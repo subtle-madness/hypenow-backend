@@ -68,6 +68,7 @@ public class UiController {
     @GetMapping("/ui/contents")
     public String contents(@RequestParam(required = false) ContentStatus status,
                            @RequestParam(defaultValue = "0") int page, Model model) {
+        page = Math.max(page, 0);
         var pageable = PageRequest.of(page, 50, Sort.by(Sort.Direction.DESC, "id"));
         var result = status == null ? contents.findAll(pageable)
                                     : contents.findByStatus(status, pageable);

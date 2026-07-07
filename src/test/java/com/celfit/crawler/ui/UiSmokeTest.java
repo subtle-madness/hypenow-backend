@@ -77,4 +77,9 @@ class UiSmokeTest extends IntegrationTest {
         mvc.perform(get("/ui/contents")).andExpect(status().isOk());
         mvc.perform(get("/ui/contents").param("status", "PENDING")).andExpect(status().isOk());
     }
+
+    @Test
+    void 음수_페이지도_500이_아니라_정상_렌더링() throws Exception {
+        mvc.perform(get("/ui/contents").param("page", "-1")).andExpect(status().isOk());
+    }
 }
