@@ -19,6 +19,7 @@ public class JobController {
         this.jobService = jobService;
     }
 
+    /** discover는 category 생략 시 전체 활성 카테고리를 순차 실행. */
     @PostMapping("/{job}")
     public ResponseEntity<Map<String, String>> trigger(@PathVariable String job,
                                                        @RequestParam(required = false) Long category) {
@@ -28,15 +29,11 @@ public class JobController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", "알 수 없는 잡: " + job));
         }
-        try {
-            return switch (jobService.trigger(name, category, TriggerType.MANUAL)) {
-                case ACCEPTED -> ResponseEntity.accepted()
-                        .body(Map.of("job", name.name(), "result", "accepted"));
-                case BUSY -> ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(Map.of("job", name.name(), "result", "busy"));
-            };
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+        return switch (jobService.trigger(name, category, TriggerType.MANUAL)) {
+            case ACCEPTED -> ResponseEntity.accepted()
+                    .body(Map.of("job", name.name(), "result", "accepted"));
+            case BUSY -> ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("job", name.name(), "result", "busy"));
+        };
     }
 }

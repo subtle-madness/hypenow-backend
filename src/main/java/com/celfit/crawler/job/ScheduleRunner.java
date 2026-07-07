@@ -1,7 +1,5 @@
 package com.celfit.crawler.job;
 
-import com.celfit.crawler.domain.Category;
-import com.celfit.crawler.domain.CategoryRepository;
 import com.celfit.crawler.domain.JobName;
 import com.celfit.crawler.domain.TriggerType;
 import org.slf4j.Logger;
@@ -18,19 +16,15 @@ public class ScheduleRunner {
     private static final Logger log = LoggerFactory.getLogger(ScheduleRunner.class);
 
     private final JobService jobService;
-    private final CategoryRepository categories;
 
-    public ScheduleRunner(JobService jobService, CategoryRepository categories) {
+    public ScheduleRunner(JobService jobService) {
         this.jobService = jobService;
-        this.categories = categories;
     }
 
     @Scheduled(cron = "${crawler.schedule.discover-cron}")
     void discover() {
-        for (Category c : categories.findByEnabledTrue()) {
-            log.info("스케줄 discover 카테고리={}: {}", c.getName(),
-                    jobService.trigger(JobName.DISCOVER, c.getId(), TriggerType.SCHEDULED));
-        }
+        // categoryId=null → JobService가 전체 활성 카테고리를 잡 1회 안에서 순차 실행
+        log.info("스케줄 discover: {}", jobService.trigger(JobName.DISCOVER, null, TriggerType.SCHEDULED));
     }
 
     @Scheduled(cron = "${crawler.schedule.qualify-cron}")

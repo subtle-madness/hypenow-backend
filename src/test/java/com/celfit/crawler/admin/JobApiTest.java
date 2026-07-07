@@ -81,9 +81,26 @@ class JobApiTest extends IntegrationTest {
     }
 
     @Test
-    void discover에_category_없으면_400_모르는_잡도_400() throws Exception {
-        mvc.perform(post("/admin/jobs/discover")).andExpect(status().isBadRequest());
+    void 모르는_잡은_400() throws Exception {
         mvc.perform(post("/admin/jobs/terraform")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 카테고리_없는_discover는_전체_활성_카테고리를_순차_실행한다() throws Exception {
+        Long cat1 = categories.save(new Category("메이크업")).getId();
+        keywords.save(new CategoryKeyword(cat1, "메이크업"));
+        Long cat2 = categories.save(new Category("스킨케어")).getId();
+        keywords.save(new CategoryKeyword(cat2, "스킨케어"));
+        Category disabled = new Category("비활성");
+        disabled.setEnabled(false);
+        Long cat3 = categories.save(disabled).getId();
+        keywords.save(new CategoryKeyword(cat3, "비활성키워드"));
+        fake.enqueue(List.of());
+        fake.enqueue(List.of());
+
+        mvc.perform(post("/admin/jobs/discover")).andExpect(status().isAccepted());
+
+        assertThat(fake.calls).hasSize(2);  // 활성 2개만 — 비활성 카테고리는 호출 안 됨
     }
 
     @Test
