@@ -1,0 +1,25 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+crawler:
+  apify:
+    token: test-token
+    base-url: http://localhost:9999
+    poll-interval: 1ms
+    run-timeout: 1s
+  discover:
+    results-limit: 100
+  aggregate:
+    delay-days: 3
+    batch-limit: 200
+    chunk-size: 50
+    comments-per-post: 50
+    max-attempts: 3
+  schedule:
+    enabled: false
+    discover-cron: "0 0 6 * * *"
+    qualify-cron: "0 30 6 * * *"
+    aggregate-cron: "0 0 7 * * *"
