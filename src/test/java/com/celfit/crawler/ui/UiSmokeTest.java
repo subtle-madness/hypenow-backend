@@ -63,4 +63,18 @@ class UiSmokeTest extends IntegrationTest {
                 .andExpect(redirectedUrl("/ui/jobs"))
                 .andExpect(flash().attributeExists("message"));
     }
+
+    @Test
+    void 카테고리_화면과_폼() throws Exception {
+        mvc.perform(get("/ui/categories")).andExpect(status().isOk());
+        mvc.perform(post("/ui/categories").param("name", "메이크업"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/ui/categories"));
+    }
+
+    @Test
+    void 수집_데이터_화면() throws Exception {
+        mvc.perform(get("/ui/contents")).andExpect(status().isOk());
+        mvc.perform(get("/ui/contents").param("status", "PENDING")).andExpect(status().isOk());
+    }
 }

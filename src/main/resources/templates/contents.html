@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <title>celfit crawler — 수집 데이터</title>
+    <style> body { font-family: sans-serif; margin: 2rem; } </style>
+</head>
+<body>
+<nav th:replace="~{fragments/nav :: nav}"></nav>
+<h1>수집 데이터</h1>
+
+<form method="get" th:action="@{/ui/contents}">
+    <select name="status">
+        <option value="">전체</option>
+        <option th:each="s : ${statuses}" th:value="${s}" th:text="${s}"
+                th:selected="${status == s}"></option>
+    </select>
+    <button type="submit">필터</button>
+</form>
+
+<table border="1" cellpadding="4">
+    <tr><th>id</th><th>short_code</th><th>유형</th><th>계정</th><th>업로드</th>
+        <th>카테고리 키워드</th><th>상태</th><th>집계 시각</th></tr>
+    <tr th:each="c : ${page.content}">
+        <td><a th:href="@{'/ui/contents/' + ${c.id}}" th:text="${c.id}"></a></td>
+        <td th:text="${c.shortCode}"></td>
+        <td th:text="${c.contentType}"></td>
+        <td th:text="${c.ownerUsername}"></td>
+        <td th:text="${c.uploadedAt}"></td>
+        <td th:text="${c.discoveryKeyword}"></td>
+        <td th:text="${c.status}"></td>
+        <td th:text="${c.aggregatedAt}"></td>
+    </tr>
+</table>
+<p>
+    <a th:if="${page.hasPrevious()}"
+       th:href="@{/ui/contents(status=${status}, page=${page.number - 1})}">이전</a>
+    <span th:text="${page.number + 1} + ' / ' + ${page.totalPages}"></span>
+    <a th:if="${page.hasNext()}"
+       th:href="@{/ui/contents(status=${status}, page=${page.number + 1})}">다음</a>
+</p>
+</body>
+</html>
