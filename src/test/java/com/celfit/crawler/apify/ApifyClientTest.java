@@ -17,10 +17,11 @@ import tools.jackson.databind.ObjectMapper;
 
 class ApifyClientTest {
 
-    /** 스크립트된 응답을 순서대로 돌려주고 호출 url을 기록하는 fake. */
+    /** 스크립트된 응답을 순서대로 돌려주고 호출 url을 기록하는 fake. abort 실패도 스크립트 가능. */
     static class FakeHttp implements ApifyHttp {
         final Deque<String> responses = new ArrayDeque<>();
         final List<String> calls = new ArrayList<>();
+        RuntimeException abortError;
 
         @Override public String get(String url) {
             calls.add("GET " + url);
@@ -29,6 +30,9 @@ class ApifyClientTest {
 
         @Override public String post(String url, String body) {
             calls.add("POST " + url);
+            if (abortError != null && url.contains("/abort")) {
+                throw abortError;
+            }
             return responses.pop();
         }
     }
@@ -70,6 +74,7 @@ class ApifyClientTest {
         assertThat(result.items().get(0)).containsEntry("shortCode", "abc");
         assertThat(http.calls.get(0)).startsWith("POST https://api.test/v2/acts/apify~instagram-hashtag-scraper/runs");
         assertThat(http.calls.get(3)).contains("/v2/datasets/ds-1/items");
+        assertThat(http.calls).noneMatch(c -> c.contains("token"));
     }
 
     @Test
@@ -100,6 +105,27 @@ class ApifyClientTest {
                 .run("actor", java.util.Map.of()))
                 .isInstanceOf(ApifyException.class)
                 .hasMessageContaining("타임아웃");
+        assertThat(http.calls).anyMatch(c -> c.startsWith("POST") && c.contains("/abort"));
+    }
+
+    @Test
+    void abort가_실패해도_타임아웃_예외가_유지되고_abort_오류는_suppressed로_붙는다() {
+        FakeHttp http = new FakeHttp();
+        http.responses.add(STARTED);
+        http.responses.add("""
+                {"data": {"status": "RUNNING"}}""");
+        http.responses.add("""
+                {"data": {"status": "RUNNING"}}""");
+        http.abortError = new ApifyException("Apify HTTP 503: unavailable");
+
+        assertThatThrownBy(() -> client(http, new TickingClock(), Duration.ofSeconds(4))
+                .run("actor", java.util.Map.of()))
+                .isInstanceOf(ApifyException.class)
+                .hasMessageContaining("타임아웃")
+                .satisfies(ex -> {
+                    assertThat(ex.getSuppressed()).hasSize(1);
+                    assertThat(ex.getSuppressed()[0]).hasMessageContaining("503");
+                });
         assertThat(http.calls).anyMatch(c -> c.startsWith("POST") && c.contains("/abort"));
     }
 }

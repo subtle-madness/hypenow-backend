@@ -15,6 +15,8 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * Apify 비동기 실행: run 시작 → 상태 폴링 → SUCCEEDED면 dataset 수신.
  * run-sync 엔드포인트는 장시간 실행에서 게이트웨이가 먼저 끊겨 과금+결과 유실 → 금지.
+ * 폴링/dataset 조회가 일시 오류로 실패하면 예외로 즉시 포기하며 액터는 abort되지 않는다
+ * — crawl_run FAILED 기록과 Apify 콘솔로 추적, 재시도는 잡 레벨 재실행으로 커버.
  */
 @Component
 public class ApifyClient implements ApifyRunner {
@@ -54,13 +56,19 @@ public class ApifyClient implements ApifyRunner {
                 throw new ApifyException("run " + runId + " 종료 상태 " + status);
             }
             if (clock.instant().isAfter(deadline)) {
-                postJson(url("/v2/actor-runs/" + runId + "/abort"), Map.of());
-                throw new ApifyException("run " + runId + " 타임아웃(" + props.runTimeout() + ") — abort 요청함");
+                ApifyException timeout = new ApifyException(
+                        "run " + runId + " 타임아웃(" + props.runTimeout() + ") — abort 시도함");
+                try {
+                    postJson(url("/v2/actor-runs/" + runId + "/abort"), Map.of());
+                } catch (RuntimeException e) {
+                    timeout.addSuppressed(e);
+                }
+                throw timeout;
             }
             sleeper.sleep(props.pollInterval());
         }
 
-        String body = http.get(url("/v2/datasets/" + datasetId + "/items") + "&clean=true&format=json");
+        String body = http.get(url("/v2/datasets/" + datasetId + "/items") + "?clean=true&format=json");
         try {
             List<Map<String, Object>> items = om.readValue(body, new TypeReference<>() {});
             return new ApifyResult(runId, items);
@@ -70,7 +78,7 @@ public class ApifyClient implements ApifyRunner {
     }
 
     private String url(String path) {
-        return props.baseUrl() + path + "?token=" + props.token();
+        return props.baseUrl() + path;
     }
 
     private JsonNode getJson(String url) {

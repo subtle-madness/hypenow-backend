@@ -12,21 +12,26 @@ import org.springframework.stereotype.Component;
 public class JdkApifyHttp implements ApifyHttp {
 
     private final HttpClient client = HttpClient.newHttpClient();
+    private final String bearer;
 
     public JdkApifyHttp(ApifyProperties props) {
         if (props.token() == null || props.token().isBlank()) {
             throw new IllegalStateException("APIFY_TOKEN이 설정되지 않았습니다 (환경변수 필요)");
         }
+        this.bearer = "Bearer " + props.token();
     }
 
     @Override
     public String get(String url) {
-        return send(HttpRequest.newBuilder(URI.create(url)).GET().build());
+        return send(HttpRequest.newBuilder(URI.create(url))
+                .header("Authorization", bearer)
+                .GET().build());
     }
 
     @Override
     public String post(String url, String jsonBody) {
         return send(HttpRequest.newBuilder(URI.create(url))
+                .header("Authorization", bearer)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                 .build());
