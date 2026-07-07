@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <title>celfit crawler — 잡 실행</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        form { display: inline-block; margin-right: 1rem; }
+        .flash { background: #e8f5e9; padding: 0.5rem 1rem; margin: 1rem 0; }
+    </style>
+</head>
+<body>
+<nav th:replace="~{fragments/nav :: nav}"></nav>
+<h1>잡 실행</h1>
+<div class="flash" th:if="${message}" th:text="${message}"></div>
+
+<form method="post" th:action="@{/ui/jobs/discover}">
+    <select name="category">
+        <option value="">전체 카테고리</option>
+        <option th:each="c : ${categories}" th:value="${c.id}" th:text="${c.name}"></option>
+    </select>
+    <button type="submit">① discover — 발굴</button>
+</form>
+<form method="post" th:action="@{/ui/jobs/qualify}">
+    <button type="submit">② qualify — 프로필·규칙 판정</button>
+</form>
+<form method="post" th:action="@{/ui/jobs/aggregate}">
+    <button type="submit">③ aggregate — +3일 상세·댓글</button>
+</form>
+
+<h2>최근 실행</h2>
+<div hx-get="/ui/fragments/runs" hx-trigger="load, every 5s"></div>
+</body>
+</html>
