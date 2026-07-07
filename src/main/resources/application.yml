@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: celfit-crawler
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  threads:
+    virtual:
+      enabled: true
+
+crawler:
+  apify:
+    token: ${APIFY_TOKEN:}
+    base-url: https://api.apify.com
+    poll-interval: 5s
+    run-timeout: 10m
+  discover:
+    results-limit: 100
+  aggregate:
+    delay-days: 3
+    batch-limit: 200
+    chunk-size: 50
+    comments-per-post: 50
+    max-attempts: 3
+  schedule:
+    enabled: false
+    discover-cron: "0 0 6 * * *"
+    qualify-cron: "0 30 6 * * *"
+    aggregate-cron: "0 0 7 * * *"
