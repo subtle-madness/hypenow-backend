@@ -116,4 +116,19 @@ class AggregateJobTest extends IntegrationTest {
         assertThat(third.failed()).isEqualTo(1);
         assertThat(contents.findById(c.getId()).orElseThrow().getStatus()).isEqualTo(ContentStatus.FAILED);
     }
+
+    @Test
+    void detail_응답이_완전히_비면_GONE이_아니라_재시도로_처리된다() {
+        Content c = seedQualified("sc1", 4);
+        fake.enqueue(List.of());   // detail: 빈 응답 — 액터 소프트 실패(레이트리밋 등) 가능성
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        assertThat(summary.gone()).isZero();
+        assertThat(summary.retried()).isEqualTo(1);
+        assertThat(contents.findById(c.getId()).orElseThrow().getStatus()).isEqualTo(ContentStatus.QUALIFIED);
+        assertThat(contents.findById(c.getId()).orElseThrow().getAggregateAttempts()).isEqualTo(1);
+        // 빈 응답 가드가 댓글 액터 호출 전에 걸려 호출 자체를 아낀다
+        assertThat(fake.calls).hasSize(1);
+    }
 }

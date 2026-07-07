@@ -58,21 +58,23 @@ public class AggregateJob {
                         Actors.POST_DETAIL, ActorInputs.postDetail(urls));
                 detailRunId = dx.runId();
                 detailByCode = indexDetails(dx.items());
+                if (detailByCode.isEmpty() && !chunk.isEmpty()) {
+                    // 요청 전부가 응답에 없음 = 삭제가 아니라 액터 소프트 실패(레이트리밋 등) 가능성
+                    // — mass-GONE 대신 재시도. 댓글 액터 호출도 아낀다.
+                    int f = bumpAttempts(chunk);
+                    failed += f;
+                    retried += chunk.size() - f;
+                    continue;
+                }
                 var cx = executor.execute(JobName.AGGREGATE, trigger, null, null,
                         Actors.COMMENT, ActorInputs.comments(urls, props.commentsPerPost()));
                 commentRunId = cx.runId();
                 commentsByCode = groupComments(cx.items());
             } catch (ApifyException e) {
-                // 청크 전체 재시도 대상 — attempts 상한 도달분은 FAILED로 밀어냄
-                for (Content c : chunk) {
-                    c.setAggregateAttempts(c.getAggregateAttempts() + 1);
-                    if (c.getAggregateAttempts() >= props.maxAttempts()) {
-                        c.setStatus(ContentStatus.FAILED);
-                        failed++;
-                    } else {
-                        retried++;
-                    }
-                }
+                // 청크 전체 재시도 대상
+                int f = bumpAttempts(chunk);
+                failed += f;
+                retried += chunk.size() - f;
                 continue;
             }
 
@@ -93,6 +95,19 @@ public class AggregateJob {
             }
         }
         return new Summary(aggregated, gone, retried, failed);
+    }
+
+    /** 청크 전체의 attempts를 올리고 상한 도달분은 FAILED로 밀어냄. FAILED 전환 수를 반환. */
+    private int bumpAttempts(List<Content> chunk) {
+        int failed = 0;
+        for (Content c : chunk) {
+            c.setAggregateAttempts(c.getAggregateAttempts() + 1);
+            if (c.getAggregateAttempts() >= props.maxAttempts()) {
+                c.setStatus(ContentStatus.FAILED);
+                failed++;
+            }
+        }
+        return failed;
     }
 
     private Map<String, Map<String, Object>> indexDetails(List<Map<String, Object>> items) {
