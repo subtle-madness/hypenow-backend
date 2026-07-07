@@ -42,6 +42,9 @@ class ContentRepositoryTest extends IntegrationTest {
         save("pend", ContentStatus.PENDING, CUTOFF.minusSeconds(3600));     // 미판정
         Content done = save("done", ContentStatus.AGGREGATED, CUTOFF.minusSeconds(3600));
         done.setAggregatedAt(Instant.now());
+        // status는 QUALIFIED지만 이미 집계됨 — aggregatedAt is null 조건이 빠지면 잘못 포함된다
+        Content doneButQualified = save("qdone", ContentStatus.QUALIFIED, CUTOFF.minusSeconds(3600));
+        doneButQualified.setAggregatedAt(Instant.now());
 
         var due = contents.findDue(ContentStatus.QUALIFIED, CUTOFF, PageRequest.of(0, 10));
         assertThat(due).extracting(Content::getShortCode).containsExactly("due1", "due2");
