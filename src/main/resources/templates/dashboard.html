@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <title>celfit crawler — 대시보드</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        .tiles { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .tile { border: 1px solid #ccc; padding: 1rem; min-width: 8rem; text-align: center; }
+        .num { font-size: 1.6rem; font-weight: bold; }
+    </style>
+</head>
+<body>
+<nav th:replace="~{fragments/nav :: nav}"></nav>
+<h1>대시보드</h1>
+<div class="tiles">
+    <div class="tile" th:each="e : ${summary.contentByStatus()}">
+        <div class="num" th:text="${e.value}">0</div>
+        <div th:text="${e.key}">STATUS</div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${summary.dueForAggregate()}">0</div>
+        <div>집계 대기 (+3일 도래)</div>
+    </div>
+</div>
+<h2>raw 적재량</h2>
+<ul>
+    <li>발굴 게시물: <span th:text="${summary.rawDiscoveryPosts()}"></span></li>
+    <li>게시물 상세: <span th:text="${summary.rawPostDetails()}"></span></li>
+    <li>댓글: <span th:text="${summary.rawComments()}"></span></li>
+    <li>프로필: <span th:text="${summary.rawProfiles()}"></span></li>
+    <li>응답 아카이브: <span th:text="${summary.rawRunItems()}"></span></li>
+</ul>
+<h2>최근 실행</h2>
+<div hx-get="/ui/fragments/runs" hx-trigger="load, every 5s"></div>
+</body>
+</html>
