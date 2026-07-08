@@ -1,6 +1,5 @@
 package com.celfit.crawler.admin;
 
-import com.celfit.crawler.config.AggregateProperties;
 import com.celfit.crawler.domain.*;
 import java.time.Clock;
 import java.time.Duration;
@@ -21,19 +20,19 @@ public class StatusService {
     private final RawPostDetailRepository rawDetails;
     private final RawCommentRepository rawComments;
     private final RawProfileRepository rawProfiles;
-    private final AggregateProperties aggregateProps;
+    private final SettingsService settings;
     private final Clock clock;
 
     public StatusService(ContentRepository contents, RawDiscoveryPostRepository rawDiscovery,
                          RawPostDetailRepository rawDetails, RawCommentRepository rawComments,
-                         RawProfileRepository rawProfiles, AggregateProperties aggregateProps,
+                         RawProfileRepository rawProfiles, SettingsService settings,
                          Clock clock) {
         this.contents = contents;
         this.rawDiscovery = rawDiscovery;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
         this.rawProfiles = rawProfiles;
-        this.aggregateProps = aggregateProps;
+        this.settings = settings;
         this.clock = clock;
     }
 
@@ -42,7 +41,7 @@ public class StatusService {
         for (ContentStatus s : ContentStatus.values()) {
             byStatus.put(s, contents.countByStatus(s));
         }
-        Instant cutoff = clock.instant().minus(Duration.ofDays(aggregateProps.delayDays()));
+        Instant cutoff = clock.instant().minus(Duration.ofDays(settings.delayDays()));
         long due = contents.countByStatusAndAggregatedAtIsNullAndUploadedAtLessThanEqual(
                 ContentStatus.QUALIFIED, cutoff);
         return new StatusSummary(byStatus, rawDiscovery.count(), rawDetails.count(),

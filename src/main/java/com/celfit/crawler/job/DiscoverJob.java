@@ -1,9 +1,9 @@
 package com.celfit.crawler.job;
 
+import com.celfit.crawler.admin.SettingsService;
 import com.celfit.crawler.apify.Actors;
 import com.celfit.crawler.apify.ActorInputs;
 import com.celfit.crawler.apify.ApifyException;
-import com.celfit.crawler.config.DiscoverProperties;
 import com.celfit.crawler.domain.*;
 import java.time.Clock;
 import java.util.Map;
@@ -22,13 +22,13 @@ public class DiscoverJob {
     private final ContentRepository contents;
     private final RawDiscoveryPostRepository rawDiscovery;
     private final CrawlExecutor executor;
-    private final DiscoverProperties props;
+    private final SettingsService settings;
     private final Clock clock;
 
     public DiscoverJob(CategoryRepository categories, CategoryKeywordRepository keywords,
                        CollectionRuleRepository rules, AccountRepository accounts,
                        ContentRepository contents, RawDiscoveryPostRepository rawDiscovery,
-                       CrawlExecutor executor, DiscoverProperties props, Clock clock) {
+                       CrawlExecutor executor, SettingsService settings, Clock clock) {
         this.categories = categories;
         this.keywords = keywords;
         this.rules = rules;
@@ -36,7 +36,7 @@ public class DiscoverJob {
         this.contents = contents;
         this.rawDiscovery = rawDiscovery;
         this.executor = executor;
-        this.props = props;
+        this.settings = settings;
         this.clock = clock;
     }
 
@@ -54,7 +54,7 @@ public class DiscoverJob {
             CrawlExecutor.Execution ex;
             try {
                 ex = executor.execute(JobName.DISCOVER, trigger, categoryId, kw.getKeyword(),
-                        Actors.DISCOVERY, ActorInputs.discovery(kw.getKeyword(), props.resultsLimit()));
+                        Actors.DISCOVERY, ActorInputs.discovery(kw.getKeyword(), settings.resultsLimit()));
             } catch (ApifyException e) {
                 failedKeywords++;  // crawl_run에 FAILED 기록됨 — 다음 키워드 계속
                 continue;

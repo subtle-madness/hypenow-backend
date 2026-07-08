@@ -1,10 +1,10 @@
 package com.celfit.crawler.job;
 
+import com.celfit.crawler.admin.SettingsService;
 import com.celfit.crawler.apify.Actors;
 import com.celfit.crawler.apify.ActorInputs;
 import com.celfit.crawler.apify.ApifyException;
 import com.celfit.crawler.apify.ShortCodes;
-import com.celfit.crawler.config.AggregateProperties;
 import com.celfit.crawler.domain.*;
 import java.time.Clock;
 import java.time.Duration;
@@ -23,28 +23,28 @@ public class AggregateJob {
     private final RawPostDetailRepository rawDetails;
     private final RawCommentRepository rawComments;
     private final CrawlExecutor executor;
-    private final AggregateProperties props;
+    private final SettingsService settings;
     private final Clock clock;
 
     public AggregateJob(ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, CrawlExecutor executor,
-                        AggregateProperties props, Clock clock) {
+                        SettingsService settings, Clock clock) {
         this.contents = contents;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
         this.executor = executor;
-        this.props = props;
+        this.settings = settings;
         this.clock = clock;
     }
 
     @Transactional
     public Summary run(TriggerType trigger) {
-        Instant cutoff = clock.instant().minus(Duration.ofDays(props.delayDays()));
+        Instant cutoff = clock.instant().minus(Duration.ofDays(settings.delayDays()));
         List<Content> due = contents.findDue(ContentStatus.QUALIFIED, cutoff,
-                PageRequest.of(0, props.batchLimit()));
+                PageRequest.of(0, settings.batchLimit()));
 
         int aggregated = 0, gone = 0, retried = 0, failed = 0;
-        for (List<Content> chunk : ActorInputs.chunk(due, props.chunkSize())) {
+        for (List<Content> chunk : ActorInputs.chunk(due, settings.chunkSize())) {
             List<String> urls = chunk.stream()
                     .map(c -> ShortCodes.postUrl(c.getShortCode()))
                     .toList();
@@ -67,7 +67,7 @@ public class AggregateJob {
                     continue;
                 }
                 var cx = executor.execute(JobName.AGGREGATE, trigger, null, null,
-                        Actors.COMMENT, ActorInputs.comments(urls, props.commentsPerPost()));
+                        Actors.COMMENT, ActorInputs.comments(urls, settings.commentsPerPost()));
                 commentRunId = cx.runId();
                 commentsByCode = groupComments(cx.items());
             } catch (ApifyException e) {
@@ -102,7 +102,7 @@ public class AggregateJob {
         int failed = 0;
         for (Content c : chunk) {
             c.setAggregateAttempts(c.getAggregateAttempts() + 1);
-            if (c.getAggregateAttempts() >= props.maxAttempts()) {
+            if (c.getAggregateAttempts() >= settings.maxAttempts()) {
                 c.setStatus(ContentStatus.FAILED);
                 failed++;
             }

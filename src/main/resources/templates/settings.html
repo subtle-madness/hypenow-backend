@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <title>celfit crawler — 설정</title>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        .flash { background: #fff3e0; padding: 0.5rem 1rem; margin: 1rem 0; }
+        table { border-collapse: collapse; }
+        td, th { padding: 0.3rem 0.8rem; text-align: left; }
+        input[type=number] { width: 6rem; }
+    </style>
+</head>
+<body>
+<nav th:replace="~{fragments/nav :: nav}"></nav>
+<h1>런타임 설정</h1>
+<p>빈칸으로 저장하면 기본값(yml)으로 복귀합니다.</p>
+<div class="flash" th:if="${message}" th:text="${message}"></div>
+
+<form method="post" th:action="@{/ui/settings}">
+    <table>
+        <tr><th>키</th><th>오버라이드 값</th><th>기본값</th></tr>
+        <tr th:each="s : ${settings}">
+            <td th:text="${s.key()}"></td>
+            <td>
+                <input type="number" th:name="${s.key()}"
+                       th:value="${s.overridden()} ? ${s.effective()} : null"/>
+            </td>
+            <td th:text="${s.defaultValue()}"></td>
+        </tr>
+    </table>
+    <button type="submit">저장</button>
+</form>
+</body>
+</html>
