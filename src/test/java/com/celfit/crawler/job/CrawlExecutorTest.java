@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.apify.ApifyException;
-import com.celfit.crawler.apify.ApifyRunner;
 import com.celfit.crawler.domain.CrawlRunRepository;
 import com.celfit.crawler.domain.JobName;
 import com.celfit.crawler.domain.RunStatus;
