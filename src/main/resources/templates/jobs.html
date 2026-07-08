@@ -23,6 +23,7 @@
     <button type="submit">① discover — 발굴</button>
 </form>
 <form method="post" th:action="@{/ui/jobs/qualify}">
+    <label><input type="checkbox" name="requalify" value="true"/> EXCLUDED 재판정 포함</label>
     <button type="submit">② qualify — 프로필·규칙 판정</button>
 </form>
 <form method="post" th:action="@{/ui/jobs/aggregate}">

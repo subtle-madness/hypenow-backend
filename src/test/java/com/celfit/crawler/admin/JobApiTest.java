@@ -8,13 +8,28 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
+import com.celfit.crawler.domain.Account;
+import com.celfit.crawler.domain.AccountRepository;
 import com.celfit.crawler.domain.Category;
 import com.celfit.crawler.domain.CategoryKeyword;
 import com.celfit.crawler.domain.CategoryRepository;
 import com.celfit.crawler.domain.CategoryKeywordRepository;
+import com.celfit.crawler.domain.CollectionRule;
+import com.celfit.crawler.domain.CollectionRuleRepository;
+import com.celfit.crawler.domain.Content;
+import com.celfit.crawler.domain.ContentRepository;
+import com.celfit.crawler.domain.ContentStatus;
+import com.celfit.crawler.domain.ContentType;
+import com.celfit.crawler.domain.CrawlRun;
+import com.celfit.crawler.domain.CrawlRunRepository;
 import com.celfit.crawler.domain.JobName;
+import com.celfit.crawler.domain.RawProfile;
+import com.celfit.crawler.domain.RawProfileRepository;
+import com.celfit.crawler.domain.TriggerType;
 import com.celfit.crawler.job.JobLock;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +65,11 @@ class JobApiTest extends IntegrationTest {
     @Autowired FakeApifyRunner fake;
     @Autowired CategoryRepository categories;
     @Autowired CategoryKeywordRepository keywords;
+    @Autowired CollectionRuleRepository rules;
+    @Autowired AccountRepository accounts;
+    @Autowired ContentRepository contents;
+    @Autowired CrawlRunRepository runs;
+    @Autowired RawProfileRepository rawProfiles;
     @Autowired JobLock lock;
 
     @org.junit.jupiter.api.BeforeEach
@@ -101,6 +121,35 @@ class JobApiTest extends IntegrationTest {
         mvc.perform(post("/admin/jobs/discover")).andExpect(status().isAccepted());
 
         assertThat(fake.calls).hasSize(2);  // 활성 2개만 — 비활성 카테고리는 호출 안 됨
+    }
+
+    @Test
+    void requalify_트리거는_EXCLUDED를_Apify_재호출_없이_재판정한다() throws Exception {
+        // EXCLUDED 상태 시드: 규칙 min 10000, 계정은 이미 프로필됨(followersCount 500)
+        Long catId = categories.save(new Category("메이크업")).getId();
+        CollectionRule rule = new CollectionRule(catId);
+        rule.setMinFollowers(10_000);
+        rules.save(rule);
+        Account kim = accounts.save(new Account("kim"));
+        kim.setLastProfiledAt(Instant.now());
+        Long runId = runs.save(new CrawlRun(JobName.QUALIFY, TriggerType.MANUAL, null, null,
+                "fake-actor", Instant.now())).getId();
+        rawProfiles.save(new RawProfile(kim.getId(), runId,
+                Map.of("username", "kim", "followersCount", 500), Instant.now()));
+        Content c = contents.save(new Content("sc-req", ContentType.REELS, "kim",
+                Instant.parse("2026-07-01T00:00:00Z"), catId, "메이크업", Instant.now()));
+        c.setStatus(ContentStatus.EXCLUDED);
+        c.setQualifiedAt(Instant.now());
+
+        // 규칙 완화 후 requalify 트리거 — raw_profile 재사용으로 QUALIFIED 전환
+        rule.setMinFollowers(100);
+
+        mvc.perform(post("/admin/jobs/qualify").param("requalify", "true"))
+                .andExpect(status().isAccepted());
+
+        assertThat(contents.findByShortCode("sc-req").orElseThrow().getStatus())
+                .isEqualTo(ContentStatus.QUALIFIED);
+        assertThat(fake.calls).isEmpty();  // Apify 재호출 없음
     }
 
     @Test

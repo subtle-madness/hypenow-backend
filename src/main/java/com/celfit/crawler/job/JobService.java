@@ -37,6 +37,11 @@ public class JobService {
 
     /** discover의 categoryId=null은 전체 활성 카테고리를 잡 1회(락 1회 점유) 안에서 순차 실행. */
     public TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType) {
+        return trigger(job, categoryId, triggerType, false);
+    }
+
+    /** requalify=true는 qualify에서 EXCLUDED도 재판정 (raw_profile 재사용 — Apify 재호출 없음). */
+    public TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType, boolean requalify) {
         if (!lock.tryAcquire(job)) return TriggerResult.BUSY;
         taskExecutor.execute(() -> {
             try {
@@ -56,7 +61,7 @@ public class JobService {
                             }
                         }
                     }
-                    case QUALIFY -> log.info("qualify 완료: {}", qualifyJob.run(triggerType));
+                    case QUALIFY -> log.info("qualify 완료: {}", qualifyJob.run(triggerType, requalify));
                     case AGGREGATE -> log.info("aggregate 완료: {}", aggregateJob.run(triggerType));
                 }
             } catch (Exception e) {

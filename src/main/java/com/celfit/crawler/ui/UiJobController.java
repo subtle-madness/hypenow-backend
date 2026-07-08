@@ -24,10 +24,11 @@ public class UiJobController {
     @PostMapping("/{job}")
     public String trigger(@PathVariable String job,
                           @RequestParam(required = false) Long category,
+                          @RequestParam(defaultValue = "false") boolean requalify,
                           RedirectAttributes ra) {
         try {
             JobName name = JobName.valueOf(job.toUpperCase(Locale.ROOT));
-            String message = switch (jobService.trigger(name, category, TriggerType.MANUAL)) {
+            String message = switch (jobService.trigger(name, category, TriggerType.MANUAL, requalify)) {
                 case ACCEPTED -> name + " 실행 시작";
                 case BUSY -> name + "이(가) 이미 실행 중입니다";
             };
