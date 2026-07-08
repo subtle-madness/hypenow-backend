@@ -257,7 +257,28 @@ crawler:
 - **DB 통합**: Testcontainers Postgres 소수 — jsonb·generated column은 H2 검증 불가.
 - **스모크**: 실 토큰, 키워드 1개·limit 5 소량 실행 수동 절차 (과금 → CI 제외, README 기록).
 
-## 9. 이번 결정의 근거 (요약)
+## 9. 구현 후 증분 (2026-07-08 확정)
+
+### 9.1 런타임 설정
+
+수집 튜닝 값은 재시작 없이 UI/REST에서 변경 가능해야 한다.
+
+- **`app_setting`** 테이블 (V2): `key`(PK, text) / `value`(text). **덮어쓴 값만** 저장.
+- **SettingsService**: 조회 시 DB 값 우선, 없으면 yml(@ConfigurationProperties) 기본값. yml은 기본값 역할로 유지.
+- 대상 6개: `discover.results-limit` · `aggregate.delay-days` · `batch-limit` · `chunk-size` · `comments-per-post` · `max-attempts`. 잡·StatusService는 properties 직접 참조 대신 SettingsService 경유.
+- UI `/ui/settings`(현재값·기본값 표시, 양수 검증) + REST `GET/PUT /admin/settings`.
+- **제외**: `schedule.enabled`·cron — 스케줄러 빈 등록이 기동 시점 결정이라 재시작 필요. 별도 작업.
+
+### 9.2 응답 아카이브 — "과금한 응답은 전부 남긴다"
+
+파이프라인이 버리는 아이템(규칙 탈락, 매칭 실패, GONE 콘텐츠의 댓글 등)도 과금된 데이터이므로 유실 없이 보관한다.
+
+- **`raw_run_item`** 테이블 (V3): `crawl_run_id`(FK) / `item_index` / `payload`(jsonb verbatim).
+- 적재 지점은 **CrawlExecutor** — 모든 액터 응답이 통과하는 단일 관문에서 응답 수신 직후 전 아이템 무조건 저장. 이후 잡이 무엇을 버리든 아카이브에는 남는다.
+- 기존 raw 4종은 유지(콘텐츠·계정 연결 및 generated column 조회용). 아카이브는 유실 방지 + 소급 분석용 — 저장량 이중화는 수용된 트레이드오프.
+- 한계(문서화): 아카이브 저장은 잡 트랜잭션에 합류하므로, 잡이 Apify 외 예외로 통째로 롤백되면 그 실행분 아카이브도 롤백된다 (crawl_run 자체가 롤백되는 기존 특성과 동일).
+
+## 10. 이번 결정의 근거 (요약)
 
 - **raw verbatim + 액터별 테이블**: 분석 스키마를 지금 확정하지 않기 위해. 액터별 분리는 FK NOT NULL 무결성·액터별 인덱스/파생컬럼의 자연스러운 자리 확보.
 - **generated column**: "스키마는 API 그대로" 원칙과 조회 편의의 양립.
