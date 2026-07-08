@@ -40,6 +40,12 @@ public class CategoryAdminController {
         service.setCategoryEnabled(id, req.enabled());
     }
 
+    @DeleteMapping("/categories/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
+        service.deleteCategory(id);
+    }
+
     @PostMapping("/categories/{id}/keywords")
     public ResponseEntity<KeywordView> addKeyword(@PathVariable Long id,
                                                   @Valid @RequestBody KeywordReq req) {

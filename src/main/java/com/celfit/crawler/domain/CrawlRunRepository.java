@@ -5,4 +5,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface CrawlRunRepository extends JpaRepository<CrawlRun, Long> {
     List<CrawlRun> findTop50ByOrderByIdDesc();
+    boolean existsByCategoryId(Long categoryId);
 }

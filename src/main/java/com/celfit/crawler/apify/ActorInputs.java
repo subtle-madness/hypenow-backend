@@ -25,10 +25,10 @@ public final class ActorInputs {
         return input;
     }
 
-    public static Map<String, Object> postDetail(List<String> postUrls) {
+    /** reel/post 전용 상세 액터 입력 — 게시물 URL 배열을 username 필드로 받는다. */
+    public static Map<String, Object> detailUrls(List<String> postUrls) {
         Map<String, Object> input = new LinkedHashMap<>();
-        input.put("directUrls", postUrls);
-        input.put("resultsType", "details");
+        input.put("username", postUrls);
         return input;
     }
 

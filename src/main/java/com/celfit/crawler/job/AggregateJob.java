@@ -43,58 +43,77 @@ public class AggregateJob {
         List<Content> due = contents.findDue(ContentStatus.QUALIFIED, cutoff,
                 PageRequest.of(0, settings.batchLimit()));
 
+        // 유형별 전용 상세 액터 — 릴스/피드가 주는 필드가 달라 나눠 호출한다
         int aggregated = 0, gone = 0, retried = 0, failed = 0;
-        for (List<Content> chunk : ActorInputs.chunk(due, settings.chunkSize())) {
-            List<String> urls = chunk.stream()
-                    .map(c -> ShortCodes.postUrl(c.getShortCode()))
-                    .toList();
-
-            Map<String, Map<String, Object>> detailByCode;
-            Map<String, List<Map<String, Object>>> commentsByCode;
-            Long detailRunId;
-            Long commentRunId;
-            try {
-                var dx = executor.execute(JobName.AGGREGATE, trigger, null, null,
-                        Actors.POST_DETAIL, ActorInputs.postDetail(urls));
-                detailRunId = dx.runId();
-                detailByCode = indexDetails(dx.items());
-                if (detailByCode.isEmpty() && !chunk.isEmpty()) {
-                    // 요청 전부가 응답에 없음 = 삭제가 아니라 액터 소프트 실패(레이트리밋 등) 가능성
-                    // — mass-GONE 대신 재시도. 댓글 액터 호출도 아낀다.
-                    int f = bumpAttempts(chunk);
-                    failed += f;
-                    retried += chunk.size() - f;
-                    continue;
-                }
-                var cx = executor.execute(JobName.AGGREGATE, trigger, null, null,
-                        Actors.COMMENT, ActorInputs.comments(urls, settings.commentsPerPost()));
-                commentRunId = cx.runId();
-                commentsByCode = groupComments(cx.items());
-            } catch (ApifyException e) {
-                // 청크 전체 재시도 대상
-                int f = bumpAttempts(chunk);
-                failed += f;
-                retried += chunk.size() - f;
-                continue;
-            }
-
-            for (Content c : chunk) {
-                Map<String, Object> detail = detailByCode.get(c.getShortCode());
-                if (detail == null) {
-                    c.setStatus(ContentStatus.GONE);  // 응답에 없음 = 삭제·비공개 간주
-                    gone++;
-                    continue;
-                }
-                rawDetails.save(new RawPostDetail(c.getId(), detailRunId, detail, clock.instant()));
-                for (Map<String, Object> comment : commentsByCode.getOrDefault(c.getShortCode(), List.of())) {
-                    rawComments.save(new RawComment(c.getId(), commentRunId, comment, clock.instant()));
-                }
-                c.setStatus(ContentStatus.AGGREGATED);
-                c.setAggregatedAt(clock.instant());
-                aggregated++;
+        for (ContentType type : ContentType.values()) {
+            List<Content> group = due.stream().filter(c -> c.getContentType() == type).toList();
+            for (List<Content> chunk : ActorInputs.chunk(group, settings.chunkSize())) {
+                ChunkResult r = aggregateChunk(chunk, type, trigger);
+                aggregated += r.aggregated;
+                gone += r.gone;
+                retried += r.retried;
+                failed += r.failed;
             }
         }
         return new Summary(aggregated, gone, retried, failed);
+    }
+
+    private record ChunkResult(int aggregated, int gone, int retried, int failed) {}
+
+    private ChunkResult aggregateChunk(List<Content> chunk, ContentType type, TriggerType trigger) {
+        List<String> detailUrls = chunk.stream()
+                .map(c -> type == ContentType.REELS
+                        ? ShortCodes.reelUrl(c.getShortCode())
+                        : ShortCodes.postUrl(c.getShortCode()))
+                .toList();
+        List<String> commentUrls = chunk.stream()
+                .map(c -> ShortCodes.postUrl(c.getShortCode()))
+                .toList();
+        String detailActor = type == ContentType.REELS ? Actors.DETAIL_REELS : Actors.DETAIL_FEED;
+
+        Map<String, Map<String, Object>> detailByCode;
+        Map<String, List<Map<String, Object>>> commentsByCode;
+        Long detailRunId;
+        Long commentRunId;
+        try {
+            var dx = executor.execute(JobName.AGGREGATE, trigger, null, null,
+                    detailActor, ActorInputs.detailUrls(detailUrls));
+            detailRunId = dx.runId();
+            detailByCode = indexDetails(dx.items());
+            if (detailByCode.isEmpty() && !chunk.isEmpty()) {
+                // 요청 전부가 응답에 없음 = 삭제가 아니라 액터 소프트 실패(레이트리밋 등) 가능성
+                // — mass-GONE 대신 재시도. 댓글 액터 호출도 아낀다.
+                int f = bumpAttempts(chunk);
+                return new ChunkResult(0, 0, chunk.size() - f, f);
+            }
+            var cx = executor.execute(JobName.AGGREGATE, trigger, null, null,
+                    Actors.COMMENT, ActorInputs.comments(commentUrls, settings.commentsPerPost()));
+            commentRunId = cx.runId();
+            commentsByCode = groupComments(cx.items());
+        } catch (ApifyException e) {
+            // 청크 전체 재시도 대상
+            int f = bumpAttempts(chunk);
+            return new ChunkResult(0, 0, chunk.size() - f, f);
+        }
+
+        int aggregated = 0, gone = 0;
+        for (Content c : chunk) {
+            Map<String, Object> detail = detailByCode.get(c.getShortCode());
+            if (detail == null) {
+                c.setStatus(ContentStatus.GONE);  // 응답에 없음 = 삭제·비공개 간주
+                gone++;
+                continue;
+            }
+            rawDetails.save(new RawPostDetail(c.getId(), detailRunId, detail, clock.instant()));
+            for (Map<String, Object> comment : commentsByCode.getOrDefault(c.getShortCode(), List.of())) {
+                rawComments.save(new RawComment(c.getId(), commentRunId, comment, clock.instant()));
+            }
+            c.setAdMarked(AdSignals.adMarked(detail));
+            c.setStatus(ContentStatus.AGGREGATED);
+            c.setAggregatedAt(clock.instant());
+            aggregated++;
+        }
+        return new ChunkResult(aggregated, gone, 0, 0);
     }
 
     /** 청크 전체의 attempts를 올리고 상한 도달분은 FAILED로 밀어냄. FAILED 전환 수를 반환. */

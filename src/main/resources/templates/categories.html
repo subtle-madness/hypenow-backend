@@ -2,23 +2,19 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>celfit crawler — 카테고리·규칙</title>
-    <style>
-        body { font-family: sans-serif; margin: 2rem; }
-        .card { border: 1px solid #ccc; padding: 1rem; margin-bottom: 1rem; }
-        .off { color: #999; }
-        .flash { background: #fff3e0; padding: 0.5rem 1rem; margin: 1rem 0; }
-        form.inline { display: inline; }
-    </style>
+    <link rel="stylesheet" href="/css/admin.css"/>
 </head>
 <body>
-<nav th:replace="~{fragments/nav :: nav}"></nav>
+<nav th:replace="~{fragments/nav :: nav('categories')}"></nav>
+<main>
 <h1>카테고리 · 수집 규칙</h1>
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 
-<form method="post" th:action="@{/ui/categories}">
+<form method="post" th:action="@{/ui/categories}" class="row">
     <input name="name" placeholder="새 카테고리" required/>
-    <button type="submit">추가</button>
+    <button type="submit" class="primary">추가</button>
 </form>
 
 <div class="card" th:each="c : ${categories}">
@@ -27,6 +23,10 @@
         <form class="inline" method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/toggle'}">
             <input type="hidden" name="enabled" th:value="${!c.enabled()}"/>
             <button type="submit" th:text="${c.enabled()} ? '비활성화' : '활성화'"></button>
+        </form>
+        <form class="inline" method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/delete'}"
+              th:attr="onsubmit=|return confirm('${c.name()} 카테고리를 삭제할까요? 키워드·규칙도 함께 삭제됩니다.')|">
+            <button type="submit" class="danger">삭제</button>
         </form>
     </h2>
 
@@ -40,13 +40,13 @@
             </form>
         </li>
     </ul>
-    <form method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/keywords'}">
+    <form method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/keywords'}" class="row">
         <input name="keyword" placeholder="새 키워드" required/>
         <button type="submit">키워드 추가</button>
     </form>
 
     <h3>규칙</h3>
-    <form method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/rule'}">
+    <form method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/rule'}" class="row">
         <label>최소 팔로워 <input type="number" name="minFollowers"
                 th:value="${c.rule() != null ? c.rule().minFollowers() : null}"/></label>
         <label>최대 팔로워 <input type="number" name="maxFollowers"
@@ -60,5 +60,6 @@
         <button type="submit">규칙 저장</button>
     </form>
 </div>
+</main>
 </body>
 </html>

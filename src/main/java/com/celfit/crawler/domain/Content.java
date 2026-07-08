@@ -51,6 +51,10 @@ public class Content {
     @Column(name = "aggregate_attempts", nullable = false)
     private int aggregateAttempts;
 
+    /** 광고·협찬 표기 여부 — aggregate 때 상세 캡션·파트너십 필드로 판별. */
+    @Column(name = "ad_marked", nullable = false)
+    private boolean adMarked;
+
     public Content(String shortCode, ContentType contentType, String ownerUsername,
                    Instant uploadedAt, Long categoryId, String discoveryKeyword, Instant firstSeenAt) {
         this.shortCode = shortCode;
