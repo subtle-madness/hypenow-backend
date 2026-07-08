@@ -5,8 +5,15 @@ document.addEventListener('DOMContentLoaded', function () {
         var key = 'persist:' + location.pathname + ':' + (el.name || el.id);
         var saved = sessionStorage.getItem(key);
         if (saved !== null) {
-            if (el.type === 'checkbox') el.checked = saved === 'true';
-            else el.value = saved;
+            if (el.type === 'checkbox') {
+                el.checked = saved === 'true';
+            } else if (el.tagName === 'SELECT') {
+                // 저장된 값의 옵션이 사라졌으면(카테고리 삭제 등) 복원하지 않는다
+                var exists = Array.prototype.some.call(el.options, function (o) { return o.value === saved; });
+                if (exists) el.value = saved;
+            } else {
+                el.value = saved;
+            }
         }
         el.addEventListener('change', function () {
             sessionStorage.setItem(key, el.type === 'checkbox' ? String(el.checked) : el.value);

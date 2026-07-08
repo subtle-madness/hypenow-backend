@@ -35,6 +35,14 @@ public class Content {
     @Column(name = "discovery_keyword", nullable = false)
     private String discoveryKeyword;
 
+    /** 발굴 키워드의 중분류. 계층: 카테고리 > 대분류(main_group) > 중분류 > 소분류(discovery_keyword). */
+    @Column(nullable = false)
+    private String subcategory;
+
+    /** 발굴 키워드의 대분류. */
+    @Column(name = "main_group", nullable = false)
+    private String mainGroup;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private ContentStatus status = ContentStatus.PENDING;
@@ -57,12 +65,21 @@ public class Content {
 
     public Content(String shortCode, ContentType contentType, String ownerUsername,
                    Instant uploadedAt, Long categoryId, String discoveryKeyword, Instant firstSeenAt) {
+        this(shortCode, contentType, ownerUsername, uploadedAt, categoryId,
+                discoveryKeyword, discoveryKeyword, discoveryKeyword, firstSeenAt);
+    }
+
+    public Content(String shortCode, ContentType contentType, String ownerUsername,
+                   Instant uploadedAt, Long categoryId, String discoveryKeyword,
+                   String subcategory, String mainGroup, Instant firstSeenAt) {
         this.shortCode = shortCode;
         this.contentType = contentType;
         this.ownerUsername = ownerUsername;
         this.uploadedAt = uploadedAt;
         this.categoryId = categoryId;
         this.discoveryKeyword = discoveryKeyword;
+        this.subcategory = subcategory;
+        this.mainGroup = mainGroup;
         this.firstSeenAt = firstSeenAt;
     }
 }

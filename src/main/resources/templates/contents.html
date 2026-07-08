@@ -26,7 +26,7 @@
 
 <table class="data">
     <tr><th>id</th><th>short_code</th><th>유형</th><th>광고</th><th>계정</th><th>업로드</th>
-        <th>카테고리 키워드</th><th>상태</th><th>집계 시각</th></tr>
+        <th>분류</th><th>발굴 키워드</th><th>상태</th><th>집계 시각</th></tr>
     <tr th:each="c : ${page.content}">
         <td><a th:href="@{'/ui/contents/' + ${c.id}}" th:text="${c.id}"></a></td>
         <td th:text="${c.shortCode}"></td>
@@ -34,6 +34,7 @@
         <td><span class="badge AD" th:if="${c.adMarked}">광고</span></td>
         <td th:text="${c.ownerUsername}"></td>
         <td th:text="${c.uploadedAt}"></td>
+        <td><span class="badge" th:text="${c.mainGroup == c.subcategory ? c.subcategory : c.mainGroup + ' › ' + c.subcategory}"></span></td>
         <td th:text="${c.discoveryKeyword}"></td>
         <td><span class="badge" th:classappend="${c.status}" th:text="${c.status}"></span></td>
         <td th:text="${c.aggregatedAt}"></td>

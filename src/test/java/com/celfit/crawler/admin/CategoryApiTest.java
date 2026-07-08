@@ -112,6 +112,69 @@ class CategoryApiTest extends IntegrationTest {
     }
 
     @Test
+    void 키워드에_대분류_중분류를_지정하고_생략하면_아래_단계값이_승계된다() throws Exception {
+        long catId = createCategory("뷰티");
+
+        // 대분류·중분류 전부 지정
+        mvc.perform(post("/admin/categories/" + catId + "/keywords")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keyword\": \"시트마스크\", \"subcategory\": \"시트팩\", \"mainGroup\": \"마스크팩\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.mainGroup").value("마스크팩"))
+                .andExpect(jsonPath("$.subcategory").value("시트팩"));
+
+        // 전부 생략 → 키워드가 중분류·대분류까지 승계
+        mvc.perform(post("/admin/categories/" + catId + "/keywords")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keyword\": \"립밤\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.subcategory").value("립밤"))
+                .andExpect(jsonPath("$.mainGroup").value("립밤"));
+
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].keywords[0].mainGroup").value("마스크팩"));
+    }
+
+    @Test
+    void 소분류_중분류_대분류_단위로_삭제할_수_있다() throws Exception {
+        long catId = createCategory("뷰티");
+        long kwId = addKeyword(catId, "시트마스크", "시트팩", "마스크팩");
+        addKeyword(catId, "겔마스크", "시트팩", "마스크팩");
+        addKeyword(catId, "코팩패치", "코팩", "마스크팩");
+        addKeyword(catId, "클렌징폼", "클렌징", "클렌징");
+
+        // 소분류 1개 삭제
+        mvc.perform(delete("/admin/keywords/" + kwId)).andExpect(status().isNoContent());
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].keywords.length()").value(3));
+
+        // 중분류 삭제 → 시트팩 하위 전부 제거
+        mvc.perform(delete("/admin/categories/" + catId + "/groups")
+                        .param("mainGroup", "마스크팩").param("subcategory", "시트팩"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].keywords.length()").value(2));
+
+        // 대분류 삭제 → 마스크팩 하위 전부 제거, 다른 대분류는 유지
+        mvc.perform(delete("/admin/categories/" + catId + "/groups")
+                        .param("mainGroup", "마스크팩"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].keywords.length()").value(1))
+                .andExpect(jsonPath("$[0].keywords[0].keyword").value("클렌징폼"));
+    }
+
+    long addKeyword(long catId, String keyword, String sub, String main) throws Exception {
+        String body = mvc.perform(post("/admin/categories/" + catId + "/keywords")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keyword\": \"" + keyword + "\", \"subcategory\": \"" + sub
+                                + "\", \"mainGroup\": \"" + main + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return new ObjectMapper().readTree(body).get("id").asLong();
+    }
+
+    @Test
     void 키워드_토글() throws Exception {
         long catId = createCategory("스킨케어");
         String body = mvc.perform(post("/admin/categories/" + catId + "/keywords")

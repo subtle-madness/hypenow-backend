@@ -30,8 +30,10 @@ class SchemaTest extends IntegrationTest {
         Long catId = jdbc.queryForObject("select id from category where name='테스트'", Long.class);
         jdbc.update("""
                 insert into content(short_code, content_type, owner_username, uploaded_at,
-                                    category_id, discovery_keyword, status, first_seen_at)
-                values ('abc123', 'REELS', 'tester', now(), ?, '테스트', 'PENDING', now())""", catId);
+                                    category_id, discovery_keyword, subcategory, main_group,
+                                    status, first_seen_at)
+                values ('abc123', 'REELS', 'tester', now(), ?, '테스트', '테스트', '테스트',
+                        'PENDING', now())""", catId);
         Long contentId = jdbc.queryForObject("select id from content where short_code='abc123'", Long.class);
         jdbc.update("""
                 insert into crawl_run(job, trigger_type, actor_id, status, started_at)

@@ -89,6 +89,22 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 키워드_추가는_선택된_대분류_탭으로_돌아온다() throws Exception {
+        Category cat = categories.save(new Category("뷰티탭"));
+        mvc.perform(post("/ui/categories/" + cat.getId() + "/keywords")
+                        .param("keyword", "클렌징폼")
+                        .param("subcategory", "클렌징")
+                        .param("cat", String.valueOf(cat.getId())))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/ui/categories?cat=" + cat.getId()));
+
+        // 선택 탭 화면에 중분류 그룹과 소분류가 보인다
+        mvc.perform(get("/ui/categories").param("cat", String.valueOf(cat.getId())))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("클렌징폼")));
+    }
+
+    @Test
     void 카테고리_삭제_폼은_목록으로_리다이렉트() throws Exception {
         Category saved = categories.save(new Category("삭제용"));
         mvc.perform(post("/ui/categories/" + saved.getId() + "/delete"))

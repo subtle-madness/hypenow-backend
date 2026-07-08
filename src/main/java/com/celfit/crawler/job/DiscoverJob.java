@@ -71,7 +71,8 @@ public class DiscoverJob {
                 var existing = contents.findByShortCode(d.shortCode());
                 Content content = existing.orElseGet(() -> contents.save(new Content(
                         d.shortCode(), d.type(), d.ownerUsername(), d.uploadedAt(),
-                        categoryId, kw.getKeyword(), clock.instant())));
+                        categoryId, kw.getKeyword(), kw.getSubcategory(), kw.getMainGroup(),
+                        clock.instant())));
                 if (existing.isPresent()) duplicates++; else newContents++;
                 // 중복 발굴이어도 raw는 항상 저장 — "언제 어떤 키워드에서 발견됐나" 이력
                 rawDiscovery.save(new RawDiscoveryPost(content.getId(), ex.runId(), d.payload(), clock.instant()));
