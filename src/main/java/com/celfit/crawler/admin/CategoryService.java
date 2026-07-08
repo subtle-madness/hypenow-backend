@@ -10,7 +10,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class CategoryService {
 
-    public record KeywordView(Long id, String keyword, boolean enabled) {}
+    public record KeywordView(Long id, String keyword, String subcategory, String mainGroup,
+                              boolean enabled) {}
     public record RuleView(Integer minFollowers, Integer maxFollowers, ContentTypeFilter contentTypes) {}
     public record CategoryView(Long id, String name, boolean enabled,
                                List<KeywordView> keywords, RuleView rule) {}
@@ -65,16 +66,43 @@ public class CategoryService {
         categories.delete(c);
     }
 
+    /**
+     * keyword는 소분류(해시태그 검색어). 중분류가 비면 키워드를, 대분류가 비면 중분류를 승계.
+     * 계층: 카테고리 > 대분류 > 중분류 > 소분류.
+     */
     @Transactional
-    public KeywordView addKeyword(Long categoryId, String keyword) {
+    public KeywordView addKeyword(Long categoryId, String keyword, String subcategory, String mainGroup) {
         if (categories.findById(categoryId).isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "카테고리 없음: " + categoryId);
         }
         if (keywords.existsByCategoryIdAndKeyword(categoryId, keyword)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 키워드: " + keyword);
         }
-        CategoryKeyword saved = keywords.save(new CategoryKeyword(categoryId, keyword));
-        return new KeywordView(saved.getId(), saved.getKeyword(), saved.isEnabled());
+        String sub = subcategory == null || subcategory.isBlank() ? keyword : subcategory.trim();
+        String main = mainGroup == null || mainGroup.isBlank() ? sub : mainGroup.trim();
+        CategoryKeyword saved = keywords.save(new CategoryKeyword(categoryId, keyword, sub, main));
+        return toView(saved);
+    }
+
+    /** 소분류(키워드 행) 1개 삭제. 수집된 콘텐츠의 분류 라벨은 영향 없음. */
+    @Transactional
+    public void deleteKeyword(Long keywordId) {
+        CategoryKeyword kw = keywords.findById(keywordId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "키워드 없음: " + keywordId));
+        keywords.delete(kw);
+    }
+
+    /** 대분류(subcategory=null) 또는 중분류 단위 일괄 삭제. */
+    @Transactional
+    public void deleteGroup(Long categoryId, String mainGroup, String subcategory) {
+        if (categories.findById(categoryId).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "카테고리 없음: " + categoryId);
+        }
+        if (subcategory == null || subcategory.isBlank()) {
+            keywords.deleteByCategoryIdAndMainGroup(categoryId, mainGroup);
+        } else {
+            keywords.deleteByCategoryIdAndMainGroupAndSubcategory(categoryId, mainGroup, subcategory);
+        }
     }
 
     @Transactional
@@ -98,9 +126,14 @@ public class CategoryService {
         return new RuleView(rule.getMinFollowers(), rule.getMaxFollowers(), rule.getContentTypes());
     }
 
+    private KeywordView toView(CategoryKeyword k) {
+        return new KeywordView(k.getId(), k.getKeyword(), k.getSubcategory(), k.getMainGroup(),
+                k.isEnabled());
+    }
+
     private CategoryView toView(Category c) {
         List<KeywordView> kws = keywords.findByCategoryId(c.getId()).stream()
-                .map(k -> new KeywordView(k.getId(), k.getKeyword(), k.isEnabled()))
+                .map(this::toView)
                 .toList();
         RuleView rule = rules.findByCategoryId(c.getId())
                 .map(r -> new RuleView(r.getMinFollowers(), r.getMaxFollowers(), r.getContentTypes()))

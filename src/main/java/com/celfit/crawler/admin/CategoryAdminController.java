@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 public class CategoryAdminController {
 
     public record CategoryReq(@NotBlank String name) {}
-    public record KeywordReq(@NotBlank String keyword) {}
+    public record KeywordReq(@NotBlank String keyword, String subcategory, String mainGroup) {}
     public record EnabledReq(boolean enabled) {}
 
     private final CategoryService service;
@@ -49,13 +49,28 @@ public class CategoryAdminController {
     @PostMapping("/categories/{id}/keywords")
     public ResponseEntity<KeywordView> addKeyword(@PathVariable Long id,
                                                   @Valid @RequestBody KeywordReq req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.addKeyword(id, req.keyword()));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(service.addKeyword(id, req.keyword(), req.subcategory(), req.mainGroup()));
     }
 
     @PatchMapping("/keywords/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void setKeywordEnabled(@PathVariable Long id, @RequestBody EnabledReq req) {
         service.setKeywordEnabled(id, req.enabled());
+    }
+
+    @DeleteMapping("/keywords/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteKeyword(@PathVariable Long id) {
+        service.deleteKeyword(id);
+    }
+
+    /** subcategory 생략 시 대분류 전체 삭제. */
+    @DeleteMapping("/categories/{id}/groups")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteGroup(@PathVariable Long id, @RequestParam String mainGroup,
+                            @RequestParam(required = false) String subcategory) {
+        service.deleteGroup(id, mainGroup, subcategory);
     }
 
     @PutMapping("/categories/{id}/rule")

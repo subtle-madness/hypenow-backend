@@ -12,53 +12,124 @@
 <h1>카테고리 · 수집 규칙</h1>
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 
-<form method="post" th:action="@{/ui/categories}" class="row">
-    <input name="name" placeholder="새 카테고리" required/>
-    <button type="submit" class="primary">추가</button>
-</form>
+<!-- 카테고리 탭 (뷰티/패션 …) -->
+<div class="cat-tabs">
+    <a th:each="c : ${categories}" class="cat-tab"
+       th:classappend="${selected != null && selected.id() == c.id()} ? 'active' : (${c.enabled()} ? '' : 'off')"
+       th:href="@{/ui/categories(cat=${c.id()})}" th:text="${c.name()}"></a>
+    <form class="inline" method="post" th:action="@{/ui/categories}">
+        <input name="name" placeholder="새 카테고리" required style="width: 7rem;"/>
+        <button type="submit">추가</button>
+    </form>
+</div>
 
-<div class="card" th:each="c : ${categories}">
-    <h2>
-        <span th:text="${c.name()}" th:classappend="${c.enabled()} ? '' : 'off'"></span>
-        <form class="inline" method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/toggle'}">
-            <input type="hidden" name="enabled" th:value="${!c.enabled()}"/>
-            <button type="submit" th:text="${c.enabled()} ? '비활성화' : '활성화'"></button>
-        </form>
-        <form class="inline" method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/delete'}"
-              th:attr="onsubmit=|return confirm('${c.name()} 카테고리를 삭제할까요? 키워드·규칙도 함께 삭제됩니다.')|">
-            <button type="submit" class="danger">삭제</button>
-        </form>
-    </h2>
+<p class="hint" th:if="${selected == null}">카테고리를 먼저 추가하세요 (예: 뷰티).</p>
 
-    <h3>키워드</h3>
-    <ul>
-        <li th:each="k : ${c.keywords()}">
-            <span th:text="${k.keyword()}" th:classappend="${k.enabled()} ? '' : 'off'"></span>
-            <form class="inline" method="post" th:action="@{'/ui/keywords/' + ${k.id()} + '/toggle'}">
-                <input type="hidden" name="enabled" th:value="${!k.enabled()}"/>
-                <button type="submit" th:text="${k.enabled()} ? '중지' : '재개'"></button>
+<div th:if="${selected != null}">
+    <div class="card">
+        <h2>
+            <span th:text="${selected.name()}" th:classappend="${selected.enabled()} ? '' : 'off'"></span>
+            <form class="inline" method="post" th:action="@{'/ui/categories/' + ${selected.id()} + '/toggle'}">
+                <input type="hidden" name="enabled" th:value="${!selected.enabled()}"/>
+                <button type="submit" th:text="${selected.enabled()} ? '수집 대상에서 제외' : '수집 대상에 포함'"></button>
             </form>
-        </li>
-    </ul>
-    <form method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/keywords'}" class="row">
-        <input name="keyword" placeholder="새 키워드" required/>
-        <button type="submit">키워드 추가</button>
-    </form>
+            <form class="inline" method="post" th:action="@{'/ui/categories/' + ${selected.id()} + '/delete'}"
+                  th:attr="onsubmit=|return confirm('${selected.name()} 카테고리를 삭제할까요? 하위 분류·규칙도 함께 삭제됩니다.')|">
+                <button type="submit" class="danger">삭제</button>
+            </form>
+        </h2>
 
-    <h3>규칙</h3>
-    <form method="post" th:action="@{'/ui/categories/' + ${c.id()} + '/rule'}" class="row">
-        <label>최소 팔로워 <input type="number" name="minFollowers"
-                th:value="${c.rule() != null ? c.rule().minFollowers() : null}"/></label>
-        <label>최대 팔로워 <input type="number" name="maxFollowers"
-                th:value="${c.rule() != null ? c.rule().maxFollowers() : null}"/></label>
-        <label>콘텐츠 유형
-            <select name="contentTypes">
-                <option th:each="f : ${filters}" th:value="${f}" th:text="${f}"
-                        th:selected="${c.rule() != null && c.rule().contentTypes() == f}"></option>
-            </select>
-        </label>
-        <button type="submit">규칙 저장</button>
-    </form>
+        <h3>수집 규칙</h3>
+        <form method="post" th:action="@{'/ui/categories/' + ${selected.id()} + '/rule'}" class="row">
+            <input type="hidden" name="cat" th:value="${selected.id()}"/>
+            <label>최소 팔로워 <input type="number" name="minFollowers"
+                    th:value="${selected.rule() != null ? selected.rule().minFollowers() : null}"/></label>
+            <label>최대 팔로워 <input type="number" name="maxFollowers"
+                    th:value="${selected.rule() != null ? selected.rule().maxFollowers() : null}"/></label>
+            <label>콘텐츠 유형
+                <select name="contentTypes">
+                    <option th:each="f : ${filters}" th:value="${f}" th:text="${f}"
+                            th:selected="${selected.rule() != null && selected.rule().contentTypes() == f}"></option>
+                </select>
+            </label>
+            <button type="submit">규칙 저장</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>분류 체계</h2>
+        <p class="hint">대분류 › 중분류 › <b>소분류</b> — 해시태그 검색은 소분류로만 실행됩니다.
+            여기서는 등록만 하고, 수집은 <a href="/ui/jobs">잡 실행</a>에서 discover를 눌러야 시작돼요.
+            "제외"한 소분류는 다음 검색에서 빠집니다.</p>
+
+        <div class="maingroup" th:each="g : ${tree}">
+            <h3>
+                <span th:text="${g.key}"></span>
+                <form class="inline" method="post"
+                      th:action="@{'/ui/categories/' + ${selected.id()} + '/groups/delete'}"
+                      th:attr="onsubmit=|return confirm('대분류 ${g.key}와 하위 중분류·소분류를 모두 삭제할까요?')|">
+                    <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                    <input type="hidden" name="mainGroup" th:value="${g.key}"/>
+                    <button type="submit" class="danger kw-toggle" title="대분류 삭제">×</button>
+                </form>
+            </h3>
+
+            <div class="midrow" th:each="m : ${g.value}">
+                <span class="midname">
+                    <span th:text="${m.key}"></span>
+                    <form class="inline" method="post"
+                          th:action="@{'/ui/categories/' + ${selected.id()} + '/groups/delete'}"
+                          th:attr="onsubmit=|return confirm('중분류 ${m.key}와 하위 소분류를 모두 삭제할까요?')|">
+                        <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                        <input type="hidden" name="mainGroup" th:value="${g.key}"/>
+                        <input type="hidden" name="subcategory" th:value="${m.key}"/>
+                        <button type="submit" class="danger kw-toggle" title="중분류 삭제">×</button>
+                    </form>
+                </span>
+                <span class="kw" th:each="k : ${m.value}" th:classappend="${k.enabled()} ? '' : 'off'">
+                    <span th:text="${k.keyword()}"></span>
+                    <form class="inline" method="post" th:action="@{'/ui/keywords/' + ${k.id()} + '/toggle'}">
+                        <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                        <input type="hidden" name="enabled" th:value="${!k.enabled()}"/>
+                        <button type="submit" class="kw-toggle"
+                                th:text="${k.enabled()} ? '제외' : '포함'"
+                                th:title="${k.enabled()} ? '다음 검색에서 제외' : '다시 검색에 포함'"></button>
+                    </form>
+                    <form class="inline" method="post" th:action="@{'/ui/keywords/' + ${k.id()} + '/delete'}"
+                          th:attr="onsubmit=|return confirm('소분류 ${k.keyword()}를 삭제할까요?')|">
+                        <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                        <button type="submit" class="kw-toggle danger" title="소분류 삭제">×</button>
+                    </form>
+                </span>
+                <form class="inline kw-add" method="post"
+                      th:action="@{'/ui/categories/' + ${selected.id()} + '/keywords'}">
+                    <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                    <input type="hidden" name="mainGroup" th:value="${g.key}"/>
+                    <input type="hidden" name="subcategory" th:value="${m.key}"/>
+                    <input name="keyword" placeholder="+ 소분류" required/>
+                    <button type="submit">추가</button>
+                </form>
+            </div>
+
+            <form class="row midcat-add" method="post"
+                  th:action="@{'/ui/categories/' + ${selected.id()} + '/keywords'}">
+                <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                <input type="hidden" name="mainGroup" th:value="${g.key}"/>
+                <input name="subcategory" placeholder="+ 새 중분류"/>
+                <input name="keyword" placeholder="첫 소분류" required/>
+                <button type="submit">중분류 추가</button>
+            </form>
+        </div>
+
+        <h3 class="newgroup-title">새 대분류</h3>
+        <form method="post" th:action="@{'/ui/categories/' + ${selected.id()} + '/keywords'}" class="row">
+            <input type="hidden" name="cat" th:value="${selected.id()}"/>
+            <input name="mainGroup" placeholder="대분류 (예: 마스크팩)" required/>
+            <input name="subcategory" placeholder="중분류 (예: 시트팩)"/>
+            <input name="keyword" placeholder="소분류 = 검색 해시태그" required/>
+            <button type="submit" class="primary">추가</button>
+        </form>
+    </div>
 </div>
 </main>
 </body>

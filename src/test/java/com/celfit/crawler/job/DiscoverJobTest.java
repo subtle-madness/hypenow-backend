@@ -75,6 +75,20 @@ class DiscoverJobTest extends IntegrationTest {
     }
 
     @Test
+    void 발굴_콘텐츠에_키워드의_대분류_중분류가_기록된다() {
+        Long catId = categories.save(new Category("뷰티")).getId();
+        keywords.save(new CategoryKeyword(catId, "시트마스크", "시트팩", "마스크팩"));
+        fake.enqueue(List.of(item("sc1", "clips", "kim")));
+
+        job.run(catId, TriggerType.MANUAL);
+
+        Content c = contents.findByShortCode("sc1").orElseThrow();
+        assertThat(c.getMainGroup()).isEqualTo("마스크팩");
+        assertThat(c.getSubcategory()).isEqualTo("시트팩");
+        assertThat(c.getDiscoveryKeyword()).isEqualTo("시트마스크");
+    }
+
+    @Test
     void 재발굴은_content를_안_늘리고_raw_이력만_쌓는다() {
         Long catId = seedCategory("메이크업");
         fake.enqueue(List.of(item("sc1", "clips", "kim")));
