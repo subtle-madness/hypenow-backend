@@ -5,4 +5,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface CollectionRuleRepository extends JpaRepository<CollectionRule, Long> {
     Optional<CollectionRule> findByCategoryId(Long categoryId);
+    void deleteByCategoryId(Long categoryId);
 }

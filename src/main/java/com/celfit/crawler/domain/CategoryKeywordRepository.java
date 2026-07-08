@@ -7,4 +7,5 @@ public interface CategoryKeywordRepository extends JpaRepository<CategoryKeyword
     List<CategoryKeyword> findByCategoryIdAndEnabledTrue(Long categoryId);
     List<CategoryKeyword> findByCategoryId(Long categoryId);
     boolean existsByCategoryIdAndKeyword(Long categoryId, String keyword);
+    void deleteByCategoryId(Long categoryId);
 }

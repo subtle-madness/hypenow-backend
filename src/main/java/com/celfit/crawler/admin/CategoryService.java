@@ -18,12 +18,17 @@ public class CategoryService {
     private final CategoryRepository categories;
     private final CategoryKeywordRepository keywords;
     private final CollectionRuleRepository rules;
+    private final CrawlRunRepository crawlRuns;
+    private final ContentRepository contents;
 
     public CategoryService(CategoryRepository categories, CategoryKeywordRepository keywords,
-                           CollectionRuleRepository rules) {
+                           CollectionRuleRepository rules, CrawlRunRepository crawlRuns,
+                           ContentRepository contents) {
         this.categories = categories;
         this.keywords = keywords;
         this.rules = rules;
+        this.crawlRuns = crawlRuns;
+        this.contents = contents;
     }
 
     @Transactional(readOnly = true)
@@ -44,6 +49,20 @@ public class CategoryService {
         Category c = categories.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "카테고리 없음: " + id));
         c.setEnabled(enabled);
+    }
+
+    /** 수집 이력(crawl_run·content)이 있으면 거부 — 이력 추적성 보존. 키워드·규칙은 함께 삭제. */
+    @Transactional
+    public void deleteCategory(Long id) {
+        Category c = categories.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "카테고리 없음: " + id));
+        if (crawlRuns.existsByCategoryId(id) || contents.existsByCategoryId(id)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "수집 이력이 있는 카테고리는 삭제할 수 없음 (비활성화 사용): " + c.getName());
+        }
+        keywords.deleteByCategoryId(id);
+        rules.deleteByCategoryId(id);
+        categories.delete(c);
     }
 
     @Transactional

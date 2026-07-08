@@ -17,6 +17,8 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     Page<Content> findByStatus(ContentStatus status, Pageable pageable);
 
+    Page<Content> findByStatusIn(java.util.Collection<ContentStatus> statuses, Pageable pageable);
+
     /** aggregate 대상: 판정 통과 + 미집계 + 업로드가 컷오프(now-3일) 이전(경계 포함). */
     @Query("""
             select c from Content c
@@ -27,6 +29,8 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
                           Pageable pageable);
 
     long countByStatus(ContentStatus status);
+
+    boolean existsByCategoryId(Long categoryId);
 
     long countByStatusAndAggregatedAtIsNullAndUploadedAtLessThanEqual(ContentStatus status, Instant cutoff);
 }

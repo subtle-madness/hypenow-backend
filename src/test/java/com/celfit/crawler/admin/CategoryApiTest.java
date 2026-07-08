@@ -4,6 +4,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.celfit.crawler.IntegrationTest;
+import com.celfit.crawler.domain.CrawlRun;
+import com.celfit.crawler.domain.CrawlRunRepository;
+import com.celfit.crawler.domain.JobName;
+import com.celfit.crawler.domain.TriggerType;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -17,6 +22,7 @@ import tools.jackson.databind.ObjectMapper;
 class CategoryApiTest extends IntegrationTest {
 
     @Autowired MockMvc mvc;
+    @Autowired CrawlRunRepository crawlRuns;
 
     long createCategory(String name) throws Exception {
         String body = mvc.perform(post("/admin/categories")
@@ -64,6 +70,45 @@ class CategoryApiTest extends IntegrationTest {
                 .andExpect(status().isNoContent());
         mvc.perform(get("/admin/categories"))
                 .andExpect(jsonPath("$[0].enabled").value(false));
+    }
+
+    @Test
+    void 카테고리_삭제_키워드_규칙도_함께_제거() throws Exception {
+        long catId = createCategory("삭제대상");
+        mvc.perform(post("/admin/categories/" + catId + "/keywords")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keyword\": \"임시키워드\"}"))
+                .andExpect(status().isCreated());
+        mvc.perform(put("/admin/categories/" + catId + "/rule")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"minFollowers\": 1000, \"maxFollowers\": null, \"contentTypes\": \"ALL\"}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(delete("/admin/categories/" + catId))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/admin/categories"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    void 수집_이력_있는_카테고리는_삭제_거부() throws Exception {
+        long catId = createCategory("이력있음");
+        crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL, catId,
+                "키워드", "actor/x", Instant.now()));
+
+        mvc.perform(delete("/admin/categories/" + catId))
+                .andExpect(status().isConflict());
+
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].name").value("이력있음"));
+    }
+
+    @Test
+    void 없는_카테고리_삭제_404() throws Exception {
+        mvc.perform(delete("/admin/categories/99999"))
+                .andExpect(status().isNotFound());
     }
 
     @Test

@@ -37,6 +37,11 @@ public class UiCategoryController {
         return handle(ra, () -> service.setCategoryEnabled(id, enabled));
     }
 
+    @PostMapping("/categories/{id}/delete")
+    public String deleteCategory(@PathVariable Long id, RedirectAttributes ra) {
+        return handle(ra, () -> service.deleteCategory(id));
+    }
+
     @PostMapping("/categories/{id}/keywords")
     public String addKeyword(@PathVariable Long id, @RequestParam String keyword,
                              RedirectAttributes ra) {
