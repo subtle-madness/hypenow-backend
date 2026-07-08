@@ -13,25 +13,28 @@ public class StatusService {
 
     public record StatusSummary(Map<ContentStatus, Long> contentByStatus,
                                 long rawDiscoveryPosts, long rawPostDetails,
-                                long rawComments, long rawProfiles, long dueForAggregate) {}
+                                long rawComments, long rawProfiles, long rawRunItems,
+                                long dueForAggregate) {}
 
     private final ContentRepository contents;
     private final RawDiscoveryPostRepository rawDiscovery;
     private final RawPostDetailRepository rawDetails;
     private final RawCommentRepository rawComments;
     private final RawProfileRepository rawProfiles;
+    private final RawRunItemRepository rawRunItems;
     private final SettingsService settings;
     private final Clock clock;
 
     public StatusService(ContentRepository contents, RawDiscoveryPostRepository rawDiscovery,
                          RawPostDetailRepository rawDetails, RawCommentRepository rawComments,
-                         RawProfileRepository rawProfiles, SettingsService settings,
-                         Clock clock) {
+                         RawProfileRepository rawProfiles, RawRunItemRepository rawRunItems,
+                         SettingsService settings, Clock clock) {
         this.contents = contents;
         this.rawDiscovery = rawDiscovery;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
         this.rawProfiles = rawProfiles;
+        this.rawRunItems = rawRunItems;
         this.settings = settings;
         this.clock = clock;
     }
@@ -45,6 +48,6 @@ public class StatusService {
         long due = contents.countByStatusAndAggregatedAtIsNullAndUploadedAtLessThanEqual(
                 ContentStatus.QUALIFIED, cutoff);
         return new StatusSummary(byStatus, rawDiscovery.count(), rawDetails.count(),
-                rawComments.count(), rawProfiles.count(), due);
+                rawComments.count(), rawProfiles.count(), rawRunItems.count(), due);
     }
 }

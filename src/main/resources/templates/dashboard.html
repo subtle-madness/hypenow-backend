@@ -30,6 +30,7 @@
     <li>게시물 상세: <span th:text="${summary.rawPostDetails()}"></span></li>
     <li>댓글: <span th:text="${summary.rawComments()}"></span></li>
     <li>프로필: <span th:text="${summary.rawProfiles()}"></span></li>
+    <li>응답 아카이브: <span th:text="${summary.rawRunItems()}"></span></li>
 </ul>
 <h2>최근 실행</h2>
 <div hx-get="/ui/fragments/runs" hx-trigger="load, every 5s"></div>

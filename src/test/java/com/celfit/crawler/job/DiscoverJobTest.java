@@ -41,6 +41,7 @@ class DiscoverJobTest extends IntegrationTest {
     @Autowired ContentRepository contents;
     @Autowired AccountRepository accounts;
     @Autowired RawDiscoveryPostRepository rawDiscovery;
+    @Autowired RawRunItemRepository rawRunItems;
 
     static Map<String, Object> item(String shortCode, String productType, String owner) {
         return productType == null
@@ -102,6 +103,8 @@ class DiscoverJobTest extends IntegrationTest {
         assertThat(summary.skipped()).isEqualTo(1);
         assertThat(contents.findByShortCode("feed1")).isEmpty();
         assertThat(rawDiscovery.count()).isEqualTo(1);
+        // 파이프라인이 버린 아이템(content_types 불일치)도 응답 아카이브에는 남는다 — 과금한 응답 전량 보관
+        assertThat(rawRunItems.count()).isEqualTo(2);
     }
 
     @Test

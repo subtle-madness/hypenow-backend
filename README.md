@@ -34,6 +34,10 @@ $env:APIFY_TOKEN = 'apify_api_...'
 4. 3일 후(백필이면 즉시 — 과거 게시물은 이미 3일 경과) **aggregate** 실행
 5. 검증 끝나면 `application.yml`의 `crawler.schedule.enabled: true`로 자동화
 
+수집 튜닝 값(발굴 상한·지연일수·배치/청크 크기·댓글 상한·재시도 상한)은 재시작 없이
+UI 설정 화면(`/ui/settings`) 또는 REST(`GET/PUT /admin/settings`)로 바꿀 수 있다 —
+값을 비우면 `application.yml` 기본값으로 복귀. `schedule.enabled`·cron은 대상 아님(재시작 필요).
+
 REST로도 가능:
 - `POST /admin/jobs/discover?category=<id>` (category 생략 시 전체 활성 카테고리 순차 실행)
 - `POST /admin/jobs/qualify`, `POST /admin/jobs/aggregate`
@@ -62,3 +66,5 @@ REST로도 가능:
   Apify 쪽 변경 시 이 세 곳만 수정
 - detail 응답이 완전히 비면(레이트리밋 소프트 실패) GONE이 아니라 재시도로 처리됨 —
   attempts 3회 초과 시 FAILED
+- 과금한 모든 액터 응답은 `raw_run_item`에 원형 그대로 전량 보관된다(파이프라인이 버린
+  아이템도 포함) — 잡 트랜잭션에 합류하므로 잡이 통째로 롤백되면 그 실행분 아카이브도 같이 롤백된다
