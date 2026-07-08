@@ -12,6 +12,10 @@ public final class ShortCodes {
         return "https://www.instagram.com/p/" + shortCode + "/";
     }
 
+    public static String reelUrl(String shortCode) {
+        return "https://www.instagram.com/reel/" + shortCode + "/";
+    }
+
     public static Optional<String> fromUrl(String url) {
         if (url == null) return Optional.empty();
         Matcher m = URL.matcher(url);

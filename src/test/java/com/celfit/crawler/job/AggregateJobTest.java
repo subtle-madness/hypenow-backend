@@ -45,8 +45,12 @@ class AggregateJobTest extends IntegrationTest {
     Long catId;
 
     Content seedQualified(String shortCode, int daysAgo) {
+        return seedQualified(shortCode, daysAgo, ContentType.REELS);
+    }
+
+    Content seedQualified(String shortCode, int daysAgo, ContentType type) {
         if (catId == null) catId = categories.save(new Category("메이크업")).getId();
-        Content c = new Content(shortCode, ContentType.REELS, "kim",
+        Content c = new Content(shortCode, type, "kim",
                 Instant.now().minus(daysAgo, ChronoUnit.DAYS), catId, "메이크업", Instant.now());
         c.setStatus(ContentStatus.QUALIFIED);
         return contents.save(c);
@@ -80,6 +84,43 @@ class AggregateJobTest extends IntegrationTest {
                 .isEqualTo(ContentStatus.QUALIFIED);
         // 댓글 액터 입력에 게시물당 상한이 들어간다
         assertThat(fake.calls.get(1).input()).containsEntry("resultsLimit", 50);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 릴스와_피드는_각자_전용_액터로_상세를_수집한다() {
+        seedQualified("reel1", 4, ContentType.REELS);
+        seedQualified("feed1", 4, ContentType.FEED);
+        fake.enqueue(List.of(detail("reel1")));  // 릴스 상세
+        fake.enqueue(List.of());                 // 릴스 댓글
+        fake.enqueue(List.of(detail("feed1")));  // 피드 상세
+        fake.enqueue(List.of());                 // 피드 댓글
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        assertThat(summary.aggregated()).isEqualTo(2);
+        assertThat(fake.calls).extracting(FakeApifyRunner.Call::actorId).containsExactly(
+                "apify~instagram-reel-scraper", "apify~instagram-comment-scraper",
+                "apify~instagram-post-scraper", "apify~instagram-comment-scraper");
+        assertThat((List<String>) fake.calls.get(0).input().get("username"))
+                .containsExactly("https://www.instagram.com/reel/reel1/");
+        assertThat((List<String>) fake.calls.get(2).input().get("username"))
+                .containsExactly("https://www.instagram.com/p/feed1/");
+    }
+
+    @Test
+    void 광고_캡션이면_ad_marked로_저장된다() {
+        seedQualified("adpost", 4);
+        seedQualified("normal", 4);
+        fake.enqueue(List.of(
+                Map.of("shortCode", "adpost", "caption", "제품을 제공받아 작성한 후기 #협찬"),
+                Map.of("shortCode", "normal", "caption", "내돈내산 솔직 후기")));
+        fake.enqueue(List.of());  // 댓글 없음
+
+        job.run(TriggerType.MANUAL);
+
+        assertThat(contents.findByShortCode("adpost").orElseThrow().isAdMarked()).isTrue();
+        assertThat(contents.findByShortCode("normal").orElseThrow().isAdMarked()).isFalse();
     }
 
     @Test

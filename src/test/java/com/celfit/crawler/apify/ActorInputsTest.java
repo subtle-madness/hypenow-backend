@@ -25,11 +25,10 @@ class ActorInputsTest {
     }
 
     @Test
-    void postDetail_comments_profiles_입력() {
+    void detailUrls_comments_profiles_입력() {
         List<String> urls = List.of("https://www.instagram.com/p/abc/");
-        assertThat(ActorInputs.postDetail(urls))
-                .containsEntry("directUrls", urls)
-                .containsEntry("resultsType", "details");
+        assertThat(ActorInputs.detailUrls(urls))
+                .containsEntry("username", urls);
         assertThat(ActorInputs.comments(urls, 50))
                 .containsEntry("directUrls", urls)
                 .containsEntry("resultsLimit", 50);
@@ -47,6 +46,7 @@ class ActorInputsTest {
     @Test
     void shortCode_url_왕복() {
         assertThat(ShortCodes.postUrl("abc_-1")).isEqualTo("https://www.instagram.com/p/abc_-1/");
+        assertThat(ShortCodes.reelUrl("abc_-1")).isEqualTo("https://www.instagram.com/reel/abc_-1/");
         assertThat(ShortCodes.fromUrl("https://www.instagram.com/p/abc_-1/")).contains("abc_-1");
         assertThat(ShortCodes.fromUrl("https://www.instagram.com/reel/xyz9/?hl=ko")).contains("xyz9");
         assertThat(ShortCodes.fromUrl("https://example.com/nope")).isEmpty();
