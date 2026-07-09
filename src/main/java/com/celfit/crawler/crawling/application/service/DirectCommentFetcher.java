@@ -77,8 +77,10 @@ public class DirectCommentFetcher implements CommentFetcher {
             if (resp.status() >= 300) throw new ApifyException("graphql " + resp.status());
             var page = mapper.parse(resp.body(), postUrl);
             out.addAll(page.comments());
-            if (!page.hasNext() || page.endCursor() == null) break;
-            cursor = page.endCursor();
+            String next = page.endCursor();
+            // 무진행 방어: 서버가 hasNext=true인데 새 댓글이 없거나 커서가 안 바뀌면 종료(무한루프 방지)
+            if (!page.hasNext() || next == null || next.equals(cursor) || page.comments().isEmpty()) break;
+            cursor = next;
             sleep();
         }
         return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;

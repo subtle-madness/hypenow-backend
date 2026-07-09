@@ -42,7 +42,13 @@ public class JdkInstagramWebClient implements InstagramWebClient {
         String proxyUrl = props.proxyUrl();
         if (proxyUrl != null && !proxyUrl.isBlank()) {
             URI proxyUri = URI.create(proxyUrl);
-            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyUri.getHost(), proxyUri.getPort())));
+            String proxyHost = proxyUri.getHost();
+            if (proxyHost == null || proxyHost.isBlank() || proxyUri.getPort() == -1) {
+                throw new IllegalStateException(
+                        "crawler.direct-comment.proxy-url 형식 오류 — host:port 포함 필요 "
+                        + "(예: http://user:pass@proxy.apify.com:8000): " + proxyUrl);
+            }
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyUri.getPort())));
 
             String userInfo = proxyUri.getUserInfo();
             if (userInfo != null && userInfo.contains(":")) {

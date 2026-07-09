@@ -84,4 +84,17 @@ class DirectCommentFetcherTest extends IntegrationTest {
         assertThatThrownBy(() -> fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL))
                 .isInstanceOf(ApifyException.class);
     }
+
+    @Test
+    void 무진행이면_중단한다() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        String base = res("/instagram/comments-response.json");
+        // hasNext=true인데 커서가 항상 동일한 값으로 고정된 응답을 반복 수신 → 무진행 방어로 종료해야 함
+        String stuck = base.replace("\"end_cursor\":null,\"has_next_page\":false",
+                "\"end_cursor\":\"CUR\",\"has_next_page\":true");
+        web.graphql = List.of(stuck);  // FakeWeb이 마지막 원소를 계속 반환 → 동일 응답 반복
+        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+        assertThat(ex.items()).hasSize(30);
+    }
 }
