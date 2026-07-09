@@ -63,8 +63,17 @@
             "제외"한 소분류는 다음 검색에서 빠집니다.</p>
 
         <div class="maingroup" th:each="g : ${tree}">
-            <h3>
+            <h3 th:classappend="${mainGroupEnabled[g.key]} ? '' : 'off'">
                 <span th:text="${g.key}"></span>
+                <form class="inline" method="post"
+                      th:action="@{'/ui/categories/' + ${selected.id()} + '/groups/toggle'}">
+                    <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                    <input type="hidden" name="mainGroup" th:value="${g.key}"/>
+                    <input type="hidden" name="enabled" th:value="${!mainGroupEnabled[g.key]}"/>
+                    <button type="submit" class="kw-toggle"
+                            th:text="${mainGroupEnabled[g.key]} ? '제외' : '포함'"
+                            th:title="${mainGroupEnabled[g.key]} ? '대분류 전체를 다음 검색에서 제외' : '대분류 전체를 다시 포함'"></button>
+                </form>
                 <form class="inline" method="post"
                       th:action="@{'/ui/categories/' + ${selected.id()} + '/groups/delete'}"
                       th:attr="onsubmit=|return confirm('대분류 ${g.key}와 하위 중분류·소분류를 모두 삭제할까요?')|">
@@ -75,8 +84,18 @@
             </h3>
 
             <div class="midrow" th:each="m : ${g.value}">
-                <span class="midname">
+                <span class="midname" th:classappend="${subGroupEnabled[g.key][m.key]} ? '' : 'off'">
                     <span th:text="${m.key}"></span>
+                    <form class="inline" method="post"
+                          th:action="@{'/ui/categories/' + ${selected.id()} + '/groups/toggle'}">
+                        <input type="hidden" name="cat" th:value="${selected.id()}"/>
+                        <input type="hidden" name="mainGroup" th:value="${g.key}"/>
+                        <input type="hidden" name="subcategory" th:value="${m.key}"/>
+                        <input type="hidden" name="enabled" th:value="${!subGroupEnabled[g.key][m.key]}"/>
+                        <button type="submit" class="kw-toggle"
+                                th:text="${subGroupEnabled[g.key][m.key]} ? '제외' : '포함'"
+                                th:title="${subGroupEnabled[g.key][m.key]} ? '중분류 전체를 다음 검색에서 제외' : '중분류 전체를 다시 포함'"></button>
+                    </form>
                     <form class="inline" method="post"
                           th:action="@{'/ui/categories/' + ${selected.id()} + '/groups/delete'}"
                           th:attr="onsubmit=|return confirm('중분류 ${m.key}와 하위 소분류를 모두 삭제할까요?')|">

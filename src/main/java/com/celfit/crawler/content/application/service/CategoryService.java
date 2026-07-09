@@ -117,6 +117,18 @@ public class CategoryService {
         kw.setEnabled(enabled);
     }
 
+    /**
+     * 대분류(subcategory=null) 또는 중분류 단위로 소속 소분류(키워드)의 enabled를 일괄 설정.
+     * discover는 enabled만 보므로 "그룹 제외 = 그 밑 키워드 제외"가 그대로 적용된다.
+     */
+    @Transactional
+    public void setGroupEnabled(Long categoryId, String mainGroup, String subcategory, boolean enabled) {
+        List<CategoryKeyword> group = (subcategory == null || subcategory.isBlank())
+                ? keywords.findByCategoryIdAndMainGroup(categoryId, mainGroup)
+                : keywords.findByCategoryIdAndMainGroupAndSubcategory(categoryId, mainGroup, subcategory);
+        group.forEach(k -> k.setEnabled(enabled));
+    }
+
     @Transactional
     public RuleView upsertRule(Long categoryId, RuleView req) {
         if (categories.findById(categoryId).isEmpty()) {

@@ -112,6 +112,43 @@ class CategoryApiTest extends IntegrationTest {
     }
 
     @Test
+    void 대분류_중분류_단위로_소분류_enabled를_일괄_토글() throws Exception {
+        long catId = createCategory("립뷰티");
+        addGroupedKeyword(catId, "톤업틴트", "틴트", "립메이크업");
+        addGroupedKeyword(catId, "물틴트", "틴트", "립메이크업");
+        addGroupedKeyword(catId, "매트립", "립스틱", "립메이크업");
+
+        // 대분류 립메이크업 전체 제외 → 소분류 3개 모두 enabled=false
+        mvc.perform(patch("/admin/categories/" + catId + "/groups")
+                        .param("mainGroup", "립메이크업")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\": false}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].keywords[0].keyword").value("톤업틴트"))
+                .andExpect(jsonPath("$[0].keywords[0].enabled").value(false))
+                .andExpect(jsonPath("$[0].keywords[1].enabled").value(false))
+                .andExpect(jsonPath("$[0].keywords[2].enabled").value(false));
+
+        // 중분류 틴트만 다시 포함 → 틴트 2개 true, 립스틱 1개는 여전히 false
+        mvc.perform(patch("/admin/categories/" + catId + "/groups")
+                        .param("mainGroup", "립메이크업").param("subcategory", "틴트")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\": true}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/admin/categories"))
+                .andExpect(jsonPath("$[0].keywords[0].enabled").value(true))   // 톤업틴트(틴트)
+                .andExpect(jsonPath("$[0].keywords[1].enabled").value(true))   // 물틴트(틴트)
+                .andExpect(jsonPath("$[0].keywords[2].enabled").value(false)); // 매트립(립스틱)
+    }
+
+    void addGroupedKeyword(long catId, String kw, String sub, String main) throws Exception {
+        mvc.perform(post("/admin/categories/" + catId + "/keywords")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"keyword\":\"" + kw + "\",\"subcategory\":\"" + sub
+                                + "\",\"mainGroup\":\"" + main + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void 키워드에_대분류_중분류를_지정하고_생략하면_아래_단계값이_승계된다() throws Exception {
         long catId = createCategory("뷰티");
 

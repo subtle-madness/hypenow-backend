@@ -37,15 +37,23 @@ public class UiCategoryController {
                 .findFirst().orElse(null);
 
         Map<String, Map<String, List<KeywordView>>> tree = new LinkedHashMap<>();
+        // 그룹별 파생 상태: 켜진 소분류가 하나라도 있으면 true(=활성 → "제외" 버튼 노출).
+        Map<String, Boolean> mainGroupEnabled = new LinkedHashMap<>();
+        Map<String, Map<String, Boolean>> subGroupEnabled = new LinkedHashMap<>();
         if (selected != null) {
             for (KeywordView k : selected.keywords()) {
                 tree.computeIfAbsent(k.mainGroup(), g -> new LinkedHashMap<>())
                         .computeIfAbsent(k.subcategory(), s -> new ArrayList<>()).add(k);
+                mainGroupEnabled.merge(k.mainGroup(), k.enabled(), Boolean::logicalOr);
+                subGroupEnabled.computeIfAbsent(k.mainGroup(), g -> new LinkedHashMap<>())
+                        .merge(k.subcategory(), k.enabled(), Boolean::logicalOr);
             }
         }
         model.addAttribute("categories", all);
         model.addAttribute("selected", selected);
         model.addAttribute("tree", tree);
+        model.addAttribute("mainGroupEnabled", mainGroupEnabled);
+        model.addAttribute("subGroupEnabled", subGroupEnabled);
         model.addAttribute("filters", ContentTypeFilter.values());
         return "categories";
     }
@@ -94,6 +102,15 @@ public class UiCategoryController {
                               @RequestParam(required = false) Long cat,
                               RedirectAttributes ra) {
         return handle(ra, cat, () -> service.deleteGroup(id, mainGroup, subcategory));
+    }
+
+    @PostMapping("/categories/{id}/groups/toggle")
+    public String toggleGroup(@PathVariable Long id, @RequestParam String mainGroup,
+                              @RequestParam(required = false) String subcategory,
+                              @RequestParam boolean enabled,
+                              @RequestParam(required = false) Long cat,
+                              RedirectAttributes ra) {
+        return handle(ra, cat, () -> service.setGroupEnabled(id, mainGroup, subcategory, enabled));
     }
 
     @PostMapping("/categories/{id}/rule")
