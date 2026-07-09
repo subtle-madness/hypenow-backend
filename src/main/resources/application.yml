@@ -15,6 +15,10 @@ crawler:
     base-url: https://api.apify.com
     poll-interval: 5s
     run-timeout: 10m
+  direct-comment:
+    proxy-url: ${APIFY_PROXY_URL:}
+    request-timeout: 15s
+    page-delay: 1s
   discover:
     results-limit: 100
   aggregate:
