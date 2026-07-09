@@ -1139,17 +1139,41 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ## Task 11: DirectCommentFetcher (조립)
 
-포스트별로 세션 GET → 핸드셰이크 추출 → GraphQL POST → 페이지네이션으로 limit까지 수집. 청크 전체를 `CrawlExecutor` Supplier 오버로드로 crawl_run 1건에 기록. `source()==DIRECT`.
+포스트별로 세션 GET → `lsd` 추출 → GraphQL POST → 페이지네이션으로 limit까지 수집. 청크 전체를 `CrawlExecutor` Supplier 오버로드로 crawl_run 1건에 기록. `source()==DIRECT`.
+
+**실측 반영:** `doc_id`·`fb_api_req_friendly_name`은 서버 HTML에 없으므로 **설정값**(`DirectCommentProperties`)으로 주입한다. `lsd`만 페이지에서 동적 추출. 요청 `variables`의 정확한 키/형식은 이 태스크의 fake 테스트로는 검증 불가하며 **Task 12 스모크에서 실측 cURL로 확정**한다(이 태스크는 오케스트레이션 로직을 실측 응답 픽스처로 검증).
 
 **Files:**
+- Modify: `src/main/java/com/celfit/crawler/crawling/adapter/out/instagram/DirectCommentProperties.java` (설정 필드 2개 추가)
+- Modify: `src/main/resources/application.yml`, `src/test/resources/application.yml` (설정 키 2개 추가)
 - Create: `src/main/java/com/celfit/crawler/crawling/application/service/DirectCommentFetcher.java`
 - Test: `src/test/java/com/celfit/crawler/crawling/application/service/DirectCommentFetcherTest.java`
 
 **Interfaces:**
-- Consumes: `InstagramWebClient`, `HandshakeExtractor`, `CommentMapper`, `CrawlExecutor`(Supplier 오버로드), `DirectCommentProperties.pageDelay()`.
-- Produces: `DirectCommentFetcher implements CommentFetcher`, `source()==DIRECT`. GraphQL 요청 본문/헤더 조립은 `RECON.md` 앵커 기준.
+- Consumes: `InstagramWebClient`, `HandshakeExtractor.lsdFrom/mediaIdFromShortCode`, `CommentMapper.parse`, `CrawlExecutor`(Supplier 오버로드), `DirectCommentProperties.{pageDelay,commentDocId,commentFriendlyName}`.
+- Produces: `DirectCommentFetcher implements CommentFetcher`, `source()==DIRECT`.
 
-- [ ] **Step 1: 실패하는 테스트 작성** (Fake `InstagramWebClient`로 페이지네이션·limit·에러 검증)
+- [ ] **Step 1: DirectCommentProperties 확장** — 필드 2개 추가:
+
+```java
+package com.celfit.crawler.crawling.adapter.out.instagram;
+
+import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties("crawler.direct-comment")
+public record DirectCommentProperties(String proxyUrl, Duration requestTimeout, Duration pageDelay,
+                                      String commentDocId, String commentFriendlyName) {}
+```
+
+`src/main/resources/application.yml`의 `direct-comment` 블록에 추가:
+```yaml
+    comment-doc-id: ${IG_COMMENT_DOC_ID:}
+    comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+```
+`src/test/resources/application.yml`의 `direct-comment` 블록에도 동일 2줄 추가(빈 기본값이면 바인딩 OK).
+
+- [ ] **Step 2: 실패하는 테스트 작성** (Fake `InstagramWebClient` + 실측 픽스처로 오케스트레이션 검증)
 
 ```java
 package com.celfit.crawler.crawling.application.service;
@@ -1157,12 +1181,12 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.CommentSource;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -1175,33 +1199,78 @@ class DirectCommentFetcherTest extends IntegrationTest {
     @Autowired CrawlExecutor executor;
     @Autowired CommentMapper mapper;   // tools.jackson ObjectMapper가 주입된 빈
 
-    // Fake 웹클라이언트: 페이지 HTML과 graphql 응답을 스크립트로 반환
+    static String res(String p) throws Exception {
+        return new String(DirectCommentFetcherTest.class.getResourceAsStream(p).readAllBytes());
+    }
+
+    // Fake 웹클라이언트: 페이지 HTML과 graphql 응답들을 순서대로 반환
     static class FakeWeb implements InstagramWebClient {
-        String html; List<String> graphql; int i = 0; int failStatus = 200;
-        public Response get(String url) { return new Response(200, html, Map.of()); }
-        public Response post(String url, String body, Map<String,String> h) {
-            if (failStatus >= 300) return new Response(failStatus, "blocked", Map.of());
-            return new Response(200, graphql.get(Math.min(i++, graphql.size()-1)), Map.of());
+        String html; List<String> graphql; int i = 0; int getStatus = 200; int postStatus = 200;
+        public Response get(String url) { return new Response(getStatus, html, Map.of()); }
+        public Response post(String url, String body, Map<String, String> h) {
+            if (postStatus >= 300) return new Response(postStatus, "blocked", Map.of());
+            return new Response(200, graphql.get(Math.min(i++, graphql.size() - 1)), Map.of());
         }
+    }
+
+    DirectCommentFetcher fetcher(FakeWeb web) {
+        return new DirectCommentFetcher(web, executor, mapper, Duration.ZERO, "DOC", "FRIENDLY");
     }
 
     @Test
     void source는_DIRECT다() {
-        var f = new DirectCommentFetcher(new FakeWeb(), executor, mapper,
-                java.time.Duration.ZERO);
-        assertThat(f.source()).isEqualTo(CommentSource.DIRECT);
+        assertThat(fetcher(new FakeWeb()).source()).isEqualTo(CommentSource.DIRECT);
+    }
+
+    @Test
+    void 단일페이지_응답의_댓글을_전부_수집한다() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        web.graphql = List.of(res("/instagram/comments-response.json"));  // hasNext=false
+        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+        assertThat(ex.items()).hasSize(15);
+        assertThat(ex.items().get(0)).containsEntry("ownerUsername", "songsariiiii");
+    }
+
+    @Test
+    void limit을_초과하면_잘라낸다() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        web.graphql = List.of(res("/instagram/comments-response.json"));
+        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 5, TriggerType.MANUAL);
+        assertThat(ex.items()).hasSize(5);
+    }
+
+    @Test
+    void 다음페이지가_있으면_커서로_이어_수집한다() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        String base = res("/instagram/comments-response.json");
+        // 1페이지: has_next_page=true+커서, 2페이지: 원본(false) → 15+15=30
+        String page1 = base.replace("\"end_cursor\":null,\"has_next_page\":false",
+                "\"end_cursor\":\"CUR\",\"has_next_page\":true");
+        web.graphql = List.of(page1, base);
+        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+        assertThat(ex.items()).hasSize(30);
+    }
+
+    @Test
+    void graphql이_차단되면_ApifyException() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        web.postStatus = 429;
+        assertThatThrownBy(() -> fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL))
+                .isInstanceOf(ApifyException.class);
     }
 }
 ```
 
-> 위 테스트의 `html`/`graphql` 문자열은 Task 7 픽스처(`post-page.html`, `comments-response.json`)를 리소스에서 읽어 채운다. 페이지네이션 검증은 `has_next_page=true`인 응답 → `false`인 응답 2개를 순서대로 스크립트하고, 수집 댓글 수가 `limit` 이하이며 두 페이지가 합쳐지는지 단언한다. 차단 검증은 `failStatus=429`로 두고 `fetch(...)`가 `ApifyException`을 던지는지 단언한다. (구체 단언은 픽스처 내용 확정 후 작성.)
-
-- [ ] **Step 2: 실패 확인**
+- [ ] **Step 3: 실패 확인**
 
 Run: `./gradlew test --tests '*DirectCommentFetcherTest'`
 Expected: FAIL — `DirectCommentFetcher` 없음.
 
-- [ ] **Step 3: 구현** — 생성자는 테스트 주입용(웹클라, executor, mapper, pageDelay)과 스프링용(properties에서 pageDelay 추출) 둘 다 제공.
+- [ ] **Step 4: 구현** — 스프링 생성자(properties)와 테스트 생성자(값 직접) 둘 다 제공. `lsd`는 동적, `doc_id`/`friendly_name`은 설정값.
 
 ```java
 package com.celfit.crawler.crawling.application.service;
@@ -1215,6 +1284,8 @@ import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.ShortCodes;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.CommentSource;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -1225,24 +1296,30 @@ import org.springframework.stereotype.Component;
 public class DirectCommentFetcher implements CommentFetcher {
 
     static final String ACTOR_LABEL = "direct-comment-crawler";
+    private static final String GRAPHQL_URL = "https://www.instagram.com/api/graphql";
+    private static final String APP_ID = "936619743392459";
 
     private final InstagramWebClient web;
     private final CrawlExecutor executor;
     private final CommentMapper mapper;
     private final Duration pageDelay;
+    private final String docId;
+    private final String friendlyName;
 
     @org.springframework.beans.factory.annotation.Autowired
     public DirectCommentFetcher(InstagramWebClient web, CrawlExecutor executor,
                                 CommentMapper mapper, DirectCommentProperties props) {
-        this(web, executor, mapper, props.pageDelay());
+        this(web, executor, mapper, props.pageDelay(), props.commentDocId(), props.commentFriendlyName());
     }
 
-    DirectCommentFetcher(InstagramWebClient web, CrawlExecutor executor,
-                         CommentMapper mapper, Duration pageDelay) {
+    DirectCommentFetcher(InstagramWebClient web, CrawlExecutor executor, CommentMapper mapper,
+                         Duration pageDelay, String docId, String friendlyName) {
         this.web = web;
         this.executor = executor;
         this.mapper = mapper;
         this.pageDelay = pageDelay;
+        this.docId = docId;
+        this.friendlyName = friendlyName;
     }
 
     @Override
@@ -1263,15 +1340,14 @@ public class DirectCommentFetcher implements CommentFetcher {
         String postUrl = ShortCodes.postUrl(shortCode);
         var pageResp = web.get(postUrl);
         if (pageResp.status() >= 300) throw new ApifyException("포스트 페이지 " + pageResp.status());
-        var hs = HandshakeExtractor.from(pageResp.body());
+        String lsd = HandshakeExtractor.lsdFrom(pageResp.body());
         long mediaId = HandshakeExtractor.mediaIdFromShortCode(shortCode);
 
         List<Map<String, Object>> out = new ArrayList<>();
         String cursor = null;
         while (out.size() < limit) {
-            String body = graphqlBody(hs, mediaId, cursor);  // RECON.md 앵커로 조립
-            var resp = web.post("https://www.instagram.com/api/graphql", body,
-                    Map.of("x-ig-app-id", "936619743392459", "x-fb-lsd", hs.lsd()));
+            var resp = web.post(GRAPHQL_URL, graphqlBody(lsd, mediaId, cursor),
+                    Map.of("x-ig-app-id", APP_ID, "x-fb-lsd", lsd));
             if (resp.status() >= 300) throw new ApifyException("graphql " + resp.status());
             var page = mapper.parse(resp.body(), postUrl);
             out.addAll(page.comments());
@@ -1279,17 +1355,22 @@ public class DirectCommentFetcher implements CommentFetcher {
             cursor = page.endCursor();
             sleep();
         }
-        return out.size() > limit ? out.subList(0, limit) : out;
+        return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
     }
 
-    private String graphqlBody(HandshakeExtractor.Handshake hs, long mediaId, String cursor) {
-        // RECON.md의 friendly_name/doc_id/variables 스펙으로 form-encoded 조립
+    /** variables 정확한 키/형식은 Task 12 스모크에서 실측 cURL로 확정. */
+    private String graphqlBody(String lsd, long mediaId, String cursor) {
         StringBuilder vars = new StringBuilder("{\"media_id\":\"").append(mediaId).append("\"");
         if (cursor != null) vars.append(",\"after\":\"").append(cursor).append("\"");
         vars.append("}");
-        return "lsd=" + hs.lsd()
-                + "&doc_id=" + hs.docId()
-                + "&variables=" + java.net.URLEncoder.encode(vars.toString(), java.nio.charset.StandardCharsets.UTF_8);
+        return "lsd=" + enc(lsd)
+                + "&fb_api_req_friendly_name=" + enc(friendlyName)
+                + "&doc_id=" + enc(docId)
+                + "&variables=" + enc(vars.toString());
+    }
+
+    private static String enc(String s) {
+        return URLEncoder.encode(s == null ? "" : s, StandardCharsets.UTF_8);
     }
 
     private void sleep() {
@@ -1308,24 +1389,24 @@ public class DirectCommentFetcher implements CommentFetcher {
 }
 ```
 
-> `graphqlBody`의 변수 키·doc_id 전달 방식은 `RECON.md` 실측(Copy as cURL 본문)으로 정확히 맞춘다. 테스트는 fake 웹으로 형태를 검증하고, 실제 계약은 Task 12 스모크로 확인한다.
-
-- [ ] **Step 4: 테스트 통과 확인**
+- [ ] **Step 5: 테스트 통과 확인**
 
 Run: `./gradlew test --tests '*DirectCommentFetcherTest'`
-Expected: PASS.
+Expected: PASS (5개 테스트).
 
-- [ ] **Step 5: 전체 테스트**
+- [ ] **Step 6: 전체 테스트**
 
 Run: `./gradlew test`
-Expected: PASS. 이제 `CommentSourceSelector`가 ACTOR/DIRECT 두 구현체를 모두 인지.
+Expected: PASS. 이제 `CommentSourceSelector`가 ACTOR/DIRECT 두 구현체를 모두 인지(스프링 컨텍스트 부팅 OK).
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add src/main/java/com/celfit/crawler/crawling/application/service/DirectCommentFetcher.java \
-        src/test/java/com/celfit/crawler/crawling/application/service/DirectCommentFetcherTest.java
-git commit -m "feat: DirectCommentFetcher — 비로그인 GraphQL 자체 댓글 크롤
+        src/test/java/com/celfit/crawler/crawling/application/service/DirectCommentFetcherTest.java \
+        src/main/java/com/celfit/crawler/crawling/adapter/out/instagram/DirectCommentProperties.java \
+        src/main/resources/application.yml src/test/resources/application.yml
+git commit -m "feat: DirectCommentFetcher — 비로그인 GraphQL 자체 댓글 크롤(doc_id는 설정값)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
