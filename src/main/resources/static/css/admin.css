@@ -155,6 +155,18 @@ a { color: var(--accent); }
     font-variant-numeric: tabular-nums; line-height: 1.15;
 }
 .tile .label { color: var(--ink-secondary); font-size: 0.78rem; margin-top: 0.3rem; }
+/* 상태 카드 부연 설명 */
+.tile .tile-desc {
+    color: var(--muted); font-size: 0.72rem; line-height: 1.35;
+    margin-top: 0.5rem; word-break: keep-all;
+}
+.tile.highlight { border-color: var(--accent, #b84a6a); }
+/* 상태 섹션 제목 */
+.tiles-head { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ink-secondary); margin: 1.4rem 0 0.6rem; }
+.tiles-head:first-of-type { margin-top: 0.4rem; }
+.tiles-head-sub { text-transform: none; letter-spacing: 0; color: var(--muted);
+    font-weight: 400; font-size: 0.78rem; margin-left: 0.4rem; }
 /* 보조 타일 (raw 적재량) — 한 단계 작게 */
 .tiles.sub { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
 .tiles.sub .num { font-size: 1.3rem; }

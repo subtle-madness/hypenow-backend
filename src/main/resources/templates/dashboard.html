@@ -11,14 +11,27 @@
 <nav th:replace="~{fragments/nav :: nav('dashboard')}"></nav>
 <main>
 <h1>대시보드</h1>
+
+<h2 class="tiles-head">수집 파이프라인 <span class="tiles-head-sub">발견 → 채택 → 집계</span></h2>
 <div class="tiles">
-    <div class="tile" th:each="e : ${summary.contentByStatus()}">
-        <div class="num" th:text="${e.value}">0</div>
-        <div class="label"><span class="badge" th:classappend="${e.key}" th:text="${e.key}">STATUS</span></div>
+    <div class="tile" th:each="t : ${pipelineTiles}">
+        <div class="num" th:text="${t.count()}">0</div>
+        <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
+        <div class="tile-desc" th:text="${t.desc()}"></div>
     </div>
-    <div class="tile">
+    <div class="tile highlight">
         <div class="num" th:text="${summary.dueForAggregate()}">0</div>
-        <div class="label">집계 대기 (+3일 도래)</div>
+        <div class="label">집계 대기</div>
+        <div class="tile-desc">채택됐고 업로드 3일 지나 지금 집계하면 처리될 물량 (QUALIFIED의 부분집합)</div>
+    </div>
+</div>
+
+<h2 class="tiles-head">제외 · 종료 <span class="tiles-head-sub">파이프라인에서 빠진 것</span></h2>
+<div class="tiles">
+    <div class="tile" th:each="t : ${droppedTiles}">
+        <div class="num" th:text="${t.count()}">0</div>
+        <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
+        <div class="tile-desc" th:text="${t.desc()}"></div>
     </div>
 </div>
 <h2>raw 적재량</h2>
