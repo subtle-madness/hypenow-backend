@@ -53,3 +53,14 @@ SELECT
   (c.er > m.med)  AS overperforms
 FROM creator c
 JOIN tier_median m USING (tier);
+
+-- 팔로워 구간별 분포 (구간별 크리에이터 수·평균 ER·콘텐츠 수)
+CREATE OR REPLACE VIEW analytics.v_tier_distribution AS
+SELECT
+  t.tier,
+  count(*)                              AS creator_count,
+  round(avg(c.avg_engagement_rate), 4)  AS avg_engagement_rate,
+  sum(c.content_count)                  AS content_count
+FROM analytics.v_creator_performance c
+JOIN analytics.v_follower_tier t ON t.username = c.owner_username
+GROUP BY t.tier;

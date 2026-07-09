@@ -11,3 +11,11 @@ BEGIN
   ASSERT (SELECT overperforms FROM analytics.v_creator_overperformance WHERE owner_username='dummy_over') = true, 'dummy_over should overperform';
   ASSERT (SELECT overperforms FROM analytics.v_creator_overperformance WHERE owner_username='dummy_micro') = false, 'dummy_micro should not overperform';
 END $$;
+
+DO $$
+BEGIN
+  -- micro 구간: 크리에이터 2명, 콘텐츠 3건, 평균 ER 0.1565
+  ASSERT (SELECT creator_count FROM analytics.v_tier_distribution WHERE tier='micro') = 2, 'micro creator_count != 2';
+  ASSERT (SELECT content_count FROM analytics.v_tier_distribution WHERE tier='micro') = 3, 'micro content_count != 3';
+  ASSERT (SELECT avg_engagement_rate FROM analytics.v_tier_distribution WHERE tier='micro') = 0.1565, 'micro avg ER != 0.1565';
+END $$;
