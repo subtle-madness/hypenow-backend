@@ -10,6 +10,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface CategoryKeywordRepository extends JpaRepository<CategoryKeyword, Long> {
     List<CategoryKeyword> findByCategoryIdAndEnabledTrue(Long categoryId);
     List<CategoryKeyword> findByCategoryId(Long categoryId);
+    List<CategoryKeyword> findByCategoryIdAndMainGroup(Long categoryId, String mainGroup);
+    List<CategoryKeyword> findByCategoryIdAndMainGroupAndSubcategory(
+            Long categoryId, String mainGroup, String subcategory);
     boolean existsByCategoryIdAndKeyword(Long categoryId, String keyword);
     void deleteByCategoryId(Long categoryId);
     void deleteByCategoryIdAndMainGroup(Long categoryId, String mainGroup);

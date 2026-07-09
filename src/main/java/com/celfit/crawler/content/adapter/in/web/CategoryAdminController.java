@@ -75,6 +75,15 @@ public class CategoryAdminController {
         service.deleteGroup(id, mainGroup, subcategory);
     }
 
+    /** subcategory 생략 시 대분류 전체, 있으면 그 중분류의 키워드 enabled 일괄 설정. */
+    @PatchMapping("/categories/{id}/groups")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void setGroupEnabled(@PathVariable Long id, @RequestParam String mainGroup,
+                                @RequestParam(required = false) String subcategory,
+                                @RequestBody EnabledReq req) {
+        service.setGroupEnabled(id, mainGroup, subcategory, req.enabled());
+    }
+
     @PutMapping("/categories/{id}/rule")
     public RuleView upsertRule(@PathVariable Long id, @RequestBody RuleView req) {
         return service.upsertRule(id, req);
