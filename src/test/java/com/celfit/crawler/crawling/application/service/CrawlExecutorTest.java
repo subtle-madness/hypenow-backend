@@ -83,4 +83,29 @@ class CrawlExecutorTest extends IntegrationTest {
         assertThat(run.getErrorMessage()).contains("보이지 않는 손");
         assertThat(rawRunItems.countByCrawlRunId(run.getId())).isZero();
     }
+
+    @Test
+    void supplier_오버로드도_성공하면_SUCCEEDED로_기록되고_아카이브된다() {
+        var execution = executor.execute(JobName.AGGREGATE, TriggerType.MANUAL, null, null,
+                "direct-comment-crawler",
+                () -> new com.celfit.crawler.crawling.application.port.out.ApifyResult(
+                        null, List.of(Map.of("text", "좋아요"))));
+
+        assertThat(execution.items()).hasSize(1);
+        var run = runs.findById(execution.runId()).orElseThrow();
+        assertThat(run.getStatus()).isEqualTo(RunStatus.SUCCEEDED);
+        assertThat(run.getApifyRunId()).isNull();
+        assertThat(rawRunItems.countByCrawlRunId(execution.runId())).isEqualTo(1);
+    }
+
+    @Test
+    void supplier가_예외를_던지면_FAILED로_기록된다() {
+        assertThatThrownBy(() -> executor.execute(JobName.AGGREGATE, TriggerType.MANUAL, null, null,
+                "direct-comment-crawler",
+                () -> { throw new ApifyException("차단됨"); }))
+                .isInstanceOf(ApifyException.class);
+        var run = runs.findTop50ByOrderByIdDesc().get(0);
+        assertThat(run.getStatus()).isEqualTo(RunStatus.FAILED);
+        assertThat(run.getErrorMessage()).contains("차단됨");
+    }
 }

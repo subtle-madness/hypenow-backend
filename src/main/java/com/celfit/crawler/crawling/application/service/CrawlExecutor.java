@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -41,9 +42,14 @@ public class CrawlExecutor {
 
     public Execution execute(JobName job, TriggerType trigger, Long categoryId,
                              String keyword, String actorId, Map<String, Object> input) {
+        return execute(job, trigger, categoryId, keyword, actorId, () -> runner.run(actorId, input));
+    }
+
+    public Execution execute(JobName job, TriggerType trigger, Long categoryId,
+                             String keyword, String actorId, Supplier<ApifyResult> work) {
         CrawlRun run = runs.save(new CrawlRun(job, trigger, categoryId, keyword, actorId, clock.instant()));
         try {
-            ApifyResult result = runner.run(actorId, input);
+            ApifyResult result = work.get();
             run.finishOk(result.runId(), result.items().size(), clock.instant());
             runs.save(run);
             archive(run.getId(), result.items());
