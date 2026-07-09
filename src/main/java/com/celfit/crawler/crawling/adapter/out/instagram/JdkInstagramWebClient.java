@@ -77,10 +77,17 @@ public class JdkInstagramWebClient implements InstagramWebClient {
 
     @Override
     public Response post(String url, String formBody, Map<String, String> headers) {
+        // Sec-Fetch-Site: same-origin 이 필수 — 없으면 Instagram 안티봇이 요청을 브라우저
+        // 네비게이션으로 판정해 GraphQL JSON 대신 HTML 셸(200)을 돌려준다(실측 확인).
+        // 나머지 sec-fetch/Accept 는 실제 브라우저 XHR 모방(견고성).
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
                 .timeout(props.requestTimeout())
                 .header("User-Agent", UA)
                 .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "*/*")
+                .header("Sec-Fetch-Site", "same-origin")
+                .header("Sec-Fetch-Mode", "cors")
+                .header("Sec-Fetch-Dest", "empty")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody));
         headers.forEach(b::header);
         return send(b.build());
