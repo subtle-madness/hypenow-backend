@@ -1,4 +1,8 @@
 spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 0
   main:
     allow-bean-definition-overriding: true
   jpa:
