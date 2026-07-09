@@ -7,3 +7,4 @@ build/
 .worktrees/
 bin/
 .DS_Store
+backup/
