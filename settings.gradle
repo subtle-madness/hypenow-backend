@@ -1,1 +1,3 @@
-rootProject.name = 'celfit-crawler'
+rootProject.name = 'celfit'
+
+include 'crawler'

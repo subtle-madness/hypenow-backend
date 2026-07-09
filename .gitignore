@@ -8,3 +8,6 @@ build/
 bin/
 .DS_Store
 backup/
+
+# 모노레포
+mac-migration-kit/
