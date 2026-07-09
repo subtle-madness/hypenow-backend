@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+	<meta charset="UTF-8">
+	<title>hypenow 분석 대시보드</title>
+	<style>
+		:root {
+			--accent: #4f46e5;
+			--accent-light: #eef0fd;
+			--bg: #f6f7fb;
+			--card-bg: #ffffff;
+			--border: #e4e6ef;
+			--text: #1f2430;
+			--muted: #767c8c;
+			--rank1-bg: #fff6dc;
+			--rank1-border: #f0c869;
+		}
+		* { box-sizing: border-box; }
+		body {
+			margin: 0;
+			padding: 32px 16px 64px;
+			background: var(--bg);
+			color: var(--text);
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+				Arial, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+			line-height: 1.5;
+		}
+		.container {
+			max-width: 960px;
+			margin: 0 auto;
+		}
+		h1 {
+			font-size: 26px;
+			font-weight: 700;
+			margin: 0 0 16px;
+			letter-spacing: -0.02em;
+		}
+		.freshness-band {
+			background: linear-gradient(135deg, var(--accent), #7c6cf0);
+			color: #fff;
+			border-radius: 12px;
+			padding: 14px 20px;
+			font-size: 14px;
+			font-weight: 500;
+			margin-bottom: 28px;
+			box-shadow: 0 4px 14px rgba(79, 70, 229, 0.25);
+		}
+		.card {
+			background: var(--card-bg);
+			border: 1px solid var(--border);
+			border-radius: 12px;
+			box-shadow: 0 1px 3px rgba(20, 20, 43, 0.04);
+			margin-bottom: 24px;
+			overflow: hidden;
+		}
+		.card h2 {
+			font-size: 16px;
+			font-weight: 700;
+			margin: 0;
+			padding: 16px 20px;
+			border-bottom: 1px solid var(--border);
+			background: #fbfbfd;
+		}
+		.table-wrap {
+			overflow-x: auto;
+		}
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 13.5px;
+			white-space: nowrap;
+		}
+		thead th {
+			text-align: left;
+			padding: 10px 20px;
+			font-weight: 600;
+			color: var(--muted);
+			font-size: 12px;
+			text-transform: uppercase;
+			letter-spacing: 0.03em;
+			border-bottom: 1px solid var(--border);
+			background: #fbfbfd;
+		}
+		tbody td {
+			padding: 10px 20px;
+			border-bottom: 1px solid var(--border);
+		}
+		tbody tr:last-child td {
+			border-bottom: none;
+		}
+		tbody tr:nth-child(even) {
+			background: #fafafe;
+		}
+		tbody tr:hover {
+			background: var(--accent-light);
+		}
+		td.num, th.num {
+			text-align: right;
+			font-variant-numeric: tabular-nums;
+		}
+		tr.rank1 td {
+			background: var(--rank1-bg);
+			border-bottom: 1px solid var(--rank1-border);
+			font-weight: 600;
+		}
+		tr.rank1:hover td {
+			background: #fdedbc;
+		}
+		.empty-row td {
+			color: var(--muted);
+			text-align: center;
+			padding: 18px;
+			font-style: italic;
+		}
+		.badge {
+			display: inline-block;
+			padding: 2px 8px;
+			border-radius: 999px;
+			background: var(--accent-light);
+			color: var(--accent);
+			font-size: 12px;
+			font-weight: 600;
+		}
+		footer {
+			text-align: center;
+			color: var(--muted);
+			font-size: 12px;
+			margin-top: 32px;
+		}
+	</style>
+</head>
+<body>
+<div class="container">
+	<h1>hypenow 분석 대시보드</h1>
+
+	<div class="freshness-band">
+		<span th:if="${freshness != null and freshness.get('at') != null}"
+			  th:text="'마지막 갱신: ' + ${#dates.format(freshness.get('at'), 'yyyy-MM-dd HH:mm:ss')} + ' · 테이블 ' + ${freshness.get('tables')} + '개 · 총 ' + ${freshness.get('rows')} + '행'">
+		</span>
+		<span th:unless="${freshness != null and freshness.get('at') != null}">
+			아직 적재 안 됨 — analytics 잡을 실행하세요
+		</span>
+	</div>
+
+	<!-- 1. 콘텐츠 참여율 랭킹 -->
+	<div class="card">
+		<h2>콘텐츠 참여율 랭킹</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th class="num">순위</th>
+					<th>shortCode</th>
+					<th>계정</th>
+					<th>분류</th>
+					<th class="num">참여율</th>
+					<th class="num">좋아요</th>
+					<th class="num">조회수</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(ranking)}" class="empty-row">
+					<td colspan="7">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${ranking}"
+					th:classappend="${row['rank_overall'] != null and row['rank_overall'] == 1} ? 'rank1' : ''">
+					<td class="num" th:text="${row['rank_overall']}">-</td>
+					<td th:text="${row['short_code']}">-</td>
+					<td th:text="${row['owner_username']}">-</td>
+					<td th:text="${row['main_group']}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['engagement_rate'], 1, 4)}">-</td>
+					<td class="num" th:text="${row['likes']}">-</td>
+					<td class="num" th:text="${row['views']}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<!-- 2. 협업 후보 (구간 대비 오버퍼폼) -->
+	<div class="card">
+		<h2>협업 후보 (구간 대비 오버퍼폼)</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th>계정</th>
+					<th>구간</th>
+					<th class="num">참여율</th>
+					<th class="num">구간중앙값</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(overperformers)}" class="empty-row">
+					<td colspan="4">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${overperformers}">
+					<td th:text="${row['owner_username']}">-</td>
+					<td><span class="badge" th:text="${row['tier']}">-</span></td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_engagement_rate'], 1, 4)}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['tier_median_er'], 1, 4)}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<!-- 3. 크리에이터별 성과 -->
+	<div class="card">
+		<h2>크리에이터별 성과</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th>계정</th>
+					<th class="num">콘텐츠수</th>
+					<th class="num">평균참여율</th>
+					<th class="num">팔로워</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(creators)}" class="empty-row">
+					<td colspan="4">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${creators}">
+					<td th:text="${row['owner_username']}">-</td>
+					<td class="num" th:text="${row['content_count']}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_engagement_rate'], 1, 4)}">-</td>
+					<td class="num" th:text="${row['followers']}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<!-- 4. 분류별 성과 -->
+	<div class="card">
+		<h2>분류별 성과</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th>분류</th>
+					<th class="num">콘텐츠수</th>
+					<th class="num">평균참여율</th>
+					<th class="num">중앙값</th>
+					<th class="num">평균좋아요</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(categories)}" class="empty-row">
+					<td colspan="5">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${categories}">
+					<td th:text="${row['main_group']}">-</td>
+					<td class="num" th:text="${row['content_count']}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_engagement_rate'], 1, 4)}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['median_engagement_rate'], 1, 4)}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_likes'], 1, 1)}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<!-- 5. 팔로워 구간 분포 -->
+	<div class="card">
+		<h2>팔로워 구간 분포</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th>구간</th>
+					<th class="num">크리에이터수</th>
+					<th class="num">콘텐츠수</th>
+					<th class="num">평균참여율</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(tiers)}" class="empty-row">
+					<td colspan="4">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${tiers}">
+					<td><span class="badge" th:text="${row['tier']}">-</span></td>
+					<td class="num" th:text="${row['creator_count']}">-</td>
+					<td class="num" th:text="${row['content_count']}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_engagement_rate'], 1, 4)}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<!-- 6. 릴스 vs 피드 -->
+	<div class="card">
+		<h2>릴스 vs 피드</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th>형식</th>
+					<th class="num">콘텐츠수</th>
+					<th class="num">평균참여율</th>
+					<th class="num">평균좋아요</th>
+					<th class="num">평균조회수</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(contentTypes)}" class="empty-row">
+					<td colspan="5">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${contentTypes}">
+					<td th:text="${row['content_format']}">-</td>
+					<td class="num" th:text="${row['content_count']}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_engagement_rate'], 1, 4)}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_likes'], 1, 1)}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_views'], 1, 1)}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<!-- 7. 해시태그 성과 -->
+	<div class="card">
+		<h2>해시태그 성과</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+				<tr>
+					<th>해시태그</th>
+					<th class="num">콘텐츠수</th>
+					<th class="num">평균참여율</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:if="${#lists.isEmpty(hashtags)}" class="empty-row">
+					<td colspan="3">데이터 없음</td>
+				</tr>
+				<tr th:each="row : ${hashtags}">
+					<td th:text="'#' + ${row['tag']}">-</td>
+					<td class="num" th:text="${row['content_count']}">-</td>
+					<td class="num" th:text="${#numbers.formatDecimal(row['avg_engagement_rate'], 1, 4)}">-</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<footer>hypenow analysis dashboard · was module</footer>
+</div>
+</body>
+</html>
