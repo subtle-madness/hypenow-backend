@@ -776,15 +776,16 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ## Task 8: HandshakeExtractor (순수 파서)
 
-`post-page.html`에서 `lsd`·`doc_id`·`media_id`를 뽑는다.
+`post-page.html`에서 `lsd` 토큰을 뽑고, shortCode로 `media_id`를 로컬 계산한다.
+**주의(RECON.md 실측):** 댓글 쿼리 `doc_id`는 서버 HTML에 없다(별도 JS 번들). 따라서 이 추출기는 **doc_id를 다루지 않는다** — doc_id/friendly_name은 Task 11에서 설정값(`DirectCommentProperties`)으로 주입한다.
 
 **Files:**
 - Create: `src/main/java/com/celfit/crawler/crawling/application/service/HandshakeExtractor.java`
 - Test: `src/test/java/com/celfit/crawler/crawling/application/service/HandshakeExtractorTest.java`
 
 **Interfaces:**
-- Produces: `record Handshake(String lsd, String docId, String mediaId)`; `static Handshake from(String html)`; 추출 실패 시 `ApifyException`.
-- 별도: `static long mediaIdFromShortCode(String sc)` — base64 로컬 계산(정찰 없이 결정적).
+- Produces: `static String lsdFrom(String html)` — HTML에서 lsd 토큰 추출, 실패 시 `ApifyException`.
+- 별도: `static long mediaIdFromShortCode(String sc)` — base64 로컬 계산(결정적).
 
 - [ ] **Step 1: media_id 로컬 계산 테스트부터** (결정적, 픽스처 불필요) — 스파이크 검증값 사용:
 
@@ -816,8 +817,6 @@ import java.util.regex.Pattern;
 
 public final class HandshakeExtractor {
 
-    public record Handshake(String lsd, String docId, String mediaId) {}
-
     private static final String ALPHABET =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -837,40 +836,31 @@ public final class HandshakeExtractor {
 
 Run: `./gradlew test --tests '*HandshakeExtractorTest'` → PASS.
 
-- [ ] **Step 3: HTML 파싱 테스트 추가** — `RECON.md`의 실측 값으로 단언(아래 `EXPECTED_*`는 RECON.md에서 복사):
+- [ ] **Step 3: lsd 추출 테스트 추가** — 실측 픽스처(`post-page.html`)에는 `"LSD",[],{"token":"..."}` 형태로 lsd가 존재함(RECON.md 확인):
 
 ```java
     @Test
-    void 페이지_HTML에서_lsd와_docId를_추출한다() throws Exception {
+    void 페이지_HTML에서_lsd_토큰을_추출한다() throws Exception {
         String html = new String(getClass().getResourceAsStream("/instagram/post-page.html").readAllBytes());
-        var hs = HandshakeExtractor.from(html);
-        assertThat(hs.lsd()).isNotBlank();      // RECON.md에 실제 토큰 형식 확인
-        assertThat(hs.docId()).matches("\\d+"); // 숫자 doc_id
+        String lsd = HandshakeExtractor.lsdFrom(html);
+        assertThat(lsd).isNotBlank();
+        assertThat(lsd).doesNotContain("\"");   // 토큰만, 따옴표 없음
     }
 ```
 
-- [ ] **Step 4: 실패 확인 → `from(html)` 구현** — 정규식은 `RECON.md` 앵커에 맞춘다. 관찰된 일반형 예시(실측으로 조정):
+- [ ] **Step 4: 실패 확인 → `lsdFrom(html)` 구현** — 정규식은 `post-page.html` 픽스처로 통과해야 한다(테스트가 정본):
 
 ```java
     private static final Pattern LSD = Pattern.compile("\"LSD\",\\[\\],\\{\"token\":\"([^\"]+)\"");
-    private static final Pattern DOC_ID = Pattern.compile("\"doc_id\":\"(\\d+)\"|doc_id=(\\d+)");
 
-    public static Handshake from(String html) {
-        String lsd = first(LSD, html);
-        if (lsd == null) throw new ApifyException("lsd 토큰 추출 실패");
-        Matcher d = DOC_ID.matcher(html);
-        String docId = d.find() ? (d.group(1) != null ? d.group(1) : d.group(2)) : null;
-        if (docId == null) throw new ApifyException("doc_id 추출 실패");
-        return new Handshake(lsd, docId, null);
-    }
-
-    private static String first(Pattern p, String s) {
-        Matcher m = p.matcher(s);
-        return m.find() ? m.group(1) : null;
+    public static String lsdFrom(String html) {
+        Matcher m = LSD.matcher(html);
+        if (!m.find()) throw new ApifyException("lsd 토큰 추출 실패");
+        return m.group(1);
     }
 ```
 
-> `LSD`/`DOC_ID` 정규식은 반드시 `post-page.html` 픽스처로 통과하도록 조정한다. 테스트가 정본.
+(import에 `java.util.regex.Matcher`, `java.util.regex.Pattern` 추가.)
 
 - [ ] **Step 5: 테스트 통과 확인**
 
@@ -882,7 +872,7 @@ Expected: PASS.
 ```bash
 git add src/main/java/com/celfit/crawler/crawling/application/service/HandshakeExtractor.java \
         src/test/java/com/celfit/crawler/crawling/application/service/HandshakeExtractorTest.java
-git commit -m "feat: HandshakeExtractor — HTML에서 lsd/doc_id, shortCode→media_id
+git commit -m "feat: HandshakeExtractor — HTML에서 lsd, shortCode→media_id
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -923,10 +913,17 @@ class CommentMapperTest extends IntegrationTest {
     @Test
     void 응답을_스키마호환_댓글맵으로_변환한다() throws Exception {
         var page = mapper.parse(fixture(), "https://www.instagram.com/p/AA/");
-        assertThat(page.comments()).isNotEmpty();
+        // 픽스처엔 댓글 15개, 단일 페이지(has_next_page=false, end_cursor=null)
+        assertThat(page.comments()).hasSize(15);
+        assertThat(page.hasNext()).isFalse();
+        assertThat(page.endCursor()).isNull();
         var first = page.comments().get(0);
         assertThat(first).containsKeys("postUrl", "ownerUsername", "text", "timestamp");
         assertThat(first.get("postUrl")).isEqualTo("https://www.instagram.com/p/AA/");
+        assertThat(first.get("ownerUsername")).isEqualTo("songsariiiii");
+        assertThat(first.get("text")).isEqualTo("이정도는 기본아잉교 ❤️");
+        // created_at 1779661498(epoch초) → ISO-8601 UTC 문자열
+        assertThat(first.get("timestamp")).isEqualTo("2026-05-24T22:24:58.000Z");
     }
 }
 ```
@@ -962,6 +959,9 @@ public class CommentMapper {
         this.om = om;   // Boot이 구성한 tools.jackson ObjectMapper 빈 주입
     }
 
+    private static final DateTimeFormatter ISO =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+
     public Page parse(String json, String postUrl) {
         JsonNode root;
         try {
@@ -969,9 +969,8 @@ public class CommentMapper {
         } catch (JacksonException e) {
             throw new ApifyException("댓글 응답 파싱 실패: " + e.getMessage(), e);
         }
-        // ↓ 경로는 RECON.md 실측으로 확정
-        JsonNode conn = root.path("data")
-                .path("xdt_api__v1__media__media_id__comments__connection");
+        // RECON.md 실측 경로: data.xig_polaris_media.comments_connection
+        JsonNode conn = root.path("data").path("xig_polaris_media").path("comments_connection");
         JsonNode edges = conn.path("edges");
         List<Map<String, Object>> out = new ArrayList<>();
         for (JsonNode edge : edges) {
@@ -980,16 +979,20 @@ public class CommentMapper {
             c.put("postUrl", postUrl);
             c.put("ownerUsername", node.path("user").path("username").asString());
             c.put("text", node.path("text").asString());
-            c.put("timestamp", node.path("created_at").asString());
+            // created_at = epoch seconds → ISO-8601 UTC (액터 경로의 ISO 문자열과 형식 일치)
+            c.put("timestamp", ISO.format(Instant.ofEpochSecond(node.path("created_at").asLong())));
             out.add(c);
         }
         JsonNode pi = conn.path("page_info");
-        return new Page(out, pi.path("end_cursor").asString(null), pi.path("has_next_page").asBoolean(false));
+        String endCursor = pi.path("end_cursor").isNull() ? null : pi.path("end_cursor").asString(null);
+        return new Page(out, endCursor, pi.path("has_next_page").asBoolean(false));
     }
 }
 ```
 
-> 필드 경로가 픽스처와 다르면 **테스트 실패로 드러난다** — RECON.md 값으로 수정.
+import에 `java.time.Instant`, `java.time.ZoneOffset`, `java.time.format.DateTimeFormatter` 추가.
+
+> 필드 경로가 픽스처와 다르면 **테스트 실패로 드러난다** — 테스트가 정본.
 
 - [ ] **Step 4: 테스트 통과 확인**
 
