@@ -9,6 +9,11 @@ services:
       - '${POSTGRES_PORT}:5432'
     volumes:
       - celfit-crawler-pg:/var/lib/postgresql/data
+      # analysis DB 자동 생성용 init 스크립트. Postgres는 데이터 디렉터리가 "처음"
+      # 초기화될 때만 docker-entrypoint-initdb.d를 실행하므로, 이미 존재하는
+      # celfit-crawler-pg 볼륨에는 적용되지 않음. 실 서버의 analysis DB는
+      # task 1에서 수동으로 생성했음 — 이 마운트는 새로 셋업하는 환경을 위한 것.
+      - ./db/init:/docker-entrypoint-initdb.d
 
 volumes:
   celfit-crawler-pg:

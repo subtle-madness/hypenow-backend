@@ -1,3 +1,5 @@
 rootProject.name = 'celfit'
 
 include 'crawler'
+include 'analytics'
+include 'was'
