@@ -5,3 +5,12 @@ BEGIN
   ASSERT (SELECT count(*) FROM raw_post_detail) = 5, 'detail rows should be dummy-only 5';
   ASSERT (SELECT count(*) FROM raw_comment WHERE content_id = 9101) = 3, 'c1 comments != 3';
 END $$;
+
+-- base 뷰 검증
+DO $$
+BEGIN
+  ASSERT (SELECT count(*) FROM analytics.v_content_metrics) = 5, 'metrics rows != 5';
+  ASSERT (SELECT followers FROM analytics.v_content_metrics WHERE short_code='dummy_c4') = 8000, 'c4 followers != 8000';
+  ASSERT (SELECT content_format FROM analytics.v_content_metrics WHERE short_code='dummy_c2') = 'feed', 'c2 not feed';
+  ASSERT (SELECT video_play_count FROM analytics.v_content_metrics WHERE short_code='dummy_c2') IS NULL, 'feed should have null views';
+END $$;
