@@ -1,8 +1,8 @@
 package com.celfit.crawler;
 
-import com.celfit.crawler.apify.ApifyException;
-import com.celfit.crawler.apify.ApifyResult;
-import com.celfit.crawler.apify.ApifyRunner;
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
+import com.celfit.crawler.crawling.application.port.out.ApifyRunnerPort;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 잡 테스트용 fake. 스크립트된 결과를 순서대로 반환하고 (actorId, input)을 기록. */
-public class FakeApifyRunner implements ApifyRunner {
+public class FakeApifyRunner implements ApifyRunnerPort {
 
     public record Call(String actorId, Map<String, Object> input) {}
 

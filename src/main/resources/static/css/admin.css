@@ -117,7 +117,11 @@ aside.side .item.active {
 }
 
 /* ── 콘텐츠 영역 ───────────────────────── */
-main { flex: 1; min-width: 0; padding: 2rem 2.4rem 4rem; max-width: 78rem; }
+main {
+    flex: 1; min-width: 0; width: 100%;
+    padding: 2rem 2.6rem 4rem;
+    max-width: 100rem; margin: 0 auto;
+}
 h1 { font-size: 1.35rem; font-weight: 750; letter-spacing: -0.01em; margin: 0 0 1.3rem; }
 h2 { font-size: 1.02rem; font-weight: 700; margin: 2rem 0 0.8rem; }
 h3 { font-size: 0.9rem; font-weight: 650; margin: 1.2rem 0 0.5rem; color: var(--ink-secondary); }
@@ -151,6 +155,9 @@ a { color: var(--accent); }
     font-variant-numeric: tabular-nums; line-height: 1.15;
 }
 .tile .label { color: var(--ink-secondary); font-size: 0.78rem; margin-top: 0.3rem; }
+/* 보조 타일 (raw 적재량) — 한 단계 작게 */
+.tiles.sub { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+.tiles.sub .num { font-size: 1.3rem; }
 
 /* ── 테이블 ───────────────────────────── */
 table.data {
