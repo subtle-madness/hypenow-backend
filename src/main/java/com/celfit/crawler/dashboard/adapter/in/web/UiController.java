@@ -69,10 +69,17 @@ public class UiController {
         return "redirect:/ui";
     }
 
+    /** 대시보드 상태 카드용 뷰. key는 badge 색상 클래스 겸 라벨. */
+    public record StatusTile(String key, long count, String desc) {}
+
     @GetMapping("/ui")
     public String dashboard(Model model) {
         model.addAttribute("summary", statusService.summary());
         return "dashboard";
+    }
+
+    private static long n(java.util.Map<ContentStatus, Long> by, ContentStatus s) {
+        return by.getOrDefault(s, 0L);
     }
 
     @GetMapping("/ui/fragments/runs")
@@ -111,10 +118,22 @@ public class UiController {
                 p == null ? 0 : p.current(), p == null ? 0 : p.total(), p == null ? 0 : p.percent());
     }
 
-    /** 상태 카드 실시간 갱신용 — 대시보드와 같은 summary를 프래그먼트로 반환. */
+    /** 상태 카드 실시간 갱신용 — 파이프라인/제외 그룹 타일을 프래그먼트로 반환. */
     @GetMapping("/ui/fragments/status-tiles")
     public String statusTilesFragment(Model model) {
-        model.addAttribute("summary", statusService.summary());
+        StatusService.StatusSummary s = statusService.summary();
+        java.util.Map<ContentStatus, Long> by = s.contentByStatus();
+        model.addAttribute("summary", s);
+        // 정상 수집 흐름: 발견 → 채택 → 집계
+        model.addAttribute("pipelineTiles", java.util.List.of(
+                new StatusTile("PENDING", n(by, ContentStatus.PENDING), "발견됨 · 프로필 판정 전"),
+                new StatusTile("QUALIFIED", n(by, ContentStatus.QUALIFIED), "규칙 통과 · 집계 대상"),
+                new StatusTile("AGGREGATED", n(by, ContentStatus.AGGREGATED), "좋아요·댓글 집계 완료")));
+        // 흐름에서 빠진 것들
+        model.addAttribute("droppedTiles", java.util.List.of(
+                new StatusTile("EXCLUDED", n(by, ContentStatus.EXCLUDED), "규칙 탈락 · 팔로워/유형 미달"),
+                new StatusTile("GONE", n(by, ContentStatus.GONE), "삭제·비공개로 사라짐"),
+                new StatusTile("FAILED", n(by, ContentStatus.FAILED), "집계 재시도 초과 · 포기")));
         return "fragments/status-tiles :: tiles";
     }
 
