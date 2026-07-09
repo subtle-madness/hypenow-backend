@@ -10,6 +10,19 @@
 <nav th:replace="~{fragments/nav :: nav('settings')}"></nav>
 <main>
 <h1>런타임 설정</h1>
+
+<section class="card">
+    <h2>댓글 수집 방식</h2>
+    <form method="post" th:action="@{/ui/comment-source}">
+        <label class="check"><input type="radio" name="source" value="ACTOR"
+            th:checked="${commentSource == 'ACTOR'}"/> 액터 (Apify)</label>
+        <label class="check"><input type="radio" name="source" value="DIRECT"
+            th:checked="${commentSource == 'DIRECT'}"/> 자체 크롤 (직접)</label>
+        <button type="submit" class="primary">저장</button>
+    </form>
+    <p class="hint">현재: <b th:text="${commentSource}">ACTOR</b> · 기본값: ACTOR</p>
+</section>
+
 <p class="hint">빈칸으로 저장하면 기본값(yml)으로 복귀합니다.</p>
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 

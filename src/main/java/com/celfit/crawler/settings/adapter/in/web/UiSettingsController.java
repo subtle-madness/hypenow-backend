@@ -1,5 +1,6 @@
 package com.celfit.crawler.settings.adapter.in.web;
 
+import com.celfit.crawler.settings.application.service.CommentSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.application.service.SettingsService.SettingView;
 import java.util.ArrayList;
@@ -19,14 +20,17 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 public class UiSettingsController {
 
     private final SettingsService service;
+    private final CommentSourceSetting commentSourceSetting;
 
-    public UiSettingsController(SettingsService service) {
+    public UiSettingsController(SettingsService service, CommentSourceSetting commentSourceSetting) {
         this.service = service;
+        this.commentSourceSetting = commentSourceSetting;
     }
 
     @GetMapping
     public String page(Model model) {
         model.addAttribute("settings", service.list());
+        model.addAttribute("commentSource", commentSourceSetting.current().name());
         return "settings";
     }
 
