@@ -6,7 +6,7 @@ SELECT
   count(*)                        AS content_count,
   round(avg(engagement_rate), 4)  AS avg_engagement_rate,
   round(avg(likes), 1)            AS avg_likes,
-  round(avg(video_play_count), 1) AS avg_views
+  round(avg(views), 1)            AS avg_views
 FROM analytics.v_content_performance
 GROUP BY ad_marked;
 

@@ -6,6 +6,7 @@ SELECT
   username,
   followers,
   CASE
+    WHEN followers IS NULL  THEN 'unknown'
     WHEN followers < 10000  THEN 'micro'
     WHEN followers < 100000 THEN 'mid'
     ELSE 'macro'
@@ -31,6 +32,7 @@ WITH creator AS (
     avg(engagement_rate) AS er,
     max(followers)       AS followers,
     CASE
+      WHEN max(followers) IS NULL   THEN 'unknown'
       WHEN max(followers) < 10000  THEN 'micro'
       WHEN max(followers) < 100000 THEN 'mid'
       ELSE 'macro'

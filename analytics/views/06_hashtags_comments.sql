@@ -7,7 +7,7 @@ SELECT
   count(*)                       AS content_count,
   round(avg(engagement_rate), 4) AS avg_engagement_rate
 FROM analytics.v_content_performance cp
-CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(cp.hashtags, '[]'::jsonb)) AS tag
+CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(cp.hashtags)='array' THEN cp.hashtags ELSE '[]'::jsonb END) AS tag
 GROUP BY tag;
 
 -- 멘션(협업/태그)별 빈도
@@ -16,7 +16,7 @@ SELECT
   mention,
   count(*) AS content_count
 FROM analytics.v_content_performance cp
-CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(cp.mentions, '[]'::jsonb)) AS mention
+CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(cp.mentions)='array' THEN cp.mentions ELSE '[]'::jsonb END) AS mention
 GROUP BY mention;
 
 -- 콘텐츠별 댓글 통계 (작성자 다양성·대댓글 비율)
