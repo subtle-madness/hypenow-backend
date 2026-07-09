@@ -30,16 +30,18 @@ public class AggregateJob {
     private final CrawlExecutor executor;
     private final SettingsService settings;
     private final Clock clock;
+    private final CommentSourceSelector commentSource;
 
     public AggregateJob(ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, CrawlExecutor executor,
-                        SettingsService settings, Clock clock) {
+                        SettingsService settings, Clock clock, CommentSourceSelector commentSource) {
         this.contents = contents;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
         this.executor = executor;
         this.settings = settings;
         this.clock = clock;
+        this.commentSource = commentSource;
     }
 
     @Transactional
@@ -71,9 +73,6 @@ public class AggregateJob {
                         ? ShortCodes.reelUrl(c.getShortCode())
                         : ShortCodes.postUrl(c.getShortCode()))
                 .toList();
-        List<String> commentUrls = chunk.stream()
-                .map(c -> ShortCodes.postUrl(c.getShortCode()))
-                .toList();
         String detailActor = type == ContentType.REELS ? Actors.DETAIL_REELS : Actors.DETAIL_FEED;
 
         Map<String, Map<String, Object>> detailByCode;
@@ -91,8 +90,9 @@ public class AggregateJob {
                 int f = bumpAttempts(chunk);
                 return new ChunkResult(0, 0, chunk.size() - f, f);
             }
-            var cx = executor.execute(JobName.AGGREGATE, trigger, null, null,
-                    Actors.COMMENT, ActorInputs.comments(commentUrls, settings.commentsPerPost()));
+            List<String> shortCodes = chunk.stream().map(Content::getShortCode).toList();
+            var cx = commentSource.current()
+                    .fetch(shortCodes, settings.commentsPerPost(), trigger);
             commentRunId = cx.runId();
             commentsByCode = groupComments(cx.items());
         } catch (ApifyException e) {
