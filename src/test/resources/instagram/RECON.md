@@ -20,7 +20,7 @@
   - created_at: `node.created_at` — **unix epoch seconds** (예: `1779661498`)
   - (부가) likes: `node.comment_like_count`, id: `node.pk`, verified: `node.user.is_verified`
 - 페이지네이션: `data.xig_polaris_media.comments_connection.page_info`
-  - `end_cursor` (이 캡처에선 `null`), `has_next_page` (이 캡처에선 `false` — 36개 전량 단일 페이지)
+  - `end_cursor` (이 캡처에선 `null`), `has_next_page` (이 캡처에선 `false` — edges 15개 단일 페이지)
 - 응답 media id: `data.xig_polaris_media.id` = `POLARIS_<mediaId>`
 
 ## 스키마 호환 매핑 규칙 (CommentMapper 출력)
