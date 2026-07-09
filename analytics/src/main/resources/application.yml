@@ -5,16 +5,21 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  main:
+    web-application-type: none
+
+analytics:
+  materialize-on-startup: true
 
 app:
   datasource:
     raw:
-      url: jdbc:postgresql://localhost:5433/crawler
+      jdbc-url: jdbc:postgresql://localhost:5433/crawler
       username: crawler
       password: crawler
       driver-class-name: org.postgresql.Driver
     analysis:
-      url: jdbc:postgresql://localhost:5433/analysis
+      jdbc-url: jdbc:postgresql://localhost:5433/analysis
       username: crawler
       password: crawler
       driver-class-name: org.postgresql.Driver
