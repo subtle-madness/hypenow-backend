@@ -20,6 +20,8 @@ crawler:
     proxy-url: ${APIFY_PROXY_URL:}
     request-timeout: 15s
     page-delay: 1s
+    comment-doc-id: ${IG_COMMENT_DOC_ID:}
+    comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
   discover:
     results-limit: 100
   aggregate:
