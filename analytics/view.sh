@@ -6,7 +6,7 @@ PSQL=(docker exec -i crawler-postgres-1 psql -U crawler -d analysis -P pager=off
 
 show() { echo; echo "━━━ $1 ━━━"; shift; "${PSQL[@]}" -c "$1"; }
 
-echo "════════ celfit 분석 결과 (analysis DB) ════════"
+echo "════════ hypenow 분석 결과 (analysis DB) ════════"
 "${PSQL[@]}" -c "select table_name, row_count, materialized_at from materialization_meta order by table_name;"
 
 show "콘텐츠 참여율 랭킹 (상위 20)" \
