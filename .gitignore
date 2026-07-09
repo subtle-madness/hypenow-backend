@@ -6,3 +6,4 @@ build/
 .claude/
 .worktrees/
 bin/
+.DS_Store
