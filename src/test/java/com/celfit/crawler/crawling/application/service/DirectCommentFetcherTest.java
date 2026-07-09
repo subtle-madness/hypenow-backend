@@ -8,18 +8,23 @@ import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.CommentSource;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Transactional
 class DirectCommentFetcherTest extends IntegrationTest {
 
     @Autowired CrawlExecutor executor;
     @Autowired CommentMapper mapper;   // tools.jackson ObjectMapper가 주입된 빈
+    @Autowired ObjectMapper om;
 
     static String res(String p) throws Exception {
         return new String(DirectCommentFetcherTest.class.getResourceAsStream(p).readAllBytes());
@@ -28,15 +33,17 @@ class DirectCommentFetcherTest extends IntegrationTest {
     // Fake 웹클라이언트: 페이지 HTML과 graphql 응답들을 순서대로 반환
     static class FakeWeb implements InstagramWebClient {
         String html; List<String> graphql; int i = 0; int getStatus = 200; int postStatus = 200;
+        String lastBody;
         public Response get(String url) { return new Response(getStatus, html, Map.of()); }
         public Response post(String url, String body, Map<String, String> h) {
+            lastBody = body;
             if (postStatus >= 300) return new Response(postStatus, "blocked", Map.of());
             return new Response(200, graphql.get(Math.min(i++, graphql.size() - 1)), Map.of());
         }
     }
 
     DirectCommentFetcher fetcher(FakeWeb web) {
-        return new DirectCommentFetcher(web, executor, mapper, Duration.ZERO, "DOC", "FRIENDLY");
+        return new DirectCommentFetcher(web, executor, mapper, Duration.ZERO, "DOC", "FRIENDLY", om);
     }
 
     @Test
@@ -74,6 +81,32 @@ class DirectCommentFetcherTest extends IntegrationTest {
         web.graphql = List.of(page1, base);
         var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
         assertThat(ex.items()).hasSize(30);
+    }
+
+    @Test
+    void 커서에_따옴표가_포함돼도_variables_JSON이_올바르게_이스케이프된다() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        String base = res("/instagram/comments-response.json");
+        // 실제 IG 커서는 중첩 JSON 문자열(따옴표 포함)이다. 문자열 연결로 조립하면 깨지는 케이스를 재현한다.
+        String cursorWithQuotes = "{\"is_server_cursor_inverse\":true,\"server_cursor\":\"ABC\"}";
+        String escapedCursor = cursorWithQuotes.replace("\\", "\\\\").replace("\"", "\\\"");
+        String page1 = base.replace("\"end_cursor\":null,\"has_next_page\":false",
+                "\"end_cursor\":\"" + escapedCursor + "\",\"has_next_page\":true");
+        web.graphql = List.of(page1, base);
+
+        fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+
+        String variablesParam = null;
+        for (String part : web.lastBody.split("&")) {
+            if (part.startsWith("variables=")) {
+                variablesParam = part.substring("variables=".length());
+            }
+        }
+        assertThat(variablesParam).isNotNull();
+        String decoded = URLDecoder.decode(variablesParam, StandardCharsets.UTF_8);
+        JsonNode node = om.readTree(decoded); // 파싱 실패 시 예외 발생 → 이스케이핑 회귀 방지
+        assertThat(node.path("after").asString()).isEqualTo(cursorWithQuotes);
     }
 
     @Test

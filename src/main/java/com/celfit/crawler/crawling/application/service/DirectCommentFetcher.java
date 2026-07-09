@@ -13,9 +13,12 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /** 비로그인 GraphQL 자체 댓글 크롤. 포스트별로 세션 GET → lsd 추출 → GraphQL POST → 페이지네이션. */
 @Component
@@ -28,24 +31,26 @@ public class DirectCommentFetcher implements CommentFetcher {
     private final InstagramWebClient web;
     private final CrawlExecutor executor;
     private final CommentMapper mapper;
+    private final ObjectMapper om;
     private final Duration pageDelay;
     private final String docId;
     private final String friendlyName;
 
     @org.springframework.beans.factory.annotation.Autowired
     public DirectCommentFetcher(InstagramWebClient web, CrawlExecutor executor,
-                                CommentMapper mapper, DirectCommentProperties props) {
-        this(web, executor, mapper, props.pageDelay(), props.commentDocId(), props.commentFriendlyName());
+                                CommentMapper mapper, DirectCommentProperties props, ObjectMapper om) {
+        this(web, executor, mapper, props.pageDelay(), props.commentDocId(), props.commentFriendlyName(), om);
     }
 
     DirectCommentFetcher(InstagramWebClient web, CrawlExecutor executor, CommentMapper mapper,
-                         Duration pageDelay, String docId, String friendlyName) {
+                         Duration pageDelay, String docId, String friendlyName, ObjectMapper om) {
         this.web = web;
         this.executor = executor;
         this.mapper = mapper;
         this.pageDelay = pageDelay;
         this.docId = docId;
         this.friendlyName = friendlyName;
+        this.om = om;
     }
 
     @Override
@@ -86,15 +91,25 @@ public class DirectCommentFetcher implements CommentFetcher {
         return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
     }
 
-    /** variables 정확한 키/형식은 Task 12 스모크에서 실측 cURL로 확정. */
+    /**
+     * variables 정확한 키/형식은 Task 12 스모크에서 실측 cURL로 확정.
+     * 커서(cursor)는 IG가 내려주는 중첩 JSON 문자열(따옴표 포함)이므로 문자열 연결이 아닌
+     * ObjectMapper 직렬화로 이스케이핑해야 한다(Task 12 실측 재확인에서 발견된 버그 수정).
+     */
     private String graphqlBody(String lsd, long mediaId, String cursor) {
-        StringBuilder vars = new StringBuilder("{\"media_id\":\"").append(mediaId).append("\"");
-        if (cursor != null) vars.append(",\"after\":\"").append(cursor).append("\"");
-        vars.append("}");
+        var vars = new LinkedHashMap<String, Object>();
+        vars.put("media_id", String.valueOf(mediaId));
+        if (cursor != null) vars.put("after", cursor);
+        String varsJson;
+        try {
+            varsJson = om.writeValueAsString(vars);
+        } catch (JacksonException e) {
+            throw new ApifyException("variables 직렬화 실패", e);
+        }
         return "lsd=" + enc(lsd)
                 + "&fb_api_req_friendly_name=" + enc(friendlyName)
                 + "&doc_id=" + enc(docId)
-                + "&variables=" + enc(vars.toString());
+                + "&variables=" + enc(varsJson);
     }
 
     private static String enc(String s) {
