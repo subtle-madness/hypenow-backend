@@ -20,7 +20,10 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
-/** 비로그인 GraphQL 자체 댓글 크롤. 포스트별로 세션 GET → lsd 추출 → GraphQL POST → 페이지네이션. */
+/**
+ * 비로그인 GraphQL 자체 댓글 크롤. 청크당 lsd를 1회 부트스트랩(무거운 페이지 GET 1회)한 뒤,
+ * 각 포스트는 가벼운 GraphQL POST + 커서 페이지네이션으로만 수집(세션 재사용 → 바이트 절감).
+ */
 @Component
 public class DirectCommentFetcher implements CommentFetcher {
 
@@ -60,18 +63,26 @@ public class DirectCommentFetcher implements CommentFetcher {
     }
 
     private List<Map<String, Object>> collectAll(List<String> shortCodes, int limit) {
+        if (shortCodes.isEmpty()) return List.of();
+        // 세션 부트스트랩: 무거운 포스트 페이지 GET(~600KB)을 청크당 딱 1회만 해서 lsd를 확보한다.
+        // lsd는 특정 포스트가 아니라 익명 세션에 묶여 있어(실측 확인) 청크 전체 graphql에 재사용 가능하고,
+        // 쿠키(csrftoken·mid)는 공유 CookieManager가 자동 유지한다. → 포스트당 페이지 GET 제거 = 전송 바이트 대폭 절감.
+        String lsd = bootstrapLsd(shortCodes.get(0));
         List<Map<String, Object>> all = new ArrayList<>();
         for (String sc : shortCodes) {
-            all.addAll(collectOne(sc, limit));
+            all.addAll(collectOne(sc, limit, lsd));
         }
         return all;
     }
 
-    private List<Map<String, Object>> collectOne(String shortCode, int limit) {
+    private String bootstrapLsd(String shortCode) {
+        var pageResp = web.get(ShortCodes.postUrl(shortCode));
+        if (pageResp.status() >= 300) throw new ApifyException("부트스트랩 페이지 " + pageResp.status());
+        return HandshakeExtractor.lsdFrom(pageResp.body());
+    }
+
+    private List<Map<String, Object>> collectOne(String shortCode, int limit, String lsd) {
         String postUrl = ShortCodes.postUrl(shortCode);
-        var pageResp = web.get(postUrl);
-        if (pageResp.status() >= 300) throw new ApifyException("포스트 페이지 " + pageResp.status());
-        String lsd = HandshakeExtractor.lsdFrom(pageResp.body());
         long mediaId = HandshakeExtractor.mediaIdFromShortCode(shortCode);
 
         List<Map<String, Object>> out = new ArrayList<>();

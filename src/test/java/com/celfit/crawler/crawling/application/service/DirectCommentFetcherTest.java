@@ -33,10 +33,10 @@ class DirectCommentFetcherTest extends IntegrationTest {
     // Fake 웹클라이언트: 페이지 HTML과 graphql 응답들을 순서대로 반환
     static class FakeWeb implements InstagramWebClient {
         String html; List<String> graphql; int i = 0; int getStatus = 200; int postStatus = 200;
-        String lastBody;
-        public Response get(String url) { return new Response(getStatus, html, Map.of()); }
+        String lastBody; int getCount = 0; int postCount = 0;
+        public Response get(String url) { getCount++; return new Response(getStatus, html, Map.of()); }
         public Response post(String url, String body, Map<String, String> h) {
-            lastBody = body;
+            postCount++; lastBody = body;
             if (postStatus >= 300) return new Response(postStatus, "blocked", Map.of());
             return new Response(200, graphql.get(Math.min(i++, graphql.size() - 1)), Map.of());
         }
@@ -107,6 +107,19 @@ class DirectCommentFetcherTest extends IntegrationTest {
         String decoded = URLDecoder.decode(variablesParam, StandardCharsets.UTF_8);
         JsonNode node = om.readTree(decoded); // 파싱 실패 시 예외 발생 → 이스케이핑 회귀 방지
         assertThat(node.path("after").asString()).isEqualTo(cursorWithQuotes);
+    }
+
+    @Test
+    void 여러_포스트여도_페이지GET은_한번만_한다() throws Exception {
+        // 세션 재사용 최적화 회귀 방지: lsd 부트스트랩용 무거운 페이지 GET은 청크당 1회.
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        web.graphql = List.of(res("/instagram/comments-response.json")); // 각 포스트 단일 페이지 15개
+        var ex = fetcher(web).fetch(List.of("AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC"),
+                50, TriggerType.MANUAL);
+        assertThat(web.getCount).isEqualTo(1);   // 페이지 GET(≈600KB)은 부트스트랩 1회만
+        assertThat(web.postCount).isEqualTo(3);  // graphql은 포스트당 1회
+        assertThat(ex.items()).hasSize(45);      // 3 × 15
     }
 
     @Test
