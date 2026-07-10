@@ -31,10 +31,12 @@ public class AggregateJob {
     private final SettingsService settings;
     private final Clock clock;
     private final CommentSourceSelector commentSource;
+    private final JobProgress progress;
 
     public AggregateJob(ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, CrawlExecutor executor,
-                        SettingsService settings, Clock clock, CommentSourceSelector commentSource) {
+                        SettingsService settings, Clock clock, CommentSourceSelector commentSource,
+                        JobProgress progress) {
         this.contents = contents;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
@@ -42,6 +44,7 @@ public class AggregateJob {
         this.settings = settings;
         this.clock = clock;
         this.commentSource = commentSource;
+        this.progress = progress;
     }
 
     @Transactional
@@ -52,15 +55,21 @@ public class AggregateJob {
 
         // 유형별 전용 상세 액터 — 릴스/피드가 주는 필드가 달라 나눠 호출한다
         int aggregated = 0, gone = 0, retried = 0, failed = 0;
-        for (ContentType type : ContentType.values()) {
-            List<Content> group = due.stream().filter(c -> c.getContentType() == type).toList();
-            for (List<Content> chunk : ActorInputs.chunk(group, settings.chunkSize())) {
-                ChunkResult r = aggregateChunk(chunk, type, trigger);
-                aggregated += r.aggregated;
-                gone += r.gone;
-                retried += r.retried;
-                failed += r.failed;
+        progress.start(JobName.AGGREGATE, due.size());   // 실시간 진행률(처리/전체)
+        try {
+            for (ContentType type : ContentType.values()) {
+                List<Content> group = due.stream().filter(c -> c.getContentType() == type).toList();
+                for (List<Content> chunk : ActorInputs.chunk(group, settings.chunkSize())) {
+                    ChunkResult r = aggregateChunk(chunk, type, trigger);
+                    aggregated += r.aggregated;
+                    gone += r.gone;
+                    retried += r.retried;
+                    failed += r.failed;
+                    progress.advance(JobName.AGGREGATE, chunk.size());
+                }
             }
+        } finally {
+            progress.finish(JobName.AGGREGATE);
         }
         return new Summary(aggregated, gone, retried, failed);
     }

@@ -34,11 +34,16 @@ public class UiController {
     private final ObjectMapper objectMapper;
     private final LogBuffer logBuffer;
 
+    private final com.celfit.crawler.crawling.application.service.JobLock jobLock;
+    private final com.celfit.crawler.crawling.application.service.JobProgress jobProgress;
+
     public UiController(StatusService statusService, CrawlRunRepository runs,
                         CategoryRepository categories, ContentRepository contents,
                         AccountRepository accounts, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, RawProfileRepository rawProfiles,
-                        ObjectMapper objectMapper, LogBuffer logBuffer) {
+                        ObjectMapper objectMapper, LogBuffer logBuffer,
+                        com.celfit.crawler.crawling.application.service.JobLock jobLock,
+                        com.celfit.crawler.crawling.application.service.JobProgress jobProgress) {
         this.statusService = statusService;
         this.runs = runs;
         this.categories = categories;
@@ -49,7 +54,12 @@ public class UiController {
         this.rawProfiles = rawProfiles;
         this.objectMapper = objectMapper;
         this.logBuffer = logBuffer;
+        this.jobLock = jobLock;
+        this.jobProgress = jobProgress;
     }
+
+    /** 현재 작업 바(실시간)용 한 잡의 상태. */
+    public record JobStatusRow(String label, boolean running, int current, int total, int percent) {}
 
     @GetMapping("/")
     public String root() {
@@ -66,6 +76,30 @@ public class UiController {
     public String runsFragment(Model model) {
         model.addAttribute("runs", runs.findTop50ByOrderByIdDesc());
         return "fragments/runs :: table";
+    }
+
+    /** 현재 작업 바(실시간): 각 잡의 실행 여부 + 진행률. */
+    @GetMapping("/ui/fragments/status")
+    public String statusFragment(Model model) {
+        model.addAttribute("jobs", java.util.List.of(
+                jobStatus(JobName.DISCOVER, "발굴"),
+                jobStatus(JobName.QUALIFY, "판정"),
+                jobStatus(JobName.AGGREGATE, "집계")));
+        return "fragments/status :: bar";
+    }
+
+    private JobStatusRow jobStatus(JobName job, String label) {
+        boolean running = jobLock.isRunning(job);
+        var p = jobProgress.get(job);
+        return new JobStatusRow(label, running,
+                p == null ? 0 : p.current(), p == null ? 0 : p.total(), p == null ? 0 : p.percent());
+    }
+
+    /** 상태 카드 실시간 갱신용 — 대시보드와 같은 summary를 프래그먼트로 반환. */
+    @GetMapping("/ui/fragments/status-tiles")
+    public String statusTilesFragment(Model model) {
+        model.addAttribute("summary", statusService.summary());
+        return "fragments/status-tiles :: tiles";
     }
 
     @GetMapping("/ui/fragments/logs")

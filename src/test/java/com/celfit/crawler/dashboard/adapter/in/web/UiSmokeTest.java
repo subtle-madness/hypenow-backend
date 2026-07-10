@@ -105,6 +105,14 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 실시간_상태_프래그먼트가_렌더된다() throws Exception {
+        // 현재 작업 바 + 상태 카드 프래그먼트가 잡 미실행 상태에서도 오류 없이 렌더되어야 한다.
+        mvc.perform(get("/ui/fragments/status")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("집계")));
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk());
+    }
+
+    @Test
     void 카테고리_삭제_폼은_목록으로_리다이렉트() throws Exception {
         Category saved = categories.save(new Category("삭제용"));
         mvc.perform(post("/ui/categories/" + saved.getId() + "/delete"))
