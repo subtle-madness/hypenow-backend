@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -30,6 +32,7 @@ public class DirectCommentFetcher implements CommentFetcher {
     static final String ACTOR_LABEL = "direct-comment-crawler";
     private static final String GRAPHQL_URL = "https://www.instagram.com/api/graphql";
     private static final String APP_ID = "936619743392459";
+    private static final Logger log = LoggerFactory.getLogger(DirectCommentFetcher.class);
 
     private final InstagramWebClient web;
     private final CrawlExecutor executor;
@@ -67,21 +70,36 @@ public class DirectCommentFetcher implements CommentFetcher {
         // 세션 부트스트랩: 무거운 포스트 페이지 GET(~600KB)을 청크당 딱 1회만 해서 lsd를 확보한다.
         // lsd는 특정 포스트가 아니라 익명 세션에 묶여 있어(실측 확인) 청크 전체 graphql에 재사용 가능하고,
         // 쿠키(csrftoken·mid)는 공유 CookieManager가 자동 유지한다. → 포스트당 페이지 GET 제거 = 전송 바이트 대폭 절감.
-        String lsd = bootstrapLsd(shortCodes.get(0));
+        var pageResp = web.get(ShortCodes.postUrl(shortCodes.get(0)));
+        if (pageResp.status() >= 300) throw new ApifyException("부트스트랩 페이지 " + pageResp.status());
+        String lsd = HandshakeExtractor.lsdFrom(pageResp.body());
+        long pageBytes = utf8Len(pageResp.body());   // 부트스트랩 페이지 전송량(응답)
+
+        long[] graphqlBytes = {0};                    // graphql 응답 전송량 누적
         List<Map<String, Object>> all = new ArrayList<>();
         for (String sc : shortCodes) {
-            all.addAll(collectOne(sc, limit, lsd));
+            all.addAll(collectOne(sc, limit, lsd, graphqlBytes));
         }
+        logTransfer(shortCodes.size(), all.size(), pageBytes, graphqlBytes[0]);
         return all;
     }
 
-    private String bootstrapLsd(String shortCode) {
-        var pageResp = web.get(ShortCodes.postUrl(shortCode));
-        if (pageResp.status() >= 300) throw new ApifyException("부트스트랩 페이지 " + pageResp.status());
-        return HandshakeExtractor.lsdFrom(pageResp.body());
+    /** run당 전송량을 로그로 남긴다. 최적화 전(페이지 GET을 포스트마다) 대비 절감비도 같이 표시. */
+    private void logTransfer(int posts, int comments, long pageBytes, long graphqlBytes) {
+        long actual = pageBytes + graphqlBytes;                 // 세션 재사용: 페이지 1회
+        long naive = pageBytes * (long) posts + graphqlBytes;   // 최적화 전: 페이지 posts회
+        String ratio = actual > 0 ? String.format("%.1f", (double) naive / actual) : "-";
+        log.info("[direct-comment] 포스트 {}개·댓글 {}개 | 전송 실측 {}KB (페이지 {}KB×1 + graphql {}KB) "
+                        + "| 세션재사용 없었다면 {}KB → {}배 절감",
+                posts, comments, actual / 1024, pageBytes / 1024, graphqlBytes / 1024,
+                naive / 1024, ratio);
     }
 
-    private List<Map<String, Object>> collectOne(String shortCode, int limit, String lsd) {
+    private static long utf8Len(String s) {
+        return s == null ? 0 : s.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private List<Map<String, Object>> collectOne(String shortCode, int limit, String lsd, long[] graphqlBytes) {
         String postUrl = ShortCodes.postUrl(shortCode);
         long mediaId = HandshakeExtractor.mediaIdFromShortCode(shortCode);
 
@@ -91,6 +109,7 @@ public class DirectCommentFetcher implements CommentFetcher {
             var resp = web.post(GRAPHQL_URL, graphqlBody(lsd, mediaId, cursor),
                     Map.of("x-ig-app-id", APP_ID, "x-fb-lsd", lsd));
             if (resp.status() >= 300) throw new ApifyException("graphql " + resp.status());
+            graphqlBytes[0] += utf8Len(resp.body());
             var page = mapper.parse(resp.body(), postUrl);
             out.addAll(page.comments());
             String next = page.endCursor();
