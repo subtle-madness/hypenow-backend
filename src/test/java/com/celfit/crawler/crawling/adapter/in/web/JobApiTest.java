@@ -71,10 +71,12 @@ class JobApiTest extends IntegrationTest {
     @Autowired CrawlRunRepository runs;
     @Autowired RawProfileRepository rawProfiles;
     @Autowired JobLock lock;
+    @Autowired com.celfit.crawler.settings.application.service.DiscoverSourceSetting discoverSourceSetting;
 
     @org.junit.jupiter.api.BeforeEach
     void resetFake() {
         fake.reset();
+        discoverSourceSetting.update(com.celfit.crawler.settings.domain.DiscoverSource.ACTOR);
     }
 
     @AfterEach

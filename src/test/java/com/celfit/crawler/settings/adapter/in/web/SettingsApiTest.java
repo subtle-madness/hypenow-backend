@@ -46,10 +46,12 @@ class SettingsApiTest extends IntegrationTest {
     @Autowired DiscoverJob discoverJob;
     @Autowired CategoryRepository categories;
     @Autowired CategoryKeywordRepository keywords;
+    @Autowired com.celfit.crawler.settings.application.service.DiscoverSourceSetting discoverSourceSetting;
 
     @BeforeEach
     void resetFake() {
         fake.reset();
+        discoverSourceSetting.update(com.celfit.crawler.settings.domain.DiscoverSource.ACTOR);
     }
 
     @Test

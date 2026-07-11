@@ -1,8 +1,5 @@
 package com.celfit.crawler.crawling.application.service;
 
-import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.port.out.Actors;
-import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.domain.*;
 import com.celfit.crawler.content.domain.*;
@@ -26,22 +23,20 @@ public class DiscoverJob {
     private final AccountRepository accounts;
     private final ContentRepository contents;
     private final RawDiscoveryPostRepository rawDiscovery;
-    private final CrawlExecutor executor;
-    private final SettingsService settings;
+    private final DiscoverSourceSelector discoverSourceSelector;
     private final Clock clock;
 
     public DiscoverJob(CategoryRepository categories, CategoryKeywordRepository keywords,
                        CollectionRuleRepository rules, AccountRepository accounts,
                        ContentRepository contents, RawDiscoveryPostRepository rawDiscovery,
-                       CrawlExecutor executor, SettingsService settings, Clock clock) {
+                       DiscoverSourceSelector discoverSourceSelector, Clock clock) {
         this.categories = categories;
         this.keywords = keywords;
         this.rules = rules;
         this.accounts = accounts;
         this.contents = contents;
         this.rawDiscovery = rawDiscovery;
-        this.executor = executor;
-        this.settings = settings;
+        this.discoverSourceSelector = discoverSourceSelector;
         this.clock = clock;
     }
 
@@ -58,8 +53,7 @@ public class DiscoverJob {
         for (CategoryKeyword kw : keywords.findByCategoryIdAndEnabledTrue(categoryId)) {
             CrawlExecutor.Execution ex;
             try {
-                ex = executor.execute(JobName.DISCOVER, trigger, categoryId, kw.getKeyword(),
-                        Actors.DISCOVERY, ActorInputs.discovery(kw.getKeyword(), settings.resultsLimit()));
+                ex = discoverSourceSelector.fetch(categoryId, kw.getKeyword(), trigger);
             } catch (ApifyException e) {
                 failedKeywords++;  // crawl_run에 FAILED 기록됨 — 다음 키워드 계속
                 continue;

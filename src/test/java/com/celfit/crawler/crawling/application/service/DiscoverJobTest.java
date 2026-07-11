@@ -34,10 +34,16 @@ class DiscoverJobTest extends IntegrationTest {
 
     @Autowired FakeApifyRunner fake;
     @Autowired DiscoverJob job;
+    @Autowired com.celfit.crawler.settings.application.service.DiscoverSourceSetting discoverSourceSetting;
 
     @org.junit.jupiter.api.BeforeEach
     void resetFake() {
         fake.reset();
+    }
+
+    @org.junit.jupiter.api.BeforeEach
+    void forceActorSource() {
+        discoverSourceSetting.update(com.celfit.crawler.settings.domain.DiscoverSource.ACTOR);
     }
 
     @Autowired CategoryRepository categories;
