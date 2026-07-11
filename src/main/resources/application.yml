@@ -15,6 +15,7 @@ crawler:
     base-url: https://api.apify.com
     poll-interval: 5s
     run-timeout: 10m
+    actor-memory-mb: ${APIFY_ACTOR_MEMORY_MB:1024}  # 실행당 메모리(128 배수). 미지정 기본 128MB면 스크래퍼 OOM
   direct-comment:
     proxy-url: ${APIFY_PROXY_URL:}
     request-timeout: 15s

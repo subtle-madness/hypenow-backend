@@ -52,7 +52,7 @@ class ApifyClientTest {
 
     ApifyClient client(FakeHttp http, TickingClock clock, Duration timeout) {
         ApifyProperties props = new ApifyProperties(
-                "tok", "https://api.test", Duration.ofSeconds(5), timeout);
+                "tok", "https://api.test", Duration.ofSeconds(5), timeout, 1024);
         Sleeper advancing = d -> clock.now = clock.now.plus(d);
         return new ApifyClient(http, props, new ObjectMapper(), advancing, clock);
     }
@@ -75,6 +75,7 @@ class ApifyClientTest {
         assertThat(result.items()).hasSize(2);
         assertThat(result.items().get(0)).containsEntry("shortCode", "abc");
         assertThat(http.calls.get(0)).startsWith("POST https://api.test/v2/acts/apify~instagram-hashtag-scraper/runs");
+        assertThat(http.calls.get(0)).contains("memory=1024");  // OOM 방지: 실행당 메모리 명시
         assertThat(http.calls.get(3)).contains("/v2/datasets/ds-1/items");
         assertThat(http.calls).noneMatch(c -> c.contains("token"));
     }

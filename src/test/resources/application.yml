@@ -16,6 +16,7 @@ crawler:
     base-url: http://localhost:9999
     poll-interval: 1ms
     run-timeout: 1s
+    actor-memory-mb: 1024
   direct-comment:
     proxy-url: ${APIFY_PROXY_URL:}
     request-timeout: 15s
