@@ -10,6 +10,7 @@ import com.celfit.crawler.settings.domain.*;
 import com.celfit.crawler.crawling.application.port.out.*;
 import com.celfit.crawler.content.application.port.out.*;
 import com.celfit.crawler.settings.application.port.out.*;
+import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -35,10 +36,16 @@ class QualifyJobTest extends IntegrationTest {
 
     @Autowired FakeApifyRunner fake;
     @Autowired QualifyJob job;
+    @Autowired ProfileSourceSetting profileSourceSetting;
 
+    // QualifyJob은 프로필 수집을 ProfileSourceSelector(Task 9)에 위임한다.
+    // 기본 소스는 SELF(web_profile_info, 실 네트워크)이므로, 이 테스트가 기대하는
+    // "FakeApifyRunner로 프로필 응답을 스텁"하는 기존 시나리오를 유지하려면
+    // 소스를 ACTOR로 고정해 ActorProfileFetcher(→ CrawlExecutor→ApifyRunnerPort) 경로를 태운다.
     @org.junit.jupiter.api.BeforeEach
     void resetFake() {
         fake.reset();
+        profileSourceSetting.update(ProfileSource.ACTOR);
     }
 
     @Autowired CategoryRepository categories;

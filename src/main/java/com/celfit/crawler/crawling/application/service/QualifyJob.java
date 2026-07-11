@@ -1,6 +1,5 @@
 package com.celfit.crawler.crawling.application.service;
 
-import com.celfit.crawler.crawling.application.port.out.Actors;
 import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.domain.*;
@@ -26,18 +25,18 @@ public class QualifyJob {
     private final AccountRepository accounts;
     private final CollectionRuleRepository rules;
     private final RawProfileRepository rawProfiles;
-    private final CrawlExecutor executor;
     private final Clock clock;
+    private final ProfileSourceSelector profileSourceSelector;
 
     public QualifyJob(ContentRepository contents, AccountRepository accounts,
                       CollectionRuleRepository rules, RawProfileRepository rawProfiles,
-                      CrawlExecutor executor, Clock clock) {
+                      Clock clock, ProfileSourceSelector profileSourceSelector) {
         this.contents = contents;
         this.accounts = accounts;
         this.rules = rules;
         this.rawProfiles = rawProfiles;
-        this.executor = executor;
         this.clock = clock;
+        this.profileSourceSelector = profileSourceSelector;
     }
 
     @Transactional
@@ -90,8 +89,7 @@ public class QualifyJob {
             List<String> names = chunk.stream().map(Account::getUsername).toList();
             CrawlExecutor.Execution ex;
             try {
-                ex = executor.execute(JobName.QUALIFY, trigger, null, null,
-                        Actors.PROFILE, ActorInputs.profiles(names));
+                ex = profileSourceSelector.fetchAndSupplement(names, trigger);
             } catch (ApifyException e) {
                 continue;  // FAILED 기록됨 — 해당 청크 계정은 다음 실행 때 재시도
             }
