@@ -23,8 +23,9 @@ crawler:
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
   direct-detail:
-    post-doc-id: ${IG_POST_DOC_ID:}
-    post-friendly-name: ${IG_POST_FRIENDLY_NAME:PolarisPostActionLoadPostQueryQuery}
+    # 비로그인 포스트 상세 쿼리(정찰 확정). doc_id는 IG가 주기적으로 교체하므로 env로 덮어쓸 수 있음.
+    post-doc-id: ${IG_POST_DOC_ID:27130156389949648}
+    post-friendly-name: ${IG_POST_FRIENDLY_NAME:PolarisLoggedOutDesktopWWWPostRootContentQuery}
     page-delay: 1s
   hiker:
     api-key: ${HIKER_API_KEY:}

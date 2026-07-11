@@ -36,16 +36,31 @@ public class DetailMapper {
         return p;
     }
 
-    /** self-crawl GraphQL 포스트 쿼리(data.xdt_shortcode_media). */
+    /**
+     * self-crawl GraphQL 포스트 쿼리.
+     * 비로그인: data.xig_polaris_media.if_not_gated_logged_out (게이팅 시 null → shortCode null).
+     * 구형/로그인 호환: data.xdt_shortcode_media.
+     */
     public Map<String, Object> fromSelfGraphql(String json) {
         JsonNode root = read(json);
-        JsonNode media = root.has("data") ? root.path("data").path("xdt_shortcode_media") : root;
+        JsonNode data = root.path("data");
+        JsonNode media;
+        if (data.path("xig_polaris_media").isObject()) {
+            media = data.path("xig_polaris_media").path("if_not_gated_logged_out");
+        } else if (data.path("xdt_shortcode_media").isObject()) {
+            media = data.path("xdt_shortcode_media");
+        } else {
+            media = root;
+        }
         Map<String, Object> p = new LinkedHashMap<>();
-        p.put("shortCode", media.path("shortcode").asString(null));
-        p.put("caption", media.path("edge_media_to_caption").path("edges").path(0)
-                .path("node").path("text").asString(null));
-        p.put("likesCount", media.path("edge_media_preview_like").path("count").asLong());
-        p.put("commentsCount", media.path("edge_media_to_comment").path("count").asLong());
+        // 비로그인: code / caption.text / like_count / comment_count ; 구형: shortcode / edge_*
+        p.put("shortCode", media.path("code").asString(media.path("shortcode").asString(null)));
+        p.put("caption", media.path("caption").path("text").asString(
+                media.path("edge_media_to_caption").path("edges").path(0).path("node").path("text").asString(null)));
+        p.put("likesCount", media.has("like_count") ? media.path("like_count").asLong()
+                : media.path("edge_media_preview_like").path("count").asLong());
+        p.put("commentsCount", media.has("comment_count") ? media.path("comment_count").asLong()
+                : media.path("edge_media_to_comment").path("count").asLong());
         p.put("videoPlayCount", null);   // 피드=조회수 없음
         p.put("isPaidPartnership", media.path("is_paid_partnership").asBoolean(false));
         p.put("_rawDetail", raw(root));

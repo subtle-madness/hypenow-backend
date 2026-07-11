@@ -80,6 +80,7 @@ public class SelfFeedDetailFetcher implements DetailFetcher {
                 if (resp.status() >= 300) throw new ApifyException("graphql " + resp.status());
                 Map<String, Object> d = mapper.fromSelfGraphql(resp.body());
                 if (d.get("shortCode") != null) out.add(d);
+                else failed.add(sc);   // 게이팅/파싱불가 → GONE 대신 재시도(비로그인 게이트는 삭제가 아님)
             } catch (ApifyException e) {
                 failed.add(sc);   // 일시적 실패 — 재시도 대상(GONE 금지)
                 log.warn("피드 상세 실패, 스킵: {} ({})", sc, e.getMessage());
@@ -91,7 +92,7 @@ public class SelfFeedDetailFetcher implements DetailFetcher {
 
     private String graphqlBody(String lsd, String shortCode) {
         var vars = new LinkedHashMap<String, Object>();
-        vars.put("shortcode", shortCode);
+        vars.put("media_id", ShortCodes.mediaId(shortCode));   // 비로그인 포스트 쿼리는 media_id(숫자 pk) 변수
         String varsJson;
         try {
             varsJson = om.writeValueAsString(vars);

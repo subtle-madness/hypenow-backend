@@ -54,6 +54,28 @@ class DetailMapperTest {
         assertThat(d).containsKey("_rawDetail");
     }
 
+    @Test void self_비로그인_xig_polaris_media_정규화() {
+        // 비로그인 응답: data.xig_polaris_media.if_not_gated_logged_out (code/caption.text/like_count/comment_count)
+        String json = """
+            {"data":{"xig_polaris_media":{"gating_ruling":null,"if_not_gated_logged_out":{
+              "code":"DamKgsggWef",
+              "caption":{"pk":"1","text":"비로그인 캡션"},
+              "like_count":487000,"comment_count":1800}}}}""";
+        Map<String, Object> d = mapper.fromSelfGraphql(json);
+        assertThat(d.get("shortCode")).isEqualTo("DamKgsggWef");
+        assertThat(d.get("caption")).isEqualTo("비로그인 캡션");
+        assertThat(d.get("likesCount")).isEqualTo(487000L);
+        assertThat(d.get("commentsCount")).isEqualTo(1800L);
+        assertThat(d.get("videoPlayCount")).isNull();
+        assertThat(d).containsKey("_rawDetail");
+    }
+
+    @Test void self_게이팅시_shortCode_null() {
+        // if_not_gated_logged_out=null → 내용 없음
+        String json = "{\"data\":{\"xig_polaris_media\":{\"gating_ruling\":{\"g\":1},\"if_not_gated_logged_out\":null}}}";
+        assertThat(mapper.fromSelfGraphql(json).get("shortCode")).isNull();
+    }
+
     @Test void actor_아이템은_그대로_통과() {
         Map<String, Object> item = new java.util.HashMap<>(Map.of(
             "shortCode", "ABC", "caption", "x", "likesCount", 5, "commentsCount", 1));
