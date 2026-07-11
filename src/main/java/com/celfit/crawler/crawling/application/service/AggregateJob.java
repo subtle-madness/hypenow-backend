@@ -1,7 +1,6 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.port.out.Actors;
 import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.domain.ShortCodes;
@@ -32,11 +31,12 @@ public class AggregateJob {
     private final Clock clock;
     private final CommentSourceSelector commentSource;
     private final JobProgress progress;
+    private final DetailSourceSelector detailSource;
 
     public AggregateJob(ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, CrawlExecutor executor,
                         SettingsService settings, Clock clock, CommentSourceSelector commentSource,
-                        JobProgress progress) {
+                        JobProgress progress, DetailSourceSelector detailSource) {
         this.contents = contents;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
@@ -45,6 +45,7 @@ public class AggregateJob {
         this.clock = clock;
         this.commentSource = commentSource;
         this.progress = progress;
+        this.detailSource = detailSource;
     }
 
     @Transactional
@@ -77,29 +78,23 @@ public class AggregateJob {
     private record ChunkResult(int aggregated, int gone, int retried, int failed) {}
 
     private ChunkResult aggregateChunk(List<Content> chunk, ContentType type, TriggerType trigger) {
-        List<String> detailUrls = chunk.stream()
-                .map(c -> type == ContentType.REELS
-                        ? ShortCodes.reelUrl(c.getShortCode())
-                        : ShortCodes.postUrl(c.getShortCode()))
-                .toList();
-        String detailActor = type == ContentType.REELS ? Actors.DETAIL_REELS : Actors.DETAIL_FEED;
+        List<String> shortCodes = chunk.stream().map(Content::getShortCode).toList();
 
         Map<String, Map<String, Object>> detailByCode;
         Map<String, List<Map<String, Object>>> commentsByCode;
         Long detailRunId;
         Long commentRunId;
+        DetailFetcher.DetailResult dr;
         try {
-            var dx = executor.execute(JobName.AGGREGATE, trigger, null, null,
-                    detailActor, ActorInputs.detailUrls(detailUrls));
-            detailRunId = dx.runId();
-            detailByCode = indexDetails(dx.items());
+            dr = detailSource.forType(type).fetch(shortCodes, type, trigger);
+            detailRunId = dr.execution().runId();
+            detailByCode = indexDetails(dr.execution().items());
             if (detailByCode.isEmpty() && !chunk.isEmpty()) {
                 // 요청 전부가 응답에 없음 = 삭제가 아니라 액터 소프트 실패(레이트리밋 등) 가능성
                 // — mass-GONE 대신 재시도. 댓글 액터 호출도 아낀다.
                 int f = bumpAttempts(chunk);
                 return new ChunkResult(0, 0, chunk.size() - f, f);
             }
-            List<String> shortCodes = chunk.stream().map(Content::getShortCode).toList();
             var cx = commentSource.current()
                     .fetch(shortCodes, settings.commentsPerPost(), trigger);
             commentRunId = cx.runId();
@@ -110,12 +105,24 @@ public class AggregateJob {
             return new ChunkResult(0, 0, chunk.size() - f, f);
         }
 
-        int aggregated = 0, gone = 0;
+        java.util.Set<String> failed = dr.failedShortCodes();
+        int aggregated = 0, gone = 0, retried = 0, failedCount = 0;
         for (Content c : chunk) {
             Map<String, Object> detail = detailByCode.get(c.getShortCode());
             if (detail == null) {
-                c.setStatus(ContentStatus.GONE);  // 응답에 없음 = 삭제·비공개 간주
-                gone++;
+                if (failed.contains(c.getShortCode())) {
+                    // 일시적 실패로 스킵됨 — GONE 대신 재시도(상한 도달 시 FAILED)
+                    c.setAggregateAttempts(c.getAggregateAttempts() + 1);
+                    if (c.getAggregateAttempts() >= settings.maxAttempts()) {
+                        c.setStatus(ContentStatus.FAILED);
+                        failedCount++;
+                    } else {
+                        retried++;
+                    }
+                } else {
+                    c.setStatus(ContentStatus.GONE);  // 응답에 있는데 이 항목만 없음 = 삭제·비공개
+                    gone++;
+                }
                 continue;
             }
             rawDetails.save(new RawPostDetail(c.getId(), detailRunId, detail, clock.instant()));
@@ -127,7 +134,7 @@ public class AggregateJob {
             c.setAggregatedAt(clock.instant());
             aggregated++;
         }
-        return new ChunkResult(aggregated, gone, 0, 0);
+        return new ChunkResult(aggregated, gone, retried, failedCount);
     }
 
     /** 청크 전체의 attempts를 올리고 상한 도달분은 FAILED로 밀어냄. FAILED 전환 수를 반환. */

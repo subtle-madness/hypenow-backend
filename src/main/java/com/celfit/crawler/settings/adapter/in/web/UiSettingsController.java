@@ -1,6 +1,8 @@
 package com.celfit.crawler.settings.adapter.in.web;
 
+import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.settings.application.service.CommentSourceSetting;
+import com.celfit.crawler.settings.application.service.DetailSourceSetting;
 import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
@@ -27,16 +29,19 @@ public class UiSettingsController {
     private final DiscoverSourceSetting discoverSourceSetting;
     private final ProfileSourceSetting profileSourceSetting;
     private final ProfileSupplementSetting profileSupplementSetting;
+    private final DetailSourceSetting detailSourceSetting;
 
     public UiSettingsController(SettingsService service, CommentSourceSetting commentSourceSetting,
                                  DiscoverSourceSetting discoverSourceSetting,
                                  ProfileSourceSetting profileSourceSetting,
-                                 ProfileSupplementSetting profileSupplementSetting) {
+                                 ProfileSupplementSetting profileSupplementSetting,
+                                 DetailSourceSetting detailSourceSetting) {
         this.service = service;
         this.commentSourceSetting = commentSourceSetting;
         this.discoverSourceSetting = discoverSourceSetting;
         this.profileSourceSetting = profileSourceSetting;
         this.profileSupplementSetting = profileSupplementSetting;
+        this.detailSourceSetting = detailSourceSetting;
     }
 
     @GetMapping
@@ -47,6 +52,8 @@ public class UiSettingsController {
         model.addAttribute("profileSource", profileSourceSetting.current().name());
         model.addAttribute("profilePosts", profileSupplementSetting.postsEnabled());
         model.addAttribute("profileRelated", profileSupplementSetting.relatedEnabled());
+        model.addAttribute("detailReelsSource", detailSourceSetting.sourceFor(ContentType.REELS).name());
+        model.addAttribute("detailFeedSource", detailSourceSetting.sourceFor(ContentType.FEED).name());
         return "settings";
     }
 
