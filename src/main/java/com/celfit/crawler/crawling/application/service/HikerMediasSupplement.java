@@ -27,7 +27,7 @@ public class HikerMediasSupplement {
         if (uid == null) return;
         String body = http.get("/v1/user/medias/chunk?user_id=" + uid);
         List<Map<String, Object>> posts = new ArrayList<>();
-        JsonNode arr = firstArray(read(body));
+        JsonNode arr = mediaArray(read(body));
         for (JsonNode n : arr) {
             JsonNode m = n.has("media") ? n.path("media") : n;
             Map<String, Object> post = new java.util.LinkedHashMap<>();
@@ -45,13 +45,24 @@ public class HikerMediasSupplement {
         catch (JacksonException e) { throw new ApifyException("medias 파싱 실패: " + e.getMessage(), e); }
     }
 
-    // 응답 구조가 {response:{items:[...]}} 또는 {items:[...]} 또는 [...] 등 다양 → 첫 번째 배열을 찾음
-    private JsonNode firstArray(JsonNode node) {
-        if (node.isArray()) return node;
+    // 응답 구조가 [[...medias...], "cursor"](실제 medias/chunk) / {response:{items:[...]}} / {items:[...]} / [...] 등 다양.
+    // "첫 배열"을 집으면 chunk의 바깥 [배열,커서] 튜플을 잘못 순회하므로,
+    // 미디어 객체(code/pk 보유)를 원소로 갖는 배열을 재귀 탐색해서 고른다.
+    private JsonNode mediaArray(JsonNode node) {
+        if (isMediaArray(node)) return node;
         for (JsonNode child : node) {
-            JsonNode found = firstArray(child);
-            if (found.isArray()) return found;
+            JsonNode found = mediaArray(child);
+            if (found.isArray() && !found.isEmpty()) return found;
         }
         return om.createArrayNode();
+    }
+
+    private boolean isMediaArray(JsonNode node) {
+        if (!node.isArray() || node.isEmpty()) return false;
+        for (JsonNode el : node) {
+            JsonNode m = el.has("media") ? el.path("media") : el;
+            if (m.isObject() && (m.has("code") || m.has("pk"))) return true;
+        }
+        return false;
     }
 }

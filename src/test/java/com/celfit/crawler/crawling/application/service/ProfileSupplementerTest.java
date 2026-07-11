@@ -46,6 +46,24 @@ class ProfileSupplementerTest {
         assertThat(ex.items().get(0)).containsKeys("latestPosts", "relatedProfiles");
     }
 
+    @Test void medias_튜플응답_파싱() {
+        // 실제 HikerAPI /v1/user/medias/chunk 형태: [[...medias...], "cursor"]
+        HikerHttp http = path -> path.contains("medias")
+            ? "[[{\"code\":\"ABC\",\"play_count\":587,\"like_count\":51,\"comment_count\":128}],\"next_cursor\"]"
+            : "{\"users\":[]}";
+        var sup = new ProfileSupplementer(new HikerMediasSupplement(http, om),
+                new HikerSuggestedSupplement(http, om), settingBoth());
+        var ex = sup.apply(oneItem(), ProfileSource.SELF);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> posts = (List<Map<String, Object>>) ex.items().get(0).get("latestPosts");
+        assertThat(posts).hasSize(1);
+        assertThat(posts.get(0))
+            .containsEntry("shortCode", "ABC")
+            .containsEntry("videoViewCount", 587L)
+            .containsEntry("likesCount", 51L)
+            .containsEntry("commentsCount", 128L);
+    }
+
     @Test void 한_보충_실패해도_나머지와_베이스는_보존() {
         HikerHttp http = path -> {
             if (path.contains("medias")) throw new ApifyException("Hiker HTTP 500");
