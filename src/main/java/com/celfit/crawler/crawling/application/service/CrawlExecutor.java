@@ -50,7 +50,7 @@ public class CrawlExecutor {
         CrawlRun run = runs.save(new CrawlRun(job, trigger, categoryId, keyword, actorId, clock.instant()));
         try {
             ApifyResult result = work.get();
-            run.finishOk(result.runId(), result.items().size(), clock.instant());
+            run.finishOk(result.runId(), result.requestCount(), result.items().size(), clock.instant());
             runs.save(run);
             archive(run.getId(), result.items());
             return new Execution(run.getId(), result.items());

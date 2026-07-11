@@ -35,6 +35,10 @@ public class CrawlRun {
     @Column(name = "apify_run_id")
     private String apifyRunId;
 
+    /** 비Apify 소스의 과금 요청 수 (HikerAPI 페이지 등). Apify 실행은 null. */
+    @Column(name = "request_count")
+    private Integer requestCount;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private RunStatus status = RunStatus.RUNNING;
@@ -61,8 +65,9 @@ public class CrawlRun {
         this.startedAt = startedAt;
     }
 
-    public void finishOk(String apifyRunId, int itemCount, Instant at) {
+    public void finishOk(String apifyRunId, Integer requestCount, int itemCount, Instant at) {
         this.apifyRunId = apifyRunId;
+        this.requestCount = requestCount;
         this.status = RunStatus.SUCCEEDED;
         this.itemCount = itemCount;
         this.finishedAt = at;

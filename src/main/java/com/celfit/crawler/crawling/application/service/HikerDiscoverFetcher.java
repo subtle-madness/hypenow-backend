@@ -51,7 +51,7 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
                 () -> collect(keyword));
     }
 
-    /** runId 자리에 구매 페이지 수를 기록 — HikerAPI는 run 개념이 없어 비용($0.001×pages) 추적용. */
+    /** requestCount에 구매 페이지 수를 기록 — 비용($0.001×pages) 추적용. */
     private ApifyResult collect(String keyword) {
         int limit = settings.resultsLimit();
         String enc = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
@@ -68,7 +68,7 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
             if (out.size() >= limit || !page.moreAvailable() || pageId == null || pageId.isBlank()
                     || pages >= MAX_PAGES) break;
         }
-        return new ApifyResult("pages=" + pages, out);
+        return new ApifyResult(null, pages, out);
     }
 
     @Override

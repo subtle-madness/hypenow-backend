@@ -67,7 +67,8 @@ class HikerDiscoverFetcherTest {
         assertThat(ex.items()).hasSize(3);
         assertThat(ex.items().get(2).get("shortCode")).isEqualTo("C3");
         assertThat(labels).containsExactly("hiker-hashtag-top");
-        assertThat(capturedResults.get(0).runId()).isEqualTo("pages=2");  // 비용 추적용 페이지 수
+        assertThat(capturedResults.get(0).requestCount()).isEqualTo(2);  // 비용 추적용 페이지 수
+        assertThat(capturedResults.get(0).runId()).isNull();             // HikerAPI는 run ID 없음
         assertThat(fetcher.source()).isEqualTo(DiscoverSource.HIKER);
     }
 
