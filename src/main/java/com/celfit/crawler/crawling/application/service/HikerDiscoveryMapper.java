@@ -62,6 +62,7 @@ public class HikerDiscoveryMapper {
         item.put("timestamp", Instant.ofEpochSecond(takenAt).toString());
         item.put("ownerUsername", username);
         item.put("productType", m.path("product_type").asString(null));
+        item.put("caption", m.path("caption").path("text").asString(null));
         item.put("likesCount", m.path("like_count").asLong());
         item.put("commentsCount", m.path("comment_count").asLong());
         item.put("videoPlayCount", m.path("play_count").asLong());

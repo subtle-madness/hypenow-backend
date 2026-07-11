@@ -17,6 +17,7 @@ class HikerDiscoveryMapperTest {
           {"layout_content":{"medias":[{"media":{
             "pk":"1","code":"DZr1AvEMT0M","taken_at":1781694665,"product_type":"clips",
             "like_count":1469,"comment_count":32,"play_count":108290,
+            "caption":{"pk":"c1","text":"제 진정좁쌀요철 루틴 공개합니다!! #스킨케어"},
             "user":{"pk":"76739063345","username":"owysim"}}}]}},
           {"layout_content":{"fill_items":[{"media":{
             "pk":"2","taken_at":1781000000,"product_type":"carousel_item"}}]}},
@@ -35,6 +36,7 @@ class HikerDiscoveryMapperTest {
             .containsEntry("timestamp", "2026-06-17T11:11:05Z")   // 1781694665 epoch → ISO
             .containsEntry("ownerUsername", "owysim")
             .containsEntry("productType", "clips")
+            .containsEntry("caption", "제 진정좁쌀요철 루틴 공개합니다!! #스킨케어")
             .containsEntry("likesCount", 1469L)
             .containsEntry("commentsCount", 32L)
             .containsEntry("videoPlayCount", 108290L);
