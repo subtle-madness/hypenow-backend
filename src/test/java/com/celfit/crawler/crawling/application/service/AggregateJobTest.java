@@ -7,6 +7,7 @@ import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.crawling.domain.*;
 import com.celfit.crawler.content.domain.*;
 import com.celfit.crawler.settings.domain.*;
+import com.celfit.crawler.settings.application.service.DetailSourceSetting;
 import com.celfit.crawler.crawling.application.port.out.*;
 import com.celfit.crawler.content.application.port.out.*;
 import com.celfit.crawler.settings.application.port.out.*;
@@ -36,10 +37,14 @@ class AggregateJobTest extends IntegrationTest {
 
     @Autowired FakeApifyRunner fake;
     @Autowired AggregateJob job;
+    @Autowired DetailSourceSetting detailSourceSetting;
 
     @org.junit.jupiter.api.BeforeEach
     void resetFake() {
         fake.reset();
+        // 상세 기본 소스는 릴스=HIKER·피드=SELF(실네트워크) — 이 테스트는 FakeApifyRunner 경유
+        // 액터 경로를 검증하므로 상세 소스를 ACTOR로 고정한다.
+        detailSourceSetting.update(DetailSource.ACTOR, DetailSource.ACTOR);
     }
 
     @Autowired CategoryRepository categories;

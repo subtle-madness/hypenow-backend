@@ -1,7 +1,6 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.port.out.Actors;
 import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.domain.ShortCodes;
@@ -32,11 +31,12 @@ public class AggregateJob {
     private final Clock clock;
     private final CommentSourceSelector commentSource;
     private final JobProgress progress;
+    private final DetailSourceSelector detailSource;
 
     public AggregateJob(ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, CrawlExecutor executor,
                         SettingsService settings, Clock clock, CommentSourceSelector commentSource,
-                        JobProgress progress) {
+                        JobProgress progress, DetailSourceSelector detailSource) {
         this.contents = contents;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
@@ -45,6 +45,7 @@ public class AggregateJob {
         this.clock = clock;
         this.commentSource = commentSource;
         this.progress = progress;
+        this.detailSource = detailSource;
     }
 
     @Transactional
@@ -77,20 +78,14 @@ public class AggregateJob {
     private record ChunkResult(int aggregated, int gone, int retried, int failed) {}
 
     private ChunkResult aggregateChunk(List<Content> chunk, ContentType type, TriggerType trigger) {
-        List<String> detailUrls = chunk.stream()
-                .map(c -> type == ContentType.REELS
-                        ? ShortCodes.reelUrl(c.getShortCode())
-                        : ShortCodes.postUrl(c.getShortCode()))
-                .toList();
-        String detailActor = type == ContentType.REELS ? Actors.DETAIL_REELS : Actors.DETAIL_FEED;
+        List<String> shortCodes = chunk.stream().map(Content::getShortCode).toList();
 
         Map<String, Map<String, Object>> detailByCode;
         Map<String, List<Map<String, Object>>> commentsByCode;
         Long detailRunId;
         Long commentRunId;
         try {
-            var dx = executor.execute(JobName.AGGREGATE, trigger, null, null,
-                    detailActor, ActorInputs.detailUrls(detailUrls));
+            CrawlExecutor.Execution dx = detailSource.forType(type).fetch(shortCodes, type, trigger);
             detailRunId = dx.runId();
             detailByCode = indexDetails(dx.items());
             if (detailByCode.isEmpty() && !chunk.isEmpty()) {
@@ -99,7 +94,6 @@ public class AggregateJob {
                 int f = bumpAttempts(chunk);
                 return new ChunkResult(0, 0, chunk.size() - f, f);
             }
-            List<String> shortCodes = chunk.stream().map(Content::getShortCode).toList();
             var cx = commentSource.current()
                     .fetch(shortCodes, settings.commentsPerPost(), trigger);
             commentRunId = cx.runId();
