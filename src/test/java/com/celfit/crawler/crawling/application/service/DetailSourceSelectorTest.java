@@ -17,7 +17,7 @@ class DetailSourceSelectorTest {
     /** source/supports만 다른 스텁 fetcher. */
     static DetailFetcher stub(DetailSource src, ContentType supported) {
         return new DetailFetcher() {
-            @Override public CrawlExecutor.Execution fetch(List<String> s, ContentType t, TriggerType tr) { return null; }
+            @Override public DetailFetcher.DetailResult fetch(List<String> s, ContentType t, TriggerType tr) { return null; }
             @Override public DetailSource source() { return src; }
             @Override public boolean supports(ContentType t) { return t == supported || src == DetailSource.ACTOR; }
         };

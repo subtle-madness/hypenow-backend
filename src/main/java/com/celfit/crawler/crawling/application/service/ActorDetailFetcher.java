@@ -22,10 +22,11 @@ public class ActorDetailFetcher implements DetailFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
+    public DetailFetcher.DetailResult fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
         String actor = actorFor(type);
-        return executor.execute(JobName.AGGREGATE, trigger, null, null, actor,
+        CrawlExecutor.Execution ex = executor.execute(JobName.AGGREGATE, trigger, null, null, actor,
                 ActorInputs.detailUrls(urlsFor(shortCodes, type)));
+        return new DetailFetcher.DetailResult(ex, java.util.Set.of());
     }
 
     String actorFor(ContentType type) {

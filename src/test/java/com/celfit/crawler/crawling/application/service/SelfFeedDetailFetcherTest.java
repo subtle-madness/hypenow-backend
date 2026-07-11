@@ -31,19 +31,21 @@ class SelfFeedDetailFetcherTest {
                 "{\"data\":{\"xdt_shortcode_media\":{\"shortcode\":\"SC1\",\"edge_media_preview_like\":{\"count\":9}}}}",
                 Map.of()));
         var f = new SelfFeedDetailFetcher(web, null, mapper, Duration.ZERO, "doc123", "PostQuery", om);
-        List<Map<String, Object>> out = f.collect(List.of("SC1"));
+        List<Map<String, Object>> out = f.collect(List.of("SC1"), new java.util.LinkedHashSet<>());
         assertThat(out).hasSize(1);
         assertThat(out.get(0)).containsEntry("shortCode", "SC1").containsEntry("likesCount", 9L);
     }
 
-    @Test void 한_shortCode_500이어도_나머지_보존() {
+    @Test void 한_shortCode_500이어도_failed집합에_담기고_나머지_보존() {
         var web = fakeWeb(body -> body.contains("BAD")
                 ? new InstagramWebClient.Response(500, "", Map.of())
                 : new InstagramWebClient.Response(200,
                     "{\"data\":{\"xdt_shortcode_media\":{\"shortcode\":\"OK\"}}}", Map.of()));
         var f = new SelfFeedDetailFetcher(web, null, mapper, Duration.ZERO, "doc123", "PostQuery", om);
-        List<Map<String, Object>> out = f.collect(List.of("BAD", "OK"));
+        var failed = new java.util.LinkedHashSet<String>();
+        List<Map<String, Object>> out = f.collect(List.of("BAD", "OK"), failed);
         assertThat(out).hasSize(1);
         assertThat(out.get(0)).containsEntry("shortCode", "OK");
+        assertThat(failed).containsExactly("BAD");
     }
 }

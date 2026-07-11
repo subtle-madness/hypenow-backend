@@ -84,10 +84,11 @@ public class AggregateJob {
         Map<String, List<Map<String, Object>>> commentsByCode;
         Long detailRunId;
         Long commentRunId;
+        DetailFetcher.DetailResult dr;
         try {
-            CrawlExecutor.Execution dx = detailSource.forType(type).fetch(shortCodes, type, trigger);
-            detailRunId = dx.runId();
-            detailByCode = indexDetails(dx.items());
+            dr = detailSource.forType(type).fetch(shortCodes, type, trigger);
+            detailRunId = dr.execution().runId();
+            detailByCode = indexDetails(dr.execution().items());
             if (detailByCode.isEmpty() && !chunk.isEmpty()) {
                 // 요청 전부가 응답에 없음 = 삭제가 아니라 액터 소프트 실패(레이트리밋 등) 가능성
                 // — mass-GONE 대신 재시도. 댓글 액터 호출도 아낀다.
@@ -104,12 +105,24 @@ public class AggregateJob {
             return new ChunkResult(0, 0, chunk.size() - f, f);
         }
 
-        int aggregated = 0, gone = 0;
+        java.util.Set<String> failed = dr.failedShortCodes();
+        int aggregated = 0, gone = 0, retried = 0, failedCount = 0;
         for (Content c : chunk) {
             Map<String, Object> detail = detailByCode.get(c.getShortCode());
             if (detail == null) {
-                c.setStatus(ContentStatus.GONE);  // 응답에 없음 = 삭제·비공개 간주
-                gone++;
+                if (failed.contains(c.getShortCode())) {
+                    // 일시적 실패로 스킵됨 — GONE 대신 재시도(상한 도달 시 FAILED)
+                    c.setAggregateAttempts(c.getAggregateAttempts() + 1);
+                    if (c.getAggregateAttempts() >= settings.maxAttempts()) {
+                        c.setStatus(ContentStatus.FAILED);
+                        failedCount++;
+                    } else {
+                        retried++;
+                    }
+                } else {
+                    c.setStatus(ContentStatus.GONE);  // 응답에 있는데 이 항목만 없음 = 삭제·비공개
+                    gone++;
+                }
                 continue;
             }
             rawDetails.save(new RawPostDetail(c.getId(), detailRunId, detail, clock.instant()));
@@ -121,7 +134,7 @@ public class AggregateJob {
             c.setAggregatedAt(clock.instant());
             aggregated++;
         }
-        return new ChunkResult(aggregated, gone, 0, 0);
+        return new ChunkResult(aggregated, gone, retried, failedCount);
     }
 
     /** 청크 전체의 attempts를 올리고 상한 도달분은 FAILED로 밀어냄. FAILED 전환 수를 반환. */

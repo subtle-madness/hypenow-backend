@@ -1,6 +1,5 @@
 package com.celfit.crawler.crawling.application.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -44,7 +43,8 @@ class AggregateJobDetailRoutingTest {
         DetailFetcher fetcher = mock(DetailFetcher.class);
         when(detailSource.forType(any())).thenReturn(fetcher);
         when(fetcher.fetch(any(), any(), any()))
-                .thenReturn(new CrawlExecutor.Execution(1L, List.of()));
+                .thenReturn(new DetailFetcher.DetailResult(
+                        new CrawlExecutor.Execution(1L, List.of()), java.util.Set.of()));
 
         CommentFetcher commentFetcher = mock(CommentFetcher.class);
         when(commentSource.current()).thenReturn(commentFetcher);
@@ -74,6 +74,5 @@ class AggregateJobDetailRoutingTest {
         verify(fetcher).fetch(List.of("reel1"), ContentType.REELS, TriggerType.MANUAL);
         // 상세 수집이 셀렉터 경유로 바뀌었으니 executor는 상세 fetch에 더 이상 쓰이지 않는다.
         org.mockito.Mockito.verifyNoInteractions(executor);
-        assertThat(detailSource).isNotNull();
     }
 }

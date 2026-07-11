@@ -59,12 +59,14 @@ public class SelfFeedDetailFetcher implements DetailFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
-        return executor.execute(JobName.AGGREGATE, trigger, null, null, LABEL,
-                () -> new ApifyResult(null, collect(shortCodes)));
+    public DetailFetcher.DetailResult fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
+        java.util.Set<String> failed = new java.util.LinkedHashSet<>();
+        CrawlExecutor.Execution ex = executor.execute(JobName.AGGREGATE, trigger, null, null, LABEL,
+                () -> new ApifyResult(null, collect(shortCodes, failed)));
+        return new DetailFetcher.DetailResult(ex, failed);
     }
 
-    List<Map<String, Object>> collect(List<String> shortCodes) {
+    List<Map<String, Object>> collect(List<String> shortCodes, java.util.Set<String> failed) {
         if (shortCodes.isEmpty()) return List.of();
         var pageResp = web.get(ShortCodes.postUrl(shortCodes.get(0)));   // 부트스트랩: lsd 1회
         if (pageResp.status() >= 300) throw new ApifyException("부트스트랩 페이지 " + pageResp.status());
@@ -79,6 +81,7 @@ public class SelfFeedDetailFetcher implements DetailFetcher {
                 Map<String, Object> d = mapper.fromSelfGraphql(resp.body());
                 if (d.get("shortCode") != null) out.add(d);
             } catch (ApifyException e) {
+                failed.add(sc);   // 일시적 실패 — 재시도 대상(GONE 금지)
                 log.warn("피드 상세 실패, 스킵: {} ({})", sc, e.getMessage());
             }
             sleep();

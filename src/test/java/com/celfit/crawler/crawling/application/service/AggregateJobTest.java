@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
+import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.domain.*;
 import com.celfit.crawler.content.domain.*;
 import com.celfit.crawler.settings.domain.*;
@@ -32,6 +33,16 @@ class AggregateJobTest extends IntegrationTest {
         @Bean @Primary
         FakeApifyRunner fakeApifyRunner() {
             return new FakeApifyRunner();
+        }
+
+        @Bean @Primary
+        HikerHttp fakeHikerHttp() {
+            return path -> {
+                if (path.contains("code=REELBAD")) throw new ApifyException("Hiker HTTP 429");
+                // 성공 응답: code를 쿼리에서 추출해 되돌려줌
+                String code = path.substring(path.indexOf("code=") + 5);
+                return "{\"code\":\"" + code + "\",\"like_count\":1,\"comment_count\":0,\"play_count\":5}";
+            };
         }
     }
 
@@ -181,5 +192,25 @@ class AggregateJobTest extends IntegrationTest {
         assertThat(contents.findById(c.getId()).orElseThrow().getAggregateAttempts()).isEqualTo(1);
         // 빈 응답 가드가 댓글 액터 호출 전에 걸려 호출 자체를 아낀다
         assertThat(fake.calls).hasSize(1);
+    }
+
+    @Test
+    void HIKER_소스에서_한_릴스가_일시실패해도_GONE이_아니라_재시도된다() {
+        detailSourceSetting.update(DetailSource.HIKER, DetailSource.ACTOR);   // 릴스=HIKER
+        seedQualified("REELOK", 4, ContentType.REELS);
+        seedQualified("REELBAD", 4, ContentType.REELS);
+        fake.enqueue(List.of());   // 릴스 댓글(ACTOR 기본 경유)
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        assertThat(summary.aggregated()).isEqualTo(1);
+        assertThat(summary.gone()).isZero();
+        assertThat(summary.retried()).isEqualTo(1);
+        Content ok = contents.findByShortCode("REELOK").orElseThrow();
+        assertThat(ok.getStatus()).isEqualTo(ContentStatus.AGGREGATED);
+        Content bad = contents.findByShortCode("REELBAD").orElseThrow();
+        assertThat(bad.getStatus()).isNotEqualTo(ContentStatus.GONE);
+        assertThat(bad.getStatus()).isEqualTo(ContentStatus.QUALIFIED);   // max-attempts=3(테스트 yml), 1 < 3
+        assertThat(bad.getAggregateAttempts()).isEqualTo(1);
     }
 }

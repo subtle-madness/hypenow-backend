@@ -33,18 +33,21 @@ public class HikerReelDetailFetcher implements DetailFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
-        return executor.execute(JobName.AGGREGATE, trigger, null, null, LABEL,
-                () -> new ApifyResult(null, collect(shortCodes)));
+    public DetailFetcher.DetailResult fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
+        java.util.Set<String> failed = new java.util.LinkedHashSet<>();
+        CrawlExecutor.Execution ex = executor.execute(JobName.AGGREGATE, trigger, null, null, LABEL,
+                () -> new ApifyResult(null, collect(shortCodes, failed)));
+        return new DetailFetcher.DetailResult(ex, failed);
     }
 
-    List<Map<String, Object>> collect(List<String> shortCodes) {
+    List<Map<String, Object>> collect(List<String> shortCodes, java.util.Set<String> failed) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (String sc : shortCodes) {
             try {
                 Map<String, Object> d = mapper.fromHikerMedia(http.get("/v2/media/info/by/code?code=" + sc));
                 if (d.get("shortCode") != null) out.add(d);
             } catch (ApifyException e) {
+                failed.add(sc);   // 일시적 실패 — 재시도 대상(GONE 금지)
                 log.warn("릴스 상세 실패, 스킵: {} ({})", sc, e.getMessage());
             }
         }
