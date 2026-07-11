@@ -18,9 +18,10 @@ public class ProfileMapper {
         this.om = om; // Boot이 구성한 tools.jackson ObjectMapper 빈 주입
     }
 
-    /** self-crawl web_profile_info(GraphQL) 단건. */
+    /** self-crawl web_profile_info(GraphQL) 단건. 정규화 필드 + 원본 전체(_rawProfile). */
     public Map<String, Object> fromSelf(String json) {
-        JsonNode user = read(json).path("data").path("user");
+        JsonNode root = read(json);
+        JsonNode user = root.path("data").path("user");
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("username", user.path("username").asString(null));
         p.put("userId", user.path("id").asString(null));
@@ -30,10 +31,11 @@ public class ProfileMapper {
         p.put("biography", user.path("biography").asString(null));
         p.put("verified", user.path("is_verified").asBoolean(false));
         p.put("private", user.path("is_private").asBoolean(false));
+        p.put("_rawProfile", raw(root));
         return p;
     }
 
-    /** HikerAPI v2/user/by/username 또는 gql/web_profile_info(모바일 user 객체). */
+    /** HikerAPI v2/user/by/username 또는 gql/web_profile_info(모바일 user 객체). 정규화 필드 + 원본 전체(_rawProfile). */
     public Map<String, Object> fromHikerUser(String json) {
         JsonNode root = read(json);
         JsonNode user = root.has("user") ? root.path("user") : root;
@@ -46,6 +48,7 @@ public class ProfileMapper {
         p.put("biography", user.path("biography").asString(null));
         p.put("verified", user.path("is_verified").asBoolean(false));
         p.put("private", user.path("is_private").asBoolean(false));
+        p.put("_rawProfile", raw(root));
         return p;
     }
 
@@ -65,6 +68,11 @@ public class ProfileMapper {
         } catch (JacksonException e) {
             throw new ApifyException("프로필 JSON 파싱 실패: " + e.getMessage(), e);
         }
+    }
+
+    /** JsonNode를 jsonb 저장용 순수 객체(Map/List/스칼라)로 변환. */
+    private Object raw(JsonNode node) {
+        return om.convertValue(node, Object.class);
     }
 
     private Long toLong(Object v) {

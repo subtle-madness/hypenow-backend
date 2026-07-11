@@ -26,9 +26,11 @@ public class HikerSuggestedSupplement {
         Object uid = item.get("userId");
         if (uid == null) return;
         String body = http.get("/v2/user/suggested/profiles?user_id=" + uid + "&expand_suggestion=true");
+        JsonNode root = read(body);
         List<Map<String, Object>> related = new ArrayList<>();
-        collectUsers(read(body), related);
+        collectUsers(root, related);
         item.put("relatedProfiles", related);
+        item.put("_rawSuggested", om.convertValue(root, Object.class));
     }
 
     private void collectUsers(JsonNode node, List<Map<String, Object>> acc) {

@@ -18,6 +18,7 @@ class ProfileMapperTest {
         assertThat(p.get("username")).isEqualTo("beauty.e.ze");
         assertThat(p.get("followersCount")).isEqualTo(2369L);
         assertThat(p.get("userId")).isEqualTo("74851841915");
+        assertThat(p).containsKey("_rawProfile");  // 원본 통째로 보존
     }
 
     @Test void hiker_user_정규화() {
@@ -27,6 +28,7 @@ class ProfileMapperTest {
         assertThat(p.get("username")).isEqualTo("tem.duck");
         assertThat(p.get("followersCount")).isEqualTo(256559L);
         assertThat(p.get("userId")).isEqualTo("74756186520");
+        assertThat(p).containsKey("_rawProfile");  // 원본 통째로 보존
     }
 
     @Test void actor_아이템_보강() {

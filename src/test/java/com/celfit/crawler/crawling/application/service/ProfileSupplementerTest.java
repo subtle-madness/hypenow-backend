@@ -43,7 +43,8 @@ class ProfileSupplementerTest {
         var sup = new ProfileSupplementer(new HikerMediasSupplement(http, om),
                 new HikerSuggestedSupplement(http, om), settingBoth());
         var ex = sup.apply(oneItem(), ProfileSource.SELF);
-        assertThat(ex.items().get(0)).containsKeys("latestPosts", "relatedProfiles");
+        assertThat(ex.items().get(0))
+            .containsKeys("latestPosts", "relatedProfiles", "_rawMedias", "_rawSuggested");  // 정규화 + 원본
     }
 
     @Test void medias_튜플응답_파싱() {

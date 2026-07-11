@@ -26,8 +26,9 @@ public class HikerMediasSupplement {
         Object uid = item.get("userId");
         if (uid == null) return;
         String body = http.get("/v1/user/medias/chunk?user_id=" + uid);
+        JsonNode root = read(body);
         List<Map<String, Object>> posts = new ArrayList<>();
-        JsonNode arr = mediaArray(read(body));
+        JsonNode arr = mediaArray(root);
         for (JsonNode n : arr) {
             JsonNode m = n.has("media") ? n.path("media") : n;
             Map<String, Object> post = new java.util.LinkedHashMap<>();
@@ -38,6 +39,7 @@ public class HikerMediasSupplement {
             posts.add(post);
         }
         item.put("latestPosts", posts);
+        item.put("_rawMedias", om.convertValue(root, Object.class));
     }
 
     private JsonNode read(String json) {
