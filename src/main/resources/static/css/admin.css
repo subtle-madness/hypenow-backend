@@ -215,6 +215,7 @@ table.data.fit { width: auto; min-width: 24rem; }
 .badge.FEED { color: var(--cat-feed); background: color-mix(in srgb, var(--cat-feed) 10%, transparent); }
 .badge.AD { color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
 .badge.tag { margin-right: 0.3rem; }
+.badge.dup { margin-left: 0.35rem; color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
 
 /* ── 폼 요소 ──────────────────────────── */
 input, select, button {

@@ -9,7 +9,13 @@
             <td th:text="${r.keyword}"></td>
             <td th:text="${r.actorId}"></td>
             <td><span class="badge" th:classappend="${r.status}" th:text="${r.status}"></span></td>
-            <td th:text="${r.itemCount}"></td>
+            <td>
+                <span th:text="${r.itemCount}"></span>
+                <span th:if="${r.job.name() == 'DISCOVER' and dupByRun != null and dupByRun[r.id] != null and dupByRun[r.id] > 0}"
+                      class="badge dup"
+                      th:text="'중복 ' + ${dupByRun[r.id]}"
+                      title="이미 발굴됐던 게시물 재발굴 — 신규 PENDING 아님"></span>
+            </td>
             <td th:text="${r.errorMessage}"></td>
             <td th:text="${r.startedAt}"></td>
             <td th:text="${r.finishedAt}"></td>

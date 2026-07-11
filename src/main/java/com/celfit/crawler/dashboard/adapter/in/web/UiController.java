@@ -31,6 +31,7 @@ public class UiController {
     private final RawPostDetailRepository rawDetails;
     private final RawCommentRepository rawComments;
     private final RawProfileRepository rawProfiles;
+    private final RawDiscoveryPostRepository rawDiscovery;
     private final ObjectMapper objectMapper;
     private final LogBuffer logBuffer;
 
@@ -41,6 +42,7 @@ public class UiController {
                         CategoryRepository categories, ContentRepository contents,
                         AccountRepository accounts, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, RawProfileRepository rawProfiles,
+                        RawDiscoveryPostRepository rawDiscovery,
                         ObjectMapper objectMapper, LogBuffer logBuffer,
                         com.celfit.crawler.crawling.application.service.JobLock jobLock,
                         com.celfit.crawler.crawling.application.service.JobProgress jobProgress) {
@@ -52,6 +54,7 @@ public class UiController {
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
         this.rawProfiles = rawProfiles;
+        this.rawDiscovery = rawDiscovery;
         this.objectMapper = objectMapper;
         this.logBuffer = logBuffer;
         this.jobLock = jobLock;
@@ -74,7 +77,20 @@ public class UiController {
 
     @GetMapping("/ui/fragments/runs")
     public String runsFragment(Model model) {
-        model.addAttribute("runs", runs.findTop50ByOrderByIdDesc());
+        var runList = runs.findTop50ByOrderByIdDesc();
+        model.addAttribute("runs", runList);
+        // DISCOVER run별 "중복 재발굴"(이미 발굴됐던 게시물) 수 — 신규 PENDING이 왜 안 늘었는지 표시
+        var discoverIds = runList.stream()
+                .filter(r -> r.getJob() == JobName.DISCOVER)
+                .map(CrawlRun::getId)
+                .toList();
+        java.util.Map<Long, Long> dupByRun = new java.util.HashMap<>();
+        if (!discoverIds.isEmpty()) {
+            for (var s : rawDiscovery.discoveryStats(discoverIds)) {
+                dupByRun.put(s.getRunId(), s.getDuplicates());
+            }
+        }
+        model.addAttribute("dupByRun", dupByRun);
         return "fragments/runs :: table";
     }
 
