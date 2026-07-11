@@ -45,7 +45,8 @@ class QualifyJobProfileSourceRoutingTest {
                 Instant.parse("2026-07-01T00:00:00Z"), 1L, "메이크업", Instant.now());
         Account kim = new Account("kim");
 
-        when(contents.findByStatus(ContentStatus.PENDING)).thenReturn(List.of(c));
+        when(contents.findByStatus(any(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(c)));
         when(accounts.findByUsernameInAndLastProfiledAtIsNull(Set.of("kim"))).thenReturn(List.of(kim));
         when(rules.findByCategoryId(1L)).thenReturn(Optional.empty());
 
@@ -53,7 +54,11 @@ class QualifyJobProfileSourceRoutingTest {
         when(selector.fetchAndSupplement(List.of("kim"), TriggerType.MANUAL))
                 .thenReturn(new CrawlExecutor.Execution(9L, List.of(item)));
 
-        QualifyJob job = new QualifyJob(contents, accounts, rules, rawProfiles, clock, selector);
+        com.celfit.crawler.settings.application.service.SettingsService settings =
+                mock(com.celfit.crawler.settings.application.service.SettingsService.class);
+        when(settings.qualifyBatchLimit()).thenReturn(500);
+
+        QualifyJob job = new QualifyJob(contents, accounts, rules, rawProfiles, clock, selector, settings);
         var summary = job.run(TriggerType.MANUAL);
 
         assertThat(summary.profiled()).isEqualTo(1);

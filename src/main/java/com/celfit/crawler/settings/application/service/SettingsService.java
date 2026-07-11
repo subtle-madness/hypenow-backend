@@ -2,6 +2,7 @@ package com.celfit.crawler.settings.application.service;
 
 import com.celfit.crawler.common.config.AggregateProperties;
 import com.celfit.crawler.common.config.DiscoverProperties;
+import com.celfit.crawler.common.config.QualifyProperties;
 import com.celfit.crawler.settings.domain.AppSetting;
 import com.celfit.crawler.settings.application.port.out.AppSettingRepository;
 import java.util.List;
@@ -20,6 +21,7 @@ public class SettingsService {
     public record SettingView(String key, int effective, int defaultValue, boolean overridden) {}
 
     static final String RESULTS_LIMIT = "discover.results-limit";
+    static final String QUALIFY_BATCH_LIMIT = "qualify.batch-limit";
     static final String DELAY_DAYS = "aggregate.delay-days";
     static final String BATCH_LIMIT = "aggregate.batch-limit";
     static final String CHUNK_SIZE = "aggregate.chunk-size";
@@ -27,22 +29,29 @@ public class SettingsService {
     static final String MAX_ATTEMPTS = "aggregate.max-attempts";
 
     private static final List<String> KEYS = List.of(
-            RESULTS_LIMIT, DELAY_DAYS, BATCH_LIMIT, CHUNK_SIZE, COMMENTS_PER_POST, MAX_ATTEMPTS);
+            RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, DELAY_DAYS, BATCH_LIMIT, CHUNK_SIZE, COMMENTS_PER_POST, MAX_ATTEMPTS);
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
+    private final QualifyProperties qualifyProps;
     private final AggregateProperties aggregateProps;
 
     public SettingsService(AppSettingRepository settings, DiscoverProperties discoverProps,
-                           AggregateProperties aggregateProps) {
+                           QualifyProperties qualifyProps, AggregateProperties aggregateProps) {
         this.settings = settings;
         this.discoverProps = discoverProps;
+        this.qualifyProps = qualifyProps;
         this.aggregateProps = aggregateProps;
     }
 
     @Transactional(readOnly = true)
     public int resultsLimit() {
         return effective(RESULTS_LIMIT);
+    }
+
+    @Transactional(readOnly = true)
+    public int qualifyBatchLimit() {
+        return effective(QUALIFY_BATCH_LIMIT);
     }
 
     @Transactional(readOnly = true)
@@ -104,6 +113,7 @@ public class SettingsService {
     private int defaultValue(String key) {
         return switch (key) {
             case RESULTS_LIMIT -> discoverProps.resultsLimit();
+            case QUALIFY_BATCH_LIMIT -> qualifyProps.batchLimit();
             case DELAY_DAYS -> aggregateProps.delayDays();
             case BATCH_LIMIT -> aggregateProps.batchLimit();
             case CHUNK_SIZE -> aggregateProps.chunkSize();

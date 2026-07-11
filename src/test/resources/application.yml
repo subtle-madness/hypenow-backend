@@ -33,6 +33,8 @@ crawler:
     request-timeout: 15s
   discover:
     results-limit: 100
+  qualify:
+    batch-limit: 500
   aggregate:
     delay-days: 3
     batch-limit: 200

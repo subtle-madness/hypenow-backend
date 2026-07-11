@@ -17,7 +17,7 @@ import org.springframework.core.task.TaskExecutor;
 @Configuration
 @EnableConfigurationProperties({ApifyProperties.class, DiscoverProperties.class,
         AggregateProperties.class, ScheduleProperties.class, DirectCommentProperties.class,
-        HikerProperties.class, DirectDetailProperties.class})
+        HikerProperties.class, DirectDetailProperties.class, QualifyProperties.class})
 public class CrawlerConfig {
 
     @Bean

@@ -8,9 +8,11 @@ import com.celfit.crawler.settings.domain.*;
 import com.celfit.crawler.crawling.application.port.out.*;
 import com.celfit.crawler.content.application.port.out.*;
 import com.celfit.crawler.settings.application.port.out.*;
+import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,16 +29,19 @@ public class QualifyJob {
     private final RawProfileRepository rawProfiles;
     private final Clock clock;
     private final ProfileSourceSelector profileSourceSelector;
+    private final SettingsService settings;
 
     public QualifyJob(ContentRepository contents, AccountRepository accounts,
                       CollectionRuleRepository rules, RawProfileRepository rawProfiles,
-                      Clock clock, ProfileSourceSelector profileSourceSelector) {
+                      Clock clock, ProfileSourceSelector profileSourceSelector,
+                      SettingsService settings) {
         this.contents = contents;
         this.accounts = accounts;
         this.rules = rules;
         this.rawProfiles = rawProfiles;
         this.clock = clock;
         this.profileSourceSelector = profileSourceSelector;
+        this.settings = settings;
     }
 
     @Transactional
@@ -47,7 +52,8 @@ public class QualifyJob {
     /** requalify=true면 EXCLUDED도 재판정 (규칙 변경 후, raw_profile 재사용 — Apify 재호출 없음). */
     @Transactional
     public Summary run(TriggerType trigger, boolean requalify) {
-        List<Content> targets = new ArrayList<>(contents.findByStatus(ContentStatus.PENDING));
+        List<Content> targets = new ArrayList<>(contents.findByStatus(ContentStatus.PENDING,
+                PageRequest.of(0, settings.qualifyBatchLimit())).getContent());
         if (requalify) targets.addAll(contents.findByStatus(ContentStatus.EXCLUDED));
 
         int profiled = profileMissingAccounts(targets, trigger);
