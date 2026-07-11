@@ -69,9 +69,12 @@ public class JdkInstagramWebClient implements InstagramWebClient {
 
     @Override
     public Response get(String url) {
+        // x-ig-app-id: 로그아웃 GET(web_profile_info 등) 다수가 이 헤더 없이는 200을 내려주지 않는다
+        // (실측 확인). 기존 댓글 플로우(포스트 페이지 GET)는 헤더가 추가돼도 영향 없다.
         return send(HttpRequest.newBuilder(URI.create(url))
                 .timeout(props.requestTimeout())
                 .header("User-Agent", UA)
+                .header("x-ig-app-id", APP_ID)
                 .GET().build());
     }
 
@@ -96,6 +99,7 @@ public class JdkInstagramWebClient implements InstagramWebClient {
     private static final String UA =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+    private static final String APP_ID = "936619743392459";
 
     private Response send(HttpRequest req) {
         try {
