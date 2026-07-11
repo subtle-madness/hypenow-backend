@@ -1,6 +1,7 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
@@ -11,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** HikerAPI 모바일 base — username별 /v2/user/by/username 단건 조회로 프로필 정규화. */
@@ -18,6 +21,7 @@ import org.springframework.stereotype.Component;
 public class HikerMobileProfileFetcher implements ProfileFetcher {
 
     static final String LABEL = "profile-hiker-mobile";
+    private static final Logger log = LoggerFactory.getLogger(HikerMobileProfileFetcher.class);
 
     private final HikerHttp http;
     private final CrawlExecutor executor;
@@ -38,9 +42,13 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
     private List<Map<String, Object>> collect(List<String> usernames) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (String u : usernames) {
-            String enc = URLEncoder.encode(u, StandardCharsets.UTF_8);
-            Map<String, Object> p = mapper.fromHikerUser(http.get("/v2/user/by/username?username=" + enc));
-            if (p.get("username") != null) out.add(p);
+            try {
+                String enc = URLEncoder.encode(u, StandardCharsets.UTF_8);
+                Map<String, Object> p = mapper.fromHikerUser(http.get("/v2/user/by/username?username=" + enc));
+                if (p.get("username") != null) out.add(p);
+            } catch (ApifyException e) {
+                log.warn("by/username 실패, 계정 스킵: {} ({})", u, e.getMessage());
+            }
         }
         return out;
     }

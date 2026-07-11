@@ -47,7 +47,8 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
         List<Map<String, Object>> out = new ArrayList<>();
         for (String u : usernames) {
             try {
-                out.add(fetchOne(u));
+                Map<String, Object> gql = fetchOne(u);
+                if (gql != null && gql.get("username") != null) out.add(gql);
             } catch (ApifyException e) {
                 log.warn("web_profile_info 실패, 계정 스킵: {} ({})", u, e.getMessage());
             }
@@ -59,8 +60,11 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
         String enc = URLEncoder.encode(username, StandardCharsets.UTF_8);
         Map<String, Object> base = mapper.fromHikerUser(http.get("/v2/user/by/username?username=" + enc));
         Object uid = base.get("userId");
-        Map<String, Object> gql = mapper.fromHikerUser(http.get("/gql/user/web_profile_info?user_id=" + uid));
-        return gql;
+        if (uid == null) {
+            log.warn("userId 없음, 계정 스킵: {}", username);
+            return null;
+        }
+        return mapper.fromHikerUser(http.get("/gql/user/web_profile_info?user_id=" + uid));
     }
 
     @Override
