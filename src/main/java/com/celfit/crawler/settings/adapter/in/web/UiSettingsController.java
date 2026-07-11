@@ -1,6 +1,8 @@
 package com.celfit.crawler.settings.adapter.in.web;
 
 import com.celfit.crawler.settings.application.service.CommentSourceSetting;
+import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
+import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.application.service.SettingsService.SettingView;
 import java.util.ArrayList;
@@ -21,16 +23,25 @@ public class UiSettingsController {
 
     private final SettingsService service;
     private final CommentSourceSetting commentSourceSetting;
+    private final ProfileSourceSetting profileSourceSetting;
+    private final ProfileSupplementSetting profileSupplementSetting;
 
-    public UiSettingsController(SettingsService service, CommentSourceSetting commentSourceSetting) {
+    public UiSettingsController(SettingsService service, CommentSourceSetting commentSourceSetting,
+                                 ProfileSourceSetting profileSourceSetting,
+                                 ProfileSupplementSetting profileSupplementSetting) {
         this.service = service;
         this.commentSourceSetting = commentSourceSetting;
+        this.profileSourceSetting = profileSourceSetting;
+        this.profileSupplementSetting = profileSupplementSetting;
     }
 
     @GetMapping
     public String page(Model model) {
         model.addAttribute("settings", service.list());
         model.addAttribute("commentSource", commentSourceSetting.current().name());
+        model.addAttribute("profileSource", profileSourceSetting.current().name());
+        model.addAttribute("profilePosts", profileSupplementSetting.postsEnabled());
+        model.addAttribute("profileRelated", profileSupplementSetting.relatedEnabled());
         return "settings";
     }
 

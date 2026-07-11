@@ -23,6 +23,28 @@
     <p class="hint">현재: <b th:text="${commentSource}">ACTOR</b> · 기본값: ACTOR</p>
 </section>
 
+<section class="card">
+    <h2>프로필 수집 방식</h2>
+    <form method="post" th:action="@{/ui/profile-source}">
+        <label class="check"><input type="radio" name="source" value="SELF"
+            th:checked="${profileSource == 'SELF'}"/> 자체 크롤 (기본)</label>
+        <label class="check"><input type="radio" name="source" value="ACTOR"
+            th:checked="${profileSource == 'ACTOR'}"/> 액터 (Apify)</label>
+        <label class="check"><input type="radio" name="source" value="HIKER_MOBILE"
+            th:checked="${profileSource == 'HIKER_MOBILE'}"/> HikerAPI 모바일</label>
+        <label class="check"><input type="radio" name="source" value="HIKER_WEB_GQL"
+            th:checked="${profileSource == 'HIKER_WEB_GQL'}"/> HikerAPI 웹gql</label>
+        <hr/>
+        <p class="hint">보충 (SELF·HikerAPI모바일에서만 적용):</p>
+        <label class="check"><input type="checkbox" name="posts" value="true"
+            th:checked="${profilePosts}"/> 게시물 조회수 채우기 (HikerAPI medias)</label>
+        <label class="check"><input type="checkbox" name="related" value="true"
+            th:checked="${profileRelated}"/> 관련계정 채우기 (HikerAPI suggested)</label>
+        <button type="submit" class="primary">저장</button>
+    </form>
+    <p class="hint">현재: <b th:text="${profileSource}">SELF</b> · 기본값: SELF</p>
+</section>
+
 <p class="hint">빈칸으로 저장하면 기본값(yml)으로 복귀합니다.</p>
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 
