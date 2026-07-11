@@ -7,10 +7,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class JdkHikerHttp implements HikerHttp {
+
+    private static final Logger log = LoggerFactory.getLogger(JdkHikerHttp.class);
 
     private final HttpClient client = HttpClient.newHttpClient();
     private final String baseUrl;
@@ -18,16 +22,21 @@ public class JdkHikerHttp implements HikerHttp {
     private final Duration timeout;
 
     public JdkHikerHttp(HikerProperties props) {
-        if (props.apiKey() == null || props.apiKey().isBlank()) {
-            throw new IllegalStateException("HIKER_API_KEY가 설정되지 않았습니다 (환경변수 필요)");
-        }
+        // 키가 없어도 앱은 부팅한다(기본 소스 SELF는 HikerAPI를 쓰지 않음).
+        // HikerAPI 소스/보충을 실제로 호출할 때만 get()에서 키를 검증한다.
         this.baseUrl = props.baseUrl() == null ? "https://api.hikerapi.com" : props.baseUrl();
         this.apiKey = props.apiKey();
         this.timeout = props.requestTimeout() == null ? Duration.ofSeconds(15) : props.requestTimeout();
+        if (this.apiKey == null || this.apiKey.isBlank()) {
+            log.warn("HIKER_API_KEY 미설정 — HikerAPI 소스/보충은 사용할 수 없습니다(SELF 등 다른 소스는 정상 동작).");
+        }
     }
 
     @Override
     public String get(String path) {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new ApifyException("HIKER_API_KEY가 설정되지 않았습니다 — HikerAPI 소스/보충을 쓰려면 환경변수 필요");
+        }
         HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(timeout)
                 .header("x-access-key", apiKey)
