@@ -22,6 +22,10 @@ crawler:
     page-delay: 1s
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  direct-detail:
+    post-doc-id: ${IG_POST_DOC_ID:}
+    post-friendly-name: ${IG_POST_FRIENDLY_NAME:PolarisPostActionLoadPostQueryQuery}
+    page-delay: 1s
   hiker:
     api-key: ${HIKER_API_KEY:}
     base-url: https://api.hikerapi.com
