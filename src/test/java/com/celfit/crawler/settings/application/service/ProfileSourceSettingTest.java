@@ -10,10 +10,10 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
-class ProfileSourceSettingTest {
+public class ProfileSourceSettingTest {
 
-    // AppSettingRepository의 최소 fake (findById/save만 사용)
-    static AppSettingRepository fakeRepo(Map<String, String> store) {
+    // AppSettingRepository의 최소 fake (findById/save만 사용) — 다른 패키지 테스트(ProfileSupplementerTest)도 재사용
+    public static AppSettingRepository fakeRepo(Map<String, String> store) {
         return new AppSettingRepository() {
             @Override public Optional<AppSetting> findById(String k) {
                 return Optional.ofNullable(store.get(k)).map(v -> new AppSetting(k, v));
