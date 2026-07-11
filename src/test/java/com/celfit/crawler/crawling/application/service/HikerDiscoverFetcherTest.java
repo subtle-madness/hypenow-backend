@@ -83,6 +83,20 @@ class HikerDiscoverFetcherTest {
         assertThat(calls).hasSize(1);  // page_id 요청 없음
     }
 
+    @Test void 빈페이지_more_available_true_무한루프_MAX_PAGES에서_종료() {
+        List<String> calls = new ArrayList<>();
+        HikerHttp http = path -> { calls.add(path); return page("", "P", true); };
+        SettingsService settings = mock(SettingsService.class);
+        when(settings.resultsLimit()).thenReturn(100);
+
+        var fetcher = new HikerDiscoverFetcher(http, passthroughExecutor(new ArrayList<>()),
+                new HikerDiscoveryMapper(new ObjectMapper()), settings);
+        var ex = fetcher.fetch(5L, "립", TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(calls).hasSize(HikerDiscoverFetcher.MAX_PAGES);
+    }
+
     @Test void 키워드는_URL인코딩된다() {
         List<String> calls = new ArrayList<>();
         HikerHttp http = path -> { calls.add(path); return page(media("C1", "u1"), null, false); };

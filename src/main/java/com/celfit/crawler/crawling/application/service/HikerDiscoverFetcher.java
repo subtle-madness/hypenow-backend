@@ -24,6 +24,14 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
 
     static final String LABEL = "hiker-hashtag-top";
 
+    /**
+     * 페이지 반복 상한: 빈 페이지(items=0)이면서 more_available=true·page_id가 계속
+     * 내려오는 퇴화 응답이면 while(true)가 무한루프로 @Transactional 잡을 붙잡고
+     * 호출당 과금($0.001/call)만 반복된다. 정상적인 resultsLimit≈100은 페이지당
+     * 수십 건 기준 ~4페이지면 충족되므로 20은 정상 흐름을 막지 않는 넉넉한 상한.
+     */
+    static final int MAX_PAGES = 20;
+
     private final HikerHttp http;
     private final CrawlExecutor executor;
     private final HikerDiscoveryMapper mapper;
@@ -48,13 +56,16 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
         String enc = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
         List<Map<String, Object>> out = new ArrayList<>();
         String pageId = null;
+        int pages = 0;
         while (true) {
             String path = "/v2/hashtag/medias/top?name=" + enc
                     + (pageId == null ? "" : "&page_id=" + URLEncoder.encode(pageId, StandardCharsets.UTF_8));
             HikerDiscoveryMapper.Page page = mapper.parse(http.get(path));
             out.addAll(page.items());
             pageId = page.nextPageId();
-            if (out.size() >= limit || !page.moreAvailable() || pageId == null || pageId.isBlank()) break;
+            pages++;
+            if (out.size() >= limit || !page.moreAvailable() || pageId == null || pageId.isBlank()
+                    || pages >= MAX_PAGES) break;
         }
         return out;
     }
