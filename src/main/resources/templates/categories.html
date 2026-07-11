@@ -151,5 +151,19 @@
     </div>
 </div>
 </main>
+<script>
+    // 모든 폼이 POST→리다이렉트(전체 리로드)라 토글할 때마다 스크롤이 맨 위로 튐 —
+    // 제출 시 위치를 저장했다가 리로드 후 복원한다.
+    document.addEventListener('submit', function () {
+        sessionStorage.setItem('cat-scroll', String(window.scrollY));
+    }, true);
+    window.addEventListener('DOMContentLoaded', function () {
+        var y = sessionStorage.getItem('cat-scroll');
+        if (y !== null) {
+            window.scrollTo(0, parseInt(y, 10));
+            sessionStorage.removeItem('cat-scroll');
+        }
+    });
+</script>
 </body>
 </html>
