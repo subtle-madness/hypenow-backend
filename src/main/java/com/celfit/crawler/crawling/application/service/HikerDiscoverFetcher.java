@@ -48,10 +48,11 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
     @Override
     public CrawlExecutor.Execution fetch(long categoryId, String keyword, TriggerType trigger) {
         return executor.execute(JobName.DISCOVER, trigger, categoryId, keyword, LABEL,
-                () -> new ApifyResult(null, collect(keyword)));
+                () -> collect(keyword));
     }
 
-    private List<Map<String, Object>> collect(String keyword) {
+    /** runId 자리에 구매 페이지 수를 기록 — HikerAPI는 run 개념이 없어 비용($0.001×pages) 추적용. */
+    private ApifyResult collect(String keyword) {
         int limit = settings.resultsLimit();
         String enc = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
         List<Map<String, Object>> out = new ArrayList<>();
@@ -67,7 +68,7 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
             if (out.size() >= limit || !page.moreAvailable() || pageId == null || pageId.isBlank()
                     || pages >= MAX_PAGES) break;
         }
-        return out;
+        return new ApifyResult("pages=" + pages, out);
     }
 
     @Override

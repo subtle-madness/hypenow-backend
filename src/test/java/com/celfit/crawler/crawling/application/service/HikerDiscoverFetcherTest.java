@@ -35,7 +35,10 @@ class HikerDiscoverFetcherTest {
     }
 
     /** executor 목: Supplier를 즉시 실행해 Execution으로 감싼다 (CrawlExecutor 실동작 모사). */
+    static List<ApifyResult> capturedResults = new ArrayList<>();
+
     static CrawlExecutor passthroughExecutor(List<String> capturedLabels) {
+        capturedResults.clear();
         CrawlExecutor executor = mock(CrawlExecutor.class);
         when(executor.execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq(5L), eq("립"),
                 any(String.class), any(Supplier.class)))
@@ -43,6 +46,7 @@ class HikerDiscoverFetcherTest {
                 capturedLabels.add(inv.getArgument(4));
                 Supplier<ApifyResult> work = inv.getArgument(5);
                 ApifyResult r = work.get();
+                capturedResults.add(r);
                 return new CrawlExecutor.Execution(1L, r.items());
             });
         return executor;
@@ -63,6 +67,7 @@ class HikerDiscoverFetcherTest {
         assertThat(ex.items()).hasSize(3);
         assertThat(ex.items().get(2).get("shortCode")).isEqualTo("C3");
         assertThat(labels).containsExactly("hiker-hashtag-top");
+        assertThat(capturedResults.get(0).runId()).isEqualTo("pages=2");  // 비용 추적용 페이지 수
         assertThat(fetcher.source()).isEqualTo(DiscoverSource.HIKER);
     }
 
