@@ -21,6 +21,10 @@ crawler:
     page-delay: 1s
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  hiker:
+    api-key: ${HIKER_API_KEY:}
+    base-url: https://api.hikerapi.com
+    request-timeout: 15s
   discover:
     results-limit: 100
   aggregate:

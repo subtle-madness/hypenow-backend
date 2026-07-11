@@ -1,6 +1,7 @@
 package com.celfit.crawler.common.config;
 
 import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
+import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
 import com.celfit.crawler.crawling.adapter.out.instagram.DirectCommentProperties;
 
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
@@ -14,7 +15,8 @@ import org.springframework.core.task.TaskExecutor;
 
 @Configuration
 @EnableConfigurationProperties({ApifyProperties.class, DiscoverProperties.class,
-        AggregateProperties.class, ScheduleProperties.class, DirectCommentProperties.class})
+        AggregateProperties.class, ScheduleProperties.class, DirectCommentProperties.class,
+        HikerProperties.class})
 public class CrawlerConfig {
 
     @Bean
