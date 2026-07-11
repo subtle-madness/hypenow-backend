@@ -39,7 +39,9 @@ public class CategoryService {
 
     @Transactional(readOnly = true)
     public List<CategoryView> list() {
-        return categories.findAll().stream().map(this::toView).toList();
+        // id 정렬 고정 — ORDER BY 없으면 토글(UPDATE)된 행이 힙 뒤로 밀려 화면 순서가 바뀐다
+        return categories.findAll(org.springframework.data.domain.Sort.by("id"))
+                .stream().map(this::toView).toList();
     }
 
     @Transactional
@@ -149,7 +151,7 @@ public class CategoryService {
     }
 
     private CategoryView toView(Category c) {
-        List<KeywordView> kws = keywords.findByCategoryId(c.getId()).stream()
+        List<KeywordView> kws = keywords.findByCategoryIdOrderByIdAsc(c.getId()).stream()
                 .map(this::toView)
                 .toList();
         RuleView rule = rules.findByCategoryId(c.getId())
