@@ -24,6 +24,18 @@ class DetailMapperTest {
         assertThat(d).containsKey("_rawDetail");
     }
 
+    @Test void hiker_media_or_ad_래퍼_언랩() {
+        // 실제 /v2/media/info/by/code 응답은 미디어를 media_or_ad로 감싼다
+        String json = """
+            {"media_or_ad":{"code":"Cr8TkbLrIZU","caption_text":"안녕",
+             "like_count":729,"comment_count":20,"play_count":19666,"is_paid_partnership":false}}""";
+        Map<String, Object> d = mapper.fromHikerMedia(json);
+        assertThat(d.get("shortCode")).isEqualTo("Cr8TkbLrIZU");
+        assertThat(d.get("likesCount")).isEqualTo(729L);
+        assertThat(d.get("videoPlayCount")).isEqualTo(19666L);
+        assertThat(d).containsKey("_rawDetail");
+    }
+
     @Test void self_피드_graphql_정규화() {
         // 실제 응답은 {data:{xdt_shortcode_media:{...}}} 래핑
         String json = """

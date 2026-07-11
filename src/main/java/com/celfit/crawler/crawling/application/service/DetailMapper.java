@@ -21,7 +21,10 @@ public class DetailMapper {
     /** HikerAPI /v2/media/info/by/code 미디어 객체. */
     public Map<String, Object> fromHikerMedia(String json) {
         JsonNode root = read(json);
-        JsonNode m = root.has("media") ? root.path("media") : root;
+        // HikerAPI /v2/media/info/by/code 는 미디어를 media_or_ad(또는 media)로 감싸 반환한다
+        JsonNode m = root.has("media") ? root.path("media")
+                : root.has("media_or_ad") ? root.path("media_or_ad")
+                : root;
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("shortCode", m.path("code").asString(null));
         p.put("caption", m.path("caption_text").asString(m.path("caption").path("text").asString(null)));
