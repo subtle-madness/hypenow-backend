@@ -191,7 +191,7 @@ spring:
   # 기본 DataSource 자동설정 비활성 (수동 2개 정의)
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
   main:
     web-application-type: none
 
