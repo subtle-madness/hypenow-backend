@@ -174,7 +174,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 미러 테이블을 읽음). ※ analytics 구현은 2026-07-12 초기화 — DB에 남은 뷰·미러 테이블은 동작하지만
 소스는 백지, 태스크 A부터 재구축.
 
-**상세 분석 작업 트랙** (설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md)):
+**상세 분석 작업 트랙** (구조 설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) ·
+데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)):
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
@@ -226,10 +227,11 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 서비스 데이터 상세 | `app` 스키마 구성·로그인 방식 등은 G 착수 시 설계 |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 
-## 9. 문서 맵
+## 9. 문서 맵과 수명 규칙
 
-- **이 문서** — 현재 유효한 구조·상태·결정 (항상 최신 유지)
+- **이 문서** — 현재 유효한 구조·상태·결정. 문서의 유일한 진입점, 항상 최신 유지
 - [crawler/README.md](crawler/README.md) — 수집 파이프라인 실행·운영
-- [analytics/README.md](analytics/README.md) — 분석 뷰 카탈로그·테스트
-- `docs/superpowers/specs/` — 시점별 설계 기록 (결정의 전말)
-- `docs/superpowers/plans/` — 시점별 상세 구현 계획 (착수 시 작성, 실행 후 이력)
+- `docs/superpowers/specs/` — 설계 기록(ADR 성격). **영구 보존·내용 불변** — 대체되면 첫머리 상태 헤더만 갱신
+- `docs/superpowers/plans/` — 상세 구현 계획(소모품). 태스크 착수 시 작성, **실행 완료·폐기 시 `plans/archive/`로 이동**
+- **상태 헤더 규칙**: 모든 dated 문서는 첫머리에 상태를 단다 —
+  `> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 → 링크 · ⏸ 보류`

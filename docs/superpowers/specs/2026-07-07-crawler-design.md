@@ -1,5 +1,6 @@
 # celfit crawler — 인스타그램 콘텐츠 raw 수집 시스템 설계
 
+> 상태: ✅ 구현됨 — crawler 운영 중
 2026-07-07 확정. celfit 피벗 후 신규 시스템 — **기존 인플루언서 파이프라인(legacy-extension·backend·tools)과 완전히 독립**이며 코드·스키마를 공유하지 않는다.
 
 ## 1. 개요 · 스코프

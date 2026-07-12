@@ -1,5 +1,6 @@
 # 크롤링 데이터 분석 카탈로그 설계
 
+> 상태: ✅ 구현됨 → 산출물은 2026-07-12 초기화, 태스크 A에서 재구축 ([detail-analysis-design §8](2026-07-12-detail-analysis-design.md))
 - 작성일: 2026-07-09
 - 상태: 설계
 - 관련: [crawler 설계](2026-07-07-crawler-design.md)

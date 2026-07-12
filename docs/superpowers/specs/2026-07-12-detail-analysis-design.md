@@ -1,5 +1,6 @@
 # hypenow 상세 분석 — 시스템 설계
 
+> 상태: ✅ 반영됨 — 최신 기준은 [ARCHITECTURE.md](../../../ARCHITECTURE.md)
 2026-07-12 (설계 세션 기록)
 기준 기획: 상세 분석 확정안 Artifact (2026-07-10, https://claude.ai/code/artifact/696bd39e-0f53-4bc5-916e-d4adbf013658)
 
@@ -120,7 +121,7 @@ G: 독립 (아무 때나)
 ## 7. 기존 문서와의 관계
 
 - 구조의 기준은 [ARCHITECTURE.md](../../../ARCHITECTURE.md)다(이 문서 직후 신설된 살아있는 문서). 이 문서는 시점 기록이며, 아래 문서들은 상세 구현 시 참고 자료다.
-- `plans/2026-07-10-hypenow-detail-backend-roadmap.md` — 이전 로드맵. 태스크 분해가 본 문서(§4)로 대체됨.
+- `plans/archive/2026-07-10-hypenow-detail-backend-roadmap.md` — 이전 로드맵. 태스크 분해가 본 문서(§4)로 대체됨.
 - `plans/2026-07-10-plan1-post-drawer-api.md` — B1+D의 상세 초안. 뷰 SQL·테스트 기대값 재사용 가치 높음.
 - `plans/2026-07-10-plan2-influencer-detail-api.md` — C1+E의 상세 초안. **SQL은 실 DB 실행 검증 완료.**
 - `plans/2026-07-10-plan3-llm-comment-analysis.md` — F+B2의 상세 초안. 단 "enrichment=crawler 모듈" 전제는

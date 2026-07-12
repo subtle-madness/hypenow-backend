@@ -4,8 +4,9 @@
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)를 먼저 읽는다** — 시스템 구조·작업 트랙 상태·결정 기록의 기준(살아있는 문서).
 - 구조나 태스크 상태가 바뀌는 작업을 했으면 ARCHITECTURE.md의 §5(작업 트랙 표)와 §7(결정 기록)을 같이 갱신한다.
-- 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(시점별 설계 기록) /
-  `docs/superpowers/plans/`(태스크 착수 시 작성하는 상세 구현 계획).
+- 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변) /
+  `docs/superpowers/plans/`(구현 계획 — 실행 완료 시 `plans/archive/`로 이동).
+  dated 문서는 첫머리 상태 헤더(`> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 · ⏸ 보류`)를 유지한다.
 
 ## 시스템 경계 (위반 금지)
 

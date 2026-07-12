@@ -1,5 +1,6 @@
 # 크롤링 데이터 분석 카탈로그 Implementation Plan
 
+> 상태: ✅ 실행됨 — 산출물은 2026-07-12 초기화(태스크 A에서 재구축)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** crawler가 적재한 인스타 raw 데이터로 "무엇을 분석할지"를 재사용 가능한 SQL 뷰(그룹 1~7)로 정의하고, 실데이터 2건 + 더미데이터로 각 뷰를 검증한다.

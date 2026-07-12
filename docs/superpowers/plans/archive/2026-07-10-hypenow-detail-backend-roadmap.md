@@ -1,7 +1,8 @@
 # hypenow 상세 분석 백엔드 — 구현 로드맵
 
+> 상태: 🗄 대체됨 → ARCHITECTURE.md §4·§5
 > ⚠️ **2026-07-12 설계 세션으로 대체됨.** 구조·태스크 분해의 기준은
-> [`../specs/2026-07-12-detail-analysis-design.md`](../specs/2026-07-12-detail-analysis-design.md)를 볼 것.
+> [`../../specs/2026-07-12-detail-analysis-design.md`](../../specs/2026-07-12-detail-analysis-design.md)를 볼 것.
 > 이 문서는 이력 참고용으로만 남긴다.
 
 > 기준 문서: 상세 분석 확정안 Artifact (2026-07-10, https://claude.ai/code/artifact/696bd39e-0f53-4bc5-916e-d4adbf013658)
