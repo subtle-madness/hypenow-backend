@@ -41,6 +41,7 @@ public class PostDetailAssembler {
 								.toList()));
 	}
 
+	/** 경과일 = 24시간 단위 경과 수 (캘린더 날짜 경계 아님 — 게시 23시간 후는 0). 프론트 "게시 N일차" = 이 값 + 1. */
 	private Long daysSincePosted(OffsetDateTime postedAt) {
 		if (postedAt == null) {
 			return null;

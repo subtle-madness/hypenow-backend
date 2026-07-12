@@ -82,4 +82,15 @@ class PostDetailAssemblerTest {
 		assertThat(response.post().daysSincePosted()).isNull();
 		assertThat(response.post().engagementRate()).isEqualByComparingTo(new BigDecimal("0.0110"));
 	}
+
+	@Test
+	void 조회수가_0이면_참여율이_null이다() {
+		Content zeroViews = new Content("mari04", "marimood", null, null,
+				OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", null, null,
+				0L, 10L, 1L, 0L);
+
+		PostDetailResponse response = assembler.toResponse(zeroViews, account(), List.of());
+
+		assertThat(response.post().engagementRate()).isNull();
+	}
 }
