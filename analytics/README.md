@@ -9,6 +9,7 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   - `00_base.sql` — base 뷰 4종. **raw 테이블·payload를 만지는 유일한 SQL.**
   - `01_recent_window.sql` — 계정별 최근 N개 윈도우 (`v_recent_content`)
   - `02_serving.sql` — 서빙 형태 뷰 3종 (`v_accounts`·`v_contents`·`v_content_comments`) — 미러 대상과 1:1
+  - `03_analysis_baseline.sql` — 콘텐츠별 기준선 뷰 (분석 잡 전용, 미러 안 함)
 - `mirror/` — 타입 기반 미러: 뷰 SELECT → 공유 record 매핑 → analysis DB 테이블
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
   대상: accounts·contents·content_comments (등록: MirrorConfig).
@@ -22,6 +23,10 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     ../gradlew :analytics:bootRun    # 미러 1회 실행 (analytics.mirror-on-startup=true)
     ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true'   # 댓글 분류 배치
     ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'  # F-1 스파이크
+    ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true'   # 콘텐츠 분석 배치
+
+⚠️ `analyze-on-startup`·`vlm-enabled`는 스프링 프로퍼티(`application.yml`/CLI 인자)이지 `app_setting` 키가 아니다.
+분석 대상은 "최근 N개 윈도우 안 + 분류 완료(또는 댓글 0)" 콘텐츠만 (classify 선행을 강제).
 
 ## app_setting 런타임 키 (뷰가 직접 읽음)
 

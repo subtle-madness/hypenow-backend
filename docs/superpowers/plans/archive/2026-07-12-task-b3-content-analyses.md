@@ -1,6 +1,6 @@
 # 태스크 B3: 기준선 스냅샷 + VLM + 종합 텍스트 → content_analyses Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-12)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 데이터 층의 마지막 조각 — 콘텐츠 1건당 분석 결과를 `content_analyses` 한 행으로 고정 저장하는 분석 잡. 기준선 스냅샷(SQL 집계 뷰) + VLM(F-2 검증 전까지 게이트 off) + 종합 텍스트(LLM) + 댓글 진정성 판정.
