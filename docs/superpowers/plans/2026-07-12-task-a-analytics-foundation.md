@@ -592,7 +592,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class MirrorJobTest {
 
 	@Container
-	static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16-alpine");
+	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	// Testcontainers 2.x의 PostgreSQLContainer는 비제네릭 — 1.x의 <SELF> 패턴 아님
 
 	JdbcTemplate db;
 	MirrorJob job;
@@ -731,7 +732,7 @@ public final class MirrorJob {
 			Object[] args = new Object[components.length];
 			for (int i = 0; i < components.length; i++) {
 				Class<?> type = components[i].getType();
-				args[i] = rs.getObject(i + 1, WRAPPERS.getOrDefault(type, type));
+				args[i] = rs.getObject(i + 1, (Class<?>) WRAPPERS.getOrDefault(type, type));
 			}
 			try {
 				rows.add(ctor.newInstance(args));
