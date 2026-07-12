@@ -79,4 +79,14 @@ class PostDetailControllerTest {
 				.andExpect(header().string("Access-Control-Allow-Origin",
 						"https://celfit-front.vercel.app"));
 	}
+
+	@Test
+	void 비허용_오리진은_CORS로_차단된다() throws Exception {
+		givenMari01();
+
+		mockMvc.perform(get("/api/posts/mari01")
+						.header("Origin", "https://evil.example.com"))
+				.andExpect(status().isForbidden())
+				.andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+	}
 }
