@@ -441,14 +441,14 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 3. **불변**: INSERT만 (UPDATE·재분석 없음). **실패 격리**: 콘텐츠 단위 try/catch continue (B2 리뷰 반영).
 4. jsonb 직렬화: `tools.jackson.databind.ObjectMapper` (Jackson 3 — CLAUDE.md 컨벤션), INSERT에서 `?::jsonb` 캐스트.
 
-- [ ] **Step 1: 실패하는 테스트 작성** — 검증 케이스 5개:
+- [x] **Step 1: 실패하는 테스트 작성** — 검증 케이스 5개:
   ① 미분석+분류완료 콘텐츠가 분석되어 저장 (기준선 수치·텍스트·분포 기반 컬럼 확인) ② 이미 분석된 콘텐츠 스킵 ③ 댓글 있는데 미분류인 콘텐츠는 대상 제외 ④ vlm-enabled=false면 VisionPort 미호출·VLM 컬럼 NULL ⑤ 한 콘텐츠 실패(포트 예외) 시 나머지는 처리
 
 테스트 골격은 CommentClassificationJobTest 패턴 재사용: Testcontainers 1개, Flyway(V1~V3) migrate, raw 대역으로 `analytics.v_analysis_baseline`과 같은 모양의 뷰를 테스트에서 CREATE (고정 수치), fake SynthesisPort/VisionPort는 호출 기록. 완전 초기화 규칙(B2 테스트의 DROP 목록에 content_analyses 추가) 준수. 구체 코드는 이 패턴에 맞춰 구현자가 작성하되 **케이스 5개의 계약은 불변**.
 
-- [ ] **Step 2: 실행 — 실패 확인**
+- [x] **Step 2: 실행 — 실패 확인**
 
-- [ ] **Step 3: Baseline record + ContentAnalysisJob 구현**
+- [x] **Step 3: Baseline record + ContentAnalysisJob 구현**
 
 ```java
 package com.celfit.analytics.analyze;
@@ -616,9 +616,9 @@ public class ContentAnalysisJob {
 }
 ```
 
-- [ ] **Step 4: 테스트 통과 (5케이스)**
+- [x] **Step 4: 테스트 통과 (5케이스)**
 
-- [ ] **Step 5: AnalyzeRunner** — ClassifyRunner 패턴 동일 (`analytics.analyze-on-startup=true` 게이트, VisionPort는 `@Autowired(required=false)` 성격의 ObjectProvider로 주입해 vlm-enabled=false여도 기동):
+- [x] **Step 5: AnalyzeRunner** — ClassifyRunner 패턴 동일 (`analytics.analyze-on-startup=true` 게이트, VisionPort는 `@Autowired(required=false)` 성격의 ObjectProvider로 주입해 vlm-enabled=false여도 기동):
 
 ```java
 package com.celfit.analytics.analyze;
@@ -657,9 +657,9 @@ public class AnalyzeRunner {
 }
 ```
 
-- [ ] **Step 6: 전체 빌드 + 기본 게이트 off 부트 스모크**
+- [x] **Step 6: 전체 빌드 + 기본 게이트 off 부트 스모크**
 
-- [ ] **Step 7: Commit** — `feat(analytics): 콘텐츠 분석 배치 — 기준선 스냅샷·종합 텍스트·VLM 게이트 (분석 시점 고정)`
+- [x] **Step 7: Commit** — `feat(analytics): 콘텐츠 분석 배치 — 기준선 스냅샷·종합 텍스트·VLM 게이트 (분석 시점 고정)`
 
 ---
 
