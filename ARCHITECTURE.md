@@ -46,8 +46,8 @@ MVP 범위:
 
 **미러란**: raw DB에 정의된 분석 뷰(`analytics.*`)를 실행해 결과를 analysis DB의 테이블로 채우는
 배치. 레플리카가 아니라 **분석 층이 결과물을 내놓는 행위 그 자체** — 뷰는 DB를 못 넘으므로 이 잡이
-tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 리포에 있는 기존 `MaterializationService`(메타데이터 기반
-제네릭 복사)는 잘못된 작업 지시로 생긴 산출물로, 태스크 A에서 §4-3 방식으로 재작성한다.
+tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `MaterializationService`(메타데이터 기반 제네릭
+복사)는 잘못된 작업 지시로 생긴 산출물이라 07-12에 삭제했고, 태스크 A에서 §4-3 방식으로 새로 만든다.
 
 ## 3. 데이터
 
@@ -63,8 +63,9 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 리포에 있는 
 
 ### 분석 뷰 (raw DB의 `analytics` 스키마)
 
-`analytics/views/NN_*.sql` 번호순 적용. 00(base) ~ 08(크리에이터 기둥) 존재.
-카탈로그: [analytics/README.md](analytics/README.md)
+`analytics/views/NN_*.sql` 번호순 적용 컨벤션. **기존 소스(00~08)는 2026-07-12 초기화** —
+로컬 DB에 적용된 뷰는 남아 있으나 소스는 백지이며, 태스크 A부터 §4 원칙대로 재작성한다.
+과거 뷰 정의는 git 이력과 `docs/superpowers/plans/2026-07-10-*` 문서에 보존돼 있다.
 
 ### analysis DB
 
@@ -142,8 +143,8 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
   분석 층의 LLM 결과 테이블). 남의 저장소는 읽기 전용 쿼리 + record 매핑만.
 - **was 접근 규율:** raw DB 접근 금지. 분석 결과는 읽기만, 쓰기는 `app` 스키마에만.
   분석 결과와 서비스 데이터를 SQL 조인하지 않는다(조합은 was 코드에서) — 물리 분리 대비.
-- **raw 스키마 지식은 base 뷰(`00_base.sql`)에 격리** — raw 테이블·payload를 직접 만지는 SQL은
-  base 뷰만(현 06·08 예외는 태스크 A에서 정리). 분석 층의 Java도 crawler 코드가 아닌 SQL로 raw를 읽는다.
+- **raw 스키마 지식은 base 뷰에 격리** — raw 테이블·payload를 직접 만지는 SQL은 base 뷰만
+  (재구축 시 처음부터 이 규칙 적용). 분석 층의 Java도 crawler 코드가 아닌 SQL로 raw를 읽는다.
 - **분류값·라벨은 생산자가 확정, 소비자는 전달만** — tier·감성분류 같은 어휘는 분석 층이 문자열로
   확정해 데이터에 박고, was는 해석·분기 없이 그대로 내려보낸다.
 
@@ -162,20 +163,22 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
 
 ### 4-7. 검증 컨벤션
 
-분석 뷰는 SQL 하니스(`analytics/test/run.sh`, 더미 시드 + BEGIN/ROLLBACK 격리)로 기대값을 고정.
+분석 뷰는 SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리, 태스크 A에서 재구축)로 기대값을 고정.
 Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리지 않는다(포트 fake).
 
 ## 5. 현재 상태 · 작업 트랙
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), 분석 뷰 00~08, 제네릭 미러 9종(§4-3 방식으로 재작성 예정), was 랭킹 대시보드.
+**운영 중**: crawler 파이프라인(discover→qualify→aggregate), was 랭킹 대시보드(analysis DB의 기존
+미러 테이블을 읽음). ※ analytics 구현은 2026-07-12 초기화 — DB에 남은 뷰·미러 테이블은 동작하지만
+소스는 백지, 태스크 A부터 재구축.
 
 **상세 분석 작업 트랙** (설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md)):
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
-| A | 분석 기반 | 최근 N개 윈도우 뷰·설정 키 + `contract-analysis` 골격 + 타입 미러 구축(기존 제네릭 미러 대체) + raw 접촉(06·08) base 뷰로 정리 | — | ⬜ |
+| A | 분석 기반 | base 뷰·최근 N개 윈도우 뷰 재작성(raw 접촉은 base 뷰만) + 설정 키 + `contract-analysis` 골격 + 타입 미러·SQL 테스트 하니스 구축 | — | ⬜ |
 | F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 | — | ⬜ |
 | B1 | 드로어 비LLM 집계 | 작성자 요약·성과·벤치마크 뷰 + 미러 | A | ⬜ |
 | B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ⬜ |
@@ -203,7 +206,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
-| 2026-07-12 | **미러를 명시적 타입 기반으로 재설계**(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=자바 그릇, TRUNCATE+INSERT, 컬럼 대조 가드) — 기존 제네릭 미러 폐기. **계약 모듈 `contract-analysis` 신설**(생산자+소비자 쌍 성립). 모듈 공유 원칙(§4-4) 확정 | [specs/2026-07-12 §8](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
+| 2026-07-12 | **미러를 명시적 타입 기반으로 재설계**(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=자바 그릇, TRUNCATE+INSERT, 컬럼 대조 가드) — 기존 제네릭 미러 폐기. **계약 모듈 `contract-analysis` 신설**(생산자+소비자 쌍 성립). 모듈 공유 원칙(§4-4) 확정. **기존 analytics 구현(뷰 소스·하니스·미러 코드) 전체 초기화 — 백지 재구축** | [specs/2026-07-12 §8](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
 | 2026-07-12 | 3-tier 확정: 미러=tier 경계(필수), LLM=분석 층 소속, 태스크 A~G 분해. **서비스 데이터**(로그인·후보 관리 등 was가 쓰는 앱 데이터)는 분석 결과와 스키마 분리(`app`), 물리 분리 고려 | [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
 | 2026-07-10 | 상세 분석 확정안(드로어 v3·인플루언서 v4) + 구현 계획 초안 3건(현재는 참고 자료) | [plans/2026-07-10-*](docs/superpowers/plans/) |
 | 2026-07-09 | 모노레포 통합(crawler/analytics/was), was 랭킹 대시보드, 미러 도입 | [plans/2026-07-09-monorepo-migration.md](docs/superpowers/plans/2026-07-09-monorepo-migration.md) |
