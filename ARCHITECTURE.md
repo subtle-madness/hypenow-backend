@@ -37,15 +37,17 @@ MVP 범위:
 | `crawler` | raw DB 쓰기 | Apify로 발굴→판정→상세 수집, 원형(raw) 적재 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
 | `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 헤드리스 배치, JdbcTemplate ×2 |
 | `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + 서비스 기능(로그인·후보 관리 등) | Spring Boot, JdbcClient |
+| `contract-analysis` *(신설 예정)* | — | 분석 결과의 record·enum — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
 
 **데이터 배치**: 저장 영역은 세 가지 — raw(크롤링 원본) / 분석 결과(미러 테이블) / **서비스 데이터**(was가
 쓰는 일반 앱 데이터: 로그인·후보 관리 등). 서비스 데이터는 분석 결과와 **스키마로 분리**(analysis DB 내
 `app` 스키마)하고, 셋 모두 현재 **한 Postgres 인스턴스**(포트 5433)에 논리 분리만 되어 있다. 부하를 보고
-물리 분리를 결정한다 — 접근 규율(§4-3)을 지키는 한 어느 경계든 설정 변경으로 분리 가능하다.
+물리 분리를 결정한다 — 접근 규율(§4-4)을 지키는 한 어느 경계든 설정 변경으로 분리 가능하다.
 
-**미러란**: raw DB에 정의된 분석 뷰(`analytics.*`)를 실행해 결과를 analysis DB의 평탄 테이블로
-채우는 배치 (`MaterializationService`: 뷰당 drop→create→전량 insert, 1회 실행 후 종료).
-레플리카가 아니라 **분석 층이 결과물을 내놓는 행위 그 자체** — 뷰는 DB를 못 넘으므로 이 잡이 tier 경계다.
+**미러란**: raw DB에 정의된 분석 뷰(`analytics.*`)를 실행해 결과를 analysis DB의 테이블로 채우는
+배치. 레플리카가 아니라 **분석 층이 결과물을 내놓는 행위 그 자체** — 뷰는 DB를 못 넘으므로 이 잡이
+tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 리포에 있는 기존 `MaterializationService`(메타데이터 기반
+제네릭 복사)는 잘못된 작업 지시로 생긴 산출물로, 태스크 A에서 §4-3 방식으로 재작성한다.
 
 ## 3. 데이터
 
@@ -66,35 +68,114 @@ MVP 범위:
 
 ### analysis DB
 
-- **분석 결과** — 미러된 평탄 테이블 (`content_ranking`, `category_performance`, …) + `materialization_meta`(신선도). analytics가 쓰고 was가 읽는다.
+- **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §4-3). analytics가 쓰고 was가 읽는다.
+- Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
 - **서비스 데이터 (`app` 스키마)** — 로그인·후보 관리 등 was가 직접 읽고 쓰는 일반 앱 데이터.
   분석 결과와 스키마로 격리, 나중에 물리 분리 가능.
 
 ## 4. 관통하는 설계 원칙
 
-1. **최근 N개 윈도우** — 모든 계정 단위 지표는 계정별 최신 게시물 N개(기본 12)만 잘라 계산.
-   재크롤링이 누적돼도 계정 간 비교가 공정. N은 `app_setting`으로 런타임 조정.
-2. **LLM도 분석 층의 일부** — 별도 시스템이 아니라 "raw를 읽어 분석 결과를 analysis DB에 채우는 일"의
-   한 종류. 비LLM 집계와 나란히 화면별 태스크에 들어간다.
-3. **was의 데이터 접근 규율** — raw DB에는 접근하지 않는다. 분석 결과는 **읽기만**, 쓰기는
-   **서비스 데이터(`app` 스키마)에만** 한다. 분석 결과와 서비스 데이터를 SQL 조인하지 않는다
-   (조합은 was 코드에서) — 이 규율이 지켜지는 한 두 영역은 언제든 물리 분리 가능.
-4. **표기 원칙** — 표본 크기가 약점으로 안 보이게 UI는 %·라벨 중심. 백엔드는 `sampleSize`와
-   비율의 분자·분모 원값을 항상 제공하고, 노출·전환은 프론트가 정한다.
-5. **검증 컨벤션** — 분석 뷰는 SQL 하니스(`analytics/test/run.sh`, 더미 시드 + BEGIN/ROLLBACK 격리)로
-   기대값을 고정. Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리지 않는다(포트 fake).
+### 4-1. 최근 N개 윈도우
+
+모든 계정 단위 지표는 계정별 최신 게시물 N개(기본 12)만 잘라 계산한다. 재크롤링이 누적돼도
+계정 간 비교가 공정해지고, UI 각주 "최근 N개 기준"이 이 한 곳을 가리킨다.
+N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일 원천 — 뷰가 직접 읽어 재배포 없이 조정.
+
+### 4-2. 로직의 자리 — 집합 연산은 SQL, 절차는 Java
+
+비즈니스 로직의 자리는 언어가 아니라 성격으로 정한다. LLM 분석도 별도 트랙이 아니라 분석 층의 일부다.
+
+| 로직 성격 | 사는 곳 | 예 |
+|---|---|---|
+| 집합 연산 (집계·순위·비율·윈도우) | SQL 뷰 (raw DB `analytics` 스키마) | 랭킹, 벤치마크, 히트율, 모멘텀 |
+| 절차·외부 연동 (호출→파싱→저장) | Java (분석 층) | LLM 댓글 분석 |
+| 상태 변화·트랜잭션 | Java (was) | 후보 상태 전이(검토중→컨택 예정→협업 중) |
+| 표현 조립 | Java (was) | 경과일 계산, 응답 블록 조립 |
+
+### 4-3. 미러 = 명시적 타입 기반 materialization
+
+하나의 "형태"를 세 아티팩트가 역할을 나눠 든다. 작성자 요약 예시:
+
+1. **뷰 SQL** — 계산 방법 (raw DB):
+
+   ```sql
+   CREATE VIEW analytics.v_author_summary AS
+   SELECT owner_username, count(*) AS sample_size,
+          round(avg(engagement_rate), 4) AS avg_er, round(avg(views), 1) AS avg_views
+   FROM analytics.v_recent_content GROUP BY owner_username;
+   ```
+
+2. **Flyway DDL** — 저장 테이블 (analysis DB — 인덱스·제약을 걸 수 있다):
+
+   ```sql
+   CREATE TABLE author_summary (owner_username text, sample_size bigint,
+                                avg_er numeric, avg_views numeric);
+   ```
+
+3. **공유 record** — 자바 그릇 (`contract-analysis` 모듈):
+
+   ```java
+   public record AuthorSummary(String ownerUsername, long sampleSize,
+                               BigDecimal avgEr, BigDecimal avgViews) {}
+   ```
+
+흐름: 분석 층이 뷰를 SELECT → record 매핑 → analysis DB 테이블에 **TRUNCATE+INSERT
+(한 트랜잭션 — 읽는 쪽에 공백 없음)** → was가 **같은 record**로 SELECT.
+미러 시작 시 **뷰 컬럼 ↔ record 필드를 대조해 불일치면 즉시 실패**시켜 무언 드리프트를 쓰기 시점에 차단한다.
+
+### 4-4. 모듈 공유 원칙
+
+- **모듈은 서로 import 하지 않는다.** 유일한 예외는 계약 모듈 **`contract-analysis`** —
+  분석 결과의 record·enum만 담고(순수 JDK, Spring/JPA 의존 금지), 생산자 analytics와 소비자 was가
+  의존한다. crawler와는 무관.
+  수록 기준: **"동일 형태를 다루는 Java 생산자+소비자 쌍"이 성립하는 타입만.** 한 모듈만 쓰는 타입은
+  그 모듈에 둔다. util·비즈니스 로직은 넣지 않는다.
+- **모듈 간 계약은 전부 데이터 계약이다:**
+
+  | 경계 | 계약 | 정의하는 쪽 |
+  |---|---|---|
+  | crawler → analytics | raw 스키마 (generated 컬럼 + 뷰가 쓰는 payload 키) | crawler |
+  | analytics → was | 분석 결과 테이블 + 공유 record | analytics |
+  | was → front | REST JSON | was |
+
+- **저장소 접근:** 소유한 저장소에는 엔티티 자유(JPA 가능 — crawler의 raw, was의 `app` 스키마,
+  분석 층의 LLM 결과 테이블). 남의 저장소는 읽기 전용 쿼리 + record 매핑만.
+- **was 접근 규율:** raw DB 접근 금지. 분석 결과는 읽기만, 쓰기는 `app` 스키마에만.
+  분석 결과와 서비스 데이터를 SQL 조인하지 않는다(조합은 was 코드에서) — 물리 분리 대비.
+- **raw 스키마 지식은 base 뷰(`00_base.sql`)에 격리** — raw 테이블·payload를 직접 만지는 SQL은
+  base 뷰만(현 06·08 예외는 태스크 A에서 정리). 분석 층의 Java도 crawler 코드가 아닌 SQL로 raw를 읽는다.
+- **분류값·라벨은 생산자가 확정, 소비자는 전달만** — tier·감성분류 같은 어휘는 분석 층이 문자열로
+  확정해 데이터에 박고, was는 해석·분기 없이 그대로 내려보낸다.
+
+### 4-5. 스키마 변경 절차
+
+- 변경은 소유자가 주도하고, 소비자는 자기 접점 한 곳만 고친다. **추가는 자유, 변경·삭제는 사전 조율.**
+- raw 변경 감지: `analytics/test/run.sh` 하니스 — 시드가 raw에 직접 INSERT하므로 사실상 계약 테스트.
+  CI 연결 권장(§8).
+- 분석 결과 변경: 뷰 SQL·record·DDL 세 곳 모두 분석 작업 소유라 한 PR에서 처리하고,
+  미러의 컬럼 대조 가드가 불일치를 쓰기 시점에 검출한다.
+
+### 4-6. 표기 원칙
+
+표본 크기가 약점으로 안 보이게 UI는 %·라벨 중심. 백엔드는 `sampleSize`와 비율의 분자·분모 원값을
+항상 제공하고, 노출·전환은 프론트가 정한다.
+
+### 4-7. 검증 컨벤션
+
+분석 뷰는 SQL 하니스(`analytics/test/run.sh`, 더미 시드 + BEGIN/ROLLBACK 격리)로 기대값을 고정.
+Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리지 않는다(포트 fake).
 
 ## 5. 현재 상태 · 작업 트랙
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), 분석 뷰 00~08, 미러 9종, was 랭킹 대시보드.
+**운영 중**: crawler 파이프라인(discover→qualify→aggregate), 분석 뷰 00~08, 제네릭 미러 9종(§4-3 방식으로 재작성 예정), was 랭킹 대시보드.
 
 **상세 분석 작업 트랙** (설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md)):
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
-| A | 집계 공통 | 최근 N개 윈도우 뷰 + 설정 키 | — | ⬜ |
+| A | 분석 기반 | 최근 N개 윈도우 뷰·설정 키 + `contract-analysis` 골격 + 타입 미러 구축(기존 제네릭 미러 대체) + raw 접촉(06·08) base 뷰로 정리 | — | ⬜ |
 | F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 | — | ⬜ |
 | B1 | 드로어 비LLM 집계 | 작성자 요약·성과·벤치마크 뷰 + 미러 | A | ⬜ |
 | B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ⬜ |
@@ -122,6 +203,7 @@ MVP 범위:
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-12 | **미러를 명시적 타입 기반으로 재설계**(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=자바 그릇, TRUNCATE+INSERT, 컬럼 대조 가드) — 기존 제네릭 미러 폐기. **계약 모듈 `contract-analysis` 신설**(생산자+소비자 쌍 성립). 모듈 공유 원칙(§4-4) 확정 | [specs/2026-07-12 §8](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
 | 2026-07-12 | 3-tier 확정: 미러=tier 경계(필수), LLM=분석 층 소속, 태스크 A~G 분해. **서비스 데이터**(로그인·후보 관리 등 was가 쓰는 앱 데이터)는 분석 결과와 스키마 분리(`app`), 물리 분리 고려 | [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
 | 2026-07-10 | 상세 분석 확정안(드로어 v3·인플루언서 v4) + 구현 계획 초안 3건(현재는 참고 자료) | [plans/2026-07-10-*](docs/superpowers/plans/) |
 | 2026-07-09 | 모노레포 통합(crawler/analytics/was), was 랭킹 대시보드, 미러 도입 | [plans/2026-07-09-monorepo-migration.md](docs/superpowers/plans/2026-07-09-monorepo-migration.md) |
@@ -133,6 +215,7 @@ MVP 범위:
 
 | 항목 | 상태 |
 |---|---|
+| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행 — CI 환경·도입 시점 |
 | 드로어 댓글 카피 | "214개 분석" 불가 → "최근 최대 50개" 정정 or 상한 상향+비용 재승인 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | LLM 코드 모듈 소속 | analysis 쪽 제안, F에서 확정 |
