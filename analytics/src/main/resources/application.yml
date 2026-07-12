@@ -11,6 +11,8 @@ spring:
 analytics:
   mirror-on-startup: true
   classify-on-startup: false   # 댓글 분류 배치 — 실 API 비용이 들어 기본 off. 실행: --analytics.classify-on-startup=true
+  analyze-on-startup: false    # 콘텐츠 분석 배치 — 실 API 비용. 실행: --analytics.analyze-on-startup=true
+  vlm-enabled: false           # F-2 스파이크 검증 전까지 VLM 스킵 (컬럼 NULL)
 
 app:
   datasource:

@@ -50,7 +50,7 @@ class CommentClassificationJobTest {
 		portCalls = new ArrayList<>();
 		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
 		// 테스트 간 완전 초기화: Flyway 이력과 V1·V2 산출물, raw 대역을 전부 지우고 다시 만든다
-		db.update("DROP TABLE IF EXISTS comment_classifications, accounts, contents, content_comments");
+		db.update("DROP TABLE IF EXISTS content_analyses, comment_classifications, accounts, contents, content_comments");
 		db.update("DROP TABLE IF EXISTS app_setting, src_comments, flyway_schema_history");
 		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis")
 				.baselineOnMigrate(true).baselineVersion("0").load().migrate();
