@@ -73,7 +73,9 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				INSERT INTO content_comments VALUES
 				 (1, 'mari01', 'hye***', '이거 어디서 살 수 있어요??', 342),
 				 (2, 'mari01', 'min***', '건성인데 자극 없을까요??', 214),
-				 (3, 'mari01', 'seo***', '언니 피부 미쳤다', 289)
+				 (3, 'mari01', 'seo***', '언니 피부 미쳤다', 289),
+				 (4, 'mari01', 'nul***', '좋아요 수 없음', NULL),
+				 (5, 'mari01', 'tie***', '동률 테스트', 289)
 				""");
 	}
 
@@ -107,10 +109,23 @@ class PostDetailRepositoryTest extends IntegrationTest {
 	void 댓글은_좋아요_내림차순으로_전부_읽는다() {
 		List<ContentComment> comments = repository.findComments("mari01");
 
-		assertThat(comments).hasSize(3);
+		assertThat(comments).hasSize(5);
 		assertThat(comments).extracting(ContentComment::likeCount)
-				.containsExactly(342L, 289L, 214L);
+				.containsExactly(342L, 289L, 289L, 214L, null);
+		// like_count 동률(289)은 id 오름차순: 3번(seo***) → 5번(tie***)
+		assertThat(comments).extracting(ContentComment::id)
+				.containsExactly(1L, 3L, 5L, 2L, 4L);
 		assertThat(comments.getFirst().authorMasked()).isEqualTo("hye***");
+	}
+
+	@Test
+	void 피드는_views가_null로_매핑된다() {
+		Optional<Content> found = repository.findContent("mari02");
+
+		assertThat(found).isPresent();
+		assertThat(found.get().views()).isNull();
+		assertThat(found.get().contentType()).isEqualTo("feed");
+		assertThat(found.get().hypeScore()).isEqualTo(2100L);
 	}
 
 	@Test
