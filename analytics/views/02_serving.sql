@@ -12,6 +12,7 @@ FROM analytics.v_base_profile;
 
 -- 콘텐츠 팩트 (상세 수집 완료된 콘텐츠만 — INNER JOIN 의도).
 -- hype_score: 릴스=조회수, 피드=좋아요+댓글 (노션 스키마 확정안). 릴스인데 views NULL이면 NULL — 정렬은 NULLS LAST.
+-- 피드도 likes·comments 중 하나라도 NULL이면 합산이 NULL로 전파된다 (피드 게시물은 조회수가 항상 NULL — CLAUDE.md 함정).
 CREATE OR REPLACE VIEW analytics.v_contents AS
 SELECT
   c.short_code,
@@ -31,6 +32,7 @@ FROM analytics.v_base_content c
 JOIN analytics.v_base_detail d USING (content_id);
 
 -- 댓글 (작성자는 마스킹해 서빙 — 원문 계정명은 raw에만 둔다)
+-- author_masked: writer가 NULL이면 결과도 NULL(플레이스홀더 아님) — 현재 시드·실데이터엔 NULL writer 없음.
 CREATE OR REPLACE VIEW analytics.v_content_comments AS
 SELECT
   m.comment_id AS id,
