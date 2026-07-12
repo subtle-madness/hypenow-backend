@@ -3,12 +3,15 @@
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- 계정별 최신 프로필
+-- 신규 컬럼은 기존 컬럼 뒤에 추가 (CREATE OR REPLACE VIEW는 기존 위치의 컬럼명 변경을 허용하지 않음).
 CREATE OR REPLACE VIEW analytics.v_base_profile AS
 SELECT DISTINCT ON (account_id)
   account_id,
   username,
   followers,
-  captured_at
+  captured_at,
+  payload->>'fullName'      AS display_name,
+  payload->>'profilePicUrl' AS profile_image_url
 FROM raw_profile
 ORDER BY account_id, captured_at DESC, id DESC;
 
@@ -23,7 +26,9 @@ SELECT DISTINCT ON (content_id)
   COALESCE(video_play_count, (payload->>'videoViewCount')::bigint) AS views,
   (payload->>'videoDuration')::numeric AS video_duration,
   payload->>'type'                     AS media_type,
-  captured_at
+  captured_at,
+  payload->>'displayUrl' AS thumbnail_url,
+  payload->>'url'        AS original_url
 FROM raw_post_detail
 ORDER BY content_id, captured_at DESC, id DESC;
 

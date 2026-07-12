@@ -37,4 +37,14 @@ BEGIN
     'v_base_comment 9101 rows != 3';
   ASSERT (SELECT max(like_count) FROM analytics.v_base_comment WHERE content_id = 9101) = 7,
     'v_base_comment 9101 max like_count != 7';
+
+  -- 서빙용 payload 키 노출 (B1)
+  ASSERT (SELECT display_name FROM analytics.v_base_profile WHERE username = 'dummy_a') = '더미 에이',
+    'v_base_profile dummy_a display_name != 더미 에이';
+  ASSERT (SELECT profile_image_url FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'https://pic/a.jpg',
+    'v_base_profile dummy_a profile_image_url != latest a.jpg';
+  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://thumb/dummy_r1.jpg',
+    'v_base_detail 9101 thumbnail_url != latest';
+  ASSERT (SELECT original_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://www.instagram.com/p/dummy_r1/',
+    'v_base_detail 9101 original_url mismatch';
 END $$;

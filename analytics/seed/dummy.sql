@@ -10,9 +10,9 @@ VALUES (9990, 'dummy', 'MANUAL', 'dummy/actor', 'SUCCEEDED', timestamptz '2026-0
 -- 계정 2개. dummy_a는 프로필 스냅샷 2개(최신 선택 검증용).
 INSERT INTO account(id, username) VALUES (9001,'dummy_a'), (9002,'dummy_b');
 INSERT INTO raw_profile(account_id, crawl_run_id, payload, captured_at) VALUES
- (9001,9990,'{"username":"dummy_a","followersCount":5000}'::jsonb,  timestamptz '2026-06-01 00:00:00+09'),
- (9001,9990,'{"username":"dummy_a","followersCount":5500}'::jsonb,  timestamptz '2026-06-05 00:00:00+09'),
- (9002,9990,'{"username":"dummy_b","followersCount":20000}'::jsonb, timestamptz '2026-06-01 00:00:00+09');
+ (9001,9990,'{"username":"dummy_a","fullName":"더미 에이","profilePicUrl":"https://pic/a_old.jpg","followersCount":5000}'::jsonb,  timestamptz '2026-06-01 00:00:00+09'),
+ (9001,9990,'{"username":"dummy_a","fullName":"더미 에이","profilePicUrl":"https://pic/a.jpg","followersCount":5500}'::jsonb,  timestamptz '2026-06-05 00:00:00+09'),
+ (9002,9990,'{"username":"dummy_b","fullName":"더미 비","profilePicUrl":"https://pic/b.jpg","followersCount":20000}'::jsonb, timestamptz '2026-06-01 00:00:00+09');
 
 -- 콘텐츠 4개: dummy_a 릴스2+피드1, dummy_b 릴스1
 INSERT INTO content(id, short_code, content_type, owner_username, uploaded_at, category_id, discovery_keyword, status, first_seen_at, subcategory, main_group, ad_marked) VALUES
@@ -24,11 +24,11 @@ INSERT INTO content(id, short_code, content_type, owner_username, uploaded_at, c
 -- 상세. 9101은 스냅샷 2개(최신 선택 검증), 9102는 videoPlayCount 없이 videoViewCount만(폴백 검증),
 -- 9103은 피드(조회수 필드 없음 → views NULL 검증).
 INSERT INTO raw_post_detail(content_id, crawl_run_id, payload, captured_at) VALUES
- (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1 old","likesCount":500,"commentsCount":50,"videoPlayCount":10000,"videoDuration":30}'::jsonb, timestamptz '2026-06-04 09:00:00+09'),
- (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1","likesCount":520,"commentsCount":52,"videoPlayCount":11000,"videoDuration":30}'::jsonb,     timestamptz '2026-06-05 09:00:00+09'),
- (9102,9990,'{"shortCode":"dummy_r2","type":"Video","caption":"cap r2","likesCount":300,"commentsCount":30,"videoViewCount":7000,"videoDuration":20}'::jsonb,      timestamptz '2026-06-05 09:00:00+09'),
- (9103,9990,'{"shortCode":"dummy_f1","type":"Image","caption":"cap f1","likesCount":2000,"commentsCount":100}'::jsonb,                                             timestamptz '2026-06-06 09:00:00+09'),
- (9104,9990,'{"shortCode":"dummy_r3","type":"Video","caption":"cap r3","likesCount":1000,"commentsCount":80,"videoPlayCount":40000,"videoDuration":15}'::jsonb,    timestamptz '2026-06-07 09:00:00+09');
+ (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1 old","likesCount":500,"commentsCount":50,"videoPlayCount":10000,"videoDuration":30,"displayUrl":"https://thumb/dummy_r1_old.jpg","url":"https://www.instagram.com/p/dummy_r1/"}'::jsonb, timestamptz '2026-06-04 09:00:00+09'),
+ (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1","likesCount":520,"commentsCount":52,"videoPlayCount":11000,"videoDuration":30,"displayUrl":"https://thumb/dummy_r1.jpg","url":"https://www.instagram.com/p/dummy_r1/"}'::jsonb,     timestamptz '2026-06-05 09:00:00+09'),
+ (9102,9990,'{"shortCode":"dummy_r2","type":"Video","caption":"cap r2","likesCount":300,"commentsCount":30,"videoViewCount":7000,"videoDuration":20,"displayUrl":"https://thumb/dummy_r2.jpg","url":"https://www.instagram.com/p/dummy_r2/"}'::jsonb,      timestamptz '2026-06-05 09:00:00+09'),
+ (9103,9990,'{"shortCode":"dummy_f1","type":"Image","caption":"cap f1","likesCount":2000,"commentsCount":100,"displayUrl":"https://thumb/dummy_f1.jpg","url":"https://www.instagram.com/p/dummy_f1/"}'::jsonb,                                             timestamptz '2026-06-06 09:00:00+09'),
+ (9104,9990,'{"shortCode":"dummy_r3","type":"Video","caption":"cap r3","likesCount":1000,"commentsCount":80,"videoPlayCount":40000,"videoDuration":15,"displayUrl":"https://thumb/dummy_r3.jpg","url":"https://www.instagram.com/p/dummy_r3/"}'::jsonb,    timestamptz '2026-06-07 09:00:00+09');
 
 -- 댓글 3건 (9101). like_count 7 / NULL / 2.
 INSERT INTO raw_comment(content_id, crawl_run_id, payload, captured_at) VALUES
