@@ -1,5 +1,7 @@
 # 태스크 A: 분석 기반 (analytics 재구축 1단계) Implementation Plan
 
+> 상태: ✅ 구현/실행/반영됨 (2026-07-12, feat/task-a-analytics-foundation 12커밋 + 리뷰 반영)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 백지 상태의 analytics 모듈에 분석 층의 기반 4종을 세운다 — ① base 뷰(raw 접촉 격리) ② 최근 N개 윈도우 뷰 + 설정 키 ③ 타입 기반 미러 잡(뷰→record→TRUNCATE+INSERT) ④ SQL 테스트 하니스. 계약 모듈 `contract-analysis`도 골격을 만든다.
