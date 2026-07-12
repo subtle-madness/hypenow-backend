@@ -1,6 +1,6 @@
 # 태스크 D: 게시물 상세 API (`GET /api/posts/{shortCode}`) Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-12)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 프론트 콘텐츠 상세 모달의 비LLM 데이터 전부(계정·게시물·수집 댓글 전체)를 반환하는 `GET /api/posts/{shortCode}`를 만든다 — B1이 개통한 analysis DB 서빙 테이블 3종(`accounts`·`contents`·`content_comments`)만 읽는다.
