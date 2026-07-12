@@ -20,12 +20,16 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     ./test/run.sh test/00_base.test.sql   # 지정 테스트
     ../gradlew :analytics:test       # Java 테스트 (Docker 필요)
     ../gradlew :analytics:bootRun    # 미러 1회 실행 (analytics.mirror-on-startup=true)
+    ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true'   # 댓글 분류 배치
+    ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'  # F-1 스파이크
 
 ## app_setting 런타임 키 (뷰가 직접 읽음)
 
 | 키 | 기본 | 의미 |
 |---|---|---|
 | `analytics.recent-window` | 12 | 계정 단위 지표의 최근 N개 윈도우 (§4-1) |
+| `analytics.llm-model` | claude-opus-4-8 | LLM 호출 모델 (스파이크 결과로 확정) |
+| `analytics.analyze-batch-limit` | 10 | 1회 실행당 LLM 분석 콘텐츠 수 상한 (비용 가드) |
 
 ⚠️ 값은 **평문 정수만** — 비정수 값이 들어가면 `v_recent_content`와 그 위의 모든 계정 단위
 뷰가 캐스팅 에러로 깨진다 (뷰가 `value::int`로 직접 읽음, 앱 레벨 검증 없음).

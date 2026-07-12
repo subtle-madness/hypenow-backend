@@ -1,6 +1,6 @@
 # 태스크 F+B2: LLM 공통 골격 + 댓글 분류 배치 Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** LLM 호출 골격(포트/어댑터·설정·비용 가드)을 세우고, 첫 소비자인 **댓글 6분류 배치**를 개통한다 — 미분류 콘텐츠의 댓글을 Claude로 분류해 `comment_classifications`에 저장. 골드셋 스파이크 러너(F-1 도구)도 만들되 **실 API 실행은 사용자 결정으로 남긴다**.

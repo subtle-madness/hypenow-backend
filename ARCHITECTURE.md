@@ -180,9 +180,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
 | A | 분석 기반 | base 뷰·최근 N개 윈도우 뷰 재작성(raw 접촉은 base 뷰만) + 설정 키 + `contract-analysis` 골격 + 타입 미러·SQL 테스트 하니스 구축 | — | ✅ |
-| F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 | — | ⬜ |
+| F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 — F-2(VLM)는 B3에서 실험 | — | ✅ |
 | B1 | 드로어 비LLM 집계 | 작성자 요약·성과·벤치마크 뷰 + 미러 | A | ✅ |
-| B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ⬜ |
+| B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ✅ |
 | B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" | F, B2 | ⬜ |
 | C1 | 인플루언서 비LLM 집계 | 정체성·성과·일관성·커머셜 + 1:N 뷰 + 미러 | A | ⬜ |
 | C2 | 인플루언서 계정 LLM | 광고유형·페르소나·브리핑·적합성 | F, C1, B3 | ⬜ |
@@ -209,6 +209,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](docs/superpowers/plans/archive/2026-07-12-task-f-b2-llm-comment-classification.md) |
 | 2026-07-12 | 게시물 **중복 크롤링 도입** — 지표 스냅샷 누적. 분석 층 서빙을 최신/이력으로 분리(`contents` = 최신, `content_metric_snapshots` = 시점별, B1에서 구현). as-of 선택 규칙은 D에서 | [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md) |
 | 2026-07-12 | **미러를 명시적 타입 기반으로 재설계**(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=자바 그릇, TRUNCATE+INSERT, 컬럼 대조 가드) — 기존 제네릭 미러 폐기. **계약 모듈 `contract-analysis` 신설**(생산자+소비자 쌍 성립). 모듈 공유 원칙(§4-4) 확정. **기존 analytics 구현(뷰 소스·하니스·미러 코드) 전체 초기화 — 백지 재구축** | [specs/2026-07-12 §8](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
 | 2026-07-12 | 3-tier 확정: 미러=tier 경계(필수), LLM=분석 층 소속, 태스크 A~G 분해. **서비스 데이터**(로그인·후보 관리 등 was가 쓰는 앱 데이터)는 분석 결과와 스키마 분리(`app`), 물리 분리 고려 | [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
@@ -225,7 +226,6 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행 — CI 환경·도입 시점 |
 | 드로어 댓글 카피 | "214개 분석" 불가 → "최근 최대 50개" 정정 or 상한 상향+비용 재승인 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
-| LLM 코드 모듈 소속 | analysis 쪽 제안, F에서 확정 |
 | 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
 | 서비스 데이터 상세 | `app` 스키마 구성·로그인 방식 등은 G 착수 시 설계 |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
