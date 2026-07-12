@@ -27,10 +27,10 @@ ARCHITECTURE.md §5 트랙 중 **데이터 층 태스크만**: A(분석 기반) 
 
 | | 미러 잡 | 분석(analyze) 잡 |
 |---|---|---|
-| 대상 테이블 | `accounts`, `contents`, `content_comments` | `content_analyses`, `comment_classifications` |
+| 대상 테이블 | `accounts`, `contents`, `content_comments`, `content_metric_snapshots` | `content_analyses`, `comment_classifications` |
 | 내용 | raw 원지표의 서빙용 사본 + 행 단위 계산(hype_score) | LLM/VLM 산출물 + **그 분석이 참조한 기준선 수치** |
 | 성격 | 항상 최신 → 매 실행 TRUNCATE+INSERT 전체 교체 | 분석 시점 고정 → 한 번 쓰고 불변 |
-| 재실행 이유 | 새 게시물 유입 반영 (기존 행은 불변 — 지표는 +3일 단일 스냅샷) | 재실행 없음. 미분석 콘텐츠만 추가 분석 |
+| 재실행 이유 | 새 게시물 유입 + 재수집으로 갱신·누적된 지표 반영 (중복 크롤링 도입 — 2026-07-12) | 재실행 없음. 미분석 콘텐츠만 추가 분석 |
 | 방식 | §4-3 타입 미러 (뷰 SQL / Flyway DDL / 공유 record, 컬럼↔필드 대조 가드) | 분석 층 소유 테이블에 Java가 직접 쓰기 (JPA 허용) |
 
 경계 기준은 "LLM 여부"가 아니라 **"항상 최신으로 덮어쓸 것 vs 분석 시점에 고정할 것"**이다.
@@ -49,8 +49,12 @@ ARCHITECTURE.md §5 트랙 중 **데이터 층 태스크만**: A(분석 기반) 
   릴스=조회수, 피드=좋아요+댓글). rank 컬럼 없음 — 순위는 필터 결과의 정렬 인덱스로 파생.
 - `content_comments` — content 참조, author_masked, body, like_count.
   작성자 답글은 수집하지 않음(팀 확정) — 관련 컬럼 없음.
+- `content_metric_snapshots` — 게시물 × 수집 시점 1행: content 참조, captured_at,
+  views, likes, comments, hype_score. **중복 크롤링(2026-07-12 도입)이 쌓는 지표 이력의 서빙 사본** —
+  집계 기간의 as-of 조회("9일 기준 화면엔 9일 수치")와 향후 추이 그래프의 재료.
+  `contents`는 이 중 **최신 스냅샷 1개**를 편 것(랭킹 기본 경로), 이력 조회만 이 테이블을 쓴다.
 
-**id는 raw의 자연키를 그대로 쓴다** (콘텐츠=short_code, 계정=username, 댓글=raw id).
+**id는 raw의 자연키를 그대로 쓴다** (콘텐츠=short_code, 계정=username, 댓글·지표 스냅샷=raw id).
 미러가 전체 교체돼도 id가 안정적이어야 분석 층 테이블의 참조가 살아남는다.
 
 ### 분석 층 소유 테이블 (Flyway 이력: analytics 소유, Java 직접 쓰기)
@@ -84,8 +88,10 @@ ARCHITECTURE.md §5 트랙 중 **데이터 층 태스크만**: A(분석 기반) 
 
 1. **base 뷰 — payload 해부 전담.** raw 테이블·jsonb를 만지는 유일한 곳(§4-4 격리 원칙).
    계정별 최신 프로필 / 콘텐츠별 최신 상세(조회수 = videoPlayCount, 폴백 videoViewCount) / 댓글 평탄화.
-2. **서빙 형태 뷰 — 미러 대상과 1:1.** `v_accounts`, `v_contents`, `v_content_comments`.
+2. **서빙 형태 뷰 — 미러 대상과 1:1.** `v_accounts`, `v_contents`, `v_content_comments`,
+   `v_content_metric_snapshots`(전 스냅샷 평탄화 — base 뷰에 이력용 노출 추가 필요, §4-5 추가는 자유).
    노션 컬럼 형태로 정리 + hype_score 등 행 단위 계산. 미러는 이 뷰를 SELECT해 같은 이름 테이블에 붓는다.
+   `v_contents`는 최신 스냅샷 기준(base 뷰의 DISTINCT ON) — 랭킹 기본 경로는 이력을 모른다.
 3. **분석용 집계 뷰 — 미러 안 함, 분석 잡이 읽음.** 계정별 최근 N개 윈도우(N은 `app_setting`
    `analytics.recent-window`, 기본 12), 기준선 집계(계정별 최근 릴스 평균 조회수·최근 N개 평균
    ER/좋아요/댓글), 카테고리 맥락(카테고리 내 조회수 백분위·평균·모수).
@@ -153,7 +159,8 @@ B3가 마지막인 이유: 종합 텍스트의 프롬프트 입력이 B2 결과�
 | 미러 갱신 주기 | crawler 수집 주기에 연동하는 방안 유력, 자동화 시점 미정 |
 | LLM/VLM 모델 | F 스파이크 결과로 결정 |
 | VLM 항목별 채택 여부 | F-2 결과로 결정 (불가 항목은 컬럼 NULL 보류) |
-| 일자별 통계 보존 | 현재 요구 없음(추이 그래프 기획 제외). 필요 확인 시 미러를 날짜 append로 전환 |
+| as-of 선택 규칙 | 집계 기간에 대응하는 스냅샷 선택(기간 끝 시점 값 vs 기간 내 최신 등)은 D(API) 설계에서 확정 — 데이터 층은 전 스냅샷 보존만 책임 |
+| 추이 그래프 UI | 데이터(`content_metric_snapshots`)는 준비되나 확정안은 추이 제외 — UI 도입 여부는 기획 결정 |
 | ARCHITECTURE.md 갱신 | §5 태스크 표(B1~B3 내용)·§9 문서 맵(analytics/README.md 링크)을 이 설계에 맞춰 갱신 필요 |
 
 ## 11. 기존 문서와의 관계
