@@ -9,12 +9,16 @@ import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.UrlImageSource;
 import com.celfit.analytics.config.AnalyticsSettings;
 import java.util.List;
+import java.util.Set;
 
 /**
  * VLM Anthropic 구현 — 썸네일 1장 + 캡션 기반 (F-2 스파이크의 최소 입력안).
  * 영상 프레임 입력은 스파이크 결과에 따라 확장.
  */
 public final class AnthropicVisionAnalyzer implements VisionPort {
+
+	private static final Set<String> SIGNAL_LEVELS = Set.of("high", "mid", "low");
+	private static final Set<String> AD_TYPES = Set.of("organic", "sponsored");
 
 	private static final String INSTRUCTIONS = """
 			당신은 뷰티 콘텐츠의 이미지 분석가다. 썸네일과 캡션을 보고 다음을 추출하라.
@@ -53,10 +57,28 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 								.text("캡션: " + caption).build())))
 				.addUserMessage("위 썸네일과 캡션을 분석하라.")
 				.build();
-		return client.messages().create(params).content().stream()
+		return sanitize(client.messages().create(params).content().stream()
 				.flatMap(block -> block.text().stream())
 				.findFirst()
 				.orElseThrow(() -> new IllegalStateException("VLM 응답에 본문 없음"))
-				.text();
+				.text());
+	}
+
+	/**
+	 * LLM이 어휘 밖 값을 지어낸 경우 null로 교체한다 (DB CHECK 제약 위반 → 콘텐츠 전체 실패 차단).
+	 * Synthesis의 등급 방어(AnthropicSynthesizer)와 대칭.
+	 */
+	static VlmResult sanitize(VlmResult raw) {
+		String level = raw.sponsoredSignalLevel() != null && SIGNAL_LEVELS.contains(raw.sponsoredSignalLevel())
+				? raw.sponsoredSignalLevel() : null;
+		String adType = raw.adType() != null && AD_TYPES.contains(raw.adType())
+				? raw.adType() : null;
+		if (java.util.Objects.equals(level, raw.sponsoredSignalLevel())
+				&& java.util.Objects.equals(adType, raw.adType())) {
+			return raw;
+		}
+		return new VlmResult(raw.detectedBrands(), level, raw.sponsoredSignalReasons(),
+				raw.adDisclosure(), raw.detectedProductCategories(), raw.vlmAttributes(),
+				raw.mainCategory(), raw.subCategories(), adType);
 	}
 }

@@ -6,9 +6,11 @@ import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.llm.SynthesisPort;
 import com.celfit.analytics.llm.VisionPort;
 import com.celfit.analytics.llm.VlmResult;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,15 +44,26 @@ public class ContentAnalysisJob {
 		this.vlmEnabled = vlmEnabled;
 	}
 
-	/** @return 분석 완료 콘텐츠 수 */
+	/**
+	 * @return 분석 완료 콘텐츠 수
+	 *
+	 * <p>대상은 양쪽 DB 교집합: 기준선은 "최근 N개" 비교 지표라 윈도우 밖 콘텐츠는
+	 * 분석 대상이 아니다 (기준선 정의 불가). 미러 전체(contents)에서 기준선 뷰에 없는
+	 * 콘텐츠를 상한 적용 전에 걸러내지 않으면 매 실행 예외→skip으로 배치 상한 슬롯을
+	 * 영구 잠식한다 (B2의 classified HashSet 패턴과 동일한 자바 측 필터).
+	 */
 	public int run() {
+		Set<String> withBaseline = new HashSet<>(raw.queryForList(
+				"SELECT short_code FROM analytics.v_analysis_baseline", String.class));
 		List<String> targets = analysis.queryForList("""
 				SELECT c.short_code FROM contents c
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
 				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-				ORDER BY c.short_code
-				LIMIT ?""", String.class, settings.analyzeBatchLimit());
+				ORDER BY c.short_code""", String.class).stream()
+				.filter(withBaseline::contains)
+				.limit(settings.analyzeBatchLimit())
+				.toList();
 		String model = settings.llmModel();
 		int processed = 0;
 		int failed = 0;

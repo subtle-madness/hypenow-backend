@@ -183,6 +183,31 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 기준선_없는_콘텐츠는_대상에서_제외되고_배치_슬롯을_잠식하지_않는다() {
+		// 윈도우 밖 콘텐츠 재현: contents에는 있지만 기준선 뷰에는 없는 short_code (분류 완료 상태).
+		// 정렬상 첫 대상(post_0)이라 — 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
+		db.update("""
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, views, likes, comments)
+				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', 5000, 100, 10)""");
+		db.update("""
+				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
+				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
+		db.update("""
+				INSERT INTO comment_classifications (id, short_code, ai_category, model)
+				VALUES (10, 'post_0', 'positive', 'claude-test')""");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
+
+		int processed = job.run();
+
+		assertEquals(1, processed); // 기준선 있는 콘텐츠(post_a)가 슬롯을 차지한다
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_0'", Long.class));
+		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
 	void 콘텐츠_하나가_실패해도_나머지는_처리된다() {
 		// 포트 대역: post_a만 예외 (모의 LLM 장애)
 		rewireJob(content -> {
