@@ -25,6 +25,7 @@ public class PostDetailController {
 						content,
 						repository.findAccount(content.accountHandle()).orElse(null),
 						repository.findComments(shortCode)))
+				// reason은 서버 로그용 — Boot 4 기본 에러 응답 본문에는 실리지 않는다 (프론트 계약은 상태코드 404).
 				.orElseThrow(() -> new ResponseStatusException(
 						HttpStatus.NOT_FOUND, "게시물을 찾을 수 없습니다: " + shortCode));
 	}

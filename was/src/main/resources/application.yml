@@ -8,8 +8,6 @@ spring:
     driver-class-name: org.postgresql.Driver
 server:
   port: 8081
-  error:
-    include-message: always # 404 사유("게시물을 찾을 수 없습니다: …")를 프론트가 받게 — 민감정보 없는 공개 읽기 API
 was:
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
