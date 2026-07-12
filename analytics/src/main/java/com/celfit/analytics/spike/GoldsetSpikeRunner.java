@@ -39,10 +39,20 @@ public class GoldsetSpikeRunner {
 		return args -> {
 			Path path = Path.of(env.getRequiredProperty("analytics.goldset-path"));
 			List<GoldRow> gold = new ArrayList<>();
+			int lineNo = 0;
 			for (String line : Files.readAllLines(path)) {
+				lineNo++;
 				if (line.isBlank()) continue;
-				String[] parts = line.split(",", 3);
-				gold.add(new GoldRow(Long.parseLong(parts[0].trim()), parts[1].trim(), parts[2]));
+				// 행 단위 방어: malformed 행(컬럼 부족·숫자 아님)은 skip + 경고 — 전체 크래시 방지
+				try {
+					String[] parts = line.split(",", 3);
+					if (parts.length < 3) {
+						throw new IllegalArgumentException("컬럼 3개(id,label,text) 미만");
+					}
+					gold.add(new GoldRow(Long.parseLong(parts[0].trim()), parts[1].trim(), parts[2]));
+				} catch (RuntimeException e) {
+					System.err.printf("골드셋 %d행 skip (%s): %s%n", lineNo, e.getMessage(), line);
+				}
 			}
 			List<CommentToClassify> input = gold.stream()
 					.map(g -> new CommentToClassify(g.id(), g.text())).toList();

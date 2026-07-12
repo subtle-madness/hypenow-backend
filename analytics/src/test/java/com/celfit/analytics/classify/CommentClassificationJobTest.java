@@ -37,6 +37,12 @@ class CommentClassificationJobTest {
 		};
 	}
 
+	/** 임의 동작 포트로 잡을 다시 배선한다 (LLM 출력 정합·실패 격리 테스트용). */
+	void rewireJob(CommentClassificationPort port) {
+		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		job = new CommentClassificationJob(db, ds, port, new AnalyticsSettings(db));
+	}
+
 	@BeforeEach
 	void setUp() {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
@@ -101,5 +107,64 @@ class CommentClassificationJobTest {
 		job.run();
 
 		assertEquals(3, db.queryForObject("SELECT count(*) FROM comment_classifications", Long.class));
+	}
+
+	@Test
+	void LLM이_id를_누락하거나_없는_id를_반환해도_입력_기준으로_정합된다() {
+		// 포트 대역: id 2 결과를 누락하고, 입력에 없는 id 999를 지어낸다 (환각)
+		rewireJob(comments -> {
+			List<ClassifiedComment> out = new ArrayList<>(comments.stream()
+					.filter(c -> c.id() != 2)
+					.map(c -> new ClassifiedComment(c.id(), "positive")).toList());
+			out.add(new ClassifiedComment(999L, "purchase"));
+			return out;
+		});
+
+		job.run();
+
+		// 저장 행 수 == 입력 댓글 수 (누락도 유실도 없다)
+		assertEquals(3, db.queryForObject("SELECT count(*) FROM comment_classifications", Long.class));
+		// 누락된 id는 etc로 합성
+		assertEquals("etc", db.queryForObject(
+				"SELECT ai_category FROM comment_classifications WHERE id = 2", String.class));
+		// 입력에 없는 id는 저장하지 않는다
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM comment_classifications WHERE id = 999", Long.class));
+	}
+
+	@Test
+	void LLM이_같은_id를_중복_반환해도_첫_결과만_저장된다() {
+		// 포트 대역: 모든 결과 뒤에 첫 댓글의 상반된 중복 결과를 덧붙인다
+		rewireJob(comments -> {
+			List<ClassifiedComment> out = new ArrayList<>(comments.stream()
+					.map(c -> new ClassifiedComment(c.id(), "positive")).toList());
+			out.add(new ClassifiedComment(comments.get(0).id(), "purchase"));
+			return out;
+		});
+
+		job.run(); // PK 충돌 없이 완료돼야 한다
+
+		assertEquals(3, db.queryForObject("SELECT count(*) FROM comment_classifications", Long.class));
+		assertEquals("positive", db.queryForObject(
+				"SELECT ai_category FROM comment_classifications WHERE id = 1", String.class));
+	}
+
+	@Test
+	void 콘텐츠_하나가_실패해도_나머지는_처리된다() {
+		// 포트 대역: post_a의 댓글(id 1 포함)에서만 예외 — 대상 순서상 첫 콘텐츠
+		rewireJob(comments -> {
+			if (comments.stream().anyMatch(c -> c.id() == 1)) {
+				throw new IllegalStateException("모의 LLM 장애");
+			}
+			return comments.stream().map(c -> new ClassifiedComment(c.id(), "positive")).toList();
+		});
+
+		int processed = job.run(); // 예외가 전파되지 않아야 한다
+
+		assertEquals(1, processed); // post_b만 성공
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM comment_classifications WHERE short_code = 'post_a'", Long.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM comment_classifications WHERE short_code = 'post_b'", Long.class));
 	}
 }
