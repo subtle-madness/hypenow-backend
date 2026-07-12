@@ -1,6 +1,6 @@
 # 태스크 B1: 서빙 뷰 3종 + 미러 테이블 + record Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-12)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 프론트가 소비할 서빙 데이터 3종(`accounts`·`contents`·`content_comments`)을 raw→analysis DB로 흘려보낸다 — 서빙 형태 뷰 3종 + analysis DB Flyway DDL + contract-analysis record 3종 + 미러 등록. 완료 시 `bootRun` 한 번으로 실데이터가 analysis DB에 채워진다.
