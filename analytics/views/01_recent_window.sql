@@ -16,7 +16,7 @@ WITH ranked AS (
     d.views,
     d.video_duration,
     d.media_type,
-    row_number() OVER (PARTITION BY c.owner_username ORDER BY c.uploaded_at DESC) AS recency_rank
+    row_number() OVER (PARTITION BY c.owner_username ORDER BY c.uploaded_at DESC, c.content_id DESC) AS recency_rank
   FROM analytics.v_base_content c
   JOIN analytics.v_base_detail d USING (content_id)
 )
