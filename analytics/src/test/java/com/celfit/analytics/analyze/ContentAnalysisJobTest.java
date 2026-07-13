@@ -11,10 +11,10 @@ import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.llm.SynthesisPort;
 import com.celfit.analytics.llm.VisionPort;
 import com.celfit.analytics.llm.VlmResult;
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,13 +68,8 @@ class ContentAnalysisJobTest {
 		db = new JdbcTemplate(ds);
 		synthesisCalls = new ArrayList<>();
 		visionCalls = new ArrayList<>();
-		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
-		// 테스트 간 완전 초기화 (B2 패턴 — content_analyses 포함)
-		db.update("DROP TABLE IF EXISTS content_analyses, comment_classifications, accounts, contents, content_comments, content_metric_snapshots");
-		db.update("DROP TABLE IF EXISTS account_summaries, account_category_stats, account_content_series");
-		db.update("DROP TABLE IF EXISTS app_setting, flyway_schema_history");
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis")
-				.baselineOnMigrate(true).baselineVersion("0").load().migrate();
+		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
+		TestDb.resetAndMigrate(db, ds);
 
 		// raw 대역: analytics.v_analysis_baseline과 같은 컬럼의 뷰 (고정 수치 테이블 기반).
 		// 실제 뷰의 컬럼 타입(numeric/bigint/smallint 혼재)을 그대로 재현해 JDBC 매퍼(getBigDecimal)를 검증한다.

@@ -3,6 +3,7 @@ package com.celfit.analytics.mirror;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -35,9 +36,8 @@ class MirrorJobTest {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
 		db = new JdbcTemplate(ds);
 		job = new MirrorJob(db, ds);
-		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
-		db.update("DROP TABLE IF EXISTS fixture_src");
-		db.update("DROP TABLE IF EXISTS fixture_row");
+		// 테스트 간 완전 초기화: 스키마 통째 재생성 (이 테스트는 Flyway 미사용)
+		TestDb.reset(db);
 		db.update("CREATE SCHEMA analytics");
 		db.update("CREATE TABLE fixture_src (id bigint, name text, score bigint)");
 		db.update("CREATE VIEW analytics.v_fixture AS SELECT id, name, score FROM fixture_src");
