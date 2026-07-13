@@ -20,7 +20,7 @@ MVP 범위:
 - **후보 관리** — 추천 결과에서 후보 저장·상태(검토중/컨택 예정/협업 중)·메모
 
 보류(⏸): 레퍼런스 콘텐츠(원하는 느낌) 매칭, 브리프발 발굴(크롤링) 트리거.
-기준 설계: [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md)
+기준 설계: [specs/2026-07-13-campaign-recommendation-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-design.md)
 프론트: celfit-front.vercel.app (별도 저장소)
 
 ## 2. 시스템 구조 — 두 개의 경로
@@ -49,7 +49,7 @@ crawler ──쓰기──▶ raw DB ──읽기── analytics ──미러�
 | `crawler` | raw DB 쓰기 | Apify로 발굴→판정→상세 수집, 원형(raw) 적재 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
 | `analytics` | raw 읽기 → 분석 결과 쓰기 | **프로필 팩토리** — 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). raw 콘텐츠에 대한 LLM 분석 소속 | 헤드리스 배치, JdbcTemplate ×2 |
 | `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | **캠페인 파이프라인 오케스트레이터**(§3) + REST API + 후보 관리 | Spring Boot, JdbcClient |
-| `contract-analysis` | — | 분석 결과의 record·enum + **매칭 어휘**(카테고리·속성·톤) — 순수 JDK 계약 타입 (§5-4). analytics·was가 의존, crawler 무관 | Java record |
+| `contract-analysis` | — | 분석 결과의 record·enum + **매칭 어휘**(제품 속성·톤 + 캠페인 목표 — 카테고리는 crawler 분류 계층 재사용이라 미수록, §5-4) — 순수 JDK 계약 타입. analytics·was가 의존, crawler 무관 | Java record |
 | `llm-core` *(신설 예정)* | — | LLM/VLM 호출 골격(인증·재시도·포트) — analytics·was 공용, 비즈니스 로직 금지 (§5-4) | 얇은 공유 모듈 |
 
 **데이터 배치**: 저장 영역은 세 가지 — raw(크롤링 원본) / 분석 결과(미러 테이블) / **서비스 데이터**(was가
@@ -78,21 +78,27 @@ SUBMITTED ─▶ ANALYZING_BRIEF ─▶ MATCHING ─▶ NARRATING ─▶ DONE
 |---|---|---|---|
 | ① 제출 | 폼 검증, 캠페인 저장, 잡 시작 | — | `app.campaign` (SUBMITTED) |
 | ② 브리프 분석 | 제품 이미지 VLM → 제품 속성(매칭 어휘로 강제) | 캠페인 이미지 | `app.campaign.product_attrs` |
-| ③ 매칭 | 하드 필터 + 축별 정규화(SQL, 파라미터 쿼리) → 가중 합산·순위(Java, 목표별 가중치 프리셋) → 상위 K 확정 | 분석 결과 `influencer_profiles` + 가중치 프리셋 | `app.campaign_recommendation` (점수 분해 + 팩트 원값 스냅샷) |
+| ③ 매칭 | 하드 필터(SQL 파라미터 쿼리: 대분류 비율 임계·팔로워 범위·최소 표본) → 가중 합산·순위(Java, 목표별 가중치 프리셋) → 상위 K 확정. 축 정규화(풀 백분위)는 프로필 미러가 사전 계산 | 분석 결과 `influencer_profiles` + 가중치 프리셋 | `app.campaign_recommendation` (점수 분해 + 팩트 원값 스냅샷) |
 | ④ 근거 서술 | **저장된 팩트만 입력으로** LLM 서술 생성 | `app.campaign_recommendation` | 같은 행의 narrative |
 | 서빙 | 진행 상태·결과 조회 (프론트 폴링), 후보 저장 연결 | `app.*` | `app.*` (후보) |
 
-**추천을 떠받치는 세 기둥** (전말: [피봇 spec §4](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md)):
+폼 입력 → 로직 라우팅은 **`MatchingCriteria` 조립 한 곳에 집중**(명시적 라우팅 계층 —
+필드별 라우팅 표는 [기준 spec §4](docs/superpowers/specs/2026-07-13-campaign-recommendation-design.md)).
+옵셔널 필드는 null → `(? IS NULL OR …)` 고정 SQL, 이미지 없으면 ② 스킵.
+
+**추천을 떠받치는 세 기둥** (전말: [기준 spec](docs/superpowers/specs/2026-07-13-campaign-recommendation-design.md)):
 
 1. **매칭용 인플루언서 프로필** — analytics가 배치로 만들어 두는 단일 재료 테이블
-   (`influencer_profiles`, 인플루언서당 1행, 매칭 축을 컬럼으로 평탄화).
-   축: 정체성(카테고리 분포·콘텐츠 속성 태그) / 규모·성과(팔로워·참여율·히트율·벤치마크 대비) /
-   상업성(광고 비율·광고 vs 비광고 성과) / 오디언스 반응(감성·구매의도) / 페르소나(라벨·광고 유형).
-2. **어휘 계약** — 브리프 쪽 VLM(제품→속성, was)과 분석 쪽 LLM(콘텐츠→속성, analytics)이
-   **같은 어휘**(카테고리·속성·톤 enum, `contract-analysis` 소유)만 출력하도록 강제.
-   어휘가 갈리면 매칭이 조용히 죽는다 — 이 피봇의 최대 침묵 실패 지점이라 계약으로 고정.
-3. **근거 확정 저장** — 추천 시점의 축별 점수 분해 + 팩트 원값을 추천 행에 스냅샷.
-   프로필 미러는 계속 갱신되므로, 저장 없이는 "어제 추천의 근거"가 오늘 데이터로 바뀐다.
+   (`influencer_profiles`, 인플루언서당 1행, 매칭 축을 컬럼으로 평탄화 + **풀 전체 백분위 사전 계산**).
+   축: 정체성(카테고리 분포·콘텐츠 속성 태그) / 규모·성과(팔로워·조회·참여율) /
+   상업성(광고 비율·비광고 성과 격차) / 오디언스 반응(구매의도·진정성·긍정 비율).
+   **NULL 규칙**: 피드만 계정은 조회 축이 NULL — 합산 시 0점이 아니라 축 제외 후 가중치 재배분.
+2. **어휘 계약** — 매칭은 단어 비교라 의미 축은 양쪽이 같은 허용 목록만 쓰도록 강제.
+   카테고리는 **crawler 분류 계층 재사용**(폼 선택지 = 계층, 프로필 분포 = 같은 계층),
+   제품 속성·톤과 캠페인 목표(인지도/전환/신뢰·리뷰)는 **`contract-analysis` enum 신설**.
+   어휘 밖 LLM 출력은 폐기(B3 검증 패턴). 어휘가 갈리면 매칭이 조용히 죽는다.
+3. **근거 확정 저장** — 추천 시점의 축별 점수 분해(적용 가중치 포함) + 팩트 원값을 추천 행에
+   스냅샷. 프로필 미러는 계속 갱신되므로, 저장 없이는 "어제 추천의 근거"가 오늘 데이터로 바뀐다.
    LLM 서술은 이 저장된 팩트만 입력으로 받아 팩트를 벗어날 수 없다.
 
 **실패·재시도 시맨틱**: 실패는 단계명이 박힌 상태(FAILED_*)로 고정, 재시도는 그 단계부터
@@ -105,8 +111,12 @@ SUBMITTED ─▶ ANALYZING_BRIEF ─▶ MATCHING ─▶ NARRATING ─▶ DONE
 |---|---|
 | `campaign` | 브리프 폼 필드, 제품 이미지 참조, VLM 추출 제품 속성(jsonb), 상태, 실패 사유, 타임스탬프 |
 | `campaign_recommendation` | campaign FK, username, 순위, 종합 점수, 축별 점수 분해(jsonb), 근거 팩트 원값 스냅샷(jsonb), LLM 서술, 서술 상태 |
-| `matching_weight_preset` | 캠페인 목표별 축 가중치 — 재배포 없이 튜닝 (`app_setting` 철학의 was판) |
+| `matching_weight_preset` | 캠페인 목표별 축 가중치 — 재배포 없이 튜닝 (`app_setting` 철학의 was판). 적용분은 추천 행에 복사 저장 — 튜닝해도 과거 근거 불변 |
 | 후보 연결 | 후보 관리가 `campaign_recommendation`을 참조 — "이 캠페인의 이 추천에서 저장됨" |
+
+잡 실행은 인프라 없이 인프로세스 스레드풀 + DB 상태가 유일한 진실(큐는 YAGNI).
+재시작 시 진행 중 상태로 남은 캠페인은 부팅 훅에서 FAILED_* 전환. 이미지는 로컬 파일
++ 경로 저장(포트 추상화).
 
 ## 4. 데이터
 
@@ -128,7 +138,10 @@ raw 접촉은 base 뷰(00)만 — 상세는 §5-4.
 ### analysis DB
 
 - **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §5-3). analytics가 쓰고 was가 읽는다.
-  피봇 후 중심 테이블은 `influencer_profiles`(매칭 재료, R1·R2에서 구축)이고, 기존 서빙 미러
+  피봇 후 중심 테이블은 `influencer_profiles`(매칭 재료, P1·P2에서 구축 — 백분위 사전 계산 포함)이고,
+  `category_hierarchy`(분류 계층 미러 — was는 raw 접근 금지라 폼 선택지·검증용으로 미러),
+  `content_attribute_tags`(콘텐츠 속성 VLM 산출물 — `content_analyses`와 달리 **재분석 허용(UPSERT)**,
+  어휘 개정 시 재실행 가능)가 추가된다. 기존 서빙 미러
   (accounts·contents·content_comments·content_metric_snapshots·account_*·댓글/콘텐츠 분석)는 근거 하위 화면 재료.
 - Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
 - **서비스 데이터 (`app` 스키마)** — §3의 캠페인 도메인(캠페인·추천 결과·가중치 프리셋)과
@@ -192,8 +205,9 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
 ### 5-4. 모듈 공유 원칙
 
 - **모듈은 서로 import 하지 않는다.** 예외는 공유 모듈 둘뿐:
-  - **`contract-analysis`** — 분석 결과의 record·enum + **매칭 어휘**(카테고리·속성·톤 —
-    브리프 VLM과 콘텐츠 LLM이 같은 어휘를 출력해야 매칭이 성립, 어휘 밖 출력은 방어).
+  - **`contract-analysis`** — 분석 결과의 record·enum + **매칭 어휘**(제품 속성·톤 + 캠페인 목표 —
+    브리프 VLM과 콘텐츠 VLM이 같은 어휘를 출력해야 매칭이 성립, 어휘 밖 출력은 폐기.
+    카테고리 어휘는 crawler 분류 계층 재사용이라 여기 미수록 — `category_hierarchy` 미러로 전달).
     순수 JDK, Spring/JPA 의존 금지. 생산자 analytics와 소비자 was가 의존, crawler 무관.
     수록 기준: **"동일 형태를 다루는 Java 생산자+소비자 쌍"이 성립하는 타입만.** 한 모듈만
     쓰는 타입은 그 모듈에 둔다. util·비즈니스 로직은 넣지 않는다.
@@ -216,8 +230,8 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
 - **raw 스키마 지식은 base 뷰에 격리** — raw 테이블·payload를 직접 만지는 SQL은 base 뷰만.
   분석 층의 Java도 crawler 코드가 아닌 SQL로 raw를 읽는다.
 - **분류값·라벨은 생산자가 확정, 소비자는 전달만** — tier·감성분류 같은 어휘는 분석 층이 문자열로
-  확정해 데이터에 박고, was는 해석·분기 없이 그대로 내려보낸다. 매칭 어휘만 예외적으로
-  계약 모듈이 생산자다(양쪽 LLM이 모두 소비자라서).
+  확정해 데이터에 박고, was는 해석·분기 없이 그대로 내려보낸다. 매칭 어휘(속성·톤·목표)만
+  예외적으로 계약 모듈이 생산자다(양쪽 LLM이 모두 소비자라서). 카테고리 어휘의 생산자는 crawler.
 
 ### 5-5. 스키마 변경 절차
 
@@ -259,17 +273,17 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 | C1 | 인플루언서 상세 비LLM 집계 | AccountReport 결정 지표 미러 3종(account_*) — 근거 하위 화면(인플루언서 상세) 재료 | ✅ PR #3 리뷰 대기 |
 | D | 게시물 상세 API | `GET /api/posts/{shortCode}` + analysis 블록(D2) — 근거 하위 화면(드로어) API | ✅ PR #4 리뷰 대기 |
 
-**캠페인 추천 작업 트랙** (구조 설계: [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md)):
+**캠페인 추천 작업 트랙** (기준 설계: [specs/2026-07-13-campaign-recommendation-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-design.md)):
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
-| V | 어휘 계약 | 매칭 어휘(카테고리·속성·톤) enum을 `contract-analysis`에 확정 | — | ⬜ |
+| V | 어휘 계약 | 제품 속성·톤 + 캠페인 목표(인지도/전환/신뢰·리뷰) enum을 `contract-analysis`에 확정 — 카테고리는 crawler 계층 재사용이라 신규 정의 없음 | — | ⬜ |
 | L | LLM 공유 모듈 | F 산출물(호출 골격)을 `llm-core`로 분리, analytics·was 공용 | — | ⬜ |
-| R1 | 프로필 비LLM 축 | `influencer_profiles` 뷰·미러 (정체성·규모·성과·상업성·오디언스 반응) — C1 산출물·계획 재료 재활용 | V | ⬜ |
-| R2 | 프로필 LLM 축 | 페르소나·광고 유형 (계정 LLM) — 구 C2 재정의 | V, L, R1 | ⬜ |
-| G | 캠페인 도메인 | `app` 스키마: 캠페인·추천 결과·후보 연결 + 비동기 잡 골격(상태 머신) | — | ⬜ |
+| P1 | 프로필 비LLM | `influencer_profiles` 뷰·미러(풀 백분위 사전 계산) + `category_hierarchy` 미러 | — | ⬜ |
+| P2 | 콘텐츠 속성 VLM | 신설 배치 → `content_attribute_tags`(재분석 허용), 프로필에 속성 집계 합류 | V, L | ⬜ |
+| G | 캠페인 도메인 | `app` 스키마 4테이블(campaign·recommendation·preset·candidate) + 잡 골격(상태 머신·재시작 복구) | — | ⬜ |
 | W1 | 브리프 이미지 분석 | 제품 이미지 VLM → 제품 속성 (어휘 계약 준수) | V, L, G | ⬜ |
-| M | 매칭 엔진 | 하드 필터·정규화 SQL + 가중 합산 Java + 가중치 프리셋 테이블 + 근거 확정 저장 | R1, G, W1 | ⬜ |
+| M | 매칭 엔진 | `MatchingCriteria` 조립 + 하드 필터 SQL + 가중 합산 Java(NULL 축 가중치 재배분) + 근거 확정 저장 | P1, G | ⬜ |
 | W2 | 근거 서술 | 저장된 팩트 기반 LLM 서술 | M, L | ⬜ |
 | API | 캠페인 API | 제출·진행 상태·결과 조회 + 후보 연결 | G, M | ⬜ |
 | E | 인플루언서 상세 API | 근거 하위 화면 — C1 미러(account_*) 서빙 | C1 | ⬜ |
@@ -277,7 +291,9 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 | ⏸ | 레퍼런스 콘텐츠 매칭 | 참고 이미지/게시물 → 비주얼 톤·스타일 매칭 | — | ⏸ |
 | ⏸ | 브리프발 발굴 트리거 | 풀 부족 시 crawler 발굴 연동 | — | ⏸ |
 
-권장 순서: V·L·G(기반, 병렬 가능) → R1 → W1·R2 → M → W2 → API. X는 아무 때나.
+권장 순서: V·L·G·P1(기반, 병렬 가능) → P2·W1 → M → W2 → API. X는 아무 때나.
+M은 P2 없이 가동 가능(속성 축 가중치 0) — 이미지 축은 나중에 켜도 파이프라인이 돈다.
+구 R2(페르소나 계정 LLM)는 소멸 — 페르소나 축은 현 프리셋에 없어 보류.
 상세 구현 계획은 태스크 착수 시 작성.
 
 ## 7. 데이터 제약 (해석 주의 — 모든 지표·매칭 설계의 전제)
@@ -298,7 +314,7 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
-| 2026-07-13 | **제품 피봇: 캠페인 브리프 → 인플루언서 추천 + 근거.** A안 채택(analytics=프로필 팩토리 / 캠페인 파이프라인은 was 소유 — §3 신설). LLM 소속 이원화(raw 대상=분석 층, 캠페인 입력 대상=was), `llm-core` 공유 모듈 신설 예정, 매칭 어휘는 `contract-analysis`에. 추천 3기둥(프로필 미러 / 어휘 계약 / 매칭+근거 확정 저장). C2→R2 재정의(C1·D는 이미 구현 — 근거 하위 화면 재료로 유지), R1(매칭 프로필) 신설, G→캠페인 도메인 확장, 랭킹 대시보드 제거(X). 레퍼런스 콘텐츠 매칭·발굴 트리거는 보류. 이 문서를 캠페인 플로우 중심으로 전면 재작성(§ 번호 변경: 원칙 §4→§5) | [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md) |
+| 2026-07-13 | **피봇 설계 사용자와 재도출 — 정본 교체.** 이전 피봇 spec은 사용자 검토 없는 초안이라 🗄 대체. 재확정: was 소유·LLM 이원화·`llm-core`·프로필 테이블·3기둥·랭킹 제거(X). 신규 확정: 폼 핵심 4필드 superset + `MatchingCriteria` 명시적 라우팅 / 카테고리 2층 하이브리드(대분류 하드·중소분류 소프트) — **어휘는 crawler 분류 계층 재사용**(신설은 속성·톤·목표 enum만, `category_hierarchy` 미러로 was 전달) / 캠페인 목표 3종 / 이미지=매칭 속성 추출(→ 콘텐츠 속성 VLM 배치 P2 신설, `content_attribute_tags` 재분석 허용) / 정규화=미러 사전 계산 풀 백분위 + NULL 축 가중치 재배분 / R1·R2→P1·P2 재편(페르소나 축 보류) | [specs/2026-07-13-campaign-recommendation-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-design.md) |
 | 2026-07-13 | B1 잔여분 `content_metric_snapshots` 미러 개통 — base 뷰에 이력 노출(`v_base_detail_history`) 추가, 서빙은 최신(`contents`)/이력(스냅샷) 분리 완성. was의 as-of 조회(태스크 D) 재료 | [plans/2026-07-13-task-b1-snapshot-mirror.md](docs/superpowers/plans/archive/2026-07-13-task-b1-snapshot-mirror.md) |
 | 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](docs/superpowers/plans/archive/2026-07-12-task-f-b2-llm-comment-classification.md) |
 | 2026-07-12 | 게시물 **중복 크롤링 도입** — 지표 스냅샷 누적. 분석 층 서빙을 최신/이력으로 분리(`contents` = 최신, `content_metric_snapshots` = 시점별, B1에서 구현). as-of 선택 규칙은 D에서 | [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md) |
@@ -314,9 +330,9 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 
 | 항목 | 상태 |
 |---|---|
-| 브리프 폼 필드 확정 | 프로필이 답할 수 있는 축 기준으로 — 태스크 G/M 착수 시 확정 (§7 인구통계 제약 주의) |
-| 가중치 프리셋 초기값 | 캠페인 목표별 축 가중치·정규화 방식 — 태스크 M 착수 시 확정, 이후 데이터로 튜닝 |
-| 제품 이미지 저장 위치 | 파일 스토리지 vs DB — 태스크 G 착수 시 결정 |
+| 브리프 폼 필드 확정 | 팀원 진행 중 — 핵심 4필드 superset으로 설계 완료(라우팅 표는 기준 spec §4), 필드 증감은 criteria 조립부에서 흡수 (§7 인구통계 제약 주의) |
+| 속성·톤 어휘 값 목록 | 태스크 V에서 확정 — 제품 이미지·콘텐츠 양쪽에서 유효한 축으로 |
+| 가중치 프리셋 수치 | 초안은 기준 spec §5 — 실데이터 튜닝 전제. 하드 필터 임계·상위 K는 태스크 M에서 설정 키로 |
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행 — CI 환경·도입 시점 |
 | 드로어 댓글 카피 | "214개 분석" 불가 → "최근 최대 50개" 정정 or 상한 상향+비용 재승인 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
