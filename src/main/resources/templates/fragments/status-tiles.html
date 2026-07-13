@@ -6,11 +6,6 @@
             <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
             <div class="tile-desc" th:text="${t.desc()}"></div>
         </div>
-        <div class="tile highlight">
-            <div class="num" th:text="${summary.dueForAggregate()}">0</div>
-            <div class="label">집계 대기</div>
-            <div class="tile-desc">채택됐고 업로드 3일 지나 지금 집계하면 처리될 물량 (QUALIFIED의 부분집합)</div>
-        </div>
     </div>
     <h2 class="tiles-head">제외 · 종료 <span class="tiles-head-sub">파이프라인에서 빠진 것</span></h2>
     <div class="tiles">

@@ -15,14 +15,6 @@
 <div hx-get="/ui/fragments/status" hx-trigger="load, every 2s"></div>
 <!-- 상태 카드 (실시간, 3초 폴링) -->
 <div hx-get="/ui/fragments/status-tiles" hx-trigger="load, every 3s"></div>
-<h2>raw 적재량</h2>
-<div class="tiles sub">
-    <div class="tile"><div class="num" th:text="${summary.rawDiscoveryPosts()}">0</div><div class="label">발굴 게시물</div></div>
-    <div class="tile"><div class="num" th:text="${summary.rawPostDetails()}">0</div><div class="label">게시물 상세</div></div>
-    <div class="tile"><div class="num" th:text="${summary.rawComments()}">0</div><div class="label">댓글</div></div>
-    <div class="tile"><div class="num" th:text="${summary.rawProfiles()}">0</div><div class="label">프로필</div></div>
-    <div class="tile"><div class="num" th:text="${summary.rawRunItems()}">0</div><div class="label">응답 아카이브</div></div>
-</div>
 <h2>최근 실행</h2>
 <div hx-get="/ui/fragments/runs" hx-trigger="load, every 5s"></div>
 </main>

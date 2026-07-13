@@ -15,15 +15,8 @@
     <tr><th>계정</th><td th:text="${content.ownerUsername}"></td></tr>
     <tr><th>업로드</th><td th:text="${content.uploadedAt}"></td></tr>
     <tr><th>상태</th><td><span class="badge" th:classappend="${content.status}" th:text="${content.status}"></span></td></tr>
-    <tr><th>광고·협찬 표기</th>
-        <td><span class="badge AD" th:if="${content.adMarked}">광고</span>
-            <span class="hint" th:unless="${content.adMarked}">표기 없음</span></td></tr>
     <tr th:if="${!taggedUsers.isEmpty()}"><th>태그된 계정</th>
         <td><span class="badge tag" th:each="t : ${taggedUsers}" th:text="${t}"></span></td></tr>
-    <tr><th>분류</th><td><span class="badge"
-            th:text="${content.mainGroup == content.subcategory ? content.subcategory
-                       : content.mainGroup + ' › ' + content.subcategory}"></span></td></tr>
-    <tr><th>발굴 키워드</th><td th:text="${content.discoveryKeyword}"></td></tr>
     <tr><th>링크</th><td><a th:href="'https://www.instagram.com/p/' + ${content.shortCode} + '/'"
                             th:text="'instagram.com/p/' + ${content.shortCode}" target="_blank"></a></td></tr>
 </table>

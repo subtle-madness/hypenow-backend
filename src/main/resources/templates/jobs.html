@@ -16,18 +16,14 @@
 
 <div class="job-forms">
     <form method="post" th:action="@{/ui/jobs/discover}">
-        <select name="category" data-persist>
-            <option value="">전체 카테고리</option>
-            <option th:each="c : ${categories}" th:value="${c.id}" th:text="${c.name}"></option>
-        </select>
         <button type="submit" class="primary">① discover — 발굴</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/qualify}">
         <label><input type="checkbox" name="requalify" value="true" data-persist/> EXCLUDED 재판정 포함</label>
         <button type="submit" class="primary">② qualify — 프로필·규칙 판정</button>
     </form>
-    <form method="post" th:action="@{/ui/jobs/aggregate}">
-        <button type="submit" class="primary">③ aggregate — +3일 상세·댓글</button>
+    <form method="post" th:action="@{/ui/jobs/collect}">
+        <button type="submit" class="primary">③ collect — 상세·댓글 수집</button>
     </form>
 </div>
 
