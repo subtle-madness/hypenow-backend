@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
 import com.celfit.contract.analysis.ContentComment;
+import com.celfit.contract.analysis.ContentMetricSnapshot;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import java.util.List;
@@ -50,6 +51,11 @@ class FlywaySchemaTest {
 	@Test
 	void content_comments_테이블_컬럼이_record와_일치한다() {
 		assertColumnsMatch("content_comments", ContentComment.class);
+	}
+
+	@Test
+	void content_metric_snapshots_테이블_컬럼이_record와_일치한다() {
+		assertColumnsMatch("content_metric_snapshots", ContentMetricSnapshot.class);
 	}
 
 	private void assertColumnsMatch(String table, Class<? extends Record> recordType) {
