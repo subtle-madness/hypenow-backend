@@ -30,13 +30,13 @@ public class JobService implements TriggerJobUseCase {
     }
 
     @Override
-    public TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType) {
-        return trigger(job, categoryId, triggerType, false);
+    public TriggerResult trigger(JobName job, TriggerType triggerType) {
+        return trigger(job, triggerType, false);
     }
 
     /** requalify=true는 qualify에서 EXCLUDED도 재판정 (raw_profile 재사용 — Apify 재호출 없음). */
     @Override
-    public TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType, boolean requalify) {
+    public TriggerResult trigger(JobName job, TriggerType triggerType, boolean requalify) {
         if (!lock.tryAcquire(job)) return TriggerResult.BUSY;
         taskExecutor.execute(() -> {
             try {

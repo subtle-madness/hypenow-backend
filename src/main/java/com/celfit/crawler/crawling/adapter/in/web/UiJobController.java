@@ -1,11 +1,10 @@
 package com.celfit.crawler.crawling.adapter.in.web;
 
+import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase;
+import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase.TriggerResult;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.TriggerType;
-import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase;
-import java.util.Locale;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -21,21 +20,28 @@ public class UiJobController {
         this.jobService = jobService;
     }
 
-    @PostMapping("/{job}")
-    public String trigger(@PathVariable String job,
-                          @RequestParam(required = false) Long category,
-                          @RequestParam(defaultValue = "false") boolean requalify,
-                          RedirectAttributes ra) {
-        try {
-            JobName name = JobName.valueOf(job.toUpperCase(Locale.ROOT));
-            String message = switch (jobService.trigger(name, category, TriggerType.MANUAL, requalify)) {
-                case ACCEPTED -> name + " 실행 시작";
-                case BUSY -> name + "이(가) 이미 실행 중입니다";
-            };
-            ra.addFlashAttribute("message", message);
-        } catch (IllegalArgumentException e) {
-            ra.addFlashAttribute("message", "실행 불가: " + e.getMessage());
-        }
+    @PostMapping("/discover")
+    public String discover(RedirectAttributes ra) {
+        return respond(JobName.DISCOVER, jobService.trigger(JobName.DISCOVER, TriggerType.MANUAL), ra);
+    }
+
+    @PostMapping("/qualify")
+    public String qualify(@RequestParam(defaultValue = "false") boolean requalify, RedirectAttributes ra) {
+        return respond(JobName.QUALIFY,
+                jobService.trigger(JobName.QUALIFY, TriggerType.MANUAL, requalify), ra);
+    }
+
+    @PostMapping("/collect")
+    public String collect(RedirectAttributes ra) {
+        return respond(JobName.COLLECT, jobService.trigger(JobName.COLLECT, TriggerType.MANUAL), ra);
+    }
+
+    private String respond(JobName name, TriggerResult result, RedirectAttributes ra) {
+        String message = switch (result) {
+            case ACCEPTED -> name + " 실행 시작";
+            case BUSY -> name + "이(가) 이미 실행 중입니다";
+        };
+        ra.addFlashAttribute("message", message);
         return "redirect:/ui/jobs";
     }
 }

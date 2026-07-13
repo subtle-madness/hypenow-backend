@@ -23,10 +23,6 @@ crawler:
     page-delay: 1s
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
-  direct-detail:
-    post-doc-id: test-doc
-    post-friendly-name: TestPostQuery
-    page-delay: 1ms
   hiker:
     api-key: test-key
     base-url: http://localhost:9999
@@ -47,4 +43,4 @@ crawler:
     enabled: false
     discover-cron: "0 0 6 * * *"
     qualify-cron: "0 30 6 * * *"
-    aggregate-cron: "0 0 7 * * *"
+    collect-cron: "0 0 7 * * *"

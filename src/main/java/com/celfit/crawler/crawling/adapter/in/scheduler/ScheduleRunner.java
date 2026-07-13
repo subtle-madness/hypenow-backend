@@ -24,16 +24,16 @@ public class ScheduleRunner {
 
     @Scheduled(cron = "${crawler.schedule.discover-cron}")
     void discover() {
-        log.info("스케줄 discover: {}", jobService.trigger(JobName.DISCOVER, null, TriggerType.SCHEDULED));
+        log.info("스케줄 discover: {}", jobService.trigger(JobName.DISCOVER, TriggerType.SCHEDULED));
     }
 
     @Scheduled(cron = "${crawler.schedule.qualify-cron}")
     void qualify() {
-        log.info("스케줄 qualify: {}", jobService.trigger(JobName.QUALIFY, null, TriggerType.SCHEDULED));
+        log.info("스케줄 qualify: {}", jobService.trigger(JobName.QUALIFY, TriggerType.SCHEDULED));
     }
 
-    @Scheduled(cron = "${crawler.schedule.aggregate-cron}")
+    @Scheduled(cron = "${crawler.schedule.collect-cron}")
     void collect() {
-        log.info("스케줄 collect: {}", jobService.trigger(JobName.COLLECT, null, TriggerType.SCHEDULED));
+        log.info("스케줄 collect: {}", jobService.trigger(JobName.COLLECT, TriggerType.SCHEDULED));
     }
 }

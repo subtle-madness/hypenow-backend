@@ -55,25 +55,6 @@
     <p class="hint">현재: <b th:text="${profileSource}">SELF</b> · 기본값: SELF</p>
 </section>
 
-<section class="card">
-    <h2>상세 수집 방식</h2>
-    <form method="post" th:action="@{/ui/detail-source}">
-        <p class="hint">릴스:</p>
-        <label class="check"><input type="radio" name="reels" value="HIKER"
-            th:checked="${detailReelsSource == 'HIKER'}"/> HikerAPI (기본·실조회수)</label>
-        <label class="check"><input type="radio" name="reels" value="ACTOR"
-            th:checked="${detailReelsSource == 'ACTOR'}"/> 액터 (Apify)</label>
-        <hr/>
-        <p class="hint">피드:</p>
-        <label class="check"><input type="radio" name="feed" value="SELF"
-            th:checked="${detailFeedSource == 'SELF'}"/> 자체 크롤 (기본·프록시)</label>
-        <label class="check"><input type="radio" name="feed" value="ACTOR"
-            th:checked="${detailFeedSource == 'ACTOR'}"/> 액터 (Apify)</label>
-        <button type="submit" class="primary">저장</button>
-    </form>
-    <p class="hint">현재: 릴스 <b th:text="${detailReelsSource}">HIKER</b> · 피드 <b th:text="${detailFeedSource}">SELF</b></p>
-</section>
-
 <p class="hint">빈칸으로 저장하면 기본값(yml)으로 복귀합니다.</p>
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 
