@@ -47,11 +47,64 @@ class SettingsApiTest extends IntegrationTest {
     void 기본값_조회() throws Exception {
         mvc.perform(get("/admin/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(7))
+                .andExpect(jsonPath("$.length()").value(9))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].effective").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].defaultValue").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false))
-                .andExpect(jsonPath("$[?(@.key=='qualify.batch-limit')].defaultValue").value(500));
+                .andExpect(jsonPath("$[?(@.key=='qualify.batch-limit')].defaultValue").value(500))
+                .andExpect(jsonPath("$[?(@.key=='qualify.min-followers')].defaultValue").value(3000))
+                .andExpect(jsonPath("$[?(@.key=='qualify.max-followers')].defaultValue").value(50000))
+                .andExpect(jsonPath("$[?(@.key=='collect.backfill-months')].defaultValue").value(6))
+                .andExpect(jsonPath("$[?(@.key=='collect.track-window-days')].defaultValue").value(30))
+                .andExpect(jsonPath("$[?(@.key=='collect.batch-limit')].defaultValue").value(10))
+                .andExpect(jsonPath("$[?(@.key=='collect.comments-per-post')].defaultValue").value(30))
+                .andExpect(jsonPath("$[?(@.key=='collect.max-attempts')].defaultValue").value(3));
+    }
+
+    @Test
+    void 새_키_왕복() throws Exception {
+        mvc.perform(put("/admin/settings/qualify.min-followers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 5000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(5000))
+                .andExpect(jsonPath("$.overridden").value(true));
+        assertThat(settingsService.qualifyMinFollowers()).isEqualTo(5000);
+
+        mvc.perform(put("/admin/settings/qualify.max-followers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 80000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(80000));
+        assertThat(settingsService.qualifyMaxFollowers()).isEqualTo(80000);
+
+        mvc.perform(put("/admin/settings/collect.backfill-months")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 12}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(12));
+        assertThat(settingsService.backfillMonths()).isEqualTo(12);
+
+        mvc.perform(put("/admin/settings/collect.track-window-days")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 45}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(45));
+        assertThat(settingsService.trackWindowDays()).isEqualTo(45);
+
+        mvc.perform(put("/admin/settings/collect.comments-per-post")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 60}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(60));
+        assertThat(settingsService.commentsPerPost()).isEqualTo(60);
+
+        mvc.perform(put("/admin/settings/collect.max-attempts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 5}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(5));
+        assertThat(settingsService.maxAttempts()).isEqualTo(5);
     }
 
     @Test
@@ -68,19 +121,19 @@ class SettingsApiTest extends IntegrationTest {
 
     @Test
     void 리셋하면_기본값으로_복귀() throws Exception {
-        mvc.perform(put("/admin/settings/aggregate.batch-limit")
+        mvc.perform(put("/admin/settings/collect.batch-limit")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"value\": 10}"))
+                        .content("{\"value\": 20}"))
                 .andExpect(status().isOk());
-        assertThat(settingsService.batchLimit()).isEqualTo(10);
+        assertThat(settingsService.collectBatchLimit()).isEqualTo(20);
 
-        mvc.perform(put("/admin/settings/aggregate.batch-limit")
+        mvc.perform(put("/admin/settings/collect.batch-limit")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\": null}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.effective").value(200))
+                .andExpect(jsonPath("$.effective").value(10))
                 .andExpect(jsonPath("$.overridden").value(false));
-        assertThat(settingsService.batchLimit()).isEqualTo(200);
+        assertThat(settingsService.collectBatchLimit()).isEqualTo(10);
     }
 
     @Test
@@ -95,11 +148,15 @@ class SettingsApiTest extends IntegrationTest {
                         .content("{\"value\": 0}"))
                 .andExpect(status().isBadRequest());
 
-        // delay-days는 0 허용 (지연 없음)
+        // aggregate.* 키는 제거됨 — 더 이상 알려진 키가 아니므로 400
         mvc.perform(put("/admin/settings/aggregate.delay-days")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\": 0}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/admin/settings/aggregate.batch-limit")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 5}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

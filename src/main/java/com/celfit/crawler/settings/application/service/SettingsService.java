@@ -1,6 +1,6 @@
 package com.celfit.crawler.settings.application.service;
 
-import com.celfit.crawler.common.config.AggregateProperties;
+import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.common.config.DiscoverProperties;
 import com.celfit.crawler.common.config.QualifyProperties;
 import com.celfit.crawler.settings.domain.AppSetting;
@@ -22,26 +22,30 @@ public class SettingsService {
 
     static final String RESULTS_LIMIT = "discover.results-limit";
     static final String QUALIFY_BATCH_LIMIT = "qualify.batch-limit";
-    static final String DELAY_DAYS = "aggregate.delay-days";
-    static final String BATCH_LIMIT = "aggregate.batch-limit";
-    static final String CHUNK_SIZE = "aggregate.chunk-size";
-    static final String COMMENTS_PER_POST = "aggregate.comments-per-post";
-    static final String MAX_ATTEMPTS = "aggregate.max-attempts";
+    static final String QUALIFY_MIN_FOLLOWERS = "qualify.min-followers";
+    static final String QUALIFY_MAX_FOLLOWERS = "qualify.max-followers";
+    static final String COLLECT_BACKFILL_MONTHS = "collect.backfill-months";
+    static final String COLLECT_TRACK_WINDOW_DAYS = "collect.track-window-days";
+    static final String COLLECT_BATCH_LIMIT = "collect.batch-limit";
+    static final String COLLECT_COMMENTS_PER_POST = "collect.comments-per-post";
+    static final String COLLECT_MAX_ATTEMPTS = "collect.max-attempts";
 
     private static final List<String> KEYS = List.of(
-            RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, DELAY_DAYS, BATCH_LIMIT, CHUNK_SIZE, COMMENTS_PER_POST, MAX_ATTEMPTS);
+            RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
+            COLLECT_BACKFILL_MONTHS, COLLECT_TRACK_WINDOW_DAYS, COLLECT_BATCH_LIMIT,
+            COLLECT_COMMENTS_PER_POST, COLLECT_MAX_ATTEMPTS);
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
     private final QualifyProperties qualifyProps;
-    private final AggregateProperties aggregateProps;
+    private final CollectProperties collectProps;
 
     public SettingsService(AppSettingRepository settings, DiscoverProperties discoverProps,
-                           QualifyProperties qualifyProps, AggregateProperties aggregateProps) {
+                           QualifyProperties qualifyProps, CollectProperties collectProps) {
         this.settings = settings;
         this.discoverProps = discoverProps;
         this.qualifyProps = qualifyProps;
-        this.aggregateProps = aggregateProps;
+        this.collectProps = collectProps;
     }
 
     @Transactional(readOnly = true)
@@ -55,28 +59,38 @@ public class SettingsService {
     }
 
     @Transactional(readOnly = true)
-    public int delayDays() {
-        return effective(DELAY_DAYS);
+    public int qualifyMinFollowers() {
+        return effective(QUALIFY_MIN_FOLLOWERS);
     }
 
     @Transactional(readOnly = true)
-    public int batchLimit() {
-        return effective(BATCH_LIMIT);
+    public int qualifyMaxFollowers() {
+        return effective(QUALIFY_MAX_FOLLOWERS);
     }
 
     @Transactional(readOnly = true)
-    public int chunkSize() {
-        return effective(CHUNK_SIZE);
+    public int backfillMonths() {
+        return effective(COLLECT_BACKFILL_MONTHS);
+    }
+
+    @Transactional(readOnly = true)
+    public int trackWindowDays() {
+        return effective(COLLECT_TRACK_WINDOW_DAYS);
+    }
+
+    @Transactional(readOnly = true)
+    public int collectBatchLimit() {
+        return effective(COLLECT_BATCH_LIMIT);
     }
 
     @Transactional(readOnly = true)
     public int commentsPerPost() {
-        return effective(COMMENTS_PER_POST);
+        return effective(COLLECT_COMMENTS_PER_POST);
     }
 
     @Transactional(readOnly = true)
     public int maxAttempts() {
-        return effective(MAX_ATTEMPTS);
+        return effective(COLLECT_MAX_ATTEMPTS);
     }
 
     @Transactional(readOnly = true)
@@ -114,17 +128,19 @@ public class SettingsService {
         return switch (key) {
             case RESULTS_LIMIT -> discoverProps.resultsLimit();
             case QUALIFY_BATCH_LIMIT -> qualifyProps.batchLimit();
-            case DELAY_DAYS -> aggregateProps.delayDays();
-            case BATCH_LIMIT -> aggregateProps.batchLimit();
-            case CHUNK_SIZE -> aggregateProps.chunkSize();
-            case COMMENTS_PER_POST -> aggregateProps.commentsPerPost();
-            case MAX_ATTEMPTS -> aggregateProps.maxAttempts();
+            case QUALIFY_MIN_FOLLOWERS -> qualifyProps.minFollowers();
+            case QUALIFY_MAX_FOLLOWERS -> qualifyProps.maxFollowers();
+            case COLLECT_BACKFILL_MONTHS -> collectProps.backfillMonths();
+            case COLLECT_TRACK_WINDOW_DAYS -> collectProps.trackWindowDays();
+            case COLLECT_BATCH_LIMIT -> collectProps.batchLimit();
+            case COLLECT_COMMENTS_PER_POST -> collectProps.commentsPerPost();
+            case COLLECT_MAX_ATTEMPTS -> collectProps.maxAttempts();
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 설정 키: " + key);
         };
     }
 
     private void validate(String key, int value) {
-        int min = DELAY_DAYS.equals(key) ? 0 : 1;
+        int min = 1;
         if (value < min) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "잘못된 값: " + key + "=" + value + " (최소 " + min + ")");

@@ -35,11 +35,13 @@ crawler:
     results-limit: 100
   qualify:
     batch-limit: 500
-  aggregate:
-    delay-days: 3
-    batch-limit: 200
-    chunk-size: 50
-    comments-per-post: 50
+    min-followers: 3000
+    max-followers: 50000
+  collect:
+    backfill-months: 6
+    track-window-days: 30
+    batch-limit: 10
+    comments-per-post: 30
     max-attempts: 3
   schedule:
     enabled: false
