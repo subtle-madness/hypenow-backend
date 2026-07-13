@@ -1,6 +1,6 @@
 # 태스크 D2: 상세 API에 분석 블록 additive 확장 Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-13)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `GET /api/posts/{shortCode}` 응답에 B2·B3 산출물을 additive로 붙인다 — 댓글별 `aiCategory`(`comment_classifications`) + `analysis` 블록(`content_analyses` 1행). 엔드포인트는 그대로 1회 호출.
