@@ -208,6 +208,27 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 빈_종합_텍스트는_저장하지_않고_다른_콘텐츠는_처리된다() {
+		// 실전 스모크 재현: LLM이 텍스트 전부 빈 문자열인 Synthesis를 반환.
+		// content_analyses는 불변이라 빈 결과가 저장되면 영구 고정 + 재분석 대상에서도 제외된다.
+		rewireJob(content -> {
+			synthesisCalls.add(content);
+			if (content.shortCode().equals("post_a")) {
+				return new Synthesis("", "", "", "normal", "");
+			}
+			return new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거");
+		}, false);
+
+		int processed = job.run(); // 빈 결과는 실패 격리 경로로 skip — 예외가 전파되지 않아야 한다
+
+		assertEquals(1, processed); // post_b만 성공
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
+	}
+
+	@Test
 	void 콘텐츠_하나가_실패해도_나머지는_처리된다() {
 		// 포트 대역: post_a만 예외 (모의 LLM 장애)
 		rewireJob(content -> {
