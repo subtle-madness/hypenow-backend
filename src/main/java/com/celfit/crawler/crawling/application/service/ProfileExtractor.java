@@ -1,0 +1,64 @@
+package com.celfit.crawler.crawling.application.service;
+
+import com.celfit.crawler.crawling.domain.RawSource;
+import java.util.Map;
+
+/** 프로필 응답 원형에서 제어 필드(followers·userId·username) 추출. 소스별 경로. */
+public final class ProfileExtractor {
+
+    public static Long followers(Map<String, Object> payload, RawSource source) {
+        return switch (source) {
+            case SELF_GQL -> asLong(dig(payload, "data", "user", "edge_followed_by", "count"));
+            case HIKER_MOBILE -> asLong(dig(user(payload), "follower_count"));
+            default -> asLong(payload.get("followersCount"));  // LEGACY_ENVELOPE·APIFY_ACTOR
+        };
+    }
+
+    public static String userId(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> dig(payload, "data", "user", "id");
+            case HIKER_MOBILE -> {
+                Object pk = dig(user(payload), "pk");
+                yield pk != null ? pk : dig(user(payload), "id");
+            }
+            default -> payload.get("userId");
+        };
+        return v == null ? null : String.valueOf(v);
+    }
+
+    public static String username(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> dig(payload, "data", "user", "username");
+            case HIKER_MOBILE -> dig(user(payload), "username");
+            default -> payload.get("username");
+        };
+        return v instanceof String s && !s.isBlank() ? s : null;
+    }
+
+    private static Map<String, Object> user(Map<String, Object> payload) {
+        return payload.get("user") instanceof Map<?, ?> u
+                ? castMap(u) : payload;
+    }
+
+    private static Object dig(Map<String, Object> m, String... path) {
+        Object cur = m;
+        for (String p : path) {
+            if (!(cur instanceof Map<?, ?> mm)) return null;
+            cur = mm.get(p);
+        }
+        return cur;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Map<?, ?> m) {
+        return (Map<String, Object>) m;
+    }
+
+    private static Long asLong(Object v) {
+        if (v instanceof Number n) return n.longValue();
+        if (v instanceof String s && !s.isBlank()) try { return Long.parseLong(s); } catch (NumberFormatException e) { return null; }
+        return null;
+    }
+
+    private ProfileExtractor() {}
+}
