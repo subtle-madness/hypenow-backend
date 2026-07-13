@@ -11,7 +11,11 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
-/** 서빙 미러 3종 조회. 계약 record로 매핑하고(§4-3), 미러 부재 시 빈 값으로 저하한다(대시보드 컨벤션). */
+/**
+ * 서빙 미러 3종 + 분석 층 소유 테이블 2종 조회. 미러 3종은 계약 record로 매핑하고(§4-3),
+ * comment_classifications·content_analyses는 공유 형태가 성립하지 않아 was 로컬 record로 매핑한다(§4-4).
+ * 어느 쪽이든 부재 시 빈 값으로 저하한다(대시보드 컨벤션).
+ */
 @Repository
 public class PostDetailRepository {
 
@@ -47,6 +51,8 @@ public class PostDetailRepository {
 				.optional());
 	}
 
+	// comment_classifications 부재 시 LEFT JOIN 전체가 실패해 댓글까지 빈 목록으로 저하된다 —
+	// B2 이후 두 테이블이 같은 Flyway로 함께 배포되므로 수용한 트레이드오프(계획 문서에 기록됨).
 	public List<CommentRow> findComments(String shortCode) {
 		return safeQuery("content_comments", List::of, () -> jdbcClient.sql("""
 				SELECT m.id, m.author_masked, m.body, m.like_count, k.ai_category

@@ -66,7 +66,25 @@ class PostDetailControllerTest {
 				.andExpect(jsonPath("$.account.followers").value(16586))
 				.andExpect(jsonPath("$.comments.collectedCount").value(2))
 				.andExpect(jsonPath("$.comments.items[0].authorMasked").value("hye***"))
-				.andExpect(jsonPath("$.comments.items[0].likeCount").value(342));
+				.andExpect(jsonPath("$.comments.items[0].likeCount").value(342))
+				.andExpect(jsonPath("$.comments.items[0].aiCategory").value("purchase"))
+				.andExpect(jsonPath("$.comments.items[1].aiCategory", org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.analysis.aiContentSummary").value("본인 평균 대비 3.1배 터진 콘텐츠"))
+				.andExpect(jsonPath("$.analysis.baseline.recentReelsAvgViews").value(608899))
+				.andExpect(jsonPath("$.analysis.categoryContext.topPercentile").value(2))
+				.andExpect(jsonPath("$.analysis.content.detectedBrands[0].name").value("Thelavicos"))
+				.andExpect(jsonPath("$.analysis.content.adType").value("sponsored"))
+				.andExpect(jsonPath("$.analysis.commentAuthenticity.grade").value("high"));
+	}
+
+	@Test
+	void 미분석_콘텐츠는_analysis가_null이다() throws Exception {
+		givenMari01();
+		given(repository.findAnalysis("mari01")).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/api/posts/mari01"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.analysis", org.hamcrest.Matchers.nullValue()));
 	}
 
 	@Test
