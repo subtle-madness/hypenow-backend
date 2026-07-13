@@ -46,8 +46,8 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(long categoryId, String keyword, TriggerType trigger) {
-        return executor.execute(JobName.DISCOVER, trigger, categoryId, keyword, LABEL,
+    public CrawlExecutor.Execution fetch(String keyword, TriggerType trigger) {
+        return executor.execute(JobName.DISCOVER, trigger, keyword, null, LABEL,
                 () -> collect(keyword));
     }
 

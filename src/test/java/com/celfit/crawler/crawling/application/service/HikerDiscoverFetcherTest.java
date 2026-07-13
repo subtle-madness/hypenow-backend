@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -40,7 +41,7 @@ class HikerDiscoverFetcherTest {
     static CrawlExecutor passthroughExecutor(List<String> capturedLabels) {
         capturedResults.clear();
         CrawlExecutor executor = mock(CrawlExecutor.class);
-        when(executor.execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq(5L), eq("립"),
+        when(executor.execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq("립"), isNull(),
                 any(String.class), any(Supplier.class)))
             .thenAnswer(inv -> {
                 capturedLabels.add(inv.getArgument(4));
@@ -62,7 +63,7 @@ class HikerDiscoverFetcherTest {
 
         var fetcher = new HikerDiscoverFetcher(http, passthroughExecutor(labels),
                 new HikerDiscoveryMapper(new ObjectMapper()), settings);
-        var ex = fetcher.fetch(5L, "립", TriggerType.MANUAL);
+        var ex = fetcher.fetch("립", TriggerType.MANUAL);
 
         assertThat(ex.items()).hasSize(3);
         assertThat(ex.items().get(2).get("shortCode")).isEqualTo("C3");
@@ -83,7 +84,7 @@ class HikerDiscoverFetcherTest {
 
         var fetcher = new HikerDiscoverFetcher(http, passthroughExecutor(new ArrayList<>()),
                 new HikerDiscoveryMapper(new ObjectMapper()), settings);
-        var ex = fetcher.fetch(5L, "립", TriggerType.MANUAL);
+        var ex = fetcher.fetch("립", TriggerType.MANUAL);
 
         assertThat(ex.items()).hasSize(2);
         assertThat(calls).hasSize(1);  // page_id 요청 없음
@@ -97,7 +98,7 @@ class HikerDiscoverFetcherTest {
 
         var fetcher = new HikerDiscoverFetcher(http, passthroughExecutor(new ArrayList<>()),
                 new HikerDiscoveryMapper(new ObjectMapper()), settings);
-        var ex = fetcher.fetch(5L, "립", TriggerType.MANUAL);
+        var ex = fetcher.fetch("립", TriggerType.MANUAL);
 
         assertThat(ex.items()).isEmpty();
         assertThat(calls).hasSize(HikerDiscoverFetcher.MAX_PAGES);
@@ -111,7 +112,7 @@ class HikerDiscoverFetcherTest {
 
         new HikerDiscoverFetcher(http, passthroughExecutor(new ArrayList<>()),
                 new HikerDiscoveryMapper(new ObjectMapper()), settings)
-            .fetch(5L, "립", TriggerType.MANUAL);
+            .fetch("립", TriggerType.MANUAL);
 
         assertThat(calls.get(0)).startsWith("/v2/hashtag/medias/top?name=%EB%A6%BD");
     }

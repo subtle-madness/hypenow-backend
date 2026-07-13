@@ -6,15 +6,15 @@ import java.util.Map;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+/** 게시물 열거 응답의 페이지 단위 원형. 게시물별 필드는 content로 추출된다. */
 @Entity
-@Table(name = "raw_profile")
+@Table(name = "raw_media_page")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class RawProfile {
+public class RawMediaPage {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -36,14 +36,8 @@ public class RawProfile {
     @Column(name = "captured_at", nullable = false)
     private Instant capturedAt;
 
-    @Setter
-    private String username;
-
-    @Setter
-    private Long followers;
-
-    public RawProfile(Long influencerId, Long crawlRunId, RawSource source,
-                      Map<String, Object> payload, Instant capturedAt) {
+    public RawMediaPage(Long influencerId, Long crawlRunId, RawSource source,
+                        Map<String, Object> payload, Instant capturedAt) {
         this.influencerId = influencerId;
         this.crawlRunId = crawlRunId;
         this.source = source;

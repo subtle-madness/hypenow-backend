@@ -22,9 +22,9 @@ public class DiscoverSourceSelector {
         this.setting = setting;
     }
 
-    public CrawlExecutor.Execution fetch(long categoryId, String keyword, TriggerType trigger) {
+    public CrawlExecutor.Execution fetch(String keyword, TriggerType trigger) {
         DiscoverFetcher f = bySource.get(setting.current());
         if (f == null) f = bySource.get(DiscoverSource.HIKER);
-        return f.fetch(categoryId, keyword, trigger);
+        return f.fetch(keyword, trigger);
     }
 }

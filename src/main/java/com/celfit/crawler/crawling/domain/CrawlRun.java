@@ -24,10 +24,10 @@ public class CrawlRun {
     @Column(name = "trigger_type", nullable = false)
     private TriggerType triggerType;
 
-    @Column(name = "category_id")
-    private Long categoryId;
-
     private String keyword;
+
+    @Column(name = "target_username")
+    private String targetUsername;
 
     @Column(name = "actor_id", nullable = false)
     private String actorId;
@@ -55,12 +55,12 @@ public class CrawlRun {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
-    public CrawlRun(JobName job, TriggerType triggerType, Long categoryId,
-                    String keyword, String actorId, Instant startedAt) {
+    public CrawlRun(JobName job, TriggerType trigger, String keyword,
+                    String targetUsername, String actorId, Instant startedAt) {
         this.job = job;
-        this.triggerType = triggerType;
-        this.categoryId = categoryId;
+        this.triggerType = trigger;
         this.keyword = keyword;
+        this.targetUsername = targetUsername;
         this.actorId = actorId;
         this.startedAt = startedAt;
     }

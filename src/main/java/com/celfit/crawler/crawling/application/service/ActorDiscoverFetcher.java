@@ -22,8 +22,8 @@ public class ActorDiscoverFetcher implements DiscoverFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(long categoryId, String keyword, TriggerType trigger) {
-        return executor.execute(JobName.DISCOVER, trigger, categoryId, keyword,
+    public CrawlExecutor.Execution fetch(String keyword, TriggerType trigger) {
+        return executor.execute(JobName.DISCOVER, trigger, keyword, null,
                 Actors.DISCOVERY, ActorInputs.discovery(keyword, settings.resultsLimit()));
     }
 

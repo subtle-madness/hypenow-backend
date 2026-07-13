@@ -26,22 +26,11 @@ public class Content {
     @Column(name = "owner_username", nullable = false)
     private String ownerUsername;
 
+    @Column(name = "influencer_id", nullable = false)
+    private Long influencerId;
+
     @Column(name = "uploaded_at", nullable = false)
     private Instant uploadedAt;
-
-    @Column(name = "category_id", nullable = false)
-    private Long categoryId;
-
-    @Column(name = "discovery_keyword", nullable = false)
-    private String discoveryKeyword;
-
-    /** 발굴 키워드의 중분류. 계층: 카테고리 > 대분류(main_group) > 중분류 > 소분류(discovery_keyword). */
-    @Column(nullable = false)
-    private String subcategory;
-
-    /** 발굴 키워드의 대분류. */
-    @Column(name = "main_group", nullable = false)
-    private String mainGroup;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -50,36 +39,19 @@ public class Content {
     @Column(name = "first_seen_at", nullable = false)
     private Instant firstSeenAt;
 
-    @Column(name = "qualified_at")
-    private Instant qualifiedAt;
+    @Column(name = "collected_at")
+    private Instant collectedAt;
 
-    @Column(name = "aggregated_at")
-    private Instant aggregatedAt;
-
-    @Column(name = "aggregate_attempts", nullable = false)
-    private int aggregateAttempts;
-
-    /** 광고·협찬 표기 여부 — aggregate 때 상세 캡션·파트너십 필드로 판별. */
-    @Column(name = "ad_marked", nullable = false)
-    private boolean adMarked;
+    @Column(name = "collect_attempts", nullable = false)
+    private int collectAttempts;
 
     public Content(String shortCode, ContentType contentType, String ownerUsername,
-                   Instant uploadedAt, Long categoryId, String discoveryKeyword, Instant firstSeenAt) {
-        this(shortCode, contentType, ownerUsername, uploadedAt, categoryId,
-                discoveryKeyword, discoveryKeyword, discoveryKeyword, firstSeenAt);
-    }
-
-    public Content(String shortCode, ContentType contentType, String ownerUsername,
-                   Instant uploadedAt, Long categoryId, String discoveryKeyword,
-                   String subcategory, String mainGroup, Instant firstSeenAt) {
+                   Long influencerId, Instant uploadedAt, Instant firstSeenAt) {
         this.shortCode = shortCode;
         this.contentType = contentType;
         this.ownerUsername = ownerUsername;
+        this.influencerId = influencerId;
         this.uploadedAt = uploadedAt;
-        this.categoryId = categoryId;
-        this.discoveryKeyword = discoveryKeyword;
-        this.subcategory = subcategory;
-        this.mainGroup = mainGroup;
         this.firstSeenAt = firstSeenAt;
     }
 }

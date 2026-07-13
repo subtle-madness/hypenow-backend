@@ -23,7 +23,7 @@ public class ActorCommentFetcher implements CommentFetcher {
     @Override
     public CrawlExecutor.Execution fetch(List<String> shortCodes, int limit, TriggerType trigger) {
         List<String> postUrls = shortCodes.stream().map(ShortCodes::postUrl).toList();
-        return executor.execute(JobName.AGGREGATE, trigger, null, null,
+        return executor.execute(JobName.COLLECT, trigger, null, null,
                 Actors.COMMENT, ActorInputs.comments(postUrls, limit));
     }
 

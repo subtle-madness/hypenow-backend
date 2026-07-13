@@ -61,7 +61,7 @@ public class DirectCommentFetcher implements CommentFetcher {
 
     @Override
     public CrawlExecutor.Execution fetch(List<String> shortCodes, int limit, TriggerType trigger) {
-        return executor.execute(JobName.AGGREGATE, trigger, null, null, ACTOR_LABEL,
+        return executor.execute(JobName.COLLECT, trigger, null, null, ACTOR_LABEL,
                 () -> new ApifyResult(null, collectAll(shortCodes, limit)));
     }
 

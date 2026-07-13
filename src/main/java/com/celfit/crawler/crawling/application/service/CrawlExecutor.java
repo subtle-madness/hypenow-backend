@@ -40,14 +40,14 @@ public class CrawlExecutor {
         this.clock = clock;
     }
 
-    public Execution execute(JobName job, TriggerType trigger, Long categoryId,
-                             String keyword, String actorId, Map<String, Object> input) {
-        return execute(job, trigger, categoryId, keyword, actorId, () -> runner.run(actorId, input));
+    public Execution execute(JobName job, TriggerType trigger, String keyword,
+                             String targetUsername, String actorId, Map<String, Object> input) {
+        return execute(job, trigger, keyword, targetUsername, actorId, () -> runner.run(actorId, input));
     }
 
-    public Execution execute(JobName job, TriggerType trigger, Long categoryId,
-                             String keyword, String actorId, Supplier<ApifyResult> work) {
-        CrawlRun run = runs.save(new CrawlRun(job, trigger, categoryId, keyword, actorId, clock.instant()));
+    public Execution execute(JobName job, TriggerType trigger, String keyword,
+                             String targetUsername, String actorId, Supplier<ApifyResult> work) {
+        CrawlRun run = runs.save(new CrawlRun(job, trigger, keyword, targetUsername, actorId, clock.instant()));
         try {
             ApifyResult result = work.get();
             run.finishOk(result.runId(), result.requestCount(), result.items().size(), clock.instant());

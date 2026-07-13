@@ -1,49 +1,21 @@
 package com.celfit.crawler.dashboard.application;
 
-import com.celfit.crawler.settings.application.service.SettingsService;
-
-import com.celfit.crawler.crawling.domain.*;
-import com.celfit.crawler.content.domain.*;
-import com.celfit.crawler.settings.domain.*;
-import com.celfit.crawler.crawling.application.port.out.*;
-import com.celfit.crawler.content.application.port.out.*;
-import com.celfit.crawler.settings.application.port.out.*;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
+import com.celfit.crawler.content.domain.ContentStatus;
+import com.celfit.crawler.content.application.port.out.ContentRepository;
 import java.util.EnumMap;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 
+/** 상태 요약 — 인플루언서 중심 재구현은 Task 10에서 진행. 현재는 빈 셸. */
 @Service
 public class StatusService {
 
-    public record StatusSummary(Map<ContentStatus, Long> contentByStatus,
-                                long rawDiscoveryPosts, long rawPostDetails,
-                                long rawComments, long rawProfiles, long rawRunItems,
-                                long dueForAggregate) {}
+    public record StatusSummary(Map<ContentStatus, Long> contentByStatus) {}
 
     private final ContentRepository contents;
-    private final RawDiscoveryPostRepository rawDiscovery;
-    private final RawPostDetailRepository rawDetails;
-    private final RawCommentRepository rawComments;
-    private final RawProfileRepository rawProfiles;
-    private final RawRunItemRepository rawRunItems;
-    private final SettingsService settings;
-    private final Clock clock;
 
-    public StatusService(ContentRepository contents, RawDiscoveryPostRepository rawDiscovery,
-                         RawPostDetailRepository rawDetails, RawCommentRepository rawComments,
-                         RawProfileRepository rawProfiles, RawRunItemRepository rawRunItems,
-                         SettingsService settings, Clock clock) {
+    public StatusService(ContentRepository contents) {
         this.contents = contents;
-        this.rawDiscovery = rawDiscovery;
-        this.rawDetails = rawDetails;
-        this.rawComments = rawComments;
-        this.rawProfiles = rawProfiles;
-        this.rawRunItems = rawRunItems;
-        this.settings = settings;
-        this.clock = clock;
     }
 
     public StatusSummary summary() {
@@ -51,10 +23,6 @@ public class StatusService {
         for (ContentStatus s : ContentStatus.values()) {
             byStatus.put(s, contents.countByStatus(s));
         }
-        Instant cutoff = clock.instant().minus(Duration.ofDays(settings.delayDays()));
-        long due = contents.countByStatusAndAggregatedAtIsNullAndUploadedAtLessThanEqual(
-                ContentStatus.QUALIFIED, cutoff);
-        return new StatusSummary(byStatus, rawDiscovery.count(), rawDetails.count(),
-                rawComments.count(), rawProfiles.count(), rawRunItems.count(), due);
+        return new StatusSummary(byStatus);
     }
 }

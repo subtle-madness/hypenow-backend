@@ -10,11 +10,11 @@ class JobProgressTest {
     @Test
     void start_advance_로_진행률이_누적되고_percent가_계산된다() {
         var p = new JobProgress();
-        p.start(JobName.AGGREGATE, 200);
-        p.advance(JobName.AGGREGATE, 50);
-        p.advance(JobName.AGGREGATE, 10);
+        p.start(JobName.COLLECT, 200);
+        p.advance(JobName.COLLECT, 50);
+        p.advance(JobName.COLLECT, 10);
 
-        var v = p.get(JobName.AGGREGATE);
+        var v = p.get(JobName.COLLECT);
         assertThat(v.current()).isEqualTo(60);
         assertThat(v.total()).isEqualTo(200);
         assertThat(v.percent()).isEqualTo(30);

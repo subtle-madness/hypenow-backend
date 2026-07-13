@@ -6,15 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
-import com.celfit.crawler.content.domain.Category;
-import com.celfit.crawler.content.domain.CategoryKeyword;
-import com.celfit.crawler.content.application.port.out.CategoryKeywordRepository;
-import com.celfit.crawler.content.application.port.out.CategoryRepository;
-import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.service.DiscoverJob;
-import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,9 +35,6 @@ class SettingsApiTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired SettingsService settingsService;
     @Autowired FakeApifyRunner fake;
-    @Autowired DiscoverJob discoverJob;
-    @Autowired CategoryRepository categories;
-    @Autowired CategoryKeywordRepository keywords;
     @Autowired com.celfit.crawler.settings.application.service.DiscoverSourceSetting discoverSourceSetting;
 
     @BeforeEach
@@ -75,15 +64,6 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.overridden").value(true));
 
         assertThat(settingsService.resultsLimit()).isEqualTo(5);
-
-        Long catId = categories.save(new Category("메이크업")).getId();
-        keywords.save(new CategoryKeyword(catId, "메이크업"));
-        fake.enqueue(List.of(Map.of("shortCode", "sc1", "productType", "clips",
-                "timestamp", "2026-07-01T12:00:00.000Z", "ownerUsername", "kim")));
-
-        discoverJob.run(catId, TriggerType.MANUAL);
-
-        assertThat(fake.calls.get(0).input()).containsEntry("resultsLimit", 5);
     }
 
     @Test

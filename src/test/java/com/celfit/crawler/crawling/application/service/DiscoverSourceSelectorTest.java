@@ -16,7 +16,7 @@ class DiscoverSourceSelectorTest {
 
     static DiscoverFetcher fetcher(DiscoverSource src, String marker) {
         return new DiscoverFetcher() {
-            @Override public CrawlExecutor.Execution fetch(long c, String k, TriggerType t) {
+            @Override public CrawlExecutor.Execution fetch(String k, TriggerType t) {
                 return new CrawlExecutor.Execution(1L, List.of(Map.of("shortCode", marker)));
             }
             @Override public DiscoverSource source() { return src; }
@@ -28,7 +28,7 @@ class DiscoverSourceSelectorTest {
         setting.update(DiscoverSource.ACTOR);
         var sel = new DiscoverSourceSelector(
             List.of(fetcher(DiscoverSource.ACTOR, "actor"), fetcher(DiscoverSource.HIKER, "hiker")), setting);
-        var ex = sel.fetch(1L, "립", TriggerType.MANUAL);
+        var ex = sel.fetch("립", TriggerType.MANUAL);
         assertThat(ex.items().get(0).get("shortCode")).isEqualTo("actor");
     }
 
@@ -36,7 +36,7 @@ class DiscoverSourceSelectorTest {
         var setting = new DiscoverSourceSetting(ProfileSourceSettingTest.fakeRepo(new HashMap<>()));
         setting.update(DiscoverSource.ACTOR);  // ACTOR 페처 미등록
         var sel = new DiscoverSourceSelector(List.of(fetcher(DiscoverSource.HIKER, "hiker")), setting);
-        var ex = sel.fetch(1L, "립", TriggerType.MANUAL);
+        var ex = sel.fetch("립", TriggerType.MANUAL);
         assertThat(ex.items().get(0).get("shortCode")).isEqualTo("hiker");
     }
 }

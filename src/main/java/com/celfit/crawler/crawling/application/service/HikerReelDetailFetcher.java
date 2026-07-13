@@ -35,7 +35,7 @@ public class HikerReelDetailFetcher implements DetailFetcher {
     @Override
     public DetailFetcher.DetailResult fetch(List<String> shortCodes, ContentType type, TriggerType trigger) {
         java.util.Set<String> failed = new java.util.LinkedHashSet<>();
-        CrawlExecutor.Execution ex = executor.execute(JobName.AGGREGATE, trigger, null, null, LABEL,
+        CrawlExecutor.Execution ex = executor.execute(JobName.COLLECT, trigger, null, null, LABEL,
                 () -> new ApifyResult(null, collect(shortCodes, failed)));
         return new DetailFetcher.DetailResult(ex, failed);
     }

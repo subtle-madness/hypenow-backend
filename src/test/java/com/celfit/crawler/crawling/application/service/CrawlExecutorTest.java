@@ -43,7 +43,7 @@ class CrawlExecutorTest extends IntegrationTest {
         fake.enqueue(List.of(Map.of("shortCode", "a"), Map.of("shortCode", "b")));
 
         var execution = executor.execute(JobName.DISCOVER, TriggerType.MANUAL,
-                null, "메이크업", "actor-x", Map.of("k", "v"));
+                "메이크업", null, "actor-x", Map.of("k", "v"));
 
         assertThat(execution.items()).hasSize(2);
         var run = runs.findById(execution.runId()).orElseThrow();
@@ -59,7 +59,7 @@ class CrawlExecutorTest extends IntegrationTest {
         fake.enqueue(List.of(Map.of("shortCode", "a"), Map.of("shortCode", "b")));
 
         var execution = executor.execute(JobName.DISCOVER, TriggerType.MANUAL,
-                null, "메이크업", "actor-x", Map.of("k", "v"));
+                "메이크업", null, "actor-x", Map.of("k", "v"));
 
         assertThat(rawRunItems.countByCrawlRunId(execution.runId())).isEqualTo(2);
         var byIndex = rawRunItems.findAll().stream()
@@ -86,7 +86,7 @@ class CrawlExecutorTest extends IntegrationTest {
 
     @Test
     void supplier_오버로드도_성공하면_SUCCEEDED로_기록되고_아카이브된다() {
-        var execution = executor.execute(JobName.AGGREGATE, TriggerType.MANUAL, null, null,
+        var execution = executor.execute(JobName.COLLECT, TriggerType.MANUAL, null, null,
                 "direct-comment-crawler",
                 () -> new com.celfit.crawler.crawling.application.port.out.ApifyResult(
                         null, List.of(Map.of("text", "좋아요"))));
@@ -100,7 +100,7 @@ class CrawlExecutorTest extends IntegrationTest {
 
     @Test
     void supplier가_예외를_던지면_FAILED로_기록된다() {
-        assertThatThrownBy(() -> executor.execute(JobName.AGGREGATE, TriggerType.MANUAL, null, null,
+        assertThatThrownBy(() -> executor.execute(JobName.COLLECT, TriggerType.MANUAL, null, null,
                 "direct-comment-crawler",
                 () -> { throw new ApifyException("차단됨"); }))
                 .isInstanceOf(ApifyException.class);

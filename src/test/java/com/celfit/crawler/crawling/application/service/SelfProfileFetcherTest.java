@@ -19,7 +19,8 @@ class SelfProfileFetcherTest {
     static CrawlExecutor passthroughExecutor() {
         return new CrawlExecutor(null, null, null, null) {
             @Override public Execution execute(com.celfit.crawler.crawling.domain.JobName job,
-                    TriggerType t, Long c, String k, String actorId, Supplier<ApifyResult> work) {
+                    TriggerType t, String keyword, String targetUsername, String actorId,
+                    Supplier<ApifyResult> work) {
                 ApifyResult r = work.get();
                 return new Execution(1L, r.items());
             }

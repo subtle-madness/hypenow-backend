@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,18 +24,18 @@ class ActorDiscoverFetcherTest {
         SettingsService settings = mock(SettingsService.class);
         when(settings.resultsLimit()).thenReturn(7);
         var expected = new CrawlExecutor.Execution(1L, List.of(Map.of("shortCode", "sc1")));
-        when(executor.execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq(5L), eq("립"),
+        when(executor.execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq("립"), isNull(),
                 eq(Actors.DISCOVERY), org.mockito.ArgumentMatchers.<Map<String, Object>>any()))
                 .thenReturn(expected);
 
         var fetcher = new ActorDiscoverFetcher(executor, settings);
-        var ex = fetcher.fetch(5L, "립", TriggerType.MANUAL);
+        var ex = fetcher.fetch("립", TriggerType.MANUAL);
 
         assertThat(ex).isSameAs(expected);
         assertThat(fetcher.source()).isEqualTo(DiscoverSource.ACTOR);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
-        verify(executor).execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq(5L), eq("립"),
+        verify(executor).execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq("립"), isNull(),
                 eq(Actors.DISCOVERY), input.capture());
         assertThat(input.getValue()).containsEntry("resultsLimit", 7).containsEntry("hashtags", List.of("립"));
     }

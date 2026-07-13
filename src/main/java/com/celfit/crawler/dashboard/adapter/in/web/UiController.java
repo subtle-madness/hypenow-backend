@@ -25,9 +25,7 @@ public class UiController {
 
     private final StatusService statusService;
     private final CrawlRunRepository runs;
-    private final CategoryRepository categories;
     private final ContentRepository contents;
-    private final AccountRepository accounts;
     private final RawPostDetailRepository rawDetails;
     private final RawCommentRepository rawComments;
     private final RawProfileRepository rawProfiles;
@@ -39,8 +37,7 @@ public class UiController {
     private final com.celfit.crawler.crawling.application.service.JobProgress jobProgress;
 
     public UiController(StatusService statusService, CrawlRunRepository runs,
-                        CategoryRepository categories, ContentRepository contents,
-                        AccountRepository accounts, RawPostDetailRepository rawDetails,
+                        ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, RawProfileRepository rawProfiles,
                         RawDiscoveryPostRepository rawDiscovery,
                         ObjectMapper objectMapper, LogBuffer logBuffer,
@@ -48,9 +45,7 @@ public class UiController {
                         com.celfit.crawler.crawling.application.service.JobProgress jobProgress) {
         this.statusService = statusService;
         this.runs = runs;
-        this.categories = categories;
         this.contents = contents;
-        this.accounts = accounts;
         this.rawDetails = rawDetails;
         this.rawComments = rawComments;
         this.rawProfiles = rawProfiles;
@@ -107,7 +102,7 @@ public class UiController {
         model.addAttribute("jobs", java.util.List.of(
                 jobStatus(JobName.DISCOVER, "발굴"),
                 jobStatus(JobName.QUALIFY, "판정"),
-                jobStatus(JobName.AGGREGATE, "집계")));
+                jobStatus(JobName.COLLECT, "수집")));
         return "fragments/status :: bar";
     }
 
@@ -124,16 +119,13 @@ public class UiController {
         StatusService.StatusSummary s = statusService.summary();
         java.util.Map<ContentStatus, Long> by = s.contentByStatus();
         model.addAttribute("summary", s);
-        // 정상 수집 흐름: 발견 → 채택 → 집계
+        // 정상 수집 흐름: 발견 → 수집 완료
         model.addAttribute("pipelineTiles", java.util.List.of(
-                new StatusTile("PENDING", n(by, ContentStatus.PENDING), "발견됨 · 프로필 판정 전"),
-                new StatusTile("QUALIFIED", n(by, ContentStatus.QUALIFIED), "규칙 통과 · 집계 대상"),
-                new StatusTile("AGGREGATED", n(by, ContentStatus.AGGREGATED), "좋아요·댓글 집계 완료")));
+                new StatusTile("PENDING", n(by, ContentStatus.PENDING), "발견됨 · 수집 전"),
+                new StatusTile("COLLECTED", n(by, ContentStatus.COLLECTED), "상세·댓글 수집 완료")));
         // 흐름에서 빠진 것들
         model.addAttribute("droppedTiles", java.util.List.of(
-                new StatusTile("EXCLUDED", n(by, ContentStatus.EXCLUDED), "규칙 탈락 · 팔로워/유형 미달"),
-                new StatusTile("GONE", n(by, ContentStatus.GONE), "삭제·비공개로 사라짐"),
-                new StatusTile("FAILED", n(by, ContentStatus.FAILED), "집계 재시도 초과 · 포기")));
+                new StatusTile("FAILED", n(by, ContentStatus.FAILED), "수집 재시도 초과 · 포기")));
         return "fragments/status-tiles :: tiles";
     }
 
@@ -145,7 +137,6 @@ public class UiController {
 
     @GetMapping("/ui/jobs")
     public String jobs(Model model) {
-        model.addAttribute("categories", categories.findByEnabledTrue());
         return "jobs";
     }
 
@@ -172,8 +163,8 @@ public class UiController {
         model.addAttribute("taggedUsers", detail.map(d -> taggedUsers(d.getPayload()))
                 .orElse(java.util.List.of()));
         model.addAttribute("comments", rawComments.findTop100ByContentIdOrderByIdDesc(id));
-        model.addAttribute("profileJson", accounts.findByUsername(content.getOwnerUsername())
-                .flatMap(a -> rawProfiles.findTopByAccountIdOrderByCapturedAtDesc(a.getId()))
+        model.addAttribute("profileJson", rawProfiles
+                .findTopByInfluencerIdOrderByCapturedAtDesc(content.getInfluencerId())
                 .map(p -> pretty(p.getPayload())).orElse(null));
         return "content-detail";
     }

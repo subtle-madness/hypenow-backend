@@ -14,12 +14,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/admin")
 public class AdminQueryController {
 
-    public record RunView(Long id, String job, String trigger, Long categoryId, String keyword,
+    public record RunView(Long id, String job, String trigger, String keyword, String targetUsername,
                           String actorId, String apifyRunId, Integer requestCount, String status,
                           Integer itemCount, String errorMessage, Instant startedAt, Instant finishedAt) {
         static RunView from(CrawlRun r) {
             return new RunView(r.getId(), r.getJob().name(), r.getTriggerType().name(),
-                    r.getCategoryId(), r.getKeyword(), r.getActorId(), r.getApifyRunId(),
+                    r.getKeyword(), r.getTargetUsername(), r.getActorId(), r.getApifyRunId(),
                     r.getRequestCount(), r.getStatus().name(), r.getItemCount(), r.getErrorMessage(),
                     r.getStartedAt(), r.getFinishedAt());
         }
