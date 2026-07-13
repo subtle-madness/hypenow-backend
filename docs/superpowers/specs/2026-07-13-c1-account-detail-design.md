@@ -41,8 +41,10 @@ celfit-front 인플루언서 패널(`AccountReport`)의 **결정적(비LLM) 필�
 4. **번호대 예약**: 뷰 `10_account_detail.sql`, Flyway `V10__account_detail_tables.sql`
    (00~03·V1~V3 사용 중, 나머지 한 자릿수는 다른 트랙 몫).
 5. **네이밍 `account_*`**, 식별자 `handle`/`account_handle` — `accounts`·`contents` 관례와 동일.
-6. **기존 파일 무수정.** `followers`는 10번 파일 안의 밑판 뷰(`v_account_recent` =
-   `v_recent_content` + `v_base_profile` 조인)에서 파생. 공유 파일 접점은 `MirrorConfig` 3줄 append뿐.
+6. **기존 파일은 base 뷰 additive 확장만.** `followers`는 10번 파일 안의 밑판 뷰(`v_account_recent` =
+   `v_recent_content` + `v_base_profile` 조인)에서 파생. 프로필 payload 키 3개(`followsCount`·
+   `postsCount`·`biography`)는 raw 접촉이라 `00_base.sql` v_base_profile 끝에 컬럼 추가(§4-5 추가는
+   자유 — raw 접촉은 base 뷰만 원칙 준수). 그 외 공유 파일 접점은 `MirrorConfig` 3줄 append뿐.
 7. **views NULL 규약 유지.** raw의 피드 게시물 views NULL은 미러에도 NULL로 보존(프론트 시드의
    "0 = 미공개"는 프론트 사정) — was가 응답 조립 시 규약을 정한다. 집계에서는 NULL/0 조회수를
    프론트 파이프라인과 동일하게 제외한다(`> 0` 필터).

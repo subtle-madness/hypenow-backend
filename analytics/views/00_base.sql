@@ -11,7 +11,10 @@ SELECT DISTINCT ON (account_id)
   followers,
   captured_at,
   payload->>'fullName'      AS display_name,
-  payload->>'profilePicUrl' AS profile_image_url
+  payload->>'profilePicUrl' AS profile_image_url,
+  (payload->>'followsCount')::bigint AS follows_count,
+  (payload->>'postsCount')::bigint   AS posts_count,
+  payload->>'biography'              AS biography
 FROM raw_profile
 ORDER BY account_id, captured_at DESC, id DESC;
 
