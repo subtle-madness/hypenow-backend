@@ -21,9 +21,19 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     ./test/run.sh test/00_base.test.sql   # 지정 테스트
     ../gradlew :analytics:test       # Java 테스트 (Docker 필요)
     ../gradlew :analytics:bootRun    # 미러 1회 실행 (analytics.mirror-on-startup=true)
-    ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true'   # 댓글 분류 배치
-    ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'  # F-1 스파이크
-    ANTHROPIC_API_KEY=... ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true'   # 콘텐츠 분석 배치
+
+### LLM 인증 (둘 중 하나)
+
+    # 방법 1 — Claude 구독(OAuth): 실행 직전 단기 토큰 발급 (자동화 전 수동 실행용)
+    export ANTHROPIC_AUTH_TOKEN=$(ant auth print-credentials --access-token)
+    # 방법 2 — API 키 (자동화·운영용)
+    export ANTHROPIC_API_KEY=sk-ant-...
+
+둘 다 설정돼 있으면 구독(OAUTH_TOKEN)이 우선한다. 토큰은 단기 만료라 배치 실행 직전에 발급할 것.
+
+    ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true'   # 댓글 분류 배치
+    ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'  # F-1 스파이크
+    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true'   # 콘텐츠 분석 배치
 
 ⚠️ `analyze-on-startup`·`vlm-enabled`는 스프링 프로퍼티(`application.yml`/CLI 인자)이지 `app_setting` 키가 아니다.
 분석 대상은 "최근 N개 윈도우 안 + 분류 완료(또는 댓글 0)" 콘텐츠만 (classify 선행을 강제).

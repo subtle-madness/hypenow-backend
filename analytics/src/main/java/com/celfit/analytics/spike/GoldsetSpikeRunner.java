@@ -1,11 +1,11 @@
 package com.celfit.analytics.spike;
 
 import com.anthropic.client.AnthropicClient;
-import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AnthropicCommentClassifier;
 import com.celfit.analytics.llm.ClassifiedComment;
 import com.celfit.analytics.llm.CommentToClassify;
+import com.celfit.analytics.llm.LlmClientFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -20,8 +20,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * F-1 스파이크: 수동 라벨 골드셋(CSV: id,label,text — 헤더 없음, text에 콤마 가능)을
- * 모델별로 분류해 정확도를 비교한다. 실 API를 때리므로 수동 실행 전용:
- *   ANTHROPIC_API_KEY=... ./gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'
+ * 모델별로 분류해 정확도를 비교한다. 실 API를 때리므로 수동 실행 전용(LLM 인증은
+ * {@link LlmClientFactory} 참고 — ANTHROPIC_AUTH_TOKEN 또는 ANTHROPIC_API_KEY 필요):
+ *   ./gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'
  * 비용·정확도 결과로 analytics.llm-model 설정을 확정한다 (ARCHITECTURE §8 미결).
  */
 @Configuration
@@ -56,7 +57,7 @@ public class GoldsetSpikeRunner {
 			}
 			List<CommentToClassify> input = gold.stream()
 					.map(g -> new CommentToClassify(g.id(), g.text())).toList();
-			AnthropicClient client = AnthropicOkHttpClient.fromEnv();
+			AnthropicClient client = LlmClientFactory.fromEnv();
 			for (String model : MODELS) {
 				JdbcTemplate raw = rawJdbcTemplate;
 				var settings = new AnalyticsSettings(raw) {
