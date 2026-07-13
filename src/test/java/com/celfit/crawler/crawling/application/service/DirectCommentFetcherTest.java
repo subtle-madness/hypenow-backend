@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.CommentSource;
 import java.net.URLDecoder;
@@ -52,35 +53,54 @@ class DirectCommentFetcherTest extends IntegrationTest {
     }
 
     @Test
-    void 단일페이지_응답의_댓글을_전부_수집한다() throws Exception {
+    void rawSource는_SELF_GQL이다() {
+        assertThat(fetcher(new FakeWeb()).rawSource()).isEqualTo(RawSource.SELF_GQL);
+    }
+
+    @Test
+    void 단일페이지_응답을_shortCode별_페이지_원형으로_수집한다() throws Exception {
         var web = new FakeWeb();
         web.html = res("/instagram/post-page.html");
         web.graphql = List.of(res("/instagram/comments-response.json"));  // hasNext=false
-        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
-        assertThat(ex.items()).hasSize(15);
-        assertThat(ex.items().get(0)).containsEntry("ownerUsername", "songsariiiii");
+        var result = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+
+        assertThat(result.pagesByCode()).containsOnlyKeys("DYtaeT4TPYu");
+        List<Map<String, Object>> pages = result.pagesByCode().get("DYtaeT4TPYu");
+        assertThat(pages).hasSize(1); // 페이지 1개 원형 그대로
+        Map<?, ?> data = (Map<?, ?>) pages.get(0).get("data");
+        Map<?, ?> xig = (Map<?, ?>) data.get("xig_polaris_media");
+        Map<?, ?> conn = (Map<?, ?>) xig.get("comments_connection");
+        assertThat((List<?>) conn.get("edges")).hasSize(15);
     }
 
     @Test
-    void limit을_초과하면_잘라낸다() throws Exception {
-        var web = new FakeWeb();
-        web.html = res("/instagram/post-page.html");
-        web.graphql = List.of(res("/instagram/comments-response.json"));
-        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 5, TriggerType.MANUAL);
-        assertThat(ex.items()).hasSize(5);
-    }
-
-    @Test
-    void 다음페이지가_있으면_커서로_이어_수집한다() throws Exception {
+    void 첫페이지가_이미_상한을_넘기면_추가_페이지_요청을_하지_않는다() throws Exception {
         var web = new FakeWeb();
         web.html = res("/instagram/post-page.html");
         String base = res("/instagram/comments-response.json");
-        // 1페이지: has_next_page=true+커서, 2페이지: 원본(false) → 15+15=30
+        // hasNext=true인 페이지지만, 15개가 이미 limit(5)를 넘기므로 다음 페이지를 요청하면 안 된다.
+        String page1 = base.replace("\"end_cursor\":null,\"has_next_page\":false",
+                "\"end_cursor\":\"CUR\",\"has_next_page\":true");
+        web.graphql = List.of(page1);
+        var result = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 5, TriggerType.MANUAL);
+
+        assertThat(web.postCount).isEqualTo(1);
+        assertThat(result.pagesByCode().get("DYtaeT4TPYu")).hasSize(1); // 원형 그대로(자르지 않음)
+    }
+
+    @Test
+    void 다음페이지가_있으면_커서로_이어_수집하고_페이지_2개가_쌓인다() throws Exception {
+        var web = new FakeWeb();
+        web.html = res("/instagram/post-page.html");
+        String base = res("/instagram/comments-response.json");
+        // 1페이지: has_next_page=true+커서, 2페이지: 원본(false)
         String page1 = base.replace("\"end_cursor\":null,\"has_next_page\":false",
                 "\"end_cursor\":\"CUR\",\"has_next_page\":true");
         web.graphql = List.of(page1, base);
-        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
-        assertThat(ex.items()).hasSize(30);
+        var result = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+
+        assertThat(web.postCount).isEqualTo(2);
+        assertThat(result.pagesByCode().get("DYtaeT4TPYu")).hasSize(2);
     }
 
     @Test
@@ -114,12 +134,13 @@ class DirectCommentFetcherTest extends IntegrationTest {
         // 세션 재사용 최적화 회귀 방지: lsd 부트스트랩용 무거운 페이지 GET은 청크당 1회.
         var web = new FakeWeb();
         web.html = res("/instagram/post-page.html");
-        web.graphql = List.of(res("/instagram/comments-response.json")); // 각 포스트 단일 페이지 15개
-        var ex = fetcher(web).fetch(List.of("AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC"),
+        web.graphql = List.of(res("/instagram/comments-response.json")); // 각 포스트 단일 페이지
+        var result = fetcher(web).fetch(List.of("AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC"),
                 50, TriggerType.MANUAL);
         assertThat(web.getCount).isEqualTo(1);   // 페이지 GET(≈600KB)은 부트스트랩 1회만
         assertThat(web.postCount).isEqualTo(3);  // graphql은 포스트당 1회
-        assertThat(ex.items()).hasSize(45);      // 3 × 15
+        assertThat(result.pagesByCode()).containsOnlyKeys("AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC");
+        assertThat(result.pagesByCode().values()).allSatisfy(pages -> assertThat(pages).hasSize(1));
     }
 
     @Test
@@ -140,7 +161,8 @@ class DirectCommentFetcherTest extends IntegrationTest {
         String stuck = base.replace("\"end_cursor\":null,\"has_next_page\":false",
                 "\"end_cursor\":\"CUR\",\"has_next_page\":true");
         web.graphql = List.of(stuck);  // FakeWeb이 마지막 원소를 계속 반환 → 동일 응답 반복
-        var ex = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
-        assertThat(ex.items()).hasSize(30);
+        var result = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+        assertThat(web.postCount).isEqualTo(2);  // 커서가 안 바뀌어 2번째 응답 후 중단
+        assertThat(result.pagesByCode().get("DYtaeT4TPYu")).hasSize(2);
     }
 }

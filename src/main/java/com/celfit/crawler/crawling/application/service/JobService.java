@@ -17,13 +17,15 @@ public class JobService implements TriggerJobUseCase {
     private final JobLock lock;
     private final DiscoverJob discoverJob;
     private final QualifyJob qualifyJob;
+    private final CollectJob collectJob;
     private final TaskExecutor taskExecutor;
 
-    public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob,
+    public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob, CollectJob collectJob,
                       @Qualifier("jobTaskExecutor") TaskExecutor taskExecutor) {
         this.lock = lock;
         this.discoverJob = discoverJob;
         this.qualifyJob = qualifyJob;
+        this.collectJob = collectJob;
         this.taskExecutor = taskExecutor;
     }
 
@@ -41,7 +43,7 @@ public class JobService implements TriggerJobUseCase {
                 switch (job) {
                     case DISCOVER -> log.info("discover 완료: {}", discoverJob.run(triggerType));
                     case QUALIFY -> log.info("qualify 완료: {}", qualifyJob.run(triggerType, requalify));
-                    case COLLECT -> log.info("collect 미구현 (Task 9)");
+                    case COLLECT -> log.info("collect 완료: {}", collectJob.run(triggerType));
                 }
             } catch (Exception e) {
                 log.error("{} 잡 실패", job, e);

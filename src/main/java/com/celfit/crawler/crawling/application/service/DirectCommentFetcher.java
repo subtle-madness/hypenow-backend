@@ -6,6 +6,7 @@ import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.CommentFetcher;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.ShortCodes;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.CommentSource;
@@ -60,13 +61,19 @@ public class DirectCommentFetcher implements CommentFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(List<String> shortCodes, int limit, TriggerType trigger) {
-        return executor.execute(JobName.COLLECT, trigger, null, null, ACTOR_LABEL,
-                () -> new ApifyResult(null, collectAll(shortCodes, limit)));
+    public CommentResult fetch(List<String> shortCodes, int commentsPerPost, TriggerType trigger) {
+        Map<String, List<Map<String, Object>>> pagesByCode = new LinkedHashMap<>();
+        CrawlExecutor.Execution ex = executor.execute(JobName.COLLECT, trigger, null, null, ACTOR_LABEL,
+                () -> collectAll(shortCodes, commentsPerPost, pagesByCode));
+        return new CommentResult(ex.runId(), pagesByCode);
     }
 
-    private List<Map<String, Object>> collectAll(List<String> shortCodes, int limit) {
-        if (shortCodes.isEmpty()) return List.of();
+    /** 포스트 1개분 수집 결과 — 저장용 페이지 원형 목록 + 로그용 실제 댓글 수. */
+    private record Collected(List<Map<String, Object>> pages, int commentCount) {}
+
+    private ApifyResult collectAll(List<String> shortCodes, int limit,
+                                   Map<String, List<Map<String, Object>>> pagesByCode) {
+        if (shortCodes.isEmpty()) return new ApifyResult(null, List.of());
         // 세션 부트스트랩: 무거운 포스트 페이지 GET(~600KB)을 청크당 딱 1회만 해서 lsd를 확보한다.
         // lsd는 특정 포스트가 아니라 익명 세션에 묶여 있어(실측 확인) 청크 전체 graphql에 재사용 가능하고,
         // 쿠키(csrftoken·mid)는 공유 CookieManager가 자동 유지한다. → 포스트당 페이지 GET 제거 = 전송 바이트 대폭 절감.
@@ -76,12 +83,16 @@ public class DirectCommentFetcher implements CommentFetcher {
         long pageBytes = utf8Len(pageResp.body());   // 부트스트랩 페이지 전송량(응답)
 
         long[] graphqlBytes = {0};                    // graphql 응답 전송량 누적
-        List<Map<String, Object>> all = new ArrayList<>();
+        List<Map<String, Object>> allPages = new ArrayList<>();
+        int totalComments = 0;
         for (String sc : shortCodes) {
-            all.addAll(collectOne(sc, limit, lsd, graphqlBytes));
+            Collected c = collectOne(sc, limit, lsd, graphqlBytes);
+            pagesByCode.put(sc, c.pages());
+            allPages.addAll(c.pages());
+            totalComments += c.commentCount();
         }
-        logTransfer(shortCodes.size(), all.size(), pageBytes, graphqlBytes[0]);
-        return all;
+        logTransfer(shortCodes.size(), totalComments, pageBytes, graphqlBytes[0]);
+        return new ApifyResult(null, allPages);
     }
 
     /** run당 전송량을 로그로 남긴다. 최적화 전(페이지 GET을 포스트마다) 대비 절감비도 같이 표시. */
@@ -99,26 +110,43 @@ public class DirectCommentFetcher implements CommentFetcher {
         return s == null ? 0 : s.getBytes(StandardCharsets.UTF_8).length;
     }
 
-    private List<Map<String, Object>> collectOne(String shortCode, int limit, String lsd, long[] graphqlBytes) {
+    /**
+     * 커서 페이지네이션으로 포스트 1개분을 수집. CommentMapper.parse()는 커서·hasNext 판단(및
+     * 로그용 댓글 수 계산)에만 쓰고, 저장용으로는 응답 JSON 원형(om.readValue)을 페이지 단위로 쌓는다.
+     */
+    private Collected collectOne(String shortCode, int limit, String lsd, long[] graphqlBytes) {
         String postUrl = ShortCodes.postUrl(shortCode);
         long mediaId = HandshakeExtractor.mediaIdFromShortCode(shortCode);
 
-        List<Map<String, Object>> out = new ArrayList<>();
+        List<Map<String, Object>> pages = new ArrayList<>();
         String cursor = null;
-        while (out.size() < limit) {
+        int collected = 0;
+        while (collected < limit) {
             var resp = web.post(GRAPHQL_URL, graphqlBody(lsd, mediaId, cursor),
                     Map.of("x-ig-app-id", APP_ID, "x-fb-lsd", lsd));
             if (resp.status() >= 300) throw new ApifyException("graphql " + resp.status());
             graphqlBytes[0] += utf8Len(resp.body());
             var page = mapper.parse(resp.body(), postUrl);
-            out.addAll(page.comments());
+            // 무진행 방어: 새 댓글이 없으면 종료(무한루프 방지)
+            if (page.comments().isEmpty()) break;
+            pages.add(rawPage(resp.body()));
+            collected += page.comments().size();
             String next = page.endCursor();
-            // 무진행 방어: 서버가 hasNext=true인데 새 댓글이 없거나 커서가 안 바뀌면 종료(무한루프 방지)
-            if (!page.hasNext() || next == null || next.equals(cursor) || page.comments().isEmpty()) break;
+            // 무진행 방어: 서버가 hasNext=true인데 커서가 안 바뀌면 종료(무한루프 방지)
+            if (!page.hasNext() || next == null || next.equals(cursor)) break;
             cursor = next;
             sleep();
         }
-        return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
+        return new Collected(pages, collected);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> rawPage(String json) {
+        try {
+            return om.readValue(json, Map.class);
+        } catch (JacksonException e) {
+            throw new ApifyException("댓글 페이지 파싱 실패: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -158,5 +186,10 @@ public class DirectCommentFetcher implements CommentFetcher {
     @Override
     public CommentSource source() {
         return CommentSource.DIRECT;
+    }
+
+    @Override
+    public RawSource rawSource() {
+        return RawSource.SELF_GQL;
     }
 }
