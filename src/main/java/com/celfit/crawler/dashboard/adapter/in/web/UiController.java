@@ -158,6 +158,13 @@ public class UiController {
         return "contents";
     }
 
+    /**
+     * 열람용 댓글 1행. 구 파이프라인(raw_post_detail 기반 댓글)은 writer/text/writtenAt 실컬럼이
+     * 채워지지만, 새 파이프라인(SELF_GQL 페이지 원형 수집)은 댓글 단위가 아니라 페이지 단위로
+     * 저장되어 이 실컬럼이 설계상 NULL이다 — 그 경우 payload 원형을 pretty JSON으로 보여준다.
+     */
+    public record CommentRow(String writer, String text, String writtenAt, String rawJson) {}
+
     @GetMapping("/ui/contents/{id}")
     public String contentDetail(@PathVariable Long id, Model model) {
         Content content = contents.findById(id)
@@ -167,11 +174,19 @@ public class UiController {
         model.addAttribute("detailJson", detail.map(d -> pretty(d.getPayload())).orElse(null));
         model.addAttribute("taggedUsers", detail.map(d -> taggedUsers(d.getPayload()))
                 .orElse(java.util.List.of()));
-        model.addAttribute("comments", rawComments.findTop100ByContentIdOrderByIdDesc(id));
+        model.addAttribute("comments", commentRows(rawComments.findTop100ByContentIdOrderByIdDesc(id)));
         model.addAttribute("profileJson", rawProfiles
                 .findTopByInfluencerIdOrderByCapturedAtDesc(content.getInfluencerId())
                 .map(p -> pretty(p.getPayload())).orElse(null));
         return "content-detail";
+    }
+
+    private java.util.List<CommentRow> commentRows(java.util.List<RawComment> rows) {
+        return rows.stream()
+                .map(c -> c.getWriter() != null
+                        ? new CommentRow(c.getWriter(), c.getText(), c.getWrittenAt(), null)
+                        : new CommentRow(null, null, null, pretty(c.getPayload())))
+                .toList();
     }
 
     /** 상세 payload의 taggedUsers → "이름 @username" 표시 문자열. 브랜드 태그 확인용. */

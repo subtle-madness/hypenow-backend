@@ -69,7 +69,7 @@ REST로도 가능:
 3. qualify → `influencer.followers`·`status`(QUALIFIED/EXCLUDED)가 채워지는지,
    `raw_profile.followers` 필드명(`followersCount`)이 유효한지 확인
 4. collect(`collect.batch-limit=1`로 소형 계정 1명) → `raw_media_page`(게시물 열거 원형),
-   `content`(PENDING→COLLECTED), `raw_post_detail`·`raw_comment` 적재 확인
+   `content`(PENDING→COLLECTED), `raw_comment`(댓글 페이지 원형) 적재 확인
 5. 값 원복
 
 ## 주의
@@ -77,16 +77,16 @@ REST로도 가능:
 - **run-sync 금지** — 비동기 시작→폴링→dataset 수신만 사용 (장시간 실행 시 과금+유실 방지).
   폴링 중 일시 오류 시 액터는 abort되지 않음 — crawl_run FAILED와 Apify 콘솔로 추적.
 - 한글 키워드는 자동으로 `keywordSearch: true` 우회 (인스타 비로그인 해시태그 차단)
-- 상세 수집은 유형별 전용 액터를 쓴다 — 릴스 `instagram-reel-scraper` / 피드
-  `instagram-post-scraper` (범용 instagram-scraper가 버리는 `taggedUsers` 등 보존)
 - 공유 수·IG 파트너십 라벨·광고 표기 판별(AdSignals)은 로그인 세션이 필요하거나 공식 액터가
   주지 않는 데이터라 **수집하지 않기로 결정** (2026-07-08) — 로그인 세션 수집은 계정 정지
   리스크. 랭킹 스코어는 조회수 기반으로 충분
 - 액터 id·필드명은 `apify/Actors.java`·`ActorInputs.java`·V1 마이그레이션에 모여 있음 —
   Apify 쪽 변경 시 이 세 곳만 수정
-- detail 응답이 완전히 비면(레이트리밋 소프트 실패) FAILED가 아니라 재시도로 처리됨 —
+- 게시물 단위 실패(댓글 수집 등)는 다음 방문에서 해당 게시물만 재시도된다(PENDING 유지) —
   attempts 3회 초과 시 FAILED
 - 과금한 모든 액터 응답은 `raw_run_item`에 원형 그대로 전량 보관된다(파이프라인이 버린
-  아이템도 포함) — 잡 트랜잭션에 합류하므로 잡이 통째로 롤백되면 그 실행분 아카이브도 같이 롤백된다
+  아이템도 포함) — 호출자 트랜잭션에 합류한다. discover/qualify는 잡 전체가 트랜잭션 1개라
+  잡이 롤백되면 그 실행분 아카이브도 같이 롤백되지만, collect는 인플루언서 방문 1회 = 트랜잭션
+  1개라 한 인플루언서의 오류가 이미 커밋된 다른 인플루언서의 raw까지 되돌리지 않는다
 - 추출 실패로 raw 실컬럼이 NULL인 행의 재추출 배치는 별도로 만들지 않는다 — 원형이
   `payload`에 남아 있어 필요해지는 시점(첫 추출 실패 관측)에 추가해도 데이터 유실이 없다
