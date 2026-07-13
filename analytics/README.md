@@ -6,13 +6,13 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 ## 구성
 
 - `views/` — raw DB `analytics` 스키마의 뷰. 파일명 번호순 적용.
-  - `00_base.sql` — base 뷰 4종. **raw 테이블·payload를 만지는 유일한 SQL.**
+  - `00_base.sql` — base 뷰 5종. **raw 테이블·payload를 만지는 유일한 SQL.**
   - `01_recent_window.sql` — 계정별 최근 N개 윈도우 (`v_recent_content`)
-  - `02_serving.sql` — 서빙 형태 뷰 3종 (`v_accounts`·`v_contents`·`v_content_comments`) — 미러 대상과 1:1
+  - `02_serving.sql` — 서빙 형태 뷰 4종 (`v_accounts`·`v_contents`·`v_content_comments`·`v_content_metric_snapshots`) — 미러 대상과 1:1
   - `03_analysis_baseline.sql` — 콘텐츠별 기준선 뷰 (분석 잡 전용, 미러 안 함)
 - `mirror/` — 타입 기반 미러: 뷰 SELECT → 공유 record 매핑 → analysis DB 테이블
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
-  대상: accounts·contents·content_comments (등록: MirrorConfig).
+  대상: accounts·contents·content_comments·content_metric_snapshots (등록: MirrorConfig).
 - `test/` — SQL 하니스. 더미 시드를 BEGIN/ROLLBACK으로 격리해 뷰 기대값을 고정.
 
 ## 실행

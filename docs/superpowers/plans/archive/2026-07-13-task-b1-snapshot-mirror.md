@@ -1,6 +1,6 @@
 # 태스크 B1 잔여분: content_metric_snapshots 미러 개통 Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-13)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 게시물 지표 스냅샷 이력(`content_metric_snapshots`)을 raw→analysis DB로 흘려보낸다 — 타입 미러 3점 세트(뷰 SQL / Flyway DDL / 계약 record) + 미러 등록. 완료 시 was의 as-of 조회(태스크 D)가 이 테이블을 읽을 수 있다.
