@@ -47,4 +47,13 @@ BEGIN
     'v_base_detail 9101 thumbnail_url != latest';
   ASSERT (SELECT original_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://www.instagram.com/p/dummy_r1/',
     'v_base_detail 9101 original_url mismatch';
+
+  -- 스냅샷 이력 노출 (B1 잔여분): 9101은 구/신 2행, 구스냅샷 views=10000
+  ASSERT (SELECT count(*) FROM analytics.v_base_detail_history WHERE content_id = 9101) = 2,
+    'v_base_detail_history 9101 rows != 2';
+  ASSERT (SELECT views FROM analytics.v_base_detail_history
+          WHERE content_id = 9101 ORDER BY captured_at ASC LIMIT 1) = 10000,
+    'v_base_detail_history 9101 oldest views != 10000';
+  ASSERT (SELECT views FROM analytics.v_base_detail_history WHERE content_id = 9102) = 7000,
+    'v_base_detail_history 9102 videoViewCount fallback != 7000';
 END $$;
