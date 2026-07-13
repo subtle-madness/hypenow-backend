@@ -129,7 +129,7 @@ raw 접촉은 base 뷰(00)만 — 상세는 §5-4.
 
 - **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §5-3). analytics가 쓰고 was가 읽는다.
   피봇 후 중심 테이블은 `influencer_profiles`(매칭 재료, R1·R2에서 구축)이고, 기존 서빙 미러
-  (accounts·contents·content_comments·content_metric_snapshots·댓글/콘텐츠 분석)는 근거 하위 화면 재료.
+  (accounts·contents·content_comments·content_metric_snapshots·account_*·댓글/콘텐츠 분석)는 근거 하위 화면 재료.
 - Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
 - **서비스 데이터 (`app` 스키마)** — §3의 캠페인 도메인(캠페인·추천 결과·가중치 프리셋)과
   후보 관리·로그인 등. 분석 결과와 스키마로 격리, 나중에 물리 분리 가능.
@@ -256,6 +256,8 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 | B1 | 게시물 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments·content_metric_snapshots) | ✅ |
 | B2 | 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | ✅ |
 | B3 | 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" | ✅ |
+| C1 | 인플루언서 상세 비LLM 집계 | AccountReport 결정 지표 미러 3종(account_*) — 근거 하위 화면(인플루언서 상세) 재료 | ✅ PR #3 리뷰 대기 |
+| D | 게시물 상세 API | `GET /api/posts/{shortCode}` + analysis 블록(D2) — 근거 하위 화면(드로어) API | ✅ PR #4 리뷰 대기 |
 
 **캠페인 추천 작업 트랙** (구조 설계: [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md)):
 
@@ -263,14 +265,14 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 |---|---|---|---|---|
 | V | 어휘 계약 | 매칭 어휘(카테고리·속성·톤) enum을 `contract-analysis`에 확정 | — | ⬜ |
 | L | LLM 공유 모듈 | F 산출물(호출 골격)을 `llm-core`로 분리, analytics·was 공용 | — | ⬜ |
-| R1 | 프로필 비LLM 축 | `influencer_profiles` 뷰·미러 (정체성·규모·성과·상업성·오디언스 반응) — 구 C1 재정의 | V | ⬜ |
+| R1 | 프로필 비LLM 축 | `influencer_profiles` 뷰·미러 (정체성·규모·성과·상업성·오디언스 반응) — C1 산출물·계획 재료 재활용 | V | ⬜ |
 | R2 | 프로필 LLM 축 | 페르소나·광고 유형 (계정 LLM) — 구 C2 재정의 | V, L, R1 | ⬜ |
 | G | 캠페인 도메인 | `app` 스키마: 캠페인·추천 결과·후보 연결 + 비동기 잡 골격(상태 머신) | — | ⬜ |
 | W1 | 브리프 이미지 분석 | 제품 이미지 VLM → 제품 속성 (어휘 계약 준수) | V, L, G | ⬜ |
 | M | 매칭 엔진 | 하드 필터·정규화 SQL + 가중 합산 Java + 가중치 프리셋 테이블 + 근거 확정 저장 | R1, G, W1 | ⬜ |
 | W2 | 근거 서술 | 저장된 팩트 기반 LLM 서술 | M, L | ⬜ |
 | API | 캠페인 API | 제출·진행 상태·결과 조회 + 후보 연결 | G, M | ⬜ |
-| D·E | 근거 하위 화면 API | 게시물 드로어·인플루언서 상세 | B1, R1 | ⬜ |
+| E | 인플루언서 상세 API | 근거 하위 화면 — C1 미러(account_*) 서빙 | C1 | ⬜ |
 | X | 랭킹 대시보드 제거 | was 랭킹 화면·전용 미러 의존 정리 | — | ⬜ |
 | ⏸ | 레퍼런스 콘텐츠 매칭 | 참고 이미지/게시물 → 비주얼 톤·스타일 매칭 | — | ⏸ |
 | ⏸ | 브리프발 발굴 트리거 | 풀 부족 시 crawler 발굴 연동 | — | ⏸ |
@@ -296,7 +298,7 @@ Java는 Testcontainers/MockMvc. LLM/VLM 호출은 테스트에서 실 API를 때
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
-| 2026-07-13 | **제품 피봇: 캠페인 브리프 → 인플루언서 추천 + 근거.** A안 채택(analytics=프로필 팩토리 / 캠페인 파이프라인은 was 소유 — §3 신설). LLM 소속 이원화(raw 대상=분석 층, 캠페인 입력 대상=was), `llm-core` 공유 모듈 신설 예정, 매칭 어휘는 `contract-analysis`에. 추천 3기둥(프로필 미러 / 어휘 계약 / 매칭+근거 확정 저장). C1·C2→R1·R2 재정의, G→캠페인 도메인 확장, 랭킹 대시보드 제거(X). 레퍼런스 콘텐츠 매칭·발굴 트리거는 보류. 이 문서를 캠페인 플로우 중심으로 전면 재작성(§ 번호 변경: 원칙 §4→§5) | [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md) |
+| 2026-07-13 | **제품 피봇: 캠페인 브리프 → 인플루언서 추천 + 근거.** A안 채택(analytics=프로필 팩토리 / 캠페인 파이프라인은 was 소유 — §3 신설). LLM 소속 이원화(raw 대상=분석 층, 캠페인 입력 대상=was), `llm-core` 공유 모듈 신설 예정, 매칭 어휘는 `contract-analysis`에. 추천 3기둥(프로필 미러 / 어휘 계약 / 매칭+근거 확정 저장). C2→R2 재정의(C1·D는 이미 구현 — 근거 하위 화면 재료로 유지), R1(매칭 프로필) 신설, G→캠페인 도메인 확장, 랭킹 대시보드 제거(X). 레퍼런스 콘텐츠 매칭·발굴 트리거는 보류. 이 문서를 캠페인 플로우 중심으로 전면 재작성(§ 번호 변경: 원칙 §4→§5) | [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md) |
 | 2026-07-13 | B1 잔여분 `content_metric_snapshots` 미러 개통 — base 뷰에 이력 노출(`v_base_detail_history`) 추가, 서빙은 최신(`contents`)/이력(스냅샷) 분리 완성. was의 as-of 조회(태스크 D) 재료 | [plans/2026-07-13-task-b1-snapshot-mirror.md](docs/superpowers/plans/archive/2026-07-13-task-b1-snapshot-mirror.md) |
 | 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](docs/superpowers/plans/archive/2026-07-12-task-f-b2-llm-comment-classification.md) |
 | 2026-07-12 | 게시물 **중복 크롤링 도입** — 지표 스냅샷 누적. 분석 층 서빙을 최신/이력으로 분리(`contents` = 최신, `content_metric_snapshots` = 시점별, B1에서 구현). as-of 선택 규칙은 D에서 | [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md) |
