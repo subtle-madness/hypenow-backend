@@ -71,6 +71,7 @@ class ContentAnalysisJobTest {
 		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
 		// 테스트 간 완전 초기화 (B2 패턴 — content_analyses 포함)
 		db.update("DROP TABLE IF EXISTS content_analyses, comment_classifications, accounts, contents, content_comments, content_metric_snapshots");
+		db.update("DROP TABLE IF EXISTS account_summaries, account_category_stats, account_content_series");
 		db.update("DROP TABLE IF EXISTS app_setting, flyway_schema_history");
 		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis")
 				.baselineOnMigrate(true).baselineVersion("0").load().migrate();
