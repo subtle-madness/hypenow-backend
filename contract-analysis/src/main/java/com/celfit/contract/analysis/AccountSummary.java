@@ -8,6 +8,8 @@ import java.time.OffsetDateTime;
  * celfit-front AccountReport의 결정(비LLM) 지표 — 산식은 스펙 2026-07-13-c1-account-detail-design.md §3.
  * metric: 'views'|'likes' — 조회수 데이터 부족 계정의 기준 지표 폴백. 트렌드·광고 비교가 이 축을 따른다.
  * avgErPct: 계정 평균 ER(팔로워 분모, %) — 게시물 ER(조회수 분모)과 정의가 다르다.
+ * trendDirection 'flat'은 "변화 ±threshold 이내"와 "비교 불가(표본 부족)"를 겸한다 —
+ * 후자는 trendOlderAvg가 NULL이고 trendChangePct가 0인 것으로 구분.
  */
 public record AccountSummary(String handle, Long followers, Long followsCount, Long postsCount,
 		String biography, Long analyzedCount, Long viewsCount, String metric, Long avgViews,
