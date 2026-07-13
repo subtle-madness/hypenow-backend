@@ -1,3 +1,6 @@
+# 프로젝트명 고정: 폴더명(hypenow-backend)이 바뀌어도 기존 컨테이너·볼륨(데이터) 유지
+name: hypenow-crawler
+
 services:
   postgres:
     image: 'postgres:17-alpine'
