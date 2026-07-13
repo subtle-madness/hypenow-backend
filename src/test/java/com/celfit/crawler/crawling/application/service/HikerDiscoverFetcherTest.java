@@ -71,6 +71,7 @@ class HikerDiscoverFetcherTest {
         assertThat(capturedResults.get(0).requestCount()).isEqualTo(2);  // 비용 추적용 페이지 수
         assertThat(capturedResults.get(0).runId()).isNull();             // HikerAPI는 run ID 없음
         assertThat(fetcher.source()).isEqualTo(DiscoverSource.HIKER);
+        assertThat(fetcher.rawSource()).isEqualTo(com.celfit.crawler.crawling.domain.RawSource.HIKER_HASHTAG);
     }
 
     @Test void limit_도달하면_다음_페이지_안_부름() {

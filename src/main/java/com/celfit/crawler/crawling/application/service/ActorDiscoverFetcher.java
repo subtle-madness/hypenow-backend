@@ -4,6 +4,7 @@ import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.Actors;
 import com.celfit.crawler.crawling.application.port.out.DiscoverFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
@@ -30,5 +31,10 @@ public class ActorDiscoverFetcher implements DiscoverFetcher {
     @Override
     public DiscoverSource source() {
         return DiscoverSource.ACTOR;
+    }
+
+    @Override
+    public RawSource rawSource() {
+        return RawSource.APIFY_ACTOR;
     }
 }

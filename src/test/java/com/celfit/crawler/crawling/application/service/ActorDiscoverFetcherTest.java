@@ -33,6 +33,7 @@ class ActorDiscoverFetcherTest {
 
         assertThat(ex).isSameAs(expected);
         assertThat(fetcher.source()).isEqualTo(DiscoverSource.ACTOR);
+        assertThat(fetcher.rawSource()).isEqualTo(com.celfit.crawler.crawling.domain.RawSource.APIFY_ACTOR);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
         verify(executor).execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq("립"), isNull(),

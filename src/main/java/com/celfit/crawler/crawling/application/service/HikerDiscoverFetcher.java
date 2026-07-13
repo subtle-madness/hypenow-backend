@@ -4,6 +4,7 @@ import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.DiscoverFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
@@ -74,5 +75,10 @@ public class HikerDiscoverFetcher implements DiscoverFetcher {
     @Override
     public DiscoverSource source() {
         return DiscoverSource.HIKER;
+    }
+
+    @Override
+    public RawSource rawSource() {
+        return RawSource.HIKER_HASHTAG;
     }
 }
