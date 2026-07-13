@@ -90,6 +90,16 @@ QUALIFIED 중 방문 대상 선정(`first_collected_at IS NULL` = 백필 대상,
 
 ## DB 스키마 (Flyway V8~)
 
+### 데이터 흐름별 저장처 (한눈에)
+
+| 무엇을 | 어디서 얻고 | raw 저장처 | 추출되는 제어 필드 |
+|---|---|---|---|
+| 발굴 게시물 | 해시태그 발굴 (기존 fetcher) | `raw_discovery_post` | shortCode·업로드시각·작성자 → `content`, `influencer`, `influencer_discovery` |
+| 프로필 (팔로워 등) | 방문/판정 시 프로필 조회 | `raw_profile` | followers·userId → `influencer` |
+| 게시물 목록+상세 (6개월 열거) | `/gql/user/medias` + `/v2/user/clips` | **`raw_media_page` (신규, 페이지 단위 원형)** | shortCode·업로드시각·타입 → `content` |
+| 댓글 | 게시물별 self GraphQL | `raw_comment` | (제어 필드 없음 — 페이지 커서만 진행 중 파싱) |
+| 게시물 단위 상세 | — 수집 안 함 (열거=상세) | `raw_post_detail` **신규 기록 없음** | 기존 데이터 보존 + 향후 재사용 대비 유지 |
+
 ### raw 계층 (payload 원형화)
 
 - `raw_discovery_post` / `raw_post_detail` / `raw_comment` / `raw_profile`:
