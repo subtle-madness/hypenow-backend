@@ -42,3 +42,19 @@ SELECT
   m.like_count
 FROM analytics.v_base_comment m
 JOIN analytics.v_base_content c USING (content_id);
+
+-- 지표 스냅샷 이력 (게시물 × 수집 시점 1행). contents는 이 중 최신 1건을 편 것 —
+-- 랭킹 기본 경로는 contents, as-of 조회·추이만 이 뷰를 쓴다 (스펙 §3).
+-- id = raw_post_detail의 id (자연키). hype_score 규칙은 v_contents와 동일.
+CREATE OR REPLACE VIEW analytics.v_content_metric_snapshots AS
+SELECT
+  h.id,
+  c.short_code,
+  h.captured_at,
+  h.views,
+  h.likes,
+  h.comments_count AS comments,
+  CASE WHEN lower(c.content_type) = 'reels' THEN h.views
+       ELSE h.likes + h.comments_count END AS hype_score
+FROM analytics.v_base_detail_history h
+JOIN analytics.v_base_content c USING (content_id);
