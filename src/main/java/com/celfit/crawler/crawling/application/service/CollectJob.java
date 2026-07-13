@@ -23,13 +23,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 수집 잡 — 인플루언서를 방문해 프로필을 갱신하고, 두 스트림(피드·클립)을 열거해 게시물을
@@ -55,12 +54,14 @@ public class CollectJob {
     private final SettingsService settings;
     private final Clock clock;
     private final JobProgress progress;
+    private final TransactionTemplate txTemplate;
 
     public CollectJob(InfluencerRepository influencers, RawProfileRepository rawProfiles,
                       RawMediaPageRepository rawMediaPages, ContentRepository contents,
                       RawCommentRepository rawComments, List<UserMediaPageFetcher> mediaFetchers,
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
-                      CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress) {
+                      CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
+                      TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.rawMediaPages = rawMediaPages;
@@ -73,9 +74,14 @@ public class CollectJob {
         this.settings = settings;
         this.clock = clock;
         this.progress = progress;
+        this.txTemplate = txTemplate;
     }
 
-    @Transactional
+    /**
+     * 배치 전체가 아니라 방문(인플루언서) 1회 = 트랜잭션 1개로 감싼다 — 원형 보존 원칙(방문 중 일부
+     * 실패가 이미 저장된 다른 방문의 raw까지 롤백시키면 안 됨) + 커넥션을 HTTP 대기 내내 점유하지
+     * 않기 위함. RuntimeException은 전부(ApifyException 포함) 해당 방문만 실패 처리하고 계속한다.
+     */
     public Summary run(TriggerType trigger) {
         List<Influencer> targets = influencers.findCollectTargets(
                 PageRequest.of(0, settings.collectBatchLimit()));
@@ -84,12 +90,12 @@ public class CollectJob {
         try {
             for (Influencer inf : targets) {
                 try {
-                    VisitResult r = visit(inf, trigger);
+                    VisitResult r = txTemplate.execute(status -> visit(inf, trigger));
                     upserted += r.upserted();
                     collected += r.collected();
                     visited++;
-                } catch (ApifyException e) {
-                    failed++;   // 인플루언서 단위 실패 — 방문 시각 미갱신, 다음 실행 재시도
+                } catch (RuntimeException e) {
+                    failed++;   // 인플루언서 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
                 } finally {
                     progress.advance(JobName.COLLECT, 1);
                 }
@@ -120,18 +126,21 @@ public class CollectJob {
 
         // 4) content upsert
         int upserted = 0;
-        List<Content> pending = new ArrayList<>();
         for (var item : inWindow.values()) {
-            Content c = contents.findByShortCode(item.shortCode()).orElseGet(() ->
+            contents.findByShortCode(item.shortCode()).orElseGet(() ->
                     contents.save(new Content(item.shortCode(), item.type(),
                             inf.getUsername(), inf.getId(), item.takenAt(), clock.instant())));
-            if (c.getStatus() == ContentStatus.PENDING) pending.add(c);
             upserted++;
         }
 
-        // 5) 게시물별 댓글 수집 (열거=상세이므로 추가 방문은 댓글뿐)
+        // 5) 게시물별 댓글 수집 — 이번 열거 윈도우가 아니라 이 인플루언서의 PENDING 전체가 대상이다.
+        // 백필 중 댓글만 실패한 게시물이나 discover가 만든 오래된 PENDING도 track-window 컷오프와
+        // 무관하게 매 방문 재시도된다. collect_attempts 상한(maxAttempts→FAILED)이 폭주를 막는다.
+        List<Content> pending = contents.findByInfluencerIdAndStatus(inf.getId(), ContentStatus.PENDING);
         int collected = collectComments(pending, trigger);
 
+        // firstCollectedAt은 "백필 열거 완료" 표식 — 댓글 실패와 무관하게 열거 성공 시 기록한다.
+        // 실패 게시물의 재시도는 위 PENDING 조회가 담당하므로 별도 신호가 필요 없다.
         if (backfill) inf.setFirstCollectedAt(clock.instant());
         inf.setLastCollectedAt(clock.instant());
         return new VisitResult(upserted, collected);

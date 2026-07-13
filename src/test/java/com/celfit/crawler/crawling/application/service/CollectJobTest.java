@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -46,6 +47,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class CollectJobTest {
 
@@ -67,9 +70,13 @@ class CollectJobTest {
     CrawlExecutor executor = mock(CrawlExecutor.class);
     SettingsService settings = mock(SettingsService.class);
     JobProgress progress = mock(JobProgress.class);
+    // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 방문 단위 트랜잭션 래핑을 그대로 재현한다.
+    TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
     AtomicLong runIdSeq = new AtomicLong(100);
     AtomicLong contentIdSeq = new AtomicLong(1000);
+    // findByShortCode/save/findByInfluencerIdAndStatus를 일관되게 뒷받침하는 인메모리 저장소.
+    Map<String, Content> contentStore = new LinkedHashMap<>();
 
     @SuppressWarnings("unchecked")
     void wireExecutorPassthrough() {
@@ -89,11 +96,26 @@ class CollectJobTest {
         when(settings.maxAttempts()).thenReturn(3);
     }
 
+    /**
+     * contents mock을 contentStore 기반 페이크로 만든다 — findByShortCode/save/
+     * findByInfluencerIdAndStatus가 같은 저장소를 공유해야 "댓글 대상 = 방문 윈도우가 아니라
+     * PENDING 전체"(Finding 1) 리팩터를 검증할 수 있다.
+     */
     void wireContentSavePassthrough() {
         when(contents.save(any())).thenAnswer(inv -> {
             Content c = inv.getArgument(0);
             if (c.getId() == null) c.setId(contentIdSeq.incrementAndGet());
+            contentStore.put(c.getShortCode(), c);
             return c;
+        });
+        when(contents.findByShortCode(any())).thenAnswer(inv ->
+                Optional.ofNullable(contentStore.get((String) inv.getArgument(0))));
+        when(contents.findByInfluencerIdAndStatus(anyLong(), any())).thenAnswer(inv -> {
+            Long infId = inv.getArgument(0);
+            ContentStatus status = inv.getArgument(1);
+            return contentStore.values().stream()
+                    .filter(c -> c.getInfluencerId().equals(infId) && c.getStatus() == status)
+                    .toList();
         });
     }
 
@@ -114,7 +136,8 @@ class CollectJobTest {
 
     CollectJob job(List<UserMediaPageFetcher> fetchers) {
         return new CollectJob(influencers, rawProfiles, rawMediaPages, contents, rawComments,
-                fetchers, profileSourceSelector, commentSource, executor, settings, CLOCK, progress);
+                fetchers, profileSourceSelector, commentSource, executor, settings, CLOCK, progress,
+                txTemplate);
     }
 
     static Influencer influencer(Long id, String username, Instant firstCollectedAt, Instant lastCollectedAt) {
@@ -471,7 +494,7 @@ class CollectJobTest {
                 WITHIN_TRACK, NOW.minusSeconds(10));
         existingFail.setId(2000L);
         existingFail.setCollectAttempts(2);
-        when(contents.findByShortCode("POST_FAIL")).thenReturn(Optional.of(existingFail));
+        contentStore.put("POST_FAIL", existingFail); // 페이크 저장소에 미리 심어 findByShortCode/findByInfluencerIdAndStatus 둘 다에 노출
 
         CommentFetcher fakeCommentFetcher = mock(CommentFetcher.class);
         when(commentSource.currentSource()).thenReturn(RawSource.SELF_GQL);
@@ -575,5 +598,103 @@ class CollectJobTest {
 
         verify(contents).findByShortCode("OLD_TRACK_1");         // 백필 대상은 윈도우 안 → upsert 시도
         verify(contents, never()).findByShortCode("OLD_TRACK_2"); // 추적 대상은 track-window 밖 → upsert 시도 없음
+    }
+
+    // ---------------------------------------------------------------------
+    // 10) 댓글 대상은 이번 방문 윈도우가 아니라 인플루언서의 PENDING 전체다 (Finding 1)
+    // ---------------------------------------------------------------------
+    @Test
+    void 백필_방문에서_댓글_실패한_게시물이_다음_방문에서_다시_댓글_대상이_된다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null); // 첫 방문 = 백필
+        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        Map<String, Object> backfillPage = gqlPage(List.of(gqlItem("OLD_FAIL", WITHIN_BACKFILL_ONLY, false)), null);
+        // 두 번째 방문(추적)에서는 이 아이템이 track-window 밖이라 다시 열거되지 않는다(빈 페이지).
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(backfillPage, emptyPage(srcA)));
+
+        CommentFetcher fakeCommentFetcher = mock(CommentFetcher.class);
+        when(commentSource.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(commentSource.current()).thenReturn(fakeCommentFetcher);
+        when(fakeCommentFetcher.fetch(eq(List.of("OLD_FAIL")), eq(50), eq(TriggerType.MANUAL)))
+                .thenThrow(new ApifyException("일시 차단"))
+                .thenReturn(new CommentFetcher.CommentResult(200L,
+                        Map.of("OLD_FAIL", List.of(Map.of("p", 1)))));
+
+        // 1차: 백필 방문 — 열거는 성공(OLD_FAIL upsert)하지만 댓글 수집 자체가 실패해 PENDING에 머문다.
+        job(List.of(fetcherA)).run(TriggerType.MANUAL);
+        Content afterFirst = contentStore.get("OLD_FAIL");
+        assertThat(afterFirst.getStatus()).isEqualTo(ContentStatus.PENDING);
+        assertThat(afterFirst.getCollectAttempts()).isEqualTo(1);
+        assertThat(inf.getFirstCollectedAt()).isEqualTo(NOW); // 열거 성공 = 백필 완료 표식(댓글 실패와 무관)
+
+        // 2차: 추적 방문 — 이번 열거는 빈 페이지(OLD_FAIL 재열거 없음)지만, PENDING 조회로 다시 댓글 대상이 되어 성공한다.
+        var summary2 = job(List.of(fetcherA)).run(TriggerType.MANUAL);
+        Content afterSecond = contentStore.get("OLD_FAIL");
+        assertThat(afterSecond.getStatus()).isEqualTo(ContentStatus.COLLECTED);
+        assertThat(summary2.postsCollected()).isEqualTo(1);
+    }
+
+    @Test
+    void 윈도우_밖_기존_PENDING_content도_방문시_댓글_대상에_포함된다() {
+        wireCommon();
+
+        // 첫 방문은 이미 오래 전 완료(추적 방문) — 이번 열거는 새로 아무것도 안 내놓는다.
+        Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
+        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        // discover 등 다른 경로로 이미 존재하던, 이번 열거 윈도우 밖의 오래된 PENDING content.
+        Content oldPending = new Content("OLD_PENDING", ContentType.FEED, "alice", 1L,
+                NOW.minus(Duration.ofDays(90)), NOW.minus(Duration.ofDays(90)));
+        oldPending.setId(3000L);
+        contentStore.put("OLD_PENDING", oldPending);
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA))); // 이번 열거는 빈 페이지
+
+        CommentFetcher fakeCommentFetcher = mock(CommentFetcher.class);
+        when(commentSource.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(commentSource.current()).thenReturn(fakeCommentFetcher);
+        when(fakeCommentFetcher.fetch(eq(List.of("OLD_PENDING")), eq(50), eq(TriggerType.MANUAL)))
+                .thenReturn(new CommentFetcher.CommentResult(300L,
+                        Map.of("OLD_PENDING", List.of(Map.of("p", 1)))));
+
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        verify(contents, never()).findByShortCode("OLD_PENDING"); // 이번 열거 upsert 경로는 타지 않았다(윈도우 밖)
+        assertThat(oldPending.getStatus()).isEqualTo(ContentStatus.COLLECTED); // 그런데도 댓글 대상엔 포함됐다
+        assertThat(summary.postsCollected()).isEqualTo(1);
+    }
+
+    // ---------------------------------------------------------------------
+    // 11) 방문 단위 트랜잭션 — ApifyException이 아닌 RuntimeException도 해당 방문만 실패
+    //     처리하고 다음 인플루언서로 계속한다 (Finding 3)
+    // ---------------------------------------------------------------------
+    @Test
+    void 비ApifyException_런타임오류도_해당_방문만_실패처리하고_다음_인플루언서를_계속한다() {
+        wireCommon();
+
+        Influencer bad = influencer(1L, "bad_user", null, null);
+        Influencer good = influencer(2L, "good_user", null, null);
+        when(influencers.findCollectTargets(any())).thenReturn(List.of(bad, good));
+
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        when(profileSourceSelector.fetchAndSupplement(eq(List.of("bad_user")), eq(TriggerType.MANUAL)))
+                .thenThrow(new IllegalStateException("예상 못한 런타임 오류")); // ApifyException이 아님
+        wireProfile("good_user", 1000L, "U2");
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA)));
+
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        assertThat(summary.failedVisits()).isEqualTo(1);
+        assertThat(summary.visited()).isEqualTo(1);
+        assertThat(bad.getLastCollectedAt()).isNull();          // 실패 방문 — 시각 미갱신
+        assertThat(good.getLastCollectedAt()).isEqualTo(NOW);   // 다음 인플루언서는 정상 처리
     }
 }

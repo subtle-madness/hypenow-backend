@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Configuration
 @EnableConfigurationProperties({ApifyProperties.class, DiscoverProperties.class,
@@ -40,5 +42,11 @@ public class CrawlerConfig {
     @Bean
     TaskExecutor jobTaskExecutor() {
         return new SimpleAsyncTaskExecutor("job-");
+    }
+
+    /** CollectJob이 인플루언서 방문 1회 = 트랜잭션 1개로 감싸는 데 쓴다(배치 전체 단일 트랜잭션 방지). */
+    @Bean
+    TransactionTemplate collectTransactionTemplate(PlatformTransactionManager txManager) {
+        return new TransactionTemplate(txManager);
     }
 }

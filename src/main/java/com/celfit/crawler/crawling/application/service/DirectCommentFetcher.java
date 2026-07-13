@@ -85,11 +85,24 @@ public class DirectCommentFetcher implements CommentFetcher {
         long[] graphqlBytes = {0};                    // graphql 응답 전송량 누적
         List<Map<String, Object>> allPages = new ArrayList<>();
         int totalComments = 0;
+        int failedPosts = 0;
+        // 포스트 1개 실패가 청크 전체 run을 실패시키지 않도록 격리한다 — 실패한 shortCode는
+        // pagesByCode에 키를 남기지 않아(호출자가 null로 판별) 그 게시물만 재시도 대상이 되고,
+        // 이미 성공한 게시물의 페이지는 이번 run 결과로 그대로 저장된다.
         for (String sc : shortCodes) {
-            Collected c = collectOne(sc, limit, lsd, graphqlBytes);
-            pagesByCode.put(sc, c.pages());
-            allPages.addAll(c.pages());
-            totalComments += c.commentCount();
+            try {
+                Collected c = collectOne(sc, limit, lsd, graphqlBytes);
+                pagesByCode.put(sc, c.pages());
+                allPages.addAll(c.pages());
+                totalComments += c.commentCount();
+            } catch (RuntimeException e) {
+                failedPosts++;
+                log.warn("[direct-comment] 포스트 {} 수집 실패 — 격리 후 다음 포스트 계속: {}", sc, e.getMessage());
+            }
+        }
+        if (failedPosts > 0) {
+            log.info("[direct-comment] 포스트 {}개 중 {}개 실패 — 해당 shortCode만 다음 방문 재시도 대상",
+                    shortCodes.size(), failedPosts);
         }
         logTransfer(shortCodes.size(), totalComments, pageBytes, graphqlBytes[0]);
         return new ApifyResult(null, allPages);

@@ -43,7 +43,7 @@ class DirectCommentFetcherTest extends IntegrationTest {
         }
     }
 
-    DirectCommentFetcher fetcher(FakeWeb web) {
+    DirectCommentFetcher fetcher(InstagramWebClient web) {
         return new DirectCommentFetcher(web, executor, mapper, Duration.ZERO, "DOC", "FRIENDLY", om);
     }
 
@@ -144,12 +144,66 @@ class DirectCommentFetcherTest extends IntegrationTest {
     }
 
     @Test
-    void graphql이_차단되면_ApifyException() throws Exception {
+    void 부트스트랩_페이지_GET이_실패하면_ApifyException() throws Exception {
+        // 핸드셰이크(청크당 1회 페이지 GET) 실패는 청크 전체가 실패한 것이므로 예외 전파를 유지한다.
+        var web = new FakeWeb();
+        web.getStatus = 500;
+        assertThatThrownBy(() -> fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL))
+                .isInstanceOf(ApifyException.class);
+    }
+
+    @Test
+    void 단일_포스트뿐이어도_graphql_실패시_그_포스트만_결과에서_빠지고_예외는_전파되지_않는다() throws Exception {
+        // Finding 2: 포스트 단위 실패는 격리된다 — 대상이 1개뿐이어도 청크(run) 자체는 성공 처리되고,
+        // 실패한 shortCode만 pagesByCode에 키가 없어 호출자(collectComments)가 재시도 대상으로 판별한다.
         var web = new FakeWeb();
         web.html = res("/instagram/post-page.html");
         web.postStatus = 429;
-        assertThatThrownBy(() -> fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL))
-                .isInstanceOf(ApifyException.class);
+        var result = fetcher(web).fetch(List.of("DYtaeT4TPYu"), 50, TriggerType.MANUAL);
+        assertThat(result.pagesByCode()).doesNotContainKey("DYtaeT4TPYu");
+    }
+
+    /** 부트스트랩(첫 GET) 이후 특정 포스트의 graphql POST만 실패시키는 fake. */
+    static class PartiallyFailingWeb implements InstagramWebClient {
+        final String html;
+        final String okGraphql;
+        final java.util.Set<Integer> failingPostCallIndices; // postCount(1-base) 기준 실패시킬 호출 순번
+        int getCount = 0;
+        int postCount = 0;
+
+        PartiallyFailingWeb(String html, String okGraphql, java.util.Set<Integer> failingPostCallIndices) {
+            this.html = html;
+            this.okGraphql = okGraphql;
+            this.failingPostCallIndices = failingPostCallIndices;
+        }
+
+        public Response get(String url) {
+            getCount++;
+            return new Response(200, html, Map.of());
+        }
+
+        public Response post(String url, String body, Map<String, String> h) {
+            postCount++;
+            if (failingPostCallIndices.contains(postCount)) {
+                return new Response(500, "blocked", Map.of());
+            }
+            return new Response(200, okGraphql, Map.of());
+        }
+    }
+
+    @Test
+    void 여러_포스트_중_하나만_실패해도_나머지는_수집되고_실패한_포스트만_결과에서_빠진다() throws Exception {
+        // Finding 2: 게시물 1개 실패가 청크 전체 run을 실패시키면 안 된다 — 실패한 shortCode만
+        // pagesByCode에서 제외(호출자가 null로 판별해 그 코드만 재시도 대상 삼는다), 나머지는 성공 처리.
+        var web = new PartiallyFailingWeb(res("/instagram/post-page.html"),
+                res("/instagram/comments-response.json"), java.util.Set.of(2)); // 2번째 postCount(=BBB)만 실패
+        var result = fetcher(web).fetch(List.of("AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC"),
+                50, TriggerType.MANUAL);
+
+        assertThat(web.getCount).isEqualTo(1); // 부트스트랩 페이지 GET은 여전히 1회
+        assertThat(result.pagesByCode()).containsOnlyKeys("AAAAAAAAAAA", "CCCCCCCCCCC"); // BBB는 키 자체가 없음
+        assertThat(result.pagesByCode().get("AAAAAAAAAAA")).hasSize(1);
+        assertThat(result.pagesByCode().get("CCCCCCCCCCC")).hasSize(1);
     }
 
     @Test
