@@ -8,16 +8,19 @@
 
 ## 1. 제품 한 장 요약
 
-**hypenow** — 인스타그램 뷰티 인플루언서 콘텐츠 분석 툴.
+**hypenow** — 캠페인 브리프 기반 인플루언서 추천 툴 (2026-07-13 피봇).
 타깃: **마이크로인플루언서를 발굴하려는 뷰티 브랜드 마케터.**
 
-MVP 범위:
-- 콘텐츠 랭킹 페이지 (운영 중 — was 대시보드)
-- **게시물 상세 드로어** — 랭킹에서 클릭 시 (성과·벤치마크 + 댓글 분석·감지·"왜 잘됐나")
-- **인플루언서 상세 페이지** — 드로어에서 진입 (정체성·성과·일관성·커머셜 + 페르소나·AI 브리핑)
-- **후보 관리** — 후보 저장·상태(검토중/컨택 예정/협업 중)·메모
+핵심 플로우: 마케터가 **캠페인 브리프**(구조화된 폼 + 제품 이미지)를 제출 → 비동기 잡이
+이미지 분석 → 후보 매칭 → 근거 생성 → **추천 리스트 + 근거**(정량 팩트 카드 + LLM 서술) 제공.
 
-기준 기획: 상세 분석 확정안 (2026-07-10 Artifact, 게시물 드로어 v3 + 인플루언서 상세 v4)
+MVP 범위:
+- **캠페인 추천** — 브리프 제출·진행 상태·추천 결과 (메인 화면)
+- **근거 하위 화면** — 인플루언서 상세·게시물 드로어 (추천 근거를 파고드는 용도)
+- **후보 관리** — 추천 결과에서 후보 저장·상태(검토중/컨택 예정/협업 중)·메모
+
+보류(⏸): 레퍼런스 콘텐츠(원하는 느낌) 매칭, 브리프발 발굴(크롤링) 트리거.
+기준 설계: [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md)
 프론트: celfit-front.vercel.app (별도 저장소)
 
 ## 2. 시스템 구조
@@ -25,22 +28,25 @@ MVP 범위:
 3-tier. 층 사이는 DB로만 통신한다 (모듈 간 HTTP/큐 없음).
 
 ```
-[크롤링]  crawler  ──쓰기──▶  raw DB (crawler)          크롤링 원본. 분석의 고정 입력
-[분석]    analysis ──읽기── raw DB
-                   ──쓰기──▶  분석 결과 (analysis DB)    was가 보여줄 데이터
-[서빙]    was      ──읽기── 분석 결과 ──▶ celfit-front
-                   ──읽기/쓰기──▶  서비스 데이터 (app 스키마)   로그인·후보 관리 등 일반 앱 데이터
+[크롤링]  crawler   ──쓰기──▶  raw DB (crawler)          크롤링 원본. 분석의 고정 입력
+[분석]    analytics ──읽기── raw DB
+                    ──쓰기──▶  분석 결과 (analysis DB)    = 프로필 팩토리: 매칭용 인플루언서
+                                                          프로필 + 근거 화면 재료를 배치 미러
+[서빙]    was       ──읽기── 분석 결과(매칭은 파라미터 쿼리) ──▶ celfit-front
+                    ──읽기/쓰기──▶  서비스 데이터 (app 스키마)   캠페인·추천 결과·후보 관리
+                    + 캠페인 비동기 잡: 브리프 이미지 VLM → 매칭·스코어링 → 근거 서술 LLM
 ```
 
 | 모듈 | 데이터 접근 | 역할 | 기술 |
 |---|---|---|---|
 | `crawler` | raw DB 쓰기 | Apify로 발굴→판정→상세 수집, 원형(raw) 적재 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
-| `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 헤드리스 배치, JdbcTemplate ×2 |
-| `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + 서비스 기능(로그인·후보 관리 등) | Spring Boot, JdbcClient |
-| `contract-analysis` *(신설 예정)* | — | 분석 결과의 record·enum — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
+| `analytics` | raw 읽기 → 분석 결과 쓰기 | **프로필 팩토리** — 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). raw 콘텐츠에 대한 LLM 분석 소속 | 헤드리스 배치, JdbcTemplate ×2 |
+| `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + **캠페인 도메인**(브리프·비동기 잡·매칭·근거 서술) + 후보 관리 | Spring Boot, JdbcClient |
+| `contract-analysis` | — | 분석 결과의 record·enum + **매칭 어휘**(카테고리·속성·톤) — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
+| `llm-core` *(신설 예정)* | — | LLM/VLM 호출 골격(인증·재시도·포트) — analytics·was 공용, 비즈니스 로직 금지 (§4-4) | 얇은 공유 모듈 |
 
 **데이터 배치**: 저장 영역은 세 가지 — raw(크롤링 원본) / 분석 결과(미러 테이블) / **서비스 데이터**(was가
-쓰는 일반 앱 데이터: 로그인·후보 관리 등). 서비스 데이터는 분석 결과와 **스키마로 분리**(analysis DB 내
+쓰는 앱 데이터: 캠페인·추천 결과·후보 관리·로그인 등). 서비스 데이터는 분석 결과와 **스키마로 분리**(analysis DB 내
 `app` 스키마)하고, 셋 모두 현재 **한 Postgres 인스턴스**(포트 5433)에 논리 분리만 되어 있다. 부하를 보고
 물리 분리를 결정한다 — 접근 규율(§4-4)을 지키는 한 어느 경계든 설정 변경으로 분리 가능하다.
 
@@ -65,13 +71,14 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 `analytics/views/NN_*.sql` 번호순 적용 컨벤션. **기존 소스(00~08)는 2026-07-12 초기화** —
 로컬 DB에 적용된 뷰는 남아 있으나 소스는 백지이며, 태스크 A부터 §4 원칙대로 재작성한다.
-과거 뷰 정의는 git 이력과 `docs/superpowers/plans/2026-07-10-*` 문서에 보존돼 있다.
+과거 뷰 정의는 git 이력과 `docs/superpowers/plans/archive/2026-07-10-*` 문서에 보존돼 있다.
 
 ### analysis DB
 
 - **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §4-3). analytics가 쓰고 was가 읽는다.
 - Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
-- **서비스 데이터 (`app` 스키마)** — 로그인·후보 관리 등 was가 직접 읽고 쓰는 일반 앱 데이터.
+- **서비스 데이터 (`app` 스키마)** — 캠페인(브리프·잡 상태)·추천 결과(점수 분해·근거 팩트
+  확정 저장·LLM 서술)·후보 관리·로그인 등 was가 직접 읽고 쓰는 앱 데이터.
   분석 결과와 스키마로 격리, 나중에 물리 분리 가능.
 
 ## 4. 관통하는 설계 원칙
@@ -84,13 +91,18 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
 
 ### 4-2. 로직의 자리 — 집합 연산은 SQL, 절차는 Java
 
-비즈니스 로직의 자리는 언어가 아니라 성격으로 정한다. LLM 분석도 별도 트랙이 아니라 분석 층의 일부다.
+비즈니스 로직의 자리는 언어가 아니라 성격으로 정한다.
+**LLM은 대상 기준으로 이원화**(07-13 피봇): raw 콘텐츠(인플루언서)에 대한 LLM은 분석 층
+(재현 가능한 분석 결과로 미러), 캠페인 입력(마케터 제출물)에 대한 LLM은 was
+(서비스 트랜잭션의 일부로 `app` 스키마에 저장).
 
 | 로직 성격 | 사는 곳 | 예 |
 |---|---|---|
-| 집합 연산 (집계·순위·비율·윈도우) | SQL 뷰 (raw DB `analytics` 스키마) | 랭킹, 벤치마크, 히트율, 모멘텀 |
-| 절차·외부 연동 (호출→파싱→저장) | Java (분석 층) | LLM 댓글 분석 |
-| 상태 변화·트랜잭션 | Java (was) | 후보 상태 전이(검토중→컨택 예정→협업 중) |
+| 집합 연산 (집계·순위·비율·윈도우) | SQL 뷰 (raw DB `analytics` 스키마) | 프로필 집계, 벤치마크, 히트율 |
+| 절차·외부 연동 — raw 콘텐츠 대상 | Java (분석 층) | LLM 댓글 분석, 페르소나 |
+| 절차·외부 연동 — 캠페인 입력 대상 | Java (was) | 브리프 이미지 VLM, 근거 서술 LLM |
+| 매칭 스코어링 | 필터·정규화는 SQL(파라미터 쿼리), 가중 합산·순위는 Java (was) | 캠페인 후보 매칭 |
+| 상태 변화·트랜잭션 | Java (was) | 캠페인 잡 상태, 후보 상태 전이 |
 | 표현 조립 | Java (was) | 경과일 계산, 응답 블록 조립 |
 
 ### 4-3. 미러 = 명시적 타입 기반 materialization
@@ -126,11 +138,14 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
 
 ### 4-4. 모듈 공유 원칙
 
-- **모듈은 서로 import 하지 않는다.** 유일한 예외는 계약 모듈 **`contract-analysis`** —
-  분석 결과의 record·enum만 담고(순수 JDK, Spring/JPA 의존 금지), 생산자 analytics와 소비자 was가
-  의존한다. crawler와는 무관.
-  수록 기준: **"동일 형태를 다루는 Java 생산자+소비자 쌍"이 성립하는 타입만.** 한 모듈만 쓰는 타입은
-  그 모듈에 둔다. util·비즈니스 로직은 넣지 않는다.
+- **모듈은 서로 import 하지 않는다.** 예외는 공유 모듈 둘뿐:
+  - **`contract-analysis`** — 분석 결과의 record·enum + **매칭 어휘**(카테고리·속성·톤 —
+    브리프 VLM과 콘텐츠 LLM이 같은 어휘를 출력해야 매칭이 성립, 어휘 밖 출력은 방어).
+    순수 JDK, Spring/JPA 의존 금지. 생산자 analytics와 소비자 was가 의존, crawler 무관.
+    수록 기준: **"동일 형태를 다루는 Java 생산자+소비자 쌍"이 성립하는 타입만.** 한 모듈만
+    쓰는 타입은 그 모듈에 둔다. util·비즈니스 로직은 넣지 않는다.
+  - **`llm-core`** *(신설 예정)* — LLM/VLM 호출 골격(인증·재시도·포트). analytics·was 공용.
+    호출 인프라만, 프롬프트·비즈니스 로직 금지.
 - **모듈 간 계약은 전부 데이터 계약이다:**
 
   | 경계 | 계약 | 정의하는 쪽 |
@@ -170,27 +185,40 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), was 랭킹 대시보드(analysis DB의 기존
-미러 테이블을 읽음). ※ analytics 구현은 2026-07-12 초기화 — DB에 남은 뷰·미러 테이블은 동작하지만
-소스는 백지, 태스크 A부터 재구축.
+**운영 중**: crawler 파이프라인(discover→qualify→aggregate). was 랭킹 대시보드는 피봇으로
+화면 구성에서 탈락 — 제거 예정(태스크 X).
 
-**상세 분석 작업 트랙** (구조 설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) ·
-데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)):
+**완료된 데이터 층 기반** (피봇 후에도 유효 — 프로필·근거 화면 재료.
+설계: [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)):
+
+| # | 태스크 | 내용 | 상태 |
+|---|---|---|---|
+| A | 분석 기반 | base 뷰·최근 N개 윈도우 뷰(raw 접촉은 base 뷰만) + 설정 키 + `contract-analysis` 골격 + 타입 미러·SQL 테스트 하니스 | ✅ |
+| F | LLM 공통 | 호출 골격 + 정확도/비용 스파이크 (→ 태스크 L에서 `llm-core`로 분리 예정) | ✅ |
+| B1 | 게시물 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments·content_metric_snapshots) | ✅ |
+| B2 | 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | ✅ |
+| B3 | 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" | ✅ |
+
+**캠페인 추천 작업 트랙** (구조 설계: [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md)):
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
-| A | 분석 기반 | base 뷰·최근 N개 윈도우 뷰 재작성(raw 접촉은 base 뷰만) + 설정 키 + `contract-analysis` 골격 + 타입 미러·SQL 테스트 하니스 구축 | — | ✅ |
-| F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 — F-2(VLM)는 B3에서 실험 | — | ✅ |
-| B1 | 드로어 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments + 지표 스냅샷 이력 `content_metric_snapshots` — 07-13 개통) | A | ✅ |
-| B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ✅ |
-| B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" | F, B2 | ✅ |
-| C1 | 인플루언서 비LLM 집계 | 정체성·성과·일관성·커머셜 + 1:N 뷰 + 미러 | A | ⬜ |
-| C2 | 인플루언서 계정 LLM | 광고유형·페르소나·브리핑·적합성 | F, C1, B3 | ⬜ |
-| D | 드로어 API | `GET /api/posts/{shortCode}` | B1 | ⬜ |
-| E | 인플루언서 API | `GET /api/influencers/{username}` | C1 | ⬜ |
-| G | 서비스 데이터 | `app` 스키마 신설 + 후보 저장·상태·메모 (로그인 등 일반 앱 데이터의 기반) | 독립 | ⬜ |
+| V | 어휘 계약 | 매칭 어휘(카테고리·속성·톤) enum을 `contract-analysis`에 확정 | — | ⬜ |
+| L | LLM 공유 모듈 | F 산출물(호출 골격)을 `llm-core`로 분리, analytics·was 공용 | — | ⬜ |
+| R1 | 프로필 비LLM 축 | `influencer_profiles` 뷰·미러 (정체성·규모·성과·상업성·오디언스 반응) — 구 C1 재정의 | V | ⬜ |
+| R2 | 프로필 LLM 축 | 페르소나·광고 유형 (계정 LLM) — 구 C2 재정의 | V, L, R1 | ⬜ |
+| G | 캠페인 도메인 | `app` 스키마: 캠페인·추천 결과·후보 연결 + 비동기 잡 골격(상태 머신) | — | ⬜ |
+| W1 | 브리프 이미지 분석 | 제품 이미지 VLM → 제품 속성 (어휘 계약 준수) | V, L, G | ⬜ |
+| M | 매칭 엔진 | 하드 필터·정규화 SQL + 가중 합산 Java + 가중치 프리셋 테이블 + 근거 확정 저장 | R1, G, W1 | ⬜ |
+| W2 | 근거 서술 | 저장된 팩트 기반 LLM 서술 | M, L | ⬜ |
+| API | 캠페인 API | 제출·진행 상태·결과 조회 + 후보 연결 | G, M | ⬜ |
+| D·E | 근거 하위 화면 API | 게시물 드로어·인플루언서 상세 | B1, R1 | ⬜ |
+| X | 랭킹 대시보드 제거 | was 랭킹 화면·전용 미러 의존 정리 | — | ⬜ |
+| ⏸ | 레퍼런스 콘텐츠 매칭 | 참고 이미지/게시물 → 비주얼 톤·스타일 매칭 | — | ⏸ |
+| ⏸ | 브리프발 발굴 트리거 | 풀 부족 시 crawler 발굴 연동 | — | ⏸ |
 
-권장 순서: A → B1, 병렬로 F(스파이크). 상세 구현 계획은 태스크 착수 시 작성.
+권장 순서: V·L·G(기반, 병렬 가능) → R1 → W1·R2 → M → W2 → API. X는 아무 때나.
+상세 구현 계획은 태스크 착수 시 작성.
 
 ## 6. 데이터 제약 (해석 주의 — 모든 지표 설계의 전제)
 
@@ -209,13 +237,14 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-13 | **제품 피봇: 캠페인 브리프 → 인플루언서 추천 + 근거.** A안 채택(analytics=프로필 팩토리 / 캠페인 파이프라인은 was 소유). LLM 소속 이원화(raw 대상=분석 층, 캠페인 입력 대상=was), `llm-core` 공유 모듈 신설 예정, 매칭 어휘는 `contract-analysis`에. 추천 3층 구조(프로필 미러 / 어휘 계약 / 3단계 매칭 + 근거 확정 저장). C1·C2→R1·R2 재정의, G→캠페인 도메인 확장, 랭킹 대시보드 제거(X). 레퍼런스 콘텐츠 매칭·발굴 트리거는 보류 | [specs/2026-07-13-campaign-recommendation-pivot-design.md](docs/superpowers/specs/2026-07-13-campaign-recommendation-pivot-design.md) |
 | 2026-07-13 | B1 잔여분 `content_metric_snapshots` 미러 개통 — base 뷰에 이력 노출(`v_base_detail_history`) 추가, 서빙은 최신(`contents`)/이력(스냅샷) 분리 완성. was의 as-of 조회(태스크 D) 재료 | [plans/2026-07-13-task-b1-snapshot-mirror.md](docs/superpowers/plans/archive/2026-07-13-task-b1-snapshot-mirror.md) |
 | 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](docs/superpowers/plans/archive/2026-07-12-task-f-b2-llm-comment-classification.md) |
 | 2026-07-12 | 게시물 **중복 크롤링 도입** — 지표 스냅샷 누적. 분석 층 서빙을 최신/이력으로 분리(`contents` = 최신, `content_metric_snapshots` = 시점별, B1에서 구현). as-of 선택 규칙은 D에서 | [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md) |
 | 2026-07-12 | **미러를 명시적 타입 기반으로 재설계**(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=자바 그릇, TRUNCATE+INSERT, 컬럼 대조 가드) — 기존 제네릭 미러 폐기. **계약 모듈 `contract-analysis` 신설**(생산자+소비자 쌍 성립). 모듈 공유 원칙(§4-4) 확정. **기존 analytics 구현(뷰 소스·하니스·미러 코드) 전체 초기화 — 백지 재구축** | [specs/2026-07-12 §8](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
 | 2026-07-12 | 3-tier 확정: 미러=tier 경계(필수), LLM=분석 층 소속, 태스크 A~G 분해. **서비스 데이터**(로그인·후보 관리 등 was가 쓰는 앱 데이터)는 분석 결과와 스키마 분리(`app`), 물리 분리 고려 | [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) |
-| 2026-07-10 | 상세 분석 확정안(드로어 v3·인플루언서 v4) + 구현 계획 초안 3건(현재는 참고 자료) | [plans/2026-07-10-*](docs/superpowers/plans/) |
-| 2026-07-09 | 모노레포 통합(crawler/analytics/was), was 랭킹 대시보드, 미러 도입 | [plans/2026-07-09-monorepo-migration.md](docs/superpowers/plans/2026-07-09-monorepo-migration.md) |
+| 2026-07-10 | 상세 분석 확정안(드로어 v3·인플루언서 v4) + 구현 계획 초안 3건(현재는 참고 자료) | [plans/archive/2026-07-10-*](docs/superpowers/plans/archive/) |
+| 2026-07-09 | 모노레포 통합(crawler/analytics/was), was 랭킹 대시보드, 미러 도입 | [plans/2026-07-09-monorepo-migration.md](docs/superpowers/plans/archive/2026-07-09-monorepo-migration.md) |
 | 2026-07-09 | 분석 = SQL 뷰 방식(A안), `analytics` 스키마, 더미 시드 검증 | [specs/2026-07-09-analytics-catalog-design.md](docs/superpowers/specs/2026-07-09-analytics-catalog-design.md) |
 | 2026-07-09 | 제품 방향: 분석 단위 = 크리에이터, 마이크로인플루언서 발굴 | [specs/2026-07-09-influencer-analysis-decisions.md](docs/superpowers/specs/2026-07-09-influencer-analysis-decisions.md) |
 | 2026-07-07 | crawler: Apify 원형(raw) 적재 + discover→qualify→aggregate 3단계 | [specs/2026-07-07-crawler-design.md](docs/superpowers/specs/2026-07-07-crawler-design.md) |

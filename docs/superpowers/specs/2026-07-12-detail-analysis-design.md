@@ -1,6 +1,6 @@
 # hypenow 상세 분석 — 시스템 설계
 
-> 상태: ✅ 반영됨 — 최신 기준은 [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+> 상태: 🗄 부분 대체됨 — 화면 구도(드로어·인플루언서 상세 중심 MVP)는 [2026-07-13 캠페인 추천 피봇](2026-07-13-campaign-recommendation-pivot-design.md)으로 대체. 구조 원칙(3-tier·미러·계약 모듈)은 ARCHITECTURE.md로 승계되어 유효
 2026-07-12 (설계 세션 기록)
 기준 기획: 상세 분석 확정안 Artifact (2026-07-10, https://claude.ai/code/artifact/696bd39e-0f53-4bc5-916e-d4adbf013658)
 

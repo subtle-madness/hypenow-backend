@@ -11,11 +11,13 @@
 ## 시스템 경계 (위반 금지)
 
 - **crawler** → raw DB(`crawler`) 쓰기. 크롤링 담당 영역 — 분석 작업에서 raw 스키마를 바꾸지 않는다.
-- **analytics** → raw 읽기, 분석 결과(analysis DB) 쓰기. LLM 분석도 이 층 소속.
-- **was** → 분석 결과는 **읽기만**, 쓰기는 **서비스 데이터(`app` 스키마)에만**. raw DB 접근 금지.
-  분석 결과와 서비스 데이터를 SQL 조인하지 않는다(조합은 was 코드에서).
-- 모듈 간 Java 공유는 계약 모듈 `contract-analysis`(분석 결과 record·enum, 순수 JDK)만 —
-  crawler는 계약 모듈과 무관. 미러는 타입 기반(뷰 SQL/Flyway DDL/공유 record — ARCHITECTURE §4-3).
+- **analytics** → raw 읽기, 분석 결과(analysis DB) 쓰기. **raw 콘텐츠(인플루언서)에 대한 LLM**은 이 층 소속.
+- **was** → 분석 결과는 **읽기만**(캠페인 매칭도 파라미터 쿼리로 읽기만), 쓰기는 **서비스
+  데이터(`app` 스키마: 캠페인·추천·후보)에만**. raw DB 접근 금지. **캠페인 입력(마케터 제출물)에
+  대한 LLM/VLM**은 was 소속. 분석 결과와 서비스 데이터를 SQL 조인하지 않는다(조합은 was 코드에서).
+- 모듈 간 Java 공유는 `contract-analysis`(분석 결과 record·enum + 매칭 어휘, 순수 JDK)와
+  `llm-core`(LLM/VLM 호출 골격, 신설 예정)만 — crawler는 둘 다 무관.
+  미러는 타입 기반(뷰 SQL/Flyway DDL/공유 record — ARCHITECTURE §4-3).
 
 ## 빌드·검증
 

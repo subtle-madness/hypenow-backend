@@ -1,6 +1,6 @@
 # analytics 데이터 층 재구축 — 설계
 
-> 상태: 🟢 활성 — 태스크 A·B1·F·B2·B3의 설계 기준
+> 상태: ✅ 반영됨 — A·B1·F·B2·B3 완료. C1·C2 부분은 [2026-07-13 피봇](2026-07-13-campaign-recommendation-pivot-design.md)에서 R1·R2로 재정의
 2026-07-12 (설계 세션 기록)
 
 - 구조 기준: [ARCHITECTURE.md](../../../ARCHITECTURE.md) §4 (타입 기반 미러·contract-analysis·로직의 자리)
