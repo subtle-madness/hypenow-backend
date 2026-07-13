@@ -116,8 +116,9 @@
 
 ## 7. 작업 방식·다른 트랙과의 관계
 
-- 브랜치 `feat/task-c1-account-detail` — `feat/task-d-post-detail-api` 위에 스택
-  (B1~B3 analytics 산출물 필요, 전 트랙이 develop 미병합 단일 라인이라 순서 병합 전제).
+- 브랜치 `feat/task-c1-account-detail` — B3 완료 커밋(`d81e0d2`) 위에 스택
+  (B1~B3 analytics 산출물 필요, 전 트랙이 develop 미병합이라 선행 트랙 병합 전제).
+  작업은 전용 워크트리 `../hypenow-backend-c1`에서 — 메인 체크아웃은 다른 세션과 공유되어 브랜치가 수시로 바뀐다.
 - E(다른 세션)는 이 문서의 테이블 5종 + record 5종을 계약으로 소비한다.
 - C2는 `account_ad_history`에 브랜드·광고유형을 **additive**로 확장(§4-5 추가는 자유).
 - 완료 시 ARCHITECTURE.md §5(C1 ✅)·§7(결정 기록: ER 정의 통일·자식 테이블 방식) 갱신.
