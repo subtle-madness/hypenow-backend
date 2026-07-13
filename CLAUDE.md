@@ -17,13 +17,13 @@
   대한 LLM/VLM**은 was 소속. 분석 결과와 서비스 데이터를 SQL 조인하지 않는다(조합은 was 코드에서).
 - 모듈 간 Java 공유는 `contract-analysis`(분석 결과 record·enum + 매칭 어휘, 순수 JDK)와
   `llm-core`(LLM/VLM 호출 골격, 신설 예정)만 — crawler는 둘 다 무관.
-  미러는 타입 기반(뷰 SQL/Flyway DDL/공유 record — ARCHITECTURE §4-3).
+  미러는 타입 기반(뷰 SQL/Flyway DDL/공유 record — ARCHITECTURE §5-3).
 
 ## 빌드·검증
 
 - 전체 테스트: `./gradlew test` (Java 21, Spring Boot 4.1, Gradle 멀티모듈: crawler/analytics/was)
-- 분석 뷰 검증: SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리) 컨벤션 — 기존 run.sh는 07-12 초기화로 삭제, 태스크 A에서 재구축
-- 실행: `./gradlew :was:bootRun`(8081) / `:crawler:bootRun`(8080, 어드민 `/ui`) / `:analytics:bootRun`(타입 미러 — 재구축 예정)
+- 분석 뷰 검증: `analytics/test/run.sh` (더미 시드 + BEGIN/ROLLBACK 격리 SQL 하니스)
+- 실행: `./gradlew :was:bootRun`(8081) / `:crawler:bootRun`(8080, 어드민 `/ui`) / `:analytics:bootRun`(타입 미러 실행)
 - DB: docker `crawler-postgres-1` (포트 5433, crawler/crawler, DB `crawler`·`analysis`)
 
 ## 컨벤션
