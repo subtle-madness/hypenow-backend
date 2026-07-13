@@ -25,7 +25,7 @@
 </form>
 
 <table class="data">
-    <tr><th>id</th><th>short_code</th><th>유형</th><th>계정</th><th>업로드</th>
+    <tr><th>id</th><th>short_code</th><th>유형</th><th>인플루언서</th><th>업로드</th>
         <th>상태</th></tr>
     <tr th:each="c : ${page.content}">
         <td><a th:href="@{'/ui/contents/' + ${c.id}}" th:text="${c.id}"></a></td>

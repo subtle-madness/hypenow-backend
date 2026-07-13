@@ -213,7 +213,7 @@ table.data.fit { width: auto; min-width: 24rem; }
     background: var(--code-bg); color: var(--ink-secondary);
     border: 1px solid transparent;
 }
-.badge.SUCCEEDED, .badge.QUALIFIED, .badge.AGGREGATED {
+.badge.SUCCEEDED, .badge.QUALIFIED, .badge.COLLECTED {
     color: var(--status-good); background: color-mix(in srgb, var(--status-good) 10%, transparent);
 }
 .badge.FAILED {

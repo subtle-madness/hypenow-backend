@@ -73,8 +73,8 @@ public class UiController {
         return "dashboard";
     }
 
-    private static long n(java.util.Map<ContentStatus, Long> by, ContentStatus s) {
-        return by.getOrDefault(s, 0L);
+    private static <K> long n(java.util.Map<K, Long> by, K key) {
+        return by.getOrDefault(key, 0L);
     }
 
     @GetMapping("/ui/fragments/runs")
@@ -113,19 +113,24 @@ public class UiController {
                 p == null ? 0 : p.current(), p == null ? 0 : p.total(), p == null ? 0 : p.percent());
     }
 
-    /** 상태 카드 실시간 갱신용 — 파이프라인/제외 그룹 타일을 프래그먼트로 반환. */
+    /** 상태 카드 실시간 갱신용 — 인플루언서 판정 타일 + 게시물 수집 타일을 프래그먼트로 반환. */
     @GetMapping("/ui/fragments/status-tiles")
     public String statusTilesFragment(Model model) {
         StatusService.StatusSummary s = statusService.summary();
-        java.util.Map<ContentStatus, Long> by = s.contentByStatus();
+        java.util.Map<InfluencerStatus, Long> byInfluencer = s.influencerByStatus();
+        java.util.Map<ContentStatus, Long> byContent = s.contentByStatus();
         model.addAttribute("summary", s);
-        // 정상 수집 흐름: 발견 → 수집 완료
-        model.addAttribute("pipelineTiles", java.util.List.of(
-                new StatusTile("PENDING", n(by, ContentStatus.PENDING), "발견됨 · 수집 전"),
-                new StatusTile("COLLECTED", n(by, ContentStatus.COLLECTED), "상세·댓글 수집 완료")));
-        // 흐름에서 빠진 것들
-        model.addAttribute("droppedTiles", java.util.List.of(
-                new StatusTile("FAILED", n(by, ContentStatus.FAILED), "수집 재시도 초과 · 포기")));
+        // 인플루언서 파이프라인: 발굴 → 판정 → (제외 또는 수집 대상)
+        model.addAttribute("influencerTiles", java.util.List.of(
+                new StatusTile("DISCOVERED", n(byInfluencer, InfluencerStatus.DISCOVERED), "발굴됨 · 판정 전"),
+                new StatusTile("QUALIFIED", n(byInfluencer, InfluencerStatus.QUALIFIED), "판정 통과 · 수집 대상"),
+                new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED), "판정 탈락 · 제외"),
+                new StatusTile("BACKFILL", s.backfillPending(), "판정 통과 · 첫 수집(백필) 대기")));
+        // 게시물 수집 상태: discover가 발견한 게시물의 상세·댓글 수집 진행
+        model.addAttribute("contentTiles", java.util.List.of(
+                new StatusTile("PENDING", n(byContent, ContentStatus.PENDING), "발견됨 · 상세·댓글 수집 전"),
+                new StatusTile("COLLECTED", n(byContent, ContentStatus.COLLECTED), "상세·댓글 수집 완료"),
+                new StatusTile("FAILED", n(byContent, ContentStatus.FAILED), "수집 재시도 초과 · 포기")));
         return "fragments/status-tiles :: tiles";
     }
 

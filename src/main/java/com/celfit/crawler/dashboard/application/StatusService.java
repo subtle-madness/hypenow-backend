@@ -1,28 +1,41 @@
 package com.celfit.crawler.dashboard.application;
 
-import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.domain.ContentStatus;
+import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import java.util.EnumMap;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 
-/** 상태 요약 — 인플루언서 중심 재구현은 Task 10에서 진행. 현재는 빈 셸. */
+/**
+ * 상태 요약 — 대시보드 카드용. 파이프라인은 발굴(discover) → 판정(qualify) → 수집(collect) 순서.
+ * 인플루언서는 판정 상태 3종 + 백필 대기(판정 통과했지만 첫 수집 전), 게시물은 수집 상태 3종.
+ */
 @Service
 public class StatusService {
 
-    public record StatusSummary(Map<ContentStatus, Long> contentByStatus) {}
+    public record StatusSummary(Map<InfluencerStatus, Long> influencerByStatus,
+                                 long backfillPending,
+                                 Map<ContentStatus, Long> contentByStatus) {}
 
+    private final InfluencerRepository influencers;
     private final ContentRepository contents;
 
-    public StatusService(ContentRepository contents) {
+    public StatusService(InfluencerRepository influencers, ContentRepository contents) {
+        this.influencers = influencers;
         this.contents = contents;
     }
 
     public StatusSummary summary() {
-        Map<ContentStatus, Long> byStatus = new EnumMap<>(ContentStatus.class);
-        for (ContentStatus s : ContentStatus.values()) {
-            byStatus.put(s, contents.countByStatus(s));
+        Map<InfluencerStatus, Long> byInfluencerStatus = new EnumMap<>(InfluencerStatus.class);
+        for (InfluencerStatus s : InfluencerStatus.values()) {
+            byInfluencerStatus.put(s, influencers.countByStatus(s));
         }
-        return new StatusSummary(byStatus);
+        Map<ContentStatus, Long> byContentStatus = new EnumMap<>(ContentStatus.class);
+        for (ContentStatus s : ContentStatus.values()) {
+            byContentStatus.put(s, contents.countByStatus(s));
+        }
+        return new StatusSummary(byInfluencerStatus, influencers.countBackfillPending(), byContentStatus);
     }
 }

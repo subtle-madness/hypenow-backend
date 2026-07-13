@@ -9,6 +9,7 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
+import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,5 +55,21 @@ class UiSmokeTest extends IntegrationTest {
         // 행이 존재하는 상태에서 렌더 — 제거된 필드(adMarked/mainGroup 등) 참조가 남아 있으면 여기서 터진다
         mvc.perform(get("/ui/contents")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-smoke")));
+    }
+
+    @Test
+    void 검색_키워드_화면이_렌더된다() throws Exception {
+        mvc.perform(get("/ui/keywords")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("검색 키워드")));
+    }
+
+    @Test
+    void 대시보드_상태_타일에_인플루언서_카운트가_렌더된다() throws Exception {
+        long before = influencers.countByStatus(InfluencerStatus.DISCOVERED);
+        influencers.save(new Influencer("smoke-count-user"));
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("DISCOVERED")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(String.valueOf(before + 1))));
     }
 }

@@ -1,15 +1,15 @@
 <div th:fragment="tiles" xmlns:th="http://www.thymeleaf.org">
-    <h2 class="tiles-head">수집 파이프라인 <span class="tiles-head-sub">발견 → 채택 → 집계</span></h2>
+    <h2 class="tiles-head">인플루언서 파이프라인 <span class="tiles-head-sub">발굴 → 판정 → 수집</span></h2>
     <div class="tiles">
-        <div class="tile" th:each="t : ${pipelineTiles}">
+        <div class="tile" th:each="t : ${influencerTiles}">
             <div class="num" th:text="${t.count()}">0</div>
             <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
             <div class="tile-desc" th:text="${t.desc()}"></div>
         </div>
     </div>
-    <h2 class="tiles-head">제외 · 종료 <span class="tiles-head-sub">파이프라인에서 빠진 것</span></h2>
+    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">discover가 발견한 게시물의 상세·댓글 수집 상태</span></h2>
     <div class="tiles">
-        <div class="tile" th:each="t : ${droppedTiles}">
+        <div class="tile" th:each="t : ${contentTiles}">
             <div class="num" th:text="${t.count()}">0</div>
             <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
             <div class="tile-desc" th:text="${t.desc()}"></div>
