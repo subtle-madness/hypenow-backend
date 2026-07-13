@@ -2,7 +2,6 @@ package com.celfit.was.postdetail;
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
-import com.celfit.contract.analysis.ContentComment;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -48,16 +47,42 @@ public class PostDetailRepository {
 				.optional());
 	}
 
-	public List<ContentComment> findComments(String shortCode) {
+	public List<CommentRow> findComments(String shortCode) {
 		return safeQuery("content_comments", List::of, () -> jdbcClient.sql("""
-				SELECT id, short_code, author_masked, body, like_count
-				FROM content_comments
-				WHERE short_code = :shortCode
-				ORDER BY like_count DESC NULLS LAST, id
+				SELECT m.id, m.author_masked, m.body, m.like_count, k.ai_category
+				FROM content_comments m
+				LEFT JOIN comment_classifications k ON k.id = m.id
+				WHERE m.short_code = :shortCode
+				ORDER BY m.like_count DESC NULLS LAST, m.id
 				""")
 				.param("shortCode", shortCode)
-				.query(ContentComment.class)
+				.query(CommentRow.class)
 				.list());
+	}
+
+	/** content_analyses 1행 — 분석 전이면 empty (응답의 analysis 블록이 null이 된다). */
+	public Optional<ContentAnalysisRow> findAnalysis(String shortCode) {
+		return safeQuery("content_analyses", Optional::empty, () -> jdbcClient.sql("""
+				SELECT analyzed_at, ai_content_summary, contents_pattern, ai_comment_insight,
+				       recent_reels_avg_views, rank_in_recent_reels, recent_reels_count,
+				       recent_contents_count, recent12_avg_engagement_rate, recent12_avg_like_count,
+				       recent12_avg_comment_count, category_top_percentile, category_avg_views,
+				       category_sample_size,
+				       detected_brands::text              AS detected_brands_json,
+				       sponsored_signal_level,
+				       sponsored_signal_reasons::text     AS sponsored_signal_reasons_json,
+				       ad_disclosure,
+				       detected_product_categories::text  AS detected_product_categories_json,
+				       vlm_attributes::text               AS vlm_attributes_json,
+				       main_category,
+				       sub_categories::text               AS sub_categories_json,
+				       ad_type, comment_authenticity_grade, comment_authenticity_note
+				FROM content_analyses
+				WHERE short_code = :shortCode
+				""")
+				.param("shortCode", shortCode)
+				.query(ContentAnalysisRow.class)
+				.optional());
 	}
 
 	private <T> T safeQuery(String table, Supplier<T> fallback, Supplier<T> query) {

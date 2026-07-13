@@ -8,7 +8,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
-import com.celfit.contract.analysis.ContentComment;
 import com.celfit.was.config.ClockConfig;
 import com.celfit.was.config.WebConfig;
 import java.math.BigDecimal;
@@ -41,8 +40,17 @@ class PostDetailControllerTest {
 		given(repository.findAccount("marimood")).willReturn(Optional.of(
 				new Account("marimood", "마리 MARI", "https://pic/mari.jpg", 16586L)));
 		given(repository.findComments("mari01")).willReturn(List.of(
-				new ContentComment(1L, "mari01", "hye***", "이거 어디서 살 수 있어요??", 342L),
-				new ContentComment(3L, "mari01", "seo***", "언니 피부 미쳤다", 289L)));
+				new CommentRow(1L, "hye***", "이거 어디서 살 수 있어요??", 342L, "purchase"),
+				new CommentRow(3L, "seo***", "언니 피부 미쳤다", 289L, null)));
+		given(repository.findAnalysis("mari01")).willReturn(Optional.of(new ContentAnalysisRow(
+				OffsetDateTime.parse("2026-07-12T00:00:00Z"),
+				"본인 평균 대비 3.1배 터진 콘텐츠", "실연형에서 터지는 패턴", "구매 전환형 반응",
+				608899L, 1, 7, 12, new BigDecimal("0.0380"), 25574L, 3653L,
+				2, 340000L, 880L,
+				"[{\"name\":\"Thelavicos\",\"evidence\":\"라벨 정면 반복 노출\"}]", "high",
+				"[\"단일 브랜드 반복 클로즈업\"]", "캡션 #협찬 표기 있음", "[\"클렌징\"]",
+				"[{\"label\":\"후킹 요소\",\"value\":\"문제 제기형 자막\"}]", "클렌징",
+				"[\"필링·각질\"]", "sponsored", "high", "진정성 높음")));
 	}
 
 	@Test
