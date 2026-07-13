@@ -8,6 +8,7 @@ import com.celfit.crawler.settings.application.service.ProfileSourceSettingTest;
 import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
 import com.celfit.crawler.settings.domain.ProfileSource;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -17,65 +18,80 @@ class ProfileSupplementerTest {
 
     ObjectMapper om = new ObjectMapper();
 
-    ProfileSupplementSetting settingBoth() {
+    ProfileSupplementSetting settingRelated(boolean enabled) {
         var s = new ProfileSupplementSetting(ProfileSourceSettingTest.fakeRepo(new HashMap<>()));
-        s.update(true, true);
+        s.update(enabled);
         return s;
     }
 
-    CrawlExecutor.Execution oneItem() {
-        Map<String, Object> item = new HashMap<>(Map.of("username", "tem.duck", "followersCount", 1L, "userId", "999"));
+    /** SELF_GQL 원형: {"data":{"user":{"username":..., "id":...}}} */
+    static Map<String, Object> selfItem() {
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("username", "tem.duck");
+        user.put("id", "999");
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("user", user);
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("data", data);
+        return root;
+    }
+
+    /** HIKER_MOBILE 원형: {"user":{"username":..., "pk":...}} */
+    static Map<String, Object> hikerMobileItem() {
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("username", "tem.duck");
+        user.put("pk", "999");
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("user", user);
+        return root;
+    }
+
+    static CrawlExecutor.Execution execWith(Map<String, Object> item) {
         return new CrawlExecutor.Execution(1L, List.of(item));
     }
 
     @Test void ACTOR는_보충_안함() {
         HikerHttp http = p -> { throw new AssertionError("호출되면 안됨"); };
-        var sup = new ProfileSupplementer(new HikerMediasSupplement(http, om),
-                new HikerSuggestedSupplement(http, om), settingBoth());
-        var ex = sup.apply(oneItem(), ProfileSource.ACTOR);
-        assertThat(ex.items().get(0)).doesNotContainKey("latestPosts");
+        var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(true));
+        var ex = sup.apply(execWith(selfItem()), ProfileSource.ACTOR);
+        assertThat(ex.items().get(0)).doesNotContainKey("relatedProfiles");
     }
 
-    @Test void SELF_둘다_보충() {
-        HikerHttp http = path -> path.contains("medias")
-            ? "{\"response\":{\"items\":[{\"code\":\"X\",\"play_count\":10}]}}"
-            : "{\"users\":[{\"username\":\"my_zipcode\",\"pk\":\"1\"}]}";
-        var sup = new ProfileSupplementer(new HikerMediasSupplement(http, om),
-                new HikerSuggestedSupplement(http, om), settingBoth());
-        var ex = sup.apply(oneItem(), ProfileSource.SELF);
-        assertThat(ex.items().get(0))
-            .containsKeys("latestPosts", "relatedProfiles", "_rawMedias", "_rawSuggested");  // 정규화 + 원본
+    @Test void 토글이_꺼져있으면_보충_안함() {
+        HikerHttp http = p -> { throw new AssertionError("호출되면 안됨"); };
+        var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(false));
+        var ex = sup.apply(execWith(selfItem()), ProfileSource.SELF);
+        assertThat(ex.items().get(0)).doesNotContainKey("relatedProfiles");
     }
 
-    @Test void medias_튜플응답_파싱() {
-        // 실제 HikerAPI /v1/user/medias/chunk 형태: [[...medias...], "cursor"]
-        HikerHttp http = path -> path.contains("medias")
-            ? "[[{\"code\":\"ABC\",\"play_count\":587,\"like_count\":51,\"comment_count\":128}],\"next_cursor\"]"
-            : "{\"users\":[]}";
-        var sup = new ProfileSupplementer(new HikerMediasSupplement(http, om),
-                new HikerSuggestedSupplement(http, om), settingBoth());
-        var ex = sup.apply(oneItem(), ProfileSource.SELF);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> posts = (List<Map<String, Object>>) ex.items().get(0).get("latestPosts");
-        assertThat(posts).hasSize(1);
-        assertThat(posts.get(0))
-            .containsEntry("shortCode", "ABC")
-            .containsEntry("videoViewCount", 587L)
-            .containsEntry("likesCount", 51L)
-            .containsEntry("commentsCount", 128L);
-    }
-
-    @Test void 한_보충_실패해도_나머지와_베이스는_보존() {
+    @Test void SELF_원형에서_userId를_추출해_related를_보충한다() {
         HikerHttp http = path -> {
-            if (path.contains("medias")) throw new ApifyException("Hiker HTTP 500");
+            assertThat(path).contains("user_id=999");
             return "{\"users\":[{\"username\":\"my_zipcode\",\"pk\":\"1\"}]}";
         };
-        var sup = new ProfileSupplementer(new HikerMediasSupplement(http, om),
-                new HikerSuggestedSupplement(http, om), settingBoth());
-        var ex = sup.apply(oneItem(), ProfileSource.HIKER_MOBILE);
+        var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(true));
+        var ex = sup.apply(execWith(selfItem()), ProfileSource.SELF);
+        assertThat(ex.items().get(0)).containsKeys("relatedProfiles", "_rawSuggested");
+    }
+
+    @Test void HIKER_MOBILE_원형에서_userId를_추출해_related를_보충한다() {
+        HikerHttp http = path -> {
+            assertThat(path).contains("user_id=999");
+            return "{\"users\":[{\"username\":\"my_zipcode\",\"pk\":\"1\"}]}";
+        };
+        var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(true));
+        var ex = sup.apply(execWith(hikerMobileItem()), ProfileSource.HIKER_MOBILE);
+        assertThat(ex.items().get(0)).containsKeys("relatedProfiles", "_rawSuggested");
+    }
+
+    @Test void related_보충_실패해도_베이스_원형은_보존된다() {
+        HikerHttp http = path -> { throw new ApifyException("Hiker HTTP 500"); };
+        var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(true));
+        var ex = sup.apply(execWith(hikerMobileItem()), ProfileSource.HIKER_MOBILE);
         Map<String, Object> item = ex.items().get(0);
-        assertThat(item).doesNotContainKey("latestPosts");     // medias 실패 → 없음
-        assertThat(item).containsKey("relatedProfiles");        // related 성공
-        assertThat(item.get("username")).isEqualTo("tem.duck"); // 베이스 보존
+        assertThat(item).doesNotContainKey("relatedProfiles");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> user = (Map<String, Object>) item.get("user");
+        assertThat(user.get("username")).isEqualTo("tem.duck"); // 베이스 원형 보존
     }
 }

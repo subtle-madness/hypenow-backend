@@ -5,6 +5,7 @@ import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.ProfileSource;
 import java.net.URLEncoder;
@@ -15,11 +16,14 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
- * HikerAPI 웹 gql base — username→pk(by/username)→web_profile_info(gql) 순으로 조회해
- * 게시물·related 번들 프로필을 정규화. by/username 또는 gql 어느 쪽이든 실패(ApifyException)하면
- * 목적(번들)을 달성할 수 없으므로 모바일 base로 폴백하지 않고 해당 계정을 통째로 스킵한다.
+ * HikerAPI 웹 gql base — username→pk(by/username)→web_profile_info(gql) 순으로 조회한다.
+ * by/username 또는 gql 어느 쪽이든 실패(ApifyException)하면 목적(번들)을 달성할 수 없으므로
+ * 모바일 base로 폴백하지 않고 해당 계정을 통째로 스킵한다. 두 응답 모두 HikerAPI user 객체
+ * 원형(by/username과 동일 형태)이라 rawSource()는 HIKER_MOBILE과 같다.
  */
 @Component
 public class HikerWebGqlProfileFetcher implements ProfileFetcher {
@@ -29,12 +33,12 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
 
     private final HikerHttp http;
     private final CrawlExecutor executor;
-    private final ProfileMapper mapper;
+    private final ObjectMapper om;
 
-    public HikerWebGqlProfileFetcher(HikerHttp http, CrawlExecutor executor, ProfileMapper mapper) {
+    public HikerWebGqlProfileFetcher(HikerHttp http, CrawlExecutor executor, ObjectMapper om) {
         this.http = http;
         this.executor = executor;
-        this.mapper = mapper;
+        this.om = om;
     }
 
     @Override
@@ -48,7 +52,7 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
         for (String u : usernames) {
             try {
                 Map<String, Object> gql = fetchOne(u);
-                if (gql != null && gql.get("username") != null) out.add(gql);
+                if (gql != null && ProfileExtractor.username(gql, RawSource.HIKER_MOBILE) != null) out.add(gql);
             } catch (ApifyException e) {
                 log.warn("web_profile_info 실패, 계정 스킵: {} ({})", u, e.getMessage());
             }
@@ -58,17 +62,31 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
 
     private Map<String, Object> fetchOne(String username) {
         String enc = URLEncoder.encode(username, StandardCharsets.UTF_8);
-        Map<String, Object> base = mapper.fromHikerUser(http.get("/v2/user/by/username?username=" + enc));
-        Object uid = base.get("userId");
+        Map<String, Object> base = readRoot(http.get("/v2/user/by/username?username=" + enc));
+        String uid = ProfileExtractor.userId(base, RawSource.HIKER_MOBILE);
         if (uid == null) {
             log.warn("userId 없음, 계정 스킵: {}", username);
             return null;
         }
-        return mapper.fromHikerUser(http.get("/gql/user/web_profile_info?user_id=" + uid));
+        return readRoot(http.get("/gql/user/web_profile_info?user_id=" + uid));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readRoot(String json) {
+        try {
+            return om.readValue(json, Map.class);
+        } catch (JacksonException e) {
+            throw new ApifyException("프로필 JSON 파싱 실패: " + e.getMessage(), e);
+        }
     }
 
     @Override
     public ProfileSource source() {
         return ProfileSource.HIKER_WEB_GQL;
+    }
+
+    @Override
+    public RawSource rawSource() {
+        return RawSource.HIKER_MOBILE;
     }
 }

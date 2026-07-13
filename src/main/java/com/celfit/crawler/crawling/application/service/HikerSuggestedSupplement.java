@@ -22,10 +22,9 @@ public class HikerSuggestedSupplement {
         this.om = om;
     }
 
-    public void enrich(Map<String, Object> item) {
-        Object uid = item.get("userId");
-        if (uid == null) return;
-        String body = http.get("/v2/user/suggested/profiles?user_id=" + uid + "&expand_suggestion=true");
+    public void enrich(Map<String, Object> item, String userId) {
+        if (userId == null) return;
+        String body = http.get("/v2/user/suggested/profiles?user_id=" + userId + "&expand_suggestion=true");
         JsonNode root = read(body);
         List<Map<String, Object>> related = new ArrayList<>();
         collectUsers(root, related);

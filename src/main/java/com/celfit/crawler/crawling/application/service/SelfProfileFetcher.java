@@ -1,10 +1,12 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.crawling.adapter.out.instagram.DirectCommentProperties;
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.ProfileSource;
 import java.time.Duration;
@@ -13,9 +15,11 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
- * 비로그인 web_profile_info 자체크롤 기반 프로필 조회. 계정마다 GET 1회씩 순차 조회 후 정규화.
+ * 비로그인 web_profile_info 자체크롤 기반 프로필 조회. 계정마다 GET 1회씩 순차 조회, 응답 원형을 그대로 반환.
  */
 @Component
 public class SelfProfileFetcher implements ProfileFetcher {
@@ -26,20 +30,20 @@ public class SelfProfileFetcher implements ProfileFetcher {
 
     private final InstagramWebClient web;
     private final CrawlExecutor executor;
-    private final ProfileMapper mapper;
+    private final ObjectMapper om;
     private final Duration pageDelay;
 
     @Autowired
     public SelfProfileFetcher(InstagramWebClient web, CrawlExecutor executor,
-                              ProfileMapper mapper, DirectCommentProperties props) {
-        this(web, executor, mapper, props.pageDelay());
+                              ObjectMapper om, DirectCommentProperties props) {
+        this(web, executor, om, props.pageDelay());
     }
 
     SelfProfileFetcher(InstagramWebClient web, CrawlExecutor executor,
-                       ProfileMapper mapper, Duration pageDelay) {
+                       ObjectMapper om, Duration pageDelay) {
         this.web = web;
         this.executor = executor;
-        this.mapper = mapper;
+        this.om = om;
         this.pageDelay = pageDelay;
     }
 
@@ -54,12 +58,21 @@ public class SelfProfileFetcher implements ProfileFetcher {
         for (String u : usernames) {
             InstagramWebClient.Response res = web.get(URL + u);
             if (res.status() == 200) {
-                Map<String, Object> p = mapper.fromSelf(res.body());
-                if (p.get("username") != null) out.add(p);
+                Map<String, Object> p = readRoot(res.body());
+                if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) out.add(p);
             }
             sleep();
         }
         return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readRoot(String json) {
+        try {
+            return om.readValue(json, Map.class);
+        } catch (JacksonException e) {
+            throw new ApifyException("프로필 JSON 파싱 실패: " + e.getMessage(), e);
+        }
     }
 
     private void sleep() {
@@ -74,5 +87,10 @@ public class SelfProfileFetcher implements ProfileFetcher {
     @Override
     public ProfileSource source() {
         return ProfileSource.SELF;
+    }
+
+    @Override
+    public RawSource rawSource() {
+        return RawSource.SELF_GQL;
     }
 }

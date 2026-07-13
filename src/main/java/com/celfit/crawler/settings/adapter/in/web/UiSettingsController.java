@@ -50,7 +50,6 @@ public class UiSettingsController {
         model.addAttribute("commentSource", commentSourceSetting.current().name());
         model.addAttribute("discoverSource", discoverSourceSetting.current().name());
         model.addAttribute("profileSource", profileSourceSetting.current().name());
-        model.addAttribute("profilePosts", profileSupplementSetting.postsEnabled());
         model.addAttribute("profileRelated", profileSupplementSetting.relatedEnabled());
         model.addAttribute("detailReelsSource", detailSourceSetting.sourceFor(ContentType.REELS).name());
         model.addAttribute("detailFeedSource", detailSourceSetting.sourceFor(ContentType.FEED).name());

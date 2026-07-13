@@ -1,6 +1,7 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
 import com.celfit.crawler.settings.domain.ProfileSource;
@@ -26,9 +27,18 @@ public class ProfileSourceSelector {
     }
 
     public CrawlExecutor.Execution fetchAndSupplement(List<String> usernames, TriggerType trigger) {
-        ProfileSource src = setting.current();
-        ProfileFetcher f = bySource.get(src);
-        if (f == null) { f = bySource.get(ProfileSource.SELF); src = ProfileSource.SELF; }
-        return supplementer.apply(f.fetch(usernames, trigger), src);
+        ProfileFetcher f = selected();
+        return supplementer.apply(f.fetch(usernames, trigger), f.source());
+    }
+
+    /** 직전 fetchAndSupplement()가 실제로 사용한(또는 지금 호출하면 사용할) 소스. */
+    public RawSource currentSource() {
+        return selected().rawSource();
+    }
+
+    private ProfileFetcher selected() {
+        ProfileFetcher f = bySource.get(setting.current());
+        if (f == null) f = bySource.get(ProfileSource.SELF);
+        return f;
     }
 }

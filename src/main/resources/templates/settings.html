@@ -48,8 +48,6 @@
             th:checked="${profileSource == 'HIKER_WEB_GQL'}"/> HikerAPI 웹gql</label>
         <hr/>
         <p class="hint">보충 (SELF·HikerAPI모바일에서만 적용):</p>
-        <label class="check"><input type="checkbox" name="posts" value="true"
-            th:checked="${profilePosts}"/> 게시물 조회수 채우기 (HikerAPI medias)</label>
         <label class="check"><input type="checkbox" name="related" value="true"
             th:checked="${profileRelated}"/> 관련계정 채우기 (HikerAPI suggested)</label>
         <button type="submit" class="primary">저장</button>

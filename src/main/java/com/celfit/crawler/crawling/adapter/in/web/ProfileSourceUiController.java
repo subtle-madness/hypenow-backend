@@ -22,10 +22,9 @@ public class ProfileSourceUiController {
 
     @PostMapping("/ui/profile-source")
     public String update(@RequestParam String source,
-                          @RequestParam(defaultValue = "false") boolean posts,
                           @RequestParam(defaultValue = "false") boolean related) {
         sourceSetting.update(ProfileSource.valueOf(source.toUpperCase(Locale.ROOT)));
-        supplementSetting.update(posts, related);
+        supplementSetting.update(related);
         return "redirect:/ui/settings";
     }
 }

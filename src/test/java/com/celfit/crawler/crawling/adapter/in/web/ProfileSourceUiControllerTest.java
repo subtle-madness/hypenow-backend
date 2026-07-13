@@ -35,10 +35,8 @@ class ProfileSourceUiControllerTest extends IntegrationTest {
     void 보충_체크박스_값이_저장된다() throws Exception {
         mvc.perform(post("/ui/profile-source")
                         .param("source", "SELF")
-                        .param("posts", "true")
                         .param("related", "true"))
                 .andExpect(status().is3xxRedirection());
-        assertThat(supplementSetting.postsEnabled()).isTrue();
         assertThat(supplementSetting.relatedEnabled()).isTrue();
     }
 }
