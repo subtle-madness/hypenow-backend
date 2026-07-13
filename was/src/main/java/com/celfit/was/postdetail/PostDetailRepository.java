@@ -54,7 +54,7 @@ public class PostDetailRepository {
 	// comment_classifications 부재 시 LEFT JOIN 전체가 실패해 댓글까지 빈 목록으로 저하된다 —
 	// B2 이후 두 테이블이 같은 Flyway로 함께 배포되므로 수용한 트레이드오프(계획 문서에 기록됨).
 	public List<CommentRow> findComments(String shortCode) {
-		return safeQuery("content_comments", List::of, () -> jdbcClient.sql("""
+		return safeQuery("content_comments(+classifications 조인)", List::of, () -> jdbcClient.sql("""
 				SELECT m.id, m.author_masked, m.body, m.like_count, k.ai_category
 				FROM content_comments m
 				LEFT JOIN comment_classifications k ON k.id = m.id

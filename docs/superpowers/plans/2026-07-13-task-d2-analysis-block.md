@@ -322,7 +322,7 @@ public record ContentAnalysisRow(
 - [ ] **Step 5: 테스트 실행 — 통과 확인**
 
 Run: `./gradlew :was:test --tests '*PostDetailRepositoryTest*'`
-Expected: 7 tests PASS (기존 6 중 댓글 테스트 1개 개명 + 신규 2)
+Expected: 8 tests PASS (기존 6 중 댓글 테스트 1개 개명 + 신규 2)
 
 이 시점에 Assembler·Controller가 `ContentComment`를 참조해 컴파일 실패할 수 있다 — 그 경우 Task 2·3에서 고치므로 **리포지토리 테스트만** 컴파일되도록 Assembler 시그니처를 임시로 바꾸지 말고, Task 2를 같은 커밋 전에 이어서 진행한 뒤 한 번에 검증해도 된다(아래 Task 2 완료 후 커밋).
 
@@ -720,7 +720,7 @@ docker exec -i crawler-postgres-1 psql -U crawler -d analysis -tAc \
 
 ## 완료 기준 (DoD)
 
-- was 테스트 19개(리포지토리 7·어셈블러 7·컨트롤러 5) + 전 모듈 그린
+- was 테스트 20개(리포지토리 8·어셈블러 7·컨트롤러 5) + 전 모듈 그린
 - 실DB에서 1회 호출 응답에 analysis 블록/aiCategory(또는 additive null 경로) 확인, 기존 필드 불변
 - 계약 문서화: 이 계획의 응답 계약 + ARCHITECTURE 결정 기록
 

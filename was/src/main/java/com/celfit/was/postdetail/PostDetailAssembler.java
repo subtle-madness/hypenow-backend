@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
-/** 계약 record → 모달 블록 응답 조립. 행 단위 파생값(참여율·경과일)만 계산한다(§4-2 표현 조립). */
+/** 계약 record·로컬 행 → 모달 블록 응답 조립. 행 단위 파생값(참여율·경과일) 계산과 jsonb 파싱만 한다(§4-2 표현 조립). */
 @Component
 public class PostDetailAssembler {
 
