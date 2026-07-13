@@ -12,9 +12,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 서빙 미러 3종 + 분석 층 소유 테이블 2종 조회. 미러 3종은 계약 record로 매핑하고(§4-3),
- * comment_classifications·content_analyses는 공유 형태가 성립하지 않아 was 로컬 record로 매핑한다(§4-4).
- * 어느 쪽이든 부재 시 빈 값으로 저하한다(대시보드 컨벤션).
+ * 서빙 미러 3종 + 분석 층 소유 테이블 2종 조회. contents·accounts는 계약 record로 매핑하고(§4-3),
+ * 댓글은 분류 조인 결과라서, comment_classifications·content_analyses는 공유 형태가 성립하지
+ * 않아서 was 로컬 record로 매핑한다(§4-4). 어느 쪽이든 부재 시 빈 값으로 저하한다(대시보드 컨벤션).
  */
 @Repository
 public class PostDetailRepository {
