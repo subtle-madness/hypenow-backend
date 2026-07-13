@@ -26,6 +26,8 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -39,6 +41,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class CollectJob {
 
     private static final int MAX_PAGES_PER_STREAM = 40;  // 폭주 방지 안전 상한
+    private static final Logger log = LoggerFactory.getLogger(CollectJob.class);
 
     public record Summary(int visited, int postsUpserted, int postsCollected, int failedVisits) {}
 
@@ -96,6 +99,7 @@ public class CollectJob {
                     visited++;
                 } catch (RuntimeException e) {
                     failed++;   // 인플루언서 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
+                    log.warn("collect 방문 실패: {}", inf.getUsername(), e);
                 } finally {
                     progress.advance(JobName.COLLECT, 1);
                 }
@@ -143,6 +147,10 @@ public class CollectJob {
         // 실패 게시물의 재시도는 위 PENDING 조회가 담당하므로 별도 신호가 필요 없다.
         if (backfill) inf.setFirstCollectedAt(clock.instant());
         inf.setLastCollectedAt(clock.instant());
+        // findCollectTargets는 방문 트랜잭션 밖(리포지토리 자체 트랜잭션)에서 조회돼 detached 상태다 —
+        // 명시적 save(merge) 없이는 위 북키핑(방문 시각·followers)이 저장되지 않아 같은 인플루언서가
+        // 매 실행 재선정(백필 무한 반복·재과금)된다.
+        influencers.save(inf);
         return new VisitResult(upserted, collected);
     }
 
