@@ -10,7 +10,10 @@ import java.util.List;
  */
 public record PostDetailResponse(Post post, Account account, Comments comments, Analysis analysis) {
 
-	/** engagementRate = (likes+comments)/views — views가 NULL(피드)이거나 0이면 null. */
+	/**
+	 * engagementRate = (likes+comments)/views — views가 NULL(피드)이거나 0이면 null.
+	 * metricsCapturedAt = 지표가 어느 스냅샷에서 왔는지 — asOf 경로에서만 채워지고 최신 경로는 null.
+	 */
 	public record Post(
 			String shortCode,
 			String thumbnailUrl,
@@ -24,7 +27,8 @@ public record PostDetailResponse(Post post, Account account, Comments comments, 
 			Long likes,
 			Long comments,
 			BigDecimal engagementRate,
-			Long hypeScore) {
+			Long hypeScore,
+			OffsetDateTime metricsCapturedAt) {
 	}
 
 	public record Account(
