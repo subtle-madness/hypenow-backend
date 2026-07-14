@@ -11,6 +11,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+
+import com.celfit.crawler.crawling.domain.JobName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -19,9 +21,9 @@ class SelfProfileFetcherTest {
     // CrawlExecutor의 Supplier 오버로드만 흉내내는 최소 스텁 (spy 대신 서브클래스)
     static CrawlExecutor passthroughExecutor() {
         return new CrawlExecutor(null, null, null, null) {
-            @Override public Execution execute(com.celfit.crawler.crawling.domain.JobName job,
-                    TriggerType t, String keyword, String targetUsername, String actorId,
-                    Supplier<ApifyResult> work) {
+            @Override public Execution execute(JobName job,
+                                               TriggerType t, String keyword, String targetUsername, String actorId,
+                                               Supplier<ApifyResult> work) {
                 ApifyResult r = work.get();
                 return new Execution(1L, r.items());
             }

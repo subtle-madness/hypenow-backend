@@ -56,7 +56,7 @@ class HikerProfileFetchersTest {
                 return """
                     {"user":{"username":"tem.duck","pk":"74756186520","follower_count":256559}}""";
             }
-            throw new com.celfit.crawler.crawling.application.port.out.ApifyException("Hiker HTTP 500");
+            throw new ApifyException("Hiker HTTP 500");
         };
         var f = new HikerWebGqlProfileFetcher(http, passthrough(), om);
         assertThat(f.source()).isEqualTo(ProfileSource.HIKER_WEB_GQL);

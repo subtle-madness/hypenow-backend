@@ -2,8 +2,9 @@ package com.celfit.crawler.crawling.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.List;
 import java.util.Map;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -62,6 +63,6 @@ class HikerDiscoveryMapperTest {
 
     @Test void 깨진_JSON이면_ApifyException() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> mapper.parse("{broken"))
-            .isInstanceOf(com.celfit.crawler.crawling.application.port.out.ApifyException.class);
+            .isInstanceOf(ApifyException.class);
     }
 }

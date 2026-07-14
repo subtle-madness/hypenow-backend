@@ -3,7 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.domain.RawSource;
-import java.util.List;
+
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 

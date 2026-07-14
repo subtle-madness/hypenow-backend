@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.crawling.application.port.out.Actors;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
@@ -33,7 +34,7 @@ class ActorDiscoverFetcherTest {
 
         assertThat(ex).isSameAs(expected);
         assertThat(fetcher.source()).isEqualTo(DiscoverSource.ACTOR);
-        assertThat(fetcher.rawSource()).isEqualTo(com.celfit.crawler.crawling.domain.RawSource.APIFY_ACTOR);
+        assertThat(fetcher.rawSource()).isEqualTo(RawSource.APIFY_ACTOR);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
         verify(executor).execute(eq(JobName.DISCOVER), eq(TriggerType.MANUAL), eq("립"), isNull(),

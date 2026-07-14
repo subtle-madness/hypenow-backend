@@ -2,15 +2,20 @@ package com.celfit.crawler.dashboard.adapter.in.web;
 
 import com.celfit.crawler.common.log.LogBuffer;
 
+import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
+import com.celfit.crawler.crawling.application.port.out.*;
+import com.celfit.crawler.crawling.domain.CrawlRun;
+import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.dashboard.application.JobCostEstimator;
 import com.celfit.crawler.dashboard.application.StatusService;
-import com.celfit.crawler.crawling.domain.*;
-import com.celfit.crawler.content.domain.*;
-import com.celfit.crawler.settings.domain.*;
 import com.celfit.crawler.crawling.application.port.out.*;
-import com.celfit.crawler.content.application.port.out.*;
-import com.celfit.crawler.settings.application.port.out.*;
+import com.celfit.crawler.crawling.application.service.JobLock;
+import com.celfit.crawler.crawling.application.service.JobProgress;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -35,8 +40,8 @@ public class UiController {
     private final ObjectMapper objectMapper;
     private final LogBuffer logBuffer;
 
-    private final com.celfit.crawler.crawling.application.service.JobLock jobLock;
-    private final com.celfit.crawler.crawling.application.service.JobProgress jobProgress;
+    private final JobLock jobLock;
+    private final JobProgress jobProgress;
     private final JobCostEstimator jobCostEstimator;
     private final HikerProperties hikerProperties;
 
@@ -45,8 +50,8 @@ public class UiController {
                         RawCommentRepository rawComments, RawProfileRepository rawProfiles,
                         RawDiscoveryPostRepository rawDiscovery,
                         ObjectMapper objectMapper, LogBuffer logBuffer,
-                        com.celfit.crawler.crawling.application.service.JobLock jobLock,
-                        com.celfit.crawler.crawling.application.service.JobProgress jobProgress,
+                        JobLock jobLock,
+                        JobProgress jobProgress,
                         JobCostEstimator jobCostEstimator, HikerProperties hikerProperties) {
         this.statusService = statusService;
         this.runs = runs;

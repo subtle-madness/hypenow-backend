@@ -1,13 +1,14 @@
 package com.celfit.crawler.crawling.adapter.out.apify;
 
-import com.celfit.crawler.crawling.application.port.out.*;
-
-import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
+import com.celfit.crawler.crawling.application.port.out.ApifyRunnerPort;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;

@@ -6,7 +6,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
+import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
+import com.celfit.crawler.settings.domain.DiscoverSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,12 +37,13 @@ class SettingsApiTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired SettingsService settingsService;
     @Autowired FakeApifyRunner fake;
-    @Autowired com.celfit.crawler.settings.application.service.DiscoverSourceSetting discoverSourceSetting;
+    @Autowired
+    DiscoverSourceSetting discoverSourceSetting;
 
     @BeforeEach
     void resetFake() {
         fake.reset();
-        discoverSourceSetting.update(com.celfit.crawler.settings.domain.DiscoverSource.ACTOR);
+        discoverSourceSetting.update(DiscoverSource.ACTOR);
     }
 
     @Test

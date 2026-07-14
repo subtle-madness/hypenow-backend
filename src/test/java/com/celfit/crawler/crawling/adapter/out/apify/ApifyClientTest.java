@@ -1,11 +1,8 @@
 package com.celfit.crawler.crawling.adapter.out.apify;
 
-import com.celfit.crawler.crawling.application.port.out.*;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -14,6 +11,9 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 

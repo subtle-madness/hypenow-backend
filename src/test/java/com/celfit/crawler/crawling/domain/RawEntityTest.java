@@ -1,12 +1,13 @@
 package com.celfit.crawler.crawling.domain;
 
 import com.celfit.crawler.crawling.application.port.out.*;
-import com.celfit.crawler.content.application.port.out.*;
-import com.celfit.crawler.content.domain.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.IntegrationTest;
+import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentType;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.List;
@@ -18,12 +19,18 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class RawEntityTest extends IntegrationTest {
 
-    @Autowired RawCommentRepository rawComments;
-    @Autowired RawProfileRepository rawProfiles;
-    @Autowired RawMediaPageRepository rawMediaPages;
-    @Autowired ContentRepository contents;
-    @Autowired InfluencerRepository influencers;
-    @Autowired CrawlRunRepository runs;
+    @Autowired
+    RawCommentRepository rawComments;
+    @Autowired
+    RawProfileRepository rawProfiles;
+    @Autowired
+    RawMediaPageRepository rawMediaPages;
+    @Autowired
+    ContentRepository contents;
+    @Autowired
+    InfluencerRepository influencers;
+    @Autowired
+    CrawlRunRepository runs;
     @Autowired EntityManager em;
 
     @Test

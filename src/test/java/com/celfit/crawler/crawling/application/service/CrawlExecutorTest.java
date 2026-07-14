@@ -13,6 +13,8 @@ import com.celfit.crawler.crawling.domain.RunStatus;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import java.util.List;
 import java.util.Map;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -88,7 +90,7 @@ class CrawlExecutorTest extends IntegrationTest {
     void supplier_오버로드도_성공하면_SUCCEEDED로_기록되고_아카이브된다() {
         var execution = executor.execute(JobName.COLLECT, TriggerType.MANUAL, null, null,
                 "direct-comment-crawler",
-                () -> new com.celfit.crawler.crawling.application.port.out.ApifyResult(
+                () -> new ApifyResult(
                         null, List.of(Map.of("text", "좋아요"))));
 
         assertThat(execution.items()).hasSize(1);

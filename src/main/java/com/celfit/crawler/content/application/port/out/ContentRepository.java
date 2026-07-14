@@ -1,11 +1,10 @@
 package com.celfit.crawler.content.application.port.out;
 
-import com.celfit.crawler.crawling.domain.*;
-import com.celfit.crawler.content.domain.*;
-import com.celfit.crawler.settings.domain.*;
-
 import java.util.List;
 import java.util.Optional;
+
+import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
