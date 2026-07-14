@@ -1,6 +1,6 @@
 # 태스크 D3: 상세 API as-of 지표 (`?endDate=`) Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-14)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `GET /api/posts/{shortCode}?endDate=2026-07-03` — 집계 기간 끝(end_date) 시점의 스냅샷으로 지표를 재구성한다. 파라미터 없으면 기존 최신 경로 그대로.
@@ -153,7 +153,7 @@ was/src/test/java/com/celfit/was/postdetail/
 
 (임포트 추가: `com.celfit.contract.analysis.ContentMetricSnapshot`, `java.time.OffsetDateTime`. 클래스 Javadoc의 "미러 3종"을 "미러 4종"으로 갱신)
 
-- [ ] **Step 4: 실행 — 통과 확인** (리포지토리 12 tests PASS)
+- [ ] **Step 4: 실행 — 통과 확인** (리포지토리 11 tests PASS — 기존 8 + 신규 3)
 
 - [ ] **Step 5: Commit** — `feat(was): as-of 스냅샷 선택 조회 — cutoff 이전 최신 1행 (계약 record 매핑)`
 
@@ -383,7 +383,7 @@ public record AsOfMetrics(ContentMetricSnapshot snapshot, OffsetDateTime referen
 
 (임포트: `org.springframework.format.annotation.DateTimeFormat`, `org.springframework.web.bind.annotation.RequestParam`, `java.time.LocalDate`, `java.time.ZoneId`, `java.time.OffsetDateTime`, `com.celfit.contract.analysis.ContentMetricSnapshot`, `java.util.Optional`)
 
-- [ ] **Step 4: was 전체 테스트** — `./gradlew :was:test` → 리포지토리 12 · 어셈블러 9 · 컨트롤러 8 전부 PASS
+- [ ] **Step 4: was 전체 테스트** — `./gradlew :was:test` → 리포지토리 11 · 어셈블러 9 · 컨트롤러 8 전부 PASS
 
 - [ ] **Step 5: Commit (Task 2+3 묶음)**
 
@@ -432,7 +432,7 @@ curl -s "http://localhost:8081/api/posts/DYE2SisT-jE" | python3 -c "import json,
 
 ## 완료 기준 (DoD)
 
-- was 테스트 29개(리포지토리 12·어셈블러 9·컨트롤러 8) + 전 모듈 그린
+- was 테스트 28개(리포지토리 11·어셈블러 9·컨트롤러 8) + 전 모듈 그린
 - 실DB: endDate 포함/이전/형식오류 = 200(스냅샷 지표+metricsCapturedAt)/404/400, 파라미터 없으면 기존 응답에 metricsCapturedAt null만 추가
 - KST 경계가 테스트로 고정 (UTC 함정 케이스 포함)
 
