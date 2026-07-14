@@ -142,6 +142,18 @@ class ProfileExtractorTest {
     }
 
     @Test
+    void category가_빈문자열이면_category_name_폴백으로_넘어간다() {
+        // HIKER_MOBILE — category가 빈 문자열("")이면 first()가 값 있는 것으로 오판해 category_name
+        // 폴백을 가리고 null로 붕괴하던 버그. 빈 문자열도 '없음' 취급해야 폴백이 살아난다.
+        Map<String, Object> hikerUser = new LinkedHashMap<>();
+        hikerUser.put("category", "");
+        hikerUser.put("category_name", "Beauty salon");
+        Map<String, Object> hiker = Map.of("user", hikerUser);
+
+        assertThat(ProfileExtractor.category(hiker, RawSource.HIKER_MOBILE)).isEqualTo("Beauty salon");
+    }
+
+    @Test
     void 뷰티_판정_재료가_없거나_공백이면_null() {
         Map<String, Object> empty = new LinkedHashMap<>();
         empty.put("biography", "  ");

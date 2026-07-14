@@ -66,8 +66,15 @@ public final class ProfileExtractor {
         return asText(v);
     }
 
+    /** 첫 non-blank 값(공백·빈 문자열은 '없음'으로 간주 — asText 기준과 일치) 반환, 없으면 null. */
     private static Object first(Object... vals) {
-        for (Object v : vals) if (v != null) return v;
+        for (Object v : vals) {
+            if (v instanceof String s) {
+                if (!s.isBlank()) return v;
+            } else if (v != null) {
+                return v;
+            }
+        }
         return null;
     }
 
