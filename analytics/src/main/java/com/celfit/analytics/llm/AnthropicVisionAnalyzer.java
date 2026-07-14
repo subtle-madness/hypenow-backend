@@ -1,14 +1,20 @@
 package com.celfit.analytics.llm;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.models.messages.Base64ImageSource;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.StructuredMessage;
 import com.anthropic.models.messages.StructuredMessageCreateParams;
 import com.anthropic.models.messages.TextBlockParam;
-import com.anthropic.models.messages.UrlImageSource;
 import com.celfit.analytics.config.AnalyticsSettings;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -17,6 +23,9 @@ import org.slf4j.LoggerFactory;
 /**
  * VLM Anthropic 구현 — 썸네일 1장 + 캡션 기반 (F-2 스파이크로 검증한 최소 입력안).
  * 분류 어휘는 {@link BeautyTaxonomy}(celfit-front 배포본 계약) 분류표를 프롬프트에 그대로 싣는다.
+ *
+ * <p>이미지는 직접 내려받아 base64로 넣는다 — URL 입력은 Anthropic이 인스타 CDN을
+ * robots.txt 사유로 전면 거부(400)해 불가 (F-2 실측 2026-07-14).
  */
 public final class AnthropicVisionAnalyzer implements VisionPort {
 
@@ -29,7 +38,8 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 			당신은 뷰티 콘텐츠의 이미지 분석가다. 썸네일과 캡션을 보고 다음을 추출하라.
 			확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 한국어로.
 
-			- detectedBrands: 화면·캡션에서 확인되는 브랜드 {name, evidence(근거)}
+			- detectedBrands: 화면·캡션에서 확인되는 브랜드 {name, evidence(근거)} —
+			  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 			- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
 			- adDisclosure: 광고 고지 여부 (예: "캡션 #협찬 표기 있음", 없으면 "표기 없음")
 			- mainCategory: 아래 분류표의 대분류 영문 값 중 하나
@@ -46,6 +56,7 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 
 	private final AnthropicClient client;
 	private final AnalyticsSettings settings;
+	private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
 	public AnthropicVisionAnalyzer(AnthropicClient client, AnalyticsSettings settings) {
 		this.client = client;
@@ -61,7 +72,7 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 				.outputConfig(VlmResult.class)
 				.addUserMessageOfBlockParams(List.of(
 						ContentBlockParam.ofImage(ImageBlockParam.builder()
-								.source(UrlImageSource.builder().url(thumbnailUrl).build())
+								.source(download(thumbnailUrl))
 								.build()),
 						ContentBlockParam.ofText(TextBlockParam.builder()
 								.text("캡션: " + caption).build())))
@@ -76,6 +87,37 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 				.findFirst()
 				.orElseThrow(() -> new IllegalStateException("VLM 응답에 본문 없음"))
 				.text());
+	}
+
+	/** 썸네일을 직접 내려받아 base64 소스로. 실패는 예외 → 콘텐츠 실패(일시 장애는 다음 실행 재대상). */
+	private Base64ImageSource download(String thumbnailUrl) {
+		try {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(thumbnailUrl))
+					.timeout(Duration.ofSeconds(15)).build();
+			HttpResponse<byte[]> res = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+			if (res.statusCode() < 200 || res.statusCode() >= 300) {
+				throw new IllegalStateException("썸네일 다운로드 실패 HTTP " + res.statusCode());
+			}
+			return Base64ImageSource.builder()
+					.mediaType(mediaTypeOf(res.headers().firstValue("content-type").orElse(null)))
+					.data(Base64.getEncoder().encodeToString(res.body()))
+					.build();
+		} catch (java.io.IOException | InterruptedException e) {
+			throw new IllegalStateException("썸네일 다운로드 실패: " + thumbnailUrl, e);
+		}
+	}
+
+	/** Content-Type → SDK MediaType. 인스타 CDN은 jpeg/webp 혼재 — 미상은 jpeg로 간주. */
+	static Base64ImageSource.MediaType mediaTypeOf(String contentType) {
+		if (contentType == null) {
+			return Base64ImageSource.MediaType.IMAGE_JPEG;
+		}
+		return switch (contentType.split(";")[0].trim().toLowerCase()) {
+			case "image/png" -> Base64ImageSource.MediaType.IMAGE_PNG;
+			case "image/gif" -> Base64ImageSource.MediaType.IMAGE_GIF;
+			case "image/webp" -> Base64ImageSource.MediaType.IMAGE_WEBP;
+			default -> Base64ImageSource.MediaType.IMAGE_JPEG;
+		};
 	}
 
 	/**

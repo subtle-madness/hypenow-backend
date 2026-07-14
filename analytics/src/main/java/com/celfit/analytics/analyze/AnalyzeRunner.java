@@ -28,7 +28,7 @@ public class AnalyzeRunner {
 	 * 썸네일 서명 URL 생존 확인 (인스타 CDN은 수집 후 ~4일이면 403 — 2026-07-14 실측).
 	 * 만료 썸네일을 VLM에 넘기면 Anthropic 쪽 fetch가 실패하므로 호출 전에 거른다.
 	 */
-	static Predicate<String> headPrecheck() {
+	public static Predicate<String> headPrecheck() {
 		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 		return url -> {
 			try {

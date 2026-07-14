@@ -128,6 +128,36 @@ analytics/README.md, ARCHITECTURE.md                         [수정] 상태·�
 
 ---
 
-## F-2 스파이크 판정 기록 (Task 4에서 기입)
+## F-2 스파이크 판정 기록 (2026-07-14 실행 — 실 콘텐츠 8건 + 유통사 어휘 검증 1건, claude-opus-4-8)
 
-(실행 후 기입)
+### 입력 방식 판정 (스펙 F-2의 "미디어 URL 유효성" 질문)
+
+| 방식 | 판정 | 근거 |
+|---|---|---|
+| URL 이미지 소스 | **불가** | Anthropic이 인스타 CDN URL을 robots.txt 사유로 전면 거부 — 8/8 전부 `400 "This URL is disallowed by the website's robots.txt file"` |
+| **직접 다운로드 + base64** | **가능 (채택)** | 8/8 성공. Content-Type은 image/jpeg·image/webp 혼재 → MediaType 매핑 구현 |
+| 영상 프레임/전체 | 미실험 | 썸네일 1장으로 품질 충분(아래) — 확장 보류 |
+
+썸네일 서명 URL 자체는 수집 후 ~4일 만료(07-09분 123건 전멸, 07-10·11분 11건 생존) →
+프리체크 + 최신 수집순 정렬로 대응 (Task 3).
+
+### 항목별 품질 판정 (8건 눈검증)
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| detectedBrands | **가능** | 화면 스와치 라벨(NARS/HOURGLASS/GIORGIO ARMANI 등)·캡션 근거 정확. 1건에서 "미상/브랜드 불명확" 노이즈 → 프롬프트에 "특정 불가 제품 제외" 지시 추가로 대응 |
+| sponsoredSignalLevel/reasons | **가능** | 공구(high)·#제품협찬(high)·내돈내산(low) 전부 정확, 근거 구체적 |
+| adDisclosure | **가능** | "#제품협찬 표기 있음"/"표기 없음" 정확 감지 |
+| mainCategory | **가능** | 8/8 slug 어휘 준수 (전부 makeup — 표본 편중은 수집 데이터 특성) |
+| subCategories | **가능** | 8/8 분류표 라벨 그대로 (중분류+소분류 조합 정확: [립메이크업,립스틱] 등) |
+| detectedProductCategories | **가능** | 소분류 어휘 준수. 속눈썹 시술 콘텐츠에서 "마스카라" 경미한 오탐 1건 — 허용 수준 |
+| detectedDistributors | **가능** | 언급 없는 8건 전부 빈 배열(무환각). 어휘 검증 케이스에서 "올영세일"→`올리브영`, "다이소에서도"→`다이소` 정식 상호명 정규화 확인 |
+| vlmAttributes | **가능** | 7항목(노출 제품~편집 스타일) 일관 출력, 내용 구체적 |
+| adType | **가능** | organic/sponsored 판정 8/8 방어 가능. 주의: 시술샵 자기 홍보를 sponsored로 본 1건 — "협찬" 정의와는 다르나 신호 자체는 타당 |
+
+**결론: 전 항목 채택 (NULL 유지 항목 없음).**
+
+### 비용 실측 (claude-opus-4-8, $5/$25 per MTok)
+
+- 건당 input 2,981~5,554 tok / output 510~913 tok, 소요 11~23초
+- **건당 ≈ $0.03~0.05** → 1,000건당 ≈ $35~50 (댓글 분류 $61/1000과 별도)

@@ -65,6 +65,19 @@ class AnthropicVisionAnalyzerTest {
 	}
 
 	@Test
+	void 컨텐트타입은_SDK_미디어타입으로_매핑되고_미상은_jpeg다() {
+		// 인스타 CDN 실측: image/jpeg와 image/webp 혼재, charset 파라미터 붙는 경우 방어
+		assertEquals(com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_WEBP,
+				AnthropicVisionAnalyzer.mediaTypeOf("image/webp"));
+		assertEquals(com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_JPEG,
+				AnthropicVisionAnalyzer.mediaTypeOf("image/jpeg; charset=binary"));
+		assertEquals(com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_JPEG,
+				AnthropicVisionAnalyzer.mediaTypeOf(null));
+		assertEquals(com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_PNG,
+				AnthropicVisionAnalyzer.mediaTypeOf("IMAGE/PNG"));
+	}
+
+	@Test
 	void null_배열은_null로_유지된다() {
 		VlmResult sanitized = AnthropicVisionAnalyzer.sanitize(new VlmResult(null, null,
 				null, null, null, null, null, null, null, null));
