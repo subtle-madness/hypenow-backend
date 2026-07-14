@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-12
+> 마지막 갱신: 2026-07-13
 
 ## 1. 제품 한 장 요약
 
@@ -181,10 +181,10 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 |---|---|---|---|---|
 | A | 분석 기반 | base 뷰·최근 N개 윈도우 뷰 재작성(raw 접촉은 base 뷰만) + 설정 키 + `contract-analysis` 골격 + 타입 미러·SQL 테스트 하니스 구축 | — | ✅ |
 | F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 — F-2(VLM)는 B3에서 실험 | — | ✅ |
-| B1 | 드로어 비LLM 집계 | 작성자 요약·성과·벤치마크 뷰 + 미러 | A | ✅ |
+| B1 | 드로어 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments + 지표 스냅샷 이력 `content_metric_snapshots` — 07-13 개통) | A | ✅ |
 | B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ✅ |
 | B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" | F, B2 | ✅ |
-| C1 | 인플루언서 비LLM 집계 | 정체성·성과·일관성·커머셜 + 1:N 뷰 + 미러 | A | ⬜ |
+| C1 | 인플루언서 비LLM 집계 | AccountReport 결정 지표 — 계정 요약·카테고리 믹스·게시물 시계열 3종 뷰 + 미러 | A | ✅ |
 | C2 | 인플루언서 계정 LLM | 광고유형·페르소나·브리핑·적합성 | F, C1, B3 | ⬜ |
 | D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출). as-of 파라미터는 스냅샷 미러 대기 | B1, B2·B3(확장분) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{username}` | C1 | ⬜ |
@@ -209,7 +209,10 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-14 | **캠페인 추천 피봇 검토 후 취소** — "브리프 제출→인플루언서 추천+근거"로의 전환을 07-13~14 검토(구조 설계·어휘 계약 계획까지 작성)했으나 기존 방향(콘텐츠 랭킹+상세 분석 MVP) 유지로 결정. 검토 산출물은 develop 미머지 — 닫힌 PR #5·로컬 브랜치 `docs/campaign-recommendation-pivot`에 보존, 본 문서 기준 태스크 트랙(§5)은 변동 없음 | 닫힌 [PR #5](https://github.com/subtle-madness/hypenow-backend/pull/5) |
 | 2026-07-13 | **태스크 D2: 상세 API에 B2·B3 산출물 additive 확장** — comments.items[].aiCategory(분류 LEFT JOIN, 미분류 null) + analysis 블록(content_analyses 1행: AI 텍스트·기준선 스냅샷·카테고리 맥락·VLM·댓글 진정성, 미분석 null). 읽기 record는 was 로컬(분석 층 소유 테이블은 공유 형태 미성립 — §4-4), jsonb는 실 JSON 구조로 서빙. 릴스 개별 바 차트는 인플루언서 상세(E) 소관. as-of 서빙은 `content_metric_snapshots` 미러(별도 세션 분리) 후 was에서 | [plans/2026-07-13-task-d2-analysis-block.md](docs/superpowers/plans/2026-07-13-task-d2-analysis-block.md) |
+| 2026-07-13 | C1은 **celfit-front 실계약(AccountReport) 기준**으로 구현 — v4 목업 지표(중앙값·히트율·변동성·구간포지션 등) 폐기. 계정 평균 ER은 **followers 분모**(`avg_er_pct`, 게시물 ER의 views 분모와 공존), 기준 지표 폴백 `metric`('views'\|'likes')은 데이터에 확정 | [specs/2026-07-13-c1-account-detail-design.md](docs/superpowers/specs/2026-07-13-c1-account-detail-design.md) |
+| 2026-07-13 | B1 잔여분 `content_metric_snapshots` 미러 개통 — base 뷰에 이력 노출(`v_base_detail_history`) 추가, 서빙은 최신(`contents`)/이력(스냅샷) 분리 완성. was의 as-of 조회(태스크 D) 재료 | [plans/2026-07-13-task-b1-snapshot-mirror.md](docs/superpowers/plans/archive/2026-07-13-task-b1-snapshot-mirror.md) |
 | 2026-07-12 | **태스크 D: 상세 API 계약 확정** — 응답 블록=소스 테이블 1:1(post/account/comments), 참여율=(좋아요+댓글)/조회수(피드는 조회수 NULL이라 null)·경과일은 was 표현 조립, 댓글은 수집분 전체 서빙(좋아요순). LLM 블록(모달 우측 탭 5종·댓글 ai_category)은 필드 부재→B2·B3 산출물의 additive 확장은 후속 태스크. as-of 규칙은 스냅샷 미러 도입 시로 보류 유지. CORS `/api/**` GET(localhost:3000·celfit-front.vercel.app) | [plans/2026-07-12-task-d-post-detail-api.md](docs/superpowers/plans/2026-07-12-task-d-post-detail-api.md) |
 | 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](docs/superpowers/plans/archive/2026-07-12-task-f-b2-llm-comment-classification.md) |
 | 2026-07-12 | 게시물 **중복 크롤링 도입** — 지표 스냅샷 누적. 분석 층 서빙을 최신/이력으로 분리(`contents` = 최신, `content_metric_snapshots` = 시점별, B1에서 구현). as-of 선택 규칙은 D에서 | [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md) |

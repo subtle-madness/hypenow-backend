@@ -121,6 +121,11 @@ public class ContentAnalysisJob {
 				(String) content.get("content_type"), (Long) content.get("views"),
 				(Long) content.get("likes"), (Long) content.get("comments"),
 				baselineForPrompt, categoryCounts));
+		// content_analyses는 불변(INSERT만)이라 빈 결과가 저장되면 영구 고정 + 재분석 대상에서도 제외된다.
+		// 저장 전에 실패 처리해 콘텐츠 단위 try/catch가 skip → 다음 실행에서 재대상되게 한다.
+		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
+			throw new IllegalStateException("종합 텍스트가 비어 있음: " + shortCode);
+		}
 		analysis.update("""
 				INSERT INTO content_analyses (short_code, model,
 				  ai_content_summary, contents_pattern, ai_comment_insight,

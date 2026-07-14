@@ -11,7 +11,10 @@ SELECT DISTINCT ON (account_id)
   followers,
   captured_at,
   payload->>'fullName'      AS display_name,
-  payload->>'profilePicUrl' AS profile_image_url
+  payload->>'profilePicUrl' AS profile_image_url,
+  (payload->>'followsCount')::bigint AS follows_count,
+  (payload->>'postsCount')::bigint   AS posts_count,
+  payload->>'biography'              AS biography
 FROM raw_profile
 ORDER BY account_id, captured_at DESC, id DESC;
 
@@ -31,6 +34,18 @@ SELECT DISTINCT ON (content_id)
   payload->>'url'        AS original_url
 FROM raw_post_detail
 ORDER BY content_id, captured_at DESC, id DESC;
+
+-- 상세 스냅샷 이력 — 중복 크롤링 누적분 전체 (최신 1건 선택은 v_base_detail).
+-- 조회수 폴백 규칙은 v_base_detail과 동일하게 유지할 것.
+CREATE OR REPLACE VIEW analytics.v_base_detail_history AS
+SELECT
+  id,
+  content_id,
+  likes,
+  comments_count,
+  COALESCE(video_play_count, (payload->>'videoViewCount')::bigint) AS views,
+  captured_at
+FROM raw_post_detail;
 
 -- 콘텐츠 메타 (content 테이블 노출)
 CREATE OR REPLACE VIEW analytics.v_base_content AS

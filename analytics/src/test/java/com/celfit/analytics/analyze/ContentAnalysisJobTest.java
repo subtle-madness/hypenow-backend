@@ -11,10 +11,10 @@ import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.llm.SynthesisPort;
 import com.celfit.analytics.llm.VisionPort;
 import com.celfit.analytics.llm.VlmResult;
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,12 +68,8 @@ class ContentAnalysisJobTest {
 		db = new JdbcTemplate(ds);
 		synthesisCalls = new ArrayList<>();
 		visionCalls = new ArrayList<>();
-		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
-		// 테스트 간 완전 초기화 (B2 패턴 — content_analyses 포함)
-		db.update("DROP TABLE IF EXISTS content_analyses, comment_classifications, accounts, contents, content_comments");
-		db.update("DROP TABLE IF EXISTS app_setting, flyway_schema_history");
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis")
-				.baselineOnMigrate(true).baselineVersion("0").load().migrate();
+		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
+		TestDb.resetAndMigrate(db, ds);
 
 		// raw 대역: analytics.v_analysis_baseline과 같은 컬럼의 뷰 (고정 수치 테이블 기반).
 		// 실제 뷰의 컬럼 타입(numeric/bigint/smallint 혼재)을 그대로 재현해 JDBC 매퍼(getBigDecimal)를 검증한다.
@@ -205,6 +201,27 @@ class ContentAnalysisJobTest {
 		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
+	void 빈_종합_텍스트는_저장하지_않고_다른_콘텐츠는_처리된다() {
+		// 실전 스모크 재현: LLM이 텍스트 전부 빈 문자열인 Synthesis를 반환.
+		// content_analyses는 불변이라 빈 결과가 저장되면 영구 고정 + 재분석 대상에서도 제외된다.
+		rewireJob(content -> {
+			synthesisCalls.add(content);
+			if (content.shortCode().equals("post_a")) {
+				return new Synthesis("", "", "", "normal", "");
+			}
+			return new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거");
+		}, false);
+
+		int processed = job.run(); // 빈 결과는 실패 격리 경로로 skip — 예외가 전파되지 않아야 한다
+
+		assertEquals(1, processed); // post_b만 성공
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
 	}
 
 	@Test

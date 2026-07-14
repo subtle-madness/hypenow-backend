@@ -1,7 +1,6 @@
 package com.celfit.analytics.llm;
 
 import com.anthropic.client.AnthropicClient;
-import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.celfit.analytics.config.AnalyticsSettings;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
@@ -18,7 +17,7 @@ public class LlmConfig {
 
 	@Bean
 	public AnthropicClient anthropicClient() {
-		return AnthropicOkHttpClient.fromEnv(); // ANTHROPIC_API_KEY 필요
+		return LlmClientFactory.fromEnv(); // ANTHROPIC_AUTH_TOKEN(구독) 우선, 없으면 ANTHROPIC_API_KEY
 	}
 
 	@Bean
