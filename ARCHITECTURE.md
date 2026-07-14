@@ -11,11 +11,13 @@
 **hypenow** — 인스타그램 뷰티 인플루언서 콘텐츠 분석 툴.
 타깃: **마이크로인플루언서를 발굴하려는 뷰티 브랜드 마케터.**
 
-MVP 범위 (07-14 정정 — 드로어·댓글 제외):
+MVP 범위 (07-14 정정 — 댓글 제외):
 - 콘텐츠 랭킹 페이지 (운영 중 — was 대시보드)
-- **인플루언서 상세 페이지** — 랭킹에서 진입 (정체성·성과·일관성·커머셜 + 페르소나·AI 브리핑)
+- **게시물 상세 드로어** — 랭킹에서 클릭 시 (성과·벤치마크 + 감지·"왜 잘됐나" — 댓글 분석은 제외)
+- **인플루언서 상세 페이지** — 드로어에서 진입 (정체성·성과·일관성·커머셜 + 페르소나·AI 브리핑)
 - **후보 관리** — 후보 저장·상태(검토중/컨택 예정/협업 중)·메모
-- ※ **게시물 상세 드로어와 댓글 분석은 MVP 제외**(07-14) — D·D2·D3·B2 구현은 보존, MVP 이후 재개
+- ※ **댓글은 수집·분석 모두 MVP 제외**(07-14) — B2 구현은 보존, MVP 이후 재개.
+  댓글 외 LLM 산출(콘텐츠 감지·종합 텍스트·계정 카피)은 전부 MVP 포함
 
 기준 기획: 상세 분석 확정안 (2026-07-10 Artifact, 게시물 드로어 v3 + 인플루언서 상세 v4)
 프론트: celfit-front.vercel.app (별도 저장소)
@@ -188,8 +190,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" (07-14 VLM 잔여분 개통 — 어휘는 celfit-front 계약, 유통사 감지 포함) | F, B2 | ✅ |
 | C1 | 인플루언서 비LLM 집계 | AccountReport 결정 지표 — 계정 요약·카테고리 믹스·게시물 시계열 3종 뷰 + 미러 | A | ✅ |
 | C2 | 인플루언서 계정 LLM | AccountReport 카피 7종(tagline~paceNote) — stale+쿨다운 재분석·이력 INSERT. 캡션 분류(브랜드·광고·카테고리)는 별도 후속(§8) | F, C1 | ✅ |
-| D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출) — **드로어 MVP 제외(07-14), 구현 보존** | B1, B2·B3(확장분) | ✅ |
-| D3 | 드로어 as-of | `GET /api/posts/{shortCode}?endDate=` — 집계 기간 끝 시점 스냅샷으로 지표 재구성(captured_at ≤ endDate의 KST 하루 끝 중 최신), 스냅샷 없으면 404(그 시점 화면에 부재). 생략 시 최신 — **드로어 MVP 제외(07-14), 구현 보존** | D, B1(스냅샷 미러) | ✅ |
+| D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출). 댓글 수집 제외(07-14)로 comments·aiCategory는 유입 없음 | B1, B2·B3(확장분) | ✅ |
+| D3 | 드로어 as-of | `GET /api/posts/{shortCode}?endDate=` — 집계 기간 끝 시점 스냅샷으로 지표 재구성(captured_at ≤ endDate의 KST 하루 끝 중 최신), 스냅샷 없으면 404(그 시점 화면에 부재). 생략 시 최신 | D, B1(스냅샷 미러) | ✅ |
 | H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype. 유통사 필터는 컬럼 신설(VLM 개통) 전까지 매칭 0 | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫, LLM 카피 7종은 C2 additive | C1, C2(확장분) | ✅ |
 | G | 서비스 데이터 | `app` 스키마 신설 + 후보 저장·상태·메모 (로그인 등 일반 앱 데이터의 기반) | 독립 | ⬜ |
@@ -218,7 +220,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
-| 2026-07-14 | **MVP 범위·데이터 정책 정정 5건** — ① 크롤링 개편의 "최근 3개월"은 **초기 확보(백필) 시작 범위**이고 지표 윈도우와 무관 — 계정 지표 윈도우는 **최근 24개**(개수 기반 유지, `analytics.recent-window` 12→24). ② **댓글 수집 MVP 제외** — B2·`content_comments` 경로 신규 유입 없음(구현 보존). ③ **게시물 지표는 업로드 +3일 시점 고정** — `contents`가 최신 스냅샷을 따라가는 구조 폐기, 재크롤 스냅샷은 이력 보존(인플루언서 상세 조회 참조용). ④ **캡션 LLM 산출 5종 확정: 광고 구분·카테고리·브랜드·제품·유통사** — 항목 목록은 수정 용이 구조로(하드코딩 대신 설정/데이터 기반). ⑤ **게시물 상세 드로어 MVP 제외** — D·D2·D3 구현 보존, MVP 서빙은 랭킹(H)+인플루언서 상세(E) | 2026-07-14 방향 정리 세션 |
+| 2026-07-14 | **MVP 범위·데이터 정책 정정 4건** — ① 크롤링 개편의 "최근 3개월"은 **초기 확보(백필) 시작 범위**이고 지표 윈도우와 무관 — 계정 지표 윈도우는 **최근 24개**(개수 기반 유지, `analytics.recent-window` 12→24). ② **댓글은 수집·분석 모두 MVP 제외** — B2·`content_comments` 경로 신규 유입 없음(구현 보존). 댓글 외 LLM 산출(콘텐츠 감지·종합 텍스트·계정 카피)은 전부 MVP 포함, 게시물 상세 드로어도 MVP 유지(댓글 분석 탭만 데이터 부재). ③ **게시물 지표는 업로드 +3일 시점 고정** — `contents`가 최신 스냅샷을 따라가는 구조 폐기, 재크롤 스냅샷은 이력 보존(인플루언서 상세 조회 참조용). ④ **캡션 LLM 산출 5종 확정: 광고 구분·카테고리·브랜드·제품·유통사** — 항목 목록은 수정 용이 구조로(하드코딩 대신 설정/데이터 기반) | 2026-07-14 방향 정리 세션 |
 | 2026-07-14 | **태스크 E: 인플루언서 상세 API 계약 확정** — 응답 = profile(accounts ⊕ account_summaries, accounts 부재 시 표시 필드 null) + report(C1 지표 전달). 주 리소스는 account_summaries(부재 404). 표현 조립 이행: 경과일 24h 단위·isActive=14일 미만·lastAdNote 문구("마지막 광고 오늘"/"N일 전")·광고 strip(시계열 순 bool). comparison은 organic/ad 평균 한쪽이라도 null이면 블록 null. LLM 카피 7종(summary·trend.note·traits·headline·brands·paceNote·tagline)은 필드 부재 → C2 additive | [plans/2026-07-14-task-e-influencer-api.md](docs/superpowers/plans/2026-07-14-task-e-influencer-api.md) |
 | 2026-07-14 | **크롤링 구조 개편 방향 확정** — 인플루언서 리스트를 먼저 확보 → 계정별 최근 3개월 게시물 크롤 → 매일 신규 게시물만 추가 크롤(기존 게시물 재크롤은 조회수 등 지표 갱신 수준, 콘텐츠 재분석 없음). 게시물 분류는 discovery 키워드 대신 **caption 감지**로 가는 방향. 파생 후속 3건(윈도우 기간 전환·B3 숙성 가드·캡션 분류 태스크)은 §8 | [specs/2026-07-14-c2-account-llm-design.md §6](docs/superpowers/specs/2026-07-14-c2-account-llm-design.md) |
 | 2026-07-14 | **태스크 C2 설계 확정** — AccountReport 카피 7종을 계정당 LLM 1콜로 생성, `account_analyses`(V20 — V11에서 renumber, B3 잔여분 선점 충돌) 이력 INSERT. 재분석 = 신규 즉시 / stale(새 게시물)+**쿨다운 7일**(매일 크롤 대비 비용 가드). adHeadline은 광고 비교 데이터 있을 때만. 계약 record `AccountAnalysis` 신설 — 분석 층 테이블도 생산자가 record로 조립·소비하면 §4-4 쌍 성립 | [specs/2026-07-14-c2-account-llm-design.md](docs/superpowers/specs/2026-07-14-c2-account-llm-design.md) |
