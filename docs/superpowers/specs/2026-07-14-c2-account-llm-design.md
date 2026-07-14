@@ -47,7 +47,10 @@ E는 숫자(C1 미러)와 카피(본 테이블)를 합쳐 서빙한다.
    `analytics.account-analyze-batch-limit`(기본 10), `analytics.account-analyze-cooldown-days`(기본 7).
    배선 게이트는 신규 프로퍼티 `analytics.account-analyze-on-startup=true` (콘텐츠 분석과 독립 실행).
 
-## 3. 저장 — `account_analyses` (analysis DB, Flyway V11, 분석 층 소유·Java 직접 쓰기)
+## 3. 저장 — `account_analyses` (analysis DB, Flyway V20, 분석 층 소유·Java 직접 쓰기)
+
+(원래 V11로 설계했으나 B3 잔여분 `V11__detected_distributors`가 공유 DB를 선점해 충돌 — V20으로 이동, 07-14.
+인플루언서 트랙은 C1의 V10과 나란한 10·20번대 번호를 예약한다.)
 
 ```
 handle                 text NOT NULL
