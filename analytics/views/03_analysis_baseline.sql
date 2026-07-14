@@ -3,9 +3,13 @@
 -- 조회수 비교 모수(릴스)와 참여 지표 모수(최근 N개 전체)를 분리해 함께 기록한다.
 CREATE OR REPLACE VIEW analytics.v_analysis_baseline AS
 WITH windowed AS (
-  SELECT *,
-         round((likes + comments_count)::numeric / NULLIF(views, 0), 4) AS er
-  FROM analytics.v_recent_content
+  -- captured_at은 최신 수집분 우선 정렬용 (B3 VLM — 썸네일 서명 URL 만료 대응).
+  -- v_recent_content에 넣지 않고 여기서 조인하는 이유: star-select 하위 뷰(10번)의 컬럼 위치를 지키기 위함.
+  SELECT w.*,
+         round((w.likes + w.comments_count)::numeric / NULLIF(w.views, 0), 4) AS er,
+         d.captured_at
+  FROM analytics.v_recent_content w
+  JOIN analytics.v_base_detail d USING (content_id)
 ),
 account_agg AS (
   SELECT owner_username,
@@ -43,7 +47,8 @@ SELECT
   a.recent12_avg_comment_count,
   c.category_top_percentile,
   c.category_avg_views,
-  c.category_sample_size
+  c.category_sample_size,
+  w.captured_at
 FROM windowed w
 JOIN account_agg a USING (owner_username)
 LEFT JOIN reels_rank r USING (content_id)

@@ -43,14 +43,17 @@ BEGIN
     'v_base_profile dummy_a display_name != 더미 에이';
   ASSERT (SELECT profile_image_url FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'https://pic/a.jpg',
     'v_base_profile dummy_a profile_image_url != latest a.jpg';
-  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://thumb/dummy_r1.jpg',
-    'v_base_detail 9101 thumbnail_url != latest';
+  -- 신형 payload(최상위 displayUrl 없음) → _rawDetail...display_uri 폴백 (B3 VLM 잔여분)
+  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://thumb/dummy_r1_new.jpg',
+    'v_base_detail 9101 thumbnail_url != nested display_uri fallback';
+  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 9102) = 'https://thumb/dummy_r2.jpg',
+    'v_base_detail 9102 thumbnail_url != displayUrl (구형 우선)';
   ASSERT (SELECT original_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://www.instagram.com/p/dummy_r1/',
     'v_base_detail 9101 original_url mismatch';
 
-  -- 스냅샷 이력 노출 (B1 잔여분): 9101은 구/신 2행, 구스냅샷 views=10000
-  ASSERT (SELECT count(*) FROM analytics.v_base_detail_history WHERE content_id = 9101) = 2,
-    'v_base_detail_history 9101 rows != 2';
+  -- 스냅샷 이력 노출 (B1 잔여분): 9101은 구/중/신 3행, 구스냅샷 views=10000
+  ASSERT (SELECT count(*) FROM analytics.v_base_detail_history WHERE content_id = 9101) = 3,
+    'v_base_detail_history 9101 rows != 3';
   ASSERT (SELECT views FROM analytics.v_base_detail_history
           WHERE content_id = 9101 ORDER BY captured_at ASC LIMIT 1) = 10000,
     'v_base_detail_history 9101 oldest views != 10000';

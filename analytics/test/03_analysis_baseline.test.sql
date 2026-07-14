@@ -25,4 +25,12 @@ BEGIN
     'dummy_r3 top percentile != 34';
   ASSERT (SELECT category_top_percentile FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 67,
     'dummy_r1 top percentile != 67';
+
+  -- 수집 시각 노출 (B3 VLM 잔여분): 분석 잡이 최신 수집분 우선 정렬에 쓴다 — 최신 스냅샷의 captured_at
+  ASSERT (SELECT captured_at FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1')
+         = timestamptz '2026-06-06 09:00:00+09',
+    'dummy_r1 captured_at != 최신 스냅샷 (06-06)';
+  ASSERT (SELECT captured_at FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r3')
+         = timestamptz '2026-06-07 09:00:00+09',
+    'dummy_r3 captured_at != 06-07';
 END $$;
