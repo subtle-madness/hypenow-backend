@@ -14,9 +14,15 @@ public class AnalyticsSettings {
 	public static final String KEY_LLM_MODEL = "analytics.llm-model";
 	/** 1회 실행당 분석(LLM 호출) 콘텐츠 수 상한 — 비용 가드. */
 	public static final String KEY_ANALYZE_BATCH_LIMIT = "analytics.analyze-batch-limit";
+	/** 1회 실행당 계정 카피(LLM 호출) 계정 수 상한 — 비용 가드. */
+	public static final String KEY_ACCOUNT_ANALYZE_BATCH_LIMIT = "analytics.account-analyze-batch-limit";
+	/** stale 계정 재분석 최소 간격(일) — 매일 크롤 구조에서 계정당 매일 호출 방지 (스펙 §2-2). */
+	public static final String KEY_ACCOUNT_ANALYZE_COOLDOWN_DAYS = "analytics.account-analyze-cooldown-days";
 
 	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
+	static final int DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT = 10;
+	static final int DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS = 7;
 
 	private final JdbcTemplate raw;
 
@@ -30,6 +36,16 @@ public class AnalyticsSettings {
 
 	public int analyzeBatchLimit() {
 		return read(KEY_ANALYZE_BATCH_LIMIT).map(Integer::parseInt).orElse(DEFAULT_ANALYZE_BATCH_LIMIT);
+	}
+
+	public int accountAnalyzeBatchLimit() {
+		return read(KEY_ACCOUNT_ANALYZE_BATCH_LIMIT).map(Integer::parseInt)
+				.orElse(DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT);
+	}
+
+	public int accountAnalyzeCooldownDays() {
+		return read(KEY_ACCOUNT_ANALYZE_COOLDOWN_DAYS).map(Integer::parseInt)
+				.orElse(DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS);
 	}
 
 	private java.util.Optional<String> read(String key) {
