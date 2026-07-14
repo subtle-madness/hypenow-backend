@@ -119,4 +119,23 @@ class BeautyJobTest {
                 InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE);
         // MANUAL 선정 쿼리는 존재하지 않음 — findByStatusAndBeautySource(…, "MANUAL") 호출 자체가 없다
     }
+
+    @Test
+    void 두_선정_쿼리에_같은_인플루언서가_겹치면_한_번만_판정한다() {
+        Influencer a = qualified(1L, "a");
+        when(influencers.findByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED)).thenReturn(List.of(a));
+        when(influencers.findByStatusAndBeautySource(
+                InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE)).thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
+        when(judge.judge(any())).thenAnswer(inv -> {
+            List<BeautyJudge.ProfileCard> cards = inv.getArgument(0);
+            assertThat(cards).hasSize(1);
+            return List.of(new BeautyJudge.Verdict("a", true, "메이크업"));
+        });
+
+        var s = job.run(TriggerType.MANUAL, true);
+
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+    }
 }

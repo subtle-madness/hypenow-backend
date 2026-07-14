@@ -58,6 +58,7 @@ public class BeautyJob {
         Map<String, Influencer> byUsername = new HashMap<>();
         int skipped = 0;
         for (Influencer inf : targets) {
+            if (byUsername.containsKey(inf.getUsername())) continue;  // 두 선정 쿼리 중복 방어
             var rp = rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(inf.getId());
             if (rp.isEmpty()) { skipped++; continue; }
             RawProfile p = rp.get();
