@@ -102,7 +102,7 @@ was/src/test/java/com/celfit/was/contentlist/
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
-`ContentListRepositoryTest.java` — `IntegrationTest` 상속, `@BeforeEach`에서 5테이블 DROP/CREATE(기존 PostDetailRepositoryTest와 동일 DDL: accounts·contents·content_analyses·content_metric_snapshots — content_comments 불필요) 후 위 시드 매트릭스 INSERT. 테스트 12개:
+`ContentListRepositoryTest.java` — `IntegrationTest` 상속, `@BeforeEach`에서 5테이블 DROP/CREATE(기존 PostDetailRepositoryTest와 동일 DDL: accounts·contents·content_analyses·content_metric_snapshots — content_comments 불필요) 후 위 시드 매트릭스 INSERT. 테스트 12개(리뷰 후속으로 13개):
 
 ```java
 	private ContentListQuery query() {
@@ -360,7 +360,7 @@ public class ContentListRepository {
 
 주의: `jsonb_array_length(an.detected_brands)`는 NULL jsonb에 NULL을 반환한다(정상). JdbcClient `.params(Map)` 사용.
 
-- [ ] **Step 4: 실행 — 12개 PASS 확인**
+- [ ] **Step 4: 실행 — 12개 PASS 확인** (리뷰 후속 fix까지 13개)
 
 - [ ] **Step 5: Commit** — `feat(was): 랭킹 목록 조회 — 기간·분석완료·as-of 스냅샷 교집합 + 필터·정렬 (동적 WHERE)`
 
@@ -448,7 +448,7 @@ public class ContentListRepository {
 
 ## 완료 기준 (DoD)
 
-- 신규 테스트 19개(리포지토리 12·어셈블러 3·컨트롤러 4) + was 전체·전 모듈 그린
+- 신규 테스트 20개(리포지토리 13·어셈블러 3·컨트롤러 4) + was 전체·전 모듈 그린
 - 실DB E2E: 목록이 as-of 지표로 서빙, VLM null 필터는 0건으로 자연 저하, 400 동작
 - distributor 활성화 지점이 주석·테스트로 고정
 
