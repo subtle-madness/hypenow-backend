@@ -143,6 +143,23 @@ class InfluencerDetailAssemblerTest {
 	}
 
 	@Test
+	void 광고_평균_한쪽만_null이어도_비교_블록은_null이다() {
+		// organic_avg는 있고 ad_avg만 null — either-null 규칙 (&&로 회귀하면 이 테스트가 잡는다)
+		AccountSummary adAvgOnlyNull = new AccountSummary("glow", 42555L, 312L, 486L, "건성 8년차",
+				12L, 10L, "views", 30600L, new BigDecimal("1.3"),
+				new BigDecimal("4.3"), 5515L, 90L,
+				"up", 18, 25000L, 29500L,
+				1L, 30600L, null, null,
+				6L, 1L, OffsetDateTime.parse("2026-07-11T00:00:00Z"),
+				OffsetDateTime.parse("2026-07-12T00:00:00Z"), new BigDecimal("2.4"));
+
+		InfluencerDetailResponse response =
+				assembler.toResponse(adAvgOnlyNull, glowAccount(), glowCategoryStats(), glowSeries());
+
+		assertThat(response.report().ads().comparison()).isNull();
+	}
+
+	@Test
 	void 오늘_업로드면_경과일_0이고_오늘_문구다() {
 		AccountSummary today = new AccountSummary("glow", 42555L, 312L, 486L, "건성 8년차",
 				12L, 10L, "views", 30600L, new BigDecimal("1.3"),
