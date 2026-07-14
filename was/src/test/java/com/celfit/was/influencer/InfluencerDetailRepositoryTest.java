@@ -2,11 +2,13 @@ package com.celfit.was.influencer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
 import com.celfit.was.IntegrationTest;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -113,6 +115,33 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 				 ('g2', 'glow', '2026-07-05T00:00:00Z', 'feed', NULL, 300, 30, true),
 				 ('g3', 'glow', '2026-07-08T00:00:00Z', 'reels', 2000, 150, 15, false)
 				""");
+
+		// 계정 LLM 카피 이력: V20__account_analyses.sql과 동일 형상 — 이력 2행(최신 1행만 유효)
+		jdbcTemplate.execute("DROP TABLE IF EXISTS account_analyses");
+		jdbcTemplate.execute("""
+				CREATE TABLE account_analyses (
+				    handle               text NOT NULL,
+				    analyzed_at          timestamptz NOT NULL,
+				    model                text NOT NULL,
+				    input_last_posted_at timestamptz,
+				    input_analyzed_count bigint,
+				    tagline              text,
+				    summary              text,
+				    trend_note           text,
+				    chart_note           text,
+				    traits               jsonb,
+				    ad_headline          text,
+				    pace_note            text,
+				    PRIMARY KEY (handle, analyzed_at)
+				)""");
+		jdbcTemplate.update("""
+				INSERT INTO account_analyses VALUES
+				 ('glow', '2026-07-10T00:00:00Z', 'opus', '2026-07-08T00:00:00Z', 11,
+				  '옛 태그라인', '옛 요약', '옛 흐름', '옛 차트', '["옛 성향"]', NULL, '옛 페이스'),
+				 ('glow', '2026-07-13T00:00:00Z', 'opus', '2026-07-12T00:00:00Z', 12,
+				  '건성 피부 신뢰 리뷰어', 'AI 분석 요약 문단', '상승 흐름 유지 중', '릴스가 평균을 끌어올림',
+				  '["솔직 후기","루틴 중심","건성 특화"]', '광고에서도 평균의 88%를 유지', '이틀에 한 번 꾸준한 페이스')
+				""");
 	}
 
 	@Test
@@ -146,7 +175,28 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 분석_이력은_계정별_최신_1행을_계약_record로_읽는다() {
+		Optional<AccountAnalysis> found = repository.findLatestAnalysis("glow");
+		assertThat(found).isPresent();
+		AccountAnalysis analysis = found.get();
+		assertThat(analysis.analyzedAt()).isEqualTo(OffsetDateTime.parse("2026-07-13T00:00:00Z"));
+		assertThat(analysis.tagline()).isEqualTo("건성 피부 신뢰 리뷰어");
+		assertThat(analysis.summary()).isEqualTo("AI 분석 요약 문단");
+		assertThat(analysis.trendNote()).isEqualTo("상승 흐름 유지 중");
+		assertThat(analysis.chartNote()).isEqualTo("릴스가 평균을 끌어올림");
+		assertThat(analysis.traits()).containsExactly("솔직 후기", "루틴 중심", "건성 특화");
+		assertThat(analysis.adHeadline()).isEqualTo("광고에서도 평균의 88%를 유지");
+		assertThat(analysis.paceNote()).isEqualTo("이틀에 한 번 꾸준한 페이스");
+	}
+
+	@Test
+	void 분석_이력이_없는_계정이면_empty다() {
+		assertThat(repository.findLatestAnalysis("nope")).isEmpty();
+	}
+
+	@Test
 	void 미러_테이블이_없으면_빈_값으로_저하한다() {
+		jdbcTemplate.execute("DROP TABLE account_analyses");
 		jdbcTemplate.execute("DROP TABLE account_content_series");
 		jdbcTemplate.execute("DROP TABLE account_category_stats");
 		jdbcTemplate.execute("DROP TABLE account_summaries");
@@ -156,5 +206,6 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 		assertThat(repository.findAccount("glow")).isEmpty();
 		assertThat(repository.findCategoryStats("glow")).isEmpty();
 		assertThat(repository.findSeries("glow")).isEmpty();
+		assertThat(repository.findLatestAnalysis("glow")).isEmpty();
 	}
 }
