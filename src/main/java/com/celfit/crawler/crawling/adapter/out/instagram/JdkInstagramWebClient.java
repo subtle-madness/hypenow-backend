@@ -107,7 +107,19 @@ public class JdkInstagramWebClient implements InstagramWebClient {
             String cookie = res.headers().firstValue("set-cookie").orElse("");
             return new Response(res.statusCode(), res.body(), Map.of("set-cookie", cookie));
         } catch (Exception e) {
+            if (isInterceptedServerUnauthorized(e)) return new Response(401, "", Map.of());
             throw new ApifyException("인스타 요청 실패: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Authenticator(프록시 자격증명)가 등록된 JDK HttpClient는 서버 401에 WWW-Authenticate
+     * 헤더가 없으면 응답 대신 IOException을 던진다. 인스타그램의 401은 챌린지 헤더가 없으므로
+     * 항상 이 경로로 온다 — 호출자가 계정·게시물 단위로 스킵할 수 있게 401 응답으로 복원한다.
+     * (프록시 407 챌린지 부재는 프록시 설정 문제이므로 예외 유지)
+     */
+    static boolean isInterceptedServerUnauthorized(Exception e) {
+        String msg = e.getMessage();
+        return msg != null && msg.contains("WWW-Authenticate header missing for response code 401");
     }
 }

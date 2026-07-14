@@ -40,10 +40,24 @@ public class JobService implements TriggerJobUseCase {
         if (!lock.tryAcquire(job)) return TriggerResult.BUSY;
         taskExecutor.execute(() -> {
             try {
+                // 부분 실패(청크·키워드·방문 단위)는 잡을 멈추지 않지만 로그 레벨로 드러낸다 —
+                // "완료" INFO와 실행 이력의 FAILED run이 모순처럼 보이던 문제 방지.
                 switch (job) {
-                    case DISCOVER -> log.info("discover 완료: {}", discoverJob.run(triggerType));
-                    case QUALIFY -> log.info("qualify 완료: {}", qualifyJob.run(triggerType, requalify));
-                    case COLLECT -> log.info("collect 완료: {}", collectJob.run(triggerType));
+                    case DISCOVER -> {
+                        var s = discoverJob.run(triggerType);
+                        if (s.failedKeywords() > 0) log.warn("discover 완료(부분 실패): {}", s);
+                        else log.info("discover 완료: {}", s);
+                    }
+                    case QUALIFY -> {
+                        var s = qualifyJob.run(triggerType, requalify);
+                        if (s.failedChunks() > 0) log.warn("qualify 완료(프로필 수집 부분 실패): {}", s);
+                        else log.info("qualify 완료: {}", s);
+                    }
+                    case COLLECT -> {
+                        var s = collectJob.run(triggerType);
+                        if (s.failedVisits() > 0) log.warn("collect 완료(방문 부분 실패): {}", s);
+                        else log.info("collect 완료: {}", s);
+                    }
                 }
             } catch (Exception e) {
                 log.error("{} 잡 실패", job, e);

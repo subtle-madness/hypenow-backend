@@ -31,7 +31,8 @@ public class QualifyJob {
     /** raw 원형 수집 시 액터/HikerAPI 호출을 묶는 청크 크기. */
     static final int PROFILE_CHUNK = 50;
 
-    public record Summary(int profiled, int qualified, int excluded, int deferred) {}
+    /** failedChunks: 프로필 수집 청크 실패 수 — 0이 아니면 일부 계정이 deferred로 밀린 이유가 실패다. */
+    public record Summary(int profiled, int qualified, int excluded, int deferred, int failedChunks) {}
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
@@ -53,7 +54,8 @@ public class QualifyJob {
         List<Influencer> targets = new ArrayList<>(influencers.findByStatus(
                 InfluencerStatus.DISCOVERED, PageRequest.of(0, settings.qualifyBatchLimit())));
 
-        int profiled = profileMissing(targets, trigger);
+        ProfileResult pr = profileMissing(targets, trigger);
+        int profiled = pr.profiled();
 
         if (requalify) {
             targets.addAll(influencers.findByStatus(InfluencerStatus.QUALIFIED, Pageable.unpaged()));
@@ -69,13 +71,15 @@ public class QualifyJob {
             inf.setStatus(pass ? InfluencerStatus.QUALIFIED : InfluencerStatus.EXCLUDED);
             if (pass) qualified++; else excluded++;
         }
-        return new Summary(profiled, qualified, excluded, deferred);
+        return new Summary(profiled, qualified, excluded, deferred, pr.failedChunks());
     }
 
-    private int profileMissing(List<Influencer> targets, TriggerType trigger) {
+    private record ProfileResult(int profiled, int failedChunks) {}
+
+    private ProfileResult profileMissing(List<Influencer> targets, TriggerType trigger) {
         List<Influencer> toProfile = targets.stream()
                 .filter(i -> i.getLastProfiledAt() == null).toList();
-        int profiled = 0;
+        int profiled = 0, failedChunks = 0;
         for (List<Influencer> chunk : ActorInputs.chunk(toProfile, PROFILE_CHUNK)) {
             List<String> names = chunk.stream().map(Influencer::getUsername).toList();
             CrawlExecutor.Execution ex;
@@ -83,6 +87,7 @@ public class QualifyJob {
             try {
                 ex = profileSourceSelector.fetchAndSupplement(names, trigger);
             } catch (ApifyException e) {
+                failedChunks++;  // crawl_run에 FAILED 기록됨 — 해당 청크 계정은 다음 실행 재시도
                 continue;
             }
             Map<String, Influencer> byName = chunk.stream()
@@ -100,6 +105,6 @@ public class QualifyJob {
                 profiled++;
             }
         }
-        return profiled;
+        return new ProfileResult(profiled, failedChunks);
     }
 }

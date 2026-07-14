@@ -151,6 +151,24 @@ class QualifyJobTest {
     }
 
     @Test
+    void 프로필_청크가_실패하면_failedChunks로_드러나고_deferred로_밀린다() {
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer bob = influencer(1L, "bob", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+                .thenReturn(new ArrayList<>(List.of(bob)));
+        when(selector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(selector.fetchAndSupplement(List.of("bob"), TriggerType.MANUAL))
+                .thenThrow(new com.celfit.crawler.crawling.application.port.out.ApifyException("401"));
+
+        var summary = job.run(TriggerType.MANUAL, false);
+
+        // 잡은 계속되지만(다음 실행 재시도) 실패가 Summary에 드러난다 — "완료" 로그와 FAILED run의 모순 방지
+        assertThat(summary.failedChunks()).isEqualTo(1);
+        assertThat(summary.deferred()).isEqualTo(1);
+        assertThat(bob.getStatus()).isEqualTo(InfluencerStatus.DISCOVERED);
+    }
+
+    @Test
     void requalify_true면_QUALIFIED_EXCLUDED도_기존_followers로_재판정하되_재호출은_없다() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
