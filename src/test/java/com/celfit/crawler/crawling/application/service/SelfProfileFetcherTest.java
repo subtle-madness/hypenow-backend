@@ -100,4 +100,57 @@ class SelfProfileFetcherTest {
         assertThat(ex.items()).hasSize(1);
         assertThat(ProfileExtractor.username(ex.items().get(0), RawSource.SELF_GQL)).isEqualTo("ok_user");
     }
+
+    // 429(rate limit)가 연속으로 임계값만큼 나면 IP 스로틀 신호로 보고 남은 계정을 두드리지 않고 중단한다.
+    // (스로틀 상태에서 계속 두드리면 스로틀만 깊어지고 홈 IP까지 위험)
+    @Test void 연속_429가_임계값에_도달하면_남은_계정을_두드리지_않고_중단한다() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                calls.incrementAndGet();
+                return new Response(429, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        // 20명을 넣어도 임계값만큼만 호출하고 멈춘다.
+        List<String> many = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "u" + i).toList();
+        var ex = f.fetch(JobName.QUALIFY, many, TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(calls.get()).isEqualTo(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT);
+        assertThat(calls.get()).isLessThan(20);
+    }
+
+    // 성공(200)이 사이에 끼면 연속 카운터가 리셋 — 간헐적 429는 회로를 트립시키지 않는다.
+    @Test void 성공이_사이에_끼면_429_연속_카운터가_리셋되어_중단하지_않는다() {
+        // 패턴: 429, 429, 200, 429, 429 ... (연속 429가 임계값에 도달하지 않음)
+        java.util.concurrent.atomic.AtomicInteger idx = new java.util.concurrent.atomic.AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                int n = idx.getAndIncrement();
+                if (n == 2) {
+                    return new Response(200,
+                            """
+                            {"data":{"user":{"username":"ok_user","id":"1","edge_followed_by":{"count":10}}}}""",
+                            Map.of());
+                }
+                return new Response(429, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        List<String> five = List.of("a", "b", "ok_user", "d", "e"); // 총 5명
+        var ex = f.fetch(JobName.QUALIFY, five, TriggerType.MANUAL);
+
+        // 200이 3번째에서 카운터를 리셋했으므로 이후 429 2연속으론 임계값(5) 미달 → 5명 전부 시도
+        assertThat(idx.get()).isEqualTo(5);
+        assertThat(ex.items()).hasSize(1);
+    }
 }

@@ -27,6 +27,8 @@ import tools.jackson.databind.ObjectMapper;
 public class SelfProfileFetcher implements ProfileFetcher {
 
     static final String LABEL = "profile-self";
+    /** 연속 429(rate limit) 회로 차단기 임계값 — 이만큼 연달아 나면 배치를 중단해 IP 스로틀 심화·차단을 막는다. */
+    static final int RATE_LIMIT_STREAK_LIMIT = 5;
     private static final Logger log = LoggerFactory.getLogger(SelfProfileFetcher.class);
     private static final String URL =
             "https://www.instagram.com/api/v1/users/web_profile_info/?username=";
@@ -58,7 +60,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
 
     private List<Map<String, Object>> collect(List<String> usernames) {
         List<Map<String, Object>> out = new ArrayList<>();
-        int total = usernames.size(), i = 0;
+        int total = usernames.size(), i = 0, rateLimitStreak = 0;
         for (String u : usernames) {
             i++;
             // 계정 단위 격리 — 프록시가 커넥션을 중간에 끊으면(TLS BUFFER_UNDERFLOW 등) 요청이
@@ -67,6 +69,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
             try {
                 InstagramWebClient.Response res = web.get(URL + u);
                 if (res.status() == 200) {
+                    rateLimitStreak = 0;   // 성공 = 스로틀 해소 신호, 회로 카운터 리셋
                     Map<String, Object> p = readRoot(res.body());
                     if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) {
                         out.add(p);
@@ -74,7 +77,16 @@ public class SelfProfileFetcher implements ProfileFetcher {
                     } else {
                         log.info("프로필 ({}/{}) {} — 스킵(응답에 계정 없음)", i, total, u);
                     }
+                } else if (res.status() == 429) {
+                    // rate limit — 연속으로 임계값에 도달하면 IP 스로틀로 판단, 남은 계정은 두드리지 않고 중단.
+                    if (++rateLimitStreak >= RATE_LIMIT_STREAK_LIMIT) {
+                        log.warn("프로필 429 연속 {}회 — IP 스로틀로 판단해 배치 중단(남은 {}명은 다음 실행 재시도)",
+                                rateLimitStreak, total - i);
+                        break;
+                    }
+                    log.info("프로필 ({}/{}) {} — 스킵(429 rate limit, 연속 {}회)", i, total, u, rateLimitStreak);
                 } else {
+                    rateLimitStreak = 0;
                     log.info("프로필 ({}/{}) {} — 스킵(HTTP {})", i, total, u, res.status());
                 }
             } catch (ApifyException e) {
