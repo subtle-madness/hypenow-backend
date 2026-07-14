@@ -40,6 +40,8 @@ class SimilarJobTest {
     com.celfit.crawler.settings.application.service.SettingsService settings =
             mock(com.celfit.crawler.settings.application.service.SettingsService.class);
 
+    java.util.List<Integer> capturedRequestCounts = new java.util.ArrayList<>();
+
     SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings, CLOCK);
 
     static Influencer seed(Long id, String username, String igUserId) {
@@ -59,6 +61,7 @@ class SimilarJobTest {
         when(executor.execute(any(), any(), any(), any(), any(), any(Supplier.class)))
                 .thenAnswer(inv -> {
                     ApifyResult r = ((Supplier<ApifyResult>) inv.getArgument(5)).get();
+                    capturedRequestCounts.add(r.requestCount());
                     return new CrawlExecutor.Execution(1L, r.items());
                 });
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -88,6 +91,7 @@ class SimilarJobTest {
             assertThat(rec.getKeyword()).isEqualTo("유사:seed1");
             assertThat(rec.getDiscoveredPostShortCode()).isNull();
         });
+        assertThat(capturedRequestCounts).containsExactly(1);  // pk 보유 — suggested 1회만
     }
 
     @Test
@@ -119,6 +123,7 @@ class SimilarJobTest {
 
         assertThat(s.getIgUserId()).isEqualTo("777");
         assertThat(summary.processedSeeds()).isEqualTo(1);
+        assertThat(capturedRequestCounts).containsExactly(2);  // pk 해석 1회 + suggested 1회
     }
 
     @Test
