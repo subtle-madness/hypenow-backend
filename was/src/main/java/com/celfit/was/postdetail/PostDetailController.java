@@ -36,8 +36,8 @@ public class PostDetailController {
 		Content content = repository.findContent(shortCode)
 				.orElseThrow(() -> notFound(shortCode));
 		Optional<AsOfMetrics> asOf = Optional.ofNullable(endDate).map(d -> {
-			// KST 오프셋(+09:00) 그대로면 OffsetDateTime.equals()가 UTC 표기(Z)와 달라 리포지토리
-			// 조회·테스트 매칭이 어긋난다 — 같은 순간을 UTC 오프셋으로 정규화해 비교 안정성을 확보.
+			// UTC 정규화는 같은 순간의 표기 통일 — DB(timestamptz) 비교는 순간 기준이라 무관하고,
+			// OffsetDateTime.equals()가 오프셋까지 비교하는 탓에 테스트 스텁 매칭·로그 표기가 어긋나는 것을 막는다.
 			OffsetDateTime cutoff = d.plusDays(1).atStartOfDay(KST)
 					.toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC);
 			ContentMetricSnapshot snapshot = repository.findSnapshotAsOf(shortCode, cutoff)
