@@ -3,6 +3,7 @@ package com.celfit.analytics.mirror;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.celfit.contract.analysis.Account;
+import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
@@ -74,6 +75,11 @@ class FlywaySchemaTest {
 	@Test
 	void account_content_series_테이블_컬럼이_record와_일치한다() {
 		assertColumnsMatch("account_content_series", AccountContentPoint.class);
+	}
+
+	@Test
+	void account_analyses_테이블_컬럼이_record와_일치한다() {
+		assertColumnsMatch("account_analyses", AccountAnalysis.class);
 	}
 
 	private void assertColumnsMatch(String table, Class<? extends Record> recordType) {

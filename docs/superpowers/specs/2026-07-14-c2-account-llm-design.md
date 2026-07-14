@@ -50,7 +50,6 @@ E는 숫자(C1 미러)와 카피(본 테이블)를 합쳐 서빙한다.
 ## 3. 저장 — `account_analyses` (analysis DB, Flyway V11, 분석 층 소유·Java 직접 쓰기)
 
 ```
-id                     bigserial PK
 handle                 text NOT NULL
 analyzed_at            timestamptz NOT NULL
 model                  text
@@ -61,7 +60,7 @@ traits                 jsonb         -- 문자열 배열 3~5개
 ad_headline            text          -- nullable (§2-4)
 ```
 
-인덱스 `(handle, analyzed_at DESC)`. 미러 테이블과 FK 없음(논리 참조).
+PK `(handle, analyzed_at)` — 자연키가 최신 조회 인덱스를 겸한다. 미러 테이블과 FK 없음(논리 참조).
 계약 record: `AccountAnalysis(handle, analyzedAt, model, inputLastPostedAt, inputAnalyzedCount,
 tagline, summary, trendNote, chartNote, traits, adHeadline, paceNote)` — traits는 `List<String>`
 (jsonb 직렬화는 잡/소비자 각자의 매핑 계층에서, record는 순수 JDK 유지).
