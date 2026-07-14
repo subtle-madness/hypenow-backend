@@ -1,6 +1,6 @@
 # 태스크 H: 랭킹 목록 API (`GET /api/contents`) Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-14)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** celfit-front 랭킹 페이지의 목록 데이터를 서빙한다 — 프론트 URL 파라미터 계약 그대로, 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 상위 100개.
@@ -70,7 +70,7 @@ was/src/test/java/com/celfit/was/contentlist/
 **테스트 시드 매트릭스 (Testcontainers, 기대값 근거):**
 
 계정 2: `alpha`(followers 5000) · `beta`(followers 20000)
-콘텐츠 5 (posted_at은 KST 정오 = UTC 03:00):
+콘텐츠 6 (posted_at은 KST 정오 = UTC 03:00):
 
 | short_code | 계정 | posted_at(KST) | type | 분석 | 스냅샷(cutoff=07-04 KST 0시 이전) | 비고 |
 |---|---|---|---|---|---|---|

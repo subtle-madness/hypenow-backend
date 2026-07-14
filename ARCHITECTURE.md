@@ -188,7 +188,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | C2 | 인플루언서 계정 LLM | 광고유형·페르소나·브리핑·적합성 | F, C1, B3 | ⬜ |
 | D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출) | B1, B2·B3(확장분) | ✅ |
 | D3 | 드로어 as-of | `GET /api/posts/{shortCode}?endDate=` — 집계 기간 끝 시점 스냅샷으로 지표 재구성(captured_at ≤ endDate의 KST 하루 끝 중 최신), 스냅샷 없으면 404(그 시점 화면에 부재). 생략 시 최신 | D, B1(스냅샷 미러) | ✅ |
-| H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ⬜ |
+| H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype. 유통사 필터는 컬럼 신설(VLM 개통) 전까지 매칭 0 | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{username}` | C1 | ⬜ |
 | G | 서비스 데이터 | `app` 스키마 신설 + 후보 저장·상태·메모 (로그인 등 일반 앱 데이터의 기반) | 독립 | ⬜ |
 
