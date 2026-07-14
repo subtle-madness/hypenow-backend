@@ -139,11 +139,13 @@ public class UiController {
                 new StatusTile("QUALIFIED", n(byInfluencer, InfluencerStatus.QUALIFIED), "판정 통과 · 수집 대상"),
                 new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED), "판정 탈락 · 제외"),
                 new StatusTile("BACKFILL", s.backfillPending(), "판정 통과 · 첫 수집(백필) 대기")));
-        // 게시물 수집 상태: discover가 발견한 게시물의 상세·댓글 수집 진행
+        // 게시물 수집 상태: collect 열거(QUALIFIED 인플루언서의 6개월 열거) 산출물만 대상 — 발굴
+        // 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         model.addAttribute("contentTiles", java.util.List.of(
-                new StatusTile("PENDING", n(byContent, ContentStatus.PENDING), "발견됨 · 상세·댓글 수집 전"),
+                new StatusTile("PENDING", n(byContent, ContentStatus.PENDING), "열거됨 · 상세·댓글 수집 전"),
                 new StatusTile("COLLECTED", n(byContent, ContentStatus.COLLECTED), "상세·댓글 수집 완료"),
                 new StatusTile("FAILED", n(byContent, ContentStatus.FAILED), "수집 재시도 초과 · 포기")));
+        model.addAttribute("discoveryArchiveCount", s.discoveryArchiveCount());
         return "fragments/status-tiles :: tiles";
     }
 

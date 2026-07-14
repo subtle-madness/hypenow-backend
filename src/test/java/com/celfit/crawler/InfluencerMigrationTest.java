@@ -113,6 +113,18 @@ class InfluencerMigrationTest {
     }
 
     @Test
+    void content_origin이_이관행은_DISCOVERY로_채워지고_컬럼은_NOT_NULL_default_없음이다() {
+        assertThat(jdbc.queryForObject(
+                "SELECT origin FROM content WHERE short_code='SC_A'", String.class)).isEqualTo("DISCOVERY");
+        assertThat(jdbc.queryForObject(
+                "SELECT origin FROM content WHERE short_code='SC_B'", String.class)).isEqualTo("DISCOVERY");
+        assertThat(jdbc.queryForObject("""
+                SELECT is_nullable = 'NO' AND column_default IS NULL
+                FROM information_schema.columns
+                WHERE table_name='content' AND column_name='origin'""", Boolean.class)).isTrue();
+    }
+
+    @Test
     void 구_테이블은_삭제되고_raw_media_page가_생긴다() {
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM information_schema.tables

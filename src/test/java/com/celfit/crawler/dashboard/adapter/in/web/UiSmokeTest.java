@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
@@ -66,7 +67,7 @@ class UiSmokeTest extends IntegrationTest {
     void 수집_데이터_화면이_content_행이_있어도_렌더된다() throws Exception {
         Influencer inf = influencers.save(new Influencer("smoke-user"));
         contents.save(new Content("sc-smoke", ContentType.REELS, "smoke-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now()));
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
 
         // 행이 존재하는 상태에서 렌더 — 제거된 필드(adMarked/mainGroup 등) 참조가 남아 있으면 여기서 터진다
         mvc.perform(get("/ui/contents")).andExpect(status().isOk())
@@ -77,7 +78,7 @@ class UiSmokeTest extends IntegrationTest {
     void 콘텐츠_상세_화면이_페이지형_raw_comment_행이_있어도_렌더되고_빈_행을_나열하지_않는다() throws Exception {
         Influencer inf = influencers.save(new Influencer("smoke-detail-user"));
         Content content = contents.save(new Content("sc-detail-smoke", ContentType.FEED, "smoke-detail-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now()));
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
         CrawlRun run = crawlRuns.save(new CrawlRun(JobName.COLLECT, TriggerType.MANUAL, null,
                 "smoke-detail-user", "direct-comment-crawler", Instant.now()));
         // SELF_GQL 신규 수집분 — writer/text/writtenAt은 설계상 NULL, payload만 페이지 원형으로 채워진다.
@@ -117,6 +118,18 @@ class UiSmokeTest extends IntegrationTest {
 
         mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("AGGREGATE")));
+    }
+
+    @Test
+    void 대시보드_상태_타일에_발굴_보관_부산물_건수가_렌더된다() throws Exception {
+        // 발굴 부산물(DISCOVERY) — 게시물 수집 카드(ENUMERATION 기준) 집계엔 안 잡히고
+        // "발굴 보관" 참고용 총계에만 잡혀야 한다.
+        Influencer inf = influencers.save(new Influencer("smoke-discovery-user"));
+        contents.save(new Content("sc-discovery-smoke", ContentType.FEED, "smoke-discovery-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.DISCOVERY));
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("발굴 보관")));
     }
 
     @Test

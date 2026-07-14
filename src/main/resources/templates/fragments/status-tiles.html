@@ -7,7 +7,7 @@
             <div class="tile-desc" th:text="${t.desc()}"></div>
         </div>
     </div>
-    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">discover가 발견한 게시물의 상세·댓글 수집 상태</span></h2>
+    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">collect 열거(QUALIFIED 인플루언서 6개월치) 기준</span></h2>
     <div class="tiles">
         <div class="tile" th:each="t : ${contentTiles}">
             <div class="num" th:text="${t.count()}">0</div>
@@ -15,4 +15,5 @@
             <div class="tile-desc" th:text="${t.desc()}"></div>
         </div>
     </div>
+    <p class="job-cost-note">발굴 보관(부산물) <span th:text="${discoveryArchiveCount}">0</span>건 — 수집 대상 아님</p>
 </div>

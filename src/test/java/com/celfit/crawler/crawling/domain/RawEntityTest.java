@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
@@ -37,7 +38,7 @@ class RawEntityTest extends IntegrationTest {
     void payload가_jsonb로_왕복되고_source가_저장된다() {
         Influencer influencer = influencers.save(new Influencer("kim"));
         Content content = contents.save(new Content("sc1", ContentType.REELS, "kim",
-                influencer.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now()));
+                influencer.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
         CrawlRun run = runs.save(new CrawlRun(JobName.COLLECT, TriggerType.MANUAL,
                 null, null, "actor", Instant.now()));
 

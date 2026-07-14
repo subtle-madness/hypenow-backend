@@ -37,8 +37,8 @@ class SchemaTest extends IntegrationTest {
         Long influencerId = jdbc.queryForObject("select id from influencer where username='owner'", Long.class);
         jdbc.update("""
                 insert into content(short_code, content_type, owner_username, influencer_id,
-                                    uploaded_at, status, first_seen_at)
-                values ('abc123', 'REELS', 'owner', ?, now(), 'PENDING', now())""", influencerId);
+                                    uploaded_at, status, first_seen_at, origin)
+                values ('abc123', 'REELS', 'owner', ?, now(), 'PENDING', now(), 'ENUMERATION')""", influencerId);
         Long contentId = jdbc.queryForObject("select id from content where short_code='abc123'", Long.class);
         jdbc.update("""
                 insert into crawl_run(job, trigger_type, actor_id, status, started_at)

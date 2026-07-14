@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.application.port.out.SearchKeywordRepository;
 import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.SearchKeyword;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.InfluencerDiscoveryRepository;
@@ -70,7 +71,7 @@ public class DiscoverJob {
                         inf.getId(), kw.getKeyword(), d.shortCode(), clock.instant()));
                 Content content = contents.findByShortCode(d.shortCode()).orElseGet(() ->
                         contents.save(new Content(d.shortCode(), d.type(), d.ownerUsername(),
-                                inf.getId(), d.uploadedAt(), clock.instant())));
+                                inf.getId(), d.uploadedAt(), clock.instant(), ContentOrigin.DISCOVERY)));
                 // 중복 발굴이어도 raw는 항상 저장 — 원형 그대로 + 소스 태그
                 RawDiscoveryPost raw = new RawDiscoveryPost(content.getId(), ex.runId(),
                         discoverSourceSelector.currentSource(), d.payload(), clock.instant());

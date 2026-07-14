@@ -123,6 +123,7 @@ QUALIFIED 중 방문 대상 선정(`first_collected_at IS NULL` = 백필 대상,
 | `influencer` | `account` 개명·확장 | `username`(unique), `status`(DISCOVERED/QUALIFIED/EXCLUDED), `followers`, `last_profiled_at`, `first_collected_at`, `last_collected_at` |
 | `influencer_discovery` | 신규 | `influencer_id` FK, `keyword`(**텍스트 스냅샷** — search_keyword id 참조 금지), `discovered_post_short_code`, `discovered_at`. append-only |
 | `content` | 재편 | `short_code`(unique), `influencer_id` FK, `content_type`, `uploaded_at`, `status`(PENDING/COLLECTED/FAILED), `collect_attempts`, `first_seen_at`, `collected_at`. 분류 컬럼·`ad_marked` 제거 |
+| `content.origin` | 신규 (V9) | `DISCOVERY`/`ENUMERATION`. 해시태그 발굴 게시물은 인플루언서 발굴의 부산물(`DISCOVERY`)일 뿐 — raw만 보관하고 상세·댓글 수집 대상이 아니다. 진짜 수집 대상은 QUALIFIED 인플루언서의 6개월 열거(CollectJob)가 만든 게시물(`ENUMERATION`)뿐이다. CollectJob의 열거 upsert가 기존 `DISCOVERY` 행을 다시 잡으면(범위 안이면 항상 그렇게 된다) `ENUMERATION`으로 승격시켜 유실 없이 정식 수집 범위로 편입한다. 댓글 수집 대상 조회(`findByInfluencerIdAndStatusAndOrigin`)와 대시보드 게시물 수집 카드 집계는 `ENUMERATION`만 본다 — `DISCOVERY`는 별도 "발굴 보관" 참고 총계로만 노출한다. 이관된 기존 행은 전부 발굴 시대 데이터이므로 `DISCOVERY`로 채웠다(default 없이 명시 세팅 강제). |
 | `crawl_run` | 수정 | `category_id` 제거 → 잡 이름 + 대상 파라미터(키워드 텍스트/인플루언서) 기록 |
 | `app_setting` | 유지 | 전역 팔로워 min/max, 백필 개월수(기본 6), 추적 윈도우, 배치 크기, 댓글 상한 |
 | `category`/`category_keyword`/`collection_rule` | **drop** | 이관 검증 후 |

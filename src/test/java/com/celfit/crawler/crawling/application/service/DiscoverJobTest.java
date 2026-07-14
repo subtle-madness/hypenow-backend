@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.application.port.out.SearchKeywordRepository;
 import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.content.domain.SearchKeyword;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
@@ -150,6 +151,7 @@ class DiscoverJobTest {
         assertThat(c.getOwnerUsername()).isEqualTo("kim");
         assertThat(c.getInfluencerId()).isEqualTo(1L);
         assertThat(c.getFirstSeenAt()).isEqualTo(NOW);
+        assertThat(c.getOrigin()).isEqualTo(ContentOrigin.DISCOVERY); // 발굴 부산물 — 수집 대상 아님
     }
 
     @Test
@@ -158,7 +160,7 @@ class DiscoverJobTest {
         when(selector.fetch(eq("립"), eq(TriggerType.MANUAL))).thenReturn(
                 new CrawlExecutor.Execution(11L, List.of(item("sc1", "clips", "kim", null))));
         when(influencers.findByUsername("kim")).thenReturn(Optional.empty());
-        Content existing = new Content("sc1", ContentType.REELS, "kim", 1L, NOW, NOW);
+        Content existing = new Content("sc1", ContentType.REELS, "kim", 1L, NOW, NOW, ContentOrigin.DISCOVERY);
         existing.setId(555L);
         when(contents.findByShortCode("sc1")).thenReturn(Optional.of(existing));
 

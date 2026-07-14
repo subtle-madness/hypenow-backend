@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
@@ -128,19 +129,27 @@ public class CollectJob {
             enumerateStream(inf, fetcher, userId, cutoff, trigger, inWindow);
         }
 
-        // 4) content upsert
+        // 4) content upsert — 신규는 ENUMERATION(수집 대상)으로 생성. 기존 행이 발굴 부산물(DISCOVERY)
+        // 이었다면 이번 열거로 정식 수집 범위에 들어온 것이므로 ENUMERATION으로 승격한다.
         int upserted = 0;
         for (var item : inWindow.values()) {
-            contents.findByShortCode(item.shortCode()).orElseGet(() ->
-                    contents.save(new Content(item.shortCode(), item.type(),
-                            inf.getUsername(), inf.getId(), item.takenAt(), clock.instant())));
+            Content existing = contents.findByShortCode(item.shortCode()).orElse(null);
+            if (existing == null) {
+                contents.save(new Content(item.shortCode(), item.type(),
+                        inf.getUsername(), inf.getId(), item.takenAt(), clock.instant(), ContentOrigin.ENUMERATION));
+            } else if (existing.getOrigin() == ContentOrigin.DISCOVERY) {
+                existing.setOrigin(ContentOrigin.ENUMERATION);
+            }
             upserted++;
         }
 
         // 5) 게시물별 댓글 수집 — 이번 열거 윈도우가 아니라 이 인플루언서의 PENDING 전체가 대상이다.
         // 백필 중 댓글만 실패한 게시물이나 discover가 만든 오래된 PENDING도 track-window 컷오프와
         // 무관하게 매 방문 재시도된다. collect_attempts 상한(maxAttempts→FAILED)이 폭주를 막는다.
-        List<Content> pending = contents.findByInfluencerIdAndStatus(inf.getId(), ContentStatus.PENDING);
+        // origin=ENUMERATION만 대상 — 발굴 부산물(DISCOVERY)은 수집 범위 밖(위 upsert가 방문 범위
+        // 안이면 승격시키므로 유실 없음).
+        List<Content> pending = contents.findByInfluencerIdAndStatusAndOrigin(
+                inf.getId(), ContentStatus.PENDING, ContentOrigin.ENUMERATION);
         int collected = collectComments(pending, trigger);
 
         // firstCollectedAt은 "백필 열거 완료" 표식 — 댓글 실패와 무관하게 열거 성공 시 기록한다.

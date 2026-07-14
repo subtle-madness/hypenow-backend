@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
@@ -98,8 +100,8 @@ class CollectJobTest {
 
     /**
      * contents mock을 contentStore 기반 페이크로 만든다 — findByShortCode/save/
-     * findByInfluencerIdAndStatus가 같은 저장소를 공유해야 "댓글 대상 = 방문 윈도우가 아니라
-     * PENDING 전체"(Finding 1) 리팩터를 검증할 수 있다.
+     * findByInfluencerIdAndStatusAndOrigin이 같은 저장소를 공유해야 "댓글 대상 = 방문 윈도우가 아니라
+     * ENUMERATION PENDING 전체"(Finding 1 + origin 도입) 리팩터를 검증할 수 있다.
      */
     void wireContentSavePassthrough() {
         when(contents.save(any())).thenAnswer(inv -> {
@@ -110,11 +112,13 @@ class CollectJobTest {
         });
         when(contents.findByShortCode(any())).thenAnswer(inv ->
                 Optional.ofNullable(contentStore.get((String) inv.getArgument(0))));
-        when(contents.findByInfluencerIdAndStatus(anyLong(), any())).thenAnswer(inv -> {
+        when(contents.findByInfluencerIdAndStatusAndOrigin(anyLong(), any(), any())).thenAnswer(inv -> {
             Long infId = inv.getArgument(0);
             ContentStatus status = inv.getArgument(1);
+            ContentOrigin origin = inv.getArgument(2);
             return contentStore.values().stream()
-                    .filter(c -> c.getInfluencerId().equals(infId) && c.getStatus() == status)
+                    .filter(c -> c.getInfluencerId().equals(infId) && c.getStatus() == status
+                            && c.getOrigin() == origin)
                     .toList();
         });
     }
@@ -490,8 +494,9 @@ class CollectJobTest {
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
 
         // POST_FAIL은 이미 시도 2회(상한 3) — 이번 실패로 3회째가 되어 FAILED 전이돼야 한다.
+        // origin=ENUMERATION — 열거 산출물(정식 수집 대상)의 재시도 시나리오.
         Content existingFail = new Content("POST_FAIL", ContentType.FEED, "alice", 1L,
-                WITHIN_TRACK, NOW.minusSeconds(10));
+                WITHIN_TRACK, NOW.minusSeconds(10), ContentOrigin.ENUMERATION);
         existingFail.setId(2000L);
         existingFail.setCollectAttempts(2);
         contentStore.put("POST_FAIL", existingFail); // 페이크 저장소에 미리 심어 findByShortCode/findByInfluencerIdAndStatus 둘 다에 노출
@@ -647,9 +652,9 @@ class CollectJobTest {
         when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
-        // discover 등 다른 경로로 이미 존재하던, 이번 열거 윈도우 밖의 오래된 PENDING content.
+        // 이전 열거로 이미 승격돼 있던(origin=ENUMERATION), 이번 열거 윈도우 밖의 오래된 PENDING content.
         Content oldPending = new Content("OLD_PENDING", ContentType.FEED, "alice", 1L,
-                NOW.minus(Duration.ofDays(90)), NOW.minus(Duration.ofDays(90)));
+                NOW.minus(Duration.ofDays(90)), NOW.minus(Duration.ofDays(90)), ContentOrigin.ENUMERATION);
         oldPending.setId(3000L);
         contentStore.put("OLD_PENDING", oldPending);
 
@@ -696,5 +701,74 @@ class CollectJobTest {
         assertThat(summary.visited()).isEqualTo(1);
         assertThat(bad.getLastCollectedAt()).isNull();          // 실패 방문 — 시각 미갱신
         assertThat(good.getLastCollectedAt()).isEqualTo(NOW);   // 다음 인플루언서는 정상 처리
+    }
+
+    // ---------------------------------------------------------------------
+    // 12) origin 도입 — 열거 upsert가 발굴 부산물을 정식 수집 대상으로 승격시키고,
+    //     댓글 대상 조회는 승격되지 않은 발굴 부산물(DISCOVERY)을 제외한다
+    // ---------------------------------------------------------------------
+    @Test
+    void 열거_upsert가_기존_DISCOVERY_행을_ENUMERATION으로_승격시킨다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
+        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        // discover가 이미 만들어둔 발굴 부산물 — 이번 열거가 같은 shortCode를 다시 잡는다.
+        Content discovered = new Content("PROMOTE1", ContentType.FEED, "alice", 1L,
+                WITHIN_TRACK, WITHIN_TRACK, ContentOrigin.DISCOVERY);
+        discovered.setId(4000L);
+        contentStore.put("PROMOTE1", discovered);
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        Map<String, Object> page = gqlPage(List.of(gqlItem("PROMOTE1", WITHIN_TRACK, false)), null);
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
+
+        job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        // 새 행을 만드는 게 아니라 기존 행을 승격 — 저장소의 PROMOTE1은 여전히 같은 객체(인스턴스)다.
+        Content promoted = contentStore.get("PROMOTE1");
+        assertThat(promoted).isSameAs(discovered);
+        assertThat(promoted.getOrigin()).isEqualTo(ContentOrigin.ENUMERATION);
+    }
+
+    @Test
+    void 댓글_대상_조회는_승격되지_않은_DISCOVERY_PENDING을_제외한다() {
+        wireCommon();
+
+        // 추적 방문(첫 방문 완료) — 이번 열거는 새로 아무것도 안 내놓아 기존 PENDING만이 댓글 대상 후보다.
+        Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
+        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        Content discoveryPending = new Content("DISC_PEND", ContentType.FEED, "alice", 1L,
+                NOW.minus(Duration.ofDays(90)), NOW.minus(Duration.ofDays(90)), ContentOrigin.DISCOVERY);
+        discoveryPending.setId(5000L);
+        contentStore.put("DISC_PEND", discoveryPending);
+
+        Content enumPending = new Content("ENUM_PEND", ContentType.FEED, "alice", 1L,
+                NOW.minus(Duration.ofDays(90)), NOW.minus(Duration.ofDays(90)), ContentOrigin.ENUMERATION);
+        enumPending.setId(5001L);
+        contentStore.put("ENUM_PEND", enumPending);
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA))); // 이번 열거는 빈 페이지
+
+        CommentFetcher fakeCommentFetcher = mock(CommentFetcher.class);
+        when(commentSource.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(commentSource.current()).thenReturn(fakeCommentFetcher);
+        when(fakeCommentFetcher.fetch(eq(List.of("ENUM_PEND")), eq(50), eq(TriggerType.MANUAL)))
+                .thenReturn(new CommentFetcher.CommentResult(300L,
+                        Map.of("ENUM_PEND", List.of(Map.of("p", 1)))));
+
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        assertThat(enumPending.getStatus()).isEqualTo(ContentStatus.COLLECTED);
+        assertThat(summary.postsCollected()).isEqualTo(1);
+        // 발굴 부산물은 댓글 대상에서 아예 빠졌으므로 시도 횟수·상태가 그대로다.
+        assertThat(discoveryPending.getStatus()).isEqualTo(ContentStatus.PENDING);
+        assertThat(discoveryPending.getCollectAttempts()).isEqualTo(0);
+        verify(fakeCommentFetcher, never()).fetch(argThat(codes -> codes.contains("DISC_PEND")), anyInt(), any());
     }
 }

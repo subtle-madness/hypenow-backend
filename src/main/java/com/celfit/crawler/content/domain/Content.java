@@ -45,13 +45,18 @@ public class Content {
     @Column(name = "collect_attempts", nullable = false)
     private int collectAttempts;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ContentOrigin origin;
+
     public Content(String shortCode, ContentType contentType, String ownerUsername,
-                   Long influencerId, Instant uploadedAt, Instant firstSeenAt) {
+                   Long influencerId, Instant uploadedAt, Instant firstSeenAt, ContentOrigin origin) {
         this.shortCode = shortCode;
         this.contentType = contentType;
         this.ownerUsername = ownerUsername;
         this.influencerId = influencerId;
         this.uploadedAt = uploadedAt;
         this.firstSeenAt = firstSeenAt;
+        this.origin = origin;
     }
 }
