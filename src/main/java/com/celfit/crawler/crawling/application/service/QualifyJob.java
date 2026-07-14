@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -29,6 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class QualifyJob {
+
+    private static final Logger log = LoggerFactory.getLogger(QualifyJob.class);
 
     /** raw 원형 수집 시 액터/HikerAPI 호출을 묶는 청크 크기. */
     static final int PROFILE_CHUNK = 50;
@@ -74,12 +78,16 @@ public class QualifyJob {
 
         long min = settings.qualifyMinFollowers(), max = settings.qualifyMaxFollowers();
         int qualified = 0, excluded = 0, deferred = 0;
+        int total = targets.size(), i = 0;
         for (Influencer inf : targets) {
+            i++;
             Long followers = inf.getFollowers();
             if (followers == null) { deferred++; continue; }   // 프로필 미확보 → 다음 실행 재시도
             boolean pass = followers >= min && followers <= max;
             inf.setStatus(pass ? InfluencerStatus.QUALIFIED : InfluencerStatus.EXCLUDED);
             if (pass) qualified++; else excluded++;
+            log.info("판정 ({}/{}) {} — {} (followers={})", i, total, inf.getUsername(),
+                    inf.getStatus(), followers);
         }
         return new Summary(profiled, qualified, excluded, deferred, pr.failedChunks());
     }

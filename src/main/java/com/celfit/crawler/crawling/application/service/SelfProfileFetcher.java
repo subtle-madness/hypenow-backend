@@ -58,7 +58,9 @@ public class SelfProfileFetcher implements ProfileFetcher {
 
     private List<Map<String, Object>> collect(List<String> usernames) {
         List<Map<String, Object>> out = new ArrayList<>();
+        int total = usernames.size(), i = 0;
         for (String u : usernames) {
+            i++;
             // 계정 단위 격리 — 프록시가 커넥션을 중간에 끊으면(TLS BUFFER_UNDERFLOW 등) 요청이
             // 예외로 죽는데, 그 1명 때문에 청크 전체를 실패시키지 않는다. 빠진 계정은 응답에
             // 없으므로 호출자(qualify deferred / collect 저장 userId 폴백)가 재시도를 담당한다.
@@ -66,10 +68,17 @@ public class SelfProfileFetcher implements ProfileFetcher {
                 InstagramWebClient.Response res = web.get(URL + u);
                 if (res.status() == 200) {
                     Map<String, Object> p = readRoot(res.body());
-                    if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) out.add(p);
+                    if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) {
+                        out.add(p);
+                        log.info("프로필 ({}/{}) {} — 확보", i, total, u);
+                    } else {
+                        log.info("프로필 ({}/{}) {} — 스킵(응답에 계정 없음)", i, total, u);
+                    }
+                } else {
+                    log.info("프로필 ({}/{}) {} — 스킵(HTTP {})", i, total, u, res.status());
                 }
             } catch (ApifyException e) {
-                log.warn("프로필 요청 실패 — 해당 계정만 건너뜀: {} ({})", u, e.getMessage());
+                log.warn("프로필 ({}/{}) {} — 요청 실패, 해당 계정만 건너뜀 ({})", i, total, u, e.getMessage());
             }
             sleep();
         }
