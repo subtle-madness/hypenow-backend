@@ -1,6 +1,6 @@
 # 태스크 E: 인플루언서 상세 API (`GET /api/influencers/{handle}`) Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-14)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development 또는 superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** celfit-front 인플루언서 패널(`AccountReport`)의 결정(비LLM) 데이터 전부를 1회 호출로 서빙한다 — C1 미러 3종 + `accounts` 조합.
