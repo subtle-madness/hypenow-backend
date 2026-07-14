@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,16 +33,19 @@ public class ContentAnalysisJob {
 	private final VisionPort vision; // vlmEnabled=false면 null 허용
 	private final AnalyticsSettings settings;
 	private final boolean vlmEnabled;
+	private final Predicate<String> thumbnailAlive;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
-			SynthesisPort synthesis, VisionPort vision, AnalyticsSettings settings, boolean vlmEnabled) {
+			SynthesisPort synthesis, VisionPort vision, AnalyticsSettings settings, boolean vlmEnabled,
+			Predicate<String> thumbnailAlive) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.synthesis = synthesis;
 		this.vision = vision;
 		this.settings = settings;
 		this.vlmEnabled = vlmEnabled;
+		this.thumbnailAlive = thumbnailAlive;
 	}
 
 	/**
@@ -53,15 +57,17 @@ public class ContentAnalysisJob {
 	 * 영구 잠식한다 (B2의 classified HashSet 패턴과 동일한 자바 측 필터).
 	 */
 	public int run() {
-		Set<String> withBaseline = new HashSet<>(raw.queryForList(
-				"SELECT short_code FROM analytics.v_analysis_baseline", String.class));
-		List<String> targets = analysis.queryForList("""
+		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분)
+		List<String> withBaseline = raw.queryForList(
+				"SELECT short_code FROM analytics.v_analysis_baseline ORDER BY captured_at DESC", String.class);
+		Set<String> eligible = new HashSet<>(analysis.queryForList("""
 				SELECT c.short_code FROM contents c
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
-				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-				ORDER BY c.short_code""", String.class).stream()
-				.filter(withBaseline::contains)
+				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))""",
+				String.class));
+		List<String> targets = withBaseline.stream()
+				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())
 				.toList();
 		String model = settings.llmModel();
@@ -105,8 +111,17 @@ public class ContentAnalysisJob {
 						longOf(rs.getBigDecimal(6)), longOf(rs.getBigDecimal(7)),
 						intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))),
 				shortCode);
-		VlmResult vlm = (vlmEnabled && vision != null)
-				? vision.analyze((String) content.get("thumbnail_url"), (String) content.get("caption"))
+		// 프리체크 실패(썸네일 없음/만료 — 영구적)는 VLM만 스킵해 NULL로 저장한다. 실패로 던지면
+		// 불변 테이블 특성상 행이 안 생겨 매 실행 재실패로 배치 슬롯을 잠식한다.
+		// VLM API 호출 예외(일시 장애)는 기존대로 콘텐츠 실패 → 다음 실행 재대상.
+		String thumbnailUrl = (String) content.get("thumbnail_url");
+		boolean vlmReady = vlmEnabled && vision != null && thumbnailUrl != null;
+		if (vlmReady && !thumbnailAlive.test(thumbnailUrl)) {
+			log.info("썸네일 만료/접근 불가 — VLM 스킵 (컬럼 NULL): {}", shortCode);
+			vlmReady = false;
+		}
+		VlmResult vlm = vlmReady
+				? vision.analyze(thumbnailUrl, (String) content.get("caption"))
 				: null;
 		Map<String, Object> baselineForPrompt = new LinkedHashMap<>();
 		baselineForPrompt.put("recent_reels_avg_views", b.recentReelsAvgViews());
