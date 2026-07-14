@@ -143,7 +143,8 @@ public class UiController {
         model.addAttribute("summary", s);
         // 인플루언서 파이프라인 — 같은 잡이 만드는 상태끼리 묶어 단계를 시각 구분:
         // discover가 DISCOVERED를 만들고, qualify가 QUALIFIED/EXCLUDED로 가르고,
-        // collect 관점에서 QUALIFIED가 BACKFILL(첫 수집 전)/TRACK(재방문 도래)로 나뉜다.
+        // collect는 방문 대기(미방문 또는 재방문 주기 도래)를 순서대로 방문한다.
+        // 모든 방문이 동일(최근 게시물 1회 수집)하므로 첫 방문/재방문을 구분하지 않는다.
         model.addAttribute("influencerGroups", java.util.List.of(
                 new StatusTileGroup("① 발굴 — discover", java.util.List.of(
                         new StatusTile("DISCOVERED", n(byInfluencer, InfluencerStatus.DISCOVERED),
@@ -153,9 +154,9 @@ public class UiController {
                                 "판정 통과 · 수집 대상"),
                         new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED),
                                 "판정 탈락 · 제외"))),
-                new StatusTileGroup("③ 수집 대기열 — collect가 방문할 순서", java.util.List.of(
-                        new StatusTile("BACKFILL", s.backfillPending(), "첫 방문 대기"),
-                        new StatusTile("TRACK", s.trackDue(), "방문 완료 · 재방문 주기 도래")))));
+                new StatusTileGroup("③ 수집 대기열 — collect가 방문할 대상", java.util.List.of(
+                        new StatusTile("READY", s.backfillPending() + s.trackDue(),
+                                "방문 대기 · 재방문 주기 도래 포함")))));
         // 게시물 수집 상태: collect 방문(프로필 내장 최근 피드 + 릴스 1페이지) 산출물만 대상 —
         // 발굴 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         model.addAttribute("contentTiles", java.util.List.of(
