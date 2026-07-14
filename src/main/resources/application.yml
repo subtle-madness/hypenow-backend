@@ -50,6 +50,8 @@ crawler:
     max-attempts: 3
     revisit-interval-days: 7 # 이미 수집한 인플루언서를 다시 대상으로 삼기까지의 최소 간격
     comments-enabled: false  # 댓글 수집 — 현재 불필요, 로직만 유지 (UI 없음, yml로만 재활성화)
+  similar:
+    batch-limit: 50   # 실행 1회당 유사 계정을 수확할 시드(뷰티 QUALIFIED) 수
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"
