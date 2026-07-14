@@ -53,13 +53,19 @@ class ContentAnalysisJobTest {
 		return (thumbnailUrl, caption) -> {
 			visionCalls.add(thumbnailUrl);
 			return new VlmResult(List.of(new VlmResult.Brand("브랜드A", "화면 노출")), "high",
-					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징"),
-					List.of(new VlmResult.Attribute("무드", "화사함")), "skincare", List.of("클렌징폼"), "sponsored");
+					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
+					List.of(new VlmResult.Attribute("무드", "화사함")), "cleansing",
+					List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored");
 		};
 	}
 
 	void rewireJob(SynthesisPort synthesisPort, boolean vlmEnabled) {
-		job = new ContentAnalysisJob(db, ds, synthesisPort, fakeVisionPort(), new AnalyticsSettings(db), vlmEnabled);
+		rewireJob(synthesisPort, vlmEnabled, url -> true);
+	}
+
+	void rewireJob(SynthesisPort synthesisPort, boolean vlmEnabled, java.util.function.Predicate<String> thumbnailAlive) {
+		job = new ContentAnalysisJob(db, ds, synthesisPort, fakeVisionPort(), new AnalyticsSettings(db),
+				vlmEnabled, thumbnailAlive);
 	}
 
 	@BeforeEach
@@ -87,15 +93,16 @@ class ContentAnalysisJobTest {
 				    recent12_avg_comment_count   numeric,
 				    category_top_percentile      smallint,
 				    category_avg_views           numeric,
-				    category_sample_size         bigint
+				    category_sample_size         bigint,
+				    captured_at                  timestamptz
 				)""");
 		db.update("""
 				CREATE VIEW analytics.v_analysis_baseline AS SELECT * FROM analytics.baseline_fixture""");
 		db.update("""
 				INSERT INTO analytics.baseline_fixture VALUES
-				  ('post_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3),
-				  ('post_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3),
-				  ('post_c', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3)""");
+				  ('post_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3, timestamptz '2026-06-05 09:00:00+09'),
+				  ('post_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3, timestamptz '2026-06-07 09:00:00+09'),
+				  ('post_c', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3, timestamptz '2026-06-06 09:00:00+09')""");
 
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
@@ -114,7 +121,8 @@ class ContentAnalysisJobTest {
 				  (1, 'post_a', 'purchase', 'claude-test'),
 				  (2, 'post_a', 'positive', 'claude-test')""");
 
-		job = new ContentAnalysisJob(db, ds, fakeSynthesisPort(), fakeVisionPort(), new AnalyticsSettings(db), false);
+		job = new ContentAnalysisJob(db, ds, fakeSynthesisPort(), fakeVisionPort(), new AnalyticsSettings(db),
+				false, url -> true);
 	}
 
 	@Test
@@ -179,9 +187,56 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void vlm_on이면_VLM_컬럼이_유통사_포함_저장된다() {
+		rewireJob(fakeSynthesisPort(), true);
+
+		int processed = job.run();
+
+		assertEquals(2, processed);
+		assertEquals(2, visionCalls.size()); // post_a, post_b 모두 VLM 호출
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[\"클렌징폼/젤\", \"클렌징폼\"]", db.queryForObject(
+				"SELECT sub_categories::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[\"올리브영\"]", db.queryForObject(
+				"SELECT detected_distributors::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("sponsored", db.queryForObject(
+				"SELECT ad_type FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 썸네일_프리체크_실패면_VLM만_스킵하고_나머지_분석은_저장된다() {
+		// 만료된 서명 URL 재현: post_a 썸네일만 죽어 있다 — VLM 실패로 행 전체가 매 실행 재실패하면 안 된다
+		rewireJob(fakeSynthesisPort(), true, url -> url.equals("https://img/b.jpg"));
+
+		int processed = job.run();
+
+		assertEquals(2, processed);
+		assertEquals(List.of("https://img/b.jpg"), visionCalls); // post_a는 VLM 미호출
+		assertEquals("요약: post_a", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_b'", String.class));
+	}
+
+	@Test
+	void 분석_대상은_수집_최신순이다() {
+		// 썸네일 서명 URL이 살아있을 때 VLM을 시도하기 위해 최신 수집분부터 (short_code 순이면 post_a 먼저)
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
+
+		int processed = job.run();
+
+		assertEquals(1, processed);
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class)); // captured_at 최신
+	}
+
+	@Test
 	void 기준선_없는_콘텐츠는_대상에서_제외되고_배치_슬롯을_잠식하지_않는다() {
 		// 윈도우 밖 콘텐츠 재현: contents에는 있지만 기준선 뷰에는 없는 short_code (분류 완료 상태).
-		// 정렬상 첫 대상(post_0)이라 — 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
+		// 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, views, likes, comments)
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', 5000, 100, 10)""");
@@ -195,12 +250,12 @@ class ContentAnalysisJobTest {
 
 		int processed = job.run();
 
-		assertEquals(1, processed); // 기준선 있는 콘텐츠(post_a)가 슬롯을 차지한다
+		assertEquals(1, processed); // 기준선 있는 콘텐츠(수집 최신순 첫 대상 post_b)가 슬롯을 차지한다
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_0'", Long.class));
 		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
 		assertEquals(1L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
 	}
 
 	@Test
