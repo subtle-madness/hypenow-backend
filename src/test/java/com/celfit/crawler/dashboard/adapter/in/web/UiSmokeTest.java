@@ -98,6 +98,58 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 인플루언서_명단은_판정_완료만_최초_발굴_맥락과_함께_보여준다() throws Exception {
+        Influencer qualified = new Influencer("smoke-roster-qualified");
+        qualified.setStatus(InfluencerStatus.QUALIFIED);
+        qualified.setFollowers(12345L);
+        influencers.save(qualified);
+        Influencer excluded = new Influencer("smoke-roster-excluded");
+        excluded.setStatus(InfluencerStatus.EXCLUDED);
+        influencers.save(excluded);
+        influencers.save(new Influencer("smoke-roster-discovered")); // 판정 전 — 명단 밖
+
+        // 발굴 이력 2건 — 명단에는 최초 발굴(먼저 저장된 행)의 키워드만 붙는다
+        discoveries.save(new InfluencerDiscovery(qualified.getId(), "roster-first-kw",
+                "sc-roster-1", Instant.parse("2026-07-01T00:00:00Z")));
+        discoveries.save(new InfluencerDiscovery(qualified.getId(), "roster-later-kw",
+                "sc-roster-2", Instant.parse("2026-07-10T00:00:00Z")));
+
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-roster-qualified")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-roster-excluded")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("roster-first-kw")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("roster-later-kw"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-roster-discovered"))));
+    }
+
+    @Test
+    void 인플루언서_명단_상태_필터가_동작하고_판정_외_상태는_무시된다() throws Exception {
+        Influencer qualified = new Influencer("smoke-filter-qualified");
+        qualified.setStatus(InfluencerStatus.QUALIFIED);
+        influencers.save(qualified);
+        Influencer excluded = new Influencer("smoke-filter-excluded");
+        excluded.setStatus(InfluencerStatus.EXCLUDED);
+        influencers.save(excluded);
+
+        mvc.perform(get("/ui/influencers").param("status", "QUALIFIED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-filter-qualified")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-filter-excluded"))));
+
+        // DISCOVERED는 명단 범위 밖 — 파라미터로 들어와도 무시되어 판정 완료 전체가 나온다
+        influencers.save(new Influencer("smoke-filter-discovered"));
+        mvc.perform(get("/ui/influencers").param("status", "DISCOVERED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-filter-qualified")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-filter-excluded")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-filter-discovered"))));
+    }
+
+    @Test
     void 검색_키워드_화면이_렌더된다() throws Exception {
         mvc.perform(get("/ui/keywords")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("검색 키워드")));

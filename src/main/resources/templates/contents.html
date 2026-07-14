@@ -3,14 +3,14 @@
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>celfit crawler — 수집 데이터</title>
+    <title>celfit crawler — 수집 게시물</title>
     <link rel="stylesheet" href="/css/admin.css"/>
     <script src="/js/admin.js"></script>
 </head>
 <body data-restore-query="true">
 <nav th:replace="~{fragments/nav :: nav('contents')}"></nav>
 <main>
-<h1>수집 데이터</h1>
+<h1>수집 게시물</h1>
 
 <form method="get" th:action="@{/ui/contents}" class="row status-filter">
     <!-- 전부 해제해도 쿼리가 비지 않게 하는 마커 — 비면 복원 스크립트가 이전 필터로 되돌린다 -->

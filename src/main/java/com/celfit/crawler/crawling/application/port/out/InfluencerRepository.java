@@ -17,6 +17,10 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     List<Influencer> findByStatus(InfluencerStatus status, Pageable pageable);
 
+    /** 인플루언서 명단 화면: 판정 완료(QUALIFIED/EXCLUDED) 등 상태 집합으로 페이징 조회. */
+    org.springframework.data.domain.Page<Influencer> findByStatusIn(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
     long countByStatus(InfluencerStatus status);
 
     /** 판정 가능분: followers를 이미 확보한(레거시 이관·이전 프로필) 인플루언서 — API 호출 없이 즉시 판정. */

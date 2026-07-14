@@ -6,7 +6,8 @@
     <nav>
         <span class="nav-label">모니터링</span>
         <a class="item" href="/ui" th:classappend="${active == 'dashboard'} ? 'active'">대시보드</a>
-        <a class="item" href="/ui/contents" th:classappend="${active == 'contents'} ? 'active'">수집 데이터</a>
+        <a class="item" href="/ui/influencers" th:classappend="${active == 'influencers'} ? 'active'">인플루언서</a>
+        <a class="item" href="/ui/contents" th:classappend="${active == 'contents'} ? 'active'">수집 게시물</a>
         <span class="nav-label">수집 운영</span>
         <a class="item" href="/ui/jobs" th:classappend="${active == 'jobs'} ? 'active'">잡 실행</a>
         <a class="item" href="/ui/keywords" th:classappend="${active == 'keywords'} ? 'active'">검색 키워드</a>

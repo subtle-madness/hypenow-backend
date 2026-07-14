@@ -38,6 +38,8 @@ public class UiController {
     private final RawCommentRepository rawComments;
     private final RawProfileRepository rawProfiles;
     private final RawDiscoveryPostRepository rawDiscovery;
+    private final InfluencerRepository influencers;
+    private final InfluencerDiscoveryRepository influencerDiscoveries;
     private final ObjectMapper objectMapper;
     private final LogBuffer logBuffer;
 
@@ -51,6 +53,8 @@ public class UiController {
                         ContentRepository contents, RawPostDetailRepository rawDetails,
                         RawCommentRepository rawComments, RawProfileRepository rawProfiles,
                         RawDiscoveryPostRepository rawDiscovery,
+                        InfluencerRepository influencers,
+                        InfluencerDiscoveryRepository influencerDiscoveries,
                         ObjectMapper objectMapper, LogBuffer logBuffer,
                         JobLock jobLock,
                         JobProgress jobProgress,
@@ -63,6 +67,8 @@ public class UiController {
         this.rawComments = rawComments;
         this.rawProfiles = rawProfiles;
         this.rawDiscovery = rawDiscovery;
+        this.influencers = influencers;
+        this.influencerDiscoveries = influencerDiscoveries;
         this.objectMapper = objectMapper;
         this.logBuffer = logBuffer;
         this.jobLock = jobLock;
@@ -179,6 +185,42 @@ public class UiController {
     public String jobs(Model model) {
         model.addAttribute("costs", jobCostEstimator.estimates());
         return "jobs";
+    }
+
+    /** 판정 완료 상태만 — 인플루언서 명단의 범위 불변식. DISCOVERED(판정 전)는 명단 밖. */
+    private static final java.util.List<InfluencerStatus> JUDGED_STATUSES =
+            java.util.List.of(InfluencerStatus.QUALIFIED, InfluencerStatus.EXCLUDED);
+
+    /** 인플루언서 명단 1행 — 판정 완료된 인플루언서 + 최초 발굴 맥락(키워드·발굴일). */
+    public record InfluencerRow(com.celfit.crawler.crawling.domain.Influencer influencer,
+                                String discoveredKeyword, java.time.Instant discoveredAt) {}
+
+    @GetMapping("/ui/influencers")
+    public String influencers(@RequestParam(required = false) java.util.List<InfluencerStatus> status,
+                              @RequestParam(defaultValue = "0") int page, Model model) {
+        var selected = status == null ? java.util.List.<InfluencerStatus>of()
+                                      : status.stream().filter(JUDGED_STATUSES::contains).toList();
+        var effective = selected.isEmpty() ? JUDGED_STATUSES : selected;
+        var pageable = PageRequest.of(Math.max(page, 0), 50, Sort.by(Sort.Direction.DESC, "id"));
+        var result = influencers.findByStatusIn(effective, pageable);
+
+        var ids = result.getContent().stream()
+                .map(com.celfit.crawler.crawling.domain.Influencer::getId).toList();
+        java.util.Map<Long, InfluencerDiscoveryRepository.FirstDiscovery> firstById = new java.util.HashMap<>();
+        if (!ids.isEmpty()) {
+            for (var d : influencerDiscoveries.findFirstDiscoveries(ids)) {
+                firstById.put(d.getInfluencerId(), d);
+            }
+        }
+        model.addAttribute("page", result.map(i -> {
+            var first = firstById.get(i.getId());
+            return new InfluencerRow(i,
+                    first == null ? null : first.getKeyword(),
+                    first == null ? null : first.getDiscoveredAt());
+        }));
+        model.addAttribute("status", selected);
+        model.addAttribute("statuses", JUDGED_STATUSES);
+        return "influencers";
     }
 
     @GetMapping("/ui/contents")
