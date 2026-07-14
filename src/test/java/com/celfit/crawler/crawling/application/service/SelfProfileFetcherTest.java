@@ -73,4 +73,31 @@ class SelfProfileFetcherTest {
         var ex = f.fetch(JobName.QUALIFY, List.of("ghost"), TriggerType.MANUAL);
         assertThat(ex.items()).isEmpty();
     }
+
+    @Test void 요청_예외는_해당_계정만_건너뛰고_나머지는_계속한다() {
+        // 프록시가 커넥션을 중간에 끊으면(TLS BUFFER_UNDERFLOW 등) web.get이 ApifyException을
+        // 던진다 — 계정 1명 때문에 청크(최대 50명) 전체가 FAILED로 무너지면 안 된다.
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                if (url.endsWith("flaky_user")) {
+                    throw new com.celfit.crawler.crawling.application.port.out.ApifyException(
+                            "인스타 요청 실패: BUFFER_UNDERFLOW with EOF");
+                }
+                return new Response(200,
+                        """
+                        {"data":{"user":{"username":"ok_user","id":"1","edge_followed_by":{"count":10}}}}""",
+                        Map.of());
+            }
+
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("flaky_user", "ok_user"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).hasSize(1);
+        assertThat(ProfileExtractor.username(ex.items().get(0), RawSource.SELF_GQL)).isEqualTo("ok_user");
+    }
 }
