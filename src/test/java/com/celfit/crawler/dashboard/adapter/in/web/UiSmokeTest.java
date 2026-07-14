@@ -9,13 +9,17 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
+import com.celfit.crawler.crawling.application.port.out.InfluencerDiscoveryRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
+import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostRepository;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.Influencer;
+import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawComment;
+import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import java.time.Instant;
@@ -39,6 +43,8 @@ class UiSmokeTest extends IntegrationTest {
     @Autowired ContentRepository contents;
     @Autowired RawCommentRepository rawComments;
     @Autowired CrawlRunRepository crawlRuns;
+    @Autowired InfluencerDiscoveryRepository discoveries;
+    @Autowired RawDiscoveryPostRepository rawDiscovery;
 
     @Test
     void 대시보드가_렌더된다() throws Exception {
@@ -107,6 +113,55 @@ class UiSmokeTest extends IntegrationTest {
         // requestCount=12 × $0.001/요청 = $0.012
         mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("$0.012")));
+    }
+
+    @Test
+    void 실행_이력의_발굴_건수와_중복이_게시물이_아니라_인플루언서_기준이다() throws Exception {
+        // 시나리오: run1에서 dup_inf 발굴 → run2에서 dup_inf 재발굴 + new_inf 신규 발굴 (게시물 2건).
+        // run2의 건수는 게시물 2건이 아니라 "인플루언서 2명", 중복은 "이미 발굴됐던 인플루언서 1명"이다.
+        Instant run1Start = Instant.parse("2026-07-14T00:00:00Z");
+        Instant run2Start = Instant.parse("2026-07-14T01:00:00Z");
+
+        Influencer dupInf = influencers.save(new Influencer("smoke-dup-inf"));
+        Influencer newInf = influencers.save(new Influencer("smoke-new-inf"));
+        Content cDup = contents.save(new Content("sc-runstat-dup", ContentType.FEED, "smoke-dup-inf",
+                dupInf.getId(), run1Start, run1Start, ContentOrigin.DISCOVERY));
+        Content cNew = contents.save(new Content("sc-runstat-new", ContentType.FEED, "smoke-new-inf",
+                newInf.getId(), run2Start, run2Start, ContentOrigin.DISCOVERY));
+
+        CrawlRun run1 = crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL,
+                "runstat-kw", null, "hiker-hashtag-top", run1Start));
+        run1.finishOk(null, 4, 1, run1Start.plusSeconds(30));
+        crawlRuns.save(run1);
+        CrawlRun run2 = crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL,
+                "runstat-kw", null, "hiker-hashtag-top", run2Start));
+        run2.finishOk(null, 4, 2, run2Start.plusSeconds(30));
+        crawlRuns.save(run2);
+
+        discoveries.save(new InfluencerDiscovery(dupInf.getId(), "runstat-kw", "sc-runstat-dup", run1Start.plusSeconds(1)));
+        discoveries.save(new InfluencerDiscovery(dupInf.getId(), "runstat-kw", "sc-runstat-dup", run2Start.plusSeconds(1)));
+        discoveries.save(new InfluencerDiscovery(newInf.getId(), "runstat-kw", "sc-runstat-new", run2Start.plusSeconds(1)));
+
+        rawDiscovery.save(new RawDiscoveryPost(cDup.getId(), run1.getId(), RawSource.HIKER_HASHTAG,
+                Map.of("k", "v"), run1Start.plusSeconds(1)));
+        rawDiscovery.save(new RawDiscoveryPost(cDup.getId(), run2.getId(), RawSource.HIKER_HASHTAG,
+                Map.of("k", "v"), run2Start.plusSeconds(1)));
+        rawDiscovery.save(new RawDiscoveryPost(cNew.getId(), run2.getId(), RawSource.HIKER_HASHTAG,
+                Map.of("k", "v"), run2Start.plusSeconds(1)));
+
+        // 리포지토리 집계 — run2: 인플루언서 2명 중 1명은 run2 시작 전에 이미 발굴돼 있었다(중복)
+        var stats = rawDiscovery.discoveryStats(java.util.List.of(run1.getId(), run2.getId()));
+        var byRun = stats.stream().collect(java.util.stream.Collectors.toMap(
+                s -> s.getRunId(), s -> s));
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run1.getId()).getInfluencers()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run1.getId()).getKnownInfluencers()).isEqualTo(0);
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run2.getId()).getInfluencers()).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run2.getId()).getKnownInfluencers()).isEqualTo(1);
+
+        // 렌더 — 건수 자리에 "2명", 중복 배지에 인플루언서 기준 "중복 1"
+        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("2명")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("중복 1")));
     }
 
     @Test

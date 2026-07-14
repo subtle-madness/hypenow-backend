@@ -100,18 +100,19 @@ public class UiController {
     public String runsFragment(Model model) {
         var runList = runs.findTop50ByOrderByIdDesc();
         model.addAttribute("runs", runList);
-        // DISCOVER run별 "중복 재발굴"(이미 발굴됐던 게시물) 수 — 신규 PENDING이 왜 안 늘었는지 표시
+        // DISCOVER run별 인플루언서 기준 통계 — 건수(발굴 인플루언서 수)와 중복(이미 발굴됐던 인플루언서 수).
+        // 발굴의 산출물은 게시물이 아니라 인플루언서이므로 게시물 수(itemCount)는 툴팁으로만 남긴다.
         var discoverIds = runList.stream()
                 .filter(r -> r.getJob() == JobName.DISCOVER)
                 .map(CrawlRun::getId)
                 .toList();
-        java.util.Map<Long, Long> dupByRun = new java.util.HashMap<>();
+        java.util.Map<Long, RawDiscoveryPostRepository.RunDiscoveryStat> infByRun = new java.util.HashMap<>();
         if (!discoverIds.isEmpty()) {
             for (var s : rawDiscovery.discoveryStats(discoverIds)) {
-                dupByRun.put(s.getRunId(), s.getDuplicates());
+                infByRun.put(s.getRunId(), s);
             }
         }
-        model.addAttribute("dupByRun", dupByRun);
+        model.addAttribute("infByRun", infByRun);
         model.addAttribute("hikerCostPerRequest", hikerProperties.costPerRequestUsd());
         return "fragments/runs :: table";
     }
