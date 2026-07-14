@@ -221,4 +221,56 @@ class JobCostEstimatorTest {
         assertThat(collect.maxRequests()).isEqualTo(6);
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
     }
+
+    @Test
+    void beauty는_유료_요청_0건_비용_0달러() {
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.resultsLimit()).thenReturn(0);
+        when(settings.qualifyBatchLimit()).thenReturn(0);
+        when(settings.collectBatchLimit()).thenReturn(0);
+        when(settings.revisitIntervalDays()).thenReturn(0);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countBackfillPending()).thenReturn(0L);
+        when(influencers.countTrackDue(any())).thenReturn(0L);
+        when(influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED)).thenReturn(516L);
+        when(profileSource.current()).thenReturn(ProfileSource.SELF);
+        when(profileSupplement.relatedEnabled()).thenReturn(false);
+
+        var beauty = estimator.estimates().stream()
+                .filter(c -> c.job().equals("beauty")).findFirst().orElseThrow();
+
+        assertThat(beauty.targets()).isEqualTo(516);
+        assertThat(beauty.maxRequests()).isZero();
+        assertThat(beauty.maxCostUsd()).isZero();
+    }
+
+    @Test
+    void similar는_배치_상한만큼_시드당_1회_pk_미보유만_최대_2회로_추정한다() {
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.resultsLimit()).thenReturn(0);
+        when(settings.qualifyBatchLimit()).thenReturn(0);
+        when(settings.collectBatchLimit()).thenReturn(0);
+        when(settings.revisitIntervalDays()).thenReturn(0);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countBackfillPending()).thenReturn(0L);
+        when(influencers.countTrackDue(any())).thenReturn(0L);
+        when(settings.similarBatchLimit()).thenReturn(50);
+        when(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                InfluencerStatus.QUALIFIED)).thenReturn(200L);
+        when(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+                InfluencerStatus.QUALIFIED)).thenReturn(30L);
+        when(profileSource.current()).thenReturn(ProfileSource.SELF);
+        when(profileSupplement.relatedEnabled()).thenReturn(false);
+
+        var similar = estimator.estimates().stream()
+                .filter(c -> c.job().equals("similar")).findFirst().orElseThrow();
+
+        assertThat(similar.targets()).isEqualTo(50);   // min(배치 50, 대기 200)
+        assertThat(similar.minRequests()).isEqualTo(50);   // 전원 pk 보유 가정
+        assertThat(similar.maxRequests()).isEqualTo(80);   // pk 미보유 30명이 배치에 다 들면 +30
+        assertThat(similar.minCostUsd()).isEqualTo(0.050);
+        assertThat(similar.maxCostUsd()).isEqualTo(0.080);
+    }
 }

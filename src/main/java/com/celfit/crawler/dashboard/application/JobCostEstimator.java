@@ -67,7 +67,8 @@ public class JobCostEstimator {
     }
 
     public List<JobCost> estimates() {
-        return List.of(discoverEstimate(), qualifyEstimate(), collectEstimate());
+        return List.of(discoverEstimate(), qualifyEstimate(), beautyEstimate(),
+                similarEstimate(), collectEstimate());
     }
 
     private JobCost discoverEstimate() {
@@ -95,6 +96,29 @@ public class JobCostEstimator {
         double cost = requests * profileCostPerRequest();
         return new JobCost("qualify", "프로필 스냅샷 · 팔로워 범위 판정",
                 endpoints, targets, requests, requests, cost, cost, note);
+    }
+
+    private JobCost beautyEstimate() {
+        long targets = influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED);
+        return new JobCost("beauty", "뷰티 계정 판정 (로컬 Claude)",
+                List.of("로컬 claude CLI — 구독 포함, 유료 API 없음"),
+                targets, 0, 0, 0, 0, "판정 재료는 저장된 raw_profile — 인스타그램 호출 없음");
+    }
+
+    private JobCost similarEstimate() {
+        long due = influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus.QUALIFIED);
+        long targets = Math.min((long) settings.similarBatchLimit(), due);
+        long noPk = influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+                InfluencerStatus.QUALIFIED);
+        // 배치가 pk 미보유 시드를 몇 명 집을지는 id 순서에 달렸으므로 min(전원 보유)~max(미보유 우선)로 추정
+        long min = targets;
+        long max = targets + Math.min(targets, noPk);
+        return new JobCost("similar", "뷰티 시드의 유사 계정 발굴",
+                List.of("HikerAPI /v2/user/suggested/profiles (시드당 1회 · 최대 30계정)",
+                        "HikerAPI /v1/user/by/username (pk 미보유 시드만 +1회)"),
+                targets, min, max,
+                min * hikerProperties.costPerRequestUsd(), max * hikerProperties.costPerRequestUsd(),
+                "실측: 호출당 30개 고정 · 기존 DB 대비 신규율 ~85%");
     }
 
     private JobCost collectEstimate() {
