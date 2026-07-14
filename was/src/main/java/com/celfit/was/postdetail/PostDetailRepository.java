@@ -2,6 +2,8 @@ package com.celfit.was.postdetail;
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
+import com.celfit.contract.analysis.ContentMetricSnapshot;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -12,9 +14,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 서빙 미러 3종 + 분석 층 소유 테이블 2종 조회. contents·accounts는 계약 record로 매핑하고(§4-3),
- * 댓글은 분류 조인 결과라서, comment_classifications·content_analyses는 공유 형태가 성립하지
- * 않아서 was 로컬 record로 매핑한다(§4-4). 어느 쪽이든 부재 시 빈 값으로 저하한다(대시보드 컨벤션).
+ * 서빙 미러 4종 + 분석 층 소유 테이블 2종 조회. contents·accounts·content_metric_snapshots는
+ * 계약 record로 매핑하고(§4-3), 댓글은 분류 조인 결과라서, comment_classifications·content_analyses는
+ * 공유 형태가 성립하지 않아서 was 로컬 record로 매핑한다(§4-4). 어느 쪽이든 부재 시 빈 값으로
+ * 저하한다(대시보드 컨벤션).
  */
 @Repository
 public class PostDetailRepository {
@@ -88,6 +91,21 @@ public class PostDetailRepository {
 				""")
 				.param("shortCode", shortCode)
 				.query(ContentAnalysisRow.class)
+				.optional());
+	}
+
+	/** cutoff(집계 기간 끝의 KST 다음날 0시) 이전 스냅샷 중 최신 1행 — as-of 선택 규칙(§7 2026-07-14). */
+	public Optional<ContentMetricSnapshot> findSnapshotAsOf(String shortCode, OffsetDateTime cutoff) {
+		return safeQuery("content_metric_snapshots", Optional::empty, () -> jdbcClient.sql("""
+				SELECT id, short_code, captured_at, views, likes, comments, hype_score
+				FROM content_metric_snapshots
+				WHERE short_code = :shortCode AND captured_at < :cutoff
+				ORDER BY captured_at DESC
+				LIMIT 1
+				""")
+				.param("shortCode", shortCode)
+				.param("cutoff", cutoff)
+				.query(ContentMetricSnapshot.class)
 				.optional());
 	}
 
