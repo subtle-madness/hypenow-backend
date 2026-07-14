@@ -35,6 +35,12 @@ public class JdkInstagramWebClient implements InstagramWebClient {
     public JdkInstagramWebClient(DirectCommentProperties props) {
         this.props = props;
         HttpClient.Builder builder = HttpClient.newBuilder()
+                // HTTP/1.1 고정 — 기본 HTTP/2는 커넥션 1개에 스트림을 다중화하는데, 프록시가
+                // 응답을 중간에 끊으면(TLS BUFFER_UNDERFLOW) 스트림이 누수되고, 한도가 차면
+                // 이후 모든 요청이 "too many concurrent streams"로 즉시 실패하며 재시작 전까지
+                // 안 풀린다(실측). 우리는 딜레이 낀 순차 요청이라 다중화 이득이 없고,
+                // HTTP/1.1은 끊긴 커넥션을 버리고 새로 열므로 자가 회복된다.
+                .version(HttpClient.Version.HTTP_1_1)
                 // Shared cookie store so anonymous session cookies set by the initial page
                 // GET carry over to the subsequent /api/graphql POST on this same client.
                 .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL));
