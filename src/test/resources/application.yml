@@ -40,6 +40,7 @@ crawler:
     batch-limit: 10
     comments-per-post: 30
     max-attempts: 3
+    revisit-interval-days: 7
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"

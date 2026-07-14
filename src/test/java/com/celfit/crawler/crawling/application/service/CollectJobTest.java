@@ -96,6 +96,7 @@ class CollectJobTest {
         when(settings.trackWindowDays()).thenReturn(7);
         when(settings.commentsPerPost()).thenReturn(50);
         when(settings.maxAttempts()).thenReturn(3);
+        when(settings.revisitIntervalDays()).thenReturn(7);
     }
 
     /**
@@ -253,7 +254,7 @@ class CollectJobTest {
 
         Influencer backfillInf = influencer(1L, "backfill_user", null, null);
         Influencer trackInf = influencer(2L, "track_user", NOW.minusSeconds(1), NOW.minusSeconds(1));
-        when(influencers.findCollectTargets(PageRequest.of(0, 5)))
+        when(influencers.findCollectTargets(any(), eq(PageRequest.of(0, 5))))
                 .thenReturn(List.of(backfillInf, trackInf));
 
         wireProfile("backfill_user", 1000L, "U1");
@@ -266,10 +267,24 @@ class CollectJobTest {
 
         job(List.of(fetcherA, fetcherB)).run(TriggerType.MANUAL);
 
-        verify(influencers).findCollectTargets(PageRequest.of(0, 5));
+        verify(influencers).findCollectTargets(any(), eq(PageRequest.of(0, 5)));
         InOrder order = inOrder(profileSourceSelector);
         order.verify(profileSourceSelector).fetchAndSupplement(eq(List.of("backfill_user")), eq(TriggerType.MANUAL));
         order.verify(profileSourceSelector).fetchAndSupplement(eq(List.of("track_user")), eq(TriggerType.MANUAL));
+    }
+
+    // ---------------------------------------------------------------------
+    // 1b) 대상 조회는 revisit-interval-days 만큼 과거 시각을 컷오프로 전달한다
+    // ---------------------------------------------------------------------
+    @Test
+    void 대상_조회는_재방문_주기만큼_과거인_시각을_컷오프로_전달한다() {
+        wireCommon();
+        when(settings.revisitIntervalDays()).thenReturn(7);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of());
+
+        job(List.of()).run(TriggerType.MANUAL);
+
+        verify(influencers).findCollectTargets(eq(NOW.minus(Duration.ofDays(7))), any());
     }
 
     // ---------------------------------------------------------------------
@@ -280,7 +295,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         Map<String, Object> profilePayload = profileItem("alice", 12345L, "USR1");
@@ -314,7 +329,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "bob", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         Map<String, Object> noUserId = new LinkedHashMap<>();
@@ -339,7 +354,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -369,7 +384,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -388,7 +403,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -411,7 +426,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -440,7 +455,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -484,7 +499,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -519,7 +534,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -550,7 +565,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -568,7 +583,7 @@ class CollectJobTest {
 
         Instant original = NOW.minus(Duration.ofDays(30));
         Influencer inf = influencer(1L, "alice", original, original);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -589,7 +604,7 @@ class CollectJobTest {
 
         Influencer backfillInf = influencer(1L, "backfill_user", null, null);
         Influencer trackInf = influencer(2L, "track_user", NOW.minus(Duration.ofDays(30)), NOW.minus(Duration.ofDays(30)));
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(backfillInf, trackInf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(backfillInf, trackInf));
         wireProfile("backfill_user", 1000L, "U1");
         wireProfile("track_user", 1000L, "U2");
 
@@ -613,7 +628,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null); // 첫 방문 = 백필
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -649,7 +664,7 @@ class CollectJobTest {
 
         // 첫 방문은 이미 오래 전 완료(추적 방문) — 이번 열거는 새로 아무것도 안 내놓는다.
         Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         // 이전 열거로 이미 승격돼 있던(origin=ENUMERATION), 이번 열거 윈도우 밖의 오래된 PENDING content.
@@ -685,7 +700,7 @@ class CollectJobTest {
 
         Influencer bad = influencer(1L, "bad_user", null, null);
         Influencer good = influencer(2L, "good_user", null, null);
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(bad, good));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(bad, good));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         when(profileSourceSelector.fetchAndSupplement(eq(List.of("bad_user")), eq(TriggerType.MANUAL)))
@@ -712,7 +727,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         // discover가 이미 만들어둔 발굴 부산물 — 이번 열거가 같은 shortCode를 다시 잡는다.
@@ -739,7 +754,7 @@ class CollectJobTest {
 
         // 추적 방문(첫 방문 완료) — 이번 열거는 새로 아무것도 안 내놓아 기존 PENDING만이 댓글 대상 후보다.
         Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
-        when(influencers.findCollectTargets(any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         Content discoveryPending = new Content("DISC_PEND", ContentType.FEED, "alice", 1L,

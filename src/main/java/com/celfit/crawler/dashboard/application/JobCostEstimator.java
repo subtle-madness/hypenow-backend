@@ -10,6 +10,9 @@ import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
 import com.celfit.crawler.settings.domain.ProfileSource;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -39,11 +42,12 @@ public class JobCostEstimator {
     private final ProfileSupplementSetting profileSupplement;
     private final SettingsService settings;
     private final HikerProperties hikerProperties;
+    private final Clock clock;
 
     public JobCostEstimator(SearchKeywordRepository searchKeywords, InfluencerRepository influencers,
                             DiscoverSourceSetting discoverSource, ProfileSourceSetting profileSource,
                             ProfileSupplementSetting profileSupplement, SettingsService settings,
-                            HikerProperties hikerProperties) {
+                            HikerProperties hikerProperties, Clock clock) {
         this.searchKeywords = searchKeywords;
         this.influencers = influencers;
         this.discoverSource = discoverSource;
@@ -51,6 +55,7 @@ public class JobCostEstimator {
         this.profileSupplement = profileSupplement;
         this.settings = settings;
         this.hikerProperties = hikerProperties;
+        this.clock = clock;
     }
 
     public List<JobCost> estimates() {
@@ -83,8 +88,9 @@ public class JobCostEstimator {
     }
 
     private JobCost collectEstimate() {
-        long targets = Math.min((long) settings.collectBatchLimit(),
-                influencers.countByStatus(InfluencerStatus.QUALIFIED));
+        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        long collectDue = influencers.countBackfillPending() + influencers.countTrackDue(revisitBefore);
+        long targets = Math.min((long) settings.collectBatchLimit(), collectDue);
         List<String> endpoints = new ArrayList<>();
         endpoints.add("HikerAPI /gql/user/medias (페이지당 1회)");
         endpoints.add("HikerAPI /v2/user/clips (페이지당 1회)");

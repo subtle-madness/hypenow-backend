@@ -141,4 +141,19 @@ class UiSmokeTest extends IntegrationTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("DISCOVERED")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(String.valueOf(before + 1))));
     }
+
+    @Test
+    void 대시보드_상태_타일에_추적_대기_카드가_렌더된다() throws Exception {
+        // 첫 수집은 끝났지만(9일 전) 재방문 주기(기본 7일)가 지나 다시 수집 대상이 될 인플루언서.
+        Influencer inf = new Influencer("smoke-track-due-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        Instant nineDaysAgo = Instant.now().minus(java.time.Duration.ofDays(9));
+        inf.setFirstCollectedAt(nineDaysAgo);
+        inf.setLastCollectedAt(nineDaysAgo);
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("TRACK")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("재방문 주기 도래")));
+    }
 }

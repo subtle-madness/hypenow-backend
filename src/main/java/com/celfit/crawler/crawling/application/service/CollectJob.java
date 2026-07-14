@@ -87,8 +87,9 @@ public class CollectJob {
      * 않기 위함. RuntimeException은 전부(ApifyException 포함) 해당 방문만 실패 처리하고 계속한다.
      */
     public Summary run(TriggerType trigger) {
+        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
         List<Influencer> targets = influencers.findCollectTargets(
-                PageRequest.of(0, settings.collectBatchLimit()));
+                revisitBefore, PageRequest.of(0, settings.collectBatchLimit()));
         int visited = 0, upserted = 0, collected = 0, failed = 0;
         progress.start(JobName.COLLECT, targets.size());
         try {

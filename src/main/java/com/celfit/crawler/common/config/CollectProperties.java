@@ -4,4 +4,4 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "crawler.collect")
 public record CollectProperties(int backfillMonths, int trackWindowDays, int batchLimit,
-                                int commentsPerPost, int maxAttempts) {}
+                                int commentsPerPost, int maxAttempts, int revisitIntervalDays) {}

@@ -50,7 +50,7 @@ class SettingsApiTest extends IntegrationTest {
     void 기본값_조회() throws Exception {
         mvc.perform(get("/admin/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(9))
+                .andExpect(jsonPath("$.length()").value(10))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].effective").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].defaultValue").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false))
@@ -61,7 +61,8 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$[?(@.key=='collect.track-window-days')].defaultValue").value(30))
                 .andExpect(jsonPath("$[?(@.key=='collect.batch-limit')].defaultValue").value(10))
                 .andExpect(jsonPath("$[?(@.key=='collect.comments-per-post')].defaultValue").value(30))
-                .andExpect(jsonPath("$[?(@.key=='collect.max-attempts')].defaultValue").value(3));
+                .andExpect(jsonPath("$[?(@.key=='collect.max-attempts')].defaultValue").value(3))
+                .andExpect(jsonPath("$[?(@.key=='collect.revisit-interval-days')].defaultValue").value(7));
     }
 
     @Test
@@ -108,6 +109,13 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.effective").value(5));
         assertThat(settingsService.maxAttempts()).isEqualTo(5);
+
+        mvc.perform(put("/admin/settings/collect.revisit-interval-days")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 14}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(14));
+        assertThat(settingsService.revisitIntervalDays()).isEqualTo(14);
     }
 
     @Test

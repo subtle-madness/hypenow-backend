@@ -29,11 +29,12 @@ public class SettingsService {
     static final String COLLECT_BATCH_LIMIT = "collect.batch-limit";
     static final String COLLECT_COMMENTS_PER_POST = "collect.comments-per-post";
     static final String COLLECT_MAX_ATTEMPTS = "collect.max-attempts";
+    static final String COLLECT_REVISIT_INTERVAL_DAYS = "collect.revisit-interval-days";
 
     private static final List<String> KEYS = List.of(
             RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
             COLLECT_BACKFILL_MONTHS, COLLECT_TRACK_WINDOW_DAYS, COLLECT_BATCH_LIMIT,
-            COLLECT_COMMENTS_PER_POST, COLLECT_MAX_ATTEMPTS);
+            COLLECT_COMMENTS_PER_POST, COLLECT_MAX_ATTEMPTS, COLLECT_REVISIT_INTERVAL_DAYS);
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
@@ -94,6 +95,11 @@ public class SettingsService {
     }
 
     @Transactional(readOnly = true)
+    public int revisitIntervalDays() {
+        return effective(COLLECT_REVISIT_INTERVAL_DAYS);
+    }
+
+    @Transactional(readOnly = true)
     public List<SettingView> list() {
         return KEYS.stream().map(this::toView).toList();
     }
@@ -135,6 +141,7 @@ public class SettingsService {
             case COLLECT_BATCH_LIMIT -> collectProps.batchLimit();
             case COLLECT_COMMENTS_PER_POST -> collectProps.commentsPerPost();
             case COLLECT_MAX_ATTEMPTS -> collectProps.maxAttempts();
+            case COLLECT_REVISIT_INTERVAL_DAYS -> collectProps.revisitIntervalDays();
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 설정 키: " + key);
         };
     }

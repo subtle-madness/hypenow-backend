@@ -1,6 +1,7 @@
 package com.celfit.crawler.dashboard.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -16,12 +17,18 @@ import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
 import com.celfit.crawler.settings.domain.ProfileSource;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class JobCostEstimatorTest {
+
+    static final Instant NOW = Instant.parse("2026-07-14T00:00:00Z");
+    static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
     private final SearchKeywordRepository searchKeywords = mock(SearchKeywordRepository.class);
     private final InfluencerRepository influencers = mock(InfluencerRepository.class);
@@ -32,7 +39,8 @@ class JobCostEstimatorTest {
     private final HikerProperties hikerProperties = new HikerProperties("key", "http://x", null, 0.001);
 
     private final JobCostEstimator estimator = new JobCostEstimator(
-            searchKeywords, influencers, discoverSource, profileSource, profileSupplement, settings, hikerProperties);
+            searchKeywords, influencers, discoverSource, profileSource, profileSupplement, settings,
+            hikerProperties, CLOCK);
 
     private static List<SearchKeyword> keywords(int n) {
         return java.util.stream.IntStream.range(0, n)
@@ -130,7 +138,8 @@ class JobCostEstimatorTest {
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(5);
         when(influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countByStatus(InfluencerStatus.QUALIFIED)).thenReturn(3L);
+        when(influencers.countBackfillPending()).thenReturn(2L);
+        when(influencers.countTrackDue(any())).thenReturn(1L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 
@@ -154,7 +163,8 @@ class JobCostEstimatorTest {
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(10);
         when(influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countByStatus(InfluencerStatus.QUALIFIED)).thenReturn(2L);
+        when(influencers.countBackfillPending()).thenReturn(2L);
+        when(influencers.countTrackDue(any())).thenReturn(0L);
         when(profileSource.current()).thenReturn(ProfileSource.HIKER_WEB_GQL);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 

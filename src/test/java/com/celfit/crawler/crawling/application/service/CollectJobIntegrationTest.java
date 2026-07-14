@@ -45,6 +45,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 class CollectJobIntegrationTest extends IntegrationTest {
 
     static final String USERNAME = "it-collect-bookkeeping-user";
+    static final String USERNAME_BACKFILL = "it-collect-revisit-backfill";
+    static final String USERNAME_DUE = "it-collect-revisit-due";
+    static final String USERNAME_RECENT = "it-collect-revisit-recent";
 
     @Autowired InfluencerRepository influencers;
     @Autowired RawProfileRepository rawProfiles;
@@ -66,6 +69,8 @@ class CollectJobIntegrationTest extends IntegrationTest {
         jdbc.update("delete from raw_run_item where crawl_run_id in (select id from crawl_run where target_username = ?)", USERNAME);
         jdbc.update("delete from crawl_run where target_username = ?", USERNAME);
         jdbc.update("delete from influencer where username = ?", USERNAME);
+        jdbc.update("delete from influencer where username in (?, ?, ?)",
+                USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT);
     }
 
     /** HIKER_GQL_MEDIAS 빈 페이지만 돌려주는 fake — 열거는 즉시 자연 종료된다. */
@@ -122,5 +127,45 @@ class CollectJobIntegrationTest extends IntegrationTest {
         assertThat(reloaded.getFirstCollectedAt()).as("first_collected_at(백필 완료 표식)").isNotNull();
         assertThat(reloaded.getFollowers()).isEqualTo(4321L);
         assertThat(reloaded.getLastProfiledAt()).isNotNull();
+    }
+
+    // ---------------------------------------------------------------------
+    // findCollectTargets가 재방문 주기(revisitBefore)를 실제 JPQL로 반영하는지 — mock으론 검증 불가.
+    // 백필(첫 수집 전) 대상이 가장 먼저, 주기 지난 추적 대상이 그다음, 주기 안 지난 최근 방문자는
+    // 아예 빠져야 한다.
+    // ---------------------------------------------------------------------
+    @Test
+    void findCollectTargets는_재방문_주기_안_지난_QUALIFIED를_제외하고_백필을_먼저_반환한다() {
+        Instant now = clock.instant();
+        Instant revisitBefore = now.minus(java.time.Duration.ofDays(settings.revisitIntervalDays()));
+
+        Influencer backfillInf = new Influencer(USERNAME_BACKFILL);
+        backfillInf.setStatus(InfluencerStatus.QUALIFIED);
+        // firstCollectedAt/lastCollectedAt 모두 null — 백필 대상
+        Long backfillId = influencers.save(backfillInf).getId();
+
+        Influencer dueInf = new Influencer(USERNAME_DUE);
+        dueInf.setStatus(InfluencerStatus.QUALIFIED);
+        Instant longAgo = revisitBefore.minusSeconds(3600); // 주기보다 더 오래 전 방문 — 대상
+        dueInf.setFirstCollectedAt(longAgo);
+        dueInf.setLastCollectedAt(longAgo);
+        Long dueId = influencers.save(dueInf).getId();
+
+        Influencer recentInf = new Influencer(USERNAME_RECENT);
+        recentInf.setStatus(InfluencerStatus.QUALIFIED);
+        Instant justNow = now.minusSeconds(60); // 주기 안 지남 — 대상 제외
+        recentInf.setFirstCollectedAt(justNow);
+        recentInf.setLastCollectedAt(justNow);
+        Long recentId = influencers.save(recentInf).getId();
+
+        List<Influencer> targets = influencers.findCollectTargets(revisitBefore,
+                org.springframework.data.domain.PageRequest.of(0, 100));
+        List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
+
+        assertThat(targetIds).contains(backfillId, dueId);
+        assertThat(targetIds).doesNotContain(recentId);
+        assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));
+
+        assertThat(influencers.countTrackDue(revisitBefore)).isGreaterThanOrEqualTo(1L);
     }
 }
