@@ -109,6 +109,17 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 실행_이력에_구_파이프라인_AGGREGATE_행이_있어도_렌더된다() throws Exception {
+        // V8 이관은 crawl_run의 과거 job 값을 재매핑하지 않는다 — 실DB에 AGGREGATE 이력 54건 존재.
+        // enum에서 AGGREGATE를 지우면 이력 조회가 IllegalArgumentException으로 터졌던 회귀의 재현.
+        crawlRuns.save(new CrawlRun(JobName.AGGREGATE, TriggerType.MANUAL,
+                null, null, "legacy-actor", Instant.now()));
+
+        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("AGGREGATE")));
+    }
+
+    @Test
     void 대시보드_상태_타일에_인플루언서_카운트가_렌더된다() throws Exception {
         long before = influencers.countByStatus(InfluencerStatus.DISCOVERED);
         influencers.save(new Influencer("smoke-count-user"));
