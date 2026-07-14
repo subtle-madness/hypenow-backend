@@ -23,6 +23,10 @@ public class FlywayConfig {
 				.locations("classpath:db/migration/analysis")
 				.baselineOnMigrate(true)
 				.baselineVersion("0")
+				// 공유 dev DB에 병행 브랜치(다른 워크트리)가 적용한 마이그레이션은 이 브랜치엔 파일이 없어
+				// "applied not resolved locally"로 기동이 막힌다 — missing만 검증 완화(적용 스킵 아님).
+				// §4-5 번호대 예약 컨벤션과 한 쌍.
+				.ignoreMigrationPatterns("*:missing")
 				.load();
 	}
 }
