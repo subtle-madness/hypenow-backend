@@ -27,6 +27,31 @@
     </form>
 </div>
 
+<h2>예상 비용</h2>
+<div class="job-costs">
+    <div class="card job-cost" th:each="c : ${costs}">
+        <h3 th:text="${c.job()}"></h3>
+        <p class="job-cost-targets">대상 <b th:text="${c.targets()}"></b>건</p>
+        <ul class="job-cost-endpoints">
+            <li th:each="ep : ${c.endpoints()}" th:text="${ep}"></li>
+        </ul>
+        <p class="job-cost-requests">
+            예상 요청 수
+            <b th:if="${c.minRequests() == c.maxRequests()}" th:text="${c.minRequests()} + '회'"></b>
+            <b th:unless="${c.minRequests() == c.maxRequests()}"
+               th:text="${c.minRequests()} + '~' + ${c.maxRequests()} + '회'"></b>
+        </p>
+        <p class="job-cost-usd">
+            예상 비용
+            <b th:if="${c.minCostUsd() == c.maxCostUsd()}"
+               th:text="'$' + ${#numbers.formatDecimal(c.minCostUsd(), 1, 3)}"></b>
+            <b th:unless="${c.minCostUsd() == c.maxCostUsd()}"
+               th:text="'$' + ${#numbers.formatDecimal(c.minCostUsd(), 1, 3)} + '~$' + ${#numbers.formatDecimal(c.maxCostUsd(), 1, 3)}"></b>
+        </p>
+        <p class="job-cost-note" th:if="${c.note() != null}" th:text="${c.note()}"></p>
+    </div>
+</div>
+
 <h2>실행 로그</h2>
 <div hx-get="/ui/fragments/logs" hx-trigger="load, every 3s"></div>
 

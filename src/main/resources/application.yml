@@ -26,6 +26,7 @@ crawler:
     api-key: ${HIKER_API_KEY:}
     base-url: https://api.hikerapi.com
     request-timeout: 15s
+    cost-per-request-usd: 0.001
   discover:
     results-limit: 100
   qualify:

@@ -2,6 +2,8 @@ package com.celfit.crawler.dashboard.adapter.in.web;
 
 import com.celfit.crawler.common.log.LogBuffer;
 
+import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
+import com.celfit.crawler.dashboard.application.JobCostEstimator;
 import com.celfit.crawler.dashboard.application.StatusService;
 import com.celfit.crawler.crawling.domain.*;
 import com.celfit.crawler.content.domain.*;
@@ -35,6 +37,8 @@ public class UiController {
 
     private final com.celfit.crawler.crawling.application.service.JobLock jobLock;
     private final com.celfit.crawler.crawling.application.service.JobProgress jobProgress;
+    private final JobCostEstimator jobCostEstimator;
+    private final HikerProperties hikerProperties;
 
     public UiController(StatusService statusService, CrawlRunRepository runs,
                         ContentRepository contents, RawPostDetailRepository rawDetails,
@@ -42,7 +46,8 @@ public class UiController {
                         RawDiscoveryPostRepository rawDiscovery,
                         ObjectMapper objectMapper, LogBuffer logBuffer,
                         com.celfit.crawler.crawling.application.service.JobLock jobLock,
-                        com.celfit.crawler.crawling.application.service.JobProgress jobProgress) {
+                        com.celfit.crawler.crawling.application.service.JobProgress jobProgress,
+                        JobCostEstimator jobCostEstimator, HikerProperties hikerProperties) {
         this.statusService = statusService;
         this.runs = runs;
         this.contents = contents;
@@ -54,6 +59,8 @@ public class UiController {
         this.logBuffer = logBuffer;
         this.jobLock = jobLock;
         this.jobProgress = jobProgress;
+        this.jobCostEstimator = jobCostEstimator;
+        this.hikerProperties = hikerProperties;
     }
 
     /** 현재 작업 바(실시간)용 한 잡의 상태. */
@@ -93,6 +100,7 @@ public class UiController {
             }
         }
         model.addAttribute("dupByRun", dupByRun);
+        model.addAttribute("hikerCostPerRequest", hikerProperties.costPerRequestUsd());
         return "fragments/runs :: table";
     }
 
@@ -142,6 +150,7 @@ public class UiController {
 
     @GetMapping("/ui/jobs")
     public String jobs(Model model) {
+        model.addAttribute("costs", jobCostEstimator.estimates());
         return "jobs";
     }
 

@@ -261,6 +261,14 @@ label { color: var(--ink-secondary); }
     box-shadow: var(--shadow);
 }
 
+/* ── 잡 예상 비용 카드 ─────────────────── */
+.job-costs { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.8rem; }
+.job-cost h3 { margin: 0 0 0.5rem; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.job-cost p { margin: 0.35rem 0; font-size: 0.85rem; }
+.job-cost-endpoints { margin: 0.35rem 0; padding-left: 1.1rem; font-size: 0.78rem; color: var(--ink-secondary); }
+.job-cost-endpoints li { margin: 0.15rem 0; }
+.job-cost-note { color: var(--muted); font-size: 0.75rem; }
+
 /* ── 실행 로그 ─────────────────────────── */
 .log-panel {
     background: var(--side-bg); color: #cfc8d4;

@@ -18,6 +18,9 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     long countByStatus(InfluencerStatus status);
 
+    /** 비용 추정용: 아직 프로필 조회 전(discover 직후)인 인플루언서 수. */
+    long countByStatusAndLastProfiledAtIsNull(InfluencerStatus status);
+
     /** 백필 대기: 판정 통과했지만 첫 수집(backfill)이 아직 안 된 인플루언서 수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.firstCollectedAt is null")
     long countBackfillPending();

@@ -27,6 +27,7 @@ crawler:
     api-key: test-key
     base-url: http://localhost:9999
     request-timeout: 15s
+    cost-per-request-usd: 0.001
   discover:
     results-limit: 100
   qualify:

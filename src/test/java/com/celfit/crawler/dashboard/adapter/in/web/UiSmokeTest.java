@@ -57,6 +57,12 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 잡_화면에_예상_비용_카드가_렌더된다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
+    }
+
+    @Test
     void 수집_데이터_화면이_content_행이_있어도_렌더된다() throws Exception {
         Influencer inf = influencers.save(new Influencer("smoke-user"));
         contents.save(new Content("sc-smoke", ContentType.REELS, "smoke-user",
@@ -88,6 +94,18 @@ class UiSmokeTest extends IntegrationTest {
     void 검색_키워드_화면이_렌더된다() throws Exception {
         mvc.perform(get("/ui/keywords")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("검색 키워드")));
+    }
+
+    @Test
+    void 실행_이력_프래그먼트에_요청수_기준_비용이_렌더된다() throws Exception {
+        CrawlRun run = crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL,
+                "cost-smoke-kw", null, "hiker-hashtag-top", Instant.now()));
+        run.finishOk(null, 12, 3, Instant.now());
+        crawlRuns.save(run);
+
+        // requestCount=12 × $0.001/요청 = $0.012
+        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("$0.012")));
     }
 
     @Test

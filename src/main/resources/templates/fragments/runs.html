@@ -1,7 +1,7 @@
 <div th:fragment="table" xmlns:th="http://www.thymeleaf.org">
     <table class="data">
         <tr><th>id</th><th>잡</th><th>트리거</th><th>키워드</th><th>액터</th>
-            <th>상태</th><th>건수</th><th>요청수</th><th>에러</th><th>시작</th><th>종료</th></tr>
+            <th>상태</th><th>건수</th><th>요청수</th><th>비용</th><th>에러</th><th>시작</th><th>종료</th></tr>
         <tr th:each="r : ${runs}">
             <td th:text="${r.id}"></td>
             <td th:text="${r.job}"></td>
@@ -17,6 +17,7 @@
                       title="이미 발굴됐던 게시물 재발굴 — 신규 PENDING 아님"></span>
             </td>
             <td th:text="${r.requestCount}" title="비Apify 소스의 과금 요청 수 (HikerAPI $0.001/요청)"></td>
+            <td th:text="${r.requestCount != null} ? '$' + ${#numbers.formatDecimal(r.requestCount * hikerCostPerRequest, 1, 3)} : '—'"></td>
             <td th:text="${r.errorMessage}"></td>
             <td th:text="${r.startedAt}"></td>
             <td th:text="${r.finishedAt}"></td>
