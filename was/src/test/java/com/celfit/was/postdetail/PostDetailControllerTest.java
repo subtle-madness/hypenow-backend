@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
+import com.celfit.contract.analysis.ContentMetricSnapshot;
 import com.celfit.was.config.ClockConfig;
 import com.celfit.was.config.WebConfig;
 import java.math.BigDecimal;
@@ -93,6 +94,37 @@ class PostDetailControllerTest {
 
 		mockMvc.perform(get("/api/posts/nope"))
 				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void endDate가_있으면_그_시점_스냅샷으로_지표를_내린다() throws Exception {
+		givenMari01();
+		given(repository.findSnapshotAsOf("mari01", OffsetDateTime.parse("2026-07-03T15:00:00Z")))
+				.willReturn(Optional.of(new ContentMetricSnapshot(12L, "mari01",
+						OffsetDateTime.parse("2026-07-02T03:00:00Z"), 500000L, 20000L, 400L, 500000L)));
+
+		mockMvc.perform(get("/api/posts/mari01").param("endDate", "2026-07-03"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.post.views").value(500000))
+				.andExpect(jsonPath("$.post.engagementRate").value(0.0408))
+				.andExpect(jsonPath("$.post.metricsCapturedAt").value("2026-07-02T03:00:00Z"))
+				.andExpect(jsonPath("$.post.caption").value("쿨톤 여름 침착 조합"));
+	}
+
+	@Test
+	void endDate_시점_스냅샷이_없으면_404() throws Exception {
+		givenMari01();
+		given(repository.findSnapshotAsOf("mari01", OffsetDateTime.parse("2026-06-29T15:00:00Z")))
+				.willReturn(Optional.empty());
+
+		mockMvc.perform(get("/api/posts/mari01").param("endDate", "2026-06-29"))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void endDate_형식이_틀리면_400() throws Exception {
+		mockMvc.perform(get("/api/posts/mari01").param("endDate", "07/03/2026"))
+				.andExpect(status().isBadRequest());
 	}
 
 	@Test
