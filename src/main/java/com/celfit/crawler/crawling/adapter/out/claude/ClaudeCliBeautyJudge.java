@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.adapter.out.claude;
 
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -41,23 +42,35 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
             try (OutputStream in = p.getOutputStream()) {
                 in.write(prompt.getBytes(StandardCharsets.UTF_8));
             }
-            // 판정 출력은 배치 50명 기준 수 KB — OS 파이프 버퍼(64KB) 안이라 waitFor 먼저 해도
-            // 스트림 교착이 없다. 무한 대기 방지를 위해 타임아웃 후 읽는다.
+            // stdout·stderr를 대기와 동시에 드레인 — 파이프 버퍼 크기와 무관하게 교착이 없다
+            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+            ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+            Thread outDrain = Thread.startVirtualThread(() -> drain(p.getInputStream(), stdout));
+            Thread errDrain = Thread.startVirtualThread(() -> drain(p.getErrorStream(), stderr));
             if (!p.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 throw new ApifyException("claude CLI 타임아웃(" + TIMEOUT_SECONDS + "s)");
             }
-            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            outDrain.join();
+            errDrain.join();
             if (p.exitValue() != 0) {
-                String err = new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-                throw new ApifyException("claude CLI 종료코드 " + p.exitValue() + ": " + err);
+                throw new ApifyException("claude CLI 종료코드 " + p.exitValue() + ": "
+                        + stderr.toString(StandardCharsets.UTF_8));
             }
-            return out;
+            return stdout.toString(StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new ApifyException("claude CLI 실행 실패(로컬 claude 설치·로그인 필요): " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ApifyException("claude CLI 대기 중단", e);
+        }
+    }
+
+    private static void drain(java.io.InputStream from, ByteArrayOutputStream to) {
+        try (from) {
+            from.transferTo(to);
+        } catch (IOException ignored) {
+            // 프로세스 강제 종료 시 스트림이 닫히며 나는 예외 — 드레인 목적상 무시
         }
     }
 
