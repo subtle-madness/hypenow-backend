@@ -1,6 +1,7 @@
 # 태스크 C2 — 인플루언서 계정 LLM 카피 Implementation Plan
 
 > 상태: ✅ 실행됨
+> ※ 플랜 본문의 V11 표기는 실행 중 V20으로 renumber됨 (공유 DB 선점 충돌 — 스펙 §3 참조)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 계정마다 LLM 1콜로 AccountReport 카피 7종을 생성해 `account_analyses`(V11)에 이력 INSERT하는 배치를 만든다.
