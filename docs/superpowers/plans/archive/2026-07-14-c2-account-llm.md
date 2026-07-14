@@ -1,6 +1,6 @@
 # 태스크 C2 — 인플루언서 계정 LLM 카피 Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 실행됨
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 계정마다 LLM 1콜로 AccountReport 카피 7종을 생성해 `account_analyses`(V11)에 이력 INSERT하는 배치를 만든다.
