@@ -202,6 +202,15 @@ class ContentListRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 미지원_follower_값은_매칭_0이다() {
+		// FollowerRange.UNKNOWN([0,0) 공집합) — 필터 무시(전체 매칭)가 아니라 매칭 0이어야 한다(verbatim 계약)
+		ContentListQuery q = ContentListQuery.of(LocalDate.parse("2026-06-27"), LocalDate.parse("2026-07-03"),
+				null, null, null, null, "bogus", null, null, null, "hype");
+		assertThat(repository.findContents(q)).isEmpty();
+		assertThat(repository.countContents(q)).isZero();
+	}
+
+	@Test
 	void content_type_필터() {
 		ContentListQuery q = ContentListQuery.of(LocalDate.parse("2026-06-27"), LocalDate.parse("2026-07-03"),
 				null, null, null, "feed", null, null, null, null, "hype");

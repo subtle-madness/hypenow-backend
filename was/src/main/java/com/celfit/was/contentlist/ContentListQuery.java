@@ -20,7 +20,9 @@ public record ContentListQuery(
 
 	/** 프론트 follower 구간 값 — 경계는 [min, max) (프론트 FOLLOWER_RANGES와 동일). */
 	public enum FollowerRange {
-		R3K_10K(3_000, 10_000), R10K_30K(10_000, 30_000), R30K_50K(30_000, 50_000);
+		R3K_10K(3_000, 10_000), R10K_30K(10_000, 30_000), R30K_50K(30_000, 50_000),
+		/** 미지원 값 — 공집합 [0, 0)이라 SQL 조건이 항상 false = "알 수 없는 값은 매칭 0" 계약을 자동 충족. */
+		UNKNOWN(0, 0);
 
 		final long min;
 		final long max;
@@ -30,13 +32,13 @@ public record ContentListQuery(
 			this.max = max;
 		}
 
-		/** 프론트 값(3k-10k 등) → 구간. 모르는 값은 null(필터 무시가 아니라 매칭 0을 원하면 호출부에서 처리 불필요 — 프론트 고정 어휘). */
+		/** 프론트 값(3k-10k 등) → 구간. 모르는 값은 UNKNOWN(필터 무시가 아니라 매칭 0 — verbatim 계약). */
 		public static FollowerRange from(String value) {
 			return switch (value) {
 				case "3k-10k" -> R3K_10K;
 				case "10k-30k" -> R10K_30K;
 				case "30k-50k" -> R30K_50K;
-				default -> null;
+				default -> UNKNOWN;
 			};
 		}
 	}
