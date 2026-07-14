@@ -125,6 +125,28 @@ class SelfProfileFetcherTest {
         assertThat(calls.get()).isLessThan(20);
     }
 
+    // 401/403(하드 블록)도 rate-limit/블록 신호 — 429처럼 연속 임계값에서 회로를 트립시킨다.
+    // (인스타는 과도한 요청 시 429 소프트 → 401 하드 블록으로 에스컬레이션하므로 둘 다 잡아야 한다)
+    @Test void 연속_401_하드블록도_임계값에_도달하면_배치를_중단한다() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                calls.incrementAndGet();
+                return new Response(401, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        List<String> many = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "u" + i).toList();
+        var ex = f.fetch(JobName.QUALIFY, many, TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(calls.get()).isEqualTo(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT);
+    }
+
     // 성공(200)이 사이에 끼면 연속 카운터가 리셋 — 간헐적 429는 회로를 트립시키지 않는다.
     @Test void 성공이_사이에_끼면_429_연속_카운터가_리셋되어_중단하지_않는다() {
         // 패턴: 429, 429, 200, 429, 429 ... (연속 429가 임계값에 도달하지 않음)
