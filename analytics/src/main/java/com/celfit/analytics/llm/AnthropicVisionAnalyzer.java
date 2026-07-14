@@ -1,13 +1,19 @@
 package com.celfit.analytics.llm;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.models.messages.Base64ImageSource;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.StructuredMessageCreateParams;
 import com.anthropic.models.messages.TextBlockParam;
-import com.anthropic.models.messages.UrlImageSource;
 import com.celfit.analytics.config.AnalyticsSettings;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 
@@ -36,6 +42,10 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 
 	private final AnthropicClient client;
 	private final AnalyticsSettings settings;
+	private final HttpClient http = HttpClient.newBuilder()
+			.followRedirects(HttpClient.Redirect.NORMAL)
+			.connectTimeout(Duration.ofSeconds(10))
+			.build();
 
 	public AnthropicVisionAnalyzer(AnthropicClient client, AnalyticsSettings settings) {
 		this.client = client;
@@ -44,6 +54,9 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 
 	@Override
 	public VlmResult analyze(String thumbnailUrl, String caption) {
+		// URL 소스는 API가 대상 사이트 robots.txt를 존중해 인스타 CDN을 항상 거절한다(2026-07-14 확인).
+		// 썸네일을 직접 받아 base64로 보낸다 — CDN 서명 만료 시 여기서 실패해 콘텐츠 단위 skip.
+		byte[] image = fetchImage(thumbnailUrl);
 		StructuredMessageCreateParams<VlmResult> params = MessageCreateParams.builder()
 				.model(settings.llmModel())
 				.maxTokens(4096L)
@@ -51,7 +64,10 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 				.outputConfig(VlmResult.class)
 				.addUserMessageOfBlockParams(List.of(
 						ContentBlockParam.ofImage(ImageBlockParam.builder()
-								.source(UrlImageSource.builder().url(thumbnailUrl).build())
+								.source(Base64ImageSource.builder()
+										.mediaType(Base64ImageSource.MediaType.of(mediaTypeOf(image)))
+										.data(Base64.getEncoder().encodeToString(image))
+										.build())
 								.build()),
 						ContentBlockParam.ofText(TextBlockParam.builder()
 								.text("캡션: " + caption).build())))
@@ -62,6 +78,41 @@ public final class AnthropicVisionAnalyzer implements VisionPort {
 				.findFirst()
 				.orElseThrow(() -> new IllegalStateException("VLM 응답에 본문 없음"))
 				.text());
+	}
+
+	private byte[] fetchImage(String url) {
+		try {
+			HttpResponse<byte[]> res = http.send(HttpRequest.newBuilder(URI.create(url))
+					.timeout(Duration.ofSeconds(20)).GET().build(),
+					HttpResponse.BodyHandlers.ofByteArray());
+			if (res.statusCode() != 200 || res.body().length == 0) {
+				throw new IllegalStateException("썸네일 취득 실패 (HTTP " + res.statusCode() + "): " + url);
+			}
+			return res.body();
+		} catch (java.io.IOException | InterruptedException e) {
+			if (e instanceof InterruptedException) {
+				Thread.currentThread().interrupt();
+			}
+			throw new IllegalStateException("썸네일 취득 실패: " + url, e);
+		}
+	}
+
+	/** 이미지 매직 바이트로 media type 판별 — 인스타 CDN은 jpeg/webp 위주, 미지 형식은 jpeg 폴백. */
+	static String mediaTypeOf(byte[] image) {
+		if (image.length >= 3 && (image[0] & 0xFF) == 0xFF && (image[1] & 0xFF) == 0xD8) {
+			return "image/jpeg";
+		}
+		if (image.length >= 4 && (image[0] & 0xFF) == 0x89 && image[1] == 'P' && image[2] == 'N' && image[3] == 'G') {
+			return "image/png";
+		}
+		if (image.length >= 4 && image[0] == 'G' && image[1] == 'I' && image[2] == 'F') {
+			return "image/gif";
+		}
+		if (image.length >= 12 && image[0] == 'R' && image[1] == 'I' && image[2] == 'F' && image[3] == 'F'
+				&& image[8] == 'W' && image[9] == 'E' && image[10] == 'B' && image[11] == 'P') {
+			return "image/webp";
+		}
+		return "image/jpeg";
 	}
 
 	/**

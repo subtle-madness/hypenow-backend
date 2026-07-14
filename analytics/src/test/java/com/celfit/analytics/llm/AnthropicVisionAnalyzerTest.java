@@ -35,4 +35,16 @@ class AnthropicVisionAnalyzerTest {
 		assertEquals("high", sanitized.sponsoredSignalLevel());
 		assertEquals("sponsored", sanitized.adType());
 	}
+
+	@Test
+	void 이미지_매직바이트로_media_type을_판별한다() {
+		// URL 소스는 robots.txt로 거절되므로(2026-07-14) 직접 받아 base64로 보낸다 — 그때 필요한 판별
+		assertEquals("image/jpeg", AnthropicVisionAnalyzer.mediaTypeOf(new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00}));
+		assertEquals("image/png", AnthropicVisionAnalyzer.mediaTypeOf(new byte[] {(byte) 0x89, 'P', 'N', 'G'}));
+		assertEquals("image/gif", AnthropicVisionAnalyzer.mediaTypeOf(new byte[] {'G', 'I', 'F', '8'}));
+		assertEquals("image/webp", AnthropicVisionAnalyzer.mediaTypeOf(
+				new byte[] {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'}));
+		// 미지의 형식은 인스타 CDN 기본값인 jpeg로 폴백
+		assertEquals("image/jpeg", AnthropicVisionAnalyzer.mediaTypeOf(new byte[] {0x00, 0x01}));
+	}
 }
