@@ -111,6 +111,10 @@ public class SimilarJob {
                 return new SeedResult(0, 0, 0, 1, 0);
             }
             // crawl_run FAILED 기록됨 — 마킹 없이 다음 실행 재시도
+            // pk 백필만 영속 — 실패 시드도 다음 실행에서 재해석 비용을 내지 않도록
+            if (seed.getIgUserId() != null) {
+                influencers.save(seed);
+            }
             log.warn("유사 발굴 ({}/{}) {} — 실패: {}", i, total, seed.getUsername(), e.getMessage());
             return new SeedResult(0, 0, 0, 0, 1);
         }

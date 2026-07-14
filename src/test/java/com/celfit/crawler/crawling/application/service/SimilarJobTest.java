@@ -177,4 +177,20 @@ class SimilarJobTest {
         assertThat(bad.getSimilarProcessedAt()).isNull();
         assertThat(good.getSimilarProcessedAt()).isEqualTo(NOW);
     }
+
+    @Test
+    void 일반_실패_시드도_해석된_pk_백필은_저장된다() {
+        Influencer s = seed(1L, "seed1", null);
+        when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), any())).thenReturn(List.of(s));
+        when(resolver.resolvePk("seed1")).thenReturn("777");
+        when(suggested.fetch("777")).thenThrow(new ApifyException("Hiker HTTP 500: 서버 오류"));
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        assertThat(summary.failedSeeds()).isEqualTo(1);
+        assertThat(s.getIgUserId()).isEqualTo("777");
+        assertThat(s.getSimilarProcessedAt()).isNull();
+        verify(influencers).save(s);   // 백필 영속
+    }
 }
