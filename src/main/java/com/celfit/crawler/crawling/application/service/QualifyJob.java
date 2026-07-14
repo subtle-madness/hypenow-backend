@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,11 +53,19 @@ public class QualifyJob {
 
     @Transactional
     public Summary run(TriggerType trigger, boolean requalify) {
-        List<Influencer> targets = new ArrayList<>(influencers.findByStatus(
-                InfluencerStatus.DISCOVERED, PageRequest.of(0, settings.qualifyBatchLimit())));
+        // 1) 판정 가능분 먼저 — followers가 이미 있는(레거시 이관·이전 프로필) DISCOVERED는
+        //    API 호출이 없으므로 배치 상한과 무관하게 전부 판정한다.
+        List<Influencer> targets = new ArrayList<>(
+                influencers.findByStatusAndFollowersIsNotNull(InfluencerStatus.DISCOVERED));
 
-        ProfileResult pr = profileMissing(targets, trigger);
+        // 2) 프로필 미확보분은 배치 상한만큼 id 순으로 — 정렬 없는 선정은 매 실행 같은 계정을
+        //    다시 뽑거나(진행 정체) 판정 준비된 계정을 영영 안 뽑는 문제가 있었다.
+        List<Influencer> toProfile = influencers.findByStatusAndFollowersIsNull(
+                InfluencerStatus.DISCOVERED,
+                PageRequest.of(0, settings.qualifyBatchLimit(), Sort.by("id")));
+        ProfileResult pr = profileMissing(toProfile, trigger);
         int profiled = pr.profiled();
+        targets.addAll(toProfile);
 
         if (requalify) {
             targets.addAll(influencers.findByStatus(InfluencerStatus.QUALIFIED, Pageable.unpaged()));
@@ -77,9 +86,8 @@ public class QualifyJob {
 
     private record ProfileResult(int profiled, int failedChunks) {}
 
-    private ProfileResult profileMissing(List<Influencer> targets, TriggerType trigger) {
-        List<Influencer> toProfile = targets.stream()
-                .filter(i -> i.getLastProfiledAt() == null).toList();
+    /** followers 미확보 배치의 프로필 수집 — 과거 시도 여부와 무관하게 재시도한다(선정 자체가 미확보 기준). */
+    private ProfileResult profileMissing(List<Influencer> toProfile, TriggerType trigger) {
         int profiled = 0, failedChunks = 0;
         for (List<Influencer> chunk : ActorInputs.chunk(toProfile, PROFILE_CHUNK)) {
             List<String> names = chunk.stream().map(Influencer::getUsername).toList();

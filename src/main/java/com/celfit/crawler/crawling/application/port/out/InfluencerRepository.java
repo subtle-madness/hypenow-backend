@@ -19,8 +19,14 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     long countByStatus(InfluencerStatus status);
 
-    /** 비용 추정용: 아직 프로필 조회 전(discover 직후)인 인플루언서 수. */
-    long countByStatusAndLastProfiledAtIsNull(InfluencerStatus status);
+    /** 판정 가능분: followers를 이미 확보한(레거시 이관·이전 프로필) 인플루언서 — API 호출 없이 즉시 판정. */
+    List<Influencer> findByStatusAndFollowersIsNotNull(InfluencerStatus status);
+
+    /** 프로필 수집 배치: followers 미확보 인플루언서 — id 순 Pageable로 결정적으로 소진한다. */
+    List<Influencer> findByStatusAndFollowersIsNull(InfluencerStatus status, Pageable pageable);
+
+    /** 비용 추정용: 프로필(followers) 미확보라 qualify가 API를 호출해야 하는 인플루언서 수. */
+    long countByStatusAndFollowersIsNull(InfluencerStatus status);
 
     /** 백필 대기: 판정 통과했지만 첫 수집(backfill)이 아직 안 된 인플루언서 수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.firstCollectedAt is null")

@@ -77,7 +77,7 @@ public class JobCostEstimator {
 
     private JobCost qualifyEstimate() {
         long targets = Math.min((long) settings.qualifyBatchLimit(),
-                influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED));
+                influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED));
         List<String> endpoints = new ArrayList<>();
         long perAccount = profileRequestsPerAccount(endpoints);
         String note = profileSource.current() == ProfileSource.ACTOR ? "Apify 액터 과금 별도" : null;

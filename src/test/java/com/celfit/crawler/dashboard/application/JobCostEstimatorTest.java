@@ -92,7 +92,7 @@ class JobCostEstimatorTest {
         when(settings.resultsLimit()).thenReturn(0);
         when(settings.qualifyBatchLimit()).thenReturn(2);
         when(settings.collectBatchLimit()).thenReturn(0);
-        when(influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED)).thenReturn(10L);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(10L);
         when(influencers.countByStatus(InfluencerStatus.QUALIFIED)).thenReturn(0L);
         when(profileSource.current()).thenReturn(ProfileSource.HIKER_MOBILE);
         when(profileSupplement.relatedEnabled()).thenReturn(true);
@@ -116,7 +116,7 @@ class JobCostEstimatorTest {
         when(settings.resultsLimit()).thenReturn(0);
         when(settings.qualifyBatchLimit()).thenReturn(500);
         when(settings.collectBatchLimit()).thenReturn(0);
-        when(influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED)).thenReturn(50L);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(50L);
         when(influencers.countByStatus(InfluencerStatus.QUALIFIED)).thenReturn(0L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
@@ -137,7 +137,7 @@ class JobCostEstimatorTest {
         when(settings.resultsLimit()).thenReturn(0);
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(5);
-        when(influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
         when(influencers.countBackfillPending()).thenReturn(2L);
         when(influencers.countTrackDue(any())).thenReturn(1L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
@@ -163,7 +163,7 @@ class JobCostEstimatorTest {
         when(settings.resultsLimit()).thenReturn(0);
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(10);
-        when(influencers.countByStatusAndLastProfiledAtIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
         when(influencers.countBackfillPending()).thenReturn(2L);
         when(influencers.countTrackDue(any())).thenReturn(0L);
         when(profileSource.current()).thenReturn(ProfileSource.HIKER_WEB_GQL);

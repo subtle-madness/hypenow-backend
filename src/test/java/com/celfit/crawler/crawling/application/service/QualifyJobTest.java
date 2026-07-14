@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 class QualifyJobTest {
 
@@ -70,23 +71,44 @@ class QualifyJobTest {
     }
 
     @Test
-    void DISCOVERED_인플루언서가_배치_상한만큼_선정된다() {
+    void 프로필_미확보_인플루언서가_id순_배치_상한만큼_선정된다() {
         when(settings.qualifyBatchLimit()).thenReturn(7);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 7)))
-                .thenReturn(new ArrayList<>());
 
         job.run(TriggerType.MANUAL, false);
 
-        verify(influencers).findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 7));
+        verify(influencers).findByStatusAndFollowersIsNull(
+                InfluencerStatus.DISCOVERED, PageRequest.of(0, 7, Sort.by("id")));
+        verify(influencers).findByStatusAndFollowersIsNotNull(InfluencerStatus.DISCOVERED);
         verify(influencers, never()).findByStatus(eq(InfluencerStatus.QUALIFIED), any());
         verify(influencers, never()).findByStatus(eq(InfluencerStatus.EXCLUDED), any());
+    }
+
+    @Test
+    void followers가_이미_있는_DISCOVERED는_배치와_무관하게_전부_즉시_판정된다() {
+        // 레거시 이관분처럼 followers가 이미 있는 계정 — API 호출 없이 판정 가능하므로
+        // 배치 상한(1)에 안 걸리고 전부 판정돼야 한다.
+        when(settings.qualifyBatchLimit()).thenReturn(1);
+        Influencer legacyIn = influencer(1L, "legacy_in", InfluencerStatus.DISCOVERED, 10000L, NOW);
+        Influencer legacyOut = influencer(2L, "legacy_out", InfluencerStatus.DISCOVERED, 100L, NOW);
+        Influencer legacyOut2 = influencer(3L, "legacy_out2", InfluencerStatus.DISCOVERED, 999999L, NOW);
+        when(influencers.findByStatusAndFollowersIsNotNull(InfluencerStatus.DISCOVERED))
+                .thenReturn(List.of(legacyIn, legacyOut, legacyOut2));
+
+        var summary = job.run(TriggerType.MANUAL, false);
+
+        assertThat(legacyIn.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);
+        assertThat(legacyOut.getStatus()).isEqualTo(InfluencerStatus.EXCLUDED);
+        assertThat(legacyOut2.getStatus()).isEqualTo(InfluencerStatus.EXCLUDED);
+        assertThat(summary.qualified()).isEqualTo(1);
+        assertThat(summary.excluded()).isEqualTo(2);
+        verify(selector, never()).fetchAndSupplement(any(), any(), any()); // 재호출 없음
     }
 
     @Test
     void 프로필_원형이_raw_profile에_source와_함께_저장되고_followers_username_실컬럼이_채워진다() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         Influencer alice = influencer(1L, "alice", InfluencerStatus.DISCOVERED, null, null);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+        when(influencers.findByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
                 .thenReturn(new ArrayList<>(List.of(alice)));
         when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
         Map<String, Object> item = hikerItem("alice", 12345L, "111");
@@ -115,7 +137,7 @@ class QualifyJobTest {
     void 프로필_수집시_igUserId가_원형에서_추출되어_저장된다() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         Influencer alice = influencer(1L, "alice", InfluencerStatus.DISCOVERED, null, null);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+        when(influencers.findByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
                 .thenReturn(new ArrayList<>(List.of(alice)));
         when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
         when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("alice"), TriggerType.MANUAL))
@@ -132,8 +154,8 @@ class QualifyJobTest {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         Influencer inRange = influencer(1L, "in", InfluencerStatus.DISCOVERED, 10000L, NOW);
         Influencer outRange = influencer(2L, "out", InfluencerStatus.DISCOVERED, 100L, NOW);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
-                .thenReturn(new ArrayList<>(List.of(inRange, outRange)));
+        when(influencers.findByStatusAndFollowersIsNotNull(InfluencerStatus.DISCOVERED))
+                .thenReturn(List.of(inRange, outRange));
 
         var summary = job.run(TriggerType.MANUAL, false);
 
@@ -150,7 +172,7 @@ class QualifyJobTest {
     void 프로필_응답에_해당_계정이_없으면_DISCOVERED_유지_deferred() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         Influencer bob = influencer(1L, "bob", InfluencerStatus.DISCOVERED, null, null);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+        when(influencers.findByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
                 .thenReturn(new ArrayList<>(List.of(bob)));
         when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
         when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("bob"), TriggerType.MANUAL))
@@ -171,7 +193,7 @@ class QualifyJobTest {
     void 프로필_청크가_실패하면_failedChunks로_드러나고_deferred로_밀린다() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         Influencer bob = influencer(1L, "bob", InfluencerStatus.DISCOVERED, null, null);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+        when(influencers.findByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
                 .thenReturn(new ArrayList<>(List.of(bob)));
         when(selector.currentSource()).thenReturn(RawSource.SELF_GQL);
         when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("bob"), TriggerType.MANUAL))
@@ -188,7 +210,7 @@ class QualifyJobTest {
     @Test
     void requalify_true면_QUALIFIED_EXCLUDED도_기존_followers로_재판정하되_재호출은_없다() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
-        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+        when(influencers.findByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
                 .thenReturn(new ArrayList<>());
         Influencer wasQualified = influencer(1L, "q", InfluencerStatus.QUALIFIED, 100L, NOW); // 이제 범위 밖
         Influencer wasExcluded = influencer(2L, "e", InfluencerStatus.EXCLUDED, 10000L, NOW); // 이제 범위 안
