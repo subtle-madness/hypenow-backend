@@ -1,6 +1,6 @@
 # 태스크 B3 잔여분: VLM 개통 (F-2 스파이크 + 유통사 감지 + 어휘 확정 + 게이트 on) Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-14)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** content_analyses의 VLM 컬럼(전부 NULL 상태)을 실데이터로 개통한다 — F-2 스파이크 검증, 유통사 감지 컬럼 신설, 분류 어휘를 celfit-front 배포본과 일치시키고, 비용 가드 하에 게이트를 켠다.
@@ -72,46 +72,46 @@ analytics/README.md, ARCHITECTURE.md                         [수정] 상태·�
 
 ### Task 1: BeautyTaxonomy + VlmResult 확장 + sanitize (TDD)
 
-- [ ] Step 1: BeautyTaxonomyTest — slug 집합·라벨 조회·프롬프트 분류표 생성 검증 (실패 확인)
-- [ ] Step 2: BeautyTaxonomy 구현 (정찰 결과의 어휘 그대로)
-- [ ] Step 3: AnthropicVisionAnalyzerTest에 sanitize 확장 케이스 추가 — 어휘 밖 main_category/sub/유통사 제거 (실패 확인)
-- [ ] Step 4: VlmResult에 `List<String> detectedDistributors` 추가(adType 앞), sanitize 확장, 프롬프트를 BeautyTaxonomy 분류표로 교체, usage 로그 추가
-- [ ] Step 5: `./gradlew :analytics:test` 그린
-- [ ] Step 6: Commit `feat(analytics): VLM 어휘를 celfit-front 배포본과 일치 — BeautyTaxonomy 단일 원천 + 유통사 감지`
+- [x] Step 1: BeautyTaxonomyTest — slug 집합·라벨 조회·프롬프트 분류표 생성 검증 (실패 확인)
+- [x] Step 2: BeautyTaxonomy 구현 (정찰 결과의 어휘 그대로)
+- [x] Step 3: AnthropicVisionAnalyzerTest에 sanitize 확장 케이스 추가 — 어휘 밖 main_category/sub/유통사 제거 (실패 확인)
+- [x] Step 4: VlmResult에 `List<String> detectedDistributors` 추가(adType 앞), sanitize 확장, 프롬프트를 BeautyTaxonomy 분류표로 교체, usage 로그 추가
+- [x] Step 5: `./gradlew :analytics:test` 그린
+- [x] Step 6: Commit `feat(analytics): VLM 어휘를 celfit-front 배포본과 일치 — BeautyTaxonomy 단일 원천 + 유통사 감지`
 
 ### Task 2: V11 마이그레이션 + 저장 배선 (TDD)
 
-- [ ] Step 1: ContentAnalysisJobTest에 "vlm on이면 VLM 컬럼(유통사 포함)이 저장된다" 케이스 추가 (실패 확인)
-- [ ] Step 2: V11__detected_distributors.sql + ContentAnalysisJob INSERT 배선
-- [ ] Step 3: 테스트 그린 → Commit `feat(analytics): content_analyses.detected_distributors jsonb + main_category CHECK`
+- [x] Step 1: ContentAnalysisJobTest에 "vlm on이면 VLM 컬럼(유통사 포함)이 저장된다" 케이스 추가 (실패 확인)
+- [x] Step 2: V11__detected_distributors.sql + ContentAnalysisJob INSERT 배선
+- [x] Step 3: 테스트 그린 → Commit `feat(analytics): content_analyses.detected_distributors jsonb + main_category CHECK`
 
 ### Task 3: 썸네일 프리체크 + 최신 수집순 정렬
 
-- [ ] Step 1: 00_base·01·03 뷰 수정(폴백·captured_at) + SQL 하니스 테스트 갱신 → `./test/run.sh` ALL GREEN
-- [ ] Step 2: ContentAnalysisJobTest — 프리체크 실패 시 VLM 스킵·나머지 저장 / 대상이 captured_at 최신순 케이스 (실패 확인)
-- [ ] Step 3: Job 구현(Predicate 주입·정렬 변경) + AnalyzeRunner HEAD 배선
-- [ ] Step 4: 전체 테스트 그린 → Commit `feat(analytics): VLM 썸네일 프리체크 + 분석 대상 최신 수집순 — 서명 URL 만료 대응`
+- [x] Step 1: 00_base·01·03 뷰 수정(폴백·captured_at) + SQL 하니스 테스트 갱신 → `./test/run.sh` ALL GREEN
+- [x] Step 2: ContentAnalysisJobTest — 프리체크 실패 시 VLM 스킵·나머지 저장 / 대상이 captured_at 최신순 케이스 (실패 확인)
+- [x] Step 3: Job 구현(Predicate 주입·정렬 변경) + AnalyzeRunner HEAD 배선
+- [x] Step 4: 전체 테스트 그린 → Commit `feat(analytics): VLM 썸네일 프리체크 + 분석 대상 최신 수집순 — 서명 URL 만료 대응`
 
 ### Task 4: F-2 스파이크 (실 API — 비용 승인 범위: 5~10건)
 
-- [ ] Step 1: VlmSpikeRunner (`--analytics.vlm-spike-limit=N` 게이트, 최신 수집·썸네일 유효 콘텐츠 N건 → 항목별 산출 출력)
-- [ ] Step 2: 실행 + 썸네일 원본 대조로 항목별 품질 판정 (가능/불가 + 건당 비용 기록)
-- [ ] Step 3: 판정 결과를 이 문서 하단에 기록, 불가 항목은 프롬프트/저장에서 제외(NULL 유지)
-- [ ] Step 4: Commit `feat(analytics): F-2 VLM 스파이크 러너 + 판정 결과`
+- [x] Step 1: VlmSpikeRunner (`--analytics.vlm-spike-limit=N` 게이트, 최신 수집·썸네일 유효 콘텐츠 N건 → 항목별 산출 출력)
+- [x] Step 2: 실행 + 썸네일 원본 대조로 항목별 품질 판정 (가능/불가 + 건당 비용 기록)
+- [x] Step 3: 판정 결과를 이 문서 하단에 기록, 불가 항목은 프롬프트/저장에서 제외(NULL 유지)
+- [x] Step 4: Commit `feat(analytics): F-2 VLM 스파이크 러너 + 판정 결과`
 
 ### Task 5: 게이트 on 검증 (실 API — 7건)
 
-- [ ] Step 1: `app_setting analytics.analyze-batch-limit=7` 설정(검증 후 원복) — 07-10 유효 썸네일 7건만
-- [ ] Step 2: `--analytics.analyze-on-startup=true --analytics.vlm-enabled=true` 실행
-- [ ] Step 3: content_analyses에서 VLM 컬럼 채움 확인 (main_category·sub_categories·detected_distributors 등)
-- [ ] Step 4: Commit (검증 결과를 이 문서에 기록)
+- [x] Step 1: `app_setting analytics.analyze-batch-limit=7` 설정(검증 후 원복) — 07-10 유효 썸네일 7건만
+- [x] Step 2: `--analytics.analyze-on-startup=true --analytics.vlm-enabled=true` 실행
+- [x] Step 3: content_analyses에서 VLM 컬럼 채움 확인 (main_category·sub_categories·detected_distributors 등)
+- [x] Step 4: Commit (검증 결과를 이 문서에 기록)
 
 ### Task 6: 문서 갱신
 
-- [ ] Step 1: analytics/README — vlm-enabled·스파이크 러너·썸네일 만료 주의
-- [ ] Step 2: ARCHITECTURE §5 B3 행(VLM 개통 반영)·§7 결정 기록(컬럼명·어휘 계약·만료 정책)
-- [ ] Step 3: 이 계획 ✅ 후 plans/archive/로 이동, 전체 테스트 최종 확인
-- [ ] Step 4: Commit `docs: B3 VLM 잔여분 개통 반영` → develop 대상 PR
+- [x] Step 1: analytics/README — vlm-enabled·스파이크 러너·썸네일 만료 주의
+- [x] Step 2: ARCHITECTURE §5 B3 행(VLM 개통 반영)·§7 결정 기록(컬럼명·어휘 계약·만료 정책)
+- [x] Step 3: 이 계획 ✅ 후 plans/archive/로 이동, 전체 테스트 최종 확인
+- [x] Step 4: Commit `docs: B3 VLM 잔여분 개통 반영` → develop 대상 PR
 
 ## 완료 기준 (DoD)
 
@@ -161,3 +161,14 @@ analytics/README.md, ARCHITECTURE.md                         [수정] 상태·�
 
 - 건당 input 2,981~5,554 tok / output 510~913 tok, 소요 11~23초
 - **건당 ≈ $0.03~0.05** → 1,000건당 ≈ $35~50 (댓글 분류 $61/1000과 별도)
+
+## 게이트 on 검증 기록 (Task 5 — 2026-07-14)
+
+- `app_setting analytics.analyze-batch-limit=7` + `--analytics.analyze-on-startup=true --analytics.vlm-enabled=true`
+- 1차 실행: 5건 성공 + 2건 일시 장애(실패 격리·재대상 동작 확인) → 2차 실행에서 성공
+- 결과: **content_analyses 14행 중 VLM 채움 7행** (07-10 수집분 전부). main_category=makeup slug,
+  sub_categories 한글 라벨 조합(예: ["베이스메이크업","파우더","팩트"]), ad_type/sponsored_signal_level 어휘 준수
+- detected_distributors: 7건 전부 `[]` — 해당 콘텐츠들에 유통사 언급 없음(무환각 정상).
+  어휘 정규화("올영세일"→올리브영)는 스파이크에서 확인 완료
+- 2차 실행의 잔여 슬롯 5건은 만료-썸네일 구콘텐츠 → 프리체크가 VLM만 스킵(NULL)하고 나머지 분석 저장 — 설계 의도대로
+- 검증 후 배치 상한 키 삭제(기본 10 원복)

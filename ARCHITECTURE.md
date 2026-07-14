@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-13
+> 마지막 갱신: 2026-07-14
 
 ## 1. 제품 한 장 요약
 
@@ -183,7 +183,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 — F-2(VLM)는 B3에서 실험 | — | ✅ |
 | B1 | 드로어 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments + 지표 스냅샷 이력 `content_metric_snapshots` — 07-13 개통) | A | ✅ |
 | B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ✅ |
-| B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" | F, B2 | ✅ |
+| B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" (07-14 VLM 잔여분 개통 — 어휘는 celfit-front 계약, 유통사 감지 포함) | F, B2 | ✅ |
 | C1 | 인플루언서 비LLM 집계 | AccountReport 결정 지표 — 계정 요약·카테고리 믹스·게시물 시계열 3종 뷰 + 미러 | A | ✅ |
 | C2 | 인플루언서 계정 LLM | 광고유형·페르소나·브리핑·적합성 | F, C1, B3 | ⬜ |
 | D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출). as-of 파라미터는 스냅샷 미러 대기 | B1, B2·B3(확장분) | ✅ |
@@ -202,6 +202,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 - 댓글은 게시물당 **최대 50개** 수집 → 목업의 "214개 분석"은 불가, 카피 정정 필요(미결).
 - 저장·공유·도달·노출 지표 없음. 팔로워는 qualify 시점 값.
 - LLM 댓글 분류 실측 비용: 게시물 1,000건당 Opus ≈ $61 / haiku ≈ $12.2 (동기·무캐시·무배치 기준).
+  VLM(썸네일)은 건당 ≈ $0.03~0.05 (opus 4.8, 07-14 실측).
+- **인스타 CDN 썸네일 URL은 수집 후 ~4일이면 만료**(403) — VLM은 최신 수집분에만 가능(분석 잡이
+  프리체크로 만료분은 VLM 컬럼 NULL 저장). VLM 데이터를 채우려면 크롤링 직후 분석 배치를 돌릴 것.
 
 ## 7. 결정 기록
 
@@ -209,6 +212,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-14 | **B3 VLM 잔여분 개통** — F-2 스파이크(실 8건) 전 항목 채택: 입력은 URL 불가(인스타 CDN을 Anthropic이 robots.txt로 거부)→직접 다운로드+base64. `content_analyses.detected_distributors jsonb` 신설(유통사 감지 — 어휘 올리브영/다이소 고정). **분류 어휘 = celfit-front 배포본 verbatim 계약**: main_category 영문 slug 6종(CHECK 추가), sub_categories = 중분류+소분류 한글 라벨 배열(프론트가 배열 포함으로 매칭), detected_product_categories = 소분류 라벨 — 단일 원천은 analytics `BeautyTaxonomy`(프롬프트+sanitize 공용). 썸네일 서명 URL ~4일 만료 대응: 분석 대상 수집 최신순 + HEAD 프리체크(만료는 VLM만 NULL). 게이트 on 실행으로 실데이터 7건 채움 확인 | [plans/archive/2026-07-14-task-b3-vlm-remainder.md](docs/superpowers/plans/archive/2026-07-14-task-b3-vlm-remainder.md) |
 | 2026-07-14 | **캠페인 추천 피봇 검토 후 취소** — "브리프 제출→인플루언서 추천+근거"로의 전환을 07-13~14 검토(구조 설계·어휘 계약 계획까지 작성)했으나 기존 방향(콘텐츠 랭킹+상세 분석 MVP) 유지로 결정. 검토 산출물은 develop 미머지 — 닫힌 PR #5·로컬 브랜치 `docs/campaign-recommendation-pivot`에 보존, 본 문서 기준 태스크 트랙(§5)은 변동 없음 | 닫힌 [PR #5](https://github.com/subtle-madness/hypenow-backend/pull/5) |
 | 2026-07-13 | **태스크 D2: 상세 API에 B2·B3 산출물 additive 확장** — comments.items[].aiCategory(분류 LEFT JOIN, 미분류 null) + analysis 블록(content_analyses 1행: AI 텍스트·기준선 스냅샷·카테고리 맥락·VLM·댓글 진정성, 미분석 null). 읽기 record는 was 로컬(분석 층 소유 테이블은 공유 형태 미성립 — §4-4), jsonb는 실 JSON 구조로 서빙. 릴스 개별 바 차트는 인플루언서 상세(E) 소관. as-of 서빙은 `content_metric_snapshots` 미러(별도 세션 분리) 후 was에서 | [plans/2026-07-13-task-d2-analysis-block.md](docs/superpowers/plans/2026-07-13-task-d2-analysis-block.md) |
 | 2026-07-13 | C1은 **celfit-front 실계약(AccountReport) 기준**으로 구현 — v4 목업 지표(중앙값·히트율·변동성·구간포지션 등) 폐기. 계정 평균 ER은 **followers 분모**(`avg_er_pct`, 게시물 ER의 views 분모와 공존), 기준 지표 폴백 `metric`('views'\|'likes')은 데이터에 확정 | [specs/2026-07-13-c1-account-detail-design.md](docs/superpowers/specs/2026-07-13-c1-account-detail-design.md) |
