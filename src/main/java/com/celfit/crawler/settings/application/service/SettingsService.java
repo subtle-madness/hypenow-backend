@@ -18,7 +18,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class SettingsService {
 
-    public record SettingView(String key, int effective, int defaultValue, boolean overridden) {}
+    public record SettingView(String key, int effective, int defaultValue, boolean overridden,
+                              String description) {}
 
     static final String RESULTS_LIMIT = "discover.results-limit";
     static final String QUALIFY_BATCH_LIMIT = "qualify.batch-limit";
@@ -35,6 +36,18 @@ public class SettingsService {
             RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
             COLLECT_BACKFILL_MONTHS, COLLECT_TRACK_WINDOW_DAYS, COLLECT_BATCH_LIMIT,
             COLLECT_COMMENTS_PER_POST, COLLECT_MAX_ATTEMPTS, COLLECT_REVISIT_INTERVAL_DAYS);
+
+    private static final java.util.Map<String, String> DESCRIPTIONS = java.util.Map.of(
+            RESULTS_LIMIT, "discover: 키워드당 발굴할 게시물 수 상한 (해시태그 페이지 반복량 결정)",
+            QUALIFY_BATCH_LIMIT, "qualify: 판정 1회당 처리할 인플루언서 수 상한 (프로필 호출량 제어)",
+            QUALIFY_MIN_FOLLOWERS, "qualify: 판정 통과 팔로워 하한 — 미만이면 EXCLUDED (전역)",
+            QUALIFY_MAX_FOLLOWERS, "qualify: 판정 통과 팔로워 상한 — 초과면 EXCLUDED (전역)",
+            COLLECT_BACKFILL_MONTHS, "collect: 첫 방문(백필) 때 수집할 게시물 기간 (개월)",
+            COLLECT_TRACK_WINDOW_DAYS, "collect: 재방문 때 수집할 최근 게시물 기간 (일)",
+            COLLECT_BATCH_LIMIT, "collect: 실행 1회당 방문할 인플루언서 수",
+            COLLECT_COMMENTS_PER_POST, "collect: 게시물당 수집할 댓글 수 상한",
+            COLLECT_MAX_ATTEMPTS, "collect: 게시물 댓글 수집 재시도 상한 — 초과 시 FAILED로 포기",
+            COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 마지막 방문 후 이 기간이 지나야 다시 대상");
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
@@ -119,9 +132,10 @@ public class SettingsService {
 
     private SettingView toView(String key) {
         int def = defaultValue(key);
+        String desc = DESCRIPTIONS.getOrDefault(key, "");
         return settings.findById(key)
-                .map(s -> new SettingView(key, Integer.parseInt(s.getValue()), def, true))
-                .orElseGet(() -> new SettingView(key, def, def, false));
+                .map(s -> new SettingView(key, Integer.parseInt(s.getValue()), def, true, desc))
+                .orElseGet(() -> new SettingView(key, def, def, false, desc));
     }
 
     private int effective(String key) {

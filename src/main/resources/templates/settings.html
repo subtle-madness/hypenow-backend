@@ -60,7 +60,7 @@
 
 <form method="post" th:action="@{/ui/settings}">
     <table class="data fit">
-        <tr><th>키</th><th>오버라이드 값</th><th>기본값</th></tr>
+        <tr><th>키</th><th>오버라이드 값</th><th>기본값</th><th>설명</th></tr>
         <tr th:each="s : ${settings}">
             <td th:text="${s.key()}"></td>
             <td>
@@ -68,6 +68,7 @@
                        th:value="${s.overridden()} ? ${s.effective()} : null"/>
             </td>
             <td th:text="${s.defaultValue()}"></td>
+            <td class="hint" th:text="${s.description()}"></td>
         </tr>
     </table>
     <p><button type="submit" class="primary">저장</button></p>

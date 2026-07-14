@@ -101,7 +101,8 @@ public class JobCostEstimator {
         double minCost = minRequests * hikerProperties.costPerRequestUsd();
         double maxCost = maxRequests * hikerProperties.costPerRequestUsd();
         return new JobCost("collect", endpoints, targets, minRequests, maxRequests,
-                minCost, maxCost, "열거 페이지 수는 6개월 게시물 양에 비례(실측 4~26)");
+                minCost, maxCost, "열거 페이지 수는 " + settings.backfillMonths()
+                        + "개월(백필 설정값) 게시물 양에 비례 — 실측 4~26페이지");
     }
 
     /**
