@@ -49,4 +49,22 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "and (i.firstCollectedAt is null or i.lastCollectedAt < :revisitBefore) "
             + "order by case when i.firstCollectedAt is null then 0 else 1 end, i.lastCollectedAt asc nulls first")
     List<Influencer> findCollectTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
+
+    /** BEAUTY 잡 대상: 판정 통과했지만 뷰티 미판정. */
+    List<Influencer> findByStatusAndBeautyIsNull(InfluencerStatus status);
+
+    /** BEAUTY 재판정(rejudge) 대상: CLAUDE 판정분만 — MANUAL은 선정 자체에서 제외된다. */
+    List<Influencer> findByStatusAndBeautySource(InfluencerStatus status, String beautySource);
+
+    /** SIMILAR 시드: 뷰티 확정 + 미수확 — id 순 Pageable로 결정적으로 소진한다. */
+    List<Influencer> findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+            InfluencerStatus status, Pageable pageable);
+
+    /** 비용 추정용. */
+    long countByStatusAndBeautyIsNull(InfluencerStatus status);
+
+    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus status);
+
+    /** 비용 추정용: pk 미보유라 SIMILAR가 username 해석 1회를 추가로 사는 시드 수. */
+    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(InfluencerStatus status);
 }
