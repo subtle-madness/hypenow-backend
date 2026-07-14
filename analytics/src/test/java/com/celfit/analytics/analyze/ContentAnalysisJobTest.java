@@ -53,8 +53,9 @@ class ContentAnalysisJobTest {
 		return (thumbnailUrl, caption) -> {
 			visionCalls.add(thumbnailUrl);
 			return new VlmResult(List.of(new VlmResult.Brand("브랜드A", "화면 노출")), "high",
-					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징"),
-					List.of(new VlmResult.Attribute("무드", "화사함")), "skincare", List.of("클렌징폼"), "sponsored");
+					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
+					List.of(new VlmResult.Attribute("무드", "화사함")), "cleansing",
+					List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored");
 		};
 	}
 
