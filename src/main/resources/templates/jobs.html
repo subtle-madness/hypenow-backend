@@ -16,21 +16,21 @@
 
 <div class="job-forms">
     <form method="post" th:action="@{/ui/jobs/discover}">
-        <button type="submit" class="primary">① discover — 발굴</button>
+        <button type="submit" class="primary">① discover — 해시태그로 인플루언서 발굴</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/qualify}">
         <label><input type="checkbox" name="requalify" value="true" data-persist/> 범위 변경 후 전체 재판정 (기존 판정분 포함 · 재호출 없음)</label>
-        <button type="submit" class="primary">② qualify — 프로필·규칙 판정</button>
+        <button type="submit" class="primary">② qualify — 프로필 스냅샷 · 팔로워 범위 판정</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/collect}">
-        <button type="submit" class="primary">③ collect — 최근 게시물·댓글 수집</button>
+        <button type="submit" class="primary">③ collect — 프로필·게시물·릴스 수집</button>
     </form>
 </div>
 
 <h2>예상 비용</h2>
 <div class="job-costs">
     <div class="card job-cost" th:each="c : ${costs}">
-        <h3 th:text="${c.job()}"></h3>
+        <h3 th:text="${c.job()} + ' — ' + ${c.label()}"></h3>
         <p class="job-cost-targets">대상 <b th:text="${c.targets()}"></b>건</p>
         <ul class="job-cost-endpoints">
             <li th:each="ep : ${c.endpoints()}" th:text="${ep}"></li>

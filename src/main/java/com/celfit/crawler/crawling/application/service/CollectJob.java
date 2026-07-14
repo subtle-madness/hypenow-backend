@@ -1,5 +1,6 @@
 package com.celfit.crawler.crawling.application.service;
 
+import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
@@ -45,6 +46,7 @@ public class CollectJob {
 
     public record Summary(int visited, int postsUpserted, int postsCollected, int failedVisits) {}
 
+    private final CollectProperties collectProps;
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
     private final RawMediaPageRepository rawMediaPages;
@@ -59,12 +61,14 @@ public class CollectJob {
     private final JobProgress progress;
     private final TransactionTemplate txTemplate;
 
-    public CollectJob(InfluencerRepository influencers, RawProfileRepository rawProfiles,
+    public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
+                      RawProfileRepository rawProfiles,
                       RawMediaPageRepository rawMediaPages, ContentRepository contents,
                       RawCommentRepository rawComments, List<UserMediaPageFetcher> mediaFetchers,
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
                       CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
                       TransactionTemplate txTemplate) {
+        this.collectProps = collectProps;
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.rawMediaPages = rawMediaPages;
@@ -145,14 +149,15 @@ public class CollectJob {
             upserted++;
         }
 
-        // 5) 게시물별 댓글 수집 — 이번 열거 윈도우가 아니라 이 인플루언서의 PENDING 전체가 대상이다.
-        // 백필 중 댓글만 실패한 게시물이나 discover가 만든 오래된 PENDING도 track-window 컷오프와
-        // 무관하게 매 방문 재시도된다. collect_attempts 상한(maxAttempts→FAILED)이 폭주를 막는다.
-        // origin=ENUMERATION만 대상 — 발굴 부산물(DISCOVERY)은 수집 범위 밖(위 upsert가 방문 범위
-        // 안이면 승격시키므로 유실 없음).
-        List<Content> pending = contents.findByInfluencerIdAndStatusAndOrigin(
-                inf.getId(), ContentStatus.PENDING, ContentOrigin.ENUMERATION);
-        int collected = collectComments(pending, trigger);
+        // 5) 게시물별 댓글 수집 — 현재는 불필요해 기본 꺼짐(crawler.collect.comments-enabled, yml 전용).
+        // 나중에 다시 필요할 수 있어 로직은 유지한다. 켜면: 이번 열거분이 아니라 이 인플루언서의
+        // ENUMERATION PENDING 전체가 대상이고, collect_attempts 상한(maxAttempts→FAILED)이 폭주를 막는다.
+        int collected = 0;
+        if (collectProps.commentsEnabled()) {
+            List<Content> pending = contents.findByInfluencerIdAndStatusAndOrigin(
+                    inf.getId(), ContentStatus.PENDING, ContentOrigin.ENUMERATION);
+            collected = collectComments(pending, trigger);
+        }
 
         // firstCollectedAt은 "첫 방문 완료" 표식 — 댓글 실패와 무관하게 열거 성공 시 기록한다.
         // 실패 게시물의 재시도는 위 PENDING 조회가 담당하므로 별도 신호가 필요 없다.
@@ -178,7 +183,8 @@ public class CollectJob {
         RawSource source = profileSourceSelector.currentSource();
         String failure = null;
         try {
-            CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(List.of(inf.getUsername()), trigger);
+            CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(
+                    JobName.COLLECT, List.of(inf.getUsername()), trigger);
             for (Map<String, Object> item : ex.items()) {
                 String username = ProfileExtractor.username(item, source);
                 if (username == null || !username.equals(inf.getUsername())) continue;

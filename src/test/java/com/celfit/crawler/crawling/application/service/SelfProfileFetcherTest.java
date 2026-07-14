@@ -56,7 +56,7 @@ class SelfProfileFetcherTest {
         var f = new SelfProfileFetcher(web, passthroughExecutor(),
                 new ObjectMapper(), Duration.ZERO);
 
-        var ex = f.fetch(List.of("beauty.e.ze"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.QUALIFY, List.of("beauty.e.ze"), TriggerType.MANUAL);
         assertThat(ex.items()).hasSize(1);
         Map<String, Object> item = ex.items().get(0);
         assertThat(ProfileExtractor.username(item, RawSource.SELF_GQL)).isEqualTo("beauty.e.ze");
@@ -70,7 +70,7 @@ class SelfProfileFetcherTest {
         var f = new SelfProfileFetcher(web, passthroughExecutor(),
                 new ObjectMapper(), Duration.ZERO);
 
-        var ex = f.fetch(List.of("ghost"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.QUALIFY, List.of("ghost"), TriggerType.MANUAL);
         assertThat(ex.items()).isEmpty();
     }
 }

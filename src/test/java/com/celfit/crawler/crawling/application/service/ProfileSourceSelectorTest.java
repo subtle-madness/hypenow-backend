@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
@@ -18,7 +19,7 @@ class ProfileSourceSelectorTest {
 
     static ProfileFetcher fetcher(ProfileSource src, RawSource rawSrc, String marker) {
         return new ProfileFetcher() {
-            @Override public CrawlExecutor.Execution fetch(List<String> u, TriggerType t) {
+            @Override public CrawlExecutor.Execution fetch(JobName job, List<String> u, TriggerType t) {
                 Map<String, Object> item = new HashMap<>(Map.of("username", marker, "followersCount", 1L, "userId", "1"));
                 return new CrawlExecutor.Execution(1L, List.of(item));
             }
@@ -39,7 +40,7 @@ class ProfileSourceSelectorTest {
             List.of(fetcher(ProfileSource.SELF, RawSource.SELF_GQL, "self"),
                     fetcher(ProfileSource.HIKER_MOBILE, RawSource.HIKER_MOBILE, "mobile")),
             setting, noopSupplementer());
-        var ex = sel.fetchAndSupplement(List.of("x"), TriggerType.MANUAL);
+        var ex = sel.fetchAndSupplement(JobName.QUALIFY, List.of("x"), TriggerType.MANUAL);
         assertThat(ex.items().get(0).get("username")).isEqualTo("mobile");
     }
 
@@ -48,7 +49,7 @@ class ProfileSourceSelectorTest {
         setting.update(ProfileSource.ACTOR); // ACTOR 페처 미등록
         var sel = new ProfileSourceSelector(
             List.of(fetcher(ProfileSource.SELF, RawSource.SELF_GQL, "self")), setting, noopSupplementer());
-        var ex = sel.fetchAndSupplement(List.of("x"), TriggerType.MANUAL);
+        var ex = sel.fetchAndSupplement(JobName.QUALIFY, List.of("x"), TriggerType.MANUAL);
         assertThat(ex.items().get(0).get("username")).isEqualTo("self");
     }
 

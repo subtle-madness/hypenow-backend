@@ -26,8 +26,10 @@ import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
 import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
+import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawProfile;
@@ -137,7 +139,12 @@ class CollectJobTest {
     }
 
     CollectJob job(List<UserMediaPageFetcher> fetchers) {
-        return new CollectJob(influencers, rawProfiles, rawMediaPages, contents, rawComments,
+        return job(fetchers, true);   // 대부분의 테스트는 댓글 로직 회귀 검증을 위해 켬
+    }
+
+    CollectJob job(List<UserMediaPageFetcher> fetchers, boolean commentsEnabled) {
+        CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
+        return new CollectJob(props, influencers, rawProfiles, rawMediaPages, contents, rawComments,
                 fetchers, profileSourceSelector, commentSource, executor, settings, CLOCK, progress,
                 txTemplate);
     }
@@ -162,7 +169,7 @@ class CollectJobTest {
 
     void wireProfile(String username, long followers, String userId) {
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of(username)), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of(username)), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(profileItem(username, followers, userId))));
     }
 
@@ -187,7 +194,7 @@ class CollectJobTest {
                 "edges", timelineNodes.stream().map(n -> (Object) Map.of("node", n)).toList()));
         Map<String, Object> payload = Map.of("data", Map.of("user", user));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of(username)), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of(username)), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(payload)));
     }
 
@@ -291,8 +298,10 @@ class CollectJobTest {
 
         verify(influencers).findCollectTargets(any(), eq(PageRequest.of(0, 5)));
         InOrder order = inOrder(profileSourceSelector);
-        order.verify(profileSourceSelector).fetchAndSupplement(eq(List.of("backfill_user")), eq(TriggerType.MANUAL));
-        order.verify(profileSourceSelector).fetchAndSupplement(eq(List.of("track_user")), eq(TriggerType.MANUAL));
+        order.verify(profileSourceSelector).fetchAndSupplement(
+                eq(JobName.COLLECT), eq(List.of("backfill_user")), eq(TriggerType.MANUAL));
+        order.verify(profileSourceSelector).fetchAndSupplement(
+                eq(JobName.COLLECT), eq(List.of("track_user")), eq(TriggerType.MANUAL));
     }
 
     // ---------------------------------------------------------------------
@@ -321,7 +330,7 @@ class CollectJobTest {
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         Map<String, Object> profilePayload = profileItem("alice", 12345L, "USR1");
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(77L, List.of(profilePayload)));
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -357,7 +366,7 @@ class CollectJobTest {
         Map<String, Object> noUserId = new LinkedHashMap<>();
         noUserId.put("username", "bob");
         noUserId.put("followersCount", 500L); // userId 없음
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of("bob")), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("bob")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(noUserId)));
 
         var summary = job(List.of()).run(TriggerType.MANUAL);
@@ -396,7 +405,7 @@ class CollectJobTest {
         inf.setIgUserId("STORED1");
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of())); // 401 등으로 계정이 응답에 없음
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -419,7 +428,7 @@ class CollectJobTest {
         inf.setIgUserId("STORED1");
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
                 .thenThrow(new ApifyException("프로필 요청 실패"));
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
@@ -439,7 +448,7 @@ class CollectJobTest {
         Influencer inf = influencer(1L, "alice", null, null); // igUserId 없음(백필 전 신규 판정분 등)
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of()));
 
         var summary = job(List.of()).run(TriggerType.MANUAL);
@@ -742,6 +751,32 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
+    // 9b) 댓글 스위치 — comments-enabled=false(운영 기본)면 댓글 단계를 통째로 건너뛴다.
+    //     로직은 유지되므로 켜면(아래 10번 계열 테스트) 기존 동작 그대로다.
+    // ---------------------------------------------------------------------
+    @Test
+    void 댓글_수집이_꺼져있으면_댓글_페처_호출_없이_게시물만_수집한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        Map<String, Object> page = gqlPage(List.of(gqlItem("NO_CMT", RECENT, false)), null);
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
+
+        var summary = job(List.of(fetcherA), false).run(TriggerType.MANUAL);
+
+        assertThat(summary.postsUpserted()).isEqualTo(1);
+        assertThat(summary.postsCollected()).isEqualTo(0);
+        assertThat(contentStore.get("NO_CMT").getStatus()).isEqualTo(ContentStatus.PENDING);
+        verify(commentSource, never()).current();          // 댓글 소스 자체를 안 건드림
+        verify(rawComments, never()).save(any());
+        assertThat(inf.getLastCollectedAt()).isEqualTo(NOW); // 방문 자체는 정상 완료
+    }
+
+    // ---------------------------------------------------------------------
     // 10) 댓글 대상은 이번 방문 열거분이 아니라 인플루언서의 PENDING 전체다 (Finding 1)
     // ---------------------------------------------------------------------
     @Test
@@ -824,7 +859,7 @@ class CollectJobTest {
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(bad, good));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
-        when(profileSourceSelector.fetchAndSupplement(eq(List.of("bad_user")), eq(TriggerType.MANUAL)))
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("bad_user")), eq(TriggerType.MANUAL)))
                 .thenThrow(new IllegalStateException("예상 못한 런타임 오류")); // ApifyException이 아님
         wireProfile("good_user", 1000L, "U2");
 

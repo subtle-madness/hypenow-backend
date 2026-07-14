@@ -28,7 +28,8 @@ public class JobCostEstimator {
     /** discover 페이지당 게시물 수 실측 하한 — 페이지 요청 수 추정용. */
     private static final double DISCOVER_ITEMS_PER_PAGE = 25.0;
 
-    public record JobCost(String job, List<String> endpoints, long targets,
+    /** label — 잡 코드명만으로는 하는 일이 안 보여서 붙이는 한글 설명 (버튼·카드 제목에 노출). */
+    public record JobCost(String job, String label, List<String> endpoints, long targets,
                           long minRequests, long maxRequests,
                           double minCostUsd, double maxCostUsd, String note) {}
 
@@ -60,15 +61,16 @@ public class JobCostEstimator {
     }
 
     private JobCost discoverEstimate() {
+        String label = "해시태그로 인플루언서 발굴";
         long targets = searchKeywords.findByEnabledTrue().size();
         if (discoverSource.current() == DiscoverSource.ACTOR) {
-            return new JobCost("discover", List.of("Apify hashtag actor"), targets,
+            return new JobCost("discover", label, List.of("Apify hashtag actor"), targets,
                     0, 0, 0, 0, "Apify 액터 과금 별도(~$0.0023/게시물)");
         }
         long perKeyword = (long) Math.ceil(settings.resultsLimit() / DISCOVER_ITEMS_PER_PAGE);
         long requests = targets * perKeyword;
         double cost = requests * hikerProperties.costPerRequestUsd();
-        return new JobCost("discover",
+        return new JobCost("discover", label,
                 List.of("HikerAPI /v2/hashtag/medias/top (키워드당 페이지 반복)"),
                 targets, requests, requests, cost, cost, "페이지당 25~30건 실측 기준 추정");
     }
@@ -81,7 +83,8 @@ public class JobCostEstimator {
         String note = profileSource.current() == ProfileSource.ACTOR ? "Apify 액터 과금 별도" : null;
         long requests = targets * perAccount;
         double cost = requests * hikerProperties.costPerRequestUsd();
-        return new JobCost("qualify", endpoints, targets, requests, requests, cost, cost, note);
+        return new JobCost("qualify", "프로필 스냅샷 · 팔로워 범위 판정",
+                endpoints, targets, requests, requests, cost, cost, note);
     }
 
     private JobCost collectEstimate() {
@@ -99,10 +102,11 @@ public class JobCostEstimator {
         }
         endpoints.add("HikerAPI /v2/user/clips (계정당 1회 — 릴스)");
         perAccount += 1;
-        endpoints.add("instagram GraphQL 댓글 (self, 무료)");
+        // 댓글 수집은 꺼져 있음(comments-enabled) — 엔드포인트 표기에서 제외
         long requests = targets * perAccount;
         double cost = requests * hikerProperties.costPerRequestUsd();
-        return new JobCost("collect", endpoints, targets, requests, requests, cost, cost,
+        return new JobCost("collect", "프로필·게시물·릴스 수집",
+                endpoints, targets, requests, requests, cost, cost,
                 "방문당 최근 피드 12개 + 릴스 1페이지 — 기간 백필·페이지네이션 없음");
     }
 

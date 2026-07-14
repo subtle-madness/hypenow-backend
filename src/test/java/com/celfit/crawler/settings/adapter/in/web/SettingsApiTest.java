@@ -50,7 +50,7 @@ class SettingsApiTest extends IntegrationTest {
     void 기본값_조회() throws Exception {
         mvc.perform(get("/admin/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(8))
+                .andExpect(jsonPath("$.length()").value(6))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].effective").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].defaultValue").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false))
@@ -58,8 +58,6 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$[?(@.key=='qualify.min-followers')].defaultValue").value(3000))
                 .andExpect(jsonPath("$[?(@.key=='qualify.max-followers')].defaultValue").value(50000))
                 .andExpect(jsonPath("$[?(@.key=='collect.batch-limit')].defaultValue").value(10))
-                .andExpect(jsonPath("$[?(@.key=='collect.comments-per-post')].defaultValue").value(30))
-                .andExpect(jsonPath("$[?(@.key=='collect.max-attempts')].defaultValue").value(3))
                 .andExpect(jsonPath("$[?(@.key=='collect.revisit-interval-days')].defaultValue").value(7));
     }
 
@@ -79,20 +77,6 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.effective").value(80000));
         assertThat(settingsService.qualifyMaxFollowers()).isEqualTo(80000);
-
-        mvc.perform(put("/admin/settings/collect.comments-per-post")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"value\": 60}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.effective").value(60));
-        assertThat(settingsService.commentsPerPost()).isEqualTo(60);
-
-        mvc.perform(put("/admin/settings/collect.max-attempts")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"value\": 5}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.effective").value(5));
-        assertThat(settingsService.maxAttempts()).isEqualTo(5);
 
         mvc.perform(put("/admin/settings/collect.revisit-interval-days")
                         .contentType(MediaType.APPLICATION_JSON)

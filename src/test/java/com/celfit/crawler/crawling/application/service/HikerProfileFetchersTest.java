@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.ProfileSource;
@@ -26,7 +27,7 @@ class HikerProfileFetchersTest {
         var f = new HikerMobileProfileFetcher(http, passthrough(), om);
         assertThat(f.source()).isEqualTo(ProfileSource.HIKER_MOBILE);
         assertThat(f.rawSource()).isEqualTo(RawSource.HIKER_MOBILE);
-        var ex = f.fetch(List.of("tem.duck"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.QUALIFY, List.of("tem.duck"), TriggerType.MANUAL);
         Map<String, Object> item = ex.items().get(0);
         assertThat(ProfileExtractor.followers(item, RawSource.HIKER_MOBILE)).isEqualTo(256559L);
         assertThat(ProfileExtractor.userId(item, RawSource.HIKER_MOBILE)).isEqualTo("74756186520");
@@ -44,7 +45,7 @@ class HikerProfileFetchersTest {
                 {"user":{"username":"tem.duck","pk":"74756186520","follower_count":256559}}""";
         };
         var f = new HikerMobileProfileFetcher(http, passthrough(), om);
-        var ex = f.fetch(List.of("bad.user", "tem.duck"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.QUALIFY, List.of("bad.user", "tem.duck"), TriggerType.MANUAL);
         assertThat(calls.get()).isEqualTo(2);  // 첫 계정 실패해도 두번째 계정 호출까지 진행
         assertThat(ex.items()).hasSize(1);
         assertThat(ProfileExtractor.username(ex.items().get(0), RawSource.HIKER_MOBILE)).isEqualTo("tem.duck");
@@ -61,7 +62,7 @@ class HikerProfileFetchersTest {
         var f = new HikerWebGqlProfileFetcher(http, passthrough(), om);
         assertThat(f.source()).isEqualTo(ProfileSource.HIKER_WEB_GQL);
         assertThat(f.rawSource()).isEqualTo(RawSource.HIKER_MOBILE);
-        var ex = f.fetch(List.of("tem.duck"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.QUALIFY, List.of("tem.duck"), TriggerType.MANUAL);
         assertThat(ex.items()).isEmpty();  // 500 → 스킵, 예외 전파 안 함
     }
 }

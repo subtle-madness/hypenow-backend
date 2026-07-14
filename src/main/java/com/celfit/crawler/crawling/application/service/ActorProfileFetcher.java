@@ -21,8 +21,8 @@ public class ActorProfileFetcher implements ProfileFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(List<String> usernames, TriggerType trigger) {
-        return executor.execute(JobName.QUALIFY, trigger, null, null,
+    public CrawlExecutor.Execution fetch(JobName job, List<String> usernames, TriggerType trigger) {
+        return executor.execute(job, trigger, null, null,
                 Actors.PROFILE, ActorInputs.profiles(usernames));
     }
 

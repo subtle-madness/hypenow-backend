@@ -26,6 +26,9 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
     /** 대시보드 게시물 수집 카드 — origin=ENUMERATION 기준으로만 집계한다. */
     long countByStatusAndOrigin(ContentStatus status, ContentOrigin origin);
 
+    /** 대시보드 게시물 유형별(FEED/REELS) 카드 — origin=ENUMERATION 기준. */
+    long countByOriginAndContentType(ContentOrigin origin, com.celfit.crawler.content.domain.ContentType contentType);
+
     /** 발굴 보관(부산물) 총계 — 수집 대상 아님, 대시보드에 참고용으로만 표시. */
     long countByOrigin(ContentOrigin origin);
 }

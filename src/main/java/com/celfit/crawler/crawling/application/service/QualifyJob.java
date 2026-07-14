@@ -6,6 +6,7 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -85,7 +86,7 @@ public class QualifyJob {
             CrawlExecutor.Execution ex;
             RawSource source = profileSourceSelector.currentSource();
             try {
-                ex = profileSourceSelector.fetchAndSupplement(names, trigger);
+                ex = profileSourceSelector.fetchAndSupplement(JobName.QUALIFY, names, trigger);
             } catch (ApifyException e) {
                 failedChunks++;  // crawl_run에 FAILED 기록됨 — 해당 청크 계정은 다음 실행 재시도
                 continue;

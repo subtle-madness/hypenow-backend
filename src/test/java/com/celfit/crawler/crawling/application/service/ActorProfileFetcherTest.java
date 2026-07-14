@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.ProfileSource;
@@ -27,7 +28,7 @@ class ActorProfileFetcherTest {
         when(exec.execute(any(), any(), any(), any(), any(), any(Map.class))).thenReturn(raw);
 
         var f = new ActorProfileFetcher(exec);
-        var ex = f.fetch(List.of("tem.duck"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.QUALIFY, List.of("tem.duck"), TriggerType.MANUAL);
 
         assertThat(ex).isSameAs(raw); // 그대로 전달 — 별도 변환 없음
         assertThat(ProfileExtractor.username(ex.items().get(0), RawSource.APIFY_ACTOR)).isEqualTo("tem.duck");

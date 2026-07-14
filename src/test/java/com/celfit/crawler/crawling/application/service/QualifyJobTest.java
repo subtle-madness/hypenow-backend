@@ -13,6 +13,7 @@ import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.RawProfile;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
@@ -89,7 +90,7 @@ class QualifyJobTest {
                 .thenReturn(new ArrayList<>(List.of(alice)));
         when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
         Map<String, Object> item = hikerItem("alice", 12345L, "111");
-        when(selector.fetchAndSupplement(List.of("alice"), TriggerType.MANUAL))
+        when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("alice"), TriggerType.MANUAL))
                 .thenReturn(new CrawlExecutor.Execution(99L, List.of(item)));
 
         var summary = job.run(TriggerType.MANUAL, false);
@@ -117,7 +118,7 @@ class QualifyJobTest {
         when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
                 .thenReturn(new ArrayList<>(List.of(alice)));
         when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
-        when(selector.fetchAndSupplement(List.of("alice"), TriggerType.MANUAL))
+        when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("alice"), TriggerType.MANUAL))
                 .thenReturn(new CrawlExecutor.Execution(99L, List.of(hikerItem("alice", 12345L, "111"))));
 
         job.run(TriggerType.MANUAL, false);
@@ -142,7 +143,7 @@ class QualifyJobTest {
         assertThat(summary.excluded()).isEqualTo(1);
         assertThat(summary.deferred()).isEqualTo(0);
         // 이미 프로필 있음(lastProfiledAt != null) → 재수집 없음
-        verify(selector, never()).fetchAndSupplement(any(), any());
+        verify(selector, never()).fetchAndSupplement(any(), any(), any());
     }
 
     @Test
@@ -152,7 +153,7 @@ class QualifyJobTest {
         when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
                 .thenReturn(new ArrayList<>(List.of(bob)));
         when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
-        when(selector.fetchAndSupplement(List.of("bob"), TriggerType.MANUAL))
+        when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("bob"), TriggerType.MANUAL))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of())); // 응답에 bob 없음
 
         var summary = job.run(TriggerType.MANUAL, false);
@@ -173,7 +174,7 @@ class QualifyJobTest {
         when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
                 .thenReturn(new ArrayList<>(List.of(bob)));
         when(selector.currentSource()).thenReturn(RawSource.SELF_GQL);
-        when(selector.fetchAndSupplement(List.of("bob"), TriggerType.MANUAL))
+        when(selector.fetchAndSupplement(JobName.QUALIFY, List.of("bob"), TriggerType.MANUAL))
                 .thenThrow(new com.celfit.crawler.crawling.application.port.out.ApifyException("401"));
 
         var summary = job.run(TriggerType.MANUAL, false);
@@ -202,6 +203,6 @@ class QualifyJobTest {
         assertThat(wasExcluded.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);
         assertThat(summary.qualified()).isEqualTo(1);
         assertThat(summary.excluded()).isEqualTo(1);
-        verify(selector, never()).fetchAndSupplement(any(), any());
+        verify(selector, never()).fetchAndSupplement(any(), any(), any());
     }
 }

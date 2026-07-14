@@ -16,6 +16,7 @@ import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -108,12 +109,13 @@ class CollectJobIntegrationTest extends IntegrationTest {
         profileItem.put("userId", "IT-USER-1");
         ProfileSourceSelector profileSource = mock(ProfileSourceSelector.class);
         when(profileSource.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
-        when(profileSource.fetchAndSupplement(any(), any()))
+        when(profileSource.fetchAndSupplement(any(), any(), any()))
                 .thenReturn(new CrawlExecutor.Execution(profileRun.getId(), List.of(profileItem)));
 
         CommentSourceSelector commentSource = mock(CommentSourceSelector.class); // 빈 열거 → 댓글 호출 없음
 
-        CollectJob job = new CollectJob(influencers, rawProfiles, rawMediaPages, contents, rawComments,
+        CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
+                influencers, rawProfiles, rawMediaPages, contents, rawComments,
                 List.of(emptyGqlFetcher()), profileSource, commentSource, executor, settings, clock,
                 progress, new TransactionTemplate(txManager));
 

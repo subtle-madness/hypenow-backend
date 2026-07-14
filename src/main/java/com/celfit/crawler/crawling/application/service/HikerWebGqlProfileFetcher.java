@@ -42,8 +42,8 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
     }
 
     @Override
-    public CrawlExecutor.Execution fetch(List<String> usernames, TriggerType trigger) {
-        return executor.execute(JobName.QUALIFY, trigger, null, null, LABEL,
+    public CrawlExecutor.Execution fetch(JobName job, List<String> usernames, TriggerType trigger) {
+        return executor.execute(job, trigger, null, null, LABEL,
                 () -> new ApifyResult(null, collect(usernames)));
     }
 
