@@ -13,6 +13,7 @@ import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.dashboard.application.JobCostEstimator;
 import com.celfit.crawler.dashboard.application.StatusService;
+import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.crawling.application.port.out.*;
 import com.celfit.crawler.crawling.application.service.JobLock;
 import com.celfit.crawler.crawling.application.service.JobProgress;
@@ -44,6 +45,7 @@ public class UiController {
     private final JobProgress jobProgress;
     private final JobCostEstimator jobCostEstimator;
     private final HikerProperties hikerProperties;
+    private final SettingsService settings;
 
     public UiController(StatusService statusService, CrawlRunRepository runs,
                         ContentRepository contents, RawPostDetailRepository rawDetails,
@@ -52,7 +54,8 @@ public class UiController {
                         ObjectMapper objectMapper, LogBuffer logBuffer,
                         JobLock jobLock,
                         JobProgress jobProgress,
-                        JobCostEstimator jobCostEstimator, HikerProperties hikerProperties) {
+                        JobCostEstimator jobCostEstimator, HikerProperties hikerProperties,
+                        SettingsService settings) {
         this.statusService = statusService;
         this.runs = runs;
         this.contents = contents;
@@ -66,6 +69,7 @@ public class UiController {
         this.jobProgress = jobProgress;
         this.jobCostEstimator = jobCostEstimator;
         this.hikerProperties = hikerProperties;
+        this.settings = settings;
     }
 
     /** 현재 작업 바(실시간)용 한 잡의 상태. */
@@ -143,10 +147,14 @@ public class UiController {
         // 게시물 수집 상태: collect 열거(QUALIFIED 인플루언서의 6개월 열거) 산출물만 대상 — 발굴
         // 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         model.addAttribute("contentTiles", java.util.List.of(
-                new StatusTile("PENDING", n(byContent, ContentStatus.PENDING), "열거됨 · 상세·댓글 수집 전"),
-                new StatusTile("COLLECTED", n(byContent, ContentStatus.COLLECTED), "상세·댓글 수집 완료"),
-                new StatusTile("FAILED", n(byContent, ContentStatus.FAILED), "수집 재시도 초과 · 포기")));
+                new StatusTile("PENDING", n(byContent, ContentStatus.PENDING), "열거됨 · 댓글 수집 전"),
+                new StatusTile("COLLECTED", n(byContent, ContentStatus.COLLECTED), "댓글까지 수집 완료"),
+                new StatusTile("FAILED", n(byContent, ContentStatus.FAILED), "댓글 수집 재시도 초과 · 포기")));
         model.addAttribute("discoveryArchiveCount", s.discoveryArchiveCount());
+        // 수집 범위는 설정값 — 하드코딩 문구 대신 현재 값 표시 (설정 화면에서 무중단 변경)
+        model.addAttribute("backfillMonths", settings.backfillMonths());
+        model.addAttribute("trackWindowDays", settings.trackWindowDays());
+        model.addAttribute("revisitIntervalDays", settings.revisitIntervalDays());
         return "fragments/status-tiles :: tiles";
     }
 

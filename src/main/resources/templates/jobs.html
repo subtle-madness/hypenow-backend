@@ -19,11 +19,11 @@
         <button type="submit" class="primary">① discover — 발굴</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/qualify}">
-        <label><input type="checkbox" name="requalify" value="true" data-persist/> EXCLUDED 재판정 포함</label>
+        <label><input type="checkbox" name="requalify" value="true" data-persist/> 범위 변경 후 전체 재판정 (기존 판정분 포함 · 재호출 없음)</label>
         <button type="submit" class="primary">② qualify — 프로필·규칙 판정</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/collect}">
-        <button type="submit" class="primary">③ collect — 상세·댓글 수집</button>
+        <button type="submit" class="primary">③ collect — 게시물 열거·댓글 수집</button>
     </form>
 </div>
 

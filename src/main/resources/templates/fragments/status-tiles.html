@@ -7,7 +7,7 @@
             <div class="tile-desc" th:text="${t.desc()}"></div>
         </div>
     </div>
-    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">collect 열거(QUALIFIED 인플루언서 6개월치) 기준</span></h2>
+    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">collect 열거 기준 — 첫 방문 <span th:text="${backfillMonths}">6</span>개월치 · 재방문 시 최근 <span th:text="${trackWindowDays}">30</span>일치 (<span th:text="${revisitIntervalDays}">7</span>일 주기 · 설정에서 변경)</span></h2>
     <div class="tiles">
         <div class="tile" th:each="t : ${contentTiles}">
             <div class="num" th:text="${t.count()}">0</div>
