@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.domain.RawSource;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -96,5 +97,56 @@ class ProfileExtractorTest {
                                 "username", "")));
 
         assertThat(ProfileExtractor.username(payload, RawSource.SELF_GQL)).isNull();
+    }
+
+    @Test
+    void 뷰티_판정_재료를_소스별_경로에서_추출한다() {
+        // LEGACY_ENVELOPE — 최상위 평탄 구조
+        Map<String, Object> legacy = new LinkedHashMap<>();
+        legacy.put("fullName", "에텔랑화장품");
+        legacy.put("businessCategoryName", "Beauty, cosmetic & personal care");
+        legacy.put("biography", "화장품 브랜드");
+        assertThat(ProfileExtractor.fullName(legacy, RawSource.LEGACY_ENVELOPE)).isEqualTo("에텔랑화장품");
+        assertThat(ProfileExtractor.category(legacy, RawSource.LEGACY_ENVELOPE))
+                .isEqualTo("Beauty, cosmetic & personal care");
+        assertThat(ProfileExtractor.biography(legacy, RawSource.LEGACY_ENVELOPE)).isEqualTo("화장품 브랜드");
+
+        // HIKER_MOBILE — user 래퍼 + category, 폴백은 category_name
+        Map<String, Object> hikerUser = new LinkedHashMap<>();
+        hikerUser.put("full_name", "뷰티 크리에이터");
+        hikerUser.put("category", "Digital creator");
+        hikerUser.put("biography", "메이크업");
+        Map<String, Object> hiker = Map.of("user", hikerUser);
+        assertThat(ProfileExtractor.fullName(hiker, RawSource.HIKER_MOBILE)).isEqualTo("뷰티 크리에이터");
+        assertThat(ProfileExtractor.category(hiker, RawSource.HIKER_MOBILE)).isEqualTo("Digital creator");
+        assertThat(ProfileExtractor.biography(hiker, RawSource.HIKER_MOBILE)).isEqualTo("메이크업");
+
+        // DATALIKERS — 평탄 유저 객체(user 래퍼 없음), category 없고 category_name만
+        Map<String, Object> dl = new LinkedHashMap<>();
+        dl.put("full_name", "네일샵");
+        dl.put("category_name", "Nail salon");
+        dl.put("biography", "네일 아트");
+        assertThat(ProfileExtractor.fullName(dl, RawSource.DATALIKERS)).isEqualTo("네일샵");
+        assertThat(ProfileExtractor.category(dl, RawSource.DATALIKERS)).isEqualTo("Nail salon");
+        assertThat(ProfileExtractor.biography(dl, RawSource.DATALIKERS)).isEqualTo("네일 아트");
+
+        // SELF_GQL — data.user 중첩
+        Map<String, Object> gqlUser = new LinkedHashMap<>();
+        gqlUser.put("full_name", "스킨케어");
+        gqlUser.put("category_name", "Health/beauty");
+        gqlUser.put("biography", "피부 관리");
+        Map<String, Object> gql = Map.of("data", Map.of("user", gqlUser));
+        assertThat(ProfileExtractor.fullName(gql, RawSource.SELF_GQL)).isEqualTo("스킨케어");
+        assertThat(ProfileExtractor.category(gql, RawSource.SELF_GQL)).isEqualTo("Health/beauty");
+        assertThat(ProfileExtractor.biography(gql, RawSource.SELF_GQL)).isEqualTo("피부 관리");
+    }
+
+    @Test
+    void 뷰티_판정_재료가_없거나_공백이면_null() {
+        Map<String, Object> empty = new LinkedHashMap<>();
+        empty.put("biography", "  ");
+        assertThat(ProfileExtractor.fullName(empty, RawSource.LEGACY_ENVELOPE)).isNull();
+        assertThat(ProfileExtractor.category(empty, RawSource.LEGACY_ENVELOPE)).isNull();
+        assertThat(ProfileExtractor.biography(empty, RawSource.LEGACY_ENVELOPE)).isNull();
     }
 }

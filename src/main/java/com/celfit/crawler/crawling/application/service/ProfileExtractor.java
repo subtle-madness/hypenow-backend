@@ -37,6 +37,44 @@ public final class ProfileExtractor {
         return v instanceof String s && !s.isBlank() ? s : null;
     }
 
+    public static String fullName(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> dig(payload, "data", "user", "full_name");
+            case HIKER_MOBILE, DATALIKERS -> dig(user(payload), "full_name");
+            default -> payload.get("fullName");
+        };
+        return asText(v);
+    }
+
+    public static String category(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> first(dig(payload, "data", "user", "category_name"),
+                    dig(payload, "data", "user", "business_category_name"));
+            case HIKER_MOBILE, DATALIKERS -> first(dig(user(payload), "category"),
+                    dig(user(payload), "category_name"), dig(user(payload), "business_category_name"));
+            default -> payload.get("businessCategoryName");
+        };
+        return asText(v);
+    }
+
+    public static String biography(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> dig(payload, "data", "user", "biography");
+            case HIKER_MOBILE, DATALIKERS -> dig(user(payload), "biography");
+            default -> payload.get("biography");
+        };
+        return asText(v);
+    }
+
+    private static Object first(Object... vals) {
+        for (Object v : vals) if (v != null) return v;
+        return null;
+    }
+
+    private static String asText(Object v) {
+        return v instanceof String s && !s.isBlank() ? s : null;
+    }
+
     private static Map<String, Object> user(Map<String, Object> payload) {
         return payload.get("user") instanceof Map<?, ?> u
                 ? castMap(u) : payload;
