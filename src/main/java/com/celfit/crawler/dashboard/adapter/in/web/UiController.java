@@ -129,6 +129,8 @@ public class UiController {
         model.addAttribute("jobs", java.util.List.of(
                 jobStatus(JobName.DISCOVER, "발굴"),
                 jobStatus(JobName.QUALIFY, "판정"),
+                jobStatus(JobName.BEAUTY, "뷰티판정"),
+                jobStatus(JobName.SIMILAR, "유사발굴"),
                 jobStatus(JobName.COLLECT, "수집")));
         return "fragments/status :: bar";
     }

@@ -25,6 +25,13 @@
     <form method="post" th:action="@{/ui/jobs/collect}">
         <button type="submit" class="primary">③ collect — 프로필·게시물·릴스 수집</button>
     </form>
+    <form method="post" th:action="@{/ui/jobs/beauty}">
+        <label><input type="checkbox" name="rejudge" value="true" data-persist/> Claude 판정분 재판정 (수동 판정 보존 · 인스타 호출 없음)</label>
+        <button type="submit" class="primary">④ beauty — 뷰티 계정 판정 (로컬 Claude · $0)</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/similar}">
+        <button type="submit" class="primary">⑤ similar — 뷰티 시드의 유사 계정 발굴</button>
+    </form>
 </div>
 
 <h2>예상 비용</h2>

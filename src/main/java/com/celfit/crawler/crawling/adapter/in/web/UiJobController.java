@@ -36,6 +36,16 @@ public class UiJobController {
         return respond(JobName.COLLECT, jobService.trigger(JobName.COLLECT, TriggerType.MANUAL), ra);
     }
 
+    @PostMapping("/beauty")
+    public String beauty(@RequestParam(defaultValue = "false") boolean rejudge, RedirectAttributes ra) {
+        return respond(JobName.BEAUTY, jobService.trigger(JobName.BEAUTY, TriggerType.MANUAL, rejudge), ra);
+    }
+
+    @PostMapping("/similar")
+    public String similar(RedirectAttributes ra) {
+        return respond(JobName.SIMILAR, jobService.trigger(JobName.SIMILAR, TriggerType.MANUAL), ra);
+    }
+
     private String respond(JobName name, TriggerResult result, RedirectAttributes ra) {
         String message = switch (result) {
             case ACCEPTED -> name + " 실행 시작";

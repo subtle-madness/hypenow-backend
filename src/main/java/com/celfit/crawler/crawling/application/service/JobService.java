@@ -18,14 +18,19 @@ public class JobService implements TriggerJobUseCase {
     private final DiscoverJob discoverJob;
     private final QualifyJob qualifyJob;
     private final CollectJob collectJob;
+    private final BeautyJob beautyJob;
+    private final SimilarJob similarJob;
     private final TaskExecutor taskExecutor;
 
     public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob, CollectJob collectJob,
+                      BeautyJob beautyJob, SimilarJob similarJob,
                       @Qualifier("jobTaskExecutor") TaskExecutor taskExecutor) {
         this.lock = lock;
         this.discoverJob = discoverJob;
         this.qualifyJob = qualifyJob;
         this.collectJob = collectJob;
+        this.beautyJob = beautyJob;
+        this.similarJob = similarJob;
         this.taskExecutor = taskExecutor;
     }
 
@@ -57,6 +62,17 @@ public class JobService implements TriggerJobUseCase {
                         var s = collectJob.run(triggerType);
                         if (s.failedVisits() > 0) log.warn("collect 완료(방문 부분 실패): {}", s);
                         else log.info("collect 완료: {}", s);
+                    }
+                    case BEAUTY -> {
+                        // requalify 플래그를 뷰티 재판정(rejudge)으로 재사용 — MANUAL은 잡이 보존
+                        var s = beautyJob.run(triggerType, requalify);
+                        if (s.failedBatches() > 0) log.warn("beauty 완료(배치 부분 실패): {}", s);
+                        else log.info("beauty 완료: {}", s);
+                    }
+                    case SIMILAR -> {
+                        var s = similarJob.run(triggerType);
+                        if (s.failedSeeds() > 0) log.warn("similar 완료(시드 부분 실패): {}", s);
+                        else log.info("similar 완료: {}", s);
                     }
                 }
             } catch (Exception e) {
