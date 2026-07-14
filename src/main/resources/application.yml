@@ -26,7 +26,7 @@ crawler:
     api-key: ${HIKER_API_KEY:}
     base-url: https://api.hikerapi.com
     request-timeout: 15s
-    cost-per-request-usd: 0.001
+    cost-per-request-usd: 0.0006  # DataLikers Day 플랜 실측 (플랜 변경 시 갱신)
   discover:
     results-limit: 100
   qualify:
