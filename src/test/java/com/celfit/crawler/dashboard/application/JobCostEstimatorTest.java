@@ -37,10 +37,12 @@ class JobCostEstimatorTest {
     private final ProfileSupplementSetting profileSupplement = mock(ProfileSupplementSetting.class);
     private final SettingsService settings = mock(SettingsService.class);
     private final HikerProperties hikerProperties = new HikerProperties("key", "http://x", null, 0.001);
+    private final com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties dataLikersProperties =
+            new com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties("key", "http://x", null, 0.0006);
 
     private final JobCostEstimator estimator = new JobCostEstimator(
             searchKeywords, influencers, discoverSource, profileSource, profileSupplement, settings,
-            hikerProperties, CLOCK);
+            hikerProperties, dataLikersProperties, CLOCK);
 
     private static List<SearchKeyword> keywords(int n) {
         return java.util.stream.IntStream.range(0, n)
@@ -128,6 +130,49 @@ class JobCostEstimatorTest {
         assertThat(qualify.maxRequests()).isZero();
         assertThat(qualify.minCostUsd()).isZero();
         assertThat(qualify.endpoints()).anySatisfy(e -> assertThat(e).contains("무료"));
+    }
+
+    @Test
+    void qualify_DATALIKERS_프로필이면_계정당_1회를_DataLikers_단가로_계산한다() {
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.resultsLimit()).thenReturn(0);
+        when(settings.qualifyBatchLimit()).thenReturn(100);
+        when(settings.collectBatchLimit()).thenReturn(0);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(50L);
+        when(profileSource.current()).thenReturn(ProfileSource.DATALIKERS);
+        when(profileSupplement.relatedEnabled()).thenReturn(false);
+
+        JobCost qualify = byJob(estimator.estimates()).get("qualify");
+
+        // 50계정 × 1요청 × $0.0006 = $0.03 (HikerAPI $0.001이 아니라 DataLikers 단가)
+        assertThat(qualify.targets()).isEqualTo(50);
+        assertThat(qualify.minRequests()).isEqualTo(50);
+        assertThat(qualify.minCostUsd()).isEqualTo(0.03);
+        assertThat(qualify.endpoints()).anySatisfy(e -> assertThat(e).contains("DataLikers"));
+    }
+
+    @Test
+    void collect_DATALIKERS_프로필이면_프로필은_DataLikers_피드릴스는_Hiker_단가로_합산한다() {
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.resultsLimit()).thenReturn(0);
+        when(settings.qualifyBatchLimit()).thenReturn(0);
+        when(settings.collectBatchLimit()).thenReturn(10);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countBackfillPending()).thenReturn(2L);
+        when(influencers.countTrackDue(any())).thenReturn(0L);
+        when(profileSource.current()).thenReturn(ProfileSource.DATALIKERS);
+        when(profileSupplement.relatedEnabled()).thenReturn(false);
+
+        JobCost collect = byJob(estimator.estimates()).get("collect");
+
+        // 계정당: 프로필 1(DataLikers) + 피드폴백 1 + 릴스 1(Hiker) = 3요청 → 2계정 = 6요청
+        // 비용: 2 × (1×$0.0006 + 2×$0.001) = 2 × $0.0026 = $0.0052
+        assertThat(collect.minRequests()).isEqualTo(6);
+        assertThat(collect.minCostUsd()).isEqualTo(0.0052);
+        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("DataLikers"));
+        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
     }
 
     @Test

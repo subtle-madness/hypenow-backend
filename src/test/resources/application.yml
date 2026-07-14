@@ -28,6 +28,11 @@ crawler:
     base-url: http://localhost:9999
     request-timeout: 15s
     cost-per-request-usd: 0.001
+  datalikers:
+    api-key: test-key
+    base-url: http://localhost:9999
+    request-timeout: 15s
+    cost-per-request-usd: 0.0006
   discover:
     results-limit: 100
   qualify:

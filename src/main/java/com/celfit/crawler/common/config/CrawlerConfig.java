@@ -1,6 +1,7 @@
 package com.celfit.crawler.common.config;
 
 import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
+import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
 import com.celfit.crawler.crawling.adapter.out.instagram.DirectCommentProperties;
 
@@ -18,7 +19,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Configuration
 @EnableConfigurationProperties({ApifyProperties.class, DiscoverProperties.class,
         CollectProperties.class, ScheduleProperties.class, DirectCommentProperties.class,
-        HikerProperties.class, QualifyProperties.class})
+        HikerProperties.class, QualifyProperties.class, DataLikersProperties.class})
 public class CrawlerConfig {
 
     @Bean

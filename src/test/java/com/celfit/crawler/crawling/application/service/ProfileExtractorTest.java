@@ -37,6 +37,19 @@ class ProfileExtractorTest {
     }
 
     @Test
+    void datalikers_flat_user_object_extracts_fields() {
+        // DataLikers /v1/user/by/username — "user" 래퍼 없이 flat. user() 헬퍼가 root를 그대로 쓴다.
+        Map<String, Object> payload = Map.of(
+                "follower_count", 256559L,
+                "pk", "74756186520",
+                "username", "tem.duck");
+
+        assertThat(ProfileExtractor.followers(payload, RawSource.DATALIKERS)).isEqualTo(256559L);
+        assertThat(ProfileExtractor.userId(payload, RawSource.DATALIKERS)).isEqualTo("74756186520");
+        assertThat(ProfileExtractor.username(payload, RawSource.DATALIKERS)).isEqualTo("tem.duck");
+    }
+
+    @Test
     void hiker_mobile_pk_missing_fallback_to_id() {
         Map<String, Object> payload = Map.of(
                 "user", Map.of(

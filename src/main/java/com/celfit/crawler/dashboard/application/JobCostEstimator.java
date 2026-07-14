@@ -1,6 +1,7 @@
 package com.celfit.crawler.dashboard.application;
 
 import com.celfit.crawler.content.application.port.out.SearchKeywordRepository;
+import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
@@ -40,12 +41,14 @@ public class JobCostEstimator {
     private final ProfileSupplementSetting profileSupplement;
     private final SettingsService settings;
     private final HikerProperties hikerProperties;
+    private final DataLikersProperties dataLikersProperties;
     private final Clock clock;
 
     public JobCostEstimator(SearchKeywordRepository searchKeywords, InfluencerRepository influencers,
                             DiscoverSourceSetting discoverSource, ProfileSourceSetting profileSource,
                             ProfileSupplementSetting profileSupplement, SettingsService settings,
-                            HikerProperties hikerProperties, Clock clock) {
+                            HikerProperties hikerProperties, DataLikersProperties dataLikersProperties,
+                            Clock clock) {
         this.searchKeywords = searchKeywords;
         this.influencers = influencers;
         this.discoverSource = discoverSource;
@@ -53,7 +56,14 @@ public class JobCostEstimator {
         this.profileSupplement = profileSupplement;
         this.settings = settings;
         this.hikerProperties = hikerProperties;
+        this.dataLikersProperties = dataLikersProperties;
         this.clock = clock;
+    }
+
+    /** 프로필 요청 1건당 단가 — DataLikers는 HikerAPI와 별개 요금이다. SELF·ACTOR는 프로필 유료 요청 없음. */
+    private double profileCostPerRequest() {
+        return profileSource.current() == ProfileSource.DATALIKERS
+                ? dataLikersProperties.costPerRequestUsd() : hikerProperties.costPerRequestUsd();
     }
 
     public List<JobCost> estimates() {
@@ -82,7 +92,7 @@ public class JobCostEstimator {
         long perAccount = profileRequestsPerAccount(endpoints);
         String note = profileSource.current() == ProfileSource.ACTOR ? "Apify 액터 과금 별도" : null;
         long requests = targets * perAccount;
-        double cost = requests * hikerProperties.costPerRequestUsd();
+        double cost = requests * profileCostPerRequest();
         return new JobCost("qualify", "프로필 스냅샷 · 팔로워 범위 판정",
                 endpoints, targets, requests, requests, cost, cost, note);
     }
@@ -92,19 +102,22 @@ public class JobCostEstimator {
         long collectDue = influencers.countBackfillPending() + influencers.countTrackDue(revisitBefore);
         long targets = Math.min((long) settings.collectBatchLimit(), collectDue);
         List<String> endpoints = new ArrayList<>();
-        long perAccount = profileRequestsPerAccount(endpoints);
-        // 피드: SELF 프로필 원형에 최근 12개가 내장 — 다른 소스는 피드 1페이지 폴백(유료 1요청)
+        // 프로필 요청은 소스별 단가(DataLikers 별도), 피드/릴스는 HikerAPI 단가 — 나눠서 합산한다.
+        long profileReqs = profileRequestsPerAccount(endpoints);
+        long hikerPages = 0;
+        // 피드: SELF 프로필 원형에 최근 12개가 내장 — 다른 소스는 피드 1페이지 폴백(HikerAPI 유료 1요청)
         if (profileSource.current() == ProfileSource.SELF) {
             endpoints.add("최근 피드 12개 — 프로필 원형에 내장 (추가 요청 없음)");
         } else {
             endpoints.add("HikerAPI /gql/user/medias (계정당 1회 — 피드 폴백)");
-            perAccount += 1;
+            hikerPages += 1;
         }
         endpoints.add("HikerAPI /v2/user/clips (계정당 1회 — 릴스)");
-        perAccount += 1;
+        hikerPages += 1;
         // 댓글 수집은 꺼져 있음(comments-enabled) — 엔드포인트 표기에서 제외
-        long requests = targets * perAccount;
-        double cost = requests * hikerProperties.costPerRequestUsd();
+        long requests = targets * (profileReqs + hikerPages);
+        double cost = targets * (profileReqs * profileCostPerRequest()
+                + hikerPages * hikerProperties.costPerRequestUsd());
         return new JobCost("collect", "프로필·게시물·릴스 수집",
                 endpoints, targets, requests, requests, cost, cost,
                 "방문당 최근 피드 12개 + 릴스 1페이지 — 기간 백필·페이지네이션 없음");
@@ -123,6 +136,10 @@ public class JobCostEstimator {
             }
             case HIKER_MOBILE, HIKER_WEB_GQL -> {
                 endpoints.add("HikerAPI /v2/user/by/username (계정당 1회)");
+                yield 1;
+            }
+            case DATALIKERS -> {
+                endpoints.add("DataLikers /v1/user/by/username (계정당 1회 · 프록시 우회)");
                 yield 1;
             }
             case ACTOR -> {
