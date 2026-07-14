@@ -101,6 +101,8 @@ public class QualifyJob {
                 rp.setFollowers(ProfileExtractor.followers(item, source));
                 rawProfiles.save(rp);
                 inf.setFollowers(rp.getFollowers());
+                String userId = ProfileExtractor.userId(item, source);
+                if (userId != null) inf.setIgUserId(userId);   // collect 열거 파라미터 — 폴백용 보존
                 inf.setLastProfiledAt(clock.instant());
                 profiled++;
             }

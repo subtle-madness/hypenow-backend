@@ -49,9 +49,16 @@ class InfluencerMigrationTest {
             VALUES (500, 'QUALIFY', 'MANUAL', 2, NULL, 'test-actor', 'SUCCEEDED', now())""");
         jdbc.update("""
             INSERT INTO raw_profile(account_id, crawl_run_id, payload, captured_at)
-            VALUES (10, 500, '{"username":"alice","followersCount":12345}'::jsonb, now())""");
+            VALUES (10, 500, '{"username":"alice","followersCount":12345,"userId":"999"}'::jsonb, now())""");
 
-        // 3) V8 적용
+        // 3) V9까지 적용 후 신스키마 픽스처 — SELF_GQL 프로필(bob). V10의 ig_user_id 백필이
+        //    LEGACY_ENVELOPE(alice)·SELF_GQL(bob) 양쪽 추출 경로를 타는지 보기 위함.
+        Flyway.configure().dataSource(ds).target("9").load().migrate();
+        jdbc.update("""
+            INSERT INTO raw_profile(influencer_id, crawl_run_id, payload, captured_at, source)
+            VALUES (11, 500, '{"data":{"user":{"id":"777","username":"bob"}}}'::jsonb, now(), 'SELF_GQL')""");
+
+        // 4) 최신까지 적용
         Flyway.configure().dataSource(ds).load().migrate();
     }
 
@@ -122,6 +129,16 @@ class InfluencerMigrationTest {
                 SELECT is_nullable = 'NO' AND column_default IS NULL
                 FROM information_schema.columns
                 WHERE table_name='content' AND column_name='origin'""", Boolean.class)).isTrue();
+    }
+
+    @Test
+    void ig_user_id가_최신_raw_profile_원형에서_소스별_경로로_백필된다() {
+        assertThat(jdbc.queryForObject(
+                "SELECT ig_user_id FROM influencer WHERE username='alice'", String.class))
+                .isEqualTo("999");   // LEGACY_ENVELOPE: payload->>'userId'
+        assertThat(jdbc.queryForObject(
+                "SELECT ig_user_id FROM influencer WHERE username='bob'", String.class))
+                .isEqualTo("777");   // SELF_GQL: data.user.id
     }
 
     @Test

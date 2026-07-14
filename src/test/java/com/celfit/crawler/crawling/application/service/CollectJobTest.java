@@ -347,6 +347,87 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
+    // 2b) 프로필 갱신 실패 내성 — 저장된 ig_user_id가 있으면 방문을 계속한다
+    //     (프록시 간헐 401로 프로필 응답이 비면 방문 전체가 죽던 문제)
+    // ---------------------------------------------------------------------
+    @Test
+    void 프로필_갱신_성공시_igUserId가_인플루언서에_저장된다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA)));
+
+        job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        assertThat(inf.getIgUserId()).isEqualTo("USR1");
+    }
+
+    @Test
+    void 프로필_응답에_계정이_없어도_저장된_igUserId가_있으면_열거를_계속한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        inf.setIgUserId("STORED1");
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of())); // 401 등으로 계정이 응답에 없음
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA)));
+
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isEqualTo(1);
+        assertThat(summary.failedVisits()).isEqualTo(0);
+        assertThat(fetcherA.userIdsSeen).containsExactly("STORED1");
+        assertThat(inf.getLastCollectedAt()).isEqualTo(NOW);      // 방문 북키핑은 정상 진행
+        verify(rawProfiles, never()).save(any());                 // 저장할 원형이 없다
+    }
+
+    @Test
+    void 프로필_요청_예외시에도_저장된_igUserId가_있으면_열거를_계속한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        inf.setIgUserId("STORED1");
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+                .thenThrow(new ApifyException("프로필 요청 실패"));
+
+        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA)));
+
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isEqualTo(1);
+        assertThat(summary.failedVisits()).isEqualTo(0);
+        assertThat(fetcherA.userIdsSeen).containsExactly("STORED1");
+    }
+
+    @Test
+    void 프로필_갱신_실패시_저장된_igUserId가_없으면_방문이_실패한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null); // igUserId 없음(백필 전 신규 판정분 등)
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        when(profileSourceSelector.fetchAndSupplement(eq(List.of("alice")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of()));
+
+        var summary = job(List.of()).run(TriggerType.MANUAL);
+
+        assertThat(summary.failedVisits()).isEqualTo(1);
+        assertThat(summary.visited()).isEqualTo(0);
+        assertThat(inf.getLastCollectedAt()).isNull();
+    }
+
+    // ---------------------------------------------------------------------
     // 3) 두 스트림 페이지가 각각 raw_media_page에 source와 함께 저장된다
     // ---------------------------------------------------------------------
     @Test

@@ -111,6 +111,22 @@ class QualifyJobTest {
     }
 
     @Test
+    void 프로필_수집시_igUserId가_원형에서_추출되어_저장된다() {
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer alice = influencer(1L, "alice", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatus(InfluencerStatus.DISCOVERED, PageRequest.of(0, 50)))
+                .thenReturn(new ArrayList<>(List.of(alice)));
+        when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
+        when(selector.fetchAndSupplement(List.of("alice"), TriggerType.MANUAL))
+                .thenReturn(new CrawlExecutor.Execution(99L, List.of(hikerItem("alice", 12345L, "111"))));
+
+        job.run(TriggerType.MANUAL, false);
+
+        // collect 열거 API 파라미터로 쓰인다 — 방문 시 프로필 갱신이 실패해도 열거를 계속할 폴백.
+        assertThat(alice.getIgUserId()).isEqualTo("111");
+    }
+
+    @Test
     void followers_갱신후_전역_범위_안이면_QUALIFIED_밖이면_EXCLUDED() {
         when(settings.qualifyBatchLimit()).thenReturn(50);
         Influencer inRange = influencer(1L, "in", InfluencerStatus.DISCOVERED, 10000L, NOW);

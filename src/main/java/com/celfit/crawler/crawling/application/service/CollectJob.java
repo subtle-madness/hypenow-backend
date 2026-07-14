@@ -164,25 +164,44 @@ public class CollectJob {
         return new VisitResult(upserted, collected);
     }
 
-    /** 프로필 원형 저장 + followers 갱신. 열거에 쓸 userId를 반환하며, 추출 실패는 방문 실패(ApifyException)로 취급한다. */
+    /**
+     * 프로필 원형 저장 + followers·igUserId 갱신 후 열거에 쓸 userId를 반환한다.
+     * 프로필 갱신은 프록시 간헐 401 등으로 언제든 실패할 수 있으므로 방문의 전제가 아니다 —
+     * 실패해도 저장된 igUserId(판정·이전 방문 때 추출)가 있으면 그 값으로 열거를 계속하고,
+     * 그것마저 없을 때만 방문 실패로 던진다.
+     */
     private String refreshProfile(Influencer inf, TriggerType trigger) {
         RawSource source = profileSourceSelector.currentSource();
-        CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(List.of(inf.getUsername()), trigger);
-        for (Map<String, Object> item : ex.items()) {
-            String username = ProfileExtractor.username(item, source);
-            if (username == null || !username.equals(inf.getUsername())) continue;
-            RawProfile rp = new RawProfile(inf.getId(), ex.runId(), source, item, clock.instant());
-            rp.setUsername(username);
-            Long followers = ProfileExtractor.followers(item, source);
-            rp.setFollowers(followers);
-            rawProfiles.save(rp);
-            inf.setFollowers(followers);
-            inf.setLastProfiledAt(clock.instant());
-            String userId = ProfileExtractor.userId(item, source);
-            if (userId == null) throw new ApifyException("userId 추출 실패: " + inf.getUsername());
-            return userId;
+        String failure = null;
+        try {
+            CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(List.of(inf.getUsername()), trigger);
+            for (Map<String, Object> item : ex.items()) {
+                String username = ProfileExtractor.username(item, source);
+                if (username == null || !username.equals(inf.getUsername())) continue;
+                RawProfile rp = new RawProfile(inf.getId(), ex.runId(), source, item, clock.instant());
+                rp.setUsername(username);
+                Long followers = ProfileExtractor.followers(item, source);
+                rp.setFollowers(followers);
+                rawProfiles.save(rp);
+                inf.setFollowers(followers);
+                inf.setLastProfiledAt(clock.instant());
+                String userId = ProfileExtractor.userId(item, source);
+                if (userId != null) {
+                    inf.setIgUserId(userId);
+                    return userId;
+                }
+                failure = "userId 추출 실패";
+            }
+            if (failure == null) failure = "응답에 계정 없음(401 차단 등)";
+        } catch (ApifyException e) {
+            failure = "프로필 요청 실패: " + e.getMessage();
         }
-        throw new ApifyException("프로필 응답에 계정 없음: " + inf.getUsername());
+        String stored = inf.getIgUserId();
+        if (stored == null) {
+            throw new ApifyException("프로필 확보 실패(저장된 userId도 없음) — " + failure + ": " + inf.getUsername());
+        }
+        log.warn("collect 프로필 갱신 실패({}) — 저장된 userId로 열거 계속: {}", failure, inf.getUsername());
+        return stored;
     }
 
     /** 커서 페이지네이션. "고정 제외 전부가 컷오프보다 오래됨"이면 중단. 윈도우 내 아이템만 수집. */
