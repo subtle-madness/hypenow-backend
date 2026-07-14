@@ -35,8 +35,6 @@ crawler:
     min-followers: 3000
     max-followers: 50000
   collect:
-    backfill-months: 6
-    track-window-days: 30
     batch-limit: 10
     comments-per-post: 30
     max-attempts: 3

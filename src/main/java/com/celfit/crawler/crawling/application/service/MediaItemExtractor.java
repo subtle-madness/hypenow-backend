@@ -21,16 +21,26 @@ public final class MediaItemExtractor {
         for (Object o : items(payload, source)) {
             if (!(o instanceof Map<?, ?> raw)) continue;
             Map<String, Object> m = unwrapMedia(raw);
-            String code = m.get("code") instanceof String s && !s.isBlank() ? s : null;
+            String code = firstString(m.get("code"), m.get("shortcode"));   // SELF_GQL은 shortcode
             Long takenAt = asLong(get(m, "taken_at"));
+            if (takenAt == null) takenAt = asLong(m.get("taken_at_timestamp")); // SELF_GQL
             if (code == null || takenAt == null) continue;
             ContentType type = "clips".equals(m.get("product_type"))
                     ? ContentType.REELS : ContentType.FEED;
             boolean pinned = nonEmptyList(m.get("timeline_pinned_user_ids"))
-                    || nonEmptyList(m.get("clips_tab_pinned_user_ids"));
+                    || nonEmptyList(m.get("clips_tab_pinned_user_ids"))
+                    || nonEmptyList(m.get("pinned_for_users"));              // SELF_GQL
             out.add(new MediaItem(code, Instant.ofEpochSecond(takenAt), type, pinned));
         }
         return out;
+    }
+
+    /**
+     * 프로필 원형(web_profile_info)에 최근 타임라인이 내장돼 있는지 — 빈 edges도 "내장 있음"
+     * (게시물 0개 계정에 피드 폴백 요청을 낭비하지 않기 위해 존재 여부와 아이템 유무를 구분).
+     */
+    public static boolean hasEmbeddedTimeline(Map<String, Object> profilePayload) {
+        return timelineEdges(profilePayload) != null;
     }
 
     /** 다음 페이지 커서. null이면 끝. */
@@ -50,15 +60,34 @@ public final class MediaItemExtractor {
             case HIKER_GQL_MEDIAS -> payload.get("items");
             case HIKER_V2_CLIPS -> payload.get("response") instanceof Map<?, ?> r
                     ? r.get("items") : null;
+            case SELF_GQL -> timelineEdges(payload);
             default -> null;
         };
         return items instanceof List<?> l ? l : List.of();
     }
 
+    /** data.user.edge_owner_to_timeline_media.edges — 없으면 null(내장 아님). */
+    private static List<?> timelineEdges(Map<String, Object> payload) {
+        Object cur = payload;
+        for (String p : new String[] {"data", "user", "edge_owner_to_timeline_media", "edges"}) {
+            if (!(cur instanceof Map<?, ?> m)) return null;
+            cur = m.get(p);
+        }
+        return cur instanceof List<?> l ? l : null;
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> unwrapMedia(Map<?, ?> item) {
-        return item.get("media") instanceof Map<?, ?> m
-                ? (Map<String, Object>) m : (Map<String, Object>) item;
+        if (item.get("media") instanceof Map<?, ?> m) return (Map<String, Object>) m;
+        if (item.get("node") instanceof Map<?, ?> n) return (Map<String, Object>) n;  // SELF_GQL edges
+        return (Map<String, Object>) item;
+    }
+
+    private static String firstString(Object... candidates) {
+        for (Object c : candidates) {
+            if (c instanceof String s && !s.isBlank()) return s;
+        }
+        return null;
     }
 
     /** hiker flat 접두사 대응: key → 1l+key → 1f+key. */

@@ -27,9 +27,6 @@ public class JobCostEstimator {
 
     /** discover 페이지당 게시물 수 실측 하한 — 페이지 요청 수 추정용. */
     private static final double DISCOVER_ITEMS_PER_PAGE = 25.0;
-    /** collect 열거(피드+클립) 페이지 수 실측 범위 — 소형 계정 4, 대형 계정 26. */
-    private static final int COLLECT_MIN_PAGES = 4;
-    private static final int COLLECT_MAX_PAGES = 26;
 
     public record JobCost(String job, List<String> endpoints, long targets,
                           long minRequests, long maxRequests,
@@ -92,17 +89,21 @@ public class JobCostEstimator {
         long collectDue = influencers.countBackfillPending() + influencers.countTrackDue(revisitBefore);
         long targets = Math.min((long) settings.collectBatchLimit(), collectDue);
         List<String> endpoints = new ArrayList<>();
-        endpoints.add("HikerAPI /gql/user/medias (페이지당 1회)");
-        endpoints.add("HikerAPI /v2/user/clips (페이지당 1회)");
+        long perAccount = profileRequestsPerAccount(endpoints);
+        // 피드: SELF 프로필 원형에 최근 12개가 내장 — 다른 소스는 피드 1페이지 폴백(유료 1요청)
+        if (profileSource.current() == ProfileSource.SELF) {
+            endpoints.add("최근 피드 12개 — 프로필 원형에 내장 (추가 요청 없음)");
+        } else {
+            endpoints.add("HikerAPI /gql/user/medias (계정당 1회 — 피드 폴백)");
+            perAccount += 1;
+        }
+        endpoints.add("HikerAPI /v2/user/clips (계정당 1회 — 릴스)");
+        perAccount += 1;
         endpoints.add("instagram GraphQL 댓글 (self, 무료)");
-        long perAccountProfile = profileRequestsPerAccount(endpoints);
-        long minRequests = targets * (perAccountProfile + COLLECT_MIN_PAGES);
-        long maxRequests = targets * (perAccountProfile + COLLECT_MAX_PAGES);
-        double minCost = minRequests * hikerProperties.costPerRequestUsd();
-        double maxCost = maxRequests * hikerProperties.costPerRequestUsd();
-        return new JobCost("collect", endpoints, targets, minRequests, maxRequests,
-                minCost, maxCost, "열거 페이지 수는 " + settings.backfillMonths()
-                        + "개월(백필 설정값) 게시물 양에 비례 — 실측 4~26페이지");
+        long requests = targets * perAccount;
+        double cost = requests * hikerProperties.costPerRequestUsd();
+        return new JobCost("collect", endpoints, targets, requests, requests, cost, cost,
+                "방문당 최근 피드 12개 + 릴스 1페이지 — 기간 백필·페이지네이션 없음");
     }
 
     /**

@@ -57,10 +57,9 @@ class CollectJobTest {
     static final Instant NOW = Instant.parse("2026-07-14T00:00:00Z");
     static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
-    // 컷오프 계산 기준 시각들 — backfill=6개월(2026-01-14 이전 컷오프), track=7일(2026-07-07 이전 컷오프)
-    static final Instant WITHIN_BACKFILL_ONLY = Instant.parse("2026-03-01T00:00:00Z"); // 백필엔 포함, 추적엔 제외
-    static final Instant WITHIN_TRACK = Instant.parse("2026-07-10T00:00:00Z");          // 둘 다 포함
-    static final Instant BEFORE_BACKFILL = Instant.parse("2025-01-01T00:00:00Z");       // 둘 다 제외
+    // 기간 컷오프가 없으므로 날짜는 임의값 — OLD는 "아주 오래된 게시물도 수집됨" 검증용
+    static final Instant RECENT = Instant.parse("2026-07-10T00:00:00Z");
+    static final Instant OLD = Instant.parse("2025-01-01T00:00:00Z");
 
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
@@ -92,8 +91,6 @@ class CollectJobTest {
 
     void wireDefaultSettings() {
         when(settings.collectBatchLimit()).thenReturn(10);
-        when(settings.backfillMonths()).thenReturn(6);
-        when(settings.trackWindowDays()).thenReturn(7);
         when(settings.commentsPerPost()).thenReturn(50);
         when(settings.maxAttempts()).thenReturn(3);
         when(settings.revisitIntervalDays()).thenReturn(7);
@@ -167,6 +164,31 @@ class CollectJobTest {
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         when(profileSourceSelector.fetchAndSupplement(eq(List.of(username)), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(profileItem(username, followers, userId))));
+    }
+
+    // ---- SELF_GQL 프로필(web_profile_info) 원형 — 최근 피드 12개 내장 ----
+    static Map<String, Object> selfTimelineNode(String shortCode, Instant takenAt,
+                                                String productType, boolean pinned) {
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("shortcode", shortCode);
+        node.put("taken_at_timestamp", takenAt.getEpochSecond());
+        node.put("product_type", productType);
+        node.put("pinned_for_users", pinned ? List.of(Map.of("id", "1")) : List.of());
+        return node;
+    }
+
+    void wireSelfProfile(String username, long followers, String userId,
+                         List<Map<String, Object>> timelineNodes) {
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("username", username);
+        user.put("id", userId);
+        user.put("edge_followed_by", Map.of("count", followers));
+        user.put("edge_owner_to_timeline_media", Map.of(
+                "edges", timelineNodes.stream().map(n -> (Object) Map.of("node", n)).toList()));
+        Map<String, Object> payload = Map.of("data", Map.of("user", user));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(profileSourceSelector.fetchAndSupplement(eq(List.of(username)), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(payload)));
     }
 
     // ---- HIKER_GQL_MEDIAS 페이지 빌더 ----
@@ -440,8 +462,8 @@ class CollectJobTest {
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
         RawSource srcB = RawSource.HIKER_V2_CLIPS;
-        Map<String, Object> pageA = gqlPage(List.of(gqlItem("A1", WITHIN_TRACK, false)), null);
-        Map<String, Object> pageB = clipsPage(List.of(clipsItem("B1", WITHIN_TRACK)), null);
+        Map<String, Object> pageA = gqlPage(List.of(gqlItem("A1", RECENT, false)), null);
+        Map<String, Object> pageB = clipsPage(List.of(clipsItem("B1", RECENT)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(pageA));
         FakeMediaFetcher fetcherB = new FakeMediaFetcher(srcB, List.of(pageB));
 
@@ -458,45 +480,44 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
-    // 4) 컷오프 넘긴 페이지에서 중단하되, 고정 게시물은 중단 판단에서 제외
+    // 4) 페이지네이션·기간 컷오프 없음 — 스트림당 1페이지만, 날짜 무관 전부 수집
     // ---------------------------------------------------------------------
     @Test
-    void 컷오프_이전_비고정_아이템만_있으면_스트림을_중단한다() {
+    void 커서가_있어도_스트림당_1페이지만_가져온다() {
         wireCommon();
 
-        Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
+        Influencer inf = influencer(1L, "alice", null, null);
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        // 커서를 달아 다음 페이지가 있는 것처럼 보이지만, 비고정 아이템이 전부 컷오프 이전이라 중단해야 한다.
-        Map<String, Object> page1 = gqlPage(List.of(gqlItem("OLD1", BEFORE_BACKFILL, false)), "C2");
-        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page1)); // page2는 없음 — 호출되면 즉시 실패
+        // 커서가 달려 있어도(다음 페이지 존재) 추가 호출이 없어야 한다 — page2 미제공, 호출되면 즉시 실패
+        Map<String, Object> page1 = gqlPage(List.of(gqlItem("P1", RECENT, false)), "C2");
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page1));
 
         job(List.of(fetcherA)).run(TriggerType.MANUAL);
 
         assertThat(fetcherA.calls).isEqualTo(1);
-        verify(contents, never()).findByShortCode("OLD1");
+        assertThat(fetcherA.cursorsSeen).containsExactly((String) null);
     }
 
     @Test
-    void 고정_게시물은_컷오프_중단_판단에서_제외된다() {
+    void 기간_컷오프_없이_오래된_게시물도_수집된다() {
         wireCommon();
 
-        Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
+        // 재방문(추적)이어도 컷오프가 없다 — 1페이지 안에 있으면 날짜 무관 전부 수집
+        Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        // page1: 고정된 오래된 아이템 하나뿐(비고정 없음) → 중단 판단 대상이 없어 계속 진행해야 한다.
-        Map<String, Object> page1 = gqlPage(List.of(gqlItem("PIN_OLD", BEFORE_BACKFILL, true)), "C2");
-        Map<String, Object> page2 = gqlPage(List.of(), null); // 자연 종료
-        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page1, page2));
+        Map<String, Object> page = gqlPage(List.of(gqlItem("VERY_OLD", OLD, false)), null);
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
 
-        job(List.of(fetcherA)).run(TriggerType.MANUAL);
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
 
-        assertThat(fetcherA.calls).isEqualTo(2); // page2까지 호출됨 = 고정 아이템 때문에 중단하지 않았다
-        assertThat(fetcherA.cursorsSeen).containsExactly(null, "C2");
+        verify(contents).findByShortCode("VERY_OLD");
+        assertThat(summary.postsUpserted()).isEqualTo(1);
     }
 
     // ---------------------------------------------------------------------
@@ -513,9 +534,9 @@ class CollectJobTest {
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
         RawSource srcB = RawSource.HIKER_V2_CLIPS;
         Map<String, Object> pageA = gqlPage(List.of(
-                gqlItem("DUP1", WITHIN_TRACK, false),
-                gqlItem("PIN_IN", WITHIN_TRACK, true)), null);
-        Map<String, Object> pageB = clipsPage(List.of(clipsItem("DUP1", WITHIN_TRACK)), null);
+                gqlItem("DUP1", RECENT, false),
+                gqlItem("PIN_IN", RECENT, true)), null);
+        Map<String, Object> pageB = clipsPage(List.of(clipsItem("DUP1", RECENT)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(pageA));
         FakeMediaFetcher fetcherB = new FakeMediaFetcher(srcB, List.of(pageB));
 
@@ -540,7 +561,7 @@ class CollectJobTest {
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        Map<String, Object> page = gqlPage(List.of(gqlItem("POST1", WITHIN_TRACK, false)), null);
+        Map<String, Object> page = gqlPage(List.of(gqlItem("POST1", RECENT, false)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
 
         Map<String, Object> commentPage1 = Map.of("page", 1, "comments", List.of("c1"));
@@ -585,14 +606,14 @@ class CollectJobTest {
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
         Map<String, Object> page = gqlPage(List.of(
-                gqlItem("POST_OK", WITHIN_TRACK, false),
-                gqlItem("POST_FAIL", WITHIN_TRACK, false)), null);
+                gqlItem("POST_OK", RECENT, false),
+                gqlItem("POST_FAIL", RECENT, false)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
 
         // POST_FAIL은 이미 시도 2회(상한 3) — 이번 실패로 3회째가 되어 FAILED 전이돼야 한다.
         // origin=ENUMERATION — 열거 산출물(정식 수집 대상)의 재시도 시나리오.
         Content existingFail = new Content("POST_FAIL", ContentType.FEED, "alice", 1L,
-                WITHIN_TRACK, NOW.minusSeconds(10), ContentOrigin.ENUMERATION);
+                RECENT, NOW.minusSeconds(10), ContentOrigin.ENUMERATION);
         existingFail.setId(2000L);
         existingFail.setCollectAttempts(2);
         contentStore.put("POST_FAIL", existingFail); // 페이크 저장소에 미리 심어 findByShortCode/findByInfluencerIdAndStatus 둘 다에 노출
@@ -619,7 +640,7 @@ class CollectJobTest {
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        Map<String, Object> page = gqlPage(List.of(gqlItem("POST1", WITHIN_TRACK, false)), null);
+        Map<String, Object> page = gqlPage(List.of(gqlItem("POST1", RECENT, false)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
 
         CommentFetcher fakeCommentFetcher = mock(CommentFetcher.class);
@@ -677,45 +698,64 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
-    // 9) 추적 방문(첫 방문 완료된 인플루언서)은 track-window-days 컷오프를 쓴다
+    // 9) 프로필 내장 타임라인 — SELF 프로필 원형에 피드가 딸려오면 피드 폴백 호출이 없다
     // ---------------------------------------------------------------------
     @Test
-    void 추적_방문은_backfill보다_좁은_track_window_컷오프를_쓴다() {
+    void 프로필_내장_타임라인이_있으면_피드_폴백_호출_없이_그대로_수집한다() {
         wireCommon();
 
-        Influencer backfillInf = influencer(1L, "backfill_user", null, null);
-        Influencer trackInf = influencer(2L, "track_user", NOW.minus(Duration.ofDays(30)), NOW.minus(Duration.ofDays(30)));
-        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(backfillInf, trackInf));
-        wireProfile("backfill_user", 1000L, "U1");
-        wireProfile("track_user", 1000L, "U2");
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireSelfProfile("alice", 12345L, "USR1", List.of(
+                selfTimelineNode("EMB_FEED", RECENT, "", false),
+                selfTimelineNode("EMB_REEL", OLD, "clips", true)));
 
-        RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        // 두 인플루언서 모두 동일 시점(WITHIN_BACKFILL_ONLY: backfill엔 포함, track엔 제외)의 아이템 1건.
-        Map<String, Object> page1 = gqlPage(List.of(gqlItem("OLD_TRACK_1", WITHIN_BACKFILL_ONLY, false)), null);
-        Map<String, Object> page2 = gqlPage(List.of(gqlItem("OLD_TRACK_2", WITHIN_BACKFILL_ONLY, false)), null);
-        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page1, page2));
+        // 피드 페처는 페이지 0개 — 호출되는 순간 FakeMediaFetcher가 AssertionError로 잡는다.
+        FakeMediaFetcher feedFetcher = new FakeMediaFetcher(RawSource.HIKER_GQL_MEDIAS, List.of());
+        FakeMediaFetcher clipsFetcher = new FakeMediaFetcher(RawSource.HIKER_V2_CLIPS,
+                List.of(emptyPage(RawSource.HIKER_V2_CLIPS)));
 
-        job(List.of(fetcherA)).run(TriggerType.MANUAL);
+        var summary = job(List.of(feedFetcher, clipsFetcher)).run(TriggerType.MANUAL);
 
-        verify(contents).findByShortCode("OLD_TRACK_1");         // 백필 대상은 윈도우 안 → upsert 시도
-        verify(contents, never()).findByShortCode("OLD_TRACK_2"); // 추적 대상은 track-window 밖 → upsert 시도 없음
+        assertThat(feedFetcher.calls).isZero();                    // 내장 타임라인이 피드 열거를 대체
+        assertThat(clipsFetcher.userIdsSeen).containsExactly("USR1"); // 릴스는 1회 호출
+        assertThat(summary.postsUpserted()).isEqualTo(2);          // 날짜·고정 무관 전부 수집
+        assertThat(contentStore.get("EMB_FEED").getContentType()).isEqualTo(ContentType.FEED);
+        assertThat(contentStore.get("EMB_REEL").getContentType()).isEqualTo(ContentType.REELS);
+    }
+
+    @Test
+    void 프로필에_타임라인이_없으면_피드_1페이지_폴백을_호출한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1"); // APIFY_ACTOR 형태 — 내장 타임라인 없음
+
+        FakeMediaFetcher feedFetcher = new FakeMediaFetcher(RawSource.HIKER_GQL_MEDIAS,
+                List.of(gqlPage(List.of(gqlItem("FB1", RECENT, false)), null)));
+
+        var summary = job(List.of(feedFetcher)).run(TriggerType.MANUAL);
+
+        assertThat(feedFetcher.userIdsSeen).containsExactly("USR1");
+        assertThat(summary.postsUpserted()).isEqualTo(1);
     }
 
     // ---------------------------------------------------------------------
-    // 10) 댓글 대상은 이번 방문 윈도우가 아니라 인플루언서의 PENDING 전체다 (Finding 1)
+    // 10) 댓글 대상은 이번 방문 열거분이 아니라 인플루언서의 PENDING 전체다 (Finding 1)
     // ---------------------------------------------------------------------
     @Test
-    void 백필_방문에서_댓글_실패한_게시물이_다음_방문에서_다시_댓글_대상이_된다() {
+    void 첫_방문에서_댓글_실패한_게시물이_다음_방문에서_다시_댓글_대상이_된다() {
         wireCommon();
 
-        Influencer inf = influencer(1L, "alice", null, null); // 첫 방문 = 백필
+        Influencer inf = influencer(1L, "alice", null, null); // 첫 방문
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        Map<String, Object> backfillPage = gqlPage(List.of(gqlItem("OLD_FAIL", WITHIN_BACKFILL_ONLY, false)), null);
-        // 두 번째 방문(추적)에서는 이 아이템이 track-window 밖이라 다시 열거되지 않는다(빈 페이지).
-        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(backfillPage, emptyPage(srcA)));
+        Map<String, Object> firstPage = gqlPage(List.of(gqlItem("OLD_FAIL", OLD, false)), null);
+        // 두 번째 방문에서는 이 아이템이 최근 1페이지에서 밀려나 다시 열거되지 않는다(빈 페이지).
+        FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(firstPage, emptyPage(srcA)));
 
         CommentFetcher fakeCommentFetcher = mock(CommentFetcher.class);
         when(commentSource.currentSource()).thenReturn(RawSource.SELF_GQL);
@@ -725,14 +765,14 @@ class CollectJobTest {
                 .thenReturn(new CommentFetcher.CommentResult(200L,
                         Map.of("OLD_FAIL", List.of(Map.of("p", 1)))));
 
-        // 1차: 백필 방문 — 열거는 성공(OLD_FAIL upsert)하지만 댓글 수집 자체가 실패해 PENDING에 머문다.
+        // 1차: 첫 방문 — 열거는 성공(OLD_FAIL upsert)하지만 댓글 수집 자체가 실패해 PENDING에 머문다.
         job(List.of(fetcherA)).run(TriggerType.MANUAL);
         Content afterFirst = contentStore.get("OLD_FAIL");
         assertThat(afterFirst.getStatus()).isEqualTo(ContentStatus.PENDING);
         assertThat(afterFirst.getCollectAttempts()).isEqualTo(1);
-        assertThat(inf.getFirstCollectedAt()).isEqualTo(NOW); // 열거 성공 = 백필 완료 표식(댓글 실패와 무관)
+        assertThat(inf.getFirstCollectedAt()).isEqualTo(NOW); // 열거 성공 = 첫 방문 완료 표식(댓글 실패와 무관)
 
-        // 2차: 추적 방문 — 이번 열거는 빈 페이지(OLD_FAIL 재열거 없음)지만, PENDING 조회로 다시 댓글 대상이 되어 성공한다.
+        // 2차: 재방문 — 이번 열거는 빈 페이지(OLD_FAIL 재열거 없음)지만, PENDING 조회로 다시 댓글 대상이 되어 성공한다.
         var summary2 = job(List.of(fetcherA)).run(TriggerType.MANUAL);
         Content afterSecond = contentStore.get("OLD_FAIL");
         assertThat(afterSecond.getStatus()).isEqualTo(ContentStatus.COLLECTED);
@@ -740,15 +780,15 @@ class CollectJobTest {
     }
 
     @Test
-    void 윈도우_밖_기존_PENDING_content도_방문시_댓글_대상에_포함된다() {
+    void 이번_열거에_안_잡힌_기존_PENDING_content도_방문시_댓글_대상에_포함된다() {
         wireCommon();
 
-        // 첫 방문은 이미 오래 전 완료(추적 방문) — 이번 열거는 새로 아무것도 안 내놓는다.
+        // 첫 방문은 이미 오래 전 완료(재방문) — 이번 열거는 새로 아무것도 안 내놓는다.
         Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
-        // 이전 열거로 이미 승격돼 있던(origin=ENUMERATION), 이번 열거 윈도우 밖의 오래된 PENDING content.
+        // 이전 열거로 이미 승격돼 있던(origin=ENUMERATION), 이번 열거에 안 잡히는 오래된 PENDING content.
         Content oldPending = new Content("OLD_PENDING", ContentType.FEED, "alice", 1L,
                 NOW.minus(Duration.ofDays(90)), NOW.minus(Duration.ofDays(90)), ContentOrigin.ENUMERATION);
         oldPending.setId(3000L);
@@ -813,12 +853,12 @@ class CollectJobTest {
 
         // discover가 이미 만들어둔 발굴 부산물 — 이번 열거가 같은 shortCode를 다시 잡는다.
         Content discovered = new Content("PROMOTE1", ContentType.FEED, "alice", 1L,
-                WITHIN_TRACK, WITHIN_TRACK, ContentOrigin.DISCOVERY);
+                RECENT, RECENT, ContentOrigin.DISCOVERY);
         discovered.setId(4000L);
         contentStore.put("PROMOTE1", discovered);
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        Map<String, Object> page = gqlPage(List.of(gqlItem("PROMOTE1", WITHIN_TRACK, false)), null);
+        Map<String, Object> page = gqlPage(List.of(gqlItem("PROMOTE1", RECENT, false)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(page));
 
         job(List.of(fetcherA)).run(TriggerType.MANUAL);

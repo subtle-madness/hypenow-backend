@@ -23,7 +23,6 @@ import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,14 +33,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 수집 잡 — 인플루언서를 방문해 프로필을 갱신하고, 두 스트림(피드·클립)을 열거해 게시물을
- * content로 upsert한 뒤 대상 게시물의 댓글을 수집한다. 첫 방문은 6개월 백필, 이후는 추적
- * 윈도우(collect.track-window-days) 컷오프를 쓴다.
+ * 수집 잡 — 인플루언서를 방문해 프로필을 갱신하고, 프로필 원형에 내장된 최근 피드(12개)와
+ * 릴스 1페이지를 content로 upsert한 뒤 대상 게시물의 댓글을 수집한다. 기간 컷오프·페이지네이션
+ * 없이 방문당 "최근 게시물 한 묶음"만 가져오며, 재방문 주기(collect.revisit-interval-days)마다
+ * 다시 방문해 그 사이의 새 게시물을 잡는다.
  */
 @Service
 public class CollectJob {
 
-    private static final int MAX_PAGES_PER_STREAM = 40;  // 폭주 방지 안전 상한
     private static final Logger log = LoggerFactory.getLogger(CollectJob.class);
 
     public record Summary(int visited, int postsUpserted, int postsCollected, int failedVisits) {}
@@ -115,20 +114,22 @@ public class CollectJob {
     private record VisitResult(int upserted, int collected) {}
 
     private VisitResult visit(Influencer inf, TriggerType trigger) {
-        // 1) 프로필 갱신 (원형 저장 + followers·userId 추출) — Task 7의 저장 로직과 동일 패턴 재사용
-        String userId = refreshProfile(inf, trigger);
+        // 1) 프로필 갱신 (원형 저장 + followers·userId 추출) — SELF 원형에는 최근 피드 12개가
+        // 내장돼 있어 피드 열거를 겸한다(별도 유료 요청 불필요).
+        ProfileRefresh profile = refreshProfile(inf, trigger);
 
-        // 2) 컷오프: 첫 방문=백필 개월, 이후=추적 윈도우
-        boolean backfill = inf.getFirstCollectedAt() == null;
-        Instant cutoff = backfill
-                ? clock.instant().atZone(ZoneOffset.UTC).minusMonths(settings.backfillMonths()).toInstant()
-                : clock.instant().minus(Duration.ofDays(settings.trackWindowDays()));
-
-        // 3) 두 스트림 열거 → 페이지 원형 저장 → 추출 → 윈도우 내 아이템 수집 (shortCode dedup)
+        // 2) 피드: 내장 타임라인 우선, 없으면(비 SELF 소스·프로필 미확보) 피드 1페이지 폴백
         Map<String, MediaItemExtractor.MediaItem> inWindow = new LinkedHashMap<>();
-        for (UserMediaPageFetcher fetcher : mediaFetchers) {
-            enumerateStream(inf, fetcher, userId, cutoff, trigger, inWindow);
+        if (profile.payload() != null && MediaItemExtractor.hasEmbeddedTimeline(profile.payload())) {
+            for (var it : MediaItemExtractor.extract(profile.payload(), RawSource.SELF_GQL)) {
+                inWindow.putIfAbsent(it.shortCode(), it);
+            }
+        } else {
+            fetchOnePage(inf, RawSource.HIKER_GQL_MEDIAS, profile.userId(), trigger, inWindow);
         }
+
+        // 3) 릴스 1페이지 — 내장 타임라인(피드 그리드)에 안 잡히는 릴스 커버 (shortCode dedup)
+        fetchOnePage(inf, RawSource.HIKER_V2_CLIPS, profile.userId(), trigger, inWindow);
 
         // 4) content upsert — 신규는 ENUMERATION(수집 대상)으로 생성. 기존 행이 발굴 부산물(DISCOVERY)
         // 이었다면 이번 열거로 정식 수집 범위에 들어온 것이므로 ENUMERATION으로 승격한다.
@@ -153,9 +154,9 @@ public class CollectJob {
                 inf.getId(), ContentStatus.PENDING, ContentOrigin.ENUMERATION);
         int collected = collectComments(pending, trigger);
 
-        // firstCollectedAt은 "백필 열거 완료" 표식 — 댓글 실패와 무관하게 열거 성공 시 기록한다.
+        // firstCollectedAt은 "첫 방문 완료" 표식 — 댓글 실패와 무관하게 열거 성공 시 기록한다.
         // 실패 게시물의 재시도는 위 PENDING 조회가 담당하므로 별도 신호가 필요 없다.
-        if (backfill) inf.setFirstCollectedAt(clock.instant());
+        if (inf.getFirstCollectedAt() == null) inf.setFirstCollectedAt(clock.instant());
         inf.setLastCollectedAt(clock.instant());
         // findCollectTargets는 방문 트랜잭션 밖(리포지토리 자체 트랜잭션)에서 조회돼 detached 상태다 —
         // 명시적 save(merge) 없이는 위 북키핑(방문 시각·followers)이 저장되지 않아 같은 인플루언서가
@@ -164,13 +165,16 @@ public class CollectJob {
         return new VisitResult(upserted, collected);
     }
 
+    /** 방문의 프로필 갱신 결과 — payload는 원형(내장 타임라인 추출용), 갱신 실패 폴백이면 null. */
+    private record ProfileRefresh(String userId, Map<String, Object> payload) {}
+
     /**
-     * 프로필 원형 저장 + followers·igUserId 갱신 후 열거에 쓸 userId를 반환한다.
+     * 프로필 원형 저장 + followers·igUserId 갱신 후 열거에 쓸 userId와 원형을 반환한다.
      * 프로필 갱신은 프록시 간헐 401 등으로 언제든 실패할 수 있으므로 방문의 전제가 아니다 —
      * 실패해도 저장된 igUserId(판정·이전 방문 때 추출)가 있으면 그 값으로 열거를 계속하고,
      * 그것마저 없을 때만 방문 실패로 던진다.
      */
-    private String refreshProfile(Influencer inf, TriggerType trigger) {
+    private ProfileRefresh refreshProfile(Influencer inf, TriggerType trigger) {
         RawSource source = profileSourceSelector.currentSource();
         String failure = null;
         try {
@@ -188,7 +192,7 @@ public class CollectJob {
                 String userId = ProfileExtractor.userId(item, source);
                 if (userId != null) {
                     inf.setIgUserId(userId);
-                    return userId;
+                    return new ProfileRefresh(userId, item);
                 }
                 failure = "userId 추출 실패";
             }
@@ -201,33 +205,22 @@ public class CollectJob {
             throw new ApifyException("프로필 확보 실패(저장된 userId도 없음) — " + failure + ": " + inf.getUsername());
         }
         log.warn("collect 프로필 갱신 실패({}) — 저장된 userId로 열거 계속: {}", failure, inf.getUsername());
-        return stored;
+        return new ProfileRefresh(stored, null);
     }
 
-    /** 커서 페이지네이션. "고정 제외 전부가 컷오프보다 오래됨"이면 중단. 윈도우 내 아이템만 수집. */
-    private void enumerateStream(Influencer inf, UserMediaPageFetcher fetcher, String userId,
-                                 Instant cutoff, TriggerType trigger,
-                                 Map<String, MediaItemExtractor.MediaItem> sink) {
-        String cursor = null;
-        for (int page = 0; page < MAX_PAGES_PER_STREAM; page++) {
-            final String cur = cursor;
-            CrawlExecutor.Execution ex = executor.execute(JobName.COLLECT, trigger,
-                    null, inf.getUsername(), fetcher.source().name(),
-                    () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(userId, cur))));
-            Map<String, Object> payload = ex.items().get(0);
-            rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), fetcher.source(),
-                    payload, clock.instant()));
-
-            List<MediaItemExtractor.MediaItem> items =
-                    MediaItemExtractor.extract(payload, fetcher.source());
-            if (items.isEmpty()) return;
-            for (var it : items) {
-                if (!it.takenAt().isBefore(cutoff)) sink.putIfAbsent(it.shortCode(), it);
-            }
-            List<MediaItemExtractor.MediaItem> fresh = items.stream().filter(i -> !i.pinned()).toList();
-            if (!fresh.isEmpty() && fresh.stream().allMatch(i -> i.takenAt().isBefore(cutoff))) return;
-            cursor = MediaItemExtractor.nextCursor(payload, fetcher.source());
-            if (cursor == null) return;
+    /** 해당 소스의 첫 페이지만 — 원형 저장 후 추출해 sink에 합류(shortCode dedup). 페이지네이션 없음. */
+    private void fetchOnePage(Influencer inf, RawSource source, String userId, TriggerType trigger,
+                              Map<String, MediaItemExtractor.MediaItem> sink) {
+        UserMediaPageFetcher fetcher = mediaFetchers.stream()
+                .filter(f -> f.source() == source).findFirst().orElse(null);
+        if (fetcher == null) return;
+        CrawlExecutor.Execution ex = executor.execute(JobName.COLLECT, trigger,
+                null, inf.getUsername(), source.name(),
+                () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(userId, null))));
+        Map<String, Object> payload = ex.items().get(0);
+        rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), source, payload, clock.instant()));
+        for (var it : MediaItemExtractor.extract(payload, source)) {
+            sink.putIfAbsent(it.shortCode(), it);
         }
     }
 

@@ -154,18 +154,16 @@ public class UiController {
                         new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED),
                                 "판정 탈락 · 제외"))),
                 new StatusTileGroup("③ 수집 대기열 — collect가 방문할 순서", java.util.List.of(
-                        new StatusTile("BACKFILL", s.backfillPending(), "첫 수집(백필) 대기"),
-                        new StatusTile("TRACK", s.trackDue(), "수집 완료 · 재방문 주기 도래")))));
-        // 게시물 수집 상태: collect 열거(QUALIFIED 인플루언서의 6개월 열거) 산출물만 대상 — 발굴
-        // 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
+                        new StatusTile("BACKFILL", s.backfillPending(), "첫 방문 대기"),
+                        new StatusTile("TRACK", s.trackDue(), "방문 완료 · 재방문 주기 도래")))));
+        // 게시물 수집 상태: collect 방문(프로필 내장 최근 피드 + 릴스 1페이지) 산출물만 대상 —
+        // 발굴 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         model.addAttribute("contentTiles", java.util.List.of(
                 new StatusTile("PENDING", n(byContent, ContentStatus.PENDING), "열거됨 · 댓글 수집 전"),
                 new StatusTile("COLLECTED", n(byContent, ContentStatus.COLLECTED), "댓글까지 수집 완료"),
                 new StatusTile("FAILED", n(byContent, ContentStatus.FAILED), "댓글 수집 재시도 초과 · 포기")));
         model.addAttribute("discoveryArchiveCount", s.discoveryArchiveCount());
-        // 수집 범위는 설정값 — 하드코딩 문구 대신 현재 값 표시 (설정 화면에서 무중단 변경)
-        model.addAttribute("backfillMonths", settings.backfillMonths());
-        model.addAttribute("trackWindowDays", settings.trackWindowDays());
+        // 재방문 주기는 설정값 — 하드코딩 문구 대신 현재 값 표시 (설정 화면에서 무중단 변경)
         model.addAttribute("revisitIntervalDays", settings.revisitIntervalDays());
         return "fragments/status-tiles :: tiles";
     }

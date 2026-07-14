@@ -34,8 +34,6 @@ crawler:
     min-followers: 3000     # 전역 판정 범위 — collection_rule 대체
     max-followers: 50000
   collect:
-    backfill-months: 6      # 첫 방문 수집 범위
-    track-window-days: 30   # 추적 방문 수집 범위 (데이터 보고 조정)
     batch-limit: 10         # 실행 1회당 방문 인플루언서 수
     comments-per-post: 30
     max-attempts: 3

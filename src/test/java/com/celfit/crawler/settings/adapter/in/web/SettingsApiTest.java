@@ -50,15 +50,13 @@ class SettingsApiTest extends IntegrationTest {
     void 기본값_조회() throws Exception {
         mvc.perform(get("/admin/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(10))
+                .andExpect(jsonPath("$.length()").value(8))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].effective").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].defaultValue").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false))
                 .andExpect(jsonPath("$[?(@.key=='qualify.batch-limit')].defaultValue").value(500))
                 .andExpect(jsonPath("$[?(@.key=='qualify.min-followers')].defaultValue").value(3000))
                 .andExpect(jsonPath("$[?(@.key=='qualify.max-followers')].defaultValue").value(50000))
-                .andExpect(jsonPath("$[?(@.key=='collect.backfill-months')].defaultValue").value(6))
-                .andExpect(jsonPath("$[?(@.key=='collect.track-window-days')].defaultValue").value(30))
                 .andExpect(jsonPath("$[?(@.key=='collect.batch-limit')].defaultValue").value(10))
                 .andExpect(jsonPath("$[?(@.key=='collect.comments-per-post')].defaultValue").value(30))
                 .andExpect(jsonPath("$[?(@.key=='collect.max-attempts')].defaultValue").value(3))
@@ -81,20 +79,6 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.effective").value(80000));
         assertThat(settingsService.qualifyMaxFollowers()).isEqualTo(80000);
-
-        mvc.perform(put("/admin/settings/collect.backfill-months")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"value\": 12}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.effective").value(12));
-        assertThat(settingsService.backfillMonths()).isEqualTo(12);
-
-        mvc.perform(put("/admin/settings/collect.track-window-days")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"value\": 45}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.effective").value(45));
-        assertThat(settingsService.trackWindowDays()).isEqualTo(45);
 
         mvc.perform(put("/admin/settings/collect.comments-per-post")
                         .contentType(MediaType.APPLICATION_JSON)

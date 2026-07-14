@@ -131,7 +131,7 @@ class JobCostEstimatorTest {
     }
 
     @Test
-    void collect_SELF_프로필이면_계정당_열거페이지_4에서_26회_범위로_계산한다() {
+    void collect_SELF_프로필이면_피드는_프로필_내장이라_계정당_릴스_1회만_과금된다() {
         when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
         when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
         when(settings.resultsLimit()).thenReturn(0);
@@ -145,18 +145,19 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // targets = min(5, 3) = 3, 계정당 0(프로필) + 4~26(열거) 페이지
+        // targets = min(5, 3) = 3, 계정당 0(프로필, 피드 12개 내장) + 1(릴스) = 1회
         assertThat(collect.targets()).isEqualTo(3);
-        assertThat(collect.minRequests()).isEqualTo(12);
-        assertThat(collect.maxRequests()).isEqualTo(78);
-        assertThat(collect.minCostUsd()).isEqualTo(0.012);
-        assertThat(collect.maxCostUsd()).isEqualTo(0.078);
-        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
+        assertThat(collect.minRequests()).isEqualTo(3);
+        assertThat(collect.maxRequests()).isEqualTo(3);
+        assertThat(collect.minCostUsd()).isEqualTo(0.003);
+        assertThat(collect.maxCostUsd()).isEqualTo(0.003);
+        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("내장"));
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("user/clips"));
+        assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("gql/user/medias"));
     }
 
     @Test
-    void collect_HIKER_WEB_GQL_프로필이면_계정당_1회가_추가된다() {
+    void collect_HIKER_WEB_GQL_프로필이면_프로필과_피드_폴백이_계정당_1회씩_추가된다() {
         when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
         when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
         when(settings.resultsLimit()).thenReturn(0);
@@ -170,8 +171,9 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // 계정당 1(프로필) + 4~26(열거) → 2*(1+4)=10 ~ 2*(1+26)=54
-        assertThat(collect.minRequests()).isEqualTo(10);
-        assertThat(collect.maxRequests()).isEqualTo(54);
+        // 계정당 1(프로필) + 1(피드 폴백) + 1(릴스) = 3회 → 2계정 = 6회
+        assertThat(collect.minRequests()).isEqualTo(6);
+        assertThat(collect.maxRequests()).isEqualTo(6);
+        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
     }
 }
