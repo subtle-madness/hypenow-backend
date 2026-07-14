@@ -73,11 +73,11 @@ public class AccountAnalysisJob {
 	private void analyzeOne(String handle, String model) {
 		Map<String, Object> summary = analysis.queryForMap(
 				"SELECT * FROM account_summaries WHERE handle = ?", handle);
-		// input 스냅샷은 JDBC 타입 지정 조회 (queryForMap의 timestamptz는 Timestamp라 record 타입과 어긋남)
+		// last_posted_at(timestamptz)만 타입 지정 조회가 필요 — queryForMap은 Timestamp를 돌려줘 record 타입과 어긋남.
+		// 나머지 스냅샷 값(bigint 등)은 summary 맵 캐스팅으로 충분하다.
 		OffsetDateTime lastPostedAt = analysis.queryForObject(
 				"SELECT last_posted_at FROM account_summaries WHERE handle = ?", OffsetDateTime.class, handle);
-		Long analyzedCount = analysis.queryForObject(
-				"SELECT analyzed_count FROM account_summaries WHERE handle = ?", Long.class, handle);
+		Long analyzedCount = (Long) summary.get("analyzed_count");
 		List<Map<String, Object>> categories = analysis.queryForList("""
 				SELECT main_group, content_count FROM account_category_stats
 				WHERE account_handle = ? ORDER BY content_count DESC, main_group ASC""", handle);
@@ -100,8 +100,8 @@ public class AccountAnalysisJob {
 		if (copy.traits() == null || copy.traits().isEmpty()) {
 			throw new IllegalStateException("traits가 비어 있음: " + handle);
 		}
-		List<String> traits = copy.traits().size() > MAX_TRAITS
-				? copy.traits().subList(0, MAX_TRAITS) : copy.traits();
+		List<String> traits = List.copyOf(copy.traits().size() > MAX_TRAITS
+				? copy.traits().subList(0, MAX_TRAITS) : copy.traits());
 
 		AccountAnalysis row = new AccountAnalysis(handle, OffsetDateTime.now(), model,
 				lastPostedAt, analyzedCount, copy.tagline(), copy.summary(), copy.trendNote(),
