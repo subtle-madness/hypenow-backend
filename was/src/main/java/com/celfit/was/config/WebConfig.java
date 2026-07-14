@@ -17,8 +17,9 @@ public class WebConfig implements WebMvcConfigurer {
 
 	@Override
 	public void addCorsMappings(CorsRegistry registry) {
+		// 후보 관리 API(태스크 G)가 쓰기 메서드를 쓰므로 GET 한정에서 확장
 		registry.addMapping("/api/**")
 				.allowedOrigins(allowedOrigins)
-				.allowedMethods("GET");
+				.allowedMethods("GET", "POST", "PUT", "DELETE");
 	}
 }
