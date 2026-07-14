@@ -7,10 +7,10 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.ClassifiedComment;
 import com.celfit.analytics.llm.CommentClassificationPort;
 import com.celfit.analytics.llm.CommentToClassify;
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -48,12 +48,8 @@ class CommentClassificationJobTest {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
 		db = new JdbcTemplate(ds);
 		portCalls = new ArrayList<>();
-		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
-		// 테스트 간 완전 초기화: Flyway 이력과 V1·V2 산출물, raw 대역을 전부 지우고 다시 만든다
-		db.update("DROP TABLE IF EXISTS content_analyses, comment_classifications, accounts, contents, content_comments, content_metric_snapshots");
-		db.update("DROP TABLE IF EXISTS app_setting, src_comments, flyway_schema_history");
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis")
-				.baselineOnMigrate(true).baselineVersion("0").load().migrate();
+		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
+		TestDb.resetAndMigrate(db, ds);
 		// 테스트용 raw 대역: 서빙 뷰와 같은 모양의 뷰 + app_setting
 		db.update("CREATE SCHEMA analytics");
 		db.update("CREATE TABLE app_setting (key text PRIMARY KEY, value text NOT NULL)");
