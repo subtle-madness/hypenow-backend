@@ -83,6 +83,9 @@ public class UiController {
     /** 대시보드 상태 카드용 뷰. key는 badge 색상 클래스 겸 라벨. */
     public record StatusTile(String key, long count, String desc) {}
 
+    /** 파이프라인 단계별 타일 묶음 — 한 잡이 만든 상태들을 시각적으로 구분해 렌더. */
+    public record StatusTileGroup(String title, java.util.List<StatusTile> tiles) {}
+
     @GetMapping("/ui")
     public String dashboard(Model model) {
         model.addAttribute("summary", statusService.summary());
@@ -137,13 +140,21 @@ public class UiController {
         java.util.Map<InfluencerStatus, Long> byInfluencer = s.influencerByStatus();
         java.util.Map<ContentStatus, Long> byContent = s.contentByStatus();
         model.addAttribute("summary", s);
-        // 인플루언서 파이프라인: 발굴 → 판정 → (제외 또는 수집 대상)
-        model.addAttribute("influencerTiles", java.util.List.of(
-                new StatusTile("DISCOVERED", n(byInfluencer, InfluencerStatus.DISCOVERED), "발굴됨 · 판정 전"),
-                new StatusTile("QUALIFIED", n(byInfluencer, InfluencerStatus.QUALIFIED), "판정 통과 · 수집 대상"),
-                new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED), "판정 탈락 · 제외"),
-                new StatusTile("BACKFILL", s.backfillPending(), "판정 통과 · 첫 수집(백필) 대기"),
-                new StatusTile("TRACK", s.trackDue(), "수집 완료 · 재방문 주기 도래")));
+        // 인플루언서 파이프라인 — 같은 잡이 만드는 상태끼리 묶어 단계를 시각 구분:
+        // discover가 DISCOVERED를 만들고, qualify가 QUALIFIED/EXCLUDED로 가르고,
+        // collect 관점에서 QUALIFIED가 BACKFILL(첫 수집 전)/TRACK(재방문 도래)로 나뉜다.
+        model.addAttribute("influencerGroups", java.util.List.of(
+                new StatusTileGroup("① 발굴 — discover", java.util.List.of(
+                        new StatusTile("DISCOVERED", n(byInfluencer, InfluencerStatus.DISCOVERED),
+                                "발굴됨 · 판정 전"))),
+                new StatusTileGroup("② 판정 — qualify가 가른 결과", java.util.List.of(
+                        new StatusTile("QUALIFIED", n(byInfluencer, InfluencerStatus.QUALIFIED),
+                                "판정 통과 · 수집 대상"),
+                        new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED),
+                                "판정 탈락 · 제외"))),
+                new StatusTileGroup("③ 수집 대기열 — collect가 방문할 순서", java.util.List.of(
+                        new StatusTile("BACKFILL", s.backfillPending(), "첫 수집(백필) 대기"),
+                        new StatusTile("TRACK", s.trackDue(), "수집 완료 · 재방문 주기 도래")))));
         // 게시물 수집 상태: collect 열거(QUALIFIED 인플루언서의 6개월 열거) 산출물만 대상 — 발굴
         // 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         model.addAttribute("contentTiles", java.util.List.of(

@@ -1,10 +1,15 @@
 <div th:fragment="tiles" xmlns:th="http://www.thymeleaf.org">
     <h2 class="tiles-head">인플루언서 파이프라인 <span class="tiles-head-sub">발굴 → 판정 → 수집</span></h2>
-    <div class="tiles">
-        <div class="tile" th:each="t : ${influencerTiles}">
-            <div class="num" th:text="${t.count()}">0</div>
-            <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
-            <div class="tile-desc" th:text="${t.desc()}"></div>
+    <div class="tile-groups">
+        <div class="tile-group" th:each="g : ${influencerGroups}">
+            <div class="tile-group-title" th:text="${g.title()}"></div>
+            <div class="tiles">
+                <div class="tile" th:each="t : ${g.tiles()}">
+                    <div class="num" th:text="${t.count()}">0</div>
+                    <div class="label"><span class="badge" th:classappend="${t.key()}" th:text="${t.key()}">STATUS</span></div>
+                    <div class="tile-desc" th:text="${t.desc()}"></div>
+                </div>
+            </div>
         </div>
     </div>
     <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">collect 열거 기준 — 첫 방문 <span th:text="${backfillMonths}">6</span>개월치 · 재방문 시 최근 <span th:text="${trackWindowDays}">30</span>일치 (<span th:text="${revisitIntervalDays}">7</span>일 주기 · 설정에서 변경)</span></h2>

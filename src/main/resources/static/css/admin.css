@@ -185,6 +185,19 @@ a { color: var(--accent); }
 .tiles.sub { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
 .tiles.sub .num { font-size: 1.3rem; }
 
+/* 파이프라인 단계별 타일 그룹 — 같은 잡이 만드는 상태끼리 묶어 구분 */
+.tile-groups { display: flex; gap: 1rem; flex-wrap: wrap; align-items: stretch; }
+.tile-group {
+    flex: 1 1 14rem; min-width: 14rem;
+    border: 1px dashed var(--border); border-radius: 14px;
+    padding: 0.7rem 0.8rem 0.8rem; background: color-mix(in srgb, var(--card) 55%, transparent);
+}
+.tile-group-title {
+    font-size: 0.72rem; font-weight: 650; color: var(--ink-secondary);
+    letter-spacing: 0.02em; margin: 0 0.15rem 0.55rem; word-break: keep-all;
+}
+.tile-group .tiles { grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); gap: 0.6rem; }
+
 /* ── 테이블 ───────────────────────────── */
 table.data {
     border-collapse: collapse; width: 100%;
@@ -223,6 +236,10 @@ table.data.fit { width: auto; min-width: 24rem; }
     color: var(--accent-ink); background: var(--accent-soft);
 }
 .badge.EXCLUDED, .badge.GONE { color: var(--muted); }
+.badge.DISCOVERED { color: var(--cat-feed); background: color-mix(in srgb, var(--cat-feed) 10%, transparent); }
+.badge.BACKFILL, .badge.TRACK {
+    color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+}
 .badge.REELS { color: var(--cat-reels); background: color-mix(in srgb, var(--cat-reels) 10%, transparent); }
 .badge.FEED { color: var(--cat-feed); background: color-mix(in srgb, var(--cat-feed) 10%, transparent); }
 .badge.AD { color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
