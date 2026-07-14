@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: was
+  datasource:
+    url: jdbc:postgresql://localhost:5433/analysis
+    username: crawler
+    password: crawler
+    driver-class-name: org.postgresql.Driver
+server:
+  port: 8081

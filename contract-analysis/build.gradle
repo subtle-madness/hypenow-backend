@@ -1,0 +1,5 @@
+// 계약 모듈: 분석 결과의 record·enum만 담는다 (ARCHITECTURE.md §4-4).
+// 순수 JDK — Spring/JPA 등 어떤 의존성도 추가하지 않는다.
+plugins {
+	id 'java-library'
+}

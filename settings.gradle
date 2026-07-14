@@ -1,1 +1,6 @@
-rootProject.name = 'celfit-crawler'
+rootProject.name = 'hypenow-backend'
+
+include 'crawler'
+include 'analytics'
+include 'contract-analysis'
+include 'was'

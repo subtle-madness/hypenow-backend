@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: analytics
+  # 기본 DataSource 자동설정 비활성 (수동 2개 정의)
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+  main:
+    web-application-type: none
+
+analytics:
+  mirror-on-startup: true
+  classify-on-startup: false   # 댓글 분류 배치 — 실 API 비용이 들어 기본 off. 실행: --analytics.classify-on-startup=true
+  analyze-on-startup: false    # 콘텐츠 분석 배치 — 실 API 비용. 실행: --analytics.analyze-on-startup=true
+  vlm-enabled: false           # F-2 스파이크 검증 전까지 VLM 스킵 (컬럼 NULL)
+
+app:
+  datasource:
+    raw:
+      jdbc-url: jdbc:postgresql://localhost:5433/crawler
+      username: crawler
+      password: crawler
+      driver-class-name: org.postgresql.Driver
+    analysis:
+      jdbc-url: jdbc:postgresql://localhost:5433/analysis
+      username: crawler
+      password: crawler
+      driver-class-name: org.postgresql.Driver
