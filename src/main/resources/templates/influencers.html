@@ -26,7 +26,7 @@
 </form>
 
 <table class="data">
-    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th>
+    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th><th>뷰티</th>
         <th>발굴 키워드</th><th>발굴일</th><th>최근 수집</th></tr>
     <tr th:each="row : ${page.content}">
         <td th:text="${row.influencer.id}"></td>
@@ -34,6 +34,22 @@
         <td><span class="badge" th:classappend="${row.influencer.status}"
                  th:text="${row.influencer.status}"></span></td>
         <td th:text="${row.influencer.followers != null ? #numbers.formatInteger(row.influencer.followers, 0, 'COMMA') : '—'}"></td>
+        <td>
+            <span th:if="${row.influencer.beauty != null}" class="badge"
+                  th:classappend="${row.influencer.beauty} ? 'QUALIFIED' : 'EXCLUDED'"
+                  th:text="${row.influencer.beauty} ? '뷰티' : '뷰티 아님'"
+                  th:title="${row.influencer.beautyReason}"></span>
+            <span th:if="${row.influencer.beauty == null}">—</span>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
+                  style="display:inline">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <button type="submit" name="beauty" value="true"
+                        th:unless="${row.influencer.beauty == true}">뷰티</button>
+                <button type="submit" name="beauty" value="false"
+                        th:unless="${row.influencer.beauty == false}">뷰티 아님</button>
+            </form>
+        </td>
         <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>
         <td th:text="${row.discoveredAt != null ? row.discoveredAt : '—'}"></td>
         <td th:text="${row.influencer.lastCollectedAt != null ? row.influencer.lastCollectedAt : '—'}"></td>
