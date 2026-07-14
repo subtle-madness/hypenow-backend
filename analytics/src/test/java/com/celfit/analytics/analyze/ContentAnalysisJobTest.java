@@ -180,6 +180,24 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void vlm_on이면_VLM_컬럼이_유통사_포함_저장된다() {
+		rewireJob(fakeSynthesisPort(), true);
+
+		int processed = job.run();
+
+		assertEquals(2, processed);
+		assertEquals(2, visionCalls.size()); // post_a, post_b 모두 VLM 호출
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[\"클렌징폼/젤\", \"클렌징폼\"]", db.queryForObject(
+				"SELECT sub_categories::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[\"올리브영\"]", db.queryForObject(
+				"SELECT detected_distributors::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("sponsored", db.queryForObject(
+				"SELECT ad_type FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
 	void 기준선_없는_콘텐츠는_대상에서_제외되고_배치_슬롯을_잠식하지_않는다() {
 		// 윈도우 밖 콘텐츠 재현: contents에는 있지만 기준선 뷰에는 없는 short_code (분류 완료 상태).
 		// 정렬상 첫 대상(post_0)이라 — 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.

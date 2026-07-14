@@ -133,10 +133,11 @@ public class ContentAnalysisJob {
 				  recent12_avg_engagement_rate, recent12_avg_like_count, recent12_avg_comment_count,
 				  category_top_percentile, category_avg_views, category_sample_size,
 				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
-				  detected_product_categories, vlm_attributes, main_category, sub_categories, ad_type,
+				  detected_product_categories, vlm_attributes, main_category, sub_categories,
+				  detected_distributors, ad_type,
 				  comment_authenticity_grade, comment_authenticity_note)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?, ?)""",
+				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?)""",
 				shortCode, model,
 				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
 				b.recentReelsAvgViews(), b.rankInRecentReels(), b.recentReelsCount(), b.recentContentsCount(),
@@ -150,6 +151,7 @@ public class ContentAnalysisJob {
 				toJson(vlm == null ? null : vlm.vlmAttributes()),
 				vlm == null ? null : vlm.mainCategory(),
 				toJson(vlm == null ? null : vlm.subCategories()),
+				toJson(vlm == null ? null : vlm.detectedDistributors()),
 				vlm == null ? null : vlm.adType(),
 				s.commentAuthenticityGrade(), s.commentAuthenticityNote());
 	}
