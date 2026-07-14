@@ -18,11 +18,15 @@ crawler:
     run-timeout: 1s
     actor-memory-mb: 1024
   direct-comment:
-    proxy-url: ${APIFY_PROXY_URL:}
     request-timeout: 15s
     page-delay: 1s
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  proxy:
+    apify-url: ${APIFY_PROXY_URL:}
+    dataimpulse-residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
+    dataimpulse-mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
+    request-timeout: 15s
   hiker:
     api-key: test-key
     base-url: http://localhost:9999

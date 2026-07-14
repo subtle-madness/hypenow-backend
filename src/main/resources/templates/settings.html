@@ -27,6 +27,27 @@
      로직은 유지되므로 재활성화 시 카드 복원. -->
 
 <section class="card">
+    <h2>인스타 자체크롤 프록시</h2>
+    <form method="post" th:action="@{/ui/proxy-source}">
+        <label class="check"><input type="radio" name="source" value="DIRECT"
+            th:checked="${proxySource == 'DIRECT'}"/> 직접 연결 (프록시 없음)</label>
+        <label class="check"><input type="radio" name="source" value="APIFY"
+            th:checked="${proxySource == 'APIFY'}"/> Apify residential
+            <span class="hint" th:if="${proxyConfigured != null and !proxyConfigured['APIFY']}"> — URL 미설정(직접 폴백)</span></label>
+        <label class="check"><input type="radio" name="source" value="DATAIMPULSE_RESIDENTIAL"
+            th:checked="${proxySource == 'DATAIMPULSE_RESIDENTIAL'}"/> DataImpulse residential
+            <span class="hint" th:if="${proxyConfigured != null and !proxyConfigured['DATAIMPULSE_RESIDENTIAL']}"> — URL 미설정(직접 폴백)</span></label>
+        <label class="check"><input type="radio" name="source" value="DATAIMPULSE_MOBILE"
+            th:checked="${proxySource == 'DATAIMPULSE_MOBILE'}"/> DataImpulse mobile
+            <span class="hint" th:if="${proxyConfigured != null and !proxyConfigured['DATAIMPULSE_MOBILE']}"> — URL 미설정(직접 폴백)</span></label>
+        <button type="submit" class="primary">저장</button>
+    </form>
+    <p class="hint">현재: <b th:text="${proxySource}">APIFY</b> · SELF 프로필·댓글 자체크롤이 나갈 경로.
+        URL은 환경변수(APIFY_PROXY_URL / DATAIMPULSE_RESIDENTIAL_PROXY_URL / DATAIMPULSE_MOBILE_PROXY_URL)로 주입.
+        <br/>변경 즉시 반영 — 앱 재시작 불필요.</p>
+</section>
+
+<section class="card">
     <h2>프로필 수집 방식</h2>
     <form method="post" th:action="@{/ui/profile-source}">
         <label class="check"><input type="radio" name="source" value="SELF"
