@@ -10,7 +10,7 @@ import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
 import com.celfit.contract.analysis.ContentMetricSnapshot;
 import com.celfit.was.config.ClockConfig;
-import com.celfit.was.config.WebConfig;
+import com.celfit.was.config.SecurityConfig;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -22,9 +22,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+// Security 도입 후 CORS·permitAll을 결정하는 건 SecurityConfig의 필터체인이라(예전 WebConfig의 CORS 매핑은
+// 걷어냄) 이 빈을 같이 import해야 한다 — CORS 허용/차단 기대값(200/403)은 그대로 유지된다.
 @WebMvcTest(controllers = PostDetailController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000,https://celfit-front.vercel.app")
-@Import({PostDetailAssembler.class, ClockConfig.class, WebConfig.class})
+@Import({PostDetailAssembler.class, ClockConfig.class, SecurityConfig.class})
 class PostDetailControllerTest {
 
 	@Autowired
