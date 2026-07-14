@@ -1,5 +1,7 @@
 -- content-ranking 프론트 화면 요소 ↔ analysis DB 미러 필드 커버리지 보고.
 -- 대상: analysis DB (미러 산출물). 뷰 하니스(test/)와 달리 실데이터를 그대로 읽는다.
+-- ※ was의 /coverage 페이지(was/.../coverage/CoverageRepository.java)와 매트릭스 정의가 쌍 —
+--   항목·판정을 바꾸면 둘 다 고칠 것.
 -- 구간 구분:
 --   · 원본 지표 계열(contents·accounts·content_metric_snapshots) — 비어 있으면 실패(가드)
 --   · LLM 분석·랭킹 산출 계열 — 미구현 구간이라 채움율만 보고 (전부 0이어도 통과)
