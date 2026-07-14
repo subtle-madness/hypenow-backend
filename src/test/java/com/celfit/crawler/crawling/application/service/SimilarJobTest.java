@@ -26,6 +26,8 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class SimilarJobTest {
 
@@ -39,10 +41,13 @@ class SimilarJobTest {
     CrawlExecutor executor = mock(CrawlExecutor.class);
     com.celfit.crawler.settings.application.service.SettingsService settings =
             mock(com.celfit.crawler.settings.application.service.SettingsService.class);
+    // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 시드 단위 트랜잭션 래핑을 그대로 재현한다.
+    TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
     java.util.List<Integer> capturedRequestCounts = new java.util.ArrayList<>();
 
-    SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings, CLOCK);
+    SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings, CLOCK,
+            txTemplate);
 
     static Influencer seed(Long id, String username, String igUserId) {
         Influencer inf = new Influencer(username);

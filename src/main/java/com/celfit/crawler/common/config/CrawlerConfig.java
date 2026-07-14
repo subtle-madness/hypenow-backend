@@ -47,7 +47,11 @@ public class CrawlerConfig {
         return new SimpleAsyncTaskExecutor("job-");
     }
 
-    /** CollectJob이 인플루언서 방문 1회 = 트랜잭션 1개로 감싸는 데 쓴다(배치 전체 단일 트랜잭션 방지). */
+    /**
+     * 배치 전체 단일 트랜잭션(idle-in-transaction 커넥션 점유·부분 실패 시 전체 롤백)을 방지하는 공용
+     * TransactionTemplate — CollectJob(방문 1회), BeautyJob(판정 배치 1회), SimilarJob(시드 1개)가
+     * 각자의 작업 단위를 이걸로 감싼다. 이름은 최초 도입한 CollectJob 기준이지만 잡 전용이 아니다.
+     */
     @Bean
     TransactionTemplate collectTransactionTemplate(PlatformTransactionManager txManager) {
         return new TransactionTemplate(txManager);

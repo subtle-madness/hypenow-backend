@@ -20,15 +20,27 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class BeautyJobTest {
 
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
     BeautyJudge judge = mock(BeautyJudge.class);
+    // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 배치 단위 트랜잭션 래핑을 그대로 재현한다.
+    TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
-    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge);
+    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, txTemplate);
+
+    @BeforeEach
+    void wireSavePassthrough() {
+        // 판정 적용이 이제 명시 save(detached merge)를 거치므로, 세터 결과 어서션이 save 이후에도
+        // 그대로 성립하는지 확인하기 위한 passthrough.
+        when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
 
     static Influencer qualified(Long id, String username) {
         Influencer inf = new Influencer(username);

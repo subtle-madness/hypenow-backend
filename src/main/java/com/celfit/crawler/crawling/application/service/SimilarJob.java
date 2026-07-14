@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 유사 계정 발굴 잡 — 뷰티 시드(QUALIFIED·beauty=true·미수확)마다 HikerAPI suggested
@@ -48,10 +48,12 @@ public class SimilarJob {
     private final CrawlExecutor executor;
     private final SettingsService settings;
     private final Clock clock;
+    private final TransactionTemplate txTemplate;
 
     public SimilarJob(InfluencerRepository influencers, InfluencerDiscoveryRepository discoveries,
                       HikerSuggestedSupplement suggested, HikerUserResolver resolver,
-                      CrawlExecutor executor, SettingsService settings, Clock clock) {
+                      CrawlExecutor executor, SettingsService settings, Clock clock,
+                      TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.discoveries = discoveries;
         this.suggested = suggested;
@@ -59,9 +61,15 @@ public class SimilarJob {
         this.executor = executor;
         this.settings = settings;
         this.clock = clock;
+        this.txTemplate = txTemplate;
     }
 
-    @Transactional
+    /**
+     * 배치 전체가 아니라 시드 1개 = 트랜잭션 1개로 감싼다 — 최대 50시드 × HTTP 대기 내내 커넥션을
+     * idle-in-transaction으로 붙들지 않기 위함 + 한 시드의 RuntimeException이 앞선 시드들의
+     * 마킹·백필·upsert·crawl_run 커밋까지 롤백시키지 않기 위함. CrawlExecutor는 호출자 트랜잭션에
+     * 합류하므로(REQUIRES_NEW 아님) 시드당 run 기록+아카이브+upsert가 한 커밋 단위로 묶인다(의도됨).
+     */
     public Summary run(TriggerType trigger) {
         List<Influencer> seeds = influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
                 InfluencerStatus.QUALIFIED,
@@ -70,39 +78,59 @@ public class SimilarJob {
         int total = seeds.size(), i = 0;
         for (Influencer seed : seeds) {
             i++;
-            CrawlExecutor.Execution ex;
-            try {
-                ex = executor.execute(JobName.SIMILAR, trigger, KEYWORD_PREFIX + seed.getUsername(),
-                        seed.getUsername(), LABEL, () -> fetchForSeed(seed));
-            } catch (ApifyException e) {
-                if (e.getMessage() != null && e.getMessage().contains(INELIGIBLE_MARK)) {
-                    seed.setSimilarProcessedAt(clock.instant());  // 수확 불가 확정 — 재시도 안 함
-                    ineligible++;
-                    log.info("유사 발굴 ({}/{}) {} — chaining 불가, 수확 불가로 마킹", i, total, seed.getUsername());
-                } else {
-                    failed++;  // crawl_run FAILED 기록됨 — 마킹 없이 다음 실행 재시도
-                    log.warn("유사 발굴 ({}/{}) {} — 실패: {}", i, total, seed.getUsername(), e.getMessage());
-                }
-                continue;
-            }
-            Set<String> seen = new HashSet<>();
-            for (Map<String, Object> item : ex.items()) {
-                String username = item.get("username") instanceof String s && !s.isBlank() ? s : null;
-                if (username == null || username.equalsIgnoreCase(seed.getUsername())
-                        || !seen.add(username.toLowerCase())) continue;
-                var existing = influencers.findByUsername(username);
-                Influencer inf = existing.orElseGet(() -> influencers.save(new Influencer(username)));
-                if (existing.isPresent()) known++; else newInf++;
-                // 신규·기존 모두 출처 기록(append-only) — discover의 관례와 동일
-                discoveries.save(new InfluencerDiscovery(
-                        inf.getId(), KEYWORD_PREFIX + seed.getUsername(), null, clock.instant()));
-            }
-            seed.setSimilarProcessedAt(clock.instant());
-            processed++;
-            log.info("유사 발굴 ({}/{}) {} — 이번 시드 {}건, 신규 누계 {}", i, total,
-                    seed.getUsername(), seen.size(), newInf);
+            int idx = i;
+            SeedResult r = txTemplate.execute(status -> processSeed(seed, trigger, idx, total));
+            processed += r.processed();
+            newInf += r.newInf();
+            known += r.known();
+            ineligible += r.ineligible();
+            failed += r.failed();
         }
         return new Summary(processed, newInf, known, ineligible, failed);
+    }
+
+    private record SeedResult(int processed, int newInf, int known, int ineligible, int failed) {}
+
+    /**
+     * 시드 1개 처리(트랜잭션 안). ApifyException은 여기서 잡아야 한다 — 트랜잭션 밖으로 던지면
+     * CrawlExecutor가 이미 저장한 crawl_run FAILED 기록까지 롤백된다.
+     * seed는 findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull이 트랜잭션 밖(레포 자체 트랜잭션)에서
+     * 조회돼 detached 상태다 — 세터만으로는 저장 안 되므로 influencers.save(seed) 명시 호출이 필수
+     * (pk 백필도 함께 영속된다). CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — 참고: CollectJobIntegrationTest.
+     */
+    private SeedResult processSeed(Influencer seed, TriggerType trigger, int i, int total) {
+        CrawlExecutor.Execution ex;
+        try {
+            ex = executor.execute(JobName.SIMILAR, trigger, KEYWORD_PREFIX + seed.getUsername(),
+                    seed.getUsername(), LABEL, () -> fetchForSeed(seed));
+        } catch (ApifyException e) {
+            if (e.getMessage() != null && e.getMessage().contains(INELIGIBLE_MARK)) {
+                seed.setSimilarProcessedAt(clock.instant());  // 수확 불가 확정 — 재시도 안 함
+                influencers.save(seed);
+                log.info("유사 발굴 ({}/{}) {} — chaining 불가, 수확 불가로 마킹", i, total, seed.getUsername());
+                return new SeedResult(0, 0, 0, 1, 0);
+            }
+            // crawl_run FAILED 기록됨 — 마킹 없이 다음 실행 재시도
+            log.warn("유사 발굴 ({}/{}) {} — 실패: {}", i, total, seed.getUsername(), e.getMessage());
+            return new SeedResult(0, 0, 0, 0, 1);
+        }
+        Set<String> seen = new HashSet<>();
+        int newInf = 0, known = 0;
+        for (Map<String, Object> item : ex.items()) {
+            String username = item.get("username") instanceof String s && !s.isBlank() ? s : null;
+            if (username == null || username.equalsIgnoreCase(seed.getUsername())
+                    || !seen.add(username.toLowerCase())) continue;
+            var existing = influencers.findByUsername(username);
+            Influencer inf = existing.orElseGet(() -> influencers.save(new Influencer(username)));
+            if (existing.isPresent()) known++; else newInf++;
+            // 신규·기존 모두 출처 기록(append-only) — discover의 관례와 동일
+            discoveries.save(new InfluencerDiscovery(
+                    inf.getId(), KEYWORD_PREFIX + seed.getUsername(), null, clock.instant()));
+        }
+        seed.setSimilarProcessedAt(clock.instant());
+        influencers.save(seed);
+        log.info("유사 발굴 ({}/{}) {} — 이번 시드 {}건, 신규 {}건", i, total, seed.getUsername(), seen.size(), newInf);
+        return new SeedResult(1, newInf, known, 0, 0);
     }
 
     /**
