@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
+import com.celfit.contract.analysis.ContentMetricSnapshot;
 import com.celfit.was.IntegrationTest;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -140,6 +142,23 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				  '[{"label":"후킹 요소","value":"문제 제기형 자막"}]'::jsonb, '클렌징',
 				  '["필링·각질"]'::jsonb, 'sponsored', 'high', '진정성 높음')
 				""");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS content_metric_snapshots");
+		jdbcTemplate.execute("""
+				CREATE TABLE content_metric_snapshots (
+				    id          bigint PRIMARY KEY,
+				    short_code  text NOT NULL,
+				    captured_at timestamptz NOT NULL,
+				    views       bigint,
+				    likes       bigint,
+				    comments    bigint,
+				    hype_score  bigint
+				)""");
+		jdbcTemplate.update("""
+				INSERT INTO content_metric_snapshots VALUES
+				 (11, 'mari01', '2026-06-30T15:00:00Z', 100000, 3000, 100, 100000),
+				 (12, 'mari01', '2026-07-04T14:59:59Z', 500000, 20000, 400, 500000),
+				 (13, 'mari01', '2026-07-07T03:00:00Z', 1911943, 32969, 488, 1911943)
+				""");
 	}
 
 	@Test
@@ -224,10 +243,41 @@ class PostDetailRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE content_comments");
 		jdbcTemplate.execute("DROP TABLE comment_classifications");
 		jdbcTemplate.execute("DROP TABLE content_analyses");
+		jdbcTemplate.execute("DROP TABLE content_metric_snapshots");
 
 		assertThat(repository.findContent("mari01")).isEmpty();
 		assertThat(repository.findAccount("marimood")).isEmpty();
 		assertThat(repository.findComments("mari01")).isEmpty();
 		assertThat(repository.findAnalysis("mari01")).isEmpty();
+		assertThat(repository.findSnapshotAsOf("mari01",
+				OffsetDateTime.parse("2026-07-10T00:00:00Z"))).isEmpty();
+	}
+
+	@Test
+	void cutoff_이전_스냅샷_중_최신을_선택한다() {
+		// endDate=2026-07-03 → cutoff = 2026-07-03T15:00:00Z (KST 07-04 00:00)
+		Optional<ContentMetricSnapshot> found = repository.findSnapshotAsOf(
+				"mari01", OffsetDateTime.parse("2026-07-03T15:00:00Z"));
+
+		assertThat(found).isPresent();
+		assertThat(found.get().views()).isEqualTo(100000L);   // 07-04T14:59Z는 KST 07-04라 제외
+		assertThat(found.get().capturedAt()).isEqualTo(OffsetDateTime.parse("2026-06-30T15:00:00Z"));
+	}
+
+	@Test
+	void cutoff_직전_1초의_스냅샷도_포함한다() {
+		// endDate=2026-07-04 → cutoff = 2026-07-04T15:00:00Z
+		Optional<ContentMetricSnapshot> found = repository.findSnapshotAsOf(
+				"mari01", OffsetDateTime.parse("2026-07-04T15:00:00Z"));
+
+		assertThat(found).isPresent();
+		assertThat(found.get().views()).isEqualTo(500000L);
+		assertThat(found.get().hypeScore()).isEqualTo(500000L);
+	}
+
+	@Test
+	void cutoff_이전_스냅샷이_없으면_empty다() {
+		assertThat(repository.findSnapshotAsOf(
+				"mari01", OffsetDateTime.parse("2026-06-29T15:00:00Z"))).isEmpty();
 	}
 }

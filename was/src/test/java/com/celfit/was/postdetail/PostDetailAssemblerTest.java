@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
+import com.celfit.contract.analysis.ContentMetricSnapshot;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
@@ -39,13 +40,15 @@ class PostDetailAssemblerTest {
 				new CommentRow(1L, "hye***", "이거 어디서 살 수 있어요??", 342L, "purchase"),
 				new CommentRow(3L, "seo***", "언니 피부 미쳤다", 289L, null));
 
-		PostDetailResponse response = assembler.toResponse(reels(), account(), comments, Optional.empty());
+		PostDetailResponse response =
+				assembler.toResponse(reels(), account(), comments, Optional.empty(), Optional.empty());
 
 		assertThat(response.post().shortCode()).isEqualTo("mari01");
 		assertThat(response.post().daysSincePosted()).isEqualTo(10L);
 		// (32969+488)/1911943 = 0.0175 (4자리 HALF_UP)
 		assertThat(response.post().engagementRate()).isEqualByComparingTo(new BigDecimal("0.0175"));
 		assertThat(response.post().hypeScore()).isEqualTo(1911943L);
+		assertThat(response.post().metricsCapturedAt()).isNull();
 		assertThat(response.account().displayName()).isEqualTo("마리 MARI");
 		assertThat(response.comments().collectedCount()).isEqualTo(2);
 		assertThat(response.comments().items().getFirst().authorMasked()).isEqualTo("hye***");
@@ -61,7 +64,8 @@ class PostDetailAssemblerTest {
 				OffsetDateTime.parse("2026-07-01T00:00:00Z"), "feed", null,
 				"https://www.instagram.com/p/mari02/", null, 2000L, 100L, 2100L);
 
-		PostDetailResponse response = assembler.toResponse(feed, account(), List.of(), Optional.empty());
+		PostDetailResponse response =
+				assembler.toResponse(feed, account(), List.of(), Optional.empty(), Optional.empty());
 
 		assertThat(response.post().engagementRate()).isNull();
 		assertThat(response.post().daysSincePosted()).isEqualTo(7L);
@@ -71,7 +75,8 @@ class PostDetailAssemblerTest {
 
 	@Test
 	void 계정이_없으면_account_블록이_null이다() {
-		PostDetailResponse response = assembler.toResponse(reels(), null, List.of(), Optional.empty());
+		PostDetailResponse response =
+				assembler.toResponse(reels(), null, List.of(), Optional.empty(), Optional.empty());
 
 		assertThat(response.account()).isNull();
 		assertThat(response.post().shortCode()).isEqualTo("mari01");
@@ -82,7 +87,8 @@ class PostDetailAssemblerTest {
 		Content undated = new Content("mari03", "marimood", null, null,
 				null, "reels", null, null, 1000L, 10L, 1L, 1000L);
 
-		PostDetailResponse response = assembler.toResponse(undated, account(), List.of(), Optional.empty());
+		PostDetailResponse response =
+				assembler.toResponse(undated, account(), List.of(), Optional.empty(), Optional.empty());
 
 		assertThat(response.post().daysSincePosted()).isNull();
 		assertThat(response.post().engagementRate()).isEqualByComparingTo(new BigDecimal("0.0110"));
@@ -94,9 +100,48 @@ class PostDetailAssemblerTest {
 				OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", null, null,
 				0L, 10L, 1L, 0L);
 
-		PostDetailResponse response = assembler.toResponse(zeroViews, account(), List.of(), Optional.empty());
+		PostDetailResponse response =
+				assembler.toResponse(zeroViews, account(), List.of(), Optional.empty(), Optional.empty());
 
 		assertThat(response.post().engagementRate()).isNull();
+	}
+
+	@Test
+	void asOf가_있으면_지표를_스냅샷_값으로_재구성한다() {
+		ContentMetricSnapshot snapshot = new ContentMetricSnapshot(12L, "mari01",
+				OffsetDateTime.parse("2026-07-04T14:59:59Z"), 500000L, 20000L, 400L, 500000L);
+		// endDate=2026-07-03 가정 → 기준 시각 = 2026-07-03T15:00:00Z (KST 07-04 00:00)
+		AsOfMetrics asOf = new AsOfMetrics(snapshot, OffsetDateTime.parse("2026-07-03T15:00:00Z"));
+
+		PostDetailResponse response =
+				assembler.toResponse(reels(), account(), List.of(), Optional.empty(), Optional.of(asOf));
+
+		assertThat(response.post().views()).isEqualTo(500000L);
+		assertThat(response.post().likes()).isEqualTo(20000L);
+		assertThat(response.post().comments()).isEqualTo(400L);
+		assertThat(response.post().hypeScore()).isEqualTo(500000L);
+		// (20000+400)/500000 = 0.0408
+		assertThat(response.post().engagementRate()).isEqualByComparingTo(new BigDecimal("0.0408"));
+		// postedAt 06-28T00:00Z → 기준 07-03T15:00Z = 5일 15시간 → 5
+		assertThat(response.post().daysSincePosted()).isEqualTo(5L);
+		assertThat(response.post().metricsCapturedAt())
+				.isEqualTo(OffsetDateTime.parse("2026-07-04T14:59:59Z"));
+		// 메타는 최신 미러 값 그대로
+		assertThat(response.post().caption()).isEqualTo("쿨톤 여름 침착 조합");
+	}
+
+	@Test
+	void asOf_스냅샷의_조회수가_null이면_참여율도_null이다() {
+		ContentMetricSnapshot feedSnapshot = new ContentMetricSnapshot(21L, "mari02",
+				OffsetDateTime.parse("2026-07-02T00:00:00Z"), null, 1500L, 80L, 1580L);
+		AsOfMetrics asOf = new AsOfMetrics(feedSnapshot, OffsetDateTime.parse("2026-07-02T15:00:00Z"));
+
+		PostDetailResponse response =
+				assembler.toResponse(reels(), account(), List.of(), Optional.empty(), Optional.of(asOf));
+
+		assertThat(response.post().views()).isNull();
+		assertThat(response.post().engagementRate()).isNull();
+		assertThat(response.post().hypeScore()).isEqualTo(1580L);
 	}
 
 	private ContentAnalysisRow analysisRow() {
@@ -114,7 +159,7 @@ class PostDetailAssemblerTest {
 	@Test
 	void 분석_1행을_analysis_블록으로_조립한다() {
 		PostDetailResponse response =
-				assembler.toResponse(reels(), account(), List.of(), Optional.of(analysisRow()));
+				assembler.toResponse(reels(), account(), List.of(), Optional.of(analysisRow()), Optional.empty());
 
 		PostDetailResponse.Analysis analysis = response.analysis();
 		assertThat(analysis.aiContentSummary()).isEqualTo("본인 평균 대비 3.1배 터진 콘텐츠");
@@ -144,7 +189,7 @@ class PostDetailAssemblerTest {
 				null, null, null, null, null, null, null, null, null, null, null);
 
 		PostDetailResponse response =
-				assembler.toResponse(reels(), account(), List.of(), Optional.of(vlmSkipped));
+				assembler.toResponse(reels(), account(), List.of(), Optional.of(vlmSkipped), Optional.empty());
 
 		PostDetailResponse.Analysis.Content content = response.analysis().content();
 		assertThat(content.detectedBrands()).isNull();

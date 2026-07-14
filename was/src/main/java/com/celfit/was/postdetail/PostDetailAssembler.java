@@ -2,6 +2,7 @@ package com.celfit.was.postdetail;
 
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.Content;
+import com.celfit.contract.analysis.ContentMetricSnapshot;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
@@ -34,15 +35,10 @@ public class PostDetailAssembler {
 		this.clock = clock;
 	}
 
-	public PostDetailResponse toResponse(Content content, Account account,
-			List<CommentRow> comments, Optional<ContentAnalysisRow> analysis) {
+	public PostDetailResponse toResponse(Content content, Account account, List<CommentRow> comments,
+			Optional<ContentAnalysisRow> analysis, Optional<AsOfMetrics> asOf) {
 		return new PostDetailResponse(
-				new PostDetailResponse.Post(
-						content.shortCode(), content.thumbnailUrl(), content.caption(),
-						content.postedAt(), daysSincePosted(content.postedAt()),
-						content.contentType(), content.videoDuration(), content.originalUrl(),
-						content.views(), content.likes(), content.comments(),
-						engagementRate(content), content.hypeScore()),
+				asOf.map(a -> asOfPost(content, a)).orElseGet(() -> latestPost(content)),
 				account == null ? null
 						: new PostDetailResponse.Account(
 								account.handle(), account.displayName(),
@@ -54,6 +50,29 @@ public class PostDetailAssembler {
 										c.id(), c.authorMasked(), c.body(), c.likeCount(), c.aiCategory()))
 								.toList()),
 				analysis.map(this::toAnalysis).orElse(null));
+	}
+
+	/** 최신 경로 — contents 미러 값 + 현재 시각 기준 경과일. */
+	private PostDetailResponse.Post latestPost(Content content) {
+		return post(content, content.views(), content.likes(), content.comments(), content.hypeScore(),
+				OffsetDateTime.now(clock), null);
+	}
+
+	/** as-of 경로 — 스냅샷 지표 + 기간 끝 기준 경과일. 메타(캡션·썸네일 등)는 최신 미러 값. */
+	private PostDetailResponse.Post asOfPost(Content content, AsOfMetrics asOf) {
+		ContentMetricSnapshot s = asOf.snapshot();
+		return post(content, s.views(), s.likes(), s.comments(), s.hypeScore(),
+				asOf.reference(), s.capturedAt());
+	}
+
+	private PostDetailResponse.Post post(Content content, Long views, Long likes, Long comments,
+			Long hypeScore, OffsetDateTime reference, OffsetDateTime metricsCapturedAt) {
+		return new PostDetailResponse.Post(
+				content.shortCode(), content.thumbnailUrl(), content.caption(),
+				content.postedAt(), daysSincePosted(content.postedAt(), reference),
+				content.contentType(), content.videoDuration(), content.originalUrl(),
+				views, likes, comments,
+				engagementRate(views, likes, comments), hypeScore, metricsCapturedAt);
 	}
 
 	private PostDetailResponse.Analysis toAnalysis(ContentAnalysisRow row) {
@@ -88,22 +107,25 @@ public class PostDetailAssembler {
 		return objectMapper.readValue(json, type);
 	}
 
-	/** 경과일 = 24시간 단위 경과 수 (캘린더 날짜 경계 아님 — 게시 23시간 후는 0). 프론트 "게시 N일차" = 이 값 + 1. */
-	private Long daysSincePosted(OffsetDateTime postedAt) {
+	/**
+	 * 경과일 = 24시간 단위 경과 수 (캘린더 날짜 경계 아님 — 게시 23시간 후는 0). 프론트 "게시 N일차" = 이 값 + 1.
+	 * reference = 최신 경로는 현재 시각, as-of 경로는 집계 기간 끝 기준 시각.
+	 */
+	private Long daysSincePosted(OffsetDateTime postedAt, OffsetDateTime reference) {
 		if (postedAt == null) {
 			return null;
 		}
-		return ChronoUnit.DAYS.between(postedAt, OffsetDateTime.now(clock));
+		return ChronoUnit.DAYS.between(postedAt, reference);
 	}
 
 	/** (좋아요+댓글)/조회수 — 피드는 조회수가 항상 NULL이라 참여율도 null (조회수 NULL 규칙). */
-	private BigDecimal engagementRate(Content content) {
-		if (content.views() == null || content.views() == 0) {
+	private BigDecimal engagementRate(Long views, Long likes, Long comments) {
+		if (views == null || views == 0) {
 			return null;
 		}
-		long engagements = nullToZero(content.likes()) + nullToZero(content.comments());
+		long engagements = nullToZero(likes) + nullToZero(comments);
 		return BigDecimal.valueOf(engagements)
-				.divide(BigDecimal.valueOf(content.views()), 4, RoundingMode.HALF_UP);
+				.divide(BigDecimal.valueOf(views), 4, RoundingMode.HALF_UP);
 	}
 
 	private long nullToZero(Long value) {
