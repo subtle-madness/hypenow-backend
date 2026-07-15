@@ -150,7 +150,8 @@ public class UiController {
         model.addAttribute("summary", s);
         // 인플루언서 파이프라인 — 같은 잡이 만드는 상태끼리 묶어 단계를 시각 구분:
         // discover가 DISCOVERED를 만들고, qualify가 QUALIFIED/EXCLUDED로 가르고,
-        // collect는 방문 대기(미방문 또는 재방문 주기 도래)를 순서대로 방문한다.
+        // beauty가 QUALIFIED를 뷰티/비뷰티로 가르고, collect는 뷰티 계정만
+        // 방문 대기(미방문 또는 재방문 주기 도래) 순서대로 방문한다.
         // 모든 방문이 동일(최근 게시물 1회 수집)하므로 첫 방문/재방문을 구분하지 않는다.
         model.addAttribute("influencerGroups", java.util.List.of(
                 new StatusTileGroup("① 발굴 — discover", java.util.List.of(
@@ -158,12 +159,19 @@ public class UiController {
                                 "발굴됨 · 판정 전"))),
                 new StatusTileGroup("② 판정 — qualify가 가른 결과", java.util.List.of(
                         new StatusTile("QUALIFIED", n(byInfluencer, InfluencerStatus.QUALIFIED),
-                                "판정 통과 · 수집 대상"),
+                                "판정 통과 · 뷰티 판정 대상"),
                         new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED),
                                 "판정 탈락 · 제외"))),
-                new StatusTileGroup("③ 수집 대기열 — collect(프로필·게시물·릴스)가 방문할 대상", java.util.List.of(
+                new StatusTileGroup("③ 뷰티 판정 — beauty가 가른 결과 (QUALIFIED 내)", java.util.List.of(
+                        new StatusTile("BEAUTY", s.beautyTrue(),
+                                "뷰티 계정 · 수집·유사발굴 대상"),
+                        new StatusTile("NOT_BEAUTY", s.beautyFalse(),
+                                "비뷰티 · 수집 제외"),
+                        new StatusTile("UNJUDGED", s.beautyUnjudged(),
+                                "미판정 · 뷰티판정 대기"))),
+                new StatusTileGroup("④ 수집 대기열 — collect(프로필·게시물·릴스)가 방문할 대상", java.util.List.of(
                         new StatusTile("READY", s.backfillPending() + s.trackDue(),
-                                "방문 대기 · 재방문 주기 도래 포함")))));
+                                "뷰티 계정만 · 방문 대기 · 재방문 주기 도래 포함")))));
         // 게시물 수집: collect 방문(프로필 내장 최근 피드 + 릴스 1페이지) 산출물만 대상 —
         // 발굴 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         // 댓글 수집은 꺼져 있으므로 상태 전이 대신 총계·유형별로 보여준다.

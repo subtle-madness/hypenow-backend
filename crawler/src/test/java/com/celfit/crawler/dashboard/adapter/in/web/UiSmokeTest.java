@@ -252,9 +252,10 @@ class UiSmokeTest extends IntegrationTest {
     @Test
     void 대시보드_수집_대기열은_첫방문_재방문_구분_없이_단일_카드다() throws Exception {
         // 모든 방문이 동일(최근 게시물 1회 수집)하므로 첫 방문/재방문 구분이 없다 —
-        // 9일 전 방문(재방문 주기 7일 경과)한 인플루언서도 같은 "수집 대기"로 잡힌다.
+        // 9일 전 방문(재방문 주기 7일 경과)한 뷰티 인플루언서도 같은 "수집 대기"로 잡힌다.
         Influencer inf = new Influencer("smoke-collect-due-user");
         inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);  // 수집 대기열은 뷰티 계정만 잡는다
         Instant nineDaysAgo = Instant.now().minus(java.time.Duration.ofDays(9));
         inf.setFirstCollectedAt(nineDaysAgo);
         inf.setLastCollectedAt(nineDaysAgo);
@@ -267,5 +268,24 @@ class UiSmokeTest extends IntegrationTest {
                         org.hamcrest.Matchers.containsString("BACKFILL"))))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("TRACK"))));
+    }
+
+    @Test
+    void 대시보드에_뷰티_판정_결과_그룹이_렌더된다() throws Exception {
+        // beauty 잡이 가른 결과(뷰티/비뷰티/미판정)가 판정과 수집 사이 단계로 보여야 한다.
+        Influencer beauty = new Influencer("smoke-beauty-true-user");
+        beauty.setStatus(InfluencerStatus.QUALIFIED);
+        beauty.setBeauty(true);
+        influencers.save(beauty);
+        Influencer notBeauty = new Influencer("smoke-beauty-false-user");
+        notBeauty.setStatus(InfluencerStatus.QUALIFIED);
+        notBeauty.setBeauty(false);
+        influencers.save(notBeauty);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 판정")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("BEAUTY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("NOT_BEAUTY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("미판정")));
     }
 }

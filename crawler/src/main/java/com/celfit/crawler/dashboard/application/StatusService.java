@@ -14,16 +14,20 @@ import java.util.Map;
 import org.springframework.stereotype.Service;
 
 /**
- * 상태 요약 — 대시보드 카드용. 파이프라인은 발굴(discover) → 판정(qualify) → 수집(collect) 순서.
- * 인플루언서는 판정 상태 3종 + 수집 대기(미방문 + 재방문 주기 도래), 게시물은 방문 산출
- * (origin=ENUMERATION) 총계와 유형별(FEED/REELS)로 집계한다 — 댓글 수집이 꺼져 있어 상태
- * 전이(PENDING→COLLECTED)는 화면 지표가 아니다. 발굴 부산물(DISCOVERY)은 수집 대상이 아니므로
- * 별도 보관 총계(discoveryArchiveCount)로만 노출한다.
+ * 상태 요약 — 대시보드 카드용. 파이프라인은 발굴(discover) → 판정(qualify) → 뷰티 판정(beauty)
+ * → 수집(collect) 순서. 인플루언서는 판정 상태 3종 + 뷰티 판정 결과(뷰티/비뷰티/미판정) +
+ * 수집 대기(뷰티만 — 미방문 + 재방문 주기 도래), 게시물은 방문 산출(origin=ENUMERATION) 총계와
+ * 유형별(FEED/REELS)로 집계한다 — 댓글 수집이 꺼져 있어 상태 전이(PENDING→COLLECTED)는 화면
+ * 지표가 아니다. 발굴 부산물(DISCOVERY)은 수집 대상이 아니므로 별도 보관 총계
+ * (discoveryArchiveCount)로만 노출한다.
  */
 @Service
 public class StatusService {
 
     public record StatusSummary(Map<InfluencerStatus, Long> influencerByStatus,
+                                 long beautyTrue,
+                                 long beautyFalse,
+                                 long beautyUnjudged,
                                  long backfillPending,
                                  long trackDue,
                                  long enumeratedTotal,
@@ -50,7 +54,11 @@ public class StatusService {
             byInfluencerStatus.put(s, influencers.countByStatus(s));
         }
         Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
-        return new StatusSummary(byInfluencerStatus, influencers.countBackfillPending(),
+        return new StatusSummary(byInfluencerStatus,
+                influencers.countByStatusAndBeauty(InfluencerStatus.QUALIFIED, true),
+                influencers.countByStatusAndBeauty(InfluencerStatus.QUALIFIED, false),
+                influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED),
+                influencers.countBackfillPending(),
                 influencers.countTrackDue(revisitBefore),
                 contents.countByOrigin(ContentOrigin.ENUMERATION),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.FEED),

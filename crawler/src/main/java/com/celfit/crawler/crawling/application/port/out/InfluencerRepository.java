@@ -32,20 +32,22 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** 비용 추정용: 프로필(followers) 미확보라 qualify가 API를 호출해야 하는 인플루언서 수. */
     long countByStatusAndFollowersIsNull(InfluencerStatus status);
 
-    /** 백필 대기: 판정 통과했지만 첫 수집(backfill)이 아직 안 된 인플루언서 수. */
-    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.firstCollectedAt is null")
+    /** 백필 대기: 판정 통과 + 뷰티 확정이지만 첫 수집(backfill)이 아직 안 된 인플루언서 수. */
+    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and i.firstCollectedAt is null")
     long countBackfillPending();
 
-    /** 추적 대기: 첫 수집은 끝났지만 재방문 주기(revisitBefore)가 지나 다시 수집 대상이 될 인플루언서 수. */
-    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' "
+    /** 추적 대기: 첫 수집은 끝났지만 재방문 주기(revisitBefore)가 지나 다시 수집 대상이 될 뷰티 인플루언서 수. */
+    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
             + "and i.firstCollectedAt is not null and i.lastCollectedAt < :revisitBefore")
     long countTrackDue(@Param("revisitBefore") Instant revisitBefore);
 
     /**
-     * 수집 대상: 판정 통과 + (백필 안 된 것 우선) + 재방문 주기(revisitBefore)가 지난 것만.
-     * 최근에 이미 수집한(주기 안 지난) 인플루언서는 대상에서 빠진다.
+     * 수집 대상: 판정 통과 + 뷰티 확정(beauty=true) + (백필 안 된 것 우선) + 재방문 주기(revisitBefore)가
+     * 지난 것만. 비뷰티·미판정은 QUALIFIED여도 방문하지 않고, 최근에 이미 수집한(주기 안 지난)
+     * 인플루언서도 대상에서 빠진다.
      */
-    @Query("select i from Influencer i where i.status = 'QUALIFIED' "
+    @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
             + "and (i.firstCollectedAt is null or i.lastCollectedAt < :revisitBefore) "
             + "order by case when i.firstCollectedAt is null then 0 else 1 end, i.lastCollectedAt asc nulls first")
     List<Influencer> findCollectTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
@@ -63,6 +65,9 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     /** 비용 추정용. */
     long countByStatusAndBeautyIsNull(InfluencerStatus status);
+
+    /** 대시보드 뷰티 판정 그룹용: 뷰티(true)/비뷰티(false) 판정 수. */
+    long countByStatusAndBeauty(InfluencerStatus status, Boolean beauty);
 
     long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus status);
 

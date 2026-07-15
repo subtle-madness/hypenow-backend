@@ -49,6 +49,8 @@ class CollectJobIntegrationTest extends IntegrationTest {
     static final String USERNAME_BACKFILL = "it-collect-revisit-backfill";
     static final String USERNAME_DUE = "it-collect-revisit-due";
     static final String USERNAME_RECENT = "it-collect-revisit-recent";
+    static final String USERNAME_NOT_BEAUTY = "it-collect-not-beauty";
+    static final String USERNAME_UNJUDGED = "it-collect-beauty-unjudged";
 
     @Autowired InfluencerRepository influencers;
     @Autowired RawProfileRepository rawProfiles;
@@ -70,8 +72,8 @@ class CollectJobIntegrationTest extends IntegrationTest {
         jdbc.update("delete from raw_run_item where crawl_run_id in (select id from crawl_run where target_username = ?)", USERNAME);
         jdbc.update("delete from crawl_run where target_username = ?", USERNAME);
         jdbc.update("delete from influencer where username = ?", USERNAME);
-        jdbc.update("delete from influencer where username in (?, ?, ?)",
-                USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT);
+        jdbc.update("delete from influencer where username in (?, ?, ?, ?, ?)",
+                USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT, USERNAME_NOT_BEAUTY, USERNAME_UNJUDGED);
     }
 
     /** HIKER_GQL_MEDIAS 빈 페이지만 돌려주는 fake — 열거는 즉시 자연 종료된다. */
@@ -94,9 +96,10 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
     @Test
     void run_후_influencer_방문_북키핑이_실제_DB에_저장된다() {
-        // QUALIFIED 인플루언서 1명 — 첫 방문(백필) 대상
+        // QUALIFIED + 뷰티 확정 인플루언서 1명 — 첫 방문(백필) 대상
         Influencer inf = new Influencer(USERNAME);
         inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
         Long infId = influencers.save(inf).getId();
 
         // 프로필 응답 mock의 runId는 raw_profile.crawl_run_id FK를 만족해야 하므로 실제 crawl_run을 만든다
@@ -140,14 +143,17 @@ class CollectJobIntegrationTest extends IntegrationTest {
     void findCollectTargets는_재방문_주기_안_지난_QUALIFIED를_제외하고_백필을_먼저_반환한다() {
         Instant now = clock.instant();
         Instant revisitBefore = now.minus(java.time.Duration.ofDays(settings.revisitIntervalDays()));
+        long backfillBefore = influencers.countBackfillPending();
 
         Influencer backfillInf = new Influencer(USERNAME_BACKFILL);
         backfillInf.setStatus(InfluencerStatus.QUALIFIED);
+        backfillInf.setBeauty(true);
         // firstCollectedAt/lastCollectedAt 모두 null — 백필 대상
         Long backfillId = influencers.save(backfillInf).getId();
 
         Influencer dueInf = new Influencer(USERNAME_DUE);
         dueInf.setStatus(InfluencerStatus.QUALIFIED);
+        dueInf.setBeauty(true);
         Instant longAgo = revisitBefore.minusSeconds(3600); // 주기보다 더 오래 전 방문 — 대상
         dueInf.setFirstCollectedAt(longAgo);
         dueInf.setLastCollectedAt(longAgo);
@@ -155,19 +161,32 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
         Influencer recentInf = new Influencer(USERNAME_RECENT);
         recentInf.setStatus(InfluencerStatus.QUALIFIED);
+        recentInf.setBeauty(true);
         Instant justNow = now.minusSeconds(60); // 주기 안 지남 — 대상 제외
         recentInf.setFirstCollectedAt(justNow);
         recentInf.setLastCollectedAt(justNow);
         Long recentId = influencers.save(recentInf).getId();
+
+        // 비뷰티·미판정은 QUALIFIED여도 수집 대상이 아니다 — collect는 뷰티 계정만 방문한다
+        Influencer notBeautyInf = new Influencer(USERNAME_NOT_BEAUTY);
+        notBeautyInf.setStatus(InfluencerStatus.QUALIFIED);
+        notBeautyInf.setBeauty(false);
+        Long notBeautyId = influencers.save(notBeautyInf).getId();
+
+        Influencer unjudgedInf = new Influencer(USERNAME_UNJUDGED);
+        unjudgedInf.setStatus(InfluencerStatus.QUALIFIED);  // beauty null — 미판정
+        Long unjudgedId = influencers.save(unjudgedInf).getId();
 
         List<Influencer> targets = influencers.findCollectTargets(revisitBefore,
                 org.springframework.data.domain.PageRequest.of(0, 100));
         List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
 
         assertThat(targetIds).contains(backfillId, dueId);
-        assertThat(targetIds).doesNotContain(recentId);
+        assertThat(targetIds).doesNotContain(recentId, notBeautyId, unjudgedId);
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));
 
         assertThat(influencers.countTrackDue(revisitBefore)).isGreaterThanOrEqualTo(1L);
+        // 대시보드 READY 카운트도 뷰티만 — 백필 대기 증가분은 뷰티 백필 1명뿐이어야 한다
+        assertThat(influencers.countBackfillPending()).isEqualTo(backfillBefore + 1);
     }
 }
