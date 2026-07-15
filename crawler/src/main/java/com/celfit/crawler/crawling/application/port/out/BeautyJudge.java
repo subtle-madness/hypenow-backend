@@ -8,7 +8,9 @@ import java.util.List;
  */
 public interface BeautyJudge {
 
-    record ProfileCard(String username, String fullName, String category, String biography) {}
+    /** captions — 최근 게시물 캡션 일부(개수·길이 절단은 호출자 몫). 없으면 빈 리스트. */
+    record ProfileCard(String username, String fullName, String category, String biography,
+                       List<String> captions) {}
 
     record Verdict(String username, boolean beauty, String reason) {}
 

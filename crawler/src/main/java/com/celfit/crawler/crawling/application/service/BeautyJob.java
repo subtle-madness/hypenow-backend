@@ -32,6 +32,12 @@ public class BeautyJob {
     /** Claude 1회 호출에 넘기는 프로필 수 — 응답 길이·타임아웃(120s)과의 균형. */
     static final int JUDGE_CHUNK = 50;
 
+    /** 카드에 담는 최근 게시물 캡션 수 — 프롬프트 크기(50명 × 캡션)와 판정 정확도의 균형. */
+    static final int CAPTION_COUNT = 5;
+
+    /** 캡션 1개당 최대 길이(문자) — 캡션 앞부분에 주제가 드러나므로 뒷부분은 잘라도 판정에 충분. */
+    static final int CAPTION_MAX_CHARS = 100;
+
     public record Summary(int judgedBeauty, int judgedNotBeauty, int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
@@ -73,7 +79,8 @@ public class BeautyJob {
             cards.add(new BeautyJudge.ProfileCard(inf.getUsername(),
                     ProfileExtractor.fullName(p.getPayload(), p.getSource()),
                     ProfileExtractor.category(p.getPayload(), p.getSource()),
-                    ProfileExtractor.biography(p.getPayload(), p.getSource())));
+                    ProfileExtractor.biography(p.getPayload(), p.getSource()),
+                    trimCaptions(ProfileExtractor.recentCaptions(p.getPayload(), p.getSource()))));
             byUsername.put(inf.getUsername(), inf);
         }
 
@@ -96,6 +103,14 @@ public class BeautyJob {
             log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 비뷰티 {}", i, total, beauty, notBeauty);
         }
         return new Summary(beauty, notBeauty, skipped, failedBatches);
+    }
+
+    /** 판정 재료 캡션 정책 적용 — 최근 CAPTION_COUNT개, 각 CAPTION_MAX_CHARS자까지. */
+    private static List<String> trimCaptions(List<String> captions) {
+        return captions.stream()
+                .limit(CAPTION_COUNT)
+                .map(c -> c.length() > CAPTION_MAX_CHARS ? c.substring(0, CAPTION_MAX_CHARS) : c)
+                .toList();
     }
 
     private record ChunkResult(int beauty, int notBeauty) {}

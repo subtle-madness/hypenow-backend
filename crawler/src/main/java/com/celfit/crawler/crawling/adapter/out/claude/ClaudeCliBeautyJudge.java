@@ -78,6 +78,8 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
         return """
                 다음은 인스타그램 계정 프로필 목록(JSON)이다. 각 계정이 "뷰티 계정"(화장품·메이크업·\
                 스킨케어·헤어·네일·에스테틱 등 뷰티 콘텐츠 중심)인지 판정하라.
+                captions는 최근 게시물 캡션 일부다(앞부분만 잘림·빈 배열은 미수집) — bio가 모호하면 \
+                캡션의 실제 콘텐츠 주제를 근거로 판정하라.
                 출력은 JSON 배열만: [{"username":"...","beauty":true|false,"reason":"한 줄"}]
                 입력의 모든 username에 대해 정확히 한 항목씩. 다른 텍스트 금지.
 

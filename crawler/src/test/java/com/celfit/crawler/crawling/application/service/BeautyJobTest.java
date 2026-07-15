@@ -80,6 +80,31 @@ class BeautyJobTest {
     }
 
     @Test
+    void 카드에_최근_캡션을_개수_제한과_길이_절단으로_담는다() {
+        Influencer a = qualified(1L, "a");
+        when(influencers.findByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED)).thenReturn(List.of(a));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("latestPosts", List.of(
+                Map.of("caption", "긴캡션".repeat(50)),  // 150자 → CAPTION_MAX_CHARS로 절단
+                Map.of("caption", "둘"), Map.of("caption", "셋"), Map.of("caption", "넷"),
+                Map.of("caption", "다섯"), Map.of("caption", "여섯"), Map.of("caption", "일곱")));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L)).thenReturn(Optional.of(
+                new RawProfile(1L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenAnswer(inv -> {
+            List<BeautyJudge.ProfileCard> cards = inv.getArgument(0);
+            assertThat(cards).hasSize(1);
+            assertThat(cards.get(0).captions()).containsExactly(
+                    "긴캡션".repeat(50).substring(0, BeautyJob.CAPTION_MAX_CHARS), "둘", "셋", "넷", "다섯");
+            return List.of(new BeautyJudge.Verdict("a", true, "ok"));
+        });
+
+        var s = job.run(TriggerType.MANUAL, false);
+
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+    }
+
+    @Test
     void raw_profile이_없으면_스킵하고_beauty는_NULL_유지() {
         Influencer a = qualified(1L, "a");
         when(influencers.findByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED)).thenReturn(List.of(a));

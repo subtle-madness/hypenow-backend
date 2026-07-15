@@ -55,7 +55,8 @@ class ClaudeCliBeautyJudgeTest {
     @Test
     void 프롬프트에_카드_JSON과_출력_형식_지시가_들어간다() {
         String p = ClaudeCliBeautyJudge.buildPrompt(om,
-                List.of(new BeautyJudge.ProfileCard("u1", "이름", "Beauty", "bio")));
-        assertThat(p).contains("\"username\":\"u1\"").contains("JSON 배열만");
+                List.of(new BeautyJudge.ProfileCard("u1", "이름", "Beauty", "bio", List.of("입술 보습 꿀템"))));
+        assertThat(p).contains("\"username\":\"u1\"").contains("입술 보습 꿀템").contains("JSON 배열만")
+                .contains("captions는 최근 게시물 캡션");
     }
 }
