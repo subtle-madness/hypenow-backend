@@ -9,23 +9,9 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
-/**
- * 카드 SELECT 절 공통 상수 — 목록(6.1)·recentContents(6.4)가 같은 행 형태를 쓴다.
- * ContentCardRow → ContentCard(스펙 5.3) 조립.
- */
+/** ContentCardRow → ContentCard(스펙 5.3) 순수 변환 — SELECT 절은 ContentCardRow.SELECT 참조. */
 @Component
 public class ContentCardAssembler {
-
-	static final String CARD_SELECT = """
-			SELECT c.short_code, c.thumbnail_url, c.caption, c.posted_at, c.content_type,
-			       c.video_duration, c.original_url, c.views, c.likes, c.comments,
-			       c.hype_score, c.metric_captured_at,
-			       an.main_category, an.sub_categories::text AS sub_categories_json, an.ad_type,
-			       an.detected_brands::text AS brands_json,
-			       an.detected_products::text AS products_json,
-			       an.detected_distributors::text AS distributors_json,
-			       a.handle, a.display_name, a.profile_image_url, a.followers
-			""";
 
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final DateTimeFormatter ISO_Z = DateTimeFormatter.ISO_INSTANT;
