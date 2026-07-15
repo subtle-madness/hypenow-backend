@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -66,6 +67,7 @@ class V1AuthControllerTest {
 
 	@Test
 	void 가입은_201과_UserSummary_envelope를_내린다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
 		given(userRepository.insertProfile(any(), anyString()))
 				.willReturn(new UserProfile(7L, "user@example.com", "김우민", "brand"));
 		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
@@ -83,6 +85,8 @@ class V1AuthControllerTest {
 
 	@Test
 	void 가입_검증_위반은_400_VALIDATION_FAILED다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(VALID_SIGNUP_BODY.replace("Passw0rd!", "passw0rd!")))
@@ -93,6 +97,7 @@ class V1AuthControllerTest {
 
 	@Test
 	void 가입_중복_이메일은_409_EMAIL_ALREADY_EXISTS다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
 		given(userRepository.insertProfile(any(), anyString()))
 				.willThrow(new DuplicateKeyException("users_email_key"));
 
@@ -101,6 +106,38 @@ class V1AuthControllerTest {
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.error.code").value("EMAIL_ALREADY_EXISTS"))
 				.andExpect(jsonPath("$.error.message").value("이미 가입된 이메일이에요. 로그인해 주세요."));
+	}
+
+	@Test
+	void 가입_레이트리밋_초과는_429_RATE_LIMITED다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(false);
+
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(VALID_SIGNUP_BODY))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"))
+				.andExpect(jsonPath("$.error.message").value("요청이 너무 잦아요. 잠시 후 다시 시도해 주세요."));
+
+		// 가입 키는 IP 단위(계정 없는 단계) — 검증·insert 전에 걸린다
+		then(rateLimiter).should().tryAcquire("signup:127.0.0.1");
+		then(userRepository).shouldHaveNoInteractions();
+	}
+
+	// A@x.com / a@x.com이 같은 버킷 — 대소문자 변형으로 계정 차원 제한을 우회하지 못한다
+	@Test
+	void 로그인_레이트리밋_키는_이메일을_lower_정규화한다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
+		given(userRepository.findProfileByEmail(anyString()))
+				.willReturn(Optional.of(new UserProfile(7L, "user@example.com", "김우민", "brand")));
+
+		mockMvc.perform(post("/v1/auth/login").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"email":"USER@Example.com","password":"Passw0rd!"}"""))
+				.andExpect(status().isOk());
+
+		then(rateLimiter).should().tryAcquire("login:user@example.com|127.0.0.1");
 	}
 
 	@Test

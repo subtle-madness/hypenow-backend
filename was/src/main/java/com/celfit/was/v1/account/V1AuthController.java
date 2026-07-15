@@ -55,6 +55,10 @@ public class V1AuthController {
 	@ResponseStatus(HttpStatus.CREATED)
 	public ApiResponse<UserSummary> signup(@RequestBody SignupRequest request,
 			HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
+		// 가입 남용 차단(스펙 4절) — 계정이 없는 단계라 키는 IP 단위
+		if (!rateLimiter.tryAcquire("signup:" + httpRequest.getRemoteAddr())) {
+			throw V1ApiException.rateLimited();
+		}
 		signupValidator.validate(request);
 
 		UserProfile profile;
@@ -74,7 +78,8 @@ public class V1AuthController {
 	@PostMapping("/v1/auth/login")
 	public ApiResponse<UserSummary> login(@RequestBody LoginRequest request,
 			HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
-		String email = request.email() == null ? "" : request.email();
+		// 키는 lower 정규화 이메일(저장 규칙과 동일) — 대소문자 변형으로 계정 차원 제한을 우회하지 못하게
+		String email = request.email() == null ? "" : UserRepository.normalizeEmail(request.email());
 		if (!rateLimiter.tryAcquire("login:" + email + "|" + httpRequest.getRemoteAddr())) {
 			throw V1ApiException.rateLimited();
 		}

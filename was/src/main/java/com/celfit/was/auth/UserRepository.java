@@ -22,7 +22,7 @@ public class UserRepository {
 				VALUES (:email, :passwordHash)
 				RETURNING id, email, password_hash, created_at
 				""")
-				.param("email", normalize(email))
+				.param("email", normalizeEmail(email))
 				.param("passwordHash", passwordHash)
 				.query(AppUser.class)
 				.single();
@@ -44,7 +44,7 @@ public class UserRepository {
 				        :agreedMarketing, CASE WHEN :agreedMarketing THEN now() END)
 				RETURNING id, email, name, user_type
 				""")
-				.param("email", normalize(request.email()))
+				.param("email", normalizeEmail(request.email()))
 				.param("passwordHash", passwordHash)
 				.param("name", request.name())
 				.param("nickname", request.nickname())
@@ -71,7 +71,7 @@ public class UserRepository {
 				FROM app.users
 				WHERE email = :email
 				""")
-				.param("email", normalize(email))
+				.param("email", normalizeEmail(email))
 				.query(UserProfile.class)
 				.optional();
 	}
@@ -82,7 +82,7 @@ public class UserRepository {
 				FROM app.users
 				WHERE email = :email
 				""")
-				.param("email", normalize(email))
+				.param("email", normalizeEmail(email))
 				.query(AppUser.class)
 				.optional();
 	}
@@ -98,7 +98,8 @@ public class UserRepository {
 				.optional();
 	}
 
-	private String normalize(String email) {
+	/** email 정규화 규칙(단일 정본) — 저장·조회와 레이트리밋 키(V1AuthController)가 같은 규칙을 공유한다. */
+	public static String normalizeEmail(String email) {
 		return email.toLowerCase();
 	}
 }
