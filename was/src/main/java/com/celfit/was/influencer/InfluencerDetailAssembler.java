@@ -1,6 +1,7 @@
 package com.celfit.was.influencer;
 
 import com.celfit.contract.analysis.Account;
+import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
@@ -11,8 +12,9 @@ import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * 계약 record 4종(AccountSummary·Account·AccountCategoryStat·AccountContentPoint) → 응답 블록 조립.
- * 집합 연산 없음 — 전 지표는 C1이 저장한 값을 그대로 전달한다. was 몫은 경과일·isActive·lastAdNote 문구·
+ * 계약 record 5종(AccountSummary·Account·AccountCategoryStat·AccountContentPoint·AccountAnalysis)
+ * → 응답 블록 조립. 집합 연산 없음 — 전 지표는 C1이 저장한 값을, LLM 카피 7종은 C2 최신 이력 값을
+ * 그대로 전달한다(분석 이력 없으면 카피 필드 null — additive). was 몫은 경과일·isActive·lastAdNote 문구·
  * 광고 strip 배열뿐(C1 스펙 §3 말미).
  */
 @Component
@@ -28,8 +30,10 @@ public class InfluencerDetailAssembler {
 	}
 
 	public InfluencerDetailResponse toResponse(AccountSummary summary, Account account,
-			List<AccountCategoryStat> categoryStats, List<AccountContentPoint> series) {
-		return new InfluencerDetailResponse(toProfile(summary, account), toReport(summary, categoryStats, series));
+			List<AccountCategoryStat> categoryStats, List<AccountContentPoint> series,
+			AccountAnalysis analysis) {
+		return new InfluencerDetailResponse(
+				toProfile(summary, account), toReport(summary, categoryStats, series, analysis));
 	}
 
 	private InfluencerDetailResponse.Profile toProfile(AccountSummary summary, Account account) {
@@ -44,17 +48,20 @@ public class InfluencerDetailAssembler {
 	}
 
 	private InfluencerDetailResponse.Report toReport(AccountSummary summary,
-			List<AccountCategoryStat> categoryStats, List<AccountContentPoint> series) {
+			List<AccountCategoryStat> categoryStats, List<AccountContentPoint> series,
+			AccountAnalysis analysis) {
 		OffsetDateTime now = OffsetDateTime.now(clock);
 		return new InfluencerDetailResponse.Report(
 				summary.postsCount(),
 				summary.analyzedCount(),
+				analysis == null ? null : analysis.tagline(),
+				analysis == null ? null : analysis.summary(),
 				toStats(summary),
-				toTrend(summary),
-				toChart(summary, series),
-				toContentMix(categoryStats),
-				toAds(summary, series, now),
-				toActivity(summary, now));
+				toTrend(summary, analysis),
+				toChart(summary, series, analysis),
+				toContentMix(categoryStats, analysis),
+				toAds(summary, series, now, analysis),
+				toActivity(summary, now, analysis));
 	}
 
 	private InfluencerDetailResponse.Report.Stats toStats(AccountSummary summary) {
@@ -63,36 +70,41 @@ public class InfluencerDetailAssembler {
 				summary.avgErPct(), summary.avgLikes(), summary.avgComments());
 	}
 
-	private InfluencerDetailResponse.Report.Trend toTrend(AccountSummary summary) {
+	private InfluencerDetailResponse.Report.Trend toTrend(AccountSummary summary, AccountAnalysis analysis) {
 		return new InfluencerDetailResponse.Report.Trend(
 				summary.trendDirection(), summary.trendChangePct(),
-				summary.trendOlderAvg(), summary.trendNewerAvg());
+				summary.trendOlderAvg(), summary.trendNewerAvg(),
+				analysis == null ? null : analysis.trendNote());
 	}
 
 	private InfluencerDetailResponse.Report.Chart toChart(AccountSummary summary,
-			List<AccountContentPoint> series) {
+			List<AccountContentPoint> series, AccountAnalysis analysis) {
 		return new InfluencerDetailResponse.Report.Chart(summary.metric(),
 				series.stream()
 						.map(p -> new InfluencerDetailResponse.Report.Bar(
 								p.shortCode(), p.postedAt(), p.contentType(),
 								p.views(), p.likes(), p.comments(), p.sponsored()))
-						.toList());
+						.toList(),
+				analysis == null ? null : analysis.chartNote());
 	}
 
-	private InfluencerDetailResponse.Report.ContentMix toContentMix(List<AccountCategoryStat> categoryStats) {
+	private InfluencerDetailResponse.Report.ContentMix toContentMix(List<AccountCategoryStat> categoryStats,
+			AccountAnalysis analysis) {
 		return new InfluencerDetailResponse.Report.ContentMix(
 				categoryStats.stream()
 						.map(c -> new InfluencerDetailResponse.Report.Category(c.mainGroup(), c.contentCount()))
-						.toList());
+						.toList(),
+				analysis == null ? null : analysis.traits());
 	}
 
 	private InfluencerDetailResponse.Report.Ads toAds(AccountSummary summary, List<AccountContentPoint> series,
-			OffsetDateTime now) {
+			OffsetDateTime now, AccountAnalysis analysis) {
 		return new InfluencerDetailResponse.Report.Ads(
 				summary.sponsoredCount(),
 				series.stream().map(AccountContentPoint::sponsored).toList(),
 				summary.lastAdPostedAt(),
 				lastAdNote(summary.lastAdPostedAt(), now),
+				analysis == null ? null : analysis.adHeadline(),
 				toComparison(summary));
 	}
 
@@ -106,11 +118,13 @@ public class InfluencerDetailAssembler {
 				summary.organicAvg(), summary.adAvg(), summary.adDropPct());
 	}
 
-	private InfluencerDetailResponse.Report.Activity toActivity(AccountSummary summary, OffsetDateTime now) {
+	private InfluencerDetailResponse.Report.Activity toActivity(AccountSummary summary, OffsetDateTime now,
+			AccountAnalysis analysis) {
 		Long lastUploadDaysAgo = daysSince(summary.lastPostedAt(), now);
 		boolean isActive = lastUploadDaysAgo != null && lastUploadDaysAgo < ACTIVE_THRESHOLD_DAYS;
 		return new InfluencerDetailResponse.Report.Activity(
-				summary.lastPostedAt(), lastUploadDaysAgo, isActive, summary.avgIntervalDays());
+				summary.lastPostedAt(), lastUploadDaysAgo, isActive, summary.avgIntervalDays(),
+				analysis == null ? null : analysis.paceNote());
 	}
 
 	/** lastAdPostedAt 없으면 null, 경과 0일이면 "마지막 광고 오늘", N일이면 "마지막 광고 N일 전". */

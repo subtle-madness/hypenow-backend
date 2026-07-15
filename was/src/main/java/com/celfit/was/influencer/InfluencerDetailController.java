@@ -6,7 +6,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-/** 인플루언서 상세 API — C1 미러 3종(계약 record) + accounts를 조합해 1회 호출로 서빙한다. */
+/**
+ * 인플루언서 상세 API — C1 미러 3종(계약 record) + accounts + C2 카피 이력(최신 1행)을
+ * 조합해 1회 호출로 서빙한다(조합은 was 코드에서 — §4-4, SQL 조인 없음).
+ */
 @RestController
 public class InfluencerDetailController {
 
@@ -25,7 +28,8 @@ public class InfluencerDetailController {
 						summary,
 						repository.findAccount(handle).orElse(null),
 						repository.findCategoryStats(handle),
-						repository.findSeries(handle)))
+						repository.findSeries(handle),
+						repository.findLatestAnalysis(handle).orElse(null)))
 				.orElseThrow(() -> new ResponseStatusException(
 						HttpStatus.NOT_FOUND, "인플루언서를 찾을 수 없습니다: " + handle));
 	}

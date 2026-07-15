@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.contract.analysis.Account;
+import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
@@ -56,6 +57,12 @@ class InfluencerDetailControllerTest {
 						"feed", null, 300L, 30L, true),
 				new AccountContentPoint("g3", "glow", OffsetDateTime.parse("2026-07-08T00:00:00Z"),
 						"reels", 2000L, 150L, 15L, false)));
+		given(repository.findLatestAnalysis("glow")).willReturn(Optional.of(
+				new AccountAnalysis("glow", OffsetDateTime.parse("2026-07-13T00:00:00Z"), "opus",
+						OffsetDateTime.parse("2026-07-12T00:00:00Z"), 12L,
+						"건성 피부 신뢰 리뷰어", "AI 분석 요약 문단", "상승 흐름 유지 중", "릴스가 평균을 끌어올림",
+						List.of("솔직 후기", "루틴 중심", "건성 특화"), "광고에서도 평균의 88%를 유지",
+						"이틀에 한 번 꾸준한 페이스")));
 	}
 
 	@Test
@@ -68,7 +75,29 @@ class InfluencerDetailControllerTest {
 				.andExpect(jsonPath("$.report.stats.metric").value("views"))
 				.andExpect(jsonPath("$.report.chart.bars[0].shortCode").value("g1"))
 				.andExpect(jsonPath("$.report.ads.strip[1]").value(true))
-				.andExpect(jsonPath("$.report.activity.isActive").value(true));
+				.andExpect(jsonPath("$.report.activity.isActive").value(true))
+				.andExpect(jsonPath("$.report.tagline").value("건성 피부 신뢰 리뷰어"))
+				.andExpect(jsonPath("$.report.summary").value("AI 분석 요약 문단"))
+				.andExpect(jsonPath("$.report.trend.note").value("상승 흐름 유지 중"))
+				.andExpect(jsonPath("$.report.chart.note").value("릴스가 평균을 끌어올림"))
+				.andExpect(jsonPath("$.report.contentMix.traits[0]").value("솔직 후기"))
+				.andExpect(jsonPath("$.report.ads.headline").value("광고에서도 평균의 88%를 유지"))
+				.andExpect(jsonPath("$.report.activity.paceNote").value("이틀에 한 번 꾸준한 페이스"));
+	}
+
+	@Test
+	void 분석_이력이_없으면_카피_필드는_null이다() throws Exception {
+		givenGlow();
+		given(repository.findLatestAnalysis("glow")).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/api/influencers/glow"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.report.tagline", org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.report.trend.note", org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.report.contentMix.traits", org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.report.ads.headline", org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.report.activity.paceNote", org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.report.stats.metric").value("views"));
 	}
 
 	@Test

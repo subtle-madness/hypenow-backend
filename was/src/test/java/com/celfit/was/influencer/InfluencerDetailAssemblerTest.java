@@ -3,6 +3,7 @@ package com.celfit.was.influencer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.contract.analysis.Account;
+import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
@@ -42,6 +43,14 @@ class InfluencerDetailAssemblerTest {
 				new AccountCategoryStat("glow", "클렌징", 3L));
 	}
 
+	private AccountAnalysis glowAnalysis() {
+		return new AccountAnalysis("glow", OffsetDateTime.parse("2026-07-13T00:00:00Z"), "opus",
+				OffsetDateTime.parse("2026-07-12T00:00:00Z"), 12L,
+				"건성 피부 신뢰 리뷰어", "AI 분석 요약 문단", "상승 흐름 유지 중", "릴스가 평균을 끌어올림",
+				List.of("솔직 후기", "루틴 중심", "건성 특화"), "광고에서도 평균의 88%를 유지",
+				"이틀에 한 번 꾸준한 페이스");
+	}
+
 	private List<AccountContentPoint> glowSeries() {
 		return List.of(
 				new AccountContentPoint("g1", "glow", OffsetDateTime.parse("2026-07-01T00:00:00Z"),
@@ -55,7 +64,7 @@ class InfluencerDetailAssemblerTest {
 	@Test
 	void 전체_블록을_조립한다() {
 		InfluencerDetailResponse response =
-				assembler.toResponse(glowSummary(), glowAccount(), glowCategoryStats(), glowSeries());
+				assembler.toResponse(glowSummary(), glowAccount(), glowCategoryStats(), glowSeries(), glowAnalysis());
 
 		assertThat(response.profile().handle()).isEqualTo("glow");
 		assertThat(response.profile().displayName()).isEqualTo("글로우");
@@ -108,12 +117,58 @@ class InfluencerDetailAssemblerTest {
 		assertThat(report.activity().lastUploadDaysAgo()).isEqualTo(2L);
 		assertThat(report.activity().isActive()).isTrue();
 		assertThat(report.activity().avgIntervalDays()).isEqualByComparingTo(new BigDecimal("2.4"));
+
+		// LLM 카피 7종 — AccountReport 화면 위치 그대로(C2 스펙 §1)
+		assertThat(report.tagline()).isEqualTo("건성 피부 신뢰 리뷰어");
+		assertThat(report.summary()).isEqualTo("AI 분석 요약 문단");
+		assertThat(report.trend().note()).isEqualTo("상승 흐름 유지 중");
+		assertThat(report.chart().note()).isEqualTo("릴스가 평균을 끌어올림");
+		assertThat(report.contentMix().traits()).containsExactly("솔직 후기", "루틴 중심", "건성 특화");
+		assertThat(report.ads().headline()).isEqualTo("광고에서도 평균의 88%를 유지");
+		assertThat(report.activity().paceNote()).isEqualTo("이틀에 한 번 꾸준한 페이스");
+	}
+
+	@Test
+	void 분석_이력이_없으면_카피_필드만_null이고_블록_형태는_유지된다() {
+		InfluencerDetailResponse response =
+				assembler.toResponse(glowSummary(), glowAccount(), glowCategoryStats(), glowSeries(), null);
+
+		InfluencerDetailResponse.Report report = response.report();
+		assertThat(report.tagline()).isNull();
+		assertThat(report.summary()).isNull();
+		assertThat(report.trend().note()).isNull();
+		assertThat(report.chart().note()).isNull();
+		assertThat(report.contentMix().traits()).isNull();
+		assertThat(report.ads().headline()).isNull();
+		assertThat(report.activity().paceNote()).isNull();
+		// 기존 블록 형태 유지 — 카피 부재가 결정 지표를 건드리지 않는다
+		assertThat(report.trend().direction()).isEqualTo("up");
+		assertThat(report.chart().bars()).hasSize(3);
+		assertThat(report.contentMix().categories()).hasSize(3);
+		assertThat(report.ads().comparison()).isNotNull();
+		assertThat(report.activity().isActive()).isTrue();
+	}
+
+	@Test
+	void adHeadline이_null인_이력은_headline만_null이고_나머지_카피는_유지된다() {
+		AccountAnalysis noAdHeadline = new AccountAnalysis("glow",
+				OffsetDateTime.parse("2026-07-13T00:00:00Z"), "opus",
+				OffsetDateTime.parse("2026-07-12T00:00:00Z"), 12L,
+				"건성 피부 신뢰 리뷰어", "AI 분석 요약 문단", "상승 흐름 유지 중", "릴스가 평균을 끌어올림",
+				List.of("솔직 후기"), null, "이틀에 한 번 꾸준한 페이스");
+
+		InfluencerDetailResponse response =
+				assembler.toResponse(glowSummary(), glowAccount(), glowCategoryStats(), glowSeries(), noAdHeadline);
+
+		assertThat(response.report().ads().headline()).isNull();
+		assertThat(response.report().tagline()).isEqualTo("건성 피부 신뢰 리뷰어");
+		assertThat(response.report().contentMix().traits()).containsExactly("솔직 후기");
 	}
 
 	@Test
 	void accounts가_없으면_표시_필드만_null이고_summaries_값은_유지된다() {
 		InfluencerDetailResponse response =
-				assembler.toResponse(glowSummary(), null, glowCategoryStats(), glowSeries());
+				assembler.toResponse(glowSummary(), null, glowCategoryStats(), glowSeries(), null);
 
 		assertThat(response.profile().displayName()).isNull();
 		assertThat(response.profile().profileImageUrl()).isNull();
@@ -135,7 +190,7 @@ class InfluencerDetailAssemblerTest {
 				OffsetDateTime.parse("2026-07-12T00:00:00Z"), new BigDecimal("2.4"));
 
 		InfluencerDetailResponse response =
-				assembler.toResponse(noAd, glowAccount(), glowCategoryStats(), glowSeries());
+				assembler.toResponse(noAd, glowAccount(), glowCategoryStats(), glowSeries(), null);
 
 		assertThat(response.report().ads().lastAdPostedAt()).isNull();
 		assertThat(response.report().ads().lastAdNote()).isNull();
@@ -154,7 +209,7 @@ class InfluencerDetailAssemblerTest {
 				OffsetDateTime.parse("2026-07-12T00:00:00Z"), new BigDecimal("2.4"));
 
 		InfluencerDetailResponse response =
-				assembler.toResponse(adAvgOnlyNull, glowAccount(), glowCategoryStats(), glowSeries());
+				assembler.toResponse(adAvgOnlyNull, glowAccount(), glowCategoryStats(), glowSeries(), null);
 
 		assertThat(response.report().ads().comparison()).isNull();
 	}
@@ -170,7 +225,7 @@ class InfluencerDetailAssemblerTest {
 				OffsetDateTime.parse("2026-07-14T00:00:00Z"), new BigDecimal("2.4"));
 
 		InfluencerDetailResponse response =
-				assembler.toResponse(today, glowAccount(), glowCategoryStats(), glowSeries());
+				assembler.toResponse(today, glowAccount(), glowCategoryStats(), glowSeries(), null);
 
 		assertThat(response.report().activity().lastUploadDaysAgo()).isEqualTo(0L);
 		assertThat(response.report().activity().isActive()).isTrue();
@@ -195,9 +250,9 @@ class InfluencerDetailAssemblerTest {
 				OffsetDateTime.parse("2026-07-01T00:00:00Z"), new BigDecimal("2.4"));
 
 		InfluencerDetailResponse fourteen =
-				assembler.toResponse(fourteenDaysAgo, glowAccount(), glowCategoryStats(), glowSeries());
+				assembler.toResponse(fourteenDaysAgo, glowAccount(), glowCategoryStats(), glowSeries(), null);
 		InfluencerDetailResponse thirteen =
-				assembler.toResponse(thirteenDaysAgo, glowAccount(), glowCategoryStats(), glowSeries());
+				assembler.toResponse(thirteenDaysAgo, glowAccount(), glowCategoryStats(), glowSeries(), null);
 
 		assertThat(fourteen.report().activity().lastUploadDaysAgo()).isEqualTo(14L);
 		assertThat(fourteen.report().activity().isActive()).isFalse();
