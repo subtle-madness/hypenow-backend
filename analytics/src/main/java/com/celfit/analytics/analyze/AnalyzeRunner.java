@@ -1,8 +1,8 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.ContentAttributePort;
 import com.celfit.analytics.llm.SynthesisPort;
-import com.celfit.analytics.llm.VisionPort;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -10,7 +10,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Predicate;
 import javax.sql.DataSource;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
@@ -47,10 +46,11 @@ public class AnalyzeRunner {
 	@Bean
 	public ContentAnalysisJob contentAnalysisJob(JdbcTemplate rawJdbcTemplate,
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
-			SynthesisPort synthesis, ObjectProvider<VisionPort> vision, AnalyticsSettings settings,
-			@Value("${analytics.vlm-enabled:false}") boolean vlmEnabled) {
+			SynthesisPort synthesis, ContentAttributePort attributes, AnalyticsSettings settings,
+			// vlm-enabled = 썸네일 첨부 게이트 (기본 off — 캡션 기반 5종은 항상 산출)
+			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled) {
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, synthesis,
-				vision.getIfAvailable(), settings, vlmEnabled, headPrecheck());
+				attributes, settings, thumbnailEnabled, headPrecheck());
 	}
 
 	@Bean
