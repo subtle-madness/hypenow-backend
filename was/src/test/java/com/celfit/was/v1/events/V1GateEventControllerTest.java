@@ -83,6 +83,19 @@ class V1GateEventControllerTest {
 	}
 
 	@Test
+	void CSRF_토큰_없이도_익명_이벤트는_204다() throws Exception {
+		// 게이트 이벤트는 CSRF 면제(SecurityConfig) — 익명 첫 방문자는 XSRF-TOKEN 쿠키를 미리 받을 수
+		// 없어 면제 없이는 스펙 6.19의 "익명 기록"이 유실된다. .with(csrf()) 없이도 통과해야 정상.
+		mockMvc.perform(post("/v1/events/gate")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"eventType":"gate_view","payload":{"section":"hero"}}"""))
+				.andExpect(status().isNoContent());
+
+		then(repository).should().insert(isNull(), eq("gate_view"), anyString());
+	}
+
+	@Test
 	void eventType_누락은_기록을_스킵하고_204다() throws Exception {
 		mockMvc.perform(post("/v1/events/gate").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)

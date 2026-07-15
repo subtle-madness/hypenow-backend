@@ -68,7 +68,12 @@ public class SecurityConfig {
 		http
 				.csrf(csrf -> csrf
 						.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()))
+						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler())
+						// 게이트 이벤트만 CSRF 면제 — 익명 첫 방문자는 XSRF-TOKEN 쿠키를 미리 받을 방법이
+						// 없어(첫 요청이 곧 이벤트) 면제 없이는 스펙 6.19의 "익명 기록"이 유실된다.
+						// append-only 측정 로그라 CSRF 표적 가치가 없고(위조돼도 남의 데이터 변조 불가),
+						// fire-and-forget이라 안전하다.
+						.ignoringRequestMatchers("/v1/events/gate"))
 				.cors(cors -> cors.configurationSource(corsConfigurationSource()))
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/api/me", "/api/saved/**").authenticated()
