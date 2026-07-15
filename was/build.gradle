@@ -9,6 +9,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
+	// Boot 4는 자동구성이 모듈로 분리 — spring-session-jdbc 단독으론 자동구성이 없어 starter를 쓴다
+	implementation 'org.springframework.boot:spring-boot-starter-session-jdbc'
 	implementation 'org.flywaydb:flyway-core'
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'

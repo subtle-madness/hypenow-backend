@@ -7,17 +7,19 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * signup/login/logout/me의 세션 쿠키·CSRF·401 계약을 실 DB(Testcontainers) + 실 필터체인으로 검증한다.
  * MockMvc는 spring-security-test 덕분에 springSecurityFilterChain을 그대로 통과한다.
+ * 세션 이어가기는 Spring Session이 발급한 hypenow-session 쿠키 왕복으로 한다 — Spring Session의
+ * 세션은 서블릿 HttpSession(MockHttpSession)이 아니라 저장소 기반이라 .session() 캐리가 안 통한다.
  */
 @AutoConfigureMockMvc
 class AuthFlowIntegrationTest extends IntegrationTest {
@@ -68,7 +70,7 @@ class AuthFlowIntegrationTest extends IntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.email").value("login1@example.com"))
 				.andReturn();
-		assertNotNull(result.getRequest().getSession(false));
+		assertNotNull(result.getResponse().getCookie("hypenow-session"));
 
 		mockMvc.perform(post("/api/auth/login").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -95,7 +97,7 @@ class AuthFlowIntegrationTest extends IntegrationTest {
 				.andExpect(status().isOk())
 				.andReturn();
 
-		mockMvc.perform(get("/api/me").session((MockHttpSession) loginResult.getRequest().getSession()))
+		mockMvc.perform(get("/api/me").cookie(loginResult.getResponse().getCookie("hypenow-session")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.email").value("me1@example.com"));
 	}
@@ -114,12 +116,12 @@ class AuthFlowIntegrationTest extends IntegrationTest {
 								{"email":"logout1@example.com","password":"password123"}"""))
 				.andExpect(status().isOk())
 				.andReturn();
-		MockHttpSession session = (MockHttpSession) loginResult.getRequest().getSession();
+		Cookie session = loginResult.getResponse().getCookie("hypenow-session");
 
-		mockMvc.perform(post("/api/auth/logout").with(csrf()).session(session))
+		mockMvc.perform(post("/api/auth/logout").with(csrf()).cookie(session))
 				.andExpect(status().isNoContent());
 
-		mockMvc.perform(get("/api/me").session(session))
+		mockMvc.perform(get("/api/me").cookie(session))
 				.andExpect(status().isUnauthorized());
 
 		// 미로그인 상태에서 logout을 호출해도 204(멱등)

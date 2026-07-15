@@ -6,8 +6,21 @@ spring:
     username: crawler
     password: crawler
     driver-class-name: org.postgresql.Driver
+  session:
+    jdbc:
+      initialize-schema: never          # DDL은 Flyway(app 스키마)가 소유 — V2__spring_session.sql
+      table-name: app.spring_session
+    timeout: 30d                        # 비활동 30일 = 슬라이딩 만료 (스펙 4절)
 server:
   port: 8081
+  servlet:
+    session:
+      cookie:
+        name: hypenow-session           # 스펙 4절 — 프론트 현재 동작과 일치
+        http-only: true
+        same-site: lax                  # Vercel rewrite 동일 오리진 구도 — Domain 불필요
+        max-age: 30d                    # 영속 쿠키
+        path: /
 was:
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
