@@ -64,7 +64,8 @@ public class V1SavedContentsController {
 		String memo = V1SavedAssembler.normalizeMemo(memoValue == null ? null : memoValue.toString());
 		ContentSave save = repository.upsertContent(principal.getUserId(), contentId, memo);
 
-		ContentItem item = savedAssembler.toContentItem(cardAssembler.toCard(row), save.memo(), save.createdAt());
+		// 저장 목록/응답 카드는 정의상 저장된 콘텐츠 → isContentsSaved=true (스펙 6.6/6.7 예시).
+		ContentItem item = savedAssembler.toContentItem(cardAssembler.toCard(row, true), save.memo(), save.createdAt());
 		HttpStatus status = save.inserted() ? HttpStatus.CREATED : HttpStatus.OK;
 		return ResponseEntity.status(status).body(ApiResponse.ok(item));
 	}
@@ -82,7 +83,8 @@ public class V1SavedContentsController {
 		} else {
 			List<String> codes = saved.stream().map(SavedContentRow::shortCode).toList();
 			Map<String, ContentCard> byCode = repository.findCards(codes).stream()
-					.map(cardAssembler::toCard)
+					.map(r -> cardAssembler.toCard(r, true)) // 저장 목록 카드 → isContentsSaved=true (스펙 6.6)
+
 					.collect(Collectors.toMap(ContentCard::id, c -> c, (a, b) -> a, LinkedHashMap::new));
 			items = savedAssembler.toContentItems(saved, byCode);
 		}

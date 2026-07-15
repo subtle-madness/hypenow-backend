@@ -2,15 +2,23 @@ package com.celfit.was.v1.influencer;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.auth.AppUser;
+import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.common.SavedLookup;
 import com.celfit.was.v1.content.ContentCardAssembler;
+import com.celfit.was.v1.content.ContentCardRow;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -30,12 +38,31 @@ class V1InfluencerControllerTest {
 	@MockitoBean
 	V1InfluencerRepository repository;
 
+	@MockitoBean
+	SavedLookup savedLookup;
+
+	private static AppUserDetails principal() {
+		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash",
+				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
+	}
+
+	private static V1InfluencerRepository.ProfileRow profile() {
+		return new V1InfluencerRepository.ProfileRow("hype_official", "하입 오피셜",
+				"https://img.example.com/p.jpg", 12345L, "https://hype.example.com",
+				321L, 456L, "안녕하세요 하입 오피셜입니다.");
+	}
+
+	private static ContentCardRow row(String code) {
+		return new ContentCardRow(code, "https://thumb/" + code, "캡션",
+				OffsetDateTime.parse("2026-07-02T03:00:00Z"), "reels", new BigDecimal("20"),
+				"https://ig/" + code, 1000L, 100L, 10L, 500L,
+				OffsetDateTime.parse("2026-07-05T03:00:00Z"), "makeup", null, "organic", null, null, null,
+				"hype_official", "하입 오피셜", "https://pic/hype.jpg", 12345L);
+	}
+
 	@Test
 	void 존재하는_핸들은_프로필과_최근_콘텐츠를_반환한다() throws Exception {
-		given(repository.findProfile("hype_official")).willReturn(Optional.of(
-				new V1InfluencerRepository.ProfileRow("hype_official", "하입 오피셜",
-						"https://img.example.com/p.jpg", 12345L, "https://hype.example.com",
-						321L, 456L, "안녕하세요 하입 오피셜입니다.")));
+		given(repository.findProfile("hype_official")).willReturn(Optional.of(profile()));
 		given(repository.findRecentCards("hype_official")).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/influencers/hype_official"))
@@ -53,5 +80,30 @@ class V1InfluencerControllerTest {
 		mockMvc.perform(get("/v1/influencers/ghost"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void 비로그인이면_개인화_필드가_없다() throws Exception {
+		given(repository.findProfile("hype_official")).willReturn(Optional.of(profile()));
+		given(repository.findRecentCards("hype_official")).willReturn(List.of(row("c1")));
+
+		mockMvc.perform(get("/v1/influencers/hype_official"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.isInfluencerSaved").doesNotExist())
+				.andExpect(jsonPath("$.data.recentContents[0].isContentsSaved").doesNotExist());
+	}
+
+	@Test
+	void 로그인이면_개인화_필드를_채운다() throws Exception {
+		given(repository.findProfile("hype_official")).willReturn(Optional.of(profile()));
+		given(repository.findRecentCards("hype_official")).willReturn(List.of(row("c1"), row("c2")));
+		given(savedLookup.savedShortCodes(7L)).willReturn(Set.of("c1"));
+		given(savedLookup.isInfluencerSaved(7L, "hype_official")).willReturn(true);
+
+		mockMvc.perform(get("/v1/influencers/hype_official").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.isInfluencerSaved").value(true))
+				.andExpect(jsonPath("$.data.recentContents[0].isContentsSaved").value(true))
+				.andExpect(jsonPath("$.data.recentContents[1].isContentsSaved").value(false));
 	}
 }

@@ -75,6 +75,7 @@ class V1SavedContentsControllerTest {
 				.andExpect(status().isCreated())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.content.id").value("c1"))
+				.andExpect(jsonPath("$.data.content.isContentsSaved").value(true)) // 저장 응답 카드(스펙 6.7)
 				.andExpect(jsonPath("$.data.memo").value("협업 후보"))
 				.andExpect(jsonPath("$.data.savedAt").value("2026-07-15T00:00:00Z"));
 	}
@@ -150,6 +151,7 @@ class V1SavedContentsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(2))
 				.andExpect(jsonPath("$.data[0].content.id").value("c2")) // 저장순 유지
+				.andExpect(jsonPath("$.data[0].content.isContentsSaved").value(true)) // 저장 목록 카드(스펙 6.6)
 				.andExpect(jsonPath("$.data[1].content.id").value("c1"))
 				.andExpect(jsonPath("$.meta.total").value(2)) // 제외분(gone) 미포함
 				.andExpect(jsonPath("$.meta.limit").value(100));

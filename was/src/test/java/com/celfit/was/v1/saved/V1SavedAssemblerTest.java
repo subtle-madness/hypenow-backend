@@ -73,6 +73,6 @@ class V1SavedAssemblerTest {
 
 	private static ContentCard card(String id) {
 		return new ContentCard(id, null, null, null, null, null, List.of(), null, null, null, null,
-				null, null, null, null, List.of(), List.of(), List.of(), null);
+				null, null, null, null, List.of(), List.of(), List.of(), null, null);
 	}
 }
