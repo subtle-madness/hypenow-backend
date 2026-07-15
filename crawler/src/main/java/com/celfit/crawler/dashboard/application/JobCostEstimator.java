@@ -129,21 +129,14 @@ public class JobCostEstimator {
         List<String> endpoints = new ArrayList<>();
         // 프로필 요청은 소스별 단가(DataLikers 별도), 피드/릴스는 HikerAPI 단가 — 나눠서 합산한다.
         long profileReqs = profileRequestsPerAccount(endpoints);
-        long hikerPages = 0;
-        // 피드: SELF 프로필 원형에 최근 12개가 내장 — 다른 소스는 피드 1페이지 폴백(HikerAPI 유료 1요청)
-        if (profileSource.current() == ProfileSource.SELF) {
-            endpoints.add("최근 피드 12개 — 프로필 원형에 내장 (추가 요청 없음)");
-        } else {
-            endpoints.add("HikerAPI /gql/user/medias (계정당 1회 — 피드 폴백)");
-            hikerPages += 1;
-        }
+        // 피드는 프로필 원형 내장분만 — 별도 요청 없음(폴백 제거). 프로필 실패는 방문 재시도.
         // 릴스는 REELS 잡으로 분리 — 댓글 수집도 꺼져 있음(comments-enabled), 둘 다 표기 제외
-        long requests = targets * (profileReqs + hikerPages);
-        double cost = targets * (profileReqs * profileCostPerRequest()
-                + hikerPages * hikerProperties.costPerRequestUsd());
+        endpoints.add("최근 피드 — 프로필 원형 내장분만 (별도 요청 없음)");
+        long requests = targets * profileReqs;
+        double cost = targets * profileReqs * profileCostPerRequest();
         return new JobCost("collect", "게시물을 위한 프로필 수집",
                 endpoints, targets, requests, requests, cost, cost,
-                "방문당 프로필 갱신 + 최근 피드 12개 — 릴스는 reels 잡 몫, 기간 백필·페이지네이션 없음");
+                "방문당 프로필 1회 — 피드는 원형 내장분, 실패(401 등) 시 방문 재시도. 릴스는 reels 잡 몫");
     }
 
     private JobCost reelsEstimate() {

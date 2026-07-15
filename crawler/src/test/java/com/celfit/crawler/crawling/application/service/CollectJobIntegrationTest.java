@@ -10,9 +10,7 @@ import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
-import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
-import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
@@ -54,7 +52,6 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
     @Autowired InfluencerRepository influencers;
     @Autowired RawProfileRepository rawProfiles;
-    @Autowired RawMediaPageRepository rawMediaPages;
     @Autowired ContentRepository contents;
     @Autowired RawCommentRepository rawComments;
     @Autowired CrawlRunRepository crawlRuns;
@@ -74,24 +71,6 @@ class CollectJobIntegrationTest extends IntegrationTest {
         jdbc.update("delete from influencer where username = ?", USERNAME);
         jdbc.update("delete from influencer where username in (?, ?, ?, ?, ?)",
                 USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT, USERNAME_NOT_BEAUTY, USERNAME_UNJUDGED);
-    }
-
-    /** HIKER_GQL_MEDIAS 빈 페이지만 돌려주는 fake — 열거는 즉시 자연 종료된다. */
-    static UserMediaPageFetcher emptyGqlFetcher() {
-        return new UserMediaPageFetcher() {
-            @Override
-            public RawSource source() {
-                return RawSource.HIKER_GQL_MEDIAS;
-            }
-
-            @Override
-            public Map<String, Object> fetchPage(String userId, String cursor) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("items", List.of());
-                m.put("more_available", false);
-                return m;
-            }
-        };
     }
 
     @Test
@@ -118,9 +97,9 @@ class CollectJobIntegrationTest extends IntegrationTest {
         CommentSourceSelector commentSource = mock(CommentSourceSelector.class); // 빈 열거 → 댓글 호출 없음
 
         CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
-                influencers, rawProfiles, rawMediaPages, contents,
+                influencers, rawProfiles, contents,
                 new ContentUpserter(contents, clock), rawComments,
-                List.of(emptyGqlFetcher()), profileSource, commentSource, executor, settings, clock,
+                profileSource, commentSource, executor, settings, clock,
                 progress, new TransactionTemplate(txManager));
 
         var summary = job.run(TriggerType.MANUAL);

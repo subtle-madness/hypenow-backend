@@ -167,12 +167,12 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // 릴스는 REELS 잡으로 분리 — 계정당: 프로필 1(DataLikers) + 피드폴백 1(Hiker) = 2요청 → 2계정 = 4요청
-        // 비용: 2 × (1×$0.0006 + 1×$0.001) = 2 × $0.0016 = $0.0032 (부동소수점 오차 허용)
-        assertThat(collect.minRequests()).isEqualTo(4);
-        assertThat(collect.minCostUsd()).isCloseTo(0.0032, org.assertj.core.api.Assertions.within(1e-9));
+        // 릴스·피드폴백 모두 제거 — 계정당 프로필 1요청(DataLikers)만 → 2계정 = 2요청
+        // 비용: 2 × $0.0006 = $0.0012 (부동소수점 오차 허용)
+        assertThat(collect.minRequests()).isEqualTo(2);
+        assertThat(collect.minCostUsd()).isCloseTo(0.0012, org.assertj.core.api.Assertions.within(1e-9));
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("DataLikers"));
-        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
+        assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("gql/user/medias"));
         assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("clips"));
     }
 
@@ -217,10 +217,10 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // 릴스 분리 후 계정당 1(프로필) + 1(피드 폴백) = 2회 → 2계정 = 4회
-        assertThat(collect.minRequests()).isEqualTo(4);
-        assertThat(collect.maxRequests()).isEqualTo(4);
-        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
+        // 피드 폴백 제거 — 계정당 프로필 1회만 → 2계정 = 2회
+        assertThat(collect.minRequests()).isEqualTo(2);
+        assertThat(collect.maxRequests()).isEqualTo(2);
+        assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("gql/user/medias"));
     }
 
     @Test

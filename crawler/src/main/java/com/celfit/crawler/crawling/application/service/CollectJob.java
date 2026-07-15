@@ -6,17 +6,13 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
-import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.CommentFetcher;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
-import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
-import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawComment;
-import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -35,10 +31,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 게시물을 위한 프로필 수집 잡 — 인플루언서를 방문해 프로필을 갱신하고, 프로필 원형에 내장된
- * 최근 피드(12개)를 content로 upsert한 뒤 대상 게시물의 댓글을 수집한다. 릴스는 별도 REELS 잡
- * (유료 HikerAPI 구간 분리 — ReelsJob). 기간 컷오프·페이지네이션 없이 방문당 "최근 게시물
- * 한 묶음"만 가져오며, 재방문 주기(collect.revisit-interval-days)마다 다시 방문해 그 사이의
- * 새 게시물을 잡는다.
+ * 최근 피드(12개)를 content로 upsert한 뒤 대상 게시물의 댓글을 수집한다. 피드를 위한 별도
+ * 요청은 없다 — 프로필 원형이 방문의 유일한 재료라, 프로필 갱신 실패(프록시 401 등)는 유료
+ * 폴백 없이 방문 실패로 남겨 다음 실행에서 재시도한다(팔로워 추이 스냅샷 구멍 방지).
+ * 릴스는 별도 REELS 잡(유료 HikerAPI 구간 분리 — ReelsJob). 기간 컷오프·페이지네이션 없이
+ * 방문당 "최근 게시물 한 묶음"만 가져오며, 재방문 주기(collect.revisit-interval-days)마다
+ * 다시 방문해 그 사이의 새 게시물을 잡는다.
  */
 @Service
 public class CollectJob {
@@ -50,11 +48,9 @@ public class CollectJob {
     private final CollectProperties collectProps;
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
-    private final RawMediaPageRepository rawMediaPages;
     private final ContentRepository contents;
     private final ContentUpserter contentUpserter;
     private final RawCommentRepository rawComments;
-    private final List<UserMediaPageFetcher> mediaFetchers;
     private final ProfileSourceSelector profileSourceSelector;
     private final CommentSourceSelector commentSource;
     private final CrawlExecutor executor;
@@ -64,21 +60,17 @@ public class CollectJob {
     private final TransactionTemplate txTemplate;
 
     public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
-                      RawProfileRepository rawProfiles,
-                      RawMediaPageRepository rawMediaPages, ContentRepository contents,
-                      ContentUpserter contentUpserter,
-                      RawCommentRepository rawComments, List<UserMediaPageFetcher> mediaFetchers,
+                      RawProfileRepository rawProfiles, ContentRepository contents,
+                      ContentUpserter contentUpserter, RawCommentRepository rawComments,
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
                       CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
                       TransactionTemplate txTemplate) {
         this.collectProps = collectProps;
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
-        this.rawMediaPages = rawMediaPages;
         this.contents = contents;
         this.contentUpserter = contentUpserter;
         this.rawComments = rawComments;
-        this.mediaFetchers = mediaFetchers;
         this.profileSourceSelector = profileSourceSelector;
         this.commentSource = commentSource;
         this.executor = executor;
@@ -122,18 +114,17 @@ public class CollectJob {
     private record VisitResult(int upserted, int collected) {}
 
     private VisitResult visit(Influencer inf, TriggerType trigger) {
-        // 1) 프로필 갱신 (원형 저장 + followers·userId 추출) — SELF 원형에는 최근 피드 12개가
-        // 내장돼 있어 피드 열거를 겸한다(별도 유료 요청 불필요).
-        ProfileRefresh profile = refreshProfile(inf, trigger);
+        // 1) 프로필 갱신 (원형 저장 + followers·userId 추출) — 방문의 유일한 재료. 실패는
+        // ApifyException으로 방문 실패(재시도) 처리되며 유료 피드 폴백은 없다.
+        Map<String, Object> payload = refreshProfile(inf, trigger);
 
-        // 2) 피드: 내장 타임라인 우선, 없으면(비 SELF 소스·프로필 미확보) 피드 1페이지 폴백
+        // 2) 피드: 프로필 원형에 내장된 최근 12개만 — 내장 타임라인이 없는 소스면 게시물 0건
+        // (프로필 스냅샷 자체는 저장됨)
         Map<String, MediaItemExtractor.MediaItem> inWindow = new LinkedHashMap<>();
-        if (profile.payload() != null && MediaItemExtractor.hasEmbeddedTimeline(profile.payload())) {
-            for (var it : MediaItemExtractor.extract(profile.payload(), RawSource.SELF_GQL)) {
+        if (MediaItemExtractor.hasEmbeddedTimeline(payload)) {
+            for (var it : MediaItemExtractor.extract(payload, RawSource.SELF_GQL)) {
                 inWindow.putIfAbsent(it.shortCode(), it);
             }
-        } else {
-            fetchOnePage(inf, RawSource.HIKER_GQL_MEDIAS, profile.userId(), trigger, inWindow);
         }
 
         // 3) content upsert — 신규 생성·DISCOVERY 승격은 ContentUpserter(REELS 잡과 공유) 규칙.
@@ -161,64 +152,33 @@ public class CollectJob {
         return new VisitResult(upserted, collected);
     }
 
-    /** 방문의 프로필 갱신 결과 — payload는 원형(내장 타임라인 추출용), 갱신 실패 폴백이면 null. */
-    private record ProfileRefresh(String userId, Map<String, Object> payload) {}
-
     /**
-     * 프로필 원형 저장 + followers·igUserId 갱신 후 열거에 쓸 userId와 원형을 반환한다.
-     * 프로필 갱신은 프록시 간헐 401 등으로 언제든 실패할 수 있으므로 방문의 전제가 아니다 —
-     * 실패해도 저장된 igUserId(판정·이전 방문 때 추출)가 있으면 그 값으로 열거를 계속하고,
-     * 그것마저 없을 때만 방문 실패로 던진다.
+     * 프로필 원형 저장 + followers·igUserId 갱신 후 원형(payload)을 반환한다.
+     * 프로필이 방문의 유일한 재료이므로 실패(프록시 간헐 401·응답 누락·userId 추출 실패)는
+     * 전부 ApifyException — 호출자(run 루프)가 방문 실패로 격리하고 다음 실행에서 재시도한다.
      */
-    private ProfileRefresh refreshProfile(Influencer inf, TriggerType trigger) {
+    private Map<String, Object> refreshProfile(Influencer inf, TriggerType trigger) {
         RawSource source = profileSourceSelector.currentSource();
-        String failure = null;
-        try {
-            CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(
-                    JobName.COLLECT, List.of(inf.getUsername()), trigger);
-            for (Map<String, Object> item : ex.items()) {
-                String username = ProfileExtractor.username(item, source);
-                if (username == null || !username.equals(inf.getUsername())) continue;
-                RawProfile rp = new RawProfile(inf.getId(), ex.runId(), source, item, clock.instant());
-                rp.setUsername(username);
-                Long followers = ProfileExtractor.followers(item, source);
-                rp.setFollowers(followers);
-                rawProfiles.save(rp);
-                inf.setFollowers(followers);
-                inf.setLastProfiledAt(clock.instant());
-                String userId = ProfileExtractor.userId(item, source);
-                if (userId != null) {
-                    inf.setIgUserId(userId);
-                    return new ProfileRefresh(userId, item);
-                }
-                failure = "userId 추출 실패";
+        CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(
+                JobName.COLLECT, List.of(inf.getUsername()), trigger);
+        for (Map<String, Object> item : ex.items()) {
+            String username = ProfileExtractor.username(item, source);
+            if (username == null || !username.equals(inf.getUsername())) continue;
+            RawProfile rp = new RawProfile(inf.getId(), ex.runId(), source, item, clock.instant());
+            rp.setUsername(username);
+            Long followers = ProfileExtractor.followers(item, source);
+            rp.setFollowers(followers);
+            rawProfiles.save(rp);
+            inf.setFollowers(followers);
+            inf.setLastProfiledAt(clock.instant());
+            String userId = ProfileExtractor.userId(item, source);
+            if (userId == null) {
+                throw new ApifyException("프로필 userId 추출 실패 — 방문 재시도: " + inf.getUsername());
             }
-            if (failure == null) failure = "응답에 계정 없음(401 차단 등)";
-        } catch (ApifyException e) {
-            failure = "프로필 요청 실패: " + e.getMessage();
+            inf.setIgUserId(userId);   // REELS 잡의 pk 재료 — 백필
+            return item;
         }
-        String stored = inf.getIgUserId();
-        if (stored == null) {
-            throw new ApifyException("프로필 확보 실패(저장된 userId도 없음) — " + failure + ": " + inf.getUsername());
-        }
-        log.warn("collect 프로필 갱신 실패({}) — 저장된 userId로 열거 계속: {}", failure, inf.getUsername());
-        return new ProfileRefresh(stored, null);
-    }
-
-    /** 해당 소스의 첫 페이지만 — 원형 저장 후 추출해 sink에 합류(shortCode dedup). 페이지네이션 없음. */
-    private void fetchOnePage(Influencer inf, RawSource source, String userId, TriggerType trigger,
-                              Map<String, MediaItemExtractor.MediaItem> sink) {
-        UserMediaPageFetcher fetcher = mediaFetchers.stream()
-                .filter(f -> f.source() == source).findFirst().orElse(null);
-        if (fetcher == null) return;
-        CrawlExecutor.Execution ex = executor.execute(JobName.COLLECT, trigger,
-                null, inf.getUsername(), source.name(),
-                () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(userId, null))));
-        Map<String, Object> payload = ex.items().get(0);
-        rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), source, payload, clock.instant()));
-        for (var it : MediaItemExtractor.extract(payload, source)) {
-            sink.putIfAbsent(it.shortCode(), it);
-        }
+        throw new ApifyException("프로필 응답에 계정 없음(401 차단 등) — 방문 재시도: " + inf.getUsername());
     }
 
     private int collectComments(List<Content> pending, TriggerType trigger) {
