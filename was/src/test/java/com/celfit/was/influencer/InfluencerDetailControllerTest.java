@@ -47,7 +47,7 @@ class InfluencerDetailControllerTest {
 						6L, 2L, OffsetDateTime.parse("2026-07-11T00:00:00Z"),
 						OffsetDateTime.parse("2026-07-12T00:00:00Z"), new BigDecimal("2.4"))));
 		given(repository.findAccount("glow")).willReturn(Optional.of(
-				new Account("glow", "글로우", "https://pic/glow.jpg", 42555L)));
+				new Account("glow", "글로우", "https://pic/glow.jpg", 42555L, null)));
 		given(repository.findCategoryStats("glow")).willReturn(List.of(
 				new AccountCategoryStat("glow", "스킨케어", 7L),
 				new AccountCategoryStat("glow", "메이크업", 3L),

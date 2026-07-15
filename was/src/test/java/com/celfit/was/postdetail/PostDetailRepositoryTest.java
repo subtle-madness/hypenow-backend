@@ -25,7 +25,7 @@ class PostDetailRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void setUpTables() {
-		// analytics의 V1__serving_tables.sql과 동일 형상 (컬럼 계약: 뷰 = DDL = record)
+		// analytics의 V1__serving_tables.sql + V31__api_spec_alignment.sql과 동일 형상 (컬럼 계약: 뷰 = DDL = record)
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_comments");
@@ -34,7 +34,8 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    external_link     text
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
@@ -49,7 +50,8 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				    views          bigint,
 				    likes          bigint,
 				    comments       bigint,
-				    hype_score     bigint
+				    hype_score     bigint,
+				    metric_captured_at timestamptz
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE content_comments (
@@ -60,16 +62,17 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				    like_count    bigint
 				)""");
 		jdbcTemplate.update("""
-				INSERT INTO accounts VALUES ('marimood', '마리 MARI', 'https://pic/mari.jpg', 16586)
+				INSERT INTO accounts VALUES ('marimood', '마리 MARI', 'https://pic/mari.jpg', 16586,
+				 'https://link.example/mari')
 				""");
 		jdbcTemplate.update("""
 				INSERT INTO contents VALUES
 				 ('mari01', 'marimood', 'https://thumb/mari01.jpg', '쿨톤 여름 침착 조합',
 				  '2026-06-28T00:00:00Z', 'reels', 18.0, 'https://www.instagram.com/p/mari01/',
-				  1911943, 32969, 488, 1911943),
+				  1911943, 32969, 488, 1911943, '2026-07-01T00:00:00Z'),
 				 ('mari02', 'marimood', 'https://thumb/mari02.jpg', '피드 게시물',
 				  '2026-07-01T00:00:00Z', 'feed', NULL, 'https://www.instagram.com/p/mari02/',
-				  NULL, 2000, 100, 2100)
+				  NULL, 2000, 100, 2100, NULL)
 				""");
 		jdbcTemplate.update("""
 				INSERT INTO content_comments VALUES

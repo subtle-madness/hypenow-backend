@@ -33,10 +33,12 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    external_link     text
 				)""");
 		jdbcTemplate.update("""
-				INSERT INTO accounts VALUES ('glow', '글로우', 'https://pic/glow.jpg', 42555)
+				INSERT INTO accounts VALUES ('glow', '글로우', 'https://pic/glow.jpg', 42555,
+				 'https://link.example/glow')
 				""");
 
 		// 인플루언서 상세 미러 3종: V10__account_detail_tables.sql과 동일 형상

@@ -33,7 +33,7 @@ class InfluencerDetailAssemblerTest {
 	}
 
 	private Account glowAccount() {
-		return new Account("glow", "글로우", "https://pic/glow.jpg", 42555L);
+		return new Account("glow", "글로우", "https://pic/glow.jpg", 42555L, null);
 	}
 
 	private List<AccountCategoryStat> glowCategoryStats() {

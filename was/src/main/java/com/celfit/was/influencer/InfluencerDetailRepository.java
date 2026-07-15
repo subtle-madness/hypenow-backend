@@ -57,7 +57,7 @@ public class InfluencerDetailRepository {
 
 	public Optional<Account> findAccount(String handle) {
 		return safeQuery("accounts", Optional::empty, () -> jdbcClient.sql("""
-				SELECT handle, display_name, profile_image_url, followers
+				SELECT handle, display_name, profile_image_url, followers, external_link
 				FROM accounts
 				WHERE handle = :handle
 				""")

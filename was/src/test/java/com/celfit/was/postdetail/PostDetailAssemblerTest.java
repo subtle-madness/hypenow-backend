@@ -27,11 +27,11 @@ class PostDetailAssemblerTest {
 	private Content reels() {
 		return new Content("mari01", "marimood", "https://thumb/mari01.jpg", "쿨톤 여름 침착 조합",
 				OffsetDateTime.parse("2026-06-28T00:00:00Z"), "reels", new BigDecimal("18.0"),
-				"https://www.instagram.com/p/mari01/", 1911943L, 32969L, 488L, 1911943L);
+				"https://www.instagram.com/p/mari01/", 1911943L, 32969L, 488L, 1911943L, null);
 	}
 
 	private Account account() {
-		return new Account("marimood", "마리 MARI", "https://pic/mari.jpg", 16586L);
+		return new Account("marimood", "마리 MARI", "https://pic/mari.jpg", 16586L, null);
 	}
 
 	@Test
@@ -62,7 +62,7 @@ class PostDetailAssemblerTest {
 	void 피드는_조회수가_없어_참여율이_null이다() {
 		Content feed = new Content("mari02", "marimood", null, "피드 게시물",
 				OffsetDateTime.parse("2026-07-01T00:00:00Z"), "feed", null,
-				"https://www.instagram.com/p/mari02/", null, 2000L, 100L, 2100L);
+				"https://www.instagram.com/p/mari02/", null, 2000L, 100L, 2100L, null);
 
 		PostDetailResponse response =
 				assembler.toResponse(feed, account(), List.of(), Optional.empty(), Optional.empty());
@@ -85,7 +85,7 @@ class PostDetailAssemblerTest {
 	@Test
 	void 게시일이_null이면_경과일도_null이다() {
 		Content undated = new Content("mari03", "marimood", null, null,
-				null, "reels", null, null, 1000L, 10L, 1L, 1000L);
+				null, "reels", null, null, 1000L, 10L, 1L, 1000L, null);
 
 		PostDetailResponse response =
 				assembler.toResponse(undated, account(), List.of(), Optional.empty(), Optional.empty());
@@ -98,7 +98,7 @@ class PostDetailAssemblerTest {
 	void 조회수가_0이면_참여율이_null이다() {
 		Content zeroViews = new Content("mari04", "marimood", null, null,
 				OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", null, null,
-				0L, 10L, 1L, 0L);
+				0L, 10L, 1L, 0L, null);
 
 		PostDetailResponse response =
 				assembler.toResponse(zeroViews, account(), List.of(), Optional.empty(), Optional.empty());

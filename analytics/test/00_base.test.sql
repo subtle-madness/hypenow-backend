@@ -60,6 +60,10 @@ BEGIN
   ASSERT (SELECT views FROM analytics.v_base_detail_history WHERE content_id = 9102) = 7000,
     'v_base_detail_history 9102 videoViewCount fallback != 7000';
 
+  -- 프로필 외부 링크 (API 스펙 정렬): 최신 payload externalUrl 노출
+  ASSERT (SELECT external_link FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'https://link.example/a',
+    'v_base_profile dummy_a external_link != https://link.example/a';
+
   -- 프로필 확장 (C1): 시드 payload에 키 없음 → NULL (키 있는 케이스는 10번 테스트 픽스처가 검증)
   ASSERT (SELECT follows_count FROM analytics.v_base_profile WHERE username = 'dummy_a') IS NULL,
     'v_base_profile dummy_a follows_count not null (seed has no key)';
