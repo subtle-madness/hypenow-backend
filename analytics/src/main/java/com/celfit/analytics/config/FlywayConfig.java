@@ -3,6 +3,7 @@ package com.celfit.analytics.config;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -17,17 +18,20 @@ import org.springframework.context.annotation.Configuration;
 public class FlywayConfig {
 
 	@Bean(initMethod = "migrate")
-	public Flyway analysisFlyway(@Qualifier("analysisDataSource") DataSource analysisDataSource) {
-		return Flyway.configure()
+	public Flyway analysisFlyway(@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			@Value("${analytics.flyway-ignore-missing:true}") boolean ignoreMissing) {
+		var configuration = Flyway.configure()
 				.dataSource(analysisDataSource)
 				.locations("classpath:db/migration/analysis")
 				.baselineOnMigrate(true)
-				.baselineVersion("0")
-				// 공유 dev DB에 병행 브랜치(다른 워크트리)가 적용한 마이그레이션은 이 브랜치엔 파일이 없어
-				// "applied not resolved locally"로 기동이 막힌다 — missing만 검증 완화(적용 스킵 아님).
-				// §4-5 번호대 예약 컨벤션과 한 쌍. 공유 dev DB 한정 양보 —
-				// 운영 프로파일 도입 시 dev로 국한(@Profile 등)하거나 제거할 것 (ARCHITECTURE §8).
-				.ignoreMigrationPatterns("*:missing")
-				.load();
+				.baselineVersion("0");
+		// 공유 dev DB에 병행 브랜치(다른 워크트리)가 적용한 마이그레이션은 이 브랜치엔 파일이 없어
+		// "applied not resolved locally"로 기동이 막힌다 — missing만 검증 완화(적용 스킵 아님).
+		// §4-5 번호대 예약 컨벤션과 한 쌍. 공유 dev DB 한정 양보 —
+		// 클라우드 타깃(application-cloud.yml)은 false로 엄격 검증한다 (ARCHITECTURE §8 해소).
+		if (ignoreMissing) {
+			configuration.ignoreMigrationPatterns("*:missing");
+		}
+		return configuration.load();
 	}
 }

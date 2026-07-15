@@ -25,3 +25,8 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+// bootJar만 산출 — Dockerfile의 COPY build/libs/*.jar 가 단일 파일을 보장
+tasks.named('jar') {
+	enabled = false
+}
