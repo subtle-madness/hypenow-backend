@@ -1,5 +1,6 @@
 package com.celfit.crawler.crawling.application.service;
 
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
@@ -32,6 +33,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ReelsJob {
 
     private static final Logger log = LoggerFactory.getLogger(ReelsJob.class);
+
+    /** 릴스(클립)가 아예 없는 계정의 Hiker 404 표식 — 재시도 무의미, 수확 완료로 마킹한다. */
+    static final String NO_CLIPS_MARK = "Entries not found";
 
     public record Summary(int visited, int postsUpserted, int skippedNoPk, int failedVisits) {}
 
@@ -103,9 +107,21 @@ public class ReelsJob {
         UserMediaPageFetcher fetcher = mediaFetchers.stream()
                 .filter(f -> f.source() == RawSource.HIKER_V2_CLIPS).findFirst()
                 .orElseThrow(() -> new IllegalStateException("HIKER_V2_CLIPS 페처 미등록"));
-        CrawlExecutor.Execution ex = executor.execute(JobName.REELS, trigger,
-                null, inf.getUsername(), RawSource.HIKER_V2_CLIPS.name(),
-                () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null))));
+        CrawlExecutor.Execution ex;
+        try {
+            ex = executor.execute(JobName.REELS, trigger,
+                    null, inf.getUsername(), RawSource.HIKER_V2_CLIPS.name(),
+                    () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null))));
+        } catch (ApifyException e) {
+            if (e.getMessage() != null && e.getMessage().contains(NO_CLIPS_MARK)) {
+                // 릴스가 아예 없는 계정 — 실패가 아니라 '수확할 것 없음' 확정. 재시도 루프 방지.
+                inf.setLastReelsAt(clock.instant());
+                influencers.save(inf);
+                log.info("릴스 없음(404) — 수확 완료로 마킹: {}", inf.getUsername());
+                return 0;
+            }
+            throw e;
+        }
         Map<String, Object> payload = ex.items().get(0);
         rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), RawSource.HIKER_V2_CLIPS,
                 payload, clock.instant()));

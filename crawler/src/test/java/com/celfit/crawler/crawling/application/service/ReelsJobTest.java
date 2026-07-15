@@ -198,6 +198,31 @@ class ReelsJobTest {
     }
 
     @Test
+    void 릴스가_없는_계정의_404는_수확_완료로_마킹해_재시도_루프를_막는다() {
+        Influencer noClips = beautyTarget(1L, "no_clips_user", "PK1");
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(noClips));
+        UserMediaPageFetcher fetcher = new UserMediaPageFetcher() {
+            @Override
+            public RawSource source() {
+                return RawSource.HIKER_V2_CLIPS;
+            }
+
+            @Override
+            public Map<String, Object> fetchPage(String userId, String cursor) {
+                throw new ApifyException("Hiker HTTP 404: {\"detail\":\"Entries not found\"}");
+            }
+        };
+
+        var s = job(List.of(fetcher)).run(TriggerType.MANUAL);
+
+        assertThat(s.failedVisits()).isZero();          // 실패가 아니라 '릴스 없음' 확정
+        assertThat(s.visited()).isEqualTo(1);
+        assertThat(s.postsUpserted()).isZero();
+        assertThat(noClips.getLastReelsAt()).isEqualTo(NOW);  // 마킹 — 다음 실행에서 재선정 안 됨
+        verify(influencers).save(noClips);
+    }
+
+    @Test
     void 이미_있는_DISCOVERY_행은_새로_만들지_않고_ENUMERATION으로_승격한다() {
         Influencer inf = beautyTarget(1L, "alice", "PK1");
         when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(inf));
