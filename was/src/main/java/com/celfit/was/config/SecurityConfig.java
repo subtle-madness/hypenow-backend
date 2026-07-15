@@ -13,9 +13,17 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.function.Supplier;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.csrf.CsrfTokenRequestHandler;
+import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
+import org.springframework.util.StringUtils;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -52,7 +60,9 @@ public class SecurityConfig {
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 		http
-				.csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()))
+				.csrf(csrf -> csrf
+						.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()))
 				.cors(cors -> cors.configurationSource(corsConfigurationSource()))
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/api/me", "/api/saved/**").authenticated()
@@ -62,6 +72,32 @@ public class SecurityConfig {
 				.httpBasic(AbstractHttpConfigurer::disable)
 				.logout(AbstractHttpConfigurer::disable);
 		return http.build();
+	}
+
+	/**
+	 * SPA용 CSRF 핸들러 (Spring Security 문서 관용구) — 기본 Xor 핸들러만 쓰면 두 가지가 막힌다:
+	 * ① 토큰이 지연 발급이라 첫 쓰기 요청 전에 XSRF-TOKEN 쿠키를 받을 방법이 없고(첫 요청이 무조건 403),
+	 * ② SPA는 쿠키의 raw 값을 X-XSRF-TOKEN 헤더로 되돌려 보내는데 Xor 핸들러는 XOR 인코딩 값만 받는다.
+	 * 그래서 handle()에서 csrfToken.get()으로 매 요청 쿠키 저장을 강제하고(BREACH 방어는 어차피
+	 * 요청 본문에 토큰을 안 싣는 SPA 헤더 방식엔 해당 없음), 헤더로 온 값은 plain 핸들러로 해석한다.
+	 * 실 curl E2E에서 발견 — MockMvc csrf() 후처리기는 쿠키 왕복을 타지 않아 못 잡는 갭.
+	 */
+	static final class SpaCsrfTokenRequestHandler implements CsrfTokenRequestHandler {
+
+		private final CsrfTokenRequestHandler plain = new CsrfTokenRequestAttributeHandler();
+		private final CsrfTokenRequestHandler xor = new XorCsrfTokenRequestAttributeHandler();
+
+		@Override
+		public void handle(HttpServletRequest request, HttpServletResponse response, Supplier<CsrfToken> csrfToken) {
+			xor.handle(request, response, csrfToken);
+			csrfToken.get(); // 지연 발급 해제 — 쿠키가 없으면 이 시점에 XSRF-TOKEN이 내려간다
+		}
+
+		@Override
+		public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken csrfToken) {
+			String headerValue = request.getHeader(csrfToken.getHeaderName());
+			return (StringUtils.hasText(headerValue) ? plain : xor).resolveCsrfTokenValue(request, csrfToken);
+		}
 	}
 
 	@Bean

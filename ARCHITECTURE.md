@@ -74,7 +74,11 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 - **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §4-3). analytics가 쓰고 was가 읽는다.
 - Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
 - **서비스 데이터 (`app` 스키마)** — 로그인·후보 관리 등 was가 직접 읽고 쓰는 일반 앱 데이터.
-  분석 결과와 스키마로 격리, 나중에 물리 분리 가능.
+  분석 결과와 스키마로 격리, 나중에 물리 분리 가능. 테이블 3종(태스크 G): `users`(이메일 lower
+  정규화·BCrypt 해시) / `saved_influencers`(user_id+handle PK, status 어휘
+  reviewing·contact_planned·collaborating + memo) / `saved_contents`(user_id+short_code PK).
+  handle·short_code는 분석 결과 **논리 참조만**(FK·조인 금지 §4-4), Flyway 이력은
+  `app.flyway_schema_history`(was 소유).
 
 ## 4. 관통하는 설계 원칙
 
@@ -195,7 +199,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype. 유통사 필터는 컬럼 신설(VLM 개통) 전까지 매칭 0 | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫. **C2 카피 조립 완료** — account_analyses 최신 1행의 카피 7종을 additive 서빙(이력 없으면 null) | C1, C2 | ✅ |
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
-| G | 서비스 데이터 | `app` 스키마 신설 + 후보 저장·상태·메모 (로그인 등 일반 앱 데이터의 기반) | 독립 | ⬜ |
+| G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일 인증(Spring Security 세션 쿠키·CSRF) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
 
 권장 순서: A → B1, 병렬로 F(스파이크). 상세 구현 계획은 태스크 착수 시 작성.
 
@@ -223,6 +227,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-15 | **태스크 G: 서비스 데이터 완료** — `app` 스키마(was 소유 Flyway, 이력 `app.flyway_schema_history`) + 이메일+비밀번호 인증(Spring Security DaoAuthenticationProvider·BCrypt·세션 쿠키, 미인증 401 고정) + 저장 2종(인플루언서 후보 상태·메모 부분 갱신 upsert / 콘텐츠 북마크 멱등 upsert). 상태 어휘는 was가 생산자로 확정: `reviewing·contact_planned·collaborating`. CSRF는 XSRF-TOKEN 쿠키 + **SpaCsrfTokenRequestHandler**(지연 발급 해제 + raw 헤더 허용 — 기본 Xor 핸들러만으론 SPA가 첫 쓰기 전 쿠키를 못 받고 raw 값도 403, 실 curl E2E에서 발견). CORS는 WebConfig GET-only를 걷어내고 SecurityConfig `CorsConfigurationSource`로 일원화(allowCredentials). 저장 기술은 JdbcClient 유지(기존 관용구·최소 의존). 확장점: spring-session-jdbc(현 인메모리 세션)·운영 HTTPS 쿠키(Secure·SameSite=None). 같은 태스크의 딴 갈래였던 후보 관리 단독 구현은 닫힌 [PR #13](https://github.com/subtle-madness/hypenow-backend/pull/13)에 보존 — app V1 충돌·후보 기능 중복으로 이 설계(07-14 사용자 확정)로 일원화 | [plans/archive/2026-07-14-task-g-service-data.md](docs/superpowers/plans/archive/2026-07-14-task-g-service-data.md) |
 | 2026-07-14 | **E에 C2 카피 additive 조립 완료** — `account_analyses` 계정별 최신 1행(계약 record `AccountAnalysis`)을 report의 tagline·summary·trend.note·chart.note·contentMix.traits·ads.headline·activity.paceNote로 서빙. 미러와 SQL 조인 없이 was 코드 조합(§4-4), traits(jsonb)는 was 매핑 계층 파싱. 이력 없으면 카피 전부 null(블록 형태 유지), adHeadline은 이력 있어도 null 허용. ads.brands는 캡션 분류 후속(§8)까지 필드 부재 유지 | [specs/2026-07-14-c2-account-llm-design.md §1](docs/superpowers/specs/2026-07-14-c2-account-llm-design.md) |
 | 2026-07-14 | **캡션 분류 + B3 숙성 가드 (B4)** — 캡션 5종(광고 구분·카테고리·브랜드·제품·유통사)을 별도 잡이 아닌 기존 속성 콜 전환(캡션 항상·썸네일 생존 시만 첨부, 병합은 모델 안에서)으로. 어휘는 analysis DB `beauty_taxonomy`·`beauty_distributors`(V30 시드)로 이동 — BeautyTaxonomy는 로더 스냅샷, 프롬프트·sanitize 동일 원천 유지, main_category CHECK는 sanitize로 이관. `detected_products jsonb`([{name,brand}]) 신설. 분석 대상에 게시 후 3일 숙성 가드(`analytics.analyze-maturity-days`) | [specs/2026-07-14-caption-classification-design.md](docs/superpowers/specs/2026-07-14-caption-classification-design.md) |
 | 2026-07-14 | **게시물 지표 +3일 고정 구현(정정 ③)** — `v_contents` 지표를 업로드 +3일 이후 **가장 이른** 스냅샷으로 고정(키 `analytics.metric-pin-days` 기본 3 — B3 숙성 가드의 "게시 후 3일"과 같은 기준, 키 공유 권장). 고정 후보 없으면 최신 폴백(구크롤러 조기 수집 잔재 5건 보호, 개편 크롤러는 3일 미경과 미수집이라 소멸 예정). 메타(썸네일·캡션)는 최신 유지(서명 URL ~4일 만료 대응). 적용은 `v_contents`만 — 계정 집계(01·10)·B3 기준선(03)은 최신 기준 유지, 미러 DDL·record 무변경. 실데이터 137건 전행 동일 확인(회귀 0). D3·H의 end_date as-of는 이력 조회로 공존 — 매일 재크롤 개시 후 정합은 §8 | [PR #14](https://github.com/subtle-madness/hypenow-backend/pull/14) |
@@ -255,7 +260,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
-| 서비스 데이터 상세 | `app` 스키마 구성·로그인 방식 등은 G 착수 시 설계 |
+| 세션·쿠키 운영 전환 | 세션은 인메모리(재기동 시 로그아웃) — 필요 시 spring-session-jdbc. 운영 배포 시 HTTPS + XSRF/JSESSIONID 쿠키 `Secure; SameSite=None` 설정(크로스 오리진 프론트) |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |
 | 윈도우 24개 전환 | `analytics.recent-window` 12→24 (07-14 정정 — "3개월"은 크롤링 백필 시작 범위이지 윈도우가 아님, 개수 기반 유지). B3 `recent12_*` 네이밍·프론트 "최근 12개" 표기 동반 수정 |

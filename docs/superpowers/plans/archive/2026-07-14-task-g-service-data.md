@@ -1,6 +1,6 @@
 # 태스크 G: 서비스 데이터 — app 스키마 + 인증 + 후보 저장 Implementation Plan
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development 또는 superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** was의 첫 쓰기 기능 — `app` 스키마 신설(was 소유 Flyway), 이메일+비밀번호 인증(Spring Security 풀설정, 세션 쿠키), 저장 기능 2종(콘텐츠 북마크·인플루언서 후보: 상태 검토중/컨택 예정/협업 중 + 메모).
