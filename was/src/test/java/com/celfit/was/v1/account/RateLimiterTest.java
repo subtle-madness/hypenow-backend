@@ -69,6 +69,22 @@ class RateLimiterTest {
 	}
 
 	@Test
+	void 분이_지나면_만료_윈도우가_맵에서_청소된다() {
+		SteppingClock clock = new SteppingClock();
+		RateLimiter limiter = new RateLimiter(clock, 10);
+
+		limiter.tryAcquire("login:old-1@x.com|1.1.1.1");
+		limiter.tryAcquire("login:old-2@x.com|1.1.1.1");
+		assertThat(limiter.size()).isEqualTo(2);
+
+		clock.advance(Duration.ofMinutes(1));
+		limiter.tryAcquire("login:fresh@x.com|1.1.1.1");
+
+		// 분당 1회 스윕 — 이전 분 키 2개는 제거되고 활성 키만 잔존
+		assertThat(limiter.size()).isEqualTo(1);
+	}
+
+	@Test
 	void 키가_다르면_카운터가_분리된다() {
 		RateLimiter limiter = new RateLimiter(new SteppingClock(), 1);
 

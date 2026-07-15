@@ -63,7 +63,7 @@ public class V1AuthController {
 
 		UserProfile profile;
 		try {
-			profile = userRepository.insertProfile(request, passwordEncoder.encode(request.password()));
+			profile = userRepository.insertProfile(request.toNewUser(), passwordEncoder.encode(request.password()));
 		} catch (DuplicateKeyException e) {
 			throw V1ApiException.conflict("EMAIL_ALREADY_EXISTS", "이미 가입된 이메일이에요. 로그인해 주세요.");
 		}

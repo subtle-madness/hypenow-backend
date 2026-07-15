@@ -1,6 +1,5 @@
 package com.celfit.was.auth;
 
-import com.celfit.was.v1.account.SignupRequest;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -32,7 +31,7 @@ public class UserRepository {
 	 * v1 가입(스펙 6.15) — 프로필 전 필드 저장. email은 lower 정규화, 중복이면 DuplicateKeyException.
 	 * marketing_updated_at은 마케팅 동의(true)일 때만 가입 시각으로 기록한다(동의 시각 추적 — 스펙 6.13).
 	 */
-	public UserProfile insertProfile(SignupRequest request, String passwordHash) {
+	public UserProfile insertProfile(NewUser newUser, String passwordHash) {
 		return jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, name, nickname, user_type, signup_route,
 				                       phone_country_code, phone_number, company_name, company_size,
@@ -44,22 +43,22 @@ public class UserRepository {
 				        :agreedMarketing, CASE WHEN :agreedMarketing THEN now() END)
 				RETURNING id, email, name, user_type
 				""")
-				.param("email", normalizeEmail(request.email()))
+				.param("email", normalizeEmail(newUser.email()))
 				.param("passwordHash", passwordHash)
-				.param("name", request.name())
-				.param("nickname", request.nickname())
-				.param("userType", request.userType())
-				.param("signupRoute", request.signupRoute())
-				.param("phoneCountryCode", request.phoneCountryCode())
-				.param("phoneNumber", request.phoneNumber())
-				.param("companyName", request.companyName())
-				.param("companySize", request.companySize())
-				.param("industry", request.industry())
-				.param("jobTitle", request.jobTitle())
-				.param("agreedTerms", Boolean.TRUE.equals(request.agreedTerms()))
-				.param("agreedPrivacy", Boolean.TRUE.equals(request.agreedPrivacy()))
-				.param("agreedAge14", Boolean.TRUE.equals(request.agreedAge14()))
-				.param("agreedMarketing", request.marketingAgreed())
+				.param("name", newUser.name())
+				.param("nickname", newUser.nickname())
+				.param("userType", newUser.userType())
+				.param("signupRoute", newUser.signupRoute())
+				.param("phoneCountryCode", newUser.phoneCountryCode())
+				.param("phoneNumber", newUser.phoneNumber())
+				.param("companyName", newUser.companyName())
+				.param("companySize", newUser.companySize())
+				.param("industry", newUser.industry())
+				.param("jobTitle", newUser.jobTitle())
+				.param("agreedTerms", newUser.agreedTerms())
+				.param("agreedPrivacy", newUser.agreedPrivacy())
+				.param("agreedAge14", newUser.agreedAge14())
+				.param("agreedMarketing", newUser.agreedMarketing())
 				.query(UserProfile.class)
 				.single();
 	}

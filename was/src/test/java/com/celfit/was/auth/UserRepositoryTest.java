@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
-import com.celfit.was.v1.account.SignupRequest;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -21,8 +20,8 @@ class UserRepositoryTest extends IntegrationTest {
 	@Autowired
 	JdbcClient jdbcClient;
 
-	private SignupRequest signupRequest(String email, boolean agreedMarketing) {
-		return new SignupRequest(email, "Passw0rd!", "김우민", "우민", "brand", "portal_search",
+	private NewUser newUser(String email, boolean agreedMarketing) {
+		return new NewUser(email, "김우민", "우민", "brand", "portal_search",
 				"+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
 				true, true, true, agreedMarketing);
 	}
@@ -66,7 +65,7 @@ class UserRepositoryTest extends IntegrationTest {
 
 	@Test
 	void insertProfile은_프로필_전_필드를_저장하고_email을_lower_정규화한다() {
-		UserProfile saved = repository.insertProfile(signupRequest("Profile@Example.com", true), "hashed-p1");
+		UserProfile saved = repository.insertProfile(newUser("Profile@Example.com", true), "hashed-p1");
 
 		assertThat(saved.id()).isPositive();
 		assertThat(saved.email()).isEqualTo("profile@example.com");
@@ -95,7 +94,7 @@ class UserRepositoryTest extends IntegrationTest {
 
 	@Test
 	void insertProfile_마케팅_미동의면_marketing_updated_at은_null이다() {
-		UserProfile saved = repository.insertProfile(signupRequest("profile2@example.com", false), "hashed-p2");
+		UserProfile saved = repository.insertProfile(newUser("profile2@example.com", false), "hashed-p2");
 
 		Map<String, Object> row = jdbcClient.sql("SELECT agreed_marketing, marketing_updated_at FROM app.users WHERE id = :id")
 				.param("id", saved.id())
@@ -107,16 +106,16 @@ class UserRepositoryTest extends IntegrationTest {
 
 	@Test
 	void insertProfile_중복_이메일은_DuplicateKeyException이다() {
-		repository.insertProfile(signupRequest("dup-profile@example.com", false), "hashed-p3");
+		repository.insertProfile(newUser("dup-profile@example.com", false), "hashed-p3");
 
 		assertThatThrownBy(() ->
-				repository.insertProfile(signupRequest("DUP-PROFILE@example.com", false), "hashed-p4"))
+				repository.insertProfile(newUser("DUP-PROFILE@example.com", false), "hashed-p4"))
 				.isInstanceOf(DuplicateKeyException.class);
 	}
 
 	@Test
 	void findProfileByEmail은_대소문자_무관하게_프로필_요약을_돌려준다() {
-		repository.insertProfile(signupRequest("find-profile@example.com", false), "hashed-p5");
+		repository.insertProfile(newUser("find-profile@example.com", false), "hashed-p5");
 
 		Optional<UserProfile> found = repository.findProfileByEmail("FIND-PROFILE@example.com");
 
