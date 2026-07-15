@@ -244,6 +244,42 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 게시_후_3일_미경과_콘텐츠는_대상에서_제외된다() {
+		// B3 숙성 가드(07-14 확정): content_analyses는 불변·재분석 없음 — 게시 직후 분석되면
+		// 덜 여문 지표·댓글로 영구 고정된다. 기본 3일 경과 후에만 분석.
+		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
+
+		int processed = job.run();
+
+		assertEquals(1, processed); // post_b만 (post_a는 숙성 미달, post_c는 미분류)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_a")));
+	}
+
+	@Test
+	void 숙성_일수는_app_setting으로_조정된다() {
+		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-maturity-days', '0')");
+
+		int processed = job.run();
+
+		assertEquals(2, processed); // 가드 0일이면 post_a도 대상
+	}
+
+	@Test
+	void posted_at이_NULL인_콘텐츠는_대상에서_제외된다() {
+		// 게시일을 모르면 숙성 여부를 판정할 수 없다 — 실데이터엔 NULL 없음(140/140 확인, 2026-07-15)
+		db.update("UPDATE contents SET posted_at = NULL WHERE short_code = 'post_a'");
+
+		int processed = job.run();
+
+		assertEquals(1, processed); // post_b만
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
 	void 분석_대상은_수집_최신순이다() {
 		// 썸네일 서명 URL이 살아있을 때 VLM을 시도하기 위해 최신 수집분부터 (short_code 순이면 post_a 먼저)
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");

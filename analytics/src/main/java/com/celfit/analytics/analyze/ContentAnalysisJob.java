@@ -20,7 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 콘텐츠 분석 배치 (스펙 §6). 분석 시점 고정·불변 — INSERT만, 재분석 없음.
- * 대상: 미분석 AND (댓글 없음 OR 분류 완료) — classify 선행을 강제.
+ * 대상: 미분석 AND (댓글 없음 OR 분류 완료) AND 게시 후 N일 경과(기본 3 — B3 숙성 가드).
  * 속성 분석은 캡션 주·썸네일 보조 (2026-07-14 캡션 분류 스펙) — 썸네일 만료여도 캡션으로 5종 산출.
  * 콘텐츠 단위 실패 격리: 한 건 실패는 로그 후 계속 (B2 리뷰 반영).
  */
@@ -61,12 +61,15 @@ public class ContentAnalysisJob {
 		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분)
 		List<String> withBaseline = raw.queryForList(
 				"SELECT short_code FROM analytics.v_analysis_baseline ORDER BY captured_at DESC", String.class);
+		// 숙성 가드: 게시 후 N일(기본 3) 경과분만 — 불변 테이블이라 게시 직후 분석되면 영구 고정 (07-14 확정).
+		// posted_at NULL은 부등식에서 자연 제외 (게시일 미상이면 숙성 판정 불가).
 		Set<String> eligible = new HashSet<>(analysis.queryForList("""
 				SELECT c.short_code FROM contents c
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
-				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))""",
-				String.class));
+				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
+				  AND c.posted_at <= now() - make_interval(days => ?)""",
+				String.class, settings.analyzeMaturityDays()));
 		List<String> targets = withBaseline.stream()
 				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())
