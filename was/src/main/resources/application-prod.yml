@@ -1,0 +1,17 @@
+# 운영(오라클) 프로파일 — 값은 deploy/compose.yaml이 환경변수로 주입한다.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+server:
+  # caddy 뒤에서 X-Forwarded-* 를 신뢰 — Secure 쿠키·scheme 판정용
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        secure: true
+        same-site: none   # rewrite·직접 호출 어느 경로든 세션 쿠키 전송 보장 (www↔api는 same-site라 Lax도 되지만 광의로)
+was:
+  cors:
+    allowed-origins: https://www.hypenow.io   # 운영 프론트 오리진만 — dev 오리진은 기본 프로파일에
