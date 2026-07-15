@@ -40,10 +40,23 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 
     ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true'   # 댓글 분류 배치
     ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'  # F-1 스파이크
-    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true'   # 콘텐츠 분석 배치
+    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true'   # 콘텐츠 분석 배치 (VLM off)
+    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true --analytics.vlm-enabled=true'  # +VLM
+    ../gradlew :analytics:bootRun --args='--analytics.vlm-spike-limit=8'         # F-2 VLM 스파이크
 
 ⚠️ `analyze-on-startup`·`vlm-enabled`는 스프링 프로퍼티(`application.yml`/CLI 인자)이지 `app_setting` 키가 아니다.
 분석 대상은 "최근 N개 윈도우 안 + 분류 완료(또는 댓글 0)" 콘텐츠만 (classify 선행을 강제).
+
+### VLM (썸네일 분석) 주의
+
+- **썸네일 서명 URL은 수집 후 ~4일이면 만료**(403 — 2026-07-14 실측). 분석 잡은 수집 최신순으로
+  돌며 호출 전 HEAD 프리체크로 만료 썸네일은 VLM만 스킵(컬럼 NULL)한다 — **VLM 데이터를 채우려면
+  크롤링 후 며칠 안에 분석 배치를 돌려야 한다.**
+- 이미지는 직접 내려받아 base64로 입력한다 — URL 입력은 Anthropic이 인스타 CDN을 robots.txt
+  사유로 거부(F-2 실측).
+- 분류 어휘(대분류 slug·중분류/소분류 한글 라벨·유통사 올리브영/다이소)는 celfit-front 배포본과의
+  계약 — `BeautyTaxonomy`가 단일 원천이고 프론트 필터 어휘가 바뀌면 함께 갱신한다.
+- 비용 실측: VLM 건당 ≈ $0.03~0.05 (opus 4.8, input 3~5.5k/output 0.5~0.9k tok).
 
 ## app_setting 런타임 키 (뷰가 직접 읽음)
 

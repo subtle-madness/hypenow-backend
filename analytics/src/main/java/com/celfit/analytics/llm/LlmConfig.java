@@ -2,17 +2,21 @@ package com.celfit.analytics.llm;
 
 import com.anthropic.client.AnthropicClient;
 import com.celfit.analytics.config.AnalyticsSettings;
+import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * LLM 빈 배선. classify·analyze 게이트가 모두 꺼져 있으면 Anthropic 클라이언트를 아예 만들지 않는다
- * (API 키 불필요). classify-on-startup만 켜도 Synthesis/Vision 포트 빈이 함께 생기지만
- * 소비자(AnalyzeRunner)가 없으면 무해 — AnalyzeRunner 쪽 게이트는 analyze-on-startup이 지킨다.
+ * LLM 빈 배선. classify·analyze·account-analyze 게이트가 모두 꺼져 있으면 Anthropic 클라이언트를
+ * 아예 만들지 않는다 (API 키 불필요). classify-on-startup만 켜도 Synthesis/Vision 포트 빈이 함께 생기지만
+ * 소비자(AnalyzeRunner)가 없으면 무해 — AnalyzeRunner·AccountAnalyzeRunner 쪽 게이트는 각자
+ * analyze-on-startup·account-analyze-on-startup이 지킨다.
  */
 @Configuration
-@ConditionalOnExpression("${analytics.classify-on-startup:false} or ${analytics.analyze-on-startup:false}")
+@ConditionalOnExpression("${analytics.classify-on-startup:false} or ${analytics.analyze-on-startup:false}"
+		+ " or ${analytics.account-analyze-on-startup:false}")
 public class LlmConfig {
 
 	@Bean
@@ -31,7 +35,19 @@ public class LlmConfig {
 	}
 
 	@Bean
-	public VisionPort visionPort(AnthropicClient client, AnalyticsSettings settings) {
-		return new AnthropicVisionAnalyzer(client, settings);
+	public BeautyTaxonomyLoader beautyTaxonomyLoader(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new BeautyTaxonomyLoader(analysisDataSource);
+	}
+
+	@Bean
+	public ContentAttributePort contentAttributePort(AnthropicClient client, AnalyticsSettings settings,
+			BeautyTaxonomyLoader taxonomyLoader) {
+		return new AnthropicContentAttributeAnalyzer(client, settings, taxonomyLoader);
+	}
+
+	@Bean
+	public AccountSynthesisPort accountSynthesisPort(AnthropicClient client, AnalyticsSettings settings) {
+		return new AnthropicAccountSynthesizer(client, settings);
 	}
 }

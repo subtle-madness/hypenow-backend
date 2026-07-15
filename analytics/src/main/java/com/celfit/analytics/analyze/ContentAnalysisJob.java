@@ -1,16 +1,17 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.ContentAttributePort;
+import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.llm.SynthesisPort;
-import com.celfit.analytics.llm.VisionPort;
-import com.celfit.analytics.llm.VlmResult;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,8 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 콘텐츠 분석 배치 (스펙 §6). 분석 시점 고정·불변 — INSERT만, 재분석 없음.
- * 대상: 미분석 AND (댓글 없음 OR 분류 완료) — classify 선행을 강제.
+ * 대상: 미분석 AND (댓글 없음 OR 분류 완료) AND 게시 후 N일 경과(기본 3 — B3 숙성 가드).
+ * 속성 분석은 캡션 주·썸네일 보조 (2026-07-14 캡션 분류 스펙) — 썸네일 만료여도 캡션으로 5종 산출.
  * 콘텐츠 단위 실패 격리: 한 건 실패는 로그 후 계속 (B2 리뷰 반영).
  */
 public class ContentAnalysisJob {
@@ -29,19 +31,22 @@ public class ContentAnalysisJob {
 	private final JdbcTemplate raw;
 	private final JdbcTemplate analysis;
 	private final SynthesisPort synthesis;
-	private final VisionPort vision; // vlmEnabled=false면 null 허용
+	private final ContentAttributePort attributes;
 	private final AnalyticsSettings settings;
-	private final boolean vlmEnabled;
+	private final boolean thumbnailEnabled; // 썸네일 첨부 게이트 — off여도 캡션 기반 속성은 산출
+	private final Predicate<String> thumbnailAlive;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
-			SynthesisPort synthesis, VisionPort vision, AnalyticsSettings settings, boolean vlmEnabled) {
+			SynthesisPort synthesis, ContentAttributePort attributes, AnalyticsSettings settings,
+			boolean thumbnailEnabled, Predicate<String> thumbnailAlive) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.synthesis = synthesis;
-		this.vision = vision;
+		this.attributes = attributes;
 		this.settings = settings;
-		this.vlmEnabled = vlmEnabled;
+		this.thumbnailEnabled = thumbnailEnabled;
+		this.thumbnailAlive = thumbnailAlive;
 	}
 
 	/**
@@ -53,15 +58,20 @@ public class ContentAnalysisJob {
 	 * 영구 잠식한다 (B2의 classified HashSet 패턴과 동일한 자바 측 필터).
 	 */
 	public int run() {
-		Set<String> withBaseline = new HashSet<>(raw.queryForList(
-				"SELECT short_code FROM analytics.v_analysis_baseline", String.class));
-		List<String> targets = analysis.queryForList("""
+		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분)
+		List<String> withBaseline = raw.queryForList(
+				"SELECT short_code FROM analytics.v_analysis_baseline ORDER BY captured_at DESC", String.class);
+		// 숙성 가드: 게시 후 N일(기본 3) 경과분만 — 불변 테이블이라 게시 직후 분석되면 영구 고정 (07-14 확정).
+		// posted_at NULL은 부등식에서 자연 제외 (게시일 미상이면 숙성 판정 불가).
+		Set<String> eligible = new HashSet<>(analysis.queryForList("""
 				SELECT c.short_code FROM contents c
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
 				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-				ORDER BY c.short_code""", String.class).stream()
-				.filter(withBaseline::contains)
+				  AND c.posted_at <= now() - make_interval(days => ?)""",
+				String.class, settings.analyzeMaturityDays()));
+		List<String> targets = withBaseline.stream()
+				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())
 				.toList();
 		String model = settings.llmModel();
@@ -105,8 +115,18 @@ public class ContentAnalysisJob {
 						longOf(rs.getBigDecimal(6)), longOf(rs.getBigDecimal(7)),
 						intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))),
 				shortCode);
-		VlmResult vlm = (vlmEnabled && vision != null)
-				? vision.analyze((String) content.get("thumbnail_url"), (String) content.get("caption"))
+		// 캡션 주·썸네일 보조: 썸네일은 게이트 on + 프리체크 생존일 때만 첨부, 만료·off여도 캡션으로 5종 산출.
+		// 캡션도 썸네일도 없으면 속성 분석에 넣을 입력이 없다 — 속성 컬럼만 NULL로 저장 (행 자체는 생성).
+		// 속성 API 호출 예외(일시 장애)는 기존대로 콘텐츠 실패 → 다음 실행 재대상.
+		String caption = (String) content.get("caption");
+		String thumbnailUrl = (String) content.get("thumbnail_url");
+		boolean attachThumbnail = thumbnailEnabled && thumbnailUrl != null && thumbnailAlive.test(thumbnailUrl);
+		if (thumbnailEnabled && thumbnailUrl != null && !attachThumbnail) {
+			log.info("썸네일 만료/접근 불가 — 캡션만으로 속성 분석: {}", shortCode);
+		}
+		boolean hasCaption = caption != null && !caption.isBlank();
+		ContentAttributes attrs = hasCaption || attachThumbnail
+				? attributes.analyze(caption, attachThumbnail ? thumbnailUrl : null)
 				: null;
 		Map<String, Object> baselineForPrompt = new LinkedHashMap<>();
 		baselineForPrompt.put("recent_reels_avg_views", b.recentReelsAvgViews());
@@ -117,7 +137,7 @@ public class ContentAnalysisJob {
 		baselineForPrompt.put("recent12_avg_comment_count", b.recent12AvgCommentCount());
 		baselineForPrompt.put("category_top_percentile", b.categoryTopPercentile());
 		Synthesis s = synthesis.synthesize(new ContentToAnalyze(shortCode,
-				(String) content.get("account_handle"), (String) content.get("caption"),
+				(String) content.get("account_handle"), caption,
 				(String) content.get("content_type"), (Long) content.get("views"),
 				(Long) content.get("likes"), (Long) content.get("comments"),
 				baselineForPrompt, categoryCounts));
@@ -133,24 +153,27 @@ public class ContentAnalysisJob {
 				  recent12_avg_engagement_rate, recent12_avg_like_count, recent12_avg_comment_count,
 				  category_top_percentile, category_avg_views, category_sample_size,
 				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
-				  detected_product_categories, vlm_attributes, main_category, sub_categories, ad_type,
+				  detected_product_categories, detected_products, vlm_attributes, main_category, sub_categories,
+				  detected_distributors, ad_type,
 				  comment_authenticity_grade, comment_authenticity_note)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?, ?)""",
+				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?)""",
 				shortCode, model,
 				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
 				b.recentReelsAvgViews(), b.rankInRecentReels(), b.recentReelsCount(), b.recentContentsCount(),
 				b.recent12AvgEngagementRate(), b.recent12AvgLikeCount(), b.recent12AvgCommentCount(),
 				b.categoryTopPercentile(), b.categoryAvgViews(), b.categorySampleSize(),
-				toJson(vlm == null ? null : vlm.detectedBrands()),
-				vlm == null ? null : vlm.sponsoredSignalLevel(),
-				toJson(vlm == null ? null : vlm.sponsoredSignalReasons()),
-				vlm == null ? null : vlm.adDisclosure(),
-				toJson(vlm == null ? null : vlm.detectedProductCategories()),
-				toJson(vlm == null ? null : vlm.vlmAttributes()),
-				vlm == null ? null : vlm.mainCategory(),
-				toJson(vlm == null ? null : vlm.subCategories()),
-				vlm == null ? null : vlm.adType(),
+				toJson(attrs == null ? null : attrs.detectedBrands()),
+				attrs == null ? null : attrs.sponsoredSignalLevel(),
+				toJson(attrs == null ? null : attrs.sponsoredSignalReasons()),
+				attrs == null ? null : attrs.adDisclosure(),
+				toJson(attrs == null ? null : attrs.detectedProductCategories()),
+				toJson(attrs == null ? null : attrs.detectedProducts()),
+				toJson(attrs == null ? null : attrs.vlmAttributes()),
+				attrs == null ? null : attrs.mainCategory(),
+				toJson(attrs == null ? null : attrs.subCategories()),
+				toJson(attrs == null ? null : attrs.detectedDistributors()),
+				attrs == null ? null : attrs.adType(),
 				s.commentAuthenticityGrade(), s.commentAuthenticityNote());
 	}
 

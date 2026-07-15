@@ -1,4 +1,4 @@
-package com.celfit.was.post;
+package com.celfit.was.postdemo;
 
 import java.util.List;
 import java.util.Map;
@@ -11,12 +11,12 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 @Controller
-public class PostDetailController {
+public class PostDemoController {
 
-	private final PostDetailRepository postDetailRepository;
+	private final PostDemoRepository postDetailRepository;
 	private final ObjectMapper json = new ObjectMapper();
 
-	public PostDetailController(PostDetailRepository postDetailRepository) {
+	public PostDemoController(PostDemoRepository postDetailRepository) {
 		this.postDetailRepository = postDetailRepository;
 	}
 

@@ -11,7 +11,10 @@ SELECT DISTINCT ON (account_id)
   followers,
   captured_at,
   payload->>'fullName'      AS display_name,
-  payload->>'profilePicUrl' AS profile_image_url
+  payload->>'profilePicUrl' AS profile_image_url,
+  (payload->>'followsCount')::bigint AS follows_count,
+  (payload->>'postsCount')::bigint   AS posts_count,
+  payload->>'biography'              AS biography
 FROM raw_profile
 ORDER BY account_id, captured_at DESC, id DESC;
 
@@ -27,7 +30,10 @@ SELECT DISTINCT ON (content_id)
   (payload->>'videoDuration')::numeric AS video_duration,
   payload->>'type'                     AS media_type,
   captured_at,
-  payload->>'displayUrl' AS thumbnail_url,
+  -- 2026-07-11부터 crawler 신형 payload는 최상위 displayUrl 없이 _rawDetail 안에만 썸네일을 담는다
+  COALESCE(payload->>'displayUrl',
+           payload#>>'{_rawDetail,data,xig_polaris_media,if_not_gated_logged_out,display_uri}')
+                         AS thumbnail_url,
   payload->>'url'        AS original_url
 FROM raw_post_detail
 ORDER BY content_id, captured_at DESC, id DESC;

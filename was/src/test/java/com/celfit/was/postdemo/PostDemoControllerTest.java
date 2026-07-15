@@ -1,4 +1,4 @@
-package com.celfit.was.post;
+package com.celfit.was.postdemo;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.BDDMockito.given;
@@ -17,14 +17,14 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(PostDetailController.class)
-class PostDetailControllerTest {
+@WebMvcTest(PostDemoController.class)
+class PostDemoControllerTest {
 
 	@Autowired
 	private MockMvc mockMvc;
 
 	@MockitoBean
-	private PostDetailRepository postDetailRepository;
+	private PostDemoRepository postDetailRepository;
 
 	private Map<String, Object> post() {
 		Map<String, Object> post = new HashMap<>();

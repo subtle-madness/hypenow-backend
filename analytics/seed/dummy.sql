@@ -21,11 +21,14 @@ INSERT INTO content(id, short_code, content_type, owner_username, uploaded_at, c
  (9103,'dummy_f1','FEED', 'dummy_a', timestamptz '2026-06-03 09:00:00+09',999,'glow','AGGREGATED',   timestamptz '2026-06-03 00:00:00+09','glow_sub','B', true),
  (9104,'dummy_r3','REELS','dummy_b', timestamptz '2026-06-04 09:00:00+09',999,'glow','AGGREGATED',   timestamptz '2026-06-04 00:00:00+09','glow_sub','B', false);
 
--- 상세. 9101은 스냅샷 2개(최신 선택 검증), 9102는 videoPlayCount 없이 videoViewCount만(폴백 검증),
--- 9103은 피드(조회수 필드 없음 → views NULL 검증).
+-- 상세. 9101은 스냅샷 3개(최신 선택 + 신형 payload 썸네일 폴백 검증),
+-- 9102는 videoPlayCount 없이 videoViewCount만(폴백 검증), 9103은 피드(조회수 필드 없음 → views NULL 검증).
+-- 9101 최신(06-06)은 2026-07-11 crawler 신형 payload 재현: 최상위 displayUrl 없이
+-- _rawDetail...display_uri에만 썸네일. 지표는 직전 스냅샷과 동일해 지표 기대값 불변.
 INSERT INTO raw_post_detail(content_id, crawl_run_id, payload, captured_at) VALUES
  (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1 old","likesCount":500,"commentsCount":50,"videoPlayCount":10000,"videoDuration":30,"displayUrl":"https://thumb/dummy_r1_old.jpg","url":"https://www.instagram.com/p/dummy_r1/"}'::jsonb, timestamptz '2026-06-04 09:00:00+09'),
  (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1","likesCount":520,"commentsCount":52,"videoPlayCount":11000,"videoDuration":30,"displayUrl":"https://thumb/dummy_r1.jpg","url":"https://www.instagram.com/p/dummy_r1/"}'::jsonb,     timestamptz '2026-06-05 09:00:00+09'),
+ (9101,9990,'{"shortCode":"dummy_r1","type":"Video","caption":"cap r1","likesCount":520,"commentsCount":52,"videoPlayCount":11000,"videoDuration":30,"url":"https://www.instagram.com/p/dummy_r1/","_rawDetail":{"data":{"xig_polaris_media":{"if_not_gated_logged_out":{"display_uri":"https://thumb/dummy_r1_new.jpg"}}}}}'::jsonb, timestamptz '2026-06-06 09:00:00+09'),
  (9102,9990,'{"shortCode":"dummy_r2","type":"Video","caption":"cap r2","likesCount":300,"commentsCount":30,"videoViewCount":7000,"videoDuration":20,"displayUrl":"https://thumb/dummy_r2.jpg","url":"https://www.instagram.com/p/dummy_r2/"}'::jsonb,      timestamptz '2026-06-05 09:00:00+09'),
  (9103,9990,'{"shortCode":"dummy_f1","type":"Image","caption":"cap f1","likesCount":2000,"commentsCount":100,"displayUrl":"https://thumb/dummy_f1.jpg","url":"https://www.instagram.com/p/dummy_f1/"}'::jsonb,                                             timestamptz '2026-06-06 09:00:00+09'),
  (9104,9990,'{"shortCode":"dummy_r3","type":"Video","caption":"cap r3","likesCount":1000,"commentsCount":80,"videoPlayCount":40000,"videoDuration":15,"displayUrl":"https://thumb/dummy_r3.jpg","url":"https://www.instagram.com/p/dummy_r3/"}'::jsonb,    timestamptz '2026-06-07 09:00:00+09');

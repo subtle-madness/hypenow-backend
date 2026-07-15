@@ -6,15 +6,15 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.ContentAttributePort;
+import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.llm.SynthesisPort;
-import com.celfit.analytics.llm.VisionPort;
-import com.celfit.analytics.llm.VlmResult;
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,9 +24,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
- * 콘텐츠 분석 배치 계약 5케이스 (계획 Task 3):
- * ① 미분석+분류완료 저장 ② 이미 분석 스킵 ③ 댓글 있는데 미분류 제외 ④ vlm-enabled=false → VisionPort 미호출·NULL
- * ⑤ 한 콘텐츠 실패 격리. 골격은 CommentClassificationJobTest 패턴(Testcontainers 1개 + raw 대역 뷰) 재사용.
+ * 콘텐츠 분석 배치 계약 케이스:
+ * ① 미분석+분류완료 저장 ② 이미 분석 스킵 ③ 댓글 있는데 미분류 제외
+ * ④ 속성 분석은 캡션 주·썸네일 보조(게이트 off·프리체크 실패여도 캡션으로 산출, 입력 전무면 생략)
+ * ⑤ 한 콘텐츠 실패 격리 ⑥ B3 숙성 가드(게시 후 3일). 골격은 CommentClassificationJobTest 패턴 재사용.
  */
 @Testcontainers
 class ContentAnalysisJobTest {
@@ -38,7 +39,7 @@ class ContentAnalysisJobTest {
 	DataSource ds;
 	ContentAnalysisJob job;
 	List<ContentToAnalyze> synthesisCalls;
-	List<String> visionCalls;
+	List<String> attributeCalls; // 속성 콜에 전달된 thumbnailUrl (null = 캡션만)
 
 	/** fake SynthesisPort: 호출 기록 + 고정 응답. */
 	SynthesisPort fakeSynthesisPort() {
@@ -48,18 +49,25 @@ class ContentAnalysisJobTest {
 		};
 	}
 
-	/** fake VisionPort: 호출 기록 + 고정 응답 (사용되면 안 되는 케이스에서 호출 여부 검증용). */
-	VisionPort fakeVisionPort() {
-		return (thumbnailUrl, caption) -> {
-			visionCalls.add(thumbnailUrl);
-			return new VlmResult(List.of(new VlmResult.Brand("브랜드A", "화면 노출")), "high",
-					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징"),
-					List.of(new VlmResult.Attribute("무드", "화사함")), "skincare", List.of("클렌징폼"), "sponsored");
+	/** fake ContentAttributePort: 전달된 thumbnailUrl 기록(null=캡션만) + 고정 응답. */
+	ContentAttributePort fakeAttributePort() {
+		return (caption, thumbnailUrl) -> {
+			attributeCalls.add(thumbnailUrl);
+			return new ContentAttributes(List.of(new ContentAttributes.Brand("브랜드A", "화면 노출")), "high",
+					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
+					List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
+					List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
+					List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored");
 		};
 	}
 
-	void rewireJob(SynthesisPort synthesisPort, boolean vlmEnabled) {
-		job = new ContentAnalysisJob(db, ds, synthesisPort, fakeVisionPort(), new AnalyticsSettings(db), vlmEnabled);
+	void rewireJob(SynthesisPort synthesisPort, boolean thumbnailEnabled) {
+		rewireJob(synthesisPort, thumbnailEnabled, url -> true);
+	}
+
+	void rewireJob(SynthesisPort synthesisPort, boolean thumbnailEnabled, java.util.function.Predicate<String> thumbnailAlive) {
+		job = new ContentAnalysisJob(db, ds, synthesisPort, fakeAttributePort(), new AnalyticsSettings(db),
+				thumbnailEnabled, thumbnailAlive);
 	}
 
 	@BeforeEach
@@ -67,13 +75,9 @@ class ContentAnalysisJobTest {
 		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
 		db = new JdbcTemplate(ds);
 		synthesisCalls = new ArrayList<>();
-		visionCalls = new ArrayList<>();
-		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
-		// 테스트 간 완전 초기화 (B2 패턴 — content_analyses 포함)
-		db.update("DROP TABLE IF EXISTS content_analyses, comment_classifications, accounts, contents, content_comments, content_metric_snapshots");
-		db.update("DROP TABLE IF EXISTS app_setting, flyway_schema_history");
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis")
-				.baselineOnMigrate(true).baselineVersion("0").load().migrate();
+		attributeCalls = new ArrayList<>();
+		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
+		TestDb.resetAndMigrate(db, ds);
 
 		// raw 대역: analytics.v_analysis_baseline과 같은 컬럼의 뷰 (고정 수치 테이블 기반).
 		// 실제 뷰의 컬럼 타입(numeric/bigint/smallint 혼재)을 그대로 재현해 JDBC 매퍼(getBigDecimal)를 검증한다.
@@ -91,23 +95,24 @@ class ContentAnalysisJobTest {
 				    recent12_avg_comment_count   numeric,
 				    category_top_percentile      smallint,
 				    category_avg_views           numeric,
-				    category_sample_size         bigint
+				    category_sample_size         bigint,
+				    captured_at                  timestamptz
 				)""");
 		db.update("""
 				CREATE VIEW analytics.v_analysis_baseline AS SELECT * FROM analytics.baseline_fixture""");
 		db.update("""
 				INSERT INTO analytics.baseline_fixture VALUES
-				  ('post_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3),
-				  ('post_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3),
-				  ('post_c', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3)""");
+				  ('post_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3, timestamptz '2026-06-05 09:00:00+09'),
+				  ('post_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3, timestamptz '2026-06-07 09:00:00+09'),
+				  ('post_c', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3, timestamptz '2026-06-06 09:00:00+09')""");
 
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
 		db.update("""
-				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, views, likes, comments) VALUES
-				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', 11000, 520, 52),
-				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', NULL, 2000, 100),
-				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', 7000, 300, 30)""");
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, views, likes, comments) VALUES
+				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', 11000, 520, 52),
+				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', NULL, 2000, 100),
+				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', 7000, 300, 30)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count) VALUES
 				  (1, 'post_a', 'aaa***', '어디서 사요?', 3),
@@ -118,7 +123,8 @@ class ContentAnalysisJobTest {
 				  (1, 'post_a', 'purchase', 'claude-test'),
 				  (2, 'post_a', 'positive', 'claude-test')""");
 
-		job = new ContentAnalysisJob(db, ds, fakeSynthesisPort(), fakeVisionPort(), new AnalyticsSettings(db), false);
+		job = new ContentAnalysisJob(db, ds, fakeSynthesisPort(), fakeAttributePort(), new AnalyticsSettings(db),
+				false, url -> true);
 	}
 
 	@Test
@@ -169,23 +175,126 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void vlm_off이면_VisionPort를_호출하지_않고_VLM_컬럼은_NULL이다() {
-		int processed = job.run(); // 기본 게이트: vlmEnabled=false
+	void 썸네일_게이트_off여도_캡션_기반_속성이_저장된다() {
+		int processed = job.run(); // 기본 게이트: thumbnailEnabled=false
 
 		assertEquals(2, processed);
-		assertTrue(visionCalls.isEmpty());
-		assertNull(db.queryForObject(
-				"SELECT detected_brands FROM content_analyses WHERE short_code = 'post_a'", String.class));
-		assertNull(db.queryForObject(
-				"SELECT sponsored_signal_level FROM content_analyses WHERE short_code = 'post_a'", String.class));
-		assertNull(db.queryForObject(
+		// 속성 콜은 항상 수행되되 썸네일은 미첨부(null) — 캡션 주 경로
+		assertEquals(java.util.Arrays.asList(null, null), attributeCalls);
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("sponsored", db.queryForObject(
 				"SELECT ad_type FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 썸네일_게이트_on이면_생존_썸네일이_첨부되고_제품명까지_저장된다() {
+		rewireJob(fakeSynthesisPort(), true);
+
+		int processed = job.run();
+
+		assertEquals(2, processed);
+		// 수집 최신순: post_b(06-07) → post_a(06-05), 둘 다 썸네일 생존 → URL 첨부
+		assertEquals(List.of("https://img/b.jpg", "https://img/a.jpg"), attributeCalls);
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[\"클렌징폼/젤\", \"클렌징폼\"]", db.queryForObject(
+				"SELECT sub_categories::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[\"올리브영\"]", db.queryForObject(
+				"SELECT detected_distributors::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("[{\"name\": \"딥클렌징폼\", \"brand\": \"브랜드A\"}]", db.queryForObject(
+				"SELECT detected_products::text FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("sponsored", db.queryForObject(
+				"SELECT ad_type FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 썸네일_프리체크_실패면_캡션만으로_속성을_산출한다() {
+		// 만료된 서명 URL 재현: post_a 썸네일만 죽어 있다 — 구 VLM처럼 컬럼 NULL이 아니라 캡션 단독 분석으로 간다
+		rewireJob(fakeSynthesisPort(), true, url -> url.equals("https://img/b.jpg"));
+
+		int processed = job.run();
+
+		assertEquals(2, processed);
+		// post_b는 썸네일 첨부, post_a는 캡션만(null)
+		assertEquals(java.util.Arrays.asList("https://img/b.jpg", null), attributeCalls);
+		assertEquals("요약: post_a", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 캡션도_썸네일도_없으면_속성_콜을_생략하고_컬럼은_NULL이다() {
+		// 입력이 아무것도 없는 콘텐츠 — 속성 분석을 부를 수 없다 (행 자체는 생성돼 배치 슬롯 잠식 방지)
+		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
+		rewireJob(fakeSynthesisPort(), true);
+
+		int processed = job.run();
+
+		assertEquals(2, processed);
+		assertEquals(List.of("https://img/b.jpg"), attributeCalls); // post_a는 속성 콜 생략
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertNull(db.queryForObject(
+				"SELECT detected_products FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		// 종합 텍스트는 정상 저장 — 행은 생성된다
+		assertEquals("요약: post_a", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 게시_후_3일_미경과_콘텐츠는_대상에서_제외된다() {
+		// B3 숙성 가드(07-14 확정): content_analyses는 불변·재분석 없음 — 게시 직후 분석되면
+		// 덜 여문 지표·댓글로 영구 고정된다. 기본 3일 경과 후에만 분석.
+		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
+
+		int processed = job.run();
+
+		assertEquals(1, processed); // post_b만 (post_a는 숙성 미달, post_c는 미분류)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_a")));
+	}
+
+	@Test
+	void 숙성_일수는_app_setting으로_조정된다() {
+		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-maturity-days', '0')");
+
+		int processed = job.run();
+
+		assertEquals(2, processed); // 가드 0일이면 post_a도 대상
+	}
+
+	@Test
+	void posted_at이_NULL인_콘텐츠는_대상에서_제외된다() {
+		// 게시일을 모르면 숙성 여부를 판정할 수 없다 — 실데이터엔 NULL 없음(140/140 확인, 2026-07-15)
+		db.update("UPDATE contents SET posted_at = NULL WHERE short_code = 'post_a'");
+
+		int processed = job.run();
+
+		assertEquals(1, processed); // post_b만
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
+	void 분석_대상은_수집_최신순이다() {
+		// 썸네일 서명 URL이 살아있을 때 VLM을 시도하기 위해 최신 수집분부터 (short_code 순이면 post_a 먼저)
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
+
+		int processed = job.run();
+
+		assertEquals(1, processed);
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class)); // captured_at 최신
 	}
 
 	@Test
 	void 기준선_없는_콘텐츠는_대상에서_제외되고_배치_슬롯을_잠식하지_않는다() {
 		// 윈도우 밖 콘텐츠 재현: contents에는 있지만 기준선 뷰에는 없는 short_code (분류 완료 상태).
-		// 정렬상 첫 대상(post_0)이라 — 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
+		// 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, views, likes, comments)
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', 5000, 100, 10)""");
@@ -199,12 +308,12 @@ class ContentAnalysisJobTest {
 
 		int processed = job.run();
 
-		assertEquals(1, processed); // 기준선 있는 콘텐츠(post_a)가 슬롯을 차지한다
+		assertEquals(1, processed); // 기준선 있는 콘텐츠(수집 최신순 첫 대상 post_b)가 슬롯을 차지한다
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_0'", Long.class));
 		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
 		assertEquals(1L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
 	}
 
 	@Test

@@ -1,4 +1,4 @@
-package com.celfit.was.post;
+package com.celfit.was.postdemo;
 
 import java.util.List;
 import java.util.Map;
@@ -8,11 +8,11 @@ import org.springframework.stereotype.Repository;
 
 /** 게시물 상세 드로어 데모용 조회 — contents ⟕ accounts ⟕ content_analyses + 댓글 분석. */
 @Repository
-public class PostDetailRepository {
+public class PostDemoRepository {
 
 	private final JdbcClient jdbcClient;
 
-	public PostDetailRepository(JdbcClient jdbcClient) {
+	public PostDemoRepository(JdbcClient jdbcClient) {
 		this.jdbcClient = jdbcClient;
 	}
 

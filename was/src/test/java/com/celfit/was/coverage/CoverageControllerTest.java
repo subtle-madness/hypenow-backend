@@ -25,7 +25,7 @@ class CoverageControllerTest {
 	private CoverageRepository coverageRepository;
 
 	@MockitoBean
-	private com.celfit.was.post.PostDetailRepository postDetailRepository;
+	private com.celfit.was.postdemo.PostDemoRepository postDetailRepository;
 
 	@Test
 	void 커버리지_페이지는_타일과_매트릭스를_렌더한다() throws Exception {
