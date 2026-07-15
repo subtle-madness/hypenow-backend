@@ -84,6 +84,22 @@ class RateLimiterTest {
 		assertThat(limiter.size()).isEqualTo(1);
 	}
 
+	// 분 경계 레이스 재현 — 과거 분(M-1) 스냅샷을 든 스레드의 늦은 스윕이 현재 분(M) 카운터를 지우면 안 된다
+	@Test
+	void 과거_분_스윕_유입에도_현재_분_윈도우와_카운터가_보존된다() {
+		SteppingClock clock = new SteppingClock();
+		RateLimiter limiter = new RateLimiter(clock, 1);
+
+		assertThat(limiter.tryAcquire("k")).isTrue(); // 현재 분 윈도우 생성 + 상한 도달
+
+		long staleMinute = clock.instant().getEpochSecond() / 60 - 1;
+		limiter.sweepIfMinuteChanged(staleMinute); // M-1 스냅샷의 늦은 도착
+
+		assertThat(limiter.size()).isEqualTo(1); // 현재 분 윈도우 잔존(삭제됐다면 0)
+		// lastSweepMinute 역행·윈도우 삭제가 있었다면 카운터가 리셋돼 true가 됐을 것
+		assertThat(limiter.tryAcquire("k")).isFalse();
+	}
+
 	@Test
 	void 키가_다르면_카운터가_분리된다() {
 		RateLimiter limiter = new RateLimiter(new SteppingClock(), 1);
