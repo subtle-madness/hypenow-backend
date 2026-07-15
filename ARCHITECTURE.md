@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-14
+> 마지막 갱신: 2026-07-15
 
 ## 1. 제품 한 장 요약
 
@@ -20,7 +20,7 @@ MVP 범위 (07-14 정정 — 댓글 제외):
   댓글 외 LLM 산출(콘텐츠 감지·종합 텍스트·계정 카피)은 전부 MVP 포함
 
 기준 기획: 상세 분석 확정안 (2026-07-10 Artifact, 게시물 드로어 v3 + 인플루언서 상세 v4)
-프론트: celfit-front.vercel.app (별도 저장소)
+프론트: www.hypenow.io (Vercel, 별도 저장소 celfit-front)
 
 ## 2. 시스템 구조
 
@@ -227,6 +227,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-15 | **was+DB 오라클 배포 체계 + 도메인 hypenow.io** — 배포 범위는 was+analysis DB만(크롤·분석은 로컬 유지, 미러가 SSH 터널로 push). 오라클 A1 무료(도쿄, 2/12) + docker compose 3컨테이너(postgres 루프백/was/caddy HTTPS), 이미지 GHCR multi-arch로 타사 30분 이사 가능 구조. 일일 pg_dump(서버 7일)+rclone Google Drive(30일) 백업. 도메인 확보: 프론트 `www.hypenow.io`(Vercel) / API `api.hypenow.io` — 프론트 연동은 Vercel rewrite로 같은 오리진화(CSRF 쿠키), prod CORS는 www.hypenow.io만. was `prod`·analytics `cloud` 프로파일 신설 — Flyway `*:missing` 완화는 dev 기본값으로 국한(§8 해소) | [specs/2026-07-15-oracle-deploy-design.md](docs/superpowers/specs/2026-07-15-oracle-deploy-design.md) |
 | 2026-07-15 | **태스크 G: 서비스 데이터 완료** — `app` 스키마(was 소유 Flyway, 이력 `app.flyway_schema_history`) + 이메일+비밀번호 인증(Spring Security DaoAuthenticationProvider·BCrypt·세션 쿠키, 미인증 401 고정) + 저장 2종(인플루언서 후보 상태·메모 부분 갱신 upsert / 콘텐츠 북마크 멱등 upsert). 상태 어휘는 was가 생산자로 확정: `reviewing·contact_planned·collaborating`. CSRF는 XSRF-TOKEN 쿠키 + **SpaCsrfTokenRequestHandler**(지연 발급 해제 + raw 헤더 허용 — 기본 Xor 핸들러만으론 SPA가 첫 쓰기 전 쿠키를 못 받고 raw 값도 403, 실 curl E2E에서 발견). CORS는 WebConfig GET-only를 걷어내고 SecurityConfig `CorsConfigurationSource`로 일원화(allowCredentials). 저장 기술은 JdbcClient 유지(기존 관용구·최소 의존). 확장점: spring-session-jdbc(현 인메모리 세션)·운영 HTTPS 쿠키(Secure·SameSite=None). 같은 태스크의 딴 갈래였던 후보 관리 단독 구현은 닫힌 [PR #13](https://github.com/subtle-madness/hypenow-backend/pull/13)에 보존 — app V1 충돌·후보 기능 중복으로 이 설계(07-14 사용자 확정)로 일원화 | [plans/archive/2026-07-14-task-g-service-data.md](docs/superpowers/plans/archive/2026-07-14-task-g-service-data.md) |
 | 2026-07-14 | was에 검증용 내부 페이지 2종 — `/coverage`(필드 커버리지 라이브 추적)·`/posts/{shortCode}`(게시물 드로어 시안형 상세 데모). 분석 결과 읽기 전용, 태스크 D(API)와 별개의 데모/점검 화면. 데모 세션의 VLM base64 전환은 B3 개통(아래 행)과 동일 결론으로 합류 | [specs/2026-07-14-was-coverage-page-design.md](docs/superpowers/specs/2026-07-14-was-coverage-page-design.md) |
 | 2026-07-14 | **E에 C2 카피 additive 조립 완료** — `account_analyses` 계정별 최신 1행(계약 record `AccountAnalysis`)을 report의 tagline·summary·trend.note·chart.note·contentMix.traits·ads.headline·activity.paceNote로 서빙. 미러와 SQL 조인 없이 was 코드 조합(§4-4), traits(jsonb)는 was 매핑 계층 파싱. 이력 없으면 카피 전부 null(블록 형태 유지), adHeadline은 이력 있어도 null 허용. ads.brands는 캡션 분류 후속(§8)까지 필드 부재 유지 | [specs/2026-07-14-c2-account-llm-design.md §1](docs/superpowers/specs/2026-07-14-c2-account-llm-design.md) |
@@ -266,7 +267,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |
 | 윈도우 24개 전환 | `analytics.recent-window` 12→24 (07-14 정정 — "3개월"은 크롤링 백필 시작 범위이지 윈도우가 아님, 개수 기반 유지). B3 `recent12_*` 네이밍·프론트 "최근 12개" 표기 동반 수정 |
 | D3·H 지표 고정 정합 | 매일 재크롤 개시 후 end_date=오늘 화면의 as-of(이력 최신)가 +3일 고정과 어긋남 — 목록·상세의 "현재" 지표를 `contents`(고정) 기준으로 전환 검토. 과거 기간 화면 재현·인플루언서 상세 참조용 이력 as-of는 유지 |
-| Flyway missing 완화 국한 | `*:missing` 검증 완화(FlywayConfig)는 공유 dev DB 전용 양보 — 운영 프로파일 도입 시 dev 국한/제거. B3 잔여분 브랜치도 동일 완화 필요(머지 순서에 따라 develop 경유 해소) |
+| ~~Flyway missing 완화 국한~~ | 해소(07-15) — 완화를 프로퍼티(`analytics.flyway-ignore-missing`, dev 기본 true)로 전환, 클라우드 타깃은 false 엄격 검증 |
 
 ## 9. 문서 맵과 수명 규칙
 
