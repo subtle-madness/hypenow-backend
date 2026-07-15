@@ -14,11 +14,18 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
   대상: accounts·contents·content_comments·content_metric_snapshots (등록: MirrorConfig).
 - `test/` — SQL 하니스. 더미 시드를 BEGIN/ROLLBACK으로 격리해 뷰 기대값을 고정.
+- `check/` — 실DB 상태 점검. `coverage.sh`: content-ranking 프론트 화면 요소별로
+  analysis DB 미러의 필드 채움율을 보고 (골격 미러가 비면 실패, LLM 분석·랭킹 구간은 보고만).
+- `export/` — `front_seed.py`: analysis DB(분석 완료분)를 celfit-front 실데이터셋
+  3종(dataset/deep-dives/account-reports)으로 변환해 프론트 시드를 덮어씀 —
+  프론트 실제 뷰(로컬 `pnpm dev`, 인메모리 모드)로 데이터 확인하는 데모용.
 
 ## 실행
 
     ./test/run.sh                    # 뷰 적용 + SQL 테스트 전체 (crawler-postgres-1 필요)
     ./test/run.sh test/00_base.test.sql   # 지정 테스트
+    ./check/coverage.sh              # 미러 결과 필드 커버리지 보고 (실DB)
+    python3 export/front_seed.py [celfit-front 경로]   # 프론트 실뷰 데모 시드 생성
     ../gradlew :analytics:test       # Java 테스트 (Docker 필요)
     ../gradlew :analytics:bootRun    # 미러 1회 실행 (analytics.mirror-on-startup=true)
 

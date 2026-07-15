@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+	<meta charset="UTF-8">
+	<title th:text="'게시물 상세 · ' + ${post['short_code']}">게시물 상세</title>
+	<style>
+		:root {
+			--accent: #4f46e5;
+			--accent-light: #eef0fd;
+			--bg: #f6f7fb;
+			--card-bg: #ffffff;
+			--border: #e4e6ef;
+			--text: #1f2430;
+			--muted: #767c8c;
+			--ok: #1a8a4a;
+			--ok-bg: #e5f6ec;
+			--warn: #b26a00;
+			--warn-bg: #fdf1dc;
+			--bad: #c22f3d;
+			--bad-bg: #fde8ea;
+		}
+		* { box-sizing: border-box; }
+		body {
+			margin: 0;
+			padding: 32px 16px 64px;
+			background: var(--bg);
+			color: var(--text);
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+				Arial, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+			line-height: 1.55;
+		}
+		.container { max-width: 720px; margin: 0 auto; }
+		.back { font-size: 13px; color: var(--muted); text-decoration: none; }
+		.back:hover { color: var(--accent); }
+		header.post { margin: 8px 0 20px; }
+		h1 { font-size: 21px; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.01em; }
+		.who { color: var(--muted); font-size: 13.5px; }
+		.badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+		.badge {
+			display: inline-block; padding: 2px 10px; border-radius: 999px;
+			font-size: 12px; font-weight: 600; background: var(--accent-light); color: var(--accent);
+		}
+		.badge.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); font-weight: 500; }
+		.badge.sponsored { background: var(--warn-bg); color: var(--warn); }
+		.badge.organic { background: var(--ok-bg); color: var(--ok); }
+		.badge.missing { background: var(--bad-bg); color: var(--bad); }
+		.card {
+			background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+			box-shadow: 0 1px 3px rgba(20, 20, 43, 0.04); margin-bottom: 18px; overflow: hidden;
+		}
+		.card h2 {
+			font-size: 14.5px; font-weight: 700; margin: 0; padding: 13px 18px;
+			border-bottom: 1px solid var(--border); background: #fbfbfd;
+		}
+		.card .body { padding: 14px 18px; }
+		.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+		.metric .k { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+		.metric .v { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+		.metric .v.null { color: var(--bad); font-size: 13px; font-weight: 500; }
+		.metric .d { font-size: 11.5px; color: var(--muted); }
+		p.text { margin: 0 0 10px; font-size: 14px; }
+		p.text:last-child { margin-bottom: 0; }
+		.label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 12px 0 4px; }
+		.label:first-child { margin-top: 0; }
+		table { width: 100%; border-collapse: collapse; font-size: 13px; }
+		td { padding: 7px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+		tr:last-child td { border-bottom: none; }
+		td.key { color: var(--muted); width: 130px; padding-right: 12px; white-space: nowrap; }
+		.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+		.bar-row .name { width: 90px; font-size: 12.5px; color: var(--muted); flex-shrink: 0; }
+		.bar-row .track { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+		.bar-row .fill { height: 100%; background: var(--accent); border-radius: 4px; }
+		.bar-row .cnt { font-size: 12.5px; font-variant-numeric: tabular-nums; width: 28px; text-align: right; }
+		.comment { border-top: 1px solid var(--border); padding: 9px 0; font-size: 13px; }
+		.comment:first-of-type { border-top: none; padding-top: 0; }
+		.comment .meta { color: var(--muted); font-size: 11.5px; margin-bottom: 1px; }
+		.caption { white-space: pre-wrap; font-size: 13px; color: var(--muted); }
+		.empty { color: var(--muted); font-style: italic; font-size: 13px; }
+		footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 28px; }
+	</style>
+</head>
+<body>
+<div class="container">
+	<a class="back" href="/coverage">← 커버리지 추적으로</a>
+
+	<header class="post">
+		<h1 th:text="'@' + ${post['account_handle']}">@handle</h1>
+		<div class="who">
+			<span th:text="${post['display_name']}">이름</span>
+			<span th:if="${post['followers'] != null}"
+				  th:text="'· 팔로워 ' + ${#numbers.formatInteger(post['followers'], 0, 'COMMA')}"></span>
+			<span th:if="${post['posted_at'] != null}"
+				  th:text="'· ' + ${#dates.format(post['posted_at'], 'yyyy-MM-dd')} + ' 게시'"></span>
+		</div>
+		<div class="badges">
+			<span class="badge ghost" th:text="${post['content_type'] == 'reels'} ? '릴스' : '피드'">유형</span>
+			<span th:if="${post['ad_type'] != null}" class="badge"
+				  th:classappend="${post['ad_type']}"
+				  th:text="${post['ad_type'] == 'sponsored'} ? '광고/협찬' : '오가닉'"></span>
+			<span th:if="${post['main_category'] != null}" class="badge" th:text="${post['main_category']}"></span>
+			<span th:each="sub : ${subCategories}" class="badge ghost" th:text="${sub}"></span>
+			<span th:if="${post['analyzed_at'] == null}" class="badge missing">LLM 분석 없음</span>
+		</div>
+	</header>
+
+	<!-- 성과 -->
+	<div class="card">
+		<h2>성과</h2>
+		<div class="body">
+			<div class="metrics">
+				<div class="metric"><div class="k">조회수</div>
+					<div class="v" th:if="${post['views'] != null}" th:text="${#numbers.formatInteger(post['views'], 0, 'COMMA')}"></div>
+					<div class="v null" th:if="${post['views'] == null}">NULL (피드)</div></div>
+				<div class="metric"><div class="k">좋아요</div>
+					<div class="v" th:text="${post['likes'] != null} ? ${#numbers.formatInteger(post['likes'], 0, 'COMMA')} : '—'"></div>
+					<div class="d" th:if="${post['recent12_avg_like_count'] != null}"
+						 th:text="'최근12 평균 ' + ${#numbers.formatInteger(post['recent12_avg_like_count'], 0, 'COMMA')}"></div></div>
+				<div class="metric"><div class="k">댓글</div>
+					<div class="v" th:text="${post['comments'] != null} ? ${#numbers.formatInteger(post['comments'], 0, 'COMMA')} : '—'"></div>
+					<div class="d" th:if="${post['recent12_avg_comment_count'] != null}"
+						 th:text="'최근12 평균 ' + ${#numbers.formatInteger(post['recent12_avg_comment_count'], 0, 'COMMA')}"></div></div>
+				<div class="metric"><div class="k">hype</div>
+					<div class="v" th:text="${post['hype_score'] != null} ? ${#numbers.formatInteger(post['hype_score'], 0, 'COMMA')} : '—'"></div></div>
+			</div>
+		</div>
+	</div>
+
+	<!-- 벤치마크 -->
+	<div class="card" th:if="${post['analyzed_at'] != null}">
+		<h2>벤치마크 <span style="font-weight:400; color:var(--muted); font-size:12px;">— 최근 콘텐츠·카테고리 기준</span></h2>
+		<div class="body">
+			<table>
+				<tr th:if="${post['rank_in_recent_reels'] != null}">
+					<td class="key">최근 릴스 내 순위</td>
+					<td th:text="${post['rank_in_recent_reels']} + ' / ' + ${post['recent_reels_count']} + '개'"></td>
+				</tr>
+				<tr th:if="${post['recent_reels_avg_views'] != null}">
+					<td class="key">최근 릴스 평균 조회수</td>
+					<td th:text="${#numbers.formatInteger(post['recent_reels_avg_views'], 0, 'COMMA')}"></td>
+				</tr>
+				<tr th:if="${post['recent12_avg_engagement_rate'] != null}">
+					<td class="key">최근 12개 평균 ER</td>
+					<td th:text="${#numbers.formatDecimal(post['recent12_avg_engagement_rate'], 1, 4)}"></td>
+				</tr>
+				<tr th:if="${post['category_top_percentile'] != null}">
+					<td class="key">카테고리 상위</td>
+					<td th:text="${post['category_top_percentile']} + '% (표본 ' + ${post['category_sample_size']} + ')'"></td>
+				</tr>
+				<tr th:if="${post['category_avg_views'] != null}">
+					<td class="key">카테고리 평균 조회수</td>
+					<td th:text="${#numbers.formatInteger(post['category_avg_views'], 0, 'COMMA')}"></td>
+				</tr>
+			</table>
+			<p class="empty" th:if="${post['rank_in_recent_reels'] == null and post['recent_reels_avg_views'] == null
+				and post['recent12_avg_engagement_rate'] == null and post['category_top_percentile'] == null}">
+				벤치마크 수치 없음 (기준선 미산출)</p>
+		</div>
+	</div>
+
+	<!-- 왜 잘됐나 -->
+	<div class="card" th:if="${post['ai_content_summary'] != null}">
+		<h2>왜 잘됐나 — AI 종합</h2>
+		<div class="body">
+			<p class="text" th:text="${post['ai_content_summary']}"></p>
+			<div th:if="${post['contents_pattern'] != null}">
+				<div class="label">콘텐츠 패턴</div>
+				<p class="text" th:text="${post['contents_pattern']}"></p>
+			</div>
+		</div>
+	</div>
+
+	<!-- 감지 -->
+	<div class="card" th:if="${post['analyzed_at'] != null}">
+		<h2>감지 — 브랜드·광고 시그널</h2>
+		<div class="body">
+			<div class="label">브랜드</div>
+			<table th:if="${!#lists.isEmpty(brands)}">
+				<tr th:each="b : ${brands}">
+					<td class="key" th:text="${b['name']}"></td>
+					<td th:text="${b['evidence']}"></td>
+				</tr>
+			</table>
+			<p class="empty" th:if="${#lists.isEmpty(brands)}">감지된 브랜드 없음</p>
+
+			<div class="label" th:if="${!#lists.isEmpty(productCategories)}">제품 카테고리</div>
+			<div class="badges" th:if="${!#lists.isEmpty(productCategories)}">
+				<span th:each="pc : ${productCategories}" class="badge ghost" th:text="${pc}"></span>
+			</div>
+
+			<div class="label" th:if="${post['sponsored_signal_level'] != null}">광고 시그널</div>
+			<p class="text" th:if="${post['sponsored_signal_level'] != null}">
+				<span class="badge" th:classappend="${post['sponsored_signal_level'] == 'high'} ? 'sponsored' : 'ghost'"
+					  th:text="${post['sponsored_signal_level']}"></span>
+				<span th:if="${post['ad_disclosure'] != null}" th:text="' · ' + ${post['ad_disclosure']}"></span>
+			</p>
+			<ul th:if="${!#lists.isEmpty(signalReasons)}" style="margin:4px 0 0; padding-left:18px; font-size:13px;">
+				<li th:each="r : ${signalReasons}" th:text="${r}"></li>
+			</ul>
+
+			<div class="label" th:if="${!#lists.isEmpty(vlmAttributes)}">화면 속성 (VLM)</div>
+			<table th:if="${!#lists.isEmpty(vlmAttributes)}">
+				<tr th:each="attr : ${vlmAttributes}">
+					<td class="key" th:text="${attr['label']}"></td>
+					<td th:text="${attr['value']}"></td>
+				</tr>
+			</table>
+		</div>
+	</div>
+
+	<!-- 댓글 분석 -->
+	<div class="card">
+		<h2>댓글 분석</h2>
+		<div class="body">
+			<div th:if="${!#lists.isEmpty(breakdown)}">
+				<div class="bar-row" th:each="row : ${breakdown}"
+					 th:with="max=${breakdown[0]['cnt']}">
+					<span class="name" th:text="${categoryLabels[row['ai_category']]} ?: ${row['ai_category']}"></span>
+					<div class="track"><div class="fill" th:style="'width:' + ${100.0 * row['cnt'] / max} + '%'"></div></div>
+					<span class="cnt" th:text="${row['cnt']}"></span>
+				</div>
+			</div>
+			<p class="empty" th:if="${#lists.isEmpty(breakdown)}">분류된 댓글 없음</p>
+
+			<div th:if="${post['comment_authenticity_grade'] != null}">
+				<div class="label">진정성</div>
+				<p class="text">
+					<span class="badge" th:classappend="${post['comment_authenticity_grade'] == 'suspect'} ? 'missing' : (${post['comment_authenticity_grade'] == 'high'} ? 'organic' : 'ghost')"
+						  th:text="${post['comment_authenticity_grade']}"></span>
+					<span th:if="${post['comment_authenticity_note'] != null}" th:text="' ' + ${post['comment_authenticity_note']}"></span>
+				</p>
+			</div>
+
+			<div th:if="${post['ai_comment_insight'] != null}">
+				<div class="label">AI 댓글 인사이트</div>
+				<p class="text" th:text="${post['ai_comment_insight']}"></p>
+			</div>
+
+			<div th:if="${!#lists.isEmpty(topComments)}">
+				<div class="label">대표 댓글 (좋아요순)</div>
+				<div class="comment" th:each="cm : ${topComments}">
+					<div class="meta" th:text="${cm['author_masked']} + (${cm['like_count'] != null} ? ' · ♥ ' + ${cm['like_count']} : '')"></div>
+					<div th:text="${cm['body']}"></div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- 캡션 원문 -->
+	<div class="card">
+		<h2>캡션 원문</h2>
+		<div class="body"><div class="caption" th:text="${post['caption']}"></div></div>
+	</div>
+
+	<footer th:text="${post['analyzed_at'] != null}
+		? '분석: ' + ${post['model']} + ' · ' + ${#dates.format(post['analyzed_at'], 'yyyy-MM-dd HH:mm')} + ' · was module'
+		: 'LLM 분석 전 게시물 · was module'"></footer>
+</div>
+</body>
+</html>
