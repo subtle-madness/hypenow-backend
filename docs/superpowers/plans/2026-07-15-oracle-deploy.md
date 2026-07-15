@@ -34,7 +34,10 @@ server:
     session:
       cookie:
         secure: true
-        same-site: none   # Vercel 프론트가 직접(크로스 사이트) 호출할 때 세션 쿠키 전송 허용
+        same-site: none   # rewrite·직접 호출 어느 경로든 세션 쿠키 전송 보장 (www↔api는 same-site라 Lax도 되지만 광의로)
+was:
+  cors:
+    allowed-origins: https://www.hypenow.io   # 운영 프론트 오리진만 — dev 오리진은 기본 프로파일에
 ```
 
 - [ ] **Step 2: prod 프로파일로 기동 검증** (로컬 DB를 운영 DB 삼아)
@@ -263,7 +266,7 @@ volumes:
 # 서버의 deploy/.env 로 복사해 실제 값 기입 (deploy/.env 는 커밋 금지)
 DB_USER=celfit
 DB_PASSWORD=change-me
-API_DOMAIN=api.example.com
+API_DOMAIN=api.hypenow.io
 ```
 
 - [ ] **Step 4: compose 문법 검증**
@@ -322,7 +325,7 @@ echo "셋업 완료 — 재로그인(docker 그룹) 후 deploy/.env 채우고 'd
 ```bash
 #!/usr/bin/env bash
 # 맥에서 실행: jar 빌드 → multi-arch 이미지 push → 서버 pull·재기동
-# 사용법: deploy/scripts/deploy.sh <ssh-host>   (예: ubuntu@api.example.com)
+# 사용법: deploy/scripts/deploy.sh <ssh-host>   (예: ubuntu@api.hypenow.io)
 set -euo pipefail
 HOST="${1:?사용법: deploy.sh <ssh-host>}"
 IMAGE=ghcr.io/subtle-madness/hypenow-was:latest
@@ -418,8 +421,9 @@ git commit -m "feat(deploy): 서버 셋업·배포·터널·백업 스크립트 
 - SSH 공개키 등록 → 생성 후 공인 IP 확보
 - "Out of capacity" 시: 시간대 바꿔 재시도 (며칠 걸릴 수 있음 — 그 경우 폴백 검토)
 
-## 2. DNS
-- A레코드 `api.<도메인>` → 인스턴스 공인 IP (TTL 300 권장)
+## 2. DNS (hypenow.io)
+- A레코드 `api.hypenow.io` → 인스턴스 공인 IP (TTL 300 권장)
+- 프론트: `www.hypenow.io`를 Vercel 커스텀 도메인으로 연결 (Vercel 안내 따라 CNAME)
 
 ## 3. 최초 기동
 ```bash
@@ -431,7 +435,7 @@ ssh ubuntu@<IP>
 cd ~/deploy && cp .env.example .env && vi .env    # DB_PASSWORD 강한 값, API_DOMAIN 실제 도메인
 docker login ghcr.io -u <github-id>               # read:packages PAT
 docker compose up -d && docker compose ps
-curl -s https://api.<도메인>/health                # {"status":"ok","service":"was"}
+curl -s https://api.hypenow.io/health             # {"status":"ok","service":"was"}
 ```
 
 ## 4. 클라우드 DB 채우기 (맥에서)
@@ -453,12 +457,13 @@ deploy/scripts/deploy.sh ubuntu@<IP>
 - 수동 pull: `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
-## 7. 프론트 연동
+## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
-  `{"rewrites":[{"source":"/api/:path*","destination":"https://api.<도메인>/api/:path*"}]}`
+  `{"rewrites":[{"source":"/api/:path*","destination":"https://api.hypenow.io/api/:path*"}]}`
   → 쿠키가 1st-party가 되어 세션·CSRF(XSRF-TOKEN 쿠키 읽기)가 자연 동작, CORS 불필요
-- 직접 호출(크로스 사이트)도 세션 쿠키는 동작(SameSite=None)하나, **CSRF 쿠키를 다른 도메인 JS가
-  못 읽어 쓰기 요청이 403** — 로그인·저장 기능을 쓰는 순간 rewrite가 사실상 필수
+- 직접 호출도 www↔api가 same-site(hypenow.io)라 세션 쿠키는 동작하나, **XSRF-TOKEN 쿠키가
+  호스트 전용이라 www의 JS가 못 읽어 쓰기 요청이 403** — 로그인·저장을 쓰는 순간 rewrite가 사실상 필수
+- prod CORS 허용 오리진은 `https://www.hypenow.io` (application-prod.yml)
 - 검증: 프론트에서 로그인 → 저장 → 새로고침 유지 확인
 
 ## 8. 오라클 계정 관리
@@ -490,7 +495,7 @@ git commit -m "docs(deploy): 운영 런북 — 인스턴스 생성~기동~배포
 - [ ] **Step 1: §7 결정 기록 맨 위에 추가**
 
 ```markdown
-| 2026-07-15 | **was+DB 오라클 배포 체계** — 배포 범위는 was+analysis DB만(크롤·분석은 로컬 유지, 미러가 SSH 터널로 push). 오라클 A1 무료(도쿄, 2/12) + docker compose 3컨테이너(postgres 루프백/was/caddy HTTPS), 이미지 GHCR multi-arch로 타사 30분 이사 가능 구조. 일일 pg_dump+맥 pull 백업. was `prod`·analytics `cloud` 프로파일 신설 — Flyway `*:missing` 완화는 dev 기본값으로 국한(§8 해소) | [specs/2026-07-15-oracle-deploy-design.md](docs/superpowers/specs/2026-07-15-oracle-deploy-design.md) |
+| 2026-07-15 | **was+DB 오라클 배포 체계 + 도메인 hypenow.io** — 배포 범위는 was+analysis DB만(크롤·분석은 로컬 유지, 미러가 SSH 터널로 push). 오라클 A1 무료(도쿄, 2/12) + docker compose 3컨테이너(postgres 루프백/was/caddy HTTPS), 이미지 GHCR multi-arch로 타사 30분 이사 가능 구조. 일일 pg_dump+맥 pull 백업. 도메인 확보: 프론트 `www.hypenow.io`(Vercel) / API `api.hypenow.io` — 프론트 연동은 Vercel rewrite로 같은 오리진화(CSRF 쿠키), prod CORS는 www.hypenow.io만. was `prod`·analytics `cloud` 프로파일 신설 — Flyway `*:missing` 완화는 dev 기본값으로 국한(§8 해소) | [specs/2026-07-15-oracle-deploy-design.md](docs/superpowers/specs/2026-07-15-oracle-deploy-design.md) |
 ```
 
 - [ ] **Step 2: §8 미결 표의 "Flyway missing 완화 국한" 행을 갱신**
@@ -501,7 +506,11 @@ git commit -m "docs(deploy): 운영 런북 — 인스턴스 생성~기동~배포
 | ~~Flyway missing 완화 국한~~ | 해소(07-15) — 완화를 프로퍼티(`analytics.flyway-ignore-missing`, dev 기본 true)로 전환, 클라우드 타깃은 false 엄격 검증 |
 ```
 
-- [ ] **Step 3: 문서 머리 "마지막 갱신"을 2026-07-15로 수정 후 Commit**
+- [ ] **Step 3: §1의 프론트 표기 갱신**
+
+`프론트: celfit-front.vercel.app (별도 저장소)` → `프론트: www.hypenow.io (Vercel, 별도 저장소 celfit-front)`
+
+- [ ] **Step 4: 문서 머리 "마지막 갱신"을 2026-07-15로 수정 후 Commit**
 
 ```bash
 git add ARCHITECTURE.md
@@ -514,5 +523,5 @@ git commit -m "docs: 오라클 배포 결정 기록 + Flyway 완화 국한 미�
 
 코드 산출물이 머지되면 `deploy/README.md` §0~§4 순서로 진행한다. 사용자 직접 단계:
 오라클 가입(도쿄)·인스턴스 생성·DNS A레코드·GHCR PAT. 이후 함께: 최초 기동 → 터널로
-Flyway+미러 → `https://api.<도메인>/health` 확인 → 프론트 rewrite 연동 → 로그인·저장 E2E →
+Flyway+미러 → `https://api.hypenow.io/health` 확인 → 프론트 rewrite 연동 → 로그인·저장 E2E →
 백업 크론 첫 실행 확인 → 복원 리허설 1회 → (안정화 후) PAYG 전환 + Budget 알림.

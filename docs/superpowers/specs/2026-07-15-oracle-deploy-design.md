@@ -30,15 +30,18 @@
   | `was` | Spring Boot REST API | `prod` 프로파일 신설 |
   | `caddy` | HTTPS 종단 + 리버스 프록시 | Let's Encrypt 자동 발급·갱신 |
 
-- **DNS**: 보유 도메인에 A레코드 `api.<도메인>` → 인스턴스 공인 IP.
+- **DNS**: `api.hypenow.io` A레코드 → 인스턴스 공인 IP. (도메인 `hypenow.io` 확보 — 07-15.
+  프론트는 `https://www.hypenow.io` — Vercel 커스텀 도메인.)
 - **방화벽**: OCI Security List + ufw 이중 — 22(SSH 키 전용)/80/443만 개방. 5432는 열지 않는다.
 - **was `prod` 프로파일**:
   - datasource → 컨테이너 postgres (자격증명은 서버의 `.env`, repo 미포함).
-  - CORS는 기존 celfit-front.vercel.app 허용 유지.
+  - CORS 허용 오리진은 `https://www.hypenow.io` (dev 오리진들은 기본 프로파일에만).
   - **Flyway `*:missing` 완화 없이 엄격 검증** — ARCHITECTURE §8 "완화는 dev 국한" 미결이
     여기서 해소된다. 완화는 dev 프로파일에만 남긴다.
-  - 태스크 G(✅) 인증이 세션 쿠키 기반이므로 크로스 사이트(Vercel↔api 도메인) 쿠키 동작
-    (`SameSite=None; Secure`, CORS credentials)을 배포 검증 항목에 포함한다 — HTTPS 전제는 caddy가 충족.
+  - 태스크 G(✅) 인증이 세션 쿠키 기반 — 프론트(`www.hypenow.io`)와 API(`api.hypenow.io`)가
+    **같은 등록 도메인의 서브도메인(same-site)**이라 세션 쿠키 전송은 자연 동작. 단 CSRF의
+    XSRF-TOKEN 쿠키는 호스트 전용이라 www의 JS가 못 읽는다 — **Vercel rewrite로 같은 오리진화**가
+    정식 연동 경로(런북 수록). 쿠키 왕복·로그인·저장 E2E를 배포 검증 항목에 포함한다.
 
 ## 2. 데이터 흐름 — 클라우드 DB를 채우는 방법
 
@@ -89,7 +92,7 @@
 
 ## 7. 검증 기준
 
-- Vercel 프론트에서 `https://api.<도메인>` 호출로 랭킹·상세·인플루언서 화면 정상 렌더.
-- 로그인·저장(G) 플로우가 크로스 사이트 쿠키로 동작.
+- 프론트(`https://www.hypenow.io`)에서 API 호출로 랭킹·상세·인플루언서 화면 정상 렌더.
+- 로그인·저장(G) 플로우가 rewrite 경유로 동작 (쿠키 왕복 E2E).
 - 로컬 미러 push → 클라우드 DB 반영 → 프론트 갱신 확인.
 - 백업 덤프를 로컬 postgres에 복원해 무결성 확인 (복원 리허설 1회).
