@@ -11,11 +11,13 @@
 **hypenow** — 인스타그램 뷰티 인플루언서 콘텐츠 분석 툴.
 타깃: **마이크로인플루언서를 발굴하려는 뷰티 브랜드 마케터.**
 
-MVP 범위:
+MVP 범위 (07-14 정정 — 댓글 제외):
 - 콘텐츠 랭킹 페이지 (운영 중 — was 대시보드)
-- **게시물 상세 드로어** — 랭킹에서 클릭 시 (성과·벤치마크 + 댓글 분석·감지·"왜 잘됐나")
+- **게시물 상세 드로어** — 랭킹에서 클릭 시 (성과·벤치마크 + 감지·"왜 잘됐나" — 댓글 분석은 제외)
 - **인플루언서 상세 페이지** — 드로어에서 진입 (정체성·성과·일관성·커머셜 + 페르소나·AI 브리핑)
 - **후보 관리** — 후보 저장·상태(검토중/컨택 예정/협업 중)·메모
+- ※ **댓글은 수집·분석 모두 MVP 제외**(07-14) — B2 구현은 보존, MVP 이후 재개.
+  댓글 외 LLM 산출(콘텐츠 감지·종합 텍스트·계정 카피)은 전부 MVP 포함
 
 기준 기획: 상세 분석 확정안 (2026-07-10 Artifact, 게시물 드로어 v3 + 인플루언서 상세 v4)
 프론트: celfit-front.vercel.app (별도 저장소)
@@ -78,7 +80,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 ### 4-1. 최근 N개 윈도우
 
-모든 계정 단위 지표는 계정별 최신 게시물 N개(기본 12)만 잘라 계산한다. 재크롤링이 누적돼도
+모든 계정 단위 지표는 계정별 최신 게시물 N개(기본 12 — 07-14 정정으로 24 전환 예정, §8)만 잘라 계산한다. 재크롤링이 누적돼도
 계정 간 비교가 공정해지고, UI 각주 "최근 N개 기준"이 이 한 곳을 가리킨다.
 N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일 원천 — 뷰가 직접 읽어 재배포 없이 조정.
 
@@ -184,11 +186,11 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | A | 분석 기반 | base 뷰·최근 N개 윈도우 뷰 재작성(raw 접촉은 base 뷰만) + 설정 키 + `contract-analysis` 골격 + 타입 미러·SQL 테스트 하니스 구축 | — | ✅ |
 | F | LLM 공통 | 호출 골격 + **정확도/비용 스파이크** + 모듈 소속 확정 — F-2(VLM)는 B3에서 실험 | — | ✅ |
 | B1 | 드로어 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments + 지표 스냅샷 이력 `content_metric_snapshots` — 07-13 개통) | A | ✅ |
-| B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 | F | ✅ |
+| B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 — **댓글 수집 MVP 제외(07-14)로 신규 유입 없음** | F | ✅ |
 | B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" (07-14 VLM 잔여분 개통 — 어휘는 celfit-front 계약, 유통사 감지 포함) | F, B2 | ✅ |
 | C1 | 인플루언서 비LLM 집계 | AccountReport 결정 지표 — 계정 요약·카테고리 믹스·게시물 시계열 3종 뷰 + 미러 | A | ✅ |
 | C2 | 인플루언서 계정 LLM | AccountReport 카피 7종(tagline~paceNote) — stale+쿨다운 재분석·이력 INSERT. 캡션 분류(브랜드·광고·카테고리)는 별도 후속(B4) | F, C1 | ✅ |
-| D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출) | B1, B2·B3(확장분) | ✅ |
+| D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출). 댓글 수집 제외(07-14)로 comments·aiCategory는 유입 없음 | B1, B2·B3(확장분) | ✅ |
 | D3 | 드로어 as-of | `GET /api/posts/{shortCode}?endDate=` — 집계 기간 끝 시점 스냅샷으로 지표 재구성(captured_at ≤ endDate의 KST 하루 끝 중 최신), 스냅샷 없으면 404(그 시점 화면에 부재). 생략 시 최신 | D, B1(스냅샷 미러) | ✅ |
 | H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype. 유통사 필터는 컬럼 신설(VLM 개통) 전까지 매칭 0 | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫, LLM 카피 7종은 C2 additive | C1, C2(확장분) | ✅ |
@@ -201,10 +203,14 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 - **피드 게시물은 조회수가 항상 NULL** (인스타가 공개 안 함). 평균·히트·확산배율 계산 시 NULL 규칙 필수.
 - 조회수 = 인스타 공개 재생수(`videoPlayCount`, 폴백 `videoViewCount`). 비로그인 취득 가능 실측 확인(07-10).
-- 게시물 지표는 **중복 크롤링으로 스냅샷이 누적**된다(2026-07-12 도입 — 이전의 "+3일 단일 스냅샷" 제약 대체).
-  랭킹 기본 경로는 최신 스냅샷 기준, 시점별 조회는 스냅샷 이력(`content_metric_snapshots`, B1)으로.
-  추이 그래프 UI는 확정안에서 제외된 상태 유지(데이터만 보존).
-- 댓글은 게시물당 **최대 50개** 수집 → 목업의 "214개 분석"은 불가, 카피 정정 필요(미결).
+- 게시물 지표는 **중복 크롤링으로 스냅샷이 누적**되지만, 서빙 지표(`contents`)는 **업로드 +3일 이후
+  가장 이른 스냅샷으로 고정**(07-14 정정 ③ — 키 `analytics.metric-pin-days` 기본 3, B3 숙성 가드와 같은
+  3일 기준). 고정 후보가 없으면 최신 폴백(구크롤러 조기 수집 잔재 5건 보호 — 개편 크롤러는 3일 미경과를
+  수집하지 않아 소멸 예정). 메타(썸네일·캡션)는 최신 스냅샷. 시점별 조회는 스냅샷 이력
+  (`content_metric_snapshots`, B1)으로 — D3·H의 end_date as-of는 이력 조회로 고정 기준과 공존
+  (기간 화면 재현·인플루언서 상세 참조용). 추이 그래프 UI는 확정안에서 제외된 상태 유지(데이터만 보존).
+- **댓글 수집은 MVP 제외**(07-14) — B2 분류·`content_comments` 경로는 신규 유입 없음(구현 보존).
+  재개 시 게시물당 최대 50개 제약이 다시 적용된다("214개 분석" 카피 불가 이슈 포함).
 - 저장·공유·도달·노출 지표 없음. 팔로워는 qualify 시점 값.
 - LLM 댓글 분류 실측 비용: 게시물 1,000건당 Opus ≈ $61 / haiku ≈ $12.2 (동기·무캐시·무배치 기준).
   VLM(썸네일)은 건당 ≈ $0.03~0.05 (opus 4.8, 07-14 실측).
@@ -218,6 +224,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
 | 2026-07-14 | **캡션 분류 + B3 숙성 가드 (B4)** — 캡션 5종(광고 구분·카테고리·브랜드·제품·유통사)을 별도 잡이 아닌 기존 속성 콜 전환(캡션 항상·썸네일 생존 시만 첨부, 병합은 모델 안에서)으로. 어휘는 analysis DB `beauty_taxonomy`·`beauty_distributors`(V30 시드)로 이동 — BeautyTaxonomy는 로더 스냅샷, 프롬프트·sanitize 동일 원천 유지, main_category CHECK는 sanitize로 이관. `detected_products jsonb`([{name,brand}]) 신설. 분석 대상에 게시 후 3일 숙성 가드(`analytics.analyze-maturity-days`) | [specs/2026-07-14-caption-classification-design.md](docs/superpowers/specs/2026-07-14-caption-classification-design.md) |
+| 2026-07-14 | **게시물 지표 +3일 고정 구현(정정 ③)** — `v_contents` 지표를 업로드 +3일 이후 **가장 이른** 스냅샷으로 고정(키 `analytics.metric-pin-days` 기본 3 — B3 숙성 가드의 "게시 후 3일"과 같은 기준, 키 공유 권장). 고정 후보 없으면 최신 폴백(구크롤러 조기 수집 잔재 5건 보호, 개편 크롤러는 3일 미경과 미수집이라 소멸 예정). 메타(썸네일·캡션)는 최신 유지(서명 URL ~4일 만료 대응). 적용은 `v_contents`만 — 계정 집계(01·10)·B3 기준선(03)은 최신 기준 유지, 미러 DDL·record 무변경. 실데이터 137건 전행 동일 확인(회귀 0). D3·H의 end_date as-of는 이력 조회로 공존 — 매일 재크롤 개시 후 정합은 §8 | [PR #14](https://github.com/subtle-madness/hypenow-backend/pull/14) |
+| 2026-07-14 | **MVP 범위·데이터 정책 정정 4건** — ① 크롤링 개편의 "최근 3개월"은 **초기 확보(백필) 시작 범위**이고 지표 윈도우와 무관 — 계정 지표 윈도우는 **최근 24개**(개수 기반 유지, `analytics.recent-window` 12→24). ② **댓글은 수집·분석 모두 MVP 제외** — B2·`content_comments` 경로 신규 유입 없음(구현 보존). 댓글 외 LLM 산출(콘텐츠 감지·종합 텍스트·계정 카피)은 전부 MVP 포함, 게시물 상세 드로어도 MVP 유지(댓글 분석 탭만 데이터 부재). ③ **게시물 지표는 업로드 +3일 시점 고정** — `contents`가 최신 스냅샷을 따라가는 구조 폐기, 재크롤 스냅샷은 이력 보존(인플루언서 상세 조회 참조용). ④ **캡션 LLM 산출 5종 확정: 광고 구분·카테고리·브랜드·제품·유통사** — 항목 목록은 수정 용이 구조로(하드코딩 대신 설정/데이터 기반) | 2026-07-14 방향 정리 세션 |
 | 2026-07-14 | **태스크 E: 인플루언서 상세 API 계약 확정** — 응답 = profile(accounts ⊕ account_summaries, accounts 부재 시 표시 필드 null) + report(C1 지표 전달). 주 리소스는 account_summaries(부재 404). 표현 조립 이행: 경과일 24h 단위·isActive=14일 미만·lastAdNote 문구("마지막 광고 오늘"/"N일 전")·광고 strip(시계열 순 bool). comparison은 organic/ad 평균 한쪽이라도 null이면 블록 null. LLM 카피 7종(summary·trend.note·traits·headline·brands·paceNote·tagline)은 필드 부재 → C2 additive | [plans/2026-07-14-task-e-influencer-api.md](docs/superpowers/plans/2026-07-14-task-e-influencer-api.md) |
 | 2026-07-14 | **크롤링 구조 개편 방향 확정** — 인플루언서 리스트를 먼저 확보 → 계정별 최근 3개월 게시물 크롤 → 매일 신규 게시물만 추가 크롤(기존 게시물 재크롤은 조회수 등 지표 갱신 수준, 콘텐츠 재분석 없음). 게시물 분류는 discovery 키워드 대신 **caption 감지**로 가는 방향. 파생 후속 3건(윈도우 기간 전환·B3 숙성 가드·캡션 분류 태스크)은 §8 | [specs/2026-07-14-c2-account-llm-design.md §6](docs/superpowers/specs/2026-07-14-c2-account-llm-design.md) |
 | 2026-07-14 | **태스크 C2 설계 확정** — AccountReport 카피 7종을 계정당 LLM 1콜로 생성, `account_analyses`(V20 — V11에서 renumber, B3 잔여분 선점 충돌) 이력 INSERT. 재분석 = 신규 즉시 / stale(새 게시물)+**쿨다운 7일**(매일 크롤 대비 비용 가드). adHeadline은 광고 비교 데이터 있을 때만. 계약 record `AccountAnalysis` 신설 — 분석 층 테이블도 생산자가 record로 조립·소비하면 §4-4 쌍 성립 | [specs/2026-07-14-c2-account-llm-design.md](docs/superpowers/specs/2026-07-14-c2-account-llm-design.md) |
@@ -243,13 +251,14 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 항목 | 상태 |
 |---|---|
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행 — CI 환경·도입 시점 |
-| 드로어 댓글 카피 | "214개 분석" 불가 → "최근 최대 50개" 정정 or 상한 상향+비용 재승인 |
+| 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
 | 서비스 데이터 상세 | `app` 스키마 구성·로그인 방식 등은 G 착수 시 설계 |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |
-| 윈도우 기간 전환 | 크롤링 개편(최근 3개월 확정 — §7 07-14) 착지 시 `v_recent_content`를 개수(12)→기간 기반으로 전환. B3 `recent12_*` 네이밍·프론트 "최근 12개" 표기 동반 수정 |
+| 윈도우 24개 전환 | `analytics.recent-window` 12→24 (07-14 정정 — "3개월"은 크롤링 백필 시작 범위이지 윈도우가 아님, 개수 기반 유지). B3 `recent12_*` 네이밍·프론트 "최근 12개" 표기 동반 수정 |
+| D3·H 지표 고정 정합 | 매일 재크롤 개시 후 end_date=오늘 화면의 as-of(이력 최신)가 +3일 고정과 어긋남 — 목록·상세의 "현재" 지표를 `contents`(고정) 기준으로 전환 검토. 과거 기간 화면 재현·인플루언서 상세 참조용 이력 as-of는 유지 |
 | Flyway missing 완화 국한 | `*:missing` 검증 완화(FlywayConfig)는 공유 dev DB 전용 양보 — 운영 프로파일 도입 시 dev 국한/제거. B3 잔여분 브랜치도 동일 완화 필요(머지 순서에 따라 develop 경유 해소) |
 
 ## 9. 문서 맵과 수명 규칙
