@@ -205,7 +205,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
-| P1 | V1 읽기 API | envelope·에러 공통 + `/v1/contents`·`/v1/contents/{id}/ai-report`·`/v1/influencers/{id}`(+ai-report). 병행 데이터 보강: hypeScore 재정의(0~100)·유통사 슬러그·updatedAt·email/externalLink 조사 | H, D, E, B4 | ⬜ |
+| P1 | V1 읽기 API | envelope·에러 공통 + `/v1/contents`·`/v1/contents/{id}/ai-report`·`/v1/influencers/{id}`(+ai-report). 병행 데이터 보강: hypeScore 재정의(0~100)·유통사 슬러그·updatedAt·email/externalLink 조사 (07-15 개통) | H, D, E, B4 | ✅ |
 | P2 | 서비스 데이터 정렬 | G 확장 — Spring Session JDBC(세션 목록·개별 로그아웃·hypenow-session 30일 슬라이딩), users 프로필 필드 V2, 저장 2종 스펙 계약화(+memo), me 부속(비번·이미지·탈퇴), 게이트 이벤트 | G, P1 | ⬜ |
 | P3 | 부가 | `/v1/stats` + `/v1/contents/{id}/similar`(유사도 사전계산 — analytics 신규) | P1 | ⬜ |
 
@@ -237,6 +237,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-15 | **P1 V1 읽기 API 개통** — `/v1` envelope 계약으로 리더보드·콘텐츠 AI 리포트·인플루언서 프로필/리포트 4종 서빙. hypeScore 스펙 5.4 산식(0~100) 재정의 — 피드는 views 부재로 팔로워 ER 축 대체 산식(cbrt(axis²×fresh)×100, 축=min(min(ER,0.3)/0.10,1)), 산식은 `analytics.hype_score()` SQL 함수 단일 원천. 유통사 필터는 `beauty_distributors.slug` 사전 해석, 카테고리 확장 매칭은 `beauty_taxonomy` SQL 처리. email은 미수집 null 확정, 매핑 단계 405/미존재 경로 404는 envelope 미적용(수용) | [plans/archive/2026-07-15-p1-v1-read-api.md](docs/superpowers/plans/archive/2026-07-15-p1-v1-read-api.md) |
 | 2026-07-15 | **프론트 API 스펙 v1 전체 채택** (fit 6.18 제외·보류) — `/v1` prefix + envelope 계약을 was 정본으로, 기존 `/api/*`와 병존 후 전환. 분석 윈도우는 스펙과 12로 정렬(develop 기본값 그대로). 인증은 G 구현 유지+확장: HttpSession→Spring Session JDBC(세션 목록·개별 로그아웃), 쿠키 `hypenow-session` 슬라이딩 30일, same-site(`Domain=.hypenow.io`·`SameSite=Lax`) 전제. hypeScore는 스펙 5.4 산식(0~100)으로 재정의(현행 원값 방식 대체). 트랙 P1(V1 읽기)→P2(서비스 데이터 정렬)→P3(stats·유사도) 분해 | [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md) |
 | 2026-07-15 | **태스크 G: 서비스 데이터 완료** — `app` 스키마(was 소유 Flyway, 이력 `app.flyway_schema_history`) + 이메일+비밀번호 인증(Spring Security DaoAuthenticationProvider·BCrypt·세션 쿠키, 미인증 401 고정) + 저장 2종(인플루언서 후보 상태·메모 부분 갱신 upsert / 콘텐츠 북마크 멱등 upsert). 상태 어휘는 was가 생산자로 확정: `reviewing·contact_planned·collaborating`. CSRF는 XSRF-TOKEN 쿠키 + **SpaCsrfTokenRequestHandler**(지연 발급 해제 + raw 헤더 허용 — 기본 Xor 핸들러만으론 SPA가 첫 쓰기 전 쿠키를 못 받고 raw 값도 403, 실 curl E2E에서 발견). CORS는 WebConfig GET-only를 걷어내고 SecurityConfig `CorsConfigurationSource`로 일원화(allowCredentials). 저장 기술은 JdbcClient 유지(기존 관용구·최소 의존). 확장점: spring-session-jdbc(현 인메모리 세션)·운영 HTTPS 쿠키(Secure·SameSite=None). 같은 태스크의 딴 갈래였던 후보 관리 단독 구현은 닫힌 [PR #13](https://github.com/subtle-madness/hypenow-backend/pull/13)에 보존 — app V1 충돌·후보 기능 중복으로 이 설계(07-14 사용자 확정)로 일원화 | [plans/archive/2026-07-14-task-g-service-data.md](docs/superpowers/plans/archive/2026-07-14-task-g-service-data.md) |
 | 2026-07-14 | was에 검증용 내부 페이지 2종 — `/coverage`(필드 커버리지 라이브 추적)·`/posts/{shortCode}`(게시물 드로어 시안형 상세 데모). 분석 결과 읽기 전용, 태스크 D(API)와 별개의 데모/점검 화면. 데모 세션의 VLM base64 전환은 B3 개통(아래 행)과 동일 결론으로 합류 | [specs/2026-07-14-was-coverage-page-design.md](docs/superpowers/specs/2026-07-14-was-coverage-page-design.md) |
