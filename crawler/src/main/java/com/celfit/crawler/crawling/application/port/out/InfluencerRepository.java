@@ -59,10 +59,15 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     List<Influencer> findByStatusAndBeautySource(InfluencerStatus status, String beautySource,
                                                  Pageable pageable);
 
-    /** REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만. */
+    /**
+     * REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만.
+     * 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 있고 릴스가 없는 "짝 안 맞는" 계정부터 채운다.
+     */
     @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore) "
-            + "order by case when i.lastReelsAt is null then 0 else 1 end, i.lastReelsAt asc nulls first, i.id")
+            + "order by case when i.lastReelsAt is null then 0 else 1 end, "
+            + "case when i.lastCollectedAt is null then 1 else 0 end, "
+            + "i.lastReelsAt asc nulls first, i.id")
     List<Influencer> findReelsTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
 
     /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. */

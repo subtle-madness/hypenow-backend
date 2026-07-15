@@ -200,6 +200,12 @@ class CollectJobIntegrationTest extends IntegrationTest {
         Instant now = clock.instant();
         Instant revisitBefore = now.minus(java.time.Duration.ofDays(settings.revisitIntervalDays()));
 
+        // 프로필 수집이 안 된 릴스 백필 — id가 더 낮아도(먼저 저장) 수집 완료 계정보다 뒤여야 한다
+        Influencer plainBackfill = new Influencer(USERNAME_UNJUDGED);
+        plainBackfill.setStatus(InfluencerStatus.QUALIFIED);
+        plainBackfill.setBeauty(true);
+        Long plainBackfillId = influencers.save(plainBackfill).getId();
+
         Influencer backfill = new Influencer(USERNAME_BACKFILL);
         backfill.setStatus(InfluencerStatus.QUALIFIED);
         backfill.setBeauty(true);
@@ -227,9 +233,11 @@ class CollectJobIntegrationTest extends IntegrationTest {
                 org.springframework.data.domain.PageRequest.of(0, 100));
         List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
 
-        assertThat(targetIds).contains(backfillId, dueId);
+        assertThat(targetIds).contains(backfillId, dueId, plainBackfillId);
         assertThat(targetIds).doesNotContain(recentId, notBeautyId);
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));  // 백필 우선
+        // 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 되고 릴스가 안 된 "짝 안 맞는" 계정부터 채운다
+        assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(plainBackfillId));
 
         assertThat(influencers.countReelsDue(revisitBefore)).isGreaterThanOrEqualTo(2L);
     }
