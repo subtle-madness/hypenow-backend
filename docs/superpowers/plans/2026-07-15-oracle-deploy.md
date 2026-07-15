@@ -309,7 +309,7 @@ fi
 # 2) 방화벽 — 80/443만 추가 개방 (OCI Security List와 이중 방어. 5432는 열지 않는다)
 sudo iptables -C INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null \
   || sudo iptables -I INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
-sudo apt-get update -y && sudo apt-get install -y iptables-persistent
+sudo apt-get update -y && sudo apt-get install -y iptables-persistent rclone
 sudo netfilter-persistent save
 
 # 3) 백업 크론 (서버 UTC 19:10 = KST 04:10, 스크립트 경로는 ~/deploy 기준)
@@ -351,7 +351,7 @@ ssh -N -L 15432:127.0.0.1:5432 "$HOST"
 
 ```bash
 #!/usr/bin/env bash
-# 서버에서 실행(크론): analysis DB 일일 pg_dump — 7일 롤링 보관
+# 서버에서 실행(크론): analysis DB 일일 pg_dump — 서버 7일 롤링 + Google Drive 오프사이트(30일 롤링)
 set -euo pipefail
 BACKUP_DIR="$HOME/backups"
 DEPLOY_DIR="$HOME/deploy"
@@ -361,6 +361,15 @@ cd "$DEPLOY_DIR"
 docker compose exec -T postgres pg_dump -U "$DB_USER" -d analysis \
   | gzip > "$BACKUP_DIR/analysis-$STAMP.sql.gz"
 ls -1t "$BACKUP_DIR"/analysis-*.sql.gz | tail -n +8 | xargs -r rm
+
+# 오프사이트: rclone gdrive 리모트가 설정돼 있으면 업로드 (설정 절차는 README §6-1)
+if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q '^gdrive:'; then
+  rclone copy "$BACKUP_DIR/analysis-$STAMP.sql.gz" gdrive:hypenow-backups/
+  rclone delete --min-age 30d gdrive:hypenow-backups/
+  echo "Drive 업로드 완료: analysis-$STAMP.sql.gz"
+else
+  echo "경고: rclone gdrive 리모트 미설정 — 오프사이트 백업 건너뜀" >&2
+fi
 echo "백업 완료: analysis-$STAMP.sql.gz"
 ```
 
@@ -453,9 +462,21 @@ deploy/scripts/deploy.sh ubuntu@<IP>
 ```
 
 ## 6. 백업·복원
-- 자동: 서버 크론이 매일 KST 04:10 덤프(7일 롤링) — `~/backups/`
-- 수동 pull: `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
+- 자동: 서버 크론이 매일 KST 04:10 덤프 — 서버 `~/backups/` 7일 롤링 + **Google Drive
+  `hypenow-backups/` 30일 롤링** (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
+- 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
+
+### 6-1. rclone(Google Drive) 1회 설정
+```bash
+# 맥에서 (브라우저 OAuth 필요)
+brew install rclone
+rclone config          # n → 이름 gdrive → storage: drive → 기본값들 → 브라우저 승인
+rclone lsd gdrive:     # 동작 확인
+scp ~/.config/rclone/rclone.conf ubuntu@<IP>:~/.config/rclone/rclone.conf   # 서버로 복사
+ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # 서버에서 확인
+```
+※ rclone.conf에는 구글 OAuth 토큰이 들어 있다 — repo에 커밋 금지, 서버 홈에만.
 
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
@@ -524,4 +545,5 @@ git commit -m "docs: 오라클 배포 결정 기록 + Flyway 완화 국한 미�
 코드 산출물이 머지되면 `deploy/README.md` §0~§4 순서로 진행한다. 사용자 직접 단계:
 오라클 가입(도쿄)·인스턴스 생성·DNS A레코드·GHCR PAT. 이후 함께: 최초 기동 → 터널로
 Flyway+미러 → `https://api.hypenow.io/health` 확인 → 프론트 rewrite 연동 → 로그인·저장 E2E →
-백업 크론 첫 실행 확인 → 복원 리허설 1회 → (안정화 후) PAYG 전환 + Budget 알림.
+rclone(Google Drive) 설정 → 백업 크론 첫 실행·Drive 도착 확인 → 복원 리허설 1회 →
+(안정화 후) PAYG 전환 + Budget 알림. 2단계(크롤·분석 파이프라인 이전)는 스펙 §8 — 별도 계획으로.
