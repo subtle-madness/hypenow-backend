@@ -1,5 +1,6 @@
 package com.celfit.crawler.dashboard.adapter.in.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -225,6 +226,25 @@ class UiSmokeTest extends IntegrationTest {
 
         mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("AGGREGATE")));
+    }
+
+    @Test
+    void 게시물_수집_타일에_인플루언서_기준_수가_같이_렌더된다() throws Exception {
+        // 한 인플루언서의 게시물 2건 — 게시물 수는 2 늘지만 인플루언서 기준으로는 1명이다.
+        long infBefore = contents.countDistinctInfluencerByOrigin(ContentOrigin.ENUMERATION);
+        Influencer inf = influencers.save(new Influencer("smoke-enum-inf-basis-user"));
+        contents.save(new Content("sc-enum-basis-1", ContentType.FEED, "smoke-enum-inf-basis-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+        contents.save(new Content("sc-enum-basis-2", ContentType.REELS, "smoke-enum-inf-basis-user",
+                inf.getId(), Instant.parse("2026-07-02T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+
+        assertThat(contents.countDistinctInfluencerByOrigin(ContentOrigin.ENUMERATION))
+                .isEqualTo(infBefore + 1);
+        assertThat(contents.countDistinctInfluencerByOriginAndContentType(
+                ContentOrigin.ENUMERATION, ContentType.REELS)).isGreaterThanOrEqualTo(1L);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("인플루언서 " + (infBefore + 1) + "명")));
     }
 
     @Test

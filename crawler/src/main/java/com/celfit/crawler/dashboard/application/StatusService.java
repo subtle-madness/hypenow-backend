@@ -34,6 +34,9 @@ public class StatusService {
                                  long enumeratedTotal,
                                  long enumeratedFeed,
                                  long enumeratedReels,
+                                 long enumeratedInfluencers,
+                                 long enumeratedFeedInfluencers,
+                                 long enumeratedReelsInfluencers,
                                  long discoveryArchiveCount) {}
 
     private final InfluencerRepository influencers;
@@ -65,6 +68,9 @@ public class StatusService {
                 contents.countByOrigin(ContentOrigin.ENUMERATION),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.FEED),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.REELS),
+                contents.countDistinctInfluencerByOrigin(ContentOrigin.ENUMERATION),
+                contents.countDistinctInfluencerByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.FEED),
+                contents.countDistinctInfluencerByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.REELS),
                 contents.countByOrigin(ContentOrigin.DISCOVERY));
     }
 }

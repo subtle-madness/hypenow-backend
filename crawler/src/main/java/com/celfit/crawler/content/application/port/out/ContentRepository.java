@@ -9,6 +9,8 @@ import com.celfit.crawler.content.domain.ContentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface ContentRepository extends JpaRepository<Content, Long> {
 
@@ -31,4 +33,15 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     /** 발굴 보관(부산물) 총계 — 수집 대상 아님, 대시보드에 참고용으로만 표시. */
     long countByOrigin(ContentOrigin origin);
+
+    /** 대시보드 게시물 수집 카드의 인플루언서 기준 — 수집 게시물이 나온 인플루언서 수(distinct). */
+    @Query("select count(distinct c.influencerId) from Content c where c.origin = :origin")
+    long countDistinctInfluencerByOrigin(@Param("origin") ContentOrigin origin);
+
+    /** 유형별(FEED/REELS) 인플루언서 기준 수(distinct). */
+    @Query("select count(distinct c.influencerId) from Content c "
+            + "where c.origin = :origin and c.contentType = :contentType")
+    long countDistinctInfluencerByOriginAndContentType(
+            @Param("origin") ContentOrigin origin,
+            @Param("contentType") com.celfit.crawler.content.domain.ContentType contentType);
 }
