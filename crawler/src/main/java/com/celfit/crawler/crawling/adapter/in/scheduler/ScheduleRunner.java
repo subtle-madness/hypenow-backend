@@ -24,17 +24,16 @@ public class ScheduleRunner {
 
     @Scheduled(cron = "${crawler.schedule.discover-cron}")
     void discover() {
-        // categoryId=null → JobService가 전체 활성 카테고리를 잡 1회 안에서 순차 실행
-        log.info("스케줄 discover: {}", jobService.trigger(JobName.DISCOVER, null, TriggerType.SCHEDULED));
+        log.info("스케줄 discover: {}", jobService.trigger(JobName.DISCOVER, TriggerType.SCHEDULED));
     }
 
     @Scheduled(cron = "${crawler.schedule.qualify-cron}")
     void qualify() {
-        log.info("스케줄 qualify: {}", jobService.trigger(JobName.QUALIFY, null, TriggerType.SCHEDULED));
+        log.info("스케줄 qualify: {}", jobService.trigger(JobName.QUALIFY, TriggerType.SCHEDULED));
     }
 
-    @Scheduled(cron = "${crawler.schedule.aggregate-cron}")
-    void aggregate() {
-        log.info("스케줄 aggregate: {}", jobService.trigger(JobName.AGGREGATE, null, TriggerType.SCHEDULED));
+    @Scheduled(cron = "${crawler.schedule.collect-cron}")
+    void collect() {
+        log.info("스케줄 collect: {}", jobService.trigger(JobName.COLLECT, TriggerType.SCHEDULED));
     }
 }

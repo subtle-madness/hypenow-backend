@@ -1,13 +1,14 @@
 package com.celfit.crawler.crawling.adapter.out.apify;
 
-import com.celfit.crawler.crawling.application.port.out.*;
-
-import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
+import com.celfit.crawler.crawling.application.port.out.ApifyRunnerPort;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
@@ -42,7 +43,13 @@ public class ApifyClient implements ApifyRunnerPort {
 
     @Override
     public ApifyResult run(String actorId, Map<String, Object> input) {
-        JsonNode started = postJson(url("/v2/acts/" + actorId + "/runs"), input);
+        // memory 미지정 시 액터 기본값(종종 128MB)으로 실행돼 스크래퍼가 OOM으로 죽는다.
+        // ?memory=<MB>로 실행당 메모리를 명시(128의 배수). 미설정이면 종전대로 기본값 사용.
+        String runsUrl = url("/v2/acts/" + actorId + "/runs");
+        if (props.actorMemoryMb() != null && props.actorMemoryMb() > 0) {
+            runsUrl += "?memory=" + props.actorMemoryMb();
+        }
+        JsonNode started = postJson(runsUrl, input);
         String runId = started.path("data").path("id").asString();
         String datasetId = started.path("data").path("defaultDatasetId").asString();
         if (runId.isEmpty() || datasetId.isEmpty()) {

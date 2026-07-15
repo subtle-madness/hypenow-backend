@@ -1,6 +1,10 @@
 package com.celfit.crawler.common.config;
 
 import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
+import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties;
+import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
+import com.celfit.crawler.crawling.adapter.out.instagram.DirectCommentProperties;
+import com.celfit.crawler.crawling.adapter.out.instagram.ProxyProperties;
 
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.adapter.out.apify.Sleeper;
@@ -10,10 +14,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Configuration
 @EnableConfigurationProperties({ApifyProperties.class, DiscoverProperties.class,
-        AggregateProperties.class, ScheduleProperties.class})
+        CollectProperties.class, ScheduleProperties.class, DirectCommentProperties.class,
+        HikerProperties.class, QualifyProperties.class, DataLikersProperties.class,
+        ProxyProperties.class, SimilarProperties.class})
 public class CrawlerConfig {
 
     @Bean
@@ -37,5 +45,15 @@ public class CrawlerConfig {
     @Bean
     TaskExecutor jobTaskExecutor() {
         return new SimpleAsyncTaskExecutor("job-");
+    }
+
+    /**
+     * 배치 전체 단일 트랜잭션(idle-in-transaction 커넥션 점유·부분 실패 시 전체 롤백)을 방지하는 공용
+     * TransactionTemplate — CollectJob(방문 1회), BeautyJob(판정 배치 1회), SimilarJob(시드 1개)가
+     * 각자의 작업 단위를 이걸로 감싼다. 이름은 최초 도입한 CollectJob 기준이지만 잡 전용이 아니다.
+     */
+    @Bean
+    TransactionTemplate collectTransactionTemplate(PlatformTransactionManager txManager) {
+        return new TransactionTemplate(txManager);
     }
 }

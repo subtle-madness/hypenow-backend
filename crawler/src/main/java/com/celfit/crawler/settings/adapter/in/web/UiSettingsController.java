@@ -1,6 +1,13 @@
 package com.celfit.crawler.settings.adapter.in.web;
 
+import com.celfit.crawler.crawling.adapter.out.instagram.ProxyProperties;
+import com.celfit.crawler.settings.application.service.CommentSourceSetting;
+import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
+import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
+import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
+import com.celfit.crawler.settings.application.service.ProxySourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
+import com.celfit.crawler.settings.domain.ProxySource;
 import com.celfit.crawler.settings.application.service.SettingsService.SettingView;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,14 +26,42 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 public class UiSettingsController {
 
     private final SettingsService service;
+    private final CommentSourceSetting commentSourceSetting;
+    private final DiscoverSourceSetting discoverSourceSetting;
+    private final ProfileSourceSetting profileSourceSetting;
+    private final ProfileSupplementSetting profileSupplementSetting;
+    private final ProxySourceSetting proxySourceSetting;
+    private final ProxyProperties proxyProperties;
 
-    public UiSettingsController(SettingsService service) {
+    public UiSettingsController(SettingsService service, CommentSourceSetting commentSourceSetting,
+                                 DiscoverSourceSetting discoverSourceSetting,
+                                 ProfileSourceSetting profileSourceSetting,
+                                 ProfileSupplementSetting profileSupplementSetting,
+                                 ProxySourceSetting proxySourceSetting,
+                                 ProxyProperties proxyProperties) {
         this.service = service;
+        this.commentSourceSetting = commentSourceSetting;
+        this.discoverSourceSetting = discoverSourceSetting;
+        this.profileSourceSetting = profileSourceSetting;
+        this.profileSupplementSetting = profileSupplementSetting;
+        this.proxySourceSetting = proxySourceSetting;
+        this.proxyProperties = proxyProperties;
     }
 
     @GetMapping
     public String page(Model model) {
         model.addAttribute("settings", service.list());
+        model.addAttribute("commentSource", commentSourceSetting.current().name());
+        model.addAttribute("discoverSource", discoverSourceSetting.current().name());
+        model.addAttribute("profileSource", profileSourceSetting.current().name());
+        model.addAttribute("profileRelated", profileSupplementSetting.relatedEnabled());
+        model.addAttribute("proxySource", proxySourceSetting.current().name());
+        // 각 프록시 소스에 URL이 실제로 설정돼 있는지 — UI에서 "미설정→직접 폴백"을 표시하기 위함.
+        Map<String, Boolean> proxyConfigured = new java.util.LinkedHashMap<>();
+        for (ProxySource s : ProxySource.values()) {
+            proxyConfigured.put(s.name(), s == ProxySource.DIRECT || proxyProperties.urlFor(s) != null);
+        }
+        model.addAttribute("proxyConfigured", proxyConfigured);
         return "settings";
     }
 

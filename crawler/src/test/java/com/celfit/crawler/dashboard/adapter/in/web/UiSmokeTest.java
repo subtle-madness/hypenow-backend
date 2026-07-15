@@ -1,180 +1,271 @@
 package com.celfit.crawler.dashboard.adapter.in.web;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
-import com.celfit.crawler.content.domain.Category;
-import com.celfit.crawler.content.application.port.out.CategoryRepository;
-import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
-import com.celfit.crawler.content.domain.ContentStatus;
+import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
-import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
+import com.celfit.crawler.crawling.application.port.out.InfluencerDiscoveryRepository;
+import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
+import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostRepository;
+import com.celfit.crawler.crawling.domain.CrawlRun;
+import com.celfit.crawler.crawling.domain.Influencer;
+import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
+import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
-import com.celfit.crawler.crawling.domain.RawPostDetail;
-import com.celfit.crawler.crawling.application.port.out.RawPostDetailRepository;
+import com.celfit.crawler.crawling.domain.RawComment;
+import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
-import org.springframework.core.task.SyncTaskExecutor;
-import org.springframework.core.task.TaskExecutor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 최소 UI 스모크 — 제거된 도메인 필드를 템플릿이 더 이상 참조하지 않는지 렌더로 확인.
+ * Task 10이 UI를 재편하면 그때 확장된 스모크로 대체된다.
+ */
 @AutoConfigureMockMvc
-@Import(UiSmokeTest.Config.class)
-@Transactional  // 카테고리 저장이 롤백되도록 — 다른 테스트 클래스와 DB 공유
+@Transactional  // 시드가 롤백되도록 — 다른 테스트 클래스와 DB 공유(싱글턴 컨테이너)
 class UiSmokeTest extends IntegrationTest {
 
-    @TestConfiguration
-    static class Config {
-        @Bean @Primary
-        FakeApifyRunner fakeApifyRunner() {
-            return new FakeApifyRunner();
-        }
-
-        @Bean("jobTaskExecutor") @Primary
-        TaskExecutor syncJobExecutor() {
-            return new SyncTaskExecutor();
-        }
-    }
-
     @Autowired MockMvc mvc;
-    @Autowired CategoryRepository categories;
+    @Autowired InfluencerRepository influencers;
     @Autowired ContentRepository contents;
+    @Autowired RawCommentRepository rawComments;
     @Autowired CrawlRunRepository crawlRuns;
-    @Autowired RawPostDetailRepository rawDetails;
+    @Autowired InfluencerDiscoveryRepository discoveries;
+    @Autowired RawDiscoveryPostRepository rawDiscovery;
 
     @Test
-    void 루트는_ui로_리다이렉트() throws Exception {
-        mvc.perform(get("/")).andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/ui"));
-    }
-
-    @Test
-    void 대시보드와_잡_화면이_뜬다() throws Exception {
+    void 대시보드가_렌더된다() throws Exception {
         mvc.perform(get("/ui")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("대시보드")));
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk());
-        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk());
     }
 
     @Test
-    void 잡_실행_폼은_플래시_메시지와_함께_리다이렉트() throws Exception {
-        categories.save(new Category("메이크업"));
-        mvc.perform(post("/ui/jobs/qualify"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/ui/jobs"))
-                .andExpect(flash().attributeExists("message"));
+    void 상태_타일_프래그먼트가_렌더된다() throws Exception {
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk());
     }
 
     @Test
-    void 카테고리_화면과_폼() throws Exception {
-        mvc.perform(get("/ui/categories")).andExpect(status().isOk());
-        mvc.perform(post("/ui/categories").param("name", "메이크업"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/ui/categories"));
+    void 잡_화면이_렌더된다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("collect")));
     }
 
     @Test
-    void 키워드_추가는_선택된_대분류_탭으로_돌아온다() throws Exception {
-        Category cat = categories.save(new Category("뷰티탭"));
-        mvc.perform(post("/ui/categories/" + cat.getId() + "/keywords")
-                        .param("keyword", "클렌징폼")
-                        .param("subcategory", "클렌징")
-                        .param("cat", String.valueOf(cat.getId())))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/ui/categories?cat=" + cat.getId()));
-
-        // 선택 탭 화면에 중분류 그룹과 소분류가 보인다
-        mvc.perform(get("/ui/categories").param("cat", String.valueOf(cat.getId())))
-                .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("클렌징폼")));
+    void 잡_화면에_예상_비용_카드가_렌더된다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
     }
 
     @Test
-    void 카테고리_삭제_폼은_목록으로_리다이렉트() throws Exception {
-        Category saved = categories.save(new Category("삭제용"));
-        mvc.perform(post("/ui/categories/" + saved.getId() + "/delete"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/ui/categories"));
-        org.junit.jupiter.api.Assertions.assertTrue(categories.findById(saved.getId()).isEmpty());
+    void 수집_데이터_화면이_content_행이_있어도_렌더된다() throws Exception {
+        Influencer inf = influencers.save(new Influencer("smoke-user"));
+        contents.save(new Content("sc-smoke", ContentType.REELS, "smoke-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+
+        // 행이 존재하는 상태에서 렌더 — 제거된 필드(adMarked/mainGroup 등) 참조가 남아 있으면 여기서 터진다
+        mvc.perform(get("/ui/contents")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-smoke")));
     }
 
     @Test
-    void 수집_데이터_화면() throws Exception {
-        mvc.perform(get("/ui/contents")).andExpect(status().isOk());
-        mvc.perform(get("/ui/contents").param("status", "PENDING")).andExpect(status().isOk());
+    void 콘텐츠_상세_화면이_페이지형_raw_comment_행이_있어도_렌더되고_빈_행을_나열하지_않는다() throws Exception {
+        Influencer inf = influencers.save(new Influencer("smoke-detail-user"));
+        Content content = contents.save(new Content("sc-detail-smoke", ContentType.FEED, "smoke-detail-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+        CrawlRun run = crawlRuns.save(new CrawlRun(JobName.COLLECT, TriggerType.MANUAL, null,
+                "smoke-detail-user", "direct-comment-crawler", Instant.now()));
+        // SELF_GQL 신규 수집분 — writer/text/writtenAt은 설계상 NULL, payload만 페이지 원형으로 채워진다.
+        rawComments.save(new RawComment(content.getId(), run.getId(), RawSource.SELF_GQL,
+                Map.of("data", Map.of("edges", java.util.List.of("c1", "c2"))), Instant.now()));
+
+        mvc.perform(get("/ui/contents/" + content.getId())).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-detail-smoke")))
+                // fallback 행이 payload를 pretty JSON으로 담아 렌더 — "빈 행 무한 나열"이 아님을 확인
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("edges")));
     }
 
     @Test
-    void 음수_페이지도_500이_아니라_정상_렌더링() throws Exception {
-        mvc.perform(get("/ui/contents").param("page", "-1")).andExpect(status().isOk());
-    }
+    void 인플루언서_명단은_판정_완료만_최초_발굴_맥락과_함께_보여준다() throws Exception {
+        Influencer qualified = new Influencer("smoke-roster-qualified");
+        qualified.setStatus(InfluencerStatus.QUALIFIED);
+        qualified.setFollowers(12345L);
+        influencers.save(qualified);
+        Influencer excluded = new Influencer("smoke-roster-excluded");
+        excluded.setStatus(InfluencerStatus.EXCLUDED);
+        influencers.save(excluded);
+        influencers.save(new Influencer("smoke-roster-discovered")); // 판정 전 — 명단 밖
 
-    @Test
-    void 수집_데이터_다중_상태_필터() throws Exception {
-        Category cat = categories.save(new Category("필터용"));
-        saveContent("sc-pending", cat.getId(), ContentStatus.PENDING);
-        saveContent("sc-qualified", cat.getId(), ContentStatus.QUALIFIED);
-        saveContent("sc-gone", cat.getId(), ContentStatus.GONE);
+        // 발굴 이력 2건 — 명단에는 최초 발굴(먼저 저장된 행)의 키워드만 붙는다
+        discoveries.save(new InfluencerDiscovery(qualified.getId(), "roster-first-kw",
+                "sc-roster-1", Instant.parse("2026-07-01T00:00:00Z")));
+        discoveries.save(new InfluencerDiscovery(qualified.getId(), "roster-later-kw",
+                "sc-roster-2", Instant.parse("2026-07-10T00:00:00Z")));
 
-        mvc.perform(get("/ui/contents")
-                        .param("status", "PENDING")
-                        .param("status", "QUALIFIED"))
-                .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-pending")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-qualified")))
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-roster-qualified")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-roster-excluded")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("roster-first-kw")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
-                        org.hamcrest.Matchers.containsString("sc-gone"))));
+                        org.hamcrest.Matchers.containsString("roster-later-kw"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-roster-discovered"))));
     }
 
     @Test
-    void 실행_로그_프래그먼트에_잡_로그가_보인다() throws Exception {
-        org.slf4j.LoggerFactory.getLogger("com.celfit.crawler.dashboard.adapter.in.web.UiSmokeTest")
-                .info("로그패널 스모크 라인");
-        mvc.perform(get("/ui/fragments/logs"))
+    void 인플루언서_명단_상태_필터가_동작하고_판정_외_상태는_무시된다() throws Exception {
+        Influencer qualified = new Influencer("smoke-filter-qualified");
+        qualified.setStatus(InfluencerStatus.QUALIFIED);
+        influencers.save(qualified);
+        Influencer excluded = new Influencer("smoke-filter-excluded");
+        excluded.setStatus(InfluencerStatus.EXCLUDED);
+        influencers.save(excluded);
+
+        mvc.perform(get("/ui/influencers").param("status", "QUALIFIED"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("로그패널 스모크 라인")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-filter-qualified")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-filter-excluded"))));
+
+        // DISCOVERED는 명단 범위 밖 — 파라미터로 들어와도 무시되어 판정 완료 전체가 나온다
+        influencers.save(new Influencer("smoke-filter-discovered"));
+        mvc.perform(get("/ui/influencers").param("status", "DISCOVERED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-filter-qualified")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-filter-excluded")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-filter-discovered"))));
     }
 
     @Test
-    void 콘텐츠_상세에_광고_표시와_태그된_계정이_보인다() throws Exception {
-        Category cat = categories.save(new Category("상세용"));
-        Content c = new Content("scdetail", ContentType.REELS, "kim",
-                Instant.parse("2026-07-01T00:00:00Z"), cat.getId(), "키워드", Instant.now());
-        c.setStatus(ContentStatus.AGGREGATED);
-        c.setAdMarked(true);
-        c = contents.save(c);
-        CrawlRun run = crawlRuns.save(new CrawlRun(JobName.AGGREGATE, TriggerType.MANUAL,
-                null, null, "actor/x", Instant.now()));
-        rawDetails.save(new RawPostDetail(c.getId(), run.getId(),
-                Map.of("shortCode", "scdetail", "taggedUsers", List.of(
-                        Map.of("username", "banilaco", "full_name", "BANILA CO"))),
-                Instant.now()));
-
-        mvc.perform(get("/ui/contents/" + c.getId()))
-                .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("광고·협찬 표기")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("banilaco")));
+    void 검색_키워드_화면이_렌더된다() throws Exception {
+        mvc.perform(get("/ui/keywords")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("검색 키워드")));
     }
 
-    private void saveContent(String shortCode, Long categoryId, ContentStatus status) {
-        Content c = new Content(shortCode, ContentType.REELS, "user-" + shortCode,
-                Instant.parse("2026-07-01T00:00:00Z"), categoryId, "키워드", Instant.now());
-        c.setStatus(status);
-        contents.save(c);
+    @Test
+    void 실행_이력_프래그먼트에_요청수_기준_비용이_렌더된다() throws Exception {
+        CrawlRun run = crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL,
+                "cost-smoke-kw", null, "hiker-hashtag-top", Instant.now()));
+        run.finishOk(null, 12, 3, Instant.now());
+        crawlRuns.save(run);
+
+        // requestCount=12 × $0.001/요청 = $0.012
+        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("$0.012")));
+    }
+
+    @Test
+    void 실행_이력의_발굴_건수와_중복이_게시물이_아니라_인플루언서_기준이다() throws Exception {
+        // 시나리오: run1에서 dup_inf 발굴 → run2에서 dup_inf 재발굴 + new_inf 신규 발굴 (게시물 2건).
+        // run2의 건수는 게시물 2건이 아니라 "인플루언서 2명", 중복은 "이미 발굴됐던 인플루언서 1명"이다.
+        Instant run1Start = Instant.parse("2026-07-14T00:00:00Z");
+        Instant run2Start = Instant.parse("2026-07-14T01:00:00Z");
+
+        Influencer dupInf = influencers.save(new Influencer("smoke-dup-inf"));
+        Influencer newInf = influencers.save(new Influencer("smoke-new-inf"));
+        Content cDup = contents.save(new Content("sc-runstat-dup", ContentType.FEED, "smoke-dup-inf",
+                dupInf.getId(), run1Start, run1Start, ContentOrigin.DISCOVERY));
+        Content cNew = contents.save(new Content("sc-runstat-new", ContentType.FEED, "smoke-new-inf",
+                newInf.getId(), run2Start, run2Start, ContentOrigin.DISCOVERY));
+
+        CrawlRun run1 = crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL,
+                "runstat-kw", null, "hiker-hashtag-top", run1Start));
+        run1.finishOk(null, 4, 1, run1Start.plusSeconds(30));
+        crawlRuns.save(run1);
+        CrawlRun run2 = crawlRuns.save(new CrawlRun(JobName.DISCOVER, TriggerType.MANUAL,
+                "runstat-kw", null, "hiker-hashtag-top", run2Start));
+        run2.finishOk(null, 4, 2, run2Start.plusSeconds(30));
+        crawlRuns.save(run2);
+
+        discoveries.save(new InfluencerDiscovery(dupInf.getId(), "runstat-kw", "sc-runstat-dup", run1Start.plusSeconds(1)));
+        discoveries.save(new InfluencerDiscovery(dupInf.getId(), "runstat-kw", "sc-runstat-dup", run2Start.plusSeconds(1)));
+        discoveries.save(new InfluencerDiscovery(newInf.getId(), "runstat-kw", "sc-runstat-new", run2Start.plusSeconds(1)));
+
+        rawDiscovery.save(new RawDiscoveryPost(cDup.getId(), run1.getId(), RawSource.HIKER_HASHTAG,
+                Map.of("k", "v"), run1Start.plusSeconds(1)));
+        rawDiscovery.save(new RawDiscoveryPost(cDup.getId(), run2.getId(), RawSource.HIKER_HASHTAG,
+                Map.of("k", "v"), run2Start.plusSeconds(1)));
+        rawDiscovery.save(new RawDiscoveryPost(cNew.getId(), run2.getId(), RawSource.HIKER_HASHTAG,
+                Map.of("k", "v"), run2Start.plusSeconds(1)));
+
+        // 리포지토리 집계 — run2: 인플루언서 2명 중 1명은 run2 시작 전에 이미 발굴돼 있었다(중복)
+        var stats = rawDiscovery.discoveryStats(java.util.List.of(run1.getId(), run2.getId()));
+        var byRun = stats.stream().collect(java.util.stream.Collectors.toMap(
+                s -> s.getRunId(), s -> s));
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run1.getId()).getInfluencers()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run1.getId()).getKnownInfluencers()).isEqualTo(0);
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run2.getId()).getInfluencers()).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(byRun.get(run2.getId()).getKnownInfluencers()).isEqualTo(1);
+
+        // 렌더 — 건수 자리에 "2명", 중복 배지에 인플루언서 기준 "중복 1"
+        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("2명")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("중복 1")));
+    }
+
+    @Test
+    void 실행_이력에_구_파이프라인_AGGREGATE_행이_있어도_렌더된다() throws Exception {
+        // V8 이관은 crawl_run의 과거 job 값을 재매핑하지 않는다 — 실DB에 AGGREGATE 이력 54건 존재.
+        // enum에서 AGGREGATE를 지우면 이력 조회가 IllegalArgumentException으로 터졌던 회귀의 재현.
+        crawlRuns.save(new CrawlRun(JobName.AGGREGATE, TriggerType.MANUAL,
+                null, null, "legacy-actor", Instant.now()));
+
+        mvc.perform(get("/ui/fragments/runs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("AGGREGATE")));
+    }
+
+    @Test
+    void 대시보드_상태_타일에_발굴_보관_부산물_건수가_렌더된다() throws Exception {
+        // 발굴 부산물(DISCOVERY) — 게시물 수집 카드(ENUMERATION 기준) 집계엔 안 잡히고
+        // "발굴 보관" 참고용 총계에만 잡혀야 한다.
+        Influencer inf = influencers.save(new Influencer("smoke-discovery-user"));
+        contents.save(new Content("sc-discovery-smoke", ContentType.FEED, "smoke-discovery-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.DISCOVERY));
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("발굴 보관")));
+    }
+
+    @Test
+    void 대시보드_상태_타일에_인플루언서_카운트가_렌더된다() throws Exception {
+        long before = influencers.countByStatus(InfluencerStatus.DISCOVERED);
+        influencers.save(new Influencer("smoke-count-user"));
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("DISCOVERED")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(String.valueOf(before + 1))));
+    }
+
+    @Test
+    void 대시보드_수집_대기열은_첫방문_재방문_구분_없이_단일_카드다() throws Exception {
+        // 모든 방문이 동일(최근 게시물 1회 수집)하므로 첫 방문/재방문 구분이 없다 —
+        // 9일 전 방문(재방문 주기 7일 경과)한 인플루언서도 같은 "수집 대기"로 잡힌다.
+        Influencer inf = new Influencer("smoke-collect-due-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        Instant nineDaysAgo = Instant.now().minus(java.time.Duration.ofDays(9));
+        inf.setFirstCollectedAt(nineDaysAgo);
+        inf.setLastCollectedAt(nineDaysAgo);
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("READY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("방문 대기")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("BACKFILL"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("TRACK"))));
     }
 }

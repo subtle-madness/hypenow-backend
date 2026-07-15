@@ -6,6 +6,7 @@ import java.util.Map;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -24,6 +25,10 @@ public class RawComment {
     @Column(name = "crawl_run_id", nullable = false)
     private Long crawlRunId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private RawSource source;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false)
     private Map<String, Object> payload;
@@ -31,19 +36,21 @@ public class RawComment {
     @Column(name = "captured_at", nullable = false)
     private Instant capturedAt;
 
-    // generated column — 읽기 전용
-    @Column(insertable = false, updatable = false)
+    @Setter
     private String writer;
 
-    @Column(insertable = false, updatable = false)
+    @Setter
     private String text;
 
-    @Column(name = "written_at", insertable = false, updatable = false)
+    @Setter
+    @Column(name = "written_at")
     private String writtenAt;
 
-    public RawComment(Long contentId, Long crawlRunId, Map<String, Object> payload, Instant capturedAt) {
+    public RawComment(Long contentId, Long crawlRunId, RawSource source,
+                      Map<String, Object> payload, Instant capturedAt) {
         this.contentId = contentId;
         this.crawlRunId = crawlRunId;
+        this.source = source;
         this.payload = payload;
         this.capturedAt = capturedAt;
     }

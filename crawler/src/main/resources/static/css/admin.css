@@ -144,6 +144,20 @@ a { color: var(--accent); }
 .card > h2:first-child, .card h2 { margin-top: 0; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 
 /* ── 스탯 타일 ─────────────────────────── */
+/* 현재 작업 바 (실시간 모니터링) */
+.jobbar { display: flex; gap: 0.7rem; flex-wrap: wrap; margin: 0.2rem 0 1.1rem; }
+.jobstat {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    padding: 0.5rem 0.9rem; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--card); font-size: 0.85rem;
+}
+.jobstat.on { border-color: var(--accent, #b84a6a); box-shadow: var(--shadow); }
+.jobstat .jp { color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+.jobstat .jp.idle { color: var(--muted); }
+.jobstat .pbar { display: inline-block; width: 84px; height: 6px; border-radius: 3px;
+    background: var(--border); overflow: hidden; }
+.jobstat .pfill { display: block; height: 100%; background: var(--accent, #b84a6a); transition: width 0.4s; }
+
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); gap: 0.8rem; }
 .tile {
     background: var(--card); border: 1px solid var(--border);
@@ -155,9 +169,34 @@ a { color: var(--accent); }
     font-variant-numeric: tabular-nums; line-height: 1.15;
 }
 .tile .label { color: var(--ink-secondary); font-size: 0.78rem; margin-top: 0.3rem; }
+/* 상태 카드 부연 설명 */
+.tile .tile-desc {
+    color: var(--muted); font-size: 0.72rem; line-height: 1.35;
+    margin-top: 0.5rem; word-break: keep-all;
+}
+.tile.highlight { border-color: var(--accent, #b84a6a); }
+/* 상태 섹션 제목 */
+.tiles-head { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ink-secondary); margin: 1.4rem 0 0.6rem; }
+.tiles-head:first-of-type { margin-top: 0.4rem; }
+.tiles-head-sub { text-transform: none; letter-spacing: 0; color: var(--muted);
+    font-weight: 400; font-size: 0.78rem; margin-left: 0.4rem; }
 /* 보조 타일 (raw 적재량) — 한 단계 작게 */
 .tiles.sub { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
 .tiles.sub .num { font-size: 1.3rem; }
+
+/* 파이프라인 단계별 타일 그룹 — 같은 잡이 만드는 상태끼리 묶어 구분 */
+.tile-groups { display: flex; gap: 1rem; flex-wrap: wrap; align-items: stretch; }
+.tile-group {
+    flex: 1 1 14rem; min-width: 14rem;
+    border: 1px dashed var(--border); border-radius: 14px;
+    padding: 0.7rem 0.8rem 0.8rem; background: color-mix(in srgb, var(--card) 55%, transparent);
+}
+.tile-group-title {
+    font-size: 0.72rem; font-weight: 650; color: var(--ink-secondary);
+    letter-spacing: 0.02em; margin: 0 0.15rem 0.55rem; word-break: keep-all;
+}
+.tile-group .tiles { grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); gap: 0.6rem; }
 
 /* ── 테이블 ───────────────────────────── */
 table.data {
@@ -187,7 +226,7 @@ table.data.fit { width: auto; min-width: 24rem; }
     background: var(--code-bg); color: var(--ink-secondary);
     border: 1px solid transparent;
 }
-.badge.SUCCEEDED, .badge.QUALIFIED, .badge.AGGREGATED {
+.badge.SUCCEEDED, .badge.QUALIFIED, .badge.COLLECTED {
     color: var(--status-good); background: color-mix(in srgb, var(--status-good) 10%, transparent);
 }
 .badge.FAILED {
@@ -197,10 +236,15 @@ table.data.fit { width: auto; min-width: 24rem; }
     color: var(--accent-ink); background: var(--accent-soft);
 }
 .badge.EXCLUDED, .badge.GONE { color: var(--muted); }
+.badge.DISCOVERED { color: var(--cat-feed); background: color-mix(in srgb, var(--cat-feed) 10%, transparent); }
+.badge.READY {
+    color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+}
 .badge.REELS { color: var(--cat-reels); background: color-mix(in srgb, var(--cat-reels) 10%, transparent); }
 .badge.FEED { color: var(--cat-feed); background: color-mix(in srgb, var(--cat-feed) 10%, transparent); }
 .badge.AD { color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
 .badge.tag { margin-right: 0.3rem; }
+.badge.dup { margin-left: 0.35rem; color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
 
 /* ── 폼 요소 ──────────────────────────── */
 input, select, button {
@@ -233,6 +277,14 @@ label { color: var(--ink-secondary); }
     padding: 0.9rem 1.1rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
     box-shadow: var(--shadow);
 }
+
+/* ── 잡 예상 비용 카드 ─────────────────── */
+.job-costs { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.8rem; }
+.job-cost h3 { margin: 0 0 0.5rem; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.job-cost p { margin: 0.35rem 0; font-size: 0.85rem; }
+.job-cost-endpoints { margin: 0.35rem 0; padding-left: 1.1rem; font-size: 0.78rem; color: var(--ink-secondary); }
+.job-cost-endpoints li { margin: 0.15rem 0; }
+.job-cost-note { color: var(--muted); font-size: 0.75rem; }
 
 /* ── 실행 로그 ─────────────────────────── */
 .log-panel {

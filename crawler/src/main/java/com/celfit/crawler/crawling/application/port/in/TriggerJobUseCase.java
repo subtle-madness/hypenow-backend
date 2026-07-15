@@ -8,8 +8,8 @@ public interface TriggerJobUseCase {
 
     enum TriggerResult { ACCEPTED, BUSY }
 
-    TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType);
+    TriggerResult trigger(JobName job, TriggerType triggerType);
 
     /** requalify=true는 qualify에서 EXCLUDED도 재판정 (raw_profile 재사용 — Apify 재호출 없음). */
-    TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType, boolean requalify);
+    TriggerResult trigger(JobName job, TriggerType triggerType, boolean requalify);
 }

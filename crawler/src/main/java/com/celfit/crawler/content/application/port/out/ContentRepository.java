@@ -1,17 +1,14 @@
 package com.celfit.crawler.content.application.port.out;
 
-import com.celfit.crawler.crawling.domain.*;
-import com.celfit.crawler.content.domain.*;
-import com.celfit.crawler.settings.domain.*;
-
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+
+import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
+import com.celfit.crawler.content.domain.ContentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 public interface ContentRepository extends JpaRepository<Content, Long> {
 
@@ -23,18 +20,15 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     Page<Content> findByStatusIn(java.util.Collection<ContentStatus> statuses, Pageable pageable);
 
-    /** aggregate 대상: 판정 통과 + 미집계 + 업로드가 컷오프(now-3일) 이전(경계 포함). */
-    @Query("""
-            select c from Content c
-            where c.status = :status and c.aggregatedAt is null and c.uploadedAt <= :cutoff
-            order by c.uploadedAt asc""")
-    List<Content> findDue(@Param("status") ContentStatus status,
-                          @Param("cutoff") Instant cutoff,
-                          Pageable pageable);
+    /** collect 댓글 대상 조회 — origin=ENUMERATION(열거 산출)만 수집 대상이다. 발굴 부산물은 제외. */
+    List<Content> findByInfluencerIdAndStatusAndOrigin(Long influencerId, ContentStatus status, ContentOrigin origin);
 
-    long countByStatus(ContentStatus status);
+    /** 대시보드 게시물 수집 카드 — origin=ENUMERATION 기준으로만 집계한다. */
+    long countByStatusAndOrigin(ContentStatus status, ContentOrigin origin);
 
-    boolean existsByCategoryId(Long categoryId);
+    /** 대시보드 게시물 유형별(FEED/REELS) 카드 — origin=ENUMERATION 기준. */
+    long countByOriginAndContentType(ContentOrigin origin, com.celfit.crawler.content.domain.ContentType contentType);
 
-    long countByStatusAndAggregatedAtIsNullAndUploadedAtLessThanEqual(ContentStatus status, Instant cutoff);
+    /** 발굴 보관(부산물) 총계 — 수집 대상 아님, 대시보드에 참고용으로만 표시. */
+    long countByOrigin(ContentOrigin origin);
 }
