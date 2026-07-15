@@ -241,6 +241,29 @@ class BeautyJobTest {
     }
 
     @Test
+    void rejudge가_유사_발굴_이력을_초기화하지_않는다() {
+        // similar_processed_at은 SIMILAR 시드 소진 표식 — 재판정이 이걸 지우면 판정 전후로
+        // similar를 다시 돌릴 때 같은 시드가 또 수확된다. 재판정은 beauty 3필드만 갱신해야 한다.
+        Influencer a = qualified(1L, "a");
+        a.setBeauty(true);
+        a.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        Instant harvested = Instant.parse("2026-07-10T00:00:00Z");
+        a.setSimilarProcessedAt(harvested);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findByStatusAndBeautySource(
+                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("a", true, "재판정")));
+
+        job.run(TriggerType.MANUAL, true);
+
+        assertThat(a.getSimilarProcessedAt()).isEqualTo(harvested);
+    }
+
+    @Test
     void 두_선정_쿼리에_같은_인플루언서가_겹치면_한_번만_판정한다() {
         Influencer a = qualified(1L, "a");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));
