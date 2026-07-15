@@ -28,6 +28,7 @@ ssh ubuntu@<IP>
 cd ~/deploy && cp .env.example .env && vi .env    # DB_PASSWORD 강한 값, API_DOMAIN 실제 도메인
 docker login ghcr.io -u <github-id>               # read:packages PAT
 # 다시 맥에서 — 첫 이미지 빌드·push + 서버 기동까지 한 번에 (buildx 빌더는 스크립트가 자동 준비)
+docker login ghcr.io -u <github-id>               # 맥: write:packages PAT (최초 1회)
 deploy/scripts/deploy.sh ubuntu@<IP>
 curl -s https://api.hypenow.io/health             # {"status":"ok","service":"was"}
 ```
