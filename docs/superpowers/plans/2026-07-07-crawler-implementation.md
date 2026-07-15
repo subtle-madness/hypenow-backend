@@ -1,5 +1,6 @@
 # celfit crawler 구현 계획
 
+> 상태: ✅ 실행됨
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 카테고리 키워드로 인스타그램 콘텐츠를 발굴하고 업로드+3일 후 게시물 상세·댓글·프로필을 Apify 응답 원형(raw)으로 적재하는 Spring Boot 앱 + 관리 UI.
