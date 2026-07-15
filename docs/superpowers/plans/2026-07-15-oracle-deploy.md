@@ -314,7 +314,7 @@ sudo netfilter-persistent save
 
 # 3) 백업 크론 (서버 UTC 19:10 = KST 04:10, 스크립트 경로는 ~/deploy 기준)
 mkdir -p "$HOME/backups"
-( crontab -l 2>/dev/null | grep -v 'scripts/backup.sh' ;
+( crontab -l 2>/dev/null | grep -v 'scripts/backup.sh' || true ;
   echo "10 19 * * * $HOME/deploy/scripts/backup.sh >> $HOME/backups/backup.log 2>&1" ) | crontab -
 
 echo "셋업 완료 — 재로그인(docker 그룹) 후 deploy/.env 채우고 'docker compose up -d'"
