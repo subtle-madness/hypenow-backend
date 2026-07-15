@@ -108,7 +108,9 @@ public class SecurityConfig {
 		configuration.setAllowedHeaders(List.of("*"));
 		configuration.setAllowCredentials(true);
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+		// 구 /api·신 /v1 두 표면 모두 프론트 오리진 허용 (같은 configuration 재사용)
 		source.registerCorsConfiguration("/api/**", configuration);
+		source.registerCorsConfiguration("/v1/**", configuration);
 		return source;
 	}
 }

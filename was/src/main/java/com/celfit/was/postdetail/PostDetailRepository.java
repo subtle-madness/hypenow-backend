@@ -34,7 +34,7 @@ public class PostDetailRepository {
 		return safeQuery("contents", Optional::empty, () -> jdbcClient.sql("""
 				SELECT short_code, account_handle, thumbnail_url, caption, posted_at,
 				       content_type, video_duration, original_url,
-				       views, likes, comments, hype_score
+				       views, likes, comments, hype_score, metric_captured_at
 				FROM contents
 				WHERE short_code = :shortCode
 				""")
@@ -45,7 +45,7 @@ public class PostDetailRepository {
 
 	public Optional<Account> findAccount(String handle) {
 		return safeQuery("accounts", Optional::empty, () -> jdbcClient.sql("""
-				SELECT handle, display_name, profile_image_url, followers
+				SELECT handle, display_name, profile_image_url, followers, external_link
 				FROM accounts
 				WHERE handle = :handle
 				""")

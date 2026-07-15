@@ -11,7 +11,7 @@ VALUES (9990, 'dummy', 'MANUAL', 'dummy/actor', 'SUCCEEDED', timestamptz '2026-0
 INSERT INTO account(id, username) VALUES (9001,'dummy_a'), (9002,'dummy_b');
 INSERT INTO raw_profile(account_id, crawl_run_id, payload, captured_at) VALUES
  (9001,9990,'{"username":"dummy_a","fullName":"더미 에이","profilePicUrl":"https://pic/a_old.jpg","followersCount":5000}'::jsonb,  timestamptz '2026-06-01 00:00:00+09'),
- (9001,9990,'{"username":"dummy_a","fullName":"더미 에이","profilePicUrl":"https://pic/a.jpg","followersCount":5500}'::jsonb,  timestamptz '2026-06-05 00:00:00+09'),
+ (9001,9990,'{"username":"dummy_a","fullName":"더미 에이","profilePicUrl":"https://pic/a.jpg","followersCount":5500,"externalUrl":"https://link.example/a"}'::jsonb,  timestamptz '2026-06-05 00:00:00+09'),
  (9002,9990,'{"username":"dummy_b","fullName":"더미 비","profilePicUrl":"https://pic/b.jpg","followersCount":20000}'::jsonb, timestamptz '2026-06-01 00:00:00+09');
 
 -- 콘텐츠 4개: dummy_a 릴스2+피드1, dummy_b 릴스1

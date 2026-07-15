@@ -14,7 +14,8 @@ SELECT DISTINCT ON (account_id)
   payload->>'profilePicUrl' AS profile_image_url,
   (payload->>'followsCount')::bigint AS follows_count,
   (payload->>'postsCount')::bigint   AS posts_count,
-  payload->>'biography'              AS biography
+  payload->>'biography'              AS biography,
+  payload->>'externalUrl'            AS external_link
 FROM raw_profile
 ORDER BY account_id, captured_at DESC, id DESC;
 

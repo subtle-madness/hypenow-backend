@@ -84,7 +84,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 ### 4-1. 최근 N개 윈도우
 
-모든 계정 단위 지표는 계정별 최신 게시물 N개(기본 12 — 07-14 정정으로 24 전환 예정, §8)만 잘라 계산한다. 재크롤링이 누적돼도
+모든 계정 단위 지표는 계정별 최신 게시물 N개(기본 12 — 07-15 API 스펙 정렬로 **12 확정**, 07-14의 24 전환 계획은 철회)만 잘라 계산한다. 재크롤링이 누적돼도
 계정 간 비교가 공정해지고, UI 각주 "최근 N개 기준"이 이 한 곳을 가리킨다.
 N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일 원천 — 뷰가 직접 읽어 재배포 없이 조정.
 
@@ -201,6 +201,16 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
 | G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일 인증(Spring Security 세션 쿠키·CSRF) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
 
+**API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
+
+| # | 태스크 | 내용 | 의존 | 상태 |
+|---|---|---|---|---|
+| P1 | V1 읽기 API | envelope·에러 공통 + `/v1/contents`·`/v1/contents/{id}/ai-report`·`/v1/influencers/{id}`(+ai-report). 병행 데이터 보강: hypeScore 재정의(0~100)·유통사 슬러그·updatedAt·email/externalLink 조사 (07-15 개통) | H, D, E, B4 | ✅ |
+| P2 | 서비스 데이터 정렬 | G 확장 — Spring Session JDBC(세션 목록·개별 로그아웃·hypenow-session 30일 슬라이딩), users 프로필 필드 V2, 저장 2종 스펙 계약화(+memo), me 부속(비번·이미지·탈퇴), 게이트 이벤트 | G, P1 | ⬜ |
+| P3 | 부가 | `/v1/stats` + `/v1/contents/{id}/similar`(유사도 사전계산 — analytics 신규) | P1 | ⬜ |
+
+기존 `/api/*`는 프론트 전환 완료까지 병존, fit(스펙 6.18)은 보류.
+
 권장 순서: A → B1, 병렬로 F(스파이크). 상세 구현 계획은 태스크 착수 시 작성.
 
 ## 6. 데이터 제약 (해석 주의 — 모든 지표 설계의 전제)
@@ -227,6 +237,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-15 | **P1 V1 읽기 API 개통** — `/v1` envelope 계약으로 리더보드·콘텐츠 AI 리포트·인플루언서 프로필/리포트 4종 서빙. hypeScore 스펙 5.4 산식(0~100) 재정의 — 피드는 views 부재로 팔로워 ER 축 대체 산식(cbrt(axis²×fresh)×100, 축=min(min(ER,0.3)/0.10,1)), 산식은 `analytics.hype_score()` SQL 함수 단일 원천. 유통사 필터는 `beauty_distributors.slug` 사전 해석, 카테고리 확장 매칭은 `beauty_taxonomy` SQL 처리. email은 미수집 null 확정, 매핑 단계 405/미존재 경로 404는 envelope 미적용(수용) | [plans/archive/2026-07-15-p1-v1-read-api.md](docs/superpowers/plans/archive/2026-07-15-p1-v1-read-api.md) |
+| 2026-07-15 | **프론트 API 스펙 v1 전체 채택** (fit 6.18 제외·보류) — `/v1` prefix + envelope 계약을 was 정본으로, 기존 `/api/*`와 병존 후 전환. 분석 윈도우는 스펙과 12로 정렬(develop 기본값 그대로). 인증은 G 구현 유지+확장: HttpSession→Spring Session JDBC(세션 목록·개별 로그아웃), 쿠키 `hypenow-session` 슬라이딩 30일, same-site 전제(도메인 확보로 Vercel rewrite 동일 오리진 — 아래 배포 행 참조). hypeScore는 스펙 5.4 산식(0~100)으로 재정의(현행 원값 방식 대체). 트랙 P1(V1 읽기)→P2(서비스 데이터 정렬)→P3(stats·유사도) 분해 | [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md) |
 | 2026-07-15 | **was+DB 오라클 배포 체계 + 도메인 hypenow.io** — 배포 범위는 was+analysis DB만(크롤·분석은 로컬 유지, 미러가 SSH 터널로 push). 오라클 A1 무료(도쿄, 2/12) + docker compose 3컨테이너(postgres 루프백/was/caddy HTTPS), 이미지 GHCR multi-arch로 타사 30분 이사 가능 구조. 일일 pg_dump(서버 7일)+rclone Google Drive(30일) 백업. 도메인 확보: 프론트 `www.hypenow.io`(Vercel) / API `api.hypenow.io` — 프론트 연동은 Vercel rewrite로 같은 오리진화(CSRF 쿠키), prod CORS는 www.hypenow.io만. was `prod`·analytics `cloud` 프로파일 신설 — Flyway `*:missing` 완화는 dev 기본값으로 국한(§8 해소) | [specs/2026-07-15-oracle-deploy-design.md](docs/superpowers/specs/2026-07-15-oracle-deploy-design.md) |
 | 2026-07-15 | **태스크 G: 서비스 데이터 완료** — `app` 스키마(was 소유 Flyway, 이력 `app.flyway_schema_history`) + 이메일+비밀번호 인증(Spring Security DaoAuthenticationProvider·BCrypt·세션 쿠키, 미인증 401 고정) + 저장 2종(인플루언서 후보 상태·메모 부분 갱신 upsert / 콘텐츠 북마크 멱등 upsert). 상태 어휘는 was가 생산자로 확정: `reviewing·contact_planned·collaborating`. CSRF는 XSRF-TOKEN 쿠키 + **SpaCsrfTokenRequestHandler**(지연 발급 해제 + raw 헤더 허용 — 기본 Xor 핸들러만으론 SPA가 첫 쓰기 전 쿠키를 못 받고 raw 값도 403, 실 curl E2E에서 발견). CORS는 WebConfig GET-only를 걷어내고 SecurityConfig `CorsConfigurationSource`로 일원화(allowCredentials). 저장 기술은 JdbcClient 유지(기존 관용구·최소 의존). 확장점: spring-session-jdbc(현 인메모리 세션)·운영 HTTPS 쿠키(Secure·SameSite=None). 같은 태스크의 딴 갈래였던 후보 관리 단독 구현은 닫힌 [PR #13](https://github.com/subtle-madness/hypenow-backend/pull/13)에 보존 — app V1 충돌·후보 기능 중복으로 이 설계(07-14 사용자 확정)로 일원화 | [plans/archive/2026-07-14-task-g-service-data.md](docs/superpowers/plans/archive/2026-07-14-task-g-service-data.md) |
 | 2026-07-14 | was에 검증용 내부 페이지 2종 — `/coverage`(필드 커버리지 라이브 추적)·`/posts/{shortCode}`(게시물 드로어 시안형 상세 데모). 분석 결과 읽기 전용, 태스크 D(API)와 별개의 데모/점검 화면. 데모 세션의 VLM base64 전환은 B3 개통(아래 행)과 동일 결론으로 합류 | [specs/2026-07-14-was-coverage-page-design.md](docs/superpowers/specs/2026-07-14-was-coverage-page-design.md) |
@@ -265,7 +277,6 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 세션·쿠키 운영 전환 | 쿠키 `Secure; SameSite=None` + HTTPS(프록시 헤더 신뢰) 부분은 해소(07-15) — application-prod.yml. 세션은 여전히 인메모리(재기동 시 로그아웃) — 필요 시 spring-session-jdbc는 미결 |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |
-| 윈도우 24개 전환 | `analytics.recent-window` 12→24 (07-14 정정 — "3개월"은 크롤링 백필 시작 범위이지 윈도우가 아님, 개수 기반 유지). B3 `recent12_*` 네이밍·프론트 "최근 12개" 표기 동반 수정 |
 | D3·H 지표 고정 정합 | 매일 재크롤 개시 후 end_date=오늘 화면의 as-of(이력 최신)가 +3일 고정과 어긋남 — 목록·상세의 "현재" 지표를 `contents`(고정) 기준으로 전환 검토. 과거 기간 화면 재현·인플루언서 상세 참조용 이력 as-of는 유지 |
 | ~~Flyway missing 완화 국한~~ | 해소(07-15) — 완화를 프로퍼티(`analytics.flyway-ignore-missing`, dev 기본 true)로 전환, 클라우드 타깃은 false 엄격 검증 |
 
