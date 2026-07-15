@@ -18,11 +18,14 @@ public class AnalyticsSettings {
 	public static final String KEY_ACCOUNT_ANALYZE_BATCH_LIMIT = "analytics.account-analyze-batch-limit";
 	/** stale 계정 재분석 최소 간격(일) — 매일 크롤 구조에서 계정당 매일 호출 방지 (스펙 §2-2). */
 	public static final String KEY_ACCOUNT_ANALYZE_COOLDOWN_DAYS = "analytics.account-analyze-cooldown-days";
+	/** 분석 대상 최소 숙성 일수 — 게시 직후 분석·영구 고정 방지 (B3 숙성 가드, 07-14 확정). */
+	public static final String KEY_ANALYZE_MATURITY_DAYS = "analytics.analyze-maturity-days";
 
 	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS = 7;
+	static final int DEFAULT_ANALYZE_MATURITY_DAYS = 3;
 
 	private final JdbcTemplate raw;
 
@@ -46,6 +49,11 @@ public class AnalyticsSettings {
 	public int accountAnalyzeCooldownDays() {
 		return read(KEY_ACCOUNT_ANALYZE_COOLDOWN_DAYS).map(Integer::parseInt)
 				.orElse(DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS);
+	}
+
+	public int analyzeMaturityDays() {
+		return read(KEY_ANALYZE_MATURITY_DAYS).map(Integer::parseInt)
+				.orElse(DEFAULT_ANALYZE_MATURITY_DAYS);
 	}
 
 	private java.util.Optional<String> read(String key) {

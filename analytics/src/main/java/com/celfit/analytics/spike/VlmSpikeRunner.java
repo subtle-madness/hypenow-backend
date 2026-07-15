@@ -2,10 +2,13 @@ package com.celfit.analytics.spike;
 
 import com.celfit.analytics.analyze.AnalyzeRunner;
 import com.celfit.analytics.config.AnalyticsSettings;
-import com.celfit.analytics.llm.AnthropicVisionAnalyzer;
+import com.celfit.analytics.llm.AnthropicContentAttributeAnalyzer;
+import com.celfit.analytics.llm.BeautyTaxonomyLoader;
+import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.LlmClientFactory;
-import com.celfit.analytics.llm.VlmResult;
 import java.util.function.Predicate;
+import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -29,6 +32,7 @@ public class VlmSpikeRunner {
 
 	@Bean
 	public CommandLineRunner vlmSpike(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			org.springframework.core.env.Environment env) {
 		return args -> {
 			int limit = Math.min(10, Integer.parseInt(
@@ -48,8 +52,8 @@ public class VlmSpikeRunner {
 			var targets = candidates.stream().filter(t -> alive.test(t.thumbnailUrl())).limit(limit).toList();
 			System.out.printf("후보 %d건 중 썸네일 생존 %d건으로 스파이크 실행%n", candidates.size(), targets.size());
 
-			var analyzer = new AnthropicVisionAnalyzer(LlmClientFactory.fromEnv(),
-					new AnalyticsSettings(rawJdbcTemplate));
+			var analyzer = new AnthropicContentAttributeAnalyzer(LlmClientFactory.fromEnv(),
+					new AnalyticsSettings(rawJdbcTemplate), new BeautyTaxonomyLoader(analysisDataSource));
 			ObjectMapper json = new ObjectMapper();
 			// 유통사 어휘 검증: 최신 수집분에 유통사 언급 콘텐츠가 없을 때, 살아있는 썸네일 1장에
 			// 지정 캡션 파일(예: 만료 썸네일 콘텐츠의 "올영/다이소" 캡션)을 붙여 정식 상호명 정규화를 확인한다.
@@ -59,7 +63,7 @@ public class VlmSpikeRunner {
 				String extraCaption = java.nio.file.Files.readString(java.nio.file.Path.of(extraCaptionFile));
 				System.out.printf("%n=== 유통사 어휘 검증 (썸네일: %s 재사용) ===%n캡션: %.160s%n",
 						targets.get(0).shortCode(), extraCaption.replace('\n', ' '));
-				VlmResult r = analyzer.analyze(targets.get(0).thumbnailUrl(), extraCaption);
+				ContentAttributes r = analyzer.analyze(extraCaption, targets.get(0).thumbnailUrl());
 				System.out.println(json.writerWithDefaultPrettyPrinter().writeValueAsString(r));
 				return;
 			}
@@ -69,7 +73,7 @@ public class VlmSpikeRunner {
 						t.caption() == null ? "(없음)" : t.caption().replace('\n', ' '));
 				try {
 					long start = System.currentTimeMillis();
-					VlmResult r = analyzer.analyze(t.thumbnailUrl(), t.caption());
+					ContentAttributes r = analyzer.analyze(t.caption(), t.thumbnailUrl());
 					System.out.printf("소요 %dms%n%s%n", System.currentTimeMillis() - start,
 							json.writerWithDefaultPrettyPrinter().writeValueAsString(r));
 				} catch (Exception e) {
