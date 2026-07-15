@@ -1,0 +1,50 @@
+# 운영 스택 — 오라클 A1이든 폴백 VPS든 동일 (사용법: deploy/README.md)
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: analysis
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"   # 루프백 전용 — 외부 접속은 SSH 터널로만
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d analysis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  was:
+    image: ghcr.io/subtle-madness/hypenow-was:latest
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://postgres:5432/analysis
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
+      JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pg-data:
+  caddy-data:
+  caddy-config:
