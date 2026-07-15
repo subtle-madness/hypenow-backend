@@ -6,6 +6,7 @@ import java.util.Map;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -18,11 +19,15 @@ public class RawProfile {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "account_id", nullable = false)
-    private Long accountId;
+    @Column(name = "influencer_id", nullable = false)
+    private Long influencerId;
 
     @Column(name = "crawl_run_id", nullable = false)
     private Long crawlRunId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private RawSource source;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false)
@@ -31,15 +36,17 @@ public class RawProfile {
     @Column(name = "captured_at", nullable = false)
     private Instant capturedAt;
 
-    @Column(insertable = false, updatable = false)
+    @Setter
     private String username;
 
-    @Column(insertable = false, updatable = false)
+    @Setter
     private Long followers;
 
-    public RawProfile(Long accountId, Long crawlRunId, Map<String, Object> payload, Instant capturedAt) {
-        this.accountId = accountId;
+    public RawProfile(Long influencerId, Long crawlRunId, RawSource source,
+                      Map<String, Object> payload, Instant capturedAt) {
+        this.influencerId = influencerId;
         this.crawlRunId = crawlRunId;
+        this.source = source;
         this.payload = payload;
         this.capturedAt = capturedAt;
     }

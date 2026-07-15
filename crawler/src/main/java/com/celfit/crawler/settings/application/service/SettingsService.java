@@ -1,7 +1,9 @@
 package com.celfit.crawler.settings.application.service;
 
-import com.celfit.crawler.common.config.AggregateProperties;
+import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.common.config.DiscoverProperties;
+import com.celfit.crawler.common.config.QualifyProperties;
+import com.celfit.crawler.common.config.SimilarProperties;
 import com.celfit.crawler.settings.domain.AppSetting;
 import com.celfit.crawler.settings.application.port.out.AppSettingRepository;
 import java.util.List;
@@ -17,27 +19,48 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class SettingsService {
 
-    public record SettingView(String key, int effective, int defaultValue, boolean overridden) {}
+    public record SettingView(String key, int effective, int defaultValue, boolean overridden,
+                              String description) {}
 
     static final String RESULTS_LIMIT = "discover.results-limit";
-    static final String DELAY_DAYS = "aggregate.delay-days";
-    static final String BATCH_LIMIT = "aggregate.batch-limit";
-    static final String CHUNK_SIZE = "aggregate.chunk-size";
-    static final String COMMENTS_PER_POST = "aggregate.comments-per-post";
-    static final String MAX_ATTEMPTS = "aggregate.max-attempts";
+    static final String QUALIFY_BATCH_LIMIT = "qualify.batch-limit";
+    static final String QUALIFY_MIN_FOLLOWERS = "qualify.min-followers";
+    static final String QUALIFY_MAX_FOLLOWERS = "qualify.max-followers";
+    static final String COLLECT_BATCH_LIMIT = "collect.batch-limit";
+    static final String COLLECT_COMMENTS_PER_POST = "collect.comments-per-post";
+    static final String COLLECT_MAX_ATTEMPTS = "collect.max-attempts";
+    static final String COLLECT_REVISIT_INTERVAL_DAYS = "collect.revisit-interval-days";
+    static final String SIMILAR_BATCH_LIMIT = "similar.batch-limit";
 
+    // 댓글 관련 키(comments-per-post·max-attempts)는 댓글 수집이 꺼지면서(yml comments-enabled)
+    // UI 목록에서 제외 — 로직·기본값은 유지되므로 재활성화 시 다시 넣으면 된다.
     private static final List<String> KEYS = List.of(
-            RESULTS_LIMIT, DELAY_DAYS, BATCH_LIMIT, CHUNK_SIZE, COMMENTS_PER_POST, MAX_ATTEMPTS);
+            RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
+            COLLECT_BATCH_LIMIT, COLLECT_REVISIT_INTERVAL_DAYS, SIMILAR_BATCH_LIMIT);
+
+    private static final java.util.Map<String, String> DESCRIPTIONS = java.util.Map.of(
+            RESULTS_LIMIT, "discover: 키워드당 발굴할 게시물 수 상한 (해시태그 페이지 반복량 결정)",
+            QUALIFY_BATCH_LIMIT, "qualify: 판정 1회당 처리할 인플루언서 수 상한 (프로필 호출량 제어)",
+            QUALIFY_MIN_FOLLOWERS, "qualify: 판정 통과 팔로워 하한 — 미만이면 EXCLUDED (전역)",
+            QUALIFY_MAX_FOLLOWERS, "qualify: 판정 통과 팔로워 상한 — 초과면 EXCLUDED (전역)",
+            COLLECT_BATCH_LIMIT, "collect: 실행 1회당 방문할 인플루언서 수",
+            COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 마지막 방문 후 이 기간이 지나야 다시 대상",
+            SIMILAR_BATCH_LIMIT, "similar: 실행 1회당 유사 계정을 수확할 시드 수 (Hiker 호출량 제어)");
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
-    private final AggregateProperties aggregateProps;
+    private final QualifyProperties qualifyProps;
+    private final CollectProperties collectProps;
+    private final SimilarProperties similarProps;
 
     public SettingsService(AppSettingRepository settings, DiscoverProperties discoverProps,
-                           AggregateProperties aggregateProps) {
+                           QualifyProperties qualifyProps, CollectProperties collectProps,
+                           SimilarProperties similarProps) {
         this.settings = settings;
         this.discoverProps = discoverProps;
-        this.aggregateProps = aggregateProps;
+        this.qualifyProps = qualifyProps;
+        this.collectProps = collectProps;
+        this.similarProps = similarProps;
     }
 
     @Transactional(readOnly = true)
@@ -46,28 +69,43 @@ public class SettingsService {
     }
 
     @Transactional(readOnly = true)
-    public int delayDays() {
-        return effective(DELAY_DAYS);
+    public int qualifyBatchLimit() {
+        return effective(QUALIFY_BATCH_LIMIT);
     }
 
     @Transactional(readOnly = true)
-    public int batchLimit() {
-        return effective(BATCH_LIMIT);
+    public int qualifyMinFollowers() {
+        return effective(QUALIFY_MIN_FOLLOWERS);
     }
 
     @Transactional(readOnly = true)
-    public int chunkSize() {
-        return effective(CHUNK_SIZE);
+    public int qualifyMaxFollowers() {
+        return effective(QUALIFY_MAX_FOLLOWERS);
+    }
+
+    @Transactional(readOnly = true)
+    public int collectBatchLimit() {
+        return effective(COLLECT_BATCH_LIMIT);
     }
 
     @Transactional(readOnly = true)
     public int commentsPerPost() {
-        return effective(COMMENTS_PER_POST);
+        return effective(COLLECT_COMMENTS_PER_POST);
     }
 
     @Transactional(readOnly = true)
     public int maxAttempts() {
-        return effective(MAX_ATTEMPTS);
+        return effective(COLLECT_MAX_ATTEMPTS);
+    }
+
+    @Transactional(readOnly = true)
+    public int revisitIntervalDays() {
+        return effective(COLLECT_REVISIT_INTERVAL_DAYS);
+    }
+
+    @Transactional(readOnly = true)
+    public int similarBatchLimit() {
+        return effective(SIMILAR_BATCH_LIMIT);
     }
 
     @Transactional(readOnly = true)
@@ -90,9 +128,10 @@ public class SettingsService {
 
     private SettingView toView(String key) {
         int def = defaultValue(key);
+        String desc = DESCRIPTIONS.getOrDefault(key, "");
         return settings.findById(key)
-                .map(s -> new SettingView(key, Integer.parseInt(s.getValue()), def, true))
-                .orElseGet(() -> new SettingView(key, def, def, false));
+                .map(s -> new SettingView(key, Integer.parseInt(s.getValue()), def, true, desc))
+                .orElseGet(() -> new SettingView(key, def, def, false, desc));
     }
 
     private int effective(String key) {
@@ -104,17 +143,20 @@ public class SettingsService {
     private int defaultValue(String key) {
         return switch (key) {
             case RESULTS_LIMIT -> discoverProps.resultsLimit();
-            case DELAY_DAYS -> aggregateProps.delayDays();
-            case BATCH_LIMIT -> aggregateProps.batchLimit();
-            case CHUNK_SIZE -> aggregateProps.chunkSize();
-            case COMMENTS_PER_POST -> aggregateProps.commentsPerPost();
-            case MAX_ATTEMPTS -> aggregateProps.maxAttempts();
+            case QUALIFY_BATCH_LIMIT -> qualifyProps.batchLimit();
+            case QUALIFY_MIN_FOLLOWERS -> qualifyProps.minFollowers();
+            case QUALIFY_MAX_FOLLOWERS -> qualifyProps.maxFollowers();
+            case COLLECT_BATCH_LIMIT -> collectProps.batchLimit();
+            case COLLECT_COMMENTS_PER_POST -> collectProps.commentsPerPost();
+            case COLLECT_MAX_ATTEMPTS -> collectProps.maxAttempts();
+            case COLLECT_REVISIT_INTERVAL_DAYS -> collectProps.revisitIntervalDays();
+            case SIMILAR_BATCH_LIMIT -> similarProps.batchLimit();
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 설정 키: " + key);
         };
     }
 
     private void validate(String key, int value) {
-        int min = DELAY_DAYS.equals(key) ? 0 : 1;
+        int min = 1;
         if (value < min) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "잘못된 값: " + key + "=" + value + " (최소 " + min + ")");

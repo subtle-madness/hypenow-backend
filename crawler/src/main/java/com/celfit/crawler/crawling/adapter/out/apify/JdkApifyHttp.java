@@ -1,13 +1,12 @@
 package com.celfit.crawler.crawling.adapter.out.apify;
 
-import com.celfit.crawler.crawling.application.port.out.*;
-
-import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import org.springframework.stereotype.Component;
 
 @Component

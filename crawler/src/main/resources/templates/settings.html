@@ -10,12 +10,71 @@
 <nav th:replace="~{fragments/nav :: nav('settings')}"></nav>
 <main>
 <h1>런타임 설정</h1>
+
+<section class="card">
+    <h2>발굴 수집 방식</h2>
+    <form method="post" th:action="@{/ui/discover-source}">
+        <label class="check"><input type="radio" name="source" value="HIKER"
+            th:checked="${discoverSource == 'HIKER'}"/> HikerAPI 해시태그 인기 (기본)</label>
+        <label class="check"><input type="radio" name="source" value="ACTOR"
+            th:checked="${discoverSource == 'ACTOR'}"/> 액터 (Apify)</label>
+        <button type="submit" class="primary">저장</button>
+    </form>
+    <p class="hint">현재: <b th:text="${discoverSource}">HIKER</b> · 기본값: HIKER · HikerAPI는 페이지(32개)당 $0.001</p>
+</section>
+
+<!-- 댓글 수집 방식 카드 제거 — 댓글 수집이 꺼져 있음(crawler.collect.comments-enabled, yml 전용).
+     로직은 유지되므로 재활성화 시 카드 복원. -->
+
+<section class="card">
+    <h2>인스타 자체크롤 프록시</h2>
+    <form method="post" th:action="@{/ui/proxy-source}">
+        <label class="check"><input type="radio" name="source" value="DIRECT"
+            th:checked="${proxySource == 'DIRECT'}"/> 직접 연결 (프록시 없음)</label>
+        <label class="check"><input type="radio" name="source" value="APIFY"
+            th:checked="${proxySource == 'APIFY'}"/> Apify residential
+            <span class="hint" th:if="${proxyConfigured != null and !proxyConfigured['APIFY']}"> — URL 미설정(직접 폴백)</span></label>
+        <label class="check"><input type="radio" name="source" value="DATAIMPULSE_RESIDENTIAL"
+            th:checked="${proxySource == 'DATAIMPULSE_RESIDENTIAL'}"/> DataImpulse residential
+            <span class="hint" th:if="${proxyConfigured != null and !proxyConfigured['DATAIMPULSE_RESIDENTIAL']}"> — URL 미설정(직접 폴백)</span></label>
+        <label class="check"><input type="radio" name="source" value="DATAIMPULSE_MOBILE"
+            th:checked="${proxySource == 'DATAIMPULSE_MOBILE'}"/> DataImpulse mobile
+            <span class="hint" th:if="${proxyConfigured != null and !proxyConfigured['DATAIMPULSE_MOBILE']}"> — URL 미설정(직접 폴백)</span></label>
+        <button type="submit" class="primary">저장</button>
+    </form>
+    <p class="hint">현재: <b th:text="${proxySource}">APIFY</b> · SELF 프로필·댓글 자체크롤이 나갈 경로.
+        URL은 환경변수(APIFY_PROXY_URL / DATAIMPULSE_RESIDENTIAL_PROXY_URL / DATAIMPULSE_MOBILE_PROXY_URL)로 주입.
+        <br/>변경 즉시 반영 — 앱 재시작 불필요.</p>
+</section>
+
+<section class="card">
+    <h2>프로필 수집 방식</h2>
+    <form method="post" th:action="@{/ui/profile-source}">
+        <label class="check"><input type="radio" name="source" value="SELF"
+            th:checked="${profileSource == 'SELF'}"/> 자체 크롤 (기본)</label>
+        <label class="check"><input type="radio" name="source" value="ACTOR"
+            th:checked="${profileSource == 'ACTOR'}"/> 액터 (Apify)</label>
+        <label class="check"><input type="radio" name="source" value="HIKER_MOBILE"
+            th:checked="${profileSource == 'HIKER_MOBILE'}"/> HikerAPI 모바일</label>
+        <label class="check"><input type="radio" name="source" value="HIKER_WEB_GQL"
+            th:checked="${profileSource == 'HIKER_WEB_GQL'}"/> HikerAPI 웹gql</label>
+        <label class="check"><input type="radio" name="source" value="DATALIKERS"
+            th:checked="${profileSource == 'DATALIKERS'}"/> DataLikers (프록시 우회 · $0.0006/계정)</label>
+        <hr/>
+        <p class="hint">보충 (SELF·HikerAPI모바일에서만 적용):</p>
+        <label class="check"><input type="checkbox" name="related" value="true"
+            th:checked="${profileRelated}"/> 관련계정 채우기 (HikerAPI suggested)</label>
+        <button type="submit" class="primary">저장</button>
+    </form>
+    <p class="hint">현재: <b th:text="${profileSource}">SELF</b> · 기본값: SELF</p>
+</section>
+
 <p class="hint">빈칸으로 저장하면 기본값(yml)으로 복귀합니다.</p>
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 
 <form method="post" th:action="@{/ui/settings}">
     <table class="data fit">
-        <tr><th>키</th><th>오버라이드 값</th><th>기본값</th></tr>
+        <tr><th>키</th><th>오버라이드 값</th><th>기본값</th><th>설명</th></tr>
         <tr th:each="s : ${settings}">
             <td th:text="${s.key()}"></td>
             <td>
@@ -23,6 +82,7 @@
                        th:value="${s.overridden()} ? ${s.effective()} : null"/>
             </td>
             <td th:text="${s.defaultValue()}"></td>
+            <td class="hint" th:text="${s.description()}"></td>
         </tr>
     </table>
     <p><button type="submit" class="primary">저장</button></p>

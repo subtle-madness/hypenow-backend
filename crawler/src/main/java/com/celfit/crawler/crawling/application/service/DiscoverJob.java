@@ -1,88 +1,87 @@
 package com.celfit.crawler.crawling.application.service;
 
-import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.port.out.Actors;
-import com.celfit.crawler.crawling.application.port.out.ActorInputs;
+import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.port.out.SearchKeywordRepository;
+import com.celfit.crawler.content.domain.Content;
+import com.celfit.crawler.content.domain.ContentOrigin;
+import com.celfit.crawler.content.domain.SearchKeyword;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
-import com.celfit.crawler.crawling.domain.*;
-import com.celfit.crawler.content.domain.*;
-import com.celfit.crawler.settings.domain.*;
-import com.celfit.crawler.crawling.application.port.out.*;
-import com.celfit.crawler.content.application.port.out.*;
-import com.celfit.crawler.settings.application.port.out.*;
+import com.celfit.crawler.crawling.application.port.out.InfluencerDiscoveryRepository;
+import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostRepository;
+import com.celfit.crawler.crawling.domain.Influencer;
+import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
+import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
+import com.celfit.crawler.crawling.domain.TriggerType;
 import java.time.Clock;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 발굴 잡 — 활성 search_keyword를 평탄하게 순회해 발굴 게시물의 작성자를 인플루언서로
+ * upsert하고, 게시물은 content로 upsert, raw 원형은 항상 저장한다(발굴 출처 기록).
+ * 발굴 경로 payload 원형화는 이번 스코프 아님 — 기존 계약 형태 그대로 저장한다.
+ */
 @Service
 public class DiscoverJob {
 
-    public record Summary(int newContents, int duplicates, int skipped, int failedKeywords) {}
+    public record Summary(int newInfluencers, int knownInfluencers, int skippedItems, int failedKeywords) {}
 
-    private final CategoryRepository categories;
-    private final CategoryKeywordRepository keywords;
-    private final CollectionRuleRepository rules;
-    private final AccountRepository accounts;
+    private final SearchKeywordRepository keywords;
+    private final InfluencerRepository influencers;
+    private final InfluencerDiscoveryRepository discoveries;
     private final ContentRepository contents;
     private final RawDiscoveryPostRepository rawDiscovery;
-    private final CrawlExecutor executor;
-    private final SettingsService settings;
+    private final DiscoverSourceSelector discoverSourceSelector;
     private final Clock clock;
 
-    public DiscoverJob(CategoryRepository categories, CategoryKeywordRepository keywords,
-                       CollectionRuleRepository rules, AccountRepository accounts,
-                       ContentRepository contents, RawDiscoveryPostRepository rawDiscovery,
-                       CrawlExecutor executor, SettingsService settings, Clock clock) {
-        this.categories = categories;
+    public DiscoverJob(SearchKeywordRepository keywords, InfluencerRepository influencers,
+                       InfluencerDiscoveryRepository discoveries, ContentRepository contents,
+                       RawDiscoveryPostRepository rawDiscovery, DiscoverSourceSelector discoverSourceSelector,
+                       Clock clock) {
         this.keywords = keywords;
-        this.rules = rules;
-        this.accounts = accounts;
+        this.influencers = influencers;
+        this.discoveries = discoveries;
         this.contents = contents;
         this.rawDiscovery = rawDiscovery;
-        this.executor = executor;
-        this.settings = settings;
+        this.discoverSourceSelector = discoverSourceSelector;
         this.clock = clock;
     }
 
     @Transactional
-    public Summary run(long categoryId, TriggerType trigger) {
-        categories.findById(categoryId)
-                .filter(Category::isEnabled)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않거나 비활성 카테고리: " + categoryId));
-        ContentTypeFilter filter = rules.findByCategoryId(categoryId)
-                .map(CollectionRule::getContentTypes)
-                .orElse(ContentTypeFilter.ALL);
-
-        int newContents = 0, duplicates = 0, skipped = 0, failedKeywords = 0;
-        for (CategoryKeyword kw : keywords.findByCategoryIdAndEnabledTrue(categoryId)) {
+    public Summary run(TriggerType trigger) {
+        int newInf = 0, known = 0, skipped = 0, failedKeywords = 0;
+        for (SearchKeyword kw : keywords.findByEnabledTrue()) {
             CrawlExecutor.Execution ex;
             try {
-                ex = executor.execute(JobName.DISCOVER, trigger, categoryId, kw.getKeyword(),
-                        Actors.DISCOVERY, ActorInputs.discovery(kw.getKeyword(), settings.resultsLimit()));
+                ex = discoverSourceSelector.fetch(kw.getKeyword(), trigger);
             } catch (ApifyException e) {
-                failedKeywords++;  // crawl_run에 FAILED 기록됨 — 다음 키워드 계속
+                failedKeywords++;
                 continue;
             }
             for (Map<String, Object> item : ex.items()) {
                 var parsed = DiscoveryItemParser.parse(item);
-                if (parsed.isEmpty() || !filter.allows(parsed.get().type())) {
-                    skipped++;  // content_types 불일치·필수 필드 결손 → 등록·raw 모두 skip
-                    continue;
-                }
+                if (parsed.isEmpty()) { skipped++; continue; }
                 var d = parsed.get();
-                accounts.findByUsername(d.ownerUsername())
-                        .orElseGet(() -> accounts.save(new Account(d.ownerUsername())));
-                var existing = contents.findByShortCode(d.shortCode());
-                Content content = existing.orElseGet(() -> contents.save(new Content(
-                        d.shortCode(), d.type(), d.ownerUsername(), d.uploadedAt(),
-                        categoryId, kw.getKeyword(), kw.getSubcategory(), kw.getMainGroup(),
-                        clock.instant())));
-                if (existing.isPresent()) duplicates++; else newContents++;
-                // 중복 발굴이어도 raw는 항상 저장 — "언제 어떤 키워드에서 발견됐나" 이력
-                rawDiscovery.save(new RawDiscoveryPost(content.getId(), ex.runId(), d.payload(), clock.instant()));
+                var existing = influencers.findByUsername(d.ownerUsername());
+                Influencer inf = existing.orElseGet(() -> influencers.save(new Influencer(d.ownerUsername())));
+                if (existing.isPresent()) known++; else newInf++;
+                discoveries.save(new InfluencerDiscovery(
+                        inf.getId(), kw.getKeyword(), d.shortCode(), clock.instant()));
+                Content content = contents.findByShortCode(d.shortCode()).orElseGet(() ->
+                        contents.save(new Content(d.shortCode(), d.type(), d.ownerUsername(),
+                                inf.getId(), d.uploadedAt(), clock.instant(), ContentOrigin.DISCOVERY)));
+                // 중복 발굴이어도 raw는 항상 저장 — 원형 그대로 + 소스 태그
+                RawDiscoveryPost raw = new RawDiscoveryPost(content.getId(), ex.runId(),
+                        discoverSourceSelector.currentSource(), d.payload(), clock.instant());
+                raw.setShortCode(d.shortCode());
+                if (d.payload().get("caption") instanceof String caption) {
+                    raw.setCaption(caption);
+                }
+                rawDiscovery.save(raw);
             }
         }
-        return new Summary(newContents, duplicates, skipped, failedKeywords);
+        return new Summary(newInf, known, skipped, failedKeywords);
     }
 }

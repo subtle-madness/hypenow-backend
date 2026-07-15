@@ -6,15 +6,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.crawler.FakeApifyRunner;
 import com.celfit.crawler.IntegrationTest;
-import com.celfit.crawler.content.domain.Category;
-import com.celfit.crawler.content.domain.CategoryKeyword;
-import com.celfit.crawler.content.application.port.out.CategoryKeywordRepository;
-import com.celfit.crawler.content.application.port.out.CategoryRepository;
-import com.celfit.crawler.crawling.domain.TriggerType;
+import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.service.DiscoverJob;
-import java.util.List;
-import java.util.Map;
+import com.celfit.crawler.settings.domain.DiscoverSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,23 +37,54 @@ class SettingsApiTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired SettingsService settingsService;
     @Autowired FakeApifyRunner fake;
-    @Autowired DiscoverJob discoverJob;
-    @Autowired CategoryRepository categories;
-    @Autowired CategoryKeywordRepository keywords;
+    @Autowired
+    DiscoverSourceSetting discoverSourceSetting;
 
     @BeforeEach
     void resetFake() {
         fake.reset();
+        discoverSourceSetting.update(DiscoverSource.ACTOR);
     }
 
     @Test
     void 기본값_조회() throws Exception {
         mvc.perform(get("/admin/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(6))
+                .andExpect(jsonPath("$.length()").value(7))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].effective").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].defaultValue").value(100))
-                .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false));
+                .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false))
+                .andExpect(jsonPath("$[?(@.key=='qualify.batch-limit')].defaultValue").value(500))
+                .andExpect(jsonPath("$[?(@.key=='qualify.min-followers')].defaultValue").value(3000))
+                .andExpect(jsonPath("$[?(@.key=='qualify.max-followers')].defaultValue").value(50000))
+                .andExpect(jsonPath("$[?(@.key=='collect.batch-limit')].defaultValue").value(10))
+                .andExpect(jsonPath("$[?(@.key=='collect.revisit-interval-days')].defaultValue").value(7))
+                .andExpect(jsonPath("$[?(@.key=='similar.batch-limit')].defaultValue").value(50));
+    }
+
+    @Test
+    void 새_키_왕복() throws Exception {
+        mvc.perform(put("/admin/settings/qualify.min-followers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 5000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(5000))
+                .andExpect(jsonPath("$.overridden").value(true));
+        assertThat(settingsService.qualifyMinFollowers()).isEqualTo(5000);
+
+        mvc.perform(put("/admin/settings/qualify.max-followers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 80000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(80000));
+        assertThat(settingsService.qualifyMaxFollowers()).isEqualTo(80000);
+
+        mvc.perform(put("/admin/settings/collect.revisit-interval-days")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 14}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effective").value(14));
+        assertThat(settingsService.revisitIntervalDays()).isEqualTo(14);
     }
 
     @Test
@@ -72,32 +97,23 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.overridden").value(true));
 
         assertThat(settingsService.resultsLimit()).isEqualTo(5);
-
-        Long catId = categories.save(new Category("메이크업")).getId();
-        keywords.save(new CategoryKeyword(catId, "메이크업"));
-        fake.enqueue(List.of(Map.of("shortCode", "sc1", "productType", "clips",
-                "timestamp", "2026-07-01T12:00:00.000Z", "ownerUsername", "kim")));
-
-        discoverJob.run(catId, TriggerType.MANUAL);
-
-        assertThat(fake.calls.get(0).input()).containsEntry("resultsLimit", 5);
     }
 
     @Test
     void 리셋하면_기본값으로_복귀() throws Exception {
-        mvc.perform(put("/admin/settings/aggregate.batch-limit")
+        mvc.perform(put("/admin/settings/collect.batch-limit")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"value\": 10}"))
+                        .content("{\"value\": 20}"))
                 .andExpect(status().isOk());
-        assertThat(settingsService.batchLimit()).isEqualTo(10);
+        assertThat(settingsService.collectBatchLimit()).isEqualTo(20);
 
-        mvc.perform(put("/admin/settings/aggregate.batch-limit")
+        mvc.perform(put("/admin/settings/collect.batch-limit")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\": null}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.effective").value(200))
+                .andExpect(jsonPath("$.effective").value(10))
                 .andExpect(jsonPath("$.overridden").value(false));
-        assertThat(settingsService.batchLimit()).isEqualTo(200);
+        assertThat(settingsService.collectBatchLimit()).isEqualTo(10);
     }
 
     @Test
@@ -112,11 +128,15 @@ class SettingsApiTest extends IntegrationTest {
                         .content("{\"value\": 0}"))
                 .andExpect(status().isBadRequest());
 
-        // delay-days는 0 허용 (지연 없음)
+        // aggregate.* 키는 제거됨 — 더 이상 알려진 키가 아니므로 400
         mvc.perform(put("/admin/settings/aggregate.delay-days")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\": 0}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/admin/settings/aggregate.batch-limit")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\": 5}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

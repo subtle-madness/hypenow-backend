@@ -1,11 +1,8 @@
 package com.celfit.crawler.crawling.adapter.out.apify;
 
-import com.celfit.crawler.crawling.application.port.out.*;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -14,6 +11,9 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -52,7 +52,7 @@ class ApifyClientTest {
 
     ApifyClient client(FakeHttp http, TickingClock clock, Duration timeout) {
         ApifyProperties props = new ApifyProperties(
-                "tok", "https://api.test", Duration.ofSeconds(5), timeout);
+                "tok", "https://api.test", Duration.ofSeconds(5), timeout, 1024);
         Sleeper advancing = d -> clock.now = clock.now.plus(d);
         return new ApifyClient(http, props, new ObjectMapper(), advancing, clock);
     }
@@ -75,6 +75,7 @@ class ApifyClientTest {
         assertThat(result.items()).hasSize(2);
         assertThat(result.items().get(0)).containsEntry("shortCode", "abc");
         assertThat(http.calls.get(0)).startsWith("POST https://api.test/v2/acts/apify~instagram-hashtag-scraper/runs");
+        assertThat(http.calls.get(0)).contains("memory=1024");  // OOM 방지: 실행당 메모리 명시
         assertThat(http.calls.get(3)).contains("/v2/datasets/ds-1/items");
         assertThat(http.calls).noneMatch(c -> c.contains("token"));
     }

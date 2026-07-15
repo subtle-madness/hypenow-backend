@@ -1,7 +1,5 @@
 package com.celfit.crawler.crawling.application.service;
 
-import com.celfit.crawler.content.domain.Category;
-import com.celfit.crawler.content.application.port.out.CategoryRepository;
 import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -19,51 +17,63 @@ public class JobService implements TriggerJobUseCase {
     private final JobLock lock;
     private final DiscoverJob discoverJob;
     private final QualifyJob qualifyJob;
-    private final AggregateJob aggregateJob;
-    private final CategoryRepository categories;
+    private final CollectJob collectJob;
+    private final BeautyJob beautyJob;
+    private final SimilarJob similarJob;
     private final TaskExecutor taskExecutor;
 
-    public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob,
-                      AggregateJob aggregateJob, CategoryRepository categories,
+    public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob, CollectJob collectJob,
+                      BeautyJob beautyJob, SimilarJob similarJob,
                       @Qualifier("jobTaskExecutor") TaskExecutor taskExecutor) {
         this.lock = lock;
         this.discoverJob = discoverJob;
         this.qualifyJob = qualifyJob;
-        this.aggregateJob = aggregateJob;
-        this.categories = categories;
+        this.collectJob = collectJob;
+        this.beautyJob = beautyJob;
+        this.similarJob = similarJob;
         this.taskExecutor = taskExecutor;
     }
 
-    /** discover의 categoryId=null은 전체 활성 카테고리를 잡 1회(락 1회 점유) 안에서 순차 실행. */
     @Override
-    public TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType) {
-        return trigger(job, categoryId, triggerType, false);
+    public TriggerResult trigger(JobName job, TriggerType triggerType) {
+        return trigger(job, triggerType, false);
     }
 
     /** requalify=true는 qualify에서 EXCLUDED도 재판정 (raw_profile 재사용 — Apify 재호출 없음). */
     @Override
-    public TriggerResult trigger(JobName job, Long categoryId, TriggerType triggerType, boolean requalify) {
+    public TriggerResult trigger(JobName job, TriggerType triggerType, boolean requalify) {
         if (!lock.tryAcquire(job)) return TriggerResult.BUSY;
         taskExecutor.execute(() -> {
             try {
+                // 부분 실패(청크·키워드·방문 단위)는 잡을 멈추지 않지만 로그 레벨로 드러낸다 —
+                // "완료" INFO와 실행 이력의 FAILED run이 모순처럼 보이던 문제 방지.
                 switch (job) {
                     case DISCOVER -> {
-                        if (categoryId != null) {
-                            log.info("discover 완료: {}", discoverJob.run(categoryId, triggerType));
-                        } else {
-                            for (Category c : categories.findByEnabledTrue()) {
-                                try {
-                                    log.info("discover 완료 (카테고리={}): {}",
-                                            c.getName(), discoverJob.run(c.getId(), triggerType));
-                                } catch (Exception e) {
-                                    // 한 카테고리 실패해도 다음 카테고리 계속 (run별 @Transactional로 격리)
-                                    log.error("discover 실패 (카테고리={})", c.getName(), e);
-                                }
-                            }
-                        }
+                        var s = discoverJob.run(triggerType);
+                        if (s.failedKeywords() > 0) log.warn("discover 완료(부분 실패): {}", s);
+                        else log.info("discover 완료: {}", s);
                     }
-                    case QUALIFY -> log.info("qualify 완료: {}", qualifyJob.run(triggerType, requalify));
-                    case AGGREGATE -> log.info("aggregate 완료: {}", aggregateJob.run(triggerType));
+                    case QUALIFY -> {
+                        var s = qualifyJob.run(triggerType, requalify);
+                        if (s.failedChunks() > 0) log.warn("qualify 완료(프로필 수집 부분 실패): {}", s);
+                        else log.info("qualify 완료: {}", s);
+                    }
+                    case COLLECT -> {
+                        var s = collectJob.run(triggerType);
+                        if (s.failedVisits() > 0) log.warn("collect 완료(방문 부분 실패): {}", s);
+                        else log.info("collect 완료: {}", s);
+                    }
+                    case BEAUTY -> {
+                        // requalify 플래그를 뷰티 재판정(rejudge)으로 재사용 — MANUAL은 잡이 보존
+                        var s = beautyJob.run(triggerType, requalify);
+                        if (s.failedBatches() > 0) log.warn("beauty 완료(배치 부분 실패): {}", s);
+                        else log.info("beauty 완료: {}", s);
+                    }
+                    case SIMILAR -> {
+                        var s = similarJob.run(triggerType);
+                        if (s.failedSeeds() > 0) log.warn("similar 완료(시드 부분 실패): {}", s);
+                        else log.info("similar 완료: {}", s);
+                    }
                 }
             } catch (Exception e) {
                 log.error("{} 잡 실패", job, e);
