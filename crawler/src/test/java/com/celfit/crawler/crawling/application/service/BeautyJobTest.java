@@ -88,6 +88,38 @@ class BeautyJobTest {
     }
 
     @Test
+    void 시작_요약과_계정별_판정_로그를_남긴다() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer a = qualified(1L, "a");
+            Influencer b = qualified(2L, "b");
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                    .thenReturn(List.of(a, b));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                    .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(2L))
+                    .thenReturn(Optional.of(legacyProfile(2L, "여행", "여행기")));
+            when(judge.judge(any())).thenReturn(List.of(
+                    new BeautyJudge.Verdict("a", true, "메이크업 중심"),
+                    new BeautyJudge.Verdict("b", false, "여행 계정")));
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> msgs = appender.list.stream()
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(msgs).anyMatch(m -> m.contains("뷰티 판정 시작") && m.contains("2명"));
+            assertThat(msgs).anyMatch(m -> m.contains("(1/2) a — 뷰티") && m.contains("메이크업 중심"));
+            assertThat(msgs).anyMatch(m -> m.contains("(2/2) b — 비뷰티") && m.contains("여행 계정"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
     void 카드에_최근_캡션을_개수_제한과_길이_절단으로_담는다() {
         Influencer a = qualified(1L, "a");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));

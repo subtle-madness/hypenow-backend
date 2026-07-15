@@ -94,6 +94,7 @@ public class BeautyJob {
 
         int beauty = 0, notBeauty = 0, failedBatches = 0;
         List<List<BeautyJudge.ProfileCard>> chunks = ActorInputs.chunk(cards, JUDGE_CHUNK);
+        log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}), 배치 {}개", cards.size(), skipped, chunks.size());
         int total = chunks.size(), i = 0;
         for (List<BeautyJudge.ProfileCard> chunk : chunks) {
             i++;
@@ -105,7 +106,8 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
-            ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername));
+            int done = beauty + notBeauty;
+            ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername, done, cards.size()));
             beauty += r.beauty();
             notBeauty += r.notBeauty();
             log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 비뷰티 {}", i, total, beauty, notBeauty);
@@ -128,7 +130,8 @@ public class BeautyJob {
      * detached 상태다 — 세터만으로는 저장되지 않으므로 influencers.save(inf) 명시 호출이 필수다
      * (CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — CollectJobIntegrationTest 참고).
      */
-    private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername) {
+    private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
+                                      int done, int totalCards) {
         int beauty = 0, notBeauty = 0;
         for (BeautyJudge.Verdict v : verdicts) {
             Influencer inf = byUsername.get(v.username());
@@ -138,6 +141,9 @@ public class BeautyJob {
             inf.setBeautyReason(v.reason());
             influencers.save(inf);
             if (v.beauty()) beauty++; else notBeauty++;
+            done++;
+            log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(),
+                    v.beauty() ? "뷰티" : "비뷰티", v.reason());
         }
         return new ChunkResult(beauty, notBeauty);
     }
