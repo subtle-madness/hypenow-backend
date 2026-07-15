@@ -84,7 +84,23 @@ class SessionPersistenceIntegrationTest extends IntegrationTest {
 				.list();
 		assertThat(attributeNames).contains("SPRING_SECURITY_CONTEXT", "session.browser", "session.os");
 
-		// ④ 쿠키 왕복 — DB에 실린 세션으로 /api/me 인증이 성립한다(재시작 생존과 같은 경로)
+		// ④ 비밀번호 해시가 세션 직렬화 바이트에 없다 — CredentialsContainer.eraseCredentials()가
+		// 인증 성공 직후 지웠어야 한다. BCrypt 해시는 ASCII라 포함됐다면 바이트에 그대로 보인다.
+		byte[] contextBytes = jdbcClient.sql("""
+						select attribute_bytes from app.spring_session_attributes
+						where session_primary_id = :primaryId and attribute_name = 'SPRING_SECURITY_CONTEXT'""")
+				.param("primaryId", row.get("primary_id"))
+				.query(byte[].class)
+				.single();
+		String passwordHash = jdbcClient.sql("select password_hash from app.users where email = :email")
+				.param("email", EMAIL)
+				.query(String.class)
+				.single();
+		String contextText = new String(contextBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+		assertThat(contextText).contains(EMAIL); // 읽은 바이트가 진짜 직렬화 본문인지 양성 대조
+		assertThat(contextText).doesNotContain(passwordHash);
+
+		// ⑤ 쿠키 왕복 — DB에 실린 세션으로 /api/me 인증이 성립한다(재시작 생존과 같은 경로)
 		String cookieValue = sessionSetCookie.substring("hypenow-session=".length(), sessionSetCookie.indexOf(';'));
 		mockMvc.perform(get("/api/me").cookie(new Cookie("hypenow-session", cookieValue)))
 				.andExpect(status().isOk())

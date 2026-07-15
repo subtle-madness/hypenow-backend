@@ -9,8 +9,10 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.session.web.http.DefaultCookieSerializer;
 
 /**
- * 세션 쿠키 직렬화기 — server.servlet.session.cookie.* 를 명시적으로 매핑한다(Boot의
- * SessionAutoConfiguration 임베디드 경로와 같은 매핑).
+ * 세션 쿠키 직렬화기 — server.servlet.session.cookie.* 의 쿠키 속성 7종(name/httpOnly/secure/
+ * path/domain/maxAge/sameSite)+partitioned를 명시 매핑한다. Boot의 SessionAutoConfiguration
+ * 임베디드 경로와 달리 DefaultCookieSerializerCustomizer(예: RememberMe 연동)는 적용하지 않는다 —
+ * 이 프로젝트에 커스터마이저가 없어 의도적으로 범위에서 제외.
  *
  * 명시 빈을 두는 이유(실측): Boot 4의 SessionAutoConfiguration은 임베디드 웹서버 컨텍스트에서만
  * 이 프로퍼티들을 CookieSerializer에 입히고, mock 서블릿 환경(MockMvc 통합 테스트)은
@@ -33,6 +35,7 @@ public class SessionConfig {
 		map.from(cookie::getDomain).to(serializer::setDomainName);
 		map.from(cookie::getMaxAge).asInt(Duration::getSeconds).to(serializer::setCookieMaxAge);
 		map.from(cookie::getSameSite).as(Cookie.SameSite::attributeValue).to(serializer::setSameSite);
+		map.from(cookie::getPartitioned).to(serializer::setPartitioned);
 		return serializer;
 	}
 }
