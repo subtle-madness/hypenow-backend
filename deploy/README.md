@@ -57,6 +57,7 @@ deploy/scripts/deploy.sh ubuntu@<IP>
 brew install rclone
 rclone config          # n → 이름 gdrive → storage: drive → 기본값들 → 브라우저 승인
 rclone lsd gdrive:     # 동작 확인
+ssh ubuntu@<IP> 'mkdir -p ~/.config/rclone'
 scp ~/.config/rclone/rclone.conf ubuntu@<IP>:~/.config/rclone/rclone.conf   # 서버로 복사
 ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # 서버에서 확인
 ```
@@ -78,6 +79,7 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
 ## 9. 이사 절차 (오라클 → 아무 VPS, 목표 30분)
 1. 새 Ubuntu 서버: §3 최초 기동 그대로 (rsync → setup → .env → up)
 2. 데이터: `pull-backup.sh`의 최신 덤프를 새 서버에 넣고
+   `cd ~/deploy && set -a && source .env && set +a` 후
    `gunzip -c dump.sql.gz | docker compose exec -T postgres psql -U $DB_USER -d analysis`
    (또는 로컬 raw에서 미러 재실행 — §4)
 3. DNS A레코드를 새 IP로 변경 → caddy가 인증서 자동 재발급
