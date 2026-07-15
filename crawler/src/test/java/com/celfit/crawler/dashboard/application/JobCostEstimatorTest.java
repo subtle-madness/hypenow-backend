@@ -234,13 +234,15 @@ class JobCostEstimatorTest {
         when(influencers.countBackfillPending()).thenReturn(0L);
         when(influencers.countTrackDue(any())).thenReturn(0L);
         when(influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED)).thenReturn(516L);
+        when(settings.beautyBatchLimit()).thenReturn(500);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 
         var beauty = estimator.estimates().stream()
                 .filter(c -> c.job().equals("beauty")).findFirst().orElseThrow();
 
-        assertThat(beauty.targets()).isEqualTo(516);
+        // 대기 516명이라도 실행 1회는 배치 한도(500)까지만
+        assertThat(beauty.targets()).isEqualTo(500);
         assertThat(beauty.maxRequests()).isZero();
         assertThat(beauty.maxCostUsd()).isZero();
     }

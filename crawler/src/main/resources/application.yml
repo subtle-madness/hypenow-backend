@@ -52,6 +52,8 @@ crawler:
     comments-enabled: false  # 댓글 수집 — 현재 불필요, 로직만 유지 (UI 없음, yml로만 재활성화)
   similar:
     batch-limit: 50   # 실행 1회당 유사 계정을 수확할 시드(뷰티 QUALIFIED) 수
+  beauty:
+    batch-limit: 500  # 판정 1회당 처리할 계정 수 상한(실행 시간 제어 — 청크 50 × 최대 120s). 초과분은 다음 실행에서.
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"

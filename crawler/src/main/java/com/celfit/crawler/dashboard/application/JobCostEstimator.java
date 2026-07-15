@@ -99,10 +99,11 @@ public class JobCostEstimator {
     }
 
     private JobCost beautyEstimate() {
-        long targets = influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED);
+        long due = influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED);
+        long targets = Math.min((long) settings.beautyBatchLimit(), due);
         return new JobCost("beauty", "뷰티 계정 판정 (로컬 Claude)",
                 List.of("로컬 claude CLI — 구독 포함, 유료 API 없음"),
-                targets, 0, 0, 0, 0, "판정 재료는 저장된 raw_profile — 인스타그램 호출 없음");
+                targets, 0, 0, 0, 0, "판정 재료는 저장된 raw_profile — 인스타그램 호출 없음, 초과분은 다음 실행");
     }
 
     private JobCost similarEstimate() {

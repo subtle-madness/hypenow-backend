@@ -9,12 +9,15 @@ import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.TriggerType;
+import com.celfit.crawler.settings.application.service.SettingsService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -43,13 +46,15 @@ public class BeautyJob {
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
     private final BeautyJudge judge;
+    private final SettingsService settings;
     private final TransactionTemplate txTemplate;
 
     public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles, BeautyJudge judge,
-                     TransactionTemplate txTemplate) {
+                     SettingsService settings, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.judge = judge;
+        this.settings = settings;
         this.txTemplate = txTemplate;
     }
 
@@ -60,11 +65,14 @@ public class BeautyJob {
      * 배치들의 커밋을 롤백시키지 않는다.
      */
     public Summary run(TriggerType trigger, boolean rejudge) {
-        List<Influencer> targets = new ArrayList<>(
-                influencers.findByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED));
-        if (rejudge) {
+        // 배치 한도(beauty.batch-limit) — 미판정 우선 선정, rejudge는 남은 한도만 채운다(초과분은 다음 실행)
+        int limit = settings.beautyBatchLimit();
+        List<Influencer> targets = new ArrayList<>(influencers.findByStatusAndBeautyIsNull(
+                InfluencerStatus.QUALIFIED, PageRequest.of(0, limit, Sort.by("id"))));
+        if (rejudge && targets.size() < limit) {
             targets.addAll(influencers.findByStatusAndBeautySource(
-                    InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE));
+                    InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                    PageRequest.of(0, limit - targets.size(), Sort.by("id"))));
         }
 
         // 판정 재료 준비 — raw_profile이 아직 없으면 판정 불가(qualify가 언젠가 채우면 재시도)
