@@ -1,6 +1,6 @@
 # 캡션 분류 + B3 숙성 가드 구현 계획
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
