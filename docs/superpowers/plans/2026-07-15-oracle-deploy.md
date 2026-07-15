@@ -331,7 +331,10 @@ HOST="${1:?사용법: deploy.sh <ssh-host>}"
 IMAGE=ghcr.io/subtle-madness/hypenow-was:latest
 cd "$(git rev-parse --show-toplevel)"
 ./gradlew :was:bootJar
-docker buildx build --platform linux/arm64,linux/amd64 -t "$IMAGE" --push was
+# multi-arch 빌더 준비 — 기본 docker 드라이버는 멀티 플랫폼 push 불가 (1회 생성 후 재사용)
+docker buildx inspect hypenow-multiarch >/dev/null 2>&1 \
+  || docker buildx create --name hypenow-multiarch --driver docker-container
+docker buildx build --builder hypenow-multiarch --platform linux/arm64,linux/amd64 -t "$IMAGE" --push was
 ssh "$HOST" 'cd ~/deploy && docker compose pull was && docker compose up -d && docker compose ps'
 ```
 
@@ -443,9 +446,11 @@ ssh ubuntu@<IP>
 # 서버에서
 cd ~/deploy && cp .env.example .env && vi .env    # DB_PASSWORD 강한 값, API_DOMAIN 실제 도메인
 docker login ghcr.io -u <github-id>               # read:packages PAT
-docker compose up -d && docker compose ps
+# 다시 맥에서 — 첫 이미지 빌드·push + 서버 기동까지 한 번에 (buildx 빌더는 스크립트가 자동 준비)
+deploy/scripts/deploy.sh ubuntu@<IP>
 curl -s https://api.hypenow.io/health             # {"status":"ok","service":"was"}
 ```
+※ 첫 push 후 GitHub → Packages → `hypenow-was` 설정에서 visibility·저장소 연결을 확인하고, 서버 PAT 계정에 read 권한이 있는지 확인 (패키지는 기본 private).
 
 ## 4. 클라우드 DB 채우기 (맥에서)
 ```bash

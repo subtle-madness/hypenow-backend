@@ -262,7 +262,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
-| 세션·쿠키 운영 전환 | 세션은 인메모리(재기동 시 로그아웃) — 필요 시 spring-session-jdbc. 운영 배포 시 HTTPS + XSRF/JSESSIONID 쿠키 `Secure; SameSite=None` 설정(크로스 오리진 프론트) |
+| 세션·쿠키 운영 전환 | 쿠키 `Secure; SameSite=None` + HTTPS(프록시 헤더 신뢰) 부분은 해소(07-15) — application-prod.yml. 세션은 여전히 인메모리(재기동 시 로그아웃) — 필요 시 spring-session-jdbc는 미결 |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |
 | 윈도우 24개 전환 | `analytics.recent-window` 12→24 (07-14 정정 — "3개월"은 크롤링 백필 시작 범위이지 윈도우가 아님, 개수 기반 유지). B3 `recent12_*` 네이밍·프론트 "최근 12개" 표기 동반 수정 |
