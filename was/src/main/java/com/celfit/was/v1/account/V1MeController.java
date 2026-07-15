@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -35,6 +37,8 @@ import org.springframework.web.multipart.MultipartFile;
  */
 @RestController
 public class V1MeController {
+
+	private static final Logger log = LoggerFactory.getLogger(V1MeController.class);
 
 	/** PATCH phoneNumber 형식 — 숫자·하이픈만, 1자 이상(스펙 6.13). */
 	private static final Pattern PHONE_NUMBER_PATTERN = Pattern.compile("^[0-9-]+$");
@@ -119,7 +123,11 @@ public class V1MeController {
 		return ApiResponse.ok(MeResponse.from(userRepository.patchProfile(principal.getUserId(), columns)));
 	}
 
-	/** 성공 시 현재 세션은 유지, 나머지 세션 전부 무효화(탈취 세션 차단 — 스펙 6.13). */
+	/**
+	 * 성공 시 현재 세션은 유지, 나머지 세션 전부 무효화(탈취 세션 차단 — 스펙 6.13).
+	 * DB(password_hash)가 정본 — 커밋 후 세션 정리 실패로 500을 내리면 클라이언트가
+	 * "변경 실패"로 오해해 옛 비밀번호를 재시도하므로, 정리는 best-effort로 하고 204를 지킨다.
+	 */
 	@PutMapping("/v1/me/password")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void changePassword(@AuthenticationPrincipal AppUserDetails principal,
@@ -127,7 +135,11 @@ public class V1MeController {
 		verifyPassword(principal.getUserId(), request.currentPassword());
 		signupValidator.validatePassword(request.newPassword());
 		userRepository.updatePasswordHash(principal.getUserId(), passwordEncoder.encode(request.newPassword()));
-		sessionService.deleteOthers(principal.getUsername(), currentSessionId(httpRequest));
+		try {
+			sessionService.deleteOthers(principal.getUsername(), currentSessionId(httpRequest));
+		} catch (RuntimeException e) {
+			log.warn("비밀번호 변경은 완료, 커밋 후 타 세션 무효화 실패 — userId={}", principal.getUserId(), e);
+		}
 	}
 
 	@GetMapping("/v1/me/sessions")
@@ -179,15 +191,28 @@ public class V1MeController {
 	/**
 	 * 탈퇴(스펙 6.13) — 비밀번호 본인 확인 후 DB 삭제는 한 트랜잭션(UserRepository.deleteAccount),
 	 * 커밋 후 전 세션 무효화·이미지 파일 정리(DB 밖 자원이라 트랜잭션 밖).
+	 * DB 삭제가 정본 — 커밋 후 정리가 실패해도 500을 내리면 "탈퇴 실패"로 오해되고, 잔존 세션이
+	 * 다른 인증 엔드포인트에서 삭제된 userId로 FK 위반을 일으키므로 정리는 best-effort + 204를 지킨다.
 	 */
 	@DeleteMapping("/v1/me")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void deleteAccount(@AuthenticationPrincipal AppUserDetails principal,
-			@RequestBody DeleteAccountRequest request) {
+			@RequestBody DeleteAccountRequest request, HttpServletRequest httpRequest) {
 		verifyPassword(principal.getUserId(), request.password());
 		userRepository.deleteAccount(principal.getUserId());
-		sessionService.deleteAll(principal.getUsername());
-		profileImageStore.delete(principal.getUserId());
+		try {
+			sessionService.deleteAll(principal.getUsername());
+		} catch (RuntimeException e) {
+			log.warn("탈퇴 DB 삭제는 완료, 커밋 후 전 세션 무효화 실패 — userId={}", principal.getUserId(), e);
+			// 세션 저장소 장애와 독립인 서블릿 로컬 invalidate로 최소한 현재 요청 세션은 끊는다
+			// (잔존 세션 재사용 축소 — 남의 기기 세션은 만료 스윕에 맡긴다)
+			invalidateCurrentSessionQuietly(httpRequest);
+		}
+		try {
+			profileImageStore.delete(principal.getUserId());
+		} catch (RuntimeException e) {
+			log.warn("탈퇴 DB 삭제는 완료, 커밋 후 프로필 이미지 정리 실패 — userId={}", principal.getUserId(), e);
+		}
 	}
 
 	private UserProfile requireProfile(long userId) {
@@ -208,6 +233,18 @@ public class V1MeController {
 	private static String currentSessionId(HttpServletRequest httpRequest) {
 		HttpSession session = httpRequest.getSession(false);
 		return session == null ? null : session.getId();
+	}
+
+	/** 세션 저장소 우회 무효화(best-effort) — invalidate 자체가 던져도 204 계약을 깨지 않는다. */
+	private static void invalidateCurrentSessionQuietly(HttpServletRequest httpRequest) {
+		try {
+			HttpSession session = httpRequest.getSession(false);
+			if (session != null) {
+				session.invalidate();
+			}
+		} catch (RuntimeException e) {
+			log.warn("현재 세션 로컬 invalidate도 실패", e);
+		}
 	}
 
 	private static String stringValue(Object value) {

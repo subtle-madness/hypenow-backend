@@ -348,6 +348,41 @@ class V1MeControllerTest {
 		order.verify(profileImageStore).delete(7L);
 	}
 
+	// DB 삭제(정본)가 끝난 뒤의 정리 실패로 500을 내리면 "탈퇴 실패" 오해 + 잔존 세션 FK 위반 — best-effort 계약
+	@Test
+	void 탈퇴는_세션_무효화가_실패해도_204고_현재_세션은_로컬로_끊고_이미지_정리는_계속한다() throws Exception {
+		givenAppUser();
+		org.mockito.BDDMockito.willThrow(new IllegalStateException("세션 저장소 장애"))
+				.given(sessionService).deleteAll(anyString());
+		MockHttpSession session = new MockHttpSession();
+
+		mockMvc.perform(delete("/v1/me").with(user(principal())).with(csrf())
+						.session(session)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"password":"%s"}""".formatted(PASSWORD)))
+				.andExpect(status().isNoContent());
+
+		then(userRepository).should().deleteAccount(7L);
+		then(profileImageStore).should().delete(7L); // 세션 실패와 무관하게 후속 정리 진행
+		assertThat(session.isInvalid()).isTrue(); // 저장소 우회 서블릿 로컬 invalidate
+	}
+
+	@Test
+	void 비밀번호_변경은_타_세션_무효화가_실패해도_204다() throws Exception {
+		givenAppUser();
+		org.mockito.BDDMockito.willThrow(new IllegalStateException("세션 저장소 장애"))
+				.given(sessionService).deleteOthers(anyString(), any());
+
+		mockMvc.perform(put("/v1/me/password").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"currentPassword":"%s","newPassword":"NewPassw0rd!"}""".formatted(PASSWORD)))
+				.andExpect(status().isNoContent());
+
+		then(userRepository).should().updatePasswordHash(eq(7L), anyString()); // 해시 변경(정본)은 완료
+	}
+
 	@Test
 	void 탈퇴_비밀번호_불일치는_400_CURRENT_PASSWORD_MISMATCH고_아무것도_지우지_않는다() throws Exception {
 		givenAppUser();
