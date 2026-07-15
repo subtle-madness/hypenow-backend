@@ -118,7 +118,8 @@ class CollectJobIntegrationTest extends IntegrationTest {
         CommentSourceSelector commentSource = mock(CommentSourceSelector.class); // 빈 열거 → 댓글 호출 없음
 
         CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
-                influencers, rawProfiles, rawMediaPages, contents, rawComments,
+                influencers, rawProfiles, rawMediaPages, contents,
+                new ContentUpserter(contents, clock), rawComments,
                 List.of(emptyGqlFetcher()), profileSource, commentSource, executor, settings, clock,
                 progress, new TransactionTemplate(txManager));
 
@@ -188,5 +189,48 @@ class CollectJobIntegrationTest extends IntegrationTest {
         assertThat(influencers.countTrackDue(revisitBefore)).isGreaterThanOrEqualTo(1L);
         // 대시보드 READY 카운트도 뷰티만 — 백필 대기 증가분은 뷰티 백필 1명뿐이어야 한다
         assertThat(influencers.countBackfillPending()).isEqualTo(backfillBefore + 1);
+    }
+
+    // ---------------------------------------------------------------------
+    // findReelsTargets — 뷰티만, 릴스 백필(last_reels_at null) 우선, 주기 안 지난 것은 제외.
+    // collect 북키핑(last_collected_at)과 독립이라 프로필 수집 이력이 릴스 대기에 영향 없다.
+    // ---------------------------------------------------------------------
+    @Test
+    void findReelsTargets는_뷰티만_릴스_주기_기준으로_선정한다() {
+        Instant now = clock.instant();
+        Instant revisitBefore = now.minus(java.time.Duration.ofDays(settings.revisitIntervalDays()));
+
+        Influencer backfill = new Influencer(USERNAME_BACKFILL);
+        backfill.setStatus(InfluencerStatus.QUALIFIED);
+        backfill.setBeauty(true);
+        backfill.setLastCollectedAt(now.minusSeconds(60));  // 프로필 수집 이력은 릴스 대기와 무관
+        Long backfillId = influencers.save(backfill).getId();
+
+        Influencer due = new Influencer(USERNAME_DUE);
+        due.setStatus(InfluencerStatus.QUALIFIED);
+        due.setBeauty(true);
+        due.setLastReelsAt(revisitBefore.minusSeconds(3600));  // 주기 지남 — 대상
+        Long dueId = influencers.save(due).getId();
+
+        Influencer recent = new Influencer(USERNAME_RECENT);
+        recent.setStatus(InfluencerStatus.QUALIFIED);
+        recent.setBeauty(true);
+        recent.setLastReelsAt(now.minusSeconds(60));  // 주기 안 지남 — 제외
+        Long recentId = influencers.save(recent).getId();
+
+        Influencer notBeauty = new Influencer(USERNAME_NOT_BEAUTY);
+        notBeauty.setStatus(InfluencerStatus.QUALIFIED);
+        notBeauty.setBeauty(false);   // 비뷰티 — 제외
+        Long notBeautyId = influencers.save(notBeauty).getId();
+
+        List<Influencer> targets = influencers.findReelsTargets(revisitBefore,
+                org.springframework.data.domain.PageRequest.of(0, 100));
+        List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
+
+        assertThat(targetIds).contains(backfillId, dueId);
+        assertThat(targetIds).doesNotContain(recentId, notBeautyId);
+        assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));  // 백필 우선
+
+        assertThat(influencers.countReelsDue(revisitBefore)).isGreaterThanOrEqualTo(2L);
     }
 }

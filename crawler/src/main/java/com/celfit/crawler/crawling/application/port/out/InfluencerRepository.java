@@ -59,6 +59,17 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     List<Influencer> findByStatusAndBeautySource(InfluencerStatus status, String beautySource,
                                                  Pageable pageable);
 
+    /** REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만. */
+    @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore) "
+            + "order by case when i.lastReelsAt is null then 0 else 1 end, i.lastReelsAt asc nulls first, i.id")
+    List<Influencer> findReelsTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
+
+    /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. */
+    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore)")
+    long countReelsDue(@Param("revisitBefore") Instant revisitBefore);
+
     /** SIMILAR 시드: 뷰티 확정 + 미수확 — id 순 Pageable로 결정적으로 소진한다. */
     List<Influencer> findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
             InfluencerStatus status, Pageable pageable);

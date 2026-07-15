@@ -68,7 +68,7 @@ public class JobCostEstimator {
 
     public List<JobCost> estimates() {
         return List.of(discoverEstimate(), qualifyEstimate(), beautyEstimate(),
-                similarEstimate(), collectEstimate());
+                similarEstimate(), collectEstimate(), reelsEstimate());
     }
 
     private JobCost discoverEstimate() {
@@ -137,15 +137,24 @@ public class JobCostEstimator {
             endpoints.add("HikerAPI /gql/user/medias (계정당 1회 — 피드 폴백)");
             hikerPages += 1;
         }
-        endpoints.add("HikerAPI /v2/user/clips (계정당 1회 — 릴스)");
-        hikerPages += 1;
-        // 댓글 수집은 꺼져 있음(comments-enabled) — 엔드포인트 표기에서 제외
+        // 릴스는 REELS 잡으로 분리 — 댓글 수집도 꺼져 있음(comments-enabled), 둘 다 표기 제외
         long requests = targets * (profileReqs + hikerPages);
         double cost = targets * (profileReqs * profileCostPerRequest()
                 + hikerPages * hikerProperties.costPerRequestUsd());
-        return new JobCost("collect", "프로필·게시물·릴스 수집",
+        return new JobCost("collect", "게시물을 위한 프로필 수집",
                 endpoints, targets, requests, requests, cost, cost,
-                "방문당 최근 피드 12개 + 릴스 1페이지 — 기간 백필·페이지네이션 없음");
+                "방문당 프로필 갱신 + 최근 피드 12개 — 릴스는 reels 잡 몫, 기간 백필·페이지네이션 없음");
+    }
+
+    private JobCost reelsEstimate() {
+        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        long due = influencers.countReelsDue(revisitBefore);
+        long targets = Math.min((long) settings.reelsBatchLimit(), due);
+        double cost = targets * hikerProperties.costPerRequestUsd();
+        return new JobCost("reels", "릴스 수집",
+                List.of("HikerAPI /v2/user/clips (계정당 정확히 1회)"),
+                targets, targets, targets, cost, cost,
+                "뷰티 계정만 · pk 미보유는 스킵(프로필 수집이 채우면 다음 실행) — 초과분은 다음 실행");
     }
 
     /**

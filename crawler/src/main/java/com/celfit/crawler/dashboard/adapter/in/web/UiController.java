@@ -131,7 +131,8 @@ public class UiController {
                 jobStatus(JobName.QUALIFY, "판정"),
                 jobStatus(JobName.BEAUTY, "뷰티판정"),
                 jobStatus(JobName.SIMILAR, "유사발굴"),
-                jobStatus(JobName.COLLECT, "수집")));
+                jobStatus(JobName.COLLECT, "프로필수집"),
+                jobStatus(JobName.REELS, "릴스수집")));
         return "fragments/status :: bar";
     }
 
@@ -169,9 +170,12 @@ public class UiController {
                                 "비뷰티 · 수집 제외"),
                         new StatusTile("UNJUDGED", s.beautyUnjudged(),
                                 "미판정 · 뷰티판정 대기"))),
-                new StatusTileGroup("④ 수집 대기열 — collect(프로필·게시물·릴스)가 방문할 대상", java.util.List.of(
+                new StatusTileGroup("④ 수집 대기열 — 게시물을 위한 프로필 수집(collect)·릴스 수집(reels)이 방문할 대상",
+                        java.util.List.of(
                         new StatusTile("READY", s.backfillPending() + s.trackDue(),
-                                "뷰티 계정만 · 방문 대기 · 재방문 주기 도래 포함")))));
+                                "게시물을 위한 프로필 수집 대기 · 뷰티 계정만"),
+                        new StatusTile("REELS_READY", s.reelsDue(),
+                                "릴스 수집 대기 · 뷰티 계정만")))));
         // 게시물 수집: collect 방문(프로필 내장 최근 피드 + 릴스 1페이지) 산출물만 대상 —
         // 발굴 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         // 댓글 수집은 꺼져 있으므로 상태 전이 대신 총계·유형별로 보여준다.

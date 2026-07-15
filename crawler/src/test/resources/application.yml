@@ -53,6 +53,8 @@ crawler:
     batch-limit: 50
   beauty:
     batch-limit: 500
+  reels:
+    batch-limit: 10
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"

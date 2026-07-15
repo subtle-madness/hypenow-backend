@@ -144,7 +144,8 @@ class CollectJobTest {
 
     CollectJob job(List<UserMediaPageFetcher> fetchers, boolean commentsEnabled) {
         CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
-        return new CollectJob(props, influencers, rawProfiles, rawMediaPages, contents, rawComments,
+        return new CollectJob(props, influencers, rawProfiles, rawMediaPages, contents,
+                new ContentUpserter(contents, CLOCK), rawComments,
                 fetchers, profileSourceSelector, commentSource, executor, settings, CLOCK, progress,
                 txTemplate);
     }
@@ -290,11 +291,9 @@ class CollectJobTest {
         wireProfile("track_user", 1000L, "U2");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        RawSource srcB = RawSource.HIKER_V2_CLIPS;
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA), emptyPage(srcA)));
-        FakeMediaFetcher fetcherB = new FakeMediaFetcher(srcB, List.of(emptyPage(srcB), emptyPage(srcB)));
 
-        job(List.of(fetcherA, fetcherB)).run(TriggerType.MANUAL);
+        job(List.of(fetcherA)).run(TriggerType.MANUAL);
 
         verify(influencers).findCollectTargets(any(), eq(PageRequest.of(0, 5)));
         InOrder order = inOrder(profileSourceSelector);
@@ -334,11 +333,9 @@ class CollectJobTest {
                 .thenReturn(new CrawlExecutor.Execution(77L, List.of(profilePayload)));
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        RawSource srcB = RawSource.HIKER_V2_CLIPS;
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(emptyPage(srcA)));
-        FakeMediaFetcher fetcherB = new FakeMediaFetcher(srcB, List.of(emptyPage(srcB)));
 
-        job(List.of(fetcherA, fetcherB)).run(TriggerType.MANUAL);
+        job(List.of(fetcherA)).run(TriggerType.MANUAL);
 
         ArgumentCaptor<RawProfile> captor = ArgumentCaptor.forClass(RawProfile.class);
         verify(rawProfiles).save(captor.capture());
@@ -352,7 +349,6 @@ class CollectJobTest {
         assertThat(inf.getFollowers()).isEqualTo(12345L);
 
         assertThat(fetcherA.userIdsSeen).containsExactly("USR1");
-        assertThat(fetcherB.userIdsSeen).containsExactly("USR1");
     }
 
     @Test
@@ -459,10 +455,10 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
-    // 3) 두 스트림 페이지가 각각 raw_media_page에 source와 함께 저장된다
+    // 3) 피드 폴백 페이지가 raw_media_page에 source와 함께 저장된다
     // ---------------------------------------------------------------------
     @Test
-    void 두_스트림_페이지가_각각_raw_media_page에_source와_함께_저장된다() {
+    void 피드_폴백_페이지가_raw_media_page에_source와_함께_저장된다() {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
@@ -470,22 +466,18 @@ class CollectJobTest {
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        RawSource srcB = RawSource.HIKER_V2_CLIPS;
         Map<String, Object> pageA = gqlPage(List.of(gqlItem("A1", RECENT, false)), null);
-        Map<String, Object> pageB = clipsPage(List.of(clipsItem("B1", RECENT)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(pageA));
-        FakeMediaFetcher fetcherB = new FakeMediaFetcher(srcB, List.of(pageB));
 
-        job(List.of(fetcherA, fetcherB)).run(TriggerType.MANUAL);
+        job(List.of(fetcherA)).run(TriggerType.MANUAL);
 
         ArgumentCaptor<RawMediaPage> captor = ArgumentCaptor.forClass(RawMediaPage.class);
-        verify(rawMediaPages, times(2)).save(captor.capture());
-        List<RawMediaPage> saved = captor.getAllValues();
-        assertThat(saved).extracting(RawMediaPage::getSource).containsExactlyInAnyOrder(srcA, srcB);
-        assertThat(saved).extracting(RawMediaPage::getInfluencerId).containsOnly(1L);
-        assertThat(saved).allSatisfy(p -> assertThat(p.getCapturedAt()).isEqualTo(NOW));
-        RawMediaPage savedA = saved.stream().filter(p -> p.getSource() == srcA).findFirst().orElseThrow();
-        assertThat(savedA.getPayload()).isEqualTo(pageA);
+        verify(rawMediaPages).save(captor.capture());
+        RawMediaPage saved = captor.getValue();
+        assertThat(saved.getSource()).isEqualTo(srcA);
+        assertThat(saved.getInfluencerId()).isEqualTo(1L);
+        assertThat(saved.getCapturedAt()).isEqualTo(NOW);
+        assertThat(saved.getPayload()).isEqualTo(pageA);
     }
 
     // ---------------------------------------------------------------------
@@ -530,10 +522,10 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
-    // 5) 두 스트림 shortCode 중복은 content 1건 (윈도우 안이면 고정이라도 포함)
+    // 5) 윈도우 안이면 고정 게시물도 수집된다
     // ---------------------------------------------------------------------
     @Test
-    void 두_스트림_shortCode_중복은_content_1건이고_윈도우_안_고정게시물도_포함된다() {
+    void 윈도우_안_고정게시물도_포함된다() {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
@@ -541,20 +533,17 @@ class CollectJobTest {
         wireProfile("alice", 1000L, "USR1");
 
         RawSource srcA = RawSource.HIKER_GQL_MEDIAS;
-        RawSource srcB = RawSource.HIKER_V2_CLIPS;
         Map<String, Object> pageA = gqlPage(List.of(
-                gqlItem("DUP1", RECENT, false),
+                gqlItem("NORM1", RECENT, false),
                 gqlItem("PIN_IN", RECENT, true)), null);
-        Map<String, Object> pageB = clipsPage(List.of(clipsItem("DUP1", RECENT)), null);
         FakeMediaFetcher fetcherA = new FakeMediaFetcher(srcA, List.of(pageA));
-        FakeMediaFetcher fetcherB = new FakeMediaFetcher(srcB, List.of(pageB));
 
-        var summary = job(List.of(fetcherA, fetcherB)).run(TriggerType.MANUAL);
+        var summary = job(List.of(fetcherA)).run(TriggerType.MANUAL);
 
         ArgumentCaptor<Content> captor = ArgumentCaptor.forClass(Content.class);
         verify(contents, times(2)).save(captor.capture());
         assertThat(captor.getAllValues()).extracting(Content::getShortCode)
-                .containsExactlyInAnyOrder("DUP1", "PIN_IN");
+                .containsExactlyInAnyOrder("NORM1", "PIN_IN");
         assertThat(summary.postsUpserted()).isEqualTo(2);
     }
 
@@ -721,13 +710,10 @@ class CollectJobTest {
 
         // 피드 페처는 페이지 0개 — 호출되는 순간 FakeMediaFetcher가 AssertionError로 잡는다.
         FakeMediaFetcher feedFetcher = new FakeMediaFetcher(RawSource.HIKER_GQL_MEDIAS, List.of());
-        FakeMediaFetcher clipsFetcher = new FakeMediaFetcher(RawSource.HIKER_V2_CLIPS,
-                List.of(emptyPage(RawSource.HIKER_V2_CLIPS)));
 
-        var summary = job(List.of(feedFetcher, clipsFetcher)).run(TriggerType.MANUAL);
+        var summary = job(List.of(feedFetcher)).run(TriggerType.MANUAL);
 
         assertThat(feedFetcher.calls).isZero();                    // 내장 타임라인이 피드 열거를 대체
-        assertThat(clipsFetcher.userIdsSeen).containsExactly("USR1"); // 릴스는 1회 호출
         assertThat(summary.postsUpserted()).isEqualTo(2);          // 날짜·고정 무관 전부 수집
         assertThat(contentStore.get("EMB_FEED").getContentType()).isEqualTo(ContentType.FEED);
         assertThat(contentStore.get("EMB_REEL").getContentType()).isEqualTo(ContentType.REELS);
@@ -748,6 +734,28 @@ class CollectJobTest {
 
         assertThat(feedFetcher.userIdsSeen).containsExactly("USR1");
         assertThat(summary.postsUpserted()).isEqualTo(1);
+    }
+
+    // ---------------------------------------------------------------------
+    // 9a) 릴스 분리 — collect는 더 이상 클립(HIKER_V2_CLIPS)을 호출하지 않는다(REELS 잡 몫)
+    // ---------------------------------------------------------------------
+    @Test
+    void 릴스_클립은_더_이상_호출하지_않는다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireSelfProfile("alice", 12345L, "USR1", List.of(
+                selfTimelineNode("EMB_FEED", RECENT, "", false)));
+
+        // 클립 페처는 페이지 0개 — 호출되는 순간 FakeMediaFetcher가 AssertionError로 잡는다.
+        FakeMediaFetcher clipsFetcher = new FakeMediaFetcher(RawSource.HIKER_V2_CLIPS, List.of());
+
+        var summary = job(List.of(clipsFetcher)).run(TriggerType.MANUAL);
+
+        assertThat(clipsFetcher.calls).isZero();
+        assertThat(summary.visited()).isEqualTo(1);
+        assertThat(summary.postsUpserted()).isEqualTo(1);  // 내장 피드만
     }
 
     // ---------------------------------------------------------------------

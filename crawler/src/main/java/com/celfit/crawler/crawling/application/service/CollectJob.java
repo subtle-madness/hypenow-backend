@@ -34,10 +34,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 수집 잡 — 인플루언서를 방문해 프로필을 갱신하고, 프로필 원형에 내장된 최근 피드(12개)와
- * 릴스 1페이지를 content로 upsert한 뒤 대상 게시물의 댓글을 수집한다. 기간 컷오프·페이지네이션
- * 없이 방문당 "최근 게시물 한 묶음"만 가져오며, 재방문 주기(collect.revisit-interval-days)마다
- * 다시 방문해 그 사이의 새 게시물을 잡는다.
+ * 게시물을 위한 프로필 수집 잡 — 인플루언서를 방문해 프로필을 갱신하고, 프로필 원형에 내장된
+ * 최근 피드(12개)를 content로 upsert한 뒤 대상 게시물의 댓글을 수집한다. 릴스는 별도 REELS 잡
+ * (유료 HikerAPI 구간 분리 — ReelsJob). 기간 컷오프·페이지네이션 없이 방문당 "최근 게시물
+ * 한 묶음"만 가져오며, 재방문 주기(collect.revisit-interval-days)마다 다시 방문해 그 사이의
+ * 새 게시물을 잡는다.
  */
 @Service
 public class CollectJob {
@@ -51,6 +52,7 @@ public class CollectJob {
     private final RawProfileRepository rawProfiles;
     private final RawMediaPageRepository rawMediaPages;
     private final ContentRepository contents;
+    private final ContentUpserter contentUpserter;
     private final RawCommentRepository rawComments;
     private final List<UserMediaPageFetcher> mediaFetchers;
     private final ProfileSourceSelector profileSourceSelector;
@@ -64,6 +66,7 @@ public class CollectJob {
     public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
                       RawProfileRepository rawProfiles,
                       RawMediaPageRepository rawMediaPages, ContentRepository contents,
+                      ContentUpserter contentUpserter,
                       RawCommentRepository rawComments, List<UserMediaPageFetcher> mediaFetchers,
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
                       CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
@@ -73,6 +76,7 @@ public class CollectJob {
         this.rawProfiles = rawProfiles;
         this.rawMediaPages = rawMediaPages;
         this.contents = contents;
+        this.contentUpserter = contentUpserter;
         this.rawComments = rawComments;
         this.mediaFetchers = mediaFetchers;
         this.profileSourceSelector = profileSourceSelector;
@@ -132,24 +136,11 @@ public class CollectJob {
             fetchOnePage(inf, RawSource.HIKER_GQL_MEDIAS, profile.userId(), trigger, inWindow);
         }
 
-        // 3) 릴스 1페이지 — 내장 타임라인(피드 그리드)에 안 잡히는 릴스 커버 (shortCode dedup)
-        fetchOnePage(inf, RawSource.HIKER_V2_CLIPS, profile.userId(), trigger, inWindow);
+        // 3) content upsert — 신규 생성·DISCOVERY 승격은 ContentUpserter(REELS 잡과 공유) 규칙.
+        // 릴스 1페이지는 별도 REELS 잡으로 분리됐다(유료 HikerAPI 구간).
+        int upserted = contentUpserter.upsert(inWindow.values(), inf);
 
-        // 4) content upsert — 신규는 ENUMERATION(수집 대상)으로 생성. 기존 행이 발굴 부산물(DISCOVERY)
-        // 이었다면 이번 열거로 정식 수집 범위에 들어온 것이므로 ENUMERATION으로 승격한다.
-        int upserted = 0;
-        for (var item : inWindow.values()) {
-            Content existing = contents.findByShortCode(item.shortCode()).orElse(null);
-            if (existing == null) {
-                contents.save(new Content(item.shortCode(), item.type(),
-                        inf.getUsername(), inf.getId(), item.takenAt(), clock.instant(), ContentOrigin.ENUMERATION));
-            } else if (existing.getOrigin() == ContentOrigin.DISCOVERY) {
-                existing.setOrigin(ContentOrigin.ENUMERATION);
-            }
-            upserted++;
-        }
-
-        // 5) 게시물별 댓글 수집 — 현재는 불필요해 기본 꺼짐(crawler.collect.comments-enabled, yml 전용).
+        // 4) 게시물별 댓글 수집 — 현재는 불필요해 기본 꺼짐(crawler.collect.comments-enabled, yml 전용).
         // 나중에 다시 필요할 수 있어 로직은 유지한다. 켜면: 이번 열거분이 아니라 이 인플루언서의
         // ENUMERATION PENDING 전체가 대상이고, collect_attempts 상한(maxAttempts→FAILED)이 폭주를 막는다.
         int collected = 0;

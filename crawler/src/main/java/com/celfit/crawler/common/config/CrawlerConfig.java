@@ -21,7 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @EnableConfigurationProperties({ApifyProperties.class, DiscoverProperties.class,
         CollectProperties.class, ScheduleProperties.class, DirectCommentProperties.class,
         HikerProperties.class, QualifyProperties.class, DataLikersProperties.class,
-        ProxyProperties.class, SimilarProperties.class, BeautyProperties.class})
+        ProxyProperties.class, SimilarProperties.class, BeautyProperties.class, ReelsProperties.class})
 public class CrawlerConfig {
 
     @Bean

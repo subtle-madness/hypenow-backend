@@ -237,7 +237,7 @@ table.data.fit { width: auto; min-width: 24rem; }
 }
 .badge.EXCLUDED, .badge.GONE { color: var(--muted); }
 .badge.DISCOVERED { color: var(--cat-feed); background: color-mix(in srgb, var(--cat-feed) 10%, transparent); }
-.badge.READY {
+.badge.READY, .badge.REELS_READY {
     color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent);
 }
 .badge.BEAUTY { color: var(--cat-reels); background: color-mix(in srgb, var(--cat-reels) 10%, transparent); }

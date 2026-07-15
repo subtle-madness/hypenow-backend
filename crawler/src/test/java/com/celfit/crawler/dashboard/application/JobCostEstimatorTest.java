@@ -153,7 +153,7 @@ class JobCostEstimatorTest {
     }
 
     @Test
-    void collect_DATALIKERS_프로필이면_프로필은_DataLikers_피드릴스는_Hiker_단가로_합산한다() {
+    void collect_DATALIKERS_프로필이면_프로필은_DataLikers_피드폴백은_Hiker_단가로_합산한다() {
         when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
         when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
         when(settings.resultsLimit()).thenReturn(0);
@@ -167,16 +167,17 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // 계정당: 프로필 1(DataLikers) + 피드폴백 1 + 릴스 1(Hiker) = 3요청 → 2계정 = 6요청
-        // 비용: 2 × (1×$0.0006 + 2×$0.001) = 2 × $0.0026 = $0.0052
-        assertThat(collect.minRequests()).isEqualTo(6);
-        assertThat(collect.minCostUsd()).isEqualTo(0.0052);
+        // 릴스는 REELS 잡으로 분리 — 계정당: 프로필 1(DataLikers) + 피드폴백 1(Hiker) = 2요청 → 2계정 = 4요청
+        // 비용: 2 × (1×$0.0006 + 1×$0.001) = 2 × $0.0016 = $0.0032 (부동소수점 오차 허용)
+        assertThat(collect.minRequests()).isEqualTo(4);
+        assertThat(collect.minCostUsd()).isCloseTo(0.0032, org.assertj.core.api.Assertions.within(1e-9));
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("DataLikers"));
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
+        assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("clips"));
     }
 
     @Test
-    void collect_SELF_프로필이면_피드는_프로필_내장이라_계정당_릴스_1회만_과금된다() {
+    void collect_SELF_프로필이면_피드_내장이라_유료_요청이_없다() {
         when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
         when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
         when(settings.resultsLimit()).thenReturn(0);
@@ -190,14 +191,14 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // targets = min(5, 3) = 3, 계정당 0(프로필, 피드 12개 내장) + 1(릴스) = 1회
+        // targets = min(5, 3) = 3, 릴스 분리 후 SELF는 계정당 0요청(프로필 무료, 피드 12개 내장)
         assertThat(collect.targets()).isEqualTo(3);
-        assertThat(collect.minRequests()).isEqualTo(3);
-        assertThat(collect.maxRequests()).isEqualTo(3);
-        assertThat(collect.minCostUsd()).isEqualTo(0.003);
-        assertThat(collect.maxCostUsd()).isEqualTo(0.003);
+        assertThat(collect.minRequests()).isZero();
+        assertThat(collect.maxRequests()).isZero();
+        assertThat(collect.minCostUsd()).isZero();
+        assertThat(collect.maxCostUsd()).isZero();
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("내장"));
-        assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("user/clips"));
+        assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("user/clips"));
         assertThat(collect.endpoints()).noneSatisfy(e -> assertThat(e).contains("gql/user/medias"));
     }
 
@@ -216,10 +217,35 @@ class JobCostEstimatorTest {
 
         JobCost collect = byJob(estimator.estimates()).get("collect");
 
-        // 계정당 1(프로필) + 1(피드 폴백) + 1(릴스) = 3회 → 2계정 = 6회
-        assertThat(collect.minRequests()).isEqualTo(6);
-        assertThat(collect.maxRequests()).isEqualTo(6);
+        // 릴스 분리 후 계정당 1(프로필) + 1(피드 폴백) = 2회 → 2계정 = 4회
+        assertThat(collect.minRequests()).isEqualTo(4);
+        assertThat(collect.maxRequests()).isEqualTo(4);
         assertThat(collect.endpoints()).anySatisfy(e -> assertThat(e).contains("gql/user/medias"));
+    }
+
+    @Test
+    void reels는_대기_계정을_배치_한도로_자르고_계정당_Hiker_1요청으로_추정한다() {
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.resultsLimit()).thenReturn(0);
+        when(settings.qualifyBatchLimit()).thenReturn(0);
+        when(settings.collectBatchLimit()).thenReturn(0);
+        when(settings.reelsBatchLimit()).thenReturn(10);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countBackfillPending()).thenReturn(0L);
+        when(influencers.countTrackDue(any())).thenReturn(0L);
+        when(influencers.countReelsDue(any())).thenReturn(25L);
+        when(profileSource.current()).thenReturn(ProfileSource.SELF);
+        when(profileSupplement.relatedEnabled()).thenReturn(false);
+
+        JobCost reels = byJob(estimator.estimates()).get("reels");
+
+        // targets = min(10, 25), 계정당 /v2/user/clips 1요청 → 10 × $0.001
+        assertThat(reels.targets()).isEqualTo(10);
+        assertThat(reels.minRequests()).isEqualTo(10);
+        assertThat(reels.maxRequests()).isEqualTo(10);
+        assertThat(reels.minCostUsd()).isEqualTo(0.010);
+        assertThat(reels.endpoints()).anySatisfy(e -> assertThat(e).contains("clips"));
     }
 
     @Test

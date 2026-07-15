@@ -46,6 +46,11 @@ public class UiJobController {
         return respond(JobName.SIMILAR, jobService.trigger(JobName.SIMILAR, TriggerType.MANUAL), ra);
     }
 
+    @PostMapping("/reels")
+    public String reels(RedirectAttributes ra) {
+        return respond(JobName.REELS, jobService.trigger(JobName.REELS, TriggerType.MANUAL), ra);
+    }
+
     private String respond(JobName name, TriggerResult result, RedirectAttributes ra) {
         String message = switch (result) {
             case ACCEPTED -> name + " 실행 시작";

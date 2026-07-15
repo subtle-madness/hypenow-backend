@@ -61,6 +61,10 @@ public class Influencer {
     @Column(name = "last_collected_at")
     private Instant lastCollectedAt;
 
+    /** REELS 잡이 릴스 1페이지를 수확한 시각. NULL이면 릴스 백필 대상. */
+    @Column(name = "last_reels_at")
+    private Instant lastReelsAt;
+
     public Influencer(String username) {
         this.username = username;
     }

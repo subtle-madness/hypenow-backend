@@ -263,11 +263,30 @@ class UiSmokeTest extends IntegrationTest {
 
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("READY")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("방문 대기")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("프로필 수집 대기")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("BACKFILL"))))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("TRACK"))));
+    }
+
+    @Test
+    void 잡_화면에_프로필_수집과_릴스_수집_버튼이_분리되어_있다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("게시물을 위한 프로필 수집")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("릴스 수집")));
+    }
+
+    @Test
+    void 대시보드_수집_대기열에_릴스_대기가_따로_렌더된다() throws Exception {
+        Influencer inf = new Influencer("smoke-reels-due-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);   // 릴스 대기열도 뷰티 계정만
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("REELS_READY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("게시물을 위한 프로필 수집")));
     }
 
     @Test

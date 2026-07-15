@@ -23,7 +23,7 @@
         <button type="submit" class="primary">② qualify — 프로필 스냅샷 · 팔로워 범위 판정</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/collect}">
-        <button type="submit" class="primary">③ collect — 프로필·게시물·릴스 수집</button>
+        <button type="submit" class="primary">③ collect — 게시물을 위한 프로필 수집 (피드 12개 내장 · 릴스 제외)</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/beauty}">
         <label><input type="checkbox" name="rejudge" value="true" data-persist/> Claude 판정분 재판정 (수동 판정 보존 · 인스타 호출 없음)</label>
@@ -31,6 +31,9 @@
     </form>
     <form method="post" th:action="@{/ui/jobs/similar}">
         <button type="submit" class="primary">⑤ similar — 뷰티 시드의 유사 계정 발굴</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/reels}">
+        <button type="submit" class="primary">⑥ reels — 릴스 수집 (계정당 HikerAPI 1요청)</button>
     </form>
 </div>
 
