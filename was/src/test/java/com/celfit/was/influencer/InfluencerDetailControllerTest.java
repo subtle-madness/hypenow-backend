@@ -12,7 +12,7 @@ import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
 import com.celfit.was.config.ClockConfig;
-import com.celfit.was.config.WebConfig;
+import com.celfit.was.config.SecurityConfig;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -24,9 +24,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+// Security 도입 후 GET /api/** permitAll을 실제로 결정하는 건 SecurityConfig의 필터체인이라(예전 WebConfig의
+// CORS 매핑은 걷어냄) 이 빈을 같이 import해야 401로 막히지 않는다 — 기대값은 그대로다.
 @WebMvcTest(controllers = InfluencerDetailController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000,https://celfit-front.vercel.app")
-@Import({InfluencerDetailAssembler.class, ClockConfig.class, WebConfig.class})
+@Import({InfluencerDetailAssembler.class, ClockConfig.class, SecurityConfig.class})
 class InfluencerDetailControllerTest {
 
 	@Autowired
