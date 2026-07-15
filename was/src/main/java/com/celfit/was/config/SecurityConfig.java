@@ -13,9 +13,15 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -66,8 +72,11 @@ public class SecurityConfig {
 				.cors(cors -> cors.configurationSource(corsConfigurationSource()))
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/api/me", "/api/saved/**").authenticated()
+						// v1 보호 경로(스펙 3.2) — auth·events·읽기 4종은 permitAll 유지
+						.requestMatchers("/v1/me/**", "/v1/saved-contents/**", "/v1/saved-influencers/**")
+						.authenticated()
 						.anyRequest().permitAll())
-				.exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
 				.logout(AbstractHttpConfigurer::disable);
@@ -97,6 +106,32 @@ public class SecurityConfig {
 		public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken csrfToken) {
 			String headerValue = request.getHeader(csrfToken.getHeaderName());
 			return (StringUtils.hasText(headerValue) ? plain : xor).resolveCsrfTokenValue(request, csrfToken);
+		}
+	}
+
+	/**
+	 * 미인증 401 진입점 — /v1 경로는 스펙 3.1 envelope JSON을 직접 쓰고(UNAUTHORIZED "로그인이 필요합니다."),
+	 * 그 외(/api 등 구 표면)는 기존 HttpStatusEntryPoint 동작(빈 401 본문)을 유지한다.
+	 * advice(V1ExceptionAdvice)는 컨트롤러 도달 후에만 작동해 필터 단계 401은 여기서 직접 써야 한다.
+	 */
+	static final class V1AwareAuthenticationEntryPoint implements AuthenticationEntryPoint {
+
+		private static final String V1_UNAUTHORIZED_BODY =
+				"{\"success\":false,\"data\":null,\"error\":{\"code\":\"UNAUTHORIZED\",\"message\":\"로그인이 필요합니다.\"}}";
+
+		private final AuthenticationEntryPoint fallback = new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED);
+
+		@Override
+		public void commence(HttpServletRequest request, HttpServletResponse response,
+				AuthenticationException authException) throws IOException, ServletException {
+			if (request.getRequestURI().startsWith("/v1/")) {
+				response.setStatus(HttpStatus.UNAUTHORIZED.value());
+				response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+				response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+				response.getWriter().write(V1_UNAUTHORIZED_BODY);
+			} else {
+				fallback.commence(request, response, authException);
+			}
 		}
 	}
 
