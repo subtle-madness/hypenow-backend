@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 근거 스펙: [specs/2026-07-15-hypenow-api-spec-alignment-design.md §5](../specs/2026-07-15-hypenow-api-spec-alignment-design.md)
+> 상태: ✅ 구현/실행/반영됨 · 근거 스펙: [specs/2026-07-15-hypenow-api-spec-alignment-design.md §5](../../specs/2026-07-15-hypenow-api-spec-alignment-design.md)
 
 **Goal:** 기존 트랙 G(Spring Security 인증·저장 2종)를 프론트 스펙 v1 계약(6.6~6.16, 6.19)으로 확장한다 — Spring Session JDBC 세션(목록·개별 로그아웃·`hypenow-session` 30일 슬라이딩), users 프로필 필드 15종, `/v1/auth·me·saved-*·events` envelope 표면, P1 응답의 개인화 필드 활성화.
 
