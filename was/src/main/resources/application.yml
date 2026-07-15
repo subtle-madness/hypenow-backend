@@ -11,6 +11,10 @@ spring:
       initialize-schema: never          # DDL은 Flyway(app 스키마)가 소유 — V2__spring_session.sql
       table-name: app.spring_session
     timeout: 30d                        # 비활동 30일 = 슬라이딩 만료 (스펙 4절)
+  servlet:
+    multipart:
+      max-file-size: 2MB                # 컨테이너 컷은 여유 — 1MB 정본 검증은 ProfileImageStore(스펙 6.13)
+      max-request-size: 3MB
 server:
   port: 8081
   servlet:
@@ -24,3 +28,5 @@ server:
 was:
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
+  profile-image:
+    dir: ./data/profile-images          # 프로필 이미지 저장 디렉토리 — /profile-images/** 로 정적 서빙

@@ -17,6 +17,7 @@ import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -65,11 +66,18 @@ class V1AuthControllerTest {
 		return UsernamePasswordAuthenticationToken.authenticated(email, null, List.of());
 	}
 
+	/** UserSummary가 쓰는 4필드만 의미 있는 프로필 픽스처 — 나머지는 T3 확장 필드 기본값. */
+	private UserProfile profile() {
+		return new UserProfile(7L, "user@example.com", "김우민", null, "brand",
+				"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
+				false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"));
+	}
+
 	@Test
 	void 가입은_201과_UserSummary_envelope를_내린다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
 		given(userRepository.insertProfile(any(), anyString()))
-				.willReturn(new UserProfile(7L, "user@example.com", "김우민", "brand"));
+				.willReturn(profile());
 		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
@@ -129,7 +137,7 @@ class V1AuthControllerTest {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
 		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
 		given(userRepository.findProfileByEmail(anyString()))
-				.willReturn(Optional.of(new UserProfile(7L, "user@example.com", "김우민", "brand")));
+				.willReturn(Optional.of(profile()));
 
 		mockMvc.perform(post("/v1/auth/login").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -145,7 +153,7 @@ class V1AuthControllerTest {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
 		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
 		given(userRepository.findProfileByEmail("user@example.com"))
-				.willReturn(Optional.of(new UserProfile(7L, "user@example.com", "김우민", "brand")));
+				.willReturn(Optional.of(profile()));
 
 		MvcResult result = mockMvc.perform(post("/v1/auth/login").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)

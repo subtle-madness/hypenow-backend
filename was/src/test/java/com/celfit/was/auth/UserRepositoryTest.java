@@ -123,4 +123,115 @@ class UserRepositoryTest extends IntegrationTest {
 		assertThat(found.get().name()).isEqualTo("김우민");
 		assertThat(found.get().userType()).isEqualTo("brand");
 	}
+
+	// --- /v1/me 확장(T3, 스펙 6.12~6.13) ---
+
+	@Test
+	void findProfileById는_프로필_전_필드를_돌려준다() {
+		UserProfile saved = repository.insertProfile(newUser("me-full@example.com", true), "hashed-m1");
+
+		UserProfile found = repository.findProfileById(saved.id()).orElseThrow();
+
+		assertThat(found.email()).isEqualTo("me-full@example.com");
+		assertThat(found.nickname()).isEqualTo("우민");
+		assertThat(found.signupRoute()).isEqualTo("portal_search");
+		assertThat(found.phoneCountryCode()).isEqualTo("+82");
+		assertThat(found.phoneNumber()).isEqualTo("010-1234-5678");
+		assertThat(found.companyName()).isEqualTo("하이프나우");
+		assertThat(found.companySize()).isEqualTo("2-10");
+		assertThat(found.industry()).isEqualTo("beauty");
+		assertThat(found.jobTitle()).isEqualTo("staff");
+		assertThat(found.agreedMarketing()).isTrue();
+		assertThat(found.marketingUpdatedAt()).isNotNull();
+		assertThat(found.profileImageUrl()).isNull();
+		assertThat(found.createdAt()).isNotNull();
+	}
+
+	@Test
+	void patchProfile은_주어진_컬럼만_바꾸고_나머지는_유지한다() {
+		UserProfile saved = repository.insertProfile(newUser("patch@example.com", false), "hashed-m2");
+
+		Map<String, Object> columns = new java.util.LinkedHashMap<>();
+		columns.put("name", "새이름");
+		columns.put("nickname", null); // 닉네임 제거(빈 문자열 입력의 저장 형태)
+		UserProfile patched = repository.patchProfile(saved.id(), columns);
+
+		assertThat(patched.name()).isEqualTo("새이름");
+		assertThat(patched.nickname()).isNull();
+		assertThat(patched.phoneNumber()).isEqualTo("010-1234-5678"); // 미지정 컬럼 유지
+		assertThat(patched.companyName()).isEqualTo("하이프나우");
+	}
+
+	@Test
+	void patchProfile_agreedMarketing은_값이_바뀔_때만_동의_시각을_갱신한다() {
+		UserProfile saved = repository.insertProfile(newUser("marketing@example.com", false), "hashed-m3");
+		assertThat(saved.marketingUpdatedAt()).isNull();
+
+		// false→true: 변경 — 시각 기록
+		UserProfile turnedOn = repository.patchProfile(saved.id(), Map.of("agreed_marketing", true));
+		assertThat(turnedOn.agreedMarketing()).isTrue();
+		assertThat(turnedOn.marketingUpdatedAt()).isNotNull();
+
+		// true→true: 같은 값 재전송 — 시각 유지
+		UserProfile resent = repository.patchProfile(saved.id(), Map.of("agreed_marketing", true));
+		assertThat(resent.marketingUpdatedAt()).isEqualTo(turnedOn.marketingUpdatedAt());
+
+		// true→false: 변경 — 철회 시각으로 다시 갱신
+		UserProfile turnedOff = repository.patchProfile(saved.id(), Map.of("agreed_marketing", false));
+		assertThat(turnedOff.agreedMarketing()).isFalse();
+		assertThat(turnedOff.marketingUpdatedAt()).isAfterOrEqualTo(turnedOn.marketingUpdatedAt());
+	}
+
+	@Test
+	void patchProfile_화이트리스트_밖_컬럼은_IllegalArgumentException이다() {
+		UserProfile saved = repository.insertProfile(newUser("whitelist@example.com", false), "hashed-m4");
+
+		assertThatThrownBy(() -> repository.patchProfile(saved.id(), Map.of("email", "hack@example.com")))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> repository.patchProfile(saved.id(), Map.of()))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void updatePasswordHash는_해시만_바꾼다() {
+		UserProfile saved = repository.insertProfile(newUser("pwchange@example.com", false), "hashed-old");
+
+		repository.updatePasswordHash(saved.id(), "hashed-new");
+
+		assertThat(repository.findById(saved.id()).orElseThrow().passwordHash()).isEqualTo("hashed-new");
+	}
+
+	@Test
+	void updateProfileImageUrl은_설정과_null_제거를_오간다() {
+		UserProfile saved = repository.insertProfile(newUser("image@example.com", false), "hashed-m5");
+
+		repository.updateProfileImageUrl(saved.id(), "/profile-images/user-" + saved.id() + ".png?v=1");
+		assertThat(repository.findProfileById(saved.id()).orElseThrow().profileImageUrl())
+				.isEqualTo("/profile-images/user-" + saved.id() + ".png?v=1");
+
+		repository.updateProfileImageUrl(saved.id(), null);
+		assertThat(repository.findProfileById(saved.id()).orElseThrow().profileImageUrl()).isNull();
+	}
+
+	@Test
+	void deleteAccount는_saved_2종과_users를_함께_지운다() {
+		UserProfile saved = repository.insertProfile(newUser("withdraw@example.com", false), "hashed-m6");
+		jdbcClient.sql("INSERT INTO app.saved_influencers (user_id, handle) VALUES (:id, 'someone')")
+				.param("id", saved.id()).update();
+		jdbcClient.sql("INSERT INTO app.saved_contents (user_id, short_code) VALUES (:id, 'ABC123')")
+				.param("id", saved.id()).update();
+
+		repository.deleteAccount(saved.id());
+
+		assertThat(count("app.saved_influencers", saved.id())).isZero();
+		assertThat(count("app.saved_contents", saved.id())).isZero();
+		assertThat(repository.findById(saved.id())).isEmpty();
+	}
+
+	private long count(String table, long userId) {
+		return jdbcClient.sql("SELECT count(*) FROM " + table + " WHERE user_id = :id")
+				.param("id", userId)
+				.query(Long.class)
+				.single();
+	}
 }

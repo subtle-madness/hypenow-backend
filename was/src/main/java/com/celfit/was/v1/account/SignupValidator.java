@@ -43,8 +43,18 @@ public class SignupValidator {
 		}
 	}
 
-	/** 비밀번호 정책(스펙 6.15) — 8자 이상 + 영대문자·소문자·숫자·특수문자 각 1자 이상. */
-	private void validatePassword(String password) {
+	/** PATCH /v1/me 재사용(스펙 6.13) — 가입과 동일한 어휘 검사. */
+	public void requireJobTitle(String value) {
+		requireIn(JOB_TITLES, value, "jobTitle");
+	}
+
+	/** PATCH /v1/me 재사용(스펙 6.13) — 가입과 동일한 어휘 검사. */
+	public void requirePhoneCountryCode(String value) {
+		requireIn(PHONE_COUNTRY_CODES, value, "phoneCountryCode");
+	}
+
+	/** 비밀번호 정책(스펙 6.15) — 8자 이상 + 영대문자·소문자·숫자·특수문자 각 1자 이상. PUT /v1/me/password도 재사용. */
+	public void validatePassword(String password) {
 		boolean ok = password != null
 				&& password.length() >= PASSWORD_MIN_LENGTH
 				&& password.chars().anyMatch(Character::isUpperCase)
