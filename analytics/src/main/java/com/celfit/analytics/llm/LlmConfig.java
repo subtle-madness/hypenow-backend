@@ -2,6 +2,8 @@ package com.celfit.analytics.llm;
 
 import com.anthropic.client.AnthropicClient;
 import com.celfit.analytics.config.AnalyticsSettings;
+import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -33,8 +35,15 @@ public class LlmConfig {
 	}
 
 	@Bean
-	public VisionPort visionPort(AnthropicClient client, AnalyticsSettings settings) {
-		return new AnthropicVisionAnalyzer(client, settings);
+	public BeautyTaxonomyLoader beautyTaxonomyLoader(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new BeautyTaxonomyLoader(analysisDataSource);
+	}
+
+	@Bean
+	public ContentAttributePort contentAttributePort(AnthropicClient client, AnalyticsSettings settings,
+			BeautyTaxonomyLoader taxonomyLoader) {
+		return new AnthropicContentAttributeAnalyzer(client, settings, taxonomyLoader);
 	}
 
 	@Bean
