@@ -59,7 +59,11 @@ class HikerProfileFetchersTest {
             }
             throw new ApifyException("Hiker HTTP 500");
         };
-        var f = new HikerWebGqlProfileFetcher(http, passthrough(), om);
+        var influencers = org.mockito.Mockito.mock(
+                com.celfit.crawler.crawling.application.port.out.InfluencerRepository.class);
+        org.mockito.Mockito.when(influencers.findByUsername(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.empty());  // 저장 pk 없음 — by/username 경로 검증 유지
+        var f = new HikerWebGqlProfileFetcher(http, passthrough(), influencers, om);
         assertThat(f.source()).isEqualTo(ProfileSource.HIKER_WEB_GQL);
         assertThat(f.rawSource()).isEqualTo(RawSource.HIKER_MOBILE);
         var ex = f.fetch(JobName.QUALIFY, List.of("tem.duck"), TriggerType.MANUAL);
