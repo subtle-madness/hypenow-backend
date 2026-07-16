@@ -331,9 +331,11 @@ class UiSmokeTest extends IntegrationTest {
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("smoke-influencer-list-user"))));
 
-        // 사이드바 모니터링에 뷰티 회사 메뉴가 노출된다
+        // 사이드바 모니터링에 뷰티 회사 메뉴가 노출되고, 인플루언서 링크는 명시 쿼리를 갖는다
+        // (쿼리 없는 링크는 admin.js 쿼리 복원에 붙잡혀 회사 뷰에서 되돌아올 수 없다)
         mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/influencers?company=false")));
     }
 
     @Test
