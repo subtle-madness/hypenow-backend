@@ -21,8 +21,11 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class ClaudeCliBeautyJudge implements BeautyJudge {
 
-    /** 배치 1회(50명) 판정의 상한 — CLI가 응답을 못 만들면 강제 종료하고 배치 실패로 넘긴다. */
-    static final int TIMEOUT_SECONDS = 120;
+    /**
+     * 배치 1회(50명) 판정의 상한 — CLI가 응답을 못 만들면 강제 종료하고 배치 실패로 넘긴다.
+     * 캡션 포함(계정당 최근 5개×100자)으로 프롬프트가 커진 뒤 120s는 간헐 타임아웃(2026-07-16 실측) — 240s로 상향.
+     */
+    static final int TIMEOUT_SECONDS = 240;
 
     private final ObjectMapper om;
 
