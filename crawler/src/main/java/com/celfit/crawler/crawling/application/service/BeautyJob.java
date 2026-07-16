@@ -47,14 +47,16 @@ public class BeautyJob {
     private final RawProfileRepository rawProfiles;
     private final BeautyJudge judge;
     private final SettingsService settings;
+    private final java.time.Clock clock;
     private final TransactionTemplate txTemplate;
 
     public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles, BeautyJudge judge,
-                     SettingsService settings, TransactionTemplate txTemplate) {
+                     SettingsService settings, java.time.Clock clock, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.judge = judge;
         this.settings = settings;
+        this.clock = clock;
         this.txTemplate = txTemplate;
     }
 
@@ -70,9 +72,10 @@ public class BeautyJob {
         List<Influencer> targets = new ArrayList<>(influencers.findByStatusAndBeautyIsNull(
                 InfluencerStatus.QUALIFIED, PageRequest.of(0, limit, Sort.by("id"))));
         if (rejudge && targets.size() < limit) {
+            // 오래된 판정 우선(쿼리 정렬) — 실패 배치가 옛 판정 시각으로 남아 먼저 재시도된다
             targets.addAll(influencers.findByStatusAndBeautySource(
                     InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
-                    PageRequest.of(0, limit - targets.size(), Sort.by("id"))));
+                    PageRequest.of(0, limit - targets.size())));
         }
 
         // 판정 재료 준비 — raw_profile이 아직 없으면 판정 불가(qualify가 언젠가 채우면 재시도)
@@ -140,6 +143,7 @@ public class BeautyJob {
             inf.setBeautyCompany(v.company());
             inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
             inf.setBeautyReason(v.reason());
+            inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
             influencers.save(inf);
             if (v.beauty()) beauty++; else notBeauty++;
             done++;

@@ -58,8 +58,14 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** BEAUTY 잡 대상: 판정 통과했지만 뷰티 미판정 — id 순 Pageable로 결정적으로 소진한다. */
     List<Influencer> findByStatusAndBeautyIsNull(InfluencerStatus status, Pageable pageable);
 
-    /** BEAUTY 재판정(rejudge) 대상: CLAUDE 판정분만 — MANUAL은 선정 자체에서 제외된다. */
-    List<Influencer> findByStatusAndBeautySource(InfluencerStatus status, String beautySource,
+    /**
+     * BEAUTY 재판정(rejudge) 대상: CLAUDE 판정분만 — MANUAL은 선정 자체에서 제외된다.
+     * 오래된 판정 우선(시각 미기록 = 가장 오래됨) — 실패 배치가 다음 실행에서 먼저 재시도된다.
+     */
+    @Query("select i from Influencer i where i.status = :status and i.beautySource = :beautySource "
+            + "order by i.beautyJudgedAt asc nulls first, i.id")
+    List<Influencer> findByStatusAndBeautySource(@Param("status") InfluencerStatus status,
+                                                 @Param("beautySource") String beautySource,
                                                  Pageable pageable);
 
     /**

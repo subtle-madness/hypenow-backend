@@ -57,6 +57,10 @@ public class Influencer {
     @Column(name = "beauty_reason")
     private String beautyReason;
 
+    /** 뷰티 판정 시각 — rejudge가 오래된 판정부터 재시도하는 기준(실패 배치는 옛 시각 유지). */
+    @Column(name = "beauty_judged_at")
+    private Instant beautyJudgedAt;
+
     /** SIMILAR 잡이 이 시드의 유사 계정 수확을 마친(또는 수확 불가로 확정한) 시각. NULL이면 시드 후보. */
     @Column(name = "similar_processed_at")
     private Instant similarProcessedAt;

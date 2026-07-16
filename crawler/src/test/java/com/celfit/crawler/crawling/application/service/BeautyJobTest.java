@@ -33,6 +33,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 class BeautyJobTest {
 
+    static final Instant NOW = Instant.parse("2026-07-16T00:00:00Z");
+
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
     BeautyJudge judge = mock(BeautyJudge.class);
@@ -40,7 +42,8 @@ class BeautyJobTest {
     // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 배치 단위 트랜잭션 래핑을 그대로 재현한다.
     TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
-    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, settings, txTemplate);
+    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, settings,
+            java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), txTemplate);
 
     @BeforeEach
     void wireSavePassthrough() {
@@ -85,6 +88,9 @@ class BeautyJobTest {
         assertThat(a.getBeautySource()).isEqualTo(Influencer.BEAUTY_SOURCE_CLAUDE);
         assertThat(a.getBeautyReason()).isEqualTo("메이크업 중심");
         assertThat(b.getBeauty()).isFalse();
+        // 판정 시각 기록 — rejudge가 오래된 판정(실패 배치)부터 재시도하는 기준
+        assertThat(a.getBeautyJudgedAt()).isEqualTo(NOW);
+        assertThat(b.getBeautyJudgedAt()).isEqualTo(NOW);
     }
 
     @Test
@@ -211,7 +217,7 @@ class BeautyJobTest {
                 InfluencerStatus.QUALIFIED, PageRequest.of(0, 3, Sort.by("id")))).thenReturn(List.of(a));
         when(influencers.findByStatusAndBeautySource(
                 InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
-                PageRequest.of(0, 2, Sort.by("id")))).thenReturn(List.of(b, c));
+                PageRequest.of(0, 2))).thenReturn(List.of(b, c));  // 정렬은 쿼리(오래된 판정 우선) 몫
         for (long id = 1; id <= 3; id++) {
             when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(id))
                     .thenReturn(Optional.of(legacyProfile(id, "이름", "bio")));

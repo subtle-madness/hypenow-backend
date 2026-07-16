@@ -242,4 +242,41 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
         assertThat(influencers.countReelsDue(revisitBefore)).isGreaterThanOrEqualTo(2L);
     }
+
+    // ---------------------------------------------------------------------
+    // rejudge 선정은 오래된 판정 우선 — 실패 배치(옛 beauty_judged_at 유지)가 다음 실행에서
+    // 먼저 재시도돼, 전체를 다시 돌리지 않아도 배치 한도만큼으로 실패분을 채울 수 있다.
+    // ---------------------------------------------------------------------
+    @Test
+    void rejudge_선정은_판정이_오래된_계정부터다() {
+        Instant now = clock.instant();
+
+        Influencer fresh = new Influencer(USERNAME_BACKFILL);   // 방금 판정됨 — 뒤로
+        fresh.setStatus(InfluencerStatus.QUALIFIED);
+        fresh.setBeauty(true);
+        fresh.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        fresh.setBeautyJudgedAt(now);
+        Long freshId = influencers.save(fresh).getId();
+
+        Influencer stale = new Influencer(USERNAME_DUE);        // 옛 판정(실패 배치) — 먼저
+        stale.setStatus(InfluencerStatus.QUALIFIED);
+        stale.setBeauty(true);
+        stale.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        stale.setBeautyJudgedAt(now.minusSeconds(86400));
+        Long staleId = influencers.save(stale).getId();
+
+        Influencer legacy = new Influencer(USERNAME_RECENT);    // 시각 미기록(구버전 판정) — 가장 먼저
+        legacy.setStatus(InfluencerStatus.QUALIFIED);
+        legacy.setBeauty(false);
+        legacy.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        Long legacyId = influencers.save(legacy).getId();
+
+        List<Long> order = influencers.findByStatusAndBeautySource(
+                        InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                        org.springframework.data.domain.PageRequest.of(0, 1000))
+                .stream().map(Influencer::getId)
+                .filter(List.of(freshId, staleId, legacyId)::contains).toList();
+
+        assertThat(order).containsExactly(legacyId, staleId, freshId);
+    }
 }
