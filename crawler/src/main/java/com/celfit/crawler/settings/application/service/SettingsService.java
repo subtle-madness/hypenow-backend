@@ -5,6 +5,7 @@ import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.common.config.DiscoverProperties;
 import com.celfit.crawler.common.config.QualifyProperties;
 import com.celfit.crawler.common.config.ReelsProperties;
+import com.celfit.crawler.common.config.ResnapshotProperties;
 import com.celfit.crawler.common.config.SimilarProperties;
 import com.celfit.crawler.settings.domain.AppSetting;
 import com.celfit.crawler.settings.application.port.out.AppSettingRepository;
@@ -35,13 +36,14 @@ public class SettingsService {
     static final String SIMILAR_BATCH_LIMIT = "similar.batch-limit";
     static final String BEAUTY_BATCH_LIMIT = "beauty.batch-limit";
     static final String REELS_BATCH_LIMIT = "reels.batch-limit";
+    static final String RESNAPSHOT_BATCH_LIMIT = "resnapshot.batch-limit";
 
     // 댓글 관련 키(comments-per-post·max-attempts)는 댓글 수집이 꺼지면서(yml comments-enabled)
     // UI 목록에서 제외 — 로직·기본값은 유지되므로 재활성화 시 다시 넣으면 된다.
     private static final List<String> KEYS = List.of(
             RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
             COLLECT_BATCH_LIMIT, COLLECT_REVISIT_INTERVAL_DAYS, SIMILAR_BATCH_LIMIT,
-            BEAUTY_BATCH_LIMIT, REELS_BATCH_LIMIT);
+            BEAUTY_BATCH_LIMIT, REELS_BATCH_LIMIT, RESNAPSHOT_BATCH_LIMIT);
 
     private static final java.util.Map<String, String> DESCRIPTIONS = java.util.Map.of(
             RESULTS_LIMIT, "discover: 키워드당 발굴할 게시물 수 상한 (해시태그 페이지 반복량 결정)",
@@ -52,7 +54,8 @@ public class SettingsService {
             COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 마지막 방문 후 이 기간이 지나야 다시 대상",
             SIMILAR_BATCH_LIMIT, "similar: 실행 1회당 유사 계정을 수확할 시드 수 (Hiker 호출량 제어)",
             BEAUTY_BATCH_LIMIT, "beauty: 판정 1회당 처리할 계정 수 상한 (실행 시간 제어 — 초과분은 다음 실행)",
-            REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)");
+            REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)",
+            RESNAPSHOT_BATCH_LIMIT, "resnapshot: 실행 1회당 재수집(로컬 GQL)할 비뷰티 계정 수 — 계정당 1요청");
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
@@ -61,11 +64,12 @@ public class SettingsService {
     private final SimilarProperties similarProps;
     private final BeautyProperties beautyProps;
     private final ReelsProperties reelsProps;
+    private final ResnapshotProperties resnapshotProps;
 
     public SettingsService(AppSettingRepository settings, DiscoverProperties discoverProps,
                            QualifyProperties qualifyProps, CollectProperties collectProps,
                            SimilarProperties similarProps, BeautyProperties beautyProps,
-                           ReelsProperties reelsProps) {
+                           ReelsProperties reelsProps, ResnapshotProperties resnapshotProps) {
         this.settings = settings;
         this.discoverProps = discoverProps;
         this.qualifyProps = qualifyProps;
@@ -73,6 +77,7 @@ public class SettingsService {
         this.similarProps = similarProps;
         this.beautyProps = beautyProps;
         this.reelsProps = reelsProps;
+        this.resnapshotProps = resnapshotProps;
     }
 
     @Transactional(readOnly = true)
@@ -131,6 +136,11 @@ public class SettingsService {
     }
 
     @Transactional(readOnly = true)
+    public int resnapshotBatchLimit() {
+        return effective(RESNAPSHOT_BATCH_LIMIT);
+    }
+
+    @Transactional(readOnly = true)
     public List<SettingView> list() {
         return KEYS.stream().map(this::toView).toList();
     }
@@ -175,6 +185,7 @@ public class SettingsService {
             case SIMILAR_BATCH_LIMIT -> similarProps.batchLimit();
             case BEAUTY_BATCH_LIMIT -> beautyProps.batchLimit();
             case REELS_BATCH_LIMIT -> reelsProps.batchLimit();
+            case RESNAPSHOT_BATCH_LIMIT -> resnapshotProps.batchLimit();
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 설정 키: " + key);
         };
     }

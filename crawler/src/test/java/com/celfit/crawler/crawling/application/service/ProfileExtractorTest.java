@@ -193,4 +193,26 @@ class ProfileExtractorTest {
         assertThat(ProfileExtractor.category(empty, RawSource.LEGACY_ENVELOPE)).isNull();
         assertThat(ProfileExtractor.biography(empty, RawSource.LEGACY_ENVELOPE)).isNull();
     }
+
+    @Test
+    void 비공개_여부를_소스별_경로에서_추출한다() {
+        // HIKER_MOBILE — user 래퍼 안 is_private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("user", Map.of("is_private", true)), RawSource.HIKER_MOBILE)).isTrue();
+        // DATALIKERS — flat is_private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("is_private", false), RawSource.DATALIKERS)).isFalse();
+        // SELF_GQL — data.user.is_private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("data", Map.of("user", Map.of("is_private", true))), RawSource.SELF_GQL)).isTrue();
+        // LEGACY_ENVELOPE — flat private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("private", true), RawSource.LEGACY_ENVELOPE)).isTrue();
+    }
+
+    @Test
+    void 비공개_여부_필드가_없으면_공개로_간주한다() {
+        assertThat(ProfileExtractor.isPrivate(Map.of("user", Map.of()), RawSource.HIKER_MOBILE)).isFalse();
+        assertThat(ProfileExtractor.isPrivate(Map.of(), RawSource.SELF_GQL)).isFalse();
+    }
 }

@@ -21,10 +21,12 @@ public class JobService implements TriggerJobUseCase {
     private final BeautyJob beautyJob;
     private final SimilarJob similarJob;
     private final ReelsJob reelsJob;
+    private final ResnapshotJob resnapshotJob;
     private final TaskExecutor taskExecutor;
 
     public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob, CollectJob collectJob,
                       BeautyJob beautyJob, SimilarJob similarJob, ReelsJob reelsJob,
+                      ResnapshotJob resnapshotJob,
                       @Qualifier("jobTaskExecutor") TaskExecutor taskExecutor) {
         this.lock = lock;
         this.discoverJob = discoverJob;
@@ -33,6 +35,7 @@ public class JobService implements TriggerJobUseCase {
         this.beautyJob = beautyJob;
         this.similarJob = similarJob;
         this.reelsJob = reelsJob;
+        this.resnapshotJob = resnapshotJob;
         this.taskExecutor = taskExecutor;
     }
 
@@ -80,6 +83,11 @@ public class JobService implements TriggerJobUseCase {
                         var s = reelsJob.run(triggerType);
                         if (s.failedVisits() > 0) log.warn("reels 완료(방문 부분 실패): {}", s);
                         else log.info("reels 완료: {}", s);
+                    }
+                    case RESNAPSHOT -> {
+                        var s = resnapshotJob.run(triggerType);
+                        if (s.failedChunks() > 0) log.warn("resnapshot 완료(청크 부분 실패): {}", s);
+                        else log.info("resnapshot 완료: {}", s);
                     }
                     case AGGREGATE -> log.warn("AGGREGATE는 판독 전용 — 실행 경로 없음");
                 }

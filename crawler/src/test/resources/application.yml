@@ -55,6 +55,8 @@ crawler:
     batch-limit: 500
   reels:
     batch-limit: 10
+  resnapshot:
+    batch-limit: 200
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"

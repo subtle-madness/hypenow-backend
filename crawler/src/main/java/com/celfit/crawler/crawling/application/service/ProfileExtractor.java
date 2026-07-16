@@ -68,6 +68,16 @@ public final class ProfileExtractor {
         return asText(v);
     }
 
+    /** 비공개 계정 여부 — 필드 누락은 공개로 간주(수집 시도 후 실패로 드러나는 쪽이 안전). */
+    public static boolean isPrivate(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> dig(payload, "data", "user", "is_private");
+            case HIKER_MOBILE, DATALIKERS -> dig(user(payload), "is_private");
+            default -> payload.get("private");
+        };
+        return v instanceof Boolean b && b;
+    }
+
     /**
      * 최근 게시물 캡션(공백·누락 제외, 응답 순서 유지). 게시물이 payload에 없는 소스
      * (HIKER_MOBILE·DATALIKERS)는 빈 리스트. LEGACY_ENVELOPE는 구형 latestPosts[].caption과

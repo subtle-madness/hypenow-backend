@@ -59,14 +59,33 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     List<Influencer> findByStatusAndBeautyIsNull(InfluencerStatus status, Pageable pageable);
 
     /**
-     * BEAUTY 재판정(rejudge) 대상: CLAUDE 판정분만 — MANUAL은 선정 자체에서 제외된다.
-     * 오래된 판정 우선(시각 미기록 = 가장 오래됨) — 실패 배치가 다음 실행에서 먼저 재시도된다.
+     * BEAUTY 재판정(rejudge) 대상: CLAUDE가 비뷰티로 판정했지만 판정 후 프로필 재료가 갱신된
+     * (새 raw_profile 스냅샷이 생긴) 계정만 — 재료가 그대로면 같은 판정만 반복하므로 배치 낭비다.
+     * MANUAL은 선정 자체에서 제외되고, 뷰티 판정분은 재검하지 않는다(캡션이 뷰티→비뷰티로
+     * 뒤집는 사례는 관측되지 않음 — 2026-07-16 실험). 오래된 판정 우선(시각 미기록 = 가장 오래됨).
      */
     @Query("select i from Influencer i where i.status = :status and i.beautySource = :beautySource "
+            + "and i.beauty = false and (i.beautyJudgedAt is null or i.beautyJudgedAt < "
+            + "(select max(rp.capturedAt) from RawProfile rp where rp.influencerId = i.id)) "
             + "order by i.beautyJudgedAt asc nulls first, i.id")
-    List<Influencer> findByStatusAndBeautySource(@Param("status") InfluencerStatus status,
-                                                 @Param("beautySource") String beautySource,
-                                                 Pageable pageable);
+    List<Influencer> findRejudgeTargets(@Param("status") InfluencerStatus status,
+                                        @Param("beautySource") String beautySource,
+                                        Pageable pageable);
+
+    /**
+     * RESNAPSHOT 잡 대상: CLAUDE가 비뷰티로 판정했고 최신 raw_profile이 캡션 없는 소스
+     * (HIKER_MOBILE·DATALIKERS)인 계정 — 캡션 재료를 확보하면 재판정에서 뷰티로 구제될 수 있다.
+     * 재수집이 끝나면 최신 스냅샷이 SELF_GQL이 되어 자연히 선정에서 빠진다.
+     */
+    @Query("select i from Influencer i where i.status = :status and i.beautySource = :beautySource "
+            + "and i.beauty = false and exists (select 1 from RawProfile rp "
+            + "where rp.influencerId = i.id and rp.source in :sources and rp.capturedAt = "
+            + "(select max(rp2.capturedAt) from RawProfile rp2 where rp2.influencerId = i.id)) "
+            + "order by i.id")
+    List<Influencer> findResnapshotTargets(@Param("status") InfluencerStatus status,
+                                           @Param("beautySource") String beautySource,
+                                           @Param("sources") java.util.Collection<com.celfit.crawler.crawling.domain.RawSource> sources,
+                                           Pageable pageable);
 
     /**
      * REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만.

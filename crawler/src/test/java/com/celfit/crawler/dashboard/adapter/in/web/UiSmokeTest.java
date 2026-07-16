@@ -71,6 +71,12 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 잡_화면에_재스냅샷_트리거가_렌더된다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/resnapshot")));
+    }
+
+    @Test
     void 수집_데이터_화면이_content_행이_있어도_렌더된다() throws Exception {
         Influencer inf = influencers.save(new Influencer("smoke-user"));
         contents.save(new Content("sc-smoke", ContentType.REELS, "smoke-user",

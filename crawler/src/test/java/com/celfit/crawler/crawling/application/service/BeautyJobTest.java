@@ -215,7 +215,7 @@ class BeautyJobTest {
         // 미판정 쿼리가 한도 3으로 호출되고, rejudge 쿼리는 남은 한도 2만 요청한다
         when(influencers.findByStatusAndBeautyIsNull(
                 InfluencerStatus.QUALIFIED, PageRequest.of(0, 3, Sort.by("id")))).thenReturn(List.of(a));
-        when(influencers.findByStatusAndBeautySource(
+        when(influencers.findRejudgeTargets(
                 InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
                 PageRequest.of(0, 2))).thenReturn(List.of(b, c));  // 정렬은 쿼리(오래된 판정 우선) 몫
         for (long id = 1; id <= 3; id++) {
@@ -245,21 +245,21 @@ class BeautyJobTest {
 
         job.run(TriggerType.MANUAL, true);
 
-        verify(influencers, never()).findByStatusAndBeautySource(any(), any(), any());
+        verify(influencers, never()).findRejudgeTargets(any(), any(), any());
     }
 
     @Test
-    void rejudge는_CLAUDE_판정분을_다시_포함하되_MANUAL은_선정하지_않는다() {
+    void rejudge는_재료_갱신된_비뷰티_선정_쿼리를_CLAUDE_판정분으로만_호출한다() {
+        // 비뷰티·재료 갱신·MANUAL 제외 조건 자체는 쿼리 몫 — BeautySelectionIntegrationTest가 고정한다.
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of());
-        when(influencers.findByStatusAndBeautySource(
+        when(influencers.findRejudgeTargets(
                 eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
                 .thenReturn(List.of());
 
         job.run(TriggerType.MANUAL, true);
 
-        verify(influencers).findByStatusAndBeautySource(
+        verify(influencers).findRejudgeTargets(
                 eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class));
-        // MANUAL 선정 쿼리는 존재하지 않음 — findByStatusAndBeautySource(…, "MANUAL") 호출 자체가 없다
     }
 
     @Test
@@ -273,7 +273,7 @@ class BeautyJobTest {
         a.setSimilarProcessedAt(harvested);
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
                 .thenReturn(List.of());
-        when(influencers.findByStatusAndBeautySource(
+        when(influencers.findRejudgeTargets(
                 eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
                 .thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
@@ -289,7 +289,7 @@ class BeautyJobTest {
     void 두_선정_쿼리에_같은_인플루언서가_겹치면_한_번만_판정한다() {
         Influencer a = qualified(1L, "a");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));
-        when(influencers.findByStatusAndBeautySource(
+        when(influencers.findRejudgeTargets(
                 eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
                 .thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
