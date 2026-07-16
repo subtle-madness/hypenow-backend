@@ -40,8 +40,15 @@ public class Influencer {
     public static final String BEAUTY_SOURCE_CLAUDE = "CLAUDE";
     public static final String BEAUTY_SOURCE_MANUAL = "MANUAL";
 
-    /** 뷰티 계정 여부 — NULL이면 미판정. SIMILAR 잡의 시드 자격 조건(beauty=true). */
+    /** 뷰티 계정 여부 — NULL이면 미판정. SIMILAR 잡의 시드 자격 조건(beauty=true, company=false). */
     private Boolean beauty;
+
+    /**
+     * 뷰티 회사(브랜드·쇼핑몰·살롱 등 사업자) 여부 — beauty=true의 하위 구분.
+     * 회사는 명단 리스트업만 하고 수집·유사발굴 대상에서 제외된다.
+     */
+    @Column(name = "beauty_company")
+    private Boolean beautyCompany;
 
     @Column(name = "beauty_source")
     private String beautySource;

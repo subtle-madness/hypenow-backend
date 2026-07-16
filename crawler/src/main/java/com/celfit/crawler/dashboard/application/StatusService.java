@@ -25,7 +25,8 @@ import org.springframework.stereotype.Service;
 public class StatusService {
 
     public record StatusSummary(Map<InfluencerStatus, Long> influencerByStatus,
-                                 long beautyTrue,
+                                 long beautyInfluencer,
+                                 long beautyCompany,
                                  long beautyFalse,
                                  long beautyUnjudged,
                                  long backfillPending,
@@ -59,7 +60,8 @@ public class StatusService {
         }
         Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
         return new StatusSummary(byInfluencerStatus,
-                influencers.countByStatusAndBeauty(InfluencerStatus.QUALIFIED, true),
+                influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
+                influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),
                 influencers.countByStatusAndBeauty(InfluencerStatus.QUALIFIED, false),
                 influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED),
                 influencers.countBackfillPending(),

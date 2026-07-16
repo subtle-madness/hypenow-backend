@@ -34,20 +34,31 @@
         <td><span class="badge" th:classappend="${row.influencer.status}"
                  th:text="${row.influencer.status}"></span></td>
         <td th:text="${row.influencer.followers != null ? #numbers.formatInteger(row.influencer.followers, 0, 'COMMA') : '—'}"></td>
-        <td>
+        <td th:with="isCompany=${row.influencer.beauty == true and row.influencer.beautyCompany == true},
+                     isInf=${row.influencer.beauty == true and row.influencer.beautyCompany != true}">
             <span th:if="${row.influencer.beauty != null}" class="badge"
-                  th:classappend="${row.influencer.beauty} ? 'QUALIFIED' : 'EXCLUDED'"
-                  th:text="${row.influencer.beauty} ? '뷰티' : '뷰티 아님'"
+                  th:classappend="${row.influencer.beauty} ? (${isCompany} ? 'BEAUTY_COMPANY' : 'QUALIFIED') : 'EXCLUDED'"
+                  th:text="${row.influencer.beauty} ? (${isCompany} ? '뷰티 회사' : '뷰티') : '뷰티 아님'"
                   th:title="${row.influencer.beautyReason}"></span>
             <span th:if="${row.influencer.beauty == null}">—</span>
             <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
-                  style="display:inline">
+                  style="display:inline" th:unless="${isInf}">
                 <input type="hidden" name="page" th:value="${page.number}"/>
                 <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
-                <button type="submit" name="beauty" value="true"
-                        th:unless="${row.influencer.beauty == true}">뷰티</button>
-                <button type="submit" name="beauty" value="false"
-                        th:unless="${row.influencer.beauty == false}">뷰티 아님</button>
+                <button type="submit" name="beauty" value="true">뷰티</button>
+            </form>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
+                  style="display:inline" th:unless="${isCompany}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <input type="hidden" name="company" value="true"/>
+                <button type="submit" name="beauty" value="true">회사</button>
+            </form>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
+                  style="display:inline" th:unless="${row.influencer.beauty == false}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <button type="submit" name="beauty" value="false">뷰티 아님</button>
             </form>
         </td>
         <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>

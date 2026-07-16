@@ -315,11 +315,17 @@ class UiSmokeTest extends IntegrationTest {
 
     @Test
     void 대시보드에_뷰티_판정_결과_그룹이_렌더된다() throws Exception {
-        // beauty 잡이 가른 결과(뷰티/비뷰티/미판정)가 판정과 수집 사이 단계로 보여야 한다.
+        // beauty 잡이 가른 결과(인플루언서/회사/비뷰티/미판정)가 판정과 수집 사이 단계로 보여야 한다.
         Influencer beauty = new Influencer("smoke-beauty-true-user");
         beauty.setStatus(InfluencerStatus.QUALIFIED);
         beauty.setBeauty(true);
+        beauty.setBeautyCompany(false);
         influencers.save(beauty);
+        Influencer company = new Influencer("smoke-beauty-company-user");
+        company.setStatus(InfluencerStatus.QUALIFIED);
+        company.setBeauty(true);
+        company.setBeautyCompany(true);
+        influencers.save(company);
         Influencer notBeauty = new Influencer("smoke-beauty-false-user");
         notBeauty.setStatus(InfluencerStatus.QUALIFIED);
         notBeauty.setBeauty(false);
@@ -328,6 +334,8 @@ class UiSmokeTest extends IntegrationTest {
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 판정")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("BEAUTY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("BEAUTY_COMPANY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("NOT_BEAUTY")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("미판정")));
     }

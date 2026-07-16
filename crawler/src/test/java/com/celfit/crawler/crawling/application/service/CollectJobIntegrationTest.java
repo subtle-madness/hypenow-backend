@@ -49,6 +49,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
     static final String USERNAME_RECENT = "it-collect-revisit-recent";
     static final String USERNAME_NOT_BEAUTY = "it-collect-not-beauty";
     static final String USERNAME_UNJUDGED = "it-collect-beauty-unjudged";
+    static final String USERNAME_COMPANY = "it-collect-beauty-company";
 
     @Autowired InfluencerRepository influencers;
     @Autowired RawProfileRepository rawProfiles;
@@ -69,8 +70,9 @@ class CollectJobIntegrationTest extends IntegrationTest {
         jdbc.update("delete from raw_run_item where crawl_run_id in (select id from crawl_run where target_username = ?)", USERNAME);
         jdbc.update("delete from crawl_run where target_username = ?", USERNAME);
         jdbc.update("delete from influencer where username = ?", USERNAME);
-        jdbc.update("delete from influencer where username in (?, ?, ?, ?, ?)",
-                USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT, USERNAME_NOT_BEAUTY, USERNAME_UNJUDGED);
+        jdbc.update("delete from influencer where username in (?, ?, ?, ?, ?, ?)",
+                USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT, USERNAME_NOT_BEAUTY, USERNAME_UNJUDGED,
+                USERNAME_COMPANY);
     }
 
     @Test
@@ -157,12 +159,19 @@ class CollectJobIntegrationTest extends IntegrationTest {
         unjudgedInf.setStatus(InfluencerStatus.QUALIFIED);  // beauty null — 미판정
         Long unjudgedId = influencers.save(unjudgedInf).getId();
 
+        // 뷰티 회사 — 리스트업만, 수집 제외
+        Influencer companyInf = new Influencer(USERNAME_COMPANY);
+        companyInf.setStatus(InfluencerStatus.QUALIFIED);
+        companyInf.setBeauty(true);
+        companyInf.setBeautyCompany(true);
+        Long companyId = influencers.save(companyInf).getId();
+
         List<Influencer> targets = influencers.findCollectTargets(revisitBefore,
                 org.springframework.data.domain.PageRequest.of(0, 100));
         List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
 
         assertThat(targetIds).contains(backfillId, dueId);
-        assertThat(targetIds).doesNotContain(recentId, notBeautyId, unjudgedId);
+        assertThat(targetIds).doesNotContain(recentId, notBeautyId, unjudgedId, companyId);
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));
 
         assertThat(influencers.countTrackDue(revisitBefore)).isGreaterThanOrEqualTo(1L);
@@ -208,12 +217,25 @@ class CollectJobIntegrationTest extends IntegrationTest {
         notBeauty.setBeauty(false);   // 비뷰티 — 제외
         Long notBeautyId = influencers.save(notBeauty).getId();
 
+        Influencer company = new Influencer(USERNAME_COMPANY);
+        company.setStatus(InfluencerStatus.QUALIFIED);
+        company.setBeauty(true);
+        company.setBeautyCompany(true);   // 뷰티 회사 — 릴스 수집도 제외
+        Long companyId = influencers.save(company).getId();
+
         List<Influencer> targets = influencers.findReelsTargets(revisitBefore,
                 org.springframework.data.domain.PageRequest.of(0, 100));
         List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
 
         assertThat(targetIds).contains(backfillId, dueId, plainBackfillId);
-        assertThat(targetIds).doesNotContain(recentId, notBeautyId);
+        assertThat(targetIds).doesNotContain(recentId, notBeautyId, companyId);
+
+        // SIMILAR 시드에서도 회사는 빠진다 (인플루언서만 시드)
+        List<Long> seedIds = influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                        InfluencerStatus.QUALIFIED, org.springframework.data.domain.PageRequest.of(0, 1000))
+                .stream().map(Influencer::getId).toList();
+        assertThat(seedIds).contains(backfillId);
+        assertThat(seedIds).doesNotContain(companyId);
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));  // 백필 우선
         // 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 되고 릴스가 안 된 "짝 안 맞는" 계정부터 채운다
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(plainBackfillId));

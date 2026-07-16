@@ -34,11 +34,13 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     /** 백필 대기: 판정 통과 + 뷰티 확정이지만 첫 수집(backfill)이 아직 안 된 인플루언서 수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and i.firstCollectedAt is null")
     long countBackfillPending();
 
     /** 추적 대기: 첫 수집은 끝났지만 재방문 주기(revisitBefore)가 지나 다시 수집 대상이 될 뷰티 인플루언서 수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and i.firstCollectedAt is not null and i.lastCollectedAt < :revisitBefore")
     long countTrackDue(@Param("revisitBefore") Instant revisitBefore);
 
@@ -48,6 +50,7 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      * 인플루언서도 대상에서 빠진다.
      */
     @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and (i.firstCollectedAt is null or i.lastCollectedAt < :revisitBefore) "
             + "order by case when i.firstCollectedAt is null then 0 else 1 end, i.lastCollectedAt asc nulls first")
     List<Influencer> findCollectTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
@@ -64,6 +67,7 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      * 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 있고 릴스가 없는 "짝 안 맞는" 계정부터 채운다.
      */
     @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore) "
             + "order by case when i.lastReelsAt is null then 0 else 1 end, "
             + "case when i.lastCollectedAt is null then 1 else 0 end, "
@@ -83,12 +87,16 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore)")
     long countReelsDue(@Param("revisitBefore") Instant revisitBefore);
 
-    /** SIMILAR 시드: 뷰티 확정 + 미수확 — id 순 Pageable로 결정적으로 소진한다. */
+    /** SIMILAR 시드: 뷰티 인플루언서(회사 제외) + 미수확 — id 순 Pageable로 결정적으로 소진한다. */
+    @Query("select i from Influencer i where i.status = :status and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+            + "and i.similarProcessedAt is null order by i.id")
     List<Influencer> findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-            InfluencerStatus status, Pageable pageable);
+            @Param("status") InfluencerStatus status, Pageable pageable);
 
     /** 비용 추정용. */
     long countByStatusAndBeautyIsNull(InfluencerStatus status);
@@ -96,8 +104,25 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** 대시보드 뷰티 판정 그룹용: 뷰티(true)/비뷰티(false) 판정 수. */
     long countByStatusAndBeauty(InfluencerStatus status, Boolean beauty);
 
-    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus status);
+    /** 대시보드 뷰티 판정 그룹용: 뷰티 인플루언서(회사 제외) 수 — 수집·유사발굴 대상과 동일 기준. */
+    @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false)")
+    long countBeautyInfluencers(@Param("status") InfluencerStatus status);
 
-    /** 비용 추정용: pk 미보유라 SIMILAR가 username 해석 1회를 추가로 사는 시드 수. */
-    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(InfluencerStatus status);
+    /** 대시보드 뷰티 판정 그룹용: 뷰티 회사 수 — 리스트업 전용(수집·유사발굴 제외). */
+    @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
+            + "and i.beautyCompany = true")
+    long countBeautyCompanies(@Param("status") InfluencerStatus status);
+
+    @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+            + "and i.similarProcessedAt is null")
+    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(@Param("status") InfluencerStatus status);
+
+    /** 비용 추정용: pk 미보유라 SIMILAR가 username 해석 1회를 추가로 사는 시드 수(회사 제외). */
+    @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
+            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+            + "and i.similarProcessedAt is null and i.igUserId is null")
+    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+            @Param("status") InfluencerStatus status);
 }

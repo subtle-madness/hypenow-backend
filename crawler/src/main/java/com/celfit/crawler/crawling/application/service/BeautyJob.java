@@ -137,13 +137,14 @@ public class BeautyJob {
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
             inf.setBeauty(v.beauty());
+            inf.setBeautyCompany(v.company());
             inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
             inf.setBeautyReason(v.reason());
             influencers.save(inf);
             if (v.beauty()) beauty++; else notBeauty++;
             done++;
             log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(),
-                    v.beauty() ? "뷰티" : "비뷰티", v.reason());
+                    v.beauty() ? (v.company() ? "뷰티(회사)" : "뷰티(인플루언서)") : "비뷰티", v.reason());
         }
         return new ChunkResult(beauty, notBeauty);
     }

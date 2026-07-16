@@ -164,8 +164,10 @@ public class UiController {
                         new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED),
                                 "판정 탈락 · 제외"))),
                 new StatusTileGroup("③ 뷰티 판정 — beauty가 가른 결과 (QUALIFIED 내)", java.util.List.of(
-                        new StatusTile("BEAUTY", s.beautyTrue(),
-                                "뷰티 계정 · 수집·유사발굴 대상"),
+                        new StatusTile("BEAUTY", s.beautyInfluencer(),
+                                "뷰티 인플루언서 · 수집·유사발굴 대상"),
+                        new StatusTile("BEAUTY_COMPANY", s.beautyCompany(),
+                                "뷰티 회사 · 리스트업 전용(수집 제외)"),
                         new StatusTile("NOT_BEAUTY", s.beautyFalse(),
                                 "비뷰티 · 수집 제외"),
                         new StatusTile("UNJUDGED", s.beautyUnjudged(),

@@ -241,6 +241,7 @@ table.data.fit { width: auto; min-width: 24rem; }
     color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent);
 }
 .badge.BEAUTY { color: var(--cat-reels); background: color-mix(in srgb, var(--cat-reels) 10%, transparent); }
+.badge.BEAUTY_COMPANY { color: var(--accent-ink); background: var(--accent-soft); }
 .badge.NOT_BEAUTY { color: var(--muted); }
 .badge.UNJUDGED {
     color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent);
