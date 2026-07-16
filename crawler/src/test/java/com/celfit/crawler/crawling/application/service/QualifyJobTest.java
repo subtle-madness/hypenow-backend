@@ -40,8 +40,12 @@ class QualifyJobTest {
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
     ProfileSourceSelector selector = mock(ProfileSourceSelector.class);
     SettingsService settings = mock(SettingsService.class);
+    // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 청크 단위 트랜잭션 래핑을 그대로 재현한다.
+    org.springframework.transaction.support.TransactionTemplate txTemplate =
+            new org.springframework.transaction.support.TransactionTemplate(
+                    mock(org.springframework.transaction.PlatformTransactionManager.class));
 
-    QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, CLOCK);
+    QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, CLOCK, txTemplate);
 
     @BeforeEach
     void wireDefaults() {
