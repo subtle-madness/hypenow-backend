@@ -18,6 +18,29 @@ class HikerProfileFetchersTest {
     static CrawlExecutor passthrough() { return SelfProfileFetcherTest.passthroughExecutor(); }
     tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
 
+    @Test void mobile_프로필_요청은_여러_건이_동시에_나간다() {
+        // 두 요청이 동시에 진행되어야만 latch가 풀린다 — 직렬 구현이면 첫 요청이 타임아웃돼 실패.
+        var latch = new java.util.concurrent.CountDownLatch(2);
+        HikerHttp http = path -> {
+            latch.countDown();
+            try {
+                if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new ApifyException("동시 요청 없음 — 직렬 실행");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ApifyException("인터럽트", e);
+            }
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"1\"}}";
+        };
+        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("a", "b", "c", "d"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).hasSize(4);  // 직렬이면 첫 계정이 타임아웃 스킵되어 3건
+    }
+
     @Test void mobile_username별_조회_응답_원형을_그대로_반환() {
         HikerHttp http = path -> {
             assertThat(path).contains("/v2/user/by/username");
