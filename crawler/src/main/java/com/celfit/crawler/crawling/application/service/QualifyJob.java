@@ -97,6 +97,7 @@ public class QualifyJob {
         int total = targets.size(), i = 0;
         for (Influencer inf : targets) {
             i++;
+            if (inf.getStatus() == InfluencerStatus.DELETED) continue;  // 404 소프트 딜리트 — 판정 제외
             Long followers = inf.getFollowers();
             if (followers == null) { deferred++; continue; }   // 프로필 미확보 → 다음 실행 재시도
             boolean pass = followers >= min && followers <= max;
@@ -139,6 +140,14 @@ public class QualifyJob {
         Map<String, Influencer> byName = chunk.stream()
                 .collect(Collectors.toMap(Influencer::getUsername, i -> i));
         int profiled = 0;
+        // 404로 판명된 계정(삭제·개명) — 소프트 딜리트로 종결, 매 실행 재선정·재과금을 끊는다
+        for (String gone : ex.notFound()) {
+            Influencer inf = byName.get(gone);
+            if (inf == null) continue;
+            inf.setStatus(InfluencerStatus.DELETED);
+            influencers.save(inf);
+            log.info("qualify 계정 소멸(404) — DELETED: {}", gone);
+        }
         for (Map<String, Object> item : ex.items()) {
             String username = ProfileExtractor.username(item, source);
             Influencer inf = username != null ? byName.get(username) : null;

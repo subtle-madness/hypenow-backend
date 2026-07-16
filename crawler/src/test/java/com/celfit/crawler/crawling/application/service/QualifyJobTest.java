@@ -75,6 +75,24 @@ class QualifyJobTest {
     }
 
     @Test
+    void 프로필_404_계정은_소프트_딜리트되어_재선정되지_않는다() {
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer ghost = influencer(1L, "ghost", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatusAndFollowersIsNull(
+                InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
+                .thenReturn(List.of(ghost));
+        when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
+        when(selector.fetchAndSupplement(any(), any(), any()))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of("ghost")));
+
+        var summary = job.run(TriggerType.MANUAL, false);
+
+        assertThat(ghost.getStatus()).isEqualTo(InfluencerStatus.DELETED);
+        verify(influencers).save(ghost);
+        assertThat(summary.deferred()).isZero();  // 소멸 계정은 재시도 대상(deferred)이 아니다
+    }
+
+    @Test
     void 프로필_미확보_인플루언서가_id순_배치_상한만큼_선정된다() {
         when(settings.qualifyBatchLimit()).thenReturn(7);
 

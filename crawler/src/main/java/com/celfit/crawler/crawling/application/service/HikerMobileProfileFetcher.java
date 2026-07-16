@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
@@ -44,12 +45,12 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
 
     @Override
     public CrawlExecutor.Execution fetch(JobName job, List<String> usernames, TriggerType trigger) {
-        return executor.execute(job, trigger, null, null, LABEL,
-                () -> new ApifyResult(null, collect(usernames)));
+        return executor.execute(job, trigger, null, null, LABEL, () -> collect(usernames));
     }
 
-    private List<Map<String, Object>> collect(List<String> usernames) {
+    private ApifyResult collect(List<String> usernames) {
         List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
         // close()가 제출된 작업 완료까지 대기(Java 21) — 청크 반환 시점에 결과가 전부 모여 있다
         try (var pool = java.util.concurrent.Executors.newFixedThreadPool(FETCH_CONCURRENCY)) {
             for (String u : usernames) {
@@ -58,13 +59,17 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
                         String enc = URLEncoder.encode(u, StandardCharsets.UTF_8);
                         Map<String, Object> p = readRoot(http.get("/v2/user/by/username?username=" + enc));
                         if (ProfileExtractor.username(p, RawSource.HIKER_MOBILE) != null) out.add(p);
+                    } catch (NotFoundException e) {
+                        // 계정 소멸(삭제·개명) — 재시도 무의미, 호출자가 소프트 딜리트한다
+                        notFound.add(u);
+                        log.info("by/username 404 — 계정 소멸: {}", u);
                     } catch (ApifyException e) {
                         log.warn("by/username 실패, 계정 스킵: {} ({})", u, e.getMessage());
                     }
                 });
             }
         }
-        return new ArrayList<>(out);
+        return new ApifyResult(null, new ArrayList<>(out), new ArrayList<>(notFound));
     }
 
     @SuppressWarnings("unchecked")

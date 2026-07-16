@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -39,6 +40,18 @@ class HikerProfileFetchersTest {
         var ex = f.fetch(JobName.QUALIFY, List.of("a", "b", "c", "d"), TriggerType.MANUAL);
 
         assertThat(ex.items()).hasSize(4);  // 직렬이면 첫 계정이 타임아웃 스킵되어 3건
+    }
+
+    @Test void mobile_404는_계정_소멸로_notFound에_기록한다() {
+        HikerHttp http = path -> {
+            throw new NotFoundException("Hiker HTTP 404: {\"detail\":\"Entries not found\"}");
+        };
+        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("gone"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(ex.notFound()).containsExactly("gone");
     }
 
     @Test void mobile_username별_조회_응답_원형을_그대로_반환() {

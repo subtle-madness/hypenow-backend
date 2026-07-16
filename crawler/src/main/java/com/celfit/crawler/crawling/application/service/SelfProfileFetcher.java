@@ -58,12 +58,12 @@ public class SelfProfileFetcher implements ProfileFetcher {
 
     @Override
     public CrawlExecutor.Execution fetch(JobName job, List<String> usernames, TriggerType trigger) {
-        return executor.execute(job, trigger, null, null, LABEL,
-                () -> new ApifyResult(null, collect(usernames)));
+        return executor.execute(job, trigger, null, null, LABEL, () -> collect(usernames));
     }
 
-    private List<Map<String, Object>> collect(List<String> usernames) {
+    private ApifyResult collect(List<String> usernames) {
         List<Map<String, Object>> out = new ArrayList<>();
+        List<String> notFound = new ArrayList<>();
         int total = usernames.size(), i = 0, rateLimitStreak = 0;
         for (String u : usernames) {
             i++;
@@ -90,6 +90,11 @@ public class SelfProfileFetcher implements ProfileFetcher {
                     }
                     log.info("프로필 ({}/{}) {} — 스킵(HTTP {} rate limit/블록, 연속 {}회)",
                             i, total, u, res.status(), rateLimitStreak);
+                } else if (res.status() == 404) {
+                    // 계정 소멸(삭제·개명) — 재시도 무의미, 호출자가 소프트 딜리트한다
+                    rateLimitStreak = 0;
+                    notFound.add(u);
+                    log.info("프로필 ({}/{}) {} — 계정 소멸(HTTP 404)", i, total, u);
                 } else {
                     rateLimitStreak = 0;
                     log.info("프로필 ({}/{}) {} — 스킵(HTTP {})", i, total, u, res.status());
@@ -99,7 +104,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
             }
             sleep();
         }
-        return out;
+        return new ApifyResult(null, out, notFound);
     }
 
     @SuppressWarnings("unchecked")

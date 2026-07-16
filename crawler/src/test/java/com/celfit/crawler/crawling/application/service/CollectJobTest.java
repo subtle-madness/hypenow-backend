@@ -149,6 +149,23 @@ class CollectJobTest {
                 txTemplate);
     }
 
+    @Test
+    void 프로필_404_계정은_방문_실패가_아니라_소프트_딜리트된다() {
+        wireCommon();
+        Influencer gone = influencer(1L, "gone", null, null);
+        when(influencers.findCollectTargets(any(), any(PageRequest.class))).thenReturn(List.of(gone));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("gone")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of("gone")));
+
+        var s = job().run(TriggerType.MANUAL);
+
+        assertThat(gone.getStatus()).isEqualTo(InfluencerStatus.DELETED);
+        verify(influencers).save(gone);
+        assertThat(s.failedVisits()).isZero();   // 재시도 무의미 — 실패로 세지 않는다
+        assertThat(gone.getLastCollectedAt()).isNull();  // 방문 완료로도 치지 않는다
+    }
+
     static Influencer influencer(Long id, String username, Instant firstCollectedAt, Instant lastCollectedAt) {
         Influencer inf = new Influencer(username);
         inf.setId(id);

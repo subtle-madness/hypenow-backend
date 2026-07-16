@@ -6,11 +6,13 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.application.port.out.CommentFetcher;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
+import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.crawling.domain.RawProfile;
@@ -98,6 +100,12 @@ public class CollectJob {
                     upserted += r.upserted();
                     collected += r.collected();
                     visited++;
+                } catch (NotFoundException e) {
+                    // 계정 소멸(404) — 방문 실패(재시도)가 아니라 소프트 딜리트로 종결.
+                    // 방문 트랜잭션은 롤백됐으므로 여기(밖)서 저장해야 확정된다.
+                    inf.setStatus(InfluencerStatus.DELETED);
+                    influencers.save(inf);
+                    log.info("collect 계정 소멸(404) — DELETED: {}", inf.getUsername());
                 } catch (RuntimeException e) {
                     failed++;   // 인플루언서 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
                     log.warn("collect 방문 실패: {}", inf.getUsername(), e);
@@ -161,6 +169,10 @@ public class CollectJob {
         RawSource source = profileSourceSelector.currentSource();
         CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(
                 JobName.COLLECT, List.of(inf.getUsername()), trigger);
+        if (ex.notFound().contains(inf.getUsername())) {
+            // 방문 트랜잭션 안에서 저장하면 이 예외로 롤백된다 — run 루프가 트랜잭션 밖에서 처리
+            throw new NotFoundException("프로필 404 — 계정 소멸: " + inf.getUsername());
+        }
         for (Map<String, Object> item : ex.items()) {
             String username = ProfileExtractor.username(item, source);
             if (username == null || !username.equals(inf.getUsername())) continue;

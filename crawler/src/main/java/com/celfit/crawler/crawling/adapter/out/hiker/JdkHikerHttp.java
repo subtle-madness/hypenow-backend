@@ -1,6 +1,7 @@
 package com.celfit.crawler.crawling.adapter.out.hiker;
 
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -44,6 +45,10 @@ public class JdkHikerHttp implements HikerHttp {
                 .GET().build();
         try {
             HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() == 404) {
+                // 대상 부재(계정 삭제·개명 등) — 재시도 무의미, 호출자가 소프트 딜리트 등 종결 처리
+                throw new NotFoundException("Hiker HTTP 404: " + res.body());
+            }
             if (res.statusCode() >= 300) {
                 throw new ApifyException("Hiker HTTP " + res.statusCode() + ": " + res.body());
             }

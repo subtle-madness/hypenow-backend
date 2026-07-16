@@ -25,7 +25,7 @@ class SelfProfileFetcherTest {
                                                TriggerType t, String keyword, String targetUsername, String actorId,
                                                Supplier<ApifyResult> work) {
                 ApifyResult r = work.get();
-                return new Execution(1L, r.items());
+                return new Execution(1L, r.items(), r.notFound());
             }
         };
     }
@@ -63,6 +63,16 @@ class SelfProfileFetcherTest {
         assertThat(ProfileExtractor.followers(item, RawSource.SELF_GQL)).isEqualTo(2369L);
         assertThat(ProfileExtractor.userId(item, RawSource.SELF_GQL)).isEqualTo("74851841915");
         assertThat(item).containsKey("data"); // 원형 그대로 보존 — 정규화된 평탄 필드가 아님
+    }
+
+    @Test void 상태코드_404는_계정_소멸로_notFound에_기록한다() {
+        var f = new SelfProfileFetcher(webReturning(404, "not found"), passthroughExecutor(),
+                new ObjectMapper(), Duration.ZERO);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("ghost"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(ex.notFound()).containsExactly("ghost");
     }
 
     @Test void 상태코드가_200이_아니면_스킵() {
