@@ -83,6 +83,12 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** 대시보드 게시물 수집 카드의 계정 기준: 프로필 스냅샷(수집 방문)을 1회 이상 수행한 계정 수. */
     long countByLastCollectedAtIsNotNull();
 
+    /** 데일리 대시보드: 기준 시각(오늘 자정) 이후 프로필 스냅샷을 마친 계정 수. */
+    long countByLastCollectedAtGreaterThanEqual(Instant since);
+
+    /** 데일리 대시보드: 기준 시각 이후 릴스 수집을 마친 계정 수. */
+    long countByLastReelsAtGreaterThanEqual(Instant since);
+
     /** 대시보드 게시물 수집 카드의 계정 기준: 릴스 수집을 1회 이상 수행한 계정 수. */
     long countByLastReelsAtIsNotNull();
 

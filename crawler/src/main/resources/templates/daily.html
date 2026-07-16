@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>celfit crawler — 데일리 수집</title>
+    <link rel="stylesheet" href="/css/admin.css"/>
+    <script src="/js/admin.js"></script>
+</head>
+<body>
+<nav th:replace="~{fragments/nav :: nav('daily')}"></nav>
+<main>
+<h1>데일리 수집</h1>
+<p class="hint">뷰티 인플루언서의 하루 단위 사이클 — 프로필 스냅샷(팔로워 추이 + 최근 게시물) · 릴스 방문.
+    재방문 주기 <span th:text="${revisitIntervalDays}">1</span>일 (설정에서 변경) · 자정 기준 오늘 진행.</p>
+
+<h2 class="tiles-head">오늘 진행 <span class="tiles-head-sub">대상 = 뷰티 인플루언서 <b th:text="${d.targetInfluencers()}">0</b>명</span></h2>
+<div class="tiles">
+    <div class="tile">
+        <div class="num" th:text="${d.snapshotDoneToday()}">0</div>
+        <div class="label"><span class="badge QUALIFIED">오늘 스냅샷</span></div>
+        <div class="tile-desc" th:text="'잔여 ' + ${d.snapshotRemaining()} + '명 — 프로필·팔로워·최근 12개'"></div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${d.reelsDoneToday()}">0</div>
+        <div class="label"><span class="badge REELS">오늘 릴스</span></div>
+        <div class="tile-desc" th:text="'잔여 ' + ${d.reelsRemaining()} + '명 — /v2/user/clips 1페이지'"></div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${d.followerSnapshotsToday()}">0</div>
+        <div class="label"><span class="badge DISCOVERED">팔로워 스냅샷</span></div>
+        <div class="tile-desc">오늘 저장된 raw_profile — 추이 데이터 적재량</div>
+    </div>
+</div>
+
+<h2 class="tiles-head">오늘 신규 게시물</h2>
+<div class="tiles">
+    <div class="tile">
+        <div class="num" th:text="${d.newPostsToday()}">0</div>
+        <div class="label"><span class="badge 게시물">오늘 신규 게시물</span></div>
+        <div class="tile-desc">오늘 처음 발견된 수집 게시물</div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${d.newFeedToday()}">0</div>
+        <div class="label"><span class="badge FEED">FEED</span></div>
+        <div class="tile-desc">피드 — 프로필 내장에서</div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${d.newReelsToday()}">0</div>
+        <div class="label"><span class="badge REELS">REELS</span></div>
+        <div class="tile-desc">릴스 — 내장 그리드 + clips에서</div>
+    </div>
+</div>
+
+<p class="job-cost-note">잡 실행·스케줄은 <a href="/ui/jobs">잡 실행</a>에서 — collect(스냅샷)와 reels는 병렬 실행 가능.</p>
+</main>
+</body>
+</html>

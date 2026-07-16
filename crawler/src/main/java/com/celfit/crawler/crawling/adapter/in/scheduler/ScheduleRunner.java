@@ -36,4 +36,16 @@ public class ScheduleRunner {
     void collect() {
         log.info("스케줄 collect: {}", jobService.trigger(JobName.COLLECT, TriggerType.SCHEDULED));
     }
+
+    /** 데일리 사이클 — collect(스냅샷)와 병렬 가능(잡 락 분리·다른 데이터). */
+    @Scheduled(cron = "${crawler.schedule.reels-cron}")
+    void reels() {
+        log.info("스케줄 reels: {}", jobService.trigger(JobName.REELS, TriggerType.SCHEDULED));
+    }
+
+    /** 신규 QUALIFIED 유입분의 뷰티 3분류 — qualify 이후로 배치. */
+    @Scheduled(cron = "${crawler.schedule.beauty-cron}")
+    void beauty() {
+        log.info("스케줄 beauty: {}", jobService.trigger(JobName.BEAUTY, TriggerType.SCHEDULED));
+    }
 }

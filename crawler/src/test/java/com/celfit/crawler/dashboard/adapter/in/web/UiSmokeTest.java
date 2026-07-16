@@ -339,6 +339,34 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 데일리_수집_대시보드가_오늘_기준_진행을_렌더한다() throws Exception {
+        // 오늘 스냅샷을 마친 뷰티 인플루언서 1명 — 오늘 완료 카운트에 잡혀야 한다
+        Influencer done = new Influencer("smoke-daily-done-user");
+        done.setStatus(InfluencerStatus.QUALIFIED);
+        done.setBeauty(true);
+        done.setBeautyCompany(false);
+        done.setLastCollectedAt(Instant.now());
+        done.setLastReelsAt(Instant.now());
+        influencers.save(done);
+        // 아직 오늘 방문 전인 뷰티 인플루언서 — 잔여 카운트에 잡혀야 한다
+        Influencer pending = new Influencer("smoke-daily-pending-user");
+        pending.setStatus(InfluencerStatus.QUALIFIED);
+        pending.setBeauty(true);
+        pending.setBeautyCompany(false);
+        influencers.save(pending);
+
+        mvc.perform(get("/ui/daily")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("데일리 수집")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 스냅샷")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 릴스")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 신규 게시물")));
+
+        // 사이드바에서 진입 가능
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/daily")));
+    }
+
+    @Test
     void 대시보드에_뷰티_판정_결과_그룹이_렌더된다() throws Exception {
         // beauty 잡이 가른 결과(인플루언서/회사/비뷰티/미판정)가 판정과 수집 사이 단계로 보여야 한다.
         Influencer beauty = new Influencer("smoke-beauty-true-user");

@@ -59,4 +59,6 @@ crawler:
     enabled: false
     discover-cron: "0 0 6 * * *"
     qualify-cron: "0 30 6 * * *"
-    collect-cron: "0 0 7 * * *"
+    beauty-cron: "0 30 7 * * *"
+    collect-cron: "0 0 1 * * *"
+    reels-cron: "0 10 1 * * *"

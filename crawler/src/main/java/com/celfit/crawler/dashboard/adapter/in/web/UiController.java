@@ -202,6 +202,14 @@ public class UiController {
         return "fragments/logs :: panel";
     }
 
+    /** 데일리 수집 대시보드 — 하루 단위 스냅샷·릴스 사이클의 오늘 진행. */
+    @GetMapping("/ui/daily")
+    public String daily(Model model) {
+        model.addAttribute("d", statusService.daily());
+        model.addAttribute("revisitIntervalDays", settings.revisitIntervalDays());
+        return "daily";
+    }
+
     @GetMapping("/ui/jobs")
     public String jobs(Model model) {
         model.addAttribute("costs", jobCostEstimator.estimates());

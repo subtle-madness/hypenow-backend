@@ -42,15 +42,41 @@ public class StatusService {
 
     private final InfluencerRepository influencers;
     private final ContentRepository contents;
+    private final com.celfit.crawler.crawling.application.port.out.RawProfileRepository rawProfiles;
     private final SettingsService settings;
     private final Clock clock;
 
     public StatusService(InfluencerRepository influencers, ContentRepository contents,
+                         com.celfit.crawler.crawling.application.port.out.RawProfileRepository rawProfiles,
                          SettingsService settings, Clock clock) {
         this.influencers = influencers;
         this.contents = contents;
+        this.rawProfiles = rawProfiles;
         this.settings = settings;
         this.clock = clock;
+    }
+
+    /** 데일리 수집 대시보드 — 오늘(로컬 자정) 기준 스냅샷·릴스·게시물 진행. */
+    public record DailySummary(long targetInfluencers,
+                               long snapshotDoneToday, long snapshotRemaining,
+                               long reelsDoneToday, long reelsRemaining,
+                               long newPostsToday, long newFeedToday, long newReelsToday,
+                               long followerSnapshotsToday) {}
+
+    public DailySummary daily() {
+        Instant today = java.time.LocalDate.now(clock).atStartOfDay(clock.getZone()).toInstant();
+        long targets = influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED);
+        long snapDone = influencers.countByLastCollectedAtGreaterThanEqual(today);
+        long reelsDone = influencers.countByLastReelsAtGreaterThanEqual(today);
+        return new DailySummary(targets,
+                snapDone, Math.max(targets - snapDone, 0),
+                reelsDone, Math.max(targets - reelsDone, 0),
+                contents.countByOriginAndFirstSeenAtGreaterThanEqual(ContentOrigin.ENUMERATION, today),
+                contents.countByOriginAndContentTypeAndFirstSeenAtGreaterThanEqual(
+                        ContentOrigin.ENUMERATION, ContentType.FEED, today),
+                contents.countByOriginAndContentTypeAndFirstSeenAtGreaterThanEqual(
+                        ContentOrigin.ENUMERATION, ContentType.REELS, today),
+                rawProfiles.countByCapturedAtGreaterThanEqual(today));
     }
 
     public StatusSummary summary() {
