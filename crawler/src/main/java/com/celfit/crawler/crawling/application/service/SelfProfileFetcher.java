@@ -29,6 +29,8 @@ public class SelfProfileFetcher implements ProfileFetcher {
     static final String LABEL = "profile-self";
     /** 연속 rate-limit/블록 응답 회로 차단기 임계값 — 이만큼 연달아 나면 배치를 중단해 IP 스로틀·차단 심화를 막는다. */
     static final int RATE_LIMIT_STREAK_LIMIT = 5;
+    /** 동시 요청 수 — 프록시 로테이션(요청마다 새 exit IP) 전제. HikerMobileProfileFetcher와 동일 수준. */
+    static final int FETCH_CONCURRENCY = 4;
     /** 인스타가 과도한 익명 요청에 주는 코드 — 429(소프트 rate limit) → 401/403(하드 블록)으로 에스컬레이션. */
     private static boolean isBlockStatus(int status) {
         return status == 429 || status == 401 || status == 403;
@@ -61,50 +63,79 @@ public class SelfProfileFetcher implements ProfileFetcher {
         return executor.execute(job, trigger, null, null, LABEL, () -> collect(usernames));
     }
 
+    /**
+     * FETCH_CONCURRENCY 워커가 계정을 나눠 순차 처리한다 — 프록시 로테이션(요청마다 새 exit IP)
+     * 전제라 동시 요청도 IP가 분산돼 안전하다. 회로 차단은 워커들이 공유하는 연속 카운터로 판단하며,
+     * 트립 후 최대 (동시성-1)건의 진행 중 요청은 마저 나갈 수 있다(중단 의미는 동일).
+     */
     private ApifyResult collect(List<String> usernames) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        List<String> notFound = new ArrayList<>();
-        int total = usernames.size(), i = 0, rateLimitStreak = 0;
-        for (String u : usernames) {
-            i++;
-            // 계정 단위 격리 — 프록시가 커넥션을 중간에 끊으면(TLS BUFFER_UNDERFLOW 등) 요청이
-            // 예외로 죽는데, 그 1명 때문에 청크 전체를 실패시키지 않는다. 빠진 계정은 응답에
-            // 없으므로 호출자(qualify deferred / collect 저장 userId 폴백)가 재시도를 담당한다.
-            try {
-                InstagramWebClient.Response res = web.get(URL + u);
-                if (res.status() == 200) {
-                    rateLimitStreak = 0;   // 성공 = 스로틀 해소 신호, 회로 카운터 리셋
-                    Map<String, Object> p = readRoot(res.body());
-                    if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) {
-                        out.add(p);
-                        log.info("프로필 ({}/{}) {} — 확보", i, total, u);
-                    } else {
-                        log.info("프로필 ({}/{}) {} — 스킵(응답에 계정 없음)", i, total, u);
+        List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
+        int total = usernames.size();
+        var done = new java.util.concurrent.atomic.AtomicInteger();
+        var rateLimitStreak = new java.util.concurrent.atomic.AtomicInteger();
+        var tripped = new java.util.concurrent.atomic.AtomicBoolean(false);
+        // 1명(collect 방문 경로)은 풀 없이 즉시 처리 — 방문마다 스레드풀을 만들 이유가 없다
+        if (total == 1) {
+            fetchOne(usernames.get(0), total, done, rateLimitStreak, tripped, out, notFound);
+            return new ApifyResult(null, out, notFound);
+        }
+        // close()가 제출된 작업 완료까지 대기(Java 21) — 반환 시점에 결과가 전부 모여 있다
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(FETCH_CONCURRENCY)) {
+            for (int w = 0; w < FETCH_CONCURRENCY; w++) {
+                final int offset = w;
+                pool.submit(() -> {
+                    for (int idx = offset; idx < total; idx += FETCH_CONCURRENCY) {
+                        if (tripped.get()) return;   // 회로 트립 — 남은 계정은 다음 실행 재시도
+                        fetchOne(usernames.get(idx), total, done, rateLimitStreak, tripped, out, notFound);
+                        sleep();
                     }
-                } else if (isBlockStatus(res.status())) {
-                    // rate limit/블록(429·401·403) — 연속으로 임계값에 도달하면 IP 차단으로 판단해 중단.
-                    if (++rateLimitStreak >= RATE_LIMIT_STREAK_LIMIT) {
-                        log.warn("프로필 블록(HTTP {}) 연속 {}회 — IP 차단으로 판단해 배치 중단(남은 {}명은 다음 실행 재시도)",
-                                res.status(), rateLimitStreak, total - i);
-                        break;
-                    }
-                    log.info("프로필 ({}/{}) {} — 스킵(HTTP {} rate limit/블록, 연속 {}회)",
-                            i, total, u, res.status(), rateLimitStreak);
-                } else if (res.status() == 404) {
-                    // 계정 소멸(삭제·개명) — 재시도 무의미, 호출자가 소프트 딜리트한다
-                    rateLimitStreak = 0;
-                    notFound.add(u);
-                    log.info("프로필 ({}/{}) {} — 계정 소멸(HTTP 404)", i, total, u);
-                } else {
-                    rateLimitStreak = 0;
-                    log.info("프로필 ({}/{}) {} — 스킵(HTTP {})", i, total, u, res.status());
-                }
-            } catch (ApifyException e) {
-                log.warn("프로필 ({}/{}) {} — 요청 실패, 해당 계정만 건너뜀 ({})", i, total, u, e.getMessage());
+                });
             }
-            sleep();
         }
         return new ApifyResult(null, out, notFound);
+    }
+
+    /** 계정 1명 처리 — 계정 단위 격리(요청 예외는 해당 계정만 스킵, 재시도는 호출자 몫). */
+    private void fetchOne(String u, int total, java.util.concurrent.atomic.AtomicInteger done,
+                          java.util.concurrent.atomic.AtomicInteger rateLimitStreak,
+                          java.util.concurrent.atomic.AtomicBoolean tripped,
+                          List<Map<String, Object>> out, List<String> notFound) {
+        int i = done.incrementAndGet();
+        try {
+            InstagramWebClient.Response res = web.get(URL + u);
+            if (res.status() == 200) {
+                rateLimitStreak.set(0);   // 성공 = 스로틀 해소 신호, 회로 카운터 리셋
+                Map<String, Object> p = readRoot(res.body());
+                if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) {
+                    out.add(p);
+                    log.info("프로필 ({}/{}) {} — 확보", i, total, u);
+                } else {
+                    log.info("프로필 ({}/{}) {} — 스킵(응답에 계정 없음)", i, total, u);
+                }
+            } else if (isBlockStatus(res.status())) {
+                // rate limit/블록(429·401·403) — 연속으로 임계값에 도달하면 IP 차단으로 판단해 중단.
+                int streak = rateLimitStreak.incrementAndGet();
+                if (streak >= RATE_LIMIT_STREAK_LIMIT) {
+                    tripped.set(true);
+                    log.warn("프로필 블록(HTTP {}) 연속 {}회 — IP 차단으로 판단해 배치 중단(남은 {}명은 다음 실행 재시도)",
+                            res.status(), streak, total - i);
+                    return;
+                }
+                log.info("프로필 ({}/{}) {} — 스킵(HTTP {} rate limit/블록, 연속 {}회)",
+                        i, total, u, res.status(), streak);
+            } else if (res.status() == 404) {
+                // 계정 소멸(삭제·개명) — 재시도 무의미, 호출자가 소프트 딜리트한다
+                rateLimitStreak.set(0);
+                notFound.add(u);
+                log.info("프로필 ({}/{}) {} — 계정 소멸(HTTP 404)", i, total, u);
+            } else {
+                rateLimitStreak.set(0);
+                log.info("프로필 ({}/{}) {} — 스킵(HTTP {})", i, total, u, res.status());
+            }
+        } catch (ApifyException e) {
+            log.warn("프로필 ({}/{}) {} — 요청 실패, 해당 계정만 건너뜀 ({})", i, total, u, e.getMessage());
+        }
     }
 
     @SuppressWarnings("unchecked")
