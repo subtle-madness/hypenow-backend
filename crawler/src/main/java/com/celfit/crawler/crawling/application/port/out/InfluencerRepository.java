@@ -89,6 +89,9 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** 데일리 대시보드: 기준 시각 이후 릴스 수집을 마친 계정 수. */
     long countByLastReelsAtGreaterThanEqual(Instant since);
 
+    /** 데일리 대시보드: 기준 시각 이후 피드·릴스 둘 다 마친(사이클 완주) 계정 수. */
+    long countByLastCollectedAtGreaterThanEqualAndLastReelsAtGreaterThanEqual(Instant c, Instant r);
+
     /** 대시보드 게시물 수집 카드의 계정 기준: 릴스 수집을 1회 이상 수행한 계정 수. */
     long countByLastReelsAtIsNotNull();
 

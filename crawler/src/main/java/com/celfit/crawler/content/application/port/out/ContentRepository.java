@@ -32,11 +32,6 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
     /** 발굴 보관(부산물) 총계 — 수집 대상 아님, 대시보드에 참고용으로만 표시. */
     long countByOrigin(ContentOrigin origin);
 
-    /** 데일리 대시보드: 기준 시각(오늘 자정) 이후 처음 발견된 수집 게시물 수. */
+    /** 데일리 대시보드: 기준 시각(오늘 자정) 이후 처음 발견된 수집 게시물 수(각주 표기용). */
     long countByOriginAndFirstSeenAtGreaterThanEqual(ContentOrigin origin, java.time.Instant since);
-
-    /** 데일리 대시보드: 유형별(FEED/REELS) 오늘 신규 게시물 수. */
-    long countByOriginAndContentTypeAndFirstSeenAtGreaterThanEqual(
-            ContentOrigin origin, com.celfit.crawler.content.domain.ContentType contentType,
-            java.time.Instant since);
 }

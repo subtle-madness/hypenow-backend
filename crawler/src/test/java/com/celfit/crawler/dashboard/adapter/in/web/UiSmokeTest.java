@@ -357,9 +357,12 @@ class UiSmokeTest extends IntegrationTest {
 
         mvc.perform(get("/ui/daily")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("데일리 수집")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 스냅샷")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 릴스")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 신규 게시물")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("피드 완료")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("릴스 완료")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("사이클 완주")))
+                // 지표 기준은 인플루언서 — raw_profile 행 수 타일은 없어야 한다
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("팔로워 스냅샷"))));
 
         // 사이드바에서 진입 가능
         mvc.perform(get("/ui")).andExpect(status().isOk())
