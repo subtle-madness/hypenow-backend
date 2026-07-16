@@ -8,14 +8,17 @@
     <script src="/js/admin.js"></script>
 </head>
 <body data-restore-query="true">
-<nav th:replace="~{fragments/nav :: nav('influencers')}"></nav>
+<nav th:replace="~{fragments/nav :: nav(${companyView} ? 'companies' : 'influencers')}"></nav>
 <main>
-<h1>인플루언서</h1>
-<p class="hint">발굴 후 판정까지 끝난 인플루언서 명단 — 판정 전(DISCOVERED)은 대시보드 카운트로만 보인다.</p>
+<h1 th:text="${companyView} ? '뷰티 회사' : '인플루언서'">인플루언서</h1>
+<p class="hint" th:text="${companyView}
+    ? '뷰티 회사로 판정된 계정 리스트업 — 수집·유사발굴 대상에서는 제외된다.'
+    : '발굴 후 판정까지 끝난 인플루언서 명단 — 판정 전(DISCOVERED)은 대시보드 카운트로만 보인다.'"></p>
 
 <form method="get" th:action="@{/ui/influencers}" class="row status-filter">
     <!-- 전부 해제해도 쿼리가 비지 않게 하는 마커 — 비면 복원 스크립트가 이전 필터로 되돌린다 -->
     <input type="hidden" name="f" value="1"/>
+    <input type="hidden" name="company" th:value="${companyView}"/>
     <label class="check" th:each="s : ${statuses}">
         <input type="checkbox" name="status" th:value="${s}"
                th:checked="${status != null && status.contains(s)}"
@@ -68,10 +71,10 @@
 </table>
 <p class="pager">
     <a th:if="${page.hasPrevious()}"
-       th:href="@{/ui/influencers(status=${status}, page=${page.number - 1})}">이전</a>
+       th:href="@{/ui/influencers(status=${status}, page=${page.number - 1}, company=${companyView})}">이전</a>
     <span th:text="${page.number + 1} + ' / ' + ${page.totalPages}"></span>
     <a th:if="${page.hasNext()}"
-       th:href="@{/ui/influencers(status=${status}, page=${page.number + 1})}">다음</a>
+       th:href="@{/ui/influencers(status=${status}, page=${page.number + 1}, company=${companyView})}">다음</a>
 </p>
 </main>
 </body>

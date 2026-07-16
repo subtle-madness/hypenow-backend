@@ -114,6 +114,10 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "and i.beautyCompany = true")
     long countBeautyCompanies(@Param("status") InfluencerStatus status);
 
+    /** 명단의 뷰티 회사 리스트업 뷰 — 회사로 판정된 계정만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndBeautyTrueAndBeautyCompanyTrue(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
     @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
             + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and i.similarProcessedAt is null")

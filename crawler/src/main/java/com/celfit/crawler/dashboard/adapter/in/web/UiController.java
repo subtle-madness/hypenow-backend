@@ -218,12 +218,17 @@ public class UiController {
 
     @GetMapping("/ui/influencers")
     public String influencers(@RequestParam(required = false) java.util.List<InfluencerStatus> status,
+                              @RequestParam(required = false, defaultValue = "false") boolean company,
                               @RequestParam(defaultValue = "0") int page, Model model) {
         var selected = status == null ? java.util.List.<InfluencerStatus>of()
                                       : status.stream().filter(JUDGED_STATUSES::contains).toList();
         var effective = selected.isEmpty() ? JUDGED_STATUSES : selected;
         var pageable = PageRequest.of(Math.max(page, 0), 50, Sort.by(Sort.Direction.DESC, "id"));
-        var result = influencers.findByStatusIn(effective, pageable);
+        // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용)
+        var result = company
+                ? influencers.findByStatusInAndBeautyTrueAndBeautyCompanyTrue(effective, pageable)
+                : influencers.findByStatusIn(effective, pageable);
+        model.addAttribute("companyView", company);
 
         var ids = result.getContent().stream()
                 .map(com.celfit.crawler.crawling.domain.Influencer::getId).toList();

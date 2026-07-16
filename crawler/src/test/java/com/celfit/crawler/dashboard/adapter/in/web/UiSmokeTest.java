@@ -314,6 +314,29 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 뷰티_회사_리스트업_뷰는_회사_계정만_보여준다() throws Exception {
+        Influencer company = new Influencer("smoke-company-list-user");
+        company.setStatus(InfluencerStatus.QUALIFIED);
+        company.setBeauty(true);
+        company.setBeautyCompany(true);
+        influencers.save(company);
+        Influencer inf = new Influencer("smoke-influencer-list-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
+        inf.setBeautyCompany(false);
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/influencers").param("company", "true")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-company-list-user")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-influencer-list-user"))));
+
+        // 사이드바 모니터링에 뷰티 회사 메뉴가 노출된다
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")));
+    }
+
+    @Test
     void 대시보드에_뷰티_판정_결과_그룹이_렌더된다() throws Exception {
         // beauty 잡이 가른 결과(인플루언서/회사/비뷰티/미판정)가 판정과 수집 사이 단계로 보여야 한다.
         Influencer beauty = new Influencer("smoke-beauty-true-user");
