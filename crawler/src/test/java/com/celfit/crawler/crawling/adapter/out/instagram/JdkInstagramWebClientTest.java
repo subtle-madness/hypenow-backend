@@ -3,9 +3,20 @@ package com.celfit.crawler.crawling.adapter.out.instagram;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.net.http.HttpClient;
 import org.junit.jupiter.api.Test;
 
 class JdkInstagramWebClientTest {
+
+    // 프록시 경로가 요청마다 새 클라이언트를 열고 즉시 닫으므로(스트림 누수 없음) HTTP/2를 쓴다.
+    // 인스타 web_profile_info는 HTTP/1.1 요청을 봇으로 판정해 429를 주고, HTTP/2면 통과한다(실측).
+    @Test
+    void 생성한_클라이언트는_HTTP2를_쓴다() {
+        assertThat(JdkInstagramWebClient.newClient(null).version())
+                .isEqualTo(HttpClient.Version.HTTP_2);
+        assertThat(JdkInstagramWebClient.newClient("http://u:p@gw.dataimpulse.com:823").version())
+                .isEqualTo(HttpClient.Version.HTTP_2);
+    }
 
     // Authenticator(프록시 자격증명)가 등록된 JDK HttpClient는 서버 401에 WWW-Authenticate
     // 헤더가 없으면 응답을 돌려주지 않고 IOException을 던진다. 인스타그램의 401은 챌린지

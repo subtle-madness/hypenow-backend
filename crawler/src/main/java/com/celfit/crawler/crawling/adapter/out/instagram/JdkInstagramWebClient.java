@@ -19,6 +19,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -42,23 +43,39 @@ public class JdkInstagramWebClient implements InstagramWebClient {
         }
     }
 
+    /** HttpClient 생성 이음매 — 프로덕션은 {@link #newClient}, 테스트는 커넥션 생성을 세는 페이크를 주입. */
+    @FunctionalInterface
+    interface HttpClientFactory {
+        /** proxyUrl==null이면 프록시 없는 클라이언트. */
+        HttpClient create(String proxyUrl);
+    }
+
+    private final HttpClientFactory clientFactory;
     private final HttpClient directClient;
-    private final Map<ProxySource, HttpClient> proxied = new EnumMap<>(ProxySource.class);
+    private final Map<ProxySource, String> proxyUrls = new EnumMap<>(ProxySource.class);
     private final ProxySourceSetting proxySource;
     private final Duration requestTimeout;
 
+    @Autowired
     public JdkInstagramWebClient(ProxyProperties proxyProps, ProxySourceSetting proxySource) {
+        this(proxyProps, proxySource, JdkInstagramWebClient::newClient);
+    }
+
+    JdkInstagramWebClient(ProxyProperties proxyProps, ProxySourceSetting proxySource,
+                          HttpClientFactory clientFactory) {
+        this.clientFactory = clientFactory;
         this.proxySource = proxySource;
         this.requestTimeout = proxyProps.requestTimeout() == null
                 ? Duration.ofSeconds(15) : proxyProps.requestTimeout();
-        this.directClient = newClient(null);
-        // 소스별 클라이언트 구성 — URL 미설정이면 스킵(직접 폴백). 한 소스의 형식 오류가 앱 부팅이나
-        // 다른 소스를 막지 않도록 소스별로 격리한다.
+        this.directClient = clientFactory.create(null);
+        // 소스별 프록시 URL 등록 — URL 미설정이면 스킵(직접 폴백). 부팅 시 한 번 만들어보며 형식을
+        // 검증해, 한 소스의 오류가 앱 부팅이나 다른 소스를 막지 않도록 소스별로 격리한다.
         for (ProxySource source : ProxySource.values()) {
             String url = proxyProps.urlFor(source);
             if (url == null) continue;
             try {
-                proxied.put(source, newClient(url));
+                clientFactory.create(url);   // 형식 검증(host:port 확인) — 소켓은 열지 않는다
+                proxyUrls.put(source, url);
             } catch (RuntimeException e) {
                 log.warn("프록시 {} 구성 실패 — 이 소스는 직접 연결로 폴백: {}", source, e.getMessage());
             }
@@ -66,13 +83,16 @@ public class JdkInstagramWebClient implements InstagramWebClient {
     }
 
     /** proxyUrl==null이면 프록시 없는 클라이언트. */
-    private HttpClient newClient(String proxyUrl) {
+    static HttpClient newClient(String proxyUrl) {
         HttpClient.Builder builder = HttpClient.newBuilder()
-                // HTTP/1.1 고정 — 기본 HTTP/2는 커넥션 1개에 스트림을 다중화하는데, 프록시가
-                // 응답을 중간에 끊으면(TLS BUFFER_UNDERFLOW) 스트림이 누수되고, 한도가 차면
-                // 이후 모든 요청이 "too many concurrent streams"로 즉시 실패한다(실측).
-                .version(HttpClient.Version.HTTP_1_1)
-                // 익명 세션 쿠키가 후속 요청까지 이어지도록 공유 쿠키 저장소.
+                // HTTP/2 고정 — 인스타 web_profile_info는 HTTP/1.1 요청을 봇으로 판정해 IP를
+                // 아무리 돌려도 429를 주고, HTTP/2면 통과한다(실측). 예전엔 HTTP/2가 커넥션 1개에
+                // 스트림을 다중화하다 프록시가 응답을 중간에 끊으면(TLS BUFFER_UNDERFLOW) 스트림이
+                // 누수돼 "too many concurrent streams"로 막혔는데, 지금은 프록시 경로가 요청마다
+                // 새 클라이언트를 열고 즉시 close하므로 커넥션당 요청이 1~2개뿐 — 누수가 쌓이지 않는다.
+                .version(HttpClient.Version.HTTP_2)
+                // 익명 세션 쿠키 저장소. 직접 경로는 공유 클라이언트라 요청 간 이어지고, 프록시 경로는
+                // 요청마다 새 클라이언트(=새 exit IP)라 매번 새 쿠키로 시작한다 — IP가 바뀌므로 오히려 자연스럽다.
                 .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL));
 
         if (proxyUrl != null) {
@@ -97,11 +117,6 @@ public class JdkInstagramWebClient implements InstagramWebClient {
             }
         }
         return builder.build();
-    }
-
-    /** 현재 활성 프록시 소스의 클라이언트(미구성이면 직접). */
-    private HttpClient activeClient() {
-        return proxied.getOrDefault(proxySource.current(), directClient);
     }
 
     @Override
@@ -138,8 +153,23 @@ public class JdkInstagramWebClient implements InstagramWebClient {
     private static final String APP_ID = "936619743392459";
 
     private Response send(HttpRequest req) {
+        String proxyUrl = proxyUrls.get(proxySource.current());
+        if (proxyUrl == null) {
+            // 직접 경로는 로테이션이 필요 없으니 공유 클라이언트를 재사용한다.
+            return exchange(directClient, req);
+        }
+        // 프록시 경로는 요청마다 새 HttpClient(=새 CONNECT 터널)를 열어, 로테이팅 프록시가 매 요청
+        // 새 exit IP를 배정하게 한다. 풀링된 클라이언트를 재사용하면 터널이 유지돼 exit IP가 배치 내내
+        // 한 개로 고정되고, IG 익명 요청 한도(~20회)에서 401 연타로 막힌다(실측). 요청 후 close로 터널을
+        // 즉시 닫아 다음 요청이 새 커넥션을 열도록 한다.
+        try (HttpClient client = clientFactory.create(proxyUrl)) {
+            return exchange(client, req);
+        }
+    }
+
+    private Response exchange(HttpClient client, HttpRequest req) {
         try {
-            HttpResponse<String> res = activeClient().send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
             String cookie = res.headers().firstValue("set-cookie").orElse("");
             return new Response(res.statusCode(), res.body(), Map.of("set-cookie", cookie));
         } catch (Exception e) {
