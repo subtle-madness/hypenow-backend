@@ -179,13 +179,15 @@ public class UiController {
         // 게시물 수집: collect 방문(프로필 내장 최근 피드 + 릴스 1페이지) 산출물만 대상 —
         // 발굴 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         // 댓글 수집은 꺼져 있으므로 상태 전이 대신 총계·유형별로 보여준다.
+        // 계정 기준은 "수집을 수행한 계정 수" — 콘텐츠 보유 계정 수로 세면 피드가 0건인
+        // 릴스 전용 계정이 빠져 보여 수집 진행도와 헷갈린다.
         model.addAttribute("contentTiles", java.util.List.of(
                 new StatusTile("게시물", s.enumeratedTotal(),
-                        "방문에서 수집된 전체 (원형 저장) · 인플루언서 " + s.enumeratedInfluencers() + "명"),
+                        "방문에서 수집된 전체 (원형 저장) · 수집 계정 " + s.anyCollectedAccounts() + "명"),
                 new StatusTile("FEED", s.enumeratedFeed(),
-                        "피드 — 프로필 내장 최근 12개에서 · 인플루언서 " + s.enumeratedFeedInfluencers() + "명"),
+                        "피드 — 프로필 내장 최근 12개에서 · 프로필 스냅샷 " + s.profileSnapshotAccounts() + "명"),
                 new StatusTile("REELS", s.enumeratedReels(),
-                        "릴스 — /v2/user/clips 1페이지에서 · 인플루언서 " + s.enumeratedReelsInfluencers() + "명")));
+                        "릴스 — /v2/user/clips 1페이지에서 · 릴스 수집 " + s.reelsCollectedAccounts() + "명")));
         model.addAttribute("discoveryArchiveCount", s.discoveryArchiveCount());
         // 재방문 주기는 설정값 — 하드코딩 문구 대신 현재 값 표시 (설정 화면에서 무중단 변경)
         model.addAttribute("revisitIntervalDays", settings.revisitIntervalDays());

@@ -70,6 +70,17 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "i.lastReelsAt asc nulls first, i.id")
     List<Influencer> findReelsTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
 
+    /** 대시보드 게시물 수집 카드의 계정 기준: 프로필 스냅샷(수집 방문)을 1회 이상 수행한 계정 수. */
+    long countByLastCollectedAtIsNotNull();
+
+    /** 대시보드 게시물 수집 카드의 계정 기준: 릴스 수집을 1회 이상 수행한 계정 수. */
+    long countByLastReelsAtIsNotNull();
+
+    /** 대시보드 게시물 수집 카드의 계정 기준: 어느 쪽이든 수집을 수행한 계정 수. */
+    @Query("select count(i) from Influencer i "
+            + "where i.lastCollectedAt is not null or i.lastReelsAt is not null")
+    long countAnyCollected();
+
     /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore)")

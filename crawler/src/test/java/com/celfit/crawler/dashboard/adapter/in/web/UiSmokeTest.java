@@ -229,22 +229,26 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
-    void 게시물_수집_타일에_인플루언서_기준_수가_같이_렌더된다() throws Exception {
-        // 한 인플루언서의 게시물 2건 — 게시물 수는 2 늘지만 인플루언서 기준으로는 1명이다.
-        long infBefore = contents.countDistinctInfluencerByOrigin(ContentOrigin.ENUMERATION);
-        Influencer inf = influencers.save(new Influencer("smoke-enum-inf-basis-user"));
-        contents.save(new Content("sc-enum-basis-1", ContentType.FEED, "smoke-enum-inf-basis-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
-        contents.save(new Content("sc-enum-basis-2", ContentType.REELS, "smoke-enum-inf-basis-user",
-                inf.getId(), Instant.parse("2026-07-02T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+    void 게시물_수집_타일의_인플루언서_기준은_수집을_수행한_계정_수다() throws Exception {
+        // 콘텐츠 보유 여부가 아니라 "수집을 수행한 계정 수" 기준 — 피드가 0건인 릴스 전용
+        // 계정도 프로필 스냅샷을 찍었으면 FEED 기준에 포함돼야 한다(콘텐츠 기준이면 헷갈림).
+        long snapBefore = influencers.countByLastCollectedAtIsNotNull();
+        long reelsBefore = influencers.countByLastReelsAtIsNotNull();
 
-        assertThat(contents.countDistinctInfluencerByOrigin(ContentOrigin.ENUMERATION))
-                .isEqualTo(infBefore + 1);
-        assertThat(contents.countDistinctInfluencerByOriginAndContentType(
-                ContentOrigin.ENUMERATION, ContentType.REELS)).isGreaterThanOrEqualTo(1L);
+        Influencer inf = new Influencer("smoke-snapshot-basis-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
+        inf.setLastCollectedAt(Instant.now());  // 프로필 스냅샷 완료 — 피드 콘텐츠는 0건
+        inf.setLastReelsAt(Instant.now());      // 릴스 수집 완료 — 릴스 콘텐츠도 0건
+        influencers.save(inf);
+
+        assertThat(influencers.countByLastCollectedAtIsNotNull()).isEqualTo(snapBefore + 1);
 
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("인플루언서 " + (infBefore + 1) + "명")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "프로필 스냅샷 " + (snapBefore + 1) + "명")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "릴스 수집 " + (reelsBefore + 1) + "명")));
     }
 
     @Test
