@@ -73,6 +73,18 @@ class ReelsJobTest {
         });
         when(contents.findByShortCode(any())).thenAnswer(inv ->
                 Optional.ofNullable(contentStore.get((String) inv.getArgument(0))));
+        when(contents.saveAll(any())).thenAnswer(inv -> {
+            java.util.List<Content> batch = new java.util.ArrayList<>();
+            for (Content c : (Iterable<Content>) inv.getArgument(0)) {
+                contentStore.put(c.getShortCode(), c);
+                batch.add(c);
+            }
+            return batch;
+        });
+        when(contents.findByShortCodeIn(any())).thenAnswer(inv -> {
+            java.util.Collection<String> codes = inv.getArgument(0);
+            return codes.stream().map(contentStore::get).filter(java.util.Objects::nonNull).toList();
+        });
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 

@@ -14,6 +14,9 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     Optional<Content> findByShortCode(String shortCode);
 
+    /** upsert 일괄 조회 — 방문당 게시물 N개를 개별 조회(N왕복) 대신 IN 1회로 가져온다. */
+    java.util.List<Content> findByShortCodeIn(java.util.Collection<String> shortCodes);
+
     List<Content> findByStatus(ContentStatus status);
 
     Page<Content> findByStatus(ContentStatus status, Pageable pageable);

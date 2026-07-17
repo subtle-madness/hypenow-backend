@@ -111,6 +111,19 @@ class CollectJobTest {
         });
         when(contents.findByShortCode(any())).thenAnswer(inv ->
                 Optional.ofNullable(contentStore.get((String) inv.getArgument(0))));
+        when(contents.saveAll(any())).thenAnswer(inv -> {
+            java.util.List<Content> batch = new java.util.ArrayList<>();
+            for (Content c : (Iterable<Content>) inv.getArgument(0)) {
+                if (c.getId() == null) c.setId(contentIdSeq.incrementAndGet());
+                contentStore.put(c.getShortCode(), c);
+                batch.add(c);
+            }
+            return batch;
+        });
+        when(contents.findByShortCodeIn(any())).thenAnswer(inv -> {
+            java.util.Collection<String> codes = inv.getArgument(0);
+            return codes.stream().map(contentStore::get).filter(java.util.Objects::nonNull).toList();
+        });
         when(contents.findByInfluencerIdAndStatusAndOrigin(anyLong(), any(), any())).thenAnswer(inv -> {
             Long infId = inv.getArgument(0);
             ContentStatus status = inv.getArgument(1);
@@ -401,7 +414,7 @@ class CollectJobTest {
 
         var summary = job().run(TriggerType.MANUAL);
 
-        verify(contents).findByShortCode("VERY_OLD");
+        verify(contents).findByShortCodeIn(argThat(codes -> codes.contains("VERY_OLD")));
         assertThat(summary.postsUpserted()).isEqualTo(1);
     }
 
@@ -417,10 +430,8 @@ class CollectJobTest {
 
         var summary = job().run(TriggerType.MANUAL);
 
-        ArgumentCaptor<Content> captor = ArgumentCaptor.forClass(Content.class);
-        verify(contents, times(2)).save(captor.capture());
-        assertThat(captor.getAllValues()).extracting(Content::getShortCode)
-                .containsExactlyInAnyOrder("NORM1", "PIN_IN");
+        // 일괄 upsert 전환 — 개별 save 대신 contentStore 최종 상태로 검증
+        assertThat(contentStore).containsKeys("NORM1", "PIN_IN");
         assertThat(summary.postsUpserted()).isEqualTo(2);
     }
 
@@ -637,7 +648,7 @@ class CollectJobTest {
 
         var summary = job().run(TriggerType.MANUAL);
 
-        verify(contents, never()).findByShortCode("OLD_PENDING"); // 이번 열거 upsert 경로는 타지 않았다(윈도우 밖)
+        verify(contents, never()).findByShortCodeIn(argThat(codes -> codes.contains("OLD_PENDING"))); // 이번 열거 upsert 경로는 타지 않았다(윈도우 밖)
         assertThat(oldPending.getStatus()).isEqualTo(ContentStatus.COLLECTED); // 그런데도 댓글 대상엔 포함됐다
         assertThat(summary.postsCollected()).isEqualTo(1);
     }
