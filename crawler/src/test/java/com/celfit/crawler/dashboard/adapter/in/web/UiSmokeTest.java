@@ -46,6 +46,7 @@ class UiSmokeTest extends IntegrationTest {
     @Autowired CrawlRunRepository crawlRuns;
     @Autowired InfluencerDiscoveryRepository discoveries;
     @Autowired RawDiscoveryPostRepository rawDiscovery;
+    @Autowired com.celfit.crawler.dashboard.application.StatusService statusService;
 
     @Test
     void 대시보드가_렌더된다() throws Exception {
@@ -382,6 +383,30 @@ class UiSmokeTest extends IntegrationTest {
         // 사이드바에서 진입 가능
         mvc.perform(get("/ui")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/daily")));
+    }
+
+    @Test
+    void 데일리_수집에_오늘_모은_게시물_피드_릴스_타일이_렌더된다() throws Exception {
+        // 인플루언서 단위(완료/잔여) 타일에 더해, 오늘 처음 발견된 게시물 수를 대시보드처럼
+        // 게시물/피드/릴스로 쪼개 보여준다 — 어제 발견분은 오늘 타일에 잡히지 않는다.
+        Influencer inf = influencers.save(new Influencer("smoke-daily-posts-user"));
+        Instant yesterday = Instant.now().minus(java.time.Duration.ofDays(1));
+        contents.save(new Content("sc-dt-feed1", ContentType.FEED, "smoke-daily-posts-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+        contents.save(new Content("sc-dt-feed2", ContentType.FEED, "smoke-daily-posts-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+        contents.save(new Content("sc-dt-reel", ContentType.REELS, "smoke-daily-posts-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
+        contents.save(new Content("sc-dt-old", ContentType.FEED, "smoke-daily-posts-user",
+                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), yesterday, ContentOrigin.ENUMERATION));
+
+        var d = statusService.daily();
+        assertThat(d.newPostsToday()).isEqualTo(3);
+        assertThat(d.newFeedToday()).isEqualTo(2);
+        assertThat(d.newReelsToday()).isEqualTo(1);
+
+        mvc.perform(get("/ui/daily")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("오늘 모은 게시물")));
     }
 
     @Test

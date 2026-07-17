@@ -33,8 +33,26 @@
     </div>
 </div>
 
-<p class="job-cost-note">참고: 오늘 새로 발견된 게시물 <b th:text="${d.newPostsToday()}">0</b>건 ·
-    잡 실행·스케줄은 <a href="/ui/jobs">잡 실행</a>에서 — collect(피드)와 reels는 병렬 실행 가능.</p>
+<h2 class="tiles-head">오늘 모은 게시물 <span class="tiles-head-sub">오늘(자정 기준) 처음 발견된 게시물 — 재방문이 다시 본 기존 게시물은 제외</span></h2>
+<div class="tiles">
+    <div class="tile">
+        <div class="num" th:text="${d.newPostsToday()}">0</div>
+        <div class="label"><span class="badge">게시물</span></div>
+        <div class="tile-desc">오늘 신규 수집 전체 (피드 + 릴스)</div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${d.newFeedToday()}">0</div>
+        <div class="label"><span class="badge FEED">FEED</span></div>
+        <div class="tile-desc">프로필 내장 타임라인에서 발견</div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${d.newReelsToday()}">0</div>
+        <div class="label"><span class="badge REELS">REELS</span></div>
+        <div class="tile-desc">내장 타임라인 + clips 1페이지에서 발견</div>
+    </div>
+</div>
+
+<p class="job-cost-note">잡 실행·스케줄은 <a href="/ui/jobs">잡 실행</a>에서 — collect(피드)와 reels는 병렬 실행 가능.</p>
 </main>
 </body>
 </html>
