@@ -13,6 +13,71 @@
 <h1>대시보드</h1>
 <!-- 현재 작업 바 (실시간, 2초 폴링) -->
 <div hx-get="/ui/fragments/status" hx-trigger="load, every 2s"></div>
+<!-- 파이프라인 구조 — 잡 흐름 정적 다이어그램 (색·글꼴은 admin.css 변수 상속 → 다크 모드 자동) -->
+<details class="pipeline-map" id="pipeline-map" open>
+    <summary>파이프라인 구조 <span class="tiles-head-sub">잡이 계정을 옮기는 경로</span></summary>
+    <svg viewBox="0 0 1000 302" role="img" aria-label="파이프라인 다이어그램: 발굴, 판정, 뷰티 판정을 거쳐 프로필 수집·릴스 수집·유사 발굴로 갈라지고, 캡션 없는 비뷰티는 재스냅샷 후 재판정된다">
+        <defs>
+            <marker id="pm-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+                <path d="M0 0 L8 4 L0 8 z" fill="var(--muted)"/>
+            </marker>
+            <marker id="pm-arrow-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+                <path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/>
+            </marker>
+        </defs>
+
+        <!-- 본선: 발굴 → 판정 → 뷰티 판정 -->
+        <path class="pm-edge" d="M192 86 H246" marker-end="url(#pm-arrow)"/>
+        <path class="pm-edge" d="M452 86 H506" marker-end="url(#pm-arrow)"/>
+        <!-- 뷰티 판정 → 수집 3갈래 (BEAUTY 인플루언서만) -->
+        <text class="pm-elabel" x="718" y="60">BEAUTY만</text>
+        <path class="pm-edge" d="M712 70 H742 V36 H766" marker-end="url(#pm-arrow)"/>
+        <path class="pm-edge" d="M712 86 H742 V108 H766" marker-end="url(#pm-arrow)"/>
+        <path class="pm-edge" d="M712 102 H742 V180 H766" marker-end="url(#pm-arrow)"/>
+        <!-- 구제 루프: 캡션 없는 비뷰티 → 재스냅샷 → 재판정(rejudge) -->
+        <path class="pm-edge pm-rejudge" d="M600 128 V194" marker-end="url(#pm-arrow-accent)"/>
+        <text class="pm-elabel pm-rejudge" x="608" y="168">NOT_BEAUTY · 캡션 없음</text>
+        <path class="pm-edge pm-rejudge" d="M430 200 V164 H560 V134" marker-end="url(#pm-arrow-accent)"/>
+        <text class="pm-elabel pm-rejudge" x="436" y="156">재판정 rejudge</text>
+        <!-- 발굴 루프: 유사 계정을 DISCOVERED로 재투입 -->
+        <path class="pm-edge pm-loop" d="M880 208 V288 H102 V134" marker-end="url(#pm-arrow)"/>
+        <text class="pm-elabel" x="500" y="282" text-anchor="middle">유사 계정 → DISCOVERED 재투입</text>
+
+        <g class="pm-nodes">
+            <rect class="pm-node" x="12" y="44" width="180" height="84" rx="11"/>
+            <text class="pm-title" x="26" y="70">발굴 <tspan class="pm-job">discover</tspan></text>
+            <text class="pm-sub" x="26" y="92">키워드 해시태그 검색</text>
+            <text class="pm-sub" x="26" y="110">DISCOVERED 적재</text>
+
+            <rect class="pm-node" x="252" y="44" width="200" height="84" rx="11"/>
+            <text class="pm-title" x="266" y="70">판정 <tspan class="pm-job">qualify</tspan></text>
+            <text class="pm-sub" x="266" y="92">프로필 스냅샷 · 팔로워 3천~5만</text>
+            <text class="pm-sub" x="266" y="110">QUALIFIED / EXCLUDED</text>
+
+            <rect class="pm-node" x="512" y="44" width="200" height="84" rx="11"/>
+            <text class="pm-title" x="526" y="70">뷰티 판정 <tspan class="pm-job">beauty</tspan></text>
+            <text class="pm-sub" x="526" y="92">Claude 3분류 (로컬 CLI)</text>
+            <text class="pm-sub" x="526" y="110">인플루언서 / 회사 / 비뷰티</text>
+
+            <rect class="pm-node" x="772" y="8" width="216" height="56" rx="11"/>
+            <text class="pm-title" x="786" y="30">프로필 수집 <tspan class="pm-job">collect</tspan></text>
+            <text class="pm-sub" x="786" y="50">SELF 프로필 + 피드 12개</text>
+
+            <rect class="pm-node" x="772" y="80" width="216" height="56" rx="11"/>
+            <text class="pm-title" x="786" y="102">릴스 수집 <tspan class="pm-job">reels</tspan></text>
+            <text class="pm-sub" x="786" y="122">HikerAPI 릴스 1페이지</text>
+
+            <rect class="pm-node" x="772" y="152" width="216" height="56" rx="11"/>
+            <text class="pm-title" x="786" y="174">유사 발굴 <tspan class="pm-job">similar</tspan></text>
+            <text class="pm-sub" x="786" y="194">뷰티 계정의 유사 계정 발굴</text>
+
+            <rect class="pm-node pm-rejudge" x="380" y="200" width="240" height="64" rx="11"/>
+            <text class="pm-title" x="394" y="224">재스냅샷 <tspan class="pm-job">resnapshot</tspan></text>
+            <text class="pm-sub" x="394" y="246">캡션 없는 비뷰티 · SELF 재수집</text>
+        </g>
+    </svg>
+    <p class="pipeline-map-note">404 응답 계정은 단계와 무관하게 DELETED(소프트 딜리트)로 종결 · 비공개 계정은 재스냅샷에서 요청 없이 스킵</p>
+</details>
 <!-- 상태 카드 (실시간, 3초 폴링) -->
 <div hx-get="/ui/fragments/status-tiles" hx-trigger="load, every 3s"></div>
 <h2>최근 실행</h2>

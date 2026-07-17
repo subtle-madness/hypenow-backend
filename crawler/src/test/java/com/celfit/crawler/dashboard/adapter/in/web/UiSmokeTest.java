@@ -54,6 +54,15 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 대시보드_상단에_파이프라인_다이어그램이_렌더된다() throws Exception {
+        // 잡 흐름(발굴→판정→뷰티 판정→수집 3갈래 + 재스냅샷/재판정·유사발굴 루프)을 정적 다이어그램으로 노출
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("pipeline-map")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("재스냅샷")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("rejudge")));
+    }
+
+    @Test
     void 상태_타일_프래그먼트가_렌더된다() throws Exception {
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk());
     }
