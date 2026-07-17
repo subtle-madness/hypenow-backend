@@ -3,14 +3,18 @@ package com.celfit.analytics.admin;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
+import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /** 어드민 층 배선 — analytics.admin-enabled=true일 때만 (cloud one-shot은 false). */
 @Configuration
@@ -41,5 +45,11 @@ public class AdminConfig {
 	@Bean(initMethod = "register", destroyMethod = "unregister")
 	public LogBuffer logBuffer() {
 		return new LogBuffer();
+	}
+
+	@Bean
+	public JobCostEstimator jobCostEstimator(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource, AnalyticsSettings settings) {
+		return new JobCostEstimator(rawJdbcTemplate, analysisDataSource, settings);
 	}
 }
