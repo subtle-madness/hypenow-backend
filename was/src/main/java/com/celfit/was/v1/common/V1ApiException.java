@@ -30,6 +30,10 @@ public class V1ApiException extends RuntimeException {
 		return new V1ApiException(HttpStatus.UNAUTHORIZED, code, message);
 	}
 
+	public static V1ApiException forbidden(String code, String message) {
+		return new V1ApiException(HttpStatus.FORBIDDEN, code, message);
+	}
+
 	public static V1ApiException rateLimited() {
 		return new V1ApiException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청이 너무 잦아요. 잠시 후 다시 시도해 주세요.");
 	}

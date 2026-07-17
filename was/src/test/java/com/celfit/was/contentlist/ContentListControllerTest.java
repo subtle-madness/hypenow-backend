@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,7 +48,7 @@ class ContentListControllerTest {
 		given(repository.countContents(any())).willReturn(1L);
 		given(repository.findContents(any())).willReturn(List.of(h1()));
 
-		mockMvc.perform(get("/api/contents")
+		mockMvc.perform(get("/api/contents").with(user("tester"))
 						.param("start_date", "2026-06-27")
 						.param("end_date", "2026-07-03")
 						.param("main_category", "makeup")
@@ -85,13 +86,13 @@ class ContentListControllerTest {
 
 	@Test
 	void start_date_누락시_400() throws Exception {
-		mockMvc.perform(get("/api/contents").param("end_date", "2026-07-03"))
+		mockMvc.perform(get("/api/contents").with(user("tester")).param("end_date", "2026-07-03"))
 				.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void end_date_형식_오류시_400() throws Exception {
-		mockMvc.perform(get("/api/contents")
+		mockMvc.perform(get("/api/contents").with(user("tester"))
 						.param("start_date", "2026-06-27")
 						.param("end_date", "bad"))
 				.andExpect(status().isBadRequest());
@@ -102,7 +103,7 @@ class ContentListControllerTest {
 		given(repository.countContents(any())).willReturn(0L);
 		given(repository.findContents(any())).willReturn(List.of());
 
-		mockMvc.perform(get("/api/contents")
+		mockMvc.perform(get("/api/contents").with(user("tester"))
 						.param("start_date", "2026-06-27")
 						.param("end_date", "2026-07-03"))
 				.andExpect(status().isOk())

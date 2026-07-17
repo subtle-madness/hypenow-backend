@@ -1,6 +1,7 @@
 package com.celfit.was.v1.content;
 
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -55,7 +56,7 @@ class V1ContentReportControllerTest {
 		given(repository.findComments("SC1")).willReturn(List.of(
 				new CommentRow(7L, "u***", "좋아요", 5L, "purchase")));
 
-		mockMvc.perform(get("/v1/contents/SC1/ai-report"))
+		mockMvc.perform(get("/v1/contents/SC1/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.scope.basis").value("recent-posts"))
@@ -80,7 +81,7 @@ class V1ContentReportControllerTest {
 	void 없는_콘텐츠나_분석_미생성은_NOT_FOUND() throws Exception {
 		given(repository.findReport("NOPE")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/v1/contents/NOPE/ai-report"))
+		mockMvc.perform(get("/v1/contents/NOPE/ai-report").with(user("tester")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
@@ -100,7 +101,7 @@ class V1ContentReportControllerTest {
 		given(repository.countByCategory("SC2")).willReturn(Map.of());
 		given(repository.findComments("SC2")).willReturn(List.of());
 
-		mockMvc.perform(get("/v1/contents/SC2/ai-report"))
+		mockMvc.perform(get("/v1/contents/SC2/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.vlmAnalysis.brands").isArray())
 				.andExpect(jsonPath("$.data.vlmAnalysis.brands").isEmpty())

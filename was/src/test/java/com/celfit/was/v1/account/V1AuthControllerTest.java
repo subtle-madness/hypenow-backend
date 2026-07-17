@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -44,7 +45,8 @@ import org.springframework.test.web.servlet.MvcResult;
 class V1AuthControllerTest {
 
 	private static final String VALID_SIGNUP_BODY = """
-			{"email":"user@example.com","password":"Passw0rd!","name":"김우민","nickname":null,
+			{"signupCode":"BETA2026",
+			 "email":"user@example.com","password":"Passw0rd!","name":"김우민","nickname":null,
 			 "userType":"brand","signupRoute":"portal_search","phoneCountryCode":"+82",
 			 "phoneNumber":"010-1234-5678","companyName":"하이프나우","companySize":"2-10",
 			 "industry":"beauty","jobTitle":"staff",
@@ -62,6 +64,14 @@ class V1AuthControllerTest {
 	@MockitoBean
 	RateLimiter rateLimiter;
 
+	@MockitoBean
+	AppSettingRepository appSettingRepository;
+
+	/** 정상 경로 공통 스텁 — 코드 일치. 코드 케이스별 테스트는 개별 재스텁. */
+	private void stubSignupCode(String value) {
+		given(appSettingRepository.findValue("signup.code")).willReturn(Optional.of(value));
+	}
+
 	private Authentication authenticated(String email) {
 		return UsernamePasswordAuthenticationToken.authenticated(email, null, List.of());
 	}
@@ -74,8 +84,66 @@ class V1AuthControllerTest {
 	}
 
 	@Test
+	void 가입_코드_불일치는_403_INVALID_SIGNUP_CODE다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		stubSignupCode("BETA2026");
+
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(VALID_SIGNUP_BODY.replace("BETA2026", "WRONG")))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"))
+				.andExpect(jsonPath("$.error.message").value("가입 코드를 확인해 주세요."));
+
+		then(userRepository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void 가입_코드_미설정이면_전면_차단이다_fail_closed() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		given(appSettingRepository.findValue("signup.code")).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(VALID_SIGNUP_BODY))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
+
+		then(userRepository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void 가입_코드가_빈_값이어도_전면_차단이다_fail_closed() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		stubSignupCode("");
+
+		// 요청도 빈 코드 — 빈 값끼리 "일치"로 뚫리면 안 된다
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(VALID_SIGNUP_BODY.replace("BETA2026", "")))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
+
+		then(userRepository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void 가입_코드는_앞뒤_공백을_무시하고_대조한다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		stubSignupCode(" BETA2026 ");
+		given(userRepository.insertProfile(any(), anyString())).willReturn(profile());
+		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
+
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(VALID_SIGNUP_BODY.replace("BETA2026", "BETA2026 ")))
+				.andExpect(status().isCreated());
+	}
+
+	@Test
 	void 가입은_201과_UserSummary_envelope를_내린다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		stubSignupCode("BETA2026");
 		given(userRepository.insertProfile(any(), anyString()))
 				.willReturn(profile());
 		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
@@ -94,6 +162,7 @@ class V1AuthControllerTest {
 	@Test
 	void 가입_검증_위반은_400_VALIDATION_FAILED다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		stubSignupCode("BETA2026");
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -106,6 +175,7 @@ class V1AuthControllerTest {
 	@Test
 	void 가입_중복_이메일은_409_EMAIL_ALREADY_EXISTS다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		stubSignupCode("BETA2026");
 		given(userRepository.insertProfile(any(), anyString()))
 				.willThrow(new DuplicateKeyException("users_email_key"));
 

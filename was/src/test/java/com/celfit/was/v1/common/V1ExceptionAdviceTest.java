@@ -2,6 +2,7 @@ package com.celfit.was.v1.common;
 
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -29,7 +30,7 @@ class V1ExceptionAdviceTest {
 
 	@Test
 	void V1ApiException은_스펙_envelope로_내려간다() throws Exception {
-		mockMvc.perform(get("/v1/stub/not-found"))
+		mockMvc.perform(get("/v1/stub/not-found").with(user("tester")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.data").value(nullValue()))
@@ -39,21 +40,21 @@ class V1ExceptionAdviceTest {
 
 	@Test
 	void 파라미터_형식_위반은_VALIDATION_FAILED_400() throws Exception {
-		mockMvc.perform(get("/v1/stub/param").param("number", "abc"))
+		mockMvc.perform(get("/v1/stub/param").with(user("tester")).param("number", "abc"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 	}
 
 	@Test
 	void 파라미터_누락도_VALIDATION_FAILED_400() throws Exception {
-		mockMvc.perform(get("/v1/stub/param"))
+		mockMvc.perform(get("/v1/stub/param").with(user("tester")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 	}
 
 	@Test
 	void 성공_envelope는_success_data_error_meta를_가진다() throws Exception {
-		mockMvc.perform(get("/v1/stub/param").param("number", "7"))
+		mockMvc.perform(get("/v1/stub/param").with(user("tester")).param("number", "7"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data").value("ok-7"))
@@ -63,7 +64,7 @@ class V1ExceptionAdviceTest {
 
 	@Test
 	void meta가_있는_성공_응답은_meta를_직렬화한다() throws Exception {
-		mockMvc.perform(get("/v1/stub/list"))
+		mockMvc.perform(get("/v1/stub/list").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data").value("rows"))
@@ -77,13 +78,13 @@ class V1ExceptionAdviceTest {
 	// 예외가 발생하는 드문 경로를 위한 방어로 남겨둔다.
 	@Test
 	void 지원하지_않는_메서드는_405로_내려간다() throws Exception {
-		mockMvc.perform(post("/v1/stub/param").with(csrf()))
+		mockMvc.perform(post("/v1/stub/param").with(csrf()).with(user("tester")))
 				.andExpect(status().isMethodNotAllowed());
 	}
 
 	@Test
 	void 지원하지_않는_컨텐츠_타입은_UNSUPPORTED_MEDIA_TYPE_415() throws Exception {
-		mockMvc.perform(post("/v1/stub/echo").with(csrf())
+		mockMvc.perform(post("/v1/stub/echo").with(csrf()).with(user("tester"))
 						.contentType(MediaType.APPLICATION_XML).content("<x/>"))
 				.andExpect(status().isUnsupportedMediaType())
 				.andExpect(jsonPath("$.success").value(false))
@@ -93,7 +94,7 @@ class V1ExceptionAdviceTest {
 
 	@Test
 	void 본문_파싱_실패는_VALIDATION_FAILED_400() throws Exception {
-		mockMvc.perform(post("/v1/stub/echo").with(csrf())
+		mockMvc.perform(post("/v1/stub/echo").with(csrf()).with(user("tester"))
 						.contentType(MediaType.APPLICATION_JSON).content("{broken"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.success").value(false))
@@ -103,7 +104,7 @@ class V1ExceptionAdviceTest {
 
 	@Test
 	void 예상밖_예외는_INTERNAL_ERROR_500이며_원본_메시지를_누출하지_않는다() throws Exception {
-		mockMvc.perform(get("/v1/stub/boom"))
+		mockMvc.perform(get("/v1/stub/boom").with(user("tester")))
 				.andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("INTERNAL_ERROR"))
