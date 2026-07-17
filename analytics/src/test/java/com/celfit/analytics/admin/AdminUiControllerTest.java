@@ -45,6 +45,16 @@ class AdminUiControllerTest {
 	}
 
 	@Test
+	void 비용_추정_실패해도_ui는_뜬다() throws Exception {
+		// 분석 뷰 미적용 등 DB 문제로 대상 카운트가 실패해도 잡 트리거·로그는 쓸 수 있어야 한다
+		when(costEstimator.costCards()).thenThrow(new RuntimeException("relation does not exist"));
+		mvc.perform(get("/ui"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("비용 추정 실패")));
+	}
+
+	@Test
 	void 트리거는_서비스를_부르고_리다이렉트() throws Exception {
 		when(jobService.trigger(eq(JobName.MIRROR), eq(TriggerType.MANUAL)))
 				.thenReturn(AnalyticsJobService.TriggerResult.ACCEPTED);
