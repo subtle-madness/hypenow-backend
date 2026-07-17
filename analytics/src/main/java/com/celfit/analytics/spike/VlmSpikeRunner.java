@@ -19,7 +19,7 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * F-2 스파이크: 실 콘텐츠 썸네일로 VLM 항목별 출력 품질을 검증한다 (스펙 §7).
  * 실 API를 때리므로 수동 실행 전용 (인증은 GoldsetSpikeRunner와 동일 — ANTHROPIC_AUTH_TOKEN/API_KEY):
- *   ./gradlew :analytics:bootRun --args='--analytics.vlm-spike-limit=8'
+ *   ./gradlew :analytics:bootRun --args='--analytics.vlm-spike-limit=8 --spring.main.web-application-type=none'
  * 썸네일 서명 URL은 수집 후 ~4일이면 만료라 최신 수집분에서 살아있는 것만 고른다.
  * 상한 10 하드캡 (비용 가드). 판정 결과는 계획 문서(plans/2026-07-14-*)에 기록한다.
  */
