@@ -210,7 +210,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 |---|---|---|---|---|
 | P1 | V1 읽기 API | envelope·에러 공통 + `/v1/contents`·`/v1/contents/{id}/ai-report`·`/v1/influencers/{id}`(+ai-report). 병행 데이터 보강: hypeScore 재정의(0~100)·유통사 슬러그·updatedAt·email/externalLink 조사 (07-15 개통) | H, D, E, B4 | ✅ |
 | P2 | 서비스 데이터 정렬 | G 확장 — Spring Session JDBC(`app.spring_session`, 세션 목록·개별 로그아웃·hypenow-session 30일 슬라이딩), `/v1/auth`(가입·로그인·로그아웃·레이트리밋), users 프로필 15필드(V3), 저장 2종 스펙 계약화(memo upsert V4·카드 조합 목록), `/v1/me` 계정(프로필 PATCH·비번·세션·프로필 이미지·탈퇴), 게이트 이벤트(V5), P1 응답 개인화 필드(isContentsSaved/isInfluencerSaved) (07-15 개통) | G, P1 | ✅ |
-| P3 | 부가 | `/v1/stats` + `/v1/contents/{id}/similar`(유사도 사전계산 — analytics 신규) | P1 | ⬜ |
+| P3 | 부가 | `/v1/stats` — 랜딩 통계(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 모수는 마이크로 구간 계정(3천~5만)·강한 HTTP 캐시(1시간). 유사 콘텐츠(6.2)는 **범위 제외 확정**(제품 고려 대상 아님 — 미구현) (07-17 개통) | P1 | ✅ |
 
 기존 `/api/*`는 프론트 전환 완료까지 병존, fit(스펙 6.18)은 보류.
 
@@ -240,6 +240,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-17 | **P3 랜딩 통계 개통 + 유사 콘텐츠 제외 확정** — GET /v1/stats(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 강한 HTTP 캐시(1시간). **모수는 마이크로 구간 계정(팔로워 3천~5만)과 그 콘텐츠로 통일** — 랜딩 카피·스펙 분포 합계 100과 일치(수집 114 중 55). 조회수는 릴스만(회신표 #16). 분포 %·합계 100 보정은 was 표현 계층(최대 잔여). updatedAt은 미러 실행 시각. **유사 콘텐츠(스펙 6.2)는 제품 고려 대상이 아니라 구현하지 않기로 확정** — 스펙 6.2·회신표 #3은 미구현으로 남김 | [plans/archive/2026-07-17-p3-landing-stats.md](docs/superpowers/plans/archive/2026-07-17-p3-landing-stats.md) |
 | 2026-07-17 | **정적분석 Error Prone 도입** — 전 모듈(4개) 컴파일에 Error Prone 단독 적용(1인 팀 시그널/노이즈 기준으로 SpotBugs 조합 대신 선택). ERROR 등급만 빌드 실패로 걸고 WARNING은 비활성(`disableAllWarnings`), 한국어 테스트 메서드명 컨벤션과 충돌하는 `UnicodeInCode`만 체크 해제. 초기 지적은 전 모듈에서 실질 1건(SecurityConfig `csrfToken.get()` 반환값 무시 — 의도적 지연 발급 해제 호출이라 `unused` 관용구로 정리, baseline/suppress 파일 불필요). 컴파일 단계에 걸리므로 CI(PR #22)의 `./gradlew test`가 그대로 정적분석 체크가 된다 | [PR #25](https://github.com/subtle-madness/hypenow-backend/pull/25) |
 | 2026-07-17 | **GitHub Actions CI 도입** — develop 대상 push·PR마다 `./gradlew test` 전체 실행(.github/workflows/ci.yml). Testcontainers는 러너 기본 Docker로 충분, 외부 키 불필요. Gradle 캐시는 gradle/actions/setup-gradle(develop push에서 쓰기, PR은 읽기). SQL 하니스는 제외 — 뷰가 실DB(V6 시점) 스키마를 전제해 리포 마이그레이션(V8+ influencer 개편)과 불일치, 프레시 DB 재현 불가 확인(§8에 블로커 기록) | .github/workflows/ci.yml |
 | 2026-07-17 | **P2 운영 배포 + 세션 쿠키 SameSite=Lax 확정** — P2(가입·로그인·/v1/me·저장·레이트리밋)를 api.hypenow.io에 배포, 운영 curl E2E(가입 201→me 200→로그아웃 204→재로그인 200, 쿠키·CSRF 왕복)와 로그인 레이트리밋(분당 10 초과 429) 실측 통과. 미결이던 prod 쿠키 SameSite는 **Lax로 확정**(사용자 확인) — www↔api는 hypenow.io 하위 same-site라 전송 손실 없고 스펙과 일치, CSRF 방어 이중화. 테스트 계정은 검증 후 DB 삭제 | [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23) |
