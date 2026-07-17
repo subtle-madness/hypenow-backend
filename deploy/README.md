@@ -47,6 +47,8 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 ```bash
 deploy/scripts/deploy.sh ubuntu@<IP>
 ```
+- 매 배포마다 `:latest`와 함께 `:sha-<short>` 태그도 push된다 (GitHub → Packages에서 확인)
+- **롤백**: `ssh ubuntu@<IP> 'cd ~/deploy && docker pull ghcr.io/subtle-madness/hypenow-was:sha-<short> && docker tag ghcr.io/subtle-madness/hypenow-was:sha-<short> ghcr.io/subtle-madness/hypenow-was:latest && docker compose up -d was'` (다음 정상 배포가 latest를 다시 덮는다)
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 KST 04:10 덤프 — 서버 `~/backups/` 7일 롤링 + **Google Drive
