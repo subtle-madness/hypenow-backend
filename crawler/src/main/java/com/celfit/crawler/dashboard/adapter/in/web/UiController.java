@@ -131,7 +131,8 @@ public class UiController {
                 jobStatus(JobName.QUALIFY, "판정"),
                 jobStatus(JobName.BEAUTY, "뷰티판정"),
                 jobStatus(JobName.SIMILAR, "유사발굴"),
-                jobStatus(JobName.COLLECT, "수집")));
+                jobStatus(JobName.COLLECT, "프로필수집"),
+                jobStatus(JobName.REELS, "릴스수집")));
         return "fragments/status :: bar";
     }
 
@@ -150,7 +151,8 @@ public class UiController {
         model.addAttribute("summary", s);
         // 인플루언서 파이프라인 — 같은 잡이 만드는 상태끼리 묶어 단계를 시각 구분:
         // discover가 DISCOVERED를 만들고, qualify가 QUALIFIED/EXCLUDED로 가르고,
-        // collect는 방문 대기(미방문 또는 재방문 주기 도래)를 순서대로 방문한다.
+        // beauty가 QUALIFIED를 뷰티/비뷰티로 가르고, collect는 뷰티 계정만
+        // 방문 대기(미방문 또는 재방문 주기 도래) 순서대로 방문한다.
         // 모든 방문이 동일(최근 게시물 1회 수집)하므로 첫 방문/재방문을 구분하지 않는다.
         model.addAttribute("influencerGroups", java.util.List.of(
                 new StatusTileGroup("① 발굴 — discover", java.util.List.of(
@@ -158,19 +160,36 @@ public class UiController {
                                 "발굴됨 · 판정 전"))),
                 new StatusTileGroup("② 판정 — qualify가 가른 결과", java.util.List.of(
                         new StatusTile("QUALIFIED", n(byInfluencer, InfluencerStatus.QUALIFIED),
-                                "판정 통과 · 수집 대상"),
+                                "판정 통과 · 뷰티 판정 대상"),
                         new StatusTile("EXCLUDED", n(byInfluencer, InfluencerStatus.EXCLUDED),
                                 "판정 탈락 · 제외"))),
-                new StatusTileGroup("③ 수집 대기열 — collect(프로필·게시물·릴스)가 방문할 대상", java.util.List.of(
+                new StatusTileGroup("③ 뷰티 판정 — beauty가 가른 결과 (QUALIFIED 내)", java.util.List.of(
+                        new StatusTile("BEAUTY", s.beautyInfluencer(),
+                                "뷰티 인플루언서 · 수집·유사발굴 대상"),
+                        new StatusTile("BEAUTY_COMPANY", s.beautyCompany(),
+                                "뷰티 회사 · 리스트업 전용(수집 제외)"),
+                        new StatusTile("NOT_BEAUTY", s.beautyFalse(),
+                                "비뷰티 · 수집 제외"),
+                        new StatusTile("UNJUDGED", s.beautyUnjudged(),
+                                "미판정 · 뷰티판정 대기"))),
+                new StatusTileGroup("④ 수집 대기열 — 게시물을 위한 프로필 수집(collect)·릴스 수집(reels)이 방문할 대상",
+                        java.util.List.of(
                         new StatusTile("READY", s.backfillPending() + s.trackDue(),
-                                "방문 대기 · 재방문 주기 도래 포함")))));
+                                "게시물을 위한 프로필 수집 대기 · 뷰티 계정만"),
+                        new StatusTile("REELS_READY", s.reelsDue(),
+                                "릴스 수집 대기 · 뷰티 계정만")))));
         // 게시물 수집: collect 방문(프로필 내장 최근 피드 + 릴스 1페이지) 산출물만 대상 —
         // 발굴 부산물(discover 원시 게시물)은 수집 대상이 아니라 여기 집계에서 빠진다.
         // 댓글 수집은 꺼져 있으므로 상태 전이 대신 총계·유형별로 보여준다.
+        // 계정 기준은 "수집을 수행한 계정 수" — 콘텐츠 보유 계정 수로 세면 피드가 0건인
+        // 릴스 전용 계정이 빠져 보여 수집 진행도와 헷갈린다.
         model.addAttribute("contentTiles", java.util.List.of(
-                new StatusTile("게시물", s.enumeratedTotal(), "방문에서 수집된 전체 (원형 저장)"),
-                new StatusTile("FEED", s.enumeratedFeed(), "피드 — 프로필 내장 최근 12개에서"),
-                new StatusTile("REELS", s.enumeratedReels(), "릴스 — /v2/user/clips 1페이지에서")));
+                new StatusTile("게시물", s.enumeratedTotal(),
+                        "방문에서 수집된 전체 (원형 저장) · 수집 계정 " + s.anyCollectedAccounts() + "명"),
+                new StatusTile("FEED", s.enumeratedFeed(),
+                        "피드 — 프로필 내장 최근 12개에서 · 프로필 스냅샷 " + s.profileSnapshotAccounts() + "명"),
+                new StatusTile("REELS", s.enumeratedReels(),
+                        "릴스 — /v2/user/clips 1페이지에서 · 릴스 수집 " + s.reelsCollectedAccounts() + "명")));
         model.addAttribute("discoveryArchiveCount", s.discoveryArchiveCount());
         // 재방문 주기는 설정값 — 하드코딩 문구 대신 현재 값 표시 (설정 화면에서 무중단 변경)
         model.addAttribute("revisitIntervalDays", settings.revisitIntervalDays());
@@ -181,6 +200,14 @@ public class UiController {
     public String logsFragment(Model model) {
         model.addAttribute("lines", logBuffer.lines());
         return "fragments/logs :: panel";
+    }
+
+    /** 데일리 수집 대시보드 — 하루 단위 스냅샷·릴스 사이클의 오늘 진행. */
+    @GetMapping("/ui/daily")
+    public String daily(Model model) {
+        model.addAttribute("d", statusService.daily());
+        model.addAttribute("revisitIntervalDays", settings.revisitIntervalDays());
+        return "daily";
     }
 
     @GetMapping("/ui/jobs")
@@ -199,12 +226,17 @@ public class UiController {
 
     @GetMapping("/ui/influencers")
     public String influencers(@RequestParam(required = false) java.util.List<InfluencerStatus> status,
+                              @RequestParam(required = false, defaultValue = "false") boolean company,
                               @RequestParam(defaultValue = "0") int page, Model model) {
         var selected = status == null ? java.util.List.<InfluencerStatus>of()
                                       : status.stream().filter(JUDGED_STATUSES::contains).toList();
         var effective = selected.isEmpty() ? JUDGED_STATUSES : selected;
         var pageable = PageRequest.of(Math.max(page, 0), 50, Sort.by(Sort.Direction.DESC, "id"));
-        var result = influencers.findByStatusIn(effective, pageable);
+        // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용)
+        var result = company
+                ? influencers.findByStatusInAndBeautyTrueAndBeautyCompanyTrue(effective, pageable)
+                : influencers.findByStatusIn(effective, pageable);
+        model.addAttribute("companyView", company);
 
         var ids = result.getContent().stream()
                 .map(com.celfit.crawler.crawling.domain.Influencer::getId).toList();

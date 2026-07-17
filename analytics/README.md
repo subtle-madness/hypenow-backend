@@ -22,7 +22,7 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 
 ## 실행
 
-    ./test/run.sh                    # 뷰 적용 + SQL 테스트 전체 (crawler-postgres-1 필요)
+    ./test/run.sh                    # 뷰 적용 + SQL 테스트 전체 (hypenow-crawler-postgres-1 필요)
     ./test/run.sh test/00_base.test.sql   # 지정 테스트
     ./check/coverage.sh              # 미러 결과 필드 커버리지 보고 (실DB)
     python3 export/front_seed.py [celfit-front 경로]   # 프론트 실뷰 데모 시드 생성

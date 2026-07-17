@@ -14,6 +14,9 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     Optional<Content> findByShortCode(String shortCode);
 
+    /** upsert 일괄 조회 — 방문당 게시물 N개를 개별 조회(N왕복) 대신 IN 1회로 가져온다. */
+    java.util.List<Content> findByShortCodeIn(java.util.Collection<String> shortCodes);
+
     List<Content> findByStatus(ContentStatus status);
 
     Page<Content> findByStatus(ContentStatus status, Pageable pageable);
@@ -31,4 +34,7 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     /** 발굴 보관(부산물) 총계 — 수집 대상 아님, 대시보드에 참고용으로만 표시. */
     long countByOrigin(ContentOrigin origin);
+
+    /** 데일리 대시보드: 기준 시각(오늘 자정) 이후 처음 발견된 수집 게시물 수(각주 표기용). */
+    long countByOriginAndFirstSeenAtGreaterThanEqual(ContentOrigin origin, java.time.Instant since);
 }

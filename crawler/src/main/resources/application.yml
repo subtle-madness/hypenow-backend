@@ -52,8 +52,16 @@ crawler:
     comments-enabled: false  # 댓글 수집 — 현재 불필요, 로직만 유지 (UI 없음, yml로만 재활성화)
   similar:
     batch-limit: 50   # 실행 1회당 유사 계정을 수확할 시드(뷰티 QUALIFIED) 수
+  beauty:
+    batch-limit: 500  # 판정 1회당 처리할 계정 수 상한(실행 시간 제어 — 청크 50 × 최대 120s). 초과분은 다음 실행에서.
+  reels:
+    batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)
+  resnapshot:
+    batch-limit: 200  # 실행 1회당 재수집할 계정 수 — 계정당 로컬 GQL 1요청(연속 rate-limit 시 회로 차단)
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"
     qualify-cron: "0 30 6 * * *"
-    collect-cron: "0 0 7 * * *"
+    beauty-cron: "0 30 7 * * *"   # qualify 유입분 3분류 — qualify 이후
+    collect-cron: "0 0 1 * * *"   # 데일리 스냅샷(팔로워 추이+게시물) — 새벽에 길게
+    reels-cron: "0 10 1 * * *"    # 릴스 1페이지 — collect와 병렬(잡 락 분리)

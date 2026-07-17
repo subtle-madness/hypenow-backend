@@ -51,8 +51,16 @@ crawler:
     comments-enabled: true   # 댓글 로직 회귀 검증을 위해 테스트에선 켬
   similar:
     batch-limit: 50
+  beauty:
+    batch-limit: 500
+  reels:
+    batch-limit: 10
+  resnapshot:
+    batch-limit: 200
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"
     qualify-cron: "0 30 6 * * *"
-    collect-cron: "0 0 7 * * *"
+    beauty-cron: "0 30 7 * * *"
+    collect-cron: "0 0 1 * * *"
+    reels-cron: "0 10 1 * * *"

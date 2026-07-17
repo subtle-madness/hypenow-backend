@@ -40,8 +40,12 @@ class QualifyJobTest {
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
     ProfileSourceSelector selector = mock(ProfileSourceSelector.class);
     SettingsService settings = mock(SettingsService.class);
+    // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 청크 단위 트랜잭션 래핑을 그대로 재현한다.
+    org.springframework.transaction.support.TransactionTemplate txTemplate =
+            new org.springframework.transaction.support.TransactionTemplate(
+                    mock(org.springframework.transaction.PlatformTransactionManager.class));
 
-    QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, CLOCK);
+    QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, CLOCK, txTemplate);
 
     @BeforeEach
     void wireDefaults() {
@@ -68,6 +72,24 @@ class QualifyJobTest {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("user", user);
         return root;
+    }
+
+    @Test
+    void 프로필_404_계정은_소프트_딜리트되어_재선정되지_않는다() {
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer ghost = influencer(1L, "ghost", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatusAndFollowersIsNull(
+                InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
+                .thenReturn(List.of(ghost));
+        when(selector.currentSource()).thenReturn(RawSource.HIKER_MOBILE);
+        when(selector.fetchAndSupplement(any(), any(), any()))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of("ghost")));
+
+        var summary = job.run(TriggerType.MANUAL, false);
+
+        assertThat(ghost.getStatus()).isEqualTo(InfluencerStatus.DELETED);
+        verify(influencers).save(ghost);
+        assertThat(summary.deferred()).isZero();  // 소멸 계정은 재시도 대상(deferred)이 아니다
     }
 
     @Test

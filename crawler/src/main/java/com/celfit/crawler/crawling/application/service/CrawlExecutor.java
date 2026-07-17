@@ -25,7 +25,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class CrawlExecutor {
 
-    public record Execution(Long runId, List<Map<String, Object>> items) {}
+    /** notFound — 404로 판명된 대상 username(계정 소멸). 호출자가 소프트 딜리트한다. */
+    public record Execution(Long runId, List<Map<String, Object>> items, List<String> notFound) {
+        public Execution(Long runId, List<Map<String, Object>> items) {
+            this(runId, items, List.of());
+        }
+    }
 
     private final ApifyRunnerPort runner;
     private final CrawlRunRepository runs;
@@ -53,7 +58,7 @@ public class CrawlExecutor {
             run.finishOk(result.runId(), result.requestCount(), result.items().size(), clock.instant());
             runs.save(run);
             archive(run.getId(), result.items());
-            return new Execution(run.getId(), result.items());
+            return new Execution(run.getId(), result.items(), result.notFound());
         } catch (ApifyException e) {
             run.finishFailed(e.getMessage(), clock.instant());
             runs.save(run);
