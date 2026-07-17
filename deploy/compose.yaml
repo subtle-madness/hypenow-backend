@@ -1,8 +1,16 @@
 # 운영 스택 — 오라클 A1이든 폴백 VPS든 동일 (사용법: deploy/README.md)
+# 로그 로테이션 — 미설정 시 json 로그가 무한 증식해 디스크를 침식한다
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_DB: analysis
       POSTGRES_USER: ${DB_USER}
@@ -20,6 +28,7 @@ services:
   was:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
+    logging: *logging
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DB_URL: jdbc:postgresql://postgres:5432/analysis
@@ -34,6 +43,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logging
     ports:
       - "80:80"
       - "443:443"

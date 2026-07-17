@@ -80,6 +80,7 @@ public class SecurityConfig {
 						// 새 엔드포인트는 기본이 잠김이라 실수로 새지 않는다.
 						.requestMatchers("/v1/auth/**").permitAll()      // 인증 입구(레거시 /api/auth는 잠금 — /v1 일원화)
 						.requestMatchers("/v1/events/gate").permitAll()  // 익명 게이트 측정 유지(스펙 6.19)
+						.requestMatchers("/v1/stats").permitAll()        // 랜딩 통계(스펙 6.20) — 로그인 전 랜딩 페이지가 소비, 공개 캐시 전제
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
 						.requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll() // 로컬·개발 문서(prod는 springdoc 비활성)
 						.anyRequest().authenticated())
@@ -106,7 +107,7 @@ public class SecurityConfig {
 		@Override
 		public void handle(HttpServletRequest request, HttpServletResponse response, Supplier<CsrfToken> csrfToken) {
 			xor.handle(request, response, csrfToken);
-			csrfToken.get(); // 지연 발급 해제 — 쿠키가 없으면 이 시점에 XSRF-TOKEN이 내려간다
+			var unused = csrfToken.get(); // 지연 발급 해제 — 쿠키가 없으면 이 시점에 XSRF-TOKEN이 내려간다 (반환값은 불필요)
 		}
 
 		@Override
