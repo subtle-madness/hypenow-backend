@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>hypenow analytics — 잡 실행</title>
+    <link rel="stylesheet" href="/css/admin.css"/>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+<main>
+<h1>analytics 잡 실행</h1>
+<div class="flash" th:if="${message}" th:text="${message}"></div>
+
+<div class="job-forms">
+    <form method="post" th:each="j : ${jobs}" th:action="@{'/ui/jobs/' + ${j.slug()}}">
+        <button type="submit" class="primary" th:text="${j.label()}"></button>
+    </form>
+</div>
+
+<h2>현재 상태</h2>
+<div hx-get="/ui/fragments/status" hx-trigger="load, every 3s"></div>
+
+<h2>예상 비용 (LLM 잡 — 추정치)</h2>
+<div class="job-costs">
+    <div class="card job-cost" th:each="c : ${costs}">
+        <h3 th:text="${c.label()}"></h3>
+        <p class="job-cost-targets">대상 <b th:text="${c.targets()}"></b>건</p>
+        <p class="job-cost-usd" th:if="${c.minUsd() != null}">
+            예상 비용
+            <b th:text="'$' + ${#numbers.formatDecimal(c.minUsd(), 1, 3)} + '~$' + ${#numbers.formatDecimal(c.maxUsd(), 1, 3)}"></b>
+        </p>
+        <p class="job-cost-note" th:text="${c.note()}"></p>
+    </div>
+</div>
+
+<h2>실행 로그</h2>
+<div hx-get="/ui/fragments/logs" hx-trigger="load, every 3s"></div>
+</main>
+</body>
+</html>

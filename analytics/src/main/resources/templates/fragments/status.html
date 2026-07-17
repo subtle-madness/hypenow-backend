@@ -1,0 +1,9 @@
+<div th:fragment="badges" xmlns:th="http://www.thymeleaf.org">
+    <div class="job-statuses">
+        <span class="job-status" th:each="s : ${statuses}">
+            <span th:text="${s.label()}"></span>
+            <span class="badge RUNNING" th:if="${s.running()}">실행 중</span>
+            <span class="badge idle" th:unless="${s.running()}">유휴</span>
+        </span>
+    </div>
+</div>
