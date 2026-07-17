@@ -1,10 +1,12 @@
 plugins {
 	id 'org.springframework.boot' version '4.1.0' apply false
 	id 'io.spring.dependency-management' version '1.1.7' apply false
+	id 'net.ltgt.errorprone' version '5.1.0' apply false
 }
 
 subprojects {
 	apply plugin: 'java'
+	apply plugin: 'net.ltgt.errorprone'
 
 	group = 'com.celfit'
 	version = '0.0.1-SNAPSHOT'
@@ -17,5 +19,20 @@ subprojects {
 
 	repositories {
 		mavenCentral()
+	}
+
+	dependencies {
+		errorprone 'com.google.errorprone:error_prone_core:2.50.0'
+	}
+
+	// 정적분석은 Error Prone 단독 — ERROR 등급(버그 확실성 높음)만 컴파일 실패로 걸고,
+	// WARNING 등급은 1인 팀 노이즈를 감안해 끈다(필요해지면 disableAllWarnings만 풀 것).
+	tasks.withType(JavaCompile).configureEach {
+		options.errorprone {
+			disableWarningsInGeneratedCode = true
+			disableAllWarnings = true
+			// 한국어 테스트 메서드명이 리포 컨벤션이라 비ASCII 식별자 지적은 해당 없음
+			disable('UnicodeInCode')
+		}
 	}
 }
