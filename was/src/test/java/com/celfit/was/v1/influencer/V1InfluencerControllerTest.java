@@ -65,7 +65,7 @@ class V1InfluencerControllerTest {
 		given(repository.findProfile("hype_official")).willReturn(Optional.of(profile()));
 		given(repository.findRecentCards("hype_official")).willReturn(List.of());
 
-		mockMvc.perform(get("/v1/influencers/hype_official"))
+		mockMvc.perform(get("/v1/influencers/hype_official").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.influencer.handle").value("hype_official"))
@@ -77,20 +77,17 @@ class V1InfluencerControllerTest {
 	void 존재하지_않는_핸들은_404_NOT_FOUND() throws Exception {
 		given(repository.findProfile("ghost")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/v1/influencers/ghost"))
+		mockMvc.perform(get("/v1/influencers/ghost").with(user(principal())))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
+	// 로그인 월(07-17) — 읽기도 인증 필수라 "비로그인 개인화 필드 없음" 계약은 401로 대체됐다
 	@Test
-	void 비로그인이면_개인화_필드가_없다() throws Exception {
-		given(repository.findProfile("hype_official")).willReturn(Optional.of(profile()));
-		given(repository.findRecentCards("hype_official")).willReturn(List.of(row("c1")));
-
+	void 비로그인은_401_UNAUTHORIZED_envelope다() throws Exception {
 		mockMvc.perform(get("/v1/influencers/hype_official"))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.isInfluencerSaved").doesNotExist())
-				.andExpect(jsonPath("$.data.recentContents[0].isContentsSaved").doesNotExist());
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
 	}
 
 	@Test

@@ -1,6 +1,7 @@
 package com.celfit.was.v1.influencer;
 
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -55,7 +56,7 @@ class V1InfluencerReportControllerTest {
 		given(repository.findCategories("zingdong__")).willReturn(List.of(new CategoryRow("메이크업", 5L)));
 		given(repository.findBrands("zingdong__")).willReturn(List.of(new BrandRow("머지", 3L)));
 
-		mockMvc.perform(get("/v1/influencers/zingdong__/ai-report"))
+		mockMvc.perform(get("/v1/influencers/zingdong__/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.tagline").value("태그라인"))
@@ -82,7 +83,7 @@ class V1InfluencerReportControllerTest {
 	void 없는_인플루언서는_NOT_FOUND() throws Exception {
 		given(repository.findSummary("ghost")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/v1/influencers/ghost/ai-report"))
+		mockMvc.perform(get("/v1/influencers/ghost/ai-report").with(user("tester")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
@@ -96,7 +97,7 @@ class V1InfluencerReportControllerTest {
 		given(repository.findCategories("h")).willReturn(List.of());
 		given(repository.findBrands("h")).willReturn(List.of());
 
-		mockMvc.perform(get("/v1/influencers/h/ai-report"))
+		mockMvc.perform(get("/v1/influencers/h/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.tagline").doesNotExist())
 				.andExpect(jsonPath("$.data.summary").doesNotExist())
