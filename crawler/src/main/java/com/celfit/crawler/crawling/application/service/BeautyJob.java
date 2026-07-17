@@ -9,19 +9,23 @@ import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.TriggerType;
+import com.celfit.crawler.settings.application.service.SettingsService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 뷰티 판정 잡 — QUALIFIED 중 미판정분의 최신 raw_profile 텍스트 재료(이름·카테고리·bio)를
  * 로컬 Claude에 배치로 넘겨 beauty를 저장한다. 인스타그램 API 호출 없음(비용 $0).
- * rejudge=true면 CLAUDE 판정분도 재판정한다 — MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
+ * rejudge=true면 판정 후 재료가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다(RESNAPSHOT 잡이
+ * 캡션 재료를 채운 뒤 돌리는 용도) — MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
  * beauty=true는 SIMILAR 잡의 시드 자격이 된다.
  */
 @Service
@@ -32,18 +36,28 @@ public class BeautyJob {
     /** Claude 1회 호출에 넘기는 프로필 수 — 응답 길이·타임아웃(120s)과의 균형. */
     static final int JUDGE_CHUNK = 50;
 
+    /** 카드에 담는 최근 게시물 캡션 수 — 프롬프트 크기(50명 × 캡션)와 판정 정확도의 균형. */
+    static final int CAPTION_COUNT = 5;
+
+    /** 캡션 1개당 최대 길이(문자) — 캡션 앞부분에 주제가 드러나므로 뒷부분은 잘라도 판정에 충분. */
+    static final int CAPTION_MAX_CHARS = 100;
+
     public record Summary(int judgedBeauty, int judgedNotBeauty, int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
     private final BeautyJudge judge;
+    private final SettingsService settings;
+    private final java.time.Clock clock;
     private final TransactionTemplate txTemplate;
 
     public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles, BeautyJudge judge,
-                     TransactionTemplate txTemplate) {
+                     SettingsService settings, java.time.Clock clock, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.judge = judge;
+        this.settings = settings;
+        this.clock = clock;
         this.txTemplate = txTemplate;
     }
 
@@ -54,11 +68,16 @@ public class BeautyJob {
      * 배치들의 커밋을 롤백시키지 않는다.
      */
     public Summary run(TriggerType trigger, boolean rejudge) {
-        List<Influencer> targets = new ArrayList<>(
-                influencers.findByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED));
-        if (rejudge) {
-            targets.addAll(influencers.findByStatusAndBeautySource(
-                    InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE));
+        // 배치 한도(beauty.batch-limit) — 미판정 우선 선정, rejudge는 남은 한도만 채운다(초과분은 다음 실행)
+        int limit = settings.beautyBatchLimit();
+        List<Influencer> targets = new ArrayList<>(influencers.findByStatusAndBeautyIsNull(
+                InfluencerStatus.QUALIFIED, PageRequest.of(0, limit, Sort.by("id"))));
+        if (rejudge && targets.size() < limit) {
+            // 재료(raw_profile)가 판정 후 갱신된 비뷰티만 — 재료가 그대로면 같은 판정만 반복한다.
+            // 오래된 판정 우선(쿼리 정렬) — 실패 배치가 옛 판정 시각으로 남아 먼저 재시도된다
+            targets.addAll(influencers.findRejudgeTargets(
+                    InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                    PageRequest.of(0, limit - targets.size())));
         }
 
         // 판정 재료 준비 — raw_profile이 아직 없으면 판정 불가(qualify가 언젠가 채우면 재시도)
@@ -73,12 +92,14 @@ public class BeautyJob {
             cards.add(new BeautyJudge.ProfileCard(inf.getUsername(),
                     ProfileExtractor.fullName(p.getPayload(), p.getSource()),
                     ProfileExtractor.category(p.getPayload(), p.getSource()),
-                    ProfileExtractor.biography(p.getPayload(), p.getSource())));
+                    ProfileExtractor.biography(p.getPayload(), p.getSource()),
+                    trimCaptions(ProfileExtractor.recentCaptions(p.getPayload(), p.getSource()))));
             byUsername.put(inf.getUsername(), inf);
         }
 
         int beauty = 0, notBeauty = 0, failedBatches = 0;
         List<List<BeautyJudge.ProfileCard>> chunks = ActorInputs.chunk(cards, JUDGE_CHUNK);
+        log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}), 배치 {}개", cards.size(), skipped, chunks.size());
         int total = chunks.size(), i = 0;
         for (List<BeautyJudge.ProfileCard> chunk : chunks) {
             i++;
@@ -90,12 +111,21 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
-            ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername));
+            int done = beauty + notBeauty;
+            ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername, done, cards.size()));
             beauty += r.beauty();
             notBeauty += r.notBeauty();
             log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 비뷰티 {}", i, total, beauty, notBeauty);
         }
         return new Summary(beauty, notBeauty, skipped, failedBatches);
+    }
+
+    /** 판정 재료 캡션 정책 적용 — 최근 CAPTION_COUNT개, 각 CAPTION_MAX_CHARS자까지. */
+    private static List<String> trimCaptions(List<String> captions) {
+        return captions.stream()
+                .limit(CAPTION_COUNT)
+                .map(c -> c.length() > CAPTION_MAX_CHARS ? c.substring(0, CAPTION_MAX_CHARS) : c)
+                .toList();
     }
 
     private record ChunkResult(int beauty, int notBeauty) {}
@@ -105,16 +135,22 @@ public class BeautyJob {
      * detached 상태다 — 세터만으로는 저장되지 않으므로 influencers.save(inf) 명시 호출이 필수다
      * (CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — CollectJobIntegrationTest 참고).
      */
-    private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername) {
+    private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
+                                      int done, int totalCards) {
         int beauty = 0, notBeauty = 0;
         for (BeautyJudge.Verdict v : verdicts) {
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
             inf.setBeauty(v.beauty());
+            inf.setBeautyCompany(v.company());
             inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
             inf.setBeautyReason(v.reason());
+            inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
             influencers.save(inf);
             if (v.beauty()) beauty++; else notBeauty++;
+            done++;
+            log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(),
+                    v.beauty() ? (v.company() ? "뷰티(회사)" : "뷰티(인플루언서)") : "비뷰티", v.reason());
         }
         return new ChunkResult(beauty, notBeauty);
     }

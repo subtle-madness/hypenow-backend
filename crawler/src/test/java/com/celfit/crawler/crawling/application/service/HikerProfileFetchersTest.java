@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -17,6 +18,41 @@ class HikerProfileFetchersTest {
 
     static CrawlExecutor passthrough() { return SelfProfileFetcherTest.passthroughExecutor(); }
     tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
+
+    @Test void mobile_프로필_요청은_여러_건이_동시에_나간다() {
+        // 두 요청이 동시에 진행되어야만 latch가 풀린다 — 직렬 구현이면 첫 요청이 타임아웃돼 실패.
+        var latch = new java.util.concurrent.CountDownLatch(2);
+        HikerHttp http = path -> {
+            latch.countDown();
+            try {
+                if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new ApifyException("동시 요청 없음 — 직렬 실행");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ApifyException("인터럽트", e);
+            }
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"1\"}}";
+        };
+        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("a", "b", "c", "d"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).hasSize(4);  // 직렬이면 첫 계정이 타임아웃 스킵되어 3건
+    }
+
+    @Test void mobile_404는_계정_소멸로_notFound에_기록한다() {
+        HikerHttp http = path -> {
+            throw new NotFoundException("Hiker HTTP 404: {\"detail\":\"Entries not found\"}");
+        };
+        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("gone"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(ex.notFound()).containsExactly("gone");
+    }
 
     @Test void mobile_username별_조회_응답_원형을_그대로_반환() {
         HikerHttp http = path -> {
@@ -59,7 +95,11 @@ class HikerProfileFetchersTest {
             }
             throw new ApifyException("Hiker HTTP 500");
         };
-        var f = new HikerWebGqlProfileFetcher(http, passthrough(), om);
+        var influencers = org.mockito.Mockito.mock(
+                com.celfit.crawler.crawling.application.port.out.InfluencerRepository.class);
+        org.mockito.Mockito.when(influencers.findByUsername(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.Optional.empty());  // 저장 pk 없음 — by/username 경로 검증 유지
+        var f = new HikerWebGqlProfileFetcher(http, passthrough(), influencers, om);
         assertThat(f.source()).isEqualTo(ProfileSource.HIKER_WEB_GQL);
         assertThat(f.rawSource()).isEqualTo(RawSource.HIKER_MOBILE);
         var ex = f.fetch(JobName.QUALIFY, List.of("tem.duck"), TriggerType.MANUAL);

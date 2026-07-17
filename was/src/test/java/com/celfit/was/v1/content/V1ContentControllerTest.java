@@ -53,17 +53,13 @@ class V1ContentControllerTest {
 				"alpha", "알파", "https://pic/alpha.jpg", 5000L);
 	}
 
+	// 로그인 월(07-17) — 읽기도 인증 필수라 "비로그인 개인화 필드 없음" 계약은 401로 대체됐다
 	@Test
-	void 비로그인이면_isContentsSaved_필드가_없다() throws Exception {
-		given(repository.findCards(any())).willReturn(List.of(row("c1")));
-		given(repository.countCards(any())).willReturn(1L);
-		given(repository.findDistributorOptions()).willReturn(List.of());
-
+	void 비로그인은_401_UNAUTHORIZED_envelope다() throws Exception {
 		mockMvc.perform(get("/v1/contents")
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11"))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data[0].id").value("c1"))
-				.andExpect(jsonPath("$.data[0].isContentsSaved").doesNotExist());
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
 	}
 
 	@Test
@@ -89,7 +85,7 @@ class V1ContentControllerTest {
 		given(repository.findDistributorOptions())
 				.willReturn(List.of(Map.of("id", "daiso", "name", "다이소")));
 
-		mockMvc.perform(get("/v1/contents")
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
@@ -100,7 +96,7 @@ class V1ContentControllerTest {
 
 	@Test
 	void startDate가_endDate보다_뒤면_VALIDATION_FAILED() throws Exception {
-		mockMvc.perform(get("/v1/contents")
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-12").param("endDate", "2026-07-11"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
@@ -108,7 +104,7 @@ class V1ContentControllerTest {
 
 	@Test
 	void 잘못된_enum은_VALIDATION_FAILED() throws Exception {
-		mockMvc.perform(get("/v1/contents")
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
 						.param("sort", "hot"))
 				.andExpect(status().isBadRequest())
@@ -117,7 +113,7 @@ class V1ContentControllerTest {
 
 	@Test
 	void startDate_누락은_VALIDATION_FAILED() throws Exception {
-		mockMvc.perform(get("/v1/contents").param("endDate", "2026-07-11"))
+		mockMvc.perform(get("/v1/contents").with(user(principal())).param("endDate", "2026-07-11"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 	}
@@ -129,7 +125,7 @@ class V1ContentControllerTest {
 		given(repository.countCards(any())).willReturn(0L);
 		given(repository.findDistributorOptions()).willReturn(List.of());
 
-		mockMvc.perform(get("/v1/contents")
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
 						.header("Origin", "http://localhost:3000"))
 				.andExpect(status().isOk())
@@ -147,7 +143,7 @@ class V1ContentControllerTest {
 
 	@Test
 	void limit_상한_초과는_VALIDATION_FAILED() throws Exception {
-		mockMvc.perform(get("/v1/contents")
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
 						.param("limit", "101"))
 				.andExpect(status().isBadRequest())

@@ -1,5 +1,6 @@
 package com.celfit.crawler.dashboard.adapter.in.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -53,6 +54,15 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 대시보드_상단에_파이프라인_다이어그램이_렌더된다() throws Exception {
+        // 잡 흐름(발굴→판정→뷰티 판정→수집 3갈래 + 재스냅샷/재판정·유사발굴 루프)을 정적 다이어그램으로 노출
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("pipeline-map")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("재스냅샷")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("rejudge")));
+    }
+
+    @Test
     void 상태_타일_프래그먼트가_렌더된다() throws Exception {
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk());
     }
@@ -67,6 +77,12 @@ class UiSmokeTest extends IntegrationTest {
     void 잡_화면에_예상_비용_카드가_렌더된다() throws Exception {
         mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
+    }
+
+    @Test
+    void 잡_화면에_재스냅샷_트리거가_렌더된다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/resnapshot")));
     }
 
     @Test
@@ -228,6 +244,29 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 게시물_수집_타일의_인플루언서_기준은_수집을_수행한_계정_수다() throws Exception {
+        // 콘텐츠 보유 여부가 아니라 "수집을 수행한 계정 수" 기준 — 피드가 0건인 릴스 전용
+        // 계정도 프로필 스냅샷을 찍었으면 FEED 기준에 포함돼야 한다(콘텐츠 기준이면 헷갈림).
+        long snapBefore = influencers.countByLastCollectedAtIsNotNull();
+        long reelsBefore = influencers.countByLastReelsAtIsNotNull();
+
+        Influencer inf = new Influencer("smoke-snapshot-basis-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
+        inf.setLastCollectedAt(Instant.now());  // 프로필 스냅샷 완료 — 피드 콘텐츠는 0건
+        inf.setLastReelsAt(Instant.now());      // 릴스 수집 완료 — 릴스 콘텐츠도 0건
+        influencers.save(inf);
+
+        assertThat(influencers.countByLastCollectedAtIsNotNull()).isEqualTo(snapBefore + 1);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "프로필 스냅샷 " + (snapBefore + 1) + "명")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "릴스 수집 " + (reelsBefore + 1) + "명")));
+    }
+
+    @Test
     void 대시보드_상태_타일에_발굴_보관_부산물_건수가_렌더된다() throws Exception {
         // 발굴 부산물(DISCOVERY) — 게시물 수집 카드(ENUMERATION 기준) 집계엔 안 잡히고
         // "발굴 보관" 참고용 총계에만 잡혀야 한다.
@@ -252,9 +291,10 @@ class UiSmokeTest extends IntegrationTest {
     @Test
     void 대시보드_수집_대기열은_첫방문_재방문_구분_없이_단일_카드다() throws Exception {
         // 모든 방문이 동일(최근 게시물 1회 수집)하므로 첫 방문/재방문 구분이 없다 —
-        // 9일 전 방문(재방문 주기 7일 경과)한 인플루언서도 같은 "수집 대기"로 잡힌다.
+        // 9일 전 방문(재방문 주기 7일 경과)한 뷰티 인플루언서도 같은 "수집 대기"로 잡힌다.
         Influencer inf = new Influencer("smoke-collect-due-user");
         inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);  // 수집 대기열은 뷰티 계정만 잡는다
         Instant nineDaysAgo = Instant.now().minus(java.time.Duration.ofDays(9));
         inf.setFirstCollectedAt(nineDaysAgo);
         inf.setLastCollectedAt(nineDaysAgo);
@@ -262,10 +302,112 @@ class UiSmokeTest extends IntegrationTest {
 
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("READY")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("방문 대기")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("프로필 수집 대기")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("BACKFILL"))))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("TRACK"))));
+    }
+
+    @Test
+    void 잡_화면에_프로필_수집과_릴스_수집_버튼이_분리되어_있다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("게시물을 위한 프로필 수집")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("릴스 수집")));
+    }
+
+    @Test
+    void 대시보드_수집_대기열에_릴스_대기가_따로_렌더된다() throws Exception {
+        Influencer inf = new Influencer("smoke-reels-due-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);   // 릴스 대기열도 뷰티 계정만
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("REELS_READY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("게시물을 위한 프로필 수집")));
+    }
+
+    @Test
+    void 뷰티_회사_리스트업_뷰는_회사_계정만_보여준다() throws Exception {
+        Influencer company = new Influencer("smoke-company-list-user");
+        company.setStatus(InfluencerStatus.QUALIFIED);
+        company.setBeauty(true);
+        company.setBeautyCompany(true);
+        influencers.save(company);
+        Influencer inf = new Influencer("smoke-influencer-list-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
+        inf.setBeautyCompany(false);
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/influencers").param("company", "true")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-company-list-user")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-influencer-list-user"))));
+
+        // 사이드바 모니터링에 뷰티 회사 메뉴가 노출되고, 인플루언서 링크는 명시 쿼리를 갖는다
+        // (쿼리 없는 링크는 admin.js 쿼리 복원에 붙잡혀 회사 뷰에서 되돌아올 수 없다)
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/influencers?company=false")));
+    }
+
+    @Test
+    void 데일리_수집_대시보드가_오늘_기준_진행을_렌더한다() throws Exception {
+        // 오늘 스냅샷을 마친 뷰티 인플루언서 1명 — 오늘 완료 카운트에 잡혀야 한다
+        Influencer done = new Influencer("smoke-daily-done-user");
+        done.setStatus(InfluencerStatus.QUALIFIED);
+        done.setBeauty(true);
+        done.setBeautyCompany(false);
+        done.setLastCollectedAt(Instant.now());
+        done.setLastReelsAt(Instant.now());
+        influencers.save(done);
+        // 아직 오늘 방문 전인 뷰티 인플루언서 — 잔여 카운트에 잡혀야 한다
+        Influencer pending = new Influencer("smoke-daily-pending-user");
+        pending.setStatus(InfluencerStatus.QUALIFIED);
+        pending.setBeauty(true);
+        pending.setBeautyCompany(false);
+        influencers.save(pending);
+
+        mvc.perform(get("/ui/daily")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("데일리 수집")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("피드 완료")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("릴스 완료")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("사이클 완주")))
+                // 지표 기준은 인플루언서 — raw_profile 행 수 타일은 없어야 한다
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("팔로워 스냅샷"))));
+
+        // 사이드바에서 진입 가능
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/daily")));
+    }
+
+    @Test
+    void 대시보드에_뷰티_판정_결과_그룹이_렌더된다() throws Exception {
+        // beauty 잡이 가른 결과(인플루언서/회사/비뷰티/미판정)가 판정과 수집 사이 단계로 보여야 한다.
+        Influencer beauty = new Influencer("smoke-beauty-true-user");
+        beauty.setStatus(InfluencerStatus.QUALIFIED);
+        beauty.setBeauty(true);
+        beauty.setBeautyCompany(false);
+        influencers.save(beauty);
+        Influencer company = new Influencer("smoke-beauty-company-user");
+        company.setStatus(InfluencerStatus.QUALIFIED);
+        company.setBeauty(true);
+        company.setBeautyCompany(true);
+        influencers.save(company);
+        Influencer notBeauty = new Influencer("smoke-beauty-false-user");
+        notBeauty.setStatus(InfluencerStatus.QUALIFIED);
+        notBeauty.setBeauty(false);
+        influencers.save(notBeauty);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 판정")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("BEAUTY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("BEAUTY_COMPANY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("NOT_BEAUTY")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("미판정")));
     }
 }

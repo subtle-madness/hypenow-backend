@@ -31,7 +31,8 @@ class SignupValidatorTest {
 		Boolean agreedMarketing = false;
 
 		SignupRequest build() {
-			return new SignupRequest(email, password, name, nickname, userType, signupRoute,
+			// signupCode는 validator 관할 밖(컨트롤러의 verifySignupCode) — 아무 값이나 무방
+			return new SignupRequest("BETA2026", email, password, name, nickname, userType, signupRoute,
 					phoneCountryCode, phoneNumber, companyName, companySize, industry, jobTitle,
 					agreedTerms, agreedPrivacy, agreedAge14, agreedMarketing);
 		}

@@ -22,7 +22,9 @@
 - 전체 테스트: `./gradlew test` (Java 21, Spring Boot 4.1, Gradle 멀티모듈: crawler/analytics/was)
 - 분석 뷰 검증: SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리) 컨벤션 — 기존 run.sh는 07-12 초기화로 삭제, 태스크 A에서 재구축
 - 실행: `./gradlew :was:bootRun`(8081) / `:crawler:bootRun`(8080, 어드민 `/ui`) / `:analytics:bootRun`(타입 미러 — 재구축 예정)
-- DB: docker `crawler-postgres-1` (포트 5433, crawler/crawler, DB `crawler`·`analysis`)
+- DB: docker `crawler-postgres-1` (포트 5433, crawler/crawler, DB `crawler`·`analysis`) —
+  컨테이너 이름은 compose 디렉토리명 기반이라 머신마다 다를 수 있음(예: `hypenow-crawler-postgres-1`).
+  스크립트는 `PG_CONTAINER` 환경변수로 오버라이드.
 
 ## 컨벤션
 
@@ -38,7 +40,7 @@
 ## 함정
 
 - `docker compose up`은 디렉토리명 기반 프로젝트로 **빈 컨테이너를 새로 만든다** — 실데이터는
-  `crawler-postgres-1`에 있음. `docker start crawler-postgres-1`로 기동할 것.
+  기존 컨테이너(`crawler-postgres-1`, 머신에 따라 이름 상이)에 있음. `docker start`로 기동할 것.
 - `.env`는 JVM에 자동 로드되지 않는다 — `APIFY_TOKEN` 등은 셸 `export` 필요.
 - Spring Boot 4 주의: `@WebMvcTest`는 `org.springframework.boot.webmvc.test.autoconfigure` 패키지,
   Testcontainers 2.x는 `org.testcontainers.postgresql.PostgreSQLContainer`.

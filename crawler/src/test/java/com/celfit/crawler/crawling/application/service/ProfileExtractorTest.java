@@ -154,11 +154,65 @@ class ProfileExtractorTest {
     }
 
     @Test
+    void 최근_게시물_캡션을_소스별_경로에서_추출한다() {
+        // LEGACY_ENVELOPE — latestPosts[].caption. 공백·누락 캡션은 건너뛰고 순서는 유지한다.
+        Map<String, Object> legacy = Map.of("latestPosts", java.util.List.of(
+                Map.of("caption", "첫 캡션", "shortCode", "A"),
+                Map.of("shortCode", "B"),
+                Map.of("caption", "  ", "shortCode", "C"),
+                Map.of("caption", "둘째 캡션", "shortCode", "D")));
+        assertThat(ProfileExtractor.recentCaptions(legacy, RawSource.LEGACY_ENVELOPE))
+                .containsExactly("첫 캡션", "둘째 캡션");
+
+        // SELF_GQL — data.user.edge_owner_to_timeline_media.edges[].node.edge_media_to_caption.edges[0].node.text
+        Map<String, Object> gql = Map.of("data", Map.of("user", Map.of(
+                "edge_owner_to_timeline_media", Map.of("edges", java.util.List.of(
+                        Map.of("node", Map.of("edge_media_to_caption", Map.of("edges", java.util.List.of(
+                                Map.of("node", Map.of("text", "GQL 캡션")))))),
+                        Map.of("node", Map.of("edge_media_to_caption", Map.of("edges", java.util.List.of()))))))));
+        assertThat(ProfileExtractor.recentCaptions(gql, RawSource.SELF_GQL))
+                .containsExactly("GQL 캡션");
+
+        // LEGACY_ENVELOPE 신형 — latestPosts 없이 _rawProfile.data.user에 GQL 타임라인이 중첩된 변형
+        Map<String, Object> legacyRaw = Map.of("_rawProfile", gql);
+        assertThat(ProfileExtractor.recentCaptions(legacyRaw, RawSource.LEGACY_ENVELOPE))
+                .containsExactly("GQL 캡션");
+
+        // HIKER_MOBILE·DATALIKERS — 게시물 없음, 빈 payload도 빈 리스트
+        assertThat(ProfileExtractor.recentCaptions(Map.of("user", Map.of()), RawSource.HIKER_MOBILE)).isEmpty();
+        assertThat(ProfileExtractor.recentCaptions(Map.of(), RawSource.DATALIKERS)).isEmpty();
+        assertThat(ProfileExtractor.recentCaptions(Map.of(), RawSource.SELF_GQL)).isEmpty();
+        assertThat(ProfileExtractor.recentCaptions(Map.of(), RawSource.LEGACY_ENVELOPE)).isEmpty();
+    }
+
+    @Test
     void 뷰티_판정_재료가_없거나_공백이면_null() {
         Map<String, Object> empty = new LinkedHashMap<>();
         empty.put("biography", "  ");
         assertThat(ProfileExtractor.fullName(empty, RawSource.LEGACY_ENVELOPE)).isNull();
         assertThat(ProfileExtractor.category(empty, RawSource.LEGACY_ENVELOPE)).isNull();
         assertThat(ProfileExtractor.biography(empty, RawSource.LEGACY_ENVELOPE)).isNull();
+    }
+
+    @Test
+    void 비공개_여부를_소스별_경로에서_추출한다() {
+        // HIKER_MOBILE — user 래퍼 안 is_private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("user", Map.of("is_private", true)), RawSource.HIKER_MOBILE)).isTrue();
+        // DATALIKERS — flat is_private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("is_private", false), RawSource.DATALIKERS)).isFalse();
+        // SELF_GQL — data.user.is_private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("data", Map.of("user", Map.of("is_private", true))), RawSource.SELF_GQL)).isTrue();
+        // LEGACY_ENVELOPE — flat private
+        assertThat(ProfileExtractor.isPrivate(
+                Map.of("private", true), RawSource.LEGACY_ENVELOPE)).isTrue();
+    }
+
+    @Test
+    void 비공개_여부_필드가_없으면_공개로_간주한다() {
+        assertThat(ProfileExtractor.isPrivate(Map.of("user", Map.of()), RawSource.HIKER_MOBILE)).isFalse();
+        assertThat(ProfileExtractor.isPrivate(Map.of(), RawSource.SELF_GQL)).isFalse();
     }
 }

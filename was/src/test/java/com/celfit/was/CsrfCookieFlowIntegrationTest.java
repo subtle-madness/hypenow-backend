@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
@@ -31,6 +32,9 @@ class CsrfCookieFlowIntegrationTest extends IntegrationTest {
 	@Autowired
 	MockMvc mockMvc;
 
+	@Autowired
+	JdbcClient jdbcClient;
+
 	@Test
 	void XSRF_쿠키는_GET에서_발급되고_raw_값_헤더로_쓰기가_통과한다() throws Exception {
 		MvcResult primed = mockMvc.perform(get("/health"))
@@ -39,12 +43,14 @@ class CsrfCookieFlowIntegrationTest extends IntegrationTest {
 				.andReturn();
 		Cookie xsrf = primed.getResponse().getCookie("XSRF-TOKEN");
 
-		mockMvc.perform(post("/api/auth/signup")
+		// 로그인 월(07-17) — 쓰기 검증은 열린 v1 가입으로(코드 개통 선행). csrf() 후처리기 없이
+		// 쿠키 raw 값 헤더 왕복이라는 원 검증 목적은 그대로다.
+		V1AuthTestSteps.enableSignupCode(jdbcClient);
+		mockMvc.perform(post("/v1/auth/signup")
 						.cookie(xsrf)
 						.header("X-XSRF-TOKEN", xsrf.getValue())
 						.contentType(MediaType.APPLICATION_JSON)
-						.content("""
-								{"email":"csrf-cookie@example.com","password":"password123"}"""))
+						.content(V1AuthTestSteps.signupBody("csrf-cookie@example.com")))
 				.andExpect(status().isCreated());
 	}
 }
