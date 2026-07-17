@@ -12,6 +12,8 @@ dependencies {
 	// Boot 4는 자동구성이 모듈로 분리 — spring-session-jdbc 단독으론 자동구성이 없어 starter를 쓴다
 	implementation 'org.springframework.boot:spring-boot-starter-session-jdbc'
 	implementation 'org.flywaydb:flyway-core'
+	// /v1 표면 자동 문서화(보조 문서 — 정본은 프론트 API 스펙). prod에서는 비활성(application-prod.yml)
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 	runtimeOnly 'org.postgresql:postgresql'
