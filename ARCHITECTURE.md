@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-15
+> 마지막 갱신: 2026-07-17
 
 ## 1. 제품 한 장 요약
 
@@ -204,6 +204,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫. **C2 카피 조립 완료** — account_analyses 최신 1행의 카피 7종을 additive 서빙(이력 없으면 null) | C1, C2 | ✅ |
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
 | G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일 인증(Spring Security 세션 쿠키·CSRF) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
+| A2 | 뷰 신 스키마 재구축 | 분석 뷰 00~20을 신 crawler 스키마(V15 인플루언서 개편) 기준 재구축 — base 소스 교체(raw_media_page clips·SELF_GQL 내장 타임라인), 뷰티 인플루언서 모수 필터, 04 LLM 후보 뷰 신설, 하니스 신 스키마 시드 재작성. 설계 확정(07-17), 구현은 PR #30 머지 후 | [PR #30](https://github.com/subtle-madness/hypenow-backend/pull/30) 머지 | ⬜ |
 
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
@@ -241,6 +242,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-17 | **분석 뷰 신 스키마 재구축 설계 확정 (A2)** — 신 크롤러는 상세 수집 없이 열거만 하므로(raw_post_detail 소멸) 캡션·지표 소스를 raw_media_page clips 아이템·SELF_GQL 내장 타임라인 노드로 교체(플랫 뷰 체인, base 층에 평탄화 뷰 2종 신설). 서빙 모수는 뷰티 인플루언서만(QUALIFIED ∧ beauty ∧ ¬company, 1,496계정), 미러 계약은 형태 유지+우아한 공백(피드 광고 false·카테고리 믹스 0행 — B4 캡션 분류가 대체 소스), 04_analysis_candidates 신설(캡션 선분석 Haiku+Batch 입구 — 숙성 가드 3일·캡션 필수까지 뷰 담당, 분석됨 대조·상한은 Java). 기반은 PR #30 머지 후 develop | [specs/2026-07-17-analytics-views-new-schema-design.md](docs/superpowers/specs/2026-07-17-analytics-views-new-schema-design.md) |
 | 2026-07-17 | **로그인 월 + 가입 코드 도입** — 제품 구조 변경(사용자 확정): 모든 조회는 로그인 필수, 가입은 단일 공용 코드 필수. SecurityConfig를 화이트리스트로 전환(기본 authenticated, 열린 경로는 /v1/auth·/v1/events/gate(익명 측정 유지)·/v1/stats(랜딩 통계 — P3와 병합 시 추가, 로그인 전 랜딩이 소비)·/health·swagger(로컬)만) — /v1 읽기 4종·구 /api·내부 페이지·프로필 이미지 전부 잠금, 401 계약은 기존 유지(/v1 envelope). 가입 코드는 `app.app_setting`(V6) `signup.code`와 trim 정확 일치, 불일치·미설정 403 INVALID_SIGNUP_CODE(fail-closed — 빈 값 시드로 배포되며 운영자 UPDATE로 개통). 레거시 /api/auth/signup은 코드 우회 뒷문이라 폐쇄(인증 입구 /v1 일원화) | [specs/2026-07-17-login-wall-signup-code-design.md](docs/superpowers/specs/2026-07-17-login-wall-signup-code-design.md) |
 | 2026-07-17 | **P3 랜딩 통계 개통 + 유사 콘텐츠 제외 확정** — GET /v1/stats(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 강한 HTTP 캐시(1시간). **모수는 마이크로 구간 계정(팔로워 3천~5만)과 그 콘텐츠로 통일** — 랜딩 카피·스펙 분포 합계 100과 일치(수집 114 중 55). 조회수는 릴스만(회신표 #16). 분포 %·합계 100 보정은 was 표현 계층(최대 잔여). updatedAt은 미러 실행 시각. **유사 콘텐츠(스펙 6.2)는 제품 고려 대상이 아니라 구현하지 않기로 확정** — 스펙 6.2·회신표 #3은 미구현으로 남김 | [plans/archive/2026-07-17-p3-landing-stats.md](docs/superpowers/plans/archive/2026-07-17-p3-landing-stats.md) |
 | 2026-07-17 | **정적분석 Error Prone 도입** — 전 모듈(4개) 컴파일에 Error Prone 단독 적용(1인 팀 시그널/노이즈 기준으로 SpotBugs 조합 대신 선택). ERROR 등급만 빌드 실패로 걸고 WARNING은 비활성(`disableAllWarnings`), 한국어 테스트 메서드명 컨벤션과 충돌하는 `UnicodeInCode`만 체크 해제. 초기 지적은 전 모듈에서 실질 1건(SecurityConfig `csrfToken.get()` 반환값 무시 — 의도적 지연 발급 해제 호출이라 `unused` 관용구로 정리, baseline/suppress 파일 불필요). 컴파일 단계에 걸리므로 CI(PR #22)의 `./gradlew test`가 그대로 정적분석 체크가 된다 | [PR #25](https://github.com/subtle-madness/hypenow-backend/pull/25) |
