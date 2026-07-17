@@ -45,6 +45,12 @@ public class CollectJob {
 
     private static final Logger log = LoggerFactory.getLogger(CollectJob.class);
 
+    /**
+     * 동시 방문 수 — 프록시 로테이션(요청마다 새 exit IP) 전제, SelfProfileFetcher.FETCH_CONCURRENCY와
+     * 동일 수준. 방문은 계정 단위로 독립(트랜잭션·북키핑 분리)이라 워커 간 공유 상태가 없다.
+     */
+    static final int VISIT_CONCURRENCY = 4;
+
     public record Summary(int visited, int postsUpserted, int postsCollected, int failedVisits) {}
 
     private final CollectProperties collectProps;
@@ -86,37 +92,65 @@ public class CollectJob {
      * 배치 전체가 아니라 방문(인플루언서) 1회 = 트랜잭션 1개로 감싼다 — 원형 보존 원칙(방문 중 일부
      * 실패가 이미 저장된 다른 방문의 raw까지 롤백시키면 안 됨) + 커넥션을 HTTP 대기 내내 점유하지
      * 않기 위함. RuntimeException은 전부(ApifyException 포함) 해당 방문만 실패 처리하고 계속한다.
+     *
+     * 방문은 VISIT_CONCURRENCY 워커가 나눠 병렬 처리한다 — 계정 단위 독립이라 안전하고, 선정
+     * 우선순위(백필 먼저)는 대상 리스트 순서로 근사 유지된다(워커가 앞에서부터 집어간다).
      */
     public Summary run(TriggerType trigger) {
         Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
         List<Influencer> targets = influencers.findCollectTargets(
                 revisitBefore, PageRequest.of(0, settings.collectBatchLimit()));
-        int visited = 0, upserted = 0, collected = 0, failed = 0;
+        var visited = new java.util.concurrent.atomic.AtomicInteger();
+        var upserted = new java.util.concurrent.atomic.AtomicInteger();
+        var collected = new java.util.concurrent.atomic.AtomicInteger();
+        var failed = new java.util.concurrent.atomic.AtomicInteger();
+        var next = new java.util.concurrent.atomic.AtomicInteger();
         progress.start(JobName.COLLECT, targets.size());
         try {
-            for (Influencer inf : targets) {
-                try {
-                    VisitResult r = txTemplate.execute(status -> visit(inf, trigger));
-                    upserted += r.upserted();
-                    collected += r.collected();
-                    visited++;
-                } catch (NotFoundException e) {
-                    // 계정 소멸(404) — 방문 실패(재시도)가 아니라 소프트 딜리트로 종결.
-                    // 방문 트랜잭션은 롤백됐으므로 여기(밖)서 저장해야 확정된다.
-                    inf.setStatus(InfluencerStatus.DELETED);
-                    influencers.save(inf);
-                    log.info("collect 계정 소멸(404) — DELETED: {}", inf.getUsername());
-                } catch (RuntimeException e) {
-                    failed++;   // 인플루언서 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
-                    log.warn("collect 방문 실패: {}", inf.getUsername(), e);
-                } finally {
-                    progress.advance(JobName.COLLECT, 1);
+            if (targets.size() <= 1) {   // 소량은 풀 없이 처리
+                if (!targets.isEmpty()) visitOne(targets.get(0), trigger, visited, upserted, collected, failed);
+            } else {
+                // close()가 제출된 작업 완료까지 대기(Java 21) — SelfProfileFetcher와 동일 관용구
+                try (var pool = java.util.concurrent.Executors.newFixedThreadPool(VISIT_CONCURRENCY)) {
+                    for (int w = 0; w < VISIT_CONCURRENCY; w++) {
+                        pool.submit(() -> {
+                            int i;
+                            while ((i = next.getAndIncrement()) < targets.size()) {
+                                visitOne(targets.get(i), trigger, visited, upserted, collected, failed);
+                            }
+                        });
+                    }
                 }
             }
         } finally {
             progress.finish(JobName.COLLECT);
         }
-        return new Summary(visited, upserted, collected, failed);
+        return new Summary(visited.get(), upserted.get(), collected.get(), failed.get());
+    }
+
+    /** 방문 1회 — 결과·실패를 공유 카운터에 집계한다. 예외 격리 의미는 순차 시절과 동일. */
+    private void visitOne(Influencer inf, TriggerType trigger,
+                          java.util.concurrent.atomic.AtomicInteger visited,
+                          java.util.concurrent.atomic.AtomicInteger upserted,
+                          java.util.concurrent.atomic.AtomicInteger collected,
+                          java.util.concurrent.atomic.AtomicInteger failed) {
+        try {
+            VisitResult r = txTemplate.execute(status -> visit(inf, trigger));
+            upserted.addAndGet(r.upserted());
+            collected.addAndGet(r.collected());
+            visited.incrementAndGet();
+        } catch (NotFoundException e) {
+            // 계정 소멸(404) — 방문 실패(재시도)가 아니라 소프트 딜리트로 종결.
+            // 방문 트랜잭션은 롤백됐으므로 여기(밖)서 저장해야 확정된다.
+            inf.setStatus(InfluencerStatus.DELETED);
+            influencers.save(inf);
+            log.info("collect 계정 소멸(404) — DELETED: {}", inf.getUsername());
+        } catch (RuntimeException e) {
+            failed.incrementAndGet();   // 인플루언서 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
+            log.warn("collect 방문 실패: {}", inf.getUsername(), e);
+        } finally {
+            progress.advance(JobName.COLLECT, 1);
+        }
     }
 
     private record VisitResult(int upserted, int collected) {}

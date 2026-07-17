@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -45,7 +44,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -163,6 +161,34 @@ class CollectJobTest {
     }
 
     @Test
+    void 방문을_여러_워커가_병렬로_처리한다() {
+        // 방문은 계정 단위로 독립(트랜잭션·북키핑 분리)이라 qualify의 SELF fetch처럼 워커 병렬이 안전하다.
+        // 순차 실행이면 동시 진행 fetch가 항상 1에 머물러 실패한다.
+        wireCommon();
+        List<Influencer> targets = new java.util.ArrayList<>();
+        for (long i = 1; i <= 8; i++) targets.add(influencer(i, "par_user" + i, null, null));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(targets);
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        var active = new java.util.concurrent.atomic.AtomicInteger();
+        var maxActive = new java.util.concurrent.atomic.AtomicInteger();
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), any(), eq(TriggerType.MANUAL)))
+                .thenAnswer(inv -> {
+                    maxActive.accumulateAndGet(active.incrementAndGet(), Math::max);
+                    Thread.sleep(100);   // 겹침 관찰 창
+                    active.decrementAndGet();
+                    List<String> names = inv.getArgument(1);
+                    return new CrawlExecutor.Execution(1L,
+                            List.of(profileItem(names.get(0), 1000L, "U-" + names.get(0))));
+                });
+
+        var summary = job().run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isEqualTo(8);
+        assertThat(maxActive.get()).isGreaterThanOrEqualTo(3);  // 워커 4개 병렬 실행의 증거
+        assertThat(targets).allSatisfy(t -> assertThat(t.getLastCollectedAt()).isEqualTo(NOW));
+    }
+
+    @Test
     void 프로필_404_계정은_방문_실패가_아니라_소프트_딜리트된다() {
         wireCommon();
         Influencer gone = influencer(1L, "gone", null, null);
@@ -251,11 +277,12 @@ class CollectJobTest {
 
         job().run(TriggerType.MANUAL);
 
+        // 우선순위는 선정 쿼리 정렬(백필 먼저)이 담당하고, 병렬 방문은 리스트 앞에서부터 집어간다 —
+        // 워커 간 완료 순서는 보장되지 않으므로 호출 순서(InOrder)가 아니라 "둘 다 방문됨"을 검증한다.
         verify(influencers).findCollectTargets(any(), eq(PageRequest.of(0, 5)));
-        InOrder order = inOrder(profileSourceSelector);
-        order.verify(profileSourceSelector).fetchAndSupplement(
+        verify(profileSourceSelector).fetchAndSupplement(
                 eq(JobName.COLLECT), eq(List.of("backfill_user")), eq(TriggerType.MANUAL));
-        order.verify(profileSourceSelector).fetchAndSupplement(
+        verify(profileSourceSelector).fetchAndSupplement(
                 eq(JobName.COLLECT), eq(List.of("track_user")), eq(TriggerType.MANUAL));
     }
 
