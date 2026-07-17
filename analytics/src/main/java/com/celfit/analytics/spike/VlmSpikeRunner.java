@@ -1,7 +1,7 @@
 package com.celfit.analytics.spike;
 
-import com.celfit.analytics.analyze.AnalyzeRunner;
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.config.JobConfig;
 import com.celfit.analytics.llm.AnthropicContentAttributeAnalyzer;
 import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.llm.ContentAttributes;
@@ -37,7 +37,7 @@ public class VlmSpikeRunner {
 		return args -> {
 			int limit = Math.min(10, Integer.parseInt(
 					env.getRequiredProperty("analytics.vlm-spike-limit")));
-			Predicate<String> alive = AnalyzeRunner.headPrecheck();
+			Predicate<String> alive = JobConfig.headPrecheck();
 			// 프리체크 탈락 대비 3배 후보 — 최신 수집순
 			var candidates = rawJdbcTemplate.query("""
 					SELECT c.short_code, d.caption, d.thumbnail_url, d.captured_at
