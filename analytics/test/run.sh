@@ -6,7 +6,8 @@ set -euo pipefail
 shopt -s nullglob
 cd "$(dirname "$0")/.."
 
-PSQL=(docker exec -i hypenow-crawler-postgres-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q)
+# 컨테이너 이름은 compose 디렉토리명 기반이라 머신마다 다르다 — PG_CONTAINER로 오버라이드
+PSQL=(docker exec -i "${PG_CONTAINER:-crawler-postgres-1}" psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q)
 
 # 1) 뷰 적용 (파일명 순, 멱등). 아직 뷰가 없으면 건너뛴다.
 for v in views/*.sql; do
