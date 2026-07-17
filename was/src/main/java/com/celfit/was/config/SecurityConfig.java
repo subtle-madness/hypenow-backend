@@ -104,7 +104,7 @@ public class SecurityConfig {
 		@Override
 		public void handle(HttpServletRequest request, HttpServletResponse response, Supplier<CsrfToken> csrfToken) {
 			xor.handle(request, response, csrfToken);
-			csrfToken.get(); // 지연 발급 해제 — 쿠키가 없으면 이 시점에 XSRF-TOKEN이 내려간다
+			var unused = csrfToken.get(); // 지연 발급 해제 — 쿠키가 없으면 이 시점에 XSRF-TOKEN이 내려간다 (반환값은 불필요)
 		}
 
 		@Override
