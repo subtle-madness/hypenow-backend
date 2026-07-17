@@ -210,7 +210,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 |---|---|---|---|---|
 | P1 | V1 읽기 API | envelope·에러 공통 + `/v1/contents`·`/v1/contents/{id}/ai-report`·`/v1/influencers/{id}`(+ai-report). 병행 데이터 보강: hypeScore 재정의(0~100)·유통사 슬러그·updatedAt·email/externalLink 조사 (07-15 개통) | H, D, E, B4 | ✅ |
 | P2 | 서비스 데이터 정렬 | G 확장 — Spring Session JDBC(`app.spring_session`, 세션 목록·개별 로그아웃·hypenow-session 30일 슬라이딩), `/v1/auth`(가입·로그인·로그아웃·레이트리밋), users 프로필 15필드(V3), 저장 2종 스펙 계약화(memo upsert V4·카드 조합 목록), `/v1/me` 계정(프로필 PATCH·비번·세션·프로필 이미지·탈퇴), 게이트 이벤트(V5), P1 응답 개인화 필드(isContentsSaved/isInfluencerSaved) (07-15 개통) | G, P1 | ✅ |
-| P3 | 부가 | `/v1/stats` + `/v1/contents/{id}/similar`(유사도 사전계산 — analytics 신규) | P1 | ⬜ |
+| P3 | 부가 | `/v1/stats` — 랜딩 통계(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 모수는 마이크로 구간 계정(3천~5만)·강한 HTTP 캐시(1시간). 유사 콘텐츠(6.2)는 **범위 제외 확정**(제품 고려 대상 아님 — 미구현) (07-17 개통) | P1 | ✅ |
 
 기존 `/api/*`는 프론트 전환 완료까지 병존, fit(스펙 6.18)은 보류.
 
@@ -240,6 +240,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-17 | **P3 랜딩 통계 개통 + 유사 콘텐츠 제외 확정** — GET /v1/stats(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 강한 HTTP 캐시(1시간). **모수는 마이크로 구간 계정(팔로워 3천~5만)과 그 콘텐츠로 통일** — 랜딩 카피·스펙 분포 합계 100과 일치(수집 114 중 55). 조회수는 릴스만(회신표 #16). 분포 %·합계 100 보정은 was 표현 계층(최대 잔여). updatedAt은 미러 실행 시각. **유사 콘텐츠(스펙 6.2)는 제품 고려 대상이 아니라 구현하지 않기로 확정** — 스펙 6.2·회신표 #3은 미구현으로 남김 | [plans/archive/2026-07-17-p3-landing-stats.md](docs/superpowers/plans/archive/2026-07-17-p3-landing-stats.md) |
 | 2026-07-15 | **P2 서비스 데이터 정렬 개통** — /v1 인증·계정·저장·이벤트를 스펙 계약으로. HttpSession→Spring Session JDBC(app.spring_session, 세션 목록·개별 로그아웃, hypenow-session 30일 슬라이딩). 세션 principal은 안정 형상(userId·email — CredentialsContainer로 해시 미영속). users 프로필 15필드(V3), 저장 memo(V4), gate_events(V5). 세션 노출 id는 sha256 alias, 타 세션 삭제는 404 은닉. 프로필 이미지 로컬 저장. 레이트리밋 인메모리(분당 스윕). 게이트 이벤트는 CSRF 면제(익명 첫 방문자가 XSRF 쿠키 선행 없이 이벤트를 쏘도록 — append-only 측정 로그라 표적 가치 없음, 완전 익명 curl E2E 403→204 확인) | [plans/archive/2026-07-15-p2-service-data-alignment.md](docs/superpowers/plans/archive/2026-07-15-p2-service-data-alignment.md) |
 | 2026-07-15 | **P1 V1 읽기 API 개통** — `/v1` envelope 계약으로 리더보드·콘텐츠 AI 리포트·인플루언서 프로필/리포트 4종 서빙. hypeScore 스펙 5.4 산식(0~100) 재정의 — 피드는 views 부재로 팔로워 ER 축 대체 산식(cbrt(axis²×fresh)×100, 축=min(min(ER,0.3)/0.10,1)), 산식은 `analytics.hype_score()` SQL 함수 단일 원천. 유통사 필터는 `beauty_distributors.slug` 사전 해석, 카테고리 확장 매칭은 `beauty_taxonomy` SQL 처리. email은 미수집 null 확정, 매핑 단계 405/미존재 경로 404는 envelope 미적용(수용) | [plans/archive/2026-07-15-p1-v1-read-api.md](docs/superpowers/plans/archive/2026-07-15-p1-v1-read-api.md) |
 | 2026-07-15 | **프론트 API 스펙 v1 전체 채택** (fit 6.18 제외·보류) — `/v1` prefix + envelope 계약을 was 정본으로, 기존 `/api/*`와 병존 후 전환. 분석 윈도우는 스펙과 12로 정렬(develop 기본값 그대로). 인증은 G 구현 유지+확장: HttpSession→Spring Session JDBC(세션 목록·개별 로그아웃), 쿠키 `hypenow-session` 슬라이딩 30일, same-site 전제(도메인 확보로 Vercel rewrite 동일 오리진 — 아래 배포 행 참조). hypeScore는 스펙 5.4 산식(0~100)으로 재정의(현행 원값 방식 대체). 트랙 P1(V1 읽기)→P2(서비스 데이터 정렬)→P3(stats·유사도) 분해 | [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md) |

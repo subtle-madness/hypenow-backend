@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 근거 스펙: [specs/2026-07-15-hypenow-api-spec-alignment-design.md §6](../specs/2026-07-15-hypenow-api-spec-alignment-design.md)
+> 상태: ✅ 구현/실행/반영됨 (2026-07-17 개통) · 근거 스펙: [specs/2026-07-15-hypenow-api-spec-alignment-design.md §6](../../specs/2026-07-15-hypenow-api-spec-alignment-design.md)
 
 **Goal:** 프론트 랜딩의 "데이터 투명성" 섹션(현재 프론트 상수)을 실데이터 API `GET /v1/stats`(스펙 6.20)로 교체한다.
 
