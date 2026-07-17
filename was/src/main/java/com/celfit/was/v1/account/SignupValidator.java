@@ -1,0 +1,80 @@
+package com.celfit.was.v1.account;
+
+import com.celfit.was.v1.common.V1ApiException;
+import java.util.Set;
+import java.util.regex.Pattern;
+import org.springframework.stereotype.Component;
+
+/**
+ * v1 가입 요청 검증(스펙 6.15) — 위반 시 V1ApiException.validation(한국어 메시지).
+ * enum Set 5종 + phoneCountryCode는 V3__users_profile_fields.sql의 CHECK 제약과 동일해야 한다.
+ */
+@Component
+public class SignupValidator {
+
+	private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+	private static final int PASSWORD_MIN_LENGTH = 8;
+
+	private static final Set<String> USER_TYPES = Set.of("brand", "agency", "distributor", "influencer");
+	private static final Set<String> SIGNUP_ROUTES = Set.of("portal_search", "blog_community", "pr_article",
+			"social_media", "offline_event", "referral", "other");
+	private static final Set<String> PHONE_COUNTRY_CODES = Set.of("+82", "+1", "+81", "+86");
+	private static final Set<String> COMPANY_SIZES = Set.of("2-10", "11-50", "51-200", "201-500", "501-1000", "1001+");
+	private static final Set<String> INDUSTRIES = Set.of("fashion", "beauty", "fnb", "home_living", "baby_kids");
+	private static final Set<String> JOB_TITLES = Set.of("representative", "executive", "team_lead", "staff", "other");
+
+	public void validate(SignupRequest request) {
+		if (request.email() == null || !EMAIL_PATTERN.matcher(request.email()).matches()) {
+			throw V1ApiException.validation("올바른 이메일 형식을 입력해 주세요.");
+		}
+		validatePassword(request.password());
+		requireText(request.name(), "이름을 입력해 주세요.");
+		requireIn(USER_TYPES, request.userType(), "userType");
+		requireIn(SIGNUP_ROUTES, request.signupRoute(), "signupRoute");
+		requireIn(PHONE_COUNTRY_CODES, request.phoneCountryCode(), "phoneCountryCode");
+		requireText(request.phoneNumber(), "전화번호를 입력해 주세요.");
+		requireText(request.companyName(), "회사명을 입력해 주세요.");
+		requireIn(COMPANY_SIZES, request.companySize(), "companySize");
+		requireIn(INDUSTRIES, request.industry(), "industry");
+		requireIn(JOB_TITLES, request.jobTitle(), "jobTitle");
+		if (!Boolean.TRUE.equals(request.agreedTerms()) || !Boolean.TRUE.equals(request.agreedPrivacy())
+				|| !Boolean.TRUE.equals(request.agreedAge14())) {
+			throw V1ApiException.validation("필수 약관에 모두 동의해 주세요.");
+		}
+	}
+
+	/** PATCH /v1/me 재사용(스펙 6.13) — 가입과 동일한 어휘 검사. */
+	public void requireJobTitle(String value) {
+		requireIn(JOB_TITLES, value, "jobTitle");
+	}
+
+	/** PATCH /v1/me 재사용(스펙 6.13) — 가입과 동일한 어휘 검사. */
+	public void requirePhoneCountryCode(String value) {
+		requireIn(PHONE_COUNTRY_CODES, value, "phoneCountryCode");
+	}
+
+	/** 비밀번호 정책(스펙 6.15) — 8자 이상 + 영대문자·소문자·숫자·특수문자 각 1자 이상. PUT /v1/me/password도 재사용. */
+	public void validatePassword(String password) {
+		boolean ok = password != null
+				&& password.length() >= PASSWORD_MIN_LENGTH
+				&& password.chars().anyMatch(Character::isUpperCase)
+				&& password.chars().anyMatch(Character::isLowerCase)
+				&& password.chars().anyMatch(Character::isDigit)
+				&& password.chars().anyMatch(c -> !Character.isLetterOrDigit(c));
+		if (!ok) {
+			throw V1ApiException.validation("비밀번호는 8자 이상, 영문 대·소문자와 숫자, 특수문자를 모두 포함해야 해요.");
+		}
+	}
+
+	private void requireText(String value, String message) {
+		if (value == null || value.isBlank()) {
+			throw V1ApiException.validation(message);
+		}
+	}
+
+	private void requireIn(Set<String> allowed, String value, String field) {
+		if (value == null || !allowed.contains(value)) {
+			throw V1ApiException.validation(field + " 값이 올바르지 않아요.");
+		}
+	}
+}

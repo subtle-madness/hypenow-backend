@@ -73,6 +73,12 @@ public class AuthController {
 			SecurityContextHolder.setContext(context);
 			securityContextRepository.saveContext(context, httpRequest, httpResponse);
 
+			// 세션 목록 표기용(스펙 6.14) — 로그인 시점 UA를 1회 파싱해 세션 attribute로 남긴다
+			HttpSession session = httpRequest.getSession(true);
+			String ua = httpRequest.getHeader("User-Agent");
+			session.setAttribute("session.browser", UserAgentParser.browser(ua));
+			session.setAttribute("session.os", UserAgentParser.os(ua));
+
 			return UserResponse.from((AppUserDetails) authResult.getPrincipal());
 		} catch (AuthenticationException e) {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "이메일 또는 비밀번호가 올바르지 않습니다");

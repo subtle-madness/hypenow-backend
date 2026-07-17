@@ -2,15 +2,22 @@ package com.celfit.was.v1.content;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.auth.AppUser;
+import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.common.SavedLookup;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -29,6 +36,51 @@ class V1ContentControllerTest {
 
 	@MockitoBean
 	V1ContentRepository repository;
+
+	@MockitoBean
+	SavedLookup savedLookup;
+
+	private static AppUserDetails principal() {
+		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash",
+				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
+	}
+
+	private static ContentCardRow row(String code) {
+		return new ContentCardRow(code, "https://thumb/" + code, "캡션",
+				OffsetDateTime.parse("2026-07-02T03:00:00Z"), "reels", new BigDecimal("20"),
+				"https://ig/" + code, 1000L, 100L, 10L, 500L,
+				OffsetDateTime.parse("2026-07-05T03:00:00Z"), "makeup", null, "organic", null, null, null,
+				"alpha", "알파", "https://pic/alpha.jpg", 5000L);
+	}
+
+	@Test
+	void 비로그인이면_isContentsSaved_필드가_없다() throws Exception {
+		given(repository.findCards(any())).willReturn(List.of(row("c1")));
+		given(repository.countCards(any())).willReturn(1L);
+		given(repository.findDistributorOptions()).willReturn(List.of());
+
+		mockMvc.perform(get("/v1/contents")
+						.param("startDate", "2026-07-05").param("endDate", "2026-07-11"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].id").value("c1"))
+				.andExpect(jsonPath("$.data[0].isContentsSaved").doesNotExist());
+	}
+
+	@Test
+	void 로그인이면_저장_여부로_isContentsSaved를_채운다() throws Exception {
+		given(repository.findCards(any())).willReturn(List.of(row("c1"), row("c2")));
+		given(repository.countCards(any())).willReturn(2L);
+		given(repository.findDistributorOptions()).willReturn(List.of());
+		given(savedLookup.savedShortCodes(7L)).willReturn(Set.of("c1"));
+
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
+						.param("startDate", "2026-07-05").param("endDate", "2026-07-11"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].id").value("c1"))
+				.andExpect(jsonPath("$.data[0].isContentsSaved").value(true))
+				.andExpect(jsonPath("$.data[1].id").value("c2"))
+				.andExpect(jsonPath("$.data[1].isContentsSaved").value(false));
+	}
 
 	@Test
 	void 성공_응답은_envelope와_meta를_가진다() throws Exception {

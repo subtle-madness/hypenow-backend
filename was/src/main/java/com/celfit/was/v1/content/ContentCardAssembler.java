@@ -26,7 +26,16 @@ public class ContentCardAssembler {
 		this.objectMapper = objectMapper;
 	}
 
+	/** 개인화 필드 없는 카드 — 비로그인 응답 경로가 쓴다(isContentsSaved=null → 직렬화 생략). */
 	public ContentCard toCard(ContentCardRow r) {
+		return toCard(r, null);
+	}
+
+	/**
+	 * saved 마킹을 실은 카드 — 로그인 응답 경로가 쓴다(스펙 2절 Optional 규약).
+	 * saved=null이면 필드 부재(비로그인), true/false면 저장 여부.
+	 */
+	public ContentCard toCard(ContentCardRow r, Boolean saved) {
 		return new ContentCard(
 				r.shortCode(), r.thumbnailUrl(), r.caption(),
 				r.postedAt() == null ? null : r.postedAt().atZoneSameInstant(KST).toLocalDate().toString(),
@@ -36,7 +45,8 @@ public class ContentCardAssembler {
 				r.hypeScore(), r.views(), r.likes(), r.comments(),
 				names(r.brandsJson()), names(r.productsJson()), strings(r.distributorsJson()),
 				new ContentCard.Influencer(r.handle(), r.handle(), r.displayName(),
-						r.profileImageUrl(), r.followers()));
+						r.profileImageUrl(), r.followers()),
+				saved);
 	}
 
 	/** jsonb 문자열 배열 → List. null(미분석)은 빈 배열 — 스펙 카드에 null 배열은 없다. */

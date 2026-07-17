@@ -13,9 +13,15 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -62,12 +68,20 @@ public class SecurityConfig {
 		http
 				.csrf(csrf -> csrf
 						.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()))
+						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler())
+						// 게이트 이벤트만 CSRF 면제 — 익명 첫 방문자는 XSRF-TOKEN 쿠키를 미리 받을 방법이
+						// 없어(첫 요청이 곧 이벤트) 면제 없이는 스펙 6.19의 "익명 기록"이 유실된다.
+						// append-only 측정 로그라 CSRF 표적 가치가 없고(위조돼도 남의 데이터 변조 불가),
+						// fire-and-forget이라 안전하다.
+						.ignoringRequestMatchers("/v1/events/gate"))
 				.cors(cors -> cors.configurationSource(corsConfigurationSource()))
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers("/api/me", "/api/saved/**").authenticated()
+						// v1 보호 경로(스펙 3.2) — auth·events·읽기 4종은 permitAll 유지
+						.requestMatchers("/v1/me/**", "/v1/saved-contents/**", "/v1/saved-influencers/**")
+						.authenticated()
 						.anyRequest().permitAll())
-				.exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
 				.logout(AbstractHttpConfigurer::disable);
@@ -100,11 +114,37 @@ public class SecurityConfig {
 		}
 	}
 
+	/**
+	 * 미인증 401 진입점 — /v1 경로는 스펙 3.1 envelope JSON을 직접 쓰고(UNAUTHORIZED "로그인이 필요합니다."),
+	 * 그 외(/api 등 구 표면)는 기존 HttpStatusEntryPoint 동작(빈 401 본문)을 유지한다.
+	 * advice(V1ExceptionAdvice)는 컨트롤러 도달 후에만 작동해 필터 단계 401은 여기서 직접 써야 한다.
+	 */
+	static final class V1AwareAuthenticationEntryPoint implements AuthenticationEntryPoint {
+
+		private static final String V1_UNAUTHORIZED_BODY =
+				"{\"success\":false,\"data\":null,\"error\":{\"code\":\"UNAUTHORIZED\",\"message\":\"로그인이 필요합니다.\"}}";
+
+		private final AuthenticationEntryPoint fallback = new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED);
+
+		@Override
+		public void commence(HttpServletRequest request, HttpServletResponse response,
+				AuthenticationException authException) throws IOException, ServletException {
+			if (request.getRequestURI().startsWith("/v1/")) {
+				response.setStatus(HttpStatus.UNAUTHORIZED.value());
+				response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+				response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+				response.getWriter().write(V1_UNAUTHORIZED_BODY);
+			} else {
+				fallback.commence(request, response, authException);
+			}
+		}
+	}
+
 	@Bean
 	public CorsConfigurationSource corsConfigurationSource() {
 		CorsConfiguration configuration = new CorsConfiguration();
 		configuration.setAllowedOrigins(Arrays.asList(allowedOrigins));
-		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE"));
+		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE")); // PATCH: /v1/me(스펙 6.13)
 		configuration.setAllowedHeaders(List.of("*"));
 		configuration.setAllowCredentials(true);
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
