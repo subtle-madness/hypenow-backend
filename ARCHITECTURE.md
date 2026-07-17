@@ -240,6 +240,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-17 | **GitHub Actions CI 도입** — develop 대상 push·PR마다 `./gradlew test` 전체 실행(.github/workflows/ci.yml). Testcontainers는 러너 기본 Docker로 충분, 외부 키 불필요. Gradle 캐시는 gradle/actions/setup-gradle(develop push에서 쓰기, PR은 읽기). SQL 하니스는 제외 — 뷰가 실DB(V6 시점) 스키마를 전제해 리포 마이그레이션(V8+ influencer 개편)과 불일치, 프레시 DB 재현 불가 확인(§8에 블로커 기록) | .github/workflows/ci.yml |
 | 2026-07-17 | **P2 운영 배포 + 세션 쿠키 SameSite=Lax 확정** — P2(가입·로그인·/v1/me·저장·레이트리밋)를 api.hypenow.io에 배포, 운영 curl E2E(가입 201→me 200→로그아웃 204→재로그인 200, 쿠키·CSRF 왕복)와 로그인 레이트리밋(분당 10 초과 429) 실측 통과. 미결이던 prod 쿠키 SameSite는 **Lax로 확정**(사용자 확인) — www↔api는 hypenow.io 하위 same-site라 전송 손실 없고 스펙과 일치, CSRF 방어 이중화. 테스트 계정은 검증 후 DB 삭제 | [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23) |
 | 2026-07-15 | **P2 서비스 데이터 정렬 개통** — /v1 인증·계정·저장·이벤트를 스펙 계약으로. HttpSession→Spring Session JDBC(app.spring_session, 세션 목록·개별 로그아웃, hypenow-session 30일 슬라이딩). 세션 principal은 안정 형상(userId·email — CredentialsContainer로 해시 미영속). users 프로필 15필드(V3), 저장 memo(V4), gate_events(V5). 세션 노출 id는 sha256 alias, 타 세션 삭제는 404 은닉. 프로필 이미지 로컬 저장. 레이트리밋 인메모리(분당 스윕). 게이트 이벤트는 CSRF 면제(익명 첫 방문자가 XSRF 쿠키 선행 없이 이벤트를 쏘도록 — append-only 측정 로그라 표적 가치 없음, 완전 익명 curl E2E 403→204 확인) | [plans/archive/2026-07-15-p2-service-data-alignment.md](docs/superpowers/plans/archive/2026-07-15-p2-service-data-alignment.md) |
 | 2026-07-15 | **P1 V1 읽기 API 개통** — `/v1` envelope 계약으로 리더보드·콘텐츠 AI 리포트·인플루언서 프로필/리포트 4종 서빙. hypeScore 스펙 5.4 산식(0~100) 재정의 — 피드는 views 부재로 팔로워 ER 축 대체 산식(cbrt(axis²×fresh)×100, 축=min(min(ER,0.3)/0.10,1)), 산식은 `analytics.hype_score()` SQL 함수 단일 원천. 유통사 필터는 `beauty_distributors.slug` 사전 해석, 카테고리 확장 매칭은 `beauty_taxonomy` SQL 처리. email은 미수집 null 확정, 매핑 단계 405/미존재 경로 404는 envelope 미적용(수용) | [plans/archive/2026-07-15-p1-v1-read-api.md](docs/superpowers/plans/archive/2026-07-15-p1-v1-read-api.md) |
@@ -275,7 +276,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 항목 | 상태 |
 |---|---|
-| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행 — CI 환경·도입 시점 |
+| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. **블로커(07-17 확인)**: 뷰·하니스가 실DB(V6 시점) 스키마(`account`/`account_id`)를 전제하는데 실DB는 V7~V12 미적용 상태로 멈춰 있고, 프레시 DB에 리포 마이그레이션을 전부 적용하면 V8 리네임(account→influencer)으로 뷰가 깨짐 — analytics 재구축(뷰의 신 스키마 전환) 후 CI 연결 |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
