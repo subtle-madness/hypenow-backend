@@ -80,8 +80,9 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
   PK, status 어휘 reviewing·contact_planned·collaborating + memo) / `saved_contents`(user_id+short_code PK,
   P2에서 memo 추가 V4) / `spring_session`·`spring_session_attributes`(P2 Spring Session JDBC 세션 영속화 V2,
   `initialize-schema=never`로 Flyway가 유일 DDL 원천) / `gate_events`(P2 게이트/잠금 측정 이벤트 V5 —
-  user_id nullable 익명 허용·payload jsonb·append-only). handle·short_code는 분석 결과 **논리 참조만**
-  (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V5).
+  user_id nullable 익명 허용·payload jsonb·append-only) / `app_setting`(V6 — was 런타임 설정 key-value,
+  첫 키 `signup.code` 가입 코드, 빈 값=가입 차단 fail-closed). handle·short_code는 분석 결과 **논리 참조만**
+  (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V6).
 
 ## 4. 관통하는 설계 원칙
 
@@ -240,6 +241,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-17 | **로그인 월 + 가입 코드 도입** — 제품 구조 변경(사용자 확정): 모든 조회는 로그인 필수, 가입은 단일 공용 코드 필수. SecurityConfig를 화이트리스트로 전환(기본 authenticated, 열린 경로는 /v1/auth·/v1/events/gate(익명 측정 유지)·/health·swagger(로컬)만) — /v1 읽기 4종·구 /api·내부 페이지·프로필 이미지 전부 잠금, 401 계약은 기존 유지(/v1 envelope). 가입 코드는 `app.app_setting`(V6) `signup.code`와 trim 정확 일치, 불일치·미설정 403 INVALID_SIGNUP_CODE(fail-closed — 빈 값 시드로 배포되며 운영자 UPDATE로 개통). 레거시 /api/auth/signup은 코드 우회 뒷문이라 폐쇄(인증 입구 /v1 일원화) | [specs/2026-07-17-login-wall-signup-code-design.md](docs/superpowers/specs/2026-07-17-login-wall-signup-code-design.md) |
 | 2026-07-17 | **P2 운영 배포 + 세션 쿠키 SameSite=Lax 확정** — P2(가입·로그인·/v1/me·저장·레이트리밋)를 api.hypenow.io에 배포, 운영 curl E2E(가입 201→me 200→로그아웃 204→재로그인 200, 쿠키·CSRF 왕복)와 로그인 레이트리밋(분당 10 초과 429) 실측 통과. 미결이던 prod 쿠키 SameSite는 **Lax로 확정**(사용자 확인) — www↔api는 hypenow.io 하위 same-site라 전송 손실 없고 스펙과 일치, CSRF 방어 이중화. 테스트 계정은 검증 후 DB 삭제 | [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23) |
 | 2026-07-15 | **P2 서비스 데이터 정렬 개통** — /v1 인증·계정·저장·이벤트를 스펙 계약으로. HttpSession→Spring Session JDBC(app.spring_session, 세션 목록·개별 로그아웃, hypenow-session 30일 슬라이딩). 세션 principal은 안정 형상(userId·email — CredentialsContainer로 해시 미영속). users 프로필 15필드(V3), 저장 memo(V4), gate_events(V5). 세션 노출 id는 sha256 alias, 타 세션 삭제는 404 은닉. 프로필 이미지 로컬 저장. 레이트리밋 인메모리(분당 스윕). 게이트 이벤트는 CSRF 면제(익명 첫 방문자가 XSRF 쿠키 선행 없이 이벤트를 쏘도록 — append-only 측정 로그라 표적 가치 없음, 완전 익명 curl E2E 403→204 확인) | [plans/archive/2026-07-15-p2-service-data-alignment.md](docs/superpowers/plans/archive/2026-07-15-p2-service-data-alignment.md) |
 | 2026-07-15 | **P1 V1 읽기 API 개통** — `/v1` envelope 계약으로 리더보드·콘텐츠 AI 리포트·인플루언서 프로필/리포트 4종 서빙. hypeScore 스펙 5.4 산식(0~100) 재정의 — 피드는 views 부재로 팔로워 ER 축 대체 산식(cbrt(axis²×fresh)×100, 축=min(min(ER,0.3)/0.10,1)), 산식은 `analytics.hype_score()` SQL 함수 단일 원천. 유통사 필터는 `beauty_distributors.slug` 사전 해석, 카테고리 확장 매칭은 `beauty_taxonomy` SQL 처리. email은 미수집 null 확정, 매핑 단계 405/미존재 경로 404는 envelope 미적용(수용) | [plans/archive/2026-07-15-p1-v1-read-api.md](docs/superpowers/plans/archive/2026-07-15-p1-v1-read-api.md) |
