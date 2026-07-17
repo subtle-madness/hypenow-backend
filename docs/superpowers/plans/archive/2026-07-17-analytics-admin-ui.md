@@ -1,6 +1,6 @@
 # analytics 어드민 UI + 스케줄러 골격 구현 계획
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-17 — 9개 태스크 전부 완료, E2E 검증)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** analytics를 상주 웹 서버(8082)로 전환하고 크롤러 어드민 패턴의 `/ui`(잡 트리거 4종·LLM 예상 비용 카드·로그 패널)와 스케줄러 골격(기본 off)을 붙인다.

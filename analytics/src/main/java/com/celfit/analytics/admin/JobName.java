@@ -19,10 +19,10 @@ public enum JobName {
 
 	/** URL 경로 조각 — account-analyze 식 소문자 하이픈. */
 	public String slug() {
-		return name().toLowerCase().replace('_', '-');
+		return name().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
 	}
 
 	public static JobName fromSlug(String slug) {
-		return valueOf(slug.toUpperCase().replace('-', '_'));
+		return valueOf(slug.toUpperCase(java.util.Locale.ROOT).replace('-', '_'));
 	}
 }
