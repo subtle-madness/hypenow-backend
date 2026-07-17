@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-15
+> 마지막 갱신: 2026-07-17
 
 ## 1. 제품 한 장 요약
 
@@ -37,7 +37,7 @@ MVP 범위 (07-14 정정 — 댓글 제외):
 | 모듈 | 데이터 접근 | 역할 | 기술 |
 |---|---|---|---|
 | `crawler` | raw DB 쓰기 | Apify로 발굴→판정→상세 수집, 원형(raw) 적재 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
-| `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 헤드리스 배치, JdbcTemplate ×2 |
+| `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 상주 서버(8082, 어드민 `/ui`) + one-shot CLI(cloud), JdbcTemplate ×2 |
 | `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + 서비스 기능(로그인·후보 관리 등) | Spring Boot, JdbcClient |
 | `contract-analysis` *(신설 예정)* | — | 분석 결과의 record·enum — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
 
@@ -204,7 +204,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫. **C2 카피 조립 완료** — account_analyses 최신 1행의 카피 7종을 additive 서빙(이력 없으면 null) | C1, C2 | ✅ |
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
 | G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일 인증(Spring Security 세션 쿠키·CSRF) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
-| I | analytics 어드민 | analytics 상주 서버화(8082) + `/ui` 잡 트리거 4종(미러·LLM 3종, 잡별 락)·LLM 예상 비용 카드·로그 패널(LogBuffer 복제) + 스케줄러 골격(`analytics.schedule.enabled`, 기본 off). cloud push는 one-shot CLI 보존 — [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) | A | ⬜ |
+| I | analytics 어드민 | analytics 상주 서버화(8082) + `/ui` 잡 트리거 4종(미러·LLM 3종, 잡별 락)·LLM 예상 비용 카드·로그 패널(LogBuffer 복제) + 스케줄러 골격(`analytics.schedule.enabled`, 기본 off). cloud push는 one-shot CLI 보존 — [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) | A | ✅ |
 
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
@@ -292,7 +292,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. **블로커(07-17 확인)**: 뷰·하니스가 실DB(V6 시점) 스키마(`account`/`account_id`)를 전제하는데 실DB는 V7~V12 미적용 상태로 멈춰 있고, 프레시 DB에 리포 마이그레이션을 전부 적용하면 V8 리네임(account→influencer)으로 뷰가 깨짐 — analytics 재구축(뷰의 신 스키마 전환) 후 CI 연결 |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
-| 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
+| 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
 | ~~세션·쿠키 운영 전환~~ | 해소 — HTTPS·Secure 쿠키(07-15, application-prod.yml), 세션 인메모리→spring-session-jdbc(07-15, P2 `app.spring_session`), SameSite는 Lax 확정(07-17, [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23)) |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |
