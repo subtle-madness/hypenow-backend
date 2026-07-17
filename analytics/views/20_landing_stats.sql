@@ -21,15 +21,23 @@ micro_content AS (
   FROM analytics.v_base_content c
   JOIN analytics.v_base_detail d USING (content_id)
   JOIN micro_account m ON m.username = c.owner_username
+),
+content_agg AS (
+  -- 조회수는 릴스만 (피드에 값이 있어도 FILTER로 배제).
+  SELECT count(*) AS contents_count,
+         COALESCE(sum(views) FILTER (WHERE content_type = 'reels'), 0)::bigint AS total_views,
+         COALESCE(round(avg(views) FILTER (WHERE content_type = 'reels')), 0)::bigint AS avg_views
+  FROM micro_content
+),
+account_agg AS (
+  -- 구간별 '계정 수'까지만 — %·합계 100 보정은 was 몫. 구간 합 = influencers_count.
+  SELECT count(*) AS influencers_count,
+         count(*) FILTER (WHERE followers < 10000) AS followers3k10k,
+         count(*) FILTER (WHERE followers >= 10000 AND followers < 30000) AS followers10k30k,
+         count(*) FILTER (WHERE followers >= 30000) AS followers30k50k
+  FROM micro_account
 )
-SELECT
-  (SELECT count(*) FROM micro_content)                                          AS contents_count,
-  (SELECT count(*) FROM micro_account)                                          AS influencers_count,
-  COALESCE((SELECT sum(views) FROM micro_content WHERE content_type = 'reels'), 0)::bigint
-                                                                                AS total_views,
-  COALESCE((SELECT round(avg(views)) FROM micro_content WHERE content_type = 'reels'), 0)::bigint
-                                                                                AS avg_views,
-  (SELECT count(*) FROM micro_account WHERE followers < 10000)                  AS followers3k10k,
-  (SELECT count(*) FROM micro_account WHERE followers >= 10000 AND followers < 30000) AS followers10k30k,
-  (SELECT count(*) FROM micro_account WHERE followers >= 30000)                 AS followers30k50k,
-  now()                                                                         AS updated_at;
+-- 집계는 GROUP BY가 없으면 모수가 비어도 항상 1행 → CROSS JOIN 결과도 항상 1행.
+SELECT contents_count, influencers_count, total_views, avg_views,
+       followers3k10k, followers10k30k, followers30k50k, now() AS updated_at
+FROM content_agg CROSS JOIN account_agg;
