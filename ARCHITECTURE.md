@@ -184,9 +184,11 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), was 랭킹 대시보드(analysis DB의 기존
-미러 테이블을 읽음). ※ analytics 구현은 2026-07-12 초기화 — DB에 남은 뷰·미러 테이블은 동작하지만
-소스는 백지, 태스크 A부터 재구축.
+**운영 중**: crawler 파이프라인(discover→qualify→aggregate), analytics 상주 어드민(8082 `/ui` —
+미러·LLM 잡 트리거, 태스크 I), was `/v1` API(스펙 v1 P1~P3 + 로그인 월) + 검증용 내부 페이지
+`/coverage`(celfit-front **배포본(origin/main)** 실소비 필드 기준 커버리지 매트릭스 — 07-18 재정의).
+구 랭킹 대시보드(`/dashboard`)와 게시물 데모(`/posts/{shortCode}`)는 프론트 전환 완료까지 잔존 —
+`/dashboard`는 옛 산출물(`content_ranking`)을 읽는다(정리 §8).
 
 **상세 분석 작업 트랙** (구조 설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) ·
 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)):
@@ -219,7 +221,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 기존 `/api/*`는 프론트 전환 완료까지 병존, fit(스펙 6.18)은 보류.
 
-권장 순서: A → B1, 병렬로 F(스파이크). 상세 구현 계획은 태스크 착수 시 작성.
+두 트랙 전 태스크 완료(07-17). 남은 작업은 §8 미결과 프론트 REST 전환 연동(celfit-front은 아직
+Drizzle/메모리 모드 — seam만 준비됨).
 
 ## 6. 데이터 제약 (해석 주의 — 모든 지표 설계의 전제)
 
@@ -245,6 +248,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-18 | **/coverage 매트릭스를 celfit-front 실소비 필드 기준으로 재정의** — 기준 코드는 celfit-front 배포본(origin/main). 구 content-ranking 카드 14행을 프론트가 실제 렌더·필터에 쓰는 /v1 필드 27행(카드·필터 6.1 → 드로어 리포트 6.3 → 인플루언서 6.4/6.5)으로 교체. 타입에만 있고 UI 미소비인 필드(email·external_link)와 /v1 미사용 미러(content_metric_snapshots — 단 metric_captured_at 원천이라 coverage.sql 골격 가드는 유지)는 제외. 구 산출물 content_ranking 행은 본 쿼리에서 분리 조회(테이블 부재에도 매트릭스 생존 — was는 폴백 행, coverage.sql은 to_regclass DO 블록). 매트릭스 정의 쌍(CoverageRepository ↔ analytics/check/coverage.sql) 컨벤션 유지 | feat/coverage-v1-fields 브랜치 |
 | 2026-07-17 | **분석 뷰 신 스키마 재구축 설계 확정 (A2)** — 신 크롤러는 상세 수집 없이 열거만 하므로(raw_post_detail 소멸) 캡션·지표 소스를 raw_media_page clips 아이템·SELF_GQL 내장 타임라인 노드로 교체(플랫 뷰 체인, base 층에 평탄화 뷰 2종 신설). 서빙 모수는 뷰티 인플루언서만(QUALIFIED ∧ beauty ∧ ¬company, 1,496계정), 미러 계약은 형태 유지+우아한 공백(피드 광고 false·카테고리 믹스 0행 — B4 캡션 분류가 대체 소스), 04_analysis_candidates 신설(캡션 선분석 Haiku+Batch 입구 — 숙성 가드 3일·캡션 필수까지 뷰 담당, 분석됨 대조·상한은 Java). 기반은 PR #30 머지 후 develop | [specs/2026-07-17-analytics-views-new-schema-design.md](docs/superpowers/specs/2026-07-17-analytics-views-new-schema-design.md) |
 | 2026-07-17 | **analytics 어드민 UI + 스케줄러 골격 설계 확정 (태스크 I 신설)** — analytics를 상주 웹 서버(8082)로 전환, 크롤러 어드민 패턴 이식(`/ui` 잡 버튼 4종 + LLM 예상 비용 카드 + LogBuffer 로그 패널 + 잡별 락·비동기 트리거). 실행 이력 DB 테이블은 두지 않음(로그로 충분 — 사용자 확정). 스케줄러는 크롤러 동일 게이트(`analytics.schedule.enabled`, 기본 off) 골격만. `mirror-on-startup` 기본 false로 전환하되 cloud push는 one-shot CLI 보존(cloud 프로파일만 true) | [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) |
 | 2026-07-17 | **로그인 월 + 가입 코드 도입** — 제품 구조 변경(사용자 확정): 모든 조회는 로그인 필수, 가입은 단일 공용 코드 필수. SecurityConfig를 화이트리스트로 전환(기본 authenticated, 열린 경로는 /v1/auth·/v1/events/gate(익명 측정 유지)·/v1/stats(랜딩 통계 — P3와 병합 시 추가, 로그인 전 랜딩이 소비)·/health·swagger(로컬)만) — /v1 읽기 4종·구 /api·내부 페이지·프로필 이미지 전부 잠금, 401 계약은 기존 유지(/v1 envelope). 가입 코드는 `app.app_setting`(V6) `signup.code`와 trim 정확 일치, 불일치·미설정 403 INVALID_SIGNUP_CODE(fail-closed — 빈 값 시드로 배포되며 운영자 UPDATE로 개통). 레거시 /api/auth/signup은 코드 우회 뒷문이라 폐쇄(인증 입구 /v1 일원화) | [specs/2026-07-17-login-wall-signup-code-design.md](docs/superpowers/specs/2026-07-17-login-wall-signup-code-design.md) |
@@ -294,6 +298,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 항목 | 상태 |
 |---|---|
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. 블로커였던 구 스키마 전제는 07-18 뷰 재구축으로 해소 — 하니스 시드가 신 스키마(V15)에 직접 INSERT하므로 프레시 DB + V1~V15 + run.sh 구조가 성립. CI 워크플로에 Postgres 서비스 + Flyway 적용 + run.sh 연결만 남음 |
+| 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. `/coverage` 매트릭스는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
