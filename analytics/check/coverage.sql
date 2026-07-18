@@ -82,7 +82,7 @@ SELECT "화면 요소", "소스", "채움", "상태" FROM (
          CASE WHEN c.total > 0 AND least(c.likes, c.comments) = c.total THEN '준비됨' ELSE '누락' END
   FROM c
   UNION ALL
-  SELECT 8, 'Hype 스코어 (정렬·목록형 표시)', 'contents.hype_score',
+  SELECT 8, 'Hype 스코어 (정렬·Hype 지수 표시)', 'contents.hype_score',
          format('%s / %s', c.hype, c.total),
          CASE WHEN c.total > 0 AND c.hype = c.total THEN '준비됨' ELSE '누락' END
   FROM c
@@ -132,7 +132,7 @@ SELECT "화면 요소", "소스", "채움", "상태" FROM (
          CASE WHEN v.taxonomy > 0 AND v.dist_vocab > 0 THEN '준비됨' ELSE '누락' END
   FROM v
   UNION ALL
-  SELECT 18, '드로어 AI 카피 3종 (요약·해석·댓글 인사이트)', 'content_analyses.ai_* / contents_pattern',
+  SELECT 18, '드로어 AI 카피 3종 (댓글 인사이트는 임시 숨김)', 'content_analyses.ai_* / contents_pattern',
          format('%s / %s', an.copy3, c.total),
          CASE WHEN an.copy3 = 0 THEN '없음' WHEN an.copy3 < c.total THEN '부분' ELSE '준비됨' END
   FROM an, c
@@ -152,17 +152,17 @@ SELECT "화면 요소", "소스", "채움", "상태" FROM (
          CASE WHEN an.vlm = 0 THEN '없음' WHEN an.vlm < c.total THEN '부분' ELSE '준비됨' END
   FROM an, c
   UNION ALL
-  SELECT 22, '드로어 댓글 신뢰도 판정', 'content_analyses.comment_authenticity_grade',
+  SELECT 22, '드로어 댓글 신뢰도 판정 (배포본 임시 숨김)', 'content_analyses.comment_authenticity_grade',
          format('%s / %s', an.cauth, c.total),
          CASE WHEN an.cauth = 0 THEN '없음' WHEN an.cauth < c.total THEN '부분' ELSE '준비됨' END
   FROM an, c
   UNION ALL
-  SELECT 23, '드로어 댓글 원문', 'content_comments',
+  SELECT 23, '드로어 댓글 원문 (배포본 임시 숨김)', 'content_comments',
          format('%s행', cm.total),
          CASE WHEN cm.total > 0 THEN '준비됨' ELSE '없음' END
   FROM cm
   UNION ALL
-  SELECT 24, '드로어 댓글 AI 분류', 'comment_classifications',
+  SELECT 24, '드로어 댓글 AI 분류 (배포본 임시 숨김)', 'comment_classifications',
          format('%s / %s', cc.total, cm.total),
          CASE WHEN cc.total = 0 THEN '없음' WHEN cc.total < cm.total THEN '부분' ELSE '준비됨' END
   FROM cc, cm

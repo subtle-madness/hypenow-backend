@@ -10,8 +10,10 @@ import org.springframework.stereotype.Repository;
 
 /**
  * celfit-front가 실제 소비하는 /v1 응답 필드별 analysis DB 채움율 조회.
+ * 기준 코드는 celfit-front 배포본(origin/main) — 로컬 체크아웃이 아니라 배포본과 대조해 갱신한다.
  * 행 구성은 프론트 소비 지점 기준: 카드·필터(6.1) → 상세 드로어 AI 리포트(6.3) → 인플루언서(6.4/6.5).
  * 타입에만 있고 UI 미소비인 필드(email·external_link 등)와 /v1 미사용 미러(content_metric_snapshots 등)는 싣지 않는다.
+ * 배포본에서 "임시 숨김"(주석 처리) 상태인 요소는 행을 유지하고 이름에 표기한다 — 계약(스펙 6.3)은 유효.
  * 매트릭스 정의는 CLI 점검 스크립트(analytics/check/coverage.sql)와 쌍 — 항목이 바뀌면 둘 다 고칠 것.
  */
 @Repository
@@ -95,7 +97,7 @@ public class CoverageRepository {
 			         CASE WHEN c.total > 0 AND least(c.likes, c.comments) = c.total THEN '준비됨' ELSE '누락' END
 			  FROM c
 			  UNION ALL
-			  SELECT 8, 'Hype 스코어 (정렬·목록형 표시)', 'contents.hype_score',
+			  SELECT 8, 'Hype 스코어 (정렬·Hype 지수 표시)', 'contents.hype_score',
 			         format('%s / %s', c.hype, c.total),
 			         CASE WHEN c.total > 0 AND c.hype = c.total THEN '준비됨' ELSE '누락' END
 			  FROM c
@@ -145,7 +147,7 @@ public class CoverageRepository {
 			         CASE WHEN v.taxonomy > 0 AND v.dist_vocab > 0 THEN '준비됨' ELSE '누락' END
 			  FROM v
 			  UNION ALL
-			  SELECT 18, '드로어 AI 카피 3종 (요약·해석·댓글 인사이트)', 'content_analyses.ai_* / contents_pattern',
+			  SELECT 18, '드로어 AI 카피 3종 (댓글 인사이트는 임시 숨김)', 'content_analyses.ai_* / contents_pattern',
 			         format('%s / %s', an.copy3, c.total),
 			         CASE WHEN an.copy3 = 0 THEN '없음' WHEN an.copy3 < c.total THEN '부분' ELSE '준비됨' END
 			  FROM an, c
@@ -165,17 +167,17 @@ public class CoverageRepository {
 			         CASE WHEN an.vlm = 0 THEN '없음' WHEN an.vlm < c.total THEN '부분' ELSE '준비됨' END
 			  FROM an, c
 			  UNION ALL
-			  SELECT 22, '드로어 댓글 신뢰도 판정', 'content_analyses.comment_authenticity_grade',
+			  SELECT 22, '드로어 댓글 신뢰도 판정 (배포본 임시 숨김)', 'content_analyses.comment_authenticity_grade',
 			         format('%s / %s', an.cauth, c.total),
 			         CASE WHEN an.cauth = 0 THEN '없음' WHEN an.cauth < c.total THEN '부분' ELSE '준비됨' END
 			  FROM an, c
 			  UNION ALL
-			  SELECT 23, '드로어 댓글 원문', 'content_comments',
+			  SELECT 23, '드로어 댓글 원문 (배포본 임시 숨김)', 'content_comments',
 			         format('%s행', cm.total),
 			         CASE WHEN cm.total > 0 THEN '준비됨' ELSE '없음' END
 			  FROM cm
 			  UNION ALL
-			  SELECT 24, '드로어 댓글 AI 분류', 'comment_classifications',
+			  SELECT 24, '드로어 댓글 AI 분류 (배포본 임시 숨김)', 'comment_classifications',
 			         format('%s / %s', cc.total, cm.total),
 			         CASE WHEN cc.total = 0 THEN '없음' WHEN cc.total < cm.total THEN '부분' ELSE '준비됨' END
 			  FROM cc, cm
