@@ -1,5 +1,6 @@
 package com.celfit.crawler.dashboard.application;
 
+import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
@@ -7,7 +8,6 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
 import java.util.Map;
@@ -86,7 +86,7 @@ public class StatusService {
         for (InfluencerStatus s : InfluencerStatus.values()) {
             byInfluencerStatus.put(s, influencers.countByStatus(s));
         }
-        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         return new StatusSummary(byInfluencerStatus,
                 influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
                 influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),

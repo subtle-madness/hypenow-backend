@@ -1,6 +1,7 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.common.config.CollectProperties;
+import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
@@ -20,7 +21,6 @@ import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,8 +37,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 요청은 없다 — 프로필 원형이 방문의 유일한 재료라, 프로필 갱신 실패(프록시 401 등)는 유료
  * 폴백 없이 방문 실패로 남겨 다음 실행에서 재시도한다(팔로워 추이 스냅샷 구멍 방지).
  * 릴스는 별도 REELS 잡(유료 HikerAPI 구간 분리 — ReelsJob). 기간 컷오프·페이지네이션 없이
- * 방문당 "최근 게시물 한 묶음"만 가져오며, 재방문 주기(collect.revisit-interval-days)마다
- * 다시 방문해 그 사이의 새 게시물을 잡는다.
+ * 방문당 "최근 게시물 한 묶음"만 가져오며, 달력 기준 재방문 주기(collect.revisit-interval-days,
+ * RevisitCutoff — 1이면 KST 자정에 전원 리셋)마다 다시 방문해 그 사이의 새 게시물을 잡는다.
  */
 @Service
 public class CollectJob {
@@ -97,7 +97,7 @@ public class CollectJob {
      * 우선순위(백필 먼저)는 대상 리스트 순서로 근사 유지된다(워커가 앞에서부터 집어간다).
      */
     public Summary run(TriggerType trigger) {
-        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         List<Influencer> targets = influencers.findCollectTargets(
                 revisitBefore, PageRequest.of(0, settings.collectBatchLimit()));
         var visited = new java.util.concurrent.atomic.AtomicInteger();

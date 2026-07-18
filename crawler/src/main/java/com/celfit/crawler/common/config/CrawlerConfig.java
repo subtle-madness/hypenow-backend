@@ -24,9 +24,11 @@ import org.springframework.transaction.support.TransactionTemplate;
         ProxyProperties.class, SimilarProperties.class, BeautyProperties.class, ReelsProperties.class})
 public class CrawlerConfig {
 
+    // 존은 "오늘 자정" 경계 계산(데일리 대시보드·재방문 대상 선정)에만 쓰인다 — 저장은 전부
+    // Instant(절대 시각)라 존과 무관. 운영자가 한국 기준으로 보므로 KST 자정에 하루가 리셋된다.
     @Bean
     Clock clock() {
-        return Clock.systemUTC();
+        return Clock.system(java.time.ZoneId.of("Asia/Seoul"));
     }
 
     @Bean

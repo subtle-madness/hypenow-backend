@@ -11,8 +11,8 @@
 <nav th:replace="~{fragments/nav :: nav('daily')}"></nav>
 <main>
 <h1>데일리 수집</h1>
-<p class="hint">기준 단위는 <b>인플루언서</b> — 오늘(자정 기준) 어떤 뷰티 인플루언서의 피드가 모였고,
-    릴스가 모였는지. 재방문 주기 <span th:text="${revisitIntervalDays}">1</span>일 (설정에서 변경).</p>
+<p class="hint">기준 단위는 <b>인플루언서</b> — 오늘(KST 자정 기준) 어떤 뷰티 인플루언서의 피드가 모였고,
+    릴스가 모였는지. 자정에 전원 다시 대상이 된다 — 재방문 주기 <span th:text="${revisitIntervalDays}">1</span>일, 달력 기준 (설정에서 변경).</p>
 
 <h2 class="tiles-head">오늘 진행 <span class="tiles-head-sub">대상 = 뷰티 인플루언서 <b th:text="${d.targetInfluencers()}">0</b>명</span></h2>
 <div class="tiles">

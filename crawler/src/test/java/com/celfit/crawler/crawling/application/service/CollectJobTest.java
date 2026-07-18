@@ -287,17 +287,19 @@ class CollectJobTest {
     }
 
     // ---------------------------------------------------------------------
-    // 1b) 대상 조회는 revisit-interval-days 만큼 과거 시각을 컷오프로 전달한다
+    // 1b) 대상 조회는 달력일 경계(오늘 자정 − (N−1)일)를 컷오프로 전달한다
     // ---------------------------------------------------------------------
     @Test
-    void 대상_조회는_재방문_주기만큼_과거인_시각을_컷오프로_전달한다() {
+    void 대상_조회는_달력일_기준_경계를_컷오프로_전달한다() {
+        // NOW = 2026-07-14T00:00Z, 주기 7일 → 경계 = 오늘 자정 − 6일 = 2026-07-08 자정.
+        // "지금 − 7일"(경과 시간)이 아니라 달력일 기준이어야 자정에 전원 리셋된다.
         wireCommon();
         when(settings.revisitIntervalDays()).thenReturn(7);
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of());
 
         job().run(TriggerType.MANUAL);
 
-        verify(influencers).findCollectTargets(eq(NOW.minus(Duration.ofDays(7))), any());
+        verify(influencers).findCollectTargets(eq(Instant.parse("2026-07-08T00:00:00Z")), any());
     }
 
     // ---------------------------------------------------------------------

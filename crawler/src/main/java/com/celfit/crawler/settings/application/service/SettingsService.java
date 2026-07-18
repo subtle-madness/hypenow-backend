@@ -49,7 +49,7 @@ public class SettingsService {
             QUALIFY_MIN_FOLLOWERS, "qualify: 판정 통과 팔로워 하한 — 미만이면 EXCLUDED (전역)",
             QUALIFY_MAX_FOLLOWERS, "qualify: 판정 통과 팔로워 상한 — 초과면 EXCLUDED (전역)",
             COLLECT_BATCH_LIMIT, "collect: 실행 1회당 방문할 인플루언서 수",
-            COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 마지막 방문 후 이 기간이 지나야 다시 대상",
+            COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 달력 기준. 1이면 오늘(KST) 아직 방문 안 한 계정이 대상, 자정에 전원 리셋",
             SIMILAR_BATCH_LIMIT, "similar: 실행 1회당 유사 계정을 수확할 시드 수 (Hiker 호출량 제어)",
             BEAUTY_BATCH_LIMIT, "beauty: 판정 1회당 처리할 계정 수 상한 (실행 시간 제어 — 초과분은 다음 실행)",
             REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)");
