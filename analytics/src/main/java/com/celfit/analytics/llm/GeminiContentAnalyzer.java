@@ -18,9 +18,12 @@ import tools.jackson.databind.ObjectMapper;
 public final class GeminiContentAnalyzer implements ContentInsightPort {
 
 	private static final Set<String> GRADES = Set.of("high", "normal", "suspect");
-	public static final int MAX_OUTPUT_TOKENS = 4096;
+	public static final int MAX_OUTPUT_TOKENS = 8192; // 검증 하니스(run_unified.py) 동일값 — 16필드 합본 여유
 
-	/** 통합 산출 스키마 — 속성 11필드(nullable) + 종합 5필드. Gemini responseSchema(OpenAPI 스타일). */
+	/**
+	 * 통합 산출 스키마 — 속성 11필드(nullable) + 종합 5필드. Gemini responseSchema(OpenAPI 스타일).
+	 * propertyOrdering으로 사실 추출(파트 A) → 해석(파트 B) 생성 순서를 강제한다 (검증 하니스 동일).
+	 */
 	public static final String RESPONSE_SCHEMA = """
 			{"type":"object","properties":{
 			  "detectedBrands":{"type":"array","nullable":true,"items":{"type":"object",
@@ -48,6 +51,10 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 			 "required":["detectedBrands","sponsoredSignalLevel","sponsoredSignalReasons","adDisclosure",
 			  "detectedProductCategories","detectedProducts","vlmAttributes","mainCategory","subCategories",
 			  "detectedDistributors","adType","aiContentSummary","contentsPattern","aiCommentInsight",
+			  "commentAuthenticityGrade","commentAuthenticityNote"],
+			 "propertyOrdering":["detectedBrands","sponsoredSignalLevel","sponsoredSignalReasons","adDisclosure",
+			  "detectedProductCategories","detectedProducts","vlmAttributes","mainCategory","subCategories",
+			  "detectedDistributors","adType","aiContentSummary","contentsPattern","aiCommentInsight",
 			  "commentAuthenticityGrade","commentAuthenticityNote"]}""";
 
 	private final GeminiApi api;
@@ -62,13 +69,16 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 		this.taxonomy = taxonomy;
 	}
 
-	/** 통합 시스템 프롬프트 — 속성 지침(골드셋 검증) + 종합 지침 + 절제 규칙 + 분류표. */
+	/** 통합 시스템 프롬프트 — 검증 통과본(unified_prompt.txt, 07-18 11건 검증) verbatim. */
 	public static String instructions(BeautyTaxonomy taxonomy) {
 		return """
-				당신은 뷰티 브랜드 마케터를 위한 인스타그램 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)과
-				지표를 보고 [A] 콘텐츠 속성과 [B] 종합 해석을 한 번에 산출하라. 한국어로.
+				당신은 뷰티 브랜드 마케터를 위한 인스타그램 콘텐츠 분석가다. 한 번의 분석에서
+				[파트 A] 캡션 속성 추출과 [파트 B] 성과 종합을 함께 수행한다. 한국어로 답한다.
 
-				[A. 속성 — 캡션·썸네일 근거. 확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라]
+				[파트 A — 캡션 속성 추출]
+				캡션(과 썸네일이 주어지면 썸네일)에서 다음을 추출하라.
+				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 뷰티와 무관한 콘텐츠면 mainCategory는 null이다.
+
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
@@ -83,7 +93,10 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				  콘텐츠 유형 / 무드 / 편집 스타일 순 (썸네일 없이 판단 불가한 항목은 제외)
 				- adType: organic|sponsored (캡션 표기+화면 종합 판정)
 
-				[B. 종합 — 주어진 수치만 근거로 삼고 수치를 지어내지 마라. 각 항목 2~3문장 이내]
+				[파트 B — 성과 종합]
+				파트 A에서 추출한 사실과 입력의 지표·기준선·댓글 분포 수치만 근거로 삼고 수치를 지어내지 마라.
+				각 항목 2~3문장 이내.
+
 				- aiContentSummary: 이 콘텐츠가 계정 평균 대비 어땠는지(배수·순위), 반응의 성격(구매 전환형/화제성),
 				  협찬 수용도를 종합한 요약
 				- contentsPattern: 이 계정의 어떤 콘텐츠 패턴에서 성과가 나는지 한 줄 해석
@@ -91,14 +104,15 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				- commentAuthenticityGrade: high(자연스러운 반응) | normal | suspect(도배·기계적 패턴 의심)
 				- commentAuthenticityNote: 판정 근거 한 줄
 
+				[파트 B 절제 규칙 — 반드시 지켜라]
 				%s
 
 				[분류표 — 대분류(한글): 중분류[소분류, …]]
-				%s""".formatted(taxonomy.distributorsPrompt(), LlmGuard.RULES, taxonomy.promptTable());
+				%s""".formatted(taxonomy.distributorsPrompt(), LlmGuard.BODY, taxonomy.promptTable());
 	}
 
-	/** 유저 입력 — 기존 AnthropicSynthesizer 입력 포맷 그대로 (골드셋 문구 검증도 이 포맷). */
-	public static String userText(ContentToAnalyze c, boolean withThumbnail) {
+	/** 유저 입력 — 검증 하니스(run_unified.py) 포맷 그대로. */
+	public static String userText(ContentToAnalyze c) {
 		return """
 				콘텐츠: %s (@%s, %s)
 				캡션: %s
@@ -106,9 +120,9 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				계정 기준선: %s
 				댓글 분류 분포: %s
 
-				위 %s과 지표를 분석하라.""".formatted(c.shortCode(), c.accountHandle(), c.contentType(),
+				위 콘텐츠를 분석하라.""".formatted(c.shortCode(), c.accountHandle(), c.contentType(),
 				c.caption() == null ? "(없음)" : c.caption(), c.views(), c.likes(), c.comments(),
-				c.baseline(), c.commentCategoryCounts(), withThumbnail ? "썸네일·캡션" : "캡션");
+				c.baseline(), c.commentCategoryCounts());
 	}
 
 	@Override
@@ -116,7 +130,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 		BeautyTaxonomy tx = taxonomy.get();
 		GeminiApi.InlineImage image = thumbnailUrl == null ? null : download(thumbnailUrl);
 		String out = api.generateJson(model.get(), instructions(tx),
-				userText(content, image != null), image, RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
+				userText(content), image, RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
 		return parse(om, out, tx);
 	}
 

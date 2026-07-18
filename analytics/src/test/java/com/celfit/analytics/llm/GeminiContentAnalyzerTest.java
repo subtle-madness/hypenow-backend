@@ -58,7 +58,8 @@ class GeminiContentAnalyzerTest {
 		String system = calls.get(0).system();
 		assertTrue(system.contains("detectedBrands"));
 		assertTrue(system.contains("aiContentSummary"));
-		assertTrue(system.contains("[절제 규칙 — 반드시 지켜라]"));
+		assertTrue(system.contains("[파트 B 절제 규칙 — 반드시 지켜라]"));
+		assertTrue(system.contains("뷰티와 무관한 콘텐츠면 mainCategory는 null"));
 		assertTrue(system.contains("클렌징폼/젤"));
 		String user = calls.get(0).user();
 		assertTrue(user.contains("캡션A"));

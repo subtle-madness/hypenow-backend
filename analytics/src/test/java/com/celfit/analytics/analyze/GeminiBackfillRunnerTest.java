@@ -139,7 +139,7 @@ class GeminiBackfillRunnerTest {
 		assertEquals("bf_a", first.path("key").asString());
 		assertTrue(first.path("request").path("generation_config").path("response_schema").has("type"));
 		assertTrue(first.path("request").path("system_instruction").path("parts").get(0)
-				.path("text").asString().contains("[절제 규칙 — 반드시 지켜라]"));
+				.path("text").asString().contains("[파트 B 절제 규칙 — 반드시 지켜라]"));
 		assertTrue(first.path("request").path("contents").get(0).path("parts").get(0)
 				.path("text").asString().contains("캡션A"));
 		// 모델은 설정 기본값, 입력 파일은 업로드 결과

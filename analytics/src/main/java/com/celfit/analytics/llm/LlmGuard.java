@@ -6,12 +6,14 @@ package com.celfit.analytics.llm;
  */
 public final class LlmGuard {
 
-	public static final String RULES = """
-			[절제 규칙 — 반드시 지켜라]
+	/** 규칙 본문 — 헤더는 문맥별(단독 프롬프트/통합 콜 파트 B)로 붙인다. */
+	public static final String BODY = """
 			- 분석 표본이 3건 미만이면 성과·패턴·추이를 단정하지 말고 "표본이 부족해 판단하기 어렵다"를 명시하라.
 			- 입력에 없는 사실·패턴·경향을 추론해 단정하지 마라. 평균과 값이 같은 이유가 표본 1건 때문이면 "안정적"이라 표현하지 마라.
 			- 조언·제안·전략 제시는 금지다. 관찰과 해석만 쓴다 ("~가 필요합니다", "~하는 전략" 금지).
 			- 핵심 주장에는 근거 수치를 함께 인용하라.""";
+
+	public static final String RULES = "[절제 규칙 — 반드시 지켜라]\n" + BODY;
 
 	private LlmGuard() {}
 }

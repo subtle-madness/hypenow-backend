@@ -125,7 +125,7 @@ public class GeminiBackfillRunner {
 		ObjectNode request = line.putObject("request");
 		request.putObject("system_instruction").putArray("parts").addObject().put("text", system);
 		request.putArray("contents").addObject().put("role", "user").putArray("parts")
-				.addObject().put("text", GeminiContentAnalyzer.userText(content, false));
+				.addObject().put("text", GeminiContentAnalyzer.userText(content));
 		ObjectNode gen = request.putObject("generation_config");
 		gen.put("temperature", 0);
 		gen.put("response_mime_type", "application/json");
