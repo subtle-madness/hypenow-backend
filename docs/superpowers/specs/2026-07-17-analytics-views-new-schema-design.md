@@ -1,6 +1,6 @@
 # 분석 뷰 신 crawler 스키마 재구축 설계
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-18)
 >
 > 2026-07-17. analytics/views의 분석 뷰 전체(00~20)를 신 crawler 스키마
 > (feat/beauty-captions, Flyway V15) 기준으로 재구축하는 설계.
