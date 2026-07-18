@@ -19,7 +19,7 @@ import tools.jackson.databind.node.ObjectNode;
  * systemInstruction + responseSchema 구조화 출력, temperature 0.
  * 무료 티어 대응: RPM 페이싱(분당 rpm콜 균등) + 429/5xx 지수 백오프, 재시도 소진 429는 일 한도로 간주.
  */
-public final class GeminiHttpApi implements GeminiApi {
+public final class GeminiHttpApi implements GeminiApi, GeminiBatchApi {
 
 	private static final Logger log = LoggerFactory.getLogger(GeminiHttpApi.class);
 	private static final String DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
@@ -129,6 +129,72 @@ public final class GeminiHttpApi implements GeminiApi {
 		gen.set("responseSchema", om.readTree(schemaJson));
 		gen.put("maxOutputTokens", maxOutputTokens);
 		return om.writeValueAsString(root);
+	}
+
+	/** File API 업로드(2단계 resumable) — 백필 JSONL 전용. */
+	@Override
+	public String uploadFile(byte[] jsonl, String displayName) {
+		try {
+			HttpRequest start = HttpRequest.newBuilder(URI.create(baseUrl + "/upload/v1beta/files"))
+					.header("x-goog-api-key", apiKey)
+					.header("X-Goog-Upload-Protocol", "resumable")
+					.header("X-Goog-Upload-Command", "start")
+					.header("X-Goog-Upload-Header-Content-Length", String.valueOf(jsonl.length))
+					.header("X-Goog-Upload-Header-Content-Type", "application/jsonl")
+					.header("Content-Type", "application/json")
+					.POST(HttpRequest.BodyPublishers.ofString(
+							"{\"file\":{\"display_name\":\"" + displayName + "\"}}"))
+					.build();
+			HttpResponse<String> started = http.send(start, HttpResponse.BodyHandlers.ofString());
+			String uploadUrl = started.headers().firstValue("x-goog-upload-url")
+					.orElseThrow(() -> new IllegalStateException(
+							"업로드 URL 헤더 없음: HTTP " + started.statusCode()));
+			HttpRequest put = HttpRequest.newBuilder(URI.create(uploadUrl))
+					.header("X-Goog-Upload-Command", "upload, finalize")
+					.header("X-Goog-Upload-Offset", "0")
+					.POST(HttpRequest.BodyPublishers.ofByteArray(jsonl))
+					.build();
+			HttpResponse<String> done = http.send(put, HttpResponse.BodyHandlers.ofString());
+			if (done.statusCode() < 200 || done.statusCode() >= 300) {
+				throw new IllegalStateException("파일 업로드 실패 HTTP " + done.statusCode());
+			}
+			return om.readTree(done.body()).path("file").path("name").asString();
+		} catch (java.io.IOException | InterruptedException e) {
+			throw new IllegalStateException("파일 업로드 실패", e);
+		}
+	}
+
+	@Override
+	public String createBatch(String model, String inputFileName, String displayName) {
+		String body = """
+				{"batch":{"display_name":"%s","input_config":{"file_name":"%s"}}}"""
+				.formatted(displayName, inputFileName);
+		String res = send("/v1beta/models/" + model + ":batchGenerateContent", body);
+		return om.readTree(res).path("name").asString();
+	}
+
+	@Override
+	public String getBatch(String batchName) {
+		return get("/v1beta/" + batchName, "배치 조회");
+	}
+
+	@Override
+	public String downloadFile(String fileName) {
+		return get("/download/v1beta/" + fileName + ":download?alt=media", "결과 다운로드");
+	}
+
+	private String get(String path, String what) {
+		try {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + path))
+					.header("x-goog-api-key", apiKey).GET().build();
+			HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+			if (res.statusCode() < 200 || res.statusCode() >= 300) {
+				throw new IllegalStateException(what + " 실패 HTTP " + res.statusCode());
+			}
+			return res.body();
+		} catch (java.io.IOException | InterruptedException e) {
+			throw new IllegalStateException(what + " 실패", e);
+		}
 	}
 
 	private synchronized void pace() {

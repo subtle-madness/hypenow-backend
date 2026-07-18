@@ -2,6 +2,7 @@ package com.celfit.analytics.config;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
+import com.celfit.analytics.analyze.GeminiBackfillRunner;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.CommentClassificationPort;
@@ -77,5 +78,30 @@ public class JobConfig {
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			AccountSynthesisPort port, AnalyticsSettings settings) {
 		return new AccountAnalysisJob(analysisDataSource, port, settings);
+	}
+
+	/**
+	 * 초기 백필 one-shot(07-18 확정 — 유료 키 Batch, 미러 one-shot CLI 컨벤션과 동형).
+	 * submit → (배치 완료 대기, ≤24h) → collect 2단 실행. 신 스키마 뷰(04·03) 적용 후에만 유효.
+	 */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.backfill-submit:false} or '${analytics.backfill-collect:}' != ''")
+	public org.springframework.boot.ApplicationRunner geminiBackfillRunner(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource, AnalyticsSettings settings,
+			@Value("${analytics.backfill-submit:false}") boolean submit,
+			@Value("${analytics.backfill-collect:}") String collectBatch,
+			@Value("${analytics.backfill-dir:./backfill}") String dir) {
+		return args -> {
+			GeminiBackfillRunner runner = new GeminiBackfillRunner(rawJdbcTemplate, analysisDataSource,
+					com.celfit.analytics.llm.GeminiHttpApi.fromEnvPaid(), settings,
+					new com.celfit.analytics.llm.BeautyTaxonomyLoader(analysisDataSource),
+					java.nio.file.Path.of(dir));
+			if (submit) {
+				runner.submit();
+			} else {
+				runner.collect(collectBatch);
+			}
+		};
 	}
 }
