@@ -210,6 +210,11 @@ git commit -m "chore(analytics): 구 스키마 뷰·테스트 초기화 + 신 �
 - Create: `analytics/views/00_base.sql`
 - Test: `analytics/test/00_base.test.sql`
 
+> **일회성 선행 처치 (실행 완료 — 07-18)**: 로컬 실DB에 구 시대 `analytics.*` 뷰 17개 + hype_score
+> 함수가 잔존해 `CREATE OR REPLACE VIEW`가 컬럼 변경을 거부했다("복원 덤프에 analytics 스키마
+> 없음" 전제가 실DB와 달랐음). 재구축이 스키마 전체를 대체하므로
+> `DROP SCHEMA analytics CASCADE;` 1회 실행으로 정리(raw 불변). 프레시 DB(CI)에서는 불필요.
+
 - [ ] **Step 1: 실패하는 테스트 작성**
 
 `analytics/test/00_base.test.sql`:
