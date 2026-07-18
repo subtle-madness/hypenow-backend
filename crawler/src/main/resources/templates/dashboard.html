@@ -43,21 +43,21 @@
 
             <rect class="pm-node" x="252" y="44" width="200" height="84" rx="11"/>
             <text class="pm-title" x="266" y="70">판정 <tspan class="pm-job">qualify</tspan></text>
-            <text class="pm-sub" x="266" y="92">프로필 스냅샷 · 팔로워 3천~5만</text>
-            <text class="pm-sub" x="266" y="110">QUALIFIED / EXCLUDED</text>
+            <text class="pm-sub" x="266" y="92">SELF 스냅샷 — 캡션 포함 재료</text>
+            <text class="pm-sub" x="266" y="110">3천~5만 → QUALIFIED / EXCLUDED</text>
 
             <rect class="pm-node" x="512" y="44" width="200" height="84" rx="11"/>
             <text class="pm-title" x="526" y="70">뷰티 판정 <tspan class="pm-job">beauty</tspan></text>
-            <text class="pm-sub" x="526" y="92">Claude 3분류 (로컬 CLI)</text>
+            <text class="pm-sub" x="526" y="92">Claude 3분류 — bio + 캡션 5개</text>
             <text class="pm-sub" x="526" y="110">인플루언서 / 회사 / 비뷰티</text>
 
             <rect class="pm-node" x="772" y="8" width="216" height="56" rx="11"/>
             <text class="pm-title" x="786" y="30">프로필 수집 <tspan class="pm-job">collect</tspan></text>
-            <text class="pm-sub" x="786" y="50">SELF 프로필 + 피드 12개</text>
+            <text class="pm-sub" x="786" y="50">SELF 프로필 + 피드 12개 · 4워커</text>
 
             <rect class="pm-node" x="772" y="80" width="216" height="56" rx="11"/>
             <text class="pm-title" x="786" y="102">릴스 수집 <tspan class="pm-job">reels</tspan></text>
-            <text class="pm-sub" x="786" y="122">HikerAPI 릴스 1페이지</text>
+            <text class="pm-sub" x="786" y="122">HikerAPI 릴스 1페이지(12개)</text>
 
             <rect class="pm-node" x="772" y="152" width="216" height="56" rx="11"/>
             <text class="pm-title" x="786" y="174">유사 발굴 <tspan class="pm-job">similar</tspan></text>
@@ -65,7 +65,7 @@
 
         </g>
     </svg>
-    <p class="pipeline-map-note">404 응답 계정은 단계와 무관하게 DELETED(소프트 딜리트)로 종결</p>
+    <p class="pipeline-map-note">수집·릴스는 재방문 주기(설정, 현재 1일)마다 뷰티 계정을 다시 방문 · 404 응답 계정은 단계와 무관하게 DELETED(소프트 딜리트)로 종결</p>
 </details>
 <!-- 상태 카드 (실시간, 3초 폴링) -->
 <div hx-get="/ui/fragments/status-tiles" hx-trigger="load, every 3s"></div>
