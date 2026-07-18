@@ -41,9 +41,19 @@ public class UiJobController {
         return respond(JobName.BEAUTY, jobService.trigger(JobName.BEAUTY, TriggerType.MANUAL, rejudge), ra);
     }
 
+    @PostMapping("/resnapshot")
+    public String resnapshot(RedirectAttributes ra) {
+        return respond(JobName.RESNAPSHOT, jobService.trigger(JobName.RESNAPSHOT, TriggerType.MANUAL), ra);
+    }
+
     @PostMapping("/similar")
     public String similar(RedirectAttributes ra) {
         return respond(JobName.SIMILAR, jobService.trigger(JobName.SIMILAR, TriggerType.MANUAL), ra);
+    }
+
+    @PostMapping("/reels")
+    public String reels(RedirectAttributes ra) {
+        return respond(JobName.REELS, jobService.trigger(JobName.REELS, TriggerType.MANUAL), ra);
     }
 
     private String respond(JobName name, TriggerResult result, RedirectAttributes ra) {

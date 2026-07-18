@@ -20,10 +20,11 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * HikerAPI 웹 gql base — username→pk(by/username)→web_profile_info(gql) 순으로 조회한다.
- * by/username 또는 gql 어느 쪽이든 실패(ApifyException)하면 목적(번들)을 달성할 수 없으므로
- * 모바일 base로 폴백하지 않고 해당 계정을 통째로 스킵한다. 두 응답 모두 HikerAPI user 객체
- * 원형(by/username과 동일 형태)이라 rawSource()는 HIKER_MOBILE과 같다.
+ * HikerAPI 웹 gql base — 저장된 pk(ig_user_id)가 있으면 web_profile_info(gql) 1요청,
+ * 없을 때만 username→pk(by/username) 해석을 앞에 붙인다(2요청). similar 아카이브 pk 백필과
+ * 결합하면 대량 스냅샷 비용이 절반 가까이 줄어든다. by/username 또는 gql 어느 쪽이든
+ * 실패(ApifyException)하면 모바일 base로 폴백하지 않고 해당 계정을 통째로 스킵한다.
+ * 두 응답 모두 HikerAPI user 객체 원형(by/username과 동일 형태)이라 rawSource()는 HIKER_MOBILE과 같다.
  */
 @Component
 public class HikerWebGqlProfileFetcher implements ProfileFetcher {
@@ -33,11 +34,15 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
 
     private final HikerHttp http;
     private final CrawlExecutor executor;
+    private final com.celfit.crawler.crawling.application.port.out.InfluencerRepository influencers;
     private final ObjectMapper om;
 
-    public HikerWebGqlProfileFetcher(HikerHttp http, CrawlExecutor executor, ObjectMapper om) {
+    public HikerWebGqlProfileFetcher(HikerHttp http, CrawlExecutor executor,
+                                     com.celfit.crawler.crawling.application.port.out.InfluencerRepository influencers,
+                                     ObjectMapper om) {
         this.http = http;
         this.executor = executor;
+        this.influencers = influencers;
         this.om = om;
     }
 
@@ -61,12 +66,19 @@ public class HikerWebGqlProfileFetcher implements ProfileFetcher {
     }
 
     private Map<String, Object> fetchOne(String username) {
-        String enc = URLEncoder.encode(username, StandardCharsets.UTF_8);
-        Map<String, Object> base = readRoot(http.get("/v2/user/by/username?username=" + enc));
-        String uid = ProfileExtractor.userId(base, RawSource.HIKER_MOBILE);
+        // 저장된 pk가 있으면(similar 아카이브 백필·이전 수집) 해석 1요청을 아낀다
+        String uid = influencers.findByUsername(username)
+                .map(i -> i.getIgUserId())
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(null);
         if (uid == null) {
-            log.warn("userId 없음, 계정 스킵: {}", username);
-            return null;
+            String enc = URLEncoder.encode(username, StandardCharsets.UTF_8);
+            Map<String, Object> base = readRoot(http.get("/v2/user/by/username?username=" + enc));
+            uid = ProfileExtractor.userId(base, RawSource.HIKER_MOBILE);
+            if (uid == null) {
+                log.warn("userId 없음, 계정 스킵: {}", username);
+                return null;
+            }
         }
         return readRoot(http.get("/gql/user/web_profile_info?user_id=" + uid));
     }

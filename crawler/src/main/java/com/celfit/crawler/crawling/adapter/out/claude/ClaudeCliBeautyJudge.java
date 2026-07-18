@@ -21,8 +21,11 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class ClaudeCliBeautyJudge implements BeautyJudge {
 
-    /** 배치 1회(50명) 판정의 상한 — CLI가 응답을 못 만들면 강제 종료하고 배치 실패로 넘긴다. */
-    static final int TIMEOUT_SECONDS = 120;
+    /**
+     * 배치 1회(50명) 판정의 상한 — CLI가 응답을 못 만들면 강제 종료하고 배치 실패로 넘긴다.
+     * 캡션 포함(계정당 최근 5개×100자)으로 프롬프트가 커진 뒤 120s는 간헐 타임아웃(2026-07-16 실측) — 240s로 상향.
+     */
+    static final int TIMEOUT_SECONDS = 240;
 
     private final ObjectMapper om;
 
@@ -76,9 +79,14 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
 
     static String buildPrompt(ObjectMapper om, List<ProfileCard> cards) {
         return """
-                다음은 인스타그램 계정 프로필 목록(JSON)이다. 각 계정이 "뷰티 계정"(화장품·메이크업·\
-                스킨케어·헤어·네일·에스테틱 등 뷰티 콘텐츠 중심)인지 판정하라.
-                출력은 JSON 배열만: [{"username":"...","beauty":true|false,"reason":"한 줄"}]
+                다음은 인스타그램 계정 프로필 목록(JSON)이다. 각 계정을 셋 중 하나로 분류하라:
+                - INFLUENCER: 뷰티(화장품·메이크업·스킨케어·헤어·네일·에스테틱 등) 콘텐츠 중심의 \
+                개인 크리에이터·인플루언서
+                - COMPANY: 뷰티 브랜드·회사·쇼핑몰·살롱 등 사업자 공식 계정
+                - NOT_BEAUTY: 뷰티 콘텐츠 중심이 아닌 계정
+                captions는 최근 게시물 캡션 일부다(앞부분만 잘림·빈 배열은 미수집) — bio가 모호하면 \
+                캡션의 실제 콘텐츠 주제를 근거로 판정하라.
+                출력은 JSON 배열만: [{"username":"...","class":"INFLUENCER|COMPANY|NOT_BEAUTY","reason":"한 줄"}]
                 입력의 모든 username에 대해 정확히 한 항목씩. 다른 텍스트 금지.
 
                 """ + om.writeValueAsString(cards);
@@ -96,8 +104,15 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
         List<Verdict> out = new ArrayList<>();
         for (JsonNode n : root) {
             String username = n.path("username").asString(null);
-            if (username == null || username.isBlank() || !n.path("beauty").isBoolean()) continue;
-            out.add(new Verdict(username, n.path("beauty").asBoolean(), n.path("reason").asString(null)));
+            String cls = n.path("class").asString(null);
+            if (username == null || username.isBlank() || cls == null) continue;
+            // 3분류 외 값(모델 일탈)은 건너뛴다 — 해당 계정은 미판정 유지, 다음 실행 재시도
+            switch (cls) {
+                case "INFLUENCER" -> out.add(new Verdict(username, true, false, n.path("reason").asString(null)));
+                case "COMPANY" -> out.add(new Verdict(username, true, true, n.path("reason").asString(null)));
+                case "NOT_BEAUTY" -> out.add(new Verdict(username, false, false, n.path("reason").asString(null)));
+                default -> { }
+            }
         }
         return out;
     }

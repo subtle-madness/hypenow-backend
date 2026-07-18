@@ -1,6 +1,8 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.crawling.domain.RawSource;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /** 프로필 응답 원형에서 제어 필드(followers·userId·username) 추출. 소스별 경로. */
@@ -64,6 +66,59 @@ public final class ProfileExtractor {
             default -> payload.get("biography");
         };
         return asText(v);
+    }
+
+    /** 비공개 계정 여부 — 필드 누락은 공개로 간주(수집 시도 후 실패로 드러나는 쪽이 안전). */
+    public static boolean isPrivate(Map<String, Object> payload, RawSource source) {
+        Object v = switch (source) {
+            case SELF_GQL -> dig(payload, "data", "user", "is_private");
+            case HIKER_MOBILE, DATALIKERS -> dig(user(payload), "is_private");
+            default -> payload.get("private");
+        };
+        return v instanceof Boolean b && b;
+    }
+
+    /**
+     * 최근 게시물 캡션(공백·누락 제외, 응답 순서 유지). 게시물이 payload에 없는 소스
+     * (HIKER_MOBILE·DATALIKERS)는 빈 리스트. LEGACY_ENVELOPE는 구형 latestPosts[].caption과
+     * 신형 _rawProfile.data.user(GQL 타임라인 중첩) 두 변형을 모두 처리한다.
+     */
+    public static List<String> recentCaptions(Map<String, Object> payload, RawSource source) {
+        return switch (source) {
+            case SELF_GQL -> gqlTimelineCaptions(dig(payload, "data", "user"));
+            case LEGACY_ENVELOPE, APIFY_ACTOR -> {
+                if (payload.get("latestPosts") instanceof List<?> posts) {
+                    List<String> out = new ArrayList<>();
+                    for (Object post : posts) {
+                        if (post instanceof Map<?, ?> m && asText(m.get("caption")) instanceof String c) {
+                            out.add(c);
+                        }
+                    }
+                    yield out;
+                }
+                yield gqlTimelineCaptions(dig(payload, "_rawProfile", "data", "user"));
+            }
+            default -> List.of();
+        };
+    }
+
+    /** GQL user 객체의 edge_owner_to_timeline_media.edges[].node.edge_media_to_caption.edges[0].node.text */
+    private static List<String> gqlTimelineCaptions(Object user) {
+        List<String> out = new ArrayList<>();
+        if (!(user instanceof Map<?, ?> u)) return out;
+        if (!(dig(castMap(u), "edge_owner_to_timeline_media", "edges") instanceof List<?> edges)) return out;
+        for (Object edge : edges) {
+            if (!(edge instanceof Map<?, ?> e)) continue;
+            if (!(dig(castMap(e), "node", "edge_media_to_caption", "edges") instanceof List<?> capEdges)) continue;
+            for (Object capEdge : capEdges) {
+                if (capEdge instanceof Map<?, ?> ce
+                        && asText(dig(castMap(ce), "node", "text")) instanceof String c) {
+                    out.add(c);
+                    break;  // 게시물 하나에 캡션 하나 — 첫 유효 캡션만
+                }
+            }
+        }
+        return out;
     }
 
     /** 첫 non-blank 값(공백·빈 문자열은 '없음'으로 간주 — asText 기준과 일치) 반환, 없으면 null. */

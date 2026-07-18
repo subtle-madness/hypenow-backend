@@ -22,12 +22,13 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 
 ## 실행
 
-    ./test/run.sh                    # 뷰 적용 + SQL 테스트 전체 (crawler-postgres-1 필요)
+    ./test/run.sh                    # 뷰 적용 + SQL 테스트 전체 (실데이터 postgres 컨테이너 필요 — 기본 crawler-postgres-1, PG_CONTAINER로 오버라이드)
     ./test/run.sh test/00_base.test.sql   # 지정 테스트
     ./check/coverage.sh              # 미러 결과 필드 커버리지 보고 (실DB)
     python3 export/front_seed.py [celfit-front 경로]   # 프론트 실뷰 데모 시드 생성
     ../gradlew :analytics:test       # Java 테스트 (Docker 필요)
-    ../gradlew :analytics:bootRun    # 미러 1회 실행 (analytics.mirror-on-startup=true)
+    ../gradlew :analytics:bootRun    # 상주 서버 기동 (8082) — one-shot 배치는 아래처럼 web-application-type=none 오버라이드
+    ../gradlew :analytics:bootRun --args='--analytics.mirror-on-startup=true --spring.main.web-application-type=none'   # 미러 1회 실행
 
 ### LLM 인증 (둘 중 하나)
 
@@ -38,11 +39,14 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 
 둘 다 설정돼 있으면 구독(OAUTH_TOKEN)이 우선한다. 토큰은 단기 만료라 배치 실행 직전에 발급할 것.
 
-    ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true'   # 댓글 분류 배치
-    ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv'  # F-1 스파이크
-    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true'   # 콘텐츠 분석 배치 (VLM off)
-    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true --analytics.vlm-enabled=true'  # +VLM
-    ../gradlew :analytics:bootRun --args='--analytics.vlm-spike-limit=8'         # F-2 VLM 스파이크
+아래 one-shot 배치는 전부 `--spring.main.web-application-type=none`을 붙인다
+(기본 프로파일이 상주 서버(8082)로 바뀌어, 없으면 배치 후 서버가 종료되지 않고 상주한다 — cloud 프로파일만 기본 one-shot):
+
+    ../gradlew :analytics:bootRun --args='--analytics.classify-on-startup=true --spring.main.web-application-type=none'   # 댓글 분류 배치
+    ../gradlew :analytics:bootRun --args='--analytics.goldset-path=/path/goldset.csv --spring.main.web-application-type=none'  # F-1 스파이크
+    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true --spring.main.web-application-type=none'   # 콘텐츠 분석 배치 (VLM off)
+    ../gradlew :analytics:bootRun --args='--analytics.analyze-on-startup=true --analytics.vlm-enabled=true --spring.main.web-application-type=none'  # +VLM
+    ../gradlew :analytics:bootRun --args='--analytics.vlm-spike-limit=8 --spring.main.web-application-type=none'         # F-2 VLM 스파이크
 
 ⚠️ `analyze-on-startup`·`vlm-enabled`는 스프링 프로퍼티(`application.yml`/CLI 인자)이지 `app_setting` 키가 아니다.
 분석 대상은 "최근 N개 윈도우 안 + 분류 완료(또는 댓글 0)" 콘텐츠만 (classify 선행을 강제).

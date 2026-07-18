@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.crawling.domain.RawSource;
@@ -25,7 +26,7 @@ class SelfProfileFetcherTest {
                                                TriggerType t, String keyword, String targetUsername, String actorId,
                                                Supplier<ApifyResult> work) {
                 ApifyResult r = work.get();
-                return new Execution(1L, r.items());
+                return new Execution(1L, r.items(), r.notFound());
             }
         };
     }
@@ -40,6 +41,36 @@ class SelfProfileFetcherTest {
                 throw new UnsupportedOperationException("web_profile_info는 GET만 사용");
             }
         };
+    }
+
+    @Test void 프로필_요청은_여러_건이_동시에_나간다() {
+        // 두 요청이 동시에 진행되어야만 latch가 풀린다 — 직렬 구현이면 첫 요청이 타임아웃돼 실패.
+        // 병렬화 전제: 프록시 로테이션(요청마다 새 exit IP)이라 동시 요청도 IP가 분산된다.
+        var latch = new java.util.concurrent.CountDownLatch(2);
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                latch.countDown();
+                try {
+                    if (!latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new ApifyException("동시 요청 없음 — 직렬 실행");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new ApifyException("인터럽트", e);
+                }
+                String u = url.substring(url.lastIndexOf('=') + 1);
+                return new Response(200,
+                        "{\"data\":{\"user\":{\"username\":\"" + u + "\",\"id\":\"1\"}}}", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("a", "b", "c", "d"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).hasSize(4);  // 직렬이면 첫 계정이 타임아웃 스킵되어 3건
     }
 
     @Test void source는_SELF_rawSource는_SELF_GQL() {
@@ -63,6 +94,16 @@ class SelfProfileFetcherTest {
         assertThat(ProfileExtractor.followers(item, RawSource.SELF_GQL)).isEqualTo(2369L);
         assertThat(ProfileExtractor.userId(item, RawSource.SELF_GQL)).isEqualTo("74851841915");
         assertThat(item).containsKey("data"); // 원형 그대로 보존 — 정규화된 평탄 필드가 아님
+    }
+
+    @Test void 상태코드_404는_계정_소멸로_notFound에_기록한다() {
+        var f = new SelfProfileFetcher(webReturning(404, "not found"), passthroughExecutor(),
+                new ObjectMapper(), Duration.ZERO);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("ghost"), TriggerType.MANUAL);
+
+        assertThat(ex.items()).isEmpty();
+        assertThat(ex.notFound()).containsExactly("ghost");
     }
 
     @Test void 상태코드가_200이_아니면_스킵() {
@@ -121,7 +162,9 @@ class SelfProfileFetcherTest {
         var ex = f.fetch(JobName.QUALIFY, many, TriggerType.MANUAL);
 
         assertThat(ex.items()).isEmpty();
-        assertThat(calls.get()).isEqualTo(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT);
+        // 병렬(FETCH_CONCURRENCY) 회로 차단 — 트립 시점에 진행 중이던 요청까지는 나갈 수 있다
+        assertThat(calls.get()).isBetween(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT,
+                SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT + SelfProfileFetcher.FETCH_CONCURRENCY - 1);
         assertThat(calls.get()).isLessThan(20);
     }
 
@@ -144,7 +187,8 @@ class SelfProfileFetcherTest {
         var ex = f.fetch(JobName.QUALIFY, many, TriggerType.MANUAL);
 
         assertThat(ex.items()).isEmpty();
-        assertThat(calls.get()).isEqualTo(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT);
+        assertThat(calls.get()).isBetween(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT,
+                SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT + SelfProfileFetcher.FETCH_CONCURRENCY - 1);
     }
 
     // 성공(200)이 사이에 끼면 연속 카운터가 리셋 — 간헐적 429는 회로를 트립시키지 않는다.

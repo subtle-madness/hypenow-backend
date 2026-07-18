@@ -1,5 +1,5 @@
 <div th:fragment="tiles" xmlns:th="http://www.thymeleaf.org">
-    <h2 class="tiles-head">인플루언서 파이프라인 <span class="tiles-head-sub">발굴 → 판정 → 수집</span></h2>
+    <h2 class="tiles-head">인플루언서 파이프라인 <span class="tiles-head-sub">발굴 → 판정 → 뷰티 판정 → 수집</span></h2>
     <div class="tile-groups">
         <div class="tile-group" th:each="g : ${influencerGroups}">
             <div class="tile-group-title" th:text="${g.title()}"></div>
@@ -12,7 +12,7 @@
             </div>
         </div>
     </div>
-    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">collect 방문 기준 — 방문당 최근 피드 12개 + 릴스 1페이지 (<span th:text="${revisitIntervalDays}">7</span>일 주기 재방문 · 설정에서 변경)</span></h2>
+    <h2 class="tiles-head">게시물 수집 <span class="tiles-head-sub">게시물을 위한 프로필 수집(피드 12개 내장) + 릴스 수집(1페이지) 산출 기준 (<span th:text="${revisitIntervalDays}">7</span>일 주기 재방문 · 설정에서 변경)</span></h2>
     <div class="tiles">
         <div class="tile" th:each="t : ${contentTiles}">
             <div class="num" th:text="${t.count()}">0</div>
