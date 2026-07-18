@@ -56,11 +56,13 @@ class UiSmokeTest extends IntegrationTest {
 
     @Test
     void 대시보드_상단에_파이프라인_다이어그램이_렌더된다() throws Exception {
-        // 잡 흐름(발굴→판정→뷰티 판정→수집 3갈래 + 재스냅샷/재판정·유사발굴 루프)을 정적 다이어그램으로 노출
+        // 잡 흐름(발굴→판정→뷰티 판정→수집 3갈래 + 유사발굴 루프)을 정적 다이어그램으로 노출.
+        // 재스냅샷 루프는 기능 제거(2026-07-18 — qualify가 SELF 캡션 재료로 첫 판정)와 함께 빠졌다.
         mvc.perform(get("/ui")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("pipeline-map")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("재스냅샷")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("rejudge")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("유사 발굴")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("resnapshot"))));
     }
 
     @Test
@@ -78,12 +80,6 @@ class UiSmokeTest extends IntegrationTest {
     void 잡_화면에_예상_비용_카드가_렌더된다() throws Exception {
         mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
-    }
-
-    @Test
-    void 잡_화면에_재스냅샷_트리거가_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/resnapshot")));
     }
 
     @Test

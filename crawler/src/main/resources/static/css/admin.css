@@ -167,15 +167,12 @@ a { color: var(--accent); }
 }
 .pipeline-map svg { display: block; width: 100%; height: auto; max-width: 68rem; margin-top: 0.7rem; }
 .pipeline-map .pm-node { fill: var(--card); stroke: var(--border-strong); }
-.pipeline-map .pm-node.pm-rejudge { stroke: var(--accent); }
 .pipeline-map .pm-title { font-size: 13px; font-weight: 700; fill: var(--ink); }
 .pipeline-map .pm-job { font-size: 10px; font-weight: 650; fill: var(--accent); }
 .pipeline-map .pm-sub { font-size: 10.5px; fill: var(--ink-secondary); }
 .pipeline-map .pm-edge { fill: none; stroke: var(--muted); stroke-width: 1.4; }
 .pipeline-map .pm-edge.pm-loop { stroke-dasharray: 5 4; }
-.pipeline-map .pm-edge.pm-rejudge { stroke: var(--accent); }
 .pipeline-map .pm-elabel { font-size: 10px; fill: var(--muted); }
-.pipeline-map text.pm-rejudge { fill: var(--accent-ink); }
 .pipeline-map-note { color: var(--muted); font-size: 0.75rem; margin: 0.5rem 0 0; }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); gap: 0.8rem; }
