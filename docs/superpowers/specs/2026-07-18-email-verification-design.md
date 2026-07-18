@@ -39,7 +39,7 @@ envelope·CSRF(XSRF 쿠키+헤더)는 기존 `/v1/auth/*`와 동일 적용.
 - 요청: `{ "email": string }` → 성공 204 (본문 없음)
 - 에러:
   - 400 `VALIDATION` — 이메일 형식 오류
-  - 409 `DUPLICATE_EMAIL` — 이미 가입된 이메일(조기 반환 — 스펙상 signup 409와 동일 수준 노출이라 수용)
+  - 409 `EMAIL_ALREADY_EXISTS` — 이미 가입된 이메일(조기 반환 — 기존 signup 409와 동일 코드·동일 수준 노출이라 수용)
   - 429 `RATE_LIMITED` — 레이트리밋
   - 502 `EMAIL_SEND_FAILED` — Resend API 장애(코드 행은 저장하지 않음 — 발송 실패 시 재시도 유도)
 
@@ -53,8 +53,9 @@ envelope·CSRF(XSRF 쿠키+헤더)는 기존 `/v1/auth/*`와 동일 적용.
 ### POST /v1/auth/signup (기존 확장)
 
 - 검증 순서: 429(레이트리밋) → 403 `INVALID_SIGNUP_CODE`(가입 코드) → 400(필드 검증)
-  → **403 `EMAIL_NOT_VERIFIED`(신설 — verified 행 없음/만료)** → 409 `DUPLICATE_EMAIL`
-- 가입 성공 시 해당 이메일의 `email_verifications` 행 삭제(1회 소비, 같은 트랜잭션).
+  → **403 `EMAIL_NOT_VERIFIED`(신설 — verified 행 없음/만료)** → 409 `EMAIL_ALREADY_EXISTS`(기존 코드)
+- 가입 성공 직후 해당 이메일의 `email_verifications` 행 삭제(1회 소비 — 원자성 불요,
+  삭제 실패로 잔존해도 verified 30분 만료로 무해).
 
 ## 5. DB — `V7__email_verifications.sql` (app 스키마, was 소유 Flyway)
 
