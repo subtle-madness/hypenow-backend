@@ -118,6 +118,28 @@ class MediaItemExtractorTest {
                         "edges", nodes.stream().map(n -> (Object) Map.of("node", n)).toList())));
     }
 
+    // ---- HIKER_V1_MEDIAS: /v1/user/medias/chunk — 모바일 계열, [medias, cursor]를 Map으로 감싼 형태 ----
+
+    @Test
+    void v1_medias_chunk_페이지에서_ISO_시각과_유형을_추출하고_커서를_읽는다() {
+        Map<String, Object> payload = Map.of(
+                "medias", List.of(
+                        Map.of("code", "C_FEED", "taken_at", "2026-07-18T01:00:00", "product_type", ""),
+                        Map.of("code", "C_REEL", "taken_at", "2026-07-18T02:00:00Z", "product_type", "clips"),
+                        Map.of("code", "C_EPOCH", "taken_at", 1773630245L)),
+                "next_end_cursor", "CUR9");
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS);
+
+        assertThat(items).hasSize(3);
+        assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
+                "C_FEED", Instant.parse("2026-07-18T01:00:00Z"), ContentType.FEED, false));
+        assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
+        assertThat(items.get(2).takenAt()).isEqualTo(Instant.ofEpochSecond(1773630245L));
+        assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V1_MEDIAS)).isEqualTo("CUR9");
+    }
+
     @Test
     void hiker_webgql_프로필의_user_루트_내장_타임라인도_판별하고_추출한다() {
         Map<String, Object> payload = hikerProfileWithTimeline(List.of(

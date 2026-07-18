@@ -63,6 +63,8 @@ class CollectJobTest {
 
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
+    com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository rawMediaPages =
+            mock(com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository.class);
     ContentRepository contents = mock(ContentRepository.class);
     RawCommentRepository rawComments = mock(RawCommentRepository.class);
     ProfileSourceSelector profileSourceSelector = mock(ProfileSourceSelector.class);
@@ -153,10 +155,15 @@ class CollectJobTest {
     }
 
     CollectJob job(boolean commentsEnabled) {
+        return job(commentsEnabled, List.of());
+    }
+
+    CollectJob job(boolean commentsEnabled,
+                   List<com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher> mediaFetchers) {
         CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
         return new CollectJob(props, influencers, rawProfiles, contents,
-                new ContentUpserter(contents, CLOCK), rawComments,
-                profileSourceSelector, commentSource, executor, settings, CLOCK, progress,
+                new ContentUpserter(contents, CLOCK), rawComments, rawMediaPages,
+                profileSourceSelector, commentSource, mediaFetchers, executor, settings, CLOCK, progress,
                 txTemplate);
     }
 
@@ -429,6 +436,53 @@ class CollectJobTest {
         assertThat(summary.postsUpserted()).isZero();              // 피드 폴백 없음
         verify(rawProfiles).save(any());                           // 프로필 스냅샷은 저장
         assertThat(inf.getLastCollectedAt()).isEqualTo(NOW);
+    }
+
+    // ---------------------------------------------------------------------
+    // 3b) 내장 타임라인 없는 소스(HIKER_MOBILE 등)는 /v1/user/medias/chunk 1페이지로 피드를 보충한다
+    // ---------------------------------------------------------------------
+    @Test
+    void 내장_타임라인_없는_소스는_medias_chunk_1페이지로_피드를_보충한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");   // APIFY_ACTOR 형태 — 내장 타임라인 없음
+
+        var chunkFetcher = mock(com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher.class);
+        when(chunkFetcher.source()).thenReturn(RawSource.HIKER_V1_MEDIAS);
+        when(chunkFetcher.fetchPage("USR1", null)).thenReturn(Map.of(
+                "medias", List.of(
+                        Map.of("code", "CHUNK_FEED", "taken_at", "2026-07-18T10:00:00", "product_type", ""),
+                        Map.of("code", "CHUNK_REEL", "taken_at", "2026-07-18T11:00:00", "product_type", "clips")),
+                "next_end_cursor", "CUR1"));
+
+        var summary = job(true, List.of(chunkFetcher)).run(TriggerType.MANUAL);
+
+        assertThat(summary.postsUpserted()).isEqualTo(2);
+        assertThat(contentStore.get("CHUNK_FEED").getContentType()).isEqualTo(ContentType.FEED);
+        assertThat(contentStore.get("CHUNK_REEL").getContentType()).isEqualTo(ContentType.REELS);
+        verify(rawMediaPages).save(any());                     // 페이지 원형 저장
+        assertThat(inf.getLastCollectedAt()).isEqualTo(NOW);   // 방문 완료
+    }
+
+    @Test
+    void 피드_보충_요청이_실패하면_방문도_실패해_재시도된다() {
+        // 게시물 없는 "방문 완료"를 만들지 않는다 — HIKER_MOBILE 사고(2026-07-18) 재발 방지 가드
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        var chunkFetcher = mock(com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher.class);
+        when(chunkFetcher.source()).thenReturn(RawSource.HIKER_V1_MEDIAS);
+        when(chunkFetcher.fetchPage("USR1", null)).thenThrow(new ApifyException("Hiker 500"));
+
+        var summary = job(true, List.of(chunkFetcher)).run(TriggerType.MANUAL);
+
+        assertThat(summary.failedVisits()).isEqualTo(1);
+        assertThat(inf.getLastCollectedAt()).isNull();
     }
 
     @Test

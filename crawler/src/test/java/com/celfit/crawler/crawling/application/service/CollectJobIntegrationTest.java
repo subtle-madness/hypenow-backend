@@ -55,6 +55,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
     @Autowired RawProfileRepository rawProfiles;
     @Autowired ContentRepository contents;
     @Autowired RawCommentRepository rawComments;
+    @Autowired com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository rawMediaPages;
     @Autowired CrawlRunRepository crawlRuns;
     @Autowired CrawlExecutor executor;
     @Autowired SettingsService settings;
@@ -100,8 +101,8 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
         CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
                 influencers, rawProfiles, contents,
-                new ContentUpserter(contents, clock), rawComments,
-                profileSource, commentSource, executor, settings, clock,
+                new ContentUpserter(contents, clock), rawComments, rawMediaPages,
+                profileSource, commentSource, java.util.List.of(), executor, settings, clock,
                 progress, new TransactionTemplate(txManager));
 
         var summary = job.run(TriggerType.MANUAL);

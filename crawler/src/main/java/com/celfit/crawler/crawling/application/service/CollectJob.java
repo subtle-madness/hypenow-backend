@@ -7,15 +7,19 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.application.port.out.CommentFetcher;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
+import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
+import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawComment;
+import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -59,8 +63,10 @@ public class CollectJob {
     private final ContentRepository contents;
     private final ContentUpserter contentUpserter;
     private final RawCommentRepository rawComments;
+    private final RawMediaPageRepository rawMediaPages;
     private final ProfileSourceSelector profileSourceSelector;
     private final CommentSourceSelector commentSource;
+    private final List<UserMediaPageFetcher> mediaFetchers;
     private final CrawlExecutor executor;
     private final SettingsService settings;
     private final Clock clock;
@@ -70,7 +76,9 @@ public class CollectJob {
     public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
                       RawProfileRepository rawProfiles, ContentRepository contents,
                       ContentUpserter contentUpserter, RawCommentRepository rawComments,
+                      RawMediaPageRepository rawMediaPages,
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
+                      List<UserMediaPageFetcher> mediaFetchers,
                       CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
                       TransactionTemplate txTemplate) {
         this.collectProps = collectProps;
@@ -79,8 +87,10 @@ public class CollectJob {
         this.contents = contents;
         this.contentUpserter = contentUpserter;
         this.rawComments = rawComments;
+        this.rawMediaPages = rawMediaPages;
         this.profileSourceSelector = profileSourceSelector;
         this.commentSource = commentSource;
+        this.mediaFetchers = mediaFetchers;
         this.executor = executor;
         this.settings = settings;
         this.clock = clock;
@@ -160,13 +170,16 @@ public class CollectJob {
         // ApifyException으로 방문 실패(재시도) 처리되며 유료 피드 폴백은 없다.
         Map<String, Object> payload = refreshProfile(inf, trigger);
 
-        // 2) 피드: 프로필 원형에 내장된 최근 12개만 — 내장 타임라인이 없는 소스면 게시물 0건
-        // (프로필 스냅샷 자체는 저장됨)
+        // 2) 피드: 프로필 원형에 내장된 최근 12개(SELF·WebGQL) — 내장 타임라인이 없는 소스
+        // (HIKER_MOBILE 등)는 /v1/user/medias/chunk 1페이지로 보충한다. SELF 실패의 유료 폴백이
+        // 아니라(그건 방문 실패·재시도 유지) 소스가 원래 타임라인을 안 주는 경우의 열거 경로다.
         Map<String, MediaItemExtractor.MediaItem> inWindow = new LinkedHashMap<>();
         if (MediaItemExtractor.hasEmbeddedTimeline(payload)) {
             for (var it : MediaItemExtractor.extract(payload, RawSource.SELF_GQL)) {
                 inWindow.putIfAbsent(it.shortCode(), it);
             }
+        } else {
+            supplementFeedPage(inf, trigger, inWindow);
         }
 
         // 3) content upsert — 신규 생성·DISCOVERY 승격은 ContentUpserter(REELS 잡과 공유) 규칙.
@@ -192,6 +205,31 @@ public class CollectJob {
         // 매 실행 재선정(백필 무한 반복·재과금)된다.
         influencers.save(inf);
         return new VisitResult(upserted, collected);
+    }
+
+    /**
+     * 내장 타임라인이 없는 프로필 소스의 피드 열거 — HIKER_V1_MEDIAS(모바일 계열) 1페이지를
+     * 수확해 raw 저장 + inWindow에 합류. 페처 미등록·pk 부재면 게시물 0건으로 프로필만 갱신
+     * (pk는 이번 프로필 갱신이 채웠을 수 있어 다음 방문부터 잡힌다). 요청 실패는 ApifyException
+     * → 방문 실패·재시도(피드 없는 "방문 완료"를 만들지 않는다 — 2026-07-18 HIKER_MOBILE 사고 재발 방지).
+     */
+    private void supplementFeedPage(Influencer inf, TriggerType trigger,
+                                    Map<String, MediaItemExtractor.MediaItem> inWindow) {
+        UserMediaPageFetcher fetcher = mediaFetchers.stream()
+                .filter(f -> f.source() == RawSource.HIKER_V1_MEDIAS).findFirst().orElse(null);
+        if (fetcher == null || inf.getIgUserId() == null || inf.getIgUserId().isBlank()) {
+            log.warn("피드 보충 스킵(페처 없음 또는 pk 없음) — 프로필만 갱신: {}", inf.getUsername());
+            return;
+        }
+        CrawlExecutor.Execution ex = executor.execute(JobName.COLLECT, trigger,
+                null, inf.getUsername(), RawSource.HIKER_V1_MEDIAS.name(),
+                () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null))));
+        Map<String, Object> page = ex.items().get(0);
+        rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), RawSource.HIKER_V1_MEDIAS,
+                page, clock.instant()));
+        for (var it : MediaItemExtractor.extract(page, RawSource.HIKER_V1_MEDIAS)) {
+            inWindow.putIfAbsent(it.shortCode(), it);
+        }
     }
 
     /**
