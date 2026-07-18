@@ -1,5 +1,9 @@
 # 상세 소스 셀렉터 설계 (Detail Source Selector)
 
+> 상태: 🗄 대체됨 — 미구현 상태에서 07-14 인플루언서 파이프라인 전환이 aggregate 단계
+> 자체를 폐기하며 소멸(DetailSource·DetailFetcher 등 미작성). 원동기였던 릴스 실조회수는
+> ReelsJob(collect 분리) 경로가 충족
+
 **날짜:** 2026-07-11
 **브랜치:** `feat/detail-source-selector` (77aa59c 기반 — 프로필·발굴과 형제)
 **범위:** 상세(Aggregate) 단계의 상세 fetch 한정. 댓글·발굴·프로필은 이번 범위 밖.

@@ -1,5 +1,9 @@
 # 프로필 소스 셀렉터 + HikerAPI 보충 설계
 
+> 상태: ✅ 구현됨 — 단 게시물 보충(`HikerMediasSupplement`·`profile.supplement.posts`)은
+> 07-14 인플루언서 파이프라인 전환에서 폐기(play_count=0·캡션 누락으로 탈락), 현재는
+> suggested 보충만 잔존
+
 **날짜:** 2026-07-11
 **범위:** 프로필(Qualify) 단계 한정. 발굴·상세·댓글은 이번 범위 밖.
 
