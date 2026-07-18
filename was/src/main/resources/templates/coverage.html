@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<meta http-equiv="refresh" content="60">
-	<title>content-ranking 커버리지 추적</title>
+	<title>celfit-front 커버리지 추적</title>
 	<style>
 		:root {
 			--accent: #4f46e5;
@@ -86,9 +86,9 @@
 </head>
 <body>
 <div class="container">
-	<h1>content-ranking 커버리지 추적</h1>
+	<h1>celfit-front 커버리지 추적</h1>
 	<p class="sub">
-		프론트 랭킹 카드가 요구하는 필드별 analysis DB 미러 채움율 · 60초마다 자동 갱신
+		celfit-front가 실제 소비하는 /v1 필드별 analysis DB 채움율 · 60초마다 자동 갱신
 		<span th:if="${queriedAt != null}"
 			  th:text="'· 조회 ' + ${#temporals.format(queriedAt, 'yyyy-MM-dd HH:mm:ss')}"></span>
 	</p>
