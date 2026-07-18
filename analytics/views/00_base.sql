@@ -136,6 +136,8 @@ FROM content;
 -- 지표 스냅샷 이력 (구 v_base_detail_history 후계) — 열거 원형 1건 = 스냅샷 1행,
 -- captured_at = 원형 수집 시각(재방문마다 누적 → +3일 고정 규칙 성립).
 -- 합성 id = (원본행 id × 1000 + 아이템 서수) × 2 + 소스태그(reel=0, timeline=1) — 유일·안정 bigint.
+-- 서수 < 1000 전제(현 크롤러는 원형 1행당 아이템 ~12개) — 초과 시 이웃 id 대역과 겹치지만,
+-- 겹침은 content_metric_snapshots 미러 PK 위반으로 시끄럽게 드러난다(무언 오염 아님).
 -- views NULL 규칙(§6): FEED는 무조건 NULL(타임라인에 값이 있어도 게이트), 릴스는 소스 값.
 -- content_type은 content 테이블이 정본(crawler 판정 우선), 조인 키는 short_code.
 CREATE OR REPLACE VIEW analytics.v_base_content_snapshot AS

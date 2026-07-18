@@ -2,6 +2,8 @@
 -- N은 app_setting 'analytics.recent-window' (기본 12) — 재배포 없이 런타임 조정.
 -- 서빙 모수 필터의 진입점: 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company)의
 -- ENUMERATION 콘텐츠 중 스냅샷 있는 것만 (INNER JOIN 의도 — 스펙 2026-07-17 §5).
+-- 같은 필터가 02(v_serving_content)·20(micro_account)에도 있다(뷰 적용 순서상 공유 불가) —
+-- 모수를 바꿀 땐 세 곳을 같이 고친다.
 -- 구 버전 대비: category_id·main_group 소멸(raw에서 제거 — B4 캡션 분류가 대체 소스),
 -- ad_marked는 이름 유지 + 소스만 최신 스냅샷의 is_paid_partnership(릴스 전용, 피드 false).
 CREATE OR REPLACE VIEW analytics.v_recent_content AS

@@ -460,6 +460,8 @@ FROM content;
 -- 지표 스냅샷 이력 (구 v_base_detail_history 후계) — 열거 원형 1건 = 스냅샷 1행,
 -- captured_at = 원형 수집 시각(재방문마다 누적 → +3일 고정 규칙 성립).
 -- 합성 id = (원본행 id × 1000 + 아이템 서수) × 2 + 소스태그(reel=0, timeline=1) — 유일·안정 bigint.
+-- 서수 < 1000 전제(현 크롤러는 원형 1행당 아이템 ~12개) — 초과 시 이웃 id 대역과 겹치지만,
+-- 겹침은 content_metric_snapshots 미러 PK 위반으로 시끄럽게 드러난다(무언 오염 아님).
 -- views NULL 규칙(§6): FEED는 무조건 NULL(타임라인에 값이 있어도 게이트), 릴스는 소스 값.
 -- content_type은 content 테이블이 정본(crawler 판정 우선), 조인 키는 short_code.
 CREATE OR REPLACE VIEW analytics.v_base_content_snapshot AS
@@ -594,6 +596,8 @@ Expected: FAIL — `relation "analytics.v_recent_content" does not exist`
 -- N은 app_setting 'analytics.recent-window' (기본 12) — 재배포 없이 런타임 조정.
 -- 서빙 모수 필터의 진입점: 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company)의
 -- ENUMERATION 콘텐츠 중 스냅샷 있는 것만 (INNER JOIN 의도 — 스펙 2026-07-17 §5).
+-- 같은 필터가 02(v_serving_content)·20(micro_account)에도 있다(뷰 적용 순서상 공유 불가) —
+-- 모수를 바꿀 땐 세 곳을 같이 고친다.
 -- 구 버전 대비: category_id·main_group 소멸(raw에서 제거 — B4 캡션 분류가 대체 소스),
 -- ad_marked는 이름 유지 + 소스만 최신 스냅샷의 is_paid_partnership(릴스 전용, 피드 false).
 CREATE OR REPLACE VIEW analytics.v_recent_content AS
@@ -755,6 +759,7 @@ $$;
 
 -- 서빙 모수: 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company)의 ENUMERATION 콘텐츠
 -- (스펙 2026-07-17 §2 결정 2). 아래 뷰들이 공유하는 필터 밑판 — 미러 안 함.
+-- 같은 필터가 01(v_recent_content)·20(micro_account)에도 있다 — 모수를 바꿀 땐 세 곳을 같이.
 CREATE OR REPLACE VIEW analytics.v_serving_content AS
 SELECT c.content_id, c.short_code, c.owner_username, c.uploaded_at, c.content_type
 FROM analytics.v_base_content c
@@ -1336,6 +1341,7 @@ Expected: FAIL — `relation "analytics.v_landing_stats" does not exist`
 -- 랜딩 데이터 투명성 통계 (스펙 6.20) — 항상 정확히 1행 (계정 0명이어도 0으로 채운 1행).
 -- 모수 = **뷰티 인플루언서 ∩ 마이크로 구간**(팔로워 3,000 이상 50,000 미만)과 그 계정들의
 -- ENUMERATION 콘텐츠 (2026-07-17 신 스키마 스펙 §5 — 랜딩 카피 "뷰티 마이크로 인플루언서"와 정합).
+-- 뷰티 필터는 01·02(v_serving_content)와 동일 문구 — 모수를 바꿀 땐 세 곳을 같이.
 -- 조회수 집계는 릴스만 (피드는 조회수 미공개 — base 층이 이미 NULL 게이트).
 -- 분포는 구간별 '계정 수'까지만 내고 %·합계 100 보정은 was 표현 계층 몫 (§4-2).
 -- updated_at: 뷰 실행 = 미러 실행 시각 → "매주 갱신 중" 표기의 근거.

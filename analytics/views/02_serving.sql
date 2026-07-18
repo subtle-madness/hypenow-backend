@@ -36,6 +36,7 @@ $$;
 
 -- 서빙 모수: 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company)의 ENUMERATION 콘텐츠
 -- (스펙 2026-07-17 §2 결정 2). 아래 뷰들이 공유하는 필터 밑판 — 미러 안 함.
+-- 같은 필터가 01(v_recent_content)·20(micro_account)에도 있다 — 모수를 바꿀 땐 세 곳을 같이.
 CREATE OR REPLACE VIEW analytics.v_serving_content AS
 SELECT c.content_id, c.short_code, c.owner_username, c.uploaded_at, c.content_type
 FROM analytics.v_base_content c
