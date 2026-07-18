@@ -150,38 +150,6 @@
 		</div>
 	</div>
 
-	<div class="card" style="margin-top:24px;">
-		<h2>게시물 상세 데모 — 분석 완료 게시물</h2>
-		<div class="table-wrap">
-			<table>
-				<thead>
-				<tr>
-					<th>게시물</th>
-					<th>계정</th>
-					<th>카테고리</th>
-					<th>광고 구분</th>
-					<th class="num">분류 댓글</th>
-					<th>분석일</th>
-				</tr>
-				</thead>
-				<tbody>
-				<tr th:if="${#lists.isEmpty(analyzedPosts)}" class="empty-row">
-					<td colspan="6">분석된 게시물 없음 — analyze 배치를 실행하세요</td>
-				</tr>
-				<tr th:each="p : ${analyzedPosts}">
-					<td class="mono"><a th:href="'/posts/' + ${p['short_code']}" th:text="${p['short_code']}"
-						style="color:var(--accent); text-decoration:none;"></a></td>
-					<td th:text="'@' + ${p['account_handle']}"></td>
-					<td th:text="${p['main_category']} ?: '—'"></td>
-					<td th:text="${p['ad_type'] != null} ? (${p['ad_type'] == 'sponsored'} ? '광고/협찬' : '오가닉') : '—'"></td>
-					<td class="num" th:text="${p['classified']}"></td>
-					<td class="num" th:text="${p['analyzed_on']}"></td>
-				</tr>
-				</tbody>
-			</table>
-		</div>
-	</div>
-
 	<footer>매트릭스 정의는 analytics/check/coverage.sql(CLI)과 쌍 · was module</footer>
 </div>
 </body>
