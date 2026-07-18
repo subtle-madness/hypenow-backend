@@ -43,8 +43,10 @@ MVP 범위 (07-14 정정 — 댓글 제외):
 
 **데이터 배치**: 저장 영역은 세 가지 — raw(크롤링 원본) / 분석 결과(미러 테이블) / **서비스 데이터**(was가
 쓰는 일반 앱 데이터: 로그인·후보 관리 등). 서비스 데이터는 분석 결과와 **스키마로 분리**(analysis DB 내
-`app` 스키마)하고, 셋 모두 현재 **한 Postgres 인스턴스**(포트 5433)에 논리 분리만 되어 있다. 부하를 보고
+`app` 스키마)하고, 로컬은 셋 모두 **한 Postgres 인스턴스**(포트 5433)에 논리 분리만 되어 있다. 부하를 보고
 물리 분리를 결정한다 — 접근 규율(§4-4)을 지키는 한 어느 경계든 설정 변경으로 분리 가능하다.
+운영 서버(오라클)는 컨테이너로 물리 분리: `postgres`(analysis DB — 분석 결과 public + 서비스 app 스키마,
+루프백 5432)와 `postgres-raw`(raw crawler DB, 루프백 5433 — 분석 잡 전용, was 접근 금지).
 
 **미러란**: raw DB에 정의된 분석 뷰(`analytics.*`)를 실행해 결과를 analysis DB의 테이블로 채우는
 배치. 레플리카가 아니라 **분석 층이 결과물을 내놓는 행위 그 자체** — 뷰는 DB를 못 넘으므로 이 잡이
@@ -248,6 +250,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **운영 서버에 raw DB 상주 컨테이너 신설 + e2e 실데이터 이전** — 오라클 운영 compose에 `postgres-raw`(crawler DB, 루프백 5433, 계정 .env `RAW_DB_*`) 추가. 07-17 일회성 LLM 실행(e2e-*)에 올라가 있던 raw 실데이터 2.4GB(콘텐츠 27,093·인플루언서 12,837)를 postgres-raw로, 분석 결과 public 스키마(계정 12,638·콘텐츠 16,686·LLM 분석 account 77/content 88·landing_stats)를 운영 analysis DB로 이전(구 114건 미러 대체, `app` 스키마·세션은 보존 — e2e의 검증용 유저 3건은 미이관). 운영 /v1/contents 실데이터 응답 검증 완료. was의 raw 접근 금지 규율은 유지(같은 compose 네트워크지만 접속 정보 미주입). 미결: backup.sh는 analysis만 백업(raw 백업 여부), e2e-* 컨테이너 정리 | deploy/compose.yaml |
 | 2026-07-18 | **/coverage 매트릭스를 celfit-front 실소비 필드 기준으로 재정의** — 기준 코드는 celfit-front 배포본(origin/main). 구 content-ranking 카드 14행을 프론트가 실제 렌더·필터에 쓰는 /v1 필드 27행(카드·필터 6.1 → 드로어 리포트 6.3 → 인플루언서 6.4/6.5)으로 교체. 타입에만 있고 UI 미소비인 필드(email·external_link)와 /v1 미사용 미러(content_metric_snapshots — 단 metric_captured_at 원천이라 coverage.sql 골격 가드는 유지)는 제외. 구 산출물 content_ranking 행은 본 쿼리에서 분리 조회(테이블 부재에도 매트릭스 생존 — was는 폴백 행, coverage.sql은 to_regclass DO 블록). 매트릭스 정의 쌍(CoverageRepository ↔ analytics/check/coverage.sql) 컨벤션 유지 | feat/coverage-v1-fields 브랜치 |
 | 2026-07-17 | **분석 뷰 신 스키마 재구축 설계 확정 (A2)** — 신 크롤러는 상세 수집 없이 열거만 하므로(raw_post_detail 소멸) 캡션·지표 소스를 raw_media_page clips 아이템·SELF_GQL 내장 타임라인 노드로 교체(플랫 뷰 체인, base 층에 평탄화 뷰 2종 신설). 서빙 모수는 뷰티 인플루언서만(QUALIFIED ∧ beauty ∧ ¬company, 1,496계정), 미러 계약은 형태 유지+우아한 공백(피드 광고 false·카테고리 믹스 0행 — B4 캡션 분류가 대체 소스), 04_analysis_candidates 신설(캡션 선분석 Haiku+Batch 입구 — 숙성 가드 3일·캡션 필수까지 뷰 담당, 분석됨 대조·상한은 Java). 기반은 PR #30 머지 후 develop | [specs/2026-07-17-analytics-views-new-schema-design.md](docs/superpowers/specs/2026-07-17-analytics-views-new-schema-design.md) |
 | 2026-07-17 | **analytics 어드민 UI + 스케줄러 골격 설계 확정 (태스크 I 신설)** — analytics를 상주 웹 서버(8082)로 전환, 크롤러 어드민 패턴 이식(`/ui` 잡 버튼 4종 + LLM 예상 비용 카드 + LogBuffer 로그 패널 + 잡별 락·비동기 트리거). 실행 이력 DB 테이블은 두지 않음(로그로 충분 — 사용자 확정). 스케줄러는 크롤러 동일 게이트(`analytics.schedule.enabled`, 기본 off) 골격만. `mirror-on-startup` 기본 false로 전환하되 cloud push는 one-shot CLI 보존(cloud 프로파일만 true) | [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) |
