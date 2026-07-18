@@ -73,6 +73,7 @@ ORDER BY influencer_id, captured_at DESC, id DESC;
 
 -- 릴스 페이지 아이템 평탄화 (HIKER_V2_CLIPS). item_ordinal = 페이지 내 위치(원형 불변 → 안정)
 -- — 합성 스냅샷 id 재료. 실DB 전수에서 flat 접두사(1l/1f) 0건 확인 — 평문 키만 파싱.
+-- 좋아요 비공개는 -1 센티널로 온다 → NULL(미상)로 정규화 — hype·평균 오염을 base에서 차단.
 CREATE OR REPLACE VIEW analytics.v_base_reel_item AS
 SELECT
   p.id            AS page_id,
@@ -80,7 +81,7 @@ SELECT
   p.influencer_id,
   p.captured_at,
   m.media->>'code'                                        AS short_code,
-  (m.media->>'like_count')::bigint                        AS likes,
+  NULLIF((m.media->>'like_count')::bigint, -1)            AS likes,
   (m.media->>'comment_count')::bigint                     AS comments_count,
   COALESCE((m.media->>'play_count')::bigint,
            (m.media->>'ig_play_count')::bigint)           AS views,
@@ -97,6 +98,7 @@ CROSS JOIN LATERAL (SELECT it.item->'media' AS media) m;
 
 -- SELF_GQL 내장 타임라인 노드 평탄화. 타임라인은 피드 전용이 아니다 — product_type='clips'
 -- 노드(릴스)가 다수라 릴스 스냅샷 폴백 소스로도 쓴다. video_view_count 0은 미공개 표기 → NULL.
+-- 좋아요 비공개 -1도 동일하게 NULL.
 CREATE OR REPLACE VIEW analytics.v_base_timeline_item AS
 SELECT
   p.id            AS profile_id,
@@ -104,8 +106,8 @@ SELECT
   p.influencer_id,
   p.captured_at,
   n.node->>'shortcode'                                    AS short_code,
-  COALESCE((n.node#>>'{edge_media_preview_like,count}')::bigint,
-           (n.node#>>'{edge_liked_by,count}')::bigint)    AS likes,
+  NULLIF(COALESCE((n.node#>>'{edge_media_preview_like,count}')::bigint,
+                  (n.node#>>'{edge_liked_by,count}')::bigint), -1) AS likes,
   (n.node#>>'{edge_media_to_comment,count}')::bigint      AS comments_count,
   NULLIF((n.node->>'video_view_count')::bigint, 0)        AS views,
   n.node#>>'{edge_media_to_caption,edges,0,node,text}'    AS caption,

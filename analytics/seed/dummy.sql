@@ -8,7 +8,7 @@
 -- 시나리오:
 --   dummy_a(99990001)  뷰티 인플루언서 — r1(99990101, 릴스: clips 스냅샷 3 + 타임라인 1 — 핀·최신 메타 검증),
 --                  r2(99990102, 타임라인 전용 릴스 — 787건 케이스), f1(99990103, 피드 — views NULL 규칙),
---                  d1(99990104, DISCOVERY 잔재 — 모수 제외), rn(99990108, 업로드 1일 전 — 숙성 가드)
+--                  d1(99990104, DISCOVERY 잔재 — 모수 제외·좋아요 비공개 -1 케이스), rn(99990108, 업로드 1일 전 — 숙성 가드)
 --   dummy_b(99990002)  뷰티 인플루언서 — r3(99990105, 캡션 결측·유료 협찬 true). 프로필 HIKER_MOBILE만(소스 분기 검증)
 --   dummy_co(99990003) 뷰티 회사 — r4(99990106, 모수 제외 검증)
 --   dummy_x(99990004)  비뷰티 — r5(99990107, 모수 제외 검증)
@@ -75,7 +75,7 @@ INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers
                 "edge_media_to_caption":{"edges":[{"node":{"text":"cap f1"}}]},
                 "display_url":"https://thumb/f1_tl.jpg"}},
        {"node":{"shortcode":"dummy_d1","product_type":"feed","taken_at_timestamp":1780531200,
-                "edge_media_preview_like":{"count":10},"edge_media_to_comment":{"count":1},
+                "edge_media_preview_like":{"count":-1},"edge_media_to_comment":{"count":1},
                 "edge_media_to_caption":{"edges":[{"node":{"text":"cap d1"}}]},
                 "display_url":"https://thumb/d1_tl.jpg"}}
      ]}}}}'::jsonb,

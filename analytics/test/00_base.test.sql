@@ -56,6 +56,8 @@ BEGIN
     'v_base_timeline_item f1 likes != 2000 (edge_liked_by 폴백)';
   ASSERT (SELECT views FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_f1') = 999,
     'v_base_timeline_item f1 views != 999 (아이템 층은 원값 — FEED 게이트는 스냅샷 층)';
+  ASSERT (SELECT likes FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_d1') IS NULL,
+    'v_base_timeline_item d1 likes not null (좋아요 비공개 -1 → NULL)';
 
   -- v_base_content_snapshot: UNION + content_type 게이트 + 합성 id 유일성
   ASSERT (SELECT count(*) FROM analytics.v_base_content_snapshot WHERE content_id BETWEEN 99990101 AND 99990108) = 11,

@@ -90,7 +90,7 @@ git rm analytics/test/00_base.test.sql analytics/test/01_recent_window.test.sql 
 -- 시나리오:
 --   dummy_a(99990001)  뷰티 인플루언서 — r1(99990101, 릴스: clips 스냅샷 3 + 타임라인 1 — 핀·최신 메타 검증),
 --                  r2(99990102, 타임라인 전용 릴스 — 787건 케이스), f1(99990103, 피드 — views NULL 규칙),
---                  d1(99990104, DISCOVERY 잔재 — 모수 제외), rn(99990108, 업로드 1일 전 — 숙성 가드)
+--                  d1(99990104, DISCOVERY 잔재 — 모수 제외·좋아요 비공개 -1 케이스), rn(99990108, 업로드 1일 전 — 숙성 가드)
 --   dummy_b(99990002)  뷰티 인플루언서 — r3(99990105, 캡션 결측·유료 협찬 true). 프로필 HIKER_MOBILE만(소스 분기 검증)
 --   dummy_co(99990003) 뷰티 회사 — r4(99990106, 모수 제외 검증)
 --   dummy_x(99990004)  비뷰티 — r5(99990107, 모수 제외 검증)
@@ -157,7 +157,7 @@ INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers
                 "edge_media_to_caption":{"edges":[{"node":{"text":"cap f1"}}]},
                 "display_url":"https://thumb/f1_tl.jpg"}},
        {"node":{"shortcode":"dummy_d1","product_type":"feed","taken_at_timestamp":1780531200,
-                "edge_media_preview_like":{"count":10},"edge_media_to_comment":{"count":1},
+                "edge_media_preview_like":{"count":-1},"edge_media_to_comment":{"count":1},
                 "edge_media_to_caption":{"edges":[{"node":{"text":"cap d1"}}]},
                 "display_url":"https://thumb/d1_tl.jpg"}}
      ]}}}}'::jsonb,
@@ -278,6 +278,8 @@ BEGIN
     'v_base_timeline_item f1 likes != 2000 (edge_liked_by 폴백)';
   ASSERT (SELECT views FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_f1') = 999,
     'v_base_timeline_item f1 views != 999 (아이템 층은 원값 — FEED 게이트는 스냅샷 층)';
+  ASSERT (SELECT likes FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_d1') IS NULL,
+    'v_base_timeline_item d1 likes not null (좋아요 비공개 -1 → NULL)';
 
   -- v_base_content_snapshot: UNION + content_type 게이트 + 합성 id 유일성
   ASSERT (SELECT count(*) FROM analytics.v_base_content_snapshot WHERE content_id BETWEEN 99990101 AND 99990108) = 11,
@@ -395,6 +397,7 @@ ORDER BY influencer_id, captured_at DESC, id DESC;
 
 -- 릴스 페이지 아이템 평탄화 (HIKER_V2_CLIPS). item_ordinal = 페이지 내 위치(원형 불변 → 안정)
 -- — 합성 스냅샷 id 재료. 실DB 전수에서 flat 접두사(1l/1f) 0건 확인 — 평문 키만 파싱.
+-- 좋아요 비공개는 -1 센티널로 온다 → NULL(미상)로 정규화 — hype·평균 오염을 base에서 차단.
 CREATE OR REPLACE VIEW analytics.v_base_reel_item AS
 SELECT
   p.id            AS page_id,
@@ -402,7 +405,7 @@ SELECT
   p.influencer_id,
   p.captured_at,
   m.media->>'code'                                        AS short_code,
-  (m.media->>'like_count')::bigint                        AS likes,
+  NULLIF((m.media->>'like_count')::bigint, -1)            AS likes,
   (m.media->>'comment_count')::bigint                     AS comments_count,
   COALESCE((m.media->>'play_count')::bigint,
            (m.media->>'ig_play_count')::bigint)           AS views,
@@ -419,6 +422,7 @@ CROSS JOIN LATERAL (SELECT it.item->'media' AS media) m;
 
 -- SELF_GQL 내장 타임라인 노드 평탄화. 타임라인은 피드 전용이 아니다 — product_type='clips'
 -- 노드(릴스)가 다수라 릴스 스냅샷 폴백 소스로도 쓴다. video_view_count 0은 미공개 표기 → NULL.
+-- 좋아요 비공개 -1도 동일하게 NULL.
 CREATE OR REPLACE VIEW analytics.v_base_timeline_item AS
 SELECT
   p.id            AS profile_id,
@@ -426,8 +430,8 @@ SELECT
   p.influencer_id,
   p.captured_at,
   n.node->>'shortcode'                                    AS short_code,
-  COALESCE((n.node#>>'{edge_media_preview_like,count}')::bigint,
-           (n.node#>>'{edge_liked_by,count}')::bigint)    AS likes,
+  NULLIF(COALESCE((n.node#>>'{edge_media_preview_like,count}')::bigint,
+                  (n.node#>>'{edge_liked_by,count}')::bigint), -1) AS likes,
   (n.node#>>'{edge_media_to_comment,count}')::bigint      AS comments_count,
   NULLIF((n.node->>'video_view_count')::bigint, 0)        AS views,
   n.node#>>'{edge_media_to_caption,edges,0,node,text}'    AS caption,
@@ -1434,6 +1438,8 @@ Expected: 각 수 초 이내(미러는 수동 배치라 10초 수준도 허용).
 ---
 
 ### Task 11: 미러 스모크 (MirrorJob 무변경 검증)
+
+> **스모크 발견 수정(07-18)**: 타임라인 likes의 비공개 -1 센티널이 hype cbrt 도메인 오류를 유발 — base 층 NULL 정규화로 수정(00_base·시드·테스트 갱신).
 
 **Files:** 없음 (실행 검증만)
 
