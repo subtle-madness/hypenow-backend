@@ -205,6 +205,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
 | G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일 인증(Spring Security 세션 쿠키·CSRF) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
 | I | analytics 어드민 | analytics 상주 서버화(8082) + `/ui` 잡 트리거 4종(미러·LLM 3종, 잡별 락)·LLM 예상 비용 카드·로그 패널(LogBuffer 복제) + 스케줄러 골격(`analytics.schedule.enabled`, 기본 off). cloud push는 one-shot CLI 보존 — [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) | A | ✅ |
+| L | LLM Gemini 전환 | 전 분석 축(판정·속성+종합 통합 1콜·카피)을 `gemini-3.1-flash-lite`로 — 프로바이더 선택 `analytics.llm-provider`(기본 gemini, anthropic 롤백), 무료 키 페이싱(15RPM, 일 예산은 batch-limit) + 한도 소진 시 배치 이월, 문구 절제 규칙(LlmGuard). 크롤러 판정은 `crawler.beauty.judge`(기본 gemini, 팀 프롬프트·파서 재사용). 백필은 유료 키 Batch one-shot(submit/collect) — [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) | F, B4, C2 | ✅ (백필 실행은 신 스키마 뷰 머지 + GEMINI_API_KEY_PAID 등록 대기) |
 
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
@@ -233,6 +234,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 - 저장·공유·도달·노출 지표 없음. 팔로워는 qualify 시점 값.
 - LLM 댓글 분류 실측 비용: 게시물 1,000건당 Opus ≈ $61 / haiku ≈ $12.2 (동기·무캐시·무배치 기준).
   VLM(썸네일)은 건당 ≈ $0.03~0.05 (opus 4.8, 07-14 실측).
+- LLM 운영 비용(07-18 확정): 전 축 gemini-3.1-flash-lite **무료 티어 $0**(분당 15콜·일 1,500콜 예산 —
+  판정 ~100 / 통합 ~450 / 카피 ~150콜), 초기 백필 2만 건은 유료 프로젝트 Batch API ~$9.
+  Anthropic 단가는 롤백 참고치. 일 1,500콜 초과 성장 시 GEMINI_API_KEY만 유료 키로 교체(코드 무변경).
 - **인스타 CDN 썸네일 URL은 수집 후 ~4일이면 만료**(403) — 썸네일 첨부는 최신 수집분에만 가능
   (분석 잡이 HEAD 프리체크, 만료분은 캡션 단독 분석 — B4). 썸네일 신호까지 반영하려면 크롤링 직후 분석 배치를 돌릴 것.
 
@@ -242,6 +246,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-18 | **LLM 스택 Gemini 3.1 Flash-Lite 전환 (태스크 L)** — 골드셋 40건 실측(Opus 기준 mainCategory 90%·adType 98%·subCat Jaccard 0.62·브랜드 88%, Haiku 4.5보다 우수·5.5배 저렴)으로 전 분석 축 통일. ②속성+③종합은 통합 1콜(`ContentInsightPort` — Anthropic은 기존 어댑터 2콜 컴포지트로 보존해 app_setting `analytics.llm-provider` 롤백 경로), 문구 프롬프트에 절제 규칙(`LlmGuard` — 표본 3건 미만 단정 금지·조언 금지·수치 인용, 골드셋 문구 검증 통과본) 필수. 이원 운영: 일상=무료 키(`GEMINI_API_KEY`) 동기+RPM 페이싱, 429/일한도 소진은 에러 아닌 배치 이월 / 백필 2만 건=유료 키(`GEMINI_API_KEY_PAID`) Batch one-shot(`analytics.backfill-submit`→`-collect`, ~$9). ①판정은 크롤러 BeautyJudge 포트 뒤 Gemini 어댑터(팀 프롬프트·파서 재사용, `crawler.beauty.judge` 기본 gemini). 댓글 분류는 MVP 휴면이라 Anthropic 유지. 구모델(2.5)은 신규 API 키에서 404 — 3.1이 유일 선택지 | [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) |
 | 2026-07-18 | **/coverage 매트릭스를 celfit-front 실소비 필드 기준으로 재정의** — 기준 코드는 celfit-front 배포본(origin/main). 구 content-ranking 카드 14행을 프론트가 실제 렌더·필터에 쓰는 /v1 필드 27행(카드·필터 6.1 → 드로어 리포트 6.3 → 인플루언서 6.4/6.5)으로 교체. 타입에만 있고 UI 미소비인 필드(email·external_link)와 /v1 미사용 미러(content_metric_snapshots — 단 metric_captured_at 원천이라 coverage.sql 골격 가드는 유지)는 제외. 구 산출물 content_ranking 행은 본 쿼리에서 분리 조회(테이블 부재에도 매트릭스 생존 — was는 폴백 행, coverage.sql은 to_regclass DO 블록). 매트릭스 정의 쌍(CoverageRepository ↔ analytics/check/coverage.sql) 컨벤션 유지 | feat/coverage-v1-fields 브랜치 |
 | 2026-07-17 | **analytics 어드민 UI + 스케줄러 골격 설계 확정 (태스크 I 신설)** — analytics를 상주 웹 서버(8082)로 전환, 크롤러 어드민 패턴 이식(`/ui` 잡 버튼 4종 + LLM 예상 비용 카드 + LogBuffer 로그 패널 + 잡별 락·비동기 트리거). 실행 이력 DB 테이블은 두지 않음(로그로 충분 — 사용자 확정). 스케줄러는 크롤러 동일 게이트(`analytics.schedule.enabled`, 기본 off) 골격만. `mirror-on-startup` 기본 false로 전환하되 cloud push는 one-shot CLI 보존(cloud 프로파일만 true) | [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) |
 | 2026-07-17 | **로그인 월 + 가입 코드 도입** — 제품 구조 변경(사용자 확정): 모든 조회는 로그인 필수, 가입은 단일 공용 코드 필수. SecurityConfig를 화이트리스트로 전환(기본 authenticated, 열린 경로는 /v1/auth·/v1/events/gate(익명 측정 유지)·/v1/stats(랜딩 통계 — P3와 병합 시 추가, 로그인 전 랜딩이 소비)·/health·swagger(로컬)만) — /v1 읽기 4종·구 /api·내부 페이지·프로필 이미지 전부 잠금, 401 계약은 기존 유지(/v1 envelope). 가입 코드는 `app.app_setting`(V6) `signup.code`와 trim 정확 일치, 불일치·미설정 403 INVALID_SIGNUP_CODE(fail-closed — 빈 값 시드로 배포되며 운영자 UPDATE로 개통). 레거시 /api/auth/signup은 코드 우회 뒷문이라 폐쇄(인증 입구 /v1 일원화) | [specs/2026-07-17-login-wall-signup-code-design.md](docs/superpowers/specs/2026-07-17-login-wall-signup-code-design.md) |
@@ -292,7 +297,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 |---|---|
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. **블로커(07-17 확인)**: 뷰·하니스가 실DB(V6 시점) 스키마(`account`/`account_id`)를 전제하는데 실DB는 V7~V12 미적용 상태로 멈춰 있고, 프레시 DB에 리포 마이그레이션을 전부 적용하면 V8 리네임(account→influencer)으로 뷰가 깨짐 — analytics 재구축(뷰의 신 스키마 전환) 후 CI 연결 |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
-| LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
+| ~~LLM 모델~~ | 해소(07-18) — 골드셋 실측으로 전 축 gemini-3.1-flash-lite 확정(§7 태스크 L), Anthropic은 app_setting 롤백 경로 |
 | 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
 | ~~세션·쿠키 운영 전환~~ | 해소 — HTTPS·Secure 쿠키(07-15, application-prod.yml), 세션 인메모리→spring-session-jdbc(07-15, P2 `app.spring_session`), SameSite는 Lax 확정(07-17, [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23)) |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
