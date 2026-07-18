@@ -1,29 +1,31 @@
 -- 랜딩 통계 뷰 기대값. 시드 근거:
 --   시드 계정 2개가 이미 마이크로 모수 안 — dummy_a followers=5500(최신 스냅샷), dummy_b=20000.
---   raw_profile.username·followers는 payload에서 파생되는 generated column —
---   픽스처는 payload에 username/followersCount를 담아야 한다 (직접 INSERT 불가).
+--   raw_profile.username·followers는 신스키마에서 crawler가 추출해 채우는 실컬럼 —
+--   뷰는 컬럼을 읽으므로 픽스처도 컬럼에 직접 넣는다(payload는 원형 재현용 최소만).
 --   시드 콘텐츠 4건은 모두 상세가 있고 소유자가 마이크로(dummy_a 릴스2+피드1, dummy_b 릴스1).
 --   조회수는 v_base_detail = 최신 스냅샷 기준: dummy_r1=11000(06-06 최신), dummy_r2=7000, dummy_r3=40000.
 --     → total_views = 11000+7000+40000 = 58000, avg_views = round(58000/3) = 19333.
 --
 -- 모수 경계 픽스처: 2,999(제외) / 3,000(포함, 하한 경계) / 49,999(포함, 상한 경계) / 50,000(제외)
-INSERT INTO account(id, username) VALUES
- (9301,'dummy_under'), (9302,'dummy_lower'), (9303,'dummy_upper'), (9304,'dummy_over');
-INSERT INTO raw_profile(account_id, crawl_run_id, payload, captured_at) VALUES
- (9301,9990,'{"username":"dummy_under","fullName":"경계 아래","followersCount":2999}'::jsonb,  now()),
- (9302,9990,'{"username":"dummy_lower","fullName":"하한","followersCount":3000}'::jsonb,      now()),
- (9303,9990,'{"username":"dummy_upper","fullName":"상한","followersCount":49999}'::jsonb,     now()),
- (9304,9990,'{"username":"dummy_over","fullName":"경계 위","followersCount":50000}'::jsonb,   now());
+INSERT INTO influencer(id, username) VALUES
+ (9909301,'dummy_under'), (9909302,'dummy_lower'), (9909303,'dummy_upper'), (9909304,'dummy_over');
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at) VALUES
+ (9909301,9909990,'DATALIKERS','dummy_under',2999, '{"username":"dummy_under","full_name":"경계 아래","follower_count":2999}'::jsonb,  now()),
+ (9909302,9909990,'DATALIKERS','dummy_lower',3000, '{"username":"dummy_lower","full_name":"하한","follower_count":3000}'::jsonb,      now()),
+ (9909303,9909990,'DATALIKERS','dummy_upper',49999,'{"username":"dummy_upper","full_name":"상한","follower_count":49999}'::jsonb,     now()),
+ (9909304,9909990,'DATALIKERS','dummy_over',50000, '{"username":"dummy_over","full_name":"경계 위","follower_count":50000}'::jsonb,   now());
 
 -- ① 피드에 조회수가 있는 픽스처(구 크롤 잔재 재현 — 실데이터 Cr8TkbLrIZU 1건과 같은 형태):
 --    콘텐츠 수에는 들어가지만 total_views에는 절대 들어가면 안 된다 (릴스 전용 규칙 실증).
 -- ② 모수 밖(50,000) 계정의 릴스: 콘텐츠 수·조회수 어디에도 들어가면 안 된다 (콘텐츠도 마이크로 모수).
-INSERT INTO content(id, short_code, content_type, owner_username, uploaded_at, category_id, discovery_keyword, status, first_seen_at, subcategory, main_group, ad_marked) VALUES
- (9305,'dummy_fv','FEED', 'dummy_a',    timestamptz '2026-06-08 09:00:00+09',999,'glow','AGGREGATED',   timestamptz '2026-06-08 00:00:00+09','glow_sub','B', false),
- (9306,'dummy_ro','REELS','dummy_over', timestamptz '2026-06-08 09:00:00+09',999,'makeup','AGGREGATED', timestamptz '2026-06-08 00:00:00+09','makeup_sub','A', false);
-INSERT INTO raw_post_detail(content_id, crawl_run_id, payload, captured_at) VALUES
- (9305,9990,'{"shortCode":"dummy_fv","type":"Image","caption":"cap fv","likesCount":10,"commentsCount":1,"videoPlayCount":999,"displayUrl":"https://thumb/fv.jpg","url":"https://www.instagram.com/p/dummy_fv/"}'::jsonb,       now()),
- (9306,9990,'{"shortCode":"dummy_ro","type":"Video","caption":"cap ro","likesCount":10,"commentsCount":1,"videoPlayCount":123456,"displayUrl":"https://thumb/ro.jpg","url":"https://www.instagram.com/p/dummy_ro/"}'::jsonb, now());
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at, status, origin, first_seen_at) VALUES
+ (9909305,'dummy_fv','FEED', 'dummy_a',9909001,    timestamptz '2026-06-08 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-06-08 00:00:00+09'),
+ (9909306,'dummy_ro','REELS','dummy_over',9909304, timestamptz '2026-06-08 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-06-08 00:00:00+09');
+INSERT INTO raw_media_page(id, influencer_id, crawl_run_id, source, payload, captured_at) VALUES
+ (9909431,9909001,9909990,'HIKER_V2_CLIPS',
+  '{"response":{"items":[{"media":{"code":"dummy_fv","media_type":1,"caption":{"text":"cap fv"},"like_count":10,"comment_count":1,"play_count":999,"image_versions2":{"candidates":[{"url":"https://thumb/fv.jpg"}]}}}]}}'::jsonb, now()),
+ (9909432,9909304,9909990,'HIKER_V2_CLIPS',
+  '{"response":{"items":[{"media":{"code":"dummy_ro","media_type":2,"caption":{"text":"cap ro"},"like_count":10,"comment_count":1,"play_count":123456,"image_versions2":{"candidates":[{"url":"https://thumb/ro.jpg"}]}}}]}}'::jsonb, now());
 
 DO $$
 DECLARE s record;

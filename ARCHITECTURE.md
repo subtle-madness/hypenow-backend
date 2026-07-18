@@ -36,7 +36,7 @@ MVP 범위 (07-14 정정 — 댓글 제외):
 
 | 모듈 | 데이터 접근 | 역할 | 기술 |
 |---|---|---|---|
-| `crawler` | raw DB 쓰기 | Apify로 발굴→판정→상세 수집, 원형(raw) 적재 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
+| `crawler` | raw DB 쓰기 | 발굴(키워드·유사)→뷰티 판정→수집(프로필+미디어 열거), 원형(raw) 적재 — 07-16 인플루언서 중심 개편 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
 | `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 상주 서버(8082, 어드민 `/ui`) + one-shot CLI(cloud), JdbcTemplate ×2 |
 | `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + 서비스 기능(로그인·후보 관리 등) | Spring Boot, JdbcClient |
 | `contract-analysis` *(신설 예정)* | — | 분석 결과의 record·enum — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
@@ -55,12 +55,16 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 ### raw DB (crawler 소유 — 분석 작업에서 불변)
 
+2026-07-16 크롤러 개편(V8~) 기준 — 계정(`influencer`) 중심, 원형은 `source` 태그 + 추출 실컬럼:
+
 | 테이블 | 내용 |
 |---|---|
-| `content` | 게시물 메타 (short_code, owner, uploaded_at, 분류 계층, ad_marked, 상태) |
-| `raw_post_detail` | Apify 상세 payload(jsonb) + generated 컬럼 (likes, comments_count, video_play_count, caption) |
-| `raw_comment` | 댓글 원문 payload + generated (writer, text, written_at) |
-| `raw_profile` | 프로필 스냅샷 payload + generated (username, followers) |
+| `influencer` | 계정 마스터 (username, status, followers, 뷰티 판정 3분류, ig_user_id, 수집 북키핑) |
+| `content` | 게시물 메타 (short_code, influencer_id, content_type, owner_username, uploaded_at, origin, 수집 상태) — 분류 계층·ad_marked는 V8에서 제거(캡션 LLM 분류로 이관, base 뷰가 NULL/false 상수로 계약 유지) |
+| `raw_media_page` | 계정별 미디어 열거 페이지 원형 (source, payload jsonb) — 게시물 지표·메타·썸네일의 원천. base 뷰는 `{response,items[].media}` 경로를 읽고, 한 페이지에 여러 게시물이 실린다 |
+| `raw_profile` | 프로필 스냅샷 원형 (source: HIKER_MOBILE/SELF_GQL/DATALIKERS — payload 형태 상이) + 추출 실컬럼 (username, followers — ProfileExtractor가 채움) |
+| `raw_comment` | 댓글 원문 payload + 추출 실컬럼 (writer, text, written_at) — 댓글 수집 MVP 제외로 신규 유입 없음 |
+| `raw_post_detail` · `raw_discovery_post` | 구크롤러 원형 보존분 — 분석 뷰는 더 이상 읽지 않음 (07-18 레거시 서빙 소멸 수용, §7) |
 | `app_setting` | 런타임 설정 key-value (분석 뷰도 여기서 임계값을 읽음) |
 
 ### 분석 뷰 (raw DB의 `analytics` 스키마)
@@ -182,7 +186,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), was 랭킹 대시보드(analysis DB의 기존
+**운영 중**: crawler 개편 파이프라인(발굴→뷰티 판정→수집 COLLECT/REELS·재검 RESNAPSHOT — 07-16), was 랭킹 대시보드(analysis DB의 기존
 미러 테이블을 읽음). ※ analytics 구현은 2026-07-12 초기화 — DB에 남은 뷰·미러 테이블은 동작하지만
 소스는 백지, 태스크 A부터 재구축.
 
@@ -242,6 +246,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-18 | **레거시 상세(raw_post_detail) 서빙 소멸 수용** — base 뷰가 raw_media_page만 읽으면서 구크롤러 전용 콘텐츠 124건(교집합 17건 제외)이 다음 미러에서 contents·랭킹·상세에서 사라지고, content_metric_snapshots 이력도 페이지 이력으로 전량 교체(id는 raw_post_detail.id → 페이지id×100000+순번 합성 — id 조인 소비처 없음 확인). 과거 end_date as-of는 구콘텐츠·과거 날짜에서 재현 불가("그 시점 화면 부재" 규칙대로 404/필터 제외). 원형 데이터는 raw에 그대로 보존 — 필요 시 뷰 UNION으로 복원 가능. 광고 비교 블록 전면 비활성·구 /api contentMix 빈 배열도 함께 수용(소비처 null-safe 전수 확인, /v1 카테고리·광고·유통사 필터는 content_analyses 기반이라 무관) | 2026-07-18 세션 (사용자 확정) |
+| 2026-07-18 | **SQL 테스트 하니스 신스키마 재작성** — seed/dummy.sql·test/*.test.sql을 개편 크롤러 스키마로 전환(run.sh 구조는 유지). 시드는 influencer·raw_profile(source·실컬럼)·raw_media_page({response,items[].media} 계정 페이지 단위 — 한 페이지에 여러 게시물)로 재구성, 프로필 3소스(HIKER_MOBILE/SELF_GQL/DATALIKERS) payload와 썸네일 non-null 폴백(image_versions2 누락 페이지) 케이스 포함. 기대값 변화: ① 광고 비교 블록은 ad_marked=false 고정으로 전 계정 비활성(sponsored 0·ad_avg NULL·organic=전체 평균) ② 카테고리 믹스는 main_group NULL 고정으로 빈 결과 — 둘 다 캡션 LLM 분류 개통 시 되살릴 "정상" 기대값. 픽스처 ID는 990xxxx 대역(실 bigserial이 구 9xxx 대역을 추월해 충돌). 신스키마 로컬 DB에서 6개 테스트 ALL GREEN | 2026-07-18 세션 |
 | 2026-07-18 | **base 뷰 신스키마(raw_media_page·influencer) 재작성 회수** — 07-17 e2e 검증 초안(오라클 `~/e2e-analytics/00_base.sql`)을 리포 `analytics/views/00_base.sql`로 회수·보강. ① 프로필 추출 컬럼(display_name·profile_image_url·follows/posts_count·biography·external_link)을 수집 소스 3형태(HIKER_MOBILE `user.*` / SELF_GQL `data.user.*` / DATALIKERS 평탄) 모두 COALESCE — 단일 경로 파싱으로 SELF_GQL 1,135·DATALIKERS 85 계정이 null이던 결함 해소. ② v_base_detail 썸네일은 "null 아닌 최신값" 폴백(재수집 페이지에 image_versions2 누락 엣지). 출력 계약은 구 00_base와 동일(하위 뷰·미러 무변경). e2e-analysis-pg `accounts` 미러 1,220건 backfill 완료(null 0). **잔여**: 테스트 하니스(seed/dummy.sql·test/*.test.sql)는 아직 구스키마 — 신스키마 시드 재작성 필요 | 2026-07-18 세션 (e2e 실측 검증) |
 | 2026-07-17 | **analytics 어드민 UI + 스케줄러 골격 설계 확정 (태스크 I 신설)** — analytics를 상주 웹 서버(8082)로 전환, 크롤러 어드민 패턴 이식(`/ui` 잡 버튼 4종 + LLM 예상 비용 카드 + LogBuffer 로그 패널 + 잡별 락·비동기 트리거). 실행 이력 DB 테이블은 두지 않음(로그로 충분 — 사용자 확정). 스케줄러는 크롤러 동일 게이트(`analytics.schedule.enabled`, 기본 off) 골격만. `mirror-on-startup` 기본 false로 전환하되 cloud push는 one-shot CLI 보존(cloud 프로파일만 true) | [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) |
 | 2026-07-17 | **로그인 월 + 가입 코드 도입** — 제품 구조 변경(사용자 확정): 모든 조회는 로그인 필수, 가입은 단일 공용 코드 필수. SecurityConfig를 화이트리스트로 전환(기본 authenticated, 열린 경로는 /v1/auth·/v1/events/gate(익명 측정 유지)·/v1/stats(랜딩 통계 — P3와 병합 시 추가, 로그인 전 랜딩이 소비)·/health·swagger(로컬)만) — /v1 읽기 4종·구 /api·내부 페이지·프로필 이미지 전부 잠금, 401 계약은 기존 유지(/v1 envelope). 가입 코드는 `app.app_setting`(V6) `signup.code`와 trim 정확 일치, 불일치·미설정 403 INVALID_SIGNUP_CODE(fail-closed — 빈 값 시드로 배포되며 운영자 UPDATE로 개통). 레거시 /api/auth/signup은 코드 우회 뒷문이라 폐쇄(인증 입구 /v1 일원화) | [specs/2026-07-17-login-wall-signup-code-design.md](docs/superpowers/specs/2026-07-17-login-wall-signup-code-design.md) |
@@ -290,7 +296,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 항목 | 상태 |
 |---|---|
-| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. **블로커(07-17 확인)**: 뷰·하니스가 실DB(V6 시점) 스키마(`account`/`account_id`)를 전제하는데 실DB는 V7~V12 미적용 상태로 멈춰 있고, 프레시 DB에 리포 마이그레이션을 전부 적용하면 V8 리네임(account→influencer)으로 뷰가 깨짐 — analytics 재구축(뷰의 신 스키마 전환) 후 CI 연결 |
+| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. ~~블로커(07-17)~~: **해소(07-18)** — 뷰(base 재작성)·하니스(시드·기대값) 모두 신스키마로 전환돼 프레시 DB + 리포 마이그레이션으로 재현 가능. CI 워크플로 연결만 남음 |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
 | 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |

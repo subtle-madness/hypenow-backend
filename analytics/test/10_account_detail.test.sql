@@ -1,36 +1,51 @@
 -- 그룹 10 기대값. 산식 정본: celfit-front parse_accounts_recent.py (스펙 §3).
+-- 신스키마 주의: content의 광고·카테고리 컬럼이 소멸해 base 뷰가 ad_marked=false·main_group=NULL
+-- 상수로 계약만 유지한다(캡션 LLM 분류로 이관 예정) — 광고 비교 블록은 전 계정 비활성
+-- (sponsored=0·ad_avg NULL·organic=전체 평균), 카테고리 믹스는 빈 결과가 "정상"이다.
 -- 결정성: 이 그룹이 읽는 설정 키를 기본값으로 강제.
 DELETE FROM app_setting WHERE key IN ('analytics.recent-window', 'analytics.trend-threshold');
 
--- ===== 추가 픽스처: metric 'views'·트렌드 down/flat·광고 비교 검증용 (계정 9005~9006) =====
-INSERT INTO account(id, username) VALUES (9005,'dummy_v'), (9006,'dummy_flat');
-INSERT INTO raw_profile(account_id, crawl_run_id, payload, captured_at) VALUES
- (9005,9990,'{"username":"dummy_v","followersCount":10000,"followsCount":300,"postsCount":80,"biography":"글로우 크리에이터"}'::jsonb, timestamptz '2026-06-06 00:00:00+09'),
- (9006,9990,'{"username":"dummy_flat","followersCount":8000}'::jsonb, timestamptz '2026-06-06 00:00:00+09');
+-- ===== 추가 픽스처: metric 'views'·트렌드 down/flat·프로필 확장 검증용 (인플루언서 9909005~9909006) =====
+-- dummy_v는 SELF_GQL 형태로 edge_* 카운트 경로를 검증 (HIKER_MOBILE 전체 키는 00 테스트가 커버).
+INSERT INTO influencer(id, username) VALUES (9909005,'dummy_v'), (9909006,'dummy_flat');
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at) VALUES
+ (9909005,9909990,'SELF_GQL','dummy_v',10000,
+  '{"data":{"user":{"username":"dummy_v","edge_followed_by":{"count":10000},"edge_follow":{"count":300},"edge_owner_to_timeline_media":{"count":80},"biography":"글로우 크리에이터"}}}'::jsonb,
+  timestamptz '2026-06-06 00:00:00+09'),
+ (9909006,9909990,'DATALIKERS','dummy_flat',8000,
+  '{"username":"dummy_flat","follower_count":8000}'::jsonb,
+  timestamptz '2026-06-06 00:00:00+09');
 
-INSERT INTO content(id, short_code, content_type, owner_username, uploaded_at, category_id, discovery_keyword, status, first_seen_at, subcategory, main_group, ad_marked) VALUES
- (9110,'dummy_v1','REELS','dummy_v',    timestamptz '2026-05-01 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-01 00:00:00+09','glow_sub','B', false),
- (9111,'dummy_v2','REELS','dummy_v',    timestamptz '2026-05-08 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-08 00:00:00+09','glow_sub','B', false),
- (9112,'dummy_v3','REELS','dummy_v',    timestamptz '2026-05-15 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-15 00:00:00+09','glow_sub','B', true),
- (9113,'dummy_v4','REELS','dummy_v',    timestamptz '2026-05-22 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-22 00:00:00+09','glow_sub','B', false),
- (9114,'dummy_v5','REELS','dummy_v',    timestamptz '2026-05-29 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-29 00:00:00+09','glow_sub','B', true),
- (9115,'dummy_v6','REELS','dummy_v',    timestamptz '2026-06-05 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-06-05 00:00:00+09','glow_sub','B', false),
- (9120,'dummy_t1','REELS','dummy_flat', timestamptz '2026-05-01 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-01 00:00:00+09','glow_sub','B', false),
- (9121,'dummy_t2','REELS','dummy_flat', timestamptz '2026-05-08 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-08 00:00:00+09','glow_sub','B', false),
- (9122,'dummy_t3','REELS','dummy_flat', timestamptz '2026-05-15 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-15 00:00:00+09','glow_sub','B', false),
- (9123,'dummy_t4','REELS','dummy_flat', timestamptz '2026-05-22 09:00:00+09',999,'glow','AGGREGATED', timestamptz '2026-05-22 00:00:00+09','glow_sub','B', false);
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at, status, origin, first_seen_at) VALUES
+ (9909110,'dummy_v1','REELS','dummy_v',9909005,    timestamptz '2026-05-01 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-01 00:00:00+09'),
+ (9909111,'dummy_v2','REELS','dummy_v',9909005,    timestamptz '2026-05-08 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-08 00:00:00+09'),
+ (9909112,'dummy_v3','REELS','dummy_v',9909005,    timestamptz '2026-05-15 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-15 00:00:00+09'),
+ (9909113,'dummy_v4','REELS','dummy_v',9909005,    timestamptz '2026-05-22 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-22 00:00:00+09'),
+ (9909114,'dummy_v5','REELS','dummy_v',9909005,    timestamptz '2026-05-29 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-29 00:00:00+09'),
+ (9909115,'dummy_v6','REELS','dummy_v',9909005,    timestamptz '2026-06-05 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-06-05 00:00:00+09'),
+ (9909120,'dummy_t1','REELS','dummy_flat',9909006, timestamptz '2026-05-01 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-01 00:00:00+09'),
+ (9909121,'dummy_t2','REELS','dummy_flat',9909006, timestamptz '2026-05-08 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-08 00:00:00+09'),
+ (9909122,'dummy_t3','REELS','dummy_flat',9909006, timestamptz '2026-05-15 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-15 00:00:00+09'),
+ (9909123,'dummy_t4','REELS','dummy_flat',9909006, timestamptz '2026-05-22 09:00:00+09','COLLECTED','ENUMERATION', timestamptz '2026-05-22 00:00:00+09');
 
-INSERT INTO raw_post_detail(content_id, crawl_run_id, payload, captured_at) VALUES
- (9110,9990,'{"shortCode":"dummy_v1","type":"Video","likesCount":400,"commentsCount":40,"videoPlayCount":20000}'::jsonb, timestamptz '2026-05-02 09:00:00+09'),
- (9111,9990,'{"shortCode":"dummy_v2","type":"Video","likesCount":300,"commentsCount":30,"videoPlayCount":18000}'::jsonb, timestamptz '2026-05-09 09:00:00+09'),
- (9112,9990,'{"shortCode":"dummy_v3","type":"Video","likesCount":500,"commentsCount":50,"videoPlayCount":22000}'::jsonb, timestamptz '2026-05-16 09:00:00+09'),
- (9113,9990,'{"shortCode":"dummy_v4","type":"Video","likesCount":200,"commentsCount":20,"videoPlayCount":10000}'::jsonb, timestamptz '2026-05-23 09:00:00+09'),
- (9114,9990,'{"shortCode":"dummy_v5","type":"Video","likesCount":150,"commentsCount":15,"videoPlayCount":8000}'::jsonb,  timestamptz '2026-05-30 09:00:00+09'),
- (9115,9990,'{"shortCode":"dummy_v6","type":"Video","likesCount":100,"commentsCount":10,"videoPlayCount":6000}'::jsonb,  timestamptz '2026-06-06 09:00:00+09'),
- (9120,9990,'{"shortCode":"dummy_t1","type":"Video","likesCount":200,"commentsCount":20,"videoPlayCount":10000}'::jsonb, timestamptz '2026-05-02 09:00:00+09'),
- (9121,9990,'{"shortCode":"dummy_t2","type":"Video","likesCount":210,"commentsCount":21,"videoPlayCount":11000}'::jsonb, timestamptz '2026-05-09 09:00:00+09'),
- (9122,9990,'{"shortCode":"dummy_t3","type":"Video","likesCount":190,"commentsCount":19,"videoPlayCount":9000}'::jsonb,  timestamptz '2026-05-16 09:00:00+09'),
- (9123,9990,'{"shortCode":"dummy_t4","type":"Video","likesCount":205,"commentsCount":25,"videoPlayCount":11500}'::jsonb, timestamptz '2026-05-23 09:00:00+09');
+-- 열거 페이지: 계정당 1장에 전체 아이템 (계정 집계는 최신 상세만 쓰므로 페이지 누적 불필요)
+INSERT INTO raw_media_page(id, influencer_id, crawl_run_id, source, payload, captured_at) VALUES
+ (9909421,9909005,9909990,'HIKER_V2_CLIPS',
+  '{"response":{"items":[
+     {"media":{"code":"dummy_v1","media_type":2,"like_count":400,"comment_count":40,"play_count":20000}},
+     {"media":{"code":"dummy_v2","media_type":2,"like_count":300,"comment_count":30,"play_count":18000}},
+     {"media":{"code":"dummy_v3","media_type":2,"like_count":500,"comment_count":50,"play_count":22000}},
+     {"media":{"code":"dummy_v4","media_type":2,"like_count":200,"comment_count":20,"play_count":10000}},
+     {"media":{"code":"dummy_v5","media_type":2,"like_count":150,"comment_count":15,"play_count":8000}},
+     {"media":{"code":"dummy_v6","media_type":2,"like_count":100,"comment_count":10,"play_count":6000}}
+   ]}}'::jsonb, timestamptz '2026-06-06 09:00:00+09'),
+ (9909422,9909006,9909990,'HIKER_V2_CLIPS',
+  '{"response":{"items":[
+     {"media":{"code":"dummy_t1","media_type":2,"like_count":200,"comment_count":20,"play_count":10000}},
+     {"media":{"code":"dummy_t2","media_type":2,"like_count":210,"comment_count":21,"play_count":11000}},
+     {"media":{"code":"dummy_t3","media_type":2,"like_count":190,"comment_count":19,"play_count":9000}},
+     {"media":{"code":"dummy_t4","media_type":2,"like_count":205,"comment_count":25,"play_count":11500}}
+   ]}}'::jsonb, timestamptz '2026-06-06 09:00:00+09');
 
 -- ===== v_account_summaries =====
 DO $$
@@ -39,7 +54,7 @@ BEGIN
     'summaries rows != 4';
 END $$;
 
--- dummy_a: metric 'likes' 폴백 + 피드 NULL 함정 + 광고 비교 + 트렌드 up
+-- dummy_a: metric 'likes' 폴백 + 피드 NULL 함정 + 트렌드 up. 광고는 ad_marked=false 고정으로 비활성.
 DO $$
 BEGIN
   ASSERT (SELECT followers          FROM analytics.v_account_summaries WHERE handle='dummy_a') = 5500,  'a followers != 5500';
@@ -58,13 +73,14 @@ BEGIN
   ASSERT (SELECT trend_change_pct   FROM analytics.v_account_summaries WHERE handle='dummy_a') = 121,   'a trend_pct != 121';
   ASSERT (SELECT trend_older_avg    FROM analytics.v_account_summaries WHERE handle='dummy_a') = 520,   'a older != 520';
   ASSERT (SELECT trend_newer_avg    FROM analytics.v_account_summaries WHERE handle='dummy_a') = 1150,  'a newer != 1150';
-  ASSERT (SELECT sponsored_count    FROM analytics.v_account_summaries WHERE handle='dummy_a') = 1,     'a sponsored != 1';
-  ASSERT (SELECT organic_avg        FROM analytics.v_account_summaries WHERE handle='dummy_a') = 410,   'a organic_avg != 410';
-  ASSERT (SELECT ad_avg             FROM analytics.v_account_summaries WHERE handle='dummy_a') = 2000,  'a ad_avg != 2000';
-  ASSERT (SELECT ad_drop_pct        FROM analytics.v_account_summaries WHERE handle='dummy_a') = -388,  'a drop != -388';
-  ASSERT (SELECT comparison_organic_count FROM analytics.v_account_summaries WHERE handle='dummy_a') = 2, 'a cmp_og != 2';
-  ASSERT (SELECT comparison_ad_count      FROM analytics.v_account_summaries WHERE handle='dummy_a') = 1, 'a cmp_ad != 1';
-  ASSERT (SELECT last_ad_posted_at  FROM analytics.v_account_summaries WHERE handle='dummy_a') = timestamptz '2026-06-03 09:00:00+09', 'a last_ad wrong';
+  -- 광고 중립화: sponsored 0, organic = 전체 평균(940), ad 쪽 전부 NULL
+  ASSERT (SELECT sponsored_count    FROM analytics.v_account_summaries WHERE handle='dummy_a') = 0,     'a sponsored != 0 (ad_marked=false 고정)';
+  ASSERT (SELECT organic_avg        FROM analytics.v_account_summaries WHERE handle='dummy_a') = 940,   'a organic_avg != 940 (전체 평균)';
+  ASSERT (SELECT ad_avg             FROM analytics.v_account_summaries WHERE handle='dummy_a') IS NULL, 'a ad_avg not null';
+  ASSERT (SELECT ad_drop_pct        FROM analytics.v_account_summaries WHERE handle='dummy_a') IS NULL, 'a drop not null';
+  ASSERT (SELECT comparison_organic_count FROM analytics.v_account_summaries WHERE handle='dummy_a') = 3, 'a cmp_og != 3';
+  ASSERT (SELECT comparison_ad_count      FROM analytics.v_account_summaries WHERE handle='dummy_a') = 0, 'a cmp_ad != 0';
+  ASSERT (SELECT last_ad_posted_at  FROM analytics.v_account_summaries WHERE handle='dummy_a') IS NULL, 'a last_ad not null';
   ASSERT (SELECT last_posted_at     FROM analytics.v_account_summaries WHERE handle='dummy_a') = timestamptz '2026-06-03 09:00:00+09', 'a last_posted wrong';
   ASSERT (SELECT avg_interval_days  FROM analytics.v_account_summaries WHERE handle='dummy_a') = 1.0,   'a interval != 1.0';
 END $$;
@@ -88,7 +104,7 @@ BEGIN
   ASSERT (SELECT avg_interval_days  FROM analytics.v_account_summaries WHERE handle='dummy_b') IS NULL,  'b interval not null (n=1)';
 END $$;
 
--- dummy_v: metric 'views' + 트렌드 down + 광고 양쪽 비교 + 프로필 확장
+-- dummy_v: metric 'views' + 트렌드 down + 프로필 확장(SELF_GQL edge_* 카운트 경로)
 DO $$
 BEGIN
   ASSERT (SELECT follows_count      FROM analytics.v_account_summaries WHERE handle='dummy_v') = 300,    'v follows_count != 300';
@@ -105,13 +121,14 @@ BEGIN
   ASSERT (SELECT trend_change_pct   FROM analytics.v_account_summaries WHERE handle='dummy_v') = -60,    'v trend_pct != -60';
   ASSERT (SELECT trend_older_avg    FROM analytics.v_account_summaries WHERE handle='dummy_v') = 20000,  'v older != 20000';
   ASSERT (SELECT trend_newer_avg    FROM analytics.v_account_summaries WHERE handle='dummy_v') = 8000,   'v newer != 8000';
-  ASSERT (SELECT sponsored_count    FROM analytics.v_account_summaries WHERE handle='dummy_v') = 2,      'v sponsored != 2';
-  ASSERT (SELECT organic_avg        FROM analytics.v_account_summaries WHERE handle='dummy_v') = 13500,  'v organic_avg != 13500';
-  ASSERT (SELECT ad_avg             FROM analytics.v_account_summaries WHERE handle='dummy_v') = 15000,  'v ad_avg != 15000';
-  ASSERT (SELECT ad_drop_pct        FROM analytics.v_account_summaries WHERE handle='dummy_v') = -11,    'v drop != -11';
-  ASSERT (SELECT comparison_organic_count FROM analytics.v_account_summaries WHERE handle='dummy_v') = 4, 'v cmp_og != 4';
-  ASSERT (SELECT comparison_ad_count      FROM analytics.v_account_summaries WHERE handle='dummy_v') = 2, 'v cmp_ad != 2';
-  ASSERT (SELECT last_ad_posted_at  FROM analytics.v_account_summaries WHERE handle='dummy_v') = timestamptz '2026-05-29 09:00:00+09', 'v last_ad wrong';
+  -- 광고 중립화: 구픽스처의 v3·v5 ad_marked=true 시나리오는 ad_marked 소멸로 재현 불가
+  ASSERT (SELECT sponsored_count    FROM analytics.v_account_summaries WHERE handle='dummy_v') = 0,      'v sponsored != 0 (ad_marked=false 고정)';
+  ASSERT (SELECT organic_avg        FROM analytics.v_account_summaries WHERE handle='dummy_v') = 14000,  'v organic_avg != 14000 (전체 평균)';
+  ASSERT (SELECT ad_avg             FROM analytics.v_account_summaries WHERE handle='dummy_v') IS NULL,  'v ad_avg not null';
+  ASSERT (SELECT ad_drop_pct        FROM analytics.v_account_summaries WHERE handle='dummy_v') IS NULL,  'v drop not null';
+  ASSERT (SELECT comparison_organic_count FROM analytics.v_account_summaries WHERE handle='dummy_v') = 6, 'v cmp_og != 6';
+  ASSERT (SELECT comparison_ad_count      FROM analytics.v_account_summaries WHERE handle='dummy_v') = 0, 'v cmp_ad != 0';
+  ASSERT (SELECT last_ad_posted_at  FROM analytics.v_account_summaries WHERE handle='dummy_v') IS NULL,  'v last_ad not null';
   ASSERT (SELECT avg_interval_days  FROM analytics.v_account_summaries WHERE handle='dummy_v') = 7.0,    'v interval != 7.0';
 END $$;
 
@@ -133,16 +150,11 @@ BEGIN
 END $$;
 
 -- ===== v_account_category_stats =====
+-- main_group이 base 뷰 NULL 상수라 빈 결과가 계약이다 (캡션 LLM 분류 개통 시 이 기대값을 되살린다)
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM analytics.v_account_category_stats WHERE account_handle LIKE 'dummy_%') = 5,
-    'category rows != 5';
-  ASSERT (SELECT content_count FROM analytics.v_account_category_stats WHERE account_handle='dummy_a' AND main_group='A') = 2,
-    'a/A count != 2';
-  ASSERT (SELECT content_count FROM analytics.v_account_category_stats WHERE account_handle='dummy_a' AND main_group='B') = 1,
-    'a/B count != 1';
-  ASSERT (SELECT content_count FROM analytics.v_account_category_stats WHERE account_handle='dummy_v' AND main_group='B') = 6,
-    'v/B count != 6';
+  ASSERT (SELECT count(*) FROM analytics.v_account_category_stats WHERE account_handle LIKE 'dummy_%') = 0,
+    'category rows != 0 (main_group NULL 고정 — 어휘 이관 전까지 빈 결과)';
 END $$;
 
 -- ===== v_account_content_series =====
@@ -150,9 +162,9 @@ DO $$
 BEGIN
   ASSERT (SELECT count(*) FROM analytics.v_account_content_series WHERE account_handle LIKE 'dummy_%') = 14,
     'series rows != 14';
-  -- 피드 views NULL 보존 + 광고 플래그 + content_type 소문자
+  -- 피드 views NULL 보존 + 광고 플래그(중립화 false) + content_type 소문자
   ASSERT (SELECT views     FROM analytics.v_account_content_series WHERE short_code='dummy_f1') IS NULL, 'f1 views not null';
-  ASSERT (SELECT sponsored FROM analytics.v_account_content_series WHERE short_code='dummy_f1') = true,  'f1 sponsored != true';
+  ASSERT (SELECT sponsored FROM analytics.v_account_content_series WHERE short_code='dummy_f1') = false, 'f1 sponsored != false (ad_marked 고정)';
   ASSERT (SELECT content_type FROM analytics.v_account_content_series WHERE short_code='dummy_f1') = 'feed', 'f1 type != feed';
   ASSERT (SELECT views     FROM analytics.v_account_content_series WHERE short_code='dummy_r2') = 7000,  'r2 views != 7000';
   ASSERT (SELECT likes     FROM analytics.v_account_content_series WHERE short_code='dummy_r2') = 300,   'r2 likes != 300';

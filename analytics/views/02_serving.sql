@@ -104,7 +104,7 @@ JOIN analytics.v_base_content c USING (content_id);
 
 -- 지표 스냅샷 이력 (게시물 × 수집 시점 1행). contents는 이 중 고정 스냅샷 1건을 편 것 —
 -- 랭킹 기본 경로는 contents, as-of 조회·추이만 이 뷰를 쓴다 (스펙 §3).
--- id = raw_post_detail의 id (자연키).
+-- id = v_base_detail_history의 합성 id (페이지 id × 100000 + 페이지 내 순번 — 유일·안정, 자연키 역할).
 -- hype 산식은 v_contents와 동일 함수 — 신선도만 captured_at 기준(as-of 화면은 "그 시점의 신선도").
 CREATE OR REPLACE VIEW analytics.v_content_metric_snapshots AS
 SELECT

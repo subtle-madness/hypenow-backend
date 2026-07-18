@@ -4,7 +4,7 @@
 -- 2026-07-18 개편 크롤러 스키마(raw_media_page·influencer) 재작성 — 07-17 e2e 검증 초안
 -- (오라클 e2e-raw-pg 적용본)을 회수·보강한 것. 출력 계약(컬럼 이름·의미)은 구 00_base와
 -- 동일하게 유지해 하위 뷰(01·02·03·10·20)·미러·record 계약을 무변경으로 통과시킨다.
--- ※ 테스트 하니스(seed/dummy.sql·test/*.test.sql)는 아직 구스키마 — 신스키마 시드 재작성 필요.
+-- 테스트 하니스(seed/dummy.sql·test/*.test.sql)도 같은 신스키마 기준 — test/run.sh로 검증.
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- 계정별 최신 프로필 — influencer_id가 계정 식별자. username·followers는 crawler가

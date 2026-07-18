@@ -1,4 +1,6 @@
 -- 기준선 뷰 기대값 (시드 손계산 근거는 계획 문서 참조)
+-- 신스키마: category_id는 base 뷰가 NULL 상수로 노출 — category_ctx가 단일 NULL 파티션이 되는데,
+-- 구시드도 더미 전부 한 카테고리(999)였으므로 파티션 구성·기대값은 그대로다.
 DELETE FROM app_setting WHERE key = 'analytics.recent-window';
 
 DO $$
