@@ -61,7 +61,7 @@ class CoverageControllerTest {
 		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(3, "e", "s", "1 / 67", "정상 범위").grade()).isEqualTo("ok");
 		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(4, "e", "s", "0 / 137", "없음").grade()).isEqualTo("bad");
 		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(5, "e", "s", "3 / 137", "부분").grade()).isEqualTo("warn");
-		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(6, "e", "s", "2행", "옛 산출물 — 태스크 A 재구축 대상").grade()).isEqualTo("warn");
-		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(7, "e", "s", "0", "없음 — 분석 뷰에서 계산 필요").grade()).isEqualTo("bad");
+		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(6, "e", "s", "2행", "옛 산출물 — 정리 대상").grade()).isEqualTo("warn");
+		org.assertj.core.api.Assertions.assertThat(CoverageRow.of(7, "e", "s", "테이블 없음", "개편 스키마 밖 — 정리 대상").grade()).isEqualTo("warn");
 	}
 }
