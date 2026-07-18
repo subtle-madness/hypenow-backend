@@ -106,4 +106,29 @@ class MediaItemExtractorTest {
     void self_gql_커서는_항상_null이다() {
         assertThat(MediaItemExtractor.nextCursor(profileWithTimeline(List.of()), RawSource.SELF_GQL)).isNull();
     }
+
+    // ---- HIKER_WEB_GQL: 같은 web_profile_info지만 루트가 data.user가 아니라 user ----
+
+    /** Hiker /gql/user/web_profile_info는 IG 원형에서 data 래퍼를 벗긴 {"user": {...}} 형태다. */
+    static Map<String, Object> hikerProfileWithTimeline(List<Map<String, Object>> nodes) {
+        return Map.of("user", Map.of(
+                "username", "alice", "pk", "1",
+                "edge_owner_to_timeline_media", Map.of(
+                        "count", 46,
+                        "edges", nodes.stream().map(n -> (Object) Map.of("node", n)).toList())));
+    }
+
+    @Test
+    void hiker_webgql_프로필의_user_루트_내장_타임라인도_판별하고_추출한다() {
+        Map<String, Object> payload = hikerProfileWithTimeline(List.of(
+                Map.of("shortcode", "HFEED", "taken_at_timestamp", 1773630245L, "product_type", ""),
+                Map.of("shortcode", "HREEL", "taken_at_timestamp", 1781092809L, "product_type", "clips")));
+
+        assertThat(MediaItemExtractor.hasEmbeddedTimeline(payload)).isTrue();
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.SELF_GQL);
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).shortCode()).isEqualTo("HFEED");
+        assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
+    }
 }

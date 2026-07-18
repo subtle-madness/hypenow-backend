@@ -66,14 +66,16 @@ public final class MediaItemExtractor {
         return items instanceof List<?> l ? l : List.of();
     }
 
-    /** data.user.edge_owner_to_timeline_media.edges — 없으면 null(내장 아님). */
+    /**
+     * edge_owner_to_timeline_media.edges — 없으면 null(내장 아님).
+     * 루트는 두 형태: SELF 직접 크롤은 data.user, Hiker /gql/user/web_profile_info는
+     * data 래퍼를 벗긴 user 루트로 같은 원형을 준다.
+     */
     private static List<?> timelineEdges(Map<String, Object> payload) {
-        Object cur = payload;
-        for (String p : new String[] {"data", "user", "edge_owner_to_timeline_media", "edges"}) {
-            if (!(cur instanceof Map<?, ?> m)) return null;
-            cur = m.get(p);
-        }
-        return cur instanceof List<?> l ? l : null;
+        Object user = payload.get("data") instanceof Map<?, ?> d ? d.get("user") : payload.get("user");
+        if (!(user instanceof Map<?, ?> u)) return null;
+        Object cur = u.get("edge_owner_to_timeline_media");
+        return cur instanceof Map<?, ?> m && m.get("edges") instanceof List<?> l ? l : null;
     }
 
     @SuppressWarnings("unchecked")
