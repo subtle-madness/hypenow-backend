@@ -20,7 +20,9 @@ public final class AnthropicAccountSynthesizer implements AccountSynthesisPort {
 			- adHeadline: 광고 비교 수치(organic_avg·ad_avg·ad_drop_pct) 근거 헤드라인 한 문장.
 			  입력에 "광고 비교 데이터: 없음"이면 빈 문자열
 			- paceNote: 업로드 페이스 한 문장 (avg_interval_days 근거, 예: "주 2~3회 올리는 페이스")
-			""";
+
+			%s
+			""".formatted(LlmGuard.RULES);
 
 	private final AnthropicClient client;
 	private final AnalyticsSettings settings;

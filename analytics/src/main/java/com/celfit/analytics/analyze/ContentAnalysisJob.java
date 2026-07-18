@@ -1,11 +1,10 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.config.AnalyticsSettings;
-import com.celfit.analytics.llm.ContentAttributePort;
 import com.celfit.analytics.llm.ContentAttributes;
+import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
-import com.celfit.analytics.llm.SynthesisPort;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,20 +29,18 @@ public class ContentAnalysisJob {
 
 	private final JdbcTemplate raw;
 	private final JdbcTemplate analysis;
-	private final SynthesisPort synthesis;
-	private final ContentAttributePort attributes;
+	private final ContentInsightPort insight; // ②속성+③종합 통합 1콜 (07-18 확정)
 	private final AnalyticsSettings settings;
 	private final boolean thumbnailEnabled; // 썸네일 첨부 게이트 — off여도 캡션 기반 속성은 산출
 	private final Predicate<String> thumbnailAlive;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
-			SynthesisPort synthesis, ContentAttributePort attributes, AnalyticsSettings settings,
+			ContentInsightPort insight, AnalyticsSettings settings,
 			boolean thumbnailEnabled, Predicate<String> thumbnailAlive) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
-		this.synthesis = synthesis;
-		this.attributes = attributes;
+		this.insight = insight;
 		this.settings = settings;
 		this.thumbnailEnabled = thumbnailEnabled;
 		this.thumbnailAlive = thumbnailAlive;
@@ -116,8 +113,7 @@ public class ContentAnalysisJob {
 						intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))),
 				shortCode);
 		// 캡션 주·썸네일 보조: 썸네일은 게이트 on + 프리체크 생존일 때만 첨부, 만료·off여도 캡션으로 5종 산출.
-		// 캡션도 썸네일도 없으면 속성 분석에 넣을 입력이 없다 — 속성 컬럼만 NULL로 저장 (행 자체는 생성).
-		// 속성 API 호출 예외(일시 장애)는 기존대로 콘텐츠 실패 → 다음 실행 재대상.
+		// 통합 1콜(속성+종합 — 07-18 확정) 예외(일시 장애)는 기존대로 콘텐츠 실패 → 다음 실행 재대상.
 		String caption = (String) content.get("caption");
 		String thumbnailUrl = (String) content.get("thumbnail_url");
 		boolean attachThumbnail = thumbnailEnabled && thumbnailUrl != null && thumbnailAlive.test(thumbnailUrl);
@@ -125,9 +121,6 @@ public class ContentAnalysisJob {
 			log.info("썸네일 만료/접근 불가 — 캡션만으로 속성 분석: {}", shortCode);
 		}
 		boolean hasCaption = caption != null && !caption.isBlank();
-		ContentAttributes attrs = hasCaption || attachThumbnail
-				? attributes.analyze(caption, attachThumbnail ? thumbnailUrl : null)
-				: null;
 		Map<String, Object> baselineForPrompt = new LinkedHashMap<>();
 		baselineForPrompt.put("recent_reels_avg_views", b.recentReelsAvgViews());
 		baselineForPrompt.put("rank_in_recent_reels", b.rankInRecentReels());
@@ -136,11 +129,14 @@ public class ContentAnalysisJob {
 		baselineForPrompt.put("recent12_avg_like_count", b.recent12AvgLikeCount());
 		baselineForPrompt.put("recent12_avg_comment_count", b.recent12AvgCommentCount());
 		baselineForPrompt.put("category_top_percentile", b.categoryTopPercentile());
-		Synthesis s = synthesis.synthesize(new ContentToAnalyze(shortCode,
+		ContentInsightPort.ContentInsight result = insight.analyze(new ContentToAnalyze(shortCode,
 				(String) content.get("account_handle"), caption,
 				(String) content.get("content_type"), (Long) content.get("views"),
 				(Long) content.get("likes"), (Long) content.get("comments"),
-				baselineForPrompt, categoryCounts));
+				baselineForPrompt, categoryCounts), attachThumbnail ? thumbnailUrl : null);
+		// 캡션도 썸네일도 없으면 속성 근거 입력이 없다 — 통합 콜이 돌려줘도 폐기하고 속성 컬럼 NULL 유지.
+		ContentAttributes attrs = hasCaption || attachThumbnail ? result.attributes() : null;
+		Synthesis s = result.synthesis();
 		// content_analyses는 불변(INSERT만)이라 빈 결과가 저장되면 영구 고정 + 재분석 대상에서도 제외된다.
 		// 저장 전에 실패 처리해 콘텐츠 단위 try/catch가 skip → 다음 실행에서 재대상되게 한다.
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {

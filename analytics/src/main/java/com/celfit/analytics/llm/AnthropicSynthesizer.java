@@ -21,7 +21,9 @@ public final class AnthropicSynthesizer implements SynthesisPort {
 			- aiCommentInsight: 댓글 분포 수치를 근거로 반응의 질을 해석
 			- commentAuthenticityGrade: high(자연스러운 반응) | normal | suspect(도배·기계적 패턴 의심)
 			- commentAuthenticityNote: 판정 근거 한 줄
-			""";
+
+			%s
+			""".formatted(LlmGuard.RULES);
 
 	private final AnthropicClient client;
 	private final AnalyticsSettings settings;

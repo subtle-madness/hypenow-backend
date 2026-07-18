@@ -5,8 +5,7 @@ import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.CommentClassificationPort;
-import com.celfit.analytics.llm.ContentAttributePort;
-import com.celfit.analytics.llm.SynthesisPort;
+import com.celfit.analytics.llm.ContentInsightPort;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -64,11 +63,11 @@ public class JobConfig {
 	@ConditionalOnExpression("${analytics.analyze-on-startup:false} or ${analytics.admin-enabled:false}")
 	public ContentAnalysisJob contentAnalysisJob(JdbcTemplate rawJdbcTemplate,
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
-			SynthesisPort synthesis, ContentAttributePort attributes, AnalyticsSettings settings,
+			ContentInsightPort insight, AnalyticsSettings settings,
 			// vlm-enabled = 썸네일 첨부 게이트 (기본 off — 캡션 기반 5종은 항상 산출)
 			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled) {
-		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, synthesis,
-				attributes, settings, thumbnailEnabled, headPrecheck());
+		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
+				settings, thumbnailEnabled, headPrecheck());
 	}
 
 	@Bean

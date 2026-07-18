@@ -36,12 +36,6 @@ public class LlmConfig {
 
 	@Bean
 	@Lazy
-	public SynthesisPort synthesisPort(AnthropicClient client, AnalyticsSettings settings) {
-		return new AnthropicSynthesizer(client, settings);
-	}
-
-	@Bean
-	@Lazy
 	public BeautyTaxonomyLoader beautyTaxonomyLoader(
 			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
 		return new BeautyTaxonomyLoader(analysisDataSource);
@@ -49,9 +43,11 @@ public class LlmConfig {
 
 	@Bean
 	@Lazy
-	public ContentAttributePort contentAttributePort(AnthropicClient client, AnalyticsSettings settings,
+	public ContentInsightPort contentInsightPort(AnthropicClient client, AnalyticsSettings settings,
 			BeautyTaxonomyLoader taxonomyLoader) {
-		return new AnthropicContentAttributeAnalyzer(client, settings, taxonomyLoader);
+		return new AnthropicContentInsight(
+				new AnthropicContentAttributeAnalyzer(client, settings, taxonomyLoader),
+				new AnthropicSynthesizer(client, settings));
 	}
 
 	@Bean

@@ -6,11 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.celfit.analytics.config.AnalyticsSettings;
-import com.celfit.analytics.llm.ContentAttributePort;
 import com.celfit.analytics.llm.ContentAttributes;
+import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
-import com.celfit.analytics.llm.SynthesisPort;
 import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,8 +25,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 /**
  * 콘텐츠 분석 배치 계약 케이스:
  * ① 미분석+분류완료 저장 ② 이미 분석 스킵 ③ 댓글 있는데 미분류 제외
- * ④ 속성 분석은 캡션 주·썸네일 보조(게이트 off·프리체크 실패여도 캡션으로 산출, 입력 전무면 생략)
+ * ④ 속성 분석은 캡션 주·썸네일 보조(게이트 off·프리체크 실패여도 캡션으로 산출, 입력 전무면 속성 폐기)
  * ⑤ 한 콘텐츠 실패 격리 ⑥ B3 숙성 가드(게시 후 3일). 골격은 CommentClassificationJobTest 패턴 재사용.
+ * 포트는 ②속성+③종합 통합 1콜(ContentInsightPort — 07-18 확정).
  */
 @Testcontainers
 class ContentAnalysisJobTest {
@@ -38,35 +38,30 @@ class ContentAnalysisJobTest {
 	JdbcTemplate db;
 	DataSource ds;
 	ContentAnalysisJob job;
-	List<ContentToAnalyze> synthesisCalls;
-	List<String> attributeCalls; // 속성 콜에 전달된 thumbnailUrl (null = 캡션만)
+	List<ContentToAnalyze> insightCalls;
+	List<String> thumbnailArgs; // 통합 콜에 전달된 thumbnailUrl (null = 캡션만)
 
-	/** fake SynthesisPort: 호출 기록 + 고정 응답. */
-	SynthesisPort fakeSynthesisPort() {
-		return content -> {
-			synthesisCalls.add(content);
-			return new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "high", "판정 근거");
+	/** fake ContentInsightPort: 호출·썸네일 인자 기록 + 고정 응답(속성+종합 합본). */
+	ContentInsightPort fakeInsightPort() {
+		return (content, thumbnailUrl) -> {
+			insightCalls.add(content);
+			thumbnailArgs.add(thumbnailUrl);
+			return new ContentInsightPort.ContentInsight(
+					new ContentAttributes(List.of(new ContentAttributes.Brand("브랜드A", "화면 노출")), "high",
+							List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
+							List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
+							List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
+							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored"),
+					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "high", "판정 근거"));
 		};
 	}
 
-	/** fake ContentAttributePort: 전달된 thumbnailUrl 기록(null=캡션만) + 고정 응답. */
-	ContentAttributePort fakeAttributePort() {
-		return (caption, thumbnailUrl) -> {
-			attributeCalls.add(thumbnailUrl);
-			return new ContentAttributes(List.of(new ContentAttributes.Brand("브랜드A", "화면 노출")), "high",
-					List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
-					List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
-					List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
-					List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored");
-		};
+	void rewireJob(ContentInsightPort port, boolean thumbnailEnabled) {
+		rewireJob(port, thumbnailEnabled, url -> true);
 	}
 
-	void rewireJob(SynthesisPort synthesisPort, boolean thumbnailEnabled) {
-		rewireJob(synthesisPort, thumbnailEnabled, url -> true);
-	}
-
-	void rewireJob(SynthesisPort synthesisPort, boolean thumbnailEnabled, java.util.function.Predicate<String> thumbnailAlive) {
-		job = new ContentAnalysisJob(db, ds, synthesisPort, fakeAttributePort(), new AnalyticsSettings(db),
+	void rewireJob(ContentInsightPort port, boolean thumbnailEnabled, java.util.function.Predicate<String> thumbnailAlive) {
+		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
 				thumbnailEnabled, thumbnailAlive);
 	}
 
@@ -74,8 +69,8 @@ class ContentAnalysisJobTest {
 	void setUp() {
 		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
 		db = new JdbcTemplate(ds);
-		synthesisCalls = new ArrayList<>();
-		attributeCalls = new ArrayList<>();
+		insightCalls = new ArrayList<>();
+		thumbnailArgs = new ArrayList<>();
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
 		TestDb.resetAndMigrate(db, ds);
 
@@ -123,7 +118,7 @@ class ContentAnalysisJobTest {
 				  (1, 'post_a', 'purchase', 'claude-test'),
 				  (2, 'post_a', 'positive', 'claude-test')""");
 
-		job = new ContentAnalysisJob(db, ds, fakeSynthesisPort(), fakeAttributePort(), new AnalyticsSettings(db),
+		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
 				false, url -> true);
 	}
 
@@ -147,7 +142,7 @@ class ContentAnalysisJobTest {
 				"SELECT comment_authenticity_grade FROM content_analyses WHERE short_code = 'post_a'", String.class));
 
 		// 종합 포트에 넘긴 댓글 분포가 comment_classifications 집계와 일치한다
-		ContentToAnalyze callForA = synthesisCalls.stream()
+		ContentToAnalyze callForA = insightCalls.stream()
 				.filter(c -> c.shortCode().equals("post_a")).findFirst().orElseThrow();
 		assertEquals(1L, callForA.commentCategoryCounts().get("purchase"));
 		assertEquals(1L, callForA.commentCategoryCounts().get("positive"));
@@ -156,12 +151,12 @@ class ContentAnalysisJobTest {
 	@Test
 	void 이미_분석된_콘텐츠는_건너뛴다() {
 		job.run();
-		synthesisCalls.clear();
+		insightCalls.clear();
 
 		int processed = job.run();
 
 		assertEquals(0, processed);
-		assertTrue(synthesisCalls.isEmpty());
+		assertTrue(insightCalls.isEmpty());
 		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
 	}
 
@@ -171,7 +166,7 @@ class ContentAnalysisJobTest {
 
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_c'", Long.class));
-		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_c")));
+		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_c")));
 	}
 
 	@Test
@@ -180,7 +175,7 @@ class ContentAnalysisJobTest {
 
 		assertEquals(2, processed);
 		// 속성 콜은 항상 수행되되 썸네일은 미첨부(null) — 캡션 주 경로
-		assertEquals(java.util.Arrays.asList(null, null), attributeCalls);
+		assertEquals(java.util.Arrays.asList(null, null), thumbnailArgs);
 		assertEquals("cleansing", db.queryForObject(
 				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
 		assertEquals("sponsored", db.queryForObject(
@@ -189,13 +184,13 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 썸네일_게이트_on이면_생존_썸네일이_첨부되고_제품명까지_저장된다() {
-		rewireJob(fakeSynthesisPort(), true);
+		rewireJob(fakeInsightPort(), true);
 
 		int processed = job.run();
 
 		assertEquals(2, processed);
 		// 수집 최신순: post_b(06-07) → post_a(06-05), 둘 다 썸네일 생존 → URL 첨부
-		assertEquals(List.of("https://img/b.jpg", "https://img/a.jpg"), attributeCalls);
+		assertEquals(List.of("https://img/b.jpg", "https://img/a.jpg"), thumbnailArgs);
 		assertEquals("cleansing", db.queryForObject(
 				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
 		assertEquals("[\"클렌징폼/젤\", \"클렌징폼\"]", db.queryForObject(
@@ -211,13 +206,13 @@ class ContentAnalysisJobTest {
 	@Test
 	void 썸네일_프리체크_실패면_캡션만으로_속성을_산출한다() {
 		// 만료된 서명 URL 재현: post_a 썸네일만 죽어 있다 — 구 VLM처럼 컬럼 NULL이 아니라 캡션 단독 분석으로 간다
-		rewireJob(fakeSynthesisPort(), true, url -> url.equals("https://img/b.jpg"));
+		rewireJob(fakeInsightPort(), true, url -> url.equals("https://img/b.jpg"));
 
 		int processed = job.run();
 
 		assertEquals(2, processed);
 		// post_b는 썸네일 첨부, post_a는 캡션만(null)
-		assertEquals(java.util.Arrays.asList("https://img/b.jpg", null), attributeCalls);
+		assertEquals(java.util.Arrays.asList("https://img/b.jpg", null), thumbnailArgs);
 		assertEquals("요약: post_a", db.queryForObject(
 				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
 		assertEquals("cleansing", db.queryForObject(
@@ -225,15 +220,16 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 캡션도_썸네일도_없으면_속성_콜을_생략하고_컬럼은_NULL이다() {
-		// 입력이 아무것도 없는 콘텐츠 — 속성 분석을 부를 수 없다 (행 자체는 생성돼 배치 슬롯 잠식 방지)
+	void 캡션도_썸네일도_없으면_속성을_폐기하고_컬럼은_NULL이다() {
+		// 입력이 아무것도 없는 콘텐츠 — 속성 근거가 없다. 통합 콜은 종합을 위해 1회 나가되
+		// 속성 산출은 폐기해 컬럼 NULL 유지 (행 자체는 생성돼 배치 슬롯 잠식 방지)
 		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
-		rewireJob(fakeSynthesisPort(), true);
+		rewireJob(fakeInsightPort(), true);
 
 		int processed = job.run();
 
 		assertEquals(2, processed);
-		assertEquals(List.of("https://img/b.jpg"), attributeCalls); // post_a는 속성 콜 생략
+		assertEquals(java.util.Arrays.asList("https://img/b.jpg", null), thumbnailArgs); // post_a도 통합 콜은 나간다
 		assertNull(db.queryForObject(
 				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
 		assertNull(db.queryForObject(
@@ -254,7 +250,7 @@ class ContentAnalysisJobTest {
 		assertEquals(1, processed); // post_b만 (post_a는 숙성 미달, post_c는 미분류)
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
-		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_a")));
+		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_a")));
 	}
 
 	@Test
@@ -311,7 +307,7 @@ class ContentAnalysisJobTest {
 		assertEquals(1, processed); // 기준선 있는 콘텐츠(수집 최신순 첫 대상 post_b)가 슬롯을 차지한다
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_0'", Long.class));
-		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
+		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
 	}
@@ -320,12 +316,12 @@ class ContentAnalysisJobTest {
 	void 빈_종합_텍스트는_저장하지_않고_다른_콘텐츠는_처리된다() {
 		// 실전 스모크 재현: LLM이 텍스트 전부 빈 문자열인 Synthesis를 반환.
 		// content_analyses는 불변이라 빈 결과가 저장되면 영구 고정 + 재분석 대상에서도 제외된다.
-		rewireJob(content -> {
-			synthesisCalls.add(content);
-			if (content.shortCode().equals("post_a")) {
-				return new Synthesis("", "", "", "normal", "");
-			}
-			return new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거");
+		rewireJob((content, thumbnailUrl) -> {
+			insightCalls.add(content);
+			Synthesis s = content.shortCode().equals("post_a")
+					? new Synthesis("", "", "", "normal", "")
+					: new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거");
+			return new ContentInsightPort.ContentInsight(null, s);
 		}, false);
 
 		int processed = job.run(); // 빈 결과는 실패 격리 경로로 skip — 예외가 전파되지 않아야 한다
@@ -340,12 +336,13 @@ class ContentAnalysisJobTest {
 	@Test
 	void 콘텐츠_하나가_실패해도_나머지는_처리된다() {
 		// 포트 대역: post_a만 예외 (모의 LLM 장애)
-		rewireJob(content -> {
+		rewireJob((content, thumbnailUrl) -> {
 			if (content.shortCode().equals("post_a")) {
 				throw new IllegalStateException("모의 LLM 장애");
 			}
-			synthesisCalls.add(content);
-			return new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거");
+			insightCalls.add(content);
+			return new ContentInsightPort.ContentInsight(null,
+					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거"));
 		}, false);
 
 		int processed = job.run(); // 예외가 전파되지 않아야 한다
