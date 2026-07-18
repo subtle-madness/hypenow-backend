@@ -71,13 +71,17 @@ public class ContentAnalysisJob {
 				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())
 				.toList();
-		String model = settings.llmModel();
+		String model = settings.activeLlmModel();
 		int processed = 0;
 		int failed = 0;
 		for (String shortCode : targets) {
 			try {
 				analyzeOne(shortCode, model);
 				processed++;
+			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
+				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
+				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
+				break;
 			} catch (Exception e) {
 				failed++;
 				log.error("analysis failed for {} — 다음 실행에서 재대상", shortCode, e);

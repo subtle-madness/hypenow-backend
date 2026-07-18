@@ -334,6 +334,37 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 일_한도_소진이면_배치를_중단하고_잔여를_이월한다() {
+		// 무료 티어 일 1,500콜 예산(07-18 확정) — 429 재시도 소진은 실패 카운트가 아니라 배치 중단(이월)
+		java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger();
+		ContentInsightPort delegate = fakeInsightPort();
+		rewireJob((content, thumbnailUrl) -> {
+			if (callCount.incrementAndGet() >= 2) {
+				throw new com.celfit.analytics.llm.LlmQuotaExhaustedException("일 한도");
+			}
+			return delegate.analyze(content, thumbnailUrl);
+		}, false);
+
+		int processed = job.run(); // 대상 2건(post_b→post_a 최신순) 중 두 번째에서 한도 소진
+
+		assertEquals(1, processed);
+		assertEquals(2, callCount.get()); // 중단 후 추가 콜 없음
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void 프로바이더_기본은_gemini고_app_setting으로_롤백된다() {
+		AnalyticsSettings settings = new AnalyticsSettings(db);
+		assertEquals("gemini", settings.llmProvider());
+		assertEquals("gemini-3.1-flash-lite", settings.geminiModel());
+		assertEquals(15, settings.geminiRpm());
+		assertEquals("gemini-3.1-flash-lite", settings.activeLlmModel());
+
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.llm-provider', 'anthropic')");
+		assertEquals("claude-opus-4-8", settings.activeLlmModel()); // 롤백 시 anthropic 모델 기록
+	}
+
+	@Test
 	void 콘텐츠_하나가_실패해도_나머지는_처리된다() {
 		// 포트 대역: post_a만 예외 (모의 LLM 장애)
 		rewireJob((content, thumbnailUrl) -> {
