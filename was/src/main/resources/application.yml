@@ -27,7 +27,7 @@ server:
         path: /
 # UI는 /swagger-ui, 스키마는 /v3/api-docs
 springdoc:
-  paths-to-match: /v1/**              # 스펙 v1 표면만 문서화 — 구 /api·내부 페이지(coverage 등)는 제외
+  paths-to-match: /v1/**              # 스펙 v1 표면만 문서화 — 구 /api·내부 페이지(postdemo 등)는 제외
   swagger-ui:
     csrf:
       enabled: true                   # try-it-out에 XSRF-TOKEN 쿠키를 헤더로 동봉 — /v1/auth/login 호출 후

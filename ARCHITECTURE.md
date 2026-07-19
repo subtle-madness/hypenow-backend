@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-18
+> 마지막 갱신: 2026-07-19
 
 ## 1. 제품 한 장 요약
 
@@ -187,8 +187,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
 **운영 중**: crawler 파이프라인(discover→qualify→aggregate), analytics 상주 어드민(8082 `/ui` —
-미러·LLM 잡 트리거, 태스크 I), was `/v1` API(스펙 v1 P1~P3 + 로그인 월) + 검증용 내부 페이지
-`/coverage`(celfit-front **배포본(origin/main)** 실소비 필드 기준 커버리지 매트릭스 — 07-18 재정의).
+미러·LLM 잡 트리거, 태스크 I + `/ui/coverage` 커버리지 매트릭스 — celfit-front **배포본(origin/main)**
+실소비 필드 기준(07-18 재정의) + 수집 모수(raw 서빙 뷰) 타일, 07-19 was에서 이전), was `/v1` API(스펙
+v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서비스 표면만).
 구 랭킹 대시보드(`/dashboard`)와 게시물 데모(`/posts/{shortCode}`)는 프론트 전환 완료까지 잔존 —
 `/dashboard`는 옛 산출물(`content_ranking`)을 읽는다(정리 §8).
 
@@ -254,6 +255,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **커버리지 대시보드를 was → analytics 어드민으로 이전** — was `/coverage`는 로그인 월 뒤에 있지만 운영에서 api.hypenow.io 전체가 was로 프록시되고 users에 role 구분이 없어 일반 가입자도 열람 가능한 노출 문제. 내부 화면의 정위치는 127.0.0.1 바인딩(SSH 터널 전용) analytics 어드민 — `/ui/coverage` 신설(매트릭스 28행은 07-18 /v1 실소비 필드 정의 유지 + 수집 모수 타일 신설: raw 서빙 뷰 `v_accounts`·`v_serving_content`를 그대로 읽어 미러 분모로 표시 — 모수 필터는 02_serving.sql이 정본, Java에서 중복하지 않음), was coverage 패키지·템플릿 제거. **원칙: 커버리지 등 내부 검증 화면은 analytics 어드민 소속, was는 고객 서비스 표면만.** 매트릭스 정의 쌍은 analytics 내부로 이동(CoverageRepository ↔ check/coverage.sql) | [specs/2026-07-14-was-coverage-page-design.md](docs/superpowers/specs/2026-07-14-was-coverage-page-design.md)(🗄) |
 | 2026-07-19 | **운영 서버에 raw DB 상주 컨테이너 신설 + e2e 실데이터 이전** — 오라클 운영 compose에 `postgres-raw`(crawler DB, 루프백 5433, 계정 .env `RAW_DB_*`) 추가. 07-17 일회성 LLM 실행(e2e-*)에 올라가 있던 raw 실데이터 2.4GB(콘텐츠 27,093·인플루언서 12,837)를 postgres-raw로, 분석 결과 public 스키마(계정 12,638·콘텐츠 16,686·LLM 분석 account 77/content 88·landing_stats)를 운영 analysis DB로 이전(구 114건 미러 대체, `app` 스키마·세션은 보존 — e2e의 검증용 유저 3건은 미이관). 운영 /v1/contents 실데이터 응답 검증 완료. was의 raw 접근 금지 규율은 유지(같은 compose 네트워크지만 접속 정보 미주입). 미결: backup.sh는 analysis만 백업(raw 백업 여부), e2e-* 컨테이너 정리 | deploy/compose.yaml |
 | 2026-07-18 | **LLM 스택 Gemini 3.1 Flash-Lite 전환 (태스크 L)** — 골드셋 40건 실측(Opus 기준 mainCategory 90%·adType 98%·subCat Jaccard 0.62·브랜드 88%, Haiku 4.5보다 우수·5.5배 저렴)으로 전 분석 축 통일. ②속성+③종합은 통합 1콜(`ContentInsightPort` — Anthropic은 기존 어댑터 2콜 컴포지트로 보존해 app_setting `analytics.llm-provider` 롤백 경로), 문구 프롬프트에 절제 규칙(`LlmGuard` — 표본 3건 미만 단정 금지·조언 금지·수치 인용, 골드셋 문구 검증 통과본) 필수. 이원 운영: 일상=무료 키(`GEMINI_API_KEY`) 동기+RPM 페이싱, 429/일한도 소진은 에러 아닌 배치 이월 / 백필 2만 건=유료 키(`GEMINI_API_KEY_PAID`) Batch one-shot(`analytics.backfill-submit`→`-collect`, ~$9). ①판정은 크롤러 BeautyJudge 포트 뒤 Gemini 어댑터(팀 프롬프트·파서 재사용, `crawler.beauty.judge` 기본 gemini). 댓글 분류는 MVP 휴면이라 Anthropic 유지. 구모델(2.5)은 신규 API 키에서 404 — 3.1이 유일 선택지 | [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) |
 | 2026-07-18 | **설계-구현 전수 감사 + 문서 드리프트 정비** — 백엔드·프론트 specs 35건 전수 대조 결과 백엔드는 무동작 스텁 0건·트랙 표와 실체 일치. 정비: §5 G 표현 명확화(이메일 **소유권 인증**(6.17)은 [TBD] 미구현 — G의 "이메일 인증"은 이메일+비밀번호 로그인 의미), 대체·현행과 어긋난 spec 7건 상태 헤더 갱신(detail-source-selector 🗄 등), `/coverage` 진입점 제거로 고아가 된 `PostDemoRepository.analyzedPosts()` 죽은 쿼리 삭제(`/posts/{shortCode}` 페이지 자체는 URL 직접 접근으로 잔존). 주요 잔여 갭은 프론트 측: 마스터 비밀번호 백도어(celfit-front core.ts — 제거 대기), 이메일 인증 실구현(설계 착수), REST 배선(PR #18 draft) | 감사 세션 리포트 |
@@ -307,7 +309,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 | 항목 | 상태 |
 |---|---|
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. 블로커였던 구 스키마 전제는 07-18 뷰 재구축으로 해소 — 하니스 시드가 신 스키마(V15)에 직접 INSERT하므로 프레시 DB + V1~V15 + run.sh 구조가 성립. CI 워크플로에 Postgres 서비스 + Flyway 적용 + run.sh 연결만 남음 |
-| 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. `/coverage` 매트릭스는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
+| 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. 커버리지 매트릭스(07-19부터 analytics `/ui/coverage`)는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | ~~LLM 모델~~ | 해소(07-18) — 골드셋 실측으로 전 축 gemini-3.1-flash-lite 확정(§7 태스크 L), Anthropic은 app_setting 롤백 경로 |
 | 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
