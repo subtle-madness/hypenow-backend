@@ -44,7 +44,12 @@ public class AdminUiController {
 		model.addAttribute("jobs", JobName.values());
 		// 분석 뷰 미적용 등으로 대상 카운트가 실패해도 트리거·로그 패널은 쓸 수 있어야 한다
 		try {
-			model.addAttribute("costs", costEstimator.costCards());
+			List<JobCostEstimator.CostCard> costs = costEstimator.costCards();
+			model.addAttribute("costs", costs);
+			if (costs.isEmpty()) {
+				// 비동기 집계가 아직 안 끝난 첫 페이지뷰 — 뷰 스캔이 분 단위라 즉시 렌더가 우선 (07-19)
+				model.addAttribute("costError", "대상 집계 계산 중 — 잠시 후 새로고침하면 채워집니다");
+			}
 		} catch (RuntimeException e) {
 			log.warn("비용 추정 실패 — 카드 없이 렌더", e);
 			model.addAttribute("costs", List.of());

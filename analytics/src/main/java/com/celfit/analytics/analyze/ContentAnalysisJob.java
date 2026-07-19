@@ -55,9 +55,24 @@ public class ContentAnalysisJob {
 	 * 영구 잠식한다 (B2의 classified HashSet 패턴과 동일한 자바 측 필터).
 	 */
 	public int run() {
-		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분)
-		List<String> withBaseline = raw.queryForList(
-				"SELECT short_code FROM analytics.v_analysis_baseline ORDER BY captured_at DESC", String.class);
+		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분).
+		// 기준선을 여기서 통째로 로드한다 — 뷰 평가가 운영 실측 분 단위(07-19, 27k 기준 4.5분)라
+		// 건당 WHERE 조회를 반복하면 배치가 뷰 스캔에 잠긴다. 1회 평가 후 메모리 맵 조회로 대체.
+		Map<String, Baseline> withBaseline = new LinkedHashMap<>();
+		raw.query("""
+				SELECT short_code, recent_reels_avg_views, rank_in_recent_reels, recent_reels_count,
+				       recent_contents_count, recent12_avg_engagement_rate,
+				       recent12_avg_like_count, recent12_avg_comment_count,
+				       category_top_percentile, category_avg_views, category_sample_size
+				FROM analytics.v_analysis_baseline ORDER BY captured_at DESC""",
+				rs -> {
+					// PG 타입이 numeric·bigint·smallint로 섞여 있어 전부 BigDecimal로 읽어 변환 (기존 관용구)
+					withBaseline.put(rs.getString(1), new Baseline(
+							longOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)), intOf(rs.getBigDecimal(4)),
+							intOf(rs.getBigDecimal(5)), rs.getBigDecimal(6),
+							longOf(rs.getBigDecimal(7)), longOf(rs.getBigDecimal(8)),
+							intOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10)), longOf(rs.getBigDecimal(11))));
+				});
 		// 숙성 가드: 게시 후 N일(기본 3) 경과분만 — 불변 테이블이라 게시 직후 분석되면 영구 고정 (07-14 확정).
 		// posted_at NULL은 부등식에서 자연 제외 (게시일 미상이면 숙성 판정 불가).
 		Set<String> eligible = new HashSet<>(analysis.queryForList("""
@@ -67,7 +82,7 @@ public class ContentAnalysisJob {
 				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
 				  AND c.posted_at <= now() - make_interval(days => ?)""",
 				String.class, settings.analyzeMaturityDays()));
-		List<String> targets = withBaseline.stream()
+		List<String> targets = withBaseline.keySet().stream()
 				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())
 				.toList();
@@ -76,7 +91,7 @@ public class ContentAnalysisJob {
 		int failed = 0;
 		for (String shortCode : targets) {
 			try {
-				analyzeOne(shortCode, model);
+				analyzeOne(shortCode, model, withBaseline.get(shortCode));
 				processed++;
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
@@ -91,7 +106,7 @@ public class ContentAnalysisJob {
 		return processed;
 	}
 
-	private void analyzeOne(String shortCode, String model) {
+	private void analyzeOne(String shortCode, String model, Baseline b) {
 		Map<String, Object> content = analysis.queryForMap("""
 				SELECT account_handle, caption, content_type, thumbnail_url, views, likes, comments
 				FROM contents WHERE short_code = ?""", shortCode);
@@ -102,20 +117,6 @@ public class ContentAnalysisJob {
 				rs -> {
 					categoryCounts.put(rs.getString(1), rs.getLong(2));
 				}, shortCode);
-		Baseline b = raw.queryForObject("""
-				SELECT recent_reels_avg_views, rank_in_recent_reels, recent_reels_count,
-				       recent_contents_count, recent12_avg_engagement_rate,
-				       recent12_avg_like_count, recent12_avg_comment_count,
-				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_baseline WHERE short_code = ?""",
-				(rs, i) -> new Baseline(
-						// PG 타입이 numeric(round)·bigint(rank/count)·smallint(::smallint)로 섞여 있어
-						// getObject 캐스트는 CCE/PSQLException 지뢰 — 전부 BigDecimal로 읽어 변환한다
-						longOf(rs.getBigDecimal(1)), intOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)),
-						intOf(rs.getBigDecimal(4)), rs.getBigDecimal(5),
-						longOf(rs.getBigDecimal(6)), longOf(rs.getBigDecimal(7)),
-						intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))),
-				shortCode);
 		// 캡션 주·썸네일 보조: 썸네일은 게이트 on + 프리체크 생존일 때만 첨부, 만료·off여도 캡션으로 5종 산출.
 		// 통합 1콜(속성+종합 — 07-18 확정) 예외(일시 장애)는 기존대로 콘텐츠 실패 → 다음 실행 재대상.
 		String caption = (String) content.get("caption");
