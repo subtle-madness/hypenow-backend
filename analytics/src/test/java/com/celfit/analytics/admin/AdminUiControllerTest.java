@@ -75,7 +75,11 @@ class AdminUiControllerTest {
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("24,113")))
 				// 창 파라미터는 숫자가 span으로 감싸여 렌더 — "pin <span>3</span>일" 형태
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("pin <span>3</span>일")))
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("slack <span>2</span>일")));
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("slack <span>2</span>일")))
+				// 단계별 생산 주체 라벨 — 잡 카드 3종과 퍼널 수치의 대응
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("후보 뷰 가드")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("콘텐츠 분석 잡")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러 잡 — 분석 무관 전체")));
 	}
 
 	@Test

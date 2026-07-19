@@ -125,6 +125,7 @@ b { font-weight: 700; }
 }
 .stage b.pending { font-size: 1rem; font-weight: 600; color: var(--muted); }
 .stage span { font-size: 0.78rem; color: var(--ink-secondary); }
+.stage .src { font-size: 0.7rem; color: var(--muted); }
 .arrow { color: var(--muted); font-size: 1.1rem; flex: 0 0 auto; }
 
 .bar {
