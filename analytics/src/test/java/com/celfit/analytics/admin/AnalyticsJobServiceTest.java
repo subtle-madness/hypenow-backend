@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
+import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
@@ -39,7 +40,7 @@ class AnalyticsJobServiceTest {
 
 	@Test
 	void 트리거는_잡을_실행하고_ACCEPTED를_반환() {
-		when(analyzeJob.run()).thenReturn(3);
+		when(analyzeJob.run()).thenReturn(new JobResult(3, 0, false));
 		var result = service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
 		assertThat(lock.isRunning(JobName.ANALYZE)).isFalse(); // 동기 실행 후 해제

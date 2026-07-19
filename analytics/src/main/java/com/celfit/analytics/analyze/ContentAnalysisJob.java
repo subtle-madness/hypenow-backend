@@ -33,28 +33,30 @@ public class ContentAnalysisJob {
 	private final AnalyticsSettings settings;
 	private final boolean thumbnailEnabled; // 썸네일 첨부 게이트 — off여도 캡션 기반 속성은 산출
 	private final Predicate<String> thumbnailAlive;
+	private final ProgressReporter reporter;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
 			ContentInsightPort insight, AnalyticsSettings settings,
-			boolean thumbnailEnabled, Predicate<String> thumbnailAlive) {
+			boolean thumbnailEnabled, Predicate<String> thumbnailAlive, ProgressReporter reporter) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.insight = insight;
 		this.settings = settings;
 		this.thumbnailEnabled = thumbnailEnabled;
 		this.thumbnailAlive = thumbnailAlive;
+		this.reporter = reporter;
 	}
 
 	/**
-	 * @return 분석 완료 콘텐츠 수
+	 * @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부)
 	 *
 	 * <p>대상은 양쪽 DB 교집합: 기준선은 "최근 N개" 비교 지표라 윈도우 밖 콘텐츠는
 	 * 분석 대상이 아니다 (기준선 정의 불가). 미러 전체(contents)에서 기준선 뷰에 없는
 	 * 콘텐츠를 상한 적용 전에 걸러내지 않으면 매 실행 예외→skip으로 배치 상한 슬롯을
 	 * 영구 잠식한다 (B2의 classified HashSet 패턴과 동일한 자바 측 필터).
 	 */
-	public int run() {
+	public JobResult run() {
 		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분).
 		// 기준선을 여기서 통째로 로드한다 — 뷰 평가가 운영 실측 분 단위(07-19, 27k 기준 4.5분)라
 		// 건당 WHERE 조회를 반복하면 배치가 뷰 스캔에 잠긴다. 1회 평가 후 메모리 맵 조회로 대체.
@@ -89,6 +91,8 @@ public class ContentAnalysisJob {
 		String model = settings.activeLlmModel();
 		int processed = 0;
 		int failed = 0;
+		boolean carriedOver = false;
+		reporter.report(0, 0, targets.size());
 		for (String shortCode : targets) {
 			try {
 				analyzeOne(shortCode, model, withBaseline.get(shortCode));
@@ -96,14 +100,16 @@ public class ContentAnalysisJob {
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
 				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
+				carriedOver = true;
 				break;
 			} catch (Exception e) {
 				failed++;
 				log.error("analysis failed for {} — 다음 실행에서 재대상", shortCode, e);
 			}
+			reporter.report(processed, failed, targets.size());
 		}
 		log.info("analysis complete ({} contents, {} failed)", processed, failed);
-		return processed;
+		return new JobResult(processed, failed, carriedOver);
 	}
 
 	private void analyzeOne(String shortCode, String model, Baseline b) {

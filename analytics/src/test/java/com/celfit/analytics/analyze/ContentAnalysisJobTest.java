@@ -1,5 +1,6 @@
 package com.celfit.analytics.analyze;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -62,7 +63,7 @@ class ContentAnalysisJobTest {
 
 	void rewireJob(ContentInsightPort port, boolean thumbnailEnabled, java.util.function.Predicate<String> thumbnailAlive) {
 		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
-				thumbnailEnabled, thumbnailAlive);
+				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP);
 	}
 
 	@BeforeEach
@@ -119,12 +120,12 @@ class ContentAnalysisJobTest {
 				  (2, 'post_a', 'positive', 'claude-test')""");
 
 		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
-				false, url -> true);
+				false, url -> true, ProgressReporter.NOOP);
 	}
 
 	@Test
 	void 미분석_분류완료_콘텐츠가_분석되어_저장된다() {
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(2, processed); // post_a, post_b (post_c는 미분류라 제외)
 		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
@@ -153,7 +154,7 @@ class ContentAnalysisJobTest {
 		job.run();
 		insightCalls.clear();
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(0, processed);
 		assertTrue(insightCalls.isEmpty());
@@ -171,7 +172,7 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 썸네일_게이트_off여도_캡션_기반_속성이_저장된다() {
-		int processed = job.run(); // 기본 게이트: thumbnailEnabled=false
+		int processed = job.run().processed(); // 기본 게이트: thumbnailEnabled=false
 
 		assertEquals(2, processed);
 		// 속성 콜은 항상 수행되되 썸네일은 미첨부(null) — 캡션 주 경로
@@ -186,7 +187,7 @@ class ContentAnalysisJobTest {
 	void 썸네일_게이트_on이면_생존_썸네일이_첨부되고_제품명까지_저장된다() {
 		rewireJob(fakeInsightPort(), true);
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(2, processed);
 		// 수집 최신순: post_b(06-07) → post_a(06-05), 둘 다 썸네일 생존 → URL 첨부
@@ -208,7 +209,7 @@ class ContentAnalysisJobTest {
 		// 만료된 서명 URL 재현: post_a 썸네일만 죽어 있다 — 구 VLM처럼 컬럼 NULL이 아니라 캡션 단독 분석으로 간다
 		rewireJob(fakeInsightPort(), true, url -> url.equals("https://img/b.jpg"));
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(2, processed);
 		// post_b는 썸네일 첨부, post_a는 캡션만(null)
@@ -226,7 +227,7 @@ class ContentAnalysisJobTest {
 		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
 		rewireJob(fakeInsightPort(), true);
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(2, processed);
 		assertEquals(java.util.Arrays.asList("https://img/b.jpg", null), thumbnailArgs); // post_a도 통합 콜은 나간다
@@ -245,7 +246,7 @@ class ContentAnalysisJobTest {
 		// 덜 여문 지표·댓글로 영구 고정된다. 기본 3일 경과 후에만 분석.
 		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(1, processed); // post_b만 (post_a는 숙성 미달, post_c는 미분류)
 		assertEquals(0L, db.queryForObject(
@@ -258,7 +259,7 @@ class ContentAnalysisJobTest {
 		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-maturity-days', '0')");
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(2, processed); // 가드 0일이면 post_a도 대상
 	}
@@ -268,7 +269,7 @@ class ContentAnalysisJobTest {
 		// 게시일을 모르면 숙성 여부를 판정할 수 없다 — 실데이터엔 NULL 없음(140/140 확인, 2026-07-15)
 		db.update("UPDATE contents SET posted_at = NULL WHERE short_code = 'post_a'");
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(1, processed); // post_b만
 		assertEquals(0L, db.queryForObject(
@@ -280,7 +281,7 @@ class ContentAnalysisJobTest {
 		// 썸네일 서명 URL이 살아있을 때 VLM을 시도하기 위해 최신 수집분부터 (short_code 순이면 post_a 먼저)
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(1, processed);
 		assertEquals(1L, db.queryForObject(
@@ -302,7 +303,7 @@ class ContentAnalysisJobTest {
 				VALUES (10, 'post_0', 'positive', 'claude-test')""");
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(1, processed); // 기준선 있는 콘텐츠(수집 최신순 첫 대상 post_b)가 슬롯을 차지한다
 		assertEquals(0L, db.queryForObject(
@@ -324,7 +325,7 @@ class ContentAnalysisJobTest {
 			return new ContentInsightPort.ContentInsight(null, s);
 		}, false);
 
-		int processed = job.run(); // 빈 결과는 실패 격리 경로로 skip — 예외가 전파되지 않아야 한다
+		int processed = job.run().processed(); // 빈 결과는 실패 격리 경로로 skip — 예외가 전파되지 않아야 한다
 
 		assertEquals(1, processed); // post_b만 성공
 		assertEquals(0L, db.queryForObject(
@@ -345,7 +346,7 @@ class ContentAnalysisJobTest {
 			return delegate.analyze(content, thumbnailUrl);
 		}, false);
 
-		int processed = job.run(); // 대상 2건(post_b→post_a 최신순) 중 두 번째에서 한도 소진
+		int processed = job.run().processed(); // 대상 2건(post_b→post_a 최신순) 중 두 번째에서 한도 소진
 
 		assertEquals(1, processed);
 		assertEquals(2, callCount.get()); // 중단 후 추가 콜 없음
@@ -376,12 +377,27 @@ class ContentAnalysisJobTest {
 					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "normal", "근거"));
 		}, false);
 
-		int processed = job.run(); // 예외가 전파되지 않아야 한다
+		int processed = job.run().processed(); // 예외가 전파되지 않아야 한다
 
 		assertEquals(1, processed); // post_b만 성공
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
+	}
+
+	@Test
+	void 진행률을_보고한다() {
+		// 대상 1건으로 고정 — 최초 보고(대상 확정 직후)와 마지막 보고(처리 완료 직후)만 검증
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
+		List<int[]> reports = new ArrayList<>();
+		ProgressReporter reporter = (p, f, t) -> reports.add(new int[]{p, f, t});
+		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
+				false, url -> true, reporter);
+
+		job.run();
+
+		assertThat(reports.getFirst()).containsExactly(0, 0, 1);
+		assertThat(reports.getLast()).containsExactly(1, 0, 1);
 	}
 }
