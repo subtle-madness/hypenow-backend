@@ -53,6 +53,11 @@ public class SignupValidator {
 		}
 	}
 
+	/** 도입문의(/v1/inquiries) 재사용 — 가입과 동일한 유형 어휘 검사. */
+	public void requireUserType(String value) {
+		requireIn(USER_TYPES, value, "userType");
+	}
+
 	/** PATCH /v1/me 재사용(스펙 6.13) — 가입과 동일한 어휘 검사. */
 	public void requireJobTitle(String value) {
 		requireIn(JOB_TITLES, value, "jobTitle");
