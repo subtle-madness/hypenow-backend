@@ -25,8 +25,9 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
   대상: accounts·contents·content_comments·content_metric_snapshots (등록: MirrorConfig).
 - `test/` — SQL 하니스. 더미 시드를 BEGIN/ROLLBACK으로 격리해 뷰 기대값을 고정.
-- `check/` — 실DB 상태 점검. `coverage.sh`: content-ranking 프론트 화면 요소별로
-  analysis DB 미러의 필드 채움율을 보고 (골격 미러가 비면 실패, LLM 분석·랭킹 구간은 보고만).
+- `check/` — 실DB 상태 점검. `coverage.sh`: celfit-front 실소비 /v1 필드별로
+  analysis DB 미러의 채움율을 보고 (골격 미러가 비면 실패, LLM 분석·랭킹 구간은 보고만).
+  매트릭스 정의는 어드민 `/ui/coverage` 페이지(`CoverageRepository`)와 쌍.
 - `export/` — `front_seed.py`: analysis DB(분석 완료분)를 celfit-front 실데이터셋
   3종(dataset/deep-dives/account-reports)으로 변환해 프론트 시드를 덮어씀 —
   프론트 실제 뷰(로컬 `pnpm dev`, 인메모리 모드)로 데이터 확인하는 데모용.

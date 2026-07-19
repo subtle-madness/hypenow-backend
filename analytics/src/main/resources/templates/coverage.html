@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta http-equiv="refresh" content="60">
+    <title>hypenow analytics — 커버리지</title>
+    <link rel="stylesheet" href="/css/admin.css"/>
+</head>
+<body>
+<main>
+<h1>커버리지 — 수집 · 미러 · 분석</h1>
+<p class="hint">
+    <a href="/ui">← 잡 실행</a> ·
+    celfit-front가 실제 소비하는 /v1 필드별 채움율 · 60초마다 자동 갱신
+    <span th:if="${queriedAt != null}"
+          th:text="'· 조회 ' + ${#temporals.format(queriedAt, 'yyyy-MM-dd HH:mm:ss')}"></span>
+</p>
+
+<p class="tiles-head">수집 모수 <span class="tiles-head-sub">raw DB 서빙 뷰 — 뷰티 인플루언서 기준</span></p>
+<div class="tiles" th:if="${source != null}">
+    <div class="tile">
+        <div class="num" th:text="${#numbers.formatInteger(source.accounts, 0, 'COMMA')}">0</div>
+        <div class="label">뷰티 계정 (v_accounts)</div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${#numbers.formatInteger(source.contents, 0, 'COMMA')}">0</div>
+        <div class="label">서빙 대상 콘텐츠 (v_serving_content)</div>
+    </div>
+</div>
+<div class="tiles" th:if="${source == null}">
+    <div class="tile">
+        <div class="num">조회 실패</div>
+        <div class="label">raw DB 접속 또는 분석 뷰 적용 여부를 확인하세요</div>
+    </div>
+</div>
+
+<p class="tiles-head">미러 · 분석 <span class="tiles-head-sub">analysis DB — 분모는 수집 모수</span></p>
+<div class="tiles" th:if="${tiles != null}">
+    <div class="tile">
+        <div class="num" th:text="${#numbers.formatInteger(tiles.accounts, 0, 'COMMA')}">0</div>
+        <div class="label">계정 미러 (accounts)</div>
+        <div class="tile-desc" th:if="${source != null}"
+             th:text="'모수 ' + ${#numbers.formatInteger(source.accounts, 0, 'COMMA')} + ' 대비'"></div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${#numbers.formatInteger(tiles.contents, 0, 'COMMA')}">0</div>
+        <div class="label">게시물 미러 (contents)</div>
+        <div class="tile-desc" th:if="${source != null}"
+             th:text="'모수 ' + ${#numbers.formatInteger(source.contents, 0, 'COMMA')} + ' 대비'"></div>
+    </div>
+    <div class="tile">
+        <div class="num" th:text="${#numbers.formatInteger(tiles.snapshots, 0, 'COMMA')}">0</div>
+        <div class="label">지표 스냅샷</div>
+        <div class="tile-desc" th:text="${tiles.snapshotLatest != null} ? '최신 ' + ${tiles.snapshotLatest} : '수집 없음'">-</div>
+    </div>
+    <div class="tile" th:classappend="${tiles.analyses < tiles.contents} ? 'highlight' : ''">
+        <div class="num" th:text="${#numbers.formatInteger(tiles.analyses, 0, 'COMMA')} + ' / ' + ${#numbers.formatInteger(tiles.contents, 0, 'COMMA')}">0</div>
+        <div class="label">LLM 분석 (content_analyses)</div>
+    </div>
+</div>
+<div class="tiles" th:if="${tiles == null}">
+    <div class="tile">
+        <div class="num">조회 실패</div>
+        <div class="label">analysis DB 접속 여부를 확인하세요</div>
+    </div>
+</div>
+
+<h2>필드 커버리지 — 화면 요소 ↔ 미러</h2>
+<table class="data">
+    <thead>
+    <tr>
+        <th>화면 요소</th>
+        <th>DB 소스</th>
+        <th>채움</th>
+        <th>상태</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:if="${#lists.isEmpty(matrix)}">
+        <td colspan="4" class="off">데이터 없음 — DB 조회 실패 또는 미러 미실행</td>
+    </tr>
+    <tr th:each="row : ${matrix}">
+        <td th:text="${row.element}">-</td>
+        <td class="off" th:text="${row.source}">-</td>
+        <td th:text="${row.filled}">-</td>
+        <td><span class="badge" th:classappend="${row.grade}" th:text="${row.status}">-</span></td>
+    </tr>
+    </tbody>
+</table>
+<p class="hint">매트릭스 정의는 analytics/check/coverage.sql(CLI)과 쌍 — 항목이 바뀌면 둘 다 고칠 것</p>
+</main>
+</body>
+</html>
