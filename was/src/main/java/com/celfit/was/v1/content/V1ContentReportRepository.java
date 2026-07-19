@@ -76,6 +76,8 @@ public class V1ContentReportRepository {
 	public record ReportRow(String shortCode, String accountHandle, String contentType,
 			Long views, Long likes, Long comments,
 			String aiContentSummary, String contentsPattern, String aiCommentInsight,
+			// 이 3컬럼(recentReelsAvgViews/rankInRecentReels/recentReelsCount)은 assembler가 소비하지
+			// 않지만 향후/디버그용으로 의도적으로 유지 — 차트는 라이브 재계산으로 전환됨(A2).
 			Long recentReelsAvgViews, Integer rankInRecentReels, Integer recentReelsCount,
 			Integer recentContentsCount, BigDecimal recent12AvgEngagementRate,
 			Long recent12AvgLikeCount, Long recent12AvgCommentCount,
