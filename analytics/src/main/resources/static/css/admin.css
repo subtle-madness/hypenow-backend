@@ -125,6 +125,7 @@ b { font-weight: 700; }
 }
 .stage b.pending { font-size: 1rem; font-weight: 600; color: var(--muted); }
 .stage span { font-size: 0.78rem; color: var(--ink-secondary); }
+.stage .src { font-size: 0.7rem; color: var(--muted); }
 .arrow { color: var(--muted); font-size: 1.1rem; flex: 0 0 auto; }
 
 .bar {
@@ -141,6 +142,8 @@ b { font-weight: 700; }
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 1rem; flex-wrap: wrap; font-size: 0.82rem; color: var(--ink-secondary);
 }
+.meta.guard { margin-top: 0.3rem; }
+.meta.guard b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .acct {
     margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--border);
     font-size: 0.82rem; color: var(--ink-secondary);

@@ -22,15 +22,15 @@ public final class MediaItemExtractor {
             if (!(o instanceof Map<?, ?> raw)) continue;
             Map<String, Object> m = unwrapMedia(raw);
             String code = firstString(m.get("code"), m.get("shortcode"));   // SELF_GQL은 shortcode
-            Long takenAt = asLong(get(m, "taken_at"));
-            if (takenAt == null) takenAt = asLong(m.get("taken_at_timestamp")); // SELF_GQL
+            Instant takenAt = takenAtOf(get(m, "taken_at"));
+            if (takenAt == null) takenAt = takenAtOf(m.get("taken_at_timestamp")); // SELF_GQL
             if (code == null || takenAt == null) continue;
             ContentType type = "clips".equals(m.get("product_type"))
                     ? ContentType.REELS : ContentType.FEED;
             boolean pinned = nonEmptyList(m.get("timeline_pinned_user_ids"))
                     || nonEmptyList(m.get("clips_tab_pinned_user_ids"))
                     || nonEmptyList(m.get("pinned_for_users"));              // SELF_GQL
-            out.add(new MediaItem(code, Instant.ofEpochSecond(takenAt), type, pinned));
+            out.add(new MediaItem(code, takenAt, type, pinned));
         }
         return out;
     }
@@ -51,6 +51,8 @@ public final class MediaItemExtractor {
                     ? s : null;
             case HIKER_V2_CLIPS -> payload.get("next_page_id") instanceof String s && !s.isBlank()
                     ? s : null;
+            case HIKER_V1_MEDIAS -> payload.get("next_end_cursor") instanceof String s && !s.isBlank()
+                    ? s : null;
             default -> null;
         };
     }
@@ -60,20 +62,23 @@ public final class MediaItemExtractor {
             case HIKER_GQL_MEDIAS -> payload.get("items");
             case HIKER_V2_CLIPS -> payload.get("response") instanceof Map<?, ?> r
                     ? r.get("items") : null;
+            case HIKER_V1_MEDIAS -> payload.get("medias");
             case SELF_GQL -> timelineEdges(payload);
             default -> null;
         };
         return items instanceof List<?> l ? l : List.of();
     }
 
-    /** data.user.edge_owner_to_timeline_media.edges — 없으면 null(내장 아님). */
+    /**
+     * edge_owner_to_timeline_media.edges — 없으면 null(내장 아님).
+     * 루트는 두 형태: SELF 직접 크롤은 data.user, Hiker /gql/user/web_profile_info는
+     * data 래퍼를 벗긴 user 루트로 같은 원형을 준다.
+     */
     private static List<?> timelineEdges(Map<String, Object> payload) {
-        Object cur = payload;
-        for (String p : new String[] {"data", "user", "edge_owner_to_timeline_media", "edges"}) {
-            if (!(cur instanceof Map<?, ?> m)) return null;
-            cur = m.get(p);
-        }
-        return cur instanceof List<?> l ? l : null;
+        Object user = payload.get("data") instanceof Map<?, ?> d ? d.get("user") : payload.get("user");
+        if (!(user instanceof Map<?, ?> u)) return null;
+        Object cur = u.get("edge_owner_to_timeline_media");
+        return cur instanceof Map<?, ?> m && m.get("edges") instanceof List<?> l ? l : null;
     }
 
     @SuppressWarnings("unchecked")
@@ -99,6 +104,26 @@ public final class MediaItemExtractor {
 
     private static Long asLong(Object v) {
         return v instanceof Number n ? n.longValue() : null;
+    }
+
+    /**
+     * 게시 시각 — epoch 초(Number, SELF·gql flat)와 ISO 문자열(Hiker /v1 serialized Media) 모두 허용.
+     * 오프셋 없는 ISO는 UTC로 해석한다.
+     */
+    private static Instant takenAtOf(Object v) {
+        if (v instanceof Number n) return Instant.ofEpochSecond(n.longValue());
+        if (v instanceof String s && !s.isBlank()) {
+            try {
+                return Instant.parse(s);
+            } catch (java.time.format.DateTimeParseException e) {
+                try {
+                    return java.time.LocalDateTime.parse(s).toInstant(java.time.ZoneOffset.UTC);
+                } catch (java.time.format.DateTimeParseException e2) {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     private static boolean nonEmptyList(Object v) {

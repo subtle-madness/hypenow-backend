@@ -1,5 +1,6 @@
 package com.celfit.crawler.crawling.application.service;
 
+import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
@@ -12,7 +13,6 @@ import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 릴스 수집 잡 — COLLECT(게시물을 위한 프로필 수집)에서 분리된 유료 구간. 뷰티 확정 계정마다
  * HikerAPI /v2/user/clips 1페이지를 수확해 raw_media_page 저장 + content upsert하고
- * last_reels_at을 북키핑한다(재방문 주기는 collect.revisit-interval-days 공유).
+ * last_reels_at을 북키핑한다(달력 기준 재방문 주기는 collect.revisit-interval-days 공유 — RevisitCutoff).
  * pk(ig_user_id) 없는 계정은 해석 요청을 쓰지 않고 스킵 — 프로필 수집이 pk를 채우면 다음
  * 실행에서 잡힌다. 즉 계정당 정확히 HikerAPI 1요청이다.
  */
@@ -69,7 +69,7 @@ public class ReelsJob {
      * 미점유). RuntimeException은 해당 방문만 실패 처리하고 계속한다.
      */
     public Summary run(TriggerType trigger) {
-        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         List<Influencer> targets = influencers.findReelsTargets(
                 revisitBefore, PageRequest.of(0, settings.reelsBatchLimit()));
         int visited = 0, upserted = 0, skippedNoPk = 0, failed = 0;

@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -45,7 +44,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -65,6 +63,8 @@ class CollectJobTest {
 
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
+    com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository rawMediaPages =
+            mock(com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository.class);
     ContentRepository contents = mock(ContentRepository.class);
     RawCommentRepository rawComments = mock(RawCommentRepository.class);
     ProfileSourceSelector profileSourceSelector = mock(ProfileSourceSelector.class);
@@ -155,11 +155,44 @@ class CollectJobTest {
     }
 
     CollectJob job(boolean commentsEnabled) {
+        return job(commentsEnabled, List.of());
+    }
+
+    CollectJob job(boolean commentsEnabled,
+                   List<com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher> mediaFetchers) {
         CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
         return new CollectJob(props, influencers, rawProfiles, contents,
-                new ContentUpserter(contents, CLOCK), rawComments,
-                profileSourceSelector, commentSource, executor, settings, CLOCK, progress,
+                new ContentUpserter(contents, CLOCK), rawComments, rawMediaPages,
+                profileSourceSelector, commentSource, mediaFetchers, executor, settings, CLOCK, progress,
                 txTemplate);
+    }
+
+    @Test
+    void 방문을_여러_워커가_병렬로_처리한다() {
+        // 방문은 계정 단위로 독립(트랜잭션·북키핑 분리)이라 qualify의 SELF fetch처럼 워커 병렬이 안전하다.
+        // 순차 실행이면 동시 진행 fetch가 항상 1에 머물러 실패한다.
+        wireCommon();
+        List<Influencer> targets = new java.util.ArrayList<>();
+        for (long i = 1; i <= 8; i++) targets.add(influencer(i, "par_user" + i, null, null));
+        when(influencers.findCollectTargets(any(), any())).thenReturn(targets);
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        var active = new java.util.concurrent.atomic.AtomicInteger();
+        var maxActive = new java.util.concurrent.atomic.AtomicInteger();
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), any(), eq(TriggerType.MANUAL)))
+                .thenAnswer(inv -> {
+                    maxActive.accumulateAndGet(active.incrementAndGet(), Math::max);
+                    Thread.sleep(100);   // 겹침 관찰 창
+                    active.decrementAndGet();
+                    List<String> names = inv.getArgument(1);
+                    return new CrawlExecutor.Execution(1L,
+                            List.of(profileItem(names.get(0), 1000L, "U-" + names.get(0))));
+                });
+
+        var summary = job().run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isEqualTo(8);
+        assertThat(maxActive.get()).isGreaterThanOrEqualTo(3);  // 워커 4개 병렬 실행의 증거
+        assertThat(targets).allSatisfy(t -> assertThat(t.getLastCollectedAt()).isEqualTo(NOW));
     }
 
     @Test
@@ -251,26 +284,29 @@ class CollectJobTest {
 
         job().run(TriggerType.MANUAL);
 
+        // 우선순위는 선정 쿼리 정렬(백필 먼저)이 담당하고, 병렬 방문은 리스트 앞에서부터 집어간다 —
+        // 워커 간 완료 순서는 보장되지 않으므로 호출 순서(InOrder)가 아니라 "둘 다 방문됨"을 검증한다.
         verify(influencers).findCollectTargets(any(), eq(PageRequest.of(0, 5)));
-        InOrder order = inOrder(profileSourceSelector);
-        order.verify(profileSourceSelector).fetchAndSupplement(
+        verify(profileSourceSelector).fetchAndSupplement(
                 eq(JobName.COLLECT), eq(List.of("backfill_user")), eq(TriggerType.MANUAL));
-        order.verify(profileSourceSelector).fetchAndSupplement(
+        verify(profileSourceSelector).fetchAndSupplement(
                 eq(JobName.COLLECT), eq(List.of("track_user")), eq(TriggerType.MANUAL));
     }
 
     // ---------------------------------------------------------------------
-    // 1b) 대상 조회는 revisit-interval-days 만큼 과거 시각을 컷오프로 전달한다
+    // 1b) 대상 조회는 달력일 경계(오늘 자정 − (N−1)일)를 컷오프로 전달한다
     // ---------------------------------------------------------------------
     @Test
-    void 대상_조회는_재방문_주기만큼_과거인_시각을_컷오프로_전달한다() {
+    void 대상_조회는_달력일_기준_경계를_컷오프로_전달한다() {
+        // NOW = 2026-07-14T00:00Z, 주기 7일 → 경계 = 오늘 자정 − 6일 = 2026-07-08 자정.
+        // "지금 − 7일"(경과 시간)이 아니라 달력일 기준이어야 자정에 전원 리셋된다.
         wireCommon();
         when(settings.revisitIntervalDays()).thenReturn(7);
         when(influencers.findCollectTargets(any(), any())).thenReturn(List.of());
 
         job().run(TriggerType.MANUAL);
 
-        verify(influencers).findCollectTargets(eq(NOW.minus(Duration.ofDays(7))), any());
+        verify(influencers).findCollectTargets(eq(Instant.parse("2026-07-08T00:00:00Z")), any());
     }
 
     // ---------------------------------------------------------------------
@@ -400,6 +436,53 @@ class CollectJobTest {
         assertThat(summary.postsUpserted()).isZero();              // 피드 폴백 없음
         verify(rawProfiles).save(any());                           // 프로필 스냅샷은 저장
         assertThat(inf.getLastCollectedAt()).isEqualTo(NOW);
+    }
+
+    // ---------------------------------------------------------------------
+    // 3b) 내장 타임라인 없는 소스(HIKER_MOBILE 등)는 /v1/user/medias/chunk 1페이지로 피드를 보충한다
+    // ---------------------------------------------------------------------
+    @Test
+    void 내장_타임라인_없는_소스는_medias_chunk_1페이지로_피드를_보충한다() {
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");   // APIFY_ACTOR 형태 — 내장 타임라인 없음
+
+        var chunkFetcher = mock(com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher.class);
+        when(chunkFetcher.source()).thenReturn(RawSource.HIKER_V1_MEDIAS);
+        when(chunkFetcher.fetchPage("USR1", null)).thenReturn(Map.of(
+                "medias", List.of(
+                        Map.of("code", "CHUNK_FEED", "taken_at", "2026-07-18T10:00:00", "product_type", ""),
+                        Map.of("code", "CHUNK_REEL", "taken_at", "2026-07-18T11:00:00", "product_type", "clips")),
+                "next_end_cursor", "CUR1"));
+
+        var summary = job(true, List.of(chunkFetcher)).run(TriggerType.MANUAL);
+
+        assertThat(summary.postsUpserted()).isEqualTo(2);
+        assertThat(contentStore.get("CHUNK_FEED").getContentType()).isEqualTo(ContentType.FEED);
+        assertThat(contentStore.get("CHUNK_REEL").getContentType()).isEqualTo(ContentType.REELS);
+        verify(rawMediaPages).save(any());                     // 페이지 원형 저장
+        assertThat(inf.getLastCollectedAt()).isEqualTo(NOW);   // 방문 완료
+    }
+
+    @Test
+    void 피드_보충_요청이_실패하면_방문도_실패해_재시도된다() {
+        // 게시물 없는 "방문 완료"를 만들지 않는다 — HIKER_MOBILE 사고(2026-07-18) 재발 방지 가드
+        wireCommon();
+
+        Influencer inf = influencer(1L, "alice", null, null);
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(inf));
+        wireProfile("alice", 1000L, "USR1");
+
+        var chunkFetcher = mock(com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher.class);
+        when(chunkFetcher.source()).thenReturn(RawSource.HIKER_V1_MEDIAS);
+        when(chunkFetcher.fetchPage("USR1", null)).thenThrow(new ApifyException("Hiker 500"));
+
+        var summary = job(true, List.of(chunkFetcher)).run(TriggerType.MANUAL);
+
+        assertThat(summary.failedVisits()).isEqualTo(1);
+        assertThat(inf.getLastCollectedAt()).isNull();
     }
 
     @Test

@@ -25,15 +25,16 @@ class SignupValidatorTest {
 		String companySize = "2-10";
 		String industry = "beauty";
 		String jobTitle = "staff";
+		String usagePurpose = null;
 		Boolean agreedTerms = true;
 		Boolean agreedPrivacy = true;
 		Boolean agreedAge14 = true;
 		Boolean agreedMarketing = false;
 
 		SignupRequest build() {
-			// signupCode는 validator 관할 밖(컨트롤러의 verifySignupCode) — 아무 값이나 무방
+			// signupCode는 validator 관할 밖(컨트롤러의 requireUsableCode) — 아무 값이나 무방
 			return new SignupRequest("BETA2026", email, password, name, nickname, userType, signupRoute,
-					phoneCountryCode, phoneNumber, companyName, companySize, industry, jobTitle,
+					phoneCountryCode, phoneNumber, companyName, companySize, industry, jobTitle, usagePurpose,
 					agreedTerms, agreedPrivacy, agreedAge14, agreedMarketing);
 		}
 	}
@@ -143,10 +144,32 @@ class SignupValidatorTest {
 		assertValidationFails(req);
 	}
 
+	// 가입 경량화(클로즈베타 2026-07-19) — 관문 통과 후 마찰 최소화, 선택 필드는 미입력(null) 허용
 	@Test
-	void 전화번호가_비어있으면_거부된다() {
+	void 선택_필드는_전부_null이어도_통과한다() {
 		Req req = new Req();
-		req.phoneNumber = "";
+		req.signupRoute = null;
+		req.phoneCountryCode = null;
+		req.phoneNumber = null;
+		req.companySize = null;
+		req.industry = null;
+		req.jobTitle = null;
+		req.usagePurpose = null;
+		assertThatCode(() -> validator.validate(req.build())).doesNotThrowAnyException();
+	}
+
+	@Test
+	void usagePurpose는_값이_있어도_통과한다() {
+		Req req = new Req();
+		req.userType = "agency";
+		req.usagePurpose = "브랜드 캠페인 인플루언서 발굴";
+		assertThatCode(() -> validator.validate(req.build())).doesNotThrowAnyException();
+	}
+
+	@Test
+	void usagePurpose_2000자_초과는_거부된다() {
+		Req req = new Req();
+		req.usagePurpose = "가".repeat(2001);
 		assertValidationFails(req);
 	}
 

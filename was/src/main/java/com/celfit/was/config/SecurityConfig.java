@@ -5,12 +5,15 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import jakarta.servlet.ServletException;
@@ -63,7 +66,29 @@ public class SecurityConfig {
 		return configuration.getAuthenticationManager();
 	}
 
+	/**
+	 * 스웨거 전용 체인(설계 2026-07-19) — ADMIN만 문서 열람. HTTP Basic 팝업으로 받고
+	 * 기존 DaoAuthenticationProvider(users 테이블 + BCrypt)를 그대로 탄다.
+	 * STATELESS는 보안 불변식: 세션엔 로그인 시점 권한 스냅샷(토큰 authorities)이 남아
+	 * 세션을 읽으면 강등된 admin이 로그아웃 전까지 통과한다 — 매 요청 Basic 재인증으로
+	 * 현재 DB role을 읽는다. CSRF는 GET 전용 문서 표면이라 불필요.
+	 * 매처는 springdoc 기본 경로와 결합돼 있다(/swagger-ui.html 진입점·/v3/api-docs.yaml 포함) —
+	 * springdoc.api-docs.path·swagger-ui.path를 바꾸면 여기도 같이 바꿀 것.
+	 */
 	@Bean
+	@Order(1)
+	public SecurityFilterChain swaggerFilterChain(HttpSecurity http) throws Exception {
+		http
+				.securityMatcher("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**", "/v3/api-docs.yaml")
+				.authorizeHttpRequests(auth -> auth.anyRequest().hasRole("ADMIN"))
+				.httpBasic(Customizer.withDefaults())
+				.csrf(AbstractHttpConfigurer::disable)
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+		return http.build();
+	}
+
+	@Bean
+	@Order(2)
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 		http
 				.csrf(csrf -> csrf
@@ -81,8 +106,8 @@ public class SecurityConfig {
 						.requestMatchers("/v1/auth/**").permitAll()      // 인증 입구(레거시 /api/auth는 잠금 — /v1 일원화)
 						.requestMatchers("/v1/events/gate").permitAll()  // 익명 게이트 측정 유지(스펙 6.19)
 						.requestMatchers("/v1/stats").permitAll()        // 랜딩 통계(스펙 6.20) — 로그인 전 랜딩 페이지가 소비, 공개 캐시 전제
+						.requestMatchers("/v1/inquiries").permitAll()    // 도입문의 접수(클로즈베타 2026-07-19) — 코드 없는 방문자 표면
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
-						.requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll() // 로컬·개발 문서(prod는 springdoc 비활성)
 						.anyRequest().authenticated())
 				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
 				.formLogin(AbstractHttpConfigurer::disable)

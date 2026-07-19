@@ -52,7 +52,7 @@ class V1InfluencerReportControllerTest {
 						"[\"뷰티\",\"유머\"]", "광고 헤드라인", "페이스 노트")));
 		given(repository.findSeries("zingdong__")).willReturn(List.of(
 				new SeriesRow(OffsetDateTime.parse("2026-06-30T20:30:00Z"), "reels", 1000L, 100L, 10L, false),
-				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "feed", null, 200L, 20L, true)));
+				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "reels", 500L, 200L, 20L, true)));
 		given(repository.findCategories("zingdong__")).willReturn(List.of(new CategoryRow("메이크업", 5L)));
 		given(repository.findBrands("zingdong__")).willReturn(List.of(new BrandRow("머지", 3L)));
 
@@ -74,7 +74,7 @@ class V1InfluencerReportControllerTest {
 				.andExpect(jsonPath("$.data.ads.strip").isArray())
 				.andExpect(jsonPath("$.data.ads.strip[0]").value(false))
 				.andExpect(jsonPath("$.data.ads.strip[1]").value(true))
-				.andExpect(jsonPath("$.data.ads.comparison.dropPct").value(30))
+				.andExpect(jsonPath("$.data.ads.comparison.dropPct").value(50)) // organic 1000 vs 광고 500
 				.andExpect(jsonPath("$.data.ads.brands[0].name").value("머지"))
 				.andExpect(jsonPath("$.data.activity.isActive").value(false)); // 업로드 이력 없음
 	}

@@ -41,13 +41,18 @@ public class V1InfluencerReportRepository {
 				""").param("h", handle).query(CopyRow.class).optional();
 	}
 
-	/** 윈도우 내 게시물 시계열 — 올린 순(posted_at ASC, 2차 short_code). chart.bars·ads.strip 재료. */
+	/** 윈도우 내 게시물 시계열 — 올린 순(posted_at ASC, 2차 short_code). chart.bars·ads.strip 재료.
+	 *  sponsored는 캡션 분류(content_analyses.ad_type='sponsored')가 정본 — series 자체의 sponsored
+	 *  (인스타 유료파트너십 태그 ad_marked)는 캡션 고지 광고를 놓쳐 brands와 어긋나므로 안 쓴다.
+	 *  분석 결과끼리 조인(§4-4 허용). 분석행 없으면 false. */
 	public List<SeriesRow> findSeries(String handle) {
 		return jdbcClient.sql("""
-				SELECT posted_at, content_type, views, likes, comments, sponsored
-				FROM account_content_series
-				WHERE account_handle = :h
-				ORDER BY posted_at, short_code
+				SELECT s.posted_at, s.content_type, s.views, s.likes, s.comments,
+				       COALESCE(an.ad_type = 'sponsored', false) AS sponsored
+				FROM account_content_series s
+				LEFT JOIN content_analyses an ON an.short_code = s.short_code
+				WHERE s.account_handle = :h
+				ORDER BY s.posted_at, s.short_code
 				""").param("h", handle).query(SeriesRow.class).list();
 	}
 
