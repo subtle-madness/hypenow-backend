@@ -1,7 +1,8 @@
 # was /coverage — 커버리지 라이브 추적 페이지 설계
 
-> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 — 매트릭스는 07-18 celfit-front 배포본 실소비 필드
-> 기준으로 재정의되어 현재 28행(본문 "14행"은 작성 시점 값 — ARCHITECTURE §7 07-18 행 참조)
+> 상태: 🗄 대체됨 — 07-19 페이지를 analytics 어드민 `/ui/coverage`로 이전(운영 노출 문제 —
+> ARCHITECTURE §7 07-19 행 참조). 매트릭스 정의(07-18 재정의 28행)는 analytics
+> `CoverageRepository` ↔ `check/coverage.sql` 쌍으로 존속. 본문 "14행"은 작성 시점 값
 
 ## 목적
 

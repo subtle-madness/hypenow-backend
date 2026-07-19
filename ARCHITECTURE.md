@@ -191,8 +191,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
 **운영 중**: crawler 파이프라인(discover→qualify→aggregate), analytics 상주 어드민(8082 `/ui` —
-미러·LLM 잡 트리거, 태스크 I), was `/v1` API(스펙 v1 P1~P3 + 로그인 월) + 검증용 내부 페이지
-`/coverage`(celfit-front **배포본(origin/main)** 실소비 필드 기준 커버리지 매트릭스 — 07-18 재정의).
+미러·LLM 잡 트리거, 태스크 I + `/ui/coverage` 커버리지 매트릭스 — celfit-front **배포본(origin/main)**
+실소비 필드 기준(07-18 재정의) + 수집 모수(raw 서빙 뷰) 타일, 07-19 was에서 이전), was `/v1` API(스펙
+v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서비스 표면만).
 구 랭킹 대시보드(`/dashboard`)와 게시물 데모(`/posts/{shortCode}`)는 프론트 전환 완료까지 잔존 —
 `/dashboard`는 옛 산출물(`content_ranking`)을 읽는다(정리 §8).
 
@@ -266,6 +267,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **커버리지 대시보드를 was → analytics 어드민으로 이전** — was `/coverage`는 로그인 월 뒤에 있지만 운영에서 api.hypenow.io 전체가 was로 프록시되고 users에 role 구분이 없어 일반 가입자도 열람 가능한 노출 문제. 내부 화면의 정위치는 127.0.0.1 바인딩(SSH 터널 전용) analytics 어드민 — `/ui/coverage` 신설(매트릭스 28행은 07-18 /v1 실소비 필드 정의 유지 + 수집 모수 타일 신설: raw 서빙 뷰 `v_accounts`·`v_serving_content`를 그대로 읽어 미러 분모로 표시 — 모수 필터는 02_serving.sql이 정본, Java에서 중복하지 않음), was coverage 패키지·템플릿 제거. **원칙: 커버리지 등 내부 검증 화면은 analytics 어드민 소속, was는 고객 서비스 표면만.** 매트릭스 정의 쌍은 analytics 내부로 이동(CoverageRepository ↔ check/coverage.sql) | [specs/2026-07-14-was-coverage-page-design.md](docs/superpowers/specs/2026-07-14-was-coverage-page-design.md)(🗄) |
 | 2026-07-19 | **분석 백필 MVP 제외 — 판정은 스냅샷 시점 가드** — 데일리 LLM 분석 후보를 "제때(+3일 근방) 크롤돼 고정 지표가 성립한 분"으로 한정(크롤 시작 07-16 이전 업로드분 ≈ 백필은 분석 안 함). 최초 구현(posted_at 14일 창)은 늦크롤분(07-05~12 업로드)을 오포함해 재설계 — `metric_captured_at ∈ [posted_at+pin(3), posted_at+pin+slack(2))` 가드를 04 뷰·분석 잡 양쪽에 적용(새 키 `analytics.analyze-timely-slack-days`). 늦크롤 백필(+3일 지표 없음)과 미성숙 폴백 지표(분석되면 영구 고정되는 누수)를 함께 차단, 분석 밀림은 나이 무관 재대상(SLA는 크롤링에만) | [PR #49](https://github.com/subtle-madness/hypenow-backend/pull/49) |
 | 2026-07-19 | **usable 핀을 최근창 경로로 확장 + 광고 지표를 ad_type 정본으로 (프론트 리포트 stale 신고 후속)** — (1) PR #58의 usable 우선순위 핀이 `v_contents`(랭킹)에만 적용돼, 최근창 경로(`v_recent_content`→recentReels·`v_analysis_baseline`·`account_summaries`)는 여전히 `v_base_detail`(최신 스냅샷 승)을 써 최신 빈 타임라인 스냅샷이 릴스 조회수를 NULL로 밀어냈다(운영 리포트 recentReels·baseline 조회수 결측). 핀 로직을 공유 뷰 `v_pinned_metrics`(00_base)로 추출해 v_contents·v_recent_content가 공유 — 지표는 pin(성숙∧완비 우선)·메타는 v_base_detail(최신) 분리 유지. 실데이터에서 v_recent_content.views가 v_contents와 일치 복구, 하니스 회귀 `test/01b_recent_window_pin.test.sql`. (2) 인플루언서 리포트 광고 블록(strip·sponsoredCount·comparison·lastAdNote)이 `ad_marked`(인스타 유료파트너십 태그·릴스만)만 잡아 캡션 고지 광고를 놓쳐 brands(ad_type 기반)와 어긋났다 → was `findSeries`가 `content_analyses.ad_type='sponsored'` 조인으로 sponsored 유도, `toAds`가 광고 블록 전체를 series 기준 재계산(분석 결과끼리 조인 §4-4). **LLM 재호출 불필요**(재미러+was 배포로 반영). 동결 baseline(기분석분)은 INSERT 전용 잡이라 자가 치유 안 됨 — 백필/재분석은 별도 판단 보류 | feat/analytics-recent-window-pin 브랜치 |
 | 2026-07-19 | **뷰티 판정 Claude API(SDK) 어댑터 — 클라우드에서 구독 과금** — 크롤러 클라우드 합류로 `claude-cli`(로컬 Claude Code CLI 자식 프로세스) 사용 불가 → `crawler.beauty.judge=claude-api`로 선택되는 `ClaudeApiBeautyJudge` 추가(기본은 gemini 유지). 프롬프트·파서는 팀 단일 원천(ClaudeCliBeautyJudge) 재사용, 모델 `claude-haiku-4-5`(`crawler.beauty.claude-model`). 과금은 자격증명이 가른다: `claude setup-token`으로 발급한 구독 장기 토큰을 `ANTHROPIC_AUTH_TOKEN`에 — authToken 우선·oauth 베타 헤더(analytics LlmClientFactory 패턴을 crawler에 복제, §4-4 모듈 격리). 서버에 `ANTHROPIC_API_KEY`를 두지 않아야 API 과금 유출이 없다 | [specs/2026-07-19-claude-api-beauty-judge-design.md](docs/superpowers/specs/2026-07-19-claude-api-beauty-judge-design.md) |
@@ -333,7 +335,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 | 항목 | 상태 |
 |---|---|
 | 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. 블로커였던 구 스키마 전제는 07-18 뷰 재구축으로 해소 — 하니스 시드가 신 스키마(V15)에 직접 INSERT하므로 프레시 DB + V1~V15 + run.sh 구조가 성립. CI 워크플로에 Postgres 서비스 + Flyway 적용 + run.sh 연결만 남음 |
-| 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. `/coverage` 매트릭스는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
+| 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. 커버리지 매트릭스(07-19부터 analytics `/ui/coverage`)는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | ~~LLM 모델~~ | 해소(07-18) — 골드셋 실측으로 전 축 gemini-3.1-flash-lite 확정(§7 태스크 L), Anthropic은 app_setting 롤백 경로 |
 | 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |

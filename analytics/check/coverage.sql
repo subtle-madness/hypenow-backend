@@ -2,8 +2,8 @@
 -- 대상: analysis DB (미러·분석 산출물). 뷰 하니스(test/)와 달리 실데이터를 그대로 읽는다.
 -- 행 구성은 프론트 소비 지점 기준: 카드·필터(6.1) → 상세 드로어 AI 리포트(6.3) → 인플루언서(6.4/6.5).
 -- 타입에만 있고 UI 미소비인 필드(email·external_link 등)와 /v1 미사용 미러(content_metric_snapshots 등)는 싣지 않는다.
--- ※ was의 /coverage 페이지(was/.../coverage/CoverageRepository.java)와 매트릭스 정의가 쌍 —
---   항목·판정을 바꾸면 둘 다 고칠 것.
+-- ※ analytics 어드민 /ui/coverage 페이지(src/.../coverage/CoverageRepository.java)와 매트릭스 정의가 쌍 —
+--   항목·판정을 바꾸면 둘 다 고칠 것. (07-19 was /coverage에서 이전 — 내부 화면은 어드민 소속)
 -- 구간 구분:
 --   · 원본 지표 계열(contents·accounts) — 비어 있으면 실패(가드)
 --   · LLM 분석·리포트 계열 — 채움율만 보고 (전부 0이어도 통과)
