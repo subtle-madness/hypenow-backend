@@ -25,6 +25,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # raw DB — 분석 잡(일회성 analytics 실행)의 읽기 소스. was는 접근 금지(시스템 경계).
+  postgres-raw:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: crawler
+      POSTGRES_USER: ${RAW_DB_USER}
+      POSTGRES_PASSWORD: ${RAW_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"   # 루프백 전용 — 로컬 5433 컨벤션과 동일 포트
+    volumes:
+      - pg-raw-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RAW_DB_USER} -d crawler"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   was:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
@@ -56,5 +75,6 @@ services:
 
 volumes:
   pg-data:
+  pg-raw-data:
   caddy-data:
   caddy-config:
