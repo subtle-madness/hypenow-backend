@@ -47,9 +47,11 @@ public class AdminUiController {
 	}
 
 	/** 퍼널 카드 뷰모델 — 커버리지·비율·집계 시각을 미리 계산해 템플릿을 단순화. */
-	public record FunnelView(long rawContents, long candidates, long analyzed, long served,
+	public record FunnelView(long rawContents, long candidates, long timelyExcluded,
+			long analyzed, long served,
 			long copiedAccounts, long beautyAccounts, boolean candidatesPending,
 			String coverageText, int coveragePercent, int todayPlanned, int daysToFull,
+			int pinDays, int slackDays, int pinPlusSlackDays,
 			int accountPercent, String computedText) {
 	}
 
@@ -161,9 +163,12 @@ public class AdminUiController {
 				? (int) Math.min(100L, f.copiedAccounts() * 100L / f.beautyAccounts()) : 0;
 		String computedText = f.heavyComputedAt() == null
 				? null : HHMM.format(f.heavyComputedAt().atZone(KST));
-		return new FunnelView(f.rawContents(), f.candidates(), f.analyzed(), f.served(),
+		return new FunnelView(f.rawContents(), f.candidates(), f.timelyExcluded(),
+				f.analyzed(), f.served(),
 				f.copiedAccounts(), f.beautyAccounts(), pending, coverageText, coveragePercent,
-				f.todayPlanned(), f.daysToFull(), accountPercent, computedText);
+				f.todayPlanned(), f.daysToFull(),
+				f.pinDays(), f.slackDays(), f.pinDays() + f.slackDays(),
+				accountPercent, computedText);
 	}
 
 	// ── 포맷 헬퍼 ─────────────────────────────────────────
