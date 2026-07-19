@@ -133,6 +133,26 @@ class V1AuthControllerTest {
 				.andExpect(jsonPath("$.error").value(nullValue()));
 	}
 
+	// 가입 경량화(2026-07-19) — 프론트 요청서의 최소 페이로드 예시 그대로 201
+	@Test
+	void 가입은_선택_필드가_전부_null이어도_201이다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		given(signupCodeRepository.isUsable("THREADS-A7K2")).willReturn(true);
+		given(signupService.register(any())).willReturn(profile());
+		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
+
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"signupCode":"THREADS-A7K2","email":"user@example.com","password":"Passw0rd!",
+								 "name":"홍길동","userType":"brand","companyName":"OO코스메틱",
+								 "signupRoute":null,"phoneCountryCode":null,"phoneNumber":null,
+								 "companySize":null,"industry":null,"jobTitle":null,"usagePurpose":null,
+								 "agreedTerms":true,"agreedPrivacy":true,"agreedAge14":true,"agreedMarketing":false}"""))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.success").value(true));
+	}
+
 	@Test
 	void 가입_검증_위반은_400_VALIDATION_FAILED다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
