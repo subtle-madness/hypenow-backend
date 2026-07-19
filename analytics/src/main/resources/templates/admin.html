@@ -52,9 +52,11 @@
             <i th:style="'width:' + ${funnel.coveragePercent()} + '%'"></i>
         </div>
         <div class="meta">
-            <span>분석 커버리지 <b th:text="${funnel.coverageText()}"></b>
+            <!-- 후보 집계 전(-1)엔 "0일" 오독 방지를 위해 해석 문장 숨김 -->
+            <span th:unless="${funnel.candidatesPending()}">분석 커버리지 <b th:text="${funnel.coverageText()}"></b>
                 — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정,
                 전량까지 약 <span th:text="${funnel.daysToFull()}"></span>일 (무료 예산 기준)</span>
+            <span class="off" th:if="${funnel.candidatesPending()}">후보 집계 중 — 커버리지는 집계 후 표시</span>
             <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
         </div>
 

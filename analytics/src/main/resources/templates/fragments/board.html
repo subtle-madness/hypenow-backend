@@ -12,7 +12,9 @@
             <div class="job-body" th:if="${card.running()}">
                 <div class="jbar"><i th:style="'width:' + ${card.percent()} + '%'"></i></div>
                 <div class="job-meta">
-                    <span><b th:text="${card.processed()}">0</b> / <span th:text="${card.total()}">0</span>
+                    <!-- 미러는 진행 단위가 '뷰'(JobResult 행 수와 다름) — 단위 힌트로 오독 방지 -->
+                    <span><b th:text="${card.processed()}">0</b> / <span th:text="${card.total()}">0</span><span
+                            th:if="${card.job().name() == 'MIRROR'}"> 뷰</span>
                         · 실패 <span th:text="${card.failed()}">0</span></span>
                     <span class="off">경과 <span th:text="${card.elapsedText()}"></span></span>
                 </div>

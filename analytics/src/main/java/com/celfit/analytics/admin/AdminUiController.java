@@ -138,7 +138,9 @@ public class AdminUiController {
 		RunHistory.Run last = history.recent(50).stream()
 				.filter(r -> r.job() == job).findFirst().orElse(null);
 		String lastTimeText = last == null ? null : HHMM.format(last.startedAt().atZone(KST));
-		String nextRunText = scheduleInfo.next(job, ZonedDateTime.now(KST))
+		// base는 시스템 존 — @Scheduled가 JVM 기본 존(운영 컨테이너=UTC)에서 크론을 해석하므로
+		// 실제 발화 시각과 일치시킨다. 표시용 KST 변환은 ScheduleInfo.next()가 담당.
+		String nextRunText = scheduleInfo.next(job, ZonedDateTime.now(ZoneId.systemDefault()))
 				.map(HHMM::format).orElse(null);
 		return new JobCard(job, job.label(), running, processed, failed, total, percent,
 				elapsedText, etaText, last, lastTimeText, nextRunText);
