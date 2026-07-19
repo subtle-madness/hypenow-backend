@@ -82,7 +82,9 @@ public class SecurityConfig {
 						.requestMatchers("/v1/events/gate").permitAll()  // 익명 게이트 측정 유지(스펙 6.19)
 						.requestMatchers("/v1/stats").permitAll()        // 랜딩 통계(스펙 6.20) — 로그인 전 랜딩 페이지가 소비, 공개 캐시 전제
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
-						.requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll() // 로컬·개발 문서(prod는 springdoc 비활성)
+						// 로컬·개발 문서(prod는 springdoc 비활성) — /swagger-ui(.html) 진입 리다이렉트 경로는
+						// /swagger-ui/** 패턴에 안 걸려 401이 나므로 명시적으로 함께 연다
+						.requestMatchers("/swagger-ui", "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 						.anyRequest().authenticated())
 				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
 				.formLogin(AbstractHttpConfigurer::disable)

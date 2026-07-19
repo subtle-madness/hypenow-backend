@@ -29,6 +29,8 @@ server:
 springdoc:
   paths-to-match: /v1/**              # 스펙 v1 표면만 문서화 — 구 /api·내부 페이지(coverage 등)는 제외
   swagger-ui:
+    path: /swagger-ui                 # 진입 URL을 /swagger-ui로 — 기본(/swagger-ui.html)은 매핑이 없어
+                                      # 404가 로그인 월 에러 디스패치에서 401로 보였다
     csrf:
       enabled: true                   # try-it-out에 XSRF-TOKEN 쿠키를 헤더로 동봉 — /v1/auth/login 호출 후
                                       # 세션 쿠키(동일 오리진)로 잠긴 엔드포인트도 Swagger에서 테스트 가능
