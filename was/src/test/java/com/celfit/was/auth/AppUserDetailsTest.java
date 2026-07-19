@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.core.GrantedAuthority;
 
 /**
- * 권한 발급 + 직렬화 계약 — role은 transient라 세션 왕복 후에는 권한이 사라져야 한다
- * (세션 직렬화 형상 불변 유지 — 스웨거 Basic 체인만 인증 시점 권한을 쓴다).
+ * 권한 발급 + 직렬화 계약 — role은 transient라 직렬화 왕복 후 principal 권한은 비어 있어야 한다
+ * (세션의 실제 권한 스냅샷은 Authentication 토큰 소관 — AppUserDetails javadoc 참조).
  */
 class AppUserDetailsTest {
 
@@ -36,7 +36,7 @@ class AppUserDetailsTest {
 	}
 
 	@Test
-	void 직렬화_왕복_후에는_권한이_비어_있다() throws Exception {
+	void 직렬화_왕복_후_principal_권한은_비어_있다() throws Exception {
 		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 		try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
 			out.writeObject(details("ADMIN"));
