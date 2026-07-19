@@ -2,6 +2,8 @@
 -- 산식 정본: celfit-front scripts/real-data-pipeline/parse_accounts_recent.py
 -- (스펙: docs/superpowers/specs/2026-07-13-c1-account-detail-design.md §3).
 -- 서빙 뷰 3종은 미러 1:1 — 컬럼 이름·순서 = V10 DDL = contract record.
+-- 신 스키마 이식(2026-07-17 스펙): 밑판 소스만 교체, ad_marked는 릴스 is_paid_partnership
+-- 기반이라 sponsored 지표는 릴스 유료 협찬만 잡힌다(피드 광고는 B4 캡션 분류가 대체 소스).
 
 -- 밑판 (미러 안 함): 윈도우 행 + 팔로워. 프로필 없는 계정은 서빙에서 제외 (INNER JOIN 의도 — 프론트가 팔로워를 요구).
 CREATE OR REPLACE VIEW analytics.v_account_recent AS
@@ -115,14 +117,11 @@ JOIN ads    a USING (owner_username)
 JOIN analytics.v_base_profile p ON p.username = b.owner_username
 CROSS JOIN cfg;
 
--- 카테고리 믹스 (라벨 = crawler main_group 어휘 — 스펙 §3. 정렬은 was 몫)
+-- 카테고리 믹스 — main_group 소멸(V8)로 항상 0행. 형태 유지(미러·record·was 무접촉),
+-- B4 캡션 분류 연계 시 Java 미러 단계에서 되살린다 (스펙 2026-07-17 §5·§10).
 CREATE OR REPLACE VIEW analytics.v_account_category_stats AS
-SELECT owner_username AS account_handle,
-       main_group,
-       count(*) AS content_count
-FROM analytics.v_account_recent
-WHERE main_group IS NOT NULL
-GROUP BY owner_username, main_group;
+SELECT NULL::text AS account_handle, NULL::text AS main_group, NULL::bigint AS content_count
+WHERE false;
 
 -- 게시물 시계열 (차트 막대·광고 스트립·최근 콘텐츠 탭 재료. 올린 순 정렬은 was 몫)
 -- views NULL(피드) 보존 — "0 = 미공개"는 프론트 표현 규약이라 여기서 변환하지 않는다.

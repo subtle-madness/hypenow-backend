@@ -1,36 +1,25 @@
--- 기준선 뷰 기대값 (시드 손계산 근거는 계획 문서 참조)
-DELETE FROM app_setting WHERE key = 'analytics.recent-window';
-
+-- 기준선 기대값. dummy_a 윈도우 = r1(12000)·r2(8000)·f1(NULL)·rn(100) — 최신 스냅샷 기준(v_recent_content).
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM analytics.v_analysis_baseline WHERE short_code LIKE 'dummy_%') = 4,
-    'baseline rows != 4';
-  ASSERT (SELECT recent12_avg_engagement_rate FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 0.0496,
-    'dummy_a avg ER != 0.0496';
-  ASSERT (SELECT recent12_avg_like_count FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 940,
-    'dummy_a avg likes != 940';
-  ASSERT (SELECT recent_contents_count FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 3,
-    'dummy_a window count != 3';
-  ASSERT (SELECT recent_reels_avg_views FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 9000,
-    'dummy_a reels avg views != 9000';
+  ASSERT (SELECT recent_contents_count FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 4,
+    'baseline r1 recent_contents_count != 4';
+  ASSERT (SELECT recent_reels_count FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 3,
+    'baseline r1 recent_reels_count != 3 (views 있는 릴스: r1·r2·rn)';
+  ASSERT (SELECT recent_reels_avg_views FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 6700,
+    'baseline r1 recent_reels_avg_views != 6700 (avg(12000,8000,100))';
   ASSERT (SELECT rank_in_recent_reels FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 1,
-    'dummy_r1 reels rank != 1';
+    'baseline r1 rank != 1';
   ASSERT (SELECT rank_in_recent_reels FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r2') = 2,
-    'dummy_r2 reels rank != 2';
-  ASSERT (SELECT rank_in_recent_reels FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_f1') IS NULL,
-    'feed reels rank must be NULL';
-  ASSERT (SELECT category_sample_size FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r3') = 3,
-    'category sample != 3 (views NULL 제외)';
-  ASSERT (SELECT category_top_percentile FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r3') = 34,
-    'dummy_r3 top percentile != 34';
-  ASSERT (SELECT category_top_percentile FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 67,
-    'dummy_r1 top percentile != 67';
-
-  -- 수집 시각 노출 (B3 VLM 잔여분): 분석 잡이 최신 수집분 우선 정렬에 쓴다 — 최신 스냅샷의 captured_at
+    'baseline r2 rank != 2';
+  ASSERT (SELECT recent12_avg_like_count FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 709,
+    'baseline r1 avg_like != 709 (avg(530,300,2000,5)=708.75)';
+  ASSERT (SELECT category_top_percentile FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') IS NULL,
+    'baseline category_top_percentile not null (소스 소멸 — NULL 상수)';
+  ASSERT (SELECT category_avg_views FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') IS NULL,
+    'baseline category_avg_views not null';
+  ASSERT (SELECT category_sample_size FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') IS NULL,
+    'baseline category_sample_size not null';
   ASSERT (SELECT captured_at FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1')
-         = timestamptz '2026-06-06 09:00:00+09',
-    'dummy_r1 captured_at != 최신 스냅샷 (06-06)';
-  ASSERT (SELECT captured_at FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r3')
-         = timestamptz '2026-06-07 09:00:00+09',
-    'dummy_r3 captured_at != 06-07';
+         = timestamptz '2026-06-08 12:00:00+09',
+    'baseline r1 captured_at != 최신 스냅샷 시각';
 END $$;
