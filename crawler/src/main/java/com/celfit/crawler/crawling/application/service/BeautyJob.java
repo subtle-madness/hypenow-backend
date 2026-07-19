@@ -24,8 +24,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 뷰티 판정 잡 — QUALIFIED 중 미판정분의 최신 raw_profile 텍스트 재료(이름·카테고리·bio)를
  * 로컬 Claude에 배치로 넘겨 beauty를 저장한다. 인스타그램 API 호출 없음(비용 $0).
- * rejudge=true면 판정 후 재료가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다(RESNAPSHOT 잡이
- * 캡션 재료를 채운 뒤 돌리는 용도) — MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
+ * rejudge=true면 판정 후 재료(raw_profile)가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다 —
+ * MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
  * beauty=true는 SIMILAR 잡의 시드 자격이 된다.
  */
 @Service
