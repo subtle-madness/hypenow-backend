@@ -141,6 +141,8 @@ b { font-weight: 700; }
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 1rem; flex-wrap: wrap; font-size: 0.82rem; color: var(--ink-secondary);
 }
+.meta.guard { margin-top: 0.3rem; }
+.meta.guard b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .acct {
     margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--border);
     font-size: 0.82rem; color: var(--ink-secondary);
