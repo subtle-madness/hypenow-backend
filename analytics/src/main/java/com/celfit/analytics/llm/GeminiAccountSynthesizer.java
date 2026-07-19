@@ -1,14 +1,21 @@
 package com.celfit.analytics.llm;
 
-import com.anthropic.client.AnthropicClient;
-import com.anthropic.models.messages.MessageCreateParams;
-import com.anthropic.models.messages.StructuredMessageCreateParams;
-import com.celfit.analytics.config.AnalyticsSettings;
+import java.util.function.Supplier;
+import tools.jackson.databind.ObjectMapper;
 
-/** 계정 카피 Anthropic 구현 — C1 미러 수치·캡션만 근거로 인플루언서 패널 문구 7종을 생성한다. */
-public final class AnthropicAccountSynthesizer implements AccountSynthesisPort {
+/** 계정 카피 Gemini 어댑터 — 카피 7종 1콜. 프롬프트·GUARD는 골드셋(07-18) 문구 검증 통과본. */
+public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
-	private static final String INSTRUCTIONS = """
+	static final int MAX_OUTPUT_TOKENS = 4096;
+
+	static final String RESPONSE_SCHEMA = """
+			{"type":"object","properties":{
+			  "tagline":{"type":"string"},"summary":{"type":"string"},"trendNote":{"type":"string"},
+			  "chartNote":{"type":"string"},"traits":{"type":"array","items":{"type":"string"}},
+			  "adHeadline":{"type":"string"},"paceNote":{"type":"string"}},
+			 "required":["tagline","summary","trendNote","chartNote","traits","adHeadline","paceNote"]}""";
+
+	static final String INSTRUCTIONS = """
 			당신은 뷰티 브랜드 마케터를 위한 인스타그램 인플루언서 분석가다. 주어진 수치·캡션만
 			근거로 삼고 수치를 지어내지 마라. 한국어. 화면에 그대로 노출되는 짧은 문구이므로 분량을 지켜라.
 
@@ -21,15 +28,15 @@ public final class AnthropicAccountSynthesizer implements AccountSynthesisPort {
 			  입력에 "광고 비교 데이터: 없음"이면 빈 문자열
 			- paceNote: 업로드 페이스 한 문장 (avg_interval_days 근거, 예: "주 2~3회 올리는 페이스")
 
-			%s
-			""".formatted(LlmGuard.RULES);
+			%s""".formatted(LlmGuard.RULES);
 
-	private final AnthropicClient client;
-	private final AnalyticsSettings settings;
+	private final GeminiApi api;
+	private final Supplier<String> model;
+	private final ObjectMapper om = new ObjectMapper();
 
-	public AnthropicAccountSynthesizer(AnthropicClient client, AnalyticsSettings settings) {
-		this.client = client;
-		this.settings = settings;
+	public GeminiAccountSynthesizer(GeminiApi api, Supplier<String> model) {
+		this.api = api;
+		this.model = model;
 	}
 
 	@Override
@@ -41,17 +48,8 @@ public final class AnthropicAccountSynthesizer implements AccountSynthesisPort {
 				게시물(올린 순, 캡션은 앞부분만): %s
 				""".formatted(account.handle(), account.hasAdComparison() ? "있음" : "없음",
 				account.summary(), account.categoryStats(), account.posts());
-		StructuredMessageCreateParams<AccountCopy> params = MessageCreateParams.builder()
-				.model(settings.llmModel())
-				.maxTokens(4096L)
-				.system(INSTRUCTIONS)
-				.outputConfig(AccountCopy.class)
-				.addUserMessage(input)
-				.build();
-		return client.messages().create(params).content().stream()
-				.flatMap(block -> block.text().stream())
-				.findFirst()
-				.orElseThrow(() -> new IllegalStateException("계정 카피 응답에 본문 없음"))
-				.text();
+		String out = api.generateJson(model.get(), INSTRUCTIONS, input, null,
+				RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
+		return om.readValue(out, AccountCopy.class);
 	}
 }

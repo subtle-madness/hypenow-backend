@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -17,8 +18,11 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 로컬 Claude Code CLI(headless `claude -p`)로 뷰티 판정 — 백엔드가 claude 로그인된
  * 로컬 맥에서 돈다는 전제(구독 포함, 유료 API 없음). PATH에 claude가 있어야 한다.
+ * 기본 구현은 Gemini(GeminiBeautyJudge, 07-18 확정) — `crawler.beauty.judge=claude-cli`로 롤백.
+ * buildPrompt/parse는 Gemini 어댑터가 재사용한다(판정 프롬프트·매핑 단일 원천).
  */
 @Component
+@ConditionalOnProperty(name = "crawler.beauty.judge", havingValue = "claude-cli")
 public class ClaudeCliBeautyJudge implements BeautyJudge {
 
     /**
@@ -77,7 +81,7 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
         }
     }
 
-    static String buildPrompt(ObjectMapper om, List<ProfileCard> cards) {
+    public static String buildPrompt(ObjectMapper om, List<ProfileCard> cards) {
         return """
                 다음은 인스타그램 계정 프로필 목록(JSON)이다. 각 계정을 셋 중 하나로 분류하라:
                 - INFLUENCER: 뷰티(화장품·메이크업·스킨케어·헤어·네일·에스테틱 등) 콘텐츠 중심의 \
@@ -92,7 +96,7 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
                 """ + om.writeValueAsString(cards);
     }
 
-    static List<Verdict> parse(ObjectMapper om, String output) {
+    public static List<Verdict> parse(ObjectMapper om, String output) {
         String json = stripFences(output);
         JsonNode root;
         try {
