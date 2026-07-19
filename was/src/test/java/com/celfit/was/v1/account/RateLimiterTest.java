@@ -111,8 +111,7 @@ class RateLimiterTest {
 
 	@Test
 	void 키별_상한_오버라이드_초과시_거부() {
-		RateLimiter limiter = new RateLimiter(
-				java.time.Clock.fixed(java.time.Instant.EPOCH, java.time.ZoneOffset.UTC), 10);
+		RateLimiter limiter = new RateLimiter(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
 		assertThat(limiter.tryAcquire("send:a@b.c", 1)).isTrue();
 		assertThat(limiter.tryAcquire("send:a@b.c", 1)).isFalse();
 		// 다른 키는 독립
