@@ -47,7 +47,7 @@ class V1ContentReportAssemblerTest {
 				"[{\"label\":\"톤\",\"value\":\"쿨톤\"}]",
 				"good", "실구매 후기 다수", "메이크업");
 		var reels = List.of(new V1ContentReportRepository.ReelPointRow(
-				1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z"))); // KST 2026-07-01 05:30
+				"SC1", 1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z"))); // KST 2026-07-01 05:30
 		var comments = List.of(new V1ContentReportRepository.CommentRow(
 				7L, "u***", "좋아요", 5L, "purchase"));
 
@@ -57,9 +57,10 @@ class V1ContentReportAssemblerTest {
 		assertThat(report.scope().basis()).isEqualTo("recent-posts");
 		assertThat(report.scope().analyzedCount()).isEqualTo(24L);
 		assertThat(report.summary()).isEqualTo("요약");
-		assertThat(report.comparison().views().multiple()).isEqualByComparingTo("8027.1");
+		// 라이브 재계산: baseline=avg(1000)=1000, multiple=3307180/1000
+		assertThat(report.comparison().views().multiple()).isEqualByComparingTo("3307.2");
 		assertThat(report.comparison().views().recentReels())
-				.containsExactly(new ContentAiReport.Comparison.Views.ReelPoint(1000L, "2026-07-01"));
+				.containsExactly(new ContentAiReport.Comparison.Views.ReelPoint("SC1", 1000L, "2026-07-01", true));
 		assertThat(report.comparison().engagementQuality().likes().baselineCount()).isEqualTo(35000L);
 		assertThat(report.comparison().narrative()).isEqualTo("패턴 서술");
 		assertThat(report.categoryContext().categoryLabel()).isEqualTo("메이크업");
@@ -101,5 +102,43 @@ class V1ContentReportAssemblerTest {
 		assertThat(report.commentAnalysis().distribution()).isEmpty();
 		assertThat(report.commentAnalysis().signals().adAversionRate()).isEqualByComparingTo("0.00");
 		assertThat(report.commentAnalysis().signals().friendTagRate()).isEqualByComparingTo("0.00");
+	}
+
+	@Test
+	void comparisonViews_라이브_재계산_프리즈컬럼_무시_식별자_채움() {
+		var row = reportRowWithViews("sc1", 30405L, /* frozenBaseline */ 999L, /* frozenRank */ 9, /* frozenCount */ 9);
+		var reels = List.of(
+				new V1ContentReportRepository.ReelPointRow("sc0", 5040L, odt("2026-07-08")),
+				new V1ContentReportRepository.ReelPointRow("sc1", 30405L, odt("2026-07-14")),
+				new V1ContentReportRepository.ReelPointRow("sc2", null, odt("2026-07-17")));
+
+		ContentAiReport report = assembler.toReport(row, reels, Map.of(), List.of());
+		var v = report.comparison().views();
+
+		assertThat(v.value()).isEqualTo(30405L);
+		assertThat(v.baseline()).isEqualTo(17723L);
+		assertThat(v.recentCount()).isEqualTo(2);
+		assertThat(v.rankInRecent()).isEqualTo(1);
+		assertThat(v.multiple()).isEqualByComparingTo("1.7");
+		assertThat(v.recentReels()).extracting("contentId").containsExactly("sc0", "sc1", "sc2");
+		assertThat(v.recentReels()).extracting("isCurrent").containsExactly(false, true, false);
+		assertThat(v.recentReels().get(2).views()).isNull();
+	}
+
+	/** ReportRow 축약 생성 — shortCode/views/frozen 컬럼(baseline·rank·count)만 지정, 나머지는 null·0. */
+	private V1ContentReportRepository.ReportRow reportRowWithViews(
+			String shortCode, Long views, Long frozenBaseline, Integer frozenRank, Integer frozenCount) {
+		return new V1ContentReportRepository.ReportRow(
+				shortCode, "handle", "reels", views, 0L, 0L,
+				null, null, null,
+				frozenBaseline, frozenRank, frozenCount,
+				null, null, null, null,
+				null, null, null,
+				null, null, null, null, null, null, null,
+				null, null, null);
+	}
+
+	private OffsetDateTime odt(String isoDate) {
+		return OffsetDateTime.parse(isoDate + "T00:00:00Z");
 	}
 }

@@ -42,10 +42,10 @@ public class V1ContentReportRepository {
 				""").param("sc", shortCode).query(ReportRow.class).optional();
 	}
 
-	/** 그 계정 릴스 시계열 (윈도우 내, 올린 순) — comparison.views.recentReels 재료. */
+	/** 그 계정 릴스 시계열 (윈도우 내, 올린 순) — comparison.views.recentReels 재료 (라이브 재계산 기준). */
 	public List<ReelPointRow> findRecentReels(String handle) {
 		return jdbcClient.sql("""
-				SELECT views, posted_at FROM account_content_series
+				SELECT short_code, views, posted_at FROM account_content_series
 				WHERE account_handle = :h AND content_type = 'reels'
 				ORDER BY posted_at
 				""").param("h", handle).query(ReelPointRow.class).list();
@@ -85,7 +85,7 @@ public class V1ContentReportRepository {
 			String commentAuthenticityGrade, String commentAuthenticityNote, String categoryLabel) {
 	}
 
-	public record ReelPointRow(Long views, OffsetDateTime postedAt) {
+	public record ReelPointRow(String shortCode, Long views, OffsetDateTime postedAt) {
 	}
 
 	public record CommentRow(Long id, String authorMasked, String body, Long likeCount, String category) {
