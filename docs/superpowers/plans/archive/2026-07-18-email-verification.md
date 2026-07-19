@@ -25,7 +25,7 @@
 - Create: `was/src/main/java/com/celfit/was/v1/account/EmailVerificationRepository.java`
 - Test: `was/src/test/java/com/celfit/was/v1/account/EmailVerificationRepositoryTest.java`
 
-- [ ] **Step 1: 마이그레이션 작성**
+- [x] **Step 1: 마이그레이션 작성**
 
 ```sql
 -- 이메일 소유권 인증(설계 2026-07-18) — 가입 전 강제. 이메일당 1행.
@@ -41,7 +41,7 @@ CREATE TABLE app.email_verifications (
 );
 ```
 
-- [ ] **Step 2: 실패하는 리포지토리 테스트 작성**
+- [x] **Step 2: 실패하는 리포지토리 테스트 작성**
 
 ```java
 package com.celfit.was.v1.account;
@@ -119,12 +119,12 @@ class EmailVerificationRepositoryTest extends IntegrationTest {
 }
 ```
 
-- [ ] **Step 3: 실패 확인**
+- [x] **Step 3: 실패 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.v1.account.EmailVerificationRepositoryTest'`
 Expected: 컴파일 실패 — `EmailVerificationRepository` 심볼 없음
 
-- [ ] **Step 4: 리포지토리 구현**
+- [x] **Step 4: 리포지토리 구현**
 
 ```java
 package com.celfit.was.v1.account;
@@ -201,12 +201,12 @@ public class EmailVerificationRepository {
 }
 ```
 
-- [ ] **Step 5: 통과 확인**
+- [x] **Step 5: 통과 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.v1.account.EmailVerificationRepositoryTest'`
 Expected: PASS (V7 마이그레이션 자동 적용 포함)
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add was/src/main/resources/db/migration/app/V7__email_verifications.sql \
@@ -225,7 +225,7 @@ send(이메일 분당 1·IP 분당 5)·confirm(IP 분당 10)은 기본 상한(10
 - Modify: `was/src/main/java/com/celfit/was/v1/account/RateLimiter.java` (tryAcquire)
 - Test: `was/src/test/java/com/celfit/was/v1/account/RateLimiterTest.java` (테스트 추가)
 
-- [ ] **Step 1: 실패하는 테스트 추가** — 기존 `RateLimiterTest`에 아래 테스트를 추가한다(기존 테스트의 RateLimiter 생성 관용구가 아래와 다르면 그 관용구를 따를 것):
+- [x] **Step 1: 실패하는 테스트 추가** — 기존 `RateLimiterTest`에 아래 테스트를 추가한다(기존 테스트의 RateLimiter 생성 관용구가 아래와 다르면 그 관용구를 따를 것):
 
 ```java
 	@Test
@@ -239,12 +239,12 @@ send(이메일 분당 1·IP 분당 5)·confirm(IP 분당 10)은 기본 상한(10
 	}
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.v1.account.RateLimiterTest'`
 Expected: 컴파일 실패 — `tryAcquire(String, int)` 없음
 
-- [ ] **Step 3: 오버로드 구현** — 기존 `tryAcquire(String)`의 본문을 옮기고 위임한다:
+- [x] **Step 3: 오버로드 구현** — 기존 `tryAcquire(String)`의 본문을 옮기고 위임한다:
 
 ```java
 	/** 허용되면 true. 분이 바뀌면 카운터 리셋(고정 윈도우). 기본 상한(was.rate-limit.per-minute). */
@@ -262,12 +262,12 @@ Expected: 컴파일 실패 — `tryAcquire(String, int)` 없음
 	}
 ```
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.v1.account.RateLimiterTest'`
 Expected: PASS (기존 테스트 포함 전부)
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add was/src/main/java/com/celfit/was/v1/account/RateLimiter.java \
@@ -285,7 +285,7 @@ git commit -m "feat(was): RateLimiter 키별 상한 오버로드 — 이메일 �
 - Modify: `was/src/main/java/com/celfit/was/v1/common/V1ApiException.java`
 - Modify: `was/src/main/java/com/celfit/was/v1/account/SignupValidator.java`
 
-- [ ] **Step 1: V1ApiException에 팩토리 추가** — `forbidden` 아래에:
+- [x] **Step 1: V1ApiException에 팩토리 추가** — `forbidden` 아래에:
 
 ```java
 	/** 코드 지정 400 — validation()의 고정 코드(VALIDATION_FAILED)와 달리 계약 코드를 직접 든다(예: INVALID_CODE). */
@@ -299,7 +299,7 @@ git commit -m "feat(was): RateLimiter 키별 상한 오버로드 — 이메일 �
 	}
 ```
 
-- [ ] **Step 2: SignupValidator에서 이메일 검사 추출** — `validate()`의 이메일 검사 첫 3줄을 교체하고 공개 메서드로 추출:
+- [x] **Step 2: SignupValidator에서 이메일 검사 추출** — `validate()`의 이메일 검사 첫 3줄을 교체하고 공개 메서드로 추출:
 
 ```java
 	public void validate(SignupRequest request) {
@@ -317,12 +317,12 @@ git commit -m "feat(was): RateLimiter 키별 상한 오버로드 — 이메일 �
 	}
 ```
 
-- [ ] **Step 3: 회귀 확인**
+- [x] **Step 3: 회귀 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.v1.account.*'`
 Expected: PASS
 
-- [ ] **Step 4: 커밋**
+- [x] **Step 4: 커밋**
 
 ```bash
 git add was/src/main/java/com/celfit/was/v1/common/V1ApiException.java \
@@ -343,7 +343,7 @@ git commit -m "feat(was): V1ApiException badRequest·badGateway 팩토리 + 이�
 - Modify: `was/src/main/resources/application.yml` (`was:` 블록에 mail 추가)
 - Test: `was/src/test/java/com/celfit/was/mail/ResendMailSenderTest.java`
 
-- [ ] **Step 1: 실패하는 ResendMailSender 테스트 작성**
+- [x] **Step 1: 실패하는 ResendMailSender 테스트 작성**
 
 ```java
 package com.celfit.was.mail;
@@ -394,12 +394,12 @@ class ResendMailSenderTest {
 }
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.mail.ResendMailSenderTest'`
 Expected: 컴파일 실패 — mail 패키지 심볼 없음
 
-- [ ] **Step 3: 포트·예외·어댑터 구현**
+- [x] **Step 3: 포트·예외·어댑터 구현**
 
 `MailSender.java`:
 
@@ -519,7 +519,7 @@ public class MailConfig {
 }
 ```
 
-- [ ] **Step 4: application.yml의 `was:` 블록에 mail 설정 추가** (`cors:` 형제 위치):
+- [x] **Step 4: application.yml의 `was:` 블록에 mail 설정 추가** (`cors:` 형제 위치):
 
 ```yaml
   mail:
@@ -527,12 +527,12 @@ public class MailConfig {
     from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트
 ```
 
-- [ ] **Step 5: 통과 확인**
+- [x] **Step 5: 통과 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.mail.ResendMailSenderTest'`
 Expected: PASS
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add was/src/main/java/com/celfit/was/mail/ was/src/main/resources/application.yml \
@@ -549,7 +549,7 @@ git commit -m "feat(was): 메일 발송 포트 — Resend HTTPS 어댑터 + 키 
 - Create: `was/src/main/java/com/celfit/was/v1/account/V1EmailVerificationController.java`
 - Test: `was/src/test/java/com/celfit/was/EmailVerificationIntegrationTest.java`
 
-- [ ] **Step 1: 실패하는 통합 테스트 작성** (send/confirm 표면 — signup 게이트는 Task 6에서 추가)
+- [x] **Step 1: 실패하는 통합 테스트 작성** (send/confirm 표면 — signup 게이트는 Task 6에서 추가)
 
 ```java
 package com.celfit.was;
@@ -729,12 +729,12 @@ class EmailVerificationIntegrationTest extends IntegrationTest {
 }
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.EmailVerificationIntegrationTest'`
 Expected: 컴파일 실패(`V1AuthTestSteps.signUp` 3-인자 시그니처는 Task 6에서 생김) — **이 시점에는 `기가입_이메일_발송은_409` 테스트를 `@org.junit.jupiter.api.Disabled("Task 6에서 활성화")`로 잠시 막고** 나머지가 404/컴파일 오류로 실패하는 것을 확인
 
-- [ ] **Step 3: 서비스 구현**
+- [x] **Step 3: 서비스 구현**
 
 ```java
 package com.celfit.was.v1.account;
@@ -826,7 +826,7 @@ public class EmailVerificationService {
 }
 ```
 
-- [ ] **Step 4: 컨트롤러 구현**
+- [x] **Step 4: 컨트롤러 구현**
 
 ```java
 package com.celfit.was.v1.account;
@@ -899,12 +899,12 @@ public class V1EmailVerificationController {
 }
 ```
 
-- [ ] **Step 5: 통과 확인** (`기가입_이메일_발송은_409`는 아직 @Disabled)
+- [x] **Step 5: 통과 확인** (`기가입_이메일_발송은_409`는 아직 @Disabled)
 
 Run: `./gradlew :was:test --tests 'com.celfit.was.EmailVerificationIntegrationTest'`
 Expected: PASS (Disabled 1건 제외)
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add was/src/main/java/com/celfit/was/v1/account/EmailVerificationService.java \
@@ -923,7 +923,7 @@ git commit -m "feat(was): 이메일 인증 send·confirm 엔드포인트 — 6�
 - Modify: `was/src/test/java/com/celfit/was/EmailVerificationIntegrationTest.java` (@Disabled 해제 + signup 게이트 테스트 추가)
 - Modify: 가입을 수행하는 기존 테스트 전부 (Step 4에서 grep으로 확정)
 
-- [ ] **Step 1: V1AuthTestSteps에 시드 헬퍼 추가 + signUp 시그니처 변경**
+- [x] **Step 1: V1AuthTestSteps에 시드 헬퍼 추가 + signUp 시그니처 변경**
 
 ```java
 	/**
@@ -954,7 +954,7 @@ git commit -m "feat(was): 이메일 인증 send·confirm 엔드포인트 — 6�
 
 (기존 2-인자 `signUp(MockMvc, String)`은 삭제 — 호출부는 Step 4에서 일괄 수정.)
 
-- [ ] **Step 2: 실패하는 signup 게이트 테스트 추가** — `EmailVerificationIntegrationTest`에 추가하고 `기가입_이메일_발송은_409`의 `@Disabled` 해제:
+- [x] **Step 2: 실패하는 signup 게이트 테스트 추가** — `EmailVerificationIntegrationTest`에 추가하고 `기가입_이메일_발송은_409`의 `@Disabled` 해제:
 
 ```java
 	@Test
@@ -1000,7 +1000,7 @@ git commit -m "feat(was): 이메일 인증 send·confirm 엔드포인트 — 6�
 	}
 ```
 
-- [ ] **Step 3: V1AuthController.signup에 게이트·소비 배선**
+- [x] **Step 3: V1AuthController.signup에 게이트·소비 배선**
 
 생성자에 `EmailVerificationService emailVerificationService` 필드·파라미터 추가(기존 관용구대로 대입), `signup()`을 다음과 같이 수정:
 
@@ -1022,7 +1022,7 @@ git commit -m "feat(was): 이메일 인증 send·confirm 엔드포인트 — 6�
 
 (`import com.celfit.was.v1.common.V1ApiException;`는 기존에 있음. `UserRepository`는 이미 import됨.)
 
-- [ ] **Step 4: 가입을 수행하는 기존 테스트 전부 갱신**
+- [x] **Step 4: 가입을 수행하는 기존 테스트 전부 갱신**
 
 먼저 호출부를 확정한다:
 
@@ -1034,12 +1034,12 @@ grep -rln "V1AuthTestSteps.signUp\|/v1/auth/signup" was/src/test/java
 - `/v1/auth/signup`을 직접 POST 하는 통합 테스트(예: `LoginWallIntegrationTest`·`CsrfCookieFlowIntegrationTest`·`SessionPersistenceIntegrationTest` 등 grep 결과 전부) → 가입 POST 직전에 `V1AuthTestSteps.markEmailVerified(jdbcClient, "<그 테스트의 이메일>");` 한 줄 추가.
 - `was/src/test/java/com/celfit/was/v1/account/V1AuthControllerTest.java`(슬라이스 테스트)가 있으면: `@MockitoBean EmailVerificationService emailVerificationService;` 추가(기존 목 빈 나열과 같은 방식) — `requireVerified`는 기본 no-op 목이라 기존 테스트는 그대로 통과한다.
 
-- [ ] **Step 5: 전체 테스트로 회귀 확인**
+- [x] **Step 5: 전체 테스트로 회귀 확인**
 
 Run: `./gradlew :was:test`
 Expected: PASS (전 통합 테스트 포함)
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add -A was/src
@@ -1055,7 +1055,7 @@ git commit -m "feat(was): 가입 전 이메일 인증 강제 — signup 403 EMAI
 - Modify: `docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md` (상태 헤더에만 6.17 해소 링크 추가 — 본문 불변)
 - Modify: `docs/superpowers/specs/2026-07-18-email-verification-design.md` (상태 헤더를 ✅ 구현됨으로)
 
-- [ ] **Step 1: ARCHITECTURE.md 갱신**
+- [x] **Step 1: ARCHITECTURE.md 갱신**
 
 - §3 `app` 스키마 테이블 나열부에 `email_verifications`(V7 — 이메일 인증 코드·verified 상태, 가입 시 소비) 추가.
 - §5 G 행의 "이메일 **소유권 인증**(스펙 6.17)은 [TBD] 미구현…" 문구를 "+ 이메일 소유권 인증(6.17 — V7 `email_verifications`·send/confirm·가입 전 강제, [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md))"으로 교체.
@@ -1066,18 +1066,18 @@ git commit -m "feat(was): 가입 전 이메일 인증 강제 — signup 403 EMAI
 | 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백), 서버 상태 방식(V7 email_verifications, verified 30분·가입 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(가입 코드 → 필드 → 이메일 인증 → 중복). 운영 개통은 Resend 도메인 인증 + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전까지 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md) |
 ```
 
-- [ ] **Step 2: 스펙 상태 헤더 2건 갱신**
+- [x] **Step 2: 스펙 상태 헤더 2건 갱신**
 
 - `2026-07-18-email-verification-design.md` 헤더: `> 상태: 🟢 활성` → `> 상태: 🟢 활성 · ✅ 구현됨(was) — 프론트 배선은 REST 전환(celfit-front PR #18 계속) 대기`
 - `2026-07-15-hypenow-api-spec-alignment-design.md` 헤더(`> 상태: 🟢 활성` 줄) 아래에 한 줄 추가:
   `> 6.17 이메일 인증 [TBD]는 [2026-07-18-email-verification-design.md](2026-07-18-email-verification-design.md)로 해소(07-19 구현)`
 
-- [ ] **Step 3: 전체 테스트**
+- [x] **Step 3: 전체 테스트**
 
 Run: `./gradlew test`
 Expected: BUILD SUCCESSFUL (crawler·analytics·was 전 모듈)
 
-- [ ] **Step 4: 커밋 + 푸시 + PR**
+- [x] **Step 4: 커밋 + 푸시 + PR**
 
 ```bash
 git add ARCHITECTURE.md docs/superpowers/specs/
