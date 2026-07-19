@@ -1,5 +1,8 @@
 # 인플루언서 중심 파이프라인 전환 설계
 
+> 상태: ✅ 구현됨 — 단 §CollectJob 세부(6개월 백필·피드/릴스 2스트림 커서 페이지네이션·
+> taken_at 컷오프)는 07-15 collect 분리 설계가 "방문당 최근 한 묶음 + 재방문 주기"로 재정의
+
 2026-07-14 · 브랜치 `feat/influencer-pipeline` (feat/direct-comment-crawler 위에서 분기)
 
 ## 배경과 목표

@@ -108,4 +108,13 @@ class RateLimiterTest {
 		assertThat(limiter.tryAcquire("login:a@b.c|2.2.2.2")).isTrue();
 		assertThat(limiter.tryAcquire("login:a@b.c|1.1.1.1")).isFalse();
 	}
+
+	@Test
+	void 키별_상한_오버라이드_초과시_거부() {
+		RateLimiter limiter = new RateLimiter(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
+		assertThat(limiter.tryAcquire("send:a@b.c", 1)).isTrue();
+		assertThat(limiter.tryAcquire("send:a@b.c", 1)).isFalse();
+		// 다른 키는 독립
+		assertThat(limiter.tryAcquire("send:x@y.z", 1)).isTrue();
+	}
 }

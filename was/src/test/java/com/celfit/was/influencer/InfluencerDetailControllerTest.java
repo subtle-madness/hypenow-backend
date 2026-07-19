@@ -1,6 +1,7 @@
 package com.celfit.was.influencer;
 
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -71,7 +72,7 @@ class InfluencerDetailControllerTest {
 	void 인플루언서_상세를_블록_JSON으로_반환한다() throws Exception {
 		givenGlow();
 
-		mockMvc.perform(get("/api/influencers/glow"))
+		mockMvc.perform(get("/api/influencers/glow").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.profile.displayName").value("글로우"))
 				.andExpect(jsonPath("$.report.stats.metric").value("views"))
@@ -92,7 +93,7 @@ class InfluencerDetailControllerTest {
 		givenGlow();
 		given(repository.findLatestAnalysis("glow")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/api/influencers/glow"))
+		mockMvc.perform(get("/api/influencers/glow").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.report.tagline", org.hamcrest.Matchers.nullValue()))
 				.andExpect(jsonPath("$.report.trend.note", org.hamcrest.Matchers.nullValue()))
@@ -106,7 +107,7 @@ class InfluencerDetailControllerTest {
 	void 없는_handle이면_404() throws Exception {
 		given(repository.findSummary("nope")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/api/influencers/nope"))
+		mockMvc.perform(get("/api/influencers/nope").with(user("tester")))
 				.andExpect(status().isNotFound());
 	}
 
@@ -114,7 +115,7 @@ class InfluencerDetailControllerTest {
 	void 허용_오리진에_CORS_헤더를_내린다() throws Exception {
 		givenGlow();
 
-		mockMvc.perform(get("/api/influencers/glow")
+		mockMvc.perform(get("/api/influencers/glow").with(user("tester"))
 						.header("Origin", "https://celfit-front.vercel.app"))
 				.andExpect(status().isOk())
 				.andExpect(header().string("Access-Control-Allow-Origin",

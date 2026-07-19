@@ -76,11 +76,14 @@ public class SecurityConfig {
 						.ignoringRequestMatchers("/v1/events/gate"))
 				.cors(cors -> cors.configurationSource(corsConfigurationSource()))
 				.authorizeHttpRequests(auth -> auth
-						.requestMatchers("/api/me", "/api/saved/**").authenticated()
-						// v1 보호 경로(스펙 3.2) — auth·events·읽기 4종은 permitAll 유지
-						.requestMatchers("/v1/me/**", "/v1/saved-contents/**", "/v1/saved-influencers/**")
-						.authenticated()
-						.anyRequest().permitAll())
+						// 로그인 월(07-17 설계) — 기본 잠금, 열린 경로만 나열(화이트리스트).
+						// 새 엔드포인트는 기본이 잠김이라 실수로 새지 않는다.
+						.requestMatchers("/v1/auth/**").permitAll()      // 인증 입구(레거시 /api/auth는 잠금 — /v1 일원화)
+						.requestMatchers("/v1/events/gate").permitAll()  // 익명 게이트 측정 유지(스펙 6.19)
+						.requestMatchers("/v1/stats").permitAll()        // 랜딩 통계(스펙 6.20) — 로그인 전 랜딩 페이지가 소비, 공개 캐시 전제
+						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
+						.requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll() // 로컬·개발 문서(prod는 springdoc 비활성)
+						.anyRequest().authenticated())
 				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)

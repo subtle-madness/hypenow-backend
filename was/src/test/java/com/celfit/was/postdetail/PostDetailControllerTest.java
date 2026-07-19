@@ -1,6 +1,7 @@
 package com.celfit.was.postdetail;
 
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -60,7 +61,7 @@ class PostDetailControllerTest {
 	void 게시물_상세를_블록_JSON으로_반환한다() throws Exception {
 		givenMari01();
 
-		mockMvc.perform(get("/api/posts/mari01"))
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.post.shortCode").value("mari01"))
 				.andExpect(jsonPath("$.post.engagementRate").value(0.0175))
@@ -85,7 +86,7 @@ class PostDetailControllerTest {
 		givenMari01();
 		given(repository.findAnalysis("mari01")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/api/posts/mari01"))
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.analysis", org.hamcrest.Matchers.nullValue()));
 	}
@@ -94,7 +95,7 @@ class PostDetailControllerTest {
 	void 없는_게시물이면_404() throws Exception {
 		given(repository.findContent("nope")).willReturn(Optional.empty());
 
-		mockMvc.perform(get("/api/posts/nope"))
+		mockMvc.perform(get("/api/posts/nope").with(user("tester")))
 				.andExpect(status().isNotFound());
 	}
 
@@ -105,7 +106,7 @@ class PostDetailControllerTest {
 				.willReturn(Optional.of(new ContentMetricSnapshot(12L, "mari01",
 						OffsetDateTime.parse("2026-07-02T03:00:00Z"), 500000L, 20000L, 400L, 500000L)));
 
-		mockMvc.perform(get("/api/posts/mari01").param("endDate", "2026-07-03"))
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester")).param("endDate", "2026-07-03"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.post.views").value(500000))
 				.andExpect(jsonPath("$.post.engagementRate").value(0.0408))
@@ -119,13 +120,13 @@ class PostDetailControllerTest {
 		given(repository.findSnapshotAsOf("mari01", OffsetDateTime.parse("2026-06-29T15:00:00Z")))
 				.willReturn(Optional.empty());
 
-		mockMvc.perform(get("/api/posts/mari01").param("endDate", "2026-06-29"))
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester")).param("endDate", "2026-06-29"))
 				.andExpect(status().isNotFound());
 	}
 
 	@Test
 	void endDate_형식이_틀리면_400() throws Exception {
-		mockMvc.perform(get("/api/posts/mari01").param("endDate", "07/03/2026"))
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester")).param("endDate", "07/03/2026"))
 				.andExpect(status().isBadRequest());
 	}
 
@@ -133,7 +134,7 @@ class PostDetailControllerTest {
 	void 허용_오리진에_CORS_헤더를_내린다() throws Exception {
 		givenMari01();
 
-		mockMvc.perform(get("/api/posts/mari01")
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester"))
 						.header("Origin", "https://celfit-front.vercel.app"))
 				.andExpect(status().isOk())
 				.andExpect(header().string("Access-Control-Allow-Origin",
@@ -144,7 +145,7 @@ class PostDetailControllerTest {
 	void 비허용_오리진은_CORS로_차단된다() throws Exception {
 		givenMari01();
 
-		mockMvc.perform(get("/api/posts/mari01")
+		mockMvc.perform(get("/api/posts/mari01").with(user("tester"))
 						.header("Origin", "https://evil.example.com"))
 				.andExpect(status().isForbidden())
 				.andExpect(header().doesNotExist("Access-Control-Allow-Origin"));

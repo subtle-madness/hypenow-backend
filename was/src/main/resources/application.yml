@@ -28,8 +28,15 @@ server:
 # UI는 /swagger-ui, 스키마는 /v3/api-docs
 springdoc:
   paths-to-match: /v1/**              # 스펙 v1 표면만 문서화 — 구 /api·내부 페이지(coverage 등)는 제외
+  swagger-ui:
+    csrf:
+      enabled: true                   # try-it-out에 XSRF-TOKEN 쿠키를 헤더로 동봉 — /v1/auth/login 호출 후
+                                      # 세션 쿠키(동일 오리진)로 잠긴 엔드포인트도 Swagger에서 테스트 가능
 was:
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:
     dir: ./data/profile-images          # 프로필 이미지 저장 디렉토리 — /profile-images/** 로 정적 서빙
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
+    from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트

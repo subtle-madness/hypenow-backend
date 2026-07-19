@@ -8,12 +8,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import jakarta.servlet.http.Cookie;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** 저장 API(인플루언서 후보·콘텐츠 북마크) — 인증 필수, 상태 전이·메모 부분 갱신 계약을 실 DB로 검증한다. */
@@ -23,19 +24,17 @@ class SavedApiIntegrationTest extends IntegrationTest {
 	@Autowired
 	MockMvc mockMvc;
 
-	/** email로 가입 후 로그인해 세션 쿠키(hypenow-session)를 반환한다 — 저장 API는 전부 인증 필수라 매 테스트 새 계정을 쓴다. */
-	private Cookie signUpAndLogIn(String email) throws Exception {
-		mockMvc.perform(post("/api/auth/signup").with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"email\":\"" + email + "\",\"password\":\"password123\"}"))
-				.andExpect(status().isCreated());
+	@Autowired
+	JdbcClient jdbcClient;
 
-		MvcResult result = mockMvc.perform(post("/api/auth/login").with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"email\":\"" + email + "\",\"password\":\"password123\"}"))
-				.andExpect(status().isOk())
-				.andReturn();
-		return result.getResponse().getCookie("hypenow-session");
+	@BeforeEach
+	void enableSignupCode() {
+		V1AuthTestSteps.enableSignupCode(jdbcClient); // 로그인 월 — 가입 코드 개통(시드는 차단 상태)
+	}
+
+	/** 가입(자동 로그인)으로 세션 쿠키를 얻는다 — 레거시 /api/auth는 월에 잠겨 v1 스텝을 쓴다. */
+	private Cookie signUpAndLogIn(String email) throws Exception {
+		return V1AuthTestSteps.signUp(mockMvc, jdbcClient, email);
 	}
 
 	@Test

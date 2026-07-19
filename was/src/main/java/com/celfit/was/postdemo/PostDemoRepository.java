@@ -61,17 +61,4 @@ public class PostDemoRepository {
 				.param("limit", limit)
 				.query().listOfRows();
 	}
-
-	/** 분석이 존재하는 게시물 목록 — /coverage의 상세 데모 진입점. */
-	public List<Map<String, Object>> analyzedPosts() {
-		return jdbcClient.sql("""
-				SELECT ca.short_code, c.account_handle, a.display_name,
-				       ca.main_category, ca.ad_type, ca.analyzed_at::date AS analyzed_on,
-				       (SELECT count(*) FROM comment_classifications k WHERE k.short_code = ca.short_code) AS classified
-				FROM content_analyses ca
-				JOIN contents c ON c.short_code = ca.short_code
-				LEFT JOIN accounts a ON a.handle = c.account_handle
-				ORDER BY ca.analyzed_at DESC""")
-				.query().listOfRows();
-	}
 }

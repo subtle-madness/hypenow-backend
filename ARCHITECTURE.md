@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-15
+> 마지막 갱신: 2026-07-18
 
 ## 1. 제품 한 장 요약
 
@@ -37,14 +37,16 @@ MVP 범위 (07-14 정정 — 댓글 제외):
 | 모듈 | 데이터 접근 | 역할 | 기술 |
 |---|---|---|---|
 | `crawler` | raw DB 쓰기 | Apify로 발굴→판정→상세 수집, 원형(raw) 적재 | Spring Boot, JPA, Flyway, Thymeleaf 어드민 |
-| `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 헤드리스 배치, JdbcTemplate ×2 |
+| `analytics` | raw 읽기 → 분석 결과 쓰기 | 분석 뷰 정의 + **미러**(분석 결과를 analysis DB에 채움). LLM 분석도 이 층 소속 | 상주 서버(8082, 어드민 `/ui`) + one-shot CLI(cloud), JdbcTemplate ×2 |
 | `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + 서비스 기능(로그인·후보 관리 등) | Spring Boot, JdbcClient |
 | `contract-analysis` *(신설 예정)* | — | 분석 결과의 record·enum — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
 
 **데이터 배치**: 저장 영역은 세 가지 — raw(크롤링 원본) / 분석 결과(미러 테이블) / **서비스 데이터**(was가
 쓰는 일반 앱 데이터: 로그인·후보 관리 등). 서비스 데이터는 분석 결과와 **스키마로 분리**(analysis DB 내
-`app` 스키마)하고, 셋 모두 현재 **한 Postgres 인스턴스**(포트 5433)에 논리 분리만 되어 있다. 부하를 보고
+`app` 스키마)하고, 로컬은 셋 모두 **한 Postgres 인스턴스**(포트 5433)에 논리 분리만 되어 있다. 부하를 보고
 물리 분리를 결정한다 — 접근 규율(§4-4)을 지키는 한 어느 경계든 설정 변경으로 분리 가능하다.
+운영 서버(오라클)는 컨테이너로 물리 분리: `postgres`(analysis DB — 분석 결과 public + 서비스 app 스키마,
+루프백 5432)와 `postgres-raw`(raw crawler DB, 루프백 5433 — 분석 잡 전용, was 접근 금지).
 
 **미러란**: raw DB에 정의된 분석 뷰(`analytics.*`)를 실행해 결과를 analysis DB의 테이블로 채우는
 배치. 레플리카가 아니라 **분석 층이 결과물을 내놓는 행위 그 자체** — 뷰는 DB를 못 넘으므로 이 잡이
@@ -57,17 +59,19 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 | 테이블 | 내용 |
 |---|---|
-| `content` | 게시물 메타 (short_code, owner, uploaded_at, 분류 계층, ad_marked, 상태) |
-| `raw_post_detail` | Apify 상세 payload(jsonb) + generated 컬럼 (likes, comments_count, video_play_count, caption) |
-| `raw_comment` | 댓글 원문 payload + generated (writer, text, written_at) |
-| `raw_profile` | 프로필 스냅샷 payload + generated (username, followers) |
+| `influencer` | 계정 (username, status, followers, 뷰티 판정 beauty/beauty_company/beauty_judged_at) |
+| `content` | 게시물 제어 (short_code, content_type, owner, uploaded_at, origin DISCOVERY/ENUMERATION, status) — 캡션·지표 없음 |
+| `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS jsonb) — 릴스 캡션·지표·썸네일의 소스 |
+| `raw_profile` | 프로필 원형(SELF_GQL·HIKER_MOBILE 등 source별 jsonb) — SELF_GQL엔 내장 타임라인 12개(피드 캡션·지표의 소스) |
+| `raw_post_detail` | 구 시대 상세 payload — 신 파이프라인 미사용(LEGACY, 크롤러 대시보드 전용) |
+| `raw_comment` | 댓글 원문 (writer/text/written_at 실컬럼) — 수집 게이트 off, 신규 유입 없음 |
 | `app_setting` | 런타임 설정 key-value (분석 뷰도 여기서 임계값을 읽음) |
 
 ### 분석 뷰 (raw DB의 `analytics` 스키마)
 
-`analytics/views/NN_*.sql` 번호순 적용 컨벤션. **기존 소스(00~08)는 2026-07-12 초기화** —
-로컬 DB에 적용된 뷰는 남아 있으나 소스는 백지이며, 태스크 A부터 §4 원칙대로 재작성한다.
-과거 뷰 정의는 git 이력과 `docs/superpowers/plans/2026-07-10-*` 문서에 보존돼 있다.
+`analytics/views/NN_*.sql` 번호순 적용 컨벤션. 2026-07-18 신 crawler 스키마(V15) 기준으로
+전면 재구축 — base 층(00)이 raw 접촉을 격리하고, 서빙 모수는 뷰티 인플루언서
+(QUALIFIED ∧ beauty ∧ ¬beauty_company). 04는 LLM 캡션 선분석 후보 뷰(미러 안 함).
 
 ### analysis DB
 
@@ -80,8 +84,10 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
   PK, status 어휘 reviewing·contact_planned·collaborating + memo) / `saved_contents`(user_id+short_code PK,
   P2에서 memo 추가 V4) / `spring_session`·`spring_session_attributes`(P2 Spring Session JDBC 세션 영속화 V2,
   `initialize-schema=never`로 Flyway가 유일 DDL 원천) / `gate_events`(P2 게이트/잠금 측정 이벤트 V5 —
-  user_id nullable 익명 허용·payload jsonb·append-only). handle·short_code는 분석 결과 **논리 참조만**
-  (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V5).
+  user_id nullable 익명 허용·payload jsonb·append-only) / `app_setting`(V6 — was 런타임 설정 key-value,
+  첫 키 `signup.code` 가입 코드, 빈 값=가입 차단 fail-closed) / `email_verifications`(V7 — 이메일 소유권
+  인증 코드 해시·만료·시도·verified 상태, 이메일당 1행·가입 성공 시 소비). handle·short_code는 분석 결과
+  **논리 참조만** (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V7).
 
 ## 4. 관통하는 설계 원칙
 
@@ -181,9 +187,11 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), was 랭킹 대시보드(analysis DB의 기존
-미러 테이블을 읽음). ※ analytics 구현은 2026-07-12 초기화 — DB에 남은 뷰·미러 테이블은 동작하지만
-소스는 백지, 태스크 A부터 재구축.
+**운영 중**: crawler 파이프라인(discover→qualify→aggregate), analytics 상주 어드민(8082 `/ui` —
+미러·LLM 잡 트리거, 태스크 I), was `/v1` API(스펙 v1 P1~P3 + 로그인 월) + 검증용 내부 페이지
+`/coverage`(celfit-front **배포본(origin/main)** 실소비 필드 기준 커버리지 매트릭스 — 07-18 재정의).
+구 랭킹 대시보드(`/dashboard`)와 게시물 데모(`/posts/{shortCode}`)는 프론트 전환 완료까지 잔존 —
+`/dashboard`는 옛 산출물(`content_ranking`)을 읽는다(정리 §8).
 
 **상세 분석 작업 트랙** (구조 설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) ·
 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)):
@@ -202,7 +210,10 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype. 유통사 필터는 컬럼 신설(VLM 개통) 전까지 매칭 0 | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫. **C2 카피 조립 완료** — account_analyses 최신 1행의 카피 7종을 additive 서빙(이력 없으면 null) | C1, C2 | ✅ |
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
-| G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일 인증(Spring Security 세션 쿠키·CSRF) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
+| G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일+비밀번호 로그인(Spring Security 세션 쿠키·CSRF) + 이메일 소유권 인증(6.17 — V7 `email_verifications`·send/confirm·가입 전 강제, 07-19 구현: [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md)) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
+| I | analytics 어드민 | 상주 서버(8082) `/ui` — **07-19 파이프라인 관측 대시보드로 재설계**: 퍼널(수집→후보→분석→서빙, 무거운 집계는 비동기 캐시)·잡 카드 3종(진행률·최근/다음 실행)·실행 피드(인메모리 이력)·접이식 로그. 비용 카드 폐지(Gemini 무료 전환). 잡별 락·수동 트리거·스케줄러 골격 유지 — [specs/2026-07-19-analytics-dashboard-design.md](docs/superpowers/specs/2026-07-19-analytics-dashboard-design.md) | A | ✅ |
+| A2 | 뷰 신 스키마 재구축 | 분석 뷰 00~20을 신 crawler 스키마(V15 인플루언서 개편) 기준 재구축 — base 소스 교체(raw_media_page clips·SELF_GQL 내장 타임라인), 뷰티 인플루언서 모수 필터, 04 LLM 후보 뷰 신설, 하니스 신 스키마 시드 재작성. 07-18 구현 완료 | [PR #30](https://github.com/subtle-madness/hypenow-backend/pull/30) 머지 | ✅ |
+| L | LLM Gemini 전환 | 전 분석 축(판정·속성+종합 통합 1콜·카피)을 `gemini-3.1-flash-lite`로 — 프로바이더 선택 `analytics.llm-provider`(기본 gemini, anthropic 롤백), 무료 키 페이싱(15RPM, 일 예산은 batch-limit) + 한도 소진 시 배치 이월, 문구 절제 규칙(LlmGuard). 크롤러 판정은 `crawler.beauty.judge`(기본 gemini, 팀 프롬프트·파서 재사용). 백필은 유료 키 Batch one-shot(submit/collect) — [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) | F, B4, C2 | ✅ (백필 실행은 GEMINI_API_KEY_PAID 등록 대기) |
 
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
@@ -210,11 +221,12 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 |---|---|---|---|---|
 | P1 | V1 읽기 API | envelope·에러 공통 + `/v1/contents`·`/v1/contents/{id}/ai-report`·`/v1/influencers/{id}`(+ai-report). 병행 데이터 보강: hypeScore 재정의(0~100)·유통사 슬러그·updatedAt·email/externalLink 조사 (07-15 개통) | H, D, E, B4 | ✅ |
 | P2 | 서비스 데이터 정렬 | G 확장 — Spring Session JDBC(`app.spring_session`, 세션 목록·개별 로그아웃·hypenow-session 30일 슬라이딩), `/v1/auth`(가입·로그인·로그아웃·레이트리밋), users 프로필 15필드(V3), 저장 2종 스펙 계약화(memo upsert V4·카드 조합 목록), `/v1/me` 계정(프로필 PATCH·비번·세션·프로필 이미지·탈퇴), 게이트 이벤트(V5), P1 응답 개인화 필드(isContentsSaved/isInfluencerSaved) (07-15 개통) | G, P1 | ✅ |
-| P3 | 부가 | `/v1/stats` + `/v1/contents/{id}/similar`(유사도 사전계산 — analytics 신규) | P1 | ⬜ |
+| P3 | 부가 | `/v1/stats` — 랜딩 통계(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 모수는 마이크로 구간 계정(3천~5만)·강한 HTTP 캐시(1시간). 유사 콘텐츠(6.2)는 **범위 제외 확정**(제품 고려 대상 아님 — 미구현) (07-17 개통) | P1 | ✅ |
 
 기존 `/api/*`는 프론트 전환 완료까지 병존, fit(스펙 6.18)은 보류.
 
-권장 순서: A → B1, 병렬로 F(스파이크). 상세 구현 계획은 태스크 착수 시 작성.
+두 트랙 전 태스크 완료(07-17). 남은 작업은 §8 미결과 프론트 REST 전환 연동(celfit-front은 아직
+Drizzle/메모리 모드 — seam만 준비됨).
 
 ## 6. 데이터 제약 (해석 주의 — 모든 지표 설계의 전제)
 
@@ -231,6 +243,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 - 저장·공유·도달·노출 지표 없음. 팔로워는 qualify 시점 값.
 - LLM 댓글 분류 실측 비용: 게시물 1,000건당 Opus ≈ $61 / haiku ≈ $12.2 (동기·무캐시·무배치 기준).
   VLM(썸네일)은 건당 ≈ $0.03~0.05 (opus 4.8, 07-14 실측).
+- LLM 운영 비용(07-18 확정): 전 축 gemini-3.1-flash-lite **무료 티어 $0**(분당 15콜·일 1,500콜 예산 —
+  판정 ~100 / 통합 ~450 / 카피 ~150콜), 초기 백필 2만 건은 유료 프로젝트 Batch API ~$9.
+  Anthropic 단가는 롤백 참고치. 일 1,500콜 초과 성장 시 GEMINI_API_KEY만 유료 키로 교체(코드 무변경).
 - **인스타 CDN 썸네일 URL은 수집 후 ~4일이면 만료**(403) — 썸네일 첨부는 최신 수집분에만 가능
   (분석 잡이 HEAD 프리체크, 만료분은 캡션 단독 분석 — B4). 썸네일 신호까지 반영하려면 크롤링 직후 분석 배치를 돌릴 것.
 
@@ -243,6 +258,17 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | 2026-07-18 | **SELF 차단 대비 유료 피드 우회 경로 — HIKER_MOBILE 프로필 + /v1/user/medias/chunk 보충** — IG가 익명 웹 요청을 광범위 차단하면(SELF 401·Hiker gql 계열 전면 500 동시 발생, 07-18 실측) 프로필·피드 모두 모바일 API 계열로 우회 가능. CollectJob이 내장 타임라인 없는 프로필 소스에서 chunk 1페이지를 보충(원형 raw_media_page 저장, 실패 시 방문 실패·재시도 — 게시물 없는 '방문 완료' 방지 가드). Hiker web_profile_info는 타임라인을 안 줌(실측 — WebGQL 소스만으론 피드 불가). 평시 기본은 무료 SELF 유지, 전환은 `profile.source` 런타임 설정 | feat/beauty-captions 브랜치 |
 | 2026-07-18 | **재방문 대상 선정을 달력일(KST) 기준으로 전환** — "마지막 방문 후 24h(N일) 경과" 대신 경계 = 오늘(KST) 자정 − (N−1)일(`RevisitCutoff`, 기본 N=1이면 오늘 안 돈 계정 전부·자정 자동 리셋). Clock 빈도 UTC→Asia/Seoul(존은 날 경계 계산에만 쓰임 — 저장은 전부 Instant라 데이터 영향 없음, 데일리 대시보드 "오늘" 타일도 KST 자정으로 정렬). collect/reels 선정·JobCostEstimator·StatusService due 수치가 같은 경계 공유. 설정 키 `collect.revisit-interval-days`는 유지, 의미만 달력 기준으로 | [specs/2026-07-18-kst-daily-targets-design.md](docs/superpowers/specs/2026-07-18-kst-daily-targets-design.md) |
 | 2026-07-18 | **재스냅샷(RESNAPSHOT) 기능 제거** — qualify가 SELF(캡션 포함 재료)로 첫 판정을 하게 되면서 캡션 백필 루프의 존재 이유가 소멸(SELF 4스레드 병렬화로 속도 문제 해소). 마지막 드레인(2,261명 재수집 → rejudge)으로 백로그를 소진한 뒤 잡·선정 쿼리(`findResnapshotTargets`)·설정 키(`resnapshot.batch-limit`)·UI 트리거·다이어그램 루프·`ProfileExtractor.isPrivate`를 제거. 드레인 실측 구제 +74명(~3.4%)으로 07-16 실험치(~30%) 대비 크게 낮아 잔존 가치 없음도 확인. `JobName.RESNAPSHOT`은 crawl_run 실이력 렌더 때문에 판독 전용 레거시로 보존(AGGREGATE 전례). rejudge는 범용(재료 갱신 시 재판정)이라 유지. 단, HIKER 등 캡션 없는 소스로 대량 qualify 웨이브를 다시 돌리려면 이 기능이 필요하다 — git 이력(9ce462d)에서 복원 | feat/beauty-captions 브랜치 |
+| 2026-07-19 | **대시보드 퍼널에 백필 제외 가드 관측 반영 (PR #49 후속)** — 무거운 집계를 후보+"성숙 풀"(04 뷰 자격에서 제때 크롤 가드만 뺀 모수) 1문장으로 확장해 가드 제외분(≈늦크롤 백필)을 수치로 노출, 가드 창 파라미터(pin·slack — app_setting 현재값)를 퍼널 meta에 표기. 수집→후보 낙차(운영 2.7만→1.9천)가 백필 MVP 제외 정책임이 화면에서 읽히게 | feat/dashboard-backfill-guard 브랜치 |
+| 2026-07-19 | **어드민 대시보드 재설계 (태스크 I 개편)** — 운영 첫날 피드백(단계 추적 불가·비용 카드 무의미·자동/수동 구분 불가)으로 관측 대시보드 전환. 잡→ProgressReporter(analyze 경계 인터페이스)→JobProgressRegistry 진행률, RunHistory 인메모리 피드(이력 DB 없음 유지), PipelineStatsService(빠른 동기+무거운 비동기 30분 캐시), ScheduleInfo(크론 다음 발화 — base는 시스템 존, @Scheduled 해석과 정합·표시만 KST). JobCostEstimator 삭제. 리뷰에서 '다음 예정' 9시간 존 오차 잡아 수정 | [specs/2026-07-19-analytics-dashboard-design.md](docs/superpowers/specs/2026-07-19-analytics-dashboard-design.md) |
+| 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백 + 기동 로그, connect 5s/read 10s 타임아웃), 서버 상태 방식(V7 `email_verifications`, verified 30분·가입 성공 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(429→가입 코드→필드→이메일 인증→409). 운영 개통은 Resend 도메인 인증(DNS SPF/DKIM) + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전 배포 시 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md) |
+| 2026-07-19 | **운영 서버에 raw DB 상주 컨테이너 신설 + e2e 실데이터 이전** — 오라클 운영 compose에 `postgres-raw`(crawler DB, 루프백 5433, 계정 .env `RAW_DB_*`) 추가. 07-17 일회성 LLM 실행(e2e-*)에 올라가 있던 raw 실데이터 2.4GB(콘텐츠 27,093·인플루언서 12,837)를 postgres-raw로, 분석 결과 public 스키마(계정 12,638·콘텐츠 16,686·LLM 분석 account 77/content 88·landing_stats)를 운영 analysis DB로 이전(구 114건 미러 대체, `app` 스키마·세션은 보존 — e2e의 검증용 유저 3건은 미이관). 운영 /v1/contents 실데이터 응답 검증 완료. was의 raw 접근 금지 규율은 유지(같은 compose 네트워크지만 접속 정보 미주입). 미결: backup.sh는 analysis만 백업(raw 백업 여부), e2e-* 컨테이너 정리 | deploy/compose.yaml |
+| 2026-07-18 | **LLM 스택 Gemini 3.1 Flash-Lite 전환 (태스크 L)** — 골드셋 40건 실측(Opus 기준 mainCategory 90%·adType 98%·subCat Jaccard 0.62·브랜드 88%, Haiku 4.5보다 우수·5.5배 저렴)으로 전 분석 축 통일. ②속성+③종합은 통합 1콜(`ContentInsightPort` — Anthropic은 기존 어댑터 2콜 컴포지트로 보존해 app_setting `analytics.llm-provider` 롤백 경로), 문구 프롬프트에 절제 규칙(`LlmGuard` — 표본 3건 미만 단정 금지·조언 금지·수치 인용, 골드셋 문구 검증 통과본) 필수. 이원 운영: 일상=무료 키(`GEMINI_API_KEY`) 동기+RPM 페이싱, 429/일한도 소진은 에러 아닌 배치 이월 / 백필 2만 건=유료 키(`GEMINI_API_KEY_PAID`) Batch one-shot(`analytics.backfill-submit`→`-collect`, ~$9). ①판정은 크롤러 BeautyJudge 포트 뒤 Gemini 어댑터(팀 프롬프트·파서 재사용, `crawler.beauty.judge` 기본 gemini). 댓글 분류는 MVP 휴면이라 Anthropic 유지. 구모델(2.5)은 신규 API 키에서 404 — 3.1이 유일 선택지 | [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) |
+| 2026-07-18 | **설계-구현 전수 감사 + 문서 드리프트 정비** — 백엔드·프론트 specs 35건 전수 대조 결과 백엔드는 무동작 스텁 0건·트랙 표와 실체 일치. 정비: §5 G 표현 명확화(이메일 **소유권 인증**(6.17)은 [TBD] 미구현 — G의 "이메일 인증"은 이메일+비밀번호 로그인 의미), 대체·현행과 어긋난 spec 7건 상태 헤더 갱신(detail-source-selector 🗄 등), `/coverage` 진입점 제거로 고아가 된 `PostDemoRepository.analyzedPosts()` 죽은 쿼리 삭제(`/posts/{shortCode}` 페이지 자체는 URL 직접 접근으로 잔존). 주요 잔여 갭은 프론트 측: 마스터 비밀번호 백도어(celfit-front core.ts — 제거 대기), 이메일 인증 실구현(설계 착수), REST 배선(PR #18 draft) | 감사 세션 리포트 |
+| 2026-07-18 | **/coverage 매트릭스를 celfit-front 실소비 필드 기준으로 재정의** — 기준 코드는 celfit-front 배포본(origin/main). 구 content-ranking 카드 14행을 프론트가 실제 렌더·필터에 쓰는 /v1 필드 27행(카드·필터 6.1 → 드로어 리포트 6.3 → 인플루언서 6.4/6.5)으로 교체. 타입에만 있고 UI 미소비인 필드(email·external_link)와 /v1 미사용 미러(content_metric_snapshots — 단 metric_captured_at 원천이라 coverage.sql 골격 가드는 유지)는 제외. 구 산출물 content_ranking 행은 본 쿼리에서 분리 조회(테이블 부재에도 매트릭스 생존 — was는 폴백 행, coverage.sql은 to_regclass DO 블록). 매트릭스 정의 쌍(CoverageRepository ↔ analytics/check/coverage.sql) 컨벤션 유지 | feat/coverage-v1-fields 브랜치 |
+| 2026-07-17 | **분석 뷰 신 스키마 재구축 설계 확정 (A2)** — 신 크롤러는 상세 수집 없이 열거만 하므로(raw_post_detail 소멸) 캡션·지표 소스를 raw_media_page clips 아이템·SELF_GQL 내장 타임라인 노드로 교체(플랫 뷰 체인, base 층에 평탄화 뷰 2종 신설). 서빙 모수는 뷰티 인플루언서만(QUALIFIED ∧ beauty ∧ ¬company, 1,496계정), 미러 계약은 형태 유지+우아한 공백(피드 광고 false·카테고리 믹스 0행 — B4 캡션 분류가 대체 소스), 04_analysis_candidates 신설(캡션 선분석 Haiku+Batch 입구 — 숙성 가드 3일·캡션 필수까지 뷰 담당, 분석됨 대조·상한은 Java). 기반은 PR #30 머지 후 develop | [specs/2026-07-17-analytics-views-new-schema-design.md](docs/superpowers/specs/2026-07-17-analytics-views-new-schema-design.md) |
+| 2026-07-17 | **analytics 어드민 UI + 스케줄러 골격 설계 확정 (태스크 I 신설)** — analytics를 상주 웹 서버(8082)로 전환, 크롤러 어드민 패턴 이식(`/ui` 잡 버튼 4종 + LLM 예상 비용 카드 + LogBuffer 로그 패널 + 잡별 락·비동기 트리거). 실행 이력 DB 테이블은 두지 않음(로그로 충분 — 사용자 확정). 스케줄러는 크롤러 동일 게이트(`analytics.schedule.enabled`, 기본 off) 골격만. `mirror-on-startup` 기본 false로 전환하되 cloud push는 one-shot CLI 보존(cloud 프로파일만 true) | [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) |
+| 2026-07-17 | **로그인 월 + 가입 코드 도입** — 제품 구조 변경(사용자 확정): 모든 조회는 로그인 필수, 가입은 단일 공용 코드 필수. SecurityConfig를 화이트리스트로 전환(기본 authenticated, 열린 경로는 /v1/auth·/v1/events/gate(익명 측정 유지)·/v1/stats(랜딩 통계 — P3와 병합 시 추가, 로그인 전 랜딩이 소비)·/health·swagger(로컬)만) — /v1 읽기 4종·구 /api·내부 페이지·프로필 이미지 전부 잠금, 401 계약은 기존 유지(/v1 envelope). 가입 코드는 `app.app_setting`(V6) `signup.code`와 trim 정확 일치, 불일치·미설정 403 INVALID_SIGNUP_CODE(fail-closed — 빈 값 시드로 배포되며 운영자 UPDATE로 개통). 레거시 /api/auth/signup은 코드 우회 뒷문이라 폐쇄(인증 입구 /v1 일원화) | [specs/2026-07-17-login-wall-signup-code-design.md](docs/superpowers/specs/2026-07-17-login-wall-signup-code-design.md) |
+| 2026-07-17 | **P3 랜딩 통계 개통 + 유사 콘텐츠 제외 확정** — GET /v1/stats(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 강한 HTTP 캐시(1시간). **모수는 마이크로 구간 계정(팔로워 3천~5만)과 그 콘텐츠로 통일** — 랜딩 카피·스펙 분포 합계 100과 일치(수집 114 중 55). 조회수는 릴스만(회신표 #16). 분포 %·합계 100 보정은 was 표현 계층(최대 잔여). updatedAt은 미러 실행 시각. **유사 콘텐츠(스펙 6.2)는 제품 고려 대상이 아니라 구현하지 않기로 확정** — 스펙 6.2·회신표 #3은 미구현으로 남김 | [plans/archive/2026-07-17-p3-landing-stats.md](docs/superpowers/plans/archive/2026-07-17-p3-landing-stats.md) |
 | 2026-07-17 | **정적분석 Error Prone 도입** — 전 모듈(4개) 컴파일에 Error Prone 단독 적용(1인 팀 시그널/노이즈 기준으로 SpotBugs 조합 대신 선택). ERROR 등급만 빌드 실패로 걸고 WARNING은 비활성(`disableAllWarnings`), 한국어 테스트 메서드명 컨벤션과 충돌하는 `UnicodeInCode`만 체크 해제. 초기 지적은 전 모듈에서 실질 1건(SecurityConfig `csrfToken.get()` 반환값 무시 — 의도적 지연 발급 해제 호출이라 `unused` 관용구로 정리, baseline/suppress 파일 불필요). 컴파일 단계에 걸리므로 CI(PR #22)의 `./gradlew test`가 그대로 정적분석 체크가 된다 | [PR #25](https://github.com/subtle-madness/hypenow-backend/pull/25) |
 | 2026-07-17 | **GitHub Actions CI 도입** — develop 대상 push·PR마다 `./gradlew test` 전체 실행(.github/workflows/ci.yml). Testcontainers는 러너 기본 Docker로 충분, 외부 키 불필요. Gradle 캐시는 gradle/actions/setup-gradle(develop push에서 쓰기, PR은 읽기). SQL 하니스는 제외 — 뷰가 실DB(V6 시점) 스키마를 전제해 리포 마이그레이션(V8+ influencer 개편)과 불일치, 프레시 DB 재현 불가 확인(§8에 블로커 기록) | .github/workflows/ci.yml |
 | 2026-07-17 | **P2 운영 배포 + 세션 쿠키 SameSite=Lax 확정** — P2(가입·로그인·/v1/me·저장·레이트리밋)를 api.hypenow.io에 배포, 운영 curl E2E(가입 201→me 200→로그아웃 204→재로그인 200, 쿠키·CSRF 왕복)와 로그인 레이트리밋(분당 10 초과 429) 실측 통과. 미결이던 prod 쿠키 SameSite는 **Lax로 확정**(사용자 확인) — www↔api는 hypenow.io 하위 same-site라 전송 손실 없고 스펙과 일치, CSRF 방어 이중화. 테스트 계정은 검증 후 DB 삭제 | [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23) |
@@ -287,10 +313,11 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 | 항목 | 상태 |
 |---|---|
-| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. **블로커(07-17 확인)**: 뷰·하니스가 실DB(V6 시점) 스키마(`account`/`account_id`)를 전제하는데 실DB는 V7~V12 미적용 상태로 멈춰 있고, 프레시 DB에 리포 마이그레이션을 전부 적용하면 V8 리네임(account→influencer)으로 뷰가 깨짐 — analytics 재구축(뷰의 신 스키마 전환) 후 CI 연결 |
+| 계약 테스트 CI 연결 | raw 변경 PR에서 `analytics/test/run.sh` 자동 실행. 블로커였던 구 스키마 전제는 07-18 뷰 재구축으로 해소 — 하니스 시드가 신 스키마(V15)에 직접 INSERT하므로 프레시 DB + V1~V15 + run.sh 구조가 성립. CI 워크플로에 Postgres 서비스 + Flyway 적용 + run.sh 연결만 남음 |
+| 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. `/coverage` 매트릭스는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
-| LLM 모델 | F 스파이크 결과로 결정 (기본 opus, haiku는 1/5 비용) |
-| 미러 갱신 주기 | 현재 수동 1회. 자동화 여부·주기 |
+| ~~LLM 모델~~ | 해소(07-18) — 골드셋 실측으로 전 축 gemini-3.1-flash-lite 확정(§7 태스크 L), Anthropic은 app_setting 롤백 경로 |
+| 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
 | ~~세션·쿠키 운영 전환~~ | 해소 — HTTPS·Secure 쿠키(07-15, application-prod.yml), 세션 인메모리→spring-session-jdbc(07-15, P2 `app.spring_session`), SameSite는 Lax 확정(07-17, [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23)) |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |

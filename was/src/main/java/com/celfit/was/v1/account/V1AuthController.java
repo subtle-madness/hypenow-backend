@@ -9,7 +9,6 @@ import com.celfit.was.v1.common.V1ApiException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -17,7 +16,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 인증 관용구(AuthenticationManager·HttpSessionSecurityContextRepository·UA attribute)는 동일,
  * 계약만 v1 envelope + 스펙 3.2 에러 코드다. UserSummary의 name·userType은 세션(AppUserDetails —
  * 안정 형상이라 프로필 미보유)에 없으므로 가입은 insertProfile RETURNING, 로그인은 SELECT로 채운다.
+ * 가입 코드는 배치 1회용(app.signup_codes, 설계 2026-07-19) — 단일 공용 코드(app_setting)는 폐기.
  */
 @RestController
 public class V1AuthController {
@@ -37,18 +36,23 @@ public class V1AuthController {
 	private final SignupValidator signupValidator;
 	private final RateLimiter rateLimiter;
 	private final UserRepository userRepository;
-	private final PasswordEncoder passwordEncoder;
+	private final SignupCodeRepository signupCodeRepository;
+	private final SignupService signupService;
 	private final AuthenticationManager authenticationManager;
+	private final EmailVerificationService emailVerificationService;
 	private final SecurityContextRepository securityContextRepository = new HttpSessionSecurityContextRepository();
 
 	public V1AuthController(SignupValidator signupValidator, RateLimiter rateLimiter,
-			UserRepository userRepository, PasswordEncoder passwordEncoder,
-			AuthenticationManager authenticationManager) {
+			UserRepository userRepository, SignupCodeRepository signupCodeRepository,
+			SignupService signupService, AuthenticationManager authenticationManager,
+			EmailVerificationService emailVerificationService) {
 		this.signupValidator = signupValidator;
 		this.rateLimiter = rateLimiter;
 		this.userRepository = userRepository;
-		this.passwordEncoder = passwordEncoder;
+		this.signupCodeRepository = signupCodeRepository;
+		this.signupService = signupService;
 		this.authenticationManager = authenticationManager;
+		this.emailVerificationService = emailVerificationService;
 	}
 
 	@PostMapping("/v1/auth/signup")
@@ -59,20 +63,36 @@ public class V1AuthController {
 		if (!rateLimiter.tryAcquire("signup:" + httpRequest.getRemoteAddr())) {
 			throw V1ApiException.rateLimited();
 		}
+		// 빠른 실패(검증·인증 확인 전) — 원자적 소진 보장은 register 안의 claim이 담당
+		requireUsableCode(request.signupCode());
 		signupValidator.validate(request);
+		// 이메일 소유권 인증(설계 2026-07-18) — 가입 전 강제. verified 30분 이내가 아니면 403
+		String email = UserRepository.normalizeEmail(request.email());
+		emailVerificationService.requireVerified(email);
 
-		UserProfile profile;
-		try {
-			profile = userRepository.insertProfile(request.toNewUser(), passwordEncoder.encode(request.password()));
-		} catch (DuplicateKeyException e) {
-			throw V1ApiException.conflict("EMAIL_ALREADY_EXISTS", "이미 가입된 이메일이에요. 로그인해 주세요.");
-		}
+		UserProfile profile = signupService.register(request);
+		emailVerificationService.consume(email);
 
 		// 가입 직후 자동 로그인 — 방금 저장한 자격증명이라 실패할 수 없는 경로(실패 시 500이 맞다)
 		Authentication authResult = authenticationManager.authenticate(
 				UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()));
 		establishSession(authResult, httpRequest, httpResponse);
 		return ApiResponse.ok(UserSummary.from(profile));
+	}
+
+	/**
+	 * 가입 코드 사전 검증(클로즈베타 관문 UX) — 관문 통과 시점에 즉시 유효성만 확인, 소진하지 않는다.
+	 * 선점은 가입 트랜잭션에서 일어나므로 통과 후 가입 시점에 코드가 이미 쓰였을 수 있고, 그때 가입이 403이다.
+	 */
+	@PostMapping("/v1/auth/signup-code/verify")
+	public ApiResponse<SignupCodeVerifyResponse> verifySignupCode(@RequestBody SignupCodeVerifyRequest request,
+			HttpServletRequest httpRequest) {
+		// 무차별 대입 방지 — 익명 표면이라 키는 IP 단위(기본 분당 10회)
+		if (!rateLimiter.tryAcquire("signup-code-verify:" + httpRequest.getRemoteAddr())) {
+			throw V1ApiException.rateLimited();
+		}
+		requireUsableCode(request.code());
+		return ApiResponse.ok(new SignupCodeVerifyResponse(true));
 	}
 
 	@PostMapping("/v1/auth/login")
@@ -105,6 +125,13 @@ public class V1AuthController {
 			session.invalidate();
 		}
 		SecurityContextHolder.clearContext();
+	}
+
+	/** 미발급·소진 코드 단일 응답 — 발급 여부를 구분해 주지 않는다(코드 존재 탐지 차단). 빈 테이블이면 전원 차단(fail-closed 유지). */
+	private void requireUsableCode(String code) {
+		if (!signupCodeRepository.isUsable(code)) {
+			throw V1ApiException.forbidden("INVALID_SIGNUP_CODE", "존재하지 않거나 이미 사용된 코드입니다.");
+		}
 	}
 
 	/** 인증 성공 → SecurityContext 세션 저장 + 세션 목록 표기용 UA attribute(Task 1 규약, 스펙 6.14). */
