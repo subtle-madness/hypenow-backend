@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
  * springdoc 최소 구성 — /v1 표면만 자동 문서화한다(springdoc.paths-to-match).
  * 정본은 프론트 API 스펙 문서이고 Swagger는 실제 서버 시그니처 확인용 보조 문서 —
  * 그래서 컨트롤러에 @Operation 류 어노테이션을 달지 않는다(자동 스캔만).
- * prod에서는 노출하지 않는다(application-prod.yml에서 springdoc 비활성).
+ * 전 환경 노출하되 접근은 admin 게이트가 통제한다(SecurityConfig 스웨거 체인 — 07-19 결정).
  */
 @Configuration
 public class OpenApiConfig {
