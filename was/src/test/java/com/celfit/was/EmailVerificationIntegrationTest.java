@@ -159,9 +159,9 @@ class EmailVerificationIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	@org.junit.jupiter.api.Disabled("Task 6에서 signUp 3-인자 시그니처 생성 후 활성화")
 	void 기가입_이메일_발송은_409() throws Exception {
-		// Task 6에서 구현
+		V1AuthTestSteps.signUp(mockMvc, jdbcClient, "verify-dup@example.com");
+		send("verify-dup@example.com", 409);
 	}
 
 	@Test
@@ -191,5 +191,47 @@ class EmailVerificationIntegrationTest extends IntegrationTest {
 				UPDATE app.email_verifications SET code_hash = 'replaced-by-resend'
 				WHERE email = 'verify-resend@example.com'""").update();
 		confirm("verify-resend@example.com", first, 400);
+	}
+
+	@Test
+	void 미인증_이메일_가입은_403_EMAIL_NOT_VERIFIED() throws Exception {
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(V1AuthTestSteps.signupBody("verify-gate@example.com")))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("EMAIL_NOT_VERIFIED"));
+	}
+
+	@Test
+	void 인증_30분_초과_가입은_403() throws Exception {
+		V1AuthTestSteps.markEmailVerified(jdbcClient, "verify-stale@example.com");
+		jdbcClient.sql("""
+				UPDATE app.email_verifications SET verified_at = now() - interval '31 minutes'
+				WHERE email = 'verify-stale@example.com'""").update();
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(V1AuthTestSteps.signupBody("verify-stale@example.com")))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("EMAIL_NOT_VERIFIED"));
+	}
+
+	@Test
+	void 가입_성공시_인증_행이_소비된다() throws Exception {
+		V1AuthTestSteps.signUp(mockMvc, jdbcClient, "verify-consume@example.com");
+		Long count = jdbcClient.sql(
+						"SELECT count(*) FROM app.email_verifications WHERE email = 'verify-consume@example.com'")
+				.query(Long.class).single();
+		assertThat(count).isZero();
+	}
+
+	@Test
+	void 가입_코드_검증이_이메일_인증보다_먼저다() throws Exception {
+		// 미인증 + 잘못된 가입 코드 → INVALID_SIGNUP_CODE(스펙 §4 순서: 가입 코드가 선행)
+		String body = V1AuthTestSteps.signupBody("verify-order@example.com")
+				.replace(V1AuthTestSteps.SIGNUP_CODE, "WRONG-CODE");
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(body))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
 	}
 }

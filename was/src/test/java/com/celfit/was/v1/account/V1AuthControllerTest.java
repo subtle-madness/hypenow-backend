@@ -67,6 +67,10 @@ class V1AuthControllerTest {
 	@MockitoBean
 	AppSettingRepository appSettingRepository;
 
+	// requireVerified·consume 기본 no-op(void) — 이메일 인증 게이트는 EmailVerificationIntegrationTest가 실 DB로 커버
+	@MockitoBean
+	EmailVerificationService emailVerificationService;
+
 	/** 정상 경로 공통 스텁 — 코드 일치. 코드 케이스별 테스트는 개별 재스텁. */
 	private void stubSignupCode(String value) {
 		given(appSettingRepository.findValue("signup.code")).willReturn(Optional.of(value));

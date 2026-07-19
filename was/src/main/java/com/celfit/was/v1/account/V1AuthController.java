@@ -45,17 +45,20 @@ public class V1AuthController {
 	private final AppSettingRepository appSettingRepository;
 	private final PasswordEncoder passwordEncoder;
 	private final AuthenticationManager authenticationManager;
+	private final EmailVerificationService emailVerificationService;
 	private final SecurityContextRepository securityContextRepository = new HttpSessionSecurityContextRepository();
 
 	public V1AuthController(SignupValidator signupValidator, RateLimiter rateLimiter,
 			UserRepository userRepository, AppSettingRepository appSettingRepository,
-			PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager) {
+			PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager,
+			EmailVerificationService emailVerificationService) {
 		this.signupValidator = signupValidator;
 		this.rateLimiter = rateLimiter;
 		this.userRepository = userRepository;
 		this.appSettingRepository = appSettingRepository;
 		this.passwordEncoder = passwordEncoder;
 		this.authenticationManager = authenticationManager;
+		this.emailVerificationService = emailVerificationService;
 	}
 
 	@PostMapping("/v1/auth/signup")
@@ -68,6 +71,9 @@ public class V1AuthController {
 		}
 		verifySignupCode(request.signupCode());
 		signupValidator.validate(request);
+		// 이메일 소유권 인증(설계 2026-07-18) — 가입 전 강제. verified 30분 이내가 아니면 403
+		String email = UserRepository.normalizeEmail(request.email());
+		emailVerificationService.requireVerified(email);
 
 		UserProfile profile;
 		try {
@@ -75,6 +81,7 @@ public class V1AuthController {
 		} catch (DuplicateKeyException e) {
 			throw V1ApiException.conflict("EMAIL_ALREADY_EXISTS", "이미 가입된 이메일이에요. 로그인해 주세요.");
 		}
+		emailVerificationService.consume(email);
 
 		// 가입 직후 자동 로그인 — 방금 저장한 자격증명이라 실패할 수 없는 경로(실패 시 500이 맞다)
 		Authentication authResult = authenticationManager.authenticate(
