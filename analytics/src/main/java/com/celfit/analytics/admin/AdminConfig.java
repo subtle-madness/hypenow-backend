@@ -60,8 +60,8 @@ public class AdminConfig {
 	}
 
 	@Bean
-	public JobCostEstimator jobCostEstimator(JdbcTemplate rawJdbcTemplate,
+	public PipelineStatsService pipelineStatsService(JdbcTemplate rawJdbcTemplate,
 			@Qualifier("analysisDataSource") DataSource analysisDataSource, AnalyticsSettings settings) {
-		return new JobCostEstimator(rawJdbcTemplate, analysisDataSource, settings);
+		return new PipelineStatsService(rawJdbcTemplate, analysisDataSource, settings);
 	}
 }

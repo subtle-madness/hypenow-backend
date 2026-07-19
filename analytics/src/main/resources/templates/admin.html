@@ -21,20 +21,6 @@
 <h2>현재 상태</h2>
 <div hx-get="/ui/fragments/status" hx-trigger="load, every 3s"></div>
 
-<h2>예상 비용 (LLM 잡 — 추정치)</h2>
-<p class="hint" th:if="${costError}" th:text="${costError}"></p>
-<div class="job-costs">
-    <div class="card job-cost" th:each="c : ${costs}">
-        <h3 th:text="${c.label()}"></h3>
-        <p class="job-cost-targets">대상 <b th:text="${c.targets()}"></b>건</p>
-        <p class="job-cost-usd" th:if="${c.minUsd() != null}">
-            예상 비용
-            <b th:text="'$' + ${#numbers.formatDecimal(c.minUsd(), 1, 3)} + '~$' + ${#numbers.formatDecimal(c.maxUsd(), 1, 3)}"></b>
-        </p>
-        <p class="job-cost-note" th:text="${c.note()}"></p>
-    </div>
-</div>
-
 <h2>실행 로그</h2>
 <div hx-get="/ui/fragments/logs" hx-trigger="load, every 3s"></div>
 </main>

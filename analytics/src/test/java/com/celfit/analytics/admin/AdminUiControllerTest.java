@@ -29,29 +29,14 @@ class AdminUiControllerTest {
 	AnalyticsJobService jobService;
 
 	@MockitoBean
-	JobCostEstimator costEstimator;
-
-	@MockitoBean
 	LogBuffer logBuffer;
 
 	@Test
-	void ui_페이지는_잡_버튼과_비용_카드를_렌더() throws Exception {
-		when(costEstimator.costCards()).thenReturn(List.of(
-				JobCostEstimator.CostCard.of(JobName.ANALYZE, 5, "0.03", "0.05", "노트")));
+	void ui_페이지는_잡_버튼을_렌더() throws Exception {
 		mvc.perform(get("/ui"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러")))
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("콘텐츠 분석")));
-	}
-
-	@Test
-	void 비용_추정_실패해도_ui는_뜬다() throws Exception {
-		// 분석 뷰 미적용 등 DB 문제로 대상 카운트가 실패해도 잡 트리거·로그는 쓸 수 있어야 한다
-		when(costEstimator.costCards()).thenThrow(new RuntimeException("relation does not exist"));
-		mvc.perform(get("/ui"))
-				.andExpect(status().isOk())
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러")))
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("비용 추정 실패")));
 	}
 
 	@Test
