@@ -50,9 +50,9 @@ public class JobCostEstimator {
 				CostCard.of(JobName.CLASSIFY, classifyTargets(), CLASSIFY_UNIT_MIN, CLASSIFY_UNIT_MAX,
 						"게시물당 $0.0122(haiku)~$0.061(opus) — 07-12 실측. 댓글 수집 MVP 제외로 대개 0건"),
 				CostCard.of(JobName.ANALYZE, analyzeTargets(), ANALYZE_UNIT_MIN, ANALYZE_UNIT_MAX,
-						"건당 $0.03~0.05 — VLM 07-14 실측 기반 추정"),
+						"기본 Gemini 무료 티어 $0 — 표시 단가는 anthropic 롤백 시 참고치($0.03~0.05, 07-14 실측)"),
 				CostCard.of(JobName.ACCOUNT_ANALYZE, accountAnalyzeTargets(), null, null,
-						"단가 미실측 — 건수만 표시 (계정당 1콜)"));
+						"기본 Gemini 무료 티어 $0 — 건수만 표시 (계정당 1콜)"));
 	}
 
 	/** CommentClassificationJob.run()의 대상 선정 복제. */

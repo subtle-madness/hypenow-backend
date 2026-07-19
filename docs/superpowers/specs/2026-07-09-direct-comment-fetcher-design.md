@@ -1,5 +1,9 @@
 # 비로그인 자체 댓글 크롤러 (DirectCommentFetcher) 설계
 
+> 상태: ✅ 구현됨 · ⏸ 운영 비활성 — 댓글 수집 자체가 MVP 제외(07-14)로
+> `crawler.collect.comments-enabled=false`(yml 전용, UI 없음). 재개 여부 미결.
+> §설정의 `direct-comment.proxy-url`은 이후 `crawler.proxy.*` 다중 소스 체계로 이동
+
 **작성일:** 2026-07-09
 **브랜치:** `feature/direct-comment-fetcher`
 
