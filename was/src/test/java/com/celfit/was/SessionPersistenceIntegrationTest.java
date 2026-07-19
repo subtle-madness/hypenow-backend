@@ -43,6 +43,7 @@ class SessionPersistenceIntegrationTest extends IntegrationTest {
 		// 로그인 월(07-17) — 레거시 /api/auth는 잠겨 v1으로 가입(코드 개통 선행). 가입 자동 로그인
 		// 세션이 하나 더 생기므로 아래 DB 조회는 이메일이 아니라 로그인 쿠키의 session_id로 짚는다.
 		V1AuthTestSteps.enableSignupCode(jdbcClient);
+		V1AuthTestSteps.markEmailVerified(jdbcClient, EMAIL);
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(V1AuthTestSteps.signupBody(EMAIL)))

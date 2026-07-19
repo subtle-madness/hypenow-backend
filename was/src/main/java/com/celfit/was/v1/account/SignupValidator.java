@@ -24,9 +24,7 @@ public class SignupValidator {
 	private static final Set<String> JOB_TITLES = Set.of("representative", "executive", "team_lead", "staff", "other");
 
 	public void validate(SignupRequest request) {
-		if (request.email() == null || !EMAIL_PATTERN.matcher(request.email()).matches()) {
-			throw V1ApiException.validation("올바른 이메일 형식을 입력해 주세요.");
-		}
+		requireEmail(request.email());
 		validatePassword(request.password());
 		requireText(request.name(), "이름을 입력해 주세요.");
 		requireIn(USER_TYPES, request.userType(), "userType");
@@ -40,6 +38,13 @@ public class SignupValidator {
 		if (!Boolean.TRUE.equals(request.agreedTerms()) || !Boolean.TRUE.equals(request.agreedPrivacy())
 				|| !Boolean.TRUE.equals(request.agreedAge14())) {
 			throw V1ApiException.validation("필수 약관에 모두 동의해 주세요.");
+		}
+	}
+
+	/** 이메일 인증 발송(send) 재사용 — 가입과 동일한 형식 검사. */
+	public void requireEmail(String email) {
+		if (email == null || !EMAIL_PATTERN.matcher(email).matches()) {
+			throw V1ApiException.validation("올바른 이메일 형식을 입력해 주세요.");
 		}
 	}
 

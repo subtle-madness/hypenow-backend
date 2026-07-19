@@ -34,7 +34,7 @@ class SavedApiIntegrationTest extends IntegrationTest {
 
 	/** 가입(자동 로그인)으로 세션 쿠키를 얻는다 — 레거시 /api/auth는 월에 잠겨 v1 스텝을 쓴다. */
 	private Cookie signUpAndLogIn(String email) throws Exception {
-		return V1AuthTestSteps.signUp(mockMvc, email);
+		return V1AuthTestSteps.signUp(mockMvc, jdbcClient, email);
 	}
 
 	@Test

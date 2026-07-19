@@ -77,6 +77,7 @@ class LoginWallIntegrationTest extends IntegrationTest {
 	@Test
 	void 로그인한_세션은_월을_통과한다() throws Exception {
 		jdbcClient.sql("UPDATE app.app_setting SET value = 'WALL-TEST' WHERE key = 'signup.code'").update();
+		V1AuthTestSteps.markEmailVerified(jdbcClient, "wall@example.com");
 		try {
 			MvcResult signup = mockMvc.perform(post("/v1/auth/signup").with(csrf())
 							.contentType(MediaType.APPLICATION_JSON).content(SIGNUP_BODY))

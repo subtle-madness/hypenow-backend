@@ -85,8 +85,9 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
   P2에서 memo 추가 V4) / `spring_session`·`spring_session_attributes`(P2 Spring Session JDBC 세션 영속화 V2,
   `initialize-schema=never`로 Flyway가 유일 DDL 원천) / `gate_events`(P2 게이트/잠금 측정 이벤트 V5 —
   user_id nullable 익명 허용·payload jsonb·append-only) / `app_setting`(V6 — was 런타임 설정 key-value,
-  첫 키 `signup.code` 가입 코드, 빈 값=가입 차단 fail-closed). handle·short_code는 분석 결과 **논리 참조만**
-  (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V6).
+  첫 키 `signup.code` 가입 코드, 빈 값=가입 차단 fail-closed) / `email_verifications`(V7 — 이메일 소유권
+  인증 코드 해시·만료·시도·verified 상태, 이메일당 1행·가입 성공 시 소비). handle·short_code는 분석 결과
+  **논리 참조만** (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V7).
 
 ## 4. 관통하는 설계 원칙
 
@@ -209,7 +210,7 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 | H | 랭킹 목록 API | `GET /api/contents` — 프론트 URL 파라미터 계약(start_date·end_date·main/mid/sub_category·content_type·follower·ad_type·distributor·sort·q) 그대로. 기간=게시일 필터, 지표=end_date 시점 스냅샷, 분석 완료 콘텐츠만, 기본 정렬 hype. 유통사 필터는 컬럼 신설(VLM 개통) 전까지 매칭 0 | D3(as-of 규칙 공유), B3(카테고리·광고·유통사 어휘) | ✅ |
 | E | 인플루언서 API | `GET /api/influencers/{handle}` — profile(accounts 조합) + report(AccountReport 결정 지표: stats·trend·chart·contentMix·ads·activity). 표현 조립(경과일·isActive 14일·lastAdNote·strip)은 was 몫. **C2 카피 조립 완료** — account_analyses 최신 1행의 카피 7종을 additive 서빙(이력 없으면 null) | C1, C2 | ✅ |
 | B4 | 캡션 분류·숙성 가드 | 속성 분석을 캡션 주·썸네일 보조로 전환(5종: 광고·카테고리·브랜드·제품·유통사, `detected_products` 신설) + 어휘 DB화(V30 `beauty_taxonomy`) + 분석 대상 "게시 후 3일" 가드 | B3 | ✅ |
-| G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일+비밀번호 로그인(Spring Security 세션 쿠키·CSRF — 이메일 **소유권 인증**(스펙 6.17)은 [TBD] 미구현, 발송·검증 엔드포인트·verified 컬럼 없음) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
+| G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일+비밀번호 로그인(Spring Security 세션 쿠키·CSRF) + 이메일 소유권 인증(6.17 — V7 `email_verifications`·send/confirm·가입 전 강제, 07-19 구현: [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md)) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
 | I | analytics 어드민 | analytics 상주 서버화(8082) + `/ui` 잡 트리거 4종(미러·LLM 3종, 잡별 락)·LLM 예상 비용 카드·로그 패널(LogBuffer 복제) + 스케줄러 골격(`analytics.schedule.enabled`, 기본 off). cloud push는 one-shot CLI 보존 — [specs/2026-07-17-analytics-admin-ui-design.md](docs/superpowers/specs/2026-07-17-analytics-admin-ui-design.md) | A | ✅ |
 | A2 | 뷰 신 스키마 재구축 | 분석 뷰 00~20을 신 crawler 스키마(V15 인플루언서 개편) 기준 재구축 — base 소스 교체(raw_media_page clips·SELF_GQL 내장 타임라인), 뷰티 인플루언서 모수 필터, 04 LLM 후보 뷰 신설, 하니스 신 스키마 시드 재작성. 07-18 구현 완료 | [PR #30](https://github.com/subtle-madness/hypenow-backend/pull/30) 머지 | ✅ |
 | L | LLM Gemini 전환 | 전 분석 축(판정·속성+종합 통합 1콜·카피)을 `gemini-3.1-flash-lite`로 — 프로바이더 선택 `analytics.llm-provider`(기본 gemini, anthropic 롤백), 무료 키 페이싱(15RPM, 일 예산은 batch-limit) + 한도 소진 시 배치 이월, 문구 절제 규칙(LlmGuard). 크롤러 판정은 `crawler.beauty.judge`(기본 gemini, 팀 프롬프트·파서 재사용). 백필은 유료 키 Batch one-shot(submit/collect) — [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) | F, B4, C2 | ✅ (백필 실행은 GEMINI_API_KEY_PAID 등록 대기) |
@@ -254,6 +255,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백 + 기동 로그, connect 5s/read 10s 타임아웃), 서버 상태 방식(V7 `email_verifications`, verified 30분·가입 성공 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(429→가입 코드→필드→이메일 인증→409). 운영 개통은 Resend 도메인 인증(DNS SPF/DKIM) + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전 배포 시 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md) |
 | 2026-07-19 | **운영 서버에 raw DB 상주 컨테이너 신설 + e2e 실데이터 이전** — 오라클 운영 compose에 `postgres-raw`(crawler DB, 루프백 5433, 계정 .env `RAW_DB_*`) 추가. 07-17 일회성 LLM 실행(e2e-*)에 올라가 있던 raw 실데이터 2.4GB(콘텐츠 27,093·인플루언서 12,837)를 postgres-raw로, 분석 결과 public 스키마(계정 12,638·콘텐츠 16,686·LLM 분석 account 77/content 88·landing_stats)를 운영 analysis DB로 이전(구 114건 미러 대체, `app` 스키마·세션은 보존 — e2e의 검증용 유저 3건은 미이관). 운영 /v1/contents 실데이터 응답 검증 완료. was의 raw 접근 금지 규율은 유지(같은 compose 네트워크지만 접속 정보 미주입). 미결: backup.sh는 analysis만 백업(raw 백업 여부), e2e-* 컨테이너 정리 | deploy/compose.yaml |
 | 2026-07-18 | **LLM 스택 Gemini 3.1 Flash-Lite 전환 (태스크 L)** — 골드셋 40건 실측(Opus 기준 mainCategory 90%·adType 98%·subCat Jaccard 0.62·브랜드 88%, Haiku 4.5보다 우수·5.5배 저렴)으로 전 분석 축 통일. ②속성+③종합은 통합 1콜(`ContentInsightPort` — Anthropic은 기존 어댑터 2콜 컴포지트로 보존해 app_setting `analytics.llm-provider` 롤백 경로), 문구 프롬프트에 절제 규칙(`LlmGuard` — 표본 3건 미만 단정 금지·조언 금지·수치 인용, 골드셋 문구 검증 통과본) 필수. 이원 운영: 일상=무료 키(`GEMINI_API_KEY`) 동기+RPM 페이싱, 429/일한도 소진은 에러 아닌 배치 이월 / 백필 2만 건=유료 키(`GEMINI_API_KEY_PAID`) Batch one-shot(`analytics.backfill-submit`→`-collect`, ~$9). ①판정은 크롤러 BeautyJudge 포트 뒤 Gemini 어댑터(팀 프롬프트·파서 재사용, `crawler.beauty.judge` 기본 gemini). 댓글 분류는 MVP 휴면이라 Anthropic 유지. 구모델(2.5)은 신규 API 키에서 404 — 3.1이 유일 선택지 | [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) |
 | 2026-07-18 | **설계-구현 전수 감사 + 문서 드리프트 정비** — 백엔드·프론트 specs 35건 전수 대조 결과 백엔드는 무동작 스텁 0건·트랙 표와 실체 일치. 정비: §5 G 표현 명확화(이메일 **소유권 인증**(6.17)은 [TBD] 미구현 — G의 "이메일 인증"은 이메일+비밀번호 로그인 의미), 대체·현행과 어긋난 spec 7건 상태 헤더 갱신(detail-source-selector 🗄 등), `/coverage` 진입점 제거로 고아가 된 `PostDemoRepository.analyzedPosts()` 죽은 쿼리 삭제(`/posts/{shortCode}` 페이지 자체는 URL 직접 접근으로 잔존). 주요 잔여 갭은 프론트 측: 마스터 비밀번호 백도어(celfit-front core.ts — 제거 대기), 이메일 인증 실구현(설계 착수), REST 배선(PR #18 draft) | 감사 세션 리포트 |
