@@ -84,10 +84,13 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
   PK, status 어휘 reviewing·contact_planned·collaborating + memo) / `saved_contents`(user_id+short_code PK,
   P2에서 memo 추가 V4) / `spring_session`·`spring_session_attributes`(P2 Spring Session JDBC 세션 영속화 V2,
   `initialize-schema=never`로 Flyway가 유일 DDL 원천) / `gate_events`(P2 게이트/잠금 측정 이벤트 V5 —
-  user_id nullable 익명 허용·payload jsonb·append-only) / `app_setting`(V6 — was 런타임 설정 key-value,
-  첫 키 `signup.code` 가입 코드, 빈 값=가입 차단 fail-closed) / `email_verifications`(V7 — 이메일 소유권
-  인증 코드 해시·만료·시도·verified 상태, 이메일당 1행·가입 성공 시 소비). handle·short_code는 분석 결과
-  **논리 참조만** (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V7).
+  user_id nullable 익명 허용·payload jsonb·append-only) / `app_setting`(V6 — was 런타임 설정 key-value.
+  `signup.code` 단일 공용 가입 코드는 V8로 폐기 — 행은 무해하게 잔존) / `email_verifications`(V7 — 이메일 소유권
+  인증 코드 해시·만료·시도·verified 상태, 이메일당 1행·가입 성공 시 소비) / `signup_codes`(V8 — 클로즈베타
+  배치 1회용 가입 코드, 채널별 발급·가입 트랜잭션 원자 선점, 소진 정본은 used_at·used_by는 ON DELETE SET NULL,
+  빈 테이블=가입 차단 fail-closed) / `inquiries`(V10 — 도입문의, uuid PK로 순번 노출 회피). users는 V9 가입
+  경량화 — 선택 필드(signup_route~job_title) NULL 허용 + `usage_purpose` 추가. handle·short_code는 분석 결과
+  **논리 참조만** (FK·조인 금지 §4-4), Flyway 이력은 `app.flyway_schema_history`(was 소유, V1~V10).
 
 ## 4. 관통하는 설계 원칙
 
@@ -225,6 +228,14 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 기존 `/api/*`는 프론트 전환 완료까지 병존, fit(스펙 6.18)은 보류.
 
+**클로즈베타 전환 트랙** (2026-07-19 프론트 요청서 — 초대코드 가입 전용 + 도입문의 접수):
+
+| # | 태스크 | 내용 | 의존 | 상태 |
+|---|---|---|---|---|
+| CB1 | 배치 1회용 가입 코드 | V8 `signup_codes`(채널별 발급) + 가입 트랜잭션 원자 선점(SignupService) + `POST /v1/auth/signup-code/verify`(관문 사전 검증) + 단일 공용 코드(app_setting) 즉시 폐기 + 코드 생성 스크립트(deploy/scripts) | — | ✅ ([PR #53](https://github.com/subtle-madness/hypenow-backend/pull/53) 머지 대기) |
+| CB2 | 가입 필드 경량화 | V9 — 선택 필드 6종 NULL 허용·기본값 제거 + `usage_purpose`(대행사) + validator optionalIn. **머지·배포 후 프론트 호환 모드 기본값 제거 통지 필수** | CB1(스택) | ✅ ([PR #54](https://github.com/subtle-madness/hypenow-backend/pull/54) 머지 대기) |
+| CB3 | 도입문의 API | V10 `inquiries`(uuid PK) + `POST /v1/inquiries`(Public, IP 분당 2회) — 운영자 확인은 DB 조회, Resend 알림은 후속 옵션 | CB2(스택 — V 번호 순서) | ✅ ([PR #56](https://github.com/subtle-madness/hypenow-backend/pull/56) 머지 대기) |
+
 두 트랙 전 태스크 완료(07-17). 남은 작업은 §8 미결과 프론트 REST 전환 연동(celfit-front은 아직
 Drizzle/메모리 모드 — seam만 준비됨).
 
@@ -255,6 +266,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **클로즈베타 전환(초대코드 가입 전용)** — 단일 공용 코드를 배치 1회용 코드(V8 `signup_codes`)로 **즉시 전환**(병행 없음 — 검증 로직 두 벌 유지가 더 위험, 기존 코드를 넣으면 1회용으로 의미가 바뀜). 소진 정본은 `used_at`(used_by는 ON DELETE SET NULL — 탈퇴해도 소진 유지), 선점은 가입 INSERT와 **한 트랜잭션의 조건부 UPDATE**(동시 가입 레이스 1명만 통과, 409 실패 시 미소진 롤백). 관문 UX용 사전 검증 `POST /v1/auth/signup-code/verify`는 소진하지 않음(TOCTOU는 가입 재검증이 흡수). 가입 필드 경량화(V9 — 필수는 이메일·비밀번호·이름·userType·companyName·약관 3종, 값 있으면 어휘 검사 유지). 도입문의 V10 `inquiries`는 **uuid PK**(공개 응답 순번 노출 회피), 레이트리밋은 시간 윈도우 확장 없이 분당 2회로 갈음. ⚠️ 배포 순서: 코드 배치 적재 → 프론트 env 코드 교체·호환 모드 기본값 제거 통지 | [PR #53](https://github.com/subtle-madness/hypenow-backend/pull/53)·[#54](https://github.com/subtle-madness/hypenow-backend/pull/54)·[#56](https://github.com/subtle-madness/hypenow-backend/pull/56) (스택, 순서대로 머지) |
 | 2026-07-19 | **어드민 대시보드 재설계 (태스크 I 개편)** — 운영 첫날 피드백(단계 추적 불가·비용 카드 무의미·자동/수동 구분 불가)으로 관측 대시보드 전환. 잡→ProgressReporter(analyze 경계 인터페이스)→JobProgressRegistry 진행률, RunHistory 인메모리 피드(이력 DB 없음 유지), PipelineStatsService(빠른 동기+무거운 비동기 30분 캐시), ScheduleInfo(크론 다음 발화 — base는 시스템 존, @Scheduled 해석과 정합·표시만 KST). JobCostEstimator 삭제. 리뷰에서 '다음 예정' 9시간 존 오차 잡아 수정 | [specs/2026-07-19-analytics-dashboard-design.md](docs/superpowers/specs/2026-07-19-analytics-dashboard-design.md) |
 | 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백 + 기동 로그, connect 5s/read 10s 타임아웃), 서버 상태 방식(V7 `email_verifications`, verified 30분·가입 성공 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(429→가입 코드→필드→이메일 인증→409). 운영 개통은 Resend 도메인 인증(DNS SPF/DKIM) + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전 배포 시 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md) |
 | 2026-07-19 | **운영 서버에 raw DB 상주 컨테이너 신설 + e2e 실데이터 이전** — 오라클 운영 compose에 `postgres-raw`(crawler DB, 루프백 5433, 계정 .env `RAW_DB_*`) 추가. 07-17 일회성 LLM 실행(e2e-*)에 올라가 있던 raw 실데이터 2.4GB(콘텐츠 27,093·인플루언서 12,837)를 postgres-raw로, 분석 결과 public 스키마(계정 12,638·콘텐츠 16,686·LLM 분석 account 77/content 88·landing_stats)를 운영 analysis DB로 이전(구 114건 미러 대체, `app` 스키마·세션은 보존 — e2e의 검증용 유저 3건은 미이관). 운영 /v1/contents 실데이터 응답 검증 완료. was의 raw 접근 금지 규율은 유지(같은 compose 네트워크지만 접속 정보 미주입). 미결: backup.sh는 analysis만 백업(raw 백업 여부), e2e-* 컨테이너 정리 | deploy/compose.yaml |
