@@ -55,7 +55,7 @@
 | was | 2.5g | 힙 2g 고정(유휴 회수 방어) — 현행 |
 | crawler | 1.5g | 힙 1g 내외, APIFY_TOKEN·Hiker 키는 서버 `.env` |
 | analytics | 1g | 힙 768m — 현행 |
-| postgres | 1g | shared_buffers 256MB로 상향(서빙 안정) |
+| postgres | (제한 없음 — 현행 유지) | **analysis DB 컨테이너는 무변경·무재시작** (사용자 방침, 07-19). 메모리 제한·튜닝은 추후 별도 승인 시 |
 | postgres-raw | 2g | shared_buffers 1GB(배치 읽기) |
 | caddy | 128m | — |
 | 합계 | ~8GB + OS ~1GB | 12GB 내 여유 ~3GB |

@@ -116,12 +116,10 @@ git commit -m "feat(deploy): crawler 상주 컨테이너 — Dockerfile·compose
 
 - [ ] **Step 1: 각 서비스에 mem_limit 추가 + postgres 튜닝**
 
-각 서비스 블록에 `mem_limit` 한 줄씩 (restart: 아래 위치):
+각 서비스 블록에 `mem_limit` 한 줄씩 (restart: 아래 위치).
+**`postgres`(analysis)는 제외 — 사용자 방침(analysis DB 무변경·무재시작). 해당 컨테이너는 compose 설정을 일절 바꾸지 않아 `up -d`에서 재생성되지 않는다.**
 
 ```yaml
-  postgres:      # 기존 블록에 추가
-    mem_limit: 1g
-    command: postgres -c shared_buffers=256MB
   postgres-raw:  # 기존 블록에 추가
     mem_limit: 2g
     command: postgres -c shared_buffers=1GB
@@ -135,12 +133,12 @@ git commit -m "feat(deploy): crawler 상주 컨테이너 — Dockerfile·compose
     mem_limit: 128m
 ```
 
-주의: `command`는 새 키 — postgres 서비스에 기존 command가 없음을 확인하고 추가.
+주의: `command`는 새 키 — postgres-raw 서비스에 기존 command가 없음을 확인하고 추가.
 
 - [ ] **Step 2: 검증**
 
 Run: `cd deploy && docker compose --env-file .env.example config | grep -E "mem_limit|shared_buffers"`
-Expected: 서비스 6개의 mem_limit 6줄 + shared_buffers 2줄
+Expected: 서비스 5개의 mem_limit 5줄 + shared_buffers 1줄 (postgres(analysis)는 없음)
 
 - [ ] **Step 3: Commit**
 
@@ -395,7 +393,7 @@ git commit -m "docs: 크롤러 클라우드 합류 반영 — §2 구조·§7 �
   - 사용자: 맥에서 `brew install rclone && rclone config`(gdrive OAuth — 브라우저 승인)
   - 실행: `scp ~/.config/rclone/rclone.conf ubuntu@<IP>:~/.config/rclone/` → 서버에서 `rclone mkdir gdrive:hypenow-backups`
   - 검증: 서버 `~/deploy/scripts/backup.sh` 수동 1회 → 출력에 `Drive 업로드 완료` + `rclone lsl gdrive:hypenow-backups` 에 오늘 덤프
-- [ ] **Step 1: 배포 정본 반영 + 메모리 제한 적용** — `rsync -av deploy/ ubuntu@<IP>:~/deploy/` 후 서버 `docker compose up -d` (재생성: 전 컨테이너, 수 초 단절). 검증: `docker compose ps` 전부 Up + `curl https://api.hypenow.io/health` ok + `docker stats --no-stream`으로 상한 확인
+- [ ] **Step 1: 배포 정본 반영 + 메모리 제한 적용** — `rsync -av deploy/ ubuntu@<IP>:~/deploy/` 후 서버 `docker compose up -d` (재생성: 설정 바뀐 컨테이너만 — **postgres(analysis)는 무변경이라 재생성 없음**, was·analytics·caddy 수 초 단절). 검증: `docker compose ps` 전부 Up + postgres(analysis) 컨테이너의 Created 시각이 그대로인지 + `curl https://api.hypenow.io/health` ok + `docker stats --no-stream`으로 상한 확인
 - [ ] **Step 2: 블록 볼륨 생성·부착** (사용자 승인 후 CLI 또는 콘솔) — 100GB·AD-1·paravirtualized. 서버에서 `deploy/scripts/attach-raw-volume.sh /dev/oracleoci/oraclevdb`. 검증: `docker inspect deploy-postgres-raw-1 | grep /mnt/raw` + `df -h /mnt/raw`
 - [ ] **Step 3: crawler 첫 배포** — 맥에서 `deploy/scripts/deploy.sh ubuntu@<IP>` (3이미지). 서버 `.env`에 APIFY_TOKEN 등 반입 선행. 검증: `docker compose ps` crawler Up + 터널로 `localhost:8080/ui` 접속
 - [ ] **Step 4: raw DB 이사** — 로컬 크롤 중단 확인 → crawler 컨테이너 stop → 터널(15433) → `deploy/scripts/migrate-raw-db.sh` → 행 수 대조 전부 일치 → crawler start. 로컬 DB는 검증 완료까지 보존
