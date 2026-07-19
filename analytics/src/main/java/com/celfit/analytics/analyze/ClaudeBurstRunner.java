@@ -247,8 +247,9 @@ public class ClaudeBurstRunner {
 					continue;
 				}
 				boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
+				// 버스트는 백필 아님 — 제때 크롤된 성숙 후보(v_analysis_candidates)라 일상 잡과 동일 timely 마킹 (V33).
 				ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
-						hasCaption ? insight.attributes() : null, insight.synthesis(), true);
+						hasCaption ? insight.attributes() : null, insight.synthesis(), true, "timely");
 				contents++;
 			} catch (Exception e) {
 				failed++;
