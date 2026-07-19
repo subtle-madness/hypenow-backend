@@ -104,11 +104,12 @@ class ContentAnalysisJobTest {
 
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
+		// metric_captured_at = 게시 +3.5일 — 제때(+pin 3일 근방) 크롤돼 고정 지표가 성립한 정상 케이스
 		db.update("""
-				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, views, likes, comments) VALUES
-				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', 11000, 520, 52),
-				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', NULL, 2000, 100),
-				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', 7000, 300, 30)""");
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments) VALUES
+				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 11000, 520, 52),
+				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 12 hours', NULL, 2000, 100),
+				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 7000, 300, 30)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count) VALUES
 				  (1, 'post_a', 'aaa***', '어디서 사요?', 3),
@@ -256,12 +257,12 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 숙성_일수는_app_setting으로_조정된다() {
-		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_a'");
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-maturity-days', '0')");
+		// 픽스처 게시일은 now()-10일 — 가드를 15일로 올리면 전부 미숙성이라 대상 없음
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-maturity-days', '15')");
 
 		int processed = job.run().processed();
 
-		assertEquals(2, processed); // 가드 0일이면 post_a도 대상
+		assertEquals(0, processed);
 	}
 
 	@Test
@@ -384,6 +385,56 @@ class ContentAnalysisJobTest {
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
+	}
+
+	@Test
+	void 늦크롤_백필_게시물은_대상에서_제외된다() {
+		// 백필 MVP 제외(07-19 재정정): 판정 기준은 게시물 나이가 아니라 "제때(+3일 근방) 크롤됐는가" —
+		// 고정 지표가 업로드 +(pin 3 + slack 2)일을 넘겨 잡힌 늦크롤분은 +3일 지표가 없다 (분석 밀림은 무기한 허용)
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '20 days',
+				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 (post_a는 +11일 늦크롤)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
+	void 제때_크롤_판정_여유는_app_setting으로_조정된다() {
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '20 days',
+				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-timely-slack-days', '30')");
+
+		int processed = job.run().processed();
+
+		assertEquals(2, processed); // 여유 30일이면 +11일 크롤분도 대상
+	}
+
+	@Test
+	void 고정_지표가_미성숙_스냅샷이면_대상에서_제외된다() {
+		// 숙성(3일) 게시물이어도 성숙 스냅샷이 아직 없으면 미러 지표는 미성숙 최신 폴백 —
+		// 이대로 분석하면 덜 여문 지표로 영구 고정된다 (다음 크롤이 성숙 스냅샷을 잡으면 자연 재대상)
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '4 days',
+				  metric_captured_at = now() - interval '3 days 12 hours' WHERE short_code = 'post_a'""");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 (post_a 지표는 게시 +0.5일 시점)
+	}
+
+	@Test
+	void 지표_수집_시각_미상_게시물은_대상에서_제외된다() {
+		// metric_captured_at NULL이면 제때 크롤 여부를 판정할 수 없다 (posted_at NULL 케이스와 동일 규칙)
+		db.update("UPDATE contents SET metric_captured_at = NULL WHERE short_code = 'post_a'");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만
 	}
 
 	@Test

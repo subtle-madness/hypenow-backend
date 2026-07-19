@@ -80,6 +80,7 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 | `analytics.recent-window` | 12 | 계정 단위 지표의 최근 N개 윈도우 (§4-1) |
 | `analytics.metric-pin-days` | 3 | 서빙 지표(v_contents) 고정 시점 — 업로드 +N일 이후 가장 이른 스냅샷 |
 | `analytics.analyze-maturity-days` | 3 | LLM 후보(v_analysis_candidates) 숙성 가드 — 업로드 +N일 경과분만 |
+| `analytics.analyze-timely-slack-days` | 2 | LLM 후보 제때 크롤 판정 여유 — 고정 지표가 업로드 +(pin+N)일 안에 잡힌 것만 (늦크롤 백필 제외) |
 | `analytics.trend-threshold` | 0.15 | 계정 트렌드 up/down 판정 임계(v_account_summaries) — 이 키만 numeric |
 | `analytics.llm-model` | claude-opus-4-8 | LLM 호출 모델 (스파이크 결과로 확정) |
 | `analytics.analyze-batch-limit` | 10 | 1회 실행당 LLM 분석 콘텐츠 수 상한 (비용 가드) |

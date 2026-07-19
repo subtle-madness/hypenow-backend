@@ -53,9 +53,10 @@
         </div>
         <div class="meta">
             <!-- 후보 집계 전(-1)엔 "0일" 오독 방지를 위해 해석 문장 숨김 -->
-            <span th:unless="${funnel.candidatesPending()}">분석 커버리지 <b th:text="${funnel.coverageText()}"></b>
-                — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정,
-                전량까지 약 <span th:text="${funnel.daysToFull()}"></span>일 (무료 예산 기준)</span>
+            <!-- 후보 = 제때(+3일 근방) 크롤돼 고정 지표가 성립한 성숙분 — 백필 MVP 제외(07-19)라 '전량까지' 표현은 폐기 -->
+            <span th:unless="${funnel.candidatesPending()}">후보 커버리지 <b th:text="${funnel.coverageText()}"></b>
+                — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정
+                · 후보는 제때(+3일 근방) 크롤분 (백필 제외)</span>
             <span class="off" th:if="${funnel.candidatesPending()}">후보 집계 중 — 커버리지는 집계 후 표시</span>
             <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
         </div>
