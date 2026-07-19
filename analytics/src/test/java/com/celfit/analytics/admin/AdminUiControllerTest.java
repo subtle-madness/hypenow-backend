@@ -64,15 +64,21 @@ class AdminUiControllerTest {
 
 	@Test
 	void 퍼널은_백필_제외_가드를_수치와_창_파라미터로_노출() throws Exception {
-		// 운영 실측 규모 — 수집 2.7만 → 후보 1,862의 낙차가 가드(백필 제외) 때문임이 읽혀야 한다.
+		// 운영 실측 규모 — 수집 2.7만 → 후보 1,914의 낙차가 가드(백필 제외) 때문임이 읽혀야 한다.
+		// analyzed 431 중 timely 57 — 커버리지 분자는 timely, 가드 밖 기분석 374는 별도 표기.
 		when(stats.funnel()).thenReturn(new PipelineStatsService.Funnel(
-				27_093, 1_862, 24_113, 1_213, 16_686, 77, 1_496, 450, 2, 3, 2,
+				27_093, 1_914, 24_113, 431, 57, 16_686, 77, 1_496, 450, 5, 3, 2,
 				Instant.parse("2026-07-19T08:20:00Z")));
 		mvc.perform(get("/ui"))
 				.andExpect(status().isOk())
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("1,862")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("1,914")))
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("늦크롤 백필")))
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("24,113")))
+				// 커버리지 = timely/후보 = 57/1,914 = 3.0% (전체 431 기준 22.5%가 아니어야 한다)
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("3.0%")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("제때 분석")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("가드 밖 기분석")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("374")))
 				// 창 파라미터는 숫자가 span으로 감싸여 렌더 — "pin <span>3</span>일" 형태
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("pin <span>3</span>일")))
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("slack <span>2</span>일")))
@@ -86,7 +92,7 @@ class AdminUiControllerTest {
 	void 퍼널_집계_전엔_백필_수치_숨기고_가드_설명만() throws Exception {
 		// candidates·timelyExcluded -1(집계 중) — "-1건 제외" 오표기가 없어야 한다.
 		when(stats.funnel()).thenReturn(new PipelineStatsService.Funnel(
-				27_093, -1, -1, 1_213, 16_686, 77, 1_496, 0, 0, 3, 2, null));
+				27_093, -1, -1, 431, 57, 16_686, 77, 1_496, 0, 0, 3, 2, null));
 		mvc.perform(get("/ui"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("집계 중")))

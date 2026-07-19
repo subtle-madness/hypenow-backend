@@ -72,7 +72,7 @@ class V1MeControllerTest {
 	ProfileImageStore profileImageStore;
 
 	private static AppUserDetails principal() {
-		return new AppUserDetails(new AppUser(7L, "user@example.com", PASSWORD_HASH,
+		return new AppUserDetails(new AppUser(7L, "user@example.com", PASSWORD_HASH, "USER",
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
 	}
 
@@ -85,7 +85,7 @@ class V1MeControllerTest {
 
 	private void givenAppUser() {
 		given(userRepository.findById(7L)).willReturn(Optional.of(
-				new AppUser(7L, "user@example.com", PASSWORD_HASH, OffsetDateTime.parse("2026-06-01T00:00:00Z"))));
+				new AppUser(7L, "user@example.com", PASSWORD_HASH, "USER", OffsetDateTime.parse("2026-06-01T00:00:00Z"))));
 	}
 
 	// --- GET /v1/me (스펙 6.12) ---

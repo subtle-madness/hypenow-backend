@@ -17,9 +17,13 @@ public class PipelineStatsService {
 	private static final Logger log = LoggerFactory.getLogger(PipelineStatsService.class);
 	private static final java.time.Duration TTL = java.time.Duration.ofMinutes(30);
 
-	/** candidates·timelyExcluded가 -1이면 아직 집계 전("집계 중…" 표시). */
+	/**
+	 * candidates·timelyExcluded가 -1이면 아직 집계 전("집계 중…" 표시).
+	 * timelyAnalyzed는 metric_timeliness='timely'(V33)만 — 후보 풀의 부분집합이라 커버리지·잔여
+	 * 계산의 분자는 이것. analyzed(전체)에는 가드 도입 전 기분석분(백필·미성숙)이 섞여 있다.
+	 */
 	public record Funnel(long rawContents, long candidates, long timelyExcluded,
-			long analyzed, long served,
+			long analyzed, long timelyAnalyzed, long served,
 			long copiedAccounts, long beautyAccounts, int todayPlanned, int daysToFull,
 			int pinDays, int slackDays, Instant heavyComputedAt) {
 	}
@@ -60,14 +64,18 @@ public class PipelineStatsService {
 		refreshHeavyIfStale();
 		long rawContents = count(raw, "SELECT count(*) FROM content");
 		long analyzed = count(analysis, "SELECT count(*) FROM content_analyses");
+		long timelyAnalyzed = count(analysis,
+				"SELECT count(*) FROM content_analyses WHERE metric_timeliness = 'timely'");
 		long served = count(analysis, "SELECT count(*) FROM contents");
 		long copied = count(analysis, "SELECT count(DISTINCT handle) FROM account_analyses");
 		long beauty = count(analysis, "SELECT count(*) FROM accounts");
 		long candidates = cachedCandidates;
 		int limit = settings.analyzeBatchLimit();
-		return new Funnel(rawContents, candidates, cachedTimelyExcluded, analyzed, served, copied, beauty,
-				candidates < 0 ? 0 : todayPlanned(candidates, analyzed, limit),
-				candidates < 0 ? 0 : daysToFull(candidates, analyzed, limit),
+		// 잔여 계산의 분자는 timely만 — 가드 밖 기분석분은 후보 풀 밖이라 섞으면 잔여가 과소된다.
+		return new Funnel(rawContents, candidates, cachedTimelyExcluded, analyzed, timelyAnalyzed,
+				served, copied, beauty,
+				candidates < 0 ? 0 : todayPlanned(candidates, timelyAnalyzed, limit),
+				candidates < 0 ? 0 : daysToFull(candidates, timelyAnalyzed, limit),
 				settings.metricPinDays(), settings.analyzeTimelySlackDays(),
 				heavyComputedAt);
 	}
