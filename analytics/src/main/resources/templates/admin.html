@@ -24,10 +24,12 @@
     <section class="card funnel" th:if="${funnel != null}">
         <div class="cap">콘텐츠 파이프라인 <span class="off">— 데이터가 흐르는 단계 (잡 실행 순서 아님)</span></div>
 
+        <!-- 각 단계의 생산 주체(잡/뷰)를 라벨로 — 아래 잡 카드 3종과 수치의 대응이 읽히게 -->
         <div class="stages">
             <div class="stage">
                 <b th:text="${#numbers.formatInteger(funnel.rawContents(), 1, 'COMMA')}">0</b>
                 <span>수집</span>
+                <span class="src">crawler 적재</span>
             </div>
             <span class="arrow">→</span>
             <div class="stage">
@@ -35,16 +37,19 @@
                 <b th:unless="${funnel.candidatesPending()}"
                    th:text="${#numbers.formatInteger(funnel.candidates(), 1, 'COMMA')}">0</b>
                 <span>LLM 후보</span>
+                <span class="src">후보 뷰 가드</span>
             </div>
             <span class="arrow">→</span>
             <div class="stage">
                 <b th:text="${#numbers.formatInteger(funnel.analyzed(), 1, 'COMMA')}">0</b>
                 <span>분석 완료</span>
+                <span class="src">콘텐츠 분석 잡</span>
             </div>
             <span class="arrow">→</span>
             <div class="stage">
                 <b th:text="${#numbers.formatInteger(funnel.served(), 1, 'COMMA')}">0</b>
                 <span>서빙 미러</span>
+                <span class="src">미러 잡 — 분석 무관 전체</span>
             </div>
         </div>
 
