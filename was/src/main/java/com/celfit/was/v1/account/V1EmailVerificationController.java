@@ -40,11 +40,9 @@ public class V1EmailVerificationController {
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void send(@RequestBody SendRequest request, HttpServletRequest httpRequest) {
 		String email = request.email() == null ? "" : UserRepository.normalizeEmail(request.email());
-		// 이메일당 분당 1회(재발송 쿨다운) + IP당 분당 20회 — 익명 발송 남용 차단.
-		// 20은 주 방어선이 아니라 보조 방어선(이메일당 1회 쿨다운이 1차)이라 넉넉히 잡는다 —
-		// 사무실 공유 IP에서 여러 사람이 같은 분에 가입을 시도해도 오탐하지 않게.
+		// 이메일당 분당 1회(재발송 쿨다운) + IP당 분당 5회 — 익명 발송 남용 차단
 		if (!rateLimiter.tryAcquire("email-verify-send:" + email, 1)
-				|| !rateLimiter.tryAcquire("email-verify-send-ip:" + httpRequest.getRemoteAddr(), 20)) {
+				|| !rateLimiter.tryAcquire("email-verify-send-ip:" + httpRequest.getRemoteAddr(), 5)) {
 			throw V1ApiException.rateLimited();
 		}
 		signupValidator.requireEmail(request.email());

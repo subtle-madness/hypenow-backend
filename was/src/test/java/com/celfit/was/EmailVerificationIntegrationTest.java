@@ -10,6 +10,7 @@ import com.celfit.was.mail.MailSendException;
 import com.celfit.was.mail.MailSender;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +26,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 이메일 소유권 인증(설계 2026-07-18) 통합 테스트 — RecordingMailSender로 발송 내용을 가로채
- * 코드를 캡처한다. 레이트리밋(이메일 분당 1회)이 전역 싱글턴이라 테스트마다 고유 이메일을 쓴다.
+ * 코드를 캡처한다. 레이트리밋이 전역 싱글턴이라 테스트마다 고유 이메일을 쓰고, IP 한도(발송 분당
+ * 5회)도 클래스 전체가 공유하지 않도록 테스트 메서드마다 고유 remoteAddr을 부여한다.
  */
 @AutoConfigureMockMvc
 class EmailVerificationIntegrationTest extends IntegrationTest {
@@ -72,16 +74,27 @@ class EmailVerificationIntegrationTest extends IntegrationTest {
 	@Autowired
 	RecordingMailSender mail;
 
+	/** IP 레이트리밋(발송 분당 5회)이 싱글턴이라 테스트 메서드끼리 간섭하지 않게 메서드마다 고유 IP. */
+	private static final AtomicInteger IP_SEQUENCE = new AtomicInteger();
+
+	private String testIp;
+
 	@BeforeEach
 	void setUp() {
 		V1AuthTestSteps.enableSignupCode(jdbcClient);
 		jdbcClient.sql("DELETE FROM app.email_verifications").update();
 		mail.texts.clear();
 		mail.failNext = false;
+		int seq = IP_SEQUENCE.incrementAndGet();
+		testIp = "10.0.%d.%d".formatted(seq / 256, seq % 256);
 	}
 
 	private void send(String email, int expectedStatus) throws Exception {
 		mockMvc.perform(post("/v1/auth/email-verification/send").with(csrf())
+						.with(req -> {
+							req.setRemoteAddr(testIp);
+							return req;
+						})
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"email\":\"%s\"}".formatted(email)))
 				.andExpect(status().is(expectedStatus));
@@ -89,6 +102,10 @@ class EmailVerificationIntegrationTest extends IntegrationTest {
 
 	private void confirm(String email, String code, int expectedStatus) throws Exception {
 		mockMvc.perform(post("/v1/auth/email-verification/confirm").with(csrf())
+						.with(req -> {
+							req.setRemoteAddr(testIp);
+							return req;
+						})
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"email\":\"%s\",\"code\":\"%s\"}".formatted(email, code)))
 				.andExpect(status().is(expectedStatus));
@@ -151,6 +168,10 @@ class EmailVerificationIntegrationTest extends IntegrationTest {
 	void 발송_실패는_502_이고_행을_남기지_않는다() throws Exception {
 		mail.failNext = true;
 		mockMvc.perform(post("/v1/auth/email-verification/send").with(csrf())
+						.with(req -> {
+							req.setRemoteAddr(testIp);
+							return req;
+						})
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"email\":\"verify-fail@example.com\"}"))
 				.andExpect(status().isBadGateway())
