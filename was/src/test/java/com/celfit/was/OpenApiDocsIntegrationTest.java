@@ -1,31 +1,103 @@
 package com.celfit.was;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import jakarta.servlet.http.Cookie;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * springdoc 스모크 — /v3/api-docs가 뜨고 /v1 표면만 담기는지(paths-to-match) 확인.
+ * springdoc 스모크 + admin 게이트(설계 2026-07-19) — 스웨거 표면은 ADMIN만, 매 요청 Basic 재인증.
+ * 세션 쿠키는 무시되어야 한다(STATELESS) — 세션엔 로그인 시점 권한 스냅샷이 남아 강등이 반영 안 되기 때문.
  * 스키마 상세는 검증하지 않는다 — 정본은 프론트 API 스펙 문서, Swagger는 보조 문서.
+ * 계정은 DB 직접 시드 — 가입 API 경유는 role 승격이 어차피 수동 SQL이라 우회 이득이 없다.
  */
 @AutoConfigureMockMvc
 class OpenApiDocsIntegrationTest extends IntegrationTest {
 
+	private static final String PASSWORD = "Passw0rd!";
+	private static final String ADMIN_EMAIL = "swagger-admin@test.io";
+	private static final String USER_EMAIL = "swagger-user@test.io";
+
 	@Autowired
 	MockMvc mockMvc;
 
+	@Autowired
+	JdbcClient jdbcClient;
+
+	@Autowired
+	PasswordEncoder passwordEncoder;
+
+	@BeforeEach
+	void seedUsers() {
+		insertUser(ADMIN_EMAIL, "ADMIN");
+		insertUser(USER_EMAIL, "USER");
+	}
+
+	/** 컨테이너는 JVM 공유(IntegrationTest) — 재실행 대비 ON CONFLICT 멱등 시드. */
+	private void insertUser(String email, String role) {
+		jdbcClient.sql("""
+				INSERT INTO app.users (email, password_hash, role)
+				VALUES (:email, :hash, :role)
+				ON CONFLICT (email) DO NOTHING""")
+				.param("email", email)
+				.param("hash", passwordEncoder.encode(PASSWORD))
+				.param("role", role)
+				.update();
+	}
+
 	@Test
-	void api_docs는_v1_표면만_문서화한다() throws Exception {
+	void 익명은_401과_Basic_팝업_헤더를_받는다() throws Exception {
 		mockMvc.perform(get("/v3/api-docs"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(header().exists("WWW-Authenticate"));
+		mockMvc.perform(get("/swagger-ui/index.html"))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void 일반_USER는_403이다() throws Exception {
+		mockMvc.perform(get("/v3/api-docs").with(httpBasic(USER_EMAIL, PASSWORD)))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void ADMIN은_v1_표면만_담긴_문서를_본다() throws Exception {
+		mockMvc.perform(get("/v3/api-docs").with(httpBasic(ADMIN_EMAIL, PASSWORD)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.info.title").value("hypenow API"))
 				.andExpect(jsonPath("$.paths['/v1/contents']").exists())
 				// 구 /api 표면·내부 페이지는 paths-to-match(/v1/**) 밖 — 문서에 없어야 한다
 				.andExpect(jsonPath("$.paths['/api/contents']").doesNotExist());
+	}
+
+	@Test
+	void ADMIN_세션_쿠키만으로는_401이다() throws Exception {
+		// STATELESS 불변식 — 세션의 권한 스냅샷(로그인 시점 authorities)이 스웨거 게이트에 통하면
+		// 강등된 admin이 로그아웃 전까지 문서를 보게 된다. 세션 경로는 반드시 무시.
+		MvcResult login = mockMvc.perform(post("/v1/auth/login").with(csrf())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"email\":\"%s\",\"password\":\"%s\"}".formatted(ADMIN_EMAIL, PASSWORD)))
+				.andExpect(status().isOk())
+				.andReturn();
+		Cookie session = login.getResponse().getCookie("hypenow-session");
+		assertThat(session).isNotNull(); // 로그인 성공 확인 — null이면 아래가 NPE로 오도된다
+		mockMvc.perform(get("/v3/api-docs").cookie(session))
+				.andExpect(status().isUnauthorized())
+				.andExpect(header().exists("WWW-Authenticate"));
 	}
 }
