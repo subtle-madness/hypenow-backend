@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-18
+> 마지막 갱신: 2026-07-19
 
 ## 1. 제품 한 장 요약
 
@@ -255,6 +255,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **Swagger 운영 노출 + admin 게이트(07-17 미노출 결정 대체)** — users.role(USER/ADMIN, V8) 최소 권한 체계 도입, 스웨거 경로 전용 @Order(1) 체인(HTTP Basic 팝업·STATELESS·hasRole ADMIN, 매처는 /v3/api-docs.yaml·/swagger-ui.html 포함). AppUserDetails.role은 transient — principal 직렬화 형상 불변, 단 세션엔 토큰 authorities 스냅샷이 남아 STATELESS 근거는 "무권한"이 아닌 신선도(매 요청 Basic 재인증이 현재 DB role 반영). 운영 반영엔 admin 계정 승격(수동 SQL `UPDATE app.users SET role='ADMIN'`) 필요, prod 브루트포스 완화(caddy rate limit)는 후속 | [specs/2026-07-19-swagger-admin-gate-design.md](docs/superpowers/specs/2026-07-19-swagger-admin-gate-design.md) |
 | 2026-07-19 | **대시보드 퍼널에 백필 제외 가드 관측 반영 (PR #49 후속)** — 무거운 집계를 후보+"성숙 풀"(04 뷰 자격에서 제때 크롤 가드만 뺀 모수) 1문장으로 확장해 가드 제외분(≈늦크롤 백필)을 수치로 노출, 가드 창 파라미터(pin·slack — app_setting 현재값)를 퍼널 meta에 표기. 수집→후보 낙차(운영 2.7만→1.9천)가 백필 MVP 제외 정책임이 화면에서 읽히게 | feat/dashboard-backfill-guard 브랜치 |
 | 2026-07-19 | **어드민 대시보드 재설계 (태스크 I 개편)** — 운영 첫날 피드백(단계 추적 불가·비용 카드 무의미·자동/수동 구분 불가)으로 관측 대시보드 전환. 잡→ProgressReporter(analyze 경계 인터페이스)→JobProgressRegistry 진행률, RunHistory 인메모리 피드(이력 DB 없음 유지), PipelineStatsService(빠른 동기+무거운 비동기 30분 캐시), ScheduleInfo(크론 다음 발화 — base는 시스템 존, @Scheduled 해석과 정합·표시만 KST). JobCostEstimator 삭제. 리뷰에서 '다음 예정' 9시간 존 오차 잡아 수정 | [specs/2026-07-19-analytics-dashboard-design.md](docs/superpowers/specs/2026-07-19-analytics-dashboard-design.md) |
 | 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백 + 기동 로그, connect 5s/read 10s 타임아웃), 서버 상태 방식(V7 `email_verifications`, verified 30분·가입 성공 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(429→가입 코드→필드→이메일 인증→409). 운영 개통은 Resend 도메인 인증(DNS SPF/DKIM) + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전 배포 시 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md) |

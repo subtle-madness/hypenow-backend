@@ -1,6 +1,6 @@
 # Swagger admin 게이트 구현 계획
 
-> 상태: 🟢 활성 · 설계: [specs/2026-07-19-swagger-admin-gate-design.md](../specs/2026-07-19-swagger-admin-gate-design.md)
+> 상태: ✅ 실행됨(2026-07-19) · 설계: [specs/2026-07-19-swagger-admin-gate-design.md](../../specs/2026-07-19-swagger-admin-gate-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
