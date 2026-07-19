@@ -41,7 +41,17 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
   ./gradlew :analytics:bootRun --args='--spring.profiles.active=cloud'   # 터미널 2: Flyway+미러
 ```
 - was의 app 스키마는 was 컨테이너가 기동 시 자체 Flyway로 생성
-- LLM 배치(analyze/account-analyze)도 같은 방식으로 `--analytics.*-on-startup=true` 플래그로 실행
+- ※ 맥 one-shot 방식은 analytics 상주 컨테이너(§4-1) 도입 전 절차 — 지금은 서버 상주가 정본
+
+## 4-1. analytics 상주 (서버, 07-19~)
+- 컨테이너 `analytics`(8082, 루프백 전용): raw(postgres-raw) 읽기 → analysis(postgres) 쓰기,
+  LLM은 Gemini 무료 키 — 서버 `.env`에 `GEMINI_API_KEY` 필요 (백필 Batch는 `GEMINI_API_KEY_PAID` 별도)
+- 스케줄(compose env, KST): 미러 04:30 → 콘텐츠 분석 05:00 → 계정 카피 07:00 (백업 04:10 뒤)
+- 어드민 UI: `ssh -L 8082:localhost:8082 <host>` 후 http://localhost:8082/ui — 잡 수동 트리거·로그
+- 분석 뷰는 이미지에 없다 — 뷰 변경 시 수동 적용:
+  `cat analytics/views/*.sql | ssh <host> 'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q'`
+- LLM 예산(무료 티어 일 1,500콜)은 raw DB `app_setting`: `analytics.analyze-batch-limit`(기본 10 → 운영 450),
+  `analytics.account-analyze-batch-limit`(→150)
 
 ## 5. 배포 (코드 변경 반영)
 ```bash
