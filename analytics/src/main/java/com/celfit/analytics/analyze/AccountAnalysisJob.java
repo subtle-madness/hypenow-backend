@@ -23,8 +23,8 @@ import tools.jackson.databind.ObjectMapper;
 public class AccountAnalysisJob {
 
 	private static final Logger log = LoggerFactory.getLogger(AccountAnalysisJob.class);
-	private static final int MAX_TRAITS = 5;
-	private static final int CAPTION_CHARS = 300;
+	static final int MAX_TRAITS = 5; // ClaudeBurstRunner(구독 버스트 collect)와 공유
+	static final int CAPTION_CHARS = 300;
 
 	private final JdbcTemplate analysis;
 	private final AccountSynthesisPort port;
