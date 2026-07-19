@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-18
+> 마지막 갱신: 2026-07-19
 
 ## 1. 제품 한 장 요약
 
@@ -266,6 +266,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-19 | **usable 핀을 최근창 경로로 확장 + 광고 지표를 ad_type 정본으로 (프론트 리포트 stale 신고 후속)** — (1) PR #58의 usable 우선순위 핀이 `v_contents`(랭킹)에만 적용돼, 최근창 경로(`v_recent_content`→recentReels·`v_analysis_baseline`·`account_summaries`)는 여전히 `v_base_detail`(최신 스냅샷 승)을 써 최신 빈 타임라인 스냅샷이 릴스 조회수를 NULL로 밀어냈다(운영 리포트 recentReels·baseline 조회수 결측). 핀 로직을 공유 뷰 `v_pinned_metrics`(00_base)로 추출해 v_contents·v_recent_content가 공유 — 지표는 pin(성숙∧완비 우선)·메타는 v_base_detail(최신) 분리 유지. 실데이터에서 v_recent_content.views가 v_contents와 일치 복구, 하니스 회귀 `test/01b_recent_window_pin.test.sql`. (2) 인플루언서 리포트 광고 블록(strip·sponsoredCount·comparison·lastAdNote)이 `ad_marked`(인스타 유료파트너십 태그·릴스만)만 잡아 캡션 고지 광고를 놓쳐 brands(ad_type 기반)와 어긋났다 → was `findSeries`가 `content_analyses.ad_type='sponsored'` 조인으로 sponsored 유도, `toAds`가 광고 블록 전체를 series 기준 재계산(분석 결과끼리 조인 §4-4). **LLM 재호출 불필요**(재미러+was 배포로 반영). 동결 baseline(기분석분)은 INSERT 전용 잡이라 자가 치유 안 됨 — 백필/재분석은 별도 판단 보류 | feat/analytics-recent-window-pin 브랜치 |
 | 2026-07-19 | **릴스 지표 핀에 usable 우선순위 도입 (hype_score 결측 대량 복구)** — `v_contents` 지표 고정(pin)이 성숙 스냅샷 중 '가장 이른 것'만 골라, view 비공개(0→NULL)인 SELF_GQL 내장 타임라인 스냅샷이 clips보다 먼저 수집되면 그걸 핀했다. 릴스 hype_score는 views 없이 못 구하므로 옆에 지표 완비 clips 스냅샷이 있어도 점수가 NULL이 됨(운영 릴스 결측 1,720건 중 1,567건이 이 경로). 핀 우선순위에 `usable`(릴스=views·likes·comments, 피드=likes·comments 완비)을 추가: 성숙∧완비 → 완비 최신 → 성숙 최이른 → 최신. 완비 스냅샷이 없으면 구 폴백 그대로라 원천 결측(피드 좋아요 비공개 등)은 NULL 유지·회귀 없음. 서버 실데이터 BEGIN/ROLLBACK 검증: 릴스 결측 1,720→153, 피드 3,567→3,558(부수 9), 전체 5,287→3,711. `test/02b_reels_pin.test.sql`로 회귀 고정 | [PR #58](https://github.com/subtle-madness/hypenow-backend/pull/58) |
 | 2026-07-19 | **클로즈베타 전환(초대코드 가입 전용)** — 단일 공용 코드를 배치 1회용 코드(V8 `signup_codes`)로 **즉시 전환**(병행 없음 — 검증 로직 두 벌 유지가 더 위험, 기존 코드를 넣으면 1회용으로 의미가 바뀜). 소진 정본은 `used_at`(used_by는 ON DELETE SET NULL — 탈퇴해도 소진 유지), 선점은 가입 INSERT와 **한 트랜잭션의 조건부 UPDATE**(동시 가입 레이스 1명만 통과, 409 실패 시 미소진 롤백). 관문 UX용 사전 검증 `POST /v1/auth/signup-code/verify`는 소진하지 않음(TOCTOU는 가입 재검증이 흡수). 가입 필드 경량화(V9 — 필수는 이메일·비밀번호·이름·userType·companyName·약관 3종, 값 있으면 어휘 검사 유지). 도입문의 V10 `inquiries`는 **uuid PK**(공개 응답 순번 노출 회피), 레이트리밋은 시간 윈도우 확장 없이 분당 2회로 갈음. ⚠️ 배포 순서: 코드 배치 적재 → 프론트 env 코드 교체·호환 모드 기본값 제거 통지 | [PR #53](https://github.com/subtle-madness/hypenow-backend/pull/53)·[#54](https://github.com/subtle-madness/hypenow-backend/pull/54)·[#56](https://github.com/subtle-madness/hypenow-backend/pull/56) (스택, 순서대로 머지) |
 | 2026-07-19 | **가드 이전 기분석분은 삭제 대신 마킹 (`metric_timeliness` V33)** — 가드(PR #49) 도입 전 분석된 431건 중 374건이 현 기준 후보 밖(늦크롤 백필 345·미성숙 폴백 29)으로 실측됨. 데이터 보존을 위해 삭제하지 않고 `content_analyses.metric_timeliness`(timely/late_backfill/immature)로 마킹: 데일리 잡은 timely 스탬프(후보 뷰 가드가 보장), 유료 Batch 백필은 late_backfill, 기존 행은 운영 1회성 UPDATE(raw 대조)로 분류. 대시보드 커버리지·잔여 계산 분자를 timely로 정정(전체 431 기준은 과대). **서빙(랭킹) 노출 정책은 미결** — 랭킹은 "분석 완료만" 노출이라 백필 기분석분의 지표 비교 편향(늦은 시점 상향)이 남아 있음 | feat/analysis-timeliness-marking 브랜치 |
