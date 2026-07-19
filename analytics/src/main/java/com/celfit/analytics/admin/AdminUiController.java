@@ -48,7 +48,7 @@ public class AdminUiController {
 
 	/** 퍼널 카드 뷰모델 — 커버리지·비율·집계 시각을 미리 계산해 템플릿을 단순화. */
 	public record FunnelView(long rawContents, long candidates, long timelyExcluded,
-			long analyzed, long served,
+			long analyzed, long timelyAnalyzed, long guardOutsideAnalyzed, long served,
 			long copiedAccounts, long beautyAccounts, boolean candidatesPending,
 			String coverageText, int coveragePercent, int todayPlanned, int daysToFull,
 			int pinDays, int slackDays, int pinPlusSlackDays,
@@ -155,16 +155,17 @@ public class AdminUiController {
 	private FunnelView funnelView() {
 		PipelineStatsService.Funnel f = stats.funnel();
 		boolean pending = f.candidates() < 0;
+		// 커버리지 분자는 timely 분석분만(V33) — 가드 밖 기분석은 후보 풀 밖이라 섞으면 과대 표시.
 		int coveragePercent = f.candidates() > 0
-				? (int) Math.min(100L, f.analyzed() * 100L / f.candidates()) : 0;
+				? (int) Math.min(100L, f.timelyAnalyzed() * 100L / f.candidates()) : 0;
 		String coverageText = f.candidates() > 0
-				? String.format(Locale.ROOT, "%.1f%%", f.analyzed() * 100.0 / f.candidates()) : "—";
+				? String.format(Locale.ROOT, "%.1f%%", f.timelyAnalyzed() * 100.0 / f.candidates()) : "—";
 		int accountPercent = f.beautyAccounts() > 0
 				? (int) Math.min(100L, f.copiedAccounts() * 100L / f.beautyAccounts()) : 0;
 		String computedText = f.heavyComputedAt() == null
 				? null : HHMM.format(f.heavyComputedAt().atZone(KST));
 		return new FunnelView(f.rawContents(), f.candidates(), f.timelyExcluded(),
-				f.analyzed(), f.served(),
+				f.analyzed(), f.timelyAnalyzed(), f.analyzed() - f.timelyAnalyzed(), f.served(),
 				f.copiedAccounts(), f.beautyAccounts(), pending, coverageText, coveragePercent,
 				f.todayPlanned(), f.daysToFull(),
 				f.pinDays(), f.slackDays(), f.pinDays() + f.slackDays(),
