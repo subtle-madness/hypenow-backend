@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<meta http-equiv="refresh" content="60">
-	<title>content-ranking 커버리지 추적</title>
+	<title>celfit-front 커버리지 추적</title>
 	<style>
 		:root {
 			--accent: #4f46e5;
@@ -86,9 +86,9 @@
 </head>
 <body>
 <div class="container">
-	<h1>content-ranking 커버리지 추적</h1>
+	<h1>celfit-front 커버리지 추적</h1>
 	<p class="sub">
-		프론트 랭킹 카드가 요구하는 필드별 analysis DB 미러 채움율 · 60초마다 자동 갱신
+		celfit-front가 실제 소비하는 /v1 필드별 analysis DB 채움율 · 60초마다 자동 갱신
 		<span th:if="${queriedAt != null}"
 			  th:text="'· 조회 ' + ${#temporals.format(queriedAt, 'yyyy-MM-dd HH:mm:ss')}"></span>
 	</p>
@@ -144,38 +144,6 @@
 					<td class="mono" th:text="${row.source}">-</td>
 					<td class="num" th:text="${row.filled}">-</td>
 					<td><span class="pill" th:classappend="${row.grade}" th:text="${row.status}">-</span></td>
-				</tr>
-				</tbody>
-			</table>
-		</div>
-	</div>
-
-	<div class="card" style="margin-top:24px;">
-		<h2>게시물 상세 데모 — 분석 완료 게시물</h2>
-		<div class="table-wrap">
-			<table>
-				<thead>
-				<tr>
-					<th>게시물</th>
-					<th>계정</th>
-					<th>카테고리</th>
-					<th>광고 구분</th>
-					<th class="num">분류 댓글</th>
-					<th>분석일</th>
-				</tr>
-				</thead>
-				<tbody>
-				<tr th:if="${#lists.isEmpty(analyzedPosts)}" class="empty-row">
-					<td colspan="6">분석된 게시물 없음 — analyze 배치를 실행하세요</td>
-				</tr>
-				<tr th:each="p : ${analyzedPosts}">
-					<td class="mono"><a th:href="'/posts/' + ${p['short_code']}" th:text="${p['short_code']}"
-						style="color:var(--accent); text-decoration:none;"></a></td>
-					<td th:text="'@' + ${p['account_handle']}"></td>
-					<td th:text="${p['main_category']} ?: '—'"></td>
-					<td th:text="${p['ad_type'] != null} ? (${p['ad_type'] == 'sponsored'} ? '광고/협찬' : '오가닉') : '—'"></td>
-					<td class="num" th:text="${p['classified']}"></td>
-					<td class="num" th:text="${p['analyzed_on']}"></td>
 				</tr>
 				</tbody>
 			</table>

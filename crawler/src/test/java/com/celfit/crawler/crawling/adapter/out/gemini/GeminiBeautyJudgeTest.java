@@ -1,0 +1,52 @@
+package com.celfit.crawler.crawling.adapter.out.gemini;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.celfit.crawler.crawling.adapter.out.claude.ClaudeCliBeautyJudge;
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.BeautyJudge.ProfileCard;
+import com.celfit.crawler.crawling.application.port.out.BeautyJudge.Verdict;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/** Gemini 판정 전송층: 팀 프롬프트 재사용 + responseSchema 배열 출력 + 팀 파서로 매핑. */
+class GeminiBeautyJudgeTest {
+
+    ObjectMapper om = new ObjectMapper();
+
+    @Test
+    void 요청_본문에_팀_프롬프트와_배열_스키마가_실린다() {
+        String prompt = ClaudeCliBeautyJudge.buildPrompt(om,
+                List.of(new ProfileCard("user1", "이름", "카테고리", "바이오", List.of("캡션1"))));
+        String body = GeminiBeautyJudge.requestBody(om, prompt);
+        JsonNode root = om.readTree(body);
+        String text = root.path("contents").get(0).path("parts").get(0).path("text").asString();
+        assertTrue(text.contains("INFLUENCER"));
+        assertTrue(text.contains("user1"));
+        JsonNode gen = root.path("generationConfig");
+        assertEquals("array", gen.path("responseSchema").path("type").asString());
+        assertEquals("application/json", gen.path("responseMimeType").asString());
+        assertEquals(0, gen.path("temperature").asInt());
+    }
+
+    @Test
+    void 응답_텍스트를_팀_파서로_판정에_매핑한다() {
+        String response = """
+                {"candidates":[{"content":{"parts":[{"text":
+                "[{\\"username\\":\\"user1\\",\\"class\\":\\"COMPANY\\",\\"reason\\":\\"쇼핑몰\\"}]"}]}}]}""";
+        String text = GeminiBeautyJudge.extractText(om, response);
+        List<Verdict> verdicts = ClaudeCliBeautyJudge.parse(om, text);
+        assertEquals(1, verdicts.size());
+        assertTrue(verdicts.get(0).beauty());
+        assertTrue(verdicts.get(0).company());
+    }
+
+    @Test
+    void 본문_없는_응답은_ApifyException으로_배치_실패_계약을_지킨다() {
+        assertThrows(ApifyException.class, () -> GeminiBeautyJudge.extractText(om, "{}"));
+    }
+}

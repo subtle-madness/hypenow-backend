@@ -26,11 +26,13 @@ public class FlywayConfig {
 				.baselineOnMigrate(true)
 				.baselineVersion("0");
 		// 공유 dev DB에 병행 브랜치(다른 워크트리)가 적용한 마이그레이션은 이 브랜치엔 파일이 없어
-		// "applied not resolved locally"로 기동이 막힌다 — missing만 검증 완화(적용 스킵 아님).
+		// "applied not resolved locally"로 기동이 막힌다 — missing·future만 검증 완화(적용 스킵 아님).
+		// future 포함 이유: ignoreMigrationPatterns는 Flyway 기본값(*:future)을 대체하므로 missing만 주면
+		// 병행 브랜치의 더 높은 번호(V32 등)가 future로 걸려 기동 불가 — 완화 의도와 어긋난다.
 		// §4-5 번호대 예약 컨벤션과 한 쌍. 공유 dev DB 한정 양보 —
 		// 클라우드 타깃(application-cloud.yml)은 false로 엄격 검증한다 (ARCHITECTURE §8 해소).
 		if (ignoreMissing) {
-			configuration.ignoreMigrationPatterns("*:missing");
+			configuration.ignoreMigrationPatterns("*:missing", "*:future");
 		}
 		return configuration.load();
 	}

@@ -1,74 +1,87 @@
--- base 뷰 기대값. 시드 근거:
---   dummy_a 프로필 최신 followers=5500 (06-01 5000 → 06-05 5500)
---   9101 최신 상세 likes=520, views=11000 (06-04 스냅샷은 구버전)
---   9102 views=7000 (videoPlayCount 없음 → videoViewCount 폴백)
---   9103 피드 → views NULL
---   9101 댓글 3건, like_count = {7, NULL, 2}
+-- base 뷰 기대값. 시드 근거: seed/dummy.sql 시나리오 주석.
 DO $$
 BEGIN
-  -- v_base_profile: 계정별 1행, 최신 스냅샷 선택
-  ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 2,
-    'v_base_profile dummy rows != 2';
+  -- v_base_influencer: 판정 컬럼 노출
+  ASSERT (SELECT count(*) FROM analytics.v_base_influencer WHERE username LIKE 'dummy_%') = 5,
+    'v_base_influencer dummy rows != 5';
+  ASSERT (SELECT beauty FROM analytics.v_base_influencer WHERE username = 'dummy_a') = true,
+    'v_base_influencer dummy_a beauty != true';
+  ASSERT (SELECT beauty_company FROM analytics.v_base_influencer WHERE username = 'dummy_co') = true,
+    'v_base_influencer dummy_co beauty_company != true';
+
+  -- v_base_profile: 계정별 최신 1건 + 소스 분기
+  ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 4,
+    'v_base_profile dummy rows != 4 (e는 프로필 없음)';
   ASSERT (SELECT followers FROM analytics.v_base_profile WHERE username = 'dummy_a') = 5500,
-    'v_base_profile dummy_a followers != 5500 (latest snapshot)';
-
-  -- v_base_detail: 콘텐츠별 1행, 최신 스냅샷 + 조회수 폴백
-  ASSERT (SELECT count(*) FROM analytics.v_base_detail WHERE content_id BETWEEN 9101 AND 9104) = 4,
-    'v_base_detail dummy rows != 4';
-  ASSERT (SELECT likes FROM analytics.v_base_detail WHERE content_id = 9101) = 520,
-    'v_base_detail 9101 likes != 520 (latest snapshot)';
-  ASSERT (SELECT views FROM analytics.v_base_detail WHERE content_id = 9101) = 11000,
-    'v_base_detail 9101 views != 11000';
-  ASSERT (SELECT views FROM analytics.v_base_detail WHERE content_id = 9102) = 7000,
-    'v_base_detail 9102 views != 7000 (videoViewCount fallback)';
-  ASSERT (SELECT views FROM analytics.v_base_detail WHERE content_id = 9103) IS NULL,
-    'v_base_detail 9103 views is not NULL (feed)';
-  ASSERT (SELECT caption FROM analytics.v_base_detail WHERE content_id = 9101) = 'cap r1',
-    'v_base_detail 9101 caption != cap r1 (latest snapshot)';
-
-  -- v_base_content: 콘텐츠 메타 노출
-  ASSERT (SELECT count(*) FROM analytics.v_base_content WHERE category_id = 999) = 4,
-    'v_base_content dummy rows != 4';
-  ASSERT (SELECT ad_marked FROM analytics.v_base_content WHERE short_code = 'dummy_f1') = true,
-    'v_base_content dummy_f1 ad_marked != true';
-
-  -- v_base_comment: 평탄화 + like_count 추출
-  ASSERT (SELECT count(*) FROM analytics.v_base_comment WHERE content_id = 9101) = 3,
-    'v_base_comment 9101 rows != 3';
-  ASSERT (SELECT max(like_count) FROM analytics.v_base_comment WHERE content_id = 9101) = 7,
-    'v_base_comment 9101 max like_count != 7';
-
-  -- 서빙용 payload 키 노출 (B1)
+    'v_base_profile dummy_a followers != 5500 (최신 SELF_GQL 실컬럼)';
   ASSERT (SELECT display_name FROM analytics.v_base_profile WHERE username = 'dummy_a') = '더미 에이',
-    'v_base_profile dummy_a display_name != 더미 에이';
-  ASSERT (SELECT profile_image_url FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'https://pic/a.jpg',
-    'v_base_profile dummy_a profile_image_url != latest a.jpg';
-  -- 신형 payload(최상위 displayUrl 없음) → _rawDetail...display_uri 폴백 (B3 VLM 잔여분)
-  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://thumb/dummy_r1_new.jpg',
-    'v_base_detail 9101 thumbnail_url != nested display_uri fallback';
-  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 9102) = 'https://thumb/dummy_r2.jpg',
-    'v_base_detail 9102 thumbnail_url != displayUrl (구형 우선)';
-  ASSERT (SELECT original_url FROM analytics.v_base_detail WHERE content_id = 9101) = 'https://www.instagram.com/p/dummy_r1/',
-    'v_base_detail 9101 original_url mismatch';
-
-  -- 스냅샷 이력 노출 (B1 잔여분): 9101은 구/중/신 3행, 구스냅샷 views=10000
-  ASSERT (SELECT count(*) FROM analytics.v_base_detail_history WHERE content_id = 9101) = 3,
-    'v_base_detail_history 9101 rows != 3';
-  ASSERT (SELECT views FROM analytics.v_base_detail_history
-          WHERE content_id = 9101 ORDER BY captured_at ASC LIMIT 1) = 10000,
-    'v_base_detail_history 9101 oldest views != 10000';
-  ASSERT (SELECT views FROM analytics.v_base_detail_history WHERE content_id = 9102) = 7000,
-    'v_base_detail_history 9102 videoViewCount fallback != 7000';
-
-  -- 프로필 외부 링크 (API 스펙 정렬): 최신 payload externalUrl 노출
+    'v_base_profile dummy_a display_name != 더미 에이 (data.user 경로)';
+  ASSERT (SELECT profile_image_url FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'https://pic/a_hd.jpg',
+    'v_base_profile dummy_a image != a_hd.jpg (profile_pic_url_hd 우선)';
+  ASSERT (SELECT follows_count FROM analytics.v_base_profile WHERE username = 'dummy_a') = 120,
+    'v_base_profile dummy_a follows_count != 120 (edge_follow.count)';
+  ASSERT (SELECT posts_count FROM analytics.v_base_profile WHERE username = 'dummy_a') = 42,
+    'v_base_profile dummy_a posts_count != 42 (edge_owner_to_timeline_media.count)';
+  ASSERT (SELECT biography FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'bio a',
+    'v_base_profile dummy_a biography != bio a';
   ASSERT (SELECT external_link FROM analytics.v_base_profile WHERE username = 'dummy_a') = 'https://link.example/a',
-    'v_base_profile dummy_a external_link != https://link.example/a';
+    'v_base_profile dummy_a external_link mismatch';
+  ASSERT (SELECT display_name FROM analytics.v_base_profile WHERE username = 'dummy_b') = '더미 비',
+    'v_base_profile dummy_b display_name != 더미 비 (HIKER_MOBILE user 래퍼 경로)';
+  ASSERT (SELECT follows_count FROM analytics.v_base_profile WHERE username = 'dummy_b') = 200,
+    'v_base_profile dummy_b follows_count != 200 (following_count)';
+  ASSERT (SELECT posts_count FROM analytics.v_base_profile WHERE username = 'dummy_b') = 10,
+    'v_base_profile dummy_b posts_count != 10 (media_count)';
+  ASSERT (SELECT external_link FROM analytics.v_base_profile WHERE username = 'dummy_b') IS NULL,
+    'v_base_profile dummy_b external_link not null (키 없음)';
 
-  -- 프로필 확장 (C1): 시드 payload에 키 없음 → NULL (키 있는 케이스는 10번 테스트 픽스처가 검증)
-  ASSERT (SELECT follows_count FROM analytics.v_base_profile WHERE username = 'dummy_a') IS NULL,
-    'v_base_profile dummy_a follows_count not null (seed has no key)';
-  ASSERT (SELECT posts_count FROM analytics.v_base_profile WHERE username = 'dummy_a') IS NULL,
-    'v_base_profile dummy_a posts_count not null (seed has no key)';
-  ASSERT (SELECT biography FROM analytics.v_base_profile WHERE username = 'dummy_a') IS NULL,
-    'v_base_profile dummy_a biography not null (seed has no key)';
+  -- v_base_reel_item: clips 아이템 평탄화
+  ASSERT (SELECT count(*) FROM analytics.v_base_reel_item WHERE short_code LIKE 'dummy_%') = 7,
+    'v_base_reel_item dummy rows != 7 (r1x3 + rn + r3 + r4 + r5)';
+  ASSERT (SELECT views FROM analytics.v_base_reel_item WHERE short_code = 'dummy_rn') = 100,
+    'v_base_reel_item rn views != 100 (ig_play_count 폴백)';
+  ASSERT (SELECT paid_partnership FROM analytics.v_base_reel_item WHERE short_code = 'dummy_r3') = true,
+    'v_base_reel_item r3 paid_partnership != true';
+  ASSERT (SELECT caption FROM analytics.v_base_reel_item WHERE short_code = 'dummy_r3') IS NULL,
+    'v_base_reel_item r3 caption not null (캡션 결측)';
+
+  -- v_base_timeline_item: 타임라인 노드 평탄화
+  ASSERT (SELECT count(*) FROM analytics.v_base_timeline_item WHERE short_code LIKE 'dummy_%') = 4,
+    'v_base_timeline_item dummy rows != 4';
+  ASSERT (SELECT views FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_r1') IS NULL,
+    'v_base_timeline_item r1 views not null (video_view_count 0 → NULL)';
+  ASSERT (SELECT views FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_r2') = 8000,
+    'v_base_timeline_item r2 views != 8000';
+  ASSERT (SELECT likes FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_f1') = 2000,
+    'v_base_timeline_item f1 likes != 2000 (edge_liked_by 폴백)';
+  ASSERT (SELECT views FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_f1') = 999,
+    'v_base_timeline_item f1 views != 999 (아이템 층은 원값 — FEED 게이트는 스냅샷 층)';
+  ASSERT (SELECT likes FROM analytics.v_base_timeline_item WHERE short_code = 'dummy_d1') IS NULL,
+    'v_base_timeline_item d1 likes not null (좋아요 비공개 -1 → NULL)';
+
+  -- v_base_content_snapshot: UNION + content_type 게이트 + 합성 id 유일성
+  ASSERT (SELECT count(*) FROM analytics.v_base_content_snapshot WHERE content_id BETWEEN 99990101 AND 99990108) = 11,
+    'v_base_content_snapshot dummy rows != 11 (r1:4, r2·f1·d1·rn·r3·r4·r5:1)';
+  ASSERT (SELECT views FROM analytics.v_base_content_snapshot WHERE content_id = 99990103) IS NULL,
+    'v_base_content_snapshot f1 views not null (FEED → 무조건 NULL)';
+  ASSERT (SELECT count(*) = count(DISTINCT id) FROM analytics.v_base_content_snapshot),
+    'v_base_content_snapshot 합성 id 중복';
+
+  -- v_base_detail: 콘텐츠별 최신 1건
+  ASSERT (SELECT likes FROM analytics.v_base_detail WHERE content_id = 99990101) = 530,
+    'v_base_detail r1 likes != 530 (최신 06-08 스냅샷)';
+  ASSERT (SELECT views FROM analytics.v_base_detail WHERE content_id = 99990101) = 12000,
+    'v_base_detail r1 views != 12000';
+  ASSERT (SELECT caption FROM analytics.v_base_detail WHERE content_id = 99990101) = 'cap r1 v3',
+    'v_base_detail r1 caption != cap r1 v3';
+  ASSERT (SELECT thumbnail_url FROM analytics.v_base_detail WHERE content_id = 99990101) = 'https://thumb/r1_v3.jpg',
+    'v_base_detail r1 thumbnail mismatch';
+  ASSERT (SELECT views FROM analytics.v_base_detail WHERE content_id = 99990102) = 8000,
+    'v_base_detail r2 views != 8000 (타임라인 전용 릴스)';
+
+  -- v_base_comment
+  ASSERT (SELECT count(*) FROM analytics.v_base_comment WHERE content_id = 99990101) = 3,
+    'v_base_comment 99990101 rows != 3';
+  ASSERT (SELECT max(like_count) FROM analytics.v_base_comment WHERE content_id = 99990101) = 7,
+    'v_base_comment 99990101 max like_count != 7';
 END $$;

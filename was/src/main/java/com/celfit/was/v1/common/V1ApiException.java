@@ -30,6 +30,20 @@ public class V1ApiException extends RuntimeException {
 		return new V1ApiException(HttpStatus.UNAUTHORIZED, code, message);
 	}
 
+	public static V1ApiException forbidden(String code, String message) {
+		return new V1ApiException(HttpStatus.FORBIDDEN, code, message);
+	}
+
+	/** 코드 지정 400 — validation()의 고정 코드(VALIDATION_FAILED)와 달리 계약 코드를 직접 든다(예: INVALID_CODE). */
+	public static V1ApiException badRequest(String code, String message) {
+		return new V1ApiException(HttpStatus.BAD_REQUEST, code, message);
+	}
+
+	/** 외부 의존(메일 발송 등) 실패 — 502. */
+	public static V1ApiException badGateway(String code, String message) {
+		return new V1ApiException(HttpStatus.BAD_GATEWAY, code, message);
+	}
+
 	public static V1ApiException rateLimited() {
 		return new V1ApiException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청이 너무 잦아요. 잠시 후 다시 시도해 주세요.");
 	}
