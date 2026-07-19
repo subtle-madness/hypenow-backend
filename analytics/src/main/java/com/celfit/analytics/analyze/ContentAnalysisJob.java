@@ -76,15 +76,20 @@ public class ContentAnalysisJob {
 							intOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10)), longOf(rs.getBigDecimal(11))));
 				});
 		// 숙성 가드: 게시 후 N일(기본 3) 경과분만 — 불변 테이블이라 게시 직후 분석되면 영구 고정 (07-14 확정).
-		// posted_at NULL은 부등식에서 자연 제외 (게시일 미상이면 숙성 판정 불가).
+		// 제때 크롤 가드(07-19 재정정): 고정 지표가 성숙(+pin일) 스냅샷이면서 +(pin+slack)일 안에 잡힌 것만 —
+		// 늦크롤 백필(+3일 지표 없음)과 미성숙 폴백 지표(영구 고정 누수)를 함께 차단. 분석 밀림은 나이 무관 허용.
+		// posted_at·metric_captured_at NULL은 부등식에서 자연 제외 (미상이면 판정 불가).
+		int pinDays = settings.metricPinDays();
 		Set<String> eligible = new HashSet<>(analysis.queryForList("""
 				SELECT c.short_code FROM contents c
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
 				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
 				  AND c.posted_at <= now() - make_interval(days => ?)
-				  AND c.posted_at > now() - make_interval(days => ?)""",
-				String.class, settings.analyzeMaturityDays(), settings.analyzeWindowDays()));
+				  AND c.metric_captured_at >= c.posted_at + make_interval(days => ?)
+				  AND c.metric_captured_at < c.posted_at + make_interval(days => ?)""",
+				String.class, settings.analyzeMaturityDays(), pinDays,
+				pinDays + settings.analyzeTimelySlackDays()));
 		List<String> targets = withBaseline.keySet().stream()
 				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())
