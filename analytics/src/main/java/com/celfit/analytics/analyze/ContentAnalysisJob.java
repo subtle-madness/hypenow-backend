@@ -159,7 +159,8 @@ public class ContentAnalysisJob {
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("종합 텍스트가 비어 있음: " + shortCode);
 		}
-		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false);
+		// 후보 뷰가 제때 크롤 가드를 보장하므로 데일리 유입은 전부 timely (V33 마킹).
+		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false, "timely");
 	}
 
 	private static Long longOf(java.math.BigDecimal v) {
