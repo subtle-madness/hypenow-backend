@@ -23,23 +23,25 @@ import tools.jackson.databind.ObjectMapper;
 public class AccountAnalysisJob {
 
 	private static final Logger log = LoggerFactory.getLogger(AccountAnalysisJob.class);
-	private static final int MAX_TRAITS = 5;
-	private static final int CAPTION_CHARS = 300;
+	static final int MAX_TRAITS = 5; // ClaudeBurstRunner(구독 버스트 collect)와 공유
+	static final int CAPTION_CHARS = 300;
 
 	private final JdbcTemplate analysis;
 	private final AccountSynthesisPort port;
 	private final AnalyticsSettings settings;
+	private final ProgressReporter reporter;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public AccountAnalysisJob(DataSource analysisDataSource, AccountSynthesisPort port,
-			AnalyticsSettings settings) {
+			AnalyticsSettings settings, ProgressReporter reporter) {
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.port = port;
 		this.settings = settings;
+		this.reporter = reporter;
 	}
 
-	/** @return 카피 생성 완료 계정 수 */
-	public int run() {
+	/** @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부) */
+	public JobResult run() {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
@@ -57,6 +59,8 @@ public class AccountAnalysisJob {
 		String model = settings.activeLlmModel();
 		int processed = 0;
 		int failed = 0;
+		boolean carriedOver = false;
+		reporter.report(0, 0, targets.size());
 		for (String handle : targets) {
 			try {
 				analyzeOne(handle, model);
@@ -64,14 +68,16 @@ public class AccountAnalysisJob {
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
 				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
+				carriedOver = true;
 				break;
 			} catch (Exception e) {
 				failed++;
 				log.error("account copy failed for {} — 다음 실행에서 재대상", handle, e);
 			}
+			reporter.report(processed, failed, targets.size());
 		}
 		log.info("account copy complete ({} accounts, {} failed)", processed, failed);
-		return processed;
+		return new JobResult(processed, failed, carriedOver);
 	}
 
 	private void analyzeOne(String handle, String model) {

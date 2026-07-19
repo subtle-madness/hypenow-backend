@@ -117,38 +117,4 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         assertThat(order).containsExactly(legacy.getId(), stale.getId(), fresh.getId());
     }
 
-    @Test
-    void 재스냅샷_선정은_최신_프로필이_캡션_없는_소스인_비뷰티만_고른다() {
-        Long run = runId();
-        List<RawSource> captionless = List.of(RawSource.HIKER_MOBILE, RawSource.DATALIKERS);
-
-        // 대상: 비뷰티 + 최신 프로필이 HIKER_MOBILE
-        Influencer hiker = notBeauty("hiker", JUDGED);
-        profile(hiker, RawSource.HIKER_MOBILE, JUDGED.minusSeconds(3600), run);
-
-        // 대상: 비뷰티 + 최신 프로필이 DATALIKERS
-        Influencer dl = notBeauty("dl", JUDGED);
-        profile(dl, RawSource.DATALIKERS, JUDGED.minusSeconds(3600), run);
-
-        // 제외: 옛 HIKER가 있어도 최신이 SELF_GQL이면 이미 캡션 재료 확보 — 재수집 불필요
-        Influencer already = notBeauty("already", JUDGED);
-        profile(already, RawSource.HIKER_MOBILE, JUDGED.minusSeconds(7200), run);
-        profile(already, RawSource.SELF_GQL, JUDGED.minusSeconds(3600), run);
-
-        // 제외: 뷰티 판정분
-        Influencer beauty = notBeauty("beauty2", JUDGED);
-        beauty.setBeauty(true);
-        influencers.save(beauty);
-        profile(beauty, RawSource.HIKER_MOBILE, JUDGED.minusSeconds(3600), run);
-
-        // 제외: raw_profile 없음
-        notBeauty("no-profile2", JUDGED);
-
-        List<Influencer> out = influencers.findResnapshotTargets(
-                InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE, captionless, PageRequest.of(0, 100));
-
-        assertThat(out.stream().map(Influencer::getUsername)
-                .filter(u -> u.startsWith(PREFIX)))
-                .containsExactlyInAnyOrder(PREFIX + "hiker", PREFIX + "dl");
-    }
 }

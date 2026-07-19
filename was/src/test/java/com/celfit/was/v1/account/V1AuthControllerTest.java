@@ -16,7 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
-import com.celfit.was.setting.AppSettingRepository;
+import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -25,7 +25,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -38,6 +37,7 @@ import org.springframework.test.web.servlet.MvcResult;
 /**
  * /v1/auth 계약 슬라이스 검증 — 실 DB·실 AuthenticationManager 없이 v1 envelope·에러 코드에 집중.
  * 세션 쿠키(hypenow-session)·실 인증 경로는 T7 E2E(실 DB)가 커버한다.
+ * 가입 코드는 배치 1회용(SignupCodeRepository mock) — 원자 소진·트랜잭션은 SignupCodeIntegrationTest가 실 DB로 커버.
  */
 @WebMvcTest(controllers = V1AuthController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000")
@@ -65,12 +65,14 @@ class V1AuthControllerTest {
 	RateLimiter rateLimiter;
 
 	@MockitoBean
-	AppSettingRepository appSettingRepository;
+	SignupCodeRepository signupCodeRepository;
 
-	/** 정상 경로 공통 스텁 — 코드 일치. 코드 케이스별 테스트는 개별 재스텁. */
-	private void stubSignupCode(String value) {
-		given(appSettingRepository.findValue("signup.code")).willReturn(Optional.of(value));
-	}
+	@MockitoBean
+	SignupService signupService;
+
+	// requireVerified·consume 기본 no-op(void) — 이메일 인증 게이트는 EmailVerificationIntegrationTest가 실 DB로 커버
+	@MockitoBean
+	EmailVerificationService emailVerificationService;
 
 	private Authentication authenticated(String email) {
 		return UsernamePasswordAuthenticationToken.authenticated(email, null, List.of());
@@ -84,9 +86,9 @@ class V1AuthControllerTest {
 	}
 
 	@Test
-	void 가입_코드_불일치는_403_INVALID_SIGNUP_CODE다() throws Exception {
+	void 가입_코드가_유효하지_않으면_403_INVALID_SIGNUP_CODE다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		stubSignupCode("BETA2026");
+		given(signupCodeRepository.isUsable("WRONG")).willReturn(false);
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -94,58 +96,30 @@ class V1AuthControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"))
-				.andExpect(jsonPath("$.error.message").value("가입 코드를 확인해 주세요."));
+				.andExpect(jsonPath("$.error.message").value("존재하지 않거나 이미 사용된 코드입니다."));
 
-		then(userRepository).shouldHaveNoInteractions();
+		then(signupService).shouldHaveNoInteractions();
 	}
 
 	@Test
-	void 가입_코드_미설정이면_전면_차단이다_fail_closed() throws Exception {
+	void 가입_코드가_빈_값이어도_403이다_fail_closed() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		given(appSettingRepository.findValue("signup.code")).willReturn(Optional.empty());
 
-		mockMvc.perform(post("/v1/auth/signup").with(csrf())
-						.contentType(MediaType.APPLICATION_JSON).content(VALID_SIGNUP_BODY))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
-
-		then(userRepository).shouldHaveNoInteractions();
-	}
-
-	@Test
-	void 가입_코드가_빈_값이어도_전면_차단이다_fail_closed() throws Exception {
-		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		stubSignupCode("");
-
-		// 요청도 빈 코드 — 빈 값끼리 "일치"로 뚫리면 안 된다
+		// isUsable 스텁 없음(기본 false) — 빈 코드가 어떤 경로로도 뚫리면 안 된다
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(VALID_SIGNUP_BODY.replace("BETA2026", "")))
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
 
-		then(userRepository).shouldHaveNoInteractions();
-	}
-
-	@Test
-	void 가입_코드는_앞뒤_공백을_무시하고_대조한다() throws Exception {
-		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		stubSignupCode(" BETA2026 ");
-		given(userRepository.insertProfile(any(), anyString())).willReturn(profile());
-		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
-
-		mockMvc.perform(post("/v1/auth/signup").with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content(VALID_SIGNUP_BODY.replace("BETA2026", "BETA2026 ")))
-				.andExpect(status().isCreated());
+		then(signupService).shouldHaveNoInteractions();
 	}
 
 	@Test
 	void 가입은_201과_UserSummary_envelope를_내린다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		stubSignupCode("BETA2026");
-		given(userRepository.insertProfile(any(), anyString()))
-				.willReturn(profile());
+		given(signupCodeRepository.isUsable("BETA2026")).willReturn(true);
+		given(signupService.register(any())).willReturn(profile());
 		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
@@ -159,10 +133,30 @@ class V1AuthControllerTest {
 				.andExpect(jsonPath("$.error").value(nullValue()));
 	}
 
+	// 가입 경량화(2026-07-19) — 프론트 요청서의 최소 페이로드 예시 그대로 201
+	@Test
+	void 가입은_선택_필드가_전부_null이어도_201이다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		given(signupCodeRepository.isUsable("THREADS-A7K2")).willReturn(true);
+		given(signupService.register(any())).willReturn(profile());
+		given(authenticationManager.authenticate(any())).willReturn(authenticated("user@example.com"));
+
+		mockMvc.perform(post("/v1/auth/signup").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"signupCode":"THREADS-A7K2","email":"user@example.com","password":"Passw0rd!",
+								 "name":"홍길동","userType":"brand","companyName":"OO코스메틱",
+								 "signupRoute":null,"phoneCountryCode":null,"phoneNumber":null,
+								 "companySize":null,"industry":null,"jobTitle":null,"usagePurpose":null,
+								 "agreedTerms":true,"agreedPrivacy":true,"agreedAge14":true,"agreedMarketing":false}"""))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.success").value(true));
+	}
+
 	@Test
 	void 가입_검증_위반은_400_VALIDATION_FAILED다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		stubSignupCode("BETA2026");
+		given(signupCodeRepository.isUsable("BETA2026")).willReturn(true);
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -175,9 +169,9 @@ class V1AuthControllerTest {
 	@Test
 	void 가입_중복_이메일은_409_EMAIL_ALREADY_EXISTS다() throws Exception {
 		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
-		stubSignupCode("BETA2026");
-		given(userRepository.insertProfile(any(), anyString()))
-				.willThrow(new DuplicateKeyException("users_email_key"));
+		given(signupCodeRepository.isUsable("BETA2026")).willReturn(true);
+		given(signupService.register(any()))
+				.willThrow(V1ApiException.conflict("EMAIL_ALREADY_EXISTS", "이미 가입된 이메일이에요. 로그인해 주세요."));
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content(VALID_SIGNUP_BODY))
@@ -198,7 +192,54 @@ class V1AuthControllerTest {
 
 		// 가입 키는 IP 단위(계정 없는 단계) — 검증·insert 전에 걸린다
 		then(rateLimiter).should().tryAcquire("signup:127.0.0.1");
-		then(userRepository).shouldHaveNoInteractions();
+		then(signupService).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void 코드_사전검증_유효하면_200_valid_true다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		given(signupCodeRepository.isUsable("THREADS-A7K2")).willReturn(true);
+
+		mockMvc.perform(post("/v1/auth/signup-code/verify").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"code":"THREADS-A7K2"}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.data.valid").value(true))
+				.andExpect(jsonPath("$.error").value(nullValue()));
+	}
+
+	@Test
+	void 코드_사전검증_무효하면_403_INVALID_SIGNUP_CODE다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(true);
+		given(signupCodeRepository.isUsable(anyString())).willReturn(false);
+
+		mockMvc.perform(post("/v1/auth/signup-code/verify").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"code":"USED-CODE"}"""))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.data").value(nullValue()))
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"))
+				.andExpect(jsonPath("$.error.message").value("존재하지 않거나 이미 사용된 코드입니다."));
+	}
+
+	@Test
+	void 코드_사전검증_레이트리밋_초과는_429다() throws Exception {
+		given(rateLimiter.tryAcquire(anyString())).willReturn(false);
+
+		mockMvc.perform(post("/v1/auth/signup-code/verify").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"code":"THREADS-A7K2"}"""))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
+
+		// 무차별 대입 방지 키는 IP 단위 — DB 조회 전에 걸린다
+		then(rateLimiter).should().tryAcquire("signup-code-verify:127.0.0.1");
+		then(signupCodeRepository).shouldHaveNoInteractions();
 	}
 
 	// A@x.com / a@x.com이 같은 버킷 — 대소문자 변형으로 계정 차원 제한을 우회하지 못한다

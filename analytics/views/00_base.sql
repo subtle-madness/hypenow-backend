@@ -185,6 +185,40 @@ SELECT DISTINCT ON (content_id)
 FROM analytics.v_base_content_snapshot
 ORDER BY content_id, captured_at DESC, id DESC;
 
+-- 콘텐츠별 고정(pin) 지표 1건 — 지표의 공통 밑판(v_contents·v_recent_content 공유).
+-- v_base_detail(메타=최신 스냅샷 승)과 분리한다: 지표는 "성숙(+N일)∧지표완비(usable) 중 가장 이른 것"을
+-- 골라야 하며(핀 규칙 — 02_serving §), 빈 타임라인 스냅샷(view 비공개 0→NULL)이 더 나중에 수집돼도
+-- 옆의 완비 clips 스냅샷을 핀한다. 이 우선순위가 v_base_detail(최신 승)엔 없어, 최근창 경로가
+-- 최신 빈 타임라인을 집어 recentReels·baseline·account_summaries 조회수가 NULL로 죽던 버그를 차단.
+-- usable = hype 산출 지표 완비(릴스=views·likes·comments, 피드=likes·comments — 피드 views 항상 NULL).
+-- N = app_setting 'analytics.metric-pin-days'(기본 3). 정렬은 02의 v_contents 구 인라인 CTE와 동일.
+CREATE OR REPLACE VIEW analytics.v_pinned_metrics AS
+WITH snap AS (
+  SELECT h.id, h.content_id, h.views, h.likes, h.comments_count, h.captured_at,
+         h.paid_partnership, h.video_duration,
+         h.captured_at >= e.uploaded_at + make_interval(days => COALESCE(
+           (SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)) AS matured,
+         (h.likes IS NOT NULL AND h.comments_count IS NOT NULL
+          AND (e.content_type <> 'REELS' OR h.views IS NOT NULL)) AS usable
+  FROM analytics.v_base_content_snapshot h
+  JOIN analytics.v_base_content e USING (content_id)
+)
+-- 우선순위: ① 성숙∧완비 중 가장 이른 것 → ② 완비 중 최신 → ③ 성숙 중 가장 이른 것 → ④ 최신.
+SELECT DISTINCT ON (content_id)
+  content_id, views, likes, comments_count, captured_at, paid_partnership, video_duration
+FROM snap
+ORDER BY content_id,
+         (matured AND usable) DESC,
+         CASE WHEN matured AND usable THEN captured_at END ASC,
+         CASE WHEN matured AND usable THEN id END ASC,
+         usable DESC,
+         CASE WHEN usable THEN captured_at END DESC,
+         CASE WHEN usable THEN id END DESC,
+         matured DESC,
+         CASE WHEN matured THEN captured_at END ASC,
+         CASE WHEN matured THEN id END ASC,
+         captured_at DESC, id DESC;
+
 -- 댓글 평탄화 (V8부터 writer/text/written_at 실컬럼, like_count만 payload 추출)
 CREATE OR REPLACE VIEW analytics.v_base_comment AS
 SELECT

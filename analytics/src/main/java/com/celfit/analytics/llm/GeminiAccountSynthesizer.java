@@ -39,16 +39,25 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 		this.model = model;
 	}
 
-	@Override
-	public AccountCopy synthesize(AccountToAnalyze account) {
-		String input = """
+	/** 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다. */
+	public static String instructions() {
+		return INSTRUCTIONS;
+	}
+
+	/** 유저 입력 — synthesize와 버스트 export가 공유 (프롬프트 정합 단일 원천). */
+	public static String userText(AccountToAnalyze account) {
+		return """
 				계정: @%s (광고 비교 데이터: %s)
 				계정 지표: %s
 				카테고리 믹스: %s
 				게시물(올린 순, 캡션은 앞부분만): %s
 				""".formatted(account.handle(), account.hasAdComparison() ? "있음" : "없음",
 				account.summary(), account.categoryStats(), account.posts());
-		String out = api.generateJson(model.get(), INSTRUCTIONS, input, null,
+	}
+
+	@Override
+	public AccountCopy synthesize(AccountToAnalyze account) {
+		String out = api.generateJson(model.get(), INSTRUCTIONS, userText(account), null,
 				RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
 		return om.readValue(out, AccountCopy.class);
 	}

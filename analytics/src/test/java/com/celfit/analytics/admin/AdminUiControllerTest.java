@@ -1,5 +1,6 @@
 package com.celfit.analytics.admin;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -10,7 +11,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -29,29 +32,94 @@ class AdminUiControllerTest {
 	AnalyticsJobService jobService;
 
 	@MockitoBean
-	JobCostEstimator costEstimator;
+	JobProgressRegistry progress;
+
+	@MockitoBean
+	RunHistory history;
+
+	@MockitoBean
+	PipelineStatsService stats;
+
+	@MockitoBean
+	ScheduleInfo scheduleInfo;
 
 	@MockitoBean
 	LogBuffer logBuffer;
 
-	@Test
-	void ui_페이지는_잡_버튼과_비용_카드를_렌더() throws Exception {
-		when(costEstimator.costCards()).thenReturn(List.of(
-				JobCostEstimator.CostCard.of(JobName.ANALYZE, 5, "0.03", "0.05", "노트")));
-		mvc.perform(get("/ui"))
-				.andExpect(status().isOk())
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러")))
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("콘텐츠 분석")));
+	@BeforeEach
+	void stubDefaults() {
+		// 진행 스냅샷은 레코드라 Mockito 기본이 null — 카드 조립 NPE 방지용 EMPTY 스텁.
+		when(progress.snapshot(any())).thenReturn(new JobProgressRegistry.Progress(false, 0, 0, 0, null));
 	}
 
 	@Test
-	void 비용_추정_실패해도_ui는_뜬다() throws Exception {
-		// 분석 뷰 미적용 등 DB 문제로 대상 카운트가 실패해도 잡 트리거·로그는 쓸 수 있어야 한다
-		when(costEstimator.costCards()).thenThrow(new RuntimeException("relation does not exist"));
+	void ui_페이지는_대시보드_셸을_렌더() throws Exception {
+		// 잡 카드·피드는 board 프래그먼트(htmx 로드) 소관 — /ui 자체엔 헤더·퍼널·로그 셸만.
 		mvc.perform(get("/ui"))
 				.andExpect(status().isOk())
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("hypenow analytics")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/fragments/board")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("라이브 로그")));
+	}
+
+	@Test
+	void 퍼널은_백필_제외_가드를_수치와_창_파라미터로_노출() throws Exception {
+		// 운영 실측 규모 — 수집 2.7만 → 후보 1,914의 낙차가 가드(백필 제외) 때문임이 읽혀야 한다.
+		// analyzed 431 중 timely 57 — 커버리지 분자는 timely, 가드 밖 기분석 374는 별도 표기.
+		when(stats.funnel()).thenReturn(new PipelineStatsService.Funnel(
+				27_093, 1_914, 24_113, 431, 57, 16_686, 77, 1_496, 450, 5, 3, 2,
+				Instant.parse("2026-07-19T08:20:00Z")));
+		mvc.perform(get("/ui"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("1,914")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("늦크롤 백필")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("24,113")))
+				// 커버리지 = timely/후보 = 57/1,914 = 3.0% (전체 431 기준 22.5%가 아니어야 한다)
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("3.0%")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("제때 분석")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("가드 밖 기분석")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("374")))
+				// 창 파라미터는 숫자가 span으로 감싸여 렌더 — "pin <span>3</span>일" 형태
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("pin <span>3</span>일")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("slack <span>2</span>일")))
+				// 단계별 생산 주체 라벨 — 잡 카드 3종과 퍼널 수치의 대응
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("후보 뷰 가드")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("콘텐츠 분석 잡")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러 잡 — 분석 무관 전체")));
+	}
+
+	@Test
+	void 퍼널_집계_전엔_백필_수치_숨기고_가드_설명만() throws Exception {
+		// candidates·timelyExcluded -1(집계 중) — "-1건 제외" 오표기가 없어야 한다.
+		when(stats.funnel()).thenReturn(new PipelineStatsService.Funnel(
+				27_093, -1, -1, 431, 57, 16_686, 77, 1_496, 0, 0, 3, 2, null));
+		mvc.perform(get("/ui"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("집계 중")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("제때 크롤분")))
+				.andExpect(content().string(org.hamcrest.Matchers.not(
+						org.hamcrest.Matchers.containsString("늦크롤 백필"))));
+	}
+
+	@Test
+	void ui_페이지는_퍼널_집계_실패에도_렌더() throws Exception {
+		when(stats.funnel()).thenThrow(new RuntimeException("집계 실패"));
+		mvc.perform(get("/ui"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("hypenow analytics")));
+	}
+
+	@Test
+	void 보드_프래그먼트는_카드와_피드() throws Exception {
+		when(jobService.isRunning(JobName.MIRROR)).thenReturn(true);
+		when(progress.snapshot(JobName.MIRROR))
+				.thenReturn(new JobProgressRegistry.Progress(true, 3, 0, 10, Instant.now()));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("미러")))
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("비용 추정 실패")));
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("콘텐츠 분석")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("실행 중")))
+				.andExpect(content().string(org.hamcrest.Matchers.containsString("실행 피드")));
 	}
 
 	@Test
@@ -85,13 +153,5 @@ class AdminUiControllerTest {
 		mvc.perform(get("/ui/fragments/logs"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(org.hamcrest.Matchers.containsString("mirror complete")));
-	}
-
-	@Test
-	void 상태_프래그먼트는_실행_중_배지() throws Exception {
-		when(jobService.isRunning(JobName.MIRROR)).thenReturn(true);
-		mvc.perform(get("/ui/fragments/status"))
-				.andExpect(status().isOk())
-				.andExpect(content().string(org.hamcrest.Matchers.containsString("실행 중")));
 	}
 }

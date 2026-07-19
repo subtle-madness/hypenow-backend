@@ -46,6 +46,7 @@ class CsrfCookieFlowIntegrationTest extends IntegrationTest {
 		// 로그인 월(07-17) — 쓰기 검증은 열린 v1 가입으로(코드 개통 선행). csrf() 후처리기 없이
 		// 쿠키 raw 값 헤더 왕복이라는 원 검증 목적은 그대로다.
 		V1AuthTestSteps.enableSignupCode(jdbcClient);
+		V1AuthTestSteps.markEmailVerified(jdbcClient, "csrf-cookie@example.com");
 		mockMvc.perform(post("/v1/auth/signup")
 						.cookie(xsrf)
 						.header("X-XSRF-TOKEN", xsrf.getValue())

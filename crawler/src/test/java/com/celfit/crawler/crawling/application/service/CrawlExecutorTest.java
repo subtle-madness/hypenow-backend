@@ -73,6 +73,23 @@ class CrawlExecutorTest extends IntegrationTest {
     }
 
     @Test
+    void 타입_테이블에_저장되는_잡은_raw_run_item_아카이브를_생략한다() {
+        // COLLECT·REELS는 응답 payload가 raw_profile·raw_media_page에 1:1 무가공 저장되므로
+        // raw_run_item 사본을 남기지 않는다 (이중 저장 제거 — 응답 전달은 그대로).
+        fake.enqueue(List.of(Map.of("data", Map.of("user", "beauty1"))));
+        var collect = executor.execute(JobName.COLLECT, TriggerType.MANUAL,
+                null, "beauty1", "actor-x", Map.of());
+        assertThat(collect.items()).hasSize(1);
+        assertThat(rawRunItems.countByCrawlRunId(collect.runId())).isZero();
+
+        fake.enqueue(List.of(Map.of("response", Map.of("items", List.of()))));
+        var reels = executor.execute(JobName.REELS, TriggerType.MANUAL,
+                null, "beauty1", "actor-x", Map.of());
+        assertThat(reels.items()).hasSize(1);
+        assertThat(rawRunItems.countByCrawlRunId(reels.runId())).isZero();
+    }
+
+    @Test
     void 실패하면_FAILED로_기록되고_예외가_전파된다() {
         fake.enqueueFailure("보이지 않는 손");
 
@@ -88,7 +105,7 @@ class CrawlExecutorTest extends IntegrationTest {
 
     @Test
     void supplier_오버로드도_성공하면_SUCCEEDED로_기록되고_아카이브된다() {
-        var execution = executor.execute(JobName.COLLECT, TriggerType.MANUAL, null, null,
+        var execution = executor.execute(JobName.SIMILAR, TriggerType.MANUAL, null, null,
                 "direct-comment-crawler",
                 () -> new ApifyResult(
                         null, List.of(Map.of("text", "좋아요"))));

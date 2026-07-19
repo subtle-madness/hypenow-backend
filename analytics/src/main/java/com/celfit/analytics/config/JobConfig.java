@@ -1,8 +1,11 @@
 package com.celfit.analytics.config;
 
+import com.celfit.analytics.admin.JobName;
+import com.celfit.analytics.admin.JobProgressRegistry;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.GeminiBackfillRunner;
+import com.celfit.analytics.analyze.ProgressReporter;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.CommentClassificationPort;
@@ -14,6 +17,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Predicate;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -66,9 +70,12 @@ public class JobConfig {
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			ContentInsightPort insight, AnalyticsSettings settings,
 			// vlm-enabled = 썸네일 첨부 게이트 (기본 off — 캡션 기반 5종은 항상 산출)
-			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled) {
+			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled,
+			ObjectProvider<JobProgressRegistry> progressRegistry) {
+		JobProgressRegistry registry = progressRegistry.getIfAvailable();
+		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
-				settings, thumbnailEnabled, headPrecheck());
+				settings, thumbnailEnabled, headPrecheck(), reporter);
 	}
 
 	@Bean
@@ -76,8 +83,37 @@ public class JobConfig {
 	@ConditionalOnExpression("${analytics.account-analyze-on-startup:false} or ${analytics.admin-enabled:false}")
 	public AccountAnalysisJob accountAnalysisJob(
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
-			AccountSynthesisPort port, AnalyticsSettings settings) {
-		return new AccountAnalysisJob(analysisDataSource, port, settings);
+			AccountSynthesisPort port, AnalyticsSettings settings,
+			ObjectProvider<JobProgressRegistry> progressRegistry) {
+		JobProgressRegistry registry = progressRegistry.getIfAvailable();
+		ProgressReporter reporter = registry != null
+				? registry.reporter(JobName.ACCOUNT_ANALYZE) : ProgressReporter.NOOP;
+		return new AccountAnalysisJob(analysisDataSource, port, settings, reporter);
+	}
+
+	/**
+	 * 구독 버스트 one-shot(07-19) — Gemini 무료 일 한도를 넘는 일회 물량을 Claude 구독 컴퓨트로 소화.
+	 * export → 드라이버(analytics/export/claude_burst_driver.py, claude -p 병렬) → collect 3단 실행.
+	 */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("'${analytics.claude-burst:}' != ''")
+	public org.springframework.boot.ApplicationRunner claudeBurstRunner(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource, AnalyticsSettings settings,
+			@Value("${analytics.claude-burst:}") String mode,
+			@Value("${analytics.burst-dir:./burst}") String dir) {
+		return args -> {
+			com.celfit.analytics.analyze.ClaudeBurstRunner runner =
+					new com.celfit.analytics.analyze.ClaudeBurstRunner(rawJdbcTemplate, analysisDataSource,
+							settings, new com.celfit.analytics.llm.BeautyTaxonomyLoader(analysisDataSource),
+							java.nio.file.Path.of(dir));
+			switch (mode) {
+				case "export" -> runner.export();
+				case "collect" -> runner.collect();
+				default -> throw new IllegalArgumentException(
+						"analytics.claude-burst는 export|collect — 입력: " + mode);
+			}
+		};
 	}
 
 	/**

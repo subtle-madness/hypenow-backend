@@ -66,13 +66,36 @@ class V1InfluencerReportAssemblerTest {
 	}
 
 	@Test
-	void comparison은_organicAvg_adAvg_둘_다_있어야_존재() {
-		assertThat(assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of())
-				.ads().comparison())
-				.isEqualTo(new InfluencerAiReport.Ads.Comparison("views", 18L, 60000L, 6L, 42000L, 30));
-		assertThat(assembler.toReport(summaryWith(null, 42000L, null), null, List.of(), List.of(), List.of())
+	void 광고블록_sponsoredCount_comparison_lastAdNote는_series의_adType에서_계산() {
+		// summary는 옛 ad_marked 집계(6·60000·42000·광고 07-12)를 담지만, 이제 무시하고 series로 계산한다.
+		var series = List.of(
+				new SeriesRow(OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", 10000L, 100L, 10L, false),
+				new SeriesRow(OffsetDateTime.parse("2026-07-03T00:00:00Z"), "reels", 20000L, 200L, 20L, false),
+				new SeriesRow(OffsetDateTime.parse("2026-07-05T00:00:00Z"), "reels", 6000L, 300L, 30L, true),
+				new SeriesRow(OffsetDateTime.parse("2026-07-08T00:00:00Z"), "reels", 4000L, 400L, 40L, true));
+
+		var ads = assembler.toReport(fullSummary(), null, series, List.of(), List.of()).ads();
+
+		assertThat(ads.sponsoredCount()).isEqualTo(2L); // summary의 6이 아니라 series의 sponsored 수
+		assertThat(ads.strip()).containsExactly(false, false, true, true);
+		// metric=views: organic avg(10000,20000)=15000, ad avg(6000,4000)=5000, drop=round((1-5000/15000)*100)=67
+		assertThat(ads.comparison()).isEqualTo(
+				new InfluencerAiReport.Ads.Comparison("views", 2L, 15000L, 2L, 5000L, 67));
+		// 마지막 광고 = series 마지막 sponsored(07-08), now=07-15 → 7일 → "마지막 광고 1주 전"(summary 07-12 아님)
+		assertThat(ads.lastAdNote()).isEqualTo("마지막 광고 1주 전");
+	}
+
+	@Test
+	void comparison은_organic과_ad_표본이_둘_다_있어야_존재() {
+		// metric=views. 광고 표본(views>0)이 없으면 null.
+		var organicOnly = List.of(
+				new SeriesRow(OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", 10000L, 100L, 10L, false));
+		assertThat(assembler.toReport(fullSummary(), null, organicOnly, List.of(), List.of())
 				.ads().comparison()).isNull();
-		assertThat(assembler.toReport(summaryWith(60000L, null, null), null, List.of(), List.of(), List.of())
+		// 유기 표본이 없어도 null.
+		var adOnly = List.of(
+				new SeriesRow(OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", 5000L, 100L, 10L, true));
+		assertThat(assembler.toReport(fullSummary(), null, adOnly, List.of(), List.of())
 				.ads().comparison()).isNull();
 	}
 
@@ -141,8 +164,9 @@ class V1InfluencerReportAssemblerTest {
 				new InfluencerAiReport.ContentMix.Category("메이크업", 5L),
 				new InfluencerAiReport.ContentMix.Category("스킨케어", 2L));
 		assertThat(report.contentMix().traits()).containsExactly("뷰티", "유머");
-		assertThat(report.ads().sponsoredCount()).isEqualTo(6L);
-		assertThat(report.ads().lastAdNote()).isEqualTo("이번 주 광고"); // 3일 전
+		// series 없음 → 광고 집계는 series에서 나오므로 0·null (광고 계산은 전용 테스트가 검증)
+		assertThat(report.ads().sponsoredCount()).isEqualTo(0L);
+		assertThat(report.ads().lastAdNote()).isNull();
 		assertThat(report.ads().headline()).isEqualTo("광고 헤드라인");
 		assertThat(report.ads().brands()).containsExactly(new InfluencerAiReport.Ads.Brand("머지", 3L));
 		assertThat(report.activity().avgIntervalDays()).isEqualByComparingTo("2.5");

@@ -48,7 +48,7 @@ class AccountAnalysisJobTest {
 	}
 
 	void rewireJob(AccountSynthesisPort port) {
-		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db));
+		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db), ProgressReporter.NOOP);
 	}
 
 	@BeforeEach
@@ -84,7 +84,7 @@ class AccountAnalysisJobTest {
 
 	@Test
 	void 신규_계정은_즉시_분석되고_카피가_저장된다() {
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(2, processed);
 		assertEquals(2L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
@@ -118,7 +118,7 @@ class AccountAnalysisJobTest {
 		job.run();
 		calls.clear();
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(0, processed);
 		assertTrue(calls.isEmpty());
@@ -132,7 +132,7 @@ class AccountAnalysisJobTest {
 		// 새 게시물 유입으로 stale
 		db.update("UPDATE account_summaries SET last_posted_at = timestamptz '2026-07-10 09:00:00+09' WHERE handle = 'acct_ad'");
 
-		int processed = job.run(); // 쿨다운 기본 7일 — 방금 분석했으므로 미경과
+		int processed = job.run().processed(); // 쿨다운 기본 7일 — 방금 분석했으므로 미경과
 
 		assertEquals(0, processed);
 		assertTrue(calls.isEmpty());
@@ -146,7 +146,7 @@ class AccountAnalysisJobTest {
 		// 기존 분석을 8일 전으로 백데이트 — 쿨다운(7일) 경과 재현
 		db.update("UPDATE account_analyses SET analyzed_at = now() - interval '8 days' WHERE handle = 'acct_ad'");
 
-		int processed = job.run();
+		int processed = job.run().processed();
 
 		assertEquals(1, processed); // acct_ad만 (acct_noad는 입력 동일)
 		assertEquals(2L, db.queryForObject(
@@ -163,7 +163,7 @@ class AccountAnalysisJobTest {
 	void 배치_상한을_지킨다() {
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-batch-limit', '1')");
 
-		int processed = job.run(); // 신규 2계정 중 1건만
+		int processed = job.run().processed(); // 신규 2계정 중 1건만
 
 		assertEquals(1, processed);
 		assertEquals(1L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
@@ -179,7 +179,7 @@ class AccountAnalysisJobTest {
 			return new AccountCopy("태그라인", "요약", "흐름", "차트", List.of("태그", "태그2", "태그3"), "", "페이스");
 		});
 
-		int processed = job.run(); // 예외가 전파되지 않아야 한다
+		int processed = job.run().processed(); // 예외가 전파되지 않아야 한다
 
 		assertEquals(1, processed); // acct_noad만 성공
 		assertEquals(0L, db.queryForObject(

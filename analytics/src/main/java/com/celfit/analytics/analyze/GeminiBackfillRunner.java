@@ -197,8 +197,9 @@ public class GeminiBackfillRunner {
 					continue;
 				}
 				boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
+				// 백필 대상은 정의상 늦크롤(+pin+slack 이후 지표) — late_backfill 마킹 (V33).
 				ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
-						hasCaption ? insight.attributes() : null, insight.synthesis(), true);
+						hasCaption ? insight.attributes() : null, insight.synthesis(), true, "late_backfill");
 				saved++;
 			} catch (Exception e) {
 				failed++;

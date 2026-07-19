@@ -76,7 +76,10 @@ class LoginWallIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 로그인한_세션은_월을_통과한다() throws Exception {
-		jdbcClient.sql("UPDATE app.app_setting SET value = 'WALL-TEST' WHERE key = 'signup.code'").update();
+		jdbcClient.sql("""
+				INSERT INTO app.signup_codes (code, channel) VALUES ('WALL-TEST', 'TEST')
+				ON CONFLICT (code) DO UPDATE SET used_by = NULL, used_at = NULL""").update();
+		V1AuthTestSteps.markEmailVerified(jdbcClient, "wall@example.com");
 		try {
 			MvcResult signup = mockMvc.perform(post("/v1/auth/signup").with(csrf())
 							.contentType(MediaType.APPLICATION_JSON).content(SIGNUP_BODY))
@@ -90,7 +93,7 @@ class LoginWallIntegrationTest extends IntegrationTest {
 					get("/v1/contents?startDate=2026-06-01&endDate=2026-07-17").cookie(session)).andReturn();
 			assertThat(read.getResponse().getStatus()).isNotEqualTo(401);
 		} finally {
-			jdbcClient.sql("UPDATE app.app_setting SET value = '' WHERE key = 'signup.code'").update();
+			jdbcClient.sql("DELETE FROM app.signup_codes WHERE code = 'WALL-TEST'").update();
 			jdbcClient.sql("DELETE FROM app.users WHERE email = 'wall@example.com'").update();
 		}
 	}

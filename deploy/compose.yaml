@@ -72,6 +72,32 @@ services:
       postgres-raw:
         condition: service_healthy
 
+  # 수집 상주 서버(8080 어드민 /ui) — raw(postgres-raw)에 쓰기. 수동 운영: 어드민 UI로 잡 트리거.
+  # 외부 미노출(루프백) — 접근은 SSH 터널(ssh -L 8080:localhost:8080). 스케줄은 기본 off(수동 운영).
+  crawler:
+    image: ghcr.io/subtle-madness/hypenow-crawler:latest
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-raw:5432/crawler
+      SPRING_DATASOURCE_USERNAME: ${RAW_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${RAW_DB_PASSWORD}
+      APIFY_TOKEN: ${APIFY_TOKEN}
+      HIKER_API_KEY: ${HIKER_API_KEY:-}
+      DATALIKERS_API_KEY: ${DATALIKERS_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Claude 뷰티 판정(claude-api 전환 대비) — OAuth 토큰만, ANTHROPIC_API_KEY는 서버에 두지 않는다
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      APIFY_PROXY_URL: ${APIFY_PROXY_URL:-}
+      DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
+      DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      JAVA_OPTS: "-Xmx1g"
+    ports:
+      - "127.0.0.1:8080:8080"   # 루프백 전용 — 어드민은 SSH 터널로만
+    depends_on:
+      postgres-raw:
+        condition: service_healthy
+
   was:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
@@ -81,6 +107,8 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/analysis
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
     depends_on:
