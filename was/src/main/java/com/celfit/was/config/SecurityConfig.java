@@ -81,6 +81,7 @@ public class SecurityConfig {
 						.requestMatchers("/v1/auth/**").permitAll()      // 인증 입구(레거시 /api/auth는 잠금 — /v1 일원화)
 						.requestMatchers("/v1/events/gate").permitAll()  // 익명 게이트 측정 유지(스펙 6.19)
 						.requestMatchers("/v1/stats").permitAll()        // 랜딩 통계(스펙 6.20) — 로그인 전 랜딩 페이지가 소비, 공개 캐시 전제
+						.requestMatchers("/v1/inquiries").permitAll()    // 도입문의 접수(클로즈베타 2026-07-19) — 코드 없는 방문자 표면
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
 						.requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll() // 로컬·개발 문서(prod는 springdoc 비활성)
 						.anyRequest().authenticated())
