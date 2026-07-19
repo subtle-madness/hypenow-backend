@@ -34,6 +34,7 @@ class UserRepositoryTest extends IntegrationTest {
 		assertThat(saved.email()).isEqualTo("user@example.com");
 		assertThat(saved.passwordHash()).isEqualTo("hashed-1");
 		assertThat(saved.createdAt()).isNotNull();
+		assertThat(saved.role()).isEqualTo("USER");
 	}
 
 	@Test
