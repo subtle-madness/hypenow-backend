@@ -57,8 +57,6 @@ crawler:
     judge: gemini     # 판정 구현 선택 — gemini(기본, GEMINI_API_KEY 셸 export 필요) | claude-cli(로컬 Claude CLI 롤백)
   reels:
     batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)
-  resnapshot:
-    batch-limit: 200  # 실행 1회당 재수집할 계정 수 — 계정당 로컬 GQL 1요청(연속 rate-limit 시 회로 차단)
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"

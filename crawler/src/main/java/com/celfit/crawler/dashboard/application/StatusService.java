@@ -1,5 +1,6 @@
 package com.celfit.crawler.dashboard.application;
 
+import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
@@ -7,7 +8,6 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
 import java.util.Map;
@@ -61,7 +61,7 @@ public class StatusService {
                                long feedDoneToday, long feedRemaining,
                                long reelsDoneToday, long reelsRemaining,
                                long cycleDoneToday,
-                               long newPostsToday) {}
+                               long newPostsToday, long newFeedToday, long newReelsToday) {}
 
     public DailySummary daily() {
         Instant today = java.time.LocalDate.now(clock).atStartOfDay(clock.getZone()).toInstant();
@@ -73,7 +73,12 @@ public class StatusService {
                 feedDone, Math.max(targets - feedDone, 0),
                 reelsDone, Math.max(targets - reelsDone, 0),
                 bothDone,
-                contents.countByOriginAndFirstSeenAtGreaterThanEqual(ContentOrigin.ENUMERATION, today));
+                // 오늘 처음 발견된 수집 게시물 — 재방문이 다시 본 기존 게시물은 잡히지 않는다
+                contents.countByOriginAndFirstSeenAtGreaterThanEqual(ContentOrigin.ENUMERATION, today),
+                contents.countByOriginAndContentTypeAndFirstSeenAtGreaterThanEqual(
+                        ContentOrigin.ENUMERATION, ContentType.FEED, today),
+                contents.countByOriginAndContentTypeAndFirstSeenAtGreaterThanEqual(
+                        ContentOrigin.ENUMERATION, ContentType.REELS, today));
     }
 
     public StatusSummary summary() {
@@ -81,7 +86,7 @@ public class StatusService {
         for (InfluencerStatus s : InfluencerStatus.values()) {
             byInfluencerStatus.put(s, influencers.countByStatus(s));
         }
-        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         return new StatusSummary(byInfluencerStatus,
                 influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
                 influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),
