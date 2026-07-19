@@ -36,7 +36,7 @@ public class UserRepository {
 		return jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash)
 				VALUES (:email, :passwordHash)
-				RETURNING id, email, password_hash, created_at
+				RETURNING id, email, password_hash, role, created_at
 				""")
 				.param("email", normalizeEmail(email))
 				.param("passwordHash", passwordHash)
@@ -156,7 +156,7 @@ public class UserRepository {
 
 	public Optional<AppUser> findByEmail(String email) {
 		return jdbcClient.sql("""
-				SELECT id, email, password_hash, created_at
+				SELECT id, email, password_hash, role, created_at
 				FROM app.users
 				WHERE email = :email
 				""")
@@ -167,7 +167,7 @@ public class UserRepository {
 
 	public Optional<AppUser> findById(long id) {
 		return jdbcClient.sql("""
-				SELECT id, email, password_hash, created_at
+				SELECT id, email, password_hash, role, created_at
 				FROM app.users
 				WHERE id = :id
 				""")
