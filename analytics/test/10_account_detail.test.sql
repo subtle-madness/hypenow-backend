@@ -1,6 +1,7 @@
--- 인플루언서 상세 기대값. dummy_a 윈도우(업로드순): r1(12000)·r2(8000)·f1(NULL)·rn(100).
--- metric='views'(views>0 3개 ≥ max(3, 4/2)), trend: older avg(12000,8000)=10000 / newer 100(f1 NULL 제외)
--- → -99% down. avg_er_pct = avg(583,330,2100,6 각각 /5500)*100 = 13.7.
+-- 인플루언서 상세 기대값. dummy_a 윈도우(업로드순): r1(11000)·r2(8000)·f1(NULL)·rn(100).
+-- r1은 지표 핀(v_pinned_metrics, 성숙 최이른 clips 06-05=11000/520) — 랭킹과 동일 스냅샷.
+-- metric='views'(views>0 3개 ≥ max(3, 4/2)), trend: older avg(11000,8000)=9500 / newer 100(f1 NULL 제외)
+-- → -99% down. avg_er_pct = avg(572,330,2100,6 각각 /5500)*100 = 13.7(반올림 동일).
 -- dummy_b: 표본 1 → metric='likes'(views_count 1 < 3), r3가 광고라 organic 표본 0 → ad_drop_pct NULL.
 DO $$
 BEGIN
@@ -13,8 +14,8 @@ BEGIN
     'summaries a followers != 5500';
   ASSERT (SELECT views_count FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 3,
     'summaries a views_count != 3';
-  ASSERT (SELECT avg_views FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 6700,
-    'summaries a avg_views != 6700';
+  ASSERT (SELECT avg_views FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 6367,
+    'summaries a avg_views != 6367 (avg(11000,8000,100)=6366.67)';
   ASSERT (SELECT metric FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 'views',
     'summaries a metric != views';
   ASSERT (SELECT avg_er_pct FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 13.7,

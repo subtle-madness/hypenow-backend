@@ -58,41 +58,11 @@ WHERE i.status = 'QUALIFIED' AND i.beauty AND NOT i.beauty_company;
 
 -- 콘텐츠 팩트. 지표(views·likes·comments·hype_score)는 **업로드 +N일 이후 가장 이른 스냅샷으로
 -- 고정**(07-14 정정 ③ — 열거 재방문으로 스냅샷이 누적돼도 서빙 지표는 3일 시점 값 유지).
--- N은 app_setting 'analytics.metric-pin-days' (기본 3). 고정 후보가 없으면(업로드 3일 안 수집분만
--- 있는 신선 게시물) 최신 스냅샷 폴백. 메타(썸네일·캡션)는 최신 스냅샷(v_base_detail) —
--- 썸네일 서명 URL 만료(~4일) 대응. original_url은 short_code로 합성(신 payload에 url 필드 없음).
+-- 지표 핀은 공유 뷰 v_pinned_metrics(00_base) — 최근창 경로(recentReels·baseline)와 같은 규칙을 쓴다.
+-- 메타(썸네일·캡션)는 최신 스냅샷(v_base_detail) — 썸네일 서명 URL 만료(~4일) 대응.
+-- original_url은 short_code로 합성(신 payload에 url 필드 없음).
 -- hype_score 신선도는 now() 기준 — 미러 갱신 시점이 랭킹 신선도의 기준 시각이다.
--- usable = hype_score 산출에 필요한 지표가 채워진 스냅샷(릴스는 views·likes·comments, 피드는
--- likes·comments — 피드 views는 항상 NULL이라 점수에 안 씀). 릴스 스냅샷 소스가 둘(clips=지표 완비,
--- SELF_GQL 내장 타임라인=view 비공개로 NULL 잦음)이라, 지표 없는 타임라인 스냅샷이 더 이르다는
--- 이유로 핀되면 옆의 완비 clips 스냅샷을 두고도 점수가 NULL이 됐다 → 핀 우선순위에 usable을 넣는다.
 CREATE OR REPLACE VIEW analytics.v_contents AS
-WITH snap AS (
-  SELECT h.id, h.content_id, h.views, h.likes, h.comments_count, h.captured_at,
-         h.captured_at >= e.uploaded_at + make_interval(days => COALESCE(
-           (SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)) AS matured,
-         (h.likes IS NOT NULL AND h.comments_count IS NOT NULL
-          AND (e.content_type <> 'REELS' OR h.views IS NOT NULL)) AS usable
-  FROM analytics.v_base_content_snapshot h
-  JOIN analytics.v_serving_content e USING (content_id)
-),
-pinned AS (
-  -- 우선순위: ① 성숙 ∧ 지표완비 중 가장 이른 것(+3일 고정 의도 유지) → ② 지표완비 중 최신
-  --           → ③ (완비 없음) 성숙 중 가장 이른 것 → ④ 최신. ③④는 구 폴백 그대로라 회귀 없음.
-  SELECT DISTINCT ON (content_id) content_id, views, likes, comments_count, captured_at
-  FROM snap
-  ORDER BY content_id,
-           (matured AND usable) DESC,
-           CASE WHEN matured AND usable THEN captured_at END ASC,
-           CASE WHEN matured AND usable THEN id END ASC,
-           usable DESC,
-           CASE WHEN usable THEN captured_at END DESC,
-           CASE WHEN usable THEN id END DESC,
-           matured DESC,
-           CASE WHEN matured THEN captured_at END ASC,
-           CASE WHEN matured THEN id END ASC,
-           captured_at DESC, id DESC
-)
 SELECT
   e.short_code,
   e.owner_username AS account_handle,
@@ -110,7 +80,7 @@ SELECT
   p.captured_at AS metric_captured_at
 FROM analytics.v_serving_content e
 JOIN analytics.v_base_detail d USING (content_id)
-JOIN pinned p USING (content_id)
+JOIN analytics.v_pinned_metrics p USING (content_id)
 LEFT JOIN analytics.v_base_profile pr ON pr.username = e.owner_username;
 
 -- 댓글 (작성자는 마스킹해 서빙 — 원문 계정명은 raw에만 둔다). 형태 구 버전 동일.
