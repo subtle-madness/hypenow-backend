@@ -20,12 +20,21 @@ public class AnalyticsSettings {
 	public static final String KEY_ACCOUNT_ANALYZE_COOLDOWN_DAYS = "analytics.account-analyze-cooldown-days";
 	/** 분석 대상 최소 숙성 일수 — 게시 직후 분석·영구 고정 방지 (B3 숙성 가드, 07-14 확정). */
 	public static final String KEY_ANALYZE_MATURITY_DAYS = "analytics.analyze-maturity-days";
+	/** LLM 프로바이더 선택 — gemini(기본, 07-18 확정) | anthropic(롤백 경로). 전환은 재기동 필요(빈 생성 시 결정). */
+	public static final String KEY_LLM_PROVIDER = "analytics.llm-provider";
+	/** Gemini 모델 — 07-18 골드셋 확정. 구모델(2.5 등)은 신규 API 키에서 404라 3.1이 유일. */
+	public static final String KEY_GEMINI_MODEL = "analytics.gemini-model";
+	/** Gemini 분당 호출 상한 — 무료 티어 15 RPM. crawler 판정과 동시 실행 시 합산 초과 주의. */
+	public static final String KEY_GEMINI_RPM = "analytics.gemini-rpm";
 
 	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS = 7;
 	static final int DEFAULT_ANALYZE_MATURITY_DAYS = 3;
+	static final String DEFAULT_LLM_PROVIDER = "gemini";
+	static final String DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
+	static final int DEFAULT_GEMINI_RPM = 15;
 
 	private final JdbcTemplate raw;
 
@@ -54,6 +63,23 @@ public class AnalyticsSettings {
 	public int analyzeMaturityDays() {
 		return read(KEY_ANALYZE_MATURITY_DAYS).map(Integer::parseInt)
 				.orElse(DEFAULT_ANALYZE_MATURITY_DAYS);
+	}
+
+	public String llmProvider() {
+		return read(KEY_LLM_PROVIDER).orElse(DEFAULT_LLM_PROVIDER);
+	}
+
+	public String geminiModel() {
+		return read(KEY_GEMINI_MODEL).orElse(DEFAULT_GEMINI_MODEL);
+	}
+
+	public int geminiRpm() {
+		return read(KEY_GEMINI_RPM).map(Integer::parseInt).orElse(DEFAULT_GEMINI_RPM);
+	}
+
+	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */
+	public String activeLlmModel() {
+		return "anthropic".equals(llmProvider()) ? llmModel() : geminiModel();
 	}
 
 	private java.util.Optional<String> read(String key) {
