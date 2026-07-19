@@ -33,13 +33,25 @@ public class AdminConfig {
 	}
 
 	@Bean
+	public JobProgressRegistry jobProgressRegistry() {
+		return new JobProgressRegistry();
+	}
+
+	/** 실행 피드 링 버퍼 — 최근 50건(07-17 결정: DB 이력 테이블 없이 인메모리로 수용). */
+	@Bean
+	public RunHistory runHistory() {
+		return new RunHistory(50);
+	}
+
+	@Bean
 	public AnalyticsJobService analyticsJobService(JobLock jobLock, TaskExecutor jobTaskExecutor,
 			MirrorJob mirrorJob, MirrorRegistry mirrorRegistry,
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
-			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob) {
+			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
+			JobProgressRegistry jobProgressRegistry, RunHistory runHistory) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
-				classifyJob, analyzeJob, accountAnalyzeJob);
+				classifyJob, analyzeJob, accountAnalyzeJob, jobProgressRegistry, runHistory);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")

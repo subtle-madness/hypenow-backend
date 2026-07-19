@@ -31,11 +31,13 @@ class AnalyticsJobServiceTest {
 	private final MirrorJob mirrorJob = mock(MirrorJob.class);
 	private final MirrorRegistry registry = new MirrorRegistry(List.of());
 	private final ContentAnalysisJob analyzeJob = mock(ContentAnalysisJob.class);
+	private final JobProgressRegistry progress = new JobProgressRegistry();
+	private final RunHistory history = new RunHistory(50);
 
 	private AnalyticsJobService service() {
 		return new AnalyticsJobService(lock, new SyncTaskExecutor(), mirrorJob, registry,
 				provider(mock(CommentClassificationJob.class)), provider(analyzeJob),
-				provider(mock(AccountAnalysisJob.class)));
+				provider(mock(AccountAnalysisJob.class)), progress, history);
 	}
 
 	@Test
@@ -61,6 +63,37 @@ class AnalyticsJobServiceTest {
 	}
 
 	@Test
+	void 성공하면_이력에_SUCCESS로_기록() {
+		when(analyzeJob.run()).thenReturn(new JobResult(3, 0, false));
+		service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.ANALYZE);
+		assertThat(run.outcome()).isEqualTo(RunHistory.Outcome.SUCCESS);
+		assertThat(run.processed()).isEqualTo(3);
+	}
+
+	@Test
+	void 예외가_나면_이력에_ERROR와_메시지_기록() {
+		when(analyzeJob.run()).thenThrow(new IllegalStateException("boom"));
+		service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
+		var run = history.recent(1).getFirst();
+		assertThat(run.outcome()).isEqualTo(RunHistory.Outcome.ERROR);
+		assertThat(run.note()).isEqualTo("boom");
+	}
+
+	@Test
+	void outcomeOf_이월이면_QUOTA_CARRYOVER() {
+		var outcome = AnalyticsJobService.outcomeOf(new JobResult(1, 0, true), null);
+		assertThat(outcome).isEqualTo(RunHistory.Outcome.QUOTA_CARRYOVER);
+	}
+
+	@Test
+	void outcomeOf_실패_건이_있으면_FAILED() {
+		var outcome = AnalyticsJobService.outcomeOf(new JobResult(5, 2, false), null);
+		assertThat(outcome).isEqualTo(RunHistory.Outcome.FAILED);
+	}
+
+	@Test
 	void 지연_잡_공급자는_실행_시점에만_조회() {
 		AtomicInteger resolved = new AtomicInteger();
 		ObjectProvider<ContentAnalysisJob> lazyProvider = new ObjectProvider<>() {
@@ -72,7 +105,7 @@ class AnalyticsJobServiceTest {
 		};
 		AnalyticsJobService service = new AnalyticsJobService(lock, new SyncTaskExecutor(),
 				mirrorJob, registry, provider(mock(CommentClassificationJob.class)),
-				lazyProvider, provider(mock(AccountAnalysisJob.class)));
+				lazyProvider, provider(mock(AccountAnalysisJob.class)), progress, history);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);
