@@ -34,7 +34,7 @@ class EmailVerificationRepositoryTest extends IntegrationTest {
 		assertThat(row.codeHash()).isEqualTo("hash-1");
 		assertThat(row.attempts()).isZero();
 		assertThat(row.verifiedAt()).isNull();
-		assertThat(row.codeExpiresAt()).isCloseTo(expiresAt, org.assertj.core.api.Assertions.within(1, java.time.temporal.ChronoUnit.SECONDS));
+		assertThat(row.codeExpiresAt().toInstant()).isCloseTo(expiresAt, org.assertj.core.api.Assertions.within(1, java.time.temporal.ChronoUnit.SECONDS));
 	}
 
 	@Test
@@ -56,7 +56,7 @@ class EmailVerificationRepositoryTest extends IntegrationTest {
 		repository.upsert(EMAIL, "hash-1", Instant.now().plusSeconds(600));
 		Instant verifiedAt = Instant.now();
 		repository.markVerified(EMAIL, verifiedAt);
-		assertThat(repository.find(EMAIL).orElseThrow().verifiedAt())
+		assertThat(repository.find(EMAIL).orElseThrow().verifiedAt().toInstant())
 				.isCloseTo(verifiedAt, org.assertj.core.api.Assertions.within(1, java.time.temporal.ChronoUnit.SECONDS));
 
 		repository.delete(EMAIL);

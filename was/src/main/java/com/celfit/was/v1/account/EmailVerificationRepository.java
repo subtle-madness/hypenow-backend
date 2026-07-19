@@ -11,8 +11,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class EmailVerificationRepository {
 
-	public record Verification(String email, String codeHash, Instant codeExpiresAt,
-			int attempts, Instant verifiedAt) {
+	public record Verification(String email, String codeHash, OffsetDateTime codeExpiresAt,
+			int attempts, OffsetDateTime verifiedAt) {
 	}
 
 	private final JdbcClient jdbcClient;
@@ -40,12 +40,7 @@ public class EmailVerificationRepository {
 				SELECT email, code_hash, code_expires_at, attempts, verified_at
 				FROM app.email_verifications WHERE email = :email""")
 				.param("email", email)
-				.query((rs, rowNum) -> new Verification(
-						rs.getString("email"),
-						rs.getString("code_hash"),
-						rs.getTimestamp("code_expires_at").toInstant(),
-						rs.getInt("attempts"),
-						rs.getTimestamp("verified_at") == null ? null : rs.getTimestamp("verified_at").toInstant()))
+				.query(Verification.class)
 				.optional();
 	}
 
