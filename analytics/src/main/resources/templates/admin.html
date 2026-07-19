@@ -3,26 +3,76 @@
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>hypenow analytics — 잡 실행</title>
+    <title>hypenow analytics</title>
     <link rel="stylesheet" href="/css/admin.css"/>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
 <body>
 <main>
-<h1>analytics 잡 실행</h1>
-<div class="flash" th:if="${message}" th:text="${message}"></div>
+    <header class="hd">
+        <h1>hypenow analytics</h1>
+        <div class="pills">
+            <span class="pill on" th:if="${scheduleEnabled}">자동화 ON</span>
+            <span class="pill" th:unless="${scheduleEnabled}">자동화 OFF — 수동 전용</span>
+            <span class="pill ghost">잡 3종 독립 실행 · 각 카드에 다음 예정</span>
+        </div>
+    </header>
 
-<div class="job-forms">
-    <form method="post" th:each="j : ${jobs}" th:action="@{'/ui/jobs/' + ${j.slug()}}">
-        <button type="submit" class="primary" th:text="${j.label()}"></button>
-    </form>
-</div>
+    <div class="flash" th:if="${message}" th:text="${message}"></div>
 
-<h2>현재 상태</h2>
-<div hx-get="/ui/fragments/status" hx-trigger="load, every 3s"></div>
+    <!-- 퍼널 — 집계 실패 시 카드 없이 렌더 -->
+    <section class="card funnel" th:if="${funnel != null}">
+        <div class="cap">콘텐츠 파이프라인 <span class="off">— 데이터가 흐르는 단계 (잡 실행 순서 아님)</span></div>
 
-<h2>실행 로그</h2>
-<div hx-get="/ui/fragments/logs" hx-trigger="load, every 3s"></div>
+        <div class="stages">
+            <div class="stage">
+                <b th:text="${#numbers.formatInteger(funnel.rawContents(), 1, 'COMMA')}">0</b>
+                <span>수집</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b class="pending" th:if="${funnel.candidatesPending()}">집계 중…</b>
+                <b th:unless="${funnel.candidatesPending()}"
+                   th:text="${#numbers.formatInteger(funnel.candidates(), 1, 'COMMA')}">0</b>
+                <span>LLM 후보</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b th:text="${#numbers.formatInteger(funnel.analyzed(), 1, 'COMMA')}">0</b>
+                <span>분석 완료</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b th:text="${#numbers.formatInteger(funnel.served(), 1, 'COMMA')}">0</b>
+                <span>서빙 미러</span>
+            </div>
+        </div>
+
+        <div class="bar" th:if="${funnel.candidates() > 0}">
+            <i th:style="'width:' + ${funnel.coveragePercent()} + '%'"></i>
+        </div>
+        <div class="meta">
+            <span>분석 커버리지 <b th:text="${funnel.coverageText()}"></b>
+                — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정,
+                전량까지 약 <span th:text="${funnel.daysToFull()}"></span>일 (무료 예산 기준)</span>
+            <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
+        </div>
+
+        <div class="acct">
+            <span>계정 카피 <b th:text="${#numbers.formatInteger(funnel.copiedAccounts(), 1, 'COMMA')}"></b>
+                / <span th:text="${#numbers.formatInteger(funnel.beautyAccounts(), 1, 'COMMA')}"></span>
+                <span class="off">(<span th:text="${funnel.accountPercent()}"></span>%)</span></span>
+            <div class="bar sm"><i th:style="'width:' + ${funnel.accountPercent()} + '%'"></i></div>
+        </div>
+    </section>
+
+    <!-- 잡 카드 + 실행 피드 (5초 폴링) -->
+    <div hx-get="/ui/fragments/board" hx-trigger="load, every 5s"></div>
+
+    <details class="logs">
+        <summary>라이브 로그</summary>
+        <div hx-get="/ui/fragments/logs" hx-trigger="load, every 5s"></div>
+    </details>
 </main>
 </body>
 </html>

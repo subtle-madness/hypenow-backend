@@ -9,6 +9,7 @@ import com.celfit.analytics.mirror.MirrorRegistry;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -57,6 +58,20 @@ public class AdminConfig {
 	@Bean(initMethod = "register", destroyMethod = "unregister")
 	public LogBuffer logBuffer() {
 		return new LogBuffer();
+	}
+
+	/**
+	 * 스케줄 가시화 — 생성자 @Value는 직접 호출 시 무시되므로 @Bean 메서드 파라미터로 값을 주입해 전달.
+	 * ScheduleRunner와 같은 프로퍼티 키를 읽는다(잡별 다음 발화 KST).
+	 */
+	@Bean
+	public ScheduleInfo scheduleInfo(
+			@Value("${analytics.schedule.enabled:false}") boolean enabled,
+			@Value("${analytics.schedule.mirror-cron:-}") String mirrorCron,
+			@Value("${analytics.schedule.classify-cron:-}") String classifyCron,
+			@Value("${analytics.schedule.analyze-cron:-}") String analyzeCron,
+			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron) {
+		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron);
 	}
 
 	@Bean

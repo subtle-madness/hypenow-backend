@@ -1,0 +1,59 @@
+<div th:fragment="board" xmlns:th="http://www.thymeleaf.org">
+    <!-- 잡 카드 그리드 (3열) -->
+    <section class="jobs">
+        <div class="card job" th:each="card : ${cards}">
+            <div class="job-hd">
+                <span class="job-title" th:text="${card.label()}"></span>
+                <span class="badge run" th:if="${card.running()}">실행 중</span>
+                <span class="badge idle" th:unless="${card.running()}">유휴</span>
+            </div>
+
+            <!-- 실행 중 -->
+            <div class="job-body" th:if="${card.running()}">
+                <div class="jbar"><i th:style="'width:' + ${card.percent()} + '%'"></i></div>
+                <div class="job-meta">
+                    <span><b th:text="${card.processed()}">0</b> / <span th:text="${card.total()}">0</span>
+                        · 실패 <span th:text="${card.failed()}">0</span></span>
+                    <span class="off">경과 <span th:text="${card.elapsedText()}"></span></span>
+                </div>
+                <div class="job-eta off" th:if="${card.etaText() != null}">예상 완료 ~<span th:text="${card.etaText()}"></span></div>
+            </div>
+
+            <!-- 유휴 -->
+            <div class="job-body" th:unless="${card.running()}">
+                <div class="job-last" th:if="${card.lastRun() != null}">
+                    <span th:text="${card.lastTimeText()}"></span>
+                    · <span th:text="${card.lastRun().processed()}"></span>건 처리 ·
+                    <span class="badge" th:switch="${card.lastRun().outcome().name()}"
+                          th:classappend="${card.lastRun().outcome().name()}">
+                        <span th:case="'SUCCESS'">성공</span>
+                        <span th:case="'QUOTA_CARRYOVER'">이월</span>
+                        <span th:case="'FAILED'">실패</span>
+                        <span th:case="'ERROR'">오류</span>
+                    </span>
+                </div>
+                <div class="job-last off" th:unless="${card.lastRun() != null}">실행 이력 없음</div>
+            </div>
+
+            <div class="job-next off">
+                <span th:if="${card.nextRunText() != null}">다음 예정 <b th:text="${card.nextRunText()}"></b> · 매일</span>
+                <span th:unless="${card.nextRunText() != null}">수동 전용</span>
+            </div>
+
+            <form method="post" th:action="@{'/ui/jobs/' + ${card.job().slug()}}">
+                <button type="submit" class="btn" th:disabled="${card.running()}">지금 실행</button>
+            </form>
+        </div>
+    </section>
+
+    <!-- 실행 피드 -->
+    <section class="card feed">
+        <h2>실행 피드</h2>
+        <div class="ev" th:each="e : ${feed}">
+            <span class="dot" th:classappend="${e.outcome()}"></span>
+            <span class="ev-time off" th:text="${e.timeText()}"></span>
+            <span class="ev-text" th:text="${e.sentence()}"></span>
+        </div>
+        <p class="hint" th:if="${#lists.isEmpty(feed)}">서버 시작 후 실행 없음 (이력은 메모리 보관 — 재시작 시 초기화).</p>
+    </section>
+</div>
