@@ -15,7 +15,7 @@ public record ContentAiReport(Scope scope, String summary, Comparison comparison
 			EngagementQuality engagementQuality, String narrative) {
 		public record Views(Long value, Long baseline, BigDecimal multiple,
 				Integer rankInRecent, Integer recentCount, List<ReelPoint> recentReels) {
-			public record ReelPoint(Long views, String postedAt) {
+			public record ReelPoint(String contentId, Long views, String postedAt, boolean isCurrent) {
 			}
 		}
 		public record EngagementRate(BigDecimal value, BigDecimal baseline) {
