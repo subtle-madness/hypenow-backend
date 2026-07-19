@@ -73,21 +73,6 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
                                         Pageable pageable);
 
     /**
-     * RESNAPSHOT 잡 대상: CLAUDE가 비뷰티로 판정했고 최신 raw_profile이 캡션 없는 소스
-     * (HIKER_MOBILE·DATALIKERS)인 계정 — 캡션 재료를 확보하면 재판정에서 뷰티로 구제될 수 있다.
-     * 재수집이 끝나면 최신 스냅샷이 SELF_GQL이 되어 자연히 선정에서 빠진다.
-     */
-    @Query("select i from Influencer i where i.status = :status and i.beautySource = :beautySource "
-            + "and i.beauty = false and exists (select 1 from RawProfile rp "
-            + "where rp.influencerId = i.id and rp.source in :sources and rp.capturedAt = "
-            + "(select max(rp2.capturedAt) from RawProfile rp2 where rp2.influencerId = i.id)) "
-            + "order by i.id")
-    List<Influencer> findResnapshotTargets(@Param("status") InfluencerStatus status,
-                                           @Param("beautySource") String beautySource,
-                                           @Param("sources") java.util.Collection<com.celfit.crawler.crawling.domain.RawSource> sources,
-                                           Pageable pageable);
-
-    /**
      * REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만.
      * 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 있고 릴스가 없는 "짝 안 맞는" 계정부터 채운다.
      */

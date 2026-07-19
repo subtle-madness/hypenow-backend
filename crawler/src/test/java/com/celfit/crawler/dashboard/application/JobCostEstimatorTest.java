@@ -54,6 +54,21 @@ class JobCostEstimatorTest {
     }
 
     @Test
+    void collect_reels의_due_집계는_달력일_기준_경계를_쓴다() {
+        // NOW = 2026-07-14T00:00Z, 주기 7일 → 경계 = 오늘 자정 − 6일 = 2026-07-08 자정.
+        // 잡 선정(RevisitCutoff)과 같은 경계여야 화면 due 수치와 실제 대상이 일치한다.
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.revisitIntervalDays()).thenReturn(7);
+        when(profileSource.current()).thenReturn(ProfileSource.SELF);
+
+        estimator.estimates();
+
+        org.mockito.Mockito.verify(influencers).countTrackDue(Instant.parse("2026-07-08T00:00:00Z"));
+        org.mockito.Mockito.verify(influencers).countReelsDue(Instant.parse("2026-07-08T00:00:00Z"));
+    }
+
+    @Test
     void discover_HIKER_소스면_키워드당_페이지_반복으로_요청수를_계산한다() {
         when(searchKeywords.findByEnabledTrue()).thenReturn(keywords(3));
         when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);

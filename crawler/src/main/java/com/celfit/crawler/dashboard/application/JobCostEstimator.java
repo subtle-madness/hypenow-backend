@@ -1,5 +1,6 @@
 package com.celfit.crawler.dashboard.application;
 
+import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.content.application.port.out.SearchKeywordRepository;
 import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
@@ -12,7 +13,6 @@ import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
 import com.celfit.crawler.settings.domain.ProfileSource;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,7 +123,7 @@ public class JobCostEstimator {
     }
 
     private JobCost collectEstimate() {
-        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         long collectDue = influencers.countBackfillPending() + influencers.countTrackDue(revisitBefore);
         long targets = Math.min((long) settings.collectBatchLimit(), collectDue);
         List<String> endpoints = new ArrayList<>();
@@ -140,7 +140,7 @@ public class JobCostEstimator {
     }
 
     private JobCost reelsEstimate() {
-        Instant revisitBefore = clock.instant().minus(Duration.ofDays(settings.revisitIntervalDays()));
+        Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         long due = influencers.countReelsDue(revisitBefore);
         long targets = Math.min((long) settings.reelsBatchLimit(), due);
         double cost = targets * hikerProperties.costPerRequestUsd();
