@@ -20,6 +20,8 @@ public class AnalyticsSettings {
 	public static final String KEY_ACCOUNT_ANALYZE_COOLDOWN_DAYS = "analytics.account-analyze-cooldown-days";
 	/** 분석 대상 최소 숙성 일수 — 게시 직후 분석·영구 고정 방지 (B3 숙성 가드, 07-14 확정). */
 	public static final String KEY_ANALYZE_MATURITY_DAYS = "analytics.analyze-maturity-days";
+	/** 분석 증분 창 상한(일) — 백필 MVP 제외(07-19): 창을 넘긴 게시물은 분석하지 않는다. */
+	public static final String KEY_ANALYZE_WINDOW_DAYS = "analytics.analyze-window-days";
 	/** LLM 프로바이더 선택 — gemini(기본, 07-18 확정) | anthropic(롤백 경로). 전환은 재기동 필요(빈 생성 시 결정). */
 	public static final String KEY_LLM_PROVIDER = "analytics.llm-provider";
 	/** Gemini 모델 — 07-18 골드셋 확정. 구모델(2.5 등)은 신규 API 키에서 404라 3.1이 유일. */
@@ -32,6 +34,7 @@ public class AnalyticsSettings {
 	static final int DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS = 7;
 	static final int DEFAULT_ANALYZE_MATURITY_DAYS = 3;
+	static final int DEFAULT_ANALYZE_WINDOW_DAYS = 14;
 	static final String DEFAULT_LLM_PROVIDER = "gemini";
 	static final String DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
 	static final int DEFAULT_GEMINI_RPM = 15;
@@ -63,6 +66,11 @@ public class AnalyticsSettings {
 	public int analyzeMaturityDays() {
 		return read(KEY_ANALYZE_MATURITY_DAYS).map(Integer::parseInt)
 				.orElse(DEFAULT_ANALYZE_MATURITY_DAYS);
+	}
+
+	public int analyzeWindowDays() {
+		return read(KEY_ANALYZE_WINDOW_DAYS).map(Integer::parseInt)
+				.orElse(DEFAULT_ANALYZE_WINDOW_DAYS);
 	}
 
 	public String llmProvider() {

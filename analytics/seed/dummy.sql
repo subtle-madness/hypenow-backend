@@ -16,6 +16,9 @@
 
 -- 설정 키 결정화: 실DB 오버라이드가 있으면 기대값이 흔들린다 (ROLLBACK으로 복구됨).
 DELETE FROM app_setting WHERE key LIKE 'analytics.%';
+-- 증분 창(analyze-window-days, 기본 14)을 사실상 무력화 — 시드 콘텐츠가 고정 날짜(2026-06)라
+-- 상대 창이 켜지면 시간이 지날수록 결과가 변한다. 창 동작 자체는 04 테스트가 값 교체로 검증.
+INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-window-days', '36500');
 
 INSERT INTO crawl_run(id, job, trigger_type, actor_id, status, started_at)
 VALUES (99990000, 'dummy', 'MANUAL', 'dummy/actor', 'SUCCEEDED', timestamptz '2026-06-05 00:00:00+09');

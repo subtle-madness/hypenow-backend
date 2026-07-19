@@ -82,8 +82,9 @@ public class ContentAnalysisJob {
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
 				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-				  AND c.posted_at <= now() - make_interval(days => ?)""",
-				String.class, settings.analyzeMaturityDays()));
+				  AND c.posted_at <= now() - make_interval(days => ?)
+				  AND c.posted_at > now() - make_interval(days => ?)""",
+				String.class, settings.analyzeMaturityDays(), settings.analyzeWindowDays()));
 		List<String> targets = withBaseline.keySet().stream()
 				.filter(eligible::contains)
 				.limit(settings.analyzeBatchLimit())

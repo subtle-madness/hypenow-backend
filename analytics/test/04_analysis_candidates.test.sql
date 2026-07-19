@@ -15,3 +15,12 @@ BEGIN
   ASSERT (SELECT views FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_r1') = 11000,
     'candidates r1 views != 11000 (고정 지표 승계)';
 END $$;
+
+-- 증분 창(07-19): 창을 14일로 되돌리면 고정 날짜(2026-06) 시드는 전부 창 밖 → 후보 0.
+-- (rn은 미숙성, 나머지는 창 초과 — 백필 MVP 제외 정책의 뷰 반영 검증)
+UPDATE app_setting SET value = '14' WHERE key = 'analytics.analyze-window-days';
+DO $$
+BEGIN
+  ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%') = 0,
+    '증분 창 밖 시드가 후보에 남아 있음';
+END $$;

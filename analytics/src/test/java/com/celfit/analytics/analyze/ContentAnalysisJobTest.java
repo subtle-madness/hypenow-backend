@@ -387,6 +387,14 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 증분_창을_넘긴_게시물은_대상에서_제외된다() {
+		// 백필 MVP 제외(07-19): analyze-window-days(기본 14)보다 오래된 게시물은 분석하지 않는다
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-window-days', '7')");
+		// 픽스처 게시일은 now()-10일 — 창 7일로 좁히면 전부 제외
+		assertEquals(0, job.run().processed());
+	}
+
+	@Test
 	void 진행률을_보고한다() {
 		// 대상 1건으로 고정 — 최초 보고(대상 확정 직후)와 마지막 보고(처리 완료 직후)만 검증
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
