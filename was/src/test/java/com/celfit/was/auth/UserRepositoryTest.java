@@ -22,8 +22,31 @@ class UserRepositoryTest extends IntegrationTest {
 
 	private NewUser newUser(String email, boolean agreedMarketing) {
 		return new NewUser(email, "김우민", "우민", "brand", "portal_search",
-				"+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
+				"+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff", null,
 				true, true, true, agreedMarketing);
+	}
+
+	// 가입 경량화(2026-07-19) — 선택 필드 null 저장 + usage_purpose(대행사 활용 목적) 저장
+	@Test
+	void insertProfile은_선택_필드_null과_usage_purpose를_저장한다() {
+		NewUser lean = new NewUser("lean@example.com", "김우민", null, "agency", null,
+				null, null, "OO대행사", null, null, null, "브랜드 캠페인 인플루언서 발굴",
+				true, true, true, false);
+
+		UserProfile saved = repository.insertProfile(lean, "hashed-lean");
+
+		Map<String, Object> row = jdbcClient.sql("""
+				SELECT signup_route, phone_country_code, phone_number, company_size, industry,
+				       job_title, usage_purpose FROM app.users WHERE id = :id""")
+				.param("id", saved.id())
+				.query().singleRow();
+		assertThat(row.get("signup_route")).isNull();
+		assertThat(row.get("phone_country_code")).isNull();
+		assertThat(row.get("phone_number")).isNull();
+		assertThat(row.get("company_size")).isNull();
+		assertThat(row.get("industry")).isNull();
+		assertThat(row.get("job_title")).isNull();
+		assertThat(row.get("usage_purpose")).isEqualTo("브랜드 캠페인 인플루언서 발굴");
 	}
 
 	@Test

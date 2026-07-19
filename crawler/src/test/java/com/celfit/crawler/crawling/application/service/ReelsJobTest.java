@@ -160,14 +160,15 @@ class ReelsJobTest {
     }
 
     @Test
-    void 대상_조회는_재방문_주기_컷오프와_배치_한도로_호출한다() {
+    void 대상_조회는_달력일_기준_경계와_배치_한도로_호출한다() {
+        // NOW = 2026-07-15T00:00Z, 주기 7일 → 경계 = 오늘 자정 − 6일 = 2026-07-09 자정 (달력일 기준)
         when(settings.reelsBatchLimit()).thenReturn(3);
         when(influencers.findReelsTargets(any(), any())).thenReturn(List.of());
 
         job(List.of()).run(TriggerType.MANUAL);
 
         verify(influencers).findReelsTargets(
-                eq(NOW.minus(Duration.ofDays(7))), eq(PageRequest.of(0, 3)));
+                eq(Instant.parse("2026-07-09T00:00:00Z")), eq(PageRequest.of(0, 3)));
     }
 
     @Test

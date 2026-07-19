@@ -29,9 +29,6 @@
         <label><input type="checkbox" name="rejudge" value="true" data-persist/> Claude 판정분 재판정 (수동 판정 보존 · 인스타 호출 없음)</label>
         <button type="submit" class="primary">④ beauty — 뷰티 계정 판정 (로컬 Claude · $0)</button>
     </form>
-    <form method="post" th:action="@{/ui/jobs/resnapshot}">
-        <button type="submit" class="primary">④-1 resnapshot — 비뷰티(캡션 없음) 프로필 재수집 (로컬 GQL · 계정당 1요청)</button>
-    </form>
     <form method="post" th:action="@{/ui/jobs/similar}">
         <button type="submit" class="primary">⑤ similar — 뷰티 시드의 유사 계정 발굴</button>
     </form>

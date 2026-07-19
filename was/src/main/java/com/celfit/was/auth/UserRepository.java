@@ -52,12 +52,12 @@ public class UserRepository {
 		return jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, name, nickname, user_type, signup_route,
 				                       phone_country_code, phone_number, company_name, company_size,
-				                       industry, job_title, agreed_terms, agreed_privacy, agreed_age14,
-				                       agreed_marketing, marketing_updated_at)
+				                       industry, job_title, usage_purpose, agreed_terms, agreed_privacy,
+				                       agreed_age14, agreed_marketing, marketing_updated_at)
 				VALUES (:email, :passwordHash, :name, :nickname, :userType, :signupRoute,
 				        :phoneCountryCode, :phoneNumber, :companyName, :companySize,
-				        :industry, :jobTitle, :agreedTerms, :agreedPrivacy, :agreedAge14,
-				        :agreedMarketing, CASE WHEN :agreedMarketing THEN now() END)
+				        :industry, :jobTitle, :usagePurpose, :agreedTerms, :agreedPrivacy,
+				        :agreedAge14, :agreedMarketing, CASE WHEN :agreedMarketing THEN now() END)
 				RETURNING\s""" + PROFILE_COLUMNS)
 				.param("email", normalizeEmail(newUser.email()))
 				.param("passwordHash", passwordHash)
@@ -71,6 +71,7 @@ public class UserRepository {
 				.param("companySize", newUser.companySize())
 				.param("industry", newUser.industry())
 				.param("jobTitle", newUser.jobTitle())
+				.param("usagePurpose", newUser.usagePurpose())
 				.param("agreedTerms", newUser.agreedTerms())
 				.param("agreedPrivacy", newUser.agreedPrivacy())
 				.param("agreedAge14", newUser.agreedAge14())

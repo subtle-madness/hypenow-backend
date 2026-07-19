@@ -142,6 +142,9 @@ class ContentAnalysisJobTest {
 				java.math.BigDecimal.class)));
 		assertEquals("high", db.queryForObject(
 				"SELECT comment_authenticity_grade FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		// 데일리 잡 유입은 후보 뷰 가드가 제때 크롤을 보장 — timely 마킹(V33)
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
 
 		// 종합 포트에 넘긴 댓글 분포가 comment_classifications 집계와 일치한다
 		ContentToAnalyze callForA = insightCalls.stream()

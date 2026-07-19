@@ -10,9 +10,14 @@ final class ContentAnalysisWriter {
 
 	private ContentAnalysisWriter() {}
 
-	/** @param conflictIgnore true면 이미 분석된 행은 건너뛴다(백필 재실행 멱등 — 일상 잡은 false). */
+	/**
+	 * @param conflictIgnore true면 이미 분석된 행은 건너뛴다(백필 재실행 멱등 — 일상 잡은 false).
+	 * @param metricTimeliness 지표 시점 마킹(V33) — 데일리 잡은 'timely'(후보 뷰 가드가 보장),
+	 *        유료 Batch 백필은 'late_backfill'. 어휘는 V33 CHECK가 단일 원천.
+	 */
 	static void insert(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
-			Baseline b, ContentAttributes attrs, Synthesis s, boolean conflictIgnore) {
+			Baseline b, ContentAttributes attrs, Synthesis s, boolean conflictIgnore,
+			String metricTimeliness) {
 		analysis.update("""
 				INSERT INTO content_analyses (short_code, model,
 				  ai_content_summary, contents_pattern, ai_comment_insight,
@@ -22,9 +27,9 @@ final class ContentAnalysisWriter {
 				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
 				  detected_product_categories, detected_products, vlm_attributes, main_category, sub_categories,
 				  detected_distributors, ad_type,
-				  comment_authenticity_grade, comment_authenticity_note)
+				  comment_authenticity_grade, comment_authenticity_note, metric_timeliness)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?)"""
+				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)"""
 				+ (conflictIgnore ? " ON CONFLICT (short_code) DO NOTHING" : ""),
 				shortCode, model,
 				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
@@ -42,7 +47,7 @@ final class ContentAnalysisWriter {
 				toJson(json, attrs == null ? null : attrs.subCategories()),
 				toJson(json, attrs == null ? null : attrs.detectedDistributors()),
 				attrs == null ? null : attrs.adType(),
-				s.commentAuthenticityGrade(), s.commentAuthenticityNote());
+				s.commentAuthenticityGrade(), s.commentAuthenticityNote(), metricTimeliness);
 	}
 
 	private static String toJson(ObjectMapper json, Object value) {
