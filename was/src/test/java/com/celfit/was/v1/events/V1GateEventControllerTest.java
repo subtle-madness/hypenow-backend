@@ -53,7 +53,7 @@ class V1GateEventControllerTest {
 	}
 
 	private static AppUserDetails principal() {
-		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash",
+		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
 	}
 
