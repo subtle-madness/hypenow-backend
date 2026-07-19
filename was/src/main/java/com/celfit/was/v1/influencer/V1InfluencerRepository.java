@@ -26,12 +26,16 @@ public class V1InfluencerRepository {
 				""").param("h", handle).query(ProfileRow.class).optional();
 	}
 
-	/** 최근 12개 Content 카드 — 분석 완료 콘텐츠만(카드 필드가 분석 산출이므로), 게시일 내림차순. */
+	/**
+	 * 최근 12개 Content 카드 — 게시일 내림차순, 분석 미완 게시물도 포함(LEFT JOIN).
+	 * 목록(6.1)은 분석 완료만 노출(INNER)이지만, 인플루언서 상세는 "실제 최신 12개"를 보여준다.
+	 * 미분석 게시물은 카드의 분석 필드(main_category·ad_type·brands 등)가 null/빈배열이 된다.
+	 */
 	public List<ContentCardRow> findRecentCards(String handle) {
 		return jdbcClient.sql(ContentCardRow.SELECT + """
 
 				FROM contents c
-				JOIN content_analyses an ON an.short_code = c.short_code
+				LEFT JOIN content_analyses an ON an.short_code = c.short_code
 				JOIN accounts a ON a.handle = c.account_handle
 				WHERE c.account_handle = :h
 				ORDER BY c.posted_at DESC, c.short_code
