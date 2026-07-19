@@ -72,12 +72,14 @@ public class SecurityConfig {
 	 * STATELESS는 보안 불변식: 세션엔 로그인 시점 권한 스냅샷(토큰 authorities)이 남아
 	 * 세션을 읽으면 강등된 admin이 로그아웃 전까지 통과한다 — 매 요청 Basic 재인증으로
 	 * 현재 DB role을 읽는다. CSRF는 GET 전용 문서 표면이라 불필요.
+	 * 매처는 springdoc 기본 경로와 결합돼 있다(/swagger-ui.html 진입점·/v3/api-docs.yaml 포함) —
+	 * springdoc.api-docs.path·swagger-ui.path를 바꾸면 여기도 같이 바꿀 것.
 	 */
 	@Bean
 	@Order(1)
 	public SecurityFilterChain swaggerFilterChain(HttpSecurity http) throws Exception {
 		http
-				.securityMatcher("/swagger-ui/**", "/v3/api-docs/**")
+				.securityMatcher("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**", "/v3/api-docs.yaml")
 				.authorizeHttpRequests(auth -> auth.anyRequest().hasRole("ADMIN"))
 				.httpBasic(Customizer.withDefaults())
 				.csrf(AbstractHttpConfigurer::disable)

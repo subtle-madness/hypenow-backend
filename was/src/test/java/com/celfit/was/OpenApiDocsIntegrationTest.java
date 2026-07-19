@@ -66,13 +66,25 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 				.andExpect(status().isUnauthorized())
 				.andExpect(header().exists("WWW-Authenticate"));
 		mockMvc.perform(get("/swagger-ui/index.html"))
-				.andExpect(status().isUnauthorized());
+				.andExpect(status().isUnauthorized())
+				.andExpect(header().exists("WWW-Authenticate"));
 	}
 
 	@Test
 	void 일반_USER는_403이다() throws Exception {
 		mockMvc.perform(get("/v3/api-docs").with(httpBasic(USER_EMAIL, PASSWORD)))
 				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void yaml_문서와_html_진입점도_게이트_안이다() throws Exception {
+		// /v3/api-docs.yaml은 /v3/api-docs/** 패턴 밖(세그먼트 매칭) — 매처 누락 시 메인 체인으로
+		// 떨어져 세션 USER에게 전체 문서가 새는 우회가 실재했다. 명시 매처를 고정한다.
+		mockMvc.perform(get("/v3/api-docs.yaml").with(httpBasic(USER_EMAIL, PASSWORD)))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(get("/swagger-ui.html"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(header().exists("WWW-Authenticate"));
 	}
 
 	@Test
