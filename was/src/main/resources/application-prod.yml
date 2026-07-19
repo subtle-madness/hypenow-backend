@@ -12,12 +12,7 @@ server:
       cookie:
         secure: true
         same-site: lax    # 스펙 확정(2026-07-17) — www↔api는 hypenow.io 하위 same-site라 Lax로 충분, CSRF 방어 이중화
-springdoc:
-  # 운영에서는 Swagger 미노출(07-17 결정) — 문서는 로컬·개발에서만
-  api-docs:
-    enabled: false
-  swagger-ui:
-    enabled: false
+# Swagger는 운영에도 노출(07-19 결정, 07-17 미노출 결정 대체) — 접근은 admin 게이트(SecurityConfig 스웨거 체인)가 통제
 was:
   cors:
     allowed-origins: https://www.hypenow.io   # 운영 프론트 오리진만 — dev 오리진은 기본 프로파일에
