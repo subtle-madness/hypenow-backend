@@ -24,13 +24,18 @@ public class RateLimiter {
 		this.perMinute = perMinute;
 	}
 
-	/** 허용되면 true. 분이 바뀌면 카운터 리셋(고정 윈도우). */
+	/** 허용되면 true. 분이 바뀌면 카운터 리셋(고정 윈도우). 기본 상한(was.rate-limit.per-minute). */
 	public boolean tryAcquire(String key) {
+		return tryAcquire(key, perMinute);
+	}
+
+	/** 경로별 상한이 다른 경우(이메일 인증 발송 분당 1회 등) — 윈도우 구조는 공유, 상한만 오버라이드. */
+	public boolean tryAcquire(String key, int limit) {
 		long minute = clock.instant().getEpochSecond() / 60;
 		sweepIfMinuteChanged(minute);
 		Window w = windows.compute(key, (k, old) ->
 				(old == null || old.epochMinute() != minute) ? new Window(minute, new AtomicInteger()) : old);
-		return w.count().incrementAndGet() <= perMinute;
+		return w.count().incrementAndGet() <= limit;
 	}
 
 	/**
