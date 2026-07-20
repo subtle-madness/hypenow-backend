@@ -21,9 +21,14 @@ class V1ContentReportAssemblerTest {
 	}
 
 	@Test
-	void 피드는_engagementRate_value가_null() {
+	void engagementRate는_팔로워_기준_피처링식() {
+		// 팔로워 null·0 → null (가드)
 		assertThat(assembler.engagementRateValue(null, 24L, 2L)).isNull();
+		assertThat(assembler.engagementRateValue(0L, 24L, 2L)).isNull();
+		// (좋아요+댓글)/팔로워×100
 		assertThat(assembler.engagementRateValue(1000L, 24L, 2L)).isEqualByComparingTo("2.60");
+		// 소형 계정 바이럴은 100% 초과 가능 (피처링 특성) — _so_eunii_ 실측(팔로워 6568)
+		assertThat(assembler.engagementRateValue(6568L, 1423L, 2799L)).isEqualByComparingTo("64.28");
 	}
 
 	@Test
@@ -37,7 +42,7 @@ class V1ContentReportAssemblerTest {
 	@Test
 	void toReport는_스펙_6_3_구조로_조립한다() {
 		var row = new V1ContentReportRepository.ReportRow(
-				"SC1", "zingdong__", "reels", 3307180L, 42216L, 86L,
+				"SC1", "zingdong__", "reels", 3307180L, 42216L, 86L, 100000L,
 				"요약", "패턴 서술", "댓글 인사이트",
 				412L, 1, 12,
 				24, new BigDecimal("1.29"), 35000L, 120L,
@@ -61,6 +66,9 @@ class V1ContentReportAssemblerTest {
 		assertThat(report.comparison().views().multiple()).isEqualByComparingTo("3307.2");
 		assertThat(report.comparison().views().recentReels())
 				.containsExactly(new ContentAiReport.Comparison.Views.ReelPoint("SC1", 1000L, "2026-07-01", true));
+		// 참여율 value·baseline 모두 팔로워(100000) 기준: 이 게시물 (42216+86)/100000, 계정평균 (35000+120)/100000
+		assertThat(report.comparison().engagementRate().value()).isEqualByComparingTo("42.30");
+		assertThat(report.comparison().engagementRate().baseline()).isEqualByComparingTo("35.12");
 		assertThat(report.comparison().engagementQuality().likes().baselineCount()).isEqualTo(35000L);
 		assertThat(report.comparison().narrative()).isEqualTo("패턴 서술");
 		assertThat(report.categoryContext().categoryLabel()).isEqualTo("메이크업");
@@ -79,7 +87,7 @@ class V1ContentReportAssemblerTest {
 	@Test
 	void vlm_미실행이어도_구조는_유지된다() {
 		var row = new V1ContentReportRepository.ReportRow(
-				"SC2", "handle", "feed", null, 100L, 10L,
+				"SC2", "handle", "feed", null, 100L, 10L, 50000L,
 				null, null, null,
 				null, null, null,
 				null, null, null, null,
@@ -89,10 +97,10 @@ class V1ContentReportAssemblerTest {
 
 		ContentAiReport report = assembler.toReport(row, List.of(), Map.of(), List.of());
 
-		// 피드: views null → 배수·참여율 value도 null
+		// 피드: views null → 조회수 배수는 null. 단 참여율은 팔로워 기준이라 값이 나온다 (110/50000×100=0.22)
 		assertThat(report.comparison().views().value()).isNull();
 		assertThat(report.comparison().views().multiple()).isNull();
-		assertThat(report.comparison().engagementRate().value()).isNull();
+		assertThat(report.comparison().engagementRate().value()).isEqualByComparingTo("0.22");
 		// jsonb null 방어 — 빈 배열, 구조 유지
 		assertThat(report.vlmAnalysis().brands()).isEmpty();
 		assertThat(report.vlmAnalysis().sponsoredSignal().reasons()).isEmpty();
@@ -129,7 +137,7 @@ class V1ContentReportAssemblerTest {
 	private V1ContentReportRepository.ReportRow reportRowWithViews(
 			String shortCode, Long views, Long frozenBaseline, Integer frozenRank, Integer frozenCount) {
 		return new V1ContentReportRepository.ReportRow(
-				shortCode, "handle", "reels", views, 0L, 0L,
+				shortCode, "handle", "reels", views, 0L, 0L, null,
 				null, null, null,
 				frozenBaseline, frozenRank, frozenCount,
 				null, null, null, null,

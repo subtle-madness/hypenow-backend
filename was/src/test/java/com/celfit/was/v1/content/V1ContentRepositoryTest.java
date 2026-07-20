@@ -59,7 +59,9 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				    ad_type               text,
 				    detected_brands       jsonb,
 				    detected_products     jsonb,
-				    detected_distributors jsonb
+				    detected_distributors jsonb,
+				    is_beauty             boolean,
+				    metric_timeliness     text
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE beauty_taxonomy (
@@ -114,19 +116,34 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('f1', 'alpha', 'https://thumb/f1.jpg', '피드 조회수 없음', '2026-07-02T03:00:00Z', 'feed',
 				  NULL, 'https://ig/f1', NULL, 50, 5, 300, '2026-07-05T03:00:00Z'),
 				 ('f2', 'beta', 'https://thumb/f2.jpg', '피드 정렬용', '2026-07-03T03:00:00Z', 'feed',
-				  NULL, 'https://ig/f2', 800, 80, 8, 350, '2026-07-06T03:00:00Z')
+				  NULL, 'https://ig/f2', 800, 80, 8, 350, '2026-07-06T03:00:00Z'),
+				 ('nb1', 'alpha', 'https://thumb/nb1.jpg', '일상 브이로그', '2026-07-02T03:00:00Z', 'reels',
+				  22, 'https://ig/nb1', 5000, 500, 50, 800, '2026-07-05T03:00:00Z'),
+				 -- 시점 마킹 대조군(별도 기간 [07-11, 07-20) — 기존 테스트 무영향):
+				 -- tl1=timely·lb1=late_backfill·lg1=시점 NULL(레거시). 셋 다 뷰티 릴스.
+				 ('tl1', 'alpha', 'https://thumb/tl1.jpg', '제때 릴스', '2026-07-15T03:00:00Z', 'reels',
+				  20, 'https://ig/tl1', 1000, 100, 10, 600, '2026-07-18T03:00:00Z'),
+				 ('lb1', 'alpha', 'https://thumb/lb1.jpg', '늦크롤 백필 릴스', '2026-07-16T03:00:00Z', 'reels',
+				  20, 'https://ig/lb1', 9999, 999, 99, 999, '2026-07-25T03:00:00Z'),
+				 ('lg1', 'alpha', 'https://thumb/lg1.jpg', '레거시 미분류 릴스', '2026-07-17T03:00:00Z', 'reels',
+				  20, 'https://ig/lg1', 500, 50, 5, 300, '2026-07-20T03:00:00Z')
 				""");
 
 		// 분석: r3만 없음(분석 미완 → 목록 제외). 유통사: r1=["다이소"], r2=[], r9=NULL.
+		// nb1은 분석은 있으나 비뷰티(is_beauty=false) → 목록 제외.
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, main_category, sub_categories, ad_type,
-				  detected_brands, detected_products, detected_distributors) VALUES
+				  detected_brands, detected_products, detected_distributors, is_beauty, metric_timeliness) VALUES
 				 ('r1', 'makeup', '["아이라이너"]'::jsonb, 'organic',
-				  '[{"name":"브랜드A"}]'::jsonb, '[{"name":"제품A"}]'::jsonb, '["다이소"]'::jsonb),
-				 ('r2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, '[]'::jsonb),
-				 ('r9', 'makeup', '["립틴트"]'::jsonb, 'sponsored', NULL, NULL, NULL),
-				 ('f1', 'makeup', '["립틴트"]'::jsonb, 'organic', NULL, NULL, NULL),
-				 ('f2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, NULL)
+				  '[{"name":"브랜드A"}]'::jsonb, '[{"name":"제품A"}]'::jsonb, '["다이소"]'::jsonb, true, 'timely'),
+				 ('r2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, '[]'::jsonb, true, 'timely'),
+				 ('r9', 'makeup', '["립틴트"]'::jsonb, 'sponsored', NULL, NULL, NULL, true, 'timely'),
+				 ('f1', 'makeup', '["립틴트"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
+				 ('f2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
+				 ('nb1', NULL, NULL, 'organic', NULL, NULL, NULL, false, 'timely'),
+				 ('tl1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
+				 ('lb1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'late_backfill'),
+				 ('lg1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, NULL)
 				""");
 	}
 
@@ -144,11 +161,35 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 비뷰티_콘텐츠는_랭킹에서_제외된다() {
+		// nb1(is_beauty=false)은 필터 없으면 hype 800으로 목록(2위권)에 낄 텐데 빠진다
+		List<ContentCardRow> rows = repository.findCards(query());
+
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("nb1");
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("r2", "r1", "r9");
+	}
+
+	@Test
 	void 분석_행_없는_콘텐츠는_제외된다() {
 		List<ContentCardRow> rows = repository.findCards(query());
 
 		// r3(분석 미완) 제외, 기본 hype 내림차순: r2(900) → r1(500) → r9(400)
 		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("r2", "r1", "r9");
+	}
+
+	@Test
+	void late_backfill은_랭킹에서_제외되고_timely와_레거시NULL은_노출된다() {
+		// [07-11, 07-20) 창: tl1(timely)·lg1(시점 NULL 레거시)는 노출, lb1(late_backfill)은 제외.
+		// lb1은 hype 999로 필터 없으면 1위인데, 늦크롤 지표 편향 때문에 랭킹에서 아예 빠진다.
+		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-11"), LocalDate.parse("2026-07-20"),
+				null, null, null, null, null, null, null, null, null, null);
+
+		List<ContentCardRow> rows = repository.findCards(q);
+
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("lb1");
+		// 기본 hype 내림차순: tl1(600) → lg1(300)
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("tl1", "lg1");
+		assertThat(repository.countCards(q)).isEqualTo(2);
 	}
 
 	@Test

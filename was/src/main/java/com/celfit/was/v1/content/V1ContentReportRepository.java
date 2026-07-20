@@ -23,6 +23,7 @@ public class V1ContentReportRepository {
 	public Optional<ReportRow> findReport(String shortCode) {
 		return jdbcClient.sql("""
 				SELECT c.short_code, c.account_handle, c.content_type, c.views, c.likes, c.comments,
+				       s.followers,
 				       an.ai_content_summary, an.contents_pattern, an.ai_comment_insight,
 				       an.recent_reels_avg_views, an.rank_in_recent_reels, an.recent_reels_count,
 				       an.recent_contents_count, an.recent12_avg_engagement_rate,
@@ -38,6 +39,7 @@ public class V1ContentReportRepository {
 				        WHERE t.main_value = an.main_category LIMIT 1) AS category_label
 				FROM contents c
 				JOIN content_analyses an ON an.short_code = c.short_code
+				LEFT JOIN account_summaries s ON s.handle = c.account_handle
 				WHERE c.short_code = :sc
 				""").param("sc", shortCode).query(ReportRow.class).optional();
 	}
@@ -74,7 +76,7 @@ public class V1ContentReportRepository {
 	}
 
 	public record ReportRow(String shortCode, String accountHandle, String contentType,
-			Long views, Long likes, Long comments,
+			Long views, Long likes, Long comments, Long followers,
 			String aiContentSummary, String contentsPattern, String aiCommentInsight,
 			// 이 3컬럼(recentReelsAvgViews/rankInRecentReels/recentReelsCount)은 assembler가 소비하지
 			// 않지만 향후/디버그용으로 의도적으로 유지 — 차트는 라이브 재계산으로 전환됨(A2).
