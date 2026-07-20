@@ -111,25 +111,97 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 		throw new IllegalStateException("도달 불가");
 	}
 
-	// --- GeminiBatchApi: Task 4에서 구현 ---
+	/** GCS media 업로드(입력 ~50MB — resumable 불필요) → gs:// URI 반환. */
 	@Override
 	public String uploadFile(byte[] jsonl, String displayName) {
-		throw new UnsupportedOperationException("Task 4에서 구현");
+		String object = "input/" + displayName + ".jsonl";
+		String encoded = java.net.URLEncoder.encode(object, StandardCharsets.UTF_8);
+		try {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(storageUrl
+					+ "/upload/storage/v1/b/" + bucket + "/o?uploadType=media&name=" + encoded))
+					.timeout(Duration.ofMinutes(5))
+					.header("Content-Type", "application/jsonl")
+					.header("Authorization", "Bearer " + token.get())
+					.POST(HttpRequest.BodyPublishers.ofByteArray(jsonl))
+					.build();
+			HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+			if (res.statusCode() < 200 || res.statusCode() >= 300) {
+				throw new IllegalStateException("GCS 업로드 실패 HTTP " + res.statusCode()
+						+ ": " + abbreviate(res.body()));
+			}
+			return "gs://" + bucket + "/" + object;
+		} catch (java.io.IOException | InterruptedException e) {
+			throw new IllegalStateException("GCS 업로드 실패: " + object, e);
+		}
 	}
 
+	/**
+	 * 배치 잡 생성 — 모델은 짧은 퍼블리셔 경로(publishers/google/models/{id}) 사용.
+	 * 공식 레퍼런스 예시 형식(2026-07 조사) — 스모크에서 거부되면 modelPath(model) 풀 경로로 교체.
+	 */
 	@Override
 	public String createBatch(String model, String inputFileName, String displayName) {
-		throw new UnsupportedOperationException("Task 4에서 구현");
+		tools.jackson.databind.node.ObjectNode body = om.createObjectNode();
+		body.put("displayName", displayName);
+		body.put("model", "publishers/google/models/" + model);
+		tools.jackson.databind.node.ObjectNode input = body.putObject("inputConfig");
+		input.put("instancesFormat", "jsonl");
+		input.putObject("gcsSource").putArray("uris").add(inputFileName);
+		tools.jackson.databind.node.ObjectNode output = body.putObject("outputConfig");
+		output.put("predictionsFormat", "jsonl");
+		output.putObject("gcsDestination").put("outputUriPrefix",
+				"gs://" + bucket + "/output/" + displayName + "/");
+		String res = send("/v1/projects/" + project + "/locations/" + location
+				+ "/batchPredictionJobs", om.writeValueAsString(body));
+		return om.readTree(res).path("name").asString();
 	}
 
+	/** 잡 조회 — 상태(state=JOB_STATE_*)·outputInfo.gcsOutputDirectory 탐색은 호출자(러너). */
 	@Override
 	public String getBatch(String batchName) {
-		throw new UnsupportedOperationException("Task 4에서 구현");
+		return get(baseUrl + "/v1/" + batchName, "배치 조회");
 	}
 
+	/** gs:// prefix 밑 .jsonl 오브젝트 목록 조회 후 내용 병합(파일별 개행 보장). */
 	@Override
 	public String downloadFile(String fileName) {
-		throw new UnsupportedOperationException("Task 4에서 구현");
+		if (!fileName.startsWith("gs://" + bucket + "/")) {
+			throw new IllegalStateException("예상 밖 출력 위치(버킷 불일치): " + fileName);
+		}
+		String prefix = fileName.substring(("gs://" + bucket + "/").length());
+		String listUrl = storageUrl + "/storage/v1/b/" + bucket + "/o?prefix="
+				+ java.net.URLEncoder.encode(prefix, StandardCharsets.UTF_8);
+		JsonNode items = om.readTree(get(listUrl, "출력 목록 조회")).path("items");
+		StringBuilder merged = new StringBuilder();
+		for (JsonNode item : items) {
+			String name = item.path("name").asString();
+			if (!name.endsWith(".jsonl")) {
+				continue;
+			}
+			String objUrl = storageUrl + "/storage/v1/b/" + bucket + "/o/"
+					+ java.net.URLEncoder.encode(name, StandardCharsets.UTF_8) + "?alt=media";
+			String content = get(objUrl, "결과 다운로드");
+			merged.append(content);
+			if (!content.endsWith("\n")) {
+				merged.append('\n');
+			}
+		}
+		return merged.toString();
+	}
+
+	private String get(String url, String what) {
+		try {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+					.timeout(Duration.ofMinutes(5))
+					.header("Authorization", "Bearer " + token.get()).GET().build();
+			HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+			if (res.statusCode() < 200 || res.statusCode() >= 300) {
+				throw new IllegalStateException(what + " 실패 HTTP " + res.statusCode());
+			}
+			return res.body();
+		} catch (java.io.IOException | InterruptedException e) {
+			throw new IllegalStateException(what + " 실패", e);
+		}
 	}
 
 	private static void sleep(long millis) {
