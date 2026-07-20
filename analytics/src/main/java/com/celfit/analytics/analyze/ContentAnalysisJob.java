@@ -5,11 +5,9 @@ import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Predicate;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
@@ -26,6 +24,9 @@ import tools.jackson.databind.ObjectMapper;
 public class ContentAnalysisJob {
 
 	private static final Logger log = LoggerFactory.getLogger(ContentAnalysisJob.class);
+	/** 계정 집계마저 없는 이례적 케이스용 — 전부 null (프롬프트가 앵커 없이 절제 처리). */
+	private static final Baseline EMPTY_BASELINE =
+			new Baseline(null, null, null, null, null, null, null, null, null, null);
 
 	private final JdbcTemplate raw;
 	private final JdbcTemplate analysis;
@@ -51,24 +52,38 @@ public class ContentAnalysisJob {
 	/**
 	 * @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부)
 	 *
-	 * <p>대상은 양쪽 DB 교집합: 기준선은 "최근 N개" 비교 지표라 윈도우 밖 콘텐츠는
-	 * 분석 대상이 아니다 (기준선 정의 불가). 미러 전체(contents)에서 기준선 뷰에 없는
-	 * 콘텐츠를 상한 적용 전에 걸러내지 않으면 매 실행 예외→skip으로 배치 상한 슬롯을
-	 * 영구 잠식한다 (B2의 classified HashSet 패턴과 동일한 자바 측 필터).
+	 * <p>대상은 숙성·제때 크롤 가드를 통과한 미분석 콘텐츠 전량(수집 최신순 상한). 기준선은 앵커로만 붙인다:
+	 * 최근창 안이면 콘텐츠 키 기준선(rank 포함), 밖이면 계정 평균(rank null) 폴백 (07-20 스코프 확장).
+	 * 계정 평균은 윈도우 밖 게시물에도 계산 가능하므로 다작 계정의 최근창 밖 성숙분도 분석한다.
 	 */
 	public JobResult run() {
-		// 최신 수집순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분).
-		// 기준선을 여기서 통째로 로드한다 — 뷰 평가가 운영 실측 분 단위(07-19, 27k 기준 4.5분)라
-		// 건당 WHERE 조회를 반복하면 배치가 뷰 스캔에 잠긴다. 1회 평가 후 메모리 맵 조회로 대체.
+		// 기준선 두 종을 통째로 로드한다 — 뷰 평가가 운영 실측 분 단위(07-19, 27k 기준 4.5분)라
+		// 건당 조회를 반복하면 배치가 뷰 스캔에 잠긴다. 1회 평가 후 메모리 맵 조회로 대체.
+		// PG 타입이 numeric·bigint·smallint로 섞여 있어 전부 BigDecimal로 읽어 변환 (기존 관용구).
+		// ① 계정 평균(account_handle 키) — 최근창 밖 후보에 붙일 앵커. rank는 계정 단위가 아니라 null.
+		Map<String, Baseline> accountBaseline = new LinkedHashMap<>();
+		raw.query("""
+				SELECT account_handle, recent_reels_avg_views, recent_reels_count,
+				       recent_contents_count, recent12_avg_engagement_rate,
+				       recent12_avg_like_count, recent12_avg_comment_count,
+				       category_top_percentile, category_avg_views, category_sample_size
+				FROM analytics.v_analysis_account_baseline""",
+				rs -> {
+					accountBaseline.put(rs.getString(1), new Baseline(
+							longOf(rs.getBigDecimal(2)), null, intOf(rs.getBigDecimal(3)),
+							intOf(rs.getBigDecimal(4)), rs.getBigDecimal(5),
+							longOf(rs.getBigDecimal(6)), longOf(rs.getBigDecimal(7)),
+							intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))));
+				});
+		// ② 콘텐츠 키 기준선(최근창 안 게시물만, rank 포함) — 있으면 계정 평균보다 우선.
 		Map<String, Baseline> withBaseline = new LinkedHashMap<>();
 		raw.query("""
 				SELECT short_code, recent_reels_avg_views, rank_in_recent_reels, recent_reels_count,
 				       recent_contents_count, recent12_avg_engagement_rate,
 				       recent12_avg_like_count, recent12_avg_comment_count,
 				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_baseline ORDER BY captured_at DESC""",
+				FROM analytics.v_analysis_baseline""",
 				rs -> {
-					// PG 타입이 numeric·bigint·smallint로 섞여 있어 전부 BigDecimal로 읽어 변환 (기존 관용구)
 					withBaseline.put(rs.getString(1), new Baseline(
 							longOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)), intOf(rs.getBigDecimal(4)),
 							intOf(rs.getBigDecimal(5)), rs.getBigDecimal(6),
@@ -79,21 +94,20 @@ public class ContentAnalysisJob {
 		// 제때 크롤 가드(07-19 재정정): 고정 지표가 성숙(+pin일) 스냅샷이면서 +(pin+slack)일 안에 잡힌 것만 —
 		// 늦크롤 백필(+3일 지표 없음)과 미성숙 폴백 지표(영구 고정 누수)를 함께 차단. 분석 밀림은 나이 무관 허용.
 		// posted_at·metric_captured_at NULL은 부등식에서 자연 제외 (미상이면 판정 불가).
+		// 수집 최신순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분).
 		int pinDays = settings.metricPinDays();
-		Set<String> eligible = new HashSet<>(analysis.queryForList("""
+		List<String> targets = analysis.queryForList("""
 				SELECT c.short_code FROM contents c
 				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
 				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
 				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
 				  AND c.posted_at <= now() - make_interval(days => ?)
 				  AND c.metric_captured_at >= c.posted_at + make_interval(days => ?)
-				  AND c.metric_captured_at < c.posted_at + make_interval(days => ?)""",
+				  AND c.metric_captured_at < c.posted_at + make_interval(days => ?)
+				ORDER BY c.metric_captured_at DESC, c.short_code
+				LIMIT ?""",
 				String.class, settings.analyzeMaturityDays(), pinDays,
-				pinDays + settings.analyzeTimelySlackDays()));
-		List<String> targets = withBaseline.keySet().stream()
-				.filter(eligible::contains)
-				.limit(settings.analyzeBatchLimit())
-				.toList();
+				pinDays + settings.analyzeTimelySlackDays(), settings.analyzeBatchLimit());
 		String model = settings.activeLlmModel();
 		int processed = 0;
 		int failed = 0;
@@ -101,7 +115,7 @@ public class ContentAnalysisJob {
 		reporter.report(0, 0, targets.size());
 		for (String shortCode : targets) {
 			try {
-				analyzeOne(shortCode, model, withBaseline.get(shortCode));
+				analyzeOne(shortCode, model, withBaseline, accountBaseline);
 				processed++;
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
@@ -118,10 +132,18 @@ public class ContentAnalysisJob {
 		return new JobResult(processed, failed, carriedOver);
 	}
 
-	private void analyzeOne(String shortCode, String model, Baseline b) {
+	private void analyzeOne(String shortCode, String model,
+			Map<String, Baseline> withBaseline, Map<String, Baseline> accountBaseline) {
 		Map<String, Object> content = analysis.queryForMap("""
 				SELECT account_handle, caption, content_type, thumbnail_url, views, likes, comments
 				FROM contents WHERE short_code = ?""", shortCode);
+		// 최근창 안이면 콘텐츠 키 기준선(rank 포함), 밖이면 계정 평균(rank null) 폴백 (07-20 스코프 확장).
+		// 계정 집계도 없는 이례적 경우(원본 스키마 스큐 등)엔 전부 null — 프롬프트가 앵커 없이 절제 처리.
+		Baseline b = withBaseline.get(shortCode);
+		if (b == null) {
+			Baseline accountAvg = accountBaseline.get((String) content.get("account_handle"));
+			b = accountAvg != null ? accountAvg : EMPTY_BASELINE;
+		}
 		Map<String, Long> categoryCounts = new LinkedHashMap<>();
 		analysis.query("""
 				SELECT ai_category, count(*) AS cnt FROM comment_classifications

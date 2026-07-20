@@ -25,7 +25,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 초기 백필 one-shot — 유료 키(GEMINI_API_KEY_PAID) Batch API 일회 실행 (2026-07-18 확정, ~$9).
- * submit: v_analysis_candidates ∩ v_analysis_baseline 중 미분석 전량 → JSONL 업로드 → 배치 생성 →
+ * submit: v_analysis_candidates 미분석 전량(계정 평균 앵커·rank는 최근창 안일 때만) → JSONL 업로드 → 배치 생성 →
  *         사이드카(프롬프트에 실은 기준선 스냅샷) 저장. 캡션 단독(썸네일 미첨부 — 서명 URL 대부분 만료).
  * collect: 상태 확인 → 결과 다운로드 → 파싱·sanitize → ON CONFLICT DO NOTHING INSERT(재실행 멱등).
  * 실행(신 스키마 뷰 04·03 적용 후): --spring.main.web-application-type=none
@@ -63,16 +63,19 @@ public class GeminiBackfillRunner {
 	public String submit() {
 		Set<String> analyzed = new HashSet<>(analysis.queryForList(
 				"SELECT short_code FROM content_analyses", String.class));
-		// 기준선(최근 N개 윈도우) 정의 가능한 후보만 — 일상 잡의 전제와 동일 (윈도우 밖은 분석 대상 아님)
+		// 미분석 후보 전량 — 일상 잡·버스트와 동일 정의 (07-20 스코프 확장). 계정 평균(recent12_avg_*·
+		// recent_reels_avg_views 등)은 account_handle 키로 항상 붙이고, rank는 최근창 안일 때만(short_code
+		// 키 — 밖이면 null). 다작 계정의 최근창 밖 성숙분도 계정 평균을 앵커로 분석 대상에 포함.
 		List<Map<String, Object>> rows = raw.queryForList("""
 				SELECT c.short_code, c.account_handle, c.content_type, c.caption,
 				       c.views, c.likes, c.comments,
-				       b.recent_reels_avg_views, b.rank_in_recent_reels, b.recent_reels_count,
-				       b.recent_contents_count, b.recent12_avg_engagement_rate,
-				       b.recent12_avg_like_count, b.recent12_avg_comment_count,
-				       b.category_top_percentile, b.category_avg_views, b.category_sample_size
+				       ab.recent_reels_avg_views, b.rank_in_recent_reels, ab.recent_reels_count,
+				       ab.recent_contents_count, ab.recent12_avg_engagement_rate,
+				       ab.recent12_avg_like_count, ab.recent12_avg_comment_count,
+				       ab.category_top_percentile, ab.category_avg_views, ab.category_sample_size
 				FROM analytics.v_analysis_candidates c
-				JOIN analytics.v_analysis_baseline b USING (short_code)
+				LEFT JOIN analytics.v_analysis_account_baseline ab ON ab.account_handle = c.account_handle
+				LEFT JOIN analytics.v_analysis_baseline b USING (short_code)
 				ORDER BY c.short_code""");
 		String system = GeminiContentAnalyzer.instructions(taxonomyLoader.get());
 		StringBuilder jsonl = new StringBuilder();
