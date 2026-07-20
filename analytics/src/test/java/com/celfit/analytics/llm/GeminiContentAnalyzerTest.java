@@ -16,7 +16,7 @@ class GeminiContentAnalyzerTest {
 			 "sponsoredSignalLevel":"엉뚱값","sponsoredSignalReasons":["#협찬"],
 			 "adDisclosure":"표기 있음","detectedProductCategories":["클렌징폼","없는라벨"],
 			 "detectedProducts":[{"name":"딥클렌징폼","brand":null}],
-			 "vlmAttributes":[],"mainCategory":"cleansing","subCategories":["클렌징폼/젤","클렌징폼"],
+			 "vlmAttributes":[],"isBeauty":true,"mainCategory":"cleansing","subCategories":["클렌징폼/젤","클렌징폼"],
 			 "detectedDistributors":["올리브영","쿠팡"],"adType":"sponsored",
 			 "aiContentSummary":"평균 대비 1.2배","contentsPattern":"클렌징 루틴형",
 			 "aiCommentInsight":"표본 부족","commentAuthenticityGrade":"이상값","commentAuthenticityNote":"근거"}""";
@@ -89,5 +89,22 @@ class GeminiContentAnalyzerTest {
 		ContentInsightPort.ContentInsight r = new GeminiContentAnalyzer(fakeApi(RESPONSE),
 				() -> "m", () -> taxonomy).analyze(content(), null);
 		assertEquals("normal", r.synthesis().commentAuthenticityGrade());
+	}
+
+	@Test
+	void isBeauty를_파싱해_속성에_싣는다() {
+		ContentInsightPort.ContentInsight r = new GeminiContentAnalyzer(fakeApi(RESPONSE),
+				() -> "m", () -> taxonomy).analyze(content(), null);
+		assertEquals(Boolean.TRUE, r.attributes().isBeauty());
+	}
+
+	@Test
+	void 스키마는_isBeauty를_요구하고_mainCategory_앞에서_생성한다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy).analyze(content(), null);
+		String schema = calls.get(0).schema();
+		assertTrue(schema.contains("\"isBeauty\""));
+		// propertyOrdering 배열 안에서 isBeauty가 mainCategory보다 앞서 생성되는지(눈속임 방지: 구간 스코프)
+		String ordering = schema.substring(schema.indexOf("propertyOrdering"));
+		assertTrue(ordering.indexOf("\"isBeauty\"") < ordering.indexOf("\"mainCategory\""));
 	}
 }

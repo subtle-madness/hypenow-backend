@@ -23,7 +23,7 @@ class AnthropicContentAttributeAnalyzerTest {
 				List.of("협찬 표기"), "표기 있음", List.of("클렌징폼"),
 				List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
 				List.of(new ContentAttributes.Attribute("무드", "화사함")), "skincare",
-				List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), adType);
+				List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), adType, true);
 	}
 
 	@Test
@@ -57,14 +57,54 @@ class AnthropicContentAttributeAnalyzerTest {
 	}
 
 	@Test
-	void 분류표_밖_대분류는_null로_교체된다() {
-		// slug 어휘 밖 값 (구 프롬프트 어휘 hair, 지어낸 값 등)
+	void 분류표_밖_대분류는_서브카테고리로_역유도된다() {
+		// slug 어휘 밖 값(hair)이라도 sub_categories의 유효 라벨(샴푸/스케일러→haircare)로 복구
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
 				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
-						List.of(), "hair", List.of("샴푸/스케일러"), List.of(), "organic"), TAXONOMY);
+						List.of(), "hair", List.of("샴푸/스케일러"), List.of(), "organic", true), TAXONOMY);
+
+		assertEquals("haircare", sanitized.mainCategory()); // 드랍 대신 역유도 복구
+		assertEquals(List.of("샴푸/스케일러"), sanitized.subCategories());
+	}
+
+	@Test
+	void 어휘_밖_라벨뿐이면_역유도도_실패해_null이다() {
+		// 유효 sub·productCategory가 하나도 없으면 복구 불가 → null 유지
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of("없는라벨"), List.of(),
+						List.of(), "hair", List.of("없는중분류"), List.of(), "organic", true), TAXONOMY);
 
 		assertNull(sanitized.mainCategory());
-		assertEquals(List.of("샴푸/스케일러"), sanitized.subCategories()); // 라벨 자체는 어휘 안 — 유지
+	}
+
+	@Test
+	void 제품카테고리로도_역유도된다() {
+		// sub_categories 비어도 detectedProductCategories의 유효 소분류로 복구
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of("립틴트"), List.of(),
+						List.of(), null, List.of(), List.of(), "organic", true), TAXONOMY);
+
+		assertEquals("makeup", sanitized.mainCategory());
+	}
+
+	@Test
+	void 비뷰티_콘텐츠는_유효_대분류를_반환해도_main이_null이_된다() {
+		// isBeauty=false인데 LLM이 유효 대분류(skincare)를 직접 줌 → 생산자가 null로 확정(비뷰티 불변식)
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
+						List.of(), "skincare", List.of("스킨"), List.of(), "organic", false), TAXONOMY);
+
+		assertNull(sanitized.mainCategory());
+	}
+
+	@Test
+	void 비뷰티_콘텐츠는_서브라벨로_역유도되지_않는다() {
+		// isBeauty=false + 유효 서브라벨(샴푸/스케일러) → 역유도해도 비뷰티라 main은 null 유지
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
+						List.of(), null, List.of("샴푸/스케일러"), List.of(), "organic", false), TAXONOMY);
+
+		assertNull(sanitized.mainCategory());
 	}
 
 	@Test
@@ -73,7 +113,7 @@ class AnthropicContentAttributeAnalyzerTest {
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
 				new ContentAttributes(List.of(), "low", List.of(), "표기 없음",
 						List.of("립틴트", "틴트제품", "립메이크업"), List.of(), List.of(), "makeup",
-						List.of("립메이크업", "립틴트", "입술화장"), List.of("올리브영", "쿠팡"), "organic"),
+						List.of("립메이크업", "립틴트", "입술화장"), List.of("올리브영", "쿠팡"), "organic", true),
 				TAXONOMY);
 
 		assertEquals(List.of("립메이크업", "립틴트"), sanitized.subCategories());
@@ -98,7 +138,7 @@ class AnthropicContentAttributeAnalyzerTest {
 	@Test
 	void null_배열은_null로_유지된다() {
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
-				new ContentAttributes(null, null, null, null, null, null, null, null, null, null, null),
+				new ContentAttributes(null, null, null, null, null, null, null, null, null, null, null, null),
 				TAXONOMY);
 
 		assertNull(sanitized.subCategories());

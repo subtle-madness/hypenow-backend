@@ -59,7 +59,8 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				    ad_type               text,
 				    detected_brands       jsonb,
 				    detected_products     jsonb,
-				    detected_distributors jsonb
+				    detected_distributors jsonb,
+				    is_beauty             boolean
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE beauty_taxonomy (
@@ -114,19 +115,23 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('f1', 'alpha', 'https://thumb/f1.jpg', '피드 조회수 없음', '2026-07-02T03:00:00Z', 'feed',
 				  NULL, 'https://ig/f1', NULL, 50, 5, 300, '2026-07-05T03:00:00Z'),
 				 ('f2', 'beta', 'https://thumb/f2.jpg', '피드 정렬용', '2026-07-03T03:00:00Z', 'feed',
-				  NULL, 'https://ig/f2', 800, 80, 8, 350, '2026-07-06T03:00:00Z')
+				  NULL, 'https://ig/f2', 800, 80, 8, 350, '2026-07-06T03:00:00Z'),
+				 ('nb1', 'alpha', 'https://thumb/nb1.jpg', '일상 브이로그', '2026-07-02T03:00:00Z', 'reels',
+				  22, 'https://ig/nb1', 5000, 500, 50, 800, '2026-07-05T03:00:00Z')
 				""");
 
 		// 분석: r3만 없음(분석 미완 → 목록 제외). 유통사: r1=["다이소"], r2=[], r9=NULL.
+		// nb1은 분석은 있으나 비뷰티(is_beauty=false) → 목록 제외.
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, main_category, sub_categories, ad_type,
-				  detected_brands, detected_products, detected_distributors) VALUES
+				  detected_brands, detected_products, detected_distributors, is_beauty) VALUES
 				 ('r1', 'makeup', '["아이라이너"]'::jsonb, 'organic',
-				  '[{"name":"브랜드A"}]'::jsonb, '[{"name":"제품A"}]'::jsonb, '["다이소"]'::jsonb),
-				 ('r2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, '[]'::jsonb),
-				 ('r9', 'makeup', '["립틴트"]'::jsonb, 'sponsored', NULL, NULL, NULL),
-				 ('f1', 'makeup', '["립틴트"]'::jsonb, 'organic', NULL, NULL, NULL),
-				 ('f2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, NULL)
+				  '[{"name":"브랜드A"}]'::jsonb, '[{"name":"제품A"}]'::jsonb, '["다이소"]'::jsonb, true),
+				 ('r2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, '[]'::jsonb, true),
+				 ('r9', 'makeup', '["립틴트"]'::jsonb, 'sponsored', NULL, NULL, NULL, true),
+				 ('f1', 'makeup', '["립틴트"]'::jsonb, 'organic', NULL, NULL, NULL, true),
+				 ('f2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, NULL, true),
+				 ('nb1', NULL, NULL, 'organic', NULL, NULL, NULL, false)
 				""");
 	}
 
@@ -141,6 +146,15 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
 				contentType, mainCategory, midCategory, subCategory, null, null, null,
 				distributorId, sort, limit);
+	}
+
+	@Test
+	void 비뷰티_콘텐츠는_랭킹에서_제외된다() {
+		// nb1(is_beauty=false)은 필터 없으면 hype 800으로 목록(2위권)에 낄 텐데 빠진다
+		List<ContentCardRow> rows = repository.findCards(query());
+
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("nb1");
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("r2", "r1", "r9");
 	}
 
 	@Test

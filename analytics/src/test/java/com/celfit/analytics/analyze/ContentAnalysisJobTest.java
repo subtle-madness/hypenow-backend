@@ -52,7 +52,7 @@ class ContentAnalysisJobTest {
 							List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
 							List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
 							List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
-							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored"),
+							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored", true),
 					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "high", "판정 근거"));
 		};
 	}
@@ -453,5 +453,56 @@ class ContentAnalysisJobTest {
 
 		assertThat(reports.getFirst()).containsExactly(0, 0, 1);
 		assertThat(reports.getLast()).containsExactly(1, 0, 1);
+	}
+
+	@Test
+	void 비뷰티_콘텐츠는_is_beauty_false로_저장되고_재분석_루프에_안_빠진다() {
+		// isBeauty=false + mainCategory=null(비뷰티라 자연 null) — 행은 기록되되 서빙에서 제외될 값
+		rewireJob((content, thumbnailUrl) -> {
+			insightCalls.add(content);
+			ContentAttributes nonBeauty = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
+					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", false);
+			return new ContentInsightPort.ContentInsight(nonBeauty,
+					new Synthesis("요약: " + content.shortCode(), "패턴", "인사이트", "normal", "근거"));
+		}, false);
+
+		int processed = job.run().processed();
+
+		assertEquals(2, processed); // post_a·post_b 모두 저장(비뷰티도 행 생성)
+		assertEquals(Boolean.FALSE, db.queryForObject(
+				"SELECT is_beauty FROM content_analyses WHERE short_code = 'post_a'", Boolean.class));
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 뷰티인데_미분류면_행을_안_남기고_재대상화된다() {
+		// isBeauty=true인데 복구 후에도 mainCategory=null → 실패 격리(skip) → 다음 실행 재대상
+		rewireJob((content, thumbnailUrl) -> {
+			insightCalls.add(content);
+			ContentAttributes beautyNoCat = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
+					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", true);
+			Synthesis s = new Synthesis("요약: " + content.shortCode(), "패턴", "인사이트", "normal", "근거");
+			ContentAttributes attrs = content.shortCode().equals("post_a") ? beautyNoCat
+					: new ContentAttributes(List.of(), null, List.of(), "표기 없음", List.of(), List.of(),
+							List.of(), "makeup", List.of(), List.of(), "organic", true); // post_b는 정상
+			return new ContentInsightPort.ContentInsight(attrs, s);
+		}, false);
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 성공, post_a는 skip
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
+	}
+
+	@Test
+	void 정상_뷰티_콘텐츠는_is_beauty_true로_저장된다() {
+		// 기존 fakeInsightPort는 isBeauty=true·mainCategory=cleansing
+		job.run();
+		assertEquals(Boolean.TRUE, db.queryForObject(
+				"SELECT is_beauty FROM content_analyses WHERE short_code = 'post_a'", Boolean.class));
 	}
 }

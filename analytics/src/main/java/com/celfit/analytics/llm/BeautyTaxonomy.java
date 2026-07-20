@@ -1,6 +1,8 @@
 package com.celfit.analytics.llm;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,8 @@ public final class BeautyTaxonomy {
 	private final Set<String> distributorSet;
 	private final Set<String> midAndSubLabels;
 	private final Set<String> subLabels;
+	private final Map<String, String> labelToMain; // mid·sub 라벨 → 단일 대분류(애매하면 제외)
+	private final List<String> mainOrder;          // 대분류 최초 등장 순서(분류표 순 tie-break)
 
 	public BeautyTaxonomy(List<Entry> entries, List<String> distributors) {
 		this.entries = List.copyOf(entries);
@@ -40,6 +44,24 @@ public final class BeautyTaxonomy {
 				.collect(Collectors.toUnmodifiableSet());
 		this.subLabels = entries.stream().map(Entry::subLabel)
 				.collect(Collectors.toUnmodifiableSet());
+
+		Map<String, Set<String>> byLabel = new LinkedHashMap<>();
+		List<String> order = new ArrayList<>();
+		for (Entry e : entries) {
+			if (!order.contains(e.mainValue())) {
+				order.add(e.mainValue());
+			}
+			byLabel.computeIfAbsent(e.midLabel(), k -> new HashSet<>()).add(e.mainValue());
+			byLabel.computeIfAbsent(e.subLabel(), k -> new HashSet<>()).add(e.mainValue());
+		}
+		Map<String, String> single = new HashMap<>();
+		byLabel.forEach((label, mains) -> {
+			if (mains.size() == 1) {
+				single.put(label, mains.iterator().next());
+			}
+		});
+		this.labelToMain = Map.copyOf(single);
+		this.mainOrder = List.copyOf(order);
 	}
 
 	/** 대분류 value(영문 slug) — content_analyses.main_category 어휘. */
@@ -83,5 +105,35 @@ public final class BeautyTaxonomy {
 								.map(mid -> "%s[%s]".formatted(mid.getKey(), String.join(", ", mid.getValue())))
 								.collect(Collectors.joining(" · "))))
 				.collect(Collectors.joining("\n"));
+	}
+
+	/**
+	 * 유효 라벨(중·소분류)들이 가리키는 대분류를 최다 득표로 역유도한다 (sanitize 복구용).
+	 * 여러 대분류에 걸치는 애매한 라벨은 집계에서 제외, 동점은 분류표 앞선 대분류로 결정론적 tie-break.
+	 * @return 역유도된 대분류 slug, 매칭 라벨이 없으면 null.
+	 */
+	public String deriveMain(List<String> labels) {
+		if (labels == null) {
+			return null;
+		}
+		Map<String, Long> votes = new LinkedHashMap<>();
+		for (String label : labels) {
+			if (label == null) {
+				continue;
+			}
+			String main = labelToMain.get(label);
+			if (main != null) {
+				votes.merge(main, 1L, Long::sum);
+			}
+		}
+		if (votes.isEmpty()) {
+			return null;
+		}
+		long max = votes.values().stream().max(Long::compare).orElseThrow();
+		return votes.entrySet().stream()
+				.filter(e -> e.getValue() == max)
+				.map(Map.Entry::getKey)
+				.min(java.util.Comparator.comparingInt(mainOrder::indexOf))
+				.orElseThrow();
 	}
 }
