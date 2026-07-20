@@ -40,6 +40,9 @@ public class GeminiBackfillRunner {
 			"recent12_avg_comment_count", "category_top_percentile", "category_avg_views",
 			"category_sample_size", "caption");
 
+	private static final java.util.regex.Pattern ECHO_SHORT_CODE =
+			java.util.regex.Pattern.compile("^콘텐츠: (\\S+) \\(");
+
 	private final JdbcTemplate raw;
 	private final JdbcTemplate analysis;
 	private final GeminiBatchApi api;
@@ -106,7 +109,8 @@ public class GeminiBackfillRunner {
 		return batchName;
 	}
 
-	/** JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(문서 형식 snake_case). */
+	/** JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(camelCase — proto JSON은
+	 *  양쪽 표기를 다 받지만 AI Studio·Vertex 공용으로 통일). */
 	ObjectNode requestLine(String shortCode, Map<String, Object> r, String system) {
 		Map<String, Object> baseline = new LinkedHashMap<>();
 		baseline.put("recent_reels_avg_views", r.get("recent_reels_avg_views"));
@@ -123,14 +127,14 @@ public class GeminiBackfillRunner {
 		ObjectNode line = om.createObjectNode();
 		line.put("key", shortCode);
 		ObjectNode request = line.putObject("request");
-		request.putObject("system_instruction").putArray("parts").addObject().put("text", system);
+		request.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
 		request.putArray("contents").addObject().put("role", "user").putArray("parts")
 				.addObject().put("text", GeminiContentAnalyzer.userText(content));
-		ObjectNode gen = request.putObject("generation_config");
+		ObjectNode gen = request.putObject("generationConfig");
 		gen.put("temperature", 0);
-		gen.put("response_mime_type", "application/json");
-		gen.set("response_schema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA));
-		gen.put("max_output_tokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
+		gen.put("responseMimeType", "application/json");
+		gen.set("responseSchema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA));
+		gen.put("maxOutputTokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
 		return line;
 	}
 
@@ -161,7 +165,8 @@ public class GeminiBackfillRunner {
 				text(batch, "metadata", "output", "responsesFile"),
 				text(batch, "response", "responsesFile"),
 				text(batch, "dest", "fileName"),
-				text(batch, "metadata", "dest", "fileName"));
+				text(batch, "metadata", "dest", "fileName"),
+				text(batch, "outputInfo", "gcsOutputDirectory"));
 		if (resultFile == null) {
 			throw new IllegalStateException("결과 파일 이름을 찾지 못함 — 배치 응답: " + batch);
 		}
@@ -176,7 +181,16 @@ public class GeminiBackfillRunner {
 			}
 			try {
 				JsonNode node = om.readTree(line);
+				String vertexStatus = node.path("status").asString("");
+				if (!vertexStatus.isEmpty()) {
+					failed++;
+					log.warn("배치 실패 라인 (status={}): {}", vertexStatus, abbreviate(line));
+					continue;
+				}
 				String shortCode = node.path("key").asString("");
+				if (shortCode.isEmpty()) {
+					shortCode = shortCodeFromEcho(node);
+				}
 				JsonNode text = node.path("response").path("candidates").path(0)
 						.path("content").path("parts").path(0).path("text");
 				if (shortCode.isEmpty() || text.isMissingNode()) {
@@ -257,6 +271,19 @@ public class GeminiBackfillRunner {
 
 	private static Long numberOf(Object v) {
 		return v == null ? null : ((Number) v).longValue();
+	}
+
+	/** Vertex 출력엔 key가 없다 — 에코된 request의 유저 텍스트 첫 줄(콘텐츠: {shortCode} ()에서 복원. */
+	static String shortCodeFromEcho(JsonNode node) {
+		JsonNode parts = node.path("request").path("contents").path(0).path("parts");
+		for (JsonNode part : parts) {
+			String text = part.path("text").asString("");
+			java.util.regex.Matcher m = ECHO_SHORT_CODE.matcher(text);
+			if (m.find()) {
+				return m.group(1);
+			}
+		}
+		return "";
 	}
 
 	private static String text(JsonNode root, String... path) {

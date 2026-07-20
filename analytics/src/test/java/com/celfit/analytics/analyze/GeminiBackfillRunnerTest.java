@@ -137,8 +137,8 @@ class GeminiBackfillRunnerTest {
 		assertEquals(2, lines.length); // bf_a, bf_b — bf_done 제외
 		JsonNode first = om.readTree(lines[0]);
 		assertEquals("bf_a", first.path("key").asString());
-		assertTrue(first.path("request").path("generation_config").path("response_schema").has("type"));
-		assertTrue(first.path("request").path("system_instruction").path("parts").get(0)
+		assertTrue(first.path("request").path("generationConfig").path("responseSchema").has("type"));
+		assertTrue(first.path("request").path("systemInstruction").path("parts").get(0)
 				.path("text").asString().contains("[파트 B 절제 규칙 — 반드시 지켜라]"));
 		assertTrue(first.path("request").path("contents").get(0).path("parts").get(0)
 				.path("text").asString().contains("캡션A"));
@@ -203,5 +203,87 @@ class GeminiBackfillRunnerTest {
 
 		assertEquals(-1, pending.collect("batches/b1"));
 		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void Vertex_형식_결과라인은_에코_첫줄에서_short_code를_복원한다() {
+		runner().submit();
+		// Vertex 출력엔 key가 없다 — request 에코 첫 줄(GeminiContentAnalyzer.userText 포맷)에서 복원
+		String echoText = """
+				콘텐츠: bf_a (@acct1, reels)
+				캡션: 캡션A
+				지표: views=9000 likes=500 comments=50
+				계정 기준선: {}
+				댓글 분류 분포: {}
+
+				위 콘텐츠를 분석하라.""";
+		// downloadFile 결과는 줄 단위(JSONL)라 한 결과 라인은 물리적으로 한 줄이어야 한다 —
+		// 텍스트 블록 대신 ObjectMapper로 조립해 개행이 섞이지 않게 한다.
+		tools.jackson.databind.node.ObjectNode line = om.createObjectNode();
+		line.put("status", "");
+		tools.jackson.databind.node.ObjectNode request = line.putObject("request");
+		request.putArray("contents").addObject().put("role", "user").putArray("parts")
+				.addObject().put("text", echoText);
+		line.putObject("response").putArray("candidates").addObject().putObject("content")
+				.putArray("parts").addObject().put("text", INSIGHT_JSON);
+		resultJsonl = om.writeValueAsString(line);
+
+		int saved = runner().collect("batches/b1");
+
+		assertEquals(1, saved);
+		assertEquals("평균 수준", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'bf_a'", String.class));
+	}
+
+	@Test
+	void Vertex_실패라인은_status가_있으면_실패로_센다() {
+		runner().submit();
+		tools.jackson.databind.node.ObjectNode line = om.createObjectNode();
+		line.put("status", "INTERNAL");
+		line.putObject("request").putArray("contents").addObject().put("role", "user")
+				.putArray("parts").addObject().put("text", "콘텐츠: bf_a (@acct1, reels)");
+		line.putObject("response");
+		resultJsonl = om.writeValueAsString(line);
+
+		int saved = runner().collect("batches/b1");
+
+		assertEquals(0, saved);
+		// bf_done은 setUp에서 이미 적재된 기존 행 — 실패 라인은 아무것도 추가하지 않는다
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void 잡_응답의_outputInfo_gcsOutputDirectory를_결과_위치로_쓴다() {
+		runner().submit(); // 사이드카만 필요 — 결과 다운로드 fake는 아래서 별도 구성
+
+		List<String> downloadedFiles = new java.util.ArrayList<>();
+		GeminiBackfillRunner vertexRunner = new GeminiBackfillRunner(db, ds, new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				return "files/f1";
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				return "batches/b1";
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				return """
+						{"name":"batches/b1","state":"JOB_STATE_SUCCEEDED",
+						 "outputInfo":{"gcsOutputDirectory":"gs://b/output/backfill/job-1"}}""";
+			}
+
+			@Override
+			public String downloadFile(String fileName) {
+				downloadedFiles.add(fileName);
+				return "";
+			}
+		}, new AnalyticsSettings(db), new BeautyTaxonomyLoader(ds), workDir);
+
+		vertexRunner.collect("batches/b1");
+
+		assertEquals(List.of("gs://b/output/backfill/job-1"), downloadedFiles);
 	}
 }
