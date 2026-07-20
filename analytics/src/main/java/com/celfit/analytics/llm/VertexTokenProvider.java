@@ -22,12 +22,18 @@ public final class VertexTokenProvider implements Supplier<String> {
 		this.credentials = credentials;
 	}
 
-	public static VertexTokenProvider fromEnv() {
+	/** SA 키 경로가 셸에 export돼 있는지 — provider=vertex 그레이스풀 폴백 판정용(로드는 안 함). */
+	public static boolean credentialsPresent() {
 		String path = System.getenv("GOOGLE_APPLICATION_CREDENTIALS");
-		if (path == null || path.isBlank()) {
+		return path != null && !path.isBlank();
+	}
+
+	public static VertexTokenProvider fromEnv() {
+		if (!credentialsPresent()) {
 			throw new IllegalStateException(
 					"GOOGLE_APPLICATION_CREDENTIALS 미설정 — SA 키 경로 셸 export 필요 (.env는 JVM에 자동 로드되지 않음)");
 		}
+		String path = System.getenv("GOOGLE_APPLICATION_CREDENTIALS");
 		try (FileInputStream in = new FileInputStream(path)) {
 			return new VertexTokenProvider(GoogleCredentials.fromStream(in).createScoped(List.of(SCOPE)));
 		} catch (java.io.IOException e) {

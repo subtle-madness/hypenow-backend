@@ -50,6 +50,29 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     export ANTHROPIC_API_KEY=sk-ant-...
 
 둘 다 설정돼 있으면 구독(OAUTH_TOKEN)이 우선한다. 토큰은 단기 만료라 배치 실행 직전에 발급할 것.
+(위 Claude 인증은 `provider=anthropic` 롤백 경로에서만 쓴다 — 기본은 아래 vertex/gemini.)
+
+### LLM 프로바이더 (vertex / gemini / anthropic)
+
+프로바이더는 `app_setting.analytics.llm-provider`로 고른다 — baseline은 **`vertex`**(V16이 gemini 시드 → V17이 vertex로 승격).
+- **vertex**(기본): Vertex AI로 동기·배치 호출. GCP 서비스계정(SA) 키 필요, `$300` 크레딧 사용.
+- **gemini**: AI Studio 무료 키(`GEMINI_API_KEY`).
+- **anthropic**: Claude 롤백 경로. 모델은 `analytics.llm-model`(폴백 기본 haiku).
+
+**그레이스풀 폴백**: `provider=vertex`라도 `GOOGLE_APPLICATION_CREDENTIALS`가 없으면 자동으로
+무료 gemini로 폴백한다(`LlmConfig.useVertex`, 로그 경고). 그래서 SA 키가 없는 로컬은 baseline이
+vertex여도 죽지 않고 gemini로 돈다. 프로바이더는 빈 생성 시점에 읽으므로 **전환은 재기동 필요**.
+
+**로컬에서 Vertex로 돌리려면** (SA 키가 있을 때):
+
+    # 1) GCP 프로젝트 hypenow-llm-prod SA 키 JSON을 로컬에 둔다 (커밋 금지)
+    export GOOGLE_APPLICATION_CREDENTIALS=~/.gcp/hypenow-vertex-sa.json   # .env 자동로드 안 됨 — 셸 export
+    # 2) 로컬 crawler DB에 provider=vertex 확인 (V16→V17 마이그레이션이 적용됐으면 이미 vertex)
+    docker exec crawler-postgres-1 psql -U crawler -d crawler -c \
+      "INSERT INTO app_setting(key,value) VALUES('analytics.llm-provider','vertex') \
+       ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value;"
+    # vertex-project(hypenow-llm-prod)·gcs-bucket은 V16이 시드, location은 기본 global.
+    # 3) analytics 재기동 → 로그에 vertex 폴백 경고가 없으면 Vertex로 도는 것.
 
 아래 one-shot 배치는 전부 `--spring.main.web-application-type=none`을 붙인다
 (기본 프로파일이 상주 서버(8082)로 바뀌어, 없으면 배치 후 서버가 종료되지 않고 상주한다 — cloud 프로파일만 기본 one-shot):
