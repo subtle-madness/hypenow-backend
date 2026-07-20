@@ -10,6 +10,8 @@
 
 **참조 스펙:** `docs/superpowers/specs/2026-07-20-reels-hype-engage-follower-normalization-design.md`
 
+> **실행 정정(2026-07-20):** 아래 psql 명령의 DB 이름 `analysis`는 **`crawler`가 맞음** — analytics 뷰·`analytics.hype_score`는 로컬/운영 모두 `crawler` DB에 정의(뷰가 raw를 읽음). 운영 컨테이너는 `deploy-postgres-raw-1`(analysis 아님). 재적합 실측값: e0=**0.01**, 릴스 앵커 **0.0736/0.7379/2.6312/5.5619**(운영 `v_analysis_candidates` 릴스 n=1717). 운영 `app_setting`에 hype 오버라이드 **없음** → 코드 기본값이 단일 소스라 Task4의 app_setting UPSERT 단계는 **생략**(뷰 재적용만).
+
 ---
 
 ## 사전 준비 (모든 psql 명령 공통)
