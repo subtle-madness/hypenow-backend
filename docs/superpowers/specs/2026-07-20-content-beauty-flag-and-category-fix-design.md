@@ -55,6 +55,9 @@
     결정론적 tie-break. 예: `["선크림","컬러립밤"]` → suncare(2) vs makeup(3) 1:1 동점 → **suncare**.
   - 매칭 라벨이 없으면 역유도 실패(null 유지).
 - 복구는 **sanitize 안**에서 일어나고(어휘 있음), 실패 판정은 **잡**이 복구된 값으로 한다.
+- **불변식(생산자 보장)**: sanitize는 `isBeauty≠true`면 mainCategory를 (직접 반환값이든 역유도값이든) **null로 확정**한다.
+  → "main_category 있음 ⇒ 뷰티"가 시스템 전역에서 성립해, main_category만 읽는 소비처(카테고리 믹스 등)가
+  별도 필터 없이 비뷰티를 자동 제외한다(§3-4). 비뷰티 행이 유효 라벨을 흘려도 카테고리가 새지 않는다.
 
 ### 3-3. 실패 시맨틱 — 행 미기록 → 자동 재대상 (요구사항 명시안)
 
@@ -83,6 +86,8 @@
   - **미분석(is_beauty null, LEFT JOIN)은 노출 유지** — "실제 최신 12개" 목적. **확정 비뷰티(false)만 제외.**
   - LIMIT 12는 필터 후 채운다(비뷰티가 걸리면 그 다음 게시물이 채움).
 - **카테고리 믹스**(`V1InfluencerReportRepository`): 이미 `an.main_category IS NOT NULL` 필터라 비뷰티 자동 제외 → **무변경**.
+  이 자동 제외는 §3-2의 생산자 불변식(비뷰티면 main_category null)이 지탱한다 — 소비처는 필터를 늘리지 않는다(§4-4).
+  같은 이유로 main_category만 읽는 레거시 리더(`ContentListRepository`·`PostDemoRepository`)도 자동으로 안전.
 - **DTO·계약 무변경** — `ContentCardRow`에 isBeauty 필드 추가 안 함, 프론트 협의 불필요.
 
 ### 3-5. 기존 342건 재분석 (self-healing ops 스크립트)
