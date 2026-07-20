@@ -7,6 +7,7 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
 import com.celfit.crawler.crawling.application.port.out.*;
+import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
@@ -254,6 +255,8 @@ public class UiController {
         }));
         model.addAttribute("status", selected);
         model.addAttribute("statuses", JUDGED_STATUSES);
+        // 수동 오버라이드 버튼용 4분류 목록 — 템플릿 하드코딩 대신 enum 단일 원천
+        model.addAttribute("beautyClasses", BeautyClass.values());
         return "influencers";
     }
 
