@@ -1,12 +1,13 @@
--- [일회성 운영 SQL] content_analyses 재조정 — 04 뷰 EXISTS 가드 재설계(feat/analysis-candidate-exists) 후속.
+-- [일회성 운영 SQL] content_analyses 재조정 — 04 뷰 날짜기준 가드(feat/analysis-date-based-window) 후속.
 --
--- 배경: content_analyses는 append-only라, 가드 기준이 바뀌기 전(핀 기반·느슨한 하한) 분석된 행이 잔존한다.
---   새 결정론 가드(창 [posted+3, posted+5)에 usable 스냅샷 EXISTS)로는 후보가 아닌 행을 정리한다.
+-- 배경: content_analyses는 append-only라, 가드 기준이 바뀌기 전(시간 간격·느슨한 slack) 분석된 행이 잔존한다.
+--   날짜기준 가드(캡처 캘린더일 = 업로드일 + pin(3) ~ +pin+slack)로는 후보가 아닌 행을 정리한다.
 --   삭제는 안전하다: 지금 자격 없는 행만 지우므로 후보 뷰가 재선택하지 않는다. 나중에 크롤이
---   창 안 usable 스냅샷을 채워 재자격되면 그때 정상적으로 재분석된다(self-healing).
+--   D+3 당일 usable 스냅샷을 채워 재자격되면 그때 정상적으로 재분석된다(self-healing).
 --
 -- 실행 위치: analysis DB (운영 deploy-postgres-1 / DB `analysis`). 04 뷰 배포(raw DB) 후에 돌린다.
--- 기준값은 배포 뷰와 동일: metric-pin-days=3, analyze-timely-slack-days=2 (app_setting 오버라이드 없음).
+-- 기준값은 배포 뷰와 동일: metric-pin-days=3, analyze-timely-slack-days=1(운영 app_setting 설정값).
+--   ⚠️ 운영 slack이 다르면 아래 interval '1 day'(=slack) 를 맞춰라.
 -- usable 정의는 04 뷰·02 서빙과 동일: likes·comments 완비 ∧ (피드거나 릴스면 views 완비).
 --
 -- dry-run: 맨 끝 ROLLBACK. 실제 반영은 ROLLBACK → COMMIT 으로 바꿔 실행.
@@ -20,13 +21,16 @@ JOIN contents c USING (short_code)
 WHERE NOT EXISTS (
   SELECT 1 FROM content_metric_snapshots s
   WHERE s.short_code = an.short_code
-    AND s.captured_at >= c.posted_at + interval '3 day'
-    AND s.captured_at <  c.posted_at + interval '5 day'
+    -- 캡처 캘린더일(KST) ∈ [업로드일+3, 업로드일+3+slack(1)) = 업로드일+3 당일
+    AND (s.captured_at AT TIME ZONE 'Asia/Seoul')::date
+          >= (c.posted_at AT TIME ZONE 'Asia/Seoul')::date + 3
+    AND (s.captured_at AT TIME ZONE 'Asia/Seoul')::date
+          <  (c.posted_at AT TIME ZONE 'Asia/Seoul')::date + 3 + 1
     AND s.likes IS NOT NULL AND s.comments IS NOT NULL
     AND (c.content_type <> 'reels' OR s.views IS NOT NULL)
 );
 
-\echo '=== 삭제 대상 총계 (새 EXISTS 가드 기준) ==='
+\echo '=== 삭제 대상 총계 (날짜기준 가드) ==='
 SELECT count(*) AS to_delete FROM stale;
 
 \echo '=== 유형별 · 게시일 커버리지 ==='
