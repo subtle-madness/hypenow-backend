@@ -59,7 +59,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 | 테이블 | 내용 |
 |---|---|
-| `influencer` | 계정 (username, status, followers, 뷰티 판정 beauty/beauty_company/beauty_judged_at) |
+| `influencer` | 계정 (username, status, followers, 뷰티 판정 4분류 beauty_class(+파생 beauty/beauty_company)/beauty_judged_at) |
 | `content` | 게시물 제어 (short_code, content_type, owner, uploaded_at, origin DISCOVERY/ENUMERATION, status) — 캡션·지표 없음 |
 | `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS jsonb) — 릴스 캡션·지표·썸네일의 소스 |
 | `raw_profile` | 프로필 원형(SELF_GQL·HIKER_MOBILE 등 source별 jsonb) — SELF_GQL엔 내장 타임라인 12개(피드 캡션·지표의 소스) |
@@ -267,6 +267,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-20 | 뷰티 판정 v2 — 4분류(beauty_class: INFLUENCER/COMPANY/BEAUTY_SERVICE/NOT_BEAUTY)로 시술·서비스 분리, boolean은 파생 유지(다운스트림 무변경). judge 기본 claude-api(구독) 전환. 스펙: docs/superpowers/specs/2026-07-20-beauty-class-v2-design.md |
 | 2026-07-20 | **hype_score v2.1 — 릴스 참여 축 조회수→팔로워 정규화 (저조회수 뭉침 해소)** — v2에서 릴스 engage 분모가 **조회수**라 조회수가 극소인 릴스가 참여율 폭발로 과대 점수를 냄(예: 1뷰·1좋아요·팔로워 2.1만이 99점). 도달:참여 1:1이라 폭발한 참여가 낮은 도달을 이김. 조회수가 릴스에서 도달·참여 **양쪽에 이중** 사용된 게 근본 원인. 수정: 릴스 engage 분모를 피드와 동일하게 `(followers+1000)`로 교체(피처링식 `(좋아요+댓글)/팔로워`) → 조회수는 **도달 축에만** 남김. 분모 변경으로 참여 스케일 이동 → **e0 0.02→0.01**(팔로워당 참여율 중앙값≈0.0094 반영), **릴스 앵커 재적합**(운영 `v_analysis_candidates` 릴스 n=1717 새 qf 백분위 = 0.0736/0.7379/2.6312/5.5619; 기존 앵커가 같은 집합 old qf 백분위와 일치함을 확인해 산출 기준 동일 검증). 피드 로직·화면 참여율 지표(`03` engagement_rate=÷views)·NULL 규칙 불변. 검증(운영 전수 18,814 릴스 시뮬): 상위 뭉침 ≥95 119→76건, 저조회수 극단 교정(1뷰 99→1점), 조회수 집계 깨진 고참여는 팔로워 신호로 보존(좋아요 4894/팔로워 7887→74점). app_setting 오버라이드 없어 코드 기본값이 단일 소스 | [specs/2026-07-20-reels-hype-engage-follower-normalization-design.md](docs/superpowers/specs/2026-07-20-reels-hype-engage-follower-normalization-design.md) |
 | 2026-07-20 | **스냅샷 flatten 물질화 캐시 (`analytics.content_snapshot_cache`)** — `v_base_content_snapshot`(raw JSON을 매 쿼리 jsonb_array_elements로 펼침)이 데이터 증가(스냅샷 14.7만)로 병목이 돼, 미러 20분·후보 쿼리(v_analysis_candidates) 40분+·분석 잡이 느려짐. flatten 결과를 담는 **캐시 테이블 + 인덱스(content_id,captured_at)** 신설, 소비 뷰(v_base_detail·v_pinned_metrics·v_content_metric_snapshots·v_analysis_candidates) 4곳을 이 캐시를 읽게 repoint → flatten 1회 계산으로 수 분→초. **갱신은 `analytics.refresh_snapshot_cache()`**(TRUNCATE+INSERT from live view) — 야간 잡 직전 **서버 cron**(Java·이미지 무변경) + 필요 시 수동. 신선도=refresh 주기(모든 소비처가 배치/야간이라 수용). MV 대신 테이블+함수: CREATE OR REPLACE·CREATE TABLE IF NOT EXISTS라 idempotent 적용·CASCADE 없음, 하니스는 시드 후 refresh 호출(본문 raw 삽입 테스트는 삽입 후 refresh — prod 동작과 동일). 배포는 apply+refresh를 한 트랜잭션(원자적, 빈 캐시 노출 0) | feat/snapshot-matview 브랜치 |
 | 2026-07-20 | **가입 코드 일괄 적재(`POST /admin/signup-codes`)** — 정적 토큰(CODES_API_KEY) @Order(0) 체인(사람용 Basic과 분리), channel 접두사 유도(빈 접두사 400), ON CONFLICT 스킵 후 {inserted,skipped}. | [specs/2026-07-20-admin-signup-codes-ingest-design.md](docs/superpowers/specs/2026-07-20-admin-signup-codes-ingest-design.md) |
