@@ -49,3 +49,45 @@ BEGIN
           WHERE short_code = 'dummy_r1' AND author_masked = 'dum***') = 3,
     'v_content_comments author_masked != dum***';
 END $$;
+
+-- hype_score 튜닝 상수 (app_setting: 반감기·reach·engage·feed 목표) — 인자 순서
+--   (type, views, likes, comments, followers, elapsed_days, halflife, reach_mult, engage_target, feed_target)
+DO $$
+DECLARE
+  s7 bigint; base bigint; v_old numeric; v_new numeric;
+BEGIN
+  -- 반감기: 경과 14일 릴스는 반감기가 클수록 감쇠가 작아 점수 ↑ (나머지 상수는 NULL→기본)
+  s7   := analytics.hype_score('reels', 10000, 500, 50, 5000, 14, 7,  NULL, NULL, NULL);
+  base := analytics.hype_score('reels', 10000, 500, 50, 5000, 14, 14, NULL, NULL, NULL);
+  ASSERT base > s7, format('halflife 14(%s) > 7(%s)', base, s7);
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,NULL,NULL,NULL,NULL) = base, 'NULL 반감기 → 기본 14';
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,0,   NULL,NULL,NULL) = base, '0 반감기 → 기본 14';
+
+  -- reach 목표 배수: 낮을수록(도달 쉬움) 점수 ↑, NULL·0 → 기본 3
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,14, 3,  NULL,NULL)
+       > analytics.hype_score('reels',10000,500,50,5000,14,14, 30, NULL,NULL), 'reach_mult 3(신) > 30(구)';
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,14, NULL,NULL,NULL)
+       = analytics.hype_score('reels',10000,500,50,5000,14,14, 3,  NULL,NULL), 'NULL reach_mult → 기본 3';
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,14, 0,  NULL,NULL)
+       = analytics.hype_score('reels',10000,500,50,5000,14,14, 3,  NULL,NULL), '0 reach_mult → 기본 3';
+
+  -- engage 목표: 낮을수록 점수 ↑, NULL·0 → 기본 0.04
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,14, NULL, 0.04, NULL)
+       > analytics.hype_score('reels',10000,500,50,5000,14,14, NULL, 0.12, NULL), 'engage 0.04(신) > 0.12(구)';
+  ASSERT analytics.hype_score('reels',10000,500,50,5000,14,14, NULL, NULL, NULL)
+       = analytics.hype_score('reels',10000,500,50,5000,14,14, NULL, 0.04, NULL), 'NULL engage → 기본 0.04';
+
+  -- feed 목표: 피드(views NULL)에서 낮을수록 점수 ↑, NULL·0 → 기본 0.035 (참여 낮게 잡아 양쪽 비포화)
+  ASSERT analytics.hype_score('feed', NULL, 60, 20, 5000, 14, 14, NULL,NULL, 0.035)
+       > analytics.hype_score('feed', NULL, 60, 20, 5000, 14, 14, NULL,NULL, 0.10), 'feed 0.035(신) > 0.10(구)';
+  ASSERT analytics.hype_score('feed', NULL, 60, 20, 5000, 14, 14, NULL,NULL, NULL)
+       = analytics.hype_score('feed', NULL, 60, 20, 5000, 14, 14, NULL,NULL, 0.035), 'NULL feed → 기본 0.035';
+
+  -- 뷰: v_content_metric_snapshots가 app_setting을 읽어 반영(반감기 ↑ → dummy_r1 점수 합 ↑)
+  DELETE FROM app_setting WHERE key = 'analytics.hype-fresh-halflife-days';
+  INSERT INTO app_setting(key, value) VALUES ('analytics.hype-fresh-halflife-days', '7');
+  v_old := (SELECT sum(hype_score) FROM analytics.v_content_metric_snapshots WHERE short_code = 'dummy_r1');
+  UPDATE app_setting SET value = '30' WHERE key = 'analytics.hype-fresh-halflife-days';
+  v_new := (SELECT sum(hype_score) FROM analytics.v_content_metric_snapshots WHERE short_code = 'dummy_r1');
+  ASSERT v_new > v_old, format('뷰 반감기 30(%s) > 7(%s) — app_setting 미반영', v_new, v_old);
+END $$;

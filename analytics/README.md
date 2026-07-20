@@ -80,6 +80,10 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
 |---|---|---|
 | `analytics.recent-window` | 12 | 계정 단위 지표의 최근 N개 윈도우 (§4-1) |
 | `analytics.metric-pin-days` | 3 | 서빙 지표(v_contents) 고정 시점 — 업로드 +N일 이후 가장 이른 스냅샷 |
+| `analytics.hype-fresh-halflife-days` | 14 | hype_score 신선도 반감기(일) — 클수록 감쇠 완화(오래된 콘텐츠 점수 유지). 미설정·0이면 함수가 14 적용 |
+| `analytics.hype-reach-target-mult` | 3 | hype_score reach 만점 기준 — 조회수/(팔로워+1000)이 이 배수면 1.0. **낮출수록 점수 ↑** |
+| `analytics.hype-engage-target` | 0.04 | hype_score engage 만점 기준 — 릴스 조회 대비 참여율. **낮출수록 점수 ↑** |
+| `analytics.hype-feed-engage-target` | 0.035 | hype_score 피드 axis 만점 기준 — 팔로워 대비 참여율. **낮출수록 점수 ↑** |
 | `analytics.analyze-maturity-days` | 3 | LLM 후보(v_analysis_candidates) 숙성 가드 — 업로드 +N일 경과분만 |
 | `analytics.analyze-timely-slack-days` | 2 | LLM 후보 제때 크롤 판정 여유 — 고정 지표가 업로드 +(pin+N)일 안에 잡힌 것만 (늦크롤 백필 제외) |
 | `analytics.trend-threshold` | 0.15 | 계정 트렌드 up/down 판정 임계(v_account_summaries) — 이 키만 numeric |
