@@ -7,7 +7,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 6.1 조회 — contents ⋈ content_analyses(분석 완료만 노출) ⋈ accounts.
+ * 6.1 조회 — contents ⋈ content_analyses(분석 완료만 노출 ∧ 뷰티만(is_beauty=true)) ⋈ accounts.
  * 중분류 확장 매칭·유통사 슬러그 해석은 어휘 테이블(beauty_taxonomy·beauty_distributors)로
  * SQL 안에서 처리한다 — Java 상수 하드코딩 없음(어휘는 생산자 소유, §4-4).
  */
@@ -53,6 +53,7 @@ public class V1ContentRepository {
 				JOIN accounts a ON a.handle = c.account_handle
 				WHERE c.posted_at >= :start AND c.posted_at < :end
 				  AND c.content_type = :contentType
+				  AND an.is_beauty = true
 				""");
 		Map<String, Object> params = new HashMap<>();
 		params.put("start", q.startInstant());

@@ -65,8 +65,8 @@ public class V1ContentReportAssembler {
 		var views = new ContentAiReport.Comparison.Views(row.views(), baseline,
 				multiple(row.views(), baseline), rankInRecent, recentCount, recentReels);
 		var engagementRate = new ContentAiReport.Comparison.EngagementRate(
-				engagementRateValue(row.views(), row.likes(), row.comments()),
-				row.recent12AvgEngagementRate());
+				engagementRateValue(row.followers(), row.likes(), row.comments()),
+				engagementRateValue(row.followers(), row.recent12AvgLikeCount(), row.recent12AvgCommentCount()));
 		var quality = new ContentAiReport.Comparison.EngagementQuality(
 				new ContentAiReport.Comparison.EngagementQuality.Counts(row.likes(), row.recent12AvgLikeCount()),
 				new ContentAiReport.Comparison.EngagementQuality.Counts(row.comments(), row.recent12AvgCommentCount()));
@@ -117,14 +117,18 @@ public class V1ContentReportAssembler {
 		return BigDecimal.valueOf(value).divide(BigDecimal.valueOf(baseline), 1, RoundingMode.HALF_UP);
 	}
 
-	/** (likes+comments)/views×100 소수 2자리 HALF_UP — views null·0(피드)이면 null. */
-	BigDecimal engagementRateValue(Long views, Long likes, Long comments) {
-		if (views == null || views == 0L) {
+	/**
+	 * 참여율 = (likes+comments)/팔로워×100, 소수 2자리 HALF_UP (인스타 피처링식). 팔로워 null·0이면 null.
+	 * value(이 게시물)·baseline(계정 recent12 평균)이 같은 팔로워 기준이라 hype_score 랭킹과 정합.
+	 * 피드도 팔로워 기준이라 값이 나온다(조회수 기준일 때의 NULL 규칙에서 벗어남).
+	 */
+	BigDecimal engagementRateValue(Long followers, Long likes, Long comments) {
+		if (followers == null || followers == 0L) {
 			return null;
 		}
 		long engaged = (likes == null ? 0L : likes) + (comments == null ? 0L : comments);
 		return BigDecimal.valueOf(engaged * 100L)
-				.divide(BigDecimal.valueOf(views), 2, RoundingMode.HALF_UP);
+				.divide(BigDecimal.valueOf(followers), 2, RoundingMode.HALF_UP);
 	}
 
 	/** 카테고리별 비율(전체 대비, 2자리) — 분류 0건이면 빈 배열. 정렬은 건수 내림차순. */

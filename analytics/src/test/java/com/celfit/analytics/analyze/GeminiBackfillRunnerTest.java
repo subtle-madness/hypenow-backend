@@ -38,7 +38,7 @@ class GeminiBackfillRunnerTest {
 			{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,
 			 "adDisclosure":"표기 없음","detectedProductCategories":["클렌징폼"],"detectedProducts":null,
 			 "vlmAttributes":null,"mainCategory":"cleansing","subCategories":["클렌징폼"],
-			 "detectedDistributors":null,"adType":"organic",
+			 "detectedDistributors":null,"adType":"organic","isBeauty":true,
 			 "aiContentSummary":"평균 수준","contentsPattern":"루틴형","aiCommentInsight":"표본 부족",
 			 "commentAuthenticityGrade":"normal","commentAuthenticityNote":"근거"}"""
 			.replace("\n", "");

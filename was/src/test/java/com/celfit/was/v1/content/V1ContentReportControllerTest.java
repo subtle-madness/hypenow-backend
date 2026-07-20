@@ -36,7 +36,7 @@ class V1ContentReportControllerTest {
 	V1ContentReportRepository repository;
 
 	private ReportRow fullRow() {
-		return new ReportRow("SC1", "zingdong__", "reels", 3307180L, 42216L, 86L,
+		return new ReportRow("SC1", "zingdong__", "reels", 3307180L, 42216L, 86L, 100000L,
 				"요약", "패턴 서술", "댓글 인사이트",
 				412L, 1, 12,
 				24, new BigDecimal("1.29"), 35000L, 120L,
@@ -68,6 +68,9 @@ class V1ContentReportControllerTest {
 				.andExpect(jsonPath("$.data.comparison.views.recentReels[0].postedAt").value("2026-07-01"))
 				.andExpect(jsonPath("$.data.comparison.views.recentReels[0].contentId").value("SC1"))
 				.andExpect(jsonPath("$.data.comparison.views.recentReels[0].isCurrent").value(true))
+				// 참여율은 팔로워(100000) 기준: value=(42216+86)/100000×100=42.30, baseline=(35000+120)/100000×100=35.12
+				.andExpect(jsonPath("$.data.comparison.engagementRate.value").value(42.30))
+				.andExpect(jsonPath("$.data.comparison.engagementRate.baseline").value(35.12))
 				.andExpect(jsonPath("$.data.comparison.engagementQuality.likes.baselineCount").value(35000))
 				.andExpect(jsonPath("$.data.comparison.narrative").value("패턴 서술"))
 				.andExpect(jsonPath("$.data.categoryContext.categoryLabel").value("메이크업"))
@@ -92,7 +95,8 @@ class V1ContentReportControllerTest {
 
 	@Test
 	void vlm_미실행이어도_구조는_유지된다() throws Exception {
-		ReportRow row = new ReportRow("SC2", "handle", "feed", null, 100L, 10L,
+		// 팔로워 null(account_summaries 미매칭) → 참여율 value null 유지 (가드)
+		ReportRow row = new ReportRow("SC2", "handle", "feed", null, 100L, 10L, null,
 				"요약", null, null,
 				null, null, null,
 				null, null, null, null,

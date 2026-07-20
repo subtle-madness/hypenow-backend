@@ -39,6 +39,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 			  "vlmAttributes":{"type":"array","nullable":true,"items":{"type":"object",
 			    "properties":{"label":{"type":"string"},"value":{"type":"string"}},
 			    "required":["label","value"]}},
+			  "isBeauty":{"type":"boolean"},
 			  "mainCategory":{"type":"string","nullable":true},
 			  "subCategories":{"type":"array","nullable":true,"items":{"type":"string"}},
 			  "detectedDistributors":{"type":"array","nullable":true,"items":{"type":"string"}},
@@ -49,11 +50,11 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 			  "commentAuthenticityGrade":{"type":"string"},
 			  "commentAuthenticityNote":{"type":"string"}},
 			 "required":["detectedBrands","sponsoredSignalLevel","sponsoredSignalReasons","adDisclosure",
-			  "detectedProductCategories","detectedProducts","vlmAttributes","mainCategory","subCategories",
+			  "detectedProductCategories","detectedProducts","vlmAttributes","isBeauty","mainCategory","subCategories",
 			  "detectedDistributors","adType","aiContentSummary","contentsPattern","aiCommentInsight",
 			  "commentAuthenticityGrade","commentAuthenticityNote"],
 			 "propertyOrdering":["detectedBrands","sponsoredSignalLevel","sponsoredSignalReasons","adDisclosure",
-			  "detectedProductCategories","detectedProducts","vlmAttributes","mainCategory","subCategories",
+			  "detectedProductCategories","detectedProducts","vlmAttributes","isBeauty","mainCategory","subCategories",
 			  "detectedDistributors","adType","aiContentSummary","contentsPattern","aiCommentInsight",
 			  "commentAuthenticityGrade","commentAuthenticityNote"]}""";
 
@@ -79,6 +80,8 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				캡션(과 썸네일이 주어지면 썸네일)에서 다음을 추출하라.
 				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 뷰티와 무관한 콘텐츠면 mainCategory는 null이다.
 
+				- isBeauty: 이 콘텐츠가 뷰티 콘텐츠인가 (true/false). 뷰티 제품·시술·루틴·리뷰 등이면 true,
+				  뷰티 인플루언서라도 일상·여행·음식 등 뷰티와 무관하면 false. mainCategory와 독립적으로 반드시 판정하라.
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
@@ -140,7 +143,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 		ContentAttributes attrs = AnthropicContentAttributeAnalyzer.sanitize(new ContentAttributes(
 				o.detectedBrands(), o.sponsoredSignalLevel(), o.sponsoredSignalReasons(), o.adDisclosure(),
 				o.detectedProductCategories(), o.detectedProducts(), o.vlmAttributes(), o.mainCategory(),
-				o.subCategories(), o.detectedDistributors(), o.adType()), taxonomy);
+				o.subCategories(), o.detectedDistributors(), o.adType(), o.isBeauty()), taxonomy);
 		String grade = o.commentAuthenticityGrade() != null && GRADES.contains(o.commentAuthenticityGrade())
 				? o.commentAuthenticityGrade() : "normal";
 		return new ContentInsight(attrs, new Synthesis(o.aiContentSummary(), o.contentsPattern(),
@@ -151,7 +154,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 	record Output(List<ContentAttributes.Brand> detectedBrands, String sponsoredSignalLevel,
 			List<String> sponsoredSignalReasons, String adDisclosure,
 			List<String> detectedProductCategories, List<ContentAttributes.Product> detectedProducts,
-			List<ContentAttributes.Attribute> vlmAttributes, String mainCategory,
+			List<ContentAttributes.Attribute> vlmAttributes, Boolean isBeauty, String mainCategory,
 			List<String> subCategories, List<String> detectedDistributors, String adType,
 			String aiContentSummary, String contentsPattern, String aiCommentInsight,
 			String commentAuthenticityGrade, String commentAuthenticityNote) {}

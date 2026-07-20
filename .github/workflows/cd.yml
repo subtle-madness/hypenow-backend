@@ -1,0 +1,101 @@
+# main 푸시마다 이미지 빌드·push + 오라클 서버 배포 — 수동 deploy.sh(deploy/scripts)의 CD 버전.
+# 대상: was·analytics·crawler 3종. develop→main 머지가 곧 배포 트리거 (develop CI 통과가 전제).
+#
+# 분석 뷰(analytics/views)는 이미지에 안 들어가므로(운영 런북 §4-1) 배포 후 raw DB에 직접 적용 —
+# 전부 CREATE OR REPLACE라 멱등이고, CI sql-harness가 프레시 DB 적용을 사전 검증한다.
+# 컬럼 이름·타입이 바뀌는 뷰 변경은 OR REPLACE로 불가 — 해당 SQL에 DROP VIEW를 포함할 것(수동 절차와 동일 제약).
+#
+# 필요 시크릿: DEPLOY_SSH_KEY(서버 ssh 개인키), DEPLOY_HOST(서버 호스트/IP — ssh 사용자는 ubuntu 고정)
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+# 배포 겹침 방지 — 진행 중 배포는 취소하지 않고 다음 배포가 대기
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    name: 이미지 빌드·push (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        service: [was, analytics, crawler]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: JDK 21 설치
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # main은 기본 브랜치(develop)가 아니라 캐시 읽기 전용 — develop CI가 만든 캐시를 재사용
+      - name: Gradle 설정
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: bootJar 빌드
+        run: ./gradlew :${{ matrix.service }}:bootJar
+
+      # 서버가 arm64(오라클 A1)라 멀티아치 필수 — Dockerfile은 jar 복사뿐이라 QEMU 부담 미미
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: ghcr 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # deploy.sh와 동일 태깅 — :latest + :sha-<short> (롤백 절차: deploy/README.md §5)
+      - name: 멀티아치 빌드·push
+        run: |
+          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+          REPO="ghcr.io/${{ github.repository_owner }}/hypenow-${{ matrix.service }}"
+          docker buildx build --platform linux/arm64,linux/amd64 \
+            -t "$REPO:latest" -t "$REPO:$SHA_TAG" --push ${{ matrix.service }}
+
+  deploy:
+    name: 서버 배포
+    needs: build-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7   # 분석 뷰 SQL 전송용
+
+      - name: SSH 설정
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: compose pull·재기동
+        run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
+            'cd ~/deploy && docker compose pull was analytics crawler && docker compose up -d && docker compose ps'
+
+      # crawler가 기동 중 Flyway로 raw 마이그레이션을 적용하므로, 새 컬럼 의존 뷰 대비 재시도
+      - name: 분석 뷰 적용 (raw DB, 멱등)
+        run: |
+          for i in 1 2 3 4 5; do
+            if cat analytics/views/*.sql | ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
+              'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q'; then
+              exit 0
+            fi
+            echo "뷰 적용 실패 — ${i}회차, 15초 후 재시도 (crawler Flyway 마이그레이션 대기 가능성)"
+            sleep 15
+          done
+          exit 1
+
+      - name: 헬스체크
+        run: curl -fsS --retry 5 --retry-delay 10 --retry-all-errors https://api.hypenow.io/health

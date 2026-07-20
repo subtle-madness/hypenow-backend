@@ -29,9 +29,9 @@ final class ContentAnalysisWriter {
 				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
 				  detected_product_categories, detected_products, vlm_attributes, main_category, sub_categories,
 				  detected_distributors, ad_type,
-				  comment_authenticity_grade, comment_authenticity_note, metric_timeliness)
+				  comment_authenticity_grade, comment_authenticity_note, metric_timeliness, is_beauty)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)"""
+				        ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?)"""
 				+ (conflictIgnore ? " ON CONFLICT (short_code) DO NOTHING" : ""),
 				shortCode, model,
 				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
@@ -49,7 +49,8 @@ final class ContentAnalysisWriter {
 				toJson(json, attrs == null ? null : attrs.subCategories()),
 				toJson(json, attrs == null ? null : attrs.detectedDistributors()),
 				attrs == null ? null : attrs.adType(),
-				s.commentAuthenticityGrade(), s.commentAuthenticityNote(), metricTimeliness);
+				s.commentAuthenticityGrade(), s.commentAuthenticityNote(), metricTimeliness,
+				attrs == null ? null : attrs.isBeauty());
 	}
 
 	private static String toJson(ObjectMapper json, Object value) {

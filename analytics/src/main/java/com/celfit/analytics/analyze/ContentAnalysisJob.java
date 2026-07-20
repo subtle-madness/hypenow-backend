@@ -198,6 +198,12 @@ public class ContentAnalysisJob {
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("종합 텍스트가 비어 있음: " + shortCode);
 		}
+		// 뷰티 콘텐츠인데 복구 후에도 대분류를 못 얻으면 행을 남기지 않는다 — 저장되면 NOT EXISTS로
+		// 영영 재분석 제외되므로, 실패 격리(skip)로 다음 실행에 재대상화(self-heal). 비뷰티(is_beauty=false)는
+		// 정상 저장돼 루프에 안 빠진다. (설계 2026-07-20 §3-3)
+		if (attrs != null && Boolean.TRUE.equals(attrs.isBeauty()) && attrs.mainCategory() == null) {
+			throw new IllegalStateException("뷰티 콘텐츠인데 대분류 미분류 — 재대상: " + shortCode);
+		}
 		// V33 마킹 분기(07-20 개정): 제때 가드를 충족하면 timely, 윈도우 경로로만 들어온 늦크롤은 late_backfill.
 		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false,
 				timely ? "timely" : "late_backfill");
