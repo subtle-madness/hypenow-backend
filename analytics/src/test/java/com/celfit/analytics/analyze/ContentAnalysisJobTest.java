@@ -454,14 +454,20 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 제때_크롤_판정_여유는_app_setting으로_조정된다() {
+		// acct1은 3건뿐이라 기본 윈도우(12)에서 post_a가 항상 윈도우 경로로도 포함된다 — 슬랙
+		// 로직이 사라져도 processed==2가 성립해 검증력이 없다(리뷰 지적). 윈도우를 0으로 닫아
+		// 순수 슬랙 확장 효과만 검증하고, 슬랙 확장으로 포함된 건은 timely로 마킹됨도 함께 확인한다.
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '20 days',
 				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-timely-slack-days', '30')");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
 
 		int processed = job.run().processed();
 
 		assertEquals(2, processed); // 여유 30일이면 +11일 크롤분도 대상
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
 	}
 
 	@Test

@@ -5,6 +5,7 @@ import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -89,33 +90,35 @@ public class ContentAnalysisJob {
 		// posted_at DESC, short_code DESC로 대체(동시각 순서 미세 차이 가능, 실질 영향 없음).
 		int pinDays = settings.metricPinDays();
 		int slackDays = settings.analyzeTimelySlackDays();
-		Map<String, Boolean> eligible = new LinkedHashMap<>();
+		// timely 술어는 base CTE에서 1회만 평가하고(중복 계산·중복 파라미터 제거 — 리뷰 반영),
+		// 바깥 WHERE·SELECT 양쪽에서 그 결과 컬럼을 그대로 재사용한다. ranked는 계정별 전체
+		// contents(가드와 무관) 기준 최근 N개 순위 — base의 다른 가드와 별개로 윈도우만 판단.
+		Map<String, Boolean> eligible = new HashMap<>();
 		analysis.query("""
-				WITH ranked AS (
+				WITH base AS (
+				  SELECT c.short_code,
+				         COALESCE(c.metric_captured_at >= c.posted_at + make_interval(days => ?)
+				              AND c.metric_captured_at < c.posted_at + make_interval(days => ?), false) AS timely
+				  FROM contents c
+				  WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
+				    AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
+				         OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
+				    AND c.posted_at <= now() - make_interval(days => ?)
+				),
+				ranked AS (
 				  SELECT short_code,
 				         row_number() OVER (PARTITION BY account_handle
 				             ORDER BY posted_at DESC, short_code DESC) AS rn
 				  FROM contents
 				)
-				SELECT c.short_code,
-				       COALESCE(c.metric_captured_at >= c.posted_at + make_interval(days => ?)
-				            AND c.metric_captured_at < c.posted_at + make_interval(days => ?), false) AS timely
-				FROM contents c
-				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
-				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
-				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-				  AND c.posted_at <= now() - make_interval(days => ?)
-				  AND (
-				    (c.metric_captured_at >= c.posted_at + make_interval(days => ?)
-				     AND c.metric_captured_at < c.posted_at + make_interval(days => ?))
-				    OR c.short_code IN (SELECT short_code FROM ranked WHERE rn <= ?)
-				  )""",
+				SELECT short_code, timely
+				FROM base
+				WHERE timely OR short_code IN (SELECT short_code FROM ranked WHERE rn <= ?)""",
 				rs -> {
 					eligible.put(rs.getString(1), rs.getBoolean(2));
 				},
 				pinDays, pinDays + slackDays,
 				settings.analyzeMaturityDays(),
-				pinDays, pinDays + slackDays,
 				settings.recentWindow());
 		List<String> targets = withBaseline.keySet().stream()
 				.filter(eligible::containsKey)
