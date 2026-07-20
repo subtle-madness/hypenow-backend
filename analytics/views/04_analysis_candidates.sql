@@ -94,7 +94,9 @@ FROM (
           + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
         <= (now() AT TIME ZONE 'Asia/Seoul')::date
   -- 최적화 배리어: OFFSET 0은 실제로 행을 건너뛰지 않지만(0개), 플래너가 이 서브쿼리 경계를 넘어
-  -- 바깥 WHERE(timely OR in_window)를 안쪽 스캔까지 밀어넣지 못하게 막는다(PG 표준 관용구).
+  -- 바깥 WHERE(timely OR in_window)를 안쪽 스캔까지 밀어넣지 못하게 막는다(PG 관용구).
+  -- ⚠️ 비공식 동작(언어 계약 아님) — CTE 기본 인라인화(PG12) 전례처럼 무력화될 수 있으니
+  -- PG 메이저 업그레이드 시 EXPLAIN으로 배리어 유효성 재확인할 것.
   OFFSET 0
 ) candidates
 WHERE timely
