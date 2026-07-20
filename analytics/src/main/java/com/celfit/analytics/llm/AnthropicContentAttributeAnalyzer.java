@@ -52,6 +52,8 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				당신은 뷰티 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)을 보고 다음을 추출하라.
 				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 한국어로.
 
+				- isBeauty: 이 콘텐츠가 뷰티 콘텐츠인가 (true/false). 뷰티 제품·시술·루틴·리뷰 등이면 true,
+				  뷰티 인플루언서라도 일상·여행·음식 등 뷰티와 무관하면 false. mainCategory와 독립적으로 반드시 판정하라.
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
@@ -134,21 +136,44 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 	/**
 	 * LLM이 어휘 밖 값을 지어낸 경우 제거한다 — 스칼라는 null로, 배열은 어휘 밖 원소만 걸러낸다
 	 * (was가 verbatim 매칭하므로 어휘 밖 라벨은 필터에 안 잡히는 노이즈).
+	 * 단 mainCategory는 어휘 밖이면 유효 서브라벨로 역유도 복구한다(드랍 아님).
+	 * 비뷰티(isBeauty≠true)면 대분류를 확정하지 않는다(생산자 불변식).
 	 * detectedBrands·detectedProducts는 자유 텍스트라 통과. Synthesis의 등급 방어와 대칭.
 	 */
 	static ContentAttributes sanitize(ContentAttributes raw, BeautyTaxonomy taxonomy) {
+		List<String> subs = filterToVocabulary(raw.subCategories(), taxonomy.allMidAndSubLabels());
+		List<String> prodCats = filterToVocabulary(raw.detectedProductCategories(), taxonomy.allSubLabels());
+		String main = keepIfIn(raw.mainCategory(), taxonomy.mainCategories());
+		if (main == null) {
+			// 어휘 밖/미상 대분류는 드랍 대신 유효 서브라벨로 역유도 복구 (예: ["선크림","컬러립밤"]→suncare)
+			List<String> signal = new ArrayList<>();
+			if (subs != null) {
+				signal.addAll(subs);
+			}
+			if (prodCats != null) {
+				signal.addAll(prodCats);
+			}
+			main = taxonomy.deriveMain(signal);
+		}
+		// 비뷰티(isBeauty≠true)는 대분류를 확정하지 않는다 — "main_category 있음 ⇒ 뷰티" 불변식을
+		// 생산자에서 보장해, main_category만 읽는 소비처(카테고리 믹스 등)가 별도 필터 없이 비뷰티를
+		// 자동 제외하게 한다. (설계 §3-4)
+		if (!Boolean.TRUE.equals(raw.isBeauty())) {
+			main = null;
+		}
 		return new ContentAttributes(
 				raw.detectedBrands(),
 				keepIfIn(raw.sponsoredSignalLevel(), SIGNAL_LEVELS),
 				raw.sponsoredSignalReasons(),
 				raw.adDisclosure(),
-				filterToVocabulary(raw.detectedProductCategories(), taxonomy.allSubLabels()),
+				prodCats,
 				raw.detectedProducts(),
 				raw.vlmAttributes(),
-				keepIfIn(raw.mainCategory(), taxonomy.mainCategories()),
-				filterToVocabulary(raw.subCategories(), taxonomy.allMidAndSubLabels()),
+				main,
+				subs,
 				filterToVocabulary(raw.detectedDistributors(), taxonomy.distributors()),
-				keepIfIn(raw.adType(), AD_TYPES));
+				keepIfIn(raw.adType(), AD_TYPES),
+				raw.isBeauty());
 	}
 
 	private static String keepIfIn(String value, Set<String> vocabulary) {

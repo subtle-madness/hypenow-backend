@@ -5,6 +5,7 @@ import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +18,8 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 콘텐츠 분석 배치 (스펙 §6). 분석 시점 고정·불변 — INSERT만, 재분석 없음.
- * 대상: 미분석 AND (댓글 없음 OR 분류 완료) AND 게시 후 N일 경과(기본 3 — B3 숙성 가드).
+ * 대상: 미분석 AND (댓글 없음 OR 분류 완료) AND 게시 후 N일 경과(기본 3 — B3 숙성 가드)
+ * AND (제때 크롤 가드 OR 계정별 최근 N개 윈도우 — 07-20 개정: 늦크롤 백필 재도입, V33 timely/late_backfill 분기).
  * 속성 분석은 캡션 주·썸네일 보조 (2026-07-14 캡션 분류 스펙) — 썸네일 만료여도 캡션으로 5종 산출.
  * 콘텐츠 단위 실패 격리: 한 건 실패는 로그 후 계속 (B2 리뷰 반영).
  */
@@ -90,24 +92,61 @@ public class ContentAnalysisJob {
 							longOf(rs.getBigDecimal(7)), longOf(rs.getBigDecimal(8)),
 							intOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10)), longOf(rs.getBigDecimal(11))));
 				});
-		// 숙성 가드: 게시 후 N일(기본 3) 경과분만 — 불변 테이블이라 게시 직후 분석되면 영구 고정 (07-14 확정).
-		// 제때 크롤 가드(07-19 재정정): 고정 지표가 성숙(+pin일) 스냅샷이면서 +(pin+slack)일 안에 잡힌 것만 —
-		// 늦크롤 백필(+3일 지표 없음)과 미성숙 폴백 지표(영구 고정 누수)를 함께 차단. 분석 밀림은 나이 무관 허용.
-		// posted_at·metric_captured_at NULL은 부등식에서 자연 제외 (미상이면 판정 불가).
-		// 수집 최신순: 썸네일 서명 URL(만료 ~4일)이 살아있을 때 VLM을 시도하기 위한 정렬 (B3 VLM 잔여분).
+		// 제때 크롤 가드(07-19 정정, 판정식 07-20 보존) + 자격 OR 확장(07-20 PO 결정): 고정 지표가
+		// 성숙(+pin일) 스냅샷이면서 +(pin+slack)일 안에 잡힌 것(timely), 또는 제때 가드를 못 채워도
+		// 계정별 최근 N개(recent-window) 윈도우 안이면 대상에 포함한다(늦크롤 백필). timely 여부는
+		// V33 metric_timeliness 마킹(timely/late_backfill)에 쓴다(analyzeOne에서 적용).
+		// 스코프 확장(07-20, #79 재통합): timely 분기는 최근창 밖도 포함하므로, 다작 계정의 최근창 밖
+		// 성숙분(콘텐츠 키 기준선 v_analysis_baseline 없음)도 이 자격으로 유입돼 계정 평균을 앵커로
+		// 분석된다. 과거의 baseline keyset ∩ eligible 교집합(최근창 밖 후보 탈락)을 걷어내고 eligible
+		// 전량을 iterate하며, analyzeOne이 withBaseline → accountBaseline → EMPTY 순으로 폴백한다.
+		// 창 닫힘 게이트(최종 통합 리뷰 I-1): 윈도우 분기에만 posted_at + (pin+slack)일 <= now() 를
+		// 추가로 건다 — 제때창이 아직 열려 있는 콘텐츠(숙성은 지났지만 pin+slack 미경과)를 윈도우
+		// 경로로 조기 분석하면, 나중에 진짜 timely 스냅샷이 들어와도 content_analyses가 불변이라
+		// late_backfill로 영구 오분류된다. timely 분기는 게이트가 필요 없다 — 술어 자체가 창 안에서
+		// 성숙 스냅샷이 잡혔음을 의미하기 때문.
+		// posted_at·metric_captured_at NULL은 제때 가드 부등식에서 자연 제외(COALESCE로 timely=false) —
+		// posted_at이 살아 있으면 윈도우 경로로는 대상이 될 수 있다.
+		// timely 술어는 base CTE에서 1회만 평가하고(중복 계산·중복 파라미터 제거) 바깥에서 재사용한다.
+		// ranked는 계정별 전체 contents(가드 무관) 기준 최근 N개 순위 — 윈도우만 판단.
+		// 수집 최신순(ORDER BY metric_captured_at DESC): 썸네일 서명 URL(만료 ~4일) 생존 시 VLM을
+		// 먼저 시도하기 위한 정렬 (B3 VLM 잔여분). 순서를 보존하려 LinkedHashMap으로 받는다.
 		int pinDays = settings.metricPinDays();
-		List<String> targets = analysis.queryForList("""
-				SELECT c.short_code FROM contents c
-				WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
-				  AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
-				       OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-				  AND c.posted_at <= now() - make_interval(days => ?)
-				  AND c.metric_captured_at >= c.posted_at + make_interval(days => ?)
-				  AND c.metric_captured_at < c.posted_at + make_interval(days => ?)
-				ORDER BY c.metric_captured_at DESC, c.short_code
+		int slackDays = settings.analyzeTimelySlackDays();
+		Map<String, Boolean> eligible = new LinkedHashMap<>();
+		analysis.query("""
+				WITH base AS (
+				  SELECT c.short_code, c.metric_captured_at,
+				         COALESCE(c.metric_captured_at >= c.posted_at + make_interval(days => ?)
+				              AND c.metric_captured_at < c.posted_at + make_interval(days => ?), false) AS timely
+				  FROM contents c
+				  WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
+				    AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
+				         OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
+				    AND c.posted_at <= now() - make_interval(days => ?)
+				),
+				ranked AS (
+				  SELECT short_code, posted_at,
+				         row_number() OVER (PARTITION BY account_handle
+				             ORDER BY posted_at DESC, short_code DESC) AS rn
+				  FROM contents
+				)
+				SELECT short_code, timely
+				FROM base
+				WHERE timely OR short_code IN (
+				  SELECT short_code FROM ranked
+				  WHERE rn <= ? AND posted_at <= now() - make_interval(days => ?)
+				)
+				ORDER BY metric_captured_at DESC NULLS LAST, short_code
 				LIMIT ?""",
-				String.class, settings.analyzeMaturityDays(), pinDays,
-				pinDays + settings.analyzeTimelySlackDays(), settings.analyzeBatchLimit());
+				rs -> {
+					eligible.put(rs.getString(1), rs.getBoolean(2));
+				},
+				pinDays, pinDays + slackDays,
+				settings.analyzeMaturityDays(),
+				settings.recentWindow(), pinDays + slackDays,
+				settings.analyzeBatchLimit());
+		List<String> targets = new ArrayList<>(eligible.keySet());
 		String model = settings.activeLlmModel();
 		int processed = 0;
 		int failed = 0;
@@ -115,7 +154,7 @@ public class ContentAnalysisJob {
 		reporter.report(0, 0, targets.size());
 		for (String shortCode : targets) {
 			try {
-				analyzeOne(shortCode, model, withBaseline, accountBaseline);
+				analyzeOne(shortCode, model, withBaseline, accountBaseline, eligible.get(shortCode));
 				processed++;
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
@@ -133,7 +172,7 @@ public class ContentAnalysisJob {
 	}
 
 	private void analyzeOne(String shortCode, String model,
-			Map<String, Baseline> withBaseline, Map<String, Baseline> accountBaseline) {
+			Map<String, Baseline> withBaseline, Map<String, Baseline> accountBaseline, boolean timely) {
 		Map<String, Object> content = analysis.queryForMap("""
 				SELECT account_handle, caption, content_type, thumbnail_url, views, likes, comments
 				FROM contents WHERE short_code = ?""", shortCode);
@@ -181,8 +220,15 @@ public class ContentAnalysisJob {
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("종합 텍스트가 비어 있음: " + shortCode);
 		}
-		// 후보 뷰가 제때 크롤 가드를 보장하므로 데일리 유입은 전부 timely (V33 마킹).
-		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false, "timely");
+		// 뷰티 콘텐츠인데 복구 후에도 대분류를 못 얻으면 행을 남기지 않는다 — 저장되면 NOT EXISTS로
+		// 영영 재분석 제외되므로, 실패 격리(skip)로 다음 실행에 재대상화(self-heal). 비뷰티(is_beauty=false)는
+		// 정상 저장돼 루프에 안 빠진다. (설계 2026-07-20 §3-3)
+		if (attrs != null && Boolean.TRUE.equals(attrs.isBeauty()) && attrs.mainCategory() == null) {
+			throw new IllegalStateException("뷰티 콘텐츠인데 대분류 미분류 — 재대상: " + shortCode);
+		}
+		// V33 마킹 분기(07-20 개정): 제때 가드를 충족하면 timely, 윈도우 경로로만 들어온 늦크롤은 late_backfill.
+		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false,
+				timely ? "timely" : "late_backfill");
 	}
 
 	private static Long longOf(java.math.BigDecimal v) {
