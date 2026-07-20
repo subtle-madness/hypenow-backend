@@ -103,6 +103,8 @@ class GeminiContentAnalyzerTest {
 		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy).analyze(content(), null);
 		String schema = calls.get(0).schema();
 		assertTrue(schema.contains("\"isBeauty\""));
-		assertTrue(schema.indexOf("\"isBeauty\"") < schema.lastIndexOf("\"mainCategory\"")); // propertyOrdering 상 앞
+		// propertyOrdering 배열 안에서 isBeauty가 mainCategory보다 앞서 생성되는지(눈속임 방지: 구간 스코프)
+		String ordering = schema.substring(schema.indexOf("propertyOrdering"));
+		assertTrue(ordering.indexOf("\"isBeauty\"") < ordering.indexOf("\"mainCategory\""));
 	}
 }
