@@ -31,6 +31,14 @@ public class AnalyticsSettings {
 	public static final String KEY_GEMINI_MODEL = "analytics.gemini-model";
 	/** Gemini 분당 호출 상한 — 무료 티어 15 RPM. crawler 판정과 동시 실행 시 합산 초과 주의. */
 	public static final String KEY_GEMINI_RPM = "analytics.gemini-rpm";
+	/** Vertex AI GCP 프로젝트 ID — provider=vertex일 때 필수. */
+	public static final String KEY_VERTEX_PROJECT = "analytics.vertex-project";
+	/** Vertex AI 로케이션 — gemini-3.1-flash-lite는 global/us/eu만 제공(도쿄 없음), 기본 global. */
+	public static final String KEY_VERTEX_LOCATION = "analytics.vertex-location";
+	/** Vertex 배치 입출력 GCS 버킷 이름(gs:// 없이) — 백필 배치 전용. */
+	public static final String KEY_VERTEX_GCS_BUCKET = "analytics.vertex-gcs-bucket";
+	/** 최근 N개 윈도우 — 01 뷰(v_recent_content)와 공유하는 키. 분석 자격 OR 분기에서 사용. */
+	public static final String KEY_RECENT_WINDOW = "analytics.recent-window";
 
 	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
@@ -42,6 +50,8 @@ public class AnalyticsSettings {
 	static final String DEFAULT_LLM_PROVIDER = "gemini";
 	static final String DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
 	static final int DEFAULT_GEMINI_RPM = 15;
+	static final String DEFAULT_VERTEX_LOCATION = "global";
+	static final int DEFAULT_RECENT_WINDOW = 12;
 
 	private final JdbcTemplate raw;
 
@@ -92,6 +102,25 @@ public class AnalyticsSettings {
 
 	public int geminiRpm() {
 		return read(KEY_GEMINI_RPM).map(Integer::parseInt).orElse(DEFAULT_GEMINI_RPM);
+	}
+
+	/** provider=vertex일 때만 호출됨 — 미설정이면 배선 시점에 fail-fast. */
+	public String vertexProject() {
+		return read(KEY_VERTEX_PROJECT).orElseThrow(() -> new IllegalStateException(
+				KEY_VERTEX_PROJECT + " 미설정 — app_setting에 GCP 프로젝트 ID 등록 필요"));
+	}
+
+	public String vertexLocation() {
+		return read(KEY_VERTEX_LOCATION).orElse(DEFAULT_VERTEX_LOCATION);
+	}
+
+	public String vertexGcsBucket() {
+		return read(KEY_VERTEX_GCS_BUCKET).orElseThrow(() -> new IllegalStateException(
+				KEY_VERTEX_GCS_BUCKET + " 미설정 — app_setting에 배치용 GCS 버킷 등록 필요"));
+	}
+
+	public int recentWindow() {
+		return read(KEY_RECENT_WINDOW).map(Integer::parseInt).orElse(DEFAULT_RECENT_WINDOW);
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */

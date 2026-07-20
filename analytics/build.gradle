@@ -10,6 +10,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'com.anthropic:anthropic-java:2.34.0'
+	implementation 'com.google.auth:google-auth-library-oauth2-http:1.49.0'
 	runtimeOnly 'org.postgresql:postgresql'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
