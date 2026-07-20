@@ -238,17 +238,21 @@ class GeminiBackfillRunnerTest {
 	@Test
 	void Vertex_실패라인은_status가_있으면_실패로_센다() {
 		runner().submit();
+		// response는 정상 저장 가능한 유효 인사이트 — status만 비어있지 않으면 그 자체로 실패여야 한다.
+		// (response를 빈 객체로 두면 이후 text.isMissingNode() 경로도 같은 결과를 내 status 분기가
+		//  vacuous하게 통과한다 — 리뷰 지적 반영)
 		tools.jackson.databind.node.ObjectNode line = om.createObjectNode();
 		line.put("status", "INTERNAL");
-		line.putObject("request").putArray("contents").addObject().put("role", "user")
-				.putArray("parts").addObject().put("text", "콘텐츠: bf_a (@acct1, reels)");
-		line.putObject("response");
+		line.put("key", "bf_a");
+		line.putObject("response").putArray("candidates").addObject().putObject("content")
+				.putArray("parts").addObject().put("text", INSIGHT_JSON);
 		resultJsonl = om.writeValueAsString(line);
 
 		int saved = runner().collect("batches/b1");
 
 		assertEquals(0, saved);
-		// bf_done은 setUp에서 이미 적재된 기존 행 — 실패 라인은 아무것도 추가하지 않는다
+		// bf_done은 setUp에서 이미 적재된 기존 행 — status 분기가 없다면 이 라인은 정상 저장돼
+		// count가 2로 늘었을 것 (bf_a는 사이드카에 있고 response도 유효하므로)
 		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
 	}
 
