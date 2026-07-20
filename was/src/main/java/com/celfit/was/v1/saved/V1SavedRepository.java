@@ -43,6 +43,24 @@ public class V1SavedRepository {
 				.single();
 	}
 
+	/**
+	 * memo만 수정(편집 전용 PUT) — 저장 이력이 있어야만 갱신한다. 없는 행이면 UPDATE가 0건이라 empty를
+	 * 돌려주고(컨트롤러가 404), upsert(POST)와 달리 새 저장을 만들지 않는다. created_at은 손대지 않는다.
+	 */
+	public Optional<SavedContentRow> updateContentMemo(long userId, String shortCode, String memo) {
+		return jdbcClient.sql("""
+				UPDATE app.saved_contents
+				SET memo = :memo
+				WHERE user_id = :userId AND short_code = :shortCode
+				RETURNING short_code, memo, created_at
+				""")
+				.param("userId", userId)
+				.param("shortCode", shortCode)
+				.param("memo", memo)
+				.query(SavedContentRow.class)
+				.optional();
+	}
+
 	/** 최근 저장 순(created_at DESC) — 목록은 전량 반환(스펙 3.3, 페이지네이션 없음). */
 	public List<SavedContentRow> findSavedContents(long userId) {
 		return jdbcClient.sql("""
@@ -83,6 +101,24 @@ public class V1SavedRepository {
 				.param("memo", memo)
 				.query(InfluencerSave.class)
 				.single();
+	}
+
+	/**
+	 * memo만 수정(편집 전용 PUT) — 저장 이력이 있어야만 갱신하고, 없으면 0건 UPDATE로 empty(컨트롤러가 404).
+	 * status는 건드리지 않고 updated_at만 now()로 밀어준다(upsert와 동일 관례). created_at은 유지.
+	 */
+	public Optional<SavedInfluencerRow> updateInfluencerMemo(long userId, String handle, String memo) {
+		return jdbcClient.sql("""
+				UPDATE app.saved_influencers
+				SET memo = :memo, updated_at = now()
+				WHERE user_id = :userId AND handle = :handle
+				RETURNING handle, memo, created_at
+				""")
+				.param("userId", userId)
+				.param("handle", handle)
+				.param("memo", memo)
+				.query(SavedInfluencerRow.class)
+				.optional();
 	}
 
 	/** 최근 저장 순 — savedAt은 최초 저장 시각이라 created_at DESC(테이블엔 updated_at도 있으나 정렬 기준 아님). */

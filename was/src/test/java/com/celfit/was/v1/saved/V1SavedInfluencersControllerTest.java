@@ -11,6 +11,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -148,5 +149,53 @@ class V1SavedInfluencersControllerTest {
 				.andExpect(status().isNoContent());
 
 		then(repository).should().deleteInfluencer(7L, "alpha");
+	}
+
+	@Test
+	void 메모_수정은_200이고_프로필_조합_항목을_돌려준다() throws Exception {
+		given(repository.updateInfluencerMemo(7L, "alpha", "수정된 메모")).willReturn(
+				Optional.of(new SavedInfluencerRow("alpha", "수정된 메모", OffsetDateTime.parse("2026-07-15T00:00:00Z"))));
+		given(repository.findInfluencer("alpha")).willReturn(Optional.of(profile("alpha")));
+
+		mockMvc.perform(put("/v1/saved-influencers/alpha").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"memo":"수정된 메모"}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.influencer.handle").value("alpha"))
+				.andExpect(jsonPath("$.data.influencer.displayName").value("알파"))
+				.andExpect(jsonPath("$.data.memo").value("수정된 메모"))
+				.andExpect(jsonPath("$.data.savedAt").value("2026-07-15T00:00:00Z"));
+	}
+
+	@Test
+	void 미러에_없는_인플루언서_메모_수정도_handle만_채워_200이다() throws Exception {
+		given(repository.updateInfluencerMemo(7L, "ghost", "메모")).willReturn(
+				Optional.of(new SavedInfluencerRow("ghost", "메모", OffsetDateTime.parse("2026-07-15T00:00:00Z"))));
+		given(repository.findInfluencer("ghost")).willReturn(Optional.empty()); // accounts 미러 부재
+
+		mockMvc.perform(put("/v1/saved-influencers/ghost").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"memo":"메모"}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.influencer.handle").value("ghost"))
+				.andExpect(jsonPath("$.data.influencer.displayName").value(org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.data.memo").value("메모"));
+	}
+
+	@Test
+	void 저장_안_된_인플루언서_메모_수정은_404_NOT_FOUND다() throws Exception {
+		given(repository.updateInfluencerMemo(7L, "ghost", null)).willReturn(Optional.empty());
+
+		mockMvc.perform(put("/v1/saved-influencers/ghost").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"memo":null}"""))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+				.andExpect(jsonPath("$.error.message").value("저장된 인플루언서가 아닙니다."));
+
+		then(repository).should(never()).findInfluencer(anyString());
 	}
 }

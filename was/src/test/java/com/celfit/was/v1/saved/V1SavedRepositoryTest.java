@@ -157,6 +157,22 @@ class V1SavedRepositoryTest extends IntegrationTest {
 		assertThat(repository.findSavedContents(userId)).isEmpty();
 	}
 
+	@Test
+	void 콘텐츠_메모_수정은_저장된_행의_memo만_바꾸고_created_at은_유지한다() {
+		ContentSave saved = repository.upsertContent(userId, "c1", "처음");
+
+		Optional<SavedContentRow> updated = repository.updateContentMemo(userId, "c1", "수정됨");
+
+		assertThat(updated).isPresent();
+		assertThat(updated.get().memo()).isEqualTo("수정됨");
+		assertThat(updated.get().createdAt()).isEqualTo(saved.createdAt());
+	}
+
+	@Test
+	void 콘텐츠_메모_수정은_저장_안_된_행이면_empty다() {
+		assertThat(repository.updateContentMemo(userId, "c1", "메모")).isEmpty(); // 저장 이력 없음
+	}
+
 	// --- 인플루언서 ---
 
 	@Test
@@ -201,6 +217,28 @@ class V1SavedRepositoryTest extends IntegrationTest {
 
 		assertThat(profiles).extracting(ContentCard.Influencer::handle)
 				.containsExactlyInAnyOrder("alpha", "beta");
+	}
+
+	@Test
+	void 인플루언서_메모_수정은_저장된_행의_memo만_바꾸고_status와_created_at은_유지한다() {
+		InfluencerSave saved = repository.upsertInfluencer(userId, "alpha", "처음");
+		jdbcTemplate.update("UPDATE app.saved_influencers SET status = 'collaborating' WHERE user_id = ? AND handle = ?",
+				userId, "alpha");
+
+		Optional<SavedInfluencerRow> updated = repository.updateInfluencerMemo(userId, "alpha", "수정됨");
+
+		assertThat(updated).isPresent();
+		assertThat(updated.get().memo()).isEqualTo("수정됨");
+		assertThat(updated.get().createdAt()).isEqualTo(saved.createdAt());
+		String status = jdbcTemplate.queryForObject(
+				"SELECT status FROM app.saved_influencers WHERE user_id = ? AND handle = ?", String.class,
+				userId, "alpha");
+		assertThat(status).isEqualTo("collaborating"); // memo 수정이 status를 건드리지 않는다
+	}
+
+	@Test
+	void 인플루언서_메모_수정은_저장_안_된_행이면_empty다() {
+		assertThat(repository.updateInfluencerMemo(userId, "alpha", "메모")).isEmpty(); // 저장 이력 없음
 	}
 
 	@Test
