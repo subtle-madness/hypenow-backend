@@ -453,6 +453,26 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 늦크롤이면서_제때창이_아직_열려있으면_윈도우_안이어도_제외된다() {
+		// 최종 통합 리뷰 I-1: 제때창(posted_at + pin(3) + slack(2) = 기본 5일)이 아직 안 닫힌
+		// 콘텐츠를 윈도우 경로로 조기 분석하면, 나중에 진짜 timely 스냅샷이 들어와도
+		// content_analyses가 불변이라 late_backfill로 영구 오분류된다. 04 뷰의 "제때창이 완전히
+		// 지난 날만 후보" 성숙 철학과 정렬하기 위해 윈도우 분기에도 창 닫힘 게이트를 건다.
+		// post_a: 숙성(3일)은 지났지만(4일 전 게시) pin+slack(5일)은 아직 안 지났다 — 창이
+		// 열려 있는 상태. 지표도 미성숙(게시 +0.5일 캡처)이라 timely=false. acct1은 3건뿐이라
+		// 기본 윈도우(12)에서 rank상으로는 포함 대상이지만, 창이 열려 있으니 제외돼야 한다.
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '4 days',
+				  metric_captured_at = now() - interval '3 days 12 hours' WHERE short_code = 'post_a'""");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 (post_a는 창이 아직 열려 있어 윈도우 경로로도 제외)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
 	void 제때_크롤_판정_여유는_app_setting으로_조정된다() {
 		// acct1은 3건뿐이라 기본 윈도우(12)에서 post_a가 항상 윈도우 경로로도 포함된다 — 슬랙
 		// 로직이 사라져도 processed==2가 성립해 검증력이 없다(리뷰 지적). 윈도우를 0으로 닫아

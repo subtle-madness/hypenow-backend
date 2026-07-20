@@ -88,6 +88,12 @@ public class ContentAnalysisJob {
 		// COALESCE로 timely=false 처리하되, posted_at이 살아 있으면 윈도우 경로로는 대상이 될 수 있다.
 		// recency 타이브레이크는 01 뷰(content_id DESC)와 다르다 — 미러엔 raw content_id가 없어
 		// posted_at DESC, short_code DESC로 대체(동시각 순서 미세 차이 가능, 실질 영향 없음).
+		// 창 닫힘 게이트(최종 통합 리뷰 I-1): 윈도우 분기에만 posted_at + (pin+slack)일 <= now() 를
+		// 추가로 건다 — 제때창이 아직 열려 있는 콘텐츠(숙성은 지났지만 pin+slack 미경과)를 윈도우
+		// 경로로 조기 분석하면, 나중에 진짜 timely 스냅샷이 들어와도 content_analyses가 불변이라
+		// late_backfill로 영구 오분류된다. timely 분기는 게이트가 필요 없다 — timely 술어 자체가
+		// 이미 창 안에서 성숙 스냅샷이 잡혔음을 의미하기 때문. 04 뷰가 "제때창이 완전히 지난 날만"
+		// 후보로 올리는 성숙 철학과 이 게이트로 정렬된다.
 		int pinDays = settings.metricPinDays();
 		int slackDays = settings.analyzeTimelySlackDays();
 		// timely 술어는 base CTE에서 1회만 평가하고(중복 계산·중복 파라미터 제거 — 리뷰 반영),
@@ -106,20 +112,23 @@ public class ContentAnalysisJob {
 				    AND c.posted_at <= now() - make_interval(days => ?)
 				),
 				ranked AS (
-				  SELECT short_code,
+				  SELECT short_code, posted_at,
 				         row_number() OVER (PARTITION BY account_handle
 				             ORDER BY posted_at DESC, short_code DESC) AS rn
 				  FROM contents
 				)
 				SELECT short_code, timely
 				FROM base
-				WHERE timely OR short_code IN (SELECT short_code FROM ranked WHERE rn <= ?)""",
+				WHERE timely OR short_code IN (
+				  SELECT short_code FROM ranked
+				  WHERE rn <= ? AND posted_at <= now() - make_interval(days => ?)
+				)""",
 				rs -> {
 					eligible.put(rs.getString(1), rs.getBoolean(2));
 				},
 				pinDays, pinDays + slackDays,
 				settings.analyzeMaturityDays(),
-				settings.recentWindow());
+				settings.recentWindow(), pinDays + slackDays);
 		List<String> targets = withBaseline.keySet().stream()
 				.filter(eligible::containsKey)
 				.limit(settings.analyzeBatchLimit())
