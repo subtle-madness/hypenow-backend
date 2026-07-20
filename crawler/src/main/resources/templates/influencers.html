@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>celfit crawler — 인플루언서</title>
+    <link rel="stylesheet" href="/css/admin.css"/>
+    <script src="/js/admin.js"></script>
+</head>
+<body data-restore-query="true">
+<nav th:replace="~{fragments/nav :: nav(${companyView} ? 'companies' : 'influencers')}"></nav>
+<main>
+<h1 th:text="${companyView} ? '뷰티 회사' : '인플루언서'">인플루언서</h1>
+<p class="hint" th:text="${companyView}
+    ? '뷰티 회사로 판정된 계정 리스트업 — 수집·유사발굴 대상에서는 제외된다.'
+    : '발굴 후 판정까지 끝난 인플루언서 명단 — 판정 전(DISCOVERED)은 대시보드 카운트로만 보인다.'"></p>
+
+<form method="get" th:action="@{/ui/influencers}" class="row status-filter">
+    <!-- 전부 해제해도 쿼리가 비지 않게 하는 마커 — 비면 복원 스크립트가 이전 필터로 되돌린다 -->
+    <input type="hidden" name="f" value="1"/>
+    <input type="hidden" name="company" th:value="${companyView}"/>
+    <label class="check" th:each="s : ${statuses}">
+        <input type="checkbox" name="status" th:value="${s}"
+               th:checked="${status != null && status.contains(s)}"
+               onchange="this.form.submit()"/>
+        <span class="badge" th:classappend="${s}" th:text="${s}"></span>
+    </label>
+    <span class="hint">체크 없음 = 판정 완료 전체</span>
+</form>
+
+<table class="data">
+    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th><th>뷰티</th>
+        <th>발굴 키워드</th><th>발굴일</th><th>최근 수집</th></tr>
+    <tr th:each="row : ${page.content}">
+        <td th:text="${row.influencer.id}"></td>
+        <td th:text="${row.influencer.username}"></td>
+        <td><span class="badge" th:classappend="${row.influencer.status}"
+                 th:text="${row.influencer.status}"></span></td>
+        <td th:text="${row.influencer.followers != null ? #numbers.formatInteger(row.influencer.followers, 0, 'COMMA') : '—'}"></td>
+        <td th:with="isCompany=${row.influencer.beauty == true and row.influencer.beautyCompany == true},
+                     isInf=${row.influencer.beauty == true and row.influencer.beautyCompany != true}">
+            <span th:if="${row.influencer.beauty != null}" class="badge"
+                  th:classappend="${row.influencer.beauty} ? (${isCompany} ? 'BEAUTY_COMPANY' : 'QUALIFIED') : 'EXCLUDED'"
+                  th:text="${row.influencer.beauty} ? (${isCompany} ? '뷰티 회사' : '뷰티') : '뷰티 아님'"
+                  th:title="${row.influencer.beautyReason}"></span>
+            <span th:if="${row.influencer.beauty == null}">—</span>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
+                  style="display:inline" th:unless="${isInf}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <button type="submit" name="beauty" value="true">뷰티</button>
+            </form>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
+                  style="display:inline" th:unless="${isCompany}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <input type="hidden" name="company" value="true"/>
+                <button type="submit" name="beauty" value="true">회사</button>
+            </form>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
+                  style="display:inline" th:unless="${row.influencer.beauty == false}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <button type="submit" name="beauty" value="false">뷰티 아님</button>
+            </form>
+        </td>
+        <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>
+        <td th:text="${row.discoveredAt != null ? row.discoveredAt : '—'}"></td>
+        <td th:text="${row.influencer.lastCollectedAt != null ? row.influencer.lastCollectedAt : '—'}"></td>
+    </tr>
+</table>
+<p class="pager">
+    <a th:if="${page.hasPrevious()}"
+       th:href="@{/ui/influencers(status=${status}, page=${page.number - 1}, company=${companyView})}">이전</a>
+    <span th:text="${page.number + 1} + ' / ' + ${page.totalPages}"></span>
+    <a th:if="${page.hasNext()}"
+       th:href="@{/ui/influencers(status=${status}, page=${page.number + 1}, company=${companyView})}">다음</a>
+</p>
+</main>
+</body>
+</html>

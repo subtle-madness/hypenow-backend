@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>celfit crawler — 대시보드</title>
+    <link rel="stylesheet" href="/css/admin.css"/>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+<nav th:replace="~{fragments/nav :: nav('dashboard')}"></nav>
+<main>
+<h1>대시보드</h1>
+<!-- 현재 작업 바 (실시간, 2초 폴링) -->
+<div hx-get="/ui/fragments/status" hx-trigger="load, every 2s"></div>
+<!-- 파이프라인 구조 — 잡 흐름 정적 다이어그램 (색·글꼴은 admin.css 변수 상속 → 다크 모드 자동) -->
+<details class="pipeline-map" id="pipeline-map" open>
+    <summary>파이프라인 구조 <span class="tiles-head-sub">잡이 계정을 옮기는 경로</span></summary>
+    <svg viewBox="0 0 1000 272" role="img" aria-label="파이프라인 다이어그램: 발굴, 판정, 뷰티 판정을 거쳐 프로필 수집·릴스 수집·유사 발굴로 갈라지고, 유사 계정은 발굴로 재투입된다">
+        <defs>
+            <marker id="pm-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+                <path d="M0 0 L8 4 L0 8 z" fill="var(--muted)"/>
+            </marker>
+        </defs>
+
+        <!-- 본선: 발굴 → 판정 → 뷰티 판정 -->
+        <path class="pm-edge" d="M192 86 H246" marker-end="url(#pm-arrow)"/>
+        <path class="pm-edge" d="M452 86 H506" marker-end="url(#pm-arrow)"/>
+        <!-- 뷰티 판정 → 수집 3갈래 (BEAUTY 인플루언서만) -->
+        <text class="pm-elabel" x="718" y="60">BEAUTY만</text>
+        <path class="pm-edge" d="M712 70 H742 V36 H766" marker-end="url(#pm-arrow)"/>
+        <path class="pm-edge" d="M712 86 H742 V108 H766" marker-end="url(#pm-arrow)"/>
+        <path class="pm-edge" d="M712 102 H742 V180 H766" marker-end="url(#pm-arrow)"/>
+        <!-- 발굴 루프: 유사 계정을 DISCOVERED로 재투입 -->
+        <path class="pm-edge pm-loop" d="M880 208 V252 H102 V134" marker-end="url(#pm-arrow)"/>
+        <text class="pm-elabel" x="500" y="246" text-anchor="middle">유사 계정 → DISCOVERED 재투입</text>
+
+        <g class="pm-nodes">
+            <rect class="pm-node" x="12" y="44" width="180" height="84" rx="11"/>
+            <text class="pm-title" x="26" y="70">발굴 <tspan class="pm-job">discover</tspan></text>
+            <text class="pm-sub" x="26" y="92">키워드 해시태그 검색</text>
+            <text class="pm-sub" x="26" y="110">DISCOVERED 적재</text>
+
+            <rect class="pm-node" x="252" y="44" width="200" height="84" rx="11"/>
+            <text class="pm-title" x="266" y="70">판정 <tspan class="pm-job">qualify</tspan></text>
+            <text class="pm-sub" x="266" y="92">SELF 스냅샷 — 캡션 포함 재료</text>
+            <text class="pm-sub" x="266" y="110">3천~5만 → QUALIFIED / EXCLUDED</text>
+
+            <rect class="pm-node" x="512" y="44" width="200" height="84" rx="11"/>
+            <text class="pm-title" x="526" y="70">뷰티 판정 <tspan class="pm-job">beauty</tspan></text>
+            <text class="pm-sub" x="526" y="92">Claude 3분류 — bio + 캡션 5개</text>
+            <text class="pm-sub" x="526" y="110">인플루언서 / 회사 / 비뷰티</text>
+
+            <rect class="pm-node" x="772" y="8" width="216" height="56" rx="11"/>
+            <text class="pm-title" x="786" y="30">프로필 수집 <tspan class="pm-job">collect</tspan></text>
+            <text class="pm-sub" x="786" y="50">SELF 프로필 + 피드 12개 · 4워커</text>
+
+            <rect class="pm-node" x="772" y="80" width="216" height="56" rx="11"/>
+            <text class="pm-title" x="786" y="102">릴스 수집 <tspan class="pm-job">reels</tspan></text>
+            <text class="pm-sub" x="786" y="122">HikerAPI 릴스 1페이지(12개)</text>
+
+            <rect class="pm-node" x="772" y="152" width="216" height="56" rx="11"/>
+            <text class="pm-title" x="786" y="174">유사 발굴 <tspan class="pm-job">similar</tspan></text>
+            <text class="pm-sub" x="786" y="194">뷰티 계정의 유사 계정 발굴</text>
+
+        </g>
+    </svg>
+    <p class="pipeline-map-note">수집·릴스는 달력 기준 재방문 주기(설정, 현재 1일 = 매일 KST 자정 리셋)로 뷰티 계정을 다시 방문 · 404 응답 계정은 단계와 무관하게 DELETED(소프트 딜리트)로 종결</p>
+</details>
+<!-- 상태 카드 (실시간, 3초 폴링) -->
+<div hx-get="/ui/fragments/status-tiles" hx-trigger="load, every 3s"></div>
+<h2>최근 실행</h2>
+<div hx-get="/ui/fragments/runs" hx-trigger="load, every 5s"></div>
+</main>
+</body>
+</html>

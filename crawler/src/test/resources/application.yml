@@ -1,0 +1,64 @@
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 0
+  main:
+    allow-bean-definition-overriding: true
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+crawler:
+  apify:
+    token: test-token
+    base-url: http://localhost:9999
+    poll-interval: 1ms
+    run-timeout: 1s
+    actor-memory-mb: 1024
+  direct-comment:
+    request-timeout: 15s
+    page-delay: 1s
+    comment-doc-id: ${IG_COMMENT_DOC_ID:}
+    comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  proxy:
+    apify-url: ${APIFY_PROXY_URL:}
+    dataimpulse-residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
+    dataimpulse-mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
+    request-timeout: 15s
+  hiker:
+    api-key: test-key
+    base-url: http://localhost:9999
+    request-timeout: 15s
+    cost-per-request-usd: 0.001
+  datalikers:
+    api-key: test-key
+    base-url: http://localhost:9999
+    request-timeout: 15s
+    cost-per-request-usd: 0.0006
+  discover:
+    results-limit: 100
+  qualify:
+    batch-limit: 500
+    min-followers: 3000
+    max-followers: 50000
+  collect:
+    batch-limit: 10
+    comments-per-post: 30
+    max-attempts: 3
+    revisit-interval-days: 7
+    comments-enabled: true   # 댓글 로직 회귀 검증을 위해 테스트에선 켬
+  similar:
+    batch-limit: 50
+  beauty:
+    batch-limit: 500
+  reels:
+    batch-limit: 10
+  schedule:
+    enabled: false
+    discover-cron: "0 0 6 * * *"
+    qualify-cron: "0 30 6 * * *"
+    beauty-cron: "0 30 7 * * *"
+    collect-cron: "0 0 1 * * *"
+    reels-cron: "0 10 1 * * *"

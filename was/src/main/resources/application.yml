@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: was
+  datasource:
+    url: jdbc:postgresql://localhost:5433/analysis
+    username: crawler
+    password: crawler
+    driver-class-name: org.postgresql.Driver
+  session:
+    jdbc:
+      initialize-schema: never          # DDL은 Flyway(app 스키마)가 소유 — V2__spring_session.sql
+      table-name: app.spring_session
+    timeout: 30d                        # 비활동 30일 = 슬라이딩 만료 (스펙 4절)
+  servlet:
+    multipart:
+      max-file-size: 2MB                # 컨테이너 컷은 여유 — 1MB 정본 검증은 ProfileImageStore(스펙 6.13)
+      max-request-size: 3MB
+server:
+  port: 8081
+  servlet:
+    session:
+      cookie:
+        name: hypenow-session           # 스펙 4절 — 프론트 현재 동작과 일치
+        http-only: true
+        same-site: lax                  # Vercel rewrite 동일 오리진 구도 — Domain 불필요
+        max-age: 30d                    # 영속 쿠키
+        path: /
+# UI는 /swagger-ui, 스키마는 /v3/api-docs
+springdoc:
+  paths-to-match: /v1/**              # 스펙 v1 표면만 문서화 — 구 /api·내부 페이지(postdemo 등)는 제외
+  swagger-ui:
+    csrf:
+      enabled: true                   # try-it-out에 XSRF-TOKEN 쿠키를 헤더로 동봉 — /v1/auth/login 호출 후
+                                      # 세션 쿠키(동일 오리진)로 잠긴 엔드포인트도 Swagger에서 테스트 가능
+codes:
+  api-key: ${CODES_API_KEY:}   # 어드민 코드 적재용 정적 토큰 — 빈 값이면 /admin/signup-codes 전면 거부(fail-closed)
+was:
+  cors:
+    allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
+  profile-image:
+    dir: ./data/profile-images          # 프로필 이미지 저장 디렉토리 — /profile-images/** 로 정적 서빙
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
+    from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트

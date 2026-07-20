@@ -1,0 +1,36 @@
+plugins {
+	id 'org.springframework.boot'
+	id 'io.spring.dependency-management'
+}
+
+dependencies {
+	implementation project(':contract-analysis')
+	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	// Boot 4는 자동구성이 모듈로 분리 — spring-session-jdbc 단독으론 자동구성이 없어 starter를 쓴다
+	implementation 'org.springframework.boot:spring-boot-starter-session-jdbc'
+	implementation 'org.flywaydb:flyway-core'
+	// /v1 표면 자동 문서화(보조 문서 — 정본은 프론트 API 스펙). prod에서는 비활성(application-prod.yml)
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+	runtimeOnly 'org.postgresql:postgresql'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.springframework.security:spring-security-test'
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+// bootJar만 산출 — Dockerfile의 COPY build/libs/*.jar 가 단일 파일을 보장
+tasks.named('jar') {
+	enabled = false
+}

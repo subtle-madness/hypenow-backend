@@ -1,0 +1,156 @@
+package com.celfit.crawler.crawling.application.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.celfit.crawler.content.domain.ContentType;
+import com.celfit.crawler.crawling.domain.RawSource;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class MediaItemExtractorTest {
+
+    @Test
+    void gql_flat_페이지에서_1l접두사_시각과_고정여부를_추출한다() {
+        Map<String, Object> payload = Map.of(
+                "items", List.of(
+                        Map.of("code", "PIN1", "1ltaken_at", 1745000000L, "product_type", "clips",
+                                "timeline_pinned_user_ids", List.of("74969123775")),
+                        Map.of("code", "NEW1", "1ltaken_at", 1783474981L, "product_type", "clips",
+                                "timeline_pinned_user_ids", List.of()),
+                        Map.of("code", "CAR1", "1ltaken_at", 1783474000L, "product_type", "carousel_container")),
+                "more_available", true,
+                "profile_grid_items_cursor", "CURSOR_X");
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_GQL_MEDIAS);
+
+        assertThat(items).hasSize(3);
+        assertThat(items.get(0).pinned()).isTrue();
+        assertThat(items.get(1)).isEqualTo(new MediaItemExtractor.MediaItem(
+                "NEW1", Instant.ofEpochSecond(1783474981L), ContentType.REELS, false));
+        assertThat(items.get(2).type()).isEqualTo(ContentType.FEED);
+        assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_GQL_MEDIAS)).isEqualTo("CURSOR_X");
+    }
+
+    @Test
+    void v2_clips_페이지는_response_items_media를_언랩한다() {
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(
+                        Map.of("media", Map.of("code", "CLIP1", "taken_at", 1783223195L,
+                                "product_type", "clips")))),
+                "next_page_id", "PAGE2");
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
+
+        assertThat(items).containsExactly(new MediaItemExtractor.MediaItem(
+                "CLIP1", Instant.ofEpochSecond(1783223195L), ContentType.REELS, false));
+        assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V2_CLIPS)).isEqualTo("PAGE2");
+    }
+
+    @Test
+    void 커서가_없거나_more_available_false면_null() {
+        assertThat(MediaItemExtractor.nextCursor(
+                Map.of("more_available", false, "profile_grid_items_cursor", "X"),
+                RawSource.HIKER_GQL_MEDIAS)).isNull();
+        assertThat(MediaItemExtractor.nextCursor(Map.of(), RawSource.HIKER_V2_CLIPS)).isNull();
+    }
+
+    @Test
+    void code_없는_아이템은_건너뛴다() {
+        Map<String, Object> payload = Map.of("items", List.of(Map.of("1ltaken_at", 1L)));
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_GQL_MEDIAS)).isEmpty();
+    }
+
+    // ---- SELF_GQL: web_profile_info 프로필 원형에 내장된 최근 12개 타임라인 ----
+
+    static Map<String, Object> profileWithTimeline(List<Map<String, Object>> nodes) {
+        return Map.of("data", Map.of("user", Map.of(
+                "edge_owner_to_timeline_media", Map.of(
+                        "count", 46,
+                        "edges", nodes.stream().map(n -> (Object) Map.of("node", n)).toList()))));
+    }
+
+    @Test
+    void self_gql_프로필_내장_타임라인에서_shortcode_시각_유형_고정여부를_추출한다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "FEED1", "taken_at_timestamp", 1773630245L, "product_type", "",
+                        "pinned_for_users", List.of(Map.of("id", "7231248475"))),
+                Map.of("shortcode", "REEL1", "taken_at_timestamp", 1781092809L, "product_type", "clips",
+                        "pinned_for_users", List.of()),
+                Map.of("shortcode", "FEED2", "taken_at_timestamp", 1783852665L)));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.SELF_GQL);
+
+        assertThat(items).hasSize(3);
+        assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
+                "FEED1", Instant.ofEpochSecond(1773630245L), ContentType.FEED, true));
+        assertThat(items.get(1)).isEqualTo(new MediaItemExtractor.MediaItem(
+                "REEL1", Instant.ofEpochSecond(1781092809L), ContentType.REELS, false));
+        assertThat(items.get(2).pinned()).isFalse();
+    }
+
+    @Test
+    void self_gql_타임라인_내장_여부를_판별한다() {
+        // 내장 있음(빈 edges 포함 — 게시물 0개 계정도 "내장 있음"이라 피드 폴백 호출이 없어야 한다)
+        assertThat(MediaItemExtractor.hasEmbeddedTimeline(profileWithTimeline(List.of()))).isTrue();
+        // 내장 없음 — HIKER_MOBILE by/username 형태 또는 프로필 미확보
+        assertThat(MediaItemExtractor.hasEmbeddedTimeline(
+                Map.of("user", Map.of("username", "alice", "pk", "1")))).isFalse();
+    }
+
+    @Test
+    void self_gql_커서는_항상_null이다() {
+        assertThat(MediaItemExtractor.nextCursor(profileWithTimeline(List.of()), RawSource.SELF_GQL)).isNull();
+    }
+
+    // ---- HIKER_WEB_GQL: 같은 web_profile_info지만 루트가 data.user가 아니라 user ----
+
+    /** Hiker /gql/user/web_profile_info는 IG 원형에서 data 래퍼를 벗긴 {"user": {...}} 형태다. */
+    static Map<String, Object> hikerProfileWithTimeline(List<Map<String, Object>> nodes) {
+        return Map.of("user", Map.of(
+                "username", "alice", "pk", "1",
+                "edge_owner_to_timeline_media", Map.of(
+                        "count", 46,
+                        "edges", nodes.stream().map(n -> (Object) Map.of("node", n)).toList())));
+    }
+
+    // ---- HIKER_V1_MEDIAS: /v1/user/medias/chunk — 모바일 계열, [medias, cursor]를 Map으로 감싼 형태 ----
+
+    @Test
+    void v1_medias_chunk_페이지에서_ISO_시각과_유형을_추출하고_커서를_읽는다() {
+        Map<String, Object> payload = Map.of(
+                "medias", List.of(
+                        Map.of("code", "C_FEED", "taken_at", "2026-07-18T01:00:00", "product_type", ""),
+                        Map.of("code", "C_REEL", "taken_at", "2026-07-18T02:00:00Z", "product_type", "clips"),
+                        Map.of("code", "C_EPOCH", "taken_at", 1773630245L)),
+                "next_end_cursor", "CUR9");
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS);
+
+        assertThat(items).hasSize(3);
+        assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
+                "C_FEED", Instant.parse("2026-07-18T01:00:00Z"), ContentType.FEED, false));
+        assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
+        assertThat(items.get(2).takenAt()).isEqualTo(Instant.ofEpochSecond(1773630245L));
+        assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V1_MEDIAS)).isEqualTo("CUR9");
+    }
+
+    @Test
+    void hiker_webgql_프로필의_user_루트_내장_타임라인도_판별하고_추출한다() {
+        Map<String, Object> payload = hikerProfileWithTimeline(List.of(
+                Map.of("shortcode", "HFEED", "taken_at_timestamp", 1773630245L, "product_type", ""),
+                Map.of("shortcode", "HREEL", "taken_at_timestamp", 1781092809L, "product_type", "clips")));
+
+        assertThat(MediaItemExtractor.hasEmbeddedTimeline(payload)).isTrue();
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.SELF_GQL);
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).shortCode()).isEqualTo("HFEED");
+        assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
+    }
+}

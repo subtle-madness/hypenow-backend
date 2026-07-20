@@ -1,0 +1,11 @@
+<div th:fragment="panel" xmlns:th="http://www.thymeleaf.org">
+    <div class="log-panel" th:if="${!lines.isEmpty()}">
+        <div class="log-line" th:each="l : ${lines}" th:classappend="${l.level()}">
+            <span class="log-time" th:text="${l.time()}"></span>
+            <span class="log-level" th:text="${l.level()}"></span>
+            <span class="log-logger" th:text="${l.logger()}"></span>
+            <span class="log-msg" th:text="${l.message()}"></span>
+        </div>
+    </div>
+    <p class="hint" th:if="${lines.isEmpty()}">아직 로그 없음 — 잡을 실행하면 여기에 표시됩니다.</p>
+</div>

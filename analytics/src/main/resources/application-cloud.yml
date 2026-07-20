@@ -1,0 +1,16 @@
+# 클라우드 타깃 — 로컬 raw를 읽어 오라클 analysis DB(SSH 터널 localhost:15432)에 Flyway+미러 push.
+# 사용법: deploy/scripts/tunnel.sh <ssh-host> 로 터널을 연 뒤
+#   CLOUD_DB_PASSWORD=... ./gradlew :analytics:bootRun --args='--spring.profiles.active=cloud'
+spring:
+  main:
+    web-application-type: none   # one-shot 배치 보존 — 미러 후 즉시 종료
+analytics:
+  admin-enabled: false           # 어드민 층 미기동 (베이스 servlet 전환과 무관하게 one-shot)
+  mirror-on-startup: true        # 베이스 기본값이 false로 바뀌어 여기서 명시
+  flyway-ignore-missing: false   # 클라우드 DB엔 이 repo 마이그레이션만 존재 — 엄격 검증
+app:
+  datasource:
+    analysis:
+      jdbc-url: jdbc:postgresql://localhost:15432/analysis
+      username: ${CLOUD_DB_USER:celfit}
+      password: ${CLOUD_DB_PASSWORD}

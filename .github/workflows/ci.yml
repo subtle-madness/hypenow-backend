@@ -1,0 +1,79 @@
+# develop 대상 push·PR + main 대상 PR(배포 관문 — develop→main 머지 전 검증)마다
+# 전체 Gradle 테스트 + 분석 뷰 SQL 하니스를 돌린다.
+# 테스트는 Testcontainers(PostgreSQL)를 쓰므로 러너의 Docker(ubuntu-latest 기본 제공)로 충분 —
+# 외부 API 키·별도 서비스 컨테이너 불필요.
+#
+# sql-harness 잡은 raw 스키마의 사실상 계약 테스트(ARCHITECTURE §4-5) — 프레시 Postgres에
+# crawler 마이그레이션 전체를 적용하고 run.sh(뷰 적용 + 시드/기대값)를 실행한다.
+# 뷰·하니스가 신스키마로 전환(07-18)돼 프레시 DB 재현이 가능해졌다(§8 블로커 해소).
+name: CI
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Gradle 전체 테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: JDK 21 설치
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Gradle 캐시·래퍼 검증 포함. 캐시 쓰기는 기본 브랜치(develop) push에서만 일어나고
+      # PR은 읽기 전용으로 재사용한다.
+      - name: Gradle 설정
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 전체 테스트
+        run: ./gradlew test
+
+      - name: 실패 시 테스트 리포트 업로드
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/test/'
+          retention-days: 7
+
+  sql-harness:
+    name: 분석 뷰 SQL 하니스
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # run.sh의 기본 컨테이너 이름(crawler-postgres-1)에 맞춰 기동 — PG_CONTAINER 오버라이드 불필요.
+      # 마이그레이션은 파일명 버전 번호순(-t V -k 2 -n: 경로에 대문자 V는 버전 접두사뿐) —
+      # 사전순은 V10을 V1__ 앞에 놓아 깨진다.
+      - name: 프레시 raw DB 기동 + crawler 마이그레이션 적용
+        run: |
+          docker run -d --name crawler-postgres-1 \
+            -e POSTGRES_USER=crawler -e POSTGRES_PASSWORD=crawler -e POSTGRES_DB=crawler \
+            postgres:16
+          for i in $(seq 1 30); do
+            if docker exec crawler-postgres-1 pg_isready -U crawler -d crawler -q 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec crawler-postgres-1 pg_isready -U crawler -d crawler
+          for f in $(ls crawler/src/main/resources/db/migration/*.sql | sort -t V -k 2 -n); do
+            echo "migrate $f"
+            docker exec -i crawler-postgres-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q < "$f"
+          done
+
+      - name: 하니스 실행 (뷰 적용 + 시드/기대값)
+        run: analytics/test/run.sh

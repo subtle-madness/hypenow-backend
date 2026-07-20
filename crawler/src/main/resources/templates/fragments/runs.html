@@ -1,0 +1,29 @@
+<div th:fragment="table" xmlns:th="http://www.thymeleaf.org">
+    <table class="data">
+        <tr><th>id</th><th>잡</th><th>트리거</th><th>키워드</th><th>액터</th>
+            <th>상태</th><th>건수</th><th>요청수</th><th>비용</th><th>에러</th><th>시작</th><th>종료</th></tr>
+        <tr th:each="r : ${runs}">
+            <td th:text="${r.id}"></td>
+            <td th:text="${r.job}"></td>
+            <td th:text="${r.triggerType}"></td>
+            <td th:text="${r.keyword}"></td>
+            <td th:text="${r.actorId}"></td>
+            <td><span class="badge" th:classappend="${r.status}" th:text="${r.status}"></span></td>
+            <td th:with="stat=${r.job.name() == 'DISCOVER' and infByRun != null ? infByRun[r.id] : null}">
+                <!-- 발굴의 산출물은 인플루언서 — 건수·중복 모두 인플루언서 기준, 게시물 수는 툴팁으로 -->
+                <span th:if="${stat != null}" th:text="${stat.influencers} + '명'"
+                      th:title="'발굴 게시물 ' + ${r.itemCount} + '건의 작성자 수'"></span>
+                <span th:if="${stat == null}" th:text="${r.itemCount}"></span>
+                <span th:if="${stat != null and stat.knownInfluencers > 0}"
+                      class="badge dup"
+                      th:text="'중복 ' + ${stat.knownInfluencers}"
+                      title="이미 발굴됐던 인플루언서 재발굴 — 신규 아님"></span>
+            </td>
+            <td th:text="${r.requestCount}" title="비Apify 소스의 과금 요청 수 (HikerAPI $0.001/요청)"></td>
+            <td th:text="${r.requestCount != null} ? '$' + ${#numbers.formatDecimal(r.requestCount * hikerCostPerRequest, 1, 3)} : '—'"></td>
+            <td th:text="${r.errorMessage}"></td>
+            <td th:text="${r.startedAt}"></td>
+            <td th:text="${r.finishedAt}"></td>
+        </tr>
+    </table>
+</div>

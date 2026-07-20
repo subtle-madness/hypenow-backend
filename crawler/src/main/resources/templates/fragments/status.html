@@ -1,0 +1,15 @@
+<div th:fragment="bar" xmlns:th="http://www.thymeleaf.org">
+    <div class="jobbar">
+        <span th:each="j : ${jobs}" class="jobstat" th:classappend="${j.running()} ? 'on' : ''">
+            <span th:text="${j.running()} ? '🔴' : '⚪'">⚪</span>
+            <b th:text="${j.label()}">잡</b>
+            <span class="jp" th:if="${j.running() and j.total() > 0}"
+                  th:text="${j.current()} + ' / ' + ${j.total()} + ' (' + ${j.percent()} + '%)'"></span>
+            <span class="jp" th:if="${j.running() and j.total() == 0}">실행 중…</span>
+            <span class="jp idle" th:unless="${j.running()}">대기</span>
+            <span class="pbar" th:if="${j.running() and j.total() > 0}">
+                <span class="pfill" th:style="'width:' + ${j.percent()} + '%'"></span>
+            </span>
+        </span>
+    </div>
+</div>

@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: analytics
+  # 기본 DataSource 자동설정 비활성 (수동 2개 정의)
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+
+server:
+  port: 8082   # crawler 8080 · was 8081 다음
+
+analytics:
+  admin-enabled: true          # 어드민 UI·잡 트리거 층. cloud one-shot에서는 false
+  mirror-on-startup: false     # 서버 모드에선 UI 트리거가 정본. one-shot 미러: --analytics.mirror-on-startup=true --spring.main.web-application-type=none
+  classify-on-startup: false   # 댓글 분류 배치 — 실 API 비용이 들어 기본 off. 실행: --analytics.classify-on-startup=true --spring.main.web-application-type=none
+  analyze-on-startup: false    # 콘텐츠 분석 배치 — 실 API 비용. 실행: --analytics.analyze-on-startup=true --spring.main.web-application-type=none
+  account-analyze-on-startup: false  # 계정 카피 배치 — 실 API 비용. 실행: --analytics.account-analyze-on-startup=true --spring.main.web-application-type=none
+  vlm-enabled: false           # F-2 스파이크 검증 전까지 VLM 스킵 (컬럼 NULL)
+  schedule:
+    enabled: false             # 스케줄 트리거 골격 — 켜려면 true + 잡별 *-cron 지정 (admin-enabled 필요)
+    # mirror-cron: "0 0 6 * * *"   # 켜는 날 예시. 미지정 잡은 "-"(비활성)
+
+app:
+  datasource:
+    raw:
+      jdbc-url: jdbc:postgresql://localhost:5433/crawler
+      username: crawler
+      password: crawler
+      driver-class-name: org.postgresql.Driver
+    analysis:
+      jdbc-url: jdbc:postgresql://localhost:5433/analysis
+      username: crawler
+      password: crawler
+      driver-class-name: org.postgresql.Driver

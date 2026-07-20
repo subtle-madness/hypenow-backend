@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: celfit-crawler
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  threads:
+    virtual:
+      enabled: true
+
+crawler:
+  apify:
+    token: ${APIFY_TOKEN:}
+    base-url: https://api.apify.com
+    poll-interval: 5s
+    run-timeout: 10m
+    actor-memory-mb: ${APIFY_ACTOR_MEMORY_MB:1024}  # 실행당 메모리(128 배수). 미지정 기본 128MB면 스크래퍼 OOM
+  direct-comment:
+    request-timeout: 15s
+    page-delay: 1s
+    comment-doc-id: ${IG_COMMENT_DOC_ID:}
+    comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  proxy:
+    # 인스타 자체크롤 프록시 URL — 소스별로 하나씩(형식 http://user:pass@host:port).
+    # 어느 걸 쓸지는 설정 화면(proxy.source)에서 고른다. 빈칸 소스를 고르면 직접 연결로 폴백.
+    apify-url: ${APIFY_PROXY_URL:}
+    dataimpulse-residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
+    dataimpulse-mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
+    request-timeout: 15s
+  hiker:
+    api-key: ${HIKER_API_KEY:}
+    base-url: https://api.hikerapi.com
+    request-timeout: 15s
+    cost-per-request-usd: 0.001
+  datalikers:
+    api-key: ${DATALIKERS_API_KEY:}
+    base-url: https://api.datalikers.com
+    request-timeout: 15s
+    cost-per-request-usd: 0.0006   # DataLikers Day 플랜 (요금제 변경 시 갱신)
+  discover:
+    results-limit: 100
+  qualify:
+    batch-limit: 500        # 판정 1회당 처리할 PENDING 콘텐츠 상한(프로필 호출량 제어). 초과분은 다음 실행에서.
+    min-followers: 3000     # 전역 판정 범위 — collection_rule 대체
+    max-followers: 50000
+  collect:
+    batch-limit: 10         # 실행 1회당 방문 인플루언서 수
+    comments-per-post: 30
+    max-attempts: 3
+    revisit-interval-days: 7 # 이미 수집한 인플루언서를 다시 대상으로 삼기까지의 최소 간격
+    comments-enabled: false  # 댓글 수집 — 현재 불필요, 로직만 유지 (UI 없음, yml로만 재활성화)
+  similar:
+    batch-limit: 50   # 실행 1회당 유사 계정을 수확할 시드(뷰티 QUALIFIED) 수
+  beauty:
+    batch-limit: 500  # 판정 1회당 처리할 계정 수 상한(실행 시간 제어 — 청크 50 × 최대 240s). 초과분은 다음 실행에서.
+    judge: gemini     # 판정 구현 선택 — gemini(기본, GEMINI_API_KEY 셸 export 필요) | claude-cli(로컬 Claude CLI 롤백) | claude-api(Anthropic SDK — 클라우드용, ANTHROPIC_AUTH_TOKEN 구독 우선·ANTHROPIC_API_KEY 폴백. 모델은 crawler.beauty.claude-model, 기본 claude-haiku-4-5)
+  reels:
+    batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)
+  schedule:
+    enabled: false
+    discover-cron: "0 0 6 * * *"
+    qualify-cron: "0 30 6 * * *"
+    beauty-cron: "0 30 7 * * *"   # qualify 유입분 3분류 — qualify 이후
+    collect-cron: "0 0 1 * * *"   # 데일리 스냅샷(팔로워 추이+게시물) — 새벽에 길게
+    reels-cron: "0 10 1 * * *"    # 릴스 1페이지 — collect와 병렬(잡 락 분리)
