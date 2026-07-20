@@ -239,3 +239,7 @@ details.logs > div { margin-top: 0.6rem; }
 .log-line.WARN .log-level { color: #e6b345; }
 .log-logger { color: #8d8494; margin-right: 0.6rem; }
 .log-msg { color: #ece8ee; }
+/* analytics 어드민 — 커버리지 상태 등급 */
+.badge.ok { color: var(--status-good); background: color-mix(in srgb, var(--status-good) 10%, transparent); }
+.badge.warn { color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
+.badge.bad { color: var(--status-critical); background: color-mix(in srgb, var(--status-critical) 10%, transparent); }

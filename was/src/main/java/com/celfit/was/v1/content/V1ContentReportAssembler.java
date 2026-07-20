@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -47,11 +48,22 @@ public class V1ContentReportAssembler {
 
 	private ContentAiReport.Comparison comparison(ReportRow row, List<ReelPointRow> reels) {
 		var recentReels = reels.stream()
-				.map(r -> new ContentAiReport.Comparison.Views.ReelPoint(r.views(), kstDate(r.postedAt())))
+				.map(r -> new ContentAiReport.Comparison.Views.ReelPoint(
+						r.shortCode(), r.views(), kstDate(r.postedAt()),
+						Objects.equals(r.shortCode(), row.shortCode())))
 				.toList();
-		var views = new ContentAiReport.Comparison.Views(row.views(), row.recentReelsAvgViews(),
-				multiple(row.views(), row.recentReelsAvgViews()),
-				row.rankInRecentReels(), row.recentReelsCount(), recentReels);
+
+		// 라이브 파생: 비NULL 릴스 조회수만 (v_analysis_baseline reels 규칙과 동일).
+		// content_analyses의 고정 baseline/rank/count는 분석 시점 LLM 서술(narrative)의 입력값일 뿐
+		// 여기서 다시 읽지 않는다 — 차트는 항상 최신 recentReels에서 라이브 계산.
+		List<Long> reelViews = nonNullViews(reels);
+		Long baseline = reelViews.isEmpty() ? null
+				: Math.round(reelViews.stream().mapToLong(Long::longValue).average().orElse(0));
+		Integer recentCount = reelViews.isEmpty() ? null : reelViews.size();
+		Integer rankInRecent = rankInRecent(reels, row.shortCode());
+
+		var views = new ContentAiReport.Comparison.Views(row.views(), baseline,
+				multiple(row.views(), baseline), rankInRecent, recentCount, recentReels);
 		var engagementRate = new ContentAiReport.Comparison.EngagementRate(
 				engagementRateValue(row.views(), row.likes(), row.comments()),
 				row.recent12AvgEngagementRate());
@@ -59,6 +71,22 @@ public class V1ContentReportAssembler {
 				new ContentAiReport.Comparison.EngagementQuality.Counts(row.likes(), row.recent12AvgLikeCount()),
 				new ContentAiReport.Comparison.EngagementQuality.Counts(row.comments(), row.recent12AvgCommentCount()));
 		return new ContentAiReport.Comparison(views, engagementRate, quality, row.contentsPattern());
+	}
+
+	/** 이 콘텐츠의 조회수 랭크(비NULL 릴스 중 내림차순, 경쟁 랭크). 본인 views가 NULL(피드 등)이면 null. */
+	private Integer rankInRecent(List<ReelPointRow> reels, String shortCode) {
+		Long self = reels.stream().filter(r -> Objects.equals(shortCode, r.shortCode()))
+				.map(ReelPointRow::views).filter(Objects::nonNull).findFirst().orElse(null);
+		if (self == null) {
+			return null;
+		}
+		long higher = nonNullViews(reels).stream().filter(v -> v > self).count();
+		return (int) (higher + 1);
+	}
+
+	/** 릴스 목록에서 조회수 NULL(미집계) 제외 — baseline·rank·count 계산 공통 재료. */
+	private List<Long> nonNullViews(List<ReelPointRow> reels) {
+		return reels.stream().map(ReelPointRow::views).filter(Objects::nonNull).toList();
 	}
 
 	private ContentAiReport.VlmAnalysis vlmAnalysis(ReportRow row) {

@@ -1,25 +1,33 @@
-package com.celfit.was.coverage;
+package com.celfit.analytics.coverage;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.stereotype.Repository;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * celfit-front가 실제 소비하는 /v1 응답 필드별 analysis DB 채움율 조회.
+ * 수집(raw)→미러·분석(analysis) 커버리지 조회 — was /coverage에서 이전(2026-07-19).
+ * 매트릭스는 celfit-front가 실제 소비하는 /v1 응답 필드별 analysis DB 채움율.
  * 기준 코드는 celfit-front 배포본(origin/main) — 로컬 체크아웃이 아니라 배포본과 대조해 갱신한다.
  * 행 구성은 프론트 소비 지점 기준: 카드·필터(6.1) → 상세 드로어 AI 리포트(6.3) → 인플루언서(6.4/6.5).
  * 타입에만 있고 UI 미소비인 필드(email·external_link 등)와 /v1 미사용 미러(content_metric_snapshots 등)는 싣지 않는다.
  * 배포본에서 "임시 숨김"(주석 처리) 상태인 요소는 행을 유지하고 이름에 표기한다 — 계약(스펙 6.3)은 유효.
  * 매트릭스 정의는 CLI 점검 스크립트(analytics/check/coverage.sql)와 쌍 — 항목이 바뀌면 둘 다 고칠 것.
  */
-@Repository
 public class CoverageRepository {
 
 	private static final Logger log = LoggerFactory.getLogger(CoverageRepository.class);
+
+	// 수집 모수 — 신 스키마 서빙 뷰(02_serving.sql)가 정본인 뷰티 인플루언서 필터를 그대로 읽는다.
+	// v_contents(지표 고정 계산)가 아닌 v_serving_content를 세는 이유: 분모는 "수집된 서빙 대상"이고 계산 비용도 가볍다.
+	private static final String SOURCE_SQL = """
+			SELECT (SELECT count(*) FROM analytics.v_accounts)        AS accounts,
+			       (SELECT count(*) FROM analytics.v_serving_content) AS contents
+			""";
 
 	// coverage.sql의 보고 쿼리와 동일한 집계 — 상태 판정 CASE도 일치시킨다.
 	// 분석 필드 분모는 c.total(전체 콘텐츠): 6.1이 분석 완료만 노출하므로 미분석분이 곧 미노출분이다.
@@ -213,35 +221,46 @@ public class CoverageRepository {
 			       (SELECT count(*) FROM content_analyses)                           AS analyses
 			""";
 
-	private final JdbcClient jdbcClient;
+	private final JdbcTemplate raw;
+	private final JdbcTemplate analysis;
 
-	public CoverageRepository(JdbcClient jdbcClient) {
-		this.jdbcClient = jdbcClient;
+	public CoverageRepository(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource) {
+		this.raw = rawJdbcTemplate;
+		this.analysis = new JdbcTemplate(analysisDataSource);
+	}
+
+	public CoverageSource source() {
+		try {
+			return raw.queryForObject(SOURCE_SQL,
+					(rs, i) -> new CoverageSource(rs.getLong("accounts"), rs.getLong("contents")));
+		} catch (DataAccessException e) {
+			log.warn("수집 모수 조회 실패(raw DB), 타일 없이 렌더합니다: {}", e.getMessage());
+			return null;
+		}
 	}
 
 	public List<CoverageRow> matrix() {
 		List<CoverageRow> rows;
 		try {
-			rows = jdbcClient.sql(MATRIX_SQL)
-					.query((rs, i) -> CoverageRow.of(
+			rows = analysis.query(MATRIX_SQL,
+					(rs, i) -> CoverageRow.of(
 							rs.getInt("ord"), rs.getString("element"), rs.getString("source"),
-							rs.getString("filled"), rs.getString("status")))
-					.list();
+							rs.getString("filled"), rs.getString("status")));
 		} catch (DataAccessException e) {
 			log.warn("커버리지 매트릭스 조회 실패, 빈 목록으로 대체합니다: {}", e.getMessage());
 			return List.of();
 		}
-		List<CoverageRow> combined = new java.util.ArrayList<>(rows);
+		List<CoverageRow> combined = new ArrayList<>(rows);
 		combined.add(rankingRow());
 		return List.copyOf(combined);
 	}
 
 	private CoverageRow rankingRow() {
 		try {
-			long total = jdbcClient.sql(RANKING_SQL).query(Long.class).single();
+			Long total = analysis.queryForObject(RANKING_SQL, Long.class);
 			return CoverageRow.of(28, "주간 랭킹 (프론트 미소비 — 구 대시보드 전용)", "content_ranking",
 					"%s행".formatted(total),
-					total == 0 ? "없음" : "옛 산출물 — 정리 대상");
+					total == null || total == 0 ? "없음" : "옛 산출물 — 정리 대상");
 		} catch (DataAccessException e) {
 			return CoverageRow.of(28, "주간 랭킹 (프론트 미소비 — 구 대시보드 전용)", "content_ranking",
 					"테이블 없음", "개편 스키마 밖 — 정리 대상");
@@ -250,11 +269,10 @@ public class CoverageRepository {
 
 	public CoverageTiles tiles() {
 		try {
-			return jdbcClient.sql(TILES_SQL)
-					.query((rs, i) -> new CoverageTiles(
+			return analysis.queryForObject(TILES_SQL,
+					(rs, i) -> new CoverageTiles(
 							rs.getLong("contents"), rs.getLong("accounts"), rs.getLong("snapshots"),
-							rs.getObject("snapshot_latest", LocalDate.class), rs.getLong("analyses")))
-					.single();
+							rs.getObject("snapshot_latest", LocalDate.class), rs.getLong("analyses")));
 		} catch (DataAccessException e) {
 			log.warn("커버리지 타일 조회 실패, 빈 값으로 대체합니다: {}", e.getMessage());
 			return null;

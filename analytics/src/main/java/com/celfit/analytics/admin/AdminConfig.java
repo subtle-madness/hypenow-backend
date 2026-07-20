@@ -4,6 +4,7 @@ import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.coverage.CoverageRepository;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
 import javax.sql.DataSource;
@@ -78,5 +79,11 @@ public class AdminConfig {
 	public PipelineStatsService pipelineStatsService(JdbcTemplate rawJdbcTemplate,
 			@Qualifier("analysisDataSource") DataSource analysisDataSource, AnalyticsSettings settings) {
 		return new PipelineStatsService(rawJdbcTemplate, analysisDataSource, settings);
+	}
+
+	@Bean
+	public CoverageRepository coverageRepository(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new CoverageRepository(rawJdbcTemplate, analysisDataSource);
 	}
 }

@@ -1,4 +1,4 @@
-package com.celfit.was.coverage;
+package com.celfit.analytics.coverage;
 
 /** 커버리지 매트릭스 한 행 — 화면 요소 하나의 DB 채움 상태. grade는 상태 문구에서 유도한 표시 등급. */
 public record CoverageRow(int ord, String element, String source, String filled, String status, String grade) {

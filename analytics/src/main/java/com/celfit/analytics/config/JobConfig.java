@@ -92,6 +92,31 @@ public class JobConfig {
 	}
 
 	/**
+	 * 구독 버스트 one-shot(07-19) — Gemini 무료 일 한도를 넘는 일회 물량을 Claude 구독 컴퓨트로 소화.
+	 * export → 드라이버(analytics/export/claude_burst_driver.py, claude -p 병렬) → collect 3단 실행.
+	 */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("'${analytics.claude-burst:}' != ''")
+	public org.springframework.boot.ApplicationRunner claudeBurstRunner(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource, AnalyticsSettings settings,
+			@Value("${analytics.claude-burst:}") String mode,
+			@Value("${analytics.burst-dir:./burst}") String dir) {
+		return args -> {
+			com.celfit.analytics.analyze.ClaudeBurstRunner runner =
+					new com.celfit.analytics.analyze.ClaudeBurstRunner(rawJdbcTemplate, analysisDataSource,
+							settings, new com.celfit.analytics.llm.BeautyTaxonomyLoader(analysisDataSource),
+							java.nio.file.Path.of(dir));
+			switch (mode) {
+				case "export" -> runner.export();
+				case "collect" -> runner.collect();
+				default -> throw new IllegalArgumentException(
+						"analytics.claude-burst는 export|collect — 입력: " + mode);
+			}
+		};
+	}
+
+	/**
 	 * 초기 백필 one-shot(07-18 확정 — 유료 키 Batch, 미러 one-shot CLI 컨벤션과 동형).
 	 * submit → (배치 완료 대기, ≤24h) → collect 2단 실행. 신 스키마 뷰(04·03) 적용 후에만 유효.
 	 */

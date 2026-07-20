@@ -51,7 +51,7 @@ class V1ContentReportControllerTest {
 	void 성공_응답은_스펙_6_3_구조를_가진다() throws Exception {
 		given(repository.findReport("SC1")).willReturn(Optional.of(fullRow()));
 		given(repository.findRecentReels("zingdong__")).willReturn(List.of(
-				new ReelPointRow(1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z")))); // KST 07-01
+				new ReelPointRow("SC1", 1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z")))); // KST 07-01, 본인 릴스
 		given(repository.countByCategory("SC1")).willReturn(Map.of("purchase", 3L, "adAware", 1L));
 		given(repository.findComments("SC1")).willReturn(List.of(
 				new CommentRow(7L, "u***", "좋아요", 5L, "purchase")));
@@ -62,9 +62,12 @@ class V1ContentReportControllerTest {
 				.andExpect(jsonPath("$.data.scope.basis").value("recent-posts"))
 				.andExpect(jsonPath("$.data.scope.analyzedCount").value(24))
 				.andExpect(jsonPath("$.data.summary").value("요약"))
-				.andExpect(jsonPath("$.data.comparison.views.multiple").value(8027.1))
+				// 라이브 재계산: baseline=avg(1000)=1000, multiple=3307180/1000 (프리즈 baseline 412 무시)
+				.andExpect(jsonPath("$.data.comparison.views.multiple").value(3307.2))
 				.andExpect(jsonPath("$.data.comparison.views.rankInRecent").value(1))
 				.andExpect(jsonPath("$.data.comparison.views.recentReels[0].postedAt").value("2026-07-01"))
+				.andExpect(jsonPath("$.data.comparison.views.recentReels[0].contentId").value("SC1"))
+				.andExpect(jsonPath("$.data.comparison.views.recentReels[0].isCurrent").value(true))
 				.andExpect(jsonPath("$.data.comparison.engagementQuality.likes.baselineCount").value(35000))
 				.andExpect(jsonPath("$.data.comparison.narrative").value("패턴 서술"))
 				.andExpect(jsonPath("$.data.categoryContext.categoryLabel").value("메이크업"))
