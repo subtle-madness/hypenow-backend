@@ -138,7 +138,7 @@ SELECT
   h.comments_count AS comments,
   analytics.hype_score(lower(e.content_type), h.views, h.likes, h.comments_count, pr.followers,
                        extract(epoch FROM (h.captured_at - e.uploaded_at)) / 86400.0) AS hype_score
-FROM analytics.v_base_content_snapshot h
+FROM analytics.content_snapshot_cache h
 JOIN analytics.v_serving_content e USING (content_id)
 LEFT JOIN analytics.v_base_profile pr ON pr.username = e.owner_username;
 

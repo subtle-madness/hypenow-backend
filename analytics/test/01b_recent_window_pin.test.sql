@@ -34,6 +34,7 @@ INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers
      ]}}}}'::jsonb,
   timestamptz '2026-06-09 12:00:00+09');
 
+SELECT analytics.refresh_snapshot_cache();  -- 본문 삽입분을 캐시에 반영
 DO $$
 BEGIN
   -- 대조군: v_contents(#58 fixed)는 이미 usable clips를 핀해 9000이 나온다.
