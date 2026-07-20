@@ -366,7 +366,7 @@ class ContentAnalysisJobTest {
 		assertEquals("gemini-3.1-flash-lite", settings.activeLlmModel());
 
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.llm-provider', 'anthropic')");
-		assertEquals("claude-opus-4-8", settings.activeLlmModel()); // 롤백 시 anthropic 모델 기록
+		assertEquals("claude-haiku-4-5-20251001", settings.activeLlmModel()); // 롤백 시 anthropic 모델 기록 — 폴백 기본은 haiku(비용 가드)
 	}
 
 	@Test

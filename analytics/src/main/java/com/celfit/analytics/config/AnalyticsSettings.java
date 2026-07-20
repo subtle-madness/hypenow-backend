@@ -42,7 +42,8 @@ public class AnalyticsSettings {
 	/** 최근 N개 윈도우 — 01 뷰(v_recent_content)와 공유하는 키. 분석 자격 OR 분기에서 사용. */
 	public static final String KEY_RECENT_WINDOW = "analytics.recent-window";
 
-	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
+	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
+	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS = 7;
