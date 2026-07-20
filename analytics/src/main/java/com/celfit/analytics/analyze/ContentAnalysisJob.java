@@ -220,11 +220,15 @@ public class ContentAnalysisJob {
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("종합 텍스트가 비어 있음: " + shortCode);
 		}
-		// 뷰티 콘텐츠인데 복구 후에도 대분류를 못 얻으면 행을 남기지 않는다 — 저장되면 NOT EXISTS로
-		// 영영 재분석 제외되므로, 실패 격리(skip)로 다음 실행에 재대상화(self-heal). 비뷰티(is_beauty=false)는
-		// 정상 저장돼 루프에 안 빠진다. (설계 2026-07-20 §3-3)
+		// 뷰티로 판정됐으나 복구 후에도 대분류를 못 얻은 경우: 분석은 temperature 0 결정론이라 같은
+		// 입력을 재실행해도 동일 결과 → 옛 self-heal(행 미기록·재대상)은 무한 재시도로 영영 완료되지
+		// 않고 매 실행 LLM 호출만 태웠다(운영 실측 재대상 루프). is_beauty=false로 **종결 저장**해
+		// 루프를 끊는다 — 불변식 'main_category null ⇒ 서빙에서 비뷰티'는 그대로 보존(is_beauty=false라
+		// 랭킹·인플루언서 상세에서 제외), 서빙 계층 무변경. 진짜 일시 실패(빈 종합·파싱 오류)는 위에서
+		// 여전히 throw→재대상으로 self-heal한다. (설계 2026-07-20 §3-3 개정: 결정론 케이스는 종결)
 		if (attrs != null && Boolean.TRUE.equals(attrs.isBeauty()) && attrs.mainCategory() == null) {
-			throw new IllegalStateException("뷰티 콘텐츠인데 대분류 미분류 — 재대상: " + shortCode);
+			log.info("뷰티 판정이나 대분류 미도출 — is_beauty=false로 종결 저장(재시도 루프 방지): {}", shortCode);
+			attrs = attrs.asNonBeauty();
 		}
 		// V33 마킹 분기(07-20 개정): 제때 가드를 충족하면 timely, 윈도우 경로로만 들어온 늦크롤은 late_backfill.
 		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false,
