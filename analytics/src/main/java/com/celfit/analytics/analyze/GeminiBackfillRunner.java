@@ -24,12 +24,14 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * 초기 백필 one-shot — 유료 키(GEMINI_API_KEY_PAID) Batch API 일회 실행 (2026-07-18 확정, ~$9).
+ * 초기 백필 one-shot — 배치 API 일회 실행. 07-20 개정: provider=vertex면 Vertex 배치(GCS,
+ * 잡 이름은 projects/{p}/locations/{loc}/batchPredictionJobs/{id} 전체 경로), 아니면
+ * AI Studio 유료 키(GEMINI_API_KEY_PAID) Batch(배치 이름 batches/NNN) — 배선은 JobConfig.
  * submit: v_analysis_candidates ∩ v_analysis_baseline 중 미분석 전량 → JSONL 업로드 → 배치 생성 →
  *         사이드카(프롬프트에 실은 기준선 스냅샷) 저장. 캡션 단독(썸네일 미첨부 — 서명 URL 대부분 만료).
  * collect: 상태 확인 → 결과 다운로드 → 파싱·sanitize → ON CONFLICT DO NOTHING INSERT(재실행 멱등).
- * 실행(신 스키마 뷰 04·03 적용 후): --spring.main.web-application-type=none
- *   --analytics.backfill-submit=true → 로그의 배치 이름으로 --analytics.backfill-collect=batches/NNN
+ * 실행: --spring.main.web-application-type=none --analytics.backfill-submit=true
+ *   → 로그의 배치 잡 이름 그대로 --analytics.backfill-collect=<잡 이름>
  */
 public class GeminiBackfillRunner {
 
