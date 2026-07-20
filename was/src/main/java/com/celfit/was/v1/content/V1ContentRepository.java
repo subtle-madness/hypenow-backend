@@ -7,7 +7,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 6.1 조회 — contents ⋈ content_analyses(분석 완료만 노출 ∧ 뷰티만(is_beauty=true)) ⋈ accounts.
+ * 6.1 조회 — contents ⋈ content_analyses(분석 완료만 노출 ∧ 뷰티만(is_beauty=true) ∧
+ * 시점 편향 없는 분만(metric_timeliness timely 또는 미분류 레거시 NULL — late_backfill·immature 제외)) ⋈ accounts.
  * 중분류 확장 매칭·유통사 슬러그 해석은 어휘 테이블(beauty_taxonomy·beauty_distributors)로
  * SQL 안에서 처리한다 — Java 상수 하드코딩 없음(어휘는 생산자 소유, §4-4).
  */
@@ -54,6 +55,11 @@ public class V1ContentRepository {
 				WHERE c.posted_at >= :start AND c.posted_at < :end
 				  AND c.content_type = :contentType
 				  AND an.is_beauty = true
+				  -- 랭킹은 시점 편향 없는 분만 노출 (2026-07-21 PO 결정): late_backfill(늦크롤 지표 상향
+				  -- 편향)·immature(미성숙 하향 편향)는 제외, timely만 노출. 단 시점 미분류 레거시(NULL,
+				  -- V33 이전 기분석분 — 백필 편향과 무관)는 비회귀로 유지. 백필분은 인플루언서 상세
+				  -- recentContents(LEFT JOIN)에서만 노출된다.
+				  AND (an.metric_timeliness = 'timely' OR an.metric_timeliness IS NULL)
 				""");
 		Map<String, Object> params = new HashMap<>();
 		params.put("start", q.startInstant());
