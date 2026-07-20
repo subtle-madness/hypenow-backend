@@ -136,19 +136,34 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 	/**
 	 * LLM이 어휘 밖 값을 지어낸 경우 제거한다 — 스칼라는 null로, 배열은 어휘 밖 원소만 걸러낸다
 	 * (was가 verbatim 매칭하므로 어휘 밖 라벨은 필터에 안 잡히는 노이즈).
+	 * 단 mainCategory는 어휘 밖이면 유효 서브라벨로 역유도 복구한다(드랍 아님).
 	 * detectedBrands·detectedProducts는 자유 텍스트라 통과. Synthesis의 등급 방어와 대칭.
 	 */
 	static ContentAttributes sanitize(ContentAttributes raw, BeautyTaxonomy taxonomy) {
+		List<String> subs = filterToVocabulary(raw.subCategories(), taxonomy.allMidAndSubLabels());
+		List<String> prodCats = filterToVocabulary(raw.detectedProductCategories(), taxonomy.allSubLabels());
+		String main = keepIfIn(raw.mainCategory(), taxonomy.mainCategories());
+		if (main == null) {
+			// 어휘 밖/미상 대분류는 드랍 대신 유효 서브라벨로 역유도 복구 (예: ["선크림","컬러립밤"]→suncare)
+			List<String> signal = new ArrayList<>();
+			if (subs != null) {
+				signal.addAll(subs);
+			}
+			if (prodCats != null) {
+				signal.addAll(prodCats);
+			}
+			main = taxonomy.deriveMain(signal);
+		}
 		return new ContentAttributes(
 				raw.detectedBrands(),
 				keepIfIn(raw.sponsoredSignalLevel(), SIGNAL_LEVELS),
 				raw.sponsoredSignalReasons(),
 				raw.adDisclosure(),
-				filterToVocabulary(raw.detectedProductCategories(), taxonomy.allSubLabels()),
+				prodCats,
 				raw.detectedProducts(),
 				raw.vlmAttributes(),
-				keepIfIn(raw.mainCategory(), taxonomy.mainCategories()),
-				filterToVocabulary(raw.subCategories(), taxonomy.allMidAndSubLabels()),
+				main,
+				subs,
 				filterToVocabulary(raw.detectedDistributors(), taxonomy.distributors()),
 				keepIfIn(raw.adType(), AD_TYPES),
 				raw.isBeauty());

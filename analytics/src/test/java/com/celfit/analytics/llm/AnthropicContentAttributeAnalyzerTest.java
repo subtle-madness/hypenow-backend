@@ -57,14 +57,34 @@ class AnthropicContentAttributeAnalyzerTest {
 	}
 
 	@Test
-	void 분류표_밖_대분류는_null로_교체된다() {
-		// slug 어휘 밖 값 (구 프롬프트 어휘 hair, 지어낸 값 등)
+	void 분류표_밖_대분류는_서브카테고리로_역유도된다() {
+		// slug 어휘 밖 값(hair)이라도 sub_categories의 유효 라벨(샴푸/스케일러→haircare)로 복구
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
 				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
 						List.of(), "hair", List.of("샴푸/스케일러"), List.of(), "organic", true), TAXONOMY);
 
+		assertEquals("haircare", sanitized.mainCategory()); // 드랍 대신 역유도 복구
+		assertEquals(List.of("샴푸/스케일러"), sanitized.subCategories());
+	}
+
+	@Test
+	void 어휘_밖_라벨뿐이면_역유도도_실패해_null이다() {
+		// 유효 sub·productCategory가 하나도 없으면 복구 불가 → null 유지
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of("없는라벨"), List.of(),
+						List.of(), "hair", List.of("없는중분류"), List.of(), "organic", true), TAXONOMY);
+
 		assertNull(sanitized.mainCategory());
-		assertEquals(List.of("샴푸/스케일러"), sanitized.subCategories()); // 라벨 자체는 어휘 안 — 유지
+	}
+
+	@Test
+	void 제품카테고리로도_역유도된다() {
+		// sub_categories 비어도 detectedProductCategories의 유효 소분류로 복구
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of("립틴트"), List.of(),
+						List.of(), null, List.of(), List.of(), "organic", true), TAXONOMY);
+
+		assertEquals("makeup", sanitized.mainCategory());
 	}
 
 	@Test
