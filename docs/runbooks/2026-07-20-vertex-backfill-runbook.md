@@ -30,7 +30,13 @@
 ## 3. 뷰 적용 + 배포
 
 기존 운영 뷰 적용·미러·배포 런북 그대로 (⚠️ origin/develop 워크트리 기준 —
-세션 간 뷰 되덮기 함정): 뷰 04 수동 적용 → analytics·was 배포.
+세션 간 뷰 되덮기 함정): **뷰 04 수동 적용 → analytics·was 배포 순서 필수** —
+백필 러너가 `v_analysis_candidates.timely` 컬럼을 SELECT하므로 구 뷰 위에서 신 코드를
+돌리면 백필 submit이 컬럼 부재로 실패한다(일상 잡은 미러 조회라 무관).
+
+- **배포 전 확인**: `SELECT value FROM app_setting WHERE key='analytics.analyze-timely-slack-days';`
+  — 뷰 COALESCE 기본(1)과 Java 기본(2)이 다르므로 운영에 **키가 명시돼 있어야** 두 판정의
+  창 폭이 일치한다. 미설정이면 명시 등록 후 진행.
 
 ## 4. 스모크 (순서 고정)
 
@@ -47,6 +53,10 @@
 3. **본 백필**: `--analytics.backfill-submit=true --spring.main.web-application-type=none`
    → 로그의 잡 이름(`projects/{p}/locations/{loc}/batchPredictionJobs/{id}` 전체 리소스명)으로
    (완료 후, ≤24h) `--analytics.backfill-collect=<잡 이름>`
+   ⚠️ **일상 잡과의 경합**: 일상 분석 잡도 같은 백로그를 자격으로 잡는다(마킹 판정은 미러 간격
+   근사라 뷰 판정과 경계에서 다를 수 있음). 백로그를 뷰 판정으로 권위 있게 채우려면 **새벽 일상
+   잡 스케줄 전에 submit→collect를 끝내거나**, 백필 기간 동안 `analytics.analyze-batch-limit`를
+   낮춰 일상 잡의 백로그 잠식을 줄일 것.
 4. **수거 후 스팟체크**: `SELECT metric_timeliness, count(*) FROM content_analyses GROUP BY 1;`
    — timely/late_backfill 증가분이 제출 물량과 정합하는지 확인.
 
