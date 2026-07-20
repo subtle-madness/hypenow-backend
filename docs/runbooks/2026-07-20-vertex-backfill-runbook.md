@@ -14,18 +14,20 @@
 
 ## 2. 서버 설정
 
-- analytics 서비스 환경에 `GOOGLE_APPLICATION_CREDENTIALS=/opt/hypenow/secrets/vertex-sa.json`
-  (compose env — `.env`는 JVM 자동 로드 안 됨)
-- app_setting (raw DB — 분석 뷰·`AnalyticsSettings`가 읽는 단일 원천):
+- analytics 서비스 환경: compose가 `GOOGLE_APPLICATION_CREDENTIALS=/secrets/vertex-sa.json` env와
+  `./secrets/vertex-sa.json:ro` 볼륨을 정의(deploy/compose.yaml — 07-20 커밋). 서버에는
+  `~/deploy/secrets/vertex-sa.json`(600)만 있으면 된다.
+- **app_setting 기준값은 Flyway가 관리한다** — crawler `V16__analytics_setting_baseline.sql`이
+  분석 기준값(analyze-batch-limit 450·account 150·slack-days 1·recent-window 12·
+  llm-provider gemini·vertex-project·vertex-gcs-bucket)을 `ON CONFLICT DO NOTHING`으로 시드.
+  변경 이력도 마이그레이션 파일로 남긴다(07-19 raw DB 이전 때 수동 등록분 유실 사고 재발 방지).
+  수동 INSERT는 더 이상 정본 경로가 아님 — **기준값 변경은 후속 마이그레이션으로**.
+  런타임 토글(전환 스위치·임시 상향)만 UPDATE로:
   ```sql
-  INSERT INTO app_setting(key,value) VALUES
-    ('analytics.vertex-project','<프로젝트ID>'),
-    ('analytics.vertex-gcs-bucket','hypenow-llm-batch')
-  ON CONFLICT (key) DO UPDATE SET value=excluded.value;
-  -- analytics.vertex-location은 기본값 'global'이 gemini-3.1-flash-lite와 정합 — 생략 가능.
-  -- 전환 스위치는 스모크 후:
-  -- UPDATE app_setting SET value='vertex' WHERE key='analytics.llm-provider';
+  -- 전환 스위치는 스모크 후 (V16 시드는 DO NOTHING이라 이 값을 되돌리지 않음):
+  UPDATE app_setting SET value='vertex' WHERE key='analytics.llm-provider';
   ```
+  `analytics.vertex-location`은 기본값 'global'이 gemini-3.1-flash-lite와 정합 — 생략.
 
 ## 3. 뷰 적용 + 배포
 
@@ -34,9 +36,10 @@
 백필 러너가 `v_analysis_candidates.timely` 컬럼을 SELECT하므로 구 뷰 위에서 신 코드를
 돌리면 백필 submit이 컬럼 부재로 실패한다(일상 잡은 미러 조회라 무관).
 
-- **배포 전 확인**: `SELECT value FROM app_setting WHERE key='analytics.analyze-timely-slack-days';`
-  — 뷰 COALESCE 기본(1)과 Java 기본(2)이 다르므로 운영에 **키가 명시돼 있어야** 두 판정의
-  창 폭이 일치한다. 미설정이면 명시 등록 후 진행.
+- **crawler도 배포 대상** — V16 시드(위 §2)는 crawler Flyway 소관이라 crawler 재배포 시 적용된다.
+- **배포 후 확인**: `SELECT key,value FROM app_setting WHERE key LIKE 'analytics.%' ORDER BY key;`
+  — V16 기준값 7종이 모두 있는지. 특히 slack-days는 뷰 COALESCE 기본(1)과 Java 기본(2)이
+  달라 키가 반드시 명시돼 있어야 두 판정의 창 폭이 일치한다.
 
 ## 4. 스모크 (순서 고정)
 
