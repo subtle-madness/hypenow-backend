@@ -74,16 +74,18 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   계약 — `BeautyTaxonomy`가 단일 원천이고 프론트 필터 어휘가 바뀌면 함께 갱신한다.
 - 비용 실측: VLM 건당 ≈ $0.03~0.05 (opus 4.8, input 3~5.5k/output 0.5~0.9k tok).
 
-## app_setting 런타임 키 (뷰가 직접 읽음)
+## app_setting 런타임 키 (뷰·함수가 직접 읽음)
 
 | 키 | 기본 | 의미 |
 |---|---|---|
 | `analytics.recent-window` | 12 | 계정 단위 지표의 최근 N개 윈도우 (§4-1) |
 | `analytics.metric-pin-days` | 3 | 서빙 지표(v_contents) 고정 시점 — 업로드 +N일 이후 가장 이른 스냅샷 |
-| `analytics.hype-fresh-halflife-days` | 14 | hype_score 신선도 반감기(일) — 클수록 감쇠 완화(오래된 콘텐츠 점수 유지). 미설정·0이면 함수가 14 적용 |
-| `analytics.hype-reach-target-mult` | 3 | hype_score reach 만점 기준 — 조회수/(팔로워+1000)이 이 배수면 1.0. **낮출수록 점수 ↑** |
-| `analytics.hype-engage-target` | 0.04 | hype_score engage 만점 기준 — 릴스 조회 대비 참여율. **낮출수록 점수 ↑** |
-| `analytics.hype-feed-engage-target` | 0.035 | hype_score 피드 axis 만점 기준 — 팔로워 대비 참여율. **낮출수록 점수 ↑** |
+| `analytics.hype-fresh-halflife-days` | 14 | hype_score 신선도 반감기(일) — 클수록 감쇠 완화. 미설정·0이면 함수가 14 적용 |
+| `analytics.hype-reels-e0` | 0.02 | hype_score v2 릴스 참여 로그 스케일 상수 (`ln(1+참여율/e0)`) |
+| `analytics.hype-feed-f0` | 0.03 | hype_score v2 피드 참여 로그 스케일 상수 (`ln(1+참여율/f0)`) |
+| `analytics.hype-reach-weight` | 1 | hype_score v2 릴스 도달 축 가중 (`Q = wr·reach + we·engage`) |
+| `analytics.hype-engage-weight` | 1 | hype_score v2 릴스 참여 축 가중 |
+| `analytics.hype-anchor-{reels,feed}-{p05,p50,p90,p99}` | (아래) | hype_score v2 0~100 매핑 앵커 — qf 값 → 10·45·80·97. 모집단 이동 시 재보정(스펙 §6). 기본: 릴스 0.2405/0.9091/1.8845/2.9835, 피드 0.0111/0.1398/0.6746/1.4890 |
 | `analytics.analyze-maturity-days` | 3 | LLM 후보(v_analysis_candidates) 숙성 가드 — 업로드 +N일 경과분만 |
 | `analytics.analyze-timely-slack-days` | 2 | LLM 후보 제때 크롤 판정 여유 — 고정 지표가 업로드 +(pin+N)일 안에 잡힌 것만 (늦크롤 백필 제외) |
 | `analytics.trend-threshold` | 0.15 | 계정 트렌드 up/down 판정 임계(v_account_summaries) — 이 키만 numeric |
