@@ -150,7 +150,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 비뷰티_콘텐츠는_랭킹에서_제외된다() {
-		// nb1(is_beauty=false)은 hype 800으로 최상위지만 목록에서 빠진다
+		// nb1(is_beauty=false)은 필터 없으면 hype 800으로 목록(2위권)에 낄 텐데 빠진다
 		List<ContentCardRow> rows = repository.findCards(query());
 
 		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("nb1");
