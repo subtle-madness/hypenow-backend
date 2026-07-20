@@ -37,18 +37,21 @@ WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
         + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
       <= (now() AT TIME ZONE 'Asia/Seoul')::date
   AND EXISTS (
-    -- 캡처 캘린더일(KST)이 [업로드일+pin, 업로드일+pin+slack)에 드는 usable 스냅샷이 있는가
+    -- 캡처 캘린더일(KST)이 [업로드일+pin, 업로드일+pin+slack)에 드는 usable 스냅샷이 있는가.
+    -- 성능: captured_at을 행마다 date로 변환하지 않고, 캘린더일 경계를 KST 자정 timestamptz로
+    -- 계산해 captured_at을 그대로 범위 비교한다(sargable — 세미조인 플랜 유지, 스냅샷 뷰 1회 계산).
+    -- 캡처가 KST일 X에 든다 ⟺ [KST자정(X), KST자정(X+1)) 이므로 결과는 날짜 변환과 완전 동치.
     SELECT 1
     FROM analytics.v_serving_content sc
     JOIN analytics.v_base_content_snapshot s USING (content_id)
     WHERE sc.short_code = v.short_code
-      AND (s.captured_at AT TIME ZONE 'Asia/Seoul')::date
-            >= (v.posted_at AT TIME ZONE 'Asia/Seoul')::date
-              + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
-      AND (s.captured_at AT TIME ZONE 'Asia/Seoul')::date
-            <  (v.posted_at AT TIME ZONE 'Asia/Seoul')::date
-              + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
-              + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
+      AND s.captured_at >= (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
+            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
+          )::timestamp AT TIME ZONE 'Asia/Seoul')
+      AND s.captured_at <  (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
+            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
+            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
+          )::timestamp AT TIME ZONE 'Asia/Seoul')
       AND s.likes IS NOT NULL AND s.comments_count IS NOT NULL
       AND (sc.content_type <> 'REELS' OR s.views IS NOT NULL)
   );
