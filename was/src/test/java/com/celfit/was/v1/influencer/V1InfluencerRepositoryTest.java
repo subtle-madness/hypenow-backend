@@ -55,7 +55,8 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				    ad_type               text,
 				    detected_brands       jsonb,
 				    detected_products     jsonb,
-				    detected_distributors jsonb
+				    detected_distributors jsonb,
+				    is_beauty             boolean
 				)""");
 
 		jdbcTemplate.update("""
@@ -63,31 +64,35 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				 ('alpha', '알파', 'https://pic/alpha.jpg', 5000)
 				""");
 
-		// a1(분석 완료, 이른 게시), a2(분석 미완, 더 최신 게시).
+		// a1(분석 완료, 이른 게시), a2(분석 미완, 더 최신 게시), a3(비뷰티 확정, 가장 최신 게시).
 		jdbcTemplate.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, posted_at, content_type,
 				  video_duration, original_url, views, likes, comments, hype_score, metric_captured_at) VALUES
 				 ('a1', 'alpha', 'https://thumb/a1.jpg', '분석 완료 릴스', '2026-07-02T03:00:00Z', 'reels',
 				  20, 'https://ig/a1', 1000, 100, 10, 500, '2026-07-05T03:00:00Z'),
 				 ('a2', 'alpha', 'https://thumb/a2.jpg', '분석 미완 릴스', '2026-07-04T03:00:00Z', 'reels',
-				  15, 'https://ig/a2', 9999, 999, 99, 999, '2026-07-07T03:00:00Z')
+				  15, 'https://ig/a2', 9999, 999, 99, 999, '2026-07-07T03:00:00Z'),
+				 ('a3', 'alpha', 'https://thumb/a3.jpg', '일상 브이로그', '2026-07-06T03:00:00Z', 'reels',
+				  18, 'https://ig/a3', 3000, 300, 30, 700, '2026-07-09T03:00:00Z')
 				""");
 
-		// a1만 분석됨 — a2는 content_analyses에 없음.
+		// a1은 뷰티로 분석 완료, a3는 비뷰티로 분석 완료 — a2는 content_analyses에 없음(미분석).
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, main_category, sub_categories, ad_type,
-				  detected_brands, detected_products, detected_distributors) VALUES
+				  detected_brands, detected_products, detected_distributors, is_beauty) VALUES
 				 ('a1', 'makeup', '["아이라이너"]'::jsonb, 'organic',
-				  '[{"name":"브랜드A"}]'::jsonb, NULL, NULL)
+				  '[{"name":"브랜드A"}]'::jsonb, NULL, NULL, true),
+				 ('a3', NULL, NULL, 'organic', NULL, NULL, NULL, false)
 				""");
 	}
 
 	@Test
-	void 최근_카드는_분석_미완_게시물도_포함하고_posted_at_내림차순이다() {
+	void 최근_카드는_분석_미완은_포함하되_비뷰티는_제외한다() {
 		List<ContentCardRow> rows = repository.findRecentCards("alpha");
 
-		// 분석 미완 a2도 포함 — posted_at DESC: a2(07-04) → a1(07-02)
+		// a3(비뷰티) 제외, a2(미분석)는 유지 — posted_at DESC: a2(07-04) → a1(07-02)
 		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("a2", "a1");
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("a3");
 	}
 
 	@Test
