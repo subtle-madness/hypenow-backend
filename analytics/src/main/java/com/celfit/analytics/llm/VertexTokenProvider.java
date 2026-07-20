@@ -8,6 +8,9 @@ import java.util.function.Supplier;
 /**
  * Vertex AI 인증 — 서비스 계정 JSON(GOOGLE_APPLICATION_CREDENTIALS 경로) → cloud-platform
  * 스코프 액세스 토큰. 만료 자동 갱신(라이브러리가 5분 여유로 판단). 실키 필요라 검증은 스모크.
+ *
+ * <p>순수 JDK HTTP 컨벤션의 예외로 google-auth 라이브러리를 쓴다 — SA JWT 서명·토큰 교환은
+ * 보안 민감 영역이라 자체 구현(RS256 수제 서명)의 버그 리스크가 전이 의존성 무게보다 크다고 판단.
  */
 public final class VertexTokenProvider implements Supplier<String> {
 
