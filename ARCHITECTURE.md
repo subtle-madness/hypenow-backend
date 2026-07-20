@@ -217,7 +217,7 @@ v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서
 | G | 서비스 데이터 | `app` 스키마 신설(was 소유 Flyway) + 이메일+비밀번호 로그인(Spring Security 세션 쿠키·CSRF) + 이메일 소유권 인증(6.17 — V7 `email_verifications`·send/confirm·가입 전 강제, 07-19 구현: [specs/2026-07-18-email-verification-design.md](docs/superpowers/specs/2026-07-18-email-verification-design.md)) + 저장 2종(`/api/saved/influencers` 상태·메모, `/api/saved/contents` 북마크) | 독립 | ✅ |
 | I | analytics 어드민 | 상주 서버(8082) `/ui` — **07-19 파이프라인 관측 대시보드로 재설계**: 퍼널(수집→후보→분석→서빙, 무거운 집계는 비동기 캐시)·잡 카드 3종(진행률·최근/다음 실행)·실행 피드(인메모리 이력)·접이식 로그. 비용 카드 폐지(Gemini 무료 전환). 잡별 락·수동 트리거·스케줄러 골격 유지 — [specs/2026-07-19-analytics-dashboard-design.md](docs/superpowers/specs/2026-07-19-analytics-dashboard-design.md) | A | ✅ |
 | A2 | 뷰 신 스키마 재구축 | 분석 뷰 00~20을 신 crawler 스키마(V15 인플루언서 개편) 기준 재구축 — base 소스 교체(raw_media_page clips·SELF_GQL 내장 타임라인), 뷰티 인플루언서 모수 필터, 04 LLM 후보 뷰 신설, 하니스 신 스키마 시드 재작성. 07-18 구현 완료 | [PR #30](https://github.com/subtle-madness/hypenow-backend/pull/30) 머지 | ✅ |
-| L | LLM Gemini 전환 | 전 분석 축(판정·속성+종합 통합 1콜·카피)을 `gemini-3.1-flash-lite`로 — 프로바이더 선택 `analytics.llm-provider`(기본 gemini, anthropic 롤백), 무료 키 페이싱(15RPM, 일 예산은 batch-limit) + 한도 소진 시 배치 이월, 문구 절제 규칙(LlmGuard). 크롤러 판정은 `crawler.beauty.judge`(기본 gemini, 팀 프롬프트·파서 재사용). 백필은 유료 키 Batch one-shot(submit/collect) — [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) | F, B4, C2 | ✅ (백필 실행은 GEMINI_API_KEY_PAID 등록 대기) |
+| L | LLM Gemini 전환 | 전 분석 축(판정·속성+종합 통합 1콜·카피)을 `gemini-3.1-flash-lite`로 — 프로바이더 선택 `analytics.llm-provider`(기본 gemini, anthropic 롤백), 무료 키 페이싱(15RPM, 일 예산은 batch-limit) + 한도 소진 시 배치 이월, 문구 절제 규칙(LlmGuard). 크롤러 판정은 `crawler.beauty.judge`(기본 claude-api, gemini는 롤백, 팀 프롬프트·파서 재사용). 백필은 유료 키 Batch one-shot(submit/collect) — [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) | F, B4, C2 | ✅ (백필 실행은 GEMINI_API_KEY_PAID 등록 대기) |
 
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
@@ -257,7 +257,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
   VLM(썸네일)은 건당 ≈ $0.03~0.05 (opus 4.8, 07-14 실측).
 - LLM 운영 비용(07-18 확정): 전 축 gemini-3.1-flash-lite **무료 티어 $0**(분당 15콜·일 1,500콜 예산 —
   판정 ~100 / 통합 ~450 / 카피 ~150콜), 초기 백필 2만 건은 유료 프로젝트 Batch API ~$9.
-  Anthropic 단가는 롤백 참고치. 일 1,500콜 초과 성장 시 GEMINI_API_KEY만 유료 키로 교체(코드 무변경).
+  Anthropic 단가는 통합·카피 축 롤백 참고치 — 판정 축은 이제 기본이 Anthropic(구독, `crawler.beauty.judge` 기본 claude-api). 일 1,500콜 초과 성장 시 GEMINI_API_KEY만 유료 키로 교체(코드 무변경).
 - **인스타 CDN 썸네일 URL은 수집 후 ~4일이면 만료**(403) — 썸네일 첨부는 최신 수집분에만 가능
   (분석 잡이 HEAD 프리체크, 만료분은 캡션 단독 분석 — B4). 썸네일 신호까지 반영하려면 크롤링 직후 분석 배치를 돌릴 것.
 

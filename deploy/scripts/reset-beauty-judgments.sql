@@ -12,5 +12,5 @@ update influencer
        beauty_source   = null,
        beauty_reason   = null,
        beauty_judged_at = null
- where beauty is not null or beauty_source is not null;
+ where beauty is not null or beauty_source is not null or beauty_class is not null;
 commit;

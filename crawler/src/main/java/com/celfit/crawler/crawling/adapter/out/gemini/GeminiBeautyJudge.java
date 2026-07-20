@@ -25,9 +25,10 @@ import tools.jackson.databind.node.ObjectNode;
  * 프롬프트·파서는 팀 것(ClaudeCliBeautyJudge) 재사용 — 이 클래스는 전송(REST + responseSchema)만.
  * 실패 계약은 포트 그대로: 호출 오류·타임아웃·파싱 불가 → ApifyException (호출자가 배치 단위 격리).
  * 무료 티어 키(GEMINI_API_KEY) — analytics 잡과 동시 실행 시 분당 15콜 합산 초과 주의.
+ * 기본은 claude-api(ClaudeApiBeautyJudge) — 이 구현은 `crawler.beauty.judge=gemini` 명시 시의 롤백 경로.
  */
 @Component
-@ConditionalOnProperty(name = "crawler.beauty.judge", havingValue = "gemini", matchIfMissing = true)
+@ConditionalOnProperty(name = "crawler.beauty.judge", havingValue = "gemini")
 public class GeminiBeautyJudge implements BeautyJudge {
 
     private static final Logger log = LoggerFactory.getLogger(GeminiBeautyJudge.class);

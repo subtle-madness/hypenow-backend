@@ -19,9 +19,10 @@ import tools.jackson.databind.ObjectMapper;
  * 인증은 ClaudeClientFactory(구독 authToken 우선)를 판정 시점에 지연 생성 —
  * 자격증명 부재가 앱 기동을 막지 않고 배치 실패(ApifyException)로 격리된다.
  * 재시도는 SDK 내장(429/5xx 기본 2회)으로 충분해 커스텀 재시도를 두지 않는다.
+ * 기본 구현(matchIfMissing) — 클라이언트 지연 생성이라 자격증명 없는 테스트 컨텍스트에서도 기동에 문제없다.
  */
 @Component
-@ConditionalOnProperty(name = "crawler.beauty.judge", havingValue = "claude-api")
+@ConditionalOnProperty(name = "crawler.beauty.judge", havingValue = "claude-api", matchIfMissing = true)
 public class ClaudeApiBeautyJudge implements BeautyJudge {
 
     private static final long MAX_TOKENS = 8192L;

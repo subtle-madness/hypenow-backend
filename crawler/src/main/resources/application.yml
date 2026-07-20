@@ -61,6 +61,6 @@ crawler:
     enabled: false
     discover-cron: "0 0 6 * * *"
     qualify-cron: "0 30 6 * * *"
-    beauty-cron: "0 30 7 * * *"   # qualify 유입분 3분류 — qualify 이후
+    beauty-cron: "0 30 7 * * *"   # qualify 유입분 4분류 판정 — qualify 이후
     collect-cron: "0 0 1 * * *"   # 데일리 스냅샷(팔로워 추이+게시물) — 새벽에 길게
     reels-cron: "0 10 1 * * *"    # 릴스 1페이지 — collect와 병렬(잡 락 분리)
