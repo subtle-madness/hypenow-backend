@@ -23,51 +23,80 @@
 -- 안이면 제때 크롤 실패(늦크롤 백필)여도 후보에 포함한다. 제때 크롤 판정을 LATERAL로 승격해 timely
 -- 컬럼(제때 크롤 여부)으로 노출 — 소비자(백필 러너·일상 잡)가 V33 metric_timeliness 마킹
 -- (timely/late_backfill)을 이 컬럼으로 결정한다.
+--
+-- 플랜 회귀 수정(07-20, 품질 리뷰 실측 반영): timely·in_window를 그냥 WHERE에 OR로 두면 옵티마이저가
+-- 그 술어를 v_contents 안쪽 idx_content_influencer 인덱스 스캔의 Filter로까지 밀어넣어, 이후 pr 조인
+-- 순서·방식까지 오판했다 — 실데이터(스냅샷 캐시 ~2.9만 행)에서 152ms→9.5~12초로 폭주(EXPLAIN 실측,
+-- 13k행 Materialize를 21k회 재스캔). 안쪽 서브쿼리를 `OFFSET 0`으로 감싸 최적화 배리어를 세우고(캡션·
+-- 성숙 가드 + timely/in_window 계산까지만 안에서 확정), OR 필터는 배리어 밖 바깥 SELECT에서 적용해
+-- 술어 푸시다운을 차단한다 — 의미(자격·timely 값·컬럼 순서)는 동일, 플랜만 바뀐다.
+-- (참고: timely를 출력 컬럼으로 노출해야 해서 옵티마이저가 이걸 세미조인으로 완전히 못 접는다 —
+-- 그래서 배리어 이후에도 베이스라인(OR·timely 노출 이전, ~150ms)보단 느리다. MATERIALIZED CTE도
+-- 동급 배리어로 동작하나 넓은 행(캡션·썸네일 포함)을 임시파일에 스풀해 이 안(OFFSET 0)보다 실측
+-- 12% 가량 더 느렸다 — 원인은 CTE 강제 구체화, OFFSET 0은 스트리밍 배리어라 스풀이 없다.)
 CREATE OR REPLACE VIEW analytics.v_analysis_candidates AS
 SELECT
-  v.short_code,
-  v.content_type,
-  v.account_handle,
-  v.posted_at AS uploaded_at,
-  v.caption,
-  v.thumbnail_url,
-  pr.followers,
-  v.views,
-  v.likes,
-  v.comments,
-  v.metric_captured_at,
-  t.timely
-FROM analytics.v_contents v
-LEFT JOIN analytics.v_base_profile pr ON pr.username = v.account_handle
-CROSS JOIN LATERAL (
-  SELECT EXISTS (
-    -- 캡처 캘린더일(KST)이 [업로드일+pin, 업로드일+pin+slack)에 드는 usable 스냅샷이 있는가.
-    -- 성능: captured_at을 행마다 date로 변환하지 않고, 캘린더일 경계를 KST 자정 timestamptz로
-    -- 계산해 captured_at을 그대로 범위 비교한다(sargable — 세미조인 플랜 유지, 스냅샷 뷰 1회 계산).
-    -- 캡처가 KST일 X에 든다 ⟺ [KST자정(X), KST자정(X+1)) 이므로 결과는 날짜 변환과 완전 동치.
-    SELECT 1
-    FROM analytics.v_serving_content sc
-    JOIN analytics.content_snapshot_cache s USING (content_id)
-    WHERE sc.short_code = v.short_code
-      AND s.captured_at >= (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
-            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
-          )::timestamp AT TIME ZONE 'Asia/Seoul')
-      AND s.captured_at <  (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
-            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
-            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
-          )::timestamp AT TIME ZONE 'Asia/Seoul')
-      AND s.likes IS NOT NULL AND s.comments_count IS NOT NULL
-      AND (sc.content_type <> 'REELS' OR s.views IS NOT NULL)
-  ) AS timely
-) t
-WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
-  -- 성숙: 제때창이 완전히 지난 날만 (업로드일 + pin + slack <= 오늘 KST) — 백필 경로도 동일 적용
-  AND (v.posted_at AT TIME ZONE 'Asia/Seoul')::date
-        + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
-        + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
-      <= (now() AT TIME ZONE 'Asia/Seoul')::date
-  AND (
-    t.timely
-    -- 늦크롤 백필: 최근 N개 윈도우(01 뷰) 안이면 포함 — 지표는 핀(v_contents) 그대로, 마킹은 소비자가
-    OR EXISTS (SELECT 1 FROM analytics.v_recent_content rw WHERE rw.short_code = v.short_code)
-  );
+  short_code,
+  content_type,
+  account_handle,
+  uploaded_at,
+  caption,
+  thumbnail_url,
+  followers,
+  views,
+  likes,
+  comments,
+  metric_captured_at,
+  timely
+FROM (
+  SELECT
+    v.short_code,
+    v.content_type,
+    v.account_handle,
+    v.posted_at AS uploaded_at,
+    v.caption,
+    v.thumbnail_url,
+    pr.followers,
+    v.views,
+    v.likes,
+    v.comments,
+    v.metric_captured_at,
+    t.timely,
+    -- 최근 N개 윈도우(01 뷰) 포함 여부도 배리어 안에서 미리 계산해 바깥 OR과 분리한다.
+    EXISTS (SELECT 1 FROM analytics.v_recent_content rw WHERE rw.short_code = v.short_code) AS in_window
+  FROM analytics.v_contents v
+  LEFT JOIN analytics.v_base_profile pr ON pr.username = v.account_handle
+  CROSS JOIN LATERAL (
+    SELECT EXISTS (
+      -- 캡처 캘린더일(KST)이 [업로드일+pin, 업로드일+pin+slack)에 드는 usable 스냅샷이 있는가.
+      -- 성능: captured_at을 행마다 date로 변환하지 않고, 캘린더일 경계를 KST 자정 timestamptz로
+      -- 계산해 captured_at을 그대로 범위 비교한다(sargable — 세미조인 플랜 유지, 스냅샷 뷰 1회 계산).
+      -- 캡처가 KST일 X에 든다 ⟺ [KST자정(X), KST자정(X+1)) 이므로 결과는 날짜 변환과 완전 동치.
+      SELECT 1
+      FROM analytics.v_serving_content sc
+      JOIN analytics.content_snapshot_cache s USING (content_id)
+      WHERE sc.short_code = v.short_code
+        AND s.captured_at >= (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
+              + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
+            )::timestamp AT TIME ZONE 'Asia/Seoul')
+        AND s.captured_at <  (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
+              + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
+              + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
+            )::timestamp AT TIME ZONE 'Asia/Seoul')
+        AND s.likes IS NOT NULL AND s.comments_count IS NOT NULL
+        AND (sc.content_type <> 'REELS' OR s.views IS NOT NULL)
+    ) AS timely
+  ) t
+  WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
+    -- 성숙: 제때창이 완전히 지난 날만 (업로드일 + pin + slack <= 오늘 KST) — 백필 경로도 동일 적용
+    AND (v.posted_at AT TIME ZONE 'Asia/Seoul')::date
+          + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
+          + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
+        <= (now() AT TIME ZONE 'Asia/Seoul')::date
+  -- 최적화 배리어: OFFSET 0은 실제로 행을 건너뛰지 않지만(0개), 플래너가 이 서브쿼리 경계를 넘어
+  -- 바깥 WHERE(timely OR in_window)를 안쪽 스캔까지 밀어넣지 못하게 막는다(PG 표준 관용구).
+  OFFSET 0
+) candidates
+WHERE timely
+  -- 늦크롤 백필: 최근 N개 윈도우(01 뷰) 안이면 포함 — 지표는 핀(v_contents) 그대로, 마킹은 소비자가
+  OR in_window;
