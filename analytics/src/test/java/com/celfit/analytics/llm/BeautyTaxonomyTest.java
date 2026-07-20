@@ -99,4 +99,9 @@ class BeautyTaxonomyTest {
 		assertEquals("makeup", ambiguous.deriveMain(List.of("겸용", "립틴트")));
 		assertNull(ambiguous.deriveMain(List.of("겸용"))); // 애매 라벨만 → 결정 불가
 	}
+
+	@Test
+	void 리스트에_null_원소가_섞여도_안전하게_무시한다() {
+		assertEquals("makeup", FIXTURE.deriveMain(java.util.Arrays.asList("립틴트", null)));
+	}
 }

@@ -118,6 +118,9 @@ public final class BeautyTaxonomy {
 		}
 		Map<String, Long> votes = new LinkedHashMap<>();
 		for (String label : labels) {
+			if (label == null) {
+				continue;
+			}
 			String main = labelToMain.get(label);
 			if (main != null) {
 				votes.merge(main, 1L, Long::sum);
