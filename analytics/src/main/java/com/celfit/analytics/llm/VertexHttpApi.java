@@ -75,7 +75,7 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 		return text.asString();
 	}
 
-	/** POST 공통 — 페이싱 없음, 429/5xx 지수 백오프만. */
+	/** POST 공통 — 페이싱 없음, 429/5xx 선형 백오프(retryBase×시도차수)만. */
 	String send(String path, String jsonBody) {
 		for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 			int status;
