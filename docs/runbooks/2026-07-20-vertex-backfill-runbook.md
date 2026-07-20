@@ -34,11 +34,13 @@
 
 ## 4. 스모크 (순서 고정)
 
-1. **동기 1콜**: `analytics.llm-provider=vertex` 설정 후 admin UI에서 분석 잡 1건 트리거 —
-   로그 `gemini usage:` 라인·content_analyses 적재 확인. 실패 시 provider를 `gemini`로 롤백.
+1. **동기 1콜**: `analytics.llm-provider=vertex` 설정 + **analytics 재기동** 후 admin UI에서
+   분석 잡 1건 트리거 — 로그 `gemini usage:` 라인·content_analyses 적재 확인.
+   실패 시 provider를 `gemini`로 롤백(§5 — 프로바이더는 빈 생성 시 고정이라 **재기동 필수**).
 2. **배치 제출 직후 확인**: 백필 submit 후 GCP 콘솔에서 잡 상태·건수를 확인하고 이상하면
-   즉시 취소(과금은 완료분만). submit 전 작업 디렉토리의 `backfill-input.jsonl`로 물량을 미리
-   확인할 수 있다.
+   즉시 취소(과금은 완료분만). 작업 디렉토리의 `backfill-input.jsonl`은 submit 실행 중
+   생성돼 배치 생성과 거의 동시라 사전 확인용이 아니다 — 물량 예측은 submit 전에
+   `SELECT count(*)`로 뷰∩기준선∩미분석을 직접 세어볼 것.
    ⚠️ 배치 `model` 필드가 거부되면(400) `VertexHttpApi.createBatch`의 짧은 경로
    (`publishers/google/models/{m}`)를 풀 경로(`projects/{p}/locations/{loc}/publishers/google/models/{m}`
    — `modelPath(model)` 재사용)로 교체 재시도 — 코드 주석(`VertexHttpApi.java:141-142`)에 명시돼 있음.
