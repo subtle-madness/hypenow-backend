@@ -48,21 +48,33 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
   LLM은 Gemini 무료 키 — 서버 `.env`에 `GEMINI_API_KEY` 필요 (백필 Batch는 `GEMINI_API_KEY_PAID` 별도)
 - 스케줄(compose env, KST): 미러 04:30 → 콘텐츠 분석 05:00 → 계정 카피 07:00 (백업 04:10 뒤)
 - 어드민 UI: `ssh -L 8082:localhost:8082 <host>` 후 http://localhost:8082/ui — 잡 수동 트리거·로그
-- 분석 뷰는 이미지에 없다 — 뷰 변경 시 수동 적용:
+- 분석 뷰는 이미지에 없다 — 07-20부터 CD(§5)가 매 배포마다 자동 적용. 수동 적용이 필요하면:
   `cat analytics/views/*.sql | ssh <host> 'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q'`
 - LLM 예산(무료 티어 일 1,500콜)은 raw DB `app_setting`: `analytics.analyze-batch-limit`(기본 10 → 운영 450),
   `analytics.account-analyze-batch-limit`(→150)
 
 ## 5. 배포 (코드 변경 반영)
+
+**정본은 CD (07-20~)**: `main`에 푸시(=develop→main 머지)하면 `.github/workflows/cd.yml`이
+was·analytics·crawler 이미지 빌드·push → 서버 compose pull·재기동 → **분석 뷰 raw DB 적용**(멱등,
+§4-1의 수동 절차를 대체) → `/health` 확인까지 수행한다.
+- 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
+  `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
+- 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
+
+수동·긴급 경로(맥에서):
 ```bash
-deploy/scripts/deploy.sh ubuntu@<IP>
+deploy/scripts/deploy.sh ubuntu@<IP>              # 기본 was+analytics — crawler는 인자로 추가
 ```
 - 매 배포마다 `:latest`와 함께 `:sha-<short>` 태그도 push된다 (GitHub → Packages에서 확인)
 - **롤백**: `ssh ubuntu@<IP> 'cd ~/deploy && docker pull ghcr.io/subtle-madness/hypenow-was:sha-<short> && docker tag ghcr.io/subtle-madness/hypenow-was:sha-<short> ghcr.io/subtle-madness/hypenow-was:latest && docker compose up -d was'` (다음 정상 배포가 latest를 다시 덮는다)
 
 ## 6. 백업·복원
-- 자동: 서버 크론이 매일 KST 04:10 덤프 — 서버 `~/backups/` 7일 롤링 + **Google Drive
-  `hypenow-backups/` 30일 롤링** (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
+- 자동: 서버 크론이 매일 KST 04:10 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
+  - **analysis**: 서버 `~/backups/` 7일 롤링 + Google Drive `hypenow-backups/` 30일 롤링
+  - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버 3일 롤링 +
+    Drive `hypenow-backups/crawler/` **최신 3개** 롤링 — 덤프가 GB급(07-20 실측 ~1.5GB,
+    DB 기준 하루 ~0.6GB씩 증가)이라 Drive 무료 15GB에 맞춰 개수 제한. 용량 증설 시 개수 상향.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
