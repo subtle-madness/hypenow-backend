@@ -13,6 +13,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -175,5 +176,55 @@ class V1SavedContentsControllerTest {
 				.andExpect(status().isNoContent());
 
 		then(repository).should().deleteContent(7L, "c1");
+	}
+
+	@Test
+	void 메모_수정은_200이고_카드_조합_항목을_돌려준다() throws Exception {
+		given(repository.updateContentMemo(7L, "c1", "수정된 메모")).willReturn(
+				Optional.of(new SavedContentRow("c1", "수정된 메모", OffsetDateTime.parse("2026-07-15T00:00:00Z"))));
+		given(repository.findCard("c1")).willReturn(Optional.of(row("c1")));
+
+		mockMvc.perform(put("/v1/saved-contents/c1").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"memo":"수정된 메모"}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.content.id").value("c1"))
+				.andExpect(jsonPath("$.data.content.isContentsSaved").value(true))
+				.andExpect(jsonPath("$.data.memo").value("수정된 메모"))
+				.andExpect(jsonPath("$.data.savedAt").value("2026-07-15T00:00:00Z"));
+	}
+
+	@Test
+	void 공백_memo_수정은_정규화되어_null로_저장된다() throws Exception {
+		given(repository.updateContentMemo(eq(7L), eq("c1"), any())).willReturn(
+				Optional.of(new SavedContentRow("c1", null, OffsetDateTime.parse("2026-07-15T00:00:00Z"))));
+		given(repository.findCard("c1")).willReturn(Optional.of(row("c1")));
+
+		mockMvc.perform(put("/v1/saved-contents/c1").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"memo":"   "}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.memo").value(org.hamcrest.Matchers.nullValue()));
+
+		ArgumentCaptor<String> memo = ArgumentCaptor.forClass(String.class);
+		then(repository).should().updateContentMemo(eq(7L), eq("c1"), memo.capture());
+		assertThat(memo.getValue()).isNull();
+	}
+
+	@Test
+	void 저장_안_된_콘텐츠_메모_수정은_404_NOT_FOUND다() throws Exception {
+		given(repository.updateContentMemo(7L, "ghost", null)).willReturn(Optional.empty());
+
+		mockMvc.perform(put("/v1/saved-contents/ghost").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"memo":null}"""))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+				.andExpect(jsonPath("$.error.message").value("저장된 콘텐츠가 아닙니다."));
+
+		then(repository).should(never()).findCard(anyString());
 	}
 }
