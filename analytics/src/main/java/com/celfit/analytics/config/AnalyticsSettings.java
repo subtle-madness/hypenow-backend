@@ -22,8 +22,10 @@ public class AnalyticsSettings {
 	public static final String KEY_ANALYZE_MATURITY_DAYS = "analytics.analyze-maturity-days";
 	/** 서빙 지표 고정 시점(일) — 02 뷰(v_contents 핀)와 공유하는 키. 제때 크롤 판정의 기준점. */
 	public static final String KEY_METRIC_PIN_DAYS = "analytics.metric-pin-days";
-	/** 제때 크롤 판정 여유(일) — 백필 MVP 제외(07-19 재정정): 고정 지표가 업로드 +(pin+여유)일을
-	 * 넘겨 잡힌 늦크롤분은 +3일 지표가 없어 분석하지 않는다. 분석 밀림은 나이 무관 허용. */
+	/** 제때 크롤 판정 여유(일) — 고정 지표가 업로드 +(pin+여유)일을 넘겨 잡히면 "늦크롤"로 판정한다
+	 * (07-20 개정: 백필 MVP 제외(07-19)를 번복 — 늦크롤이어도 최근 N개 윈도우 안이면 대상에 포함해
+	 * late_backfill로 분석한다. 이 키는 이제 분석 대상 여부가 아니라 timely/late_backfill 마킹의
+	 * 판정 기준점으로 쓰인다). 분석 밀림은 나이 무관 허용. */
 	public static final String KEY_ANALYZE_TIMELY_SLACK_DAYS = "analytics.analyze-timely-slack-days";
 	/** LLM 프로바이더 선택 — gemini(기본, 07-18 확정) | anthropic(롤백 경로). 전환은 재기동 필요(빈 생성 시 결정). */
 	public static final String KEY_LLM_PROVIDER = "analytics.llm-provider";
