@@ -10,9 +10,9 @@
 --   합성 Q: 릴스 = wr·reach + we·engage ,  피드 = engage(피드)
 --   qf = Q · 0.5^(경과일/halflife)      -- elapsed_days는 호출부가 계산해 넘김, 음수 클램프는 함수 안(GREATEST 0)
 --   점수 = qf를 타입별 4점 앵커로 구간 선형 매핑(p05→10·p50→45·p90→80·p99→97, [0,100] 클램프).
---   앵커값은 운영 분석 집합(2026-07-20) 산출·동결 — 모집단 이동 시 재보정(스펙 §6).
+--   앵커값은 운영 분석 집합(v_analysis_candidates) 산출·동결 — 릴스는 2026-07-20 v2.1 재적합(팔로워 정규화 분포). 모집단 이동 시 재보정(스펙 §6·2026-07-20-reels-hype-engage-follower-normalization §Task3).
 -- 튜닝 상수는 함수가 app_setting에서 직접 읽는다(STABLE) — 호출부는 6-인자로 단순, 재배포 없이 튜닝.
---   키: hype-fresh-halflife-days(14)·hype-reels-e0(0.02: v2.1부터 팔로워당 참여 기준)·hype-feed-f0(0.03)·hype-reach-weight(1)·hype-engage-weight(1)
+--   키: hype-fresh-halflife-days(14)·hype-reels-e0(0.01: v2.1부터 팔로워당 참여 기준, 릴스 참여율 중앙값≈0.0094)·hype-feed-f0(0.03)·hype-reach-weight(1)·hype-engage-weight(1)
 --       ·hype-anchor-{reels,feed}-{p05,p50,p90,p99}. 미설정/0이면 함수 내 COALESCE 기본값(단일 소스).
 -- NULL 규칙: likes·comments 중 NULL → NULL, 릴스인데 views NULL → NULL (피드 조회수 항상 NULL은 정상 — CLAUDE.md 함정).
 CREATE OR REPLACE FUNCTION analytics.hype_score(
@@ -23,21 +23,21 @@ LANGUAGE sql STABLE AS $$
   WITH s AS (
     SELECT
       COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-fresh-halflife-days'),0),14) AS hl,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reels-e0'),0),0.02)          AS e0,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reels-e0'),0),0.01)          AS e0,
       COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-feed-f0'),0),0.03)           AS f0,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reach-weight'),1)                   AS wr,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p05'),0.2405)
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p05'),0.0736)
         ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p05'),0.0111) END  AS a05,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p50'),0.9091)
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p50'),0.7379)
         ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p50'),0.1398) END  AS a50,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p90'),1.8845)
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p90'),2.6312)
         ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p90'),0.6746) END  AS a90,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p99'),2.9835)
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p99'),5.5619)
         ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p99'),1.4890) END  AS a99
   ),
   c AS (
