@@ -108,4 +108,20 @@ class AdminSignupCodeIngestIntegrationTest extends IntegrationTest {
 		sb.append("]}");
 		submit(TOKEN, sb.toString()).andExpect(status().isBadRequest());
 	}
+
+	@Test
+	void 배치_정확히_500개면_전부_적재() throws Exception {
+		String prefix = "B" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
+		StringBuilder sb = new StringBuilder("{\"codes\":[");
+		for (int i = 0; i < 500; i++) {
+			if (i > 0) {
+				sb.append(',');
+			}
+			sb.append('"').append(prefix).append('-').append(String.format("%04d", i)).append('"');
+		}
+		sb.append("]}");
+		submit(TOKEN, sb.toString())
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.inserted").value(500));
+	}
 }
