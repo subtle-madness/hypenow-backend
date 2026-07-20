@@ -165,16 +165,17 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 	}
 
 	/**
-	 * gs:// prefix 밑 .jsonl 오브젝트 목록 조회 후 내용 병합(파일별 개행 보장).
+	 * gs:// prefix 밑 .jsonl 오브젝트 목록 조회 후 파일별로 줄 단위 스트리밍 전달 —
+	 * 운영 실측 119MB+ 결과를 String으로 병합하면 기본 힙에서 OOM(07-20 백필 사고)이라
+	 * 오브젝트마다 본문 스트림을 순차 소비한다. 목록 응답(JSON 메타)만 String 적재.
 	 * objects.list는 페이지당 최대 1000개 — nextPageToken이 있으면 이어서 조회(do-while).
 	 */
 	@Override
-	public String downloadFile(String fileName) {
+	public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
 		if (!fileName.startsWith("gs://" + bucket + "/")) {
 			throw new IllegalStateException("예상 밖 출력 위치(버킷 불일치): " + fileName);
 		}
 		String prefix = fileName.substring(("gs://" + bucket + "/").length());
-		StringBuilder merged = new StringBuilder();
 		String pageToken = null;
 		do {
 			String listUrl = storageUrl + "/storage/v1/b/" + bucket + "/o?prefix="
@@ -189,16 +190,13 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 				// 경로 세그먼트(/o/{name})는 URLEncoder(form-encoding)가 공백을 +로 바꿔 잘못 인코딩 — %20로 치환
 				String objUrl = storageUrl + "/storage/v1/b/" + bucket + "/o/"
 						+ URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20") + "?alt=media";
-				String content = get(objUrl, "결과 다운로드");
-				merged.append(content);
-				if (!content.endsWith("\n")) {
-					merged.append('\n');
-				}
+				GeminiHttpApi.streamLines(URI.create(objUrl),
+						req -> req.header("Authorization", "Bearer " + token.get()),
+						http, "결과 다운로드", onLine);
 			}
 			JsonNode tokenNode = page.path("nextPageToken");
 			pageToken = tokenNode.isMissingNode() || tokenNode.isNull() ? null : tokenNode.asString();
 		} while (pageToken != null && !pageToken.isEmpty());
-		return merged.toString();
 	}
 
 	private String get(String url, String what) {
