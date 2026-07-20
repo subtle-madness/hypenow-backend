@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -80,6 +81,25 @@ public class V1SavedInfluencersController {
 		meta.put("total", items.size());
 		meta.put("limit", 100);
 		return ApiResponse.ok(items, meta);
+	}
+
+	/**
+	 * 메모 수정(편집 전용 PUT) — 이미 저장된 인플루언서의 memo만 갱신하고 200을 돌려준다. 저장 이력이 없으면
+	 * 404(POST와 달리 새 저장을 만들지 않는다). 프로필 미러가 없어도 목록과 같은 정책으로 handle만 채워 남긴다
+	 * (저장이 정본, 미러는 보조) — POST의 존재 요구와 다른 이유: 편집은 이미 저장된 행이 대상이라서다.
+	 */
+	@PutMapping("/v1/saved-influencers/{influencerId}")
+	public ApiResponse<InfluencerItem> updateMemo(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String influencerId, @RequestBody(required = false) Map<String, Object> body) {
+		Map<String, Object> fields = body == null ? Map.of() : body;
+		Object memoValue = fields.get("memo");
+		String memo = V1SavedAssembler.normalizeMemo(memoValue == null ? null : memoValue.toString());
+		SavedInfluencerRow saved = repository.updateInfluencerMemo(principal.getUserId(), influencerId, memo)
+				.orElseThrow(() -> V1ApiException.notFound("저장된 인플루언서가 아닙니다."));
+		ContentCard.Influencer profile = repository.findInfluencer(influencerId)
+				.orElse(new ContentCard.Influencer(influencerId, influencerId, null, null, null));
+		InfluencerItem item = savedAssembler.toInfluencerItem(profile, saved.memo(), saved.createdAt());
+		return ApiResponse.ok(item);
 	}
 
 	/** 저장 취소 — 멱등 204(없어도 성공, 스펙 6.11). */

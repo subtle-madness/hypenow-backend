@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -92,6 +93,24 @@ public class V1SavedContentsController {
 		meta.put("total", items.size());
 		meta.put("limit", 100);
 		return ApiResponse.ok(items, meta);
+	}
+
+	/**
+	 * 메모 수정(편집 전용 PUT) — 이미 저장된 콘텐츠의 memo만 갱신하고 200을 돌려준다. 저장 이력이 없으면
+	 * 404(POST와 달리 새 저장을 만들지 않는다). 응답 카드는 POST와 동일하게 조회 시점 미러에서 조합한다.
+	 */
+	@PutMapping("/v1/saved-contents/{contentId}")
+	public ApiResponse<ContentItem> updateMemo(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String contentId, @RequestBody(required = false) Map<String, Object> body) {
+		Map<String, Object> fields = body == null ? Map.of() : body;
+		Object memoValue = fields.get("memo");
+		String memo = V1SavedAssembler.normalizeMemo(memoValue == null ? null : memoValue.toString());
+		SavedContentRow saved = repository.updateContentMemo(principal.getUserId(), contentId, memo)
+				.orElseThrow(() -> V1ApiException.notFound("저장된 콘텐츠가 아닙니다."));
+		ContentCardRow row = repository.findCard(contentId)
+				.orElseThrow(() -> V1ApiException.notFound("콘텐츠를 찾을 수 없습니다."));
+		ContentItem item = savedAssembler.toContentItem(cardAssembler.toCard(row, true), saved.memo(), saved.createdAt());
+		return ApiResponse.ok(item);
 	}
 
 	/** 저장 취소 — 멱등 204(없어도 성공, 스펙 6.8). */
