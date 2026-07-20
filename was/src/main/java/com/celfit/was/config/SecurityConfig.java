@@ -27,6 +27,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -36,6 +37,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import com.celfit.was.admin.CodesApiKeyAuthFilter;
 
 /**
  * 세션 쿠키 인증 — DaoAuthenticationProvider(AppUserDetailsService + BCrypt)는
@@ -64,6 +66,40 @@ public class SecurityConfig {
 	@Bean
 	public AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) throws Exception {
 		return configuration.getAuthenticationManager();
+	}
+
+	/**
+	 * 가입 코드 적재 전용 체인(설계 2026-07-20) — /admin/signup-codes만 정적 토큰(Bearer CODES_API_KEY)으로 잠근다.
+	 * @Order(0)이라 사람용 @Order(1) ADMIN Basic 체인(/admin/**)보다 먼저 이 경로를 잡는다(기계 대 기계 호출).
+	 * stateless·CSRF/CORS off, 미인증은 Basic 챌린지 없이 401 {"error":...}. 토큰 검증·fail-closed는 필터가 수행.
+	 */
+	@Bean
+	@Order(0)
+	public SecurityFilterChain signupCodeIngestFilterChain(HttpSecurity http,
+			@Value("${codes.api-key:}") String codesApiKey) throws Exception {
+		http
+				.securityMatcher("/admin/signup-codes")
+				.authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+				.addFilterBefore(new CodesApiKeyAuthFilter(codesApiKey),
+						UsernamePasswordAuthenticationFilter.class)
+				.exceptionHandling(ex -> ex.authenticationEntryPoint(new JsonUnauthorizedEntryPoint()))
+				.csrf(AbstractHttpConfigurer::disable)
+				.cors(AbstractHttpConfigurer::disable)
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+		return http.build();
+	}
+
+	/** /admin/signup-codes 미인증 진입점 — Basic 챌린지 없이 401 {"error":...}(어드민이 본문 그대로 노출). */
+	static final class JsonUnauthorizedEntryPoint implements AuthenticationEntryPoint {
+
+		@Override
+		public void commence(HttpServletRequest request, HttpServletResponse response,
+				AuthenticationException authException) throws IOException {
+			response.setStatus(HttpStatus.UNAUTHORIZED.value());
+			response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+			response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+			response.getWriter().write("{\"error\":\"인증 실패\"}");
+		}
 	}
 
 	/**

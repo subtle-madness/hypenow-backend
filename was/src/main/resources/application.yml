@@ -32,6 +32,8 @@ springdoc:
     csrf:
       enabled: true                   # try-it-out에 XSRF-TOKEN 쿠키를 헤더로 동봉 — /v1/auth/login 호출 후
                                       # 세션 쿠키(동일 오리진)로 잠긴 엔드포인트도 Swagger에서 테스트 가능
+codes:
+  api-key: ${CODES_API_KEY:}   # 어드민 코드 적재용 정적 토큰 — 빈 값이면 /admin/signup-codes 전면 거부(fail-closed)
 was:
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
