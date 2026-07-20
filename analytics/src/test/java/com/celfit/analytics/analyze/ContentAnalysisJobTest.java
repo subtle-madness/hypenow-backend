@@ -52,7 +52,7 @@ class ContentAnalysisJobTest {
 							List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
 							List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
 							List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
-							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored"),
+							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored", true),
 					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "high", "판정 근거"));
 		};
 	}

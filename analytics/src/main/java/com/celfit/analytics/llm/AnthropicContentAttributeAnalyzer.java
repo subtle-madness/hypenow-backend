@@ -52,6 +52,8 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				당신은 뷰티 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)을 보고 다음을 추출하라.
 				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 한국어로.
 
+				- isBeauty: 이 콘텐츠가 뷰티 콘텐츠인가 (true/false). 뷰티 제품·시술·루틴·리뷰 등이면 true,
+				  뷰티 인플루언서라도 일상·여행·음식 등 뷰티와 무관하면 false. mainCategory와 독립적으로 반드시 판정하라.
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
@@ -148,7 +150,8 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				keepIfIn(raw.mainCategory(), taxonomy.mainCategories()),
 				filterToVocabulary(raw.subCategories(), taxonomy.allMidAndSubLabels()),
 				filterToVocabulary(raw.detectedDistributors(), taxonomy.distributors()),
-				keepIfIn(raw.adType(), AD_TYPES));
+				keepIfIn(raw.adType(), AD_TYPES),
+				raw.isBeauty());
 	}
 
 	private static String keepIfIn(String value, Set<String> vocabulary) {

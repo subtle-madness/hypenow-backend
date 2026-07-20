@@ -23,7 +23,7 @@ class AnthropicContentAttributeAnalyzerTest {
 				List.of("협찬 표기"), "표기 있음", List.of("클렌징폼"),
 				List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
 				List.of(new ContentAttributes.Attribute("무드", "화사함")), "skincare",
-				List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), adType);
+				List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), adType, true);
 	}
 
 	@Test
@@ -61,7 +61,7 @@ class AnthropicContentAttributeAnalyzerTest {
 		// slug 어휘 밖 값 (구 프롬프트 어휘 hair, 지어낸 값 등)
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
 				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
-						List.of(), "hair", List.of("샴푸/스케일러"), List.of(), "organic"), TAXONOMY);
+						List.of(), "hair", List.of("샴푸/스케일러"), List.of(), "organic", true), TAXONOMY);
 
 		assertNull(sanitized.mainCategory());
 		assertEquals(List.of("샴푸/스케일러"), sanitized.subCategories()); // 라벨 자체는 어휘 안 — 유지
@@ -73,7 +73,7 @@ class AnthropicContentAttributeAnalyzerTest {
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
 				new ContentAttributes(List.of(), "low", List.of(), "표기 없음",
 						List.of("립틴트", "틴트제품", "립메이크업"), List.of(), List.of(), "makeup",
-						List.of("립메이크업", "립틴트", "입술화장"), List.of("올리브영", "쿠팡"), "organic"),
+						List.of("립메이크업", "립틴트", "입술화장"), List.of("올리브영", "쿠팡"), "organic", true),
 				TAXONOMY);
 
 		assertEquals(List.of("립메이크업", "립틴트"), sanitized.subCategories());
@@ -98,7 +98,7 @@ class AnthropicContentAttributeAnalyzerTest {
 	@Test
 	void null_배열은_null로_유지된다() {
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
-				new ContentAttributes(null, null, null, null, null, null, null, null, null, null, null),
+				new ContentAttributes(null, null, null, null, null, null, null, null, null, null, null, null),
 				TAXONOMY);
 
 		assertNull(sanitized.subCategories());
