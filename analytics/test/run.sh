@@ -23,7 +23,9 @@ if [ ${#tests[@]} -eq 0 ]; then tests=(test/*.test.sql); fi
 if [ ${#tests[@]} -eq 0 ]; then echo "no tests found"; exit 1; fi
 for t in "${tests[@]}"; do
   echo "== $t =="
-  { echo 'BEGIN;'; cat seed/dummy.sql; cat "$t"; echo 'ROLLBACK;'; } | "${PSQL[@]}"
+  # 시드 후 물질화 캐시 갱신(소비 뷰가 시드 raw를 반영하도록) — 트랜잭션 내라 ROLLBACK으로 복구
+  { echo 'BEGIN;'; cat seed/dummy.sql; echo 'SELECT analytics.refresh_snapshot_cache();'; \
+    cat "$t"; echo 'ROLLBACK;'; } | "${PSQL[@]}"
   echo "PASS: $t"
 done
 echo "ALL GREEN"

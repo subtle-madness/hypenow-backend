@@ -126,7 +126,7 @@ SELECT
                        (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-reach-target-mult'),
                        (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-engage-target'),
                        (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-feed-engage-target')) AS hype_score
-FROM analytics.v_base_content_snapshot h
+FROM analytics.content_snapshot_cache h
 JOIN analytics.v_serving_content e USING (content_id)
 LEFT JOIN analytics.v_base_profile pr ON pr.username = e.owner_username;
 

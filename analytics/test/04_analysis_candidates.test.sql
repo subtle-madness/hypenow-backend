@@ -16,6 +16,7 @@ INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, capture
  (99990001,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_cl","product_type":"clips","taken_at":1780000000,"like_count":200,"comment_count":20,"play_count":5000,"caption":{"text":"cap cl"},"image_versions2":{"candidates":[{"url":"https://thumb/cl.jpg"}]}}}]}}'::jsonb, now() - interval '1 day'),
  (99990001,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_op","product_type":"clips","taken_at":1780000000,"like_count":300,"comment_count":30,"play_count":6000,"caption":{"text":"cap op"},"image_versions2":{"candidates":[{"url":"https://thumb/op.jpg"}]}}}]}}'::jsonb, now());
 
+SELECT analytics.refresh_snapshot_cache();  -- 본문 삽입분을 캐시에 반영
 -- 기본(slack=1): D+3 '그 날' 하루만.
 DO $$
 BEGIN
@@ -43,6 +44,7 @@ INSERT INTO content(id, short_code, content_type, owner_username, influencer_id,
  (99990109,'dummy_pd','REELS','dummy_a',99990001, timestamptz '2026-06-01 09:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0);
 INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at) VALUES
  (99990001,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_pd","product_type":"clips","taken_at":1780272000,"like_count":100,"comment_count":10,"caption":{"text":"cap pd"},"image_versions2":{"candidates":[{"url":"https://thumb/pd.jpg"}]}}}]}}'::jsonb, timestamptz '2026-06-04 12:00:00+09');
+SELECT analytics.refresh_snapshot_cache();  -- 본문 삽입분을 캐시에 반영
 DO $$
 BEGIN
   -- 전제: dummy_pd 핀(06-04 스냅)은 D+3 당일 캘린더일, 그런데 views NULL(비-usable)

@@ -25,6 +25,7 @@ INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers
 INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at) VALUES
  (99990001,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_rp","product_type":"clips","taken_at":1780272000,"like_count":410,"comment_count":41,"play_count":9000,"video_duration":22.0,"is_paid_partnership":false,"caption":{"text":"cap rp"},"image_versions2":{"candidates":[{"url":"https://thumb/rp_v1.jpg"}]}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09');
 
+SELECT analytics.refresh_snapshot_cache();  -- 본문 삽입분을 캐시에 반영
 DO $$
 BEGIN
   -- 핀은 지표 완비된 clips 스냅샷을 골라야 한다 (빈 타임라인이 더 이르더라도).

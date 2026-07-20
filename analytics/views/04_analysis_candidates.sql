@@ -43,7 +43,7 @@ WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
     -- 캡처가 KST일 X에 든다 ⟺ [KST자정(X), KST자정(X+1)) 이므로 결과는 날짜 변환과 완전 동치.
     SELECT 1
     FROM analytics.v_serving_content sc
-    JOIN analytics.v_base_content_snapshot s USING (content_id)
+    JOIN analytics.content_snapshot_cache s USING (content_id)
     WHERE sc.short_code = v.short_code
       AND s.captured_at >= (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
             + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
