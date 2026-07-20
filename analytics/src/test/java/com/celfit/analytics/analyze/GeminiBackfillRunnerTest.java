@@ -100,7 +100,8 @@ class GeminiBackfillRunnerTest {
 				CREATE TABLE analytics.candidates_fixture (
 				    short_code text PRIMARY KEY, content_type text, account_handle text,
 				    uploaded_at timestamptz, caption text, thumbnail_url text, followers bigint,
-				    views bigint, likes bigint, comments bigint, metric_captured_at timestamptz)""");
+				    views bigint, likes bigint, comments bigint, metric_captured_at timestamptz,
+				    timely boolean)""");
 		db.update("CREATE VIEW analytics.v_analysis_candidates AS SELECT * FROM analytics.candidates_fixture");
 		db.update("""
 				CREATE TABLE analytics.baseline_fixture (
@@ -110,11 +111,12 @@ class GeminiBackfillRunnerTest {
 				    recent12_avg_comment_count numeric, category_top_percentile smallint,
 				    category_avg_views numeric, category_sample_size bigint, captured_at timestamptz)""");
 		db.update("CREATE VIEW analytics.v_analysis_baseline AS SELECT * FROM analytics.baseline_fixture");
+		// timely: bf_a=제때 크롤(true), bf_b=윈도우 경로로만 들어온 늦크롤(false) — 마킹 분기 검증용
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('bf_a', 'reels', 'acct1', now() - interval '10 days', '캡션A', NULL, 10000, 9000, 500, 50, now()),
-				  ('bf_b', 'feed', 'acct1', now() - interval '9 days', NULL, NULL, 10000, NULL, 300, 30, now()),
-				  ('bf_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now())""");
+				  ('bf_a', 'reels', 'acct1', now() - interval '10 days', '캡션A', NULL, 10000, 9000, 500, 50, now(), true),
+				  ('bf_b', 'feed', 'acct1', now() - interval '9 days', NULL, NULL, 10000, NULL, 300, 30, now(), false),
+				  ('bf_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now(), true)""");
 		db.update("""
 				INSERT INTO analytics.baseline_fixture VALUES
 				  ('bf_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3, now()),
@@ -171,10 +173,44 @@ class GeminiBackfillRunnerTest {
 				"SELECT main_category FROM content_analyses WHERE short_code = 'bf_b'", String.class));
 		assertEquals("평균 수준", db.queryForObject(
 				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'bf_b'", String.class));
+		// 마킹은 사이드카에 실린 뷰의 timely 판정을 승계(07-20 개정) — bf_a=timely, bf_b=late_backfill
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'bf_a'", String.class));
+		assertEquals("late_backfill", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'bf_b'", String.class));
 
 		// 재실행 멱등 — ON CONFLICT DO NOTHING이라 행 수·내용 불변
 		runner().collect("batches/b1");
 		assertEquals(3L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void collect는_구버전_사이드카에_timely_키가_없으면_late_backfill로_폴백한다() throws java.io.IOException {
+		// timely 컬럼 도입(07-20) 이전에 만들어진 사이드카를 흉내 — timely 키가 아예 없다
+		tools.jackson.databind.node.ObjectNode oldSidecarLine = om.createObjectNode();
+		oldSidecarLine.put("short_code", "bf_a");
+		oldSidecarLine.put("recent_reels_avg_views", "9000");
+		oldSidecarLine.put("rank_in_recent_reels", "1");
+		oldSidecarLine.put("recent_reels_count", "2");
+		oldSidecarLine.put("recent_contents_count", "3");
+		oldSidecarLine.put("recent12_avg_engagement_rate", "0.0496");
+		oldSidecarLine.put("recent12_avg_like_count", "940");
+		oldSidecarLine.put("recent12_avg_comment_count", "61");
+		oldSidecarLine.put("category_top_percentile", "67");
+		oldSidecarLine.put("category_avg_views", "19333");
+		oldSidecarLine.put("category_sample_size", "3");
+		oldSidecarLine.put("caption", "캡션A");
+		Files.createDirectories(workDir);
+		Files.writeString(workDir.resolve("backfill-sidecar.jsonl"), om.writeValueAsString(oldSidecarLine) + "\n");
+		resultJsonl = """
+				{"key":"bf_a","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(INSIGHT_JSON));
+
+		int saved = runner().collect("batches/b1");
+
+		assertEquals(1, saved);
+		assertEquals("late_backfill", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'bf_a'", String.class));
 	}
 
 	@Test

@@ -38,7 +38,7 @@ public class GeminiBackfillRunner {
 			"recent_reels_avg_views", "rank_in_recent_reels", "recent_reels_count",
 			"recent_contents_count", "recent12_avg_engagement_rate", "recent12_avg_like_count",
 			"recent12_avg_comment_count", "category_top_percentile", "category_avg_views",
-			"category_sample_size", "caption");
+			"category_sample_size", "caption", "timely");
 
 	private static final java.util.regex.Pattern ECHO_SHORT_CODE =
 			java.util.regex.Pattern.compile("^콘텐츠: (\\S+) \\(");
@@ -69,7 +69,7 @@ public class GeminiBackfillRunner {
 		// 기준선(최근 N개 윈도우) 정의 가능한 후보만 — 일상 잡의 전제와 동일 (윈도우 밖은 분석 대상 아님)
 		List<Map<String, Object>> rows = raw.queryForList("""
 				SELECT c.short_code, c.account_handle, c.content_type, c.caption,
-				       c.views, c.likes, c.comments,
+				       c.views, c.likes, c.comments, c.timely,
 				       b.recent_reels_avg_views, b.rank_in_recent_reels, b.recent_reels_count,
 				       b.recent_contents_count, b.recent12_avg_engagement_rate,
 				       b.recent12_avg_like_count, b.recent12_avg_comment_count,
@@ -211,9 +211,12 @@ public class GeminiBackfillRunner {
 					continue;
 				}
 				boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
-				// 백필 대상은 정의상 늦크롤(+pin+slack 이후 지표) — late_backfill 마킹 (V33).
+				// 07-20 개정: 04 뷰가 timely 후보도 포함(제때 크롤 OR 최근 N 윈도우) — 마킹은 뷰의 timely
+				// 판정을 그대로 승계한다. 구버전 사이드카(timely 키 없음)는 NULL→false로 late_backfill 폴백.
+				boolean timely = "true".equals(base.get("timely"));
 				ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
-						hasCaption ? insight.attributes() : null, insight.synthesis(), true, "late_backfill");
+						hasCaption ? insight.attributes() : null, insight.synthesis(), true,
+						timely ? "timely" : "late_backfill");
 				saved++;
 			} catch (Exception e) {
 				failed++;
