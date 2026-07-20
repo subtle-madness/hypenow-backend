@@ -54,6 +54,13 @@ class VertexHttpApiTest {
 						+ "\"state\":\"JOB_STATE_PENDING\"}";
 			} else if (uri.startsWith("/upload/")) {
 				response = "{\"name\":\"input/backfill-1.jsonl\"}";
+			} else if (uri.startsWith("/storage/") && uri.contains("pageToken=page-2")) {
+				// 두 번째 페이지 — nextPageToken 없음(마지막 페이지)
+				response = "{\"items\":[{\"name\":\"output/paged-1/job-9/predictions_b.jsonl\"}]}";
+			} else if (uri.startsWith("/storage/") && uri.contains("prefix=output%2Fpaged-1%2Fjob-9")) {
+				// 첫 페이지 — nextPageToken 있음
+				response = "{\"nextPageToken\":\"page-2\",\"items\":"
+						+ "[{\"name\":\"output/paged-1/job-9/predictions_a.jsonl\"}]}";
 			} else if (uri.startsWith("/storage/") && uri.contains("prefix=")) {
 				response = "{\"items\":[{\"name\":\"output/backfill-1/job-123/predictions_1.jsonl\"},"
 						+ "{\"name\":\"output/backfill-1/job-123/predictions_2.jsonl\"}]}";
@@ -61,6 +68,10 @@ class VertexHttpApiTest {
 				response = "{\"line\":1}\n";
 			} else if (uri.contains("predictions_2")) {
 				response = "{\"line\":2}\n";
+			} else if (uri.contains("predictions_a")) {
+				response = "{\"page\":1}\n";
+			} else if (uri.contains("predictions_b")) {
+				response = "{\"page\":2}\n";
 			} else {
 				response = OK_RESPONSE;
 			}
@@ -155,5 +166,11 @@ class VertexHttpApiTest {
 	void 결과_다운로드는_prefix_목록의_jsonl을_병합한다() {
 		String merged = api().downloadFile("gs://test-bucket/output/backfill-1/job-123");
 		assertEquals("{\"line\":1}\n{\"line\":2}\n", merged);
+	}
+
+	@Test
+	void 결과_다운로드는_nextPageToken이_있으면_다음_페이지까지_이어서_병합한다() {
+		String merged = api().downloadFile("gs://test-bucket/output/paged-1/job-9");
+		assertEquals("{\"page\":1}\n{\"page\":2}\n", merged);
 	}
 }

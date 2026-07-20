@@ -1,6 +1,7 @@
 package com.celfit.analytics.llm;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -11,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Vertex AI REST 구현 — GeminiHttpApi와 동일 바디(requestBody 재사용), 차이는
@@ -115,7 +117,7 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 	@Override
 	public String uploadFile(byte[] jsonl, String displayName) {
 		String object = "input/" + displayName + ".jsonl";
-		String encoded = java.net.URLEncoder.encode(object, StandardCharsets.UTF_8);
+		String encoded = URLEncoder.encode(object, StandardCharsets.UTF_8);
 		try {
 			HttpRequest req = HttpRequest.newBuilder(URI.create(storageUrl
 					+ "/upload/storage/v1/b/" + bucket + "/o?uploadType=media&name=" + encoded))
@@ -141,13 +143,13 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 	 */
 	@Override
 	public String createBatch(String model, String inputFileName, String displayName) {
-		tools.jackson.databind.node.ObjectNode body = om.createObjectNode();
+		ObjectNode body = om.createObjectNode();
 		body.put("displayName", displayName);
 		body.put("model", "publishers/google/models/" + model);
-		tools.jackson.databind.node.ObjectNode input = body.putObject("inputConfig");
+		ObjectNode input = body.putObject("inputConfig");
 		input.put("instancesFormat", "jsonl");
 		input.putObject("gcsSource").putArray("uris").add(inputFileName);
-		tools.jackson.databind.node.ObjectNode output = body.putObject("outputConfig");
+		ObjectNode output = body.putObject("outputConfig");
 		output.put("predictionsFormat", "jsonl");
 		output.putObject("gcsDestination").put("outputUriPrefix",
 				"gs://" + bucket + "/output/" + displayName + "/");
@@ -162,30 +164,40 @@ public final class VertexHttpApi implements GeminiApi, GeminiBatchApi {
 		return get(baseUrl + "/v1/" + batchName, "배치 조회");
 	}
 
-	/** gs:// prefix 밑 .jsonl 오브젝트 목록 조회 후 내용 병합(파일별 개행 보장). */
+	/**
+	 * gs:// prefix 밑 .jsonl 오브젝트 목록 조회 후 내용 병합(파일별 개행 보장).
+	 * objects.list는 페이지당 최대 1000개 — nextPageToken이 있으면 이어서 조회(do-while).
+	 */
 	@Override
 	public String downloadFile(String fileName) {
 		if (!fileName.startsWith("gs://" + bucket + "/")) {
 			throw new IllegalStateException("예상 밖 출력 위치(버킷 불일치): " + fileName);
 		}
 		String prefix = fileName.substring(("gs://" + bucket + "/").length());
-		String listUrl = storageUrl + "/storage/v1/b/" + bucket + "/o?prefix="
-				+ java.net.URLEncoder.encode(prefix, StandardCharsets.UTF_8);
-		JsonNode items = om.readTree(get(listUrl, "출력 목록 조회")).path("items");
 		StringBuilder merged = new StringBuilder();
-		for (JsonNode item : items) {
-			String name = item.path("name").asString();
-			if (!name.endsWith(".jsonl")) {
-				continue;
+		String pageToken = null;
+		do {
+			String listUrl = storageUrl + "/storage/v1/b/" + bucket + "/o?prefix="
+					+ URLEncoder.encode(prefix, StandardCharsets.UTF_8)
+					+ (pageToken == null ? "" : "&pageToken=" + URLEncoder.encode(pageToken, StandardCharsets.UTF_8));
+			JsonNode page = om.readTree(get(listUrl, "출력 목록 조회"));
+			for (JsonNode item : page.path("items")) {
+				String name = item.path("name").asString();
+				if (!name.endsWith(".jsonl")) {
+					continue;
+				}
+				// 경로 세그먼트(/o/{name})는 URLEncoder(form-encoding)가 공백을 +로 바꿔 잘못 인코딩 — %20로 치환
+				String objUrl = storageUrl + "/storage/v1/b/" + bucket + "/o/"
+						+ URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20") + "?alt=media";
+				String content = get(objUrl, "결과 다운로드");
+				merged.append(content);
+				if (!content.endsWith("\n")) {
+					merged.append('\n');
+				}
 			}
-			String objUrl = storageUrl + "/storage/v1/b/" + bucket + "/o/"
-					+ java.net.URLEncoder.encode(name, StandardCharsets.UTF_8) + "?alt=media";
-			String content = get(objUrl, "결과 다운로드");
-			merged.append(content);
-			if (!content.endsWith("\n")) {
-				merged.append('\n');
-			}
-		}
+			JsonNode tokenNode = page.path("nextPageToken");
+			pageToken = tokenNode.isMissingNode() || tokenNode.isNull() ? null : tokenNode.asString();
+		} while (pageToken != null && !pageToken.isEmpty());
 		return merged.toString();
 	}
 
