@@ -305,4 +305,42 @@ class BeautyJobTest {
 
         assertThat(s.judgedBeauty()).isEqualTo(1);
     }
+
+    @Test
+    void 판정_결과가_beauty_class와_파생_boolean으로_저장되고_Summary가_구분_집계한다() {
+        Influencer inf1 = qualified(1L, "inf1");
+        Influencer com1 = qualified(2L, "com1");
+        Influencer svc1 = qualified(3L, "svc1");
+        Influencer no1 = qualified(4L, "no1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(inf1, com1, svc1, no1));
+        for (long id = 1; id <= 4; id++) {
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(id))
+                    .thenReturn(Optional.of(legacyProfile(id, "이름", "bio")));
+        }
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("inf1", BeautyClass.INFLUENCER, "메이크업 크리에이터"),
+                new BeautyJudge.Verdict("com1", BeautyClass.COMPANY, "화장품 브랜드"),
+                new BeautyJudge.Verdict("svc1", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보"),
+                new BeautyJudge.Verdict("no1", BeautyClass.NOT_BEAUTY, "여행 계정")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
+
+        assertThat(s.judgedBeauty()).isEqualTo(2);      // INFLUENCER + COMPANY
+        assertThat(s.judgedService()).isEqualTo(1);     // BEAUTY_SERVICE
+        assertThat(s.judgedNotBeauty()).isEqualTo(1);   // NOT_BEAUTY
+
+        // BEAUTY_SERVICE — beauty_class 원본 저장 + beauty=false 파생(수집·시드 자동 제외)
+        assertThat(svc1.getBeautyClass()).isEqualTo(BeautyClass.BEAUTY_SERVICE);
+        assertThat(svc1.getBeauty()).isFalse();
+        assertThat(svc1.getBeautyCompany()).isFalse();
+        assertThat(svc1.getBeautySource()).isEqualTo(Influencer.BEAUTY_SOURCE_CLAUDE);
+        assertThat(svc1.getBeautyJudgedAt()).isEqualTo(NOW);
+        // 인플루언서·회사도 파생 boolean이 기존 규칙과 동일
+        assertThat(inf1.getBeauty()).isTrue();
+        assertThat(inf1.getBeautyCompany()).isFalse();
+        assertThat(com1.getBeauty()).isTrue();
+        assertThat(com1.getBeautyCompany()).isTrue();
+        assertThat(no1.getBeauty()).isFalse();
+    }
 }
