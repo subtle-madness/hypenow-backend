@@ -12,8 +12,9 @@ final class ContentAnalysisWriter {
 
 	/**
 	 * @param conflictIgnore true면 이미 분석된 행은 건너뛴다(백필 재실행 멱등 — 일상 잡은 false).
-	 * @param metricTimeliness 지표 시점 마킹(V33) — 데일리 잡은 'timely'(후보 뷰 가드가 보장),
-	 *        유료 Batch 백필은 'late_backfill'. 어휘는 V33 CHECK가 단일 원천.
+	 * @param metricTimeliness 지표 시점 마킹(V33) — 데일리 잡은 제때 가드 충족 여부로 timely/late_backfill을
+	 *        직접 분기(07-20 개정: 늦크롤도 최근 N개 윈도우 안이면 대상 포함), 유료 Batch 백필은 항상
+	 *        'late_backfill'(정의상 늦크롤). 어휘는 V33 CHECK가 단일 원천.
 	 */
 	static void insert(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
 			Baseline b, ContentAttributes attrs, Synthesis s, boolean conflictIgnore,
