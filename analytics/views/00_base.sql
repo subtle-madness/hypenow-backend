@@ -169,6 +169,35 @@ SELECT
 FROM analytics.v_base_timeline_item t
 JOIN analytics.v_base_content c USING (short_code);
 
+-- 물질화 캐시: v_base_content_snapshot(raw JSON flatten)을 매 쿼리 재계산하지 않도록 주기 갱신본을 담는다.
+-- 소비 뷰(v_base_detail·v_pinned_metrics·v_content_metric_snapshots·v_analysis_candidates)는 이 캐시를 읽어
+-- flatten을 한 번만 계산(REFRESH 시점)한다 — 미러·분석 후보 쿼리가 수 분→초로. 신선도는 refresh 주기.
+-- 갱신: SELECT analytics.refresh_snapshot_cache(); (야간 잡 직전 cron + 필요 시 수동). 컬럼=view와 동일.
+CREATE TABLE IF NOT EXISTS analytics.content_snapshot_cache (
+  id              bigint PRIMARY KEY,
+  content_id      bigint,
+  captured_at     timestamptz,
+  likes           bigint,
+  comments_count  bigint,
+  views           bigint,
+  caption         text,
+  thumbnail_url   text,
+  video_duration  numeric,
+  paid_partnership boolean
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_cache_content_captured
+  ON analytics.content_snapshot_cache (content_id, captured_at);
+
+CREATE OR REPLACE FUNCTION analytics.refresh_snapshot_cache() RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n bigint;
+BEGIN
+  TRUNCATE analytics.content_snapshot_cache;
+  INSERT INTO analytics.content_snapshot_cache
+    SELECT * FROM analytics.v_base_content_snapshot;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $$;
+
 -- 콘텐츠별 최신 스냅샷 1건 (구 v_base_detail 후계). 메타(캡션·썸네일)는 최신 수집분
 -- — 인스타 CDN 서명 URL ~4일 만료 대응(§6). 지표 고정(+3일)은 02 서빙 층 몫.
 CREATE OR REPLACE VIEW analytics.v_base_detail AS
@@ -182,7 +211,7 @@ SELECT DISTINCT ON (content_id)
   thumbnail_url,
   paid_partnership,
   captured_at
-FROM analytics.v_base_content_snapshot
+FROM analytics.content_snapshot_cache
 ORDER BY content_id, captured_at DESC, id DESC;
 
 -- 콘텐츠별 고정(pin) 지표 1건 — 지표의 공통 밑판(v_contents·v_recent_content 공유).
@@ -200,7 +229,7 @@ WITH snap AS (
            (SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)) AS matured,
          (h.likes IS NOT NULL AND h.comments_count IS NOT NULL
           AND (e.content_type <> 'REELS' OR h.views IS NOT NULL)) AS usable
-  FROM analytics.v_base_content_snapshot h
+  FROM analytics.content_snapshot_cache h
   JOIN analytics.v_base_content e USING (content_id)
 )
 -- 우선순위: ① 성숙∧완비 중 가장 이른 것 → ② 완비 중 최신 → ③ 성숙 중 가장 이른 것 → ④ 최신.
