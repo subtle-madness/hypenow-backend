@@ -4,16 +4,23 @@
 -- hype_score 산식 (스펙 5.4, 2026-07-15 API 스펙 정렬 — 구 원값 방식(릴스=조회수, 피드=좋아요+댓글) 폐기).
 -- 결과 0~100. 두 서빙 뷰(v_contents·v_content_metric_snapshots)가 공유 — 신선도 기준 시각만 호출부가 정한다.
 --   릴스: score = round(cbrt(reach × engage × fresh) × 100)
---     reach  = LEAST(ln(1 + views/(followers+1000)) / ln(31), 1)
---     engage = LEAST(LEAST((likes + comments×3)/views, 0.5) / 0.12, 1)
---   피드(views 항상 NULL): er = (likes + comments×3)/(followers+1000), axis = LEAST(LEAST(er, 0.3)/0.10, 1)
+--     reach  = LEAST(ln(1 + views/(followers+1000)) / ln(1 + reach_mult), 1)      -- 조회가 팔로워의 reach_mult배면 만점
+--     engage = LEAST(LEAST((likes + comments×3)/views, 0.5) / engage_target, 1)   -- 조회 대비 참여율이 engage_target면 만점
+--   피드(views 항상 NULL): axis = LEAST(LEAST((likes+comments×3)/(followers+1000), 0.3) / feed_target, 1)
 --     score = round(cbrt(axis² × fresh) × 100) — 축 제곱으로 릴스(3축 곱)와 스케일 균형.
---   fresh = 0.5 ^ (경과일/7) — elapsed_days는 호출부가 계산해 넘기고, 음수 클램프는 함수 안(GREATEST 0).
+--   fresh = 0.5 ^ (경과일/halflife). elapsed_days는 호출부가 계산해 넘기고, 음수 클램프는 함수 안(GREATEST 0).
+-- 튜닝 상수 4종은 호출부가 app_setting에서 읽어 넘기고, 미설정(NULL)·오설정(0)이면 함수가 기본값 적용(기본값 단일 소스):
+--   halflife_days  'analytics.hype-fresh-halflife-days'  기본 14    — 신선도 반감기(일). ↑ = 오래된 콘텐츠 점수 유지
+--   reach_mult     'analytics.hype-reach-target-mult'    기본 3     — 조회수/(팔로워+1000) 이 배수면 reach 만점. ↓ = 점수 ↑
+--   engage_target  'analytics.hype-engage-target'        기본 0.04  — 릴스 조회 대비 참여율 만점 기준. ↓ = 점수 ↑
+--   feed_target    'analytics.hype-feed-engage-target'   기본 0.035 — 피드 팔로워 대비 참여율 만점 기준. ↓ = 점수 ↑
+--   (2026-07-20 재보정: 분석 집합 실측으로 30배/12%/10% → 3배/4%/3.5%, 중앙값 21→40 — ARCHITECTURE §7)
 -- NULL 규칙: 릴스인데 views NULL → NULL, likes·comments 중 NULL → NULL (피드 조회수 항상 NULL — CLAUDE.md 함정).
 --   LEAST/GREATEST는 NULL 인자를 무시해 NULL이 전파되지 않으므로 명시 가드가 필수다.
 CREATE OR REPLACE FUNCTION analytics.hype_score(
   content_type text, views bigint, likes bigint, comments bigint,
-  followers bigint, elapsed_days numeric
+  followers bigint, elapsed_days numeric, halflife_days numeric,
+  reach_mult numeric, engage_target numeric, feed_target numeric
 ) RETURNS bigint
 LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
@@ -21,15 +28,17 @@ LANGUAGE sql IMMUTABLE AS $$
          OR (content_type = 'reels' AND views IS NULL) THEN NULL
     WHEN content_type = 'reels' THEN
       round(power(
-        LEAST(ln(1 + views::numeric / (COALESCE(followers, 0) + 1000)) / ln(31), 1)
-        * LEAST(LEAST((likes + comments * 3)::numeric / NULLIF(views, 0), 0.5) / 0.12, 1)
-        * power(0.5, GREATEST(elapsed_days, 0) / 7.0),
+        LEAST(ln(1 + views::numeric / (COALESCE(followers, 0) + 1000))
+              / ln(1 + COALESCE(NULLIF(reach_mult, 0), 3)), 1)
+        * LEAST(LEAST((likes + comments * 3)::numeric / NULLIF(views, 0), 0.5)
+              / COALESCE(NULLIF(engage_target, 0), 0.04), 1)
+        * power(0.5, GREATEST(elapsed_days, 0) / COALESCE(NULLIF(halflife_days, 0), 14)),
         1.0 / 3.0) * 100)::bigint
     ELSE
       round(power(
-        power(LEAST(LEAST((likes + comments * 3)::numeric
-                          / (COALESCE(followers, 0) + 1000), 0.3) / 0.10, 1), 2)
-        * power(0.5, GREATEST(elapsed_days, 0) / 7.0),
+        power(LEAST(LEAST((likes + comments * 3)::numeric / (COALESCE(followers, 0) + 1000), 0.3)
+              / COALESCE(NULLIF(feed_target, 0), 0.035), 1), 2)
+        * power(0.5, GREATEST(elapsed_days, 0) / COALESCE(NULLIF(halflife_days, 0), 14)),
         1.0 / 3.0) * 100)::bigint
   END
 $$;
@@ -76,7 +85,11 @@ SELECT
   p.likes,
   p.comments_count AS comments,
   analytics.hype_score(lower(e.content_type), p.views, p.likes, p.comments_count, pr.followers,
-                       extract(epoch FROM (now() - e.uploaded_at)) / 86400.0) AS hype_score,
+                       extract(epoch FROM (now() - e.uploaded_at)) / 86400.0,
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-fresh-halflife-days'),
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-reach-target-mult'),
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-engage-target'),
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-feed-engage-target')) AS hype_score,
   p.captured_at AS metric_captured_at
 FROM analytics.v_serving_content e
 JOIN analytics.v_base_detail d USING (content_id)
@@ -108,7 +121,17 @@ SELECT
   h.likes,
   h.comments_count AS comments,
   analytics.hype_score(lower(e.content_type), h.views, h.likes, h.comments_count, pr.followers,
-                       extract(epoch FROM (h.captured_at - e.uploaded_at)) / 86400.0) AS hype_score
+                       extract(epoch FROM (h.captured_at - e.uploaded_at)) / 86400.0,
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-fresh-halflife-days'),
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-reach-target-mult'),
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-engage-target'),
+                       (SELECT value::numeric FROM app_setting WHERE key = 'analytics.hype-feed-engage-target')) AS hype_score
 FROM analytics.v_base_content_snapshot h
 JOIN analytics.v_serving_content e USING (content_id)
 LEFT JOIN analytics.v_base_profile pr ON pr.username = e.owner_username;
+
+-- 구 hype_score 시그니처 정리(멱등). 인자 추가는 CREATE OR REPLACE가 교체 못 하고 오버로드를 남긴다 —
+-- 위 두 뷰를 신(10-인자)로 재정의한 뒤라 구 함수 의존성이 끊겨 CASCADE 없이 드롭된다(신 DB에선 no-op).
+-- 6-인자=운영 배포본, 7-인자=반감기 중간본(로컬만) 둘 다 정리.
+DROP FUNCTION IF EXISTS analytics.hype_score(text, bigint, bigint, bigint, bigint, numeric);
+DROP FUNCTION IF EXISTS analytics.hype_score(text, bigint, bigint, bigint, bigint, numeric, numeric);
