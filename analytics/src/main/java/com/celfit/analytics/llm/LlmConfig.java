@@ -3,6 +3,8 @@ package com.celfit.analytics.llm;
 import com.anthropic.client.AnthropicClient;
 import com.celfit.analytics.config.AnalyticsSettings;
 import javax.sql.DataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -24,6 +26,16 @@ import org.springframework.context.annotation.Lazy;
 @ConditionalOnExpression("${analytics.classify-on-startup:false} or ${analytics.analyze-on-startup:false}"
 		+ " or ${analytics.account-analyze-on-startup:false} or ${analytics.admin-enabled:false}")
 public class LlmConfig {
+
+	private static final Logger log = LoggerFactory.getLogger(LlmConfig.class);
+
+	/**
+	 * Vertex를 실제로 쓸지 판정 — provider=vertex이고 SA 키가 존재할 때만. provider=vertex인데
+	 * 키가 없으면(크레딧 소진·무설정 로컬·CI) gemini로 폴백하려고 false. 순수 함수라 단위 테스트 대상.
+	 */
+	static boolean useVertex(String provider, boolean credentialsPresent) {
+		return "vertex".equals(provider) && credentialsPresent;
+	}
 
 	@Bean
 	@Lazy
@@ -47,8 +59,13 @@ public class LlmConfig {
 	@Bean
 	@Lazy
 	public GeminiApi geminiApi(AnalyticsSettings settings) {
-		if ("vertex".equals(settings.llmProvider())) {
+		String provider = settings.llmProvider();
+		if (useVertex(provider, VertexTokenProvider.credentialsPresent())) {
 			return VertexHttpApi.fromEnv(settings); // SA 토큰 + app_setting 프로젝트/버킷
+		}
+		if ("vertex".equals(provider)) {
+			// baseline은 vertex지만 SA 키가 없다 — 죽이지 않고 무료 gemini로 폴백(크레딧 소진·무설정 로컬 안전).
+			log.warn("provider=vertex인데 GOOGLE_APPLICATION_CREDENTIALS 미설정 — gemini로 폴백");
 		}
 		return GeminiHttpApi.fromEnv(settings.geminiRpm()); // GEMINI_API_KEY (무료 프로젝트)
 	}
