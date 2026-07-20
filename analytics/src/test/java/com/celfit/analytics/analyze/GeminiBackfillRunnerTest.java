@@ -111,17 +111,32 @@ class GeminiBackfillRunnerTest {
 				    recent12_avg_comment_count numeric, category_top_percentile smallint,
 				    category_avg_views numeric, category_sample_size bigint, captured_at timestamptz)""");
 		db.update("CREATE VIEW analytics.v_analysis_baseline AS SELECT * FROM analytics.baseline_fixture");
-		// timely: bf_a=제때 크롤(true), bf_b=윈도우 경로로만 들어온 늦크롤(false) — 마킹 분기 검증용
+		// 계정 평균 뷰(account_handle 키) — 실제로는 v_analysis_baseline의 계정 컬럼과 동치. 최근창 밖 후보의 앵커.
+		db.update("""
+				CREATE TABLE analytics.account_baseline_fixture (
+				    account_handle text PRIMARY KEY, recent_reels_avg_views numeric,
+				    recent_reels_count bigint, recent_contents_count bigint,
+				    recent12_avg_engagement_rate numeric, recent12_avg_like_count numeric,
+				    recent12_avg_comment_count numeric, category_top_percentile smallint,
+				    category_avg_views numeric, category_sample_size bigint)""");
+		db.update("CREATE VIEW analytics.v_analysis_account_baseline AS SELECT * FROM analytics.account_baseline_fixture");
+		// timely: bf_a=제때 크롤(true), bf_b=윈도우 경로로만 들어온 늦크롤(false), bf_out=최근창 밖
+		// 성숙분(제때 크롤 true) — V33 마킹 분기(#85)와 계정 평균 앵커(#79 재통합)를 동시 검증한다.
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
 				  ('bf_a', 'reels', 'acct1', now() - interval '10 days', '캡션A', NULL, 10000, 9000, 500, 50, now(), true),
 				  ('bf_b', 'feed', 'acct1', now() - interval '9 days', NULL, NULL, 10000, NULL, 300, 30, now(), false),
-				  ('bf_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now(), true)""");
+				  ('bf_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now(), true),
+				  ('bf_out', 'reels', 'acct1', now() - interval '11 days', '캡션OUT', NULL, 10000, 6000, 400, 40, now(), true)""");
 		db.update("""
 				INSERT INTO analytics.baseline_fixture VALUES
 				  ('bf_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3, now()),
 				  ('bf_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3, now()),
 				  ('bf_done', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3, now())""");
+		// bf_out은 후보엔 있지만 콘텐츠 키 기준선엔 없음(최근창 밖) — 계정 평균만 붙는다
+		db.update("""
+				INSERT INTO analytics.account_baseline_fixture VALUES
+				  ('acct1', 9000, 2, 3, 0.0496, 940, 61, 67, 19333, 3)""");
 		// bf_done은 이미 분석됨 — submit 대상에서 제외돼야 한다
 		db.update("""
 				INSERT INTO content_analyses (short_code, model, ai_content_summary)
@@ -129,14 +144,14 @@ class GeminiBackfillRunnerTest {
 	}
 
 	@Test
-	void submit은_미분석_후보만_JSONL로_만들고_배치를_생성한다() {
+	void submit은_미분석_후보만_JSONL로_만들고_배치를_생성한다() throws Exception {
 		String batchName = runner().submit();
 
 		assertEquals("batches/b1", batchName);
 		assertEquals(1, uploads.size());
 		String jsonl = new String(uploads.get(0), StandardCharsets.UTF_8);
 		String[] lines = jsonl.strip().split("\n");
-		assertEquals(2, lines.length); // bf_a, bf_b — bf_done 제외
+		assertEquals(3, lines.length); // bf_a, bf_b, bf_out — bf_done(분석됨) 제외
 		JsonNode first = om.readTree(lines[0]);
 		assertEquals("bf_a", first.path("key").asString());
 		assertTrue(first.path("request").path("generationConfig").path("responseSchema").has("type"));
@@ -147,6 +162,17 @@ class GeminiBackfillRunnerTest {
 		// 모델은 설정 기본값, 입력 파일은 업로드 결과
 		assertEquals(List.of("gemini-3.1-flash-lite|files/f1"), createdBatches);
 		assertTrue(Files.exists(workDir.resolve("backfill-sidecar.jsonl")));
+
+		// 최근창 밖 후보(bf_out) — 계정 평균은 앵커로 실리고 rank는 null (07-20 스코프 확장)
+		JsonNode sidecarOut = null;
+		for (String s : Files.readAllLines(workDir.resolve("backfill-sidecar.jsonl"))) {
+			JsonNode n = om.readTree(s);
+			if (n.path("short_code").asString().equals("bf_out")) {
+				sidecarOut = n;
+			}
+		}
+		assertEquals("9000", sidecarOut.path("recent_reels_avg_views").asString()); // 계정 평균 앵커
+		assertTrue(sidecarOut.path("rank_in_recent_reels").isNull()); // 최근창 밖 → rank 없음
 	}
 
 	@Test
