@@ -88,6 +88,26 @@ class AnthropicContentAttributeAnalyzerTest {
 	}
 
 	@Test
+	void 비뷰티_콘텐츠는_유효_대분류를_반환해도_main이_null이_된다() {
+		// isBeauty=false인데 LLM이 유효 대분류(skincare)를 직접 줌 → 생산자가 null로 확정(비뷰티 불변식)
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
+						List.of(), "skincare", List.of("스킨"), List.of(), "organic", false), TAXONOMY);
+
+		assertNull(sanitized.mainCategory());
+	}
+
+	@Test
+	void 비뷰티_콘텐츠는_서브라벨로_역유도되지_않는다() {
+		// isBeauty=false + 유효 서브라벨(샴푸/스케일러) → 역유도해도 비뷰티라 main은 null 유지
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음", List.of(), List.of(),
+						List.of(), null, List.of("샴푸/스케일러"), List.of(), "organic", false), TAXONOMY);
+
+		assertNull(sanitized.mainCategory());
+	}
+
+	@Test
 	void 분류표_밖_라벨은_배열에서_제거된다() {
 		// sub_categories는 중분류+소분류 어휘, product 카테고리는 소분류 어휘, 유통사는 올리브영/다이소 고정
 		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(

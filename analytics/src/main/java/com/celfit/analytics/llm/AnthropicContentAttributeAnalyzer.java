@@ -137,6 +137,7 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 	 * LLM이 어휘 밖 값을 지어낸 경우 제거한다 — 스칼라는 null로, 배열은 어휘 밖 원소만 걸러낸다
 	 * (was가 verbatim 매칭하므로 어휘 밖 라벨은 필터에 안 잡히는 노이즈).
 	 * 단 mainCategory는 어휘 밖이면 유효 서브라벨로 역유도 복구한다(드랍 아님).
+	 * 비뷰티(isBeauty≠true)면 대분류를 확정하지 않는다(생산자 불변식).
 	 * detectedBrands·detectedProducts는 자유 텍스트라 통과. Synthesis의 등급 방어와 대칭.
 	 */
 	static ContentAttributes sanitize(ContentAttributes raw, BeautyTaxonomy taxonomy) {
@@ -153,6 +154,12 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				signal.addAll(prodCats);
 			}
 			main = taxonomy.deriveMain(signal);
+		}
+		// 비뷰티(isBeauty≠true)는 대분류를 확정하지 않는다 — "main_category 있음 ⇒ 뷰티" 불변식을
+		// 생산자에서 보장해, main_category만 읽는 소비처(카테고리 믹스 등)가 별도 필터 없이 비뷰티를
+		// 자동 제외하게 한다. (설계 §3-4)
+		if (!Boolean.TRUE.equals(raw.isBeauty())) {
+			main = null;
 		}
 		return new ContentAttributes(
 				raw.detectedBrands(),
