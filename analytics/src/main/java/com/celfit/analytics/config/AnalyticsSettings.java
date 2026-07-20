@@ -32,7 +32,8 @@ public class AnalyticsSettings {
 	/** Gemini 분당 호출 상한 — 무료 티어 15 RPM. crawler 판정과 동시 실행 시 합산 초과 주의. */
 	public static final String KEY_GEMINI_RPM = "analytics.gemini-rpm";
 
-	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
+	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
+	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_BATCH_LIMIT = 10;
 	static final int DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS = 7;
