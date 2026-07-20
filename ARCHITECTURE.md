@@ -235,9 +235,9 @@ v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서
 
 | # | 태스크 | 내용 | 의존 | 상태 |
 |---|---|---|---|---|
-| CB1 | 배치 1회용 가입 코드 | V8 `signup_codes`(채널별 발급) + 가입 트랜잭션 원자 선점(SignupService) + `POST /v1/auth/signup-code/verify`(관문 사전 검증) + 단일 공용 코드(app_setting) 즉시 폐기 + 코드 생성 스크립트(deploy/scripts) | — | ✅ ([PR #53](https://github.com/subtle-madness/hypenow-backend/pull/53) 머지 대기) |
-| CB2 | 가입 필드 경량화 | V9 — 선택 필드 6종 NULL 허용·기본값 제거 + `usage_purpose`(대행사) + validator optionalIn. **머지·배포 후 프론트 호환 모드 기본값 제거 통지 필수** | CB1(스택) | ✅ ([PR #54](https://github.com/subtle-madness/hypenow-backend/pull/54) 머지 대기) |
-| CB3 | 도입문의 API | V10 `inquiries`(uuid PK) + `POST /v1/inquiries`(Public, IP 분당 2회) — 운영자 확인은 DB 조회, Resend 알림은 후속 옵션 | CB2(스택 — V 번호 순서) | ✅ ([PR #56](https://github.com/subtle-madness/hypenow-backend/pull/56) 머지 대기) |
+| CB1 | 배치 1회용 가입 코드 | V8 `signup_codes`(채널별 발급) + 가입 트랜잭션 원자 선점(SignupService) + `POST /v1/auth/signup-code/verify`(관문 사전 검증) + 단일 공용 코드(app_setting) 즉시 폐기 + 코드 생성 스크립트(deploy/scripts) | — | ✅ ([PR #53](https://github.com/subtle-madness/hypenow-backend/pull/53) 머지 완료 07-19) |
+| CB2 | 가입 필드 경량화 | V9 — 선택 필드 6종 NULL 허용·기본값 제거 + `usage_purpose`(대행사) + validator optionalIn. **머지·배포 후 프론트 호환 모드 기본값 제거 통지 필수** | CB1(스택) | ✅ ([PR #54](https://github.com/subtle-madness/hypenow-backend/pull/54) 머지 완료 07-19) |
+| CB3 | 도입문의 API | V10 `inquiries`(uuid PK) + `POST /v1/inquiries`(Public, IP 분당 2회) — 운영자 확인은 DB 조회, Resend 알림은 후속 옵션 | CB2(스택 — V 번호 순서) | ✅ ([PR #56](https://github.com/subtle-madness/hypenow-backend/pull/56) 머지 완료 07-19) |
 
 두 트랙 전 태스크 완료(07-17). 남은 작업은 §8 미결과 프론트 REST 전환 연동(celfit-front은 아직
 Drizzle/메모리 모드 — seam만 준비됨).
