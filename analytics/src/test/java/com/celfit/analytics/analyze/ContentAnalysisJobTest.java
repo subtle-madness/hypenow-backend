@@ -102,13 +102,36 @@ class ContentAnalysisJobTest {
 				  ('post_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3, timestamptz '2026-06-07 09:00:00+09'),
 				  ('post_c', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3, timestamptz '2026-06-06 09:00:00+09')""");
 
+		// 계정 평균 뷰(account_handle 키, rank·captured_at 없음) — 최근창 밖 후보에 붙일 앵커 (07-20 스코프 확장).
+		// short_code 기준선과 값이 달라야 폴백 경로가 계정 뷰를 쓴 것이 검증된다 (avg_views 8000 vs post_a 9000).
+		db.update("""
+				CREATE TABLE analytics.account_baseline_fixture (
+				    account_handle               text PRIMARY KEY,
+				    recent_reels_avg_views       numeric,
+				    recent_reels_count           bigint,
+				    recent_contents_count        bigint,
+				    recent12_avg_engagement_rate numeric,
+				    recent12_avg_like_count      numeric,
+				    recent12_avg_comment_count   numeric,
+				    category_top_percentile      smallint,
+				    category_avg_views           numeric,
+				    category_sample_size         bigint
+				)""");
+		db.update("""
+				CREATE VIEW analytics.v_analysis_account_baseline AS SELECT * FROM analytics.account_baseline_fixture""");
+		db.update("""
+				INSERT INTO analytics.account_baseline_fixture VALUES
+				  ('acct1', 8000, 2, 3, 0.045, 800, 55, NULL, NULL, NULL)""");
+
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
 		// metric_captured_at = 게시 +3.5일 — 제때(+pin 3일 근방) 크롤돼 고정 지표가 성립한 정상 케이스
+		// metric_captured_at은 셋 다 제때창 [posted+3d, posted+5d) 안이되 서로 다르게 — 수집 최신순
+		// 정렬(ORDER BY metric_captured_at DESC)이 post_b를 먼저 뽑는지 검증하기 위함 (b가 가장 최신).
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments) VALUES
-				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 11000, 520, 52),
-				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 12 hours', NULL, 2000, 100),
+				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 18 hours', 11000, 520, 52),
+				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 6 hours', NULL, 2000, 100),
 				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 7000, 300, 30)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count) VALUES
@@ -293,28 +316,34 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 기준선_없는_콘텐츠는_대상에서_제외되고_배치_슬롯을_잠식하지_않는다() {
-		// 윈도우 밖 콘텐츠 재현: contents에는 있지만 기준선 뷰에는 없는 short_code (분류 완료 상태).
-		// 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
+	void 최근창_밖_콘텐츠는_계정_평균을_앵커로_분석된다() {
+		// 07-20 스코프 확장: 다작 계정의 최근창 밖 성숙분 재현 — contents엔 있고 제때 크롤됐지만
+		// 콘텐츠 키 기준선(v_analysis_baseline)엔 없는 short_code. 예전엔 배치 슬롯 잠식 방지로 제외했으나,
+		// 이제 계정 평균(v_analysis_account_baseline)을 앵커로 붙여 분석한다 (rank만 null).
 		db.update("""
-				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, views, likes, comments)
-				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', 5000, 100, 10)""");
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments)
+				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 20 hours', 5000, 100, 10)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
 				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
 		db.update("""
 				INSERT INTO comment_classifications (id, short_code, ai_category, model)
 				VALUES (10, 'post_0', 'positive', 'claude-test')""");
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
 
 		int processed = job.run().processed();
 
-		assertEquals(1, processed); // 기준선 있는 콘텐츠(수집 최신순 첫 대상 post_b)가 슬롯을 차지한다
-		assertEquals(0L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_0'", Long.class));
-		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
-		assertEquals(1L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
+		assertEquals(3, processed); // post_a, post_b (최근창 안) + post_0 (최근창 밖, 계정 평균 앵커)
+		assertTrue(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
+		// 계정 평균이 저장된다 — short_code 기준선(post_a=9000)이 아닌 계정 뷰 값(8000), rank는 null
+		assertEquals(8000L, db.queryForObject(
+				"SELECT recent_reels_avg_views FROM content_analyses WHERE short_code = 'post_0'", Long.class));
+		assertNull(db.queryForObject(
+				"SELECT rank_in_recent_reels FROM content_analyses WHERE short_code = 'post_0'", Integer.class));
+		// 프롬프트에도 계정 평균이 앵커로 실린다 (aiContentSummary의 '계정 평균 대비' 근거)
+		ContentToAnalyze callFor0 = insightCalls.stream()
+				.filter(c -> c.shortCode().equals("post_0")).findFirst().orElseThrow();
+		assertEquals(8000L, ((Number) callFor0.baseline().get("recent_reels_avg_views")).longValue());
+		assertNull(callFor0.baseline().get("rank_in_recent_reels"));
 	}
 
 	@Test
