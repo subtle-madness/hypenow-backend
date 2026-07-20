@@ -45,7 +45,8 @@ services:
       retries: 5
 
   # 분석 상주 서버(8082 어드민 /ui) — raw(postgres-raw) 읽기 → analysis(postgres) 쓰기.
-  # 외부 미노출(루프백) — 어드민 접근은 SSH 터널(ssh -L 8082:localhost:8082). LLM은 Gemini 무료 키.
+  # 외부 미노출(루프백) — 어드민 접근은 SSH 터널(ssh -L 8082:localhost:8082).
+  # LLM: app_setting analytics.llm-provider로 선택 — gemini(무료 키) | vertex(SA 키, 07-20 전환).
   analytics:
     image: ghcr.io/subtle-madness/hypenow-analytics:latest
     restart: unless-stopped
@@ -58,12 +59,16 @@ services:
       APP_DATASOURCE_ANALYSIS_USERNAME: ${DB_USER}
       APP_DATASOURCE_ANALYSIS_PASSWORD: ${DB_PASSWORD}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Vertex SA 키 — provider=vertex일 때만 읽힘(빈 생성 시점), 파일은 secrets/ 볼륨
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
       # 스케줄(KST=UTC+9): 미러 04:30 → 분석 05:00 → 계정 카피 07:00 (백업 04:10 이후)
       ANALYTICS_SCHEDULE_ENABLED: "true"
       ANALYTICS_SCHEDULE_MIRROR_CRON: "0 30 19 * * *"
       ANALYTICS_SCHEDULE_ANALYZE_CRON: "0 0 20 * * *"
       ANALYTICS_SCHEDULE_ACCOUNT_ANALYZE_CRON: "0 0 22 * * *"
       JAVA_OPTS: "-Xms256m -Xmx768m"
+    volumes:
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     ports:
       - "127.0.0.1:8082:8082"   # 루프백 전용 — 어드민은 SSH 터널로만
     depends_on:

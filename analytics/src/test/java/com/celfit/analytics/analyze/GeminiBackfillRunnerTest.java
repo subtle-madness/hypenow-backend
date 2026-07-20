@@ -100,7 +100,8 @@ class GeminiBackfillRunnerTest {
 				CREATE TABLE analytics.candidates_fixture (
 				    short_code text PRIMARY KEY, content_type text, account_handle text,
 				    uploaded_at timestamptz, caption text, thumbnail_url text, followers bigint,
-				    views bigint, likes bigint, comments bigint, metric_captured_at timestamptz)""");
+				    views bigint, likes bigint, comments bigint, metric_captured_at timestamptz,
+				    timely boolean)""");
 		db.update("CREATE VIEW analytics.v_analysis_candidates AS SELECT * FROM analytics.candidates_fixture");
 		db.update("""
 				CREATE TABLE analytics.baseline_fixture (
@@ -110,11 +111,12 @@ class GeminiBackfillRunnerTest {
 				    recent12_avg_comment_count numeric, category_top_percentile smallint,
 				    category_avg_views numeric, category_sample_size bigint, captured_at timestamptz)""");
 		db.update("CREATE VIEW analytics.v_analysis_baseline AS SELECT * FROM analytics.baseline_fixture");
+		// timely: bf_a=제때 크롤(true), bf_b=윈도우 경로로만 들어온 늦크롤(false) — 마킹 분기 검증용
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('bf_a', 'reels', 'acct1', now() - interval '10 days', '캡션A', NULL, 10000, 9000, 500, 50, now()),
-				  ('bf_b', 'feed', 'acct1', now() - interval '9 days', NULL, NULL, 10000, NULL, 300, 30, now()),
-				  ('bf_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now())""");
+				  ('bf_a', 'reels', 'acct1', now() - interval '10 days', '캡션A', NULL, 10000, 9000, 500, 50, now(), true),
+				  ('bf_b', 'feed', 'acct1', now() - interval '9 days', NULL, NULL, 10000, NULL, 300, 30, now(), false),
+				  ('bf_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now(), true)""");
 		db.update("""
 				INSERT INTO analytics.baseline_fixture VALUES
 				  ('bf_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3, now()),
@@ -137,8 +139,8 @@ class GeminiBackfillRunnerTest {
 		assertEquals(2, lines.length); // bf_a, bf_b — bf_done 제외
 		JsonNode first = om.readTree(lines[0]);
 		assertEquals("bf_a", first.path("key").asString());
-		assertTrue(first.path("request").path("generation_config").path("response_schema").has("type"));
-		assertTrue(first.path("request").path("system_instruction").path("parts").get(0)
+		assertTrue(first.path("request").path("generationConfig").path("responseSchema").has("type"));
+		assertTrue(first.path("request").path("systemInstruction").path("parts").get(0)
 				.path("text").asString().contains("[파트 B 절제 규칙 — 반드시 지켜라]"));
 		assertTrue(first.path("request").path("contents").get(0).path("parts").get(0)
 				.path("text").asString().contains("캡션A"));
@@ -171,10 +173,44 @@ class GeminiBackfillRunnerTest {
 				"SELECT main_category FROM content_analyses WHERE short_code = 'bf_b'", String.class));
 		assertEquals("평균 수준", db.queryForObject(
 				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'bf_b'", String.class));
+		// 마킹은 사이드카에 실린 뷰의 timely 판정을 승계(07-20 개정) — bf_a=timely, bf_b=late_backfill
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'bf_a'", String.class));
+		assertEquals("late_backfill", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'bf_b'", String.class));
 
 		// 재실행 멱등 — ON CONFLICT DO NOTHING이라 행 수·내용 불변
 		runner().collect("batches/b1");
 		assertEquals(3L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void collect는_구버전_사이드카에_timely_키가_없으면_late_backfill로_폴백한다() throws java.io.IOException {
+		// timely 컬럼 도입(07-20) 이전에 만들어진 사이드카를 흉내 — timely 키가 아예 없다
+		tools.jackson.databind.node.ObjectNode oldSidecarLine = om.createObjectNode();
+		oldSidecarLine.put("short_code", "bf_a");
+		oldSidecarLine.put("recent_reels_avg_views", "9000");
+		oldSidecarLine.put("rank_in_recent_reels", "1");
+		oldSidecarLine.put("recent_reels_count", "2");
+		oldSidecarLine.put("recent_contents_count", "3");
+		oldSidecarLine.put("recent12_avg_engagement_rate", "0.0496");
+		oldSidecarLine.put("recent12_avg_like_count", "940");
+		oldSidecarLine.put("recent12_avg_comment_count", "61");
+		oldSidecarLine.put("category_top_percentile", "67");
+		oldSidecarLine.put("category_avg_views", "19333");
+		oldSidecarLine.put("category_sample_size", "3");
+		oldSidecarLine.put("caption", "캡션A");
+		Files.createDirectories(workDir);
+		Files.writeString(workDir.resolve("backfill-sidecar.jsonl"), om.writeValueAsString(oldSidecarLine) + "\n");
+		resultJsonl = """
+				{"key":"bf_a","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(INSIGHT_JSON));
+
+		int saved = runner().collect("batches/b1");
+
+		assertEquals(1, saved);
+		assertEquals("late_backfill", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'bf_a'", String.class));
 	}
 
 	@Test
@@ -203,5 +239,91 @@ class GeminiBackfillRunnerTest {
 
 		assertEquals(-1, pending.collect("batches/b1"));
 		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void Vertex_형식_결과라인은_에코_첫줄에서_short_code를_복원한다() {
+		runner().submit();
+		// Vertex 출력엔 key가 없다 — request 에코 첫 줄(GeminiContentAnalyzer.userText 포맷)에서 복원
+		String echoText = """
+				콘텐츠: bf_a (@acct1, reels)
+				캡션: 캡션A
+				지표: views=9000 likes=500 comments=50
+				계정 기준선: {}
+				댓글 분류 분포: {}
+
+				위 콘텐츠를 분석하라.""";
+		// downloadFile 결과는 줄 단위(JSONL)라 한 결과 라인은 물리적으로 한 줄이어야 한다 —
+		// 텍스트 블록 대신 ObjectMapper로 조립해 개행이 섞이지 않게 한다.
+		tools.jackson.databind.node.ObjectNode line = om.createObjectNode();
+		line.put("status", "");
+		tools.jackson.databind.node.ObjectNode request = line.putObject("request");
+		request.putArray("contents").addObject().put("role", "user").putArray("parts")
+				.addObject().put("text", echoText);
+		line.putObject("response").putArray("candidates").addObject().putObject("content")
+				.putArray("parts").addObject().put("text", INSIGHT_JSON);
+		resultJsonl = om.writeValueAsString(line);
+
+		int saved = runner().collect("batches/b1");
+
+		assertEquals(1, saved);
+		assertEquals("평균 수준", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'bf_a'", String.class));
+	}
+
+	@Test
+	void Vertex_실패라인은_status가_있으면_실패로_센다() {
+		runner().submit();
+		// response는 정상 저장 가능한 유효 인사이트 — status만 비어있지 않으면 그 자체로 실패여야 한다.
+		// (response를 빈 객체로 두면 이후 text.isMissingNode() 경로도 같은 결과를 내 status 분기가
+		//  vacuous하게 통과한다 — 리뷰 지적 반영)
+		tools.jackson.databind.node.ObjectNode line = om.createObjectNode();
+		line.put("status", "INTERNAL");
+		line.put("key", "bf_a");
+		line.putObject("response").putArray("candidates").addObject().putObject("content")
+				.putArray("parts").addObject().put("text", INSIGHT_JSON);
+		resultJsonl = om.writeValueAsString(line);
+
+		int saved = runner().collect("batches/b1");
+
+		assertEquals(0, saved);
+		// bf_done은 setUp에서 이미 적재된 기존 행 — status 분기가 없다면 이 라인은 정상 저장돼
+		// count가 2로 늘었을 것 (bf_a는 사이드카에 있고 response도 유효하므로)
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void 잡_응답의_outputInfo_gcsOutputDirectory를_결과_위치로_쓴다() {
+		runner().submit(); // 사이드카만 필요 — 결과 다운로드 fake는 아래서 별도 구성
+
+		List<String> downloadedFiles = new java.util.ArrayList<>();
+		GeminiBackfillRunner vertexRunner = new GeminiBackfillRunner(db, ds, new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				return "files/f1";
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				return "batches/b1";
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				return """
+						{"name":"batches/b1","state":"JOB_STATE_SUCCEEDED",
+						 "outputInfo":{"gcsOutputDirectory":"gs://b/output/backfill/job-1"}}""";
+			}
+
+			@Override
+			public String downloadFile(String fileName) {
+				downloadedFiles.add(fileName);
+				return "";
+			}
+		}, new AnalyticsSettings(db), new BeautyTaxonomyLoader(ds), workDir);
+
+		vertexRunner.collect("batches/b1");
+
+		assertEquals(List.of("gs://b/output/backfill/job-1"), downloadedFiles);
 	}
 }
