@@ -65,9 +65,11 @@ class AccountAnalysisJobTest {
 				  organic_avg, ad_avg, last_posted_at) VALUES
 				  ('acct_ad',   10000, 6, 6, 'views', 13500, 15000, timestamptz '2026-07-01 09:00:00+09'),
 				  ('acct_noad',  8000, 4, 4, 'views', 10375, NULL,  timestamptz '2026-07-02 09:00:00+09')""");
+		// 카테고리 믹스는 테이블이 아니라 파생 뷰다(V35) — 캡션 분류를 심으면 뷰가 집계해 준다.
 		db.update("""
-				INSERT INTO account_category_stats (account_handle, main_group, content_count) VALUES
-				  ('acct_ad', 'B', 6), ('acct_noad', 'B', 4)""");
+				INSERT INTO content_analyses (short_code, model, main_category, is_beauty) VALUES
+				  ('p1', 'test', 'makeup', true), ('p2', 'test', 'makeup', true),
+				  ('p3', 'test', 'skincare', true)""");
 		db.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
 				  views, likes, comments, sponsored) VALUES
