@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.mirror.MirrorRegistry;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -53,6 +54,9 @@ class AdminUiControllerTest {
 	@MockitoBean
 	AnalyticsSettings settings;
 
+	@MockitoBean
+	MirrorRegistry mirrorRegistry;
+
 	/** 운영 실측 규모의 퍼널 — 수집 2.7만 → 후보 1,914, 분석 431(매일 57·백필 300·기타 74). */
 	private static PipelineStatsService.Funnel funnel(long candidates, long timelyExcluded) {
 		return funnel(candidates, timelyExcluded, null);
@@ -70,6 +74,7 @@ class AdminUiControllerTest {
 	void stubDefaults() {
 		// 진행 스냅샷은 레코드라 Mockito 기본이 null — 카드 조립 NPE 방지용 EMPTY 스텁.
 		when(progress.snapshot(any())).thenReturn(new JobProgressRegistry.Progress(false, 0, 0, 0, null));
+		when(mirrorRegistry.specs()).thenReturn(java.util.Collections.nCopies(7, null));
 		when(settings.llmProvider()).thenReturn("vertex");
 		when(settings.activeLlmModel()).thenReturn("gemini-3.1-flash-lite");
 		when(stats.health()).thenReturn(new PipelineStatsService.Health(120, 4,
@@ -178,7 +183,29 @@ class AdminUiControllerTest {
 				.andExpect(content().string(Matchers.containsString("백필(상세 전용) 300 별도")))
 				// 계정 카피 — 완료 77 / 뷰티 1,496 · 대상 12
 				.andExpect(content().string(Matchers.containsString("완료 77 / 뷰티 1,496")))
-				.andExpect(content().string(Matchers.containsString("대상 12")));
+				.andExpect(content().string(Matchers.containsString("대상 12")))
+				// 미러도 "몇 개를 옮겼는지" 보여야 한다 (대상 뷰 수 · 적재 결과)
+				.andExpect(content().string(Matchers.containsString("대상 7개 뷰 · 게시물 16,686 · 계정 1,496")));
+	}
+
+	@Test
+	void 후보_미상이면_오늘_예정량은_0이_아니라_미상으로() throws Exception {
+		// todayPlanned=0을 "+0 예정"으로 쓰면 "오늘 아무것도 안 함"으로 오독된다.
+		when(stats.funnel()).thenReturn(funnel(-1, -1, "ERROR: relation does not exist"));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("오늘 예정량 미상")))
+				.andExpect(content().string(Matchers.not(Matchers.containsString("오늘 +0 예정"))));
+	}
+
+	@Test
+	void 분석완료_단계는_합계와_매일_백필_내역을_함께_보여준다() throws Exception {
+		// 대표 숫자만 보면 뭉쳐 보이므로 단계 바로 아래에 내역을 붙인다.
+		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("분석 완료 <span class=\"off\">합계</span>")))
+				.andExpect(content().string(Matchers.containsString("서빙 미러 <span class=\"off\">게시물</span>")));
 	}
 
 	@Test

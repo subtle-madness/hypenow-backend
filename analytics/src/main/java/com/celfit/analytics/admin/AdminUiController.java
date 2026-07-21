@@ -1,6 +1,7 @@
 package com.celfit.analytics.admin;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.mirror.MirrorRegistry;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -77,10 +78,11 @@ public class AdminUiController {
 	private final ScheduleInfo scheduleInfo;
 	private final LogBuffer logBuffer;
 	private final AnalyticsSettings settings;
+	private final MirrorRegistry mirrorRegistry;
 
 	public AdminUiController(AnalyticsJobService jobService, JobProgressRegistry progress,
 			RunHistory history, PipelineStatsService stats, ScheduleInfo scheduleInfo,
-			LogBuffer logBuffer, AnalyticsSettings settings) {
+			LogBuffer logBuffer, AnalyticsSettings settings, MirrorRegistry mirrorRegistry) {
 		this.jobService = jobService;
 		this.progress = progress;
 		this.history = history;
@@ -88,6 +90,7 @@ public class AdminUiController {
 		this.scheduleInfo = scheduleInfo;
 		this.logBuffer = logBuffer;
 		this.settings = settings;
+		this.mirrorRegistry = mirrorRegistry;
 	}
 
 	@GetMapping("/")
@@ -187,6 +190,9 @@ public class AdminUiController {
 			}
 			case ACCOUNT_ANALYZE -> "완료 %s / 뷰티 %s · 대상 %s".formatted(
 					comma(f.copiedAccounts()), comma(f.beautyAccounts()), comma(f.accountTarget()));
+			// 미러도 "몇 개를 옮겼는지"가 보여야 한다 — 대상 뷰 수와 적재 결과(게시물·계정).
+			case MIRROR -> "대상 %d개 뷰 · 게시물 %s · 계정 %s".formatted(
+					mirrorRegistry.specs().size(), comma(f.served()), comma(f.beautyAccounts()));
 			default -> null;
 		};
 	}
@@ -196,10 +202,13 @@ public class AdminUiController {
 			return null;
 		}
 		return switch (job) {
-			case ANALYZE -> f.backfillAnalyzed() > 0
-					? "백필(상세 전용) %s 별도 · 오늘 +%s 예정".formatted(
-							comma(f.backfillAnalyzed()), f.todayPlanned())
-					: "오늘 +%s 예정".formatted(f.todayPlanned());
+			// 후보 미상(집계 중·실패)이면 todayPlanned은 0이 아니라 "모름" — "+0 예정"은 오독을 부른다.
+			case ANALYZE -> {
+				String plan = f.candidates() < 0 ? "오늘 예정량 미상" : "오늘 +%s 예정".formatted(f.todayPlanned());
+				yield f.backfillAnalyzed() > 0
+						? "백필(상세 전용) %s 별도 · %s".formatted(comma(f.backfillAnalyzed()), plan)
+						: plan;
+			}
 			case ACCOUNT_ANALYZE -> "stale + 쿨다운 경과분 재분석";
 			case MIRROR -> "분석 무관 — 서빙 뷰 전체 재적재";
 			default -> null;

@@ -68,16 +68,19 @@
                 <span class="src" th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}">후보 뷰 가드</span>
             </div>
             <span class="arrow">→</span>
+            <!-- 대표 숫자는 합계지만, 바로 아래에 매일/백필을 붙여 "뭉쳐 보이는" 오독을 막는다 -->
             <div class="stage">
                 <b th:text="${#numbers.formatInteger(funnel.analyzed(), 1, 'COMMA')}">0</b>
-                <span>분석 완료</span>
-                <span class="src">콘텐츠 분석 잡</span>
+                <span>분석 완료 <span class="off">합계</span></span>
+                <span class="src">매일 <span th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}"></span>
+                    · 백필 <span th:text="${#numbers.formatInteger(funnel.backfillAnalyzed(), 1, 'COMMA')}"></span></span>
             </div>
             <span class="arrow">→</span>
             <div class="stage">
                 <b th:text="${#numbers.formatInteger(funnel.served(), 1, 'COMMA')}">0</b>
-                <span>서빙 미러</span>
-                <span class="src">미러 잡 — 분석 무관</span>
+                <span>서빙 미러 <span class="off">게시물</span></span>
+                <span class="src">계정 <span th:text="${#numbers.formatInteger(funnel.beautyAccounts(), 1, 'COMMA')}"></span>
+                    · 미러 잡(분석 무관)</span>
             </div>
         </div>
 
