@@ -12,6 +12,7 @@ import com.celfit.analytics.llm.AccountToAnalyze;
 import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,25 +60,48 @@ class AccountAnalysisJobTest {
 		TestDb.resetAndMigrate(db, ds);
 		db.update("CREATE TABLE app_setting (key text PRIMARY KEY, value text NOT NULL)");
 
-		// C1 미러 시드: acct_ad(광고 비교 있음), acct_noad(광고 없음 — ad_avg NULL)
+		// C1 미러 시드 — 광고 정본은 content_analyses.ad_type(캡션 분류)이고, 미러의
+		// account_summaries.organic_avg/ad_avg·series.sponsored는 옛 소스(ad_marked, 릴스 전용)다.
+		// 네 계정으로 두 소스가 어긋나는 경우를 모두 덮는다:
+		//   acct_ad     — 두 소스 모두 광고 있음
+		//   acct_noad   — 광고 없음
+		//   acct_caption— 캡션 고지만(릴스 태그 없음): 옛 소스로는 차단됐던 케이스
+		//   acct_tagonly— 릴스 태그만(캡션 분류는 organic): 화면에 비교가 안 뜨는 케이스
 		db.update("""
 				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
 				  organic_avg, ad_avg, last_posted_at) VALUES
-				  ('acct_ad',   10000, 6, 6, 'views', 13500, 15000, timestamptz '2026-07-01 09:00:00+09'),
-				  ('acct_noad',  8000, 4, 4, 'views', 10375, NULL,  timestamptz '2026-07-02 09:00:00+09')""");
-		db.update("""
-				INSERT INTO account_category_stats (account_handle, main_group, content_count) VALUES
-				  ('acct_ad', 'B', 6), ('acct_noad', 'B', 4)""");
+				  ('acct_ad',      10000, 6, 6, 'views', 13500, 15000, timestamptz '2026-07-01 09:00:00+09'),
+				  ('acct_noad',     8000, 4, 4, 'views', 10375, NULL,  timestamptz '2026-07-02 09:00:00+09'),
+				  ('acct_caption',  9000, 4, 4, 'views', 12000, NULL,  timestamptz '2026-07-03 09:00:00+09'),
+				  ('acct_tagonly',  7000, 4, 4, 'views', 11000, 30000, timestamptz '2026-07-04 09:00:00+09')""");
 		db.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
 				  views, likes, comments, sponsored) VALUES
-				  ('p1', 'acct_ad',   timestamptz '2026-06-01 09:00:00+09', 'reels', 20000, 400, 40, false),
-				  ('p2', 'acct_ad',   timestamptz '2026-07-01 09:00:00+09', 'reels', 22000, 500, 50, true),
-				  ('p3', 'acct_noad', timestamptz '2026-07-02 09:00:00+09', 'feed',  NULL,  200, 20, false)""");
+				  ('p1', 'acct_ad',      timestamptz '2026-06-01 09:00:00+09', 'reels', 20000, 400, 40, false),
+				  ('p2', 'acct_ad',      timestamptz '2026-07-01 09:00:00+09', 'reels', 22000, 500, 50, true),
+				  ('p3', 'acct_noad',    timestamptz '2026-07-02 09:00:00+09', 'feed',  NULL,  200, 20, false),
+				  ('p4', 'acct_caption', timestamptz '2026-06-03 09:00:00+09', 'reels', 10000, 300, 30, false),
+				  ('p5', 'acct_caption', timestamptz '2026-07-03 09:00:00+09', 'reels',  6000, 200, 20, false),
+				  ('p6', 'acct_tagonly', timestamptz '2026-06-04 09:00:00+09', 'reels', 11000, 300, 30, false),
+				  ('p7', 'acct_tagonly', timestamptz '2026-07-04 09:00:00+09', 'reels', 30000, 900, 90, true)""");
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, caption, content_type) VALUES
 				  ('p1', 'acct_ad', '캡션1', 'reels'), ('p2', 'acct_ad', '캡션2', 'reels'),
-				  ('p3', 'acct_noad', '캡션3', 'feed')""");
+				  ('p3', 'acct_noad', '캡션3', 'feed'),
+				  ('p4', 'acct_caption', '캡션4', 'reels'), ('p5', 'acct_caption', '#광고 캡션5', 'reels'),
+				  ('p6', 'acct_tagonly', '캡션6', 'reels'), ('p7', 'acct_tagonly', '캡션7', 'reels')""");
+		// 광고 정본 — p2·p5만 협찬. acct_tagonly는 릴스 태그(p7 sponsored=true)와 달리 캡션 분류상 organic.
+		// 카테고리 믹스는 테이블이 아니라 파생 뷰다(V35) — 캡션 분류를 심으면 뷰가 집계해 준다.
+		// short_code가 PK라 광고·카테고리를 한 번에 넣는다(따로 INSERT하면 p1·p2가 중복된다).
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, is_beauty, ad_type) VALUES
+				  ('p1', 'test', 'makeup',   true, 'organic'),
+				  ('p2', 'test', 'makeup',   true, 'sponsored'),
+				  ('p3', 'test', 'skincare', true, NULL),
+				  ('p4', 'test', NULL,       NULL, 'organic'),
+				  ('p5', 'test', NULL,       NULL, 'sponsored'),
+				  ('p6', 'test', NULL,       NULL, 'organic'),
+				  ('p7', 'test', NULL,       NULL, 'organic')""");
 
 		rewireJob(fakePort());
 	}
@@ -86,8 +110,8 @@ class AccountAnalysisJobTest {
 	void 신규_계정은_즉시_분석되고_카피가_저장된다() {
 		int processed = job.run().processed();
 
-		assertEquals(2, processed);
-		assertEquals(2L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		assertEquals(4, processed);
+		assertEquals(4L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 		assertEquals("태그라인: acct_ad", db.queryForObject(
 				"SELECT tagline FROM account_analyses WHERE handle = 'acct_ad'", String.class));
 		// traits는 jsonb 배열로 저장된다
@@ -99,18 +123,79 @@ class AccountAnalysisJobTest {
 				Long.class));
 	}
 
+	AccountToAnalyze callFor(String handle) {
+		return calls.stream().filter(c -> c.handle().equals(handle)).findFirst().orElseThrow();
+	}
+
+	String headlineOf(String handle) {
+		return db.queryForObject(
+				"SELECT ad_headline FROM account_analyses WHERE handle = ?", String.class, handle);
+	}
+
 	@Test
 	void adHeadline은_광고_비교가_있는_계정에만_저장된다() {
 		job.run();
 
 		// fake 포트는 둘 다 헤드라인을 반환하지만, 비교 없는 계정은 잡이 NULL로 저장한다
-		assertEquals("광고 헤드라인", db.queryForObject(
-				"SELECT ad_headline FROM account_analyses WHERE handle = 'acct_ad'", String.class));
-		assertNull(db.queryForObject(
-				"SELECT ad_headline FROM account_analyses WHERE handle = 'acct_noad'", String.class));
+		assertEquals("광고 헤드라인", headlineOf("acct_ad"));
+		assertNull(headlineOf("acct_noad"));
 		// 포트 입력의 hasAdComparison 플래그도 정확해야 한다 (어댑터가 지시문에서 분기)
-		assertTrue(calls.stream().filter(c -> c.handle().equals("acct_ad")).findFirst().orElseThrow().hasAdComparison());
-		assertFalse(calls.stream().filter(c -> c.handle().equals("acct_noad")).findFirst().orElseThrow().hasAdComparison());
+		assertTrue(callFor("acct_ad").hasAdComparison());
+		assertFalse(callFor("acct_noad").hasAdComparison());
+	}
+
+	/** 버그 정본 케이스 — 캡션으로 협찬 고지했지만 릴스 유료파트너십 태그가 없는 계정.
+	 *  옛 소스(account_summaries.ad_avg)로는 영구 차단됐다(운영 995계정). */
+	@Test
+	void 캡션_고지만_있는_계정도_광고_비교로_인정된다() {
+		job.run();
+
+		assertTrue(callFor("acct_caption").hasAdComparison());
+		assertEquals("광고 헤드라인", headlineOf("acct_caption"));
+	}
+
+	/** 역방향 — 릴스 태그만 있고 캡션 분류상 협찬이 아니면 화면(was)에도 비교가 안 뜬다.
+	 *  헤드라인만 남으면 설명 대상 없는 문구가 되므로 차단이 맞다. */
+	@Test
+	void 릴스_태그만_있고_캡션_분류가_organic이면_광고_비교가_아니다() {
+		job.run();
+
+		assertFalse(callFor("acct_tagonly").hasAdComparison());
+		assertNull(headlineOf("acct_tagonly"));
+	}
+
+	/** 프롬프트에 실리는 광고 수치도 정본(ad_type) 기준이어야 한다 — 헤드라인이 설명하는 숫자와
+	 *  화면 숫자가 갈리면 안 된다. acct_tagonly: 옛 소스는 organic 11000/ad 30000이지만
+	 *  정본으로는 p6·p7 모두 organic → 비교 없음(NULL)·협찬 0건. */
+	@Test
+	void 프롬프트_광고_수치가_정본_기준으로_치환된다() {
+		job.run();
+
+		Map<String, Object> caption = callFor("acct_caption").summary();
+		assertEquals(10000L, caption.get("organic_avg")); // p4
+		assertEquals(6000L, caption.get("ad_avg")); // p5
+		assertEquals(40, caption.get("ad_drop_pct")); // (1 - 6000/10000) * 100
+		assertEquals(1L, caption.get("sponsored_count"));
+		assertEquals(1L, caption.get("comparison_organic_count"));
+		assertEquals(1L, caption.get("comparison_ad_count"));
+
+		Map<String, Object> tagOnly = callFor("acct_tagonly").summary();
+		assertNull(tagOnly.get("organic_avg"));
+		assertNull(tagOnly.get("ad_avg"));
+		assertNull(tagOnly.get("ad_drop_pct"));
+		assertEquals(0L, tagOnly.get("sponsored_count"));
+	}
+
+	/** 게시물별 sponsored 플래그도 같은 정본 — 요약은 협찬 1건인데 게시물은 전부 false 같은
+	 *  자기모순 입력이 LLM에 들어가지 않게 한다. */
+	@Test
+	void 프롬프트_게시물_sponsored도_정본_기준이다() {
+		job.run();
+
+		List<Map<String, Object>> posts = callFor("acct_caption").posts();
+		assertEquals(List.of(false, true), posts.stream().map(p -> p.get("sponsored")).toList());
+		assertEquals(List.of(false, false),
+				callFor("acct_tagonly").posts().stream().map(p -> p.get("sponsored")).toList());
 	}
 
 	@Test
@@ -122,7 +207,7 @@ class AccountAnalysisJobTest {
 
 		assertEquals(0, processed);
 		assertTrue(calls.isEmpty());
-		assertEquals(2L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		assertEquals(4L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 	}
 
 	@Test
@@ -181,7 +266,7 @@ class AccountAnalysisJobTest {
 
 		int processed = job.run().processed(); // 예외가 전파되지 않아야 한다
 
-		assertEquals(1, processed); // acct_noad만 성공
+		assertEquals(3, processed); // acct_ad만 실패
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad'", Long.class));
 		assertEquals(1L, db.queryForObject(

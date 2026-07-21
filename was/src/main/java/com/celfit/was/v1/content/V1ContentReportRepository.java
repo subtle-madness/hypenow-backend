@@ -35,6 +35,7 @@ public class V1ContentReportRepository {
 				       an.ad_disclosure, an.detected_product_categories::text AS product_categories_json,
 				       an.vlm_attributes::text AS attributes_json,
 				       an.comment_authenticity_grade, an.comment_authenticity_note,
+				       an.metric_timeliness,
 				       (SELECT t.main_label FROM beauty_taxonomy t
 				        WHERE t.main_value = an.main_category LIMIT 1) AS category_label
 				FROM contents c
@@ -42,6 +43,41 @@ public class V1ContentReportRepository {
 				LEFT JOIN account_summaries s ON s.handle = c.account_handle
 				WHERE c.short_code = :sc
 				""").param("sc", shortCode).query(ReportRow.class).optional();
+	}
+
+	/**
+	 * 같은 대분류 카테고리의 조회수 맥락 — 조회 시점 라이브 집계.
+	 *
+	 * <p>content_analyses의 category_* 3컬럼은 영구 NULL이다: main_category가 이 행을 만든 통합 1콜
+	 * LLM의 산출물이라 저장 시점에는 아직 카테고리를 모르고, 테이블이 불변(INSERT-only)이라 나중에
+	 * 채울 수도 없다. 조회수 baseline·rank를 라이브 계산으로 옮긴 A2(07-19)와 같은 처방 —
+	 * 과거 분석분 전량에 그대로 소급된다.
+	 *
+	 * <p>모수 규칙:
+	 * <ul>
+	 * <li>뷰티 분석분(is_beauty)만. 카테고리는 beauty_taxonomy 대분류(main_category).
+	 * <li><b>조회수 NULL 제외</b> — 피드는 views가 항상 NULL이라(프로젝트 규칙) 모수는 사실상 릴스다.
+	 * <li>지표 시점이 timely 또는 레거시 NULL인 건만 — 늦크롤 백필은 조회수가 더 오래 누적돼
+	 *     평균을 부풀린다(운영 실측: cleansing 전체 평균 75,543 vs timely 18,499). 랭킹
+	 *     /v1/contents가 쓰는 필터와 같은 규칙이다.
+	 * </ul>
+	 *
+	 * @param views 이 게시물의 조회수. NULL이면 순위 비교가 무의미하므로 -1을 넣어 질의하고
+	 *              백분위는 조립 단계에서 버린다(평균·표본 수는 그대로 유효).
+	 */
+	public CategoryContextRow findCategoryContext(String mainCategory, Long views) {
+		return jdbcClient.sql("""
+				SELECT count(*)                                    AS sample_size,
+				       round(avg(c.views))::bigint                 AS avg_views,
+				       count(*) FILTER (WHERE c.views > :views)    AS higher_count
+				FROM contents c
+				JOIN content_analyses an ON an.short_code = c.short_code
+				WHERE an.main_category = :mc
+				  AND an.is_beauty = true
+				  AND c.views IS NOT NULL
+				  AND (an.metric_timeliness = 'timely' OR an.metric_timeliness IS NULL)
+				""").param("mc", mainCategory).param("views", views == null ? -1L : views)
+				.query(CategoryContextRow.class).single();
 	}
 
 	/** 그 계정 릴스 시계열 (윈도우 내, 올린 순) — comparison.views.recentReels 재료 (라이브 재계산 기준). */
@@ -83,10 +119,17 @@ public class V1ContentReportRepository {
 			Long recentReelsAvgViews, Integer rankInRecentReels, Integer recentReelsCount,
 			Integer recentContentsCount, BigDecimal recent12AvgEngagementRate,
 			Long recent12AvgLikeCount, Long recent12AvgCommentCount,
+			// category* 3컬럼도 같은 이유로 남긴 프리즈 값이다 — 영구 NULL이라 조립에 쓰지 않고
+			// findCategoryContext 라이브 집계로 대체한다(07-21).
 			Integer categoryTopPercentile, Long categoryAvgViews, Long categorySampleSize,
 			String mainCategory, String brandsJson, String sponsoredSignalLevel, String reasonsJson,
 			String adDisclosure, String productCategoriesJson, String attributesJson,
-			String commentAuthenticityGrade, String commentAuthenticityNote, String categoryLabel) {
+			String commentAuthenticityGrade, String commentAuthenticityNote, String metricTimeliness,
+			String categoryLabel) {
+	}
+
+	/** 카테고리 맥락 라이브 집계 1행. higherCount = 이 게시물보다 조회수가 높은 표본 수. */
+	public record CategoryContextRow(Long sampleSize, Long avgViews, Long higherCount) {
 	}
 
 	public record ReelPointRow(String shortCode, Long views, OffsetDateTime postedAt) {

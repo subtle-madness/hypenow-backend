@@ -18,8 +18,9 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     `v_content_comments`·`v_content_metric_snapshots`) — 미러 대상과 1:1
   - `03_analysis_baseline.sql` — 콘텐츠별 기준선 뷰 (`v_analysis_baseline`, 분석 잡 전용, 미러 안 함)
   - `04_analysis_candidates.sql` — LLM 캡션 선분석 후보 뷰 (`v_analysis_candidates`, 숙성 가드 3일·캡션 필수, 미러 안 함)
-  - `10_account_detail.sql` — 계정 상세 뷰 4종 (`v_account_recent`·`v_account_summaries`·
-    `v_account_category_stats`·`v_account_content_series`)
+  - `10_account_detail.sql` — 계정 상세 뷰 3종 (`v_account_recent`·`v_account_summaries`·
+    `v_account_content_series`). 카테고리 믹스는 07-21에 analysis DB 파생 뷰
+    `account_category_stats`(V35)로 이관 — 소스인 캡션 분류가 analysis DB라 여기선 못 만든다.
   - `20_landing_stats.sql` — 랜딩 통계 뷰 (`v_landing_stats`)
 - `mirror/` — 타입 기반 미러: 뷰 SELECT → 공유 record 매핑 → analysis DB 테이블
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
