@@ -178,9 +178,40 @@ public final class GeminiHttpApi implements GeminiApi, GeminiBatchApi {
 		return get("/v1beta/" + batchName, "배치 조회");
 	}
 
+	/** 결과 다운로드 — 본문을 String으로 모으지 않고 스트림에서 줄 단위로 소비자에 전달. */
 	@Override
-	public String downloadFile(String fileName) {
-		return get("/download/v1beta/" + fileName + ":download?alt=media", "결과 다운로드");
+	public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
+		streamLines(URI.create(baseUrl + "/download/v1beta/" + fileName + ":download?alt=media"),
+				req -> req.header("x-goog-api-key", apiKey), http, "결과 다운로드", onLine);
+	}
+
+	/**
+	 * GET 응답 본문을 줄 단위 스트리밍 소비 — 배치 결과(운영 실측 119MB+)를 전체 적재하면
+	 * 기본 힙에서 OOM이라 ofInputStream + BufferedReader로 순차 전달한다. 빈 줄은 건너뛴다.
+	 * AI Studio·Vertex 공용 (헤더만 authHeader로 다름).
+	 */
+	static void streamLines(URI uri, java.util.function.UnaryOperator<HttpRequest.Builder> authHeader,
+			HttpClient http, String what, java.util.function.Consumer<String> onLine) {
+		try {
+			HttpRequest req = authHeader.apply(HttpRequest.newBuilder(uri)
+					.timeout(Duration.ofMinutes(30))).GET().build();
+			HttpResponse<java.io.InputStream> res =
+					http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+			try (java.io.BufferedReader reader = new java.io.BufferedReader(
+					new java.io.InputStreamReader(res.body(), StandardCharsets.UTF_8))) {
+				if (res.statusCode() < 200 || res.statusCode() >= 300) {
+					throw new IllegalStateException(what + " 실패 HTTP " + res.statusCode());
+				}
+				String line;
+				while ((line = reader.readLine()) != null) {
+					if (!line.isBlank()) {
+						onLine.accept(line);
+					}
+				}
+			}
+		} catch (java.io.IOException | InterruptedException e) {
+			throw new IllegalStateException(what + " 실패", e);
+		}
 	}
 
 	private String get(String path, String what) {

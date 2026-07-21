@@ -179,19 +179,17 @@ public class GeminiBackfillRunner {
 		Map<String, Map<String, String>> sidecar = readSidecar();
 		String model = settings.geminiModel();
 		BeautyTaxonomy taxonomy = taxonomyLoader.get();
-		int saved = 0;
-		int failed = 0;
-		for (String line : api.downloadFile(resultFile).split("\n")) {
-			if (line.isBlank()) {
-				continue;
-			}
+		// 결과(운영 실측 119MB+)는 스트리밍으로 한 줄씩 받아 즉시 파싱·INSERT — 전체 적재 금지(07-20 OOM)
+		java.util.concurrent.atomic.AtomicInteger saved = new java.util.concurrent.atomic.AtomicInteger();
+		java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+		api.downloadResults(resultFile, line -> {
 			try {
 				JsonNode node = om.readTree(line);
 				String vertexStatus = node.path("status").asString("");
 				if (!vertexStatus.isEmpty()) {
-					failed++;
+					failed.incrementAndGet();
 					log.warn("배치 실패 라인 (status={}): {}", vertexStatus, abbreviate(line));
-					continue;
+					return;
 				}
 				String shortCode = node.path("key").asString("");
 				if (shortCode.isEmpty()) {
@@ -200,21 +198,21 @@ public class GeminiBackfillRunner {
 				JsonNode text = node.path("response").path("candidates").path(0)
 						.path("content").path("parts").path(0).path("text");
 				if (shortCode.isEmpty() || text.isMissingNode()) {
-					failed++;
+					failed.incrementAndGet();
 					log.warn("결과 라인 해석 불가/오류 응답: {}", abbreviate(line));
-					continue;
+					return;
 				}
 				ContentInsight insight = GeminiContentAnalyzer.parse(om, text.asString(), taxonomy);
 				if (insight.synthesis().aiContentSummary() == null
 						|| insight.synthesis().aiContentSummary().isBlank()) {
-					failed++;
-					continue;
+					failed.incrementAndGet();
+					return;
 				}
 				Map<String, String> base = sidecar.get(shortCode);
 				if (base == null) {
-					failed++;
+					failed.incrementAndGet();
 					log.warn("사이드카에 없는 key: {}", shortCode);
-					continue;
+					return;
 				}
 				boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
 				// 07-20 개정: 04 뷰가 timely 후보도 포함(제때 크롤 OR 최근 N 윈도우) — 마킹은 뷰의 timely
@@ -223,14 +221,14 @@ public class GeminiBackfillRunner {
 				ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
 						hasCaption ? insight.attributes() : null, insight.synthesis(), true,
 						timely ? "timely" : "late_backfill");
-				saved++;
+				saved.incrementAndGet();
 			} catch (Exception e) {
-				failed++;
+				failed.incrementAndGet();
 				log.warn("결과 라인 저장 실패: {}", abbreviate(line), e);
 			}
-		}
-		log.info("백필 저장 완료 — {}건 저장, {}건 실패(잔여는 일상 파이프라인이 흡수)", saved, failed);
-		return saved;
+		});
+		log.info("백필 저장 완료 — {}건 저장, {}건 실패(잔여는 일상 파이프라인이 흡수)", saved.get(), failed.get());
+		return saved.get();
 	}
 
 	private Map<String, Map<String, String>> readSidecar() {

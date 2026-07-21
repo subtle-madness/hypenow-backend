@@ -75,8 +75,8 @@ class GeminiBackfillRunnerTest {
 			}
 
 			@Override
-			public String downloadFile(String fileName) {
-				return resultJsonl;
+			public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
+				resultJsonl.lines().filter(l -> !l.isBlank()).forEach(onLine);
 			}
 		};
 	}
@@ -258,7 +258,7 @@ class GeminiBackfillRunnerTest {
 			}
 
 			@Override
-			public String downloadFile(String fileName) {
+			public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
 				throw new IllegalStateException("호출되면 안 됨");
 			}
 		}, new AnalyticsSettings(db), new BeautyTaxonomyLoader(ds), workDir);
@@ -279,7 +279,7 @@ class GeminiBackfillRunnerTest {
 				댓글 분류 분포: {}
 
 				위 콘텐츠를 분석하라.""";
-		// downloadFile 결과는 줄 단위(JSONL)라 한 결과 라인은 물리적으로 한 줄이어야 한다 —
+		// downloadResults는 줄 단위(JSONL) 전달이라 한 결과 라인은 물리적으로 한 줄이어야 한다 —
 		// 텍스트 블록 대신 ObjectMapper로 조립해 개행이 섞이지 않게 한다.
 		tools.jackson.databind.node.ObjectNode line = om.createObjectNode();
 		line.put("status", "");
@@ -342,9 +342,8 @@ class GeminiBackfillRunnerTest {
 			}
 
 			@Override
-			public String downloadFile(String fileName) {
+			public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
 				downloadedFiles.add(fileName);
-				return "";
 			}
 		}, new AnalyticsSettings(db), new BeautyTaxonomyLoader(ds), workDir);
 
