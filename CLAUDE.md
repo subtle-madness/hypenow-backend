@@ -31,6 +31,10 @@
 - 주석·로그·커밋 메시지는 한국어. 커밋 prefix는 `feat(모듈):`/`docs:` 식.
 - **브랜치·PR**: 기본 브랜치는 `develop`. 작업은 `feat/*`(또는 `docs/*`, `chore/*`) 브랜치에서 하고
   **develop 대상 PR**로 합친다. develop·main 직접 push 금지. `main`은 릴리스용.
+- **배포는 develop→main 머지(CD)로만 한다.** `deploy/scripts/deploy.sh` 수동 실행 금지 —
+  긴급 롤백·CD 불능 시에만, 반드시 사용자 확인 후 `--force`로. (07-20: develop 체크아웃 상태의
+  수동 배포가 CD의 main 배포를 덮어 was/analytics 버전 불일치 → 랭킹 API 전면 500.
+  `:latest`는 마지막 push가 이긴다.)
 - crawler는 DDD/헥사고날(`<context>/{domain, application/{service,port}, adapter/{in,out}}`), was·analytics는 평탄 패키지.
 - DTO는 record(+정적 `from()`). was 조회는 JdbcClient. Jackson 3(`tools.jackson.*`).
 - 분석 뷰는 `analytics/views/NN_*.sql` 번호순 적용, 테스트는 같은 번호 `analytics/test/NN_*.test.sql`.

@@ -585,8 +585,12 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 뷰티인데_미분류면_행을_안_남기고_재대상화된다() {
-		// isBeauty=true인데 복구 후에도 mainCategory=null → 실패 격리(skip) → 다음 실행 재대상
+	void 뷰티지만_대분류_미도출이면_is_beauty_false로_종결_저장한다() {
+		// isBeauty=true인데 복구 후에도 mainCategory=null인 케이스. 분석은 temperature 0 결정론이라
+		// 같은 입력을 재실행해도 동일 결과 → 옛 self-heal(행 미기록→재대상)은 매 실행 무한 재시도로
+		// 영영 완료되지 않고 호출만 태웠다. 이제 is_beauty=false로 **종결 저장**해 루프를 끊는다.
+		// 불변식('main_category null ⇒ 서빙에서 비뷰티') 보존: is_beauty=false라 랭킹·상세에서 제외되고,
+		// 서빙 계층 무변경. (재대상 폴백은 빈 종합/파싱 오류 같은 진짜 일시 실패에만 남긴다.)
 		rewireJob((content, thumbnailUrl) -> {
 			insightCalls.add(content);
 			ContentAttributes beautyNoCat = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
@@ -600,9 +604,15 @@ class ContentAnalysisJobTest {
 
 		int processed = job.run().processed();
 
-		assertEquals(1, processed); // post_b만 성공, post_a는 skip
-		assertEquals(0L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertEquals(2, processed); // post_a·post_b 모두 종결 저장(더 이상 skip 아님)
+		// post_a: 뷰티였으나 대분류 미도출 → is_beauty=false로 저장, main_category는 null 유지
+		assertEquals(Boolean.FALSE, db.queryForObject(
+				"SELECT is_beauty FROM content_analyses WHERE short_code = 'post_a'", Boolean.class));
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		// 종합 텍스트는 정상 저장돼 행이 존재 → NOT EXISTS로 다음 실행 재대상 안 됨(루프 종료)
+		assertEquals("요약: post_a", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
 	}

@@ -43,7 +43,7 @@ public class ScheduleRunner {
         log.info("스케줄 reels: {}", jobService.trigger(JobName.REELS, TriggerType.SCHEDULED));
     }
 
-    /** 신규 QUALIFIED 유입분의 뷰티 3분류 — qualify 이후로 배치. */
+    /** 신규 QUALIFIED 유입분의 뷰티 4분류 — qualify 이후로 배치. */
     @Scheduled(cron = "${crawler.schedule.beauty-cron}")
     void beauty() {
         log.info("스케줄 beauty: {}", jobService.trigger(JobName.BEAUTY, TriggerType.SCHEDULED));

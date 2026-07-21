@@ -5,6 +5,7 @@ import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
+import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.RawProfile;
@@ -23,7 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 뷰티 판정 잡 — QUALIFIED 중 미판정분의 최신 raw_profile 텍스트 재료(이름·카테고리·bio)를
- * 로컬 Claude에 배치로 넘겨 beauty를 저장한다. 인스타그램 API 호출 없음(비용 $0).
+ * 로컬 Claude에 배치로 넘겨 beauty_class와 파생 boolean을 저장한다. 인스타그램 API 호출 없음(비용 $0).
  * rejudge=true면 판정 후 재료(raw_profile)가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다 —
  * MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
  * beauty=true는 SIMILAR 잡의 시드 자격이 된다.
@@ -42,7 +43,8 @@ public class BeautyJob {
     /** 캡션 1개당 최대 길이(문자) — 캡션 앞부분에 주제가 드러나므로 뒷부분은 잘라도 판정에 충분. */
     static final int CAPTION_MAX_CHARS = 100;
 
-    public record Summary(int judgedBeauty, int judgedNotBeauty, int skippedNoProfile, int failedBatches) {}
+    public record Summary(int judgedBeauty, int judgedService, int judgedNotBeauty,
+                          int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
@@ -97,7 +99,7 @@ public class BeautyJob {
             byUsername.put(inf.getUsername(), inf);
         }
 
-        int beauty = 0, notBeauty = 0, failedBatches = 0;
+        int beauty = 0, service = 0, notBeauty = 0, failedBatches = 0;
         List<List<BeautyJudge.ProfileCard>> chunks = ActorInputs.chunk(cards, JUDGE_CHUNK);
         log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}), 배치 {}개", cards.size(), skipped, chunks.size());
         int total = chunks.size(), i = 0;
@@ -107,17 +109,19 @@ public class BeautyJob {
             try {
                 verdicts = judge.judge(chunk);  // 트랜잭션 밖 — 최대 120초 CLI 호출 동안 커넥션 미점유
             } catch (ApifyException e) {
-                failedBatches++;  // 해당 배치 계정은 beauty NULL 유지 — 다음 실행 재시도
+                failedBatches++;  // 해당 배치 계정은 beauty_class NULL 유지 — 다음 실행 재시도
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
-            int done = beauty + notBeauty;
+            int done = beauty + service + notBeauty;
             ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername, done, cards.size()));
             beauty += r.beauty();
+            service += r.service();
             notBeauty += r.notBeauty();
-            log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 비뷰티 {}", i, total, beauty, notBeauty);
+            log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 시술·서비스 {} / 비뷰티 {}",
+                    i, total, beauty, service, notBeauty);
         }
-        return new Summary(beauty, notBeauty, skipped, failedBatches);
+        return new Summary(beauty, service, notBeauty, skipped, failedBatches);
     }
 
     /** 판정 재료 캡션 정책 적용 — 최근 CAPTION_COUNT개, 각 CAPTION_MAX_CHARS자까지. */
@@ -128,7 +132,7 @@ public class BeautyJob {
                 .toList();
     }
 
-    private record ChunkResult(int beauty, int notBeauty) {}
+    private record ChunkResult(int beauty, int service, int notBeauty) {}
 
     /**
      * 판정 결과 적용(트랜잭션 안). targets 조회가 트랜잭션 밖(레포 자체 트랜잭션)에서 이뤄져 Influencer가
@@ -137,21 +141,27 @@ public class BeautyJob {
      */
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
                                       int done, int totalCards) {
-        int beauty = 0, notBeauty = 0;
+        int beauty = 0, service = 0, notBeauty = 0;
         for (BeautyJudge.Verdict v : verdicts) {
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
-            inf.setBeauty(v.beauty());
-            inf.setBeautyCompany(v.company());
-            inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
-            inf.setBeautyReason(v.reason());
+            inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason());
             inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
             influencers.save(inf);
-            if (v.beauty()) beauty++; else notBeauty++;
+            switch (v.beautyClass()) {
+                case INFLUENCER, COMPANY -> beauty++;
+                case BEAUTY_SERVICE -> service++;
+                case NOT_BEAUTY -> notBeauty++;
+            }
             done++;
-            log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(),
-                    v.beauty() ? (v.company() ? "뷰티(회사)" : "뷰티(인플루언서)") : "비뷰티", v.reason());
+            String label = switch (v.beautyClass()) {
+                case INFLUENCER -> "뷰티(인플루언서)";
+                case COMPANY -> "뷰티(회사)";
+                case BEAUTY_SERVICE -> "뷰티(시술·서비스)";
+                case NOT_BEAUTY -> "비뷰티";
+            };
+            log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(), label, v.reason());
         }
-        return new ChunkResult(beauty, notBeauty);
+        return new ChunkResult(beauty, service, notBeauty);
     }
 }

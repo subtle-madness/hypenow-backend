@@ -50,6 +50,11 @@ public class Influencer {
     @Column(name = "beauty_company")
     private Boolean beautyCompany;
 
+    /** 4분류 원본(v2) — boolean은 이 값의 파생. NULL이면 미판정(구 3분류 시대 판정분 포함). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "beauty_class")
+    private BeautyClass beautyClass;
+
     @Column(name = "beauty_source")
     private String beautySource;
 
@@ -78,5 +83,14 @@ public class Influencer {
 
     public Influencer(String username) {
         this.username = username;
+    }
+
+    /** 판정 결과 일괄 적용 — 파생 boolean을 beauty_class와 항상 일치시킨다. judgedAt은 호출자 몫. */
+    public void classify(BeautyClass cls, String source, String reason) {
+        this.beautyClass = cls;
+        this.beauty = cls.beauty();
+        this.beautyCompany = cls.company();
+        this.beautySource = source;
+        this.beautyReason = reason;
     }
 }

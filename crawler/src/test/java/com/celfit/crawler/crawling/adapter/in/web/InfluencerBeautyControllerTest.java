@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -18,14 +19,14 @@ class InfluencerBeautyControllerTest {
     InfluencerBeautyController controller = new InfluencerBeautyController(influencers);
 
     @Test
-    void 수동_판정은_beauty와_MANUAL_출처를_기록한다() {
+    void 수동_판정은_beauty_class와_파생값과_MANUAL_출처를_기록한다() {
         Influencer inf = new Influencer("a");
-        inf.setBeauty(true);
-        inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "이전 판정");
         when(influencers.findById(1L)).thenReturn(Optional.of(inf));
 
-        String view = controller.override(1L, false, false, 2, null, new RedirectAttributesModelMap());
+        String view = controller.override(1L, BeautyClass.BEAUTY_SERVICE, 2, null, new RedirectAttributesModelMap());
 
+        assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.BEAUTY_SERVICE);
         assertThat(inf.getBeauty()).isFalse();
         assertThat(inf.getBeautyCompany()).isFalse();
         assertThat(inf.getBeautySource()).isEqualTo(Influencer.BEAUTY_SOURCE_MANUAL);
@@ -38,8 +39,9 @@ class InfluencerBeautyControllerTest {
         Influencer inf = new Influencer("brand");
         when(influencers.findById(1L)).thenReturn(Optional.of(inf));
 
-        controller.override(1L, true, true, 0, null, new RedirectAttributesModelMap());
+        controller.override(1L, BeautyClass.COMPANY, 0, null, new RedirectAttributesModelMap());
 
+        assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.COMPANY);
         assertThat(inf.getBeauty()).isTrue();
         assertThat(inf.getBeautyCompany()).isTrue();
         assertThat(inf.getBeautySource()).isEqualTo(Influencer.BEAUTY_SOURCE_MANUAL);
@@ -48,7 +50,8 @@ class InfluencerBeautyControllerTest {
     @Test
     void 없는_인플루언서는_404() {
         when(influencers.findById(9L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> controller.override(9L, true, false, 0, null, new RedirectAttributesModelMap()))
+        assertThatThrownBy(() -> controller.override(9L, BeautyClass.INFLUENCER, 0, null,
+                new RedirectAttributesModelMap()))
                 .isInstanceOf(ResponseStatusException.class);
     }
 }
