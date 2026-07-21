@@ -168,6 +168,33 @@ class BeautyJobTest {
     }
 
     @Test
+    void 캡션_절단이_이모지_서로게이트_쌍을_반쪽으로_자르지_않는다() {
+        // 절단 경계(100번째 문자)가 이모지(UTF-16 서로게이트 쌍, 2문자) 한가운데면 substring이
+        // high surrogate 반쪽만 남겨 깨진 문자열이 되고, Anthropic API가 요청 JSON을 400으로 거부한다
+        // (운영 실측 2026-07-21: "no low surrogate in string" — 배치 10개 중 9개 실패).
+        Influencer a = qualified(1L, "a");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));
+        String caption = "가".repeat(BeautyJob.CAPTION_MAX_CHARS - 1) + "💄뒤";  // 99자 + 쌍(2자) + 1자
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("latestPosts", List.of(Map.of("caption", caption)));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L)).thenReturn(Optional.of(
+                new RawProfile(1L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenAnswer(inv -> {
+            List<BeautyJudge.ProfileCard> cards = inv.getArgument(0);
+            String trimmed = cards.get(0).captions().get(0);
+            // 쌍을 통째로 버리고 99자에서 끊는다 — 반쪽 서로게이트가 남으면 안 된다
+            assertThat(trimmed).isEqualTo("가".repeat(BeautyJob.CAPTION_MAX_CHARS - 1));
+            assertThat(Character.isHighSurrogate(trimmed.charAt(trimmed.length() - 1))).isFalse();
+            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok"));
+        });
+
+        var s = job.run(TriggerType.MANUAL, false);
+
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+    }
+
+    @Test
     void raw_profile이_없으면_스킵하고_beauty는_NULL_유지() {
         Influencer a = qualified(1L, "a");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));
