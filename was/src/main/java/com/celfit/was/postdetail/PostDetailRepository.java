@@ -36,7 +36,7 @@ public class PostDetailRepository {
 				       COALESCE('/img/' || it.object_path, c.thumbnail_url) AS thumbnail_url,
 				       c.caption, c.posted_at,
 				       c.content_type, c.video_duration, c.original_url,
-				       c.views, c.likes, c.comments, c.hype_score, c.metric_captured_at
+				       c.views, c.likes, c.comments, c.hype_score, c.metric_captured_at, c.ad_marked
 				FROM contents c
 				LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
 				WHERE c.short_code = :shortCode

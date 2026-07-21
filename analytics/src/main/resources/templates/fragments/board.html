@@ -28,11 +28,13 @@
                         th:text="${health.analysisFreshText()}">—</span></b>
                 <span class="off">content_analyses</span>
             </div>
+            <!-- 구명(미러 잡 시각처럼 읽히던 라벨)은 오해 유발 — 실체는 max(captured_at), 즉 크롤이
+                 지표를 마지막으로 잡은 시각이다(07-20 크롤 정지를 잡아낸 신호 — v3에서 이름을 실체에 맞춤). -->
             <div class="hstat">
-                <span class="hlabel">마지막 미러</span>
+                <span class="hlabel">크롤 지표 신선도</span>
                 <b><span class="fdot" th:classappend="${health.mirrorGrade()}"></span><span
                         th:text="${health.mirrorFreshText()}">—</span></b>
-                <span class="off">지표 스냅샷 최신</span>
+                <span class="off">미러된 지표 스냅샷 최신</span>
             </div>
             <div class="hstat">
                 <span class="hlabel">마지막 계정 카피</span>
@@ -43,94 +45,158 @@
         </div>
     </section>
 
-    <!-- ── 퍼널 ── -->
+    <!-- ── 계정 보드 — 모수는 현재 raw 스냅샷 (v3 §2-A) ── -->
     <section class="card funnel" th:if="${funnel != null}">
-        <div class="cap">콘텐츠 파이프라인 <span class="off">— 데이터가 흐르는 단계 (잡 실행 순서 아님)</span></div>
+        <div class="cap">계정 보드 <span class="off">— 현재 raw 스냅샷 기준 · 뷰티 재판정 중엔 수시 변동</span></div>
 
         <div class="stages">
             <div class="stage">
-                <b th:text="${#numbers.formatInteger(funnel.rawContents(), 1, 'COMMA')}">0</b>
+                <b th:text="${funnel.acctTotal()}">0</b>
+                <span>수집 계정</span>
+                <span class="src">crawler influencer</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b th:text="${funnel.acctQualified()}">0</b>
+                <span>프로필 검증</span>
+                <span class="src">QUALIFIED</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b th:text="${funnel.acctBeauty()}">0</b>
+                <span>뷰티 인플루언서 <span class="off">서빙 모수</span></span>
+                <span class="src">뷰티 개인 판정</span>
+            </div>
+        </div>
+
+        <div class="split">
+            <span class="split-label">검증 후 분해</span>
+            <span class="chip alt">뷰티 회사 <b th:text="${funnel.acctCompany()}">0</b>
+                <span class="off">서빙 제외</span></span>
+            <span class="chip mute">비뷰티·미판정 <b th:text="${funnel.acctNonBeauty()}">0</b></span>
+            <!-- 판정 히스토리(G3)가 없어 "재판정으로 바뀐 수"는 못 센다 — 오늘 판정 처리량으로 대신 신호 -->
+            <span class="chip ok" th:if="${funnel.judgedToday() > 0}">오늘 판정 <b
+                    th:text="${funnel.judgedTodayText()}">0</b>건
+                <span class="off">재판정 진행 신호</span></span>
+        </div>
+
+        <!-- 계정 카피(G1) — 분모는 현 모수(크로스 DB 교집합). 누적 핸들로 세면 >100%가 나온다. -->
+        <div class="acct" th:if="${funnel.heavyPending() or funnel.heavyFailed()}">
+            <span class="off" th:if="${funnel.heavyPending()}">계정 카피 현황 집계 중… <span
+                    class="off">(현 모수 대조는 백그라운드 집계 — 누적 카피 <span
+                    th:text="${funnel.copyCumulative()}"></span>핸들)</span></span>
+            <span class="off" th:if="${funnel.heavyFailed()}">계정 카피 현황 집계 실패 — 누적 카피 <span
+                    th:text="${funnel.copyCumulative()}"></span>핸들</span>
+        </div>
+        <div class="acct" th:unless="${funnel.heavyPending() or funnel.heavyFailed()}">
+            <span>계정 카피 <b th:text="${funnel.copyHave()}"></b>
+                / <span th:text="${funnel.copyBase()}"></span>
+                <span class="off">(<span th:text="${funnel.copyPercent()}"></span>% · 현 모수 기준)</span>
+                · stale 대상 <b th:text="${funnel.copyStale()}"></b>
+                <span class="off">· 누적 카피 <span th:text="${funnel.copyCumulative()}"></span>핸들 — 탈락 계정 포함</span></span>
+            <div class="bar sm"><i th:style="'width:' + ${funnel.copyPercent()} + '%'"></i></div>
+        </div>
+    </section>
+
+    <!-- ── 콘텐츠 보드 — 2축+상태 전이 (v3 §2-B, 퍼널 폐기) ── -->
+    <section class="card funnel" th:if="${funnel != null}">
+        <div class="cap">콘텐츠 보드 <span class="off">— 모수는 현재 raw 스냅샷 · 분석 여부는 크로스 DB 대조</span></div>
+
+        <div class="stages">
+            <div class="stage">
+                <b th:text="${funnel.rawContents()}">0</b>
                 <span>수집</span>
                 <span class="src">crawler 적재</span>
             </div>
             <span class="arrow">→</span>
-            <!-- 후보 수는 3상태: 집계 중 / 집계 실패(뷰 미적용·드리프트) / 수치.
+            <!-- 서빙·자격 수는 3상태: 집계 중 / 집계 실패(뷰 미적용·드리프트) / 수치.
                  실패를 "집계 중"으로 뭉개면 영원히 안 뜨는 것처럼 보인다(2026-07-21 발견). -->
             <div class="stage">
-                <b class="pending" th:if="${funnel.candidatesPending()}">집계 중…</b>
-                <b class="failed" th:if="${funnel.candidatesFailed()}">집계 실패</b>
-                <b th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}"
-                   th:text="${#numbers.formatInteger(funnel.candidates(), 1, 'COMMA')}">0</b>
-                <span>LLM 후보</span>
+                <b class="pending" th:if="${funnel.heavyPending()}">집계 중…</b>
+                <b class="failed" th:if="${funnel.heavyFailed()}">집계 실패</b>
+                <b th:unless="${funnel.heavyPending() or funnel.heavyFailed()}"
+                   th:text="${funnel.serving()}">0</b>
+                <span>뷰티 서빙</span>
+                <span class="src">서빙 모수 뷰</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b class="pending" th:if="${funnel.heavyPending()}">집계 중…</b>
+                <b class="failed" th:if="${funnel.heavyFailed()}">집계 실패</b>
+                <b th:unless="${funnel.heavyPending() or funnel.heavyFailed()}"
+                   th:text="${funnel.candidates()}">0</b>
+                <span>분석 자격</span>
                 <!-- 집계는 백그라운드 3분대 — "고장"으로 오해하지 않게 소요·자동 갱신을 명시 -->
-                <span class="src" th:if="${funnel.candidatesPending()}">백그라운드 ~3분 · 자동 갱신</span>
-                <span class="src" th:if="${funnel.candidatesFailed()}">5초마다 재시도 중</span>
-                <span class="src" th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}">후보 뷰 가드</span>
-            </div>
-            <span class="arrow">→</span>
-            <!-- 대표 숫자는 합계지만, 바로 아래에 매일/백필을 붙여 "뭉쳐 보이는" 오독을 막는다 -->
-            <div class="stage">
-                <b th:text="${#numbers.formatInteger(funnel.analyzed(), 1, 'COMMA')}">0</b>
-                <span>분석 완료 <span class="off">합계</span></span>
-                <span class="src">매일 <span th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}"></span>
-                    · 백필 <span th:text="${#numbers.formatInteger(funnel.backfillAnalyzed(), 1, 'COMMA')}"></span></span>
-            </div>
-            <span class="arrow">→</span>
-            <div class="stage">
-                <b th:text="${#numbers.formatInteger(funnel.served(), 1, 'COMMA')}">0</b>
-                <span>서빙 미러 <span class="off">게시물</span></span>
-                <span class="src">계정 <span th:text="${#numbers.formatInteger(funnel.beautyAccounts(), 1, 'COMMA')}"></span>
-                    · 미러 잡(분석 무관)</span>
+                <span class="src" th:if="${funnel.heavyPending()}">백그라운드 ~3분 · 자동 갱신</span>
+                <span class="src" th:if="${funnel.heavyFailed()}">5초마다 재시도 중</span>
+                <span class="src" th:unless="${funnel.heavyPending() or funnel.heavyFailed()}">후보 뷰 가드</span>
             </div>
         </div>
 
-        <!-- 분석 완료 내역 — 매일(랭킹 노출) vs 백필(상세 전용)을 명시 분리 -->
-        <div class="split">
-            <span class="split-label">분석 완료 내역</span>
-            <span class="chip ok">매일 <b th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}">0</b>
-                <span class="off">랭킹 노출</span></span>
-            <span class="chip alt">백필 <b th:text="${#numbers.formatInteger(funnel.backfillAnalyzed(), 1, 'COMMA')}">0</b>
-                <span class="off">인플루언서 상세 전용</span></span>
-            <span class="chip mute" th:if="${funnel.otherAnalyzed() > 0}">기타 <b
-                    th:text="${#numbers.formatInteger(funnel.otherAnalyzed(), 1, 'COMMA')}">0</b>
-                <span class="off">미성숙·마킹 전 레거시</span></span>
+        <!-- 트랙 4분할(G1) — 자격을 트랙별 기분석/미분석으로 쪼갠다. 항등식: 자격 = 기분석 + 미분석 -->
+        <div th:unless="${funnel.heavyPending() or funnel.heavyFailed()}">
+            <div class="split">
+                <span class="split-label">랭킹 트랙 <span class="off">제때 크롤</span></span>
+                <span class="chip ok">자격 <b th:text="${funnel.timelyTotal()}">0</b></span>
+                <span class="chip">기분석 <b th:text="${funnel.timelyDone()}">0</b>
+                    <span class="off">랭킹 노출</span></span>
+                <span class="chip alt">미분석 <b th:text="${funnel.timelyPending()}">0</b></span>
+            </div>
+            <div class="split">
+                <span class="split-label">상세 트랙 <span class="off">최근 윈도우 · 랭킹 제외</span></span>
+                <span class="chip ok">자격 <b th:text="${funnel.windowTotal()}">0</b></span>
+                <span class="chip">기분석 <b th:text="${funnel.windowDone()}">0</b>
+                    <span class="off">인플루언서 상세 전용</span></span>
+                <span class="chip alt">미분석 <b th:text="${funnel.windowPending()}">0</b></span>
+            </div>
+            <div class="split">
+                <span class="split-label">진짜 잔여</span>
+                <span class="chip alt"><b th:text="${funnel.truePending()}">0</b>건
+                    <span class="off">자격 ∩ 미분석</span></span>
+                <span class="chip">오늘 +<b th:text="${funnel.todayPlanned()}">0</b> 예정</span>
+                <span class="chip mute" th:if="${funnel.daysToFull() > 0}">완주까지 <b
+                        th:text="${funnel.daysToFull()}">0</b>일</span>
+            </div>
         </div>
 
-        <div class="bar" th:if="${funnel.candidates() > 0}">
+        <!-- 서빙 커버리지(G2) — 분모·분자 모두 "현재 서빙 모수". 누적 분석 수는 아래 각주로 강등 -->
+        <div class="bar" th:unless="${funnel.heavyPending() or funnel.heavyFailed()}">
             <i th:style="'width:' + ${funnel.coveragePercent()} + '%'"></i>
         </div>
-        <!-- 후보 집계 실패 — 사유를 그대로 노출한다(뷰 미적용/드리프트가 대표 원인, 07-20 사고 재발 감지용) -->
-        <div class="alert bad" th:if="${funnel.candidatesFailed()}">
+        <!-- 집계 실패 — 사유를 그대로 노출한다(뷰 미적용/드리프트가 대표 원인, 07-20 사고 재발 감지용) -->
+        <div class="alert bad" th:if="${funnel.heavyFailed()}">
             <b>후보 집계 실패</b> — 분석 뷰가 raw DB에 적용되지 않았을 수 있음
             <div class="alert-detail" th:text="${funnel.candidatesErrorText()}"></div>
         </div>
 
         <div class="meta">
-            <!-- 커버리지 분자는 제때(timely) 분석분만 — 가드 밖 기분석이 섞이면 과대 표시 -->
-            <span th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}">후보 커버리지 <b th:text="${funnel.coverageText()}"></b>
-                <span class="off">(매일 분석 <span th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}"></span>)</span>
-                — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정<span
-                    th:if="${funnel.daysToFull() > 0}" class="off"> · 완주까지 <span th:text="${funnel.daysToFull()}"></span>일</span></span>
-            <span class="off" th:if="${funnel.candidatesPending()}">후보 집계 중 — 커버리지는 집계 후 표시</span>
+            <span th:unless="${funnel.heavyPending() or funnel.heavyFailed()}">서빙 커버리지 <b
+                    th:text="${funnel.coverageText()}"></b>
+                <span class="off">(현 서빙 <span th:text="${funnel.serving()}"></span> 중 분석 보유
+                    <span th:text="${funnel.servingAnalyzed()}"></span>)</span></span>
+            <span class="off" th:if="${funnel.heavyPending()}">집계 중 — 커버리지·트랙 분해는 집계 후 표시</span>
             <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
         </div>
 
-        <!-- 제때 크롤 가드 — 수집→후보 낙차의 이유를 창 파라미터·제외분으로 설명 -->
+        <!-- 자격 밖 분해 + 제때 크롤 가드 — 서빙→자격 낙차의 이유를 수치로 설명 -->
         <div class="meta guard">
-            <span>후보 = 고정 지표가 업로드 +<span th:text="${funnel.pinDays()}"></span>~<span
-                th:text="${funnel.pinPlusSlackDays()}"></span>일 안에 잡힌 제때 크롤분
+            <span>자격 = 성숙(제때창 완전 경과) ∩ (제때 크롤 or 최근 윈도우)
                 <span class="off">(pin <span th:text="${funnel.pinDays()}"></span>일 + slack <span
                         th:text="${funnel.slackDays()}"></span>일)</span><span
-                th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}"> · 늦크롤 <b
-                    th:text="${#numbers.formatInteger(funnel.timelyExcluded(), 1, 'COMMA')}"></b>건은 후보 밖
-                <span class="off">— 최근 N개 창 안이면 백필로 분석(랭킹 제외)</span></span></span>
+                th:unless="${funnel.heavyPending() or funnel.heavyFailed()}"> · 자격 밖 = 미성숙 <b
+                    th:text="${funnel.immature()}"></b> + 영구 제외 <b
+                    th:text="${funnel.lateExcluded()}"></b>
+                <span class="off">— 늦크롤이면서 윈도우 밖</span></span></span>
         </div>
 
-        <div class="acct">
-            <span>계정 카피 <b th:text="${#numbers.formatInteger(funnel.copiedAccounts(), 1, 'COMMA')}"></b>
-                / <span th:text="${#numbers.formatInteger(funnel.beautyAccounts(), 1, 'COMMA')}"></span>
-                <span class="off">(<span th:text="${funnel.accountPercent()}"></span>%)</span></span>
-            <div class="bar sm"><i th:style="'width:' + ${funnel.accountPercent()} + '%'"></i></div>
+        <!-- 누적 각주 — 역대 분석 저장 총량. 모수 리비전(판정 v1/v2)이 섞여 커버리지 분자가 아니다(v3 §2) -->
+        <div class="meta">
+            <span class="off">각주 — 역대 분석 저장 <span th:text="${funnel.analyzedTotal()}"></span>건
+                (제때 <span th:text="${funnel.timelyMarked()}"></span>
+                · 백필 <span th:text="${funnel.backfillMarked()}"></span><span
+                    th:if="${funnel.otherMarked() > 0}"> · 기타 <span
+                    th:text="${funnel.otherMarkedText()}"></span></span>)
+                — 모수 리비전 혼재, 현 모수 커버리지와 별개</span>
         </div>
     </section>
 
@@ -203,14 +269,15 @@
             <div class="job-next off">스케줄 미배정</div>
         </div>
 
-        <!-- 백필 배치는 CLI one-shot(submit/collect)이라 잡 락·진행률이 없다 — 결과 수치로만 안내 -->
+        <!-- 백필 배치는 CLI one-shot(submit/collect)이라 잡 락·진행률이 없다 — 결과 수치로만 안내.
+             07-20 배치는 완결된 1회성 — 상시 잔여는 콘텐츠 보드의 미분석 합 하나로 수렴(v3 §1). -->
         <div class="card job dormant" th:if="${funnel != null}">
             <div class="job-hd">
                 <span class="job-title">백필 배치 (one-shot)</span>
                 <span class="badge idle">CLI 전용</span>
             </div>
             <div class="job-body">
-                <div class="job-last">누적 <b th:text="${#numbers.formatInteger(funnel.backfillAnalyzed(), 1, 'COMMA')}">0</b>건 적재
+                <div class="job-last">누적 <b th:text="${funnel.backfillMarked()}">0</b>건 적재
                     <span class="off">(late_backfill)</span></div>
             </div>
             <div class="job-scope off">Vertex/AI Studio 배치 — 대시보드에서 트리거 불가, 진행 상태는 라이브 로그 확인</div>

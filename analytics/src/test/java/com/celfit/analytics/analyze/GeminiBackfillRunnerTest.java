@@ -101,7 +101,7 @@ class GeminiBackfillRunnerTest {
 				    short_code text PRIMARY KEY, content_type text, account_handle text,
 				    uploaded_at timestamptz, caption text, thumbnail_url text, followers bigint,
 				    views bigint, likes bigint, comments bigint, metric_captured_at timestamptz,
-				    timely boolean)""");
+				    timely boolean, ad_marked boolean)""");
 		db.update("CREATE VIEW analytics.v_analysis_candidates AS SELECT * FROM analytics.candidates_fixture");
 		db.update("""
 				CREATE TABLE analytics.baseline_fixture (

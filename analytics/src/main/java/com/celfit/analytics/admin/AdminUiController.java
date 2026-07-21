@@ -51,14 +51,31 @@ public class AdminUiController {
 	public record FeedItem(String timeText, String outcome, String sentence) {
 	}
 
-	/** 퍼널 카드 뷰모델 — 커버리지·비율·집계 시각을 미리 계산해 템플릿을 단순화. */
-	public record FunnelView(long rawContents, long candidates, long timelyExcluded,
-			long analyzed, long timelyAnalyzed, long backfillAnalyzed, long otherAnalyzed,
-			long served, long copiedAccounts, long beautyAccounts, boolean candidatesPending,
-			boolean candidatesFailed, String candidatesErrorText,
-			String coverageText, int coveragePercent, int todayPlanned, int daysToFull,
-			int pinDays, int slackDays, int pinPlusSlackDays,
-			int accountPercent, String computedText) {
+	/**
+	 * 보드 뷰모델 (v3 — 계정 보드·콘텐츠 보드) — 수치는 전부 컨트롤러에서 포맷해 문자열로.
+	 * 무거운 집계(크로스 DB 대조) 파생 필드는 집계 전/실패면 null — 템플릿은 3상태(pending/failed/수치)
+	 * 가드로 감싼다(v2의 "집계 중" 영구 고정 버그 대응 유지).
+	 */
+	public record FunnelView(
+			// 무거운 집계 3상태 (v2 유지)
+			boolean heavyPending, boolean heavyFailed, String candidatesErrorText, String computedText,
+			// 계정 보드 — 매 요청 raw 카운트
+			String acctTotal, String acctQualified, String acctBeauty, String acctCompany,
+			String acctNonBeauty, long judgedToday, String judgedTodayText,
+			// 계정 카피 (G1) — 현 모수 기준 + 누적 각주
+			String copyBase, String copyHave, int copyPercent, String copyStale, String copyCumulative,
+			// 콘텐츠 보드 — 축 수치
+			String rawContents, String serving, String candidates,
+			String timelyTotal, String timelyDone, String timelyPending,
+			String windowTotal, String windowDone, String windowPending,
+			String truePending, int todayPlanned, int daysToFull,
+			String immature, String lateExcluded,
+			// 서빙 커버리지 (G2)
+			String servingAnalyzed, String coverageText, int coveragePercent,
+			// 누적 각주 (역대 분석 저장 — 모수 리비전 혼재)
+			String analyzedTotal, String timelyMarked, String backfillMarked, long otherMarked,
+			String otherMarkedText,
+			int pinDays, int slackDays, int pinPlusSlackDays) {
 	}
 
 	/** 건강 스트립 — 신선도·오늘 처리량·프로바이더·쿼터 이월. 문자열은 전부 컨트롤러에서 조립. */
@@ -174,25 +191,30 @@ public class AdminUiController {
 				scopeLine(job, f), scopeSubLine(job, f));
 	}
 
-	/** 잡별 대상/완료/잔여 한 줄 — 퍼널 수치에서 파생. 집계 전(f==null)이거나 미러면 null. */
+	/** 잡별 대상/완료/잔여 한 줄 — 집계 수치에서 파생. 집계 전(f==null)이거나 모르는 잡이면 null. */
 	private String scopeLine(JobName job, PipelineStatsService.Funnel f) {
 		if (f == null) {
 			return null;
 		}
+		PipelineStatsService.Heavy h = f.heavy();
 		return switch (job) {
 			case ANALYZE -> {
-				if (f.candidates() < 0) {
+				if (h == null) {
 					yield f.candidatesError() != null ? "대상 집계 실패 — 분석 뷰 확인 필요" : "대상 집계 중…";
 				}
-				long remaining = Math.max(0, f.candidates() - f.timelyAnalyzed());
-				yield "매일 %s 완료 · 후보 %s · 잔여 %s".formatted(
-						comma(f.timelyAnalyzed()), comma(f.candidates()), comma(remaining));
+				// 잔여는 크로스 DB 대조의 "진짜 잔여"(후보 ∩ 미분석) — 누적 마킹 수 빼기가 아니다(G1).
+				yield "후보 %s · 기분석 %s · 미분석 %s".formatted(
+						comma(h.candidates()), comma(h.candidates() - h.truePending()),
+						comma(h.truePending()));
 			}
-			case ACCOUNT_ANALYZE -> "완료 %s / 뷰티 %s · 대상 %s".formatted(
-					comma(f.copiedAccounts()), comma(f.beautyAccounts()), comma(f.accountTarget()));
-			// 미러도 "몇 개를 옮겼는지"가 보여야 한다 — 대상 뷰 수와 적재 결과(게시물·계정).
+			// 계정 카피 완료율도 현 모수 기준(G1) — 누적 핸들(탈락 계정 포함)로 세면 >100%가 나온다.
+			case ACCOUNT_ANALYZE -> h == null
+					? "카피 누적 %s · 대상 %s".formatted(comma(f.copiedAccounts()), comma(f.accountTarget()))
+					: "현 모수 %s 중 카피 %s · 대상 %s".formatted(
+							comma(h.beautyHandles()), comma(h.beautyCopied()), comma(f.accountTarget()));
+			// 미러도 "몇 개를 옮겼는지"가 보여야 한다 — 대상 뷰 수와 적재 결과(미러 세계의 게시물·계정).
 			case MIRROR -> "대상 %d개 뷰 · 게시물 %s · 계정 %s".formatted(
-					mirrorRegistry.specs().size(), comma(f.served()), comma(f.beautyAccounts()));
+					mirrorRegistry.specs().size(), comma(f.served()), comma(f.mirrorAccounts()));
 			default -> null;
 		};
 	}
@@ -202,13 +224,9 @@ public class AdminUiController {
 			return null;
 		}
 		return switch (job) {
-			// 후보 미상(집계 중·실패)이면 todayPlanned은 0이 아니라 "모름" — "+0 예정"은 오독을 부른다.
-			case ANALYZE -> {
-				String plan = f.candidates() < 0 ? "오늘 예정량 미상" : "오늘 +%s 예정".formatted(f.todayPlanned());
-				yield f.backfillAnalyzed() > 0
-						? "백필(상세 전용) %s 별도 · %s".formatted(comma(f.backfillAnalyzed()), plan)
-						: plan;
-			}
+			// 잔여 미상(집계 중·실패)이면 todayPlanned은 0이 아니라 "모름" — "+0 예정"은 오독을 부른다.
+			case ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
+					: "오늘 +%s 예정 · 랭킹 노출은 제때(timely) 분석분만".formatted(f.todayPlanned());
 			case ACCOUNT_ANALYZE -> "stale + 쿨다운 경과분 재분석";
 			case MIRROR -> "분석 무관 — 서빙 뷰 전체 재적재";
 			default -> null;
@@ -220,27 +238,48 @@ public class AdminUiController {
 	}
 
 	private FunnelView funnelView(PipelineStatsService.Funnel f) {
+		PipelineStatsService.Heavy h = f.heavy();
 		// 캐시 없음 + 마지막 시도 실패 = "집계 실패"(뷰 미적용·드리프트 등). 실패 사유가 없으면 순수 "집계 중".
-		boolean failed = f.candidates() < 0 && f.candidatesError() != null;
-		boolean pending = f.candidates() < 0 && !failed;
-		// 커버리지 분자는 timely 분석분만(V33) — 가드 밖 기분석은 후보 풀 밖이라 섞으면 과대 표시.
-		int coveragePercent = f.candidates() > 0
-				? (int) Math.min(100L, f.timelyAnalyzed() * 100L / f.candidates()) : 0;
-		String coverageText = f.candidates() > 0
-				? String.format(Locale.ROOT, "%.1f%%", f.timelyAnalyzed() * 100.0 / f.candidates()) : "—";
-		int accountPercent = f.beautyAccounts() > 0
-				? (int) Math.min(100L, f.copiedAccounts() * 100L / f.beautyAccounts()) : 0;
-		String computedText = f.heavyComputedAt() == null
-				? null : HHMM.format(f.heavyComputedAt().atZone(KST));
+		boolean failed = h == null && f.candidatesError() != null;
+		boolean pending = h == null && !failed;
+		PipelineStatsService.Accounts a = f.accounts();
+		// 커버리지(G2): 분모·분자 모두 "현재 서빙 모수" — 누적 분석 수는 모수 리비전이 섞여 각주로 강등.
+		int coveragePercent = h != null && h.servingContents() > 0
+				? (int) Math.min(100L, h.servingAnalyzed() * 100L / h.servingContents()) : 0;
+		String coverageText = h != null && h.servingContents() > 0
+				? String.format(Locale.ROOT, "%.1f%%", h.servingAnalyzed() * 100.0 / h.servingContents())
+				: "—";
+		// 계정 카피율(G1)도 현 모수 교집합 기준 — 누적 핸들/현 모수로 세면 >100%가 나온다.
+		int copyPercent = h != null && h.beautyHandles() > 0
+				? (int) Math.min(100L, h.beautyCopied() * 100L / h.beautyHandles()) : 0;
+		String computedText = h == null ? null : HHMM.format(h.computedAt().atZone(KST));
 		// immature·마킹 전(NULL) 레거시 — timely/backfill 어느 쪽도 아닌 기분석분.
-		long other = Math.max(0, f.analyzed() - f.timelyAnalyzed() - f.backfillAnalyzed());
-		return new FunnelView(f.rawContents(), f.candidates(), f.timelyExcluded(),
-				f.analyzed(), f.timelyAnalyzed(), f.backfillAnalyzed(), other, f.served(),
-				f.copiedAccounts(), f.beautyAccounts(), pending, failed, f.candidatesError(),
-				coverageText, coveragePercent,
+		long other = Math.max(0, f.analyzed() - f.timelyMarked() - f.backfillMarked());
+		return new FunnelView(pending, failed, f.candidatesError(), computedText,
+				comma(a.total()), comma(a.qualified()), comma(a.beautyIndividual()),
+				comma(a.beautyCompany()), comma(a.nonBeauty()),
+				a.judgedToday(), comma(a.judgedToday()),
+				h == null ? null : comma(h.beautyHandles()),
+				h == null ? null : comma(h.beautyCopied()),
+				copyPercent, comma(f.accountTarget()), comma(f.copiedAccounts()),
+				comma(f.rawContents()),
+				h == null ? null : comma(h.servingContents()),
+				h == null ? null : comma(h.candidates()),
+				h == null ? null : comma(h.timelyTotal()),
+				h == null ? null : comma(h.timelyDone()),
+				h == null ? null : comma(h.timelyPending()),
+				h == null ? null : comma(h.windowTotal()),
+				h == null ? null : comma(h.windowDone()),
+				h == null ? null : comma(h.windowPending()),
+				h == null ? null : comma(h.truePending()),
 				f.todayPlanned(), f.daysToFull(),
-				f.pinDays(), f.slackDays(), f.pinDays() + f.slackDays(),
-				accountPercent, computedText);
+				h == null ? null : comma(h.immaturePool()),
+				h == null ? null : comma(h.lateExcluded()),
+				h == null ? null : comma(h.servingAnalyzed()),
+				coverageText, coveragePercent,
+				comma(f.analyzed()), comma(f.timelyMarked()), comma(f.backfillMarked()),
+				other, comma(other),
+				f.pinDays(), f.slackDays(), f.pinDays() + f.slackDays());
 	}
 
 	private HealthView healthView(PipelineStatsService.Health h) {
