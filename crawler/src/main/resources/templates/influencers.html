@@ -37,31 +37,26 @@
         <td><span class="badge" th:classappend="${row.influencer.status}"
                  th:text="${row.influencer.status}"></span></td>
         <td th:text="${row.influencer.followers != null ? #numbers.formatInteger(row.influencer.followers, 0, 'COMMA') : '—'}"></td>
-        <td th:with="isCompany=${row.influencer.beauty == true and row.influencer.beautyCompany == true},
-                     isInf=${row.influencer.beauty == true and row.influencer.beautyCompany != true}">
-            <span th:if="${row.influencer.beauty != null}" class="badge"
-                  th:classappend="${row.influencer.beauty} ? (${isCompany} ? 'BEAUTY_COMPANY' : 'QUALIFIED') : 'EXCLUDED'"
-                  th:text="${row.influencer.beauty} ? (${isCompany} ? '뷰티 회사' : '뷰티') : '뷰티 아님'"
+        <td th:with="cls=${row.influencer.beautyClass != null ? row.influencer.beautyClass.name() : null}">
+            <!-- v2 판정(beauty_class 있음) — 4분류 배지 -->
+            <span th:if="${cls != null}" class="badge"
+                  th:classappend="${cls == 'INFLUENCER'} ? 'BEAUTY' : (${cls == 'COMPANY'} ? 'BEAUTY_COMPANY' : (${cls == 'BEAUTY_SERVICE'} ? 'BEAUTY_SERVICE' : 'NOT_BEAUTY'))"
+                  th:text="${cls == 'INFLUENCER'} ? '뷰티' : (${cls == 'COMPANY'} ? '뷰티 회사' : (${cls == 'BEAUTY_SERVICE'} ? '시술·서비스' : '뷰티 아님'))"
                   th:title="${row.influencer.beautyReason}"></span>
-            <span th:if="${row.influencer.beauty == null}">—</span>
+            <!-- 구 3분류 시대 판정분(재판정 전 과도기) — boolean 기반 표시 -->
+            <span th:if="${cls == null and row.influencer.beauty != null}" class="badge"
+                  th:classappend="${row.influencer.beauty} ? (${row.influencer.beautyCompany} ? 'BEAUTY_COMPANY' : 'BEAUTY') : 'NOT_BEAUTY'"
+                  th:text="${row.influencer.beauty} ? (${row.influencer.beautyCompany} ? '뷰티 회사(구)' : '뷰티(구)') : '뷰티 아님(구)'"
+                  th:title="${row.influencer.beautyReason}"></span>
+            <span th:if="${cls == null and row.influencer.beauty == null}">—</span>
             <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
-                  style="display:inline" th:unless="${isInf}">
+                  style="display:inline" th:each="target : ${beautyClasses}"
+                  th:unless="${cls == target.name()}">
                 <input type="hidden" name="page" th:value="${page.number}"/>
                 <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
-                <button type="submit" name="beauty" value="true">뷰티</button>
-            </form>
-            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
-                  style="display:inline" th:unless="${isCompany}">
-                <input type="hidden" name="page" th:value="${page.number}"/>
-                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
-                <input type="hidden" name="company" value="true"/>
-                <button type="submit" name="beauty" value="true">회사</button>
-            </form>
-            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/beauty|}"
-                  style="display:inline" th:unless="${row.influencer.beauty == false}">
-                <input type="hidden" name="page" th:value="${page.number}"/>
-                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
-                <button type="submit" name="beauty" value="false">뷰티 아님</button>
+                <input type="hidden" name="beautyClass" th:value="${target.name()}"/>
+                <button type="submit"
+                        th:text="${target.name() == 'INFLUENCER'} ? '뷰티' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'BEAUTY_SERVICE'} ? '시술' : '아님'))"></button>
             </form>
         </td>
         <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>

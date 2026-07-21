@@ -7,6 +7,7 @@ import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
 import com.celfit.crawler.crawling.application.port.out.*;
+import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
@@ -168,7 +169,9 @@ public class UiController {
                                 "뷰티 인플루언서 · 수집·유사발굴 대상"),
                         new StatusTile("BEAUTY_COMPANY", s.beautyCompany(),
                                 "뷰티 회사 · 리스트업 전용(수집 제외)"),
-                        new StatusTile("NOT_BEAUTY", s.beautyFalse(),
+                        new StatusTile("BEAUTY_SERVICE", s.beautyService(),
+                                "시술·서비스(병원·에스테틱·헤어·네일 등) · 타깃 제외"),
+                        new StatusTile("NOT_BEAUTY", s.beautyFalse() - s.beautyService(),
                                 "비뷰티 · 수집 제외"),
                         new StatusTile("UNJUDGED", s.beautyUnjudged(),
                                 "미판정 · 뷰티판정 대기"))),
@@ -254,6 +257,8 @@ public class UiController {
         }));
         model.addAttribute("status", selected);
         model.addAttribute("statuses", JUDGED_STATUSES);
+        // 수동 오버라이드 버튼용 4분류 목록 — 템플릿 하드코딩 대신 enum 단일 원천
+        model.addAttribute("beautyClasses", BeautyClass.values());
         return "influencers";
     }
 
