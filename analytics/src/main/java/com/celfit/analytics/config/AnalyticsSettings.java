@@ -31,6 +31,8 @@ public class AnalyticsSettings {
 	public static final String KEY_GEMINI_MODEL = "analytics.gemini-model";
 	/** Gemini 분당 호출 상한 — 무료 티어 15 RPM. crawler 판정과 동시 실행 시 합산 초과 주의. */
 	public static final String KEY_GEMINI_RPM = "analytics.gemini-rpm";
+	/** 1회 실행당 이미지 아카이브(다운로드+업로드) 상한 — 초과분은 이월. */
+	public static final String KEY_ARCHIVE_BATCH_LIMIT = "analytics.archive-batch-limit";
 
 	static final String DEFAULT_LLM_MODEL = "claude-opus-4-8";
 	static final int DEFAULT_ANALYZE_BATCH_LIMIT = 10;
@@ -42,6 +44,7 @@ public class AnalyticsSettings {
 	static final String DEFAULT_LLM_PROVIDER = "gemini";
 	static final String DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
 	static final int DEFAULT_GEMINI_RPM = 15;
+	static final int DEFAULT_ARCHIVE_BATCH_LIMIT = 1000;
 
 	private final JdbcTemplate raw;
 
@@ -92,6 +95,11 @@ public class AnalyticsSettings {
 
 	public int geminiRpm() {
 		return read(KEY_GEMINI_RPM).map(Integer::parseInt).orElse(DEFAULT_GEMINI_RPM);
+	}
+
+	public int archiveBatchLimit() {
+		return read(KEY_ARCHIVE_BATCH_LIMIT).map(Integer::parseInt)
+				.orElse(DEFAULT_ARCHIVE_BATCH_LIMIT);
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */
