@@ -24,6 +24,7 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -57,6 +58,16 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				    detected_products     jsonb,
 				    detected_distributors jsonb,
 				    is_beauty             boolean
+				)""");
+		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
+		jdbcTemplate.execute("""
+				CREATE TABLE image_assets (
+				    kind        text NOT NULL,
+				    key         text NOT NULL,
+				    object_path text NOT NULL,
+				    source_name text NOT NULL,
+				    archived_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (kind, key)
 				)""");
 
 		jdbcTemplate.update("""
