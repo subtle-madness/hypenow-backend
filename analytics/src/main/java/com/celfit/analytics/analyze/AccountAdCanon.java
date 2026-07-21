@@ -1,5 +1,6 @@
 package com.celfit.analytics.analyze;
 
+import com.celfit.analytics.llm.AdSituation;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,11 +33,29 @@ final class AccountAdCanon {
 			long comparisonOrganicCount, long comparisonAdCount, OffsetDateTime lastAdPostedAt) {
 
 		/**
-		 * 광고 비교 성립 여부 = 프롬프트의 "광고 비교 데이터: 있음" 및 adHeadline 저장 게이트.
-		 * 한쪽 그룹만 있으면 화면(was)에도 comparison이 null이라 설명 대상 없는 헤드라인이 된다.
+		 * 광고 비교 성립 여부 — organic·협찬 평균이 둘 다 있을 때만. 화면(was)의 comparison 표시
+		 * 조건과 같다(한쪽만 있으면 was도 null).
 		 */
 		boolean hasComparison() {
 			return organicAvg != null && adAvg != null;
+		}
+
+		/**
+		 * adHeadline이 무엇을 진술할지 가르는 4분기 (07-21). 비교가 안 돼도 협찬 유무 자체가
+		 * 정보라 헤드라인을 만든다 — 근거가 아예 없는 INSUFFICIENT만 제외.
+		 */
+		AdSituation situation() {
+			if (hasComparison()) {
+				return AdSituation.COMPARABLE;
+			}
+			if (comparisonOrganicCount > 0 && sponsoredCount == 0) {
+				return AdSituation.NO_ADS; // 측정 가능 organic이 있고 협찬은 하나도 없음
+			}
+			if (comparisonAdCount > 0 && comparisonOrganicCount == 0) {
+				return AdSituation.ALL_ADS; // 측정 가능분이 전량 협찬
+			}
+			// 측정 가능 게시물이 없거나(피드 조회수 NULL 등), 협찬은 있는데 지표가 없어 진술 근거가 없음
+			return AdSituation.INSUFFICIENT;
 		}
 	}
 
