@@ -51,7 +51,8 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				    likes          bigint,
 				    comments       bigint,
 				    hype_score     bigint,
-				    metric_captured_at timestamptz
+				    metric_captured_at timestamptz,
+				    ad_marked      boolean
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE content_comments (

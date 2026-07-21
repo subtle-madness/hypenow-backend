@@ -47,7 +47,10 @@ SELECT
   likes,
   comments,
   metric_captured_at,
-  timely
+  timely,
+  -- 인스타 유료 파트너십 태그 — v_contents가 이미 핀 스냅샷에서 들고 있어 그대로 통과시킨다
+  -- (조인 추가 없음 = 플랜 불변). LLM 프롬프트에 확정 사실로 싣는 용도.
+  ad_marked
 FROM (
   SELECT
     v.short_code,
@@ -61,6 +64,7 @@ FROM (
     v.likes,
     v.comments,
     v.metric_captured_at,
+    v.ad_marked,
     t.timely,
     -- 최근 N개 윈도우(01 뷰) 포함 여부도 배리어 안에서 미리 계산해 바깥 OR과 분리한다.
     EXISTS (SELECT 1 FROM analytics.v_recent_content rw WHERE rw.short_code = v.short_code) AS in_window

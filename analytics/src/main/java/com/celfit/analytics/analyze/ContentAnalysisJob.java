@@ -174,7 +174,8 @@ public class ContentAnalysisJob {
 	private void analyzeOne(String shortCode, String model,
 			Map<String, Baseline> withBaseline, Map<String, Baseline> accountBaseline, boolean timely) {
 		Map<String, Object> content = analysis.queryForMap("""
-				SELECT account_handle, caption, content_type, thumbnail_url, views, likes, comments
+				SELECT account_handle, caption, content_type, thumbnail_url, views, likes, comments,
+				       ad_marked
 				FROM contents WHERE short_code = ?""", shortCode);
 		// 최근창 안이면 콘텐츠 키 기준선(rank 포함), 밖이면 계정 평균(rank null) 폴백 (07-20 스코프 확장).
 		// 계정 집계도 없는 이례적 경우(원본 스키마 스큐 등)엔 전부 null — 프롬프트가 앵커 없이 절제 처리.
@@ -211,7 +212,8 @@ public class ContentAnalysisJob {
 				(String) content.get("account_handle"), caption,
 				(String) content.get("content_type"), (Long) content.get("views"),
 				(Long) content.get("likes"), (Long) content.get("comments"),
-				baselineForPrompt, categoryCounts), attachThumbnail ? thumbnailUrl : null);
+				baselineForPrompt, categoryCounts, (Boolean) content.get("ad_marked")),
+				attachThumbnail ? thumbnailUrl : null);
 		// 캡션도 썸네일도 없으면 속성 근거 입력이 없다 — 통합 콜이 돌려줘도 폐기하고 속성 컬럼 NULL 유지.
 		ContentAttributes attrs = hasCaption || attachThumbnail ? result.attributes() : null;
 		Synthesis s = result.synthesis();
