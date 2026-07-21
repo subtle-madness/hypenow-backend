@@ -20,12 +20,14 @@ public class ScheduleInfo {
 			@Value("${analytics.schedule.mirror-cron:-}") String mirrorCron,
 			@Value("${analytics.schedule.classify-cron:-}") String classifyCron,
 			@Value("${analytics.schedule.analyze-cron:-}") String analyzeCron,
-			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron) {
+			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron,
+			@Value("${analytics.schedule.archive-cron:-}") String archiveCron) {
 		this.enabled = enabled;
 		put(JobName.MIRROR, mirrorCron);
 		put(JobName.CLASSIFY, classifyCron);
 		put(JobName.ANALYZE, analyzeCron);
 		put(JobName.ACCOUNT_ANALYZE, accountCron);
+		put(JobName.ARCHIVE, archiveCron);
 	}
 
 	private void put(JobName job, String cron) {

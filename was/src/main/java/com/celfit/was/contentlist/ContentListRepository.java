@@ -31,8 +31,12 @@ public class ContentListRepository {
 		return safeQuery(List::of, () -> {
 			Sql sql = buildWhere(query);
 			return jdbcClient.sql("""
-					SELECT c.short_code, c.thumbnail_url, c.caption, c.posted_at, c.content_type,
-					       a.handle, a.display_name, a.profile_image_url, a.followers,
+					SELECT c.short_code,
+					       COALESCE('/img/' || it.object_path, c.thumbnail_url) AS thumbnail_url,
+					       c.caption, c.posted_at, c.content_type,
+					       a.handle, a.display_name,
+					       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+					       a.followers,
 					       s.views, s.likes, s.comments, s.hype_score, s.captured_at,
 					       an.ad_type,
 					       an.detected_product_categories::text AS product_categories_json,
@@ -69,6 +73,8 @@ public class ContentListRepository {
 				  WHERE m.short_code = c.short_code AND m.captured_at < :cutoff
 				  ORDER BY m.captured_at DESC LIMIT 1
 				) s ON true
+				LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
 				WHERE c.posted_at >= :startInstant AND c.posted_at < :cutoff
 				""");
 		Map<String, Object> params = new HashMap<>();

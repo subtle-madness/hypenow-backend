@@ -26,6 +26,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # 병행 PR이 같은 Flyway 번호를 선점하면 머지 후에야 터진다(07-21 V35·V36 연속 선점) —
+      # 테스트 전체를 기다리지 않고 수 초 안에 명확히 실패시킨다. PR CI는 base와의
+      # 머지 결과(refs/pull/N/merge)를 체크아웃하므로 develop에 먼저 들어간 번호와의 중복도 잡힌다.
+      - name: Flyway 마이그레이션 버전 중복 검사
+        run: |
+          fail=0
+          for d in analytics/src/main/resources/db/migration/analysis \
+                   was/src/main/resources/db/migration \
+                   crawler/src/main/resources/db/migration; do
+            [ -d "$d" ] || continue
+            dup=$(ls "$d" | grep -oE '^V[0-9]+' | sort | uniq -d)
+            if [ -n "$dup" ]; then
+              echo "::error::마이그레이션 버전 중복 ($d): $(echo $dup | tr '\n' ' ') — 뒤에 온 PR이 다음 번호로 재번호할 것"
+              fail=1
+            fi
+          done
+          exit $fail
+
       - name: JDK 21 설치
         uses: actions/setup-java@v5
         with:
