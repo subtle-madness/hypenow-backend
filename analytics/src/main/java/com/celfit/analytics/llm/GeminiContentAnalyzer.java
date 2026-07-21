@@ -70,6 +70,23 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 		this.taxonomy = taxonomy;
 	}
 
+	/**
+	 * 파트 B(성과 종합) 문구 정의 — 통합 콜과 해석 문구 전용 어댑터({@link GeminiContentSynthesizer})가
+	 * <b>공유</b>한다. 복제해 두면 한쪽만 고쳐져 신규 분석분과 재생성분의 의미가 갈린다.
+	 * 이 문장이 바뀌면 {@link Synthesis#VERSION}을 올려 기존 행을 갱신 대상으로 만들 것.
+	 */
+	static final String SYNTHESIS_RULES = """
+			[파트 B — 성과 종합]
+			추출된 사실과 입력의 지표·기준선·댓글 분포 수치만 근거로 삼고 수치를 지어내지 마라.
+			각 항목 2~3문장 이내.
+
+			- aiContentSummary: 이 콘텐츠가 계정 평균 대비 어땠는지(배수·순위), 반응의 성격(구매 전환형/화제성),
+			  협찬 수용도를 종합한 요약
+			- contentsPattern: 이 콘텐츠가 최근 12개 평균(계정 기준선) 대비 참여율·좋아요·댓글에서 어느 지점이 두드러지거나 처지는지 한 줄 비교. 기준선 수치를 인용하고, 계정 전체 콘텐츠 경향으로 일반화하지 마라 (07-21 재정의: 콘텐츠 1건 입력으로 계정 패턴을 물어 표본부족 헤지가 나던 것을 소비처 Comparison.narrative에 맞춰 비교 해설로 낮춤)
+			- aiCommentInsight: 댓글 분포 수치를 근거로 반응의 질을 해석
+			- commentAuthenticityGrade: high(자연스러운 반응) | normal | suspect(도배·기계적 패턴 의심)
+			- commentAuthenticityNote: 판정 근거 한 줄""";
+
 	/** 통합 시스템 프롬프트 — 검증 통과본(unified_prompt.txt, 07-18 11건 검증) verbatim. */
 	public static String instructions(BeautyTaxonomy taxonomy) {
 		return """
@@ -100,22 +117,13 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				    (피드는 태그 기능 자체가 없고, 릴스도 캡션으로만 고지하는 경우가 많다) —
 				    '없음'·'해당 없음'이면 캡션·화면 근거로 평소대로 판단하라.
 
-				[파트 B — 성과 종합]
-				파트 A에서 추출한 사실과 입력의 지표·기준선·댓글 분포 수치만 근거로 삼고 수치를 지어내지 마라.
-				각 항목 2~3문장 이내.
-
-				- aiContentSummary: 이 콘텐츠가 계정 평균 대비 어땠는지(배수·순위), 반응의 성격(구매 전환형/화제성),
-				  협찬 수용도를 종합한 요약
-				- contentsPattern: 이 콘텐츠가 최근 12개 평균(계정 기준선) 대비 참여율·좋아요·댓글에서 어느 지점이 두드러지거나 처지는지 한 줄 비교. 기준선 수치를 인용하고, 계정 전체 콘텐츠 경향으로 일반화하지 마라 (07-21 재정의: 콘텐츠 1건 입력으로 계정 패턴을 물어 표본부족 헤지가 나던 것을 소비처 Comparison.narrative에 맞춰 비교 해설로 낮춤)
-				- aiCommentInsight: 댓글 분포 수치를 근거로 반응의 질을 해석
-				- commentAuthenticityGrade: high(자연스러운 반응) | normal | suspect(도배·기계적 패턴 의심)
-				- commentAuthenticityNote: 판정 근거 한 줄
+				%s
 
 				[파트 B 절제 규칙 — 반드시 지켜라]
 				%s
 
 				[분류표 — 대분류(한글): 중분류[소분류, …]]
-				%s""".formatted(taxonomy.distributorsPrompt(), LlmGuard.BODY, taxonomy.promptTable());
+				%s""".formatted(taxonomy.distributorsPrompt(), SYNTHESIS_RULES, LlmGuard.BODY, taxonomy.promptTable());
 	}
 
 	/** 유저 입력 — 검증 하니스(run_unified.py) 포맷 그대로 + 공식 광고태그 사실 1줄. */
@@ -164,11 +172,25 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				o.detectedBrands(), o.sponsoredSignalLevel(), o.sponsoredSignalReasons(), o.adDisclosure(),
 				o.detectedProductCategories(), o.detectedProducts(), o.vlmAttributes(), o.mainCategory(),
 				o.subCategories(), o.detectedDistributors(), o.adType(), o.isBeauty()), taxonomy);
-		String grade = o.commentAuthenticityGrade() != null && GRADES.contains(o.commentAuthenticityGrade())
-				? o.commentAuthenticityGrade() : "normal";
+		String grade = defendGrade(o.commentAuthenticityGrade());
 		return new ContentInsight(attrs, new Synthesis(o.aiContentSummary(), o.contentsPattern(),
 				o.aiCommentInsight(), grade, o.commentAuthenticityNote()));
 	}
+
+	/** 종합 5필드만 파싱 — 해석 문구 전용 어댑터({@link GeminiContentSynthesizer})가 쓴다. 등급 방어 공유. */
+	public static Synthesis parseSynthesis(ObjectMapper om, String json) {
+		SynthesisOutput o = om.readValue(json, SynthesisOutput.class);
+		return new Synthesis(o.aiContentSummary(), o.contentsPattern(), o.aiCommentInsight(),
+				defendGrade(o.commentAuthenticityGrade()), o.commentAuthenticityNote());
+	}
+
+	/** 어휘 밖 등급은 normal로 — 통합 파서와 같은 방어. */
+	private static String defendGrade(String grade) {
+		return grade != null && GRADES.contains(grade) ? grade : "normal";
+	}
+
+	record SynthesisOutput(String aiContentSummary, String contentsPattern, String aiCommentInsight,
+			String commentAuthenticityGrade, String commentAuthenticityNote) {}
 
 	/** 통합 산출 합본 — RESPONSE_SCHEMA와 1:1. */
 	record Output(List<ContentAttributes.Brand> detectedBrands, String sponsoredSignalLevel,
