@@ -31,6 +31,12 @@ BEGIN
     'v_contents r1 content_type != reels (lower)';
   ASSERT (SELECT hype_score FROM analytics.v_contents WHERE short_code = 'dummy_r1') IS NOT NULL,
     'v_contents r1 hype_score is null';
+  -- 인스타 유료 파트너십 태그가 핀 스냅샷에서 v_contents까지 통과한다 (07-21 — LLM 프롬프트 입력용,
+  -- 미러 contents.ad_marked로 내려가 일상 잡이 확정 사실로 싣는다). 피드는 소스가 항상 false.
+  ASSERT (SELECT ad_marked FROM analytics.v_contents WHERE short_code = 'dummy_r1') = false,
+    'v_contents r1 ad_marked != false';
+  ASSERT (SELECT ad_marked FROM analytics.v_contents WHERE short_code = 'dummy_f1') = false,
+    'v_contents f1(피드) ad_marked != false';
 
   -- v_content_metric_snapshots: 이력 + 합성 id + 모수
   ASSERT (SELECT count(*) FROM analytics.v_content_metric_snapshots WHERE short_code = 'dummy_r1') = 4,

@@ -95,6 +95,10 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				- vlmAttributes: {label, value} — 노출 제품 / 제품 노출 비중 / 후킹 요소 / 전환 장치 /
 				  콘텐츠 유형 / 무드 / 편집 스타일 순 (썸네일 없이 판단 불가한 항목은 제외)
 				- adType: organic|sponsored (캡션 표기+화면 종합 판정)
+				  ※ 입력의 "인스타 유료 파트너십 태그"가 '있음'이면 인스타가 보증하는 확정 광고다 —
+				    이 경우 adType은 반드시 sponsored로 판정하라. 반대로 '없음'은 광고가 아니라는 뜻이 아니다
+				    (피드는 태그 기능 자체가 없고, 릴스도 캡션으로만 고지하는 경우가 많다) —
+				    '없음'·'해당 없음'이면 캡션·화면 근거로 평소대로 판단하라.
 
 				[파트 B — 성과 종합]
 				파트 A에서 추출한 사실과 입력의 지표·기준선·댓글 분포 수치만 근거로 삼고 수치를 지어내지 마라.
@@ -114,18 +118,34 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				%s""".formatted(taxonomy.distributorsPrompt(), LlmGuard.BODY, taxonomy.promptTable());
 	}
 
-	/** 유저 입력 — 검증 하니스(run_unified.py) 포맷 그대로. */
+	/** 유저 입력 — 검증 하니스(run_unified.py) 포맷 그대로 + 공식 광고태그 사실 1줄. */
 	public static String userText(ContentToAnalyze c) {
 		return """
 				콘텐츠: %s (@%s, %s)
 				캡션: %s
+				인스타 유료 파트너십 태그: %s
 				지표: views=%s likes=%s comments=%s
 				계정 기준선: %s
 				댓글 분류 분포: %s
 
 				위 콘텐츠를 분석하라.""".formatted(c.shortCode(), c.accountHandle(), c.contentType(),
-				c.caption() == null ? "(없음)" : c.caption(), c.views(), c.likes(), c.comments(),
-				c.baseline(), c.commentCategoryCounts());
+				c.caption() == null ? "(없음)" : c.caption(), adMarkedText(c),
+				c.views(), c.likes(), c.comments(), c.baseline(), c.commentCategoryCounts());
+	}
+
+	/**
+	 * 태그는 릴스 전용 기능이라 판정 기준은 값이 아니라 콘텐츠 타입이다 — 미러(v_contents)는 피드에
+	 * false를 채우므로 값만 보면 "없음"이 되어 "광고 아님"으로 오독된다. 릴스인데 값이 없는 경우
+	 * (이례적)는 "없음"이 아니라 "확인 안 됨"으로 구분해 근거 없는 organic 판정을 막는다.
+	 */
+	private static String adMarkedText(ContentToAnalyze c) {
+		if (!"reels".equalsIgnoreCase(c.contentType())) {
+			return "해당 없음 (피드는 태그 기능 없음)";
+		}
+		if (c.adMarked() == null) {
+			return "확인 안 됨";
+		}
+		return c.adMarked() ? "있음 (인스타 공식 표기 — 확정 광고)" : "없음";
 	}
 
 	@Override

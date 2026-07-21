@@ -106,7 +106,12 @@ SELECT
   p.comments_count AS comments,
   analytics.hype_score(lower(e.content_type), p.views, p.likes, p.comments_count, pr.followers,
                        extract(epoch FROM (now() - e.uploaded_at)) / 86400.0) AS hype_score,
-  p.captured_at AS metric_captured_at
+  p.captured_at AS metric_captured_at,
+  -- 인스타 유료 파트너십 태그(릴스 전용, 피드는 항상 false). 광고 판정의 정본은 캡션 분류
+  -- (content_analyses.ad_type)지만, 이 태그는 인스타가 보증하는 확정 사실이라 LLM 프롬프트에
+  -- 사실로 실어야 한다 — 안 실으면 태그가 붙은 게시물을 LLM이 organic으로 뒤집는다(실측 87건).
+  -- 미러(contents.ad_marked)로 내려야 일상 잡(analysis DB만 읽음)이 쓸 수 있다.
+  p.paid_partnership AS ad_marked
 FROM analytics.v_serving_content e
 JOIN analytics.v_base_detail d USING (content_id)
 JOIN analytics.v_pinned_metrics p USING (content_id)

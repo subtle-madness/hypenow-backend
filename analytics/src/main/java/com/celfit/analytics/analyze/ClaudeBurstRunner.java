@@ -111,7 +111,7 @@ public class ClaudeBurstRunner {
 				"SELECT short_code FROM content_analyses", String.class));
 		List<Map<String, Object>> rows = raw.queryForList("""
 				SELECT c.short_code, c.account_handle, c.content_type, c.caption,
-				       c.views, c.likes, c.comments,
+				       c.views, c.likes, c.comments, c.ad_marked,
 				       ab.recent_reels_avg_views, b.rank_in_recent_reels, ab.recent_reels_count,
 				       ab.recent_contents_count, ab.recent12_avg_engagement_rate,
 				       ab.recent12_avg_like_count, ab.recent12_avg_comment_count,
@@ -140,7 +140,7 @@ public class ClaudeBurstRunner {
 			ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 					(String) r.get("caption"), (String) r.get("content_type"),
 					numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
-					baseline, Map.of());
+					baseline, Map.of(), (Boolean) r.get("ad_marked"));
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", shortCode)
 					.put("system", system)

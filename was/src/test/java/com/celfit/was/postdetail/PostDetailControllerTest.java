@@ -40,7 +40,7 @@ class PostDetailControllerTest {
 		given(repository.findContent("mari01")).willReturn(Optional.of(
 				new Content("mari01", "marimood", "https://thumb/mari01.jpg", "쿨톤 여름 침착 조합",
 						OffsetDateTime.parse("2026-06-28T00:00:00Z"), "reels", new BigDecimal("18.0"),
-						"https://www.instagram.com/p/mari01/", 1911943L, 32969L, 488L, 1911943L, null)));
+						"https://www.instagram.com/p/mari01/", 1911943L, 32969L, 488L, 1911943L, null, null)));
 		given(repository.findAccount("marimood")).willReturn(Optional.of(
 				new Account("marimood", "마리 MARI", "https://pic/mari.jpg", 16586L, null)));
 		given(repository.findComments("mari01")).willReturn(List.of(
