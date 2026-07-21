@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 # 맥에서 실행: jar 빌드 → multi-arch 이미지 push → 서버 pull·재기동
-# 사용법: deploy/scripts/deploy.sh <ssh-host> [서비스…]
+# CD 도입(07-20) 후 평상시 배포는 develop→main 머지 — 이 스크립트는 긴급 경로 전용.
+# 사용법: deploy/scripts/deploy.sh [--force] <ssh-host> [서비스…]
 #   예: deploy.sh ubuntu@api.hypenow.io            (was+analytics 전부)
 #       deploy.sh hypenow analytics                (analytics만)
 set -euo pipefail
-HOST="${1:?사용법: deploy.sh <ssh-host> [was|analytics …]}"
+FORCE=0
+if [ "${1:-}" = "--force" ]; then FORCE=1; shift; fi
+HOST="${1:?사용법: deploy.sh [--force] <ssh-host> [was|analytics …]}"
 shift
+# 가드: :latest는 마지막 push가 이긴다 — main이 아닌 커밋의 수동 배포가 CD 배포를 덮으면
+# 서비스 간 버전 불일치가 난다(07-20 장애: develop was + main analytics → 랭킹 500).
+git fetch -q origin main
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ] && [ "$FORCE" -ne 1 ]; then
+  echo "거부: 현재 HEAD가 origin/main이 아닙니다. 배포는 develop→main 머지(CD)로 하세요." >&2
+  echo "CD 불능 등 긴급 시에만: deploy.sh --force <ssh-host> …" >&2
+  exit 1
+fi
 SERVICES=("$@")
 if [ ${#SERVICES[@]} -eq 0 ]; then SERVICES=(was analytics); fi
 cd "$(git rev-parse --show-toplevel)"

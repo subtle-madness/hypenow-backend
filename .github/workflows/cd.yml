@@ -79,6 +79,18 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
+      # compose.yaml·Caddyfile은 서버 ~/deploy가 실물 — 레포를 정본으로 동기화해 드리프트 방지.
+      # 동기화 후 config 검증: 레포에 새로 참조된 ${VAR}가 서버 .env에 없으면
+      # 컨테이너가 빈 값으로 침묵 기동하므로, 그 전에 배포를 실패시킨다.
+      - name: compose·Caddyfile 동기화·검증
+        run: |
+          scp -i ~/.ssh/id_deploy deploy/compose.yaml deploy/Caddyfile "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
+            'cd ~/deploy && out=$(docker compose config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
+             if echo "$out" | grep -q "is not set"; then
+               echo "$out"; echo "compose가 참조하는 env 변수가 서버 .env에 없음 — .env 갱신 후 재배포"; exit 1
+             fi'
+
       - name: compose pull·재기동
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
