@@ -13,10 +13,18 @@ public interface BeautyJudge {
                        List<String> captions) {}
 
     /**
-     * 3분류 판정 결과 — 비뷰티(beauty=false) / 뷰티 인플루언서(beauty=true, company=false) /
-     * 뷰티 회사(beauty=true, company=true). 회사 계정은 명단 리스트업만 하고 수집·유사발굴에서 제외.
+     * 4분류 판정 결과(v2) — 파생 boolean(beauty/company)은 BeautyClass 규칙을 위임한다.
+     * BEAUTY_SERVICE(시술·서비스)는 beauty=false — 리스트업 세그먼트로만 남고 수집·유사발굴 제외.
      */
-    record Verdict(String username, boolean beauty, boolean company, String reason) {}
+    record Verdict(String username, com.celfit.crawler.crawling.domain.BeautyClass beautyClass, String reason) {
+        public boolean beauty() {
+            return beautyClass.beauty();
+        }
+
+        public boolean company() {
+            return beautyClass.company();
+        }
+    }
 
     /** 실패(CLI 오류·타임아웃·파싱 불가)는 ApifyException — 호출자가 배치 단위로 격리한다. */
     List<Verdict> judge(List<ProfileCard> cards);

@@ -29,7 +29,7 @@ import tools.jackson.databind.ObjectMapper;
  * Gemini 무료 일 한도(1,500콜)를 넘을 때, LLM 호출만 Claude 구독 컴퓨트(claude -p 병렬 드라이버,
  * analytics/export/claude_burst_driver.py)로 빼서 소화한다. 유료 API 키 불필요.
  *
- * <p>export: 미분석 후보(∩ 기준선)·미카피 계정 → 프롬프트 JSONL({key,system,user}) + 사이드카.
+ * <p>export: 미분석 후보(계정 평균 앵커·rank는 최근창 안일 때만)·미카피 계정 → 프롬프트 JSONL({key,system,user}) + 사이드카.
  * collect: 드라이버 결과({key,text}) 파싱·sanitize 후 멱등 INSERT — 프롬프트·sanitize·저장 형태는
  * 일상 파이프라인(GeminiContentAnalyzer·GeminiAccountSynthesizer·ContentAnalysisWriter)과 동일 원천.
  * 실패·미수거 건은 그대로 남아 일상 파이프라인이 자연 흡수한다.
@@ -103,19 +103,22 @@ public class ClaudeBurstRunner {
 		}
 	}
 
-	/** 미분석 후보 ∩ 기준선 — GeminiBackfillRunner.submit과 동일 대상 정의. */
+	/** 미분석 후보 전량 — GeminiBackfillRunner.submit과 동일 대상 정의. 계정 평균은 항상 붙이고
+	 * (v_analysis_account_baseline, account_handle 키), rank는 최근창 안일 때만(v_analysis_baseline, short_code
+	 * 키 — 밖이면 null). 07-20 스코프 확장: 다작 계정의 최근창 밖 성숙분도 계정 평균을 앵커로 분석. */
 	private int exportContents() {
 		Set<String> analyzed = new HashSet<>(analysis.queryForList(
 				"SELECT short_code FROM content_analyses", String.class));
 		List<Map<String, Object>> rows = raw.queryForList("""
 				SELECT c.short_code, c.account_handle, c.content_type, c.caption,
 				       c.views, c.likes, c.comments,
-				       b.recent_reels_avg_views, b.rank_in_recent_reels, b.recent_reels_count,
-				       b.recent_contents_count, b.recent12_avg_engagement_rate,
-				       b.recent12_avg_like_count, b.recent12_avg_comment_count,
-				       b.category_top_percentile, b.category_avg_views, b.category_sample_size
+				       ab.recent_reels_avg_views, b.rank_in_recent_reels, ab.recent_reels_count,
+				       ab.recent_contents_count, ab.recent12_avg_engagement_rate,
+				       ab.recent12_avg_like_count, ab.recent12_avg_comment_count,
+				       ab.category_top_percentile, ab.category_avg_views, ab.category_sample_size
 				FROM analytics.v_analysis_candidates c
-				JOIN analytics.v_analysis_baseline b USING (short_code)
+				LEFT JOIN analytics.v_analysis_account_baseline ab ON ab.account_handle = c.account_handle
+				LEFT JOIN analytics.v_analysis_baseline b USING (short_code)
 				ORDER BY c.short_code""");
 		String system = GeminiContentAnalyzer.instructions(taxonomyLoader.get());
 		StringBuilder input = new StringBuilder();
@@ -185,16 +188,13 @@ public class ClaudeBurstRunner {
 			List<Map<String, Object>> categories = analysis.queryForList("""
 					SELECT main_group, content_count FROM account_category_stats
 					WHERE account_handle = ? ORDER BY content_count DESC, main_group ASC""", handle);
-			List<Map<String, Object>> posts = analysis.queryForList("""
-					SELECT p.posted_at, p.content_type, p.views, p.likes, p.comments, p.sponsored,
-					       left(c.caption, %d) AS caption
-					FROM account_content_series p
-					LEFT JOIN contents c ON c.short_code = p.short_code
-					WHERE p.account_handle = ?
-					ORDER BY p.posted_at ASC, p.short_code ASC"""
-					.formatted(AccountAnalysisJob.CAPTION_CHARS), handle);
-			boolean hasAdComparison = summary.get("organic_avg") != null && summary.get("ad_avg") != null;
-			AccountToAnalyze account = new AccountToAnalyze(handle, summary, categories, posts, hasAdComparison);
+			List<Map<String, Object>> posts = AccountAdCanon.loadPosts(analysis, handle);
+			// AccountAnalysisJob.analyzeOne과 동일 정본 — 판정·수치 모두 AccountAdCanon 단일 원천.
+			AccountAdCanon.AdMetrics ad =
+					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
+			boolean hasAdComparison = ad.hasComparison();
+			AccountToAnalyze account = new AccountToAnalyze(handle,
+					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, hasAdComparison);
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
 					.put("system", GeminiAccountSynthesizer.instructions())

@@ -14,79 +14,18 @@
         <div class="pills">
             <span class="pill on" th:if="${scheduleEnabled}">자동화 ON</span>
             <span class="pill" th:unless="${scheduleEnabled}">자동화 OFF — 수동 전용</span>
-            <span class="pill ghost">잡 3종 독립 실행 · 각 카드에 다음 예정</span>
+            <span class="pill ghost">5초마다 자동 갱신</span>
         </div>
     </header>
-    <p class="hint"><a href="/ui/coverage">커버리지 — 수집·미러·분석 채움 상태 →</a></p>
+    <p class="hint"><a href="/ui/coverage">커버리지 — 필드별 채움 상태 →</a></p>
 
     <div class="flash" th:if="${message}" th:text="${message}"></div>
 
-    <!-- 퍼널 — 집계 실패 시 카드 없이 렌더 -->
-    <section class="card funnel" th:if="${funnel != null}">
-        <div class="cap">콘텐츠 파이프라인 <span class="off">— 데이터가 흐르는 단계 (잡 실행 순서 아님)</span></div>
-
-        <!-- 각 단계의 생산 주체(잡/뷰)를 라벨로 — 아래 잡 카드 3종과 수치의 대응이 읽히게 -->
-        <div class="stages">
-            <div class="stage">
-                <b th:text="${#numbers.formatInteger(funnel.rawContents(), 1, 'COMMA')}">0</b>
-                <span>수집</span>
-                <span class="src">crawler 적재</span>
-            </div>
-            <span class="arrow">→</span>
-            <div class="stage">
-                <b class="pending" th:if="${funnel.candidatesPending()}">집계 중…</b>
-                <b th:unless="${funnel.candidatesPending()}"
-                   th:text="${#numbers.formatInteger(funnel.candidates(), 1, 'COMMA')}">0</b>
-                <span>LLM 후보</span>
-                <span class="src">후보 뷰 가드</span>
-            </div>
-            <span class="arrow">→</span>
-            <div class="stage">
-                <b th:text="${#numbers.formatInteger(funnel.analyzed(), 1, 'COMMA')}">0</b>
-                <span>분석 완료</span>
-                <span class="src">콘텐츠 분석 잡</span>
-            </div>
-            <span class="arrow">→</span>
-            <div class="stage">
-                <b th:text="${#numbers.formatInteger(funnel.served(), 1, 'COMMA')}">0</b>
-                <span>서빙 미러</span>
-                <span class="src">미러 잡 — 분석 무관 전체</span>
-            </div>
-        </div>
-
-        <div class="bar" th:if="${funnel.candidates() > 0}">
-            <i th:style="'width:' + ${funnel.coveragePercent()} + '%'"></i>
-        </div>
-        <div class="meta">
-            <!-- 후보 집계 전(-1)엔 "0일" 오독 방지를 위해 해석 문장 숨김 -->
-            <!-- 커버리지 분자는 제때(timely) 분석분만 — 가드 밖 기분석이 섞이면 과대 표시 -->
-            <span th:unless="${funnel.candidatesPending()}">후보 커버리지 <b th:text="${funnel.coverageText()}"></b>
-                <span class="off">(제때 분석 <span th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}"></span>)</span>
-                — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정</span>
-            <span class="off" th:if="${funnel.candidatesPending()}">후보 집계 중 — 커버리지는 집계 후 표시</span>
-            <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
-        </div>
-        <!-- 백필 제외 가드(PR #49) — 수집→후보 낙차의 이유를 창 파라미터·제외분 수치로 설명 -->
-        <div class="meta guard">
-            <span>후보 = 고정 지표가 업로드 +<span th:text="${funnel.pinDays()}"></span>~<span
-                th:text="${funnel.pinPlusSlackDays()}"></span>일 안에 잡힌 제때 크롤분
-                <span class="off">(pin <span th:text="${funnel.pinDays()}"></span>일 + slack <span th:text="${funnel.slackDays()}"></span>일)</span><span
-                th:unless="${funnel.candidatesPending()}"> · 늦크롤 백필 <b th:text="${#numbers.formatInteger(funnel.timelyExcluded(), 1, 'COMMA')}"></b>건 제외
-                <span class="off">— MVP는 분석 안 함, 분석 밀림은 나이 무관 재대상</span></span><span
-                th:if="${funnel.guardOutsideAnalyzed() > 0}"> · 가드 밖 기분석 <b th:text="${#numbers.formatInteger(funnel.guardOutsideAnalyzed(), 1, 'COMMA')}"></b>건
-                <span class="off">— 마킹 구분(노출 정책 미결)</span></span></span>
-        </div>
-
-        <div class="acct">
-            <span>계정 카피 <b th:text="${#numbers.formatInteger(funnel.copiedAccounts(), 1, 'COMMA')}"></b>
-                / <span th:text="${#numbers.formatInteger(funnel.beautyAccounts(), 1, 'COMMA')}"></span>
-                <span class="off">(<span th:text="${funnel.accountPercent()}"></span>%)</span></span>
-            <div class="bar sm"><i th:style="'width:' + ${funnel.accountPercent()} + '%'"></i></div>
-        </div>
-    </section>
-
-    <!-- 잡 카드 + 실행 피드 (5초 폴링) -->
-    <div hx-get="/ui/fragments/board" hx-trigger="load, every 5s"></div>
+    <!-- 건강·퍼널·잡 카드·피드를 통째로 5초 폴링.
+         퍼널이 폴링 대상이어야 후보 집계(무거운 캐시) 완료가 새로고침 없이 반영된다. -->
+    <div hx-get="/ui/fragments/board" hx-trigger="load, every 5s">
+        <p class="hint">현황 불러오는 중…</p>
+    </div>
 
     <details class="logs">
         <summary>라이브 로그</summary>

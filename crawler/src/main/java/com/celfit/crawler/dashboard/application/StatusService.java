@@ -5,6 +5,7 @@ import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
@@ -27,6 +28,7 @@ public class StatusService {
     public record StatusSummary(Map<InfluencerStatus, Long> influencerByStatus,
                                  long beautyInfluencer,
                                  long beautyCompany,
+                                 long beautyService,
                                  long beautyFalse,
                                  long beautyUnjudged,
                                  long backfillPending,
@@ -90,6 +92,7 @@ public class StatusService {
         return new StatusSummary(byInfluencerStatus,
                 influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
                 influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),
+                influencers.countByStatusAndBeautyClass(InfluencerStatus.QUALIFIED, BeautyClass.BEAUTY_SERVICE),
                 influencers.countByStatusAndBeauty(InfluencerStatus.QUALIFIED, false),
                 influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED),
                 influencers.countBackfillPending(),

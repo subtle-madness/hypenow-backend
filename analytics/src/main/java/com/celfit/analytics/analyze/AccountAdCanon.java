@@ -1,0 +1,112 @@
+package com.celfit.analytics.analyze;
+
+import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+/**
+ * 계정 광고 지표 정본 — <b>content_analyses.ad_type='sponsored'(캡션 분류)</b> 기준.
+ *
+ * <p>미러의 account_summaries.organic_avg·ad_avg·sponsored_count와 account_content_series.sponsored는
+ * raw 뷰(10_account_detail)에서 ad_marked = 인스타 유료파트너십 태그로 집계되는데, 이건 릴스 전용이라
+ * 캡션으로만 고지한 광고를 놓친다. 07-17(e203c3c)에 화면(was V1InfluencerReportRepository·Assembler)은
+ * 이미 ad_type 정본으로 옮겼지만 카피 잡의 광고 판정만 옛 소스에 남아, 캡션 고지 계정의 adHeadline이
+ * 영구 NULL이 됐다(운영 995계정). 산식·비교 성립 조건은 was Assembler.comparison과 동일하게 맞춘다 —
+ * 헤드라인이 설명하는 숫자와 화면 숫자가 갈리면 안 되기 때문.
+ *
+ * <p>정본 테이블(content_analyses)은 analysis DB에 있어 잡의 analysis JdbcTemplate으로 읽는다.
+ * raw DB의 analytics.* 뷰에서는 DB가 달라 조인할 수 없다(§시스템 경계).
+ *
+ * <p>AccountAnalysisJob(일상 배치)과 ClaudeBurstRunner(구독 버스트 export) 양쪽이 공유한다 —
+ * 판정이 복제돼 한쪽만 고쳐지는 재발을 막으려 단일 원천으로 둔다.
+ */
+final class AccountAdCanon {
+
+	private AccountAdCanon() {
+	}
+
+	/** 계정 1건의 광고 집계. 비교 평균은 organic·ad 두 그룹이 모두 있을 때만 채워진다. */
+	record AdMetrics(long sponsoredCount, Long organicAvg, Long adAvg, Integer adDropPct,
+			long comparisonOrganicCount, long comparisonAdCount, OffsetDateTime lastAdPostedAt) {
+
+		/**
+		 * 광고 비교 성립 여부 = 프롬프트의 "광고 비교 데이터: 있음" 및 adHeadline 저장 게이트.
+		 * 한쪽 그룹만 있으면 화면(was)에도 comparison이 null이라 설명 대상 없는 헤드라인이 된다.
+		 */
+		boolean hasComparison() {
+			return organicAvg != null && adAvg != null;
+		}
+	}
+
+	/**
+	 * 기준지표(metric) 값 &gt; 0인 콘텐츠만 ad_type 여부로 그룹지어 집계.
+	 * drop%는 원 평균 기준 반올림(표시용 평균은 각자 반올림) — was Assembler와 같은 규약.
+	 */
+	static AdMetrics load(JdbcTemplate analysis, String handle, String metric) {
+		return analysis.queryForObject("""
+				WITH m AS (
+				  SELECT s.posted_at,
+				         CASE WHEN ?::text = 'views' THEN s.views ELSE s.likes END AS mval,
+				         COALESCE(an.ad_type = 'sponsored', false) AS sponsored
+				  FROM account_content_series s
+				  LEFT JOIN content_analyses an ON an.short_code = s.short_code
+				  WHERE s.account_handle = ?
+				), a AS (
+				  SELECT count(*) FILTER (WHERE sponsored)                       AS sponsored_count,
+				         avg(mval) FILTER (WHERE NOT sponsored AND mval > 0)     AS organic_raw,
+				         avg(mval) FILTER (WHERE sponsored AND mval > 0)         AS ad_raw,
+				         count(*) FILTER (WHERE NOT sponsored AND mval > 0)      AS organic_n,
+				         count(*) FILTER (WHERE sponsored AND mval > 0)          AS ad_n,
+				         max(posted_at) FILTER (WHERE sponsored)                 AS last_ad_posted_at
+				  FROM m
+				)
+				SELECT sponsored_count, organic_n, ad_n, last_ad_posted_at,
+				       CASE WHEN organic_n > 0 AND ad_n > 0 THEN round(organic_raw)::bigint END AS organic_avg,
+				       CASE WHEN organic_n > 0 AND ad_n > 0 THEN round(ad_raw)::bigint END      AS ad_avg,
+				       CASE WHEN organic_n > 0 AND ad_n > 0 AND organic_raw > 0
+				            THEN round((1 - ad_raw / organic_raw) * 100)::int END               AS ad_drop_pct
+				FROM a""",
+				(rs, rowNum) -> new AdMetrics(rs.getLong("sponsored_count"),
+						(Long) rs.getObject("organic_avg"), (Long) rs.getObject("ad_avg"),
+						(Integer) rs.getObject("ad_drop_pct"),
+						rs.getLong("organic_n"), rs.getLong("ad_n"),
+						rs.getObject("last_ad_posted_at", OffsetDateTime.class)),
+				metric, handle);
+	}
+
+	/**
+	 * 프롬프트에 실리는 계정 지표를 정본 값으로 치환한다 — 미러 행의 광고 컬럼은 옛 소스라
+	 * 그대로 두면 헤드라인 근거 수치(organic_avg·ad_avg·ad_drop_pct)가 화면과 어긋난다.
+	 * 원본 맵은 건드리지 않고 컬럼 순서를 유지한 사본을 돌려준다.
+	 */
+	static Map<String, Object> canonicalSummary(Map<String, Object> summary, AdMetrics ad) {
+		Map<String, Object> out = new LinkedHashMap<>(summary);
+		out.put("sponsored_count", ad.sponsoredCount());
+		out.put("organic_avg", ad.organicAvg());
+		out.put("ad_avg", ad.adAvg());
+		out.put("ad_drop_pct", ad.adDropPct());
+		out.put("comparison_organic_count", ad.comparisonOrganicCount());
+		out.put("comparison_ad_count", ad.comparisonAdCount());
+		out.put("last_ad_posted_at", ad.lastAdPostedAt());
+		return out;
+	}
+
+	/**
+	 * 프롬프트용 게시물 시계열 — 올린 순, 캡션 앞부분 절단, sponsored는 정본(ad_type) 기준.
+	 * 요약은 협찬 N건인데 게시물은 전부 false인 자기모순 입력을 막는다(was 차트 bars와 동일 소스).
+	 */
+	static List<Map<String, Object>> loadPosts(JdbcTemplate analysis, String handle) {
+		return analysis.queryForList("""
+				SELECT p.posted_at, p.content_type, p.views, p.likes, p.comments,
+				       COALESCE(an.ad_type = 'sponsored', false) AS sponsored,
+				       left(c.caption, %d) AS caption
+				FROM account_content_series p
+				LEFT JOIN contents c ON c.short_code = p.short_code
+				LEFT JOIN content_analyses an ON an.short_code = p.short_code
+				WHERE p.account_handle = ?
+				ORDER BY p.posted_at ASC, p.short_code ASC"""
+				.formatted(AccountAnalysisJob.CAPTION_CHARS), handle);
+	}
+}

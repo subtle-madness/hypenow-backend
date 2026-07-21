@@ -83,16 +83,30 @@ class ClaudeBurstRunnerTest {
 				    recent12_avg_comment_count numeric, category_top_percentile smallint,
 				    category_avg_views numeric, category_sample_size bigint, captured_at timestamptz)""");
 		db.update("CREATE VIEW analytics.v_analysis_baseline AS SELECT * FROM analytics.baseline_fixture");
+		// 계정 평균 뷰(account_handle 키) — 최근창 밖 후보의 앵커 (실제로는 baseline의 계정 컬럼과 동치).
+		db.update("""
+				CREATE TABLE analytics.account_baseline_fixture (
+				    account_handle text PRIMARY KEY, recent_reels_avg_views numeric,
+				    recent_reels_count bigint, recent_contents_count bigint,
+				    recent12_avg_engagement_rate numeric, recent12_avg_like_count numeric,
+				    recent12_avg_comment_count numeric, category_top_percentile smallint,
+				    category_avg_views numeric, category_sample_size bigint)""");
+		db.update("CREATE VIEW analytics.v_analysis_account_baseline AS SELECT * FROM analytics.account_baseline_fixture");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
 				  ('cb_a', 'reels', 'acct1', now() - interval '10 days', '캡션A', NULL, 10000, 9000, 500, 50, now()),
 				  ('cb_b', 'feed', 'acct1', now() - interval '9 days', NULL, NULL, 10000, NULL, 300, 30, now()),
-				  ('cb_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now())""");
+				  ('cb_done', 'reels', 'acct1', now() - interval '8 days', '이미 분석', NULL, 10000, 100, 10, 1, now()),
+				  ('cb_out', 'reels', 'acct1', now() - interval '11 days', '캡션OUT', NULL, 10000, 6000, 400, 40, now())""");
 		db.update("""
 				INSERT INTO analytics.baseline_fixture VALUES
 				  ('cb_a', 9000, 1, 2, 3, 0.0496, 940, 61, 67, 19333, 3, now()),
 				  ('cb_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3, now()),
 				  ('cb_done', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3, now())""");
+		// cb_out은 후보엔 있지만 콘텐츠 키 기준선엔 없음(최근창 밖) — 계정 평균만 붙는다
+		db.update("""
+				INSERT INTO analytics.account_baseline_fixture VALUES
+				  ('acct1', 9000, 2, 3, 0.0496, 940, 61, 67, 19333, 3)""");
 		db.update("""
 				INSERT INTO content_analyses (short_code, model, ai_content_summary)
 				VALUES ('cb_done', 'test', '기존 분석')""");
@@ -107,21 +121,60 @@ class ClaudeBurstRunnerTest {
 				VALUES ('acct_done', now(), 'test', timestamptz '2026-07-14 09:00:00+09', 't', 's')""");
 	}
 
+	/**
+	 * 버스트 export도 일상 배치와 같은 광고 정본(content_analyses.ad_type)을 쓴다 —
+	 * 판정이 복제돼 한쪽만 고쳐지는 재발 방지(AccountAdCanon 공유).
+	 * acct1은 미러 집계(organic_avg·ad_avg)가 NULL이지만 캡션 분류로는 협찬이 있다.
+	 */
+	@Test
+	void export의_광고_비교_판정은_캡션_분류_정본을_따른다() throws Exception {
+		db.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
+				  views, likes, comments, sponsored) VALUES
+				  ('cs1', 'acct1', timestamptz '2026-07-10 09:00:00+09', 'reels', 10000, 300, 30, false),
+				  ('cs2', 'acct1', timestamptz '2026-07-15 09:00:00+09', 'reels',  6000, 200, 20, false)""");
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, ad_type) VALUES
+				  ('cs1', 'test', 'organic'), ('cs2', 'test', 'sponsored')""");
+
+		runner().export();
+
+		JsonNode sidecar = om.readTree(Files.readAllLines(workDir.resolve("accounts-sidecar.jsonl")).get(0));
+		assertTrue(sidecar.path("has_ad_comparison").asBoolean());
+		// 프롬프트 수치도 정본으로 치환된다 (metric 미지정 → likes 기준: organic 300 vs ad 200)
+		String user = om.readTree(Files.readAllLines(workDir.resolve("accounts-input.jsonl")).get(0))
+				.path("user").asString();
+		assertTrue(user.contains("광고 비교 데이터: 있음"), user);
+		assertTrue(user.contains("organic_avg=300"), user);
+		assertTrue(user.contains("ad_avg=200"), user);
+	}
+
 	@Test
 	void export는_미분석_후보와_미카피_계정의_프롬프트_JSONL을_만든다() throws Exception {
 		ClaudeBurstRunner.ExportResult result = runner().export();
 
-		assertEquals(2, result.contents()); // cb_a, cb_b — cb_done 제외
+		assertEquals(3, result.contents()); // cb_a, cb_b, cb_out — cb_done(분석됨) 제외
 		assertEquals(1, result.accounts()); // acct1 — acct_done 제외
 
 		var contentLines = Files.readAllLines(workDir.resolve("contents-input.jsonl"));
-		assertEquals(2, contentLines.size());
+		assertEquals(3, contentLines.size());
 		JsonNode first = om.readTree(contentLines.get(0));
 		assertEquals("cb_a", first.path("key").asString());
 		assertTrue(first.path("system").asString().contains("[파트 B 절제 규칙 — 반드시 지켜라]"));
 		assertTrue(first.path("user").asString().contains("캡션A"));
 		assertTrue(first.path("user").asString().contains("JSON")); // 스키마 강제 문구(클로드는 response_schema 없음)
 		assertTrue(Files.exists(workDir.resolve("contents-sidecar.jsonl")));
+
+		// 최근창 밖 후보(cb_out) — 계정 평균은 앵커로 실리고 rank는 null (07-20 스코프 확장)
+		JsonNode sidecarOut = null;
+		for (String s : Files.readAllLines(workDir.resolve("contents-sidecar.jsonl"))) {
+			JsonNode n = om.readTree(s);
+			if (n.path("short_code").asString().equals("cb_out")) {
+				sidecarOut = n;
+			}
+		}
+		assertEquals("9000", sidecarOut.path("recent_reels_avg_views").asString()); // 계정 평균 앵커
+		assertTrue(sidecarOut.path("rank_in_recent_reels").isNull()); // 최근창 밖 → rank 없음
 
 		var accountLines = Files.readAllLines(workDir.resolve("accounts-input.jsonl"));
 		JsonNode acct = om.readTree(accountLines.get(0));

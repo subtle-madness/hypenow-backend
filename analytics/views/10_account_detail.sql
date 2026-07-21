@@ -117,11 +117,10 @@ JOIN ads    a USING (owner_username)
 JOIN analytics.v_base_profile p ON p.username = b.owner_username
 CROSS JOIN cfg;
 
--- 카테고리 믹스 — main_group 소멸(V8)로 항상 0행. 형태 유지(미러·record·was 무접촉),
--- B4 캡션 분류 연계 시 Java 미러 단계에서 되살린다 (스펙 2026-07-17 §5·§10).
-CREATE OR REPLACE VIEW analytics.v_account_category_stats AS
-SELECT NULL::text AS account_handle, NULL::text AS main_group, NULL::bigint AS content_count
-WHERE false;
+-- 카테고리 믹스는 raw DB를 떠났다 (07-21). 대체 소스인 캡션 분류(content_analyses.main_category)는
+-- analysis DB에 있어 여기서 조인할 수 없다 — analysis DB 파생 뷰 account_category_stats(V35)가 정본.
+-- 구 스텁 뷰(항상 0행)는 미러 등록부에서도 빠졌으므로 운영에서 정리한다(멱등).
+DROP VIEW IF EXISTS analytics.v_account_category_stats;
 
 -- 게시물 시계열 (차트 막대·광고 스트립·최근 콘텐츠 탭 재료. 올린 순 정렬은 was 몫)
 -- views NULL(피드) 보존 — "0 = 미공개"는 프론트 표현 규약이라 여기서 변환하지 않는다.

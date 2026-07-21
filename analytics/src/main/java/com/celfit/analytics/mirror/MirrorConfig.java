@@ -1,7 +1,6 @@
 package com.celfit.analytics.mirror;
 
 import com.celfit.contract.analysis.Account;
-import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
 import com.celfit.contract.analysis.Content;
@@ -25,8 +24,11 @@ public class MirrorConfig {
 	}
 
 	/**
-	 * 미러 대상 등록부 — 서빙 뷰 4종(B1, 지표 스냅샷 포함) + 인플루언서 상세 3종(C1) + 랜딩 통계 1종(P3).
+	 * 미러 대상 등록부 — 서빙 뷰 4종(B1, 지표 스냅샷 포함) + 인플루언서 상세 2종(C1) + 랜딩 통계 1종(P3).
 	 * 컬럼 계약은 각 record의 Javadoc과 V1·V4·V10·V32 DDL 참조.
+	 *
+	 * <p>account_category_stats는 미러 대상이 아니다(07-21 V35) — 소스인 캡션 분류가 analysis DB에
+	 * 있어 raw 뷰로는 만들 수 없다. analysis DB 안의 파생 뷰가 같은 이름·컬럼으로 대체한다.
 	 */
 	@Bean
 	public MirrorRegistry mirrorRegistry() {
@@ -37,7 +39,6 @@ public class MirrorConfig {
 				new MirrorSpec<>("analytics.v_content_metric_snapshots", "content_metric_snapshots",
 						ContentMetricSnapshot.class),
 				new MirrorSpec<>("analytics.v_account_summaries", "account_summaries", AccountSummary.class),
-				new MirrorSpec<>("analytics.v_account_category_stats", "account_category_stats", AccountCategoryStat.class),
 				new MirrorSpec<>("analytics.v_account_content_series", "account_content_series", AccountContentPoint.class),
 				new MirrorSpec<>("analytics.v_landing_stats", "landing_stats", LandingStats.class)));
 	}

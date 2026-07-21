@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import org.springframework.data.domain.Pageable;
@@ -122,6 +123,9 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
 
     /** 대시보드 뷰티 판정 그룹용: 뷰티(true)/비뷰티(false) 판정 수. */
     long countByStatusAndBeauty(InfluencerStatus status, Boolean beauty);
+
+    /** 뷰티 판정 4분류 집계 — 대시보드 타일용(BEAUTY_SERVICE 등). */
+    long countByStatusAndBeautyClass(InfluencerStatus status, BeautyClass beautyClass);
 
     /** 대시보드 뷰티 판정 그룹용: 뷰티 인플루언서(회사 제외) 수 — 수집·유사발굴 대상과 동일 기준. */
     @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "

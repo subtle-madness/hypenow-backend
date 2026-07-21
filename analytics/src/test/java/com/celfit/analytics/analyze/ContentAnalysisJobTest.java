@@ -102,13 +102,36 @@ class ContentAnalysisJobTest {
 				  ('post_b', NULL, NULL, 0, 3, 0.03, 500, 40, 90, 15000, 3, timestamptz '2026-06-07 09:00:00+09'),
 				  ('post_c', 9000, 2, 2, 3, 0.04, 700, 50, 80, 19333, 3, timestamptz '2026-06-06 09:00:00+09')""");
 
+		// 계정 평균 뷰(account_handle 키, rank·captured_at 없음) — 최근창 밖 후보에 붙일 앵커 (07-20 스코프 확장).
+		// short_code 기준선과 값이 달라야 폴백 경로가 계정 뷰를 쓴 것이 검증된다 (avg_views 8000 vs post_a 9000).
+		db.update("""
+				CREATE TABLE analytics.account_baseline_fixture (
+				    account_handle               text PRIMARY KEY,
+				    recent_reels_avg_views       numeric,
+				    recent_reels_count           bigint,
+				    recent_contents_count        bigint,
+				    recent12_avg_engagement_rate numeric,
+				    recent12_avg_like_count      numeric,
+				    recent12_avg_comment_count   numeric,
+				    category_top_percentile      smallint,
+				    category_avg_views           numeric,
+				    category_sample_size         bigint
+				)""");
+		db.update("""
+				CREATE VIEW analytics.v_analysis_account_baseline AS SELECT * FROM analytics.account_baseline_fixture""");
+		db.update("""
+				INSERT INTO analytics.account_baseline_fixture VALUES
+				  ('acct1', 8000, 2, 3, 0.045, 800, 55, NULL, NULL, NULL)""");
+
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
 		// metric_captured_at = 게시 +3.5일 — 제때(+pin 3일 근방) 크롤돼 고정 지표가 성립한 정상 케이스
+		// metric_captured_at은 셋 다 제때창 [posted+3d, posted+5d) 안이되 서로 다르게 — 수집 최신순
+		// 정렬(ORDER BY metric_captured_at DESC)이 post_b를 먼저 뽑는지 검증하기 위함 (b가 가장 최신).
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments) VALUES
-				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 11000, 520, 52),
-				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 12 hours', NULL, 2000, 100),
+				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 18 hours', 11000, 520, 52),
+				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 6 hours', NULL, 2000, 100),
 				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 7000, 300, 30)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count) VALUES
@@ -293,28 +316,34 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 기준선_없는_콘텐츠는_대상에서_제외되고_배치_슬롯을_잠식하지_않는다() {
-		// 윈도우 밖 콘텐츠 재현: contents에는 있지만 기준선 뷰에는 없는 short_code (분류 완료 상태).
-		// 제외가 안 되면 batch-limit=1 슬롯을 잠식해 아무것도 처리 못 한다.
+	void 최근창_밖_콘텐츠는_계정_평균을_앵커로_분석된다() {
+		// 07-20 스코프 확장: 다작 계정의 최근창 밖 성숙분 재현 — contents엔 있고 제때 크롤됐지만
+		// 콘텐츠 키 기준선(v_analysis_baseline)엔 없는 short_code. 예전엔 배치 슬롯 잠식 방지로 제외했으나,
+		// 이제 계정 평균(v_analysis_account_baseline)을 앵커로 붙여 분석한다 (rank만 null).
 		db.update("""
-				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, views, likes, comments)
-				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', 5000, 100, 10)""");
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments)
+				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 20 hours', 5000, 100, 10)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
 				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
 		db.update("""
 				INSERT INTO comment_classifications (id, short_code, ai_category, model)
 				VALUES (10, 'post_0', 'positive', 'claude-test')""");
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
 
 		int processed = job.run().processed();
 
-		assertEquals(1, processed); // 기준선 있는 콘텐츠(수집 최신순 첫 대상 post_b)가 슬롯을 차지한다
-		assertEquals(0L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_0'", Long.class));
-		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
-		assertEquals(1L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
+		assertEquals(3, processed); // post_a, post_b (최근창 안) + post_0 (최근창 밖, 계정 평균 앵커)
+		assertTrue(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_0")));
+		// 계정 평균이 저장된다 — short_code 기준선(post_a=9000)이 아닌 계정 뷰 값(8000), rank는 null
+		assertEquals(8000L, db.queryForObject(
+				"SELECT recent_reels_avg_views FROM content_analyses WHERE short_code = 'post_0'", Long.class));
+		assertNull(db.queryForObject(
+				"SELECT rank_in_recent_reels FROM content_analyses WHERE short_code = 'post_0'", Integer.class));
+		// 프롬프트에도 계정 평균이 앵커로 실린다 (aiContentSummary의 '계정 평균 대비' 근거)
+		ContentToAnalyze callFor0 = insightCalls.stream()
+				.filter(c -> c.shortCode().equals("post_0")).findFirst().orElseThrow();
+		assertEquals(8000L, ((Number) callFor0.baseline().get("recent_reels_avg_views")).longValue());
+		assertNull(callFor0.baseline().get("rank_in_recent_reels"));
 	}
 
 	@Test
@@ -366,7 +395,7 @@ class ContentAnalysisJobTest {
 		assertEquals("gemini-3.1-flash-lite", settings.activeLlmModel());
 
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.llm-provider', 'anthropic')");
-		assertEquals("claude-opus-4-8", settings.activeLlmModel()); // 롤백 시 anthropic 모델 기록
+		assertEquals("claude-haiku-4-5-20251001", settings.activeLlmModel()); // 롤백 시 anthropic 모델 기록 — 폴백 기본은 haiku(비용 가드)
 	}
 
 	@Test
@@ -391,39 +420,116 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 늦크롤_백필_게시물은_대상에서_제외된다() {
-		// 백필 MVP 제외(07-19 재정정): 판정 기준은 게시물 나이가 아니라 "제때(+3일 근방) 크롤됐는가" —
-		// 고정 지표가 업로드 +(pin 3 + slack 2)일을 넘겨 잡힌 늦크롤분은 +3일 지표가 없다 (분석 밀림은 무기한 허용)
+	void 늦크롤_백필_게시물도_윈도우가_닫히면_대상에서_제외된다() {
+		// 07-20 개정으로 "백필 MVP 제외"(07-19)는 번복됐다 — 늦크롤이라도 계정별 최근 N개 윈도우
+		// 안이면 이제 포함된다(late_backfill 마킹, 아래 늦크롤_최근_윈도우_안이면 테스트로 회귀 검증).
+		// 이 테스트는 그 윈도우 경로까지 완전히 닫힌 경우(recent-window=0)를 별도로 고정한다 —
+		// 순수 제때 가드만으로는 여전히 늦크롤분이 제외됨을 확인.
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '20 days',
+				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 (post_a는 +11일 늦크롤, 윈도우도 닫혀 있음)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
+	void 늦크롤이라도_최근_윈도우_안이면_분석하고_late_backfill로_마킹한다() {
+		// 07-20 PO 결정(스펙 2026-07-20-vertex-migration-recent12-backfill-design.md): 늦크롤(제때
+		// 크롤 실패)이라도 계정의 최근 N개(기본 12) 윈도우 안이면 일상 분석 대상에 포함하고
+		// V33 metric_timeliness를 late_backfill로 마킹한다. acct1은 총 3건뿐이라 기본 윈도우(12) 안.
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '20 days',
 				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
 
 		int processed = job.run().processed();
 
-		assertEquals(1, processed); // post_b만 (post_a는 +11일 늦크롤)
+		assertEquals(2, processed); // post_a(늦크롤이지만 윈도우 안), post_b
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertEquals("late_backfill", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 제때_크롤분은_timely로_마킹한다() {
+		// 회귀: 제때 가드를 충족하는 기존 경로는 여전히 timely로 마킹된다 (post_a는 setUp 기본값 그대로).
+		int processed = job.run().processed();
+
+		assertEquals(2, processed);
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void 늦크롤이면서_윈도우_밖이면_여전히_제외된다() {
+		// 최근 윈도우를 1로 좁혀 acct1의 최신 게시물만 남긴다 — post_a를 늦크롤로 만들고 더 오래된
+		// 게시물로 두면(post_b·post_c가 더 최근) rank가 윈도우 밖으로 밀려나 여전히 제외돼야 한다.
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '20 days',
+				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '1')");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 (post_a는 늦크롤+윈도우 밖 모두 해당)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+	}
+
+	@Test
+	void 늦크롤이면서_제때창이_아직_열려있으면_윈도우_안이어도_제외된다() {
+		// 최종 통합 리뷰 I-1: 제때창(posted_at + pin(3) + slack(2) = 기본 5일)이 아직 안 닫힌
+		// 콘텐츠를 윈도우 경로로 조기 분석하면, 나중에 진짜 timely 스냅샷이 들어와도
+		// content_analyses가 불변이라 late_backfill로 영구 오분류된다. 04 뷰의 "제때창이 완전히
+		// 지난 날만 후보" 성숙 철학과 정렬하기 위해 윈도우 분기에도 창 닫힘 게이트를 건다.
+		// post_a: 숙성(3일)은 지났지만(4일 전 게시) pin+slack(5일)은 아직 안 지났다 — 창이
+		// 열려 있는 상태. 지표도 미성숙(게시 +0.5일 캡처)이라 timely=false. acct1은 3건뿐이라
+		// 기본 윈도우(12)에서 rank상으로는 포함 대상이지만, 창이 열려 있으니 제외돼야 한다.
+		db.update("""
+				UPDATE contents SET posted_at = now() - interval '4 days',
+				  metric_captured_at = now() - interval '3 days 12 hours' WHERE short_code = 'post_a'""");
+
+		int processed = job.run().processed();
+
+		assertEquals(1, processed); // post_b만 (post_a는 창이 아직 열려 있어 윈도우 경로로도 제외)
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 	}
 
 	@Test
 	void 제때_크롤_판정_여유는_app_setting으로_조정된다() {
+		// acct1은 3건뿐이라 기본 윈도우(12)에서 post_a가 항상 윈도우 경로로도 포함된다 — 슬랙
+		// 로직이 사라져도 processed==2가 성립해 검증력이 없다(리뷰 지적). 윈도우를 0으로 닫아
+		// 순수 슬랙 확장 효과만 검증하고, 슬랙 확장으로 포함된 건은 timely로 마킹됨도 함께 확인한다.
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '20 days',
 				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-timely-slack-days', '30')");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
 
 		int processed = job.run().processed();
 
 		assertEquals(2, processed); // 여유 30일이면 +11일 크롤분도 대상
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
 	}
 
 	@Test
 	void 고정_지표가_미성숙_스냅샷이면_대상에서_제외된다() {
 		// 숙성(3일) 게시물이어도 성숙 스냅샷이 아직 없으면 미러 지표는 미성숙 최신 폴백 —
 		// 이대로 분석하면 덜 여문 지표로 영구 고정된다 (다음 크롤이 성숙 스냅샷을 잡으면 자연 재대상)
+		// 최근 윈도우는 0으로 닫아 순수 제때 가드만 검증한다 — post_a는 방금 게시돼(4일 전) 그대로
+		// 두면 계정 내 최신순위라 07-20 윈도우 OR 경로로 새어 들어간다(그 자체는 의도된 동작,
+		// 아래 늦크롤이라도_최근_윈도우_안이면 테스트가 커버). 여기선 미성숙 가드 단독 배제를 고정한다.
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '4 days',
 				  metric_captured_at = now() - interval '3 days 12 hours' WHERE short_code = 'post_a'""");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
 
 		int processed = job.run().processed();
 
@@ -433,7 +539,10 @@ class ContentAnalysisJobTest {
 	@Test
 	void 지표_수집_시각_미상_게시물은_대상에서_제외된다() {
 		// metric_captured_at NULL이면 제때 크롤 여부를 판정할 수 없다 (posted_at NULL 케이스와 동일 규칙)
+		// posted_at은 살아 있어 최근 윈도우 OR 경로로는 여전히 대상이 될 수 있으므로(의도된 동작),
+		// 순수 제때 가드 단독 배제를 고정하기 위해 윈도우를 0으로 닫는다.
 		db.update("UPDATE contents SET metric_captured_at = NULL WHERE short_code = 'post_a'");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
 
 		int processed = job.run().processed();
 
@@ -476,8 +585,12 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 뷰티인데_미분류면_행을_안_남기고_재대상화된다() {
-		// isBeauty=true인데 복구 후에도 mainCategory=null → 실패 격리(skip) → 다음 실행 재대상
+	void 뷰티지만_대분류_미도출이면_is_beauty_false로_종결_저장한다() {
+		// isBeauty=true인데 복구 후에도 mainCategory=null인 케이스. 분석은 temperature 0 결정론이라
+		// 같은 입력을 재실행해도 동일 결과 → 옛 self-heal(행 미기록→재대상)은 매 실행 무한 재시도로
+		// 영영 완료되지 않고 호출만 태웠다. 이제 is_beauty=false로 **종결 저장**해 루프를 끊는다.
+		// 불변식('main_category null ⇒ 서빙에서 비뷰티') 보존: is_beauty=false라 랭킹·상세에서 제외되고,
+		// 서빙 계층 무변경. (재대상 폴백은 빈 종합/파싱 오류 같은 진짜 일시 실패에만 남긴다.)
 		rewireJob((content, thumbnailUrl) -> {
 			insightCalls.add(content);
 			ContentAttributes beautyNoCat = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
@@ -491,9 +604,15 @@ class ContentAnalysisJobTest {
 
 		int processed = job.run().processed();
 
-		assertEquals(1, processed); // post_b만 성공, post_a는 skip
-		assertEquals(0L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
+		assertEquals(2, processed); // post_a·post_b 모두 종결 저장(더 이상 skip 아님)
+		// post_a: 뷰티였으나 대분류 미도출 → is_beauty=false로 저장, main_category는 null 유지
+		assertEquals(Boolean.FALSE, db.queryForObject(
+				"SELECT is_beauty FROM content_analyses WHERE short_code = 'post_a'", Boolean.class));
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		// 종합 텍스트는 정상 저장돼 행이 존재 → NOT EXISTS로 다음 실행 재대상 안 됨(루프 종료)
+		assertEquals("요약: post_a", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class));
 	}

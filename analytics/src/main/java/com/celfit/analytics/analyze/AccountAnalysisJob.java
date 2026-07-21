@@ -91,17 +91,13 @@ public class AccountAnalysisJob {
 		List<Map<String, Object>> categories = analysis.queryForList("""
 				SELECT main_group, content_count FROM account_category_stats
 				WHERE account_handle = ? ORDER BY content_count DESC, main_group ASC""", handle);
-		List<Map<String, Object>> posts = analysis.queryForList("""
-				SELECT p.posted_at, p.content_type, p.views, p.likes, p.comments, p.sponsored,
-				       left(c.caption, %d) AS caption
-				FROM account_content_series p
-				LEFT JOIN contents c ON c.short_code = p.short_code
-				WHERE p.account_handle = ?
-				ORDER BY p.posted_at ASC, p.short_code ASC""".formatted(CAPTION_CHARS), handle);
-		boolean hasAdComparison = summary.get("organic_avg") != null && summary.get("ad_avg") != null;
+		List<Map<String, Object>> posts = AccountAdCanon.loadPosts(analysis, handle);
+		// 광고 판정·수치는 캡션 분류(ad_type) 정본 — 미러의 ad_marked 집계는 릴스 전용이라 쓰지 않는다.
+		AccountAdCanon.AdMetrics ad = AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
+		boolean hasAdComparison = ad.hasComparison();
 
-		AccountCopy copy = port.synthesize(
-				new AccountToAnalyze(handle, summary, categories, posts, hasAdComparison));
+		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
+				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, hasAdComparison));
 
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지)
 		if (isBlank(copy.tagline()) || isBlank(copy.summary())) {

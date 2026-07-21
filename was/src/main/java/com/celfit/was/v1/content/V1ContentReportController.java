@@ -23,8 +23,12 @@ public class V1ContentReportController {
 	public ApiResponse<ContentAiReport> aiReport(@PathVariable String contentId) {
 		var report = repository.findReport(contentId)
 				.orElseThrow(() -> V1ApiException.notFound("콘텐츠를 찾을 수 없습니다."));
+		// 카테고리 맥락은 대분류가 있을 때만 집계한다 (미분류면 비교 모수 자체가 정의되지 않음).
+		var categoryContext = report.mainCategory() == null ? null
+				: repository.findCategoryContext(report.mainCategory(), report.views());
 		return ApiResponse.ok(assembler.toReport(report,
 				repository.findRecentReels(report.accountHandle()),
+				categoryContext,
 				repository.countByCategory(contentId),
 				repository.findComments(contentId)));
 	}

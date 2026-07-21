@@ -38,7 +38,11 @@ class GeminiHttpApiTest {
 			ex.getRequestBody().transferTo(buf);
 			bodies.add(buf.toString(StandardCharsets.UTF_8));
 			int remaining = status429Count.getAndDecrement();
-			byte[] out = (remaining > 0 ? "{}" : OK_RESPONSE).getBytes(StandardCharsets.UTF_8);
+			String response = remaining > 0 ? "{}"
+					: ex.getRequestURI().toString().contains(":download")
+							? "{\"line\":1}\n{\"line\":2}\n"
+							: OK_RESPONSE;
+			byte[] out = response.getBytes(StandardCharsets.UTF_8);
 			ex.sendResponseHeaders(remaining > 0 ? 429 : 200, out.length);
 			ex.getResponseBody().write(out);
 			ex.close();
@@ -99,5 +103,12 @@ class GeminiHttpApiTest {
 		status429Count.set(100);
 		assertThrows(LlmQuotaExhaustedException.class,
 				() -> api().generateJson("m", "sys", "user", null, "{\"type\":\"object\"}", 1024));
+	}
+
+	@Test
+	void 결과_다운로드는_줄_단위로_순서대로_전달한다() {
+		java.util.List<String> lines = new java.util.ArrayList<>();
+		api().downloadResults("files/r1", lines::add);
+		assertEquals(java.util.List.of("{\"line\":1}", "{\"line\":2}"), lines);
 	}
 }

@@ -59,8 +59,7 @@ public class CoverageRepository {
 			                count(detected_distributors)  AS distributors,
 			                least(count(ai_content_summary), count(contents_pattern), count(ai_comment_insight)) AS copy3,
 			                least(count(recent_reels_avg_views), count(recent12_avg_engagement_rate)) AS baseline,
-			                least(count(category_top_percentile), count(category_avg_views), count(category_sample_size)) AS catctx,
-			                least(count(sponsored_signal_level), count(detected_product_categories), count(vlm_attributes)) AS vlm,
+			                			                least(count(sponsored_signal_level), count(detected_product_categories), count(vlm_attributes)) AS vlm,
 			                count(comment_authenticity_grade) AS cauth
 			         FROM content_analyses),
 			  v AS (SELECT (SELECT count(*) FROM beauty_taxonomy)     AS taxonomy,
@@ -165,9 +164,9 @@ public class CoverageRepository {
 			         CASE WHEN an.baseline = 0 THEN '없음' WHEN an.baseline < c.total THEN '부분' ELSE '준비됨' END
 			  FROM an, c
 			  UNION ALL
-			  SELECT 20, '드로어 카테고리 맥락 (상위%·평균·모수)', 'content_analyses.category_*',
-			         format('%s / %s', an.catctx, c.total),
-			         CASE WHEN an.catctx = 0 THEN '없음' WHEN an.catctx < c.total THEN '부분' ELSE '준비됨' END
+			  SELECT 20, '드로어 카테고리 맥락 (상위%·평균·모수 — was 라이브 계산)', 'content_analyses.main_category',
+			         format('%s / %s', an.category, c.total),
+			         CASE WHEN an.category = 0 THEN '없음' WHEN an.category < c.total THEN '부분' ELSE '준비됨' END
 			  FROM an, c
 			  UNION ALL
 			  SELECT 21, '드로어 VLM 분석 (협찬 신호·속성·제품 카테고리)', 'content_analyses.sponsored_signal_* / vlm_attributes 외',

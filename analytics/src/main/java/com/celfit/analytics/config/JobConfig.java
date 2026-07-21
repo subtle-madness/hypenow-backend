@@ -138,6 +138,7 @@ public class JobConfig {
 	/**
 	 * 초기 백필 one-shot(07-18 확정 — 유료 키 Batch, 미러 one-shot CLI 컨벤션과 동형).
 	 * submit → (배치 완료 대기, ≤24h) → collect 2단 실행. 신 스키마 뷰(04·03) 적용 후에만 유효.
+	 * provider=vertex면 Vertex 배치(GCS)를 대신 사용한다.
 	 */
 	@Bean
 	@Lazy
@@ -148,8 +149,12 @@ public class JobConfig {
 			@Value("${analytics.backfill-collect:}") String collectBatch,
 			@Value("${analytics.backfill-dir:./backfill}") String dir) {
 		return args -> {
+			com.celfit.analytics.llm.GeminiBatchApi batchApi =
+					"vertex".equals(settings.llmProvider())
+							? com.celfit.analytics.llm.VertexHttpApi.fromEnv(settings)
+							: com.celfit.analytics.llm.GeminiHttpApi.fromEnvPaid();
 			GeminiBackfillRunner runner = new GeminiBackfillRunner(rawJdbcTemplate, analysisDataSource,
-					com.celfit.analytics.llm.GeminiHttpApi.fromEnvPaid(), settings,
+					batchApi, settings,
 					new com.celfit.analytics.llm.BeautyTaxonomyLoader(analysisDataSource),
 					java.nio.file.Path.of(dir));
 			if (submit) {

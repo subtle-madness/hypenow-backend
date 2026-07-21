@@ -138,6 +138,23 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 인플루언서_명단은_v2_4분류_판정을_배지로_렌더한다() throws Exception {
+        // v2 판정(beautyClass 세팅) 렌더 경로 커버 — 이 브랜치의 Thymeleaf 표현식(체이닝 삼항)에서
+        // 실제 파스 버그가 났던 이력이 있어, boolean 폴백만 있는 다른 픽스처로는 회귀를 못 잡는다.
+        Influencer inf = new Influencer("smoke-v2-beautyclass");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.classify(com.celfit.crawler.crawling.domain.BeautyClass.BEAUTY_SERVICE,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "시술 중심 계정");
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-v2-beautyclass")))
+                // 4분류 배지 텍스트 + 배지 색상 클래스
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("시술·서비스")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("BEAUTY_SERVICE")));
+    }
+
+    @Test
     void 인플루언서_명단_상태_필터가_동작하고_판정_외_상태는_무시된다() throws Exception {
         Influencer qualified = new Influencer("smoke-filter-qualified");
         qualified.setStatus(InfluencerStatus.QUALIFIED);

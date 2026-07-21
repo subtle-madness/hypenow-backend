@@ -54,13 +54,13 @@ crawler:
     batch-limit: 50   # 실행 1회당 유사 계정을 수확할 시드(뷰티 QUALIFIED) 수
   beauty:
     batch-limit: 500  # 판정 1회당 처리할 계정 수 상한(실행 시간 제어 — 청크 50 × 최대 240s). 초과분은 다음 실행에서.
-    judge: gemini     # 판정 구현 선택 — gemini(기본, GEMINI_API_KEY 셸 export 필요) | claude-cli(로컬 Claude CLI 롤백) | claude-api(Anthropic SDK — 클라우드용, ANTHROPIC_AUTH_TOKEN 구독 우선·ANTHROPIC_API_KEY 폴백. 모델은 crawler.beauty.claude-model, 기본 claude-haiku-4-5)
+    judge: claude-api # 판정 구현 — claude-api(기본, Anthropic SDK: ANTHROPIC_AUTH_TOKEN 구독 우선·ANTHROPIC_API_KEY 폴백, 모델 crawler.beauty.claude-model 기본 claude-haiku-4-5) | gemini(롤백: GEMINI_API_KEY) | claude-cli(로컬 Claude CLI 롤백)
   reels:
     batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"
     qualify-cron: "0 30 6 * * *"
-    beauty-cron: "0 30 7 * * *"   # qualify 유입분 3분류 — qualify 이후
+    beauty-cron: "0 30 7 * * *"   # qualify 유입분 4분류 판정 — qualify 이후
     collect-cron: "0 0 1 * * *"   # 데일리 스냅샷(팔로워 추이+게시물) — 새벽에 길게
     reels-cron: "0 10 1 * * *"    # 릴스 1페이지 — collect와 병렬(잡 락 분리)

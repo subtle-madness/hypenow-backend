@@ -68,8 +68,9 @@ class FlywaySchemaTest {
 		assertColumnsMatch("account_summaries", AccountSummary.class);
 	}
 
+	/** account_category_stats는 미러 테이블이 아니라 analysis DB 파생 뷰(V35)지만 계약은 동일하다. */
 	@Test
-	void account_category_stats_테이블_컬럼이_record와_일치한다() {
+	void account_category_stats_뷰_컬럼이_record와_일치한다() {
 		assertColumnsMatch("account_category_stats", AccountCategoryStat.class);
 	}
 
