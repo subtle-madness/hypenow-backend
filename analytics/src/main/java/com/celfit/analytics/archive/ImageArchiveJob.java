@@ -110,7 +110,17 @@ public class ImageArchiveJob {
 				SELECT handle, profile_image_url FROM analytics.v_accounts
 				WHERE profile_image_url IS NOT NULL
 				""", (rs, i) -> new Target(KIND_PROFILE, rs.getString(1), rs.getString(2)))
-				.stream().filter(t -> !sourceName(t.url()).equals(archived.get(t.key()))).toList();
+				.stream().filter(t -> profileChanged(t, archived.get(t.key()))).toList();
+	}
+
+	/** 파일명 비교 — URL이 파싱 불가면 '변경'으로 간주해 대상에 남긴다(실패는 run()의 건 단위 격리가 흡수). */
+	private boolean profileChanged(Target t, String archivedSourceName) {
+		try {
+			return !sourceName(t.url()).equals(archivedSourceName);
+		} catch (IllegalArgumentException e) {
+			log.warn("프로필 URL 파싱 실패 — 재시도 대상으로 유지: {}", t.key(), e);
+			return true;
+		}
 	}
 
 	/** URL 경로의 마지막 세그먼트(인스타 미디어 ID 파일명) — 호스트·서명 쿼리는 크롤마다 바뀌므로 제외. */

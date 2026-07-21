@@ -182,4 +182,18 @@ class ImageArchiveJobTest {
 			assertThat(m.get("cacheControl")).isEqualTo("public, max-age=86400");
 		});
 	}
+
+	@Test
+	void 파싱_불가_URL은_그_건만_실패하고_나머지는_계속() {
+		seedAccount("broken", "https://cdn.example/v/463 111_n.jpg?sig=1"); // 공백 — URI 파싱 불가
+		seedContent("good", "https://cdn.example/ok_n.jpg");
+
+		JobResult result = job(1000).run();
+
+		assertThat(result.processed()).isEqualTo(1);
+		assertThat(result.failed()).isEqualTo(1);
+		Integer rows = db.queryForObject(
+				"SELECT count(*) FROM image_assets WHERE key='broken'", Integer.class);
+		assertThat(rows).isZero();
+	}
 }
