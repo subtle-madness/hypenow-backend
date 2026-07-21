@@ -66,6 +66,14 @@ services:
       JAVA_OPTS: "-Xms256m -Xmx768m"
     ports:
       - "127.0.0.1:8082:8082"   # 루프백 전용 — 어드민은 SSH 터널로만
+    # 8082 리슨 = Spring 기동 완료 = analysis DB Flyway 마이그레이션 적용 완료 신호.
+    # 이미지에 curl이 없어 bash /dev/tcp로 확인. start_period는 마이그레이션(백필 포함) 여유.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8082' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,8 +121,13 @@ services:
       CODES_API_KEY: ${CODES_API_KEY:-}
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
+    # analytics healthy(=analysis DB 마이그레이션 완료) 후 기동 — was 코드가 새 분석 컬럼을
+    # 참조하는 배포에서 기동 직후 500 레이스 차단(07-20 장애의 일시 변형). analytics가
+    # healthy 실패하면 was도 안 뜨는 결합이 생기니, 그때는 up -d에 --no-deps로 우회.
     depends_on:
       postgres:
+        condition: service_healthy
+      analytics:
         condition: service_healthy
 
   caddy:
