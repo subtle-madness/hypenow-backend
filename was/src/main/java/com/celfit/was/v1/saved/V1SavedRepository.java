@@ -154,6 +154,7 @@ public class V1SavedRepository {
 				FROM contents c
 				JOIN content_analyses an ON an.short_code = c.short_code
 				JOIN accounts a ON a.handle = c.account_handle
+				""" + ContentCardRow.IMAGE_JOINS + """
 				WHERE c.short_code = :sc
 				""")
 				.param("sc", shortCode)
@@ -168,6 +169,7 @@ public class V1SavedRepository {
 				FROM contents c
 				JOIN content_analyses an ON an.short_code = c.short_code
 				JOIN accounts a ON a.handle = c.account_handle
+				""" + ContentCardRow.IMAGE_JOINS + """
 				WHERE c.short_code IN (:codes)
 				""")
 				.param("codes", shortCodes)
@@ -178,9 +180,12 @@ public class V1SavedRepository {
 	/** accounts 프로필 1건(id=handle) — POST 존재 확인 겸 응답 프로필. 없으면 404. */
 	public Optional<ContentCard.Influencer> findInfluencer(String handle) {
 		return jdbcClient.sql("""
-				SELECT handle, display_name, profile_image_url, followers
-				FROM accounts
-				WHERE handle = :h
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers
+				FROM accounts a
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+				WHERE a.handle = :h
 				""")
 				.param("h", handle)
 				.query((rs, i) -> new ContentCard.Influencer(rs.getString("handle"), rs.getString("handle"),
@@ -192,9 +197,12 @@ public class V1SavedRepository {
 	/** 저장된 handle 묶음의 프로필 일괄 조회 — 부재분은 결과에서 빠지고, 조합 시 handle-only로 채운다. */
 	public List<ContentCard.Influencer> findInfluencers(List<String> handles) {
 		return jdbcClient.sql("""
-				SELECT handle, display_name, profile_image_url, followers
-				FROM accounts
-				WHERE handle IN (:handles)
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers
+				FROM accounts a
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+				WHERE a.handle IN (:handles)
 				""")
 				.param("handles", handles)
 				.query((rs, i) -> new ContentCard.Influencer(rs.getString("handle"), rs.getString("handle"),

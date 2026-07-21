@@ -27,6 +27,7 @@ class ContentListRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -88,6 +89,16 @@ class ContentListRepositoryTest extends IntegrationTest {
 				    likes       bigint,
 				    comments    bigint,
 				    hype_score  bigint
+				)""");
+		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
+		jdbcTemplate.execute("""
+				CREATE TABLE image_assets (
+				    kind        text NOT NULL,
+				    key         text NOT NULL,
+				    object_path text NOT NULL,
+				    source_name text NOT NULL,
+				    archived_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (kind, key)
 				)""");
 
 		// 계정 2: alpha(5000) · beta(20000)
@@ -269,6 +280,26 @@ class ContentListRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findContents(q)).isEmpty();
 		assertThat(repository.countContents(q)).isEqualTo(0);
+	}
+
+	@Test
+	void 아카이브된_이미지는_img_경로로_미아카이브는_원본_URL로_서빙된다() {
+		// h1(alpha)만 아카이브: 썸네일 kind='thumbnail'/key=short_code, 프로필 kind='profile'/key=handle
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('thumbnail', 'h1', 'thumb/h1.jpg', 'h1.jpg')");
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('profile', 'alpha', 'profile/alpha.jpg', 'alpha.jpg')");
+
+		List<ContentListRow> rows = repository.findContents(query());
+
+		ContentListRow archived = rows.stream().filter(r -> r.shortCode().equals("h1")).findFirst().orElseThrow();
+		assertThat(archived.thumbnailUrl()).isEqualTo("/img/thumb/h1.jpg");
+		assertThat(archived.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+
+		// h2(beta)는 미아카이브 — 원본 CDN URL 그대로 폴백
+		ContentListRow fallback = rows.stream().filter(r -> r.shortCode().equals("h2")).findFirst().orElseThrow();
+		assertThat(fallback.thumbnailUrl()).isEqualTo("https://thumb/h2.jpg");
+		assertThat(fallback.profileImageUrl()).isEqualTo("https://pic/beta.jpg");
 	}
 
 	@Test

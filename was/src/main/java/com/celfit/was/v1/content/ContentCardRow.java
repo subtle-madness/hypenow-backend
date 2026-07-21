@@ -32,15 +32,26 @@ public record ContentCardRow(
 		String profileImageUrl,
 		Long followers) {
 
-	/** 카드 SELECT 절 공통 상수 — 목록(6.1)·recentContents(6.4) 리포지토리가 같이 쓴다. */
+	/** 카드 SELECT 절 공통 상수 — 목록(6.1)·recentContents(6.4) 리포지토리가 같이 쓴다.
+	 *  아카이브된 이미지는 /img/ 상대경로(Vercel rewrite→오브젝트 스토리지), 미아카이브는 원본 CDN 폴백. */
 	public static final String SELECT = """
-			SELECT c.short_code, c.thumbnail_url, c.caption, c.posted_at, c.content_type,
+			SELECT c.short_code,
+			       COALESCE('/img/' || it.object_path, c.thumbnail_url) AS thumbnail_url,
+			       c.caption, c.posted_at, c.content_type,
 			       c.video_duration, c.original_url, c.views, c.likes, c.comments,
 			       c.hype_score, c.metric_captured_at,
 			       an.main_category, an.sub_categories::text AS sub_categories_json, an.ad_type,
 			       an.detected_brands::text AS brands_json,
 			       an.detected_products::text AS products_json,
 			       an.detected_distributors::text AS distributors_json,
-			       a.handle, a.display_name, a.profile_image_url, a.followers
+			       a.handle, a.display_name,
+			       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+			       a.followers
+			""";
+
+	/** SELECT의 it·ip 별칭 공급 — 카드 FROM 절에 반드시 함께 붙인다. */
+	public static final String IMAGE_JOINS = """
+			LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
+			LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
 			""";
 }

@@ -5,7 +5,10 @@ spring:
     username: ${DB_USER}
     password: ${DB_PASSWORD}
 server:
-  # caddy 뒤에서 X-Forwarded-* 를 신뢰 — Secure 쿠키·scheme 판정용
+  # caddy 뒤에서 X-Forwarded-* 를 신뢰 — Secure 쿠키·scheme 판정 + 클라이언트 IP 복원.
+  # remoteAddr 복원은 레이트리밋 키(IP별 버킷)의 전제 — 깨지면 전 사용자가 Caddy IP 버킷 하나를
+  # 공유한다. ProdForwardedHeadersTest가 회귀 가드. 스푸핑은 Caddy(2.5+)가 외부 유입
+  # X-Forwarded-For를 버리고 실측 IP로 재설정해 방어.
   forward-headers-strategy: framework
   servlet:
     session:

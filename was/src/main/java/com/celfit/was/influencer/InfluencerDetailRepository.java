@@ -57,9 +57,12 @@ public class InfluencerDetailRepository {
 
 	public Optional<Account> findAccount(String handle) {
 		return safeQuery("accounts", Optional::empty, () -> jdbcClient.sql("""
-				SELECT handle, display_name, profile_image_url, followers, external_link
-				FROM accounts
-				WHERE handle = :handle
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers, a.external_link
+				FROM accounts a
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+				WHERE a.handle = :handle
 				""")
 				.param("handle", handle)
 				.query(Account.class)

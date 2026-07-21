@@ -15,13 +15,16 @@ public class V1InfluencerRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
-	/** accounts ⋈ account_summaries — 프로필 1행. */
+	/** accounts ⋈ account_summaries — 프로필 1행. 아카이브된 프로필 이미지는 /img/ 상대경로로 폴백. */
 	public Optional<ProfileRow> findProfile(String handle) {
 		return jdbcClient.sql("""
-				SELECT a.handle, a.display_name, a.profile_image_url, a.followers, a.external_link,
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers, a.external_link,
 				       s.posts_count, s.follows_count, s.biography
 				FROM accounts a
 				LEFT JOIN account_summaries s ON s.handle = a.handle
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
 				WHERE a.handle = :h
 				""").param("h", handle).query(ProfileRow.class).optional();
 	}
@@ -38,6 +41,7 @@ public class V1InfluencerRepository {
 				FROM contents c
 				LEFT JOIN content_analyses an ON an.short_code = c.short_code
 				JOIN accounts a ON a.handle = c.account_handle
+				""" + ContentCardRow.IMAGE_JOINS + """
 				WHERE c.account_handle = :h
 				  AND (an.is_beauty IS DISTINCT FROM false)
 				ORDER BY c.posted_at DESC, c.short_code

@@ -32,11 +32,14 @@ public class PostDetailRepository {
 
 	public Optional<Content> findContent(String shortCode) {
 		return safeQuery("contents", Optional::empty, () -> jdbcClient.sql("""
-				SELECT short_code, account_handle, thumbnail_url, caption, posted_at,
-				       content_type, video_duration, original_url,
-				       views, likes, comments, hype_score, metric_captured_at, ad_marked
-				FROM contents
-				WHERE short_code = :shortCode
+				SELECT c.short_code, c.account_handle,
+				       COALESCE('/img/' || it.object_path, c.thumbnail_url) AS thumbnail_url,
+				       c.caption, c.posted_at,
+				       c.content_type, c.video_duration, c.original_url,
+				       c.views, c.likes, c.comments, c.hype_score, c.metric_captured_at, c.ad_marked
+				FROM contents c
+				LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
+				WHERE c.short_code = :shortCode
 				""")
 				.param("shortCode", shortCode)
 				.query(Content.class)
@@ -45,9 +48,12 @@ public class PostDetailRepository {
 
 	public Optional<Account> findAccount(String handle) {
 		return safeQuery("accounts", Optional::empty, () -> jdbcClient.sql("""
-				SELECT handle, display_name, profile_image_url, followers, external_link
-				FROM accounts
-				WHERE handle = :handle
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers, a.external_link
+				FROM accounts a
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+				WHERE a.handle = :handle
 				""")
 				.param("handle", handle)
 				.query(Account.class)

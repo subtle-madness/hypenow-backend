@@ -2,6 +2,7 @@ package com.celfit.was.influencer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
@@ -28,6 +29,7 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 	void setUpTables() {
 		// accounts: PostDetailRepositoryTest와 동일 형상(패키지 분리로 의도적 중복)
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -35,6 +37,16 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 				    profile_image_url text,
 				    followers         bigint,
 				    external_link     text
+				)""");
+		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
+		jdbcTemplate.execute("""
+				CREATE TABLE image_assets (
+				    kind        text NOT NULL,
+				    key         text NOT NULL,
+				    object_path text NOT NULL,
+				    source_name text NOT NULL,
+				    archived_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (kind, key)
 				)""");
 		jdbcTemplate.update("""
 				INSERT INTO accounts VALUES ('glow', '글로우', 'https://pic/glow.jpg', 42555,
@@ -194,6 +206,24 @@ class InfluencerDetailRepositoryTest extends IntegrationTest {
 	@Test
 	void 분석_이력이_없는_계정이면_empty다() {
 		assertThat(repository.findLatestAnalysis("nope")).isEmpty();
+	}
+
+	@Test
+	void 아카이브된_프로필_이미지는_img_경로로_미아카이브는_원본_URL로_서빙된다() {
+		jdbcTemplate.update("""
+				INSERT INTO accounts VALUES ('plain', '플레인', 'https://pic/plain.jpg', 1000, NULL)
+				""");
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('profile', 'glow', 'profile/glow.jpg', 'glow.jpg')");
+
+		Optional<Account> archived = repository.findAccount("glow");
+		assertThat(archived).isPresent();
+		assertThat(archived.get().profileImageUrl()).isEqualTo("/img/profile/glow.jpg");
+
+		// plain은 미아카이브 — 원본 CDN URL 그대로 폴백
+		Optional<Account> fallback = repository.findAccount("plain");
+		assertThat(fallback).isPresent();
+		assertThat(fallback.get().profileImageUrl()).isEqualTo("https://pic/plain.jpg");
 	}
 
 	@Test

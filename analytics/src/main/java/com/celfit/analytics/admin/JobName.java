@@ -5,7 +5,8 @@ public enum JobName {
 	MIRROR("미러 — 분석 뷰 → analysis DB"),
 	CLASSIFY("댓글 분류 (LLM)"),
 	ANALYZE("콘텐츠 분석 (LLM)"),
-	ACCOUNT_ANALYZE("계정 카피 (LLM)");
+	ACCOUNT_ANALYZE("계정 카피 (LLM)"),
+	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지");
 
 	private final String label;
 
