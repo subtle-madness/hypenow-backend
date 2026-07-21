@@ -1,6 +1,7 @@
 # 뷰티 판정 v2 — 4분류(beauty_class) 구현 계획
 
 > 상태: 🟢 활성 · ✅ 구현됨(재판정 운영 작업 대기)
+> ※ 07-21 develop 머지 시 Flyway 번호 충돌(develop이 V16·V17 선점)로 본문에 V16으로 적힌 beauty_class 마이그레이션은 **V18__beauty_class.sql**로 리네임됨.
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
