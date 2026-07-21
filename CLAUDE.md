@@ -39,6 +39,9 @@
 - DTO는 record(+정적 `from()`). was 조회는 JdbcClient. Jackson 3(`tools.jackson.*`).
 - 분석 뷰는 `analytics/views/NN_*.sql` 번호순 적용, 테스트는 같은 번호 `analytics/test/NN_*.test.sql`.
 - 런타임 설정은 `app_setting(key,value)` — 뷰가 직접 읽는 키도 있다(예: `analytics.recent-window`).
+  **기준값은 crawler Flyway 마이그레이션으로 시드**(`ON CONFLICT DO NOTHING`, V16 참조 —
+  07-20 수동 등록분 유실 사고 후 확립). 기준값 추가·변경은 후속 마이그레이션으로,
+  수동 UPDATE는 런타임 토글(프로바이더 전환·임시 상향)만.
 - 배열 저장은 `text[]` 대신 `jsonb` (기존 `RawComment.payload` 매핑 관용구 재사용).
 
 ## 함정

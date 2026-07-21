@@ -3,6 +3,8 @@ package com.celfit.analytics.llm;
 import com.anthropic.client.AnthropicClient;
 import com.celfit.analytics.config.AnalyticsSettings;
 import javax.sql.DataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -14,14 +16,26 @@ import org.springframework.context.annotation.Lazy;
  * LLM 빈 배선. 게이트가 모두 꺼져 있으면 클라이언트를 아예 만들지 않는다 (API 키 불필요).
  * 전 빈 @Lazy라 기동 시 키가 없어도 뜨고, LLM 잡 첫 실행 때 생성된다.
  *
- * <p>프로바이더 선택(07-18 확정): app_setting `analytics.llm-provider` — gemini(기본) | anthropic(롤백).
- * 포트 빈 생성 시점에 읽으므로 전환은 재기동 필요. ObjectProvider로 반대편 클라이언트는 만들지 않아
- * gemini 운영 시 ANTHROPIC 키가 없어도 된다(댓글 분류는 MVP 휴면이라 Anthropic 유지 — 미호출이면 무해).
+ * <p>프로바이더 선택: app_setting `analytics.llm-provider` — gemini(기본) | vertex(Vertex AI — 07-20 전환)
+ * | anthropic(롤백). 포트 빈 생성 시점에 읽으므로 전환은 재기동 필요. ObjectProvider로 반대편 클라이언트는
+ * 만들지 않아 gemini 운영 시 ANTHROPIC 키가 없어도 된다(댓글 분류는 MVP 휴면이라 Anthropic 유지 — 미호출이면 무해).
+ * vertex는 contentInsightPort/accountSynthesisPort 분기에서 "anthropic이 아님" 경로를 그대로 타 기존
+ * Gemini 어댑터를 재사용하고, 주입되는 {@link GeminiApi} 빈만 {@link VertexHttpApi} 구현으로 바뀐다.
  */
 @Configuration
 @ConditionalOnExpression("${analytics.classify-on-startup:false} or ${analytics.analyze-on-startup:false}"
 		+ " or ${analytics.account-analyze-on-startup:false} or ${analytics.admin-enabled:false}")
 public class LlmConfig {
+
+	private static final Logger log = LoggerFactory.getLogger(LlmConfig.class);
+
+	/**
+	 * Vertex를 실제로 쓸지 판정 — provider=vertex이고 SA 키가 존재할 때만. provider=vertex인데
+	 * 키가 없으면(크레딧 소진·무설정 로컬·CI) gemini로 폴백하려고 false. 순수 함수라 단위 테스트 대상.
+	 */
+	static boolean useVertex(String provider, boolean credentialsPresent) {
+		return "vertex".equals(provider) && credentialsPresent;
+	}
 
 	@Bean
 	@Lazy
@@ -45,6 +59,14 @@ public class LlmConfig {
 	@Bean
 	@Lazy
 	public GeminiApi geminiApi(AnalyticsSettings settings) {
+		String provider = settings.llmProvider();
+		if (useVertex(provider, VertexTokenProvider.credentialsPresent())) {
+			return VertexHttpApi.fromEnv(settings); // SA 토큰 + app_setting 프로젝트/버킷
+		}
+		if ("vertex".equals(provider)) {
+			// baseline은 vertex지만 SA 키가 없다 — 죽이지 않고 무료 gemini로 폴백(크레딧 소진·무설정 로컬 안전).
+			log.warn("provider=vertex인데 GOOGLE_APPLICATION_CREDENTIALS 미설정 — gemini로 폴백");
+		}
 		return GeminiHttpApi.fromEnv(settings.geminiRpm()); // GEMINI_API_KEY (무료 프로젝트)
 	}
 

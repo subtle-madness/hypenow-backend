@@ -24,12 +24,15 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * 초기 백필 one-shot — 유료 키(GEMINI_API_KEY_PAID) Batch API 일회 실행 (2026-07-18 확정, ~$9).
- * submit: v_analysis_candidates ∩ v_analysis_baseline 중 미분석 전량 → JSONL 업로드 → 배치 생성 →
+ * 초기 백필 one-shot — 배치 API 일회 실행. 07-20 개정: provider=vertex면 Vertex 배치(GCS,
+ * 잡 이름은 projects/{p}/locations/{loc}/batchPredictionJobs/{id} 전체 경로), 아니면
+ * AI Studio 유료 키(GEMINI_API_KEY_PAID) Batch(배치 이름 batches/NNN) — 배선은 JobConfig.
+ * submit: v_analysis_candidates 미분석 전량(계정 평균 앵커·rank는 최근창 안일 때만 — 07-20 스코프 확장,
+ *         #79 재통합) → JSONL 업로드 → 배치 생성 →
  *         사이드카(프롬프트에 실은 기준선 스냅샷) 저장. 캡션 단독(썸네일 미첨부 — 서명 URL 대부분 만료).
  * collect: 상태 확인 → 결과 다운로드 → 파싱·sanitize → ON CONFLICT DO NOTHING INSERT(재실행 멱등).
- * 실행(신 스키마 뷰 04·03 적용 후): --spring.main.web-application-type=none
- *   --analytics.backfill-submit=true → 로그의 배치 이름으로 --analytics.backfill-collect=batches/NNN
+ * 실행: --spring.main.web-application-type=none --analytics.backfill-submit=true
+ *   → 로그의 배치 잡 이름 그대로 --analytics.backfill-collect=<잡 이름>
  */
 public class GeminiBackfillRunner {
 
@@ -38,7 +41,10 @@ public class GeminiBackfillRunner {
 			"recent_reels_avg_views", "rank_in_recent_reels", "recent_reels_count",
 			"recent_contents_count", "recent12_avg_engagement_rate", "recent12_avg_like_count",
 			"recent12_avg_comment_count", "category_top_percentile", "category_avg_views",
-			"category_sample_size", "caption");
+			"category_sample_size", "caption", "timely");
+
+	private static final java.util.regex.Pattern ECHO_SHORT_CODE =
+			java.util.regex.Pattern.compile("^콘텐츠: (\\S+) \\(");
 
 	private final JdbcTemplate raw;
 	private final JdbcTemplate analysis;
@@ -63,16 +69,19 @@ public class GeminiBackfillRunner {
 	public String submit() {
 		Set<String> analyzed = new HashSet<>(analysis.queryForList(
 				"SELECT short_code FROM content_analyses", String.class));
-		// 기준선(최근 N개 윈도우) 정의 가능한 후보만 — 일상 잡의 전제와 동일 (윈도우 밖은 분석 대상 아님)
+		// 미분석 후보 전량 — 일상 잡·버스트와 동일 정의 (07-20 스코프 확장). 계정 평균(recent12_avg_*·
+		// recent_reels_avg_views 등)은 account_handle 키로 항상 붙이고, rank는 최근창 안일 때만(short_code
+		// 키 — 밖이면 null). 다작 계정의 최근창 밖 성숙분도 계정 평균을 앵커로 분석 대상에 포함.
 		List<Map<String, Object>> rows = raw.queryForList("""
 				SELECT c.short_code, c.account_handle, c.content_type, c.caption,
-				       c.views, c.likes, c.comments,
-				       b.recent_reels_avg_views, b.rank_in_recent_reels, b.recent_reels_count,
-				       b.recent_contents_count, b.recent12_avg_engagement_rate,
-				       b.recent12_avg_like_count, b.recent12_avg_comment_count,
-				       b.category_top_percentile, b.category_avg_views, b.category_sample_size
+				       c.views, c.likes, c.comments, c.timely,
+				       ab.recent_reels_avg_views, b.rank_in_recent_reels, ab.recent_reels_count,
+				       ab.recent_contents_count, ab.recent12_avg_engagement_rate,
+				       ab.recent12_avg_like_count, ab.recent12_avg_comment_count,
+				       ab.category_top_percentile, ab.category_avg_views, ab.category_sample_size
 				FROM analytics.v_analysis_candidates c
-				JOIN analytics.v_analysis_baseline b USING (short_code)
+				LEFT JOIN analytics.v_analysis_account_baseline ab ON ab.account_handle = c.account_handle
+				LEFT JOIN analytics.v_analysis_baseline b USING (short_code)
 				ORDER BY c.short_code""");
 		String system = GeminiContentAnalyzer.instructions(taxonomyLoader.get());
 		StringBuilder jsonl = new StringBuilder();
@@ -106,7 +115,8 @@ public class GeminiBackfillRunner {
 		return batchName;
 	}
 
-	/** JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(문서 형식 snake_case). */
+	/** JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(camelCase — proto JSON은
+	 *  양쪽 표기를 다 받지만 AI Studio·Vertex 공용으로 통일). */
 	ObjectNode requestLine(String shortCode, Map<String, Object> r, String system) {
 		Map<String, Object> baseline = new LinkedHashMap<>();
 		baseline.put("recent_reels_avg_views", r.get("recent_reels_avg_views"));
@@ -123,14 +133,14 @@ public class GeminiBackfillRunner {
 		ObjectNode line = om.createObjectNode();
 		line.put("key", shortCode);
 		ObjectNode request = line.putObject("request");
-		request.putObject("system_instruction").putArray("parts").addObject().put("text", system);
+		request.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
 		request.putArray("contents").addObject().put("role", "user").putArray("parts")
 				.addObject().put("text", GeminiContentAnalyzer.userText(content));
-		ObjectNode gen = request.putObject("generation_config");
+		ObjectNode gen = request.putObject("generationConfig");
 		gen.put("temperature", 0);
-		gen.put("response_mime_type", "application/json");
-		gen.set("response_schema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA));
-		gen.put("max_output_tokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
+		gen.put("responseMimeType", "application/json");
+		gen.set("responseSchema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA));
+		gen.put("maxOutputTokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
 		return line;
 	}
 
@@ -161,7 +171,8 @@ public class GeminiBackfillRunner {
 				text(batch, "metadata", "output", "responsesFile"),
 				text(batch, "response", "responsesFile"),
 				text(batch, "dest", "fileName"),
-				text(batch, "metadata", "dest", "fileName"));
+				text(batch, "metadata", "dest", "fileName"),
+				text(batch, "outputInfo", "gcsOutputDirectory"));
 		if (resultFile == null) {
 			throw new IllegalStateException("결과 파일 이름을 찾지 못함 — 배치 응답: " + batch);
 		}
@@ -176,7 +187,16 @@ public class GeminiBackfillRunner {
 			}
 			try {
 				JsonNode node = om.readTree(line);
+				String vertexStatus = node.path("status").asString("");
+				if (!vertexStatus.isEmpty()) {
+					failed++;
+					log.warn("배치 실패 라인 (status={}): {}", vertexStatus, abbreviate(line));
+					continue;
+				}
 				String shortCode = node.path("key").asString("");
+				if (shortCode.isEmpty()) {
+					shortCode = shortCodeFromEcho(node);
+				}
 				JsonNode text = node.path("response").path("candidates").path(0)
 						.path("content").path("parts").path(0).path("text");
 				if (shortCode.isEmpty() || text.isMissingNode()) {
@@ -197,9 +217,12 @@ public class GeminiBackfillRunner {
 					continue;
 				}
 				boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
-				// 백필 대상은 정의상 늦크롤(+pin+slack 이후 지표) — late_backfill 마킹 (V33).
+				// 07-20 개정: 04 뷰가 timely 후보도 포함(제때 크롤 OR 최근 N 윈도우) — 마킹은 뷰의 timely
+				// 판정을 그대로 승계한다. 구버전 사이드카(timely 키 없음)는 NULL→false로 late_backfill 폴백.
+				boolean timely = "true".equals(base.get("timely"));
 				ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
-						hasCaption ? insight.attributes() : null, insight.synthesis(), true, "late_backfill");
+						hasCaption ? insight.attributes() : null, insight.synthesis(), true,
+						timely ? "timely" : "late_backfill");
 				saved++;
 			} catch (Exception e) {
 				failed++;
@@ -257,6 +280,19 @@ public class GeminiBackfillRunner {
 
 	private static Long numberOf(Object v) {
 		return v == null ? null : ((Number) v).longValue();
+	}
+
+	/** Vertex 출력엔 key가 없다 — 에코된 request의 유저 텍스트 첫 줄(콘텐츠: {shortCode} ()에서 복원. */
+	static String shortCodeFromEcho(JsonNode node) {
+		JsonNode parts = node.path("request").path("contents").path(0).path("parts");
+		for (JsonNode part : parts) {
+			String text = part.path("text").asString("");
+			java.util.regex.Matcher m = ECHO_SHORT_CODE.matcher(text);
+			if (m.find()) {
+				return m.group(1);
+			}
+		}
+		return "";
 	}
 
 	private static String text(JsonNode root, String... path) {
