@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.JobResult;
+import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
@@ -31,13 +32,15 @@ class AnalyticsJobServiceTest {
 	private final MirrorJob mirrorJob = mock(MirrorJob.class);
 	private final MirrorRegistry registry = new MirrorRegistry(List.of());
 	private final ContentAnalysisJob analyzeJob = mock(ContentAnalysisJob.class);
+	private final ImageArchiveJob archiveJob = mock(ImageArchiveJob.class);
 	private final JobProgressRegistry progress = new JobProgressRegistry();
 	private final RunHistory history = new RunHistory(50);
 
 	private AnalyticsJobService service() {
 		return new AnalyticsJobService(lock, new SyncTaskExecutor(), mirrorJob, registry,
 				provider(mock(CommentClassificationJob.class)), provider(analyzeJob),
-				provider(mock(AccountAnalysisJob.class)), progress, history);
+				provider(mock(AccountAnalysisJob.class)), provider(archiveJob),
+				progress, history);
 	}
 
 	@Test
@@ -46,6 +49,17 @@ class AnalyticsJobServiceTest {
 		var result = service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
 		assertThat(lock.isRunning(JobName.ANALYZE)).isFalse(); // 동기 실행 후 해제
+	}
+
+	@Test
+	void archive_잡을_트리거하면_run이_호출된다() {
+		when(archiveJob.run()).thenReturn(new JobResult(3, 1, false));
+		var result = service().trigger(JobName.ARCHIVE, TriggerType.MANUAL);
+		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.ARCHIVE);
+		assertThat(run.processed()).isEqualTo(3);
+		assertThat(run.failed()).isEqualTo(1);
 	}
 
 	@Test
@@ -105,7 +119,8 @@ class AnalyticsJobServiceTest {
 		};
 		AnalyticsJobService service = new AnalyticsJobService(lock, new SyncTaskExecutor(),
 				mirrorJob, registry, provider(mock(CommentClassificationJob.class)),
-				lazyProvider, provider(mock(AccountAnalysisJob.class)), progress, history);
+				lazyProvider, provider(mock(AccountAnalysisJob.class)),
+				provider(mock(ImageArchiveJob.class)), progress, history);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);

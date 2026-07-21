@@ -6,6 +6,9 @@ import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.GeminiBackfillRunner;
 import com.celfit.analytics.analyze.ProgressReporter;
+import com.celfit.analytics.archive.ImageArchiveJob;
+import com.celfit.analytics.archive.ImageDownloader;
+import com.celfit.analytics.archive.ParImageStore;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.CommentClassificationPort;
@@ -89,6 +92,22 @@ public class JobConfig {
 		ProgressReporter reporter = registry != null
 				? registry.reporter(JobName.ACCOUNT_ANALYZE) : ProgressReporter.NOOP;
 		return new AccountAnalysisJob(analysisDataSource, port, settings, reporter);
+	}
+
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.archive-on-startup:false} or ${analytics.admin-enabled:false}")
+	public ImageArchiveJob imageArchiveJob(JdbcTemplate rawJdbcTemplate,
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			AnalyticsSettings settings,
+			@Value("${analytics.image-par-url:}") String imageParUrl,
+			ObjectProvider<JobProgressRegistry> progressRegistry) {
+		JobProgressRegistry registry = progressRegistry.getIfAvailable();
+		ProgressReporter reporter = registry != null
+				? registry.reporter(JobName.ARCHIVE) : ProgressReporter.NOOP;
+		// @Lazy — PAR 미설정이면 첫 트리거 때 이 잡만 실패(로그 패널 노출), 서버 기동은 영향 없음
+		return new ImageArchiveJob(rawJdbcTemplate, analysisDataSource,
+				new ParImageStore(imageParUrl), ImageDownloader.http(), settings, reporter);
 	}
 
 	/**

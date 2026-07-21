@@ -3,6 +3,7 @@ package com.celfit.analytics.admin;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.JobResult;
+import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
@@ -30,6 +31,7 @@ public class AnalyticsJobService {
 	private final ObjectProvider<CommentClassificationJob> classifyJob;
 	private final ObjectProvider<ContentAnalysisJob> analyzeJob;
 	private final ObjectProvider<AccountAnalysisJob> accountAnalyzeJob;
+	private final ObjectProvider<ImageArchiveJob> archiveJob;
 	private final JobProgressRegistry progress;
 	private final RunHistory history;
 
@@ -38,6 +40,7 @@ public class AnalyticsJobService {
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
+			ObjectProvider<ImageArchiveJob> archiveJob,
 			JobProgressRegistry progress, RunHistory history) {
 		this.lock = lock;
 		this.executor = executor;
@@ -46,6 +49,7 @@ public class AnalyticsJobService {
 		this.classifyJob = classifyJob;
 		this.analyzeJob = analyzeJob;
 		this.accountAnalyzeJob = accountAnalyzeJob;
+		this.archiveJob = archiveJob;
 		this.progress = progress;
 		this.history = history;
 	}
@@ -117,6 +121,7 @@ public class AnalyticsJobService {
 			}
 			case ANALYZE -> analyzeJob.getObject().run();
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
+			case ARCHIVE -> archiveJob.getObject().run();
 		};
 	}
 }
