@@ -128,8 +128,20 @@ public class BeautyJob {
     private static List<String> trimCaptions(List<String> captions) {
         return captions.stream()
                 .limit(CAPTION_COUNT)
-                .map(c -> c.length() > CAPTION_MAX_CHARS ? c.substring(0, CAPTION_MAX_CHARS) : c)
+                .map(BeautyJob::trimSurrogateSafe)
                 .toList();
+    }
+
+    /**
+     * 절단 경계가 이모지(서로게이트 쌍) 한가운데면 high surrogate 반쪽만 남아 깨진 문자열이 되고,
+     * Anthropic API가 요청 JSON 전체를 400으로 거부한다(2026-07-21 운영 배치 9/10 실패 실측).
+     * 경계가 쌍을 가르면 한 문자 앞에서 끊는다.
+     */
+    private static String trimSurrogateSafe(String c) {
+        if (c.length() <= CAPTION_MAX_CHARS) return c;
+        int end = CAPTION_MAX_CHARS;
+        if (Character.isHighSurrogate(c.charAt(end - 1))) end--;
+        return c.substring(0, end);
     }
 
     private record ChunkResult(int beauty, int service, int notBeauty) {}
