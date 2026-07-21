@@ -192,16 +192,16 @@ public class ClaudeBurstRunner {
 			// AccountAnalysisJob.analyzeOne과 동일 정본 — 판정·수치 모두 AccountAdCanon 단일 원천.
 			AccountAdCanon.AdMetrics ad =
 					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
-			boolean hasAdComparison = ad.hasComparison();
+			com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
 			AccountToAnalyze account = new AccountToAnalyze(handle,
-					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, hasAdComparison);
+					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation);
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
 					.put("system", GeminiAccountSynthesizer.instructions())
 					.put("user", GeminiAccountSynthesizer.userText(account) + ACCOUNT_JSON_RULE)))
 					.append('\n');
 			var side = om.createObjectNode().put("handle", handle)
-					.put("has_ad_comparison", hasAdComparison);
+					.put("ad_situation", adSituation.name());
 			Long analyzedCount = (Long) summary.get("analyzed_count");
 			if (analyzedCount == null) {
 				side.putNull("analyzed_count");
@@ -257,7 +257,7 @@ public class ClaudeBurstRunner {
 			}
 		}
 		Map<String, Map<String, String>> accountSidecar = readSidecar("accounts-sidecar.jsonl", "handle",
-				List.of("handle", "has_ad_comparison", "analyzed_count", "input_last_posted_at"));
+				List.of("handle", "ad_situation", "analyzed_count", "input_last_posted_at"));
 		for (JsonNode line : readResults("accounts-results.jsonl")) {
 			String handle = line.path("key").asString("");
 			try {
@@ -300,7 +300,11 @@ public class ClaudeBurstRunner {
 		}
 		List<String> traits = List.copyOf(copy.traits().size() > AccountAnalysisJob.MAX_TRAITS
 				? copy.traits().subList(0, AccountAnalysisJob.MAX_TRAITS) : copy.traits());
-		boolean hasAdComparison = Boolean.parseBoolean(side.get("has_ad_comparison"));
+		// 사이드카에 없는 옛 파일(has_ad_comparison 시절)이면 근거 없음으로 보수적 처리
+		String situationName = side.get("ad_situation");
+		com.celfit.analytics.llm.AdSituation adSituation = situationName == null
+				? com.celfit.analytics.llm.AdSituation.INSUFFICIENT
+				: com.celfit.analytics.llm.AdSituation.valueOf(situationName);
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
 				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
@@ -310,7 +314,7 @@ public class ClaudeBurstRunner {
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
 				copy.tagline(), copy.summary(), copy.trendNote(), copy.chartNote(),
 				om.writeValueAsString(traits),
-				hasAdComparison && !isBlank(copy.adHeadline()) ? copy.adHeadline() : null,
+				adSituation.writesHeadline() && !isBlank(copy.adHeadline()) ? copy.adHeadline() : null,
 				copy.paceNote());
 		return true;
 	}

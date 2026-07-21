@@ -9,6 +9,7 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
@@ -73,7 +74,8 @@ class AccountAnalysisJobTest {
 				  ('acct_ad',      10000, 6, 6, 'views', 13500, 15000, timestamptz '2026-07-01 09:00:00+09'),
 				  ('acct_noad',     8000, 4, 4, 'views', 10375, NULL,  timestamptz '2026-07-02 09:00:00+09'),
 				  ('acct_caption',  9000, 4, 4, 'views', 12000, NULL,  timestamptz '2026-07-03 09:00:00+09'),
-				  ('acct_tagonly',  7000, 4, 4, 'views', 11000, 30000, timestamptz '2026-07-04 09:00:00+09')""");
+				  ('acct_tagonly',  7000, 4, 4, 'views', 11000, 30000, timestamptz '2026-07-04 09:00:00+09'),
+				  ('acct_allads',   6000, 4, 4, 'views', NULL,  9000,  timestamptz '2026-07-05 09:00:00+09')""");
 		db.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
 				  views, likes, comments, sponsored) VALUES
@@ -83,13 +85,16 @@ class AccountAnalysisJobTest {
 				  ('p4', 'acct_caption', timestamptz '2026-06-03 09:00:00+09', 'reels', 10000, 300, 30, false),
 				  ('p5', 'acct_caption', timestamptz '2026-07-03 09:00:00+09', 'reels',  6000, 200, 20, false),
 				  ('p6', 'acct_tagonly', timestamptz '2026-06-04 09:00:00+09', 'reels', 11000, 300, 30, false),
-				  ('p7', 'acct_tagonly', timestamptz '2026-07-04 09:00:00+09', 'reels', 30000, 900, 90, true)""");
+				  ('p7', 'acct_tagonly', timestamptz '2026-07-04 09:00:00+09', 'reels', 30000, 900, 90, true),
+				  ('p8', 'acct_allads',  timestamptz '2026-06-05 09:00:00+09', 'reels',  8000, 250, 25, false),
+				  ('p9', 'acct_allads',  timestamptz '2026-07-05 09:00:00+09', 'reels', 10000, 350, 35, false)""");
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, caption, content_type) VALUES
 				  ('p1', 'acct_ad', '캡션1', 'reels'), ('p2', 'acct_ad', '캡션2', 'reels'),
 				  ('p3', 'acct_noad', '캡션3', 'feed'),
 				  ('p4', 'acct_caption', '캡션4', 'reels'), ('p5', 'acct_caption', '#광고 캡션5', 'reels'),
-				  ('p6', 'acct_tagonly', '캡션6', 'reels'), ('p7', 'acct_tagonly', '캡션7', 'reels')""");
+				  ('p6', 'acct_tagonly', '캡션6', 'reels'), ('p7', 'acct_tagonly', '캡션7', 'reels'),
+				  ('p8', 'acct_allads', '#광고 캡션8', 'reels'), ('p9', 'acct_allads', '#협찬 캡션9', 'reels')""");
 		// 광고 정본 — p2·p5만 협찬. acct_tagonly는 릴스 태그(p7 sponsored=true)와 달리 캡션 분류상 organic.
 		// 카테고리 믹스는 테이블이 아니라 파생 뷰다(V35) — 캡션 분류를 심으면 뷰가 집계해 준다.
 		// short_code가 PK라 광고·카테고리를 한 번에 넣는다(따로 INSERT하면 p1·p2가 중복된다).
@@ -101,7 +106,9 @@ class AccountAnalysisJobTest {
 				  ('p4', 'test', NULL,       NULL, 'organic'),
 				  ('p5', 'test', NULL,       NULL, 'sponsored'),
 				  ('p6', 'test', NULL,       NULL, 'organic'),
-				  ('p7', 'test', NULL,       NULL, 'organic')""");
+				  ('p7', 'test', NULL,       NULL, 'organic'),
+				  ('p8', 'test', NULL,       NULL, 'sponsored'),
+				  ('p9', 'test', NULL,       NULL, 'sponsored')""");
 
 		rewireJob(fakePort());
 	}
@@ -110,8 +117,8 @@ class AccountAnalysisJobTest {
 	void 신규_계정은_즉시_분석되고_카피가_저장된다() {
 		int processed = job.run().processed();
 
-		assertEquals(4, processed);
-		assertEquals(4L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		assertEquals(5, processed);
+		assertEquals(5L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 		assertEquals("태그라인: acct_ad", db.queryForObject(
 				"SELECT tagline FROM account_analyses WHERE handle = 'acct_ad'", String.class));
 		// traits는 jsonb 배열로 저장된다
@@ -133,40 +140,62 @@ class AccountAnalysisJobTest {
 	}
 
 	@Test
-	void adHeadline은_광고_비교가_있는_계정에만_저장된다() {
+	void 광고_상황별로_헤드라인_생성_여부가_갈린다() {
 		job.run();
 
-		// fake 포트는 둘 다 헤드라인을 반환하지만, 비교 없는 계정은 잡이 NULL로 저장한다
+		// ① 비교 가능(organic·협찬 둘 다 측정 가능) — 현행 그대로 생성
+		assertEquals(AdSituation.COMPARABLE, callFor("acct_ad").adSituation());
 		assertEquals("광고 헤드라인", headlineOf("acct_ad"));
+		// ④ 지표 부족(측정 가능 게시물 없음 — 피드 조회수 NULL) — 근거가 없어 NULL 유지
+		assertEquals(AdSituation.INSUFFICIENT, callFor("acct_noad").adSituation());
 		assertNull(headlineOf("acct_noad"));
-		// 포트 입력의 hasAdComparison 플래그도 정확해야 한다 (어댑터가 지시문에서 분기)
-		assertTrue(callFor("acct_ad").hasAdComparison());
-		assertFalse(callFor("acct_noad").hasAdComparison());
 	}
 
-	/** 버그 정본 케이스 — 캡션으로 협찬 고지했지만 릴스 유료파트너십 태그가 없는 계정.
-	 *  옛 소스(account_summaries.ad_avg)로는 영구 차단됐다(운영 995계정). */
+	/** 버그 정본 케이스 — 캡션으로 협찬 고지했지만 릴스 유료파트너십 태그가 없는 계정. */
 	@Test
-	void 캡션_고지만_있는_계정도_광고_비교로_인정된다() {
+	void 캡션_고지만_있는_계정도_비교_가능으로_인정된다() {
 		job.run();
 
-		assertTrue(callFor("acct_caption").hasAdComparison());
+		assertEquals(AdSituation.COMPARABLE, callFor("acct_caption").adSituation());
 		assertEquals("광고 헤드라인", headlineOf("acct_caption"));
 	}
 
-	/** 역방향 — 릴스 태그만 있고 캡션 분류상 협찬이 아니면 화면(was)에도 비교가 안 뜬다.
-	 *  헤드라인만 남으면 설명 대상 없는 문구가 되므로 차단이 맞다. */
+	/**
+	 * ② 협찬 이력 전무 — 예전엔 "비교 불가"라 NULL이었지만, 협찬이 없다는 사실 자체가
+	 * 마케터에게 정보다(객관 진술). 헤드라인을 생성한다.
+	 */
 	@Test
-	void 릴스_태그만_있고_캡션_분류가_organic이면_광고_비교가_아니다() {
+	void 협찬이_전혀_없는_계정도_헤드라인을_받는다() {
 		job.run();
 
-		assertFalse(callFor("acct_tagonly").hasAdComparison());
-		assertNull(headlineOf("acct_tagonly"));
+		assertEquals(AdSituation.NO_ADS, callFor("acct_tagonly").adSituation());
+		assertEquals("광고 헤드라인", headlineOf("acct_tagonly"));
+	}
+
+	/**
+	 * ③ 측정 가능분이 전량 협찬 — 비교 대상 organic이 없을 뿐, 협찬 비중·성과는 진술 가능하다.
+	 */
+	@Test
+	void 전량_협찬_계정도_헤드라인을_받는다() {
+		job.run();
+
+		assertEquals(AdSituation.ALL_ADS, callFor("acct_allads").adSituation());
+		assertEquals("광고 헤드라인", headlineOf("acct_allads"));
+	}
+
+	/** 프롬프트 지시문이 평가·권유를 금지하고 상황별 진술을 요구해야 한다. */
+	@Test
+	void 지시문이_평가를_금지하고_상황별_진술을_지시한다() {
+		String instructions = com.celfit.analytics.llm.GeminiAccountSynthesizer.instructions();
+
+		assertTrue(instructions.contains("좋다"), instructions);
+		assertTrue(instructions.contains(AdSituation.NO_ADS.label()), instructions);
+		assertTrue(instructions.contains(AdSituation.ALL_ADS.label()), instructions);
 	}
 
 	/** 프롬프트에 실리는 광고 수치도 정본(ad_type) 기준이어야 한다 — 헤드라인이 설명하는 숫자와
 	 *  화면 숫자가 갈리면 안 된다. acct_tagonly: 옛 소스는 organic 11000/ad 30000이지만
-	 *  정본으로는 p6·p7 모두 organic → 비교 없음(NULL)·협찬 0건. */
+	 *  정본으로는 p6·p7 모두 organic → 비교 평균 없음(NULL)·협찬 0건. */
 	@Test
 	void 프롬프트_광고_수치가_정본_기준으로_치환된다() {
 		job.run();
@@ -207,7 +236,7 @@ class AccountAnalysisJobTest {
 
 		assertEquals(0, processed);
 		assertTrue(calls.isEmpty());
-		assertEquals(4L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		assertEquals(5L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 	}
 
 	@Test
@@ -266,7 +295,7 @@ class AccountAnalysisJobTest {
 
 		int processed = job.run().processed(); // 예외가 전파되지 않아야 한다
 
-		assertEquals(3, processed); // acct_ad만 실패
+		assertEquals(4, processed); // acct_ad만 실패
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad'", Long.class));
 		assertEquals(1L, db.queryForObject(

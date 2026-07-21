@@ -94,10 +94,10 @@ public class AccountAnalysisJob {
 		List<Map<String, Object>> posts = AccountAdCanon.loadPosts(analysis, handle);
 		// 광고 판정·수치는 캡션 분류(ad_type) 정본 — 미러의 ad_marked 집계는 릴스 전용이라 쓰지 않는다.
 		AccountAdCanon.AdMetrics ad = AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
-		boolean hasAdComparison = ad.hasComparison();
+		com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
 
 		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
-				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, hasAdComparison));
+				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation));
 
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지)
 		if (isBlank(copy.tagline()) || isBlank(copy.summary())) {
@@ -112,7 +112,7 @@ public class AccountAnalysisJob {
 		AccountAnalysis row = new AccountAnalysis(handle, OffsetDateTime.now(), model,
 				lastPostedAt, analyzedCount, copy.tagline(), copy.summary(), copy.trendNote(),
 				copy.chartNote(), traits,
-				hasAdComparison ? blankToNull(copy.adHeadline()) : null, copy.paceNote());
+				adSituation.writesHeadline() ? blankToNull(copy.adHeadline()) : null, copy.paceNote());
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
 				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
