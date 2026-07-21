@@ -14,6 +14,19 @@ BEGIN
     'baseline r2 rank != 2';
   ASSERT (SELECT recent12_avg_like_count FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') = 706,
     'baseline r1 avg_like != 706 (avg(520,300,2000,5)=706.25)';
+  -- ER 분모가 팔로워(dummy_a=5500)인지 — 같은 NULL 규칙으로 직접 재계산해 대조한다.
+  -- 주의: "ER×팔로워 = 평균좋아요+평균댓글" 같은 불변식은 성립하지 않는다. likes가 NULL인
+  -- 게시물은 (likes+comments)가 NULL이라 ER 평균에서 빠지지만 avg(comments_count)에는
+  -- 남아서 모수가 어긋난다(운영 최근창에 likes NULL 413건/100계정 실재).
+  ASSERT (SELECT recent12_avg_engagement_rate FROM analytics.v_analysis_account_baseline
+          WHERE account_handle = 'dummy_a')
+         = (SELECT round(avg(round((w.likes + w.comments_count)::numeric / 5500, 6)), 6)
+            FROM analytics.v_recent_content w WHERE w.owner_username = 'dummy_a'),
+    'account_baseline dummy_a ER != 팔로워(5500) 분모 재계산값 — 분모가 조회수로 회귀했을 수 있음';
+  -- 피드(f1: views NULL)도 평균에 포함된다 — 구 정의(÷조회수)에선 제외됐다.
+  ASSERT (SELECT recent12_avg_engagement_rate FROM analytics.v_analysis_baseline
+          WHERE short_code = 'dummy_r1') IS NOT NULL,
+    'baseline r1 recent12_avg_engagement_rate is null (팔로워 분모인데 NULL)';
   ASSERT (SELECT category_top_percentile FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') IS NULL,
     'baseline category_top_percentile not null (소스 소멸 — NULL 상수)';
   ASSERT (SELECT category_avg_views FROM analytics.v_analysis_baseline WHERE short_code = 'dummy_r1') IS NULL,
