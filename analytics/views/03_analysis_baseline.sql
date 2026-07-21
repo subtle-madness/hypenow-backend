@@ -1,5 +1,10 @@
 -- 콘텐츠별 기준선 (분석 잡 전용 — 미러 안 함, 분석 시점에 content_analyses로 고정 저장).
--- ER = (likes+comments)/views. views NULL(피드)은 ER NULL → 평균에서 제외.
+-- ER = (likes+comments)/팔로워 (2026-07-21 정정). 참여율은 "계정 규모 대비 반응"을 재는 지표인데
+-- 조회수를 분모로 쓰면 도달이 클수록 값이 낮아지는 역상관이 생겨, 도달이 큰 콘텐츠일수록 참여율이
+-- 가장 낮게 나왔다(실측: 팔로워 6,568에 조회수 72만인 계정이 0.58%, 팔로워 기준으론 64.28%).
+-- 분모가 팔로워로 바뀌면서 피드도 평균에 포함된다 — 구 정의에선 views NULL이라 제외됐다.
+-- 소형 계정의 바이럴은 1.0(=100%)을 넘을 수 있다(참여 수가 팔로워 수를 넘음) — 정상값이다.
+-- 저장 단위는 %가 아니라 비율(0.0129 = 1.29%)이며, 소비처는 프롬프트 앵커뿐이다(서빙 미사용).
 -- 컬럼 형태는 구 버전 유지(기존 분석 Java 무접촉) — category_* 3컬럼은 main_group 소멸로
 -- NULL 상수 (B4 캡션 분류 산출물(analysis DB)이 대체 예정 — 스펙 2026-07-17 §5).
 --
@@ -17,7 +22,7 @@ SELECT
   round(avg(w.views) FILTER (WHERE lower(w.content_type) = 'reels'), 0)                    AS recent_reels_avg_views,
   count(*) FILTER (WHERE lower(w.content_type) = 'reels' AND w.views IS NOT NULL)          AS recent_reels_count,
   count(*)                                                                                  AS recent_contents_count,
-  round(avg(round((w.likes + w.comments_count)::numeric / NULLIF(w.views, 0), 4)), 4)      AS recent12_avg_engagement_rate,
+  round(avg(round((w.likes + w.comments_count)::numeric / NULLIF(pr.followers, 0), 6)), 6) AS recent12_avg_engagement_rate,
   round(avg(w.likes), 0)                                                                    AS recent12_avg_like_count,
   round(avg(w.comments_count), 0)                                                           AS recent12_avg_comment_count,
   NULL::smallint AS category_top_percentile,
@@ -25,6 +30,10 @@ SELECT
   NULL::bigint   AS category_sample_size
 FROM analytics.v_recent_content w
 JOIN analytics.v_base_detail d USING (content_id)
+-- 팔로워는 계정당 1행으로 접어서 조인한다 — v_base_profile은 influencer_id 기준 DISTINCT ON이라
+-- 같은 username이 두 influencer_id로 존재하면 조인이 팬아웃돼 집계가 중복 계산된다.
+LEFT JOIN (SELECT username, max(followers) AS followers
+           FROM analytics.v_base_profile GROUP BY username) pr ON pr.username = w.owner_username
 GROUP BY w.owner_username;
 
 CREATE OR REPLACE VIEW analytics.v_analysis_baseline AS

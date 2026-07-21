@@ -17,7 +17,7 @@ public final class AnthropicSynthesizer implements SynthesisPort {
 
 			- aiContentSummary: 이 콘텐츠가 계정 평균 대비 어땠는지(배수·순위), 반응의 성격(구매 전환형/화제성),
 			  협찬 수용도를 종합한 요약
-			- contentsPattern: 이 계정의 어떤 콘텐츠 패턴에서 성과가 나는지 한 줄 해석
+			- contentsPattern: 이 콘텐츠가 최근 12개 평균(계정 기준선) 대비 참여율·좋아요·댓글에서 어느 지점이 두드러지거나 처지는지 한 줄 비교. 기준선 수치를 인용하고, 계정 전체 콘텐츠 경향으로 일반화하지 마라 (07-21 재정의 — GeminiContentAnalyzer와 동일 문구)
 			- aiCommentInsight: 댓글 분포 수치를 근거로 반응의 질을 해석
 			- commentAuthenticityGrade: high(자연스러운 반응) | normal | suspect(도배·기계적 패턴 의심)
 			- commentAuthenticityNote: 판정 근거 한 줄
