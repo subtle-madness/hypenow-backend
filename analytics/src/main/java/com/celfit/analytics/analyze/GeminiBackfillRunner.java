@@ -118,14 +118,7 @@ public class GeminiBackfillRunner {
 	/** JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(camelCase — proto JSON은
 	 *  양쪽 표기를 다 받지만 AI Studio·Vertex 공용으로 통일). */
 	ObjectNode requestLine(String shortCode, Map<String, Object> r, String system) {
-		Map<String, Object> baseline = new LinkedHashMap<>();
-		baseline.put("recent_reels_avg_views", r.get("recent_reels_avg_views"));
-		baseline.put("rank_in_recent_reels", r.get("rank_in_recent_reels"));
-		baseline.put("recent_contents_count", r.get("recent_contents_count"));
-		baseline.put("recent12_avg_engagement_rate", r.get("recent12_avg_engagement_rate"));
-		baseline.put("recent12_avg_like_count", r.get("recent12_avg_like_count"));
-		baseline.put("recent12_avg_comment_count", r.get("recent12_avg_comment_count"));
-		baseline.put("category_top_percentile", r.get("category_top_percentile"));
+		Map<String, Object> baseline = PromptBaseline.ofRow(r);
 		ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 				(String) r.get("caption"), (String) r.get("content_type"),
 				numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),

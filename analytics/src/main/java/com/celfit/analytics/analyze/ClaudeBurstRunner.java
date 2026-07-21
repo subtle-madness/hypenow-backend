@@ -129,14 +129,7 @@ public class ClaudeBurstRunner {
 			if (analyzed.contains(shortCode)) {
 				continue;
 			}
-			Map<String, Object> baseline = new LinkedHashMap<>();
-			baseline.put("recent_reels_avg_views", r.get("recent_reels_avg_views"));
-			baseline.put("rank_in_recent_reels", r.get("rank_in_recent_reels"));
-			baseline.put("recent_contents_count", r.get("recent_contents_count"));
-			baseline.put("recent12_avg_engagement_rate", r.get("recent12_avg_engagement_rate"));
-			baseline.put("recent12_avg_like_count", r.get("recent12_avg_like_count"));
-			baseline.put("recent12_avg_comment_count", r.get("recent12_avg_comment_count"));
-			baseline.put("category_top_percentile", r.get("category_top_percentile"));
+			Map<String, Object> baseline = PromptBaseline.ofRow(r);
 			ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 					(String) r.get("caption"), (String) r.get("content_type"),
 					numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
