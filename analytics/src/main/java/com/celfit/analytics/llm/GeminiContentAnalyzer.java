@@ -79,6 +79,8 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 			[파트 B — 성과 종합]
 			추출된 사실과 입력의 지표·기준선·댓글 분포 수치만 근거로 삼고 수치를 지어내지 마라.
 			각 항목 2~3문장 이내.
+			기준선 키의 접미사 _pct는 이미 퍼센트 값이다(화면 표기와 동일) — 인용할 때 100을 곱하거나
+			나누지 말고 그대로 쓰고 % 를 붙여라.
 
 			- aiContentSummary: 이 콘텐츠가 계정 평균 대비 어땠는지(배수·순위), 반응의 성격(구매 전환형/화제성),
 			  협찬 수용도를 종합한 요약

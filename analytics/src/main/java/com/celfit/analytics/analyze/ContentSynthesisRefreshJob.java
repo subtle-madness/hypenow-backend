@@ -130,7 +130,7 @@ public class ContentSynthesisRefreshJob {
 		Synthesis s = port.synthesize(new ContentToSynthesize(shortCode,
 				(String) row.get("account_handle"), (String) row.get("content_type"),
 				(Long) row.get("views"), (Long) row.get("likes"), (Long) row.get("comments"),
-				promptBaseline(b), categoryCounts, facts(row)));
+				PromptBaseline.of(b), categoryCounts, facts(row)));
 
 		// 빈 종합은 저장하지 않는다 — 기존 문구가 낡았어도 빈 문구보다는 낫다(가드는 통합 잡과 동일 취지).
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
@@ -152,16 +152,4 @@ public class ContentSynthesisRefreshJob {
 		return facts;
 	}
 
-	/** 통합 잡(ContentAnalysisJob.analyzeOne)과 같은 키·순서 — 프롬프트 입력 형태를 맞춘다. */
-	private static Map<String, Object> promptBaseline(Baseline b) {
-		Map<String, Object> m = new LinkedHashMap<>();
-		m.put("recent_reels_avg_views", b.recentReelsAvgViews());
-		m.put("rank_in_recent_reels", b.rankInRecentReels());
-		m.put("recent_contents_count", b.recentContentsCount());
-		m.put("recent12_avg_engagement_rate", b.recent12AvgEngagementRate());
-		m.put("recent12_avg_like_count", b.recent12AvgLikeCount());
-		m.put("recent12_avg_comment_count", b.recent12AvgCommentCount());
-		m.put("category_top_percentile", b.categoryTopPercentile());
-		return m;
-	}
 }
