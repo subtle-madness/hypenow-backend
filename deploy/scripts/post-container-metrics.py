@@ -16,6 +16,11 @@ SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy"]
 NAMESPACE = "hypenow_custom"
 COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaat36ksxqom5nzid6jzx2tglneiyganxbjk7t5pgmlvgpc44eozllq"
 
+# 오브젝트 스토리지 — OCI가 StoredBytes를 자동 게시하지 않아(2026-07 실측 7일 무데이터)
+# 여기서 approximateSize를 직접 게시한다. 정책에 read buckets(해당 버킷 한정) 필요.
+BUCKETS = ["hypenow-images"]
+OS_NAMESPACE = "nr4nxrxoojw8"
+
 
 def container_up(service: str) -> int:
 	"""1=정상(running이고, 헬스체크가 있으면 healthy/starting). starting을 살아있음으로 치는 건
@@ -48,10 +53,18 @@ def metric(name: str, dimensions: dict, value: float) -> oci.monitoring.models.M
 		datapoints=[oci.monitoring.models.Datapoint(timestamp=now, value=float(value))])
 
 
+signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+
 data = [metric("container_up", {"containerName": s}, container_up(s)) for s in SERVICES]
 data.append(metric("disk_used_percent", {"host": "hypenow-api"}, disk_used_percent()))
 
-signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+# 버킷 용량은 5분 결에만 조회 — 성장 속도 대비 1분 해상도가 불필요하고 GetBucket API 호출 절약
+if now.minute % 5 == 0:
+	os_client = oci.object_storage.ObjectStorageClient({"region": signer.region}, signer=signer)
+	for bucket in BUCKETS:
+		size = os_client.get_bucket(OS_NAMESPACE, bucket, fields=["approximateSize"]).data.approximate_size or 0
+		data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(size / 2**30, 3)))
+
 client = oci.monitoring.MonitoringClient(
 	{"region": signer.region}, signer=signer,
 	service_endpoint=f"https://telemetry-ingestion.{signer.region}.oraclecloud.com")
