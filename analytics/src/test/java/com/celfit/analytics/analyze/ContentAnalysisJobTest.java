@@ -129,10 +129,10 @@ class ContentAnalysisJobTest {
 		// metric_captured_at은 셋 다 제때창 [posted+3d, posted+5d) 안이되 서로 다르게 — 수집 최신순
 		// 정렬(ORDER BY metric_captured_at DESC)이 post_b를 먼저 뽑는지 검증하기 위함 (b가 가장 최신).
 		db.update("""
-				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments) VALUES
-				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 18 hours', 11000, 520, 52),
-				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 6 hours', NULL, 2000, 100),
-				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 7000, 300, 30)""");
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments, ad_marked) VALUES
+				  ('post_a', 'acct1', 'https://img/a.jpg', '캡션A', 'reels', now() - interval '10 days', now() - interval '6 days 18 hours', 11000, 520, 52, true),
+				  ('post_b', 'acct1', 'https://img/b.jpg', '캡션B', 'feed', now() - interval '10 days', now() - interval '6 days 6 hours', NULL, 2000, 100, false),
+				  ('post_c', 'acct1', 'https://img/c.jpg', '캡션C', 'reels', now() - interval '10 days', now() - interval '6 days 12 hours', 7000, 300, 30, false)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count) VALUES
 				  (1, 'post_a', 'aaa***', '어디서 사요?', 3),
@@ -174,6 +174,21 @@ class ContentAnalysisJobTest {
 				.filter(c -> c.shortCode().equals("post_a")).findFirst().orElseThrow();
 		assertEquals(1L, callForA.commentCategoryCounts().get("purchase"));
 		assertEquals(1L, callForA.commentCategoryCounts().get("positive"));
+	}
+
+	/**
+	 * 인스타 유료 파트너십 태그(미러 contents.ad_marked)가 프롬프트 입력까지 전달돼야 한다 —
+	 * 안 실으면 태그가 붙은 게시물을 LLM이 organic으로 뒤집는다(운영 실측 87건).
+	 */
+	@Test
+	void 공식_광고태그가_프롬프트_입력으로_전달된다() {
+		job.run();
+
+		assertEquals(Boolean.TRUE, insightCalls.stream()
+				.filter(c -> c.shortCode().equals("post_a")).findFirst().orElseThrow().adMarked());
+		// post_b는 피드 — 미러가 false를 채운다 (post_c는 댓글 분류 미완이라 후보에서 제외)
+		assertEquals(Boolean.FALSE, insightCalls.stream()
+				.filter(c -> c.shortCode().equals("post_b")).findFirst().orElseThrow().adMarked());
 	}
 
 	@Test
