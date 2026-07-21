@@ -47,12 +47,13 @@ public class SimilarJob {
     private final HikerUserResolver resolver;
     private final CrawlExecutor executor;
     private final SettingsService settings;
+    private final JobStopFlag stopFlag;
     private final Clock clock;
     private final TransactionTemplate txTemplate;
 
     public SimilarJob(InfluencerRepository influencers, InfluencerDiscoveryRepository discoveries,
                       HikerSuggestedSupplement suggested, HikerUserResolver resolver,
-                      CrawlExecutor executor, SettingsService settings, Clock clock,
+                      CrawlExecutor executor, SettingsService settings, JobStopFlag stopFlag, Clock clock,
                       TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.discoveries = discoveries;
@@ -60,6 +61,7 @@ public class SimilarJob {
         this.resolver = resolver;
         this.executor = executor;
         this.settings = settings;
+        this.stopFlag = stopFlag;
         this.clock = clock;
         this.txTemplate = txTemplate;
     }
@@ -77,6 +79,10 @@ public class SimilarJob {
         int processed = 0, newInf = 0, known = 0, ineligible = 0, failed = 0;
         int total = seeds.size(), i = 0;
         for (Influencer seed : seeds) {
+            if (stopFlag.isRequested(JobName.SIMILAR)) {
+                log.info("similar 중지 요청 — 잔여 시드 건너뛰고 조기 종료 ({}/{} 시드 처리)", i, total);
+                break;
+            }
             i++;
             int idx = i;
             SeedResult r = txTemplate.execute(status -> processSeed(seed, trigger, idx, total));

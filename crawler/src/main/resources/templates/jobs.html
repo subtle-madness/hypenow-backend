@@ -15,25 +15,38 @@
 <div class="flash" th:if="${message}" th:text="${message}"></div>
 
 <div class="job-forms">
+    <!-- 중지 버튼은 같은 폼의 formaction — 협조적 중지(진행 중 단위 작업까지 마치고 종료) -->
     <form method="post" th:action="@{/ui/jobs/discover}">
         <button type="submit" class="primary">① discover — 해시태그로 인플루언서 발굴</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/DISCOVER/stop}"
+                title="진행 중인 키워드까지 마치고 멈춘다">중지</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/qualify}">
         <label><input type="checkbox" name="requalify" value="true" data-persist/> 범위 변경 후 전체 재판정 (기존 판정분 포함 · 재호출 없음)</label>
         <button type="submit" class="primary">② qualify — 프로필 스냅샷 · 팔로워 범위 판정</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/QUALIFY/stop}"
+                title="진행 중인 프로필 청크까지 마치고 멈춘다">중지</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/collect}">
         <button type="submit" class="primary">③ collect — 게시물을 위한 프로필 수집 (피드 12개 내장 · 릴스 제외)</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/COLLECT/stop}"
+                title="진행 중인 방문까지 마치고 멈춘다">중지</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/beauty}">
         <label><input type="checkbox" name="rejudge" value="true" data-persist/> Claude 판정분 재판정 (수동 판정 보존 · 인스타 호출 없음)</label>
         <button type="submit" class="primary">④ beauty — 뷰티 계정 판정 (로컬 Claude · $0)</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/BEAUTY/stop}"
+                title="진행 중인 판정 배치까지 마치고 멈춘다">중지</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/similar}">
         <button type="submit" class="primary">⑤ similar — 뷰티 시드의 유사 계정 발굴</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/SIMILAR/stop}"
+                title="진행 중인 시드까지 마치고 멈춘다">중지</button>
     </form>
     <form method="post" th:action="@{/ui/jobs/reels}">
         <button type="submit" class="primary">⑥ reels — 릴스 수집 (계정당 HikerAPI 1요청)</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/REELS/stop}"
+                title="진행 중인 방문까지 마치고 멈춘다">중지</button>
     </form>
 </div>
 

@@ -141,6 +141,22 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     org.springframework.data.domain.Page<Influencer> findByStatusInAndBeautyTrueAndBeautyCompanyTrue(
             java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
 
+    /** 명단 뷰티 필터: 선택한 4분류(beauty_class)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndBeautyClassIn(
+            java.util.Collection<InfluencerStatus> statuses,
+            java.util.Collection<BeautyClass> classes, Pageable pageable);
+
+    /** 명단 뷰티 필터: 미판정(beauty_class 없음 — 구 3분류 시대 판정분 포함)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndBeautyClassIsNull(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
+    /** 명단 뷰티 필터: 선택 분류 + 미판정을 함께 체크한 경우. */
+    @Query("select i from Influencer i where i.status in :statuses "
+            + "and (i.beautyClass in :classes or i.beautyClass is null)")
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndBeautyClassInOrNull(
+            @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
+            @Param("classes") java.util.Collection<BeautyClass> classes, Pageable pageable);
+
     @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
             + "and (i.beautyCompany is null or i.beautyCompany = false) "
             + "and i.similarProcessedAt is null")

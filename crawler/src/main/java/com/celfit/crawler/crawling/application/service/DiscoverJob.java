@@ -11,10 +11,13 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import java.time.Clock;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DiscoverJob {
 
+    private static final Logger log = LoggerFactory.getLogger(DiscoverJob.class);
+
     public record Summary(int newInfluencers, int knownInfluencers, int skippedItems, int failedKeywords) {}
 
     private final SearchKeywordRepository keywords;
@@ -34,18 +39,20 @@ public class DiscoverJob {
     private final ContentRepository contents;
     private final RawDiscoveryPostRepository rawDiscovery;
     private final DiscoverSourceSelector discoverSourceSelector;
+    private final JobStopFlag stopFlag;
     private final Clock clock;
 
     public DiscoverJob(SearchKeywordRepository keywords, InfluencerRepository influencers,
                        InfluencerDiscoveryRepository discoveries, ContentRepository contents,
                        RawDiscoveryPostRepository rawDiscovery, DiscoverSourceSelector discoverSourceSelector,
-                       Clock clock) {
+                       JobStopFlag stopFlag, Clock clock) {
         this.keywords = keywords;
         this.influencers = influencers;
         this.discoveries = discoveries;
         this.contents = contents;
         this.rawDiscovery = rawDiscovery;
         this.discoverSourceSelector = discoverSourceSelector;
+        this.stopFlag = stopFlag;
         this.clock = clock;
     }
 
@@ -53,6 +60,10 @@ public class DiscoverJob {
     public Summary run(TriggerType trigger) {
         int newInf = 0, known = 0, skipped = 0, failedKeywords = 0;
         for (SearchKeyword kw : keywords.findByEnabledTrue()) {
+            if (stopFlag.isRequested(JobName.DISCOVER)) {
+                log.info("discover 중지 요청 — 잔여 키워드 건너뛰고 조기 종료");
+                break;
+            }
             CrawlExecutor.Execution ex;
             try {
                 ex = discoverSourceSelector.fetch(kw.getKeyword(), trigger);

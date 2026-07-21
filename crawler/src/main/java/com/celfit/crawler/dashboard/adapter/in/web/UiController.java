@@ -227,18 +227,45 @@ public class UiController {
     public record InfluencerRow(com.celfit.crawler.crawling.domain.Influencer influencer,
                                 String discoveredKeyword, java.time.Instant discoveredAt) {}
 
+    /** 명단 뷰티 필터 체크박스 1개 — key는 쿼리 파라미터 값, badge는 배지 색상 클래스. */
+    public record BeautyFilter(String key, String label, String badge) {}
+
+    /** 뷰티 4분류 + 미판정 — UNJUDGED는 beauty_class 없음(구 3분류 시대 판정분 포함). */
+    private static final java.util.List<BeautyFilter> BEAUTY_FILTERS = java.util.List.of(
+            new BeautyFilter("INFLUENCER", "뷰티", "BEAUTY"),
+            new BeautyFilter("COMPANY", "뷰티 회사", "BEAUTY_COMPANY"),
+            new BeautyFilter("BEAUTY_SERVICE", "시술·서비스", "BEAUTY_SERVICE"),
+            new BeautyFilter("NOT_BEAUTY", "뷰티 아님", "NOT_BEAUTY"),
+            new BeautyFilter("UNJUDGED", "미판정", "UNJUDGED"));
+
     @GetMapping("/ui/influencers")
     public String influencers(@RequestParam(required = false) java.util.List<InfluencerStatus> status,
+                              @RequestParam(required = false) java.util.List<String> beauty,
                               @RequestParam(required = false, defaultValue = "false") boolean company,
                               @RequestParam(defaultValue = "0") int page, Model model) {
         var selected = status == null ? java.util.List.<InfluencerStatus>of()
                                       : status.stream().filter(JUDGED_STATUSES::contains).toList();
         var effective = selected.isEmpty() ? JUDGED_STATUSES : selected;
+        var beautyKeys = BEAUTY_FILTERS.stream().map(BeautyFilter::key).toList();
+        var beautySelected = beauty == null ? java.util.List.<String>of()
+                                            : beauty.stream().filter(beautyKeys::contains).toList();
+        boolean unjudged = beautySelected.contains("UNJUDGED");
+        var classes = beautySelected.stream().filter(k -> !"UNJUDGED".equals(k))
+                .map(BeautyClass::valueOf).toList();
         var pageable = PageRequest.of(Math.max(page, 0), 50, Sort.by(Sort.Direction.DESC, "id"));
-        // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용)
-        var result = company
-                ? influencers.findByStatusInAndBeautyTrueAndBeautyCompanyTrue(effective, pageable)
-                : influencers.findByStatusIn(effective, pageable);
+        // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용, 뷰티 필터 없음)
+        org.springframework.data.domain.Page<com.celfit.crawler.crawling.domain.Influencer> result;
+        if (company) {
+            result = influencers.findByStatusInAndBeautyTrueAndBeautyCompanyTrue(effective, pageable);
+        } else if (classes.isEmpty() && !unjudged) {
+            result = influencers.findByStatusIn(effective, pageable);
+        } else if (classes.isEmpty()) {
+            result = influencers.findByStatusInAndBeautyClassIsNull(effective, pageable);
+        } else if (!unjudged) {
+            result = influencers.findByStatusInAndBeautyClassIn(effective, classes, pageable);
+        } else {
+            result = influencers.findByStatusInAndBeautyClassInOrNull(effective, classes, pageable);
+        }
         model.addAttribute("companyView", company);
 
         var ids = result.getContent().stream()
@@ -257,6 +284,8 @@ public class UiController {
         }));
         model.addAttribute("status", selected);
         model.addAttribute("statuses", JUDGED_STATUSES);
+        model.addAttribute("beauty", beautySelected);
+        model.addAttribute("beautyFilters", BEAUTY_FILTERS);
         // 수동 오버라이드 버튼용 4분류 목록 — 템플릿 하드코딩 대신 enum 단일 원천
         model.addAttribute("beautyClasses", BeautyClass.values());
         return "influencers";

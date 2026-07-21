@@ -180,6 +180,65 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 인플루언서_명단_뷰티_필터가_분류와_미판정을_거른다() throws Exception {
+        Influencer beauty = new Influencer("smoke-bf-beauty");
+        beauty.setStatus(InfluencerStatus.QUALIFIED);
+        beauty.classify(com.celfit.crawler.crawling.domain.BeautyClass.INFLUENCER,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "뷰티 계정");
+        influencers.save(beauty);
+        Influencer company = new Influencer("smoke-bf-company");
+        company.setStatus(InfluencerStatus.QUALIFIED);
+        company.classify(com.celfit.crawler.crawling.domain.BeautyClass.COMPANY,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "브랜드 계정");
+        influencers.save(company);
+        Influencer unjudged = new Influencer("smoke-bf-unjudged");
+        unjudged.setStatus(InfluencerStatus.QUALIFIED);
+        influencers.save(unjudged);
+
+        // 단일 분류 필터 — 뷰티만
+        mvc.perform(get("/ui/influencers").param("beauty", "INFLUENCER"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-bf-beauty")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-bf-company"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-bf-unjudged"))));
+
+        // 미판정 필터 — beauty_class 없는 계정만
+        mvc.perform(get("/ui/influencers").param("beauty", "UNJUDGED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-bf-unjudged")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-bf-beauty"))));
+
+        // 분류 + 미판정 동시 선택
+        mvc.perform(get("/ui/influencers").param("beauty", "COMPANY").param("beauty", "UNJUDGED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-bf-company")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-bf-unjudged")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-bf-beauty"))));
+    }
+
+    @Test
+    void 인플루언서_명단_유저명이_인스타그램_프로필_링크로_렌더된다() throws Exception {
+        Influencer inf = new Influencer("smoke-link-user");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "https://www.instagram.com/smoke-link-user/")));
+    }
+
+    @Test
+    void 잡_화면에_잡별_중지_버튼이_렌더된다() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/DISCOVER/stop")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")));
+    }
+
+    @Test
     void 검색_키워드_화면이_렌더된다() throws Exception {
         mvc.perform(get("/ui/keywords")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("검색 키워드")));

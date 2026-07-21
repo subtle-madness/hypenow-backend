@@ -47,12 +47,13 @@ public class ReelsJob {
     private final SettingsService settings;
     private final Clock clock;
     private final JobProgress progress;
+    private final JobStopFlag stopFlag;
     private final TransactionTemplate txTemplate;
 
     public ReelsJob(InfluencerRepository influencers, RawMediaPageRepository rawMediaPages,
                     ContentUpserter contentUpserter, List<UserMediaPageFetcher> mediaFetchers,
                     CrawlExecutor executor, SettingsService settings, Clock clock,
-                    JobProgress progress, TransactionTemplate txTemplate) {
+                    JobProgress progress, JobStopFlag stopFlag, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawMediaPages = rawMediaPages;
         this.contentUpserter = contentUpserter;
@@ -61,6 +62,7 @@ public class ReelsJob {
         this.settings = settings;
         this.clock = clock;
         this.progress = progress;
+        this.stopFlag = stopFlag;
         this.txTemplate = txTemplate;
     }
 
@@ -76,6 +78,11 @@ public class ReelsJob {
         progress.start(JobName.REELS, targets.size());
         try {
             for (Influencer inf : targets) {
+                if (stopFlag.isRequested(JobName.REELS)) {
+                    log.info("reels 중지 요청 — 잔여 방문 건너뛰고 조기 종료 ({}명 중 {}명 방문)",
+                            targets.size(), visited + failed);
+                    break;
+                }
                 if (inf.getIgUserId() == null || inf.getIgUserId().isBlank()) {
                     skippedNoPk++;   // 해석 요청 안 씀 — 프로필 수집이 pk를 채우면 다음 실행에서 잡힌다
                     log.warn("릴스 수집 스킵(pk 없음) — 프로필 수집 선행 필요: {}", inf.getUsername());
