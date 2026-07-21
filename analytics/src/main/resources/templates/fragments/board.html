@@ -1,5 +1,137 @@
 <div th:fragment="board" xmlns:th="http://www.thymeleaf.org">
-    <!-- 잡 카드 그리드 (3열) -->
+
+    <!-- ── 건강 스트립 — "잘 돌고 있나 / 무엇으로 도나"를 최상단에서 답한다 ── -->
+    <section class="card health" th:if="${health != null}">
+        <!-- LLM 일 한도 소진 이월 — 커버리지가 안 느는 가장 흔한 원인이라 최상단 경고 -->
+        <div class="alert" th:if="${health.quotaCarryover()}">
+            <b>쿼터 이월 중</b> — <span th:text="${health.quotaText()}"></span>
+        </div>
+
+        <div class="hstats">
+            <div class="hstat">
+                <span class="hlabel">LLM 프로바이더</span>
+                <b th:text="${health.providerLabel()}">—</b>
+                <span class="off" th:text="${health.model()}"></span>
+                <span class="off" th:if="${health.rpmText() != null}" th:text="${health.rpmText()}"></span>
+            </div>
+
+            <div class="hstat">
+                <span class="hlabel">오늘 처리 <span class="off">(KST)</span></span>
+                <b>콘텐츠 <span th:text="${#numbers.formatInteger(health.todayAnalyzed(), 1, 'COMMA')}">0</span>건</b>
+                <span class="off">계정 카피 <span th:text="${#numbers.formatInteger(health.todayAccountCopied(), 1, 'COMMA')}">0</span>건</span>
+            </div>
+
+            <!-- 신선도 3종 — 야간 잡이 조용히 죽으면 여기가 먼저 빨개진다(07-20 미러 동결 사각지대) -->
+            <div class="hstat">
+                <span class="hlabel">마지막 분석</span>
+                <b><span class="fdot" th:classappend="${health.analysisGrade()}"></span><span
+                        th:text="${health.analysisFreshText()}">—</span></b>
+                <span class="off">content_analyses</span>
+            </div>
+            <div class="hstat">
+                <span class="hlabel">마지막 미러</span>
+                <b><span class="fdot" th:classappend="${health.mirrorGrade()}"></span><span
+                        th:text="${health.mirrorFreshText()}">—</span></b>
+                <span class="off">지표 스냅샷 최신</span>
+            </div>
+            <div class="hstat">
+                <span class="hlabel">마지막 계정 카피</span>
+                <b><span class="fdot" th:classappend="${health.accountGrade()}"></span><span
+                        th:text="${health.accountFreshText()}">—</span></b>
+                <span class="off">account_analyses</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── 퍼널 ── -->
+    <section class="card funnel" th:if="${funnel != null}">
+        <div class="cap">콘텐츠 파이프라인 <span class="off">— 데이터가 흐르는 단계 (잡 실행 순서 아님)</span></div>
+
+        <div class="stages">
+            <div class="stage">
+                <b th:text="${#numbers.formatInteger(funnel.rawContents(), 1, 'COMMA')}">0</b>
+                <span>수집</span>
+                <span class="src">crawler 적재</span>
+            </div>
+            <span class="arrow">→</span>
+            <!-- 후보 수는 3상태: 집계 중 / 집계 실패(뷰 미적용·드리프트) / 수치.
+                 실패를 "집계 중"으로 뭉개면 영원히 안 뜨는 것처럼 보인다(2026-07-21 발견). -->
+            <div class="stage">
+                <b class="pending" th:if="${funnel.candidatesPending()}">집계 중…</b>
+                <b class="failed" th:if="${funnel.candidatesFailed()}">집계 실패</b>
+                <b th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}"
+                   th:text="${#numbers.formatInteger(funnel.candidates(), 1, 'COMMA')}">0</b>
+                <span>LLM 후보</span>
+                <!-- 집계는 백그라운드 3분대 — "고장"으로 오해하지 않게 소요·자동 갱신을 명시 -->
+                <span class="src" th:if="${funnel.candidatesPending()}">백그라운드 ~3분 · 자동 갱신</span>
+                <span class="src" th:if="${funnel.candidatesFailed()}">5초마다 재시도 중</span>
+                <span class="src" th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}">후보 뷰 가드</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b th:text="${#numbers.formatInteger(funnel.analyzed(), 1, 'COMMA')}">0</b>
+                <span>분석 완료</span>
+                <span class="src">콘텐츠 분석 잡</span>
+            </div>
+            <span class="arrow">→</span>
+            <div class="stage">
+                <b th:text="${#numbers.formatInteger(funnel.served(), 1, 'COMMA')}">0</b>
+                <span>서빙 미러</span>
+                <span class="src">미러 잡 — 분석 무관</span>
+            </div>
+        </div>
+
+        <!-- 분석 완료 내역 — 매일(랭킹 노출) vs 백필(상세 전용)을 명시 분리 -->
+        <div class="split">
+            <span class="split-label">분석 완료 내역</span>
+            <span class="chip ok">매일 <b th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}">0</b>
+                <span class="off">랭킹 노출</span></span>
+            <span class="chip alt">백필 <b th:text="${#numbers.formatInteger(funnel.backfillAnalyzed(), 1, 'COMMA')}">0</b>
+                <span class="off">인플루언서 상세 전용</span></span>
+            <span class="chip mute" th:if="${funnel.otherAnalyzed() > 0}">기타 <b
+                    th:text="${#numbers.formatInteger(funnel.otherAnalyzed(), 1, 'COMMA')}">0</b>
+                <span class="off">미성숙·마킹 전 레거시</span></span>
+        </div>
+
+        <div class="bar" th:if="${funnel.candidates() > 0}">
+            <i th:style="'width:' + ${funnel.coveragePercent()} + '%'"></i>
+        </div>
+        <!-- 후보 집계 실패 — 사유를 그대로 노출한다(뷰 미적용/드리프트가 대표 원인, 07-20 사고 재발 감지용) -->
+        <div class="alert bad" th:if="${funnel.candidatesFailed()}">
+            <b>후보 집계 실패</b> — 분석 뷰가 raw DB에 적용되지 않았을 수 있음
+            <div class="alert-detail" th:text="${funnel.candidatesErrorText()}"></div>
+        </div>
+
+        <div class="meta">
+            <!-- 커버리지 분자는 제때(timely) 분석분만 — 가드 밖 기분석이 섞이면 과대 표시 -->
+            <span th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}">후보 커버리지 <b th:text="${funnel.coverageText()}"></b>
+                <span class="off">(매일 분석 <span th:text="${#numbers.formatInteger(funnel.timelyAnalyzed(), 1, 'COMMA')}"></span>)</span>
+                — 오늘 +<span th:text="${funnel.todayPlanned()}"></span> 예정<span
+                    th:if="${funnel.daysToFull() > 0}" class="off"> · 완주까지 <span th:text="${funnel.daysToFull()}"></span>일</span></span>
+            <span class="off" th:if="${funnel.candidatesPending()}">후보 집계 중 — 커버리지는 집계 후 표시</span>
+            <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
+        </div>
+
+        <!-- 제때 크롤 가드 — 수집→후보 낙차의 이유를 창 파라미터·제외분으로 설명 -->
+        <div class="meta guard">
+            <span>후보 = 고정 지표가 업로드 +<span th:text="${funnel.pinDays()}"></span>~<span
+                th:text="${funnel.pinPlusSlackDays()}"></span>일 안에 잡힌 제때 크롤분
+                <span class="off">(pin <span th:text="${funnel.pinDays()}"></span>일 + slack <span
+                        th:text="${funnel.slackDays()}"></span>일)</span><span
+                th:unless="${funnel.candidatesPending() or funnel.candidatesFailed()}"> · 늦크롤 <b
+                    th:text="${#numbers.formatInteger(funnel.timelyExcluded(), 1, 'COMMA')}"></b>건은 후보 밖
+                <span class="off">— 최근 N개 창 안이면 백필로 분석(랭킹 제외)</span></span></span>
+        </div>
+
+        <div class="acct">
+            <span>계정 카피 <b th:text="${#numbers.formatInteger(funnel.copiedAccounts(), 1, 'COMMA')}"></b>
+                / <span th:text="${#numbers.formatInteger(funnel.beautyAccounts(), 1, 'COMMA')}"></span>
+                <span class="off">(<span th:text="${funnel.accountPercent()}"></span>%)</span></span>
+            <div class="bar sm"><i th:style="'width:' + ${funnel.accountPercent()} + '%'"></i></div>
+        </div>
+    </section>
+
+    <!-- ── 잡 카드 ── -->
     <section class="jobs">
         <div class="card job" th:each="card : ${cards}">
             <div class="job-hd">
@@ -37,6 +169,14 @@
                 <div class="job-last off" th:unless="${card.lastRun() != null}">실행 이력 없음</div>
             </div>
 
+            <!-- 잡별 대상·완료·잔여 — 콘텐츠 분석과 계정 카피의 수치를 각각 분리해 노출 -->
+            <div class="job-scope" th:if="${card.scopeLine() != null}">
+                <span th:text="${card.scopeLine()}"></span>
+                <span class="off" th:if="${card.scopeSubLine() != null}" th:text="${card.scopeSubLine()}"></span>
+            </div>
+            <div class="job-scope off" th:if="${card.scopeLine() == null and card.scopeSubLine() != null}"
+                 th:text="${card.scopeSubLine()}"></div>
+
             <div class="job-next off">
                 <span th:if="${card.nextRunText() != null}">다음 예정 <b th:text="${card.nextRunText()}"></b> · 매일</span>
                 <span th:unless="${card.nextRunText() != null}">수동 전용</span>
@@ -46,9 +186,36 @@
                 <button type="submit" class="btn" th:disabled="${card.running()}">지금 실행</button>
             </form>
         </div>
+
+        <!-- 휴면 잡 — 숨기면 "0건=고장?"으로 오해되므로 사유와 함께 남긴다 -->
+        <div class="card job dormant">
+            <div class="job-hd">
+                <span class="job-title">댓글 분류 (LLM)</span>
+                <span class="badge idle">휴면</span>
+            </div>
+            <div class="job-body">
+                <div class="job-last off">댓글 수집 재개 대기 — 수집이 멈춰 대상이 없음</div>
+            </div>
+            <div class="job-scope off">재개 전까지 댓글 인사이트·신뢰도 판정은 채워지지 않음</div>
+            <div class="job-next off">스케줄 미배정</div>
+        </div>
+
+        <!-- 백필 배치는 CLI one-shot(submit/collect)이라 잡 락·진행률이 없다 — 결과 수치로만 안내 -->
+        <div class="card job dormant" th:if="${funnel != null}">
+            <div class="job-hd">
+                <span class="job-title">백필 배치 (one-shot)</span>
+                <span class="badge idle">CLI 전용</span>
+            </div>
+            <div class="job-body">
+                <div class="job-last">누적 <b th:text="${#numbers.formatInteger(funnel.backfillAnalyzed(), 1, 'COMMA')}">0</b>건 적재
+                    <span class="off">(late_backfill)</span></div>
+            </div>
+            <div class="job-scope off">Vertex/AI Studio 배치 — 대시보드에서 트리거 불가, 진행 상태는 라이브 로그 확인</div>
+            <div class="job-next off">수동 실행 — backfill-submit / backfill-collect</div>
+        </div>
     </section>
 
-    <!-- 실행 피드 -->
+    <!-- ── 실행 피드 ── -->
     <section class="card feed">
         <h2>실행 피드</h2>
         <div class="ev" th:each="e : ${feed}">
