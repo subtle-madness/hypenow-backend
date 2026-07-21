@@ -105,9 +105,10 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
 - 무료 전용 상태에서는 7일 유휴 시 정지 경고 메일 주시 (JAVA_OPTS -Xms2g가 메모리 조건 방어)
 
 ## 9. 모니터링·알람 (07-21~)
-- OCI 알람 6개 → ONS 토픽 `hypenow-alerts` → 디스코드(웹훅 URL 뒤 `/slack`을 붙인 Slack 프로토콜 구독):
-  인스턴스 CPU·메모리 85%, 인스턴스 다운, **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**,
-  **버킷 15GB**(무료 티어 20GiB 한도)
+- OCI 알람 7개 → ONS 토픽 `hypenow-alerts` → 디스코드(웹훅 URL 뒤 `/slack`을 붙인 Slack 프로토콜 구독):
+  **API 외형 감시**(Health Checks `hypenow-api-health` — 외부 관측점 3곳에서 60초마다
+  `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
+  **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
 - 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
   (버킷은 스크립트가 5분 결에만 조회 — OCI가 StoredBytes를 자동 게시하지 않아 직접 게시):
   `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
