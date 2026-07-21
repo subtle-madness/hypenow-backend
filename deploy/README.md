@@ -104,7 +104,17 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
 - 자리 잡으면 **PAYG 전환**(유휴 회수 면제) + **Budget 알림 $1**
 - 무료 전용 상태에서는 7일 유휴 시 정지 경고 메일 주시 (JAVA_OPTS -Xms2g가 메모리 조건 방어)
 
-## 9. 이사 절차 (오라클 → 아무 VPS, 목표 30분)
+## 9. 모니터링·알람 (07-21~)
+- OCI 알람 5개 → ONS 토픽 `hypenow-alerts` → 디스코드(웹훅 URL 뒤 `/slack`을 붙인 Slack 프로토콜 구독):
+  인스턴스 CPU·메모리 85%, 인스턴스 다운, **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**
+- 컨테이너·디스크는 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기:
+  `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
+- 인증은 인스턴스 프린시펄(dynamic group `hypenow-instances` + policy `hypenow-custom-metrics`) —
+  서버에 API 키를 두지 않는다. venv: `python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci`
+- 컨테이너 추가·이름 변경 시 스크립트의 `SERVICES` 목록도 갱신할 것(목록 고정 방식 —
+  사라진 컨테이너도 0으로 게시해 알람이 잡는다)
+
+## 10. 이사 절차 (오라클 → 아무 VPS, 목표 30분)
 1. 새 Ubuntu 서버: §3 최초 기동 그대로 (rsync → setup → .env → up)
 2. 데이터: `pull-backup.sh`의 최신 덤프를 새 서버에 넣고
    `cd ~/deploy && set -a && source .env && set +a` 후
