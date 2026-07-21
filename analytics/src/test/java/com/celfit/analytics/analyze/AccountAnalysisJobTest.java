@@ -75,10 +75,6 @@ class AccountAnalysisJobTest {
 				  ('acct_caption',  9000, 4, 4, 'views', 12000, NULL,  timestamptz '2026-07-03 09:00:00+09'),
 				  ('acct_tagonly',  7000, 4, 4, 'views', 11000, 30000, timestamptz '2026-07-04 09:00:00+09')""");
 		db.update("""
-				INSERT INTO account_category_stats (account_handle, main_group, content_count) VALUES
-				  ('acct_ad', 'B', 6), ('acct_noad', 'B', 4),
-				  ('acct_caption', 'B', 4), ('acct_tagonly', 'B', 4)""");
-		db.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
 				  views, likes, comments, sponsored) VALUES
 				  ('p1', 'acct_ad',      timestamptz '2026-06-01 09:00:00+09', 'reels', 20000, 400, 40, false),
@@ -95,11 +91,17 @@ class AccountAnalysisJobTest {
 				  ('p4', 'acct_caption', '캡션4', 'reels'), ('p5', 'acct_caption', '#광고 캡션5', 'reels'),
 				  ('p6', 'acct_tagonly', '캡션6', 'reels'), ('p7', 'acct_tagonly', '캡션7', 'reels')""");
 		// 광고 정본 — p2·p5만 협찬. acct_tagonly는 릴스 태그(p7 sponsored=true)와 달리 캡션 분류상 organic.
+		// 카테고리 믹스는 테이블이 아니라 파생 뷰다(V35) — 캡션 분류를 심으면 뷰가 집계해 준다.
+		// short_code가 PK라 광고·카테고리를 한 번에 넣는다(따로 INSERT하면 p1·p2가 중복된다).
 		db.update("""
-				INSERT INTO content_analyses (short_code, model, ad_type) VALUES
-				  ('p1', 'test', 'organic'), ('p2', 'test', 'sponsored'),
-				  ('p4', 'test', 'organic'), ('p5', 'test', 'sponsored'),
-				  ('p6', 'test', 'organic'), ('p7', 'test', 'organic')""");
+				INSERT INTO content_analyses (short_code, model, main_category, is_beauty, ad_type) VALUES
+				  ('p1', 'test', 'makeup',   true, 'organic'),
+				  ('p2', 'test', 'makeup',   true, 'sponsored'),
+				  ('p3', 'test', 'skincare', true, NULL),
+				  ('p4', 'test', NULL,       NULL, 'organic'),
+				  ('p5', 'test', NULL,       NULL, 'sponsored'),
+				  ('p6', 'test', NULL,       NULL, 'organic'),
+				  ('p7', 'test', NULL,       NULL, 'organic')""");
 
 		rewireJob(fakePort());
 	}

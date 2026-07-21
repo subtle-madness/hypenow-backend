@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-20
+> 마지막 갱신: 2026-07-21
 
 ## 1. 제품 한 장 요약
 
@@ -76,6 +76,9 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 ### analysis DB
 
 - **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §4-3). analytics가 쓰고 was가 읽는다.
+  - **파생 뷰(미러 아님)** — 입력이 전부 analysis DB 안에 있는 집계는 미러를 거치지 않고 이 DB의 뷰로
+    둔다. raw를 볼 필요가 없으니 뷰가 DB 경계를 넘을 일이 없고, 미러 지연 없이 항상 최신이며 과거
+    적재분에도 자동 소급된다. 현재 `account_category_stats`(계정 카테고리 믹스 — V35) 하나.
 - Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
 - **서비스 데이터 (`app` 스키마)** — 로그인·후보 관리 등 was가 직접 읽고 쓰는 일반 앱 데이터.
   분석 결과와 스키마로 격리, 나중에 물리 분리 가능. 테이블(태스크 G + P2 확장): `users`(이메일 lower
@@ -207,7 +210,7 @@ v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서
 | B1 | 드로어 비LLM 집계 | 서빙 뷰·미러 4종 (accounts·contents·content_comments + 지표 스냅샷 이력 `content_metric_snapshots` — 07-13 개통) | A | ✅ |
 | B2 | 드로어 댓글 LLM | 감성·키워드·구매의도 → 집계 + 미러 — **댓글 수집 MVP 제외(07-14)로 신규 유입 없음** | F | ✅ |
 | B3 | 드로어 콘텐츠 LLM | 감지 + 콘텐츠 속성 + "왜 잘됐나" (07-14 VLM 잔여분 개통 — 어휘는 celfit-front 계약, 유통사 감지 포함) | F, B2 | ✅ |
-| C1 | 인플루언서 비LLM 집계 | AccountReport 결정 지표 — 계정 요약·카테고리 믹스·게시물 시계열 3종 뷰 + 미러 | A | ✅ |
+| C1 | 인플루언서 비LLM 집계 | AccountReport 결정 지표 — 계정 요약·게시물 시계열 2종 뷰 + 미러. 카테고리 믹스는 07-21에 analysis DB 파생 뷰(V35)로 이관 — 소스인 캡션 분류가 analysis DB라 raw 뷰로는 만들 수 없다 | A | ✅ |
 | C2 | 인플루언서 계정 LLM | AccountReport 카피 7종(tagline~paceNote) — stale+쿨다운 재분석·이력 INSERT. 캡션 분류(브랜드·광고·카테고리)는 별도 후속(B4) | F, C1 | ✅ |
 | D | 드로어 API | `GET /api/posts/{shortCode}` — post/account/comments + analysis 블록·댓글 aiCategory(B2·B3 산출물 포함, 1회 호출). 댓글 수집 제외(07-14)로 comments·aiCategory는 유입 없음 | B1, B2·B3(확장분) | ✅ |
 | D3 | 드로어 as-of | `GET /api/posts/{shortCode}?endDate=` — 집계 기간 끝 시점 스냅샷으로 지표 재구성(captured_at ≤ endDate의 KST 하루 끝 중 최신), 스냅샷 없으면 404(그 시점 화면에 부재). 생략 시 최신 | D, B1(스냅샷 미러) | ✅ |
@@ -269,6 +272,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-21 | **카테고리 맥락 스텁 2건 복구 — 크로스 DB 제약을 미러가 아닌 "각 층에서 라이브 계산"으로 우회** — V8에서 crawler `main_group`이 사라지며 카테고리 관련 산출물이 상수 스텁으로 남았고(운영 실측: `content_analyses.category_*` 16,827건 중 3건만 채워짐, 미러 `account_category_stats` 0행), 대체재인 V30 캡션 분류(`content_analyses.main_category`)가 끝내 연결되지 않았다. **연결이 안 된 진짜 이유는 DB 경계** — `analytics.*` 뷰는 raw DB에 있고 `main_category`는 analysis DB에 있어 뷰에서 조인할 수 없다. 미러(raw 뷰 → analysis 테이블) 경로로는 구조적으로 채울 수 없는 값이었다. 해소 방식 두 갈래: ①**계정 카테고리 믹스**는 미러를 포기하고 **analysis DB 안의 파생 뷰**(V35 — 테이블 DROP 후 동명 뷰)로 재정의. 입력(`account_content_series`⋈`content_analyses`⋈`beauty_taxonomy`)이 전부 analysis DB라 raw가 필요 없고, 이름·컬럼이 같아 소비자 3곳(`AccountAnalysisJob`·`ClaudeBurstRunner`·was `InfluencerDetailRepository`)은 무접촉. 라벨은 `beauty_taxonomy.main_label`, 모수는 최근 N개 윈도우(§4-1). 운영 실측 3,244행/1,405계정/9,941건 — 계정 종합 LLM 프롬프트의 "카테고리 믹스: `[]`"가 채워져 traits 품질이 개선된다. ②**콘텐츠 상세 카테고리 맥락 3필드**는 was 조회 시점 **라이브 계산**(`V1ContentReportRepository.findCategoryContext`). `content_analyses.category_*` 3컬럼은 **영구 NULL로 확정**했는데, `main_category`가 그 행을 만든 통합 1콜 LLM의 산출물이라 저장 시점엔 아직 카테고리를 모르고(닭-달걀) 테이블이 불변(INSERT-only)이라 나중에 채울 수도 없기 때문 — 조회수 baseline·rank를 라이브로 옮긴 A2(07-19)와 같은 처방이며 **과거 16,827건 전량에 소급**된다(백필 불필요). NULL 규칙: 표본은 `is_beauty` ∧ 같은 대분류 ∧ **조회수 NOT NULL**(피드는 views가 항상 NULL이라 모수는 사실상 릴스) ∧ 시점 편향 없는 분(`timely` 또는 레거시 NULL — 랭킹 `/v1/contents`와 같은 필터. 늦크롤 백필을 섞으면 평균이 부풀려진다: cleansing 전체 평균 75,543 vs timely 18,499). 백분위는 이 게시물이 표본과 같은 잣대일 때만 계산하고(피드·늦크롤 백필이면 null) 평균·표본 수는 그대로 노출. 회귀: `:was:test` 359 / `:analytics:test` 172 GREEN + SQL 하니스 ALL GREEN | `V35__account_category_stats_view.sql`·`V1ContentReportRepository`·`V1ContentReportAssembler` |
 | 2026-07-21 | **계정 카피 광고 판정을 캡션 분류(`content_analyses.ad_type`) 정본으로 통일 — `ad_headline` 영구 NULL 해소** — 화면(was)은 07-17(`e203c3c`)에 광고 지표를 `ad_type='sponsored'` 정본으로 옮겼는데 **카피 잡의 `hasAdComparison` 판정만 옛 소스**(`account_summaries.organic_avg`/`ad_avg` = `ad_marked` = 인스타 유료파트너십 태그, **릴스 전용**)에 남아, 캡션으로만 협찬을 고지한 계정은 프롬프트가 "광고 비교 데이터: 없음" → LLM 빈 문자열 → 저장 시 무조건 NULL이 됐다(운영 실측 `ad_headline` NULL **1,304/1,517 계정(86%)**, 옛 게이트 통과는 311개뿐). 수정: 판정·수치를 **`AccountAdCanon` 단일 원천**으로 추출 — `AccountAnalysisJob`·`ClaudeBurstRunner`에 복제돼 있던 로직(한쪽만 고쳐지는 재발 원인)을 공유 함수로 합쳤다. 게이트는 was `Assembler.comparison`과 **동일 조건**(기준지표>0인 organic·ad 두 그룹이 모두 있을 때만) — 한쪽만 있으면 화면에도 비교가 안 떠 설명 대상 없는 헤드라인이 되므로. 프롬프트에 싣는 수치도 같은 정본으로 치환(`organic_avg`·`ad_avg`·`ad_drop_pct`·`sponsored_count`·비교 건수·`last_ad_posted_at` + 게시물별 `sponsored`) — 헤드라인이 설명하는 숫자와 화면 숫자가 갈리지 않게. 정본 테이블은 analysis DB에 있어 잡의 analysis JdbcTemplate으로 읽는다(raw의 `analytics.*` 뷰에선 DB가 달라 조인 불가). 운영 시뮬 실측: 게이트 통과 311→**1,045계정**(신규 해금 771, 이탈 37 = 측정 가능한 게시물이 전부 협찬이라 비교 자체가 불성립 — 화면도 동일하게 비교 없음). 미러 뷰(`10_account_detail`)의 `ad_marked` 집계 컬럼은 **무변경**(다른 소비처 보존, 카피 잡만 정본으로 치환). **이 수정은 다음 잡 실행분부터 적용** — 기존 NULL 1,304건은 재분석 필요(본 PR 범위 밖) | `AccountAdCanon`(신규)·`AccountAnalysisJob`·`ClaudeBurstRunner` |
 | 2026-07-21 | **수동 배포 이중 가드 (07-20 배포 겹침 장애 후속)** — CD 도입 당일 develop 체크아웃 상태의 수동 deploy.sh가 CD의 main 배포를 20분 만에 덮어 was(develop)·analytics(main) 버전 불일치 → was의 `is_beauty` 필터가 미적용 마이그레이션(V34) 컬럼을 참조해 랭킹 API 전면 500(main 롤백으로 복구). 재발 방지 2겹: (1) deploy.sh에 HEAD≠origin/main 거부 가드(`--force`로만 우회 — 긴급 경로 보존), (2) CLAUDE.md 컨벤션에 "배포는 develop→main 머지로만" 명문화(클로드 세션 차단). GHCR write PAT 회수(완전 차단)는 CD 신뢰 축적 후 별도 판단, main branch protection은 무료 플랜 private 레포라 불가 | deploy/scripts/deploy.sh |
 | 2026-07-21 | **뷰티-무대분류 콘텐츠 무한 재대상 루프 종결 (self-heal §3-3 개정)** — `ContentAnalysisJob`이 `isBeauty=true`이나 복구 후에도 `main_category=null`인 콘텐츠를 "행 미기록→NOT EXISTS 재대상"(self-heal)으로 두던 것이, 분석이 **temperature 0 결정론**이라 재실행해도 동일 결과 → 매 실행마다 같은 콘텐츠를 다시 집어 LLM 호출만 태우고 영영 미완(운영 로그 `뷰티 콘텐츠인데 대분류 미분류 — 재대상` 반복, 실측 스턱 다수). 수정: 이 케이스를 **`is_beauty=false`로 종결 저장**(`ContentAttributes.asNonBeauty()` — isBeauty만 false, 나머지 속성 보존)해 루프를 끊는다. 불변식 'main_category null ⇒ 서빙 비뷰티'는 그대로 보존(is_beauty=false라 랭킹·인플루언서 상세에서 제외) → **was 서빙 무변경**. 진짜 일시 실패(빈 종합·파싱 오류)의 재대상 폴백은 유지. 백필 러너(`GeminiBackfillRunner`)는 별개 경로라 미접촉(스트리밍 개조 #89 진행 중). 회귀: `ContentAnalysisJobTest`를 종결저장 케이스로 전환, `:analytics:test` GREEN | `ContentAnalysisJob`·`ContentAttributes.asNonBeauty()` |

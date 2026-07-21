@@ -33,9 +33,10 @@ BEGIN
   ASSERT (SELECT ad_drop_pct FROM analytics.v_account_summaries WHERE handle = 'dummy_b') IS NULL,
     'summaries b ad_drop_pct not null (유기 표본 0)';
 
-  -- 카테고리 믹스: 소스 소멸 — 형태 유지 + 항상 0행
-  ASSERT (SELECT count(*) FROM analytics.v_account_category_stats) = 0,
-    'v_account_category_stats not empty';
+  -- 카테고리 믹스는 raw를 떠났다(07-21) — 구 스텁 뷰가 남아 있으면 미러 등록부와 어긋난 상태다.
+  ASSERT NOT EXISTS (SELECT 1 FROM pg_views
+                     WHERE schemaname = 'analytics' AND viewname = 'v_account_category_stats'),
+    'analytics.v_account_category_stats still exists (V35 파생 뷰로 이관됨)';
 
   ASSERT (SELECT count(*) FROM analytics.v_account_content_series WHERE account_handle LIKE 'dummy_%') = 5,
     'v_account_content_series dummy rows != 5';

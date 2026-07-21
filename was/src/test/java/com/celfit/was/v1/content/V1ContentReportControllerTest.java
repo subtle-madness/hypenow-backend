@@ -44,7 +44,7 @@ class V1ContentReportControllerTest {
 				"makeup", "[{\"name\":\"머지\",\"evidence\":\"로고 노출\"}]", "high",
 				"[\"협찬 문구\"]", "명시", "[\"아이라이너\"]",
 				"[{\"label\":\"톤\",\"value\":\"쿨톤\"}]",
-				"good", "실구매 후기 다수", "메이크업");
+				"good", "실구매 후기 다수", "timely", "메이크업");
 	}
 
 	@Test
@@ -52,6 +52,8 @@ class V1ContentReportControllerTest {
 		given(repository.findReport("SC1")).willReturn(Optional.of(fullRow()));
 		given(repository.findRecentReels("zingdong__")).willReturn(List.of(
 				new ReelPointRow("SC1", 1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z")))); // KST 07-01, 본인 릴스
+		given(repository.findCategoryContext("makeup", 3307180L)).willReturn(
+				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 19L));
 		given(repository.countByCategory("SC1")).willReturn(Map.of("purchase", 3L, "adAware", 1L));
 		given(repository.findComments("SC1")).willReturn(List.of(
 				new CommentRow(7L, "u***", "좋아요", 5L, "purchase")));
@@ -74,6 +76,10 @@ class V1ContentReportControllerTest {
 				.andExpect(jsonPath("$.data.comparison.engagementQuality.likes.baselineCount").value(35000))
 				.andExpect(jsonPath("$.data.comparison.narrative").value("패턴 서술"))
 				.andExpect(jsonPath("$.data.categoryContext.categoryLabel").value("메이크업"))
+				// 라이브 집계: 표본 200 중 19건이 더 높음 → 20위 → 상위 10% (프리즈 컬럼 5 무시)
+				.andExpect(jsonPath("$.data.categoryContext.percentile").value(10))
+				.andExpect(jsonPath("$.data.categoryContext.categoryAvgViews").value(41713))
+				.andExpect(jsonPath("$.data.categoryContext.sampleSize").value(200))
 				.andExpect(jsonPath("$.data.vlmAnalysis.brands[0].name").value("머지"))
 				.andExpect(jsonPath("$.data.vlmAnalysis.sponsoredSignal.level").value("high"))
 				.andExpect(jsonPath("$.data.vlmAnalysis.attributes[0].label").value("톤"))
@@ -102,7 +108,7 @@ class V1ContentReportControllerTest {
 				null, null, null, null,
 				null, null, null,
 				null, null, null, null, null, null, null,
-				null, null, null);
+				null, null, null, null);
 		given(repository.findReport("SC2")).willReturn(Optional.of(row));
 		given(repository.findRecentReels("handle")).willReturn(List.of());
 		given(repository.countByCategory("SC2")).willReturn(Map.of());

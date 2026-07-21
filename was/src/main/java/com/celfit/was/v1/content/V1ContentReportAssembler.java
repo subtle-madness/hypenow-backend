@@ -1,5 +1,6 @@
 package com.celfit.was.v1.content;
 
+import com.celfit.was.v1.content.V1ContentReportRepository.CategoryContextRow;
 import com.celfit.was.v1.content.V1ContentReportRepository.CommentRow;
 import com.celfit.was.v1.content.V1ContentReportRepository.ReelPointRow;
 import com.celfit.was.v1.content.V1ContentReportRepository.ReportRow;
@@ -32,14 +33,14 @@ public class V1ContentReportAssembler {
 	}
 
 	public ContentAiReport toReport(ReportRow row, List<ReelPointRow> reels,
-			Map<String, Long> categoryCounts, List<CommentRow> comments) {
+			CategoryContextRow categoryContext, Map<String, Long> categoryCounts,
+			List<CommentRow> comments) {
 		return new ContentAiReport(
 				new ContentAiReport.Scope("recent-posts",
 						row.recentContentsCount() == null ? 0L : row.recentContentsCount()),
 				row.aiContentSummary(),
 				comparison(row, reels),
-				new ContentAiReport.CategoryContext(row.categoryLabel(), row.categoryTopPercentile(),
-						row.categoryAvgViews(), row.categorySampleSize()),
+				categoryContext(row, categoryContext),
 				vlmAnalysis(row),
 				commentAnalysis(row, categoryCounts),
 				comments.stream().map(c -> new ContentAiReport.Comment(String.valueOf(c.id()),
@@ -87,6 +88,42 @@ public class V1ContentReportAssembler {
 	/** 릴스 목록에서 조회수 NULL(미집계) 제외 — baseline·rank·count 계산 공통 재료. */
 	private List<Long> nonNullViews(List<ReelPointRow> reels) {
 		return reels.stream().map(ReelPointRow::views).filter(Objects::nonNull).toList();
+	}
+
+	/**
+	 * 카테고리 맥락 — 같은 대분류 뷰티 게시물과의 비교 (라이브 집계, 모수 규칙은 repository Javadoc).
+	 * NULL 규칙 세 갈래:
+	 * <ul>
+	 * <li>대분류 미분류(main_category NULL)면 stats 자체가 없다 → 라벨만 두고 3값 null.
+	 * <li>표본 0이면 평균·백분위 null (표본 수는 0으로 노출 — "비교 대상이 없다"를 프론트가 구분).
+	 * <li>백분위는 이 게시물이 표본과 같은 잣대일 때만: 조회수 NULL(피드)이거나 지표 시점이
+	 *     늦크롤 백필·미성숙이면 null. 평균·표본 수는 그래도 맥락으로 쓸모가 있어 그대로 준다.
+	 * </ul>
+	 */
+	private ContentAiReport.CategoryContext categoryContext(ReportRow row, CategoryContextRow stats) {
+		long sampleSize = stats == null || stats.sampleSize() == null ? 0L : stats.sampleSize();
+		if (sampleSize == 0L) {
+			return new ContentAiReport.CategoryContext(row.categoryLabel(), null, null,
+					stats == null ? null : sampleSize);
+		}
+		Integer percentile = comparableMetric(row)
+				? topPercentile(stats.higherCount() == null ? 0L : stats.higherCount(), sampleSize)
+				: null;
+		return new ContentAiReport.CategoryContext(row.categoryLabel(), percentile,
+				stats.avgViews(), sampleSize);
+	}
+
+	/** 상위 백분위 = 올림(100 × 순위 / 표본). 1위는 항상 1, 꼴찌는 100. */
+	Integer topPercentile(long higherCount, long sampleSize) {
+		long rank = higherCount + 1;
+		long pct = (rank * 100 + sampleSize - 1) / sampleSize; // ceil
+		return (int) Math.min(100L, Math.max(1L, pct));
+	}
+
+	/** 표본과 같은 잣대인가 — 조회수가 있고 고정 지표가 제때(timely, 레거시 NULL 포함) 잡힌 건. */
+	private boolean comparableMetric(ReportRow row) {
+		return row.views() != null
+				&& (row.metricTimeliness() == null || "timely".equals(row.metricTimeliness()));
 	}
 
 	private ContentAiReport.VlmAnalysis vlmAnalysis(ReportRow row) {

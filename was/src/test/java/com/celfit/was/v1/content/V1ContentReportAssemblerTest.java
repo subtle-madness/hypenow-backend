@@ -50,13 +50,14 @@ class V1ContentReportAssemblerTest {
 				"makeup", "[{\"name\":\"머지\",\"evidence\":\"로고 노출\"}]", "high",
 				"[\"협찬 문구\"]", "명시", "[\"아이라이너\"]",
 				"[{\"label\":\"톤\",\"value\":\"쿨톤\"}]",
-				"good", "실구매 후기 다수", "메이크업");
+				"good", "실구매 후기 다수", "timely", "메이크업");
 		var reels = List.of(new V1ContentReportRepository.ReelPointRow(
 				"SC1", 1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z"))); // KST 2026-07-01 05:30
 		var comments = List.of(new V1ContentReportRepository.CommentRow(
 				7L, "u***", "좋아요", 5L, "purchase"));
 
 		ContentAiReport report = assembler.toReport(row, reels,
+				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 19L),
 				Map.of("purchase", 3L, "adAware", 1L), comments);
 
 		assertThat(report.scope().basis()).isEqualTo("recent-posts");
@@ -71,7 +72,11 @@ class V1ContentReportAssemblerTest {
 		assertThat(report.comparison().engagementRate().baseline()).isEqualByComparingTo("35.12");
 		assertThat(report.comparison().engagementQuality().likes().baselineCount()).isEqualTo(35000L);
 		assertThat(report.comparison().narrative()).isEqualTo("패턴 서술");
+		// 카테고리 맥락은 라이브 집계에서: 표본 200, 나보다 높은 게 19건 → 20위 → 상위 10%
 		assertThat(report.categoryContext().categoryLabel()).isEqualTo("메이크업");
+		assertThat(report.categoryContext().percentile()).isEqualTo(10);
+		assertThat(report.categoryContext().categoryAvgViews()).isEqualTo(41713L);
+		assertThat(report.categoryContext().sampleSize()).isEqualTo(200L);
 		assertThat(report.vlmAnalysis().brands())
 				.containsExactly(new ContentAiReport.VlmAnalysis.Brand("머지", "로고 노출"));
 		assertThat(report.vlmAnalysis().sponsoredSignal().level()).isEqualTo("high");
@@ -93,9 +98,9 @@ class V1ContentReportAssemblerTest {
 				null, null, null, null,
 				null, null, null,
 				null, null, null, null, null, null, null,
-				null, null, null);
+				null, null, null, null);
 
-		ContentAiReport report = assembler.toReport(row, List.of(), Map.of(), List.of());
+		ContentAiReport report = assembler.toReport(row, List.of(), null, Map.of(), List.of());
 
 		// 피드: views null → 조회수 배수는 null. 단 참여율은 팔로워 기준이라 값이 나온다 (110/50000×100=0.22)
 		assertThat(report.comparison().views().value()).isNull();
@@ -120,7 +125,7 @@ class V1ContentReportAssemblerTest {
 				new V1ContentReportRepository.ReelPointRow("sc1", 30405L, odt("2026-07-14")),
 				new V1ContentReportRepository.ReelPointRow("sc2", null, odt("2026-07-17")));
 
-		ContentAiReport report = assembler.toReport(row, reels, Map.of(), List.of());
+		ContentAiReport report = assembler.toReport(row, reels, null, Map.of(), List.of());
 		var v = report.comparison().views();
 
 		assertThat(v.value()).isEqualTo(30405L);
@@ -133,6 +138,70 @@ class V1ContentReportAssemblerTest {
 		assertThat(v.recentReels().get(2).views()).isNull();
 	}
 
+	@Test
+	void 상위백분위는_올림_1위는_1_꼴찌는_100() {
+		assertThat(assembler.topPercentile(0L, 200L)).isEqualTo(1); // 1위
+		assertThat(assembler.topPercentile(19L, 200L)).isEqualTo(10); // 20위
+		assertThat(assembler.topPercentile(199L, 200L)).isEqualTo(100); // 꼴찌
+		assertThat(assembler.topPercentile(0L, 1L)).isEqualTo(100); // 표본 1이면 1위여도 100
+		assertThat(assembler.topPercentile(2L, 7L)).isEqualTo(43); // ceil(300/7)=43
+	}
+
+	@Test
+	void 카테고리맥락_피드는_백분위_null_평균표본은_유지() {
+		var row = categoryRow(/* views */ null, "timely");
+
+		var ctx = assembler.toReport(row, List.of(),
+				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 0L),
+				Map.of(), List.of()).categoryContext();
+
+		// 피드는 views가 항상 NULL이라 조회수 순위 비교가 성립하지 않는다 (프로젝트 규칙)
+		assertThat(ctx.percentile()).isNull();
+		assertThat(ctx.categoryAvgViews()).isEqualTo(41713L);
+		assertThat(ctx.sampleSize()).isEqualTo(200L);
+	}
+
+	@Test
+	void 카테고리맥락_늦크롤_백필은_백분위_null() {
+		var row = categoryRow(50000L, "late_backfill");
+
+		var ctx = assembler.toReport(row, List.of(),
+				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 5L),
+				Map.of(), List.of()).categoryContext();
+
+		// 표본(timely)과 잣대가 달라 순위가 부풀려진다 — 백분위만 접고 맥락 값은 남긴다
+		assertThat(ctx.percentile()).isNull();
+		assertThat(ctx.sampleSize()).isEqualTo(200L);
+	}
+
+	@Test
+	void 카테고리맥락_미분류면_전부_null_표본0이면_0() {
+		var 미분류 = assembler.toReport(categoryRow(1000L, "timely"), List.of(), null, Map.of(), List.of())
+				.categoryContext();
+		assertThat(미분류.percentile()).isNull();
+		assertThat(미분류.categoryAvgViews()).isNull();
+		assertThat(미분류.sampleSize()).isNull();
+
+		var 표본없음 = assembler.toReport(categoryRow(1000L, "timely"), List.of(),
+				new V1ContentReportRepository.CategoryContextRow(0L, null, 0L), Map.of(), List.of())
+				.categoryContext();
+		assertThat(표본없음.percentile()).isNull();
+		assertThat(표본없음.categoryAvgViews()).isNull();
+		assertThat(표본없음.sampleSize()).isEqualTo(0L);
+	}
+
+	/** 카테고리 맥락 검증용 축약 ReportRow — views·metricTimeliness만 지정. */
+	private V1ContentReportRepository.ReportRow categoryRow(Long views, String metricTimeliness) {
+		return new V1ContentReportRepository.ReportRow(
+				"sc", "handle", views == null ? "feed" : "reels", views, 0L, 0L, null,
+				null, null, null,
+				null, null, null,
+				null, null, null, null,
+				null, null, null,
+				"makeup", null, null, null, null, null, null,
+				null, null, metricTimeliness, "메이크업");
+	}
+
 	/** ReportRow 축약 생성 — shortCode/views/frozen 컬럼(baseline·rank·count)만 지정, 나머지는 null·0. */
 	private V1ContentReportRepository.ReportRow reportRowWithViews(
 			String shortCode, Long views, Long frozenBaseline, Integer frozenRank, Integer frozenCount) {
@@ -143,7 +212,7 @@ class V1ContentReportAssemblerTest {
 				null, null, null, null,
 				null, null, null,
 				null, null, null, null, null, null, null,
-				null, null, null);
+				null, null, null, null);
 	}
 
 	private OffsetDateTime odt(String isoDate) {
