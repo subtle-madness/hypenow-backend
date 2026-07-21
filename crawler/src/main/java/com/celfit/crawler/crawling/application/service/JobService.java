@@ -15,6 +15,7 @@ public class JobService implements TriggerJobUseCase {
     private static final Logger log = LoggerFactory.getLogger(JobService.class);
 
     private final JobLock lock;
+    private final JobStopFlag stopFlag;
     private final DiscoverJob discoverJob;
     private final QualifyJob qualifyJob;
     private final CollectJob collectJob;
@@ -23,10 +24,11 @@ public class JobService implements TriggerJobUseCase {
     private final ReelsJob reelsJob;
     private final TaskExecutor taskExecutor;
 
-    public JobService(JobLock lock, DiscoverJob discoverJob, QualifyJob qualifyJob, CollectJob collectJob,
-                      BeautyJob beautyJob, SimilarJob similarJob, ReelsJob reelsJob,
+    public JobService(JobLock lock, JobStopFlag stopFlag, DiscoverJob discoverJob, QualifyJob qualifyJob,
+                      CollectJob collectJob, BeautyJob beautyJob, SimilarJob similarJob, ReelsJob reelsJob,
                       @Qualifier("jobTaskExecutor") TaskExecutor taskExecutor) {
         this.lock = lock;
+        this.stopFlag = stopFlag;
         this.discoverJob = discoverJob;
         this.qualifyJob = qualifyJob;
         this.collectJob = collectJob;
@@ -45,6 +47,7 @@ public class JobService implements TriggerJobUseCase {
     @Override
     public TriggerResult trigger(JobName job, TriggerType triggerType, boolean requalify) {
         if (!lock.tryAcquire(job)) return TriggerResult.BUSY;
+        stopFlag.clear(job);   // 직전 실행 말미의 늦은 중지 요청이 이번 실행을 죽이지 않게
         taskExecutor.execute(() -> {
             try {
                 // 부분 실패(청크·키워드·방문 단위)는 잡을 멈추지 않지만 로그 레벨로 드러낸다 —
@@ -90,5 +93,13 @@ public class JobService implements TriggerJobUseCase {
             }
         });
         return TriggerResult.ACCEPTED;
+    }
+
+    @Override
+    public StopResult stop(JobName job) {
+        if (!lock.isRunning(job)) return StopResult.NOT_RUNNING;
+        stopFlag.request(job);
+        log.info("{} 중지 요청 — 진행 중인 단위 작업까지 마치고 조기 종료한다", job);
+        return StopResult.STOP_REQUESTED;
     }
 }

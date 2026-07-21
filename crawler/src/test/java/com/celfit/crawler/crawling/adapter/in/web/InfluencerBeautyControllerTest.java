@@ -24,7 +24,8 @@ class InfluencerBeautyControllerTest {
         inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "이전 판정");
         when(influencers.findById(1L)).thenReturn(Optional.of(inf));
 
-        String view = controller.override(1L, BeautyClass.BEAUTY_SERVICE, 2, null, new RedirectAttributesModelMap());
+        String view = controller.override(1L, BeautyClass.BEAUTY_SERVICE, 2, null, null,
+                new RedirectAttributesModelMap());
 
         assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.BEAUTY_SERVICE);
         assertThat(inf.getBeauty()).isFalse();
@@ -39,7 +40,7 @@ class InfluencerBeautyControllerTest {
         Influencer inf = new Influencer("brand");
         when(influencers.findById(1L)).thenReturn(Optional.of(inf));
 
-        controller.override(1L, BeautyClass.COMPANY, 0, null, new RedirectAttributesModelMap());
+        controller.override(1L, BeautyClass.COMPANY, 0, null, null, new RedirectAttributesModelMap());
 
         assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.COMPANY);
         assertThat(inf.getBeauty()).isTrue();
@@ -50,7 +51,7 @@ class InfluencerBeautyControllerTest {
     @Test
     void 없는_인플루언서는_404() {
         when(influencers.findById(9L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> controller.override(9L, BeautyClass.INFLUENCER, 0, null,
+        assertThatThrownBy(() -> controller.override(9L, BeautyClass.INFLUENCER, 0, null, null,
                 new RedirectAttributesModelMap()))
                 .isInstanceOf(ResponseStatusException.class);
     }

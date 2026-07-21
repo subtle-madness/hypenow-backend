@@ -43,16 +43,18 @@ public class QualifyJob {
     private final RawProfileRepository rawProfiles;
     private final ProfileSourceSelector profileSourceSelector;
     private final SettingsService settings;
+    private final JobStopFlag stopFlag;
     private final Clock clock;
     private final TransactionTemplate txTemplate;
 
     public QualifyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles,
-                      ProfileSourceSelector profileSourceSelector, SettingsService settings, Clock clock,
-                      TransactionTemplate txTemplate) {
+                      ProfileSourceSelector profileSourceSelector, SettingsService settings,
+                      JobStopFlag stopFlag, Clock clock, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.profileSourceSelector = profileSourceSelector;
         this.settings = settings;
+        this.stopFlag = stopFlag;
         this.clock = clock;
         this.txTemplate = txTemplate;
     }
@@ -120,6 +122,11 @@ public class QualifyJob {
     private ProfileResult profileMissing(List<Influencer> toProfile, TriggerType trigger) {
         int profiled = 0, failedChunks = 0;
         for (List<Influencer> chunk : ActorInputs.chunk(toProfile, PROFILE_CHUNK)) {
+            if (stopFlag.isRequested(JobName.QUALIFY)) {
+                // 잔여 청크만 중단 — 이미 확보한 프로필의 판정(judge, DB 전용·즉시)은 그대로 진행된다
+                log.info("qualify 중지 요청 — 잔여 프로필 청크 건너뛰고 조기 종료");
+                break;
+            }
             List<String> names = chunk.stream().map(Influencer::getUsername).toList();
             CrawlExecutor.Execution ex;
             RawSource source = profileSourceSelector.currentSource();

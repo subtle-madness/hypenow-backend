@@ -93,4 +93,15 @@ public class LlmConfig {
 		}
 		return new GeminiAccountSynthesizer(gemini.getObject(), settings::geminiModel);
 	}
+
+	/**
+	 * 해석 문구 전용 포트 — 갱신 잡이 쓴다. Anthropic 경로는 아직 없어 Gemini/Vertex만 지원한다
+	 * (갱신은 일회성 배치라 프로바이더 폴백까지 둘 필요가 없다).
+	 */
+	@Bean
+	@Lazy
+	public ContentSynthesisPort contentSynthesisPort(AnalyticsSettings settings,
+			ObjectProvider<GeminiApi> gemini) {
+		return new GeminiContentSynthesizer(gemini.getObject(), settings::geminiModel);
+	}
 }
