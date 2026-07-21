@@ -30,6 +30,7 @@ public class InfluencerBeautyController {
     public String override(@PathVariable Long id, @RequestParam BeautyClass beautyClass,
                            @RequestParam(defaultValue = "0") int page,
                            @RequestParam(required = false) List<InfluencerStatus> status,
+                           @RequestParam(required = false) List<String> beauty,
                            RedirectAttributes ra) {
         Influencer inf = influencers.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
@@ -37,6 +38,7 @@ public class InfluencerBeautyController {
         influencers.save(inf);
         ra.addAttribute("page", page);
         if (status != null && !status.isEmpty()) ra.addAttribute("status", status);
+        if (beauty != null && !beauty.isEmpty()) ra.addAttribute("beauty", beauty);   // 뷰티 필터 보존
         return "redirect:/ui/influencers";
     }
 }

@@ -17,6 +17,7 @@ import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -88,9 +89,23 @@ class ReelsJobTest {
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
+    JobStopFlag stopFlag = new JobStopFlag();
+
     ReelsJob job(List<UserMediaPageFetcher> fetchers) {
         return new ReelsJob(influencers, rawMediaPages, new ContentUpserter(contents, CLOCK),
-                fetchers, executor, settings, CLOCK, progress, txTemplate);
+                fetchers, executor, settings, CLOCK, progress, stopFlag, txTemplate);
+    }
+
+    @Test
+    void 중지_요청이_있으면_방문하지_않는다() {
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(beautyTarget(1L, "a", "pk1")));
+        stopFlag.request(JobName.REELS);
+
+        // 페처 없이도 방문 자체가 스킵되므로 예외·실패 카운트 없이 조기 종료된다
+        var summary = job(List.of()).run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isZero();
+        assertThat(summary.failedVisits()).isZero();
     }
 
     static Influencer beautyTarget(Long id, String username, String pk) {

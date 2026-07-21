@@ -25,6 +25,14 @@
                onchange="this.form.submit()"/>
         <span class="badge" th:classappend="${s}" th:text="${s}"></span>
     </label>
+    <!-- 뷰티 판정 필터 — 회사 리스트업 뷰는 이미 회사 고정이라 숨긴다 -->
+    <span class="filter-sep" th:unless="${companyView}"></span>
+    <label class="check" th:unless="${companyView}" th:each="bf : ${beautyFilters}">
+        <input type="checkbox" name="beauty" th:value="${bf.key()}"
+               th:checked="${beauty != null && beauty.contains(bf.key())}"
+               onchange="this.form.submit()"/>
+        <span class="badge" th:classappend="${bf.badge()}" th:text="${bf.label()}"></span>
+    </label>
     <span class="hint">체크 없음 = 판정 완료 전체</span>
 </form>
 
@@ -33,7 +41,9 @@
         <th>발굴 키워드</th><th>발굴일</th><th>최근 수집</th></tr>
     <tr th:each="row : ${page.content}">
         <td th:text="${row.influencer.id}"></td>
-        <td th:text="${row.influencer.username}"></td>
+        <td><a class="username-link" target="_blank" rel="noopener"
+               th:href="'https://www.instagram.com/' + ${row.influencer.username} + '/'"
+               th:text="${row.influencer.username}"></a></td>
         <td><span class="badge" th:classappend="${row.influencer.status}"
                  th:text="${row.influencer.status}"></span></td>
         <td th:text="${row.influencer.followers != null ? #numbers.formatInteger(row.influencer.followers, 0, 'COMMA') : '—'}"></td>
@@ -54,6 +64,7 @@
                   th:unless="${cls == target.name()}">
                 <input type="hidden" name="page" th:value="${page.number}"/>
                 <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
                 <input type="hidden" name="beautyClass" th:value="${target.name()}"/>
                 <button type="submit"
                         th:text="${target.name() == 'INFLUENCER'} ? '뷰티' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'BEAUTY_SERVICE'} ? '시술' : '아님'))"></button>
@@ -66,10 +77,10 @@
 </table>
 <p class="pager">
     <a th:if="${page.hasPrevious()}"
-       th:href="@{/ui/influencers(status=${status}, page=${page.number - 1}, company=${companyView})}">이전</a>
+       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, page=${page.number - 1}, company=${companyView})}">이전</a>
     <span th:text="${page.number + 1} + ' / ' + ${page.totalPages}"></span>
     <a th:if="${page.hasNext()}"
-       th:href="@{/ui/influencers(status=${status}, page=${page.number + 1}, company=${companyView})}">다음</a>
+       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, page=${page.number + 1}, company=${companyView})}">다음</a>
 </p>
 </main>
 </body>
