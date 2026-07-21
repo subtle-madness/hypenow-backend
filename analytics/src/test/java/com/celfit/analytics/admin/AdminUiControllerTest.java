@@ -57,17 +57,26 @@ class AdminUiControllerTest {
 	@MockitoBean
 	MirrorRegistry mirrorRegistry;
 
-	/** 운영 실측 규모의 퍼널 — 수집 2.7만 → 후보 1,914, 분석 431(매일 57·백필 300·기타 74). */
-	private static PipelineStatsService.Funnel funnel(long candidates, long timelyExcluded) {
-		return funnel(candidates, timelyExcluded, null);
-	}
+	/** v3 설계 문서 §1의 07-21 운영 실측 규모 — 계정 축 14,123→1,714→723 (회사 169·비뷰티 822). */
+	private static final PipelineStatsService.Accounts ACCOUNTS =
+			new PipelineStatsService.Accounts(14_123, 1_714, 723, 169, 822, 1_861);
 
-	private static PipelineStatsService.Funnel funnel(long candidates, long timelyExcluded,
+	/** 콘텐츠 축 실측 — 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286. */
+	private static final PipelineStatsService.Heavy HEAVY = new PipelineStatsService.Heavy(
+			7_402, 1_435, 1_432, 5_967, 5_684,
+			12_777, 11_072, 4_000, 1_104, 723, 700,
+			Instant.parse("2026-07-21T08:20:00Z"));
+
+	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 — 누적(각주)·미러 수치는 §1 실측. */
+	private static PipelineStatsService.Funnel funnel(PipelineStatsService.Heavy heavy,
 			String candidatesError) {
-		return new PipelineStatsService.Funnel(27_093, candidates, timelyExcluded,
-				431, 57, 300, 16_686, 77, 1_496, 12,
-				candidates < 0 ? 0 : 450, candidates < 0 ? 0 : 5, 3, 2,
-				Instant.parse("2026-07-21T08:20:00Z"), candidatesError);
+		long remaining = heavy == null ? -1 : heavy.truePending();
+		return new PipelineStatsService.Funnel(31_038,
+				16_827, 1_745, 14_637,
+				30_358, 1_515, 1_517, 12,
+				ACCOUNTS, heavy,
+				remaining < 0 ? 0 : (int) remaining, remaining < 0 ? 0 : 1,
+				3, 1, candidatesError);
 	}
 
 	@BeforeEach
@@ -85,7 +94,7 @@ class AdminUiControllerTest {
 
 	@Test
 	void ui_페이지는_대시보드_셸을_렌더() throws Exception {
-		// 건강·퍼널·잡 카드·피드는 board 프래그먼트(htmx 폴링) 소관 — /ui 자체엔 헤더·셸만.
+		// 건강·보드·잡 카드·피드는 board 프래그먼트(htmx 폴링) 소관 — /ui 자체엔 헤더·셸만.
 		mvc.perform(get("/ui"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("hypenow analytics")))
@@ -94,43 +103,108 @@ class AdminUiControllerTest {
 	}
 
 	@Test
-	void 퍼널은_분석완료를_매일과_백필로_분리_노출() throws Exception {
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+	void 계정_보드는_수집_검증_뷰티_모수와_분해를_노출() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
-				.andExpect(content().string(Matchers.containsString("1,914")))
-				// 매일(랭킹 노출) vs 백필(상세 전용) 분리 — 뭉뚱그린 "분석 완료" 단일 수치가 아니어야 한다
-				.andExpect(content().string(Matchers.containsString("분석 완료 내역")))
-				.andExpect(content().string(Matchers.containsString("랭킹 노출")))
-				.andExpect(content().string(Matchers.containsString("인플루언서 상세 전용")))
-				// 매일 57 · 백필 300 · 기타 74(=431-57-300)
-				.andExpect(content().string(Matchers.containsString("300")))
-				.andExpect(content().string(Matchers.containsString("74")))
-				// 커버리지 = timely/후보 = 57/1,914 = 3.0% (전체 431 기준 22.5%가 아니어야 한다)
-				.andExpect(content().string(Matchers.containsString("3.0%")))
-				.andExpect(content().string(Matchers.containsString("24,113")))
-				.andExpect(content().string(Matchers.containsString("pin <span>3</span>일")))
-				.andExpect(content().string(Matchers.containsString("slack <span>2</span>일")));
+				.andExpect(content().string(Matchers.containsString("계정 보드")))
+				.andExpect(content().string(Matchers.containsString("14,123")))
+				.andExpect(content().string(Matchers.containsString("1,714")))
+				.andExpect(content().string(Matchers.containsString("723")))
+				// 모수에서 빠지는 이유를 명시 분해 — 회사 169 · 비뷰티(미판정 포함) 822
+				.andExpect(content().string(Matchers.containsString("뷰티 회사")))
+				.andExpect(content().string(Matchers.containsString("169")))
+				.andExpect(content().string(Matchers.containsString("비뷰티·미판정")))
+				.andExpect(content().string(Matchers.containsString("822")))
+				// 재판정 진행 신호 — 오늘 판정 처리량 (히스토리 G3 부재의 차선)
+				.andExpect(content().string(Matchers.containsString("오늘 판정")))
+				.andExpect(content().string(Matchers.containsString("1,861")));
 	}
 
 	@Test
-	void 후보_집계_중이면_자동갱신_안내를_보여주고_늦크롤_수치는_숨김() throws Exception {
-		// candidates·timelyExcluded -1(집계 중) — "-1건" 오표기가 없어야 하고,
-		// 백그라운드 소요·자동 갱신을 명시해 "고장"으로 오해되지 않아야 한다.
-		when(stats.funnel()).thenReturn(funnel(-1, -1));
+	void 계정_카피는_현_모수_교집합_기준이고_누적은_각주_G1() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				// 현 모수 723 중 카피 700 — 누적 1,517/723 같은 >100% 표기가 아니어야 한다
+				.andExpect(content().string(Matchers.containsString("계정 카피 <b>700</b>")))
+				.andExpect(content().string(Matchers.containsString("현 모수 기준")))
+				.andExpect(content().string(Matchers.containsString("stale 대상")))
+				// 누적 카피는 각주로 강등 (탈락 계정 포함 표기)
+				.andExpect(content().string(Matchers.containsString("누적 카피")))
+				.andExpect(content().string(Matchers.containsString("1,517")))
+				.andExpect(content().string(Matchers.containsString("탈락 계정 포함")));
+	}
+
+	@Test
+	void 콘텐츠_보드는_트랙별_기분석_미분석_4분할과_진짜_잔여_G1() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("콘텐츠 보드")))
+				// 축: 수집 31,038 → 뷰티 서빙 12,777 → 분석 자격 7,402
+				.andExpect(content().string(Matchers.containsString("31,038")))
+				.andExpect(content().string(Matchers.containsString("12,777")))
+				.andExpect(content().string(Matchers.containsString("7,402")))
+				// 랭킹 트랙(제때) 1,435 = 기분석 1,432 + 미분석 3
+				.andExpect(content().string(Matchers.containsString("랭킹 트랙")))
+				.andExpect(content().string(Matchers.containsString("1,435")))
+				.andExpect(content().string(Matchers.containsString("1,432")))
+				// 상세 트랙(윈도우) 5,967 = 기분석 5,684 + 미분석 283
+				.andExpect(content().string(Matchers.containsString("상세 트랙")))
+				.andExpect(content().string(Matchers.containsString("5,967")))
+				.andExpect(content().string(Matchers.containsString("5,684")))
+				.andExpect(content().string(Matchers.containsString("283")))
+				// 진짜 잔여 = 자격 ∩ 미분석 286 — 사용자가 알고 싶던 그 숫자
+				.andExpect(content().string(Matchers.containsString("진짜 잔여")))
+				.andExpect(content().string(Matchers.containsString("286")))
+				.andExpect(content().string(Matchers.containsString("완주까지 <b>1</b>일")));
+	}
+
+	@Test
+	void 커버리지는_현_서빙_모수_기준이고_누적은_각주_G2() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				// 분모·분자 모두 현 서빙 스냅샷: 11,072/12,777 = 86.7%
+				.andExpect(content().string(Matchers.containsString("서빙 커버리지")))
+				.andExpect(content().string(Matchers.containsString("86.7%")))
+				.andExpect(content().string(Matchers.containsString("11,072")))
+				// 누적 16,827은 각주로 강등 — 모수 리비전 혼재 명시
+				.andExpect(content().string(Matchers.containsString("역대 분석 저장")))
+				.andExpect(content().string(Matchers.containsString("16,827")))
+				.andExpect(content().string(Matchers.containsString("14,637")))
+				// 기타 = 16,827 − 1,745 − 14,637 = 445 (immature·마킹 전 레거시)
+				.andExpect(content().string(Matchers.containsString("445")))
+				.andExpect(content().string(Matchers.containsString("모수 리비전 혼재")))
+				// 자격 밖 분해 — 미성숙 4,000 · 영구 제외 1,104
+				.andExpect(content().string(Matchers.containsString("미성숙")))
+				.andExpect(content().string(Matchers.containsString("4,000")))
+				.andExpect(content().string(Matchers.containsString("영구 제외")))
+				.andExpect(content().string(Matchers.containsString("1,104")))
+				.andExpect(content().string(Matchers.containsString("pin <span>3</span>일")))
+				.andExpect(content().string(Matchers.containsString("slack <span>1</span>일")));
+	}
+
+	@Test
+	void 집계_중이면_자동갱신_안내를_보여주고_대조_수치는_숨김() throws Exception {
+		// heavy 없음(집계 중) — "-1건" 오표기가 없어야 하고, 백그라운드 소요·자동 갱신을 명시해
+		// "고장"으로 오해되지 않아야 한다. 트랙 분해·커버리지도 집계 후 표시.
+		when(stats.funnel()).thenReturn(funnel(null, null));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("집계 중")))
 				.andExpect(content().string(Matchers.containsString("백그라운드 ~3분 · 자동 갱신")))
-				.andExpect(content().string(Matchers.containsString("제때 크롤분")))
-				.andExpect(content().string(Matchers.not(Matchers.containsString("건은 후보 밖"))));
+				.andExpect(content().string(Matchers.containsString("계정 카피 현황 집계 중")))
+				.andExpect(content().string(Matchers.not(Matchers.containsString("진짜 잔여"))))
+				.andExpect(content().string(Matchers.not(Matchers.containsString("-1"))));
 	}
 
 	@Test
-	void 후보_집계_실패는_집계중과_구분해_사유까지_노출() throws Exception {
+	void 집계_실패는_집계중과_구분해_사유까지_노출() throws Exception {
 		// 뷰 드리프트로 후보 뷰가 사라지면 캐시가 없는 채 실패만 반복된다 — 이때 "집계 중"으로 뭉개면
 		// 영원히 안 뜨는 것처럼 보인다. 실패임을 명시하고 사유를 그대로 보여줘야 한다.
-		when(stats.funnel()).thenReturn(funnel(-1, -1,
+		when(stats.funnel()).thenReturn(funnel(null,
 				"ERROR: relation \"analytics.v_analysis_candidates\" does not exist"));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
@@ -144,7 +218,7 @@ class AdminUiControllerTest {
 
 	@Test
 	void 건강_스트립은_프로바이더와_신선도와_오늘처리량() throws Exception {
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("LLM 프로바이더")))
@@ -152,9 +226,10 @@ class AdminUiControllerTest {
 				.andExpect(content().string(Matchers.containsString("gemini-3.1-flash-lite")))
 				.andExpect(content().string(Matchers.containsString("오늘 처리")))
 				.andExpect(content().string(Matchers.containsString("120")))
-				// 신선도 — 마지막 분석/미러/계정 카피 3종
+				// 신선도 3종 — "마지막 미러"는 실체(크롤 지표 최신)에 맞게 개명(v3 §2-C)
 				.andExpect(content().string(Matchers.containsString("마지막 분석")))
-				.andExpect(content().string(Matchers.containsString("마지막 미러")))
+				.andExpect(content().string(Matchers.containsString("크롤 지표 신선도")))
+				.andExpect(content().string(Matchers.not(Matchers.containsString("마지막 미러"))))
 				.andExpect(content().string(Matchers.containsString("마지막 계정 카피")))
 				.andExpect(content().string(Matchers.containsString("시간 전")));
 	}
@@ -162,7 +237,7 @@ class AdminUiControllerTest {
 	@Test
 	void 쿼터_이월이면_상단에_경고() throws Exception {
 		// 커버리지가 안 느는 가장 흔한 원인 — 최근 실행이 QUOTA_CARRYOVER면 배너로 노출한다.
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		when(history.recent(anyInt())).thenReturn(List.of(new RunHistory.Run(
 				JobName.ANALYZE, TriggerType.SCHEDULED, Instant.now().minusSeconds(600),
 				Instant.now(), RunHistory.Outcome.QUOTA_CARRYOVER, 450, 0, null)));
@@ -173,25 +248,24 @@ class AdminUiControllerTest {
 	}
 
 	@Test
-	void 잡카드는_콘텐츠분석과_계정카피의_대상_완료_잔여를_각각_노출() throws Exception {
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+	void 잡카드는_진짜_잔여와_현_모수_카피를_노출() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
-				// 콘텐츠 분석 — 매일 57 완료 · 후보 1,914 · 잔여 1,857
-				.andExpect(content().string(Matchers.containsString("매일 57 완료")))
-				.andExpect(content().string(Matchers.containsString("잔여 1,857")))
-				.andExpect(content().string(Matchers.containsString("백필(상세 전용) 300 별도")))
-				// 계정 카피 — 완료 77 / 뷰티 1,496 · 대상 12
-				.andExpect(content().string(Matchers.containsString("완료 77 / 뷰티 1,496")))
+				// 콘텐츠 분석 — 잔여는 크로스 DB 대조(후보 ∩ 미분석), 마킹 누적 빼기가 아니다
+				.andExpect(content().string(Matchers.containsString("후보 7,402 · 기분석 7,116 · 미분석 286")))
+				.andExpect(content().string(Matchers.containsString("오늘 +286 예정")))
+				// 계정 카피 — 현 모수 723 중 700 · 대상 12
+				.andExpect(content().string(Matchers.containsString("현 모수 723 중 카피 700")))
 				.andExpect(content().string(Matchers.containsString("대상 12")))
-				// 미러도 "몇 개를 옮겼는지" 보여야 한다 (대상 뷰 수 · 적재 결과)
-				.andExpect(content().string(Matchers.containsString("대상 7개 뷰 · 게시물 16,686 · 계정 1,496")));
+				// 미러는 미러 세계(analysis DB 적재분) 수치 — raw 현 모수와 다를 수 있다
+				.andExpect(content().string(Matchers.containsString("대상 7개 뷰 · 게시물 30,358 · 계정 1,515")));
 	}
 
 	@Test
-	void 후보_미상이면_오늘_예정량은_0이_아니라_미상으로() throws Exception {
+	void 잔여_미상이면_오늘_예정량은_0이_아니라_미상으로() throws Exception {
 		// todayPlanned=0을 "+0 예정"으로 쓰면 "오늘 아무것도 안 함"으로 오독된다.
-		when(stats.funnel()).thenReturn(funnel(-1, -1, "ERROR: relation does not exist"));
+		when(stats.funnel()).thenReturn(funnel(null, "ERROR: relation does not exist"));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("오늘 예정량 미상")))
@@ -199,19 +273,9 @@ class AdminUiControllerTest {
 	}
 
 	@Test
-	void 분석완료_단계는_합계와_매일_백필_내역을_함께_보여준다() throws Exception {
-		// 대표 숫자만 보면 뭉쳐 보이므로 단계 바로 아래에 내역을 붙인다.
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
-		mvc.perform(get("/ui/fragments/board"))
-				.andExpect(status().isOk())
-				.andExpect(content().string(Matchers.containsString("분석 완료 <span class=\"off\">합계</span>")))
-				.andExpect(content().string(Matchers.containsString("서빙 미러 <span class=\"off\">게시물</span>")));
-	}
-
-	@Test
 	void 휴면_댓글분류와_CLI_백필배치도_카드로_노출() throws Exception {
 		// 숨기면 "0건 = 고장?"으로 오해되므로 사유와 함께 남긴다.
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("댓글 분류")))
@@ -222,7 +286,7 @@ class AdminUiControllerTest {
 	}
 
 	@Test
-	void 보드는_퍼널_집계_실패에도_카드와_피드를_렌더() throws Exception {
+	void 보드는_집계_실패에도_카드와_피드를_렌더() throws Exception {
 		when(stats.funnel()).thenThrow(new RuntimeException("집계 실패"));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
@@ -232,7 +296,7 @@ class AdminUiControllerTest {
 
 	@Test
 	void 보드_프래그먼트는_실행중_잡을_진행률과_함께() throws Exception {
-		when(stats.funnel()).thenReturn(funnel(1_914, 24_113));
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		when(jobService.isRunning(JobName.MIRROR)).thenReturn(true);
 		when(progress.snapshot(JobName.MIRROR))
 				.thenReturn(new JobProgressRegistry.Progress(true, 3, 0, 10, Instant.now()));
