@@ -23,6 +23,7 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 	void setUpTables() {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
@@ -30,7 +31,37 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    external_link     text
+				)""");
+		jdbcTemplate.execute("""
+				CREATE TABLE account_summaries (
+				    handle                   text PRIMARY KEY,
+				    followers                bigint,
+				    follows_count            bigint,
+				    posts_count              bigint,
+				    biography                text,
+				    analyzed_count           bigint,
+				    views_count              bigint,
+				    metric                   text,
+				    avg_views                bigint,
+				    views_per_follower       numeric,
+				    avg_er_pct               numeric,
+				    avg_likes                bigint,
+				    avg_comments             bigint,
+				    trend_direction          text,
+				    trend_change_pct         integer,
+				    trend_older_avg          bigint,
+				    trend_newer_avg          bigint,
+				    sponsored_count          bigint,
+				    organic_avg              bigint,
+				    ad_avg                   bigint,
+				    ad_drop_pct              integer,
+				    comparison_organic_count bigint,
+				    comparison_ad_count      bigint,
+				    last_ad_posted_at        timestamptz,
+				    last_posted_at           timestamptz,
+				    avg_interval_days        numeric
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
@@ -71,8 +102,8 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				)""");
 
 		jdbcTemplate.update("""
-				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
-				 ('alpha', '알파', 'https://pic/alpha.jpg', 5000)
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers, external_link) VALUES
+				 ('alpha', '알파', 'https://pic/alpha.jpg', 5000, null)
 				""");
 
 		// a1(분석 완료, 이른 게시), a2(분석 미완, 더 최신 게시), a3(비뷰티 확정, 가장 최신 게시).
