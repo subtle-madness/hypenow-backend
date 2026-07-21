@@ -118,4 +118,20 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 		assertThat(a2.handle()).isEqualTo("alpha");
 		assertThat(a2.followers()).isEqualTo(5000L);
 	}
+
+	@Test
+	void 프로필_이미지는_아카이브되면_img_경로_아니면_원본() {
+		// 원본 URL이 설정된 프로필 조회 — 아카이브 없으면 원본 반환(fallback)
+		V1InfluencerRepository.ProfileRow profile = repository.findProfile("alpha").orElseThrow();
+		assertThat(profile.profileImageUrl()).isEqualTo("https://pic/alpha.jpg");
+
+		// 아카이브 추가 후 재조회 — COALESCE가 /img/ 경로 선택
+		jdbcTemplate.update("""
+				INSERT INTO image_assets (kind, key, object_path, source_name)
+				VALUES ('profile', 'alpha', 'profile/alpha.jpg', 'alpha.jpg')
+				""");
+
+		profile = repository.findProfile("alpha").orElseThrow();
+		assertThat(profile.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+	}
 }

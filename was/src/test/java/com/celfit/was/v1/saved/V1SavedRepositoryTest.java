@@ -265,4 +265,30 @@ class V1SavedRepositoryTest extends IntegrationTest {
 		assertThat(repository.findSavedInfluencers(userId)).extracting(SavedInfluencerRow::handle)
 				.containsExactly("alpha");
 	}
+
+	@Test
+	void 인플루언서_프로필_이미지는_아카이브되면_img_경로_아니면_원본() {
+		// findInfluencer 단건: 원본 URL이 설정됨(아카이브 없음)
+		ContentCard.Influencer alpha = repository.findInfluencer("alpha").orElseThrow();
+		assertThat(alpha.profileImageUrl()).isEqualTo("https://pic/alpha.jpg");
+
+		// alpha의 아카이브 추가 후 재조회 — COALESCE가 /img/ 경로 선택
+		jdbcTemplate.update("""
+				INSERT INTO image_assets (kind, key, object_path, source_name)
+				VALUES ('profile', 'alpha', 'profile/alpha.jpg', 'alpha.jpg')
+				""");
+
+		alpha = repository.findInfluencer("alpha").orElseThrow();
+		assertThat(alpha.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+
+		// findInfluencers 묶음: alpha는 아카이브 있음, beta는 없음
+		List<ContentCard.Influencer> profiles = repository.findInfluencers(List.of("alpha", "beta"));
+		ContentCard.Influencer archivedAlpha = profiles.stream()
+				.filter(p -> p.handle().equals("alpha")).findFirst().orElseThrow();
+		ContentCard.Influencer originalBeta = profiles.stream()
+				.filter(p -> p.handle().equals("beta")).findFirst().orElseThrow();
+
+		assertThat(archivedAlpha.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+		assertThat(originalBeta.profileImageUrl()).isEqualTo("https://pic/beta.jpg");
+	}
 }
