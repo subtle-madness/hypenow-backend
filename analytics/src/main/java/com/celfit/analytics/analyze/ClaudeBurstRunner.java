@@ -188,16 +188,13 @@ public class ClaudeBurstRunner {
 			List<Map<String, Object>> categories = analysis.queryForList("""
 					SELECT main_group, content_count FROM account_category_stats
 					WHERE account_handle = ? ORDER BY content_count DESC, main_group ASC""", handle);
-			List<Map<String, Object>> posts = analysis.queryForList("""
-					SELECT p.posted_at, p.content_type, p.views, p.likes, p.comments, p.sponsored,
-					       left(c.caption, %d) AS caption
-					FROM account_content_series p
-					LEFT JOIN contents c ON c.short_code = p.short_code
-					WHERE p.account_handle = ?
-					ORDER BY p.posted_at ASC, p.short_code ASC"""
-					.formatted(AccountAnalysisJob.CAPTION_CHARS), handle);
-			boolean hasAdComparison = summary.get("organic_avg") != null && summary.get("ad_avg") != null;
-			AccountToAnalyze account = new AccountToAnalyze(handle, summary, categories, posts, hasAdComparison);
+			List<Map<String, Object>> posts = AccountAdCanon.loadPosts(analysis, handle);
+			// AccountAnalysisJob.analyzeOne과 동일 정본 — 판정·수치 모두 AccountAdCanon 단일 원천.
+			AccountAdCanon.AdMetrics ad =
+					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
+			boolean hasAdComparison = ad.hasComparison();
+			AccountToAnalyze account = new AccountToAnalyze(handle,
+					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, hasAdComparison);
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
 					.put("system", GeminiAccountSynthesizer.instructions())
