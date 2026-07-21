@@ -34,7 +34,7 @@ public class PostDetailRepository {
 		return safeQuery("contents", Optional::empty, () -> jdbcClient.sql("""
 				SELECT short_code, account_handle, thumbnail_url, caption, posted_at,
 				       content_type, video_duration, original_url,
-				       views, likes, comments, hype_score, metric_captured_at
+				       views, likes, comments, hype_score, metric_captured_at, ad_marked
 				FROM contents
 				WHERE short_code = :shortCode
 				""")

@@ -25,6 +25,10 @@ DO $$
 BEGIN
   ASSERT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_f1' AND timely),
     'f1(D+3=06-06 usable 스냅)이 timely 후보로 없음';
+  -- 인스타 유료 파트너십 태그를 후보 뷰가 그대로 통과시킨다 (07-21 — 백필/버스트 러너의 프롬프트 입력).
+  -- v_contents가 이미 들고 있어 조인 추가 없이 투영만 한다.
+  ASSERT (SELECT ad_marked FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_f1') = false,
+    'v_analysis_candidates f1 ad_marked 통과 안 됨';
   -- 07-20 백필 재도입: 제때 크롤 실패(D+3 당일 usable 스냅 없음)라도 최근 윈도우(기본 12) 안이면
   -- timely=false 백필 후보로 포함 — 구 기대치(NOT EXISTS)를 뒤집는다.
   ASSERT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_r1' AND NOT timely),

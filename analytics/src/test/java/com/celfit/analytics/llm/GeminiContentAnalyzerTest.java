@@ -37,8 +37,63 @@ class GeminiContentAnalyzerTest {
 	}
 
 	ContentToAnalyze content() {
-		return new ContentToAnalyze("post_a", "acct1", "캡션A", "reels", 11000L, 520L, 52L,
-				Map.of("recent_contents_count", 3), Map.of());
+		return content("reels", null);
+	}
+
+	ContentToAnalyze content(String contentType, Boolean adMarked) {
+		return new ContentToAnalyze("post_a", "acct1", "캡션A", contentType, 11000L, 520L, 52L,
+				Map.of("recent_contents_count", 3), Map.of(), adMarked);
+	}
+
+	/**
+	 * 인스타 유료 파트너십 태그는 인스타가 보증하는 확정 사실이라 프롬프트에 반드시 실려야 한다 —
+	 * 안 실으면 태그가 붙은 게시물을 LLM이 organic으로 뒤집는다(운영 실측 87건).
+	 */
+	@Test
+	void 공식_광고태그가_사실로_프롬프트에_실린다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy)
+				.analyze(content("reels", true), null);
+
+		assertTrue(calls.get(0).user().contains("인스타 유료 파트너십 태그: 있음"), calls.get(0).user());
+	}
+
+	@Test
+	void 태그가_없는_릴스는_없음으로_실린다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy)
+				.analyze(content("reels", false), null);
+
+		assertTrue(calls.get(0).user().contains("인스타 유료 파트너십 태그: 없음"), calls.get(0).user());
+	}
+
+	/**
+	 * 피드는 태그 기능 자체가 없다 — "없음"으로 쓰면 "광고 아님"으로 오독된다.
+	 * 미러(v_contents)가 피드에 false를 채우므로 값이 아니라 콘텐츠 타입으로 판정해야 한다.
+	 */
+	@Test
+	void 피드는_값이_false여도_해당없음으로_실린다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy)
+				.analyze(content("feed", false), null);
+
+		assertTrue(calls.get(0).user().contains("인스타 유료 파트너십 태그: 해당 없음"), calls.get(0).user());
+	}
+
+	/** 릴스인데 값이 없으면 "없음"이 아니라 "확인 안 됨" — 근거 없는 organic 판정 방지. */
+	@Test
+	void 릴스인데_값이_없으면_확인_안됨으로_실린다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy)
+				.analyze(content("reels", null), null);
+
+		assertTrue(calls.get(0).user().contains("인스타 유료 파트너십 태그: 확인 안 됨"), calls.get(0).user());
+	}
+
+	/** 태그의 증거력은 한 방향뿐 — 있으면 확정 광고, 없으면 판단 보류(캡션 고지가 정본). */
+	@Test
+	void 지시문이_태그의_단방향_증거력을_명시한다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy).analyze(content(), null);
+
+		String system = calls.get(0).system();
+		assertTrue(system.contains("반드시 sponsored"), system);
+		assertTrue(system.contains("'없음'은 광고가 아니라는 뜻이 아니다"), system);
 	}
 
 	@Test
