@@ -63,7 +63,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 | `content` | 게시물 제어 (short_code, content_type, owner, uploaded_at, origin DISCOVERY/ENUMERATION, status) — 캡션·지표 없음 |
 | `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS jsonb) — 릴스 캡션·지표·썸네일의 소스 |
 | `raw_profile` | 프로필 원형(SELF_GQL·HIKER_MOBILE 등 source별 jsonb) — SELF_GQL엔 내장 타임라인 12개(피드 캡션·지표의 소스) |
-| `raw_post_detail` | 구 시대 상세 payload — 신 파이프라인 미사용(LEGACY, 크롤러 대시보드 전용) |
+| `raw_post_detail` | 구 시대 상세 payload — 신 파이프라인 미사용(LEGACY). 07-22 열람 화면 제거로 접근 코드도 삭제, 테이블만 잔존 |
 | `raw_comment` | 댓글 원문 (writer/text/written_at 실컬럼) — 수집 게이트 off, 신규 유입 없음 |
 | `app_setting` | 런타임 설정 key-value (분석 뷰도 여기서 임계값을 읽음) |
 
@@ -193,7 +193,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), analytics 상주 어드민(8082 `/ui` —
+**운영 중**: crawler 파이프라인(discover→qualify→beauty→collect·reels — 07-22부터 qualify·beauty·collect·reels는
+새벽 윈도우 반복 크론 자동 실행, discover·similar만 어드민 수동 트리거. 어드민은 대시보드 단일
+화면으로 개편: 잡 실행 스트립·예상 비용·실행 로그 통합, 잡 실행·수집 게시물 탭 제거), analytics 상주 어드민(8082 `/ui` —
 미러·LLM 잡 트리거, 태스크 I + `/ui/coverage` 커버리지 매트릭스 — celfit-front **배포본(origin/main)**
 실소비 필드 기준(07-18 재정의) + 수집 모수(raw 서빙 뷰) 타일, 07-19 was에서 이전), was `/v1` API(스펙
 v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서비스 표면만).
@@ -275,6 +277,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-22 | **크롤링 데일리 자동화 + 크롤러 어드민 대시보드 개편** — 스케줄은 코드 무변경(기존 ScheduleRunner를 compose env로 점화). 단발 크론 대신 **윈도우 반복 발사**(collect 01:00~03:30/30분 · reels 01:10~03:55/15분 · qualify 02:00~03:30/30분 · beauty 03:00·03:30, KST): 잡이 "남은 대상만" 선정하므로 반복이 안전하고 일시 실패·컨테이너 재기동을 윈도우 안에서 흡수, analytics 미러 04:30 전 완결로 같은 날 반영(썸네일 CDN 만료 전 처리). 발굴(discover·similar)은 수동 유지, 실패 알림은 후속(컨테이너 다운은 기존 OCI 알람 담당). 어드민은 잡 실행 폼·예상 비용·실행 로그를 대시보드로 통합하고 잡 실행·수집 게시물 탭을 코드까지 제거(LEGACY RawPostDetail 엔티티·리포지토리 삭제, 테이블 잔존) | [specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md](docs/superpowers/specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md) |
 | 2026-07-22 | **Swagger 표면 확장 + 가입 코드 발송 추적** — Swagger 표면을 `/v1/**`에서 `/v1/**, /admin/**`로 확장, 어드민 FE가 Swagger에서 어드민 API 시그니처 확인(접근은 기존 ADMIN Basic 게이트) / `app.signup_codes`에 `is_sent` 칼럼 추가(발송 여부, 소진과 별개 축), 양방향 PATCH 엔드포인트 제공 | `PATCH /admin/signup-codes/{code}` · [specs/2026-07-22-signup-codes-is-sent-design.md](docs/superpowers/specs/2026-07-22-signup-codes-is-sent-design.md) |
 | 2026-07-22 | **수동 발굴 등록 API + 크롬 익스텐션** — 크롤링 두 경로(DiscoverJob·SimilarJob)뿐이던 인플루언서 유입에 수동 경로 추가: crawler `POST /api/manual-discoveries`(신규만 DISCOVERED 생성, 기존 계정은 상태만 응답 — 반복 클릭의 discovery 이력 스팸 방지, 출처 keyword `수동:크롬`), 사전 공유 토큰 `X-Api-Token` 인증(`MANUAL_DISCOVERY_TOKEN`, 미설정 시 503 fail-closed). Caddy는 이 경로만 `/crawler/api/manual-discoveries`로 외부 공개 — 어드민 `/ui`·`/admin`은 계속 SSH 터널 전용. 수동 등록도 기존 qualify→beauty 파이프라인 동일 적용(팔로워 필터 면제 없음). 크롬 익스텐션(MV3 팝업 — 현재 탭 URL에서 username 추출, DOM 무접촉)은 레포 밖 별도 저장소 `hypenow-extension` | [specs/2026-07-22-manual-discovery-extension-design.md](docs/superpowers/specs/2026-07-22-manual-discovery-extension-design.md) |
 | 2026-07-21 | **OCI 모니터링 알람 도입 + 보안 표면 점검** — 알람 5개 → ONS 토픽 `hypenow-alerts`(디스코드 웹훅을 Slack 프로토콜 구독으로 연결, 웹훅 URL 뒤 `/slack`): 인스턴스 CPU·메모리 85%·인스턴스 다운(oci_computeagent/infrastructure_health) + 컨테이너 다운·디스크 85%(커스텀 `hypenow_custom` — 서버 크론 1분 `post-container-metrics.py`, 인스턴스 프린시펄 인증이라 서버에 키 없음). 점검 결론: 방화벽은 시큐리티 리스트(22/80/443만 개방, 앱 포트 미노출)로 충분해 유료 방화벽 불채택. 레이트리밋은 `forward-headers-strategy: framework`가 XFF→remoteAddr를 복원해 **이미 IP별 정상 동작**(스푸핑은 Caddy 2.5+가 외부 XFF 폐기로 방어) — 취약 의심은 오진이었고 설정 한 줄에 걸린 보증이라 회귀 가드 테스트만 추가([PR #110](https://github.com/subtle-madness/hypenow-backend/pull/110)). 부트 볼륨 100GB는 전량 파티션 반영·사용 30% 확인(볼륨 증설 불필요) | deploy/scripts/post-container-metrics.py · deploy/README.md §10 |
@@ -379,7 +382,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 | 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. 커버리지 매트릭스(07-19부터 analytics `/ui/coverage`)는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | ~~LLM 모델~~ | 해소(07-18) — 골드셋 실측으로 전 축 gemini-3.1-flash-lite 확정(§7 태스크 L), Anthropic은 app_setting 롤백 경로 |
-| 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
+| ~~미러 갱신 주기~~ | 해소 — 07-21 analytics 스케줄 점화(04:30~) + 07-22 크롤 자동화가 그 앞 새벽으로 정렬 |
 | ~~세션·쿠키 운영 전환~~ | 해소 — HTTPS·Secure 쿠키(07-15, application-prod.yml), 세션 인메모리→spring-session-jdbc(07-15, P2 `app.spring_session`), SameSite는 Lax 확정(07-17, [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23)) |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |

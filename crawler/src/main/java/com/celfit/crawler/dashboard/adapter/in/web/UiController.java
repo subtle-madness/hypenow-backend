@@ -2,46 +2,32 @@ package com.celfit.crawler.dashboard.adapter.in.web;
 
 import com.celfit.crawler.common.log.LogBuffer;
 
-import com.celfit.crawler.content.application.port.out.ContentRepository;
-import com.celfit.crawler.content.domain.Content;
-import com.celfit.crawler.content.domain.ContentStatus;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
 import com.celfit.crawler.crawling.application.port.out.*;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
-import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.dashboard.application.JobCostEstimator;
 import com.celfit.crawler.dashboard.application.StatusService;
 import com.celfit.crawler.settings.application.service.SettingsService;
-import com.celfit.crawler.crawling.application.port.out.*;
 import com.celfit.crawler.crawling.application.service.JobLock;
 import com.celfit.crawler.crawling.application.service.JobProgress;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.databind.ObjectMapper;
 
 @Controller
 public class UiController {
 
     private final StatusService statusService;
     private final CrawlRunRepository runs;
-    private final ContentRepository contents;
-    private final RawPostDetailRepository rawDetails;
-    private final RawCommentRepository rawComments;
-    private final RawProfileRepository rawProfiles;
     private final RawDiscoveryPostRepository rawDiscovery;
     private final InfluencerRepository influencers;
     private final InfluencerDiscoveryRepository influencerDiscoveries;
-    private final ObjectMapper objectMapper;
     private final LogBuffer logBuffer;
 
     private final JobLock jobLock;
@@ -51,26 +37,19 @@ public class UiController {
     private final SettingsService settings;
 
     public UiController(StatusService statusService, CrawlRunRepository runs,
-                        ContentRepository contents, RawPostDetailRepository rawDetails,
-                        RawCommentRepository rawComments, RawProfileRepository rawProfiles,
                         RawDiscoveryPostRepository rawDiscovery,
                         InfluencerRepository influencers,
                         InfluencerDiscoveryRepository influencerDiscoveries,
-                        ObjectMapper objectMapper, LogBuffer logBuffer,
+                        LogBuffer logBuffer,
                         JobLock jobLock,
                         JobProgress jobProgress,
                         JobCostEstimator jobCostEstimator, HikerProperties hikerProperties,
                         SettingsService settings) {
         this.statusService = statusService;
         this.runs = runs;
-        this.contents = contents;
-        this.rawDetails = rawDetails;
-        this.rawComments = rawComments;
-        this.rawProfiles = rawProfiles;
         this.rawDiscovery = rawDiscovery;
         this.influencers = influencers;
         this.influencerDiscoveries = influencerDiscoveries;
-        this.objectMapper = objectMapper;
         this.logBuffer = logBuffer;
         this.jobLock = jobLock;
         this.jobProgress = jobProgress;
@@ -96,6 +75,7 @@ public class UiController {
     @GetMapping("/ui")
     public String dashboard(Model model) {
         model.addAttribute("summary", statusService.summary());
+        model.addAttribute("costs", jobCostEstimator.estimates());
         return "dashboard";
     }
 
@@ -213,12 +193,6 @@ public class UiController {
         return "daily";
     }
 
-    @GetMapping("/ui/jobs")
-    public String jobs(Model model) {
-        model.addAttribute("costs", jobCostEstimator.estimates());
-        return "jobs";
-    }
-
     /** 판정 완료 상태만 — 인플루언서 명단의 범위 불변식. DISCOVERED(판정 전)는 명단 밖. */
     private static final java.util.List<InfluencerStatus> JUDGED_STATUSES =
             java.util.List.of(InfluencerStatus.QUALIFIED, InfluencerStatus.EXCLUDED);
@@ -291,69 +265,4 @@ public class UiController {
         return "influencers";
     }
 
-    @GetMapping("/ui/contents")
-    public String contents(@RequestParam(required = false) java.util.List<ContentStatus> status,
-                           @RequestParam(defaultValue = "0") int page, Model model) {
-        page = Math.max(page, 0);
-        var pageable = PageRequest.of(page, 50, Sort.by(Sort.Direction.DESC, "id"));
-        var result = (status == null || status.isEmpty()) ? contents.findAll(pageable)
-                                                          : contents.findByStatusIn(status, pageable);
-        model.addAttribute("page", result);
-        model.addAttribute("status", status);
-        model.addAttribute("statuses", ContentStatus.values());
-        return "contents";
-    }
-
-    /**
-     * 열람용 댓글 1행. 구 파이프라인(raw_post_detail 기반 댓글)은 writer/text/writtenAt 실컬럼이
-     * 채워지지만, 새 파이프라인(SELF_GQL 페이지 원형 수집)은 댓글 단위가 아니라 페이지 단위로
-     * 저장되어 이 실컬럼이 설계상 NULL이다 — 그 경우 payload 원형을 pretty JSON으로 보여준다.
-     */
-    public record CommentRow(String writer, String text, String writtenAt, String rawJson) {}
-
-    @GetMapping("/ui/contents/{id}")
-    public String contentDetail(@PathVariable Long id, Model model) {
-        Content content = contents.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "콘텐츠 없음"));
-        var detail = rawDetails.findTopByContentIdOrderByCapturedAtDesc(id);
-        model.addAttribute("content", content);
-        model.addAttribute("detailJson", detail.map(d -> pretty(d.getPayload())).orElse(null));
-        model.addAttribute("taggedUsers", detail.map(d -> taggedUsers(d.getPayload()))
-                .orElse(java.util.List.of()));
-        model.addAttribute("comments", commentRows(rawComments.findTop100ByContentIdOrderByIdDesc(id)));
-        model.addAttribute("profileJson", rawProfiles
-                .findTopByInfluencerIdOrderByCapturedAtDesc(content.getInfluencerId())
-                .map(p -> pretty(p.getPayload())).orElse(null));
-        return "content-detail";
-    }
-
-    private java.util.List<CommentRow> commentRows(java.util.List<RawComment> rows) {
-        return rows.stream()
-                .map(c -> c.getWriter() != null
-                        ? new CommentRow(c.getWriter(), c.getText(), c.getWrittenAt(), null)
-                        : new CommentRow(null, null, null, pretty(c.getPayload())))
-                .toList();
-    }
-
-    /** 상세 payload의 taggedUsers → "이름 @username" 표시 문자열. 브랜드 태그 확인용. */
-    private java.util.List<String> taggedUsers(java.util.Map<String, Object> payload) {
-        if (!(payload.get("taggedUsers") instanceof java.util.List<?> tags)) return java.util.List.of();
-        java.util.List<String> out = new java.util.ArrayList<>();
-        for (Object t : tags) {
-            if (!(t instanceof java.util.Map<?, ?> m)) continue;
-            String username = m.get("username") instanceof String s ? s : null;
-            String fullName = m.get("full_name") instanceof String s ? s : null;
-            if (username == null && fullName == null) continue;
-            out.add(((fullName != null ? fullName : "") + (username != null ? " @" + username : "")).trim());
-        }
-        return out;
-    }
-
-    private String pretty(Object payload) {
-        try {
-            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
-        } catch (Exception e) {
-            return String.valueOf(payload);
-        }
-    }
 }

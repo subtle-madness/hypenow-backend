@@ -294,12 +294,17 @@ form.inline { display: inline; }
 form.row { display: flex; gap: 0.55rem; align-items: center; flex-wrap: wrap; margin: 0.6rem 0 1rem; }
 label { color: var(--ink-secondary); }
 
-/* ── 잡 실행 카드 ─────────────────────── */
-.job-forms { display: flex; gap: 0.8rem; flex-wrap: wrap; }
-.job-forms form {
-    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 0.9rem 1.1rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
-    box-shadow: var(--shadow);
+/* ── 대시보드 잡 실행 스트립 ───────────── */
+.job-strip { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 0.4rem 0 1.2rem; }
+.job-strip form {
+    display: flex; align-items: center; gap: 0.5rem;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 0.45rem 0.7rem; box-shadow: var(--shadow);
+}
+.job-strip .job-strip-name { font-weight: 700; font-size: 0.85rem; color: var(--accent-ink); }
+.job-strip label {
+    font-size: 0.75rem; color: var(--ink-secondary);
+    display: flex; align-items: center; gap: 0.25rem;
 }
 
 /* ── 잡 예상 비용 카드 ─────────────────── */

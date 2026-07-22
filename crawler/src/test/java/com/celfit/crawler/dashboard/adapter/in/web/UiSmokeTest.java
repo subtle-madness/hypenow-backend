@@ -12,14 +12,12 @@ import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerDiscoveryRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
-import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
 import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostRepository;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
-import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -42,7 +40,6 @@ class UiSmokeTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired InfluencerRepository influencers;
     @Autowired ContentRepository contents;
-    @Autowired RawCommentRepository rawComments;
     @Autowired CrawlRunRepository crawlRuns;
     @Autowired InfluencerDiscoveryRepository discoveries;
     @Autowired RawDiscoveryPostRepository rawDiscovery;
@@ -66,48 +63,39 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 대시보드에_잡_실행_스트립이_렌더된다() throws Exception {
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("job-strip")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/discover")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")));
+    }
+
+    @Test
+    void 대시보드에_예상_비용_카드가_렌더된다() throws Exception {
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
+    }
+
+    @Test
+    void 대시보드에_실행_로그_패널이_렌더된다() throws Exception {
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/fragments/logs")));
+    }
+
+    @Test
     void 상태_타일_프래그먼트가_렌더된다() throws Exception {
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk());
     }
 
     @Test
-    void 잡_화면이_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("collect")));
+    void 잡_실행_페이지는_제거됐다_트리거는_대시보드_스트립() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isNotFound());
     }
 
     @Test
-    void 잡_화면에_예상_비용_카드가_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
-    }
-
-    @Test
-    void 수집_데이터_화면이_content_행이_있어도_렌더된다() throws Exception {
-        Influencer inf = influencers.save(new Influencer("smoke-user"));
-        contents.save(new Content("sc-smoke", ContentType.REELS, "smoke-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
-
-        // 행이 존재하는 상태에서 렌더 — 제거된 필드(adMarked/mainGroup 등) 참조가 남아 있으면 여기서 터진다
-        mvc.perform(get("/ui/contents")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-smoke")));
-    }
-
-    @Test
-    void 콘텐츠_상세_화면이_페이지형_raw_comment_행이_있어도_렌더되고_빈_행을_나열하지_않는다() throws Exception {
-        Influencer inf = influencers.save(new Influencer("smoke-detail-user"));
-        Content content = contents.save(new Content("sc-detail-smoke", ContentType.FEED, "smoke-detail-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
-        CrawlRun run = crawlRuns.save(new CrawlRun(JobName.COLLECT, TriggerType.MANUAL, null,
-                "smoke-detail-user", "direct-comment-crawler", Instant.now()));
-        // SELF_GQL 신규 수집분 — writer/text/writtenAt은 설계상 NULL, payload만 페이지 원형으로 채워진다.
-        rawComments.save(new RawComment(content.getId(), run.getId(), RawSource.SELF_GQL,
-                Map.of("data", Map.of("edges", java.util.List.of("c1", "c2"))), Instant.now()));
-
-        mvc.perform(get("/ui/contents/" + content.getId())).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-detail-smoke")))
-                // fallback 행이 payload를 pretty JSON으로 담아 렌더 — "빈 행 무한 나열"이 아님을 확인
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("edges")));
+    void 수집_게시물_페이지는_제거됐다() throws Exception {
+        mvc.perform(get("/ui/contents")).andExpect(status().isNotFound());
+        mvc.perform(get("/ui/contents/1")).andExpect(status().isNotFound());
     }
 
     @Test
@@ -229,13 +217,6 @@ class UiSmokeTest extends IntegrationTest {
         mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(
                         "https://www.instagram.com/smoke-link-user/")));
-    }
-
-    @Test
-    void 잡_화면에_잡별_중지_버튼이_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/DISCOVER/stop")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")));
     }
 
     @Test
@@ -380,13 +361,6 @@ class UiSmokeTest extends IntegrationTest {
                         org.hamcrest.Matchers.containsString("BACKFILL"))))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("TRACK"))));
-    }
-
-    @Test
-    void 잡_화면에_프로필_수집과_릴스_수집_버튼이_분리되어_있다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("게시물을 위한 프로필 수집")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("릴스 수집")));
     }
 
     @Test

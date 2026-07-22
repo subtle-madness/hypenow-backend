@@ -18,7 +18,7 @@ $env:APIFY_TOKEN = 'apify_api_...'
 ./gradlew bootRun
 ```
 
-- UI: http://localhost:8080/ui (대시보드 · 잡 실행 · 검색 키워드 · 설정 · 수집 데이터 열람)
+- UI: http://localhost:8080/ui (대시보드 — 잡 실행 스트립·예상 비용·실행 로그 포함 · 데일리 수집 · 인플루언서 · 검색 키워드 · 설정)
 - DB: localhost:5433 / crawler / crawler — raw 테이블(`raw_media_page`/`raw_post_detail`/
   `raw_comment`/`raw_profile`)은 `payload`(jsonb, Apify/HikerAPI 응답 원형)와 함께
   추출된 실컬럼(`short_code`/`caption`/`writer`/`text`/`followers` 등)을 갖고 있어
@@ -32,19 +32,20 @@ $env:APIFY_TOKEN = 'apify_api_...'
 ./gradlew test          # 통합 테스트는 Testcontainers — Docker Desktop 필요
 ```
 
-## 운영 절차 (초기 = 전부 수동)
+## 운영 절차
 
 1. UI → 검색 키워드(`/ui/keywords`): 발굴에 쓸 해시태그 검색어 등록(예: 데일리룩). 텍스트
    수정은 없음 — 바꾸려면 삭제 후 재추가. "제외" 처리한 키워드는 다음 discover에서 빠진다.
-2. UI → 잡 실행(`/ui/jobs`): **① discover** 실행 → 활성 키워드를 순회하며 인플루언서를
+2. 대시보드(`/ui`)의 실행 스트립에서 **① discover** 실행 → 활성 키워드를 순회하며 인플루언서를
    upsert(신규는 DISCOVERED) → 대시보드에서 DISCOVERED 수 확인
 3. **② qualify** 실행 → 프로필 조회 후 전역 팔로워 범위로 QUALIFIED/EXCLUDED 판정
    (`EXCLUDED 재판정 포함` 체크박스로 이전에 탈락한 인플루언서도 다시 판정 가능)
 4. **③ collect** 실행 → QUALIFIED 인플루언서의 게시물을 열거해 `content`에 적재하고, 발견된
    게시물의 상세·댓글을 수집(PENDING→COLLECTED). 첫 수집(백필)은 최근 N개월(기본 6개월),
    이후 추적 수집은 최근 N일(기본 30일) 범위 — 대시보드 "백필 대기" 카드로 진행 확인
-5. 검증 끝나면 `application.yml`의 `crawler.schedule.enabled: true`로 자동화
-   (discover/qualify/collect 각각 별도 cron)
+5. 운영 서버는 deploy/compose.yaml의 `CRAWLER_SCHEDULE_*` env로 qualify·beauty·collect·reels가
+   새벽 윈도우 반복 크론으로 자동 실행된다(07-22~, deploy/README §4-2). 발굴(discover·similar)만
+   수동 트리거.
 
 수집 튜닝 값(발굴 상한·판정 팔로워 범위·배치 크기·백필/추적 기간·댓글 상한·재시도 상한)은
 재시작 없이 UI 설정 화면(`/ui/settings`) 또는 REST(`GET/PUT /admin/settings`)로 바꿀 수 있다 —
