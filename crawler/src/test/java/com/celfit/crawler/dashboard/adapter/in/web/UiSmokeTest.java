@@ -91,15 +91,8 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
-    void 잡_화면이_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("collect")));
-    }
-
-    @Test
-    void 잡_화면에_예상_비용_카드가_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
+    void 잡_실행_페이지는_제거됐다_트리거는_대시보드_스트립() throws Exception {
+        mvc.perform(get("/ui/jobs")).andExpect(status().isNotFound());
     }
 
     @Test
@@ -252,13 +245,6 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
-    void 잡_화면에_잡별_중지_버튼이_렌더된다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/DISCOVER/stop")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")));
-    }
-
-    @Test
     void 검색_키워드_화면이_렌더된다() throws Exception {
         mvc.perform(get("/ui/keywords")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("검색 키워드")));
@@ -400,13 +386,6 @@ class UiSmokeTest extends IntegrationTest {
                         org.hamcrest.Matchers.containsString("BACKFILL"))))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("TRACK"))));
-    }
-
-    @Test
-    void 잡_화면에_프로필_수집과_릴스_수집_버튼이_분리되어_있다() throws Exception {
-        mvc.perform(get("/ui/jobs")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("게시물을 위한 프로필 수집")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("릴스 수집")));
     }
 
     @Test

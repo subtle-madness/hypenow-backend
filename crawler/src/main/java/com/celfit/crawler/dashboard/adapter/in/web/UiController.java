@@ -214,12 +214,6 @@ public class UiController {
         return "daily";
     }
 
-    @GetMapping("/ui/jobs")
-    public String jobs(Model model) {
-        model.addAttribute("costs", jobCostEstimator.estimates());
-        return "jobs";
-    }
-
     /** 판정 완료 상태만 — 인플루언서 명단의 범위 불변식. DISCOVERED(판정 전)는 명단 밖. */
     private static final java.util.List<InfluencerStatus> JUDGED_STATUSES =
             java.util.List.of(InfluencerStatus.QUALIFIED, InfluencerStatus.EXCLUDED);
