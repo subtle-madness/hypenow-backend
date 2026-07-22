@@ -156,4 +156,22 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 		assertThat(withdrawn.userId()).isNull();
 		assertThat(withdrawn.usedAt()).isNotNull();
 	}
+
+	@Test
+	void 새로_적재된_코드는_isSent가_false다() throws Exception {
+		String adminEmail = uniqueEmail("admin-issent");
+		seedUser(adminEmail, "ADMIN");
+		String code = uniqueCode("DM-ISSENT");
+		seedUnusedCode(code, "DM");
+
+		// HTTP 계약: 조회 응답에 isSent 키가 false로 존재.
+		mockMvc.perform(get("/admin/signups").with(httpBasic(adminEmail, "Passw0rd!")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[?(@.code=='" + code + "')].isSent")
+						.value(org.hamcrest.Matchers.contains(false)));
+
+		SignupUsageRow row = repository.findAll().stream()
+				.filter(r -> r.code().equals(code)).findFirst().orElseThrow();
+		assertThat(row.isSent()).isFalse();
+	}
 }

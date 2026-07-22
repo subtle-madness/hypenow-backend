@@ -19,7 +19,7 @@ public class AdminSignupRepository {
 
 	public List<SignupUsageRow> findAll() {
 		return jdbcClient.sql("""
-				SELECT sc.code, sc.channel, u.email, sc.used_by AS user_id, sc.used_at
+				SELECT sc.code, sc.channel, u.email, sc.used_by AS user_id, sc.used_at, sc.is_sent
 				FROM app.signup_codes sc
 				LEFT JOIN app.users u ON u.id = sc.used_by
 				ORDER BY sc.used_at DESC NULLS LAST, sc.code""")
