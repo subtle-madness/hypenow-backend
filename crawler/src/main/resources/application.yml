@@ -57,6 +57,8 @@ crawler:
     judge: claude-api # 판정 구현 — claude-api(기본, Anthropic SDK: ANTHROPIC_AUTH_TOKEN 구독 우선·ANTHROPIC_API_KEY 폴백, 모델 crawler.beauty.claude-model 기본 claude-haiku-4-5) | gemini(롤백: GEMINI_API_KEY) | claude-cli(로컬 Claude CLI 롤백)
   reels:
     batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)
+  manual-discovery:
+    token: ${MANUAL_DISCOVERY_TOKEN:}  # 크롬 익스텐션 수동 등록 API 토큰 — 미설정 시 API 비활성(503)
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"
