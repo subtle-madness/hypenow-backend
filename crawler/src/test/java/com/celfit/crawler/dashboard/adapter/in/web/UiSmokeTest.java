@@ -12,14 +12,12 @@ import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerDiscoveryRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
-import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
 import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostRepository;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
-import com.celfit.crawler.crawling.domain.RawComment;
 import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -42,7 +40,6 @@ class UiSmokeTest extends IntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired InfluencerRepository influencers;
     @Autowired ContentRepository contents;
-    @Autowired RawCommentRepository rawComments;
     @Autowired CrawlRunRepository crawlRuns;
     @Autowired InfluencerDiscoveryRepository discoveries;
     @Autowired RawDiscoveryPostRepository rawDiscovery;
@@ -96,31 +93,9 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
-    void 수집_데이터_화면이_content_행이_있어도_렌더된다() throws Exception {
-        Influencer inf = influencers.save(new Influencer("smoke-user"));
-        contents.save(new Content("sc-smoke", ContentType.REELS, "smoke-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
-
-        // 행이 존재하는 상태에서 렌더 — 제거된 필드(adMarked/mainGroup 등) 참조가 남아 있으면 여기서 터진다
-        mvc.perform(get("/ui/contents")).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-smoke")));
-    }
-
-    @Test
-    void 콘텐츠_상세_화면이_페이지형_raw_comment_행이_있어도_렌더되고_빈_행을_나열하지_않는다() throws Exception {
-        Influencer inf = influencers.save(new Influencer("smoke-detail-user"));
-        Content content = contents.save(new Content("sc-detail-smoke", ContentType.FEED, "smoke-detail-user",
-                inf.getId(), Instant.parse("2026-07-01T00:00:00Z"), Instant.now(), ContentOrigin.ENUMERATION));
-        CrawlRun run = crawlRuns.save(new CrawlRun(JobName.COLLECT, TriggerType.MANUAL, null,
-                "smoke-detail-user", "direct-comment-crawler", Instant.now()));
-        // SELF_GQL 신규 수집분 — writer/text/writtenAt은 설계상 NULL, payload만 페이지 원형으로 채워진다.
-        rawComments.save(new RawComment(content.getId(), run.getId(), RawSource.SELF_GQL,
-                Map.of("data", Map.of("edges", java.util.List.of("c1", "c2"))), Instant.now()));
-
-        mvc.perform(get("/ui/contents/" + content.getId())).andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sc-detail-smoke")))
-                // fallback 행이 payload를 pretty JSON으로 담아 렌더 — "빈 행 무한 나열"이 아님을 확인
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("edges")));
+    void 수집_게시물_페이지는_제거됐다() throws Exception {
+        mvc.perform(get("/ui/contents")).andExpect(status().isNotFound());
+        mvc.perform(get("/ui/contents/1")).andExpect(status().isNotFound());
     }
 
     @Test
