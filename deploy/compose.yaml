@@ -87,8 +87,9 @@ services:
       postgres-raw:
         condition: service_healthy
 
-  # 수집 상주 서버(8080 어드민 /ui) — raw(postgres-raw)에 쓰기. 수동 운영: 어드민 UI로 잡 트리거.
-  # 외부 미노출(루프백) — 접근은 SSH 터널(ssh -L 8080:localhost:8080). 스케줄은 기본 off(수동 운영).
+  # 수집 상주 서버(8080 어드민 /ui) — raw(postgres-raw)에 쓰기.
+  # 외부 미노출(루프백) — 접근은 SSH 터널(ssh -L 8080:localhost:8080).
+  # 데일리 스케줄 자동(아래 CRAWLER_SCHEDULE_*) — 발굴(discover·similar)만 어드민 UI 수동 트리거.
   crawler:
     image: ghcr.io/subtle-madness/hypenow-crawler:latest
     restart: unless-stopped
@@ -106,6 +107,16 @@ services:
       APIFY_PROXY_URL: ${APIFY_PROXY_URL:-}
       DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
       DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      # 스케줄(KST=UTC+9) — 윈도우 반복 발사: 잡들이 "남은 대상만" 선정하므로(재방문 컷오프·
+      # DISCOVERED/미판정 잔여) 반복이 안전하고, 일시 실패·컨테이너 재기동을 윈도우 안에서 흡수한다.
+      # collect 01:00~03:30/30분 · reels 01:10~03:55/15분 · qualify 02:00~03:30/30분 · beauty 03:00·03:30
+      # → analytics 미러 04:30 전에 완결(같은 날 새벽 분석·아카이브 반영). 발굴(discover·similar)은 수동.
+      CRAWLER_SCHEDULE_ENABLED: "true"
+      CRAWLER_SCHEDULE_COLLECT_CRON: "0 0/30 16-18 * * *"
+      CRAWLER_SCHEDULE_REELS_CRON: "0 10/15 16-18 * * *"
+      CRAWLER_SCHEDULE_QUALIFY_CRON: "0 0/30 17-18 * * *"
+      CRAWLER_SCHEDULE_BEAUTY_CRON: "0 0,30 18 * * *"
+      CRAWLER_SCHEDULE_DISCOVER_CRON: "-"
       JAVA_OPTS: "-Xmx1g"
     ports:
       - "127.0.0.1:8080:8080"   # 루프백 전용 — 어드민은 SSH 터널로만
