@@ -6,11 +6,13 @@
     <title>celfit crawler — 대시보드</title>
     <link rel="stylesheet" href="/css/admin.css"/>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="/js/admin.js"></script>
 </head>
 <body>
 <nav th:replace="~{fragments/nav :: nav('dashboard')}"></nav>
 <main>
 <h1>대시보드</h1>
+<div class="flash" th:if="${message}" th:text="${message}"></div>
 <!-- 현재 작업 바 (실시간, 2초 폴링) -->
 <div hx-get="/ui/fragments/status" hx-trigger="load, every 2s"></div>
 <!-- 파이프라인 구조 — 잡 흐름 정적 다이어그램 (색·글꼴은 admin.css 변수 상속 → 다크 모드 자동) -->
@@ -67,8 +69,78 @@
     </svg>
     <p class="pipeline-map-note">수집·릴스는 달력 기준 재방문 주기(설정, 현재 1일 = 매일 KST 자정 리셋)로 뷰티 계정을 다시 방문 · 404 응답 계정은 단계와 무관하게 DELETED(소프트 딜리트)로 종결</p>
 </details>
+<!-- 잡 실행 스트립 — 다이어그램의 각 잡을 바로 실행/중지 (긴 설명은 title 툴팁).
+     중지는 협조적 — 진행 중 단위 작업까지 마치고 종료. 스케줄 자동화 후 수동 주 용도는 discover·similar. -->
+<div class="job-strip">
+    <form method="post" th:action="@{/ui/jobs/discover}">
+        <span class="job-strip-name">discover</span>
+        <button type="submit" class="primary" title="해시태그로 인플루언서 발굴">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/DISCOVER/stop}"
+                title="진행 중인 키워드까지 마치고 멈춘다">중지</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/qualify}">
+        <span class="job-strip-name">qualify</span>
+        <label title="범위 변경 후 전체 재판정 — 기존 판정분 포함 · 재호출 없음">
+            <input type="checkbox" name="requalify" value="true" data-persist/> 전체 재판정</label>
+        <button type="submit" class="primary" title="프로필 스냅샷 · 팔로워 범위 판정">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/QUALIFY/stop}"
+                title="진행 중인 프로필 청크까지 마치고 멈춘다">중지</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/beauty}">
+        <span class="job-strip-name">beauty</span>
+        <label title="Claude 판정분 재판정 — 수동 판정 보존 · 인스타 호출 없음">
+            <input type="checkbox" name="rejudge" value="true" data-persist/> 재판정</label>
+        <button type="submit" class="primary" title="뷰티 계정 판정">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/BEAUTY/stop}"
+                title="진행 중인 판정 배치까지 마치고 멈춘다">중지</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/collect}">
+        <span class="job-strip-name">collect</span>
+        <button type="submit" class="primary" title="게시물을 위한 프로필 수집 (피드 12개 내장 · 릴스 제외)">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/COLLECT/stop}"
+                title="진행 중인 방문까지 마치고 멈춘다">중지</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/reels}">
+        <span class="job-strip-name">reels</span>
+        <button type="submit" class="primary" title="릴스 수집 (계정당 HikerAPI 1요청)">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/REELS/stop}"
+                title="진행 중인 방문까지 마치고 멈춘다">중지</button>
+    </form>
+    <form method="post" th:action="@{/ui/jobs/similar}">
+        <span class="job-strip-name">similar</span>
+        <button type="submit" class="primary" title="뷰티 시드의 유사 계정 발굴">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/SIMILAR/stop}"
+                title="진행 중인 시드까지 마치고 멈춘다">중지</button>
+    </form>
+</div>
+<h2>예상 비용</h2>
+<div class="job-costs">
+    <div class="card job-cost" th:each="c : ${costs}">
+        <h3 th:text="${c.job()} + ' — ' + ${c.label()}"></h3>
+        <p class="job-cost-targets">대상 <b th:text="${c.targets()}"></b>건</p>
+        <ul class="job-cost-endpoints">
+            <li th:each="ep : ${c.endpoints()}" th:text="${ep}"></li>
+        </ul>
+        <p class="job-cost-requests">
+            예상 요청 수
+            <b th:if="${c.minRequests() == c.maxRequests()}" th:text="${c.minRequests()} + '회'"></b>
+            <b th:unless="${c.minRequests() == c.maxRequests()}"
+               th:text="${c.minRequests()} + '~' + ${c.maxRequests()} + '회'"></b>
+        </p>
+        <p class="job-cost-usd">
+            예상 비용
+            <b th:if="${c.minCostUsd() == c.maxCostUsd()}"
+               th:text="'$' + ${#numbers.formatDecimal(c.minCostUsd(), 1, 3)}"></b>
+            <b th:unless="${c.minCostUsd() == c.maxCostUsd()}"
+               th:text="'$' + ${#numbers.formatDecimal(c.minCostUsd(), 1, 3)} + '~$' + ${#numbers.formatDecimal(c.maxCostUsd(), 1, 3)}"></b>
+        </p>
+        <p class="job-cost-note" th:if="${c.note() != null}" th:text="${c.note()}"></p>
+    </div>
+</div>
 <!-- 상태 카드 (실시간, 3초 폴링) -->
 <div hx-get="/ui/fragments/status-tiles" hx-trigger="load, every 3s"></div>
+<h2>실행 로그</h2>
+<div hx-get="/ui/fragments/logs" hx-trigger="load, every 3s"></div>
 <h2>최근 실행</h2>
 <div hx-get="/ui/fragments/runs" hx-trigger="load, every 5s"></div>
 </main>

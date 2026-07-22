@@ -21,8 +21,6 @@ public interface ContentRepository extends JpaRepository<Content, Long> {
 
     Page<Content> findByStatus(ContentStatus status, Pageable pageable);
 
-    Page<Content> findByStatusIn(java.util.Collection<ContentStatus> statuses, Pageable pageable);
-
     /** collect 댓글 대상 조회 — origin=ENUMERATION(열거 산출)만 수집 대상이다. 발굴 부산물은 제외. */
     List<Content> findByInfluencerIdAndStatusAndOrigin(Long influencerId, ContentStatus status, ContentOrigin origin);
 
