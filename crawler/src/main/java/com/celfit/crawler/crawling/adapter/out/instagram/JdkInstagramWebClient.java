@@ -160,10 +160,15 @@ public class JdkInstagramWebClient implements InstagramWebClient {
         }
         // 프록시 경로는 요청마다 새 HttpClient(=새 CONNECT 터널)를 열어, 로테이팅 프록시가 매 요청
         // 새 exit IP를 배정하게 한다. 풀링된 클라이언트를 재사용하면 터널이 유지돼 exit IP가 배치 내내
-        // 한 개로 고정되고, IG 익명 요청 한도(~20회)에서 401 연타로 막힌다(실측). 요청 후 close로 터널을
-        // 즉시 닫아 다음 요청이 새 커넥션을 열도록 한다.
-        try (HttpClient client = clientFactory.create(proxyUrl)) {
+        // 한 개로 고정되고, IG 익명 요청 한도(~20회)에서 401 연타로 막힌다(실측). 종료는 close()가
+        // 아니라 shutdownNow() — close()는 커넥션 정리를 기다리며 블로킹돼, 401(WWW-Authenticate 부재
+        // IOException) 뒤엔 상대가 h2 커넥션을 끊어줄 때까지 수십 초(운영 실측 중앙값 62s) 워커를
+        // 점유한다. shutdownNow()는 즉시 반환되면서 터널도 바로 닫는다(로테이션 의도 동일).
+        HttpClient client = clientFactory.create(proxyUrl);
+        try {
             return exchange(client, req);
+        } finally {
+            client.shutdownNow();
         }
     }
 
