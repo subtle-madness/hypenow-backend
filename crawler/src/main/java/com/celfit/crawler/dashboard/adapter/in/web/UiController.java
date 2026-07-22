@@ -96,6 +96,7 @@ public class UiController {
     @GetMapping("/ui")
     public String dashboard(Model model) {
         model.addAttribute("summary", statusService.summary());
+        model.addAttribute("costs", jobCostEstimator.estimates());
         return "dashboard";
     }
 

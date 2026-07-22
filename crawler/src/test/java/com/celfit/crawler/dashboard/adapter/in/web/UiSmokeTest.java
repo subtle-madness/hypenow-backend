@@ -66,6 +66,26 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 대시보드에_잡_실행_스트립이_렌더된다() throws Exception {
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("job-strip")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/discover")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")));
+    }
+
+    @Test
+    void 대시보드에_예상_비용_카드가_렌더된다() throws Exception {
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("예상 비용")));
+    }
+
+    @Test
+    void 대시보드에_실행_로그_패널이_렌더된다() throws Exception {
+        mvc.perform(get("/ui")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/fragments/logs")));
+    }
+
+    @Test
     void 상태_타일_프래그먼트가_렌더된다() throws Exception {
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk());
     }
