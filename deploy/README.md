@@ -105,7 +105,11 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
 - 무료 전용 상태에서는 7일 유휴 시 정지 경고 메일 주시 (JAVA_OPTS -Xms2g가 메모리 조건 방어)
 
 ## 9. 모니터링·알람 (07-21~)
-- OCI 알람 7개 → ONS 토픽 `hypenow-alerts` → 디스코드(웹훅 URL 뒤 `/slack`을 붙인 Slack 프로토콜 구독):
+- OCI 알람 7개 → ONS 토픽 `hypenow-alerts` → **디스코드 릴레이**(CUSTOM_HTTPS 구독 →
+  `ons-relay` 컨테이너 → 디스코드 웹훅. ONS가 SLACK 엔드포인트를 hooks.slack.com만 허용해
+  직결 불가 — 서버 `.env`에 `DISCORD_WEBHOOK_URL`·`ONS_RELAY_TOKEN` 필요, 경로는
+  caddy `/internal/ons-relay/<토큰>`. 주의: 인스턴스 자체가 죽으면 릴레이도 죽어
+  인스턴스 다운·API 불통 알람은 디스코드에 못 온다 — 필요 시 EMAIL 구독을 백업으로 추가):
   **API 외형 감시**(Health Checks `hypenow-api-health` — 외부 관측점 3곳에서 60초마다
   `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
   **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
