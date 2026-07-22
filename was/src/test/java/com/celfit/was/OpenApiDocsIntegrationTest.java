@@ -98,6 +98,18 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
+	void 베이스_경로도_진입점이다() throws Exception {
+		// /swagger-ui(베이스)는 시큐리티 매처(/swagger-ui/**)에는 잡히지만 springdoc 기본 매핑이 없어
+		// 인증 통과 후 404(Whitelabel)가 났다 — 운영에서 ADMIN이 자연 URL로 들어오다 실제로 걸린 경로.
+		// swagger-ui.path=/swagger-ui로 진입 리다이렉트를 매핑해 index.html로 보낸다.
+		mockMvc.perform(get("/swagger-ui").with(httpBasic(ADMIN_EMAIL, PASSWORD)))
+				.andExpect(status().is3xxRedirection());
+		mockMvc.perform(get("/swagger-ui"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(header().exists("WWW-Authenticate"));
+	}
+
+	@Test
 	void ADMIN_세션_쿠키만으로는_401이다() throws Exception {
 		// STATELESS 불변식 — 세션의 권한 스냅샷(로그인 시점 authorities)이 스웨거 게이트에 통하면
 		// 강등된 admin이 로그아웃 전까지 문서를 보게 된다. 세션 경로는 반드시 무시.
