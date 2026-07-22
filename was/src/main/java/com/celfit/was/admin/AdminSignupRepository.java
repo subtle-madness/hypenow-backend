@@ -26,4 +26,12 @@ public class AdminSignupRepository {
 				.query(SignupUsageRow.class)
 				.list();
 	}
+
+	/** 발송 표시 갱신 — 반환 0이면 코드 없음(호출부가 404 판정). */
+	public int updateIsSent(String code, boolean isSent) {
+		return jdbcClient.sql("UPDATE app.signup_codes SET is_sent = :isSent WHERE code = :code")
+				.param("isSent", isSent)
+				.param("code", code)
+				.update();
+	}
 }
