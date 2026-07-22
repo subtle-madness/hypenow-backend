@@ -134,3 +134,9 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
    `gunzip -c dump.sql.gz | docker compose exec -T postgres psql -U $DB_USER -d analysis`
    (또는 로컬 raw에서 미러 재실행 — §4)
 3. DNS A레코드를 새 IP로 변경 → caddy가 인증서 자동 재발급
+
+## 11. 수동 발굴 등록 API (크롬 익스텐션, 07-22~)
+- `POST https://api.hypenow.io/crawler/api/manual-discoveries` — Caddy가 crawler의 이 경로만 공개.
+  헤더 `X-Api-Token` 필요, 서버 `.env`에 `MANUAL_DISCOVERY_TOKEN`(강한 랜덤 값) 설정 후 crawler 재기동.
+  토큰 미설정이면 API는 503(fail-closed). 등록된 계정은 DISCOVERED로 들어가 기존 qualify→beauty가 처리.
+- 익스텐션은 별도 저장소 `hypenow-extension` — 옵션에 엔드포인트 URL·토큰을 넣어 사용.

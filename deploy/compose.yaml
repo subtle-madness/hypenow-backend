@@ -106,6 +106,8 @@ services:
       APIFY_PROXY_URL: ${APIFY_PROXY_URL:-}
       DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
       DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      # 크롬 익스텐션 수동 발굴 등록 API 토큰 — 미설정 시 해당 API 비활성(fail-closed)
+      MANUAL_DISCOVERY_TOKEN: ${MANUAL_DISCOVERY_TOKEN:-}
       JAVA_OPTS: "-Xmx1g"
     ports:
       - "127.0.0.1:8080:8080"   # 루프백 전용 — 어드민은 SSH 터널로만
