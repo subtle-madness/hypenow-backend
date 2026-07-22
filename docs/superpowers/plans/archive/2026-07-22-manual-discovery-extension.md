@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: `docs/superpowers/specs/2026-07-22-manual-discovery-extension-design.md`
+> 상태: ✅ 구현·실행됨 (07-22) · 스펙: `docs/superpowers/specs/2026-07-22-manual-discovery-extension-design.md`
 
 **Goal:** 크롬 익스텐션에서 보고 있는 인스타 프로필을 crawler DB의 발굴 단계(DISCOVERED)로 한 클릭 등록한다.
 
