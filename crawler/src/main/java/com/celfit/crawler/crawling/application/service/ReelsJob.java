@@ -114,20 +114,26 @@ public class ReelsJob {
         UserMediaPageFetcher fetcher = mediaFetchers.stream()
                 .filter(f -> f.source() == RawSource.HIKER_V2_CLIPS).findFirst()
                 .orElseThrow(() -> new IllegalStateException("HIKER_V2_CLIPS 페처 미등록"));
-        CrawlExecutor.Execution ex;
-        try {
-            ex = executor.execute(JobName.REELS, trigger,
-                    null, inf.getUsername(), RawSource.HIKER_V2_CLIPS.name(),
-                    () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null))));
-        } catch (ApifyException e) {
-            if (e.getMessage() != null && e.getMessage().contains(NO_CLIPS_MARK)) {
-                // 릴스가 아예 없는 계정 — 실패가 아니라 '수확할 것 없음' 확정. 재시도 루프 방지.
-                inf.setLastReelsAt(clock.instant());
-                influencers.save(inf);
-                log.info("릴스 없음(404) — 수확 완료로 마킹: {}", inf.getUsername());
-                return 0;
-            }
-            throw e;
+        // '릴스 없음' 404 판정은 콜백 안에서 빈 결과로 흡수한다 — 예외로 내보내면 CrawlExecutor가
+        // run을 FAILED로 마감해, 양성 케이스가 실패 통계·어드민 FAILED 배지를 오염시킨다(07-22 실측:
+        // run 실패의 ~95%가 이것). 요청은 나갔으므로 requestCount=1(과금 집계)은 유지한다.
+        CrawlExecutor.Execution ex = executor.execute(JobName.REELS, trigger,
+                null, inf.getUsername(), RawSource.HIKER_V2_CLIPS.name(), () -> {
+                    try {
+                        return new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null)));
+                    } catch (ApifyException e) {
+                        if (e.getMessage() != null && e.getMessage().contains(NO_CLIPS_MARK)) {
+                            return new ApifyResult(null, 1, List.of());
+                        }
+                        throw e;
+                    }
+                });
+        if (ex.items().isEmpty()) {
+            // 릴스가 아예 없는 계정 — 실패가 아니라 '수확할 것 없음' 확정. 재시도 루프 방지.
+            inf.setLastReelsAt(clock.instant());
+            influencers.save(inf);
+            log.info("릴스 없음(404) — 수확 완료로 마킹: {}", inf.getUsername());
+            return 0;
         }
         Map<String, Object> payload = ex.items().get(0);
         rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), RawSource.HIKER_V2_CLIPS,
