@@ -19,11 +19,19 @@ public class AdminSignupRepository {
 
 	public List<SignupUsageRow> findAll() {
 		return jdbcClient.sql("""
-				SELECT sc.code, sc.channel, u.email, sc.used_by AS user_id, sc.used_at
+				SELECT sc.code, sc.channel, u.email, sc.used_by AS user_id, sc.used_at, sc.is_sent
 				FROM app.signup_codes sc
 				LEFT JOIN app.users u ON u.id = sc.used_by
 				ORDER BY sc.used_at DESC NULLS LAST, sc.code""")
 				.query(SignupUsageRow.class)
 				.list();
+	}
+
+	/** 발송 표시 갱신 — 반환 0이면 코드 없음(호출부가 404 판정). */
+	public int updateIsSent(String code, boolean isSent) {
+		return jdbcClient.sql("UPDATE app.signup_codes SET is_sent = :isSent WHERE code = :code")
+				.param("isSent", isSent)
+				.param("code", code)
+				.update();
 	}
 }

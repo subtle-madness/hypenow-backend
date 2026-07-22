@@ -107,6 +107,8 @@ services:
       APIFY_PROXY_URL: ${APIFY_PROXY_URL:-}
       DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
       DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      # 크롬 익스텐션 수동 발굴 등록 API 토큰 — 미설정 시 해당 API 비활성(fail-closed)
+      MANUAL_DISCOVERY_TOKEN: ${MANUAL_DISCOVERY_TOKEN:-}
       # 스케줄(KST=UTC+9) — 윈도우 반복 발사: 잡들이 "남은 대상만" 선정하므로(재방문 컷오프·
       # DISCOVERED/미판정 잔여) 반복이 안전하고, 일시 실패·컨테이너 재기동을 윈도우 안에서 흡수한다.
       # collect 01:00~03:30/30분 · reels 01:10~03:55/15분 · qualify 02:00~03:30/30분 · beauty 03:00·03:30
