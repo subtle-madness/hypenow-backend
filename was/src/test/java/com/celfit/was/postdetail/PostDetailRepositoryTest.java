@@ -29,6 +29,7 @@ class PostDetailRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_comments");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -61,6 +62,16 @@ class PostDetailRepositoryTest extends IntegrationTest {
 				    author_masked text,
 				    body          text,
 				    like_count    bigint
+				)""");
+		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
+		jdbcTemplate.execute("""
+				CREATE TABLE image_assets (
+				    kind        text NOT NULL,
+				    key         text NOT NULL,
+				    object_path text NOT NULL,
+				    source_name text NOT NULL,
+				    archived_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (kind, key)
 				)""");
 		jdbcTemplate.update("""
 				INSERT INTO accounts VALUES ('marimood', '마리 MARI', 'https://pic/mari.jpg', 16586,
@@ -238,6 +249,28 @@ class PostDetailRepositoryTest extends IntegrationTest {
 		assertThat(found.get().views()).isNull();
 		assertThat(found.get().contentType()).isEqualTo("feed");
 		assertThat(found.get().hypeScore()).isEqualTo(2100L);
+	}
+
+	@Test
+	void 아카이브된_이미지는_img_경로로_미아카이브는_원본_URL로_서빙된다() {
+		// mari01 썸네일 + marimood 프로필만 아카이브
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('thumbnail', 'mari01', 'thumb/mari01.jpg', 'mari01.jpg')");
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('profile', 'marimood', 'profile/marimood.jpg', 'marimood.jpg')");
+
+		Optional<Content> archivedContent = repository.findContent("mari01");
+		assertThat(archivedContent).isPresent();
+		assertThat(archivedContent.get().thumbnailUrl()).isEqualTo("/img/thumb/mari01.jpg");
+
+		Optional<Account> archivedAccount = repository.findAccount("marimood");
+		assertThat(archivedAccount).isPresent();
+		assertThat(archivedAccount.get().profileImageUrl()).isEqualTo("/img/profile/marimood.jpg");
+
+		// mari02는 미아카이브 — 원본 CDN URL 그대로 폴백
+		Optional<Content> fallbackContent = repository.findContent("mari02");
+		assertThat(fallbackContent).isPresent();
+		assertThat(fallbackContent.get().thumbnailUrl()).isEqualTo("https://thumb/mari02.jpg");
 	}
 
 	@Test

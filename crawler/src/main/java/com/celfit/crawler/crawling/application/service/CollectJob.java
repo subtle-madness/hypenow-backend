@@ -71,6 +71,7 @@ public class CollectJob {
     private final SettingsService settings;
     private final Clock clock;
     private final JobProgress progress;
+    private final JobStopFlag stopFlag;
     private final TransactionTemplate txTemplate;
 
     public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
@@ -80,7 +81,7 @@ public class CollectJob {
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
                       List<UserMediaPageFetcher> mediaFetchers,
                       CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
-                      TransactionTemplate txTemplate) {
+                      JobStopFlag stopFlag, TransactionTemplate txTemplate) {
         this.collectProps = collectProps;
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
@@ -95,6 +96,7 @@ public class CollectJob {
         this.settings = settings;
         this.clock = clock;
         this.progress = progress;
+        this.stopFlag = stopFlag;
         this.txTemplate = txTemplate;
     }
 
@@ -125,12 +127,18 @@ public class CollectJob {
                     for (int w = 0; w < VISIT_CONCURRENCY; w++) {
                         pool.submit(() -> {
                             int i;
-                            while ((i = next.getAndIncrement()) < targets.size()) {
+                            // 중지 요청 시 워커가 새 방문을 집지 않는다 — 진행 중 방문은 끝까지 수행
+                            while (!stopFlag.isRequested(JobName.COLLECT)
+                                    && (i = next.getAndIncrement()) < targets.size()) {
                                 visitOne(targets.get(i), trigger, visited, upserted, collected, failed);
                             }
                         });
                     }
                 }
+            }
+            if (stopFlag.isRequested(JobName.COLLECT)) {
+                log.info("collect 중지 요청 — 잔여 방문 건너뛰고 조기 종료 ({}명 중 {}명 방문)",
+                        targets.size(), visited.get() + failed.get());
             }
         } finally {
             progress.finish(JobName.COLLECT);

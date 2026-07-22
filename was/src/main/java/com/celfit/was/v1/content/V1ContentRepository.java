@@ -52,6 +52,8 @@ public class V1ContentRepository {
 				FROM contents c
 				JOIN content_analyses an ON an.short_code = c.short_code
 				JOIN accounts a ON a.handle = c.account_handle
+				LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
 				WHERE c.posted_at >= :start AND c.posted_at < :end
 				  AND c.content_type = :contentType
 				  AND an.is_beauty = true

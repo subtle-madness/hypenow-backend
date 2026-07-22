@@ -72,6 +72,7 @@ class CollectJobTest {
     CrawlExecutor executor = mock(CrawlExecutor.class);
     SettingsService settings = mock(SettingsService.class);
     JobProgress progress = mock(JobProgress.class);
+    JobStopFlag stopFlag = new JobStopFlag();
     // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 방문 단위 트랜잭션 래핑을 그대로 재현한다.
     TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
@@ -158,13 +159,27 @@ class CollectJobTest {
         return job(commentsEnabled, List.of());
     }
 
+    @Test
+    void 중지_요청이_있으면_워커가_방문을_집지_않는다() {
+        wireCommon();
+        when(influencers.findCollectTargets(any(), any())).thenReturn(List.of(
+                influencer(1L, "a", null, null), influencer(2L, "b", null, null)));
+        stopFlag.request(JobName.COLLECT);
+
+        var summary = job().run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isZero();
+        assertThat(summary.failedVisits()).isZero();
+        verify(profileSourceSelector, never()).fetchAndSupplement(any(), any(), any());
+    }
+
     CollectJob job(boolean commentsEnabled,
                    List<com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher> mediaFetchers) {
         CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
         return new CollectJob(props, influencers, rawProfiles, contents,
                 new ContentUpserter(contents, CLOCK), rawComments, rawMediaPages,
                 profileSourceSelector, commentSource, mediaFetchers, executor, settings, CLOCK, progress,
-                txTemplate);
+                stopFlag, txTemplate);
     }
 
     @Test

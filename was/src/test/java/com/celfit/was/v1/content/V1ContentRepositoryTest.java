@@ -28,6 +28,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_distributors");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -79,6 +80,16 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				    name text PRIMARY KEY,
 				    sort int  NOT NULL,
 				    slug text NOT NULL UNIQUE
+				)""");
+		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
+		jdbcTemplate.execute("""
+				CREATE TABLE image_assets (
+				    kind        text NOT NULL,
+				    key         text NOT NULL,
+				    object_path text NOT NULL,
+				    source_name text NOT NULL,
+				    archived_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (kind, key)
 				)""");
 
 		// 어휘 시드: 아이메이크업(아이라이너)·립메이크업(립틴트), 유통사 2종(slug 포함)
@@ -233,6 +244,26 @@ class V1ContentRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findCards(limited)).hasSize(1);
 		assertThat(repository.countCards(limited)).isEqualTo(3);
+	}
+
+	@Test
+	void 아카이브된_이미지는_img_경로로_미아카이브는_원본_URL로_서빙된다() {
+		// r1(alpha)만 아카이브: 썸네일 kind='thumbnail'/key=short_code, 프로필 kind='profile'/key=handle
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('thumbnail', 'r1', 'thumb/r1.jpg', 'r1.jpg')");
+		jdbcTemplate.update("INSERT INTO image_assets(kind, key, object_path, source_name) "
+				+ "VALUES ('profile', 'alpha', 'profile/alpha.jpg', 'alpha.jpg')");
+
+		List<ContentCardRow> rows = repository.findCards(query());
+
+		ContentCardRow archived = rows.stream().filter(r -> r.shortCode().equals("r1")).findFirst().orElseThrow();
+		assertThat(archived.thumbnailUrl()).isEqualTo("/img/thumb/r1.jpg");
+		assertThat(archived.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+
+		// r2(beta)는 미아카이브 — 원본 CDN URL 그대로 폴백
+		ContentCardRow fallback = rows.stream().filter(r -> r.shortCode().equals("r2")).findFirst().orElseThrow();
+		assertThat(fallback.thumbnailUrl()).isEqualTo("https://thumb/r2.jpg");
+		assertThat(fallback.profileImageUrl()).isEqualTo("https://pic/beta.jpg");
 	}
 
 	@Test

@@ -141,11 +141,11 @@ class ClaudeBurstRunnerTest {
 		runner().export();
 
 		JsonNode sidecar = om.readTree(Files.readAllLines(workDir.resolve("accounts-sidecar.jsonl")).get(0));
-		assertTrue(sidecar.path("has_ad_comparison").asBoolean());
+		assertEquals("COMPARABLE", sidecar.path("ad_situation").asString());
 		// 프롬프트 수치도 정본으로 치환된다 (metric 미지정 → likes 기준: organic 300 vs ad 200)
 		String user = om.readTree(Files.readAllLines(workDir.resolve("accounts-input.jsonl")).get(0))
 				.path("user").asString();
-		assertTrue(user.contains("광고 비교 데이터: 있음"), user);
+		assertTrue(user.contains("광고 활동: 비교 가능"), user);
 		assertTrue(user.contains("organic_avg=300"), user);
 		assertTrue(user.contains("ad_avg=200"), user);
 	}

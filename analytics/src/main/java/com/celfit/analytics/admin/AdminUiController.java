@@ -31,9 +31,9 @@ public class AdminUiController {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
 
-	/** 대시보드에 활성 잡으로 노출하는 3종. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시. */
+	/** 대시보드에 활성 잡으로 노출하는 4종. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시. */
 	private static final List<JobName> DASHBOARD_JOBS =
-			List.of(JobName.MIRROR, JobName.ANALYZE, JobName.ACCOUNT_ANALYZE);
+			List.of(JobName.MIRROR, JobName.ANALYZE, JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE);
 
 	/** 잡 카드 뷰모델 — 시각·경과는 컨트롤러에서 KST 포맷해 문자열로 넘긴다(#temporals 미탑재). */
 	public record JobCard(JobName job, String label, boolean running,

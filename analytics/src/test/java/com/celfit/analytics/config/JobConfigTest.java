@@ -20,6 +20,8 @@ class JobConfigTest {
 							.containsBeanDefinition("contentAnalysisJob")).isTrue();
 					assertThat(ctx.getSourceApplicationContext()
 							.containsBeanDefinition("accountAnalysisJob")).isTrue();
+					assertThat(ctx.getSourceApplicationContext()
+							.containsBeanDefinition("imageArchiveJob")).isTrue();
 				});
 	}
 
@@ -33,6 +35,8 @@ class JobConfigTest {
 							.containsBeanDefinition("contentAnalysisJob")).isFalse();
 					assertThat(ctx.getSourceApplicationContext()
 							.containsBeanDefinition("accountAnalysisJob")).isFalse();
+					assertThat(ctx.getSourceApplicationContext()
+							.containsBeanDefinition("imageArchiveJob")).isFalse();
 				});
 	}
 
@@ -44,6 +48,17 @@ class JobConfigTest {
 							.containsBeanDefinition("contentAnalysisJob")).isTrue();
 					assertThat(ctx.getSourceApplicationContext()
 							.containsBeanDefinition("commentClassificationJob")).isFalse();
+				});
+	}
+
+	@Test
+	void archive_gate_on이면_imageArchiveJob_빈_정의가_있다() {
+		runner.withPropertyValues("analytics.admin-enabled=false", "analytics.archive-on-startup=true")
+				.run(ctx -> {
+					assertThat(ctx.getSourceApplicationContext()
+							.containsBeanDefinition("imageArchiveJob")).isTrue();
+					assertThat(ctx.getSourceApplicationContext()
+							.containsBeanDefinition("contentAnalysisJob")).isFalse();
 				});
 	}
 }

@@ -45,7 +45,9 @@ class QualifyJobTest {
             new org.springframework.transaction.support.TransactionTemplate(
                     mock(org.springframework.transaction.PlatformTransactionManager.class));
 
-    QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, CLOCK, txTemplate);
+    JobStopFlag stopFlag = new JobStopFlag();
+
+    QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, stopFlag, CLOCK, txTemplate);
 
     @BeforeEach
     void wireDefaults() {
@@ -72,6 +74,24 @@ class QualifyJobTest {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("user", user);
         return root;
+    }
+
+    @Test
+    void 중지_요청이_있으면_프로필_청크는_건너뛰고_이미_확보된_판정만_진행한다() {
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer legacy = influencer(1L, "legacy", InfluencerStatus.DISCOVERED, 10000L, NOW);
+        when(influencers.findByStatusAndFollowersIsNotNull(InfluencerStatus.DISCOVERED))
+                .thenReturn(List.of(legacy));
+        Influencer pending = influencer(2L, "pending", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatusAndFollowersIsNull(eq(InfluencerStatus.DISCOVERED), any(Pageable.class)))
+                .thenReturn(List.of(pending));
+        stopFlag.request(JobName.QUALIFY);
+
+        var summary = job.run(TriggerType.MANUAL, false);
+
+        verify(selector, never()).fetchAndSupplement(any(), any(), any());  // API 구간만 중단
+        assertThat(legacy.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);  // DB 전용 판정은 진행
+        assertThat(summary.deferred()).isEqualTo(1);  // 미확보분은 다음 실행 재시도
     }
 
     @Test

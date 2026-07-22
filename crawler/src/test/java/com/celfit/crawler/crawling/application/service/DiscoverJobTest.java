@@ -23,6 +23,7 @@ import com.celfit.crawler.crawling.application.port.out.RawDiscoveryPostReposito
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawDiscoveryPost;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -50,8 +51,10 @@ class DiscoverJobTest {
     RawDiscoveryPostRepository rawDiscovery = mock(RawDiscoveryPostRepository.class);
     DiscoverSourceSelector selector = mock(DiscoverSourceSelector.class);
 
+    JobStopFlag stopFlag = new JobStopFlag();
+
     DiscoverJob job = new DiscoverJob(keywords, influencers, discoveries, contents,
-            rawDiscovery, selector, CLOCK);
+            rawDiscovery, selector, stopFlag, CLOCK);
 
     AtomicLong influencerIds = new AtomicLong(0);
     AtomicLong contentIds = new AtomicLong(0);
@@ -83,6 +86,17 @@ class DiscoverJobTest {
         if (productType != null) m.put("productType", productType);
         if (caption != null) m.put("caption", caption);
         return m;
+    }
+
+    @Test
+    void 중지_요청이_있으면_키워드를_순회하지_않는다() {
+        when(keywords.findByEnabledTrue()).thenReturn(List.of(keyword("립"), keyword("틴트")));
+        stopFlag.request(JobName.DISCOVER);
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        verify(selector, never()).fetch(anyString(), any());
+        assertThat(summary.newInfluencers()).isZero();
     }
 
     @Test

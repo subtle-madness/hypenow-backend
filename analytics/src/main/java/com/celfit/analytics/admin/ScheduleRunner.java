@@ -44,4 +44,9 @@ public class ScheduleRunner {
 		log.info("스케줄 account-analyze: {}",
 				jobService.trigger(JobName.ACCOUNT_ANALYZE, TriggerType.SCHEDULED));
 	}
+
+	@Scheduled(cron = "${analytics.schedule.archive-cron:-}")
+	void archive() {
+		log.info("스케줄 archive: {}", jobService.trigger(JobName.ARCHIVE, TriggerType.SCHEDULED));
+	}
 }

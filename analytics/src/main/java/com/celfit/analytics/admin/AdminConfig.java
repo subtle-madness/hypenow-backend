@@ -2,6 +2,8 @@ package com.celfit.analytics.admin;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
+import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
+import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.coverage.CoverageRepository;
@@ -51,9 +53,12 @@ public class AdminConfig {
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
+			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
+			ObjectProvider<ImageArchiveJob> archiveJob,
 			JobProgressRegistry jobProgressRegistry, RunHistory runHistory) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
-				classifyJob, analyzeJob, accountAnalyzeJob, jobProgressRegistry, runHistory);
+				classifyJob, analyzeJob, accountAnalyzeJob, synthesisRefreshJob, archiveJob,
+				jobProgressRegistry, runHistory);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")
@@ -71,8 +76,9 @@ public class AdminConfig {
 			@Value("${analytics.schedule.mirror-cron:-}") String mirrorCron,
 			@Value("${analytics.schedule.classify-cron:-}") String classifyCron,
 			@Value("${analytics.schedule.analyze-cron:-}") String analyzeCron,
-			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron) {
-		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron);
+			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron,
+			@Value("${analytics.schedule.archive-cron:-}") String archiveCron) {
+		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron, archiveCron);
 	}
 
 	@Bean

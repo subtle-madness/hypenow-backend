@@ -15,6 +15,7 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import java.time.Clock;
 import java.time.Instant;
@@ -46,8 +47,10 @@ class SimilarJobTest {
 
     java.util.List<Integer> capturedRequestCounts = new java.util.ArrayList<>();
 
-    SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings, CLOCK,
-            txTemplate);
+    JobStopFlag stopFlag = new JobStopFlag();
+
+    SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings,
+            stopFlag, CLOCK, txTemplate);
 
     static Influencer seed(Long id, String username, String igUserId) {
         Influencer inf = new Influencer(username);
@@ -70,6 +73,19 @@ class SimilarJobTest {
                     return new CrawlExecutor.Execution(1L, r.items());
                 });
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void 중지_요청이_있으면_시드를_처리하지_않는다() {
+        when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), any())).thenReturn(List.of(seed(1L, "seed1", "100")));
+        stopFlag.request(JobName.SIMILAR);
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        verify(executor, never()).execute(any(), any(), any(), any(), any(), any(Supplier.class));
+        assertThat(summary.processedSeeds()).isZero();
     }
 
     @Test

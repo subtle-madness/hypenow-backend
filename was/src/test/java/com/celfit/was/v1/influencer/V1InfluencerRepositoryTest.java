@@ -23,13 +23,45 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 	void setUpTables() {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    external_link     text
+				)""");
+		jdbcTemplate.execute("""
+				CREATE TABLE account_summaries (
+				    handle                   text PRIMARY KEY,
+				    followers                bigint,
+				    follows_count            bigint,
+				    posts_count              bigint,
+				    biography                text,
+				    analyzed_count           bigint,
+				    views_count              bigint,
+				    metric                   text,
+				    avg_views                bigint,
+				    views_per_follower       numeric,
+				    avg_er_pct               numeric,
+				    avg_likes                bigint,
+				    avg_comments             bigint,
+				    trend_direction          text,
+				    trend_change_pct         integer,
+				    trend_older_avg          bigint,
+				    trend_newer_avg          bigint,
+				    sponsored_count          bigint,
+				    organic_avg              bigint,
+				    ad_avg                   bigint,
+				    ad_drop_pct              integer,
+				    comparison_organic_count bigint,
+				    comparison_ad_count      bigint,
+				    last_ad_posted_at        timestamptz,
+				    last_posted_at           timestamptz,
+				    avg_interval_days        numeric
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
@@ -58,10 +90,20 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				    detected_distributors jsonb,
 				    is_beauty             boolean
 				)""");
+		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
+		jdbcTemplate.execute("""
+				CREATE TABLE image_assets (
+				    kind        text NOT NULL,
+				    key         text NOT NULL,
+				    object_path text NOT NULL,
+				    source_name text NOT NULL,
+				    archived_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (kind, key)
+				)""");
 
 		jdbcTemplate.update("""
-				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
-				 ('alpha', '알파', 'https://pic/alpha.jpg', 5000)
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers, external_link) VALUES
+				 ('alpha', '알파', 'https://pic/alpha.jpg', 5000, null)
 				""");
 
 		// a1(분석 완료, 이른 게시), a2(분석 미완, 더 최신 게시), a3(비뷰티 확정, 가장 최신 게시).
@@ -106,5 +148,21 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 		assertThat(a2.views()).isEqualTo(9999L);
 		assertThat(a2.handle()).isEqualTo("alpha");
 		assertThat(a2.followers()).isEqualTo(5000L);
+	}
+
+	@Test
+	void 프로필_이미지는_아카이브되면_img_경로_아니면_원본() {
+		// 원본 URL이 설정된 프로필 조회 — 아카이브 없으면 원본 반환(fallback)
+		V1InfluencerRepository.ProfileRow profile = repository.findProfile("alpha").orElseThrow();
+		assertThat(profile.profileImageUrl()).isEqualTo("https://pic/alpha.jpg");
+
+		// 아카이브 추가 후 재조회 — COALESCE가 /img/ 경로 선택
+		jdbcTemplate.update("""
+				INSERT INTO image_assets (kind, key, object_path, source_name)
+				VALUES ('profile', 'alpha', 'profile/alpha.jpg', 'alpha.jpg')
+				""");
+
+		profile = repository.findProfile("alpha").orElseThrow();
+		assertThat(profile.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
 	}
 }
