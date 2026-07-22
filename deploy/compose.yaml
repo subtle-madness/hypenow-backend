@@ -137,6 +137,19 @@ services:
       analytics:
         condition: service_healthy
 
+  # OCI ONS 알람 → 디스코드 웹훅 릴레이 — ONS가 SLACK 엔드포인트를 hooks.slack.com만
+  # 허용해 디스코드 직결 불가(2026-07 실측). caddy가 /internal/ons-relay/*를 이쪽으로 라우팅.
+  ons-relay:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
+      ONS_RELAY_TOKEN: ${ONS_RELAY_TOKEN}
+    volumes:
+      - ./ons-discord-relay.py:/relay.py:ro
+    command: python /relay.py
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
