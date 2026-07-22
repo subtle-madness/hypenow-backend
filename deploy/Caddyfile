@@ -1,3 +1,9 @@
 {$API_DOMAIN} {
-	reverse_proxy was:8081
+	# OCI ONS 알람 → 디스코드 릴레이 (경로 토큰은 릴레이가 검증)
+	handle /internal/ons-relay/* {
+		reverse_proxy ons-relay:9099
+	}
+	handle {
+		reverse_proxy was:8081
+	}
 }
