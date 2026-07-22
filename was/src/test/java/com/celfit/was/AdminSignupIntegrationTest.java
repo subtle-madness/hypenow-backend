@@ -3,8 +3,11 @@ package com.celfit.was;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.springframework.http.MediaType;
 
 import java.util.List;
 import java.util.UUID;
@@ -155,5 +158,88 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 		assertThat(withdrawn.email()).isNull();
 		assertThat(withdrawn.userId()).isNull();
 		assertThat(withdrawn.usedAt()).isNotNull();
+	}
+
+	@Test
+	void 새로_적재된_코드는_isSent가_false다() throws Exception {
+		String adminEmail = uniqueEmail("admin-issent");
+		seedUser(adminEmail, "ADMIN");
+		String code = uniqueCode("DM-ISSENT");
+		seedUnusedCode(code, "DM");
+
+		// HTTP 계약: 조회 응답에 isSent 키가 false로 존재.
+		mockMvc.perform(get("/admin/signups").with(httpBasic(adminEmail, "Passw0rd!")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[?(@.code=='" + code + "')].isSent")
+						.value(org.hamcrest.Matchers.contains(false)));
+
+		SignupUsageRow row = repository.findAll().stream()
+				.filter(r -> r.code().equals(code)).findFirst().orElseThrow();
+		assertThat(row.isSent()).isFalse();
+	}
+
+	@Test
+	void PATCH로_발송_표시를_켜고_끌_수_있다() throws Exception {
+		String adminEmail = uniqueEmail("admin-sent");
+		seedUser(adminEmail, "ADMIN");
+		String code = uniqueCode("DM-SENT");
+		seedUnusedCode(code, "DM");
+
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSent\": true}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.code").value(code))
+				.andExpect(jsonPath("$.isSent").value(true));
+		assertThat(repository.findAll().stream()
+				.filter(r -> r.code().equals(code)).findFirst().orElseThrow().isSent()).isTrue();
+
+		// 양방향 — 다시 끄기(실수 복구).
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSent\": false}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.isSent").value(false));
+		assertThat(repository.findAll().stream()
+				.filter(r -> r.code().equals(code)).findFirst().orElseThrow().isSent()).isFalse();
+	}
+
+	@Test
+	void 없는_코드_PATCH는_404() throws Exception {
+		String adminEmail = uniqueEmail("admin-404");
+		seedUser(adminEmail, "ADMIN");
+
+		mockMvc.perform(patch("/admin/signup-codes/" + uniqueCode("NOPE"))
+				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSent\": true}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error").exists());
+	}
+
+	@Test
+	void isSent_누락_PATCH는_400() throws Exception {
+		String adminEmail = uniqueEmail("admin-400");
+		seedUser(adminEmail, "ADMIN");
+		String code = uniqueCode("DM-400");
+		seedUnusedCode(code, "DM");
+
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error").exists());
+	}
+
+	@Test
+	void 미인증_PATCH는_401() throws Exception {
+		// @Order(0) 토큰 체인 매처는 정확히 /admin/signup-codes — 하위 경로는 Basic 체인(401 챌린지)에 떨어진다.
+		mockMvc.perform(patch("/admin/signup-codes/" + uniqueCode("DM-ANON"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSent\": true}"))
+				.andExpect(status().isUnauthorized());
 	}
 }
