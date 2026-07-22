@@ -124,4 +124,13 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 				.andExpect(status().isUnauthorized())
 				.andExpect(header().exists("WWW-Authenticate"));
 	}
+
+	@Test
+	void 어드민_API도_문서화된다() throws Exception {
+		// 07-22 결정: paths-to-match에 /admin/** 추가 — 접근은 기존 ADMIN 게이트가 통제하므로 보안 변화 없음.
+		mockMvc.perform(get("/v3/api-docs").with(httpBasic(ADMIN_EMAIL, PASSWORD)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.paths['/admin/signups']").exists())
+				.andExpect(jsonPath("$.paths['/admin/signup-codes/{code}']").exists());
+	}
 }

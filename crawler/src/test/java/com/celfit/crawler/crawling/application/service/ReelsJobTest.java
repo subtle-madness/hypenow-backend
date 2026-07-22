@@ -251,6 +251,43 @@ class ReelsJobTest {
     }
 
     @Test
+    void 릴스없음_404는_crawl_run을_FAILED로_기록하지_않는다() {
+        // 실제 CrawlExecutor는 콜백이 던지면 run을 FAILED로 마감한 뒤 재-throw한다 — 그 마감 규칙만
+        // 흉내내서, '릴스 없음' 판정이 executor 콜백 밖(예외 경로)이 아니라 안(빈 결과)에서 나는지 검증.
+        var runFailed = new java.util.concurrent.atomic.AtomicBoolean();
+        when(executor.execute(any(), any(), any(), any(), any(), any(Supplier.class)))
+                .thenAnswer(inv -> {
+                    Supplier<ApifyResult> work = inv.getArgument(5);
+                    try {
+                        return new CrawlExecutor.Execution(runIdSeq.incrementAndGet(), work.get().items());
+                    } catch (ApifyException e) {
+                        runFailed.set(true);
+                        throw e;
+                    }
+                });
+        Influencer noClips = beautyTarget(1L, "no_clips_user", "PK1");
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(noClips));
+        UserMediaPageFetcher fetcher = new UserMediaPageFetcher() {
+            @Override
+            public RawSource source() {
+                return RawSource.HIKER_V2_CLIPS;
+            }
+
+            @Override
+            public Map<String, Object> fetchPage(String userId, String cursor) {
+                throw new com.celfit.crawler.crawling.application.port.out.NotFoundException(
+                        "Hiker HTTP 404: {\"detail\":\"Entries not found\"}");
+            }
+        };
+
+        var s = job(List.of(fetcher)).run(TriggerType.MANUAL);
+
+        assertThat(runFailed).isFalse();                     // 양성 케이스 — FAILED 배지 금지
+        assertThat(s.failedVisits()).isZero();
+        assertThat(noClips.getLastReelsAt()).isEqualTo(NOW);
+    }
+
+    @Test
     void 이미_있는_DISCOVERY_행은_새로_만들지_않고_ENUMERATION으로_승격한다() {
         Influencer inf = beautyTarget(1L, "alice", "PK1");
         when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(inf));
