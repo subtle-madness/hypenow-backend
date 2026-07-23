@@ -434,19 +434,22 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 늦크롤_백필_게시물도_윈도우가_닫히면_대상에서_제외된다() {
+	void 늦크롤_백필_게시물도_윈도우가_닫히면_runLateBackfill_대상에서도_제외된다() {
 		// 07-20 개정으로 "백필 MVP 제외"(07-19)는 번복됐다 — 늦크롤이라도 계정별 최근 N개 윈도우
 		// 안이면 이제 포함된다(late_backfill 마킹, 아래 늦크롤_최근_윈도우_안이면 테스트로 회귀 검증).
-		// 이 테스트는 그 윈도우 경로까지 완전히 닫힌 경우(recent-window=0)를 별도로 고정한다 —
-		// 순수 제때 가드만으로는 여전히 늦크롤분이 제외됨을 확인.
+		// 이 테스트는 그 윈도우 경로까지 완전히 닫힌 경우(recent-window=0)를 고정한다 — 백필의
+		// 킬스위치(recent-window=0으로 전량 차단)가 실제로 동작함을 runLateBackfill()로 검증한다.
+		// (split 이후 recentWindow는 LATE_BACKFILL_SQL에만 쓰이므로 run()으로는 이 게이트를 못 태운다.)
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '20 days',
 				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
 
-		int processed = job.run().processed();
+		int timelyProcessed = job.run().processed();
+		int backfillProcessed = job.runLateBackfill().processed();
 
-		assertEquals(1, processed); // post_b만 (post_a는 +11일 늦크롤, 윈도우도 닫혀 있음)
+		assertEquals(1, timelyProcessed); // post_b만 (post_a는 늦크롤)
+		assertEquals(0, backfillProcessed); // post_a는 늦크롤이지만 윈도우가 닫혀 있어(rn<=0) 제외
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 	}
