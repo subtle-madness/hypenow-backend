@@ -176,6 +176,35 @@ class SimilarJobTest {
         assertThat(s.getSimilarProcessedAt()).isEqualTo(NOW);
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void chaining_불가는_crawl_run을_FAILED로_기록하지_않는다() {
+        // 실제 CrawlExecutor는 콜백이 던지면 run을 FAILED로 마감한 뒤 재-throw한다 — 그 마감 규칙만
+        // 흉내내서, '수확 불가' 판정이 콜백 밖(예외 경로)이 아니라 안(빈 결과)에서 나는지 검증.
+        var runFailed = new java.util.concurrent.atomic.AtomicBoolean();
+        when(executor.execute(any(), any(), any(), any(), any(), any(Supplier.class)))
+                .thenAnswer(inv -> {
+                    try {
+                        ApifyResult r = ((Supplier<ApifyResult>) inv.getArgument(5)).get();
+                        return new CrawlExecutor.Execution(1L, r.items());
+                    } catch (ApifyException e) {
+                        runFailed.set(true);
+                        throw e;
+                    }
+                });
+        Influencer s = seed(1L, "seed1", "100");
+        when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), any())).thenReturn(List.of(s));
+        when(suggested.fetch("100")).thenThrow(new ApifyException(
+                "Hiker HTTP 403: {\"detail\":\"Not eligible for chaining.\",\"exc_type\":\"InvalidTargetUser\"}"));
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        assertThat(runFailed).isFalse();                     // 양성 케이스 — FAILED 배지 금지
+        assertThat(summary.ineligibleSeeds()).isEqualTo(1);
+        assertThat(s.getSimilarProcessedAt()).isEqualTo(NOW);
+    }
+
     @Test
     void 일반_오류_시드는_격리되고_다음_시드는_계속_처리된다() {
         Influencer bad = seed(1L, "bad", "1");
