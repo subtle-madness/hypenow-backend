@@ -31,7 +31,7 @@ public class AdminUiController {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
 
-	/** 대시보드에 활성 잡으로 노출하는 4종. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시. */
+	/** 대시보드에 활성 잡으로 노출하는 5종. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시. */
 	private static final List<JobName> DASHBOARD_JOBS =
 			List.of(JobName.MIRROR, JobName.ANALYZE, JobName.LATE_BACKFILL_ANALYZE,
 					JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE);
