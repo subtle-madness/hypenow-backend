@@ -79,8 +79,10 @@ public class JobConfig {
 			ObjectProvider<JobProgressRegistry> progressRegistry) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
+		ProgressReporter backfillReporter = registry != null
+				? registry.reporter(JobName.LATE_BACKFILL_ANALYZE) : ProgressReporter.NOOP;
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
-				settings, thumbnailEnabled, headPrecheck(), reporter);
+				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter);
 	}
 
 	@Bean

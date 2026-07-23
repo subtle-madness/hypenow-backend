@@ -140,14 +140,13 @@ public class PipelineStatsService {
 		long mirrorAccounts = count(analysis, "SELECT count(*) FROM accounts");
 		long copied = count(analysis, "SELECT count(DISTINCT handle) FROM account_analyses");
 		Heavy heavy = cachedHeavy;
-		int limit = settings.analyzeBatchLimit();
 		// 잔여는 크로스 DB 대조의 "진짜 잔여"(후보 ∩ 미분석) — 누적 마킹 수로 빼면 리비전이 섞인다.
 		long remaining = heavy == null ? -1 : heavy.truePending();
 		return new Funnel(rawContents,
 				num(ca.get("total")), num(ca.get("timely")), num(ca.get("backfill")),
 				served, mirrorAccounts, copied, accountTarget(), accounts, heavy,
-				remaining < 0 ? 0 : todayPlanned(remaining, limit),
-				remaining < 0 ? 0 : daysToFull(remaining, limit),
+				remaining < 0 ? 0 : todayPlanned(remaining),
+				remaining < 0 ? 0 : daysToFull(remaining),
 				settings.metricPinDays(), settings.analyzeTimelySlackDays(),
 				heavyError);
 	}
@@ -221,13 +220,21 @@ public class PipelineStatsService {
 		return v == null ? 0 : v;
 	}
 
-	static int todayPlanned(long remaining, int batchLimit) {
-		return (int) Math.min(Math.max(0, remaining), batchLimit);
+	/**
+	 * 오늘 처리 예정 — LIMIT 폐지(2026-07-23, ContentAnalysisJob timely/late_backfill 분리)
+	 * 이후 잡은 매 실행마다 자격 후보 전량을 시도한다(실질 상한은 LLM 쿼타 429). "오늘 예정"은
+	 * 그래서 잔여 전체다.
+	 */
+	static int todayPlanned(long remaining) {
+		return (int) Math.min(Math.max(0, remaining), Integer.MAX_VALUE);
 	}
 
-	static int daysToFull(long remaining, int batchLimit) {
-		if (remaining <= 0 || batchLimit <= 0) return 0;
-		return (int) Math.ceilDiv(remaining, batchLimit);
+	/**
+	 * 완주까지 남은 실행 횟수 — 잡이 매 실행 전량을 시도하므로 잔여가 있으면 다음 1회뿐이다.
+	 * 쿼타 소진으로 이월되는 경우는 이 수치가 아니라 RunHistory의 QUOTA_CARRYOVER 이력으로 별도 노출된다.
+	 */
+	static int daysToFull(long remaining) {
+		return remaining > 0 ? 1 : 0;
 	}
 
 	/** 트랙별 대조 (G1 핵심) — 후보(short_code→timely)와 기분석 셋의 Java 교집합. 항등식 보장 지점. */

@@ -124,6 +124,7 @@ public class AnalyticsJobService {
 				yield new JobResult(n, 0, false);
 			}
 			case ANALYZE -> analyzeJob.getObject().run();
+			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
 			case SYNTHESIS_REFRESH -> synthesisRefreshJob.getObject().run();
 			case ARCHIVE -> archiveJob.getObject().run();

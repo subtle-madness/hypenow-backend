@@ -19,6 +19,7 @@ analytics:
   schedule:
     enabled: false             # 스케줄 트리거 골격 — 켜려면 true + 잡별 *-cron 지정 (admin-enabled 필요)
     # mirror-cron: "0 0 6 * * *"   # 켜는 날 예시. 미지정 잡은 "-"(비활성)
+    # late-backfill-analyze-cron: "0 30 3 * * *"  # timely(analyze-cron) 직후 예시 — 별도 예산이라 독립 조정 가능
 
 app:
   datasource:
