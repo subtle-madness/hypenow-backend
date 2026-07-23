@@ -69,8 +69,10 @@ public class SecurityConfig {
 	}
 
 	/**
-	 * 가입 코드 적재 전용 체인(설계 2026-07-20) — /admin/signup-codes만 정적 토큰(Bearer CODES_API_KEY)으로 잠근다.
-	 * @Order(0)이라 사람용 @Order(1) ADMIN Basic 체인(/admin/**)보다 먼저 이 경로를 잡는다(기계 대 기계 호출).
+	 * 가입 코드 API 체인(설계 2026-07-20, 07-23 확장) — 적재 POST에 더해 조회 GET(/admin/signups)·
+	 * 발송 표시 PATCH(/admin/signup-codes/{code})까지 정적 토큰(Bearer CODES_API_KEY)으로 잠근다.
+	 * 어드민 FE가 세션·Basic이 아니라 키 헤더 방식만 쓰기 때문(07-23 결정 — Basic 전제였던 07-22 설계를 대체).
+	 * @Order(0)이라 사람용 @Order(1) ADMIN Basic 체인(/admin/**)보다 먼저 이 경로들을 잡는다.
 	 * stateless·CSRF/CORS off, 미인증은 Basic 챌린지 없이 401 {"error":...}. 토큰 검증·fail-closed는 필터가 수행.
 	 */
 	@Bean
@@ -78,7 +80,7 @@ public class SecurityConfig {
 	public SecurityFilterChain signupCodeIngestFilterChain(HttpSecurity http,
 			@Value("${codes.api-key:}") String codesApiKey) throws Exception {
 		http
-				.securityMatcher("/admin/signup-codes")
+				.securityMatcher("/admin/signup-codes", "/admin/signup-codes/*", "/admin/signups")
 				.authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
 				.addFilterBefore(new CodesApiKeyAuthFilter(codesApiKey),
 						UsernamePasswordAuthenticationFilter.class)
@@ -89,7 +91,7 @@ public class SecurityConfig {
 		return http.build();
 	}
 
-	/** /admin/signup-codes 미인증 진입점 — Basic 챌린지 없이 401 {"error":...}(어드민이 본문 그대로 노출). */
+	/** 가입 코드 API(토큰 체인) 미인증 진입점 — Basic 챌린지 없이 401 {"error":...}(어드민이 본문 그대로 노출). */
 	static final class JsonUnauthorizedEntryPoint implements AuthenticationEntryPoint {
 
 		@Override
