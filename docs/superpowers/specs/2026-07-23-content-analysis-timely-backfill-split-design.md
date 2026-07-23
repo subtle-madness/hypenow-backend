@@ -1,4 +1,4 @@
-> 상태: 🟢 활성 · ⏸ 계획 수립 중 (구현 전)
+> 상태: 🟢 활성 · ✅ 구현됨 (PR 대기 — develop 머지 전)
 
 # ContentAnalysisJob timely/late_backfill 후보 선정 분리 설계
 
