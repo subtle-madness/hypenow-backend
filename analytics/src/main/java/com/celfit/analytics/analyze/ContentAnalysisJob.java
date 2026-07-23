@@ -51,6 +51,9 @@ public class ContentAnalysisJob {
 		this.reporter = reporter;
 	}
 
+	/** raw v_analysis_account_baseline·v_analysis_baseline 1회 로딩 결과 — run()·runLateBackfill() 공유. */
+	private record Baselines(Map<String, Baseline> accountBaseline, Map<String, Baseline> withBaseline) {}
+
 	/**
 	 * @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부)
 	 *
@@ -59,39 +62,7 @@ public class ContentAnalysisJob {
 	 * 계정 평균은 윈도우 밖 게시물에도 계산 가능하므로 다작 계정의 최근창 밖 성숙분도 분석한다.
 	 */
 	public JobResult run() {
-		// 기준선 두 종을 통째로 로드한다 — 뷰 평가가 운영 실측 분 단위(07-19, 27k 기준 4.5분)라
-		// 건당 조회를 반복하면 배치가 뷰 스캔에 잠긴다. 1회 평가 후 메모리 맵 조회로 대체.
-		// PG 타입이 numeric·bigint·smallint로 섞여 있어 전부 BigDecimal로 읽어 변환 (기존 관용구).
-		// ① 계정 평균(account_handle 키) — 최근창 밖 후보에 붙일 앵커. rank는 계정 단위가 아니라 null.
-		Map<String, Baseline> accountBaseline = new LinkedHashMap<>();
-		raw.query("""
-				SELECT account_handle, recent_reels_avg_views, recent_reels_count,
-				       recent_contents_count, recent12_avg_engagement_rate,
-				       recent12_avg_like_count, recent12_avg_comment_count,
-				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_account_baseline""",
-				rs -> {
-					accountBaseline.put(rs.getString(1), new Baseline(
-							longOf(rs.getBigDecimal(2)), null, intOf(rs.getBigDecimal(3)),
-							intOf(rs.getBigDecimal(4)), rs.getBigDecimal(5),
-							longOf(rs.getBigDecimal(6)), longOf(rs.getBigDecimal(7)),
-							intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))));
-				});
-		// ② 콘텐츠 키 기준선(최근창 안 게시물만, rank 포함) — 있으면 계정 평균보다 우선.
-		Map<String, Baseline> withBaseline = new LinkedHashMap<>();
-		raw.query("""
-				SELECT short_code, recent_reels_avg_views, rank_in_recent_reels, recent_reels_count,
-				       recent_contents_count, recent12_avg_engagement_rate,
-				       recent12_avg_like_count, recent12_avg_comment_count,
-				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_baseline""",
-				rs -> {
-					withBaseline.put(rs.getString(1), new Baseline(
-							longOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)), intOf(rs.getBigDecimal(4)),
-							intOf(rs.getBigDecimal(5)), rs.getBigDecimal(6),
-							longOf(rs.getBigDecimal(7)), longOf(rs.getBigDecimal(8)),
-							intOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10)), longOf(rs.getBigDecimal(11))));
-				});
+		Baselines baselines = loadBaselines();
 		// 제때 크롤 가드(07-19 정정, 판정식 07-20 보존) + 자격 OR 확장(07-20 PO 결정): 고정 지표가
 		// 성숙(+pin일) 스냅샷이면서 +(pin+slack)일 안에 잡힌 것(timely), 또는 제때 가드를 못 채워도
 		// 계정별 최근 N개(recent-window) 윈도우 안이면 대상에 포함한다(늦크롤 백필). timely 여부는
@@ -154,7 +125,7 @@ public class ContentAnalysisJob {
 		reporter.report(0, 0, targets.size());
 		for (String shortCode : targets) {
 			try {
-				analyzeOne(shortCode, model, withBaseline, accountBaseline, eligible.get(shortCode));
+				analyzeOne(shortCode, model, baselines.withBaseline(), baselines.accountBaseline(), eligible.get(shortCode));
 				processed++;
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
@@ -169,6 +140,43 @@ public class ContentAnalysisJob {
 		}
 		log.info("analysis complete ({} contents, {} failed)", processed, failed);
 		return new JobResult(processed, failed, carriedOver);
+	}
+
+	// 기준선 두 종을 통째로 로드한다 — 뷰 평가가 운영 실측 분 단위(07-19, 27k 기준 4.5분)라
+	// 건당 조회를 반복하면 배치가 뷰 스캔에 잠긴다. 1회 평가 후 메모리 맵 조회로 대체.
+	// PG 타입이 numeric·bigint·smallint로 섞여 있어 전부 BigDecimal로 읽어 변환 (기존 관용구).
+	private Baselines loadBaselines() {
+		// ① 계정 평균(account_handle 키) — 최근창 밖 후보에 붙일 앵커. rank는 계정 단위가 아니라 null.
+		Map<String, Baseline> accountBaseline = new LinkedHashMap<>();
+		raw.query("""
+				SELECT account_handle, recent_reels_avg_views, recent_reels_count,
+				       recent_contents_count, recent12_avg_engagement_rate,
+				       recent12_avg_like_count, recent12_avg_comment_count,
+				       category_top_percentile, category_avg_views, category_sample_size
+				FROM analytics.v_analysis_account_baseline""",
+				rs -> {
+					accountBaseline.put(rs.getString(1), new Baseline(
+							longOf(rs.getBigDecimal(2)), null, intOf(rs.getBigDecimal(3)),
+							intOf(rs.getBigDecimal(4)), rs.getBigDecimal(5),
+							longOf(rs.getBigDecimal(6)), longOf(rs.getBigDecimal(7)),
+							intOf(rs.getBigDecimal(8)), longOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10))));
+				});
+		// ② 콘텐츠 키 기준선(최근창 안 게시물만, rank 포함) — 있으면 계정 평균보다 우선.
+		Map<String, Baseline> withBaseline = new LinkedHashMap<>();
+		raw.query("""
+				SELECT short_code, recent_reels_avg_views, rank_in_recent_reels, recent_reels_count,
+				       recent_contents_count, recent12_avg_engagement_rate,
+				       recent12_avg_like_count, recent12_avg_comment_count,
+				       category_top_percentile, category_avg_views, category_sample_size
+				FROM analytics.v_analysis_baseline""",
+				rs -> {
+					withBaseline.put(rs.getString(1), new Baseline(
+							longOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)), intOf(rs.getBigDecimal(4)),
+							intOf(rs.getBigDecimal(5)), rs.getBigDecimal(6),
+							longOf(rs.getBigDecimal(7)), longOf(rs.getBigDecimal(8)),
+							intOf(rs.getBigDecimal(9)), longOf(rs.getBigDecimal(10)), longOf(rs.getBigDecimal(11))));
+				});
+		return new Baselines(accountBaseline, withBaseline);
 	}
 
 	private void analyzeOne(String shortCode, String model,
