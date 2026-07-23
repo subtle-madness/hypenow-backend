@@ -52,6 +52,16 @@ class AnalyticsJobServiceTest {
 	}
 
 	@Test
+	void late_backfill_잡을_트리거하면_runLateBackfill이_호출된다() {
+		when(analyzeJob.runLateBackfill()).thenReturn(new JobResult(2, 0, false));
+		var result = service().trigger(JobName.LATE_BACKFILL_ANALYZE, TriggerType.MANUAL);
+		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.LATE_BACKFILL_ANALYZE);
+		assertThat(run.processed()).isEqualTo(2);
+	}
+
+	@Test
 	void archive_잡을_트리거하면_run이_호출된다() {
 		when(archiveJob.run()).thenReturn(new JobResult(3, 1, false));
 		var result = service().trigger(JobName.ARCHIVE, TriggerType.MANUAL);
