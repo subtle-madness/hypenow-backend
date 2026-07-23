@@ -232,14 +232,7 @@ public class ContentAnalysisJob {
 			log.info("썸네일 만료/접근 불가 — 캡션만으로 속성 분석: {}", shortCode);
 		}
 		boolean hasCaption = caption != null && !caption.isBlank();
-		Map<String, Object> baselineForPrompt = new LinkedHashMap<>();
-		baselineForPrompt.put("recent_reels_avg_views", b.recentReelsAvgViews());
-		baselineForPrompt.put("rank_in_recent_reels", b.rankInRecentReels());
-		baselineForPrompt.put("recent_contents_count", b.recentContentsCount());
-		baselineForPrompt.put("recent12_avg_engagement_rate", b.recent12AvgEngagementRate());
-		baselineForPrompt.put("recent12_avg_like_count", b.recent12AvgLikeCount());
-		baselineForPrompt.put("recent12_avg_comment_count", b.recent12AvgCommentCount());
-		baselineForPrompt.put("category_top_percentile", b.categoryTopPercentile());
+		Map<String, Object> baselineForPrompt = PromptBaseline.of(b);
 		ContentInsightPort.ContentInsight result = insight.analyze(new ContentToAnalyze(shortCode,
 				(String) content.get("account_handle"), caption,
 				(String) content.get("content_type"), (Long) content.get("views"),

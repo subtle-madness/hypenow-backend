@@ -15,6 +15,7 @@ import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -43,7 +44,9 @@ class BeautyJobTest {
     // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 배치 단위 트랜잭션 래핑을 그대로 재현한다.
     TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
-    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, settings,
+    JobStopFlag stopFlag = new JobStopFlag();
+
+    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, settings, stopFlag,
             java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), txTemplate);
 
     @BeforeEach
@@ -66,6 +69,21 @@ class BeautyJobTest {
         payload.put("fullName", fullName);
         payload.put("biography", bio);
         return new RawProfile(influencerId, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH);
+    }
+
+    @Test
+    void 중지_요청이_있으면_판정_배치를_실행하지_않는다() {
+        Influencer a = qualified(1L, "a");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
+        stopFlag.request(JobName.BEAUTY);
+
+        job.run(TriggerType.MANUAL, false);
+
+        verify(judge, never()).judge(any());
+        assertThat(a.getBeauty()).isNull();
     }
 
     @Test

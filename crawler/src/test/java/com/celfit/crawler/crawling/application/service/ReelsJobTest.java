@@ -17,6 +17,7 @@ import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -88,9 +89,23 @@ class ReelsJobTest {
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
+    JobStopFlag stopFlag = new JobStopFlag();
+
     ReelsJob job(List<UserMediaPageFetcher> fetchers) {
         return new ReelsJob(influencers, rawMediaPages, new ContentUpserter(contents, CLOCK),
-                fetchers, executor, settings, CLOCK, progress, txTemplate);
+                fetchers, executor, settings, CLOCK, progress, stopFlag, txTemplate);
+    }
+
+    @Test
+    void 중지_요청이_있으면_방문하지_않는다() {
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(beautyTarget(1L, "a", "pk1")));
+        stopFlag.request(JobName.REELS);
+
+        // 페처 없이도 방문 자체가 스킵되므로 예외·실패 카운트 없이 조기 종료된다
+        var summary = job(List.of()).run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isZero();
+        assertThat(summary.failedVisits()).isZero();
     }
 
     static Influencer beautyTarget(Long id, String username, String pk) {
@@ -233,6 +248,43 @@ class ReelsJobTest {
         assertThat(s.postsUpserted()).isZero();
         assertThat(noClips.getLastReelsAt()).isEqualTo(NOW);  // 마킹 — 다음 실행에서 재선정 안 됨
         verify(influencers).save(noClips);
+    }
+
+    @Test
+    void 릴스없음_404는_crawl_run을_FAILED로_기록하지_않는다() {
+        // 실제 CrawlExecutor는 콜백이 던지면 run을 FAILED로 마감한 뒤 재-throw한다 — 그 마감 규칙만
+        // 흉내내서, '릴스 없음' 판정이 executor 콜백 밖(예외 경로)이 아니라 안(빈 결과)에서 나는지 검증.
+        var runFailed = new java.util.concurrent.atomic.AtomicBoolean();
+        when(executor.execute(any(), any(), any(), any(), any(), any(Supplier.class)))
+                .thenAnswer(inv -> {
+                    Supplier<ApifyResult> work = inv.getArgument(5);
+                    try {
+                        return new CrawlExecutor.Execution(runIdSeq.incrementAndGet(), work.get().items());
+                    } catch (ApifyException e) {
+                        runFailed.set(true);
+                        throw e;
+                    }
+                });
+        Influencer noClips = beautyTarget(1L, "no_clips_user", "PK1");
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(noClips));
+        UserMediaPageFetcher fetcher = new UserMediaPageFetcher() {
+            @Override
+            public RawSource source() {
+                return RawSource.HIKER_V2_CLIPS;
+            }
+
+            @Override
+            public Map<String, Object> fetchPage(String userId, String cursor) {
+                throw new com.celfit.crawler.crawling.application.port.out.NotFoundException(
+                        "Hiker HTTP 404: {\"detail\":\"Entries not found\"}");
+            }
+        };
+
+        var s = job(List.of(fetcher)).run(TriggerType.MANUAL);
+
+        assertThat(runFailed).isFalse();                     // 양성 케이스 — FAILED 배지 금지
+        assertThat(s.failedVisits()).isZero();
+        assertThat(noClips.getLastReelsAt()).isEqualTo(NOW);
     }
 
     @Test

@@ -87,8 +87,9 @@ services:
       postgres-raw:
         condition: service_healthy
 
-  # 수집 상주 서버(8080 어드민 /ui) — raw(postgres-raw)에 쓰기. 수동 운영: 어드민 UI로 잡 트리거.
-  # 외부 미노출(루프백) — 접근은 SSH 터널(ssh -L 8080:localhost:8080). 스케줄은 기본 off(수동 운영).
+  # 수집 상주 서버(8080 어드민 /ui) — raw(postgres-raw)에 쓰기.
+  # 외부 미노출(루프백) — 접근은 SSH 터널(ssh -L 8080:localhost:8080).
+  # 데일리 스케줄 자동(아래 CRAWLER_SCHEDULE_*) — 발굴(discover·similar)만 어드민 UI 수동 트리거.
   crawler:
     image: ghcr.io/subtle-madness/hypenow-crawler:latest
     restart: unless-stopped
@@ -106,6 +107,18 @@ services:
       APIFY_PROXY_URL: ${APIFY_PROXY_URL:-}
       DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
       DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      # 크롬 익스텐션 수동 발굴 등록 API 토큰 — 미설정 시 해당 API 비활성(fail-closed)
+      MANUAL_DISCOVERY_TOKEN: ${MANUAL_DISCOVERY_TOKEN:-}
+      # 스케줄(KST=UTC+9) — 윈도우 반복 발사: 잡들이 "남은 대상만" 선정하므로(재방문 컷오프·
+      # DISCOVERED/미판정 잔여) 반복이 안전하고, 일시 실패·컨테이너 재기동을 윈도우 안에서 흡수한다.
+      # collect 01:00~03:30/30분 · reels 01:10~03:55/15분 · qualify 02:00~03:30/30분 · beauty 03:00·03:30
+      # → analytics 미러 04:30 전에 완결(같은 날 새벽 분석·아카이브 반영). 발굴(discover·similar)은 수동.
+      CRAWLER_SCHEDULE_ENABLED: "true"
+      CRAWLER_SCHEDULE_COLLECT_CRON: "0 0/30 16-18 * * *"
+      CRAWLER_SCHEDULE_REELS_CRON: "0 10/15 16-18 * * *"
+      CRAWLER_SCHEDULE_QUALIFY_CRON: "0 0/30 17-18 * * *"
+      CRAWLER_SCHEDULE_BEAUTY_CRON: "0 0,30 18 * * *"
+      CRAWLER_SCHEDULE_DISCOVER_CRON: "-"
       JAVA_OPTS: "-Xmx1g"
     ports:
       - "127.0.0.1:8080:8080"   # 루프백 전용 — 어드민은 SSH 터널로만
@@ -136,6 +149,19 @@ services:
         condition: service_healthy
       analytics:
         condition: service_healthy
+
+  # OCI ONS 알람 → 디스코드 웹훅 릴레이 — ONS가 SLACK 엔드포인트를 hooks.slack.com만
+  # 허용해 디스코드 직결 불가(2026-07 실측). caddy가 /internal/ons-relay/*를 이쪽으로 라우팅.
+  ons-relay:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
+      ONS_RELAY_TOKEN: ${ONS_RELAY_TOKEN}
+    volumes:
+      - ./ons-discord-relay.py:/relay.py:ro
+    command: python /relay.py
 
   caddy:
     image: caddy:2-alpine

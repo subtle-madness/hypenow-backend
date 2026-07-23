@@ -1,10 +1,12 @@
 package com.celfit.crawler.crawling.adapter.in.web;
 
 import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase;
+import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase.StopResult;
 import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase.TriggerResult;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -51,12 +53,24 @@ public class UiJobController {
         return respond(JobName.REELS, jobService.trigger(JobName.REELS, TriggerType.MANUAL), ra);
     }
 
+    /** 협조적 중지 — 진행 중인 단위 작업(키워드·청크·방문·시드)까지 마치고 잡이 조기 종료된다. */
+    @PostMapping("/{job}/stop")
+    public String stop(@PathVariable JobName job, RedirectAttributes ra) {
+        StopResult result = jobService.stop(job);
+        String message = switch (result) {
+            case STOP_REQUESTED -> job + " 중지 요청 — 진행 중인 작업 단위까지 마치고 멈춥니다";
+            case NOT_RUNNING -> job + "이(가) 실행 중이 아닙니다";
+        };
+        ra.addFlashAttribute("message", message);
+        return "redirect:/ui";
+    }
+
     private String respond(JobName name, TriggerResult result, RedirectAttributes ra) {
         String message = switch (result) {
             case ACCEPTED -> name + " 실행 시작";
             case BUSY -> name + "이(가) 이미 실행 중입니다";
         };
         ra.addFlashAttribute("message", message);
-        return "redirect:/ui/jobs";
+        return "redirect:/ui";
     }
 }

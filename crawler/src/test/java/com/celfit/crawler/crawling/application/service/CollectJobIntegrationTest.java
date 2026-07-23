@@ -103,7 +103,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
                 influencers, rawProfiles, contents,
                 new ContentUpserter(contents, clock), rawComments, rawMediaPages,
                 profileSource, commentSource, java.util.List.of(), executor, settings, clock,
-                progress, new TransactionTemplate(txManager));
+                progress, new JobStopFlag(), new TransactionTemplate(txManager));
 
         var summary = job.run(TriggerType.MANUAL);
         assertThat(summary.visited()).isEqualTo(1);

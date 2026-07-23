@@ -47,12 +47,13 @@ public class SimilarJob {
     private final HikerUserResolver resolver;
     private final CrawlExecutor executor;
     private final SettingsService settings;
+    private final JobStopFlag stopFlag;
     private final Clock clock;
     private final TransactionTemplate txTemplate;
 
     public SimilarJob(InfluencerRepository influencers, InfluencerDiscoveryRepository discoveries,
                       HikerSuggestedSupplement suggested, HikerUserResolver resolver,
-                      CrawlExecutor executor, SettingsService settings, Clock clock,
+                      CrawlExecutor executor, SettingsService settings, JobStopFlag stopFlag, Clock clock,
                       TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.discoveries = discoveries;
@@ -60,6 +61,7 @@ public class SimilarJob {
         this.resolver = resolver;
         this.executor = executor;
         this.settings = settings;
+        this.stopFlag = stopFlag;
         this.clock = clock;
         this.txTemplate = txTemplate;
     }
@@ -77,6 +79,10 @@ public class SimilarJob {
         int processed = 0, newInf = 0, known = 0, ineligible = 0, failed = 0;
         int total = seeds.size(), i = 0;
         for (Influencer seed : seeds) {
+            if (stopFlag.isRequested(JobName.SIMILAR)) {
+                log.info("similar 중지 요청 — 잔여 시드 건너뛰고 조기 종료 ({}/{} 시드 처리)", i, total);
+                break;
+            }
             i++;
             int idx = i;
             SeedResult r = txTemplate.execute(status -> processSeed(seed, trigger, idx, total));
@@ -99,17 +105,25 @@ public class SimilarJob {
      * (pk 백필도 함께 영속된다). CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — 참고: CollectJobIntegrationTest.
      */
     private SeedResult processSeed(Influencer seed, TriggerType trigger, int i, int total) {
+        // 'chaining 불가' 판정은 콜백 안에서 빈 결과로 흡수한다 — 예외로 내보내면 CrawlExecutor가
+        // run을 FAILED로 마감해, 양성 케이스가 실패 통계·어드민 FAILED 배지를 오염시킨다
+        // (ReelsJob의 '릴스 없음' 404와 동일 패턴). 요청은 나갔으므로 requestCount는 유지한다.
+        var ineligible = new java.util.concurrent.atomic.AtomicBoolean();
         CrawlExecutor.Execution ex;
         try {
             ex = executor.execute(JobName.SIMILAR, trigger, KEYWORD_PREFIX + seed.getUsername(),
-                    seed.getUsername(), LABEL, () -> fetchForSeed(seed));
+                    seed.getUsername(), LABEL, () -> {
+                        try {
+                            return fetchForSeed(seed);
+                        } catch (ApifyException e) {
+                            if (e.getMessage() != null && e.getMessage().contains(INELIGIBLE_MARK)) {
+                                ineligible.set(true);
+                                return new ApifyResult(null, 1, List.of());
+                            }
+                            throw e;
+                        }
+                    });
         } catch (ApifyException e) {
-            if (e.getMessage() != null && e.getMessage().contains(INELIGIBLE_MARK)) {
-                seed.setSimilarProcessedAt(clock.instant());  // 수확 불가 확정 — 재시도 안 함
-                influencers.save(seed);
-                log.info("유사 발굴 ({}/{}) {} — chaining 불가, 수확 불가로 마킹", i, total, seed.getUsername());
-                return new SeedResult(0, 0, 0, 1, 0);
-            }
             // crawl_run FAILED 기록됨 — 마킹 없이 다음 실행 재시도
             // pk 백필만 영속 — 실패 시드도 다음 실행에서 재해석 비용을 내지 않도록
             if (seed.getIgUserId() != null) {
@@ -117,6 +131,12 @@ public class SimilarJob {
             }
             log.warn("유사 발굴 ({}/{}) {} — 실패: {}", i, total, seed.getUsername(), e.getMessage());
             return new SeedResult(0, 0, 0, 0, 1);
+        }
+        if (ineligible.get()) {
+            seed.setSimilarProcessedAt(clock.instant());  // 수확 불가 확정 — 재시도 안 함
+            influencers.save(seed);
+            log.info("유사 발굴 ({}/{}) {} — chaining 불가, 수확 불가로 마킹", i, total, seed.getUsername());
+            return new SeedResult(0, 0, 0, 1, 0);
         }
         Set<String> seen = new HashSet<>();
         int newInf = 0, known = 0;

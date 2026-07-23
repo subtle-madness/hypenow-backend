@@ -15,6 +15,7 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerDiscovery;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import java.time.Clock;
 import java.time.Instant;
@@ -46,8 +47,10 @@ class SimilarJobTest {
 
     java.util.List<Integer> capturedRequestCounts = new java.util.ArrayList<>();
 
-    SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings, CLOCK,
-            txTemplate);
+    JobStopFlag stopFlag = new JobStopFlag();
+
+    SimilarJob job = new SimilarJob(influencers, discoveries, suggested, resolver, executor, settings,
+            stopFlag, CLOCK, txTemplate);
 
     static Influencer seed(Long id, String username, String igUserId) {
         Influencer inf = new Influencer(username);
@@ -70,6 +73,19 @@ class SimilarJobTest {
                     return new CrawlExecutor.Execution(1L, r.items());
                 });
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void 중지_요청이_있으면_시드를_처리하지_않는다() {
+        when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), any())).thenReturn(List.of(seed(1L, "seed1", "100")));
+        stopFlag.request(JobName.SIMILAR);
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        verify(executor, never()).execute(any(), any(), any(), any(), any(), any(Supplier.class));
+        assertThat(summary.processedSeeds()).isZero();
     }
 
     @Test
@@ -157,6 +173,35 @@ class SimilarJobTest {
 
         assertThat(summary.ineligibleSeeds()).isEqualTo(1);
         assertThat(summary.failedSeeds()).isZero();
+        assertThat(s.getSimilarProcessedAt()).isEqualTo(NOW);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void chaining_불가는_crawl_run을_FAILED로_기록하지_않는다() {
+        // 실제 CrawlExecutor는 콜백이 던지면 run을 FAILED로 마감한 뒤 재-throw한다 — 그 마감 규칙만
+        // 흉내내서, '수확 불가' 판정이 콜백 밖(예외 경로)이 아니라 안(빈 결과)에서 나는지 검증.
+        var runFailed = new java.util.concurrent.atomic.AtomicBoolean();
+        when(executor.execute(any(), any(), any(), any(), any(), any(Supplier.class)))
+                .thenAnswer(inv -> {
+                    try {
+                        ApifyResult r = ((Supplier<ApifyResult>) inv.getArgument(5)).get();
+                        return new CrawlExecutor.Execution(1L, r.items());
+                    } catch (ApifyException e) {
+                        runFailed.set(true);
+                        throw e;
+                    }
+                });
+        Influencer s = seed(1L, "seed1", "100");
+        when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), any())).thenReturn(List.of(s));
+        when(suggested.fetch("100")).thenThrow(new ApifyException(
+                "Hiker HTTP 403: {\"detail\":\"Not eligible for chaining.\",\"exc_type\":\"InvalidTargetUser\"}"));
+
+        var summary = job.run(TriggerType.MANUAL);
+
+        assertThat(runFailed).isFalse();                     // 양성 케이스 — FAILED 배지 금지
+        assertThat(summary.ineligibleSeeds()).isEqualTo(1);
         assertThat(s.getSimilarProcessedAt()).isEqualTo(NOW);
     }
 

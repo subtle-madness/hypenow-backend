@@ -53,6 +53,15 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 - LLM 예산(무료 티어 일 1,500콜)은 raw DB `app_setting`: `analytics.analyze-batch-limit`(기본 10 → 운영 450),
   `analytics.account-analyze-batch-limit`(→150)
 
+## 4-2. crawler 스케줄 (서버, 07-22~)
+- 데일리 자동(compose env, KST — 윈도우 반복: 잡이 남은 대상만 집어 실패·재기동을 흡수):
+  collect 01:00~03:30/30분 → reels 01:10~03:55/15분 → qualify 02:00~03:30/30분 → beauty 03:00·03:30
+  — analytics 미러 04:30 전 완결. 발굴(discover·similar)은 수동.
+- 어드민 UI: `ssh -L 8080:localhost:8080 <host>` 후 http://localhost:8080/ui — 대시보드에서
+  잡 수동 트리거(실행 스트립)·예상 비용·실행 로그·최근 실행 확인
+- 롤백: compose의 `CRAWLER_SCHEDULE_ENABLED: "false"` 후 `docker compose up -d crawler`
+  — 서버에서 직접 고친 값은 다음 CD 배포가 레포 compose로 덮어쓴다. 영구 off는 레포 compose 수정 후 develop→main 머지.
+
 ## 5. 배포 (코드 변경 반영)
 
 **정본은 CD (07-20~)**: `main`에 푸시(=develop→main 머지)하면 `.github/workflows/cd.yml`이
@@ -104,10 +113,39 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
 - 자리 잡으면 **PAYG 전환**(유휴 회수 면제) + **Budget 알림 $1**
 - 무료 전용 상태에서는 7일 유휴 시 정지 경고 메일 주시 (JAVA_OPTS -Xms2g가 메모리 조건 방어)
 
-## 9. 이사 절차 (오라클 → 아무 VPS, 목표 30분)
+## 9. 모니터링·알람 (07-21~)
+- 토픽 2개: 일반 `hypenow-alerts`(알람 5개 → 디스코드) / 치명 `hypenow-alerts-critical`
+  (인스턴스 다운·API 불통 → 디스코드 **+ EMAIL 백업** — 인스턴스가 통째로 죽으면 릴레이도
+  죽어 디스코드 경로가 끊기므로, OCI에서 직접 나가는 이메일이 그 순간을 커버.
+  알람당 토픽 1개 제약이라 "치명 토픽에 구독 2개" 구조. 이메일 추가는 구독만 더 붙이면 됨)
+- 디스코드는 **릴레이 경유**(CUSTOM_HTTPS 구독 → `ons-relay` 컨테이너 → 디스코드 웹훅.
+  ONS가 SLACK 엔드포인트를 hooks.slack.com만 허용해 직결 불가 — 서버 `.env`에
+  `DISCORD_WEBHOOK_URL`·`ONS_RELAY_TOKEN` 필요, 경로는 caddy `/internal/ons-relay/<토큰>`.
+  구독 확인은 릴레이가 자동 컨펌. PAYG 전환 시 OCI Functions로 릴레이 대체 검토):
+  **API 외형 감시**(Health Checks `hypenow-api-health` — 외부 관측점 3곳에서 60초마다
+  `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
+  **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
+- 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
+  (버킷은 스크립트가 5분 결에만 조회 — OCI가 StoredBytes를 자동 게시하지 않아 직접 게시):
+  `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
+- 인증은 인스턴스 프린시펄 — 서버에 API 키를 두지 않는다. IAM 구성:
+  dynamic group `hypenow-instances`(인스턴스 매칭) + policy `hypenow-custom-metrics`:
+  `Allow dynamic-group hypenow-instances to use metrics in tenancy where target.metrics.namespace='hypenow_custom'`
+  `Allow dynamic-group hypenow-instances to read buckets in tenancy where target.bucket.name='hypenow-images'`
+  venv: `python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci`
+- 컨테이너 추가·이름 변경 시 스크립트의 `SERVICES` 목록도 갱신할 것(목록 고정 방식 —
+  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `BUCKETS` 목록 갱신.
+
+## 10. 이사 절차 (오라클 → 아무 VPS, 목표 30분)
 1. 새 Ubuntu 서버: §3 최초 기동 그대로 (rsync → setup → .env → up)
 2. 데이터: `pull-backup.sh`의 최신 덤프를 새 서버에 넣고
    `cd ~/deploy && set -a && source .env && set +a` 후
    `gunzip -c dump.sql.gz | docker compose exec -T postgres psql -U $DB_USER -d analysis`
    (또는 로컬 raw에서 미러 재실행 — §4)
 3. DNS A레코드를 새 IP로 변경 → caddy가 인증서 자동 재발급
+
+## 11. 수동 발굴 등록 API (크롬 익스텐션, 07-22~)
+- `POST https://api.hypenow.io/crawler/api/manual-discoveries` — Caddy가 crawler의 이 경로만 공개.
+  헤더 `X-Api-Token` 필요, 서버 `.env`에 `MANUAL_DISCOVERY_TOKEN`(강한 랜덤 값) 설정 후 crawler 재기동.
+  토큰 미설정이면 API는 503(fail-closed). 등록된 계정은 DISCOVERED로 들어가 기존 qualify→beauty가 처리.
+- 익스텐션은 별도 저장소 `hypenow-extension` — 옵션에 엔드포인트 URL·토큰을 넣어 사용.

@@ -47,12 +47,13 @@ public class ReelsJob {
     private final SettingsService settings;
     private final Clock clock;
     private final JobProgress progress;
+    private final JobStopFlag stopFlag;
     private final TransactionTemplate txTemplate;
 
     public ReelsJob(InfluencerRepository influencers, RawMediaPageRepository rawMediaPages,
                     ContentUpserter contentUpserter, List<UserMediaPageFetcher> mediaFetchers,
                     CrawlExecutor executor, SettingsService settings, Clock clock,
-                    JobProgress progress, TransactionTemplate txTemplate) {
+                    JobProgress progress, JobStopFlag stopFlag, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawMediaPages = rawMediaPages;
         this.contentUpserter = contentUpserter;
@@ -61,6 +62,7 @@ public class ReelsJob {
         this.settings = settings;
         this.clock = clock;
         this.progress = progress;
+        this.stopFlag = stopFlag;
         this.txTemplate = txTemplate;
     }
 
@@ -76,6 +78,11 @@ public class ReelsJob {
         progress.start(JobName.REELS, targets.size());
         try {
             for (Influencer inf : targets) {
+                if (stopFlag.isRequested(JobName.REELS)) {
+                    log.info("reels 중지 요청 — 잔여 방문 건너뛰고 조기 종료 ({}명 중 {}명 방문)",
+                            targets.size(), visited + failed);
+                    break;
+                }
                 if (inf.getIgUserId() == null || inf.getIgUserId().isBlank()) {
                     skippedNoPk++;   // 해석 요청 안 씀 — 프로필 수집이 pk를 채우면 다음 실행에서 잡힌다
                     log.warn("릴스 수집 스킵(pk 없음) — 프로필 수집 선행 필요: {}", inf.getUsername());
@@ -107,20 +114,26 @@ public class ReelsJob {
         UserMediaPageFetcher fetcher = mediaFetchers.stream()
                 .filter(f -> f.source() == RawSource.HIKER_V2_CLIPS).findFirst()
                 .orElseThrow(() -> new IllegalStateException("HIKER_V2_CLIPS 페처 미등록"));
-        CrawlExecutor.Execution ex;
-        try {
-            ex = executor.execute(JobName.REELS, trigger,
-                    null, inf.getUsername(), RawSource.HIKER_V2_CLIPS.name(),
-                    () -> new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null))));
-        } catch (ApifyException e) {
-            if (e.getMessage() != null && e.getMessage().contains(NO_CLIPS_MARK)) {
-                // 릴스가 아예 없는 계정 — 실패가 아니라 '수확할 것 없음' 확정. 재시도 루프 방지.
-                inf.setLastReelsAt(clock.instant());
-                influencers.save(inf);
-                log.info("릴스 없음(404) — 수확 완료로 마킹: {}", inf.getUsername());
-                return 0;
-            }
-            throw e;
+        // '릴스 없음' 404 판정은 콜백 안에서 빈 결과로 흡수한다 — 예외로 내보내면 CrawlExecutor가
+        // run을 FAILED로 마감해, 양성 케이스가 실패 통계·어드민 FAILED 배지를 오염시킨다(07-22 실측:
+        // run 실패의 ~95%가 이것). 요청은 나갔으므로 requestCount=1(과금 집계)은 유지한다.
+        CrawlExecutor.Execution ex = executor.execute(JobName.REELS, trigger,
+                null, inf.getUsername(), RawSource.HIKER_V2_CLIPS.name(), () -> {
+                    try {
+                        return new ApifyResult(null, 1, List.of(fetcher.fetchPage(inf.getIgUserId(), null)));
+                    } catch (ApifyException e) {
+                        if (e.getMessage() != null && e.getMessage().contains(NO_CLIPS_MARK)) {
+                            return new ApifyResult(null, 1, List.of());
+                        }
+                        throw e;
+                    }
+                });
+        if (ex.items().isEmpty()) {
+            // 릴스가 아예 없는 계정 — 실패가 아니라 '수확할 것 없음' 확정. 재시도 루프 방지.
+            inf.setLastReelsAt(clock.instant());
+            influencers.save(inf);
+            log.info("릴스 없음(404) — 수확 완료로 마킹: {}", inf.getUsername());
+            return 0;
         }
         Map<String, Object> payload = ex.items().get(0);
         rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), RawSource.HIKER_V2_CLIPS,

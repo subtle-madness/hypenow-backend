@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import org.mockito.ArgumentMatchers;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -74,6 +75,62 @@ class JdkInstagramWebClientRotationTest {
                 .containsExactly("http://u:p@gw.dataimpulse.com:823",
                         "http://u:p@gw.dataimpulse.com:823",
                         "http://u:p@gw.dataimpulse.com:823");
+    }
+
+    @Test
+    void 프록시_클라이언트는_close가_아니라_shutdownNow로_닫는다() throws Exception {
+        // close()는 진행 중이던 h2 커넥션 정리를 기다리며 블로킹된다 — 401(WWW-Authenticate 부재
+        // IOException) 뒤엔 상대가 커넥션을 끊어줄 때까지 수십 초를 대기해(운영 실측 중앙값 62s)
+        // 워커를 점유한다. shutdownNow()는 즉시 반환되면서 터널도 바로 닫는다(로테이션 의도 유지).
+        List<String> creations = new ArrayList<>();
+        List<HttpClient> clients = new ArrayList<>();
+        ProxySourceSetting setting = mock(ProxySourceSetting.class);
+        when(setting.current()).thenReturn(ProxySource.DATAIMPULSE_RESIDENTIAL);
+        ProxyProperties props = new ProxyProperties(
+                null, "http://u:p@gw.dataimpulse.com:823", null, Duration.ofSeconds(15));
+
+        JdkInstagramWebClient web =
+                new JdkInstagramWebClient(props, setting, recordingFactory(creations, clients));
+        int afterInit = clients.size();
+
+        web.get("https://x/1");
+
+        HttpClient perRequest = clients.get(afterInit);
+        verify(perRequest).shutdownNow();
+        verify(perRequest, never()).close();
+    }
+
+    @Test
+    void 프록시_클라이언트는_요청_실패시에도_shutdownNow로_닫는다() throws Exception {
+        List<String> creations = new ArrayList<>();
+        List<HttpClient> clients = new ArrayList<>();
+        ProxySourceSetting setting = mock(ProxySourceSetting.class);
+        when(setting.current()).thenReturn(ProxySource.DATAIMPULSE_RESIDENTIAL);
+        ProxyProperties props = new ProxyProperties(
+                null, "http://u:p@gw.dataimpulse.com:823", null, Duration.ofSeconds(15));
+        // 인스타 401(챌린지 헤더 부재)로 send가 IOException을 던지는 경로
+        JdkInstagramWebClient.HttpClientFactory failing = url -> {
+            creations.add(url);
+            HttpClient c = mock(HttpClient.class);
+            try {
+                when(c.send(any(), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                        .thenThrow(new java.io.IOException(
+                                "WWW-Authenticate header missing for response code 401"));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            clients.add(c);
+            return c;
+        };
+
+        JdkInstagramWebClient web = new JdkInstagramWebClient(props, setting, failing);
+        int afterInit = clients.size();
+
+        assertThat(web.get("https://x/1").status()).isEqualTo(401);
+
+        HttpClient perRequest = clients.get(afterInit);
+        verify(perRequest).shutdownNow();
+        verify(perRequest, never()).close();
     }
 
     @Test

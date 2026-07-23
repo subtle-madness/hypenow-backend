@@ -39,7 +39,9 @@ class AnalyticsJobServiceTest {
 	private AnalyticsJobService service() {
 		return new AnalyticsJobService(lock, new SyncTaskExecutor(), mirrorJob, registry,
 				provider(mock(CommentClassificationJob.class)), provider(analyzeJob),
-				provider(mock(AccountAnalysisJob.class)), provider(archiveJob),
+				provider(mock(AccountAnalysisJob.class)),
+				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
+				provider(archiveJob),
 				progress, history);
 	}
 
@@ -130,6 +132,7 @@ class AnalyticsJobServiceTest {
 		AnalyticsJobService service = new AnalyticsJobService(lock, new SyncTaskExecutor(),
 				mirrorJob, registry, provider(mock(CommentClassificationJob.class)),
 				lazyProvider, provider(mock(AccountAnalysisJob.class)),
+				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)), progress, history);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);

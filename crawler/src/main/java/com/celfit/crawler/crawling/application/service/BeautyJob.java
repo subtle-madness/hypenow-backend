@@ -8,6 +8,7 @@ import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
+import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
@@ -50,15 +51,18 @@ public class BeautyJob {
     private final RawProfileRepository rawProfiles;
     private final BeautyJudge judge;
     private final SettingsService settings;
+    private final JobStopFlag stopFlag;
     private final java.time.Clock clock;
     private final TransactionTemplate txTemplate;
 
     public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles, BeautyJudge judge,
-                     SettingsService settings, java.time.Clock clock, TransactionTemplate txTemplate) {
+                     SettingsService settings, JobStopFlag stopFlag, java.time.Clock clock,
+                     TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
         this.judge = judge;
         this.settings = settings;
+        this.stopFlag = stopFlag;
         this.clock = clock;
         this.txTemplate = txTemplate;
     }
@@ -104,6 +108,10 @@ public class BeautyJob {
         log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}), 배치 {}개", cards.size(), skipped, chunks.size());
         int total = chunks.size(), i = 0;
         for (List<BeautyJudge.ProfileCard> chunk : chunks) {
+            if (stopFlag.isRequested(JobName.BEAUTY)) {
+                log.info("beauty 중지 요청 — 잔여 배치 건너뛰고 조기 종료 ({}/{} 배치 처리)", i, total);
+                break;
+            }
             i++;
             List<BeautyJudge.Verdict> verdicts;
             try {

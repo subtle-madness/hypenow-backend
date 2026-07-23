@@ -57,10 +57,12 @@ crawler:
     judge: claude-api # 판정 구현 — claude-api(기본, Anthropic SDK: ANTHROPIC_AUTH_TOKEN 구독 우선·ANTHROPIC_API_KEY 폴백, 모델 crawler.beauty.claude-model 기본 claude-haiku-4-5) | gemini(롤백: GEMINI_API_KEY) | claude-cli(로컬 Claude CLI 롤백)
   reels:
     batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)
+  manual-discovery:
+    token: ${MANUAL_DISCOVERY_TOKEN:}  # 크롬 익스텐션 수동 등록 API 토큰 — 미설정 시 API 비활성(503)
   schedule:
-    enabled: false
-    discover-cron: "0 0 6 * * *"
-    qualify-cron: "0 30 6 * * *"
-    beauty-cron: "0 30 7 * * *"   # qualify 유입분 4분류 판정 — qualify 이후
-    collect-cron: "0 0 1 * * *"   # 데일리 스냅샷(팔로워 추이+게시물) — 새벽에 길게
-    reels-cron: "0 10 1 * * *"    # 릴스 1페이지 — collect와 병렬(잡 락 분리)
+    enabled: false                       # 운영 점화는 deploy/compose.yaml env(UTC 크론)
+    discover-cron: "0 0 6 * * *"         # 발굴은 수동 운영 — 운영 env에선 "-"(비활성)
+    collect-cron: "0 0/30 1-3 * * *"     # 데일리 스냅샷 01:00~03:30/30분 — 윈도우 반복(잔여만 재시도)
+    reels-cron: "0 10/15 1-3 * * *"      # 릴스 1페이지 01:10~03:55/15분 — 회당 10계정 한도 보완
+    qualify-cron: "0 0/30 2-3 * * *"     # 판정 02:00~03:30/30분 — DISCOVERED 잔여만
+    beauty-cron: "0 0,30 3 * * *"        # 뷰티 4분류 03:00·03:30 — qualify 이후, analytics 04:30 전

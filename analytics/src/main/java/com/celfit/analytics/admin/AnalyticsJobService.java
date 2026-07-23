@@ -1,6 +1,7 @@
 package com.celfit.analytics.admin;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
+import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.archive.ImageArchiveJob;
@@ -31,6 +32,7 @@ public class AnalyticsJobService {
 	private final ObjectProvider<CommentClassificationJob> classifyJob;
 	private final ObjectProvider<ContentAnalysisJob> analyzeJob;
 	private final ObjectProvider<AccountAnalysisJob> accountAnalyzeJob;
+	private final ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob;
 	private final ObjectProvider<ImageArchiveJob> archiveJob;
 	private final JobProgressRegistry progress;
 	private final RunHistory history;
@@ -40,6 +42,7 @@ public class AnalyticsJobService {
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
+			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			JobProgressRegistry progress, RunHistory history) {
 		this.lock = lock;
@@ -49,6 +52,7 @@ public class AnalyticsJobService {
 		this.classifyJob = classifyJob;
 		this.analyzeJob = analyzeJob;
 		this.accountAnalyzeJob = accountAnalyzeJob;
+		this.synthesisRefreshJob = synthesisRefreshJob;
 		this.archiveJob = archiveJob;
 		this.progress = progress;
 		this.history = history;
@@ -122,6 +126,7 @@ public class AnalyticsJobService {
 			case ANALYZE -> analyzeJob.getObject().run();
 			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
+			case SYNTHESIS_REFRESH -> synthesisRefreshJob.getObject().run();
 			case ARCHIVE -> archiveJob.getObject().run();
 		};
 	}

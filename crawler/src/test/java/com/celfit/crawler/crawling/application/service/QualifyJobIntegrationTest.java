@@ -78,8 +78,8 @@ class QualifyJobIntegrationTest extends IntegrationTest {
                 .thenReturn(new CrawlExecutor.Execution(run.getId(), List.of(item)))   // 1청크 성공
                 .thenThrow(new IllegalStateException("둘째 청크에서 프로세스가 죽는 상황"));  // 2청크 죽음
 
-        QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, clock,
-                new TransactionTemplate(txManager));
+        QualifyJob job = new QualifyJob(influencers, rawProfiles, selector, settings, new JobStopFlag(),
+                clock, new TransactionTemplate(txManager));
         var summary = job.run(TriggerType.MANUAL, false);
 
         // 뒤 청크 실패는 격리 — 잡은 정상 종료하고 실패 청크로 집계된다

@@ -19,7 +19,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 /**
- * 잡(discover/qualify/collect) 실행 예상 비용·사용 엔드포인트 추정 — /ui/jobs 표시용.
+ * 잡(discover/qualify/collect) 실행 예상 비용·사용 엔드포인트 추정 — 대시보드 표시용.
  * HikerAPI는 요청 1회당 {@link HikerProperties#costPerRequestUsd()} 과금. 실제 요청 수는
  * 계정·게시물 규모에 따라 달라지므로 min~max 범위로만 추정한다(정산은 실제 request_count 기준).
  */

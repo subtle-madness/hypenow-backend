@@ -1,3 +1,14 @@
 {$API_DOMAIN} {
-	reverse_proxy was:8081
+	# OCI ONS 알람 → 디스코드 릴레이 (경로 토큰은 릴레이가 검증)
+	handle /internal/ons-relay/* {
+		reverse_proxy ons-relay:9099
+	}
+	# 크롬 익스텐션 수동 발굴 등록 — crawler에서 이 경로만 외부 공개(토큰은 crawler가 검증)
+	handle /crawler/api/manual-discoveries {
+		uri strip_prefix /crawler
+		reverse_proxy crawler:8080
+	}
+	handle {
+		reverse_proxy was:8081
+	}
 }
