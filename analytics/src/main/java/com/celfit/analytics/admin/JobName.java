@@ -7,7 +7,8 @@ public enum JobName {
 	ANALYZE("콘텐츠 분석 (LLM)"),
 	ACCOUNT_ANALYZE("계정 카피 (LLM)"),
 	SYNTHESIS_REFRESH("해석 문구 갱신 (LLM) — 사실 보존"),
-	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지");
+	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지"),
+	LATE_BACKFILL_ANALYZE("늦크롤 백필 분석 (LLM)");
 
 	private final String label;
 

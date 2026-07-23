@@ -11,6 +11,7 @@ class JobNameTest {
 	void slug은_소문자_하이픈() {
 		assertThat(JobName.MIRROR.slug()).isEqualTo("mirror");
 		assertThat(JobName.ACCOUNT_ANALYZE.slug()).isEqualTo("account-analyze");
+		assertThat(JobName.LATE_BACKFILL_ANALYZE.slug()).isEqualTo("late-backfill-analyze");
 	}
 
 	@Test

@@ -9,9 +9,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 관리자 가입 코드 조회 API(설계 2026-07-19) — GET /admin/signups.
- * 발송 표시 변경(설계 2026-07-22) — PATCH /admin/signup-codes/{code}. @Order(0) 토큰 체인 매처는
- * 정확히 /admin/signup-codes라 하위 경로는 안 잡는다 — 이 PATCH는 Basic 체인 소속.
- * 인증은 SecurityConfig의 @Order(1) ADMIN Basic 체인이 담당(/admin/** 매처). 여기선 role 검사를 하지 않는다.
+ * 발송 표시 변경(설계 2026-07-22) — PATCH /admin/signup-codes/{code}.
+ * 인증은 07-23부터 두 경로 모두 @Order(0) 토큰 체인(Bearer CODES_API_KEY)이 담당한다 —
+ * 어드민 FE가 키 헤더 방식만 써서 Basic에서 전환(SecurityConfig 매처 참조). 여기선 인증 검사를 하지 않는다.
  */
 @RestController
 public class AdminSignupController {

@@ -63,7 +63,7 @@ class ContentAnalysisJobTest {
 
 	void rewireJob(ContentInsightPort port, boolean thumbnailEnabled, java.util.function.Predicate<String> thumbnailAlive) {
 		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
-				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP);
+				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP, ProgressReporter.NOOP);
 	}
 
 	@BeforeEach
@@ -144,7 +144,7 @@ class ContentAnalysisJobTest {
 				  (2, 'post_a', 'positive', 'claude-test')""");
 
 		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
-				false, url -> true, ProgressReporter.NOOP);
+				false, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP);
 	}
 
 	@Test
@@ -320,14 +320,13 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 분석_대상은_수집_최신순이다() {
-		// 썸네일 서명 URL이 살아있을 때 VLM을 시도하기 위해 최신 수집분부터 (short_code 순이면 post_a 먼저)
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
-
+		// 썸네일 서명 URL이 살아있을 때 VLM을 먼저 시도하기 위해 최신 수집분부터 처리한다.
+		// LIMIT을 없앴으므로(전량 처리) 순서는 insightCalls 호출 순서로 검증한다.
 		int processed = job.run().processed();
 
-		assertEquals(1, processed);
-		assertEquals(1L, db.queryForObject(
-				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_b'", Long.class)); // captured_at 최신
+		assertEquals(2, processed);
+		assertEquals("post_b", insightCalls.get(0).shortCode()); // captured_at 최신
+		assertEquals("post_a", insightCalls.get(1).shortCode());
 	}
 
 	@Test
@@ -435,35 +434,42 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 늦크롤_백필_게시물도_윈도우가_닫히면_대상에서_제외된다() {
+	void 늦크롤_백필_게시물도_윈도우가_닫히면_runLateBackfill_대상에서도_제외된다() {
 		// 07-20 개정으로 "백필 MVP 제외"(07-19)는 번복됐다 — 늦크롤이라도 계정별 최근 N개 윈도우
 		// 안이면 이제 포함된다(late_backfill 마킹, 아래 늦크롤_최근_윈도우_안이면 테스트로 회귀 검증).
-		// 이 테스트는 그 윈도우 경로까지 완전히 닫힌 경우(recent-window=0)를 별도로 고정한다 —
-		// 순수 제때 가드만으로는 여전히 늦크롤분이 제외됨을 확인.
+		// 이 테스트는 그 윈도우 경로까지 완전히 닫힌 경우(recent-window=0)를 고정한다 — 백필의
+		// 킬스위치(recent-window=0으로 전량 차단)가 실제로 동작함을 runLateBackfill()로 검증한다.
+		// (split 이후 recentWindow는 LATE_BACKFILL_SQL에만 쓰이므로 run()으로는 이 게이트를 못 태운다.)
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '20 days',
 				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')");
 
-		int processed = job.run().processed();
+		int timelyProcessed = job.run().processed();
+		int backfillProcessed = job.runLateBackfill().processed();
 
-		assertEquals(1, processed); // post_b만 (post_a는 +11일 늦크롤, 윈도우도 닫혀 있음)
+		assertEquals(1, timelyProcessed); // post_b만 (post_a는 늦크롤)
+		assertEquals(0, backfillProcessed); // post_a는 늦크롤이지만 윈도우가 닫혀 있어(rn<=0) 제외
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 	}
 
 	@Test
-	void 늦크롤이라도_최근_윈도우_안이면_분석하고_late_backfill로_마킹한다() {
+	void 늦크롤이라도_최근_윈도우_안이면_runLateBackfill이_분석하고_late_backfill로_마킹한다() {
 		// 07-20 PO 결정(스펙 2026-07-20-vertex-migration-recent12-backfill-design.md): 늦크롤(제때
-		// 크롤 실패)이라도 계정의 최근 N개(기본 12) 윈도우 안이면 일상 분석 대상에 포함하고
+		// 크롤 실패)이라도 계정의 최근 N개(기본 12) 윈도우 안이면 late_backfill 잡의 대상에 포함하고
 		// V33 metric_timeliness를 late_backfill로 마킹한다. acct1은 총 3건뿐이라 기본 윈도우(12) 안.
+		// timely·backfill 쿼리는 상호 배타적이므로(2026-07-23 설계) post_a는 runLateBackfill()에서만,
+		// post_b는 run()에서만 나온다.
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '20 days',
 				  metric_captured_at = now() - interval '9 days' WHERE short_code = 'post_a'""");
 
-		int processed = job.run().processed();
+		int timelyProcessed = job.run().processed();
+		int backfillProcessed = job.runLateBackfill().processed();
 
-		assertEquals(2, processed); // post_a(늦크롤이지만 윈도우 안), post_b
+		assertEquals(1, timelyProcessed); // post_b만
+		assertEquals(1, backfillProcessed); // post_a(늦크롤이지만 윈도우 안)
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 		assertEquals("late_backfill", db.queryForObject(
@@ -478,6 +484,18 @@ class ContentAnalysisJobTest {
 		assertEquals(2, processed);
 		assertEquals("timely", db.queryForObject(
 				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
+	}
+
+	@Test
+	void timely이면서_최근_윈도우_안인_콘텐츠는_runLateBackfill_쿼리에서_제외된다() {
+		// 설계(2026-07-23): backfill 쿼리는 NOT timely를 명시한다. setUp 기본 픽스처의 post_a·post_b는
+		// 둘 다 timely면서 동시에 최근 윈도우 안(acct1 총 3건 < 기본 윈도우 12)이지만, 이제 timely
+		// 쪽이 먼저 가져가므로 runLateBackfill()에는 잡히지 않아야 한다 — 두 쿼리의 short_code 집합이
+		// 항상 서로소여야 content_analyses INSERT 경합이 안 생긴다.
+		int backfillProcessed = job.runLateBackfill().processed();
+
+		assertEquals(0, backfillProcessed);
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
 	}
 
 	@Test
@@ -497,21 +515,22 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 늦크롤이면서_제때창이_아직_열려있으면_윈도우_안이어도_제외된다() {
+	void 늦크롤이면서_제때창이_아직_열려있으면_runLateBackfill에서도_제외된다() {
 		// 최종 통합 리뷰 I-1: 제때창(posted_at + pin(3) + slack(2) = 기본 5일)이 아직 안 닫힌
 		// 콘텐츠를 윈도우 경로로 조기 분석하면, 나중에 진짜 timely 스냅샷이 들어와도
 		// content_analyses가 불변이라 late_backfill로 영구 오분류된다. 04 뷰의 "제때창이 완전히
-		// 지난 날만 후보" 성숙 철학과 정렬하기 위해 윈도우 분기에도 창 닫힘 게이트를 건다.
+		// 지난 날만 후보" 성숙 철학과 정렬하기 위해 late_backfill 쿼리에도 창 닫힘 게이트를 건다.
 		// post_a: 숙성(3일)은 지났지만(4일 전 게시) pin+slack(5일)은 아직 안 지났다 — 창이
 		// 열려 있는 상태. 지표도 미성숙(게시 +0.5일 캡처)이라 timely=false. acct1은 3건뿐이라
 		// 기본 윈도우(12)에서 rank상으로는 포함 대상이지만, 창이 열려 있으니 제외돼야 한다.
+		// post_a가 timely가 아니므로 run()으로는 이 게이트를 태우지 못한다 — runLateBackfill()로 검증.
 		db.update("""
 				UPDATE contents SET posted_at = now() - interval '4 days',
 				  metric_captured_at = now() - interval '3 days 12 hours' WHERE short_code = 'post_a'""");
 
-		int processed = job.run().processed();
+		int backfillProcessed = job.runLateBackfill().processed();
 
-		assertEquals(1, processed); // post_b만 (post_a는 창이 아직 열려 있어 윈도우 경로로도 제외)
+		assertEquals(0, backfillProcessed); // post_a는 창 안 닫힘, post_b는 애초 timely라 백필 대상 아님
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE short_code = 'post_a'", Long.class));
 	}
@@ -566,12 +585,13 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 진행률을_보고한다() {
-		// 대상 1건으로 고정 — 최초 보고(대상 확정 직후)와 마지막 보고(처리 완료 직후)만 검증
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-batch-limit', '1')");
+		// 대상 1건으로 고정 — 최초 보고(대상 확정 직후)와 마지막 보고(처리 완료 직후)만 검증.
+		// LIMIT이 없어졌으므로 post_b를 숙성 가드 미달로 만들어 대상에서 빼는 방식으로 1건을 고정한다.
+		db.update("UPDATE contents SET posted_at = now() - interval '1 day' WHERE short_code = 'post_b'");
 		List<int[]> reports = new ArrayList<>();
 		ProgressReporter reporter = (p, f, t) -> reports.add(new int[]{p, f, t});
 		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
-				false, url -> true, reporter);
+				false, url -> true, reporter, ProgressReporter.NOOP);
 
 		job.run();
 

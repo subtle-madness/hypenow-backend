@@ -13,7 +13,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * CODES_API_KEY Bearer 검증 필터(설계 2026-07-20) — /admin/signup-codes 전용 @Order(0) 체인에서만 동작.
+ * CODES_API_KEY Bearer 검증 필터(설계 2026-07-20) — 가입 코드 API @Order(0) 체인에서만 동작
+ * (07-23부터 적재 POST 외에 조회 GET·발송 표시 PATCH도 이 체인 소속 — SecurityConfig 매처 참조).
  * 키 미설정이면 503(fail-closed·오설정 구분), 토큰 일치 시 인증 세팅(권한 무관). 불일치·헤더 없음이면
  * 인증 미세팅 → 체인의 authenticated()가 진입점 401로 처리. 비교는 MessageDigest.isEqual(상수시간).
  */

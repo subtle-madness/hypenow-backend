@@ -11,15 +11,14 @@ import org.junit.jupiter.api.Test;
 class PipelineStatsServiceTest {
 
 	@Test
-	void 잔여와_배치상한으로_오늘예정과_소요일() {
-		// 진짜 잔여 24551, 상한 450 → 오늘 450, 55일
-		assertThat(PipelineStatsService.todayPlanned(24_551, 450)).isEqualTo(450);
-		assertThat(PipelineStatsService.daysToFull(24_551, 450)).isEqualTo(55);
+	void 잔여로_오늘예정과_완주여부() {
+		// LIMIT 폐지(2026-07-23) 이후 잡은 잔여 전량을 매 실행 시도 — 오늘 예정=잔여 전체,
+		// 완주까지는 잔여가 있으면 항상 "다음 1회"뿐(쿼타 이월은 RunHistory가 별도 추적).
+		assertThat(PipelineStatsService.todayPlanned(24_551)).isEqualTo(24_551);
+		assertThat(PipelineStatsService.daysToFull(24_551)).isEqualTo(1);
 		// 잔여 0
-		assertThat(PipelineStatsService.todayPlanned(0, 450)).isZero();
-		assertThat(PipelineStatsService.daysToFull(0, 450)).isZero();
-		// 상한 0 방어
-		assertThat(PipelineStatsService.daysToFull(10, 0)).isZero();
+		assertThat(PipelineStatsService.todayPlanned(0)).isZero();
+		assertThat(PipelineStatsService.daysToFull(0)).isZero();
 	}
 
 	@Test

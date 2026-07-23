@@ -1,34 +1,37 @@
 package com.celfit.was;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import org.springframework.http.MediaType;
 
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import com.celfit.was.admin.AdminSignupRepository;
 import com.celfit.was.admin.SignupUsageRow;
 
 /**
- * 관리자 가입 코드 조회(설계 2026-07-19) — /admin/**는 ADMIN Basic 체인(SecurityConfig @Order(1)).
+ * 관리자 가입 코드 조회·발송 표시(설계 2026-07-19·07-22) — 조회 GET·발송 PATCH는 07-23부터
+ * @Order(0) 토큰 체인(Bearer CODES_API_KEY) 소속이다(어드민 FE가 키 헤더 방식만 사용해 Basic에서 전환).
  * 실 DB에 유저·코드를 시드해 인증 경계와 소진/미소진/탈퇴 정렬을 검증한다.
  * 싱글턴 DB 공유·무롤백이라 전역 위치 대신 코드 값 필터·상대 인덱스로 단언하고,
  * 재실행 충돌을 피하려 이메일·코드는 매 호출 UUID로 유니크하게 발급한다(OpenApiDocsIntegrationTest의
  * ON CONFLICT 멱등 시드와 달리 여기선 seedUser가 RETURNING id로 PK를 받아야 해서 유니크 값 방식을 쓴다).
  */
 @AutoConfigureMockMvc
+@TestPropertySource(properties = "codes.api-key=test-secret-signups")
 class AdminSignupIntegrationTest extends IntegrationTest {
+
+	private static final String TOKEN = "test-secret-signups";
 
 	@Autowired
 	MockMvc mockMvc;
@@ -102,27 +105,23 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void ADMIN_아니면_403() throws Exception {
-		String userEmail = uniqueEmail("user-403");
-		seedUser(userEmail, "USER");
-		mockMvc.perform(get("/admin/signups").with(httpBasic(userEmail, "Passw0rd!")))
-				.andExpect(status().isForbidden());
+	void 토큰_틀리면_401() throws Exception {
+		mockMvc.perform(get("/admin/signups").header("Authorization", "Bearer wrong-token"))
+				.andExpect(status().isUnauthorized());
 	}
 
 	@Test
-	void ADMIN이면_소진코드는_유저와_미소진코드는_null로_반환() throws Exception {
+	void 토큰이_맞으면_소진코드는_유저와_미소진코드는_null로_반환() throws Exception {
 		String memberEmail = uniqueEmail("member");
-		String adminEmail = uniqueEmail("admin");
 		String usedCode = uniqueCode("THREADS-USED");
 		String openCode = uniqueCode("DM-OPEN");
 		long memberId = seedUser(memberEmail, "USER");
-		seedUser(adminEmail, "ADMIN");
 		seedUsedCode(usedCode, "THREADS", memberId);
 		seedUnusedCode(openCode, "DM");
 
 		// HTTP 계약: 200 + 소진 코드의 email 채워짐, 미소진 코드의 email 키가 명시적 null로 존재.
 		// 필터([?()])는 indefinite path라 결과가 리스트 → contains 매처로 단언.
-		mockMvc.perform(get("/admin/signups").with(httpBasic(adminEmail, "Passw0rd!")))
+		mockMvc.perform(get("/admin/signups").header("Authorization", "Bearer " + TOKEN))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$[?(@.code=='" + usedCode + "')].email")
 						.value(org.hamcrest.Matchers.contains(memberEmail)))
@@ -162,13 +161,11 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 새로_적재된_코드는_isSent가_false다() throws Exception {
-		String adminEmail = uniqueEmail("admin-issent");
-		seedUser(adminEmail, "ADMIN");
 		String code = uniqueCode("DM-ISSENT");
 		seedUnusedCode(code, "DM");
 
 		// HTTP 계약: 조회 응답에 isSent 키가 false로 존재.
-		mockMvc.perform(get("/admin/signups").with(httpBasic(adminEmail, "Passw0rd!")))
+		mockMvc.perform(get("/admin/signups").header("Authorization", "Bearer " + TOKEN))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$[?(@.code=='" + code + "')].isSent")
 						.value(org.hamcrest.Matchers.contains(false)));
@@ -180,13 +177,11 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 
 	@Test
 	void PATCH로_발송_표시를_켜고_끌_수_있다() throws Exception {
-		String adminEmail = uniqueEmail("admin-sent");
-		seedUser(adminEmail, "ADMIN");
 		String code = uniqueCode("DM-SENT");
 		seedUnusedCode(code, "DM");
 
 		mockMvc.perform(patch("/admin/signup-codes/" + code)
-				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.header("Authorization", "Bearer " + TOKEN)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"isSent\": true}"))
 				.andExpect(status().isOk())
@@ -197,7 +192,7 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 
 		// 양방향 — 다시 끄기(실수 복구).
 		mockMvc.perform(patch("/admin/signup-codes/" + code)
-				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.header("Authorization", "Bearer " + TOKEN)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"isSent\": false}"))
 				.andExpect(status().isOk())
@@ -208,11 +203,8 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 없는_코드_PATCH는_404() throws Exception {
-		String adminEmail = uniqueEmail("admin-404");
-		seedUser(adminEmail, "ADMIN");
-
 		mockMvc.perform(patch("/admin/signup-codes/" + uniqueCode("NOPE"))
-				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.header("Authorization", "Bearer " + TOKEN)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"isSent\": true}"))
 				.andExpect(status().isNotFound())
@@ -221,13 +213,11 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 
 	@Test
 	void isSent_누락_PATCH는_400() throws Exception {
-		String adminEmail = uniqueEmail("admin-400");
-		seedUser(adminEmail, "ADMIN");
 		String code = uniqueCode("DM-400");
 		seedUnusedCode(code, "DM");
 
 		mockMvc.perform(patch("/admin/signup-codes/" + code)
-				.with(httpBasic(adminEmail, "Passw0rd!"))
+				.header("Authorization", "Bearer " + TOKEN)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{}"))
 				.andExpect(status().isBadRequest())
@@ -236,7 +226,7 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 미인증_PATCH는_401() throws Exception {
-		// @Order(0) 토큰 체인 매처는 정확히 /admin/signup-codes — 하위 경로는 Basic 체인(401 챌린지)에 떨어진다.
+		// 토큰 체인 소속(07-23) — 헤더 없으면 필터가 인증 미세팅, 진입점이 401 {"error":...}로 응답.
 		mockMvc.perform(patch("/admin/signup-codes/" + uniqueCode("DM-ANON"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"isSent\": true}"))
