@@ -6,7 +6,8 @@ public enum JobName {
 	CLASSIFY("댓글 분류 (LLM)"),
 	ANALYZE("콘텐츠 분석 (LLM)"),
 	ACCOUNT_ANALYZE("계정 카피 (LLM)"),
-	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지");
+	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지"),
+	LATE_BACKFILL_ANALYZE("늦크롤 백필 분석 (LLM)");
 
 	private final String label;
 
