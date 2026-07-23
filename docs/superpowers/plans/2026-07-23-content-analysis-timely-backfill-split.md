@@ -14,6 +14,15 @@ LLM 429 quota + 기존 carryover 로직), 두 진입점은 각자 `JobName`·cro
 
 **참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-timely-backfill-split-design.md](../specs/2026-07-23-content-analysis-timely-backfill-split-design.md)
 
+> **실행 환경 주의(2026-07-23 실행 세션에서 발견):** 샌드박스 세션에서는 Testcontainers가 로컬
+> colima Docker 소켓에 접근하지 못한다(`docker info` 자체가 실패 — 호스트 소켓이 샌드박스에서
+> 안 보임). `ContentAnalysisJobTest`(Task 2~4의 핵심 테스트)는 `@Testcontainers` 기반이라 이
+> 환경에서는 **실행 자체가 안 되고 IllegalStateException으로 죽는다** — 코드 결함이 아니다.
+> `JobNameTest`·`AnalyticsJobServiceTest`·`ScheduleRunnerTest`·`AdminUiControllerTest`는
+> Testcontainers를 안 써서 정상 실행된다. Task 2~4에서 `ContentAnalysisJobTest` 관련 단계는
+> 코드·테스트 코드 자체는 정확히 작성하되, 실행 결과는 "샌드박스 제약으로 미실행"으로 보고한다.
+> 머지 전 실행 가능한 환경(Docker 붙는 로컬/CI)에서 `./gradlew :analytics:test` 재확인 필요.
+
 ---
 
 ## Task 1: JobName에 LATE_BACKFILL_ANALYZE 추가
@@ -69,6 +78,12 @@ git add analytics/src/main/java/com/celfit/analytics/admin/JobName.java \
         analytics/src/test/java/com/celfit/analytics/admin/JobNameTest.java
 git commit -m "feat(analytics): JobName에 LATE_BACKFILL_ANALYZE 추가"
 ```
+
+> **실행 중 발견(수정됨):** `JobName`에 6번째 값을 추가하면 `AnalyticsJobService.run(JobName)`의
+> exhaustive switch(`default` 없음)가 컴파일 자체를 깨서 모듈 전체 테스트가 막힌다. Task 1 실행
+> 직후 임시 케이스를 추가해 복구했다(커밋 `82f42ce`):
+> `case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().run(); // TODO(Task 4/5): runLateBackfill()로 교체`
+> — **Task 5는 이제 이 줄을 "추가"가 아니라 "교체"한다** (아래 Task 5 Step 3 갱신 참고).
 
 ---
 
@@ -684,15 +699,15 @@ Run: `./gradlew :analytics:test --tests "com.celfit.analytics.admin.AnalyticsJob
 Expected: FAIL (`AnalyticsJobService.run()`의 switch가 `LATE_BACKFILL_ANALYZE`를 모르는 case로 던짐 —
 `MatchException`류)
 
-- [ ] **Step 3: AnalyticsJobService switch에 case 추가**
+- [ ] **Step 3: AnalyticsJobService switch의 임시 케이스를 실제 호출로 교체**
 
-`AnalyticsJobService.java`의 `run(JobName job)`(101~126행) 안 switch에서
+Task 1 실행 중 컴파일 복구용으로 이미 임시 케이스가 들어가 있다(커밋 `82f42ce`):
 
 ```java
-			case ANALYZE -> analyzeJob.getObject().run();
+			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().run(); // TODO(Task 4/5): runLateBackfill()로 교체 — 현재는 컴파일 유지용 임시 배선
 ```
 
-바로 아래에 추가:
+이 줄을 다음으로 교체(TODO 주석 제거, `run()` → `runLateBackfill()`):
 
 ```java
 			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
