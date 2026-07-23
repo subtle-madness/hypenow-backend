@@ -120,6 +120,7 @@ public class AnalyticsJobService {
 				yield new JobResult(n, 0, false);
 			}
 			case ANALYZE -> analyzeJob.getObject().run();
+			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().run(); // TODO(Task 4/5): runLateBackfill()로 교체 — 현재는 컴파일 유지용 임시 배선
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
 			case ARCHIVE -> archiveJob.getObject().run();
 		};
