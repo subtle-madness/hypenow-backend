@@ -6,7 +6,9 @@ import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase;
 import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase.StopResult;
+import com.celfit.crawler.crawling.application.port.in.TriggerJobUseCase.TriggerResult;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.TriggerType;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.support.RedirectAttributesModelMap;
 
@@ -22,7 +24,7 @@ class UiJobControllerTest {
 
         String view = controller.stop(JobName.COLLECT, ra);
 
-        assertThat(view).isEqualTo("redirect:/ui/jobs");
+        assertThat(view).isEqualTo("redirect:/ui");
         assertThat(ra.getFlashAttributes().get("message").toString()).contains("중지 요청");
     }
 
@@ -34,5 +36,16 @@ class UiJobControllerTest {
         controller.stop(JobName.REELS, ra);
 
         assertThat(ra.getFlashAttributes().get("message").toString()).contains("실행 중이 아닙니다");
+    }
+
+    @Test
+    void 잡_트리거는_대시보드로_리다이렉트하고_시작_메시지를_남긴다() {
+        when(jobService.trigger(JobName.COLLECT, TriggerType.MANUAL)).thenReturn(TriggerResult.ACCEPTED);
+        var ra = new RedirectAttributesModelMap();
+
+        String view = controller.collect(ra);
+
+        assertThat(view).isEqualTo("redirect:/ui");
+        assertThat(ra.getFlashAttributes().get("message").toString()).contains("실행 시작");
     }
 }

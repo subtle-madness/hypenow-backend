@@ -62,7 +62,7 @@ public class UiJobController {
             case NOT_RUNNING -> job + "이(가) 실행 중이 아닙니다";
         };
         ra.addFlashAttribute("message", message);
-        return "redirect:/ui/jobs";
+        return "redirect:/ui";
     }
 
     private String respond(JobName name, TriggerResult result, RedirectAttributes ra) {
@@ -71,6 +71,6 @@ public class UiJobController {
             case BUSY -> name + "이(가) 이미 실행 중입니다";
         };
         ra.addFlashAttribute("message", message);
-        return "redirect:/ui/jobs";
+        return "redirect:/ui";
     }
 }

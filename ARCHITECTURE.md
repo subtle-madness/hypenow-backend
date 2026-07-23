@@ -63,7 +63,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 | `content` | 게시물 제어 (short_code, content_type, owner, uploaded_at, origin DISCOVERY/ENUMERATION, status) — 캡션·지표 없음 |
 | `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS jsonb) — 릴스 캡션·지표·썸네일의 소스 |
 | `raw_profile` | 프로필 원형(SELF_GQL·HIKER_MOBILE 등 source별 jsonb) — SELF_GQL엔 내장 타임라인 12개(피드 캡션·지표의 소스) |
-| `raw_post_detail` | 구 시대 상세 payload — 신 파이프라인 미사용(LEGACY, 크롤러 대시보드 전용) |
+| `raw_post_detail` | 구 시대 상세 payload — 신 파이프라인 미사용(LEGACY). 07-22 열람 화면 제거로 접근 코드도 삭제, 테이블만 잔존 |
 | `raw_comment` | 댓글 원문 (writer/text/written_at 실컬럼) — 수집 게이트 off, 신규 유입 없음 |
 | `app_setting` | 런타임 설정 key-value (분석 뷰도 여기서 임계값을 읽음) |
 
@@ -193,7 +193,9 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 
 > 상태가 바뀌면 이 표를 갱신한다. ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류
 
-**운영 중**: crawler 파이프라인(discover→qualify→aggregate), analytics 상주 어드민(8082 `/ui` —
+**운영 중**: crawler 파이프라인(discover→qualify→beauty→collect·reels — 07-22부터 qualify·beauty·collect·reels는
+새벽 윈도우 반복 크론 자동 실행, discover·similar만 어드민 수동 트리거. 어드민은 대시보드 단일
+화면으로 개편: 잡 실행 스트립·예상 비용·실행 로그 통합, 잡 실행·수집 게시물 탭 제거), analytics 상주 어드민(8082 `/ui` —
 미러·LLM 잡 트리거, 태스크 I + `/ui/coverage` 커버리지 매트릭스 — celfit-front **배포본(origin/main)**
 실소비 필드 기준(07-18 재정의) + 수집 모수(raw 서빙 뷰) 타일, 07-19 was에서 이전), was `/v1` API(스펙
 v1 P1~P3 + 로그인 월 — 커버리지는 어드민 소속, was는 고객 서비스 표면만).
@@ -225,7 +227,7 @@ DISCOVERED 유입, 이후 qualify→beauty는 기존 파이프라인 동일 처�
 | I | analytics 어드민 | 상주 서버(8082) `/ui` — 07-19 파이프라인 관측 대시보드 재설계([specs/2026-07-19-analytics-dashboard-design.md](docs/superpowers/specs/2026-07-19-analytics-dashboard-design.md)) → **07-21 v3 모델 재설계**: 퍼널 폐기 → 계정 보드·콘텐츠 보드 2축(모수=현재 raw 스냅샷), 크로스 DB 잔여 대조(G1 — 후보 ∩ 미분석, 트랙별 4분할)·커버리지 현 서빙 모수 재정의(G2), 누적 분석 수는 각주 강등 — [plans/2026-07-21-analytics-dashboard-v3-data-model.md](docs/superpowers/plans/2026-07-21-analytics-dashboard-v3-data-model.md). 잡 카드·실행 피드·폴링·집계 3상태는 v2 유지 | A | ✅ |
 | A2 | 뷰 신 스키마 재구축 | 분석 뷰 00~20을 신 crawler 스키마(V15 인플루언서 개편) 기준 재구축 — base 소스 교체(raw_media_page clips·SELF_GQL 내장 타임라인), 뷰티 인플루언서 모수 필터, 04 LLM 후보 뷰 신설, 하니스 신 스키마 시드 재작성. 07-18 구현 완료 | [PR #30](https://github.com/subtle-madness/hypenow-backend/pull/30) 머지 | ✅ |
 | L | LLM Gemini 전환 | 전 분석 축(판정·속성+종합 통합 1콜·카피)을 `gemini-3.1-flash-lite`로 — 프로바이더 선택 `analytics.llm-provider`(기본 gemini, anthropic 롤백), 무료 키 페이싱(15RPM, 일 예산은 batch-limit) + 한도 소진 시 배치 이월, 문구 절제 규칙(LlmGuard). 크롤러 판정은 `crawler.beauty.judge`(기본 claude-api, gemini는 롤백, 팀 프롬프트·파서 재사용). 백필은 유료 키 Batch one-shot(submit/collect) — [plans/archive/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/archive/2026-07-18-gemini-llm-stack.md) | F, B4, C2 | ✅ (백필 경로는 M에서 Vertex로 대체) |
-| M | Vertex 전환 + 백필 재도입 | 일상 경로를 AI Studio 무료 키 → Vertex AI(SA OAuth)로 완전 전환(`analytics.llm-provider=vertex`, `VertexTokenProvider`+`VertexHttpApi`), 배치도 GCS 경유로 Vertex 전환(상관관계는 에코 파싱으로 재설계). crawler 뷰티 판정은 무접촉(뷰티 판정 v2에서 claude-api 구독으로 별도 전환). 04 뷰·`ContentAnalysisJob` 자격에 "최근 N개 윈도우 포함" OR 추가로 07-19 백필 MVP 제외를 번복, `metric_timeliness`를 timely/late_backfill로 직접 분기. 사용자 런북: [runbooks/2026-07-20-vertex-backfill-runbook.md](docs/runbooks/2026-07-20-vertex-backfill-runbook.md) | L | ✅ (구현 완료 — GCP 준비·실 스모크·본 백필은 런북 절차로 사용자 진행 대기) |
+| M | Vertex 전환 + 백필 재도입 | 일상 경로를 AI Studio 무료 키 → Vertex AI(SA OAuth)로 완전 전환(`analytics.llm-provider=vertex`, `VertexTokenProvider`+`VertexHttpApi`), 배치도 GCS 경유로 Vertex 전환(상관관계는 에코 파싱으로 재설계). crawler 뷰티 판정은 무접촉(뷰티 판정 v2에서 claude-api 구독으로 별도 전환). 04 뷰·`ContentAnalysisJob` 자격에 "최근 N개 윈도우 포함" OR 추가로 07-19 백필 MVP 제외를 번복, `metric_timeliness`를 timely/late_backfill로 직접 분기. (07-23 개정: `ContentAnalysisJob`의 OR 결합 단일 쿼리를 `run()`/`runLateBackfill()` 두 진입점으로 분리 — 예산 공유 문제 해소, LIMIT 완전 제거·실질 상한은 LLM 쿼타로 대체. [specs/2026-07-23-content-analysis-timely-backfill-split-design.md](docs/superpowers/specs/2026-07-23-content-analysis-timely-backfill-split-design.md)) 사용자 런북: [runbooks/2026-07-20-vertex-backfill-runbook.md](docs/runbooks/2026-07-20-vertex-backfill-runbook.md) | L | ✅ (구현 완료 — GCP 준비·실 스모크·본 백필은 런북 절차로 사용자 진행 대기) |
 | J | 서빙 이미지 아카이브 | CDN 만료(~4일) 전 프로필·릴스 썸네일·게시글 썸네일을 OCI `hypenow-images` 버킷에 적재하는 analytics 잡 + `image_assets`(V37, 미러 제외 누적) + was COALESCE `/img/` 상대경로 서빙(Vercel rewrite 엣지 캐시 — 프론트 배포 완료) — [specs/2026-07-21-image-archive-design.md](docs/superpowers/specs/2026-07-21-image-archive-design.md) [plans/2026-07-21-image-archive.md → archive] | B1(미러), 어드민 I | ✅ (운영 개통 완료 — 버킷 공개·PAR 등록·서버 env, 첫 실행 확인 대기) |
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
@@ -276,6 +278,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
 | 2026-07-23 | **가입 코드 어드민 API 인증을 토큰 체인으로 통일** — 07-22 설계는 조회 GET·발송 PATCH를 ADMIN Basic 전제로 뒀지만, 어드민 FE는 세션·Basic 없이 `CODES_API_KEY` 헤더 방식만 사용해 `GET /admin/signups`가 401. @Order(0) 토큰 체인 매처를 `/admin/signup-codes`·`/admin/signup-codes/*`·`/admin/signups`로 확장해 적재·조회·발송 표시 모두 Bearer 키 인증으로 통일. 트레이드오프 수용: 해당 경로는 Basic 불가(Swagger try-it-out 안 됨), 정적 키 하나로 가입자 이메일 열람 가능(노출 표면 확대 인지) | SecurityConfig `signupCodeIngestFilterChain` |
+| 2026-07-23 | **`ContentAnalysisJob` timely/late_backfill 후보 선정 분리 — 예산 독립화 + LIMIT 폐지** — 늦크롤 백필 후보가 몰리면(신규 계정 대량 유입 등) 매일 갱신돼야 할 timely 분석이 밀리는 문제. `base`/`ranked` CTE는 공유하되 바깥 WHERE를 `WHERE timely`(신규 `run()`)와 `WHERE NOT timely AND 윈도우`(신규 `runLateBackfill()`)로 상호 배타 분리 — 두 잡이 동시에 같은 short_code를 집을 수 없어 `content_analyses` INSERT 경합도 원천 차단. LIMIT은 양쪽 다 완전 제거(실질 상한은 기존 LLM 429 쿼타 이월 로직 재사용) — 신규 app_setting·마이그레이션 불필요. `JobName.LATE_BACKFILL_ANALYZE` 신설로 어드민·스케줄(`analytics.schedule.late-backfill-analyze-cron`) 독립 배선. 클래스는 진입점만 분리(별도 클래스 안 만듦 — 기준선 로딩 `loadBaselines()` 공유). 회귀: `:analytics:test` 212 GREEN(Testcontainers 실행 포함) | [specs/2026-07-23-content-analysis-timely-backfill-split-design.md](docs/superpowers/specs/2026-07-23-content-analysis-timely-backfill-split-design.md) · [plans/2026-07-23-content-analysis-timely-backfill-split.md](docs/superpowers/plans/2026-07-23-content-analysis-timely-backfill-split.md) |
 | 2026-07-22 | **Swagger 표면 확장 + 가입 코드 발송 추적** — Swagger 표면을 `/v1/**`에서 `/v1/**, /admin/**`로 확장, 어드민 FE가 Swagger에서 어드민 API 시그니처 확인(접근은 기존 ADMIN Basic 게이트) / `app.signup_codes`에 `is_sent` 칼럼 추가(발송 여부, 소진과 별개 축), 양방향 PATCH 엔드포인트 제공 | `PATCH /admin/signup-codes/{code}` · [specs/2026-07-22-signup-codes-is-sent-design.md](docs/superpowers/specs/2026-07-22-signup-codes-is-sent-design.md) |
 | 2026-07-22 | **수동 발굴 등록 API + 크롬 익스텐션** — 크롤링 두 경로(DiscoverJob·SimilarJob)뿐이던 인플루언서 유입에 수동 경로 추가: crawler `POST /api/manual-discoveries`(신규만 DISCOVERED 생성, 기존 계정은 상태만 응답 — 반복 클릭의 discovery 이력 스팸 방지, 출처 keyword `수동:크롬`), 사전 공유 토큰 `X-Api-Token` 인증(`MANUAL_DISCOVERY_TOKEN`, 미설정 시 503 fail-closed). Caddy는 이 경로만 `/crawler/api/manual-discoveries`로 외부 공개 — 어드민 `/ui`·`/admin`은 계속 SSH 터널 전용. 수동 등록도 기존 qualify→beauty 파이프라인 동일 적용(팔로워 필터 면제 없음). 크롬 익스텐션(MV3 팝업 — 현재 탭 URL에서 username 추출, DOM 무접촉)은 레포 밖 별도 저장소 `hypenow-extension` | [specs/2026-07-22-manual-discovery-extension-design.md](docs/superpowers/specs/2026-07-22-manual-discovery-extension-design.md) |
 | 2026-07-21 | **OCI 모니터링 알람 도입 + 보안 표면 점검** — 알람 5개 → ONS 토픽 `hypenow-alerts`(디스코드 웹훅을 Slack 프로토콜 구독으로 연결, 웹훅 URL 뒤 `/slack`): 인스턴스 CPU·메모리 85%·인스턴스 다운(oci_computeagent/infrastructure_health) + 컨테이너 다운·디스크 85%(커스텀 `hypenow_custom` — 서버 크론 1분 `post-container-metrics.py`, 인스턴스 프린시펄 인증이라 서버에 키 없음). 점검 결론: 방화벽은 시큐리티 리스트(22/80/443만 개방, 앱 포트 미노출)로 충분해 유료 방화벽 불채택. 레이트리밋은 `forward-headers-strategy: framework`가 XFF→remoteAddr를 복원해 **이미 IP별 정상 동작**(스푸핑은 Caddy 2.5+가 외부 XFF 폐기로 방어) — 취약 의심은 오진이었고 설정 한 줄에 걸린 보증이라 회귀 가드 테스트만 추가([PR #110](https://github.com/subtle-madness/hypenow-backend/pull/110)). 부트 볼륨 100GB는 전량 파티션 반영·사용 30% 확인(볼륨 증설 불필요) | deploy/scripts/post-container-metrics.py · deploy/README.md §10 |
@@ -380,7 +383,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 | 구 산출물·구 화면 정리 | `content_ranking` 등 07-12 이전 산출물 테이블은 구 `/dashboard`가 아직 읽어 보류(B1 때 확인). 프론트 전환 완료 후 구 `/api/*`·`/dashboard`·`/posts/{shortCode}` 데모와 일괄 정리. 커버리지 매트릭스(07-19부터 analytics `/ui/coverage`)는 분리 조회로 테이블 부재 내성 확보(07-18, [PR #34](https://github.com/subtle-madness/hypenow-backend/pull/34)) |
 | 댓글 수집 재개 | MVP 제외(07-14) — 재개 시 크롤러 댓글 액터 복원 + B2 게이트 on + "214개 분석" 카피 정정("최근 최대 50개") 일괄 처리 |
 | ~~LLM 모델~~ | 해소(07-18) — 골드셋 실측으로 전 축 gemini-3.1-flash-lite 확정(§7 태스크 L), Anthropic은 app_setting 롤백 경로 |
-| 미러 갱신 주기 | 어드민 UI 수동 트리거(8082 `/ui`, 태스크 I). 스케줄 골격 있음(`analytics.schedule.enabled`, 기본 off) — 크론 켜는 시점·주기만 미결(크롤 일일 자동화와 함께 결정) |
+| ~~미러 갱신 주기~~ | 해소 — 07-21 analytics 스케줄 점화(04:30~) + 07-22 크롤 자동화가 그 앞 새벽으로 정렬 |
 | ~~세션·쿠키 운영 전환~~ | 해소 — HTTPS·Secure 쿠키(07-15, application-prod.yml), 세션 인메모리→spring-session-jdbc(07-15, P2 `app.spring_session`), SameSite는 Lax 확정(07-17, [PR #23](https://github.com/subtle-madness/hypenow-backend/pull/23)) |
 | 감성 비율 분모 | 기본 표기는 전체(스팸 포함), 원값 제공으로 프론트 전환 가능 |
 | 미러 부분 실패 시맨틱 | 러너는 fail-fast — N번째 spec 실패 시 이후 spec은 이전 실행 상태로 남음(신선/스테일 혼재). B1에서 갱신 메타 기록 or 실패 집계 방식 결정 |

@@ -39,6 +39,12 @@ public class ScheduleRunner {
 		log.info("스케줄 analyze: {}", jobService.trigger(JobName.ANALYZE, TriggerType.SCHEDULED));
 	}
 
+	@Scheduled(cron = "${analytics.schedule.late-backfill-analyze-cron:-}")
+	void lateBackfillAnalyze() {
+		log.info("스케줄 late-backfill-analyze: {}",
+				jobService.trigger(JobName.LATE_BACKFILL_ANALYZE, TriggerType.SCHEDULED));
+	}
+
 	@Scheduled(cron = "${analytics.schedule.account-analyze-cron:-}")
 	void accountAnalyze() {
 		log.info("스케줄 account-analyze: {}",

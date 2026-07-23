@@ -11,9 +11,7 @@
              빈 href면 회사 뷰를 본 뒤 인플루언서 탭이 회사 뷰로 되돌려지는 문제가 있었다 -->
         <a class="item" href="/ui/influencers?company=false" th:classappend="${active == 'influencers'} ? 'active'">인플루언서</a>
         <a class="item" href="/ui/influencers?company=true" th:classappend="${active == 'companies'} ? 'active'">뷰티 회사</a>
-        <a class="item" href="/ui/contents" th:classappend="${active == 'contents'} ? 'active'">수집 게시물</a>
         <span class="nav-label">수집 운영</span>
-        <a class="item" href="/ui/jobs" th:classappend="${active == 'jobs'} ? 'active'">잡 실행</a>
         <a class="item" href="/ui/keywords" th:classappend="${active == 'keywords'} ? 'active'">검색 키워드</a>
         <a class="item" href="/ui/settings" th:classappend="${active == 'settings'} ? 'active'">설정</a>
     </nav>
