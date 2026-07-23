@@ -63,7 +63,7 @@ class ContentAnalysisJobTest {
 
 	void rewireJob(ContentInsightPort port, boolean thumbnailEnabled, java.util.function.Predicate<String> thumbnailAlive) {
 		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
-				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP);
+				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP, ProgressReporter.NOOP);
 	}
 
 	@BeforeEach
@@ -144,7 +144,7 @@ class ContentAnalysisJobTest {
 				  (2, 'post_a', 'positive', 'claude-test')""");
 
 		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
-				false, url -> true, ProgressReporter.NOOP);
+				false, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP);
 	}
 
 	@Test
@@ -571,7 +571,7 @@ class ContentAnalysisJobTest {
 		List<int[]> reports = new ArrayList<>();
 		ProgressReporter reporter = (p, f, t) -> reports.add(new int[]{p, f, t});
 		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
-				false, url -> true, reporter);
+				false, url -> true, reporter, ProgressReporter.NOOP);
 
 		job.run();
 

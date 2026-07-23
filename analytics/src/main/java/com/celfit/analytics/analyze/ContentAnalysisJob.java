@@ -37,11 +37,13 @@ public class ContentAnalysisJob {
 	private final boolean thumbnailEnabled; // 썸네일 첨부 게이트 — off여도 캡션 기반 속성은 산출
 	private final Predicate<String> thumbnailAlive;
 	private final ProgressReporter reporter;
+	private final ProgressReporter backfillReporter; // runLateBackfill() 진행률 — run()의 reporter와 별도 JobName
 	private final ObjectMapper json = new ObjectMapper();
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
 			ContentInsightPort insight, AnalyticsSettings settings,
-			boolean thumbnailEnabled, Predicate<String> thumbnailAlive, ProgressReporter reporter) {
+			boolean thumbnailEnabled, Predicate<String> thumbnailAlive,
+			ProgressReporter reporter, ProgressReporter backfillReporter) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.insight = insight;
@@ -49,6 +51,7 @@ public class ContentAnalysisJob {
 		this.thumbnailEnabled = thumbnailEnabled;
 		this.thumbnailAlive = thumbnailAlive;
 		this.reporter = reporter;
+		this.backfillReporter = backfillReporter;
 	}
 
 	/** raw v_analysis_account_baseline·v_analysis_baseline 1회 로딩 결과 — run()·runLateBackfill() 공유. */
