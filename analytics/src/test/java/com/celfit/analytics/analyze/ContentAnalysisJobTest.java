@@ -413,6 +413,15 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 동시_처리_개수_기본값과_app_setting_오버라이드() {
+		AnalyticsSettings settings = new AnalyticsSettings(db);
+		assertEquals(8, settings.analyzeConcurrency());
+
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '3')");
+		assertEquals(3, settings.analyzeConcurrency());
+	}
+
+	@Test
 	void 콘텐츠_하나가_실패해도_나머지는_처리된다() {
 		// 포트 대역: post_a만 예외 (모의 LLM 장애)
 		rewireJob((content, thumbnailUrl) -> {

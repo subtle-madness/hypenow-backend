@@ -43,6 +43,10 @@ public class AnalyticsSettings {
 	public static final String KEY_VERTEX_GCS_BUCKET = "analytics.vertex-gcs-bucket";
 	/** 최근 N개 윈도우 — 01 뷰(v_recent_content)와 공유하는 키. 분석 자격 OR 분기에서 사용. */
 	public static final String KEY_RECENT_WINDOW = "analytics.recent-window";
+	/** 동시 처리(병렬) 개수 — LLM 콜 처리량 개선(2026-07-23). Vertex는 RPM 페이싱이 없어(DSQ)
+	 * 병렬화 여유가 있고, Gemini로 되돌려도 GeminiHttpApi.pace()가 synchronized라 안전하게
+	 * 감속된다. 429 빈도를 보며 재배포 없이 조정할 수 있게 app_setting으로 뺀다. */
+	public static final String KEY_ANALYZE_CONCURRENCY = "analytics.analyze-concurrency";
 
 	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
 	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
@@ -58,6 +62,7 @@ public class AnalyticsSettings {
 	static final int DEFAULT_ARCHIVE_BATCH_LIMIT = 1000;
 	static final String DEFAULT_VERTEX_LOCATION = "global";
 	static final int DEFAULT_RECENT_WINDOW = 12;
+	static final int DEFAULT_ANALYZE_CONCURRENCY = 8;
 
 	private final JdbcTemplate raw;
 
@@ -132,6 +137,10 @@ public class AnalyticsSettings {
 
 	public int recentWindow() {
 		return read(KEY_RECENT_WINDOW).map(Integer::parseInt).orElse(DEFAULT_RECENT_WINDOW);
+	}
+
+	public int analyzeConcurrency() {
+		return read(KEY_ANALYZE_CONCURRENCY).map(Integer::parseInt).orElse(DEFAULT_ANALYZE_CONCURRENCY);
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */
