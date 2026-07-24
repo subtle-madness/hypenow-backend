@@ -27,11 +27,11 @@ import org.junit.jupiter.api.Test;
  */
 class JdkInstagramWebClientRotationTest {
 
-    private HttpResponse<String> ok() throws Exception {
+    private HttpResponse<byte[]> ok() throws Exception {
         @SuppressWarnings("unchecked")
-        HttpResponse<String> r = mock(HttpResponse.class);
+        HttpResponse<byte[]> r = mock(HttpResponse.class);
         when(r.statusCode()).thenReturn(200);
-        when(r.body()).thenReturn("{}");
+        when(r.body()).thenReturn("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         when(r.headers()).thenReturn(HttpHeaders.of(Map.of(), (a, b) -> true));
         return r;
     }
@@ -42,8 +42,8 @@ class JdkInstagramWebClientRotationTest {
             creations.add(url);                // null=직접, 그 외=프록시 URL
             HttpClient c = mock(HttpClient.class);
             try {
-                HttpResponse<String> resp = ok();   // 중첩 스터빙 방지 — 응답을 먼저 완성한다
-                when(c.send(any(), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                HttpResponse<byte[]> resp = ok();   // 중첩 스터빙 방지 — 응답을 먼저 완성한다
+                when(c.send(any(), ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>any()))
                         .thenReturn(resp);
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -113,7 +113,7 @@ class JdkInstagramWebClientRotationTest {
             creations.add(url);
             HttpClient c = mock(HttpClient.class);
             try {
-                when(c.send(any(), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                when(c.send(any(), ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>any()))
                         .thenThrow(new java.io.IOException(
                                 "WWW-Authenticate header missing for response code 401"));
             } catch (Exception e) {
