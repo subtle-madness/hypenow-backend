@@ -70,8 +70,11 @@ class ContentAnalysisJobTest {
 	void setUp() {
 		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
 		db = new JdbcTemplate(ds);
-		insightCalls = new ArrayList<>();
-		thumbnailArgs = new ArrayList<>();
+		// 병렬 처리(기본 concurrency=8)로 여러 스레드가 동시에 add()할 수 있어 synchronizedList로
+		// 감싼다 — 순서 결정성까지는 보장 안 하지만(그건 각 테스트가 필요시 concurrency=1로 고정),
+		// 최소한 손실·손상 없이 안전하게 누적되게 한다 (2026-07-24 레이스 컨디션 수정).
+		insightCalls = java.util.Collections.synchronizedList(new ArrayList<>());
+		thumbnailArgs = java.util.Collections.synchronizedList(new ArrayList<>());
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
 		TestDb.resetAndMigrate(db, ds);
 
@@ -227,6 +230,8 @@ class ContentAnalysisJobTest {
 
 	@Test
 	void 썸네일_게이트_on이면_생존_썸네일이_첨부되고_제품명까지_저장된다() {
+		// thumbnailArgs 위치 동등성(수집 최신순)을 검증하므로 concurrency=1로 완료 순서를 고정한다.
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
 		rewireJob(fakeInsightPort(), true);
 
 		int processed = job.run().processed();
@@ -249,6 +254,8 @@ class ContentAnalysisJobTest {
 	@Test
 	void 썸네일_프리체크_실패면_캡션만으로_속성을_산출한다() {
 		// 만료된 서명 URL 재현: post_a 썸네일만 죽어 있다 — 구 VLM처럼 컬럼 NULL이 아니라 캡션 단독 분석으로 간다
+		// thumbnailArgs 위치 동등성을 검증하므로 concurrency=1로 완료 순서를 고정한다.
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
 		rewireJob(fakeInsightPort(), true, url -> url.equals("https://img/b.jpg"));
 
 		int processed = job.run().processed();
@@ -266,6 +273,8 @@ class ContentAnalysisJobTest {
 	void 캡션도_썸네일도_없으면_속성을_폐기하고_컬럼은_NULL이다() {
 		// 입력이 아무것도 없는 콘텐츠 — 속성 근거가 없다. 통합 콜은 종합을 위해 1회 나가되
 		// 속성 산출은 폐기해 컬럼 NULL 유지 (행 자체는 생성돼 배치 슬롯 잠식 방지)
+		// thumbnailArgs 위치 동등성을 검증하므로 concurrency=1로 완료 순서를 고정한다.
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
 		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
 		rewireJob(fakeInsightPort(), true);
 
