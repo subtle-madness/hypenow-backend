@@ -9,6 +9,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
@@ -143,26 +148,56 @@ public class ContentAnalysisJob {
 			targets.add(rs.getString(1));
 		}, params);
 		String model = settings.activeLlmModel();
-		int processed = 0;
-		int failed = 0;
-		boolean carriedOver = false;
+		AtomicInteger processedCount = new AtomicInteger();
+		AtomicInteger failedCount = new AtomicInteger();
+		AtomicBoolean quotaExhausted = new AtomicBoolean();
 		progress.report(0, 0, targets.size());
+
+		// 대상은 제출 순서(=쿼리의 최신순)를 유지한 채 병렬 처리한다 — 고정 크기 풀의 작업 큐는
+		// FIFO라 "최신 수집분부터"(썸네일 서명 URL 생존 우선순위, B3) 의도는 유지되고 완료
+		// 순서만 동시성 때문에 섞인다. 병렬도는 app_setting(analytics.analyze-concurrency,
+		// 기본 8)으로 재배포 없이 조정 가능 — Vertex는 RPM 페이싱이 없어(DSQ) 여유가 있다.
+		List<Callable<Void>> tasks = new ArrayList<>();
 		for (String shortCode : targets) {
-			try {
-				analyzeOne(shortCode, model, baselines.withBaseline(), baselines.accountBaseline(), timely);
-				processed++;
-			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
-				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
-				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
-				carriedOver = true;
-				break;
-			} catch (Exception e) {
-				failed++;
-				log.error("analysis failed for {} — 다음 실행에서 재대상", shortCode, e);
-			}
-			progress.report(processed, failed, targets.size());
+			tasks.add(() -> {
+				if (quotaExhausted.get()) {
+					return null; // 이미 쿼타 소진 — 남은 큐는 추가 429를 만들지 않도록 LLM 호출 없이 스킵
+				}
+				try {
+					analyzeOne(shortCode, model, baselines.withBaseline(), baselines.accountBaseline(), timely);
+					int p = processedCount.incrementAndGet();
+					progress.report(p, failedCount.get(), targets.size());
+				} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
+					// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18
+					// 확정, 병렬화 후에도 유지). 이미 진행 중이던 다른 작업은 강제 취소하지 않고
+					// 완료시킨다 — 콜 자체가 짧아(초 단위) 취소로 얻는 이득보다 부분 상태 복잡도가 크다.
+					quotaExhausted.set(true);
+					log.warn("LLM 일 한도 소진 감지 — {} 스킵(이월), 이후 미착수 대상도 스킵됨", shortCode);
+				} catch (Exception e) {
+					int f = failedCount.incrementAndGet();
+					log.error("analysis failed for {} — 다음 실행에서 재대상", shortCode, e);
+					progress.report(processedCount.get(), f, targets.size());
+				}
+				return null;
+			});
 		}
-		log.info("analysis complete ({} contents, {} failed)", processed, failed);
+
+		int concurrency = Math.max(1, settings.analyzeConcurrency());
+		try (ExecutorService pool = Executors.newFixedThreadPool(concurrency)) {
+			pool.invokeAll(tasks);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("분석 배치가 인터럽트됨", e);
+		}
+
+		int processed = processedCount.get();
+		int failed = failedCount.get();
+		boolean carriedOver = quotaExhausted.get();
+		// 풀 종료 후 최종 수치로 한 번 더 보고 — 동시 완료 시 마지막 개별 report 호출이 진짜
+		// 최종값이라는 보장이 없어, 이게 없으면 어드민 진행률 UI가 부정확한 값으로 끝날 수 있다.
+		progress.report(processed, failed, targets.size());
+		log.info("analysis complete ({} contents, {} failed, quota carried over={})",
+				processed, failed, carriedOver);
 		return new JobResult(processed, failed, carriedOver);
 	}
 
