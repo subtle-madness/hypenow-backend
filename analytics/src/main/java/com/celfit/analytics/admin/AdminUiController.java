@@ -203,10 +203,18 @@ public class AdminUiController {
 				if (h == null) {
 					yield f.candidatesError() != null ? "대상 집계 실패 — 분석 뷰 확인 필요" : "대상 집계 중…";
 				}
-				// 잔여는 크로스 DB 대조의 "진짜 잔여"(후보 ∩ 미분석) — 누적 마킹 수 빼기가 아니다(G1).
+				// timely 트랙만 표시(2026-07-23 분리) — late_backfill 트랙은 LATE_BACKFILL_ANALYZE
+				// 카드가 별도 표시. 예전엔 한 잡이 둘 다 처리해 합산이 맞았지만, 분리 후 합산을 그대로
+				// 이 카드에 두면 "콘텐츠 분석이 N건 밀렸다"로 오독된다(실제론 백필 잡 미가동 때문).
 				yield "후보 %s · 기분석 %s · 미분석 %s".formatted(
-						comma(h.candidates()), comma(h.candidates() - h.truePending()),
-						comma(h.truePending()));
+						comma(h.timelyTotal()), comma(h.timelyDone()), comma(h.timelyPending()));
+			}
+			case LATE_BACKFILL_ANALYZE -> {
+				if (h == null) {
+					yield f.candidatesError() != null ? "대상 집계 실패 — 분석 뷰 확인 필요" : "대상 집계 중…";
+				}
+				yield "후보 %s · 기분석 %s · 미분석 %s".formatted(
+						comma(h.windowTotal()), comma(h.windowDone()), comma(h.windowPending()));
 			}
 			// 계정 카피 완료율도 현 모수 기준(G1) — 누적 핸들(탈락 계정 포함)로 세면 >100%가 나온다.
 			case ACCOUNT_ANALYZE -> h == null
@@ -226,8 +234,11 @@ public class AdminUiController {
 		}
 		return switch (job) {
 			// 잔여 미상(집계 중·실패)이면 todayPlanned은 0이 아니라 "모름" — "+0 예정"은 오독을 부른다.
+			// LIMIT 폐지(2026-07-23) 이후 잡은 자기 트랙의 잔여 전량을 오늘 시도 — 트랙별 잔여를 그대로 쓴다.
 			case ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
-					: "오늘 +%s 예정 · 랭킹 노출은 제때(timely) 분석분만".formatted(f.todayPlanned());
+					: "오늘 +%s 예정 · 랭킹 노출은 제때(timely) 분석분만".formatted(comma(f.heavy().timelyPending()));
+			case LATE_BACKFILL_ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
+					: "오늘 +%s 예정 · 인플루언서 상세에만 노출".formatted(comma(f.heavy().windowPending()));
 			case ACCOUNT_ANALYZE -> "stale + 쿨다운 경과분 재분석";
 			case MIRROR -> "분석 무관 — 서빙 뷰 전체 재적재";
 			default -> null;
