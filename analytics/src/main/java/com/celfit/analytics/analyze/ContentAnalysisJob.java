@@ -172,7 +172,7 @@ public class ContentAnalysisJob {
 					// 확정, 병렬화 후에도 유지). 이미 진행 중이던 다른 작업은 강제 취소하지 않고
 					// 완료시킨다 — 콜 자체가 짧아(초 단위) 취소로 얻는 이득보다 부분 상태 복잡도가 크다.
 					quotaExhausted.set(true);
-					log.warn("LLM 일 한도 소진 — {} 이후 대상은 스킵(이월)", shortCode);
+					log.warn("LLM 일 한도 소진 감지 — {} 스킵(이월), 이후 미착수 대상도 스킵됨", shortCode);
 				} catch (Exception e) {
 					int f = failedCount.incrementAndGet();
 					log.error("analysis failed for {} — 다음 실행에서 재대상", shortCode, e);

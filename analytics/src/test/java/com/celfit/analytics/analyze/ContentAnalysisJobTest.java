@@ -66,6 +66,12 @@ class ContentAnalysisJobTest {
 				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP, ProgressReporter.NOOP);
 	}
 
+	/** insightCalls/thumbnailArgs 호출 순서를 단언하는 테스트 전용 — 병렬 처리(기본 concurrency=8)에서는
+	 * 완료 순서가 섞이므로 concurrency=1로 고정해 순차 처리를 강제한다. */
+	void pinSequentialConcurrency() {
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+	}
+
 	@BeforeEach
 	void setUp() {
 		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
@@ -231,7 +237,7 @@ class ContentAnalysisJobTest {
 	@Test
 	void 썸네일_게이트_on이면_생존_썸네일이_첨부되고_제품명까지_저장된다() {
 		// thumbnailArgs 위치 동등성(수집 최신순)을 검증하므로 concurrency=1로 완료 순서를 고정한다.
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+		pinSequentialConcurrency();
 		rewireJob(fakeInsightPort(), true);
 
 		int processed = job.run().processed();
@@ -255,7 +261,7 @@ class ContentAnalysisJobTest {
 	void 썸네일_프리체크_실패면_캡션만으로_속성을_산출한다() {
 		// 만료된 서명 URL 재현: post_a 썸네일만 죽어 있다 — 구 VLM처럼 컬럼 NULL이 아니라 캡션 단독 분석으로 간다
 		// thumbnailArgs 위치 동등성을 검증하므로 concurrency=1로 완료 순서를 고정한다.
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+		pinSequentialConcurrency();
 		rewireJob(fakeInsightPort(), true, url -> url.equals("https://img/b.jpg"));
 
 		int processed = job.run().processed();
@@ -274,7 +280,7 @@ class ContentAnalysisJobTest {
 		// 입력이 아무것도 없는 콘텐츠 — 속성 근거가 없다. 통합 콜은 종합을 위해 1회 나가되
 		// 속성 산출은 폐기해 컬럼 NULL 유지 (행 자체는 생성돼 배치 슬롯 잠식 방지)
 		// thumbnailArgs 위치 동등성을 검증하므로 concurrency=1로 완료 순서를 고정한다.
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+		pinSequentialConcurrency();
 		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
 		rewireJob(fakeInsightPort(), true);
 
@@ -333,7 +339,7 @@ class ContentAnalysisJobTest {
 		// LIMIT을 없앴으므로(전량 처리) 순서는 insightCalls 호출 순서로 검증한다.
 		// 병렬 처리(기본 concurrency=8)에서는 완료 순서가 섞일 수 있어 concurrency=1로 고정해
 		// 순서를 결정적으로 만든다 — 제출 순서(=최신순)는 병렬 여부와 무관하게 항상 유지된다.
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+		pinSequentialConcurrency();
 
 		int processed = job.run().processed();
 
@@ -418,7 +424,7 @@ class ContentAnalysisJobTest {
 		// 병렬화(2026-07-23) 후에도 쿼타 소진 후 남은 큐가 추가로 429를 만들며 시간을 낭비하지
 		// 않아야 한다. concurrency=1로 고정해 순서를 결정적으로 만들고, 최신순 첫 대상(post_b)에서
 		// 소진시켜 나머지(post_a, post_0)가 insight.analyze() 자체를 안 타는지 확인한다.
-		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+		pinSequentialConcurrency();
 		db.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments)
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 22 hours', 5000, 100, 10)""");
