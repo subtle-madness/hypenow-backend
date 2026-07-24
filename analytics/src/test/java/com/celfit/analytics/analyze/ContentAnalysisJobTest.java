@@ -322,6 +322,10 @@ class ContentAnalysisJobTest {
 	void 분석_대상은_수집_최신순이다() {
 		// 썸네일 서명 URL이 살아있을 때 VLM을 먼저 시도하기 위해 최신 수집분부터 처리한다.
 		// LIMIT을 없앴으므로(전량 처리) 순서는 insightCalls 호출 순서로 검증한다.
+		// 병렬 처리(기본 concurrency=8)에서는 완료 순서가 섞일 수 있어 concurrency=1로 고정해
+		// 순서를 결정적으로 만든다 — 제출 순서(=최신순)는 병렬 여부와 무관하게 항상 유지된다.
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+
 		int processed = job.run().processed();
 
 		assertEquals(2, processed);
@@ -398,6 +402,35 @@ class ContentAnalysisJobTest {
 		assertEquals(1, processed);
 		assertEquals(2, callCount.get()); // 중단 후 추가 콜 없음
 		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void 쿼타_소진_플래그가_서면_이후_대상은_LLM_호출_없이_스킵된다() {
+		// 병렬화(2026-07-23) 후에도 쿼타 소진 후 남은 큐가 추가로 429를 만들며 시간을 낭비하지
+		// 않아야 한다. concurrency=1로 고정해 순서를 결정적으로 만들고, 최신순 첫 대상(post_b)에서
+		// 소진시켜 나머지(post_a, post_0)가 insight.analyze() 자체를 안 타는지 확인한다.
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '1')");
+		db.update("""
+				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, content_type, posted_at, metric_captured_at, views, likes, comments)
+				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 22 hours', 5000, 100, 10)""");
+		db.update("""
+				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
+				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
+		db.update("""
+				INSERT INTO comment_classifications (id, short_code, ai_category, model)
+				VALUES (10, 'post_0', 'positive', 'claude-test')""");
+		List<String> attempted = new ArrayList<>();
+		rewireJob((content, thumbnailUrl) -> {
+			attempted.add(content.shortCode());
+			throw new com.celfit.analytics.llm.LlmQuotaExhaustedException("일 한도");
+		}, false);
+
+		int processed = job.run().processed();
+
+		assertEquals(0, processed);
+		assertEquals(1, attempted.size()); // 최신순 첫 대상(post_b)에서 소진 — 나머지 2건은 호출 자체가 없음
+		assertEquals("post_b", attempted.get(0));
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
 	}
 
 	@Test
