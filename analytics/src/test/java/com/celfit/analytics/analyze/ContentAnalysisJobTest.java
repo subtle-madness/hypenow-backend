@@ -412,7 +412,9 @@ class ContentAnalysisJobTest {
 			return delegate.analyze(content, thumbnailUrl);
 		}, false);
 
-		int processed = job.run().processed(); // 대상 2건(post_b→post_a 최신순) 중 두 번째에서 한도 소진
+		// 병렬화(2026-07-23) 후에도 대상 2건 중 하나가 먼저 카운트를 2로 올려 한도 소진 —
+		// 어느 쪽이 먼저인지는 순서 무관(AtomicInteger 원자성만으로 결과가 결정적).
+		int processed = job.run().processed();
 
 		assertEquals(1, processed);
 		assertEquals(2, callCount.get()); // 중단 후 추가 콜 없음
