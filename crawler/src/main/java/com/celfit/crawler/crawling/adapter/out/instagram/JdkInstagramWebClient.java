@@ -4,6 +4,8 @@ import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.settings.application.service.ProxySourceSetting;
 import com.celfit.crawler.settings.domain.ProxySource;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.net.Authenticator;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -14,9 +16,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -127,6 +131,7 @@ public class JdkInstagramWebClient implements InstagramWebClient {
                 .timeout(requestTimeout)
                 .header("User-Agent", UA)
                 .header("x-ig-app-id", APP_ID)
+                .header("Accept-Encoding", "gzip")
                 .GET().build());
     }
 
@@ -139,6 +144,7 @@ public class JdkInstagramWebClient implements InstagramWebClient {
                 .header("User-Agent", UA)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Accept", "*/*")
+                .header("Accept-Encoding", "gzip")
                 .header("Sec-Fetch-Site", "same-origin")
                 .header("Sec-Fetch-Mode", "cors")
                 .header("Sec-Fetch-Dest", "empty")
@@ -174,12 +180,24 @@ public class JdkInstagramWebClient implements InstagramWebClient {
 
     private Response exchange(HttpClient client, HttpRequest req) {
         try {
-            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            // 프록시는 터널 바이트 그대로 과금하므로 gzip으로 받는다. JDK HttpClient는 자동 해제가
+            // 없어 바이트로 받아 직접 푼다(Content-Encoding 없으면 무압축 그대로).
+            HttpResponse<byte[]> res = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
             String cookie = res.headers().firstValue("set-cookie").orElse("");
-            return new Response(res.statusCode(), res.body(), Map.of("set-cookie", cookie));
+            String encoding = res.headers().firstValue("content-encoding").orElse("");
+            String body = "gzip".equalsIgnoreCase(encoding.trim())
+                    ? gunzip(res.body())
+                    : new String(res.body(), StandardCharsets.UTF_8);
+            return new Response(res.statusCode(), body, Map.of("set-cookie", cookie));
         } catch (Exception e) {
             if (isInterceptedServerUnauthorized(e)) return new Response(401, "", Map.of());
             throw new ApifyException("인스타 요청 실패: " + e.getMessage(), e);
+        }
+    }
+
+    private static String gunzip(byte[] compressed) throws IOException {
+        try (GZIPInputStream gz = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+            return new String(gz.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 
