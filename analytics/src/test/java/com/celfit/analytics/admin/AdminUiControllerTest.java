@@ -252,9 +252,12 @@ class AdminUiControllerTest {
 		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
-				// 콘텐츠 분석 — 잔여는 크로스 DB 대조(후보 ∩ 미분석), 마킹 누적 빼기가 아니다
-				.andExpect(content().string(Matchers.containsString("후보 7,402 · 기분석 7,116 · 미분석 286")))
-				.andExpect(content().string(Matchers.containsString("오늘 +286 예정")))
+				// 콘텐츠 분석(timely 트랙만, 2026-07-23 분리) — 1,435 = 기분석 1,432 + 미분석 3
+				.andExpect(content().string(Matchers.containsString("후보 1,435 · 기분석 1,432 · 미분석 3")))
+				.andExpect(content().string(Matchers.containsString("오늘 +3 예정")))
+				// 늦크롤 백필(윈도우 트랙) — 5,967 = 기분석 5,684 + 미분석 283
+				.andExpect(content().string(Matchers.containsString("후보 5,967 · 기분석 5,684 · 미분석 283")))
+				.andExpect(content().string(Matchers.containsString("오늘 +283 예정")))
 				// 계정 카피 — 현 모수 723 중 700 · 대상 12
 				.andExpect(content().string(Matchers.containsString("현 모수 723 중 카피 700")))
 				.andExpect(content().string(Matchers.containsString("대상 12")))
