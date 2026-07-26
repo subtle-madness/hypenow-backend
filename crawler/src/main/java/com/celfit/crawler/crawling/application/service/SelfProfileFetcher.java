@@ -76,15 +76,25 @@ public class SelfProfileFetcher implements ProfileFetcher {
      * 트립 후 최대 (동시성-1)건의 진행 중 요청은 마저 나갈 수 있다(중단 의미는 동일).
      */
     private ApifyResult collect(List<String> usernames) {
+        return collect(usernames, new ArrayList<>());
+    }
+
+    /**
+     * 컴포지트(SELF_HIKER_FALLBACK)용 — HTTP 400이 난 계정을 badRequestOut에 수집한다.
+     * 400 수집 외 동작은 단독 SELF와 동일(400 계정은 items·notFound에 안 들어가고 스킵).
+     */
+    ApifyResult collect(List<String> usernames, List<String> badRequestOut) {
         List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
         List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
+        // 워커들이 동시에 add하므로 동기화 래핑 — 호출자는 일반 리스트를 넘겨도 된다
+        List<String> badRequest = java.util.Collections.synchronizedList(badRequestOut);
         int total = usernames.size();
         var done = new java.util.concurrent.atomic.AtomicInteger();
         var rateLimitStreak = new java.util.concurrent.atomic.AtomicInteger();
         var tripped = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 1명(collect 방문 경로)은 풀 없이 즉시 처리 — 방문마다 스레드풀을 만들 이유가 없다
         if (total == 1) {
-            fetchOne(usernames.get(0), total, done, rateLimitStreak, tripped, out, notFound);
+            fetchOne(usernames.get(0), total, done, rateLimitStreak, tripped, out, notFound, badRequest);
             return new ApifyResult(null, out, notFound);
         }
         // close()가 제출된 작업 완료까지 대기(Java 21) — 반환 시점에 결과가 전부 모여 있다
@@ -94,7 +104,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
                 pool.submit(() -> {
                     for (int idx = offset; idx < total; idx += FETCH_CONCURRENCY) {
                         if (tripped.get()) return;   // 회로 트립 — 남은 계정은 다음 실행 재시도
-                        fetchOne(usernames.get(idx), total, done, rateLimitStreak, tripped, out, notFound);
+                        fetchOne(usernames.get(idx), total, done, rateLimitStreak, tripped, out, notFound, badRequest);
                         sleep();
                     }
                 });
@@ -107,7 +117,8 @@ public class SelfProfileFetcher implements ProfileFetcher {
     private void fetchOne(String u, int total, java.util.concurrent.atomic.AtomicInteger done,
                           java.util.concurrent.atomic.AtomicInteger rateLimitStreak,
                           java.util.concurrent.atomic.AtomicBoolean tripped,
-                          List<Map<String, Object>> out, List<String> notFound) {
+                          List<Map<String, Object>> out, List<String> notFound,
+                          List<String> badRequest) {
         int i = done.incrementAndGet();
         try {
             for (int attempt = 1; attempt <= BLOCK_MAX_ATTEMPTS; attempt++) {
@@ -141,6 +152,14 @@ public class SelfProfileFetcher implements ProfileFetcher {
                     }
                     log.info("프로필 ({}/{}) {} — 스킵(HTTP {} rate limit/블록, {}회 시도 소진, 연속 {}회)",
                             i, total, u, res.status(), attempt, streak);
+                    return;
+                }
+                if (res.status() == 400) {
+                    // IP 무관 400(비즈니스 카테고리 버그) — 재시도 무의미. 컴포지트가 Hiker로
+                    // 폴백할 수 있게 수집만 하고 스킵한다(블록 신호가 아니므로 회로 카운터 리셋).
+                    rateLimitStreak.set(0);
+                    badRequest.add(u);
+                    log.info("프로필 ({}/{}) {} — HTTP 400(버그 계정) 스킵, 폴백 대상 수집", i, total, u);
                     return;
                 }
                 if (res.status() == 404) {
