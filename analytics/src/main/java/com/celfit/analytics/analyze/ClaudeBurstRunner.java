@@ -116,9 +116,9 @@ public class ClaudeBurstRunner {
 				       ab.recent_contents_count, ab.recent12_avg_engagement_rate,
 				       ab.recent12_avg_like_count, ab.recent12_avg_comment_count,
 				       ab.category_top_percentile, ab.category_avg_views, ab.category_sample_size
-				FROM analytics.v_analysis_candidates c
-				LEFT JOIN analytics.v_analysis_account_baseline ab ON ab.account_handle = c.account_handle
-				LEFT JOIN analytics.v_analysis_baseline b USING (short_code)
+				FROM v_analysis_candidates c
+				LEFT JOIN v_analysis_account_baseline ab ON ab.account_handle = c.account_handle
+				LEFT JOIN v_analysis_baseline b USING (short_code)
 				ORDER BY c.short_code""");
 		String system = GeminiContentAnalyzer.instructions(taxonomyLoader.get());
 		StringBuilder input = new StringBuilder();

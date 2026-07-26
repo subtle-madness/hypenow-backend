@@ -15,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -61,7 +60,7 @@ class ClaudeBurstRunnerTest {
 
 	@BeforeEach
 	void setUp() {
-		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 

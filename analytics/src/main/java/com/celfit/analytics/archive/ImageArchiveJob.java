@@ -94,7 +94,7 @@ public class ImageArchiveJob {
 		Set<String> archived = new HashSet<>(analysis.queryForList(
 				"SELECT key FROM image_assets WHERE kind = 'thumbnail'", String.class));
 		return raw.query("""
-				SELECT short_code, thumbnail_url FROM analytics.v_contents
+				SELECT short_code, thumbnail_url FROM v_contents
 				WHERE thumbnail_url IS NOT NULL
 				""", (rs, i) -> new Target(KIND_THUMBNAIL, rs.getString(1), rs.getString(2)))
 				.stream().filter(t -> !archived.contains(t.key())).toList();
@@ -107,7 +107,7 @@ public class ImageArchiveJob {
 					archived.put(rs.getString(1), rs.getString(2));
 				});
 		return raw.query("""
-				SELECT handle, profile_image_url FROM analytics.v_accounts
+				SELECT handle, profile_image_url FROM v_accounts
 				WHERE profile_image_url IS NOT NULL
 				""", (rs, i) -> new Target(KIND_PROFILE, rs.getString(1), rs.getString(2)))
 				.stream().filter(t -> profileChanged(t, archived.get(t.key()))).toList();

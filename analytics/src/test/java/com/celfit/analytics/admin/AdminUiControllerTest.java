@@ -205,7 +205,7 @@ class AdminUiControllerTest {
 		// 뷰 드리프트로 후보 뷰가 사라지면 캐시가 없는 채 실패만 반복된다 — 이때 "집계 중"으로 뭉개면
 		// 영원히 안 뜨는 것처럼 보인다. 실패임을 명시하고 사유를 그대로 보여줘야 한다.
 		when(stats.funnel()).thenReturn(funnel(null,
-				"ERROR: relation \"analytics.v_analysis_candidates\" does not exist"));
+				"ERROR: relation \"v_analysis_candidates\" does not exist"));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("집계 실패")))

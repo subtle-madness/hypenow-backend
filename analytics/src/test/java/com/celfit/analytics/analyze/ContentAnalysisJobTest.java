@@ -18,7 +18,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -74,7 +73,7 @@ class ContentAnalysisJobTest {
 
 	@BeforeEach
 	void setUp() {
-		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		// 병렬 처리(기본 concurrency=8)로 여러 스레드가 동시에 add()할 수 있어 synchronizedList로
 		// 감싼다 — 순서 결정성까지는 보장 안 하지만(그건 각 테스트가 필요시 concurrency=1로 고정),

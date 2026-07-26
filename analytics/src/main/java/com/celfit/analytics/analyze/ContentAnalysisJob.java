@@ -212,7 +212,7 @@ public class ContentAnalysisJob {
 				       recent_contents_count, recent12_avg_engagement_rate,
 				       recent12_avg_like_count, recent12_avg_comment_count,
 				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_account_baseline""",
+				FROM v_analysis_account_baseline""",
 				rs -> {
 					accountBaseline.put(rs.getString(1), new Baseline(
 							longOf(rs.getBigDecimal(2)), null, intOf(rs.getBigDecimal(3)),
@@ -227,7 +227,7 @@ public class ContentAnalysisJob {
 				       recent_contents_count, recent12_avg_engagement_rate,
 				       recent12_avg_like_count, recent12_avg_comment_count,
 				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_baseline""",
+				FROM v_analysis_baseline""",
 				rs -> {
 					withBaseline.put(rs.getString(1), new Baseline(
 							longOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)), intOf(rs.getBigDecimal(4)),

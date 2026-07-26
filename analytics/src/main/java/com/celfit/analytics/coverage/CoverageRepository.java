@@ -25,8 +25,8 @@ public class CoverageRepository {
 	// 수집 모수 — 신 스키마 서빙 뷰(02_serving.sql)가 정본인 뷰티 인플루언서 필터를 그대로 읽는다.
 	// v_contents(지표 고정 계산)가 아닌 v_serving_content를 세는 이유: 분모는 "수집된 서빙 대상"이고 계산 비용도 가볍다.
 	private static final String SOURCE_SQL = """
-			SELECT (SELECT count(*) FROM analytics.v_accounts)        AS accounts,
-			       (SELECT count(*) FROM analytics.v_serving_content) AS contents
+			SELECT (SELECT count(*) FROM v_accounts)        AS accounts,
+			       (SELECT count(*) FROM v_serving_content) AS contents
 			""";
 
 	// coverage.sql의 보고 쿼리와 동일한 집계 — 상태 판정 CASE도 일치시킨다.

@@ -104,7 +104,7 @@ public class PipelineStatsService {
 			            + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
 			          <= (now() AT TIME ZONE 'Asia/Seoul')::date
 			  ) AS mature_pool
-			FROM analytics.v_contents v
+			FROM v_contents v
 			WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
 			""";
 
@@ -301,7 +301,7 @@ public class PipelineStatsService {
 					// ① 분석 자격 — 트랙(timely/윈도우) × (기분석/미분석) 4분할을 Java에서 대조.
 					Map<String, Boolean> candidateRows = new java.util.LinkedHashMap<>();
 					try (ResultSet rs = st.executeQuery(
-							"SELECT short_code, timely FROM analytics.v_analysis_candidates")) {
+							"SELECT short_code, timely FROM v_analysis_candidates")) {
 						while (rs.next()) {
 							candidateRows.put(rs.getString(1), rs.getBoolean(2));
 						}
@@ -319,7 +319,7 @@ public class PipelineStatsService {
 					long serving = 0;
 					long servingAnalyzed = 0;
 					try (ResultSet rs = st.executeQuery(
-							"SELECT short_code FROM analytics.v_serving_content")) {
+							"SELECT short_code FROM v_serving_content")) {
 						while (rs.next()) {
 							serving++;
 							if (analyzedCodes.contains(rs.getString(1))) servingAnalyzed++;
@@ -328,7 +328,7 @@ public class PipelineStatsService {
 					// ④ 계정 카피 (G1) — 현 모수 핸들 ∩ 카피 보유. 누적 카피(탈락 계정 포함)와 분리.
 					long beautyHandles = 0;
 					long beautyCopied = 0;
-					try (ResultSet rs = st.executeQuery("SELECT handle FROM analytics.v_accounts")) {
+					try (ResultSet rs = st.executeQuery("SELECT handle FROM v_accounts")) {
 						while (rs.next()) {
 							beautyHandles++;
 							if (copiedHandles.contains(rs.getString(1))) beautyCopied++;

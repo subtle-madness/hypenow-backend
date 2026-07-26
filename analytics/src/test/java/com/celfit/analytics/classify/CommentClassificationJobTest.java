@@ -14,7 +14,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -39,13 +38,13 @@ class CommentClassificationJobTest {
 
 	/** 임의 동작 포트로 잡을 다시 배선한다 (LLM 출력 정합·실패 격리 테스트용). */
 	void rewireJob(CommentClassificationPort port) {
-		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		DataSource ds = TestDb.rawDataSource(pg);
 		job = new CommentClassificationJob(db, ds, port, new AnalyticsSettings(db));
 	}
 
 	@BeforeEach
 	void setUp() {
-		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		DataSource ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		portCalls = new ArrayList<>();
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
