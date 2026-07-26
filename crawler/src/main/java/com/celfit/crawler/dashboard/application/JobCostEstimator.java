@@ -169,6 +169,10 @@ public class JobCostEstimator {
                 endpoints.add("DataLikers /v1/user/by/username (계정당 1회 · 프록시 우회)");
                 yield 1;
             }
+            case SELF_HIKER_FALLBACK -> {
+                endpoints.add("instagram web_profile_info (self, 무료) — 400 계정만 HikerAPI /v2/user/by/username 폴백(+건당 1회)");
+                yield 0;   // 폴백 비율은 사전 추정 불가 — 기본 0으로 집계
+            }
             case ACTOR -> {
                 endpoints.add("Apify 프로필 액터");
                 yield 0;
