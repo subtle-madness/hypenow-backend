@@ -63,7 +63,7 @@
         <label class="check"><input type="radio" name="source" value="DATALIKERS"
             th:checked="${profileSource == 'DATALIKERS'}"/> DataLikers (프록시 우회 · $0.0006/계정)</label>
         <hr/>
-        <p class="hint">보충 (SELF·HikerAPI모바일에서만 적용):</p>
+        <p class="hint">보충 (SELF·SELF+400폴백·HikerAPI모바일에서만 적용):</p>
         <label class="check"><input type="checkbox" name="related" value="true"
             th:checked="${profileRelated}"/> 관련계정 채우기 (HikerAPI suggested)</label>
         <button type="submit" class="primary">저장</button>

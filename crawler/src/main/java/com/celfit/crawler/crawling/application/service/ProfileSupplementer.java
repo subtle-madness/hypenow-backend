@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 부족한 베이스(SELF·HIKER_MOBILE)에만 related(HikerAPI suggested) 보충을 적용.
+ * 부족한 베이스(SELF·SELF_HIKER_FALLBACK·HIKER_MOBILE)에만 related(HikerAPI suggested) 보충을 적용.
  * item은 소스 원형(SELF_GQL 또는 HIKER_MOBILE 형태)이므로 userId는 ProfileExtractor로 추출한다.
  */
 @Service
