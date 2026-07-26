@@ -12,3 +12,11 @@
 		reverse_proxy was:8081
 	}
 }
+
+# dev 스테이징 (태스크 K) — 보호는 was 로그인 월(별도 dev 가입 코드) 그대로.
+# dev 프로파일 미기동 시 502 — caddy는 요청 시점에 업스트림을 찾으므로 설정 로드는 무해.
+{$DEV_API_DOMAIN:dev-api.hypenow.io} {
+	handle {
+		reverse_proxy dev-was:8081
+	}
+}
