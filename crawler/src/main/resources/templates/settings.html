@@ -52,6 +52,8 @@
     <form method="post" th:action="@{/ui/profile-source}">
         <label class="check"><input type="radio" name="source" value="SELF"
             th:checked="${profileSource == 'SELF'}"/> 자체 크롤 (기본)</label>
+        <label class="check"><input type="radio" name="source" value="SELF_HIKER_FALLBACK"
+            th:checked="${profileSource == 'SELF_HIKER_FALLBACK'}"/> 자체 크롤 + 400 계정만 Hiker 폴백</label>
         <label class="check"><input type="radio" name="source" value="ACTOR"
             th:checked="${profileSource == 'ACTOR'}"/> 액터 (Apify)</label>
         <label class="check"><input type="radio" name="source" value="HIKER_MOBILE"

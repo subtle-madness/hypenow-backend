@@ -32,6 +32,14 @@ class ProfileSourceUiControllerTest extends IntegrationTest {
     }
 
     @Test
+    void SELF_HIKER_FALLBACK_소스도_저장된다() throws Exception {
+        mvc.perform(post("/ui/profile-source").param("source", "SELF_HIKER_FALLBACK"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/ui/settings"));
+        assertThat(sourceSetting.current()).isEqualTo(ProfileSource.SELF_HIKER_FALLBACK);
+    }
+
+    @Test
     void 보충_체크박스_값이_저장된다() throws Exception {
         mvc.perform(post("/ui/profile-source")
                         .param("source", "SELF")
