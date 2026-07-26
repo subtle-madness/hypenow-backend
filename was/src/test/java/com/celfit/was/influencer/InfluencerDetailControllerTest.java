@@ -12,15 +12,19 @@ import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
 import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
-import com.celfit.was.config.ClockConfig;
 import com.celfit.was.config.SecurityConfig;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -29,8 +33,18 @@ import org.springframework.test.web.servlet.MockMvc;
 // CORS 매핑은 걷어냄) 이 빈을 같이 import해야 401로 막히지 않는다 — 기대값은 그대로다.
 @WebMvcTest(controllers = InfluencerDetailController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000,https://celfit-front.vercel.app")
-@Import({InfluencerDetailAssembler.class, ClockConfig.class, SecurityConfig.class})
+@Import({InfluencerDetailAssembler.class, SecurityConfig.class})
 class InfluencerDetailControllerTest {
+
+	// 시스템 시계(ClockConfig)를 쓰면 픽스처 lastPostedAt(07-12) 경과일이 실행 날짜에 따라 변해
+	// isActive 단언이 시한폭탄이 된다(2026-07-26부터 14일 경과로 false) — 어셈블러 테스트와 같은 고정 시각 주입.
+	@TestConfiguration
+	static class FixedClockConfig {
+		@Bean
+		Clock clock() {
+			return Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC);
+		}
+	}
 
 	@Autowired
 	MockMvc mockMvc;
