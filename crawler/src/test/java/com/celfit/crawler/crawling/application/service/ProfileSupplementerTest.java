@@ -84,6 +84,23 @@ class ProfileSupplementerTest {
         assertThat(ex.items().get(0)).containsKeys("relatedProfiles", "_rawSuggested");
     }
 
+    @Test void SELF_HIKER_FALLBACK_혼합_배치는_아이템별_감지로_보충한다() {
+        java.util.List<String> paths = new java.util.ArrayList<>();
+        HikerHttp http = path -> {
+            paths.add(path);
+            return "{\"users\":[{\"username\":\"my_zipcode\",\"pk\":\"1\"}]}";
+        };
+        var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(true));
+
+        var ex = new CrawlExecutor.Execution(1L, List.of(selfItem(), hikerMobileItem()));
+        sup.apply(ex, ProfileSource.SELF_HIKER_FALLBACK);
+
+        // SELF 원형(data.user.id=999)과 HIKER 원형(user.pk=999) 모두 userId가 추출돼 보충된다
+        assertThat(ex.items().get(0)).containsKeys("relatedProfiles", "_rawSuggested");
+        assertThat(ex.items().get(1)).containsKeys("relatedProfiles", "_rawSuggested");
+        assertThat(paths).hasSize(2).allSatisfy(p -> assertThat(p).contains("user_id=999"));
+    }
+
     @Test void related_보충_실패해도_베이스_원형은_보존된다() {
         HikerHttp http = path -> { throw new ApifyException("Hiker HTTP 500"); };
         var sup = new ProfileSupplementer(new HikerSuggestedSupplement(http, om), settingRelated(true));

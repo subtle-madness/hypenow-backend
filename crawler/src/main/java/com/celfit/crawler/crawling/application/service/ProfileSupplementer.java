@@ -17,7 +17,8 @@ import org.springframework.stereotype.Service;
 public class ProfileSupplementer {
 
     private static final Logger log = LoggerFactory.getLogger(ProfileSupplementer.class);
-    private static final Set<ProfileSource> DEFICIENT = Set.of(ProfileSource.SELF, ProfileSource.HIKER_MOBILE);
+    private static final Set<ProfileSource> DEFICIENT =
+            Set.of(ProfileSource.SELF, ProfileSource.HIKER_MOBILE, ProfileSource.SELF_HIKER_FALLBACK);
 
     private final HikerSuggestedSupplement suggested;
     private final ProfileSupplementSetting setting;
@@ -30,9 +31,10 @@ public class ProfileSupplementer {
     public CrawlExecutor.Execution apply(CrawlExecutor.Execution ex, ProfileSource source) {
         if (!DEFICIENT.contains(source)) return ex;
         if (!setting.relatedEnabled()) return ex;
-        RawSource rawSource = source == ProfileSource.SELF ? RawSource.SELF_GQL : RawSource.HIKER_MOBILE;
+        // SELF 계열(SELF·SELF_HIKER_FALLBACK)의 기본 원형은 SELF_GQL — 폴백 혼합분은 아이템별 감지
+        RawSource base = source == ProfileSource.HIKER_MOBILE ? RawSource.HIKER_MOBILE : RawSource.SELF_GQL;
         for (Map<String, Object> item : ex.items()) {
-            String uid = ProfileExtractor.userId(item, rawSource);
+            String uid = ProfileExtractor.userId(item, ProfileExtractor.detect(item, base));
             try { suggested.enrich(item, uid); }
             catch (RuntimeException e) { log.warn("related 보충 실패 {}: {}", uid, e.getMessage()); }
         }

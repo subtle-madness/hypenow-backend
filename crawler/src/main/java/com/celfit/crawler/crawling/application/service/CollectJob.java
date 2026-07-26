@@ -246,7 +246,7 @@ public class CollectJob {
      * 전부 ApifyException — 호출자(run 루프)가 방문 실패로 격리하고 다음 실행에서 재시도한다.
      */
     private Map<String, Object> refreshProfile(Influencer inf, TriggerType trigger) {
-        RawSource source = profileSourceSelector.currentSource();
+        RawSource batchSource = profileSourceSelector.currentSource();
         CrawlExecutor.Execution ex = profileSourceSelector.fetchAndSupplement(
                 JobName.COLLECT, List.of(inf.getUsername()), trigger);
         if (ex.notFound().contains(inf.getUsername())) {
@@ -254,6 +254,8 @@ public class CollectJob {
             throw new NotFoundException("프로필 404 — 계정 소멸: " + inf.getUsername());
         }
         for (Map<String, Object> item : ex.items()) {
+            // 컴포지트(400 → Hiker 폴백) 배치는 아이템별 원형이 섞인다 — 셰이프로 실제 소스 감지
+            RawSource source = ProfileExtractor.detect(item, batchSource);
             String username = ProfileExtractor.username(item, source);
             if (username == null || !username.equals(inf.getUsername())) continue;
             RawProfile rp = new RawProfile(inf.getId(), ex.runId(), source, item, clock.instant());
