@@ -186,6 +186,34 @@ class ProfileExtractorTest {
     }
 
     @Test
+    void detect는_data_루트를_SELF_GQL로_감지한다() {
+        Map<String, Object> payload = Map.of("data", Map.of("user", Map.of("username", "a")));
+        assertThat(ProfileExtractor.detect(payload, RawSource.SELF_GQL)).isEqualTo(RawSource.SELF_GQL);
+    }
+
+    @Test
+    void detect는_user_래퍼_또는_pk_최상위를_HIKER_MOBILE로_감지한다() {
+        Map<String, Object> wrapped = Map.of("user", Map.of("username", "a", "pk", "1"));
+        Map<String, Object> flat = Map.of("username", "a", "pk", "1");
+        assertThat(ProfileExtractor.detect(wrapped, RawSource.SELF_GQL)).isEqualTo(RawSource.HIKER_MOBILE);
+        assertThat(ProfileExtractor.detect(flat, RawSource.SELF_GQL)).isEqualTo(RawSource.HIKER_MOBILE);
+    }
+
+    @Test
+    void detect는_SELF_GQL_배치가_아니면_감지_없이_기본_소스를_반환한다() {
+        // DATALIKERS 원형은 flat(pk 최상위) — 감지하면 HIKER_MOBILE로 오기록되므로 게이트로 보호
+        Map<String, Object> flat = Map.of("username", "a", "pk", "1");
+        assertThat(ProfileExtractor.detect(flat, RawSource.DATALIKERS)).isEqualTo(RawSource.DATALIKERS);
+        assertThat(ProfileExtractor.detect(flat, RawSource.APIFY_ACTOR)).isEqualTo(RawSource.APIFY_ACTOR);
+    }
+
+    @Test
+    void detect는_모르는_형태면_기본_소스를_반환한다() {
+        Map<String, Object> unknown = Map.of("username", "a", "followersCount", 1L);
+        assertThat(ProfileExtractor.detect(unknown, RawSource.SELF_GQL)).isEqualTo(RawSource.SELF_GQL);
+    }
+
+    @Test
     void 뷰티_판정_재료가_없거나_공백이면_null() {
         Map<String, Object> empty = new LinkedHashMap<>();
         empty.put("biography", "  ");
