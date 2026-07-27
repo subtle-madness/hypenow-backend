@@ -224,6 +224,16 @@ public class AdminUiController {
 			// 미러도 "몇 개를 옮겼는지"가 보여야 한다 — 대상 뷰 수와 적재 결과(미러 세계의 게시물·계정).
 			case MIRROR -> "대상 %d개 뷰 · 게시물 %s · 계정 %s".formatted(
 					mirrorRegistry.specs().size(), comma(f.served()), comma(f.mirrorAccounts()));
+			// 아카이브 — 대상(썸네일+프로필) 대비 얼마나 옮겨졌는지. 잔여 분해는 서브라인.
+			case ARCHIVE -> {
+				if (h == null) {
+					yield f.candidatesError() != null ? "대상 집계 실패 — 분석 뷰 확인 필요" : "대상 집계 중…";
+				}
+				PipelineStatsService.ArchiveCoverage c = h.archive();
+				int percent = c.targets() > 0 ? (int) (c.archived() * 100 / c.targets()) : 0;
+				yield "대상 %s · 아카이브 %s (%d%%) · 미아카이브 %s".formatted(
+						comma(c.targets()), comma(c.archived()), percent, comma(c.pending()));
+			}
 			default -> null;
 		};
 	}
@@ -241,6 +251,11 @@ public class AdminUiController {
 					: "오늘 +%s 예정 · 인플루언서 상세에만 노출".formatted(comma(f.heavy().windowPending()));
 			case ACCOUNT_ANALYZE -> "stale + 쿨다운 경과분 재분석";
 			case MIRROR -> "분석 무관 — 서빙 뷰 전체 재적재";
+			// 미아카이브 중 CDN 만료(~4일)분은 재크롤로 URL이 갱신돼야 구제 — 수치는 30분 캐시.
+			case ARCHIVE -> f.heavy() == null ? null
+					: "썸네일 잔여 %s · 프로필 갱신 대기 %s".formatted(
+							comma(f.heavy().archive().thumbPending()),
+							comma(f.heavy().archive().profilePending()));
 			default -> null;
 		};
 	}

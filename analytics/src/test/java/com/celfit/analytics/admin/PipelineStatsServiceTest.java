@@ -41,11 +41,35 @@ class PipelineStatsServiceTest {
 	}
 
 	@Test
+	void 아카이브_커버리지는_잡의_대상_선정과_같은_규칙으로_대조() {
+		// 썸네일: 대상 {a,b,c} ∩ 기록 {a,z} = 1건 아카이브 (대상 밖 기록 z는 안 센다 — 잡과 동일).
+		// 프로필: 파일명 일치(p1)만 최신, 불일치(p2)·파싱 불가(p3)는 갱신 대기(잡의 '변경 취급').
+		PipelineStatsService.ArchiveCoverage c = PipelineStatsService.archiveCoverage(
+				Set.of("a", "b", "c"), Set.of("a", "z"),
+				Map.of("p1", "https://cdn.example/t51/111_n.jpg?sig=1",
+						"p2", "https://cdn.example/t51/222_n.jpg",
+						"p3", "not a url"),
+				Map.of("p1", "111_n.jpg", "p2", "999_n.jpg"));
+		assertThat(c.thumbTargets()).isEqualTo(3);
+		assertThat(c.thumbArchived()).isEqualTo(1);
+		assertThat(c.thumbPending()).isEqualTo(2);
+		assertThat(c.profileTargets()).isEqualTo(3);
+		assertThat(c.profileFresh()).isEqualTo(1);
+		assertThat(c.profilePending()).isEqualTo(2);
+		// 카드 한 줄용 합산
+		assertThat(c.targets()).isEqualTo(6);
+		assertThat(c.archived()).isEqualTo(2);
+		assertThat(c.pending()).isEqualTo(4);
+	}
+
+	@Test
 	void heavy_스냅샷은_항등식_후보는_기분석더하기미분석() {
 		// v3 설계 문서 §1 실측(07-21): 후보 7,402 = timely 1,435 + 윈도우 5,967, 미분석 286.
 		PipelineStatsService.Heavy h = new PipelineStatsService.Heavy(
 				7_402, 1_435, 1_432, 5_967, 5_684,
-				12_777, 11_072, 4_000, 1_104, 723, 700, Instant.now());
+				12_777, 11_072, 4_000, 1_104, 723, 700,
+				new PipelineStatsService.ArchiveCoverage(107_886, 27_686, 5_699, 5_694),
+				Instant.now());
 		assertThat(h.timelyPending()).isEqualTo(3);
 		assertThat(h.windowPending()).isEqualTo(283);
 		assertThat(h.truePending()).isEqualTo(286);

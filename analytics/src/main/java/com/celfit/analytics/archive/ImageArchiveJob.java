@@ -123,8 +123,9 @@ public class ImageArchiveJob {
 		}
 	}
 
-	/** URL 경로의 마지막 세그먼트(인스타 미디어 ID 파일명) — 호스트·서명 쿼리는 크롤마다 바뀌므로 제외. */
-	static String sourceName(String url) {
+	/** URL 경로의 마지막 세그먼트(인스타 미디어 ID 파일명) — 호스트·서명 쿼리는 크롤마다 바뀌므로 제외.
+	 *  어드민 커버리지 집계(PipelineStatsService)도 같은 규칙으로 대조해야 해서 public. */
+	public static String sourceName(String url) {
 		String path = URI.create(url).getPath();
 		return path.substring(path.lastIndexOf('/') + 1);
 	}
