@@ -13,9 +13,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <p>미러의 account_summaries.organic_avg·ad_avg·sponsored_count와 account_content_series.sponsored는
  * raw 뷰(10_account_detail)에서 ad_marked = 인스타 유료파트너십 태그로 집계되는데, 이건 릴스 전용이라
  * 캡션으로만 고지한 광고를 놓친다. 07-17(e203c3c)에 화면(was V1InfluencerReportRepository·Assembler)은
- * 이미 ad_type 정본으로 옮겼지만 카피 잡의 광고 판정만 옛 소스에 남아, 캡션 고지 계정의 adHeadline이
- * 영구 NULL이 됐다(운영 995계정). 산식·비교 성립 조건은 was Assembler.comparison과 동일하게 맞춘다 —
- * 헤드라인이 설명하는 숫자와 화면 숫자가 갈리면 안 되기 때문.
+ * 이미 ad_type 정본으로 옮겼지만 카피 잡의 광고 판정만 옛 소스에 남아, 캡션 고지 계정의 adSummary(당시
+ * 이름 adHeadline)가 영구 NULL이 됐다(운영 995계정). 산식·비교 성립 조건은 was Assembler.comparison과
+ * 동일하게 맞춘다 — adSummary가 설명하는 숫자와 화면 숫자가 갈리면 안 되기 때문.
  *
  * <p>정본 테이블(content_analyses)은 analysis DB에 있어 잡의 analysis JdbcTemplate으로 읽는다.
  * raw DB의 analytics.* 뷰에서는 DB가 달라 조인할 수 없다(§시스템 경계).
@@ -41,8 +41,8 @@ final class AccountAdCanon {
 		}
 
 		/**
-		 * adHeadline이 무엇을 진술할지 가르는 4분기 (07-21). 비교가 안 돼도 협찬 유무 자체가
-		 * 정보라 헤드라인을 만든다 — 근거가 아예 없는 INSUFFICIENT만 제외.
+		 * adSummary가 무엇을 진술할지 가르는 4분기 (07-21). 비교가 안 돼도 협찬 유무 자체가
+		 * 정보라 adSummary를 만든다 — 근거가 아예 없는 INSUFFICIENT만 제외.
 		 */
 		AdSituation situation() {
 			if (hasComparison()) {
