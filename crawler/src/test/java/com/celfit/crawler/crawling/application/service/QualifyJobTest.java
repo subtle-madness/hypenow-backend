@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -247,6 +248,33 @@ class QualifyJobTest {
         assertThat(summary.failedChunks()).isEqualTo(1);
         assertThat(summary.deferred()).isEqualTo(1);
         assertThat(bob.getStatus()).isEqualTo(InfluencerStatus.DISCOVERED);
+    }
+
+    @Test
+    void 혼합_배치는_아이템별_감지된_소스로_raw_profile을_저장한다() {
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer selfInf = influencer(1L, "self_user", InfluencerStatus.DISCOVERED, null, null);
+        Influencer hikerInf = influencer(2L, "hiker_user", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatusAndFollowersIsNull(eq(InfluencerStatus.DISCOVERED), any(Pageable.class)))
+                .thenReturn(List.of(selfInf, hikerInf));
+        when(selector.currentSource()).thenReturn(RawSource.SELF_GQL);   // 컴포지트의 기본 소스
+        Map<String, Object> selfItem = Map.of("data", Map.of("user", Map.of(
+                "username", "self_user", "id", "111", "edge_followed_by", Map.of("count", 5000))));
+        when(selector.fetchAndSupplement(any(), any(), any()))
+                .thenReturn(new CrawlExecutor.Execution(1L,
+                        List.of(selfItem, hikerItem("hiker_user", 6000, "222"))));
+
+        job.run(TriggerType.MANUAL, false);
+
+        ArgumentCaptor<RawProfile> captor = ArgumentCaptor.forClass(RawProfile.class);
+        verify(rawProfiles, org.mockito.Mockito.times(2)).save(captor.capture());
+        Map<Long, RawSource> byInf = captor.getAllValues().stream()
+                .collect(Collectors.toMap(RawProfile::getInfluencerId, RawProfile::getSource));
+        assertThat(byInf.get(1L)).isEqualTo(RawSource.SELF_GQL);
+        assertThat(byInf.get(2L)).isEqualTo(RawSource.HIKER_MOBILE);
+        assertThat(selfInf.getFollowers()).isEqualTo(5000L);   // SELF 원형 경로로 추출됨
+        assertThat(hikerInf.getFollowers()).isEqualTo(6000L);  // HIKER 원형 경로로 추출됨
+        assertThat(hikerInf.getIgUserId()).isEqualTo("222");
     }
 
     @Test
