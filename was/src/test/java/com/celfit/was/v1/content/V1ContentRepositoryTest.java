@@ -158,17 +158,22 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				""");
 	}
 
-	/** 기본 조회: 2026-07-01~07-10, contentType 기본(reels)·sort 기본(hype)·limit 기본(100). */
+	/** 기본 조회: 2026-07-01~07-10, contentType 기본(reels)·sort 기본(hype)·limit 기본(100)·offset 기본(0). */
 	private V1ContentQuery query() {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
-				null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	private V1ContentQuery query(String contentType, String mainCategory, String midCategory,
 			String subCategory, String distributorId, String sort, Integer limit) {
+		return query(contentType, mainCategory, midCategory, subCategory, distributorId, sort, limit, null);
+	}
+
+	private V1ContentQuery query(String contentType, String mainCategory, String midCategory,
+			String subCategory, String distributorId, String sort, Integer limit, Integer offset) {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
 				contentType, mainCategory, midCategory, subCategory, null, null, null,
-				distributorId, sort, limit);
+				distributorId, sort, limit, offset);
 	}
 
 	@Test
@@ -193,7 +198,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		// [07-11, 07-20) 창: tl1(timely)·lg1(시점 NULL 레거시)는 노출, lb1(late_backfill)은 제외.
 		// lb1은 hype 999로 필터 없으면 1위인데, 늦크롤 지표 편향 때문에 랭킹에서 아예 빠진다.
 		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-11"), LocalDate.parse("2026-07-20"),
-				null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null);
 
 		List<ContentCardRow> rows = repository.findCards(q);
 
@@ -244,6 +249,17 @@ class V1ContentRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findCards(limited)).hasSize(1);
 		assertThat(repository.countCards(limited)).isEqualTo(3);
+	}
+
+	@Test
+	void offset은_다음_페이지로_건너뛰고_countCards는_영향받지_않는다() {
+		// 기본 hype 내림차순: r2(900) → r1(500) → r9(400) — limit=1로 한 건씩 페이지네이션
+		V1ContentQuery page1 = query(null, null, null, null, null, null, 1, 0);
+		V1ContentQuery page2 = query(null, null, null, null, null, null, 1, 1);
+
+		assertThat(repository.findCards(page1)).extracting(ContentCardRow::shortCode).containsExactly("r2");
+		assertThat(repository.findCards(page2)).extracting(ContentCardRow::shortCode).containsExactly("r1");
+		assertThat(repository.countCards(page2)).isEqualTo(3);
 	}
 
 	@Test

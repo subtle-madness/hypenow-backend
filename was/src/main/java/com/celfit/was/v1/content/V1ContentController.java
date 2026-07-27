@@ -46,9 +46,11 @@ public class V1ContentController {
 			@RequestParam(required = false) String adType,
 			@RequestParam(required = false) String distributorId,
 			@RequestParam(required = false) String sort,
-			@RequestParam(required = false) Integer limit) {
+			@RequestParam(required = false) Integer limit,
+			@RequestParam(required = false) Integer offset) {
 		V1ContentQuery query = V1ContentQuery.of(startDate, endDate, contentType, mainCategory,
-				midCategory, subCategory, follower, keyword, adType, distributorId, sort, limit);
+				midCategory, subCategory, follower, keyword, adType, distributorId, sort, limit,
+				offset);
 		// 로그인 시에만 저장 셋을 1회 조회해 각 카드를 마킹, 비로그인이면 saved=null(필드 부재).
 		Set<String> savedCodes = principal == null ? null : savedLookup.savedShortCodes(principal.getUserId());
 		List<ContentCard> cards = repository.findCards(query).stream()
@@ -58,6 +60,7 @@ public class V1ContentController {
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", repository.countCards(query));
 		meta.put("limit", query.limit());
+		meta.put("offset", query.offset());
 		meta.put("distributors", repository.findDistributorOptions());
 		return ApiResponse.ok(cards, meta);
 	}
