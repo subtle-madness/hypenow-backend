@@ -24,7 +24,7 @@ public class V1ContentRepository {
 	public List<ContentCardRow> findCards(V1ContentQuery q) {
 		Sql sql = buildWhere(q);
 		return jdbcClient.sql(ContentCardRow.SELECT + sql.fromWhere + orderBy(q.sort())
-						+ "\nLIMIT " + q.limit())
+						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
 				.query(ContentCardRow.class)
 				.list();
