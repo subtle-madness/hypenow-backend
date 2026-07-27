@@ -245,6 +245,38 @@ class CollectJobTest {
         return m;
     }
 
+    /** HIKER_MOBILE 원형 — 폴백으로 넘어온 계정의 방문 케이스용. */
+    static Map<String, Object> hikerFallbackItem(String username, long followers, String pk) {
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("username", username);
+        user.put("follower_count", followers);
+        user.put("pk", pk);
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("user", user);
+        return root;
+    }
+
+    @Test
+    void 폴백으로_넘어온_프로필은_감지된_소스로_저장되고_추출된다() {
+        wireCommon();
+        Influencer inf = influencer(1L, "bugged_user", null, null);
+        when(influencers.findCollectTargets(any(), any(PageRequest.class))).thenReturn(List.of(inf));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);   // 컴포지트 기본 소스
+        when(profileSourceSelector.fetchAndSupplement(
+                eq(JobName.COLLECT), eq(List.of("bugged_user")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L,
+                        List.of(hikerFallbackItem("bugged_user", 7000L, "333"))));
+
+        var summary = job().run(TriggerType.MANUAL);
+
+        assertThat(summary.visited()).isEqualTo(1);
+        ArgumentCaptor<RawProfile> captor = ArgumentCaptor.forClass(RawProfile.class);
+        verify(rawProfiles).save(captor.capture());
+        assertThat(captor.getValue().getSource()).isEqualTo(RawSource.HIKER_MOBILE);
+        assertThat(inf.getFollowers()).isEqualTo(7000L);
+        assertThat(inf.getIgUserId()).isEqualTo("333");   // 내장 타임라인 없음 → 미디어 폴백 재료
+    }
+
     void wireProfile(String username, long followers, String userId) {
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of(username)), eq(TriggerType.MANUAL)))
