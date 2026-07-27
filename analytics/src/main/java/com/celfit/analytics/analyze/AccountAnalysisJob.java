@@ -112,7 +112,9 @@ public class AccountAnalysisJob {
 		AccountAnalysis row = new AccountAnalysis(handle, OffsetDateTime.now(), model,
 				lastPostedAt, analyzedCount, copy.tagline(), copy.summary(), copy.trendNote(),
 				copy.chartNote(), traits,
-				adSituation.writesHeadline() ? blankToNull(copy.adHeadline()) : null, copy.paceNote());
+				adSituation.writesHeadline() ? blankToNull(copy.adHeadline()) : null, copy.paceNote(),
+				// 신 요약 3종 — Task 4에서 실값 배선 (INSERT 컬럼 교체와 함께)
+				null, null, null);
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
 				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
