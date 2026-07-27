@@ -100,7 +100,8 @@ public class AccountAnalysisJob {
 				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation));
 
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지)
-		if (isBlank(copy.tagline()) || isBlank(copy.summary())) {
+		// summary → perfSummary로 기계적 치환 (Task 4에서 교체)
+		if (isBlank(copy.tagline()) || isBlank(copy.perfSummary())) {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
 		if (copy.traits() == null || copy.traits().isEmpty()) {
@@ -109,10 +110,12 @@ public class AccountAnalysisJob {
 		List<String> traits = List.copyOf(copy.traits().size() > MAX_TRAITS
 				? copy.traits().subList(0, MAX_TRAITS) : copy.traits());
 
+		// 구 카피 컬럼(summary/trendNote/chartNote/adHeadline/paceNote)은 07-27 개편으로 미기록(V40) —
+		// adSituation은 더 이상 이 자리에서 안 쓰인다. 신 요약 3종 실값 배선은 Task 4.
 		AccountAnalysis row = new AccountAnalysis(handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy.tagline(), copy.summary(), copy.trendNote(),
-				copy.chartNote(), traits,
-				adSituation.writesHeadline() ? blankToNull(copy.adHeadline()) : null, copy.paceNote(),
+				lastPostedAt, analyzedCount, copy.tagline(), null, null,
+				null, traits,
+				null, null,
 				// 신 요약 3종 — Task 4에서 실값 배선 (INSERT 컬럼 교체와 함께)
 				null, null, null);
 		analysis.update("""
@@ -130,6 +133,7 @@ public class AccountAnalysisJob {
 		return s == null || s.isBlank();
 	}
 
+	// Task 4에서 adSummary 조건부 저장에 재사용 (blankToNull(copy.adSummary()))
 	private static String blankToNull(String s) {
 		return isBlank(s) ? null : s;
 	}

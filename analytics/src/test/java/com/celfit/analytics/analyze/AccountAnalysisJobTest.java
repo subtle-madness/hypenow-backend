@@ -24,7 +24,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * 계정 카피 배치 계약 (스펙 §2·§4):
- * ① 신규 즉시 분석·저장(adHeadline 조건부·traits jsonb 포함) ② 입력 동일 스킵
+ * ① 신규 즉시 분석·저장(adSummary 조건부·traits jsonb 포함 — 07-27 개편 후 Job은 ad_headline에
+ * 항상 NULL을 쓰므로 헤드라인 관련 단언은 Task 4에서 복원) ② 입력 동일 스킵
  * ③ stale인데 쿨다운 미경과 제외 ④ stale+쿨다운 경과 재분석 — 이력 2행
  * ⑤ 배치 상한 ⑥ 빈 카피 실패 격리 ⑦ traits 5개 절단.
  */
@@ -39,12 +40,14 @@ class AccountAnalysisJobTest {
 	AccountAnalysisJob job;
 	List<AccountToAnalyze> calls;
 
-	/** fake 포트: 호출 기록 + 고정 응답. adHeadline은 항상 채워 반환 — 조건부 NULL은 잡의 책임임을 검증. */
+	/** fake 포트: 호출 기록 + 고정 응답. adSummary는 항상 채워 반환 — 조건부 NULL 처리는 Task 4에서 잡이 다시 맡는다. */
 	AccountSynthesisPort fakePort() {
 		return account -> {
 			calls.add(account);
-			return new AccountCopy("태그라인: " + account.handle(), "요약 문단", "흐름 문구", "차트 캡션",
-					List.of("저자극", "성분리뷰", "정보형"), "광고 헤드라인", "페이스 문구");
+			// AccountCopy 5종 계약(Task 3)에 맞춘 기계적 치환 — summary→perfSummary,
+			// trendNote→contentSummary, adHeadline→adSummary (chartNote·paceNote는 폐지돼 대응 없음)
+			return new AccountCopy("태그라인: " + account.handle(),
+					List.of("저자극", "성분리뷰", "정보형"), "요약 문단", "흐름 문구", "광고 헤드라인");
 		};
 	}
 
@@ -286,10 +289,11 @@ class AccountAnalysisJobTest {
 	void 빈_카피는_저장하지_않고_다른_계정은_처리된다() {
 		rewireJob(account -> {
 			calls.add(account);
+			// 기계적 치환(Task 3) — summary→perfSummary, trendNote→contentSummary, adHeadline→adSummary
 			if (account.handle().equals("acct_ad")) {
-				return new AccountCopy("", "", "흐름", "차트", List.of("태그"), "", "페이스");
+				return new AccountCopy("", List.of("태그"), "", "흐름", "");
 			}
-			return new AccountCopy("태그라인", "요약", "흐름", "차트", List.of("태그", "태그2", "태그3"), "", "페이스");
+			return new AccountCopy("태그라인", List.of("태그", "태그2", "태그3"), "요약", "흐름", "");
 		});
 
 		int processed = job.run().processed(); // 예외가 전파되지 않아야 한다
@@ -305,8 +309,9 @@ class AccountAnalysisJobTest {
 	void traits가_5개를_넘으면_앞_5개만_저장한다() {
 		rewireJob(account -> {
 			calls.add(account);
-			return new AccountCopy("태그라인", "요약", "흐름", "차트",
-					List.of("t1", "t2", "t3", "t4", "t5", "t6"), "", "페이스");
+			// 기계적 치환(Task 3) — summary→perfSummary, trendNote→contentSummary
+			return new AccountCopy("태그라인",
+					List.of("t1", "t2", "t3", "t4", "t5", "t6"), "요약", "흐름", "");
 		});
 
 		job.run();

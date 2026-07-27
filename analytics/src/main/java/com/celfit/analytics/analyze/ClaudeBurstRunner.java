@@ -277,7 +277,8 @@ public class ClaudeBurstRunner {
 		}
 		AccountCopy copy = om.readValue(json, AccountCopy.class);
 		// AccountAnalysisJob.analyzeOne과 동일 가드 — 빈 카피가 최신 행으로 서빙되는 것 차단
-		if (isBlank(copy.tagline()) || isBlank(copy.summary())
+		// summary → perfSummary로 기계적 치환 (Task 4에서 교체)
+		if (isBlank(copy.tagline()) || isBlank(copy.perfSummary())
 				|| copy.traits() == null || copy.traits().isEmpty()) {
 			return false;
 		}
@@ -293,11 +294,8 @@ public class ClaudeBurstRunner {
 		}
 		List<String> traits = List.copyOf(copy.traits().size() > AccountAnalysisJob.MAX_TRAITS
 				? copy.traits().subList(0, AccountAnalysisJob.MAX_TRAITS) : copy.traits());
-		// 사이드카에 없는 옛 파일(has_ad_comparison 시절)이면 근거 없음으로 보수적 처리
-		String situationName = side.get("ad_situation");
-		com.celfit.analytics.llm.AdSituation adSituation = situationName == null
-				? com.celfit.analytics.llm.AdSituation.INSUFFICIENT
-				: com.celfit.analytics.llm.AdSituation.valueOf(situationName);
+		// 구 카피 컬럼(summary/trendNote/chartNote/adHeadline/paceNote)은 07-27 개편으로 미기록(V40).
+		// ad_situation 사이드카 파싱은 Task 5(adSummary 배선)에서 재사용 — 지금은 미참조.
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
 				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
@@ -305,10 +303,9 @@ public class ClaudeBurstRunner {
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)""",
 				handle, OffsetDateTime.now(), model, inputLastPostedAt,
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
-				copy.tagline(), copy.summary(), copy.trendNote(), copy.chartNote(),
+				copy.tagline(), null, null, null,
 				om.writeValueAsString(traits),
-				adSituation.writesHeadline() && !isBlank(copy.adHeadline()) ? copy.adHeadline() : null,
-				copy.paceNote());
+				null, null);
 		return true;
 	}
 
