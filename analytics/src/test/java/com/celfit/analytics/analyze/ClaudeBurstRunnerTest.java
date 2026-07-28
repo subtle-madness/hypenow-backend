@@ -42,8 +42,8 @@ class ClaudeBurstRunnerTest {
 			.replace("\n", "");
 
 	static final String COPY_JSON = """
-			{"tagline":"저자극 스킨케어 리뷰","summary":"요약 문장","trendNote":"상승세",
-			 "chartNote":"상위 3개가 견인","traits":["정보형","리뷰"],"adHeadline":"","paceNote":"주 2회"}"""
+			{"tagline":"저자극 스킨케어 리뷰","traits":["정보형","리뷰"],
+			 "perfSummary":"성과 요약 문장","contentSummary":"콘텐츠 요약 문장","adSummary":"광고 요약"}"""
 			.replace("\n", "");
 
 	@TempDir
@@ -215,9 +215,14 @@ class ClaudeBurstRunnerTest {
 				"SELECT tagline FROM account_analyses WHERE handle = 'acct1'", String.class));
 		assertEquals(3L, db.queryForObject(
 				"SELECT input_analyzed_count FROM account_analyses WHERE handle = 'acct1'", Long.class));
-		// 광고 비교 데이터 없음 → adHeadline 빈 문자열은 NULL로
+		assertEquals("성과 요약 문장", db.queryForObject(
+				"SELECT perf_summary FROM account_analyses WHERE handle = 'acct1'", String.class));
+		assertEquals("콘텐츠 요약 문장", db.queryForObject(
+				"SELECT content_summary FROM account_analyses WHERE handle = 'acct1'", String.class));
+		// acct1은 account_content_series가 없어 측정 가능 게시물 자체가 없다 → AdSituation.INSUFFICIENT
+		// (export가 사이드카에 적어둔 ad_situation 그대로) → adSummary는 값이 있어도 NULL로 버려진다
 		assertNull(db.queryForObject(
-				"SELECT ad_headline FROM account_analyses WHERE handle = 'acct1'", String.class));
+				"SELECT ad_summary FROM account_analyses WHERE handle = 'acct1'", String.class));
 
 		// 재실행 멱등 — 콘텐츠는 ON CONFLICT, 계정은 동일 입력 스냅샷 재수집 방지
 		runner().collect();

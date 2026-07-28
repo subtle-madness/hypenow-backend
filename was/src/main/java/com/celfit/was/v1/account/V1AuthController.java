@@ -33,6 +33,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class V1AuthController {
 
+	/** 이메일 중복 확인 상한(분당·IP) — 디바운스 500ms 전제라 가입(10회)보다 느슨, 열거 남용은 차단. */
+	private static final int EMAIL_AVAILABILITY_PER_MINUTE = 30;
+
 	private final SignupValidator signupValidator;
 	private final RateLimiter rateLimiter;
 	private final UserRepository userRepository;
@@ -93,6 +96,22 @@ public class V1AuthController {
 		}
 		requireUsableCode(request.code());
 		return ApiResponse.ok(new SignupCodeVerifyResponse(true));
+	}
+
+	/**
+	 * 가입 전 이메일 중복 확인(스펙 6.24) — 위저드 2스텝 디바운스 호출. 비교 기준은 6.15 가입과 동일
+	 * (UserRepository가 lower 정규화). 존재 여부 노출은 6.15의 409와 동일 수준이라 추가 마스킹 없음.
+	 */
+	@PostMapping("/v1/auth/email-availability")
+	public ApiResponse<EmailAvailabilityResponse> emailAvailability(
+			@RequestBody EmailAvailabilityRequest request, HttpServletRequest httpRequest) {
+		if (!rateLimiter.tryAcquire("email-availability:" + httpRequest.getRemoteAddr(),
+				EMAIL_AVAILABILITY_PER_MINUTE)) {
+			throw V1ApiException.rateLimited();
+		}
+		signupValidator.requireEmail(request.email());
+		return ApiResponse.ok(new EmailAvailabilityResponse(
+				userRepository.findByEmail(request.email()).isEmpty()));
 	}
 
 	@PostMapping("/v1/auth/login")

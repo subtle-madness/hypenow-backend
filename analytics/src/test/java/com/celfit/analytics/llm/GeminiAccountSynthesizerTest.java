@@ -11,8 +11,11 @@ import org.junit.jupiter.api.Test;
 class GeminiAccountSynthesizerTest {
 
 	static final String RESPONSE = """
-			{"tagline":"저자극 스킨케어 리뷰 톤","summary":"요약 문장","trendNote":"상승 12%",
-			 "chartNote":"상위 3개가 견인","traits":["정보형","스킨케어"],"adHeadline":"","paceNote":"주 2회"}""";
+			{"tagline":"저자극 스킨케어 중심 · 성분표를 짚어가며 사용 전후 비교로 설득하는 정보형 리뷰 톤",
+			 "traits":["정보형","스킨케어"],
+			 "perfSummary":"평균 조회수가 팔로워의 0.4배 수준입니다.",
+			 "contentSummary":"성분 설명과 사용 전후 비교가 반복됩니다.",
+			 "adSummary":"광고 요약 문장"}""";
 
 	record Call(String model, String system, String user, String schema) {}
 
@@ -26,12 +29,16 @@ class GeminiAccountSynthesizerTest {
 	}
 
 	@Test
-	void 카피_7종을_레코드로_돌려준다() {
+	void 카피_5종을_레코드로_돌려준다() {
 		AccountCopy copy = new GeminiAccountSynthesizer(fakeApi(), () -> "gemini-3.1-flash-lite")
 				.synthesize(new AccountToAnalyze("acct1", Map.of("avg_views", 1000),
 						List.of(Map.of("main_group", "cleansing")), List.of(), AdSituation.COMPARABLE));
-		assertEquals("저자극 스킨케어 리뷰 톤", copy.tagline());
+		assertEquals("저자극 스킨케어 중심 · 성분표를 짚어가며 사용 전후 비교로 설득하는 정보형 리뷰 톤",
+				copy.tagline());
 		assertEquals(List.of("정보형", "스킨케어"), copy.traits());
+		assertEquals("평균 조회수가 팔로워의 0.4배 수준입니다.", copy.perfSummary());
+		assertEquals("성분 설명과 사용 전후 비교가 반복됩니다.", copy.contentSummary());
+		assertEquals("광고 요약 문장", copy.adSummary());
 		assertEquals("gemini-3.1-flash-lite", calls.get(0).model());
 	}
 
@@ -41,16 +48,31 @@ class GeminiAccountSynthesizerTest {
 				.synthesize(new AccountToAnalyze("acct1", Map.of(), List.of(), List.of(), AdSituation.NO_ADS));
 		assertTrue(calls.get(0).system().contains("[절제 규칙 — 반드시 지켜라]"));
 		assertTrue(calls.get(0).user().contains("광고 활동: 협찬 없음"));
-		assertTrue(calls.get(0).schema().contains("adHeadline"));
+		assertTrue(calls.get(0).schema().contains("adSummary"));
+		assertTrue(!calls.get(0).schema().contains("adHeadline"));
 	}
 
 	/** 평가·권유 금지가 지시문에 명시돼야 한다 (07-21 PO 결정 — 객관 진술만). */
 	@Test
-	void 지시문이_광고_헤드라인의_평가를_금지한다() {
+	void 지시문이_광고_요약의_평가를_금지한다() {
 		String system = GeminiAccountSynthesizer.instructions();
 		assertTrue(system.contains("평가나 권유는 쓰지 마라"), system);
 		for (AdSituation s : AdSituation.values()) {
 			assertTrue(system.contains(s.label()), s + " 케이스가 지시문에 없음");
 		}
+	}
+
+	@Test
+	void 지시문이_태그라인_구체화를_요구한다() {
+		String system = GeminiAccountSynthesizer.instructions();
+		assertTrue(system.contains("70자 이내"), system);
+		assertTrue(system.contains("전개 방식"), system);
+	}
+
+	/** 성과 요약은 수준·방향 표현만 — 수치 정본(스탯 타일)과 저빈도 갱신 문장이 어긋나는 것을 막는다 (07-28). */
+	@Test
+	void 지시문이_성과_요약의_수치_인용을_금지한다() {
+		String system = GeminiAccountSynthesizer.instructions();
+		assertTrue(system.contains("구체 수치를 문장에 그대로 인용하지 마라"), system);
 	}
 }
