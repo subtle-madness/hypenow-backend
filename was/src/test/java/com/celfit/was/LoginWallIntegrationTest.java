@@ -59,6 +59,12 @@ class LoginWallIntegrationTest extends IntegrationTest {
 	void 열린_경로는_익명으로_통과한다() throws Exception {
 		mockMvc.perform(get("/health")).andExpect(status().isOk());
 
+		// 발굴 목록(스펙 6.21) — 비로그인 공개. 분석 테이블이 없는 컨테이너라 200은 불가,
+		// 월(401)에 안 막힌 것만 확인. 상세(/v1/influencers/{id})는 잠김 유지.
+		MvcResult discovery = mockMvc.perform(get("/v1/influencers")).andReturn();
+		assertThat(discovery.getResponse().getStatus()).isNotEqualTo(401);
+		mockMvc.perform(get("/v1/influencers/someone")).andExpect(status().isUnauthorized());
+
 		// 게이트 이벤트 — 익명 + CSRF 면제 그대로(스펙 6.19)
 		mockMvc.perform(post("/v1/events/gate").contentType(MediaType.APPLICATION_JSON)
 						.content("""
