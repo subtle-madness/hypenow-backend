@@ -22,7 +22,9 @@ import tools.jackson.databind.ObjectMapper;
  * oldonly — 구 스키마 카피(perf_summary NULL)만 있는 계정 → findLatestCopy empty.
  * mixed — 구행(perf_summary 有, 오래됨) + 신행처럼 보이는 최신 NULL행 → 구행이 이겨야 함.
  * dupe — 게시물 1개, detected_brands에 같은 브랜드 2회 기재 → cnt는 게시물 수(1)여야 함.
- * o1~o6 — dupe와 같은 브랜드(롬앤) 협찬 계정, 협업 수 1~6 → othersJson 상위5·자기제외 검증.
+ * o3~o6 — dupe와 같은 브랜드(롬앤) 협찬 계정, 협업 수 3~6(4명뿐이라 5번째 슬롯은 원래 비어야 함).
+ *   자기 제외(<> :h)가 없으면 dupe(cnt 1)가 그 빈 슬롯을 채워 5번째로 들어온다 — othersJson 단언은
+ *   정확히 4개(o6~o3)이고 dupe가 없음을 함께 확인해 자기 제외 절이 실제로 결과를 바꾼다는 걸 증명한다.
  * sim_me/sim_true/sim_mid/sim_dup/sim_far_tie/sim_other_cat — 유사 핸들 Jaccard·팔로워 근접·
  *   카테고리 필터·DISTINCT 교집합 검증(sim_dup은 trait 중복 기재로 raw count면 부풀려짐).
  */
@@ -225,19 +227,20 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				  detected_brands) VALUES
 				  ('d1', true, 'skincare', 'sponsored', '[{"name":"롬앤"},{"name":"롬앤"}]'::jsonb)""");
 
-		// o1~o6 — 롬앤 협찬 계정, 협업 수 1~6(브랜드 하나당 게시물 하나, 중복 기재 없음)
+		// o3~o6 — 롬앤 협찬 계정, 협업 수 3~6(브랜드 하나당 게시물 하나, 중복 기재 없음). 딱 4명이라
+		// 정상적으로도(자기 제외 있어도) 5번째 슬롯은 비어야 한다 — 자기 제외 검증의 핵심 조건.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
 				  content_type, views, likes, comments, sponsored)
 				SELECT 'o' || acct || '_' || n, 'o' || acct,
 				       now() - ((acct * 10 + n) || ' days')::interval, 'reels', 5000, 100, 5, true
-				FROM generate_series(1, 6) AS acct, generate_series(1, 6) AS n
+				FROM generate_series(3, 6) AS acct, generate_series(1, 6) AS n
 				WHERE n <= acct""");
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, is_beauty, main_category, ad_type,
 				  detected_brands)
 				SELECT 'o' || acct || '_' || n, true, 'skincare', 'sponsored', '[{"name":"롬앤"}]'::jsonb
-				FROM generate_series(1, 6) AS acct, generate_series(1, 6) AS n
+				FROM generate_series(3, 6) AS acct, generate_series(1, 6) AS n
 				WHERE n <= acct""");
 
 		// 유사 핸들 재료 — 전부 스킨케어(sim_other_cat만 메이크업), 팔로워는 sim_me=10000 기준.
@@ -321,13 +324,17 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 구행과_최신_NULL신행이_섞이면_구행을_반환() {
+	void 구행과_최신_NULL신행이_섞이면_구행을_반환() throws Exception {
 		var copy = repository.findLatestCopy("mixed").orElseThrow();
 		assertThat(copy.tagline()).isEqualTo("과거 태그라인"); // 최신 NULL행 무시
 		assertThat(copy.perfSummary()).isEqualTo("과거 성과 요약");
 		assertThat(copy.contentSummary()).isEqualTo("과거 콘텐츠 요약");
 		assertThat(copy.adSummary()).isNull();
-		assertThat(copy.traitsJson()).isEqualTo("[\"a\", \"b\"]");
+
+		List<String> traits = objectMapper.readValue(copy.traitsJson(),
+				new TypeReference<List<String>>() {
+				});
+		assertThat(traits).containsExactly("a", "b");
 	}
 
 	@Test
@@ -346,7 +353,11 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		List<String> others = objectMapper.readValue(row.othersJson(),
 				new TypeReference<List<String>>() {
 				});
-		assertThat(others).containsExactly("o6", "o5", "o4", "o3", "o2"); // 협업 수 내림차순, 자기 제외, 최대 5
+		// 후보는 o3~o6(4명)뿐이라 5번째 슬롯이 원래 비어야 한다. 자기 제외(<> :h) 절이 없으면
+		// dupe(cnt 1) 자신이 그 슬롯을 채워 5개가 되고 dupe가 포함된다 — 정확히 4개+dupe 부재로
+		// 자기 제외가 실제로 결과를 바꾼다는 걸 함께 증명한다.
+		assertThat(others).containsExactly("o6", "o5", "o4", "o3"); // 협업 수 내림차순
+		assertThat(others).doesNotContain("dupe");
 	}
 
 	@Test
