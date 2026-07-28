@@ -248,7 +248,8 @@ public class AdminUiController {
 			case ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
 					: "오늘 +%s 예정 · 랭킹 노출은 제때(timely) 분석분만".formatted(comma(f.heavy().timelyPending()));
 			case LATE_BACKFILL_ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
-					: "오늘 +%s 예정 · 인플루언서 상세에만 노출".formatted(comma(f.heavy().windowPending()));
+					: "오늘 +%s 예정 · 제때창 놓침분 — 인플루언서 상세에만 노출"
+							.formatted(comma(f.heavy().windowPending()));
 			case ACCOUNT_ANALYZE -> "stale + 쿨다운 경과분 재분석";
 			case MIRROR -> "분석 무관 — 서빙 뷰 전체 재적재";
 			// 미아카이브 중 CDN 만료(~4일)분은 재크롤로 URL이 갱신돼야 구제 — 수치는 30분 캐시.
