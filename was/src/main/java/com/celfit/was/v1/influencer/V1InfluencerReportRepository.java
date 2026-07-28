@@ -29,13 +29,16 @@ public class V1InfluencerReportRepository {
 				""").param("h", handle).query(SummaryRow.class).optional();
 	}
 
-	/** 계정 LLM 카피 — 이력 테이블(account_analyses)에서 계정별 최신 1행만 유효. 없으면 카피 전부 null. */
+	/** 계정 LLM 카피 — 구 형식 카피가 있는 최신 행만(전환기 게이트). 07-28 개편 백필이 채우는
+	 *  신 스키마 행(구 컬럼 summary·trend_note·chart_note·ad_headline·pace_note는 NULL)이 최신이
+	 *  되어도 v1 화면이 비지 않게 한다(v2의 perf_summary 게이트와 대칭). 없으면 카피 전부 null.
+	 *  프론트 v2 전환 후 v1 폐기 PR에서 이 표면째 제거할 것. */
 	public Optional<CopyRow> findLatestCopy(String handle) {
 		return jdbcClient.sql("""
 				SELECT tagline, summary, trend_note, chart_note, traits::text AS traits_json,
 				       ad_headline, pace_note
 				FROM account_analyses
-				WHERE handle = :h
+				WHERE handle = :h AND summary IS NOT NULL
 				ORDER BY analyzed_at DESC
 				LIMIT 1
 				""").param("h", handle).query(CopyRow.class).optional();
