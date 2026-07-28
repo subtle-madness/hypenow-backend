@@ -109,6 +109,48 @@ public class V1InfluencerReportRepository {
 				""").param("h", handle).query(PeerStatsRow.class).optional();
 	}
 
+	/** 유사 인플루언서 — 같은 주 카테고리(account_peer_stats) 후보를 traits 교집합 내림차순,
+	 *  팔로워 근접 오름차순으로 상위 6. 카피 없는 계정은 후보 제외(LATERAL INNER).
+	 *  overlap·union 모두 중복 제거(DISTINCT) — matchPct ≤ 100 보장(traits는 LLM 산출이라
+	 *  유일성 보장 없음 — count(*)면 중복 원소 있는 후보의 overlap>union으로 100% 초과 가능했음).
+	 *  기준 계정이 없거나(account_peer_stats·account_analyses 미존재) 같은 카테고리 후보가
+	 *  없으면 빈 목록을 돌려준다 — findSummary(Optional)와 달리 존재 확인용이 아니라 목록
+	 *  조회라 404로 이어지지 않고, 컨트롤러도 200+[]로 그대로 응답한다. */
+	public List<SimilarRow> findSimilar(String handle) {
+		return jdbcClient.sql("""
+				WITH me AS (
+				  SELECT p.peer_category, ac.followers, la.traits
+				  FROM account_peer_stats p
+				  JOIN accounts ac ON ac.handle = p.handle
+				  JOIN LATERAL (SELECT traits FROM account_analyses
+				                WHERE handle = p.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
+				  WHERE p.handle = :h
+				)
+				SELECT c.handle AS influencer_id, ac.display_name AS name,
+				       COALESCE('/img/' || ip.object_path, ac.profile_image_url) AS profile_image_url,
+				       la.tagline,
+				       (SELECT count(DISTINCT t.value) FROM jsonb_array_elements_text(la.traits) t
+				         WHERE t.value IN (SELECT value FROM jsonb_array_elements_text(me.traits))) AS overlap_n,
+				       (SELECT count(DISTINCT value) FROM (
+				          SELECT value FROM jsonb_array_elements_text(la.traits)
+				          UNION ALL SELECT value FROM jsonb_array_elements_text(me.traits)) u) AS union_n
+				FROM account_peer_stats c
+				JOIN me ON c.peer_category = me.peer_category
+				JOIN accounts ac ON ac.handle = c.handle
+				JOIN LATERAL (SELECT tagline, traits FROM account_analyses
+				              WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
+				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = c.handle
+				WHERE c.handle <> :h
+				ORDER BY overlap_n DESC, abs(ac.followers - me.followers) ASC
+				LIMIT 6
+				""").param("h", handle).query(SimilarRow.class).list();
+	}
+
+	/** overlap·union 모두 중복 제거(DISTINCT) — matchPct ≤ 100 보장. */
+	public record SimilarRow(String influencerId, String name, String profileImageUrl,
+			String tagline, Long overlapN, Long unionN) {
+	}
+
 	public record SummaryRow(Long followers, Long analyzedCount, Long postsCount, String metric,
 			Long avgViews, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgLikes,
 			Long avgComments, OffsetDateTime lastPostedAt, BigDecimal avgIntervalDays) {

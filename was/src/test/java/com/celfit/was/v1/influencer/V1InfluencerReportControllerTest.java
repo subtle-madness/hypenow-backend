@@ -130,6 +130,38 @@ class V1InfluencerReportControllerTest {
 	}
 
 	@Test
+	void 유사_인플루언서_목록() throws Exception {
+		given(repository.findSimilar("haeun.log")).willReturn(List.of(
+				new V1InfluencerReportRepository.SimilarRow("minji.beauty", "민지", "/img/p.jpg",
+						"저자극 스킨케어 성분 리뷰", 3L, 5L)));
+		mockMvc.perform(get("/v1/influencers/haeun.log/similar").with(user("tester")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].influencerId").value("minji.beauty"))
+				.andExpect(jsonPath("$.data[0].matchPct").value(60)); // 3/5 Jaccard
+	}
+
+	@Test
+	void 유사_인플루언서_교집합_없으면_matchPct_null() throws Exception {
+		given(repository.findSimilar("haeun.log")).willReturn(List.of(
+				new V1InfluencerReportRepository.SimilarRow("somi.skin", "소미", null,
+						"색조 위주", 0L, 7L)));
+		mockMvc.perform(get("/v1/influencers/haeun.log/similar").with(user("tester")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].influencerId").value("somi.skin"))
+				.andExpect(jsonPath("$.data[0].matchPct").doesNotExist());
+	}
+
+	@Test
+	void 유사_인플루언서_없으면_200에_빈_배열() throws Exception {
+		given(repository.findSimilar("ghost")).willReturn(List.of());
+
+		mockMvc.perform(get("/v1/influencers/ghost/similar").with(user("tester")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data").isArray())
+				.andExpect(jsonPath("$.data").isEmpty());
+	}
+
+	@Test
 	void 없는_인플루언서는_NOT_FOUND() throws Exception {
 		given(repository.findSummary("ghost")).willReturn(Optional.empty());
 
