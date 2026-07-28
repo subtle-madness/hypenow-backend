@@ -209,26 +209,33 @@ public class V1InfluencerReportAssembler {
 	 *  이 비율을 크게 벗어나는 좋아요는 팔로워 반응으로 보지 않는다(탐색탭 유입·구매성 좋아요 컷). */
 	private static final double LIKES_PER_COMMENT_ANCHOR = 39.0;
 
+	/** 중복 계수 — 게시물당 반응을 "윈도우 중 1회 이상 반응한 고유 팔로워"로 확장할 때의
+	 *  실효 독립 기회 비율(지수 = 게시물 수 × 0.25, 12개면 3). 임의 설정(07-28 확정) —
+	 *  댓글 작성자 수집이 재개되면 계정별 실측 중복률로 대체 예정. */
+	private static final double DUPLICATION_FACTOR = 0.25;
+
 	/**
-	 * 유효 팔로워 = 게시물당 평균 실반응 팔로워 수 (07-28 재설계 — 추정 확장 없는 측정값).
-	 * 게시물별 인정 반응 = min( (좋아요+댓글) × min(1, 팔로워/조회수),   ← 릴스 바이럴 안분
-	 *                            ANCHOR × (댓글+1) )                      ← 비정상 좋아요 컷
-	 * "한 번이라도 반응할 팔로워" 류의 확장 추정(유니온·포화곡선)은 독립 가정이 값을 부풀려 폐기 —
-	 * 관측 가능한 것만 센다. 운영 실측(07-28, 6,321계정): 팔로워 대비 중앙값 1.2%·상위 1% 18.4%·
-	 * 최대 53.5% — 100%는 장치 없이 자연히 불가. 피어와 무관한 절대 측정(피어는 topPct 전용).
+	 * 유효 팔로워 = 팔로워 × (1 − (1−r)^(n×중복계수)) — "최근 n개 중 1회 이상 반응한 고유 팔로워" 추정.
+	 * 선형 ×n은 같은 팔로워를 거듭 세어 팔로워 초과 모순이 나므로, 이미 반응한 팔로워를 다시 세지
+	 * 않는 포함-배제 형태를 쓴다(보통 계정에선 ×3과 사실상 동일, 반응률 높은 계정만 중복 차감).
+	 * r = 게시물당 평균 인정 반응 ÷ 팔로워 —
+	 *   인정 반응 = min( (좋아요+댓글) × min(1, 팔로워/조회수),   ← 릴스 바이럴 안분
+	 *                    ANCHOR × (댓글+1) )                       ← 비정상 좋아요 컷
+	 * 운영 실측(07-28, 6,321계정): 중앙값 3.4%·상위 1% 45.7%·최대 89.9% — 90% 이상 0계정,
+	 * 100%는 셈법 자체로 불가(캡·클램프 없음). 피어와 무관한 절대 추정(피어는 topPct 전용).
 	 */
 	static Long effectiveFollowers(Long followers, List<SeriesRow> series) {
-		Double avg = avgEngagedFollowers(followers, series);
-		return avg == null ? null : Math.round(avg);
+		Double ratio = engagedRatio(followers, series);
+		return ratio == null ? null : Math.round(followers * ratio);
 	}
 
 	/** effectiveFollowers의 팔로워 대비 %(반올림). 산출 불가 시 null. */
 	static Integer effectiveFollowersPct(Long followers, List<SeriesRow> series) {
-		Double avg = avgEngagedFollowers(followers, series);
-		return avg == null ? null : (int) Math.round(avg * 100 / followers);
+		Double ratio = engagedRatio(followers, series);
+		return ratio == null ? null : (int) Math.round(ratio * 100);
 	}
 
-	private static Double avgEngagedFollowers(Long followers, List<SeriesRow> series) {
+	private static Double engagedRatio(Long followers, List<SeriesRow> series) {
 		if (followers == null || followers <= 0 || series.isEmpty()) {
 			return null;
 		}
@@ -242,7 +249,10 @@ public class V1InfluencerReportAssembler {
 			}
 			sum += Math.min(engaged, LIKES_PER_COMMENT_ANCHOR * (comments + 1));
 		}
-		return sum / series.size();
+		double r = Math.min(sum / series.size() / followers, 1.0);
+		// 게시물이 적으면(지수 < 1) 확장이 축소로 뒤집히므로 하한 1 — 최소한 게시물당 측정값은 보장
+		double exponent = Math.max(1.0, series.size() * DUPLICATION_FACTOR);
+		return 1 - Math.pow(1 - r, exponent);
 	}
 
 	private InfluencerAiReport.Chart toChart(SummaryRow summary, List<SeriesRow> series) {

@@ -9,7 +9,8 @@ import java.util.List;
  * 유효 팔로워·성장세·헤드라인은 알고리즘 산출(LLM 아님) — 산식은 Assembler 참조.
  */
 public record InfluencerAiReport(String tagline, Long analyzedCount, Long totalPosts,
-		/** 게시물당 평균 실반응 팔로워 수(측정값 — 조회수 안분·비정상 좋아요 컷). 팔로워·시계열 없으면 null. */
+		/** 최근 게시물에 1회 이상 반응하는 고유 팔로워 추정 — 게시물당 실반응(조회수 안분·비정상
+		 *  좋아요 컷) × 중복 계수 확장. 팔로워·시계열 없으면 null. */
 		Long effectiveFollowers,
 		/** effectiveFollowers의 팔로워 대비 %(반올림) — 같은 조건에서 null. */
 		Integer effectiveFollowersPct,

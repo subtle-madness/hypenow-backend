@@ -178,8 +178,9 @@ class V1InfluencerReportAssemblerTest {
 	}
 
 	@Test
-	void 유효_팔로워는_게시물당_평균_실반응() {
-		// views(1000) < followers(10000) → 안분 없음. e = 100+10 = 110씩 2건 → 평균 110, pct 1(=1.1 반올림)
+	void 유효_팔로워는_게시물당_평균_실반응_기반() {
+		// views(1000) < followers(10000) → 안분 없음. e = 100+10 = 110씩 2건.
+		// 게시물 2개면 지수 = max(1, 2×0.25) = 1 → 확장 없이 게시물당 측정값 그대로 110, pct 1(=1.1 반올림)
 		var series = List.of(
 				row("2026-07-01T00:00:00Z", 1000L, 100, 10, false),
 				row("2026-07-02T00:00:00Z", 1000L, 100, 10, false));
@@ -187,6 +188,19 @@ class V1InfluencerReportAssemblerTest {
 				List.of(), peer());
 		assertThat(r.effectiveFollowers()).isEqualTo(110L);
 		assertThat(r.effectiveFollowersPct()).isEqualTo(1);
+	}
+
+	@Test
+	void 유효_팔로워_윈도우_12개면_중복계수_확장() {
+		// r = 110/10000 = 1.1%, 지수 = 12×0.25 = 3 → 1−(1−0.011)³ = 3.264% → 326명, pct 3
+		var series = new java.util.ArrayList<SeriesRow>();
+		for (int day = 1; day <= 12; day++) {
+			series.add(row(String.format("2026-07-%02dT00:00:00Z", day), 1000L, 100, 10, false));
+		}
+		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
+				List.of(), peer());
+		assertThat(r.effectiveFollowers()).isEqualTo(326L);
+		assertThat(r.effectiveFollowersPct()).isEqualTo(3);
 	}
 
 	@Test
