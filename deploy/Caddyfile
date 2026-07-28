@@ -13,10 +13,6 @@
 	}
 }
 
-# dev 스테이징 (태스크 K) — 보호는 was 로그인 월(별도 dev 가입 코드) 그대로.
-# dev 프로파일 미기동 시 502 — caddy는 요청 시점에 업스트림을 찾으므로 설정 로드는 무해.
-{$DEV_API_DOMAIN:dev-api.hypenow.io} {
-	handle {
-		reverse_proxy dev-was:8081
-	}
-}
+# dev 등 부가 라우팅은 caddy.d/*.caddy로 분리 — dev CD가 dev 파일만 갱신·리로드하므로
+# 이 본 파일(운영 라우팅)은 main 배포로만 바뀐다. glob이라 파일이 없어도 무해.
+import /etc/caddy/caddy.d/*.caddy

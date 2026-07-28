@@ -79,11 +79,17 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      # compose·Caddyfile은 develop 버전으로 동기화 — 운영 컨테이너는 재기동하지 않으므로 무영향,
+      # 본 Caddyfile(운영 라우팅)은 보내지 않는다 — dev 라우팅은 caddy.d/dev-api.caddy만 갱신.
+      # develop에만 있는 운영 라우팅 변경이 main 배포 전에 발효되는 뒷문을 막는 게 요점.
+      # 주의: caddy 볼륨 마운트(caddy.d)와 본 Caddyfile의 import 라인은 main 배포(운영 CD)로
+      # 서버에 반영된 뒤부터 dev 라우팅이 살아난다.
+      # compose는 develop 버전으로 동기화 — 운영 컨테이너는 재기동하지 않으므로 무영향,
       # 다음 main 배포가 main 버전으로 재동기화한다(운영 CD와 같은 검증 포함)
-      - name: compose·Caddyfile·스크립트 동기화·검증
+      - name: compose·dev 라우팅·스크립트 동기화·검증
         run: |
-          scp -i ~/.ssh/id_deploy deploy/compose.yaml deploy/Caddyfile "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'mkdir -p ~/deploy/scripts ~/deploy/caddy.d'
+          scp -i ~/.ssh/id_deploy deploy/compose.yaml "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
+          scp -i ~/.ssh/id_deploy deploy/caddy.d/dev-api.caddy "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/caddy.d/"
           scp -i ~/.ssh/id_deploy deploy/scripts/prepare-dev-raw-role.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && out=$(docker compose --profile dev config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
@@ -109,7 +115,7 @@ jobs:
       - name: 잔존 참조 검사
         run: |
           residue=$(ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-            'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -tA' <<'SQL'
+            'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -tA -v ON_ERROR_STOP=1' <<'SQL'
           SELECT 'view ' || viewname FROM pg_views
             WHERE schemaname = 'analytics_dev' AND definition ~ $q$[^']analytics\.$q$
           UNION ALL
