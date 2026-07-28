@@ -157,19 +157,13 @@ public class ClaudeBurstRunner {
 		return count;
 	}
 
-	/** 카피 대상 전량 — AccountAnalysisJob.run의 자격 정의에서 배치 상한만 뺐다. */
+	/** 카피 대상 전량 — AccountAnalysisJob.ELIGIBLE_WHERE(잡의 자격 정의와 단일 정본)에서 배치 상한만 뺐다. */
 	private int exportAccounts() {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
-				LEFT JOIN LATERAL (
-				  SELECT a.input_last_posted_at, a.analyzed_at
-				  FROM account_analyses a WHERE a.handle = s.handle
-				  ORDER BY a.analyzed_at DESC LIMIT 1
-				) latest ON true
-				WHERE latest.analyzed_at IS NULL
-				   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-				       AND latest.analyzed_at < now() - make_interval(days => ?))
+				""" + AccountAnalysisJob.ELIGIBLE_WHERE + """
+
 				ORDER BY s.handle""", String.class, settings.accountAnalyzeCooldownDays());
 		StringBuilder input = new StringBuilder();
 		StringBuilder sidecar = new StringBuilder();

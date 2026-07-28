@@ -5,7 +5,7 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.StructuredMessageCreateParams;
 import com.celfit.analytics.config.AnalyticsSettings;
 
-/** 계정 카피 Anthropic 구현 — C1 미러 수치·캡션만 근거로 인플루언서 패널 문구 7종을 생성한다. */
+/** 계정 카피 Anthropic 구현 — C1 미러 수치·캡션만 근거로 인플루언서 패널 문구 5종을 생성한다. */
 public final class AnthropicAccountSynthesizer implements AccountSynthesisPort {
 
 	/** 프롬프트는 Gemini 어댑터의 검증 통과본을 공유한다 — 복제해 두면 한쪽만 고쳐지는 사고가 난다
