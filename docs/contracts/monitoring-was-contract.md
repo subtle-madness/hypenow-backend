@@ -53,7 +53,11 @@
   "registrationKey": "was가 생성한 UUID",   // 멱등 키 — 재시도 시 같은 target 반환
   "type": "ACCOUNT",
   "username": "some_influencer",
-  "keywords": ["샤넬", "chanel"],           // 1개 이상, OR 매칭
+  "keywordRule": {
+    "and":     ["샤넬", "립스틱"],   // 전부 포함돼야 매칭 (0개 이상)
+    "any":     ["chanel", "샤넬"],   // 하나 이상 포함돼야 매칭 (0개 이상)
+    "exclude": ["이벤트", "공구"]    // 하나라도 포함되면 배제 (0개 이상)
+  },                                 // and·any 중 최소 한 목록은 비어 있지 않아야 (VALIDATION)
   "expiresAt": "2026-08-28T23:59:59+09:00"
 }
 
@@ -120,7 +124,7 @@ WATCHING 캠페인의 PENDING 후보를 승인 → 그 게시물로 TRACKING 전
 | `type` | text | `ACCOUNT` / `POST` |
 | `username` | text | 계정 핸들 (POST 등록도 소유 계정 기록) |
 | `short_code` | text null | POST 등록 시의 게시물 |
-| `keywords` | jsonb | 키워드 배열 (ACCOUNT 전용) |
+| `keyword_rule` | jsonb | 키워드 규칙 `{"and":[…],"any":[…],"exclude":[…]}` (ACCOUNT 전용). 매칭 = and 전부 ∧ (any 비었거나 하나 이상) ∧ exclude 전무 — 부분 문자열·대소문자 무시·캡션 전문 |
 | `status` | text | `WATCHING` / `TRACKING` / `EXPIRED` / `CANCELED` / `FAILED` |
 | `tracked_short_code` | text null | 승인(또는 직접 등록)된 추적 게시물 |
 | `tracked_since` | timestamptz null | TRACKING 전환 시각 |
