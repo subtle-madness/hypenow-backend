@@ -18,7 +18,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -55,7 +54,7 @@ class AccountAnalysisJobTest {
 
 	@BeforeEach
 	void setUp() {
-		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		calls = new ArrayList<>();
 		TestDb.resetAndMigrate(db, ds);

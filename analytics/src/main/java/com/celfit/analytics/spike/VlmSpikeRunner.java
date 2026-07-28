@@ -41,8 +41,8 @@ public class VlmSpikeRunner {
 			// 프리체크 탈락 대비 3배 후보 — 최신 수집순
 			var candidates = rawJdbcTemplate.query("""
 					SELECT c.short_code, d.caption, d.thumbnail_url, d.captured_at
-					FROM analytics.v_base_content c
-					JOIN analytics.v_base_detail d USING (content_id)
+					FROM v_base_content c
+					JOIN v_base_detail d USING (content_id)
 					WHERE d.thumbnail_url IS NOT NULL
 					ORDER BY d.captured_at DESC
 					LIMIT ?""",
