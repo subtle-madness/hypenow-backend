@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
@@ -146,6 +147,7 @@ public class SecurityConfig {
 						.requestMatchers("/v1/events/gate").permitAll()  // 익명 게이트 측정 유지(스펙 6.19)
 						.requestMatchers("/v1/stats").permitAll()        // 랜딩 통계(스펙 6.20) — 로그인 전 랜딩 페이지가 소비, 공개 캐시 전제
 						.requestMatchers("/v1/inquiries").permitAll()    // 도입문의 접수(클로즈베타 2026-07-19) — 코드 없는 방문자 표면
+						.requestMatchers(HttpMethod.GET, "/v1/influencers").permitAll() // 발굴 목록(스펙 6.21) — 비로그인 공개, 개인화 필드 없음. /v1/influencers/{id}는 잠김 유지
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
 						.anyRequest().authenticated())
 				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
