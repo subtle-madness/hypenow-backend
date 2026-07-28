@@ -3,6 +3,7 @@ package com.celfit.analytics.analyze;
 import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.BeautyTaxonomy;
 import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.llm.ContentInsightPort.ContentInsight;
@@ -52,8 +53,8 @@ public class ClaudeBurstRunner {
 			aiCommentInsight, commentAuthenticityGrade, commentAuthenticityNote""";
 	private static final String ACCOUNT_JSON_RULE = """
 
-			출력 형식: 아래 7개 키를 모두 가진 JSON 객체 하나만 출력하라. 코드펜스·설명·다른 텍스트 금지.
-			키: tagline, summary, trendNote, chartNote, traits(문자열 배열), adHeadline, paceNote""";
+			출력 형식: 아래 5개 키를 모두 가진 JSON 객체 하나만 출력하라. 코드펜스·설명·다른 텍스트 금지.
+			키: tagline, traits(문자열 배열), perfSummary, contentSummary, adSummary""";
 
 	public record ExportResult(int contents, int accounts) {}
 
@@ -277,9 +278,10 @@ public class ClaudeBurstRunner {
 		}
 		AccountCopy copy = om.readValue(json, AccountCopy.class);
 		// AccountAnalysisJob.analyzeOne과 동일 가드 — 빈 카피가 최신 행으로 서빙되는 것 차단
-		// summary → perfSummary로 기계적 치환 (Task 4에서 교체)
-		if (isBlank(copy.tagline()) || isBlank(copy.perfSummary())
-				|| copy.traits() == null || copy.traits().isEmpty()) {
+		if (isBlank(copy.tagline()) || isBlank(copy.perfSummary()) || isBlank(copy.contentSummary())) {
+			return false;
+		}
+		if (copy.traits() == null || copy.traits().isEmpty()) {
 			return false;
 		}
 		OffsetDateTime inputLastPostedAt = side.get("input_last_posted_at") == null
@@ -294,18 +296,23 @@ public class ClaudeBurstRunner {
 		}
 		List<String> traits = List.copyOf(copy.traits().size() > AccountAnalysisJob.MAX_TRAITS
 				? copy.traits().subList(0, AccountAnalysisJob.MAX_TRAITS) : copy.traits());
-		// 구 카피 컬럼(summary/trendNote/chartNote/adHeadline/paceNote)은 07-27 개편으로 미기록(V40).
-		// ad_situation 사이드카 파싱은 Task 5(adSummary 배선)에서 재사용 — 지금은 미참조.
+		// ad_situation은 export 시점에 사이드카에 적어둔 값(AdSituation.name()) — AccountAnalysisJob과
+		// 동일하게 INSUFFICIENT(근거 없음)일 때만 adSummary를 버린다. 구 export 산출물처럼 필드 자체가
+		// 없으면(사이드카에 ad_situation 키 없음) AccountAdCanon을 재조회하는 대신 보수적으로 NULL 처리 —
+		// 근거 재현이 안 되는 값을 함부로 서빙하지 않는다는 이 파일의 기존 관용구(base==null → 실패 취급,
+		// 다른 개별 필드 null-safe 파싱)를 따른 것이다.
+		String situationName = side.get("ad_situation");
+		AdSituation situation = situationName == null ? null : AdSituation.valueOf(situationName);
+		String adSummary = situation != null && situation.writesHeadline() ? blankToNull(copy.adSummary()) : null;
+		// 구 카피 5컬럼(summary·trend/chart_note·ad_headline·pace_note)은 07-27 개편 후 미기록 — AccountAnalysisJob과 동일.
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
-				  ad_headline, pace_note)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)""",
+				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary)
+				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)""",
 				handle, OffsetDateTime.now(), model, inputLastPostedAt,
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
-				copy.tagline(), null, null, null,
-				om.writeValueAsString(traits),
-				null, null);
+				copy.tagline(), om.writeValueAsString(traits),
+				copy.perfSummary(), copy.contentSummary(), adSummary);
 		return true;
 	}
 
@@ -369,6 +376,10 @@ public class ClaudeBurstRunner {
 
 	private static boolean isBlank(String s) {
 		return s == null || s.isBlank();
+	}
+
+	private static String blankToNull(String s) {
+		return isBlank(s) ? null : s;
 	}
 
 	private static Long longOrNull(String v) {
