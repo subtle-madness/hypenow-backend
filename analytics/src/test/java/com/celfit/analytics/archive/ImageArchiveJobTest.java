@@ -13,7 +13,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -58,7 +57,7 @@ class ImageArchiveJobTest {
 
 	@BeforeEach
 	void setUp() {
-		ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 		// raw 쪽 대체물 — 잡이 읽는 뷰와 같은 이름의 테이블 + app_setting

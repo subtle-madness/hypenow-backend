@@ -94,7 +94,7 @@ public class ImageArchiveJob {
 		Set<String> archived = new HashSet<>(analysis.queryForList(
 				"SELECT key FROM image_assets WHERE kind = 'thumbnail'", String.class));
 		return raw.query("""
-				SELECT short_code, thumbnail_url FROM analytics.v_contents
+				SELECT short_code, thumbnail_url FROM v_contents
 				WHERE thumbnail_url IS NOT NULL
 				""", (rs, i) -> new Target(KIND_THUMBNAIL, rs.getString(1), rs.getString(2)))
 				.stream().filter(t -> !archived.contains(t.key())).toList();
@@ -107,7 +107,7 @@ public class ImageArchiveJob {
 					archived.put(rs.getString(1), rs.getString(2));
 				});
 		return raw.query("""
-				SELECT handle, profile_image_url FROM analytics.v_accounts
+				SELECT handle, profile_image_url FROM v_accounts
 				WHERE profile_image_url IS NOT NULL
 				""", (rs, i) -> new Target(KIND_PROFILE, rs.getString(1), rs.getString(2)))
 				.stream().filter(t -> profileChanged(t, archived.get(t.key()))).toList();
@@ -123,8 +123,9 @@ public class ImageArchiveJob {
 		}
 	}
 
-	/** URL 경로의 마지막 세그먼트(인스타 미디어 ID 파일명) — 호스트·서명 쿼리는 크롤마다 바뀌므로 제외. */
-	static String sourceName(String url) {
+	/** URL 경로의 마지막 세그먼트(인스타 미디어 ID 파일명) — 호스트·서명 쿼리는 크롤마다 바뀌므로 제외.
+	 *  어드민 커버리지 집계(PipelineStatsService)도 같은 규칙으로 대조해야 해서 public. */
+	public static String sourceName(String url) {
 		String path = URI.create(url).getPath();
 		return path.substring(path.lastIndexOf('/') + 1);
 	}

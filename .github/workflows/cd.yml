@@ -12,9 +12,10 @@ on:
   push:
     branches: [main]
 
-# 배포 겹침 방지 — 진행 중 배포는 취소하지 않고 다음 배포가 대기
+# 배포 겹침 방지 — 진행 중 배포는 취소하지 않고 다음 배포가 대기.
+# dev CD(cd-dev.yml)와 같은 그룹 — 두 CD가 같은 서버 ~/deploy를 쓰므로 직렬화한다
 concurrency:
-  group: cd-main
+  group: deploy-server
   cancel-in-progress: false
 
 permissions:

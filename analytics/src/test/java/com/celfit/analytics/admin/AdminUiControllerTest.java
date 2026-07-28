@@ -65,6 +65,8 @@ class AdminUiControllerTest {
 	private static final PipelineStatsService.Heavy HEAVY = new PipelineStatsService.Heavy(
 			7_402, 1_435, 1_432, 5_967, 5_684,
 			12_777, 11_072, 4_000, 1_104, 723, 700,
+			// 아카이브 커버리지 07-27 실측 — 썸네일 107,886 중 27,686 · 프로필 5,699 중 5,694
+			new PipelineStatsService.ArchiveCoverage(107_886, 27_686, 5_699, 5_694),
 			Instant.parse("2026-07-21T08:20:00Z"));
 
 	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 — 누적(각주)·미러 수치는 §1 실측. */
@@ -205,7 +207,7 @@ class AdminUiControllerTest {
 		// 뷰 드리프트로 후보 뷰가 사라지면 캐시가 없는 채 실패만 반복된다 — 이때 "집계 중"으로 뭉개면
 		// 영원히 안 뜨는 것처럼 보인다. 실패임을 명시하고 사유를 그대로 보여줘야 한다.
 		when(stats.funnel()).thenReturn(funnel(null,
-				"ERROR: relation \"analytics.v_analysis_candidates\" does not exist"));
+				"ERROR: relation \"v_analysis_candidates\" does not exist"));
 		mvc.perform(get("/ui/fragments/board"))
 				.andExpect(status().isOk())
 				.andExpect(content().string(Matchers.containsString("집계 실패")))
@@ -263,6 +265,27 @@ class AdminUiControllerTest {
 				.andExpect(content().string(Matchers.containsString("대상 12")))
 				// 미러는 미러 세계(analysis DB 적재분) 수치 — raw 현 모수와 다를 수 있다
 				.andExpect(content().string(Matchers.containsString("대상 7개 뷰 · 게시물 30,358 · 계정 1,515")));
+	}
+
+	@Test
+	void 아카이브_카드는_대상_대비_커버리지와_종류별_잔여를_노출() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				// 합산 커버리지 — 대상 113,585(썸 107,886 + 프로필 5,699) 중 33,380 아카이브 = 29%
+				.andExpect(content().string(
+						Matchers.containsString("대상 113,585 · 아카이브 33,380 (29%) · 미아카이브 80,205")))
+				// 종류별 잔여 — 썸네일 80,200 · 프로필 5
+				.andExpect(content().string(
+						Matchers.containsString("썸네일 잔여 80,200 · 프로필 갱신 대기 5")));
+	}
+
+	@Test
+	void 아카이브_카드는_집계_전이면_커버리지_대신_집계중_안내() throws Exception {
+		when(stats.funnel()).thenReturn(funnel(null, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.not(Matchers.containsString("미아카이브"))));
 	}
 
 	@Test

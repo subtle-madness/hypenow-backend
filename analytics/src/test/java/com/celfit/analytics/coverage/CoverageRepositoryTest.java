@@ -27,7 +27,7 @@ class CoverageRepositoryTest {
 
 	@BeforeAll
 	static void setUp() {
-		DriverManagerDataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		DriverManagerDataSource ds = TestDb.rawDataSource(pg);
 		JdbcTemplate db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 		// raw JdbcTemplate이 같은 DB를 가리키지만 analytics 뷰가 없다 — source()는 null로 축소돼야 한다
