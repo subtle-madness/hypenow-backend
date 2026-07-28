@@ -374,11 +374,176 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 유사_핸들은_교집합_내림차순_팔로워_근접_카테고리_필터_최대_9() {
+	void 유사_핸들은_교집합_내림차순_팔로워_근접_카테고리_필터() {
+		// 07-28 유사도 v2: 넷 다 sim_me와 같은 카테고리(스킨케어) 100% 단일이라 믹스 기여(+0.4)가
+		// 균일하게 붙어 상대 순위는 여전히 Jaccard(×0.6)로만 갈린다 — 이 픽스처는 LIMIT(이제 10)
+		// 경계는 검증하지 않는다(최대_10명까지만_반환한다가 담당).
 		// sim_true(overlap 3, diff 500) > sim_mid(overlap 2, diff 40000)
 		//   > sim_dup(overlap 1 — distinct라 raw 4가 아님, diff 1) > sim_far_tie(overlap 1, diff 80000)
 		// sim_other_cat은 traits 완전 일치지만 카테고리(메이크업)가 달라 제외. sim_me 자신도 제외.
 		assertThat(repository.findSimilarHandles("sim_me"))
 				.containsExactly("sim_true", "sim_mid", "sim_dup", "sim_far_tie");
+	}
+
+	/**
+	 * 유사도 v2 1단계(07-28) 혼합 점수 테스트 — 이 클래스의 공유 @BeforeEach 픽스처(sim_*·basic·
+	 * dupe·o3~o6)와 충돌하지 않도록 전용 카테고리 어휘(탄력케어·모발케어·향케어·향수케어·홈케어)를
+	 * 쓴다: 기존 픽스처는 전부 skincare/makeup(스킨케어/메이크업)이라, 이 라벨들을 재사용하면
+	 * sim_other_cat(메이크업 100%)·sim_*(스킨케어 100%)이 예상치 못한 후보로 섞여 들어온다.
+	 *
+	 * peer_category(V39)는 account_category_stats(V35)의 건수 최다 main_group에서 파생되므로(동률은
+	 * 라벨 오름차순) 옛 V1 테스트처럼 피어 카테고리를 믹스와 독립적으로 지정할 수 없다 — mixCounts
+	 * 배분 자체가 지배 카테고리를 결정한다. 실게시물 행을 통해 통계를 만든다.
+	 */
+	private void seedSimAccount(String handle, long followers, String traitsJson, String... mixCounts) {
+		jdbcTemplate.update("INSERT INTO accounts (handle, followers) VALUES (?, ?)", handle, followers);
+		jdbcTemplate.update("INSERT INTO account_summaries (handle, followers) VALUES (?, ?)", handle, followers);
+		jdbcTemplate.update(
+				"INSERT INTO account_analyses (handle, analyzed_at, traits) VALUES (?, now(), ?::jsonb)",
+				handle, traitsJson);
+		int post = 0;
+		for (int i = 0; i < mixCounts.length; i += 2) {
+			String category = mixCounts[i];
+			int count = Integer.parseInt(mixCounts[i + 1]);
+			for (int j = 0; j < count; j++) {
+				String shortCode = handle + "_p" + (post++);
+				jdbcTemplate.update("""
+						INSERT INTO account_content_series (short_code, account_handle, posted_at,
+						  content_type, views, likes, comments, sponsored) VALUES
+						  (?, ?, now(), 'reels', 1000, 10, 1, false)""", shortCode, handle);
+				jdbcTemplate.update("""
+						INSERT INTO content_analyses (short_code, is_beauty, main_category, ad_type,
+						  detected_brands) VALUES (?, true, ?, 'organic', NULL)""", shortCode, category);
+			}
+		}
+	}
+
+	@Test
+	void 태그_겹침이_높을수록_상위() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\",\"성분 분석\",\"릴스 중심\"]", "탄력케어", "10");
+		// full: Jaccard 1.0, 믹스 1.0(둘 다 탄력케어 단일) → 0.6+0.4 = 1.0
+		seedSimAccount("full", 20_000, "[\"정보형 리뷰\",\"성분 분석\",\"릴스 중심\"]", "탄력케어", "10");
+		// partial: 교집합 1/합집합 5 = 0.2 → 0.12+0.4 = 0.52
+		seedSimAccount("partial", 20_000, "[\"정보형 리뷰\",\"감성 콘텐츠\",\"일상 브이로그\"]", "탄력케어", "10");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("full", "partial");
+	}
+
+	@Test
+	void 믹스만_같아도_컷은_넘고_태그_겹침보다는_아래() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// tagged: Jaccard 1.0 → 1.0 / mixonly: Jaccard 0, 믹스 1.0 → 0.40(컷 0.30 통과)
+		seedSimAccount("tagged", 99_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		seedSimAccount("mixonly", 11_000, "[\"감성 콘텐츠\"]", "탄력케어", "10");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("tagged", "mixonly");
+	}
+
+	@Test
+	void 컷_미달이면_제외된다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// faroff 지배 카테고리는 탄력케어(6>4)라 me와 같은 피어 카테고리지만, me는 탄력케어 100%뿐이라
+		// 겹치는 성분은 min(1.0, 0.6)=0.6 → 0.4×0.6=0.24 + 태그 무겹침 = 0.24 < 0.30.
+		seedSimAccount("faroff", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "6", "모발케어", "4");
+
+		assertThat(repository.findSimilarHandles("me")).isEmpty();
+	}
+
+	@Test
+	void 최대_10명까지만_반환한다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		for (int i = 0; i < 12; i++) {
+			seedSimAccount("cand" + i, 10_000 + i, "[\"감성 콘텐츠\"]", "탄력케어", "10");
+		}
+
+		assertThat(repository.findSimilarHandles("me")).hasSize(10);
+	}
+
+	@Test
+	void 동점이면_팔로워_근접_우선() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// 둘 다 점수 0.40 동점(탄력케어 100%, 태그 무겹침) — 팔로워 차 5,000 < 50,000
+		seedSimAccount("near", 15_000, "[\"감성 콘텐츠\"]", "탄력케어", "10");
+		seedSimAccount("far", 60_000, "[\"일상 브이로그\"]", "탄력케어", "10");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("near", "far");
+	}
+
+	@Test
+	void 믹스_결측_후보는_태그_성분만으로_판정() {
+		// 기준 계정(me) 자체가 카테고리 통계가 전혀 없어(계정 통계 미기록) peer_category='미분류' —
+		// my_shares가 빈 집합이 되어 모든 후보의 믹스 기여가 0으로 고정된다(V1 테스트의 "후보 믹스
+		// 결측"을 이 실뷰 기반 스키마에 맞게 재해석: peer_category 자체가 account_category_stats에서
+		// 파생되므로, 후보만 결측인데 피어 카테고리는 일치하는 조합은 만들 수 없다 — 일치하려면
+		// 후보도 그 카테고리 통계를 반드시 가져야 하기 때문).
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]"); // mixCounts 없음 → peer_category='미분류'
+		// nomixTagged: 0.6×1.0 = 0.60 ≥ 컷 / nomixBare: 0 → 제외
+		seedSimAccount("nomixTagged", 12_000, "[\"정보형 리뷰\"]");
+		seedSimAccount("nomixBare", 12_000, "[\"감성 콘텐츠\"]");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("nomixTagged");
+	}
+
+	@Test
+	void 기준_계정이_없으면_빈_목록() {
+		assertThat(repository.findSimilarHandles("ghost")).isEmpty();
+	}
+
+	@Test
+	void 다른_피어_카테고리_후보는_제외된다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// traits·믹스가 완전 일치해도 피어 카테고리(모발케어)가 다르면 후보 자체가 아니다(스펙 ② 경계 유지).
+		seedSimAccount("other", 10_000, "[\"정보형 리뷰\"]", "모발케어", "10");
+
+		assertThat(repository.findSimilarHandles("me")).isEmpty();
+	}
+
+	@Test
+	void 컷_경계_0_30은_포함된다() {
+		// 믹스 교집합 정확히 0.75(0.4×0.75=0.300), 태그 무겹침 → 점수 정확히 0.30 → >= 컷 포함.
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "3", "모발케어", "1");
+		seedSimAccount("edge", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "3", "향케어", "1");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("edge");
+	}
+
+	@Test
+	void 최신_분석의_traits만_쓴다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// stale: 지배 카테고리는 me와 같은 탄력케어(6>4)라 믹스 0.4×0.6=0.24만으로는 컷 미달.
+		// 옛 분석(now-1h)은 태그가 겹쳐(0.6) 합치면 0.84로 컷을 넘지만, 최신 분석(now)은 무겹침이라
+		// 최신 기준 점수 0.24 < 0.30 → 제외돼야 한다(최신 분석만 쓴다는 걸 증명).
+		seedSimAccount("stale", 12_000, "[\"감성 콘텐츠\"]", "탄력케어", "6", "모발케어", "4");
+		jdbcTemplate.update("""
+				INSERT INTO account_analyses (handle, analyzed_at, traits)
+				VALUES ('stale', now() - interval '1 hour', '["정보형 리뷰"]'::jsonb)""");
+
+		assertThat(repository.findSimilarHandles("me")).isEmpty();
+	}
+
+	@Test
+	void 동점_동거리면_handle_순으로_고정된다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// 점수 0.40 동점 + 팔로워 거리 동일 → handle ASC 최종 타이브레이크(호출 간 순서 고정).
+		seedSimAccount("bb", 12_000, "[\"감성 콘텐츠\"]", "탄력케어", "10");
+		seedSimAccount("aa", 12_000, "[\"일상 브이로그\"]", "탄력케어", "10");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("aa", "bb");
+	}
+
+	@Test
+	void 기준_계정_셰어가_교집합을_구속한다() {
+		// me는 4개 카테고리(탄력케어·향수케어·허브케어·홈케어)에 1건씩 — 전부 동률(1건)이라
+		// peer_category는 라벨 오름차순 최솟값인 탄력케어로 정해지고(코드포인트 비교로 탄력케어
+		// 0xd0c4가 향수케어 0xd5a5·허브케어 0xd5c8·홈케어 0xd648보다 작아 넷 중 가장 앞섬 — 실행
+		// 전 python3 sorted()로 검증됨), 탄력케어 셰어는 정확히 0.25(1/4)다.
+		// skewed는 탄력케어 100%(4건) — 정상 계산이면 교집합 min(0.25, 1.0)=0.25 → 0.4×0.25=0.10 <
+		// 컷. my_shares가 PARTITION BY main_group으로 잘못 정규화되면(리뷰 변이) me의 모든 카테고리
+		// 셰어가 1.0으로 뭉개져 교집합이 min(1.0,1.0)=1.0 → 0.40으로 컷을 넘어버린다 — 그 변이를 잡는 그물.
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]",
+				"탄력케어", "1", "향수케어", "1", "허브케어", "1", "홈케어", "1");
+		seedSimAccount("skewed", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "4");
+
+		assertThat(repository.findSimilarHandles("me")).isEmpty();
 	}
 }

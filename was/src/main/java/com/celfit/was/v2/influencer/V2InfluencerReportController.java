@@ -50,7 +50,7 @@ public class V2InfluencerReportController {
 				repository.findBrandCollabs(influencerId)));
 	}
 
-	/** 6.23 — 응답은 6.21 InfluencerCard 재사용, 서버 고정 최대 9(유사도 내림차순). */
+	/** 6.23 — 응답은 6.21 InfluencerCard 재사용, 서버 고정 최대 10(유사도 내림차순, 07-28 유사도 v2 — 9→10 변경). */
 	@GetMapping("/v2/influencers/{influencerId}/similar")
 	public ApiResponse<List<InfluencerCard>> similar(@PathVariable String influencerId) {
 		if (repository.findSummary(influencerId).isEmpty()) {

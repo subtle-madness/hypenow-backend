@@ -104,8 +104,12 @@ public class V2InfluencerReportRepository {
 				""").param("h", handle).query(BrandCollabRow.class).list();
 	}
 
-	/** 유사 인플루언서 핸들 — 동일 주 카테고리 × traits Jaccard 교집합 내림차순 × 팔로워 근접,
-	 *  상위 9(스펙 6.23 서버 고정). overlap은 DISTINCT(중복 traits 부풀림 방지). 카드 조립은
+	/** 유사 인플루언서 핸들 — 혼합 점수 = 0.6×traits Jaccard + 0.4×카테고리 믹스 히스토그램 교집합.
+	 *  같은 피어 카테고리 내에서 컷 0.30 미달 제외, 점수 내림차순·팔로워 근접·handle 순 상위 10
+	 *  (07-28 유사도 v2 — 스펙 6.23의 9는 10으로 변경 확정). 점수는 정렬·컷 전용이라 반환하지 않는다.
+	 *  카피 없는 계정은 후보 제외(LATERAL INNER). 믹스는 집합 기반 CTE — 상관 서브쿼리는 운영 규모
+	 *  실측 1,981ms 성능 절벽(집합 기반 85ms, 컷 0.30 근거는 운영 dry-run: 10위 점수 최솟값 0.400).
+	 *  scored MATERIALIZED는 점수식의 WHERE/ORDER BY 이중 평가 방지. 카드 조립은
 	 *  발굴 목록(6.21) 표면 재사용 — 기준 계정이 풀에 없으면 빈 목록. */
 	public List<String> findSimilarHandles(String handle) {
 		return jdbcClient.sql("""
@@ -116,18 +120,44 @@ public class V2InfluencerReportRepository {
 				  JOIN LATERAL (SELECT traits FROM account_analyses
 				                WHERE handle = p.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
 				  WHERE p.handle = :h
+				),
+				my_shares AS (
+				  SELECT main_group,
+				         content_count::numeric / sum(content_count) OVER () AS share
+				  FROM account_category_stats
+				  WHERE account_handle = :h
+				),
+				cand_mix AS (
+				  SELECT s.account_handle, sum(LEAST(ms.share, s.share)) AS mix_overlap
+				  FROM (SELECT account_handle, main_group,
+				               content_count::numeric / sum(content_count)
+				                 OVER (PARTITION BY account_handle) AS share
+				        FROM account_category_stats) s
+				  JOIN my_shares ms ON ms.main_group = s.main_group
+				  GROUP BY s.account_handle
+				),
+				scored AS MATERIALIZED (
+				  SELECT c.handle, ac.followers, me.followers AS my_followers,
+				         0.6 * COALESCE(
+				           (SELECT count(DISTINCT t.value) FROM jsonb_array_elements_text(la.traits) t
+				             WHERE t.value IN (SELECT value FROM jsonb_array_elements_text(me.traits)))::numeric
+				           / NULLIF((SELECT count(DISTINCT value) FROM (
+				               SELECT value FROM jsonb_array_elements_text(la.traits)
+				               UNION ALL SELECT value FROM jsonb_array_elements_text(me.traits)) u), 0), 0)
+				         + 0.4 * COALESCE(cm.mix_overlap, 0) AS score
+				  FROM account_peer_stats c
+				  JOIN me ON c.peer_category = me.peer_category
+				  JOIN accounts ac ON ac.handle = c.handle
+				  JOIN LATERAL (SELECT traits FROM account_analyses
+				                WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
+				  LEFT JOIN cand_mix cm ON cm.account_handle = c.handle
+				  WHERE c.handle <> :h
 				)
-				SELECT c.handle
-				FROM account_peer_stats c
-				JOIN me ON c.peer_category = me.peer_category
-				JOIN accounts ac ON ac.handle = c.handle
-				JOIN LATERAL (SELECT traits FROM account_analyses
-				              WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
-				WHERE c.handle <> :h
-				ORDER BY (SELECT count(DISTINCT t.value) FROM jsonb_array_elements_text(la.traits) t
-				           WHERE t.value IN (SELECT value FROM jsonb_array_elements_text(me.traits))) DESC,
-				         abs(ac.followers - me.followers) ASC
-				LIMIT 9
+				SELECT handle
+				FROM scored
+				WHERE score >= 0.30
+				ORDER BY score DESC, abs(followers - my_followers) ASC, handle ASC
+				LIMIT 10
 				""").param("h", handle).query(String.class).list();
 	}
 
