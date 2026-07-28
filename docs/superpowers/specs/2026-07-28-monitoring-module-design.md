@@ -177,6 +177,10 @@ monitoring DB (쓰기는 monitoring 계정만, Flyway 이력 1개)
 
 ## 6. 계약 스케치
 
+> was 개발자용 상세 계약(요청/응답 JSON·에러 어휘·조회 컬럼 정의·쿼리 예)은
+> [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md)가
+> 정본(living) — 아래는 설계 수준 요약.
+
 ### 명령 — monitoring 내부 API (was만 호출 — 정적 토큰 인증, 외부 미노출)
 
 | 메서드 | 경로 | 동작 |
