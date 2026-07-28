@@ -33,13 +33,13 @@ public class MirrorConfig {
 	@Bean
 	public MirrorRegistry mirrorRegistry() {
 		return new MirrorRegistry(List.of(
-				new MirrorSpec<>("analytics.v_accounts", "accounts", Account.class),
-				new MirrorSpec<>("analytics.v_contents", "contents", Content.class),
-				new MirrorSpec<>("analytics.v_content_comments", "content_comments", ContentComment.class),
-				new MirrorSpec<>("analytics.v_content_metric_snapshots", "content_metric_snapshots",
+				new MirrorSpec<>("v_accounts", "accounts", Account.class),
+				new MirrorSpec<>("v_contents", "contents", Content.class),
+				new MirrorSpec<>("v_content_comments", "content_comments", ContentComment.class),
+				new MirrorSpec<>("v_content_metric_snapshots", "content_metric_snapshots",
 						ContentMetricSnapshot.class),
-				new MirrorSpec<>("analytics.v_account_summaries", "account_summaries", AccountSummary.class),
-				new MirrorSpec<>("analytics.v_account_content_series", "account_content_series", AccountContentPoint.class),
-				new MirrorSpec<>("analytics.v_landing_stats", "landing_stats", LandingStats.class)));
+				new MirrorSpec<>("v_account_summaries", "account_summaries", AccountSummary.class),
+				new MirrorSpec<>("v_account_content_series", "account_content_series", AccountContentPoint.class),
+				new MirrorSpec<>("v_landing_stats", "landing_stats", LandingStats.class)));
 	}
 }

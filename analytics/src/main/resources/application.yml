@@ -28,6 +28,9 @@ app:
       username: crawler
       password: crawler
       driver-class-name: org.postgresql.Driver
+      # 뷰·캐시 스키마 선택(태스크 K) — 운영 기본 analytics, dev 스테이징은 ANALYTICS_RAW_SCHEMA=analytics_dev.
+      # SQL은 뷰 이름을 무접두어로 쓰고(태스크 2) 이 search_path가 스키마를 결정한다.
+      connection-init-sql: SET search_path TO ${analytics.raw-schema:analytics}, public
     analysis:
       jdbc-url: jdbc:postgresql://localhost:5433/analysis
       username: crawler

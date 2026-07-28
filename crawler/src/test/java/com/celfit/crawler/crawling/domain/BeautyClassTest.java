@@ -14,6 +14,8 @@ class BeautyClassTest {
         assertThat(BeautyClass.COMPANY.company()).isTrue();
         assertThat(BeautyClass.BEAUTY_SERVICE.beauty()).isFalse();
         assertThat(BeautyClass.BEAUTY_SERVICE.company()).isFalse();
+        assertThat(BeautyClass.FOREIGN_INFLUENCER.beauty()).isFalse();
+        assertThat(BeautyClass.FOREIGN_INFLUENCER.company()).isFalse();
         assertThat(BeautyClass.NOT_BEAUTY.beauty()).isFalse();
         assertThat(BeautyClass.NOT_BEAUTY.company()).isFalse();
     }

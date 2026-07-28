@@ -176,6 +176,7 @@ services:
       API_DOMAIN: ${API_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy.d:/etc/caddy/caddy.d:ro
       - caddy-data:/data
       - caddy-config:/config
 

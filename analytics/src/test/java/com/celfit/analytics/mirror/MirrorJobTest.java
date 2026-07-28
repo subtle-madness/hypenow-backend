@@ -10,7 +10,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -29,11 +28,11 @@ class MirrorJobTest {
 	record MismatchRow(Long id, String label) {}
 
 	static final MirrorSpec<FixtureRow> SPEC =
-			new MirrorSpec<>("analytics.v_fixture", "fixture_row", FixtureRow.class);
+			new MirrorSpec<>("v_fixture", "fixture_row", FixtureRow.class);
 
 	@BeforeEach
 	void setUp() {
-		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+		DataSource ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		job = new MirrorJob(db, ds);
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 (이 테스트는 Flyway 미사용)
@@ -73,7 +72,7 @@ class MirrorJobTest {
 	void 뷰_컬럼과_record_필드가_다르면_즉시_실패하고_테이블은_건드리지_않는다() {
 		db.update("INSERT INTO fixture_row VALUES (99,'keep',0)");
 		MirrorSpec<MismatchRow> bad =
-				new MirrorSpec<>("analytics.v_fixture", "fixture_row", MismatchRow.class);
+				new MirrorSpec<>("v_fixture", "fixture_row", MismatchRow.class);
 
 		assertThrows(IllegalStateException.class, () -> job.mirror(bad));
 

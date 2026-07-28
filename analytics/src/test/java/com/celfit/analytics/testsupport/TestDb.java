@@ -3,6 +3,8 @@ package com.celfit.analytics.testsupport;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * Testcontainers 잡 테스트 공용 DB 초기화.
@@ -23,6 +25,18 @@ public final class TestDb {
 		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
 		db.update("DROP SCHEMA public CASCADE");
 		db.update("CREATE SCHEMA public");
+	}
+
+	/**
+	 * raw 쪽 테스트 DataSource — 운영의 connection-init-sql과 같은 효과를 JDBC URL
+	 * currentSchema로 낸다(태스크 K). public을 앞에 둬 픽스처 DDL·Flyway는 기존처럼
+	 * public에 만들어지고, 무접두어 뷰 조회만 analytics로 폴백된다.
+	 */
+	public static DriverManagerDataSource rawDataSource(PostgreSQLContainer pg) {
+		String sep = pg.getJdbcUrl().contains("?") ? "&" : "?";
+		return new DriverManagerDataSource(
+				pg.getJdbcUrl() + sep + "currentSchema=public,analytics",
+				pg.getUsername(), pg.getPassword());
 	}
 
 	/** 스키마 초기화 후 분석 마이그레이션을 처음부터 다시 적용한다. */

@@ -357,9 +357,10 @@ class BeautyJobTest {
         Influencer com1 = qualified(2L, "com1");
         Influencer svc1 = qualified(3L, "svc1");
         Influencer no1 = qualified(4L, "no1");
+        Influencer for1 = qualified(5L, "for1");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
-                .thenReturn(List.of(inf1, com1, svc1, no1));
-        for (long id = 1; id <= 4; id++) {
+                .thenReturn(List.of(inf1, com1, svc1, no1, for1));
+        for (long id = 1; id <= 5; id++) {
             when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(id))
                     .thenReturn(Optional.of(legacyProfile(id, "이름", "bio")));
         }
@@ -367,13 +368,20 @@ class BeautyJobTest {
                 new BeautyJudge.Verdict("inf1", BeautyClass.INFLUENCER, "메이크업 크리에이터"),
                 new BeautyJudge.Verdict("com1", BeautyClass.COMPANY, "화장품 브랜드"),
                 new BeautyJudge.Verdict("svc1", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보"),
-                new BeautyJudge.Verdict("no1", BeautyClass.NOT_BEAUTY, "여행 계정")));
+                new BeautyJudge.Verdict("no1", BeautyClass.NOT_BEAUTY, "여행 계정"),
+                new BeautyJudge.Verdict("for1", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠")));
 
         BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
 
         assertThat(s.judgedBeauty()).isEqualTo(2);      // INFLUENCER + COMPANY
         assertThat(s.judgedService()).isEqualTo(1);     // BEAUTY_SERVICE
+        assertThat(s.judgedForeign()).isEqualTo(1);     // FOREIGN_INFLUENCER
         assertThat(s.judgedNotBeauty()).isEqualTo(1);   // NOT_BEAUTY
+
+        // FOREIGN_INFLUENCER — beauty_class 원본 저장 + beauty=false 파생(수집·시드 자동 제외)
+        assertThat(for1.getBeautyClass()).isEqualTo(BeautyClass.FOREIGN_INFLUENCER);
+        assertThat(for1.getBeauty()).isFalse();
+        assertThat(for1.getBeautyCompany()).isFalse();
 
         // BEAUTY_SERVICE — beauty_class 원본 저장 + beauty=false 파생(수집·시드 자동 제외)
         assertThat(svc1.getBeautyClass()).isEqualTo(BeautyClass.BEAUTY_SERVICE);

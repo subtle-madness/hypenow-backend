@@ -49,7 +49,7 @@ public class ContentAnalysisJob {
 	// 뺀다(뷰 주석의 원 설계: "'이미 분석됨' 제외·정렬 정책은 Java 몫").
 	private static final String CANDIDATES_SQL = """
 			SELECT short_code
-			FROM analytics.v_analysis_candidates
+			FROM v_analysis_candidates
 			WHERE timely = ?
 			ORDER BY metric_captured_at DESC NULLS LAST, short_code""";
 
@@ -198,7 +198,7 @@ public class ContentAnalysisJob {
 				       recent_contents_count, recent12_avg_engagement_rate,
 				       recent12_avg_like_count, recent12_avg_comment_count,
 				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_account_baseline""",
+				FROM v_analysis_account_baseline""",
 				rs -> {
 					accountBaseline.put(rs.getString(1), new Baseline(
 							longOf(rs.getBigDecimal(2)), null, intOf(rs.getBigDecimal(3)),
@@ -213,7 +213,7 @@ public class ContentAnalysisJob {
 				       recent_contents_count, recent12_avg_engagement_rate,
 				       recent12_avg_like_count, recent12_avg_comment_count,
 				       category_top_percentile, category_avg_views, category_sample_size
-				FROM analytics.v_analysis_baseline""",
+				FROM v_analysis_baseline""",
 				rs -> {
 					withBaseline.put(rs.getString(1), new Baseline(
 							longOf(rs.getBigDecimal(2)), intOf(rs.getBigDecimal(3)), intOf(rs.getBigDecimal(4)),

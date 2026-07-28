@@ -15,13 +15,14 @@ class ClaudeCliBeautyJudgeTest {
     ObjectMapper om = new ObjectMapper();
 
     @Test
-    void 코드펜스로_감싼_4분류_JSON_배열을_판정으로_파싱한다() {
+    void 코드펜스로_감싼_5분류_JSON_배열을_판정으로_파싱한다() {
         String output = """
                 ```json
                 [{"username":"a","class":"INFLUENCER","reason":"메이크업 크리에이터"},
                  {"username":"b","class":"COMPANY","reason":"화장품 브랜드 공식몰"},
                  {"username":"c","class":"BEAUTY_SERVICE","reason":"피부과 시술 홍보 계정"},
-                 {"username":"d","class":"NOT_BEAUTY","reason":"여행 계정"}]
+                 {"username":"d","class":"NOT_BEAUTY","reason":"여행 계정"},
+                 {"username":"e","class":"FOREIGN_INFLUENCER","reason":"영어 뷰티 콘텐츠"}]
                 ```
                 """;
         List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, output);
@@ -29,7 +30,8 @@ class ClaudeCliBeautyJudgeTest {
                 new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 크리에이터"),
                 new BeautyJudge.Verdict("b", BeautyClass.COMPANY, "화장품 브랜드 공식몰"),
                 new BeautyJudge.Verdict("c", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보 계정"),
-                new BeautyJudge.Verdict("d", BeautyClass.NOT_BEAUTY, "여행 계정"));
+                new BeautyJudge.Verdict("d", BeautyClass.NOT_BEAUTY, "여행 계정"),
+                new BeautyJudge.Verdict("e", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠"));
     }
 
     @Test
@@ -37,6 +39,7 @@ class ClaudeCliBeautyJudgeTest {
         assertThat(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, null).beauty()).isTrue();
         assertThat(new BeautyJudge.Verdict("a", BeautyClass.COMPANY, null).company()).isTrue();
         assertThat(new BeautyJudge.Verdict("a", BeautyClass.BEAUTY_SERVICE, null).beauty()).isFalse();
+        assertThat(new BeautyJudge.Verdict("a", BeautyClass.FOREIGN_INFLUENCER, null).beauty()).isFalse();
         assertThat(new BeautyJudge.Verdict("a", BeautyClass.NOT_BEAUTY, null).beauty()).isFalse();
     }
 
@@ -48,7 +51,7 @@ class ClaudeCliBeautyJudgeTest {
     }
 
     @Test
-    void username_누락이나_class가_4분류가_아닌_항목은_건너뛴다() {
+    void username_누락이나_class가_5분류가_아닌_항목은_건너뛴다() {
         List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, """
                 [{"class":"INFLUENCER","reason":"x"},
                  {"username":"ok","class":"BEAUTY"},
@@ -67,11 +70,12 @@ class ClaudeCliBeautyJudgeTest {
     }
 
     @Test
-    void 프롬프트에_판정_목적과_카드_JSON과_4분류_출력_형식_지시가_들어간다() {
+    void 프롬프트에_판정_목적과_카드_JSON과_5분류_출력_형식_지시가_들어간다() {
         String p = ClaudeCliBeautyJudge.buildPrompt(om,
                 List.of(new BeautyJudge.ProfileCard("u1", "이름", "Beauty", "bio", List.of("입술 보습 꿀템"))));
         assertThat(p).contains("\"username\":\"u1\"").contains("입술 보습 꿀템").contains("JSON 배열만")
                 .contains("INFLUENCER").contains("COMPANY").contains("BEAUTY_SERVICE").contains("NOT_BEAUTY")
+                .contains("FOREIGN_INFLUENCER").contains("한국어")
                 .contains("시딩·협찬").contains("피부과").contains("captions는 최근 게시물 캡션");
     }
 }

@@ -53,7 +53,7 @@ public class CommentClassificationJob {
 		Set<String> classified = new HashSet<>(analysis.queryForList(
 				"SELECT DISTINCT short_code FROM comment_classifications", String.class));
 		List<String> targets = raw.queryForList("""
-				SELECT DISTINCT short_code FROM analytics.v_content_comments
+				SELECT DISTINCT short_code FROM v_content_comments
 				ORDER BY short_code""", String.class).stream()
 				.filter(sc -> !classified.contains(sc))
 				.limit(settings.analyzeBatchLimit())
@@ -64,7 +64,7 @@ public class CommentClassificationJob {
 		for (String shortCode : targets) {
 			try {
 				List<CommentToClassify> comments = raw.query("""
-						SELECT id, body FROM analytics.v_content_comments WHERE short_code = ?
+						SELECT id, body FROM v_content_comments WHERE short_code = ?
 						ORDER BY like_count DESC NULLS LAST, id LIMIT ?""",
 						(rs, i) -> new CommentToClassify(rs.getLong(1), rs.getString(2)),
 						shortCode, MAX_COMMENTS_PER_CONTENT);
