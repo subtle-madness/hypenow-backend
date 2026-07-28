@@ -113,4 +113,17 @@ BEGIN
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_pd'),
     'recent-window=1인데 늦크롤 pd가 여전히 후보에 있음 (창 밖 제외 실패)';
 END $$;
+
+-- 킬스위치: recent-window=0이면 늦크롤 백필 후보가 전량 차단된다 (timely 후보만 남음).
+-- 07-28 캘린더일 정합으로 ContentAnalysisJob이 이 뷰를 그대로 소비하게 되면서, 백필 전량
+-- 차단 회귀(구 Java 테스트)가 이 뷰 층으로 이관됐다.
+INSERT INTO app_setting(key, value) VALUES ('analytics.recent-window', '0')
+  ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+DO $$
+BEGIN
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE NOT timely),
+    'recent-window=0인데 timely=false 백필 후보가 남아 있음 (킬스위치 실패)';
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE timely),
+    'recent-window=0이 timely 후보까지 차단함 (킬스위치 과차단)';
+END $$;
 -- run.sh가 파일 전체를 BEGIN/ROLLBACK으로 감싸므로(격리) app_setting 원복은 불필요.
