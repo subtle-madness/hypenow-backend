@@ -33,7 +33,7 @@
 | `MonitoringReadRepository` | monitoring DB 베이스 테이블 4개 SELECT |
 | `MonitoringCampaignService` | user_id 기준 오케스트레이션 (키 선저장·소유 검증) |
 | `MonitoringCampaignMappingRepository` | `app.monitoring_campaigns` CRUD (기존 primary JdbcClient) |
-| app Flyway `V11__monitoring_campaigns.sql` | 매핑 테이블 DDL |
+| app Flyway `V13__monitoring_campaigns.sql` | 매핑 테이블 DDL (V12까지 사용 중 — 번호는 머지 직전 재확인) |
 
 인증: 없음 — monitoring API는 도커 내부망 전용(Caddy 미노출)이라 정적 토큰을 제거하기로
 결정(07-28). 이에 따라 `UNAUTHORIZED`/`TOKEN_UNSET` 에러 어휘도 계약에서 빠졌다.
@@ -44,8 +44,11 @@ monitoring DataSource를 **스프링 빈으로 등록하면 안 된다.** Spring
 `DataSourceAutoConfiguration`은 DataSource 빈이 하나라도 정의되면 back-off 하므로, 기존
 analysis DB 기본 연결(세션 JDBC·app Flyway 포함)이 깨진다. 따라서:
 
-- monitoring용 `HikariDataSource`는 `MonitoringConfig` **내부에서 직접 생성**하고
-  빈으로는 `monitoringJdbcClient`(JdbcClient)만 노출. close는 config `@PreDestroy`.
+- monitoring용 `HikariDataSource`와 그 위의 `JdbcClient` **둘 다 빈으로 노출하지 않는다** —
+  `JdbcClientAutoConfiguration`도 JdbcClient 빈 존재 시 back-off 하므로, JdbcClient를 빈으로
+  두면 기존 리포지토리 전부의 타입 주입이 모호해진다. `MonitoringConfig` 내부에서 직접
+  생성해 도메인 빈 3개(`MonitoringCommandClient`·`MonitoringReadRepository`·
+  `MonitoringCampaignService`)만 노출. close는 config `@PreDestroy`.
 - `monitoring.enabled=false`(기본) → 오늘과 완전히 동일. `true`여도 기존 자동구성 무손상.
 - 접속 계정은 계약대로 읽기 전용(`public` 스키마 SELECT만 GRANT) — 쓰기 시도는 DB 권한
   오류로 fail-closed(의도된 동작, was에서 방어 로직 불필요).
@@ -117,7 +120,7 @@ created_at       timestamptz NOT NULL
   `monitoring-schema.sql`). ⚠️ 계약이 v0.1 초안이라 **픽스처 표류 위험** — monitoring
   구현 확정 시 실제 스키마와 대조하는 후속 작업 필요.
 - **서비스**: 2단계 등록 정합(선저장→확정), replay 재시도, 소유 검증, 삭제 순서.
-- **마이그레이션**: V11은 기존 app Flyway 테스트 경로로 실적용.
+- **마이그레이션**: V13은 기존 app Flyway 테스트 경로로 실적용.
 - **비활성 기본값**: 기존 테스트 전체가 `monitoring.enabled` 미설정으로 도는 것 자체가
   "무영향" 회귀 검증.
 
