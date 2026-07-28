@@ -39,6 +39,7 @@
 | 6 | 감시(키워드 감지)·추적(추이) 모두 **일 1회 배치** + 등록 시 즉시 1회 수집 | 수 시간 간격 감지(비용 대비 불필요 — 주기는 런타임 설정으로 조정 가능하게 열어둠) |
 | 7 | **모니터링 기간은 was(FE)가 등록 시 지정**, monitoring이 만료 판단·자동 종료 | 수동 해지만(FE 요구가 기간 설정) — 수동 해지도 병행 지원 |
 | 8 | **감지 → 추적 전환은 FE 승인 게이트를 거친다** — 감지는 후보 축적일 뿐 상태 전이가 아니고, was의 승인 명령이 있어야 TRACKING 전환 | 감지 즉시 자동 전환(오감지·무관 게시물을 사용자가 걸러낼 수 없음) |
+| 9 | **감지 이메일 알람 발송은 was — 매일 KST 09:00 고정 크론** — 수신자 매핑·이메일 주소·알람 on/off·발송 채널이 전부 app 스키마/was 소유. was 크론이 monitoring API(`GET /api/candidates?detected_after=`)로 신규 후보를 조회해 알람 on 유저에게만 발송, 발송 워터마크는 app 스키마. monitoring은 감지 사실 기록·조회 API 제공까지 | monitoring 발송(PII·설정을 monitoring에 복제하거나 app 스키마를 읽어야 함 — 캡슐화 위반), monitoring→was 웹훅(감지 02:00·발송 09:00 고정이라 즉시성 이득 0, 역방향 의존만 추가) |
 
 ### API 예외의 근거 (결정 3 상세)
 
@@ -120,8 +121,8 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
 ```
 등록(계정+키워드) → WATCHING ──키워드 감지──▶ 후보 기록(PENDING) · 감시는 지속
                       ▲                          │ was 승인(후보 선택)
-                      │ was 거절(후보 기각)       ▼
-등록(게시물) ────────────────────────────▶ TRACKING ──만료/해지──▶ EXPIRED/CANCELED
+                      │ was 거절(후보 기각)         ▼
+등록(게시물) ──────────────────────────────────▶ TRACKING ──만료/해지──▶ EXPIRED/CANCELED
                    (수집 불가: 계정 소멸·비공개 등) ──▶ FAILED
 ```
 
@@ -133,7 +134,9 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
   같은 게시물은 한 번만 후보로 기록(재감지 시 중복 생성 없음).
 - **승인/거절 (was 명령)**: 승인하면 그 후보의 게시물로 TRACKING 전환(`tracked_short_code`
   확정, 승인 즉시 1회 수집 후 일별 스냅샷). 거절하면 그 후보만 REJECTED로 닫고 WATCHING
-  지속. FE 통보는 was 조회 기반(목록에 "감지됨 — 승인 대기" 노출) — 푸시 알림은 범위 밖.
+  지속. FE 통보는 was 조회 기반(목록에 "감지됨 — 승인 대기" 노출) + **감지 이메일
+  알람** — 발송은 was(결정 9): 매일 09:00 크론이 후보 조회 API로 신규 감지분을
+  가져와 알람 on 유저에게만 발송. 푸시 알림은 범위 밖.
 - **TRACKING**: 승인된(또는 직접 등록된) 게시물 지표 일별 스냅샷. 계정 대상은 전환
   후에도 프로필+최근 게시물 스냅샷을 계속 쌓고, 승인된 게시물이 최근 열거 범위에서
   밀려나도 개별 조회로 계속 추적한다.
@@ -152,6 +155,7 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
 | POST | `/api/targets` | 등록. **동기로 첫 Hiker 수집·검증까지 수행 후 응답**(계정 존재 확인 + 첫 스냅샷 포함 — was 타임아웃 여유 ~10s) |
 | GET | `/api/targets/{id}` | 상태 + 최신 스냅샷 + 감지 후보 목록(PENDING 포함) |
 | GET | `/api/targets/{id}/timeseries` | 일별 추이 + 파생 집계 |
+| GET | `/api/candidates?detected_after=` | 신규 감지 후보 목록 — was의 09:00 이메일 알람 크론이 소비 |
 | POST | `/api/targets/{id}/candidates/{candidateId}/approve` | 후보 승인 → TRACKING 전환(즉시 1회 수집 포함) |
 | POST | `/api/targets/{id}/candidates/{candidateId}/reject` | 후보 기각 → WATCHING 지속 |
 | PATCH | `/api/targets/{id}` | 기간 연장 등 |
@@ -176,6 +180,8 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
   스냅샷 + 만료 처리. 주기·시각은 런타임 설정으로 조정 가능하게.
   (02:00은 기존 스택과 자원 경합 없음 — monitoring은 Hiker·자기 DB만 쓰므로
   crawler 새벽 윈도우·미러 04:30·분석 05:00과 독립.)
+- 감지 이메일 알람은 was 소속 09:00 크론(결정 9) — monitoring 스케줄과 무관, 감지
+  (02:00)와 발송(09:00) 사이 7시간 여유라 이벤트 전달 배선 불필요.
 - Hiker 비용: 계정 대상은 일 프로필 1콜 + 게시물 열거·지표 콜(저장·공유·리포스트까지
   받는 엔드포인트 조합에 따라 게시물별 개별 콜이 필요할 수 있음 — 구현 시 확정),
   게시물 대상은 일 1콜. 수백 대상 기준 감당 범위, 초과 성장 시 열거 범위 축소로 조절.
