@@ -186,7 +186,7 @@ public class ClaudeBurstRunner {
 			// AccountAnalysisJob.analyzeOne과 동일 정본 — 판정·수치 모두 AccountAdCanon 단일 원천.
 			AccountAdCanon.AdMetrics ad =
 					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
-			com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
+			AdSituation adSituation = ad.situation();
 			AccountToAnalyze account = new AccountToAnalyze(handle,
 					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation);
 			input.append(om.writeValueAsString(om.createObjectNode()
