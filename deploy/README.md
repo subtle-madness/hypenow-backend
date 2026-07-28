@@ -149,3 +149,78 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
   헤더 `X-Api-Token` 필요, 서버 `.env`에 `MANUAL_DISCOVERY_TOKEN`(강한 랜덤 값) 설정 후 crawler 재기동.
   토큰 미설정이면 API는 503(fail-closed). 등록된 계정은 DISCOVERED로 들어가 기존 qualify→beauty가 처리.
 - 익스텐션은 별도 저장소 `hypenow-extension` — 옵션에 엔드포인트 URL·토큰을 넣어 사용.
+
+## 12. dev 스테이징 (태스크 K, 07-28~)
+
+develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflows/cd-dev.yml`이 자동 배포한다
+(`workflow_run` 트리거 — CI가 실패하면 dev 배포도 없다). 구조·결정 근거:
+[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/2026-07-26-dev-staging-environment-design.md)
+
+- 접속: `https://dev-api.hypenow.io` (was 로그인 월 — dev 전용 가입 코드 필요)
+- dev 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
+- dev analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
+- 배치는 **운영 인스턴스 동거** — dev 3종은 `profiles: ["dev"]`라 `--profile dev` 없이는 뜨지도,
+  멈추지도 않는다(운영 무영향). mem_limit로 상한을 걸어 운영 메모리를 침식하지 않는다.
+- raw는 운영 `postgres-raw` **공유** — dev 계정 `analytics_dev`는 crawler 테이블(public) 읽기 전용,
+  뷰·캐시는 자기 소유 `analytics_dev` 스키마에 치환 설치(`rewrite-views-dev-schema.sh`).
+  운영 `analytics` 스키마엔 USAGE도 없다 — 치환 누락은 권한 오류로 즉사(fail-closed).
+- 스키마 선택 방식: analytics의 조회 SQL은 **뷰 이름을 무접두어로** 쓰고, raw DataSource의
+  `connection-init-sql`(`SET search_path TO ${analytics.raw-schema:analytics}, public`)이 스키마를
+  결정한다. dev만 compose env `ANALYTICS_RAW_SCHEMA=analytics_dev`로 오버라이드 — 운영 동작 불변.
+- **dev 라우팅은 본 `Caddyfile`이 아니라 `deploy/caddy.d/dev-api.caddy`**에 있고, 본 Caddyfile은
+  `import /etc/caddy/caddy.d/*.caddy` 한 줄만 갖는다. dev CD는 이 dev 파일만 서버로 보내고
+  reload하므로 **운영 라우팅은 main 배포로만 바뀐다**(develop에만 있는 운영 라우팅 변경이 먼저
+  발효되는 뒷문 차단).
+
+### 최초 개통 체크리스트 (1회, 사용자 실행 — **순서가 중요**)
+
+1. **DNS A 레코드**: `dev-api.hypenow.io` → 서버 공인 IP (운영과 동일 IP, TTL 300)
+2. **서버 `~/deploy/.env`에 추가** (값 생성: `openssl rand -base64 24`):
+   `DEV_DB_USER=devapp` · `DEV_DB_PASSWORD=<생성>` · `DEV_RAW_DB_PASSWORD=<생성>` ·
+   `DEV_CODES_API_KEY=<생성>` (미설정 시 가입 코드 적재 API는 503 fail-closed)
+3. **`~/deploy/caddy.d` 디렉토리를 ubuntu 소유로 먼저 만든다 — main 배포보다 앞서야 한다**:
+   ```bash
+   ssh ubuntu@<IP> 'mkdir -p ~/deploy/caddy.d && ls -ld ~/deploy/caddy.d'   # 소유자 ubuntu 확인
+   ```
+   순서가 뒤집히면 4번 운영 배포의 caddy 컨테이너 재생성이 이 디렉토리를 **root 소유로 생성**해,
+   이후 dev CD의 `scp dev-api.caddy`가 Permission denied로 실패한다.
+4. **develop→main 머지 1회(운영 배포)** — caddy의 `caddy.d` 볼륨 마운트와 본 Caddyfile의 `import`
+   라인이 이 배포로 서버에 반영된다(compose 정의 변경이라 caddy가 자동 재생성). **그 전까지 dev
+   라우팅은 살아나지 않는다** — 이 배포보다 dev CD가 먼저 돌면 마지막 헬스체크 스텝만 실패한다
+   (무해 — 4번 완료 후 워크플로 재실행하면 된다).
+5. **develop에 푸시**(또는 `CD dev` 재실행) → `CI` 성공 → `CD dev` 전 스텝 성공 확인
+   (계정 준비·뷰 치환 적용·잔존 참조 검사·pull/재기동·caddy reload·`/health`)
+6. **dev 가입 코드 시드** — 둘 중 하나:
+   ```bash
+   # (a) API — 토큰은 .env의 DEV_CODES_API_KEY
+   curl -fsS -X POST https://dev-api.hypenow.io/admin/signup-codes \
+     -H "Authorization: Bearer $DEV_CODES_API_KEY" -H 'Content-Type: application/json' \
+     -d '{"codes":["DEV-AAAA","DEV-BBBB"]}'
+   # (b) 스크립트로 INSERT SQL 생성 → dev analysis DB에 직접 (맥에서)
+   deploy/scripts/generate-signup-codes.sh DEV 10 | \
+     ssh ubuntu@<IP> 'docker exec -i deploy-dev-postgres-1 psql -U <DEV_DB_USER> -d analysis'
+   ```
+7. **검증**: `https://dev-api.hypenow.io`에서 가입·로그인 → `/v1/contents` 응답 확인.
+   이메일 인증 코드는 Resend 미설정(로깅 폴백)이라
+   `ssh ubuntu@<IP> 'docker logs deploy-dev-was-1 | grep 인증'`에서 확인.
+
+### 일상 사용
+
+- 기능 확인 절차: PR→develop 머지 → CI 성공 → cd-dev 완료 대기 → 어드민(8083)에서 미러 수동 실행 →
+  dev-api로 API 응답 확인 → 이상 없으면 develop→main 머지(운영 배포). **승격 = 머지 그 자체** —
+  코드·설정 수정 0, 같은 아티팩트에 배포 설정만 다르다.
+- dev 스케줄은 전부 off(`ANALYTICS_SCHEDULE_ENABLED: "false"`) — 미러·분석·LLM 잡은 어드민 수동
+  트리거만. LLM은 운영 자격증명 공유라 소량으로(쿼터·비용 공유 인지). 이미지 아카이브는
+  `ANALYTICS_IMAGE_PAR_URL: ""`이라 실행 시 fail-fast(운영 버킷 오염 방지).
+- 뷰만 다시 적용(맥에서 — cd-dev와 같은 절차):
+  ```bash
+  cat analytics/views/*.sql | deploy/scripts/rewrite-views-dev-schema.sh | \
+    ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -v ON_ERROR_STOP=1 -q'
+  ```
+- 스냅샷 캐시 refresh(필요 시):
+  `ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -c "SELECT analytics_dev.refresh_snapshot_cache();"'`
+- dev 스택 정지: `cd ~/deploy && docker compose --profile dev stop dev-was dev-analytics dev-postgres`
+  (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 `up -d` 같은 인자.
+- 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-dev-was-1` ·
+  `deploy-dev-analytics-1` · `deploy-dev-postgres-1`. 모니터링 `SERVICES` 목록(§9)에는 dev를 넣지
+  않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.

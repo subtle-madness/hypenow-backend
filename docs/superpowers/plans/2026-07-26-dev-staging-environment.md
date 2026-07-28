@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 실행 대기
+> 상태: ✅ 실행 완료 (2026-07-28)
 > 스펙: [specs/2026-07-26-dev-staging-environment-design.md](../specs/2026-07-26-dev-staging-environment-design.md)
 
 **Goal:** develop 푸시마다 운영 인스턴스 위에 dev 스택(dev-was·dev-analytics·dev-postgres)이 자동 배포되고, 운영 postgres-raw를 읽기 전용 공유하되 뷰는 `analytics_dev` 스키마에 격리 설치되는 스테이징을 만든다.
