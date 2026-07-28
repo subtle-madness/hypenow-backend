@@ -33,7 +33,7 @@ class V1InfluencerDiscoveryControllerTest {
 	V1InfluencerDiscoveryRepository repository;
 
 	private static CardRow row(String handle) {
-		return new CardRow(handle, "글로우", "/img/p/glow.jpg", 20000L, 19662L, 214L, 380L,
+		return new CardRow(handle, "글로우", "/img/p/glow.jpg", 20000L, 214L, 380L,
 				"소개", "저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
 				413200L, 10370L, 152L, 3L);
 	}
@@ -45,6 +45,7 @@ class V1InfluencerDiscoveryControllerTest {
 		given(repository.findShares(anyList())).willReturn(List.of());
 		given(repository.findBrands(anyList())).willReturn(List.of());
 		given(repository.findThumbs(anyList())).willReturn(List.of());
+		given(repository.findEngagements(anyList())).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/influencers?sponsored=1-2&offset=100"))
 				.andExpect(status().isOk()) // 로그인 월 예외(permitAll) — 비로그인 공개 페이지

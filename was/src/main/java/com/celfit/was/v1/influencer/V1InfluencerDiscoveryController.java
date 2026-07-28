@@ -45,7 +45,8 @@ public class V1InfluencerDiscoveryController {
 		List<String> handles = rows.stream()
 				.map(V1InfluencerDiscoveryRepository.CardRow::handle).toList();
 		List<InfluencerCard> cards = assembler.toCards(rows, repository.findShares(handles),
-				repository.findBrands(handles), repository.findThumbs(handles));
+				repository.findBrands(handles), repository.findThumbs(handles),
+				repository.findEngagements(handles));
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", repository.countCards(query));
 		meta.put("limit", query.limit());

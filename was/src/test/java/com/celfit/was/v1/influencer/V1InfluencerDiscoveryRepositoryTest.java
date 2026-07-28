@@ -16,8 +16,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *         마지막 업로드 1일 전, 태그라인 이력 2행(최신이 이겨야 함)
  * calm  — 3만·ER 2.0·배율 5.0, 스킨케어 100%, 협찬 0, 10일 전
  * mute  — 4만·ER 1.0·릴스 없음(avg_views NULL), 피드만, 스킨케어 100%, 40일 전
- * tiny  — 1천(피어 버킷 단독 → 전체 중앙값 폴백)·ER 3.0, 5일 전
- * 피어(스킨케어×1만-5만) ER = {4.0, 2.0, 1.0} → 중앙값 2.0. 전체 중앙값 = {4,2,1,3} → 2.5.
+ * tiny  — 1천·ER 3.0, 5일 전
+ * 유효 팔로워는 Java(EffectiveFollowers)가 계산 — 여기선 SQL 조회 자체(findEngagements)만 검증한다.
  */
 class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
@@ -219,17 +219,6 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 유효_팔로워는_피어_중앙값_ER_보정_상한_1_피어부족은_전체_폴백() {
-		List<CardRow> rows = repository.findCards(all());
-		// glow: ER 4.0 ≥ 피어 중앙값 2.0 → 상한 1 → 팔로워 그대로
-		assertThat(byHandle(rows, "glow").effectiveFollowers()).isEqualTo(20000);
-		// mute: 1.0 / 2.0 = 0.5 → 40000 × 0.5
-		assertThat(byHandle(rows, "mute").effectiveFollowers()).isEqualTo(20000);
-		// tiny: 피어 버킷 단독(n=1) → 전체 중앙값 2.5 폴백 → 3.0/2.5 상한 1 → 1000
-		assertThat(byHandle(rows, "tiny").effectiveFollowers()).isEqualTo(1000);
-	}
-
-	@Test
 	void 팔로워_구간은_min이상_max미만() {
 		var mid = query(null, null, null, null, "10k-30k", null, null, null, null, null, null);
 		assertThat(repository.findCards(mid)).extracting(CardRow::handle)
@@ -344,7 +333,21 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(muteThumbs.get(0).contentType()).isEqualTo("feed");
 	}
 
-	private static CardRow byHandle(List<CardRow> rows, String handle) {
-		return rows.stream().filter(r -> r.handle().equals(handle)).findFirst().orElseThrow();
+	@Test
+	void 보강_유효팔로워_재료는_시계열_전량을_핸들별로_반환() {
+		// glow 5행(g1~g5) + calm 3행(c1~c3) — 순서는 무관(EffectiveFollowers 산식이 평균이라)
+		var engagements = repository.findEngagements(List.of("glow", "calm"));
+		assertThat(engagements).hasSize(8);
+		var glow = engagements.stream()
+				.filter(e -> e.accountHandle().equals("glow")).toList();
+		assertThat(glow).hasSize(5);
+		assertThat(glow).anySatisfy(e -> {
+			assertThat(e.views()).isEqualTo(60000L);
+			assertThat(e.likes()).isEqualTo(3500L);
+			assertThat(e.comments()).isEqualTo(160L);
+		});
+		var calm = engagements.stream()
+				.filter(e -> e.accountHandle().equals("calm")).toList();
+		assertThat(calm).hasSize(3);
 	}
 }

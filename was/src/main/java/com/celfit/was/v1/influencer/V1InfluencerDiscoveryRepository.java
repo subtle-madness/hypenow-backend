@@ -12,8 +12,9 @@ import org.springframework.stereotype.Repository;
  * 6.21 발굴 목록 조회 — 모수는 account_summaries 보유 계정(최근 12창 분석 계정) ⋈ accounts.
  * 광고 판정 정본은 content_analyses.ad_type='sponsored'(캡션 분류) — series.sponsored(raw 플래그)는
  * 쓰지 않는다(리포트 개편 07-27과 동일 결정). 중분류 확장은 어휘 테이블(beauty_taxonomy)로 SQL 안에서
- * 처리(§4-4). 필터·정렬·페이지는 본 쿼리 1회 + count 1회, 반환 페이지 핸들에 대해서만 보강 3쿼리
- * (카테고리 비중·협업 브랜드·최근 썸네일)를 더 친다.
+ * 처리(§4-4). 필터·정렬·페이지는 본 쿼리 1회 + count 1회, 반환 페이지 핸들에 대해서만 보강 4쿼리
+ * (카테고리 비중·협업 브랜드·최근 썸네일·유효 팔로워 시계열)를 더 친다. 유효 팔로워 자체는
+ * SQL이 아니라 Java(EffectiveFollowers, 6.21/6.22 공용 산식)에서 계산한다(스펙 7절 17번).
  */
 @Repository
 public class V1InfluencerDiscoveryRepository {
@@ -24,66 +25,17 @@ public class V1InfluencerDiscoveryRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
-	/**
-	 * 유효 팔로워 휴리스틱(리포트 개편 07-27 확정 산식과 동일): followers × min(1, 계정 ER / 피어 중앙값 ER).
-	 * 피어 = 주 카테고리(창 내 최빈 main_category) × 팔로워 버킷(V39와 동일 경계). 피어 표본 3 미만이면
-	 * 전체 중앙값 폴백, 그래도 근거가 없으면 null. V39 뷰 대신 인라인 CTE — 정의가 같아 값은 일치한다.
-	 */
-	private static final String EFFECTIVE_FOLLOWERS_CTES = """
-			WITH cat AS (
-			  SELECT account_handle, main_category FROM (
-			    SELECT s.account_handle, an.main_category,
-			           row_number() OVER (PARTITION BY s.account_handle
-			                              ORDER BY count(*) DESC, an.main_category) AS rn
-			    FROM account_content_series s
-			    JOIN content_analyses an ON an.short_code = s.short_code
-			    WHERE an.is_beauty IS TRUE AND an.main_category IS NOT NULL
-			    GROUP BY s.account_handle, an.main_category) x
-			  WHERE rn = 1
-			),
-			peer AS (
-			  SELECT su2.handle,
-			         COALESCE(c2.main_category, '미분류') AS peer_cat,
-			         CASE WHEN su2.followers >= 500000 THEN '50만+'
-			              WHEN su2.followers >= 100000 THEN '10만-50만'
-			              WHEN su2.followers >=  50000 THEN '5만-10만'
-			              WHEN su2.followers >=  10000 THEN '1만-5만'
-			              ELSE '1만 미만' END AS bkt,
-			         su2.avg_er_pct
-			  FROM account_summaries su2
-			  LEFT JOIN cat c2 ON c2.account_handle = su2.handle
-			),
-			med AS (
-			  SELECT peer_cat, bkt, count(*) FILTER (WHERE avg_er_pct IS NOT NULL) AS n,
-			         percentile_cont(0.5) WITHIN GROUP (ORDER BY avg_er_pct) AS med_er
-			  FROM peer GROUP BY 1, 2
-			),
-			gmed AS (
-			  SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY avg_er_pct) AS med_er FROM peer
-			)
-			""";
-
 	public List<CardRow> findCards(V1InfluencerDiscoveryQuery q) {
 		Sql sql = build(q);
-		return jdbcClient.sql(EFFECTIVE_FOLLOWERS_CTES + """
+		return jdbcClient.sql("""
 						SELECT a.handle, a.display_name,
 						       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
 						       a.followers,
-						       CASE WHEN su.avg_er_pct IS NOT NULL
-						             AND COALESCE(CASE WHEN m.n >= 3 THEN m.med_er ELSE g.med_er END, 0) > 0
-						            THEN round(a.followers * least(1, su.avg_er_pct
-						                 / CASE WHEN m.n >= 3 THEN m.med_er ELSE g.med_er END))::bigint
-						       END AS effective_followers,
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 						       su.avg_views, su.avg_likes, su.avg_comments,
 						       COALESCE(sp.cnt, 0) AS sponsored_count
-						""" + sql.fromJoins + """
-
-						LEFT JOIN peer b ON b.handle = su.handle
-						LEFT JOIN med m ON m.peer_cat = b.peer_cat AND m.bkt = b.bkt
-						CROSS JOIN gmed g
-						""" + sql.where + orderBy(q.sort())
+						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
 				.query(CardRow.class)
@@ -280,8 +232,20 @@ public class V1InfluencerDiscoveryRepository {
 						""").param("handles", handles).query(ThumbRow.class).list();
 	}
 
+	/** 유효 팔로워 재료 — 페이지 핸들의 창 내 시계열(순서 무관, 산식이 평균이라). 계산은 Java(EffectiveFollowers). */
+	public List<EngagementRow> findEngagements(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+						SELECT account_handle, views, likes, comments
+						FROM account_content_series
+						WHERE account_handle IN (:handles)
+						""").param("handles", handles).query(EngagementRow.class).list();
+	}
+
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
-			Long effectiveFollowers, Long postsCount, Long followsCount, String biography,
+			Long postsCount, Long followsCount, String biography,
 			String tagline, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgViews,
 			Long avgLikes, Long avgComments, Long sponsoredCount) {
 	}
@@ -295,5 +259,8 @@ public class V1InfluencerDiscoveryRepository {
 	public record ThumbRow(String accountHandle, String shortCode, String thumbnailUrl,
 			String contentType, String mainCategory, String adType, OffsetDateTime postedAt,
 			Long views, Long likes, Long comments) {
+	}
+
+	public record EngagementRow(String accountHandle, Long views, Long likes, Long comments) {
 	}
 }
