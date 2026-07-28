@@ -11,6 +11,12 @@ spring:
       initialize-schema: never          # DDL은 Flyway(app 스키마)가 소유 — V2__spring_session.sql
       table-name: app.spring_session
     timeout: 30d                        # 비활동 30일 = 슬라이딩 만료 (스펙 4절)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms            # 명령 타임아웃 — 장애 시 지연 전파 상한(fail-open 전제, 스펙 §7)
+      connect-timeout: 500ms
   servlet:
     multipart:
       max-file-size: 2MB                # 컨테이너 컷은 여유 — 1MB 정본 검증은 ProfileImageStore(스펙 6.13)
