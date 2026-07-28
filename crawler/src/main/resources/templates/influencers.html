@@ -48,10 +48,10 @@
                  th:text="${row.influencer.status}"></span></td>
         <td th:text="${row.influencer.followers != null ? #numbers.formatInteger(row.influencer.followers, 0, 'COMMA') : '—'}"></td>
         <td th:with="cls=${row.influencer.beautyClass != null ? row.influencer.beautyClass.name() : null}">
-            <!-- v2 판정(beauty_class 있음) — 4분류 배지 -->
+            <!-- v3 판정(beauty_class 있음) — 5분류 배지 -->
             <span th:if="${cls != null}" class="badge"
-                  th:classappend="${cls == 'INFLUENCER'} ? 'BEAUTY' : (${cls == 'COMPANY'} ? 'BEAUTY_COMPANY' : (${cls == 'BEAUTY_SERVICE'} ? 'BEAUTY_SERVICE' : 'NOT_BEAUTY'))"
-                  th:text="${cls == 'INFLUENCER'} ? '뷰티' : (${cls == 'COMPANY'} ? '뷰티 회사' : (${cls == 'BEAUTY_SERVICE'} ? '시술·서비스' : '뷰티 아님'))"
+                  th:classappend="${cls == 'INFLUENCER'} ? 'BEAUTY' : (${cls == 'COMPANY'} ? 'BEAUTY_COMPANY' : (${cls == 'BEAUTY_SERVICE'} ? 'BEAUTY_SERVICE' : (${cls == 'FOREIGN_INFLUENCER'} ? 'FOREIGN_INFLUENCER' : 'NOT_BEAUTY')))"
+                  th:text="${cls == 'INFLUENCER'} ? '뷰티' : (${cls == 'COMPANY'} ? '뷰티 회사' : (${cls == 'BEAUTY_SERVICE'} ? '시술·서비스' : (${cls == 'FOREIGN_INFLUENCER'} ? '외국인' : '뷰티 아님')))"
                   th:title="${row.influencer.beautyReason}"></span>
             <!-- 구 3분류 시대 판정분(재판정 전 과도기) — boolean 기반 표시 -->
             <span th:if="${cls == null and row.influencer.beauty != null}" class="badge"
@@ -67,7 +67,7 @@
                 <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
                 <input type="hidden" name="beautyClass" th:value="${target.name()}"/>
                 <button type="submit"
-                        th:text="${target.name() == 'INFLUENCER'} ? '뷰티' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'BEAUTY_SERVICE'} ? '시술' : '아님'))"></button>
+                        th:text="${target.name() == 'INFLUENCER'} ? '뷰티' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'BEAUTY_SERVICE'} ? '시술' : (${target.name() == 'FOREIGN_INFLUENCER'} ? '외국인' : '아님')))"></button>
             </form>
         </td>
         <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>

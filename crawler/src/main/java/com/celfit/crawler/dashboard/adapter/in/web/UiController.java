@@ -151,7 +151,9 @@ public class UiController {
                                 "뷰티 회사 · 리스트업 전용(수집 제외)"),
                         new StatusTile("BEAUTY_SERVICE", s.beautyService(),
                                 "시술·서비스(병원·에스테틱·헤어·네일 등) · 타깃 제외"),
-                        new StatusTile("NOT_BEAUTY", s.beautyFalse() - s.beautyService(),
+                        new StatusTile("FOREIGN", s.beautyForeign(),
+                                "외국인 뷰티 인플루언서 · 한국 시장 타깃 제외"),
+                        new StatusTile("NOT_BEAUTY", s.beautyFalse() - s.beautyService() - s.beautyForeign(),
                                 "비뷰티 · 수집 제외"),
                         new StatusTile("UNJUDGED", s.beautyUnjudged(),
                                 "미판정 · 뷰티판정 대기"))),
@@ -204,11 +206,12 @@ public class UiController {
     /** 명단 뷰티 필터 체크박스 1개 — key는 쿼리 파라미터 값, badge는 배지 색상 클래스. */
     public record BeautyFilter(String key, String label, String badge) {}
 
-    /** 뷰티 4분류 + 미판정 — UNJUDGED는 beauty_class 없음(구 3분류 시대 판정분 포함). */
+    /** 뷰티 5분류 + 미판정 — UNJUDGED는 beauty_class 없음(구 3분류 시대 판정분 포함). */
     private static final java.util.List<BeautyFilter> BEAUTY_FILTERS = java.util.List.of(
             new BeautyFilter("INFLUENCER", "뷰티", "BEAUTY"),
             new BeautyFilter("COMPANY", "뷰티 회사", "BEAUTY_COMPANY"),
             new BeautyFilter("BEAUTY_SERVICE", "시술·서비스", "BEAUTY_SERVICE"),
+            new BeautyFilter("FOREIGN_INFLUENCER", "외국인", "FOREIGN_INFLUENCER"),
             new BeautyFilter("NOT_BEAUTY", "뷰티 아님", "NOT_BEAUTY"),
             new BeautyFilter("UNJUDGED", "미판정", "UNJUDGED"));
 
