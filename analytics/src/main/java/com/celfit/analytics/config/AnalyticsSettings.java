@@ -88,6 +88,7 @@ public class AnalyticsSettings {
 				.orElse(DEFAULT_ACCOUNT_ANALYZE_COOLDOWN_DAYS);
 	}
 
+	/** 07-28 캘린더일 정합 후 잡에서 미사용 — 후보 성숙 가드는 04 뷰 소관. 키 호환을 위해 유지. */
 	public int analyzeMaturityDays() {
 		return read(KEY_ANALYZE_MATURITY_DAYS).map(Integer::parseInt)
 				.orElse(DEFAULT_ANALYZE_MATURITY_DAYS);
