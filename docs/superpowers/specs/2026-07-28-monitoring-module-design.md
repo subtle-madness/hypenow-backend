@@ -10,8 +10,9 @@
 지표 추이를 쌓고, was가 소비할 수 있는 형태로 제공한다.
 
 - **계정 등록** = "시딩을 맡겼는데 게시물이 아직 안 올라온 상태". 프로필을 매일 감시하다
-  **키워드(예: 캡션에 '샤넬')가 담긴 게시물이 올라오는 순간을 감지**하면, 추적 대상이
-  프로필에서 그 게시물로 전환된다.
+  **키워드(예: 캡션에 '샤넬')가 담긴 게시물이 올라오면 후보로 감지**한다. 감지는 자동
+  전환이 아니다 — FE에서 사용자가 후보를 **승인해야** 추적 대상이 프로필에서 그
+  게시물로 전환된다(오감지·무관 게시물 걸러내기).
 - **게시물 등록** = 그 게시물 하나의 지표(좋아요·댓글·조회수)를 매일 스냅샷.
 - 등록 직후 첫 수집 결과가 수 초 내 프론트에 보여야 하고, 이후 매일 추이가 쌓인다.
 - 대상은 **임의의 인스타 계정·게시물**(기존 뷰티 QUALIFIED 풀 밖 포함 — 브랜드 계정,
@@ -33,6 +34,7 @@
 | 5 | DB는 **기존 `postgres` 인스턴스(컨테이너)에 데이터베이스 신설** | 전용 Postgres 컨테이너(서버 메모리 제약 — 격리는 DB+계정 권한으로 이미 완성) |
 | 6 | 감시(키워드 감지)·추적(추이) 모두 **일 1회 배치** + 등록 시 즉시 1회 수집 | 수 시간 간격 감지(비용 대비 불필요 — 주기는 런타임 설정으로 조정 가능하게 열어둠) |
 | 7 | **모니터링 기간은 was(FE)가 등록 시 지정**, monitoring이 만료 판단·자동 종료 | 수동 해지만(FE 요구가 기간 설정) — 수동 해지도 병행 지원 |
+| 8 | **감지 → 추적 전환은 FE 승인 게이트를 거친다** — 감지는 후보 축적일 뿐 상태 전이가 아니고, was의 승인 명령이 있어야 TRACKING 전환 | 감지 즉시 자동 전환(오감지·무관 게시물을 사용자가 걸러낼 수 없음) |
 
 ### API 예외의 근거 (결정 3 상세)
 
@@ -88,9 +90,11 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
 │   └── fetch_payload(id, target_id, kind PROFILE/POSTS/POST, fetched_at,
 │                     http_status, payload jsonb)
 ├── state 스키마    상태 기계
-│   └── target(id, type ACCOUNT/POST, username, short_code, keyword,
-│              status, detected_short_code, detected_at,
-│              expires_at, registered_at, closed_at, last_fetched_at, fail_reason)
+│   ├── target(id, type ACCOUNT/POST, username, short_code, keyword,
+│   │          status, tracked_short_code, tracked_since,
+│   │          expires_at, registered_at, closed_at, last_fetched_at, fail_reason)
+│   └── detected_candidate(id, target_id, short_code, detected_at,
+│                          caption_excerpt, status PENDING/APPROVED/REJECTED)
 └── serving 스키마  was API 응답의 원천
     ├── profile_snapshot(target_id, captured_on, followers, following, media_count …)
     ├── post_snapshot(target_id, short_code, captured_on, likes, comments, views)
@@ -106,17 +110,26 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
 ## 5. 상태 기계
 
 ```
-등록(계정+키워드) → WATCHING ──키워드 게시물 감지──▶ TRACKING ──만료/해지──▶ EXPIRED/CANCELED
-등록(게시물)     → TRACKING ──────────────────────────────────▶ EXPIRED/CANCELED
+등록(계정+키워드) → WATCHING ──키워드 감지──▶ 후보 기록(PENDING) · 감시는 지속
+                      ▲                          │ was 승인(후보 선택)
+                      │ was 거절(후보 기각)       ▼
+등록(게시물) ────────────────────────────▶ TRACKING ──만료/해지──▶ EXPIRED/CANCELED
                    (수집 불가: 계정 소멸·비공개 등) ──▶ FAILED
 ```
 
 - **WATCHING**: 프로필 지표 스냅샷 + 최근 게시물 열거 → 캡션 키워드 매칭(부분 문자열,
   대소문자 무시. 키워드 1개 이상 등록 시 OR 매칭 — 세부는 구현 시 조정).
-- **TRACKING**: 감지된(또는 직접 등록된) 게시물 지표 일별 스냅샷. 전환 후에도 프로필
+- **감지 = 후보 축적 (상태 전이 아님)**: 매칭된 게시물을 `detected_candidate`(PENDING)로
+  기록하고 감시를 지속한다 — 승인 대기 중 다른 키워드 게시물이 올라오면 후보에 추가.
+  같은 게시물은 한 번만 후보로 기록(재감지 시 중복 생성 없음).
+- **승인/거절 (was 명령)**: 승인하면 그 후보의 게시물로 TRACKING 전환(`tracked_short_code`
+  확정, 승인 즉시 1회 수집 후 일별 스냅샷). 거절하면 그 후보만 REJECTED로 닫고 WATCHING
+  지속. FE 통보는 was 조회 기반(목록에 "감지됨 — 승인 대기" 노출) — 푸시 알림은 범위 밖.
+- **TRACKING**: 승인된(또는 직접 등록된) 게시물 지표 일별 스냅샷. 전환 후에도 프로필
   스냅샷을 계속 쌓을지는 구현 시 결정(기본: 게시물만).
 - **만료**: was가 등록 시 `expires_at`을 넘기고, monitoring 일일 배치가 만료 판단 →
-  수집 중단·EXPIRED. 수동 해지(CANCELED)·기간 연장(PATCH)도 지원.
+  수집 중단·EXPIRED. 수동 해지(CANCELED)·기간 연장(PATCH)도 지원. WATCHING 상태에서
+  만료되면(끝내 승인된 게시물 없음) 그대로 EXPIRED.
 - 일시 실패(Hiker 오류·타임아웃)는 상태 유지 + 다음 배치 재시도, 결정적 실패
   (404 계정 소멸 등)만 FAILED.
 
@@ -127,8 +140,10 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
 | 메서드 | 경로 | 동작 |
 |---|---|---|
 | POST | `/api/targets` | 등록. **동기로 첫 Hiker 수집·검증까지 수행 후 응답**(계정 존재 확인 + 첫 스냅샷 포함 — was 타임아웃 여유 ~10s) |
-| GET | `/api/targets/{id}` | 상태 + 최신 스냅샷 + 감지 정보 |
+| GET | `/api/targets/{id}` | 상태 + 최신 스냅샷 + 감지 후보 목록(PENDING 포함) |
 | GET | `/api/targets/{id}/timeseries` | 일별 추이 + 파생 집계 |
+| POST | `/api/targets/{id}/candidates/{candidateId}/approve` | 후보 승인 → TRACKING 전환(즉시 1회 수집 포함) |
+| POST | `/api/targets/{id}/candidates/{candidateId}/reject` | 후보 기각 → WATCHING 지속 |
 | PATCH | `/api/targets/{id}` | 기간 연장 등 |
 | DELETE | `/api/targets/{id}` | 해지(CANCELED) |
 
