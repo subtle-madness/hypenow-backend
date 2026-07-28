@@ -4,7 +4,6 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
-import com.celfit.contract.analysis.AccountAnalysis;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +23,6 @@ import tools.jackson.databind.ObjectMapper;
 public class AccountAnalysisJob {
 
 	private static final Logger log = LoggerFactory.getLogger(AccountAnalysisJob.class);
-	static final int MAX_TRAITS = 5; // ClaudeBurstRunner(구독 버스트 collect)와 공유
 	static final int CAPTION_CHARS = 300;
 
 	private final JdbcTemplate analysis;
@@ -101,35 +99,12 @@ public class AccountAnalysisJob {
 		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
 				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation));
 
-		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지)
-		if (isBlank(copy.tagline()) || isBlank(copy.perfSummary()) || isBlank(copy.contentSummary())) {
+		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지).
+		// 절단·INSERT는 AccountAnalysisWriter 단일 원천(ClaudeBurstRunner와 공유 — 07-17 재발 방지).
+		if (!AccountAnalysisWriter.isValid(copy)) {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
-		if (copy.traits() == null || copy.traits().isEmpty()) {
-			throw new IllegalStateException("traits가 비어 있음: " + handle);
-		}
-		List<String> traits = List.copyOf(copy.traits().size() > MAX_TRAITS
-				? copy.traits().subList(0, MAX_TRAITS) : copy.traits());
-
-		// 구 카피 5컬럼(summary·trend/chart_note·ad_headline·pace_note)은 07-27 개편 후 미기록(NULL).
-		AccountAnalysis row = new AccountAnalysis(handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy.tagline(), null, null, null, traits, null, null,
-				copy.perfSummary(), copy.contentSummary(),
-				adSituation.writesHeadline() ? blankToNull(copy.adSummary()) : null);
-		analysis.update("""
-				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary)
-				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)""",
-				row.handle(), row.analyzedAt(), row.model(), row.inputLastPostedAt(),
-				row.inputAnalyzedCount(), row.tagline(), json.writeValueAsString(row.traits()),
-				row.perfSummary(), row.contentSummary(), row.adSummary());
-	}
-
-	private static boolean isBlank(String s) {
-		return s == null || s.isBlank();
-	}
-
-	private static String blankToNull(String s) {
-		return isBlank(s) ? null : s;
+		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
+				lastPostedAt, analyzedCount, copy, adSituation);
 	}
 }

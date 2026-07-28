@@ -277,11 +277,8 @@ public class ClaudeBurstRunner {
 			return false;
 		}
 		AccountCopy copy = om.readValue(json, AccountCopy.class);
-		// AccountAnalysisJob.analyzeOne과 동일 가드 — 빈 카피가 최신 행으로 서빙되는 것 차단
-		if (isBlank(copy.tagline()) || isBlank(copy.perfSummary()) || isBlank(copy.contentSummary())) {
-			return false;
-		}
-		if (copy.traits() == null || copy.traits().isEmpty()) {
+		// 가드·절단·INSERT는 AccountAnalysisWriter 단일 원천(AccountAnalysisJob과 공유 — 07-17 재발 방지)
+		if (!AccountAnalysisWriter.isValid(copy)) {
 			return false;
 		}
 		OffsetDateTime inputLastPostedAt = side.get("input_last_posted_at") == null
@@ -294,25 +291,16 @@ public class ClaudeBurstRunner {
 		if (dup != null && dup > 0) {
 			return false;
 		}
-		List<String> traits = List.copyOf(copy.traits().size() > AccountAnalysisJob.MAX_TRAITS
-				? copy.traits().subList(0, AccountAnalysisJob.MAX_TRAITS) : copy.traits());
-		// ad_situation은 export 시점에 사이드카에 적어둔 값(AdSituation.name()) — AccountAnalysisJob과
-		// 동일하게 INSUFFICIENT(근거 없음)일 때만 adSummary를 버린다. 구 export 산출물처럼 필드 자체가
-		// 없으면(사이드카에 ad_situation 키 없음) AccountAdCanon을 재조회하는 대신 보수적으로 NULL 처리 —
+		// ad_situation은 export 시점에 사이드카에 적어둔 값(AdSituation.name()) — AccountAnalysisWriter가
+		// INSUFFICIENT(근거 없음)일 때만 adSummary를 버린다. 구 export 산출물처럼 필드 자체가 없으면
+		// (사이드카에 ad_situation 키 없음) AccountAdCanon을 재조회하는 대신 보수적으로 NULL 처리 —
 		// 근거 재현이 안 되는 값을 함부로 서빙하지 않는다는 이 파일의 기존 관용구(base==null → 실패 취급,
 		// 다른 개별 필드 null-safe 파싱)를 따른 것이다.
 		String situationName = side.get("ad_situation");
 		AdSituation situation = situationName == null ? null : AdSituation.valueOf(situationName);
-		String adSummary = situation != null && situation.writesHeadline() ? blankToNull(copy.adSummary()) : null;
-		// 구 카피 5컬럼(summary·trend/chart_note·ad_headline·pace_note)은 07-27 개편 후 미기록 — AccountAnalysisJob과 동일.
-		analysis.update("""
-				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary)
-				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)""",
-				handle, OffsetDateTime.now(), model, inputLastPostedAt,
+		AccountAnalysisWriter.insert(analysis, om, handle, OffsetDateTime.now(), model, inputLastPostedAt,
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
-				copy.tagline(), om.writeValueAsString(traits),
-				copy.perfSummary(), copy.contentSummary(), adSummary);
+				copy, situation);
 		return true;
 	}
 
@@ -372,14 +360,6 @@ public class ClaudeBurstRunner {
 				longOrNull(b.get("recent12_avg_like_count")), longOrNull(b.get("recent12_avg_comment_count")),
 				intOrNull(b.get("category_top_percentile")), longOrNull(b.get("category_avg_views")),
 				longOrNull(b.get("category_sample_size")));
-	}
-
-	private static boolean isBlank(String s) {
-		return s == null || s.isBlank();
-	}
-
-	private static String blankToNull(String s) {
-		return isBlank(s) ? null : s;
 	}
 
 	private static Long longOrNull(String v) {
