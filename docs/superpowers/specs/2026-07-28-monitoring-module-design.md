@@ -30,7 +30,7 @@
 | 1 | **신규 `monitoring` 모듈** (4번째 Gradle 모듈, 별도 프로세스·컨테이너) | crawler 내 bounded context(사용자가 분리 명시 + crawler는 raw 쓰기 전용이라 서빙 적재 불가), analytics 편입(분석 층이 자체 수집원을 갖게 돼 층 정의 훼손) |
 | 2 | **수집은 HikerAPI만** — 자체 얇은 Hiker 클라이언트 보유 | crawler 페처 재사용(모듈 간 Java 공유 금지 + SELF/Apify 기계 불필요라 유인 없음) |
 | 3 | **was ↔ monitoring은 내부 HTTP API** — "층 사이는 DB로만" 원칙의 **명시적 예외** | DB 폴링/LISTEN-NOTIFY(등록 시 동기 검증 불가 — 사용자 결정으로 API 채택) |
-| 4 | **monitoring 소유 단일 사설 DB** + 내부 3스키마(raw/state/serving) | 원형·서빙 두 DB 분리(외부 독자가 없어 실질 격리 이득 0, 운영 비용만 발생), analysis DB `monitoring` 스키마(was가 DB로 읽는 전제가 사라져 불필요) |
+| 4 | **monitoring 소유 단일 사설 DB** + 내부 2스키마(raw/public) — 원형만 스키마 분리 | 원형·서빙 두 DB 분리(외부 독자가 없어 실질 격리 이득 0, 운영 비용만 발생), analysis DB `monitoring` 스키마(was가 DB로 읽는 전제가 사라져 불필요), state/serving 추가 분리(상태도 API로 서빙되는 같은 소비자라 경계 근거 없음) |
 | 5 | DB는 **기존 `postgres` 인스턴스(컨테이너)에 데이터베이스 신설** | 전용 Postgres 컨테이너(서버 메모리 제약 — 격리는 DB+계정 권한으로 이미 완성) |
 | 6 | 감시(키워드 감지)·추적(추이) 모두 **일 1회 배치** + 등록 시 즉시 1회 수집 | 수 시간 간격 감지(비용 대비 불필요 — 주기는 런타임 설정으로 조정 가능하게 열어둠) |
 | 7 | **모니터링 기간은 was(FE)가 등록 시 지정**, monitoring이 만료 판단·자동 종료 | 수동 해지만(FE 요구가 기간 설정) — 수동 해지도 병행 지원 |
@@ -62,7 +62,7 @@ content.status)가 동거하는 것과 같은 이치. 개념적 분리는 DB 안
 프론트 ──HTTP──▶ was ──내부 HTTP──▶ monitoring ──HikerAPI──▶ 인스타
   (/v1/monitoring/…)   (도커 내부망,        │
                         정적 토큰,          └─읽기/쓰기─▶ monitoring DB (사설)
-                        Caddy 미노출)              raw / state / serving 3스키마
+                        Caddy 미노출)              raw + public 2스키마
 ```
 
 - was는 프론트 요청을 받아 monitoring API를 호출·조합해 내려줄 뿐, monitoring DB에
@@ -82,28 +82,31 @@ content.status)가 동거하는 것과 같은 이치. 개념적 분리는 DB 안
 쓰기·분석 스캔의 배치 성격, monitoring은 등록 즉시 응답하는 서빙 성격. (볼륨은 캠페인
 수십~수백 건 규모라 어느 쪽이든 미미.)
 
-## 4. monitoring DB — 3스키마
+## 4. monitoring DB — 2스키마
 
 ```
 monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
-├── raw 스키마      원형. append-only, 재파싱·감지 오판 디버깅·필드 소급용
+├── raw 스키마     원형. append-only, 재파싱·감지 오판 디버깅·필드 소급용 —
+│   │              수명·용도가 달라(롤링 삭제 대상) 유일하게 스키마로 격리
 │   └── fetch_payload(id, target_id, kind PROFILE/POSTS/POST, fetched_at,
 │                     http_status, payload jsonb)
-├── state 스키마    상태 기계
-│   ├── target(id, type ACCOUNT/POST, username, short_code, keyword,
-│   │          status, tracked_short_code, tracked_since,
-│   │          expires_at, registered_at, closed_at, last_fetched_at, fail_reason)
-│   └── detected_candidate(id, target_id, short_code, detected_at,
-│                          caption_excerpt, status PENDING/APPROVED/REJECTED)
-└── serving 스키마  was API 응답의 원천
+└── public 스키마  가공 데이터 전부 — 상태 기계·시계열·파생 집계
+    ├── target(id, type ACCOUNT/POST, username, short_code, keyword,
+    │          status, tracked_short_code, tracked_since,
+    │          expires_at, registered_at, closed_at, last_fetched_at, fail_reason)
+    ├── detected_candidate(id, target_id, short_code, detected_at,
+    │                      caption_excerpt, status PENDING/APPROVED/REJECTED)
     ├── profile_snapshot(target_id, captured_on, followers, following, media_count …)
     ├── post_snapshot(target_id, short_code, captured_on, likes, comments, views)
-    └── 파생 집계    증감률·이동평균 — 입력이 전부 이 DB 안이므로 뷰로 정의
-                     (analysis DB 파생 뷰 전례 — 미러 없이 항상 최신·과거 소급)
+    └── 파생 집계   증감률·이동평균 — 입력이 전부 이 DB 안이므로 뷰로 정의
+                    (analysis DB 파생 뷰 전례 — 미러 없이 항상 최신·과거 소급)
 ```
 
+- state/serving을 더 가르지 않는 이유: 상태·후보도 was API 응답에 그대로 나가는
+  데이터라 소비자가 같다 — 경계 양쪽의 접근 주체가 다르지 않으면 스키마 분리는
+  근거가 없다. 성격 차이(가변 상태 행 vs append-only 시계열)는 테이블 단위로 충분.
 - 흐름: Hiker 응답을 `raw.fetch_payload`에 원형 그대로 → 같은 트랜잭션에서 파싱해
-  `serving.*_snapshot` 적재 → 키워드 매칭·상태 전이는 `state.target` 갱신.
+  `*_snapshot` 적재 → 키워드 매칭·상태 전이는 `target`·`detected_candidate` 갱신.
 - 스냅샷 키는 `(target_id, captured_on)` — 일 1회 멱등(재실행 시 upsert).
 - 원형 보존 정책은 사설이라 자유(예: 90일 롤링 삭제) — 구현 시 확정.
 
@@ -162,8 +165,10 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
 
 ## 7. 스케줄·비용
 
-- 일 1회 배치(새벽 크론)가 활성 대상 전체를 순회: WATCHING 감지 + TRACKING 스냅샷
-  + 만료 처리. 주기·시각은 런타임 설정으로 조정 가능하게.
+- 일 1회 배치(**KST 02:00** 크론)가 활성 대상 전체를 순회: WATCHING 감지 + TRACKING
+  스냅샷 + 만료 처리. 주기·시각은 런타임 설정으로 조정 가능하게.
+  (02:00은 기존 스택과 자원 경합 없음 — monitoring은 Hiker·자기 DB만 쓰므로
+  crawler 새벽 윈도우·미러 04:30·분석 05:00과 독립.)
 - Hiker 비용: 대상당 일 1~2콜(프로필 or 게시물) — 수백 대상 기준 무시 가능 수준.
 - 등록 시 즉시 1회 수집은 배치와 동일 코드 경로 재사용.
 
