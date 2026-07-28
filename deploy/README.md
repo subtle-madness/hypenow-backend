@@ -230,3 +230,15 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 - 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-dev-was-1` ·
   `deploy-dev-analytics-1` · `deploy-dev-postgres-1`. 모니터링 `SERVICES` 목록(§9)에는 dev를 넣지
   않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.
+
+### 주의 (함정 2건)
+
+- **orphan 경고는 정상, `--remove-orphans` 금지.** dev 기동 후 운영 경로(`docker compose up -d`,
+  deploy.sh)는 매번 `Found orphan containers (deploy-dev-was-1 …)` 경고를 낸다 — dev 서비스가
+  `compose.dev.yaml`에 있어 운영 파일 단독 실행엔 "고아"로 보일 뿐이다. 경고문이 권하는
+  `--remove-orphans`를 붙이면 **dev 컨테이너 3종이 제거된다.** 절대 붙이지 말 것.
+- **운영 배포가 cancelled로 끝났으면 재실행.** 운영 CD와 dev CD는 같은 concurrency 그룹
+  (`deploy-server`)으로 직렬화되는데, GitHub는 그룹당 대기 1개만 유지한다 — dev 배포 실행 중에
+  운영 배포가 대기하다가 새 dev 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
+  있다. develop→main 머지 후엔 Actions에서 CD 런이 success로 끝났는지 확인하고, cancelled면
+  Re-run으로 재실행한다(07-20 "배포가 조용히 안 나감" 계열 방지).
