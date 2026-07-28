@@ -60,8 +60,8 @@ class V1InfluencerReportControllerTest {
 						"캡션4 광고", "https://img/thumb4.jpg", "브랜드A"));
 	}
 
-	// peerSize 5(>=MIN_PEER_SIZE 3, 게이트 통과) · topPct*는 임의 배정값(그대로 통과되는지 확인용) ·
-	// peerMedianErPct 4.0% → erRatio = min(1, 계정ER 2.0 / 4.0) = 0.5 → 유효 팔로워 10000×0.5=5000.
+	// peerSize 5(>=MIN_PEER_SIZE 3, 게이트 통과) · topPct*는 임의 배정값(그대로 통과되는지 확인용).
+	// 유효 팔로워는 07-28부터 피어 무관(시계열 실반응 측정) — 이 픽스처는 topPct 검증에만 쓰인다.
 	private PeerStatsRow fullPeer() {
 		return new PeerStatsRow(5L, 80, 75, 70, 65, 90, 85, 80, 75,
 				new BigDecimal("4.0"), new BigDecimal("3.5"));
@@ -84,9 +84,10 @@ class V1InfluencerReportControllerTest {
 				.andExpect(jsonPath("$.data.tagline").value("태그라인"))
 				.andExpect(jsonPath("$.data.analyzedCount").value(24))
 				.andExpect(jsonPath("$.data.totalPosts").value(321))
-				// 유효 팔로워: followers 10000 × min(1, 계정ER 2.0 / 피어중앙값 4.0) = 5000(비율 50%).
-				.andExpect(jsonPath("$.data.effectiveFollowers").value(5000))
-				.andExpect(jsonPath("$.data.effectiveFollowersPct").value(50))
+				// 유효 팔로워(게시물당 평균 실반응): (110+110+220+220)/4 = 165명, 팔로워 대비 1.65% → 반올림 2.
+				// views가 전부 팔로워(10000) 미만이라 바이럴 안분 없음, 좋아요:댓글 10:1이라 앵커 컷도 없음.
+				.andExpect(jsonPath("$.data.effectiveFollowers").value(165))
+				.andExpect(jsonPath("$.data.effectiveFollowersPct").value(2))
 				.andExpect(jsonPath("$.data.stats.metric").value("views"))
 				.andExpect(jsonPath("$.data.stats.perfSummary").value("성과 요약"))
 				// overall.views: value=summary.avgViews 그대로, growthPct=올린순 앞2(1000)→뒤2(2000)=+100%,
@@ -195,7 +196,7 @@ class V1InfluencerReportControllerTest {
 				.andExpect(jsonPath("$.data.chart.bars").isEmpty())
 				.andExpect(jsonPath("$.data.ads.adSummary").doesNotExist())
 				.andExpect(jsonPath("$.data.ads.headline").doesNotExist()) // 광고 이력 없음
-				.andExpect(jsonPath("$.data.effectiveFollowers").doesNotExist()) // 피어 없음
+				.andExpect(jsonPath("$.data.effectiveFollowers").doesNotExist()) // 시계열 없음(측정 불가)
 				.andExpect(jsonPath("$.data.activity.isActive").value(false));
 	}
 }

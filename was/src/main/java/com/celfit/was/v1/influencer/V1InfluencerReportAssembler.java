@@ -58,8 +58,8 @@ public class V1InfluencerReportAssembler {
 				copy == null ? null : copy.tagline(),
 				summary.analyzedCount(),
 				summary.postsCount(),
-				effectiveFollowers(summary.followers(), summary.avgErPct(), peer),
-				effectiveFollowersPct(summary.followers(), summary.avgErPct(), peer),
+				effectiveFollowers(summary.followers(), series),
+				effectiveFollowersPct(summary.followers(), series),
 				toStats(summary, copy, series, peer),
 				toChart(summary, series),
 				toContentMix(copy, categories),
@@ -205,38 +205,44 @@ public class V1InfluencerReportAssembler {
 		return value == null ? null : BigDecimal.valueOf(value);
 	}
 
+	/** 댓글 앵커 계수 — 모집단 38,474게시물의 좋아요:댓글 비율 상위 90% 경계(07-28 실측 39:1).
+	 *  이 비율을 크게 벗어나는 좋아요는 팔로워 반응으로 보지 않는다(탐색탭 유입·구매성 좋아요 컷). */
+	private static final double LIKES_PER_COMMENT_ANCHOR = 39.0;
+
 	/**
-	 * 유효 팔로워 = followers × min(1, 계정 ER / 기준 ER). 기준 = 피어 중앙값 ER(폴백 전체 중앙값).
-	 * 휴리스틱(07-27 확정) — 정밀도보다 방향성. 근거 없으면 null(화면은 칸 숨김).
+	 * 유효 팔로워 = 게시물당 평균 실반응 팔로워 수 (07-28 재설계 — 추정 확장 없는 측정값).
+	 * 게시물별 인정 반응 = min( (좋아요+댓글) × min(1, 팔로워/조회수),   ← 릴스 바이럴 안분
+	 *                            ANCHOR × (댓글+1) )                      ← 비정상 좋아요 컷
+	 * "한 번이라도 반응할 팔로워" 류의 확장 추정(유니온·포화곡선)은 독립 가정이 값을 부풀려 폐기 —
+	 * 관측 가능한 것만 센다. 운영 실측(07-28, 6,321계정): 팔로워 대비 중앙값 1.2%·상위 1% 18.4%·
+	 * 최대 53.5% — 100%는 장치 없이 자연히 불가. 피어와 무관한 절대 측정(피어는 topPct 전용).
 	 */
-	static Long effectiveFollowers(Long followers, BigDecimal accountErPct, PeerStatsRow peer) {
-		Double ratio = erRatio(followers, accountErPct, peer);
-		if (ratio == null) {
-			return null;
-		}
-		return Math.round(followers * ratio);
+	static Long effectiveFollowers(Long followers, List<SeriesRow> series) {
+		Double avg = avgEngagedFollowers(followers, series);
+		return avg == null ? null : Math.round(avg);
 	}
 
-	/** effectiveFollowers와 같은 ratio × 100 반올림. 산출 불가 시 null. */
-	static Integer effectiveFollowersPct(Long followers, BigDecimal accountErPct, PeerStatsRow peer) {
-		Double ratio = erRatio(followers, accountErPct, peer);
-		if (ratio == null) {
-			return null;
-		}
-		return (int) Math.round(ratio * 100);
+	/** effectiveFollowers의 팔로워 대비 %(반올림). 산출 불가 시 null. */
+	static Integer effectiveFollowersPct(Long followers, List<SeriesRow> series) {
+		Double avg = avgEngagedFollowers(followers, series);
+		return avg == null ? null : (int) Math.round(avg * 100 / followers);
 	}
 
-	/** peerSize < MIN_PEER_SIZE(예: 1명=자기 자신)이면 중앙값이 자기 ER과 같아져 ratio가 항상 1이 되므로
-	 *  topPct와 같은 최소표본 게이트를 반드시 통과시킨다 — 우회하면 유효 팔로워가 늘 원 팔로워와 같아진다. */
-	private static Double erRatio(Long followers, BigDecimal accountErPct, PeerStatsRow peer) {
-		if (followers == null || accountErPct == null || peer == null || peer.peerSize() < MIN_PEER_SIZE) {
+	private static Double avgEngagedFollowers(Long followers, List<SeriesRow> series) {
+		if (followers == null || followers <= 0 || series.isEmpty()) {
 			return null;
 		}
-		BigDecimal ref = peer.peerMedianErPct() != null ? peer.peerMedianErPct() : peer.globalMedianErPct();
-		if (ref == null || ref.signum() <= 0) {
-			return null;
+		double sum = 0;
+		for (SeriesRow s : series) {
+			long likes = s.likes() == null ? 0 : Math.max(s.likes(), 0);
+			long comments = s.comments() == null ? 0 : Math.max(s.comments(), 0);
+			double engaged = likes + comments;
+			if (s.views() != null && s.views() > followers) {
+				engaged = engaged * followers / (double) s.views(); // 도달 중 팔로워 비중으로 안분
+			}
+			sum += Math.min(engaged, LIKES_PER_COMMENT_ANCHOR * (comments + 1));
 		}
-		return Math.min(1.0, accountErPct.doubleValue() / ref.doubleValue());
+		return sum / series.size();
 	}
 
 	private InfluencerAiReport.Chart toChart(SummaryRow summary, List<SeriesRow> series) {

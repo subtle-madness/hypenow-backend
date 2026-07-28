@@ -38,7 +38,7 @@ class V1InfluencerReportAssemblerTest {
 				new BigDecimal("3.10"), 1500L, 80L, lastPostedAt, new BigDecimal("2.5"));
 	}
 
-	/** 피어 표본 20건, 계정 ER(3.10)이 피어 중앙값(2.0)보다 높아 유효 팔로워 상한 1 적용 케이스. */
+	/** 피어 표본 20건 — topPct 8종 검증용 (유효 팔로워는 07-28부터 피어 무관). */
 	private PeerStatsRow peer() {
 		return new PeerStatsRow(20L, 18, 26, 32, 45, 39, 42, 48, 53,
 				new BigDecimal("2.0"), new BigDecimal("2.4"));
@@ -178,26 +178,49 @@ class V1InfluencerReportAssemblerTest {
 	}
 
 	@Test
-	void 유효_팔로워는_피어_중앙값_ER_대비_보정_상한_1() {
-		var r = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
+	void 유효_팔로워는_게시물당_평균_실반응() {
+		// views(1000) < followers(10000) → 안분 없음. e = 100+10 = 110씩 2건 → 평균 110, pct 1(=1.1 반올림)
+		var series = List.of(
+				row("2026-07-01T00:00:00Z", 1000L, 100, 10, false),
+				row("2026-07-02T00:00:00Z", 1000L, 100, 10, false));
+		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
 				List.of(), peer());
-		assertThat(r.effectiveFollowers()).isEqualTo(10000L);
-		assertThat(r.effectiveFollowersPct()).isEqualTo(100);
-
-		var half = new PeerStatsRow(20L, null, null, null, null, null, null, null, null,
-				new BigDecimal("6.2"), new BigDecimal("2.4"));
-		var r2 = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
-				List.of(), half);
-		assertThat(r2.effectiveFollowers()).isEqualTo(5000L);
-		assertThat(r2.effectiveFollowersPct()).isEqualTo(50);
+		assertThat(r.effectiveFollowers()).isEqualTo(110L);
+		assertThat(r.effectiveFollowersPct()).isEqualTo(1);
 	}
 
 	@Test
-	void 피어가_없으면_topPct와_유효팔로워_null() {
-		var r = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
-				List.of(), null);
-		assertThat(r.effectiveFollowers()).isNull();
-		assertThat(r.stats().overall().views().topPct()).isNull();
+	void 유효_팔로워_바이럴은_팔로워_비중으로_안분() {
+		// views 100000 = 팔로워의 10배 → 반응 5100 중 팔로워 몫 1/10 = 510
+		var series = List.of(row("2026-07-01T00:00:00Z", 100000L, 5000, 100, false));
+		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
+				List.of(), peer());
+		assertThat(r.effectiveFollowers()).isEqualTo(510L);
+		assertThat(r.effectiveFollowersPct()).isEqualTo(5);
+	}
+
+	@Test
+	void 유효_팔로워_비정상_좋아요는_댓글_앵커로_컷() {
+		// 피드(views null) 좋아요 5000·댓글 10 — 좋아요:댓글 500:1은 정상 범위(39:1) 밖 → 39×(10+1)=429로 컷
+		var series = List.of(row("2026-07-01T00:00:00Z", null, 5000, 10, false));
+		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
+				List.of(), peer());
+		assertThat(r.effectiveFollowers()).isEqualTo(429L);
+		assertThat(r.effectiveFollowersPct()).isEqualTo(4);
+	}
+
+	@Test
+	void 시계열_없으면_유효팔로워_null_피어_없으면_topPct만_null() {
+		// 유효 팔로워는 시계열 기반 측정값 — 시계열이 없으면 null, 피어 유무와는 무관
+		var empty = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
+				List.of(), peer());
+		assertThat(empty.effectiveFollowers()).isNull();
+
+		var noPeer = assembler.toReport(fullSummary(), null,
+				List.of(row("2026-07-01T00:00:00Z", 1000L, 100, 10, false)),
+				List.of(), List.of(), List.of(), null);
+		assertThat(noPeer.stats().overall().views().topPct()).isNull();
+		assertThat(noPeer.effectiveFollowers()).isEqualTo(110L);
 	}
 
 	@Test
@@ -214,16 +237,15 @@ class V1InfluencerReportAssemblerTest {
 	}
 
 	@Test
-	void 피어_3계정_미만이면_topPct와_유효팔로워_모두_숨김() {
-		// peerMedianErPct(2.0)가 fullSummary avgErPct(3.10)보다 낮아 ratio=1(100%)이 나오는 조합 —
-		// peerSize 게이트가 없으면 "피어 1명(자기 자신)=항상 100%" 버그를 그대로 재현하는 케이스.
+	void 피어_3계정_미만이면_topPct만_숨김() {
+		// topPct(피어 비교)는 최소표본 게이트 대상. 유효 팔로워는 시계열 측정값이라 피어와 무관 (07-28 분리)
 		var tiny = new PeerStatsRow(2L, 18, 26, 32, 45, 39, 42, 48, 53,
 				new BigDecimal("2.0"), new BigDecimal("2.4"));
-		var r = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
-				List.of(), tiny);
+		var r = assembler.toReport(fullSummary(), null,
+				List.of(row("2026-07-01T00:00:00Z", 1000L, 100, 10, false)),
+				List.of(), List.of(), List.of(), tiny);
 		assertThat(r.stats().overall().views().topPct()).isNull();
-		assertThat(r.effectiveFollowers()).isNull();
-		assertThat(r.effectiveFollowersPct()).isNull();
+		assertThat(r.effectiveFollowers()).isEqualTo(110L);
 	}
 
 	@Test
