@@ -19,6 +19,22 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class V1InfluencerDiscoveryRepository {
 
+	// cp(최신 태그라인)·sp(광고 수)는 q·sponsored 필터가 참조하므로 count 쿼리에도 함께 붙인다.
+	// findCardsByHandles(6.23 유사 카드 재사용)도 같은 조인을 그대로 공유한다.
+	private static final String FROM_JOINS = """
+
+			FROM account_summaries su
+			JOIN accounts a ON a.handle = su.handle
+			LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+			LEFT JOIN LATERAL (SELECT aa.tagline FROM account_analyses aa
+			                   WHERE aa.handle = su.handle
+			                   ORDER BY aa.analyzed_at DESC LIMIT 1) cp ON true
+			LEFT JOIN (SELECT s.account_handle, count(*) AS cnt
+			           FROM account_content_series s
+			           JOIN content_analyses an ON an.short_code = s.short_code
+			                                   AND an.ad_type = 'sponsored'
+			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle""";
+
 	private final JdbcClient jdbcClient;
 
 	public V1InfluencerDiscoveryRepository(JdbcClient jdbcClient) {
@@ -48,24 +64,30 @@ public class V1InfluencerDiscoveryRepository {
 				.params(sql.params).query(Long.class).single();
 	}
 
+	/** 핸들 목록 카드 일괄 조회(6.23 유사 카드 재사용) — 필터·정렬 없음, 순서는 호출부가 복원. */
+	public List<CardRow> findCardsByHandles(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers,
+				       su.posts_count, su.follows_count, su.biography, cp.tagline,
+				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
+				       su.avg_views, su.avg_likes, su.avg_comments,
+				       COALESCE(sp.cnt, 0) AS sponsored_count
+				""" + FROM_JOINS + """
+
+				WHERE a.handle IN (:handles)
+				""").param("handles", handles).query(CardRow.class).list();
+	}
+
 	private record Sql(String fromJoins, String where, Map<String, Object> params) {
 	}
 
 	private Sql build(V1InfluencerDiscoveryQuery q) {
-		// cp(최신 태그라인)·sp(광고 수)는 q·sponsored 필터가 참조하므로 count 쿼리에도 함께 붙인다.
-		String fromJoins = """
-
-				FROM account_summaries su
-				JOIN accounts a ON a.handle = su.handle
-				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
-				LEFT JOIN LATERAL (SELECT aa.tagline FROM account_analyses aa
-				                   WHERE aa.handle = su.handle
-				                   ORDER BY aa.analyzed_at DESC LIMIT 1) cp ON true
-				LEFT JOIN (SELECT s.account_handle, count(*) AS cnt
-				           FROM account_content_series s
-				           JOIN content_analyses an ON an.short_code = s.short_code
-				                                   AND an.ad_type = 'sponsored'
-				           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle""";
+		String fromJoins = FROM_JOINS;
 		StringBuilder where = new StringBuilder("WHERE true");
 		Map<String, Object> params = new HashMap<>();
 		if (q.mainCategory() != null) {

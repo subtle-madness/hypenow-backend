@@ -13,10 +13,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
- * v1 패키지 전용 에러 → envelope 매핑(스펙 3.2). 구 /api 표면에는 영향 없다(basePackages 한정).
+ * v1·v2 패키지 전용 에러 → envelope 매핑(스펙 3.2). 구 /api 표면에는 영향 없다(basePackages 한정).
+ * v2(발굴 리포트 v2, 스펙 6.22·6.23)도 V1ApiException·ApiResponse를 그대로 재사용하므로 같은 advice가 잡는다
+ * — basePackages는 컨트롤러 패키지 기준(예외 패키지 기준 아님)이라 com.celfit.was.v2도 나열해야 한다.
  * 4xx는 클라이언트 잘못이라 로그를 남기지 않고, 캐치올 5xx만 error 로그를 남긴다(의도된 비대칭).
  */
-@RestControllerAdvice(basePackages = "com.celfit.was.v1")
+@RestControllerAdvice(basePackages = {"com.celfit.was.v1", "com.celfit.was.v2"})
 public class V1ExceptionAdvice {
 
 	private static final Logger log = LoggerFactory.getLogger(V1ExceptionAdvice.class);
