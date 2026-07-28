@@ -159,8 +159,13 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 - 접속: `https://dev-api.hypenow.io` (was 로그인 월 — dev 전용 가입 코드 필요)
 - dev 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
 - dev analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
-- 배치는 **운영 인스턴스 동거** — dev 3종은 `profiles: ["dev"]`라 `--profile dev` 없이는 뜨지도,
-  멈추지도 않는다(운영 무영향). mem_limit로 상한을 걸어 운영 메모리를 침식하지 않는다.
+- 배치는 **운영 인스턴스 동거** — dev 3종의 정의는 별도 파일 **`deploy/compose.dev.yaml`**에 있고
+  운영 `compose.yaml`에 겹쳐 쓴다(`-f compose.yaml -f compose.dev.yaml --profile dev`).
+  파일을 나눈 이유: **dev CD는 이 dev 파일만 서버로 보낸다** — 운영 서비스 정의는 main 배포로만
+  서버에 도달하므로, develop의 운영 정의 변경이 dev 배포로 먼저 발효되거나 `depends_on` 연쇄로
+  운영 컨테이너가 재생성되는 사고가 구조적으로 불가능하다(caddy.d 분리와 같은 원리).
+  `profiles: ["dev"]`도 유지 — `--profile dev` 없이는 뜨지도 멈추지도 않는다(이중 가드).
+  mem_limit로 상한을 걸어 운영 메모리를 침식하지 않는다.
 - raw는 운영 `postgres-raw` **공유** — dev 계정 `analytics_dev`는 crawler 테이블(public) 읽기 전용,
   뷰·캐시는 자기 소유 `analytics_dev` 스키마에 치환 설치(`rewrite-views-dev-schema.sh`).
   운영 `analytics` 스키마엔 USAGE도 없다 — 치환 누락은 권한 오류로 즉사(fail-closed).
@@ -219,8 +224,9 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
   ```
 - 스냅샷 캐시 refresh(필요 시):
   `ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -c "SELECT analytics_dev.refresh_snapshot_cache();"'`
-- dev 스택 정지: `cd ~/deploy && docker compose --profile dev stop dev-was dev-analytics dev-postgres`
-  (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 `up -d` 같은 인자.
+- dev 스택 정지:
+  `cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev stop dev-was dev-analytics dev-postgres`
+  (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 같은 `-f`·프로파일 인자에 `up -d`.
 - 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-dev-was-1` ·
   `deploy-dev-analytics-1` · `deploy-dev-postgres-1`. 모니터링 `SERVICES` 목록(§9)에는 dev를 넣지
   않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.

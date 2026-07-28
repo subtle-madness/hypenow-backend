@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # rewrite-views-dev-schema.sh 픽스처 테스트 — 실제 뷰 SQL의 4가지 패턴을 커버:
-# ①스키마 생성(무점) ②뷰 정의·참조 ③따옴표 설정 키(치환 금지) ④달러 인용 함수 본문·DROP
+# ①스키마 생성문(삭제 — dev 계정은 DB CREATE 권한이 없다) ②뷰 정의·참조
+# ③따옴표 설정 키(치환 금지) ④달러 인용 함수 본문·DROP
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -20,7 +21,6 @@ IN
 )
 
 expected=$(cat <<'OUT'
-CREATE SCHEMA IF NOT EXISTS analytics_dev;
 CREATE OR REPLACE VIEW analytics_dev.v_base_influencer AS
 SELECT id FROM influencer;
 analytics_dev.v_line_start_case AS x
