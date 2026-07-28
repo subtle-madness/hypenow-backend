@@ -112,6 +112,21 @@ class V2InfluencerReportAssemblerTest {
 	}
 
 	@Test
+	void erTrend는_최신_12개만_취하고_가장_오래된_1건은_절단() {
+		// 13건, 올린 순(ASC) — likes를 i×10으로 늘려 각 er 값을 구분한다.
+		// 앞(가장 오래된) 1건이 잘려야 하므로 첫 요소는 2번째 게시물(07-02)이어야 한다.
+		var series = new java.util.ArrayList<SeriesRow>();
+		for (int i = 1; i <= 13; i++) {
+			series.add(row("2026-07-%02dT00:00:00Z".formatted(i), null, i * 10, 0, false));
+		}
+		var trend = assembler.toReport(summary(), copy(), series, List.of(), List.of()).erTrend();
+		assertThat(trend).hasSize(12);
+		assertThat(trend.get(0).date()).isEqualTo("2026-07-02");        // 07-01(가장 오래된 1건)이 절단됨
+		assertThat(trend.get(0).value()).isEqualByComparingTo("0.2");   // (20+0)×100/10000
+		assertThat(trend.get(11).date()).isEqualTo("2026-07-13");       // 마지막(최신) 게시물
+	}
+
+	@Test
 	void ads는_정수_간격과_사실값_헤드라인_브랜드_중첩() {
 		// 광고 3건: 07-01·07-05·07-09 → 스팬 8일/2 = 4일, 마지막 광고 19일 전(기준 07-28)
 		var series = List.of(

@@ -123,13 +123,14 @@ public class V2InfluencerReportAssembler {
 				.toList();
 	}
 
-	/** erTrend — 최근 게시물 전체 올린 순 최대 12개, 게시물당 (좋아요+댓글)×100/팔로워 소수 1.
-	 *  팔로워 근거 없으면 빈 배열. 음수 센티널(likes -1)은 0 클램프. */
+	/** erTrend — 최근 게시물 전체 올린 순 최신 12개(창 확장 대비 뒤에서 절단 — series는 ASC라
+	 *  앞을 자르면 오래된 쪽이 남는 실수가 생기기 쉽다, viewsTrend와 동일한 절단 방향),
+	 *  게시물당 (좋아요+댓글)×100/팔로워 소수 1. 팔로워 근거 없으면 빈 배열. 음수 센티널(likes -1)은 0 클램프. */
 	private List<TrendPoint> erTrend(List<SeriesRow> series, Long followers) {
 		if (followers == null || followers <= 0) {
 			return List.of();
 		}
-		return series.stream().limit(ER_TREND_MAX).map(s -> {
+		return series.stream().skip(Math.max(0, series.size() - ER_TREND_MAX)).map(s -> {
 			long likes = s.likes() == null ? 0 : Math.max(s.likes(), 0);
 			long comments = s.comments() == null ? 0 : Math.max(s.comments(), 0);
 			BigDecimal er = BigDecimal.valueOf((likes + comments) * 100.0 / followers)

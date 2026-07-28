@@ -24,6 +24,9 @@ import tools.jackson.databind.ObjectMapper;
  * o3~o6 — dupe와 같은 브랜드(롬앤) 협찬 계정, 협업 수 3~6(4명뿐이라 5번째 슬롯은 원래 비어야 함).
  *   자기 제외(<> :h)가 없으면 dupe(cnt 1)가 그 빈 슬롯을 채워 5번째로 들어온다 — othersJson 단언은
  *   정확히 4개(o6~o3)이고 dupe가 없음을 함께 확인해 자기 제외 절이 실제로 결과를 바꾼다는 걸 증명한다.
+ *   o3의 게시물 하나(o3_1)는 detected_brands에 롬앤을 2회 중복 기재 — count(*)였다면 o3 cnt가
+ *   4로 부풀어 o4(진짜 4)와 동률→최신순 tie-break로 o3가 o4를 앞지르지만, count(DISTINCT
+ *   short_code)면 o3는 실게시물 수 3을 유지해 o4 뒤 순위(o6,o5,o4,o3)가 그대로다.
  * sim_me/sim_true/sim_mid/sim_dup/sim_far_tie/sim_other_cat — 유사 핸들 Jaccard·팔로워 근접·
  *   카테고리 필터·DISTINCT 교집합 검증(sim_dup은 trait 중복 기재로 raw count면 부풀려짐).
  */
@@ -244,6 +247,11 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				SELECT 'o' || acct || '_' || n, true, 'skincare', 'sponsored', '[{"name":"롬앤"}]'::jsonb
 				FROM generate_series(3, 6) AS acct, generate_series(1, 6) AS n
 				WHERE n <= acct""");
+		// o3_1만 롬앤을 2회 중복 기재 — o3의 실게시물 수는 여전히 3, 하지만 count(*)라면 4로 부풀어
+		// o4(실게시물 4)와 동률이 되고, o3가 o4보다 최신이라 tie-break로 순위가 역전된다(others 판별 재료).
+		jdbcTemplate.update("""
+				UPDATE content_analyses SET detected_brands = '[{"name":"롬앤"},{"name":"롬앤"}]'::jsonb
+				WHERE short_code = 'o3_1'""");
 
 		// 유사 핸들 재료 — 전부 스킨케어(sim_other_cat만 메이크업), 팔로워는 sim_me=10000 기준.
 		jdbcTemplate.update("""
@@ -358,6 +366,9 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// 후보는 o3~o6(4명)뿐이라 5번째 슬롯이 원래 비어야 한다. 자기 제외(<> :h) 절이 없으면
 		// dupe(cnt 1) 자신이 그 슬롯을 채워 5개가 되고 dupe가 포함된다 — 정확히 4개+dupe 부재로
 		// 자기 제외가 실제로 결과를 바꾼다는 걸 함께 증명한다.
+		// o3_1의 중복 기재도 여기서 함께 걸린다: others의 cnt가 count(*)라면 o3=4로 o4와 동률→
+		// tie-break(최신순)로 o3가 o4를 앞질러 순서가 o6,o5,o3,o4가 된다. count(DISTINCT
+		// short_code)면 o3는 실게시물 수 3을 유지해 아래 순서(o6,o5,o4,o3)가 그대로 성립한다.
 		assertThat(others).containsExactly("o6", "o5", "o4", "o3"); // 협업 수 내림차순
 		assertThat(others).doesNotContain("dupe");
 	}

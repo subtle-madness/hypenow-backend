@@ -69,7 +69,8 @@ public class V2InfluencerReportRepository {
 	 * ads.brands — 이 계정의 브랜드별 협찬 게시물(contentIds, 올린 순)과 풀 내 같은 브랜드 협업 계정
 	 * 상위 5(otherInfluencers, 협업 수 내림차순 — 스펙 7절 22번 백엔드 확정). pairs에서 (브랜드,게시물)
 	 * DISTINCT — detected_brands 배열에 같은 브랜드가 중복 기재돼도 contentIds·cnt가 안 부풀도록
-	 * (traits Jaccard DISTINCT 교훈과 동일). JSON 집계는 CopyRow.traitsJson과 같은 ::text 관용구.
+	 * (traits Jaccard DISTINCT 교훈과 동일). others의 cnt도 count(DISTINCT s2.short_code)로 게시물
+	 * 단위 중복 제거(mine과 대칭). JSON 집계는 CopyRow.traitsJson과 같은 ::text 관용구.
 	 */
 	public List<BrandCollabRow> findBrandCollabs(String handle) {
 		return jdbcClient.sql("""
@@ -87,7 +88,8 @@ public class V2InfluencerReportRepository {
 				)
 				SELECT m.name, m.cnt, m.content_ids_json,
 				       COALESCE((SELECT jsonb_agg(o.handle ORDER BY o.cnt DESC, o.last_at DESC)
-				                 FROM (SELECT s2.account_handle AS handle, count(*) AS cnt,
+				                 FROM (SELECT s2.account_handle AS handle,
+				                              count(DISTINCT s2.short_code) AS cnt,
 				                              max(s2.posted_at) AS last_at
 				                       FROM account_content_series s2
 				                       JOIN content_analyses an2 ON an2.short_code = s2.short_code
