@@ -233,6 +233,9 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 
 ### 주의 (함정 2건)
 
+- **develop 머지는 실행 중인 dev 잡을 끊는다.** cd-dev가 dev 컨테이너를 새 이미지로 재생성하므로,
+  미러·분석 잡이 돌던 중이면 그대로 중단된다(07-28 첫 미러가 이렇게 유실 — 재실행으로 해소).
+  긴 잡을 돌릴 땐 develop 머지 타이밍을 피하거나, 끊겼으면 어드민에서 재트리거하면 된다.
 - **orphan 경고는 정상, `--remove-orphans` 금지.** dev 기동 후 운영 경로(`docker compose up -d`,
   deploy.sh)는 매번 `Found orphan containers (deploy-dev-was-1 …)` 경고를 낸다 — dev 서비스가
   `compose.dev.yaml`에 있어 운영 파일 단독 실행엔 "고아"로 보일 뿐이다. 경고문이 권하는
