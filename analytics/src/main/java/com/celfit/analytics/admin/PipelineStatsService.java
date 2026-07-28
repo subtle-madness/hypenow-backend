@@ -1,10 +1,12 @@
 package com.celfit.analytics.admin;
 
+import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.config.AnalyticsSettings;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -44,6 +46,7 @@ public class PipelineStatsService {
 			long servingContents, long servingAnalyzed,
 			long immaturePool, long lateExcluded,
 			long beautyHandles, long beautyCopied,
+			ArchiveCoverage archive,
 			Instant computedAt) {
 
 		public long timelyPending() {
@@ -58,6 +61,56 @@ public class PipelineStatsService {
 		public long truePending() {
 			return timelyPending() + windowPending();
 		}
+	}
+
+	/**
+	 * 아카이브 커버리지 — ImageArchiveJob의 대상 선정 규칙과 동일한 대조(썸네일=미기록 short_code,
+	 * 프로필=원본 파일명 불일치). 잡과 규칙이 어긋나면 카드 잔여와 실제 처리량이 어긋난다.
+	 */
+	public record ArchiveCoverage(long thumbTargets, long thumbArchived,
+			long profileTargets, long profileFresh) {
+
+		public long thumbPending() {
+			return thumbTargets - thumbArchived;
+		}
+
+		public long profilePending() {
+			return profileTargets - profileFresh;
+		}
+
+		public long targets() {
+			return thumbTargets + profileTargets;
+		}
+
+		public long archived() {
+			return thumbArchived + profileFresh;
+		}
+
+		public long pending() {
+			return thumbPending() + profilePending();
+		}
+	}
+
+	/** 대상 밖 기록(archived에만 있는 키)은 안 센다 — 잡이 다시 볼 일 없는 키라 커버리지 분자 부풀림 방지. */
+	static ArchiveCoverage archiveCoverage(Set<String> thumbCodes, Set<String> archivedThumbs,
+			Map<String, String> profileUrls, Map<String, String> archivedProfileSources) {
+		long thumbArchived = thumbCodes.stream().filter(archivedThumbs::contains).count();
+		long profileFresh = 0;
+		for (Map.Entry<String, String> e : profileUrls.entrySet()) {
+			String archivedSource = archivedProfileSources.get(e.getKey());
+			if (archivedSource == null) {
+				continue;
+			}
+			try {
+				if (ImageArchiveJob.sourceName(e.getValue()).equals(archivedSource)) {
+					profileFresh++;
+				}
+			} catch (RuntimeException ex) {
+				// URL 파싱 불가 — 잡과 동일하게 '변경 취급'(갱신 대기로 남긴다)
+			}
+		}
+		return new ArchiveCoverage(thumbCodes.size(), thumbArchived,
+				profileUrls.size(), profileFresh);
 	}
 
 	/** 계정 축 (raw influencer, 현재 스냅샷 — 매 요청 싼 카운트). nonBeauty는 미판정 포함. */
@@ -290,6 +343,14 @@ public class PipelineStatsService {
 				analysis.queryForList("SELECT short_code FROM content_analyses", String.class));
 		Set<String> copiedHandles = new HashSet<>(
 				analysis.queryForList("SELECT DISTINCT handle FROM account_analyses", String.class));
+		// 아카이브 기록 셋 — 다른 DB(analysis)라 raw 스냅샷과 정합 불가는 기존 셋들과 같은 한계.
+		Set<String> archivedThumbs = new HashSet<>(analysis.queryForList(
+				"SELECT key FROM image_assets WHERE kind = 'thumbnail'", String.class));
+		Map<String, String> archivedProfiles = new HashMap<>();
+		analysis.query("SELECT key, source_name FROM image_assets WHERE kind = 'profile'",
+				rs -> {
+					archivedProfiles.put(rs.getString(1), rs.getString(2));
+				});
 		return raw.execute((Connection con) -> {
 			boolean oldAutoCommit = con.getAutoCommit();
 			int oldIsolation = con.getTransactionIsolation();
@@ -334,6 +395,21 @@ public class PipelineStatsService {
 							if (copiedHandles.contains(rs.getString(1))) beautyCopied++;
 						}
 					}
+					// ⑤ 아카이브 커버리지 — 잡(ImageArchiveJob)의 대상 쿼리와 동일한 선정으로 대조.
+					Set<String> thumbCodes = new HashSet<>();
+					try (ResultSet rs = st.executeQuery(
+							"SELECT short_code FROM v_contents WHERE thumbnail_url IS NOT NULL")) {
+						while (rs.next()) {
+							thumbCodes.add(rs.getString(1));
+						}
+					}
+					Map<String, String> profileUrls = new HashMap<>();
+					try (ResultSet rs = st.executeQuery(
+							"SELECT handle, profile_image_url FROM v_accounts WHERE profile_image_url IS NOT NULL")) {
+						while (rs.next()) {
+							profileUrls.put(rs.getString(1), rs.getString(2));
+						}
+					}
 					con.commit();
 					long candidates = tracks.timelyTotal() + tracks.windowTotal();
 					return new Heavy(candidates,
@@ -342,7 +418,9 @@ public class PipelineStatsService {
 							serving, servingAnalyzed,
 							Math.max(0, captionPool - maturePool),
 							Math.max(0, maturePool - candidates),
-							beautyHandles, beautyCopied, Instant.now());
+							beautyHandles, beautyCopied,
+							archiveCoverage(thumbCodes, archivedThumbs, profileUrls, archivedProfiles),
+							Instant.now());
 				}
 			} catch (java.sql.SQLException e) {
 				con.rollback();

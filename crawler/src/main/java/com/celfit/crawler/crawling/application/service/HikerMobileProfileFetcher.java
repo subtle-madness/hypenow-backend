@@ -48,7 +48,8 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
         return executor.execute(job, trigger, null, null, LABEL, () -> collect(usernames));
     }
 
-    private ApifyResult collect(List<String> usernames) {
+    /** 컴포지트(SELF_HIKER_FALLBACK)의 400 폴백 경로에서도 직접 호출된다 — 패키지 가시성. */
+    ApifyResult collect(List<String> usernames) {
         List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
         List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
         // close()가 제출된 작업 완료까지 대기(Java 21) — 청크 반환 시점에 결과가 전부 모여 있다

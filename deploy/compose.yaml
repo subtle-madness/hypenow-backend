@@ -61,11 +61,13 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       # Vertex SA 키 — provider=vertex일 때만 읽힘(빈 생성 시점), 파일은 secrets/ 볼륨
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-      # 스케줄(KST=UTC+9): 미러 04:30 → 아카이브 04:50 → 분석 05:00 → 계정 카피 07:00 (백업 04:10 이후)
+      # 스케줄(KST=UTC+9): 미러 04:30 → 아카이브 04:50 → 분석 05:00 → 백필 06:00 → 계정 카피 07:00 (백업 04:10 이후)
       ANALYTICS_SCHEDULE_ENABLED: "true"
       ANALYTICS_SCHEDULE_MIRROR_CRON: "0 30 19 * * *"
       ANALYTICS_SCHEDULE_ARCHIVE_CRON: "0 50 19 * * *"
       ANALYTICS_SCHEDULE_ANALYZE_CRON: "0 0 20 * * *"
+      # 늦크롤 백필 — timely와 예산 독립(2026-07-23 분리). 신규 계정 온보딩 백카탈로그가 주 대상
+      ANALYTICS_SCHEDULE_LATE_BACKFILL_ANALYZE_CRON: "0 0 21 * * *"
       ANALYTICS_SCHEDULE_ACCOUNT_ANALYZE_CRON: "0 0 22 * * *"
       ANALYTICS_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       JAVA_OPTS: "-Xms256m -Xmx768m"

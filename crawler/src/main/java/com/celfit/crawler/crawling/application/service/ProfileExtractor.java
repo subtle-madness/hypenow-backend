@@ -8,6 +8,18 @@ import java.util.Map;
 /** 프로필 응답 원형에서 제어 필드(followers·userId·username) 추출. 소스별 경로. */
 public final class ProfileExtractor {
 
+    /**
+     * 혼합 배치(SELF 베이스 + 400 Hiker 폴백)의 아이템별 소스 감지. SELF_GQL 원형은 루트에
+     * "data", HIKER_MOBILE 원형은 "user" 래퍼 또는 flat "pk"가 있다. SELF_GQL 기본이 아닌
+     * 배치는 감지하지 않는다 — DATALIKERS 등 flat 원형이 HIKER_MOBILE로 오기록되는 것을 막는다.
+     */
+    public static RawSource detect(Map<String, Object> payload, RawSource defaultSource) {
+        if (defaultSource != RawSource.SELF_GQL) return defaultSource;
+        if (payload.get("data") instanceof Map) return RawSource.SELF_GQL;
+        if (payload.get("user") instanceof Map || payload.containsKey("pk")) return RawSource.HIKER_MOBILE;
+        return defaultSource;
+    }
+
     public static Long followers(Map<String, Object> payload, RawSource source) {
         return switch (source) {
             case SELF_GQL -> asLong(dig(payload, "data", "user", "edge_followed_by", "count"));

@@ -14,7 +14,7 @@ import java.util.Set;
 public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExclusive,
 		String contentType, String mainCategory, String midCategory, String subCategory,
 		String follower, String keyword, String adType, String distributorId,
-		String sort, int limit) {
+		String sort, int limit, int offset) {
 
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final Set<String> CONTENT_TYPES = Set.of("reels", "feed");
@@ -26,7 +26,8 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 
 	public static V1ContentQuery of(LocalDate startDate, LocalDate endDate, String contentType,
 			String mainCategory, String midCategory, String subCategory, String follower,
-			String keyword, String adType, String distributorId, String sort, Integer limit) {
+			String keyword, String adType, String distributorId, String sort, Integer limit,
+			Integer offset) {
 		if (startDate.isAfter(endDate)) {
 			throw V1ApiException.validation("조회 기간이 올바르지 않습니다.");
 		}
@@ -45,10 +46,12 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 		require(ad == null || AD_TYPES.contains(ad), "adType");
 		int lim = limit == null ? 100 : limit;
 		require(lim >= 1 && lim <= 100, "limit");
+		int off = offset == null ? 0 : offset;
+		require(off >= 0, "offset");
 		return new V1ContentQuery(
 				startDate.atStartOfDay(KST).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC),
 				endDate.plusDays(1).atStartOfDay(KST).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC),
-				ct, main, mid, sub, fo, blankToNull(keyword), ad, dist, so, lim);
+				ct, main, mid, sub, fo, blankToNull(keyword), ad, dist, so, lim, off);
 	}
 
 	private static void require(boolean ok, String name) {

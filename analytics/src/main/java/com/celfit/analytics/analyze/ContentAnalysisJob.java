@@ -6,9 +6,11 @@ import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
 import com.celfit.analytics.llm.Synthesis;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,10 +25,11 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 콘텐츠 분석 배치 (스펙 §6). 분석 시점 고정·불변 — INSERT만, 재분석 없음.
- * 대상: 미분석 AND (댓글 없음 OR 분류 완료) AND 게시 후 N일 경과(기본 3 — B3 숙성 가드).
+ * 대상: raw 후보 뷰(v_analysis_candidates)의 후보 중 미분석 AND (댓글 없음 OR 분류 완료) —
+ * 자격(캘린더일 timely·성숙·윈도우)은 뷰 소관(07-28 정합), 제외는 여기 Java diff 소관.
  * timely(run())와 late_backfill(runLateBackfill())은 서로 다른 진입점 — 예산·스케줄이 별도라
- * 백필 후보가 몰려도 매일 갱신돼야 할 timely 분석이 밀리지 않는다(2026-07-23 설계, NOT timely로
- * 상호 배타적).
+ * 백필 후보가 몰려도 매일 갱신돼야 할 timely 분석이 밀리지 않는다(2026-07-23 설계, 뷰의
+ * timely 컬럼으로 서로소 분할).
  * 속성 분석은 캡션 주·썸네일 보조 (2026-07-14 캡션 분류 스펙) — 썸네일 만료여도 캡션으로 5종 산출.
  * 콘텐츠 단위 실패 격리: 한 건 실패는 로그 후 계속 (B2 리뷰 반영).
  */
@@ -37,53 +40,17 @@ public class ContentAnalysisJob {
 	private static final Baseline EMPTY_BASELINE =
 			new Baseline(null, null, null, null, null, null, null, null, null, null);
 
-	// 제때 크롤 가드(07-19 정정, 판정식 07-20 보존): 고정 지표가 성숙(+pin일) 스냅샷이면서
-	// +(pin+slack)일 안에 잡힌 것만 timely. posted_at·metric_captured_at NULL은 COALESCE로
-	// timely=false로 자연 제외.
-	private static final String TIMELY_SQL = """
-			WITH base AS (
-			  SELECT c.short_code, c.metric_captured_at,
-			         COALESCE(c.metric_captured_at >= c.posted_at + make_interval(days => ?)
-			              AND c.metric_captured_at < c.posted_at + make_interval(days => ?), false) AS timely
-			  FROM contents c
-			  WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
-			    AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
-			         OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-			    AND c.posted_at <= now() - make_interval(days => ?)
-			)
+	// 후보 자격은 raw 후보 뷰가 정본(07-28 캘린더일 정합 — 뷰 04 주석 참조): 캘린더일(KST)
+	// timely 판정·성숙(창닫힘)·최근 N개 윈도우 게이트 전부 뷰 소관. 잡은 timely 플래그로 두
+	// 진입점을 서로소 분할(WHERE timely = ?)하고 마킹에 그대로 쓴다. 구 간격식(캡처가 업로드
+	// +pin~+pin+slack일 '시간 간격' 안) 판정은 뷰의 캘린더일 정정(07-20)과 갈라져 일 수백 건이
+	// late_backfill로 새던 원인이라 제거 — 수식은 뷰 한 곳에만 둔다.
+	// '이미 분석됨'·댓글 게이트 제외는 analysis DB 상태라 SQL 조인이 불가 — Java 셋 대조(diff)로
+	// 뺀다(뷰 주석의 원 설계: "'이미 분석됨' 제외·정렬 정책은 Java 몫").
+	private static final String CANDIDATES_SQL = """
 			SELECT short_code
-			FROM base
-			WHERE timely
-			ORDER BY metric_captured_at DESC NULLS LAST, short_code""";
-
-	// timely 가드를 못 채운 콘텐츠 중 계정별 최근 N개(recent-window) 윈도우 안인 것만 — 늦크롤 백필
-	// (07-20 재도입). NOT timely로 timely 쿼리와 상호 배타적(같은 콘텐츠를 두 잡이 동시에 집지 않음).
-	// 창 닫힘 게이트(posted_at + (pin+slack)일 <= now())는 윈도우 분기에만 건다 — 제때창이 아직 열려
-	// 있는 콘텐츠를 조기에 late_backfill로 분석해버리면, 나중에 진짜 timely 스냅샷이 들어와도
-	// content_analyses가 불변이라 영구 오분류된다.
-	private static final String LATE_BACKFILL_SQL = """
-			WITH base AS (
-			  SELECT c.short_code, c.metric_captured_at,
-			         COALESCE(c.metric_captured_at >= c.posted_at + make_interval(days => ?)
-			              AND c.metric_captured_at < c.posted_at + make_interval(days => ?), false) AS timely
-			  FROM contents c
-			  WHERE NOT EXISTS (SELECT 1 FROM content_analyses a WHERE a.short_code = c.short_code)
-			    AND (NOT EXISTS (SELECT 1 FROM content_comments m WHERE m.short_code = c.short_code)
-			         OR EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = c.short_code))
-			    AND c.posted_at <= now() - make_interval(days => ?)
-			),
-			ranked AS (
-			  SELECT short_code, posted_at,
-			         row_number() OVER (PARTITION BY account_handle
-			             ORDER BY posted_at DESC, short_code DESC) AS rn
-			  FROM contents
-			)
-			SELECT short_code
-			FROM base
-			WHERE NOT timely AND short_code IN (
-			  SELECT short_code FROM ranked
-			  WHERE rn <= ? AND posted_at <= now() - make_interval(days => ?)
-			)
+			FROM v_analysis_candidates
+			WHERE timely = ?
 			ORDER BY metric_captured_at DESC NULLS LAST, short_code""";
 
 	private final JdbcTemplate raw;
@@ -116,37 +83,56 @@ public class ContentAnalysisJob {
 	/**
 	 * @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부)
 	 *
-	 * <p>timely 가드를 충족한 미분석 콘텐츠 전량(LIMIT 없음 — 실질 상한은 LLM 429 quota).
+	 * <p>후보 뷰의 timely 후보 전량(LIMIT 없음 — 실질 상한은 LLM 429 quota).
 	 */
 	public JobResult run() {
-		int pinDays = settings.metricPinDays();
-		int slackDays = settings.analyzeTimelySlackDays();
-		return runQuery(TIMELY_SQL,
-				new Object[] {pinDays, pinDays + slackDays, settings.analyzeMaturityDays()},
-				true, reporter);
+		return runQuery(true, reporter);
 	}
 
 	/**
 	 * @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부)
 	 *
-	 * <p>timely 가드는 못 채웠지만 계정별 최근 N개 윈도우 안인 콘텐츠 전량(LIMIT 없음).
-	 * run()과 상호 배타적 — 같은 short_code가 두 쿼리에 동시에 잡히지 않는다.
+	 * <p>후보 뷰의 NOT timely 후보(= 최근 N개 윈도우 안 늦크롤) 전량(LIMIT 없음).
+	 * run()과 상호 배타 — 같은 뷰의 timely 컬럼으로 서로소 분할이라 같은 short_code가
+	 * 두 진입점에 동시에 잡히지 않는다.
 	 */
 	public JobResult runLateBackfill() {
-		int pinDays = settings.metricPinDays();
-		int slackDays = settings.analyzeTimelySlackDays();
-		return runQuery(LATE_BACKFILL_SQL,
-				new Object[] {pinDays, pinDays + slackDays, settings.analyzeMaturityDays(),
-						settings.recentWindow(), pinDays + slackDays},
-				false, backfillReporter);
+		return runQuery(false, backfillReporter);
 	}
 
-	private JobResult runQuery(String sql, Object[] params, boolean timely, ProgressReporter progress) {
+	private JobResult runQuery(boolean timely, ProgressReporter progress) {
 		Baselines baselines = loadBaselines();
+		List<String> candidates = new ArrayList<>();
+		raw.query(CANDIDATES_SQL, rs -> {
+			candidates.add(rs.getString(1));
+		}, timely);
+		// analysis 쪽 제외 셋 3종 — 후보 수만·분석 누적 8만 스케일이라 통짜 로드가 충분히 싸다.
+		Set<String> analyzed = new HashSet<>(
+				analysis.queryForList("SELECT short_code FROM content_analyses", String.class));
+		// 댓글이 미러됐는데 분류가 아직인 콘텐츠는 댓글 인사이트 입력이 미완이라 보류(기존 게이트 유지)
+		Set<String> commentBlocked = new HashSet<>(analysis.queryForList("""
+				SELECT DISTINCT m.short_code FROM content_comments m
+				WHERE NOT EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = m.short_code)""",
+				String.class));
+		// 라이브 후보 뷰와 미러(전날 19:30 스냅샷) 간극 가드 — 미러에 아직 없는 후보를 analyzeOne이
+		// 조회 실패(실패 카운트 오염)로 만들지 않고 스킵한다. 다음 미러 후 자연 재대상.
+		Set<String> mirrored = new HashSet<>(
+				analysis.queryForList("SELECT short_code FROM contents", String.class));
 		List<String> targets = new ArrayList<>();
-		analysis.query(sql, rs -> {
-			targets.add(rs.getString(1));
-		}, params);
+		int mirrorMissing = 0;
+		for (String shortCode : candidates) {
+			if (analyzed.contains(shortCode) || commentBlocked.contains(shortCode)) {
+				continue;
+			}
+			if (!mirrored.contains(shortCode)) {
+				mirrorMissing++;
+				continue;
+			}
+			targets.add(shortCode);
+		}
+		if (mirrorMissing > 0) {
+			log.info("미러 부재 후보 {}건 스킵 — 다음 미러 후 자연 재대상", mirrorMissing);
+		}
 		String model = settings.activeLlmModel();
 		AtomicInteger processedCount = new AtomicInteger();
 		AtomicInteger failedCount = new AtomicInteger();

@@ -264,4 +264,38 @@ class SelfProfileFetcherTest {
         assertThat(ex.items()).isEmpty();       // 소진 — 방문 실패로 다음 실행 재시도
         assertThat(ex.notFound()).isEmpty();    // 404(계정 소멸)와는 구분된다
     }
+
+    @Test void 상태코드_400은_badRequestOut에_수집되고_스킵된다() {
+        var f = new SelfProfileFetcher(webReturning(400, "{\"status\":\"fail\"}"), passthroughExecutor(),
+                new ObjectMapper(), Duration.ZERO);
+
+        List<String> badRequest = new java.util.ArrayList<>();
+        ApifyResult r = f.collect(List.of("bugged"), badRequest);
+
+        assertThat(r.items()).isEmpty();
+        assertThat(r.notFound()).isEmpty();   // 404(계정 소멸)와 구분된다
+        assertThat(badRequest).containsExactly("bugged");
+    }
+
+    // 400은 블록(429·401·403) 신호가 아니다 — 연속으로 나와도 회로를 트립시키지 않고 전 계정을 조회한다.
+    @Test void 연속_400은_회로를_트립시키지_않는다() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                calls.incrementAndGet();
+                return new Response(400, "{\"status\":\"fail\"}", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        List<String> badRequest = new java.util.ArrayList<>();
+        List<String> many = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "u" + i).toList();
+        f.collect(many, badRequest);
+
+        assertThat(calls.get()).isEqualTo(20);            // 중단 없음 — 계정당 1회씩 전부 조회
+        assertThat(badRequest).hasSize(20);
+    }
 }

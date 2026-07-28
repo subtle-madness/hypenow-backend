@@ -91,7 +91,30 @@ class V1ContentControllerTest {
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.meta.total").value(0))
 				.andExpect(jsonPath("$.meta.limit").value(100))
+				.andExpect(jsonPath("$.meta.offset").value(0))
 				.andExpect(jsonPath("$.meta.distributors[0].id").value("daiso"));
+	}
+
+	@Test
+	void offset_파라미터는_meta에_그대로_반영된다() throws Exception {
+		given(repository.findCards(any())).willReturn(List.of());
+		given(repository.countCards(any())).willReturn(0L);
+		given(repository.findDistributorOptions()).willReturn(List.of());
+
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
+						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
+						.param("offset", "20"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.offset").value(20));
+	}
+
+	@Test
+	void 음수_offset은_VALIDATION_FAILED() throws Exception {
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
+						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
+						.param("offset", "-1"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 	}
 
 	@Test
