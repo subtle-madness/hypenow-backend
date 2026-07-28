@@ -33,6 +33,8 @@ public class CacheConfig implements CachingConfigurer {
 
 	@Bean
 	public RedisCacheManager cacheManager(RedisConnectionFactory factory) {
+		// 주의: 캐시 값의 OffsetDateTime은 왕복 시 offset이 UTC로 정규화된다(instant는 보존) —
+		// 캐시 DTO의 시간 필드는 instant 기반으로만 소비할 것.
 		RedisCacheConfiguration base = RedisCacheConfiguration.defaultCacheConfig()
 				.computePrefixWith(name -> "hypenow:cache:" + name + ":")
 				.serializeValuesWith(RedisSerializationContext.SerializationPair
@@ -73,7 +75,6 @@ public class CacheConfig implements CachingConfigurer {
 	}
 
 	private static void warn(String op, Cache cache, Object key, RuntimeException e) {
-		log.warn("캐시 {} 실패(fail-open, 무시) cache={} key={}: {}", op, cache.getName(), key,
-				e.getMessage());
+		log.warn("캐시 {} 실패(fail-open, 무시) cache={} key={}", op, cache.getName(), key, e);
 	}
 }

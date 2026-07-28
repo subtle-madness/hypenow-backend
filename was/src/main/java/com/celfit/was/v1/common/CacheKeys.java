@@ -5,7 +5,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-/** 캐시 키 축약 — 정규화된 쿼리 toString을 SHA-256 hex로 접는다(같은 조건 = 같은 키, 스펙 §4). */
+/**
+ * 캐시 키 축약 — 정규화된 쿼리 toString을 SHA-256 hex로 접는다(같은 조건 = 같은 키, 스펙 §4).
+ * 입력 정규화(기본값 명시화·순서 고정)는 호출자 책임 — 이 유틸은 임의 문자열 해시일 뿐이다.
+ */
 public final class CacheKeys {
 
 	private CacheKeys() {

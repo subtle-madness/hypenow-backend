@@ -13,18 +13,22 @@ import org.springframework.stereotype.Component;
  * 목록 다음 페이지 선계산 실행기(스펙 §5) — 응답 반환 후 N+1 페이지를 캐시에 미리 적재한다.
  * 실패·포화는 조용히 버린다(fail-open과 동일): 프리페치는 최적화지 기능이 아니다.
  * 중복 계산 방지는 @Cacheable(sync=true)가 담당 — 여기서는 스킵 판단을 하지 않는다.
+ * 프리페치 스레드에는 요청 컨텍스트(SecurityContext 등)가 없다 — 비개인화 공통 페이지 계산만 태울 것.
  */
 @Component
 public class PagePrefetcher {
 
 	private static final Logger log = LoggerFactory.getLogger(PagePrefetcher.class);
 
+	// 큐를 짧게(16) 유지 — TPE는 큐 포화 후에야 max(2)로 늘고, 포화 시 DiscardPolicy가
+	// 낡은 프리페치를 빨리 버리는 게 목적(프리페치는 시효성 작업).
 	private final ExecutorService pool = new ThreadPoolExecutor(1, 2, 30, TimeUnit.SECONDS,
-			new ArrayBlockingQueue<>(64), runnable -> {
+			new ArrayBlockingQueue<>(16), runnable -> {
 				Thread t = new Thread(runnable, "page-prefetch");
 				t.setDaemon(true);
+				t.setUncaughtExceptionHandler((th, ex) -> log.warn("프리페치 스레드 비정상 종료", ex));
 				return t;
-			}, new ThreadPoolExecutor.DiscardPolicy());
+			}, (r, executor) -> log.debug("프리페치 폐기(포화)"));
 
 	/** 마지막 페이지·부분 페이지면 프리페치하지 않는다. */
 	public static boolean hasNextPage(int returned, int limit, int offset, long total) {
@@ -36,7 +40,7 @@ public class PagePrefetcher {
 			try {
 				task.run();
 			} catch (RuntimeException e) {
-				log.debug("프리페치 실패(무시)", e);
+				log.warn("프리페치 실패(무시)", e);
 			}
 		});
 	}

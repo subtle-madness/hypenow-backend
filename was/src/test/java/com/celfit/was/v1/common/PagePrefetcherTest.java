@@ -4,9 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class PagePrefetcherTest {
+
+	private final PagePrefetcher prefetcher = new PagePrefetcher();
+
+	@AfterEach
+	void tearDown() {
+		prefetcher.shutdown();
+	}
 
 	@Test
 	void 다음_페이지_판정() {
@@ -17,16 +26,23 @@ class PagePrefetcherTest {
 	}
 
 	@Test
-	void 작업이_실행되고_예외는_삼킨다() throws Exception {
-		PagePrefetcher prefetcher = new PagePrefetcher();
+	void 예외가_삼켜져_워커_스레드가_살아남는다() throws Exception {
+		AtomicLong firstThread = new AtomicLong();
+		AtomicLong secondThread = new AtomicLong();
 		CountDownLatch ran = new CountDownLatch(1);
 		prefetcher.prefetch(() -> {
+			firstThread.set(Thread.currentThread().threadId());
 			ran.countDown();
 			throw new IllegalStateException("boom"); // 삼켜져야 함
 		});
 		assertThat(ran.await(2, TimeUnit.SECONDS)).isTrue();
 		CountDownLatch after = new CountDownLatch(1);
-		prefetcher.prefetch(after::countDown); // 이전 예외 후에도 풀 생존
+		prefetcher.prefetch(() -> {
+			secondThread.set(Thread.currentThread().threadId());
+			after.countDown();
+		});
 		assertThat(after.await(2, TimeUnit.SECONDS)).isTrue();
+		// catch가 없으면 워커가 죽고 교체돼 스레드 id가 달라진다
+		assertThat(secondThread.get()).isEqualTo(firstThread.get());
 	}
 }
