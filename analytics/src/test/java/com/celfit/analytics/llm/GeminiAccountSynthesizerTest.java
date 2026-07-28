@@ -68,4 +68,11 @@ class GeminiAccountSynthesizerTest {
 		assertTrue(system.contains("70자 이내"), system);
 		assertTrue(system.contains("전개 방식"), system);
 	}
+
+	/** 성과 요약은 수준·방향 표현만 — 수치 정본(스탯 타일)과 저빈도 갱신 문장이 어긋나는 것을 막는다 (07-28). */
+	@Test
+	void 지시문이_성과_요약의_수치_인용을_금지한다() {
+		String system = GeminiAccountSynthesizer.instructions();
+		assertTrue(system.contains("구체 수치를 문장에 그대로 인용하지 마라"), system);
+	}
 }

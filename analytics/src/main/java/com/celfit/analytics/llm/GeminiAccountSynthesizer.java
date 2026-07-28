@@ -26,7 +26,9 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			- perfSummary: 성과 요약 2~3문장 — 평균 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
 			  반응 차이 중심 (avg_views·avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물
 			  목록(content_type·views·likes) 근거 — 포맷별 반응 차이는 게시물 목록에서만 확인 가능하니
-			  그 밖은 단정하지 마라)
+			  그 밖은 단정하지 마라). **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면
+			  스탯 타일이고 이 문장은 매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편",
+			  "완만한 상승세", "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
 			- contentSummary: 콘텐츠 성격 요약 2~3문장 — 무엇을 어떤 방식으로 다루는지, 반복되는 형식·톤
 			  (카테고리 믹스·캡션 근거)
 			- adSummary: 광고 활동 요약 2~3문장. 입력의 "광고 활동" 값에 따라 아래처럼 쓴다.
