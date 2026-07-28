@@ -37,22 +37,22 @@ class V1InfluencerReportControllerTest {
 	@MockitoBean
 	V1InfluencerReportRepository repository;
 
+	// TODO(Task 9): 신 7-인자 시그니처에 맞춘 기계적 컴파일 수정 — 픽스처·jsonPath 갱신은 컨트롤러 배선 태스크 몫.
 	private SummaryRow fullSummary() {
-		return new SummaryRow(24L, 321L, "views", 52000L, new BigDecimal("0.42"),
-				new BigDecimal("3.10"), 1500L, 80L, "up", 6L,
-				60000L, 42000L, 30, 18L, 6L,
-				null, null, new BigDecimal("2.5"));
+		return new SummaryRow(10000L, 24L, 321L, "views", 52000L, new BigDecimal("0.42"),
+				new BigDecimal("3.10"), 1500L, 80L, null, new BigDecimal("2.5"));
 	}
 
 	@Test
 	void 성공_응답은_스펙_6_5_구조를_가진다() throws Exception {
 		given(repository.findSummary("zingdong__")).willReturn(Optional.of(fullSummary()));
 		given(repository.findLatestCopy("zingdong__")).willReturn(Optional.of(
-				new CopyRow("태그라인", "요약", "추세 노트", "차트 노트",
-						"[\"뷰티\",\"유머\"]", "광고 헤드라인", "페이스 노트")));
+				new CopyRow("태그라인", "[\"뷰티\",\"유머\"]", "성과 요약", "콘텐츠 요약", "광고 요약")));
 		given(repository.findSeries("zingdong__")).willReturn(List.of(
-				new SeriesRow(OffsetDateTime.parse("2026-06-30T20:30:00Z"), "reels", 1000L, 100L, 10L, false),
-				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "reels", 500L, 200L, 20L, true)));
+				new SeriesRow(OffsetDateTime.parse("2026-06-30T20:30:00Z"), "reels", 1000L, 100L, 10L, false,
+						null, null, null),
+				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "reels", 500L, 200L, 20L, true,
+						null, null, null)));
 		given(repository.findCategories("zingdong__")).willReturn(List.of(new CategoryRow("메이크업", 5L)));
 		given(repository.findBrands("zingdong__")).willReturn(List.of(new BrandRow("머지", 3L)));
 

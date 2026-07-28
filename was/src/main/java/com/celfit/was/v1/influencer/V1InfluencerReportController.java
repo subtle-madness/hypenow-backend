@@ -27,6 +27,8 @@ public class V1InfluencerReportController {
 				repository.findLatestCopy(influencerId).orElse(null),
 				repository.findSeries(influencerId),
 				repository.findCategories(influencerId),
-				repository.findBrands(influencerId)));
+				repository.findBrands(influencerId),
+				repository.findProducts(influencerId),
+				repository.findPeerStats(influencerId).orElse(null)));
 	}
 }
