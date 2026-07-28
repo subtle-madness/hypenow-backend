@@ -7,7 +7,6 @@ import com.celfit.was.v2.influencer.V2InfluencerReportRepository.BrandCollabRow;
 import com.celfit.was.v2.influencer.V2InfluencerReportRepository.CategoryRow;
 import com.celfit.was.v2.influencer.V2InfluencerReportRepository.SeriesRow;
 import com.celfit.was.v2.influencer.V2InfluencerReportRepository.SummaryRow;
-import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -110,6 +109,9 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				    sub_order  int  NOT NULL,
 				    PRIMARY KEY (main_value, mid_label, sub_label)
 				)""");
+		// 아래 두 뷰 DDL은 analytics V35(account_category_stats)·V39(account_peer_stats) 마이그레이션의
+		// verbatim 사본이다 — 원본 마이그레이션이 바뀌면 이 사본도 같이 갱신할 것. 어긋나면 이 테스트는
+		// 실DB와 다른 로직을 검증하게 된다.
 		// V35 그대로 — account_peer_stats(V39)가 이 뷰에 의존한다.
 		jdbcTemplate.execute("""
 				CREATE VIEW account_category_stats AS
