@@ -1,41 +1,32 @@
 package com.celfit.was.v1.influencer;
 
-import com.celfit.was.v1.influencer.InfluencerAiReport.Stats.Stat;
-import com.celfit.was.v1.influencer.InfluencerAiReport.Stats.StatRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.BrandRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.CategoryRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.CopyRow;
-import com.celfit.was.v1.influencer.V1InfluencerReportRepository.PeerStatsRow;
-import com.celfit.was.v1.influencer.V1InfluencerReportRepository.ProductRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.SeriesRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.SummaryRow;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
-import java.util.function.Function;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * 미러 행 → InfluencerAiReport(스펙 6.5 v2, 07-27 개편) 순수 변환.
- * was 몫은 lastAdNote 문구·경과일·isActive·strip 추출·성장세/유효 팔로워/헤드라인 알고리즘 산출뿐
- * (LLM 카피 배치·집합 연산은 각각 analytics/SQL 몫). 카피(copy)는 nullable — 카피 필드만 null,
- * 블록 구조는 유지한다. peer(PeerStatsRow)도 nullable — 피어 표본 없으면 topPct·유효 팔로워는 null.
+ * 미러 행 → InfluencerAiReport(스펙 6.5) 순수 변환 — 조립 규칙은 P1 계획서 매핑표가 정본.
+ * was 몫은 lastAdNote 문구·경과일·isActive·strip 추출뿐(집합 연산은 전부 SQL/분석층).
+ * 주의: 기존 E 표면(InfluencerDetailAssembler)과 문구·경계가 다르다 —
+ * lastAdNote는 주 단위 문구, isActive는 14일 포함(<=). 스펙 6.5가 정본.
  */
 @Component
 public class V1InfluencerReportAssembler {
 
 	/** isActive 판정 경계(일) — 14일까지 활동 중(스펙 6.5, 경계 포함). */
 	private static final long ACTIVE_THRESHOLD_DAYS = 14;
-	/** 피어 표본 최소 크기 — 미만이면 topPct 전부 숨김(퍼센타일 신뢰 불가). */
-	private static final long MIN_PEER_SIZE = 3;
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
 	};
@@ -48,287 +39,95 @@ public class V1InfluencerReportAssembler {
 		this.objectMapper = objectMapper;
 	}
 
-	/** copy·peer는 nullable — copy 없으면 카피 필드만 null, peer 없으면 topPct·유효 팔로워만 null.
-	 *  블록 구조는 항상 유지된다. */
+	/** copy는 nullable(account_analyses 미생성) — 카피 필드만 null, 블록 구조는 유지. */
 	public InfluencerAiReport toReport(SummaryRow summary, CopyRow copy, List<SeriesRow> series,
-			List<CategoryRow> categories, List<BrandRow> brands, List<ProductRow> products,
-			PeerStatsRow peer) {
+			List<CategoryRow> categories, List<BrandRow> brands) {
 		OffsetDateTime now = OffsetDateTime.now(clock);
 		return new InfluencerAiReport(
 				copy == null ? null : copy.tagline(),
 				summary.analyzedCount(),
 				summary.postsCount(),
-				effectiveFollowers(summary.followers(), series),
-				effectiveFollowersPct(summary.followers(), series),
-				toStats(summary, copy, series, peer),
-				toChart(summary, series),
+				copy == null ? null : copy.summary(),
+				toStats(summary),
+				new InfluencerAiReport.Trend(summary.trendDirection(), copy == null ? null : copy.trendNote()),
+				toChart(summary, copy, series),
 				toContentMix(copy, categories),
-				toAds(summary, copy, series, brands, products, now),
-				toActivity(summary, now));
+				toAds(summary, copy, series, brands, now),
+				toActivity(summary, copy, now));
 	}
 
-	private InfluencerAiReport.Stats toStats(SummaryRow summary, CopyRow copy, List<SeriesRow> series,
-			PeerStatsRow peer) {
-		return new InfluencerAiReport.Stats(summary.metric(), summary.viewsPerFollower(),
-				copy == null ? null : copy.perfSummary(),
-				overallStatRow(summary, series, peer),
-				adStatRow(series, summary.followers(), peer));
+	private InfluencerAiReport.Stats toStats(SummaryRow summary) {
+		return new InfluencerAiReport.Stats(summary.metric(), summary.avgViews(),
+				summary.viewsPerFollower(), summary.avgErPct(), summary.avgLikes(), summary.avgComments());
 	}
 
-	/** 전체 행 — value는 summary(이미 SQL이 평균낸 값), growthPct는 series 전체(올린 순), topPct는 피어. */
-	private StatRow overallStatRow(SummaryRow summary, List<SeriesRow> series, PeerStatsRow peer) {
-		return new StatRow(
-				new Stat(toBigDecimal(summary.avgViews()),
-						growthPct(mapToDouble(series, s -> s.views() == null ? null : s.views().doubleValue())),
-						topPct(peer, peer == null ? null : peer.topPctViews())),
-				new Stat(summary.avgErPct(),
-						growthPct(mapToDouble(series, V1InfluencerReportAssembler::erProxy)),
-						topPct(peer, peer == null ? null : peer.topPctEr())),
-				new Stat(toBigDecimal(summary.avgLikes()),
-						growthPct(mapToDouble(series, s -> s.likes() == null ? null : s.likes().doubleValue())),
-						topPct(peer, peer == null ? null : peer.topPctLikes())),
-				new Stat(toBigDecimal(summary.avgComments()),
-						growthPct(mapToDouble(series, s -> s.comments() == null ? null : s.comments().doubleValue())),
-						topPct(peer, peer == null ? null : peer.topPctComments())));
-	}
-
-	/** 광고 행 — sponsored 0건이면 null. 값은 series에서 재계산(summary는 전체 집계라 못 씀), topPct는 피어(ad_*). */
-	private StatRow adStatRow(List<SeriesRow> series, Long followers, PeerStatsRow peer) {
-		List<SeriesRow> sponsored = series.stream().filter(s -> Boolean.TRUE.equals(s.sponsored())).toList();
-		if (sponsored.isEmpty()) {
-			return null;
-		}
-		return new StatRow(
-				new Stat(avgPositive(sponsored.stream().map(SeriesRow::views).toList()),
-						growthPct(mapToDouble(sponsored, s -> s.views() == null ? null : s.views().doubleValue())),
-						topPct(peer, peer == null ? null : peer.topPctAdViews())),
-				new Stat(adEr(sponsored, followers),
-						growthPct(mapToDouble(sponsored, V1InfluencerReportAssembler::erProxy)),
-						topPct(peer, peer == null ? null : peer.topPctAdEr())),
-				new Stat(avg(sponsored.stream().map(SeriesRow::likes).toList()),
-						growthPct(mapToDouble(sponsored, s -> s.likes() == null ? null : s.likes().doubleValue())),
-						topPct(peer, peer == null ? null : peer.topPctAdLikes())),
-				new Stat(avg(sponsored.stream().map(SeriesRow::comments).toList()),
-						growthPct(mapToDouble(sponsored, s -> s.comments() == null ? null : s.comments().doubleValue())),
-						topPct(peer, peer == null ? null : peer.topPctAdComments())));
-	}
-
-	/** er 대용값 = likes+comments(팔로워 상수이므로 증감률은 실제 ER 증감률과 동일) — 둘 다 null이면 null. */
-	private static Double erProxy(SeriesRow s) {
-		if (s.likes() == null && s.comments() == null) {
-			return null;
-		}
-		long likes = s.likes() == null ? 0 : s.likes();
-		long comments = s.comments() == null ? 0 : s.comments();
-		return (double) (likes + comments);
-	}
-
-	private static <T> List<Double> mapToDouble(List<T> rows, Function<T, Double> f) {
-		return rows.stream().map(f).toList();
-	}
-
-	/** topPct 규칙: 피어 없거나 표본 3 미만이면 전부 숨김(null). */
-	private static Integer topPct(PeerStatsRow peer, Integer value) {
-		if (peer == null || peer.peerSize() < MIN_PEER_SIZE) {
-			return null;
-		}
-		return value;
-	}
-
-	/**
-	 * 성장세: 올린 순 앞절반(floor(n/2)) vs 뒤절반, 각 절반에서 값>0만 평균 —
-	 * 10_account_detail trend CTE와 같은 경계·필터. 근거 부족(절반 비었거나 older 0)이면 null.
-	 */
-	static Integer growthPct(List<Double> valuesInOrder) {
-		int n = valuesInOrder.size();
-		if (n < 2) {
-			return null;
-		}
-		double olderSum = 0, newerSum = 0;
-		int olderN = 0, newerN = 0;
-		for (int i = 0; i < n; i++) {
-			double v = valuesInOrder.get(i) == null ? 0 : valuesInOrder.get(i);
-			if (v <= 0) {
-				continue;
-			}
-			if (i < n / 2) {
-				olderSum += v;
-				olderN++;
-			} else {
-				newerSum += v;
-				newerN++;
-			}
-		}
-		// olderN>0이면 olderSum도 반드시 >0(양수만 누적하므로) — olderSum==0 분기는 도달 불가라 생략.
-		if (olderN == 0 || newerN == 0) {
-			return null;
-		}
-		return (int) Math.round(((newerSum / newerN) / (olderSum / olderN) - 1) * 100);
-	}
-
-	/** views>0인 표본만 평균(반올림). 표본 없으면 null. */
-	private static BigDecimal avgPositive(List<Long> values) {
-		List<Long> positive = values.stream().filter(v -> v != null && v > 0).toList();
-		if (positive.isEmpty()) {
-			return null;
-		}
-		double avg = positive.stream().mapToLong(Long::longValue).average().orElseThrow();
-		return BigDecimal.valueOf(Math.round(avg));
-	}
-
-	/** null이 아닌 값 전부 평균(반올림). 표본 없으면 null. */
-	private static BigDecimal avg(List<Long> values) {
-		List<Long> nonNull = values.stream().filter(Objects::nonNull).toList();
-		if (nonNull.isEmpty()) {
-			return null;
-		}
-		double avg = nonNull.stream().mapToLong(Long::longValue).average().orElseThrow();
-		return BigDecimal.valueOf(Math.round(avg));
-	}
-
-	/** 광고 er = avg(likes+comments) * 100 / followers, 소수 1(HALF_UP). followers null/0이면 null. */
-	private static BigDecimal adEr(List<SeriesRow> sponsored, Long followers) {
-		if (followers == null || followers <= 0 || sponsored.isEmpty()) {
-			return null;
-		}
-		double sum = 0;
-		for (SeriesRow s : sponsored) {
-			long likes = s.likes() == null ? 0 : s.likes();
-			long comments = s.comments() == null ? 0 : s.comments();
-			sum += likes + comments;
-		}
-		double avgEngagement = sum / sponsored.size();
-		return BigDecimal.valueOf(avgEngagement * 100 / followers).setScale(1, RoundingMode.HALF_UP);
-	}
-
-	private static BigDecimal toBigDecimal(Long value) {
-		return value == null ? null : BigDecimal.valueOf(value);
-	}
-
-	/** 댓글 앵커 계수 — 모집단 38,474게시물의 좋아요:댓글 비율 상위 90% 경계(07-28 실측 39:1).
-	 *  이 비율을 크게 벗어나는 좋아요는 팔로워 반응으로 보지 않는다(탐색탭 유입·구매성 좋아요 컷). */
-	private static final double LIKES_PER_COMMENT_ANCHOR = 39.0;
-
-	/** 중복 계수 — 게시물당 반응을 "윈도우 중 1회 이상 반응한 고유 팔로워"로 확장할 때의
-	 *  실효 독립 기회 비율(지수 = 게시물 수 × 0.25, 12개면 3). 임의 설정(07-28 확정) —
-	 *  댓글 작성자 수집이 재개되면 계정별 실측 중복률로 대체 예정. */
-	private static final double DUPLICATION_FACTOR = 0.25;
-
-	/**
-	 * 유효 팔로워 = 팔로워 × (1 − (1−r)^(n×중복계수)) — "최근 n개 중 1회 이상 반응한 고유 팔로워" 추정.
-	 * 선형 ×n은 같은 팔로워를 거듭 세어 팔로워 초과 모순이 나므로, 이미 반응한 팔로워를 다시 세지
-	 * 않는 포함-배제 형태를 쓴다(보통 계정에선 ×3과 사실상 동일, 반응률 높은 계정만 중복 차감).
-	 * r = 게시물당 평균 인정 반응 ÷ 팔로워 —
-	 *   인정 반응 = min( (좋아요+댓글) × min(1, 팔로워/조회수),   ← 릴스 바이럴 안분
-	 *                    ANCHOR × (댓글+1) )                       ← 비정상 좋아요 컷
-	 * 운영 실측(07-28, 6,321계정): 중앙값 3.4%·상위 1% 45.7%·최대 89.9% — 90% 이상 0계정,
-	 * 100%는 셈법 자체로 불가(캡·클램프 없음). 피어와 무관한 절대 추정(피어는 topPct 전용).
-	 */
-	static Long effectiveFollowers(Long followers, List<SeriesRow> series) {
-		Double ratio = engagedRatio(followers, series);
-		return ratio == null ? null : Math.round(followers * ratio);
-	}
-
-	/** effectiveFollowers의 팔로워 대비 %(반올림). 산출 불가 시 null. */
-	static Integer effectiveFollowersPct(Long followers, List<SeriesRow> series) {
-		Double ratio = engagedRatio(followers, series);
-		return ratio == null ? null : (int) Math.round(ratio * 100);
-	}
-
-	private static Double engagedRatio(Long followers, List<SeriesRow> series) {
-		if (followers == null || followers <= 0 || series.isEmpty()) {
-			return null;
-		}
-		double sum = 0;
-		for (SeriesRow s : series) {
-			long likes = s.likes() == null ? 0 : Math.max(s.likes(), 0);
-			long comments = s.comments() == null ? 0 : Math.max(s.comments(), 0);
-			double engaged = likes + comments;
-			if (s.views() != null && s.views() > followers) {
-				engaged = engaged * followers / (double) s.views(); // 도달 중 팔로워 비중으로 안분
-			}
-			sum += Math.min(engaged, LIKES_PER_COMMENT_ANCHOR * (comments + 1));
-		}
-		double r = Math.min(sum / series.size() / followers, 1.0);
-		// 게시물이 적으면(지수 < 1) 확장이 축소로 뒤집히므로 하한 1 — 최소한 게시물당 측정값은 보장
-		double exponent = Math.max(1.0, series.size() * DUPLICATION_FACTOR);
-		return 1 - Math.pow(1 - r, exponent);
-	}
-
-	private InfluencerAiReport.Chart toChart(SummaryRow summary, List<SeriesRow> series) {
-		return new InfluencerAiReport.Chart(summary.metric(),
+	private InfluencerAiReport.Chart toChart(SummaryRow summary, CopyRow copy, List<SeriesRow> series) {
+		return new InfluencerAiReport.Chart(summary.metric(), copy == null ? null : copy.chartNote(),
 				series.stream()
 						.map(p -> new InfluencerAiReport.Chart.Bar(p.views(), p.likes(), p.comments(),
-								kstDate(p.postedAt()), p.sponsored(), p.contentType(), p.caption(),
-								p.thumbnailUrl(), p.brand()))
+								kstDate(p.postedAt()), p.sponsored(), p.contentType()))
 						.toList());
 	}
 
 	private InfluencerAiReport.ContentMix toContentMix(CopyRow copy, List<CategoryRow> categories) {
 		return new InfluencerAiReport.ContentMix(
-				copy == null ? null : copy.contentSummary(),
 				categories.stream()
 						.map(c -> new InfluencerAiReport.ContentMix.Category(c.label(), c.cnt()))
 						.toList(),
 				traits(copy));
 	}
 
+	/**
+	 * 광고 지표는 캡션 분류(content_analyses.ad_type='sponsored')가 정본 — SeriesRow.sponsored로 전달된다.
+	 * 인스타 유료파트너십 태그(ad_marked)만 잡던 account_summaries 집계는 캡션 고지 광고를 놓쳐(운영에서
+	 * strip 전부 false·sponsoredCount 0) brands(ad_type 기반)와 어긋났다 → 광고 블록 전체를 series로 재계산.
+	 */
 	private InfluencerAiReport.Ads toAds(SummaryRow summary, CopyRow copy, List<SeriesRow> series,
-			List<BrandRow> brands, List<ProductRow> products, OffsetDateTime now) {
-		List<SeriesRow> sponsored = series.stream().filter(s -> Boolean.TRUE.equals(s.sponsored())).toList();
-		OffsetDateTime lastAd = sponsored.stream()
+			List<BrandRow> brands, OffsetDateTime now) {
+		long sponsoredCount = series.stream().filter(s -> Boolean.TRUE.equals(s.sponsored())).count();
+		OffsetDateTime lastAd = series.stream()
+				.filter(s -> Boolean.TRUE.equals(s.sponsored()))
 				.map(SeriesRow::postedAt)
 				.max(Comparator.naturalOrder()).orElse(null);
-		Long lastAdDaysAgo = daysSince(lastAd, now);
-		BigDecimal adIntervalDays = adIntervalDays(sponsored);
-		String topBrand = brands.isEmpty() ? null : brands.get(0).name();
 		return new InfluencerAiReport.Ads(
-				copy == null ? null : copy.adSummary(),
-				(long) sponsored.size(),
+				sponsoredCount,
 				series.stream().map(s -> Boolean.TRUE.equals(s.sponsored())).toList(),
 				lastAdNote(lastAd, now),
-				adIntervalDays,
-				lastAdDaysAgo,
-				headline(lastAdDaysAgo, adIntervalDays, topBrand),
-				brands.stream().map(b -> new InfluencerAiReport.Ads.Brand(b.name(), b.cnt())).toList(),
-				products.stream().map(p -> new InfluencerAiReport.Ads.Product(p.name(), p.cnt())).toList());
+				comparison(summary.metric(), series),
+				copy == null ? null : copy.adHeadline(),
+				brands.stream().map(b -> new InfluencerAiReport.Ads.Brand(b.name(), b.cnt())).toList());
 	}
 
-	/** 스팬일수 / (건수-1), 소수 1(HALF_UP). 광고 2건 미만이거나 전부 같은 날(스팬 0)이면
-	 *  "평균 0일 간격" 같은 오해 소지 문구를 막기 위해 null. */
-	private static BigDecimal adIntervalDays(List<SeriesRow> sponsored) {
-		if (sponsored.size() < 2) {
+	/**
+	 * organic vs 광고 평균 비교 — 기준지표(metric) 값 > 0인 콘텐츠만, ad_type='sponsored' 여부로 그룹.
+	 * 두 그룹 중 하나라도 비면 null(프론트 comparison? 분기 대응). 산식은 10_account_detail ads CTE와 동일.
+	 * drop%는 원 평균 기준 반올림(표시용 평균은 각자 반올림) — 소수점만 SQL 반올림과 다를 수 있다.
+	 */
+	private InfluencerAiReport.Ads.Comparison comparison(String metric, List<SeriesRow> series) {
+		List<Long> organic = new ArrayList<>();
+		List<Long> ad = new ArrayList<>();
+		for (SeriesRow s : series) {
+			Long mval = "views".equals(metric) ? s.views() : s.likes();
+			if (mval == null || mval <= 0) {
+				continue;
+			}
+			(Boolean.TRUE.equals(s.sponsored()) ? ad : organic).add(mval);
+		}
+		if (organic.isEmpty() || ad.isEmpty()) {
 			return null;
 		}
-		OffsetDateTime min = sponsored.stream().map(SeriesRow::postedAt).min(Comparator.naturalOrder()).orElseThrow();
-		OffsetDateTime max = sponsored.stream().map(SeriesRow::postedAt).max(Comparator.naturalOrder()).orElseThrow();
-		long spanDays = ChronoUnit.DAYS.between(min, max);
-		if (spanDays == 0) {
-			return null;
-		}
-		return BigDecimal.valueOf(spanDays)
-				.divide(BigDecimal.valueOf(sponsored.size() - 1), 1, RoundingMode.HALF_UP);
+		double organicRaw = organic.stream().mapToLong(Long::longValue).average().getAsDouble();
+		double adRaw = ad.stream().mapToLong(Long::longValue).average().getAsDouble();
+		int dropPct = (int) Math.round((1 - adRaw / organicRaw) * 100);
+		return new InfluencerAiReport.Ads.Comparison(metric, (long) organic.size(), Math.round(organicRaw),
+				(long) ad.size(), Math.round(adRaw), dropPct);
 	}
 
-	/** 광고 헤드라인 — 사실값 템플릿(07-27 확정, LLM 아님). 광고 이력 없으면 null. */
-	static String headline(Long lastAdDaysAgo, BigDecimal adIntervalDays, String topBrand) {
-		if (lastAdDaysAgo == null) {
-			return null;
-		}
-		StringBuilder sb = new StringBuilder();
-		sb.append(lastAdDaysAgo == 0 ? "오늘" : "최근 " + lastAdDaysAgo + "일 전");
-		sb.append(topBrand != null ? " " + topBrand + " 협업" : " 광고 게시");
-		if (adIntervalDays != null) {
-			sb.append(" · 평균 ").append(adIntervalDays.setScale(0, RoundingMode.HALF_UP))
-					.append("일 간격으로 광고 진행");
-		}
-		return sb.toString();
-	}
-
-	private InfluencerAiReport.Activity toActivity(SummaryRow summary, OffsetDateTime now) {
+	private InfluencerAiReport.Activity toActivity(SummaryRow summary, CopyRow copy, OffsetDateTime now) {
 		Long lastUploadDaysAgo = daysSince(summary.lastPostedAt(), now);
 		boolean isActive = lastUploadDaysAgo != null && lastUploadDaysAgo <= ACTIVE_THRESHOLD_DAYS;
-		return new InfluencerAiReport.Activity(lastUploadDaysAgo, isActive, summary.avgIntervalDays());
+		return new InfluencerAiReport.Activity(lastUploadDaysAgo, isActive,
+				summary.avgIntervalDays(), copy == null ? null : copy.paceNote());
 	}
 
 	/** 광고 이력 없으면 null, 경과 7일 미만이면 "이번 주 광고", 그 외 "마지막 광고 N주 전"(N=경과일/7 내림, 최소 1). */

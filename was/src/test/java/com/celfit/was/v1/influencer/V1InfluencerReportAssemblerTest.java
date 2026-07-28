@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.BrandRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.CategoryRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.CopyRow;
-import com.celfit.was.v1.influencer.V1InfluencerReportRepository.PeerStatsRow;
-import com.celfit.was.v1.influencer.V1InfluencerReportRepository.ProductRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.SeriesRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.SummaryRow;
 import java.math.BigDecimal;
@@ -20,33 +18,27 @@ import tools.jackson.databind.ObjectMapper;
 
 class V1InfluencerReportAssemblerTest {
 
-	// 기준시각 고정 — 경과일·isActive·헤드라인 판정이 결정적이도록.
+	// 기준시각 고정 — 경과일·isActive 판정이 결정적이도록.
 	private final Clock fixedClock = Clock.fixed(Instant.parse("2026-07-15T00:00:00Z"), ZoneOffset.UTC);
 	private final OffsetDateTime now = OffsetDateTime.parse("2026-07-15T00:00:00Z");
 	private final V1InfluencerReportAssembler assembler =
 			new V1InfluencerReportAssembler(fixedClock, new ObjectMapper());
 
-	/** 전 필드 채운 summary — 팔로워 10000, 마지막 업로드 5일 전(07-10). */
+	/** 전 필드 채운 summary — 광고 3일 전, 마지막 업로드 5일 전. */
 	private SummaryRow fullSummary() {
-		return new SummaryRow(10000L, 12L, 187L, "views", 52000L, new BigDecimal("0.42"),
-				new BigDecimal("3.10"), 1500L, 80L,
-				OffsetDateTime.parse("2026-07-10T00:00:00Z"), new BigDecimal("2.5"));
+		return new SummaryRow(24L, 321L, "views", 52000L, new BigDecimal("0.42"),
+				new BigDecimal("3.10"), 1500L, 80L, "up", 6L,
+				60000L, 42000L, 30, 18L, 6L,
+				OffsetDateTime.parse("2026-07-12T00:00:00Z"),
+				OffsetDateTime.parse("2026-07-10T00:00:00Z"),
+				new BigDecimal("2.5"));
 	}
 
-	private SummaryRow summaryWith(OffsetDateTime lastPostedAt) {
-		return new SummaryRow(10000L, 12L, 187L, "views", 52000L, new BigDecimal("0.42"),
-				new BigDecimal("3.10"), 1500L, 80L, lastPostedAt, new BigDecimal("2.5"));
-	}
-
-	/** 피어 표본 20건 — topPct 8종 검증용 (유효 팔로워는 07-28부터 피어 무관). */
-	private PeerStatsRow peer() {
-		return new PeerStatsRow(20L, 18, 26, 32, 45, 39, 42, 48, 53,
-				new BigDecimal("2.0"), new BigDecimal("2.4"));
-	}
-
-	private SeriesRow row(String at, Long views, long likes, long comments, boolean sp) {
-		return new SeriesRow(OffsetDateTime.parse(at), "reels", views, likes, comments, sp,
-				"캡션", "/img/t.jpg", sp ? "브랜드A" : null);
+	private SummaryRow summaryWith(Long organicAvg, Long adAvg, OffsetDateTime lastPostedAt) {
+		return new SummaryRow(24L, 321L, "views", 52000L, new BigDecimal("0.42"),
+				new BigDecimal("3.10"), 1500L, 80L, "up", 6L,
+				organicAvg, adAvg, 30, 18L, 6L,
+				null, lastPostedAt, new BigDecimal("2.5"));
 	}
 
 	@Test
@@ -59,35 +51,67 @@ class V1InfluencerReportAssemblerTest {
 	}
 
 	@Test
-	void strip은_bars와_같은_올린_순의_sponsored_추출이고_캡션_썸네일_브랜드는_그대로_통과한다() {
+	void strip은_bars와_같은_올린_순의_sponsored_추출() {
 		var series = List.of(
-				row("2026-06-30T20:30:00Z", 1000L, 100, 10, false),
-				row("2026-07-05T03:00:00Z", null, 200, 20, true));
+				new SeriesRow(OffsetDateTime.parse("2026-06-30T20:30:00Z"), "reels", 1000L, 100L, 10L, false),
+				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "feed", null, 200L, 20L, true));
 
-		InfluencerAiReport report = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
+		InfluencerAiReport report = assembler.toReport(fullSummary(), null, series, List.of(), List.of());
 
-		// bars 순서(올린 순) 그대로, postedAt은 KST 달력 날짜, caption·thumbnailUrl·brand는 그대로 통과
+		// bars 순서(올린 순) 그대로, postedAt은 KST 달력 날짜
 		assertThat(report.chart().bars()).containsExactly(
-				new InfluencerAiReport.Chart.Bar(1000L, 100L, 10L, "2026-07-01", false, "reels",
-						"캡션", "/img/t.jpg", null),
-				new InfluencerAiReport.Chart.Bar(null, 200L, 20L, "2026-07-05", true, "reels",
-						"캡션", "/img/t.jpg", "브랜드A"));
+				new InfluencerAiReport.Chart.Bar(1000L, 100L, 10L, "2026-07-01", false, "reels"),
+				new InfluencerAiReport.Chart.Bar(null, 200L, 20L, "2026-07-05", true, "feed"));
 		assertThat(report.ads().strip()).containsExactly(false, true);
 	}
 
 	@Test
+	void 광고블록_sponsoredCount_comparison_lastAdNote는_series의_adType에서_계산() {
+		// summary는 옛 ad_marked 집계(6·60000·42000·광고 07-12)를 담지만, 이제 무시하고 series로 계산한다.
+		var series = List.of(
+				new SeriesRow(OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", 10000L, 100L, 10L, false),
+				new SeriesRow(OffsetDateTime.parse("2026-07-03T00:00:00Z"), "reels", 20000L, 200L, 20L, false),
+				new SeriesRow(OffsetDateTime.parse("2026-07-05T00:00:00Z"), "reels", 6000L, 300L, 30L, true),
+				new SeriesRow(OffsetDateTime.parse("2026-07-08T00:00:00Z"), "reels", 4000L, 400L, 40L, true));
+
+		var ads = assembler.toReport(fullSummary(), null, series, List.of(), List.of()).ads();
+
+		assertThat(ads.sponsoredCount()).isEqualTo(2L); // summary의 6이 아니라 series의 sponsored 수
+		assertThat(ads.strip()).containsExactly(false, false, true, true);
+		// metric=views: organic avg(10000,20000)=15000, ad avg(6000,4000)=5000, drop=round((1-5000/15000)*100)=67
+		assertThat(ads.comparison()).isEqualTo(
+				new InfluencerAiReport.Ads.Comparison("views", 2L, 15000L, 2L, 5000L, 67));
+		// 마지막 광고 = series 마지막 sponsored(07-08), now=07-15 → 7일 → "마지막 광고 1주 전"(summary 07-12 아님)
+		assertThat(ads.lastAdNote()).isEqualTo("마지막 광고 1주 전");
+	}
+
+	@Test
+	void comparison은_organic과_ad_표본이_둘_다_있어야_존재() {
+		// metric=views. 광고 표본(views>0)이 없으면 null.
+		var organicOnly = List.of(
+				new SeriesRow(OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", 10000L, 100L, 10L, false));
+		assertThat(assembler.toReport(fullSummary(), null, organicOnly, List.of(), List.of())
+				.ads().comparison()).isNull();
+		// 유기 표본이 없어도 null.
+		var adOnly = List.of(
+				new SeriesRow(OffsetDateTime.parse("2026-07-01T00:00:00Z"), "reels", 5000L, 100L, 10L, true));
+		assertThat(assembler.toReport(fullSummary(), null, adOnly, List.of(), List.of())
+				.ads().comparison()).isNull();
+	}
+
+	@Test
 	void 카피_없음이면_카피_필드만_null_블록_구조는_유지() {
-		InfluencerAiReport report = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
-				List.of(), peer());
+		InfluencerAiReport report = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of());
 
 		assertThat(report.tagline()).isNull();
-		assertThat(report.stats().perfSummary()).isNull();
-		assertThat(report.contentMix().contentSummary()).isNull();
-		assertThat(report.ads().adSummary()).isNull();
+		assertThat(report.summary()).isNull();
+		assertThat(report.trend().note()).isNull();
+		assertThat(report.chart().note()).isNull();
 		assertThat(report.contentMix().traits()).isEmpty();
-		assertThat(report.ads().headline()).isNull(); // 광고 이력 없음
+		assertThat(report.ads().headline()).isNull();
+		assertThat(report.activity().paceNote()).isNull();
 		// 카피와 무관한 값은 그대로
+		assertThat(report.trend().direction()).isEqualTo("up");
 		assertThat(report.chart().metric()).isEqualTo("views");
 		assertThat(report.stats().metric()).isEqualTo("views");
 	}
@@ -95,190 +119,57 @@ class V1InfluencerReportAssemblerTest {
 	@Test
 	void activity_경과일은_24시간_단위_isActive는_14일_경계_포함() {
 		// 5일 전 업로드
-		var active = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
-				List.of(), peer()).activity();
+		var active = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of()).activity();
 		assertThat(active.lastUploadDaysAgo()).isEqualTo(5L);
 		assertThat(active.isActive()).isTrue();
 
 		// 정확히 14일 전 → true (스펙 6.5: <= 14)
-		var boundary = assembler.toReport(summaryWith(now.minusDays(14)), null, List.of(), List.of(),
-				List.of(), List.of(), peer()).activity();
+		var boundary = assembler.toReport(summaryWith(null, null, now.minusDays(14)),
+				null, List.of(), List.of(), List.of()).activity();
 		assertThat(boundary.lastUploadDaysAgo()).isEqualTo(14L);
 		assertThat(boundary.isActive()).isTrue();
 
 		// 15일 전 → false
-		var inactive = assembler.toReport(summaryWith(now.minusDays(15)), null, List.of(), List.of(),
-				List.of(), List.of(), peer()).activity();
+		var inactive = assembler.toReport(summaryWith(null, null, now.minusDays(15)),
+				null, List.of(), List.of(), List.of()).activity();
 		assertThat(inactive.lastUploadDaysAgo()).isEqualTo(15L);
 		assertThat(inactive.isActive()).isFalse();
 
 		// 업로드 이력 없음 → null·false
-		var unknown = assembler.toReport(summaryWith(null), null, List.of(), List.of(), List.of(),
-				List.of(), peer()).activity();
+		var unknown = assembler.toReport(summaryWith(null, null, null),
+				null, List.of(), List.of(), List.of()).activity();
 		assertThat(unknown.lastUploadDaysAgo()).isNull();
 		assertThat(unknown.isActive()).isFalse();
 	}
 
 	@Test
 	void toReport는_스펙_6_5_구조로_조립한다() {
-		var copy = new CopyRow("태그라인", "[\"뷰티\",\"유머\"]", "성과 요약", "콘텐츠 요약", "광고 요약");
+		var copy = new CopyRow("태그라인", "요약", "추세 노트", "차트 노트",
+				"[\"뷰티\",\"유머\"]", "광고 헤드라인", "페이스 노트");
 		var categories = List.of(new CategoryRow("메이크업", 5L), new CategoryRow("스킨케어", 2L));
 		var brands = List.of(new BrandRow("머지", 3L));
-		var products = List.of(new ProductRow("립스틱", 2L));
 
-		InfluencerAiReport report = assembler.toReport(fullSummary(), copy, List.of(), categories, brands,
-				products, peer());
+		InfluencerAiReport report = assembler.toReport(fullSummary(), copy, List.of(), categories, brands);
 
 		assertThat(report.tagline()).isEqualTo("태그라인");
-		assertThat(report.analyzedCount()).isEqualTo(12L);
-		assertThat(report.totalPosts()).isEqualTo(187L);
-		assertThat(report.stats().metric()).isEqualTo("views");
-		assertThat(report.stats().perfSummary()).isEqualTo("성과 요약");
+		assertThat(report.analyzedCount()).isEqualTo(24L);
+		assertThat(report.totalPosts()).isEqualTo(321L);
+		assertThat(report.summary()).isEqualTo("요약");
+		assertThat(report.stats()).isEqualTo(new InfluencerAiReport.Stats(
+				"views", 52000L, new BigDecimal("0.42"), new BigDecimal("3.10"), 1500L, 80L));
+		assertThat(report.trend()).isEqualTo(new InfluencerAiReport.Trend("up", "추세 노트"));
 		assertThat(report.chart().metric()).isEqualTo("views");
-		assertThat(report.contentMix().contentSummary()).isEqualTo("콘텐츠 요약");
+		assertThat(report.chart().note()).isEqualTo("차트 노트");
 		assertThat(report.contentMix().categories()).containsExactly(
 				new InfluencerAiReport.ContentMix.Category("메이크업", 5L),
 				new InfluencerAiReport.ContentMix.Category("스킨케어", 2L));
 		assertThat(report.contentMix().traits()).containsExactly("뷰티", "유머");
-		assertThat(report.ads().adSummary()).isEqualTo("광고 요약");
-		assertThat(report.ads().brands()).containsExactly(new InfluencerAiReport.Ads.Brand("머지", 3L));
-		assertThat(report.ads().products()).containsExactly(new InfluencerAiReport.Ads.Product("립스틱", 2L));
 		// series 없음 → 광고 집계는 series에서 나오므로 0·null (광고 계산은 전용 테스트가 검증)
 		assertThat(report.ads().sponsoredCount()).isEqualTo(0L);
 		assertThat(report.ads().lastAdNote()).isNull();
+		assertThat(report.ads().headline()).isEqualTo("광고 헤드라인");
+		assertThat(report.ads().brands()).containsExactly(new InfluencerAiReport.Ads.Brand("머지", 3L));
 		assertThat(report.activity().avgIntervalDays()).isEqualByComparingTo("2.5");
-	}
-
-	@Test
-	void 성장세는_앞절반_뒤절반_평균_증감률() {
-		var series = List.of(
-				row("2026-07-01T00:00:00Z", 8000L, 100, 10, false),
-				row("2026-07-02T00:00:00Z", 12000L, 100, 10, false),
-				row("2026-07-03T00:00:00Z", 14000L, 100, 10, false),
-				row("2026-07-04T00:00:00Z", 16000L, 100, 10, false));
-		var report = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
-		assertThat(report.stats().overall().views().growthPct()).isEqualTo(50);
-	}
-
-	@Test
-	void 광고행은_sponsored만으로_계산하고_광고_없으면_null() {
-		var noAds = List.of(row("2026-07-01T00:00:00Z", 8000L, 100, 10, false));
-		assertThat(assembler.toReport(fullSummary(), null, noAds, List.of(), List.of(),
-				List.of(), peer()).stats().ad()).isNull();
-
-		var withAds = List.of(
-				row("2026-07-01T00:00:00Z", 10000L, 100, 10, false),
-				row("2026-07-02T00:00:00Z", 6000L, 300, 30, true),
-				row("2026-07-03T00:00:00Z", 4000L, 400, 40, true));
-		var ad = assembler.toReport(fullSummary(), null, withAds, List.of(), List.of(),
-				List.of(), peer()).stats().ad();
-		assertThat(ad.views().value()).isEqualByComparingTo("5000");
-		assertThat(ad.views().topPct()).isEqualTo(39);
-	}
-
-	@Test
-	void 유효_팔로워는_게시물당_평균_실반응_기반() {
-		// views(1000) < followers(10000) → 안분 없음. e = 100+10 = 110씩 2건.
-		// 게시물 2개면 지수 = max(1, 2×0.25) = 1 → 확장 없이 게시물당 측정값 그대로 110, pct 1(=1.1 반올림)
-		var series = List.of(
-				row("2026-07-01T00:00:00Z", 1000L, 100, 10, false),
-				row("2026-07-02T00:00:00Z", 1000L, 100, 10, false));
-		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
-		assertThat(r.effectiveFollowers()).isEqualTo(110L);
-		assertThat(r.effectiveFollowersPct()).isEqualTo(1);
-	}
-
-	@Test
-	void 유효_팔로워_윈도우_12개면_중복계수_확장() {
-		// r = 110/10000 = 1.1%, 지수 = 12×0.25 = 3 → 1−(1−0.011)³ = 3.264% → 326명, pct 3
-		var series = new java.util.ArrayList<SeriesRow>();
-		for (int day = 1; day <= 12; day++) {
-			series.add(row(String.format("2026-07-%02dT00:00:00Z", day), 1000L, 100, 10, false));
-		}
-		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
-		assertThat(r.effectiveFollowers()).isEqualTo(326L);
-		assertThat(r.effectiveFollowersPct()).isEqualTo(3);
-	}
-
-	@Test
-	void 유효_팔로워_바이럴은_팔로워_비중으로_안분() {
-		// views 100000 = 팔로워의 10배 → 반응 5100 중 팔로워 몫 1/10 = 510
-		var series = List.of(row("2026-07-01T00:00:00Z", 100000L, 5000, 100, false));
-		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
-		assertThat(r.effectiveFollowers()).isEqualTo(510L);
-		assertThat(r.effectiveFollowersPct()).isEqualTo(5);
-	}
-
-	@Test
-	void 유효_팔로워_비정상_좋아요는_댓글_앵커로_컷() {
-		// 피드(views null) 좋아요 5000·댓글 10 — 좋아요:댓글 500:1은 정상 범위(39:1) 밖 → 39×(10+1)=429로 컷
-		var series = List.of(row("2026-07-01T00:00:00Z", null, 5000, 10, false));
-		var r = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
-		assertThat(r.effectiveFollowers()).isEqualTo(429L);
-		assertThat(r.effectiveFollowersPct()).isEqualTo(4);
-	}
-
-	@Test
-	void 시계열_없으면_유효팔로워_null_피어_없으면_topPct만_null() {
-		// 유효 팔로워는 시계열 기반 측정값 — 시계열이 없으면 null, 피어 유무와는 무관
-		var empty = assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of(),
-				List.of(), peer());
-		assertThat(empty.effectiveFollowers()).isNull();
-
-		var noPeer = assembler.toReport(fullSummary(), null,
-				List.of(row("2026-07-01T00:00:00Z", 1000L, 100, 10, false)),
-				List.of(), List.of(), List.of(), null);
-		assertThat(noPeer.stats().overall().views().topPct()).isNull();
-		assertThat(noPeer.effectiveFollowers()).isEqualTo(110L);
-	}
-
-	@Test
-	void 헤드라인은_사실값_템플릿() {
-		// now 고정 2026-07-15, 마지막 광고 07-05(10일 전), 광고 2건 간격 4일, 최다 브랜드 "브랜드A"
-		var series = List.of(
-				row("2026-07-01T00:00:00Z", 10000L, 100, 10, true),
-				row("2026-07-05T00:00:00Z", 8000L, 100, 10, true));
-		var ads = assembler.toReport(fullSummary(), null, series, List.of(),
-				List.of(new BrandRow("브랜드A", 2L)), List.of(), peer()).ads();
-		assertThat(ads.headline()).isEqualTo("최근 10일 전 브랜드A 협업 · 평균 4일 간격으로 광고 진행");
-		assertThat(ads.adIntervalDays()).isEqualByComparingTo("4.0");
-		assertThat(ads.lastAdDaysAgo()).isEqualTo(10L);
-	}
-
-	@Test
-	void 피어_3계정_미만이면_topPct만_숨김() {
-		// topPct(피어 비교)는 최소표본 게이트 대상. 유효 팔로워는 시계열 측정값이라 피어와 무관 (07-28 분리)
-		var tiny = new PeerStatsRow(2L, 18, 26, 32, 45, 39, 42, 48, 53,
-				new BigDecimal("2.0"), new BigDecimal("2.4"));
-		var r = assembler.toReport(fullSummary(), null,
-				List.of(row("2026-07-01T00:00:00Z", 1000L, 100, 10, false)),
-				List.of(), List.of(), List.of(), tiny);
-		assertThat(r.stats().overall().views().topPct()).isNull();
-		assertThat(r.effectiveFollowers()).isEqualTo(110L);
-	}
-
-	@Test
-	void 성장세는_값이_전부_0이거나_null이면_null() {
-		var series = List.of(
-				row("2026-07-01T00:00:00Z", 0L, 100, 10, false),
-				row("2026-07-02T00:00:00Z", null, 100, 10, false));
-		var report = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer());
-		assertThat(report.stats().overall().views().growthPct()).isNull();
-	}
-
-	@Test
-	void 광고_간격은_전부_같은_날이면_스팬_0이라_null() {
-		var series = List.of(
-				row("2026-07-05T00:00:00Z", 10000L, 100, 10, true),
-				row("2026-07-05T00:00:00Z", 8000L, 100, 10, true));
-		var ads = assembler.toReport(fullSummary(), null, series, List.of(), List.of(),
-				List.of(), peer()).ads();
-		assertThat(ads.adIntervalDays()).isNull();
+		assertThat(report.activity().paceNote()).isEqualTo("페이스 노트");
 	}
 }
