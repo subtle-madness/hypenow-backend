@@ -108,6 +108,11 @@ monitoring DB (monitoring 계정만 접근, Flyway 이력 1개)
                     (analysis DB 파생 뷰 전례 — 미러 없이 항상 최신·과거 소급)
 ```
 
+- **`target.id`(target_id)는 was↔monitoring 계약의 식별자** — 발급자(정본)는
+  monitoring(등록 응답으로 전달), was는 `app` 스키마에 `(user_id, target_id)` 매핑으로
+  **논리 참조만** 보관(FK·조인 없음 — `saved_influencers.handle` 관용구와 동일).
+  ID는 불변·재사용 없음, 해지도 삭제가 아닌 상태 전이(CANCELED)라 참조가 끊기지
+  않으며, 등록 중 크래시로 매핑이 유실돼도 멱등 등록(§8)으로 같은 ID를 재획득한다.
 - state/serving을 더 가르지 않는 이유: 상태·후보도 was API 응답에 그대로 나가는
   데이터라 소비자가 같다 — 경계 양쪽의 접근 주체가 다르지 않으면 스키마 분리는
   근거가 없다. 성격 차이(가변 상태 행 vs append-only 시계열)는 테이블 단위로 충분.
