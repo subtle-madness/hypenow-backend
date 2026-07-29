@@ -100,7 +100,7 @@ class MonitoringCampaignServiceTest extends IntegrationTest {
 	@Test
 	void 소유하지_않은_target_명령은_클라이언트_호출_전에_거부된다() {
 		assertThatThrownBy(() -> service.approve(userId, 999L, 1L))
-				.isInstanceOf(CampaignNotFoundException.class);
+				.isInstanceOf(MonitoringCampaignNotFoundException.class);
 		verify(client, never()).approve(anyLong(), anyLong());
 	}
 

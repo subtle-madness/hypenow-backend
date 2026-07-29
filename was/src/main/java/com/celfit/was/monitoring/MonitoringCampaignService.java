@@ -7,6 +7,10 @@ import java.util.UUID;
  * user_id 기준 모니터링 오케스트레이션(스펙 §6).
  * 등록은 멱등키 선저장 2단계 — was가 호출 직후 죽어도 키가 남아 같은 키 replay가 가능하다.
  * 명령은 (user, target) 매핑 소유 검증 후 위임. 삭제는 해지 성공 후에만 매핑을 지운다.
+ *
+ * 주의: registrationKey 멱등성은 "같은 논리적 요청의 재시도"에만 유효하다 — 같은 유저가 같은
+ * 대상을 새 요청으로 두 번 등록하면 별개 캠페인 2개가 정상 생성된다(계약 §2-1). 동일 대상
+ * 중복 등록을 막을지는 이 서비스 책임 밖(프론트 API 계층에서 판단할 것).
  */
 public class MonitoringCampaignService {
 
@@ -41,6 +45,9 @@ public class MonitoringCampaignService {
 			mappings.deleteByKey(key);
 			throw e;
 		}
+		// confirmTarget의 IllegalStateException(갱신 0행)은 현재 도달 불가 — pending 행을 지우는
+		// 경로가 위 ApiException catch뿐이라서다. 후속으로 pending 청소 잡이 생기면 느린 재시도와의
+		// 레이스로 이 경로가 열리므로 그때 처리 방식을 재검토할 것(스펙 §6 알려진 한계).
 		// 전송 계열(Unavailable)로 여기 못 오면 pending 행이 남는다 — 의도된 보류(스펙 §6 알려진 한계)
 		mappings.confirmTarget(key, result.targetId());
 		return result;
@@ -83,6 +90,6 @@ public class MonitoringCampaignService {
 
 	private void requireOwned(long userId, long targetId) {
 		var unused = mappings.findByUserAndTarget(userId, targetId)
-				.orElseThrow(() -> new CampaignNotFoundException(targetId));
+				.orElseThrow(() -> new MonitoringCampaignNotFoundException(targetId));
 	}
 }
