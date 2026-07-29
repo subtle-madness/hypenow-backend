@@ -1,5 +1,6 @@
 package com.celfit.was.v1.influencer;
 
+import com.celfit.was.v1.common.CacheKeys;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.Arrays;
 import java.util.List;
@@ -43,6 +44,17 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 		return new V1InfluencerDiscoveryQuery(keywords(q), main, mid, sub, fo,
 				ac == null ? null : Integer.valueOf(ac.substring(0, ac.length() - 1)),
 				sp, co != null, so, lim, off);
+	}
+
+	/** 캐시 키(스펙 §4) — of()가 정규화를 끝낸 컴포넌트 전체의 toString 축약. record toString은 결정적. */
+	public String cacheKey() {
+		return CacheKeys.sha256(toString());
+	}
+
+	/** 다음 페이지 쿼리 — 프리페치용(스펙 §5). */
+	public V1InfluencerDiscoveryQuery next() {
+		return new V1InfluencerDiscoveryQuery(keywords, mainCategory, midCategory, subCategory,
+				follower, activityDays, sponsored, contactOpen, sort, limit, offset + limit);
 	}
 
 	/** 쉼표 분리 후 트림, 빈 조각 제거 — 키워드 안 쉼표는 프론트 입력에서 차단(스펙 6.21). */

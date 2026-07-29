@@ -60,6 +60,24 @@ class V1InfluencerDiscoveryQueryTest {
 	}
 
 	@Test
+	void 같은_조건은_같은_캐시_키_페이지가_다르면_다른_키() {
+		V1InfluencerDiscoveryQuery a = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 0);
+		V1InfluencerDiscoveryQuery b = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 0);
+		assertThat(a.cacheKey()).isEqualTo(b.cacheKey());
+		assertThat(a.cacheKey()).isNotEqualTo(a.next().cacheKey());
+	}
+
+	@Test
+	void next는_offset만_limit만큼_전진() {
+		V1InfluencerDiscoveryQuery next = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 100).next();
+		assertThat(next.offset()).isEqualTo(150);
+		assertThat(next.limit()).isEqualTo(50);
+	}
+
+	@Test
 	void 잘못된_enum과_음수_경계는_400() {
 		assertThatThrownBy(() -> of(null, "nail", null, null, null, null, null, null, null, null, null))
 				.isInstanceOf(V1ApiException.class);
