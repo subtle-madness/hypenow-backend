@@ -30,8 +30,10 @@
 
 - 주석·로그·커밋 메시지는 한국어. 커밋 prefix는 `feat(모듈):`/`docs:` 식.
 - **브랜치·PR**: 기본 브랜치는 `develop`. 작업은 `feat/*`(또는 `docs/*`, `chore/*`) 브랜치에서 하고
-  **develop 대상 PR**로 합친다. develop·main 직접 push 금지. `main`은 릴리스용.
-- **배포는 develop→main 머지(CD)로만 한다.** `deploy/scripts/deploy.sh` 수동 실행 금지 —
+  **develop 대상 PR**로 합친다. develop·staging·main 직접 push 금지(승격 머지 제외). `main`은 릴리스용.
+- **승격 흐름은 develop→staging→main** (07-29~): develop 머지는 CI만(배포 없음),
+  **develop→staging 머지 = test 스테이징 배포**(dev-api.hypenow.io — cd-test.yml),
+  **staging→main 머지 = 운영 배포**. 배포는 이 CD로만 한다. `deploy/scripts/deploy.sh` 수동 실행 금지 —
   긴급 롤백·CD 불능 시에만, 반드시 사용자 확인 후 `--force`로. (07-20: develop 체크아웃 상태의
   수동 배포가 CD의 main 배포를 덮어 was/analytics 버전 불일치 → 랭킹 API 전면 500.
   `:latest`는 마지막 push가 이긴다.)
