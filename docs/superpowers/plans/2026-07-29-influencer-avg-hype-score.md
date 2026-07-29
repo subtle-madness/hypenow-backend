@@ -1,6 +1,6 @@
 # 계정 하입 스코어 (발굴 목록) Implementation Plan
 
-> 상태: 🟢 활성 (실행 대기)
+> 상태: 🟢 활성 · ✅ 실행됨(2026-07-29, 5개 태스크 완료 — 머지 후 archive 이동 예정)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
