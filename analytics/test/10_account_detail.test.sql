@@ -73,7 +73,7 @@ INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers
 VALUES (99990006, 99990000, 'HIKER_MOBILE', 'dummy_h', 3000,
   '{"status":"ok","user":{"username":"dummy_h","full_name":"더미 에이치","follower_count":3000}}'::jsonb,
   timestamptz '2026-06-01 12:00:00+09');
--- play_count·ig_play_count 둘 다 없음 → views NULL → 릴스 hype NULL (핀 우선순위 ④ 최신으로 여전히 핀됨)
+-- play_count·ig_play_count 둘 다 없음 → views NULL → 릴스 hype NULL (스냅샷 1건이라 우선순위 무관하게 핀됨)
 INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
 VALUES (99990006, 99990000, 'HIKER_V2_CLIPS',
   '{"response":{"status":"ok","items":[{"media":{"code":"dummy_h1","product_type":"clips","taken_at":1780272000,"like_count":100,"comment_count":10,"caption":{"text":"cap h1"}}}]}}'::jsonb,
@@ -88,4 +88,32 @@ BEGIN
     'summaries h avg_hype_score not null (창 전체 점수 불가면 NULL)';
   ASSERT (SELECT avg_likes FROM analytics.v_account_summaries WHERE handle = 'dummy_h') = 100,
     'summaries h avg_likes != 100 (다른 집계는 살아야 함)';
+END $$;
+
+-- 혼재 창: 유효 점수 + NULL 점수가 섞였을 때 NULL만 분모에서 빠지는지 (스펙 §7-1).
+-- dummy_a(전부 유효)에 점수 불가 릴스 1건을 더해 혼재로 만든 뒤 항등식 재단언 —
+-- 구현이 COALESCE(...,0)·sum/count(*)로 회귀하면 v_contents(avg는 NULL 자연 제외) 기준과 어긋나 잡힌다.
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts)
+VALUES (99990110, 'dummy_rx', 'REELS', 'dummy_a', 99990001, timestamptz '2026-06-02 10:00:00+09',
+        'PENDING', timestamptz '2026-06-02 12:00:00+09', 'ENUMERATION', 0);
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
+VALUES (99990001, 99990000, 'HIKER_V2_CLIPS',
+  '{"response":{"status":"ok","items":[{"media":{"code":"dummy_rx","product_type":"clips","taken_at":1780365600,"like_count":50,"comment_count":5,"caption":{"text":"cap rx"}}}]}}'::jsonb,
+  timestamptz '2026-06-08 12:00:00+09');
+SELECT analytics.refresh_snapshot_cache();
+
+DO $$
+BEGIN
+  ASSERT (SELECT count(*) FROM analytics.v_account_content_series
+          WHERE account_handle = 'dummy_a' AND short_code = 'dummy_rx') = 1,
+    'dummy_rx not in window (혼재 픽스처 자체가 안 만들어짐)';
+  ASSERT (SELECT hype_score FROM analytics.v_contents WHERE short_code = 'dummy_rx') IS NULL,
+    'dummy_rx hype not null (점수 불가 조건이 깨짐 — views가 생겼나)';
+  ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
+       = (SELECT round(avg(c.hype_score))::bigint
+          FROM analytics.v_contents c
+          JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
+          WHERE s.account_handle = 'dummy_a'),
+    'summaries a 혼재 창 항등식 실패 (NULL이 분모에 섞였을 가능성)';
 END $$;
