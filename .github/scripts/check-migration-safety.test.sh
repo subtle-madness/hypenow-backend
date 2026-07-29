@@ -72,5 +72,12 @@ ALTER TABLE app.example ADD COLUMN flag boolean NOT NULL DEFAULT false;
 SQL
 expect 0 "ADD COLUMN NOT NULL DEFAULT 는 통과(구버전 INSERT 안전)" "$TMP/not-null-default.sql"
 
+cat > "$TMP/multiline.sql" <<'SQL'
+ALTER TABLE app.example
+  DROP
+  COLUMN note;
+SQL
+expect 1 "여러 줄에 걸친 DROP COLUMN 차단" "$TMP/multiline.sql"
+
 echo "셀프테스트: $pass/$total"
 [ "$pass" -eq "$total" ]
