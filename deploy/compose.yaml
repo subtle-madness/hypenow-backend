@@ -6,11 +6,21 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+# 네트워크 분리 (07-29) — 운영(prod)과 test 스테이징(test)을 브리지로 격리해 test→운영
+# 경로를 커널(iptables) 수준에서 차단한다. 커스텀 네트워크 선언 시 compose 기본 네트워크가
+# 사라지므로 모든 서비스에 networks: 명시 필수(누락 = 통신 고립). 의도된 공유 접점 둘만
+# 양쪽 소속: caddy(운영·test 도메인 라우팅), postgres-raw(test-analytics의 raw 읽기 —
+# analytics_dev 읽기 전용 계정). test 서비스 정의는 compose.test.yaml 참조.
+networks:
+  prod:
+  test:
+
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     logging: *logging
+    networks: [prod]
     environment:
       POSTGRES_DB: analysis
       POSTGRES_USER: ${DB_USER}
@@ -30,6 +40,7 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     logging: *logging
+    networks: [prod, test]   # test-analytics가 analytics_dev 계정으로 raw를 읽는다 — 의도된 공유 접점
     environment:
       POSTGRES_DB: crawler
       POSTGRES_USER: ${RAW_DB_USER}
@@ -51,6 +62,7 @@ services:
     image: ghcr.io/subtle-madness/hypenow-analytics:latest
     restart: unless-stopped
     logging: *logging
+    networks: [prod]
     environment:
       APP_DATASOURCE_RAW_JDBC_URL: jdbc:postgresql://postgres-raw:5432/crawler
       APP_DATASOURCE_RAW_USERNAME: ${RAW_DB_USER}
@@ -96,6 +108,7 @@ services:
     image: ghcr.io/subtle-madness/hypenow-crawler:latest
     restart: unless-stopped
     logging: *logging
+    networks: [prod]
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-raw:5432/crawler
       SPRING_DATASOURCE_USERNAME: ${RAW_DB_USER}
@@ -132,6 +145,7 @@ services:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
     logging: *logging
+    networks: [prod]
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DB_URL: jdbc:postgresql://postgres:5432/analysis
@@ -158,6 +172,7 @@ services:
     image: python:3.12-alpine
     restart: unless-stopped
     logging: *logging
+    networks: [prod]
     environment:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
       ONS_RELAY_TOKEN: ${ONS_RELAY_TOKEN}
@@ -169,6 +184,7 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     logging: *logging
+    networks: [prod, test]   # api(운영)·dev-api(test) 도메인을 한 caddy가 라우팅 — 의도된 공유 접점
     ports:
       - "80:80"
       - "443:443"

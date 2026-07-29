@@ -1,4 +1,6 @@
-> 상태: 🟢 활성 · ✅ 구현됨 (개통 체크리스트 대기)
+> 상태: 🗄 대체됨 (부분) — 구조 원리(운영 동거·raw 공유·analytics_dev 격리·파일 공급 분리)는 유효하나,
+> 트리거·명칭은 [2026-07-29-staging-branch-test-stack-design.md](2026-07-29-staging-branch-test-stack-design.md)로
+> 개편(develop CI→staging CI, dev-*→test-*, `:develop`→`:staging`, prod/test 네트워크 분리)
 
 # dev 스테이징 환경 설계 — 운영 인스턴스 동거 + raw 공유(`analytics_dev` 스키마 격리)
 
