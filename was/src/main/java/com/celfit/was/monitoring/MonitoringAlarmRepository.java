@@ -64,6 +64,7 @@ public class MonitoringAlarmRepository {
 				"SELECT count(*) FROM app.monitoring_alarm_state WHERE event_type = :e")
 				.param("e", eventType).query(Long.class).single() == 0) {
 			// 후퇴 방지로 걸러진 게 아니라 행 자체가 없음 — 새 이벤트의 워터마크 시드 누락 신호
+			// 현 잡 경로에선 도달 불가(watermark()가 선행) — advance만 부르는 미래 호출자를 위한 가드
 			log.warn("워터마크 행 없음 — 마이그레이션 시드 누락 의심: event_type={}", eventType);
 		}
 	}

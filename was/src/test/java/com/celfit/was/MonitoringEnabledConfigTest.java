@@ -14,8 +14,10 @@ import org.springframework.test.context.TestPropertySource;
 /**
  * monitoring.enabled=true — 모니터링 구성이 뜨되, 기본 DataSource·JdbcClient 자동구성이
  * back-off 하지 않는다(인프라 빈 비노출 설계 검증 — 스펙 §3).
+ * monitoring.alarm.cron=-(CRON_DISABLED)로 실제 스케줄 등록을 억제 — 09:00 KST를 가로지르는
+ * CI 실행에서 알람 잡이 실제로 돌아 공유 워터마크를 오염시키는 플레이크를 막는다.
  */
-@TestPropertySource(properties = "monitoring.enabled=true")
+@TestPropertySource(properties = { "monitoring.enabled=true", "monitoring.alarm.cron=-" })
 class MonitoringEnabledConfigTest extends IntegrationTest {
 
 	@DynamicPropertySource

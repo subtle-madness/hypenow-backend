@@ -40,7 +40,7 @@ public class MonitoringAlarmJob {
 		this.mailSender = mailSender;
 	}
 
-	@Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
+	@Scheduled(cron = "${monitoring.alarm.cron:0 0 9 * * *}", zone = "Asia/Seoul")
 	public void sendPostDetectedAlarms() {
 		OffsetDateTime watermark = alarmRepository.watermark(EVENT_POST_DETECTED);
 		List<PendingCandidate> fresh = readRepository.findPendingCandidatesSince(watermark.toInstant());
@@ -92,8 +92,8 @@ public class MonitoringAlarmJob {
 			OffsetDateTime maxDetected = fresh.stream().map(PendingCandidate::detectedAt)
 					.max(Comparator.naturalOrder()).orElseThrow();
 			alarmRepository.advanceWatermark(EVENT_POST_DETECTED, maxDetected);
-			log.info("모니터링 알람: 대상 {}명 중 {}명 발송(옵트아웃 {}명·이메일없음 {}명 제외), 워터마크 {} 전진",
-					byUser.size(), byUser.size() - skippedNoEmail, optedOut.size(), skippedNoEmail, maxDetected);
+			log.info("모니터링 알람: {}명 발송(옵트아웃 {}명·이메일없음 {}명 제외), 워터마크 {} 전진",
+					byUser.size() - skippedNoEmail, optedOut.size(), skippedNoEmail, maxDetected);
 		} else {
 			log.error("모니터링 알람: 발송 대상 {}명 중 실패 {}건 — 워터마크 유지(다음 회차 재발송, 중복 수신 가능)",
 					byUser.size(), failures);

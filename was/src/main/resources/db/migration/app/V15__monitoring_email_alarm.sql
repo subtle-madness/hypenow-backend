@@ -17,4 +17,5 @@ CREATE TABLE app.monitoring_alarm_state (
 
 -- 시드: 마이그레이션 시각부터 시작 — 적용 이전 감지분의 일괄 발송 방지.
 INSERT INTO app.monitoring_alarm_state (event_type, last_notified_at)
-VALUES ('POST_DETECTED', now());
+VALUES ('POST_DETECTED', now())
+ON CONFLICT DO NOTHING;
