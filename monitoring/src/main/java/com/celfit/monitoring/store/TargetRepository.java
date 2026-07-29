@@ -25,7 +25,9 @@ public class TargetRepository {
 					: JSON.readValue(rs.getString("keyword_rule"), KeywordRule.class),
 			TargetStatus.valueOf(rs.getString("status")), rs.getString("tracked_short_code"),
 			rs.getString("registration_key"),
-			rs.getTimestamp("expires_at").toInstant(), rs.getString("fail_reason"));
+			rs.getTimestamp("expires_at").toInstant(), rs.getString("fail_reason"),
+			// NOT NULL DEFAULT now() — 애플리케이션이 값을 주지 않는 컬럼이라 null 분기가 없다.
+			rs.getTimestamp("registered_at").toInstant());
 
 	private final JdbcTemplate db;
 

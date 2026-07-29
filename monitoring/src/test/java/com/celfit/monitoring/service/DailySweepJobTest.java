@@ -34,8 +34,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  */
 class DailySweepJobTest {
 
-	/** 스윕 픽스처 한 건 — 열거 응답에 실릴 게시물. */
-	private record FakePost(String code, String caption, long takenAt) {}
+	/** 스윕 픽스처 한 건 — 열거 응답에 실릴 게시물. takenAt이 null이면 응답에서 taken_at 키 자체가 빠진다. */
+	private record FakePost(String code, String caption, Long takenAt) {}
 
 	/**
 	 * 스윕 전용 Hiker fake — 계정별로 다른 프로필·열거 응답을 주고 콜 수를 센다.
@@ -157,10 +157,12 @@ class DailySweepJobTest {
 
 		/** 캡션에 따옴표·역슬래시를 쓰지 않는다는 전제 — 픽스처 문자열이라 이스케이프를 생략한다. */
 		private static String itemJson(FakePost post, String owner) {
+			// taken_at이 null이면 키를 통째로 뺀다 — 실제 응답의 "게시 시각 미상" 셰이프와 같다.
+			String takenAt = post.takenAt() == null ? "" : "\"taken_at\":" + post.takenAt() + ",";
 			return """
-					{"code":"%s","product_type":"clips","taken_at":%d,"caption":{"text":"%s"},
+					{"code":"%s","product_type":"clips",%s"caption":{"text":"%s"},
 					"like_count":10,"comment_count":2,"play_count":100,"user":{"username":"%s"}}"""
-					.formatted(post.code(), post.takenAt(), post.caption(), owner);
+					.formatted(post.code(), takenAt, post.caption(), owner);
 		}
 
 		private static String param(String path, String name) {
@@ -176,6 +178,10 @@ class DailySweepJobTest {
 
 	private static final Instant FUTURE = Instant.now().plusSeconds(86_400);
 	private static final Instant PAST = Instant.now().minusSeconds(60);
+	/** 감지 하한선(target.registered_at = 등록 시점의 now()) 위쪽 게시 시각. */
+	private static final long AFTER = Instant.now().plusSeconds(600).getEpochSecond();
+	/** 하한선 아래 — 캠페인 등록 전에 올라온 옛 게시물. */
+	private static final long BEFORE = Instant.now().minusSeconds(86_400).getEpochSecond();
 
 	JdbcTemplate db;
 	TargetRepository targets;
@@ -210,6 +216,12 @@ class DailySweepJobTest {
 				TargetStatus.TRACKING, trackedShortCode, key, FUTURE);
 	}
 
+	private List<String> candidateCodes(long targetId) {
+		return db.queryForList("""
+				SELECT short_code FROM detected_candidate WHERE target_id=? ORDER BY short_code""",
+				String.class, targetId);
+	}
+
 	private long candidateCount(long targetId) {
 		return db.queryForObject("SELECT count(*) FROM detected_candidate WHERE target_id=?",
 				Long.class, targetId);
@@ -222,7 +234,7 @@ class DailySweepJobTest {
 	// ① 만료
 	@Test
 	void 만료_지난_활성_캠페인은_EXPIRED로_종결되고_수집하지_않는다() {
-		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", 1_785_000_000L));
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
 		long expired = watching("someuser", any("Rare Beginnings"), "rk-expired", PAST);
 
 		job.run();
@@ -237,8 +249,8 @@ class DailySweepJobTest {
 	@Test
 	void 같은_계정_두_캠페인은_수집_1회_감지는_각자() {
 		hiker.account("someuser", "111",
-				new FakePost("AAA", "Rare Beginnings 신상 런칭", 1_785_000_000L),
-				new FakePost("BBB", "오늘의 데일리 메이크업", 1_784_900_000L));
+				new FakePost("AAA", "Rare Beginnings 신상 런칭", AFTER),
+				new FakePost("BBB", "오늘의 데일리 메이크업", AFTER - 100));
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 		long b = watching("someuser", any("절대없는키워드zz"), "rk-b", FUTURE);
 
@@ -246,6 +258,8 @@ class DailySweepJobTest {
 
 		// 캠페인 수만큼 수집하면 같은 계정을 여러 번 긁어 콜이 배로 든다 — 관측 대상 단위로 1회.
 		assertThat(hiker.profileCalls).isEqualTo(1);
+		// 열거 1회는 clips(조회수 보강) + medias 2콜이다 — 과금 단위가 콜이라 이 구성을 못박는다.
+		assertThat(hiker.clipsCalls).isEqualTo(1);
 		assertThat(hiker.mediasCalls).isEqualTo(1);
 		assertThat(candidateCount(a)).isEqualTo(1);
 		assertThat(candidateCount(b)).isZero();
@@ -260,9 +274,9 @@ class DailySweepJobTest {
 	@Test
 	void 매칭_게시물은_PENDING_후보로_쌓이고_재실행해도_중복되지_않는다() {
 		hiker.account("someuser", "111",
-				new FakePost("AAA", "Rare Beginnings 신상 런칭", 1_785_000_000L),
-				new FakePost("BBB", "Rare Beginnings 앵콜", 1_784_900_000L),
-				new FakePost("CCC", "무관한 게시물", 1_784_800_000L));
+				new FakePost("AAA", "Rare Beginnings 신상 런칭", AFTER),
+				new FakePost("BBB", "Rare Beginnings 앵콜", AFTER - 100),
+				new FakePost("CCC", "무관한 게시물", AFTER - 200));
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 
 		job.run();
@@ -278,10 +292,44 @@ class DailySweepJobTest {
 				.contains("Rare Beginnings");
 	}
 
+	/**
+	 * 감지 하한선 — 등록 시각 이후 게시물만 후보가 된다(설계 §5, 07-29 확정).
+	 * 없으면 첫 스윕에서 등록 전 옛 키워드 게시물이 통째로 올라와 검토 화면이 노이즈로 찬다.
+	 */
+	@Test
+	void 등록_시각_이전_게시물은_키워드가_맞아도_후보가_아니다() {
+		hiker.account("someuser", "111",
+				new FakePost("OLDPOST", "Rare Beginnings 신상 런칭", BEFORE),
+				new FakePost("NEWPOST", "Rare Beginnings 앵콜", AFTER));
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		assertThat(candidateCodes(a)).containsExactly("NEWPOST");
+		// 감지에서 빠졌을 뿐 관측은 한다 — 지표 스냅샷은 등록 전 게시물도 남는다.
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_snapshot WHERE short_code='OLDPOST'""", Long.class))
+				.isEqualTo(1);
+	}
+
+	/** 게시 시각을 모르면 하한선 판정 자체가 불가능하다 — 잘못 올린 후보는 사람이 지워야 하므로 보수적으로 뺀다. */
+	@Test
+	void 게시_시각을_모르는_게시물은_보수적으로_후보에서_제외한다() {
+		hiker.account("someuser", "111", new FakePost("NOTIME", "Rare Beginnings 신상 런칭", null));
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		assertThat(candidateCount(a)).isZero();
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_snapshot WHERE short_code='NOTIME'""", Long.class))
+				.isEqualTo(1);
+	}
+
 	// ④ 추적 게시물 보강
 	@Test
 	void 열거_밖으로_밀려난_추적_게시물만_단건_콜로_보강한다() {
-		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", 1_785_000_000L))
+		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
 				.standalonePost("OLD9", "someuser", "예전 협찬 게시물");
 		long stale = tracking("someuser", "OLD9", "rk-stale");
 		long fresh = tracking("someuser", "AAA", "rk-fresh");
@@ -318,7 +366,7 @@ class DailySweepJobTest {
 	@Test
 	void 한_계정_수집_오류가_다른_계정_처리를_막지_않는다() {
 		hiker.brokenAccount("bad_user")
-				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", 1_785_000_000L));
+				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", AFTER));
 		long bad = watching("bad_user", any("Rare Beginnings"), "rk-bad", FUTURE);
 		long good = watching("good_user", any("Rare Beginnings"), "rk-good", FUTURE);
 
@@ -334,7 +382,7 @@ class DailySweepJobTest {
 	@Test
 	void 계정_404는_그_계정의_활성_캠페인_전부를_FAILED로_종결한다() {
 		hiker.missingAccount("gone_user")
-				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", 1_785_000_000L));
+				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", AFTER));
 		long gone1 = watching("gone_user", any("Rare Beginnings"), "rk-gone1", FUTURE);
 		long gone2 = tracking("gone_user", "ZZZ", "rk-gone2");
 		long good = watching("good_user", any("Rare Beginnings"), "rk-good", FUTURE);
@@ -355,7 +403,7 @@ class DailySweepJobTest {
 	 */
 	@Test
 	void 추적_게시물_404는_해당_캠페인만_FAILED로_종결한다() {
-		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", 1_785_000_000L))
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER))
 				.missingPost("DEAD1");
 		long dead = tracking("someuser", "DEAD1", "rk-dead");
 		long alive = watching("someuser", any("Rare Beginnings"), "rk-alive", FUTURE);
@@ -376,7 +424,7 @@ class DailySweepJobTest {
 	@Test
 	void 비공개_전환_계정은_활성_캠페인_전부를_FAILED_PRIVATE_ACCOUNT로_종결한다() {
 		hiker.privateAccount("shy_user")
-				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", 1_785_000_000L));
+				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", AFTER));
 		long shy1 = watching("shy_user", any("Rare Beginnings"), "rk-shy1", FUTURE);
 		long shy2 = tracking("shy_user", "ZZZ", "rk-shy2");
 		long good = watching("good_user", any("Rare Beginnings"), "rk-good", FUTURE);

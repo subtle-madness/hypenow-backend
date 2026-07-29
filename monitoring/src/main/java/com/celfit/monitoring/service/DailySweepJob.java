@@ -8,6 +8,7 @@ import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.CandidateRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -87,6 +88,12 @@ public class DailySweepJob {
 				// 추적 게시물만 삭제된 경우 — 계정은 멀쩡하니 이 캠페인 하나만 종결한다.
 				log.info("추적 게시물 부재 — 캠페인 {} 종결: {}", t.id(), t.trackedShortCode());
 				closeFailed(t.id(), NOT_FOUND);
+			} catch (PrivateAccountException e) {
+				// 지금은 도달 불가다 — 비공개 판정은 프로필 응답에만 있고 그건 계정 갈래에서 걸린다.
+				// 그래도 계정 갈래와 대칭으로 둔다: 단건 경로(fetchPost)에 비공개 판정이 생기는 순간
+				// 이 갈래가 없으면 "일반 실패"로 조용히 새어 만료까지 매일 재시도하게 된다.
+				log.info("추적 게시물 비공개 — 캠페인 {} 종결: {}", t.id(), t.trackedShortCode());
+				closeFailed(t.id(), PRIVATE_ACCOUNT);
 			} catch (RuntimeException e) {
 				log.warn("캠페인 스윕 실패(격리) — target {}: {}", t.id(), e.toString());
 			}
@@ -114,7 +121,7 @@ public class DailySweepJob {
 	private void sweepTarget(TargetRow t, List<PostInfo> posts, Set<String> enumerated) {
 		if (t.status() == TargetStatus.WATCHING && t.keywordRule() != null) {
 			for (PostInfo p : posts) {
-				if (t.keywordRule().matches(p.caption())) {
+				if (postedAfterRegistration(p, t) && t.keywordRule().matches(p.caption())) {
 					candidates.insertPending(t.id(), p.shortCode(), excerpt(p.caption()));
 				}
 			}
@@ -125,6 +132,17 @@ public class DailySweepJob {
 			collect.collectPost(tracked);
 		}
 		targets.touchFetched(t.id());
+	}
+
+	/**
+	 * 감지 하한선 — 캠페인 등록 시각 이후에 게시된 것만 후보로 본다(설계 §5, 07-29 확정).
+	 * 없으면 첫 스윕에서 등록 전의 옛 키워드 게시물이 통째로 후보로 떠 검토 화면이 노이즈로 찬다.
+	 * taken_at을 못 얻은 게시물은 보수적으로 제외한다 — 잘못 올린 후보는 사람이 지워야 하지만,
+	 * 빠뜨린 게시물은 다음 스윕에서 taken_at이 채워지면 다시 걸린다(후보 생성은 멱등).
+	 */
+	private static boolean postedAfterRegistration(PostInfo p, TargetRow t) {
+		return p.takenAt() != null
+				&& !Instant.ofEpochSecond(p.takenAt()).isBefore(t.registeredAt());
 	}
 
 	/**
