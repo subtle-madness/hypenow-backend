@@ -11,8 +11,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.common.PagePrefetcher;
 import com.celfit.was.v1.common.SavedLookup;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import com.celfit.was.v1.content.V1ContentPageService.ContentPage;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -35,7 +37,10 @@ class V1ContentControllerTest {
 	MockMvc mockMvc;
 
 	@MockitoBean
-	V1ContentRepository repository;
+	V1ContentPageService pageService;
+
+	@MockitoBean
+	PagePrefetcher prefetcher;
 
 	@MockitoBean
 	SavedLookup savedLookup;
@@ -64,9 +69,8 @@ class V1ContentControllerTest {
 
 	@Test
 	void 로그인이면_저장_여부로_isContentsSaved를_채운다() throws Exception {
-		given(repository.findCards(any())).willReturn(List.of(row("c1"), row("c2")));
-		given(repository.countCards(any())).willReturn(2L);
-		given(repository.findDistributorOptions()).willReturn(List.of());
+		given(pageService.page(any())).willReturn(new ContentPage(List.of(row("c1"), row("c2")), 2L));
+		given(pageService.distributorOptions()).willReturn(List.of());
 		given(savedLookup.savedShortCodes(7L)).willReturn(Set.of("c1"));
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
@@ -80,9 +84,8 @@ class V1ContentControllerTest {
 
 	@Test
 	void 성공_응답은_envelope와_meta를_가진다() throws Exception {
-		given(repository.findCards(any())).willReturn(List.of());
-		given(repository.countCards(any())).willReturn(0L);
-		given(repository.findDistributorOptions())
+		given(pageService.page(any())).willReturn(new ContentPage(List.of(), 0L));
+		given(pageService.distributorOptions())
 				.willReturn(List.of(Map.of("id", "daiso", "name", "다이소")));
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
@@ -97,9 +100,8 @@ class V1ContentControllerTest {
 
 	@Test
 	void offset_파라미터는_meta에_그대로_반영된다() throws Exception {
-		given(repository.findCards(any())).willReturn(List.of());
-		given(repository.countCards(any())).willReturn(0L);
-		given(repository.findDistributorOptions()).willReturn(List.of());
+		given(pageService.page(any())).willReturn(new ContentPage(List.of(), 0L));
+		given(pageService.distributorOptions()).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
@@ -144,9 +146,8 @@ class V1ContentControllerTest {
 	// /v1 표면 CORS 회귀 — SecurityConfig가 /api/**만 등록해 /v1/**에 CORS 헤더가 안 나가던 누락 방지.
 	@Test
 	void 허용_오리진에_CORS_헤더를_내린다() throws Exception {
-		given(repository.findCards(any())).willReturn(List.of());
-		given(repository.countCards(any())).willReturn(0L);
-		given(repository.findDistributorOptions()).willReturn(List.of());
+		given(pageService.page(any())).willReturn(new ContentPage(List.of(), 0L));
+		given(pageService.distributorOptions()).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
@@ -166,6 +167,7 @@ class V1ContentControllerTest {
 
 	@Test
 	void limit_상한_초과는_VALIDATION_FAILED() throws Exception {
+		// (스텁 불필요 — 컨트롤러 진입 전 검증 실패)
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
 						.param("limit", "101"))
