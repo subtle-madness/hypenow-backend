@@ -29,7 +29,7 @@ public class MailConfig {
 			log.warn("RESEND_API_KEY 미설정 — 메일을 실발송하지 않고 로그로만 출력한다(운영이라면 설정 누락)");
 			return new LoggingMailSender();
 		}
-		// 동기 가입 경로에서 호출되므로 무한 블록 금지 — connect 5초·read 10초
+		// 현재 유일한 호출자는 모니터링 알람 크론(09:00) — 그래도 무한 블록 금지(스케줄 스레드 보호): connect 5초·read 10초
 		// (analytics JobConfig/AnthropicContentAttributeAnalyzer의 JDK HttpClient 타임아웃 관용구를 RestClient에 이식)
 		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 		JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(http);

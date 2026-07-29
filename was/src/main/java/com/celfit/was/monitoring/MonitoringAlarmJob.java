@@ -71,9 +71,14 @@ public class MonitoringAlarmJob {
 
 		int failures = 0;
 		for (Map.Entry<Long, List<PendingCandidate>> entry : byUser.entrySet()) {
+			String email = emails.get(entry.getKey());
+			if (email == null) {
+				// findByTargetIds~emailsByUserIds 사이 탈퇴(CASCADE) 레이스 — 발송 불가, 다음 회차엔 매핑도 사라진다
+				log.warn("모니터링 알람: 이메일 없음(유저 삭제 레이스 추정) — 스킵 userId={}", entry.getKey());
+				continue;
+			}
 			try {
-				mailSender.send(emails.get(entry.getKey()),
-						composer.subject(entry.getValue().size()), composer.body(entry.getValue()));
+				mailSender.send(email, composer.subject(entry.getValue().size()), composer.body(entry.getValue()));
 			} catch (RuntimeException e) {
 				failures++;
 				log.error("모니터링 알람 발송 실패 userId={}", entry.getKey(), e);
@@ -88,8 +93,8 @@ public class MonitoringAlarmJob {
 			log.info("모니터링 알람: {}명 발송(옵트아웃 {}명 제외), 워터마크 {} 전진",
 					byUser.size(), optedOut.size(), maxDetected);
 		} else {
-			log.error("모니터링 알람: 발송 실패 {}건 — 워터마크 유지(다음 회차 재발송, 중복 수신 가능)",
-					failures);
+			log.error("모니터링 알람: 발송 대상 {}명 중 실패 {}건 — 워터마크 유지(다음 회차 재발송, 중복 수신 가능)",
+					byUser.size(), failures);
 		}
 	}
 }

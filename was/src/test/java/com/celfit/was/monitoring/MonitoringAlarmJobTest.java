@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -155,6 +156,22 @@ class MonitoringAlarmJobTest extends IntegrationTest {
 
 		verify(mailSender).send(eq(emailOf(user)), contains("1건"), contains("NEW1"));
 		assertThat(alarmRepository.watermark("POST_DETECTED")).isEqualTo(DETECTED_2);
+	}
+
+	@Test
+	void 실패한_회차는_다음_실행에서_같은_후보를_재발송한다() {
+		long user = seedUser();
+		long t1 = linkUserToTarget(user, seedTarget("acc1", "WATCHING"));
+		seedCandidate(t1, "NEW1", DETECTED_1);
+		doThrow(new RuntimeException("발송 실패"))
+				.doNothing()   // 1차 실행 실패 → 2차 실행 성공
+				.when(mailSender).send(anyString(), anyString(), anyString());
+
+		job.sendPostDetectedAlarms();   // 실패 — 워터마크 유지
+		job.sendPostDetectedAlarms();   // 재실행 — 같은 후보 재발송(중복 > 유실 계약)
+
+		verify(mailSender, times(2)).send(eq(emailOf(user)), contains("1건"), contains("NEW1"));
+		assertThat(alarmRepository.watermark("POST_DETECTED")).isEqualTo(DETECTED_1);
 	}
 
 	@Test
