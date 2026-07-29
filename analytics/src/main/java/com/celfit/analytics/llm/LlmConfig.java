@@ -86,12 +86,20 @@ public class LlmConfig {
 
 	@Bean
 	@Lazy
+	public TraitTaxonomyLoader traitTaxonomyLoader(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new TraitTaxonomyLoader(analysisDataSource);
+	}
+
+	@Bean
+	@Lazy
 	public AccountSynthesisPort accountSynthesisPort(AnalyticsSettings settings,
-			ObjectProvider<AnthropicClient> anthropic, ObjectProvider<GeminiApi> gemini) {
+			ObjectProvider<AnthropicClient> anthropic, ObjectProvider<GeminiApi> gemini,
+			TraitTaxonomyLoader traitLoader) {
 		if ("anthropic".equals(settings.llmProvider())) {
-			return new AnthropicAccountSynthesizer(anthropic.getObject(), settings);
+			return new AnthropicAccountSynthesizer(anthropic.getObject(), settings, traitLoader);
 		}
-		return new GeminiAccountSynthesizer(gemini.getObject(), settings::geminiModel);
+		return new GeminiAccountSynthesizer(gemini.getObject(), settings::geminiModel, traitLoader::get);
 	}
 
 	/**

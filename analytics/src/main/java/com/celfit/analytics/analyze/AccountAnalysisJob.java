@@ -4,6 +4,7 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.TraitTaxonomyLoader;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -47,14 +48,16 @@ public class AccountAnalysisJob {
 	private final AccountSynthesisPort port;
 	private final AnalyticsSettings settings;
 	private final ProgressReporter reporter;
+	private final TraitTaxonomyLoader traitLoader;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public AccountAnalysisJob(DataSource analysisDataSource, AccountSynthesisPort port,
-			AnalyticsSettings settings, ProgressReporter reporter) {
+			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader) {
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.port = port;
 		this.settings = settings;
 		this.reporter = reporter;
+		this.traitLoader = traitLoader;
 	}
 
 	/** @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부) */
@@ -116,6 +119,6 @@ public class AccountAnalysisJob {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
 		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy, adSituation);
+				lastPostedAt, analyzedCount, copy, adSituation, traitLoader.get().names());
 	}
 }
