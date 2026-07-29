@@ -2,9 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 실행 전
-> 스펙: [specs/2026-07-28-monitoring-module-design.md](../specs/2026-07-28-monitoring-module-design.md) ·
-> was 계약: [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md)
+> 상태: ✅ 실행 완료(2026-07-29 — 전 12태스크 + 문서 정리)
+> 스펙: [specs/2026-07-28-monitoring-module-design.md](../../specs/2026-07-28-monitoring-module-design.md) ·
+> was 계약: [docs/contracts/monitoring-was-contract.md](../../../contracts/monitoring-was-contract.md) ·
+> Hiker 매핑 정본: [plans/2026-07-28-monitoring-hiker-findings.md](../2026-07-28-monitoring-hiker-findings.md)
 
 **Goal:** 시딩 캠페인 모니터링을 담당하는 4번째 Gradle 모듈 `monitoring` 신설 — 등록(동기 첫 수집)·키워드 감지·승인 게이트·일일 스윕·조회 표면까지.
 

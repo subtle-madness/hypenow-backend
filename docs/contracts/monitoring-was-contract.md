@@ -2,7 +2,8 @@
 
 > **living 문서** — monitoring 모듈이 was에 제공하는 계약의 정본. 구현과 함께 갱신한다.
 > 배경·설계 근거는 [specs/2026-07-28-monitoring-module-design.md](../superpowers/specs/2026-07-28-monitoring-module-design.md) 참조.
-> 상태: v0.1 초안 (구현 미착수 — 필드·에러 어휘는 구현 중 조정될 수 있음, 변경 시 이 문서가 먼저 갱신됨)
+> 상태: **v1.0 (구현 반영 — 2026-07-29)** · 명령 API 5종·조회 표면(테이블 4 + 뷰 2)·에러 어휘 전부 구현과 일치.
+> 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
 
@@ -164,8 +165,8 @@ target이 활성(WATCHING/TRACKING)이 아니면 409 `INVALID_STATE` — 종결�
 ### profile_snapshot / post_snapshot — 관측치 (계정·게시물 단위, 캠페인 간 공유)
 
 ```
-profile_snapshot(username, captured_on date, followers, following, media_count, …)
-                 PK (username, captured_on) — 일 1회 upsert
+profile_snapshot(username, captured_on date, followers, following, media_count)
+                 PK (username, captured_on) — 일 1회 upsert. 컬럼은 이 5개가 전부다
 
 post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
               likes, comments, views, saves, shares, reposts)
@@ -173,16 +174,50 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 ```
 
 - 지표 6종: 좋아요·댓글·조회·저장·공유·리포스트. **취득 불가 지표는 null**
-  (예: 피드 조회수 — Hiker 필드 매핑은 구현 시 확정, null 규칙 준수 필수).
+  (예: 피드 조회수 — 항상 null. Hiker 필드 매핑의 정본은
+  [plans/2026-07-28-monitoring-hiker-findings.md](../superpowers/plans/2026-07-28-monitoring-hiker-findings.md)).
 - 캠페인 추이는 target을 조인해 본다: `target.username` → profile_snapshot,
   `target.tracked_short_code` → post_snapshot.
 
-### 조회 뷰 (구현 시 확정 — 이름·컬럼은 초안)
+### 조회 뷰 (구현 확정 — v1.0)
 
-- `v_target_overview` — target + 최신 프로필/게시물 스냅샷 + PENDING 후보 수.
-  캠페인 목록 화면은 이것 하나로 서빙 가능하게 유지한다.
-- `v_target_timeseries` — target_id × captured_on 일별 지표 + 전일 대비 증감.
-  파생 집계(증감률·이동평균)는 뷰 안에서 계산돼 나온다.
+#### `v_target_overview` — 캠페인 목록 (target 1행당 1행, 26컬럼)
+
+캠페인 목록 화면은 이 뷰 하나로 서빙 가능하게 유지한다. 컬럼:
+
+| 구획 | 컬럼 |
+|---|---|
+| target (14) | `target_id`(= target.id), `type`, `username`, `short_code`, `keyword_rule`, `status`, `tracked_short_code`, `tracked_since`, `registration_key`, `expires_at`, `registered_at`, `closed_at`, `last_fetched_at`, `fail_reason` |
+| 최신 프로필 스냅샷 (3) | `profile_captured_on`, `followers`, `media_count` |
+| 최신 게시물 스냅샷 (8) | `post_captured_on`, `content_type`, `likes`, `comments`, `views`, `saves`, `shares`, `reposts` |
+| 후보 (1) | `pending_candidates` — PENDING 후보 수 |
+
+- 스냅샷 구획은 **각각 최신 1행**(captured_on DESC LIMIT 1)이고, 프로필과 게시물의
+  `captured_on`은 서로 다를 수 있어 별도 컬럼(`profile_captured_on` / `post_captured_on`)이다.
+- 추적 게시물이 없는 캠페인(WATCHING·미승인)은 **게시물 구획 8컬럼이 전부 null**.
+  아직 프로필 수집 전이면 프로필 구획 3컬럼도 null (LEFT JOIN — target 행 자체는 항상 나온다).
+- `followers`/`media_count`만 노출한다(스냅샷의 `following`은 뷰에 없음 — 필요하면
+  `profile_snapshot`을 직접 조회).
+
+#### `v_target_timeseries` — 추적 게시물 일별 추이 (target_id × captured_on)
+
+| 구획 | 컬럼 |
+|---|---|
+| 키 (3) | `target_id`, `captured_on`, `content_type` |
+| 지표 6종 | `likes`, `comments`, `views`, `saves`, `shares`, `reposts` |
+| 전일 대비 증감 6종 | `likes_delta`, `comments_delta`, `views_delta`, `saves_delta`, `shares_delta`, `reposts_delta` |
+
+- 추적 게시물이 있는 캠페인만 행이 나온다(INNER JOIN — WATCHING 캠페인은 0행).
+- 첫날 행의 `*_delta`는 null(직전 행 없음). 원지표가 null이면 delta도 null.
+
+**⚠ delta는 직전 '행' 기준이지 '전일' 기준이 아니다** — `lag()`는 같은 target의
+captured_on 순서상 바로 앞 행과 비교한다. 수집이 하루 빠지면(장애·일시 실패) 그 다음
+행의 delta는 **2일치 증감이 하나로 합쳐져** 나온다. 일 단위 정규화가 필요하면
+was가 `captured_on` 간격을 같이 읽어 나눠 쓸 것.
+
+**⚠ 두 뷰를 조인하지 말 것** — 지표 컬럼명(`likes`·`comments`·…·`content_type`)이
+겹쳐서 조인하면 어느 쪽 값인지 모호해진다. 용도가 다르므로 각각 조회한다:
+**overview = 최신 1일 스냅 (목록·상세 헤더)**, **timeseries = 일별 시계열 (추이 그래프)**.
 
 ### 자주 쓸 쿼리 예
 

@@ -1,6 +1,6 @@
 # 모니터링 모듈 설계 — 시딩 캠페인 추이 추적
 
-> 상태: 🟢 활성 · 설계 확정 (구현 미착수)
+> 상태: 🟢 활성 · ✅ 구현됨(2026-07-29 — 트랙 MON, 개통 ops 대기)
 > 작성: 2026-07-28
 
 ## 1. 배경·목적
@@ -267,3 +267,16 @@ monitoring DB (쓰기는 monitoring 계정만, Flyway 이력 1개)
   선정, 열거 응답만으로 6지표가 다 나오는지(안 나오면 게시물별 개별 콜) 실측.
 - 원형 보존 기간, 게시물 열거 페이지 수(최근 N개 범위).
 - 내부 API 에러 코드 어휘, was `/v1/monitoring` 응답 스키마 상세.
+
+> **해소 현황 (2026-07-29 구현 시점 — 본문은 설계 당시 기록이라 불변, 아래가 결론이다)**
+>
+> - **Hiker 엔드포인트·필드 매핑 → 확정.** 실측 결과 v1 계열은 6지표 중 좋아요·댓글만 줘서
+>   전량 **v2 계열로 교체**(`/v2/user/by/username` · `/v2/user/medias` · `/v2/media/by/code`).
+>   `/v2/user/medias`가 릴스 재생수를 안 줘서 `/v2/user/clips` 보강 1콜을 더해 **계정당 3콜**.
+>   정본: [plans/2026-07-28-monitoring-hiker-findings.md](../plans/2026-07-28-monitoring-hiker-findings.md).
+> - **게시물 열거 페이지 수 → 기본 1페이지**(설정 `monitoring.enumerate-pages`로 조정 가능).
+> - **내부 API 에러 코드 어휘 → 계약 v1.0에서 동결**
+>   ([contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md) §2).
+>   was `/v1/monitoring` 응답 스키마는 was 몫이라 이 트랙 범위 밖.
+> - **미결(후속 과제)**: raw 원형(`raw.fetch_payload`) 보존 기간·롤링 삭제, 종결(EXPIRED·CANCELED·FAILED)
+>   캠페인의 데이터 청소 정책. 둘 다 구현에 없다 — 데이터가 쌓이기 시작한 뒤 별도 결정.

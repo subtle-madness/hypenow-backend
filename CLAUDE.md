@@ -22,6 +22,7 @@
 - 전체 테스트: `./gradlew test` (Java 21, Spring Boot 4.1, Gradle 멀티모듈: crawler/analytics/was)
 - 분석 뷰 검증: SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리) 컨벤션 — 기존 run.sh는 07-12 초기화로 삭제, 태스크 A에서 재구축
 - 실행: `./gradlew :was:bootRun`(8081) / `:crawler:bootRun`(8080, 어드민 `/ui`) / `:analytics:bootRun`(8082, 어드민 `/ui` — 잡 트리거·로그. one-shot 미러는 `--analytics.mirror-on-startup=true --spring.main.web-application-type=none`)
+- 실행(monitoring): `./gradlew :monitoring:bootRun`(8083) — 로컬은 기존 DB 볼륨에 `db/init/02-create-monitoring-db.sql`을 수동 적용해야 뜬다(init 스크립트는 새 볼륨에만 자동 실행).
 - DB: docker `crawler-postgres-1` (포트 5433, crawler/crawler, DB `crawler`·`analysis`) —
   컨테이너 이름은 compose 디렉토리명 기반이라 머신마다 다를 수 있음(예: `hypenow-crawler-postgres-1`).
   스크립트는 `PG_CONTAINER` 환경변수로 오버라이드.

@@ -4,7 +4,8 @@
 > 근거 픽스처: `monitoring/src/test/resources/hiker/*.json` (응답 원문, 공개 데이터)
 
 Task 1(실측·픽스처)의 결과 문서. **Task 4 파서의 필드 후보는 이 문서가 정본**이며,
-계획서(`2026-07-28-monitoring-module.md`) Task 4 코드 블록도 이 결론에 맞춰 이미 수정했다.
+계획서(`plans/archive/2026-07-28-monitoring-module.md` — 실행 완료 후 아카이브됨) Task 4 코드
+블록도 이 결론에 맞춰 이미 수정했다.
 
 ---
 
