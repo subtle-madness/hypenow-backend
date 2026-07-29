@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.monitoring.testsupport.TestDb;
+import java.sql.Date;
 import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,19 +47,17 @@ class ReadSurfaceTest {
 				VALUES ('acct_a', DATE '2026-07-27', 1000, 10, 50),
 				       ('acct_a', DATE '2026-07-28', 1200, 11, 52)""");
 
-		long tracking = db.queryForObject("""
+		db.update("""
 				INSERT INTO target (type, username, short_code, status, tracked_short_code, tracked_since,
 				                    registration_key, expires_at)
 				VALUES ('POST', 'acct_b', 'SC1', 'TRACKING', 'SC1', now(),
-				        'key-tracking', now() + interval '30 days')
-				RETURNING id""", Long.class);
-		// 피드 게시물이라 views는 항상 null — delta도 null로 나와야 한다.
+				        'key-tracking', now() + interval '30 days')""");
+		// 게시물 스냅샷도 이틀치 — 피드 게시물이라 views는 항상 null(delta도 null로 나와야 한다).
 		db.update("""
 				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
 				                           likes, comments, views, saves, shares, reposts)
 				VALUES ('acct_b', 'SC1', DATE '2026-07-27', 'FEED', 100, 5, NULL, 3, 1, 0),
 				       ('acct_b', 'SC1', DATE '2026-07-28', 'FEED', 130, 9, NULL, 4, 1, 2)""");
-		assertThat(tracking).isNotEqualTo(watching);
 	}
 
 	@Test
@@ -67,15 +66,38 @@ class ReadSurfaceTest {
 
 		var row = db.queryForMap("SELECT * FROM v_target_overview WHERE username = 'acct_a'");
 		assertThat(row.get("status")).isEqualTo("WATCHING");
+		assertThat(row.get("registration_key")).isEqualTo("key-watching");
 		assertThat(row.get("pending_candidates")).isEqualTo(1L);
-		assertThat(row.get("profile_captured_on")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 28)));
+		assertThat(row.get("profile_captured_on")).isEqualTo(Date.valueOf(LocalDate.of(2026, 7, 28)));
 		assertThat(row.get("followers")).isEqualTo(1200L);
 		assertThat(row.get("media_count")).isEqualTo(52L);
 
-		// 스냅샷이 없는 캠페인도 목록에서 빠지지 않는다(LEFT JOIN LATERAL).
-		var noSnapshot = db.queryForMap("SELECT * FROM v_target_overview WHERE username = 'acct_b'");
-		assertThat(noSnapshot.get("followers")).isNull();
-		assertThat(noSnapshot.get("pending_candidates")).isEqualTo(0L);
+		// 프로필 스냅샷이 없는 캠페인도 목록에서 빠지지 않는다(LEFT JOIN LATERAL).
+		var noProfile = db.queryForMap("SELECT * FROM v_target_overview WHERE username = 'acct_b'");
+		assertThat(noProfile.get("followers")).isNull();
+		assertThat(noProfile.get("pending_candidates")).isEqualTo(0L);
+	}
+
+	@Test
+	void 개요_뷰는_추적_게시물의_최신_지표를_같이_준다() {
+		// 캠페인 목록 화면은 이 뷰 하나로 서빙된다 — 추적 중이면 최신 하루치 지표가 붙는다.
+		var tracking = db.queryForMap("SELECT * FROM v_target_overview WHERE registration_key = 'key-tracking'");
+		assertThat(tracking.get("tracked_short_code")).isEqualTo("SC1");
+		assertThat(tracking.get("post_captured_on")).isEqualTo(Date.valueOf(LocalDate.of(2026, 7, 28)));
+		assertThat(tracking.get("content_type")).isEqualTo("FEED");
+		// 첫날 값(100)이 아니라 최신 값 — LATERAL의 ORDER BY DESC LIMIT 1이 빠지면 여기서 깨진다.
+		assertThat(tracking.get("likes")).isEqualTo(130L);
+		assertThat(tracking.get("comments")).isEqualTo(9L);
+		assertThat(tracking.get("saves")).isEqualTo(4L);
+		assertThat(tracking.get("views")).isNull();   // 피드 조회수는 항상 null
+
+		// 미추적(WATCHING) 캠페인은 게시물 컬럼이 전부 null — INNER JOIN이면 목록에서 사라진다.
+		var watching = db.queryForMap("SELECT * FROM v_target_overview WHERE registration_key = 'key-watching'");
+		assertThat(watching.get("tracked_short_code")).isNull();
+		assertThat(watching.get("post_captured_on")).isNull();
+		assertThat(watching.get("content_type")).isNull();
+		assertThat(watching.get("likes")).isNull();
+		assertThat(watching.get("comments")).isNull();
 	}
 
 	@Test
