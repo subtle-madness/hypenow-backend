@@ -1,6 +1,6 @@
 # Redis 캐싱 도입 구현 계획
 
-> 상태: 🟢 활성 · 스펙: [2026-07-28-redis-caching-design.md](../specs/2026-07-28-redis-caching-design.md)
+> 상태: 🟢 활성 · ✅ 구현 완료(2026-07-29) · 스펙: [2026-07-28-redis-caching-design.md](../specs/2026-07-28-redis-caching-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1254,6 +1254,8 @@ git add was/src/test/java/com/celfit/was/ContentCacheSeed.java was/src/test/java
 git commit -m "test(was): 캐시 통합 테스트 — 히트·TTL·프리페치·JSON 왕복·fail-open"
 ```
 
+> 구현 노트: 테스트 5→11개로 확장(리뷰 누적 체크리스트 A~F — 미스==히트 동일성·OffsetDateTime 정규화 계약·리포트 왕복 3종·6h TTL·404 비캐싱·리포트 서비스 경유 히트). put→get 레이스의 원인은 SDR 4.1 기본 비동기 캐시 쓰기로 판명 → CacheConfig에 immediateWrites 채택(폴링 불필요화·put 실패 가시성·테스트 격리 동시 해결). 스펙 §8의 '개인화 오버레이 정확성'은 Task 3 컨트롤러 구조(캐시 밖 오버레이) + 기존 WebMvcTest로 커버, 'TTL 만료'는 TTL 값 검증으로 갈음.
+
 ---
 
 ### Task 7: 전체 검증 · 문서 갱신 · PR
@@ -1307,6 +1309,7 @@ EOF
   1. `docker compose ps`로 redis 컨테이너 기동 확인
   2. 랭킹/발굴 목록 두 번 호출해 두 번째 응답 시간 단축 스팟체크
   3. `redis-cli info memory | grep used_memory_human`으로 메모리 사용 관측(256mb 상한 대비)
+  4. `redis-cli INFO stats`의 `evicted_keys`·`keyspace_hits/misses` 스팟체크 — evict 유의미하면 maxmemory 256mb 상향 검토(발굴 페이지가 무거워 빠듯할 수 있음)
 
 ---
 

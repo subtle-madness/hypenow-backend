@@ -118,7 +118,8 @@ class CacheIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 두번째_호출은_캐시_히트라_DB_변경이_안_보이고_미스_응답과_히트_응답이_완전히_같다() {
-		var first = pageService.page(q(1, 0));
+		V1ContentQuery query = q(1, 0);
+		var first = pageService.page(query);
 		assertThat(first.rows()).extracting(ContentCardRow::shortCode).containsExactly("c1");
 		assertThat(first.total()).isEqualTo(2);
 		// videoDuration(BigDecimal)까지 채운 행이라 JSON 왕복에서 scale이 틀어지면 이 단언에서 걸린다.
@@ -126,7 +127,7 @@ class CacheIntegrationTest extends IntegrationTest {
 
 		jdbcTemplate.update("UPDATE contents SET caption = '변경됨' WHERE short_code = 'c1'");
 
-		var second = pageService.page(q(1, 0));
+		var second = pageService.page(query);
 		assertThat(second.rows().get(0).caption()).isEqualTo("수분크림 리뷰"); // 캐시 히트 증거(TTL 내 stale 허용)
 		// 미스 응답(first)과 히트 응답(second)이 record 단위로 완전 동일 — JSON 왕복(BigDecimal scale·
 		// 중첩 record 포함)이 원본과 다른 값을 만들지 않는다는 것을 한 단언으로 고정(리뷰 체크리스트 A).

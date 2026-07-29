@@ -115,7 +115,9 @@ public final class ContentCacheSeed {
 				    comments       bigint
 				)""");
 		jdbc.execute("CREATE TABLE beauty_taxonomy (main_value text, main_label text)");
-		jdbc.execute("INSERT INTO accounts VALUES ('glow', '글로우', null, 20000)");
+		jdbc.execute("""
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers)
+				VALUES ('glow', '글로우', null, 20000)""");
 		jdbc.execute("""
 				INSERT INTO account_summaries (handle, analyzed_count, posts_count, metric, avg_views,
 				    views_per_follower, avg_er_pct, avg_likes, avg_comments, trend_direction,
