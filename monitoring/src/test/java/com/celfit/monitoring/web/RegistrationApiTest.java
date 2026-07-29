@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.testsupport.TestDb;
@@ -37,6 +38,8 @@ class RegistrationApiTest {
 		volatile boolean notFound = false;
 		volatile boolean privateAccount = false;
 		volatile boolean postWithoutOwner = false;
+		/** 프로필·clips는 성공하고 열거(medias)만 터지는 부분 실패 — 이미 나간 콜의 원형이 살아남는지 본다. */
+		volatile boolean mediasFail = false;
 
 		/** 단건 응답에서 user만 빠진 변형 — 소유 계정을 알 수 없어 등록도 스냅샷 적재도 불가한 셰이프. */
 		private static final String POST_WITHOUT_OWNER = """
@@ -61,6 +64,9 @@ class RegistrationApiTest {
 						: fixture("profile.json");
 			}
 			if (path.startsWith("/v2/user/medias")) {
+				if (mediasFail) {
+					throw new HikerFetchException("열거 실패");
+				}
 				return fixture("medias.json");
 			}
 			if (path.startsWith("/v2/user/clips")) {
@@ -114,6 +120,37 @@ class RegistrationApiTest {
 		hiker.notFound = false;
 		hiker.privateAccount = false;
 		hiker.postWithoutOwner = false;
+		hiker.mediasFail = false;
+	}
+
+	/**
+	 * 수집이 도중에 터져도 이미 나간 콜의 원형은 남아야 한다 — 감사·재파싱의 근거이자
+	 * 장애 때 "어디까지 받았나"를 되짚는 유일한 기록이다.
+	 *
+	 * <p>이 단언은 트랜잭션 구조를 판별한다: CollectService가 {@code @Transactional}로 fetch까지
+	 * 감싸던 시절에는 열거 실패가 앞서 성공한 프로필·clips의 원형 적재까지 롤백해 0행이 됐다.
+	 * 지금은 fetch가 트랜잭션 밖이라(쓰기만 SnapshotWriter가 묶는다) 원형이 살아남는다.
+	 * 프록시가 실제로 붙는 스프링 컨텍스트에서 확인해야 의미가 있어 여기에 둔다.
+	 */
+	@Test
+	void 열거_실패로_등록이_502여도_이미_받은_원형은_남는다() throws Exception {
+		hiker.mediasFail = true;
+
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
+				.andExpect(status().isBadGateway())
+				.andExpect(jsonPath("$.code").value("FETCH_FAILED"));
+
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM raw.fetch_payload WHERE kind='PROFILE' AND subject='someuser'""",
+				Long.class)).isEqualTo(1);
+		// 열거는 clips(조회수 보강) → medias 순서라 clips 1콜은 성공해 있다.
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM raw.fetch_payload WHERE kind='POSTS'""", Long.class)).isEqualTo(1);
+		// 원형이 남는 것과 별개로 캠페인은 만들어지지 않는다 — 첫 수집이 끝나야 등록이다.
+		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isZero();
+		// 프로필 스냅샷도 없다 — 수집 1회분은 SnapshotWriter가 한 트랜잭션으로 묶어 통째로 커밋한다.
+		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isZero();
 	}
 
 	@Test

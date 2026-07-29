@@ -10,10 +10,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.service.SnapshotWriter;
 import com.celfit.monitoring.store.CandidateRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,6 +33,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
 /** 명령 API 4종(승인·거절·연장·해지) — 계약 §2-2~2-5의 상태 전이 규칙. */
@@ -59,6 +63,8 @@ class CommandApiTest {
 	@Autowired TargetRepository targets;
 	@Autowired CandidateRepository candidates;
 	@Autowired RegistrationApiTest.SwitchableHiker hiker;
+	@Autowired SnapshotWriter snapshotWriter;
+	@Autowired TransactionTemplate tx;
 	MockMvc mvc;
 
 	/** 픽스처(media-by-code.json)의 숏코드 — 승인 후 적재되는 post_snapshot 행과 맞물린다. */
@@ -193,6 +199,25 @@ class CommandApiTest {
 		assertThat(db.queryForObject("SELECT tracked_short_code FROM target WHERE id=?", String.class,
 				targetId)).isNull();
 		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot", Long.class)).isZero();
+	}
+
+	/**
+	 * 위 롤백 테스트가 성립하는 근거 — SnapshotWriter는 REQUIRED라 바깥 트랜잭션에 **참여**한다.
+	 * 전파를 REQUIRES_NEW로 바꾸면 스냅샷만 별도 커밋돼, 승인이 실패해도 지표 행이 남는다
+	 * (= "WATCHING인데 추적 지표가 있는" 유령 상태). 그 회귀를 여기서 잡는다.
+	 */
+	@Test
+	void 스냅샷_쓰기는_바깥_트랜잭션에_참여한다() {
+		var post = new PostInfo("TXPROBE1", "someuser", "REELS", "캡션", 1_785_000_000L,
+				1L, 1L, 1L, null, null, null, "{}");
+
+		tx.executeWithoutResult(status -> {
+			snapshotWriter.savePost(LocalDate.of(2026, 7, 29), post);
+			status.setRollbackOnly();
+		});
+
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_snapshot WHERE short_code='TXPROBE1'""", Long.class)).isZero();
 	}
 
 	@Test

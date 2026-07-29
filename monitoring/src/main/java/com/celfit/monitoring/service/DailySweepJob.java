@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.CandidateRepository;
 import com.celfit.monitoring.store.TargetRepository;
@@ -29,6 +30,7 @@ public class DailySweepJob {
 	private static final Logger log = LoggerFactory.getLogger(DailySweepJob.class);
 	private static final int EXCERPT_LEN = 120;
 	private static final String NOT_FOUND = "SUBJECT_NOT_FOUND";
+	private static final String PRIVATE_ACCOUNT = "PRIVATE_ACCOUNT";
 
 	private final TargetRepository targets;
 	private final CandidateRepository candidates;
@@ -52,7 +54,12 @@ public class DailySweepJob {
 				sweepAccount(entry.getKey(), entry.getValue());
 			} catch (SubjectNotFoundException e) {
 				// 계정 자체가 없어졌다(삭제·개명) — 재시도해도 결과가 같으니 그 계정의 캠페인을 전부 종결한다.
-				entry.getValue().forEach(t -> targets.close(t.id(), TargetStatus.FAILED, NOT_FOUND));
+				closeAll(entry.getKey(), entry.getValue(), NOT_FOUND);
+				failedAccounts++;
+			} catch (PrivateAccountException e) {
+				// 비공개 전환도 결정적 수집 불가다(설계 §5 "계정 소멸·비공개 등 → FAILED").
+				// 일반 실패로 두면 만료일까지 매일 1콜을 태우면서 영원히 WATCHING으로 남는다.
+				closeAll(entry.getKey(), entry.getValue(), PRIVATE_ACCOUNT);
 				failedAccounts++;
 			} catch (RuntimeException e) {
 				// 재시도 여지가 있는 실패(5xx·타임아웃·셰이프 이상)는 상태를 건드리지 않는다 — 내일 스윕이 다시 본다.
@@ -79,10 +86,28 @@ public class DailySweepJob {
 			} catch (SubjectNotFoundException e) {
 				// 추적 게시물만 삭제된 경우 — 계정은 멀쩡하니 이 캠페인 하나만 종결한다.
 				log.info("추적 게시물 부재 — 캠페인 {} 종결: {}", t.id(), t.trackedShortCode());
-				targets.close(t.id(), TargetStatus.FAILED, NOT_FOUND);
+				closeFailed(t.id(), NOT_FOUND);
 			} catch (RuntimeException e) {
 				log.warn("캠페인 스윕 실패(격리) — target {}: {}", t.id(), e.toString());
 			}
+		}
+	}
+
+	/** 결정적 수집 불가 — 그 계정의 활성 캠페인을 한꺼번에 종결한다. */
+	private void closeAll(String username, List<TargetRow> accountTargets, String failReason) {
+		log.info("계정 수집 불가({}) — {} 캠페인 {}건 종결", failReason, username, accountTargets.size());
+		accountTargets.forEach(t -> closeFailed(t.id(), failReason));
+	}
+
+	/**
+	 * 종결도 실패할 수 있다(DB 순단·락 타임아웃). 여기서 예외가 새면 남은 계정이 통째로 안 돌아
+	 * "캠페인 하나 종결 실패"가 "그날 스윕 전면 중단"으로 번진다 — 로그만 남기고 계속한다.
+	 */
+	private void closeFailed(long targetId, String failReason) {
+		try {
+			targets.close(targetId, TargetStatus.FAILED, failReason);
+		} catch (RuntimeException e) {
+			log.warn("종결 실패(격리) — target {} → FAILED/{}: {}", targetId, failReason, e.toString());
 		}
 	}
 

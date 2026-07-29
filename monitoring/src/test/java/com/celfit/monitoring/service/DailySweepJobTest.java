@@ -49,6 +49,7 @@ class DailySweepJobTest {
 		private final Map<String, FakePost> postByCode = new HashMap<>();
 		private final Map<String, String> ownerByCode = new HashMap<>();
 		private final Set<String> missingUsernames = new HashSet<>();
+		private final Set<String> privateUsernames = new HashSet<>();
 		private final Set<String> brokenUsernames = new HashSet<>();
 		private final Set<String> missingCodes = new HashSet<>();
 
@@ -81,6 +82,12 @@ class DailySweepJobTest {
 			return this;
 		}
 
+		/** 등록 후 비공개 전환 — 프로필은 응답하지만 is_private이라 열거가 막힌다. */
+		FakeHiker privateAccount(String username) {
+			privateUsernames.add(username);
+			return this;
+		}
+
 		/** 일반 수집 실패(5xx·타임아웃) — 재시도 여지가 있는 실패. */
 		FakeHiker brokenAccount(String username) {
 			brokenUsernames.add(username);
@@ -103,6 +110,10 @@ class DailySweepJobTest {
 				}
 				if (brokenUsernames.contains(username)) {
 					throw new HikerFetchException("502 " + username);
+				}
+				// 비공개는 200 응답의 is_private 플래그다 — 판정은 HikerClient가 한다(fake가 대신 던지지 않는다).
+				if (privateUsernames.contains(username)) {
+					return "{\"user\":{\"pk\":9,\"username\":\"" + username + "\",\"is_private\":true},\"status\":\"ok\"}";
 				}
 				return profileJson(username, userIdByUsername.getOrDefault(username, "0"));
 			}
@@ -358,28 +369,26 @@ class DailySweepJobTest {
 		assertThat(candidateCount(alive)).isEqualTo(1);
 	}
 
-	/** 수집 실패가 이미 나간 콜의 원형까지 지우면 감사 기록이 사라진다(fetch는 트랜잭션 밖). */
+	/**
+	 * 등록 후 비공개로 전환된 계정도 결정적 수집 불가다(설계 §5 "계정 소멸·비공개 등 → FAILED").
+	 * 일반 실패로 두면 만료일까지 매일 1콜을 태우면서 영원히 WATCHING으로 남는다.
+	 */
 	@Test
-	void 열거_실패해도_먼저_받은_프로필_원형은_남는다() {
-		hiker.account("half_user", "333");   // 프로필은 성공, 열거는 user_id 미등록이라 빈 배열
-		var brokenClient = new HikerClient(new RecordingHikerHttp(new HikerHttp() {
-			@Override
-			public String get(String path) {
-				if (path.startsWith("/v2/user/medias")) {
-					throw new HikerFetchException("열거 실패");
-				}
-				return hiker.get(path);
-			}
-		}, new RawPayloadRepository(db)));
-		var collect = new CollectService(brokenClient, new SnapshotWriter(new SnapshotRepository(db)), 1);
-		var brokenJob = new DailySweepJob(targets, candidates, collect);
-		watching("half_user", any("Rare Beginnings"), "rk-half", FUTURE);
+	void 비공개_전환_계정은_활성_캠페인_전부를_FAILED_PRIVATE_ACCOUNT로_종결한다() {
+		hiker.privateAccount("shy_user")
+				.account("good_user", "222", new FakePost("GGG", "Rare Beginnings 신상", 1_785_000_000L));
+		long shy1 = watching("shy_user", any("Rare Beginnings"), "rk-shy1", FUTURE);
+		long shy2 = tracking("shy_user", "ZZZ", "rk-shy2");
+		long good = watching("good_user", any("Rare Beginnings"), "rk-good", FUTURE);
 
-		brokenJob.run();
+		job.run();
 
-		assertThat(db.queryForObject("""
-				SELECT count(*) FROM raw.fetch_payload WHERE kind='PROFILE' AND subject='half_user'""",
-				Long.class)).isEqualTo(1);
+		assertThat(statusOf(shy1)).isEqualTo(TargetStatus.FAILED);
+		assertThat(statusOf(shy2)).isEqualTo(TargetStatus.FAILED);
+		// fail_reason 어휘는 계약 §2와 같은 것을 쓴다 — was가 사유별 안내를 갈라 보여준다.
+		assertThat(db.queryForList("SELECT fail_reason FROM target WHERE id IN (?,?)",
+				String.class, shy1, shy2)).containsOnly("PRIVATE_ACCOUNT");
+		assertThat(statusOf(good)).isEqualTo(TargetStatus.WATCHING);
 	}
 
 	/** 콜 카운트 단언이 fake 배선 실수로 0이 되는 걸 막는 최소 가드. */
