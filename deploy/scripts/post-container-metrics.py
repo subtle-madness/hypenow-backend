@@ -12,7 +12,7 @@ import oci
 
 # compose 서비스 고정 목록 — 실행 중인 것만 열거하면 "사라진 컨테이너"가 메트릭 스트림에서
 # 빠져 알람이 못 잡는다. 목록에 있는데 inspect가 실패하면 0(다운)으로 게시된다.
-SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy"]
+SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", "monitoring"]
 NAMESPACE = "hypenow_custom"
 COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaat36ksxqom5nzid6jzx2tglneiyganxbjk7t5pgmlvgpc44eozllq"
 
