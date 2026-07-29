@@ -60,39 +60,23 @@ class SignupValidatorTest {
 		assertValidationFails(req);
 	}
 
+	// 복잡도 정책 제거(2026-07-29) — 규칙은 프론트 관할, 백엔드는 빈 값만 차단
 	@Test
-	void 비밀번호_8자_미만은_거부된다() {
+	void 비밀번호는_비어있지만_않으면_통과한다() {
 		Req req = new Req();
-		req.password = "Pa0!x";
-		assertValidationFails(req);
+		req.password = "weak";
+		assertThatCode(() -> validator.validate(req.build())).doesNotThrowAnyException();
 	}
 
 	@Test
-	void 비밀번호_대문자_누락은_거부된다() {
+	void 비밀번호_미입력은_거부된다() {
 		Req req = new Req();
-		req.password = "passw0rd!";
+		req.password = null;
 		assertValidationFails(req);
-	}
 
-	@Test
-	void 비밀번호_소문자_누락은_거부된다() {
-		Req req = new Req();
-		req.password = "PASSW0RD!";
-		assertValidationFails(req);
-	}
-
-	@Test
-	void 비밀번호_숫자_누락은_거부된다() {
-		Req req = new Req();
-		req.password = "Password!";
-		assertValidationFails(req);
-	}
-
-	@Test
-	void 비밀번호_특수문자_누락은_거부된다() {
-		Req req = new Req();
-		req.password = "Passw0rd1";
-		assertValidationFails(req);
+		Req req2 = new Req();
+		req2.password = "   ";
+		assertValidationFails(req2);
 	}
 
 	@Test

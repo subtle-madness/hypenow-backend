@@ -168,7 +168,7 @@ class V1AuthControllerTest {
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(VALID_SIGNUP_BODY.replace("Passw0rd!", "passw0rd!")))
+						.content(VALID_SIGNUP_BODY.replace("Passw0rd!", " ")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
