@@ -128,6 +128,19 @@ services:
       postgres-raw:
         condition: service_healthy
 
+  # was 조회 캐시 전용(세션 아님) — 휘발 허용(재시작=콜드 캐시), AOF·볼륨 없음 (스펙 §3).
+  # was가 REDIS_HOST=redis로 접속. depends_on 없음 — redis 불능이어도 was는 DB 직행(fail-open).
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   was:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
@@ -137,6 +150,7 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/analysis
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
       # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 어드민 가입 코드 일괄 적재(POST /admin/signup-codes) 정적 토큰 — 서버 .env에 등록. 미설정 시 엔드포인트 fail-closed(503)

@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.content.V1ContentReportRepository.CommentRow;
 import com.celfit.was.v1.content.V1ContentReportRepository.ReelPointRow;
@@ -15,25 +16,28 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
-// V1ContentControllerTest와 같은 구성 — WebConfig 없음, CORS는 SecurityConfig 일원화.
+// 서비스가 리포지토리·조립을 캡슐화하므로 컨트롤러 테스트는 서비스만 목킹한다.
+// 정상 케이스는 어셈블러를 테스트 안에서 직접 인스턴스화해 같은 스텁 입력으로 기대 리포트를 조립한다.
 @WebMvcTest(controllers = V1ContentReportController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000")
-@Import({V1ContentReportAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({V1ExceptionAdvice.class, SecurityConfig.class})
 class V1ContentReportControllerTest {
 
 	@Autowired
 	MockMvc mockMvc;
 
 	@MockitoBean
-	V1ContentReportRepository repository;
+	V1ContentReportService service;
+
+	private final V1ContentReportAssembler assembler = new V1ContentReportAssembler(new ObjectMapper());
 
 	private ReportRow fullRow() {
 		return new ReportRow("SC1", "zingdong__", "reels", 3307180L, 42216L, 86L, 100000L,
@@ -49,14 +53,15 @@ class V1ContentReportControllerTest {
 
 	@Test
 	void 성공_응답은_스펙_6_3_구조를_가진다() throws Exception {
-		given(repository.findReport("SC1")).willReturn(Optional.of(fullRow()));
-		given(repository.findRecentReels("zingdong__")).willReturn(List.of(
-				new ReelPointRow("SC1", 1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z")))); // KST 07-01, 본인 릴스
-		given(repository.findCategoryContext("makeup", 3307180L)).willReturn(
-				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 19L));
-		given(repository.countByCategory("SC1")).willReturn(Map.of("purchase", 3L, "adAware", 1L));
-		given(repository.findComments("SC1")).willReturn(List.of(
-				new CommentRow(7L, "u***", "좋아요", 5L, "purchase")));
+		ReportRow row = fullRow();
+		List<ReelPointRow> reels = List.of(
+				new ReelPointRow("SC1", 1000L, OffsetDateTime.parse("2026-06-30T20:30:00Z"))); // KST 07-01, 본인 릴스
+		V1ContentReportRepository.CategoryContextRow categoryContext =
+				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 19L);
+		Map<String, Long> categoryCounts = Map.of("purchase", 3L, "adAware", 1L);
+		List<CommentRow> comments = List.of(new CommentRow(7L, "u***", "좋아요", 5L, "purchase"));
+		given(service.report("SC1")).willReturn(
+				assembler.toReport(row, reels, categoryContext, categoryCounts, comments));
 
 		mockMvc.perform(get("/v1/contents/SC1/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
@@ -91,7 +96,7 @@ class V1ContentReportControllerTest {
 
 	@Test
 	void 없는_콘텐츠나_분석_미생성은_NOT_FOUND() throws Exception {
-		given(repository.findReport("NOPE")).willReturn(Optional.empty());
+		given(service.report("NOPE")).willThrow(V1ApiException.notFound("콘텐츠를 찾을 수 없습니다."));
 
 		mockMvc.perform(get("/v1/contents/NOPE/ai-report").with(user("tester")))
 				.andExpect(status().isNotFound())
@@ -109,10 +114,8 @@ class V1ContentReportControllerTest {
 				null, null, null,
 				null, null, null, null, null, null, null,
 				null, null, null, null);
-		given(repository.findReport("SC2")).willReturn(Optional.of(row));
-		given(repository.findRecentReels("handle")).willReturn(List.of());
-		given(repository.countByCategory("SC2")).willReturn(Map.of());
-		given(repository.findComments("SC2")).willReturn(List.of());
+		given(service.report("SC2")).willReturn(
+				assembler.toReport(row, List.of(), null, Map.of(), List.of()));
 
 		mockMvc.perform(get("/v1/contents/SC2/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
