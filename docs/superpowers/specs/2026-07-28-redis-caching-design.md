@@ -42,7 +42,7 @@
 - 목록 키 생성: 필터·정렬·페이지 파라미터 record를 정규화(기본값 명시화, 순서 고정) 후 SHA-256 축약 — "같은 조건 = 같은 키" 보장. 커스텀 `KeyGenerator`.
 - TTL 근거: 미러가 새벽(KST 06:00대) — 리포트 최악 stale 6h면 오전 중 자연 갱신, 허용 범위 내.
 - 직렬화: **Jackson 3 JSON**(Boot 4 기준 `GenericJackson3JsonRedisSerializer` 계열). 자바 직렬화 금지(클래스 변경에 취약). 응답 DTO record 그대로 직렬화.
-- 스탬피드 방어는 `@Cacheable(sync = true)` 한 줄만 — 그 이상 불필요.
+- 동일 키 동시 미스의 중복 계산은 허용(SDR 4.1 non-locking writer에서 `sync = true`는 dedup이 아님 — 구현 시 실측). TTL 백스톱 전용 설계라 수용, 문제 시 로컬 dedup 후속.
 
 ## 5. 다음 페이지 프리페치 (목록 2종)
 

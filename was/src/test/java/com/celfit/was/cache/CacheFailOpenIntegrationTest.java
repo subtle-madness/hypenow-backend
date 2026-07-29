@@ -15,7 +15,7 @@ import org.springframework.test.context.DynamicPropertySource;
 
 /** Redis 불능(닫힌 포트) = 캐시 미스로 강등 — 조회는 DB 직행으로 정상(스펙 §7 fail-open).
  *  @Cacheable(sync=true) 경로까지 CacheErrorHandler가 덮는지가 핵심(플레인 캐시 미스와 달리
- *  동기화 락을 타므로 별도 검증 가치가 있다). */
+ *  별도 코드 경로 RedisCacheWriter.get(name, key, loader, ttl, tti)를 타므로 별도 검증 가치가 있다). */
 class CacheFailOpenIntegrationTest extends IntegrationTest {
 
 	@DynamicPropertySource

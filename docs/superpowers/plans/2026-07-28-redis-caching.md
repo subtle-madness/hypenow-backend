@@ -1,6 +1,6 @@
 # Redis 캐싱 도입 구현 계획
 
-> 상태: 🟢 활성 · ✅ 구현 완료(2026-07-29) · 스펙: [2026-07-28-redis-caching-design.md](../specs/2026-07-28-redis-caching-design.md)
+> 상태: 🟢 활성 · 구현 완료(2026-07-29)·운영 배포 대기 · 스펙: [2026-07-28-redis-caching-design.md](../specs/2026-07-28-redis-caching-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -611,7 +611,7 @@ git add was/src/main/java/com/celfit/was/v1/content/ was/src/test/java/com/celfi
 git commit -m "feat(was): 랭킹 목록 공통 페이지 Redis 캐시 + 다음 페이지 프리페치 (6.1)"
 ```
 
-> 구현 노트(리뷰 반영): ① 스펙 §4의 커스텀 KeyGenerator 대신 SpEL `#q.cacheKey()` 채택(더 명시적). ② 스펙 §5의 '캐시에 있으면 스킵'은 `@Cacheable(sync=true)` 위임으로 충족(Redis GET 1회 = 사실상 스킵; 단 Redis 장애 시 프리페치가 실DB 조회가 되는 부작용 있음 — 상한은 풀 max 2). ③ 캐시 값 스키마 세대를 빌드 시각 epoch로 prefix에 반영(`buildInfo()`) — 배포마다 콜드 캐시(수용). 부작용: `:was:test`가 매 빌드 재실행됨(build-info 갱신 때문, 로컬 증분 빌드 비용으로 수용).
+> 구현 노트(리뷰 반영): ① 스펙 §4의 커스텀 KeyGenerator 대신 SpEL `#q.cacheKey()` 채택(더 명시적). ② 스펙 §5의 '캐시에 있으면 스킵'은 Redis GET 1회로 캐시 존재 시 즉시 반환(사실상 스킵). 단 동시 미스 dedup은 아님(non-locking writer) — 중복 계산 허용. Redis 장애 시 프리페치가 실DB 조회가 되는 부작용도 있음 — 상한은 풀 max 2. ③ 캐시 값 스키마 세대를 빌드 시각 epoch로 prefix에 반영(`buildInfo()`) — 배포마다 콜드 캐시(수용). 부작용: `:was:test`가 매 빌드 재실행됨(build-info 갱신 때문, 로컬 증분 빌드 비용으로 수용).
 
 ---
 
@@ -1310,6 +1310,7 @@ EOF
   2. 랭킹/발굴 목록 두 번 호출해 두 번째 응답 시간 단축 스팟체크
   3. `redis-cli info memory | grep used_memory_human`으로 메모리 사용 관측(256mb 상한 대비)
   4. `redis-cli INFO stats`의 `evicted_keys`·`keyspace_hits/misses` 스팟체크 — evict 유의미하면 maxmemory 256mb 상향 검토(발굴 페이지가 무거워 빠듯할 수 있음)
+  5. 배포 직후는 cacheEpoch 변경으로 100% 콜드 캐시 — 첫 트래픽 버스트에서 같은 페이지 중복 계산 가능(수용, 관측만)
 
 ---
 
