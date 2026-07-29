@@ -129,12 +129,12 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 최근_카드는_분석_미완은_포함하되_비뷰티는_제외한다() {
+	void 최근_카드는_뷰티_판정과_무관하게_실제_최신_12개를_반환한다() {
 		List<ContentCardRow> rows = repository.findRecentCards("alpha");
 
-		// a3(비뷰티) 제외, a2(미분석)는 유지 — posted_at DESC: a2(07-04) → a1(07-02)
-		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("a2", "a1");
-		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("a3");
+		// a3(비뷰티 확정)도 포함 — 성과 지표 모수와 동일한 "실제 최신 12개"(07-28 결정).
+		// posted_at DESC: a3(07-06) → a2(07-04, 미분석) → a1(07-02)
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("a3", "a2", "a1");
 	}
 
 	@Test
