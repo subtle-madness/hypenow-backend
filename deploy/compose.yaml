@@ -248,6 +248,8 @@ services:
       - ./caddy.d:/etc/caddy/caddy.d:ro
       - caddy-data:/data
       - caddy-config:/config
+      # 액세스 로그(2026-07-29) — 호스트에서 바로 grep/jq 가능하게 바인드(로테이션은 Caddy roll이 담당)
+      - ./logs/caddy:/var/log/caddy
 
 volumes:
   pg-data:
