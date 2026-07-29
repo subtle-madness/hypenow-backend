@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -76,6 +77,26 @@ class MonitoringCommandClientTest {
 	void 바디_없는_5xx는_Unavailable() {
 		server.expect(requestTo(BASE + "/api/targets"))
 				.andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+
+		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
+				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
+	@Test
+	void 접속_실패는_Unavailable() {
+		server.expect(requestTo(BASE + "/api/targets"))
+				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
+
+		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
+				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
+	@Test
+	void 성공_응답인데_바디_해석_불가면_Unavailable() {
+		server.expect(requestTo(BASE + "/api/targets"))
+				.andRespond(withSuccess("{ 깨진 json", MediaType.APPLICATION_JSON));
 
 		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
 				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))

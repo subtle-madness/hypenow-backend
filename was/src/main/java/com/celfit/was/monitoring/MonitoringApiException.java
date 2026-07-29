@@ -10,7 +10,11 @@ public class MonitoringApiException extends MonitoringException {
 	private final int httpStatus;
 
 	public MonitoringApiException(String code, String message, int httpStatus) {
-		super("[" + code + "] " + message);
+		this(code, message, httpStatus, null);
+	}
+
+	public MonitoringApiException(String code, String message, int httpStatus, Throwable cause) {
+		super("[" + code + "] " + message, cause);
 		this.code = code;
 		this.httpStatus = httpStatus;
 	}
