@@ -45,6 +45,8 @@
 | 8 | **감지 → 추적 전환은 FE 승인 게이트를 거친다** — 감지는 후보 축적일 뿐 상태 전이가 아니고, was의 승인 명령이 있어야 TRACKING 전환 | 감지 즉시 자동 전환(오감지·무관 게시물을 사용자가 걸러낼 수 없음) |
 | 9 | **감지 이메일 알람 발송은 was — 매일 KST 09:00 고정 크론** — 수신자 매핑·이메일 주소·알람 on/off·발송 채널이 전부 app 스키마/was 소유. was 크론이 신규 감지 후보를 읽기 전용 SELECT로 조회(결정 3)해 알람 on 유저에게만 발송, 발송 워터마크는 app 스키마. monitoring은 감지 사실 기록까지 | monitoring 발송(PII·설정을 monitoring에 복제하거나 app 스키마를 읽어야 함 — 캡슐화 위반), monitoring→was 웹훅(감지 02:00·발송 09:00 고정이라 즉시성 이득 0, 역방향 의존만 추가) |
 | 10 | **target은 캠페인(등록) 단위, 스냅샷은 관측 대상(계정·게시물) 단위** — 같은 인플루언서를 키워드가 다른 캠페인 여럿이 동시 감시 가능(감지 후보는 target 소속이라 귀속 모호성 없음), 수집·스냅샷은 계정당 1회로 공유(중복 크롤·중복 적재 없음) | target=인플루언서 단위(브랜드 b·c가 키워드 d·e로 같은 계정을 감시할 때 감지가 누구 캠페인인지 구분 불가), 스냅샷을 target별 중복 적재(같은 계정 N개 캠페인이면 N배 크롤·저장) |
+| 11 | **명령 API 인증은 토큰이 아니라 전용 도커 네트워크(`monitoring-net`)** — was와 monitoring만 소속, 호스트 포트 미노출(`ports` 매핑 없음). 미소속 컨테이너(dev-was·crawler·caddy 등)는 DNS 해석부터 실패 → dev/운영 오배선이 connection error로 즉사(fail-closed), 유출될 공유 비밀 없음 | 정적 토큰(공유 비밀 — was가 뚫리면 토큰도 같이 뚫려 네트워크 격리 대비 추가 방어 0, env·검사 코드 관리 비용만. 07-29 대체), 무인증+평면 네트워크(dev-was 오배선이 조용히 운영 오염) |
+| 12 | **dev 스택 편입 — `dev-monitoring` 신설** — dev-postgres에 monitoring DB, dev 전용 `dev-monitoring-net`(dev-was와 둘만), 스윕 크론 off(K 트랙 "dev 스케줄 전부 off" 원칙 — 등록 동기 수집만 동작, Hiker 실키 소량 사용) | dev 제외(dev-was의 모니터링 기능이 검증 불가 — 07-29 편입 결정) |
 
 ### 통신 방식의 근거 (결정 3 상세)
 
@@ -77,10 +79,10 @@ content.status)가 동거하는 것과 같은 이치. 개념적 분리는 DB 안
 
 ```
 프론트 ──HTTP──▶ was ──명령: 내부 HTTP──▶ monitoring ──HikerAPI──▶ 인스타
-  (/v1/monitoring/…)  │  (도커 내부망, 정적 토큰,     │
-                      │   Caddy 미노출)              └─읽기/쓰기─▶ monitoring DB
-                      └──조회: SELECT (읽기 전용 계정) ──────────▶   raw + public 2스키마
-                                                                  (was는 public만 GRANT)
+  (/v1/monitoring/…)  │  (전용 네트워크 monitoring-net     │
+                      │   — was만 소속, 호스트 포트 없음)  └─읽기/쓰기─▶ monitoring DB
+                      └──조회: SELECT (읽기 전용 계정) ─────────────▶   raw + public 2스키마
+                                                                     (was는 public만 GRANT)
 ```
 
 - was의 쓰기는 전부 monitoring API 명령 경유(직접 쓰기 불가 — 읽기 전용 계정),
@@ -93,8 +95,9 @@ content.status)가 동거하는 것과 같은 이치. 개념적 분리는 DB 안
 
 | 컨테이너 | 변화 |
 |---|---|
-| `monitoring` (신설) | Spring Boot JVM, 포트 8083 (crawler 8080 · was 8081 · analytics 8082 다음) |
+| `monitoring` (신설) | Spring Boot JVM, 컨테이너 포트 8083 — **호스트 포트 매핑 없음**, `monitoring-net` 전용 네트워크(was와 둘만 소속. 결정 11 — dev-analytics가 호스트 8083 점유 중이라 충돌도 회피) |
 | `postgres` (기존) | `monitoring` 데이터베이스 신설 — 계정 2개: monitoring(전권), was(읽기 전용 — `public` 조회 표면만 GRANT, `raw` 무권한). 그 외 접근 불가(fail-closed), 크로스 DB 쿼리 불가 |
+| `dev-monitoring` (신설 — dev 스택) | `:develop` 태그, dev-postgres의 monitoring DB, `dev-monitoring-net`(dev-was와 둘만), 스윕 크론 off (결정 12) |
 
 `postgres-raw`가 아닌 `postgres` 인스턴스에 두는 이유: postgres-raw는 새벽 크롤 대량
 쓰기·분석 스캔의 배치 성격, monitoring은 등록 즉시 응답하는 서빙 성격. (볼륨은 캠페인
@@ -185,7 +188,7 @@ monitoring DB (쓰기는 monitoring 계정만, Flyway 이력 1개)
 > [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md)가
 > 정본(living) — 아래는 설계 수준 요약.
 
-### 명령 — monitoring 내부 API (was만 호출 — 정적 토큰 인증, 외부 미노출)
+### 명령 — monitoring 내부 API (was만 호출 — 전용 네트워크 `monitoring-net` 소속이 곧 인증, 토큰 없음)
 
 | 메서드 | 경로 | 동작 |
 |---|---|---|
@@ -234,8 +237,9 @@ monitoring DB (쓰기는 monitoring 계정만, Flyway 이력 1개)
 
 ## 8. 실패 처리·운영
 
-- **인증**: 내부 API는 사전 공유 정적 토큰(`MANUAL_DISCOVERY_TOKEN` 전례), 미설정 시
-  503 fail-closed. Caddy에 미노출 — 도커 내부 네트워크만.
+- **접근 통제**: 토큰 없음 — `monitoring-net` 전용 네트워크 소속(was뿐)이 곧 인증(결정 11).
+  호스트 포트 미노출·Caddy 미노출. 미소속 컨테이너는 `monitoring` 호스트명 해석부터 실패.
+  서버에서의 수동 디버깅은 `docker exec <was 컨테이너> curl http://monitoring:8083/...` 경유.
 - **was 쪽**: monitoring 호출 타임아웃·5xx 시 프론트에 명확한 에러 전달. 등록 멱등은
   was가 생성해 넘기는 `registration_key` 기준 — 같은 키 재시도는 기존 target 반환
   (크래시 복구), 키가 다르면 같은 계정·키워드라도 별도 캠페인(결정 10과 정합).

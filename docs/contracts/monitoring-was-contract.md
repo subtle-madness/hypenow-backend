@@ -21,9 +21,10 @@
 
 | 항목 | 값 |
 |---|---|
-| 명령 API | `http://monitoring:8083` (도커 내부망 전용, Caddy 미노출) |
-| 인증 | `X-Api-Token: ${MONITORING_API_TOKEN}` (사전 공유 정적 토큰, 미설정 시 503) |
-| 조회 DB | `postgres` 인스턴스의 `monitoring` DB, 읽기 전용 계정(`public` 스키마만 GRANT) |
+| 명령 API | `http://monitoring:8083` — **전용 도커 네트워크 `monitoring-net`** 경유(was 컨테이너가 이 네트워크에 소속돼야 이름이 해석됨). 호스트 포트·Caddy 미노출 |
+| 인증 | **없음 — 네트워크 소속이 곧 인증.** `monitoring-net`에는 was와 monitoring만 소속. 헤더·토큰 불필요 |
+| dev 환경 | `http://dev-monitoring:8083` — `dev-monitoring-net`(dev-was와 둘만 소속). 운영 monitoring은 dev에서 DNS 해석 자체가 안 됨(오배선 fail-closed) |
+| 조회 DB | `postgres` 인스턴스의 `monitoring` DB, 읽기 전용 계정(`public` 스키마만 GRANT). dev는 dev-postgres의 monitoring DB |
 | 타임아웃 권고 | 등록 POST 10s (동기 Hiker 수집 포함) / 나머지 명령 5s (승인도 즉시 수집 포함 시 10s) |
 
 ## 2. 명령 API
@@ -37,13 +38,13 @@
 | code | HTTP | 의미 |
 |---|---|---|
 | `VALIDATION` | 400 | 요청 형식·필수 필드 위반 |
-| `UNAUTHORIZED` | 401 | 토큰 불일치 |
 | `TARGET_NOT_FOUND` / `CANDIDATE_NOT_FOUND` | 404 | 해당 id 없음 |
 | `SUBJECT_NOT_FOUND` | 404 | 인스타에 계정/게시물이 없음 (등록 시) |
 | `PRIVATE_ACCOUNT` | 422 | 비공개 계정이라 수집 불가 |
 | `INVALID_STATE` | 409 | 상태상 불가한 명령 (예: 종결된 target 승인) |
 | `FETCH_FAILED` | 502 | Hiker 일시 오류 — was는 그대로 프론트에 실패 전달, 재시도는 사용자 몫 |
-| `TOKEN_UNSET` | 503 | 서버에 토큰 미설정 (fail-closed) |
+
+(인증 에러 없음 — 접근 통제는 네트워크 소속으로 강제되므로, 연결 자체가 안 되면 배선 문제다.)
 
 ### 2-1. 등록 — `POST /api/targets`
 

@@ -8,7 +8,7 @@
 
 **Goal:** 시딩 캠페인 모니터링을 담당하는 4번째 Gradle 모듈 `monitoring` 신설 — 등록(동기 첫 수집)·키워드 감지·승인 게이트·일일 스윕·조회 표면까지.
 
-**Architecture:** 명령은 내부 HTTP API(정적 토큰), 조회는 was가 monitoring DB `public` 스키마를 읽기 전용 SELECT. 수집은 HikerAPI만. 사설 monitoring DB(기존 `postgres` 인스턴스에 신설, raw/public 2스키마). target=캠페인 단위, 스냅샷=관측 대상(계정·게시물) 단위.
+**Architecture:** 명령은 내부 HTTP API(전용 도커 네트워크 `monitoring-net`이 접근 통제 — 토큰 없음), 조회는 was가 monitoring DB `public` 스키마를 읽기 전용 SELECT. 수집은 HikerAPI만. 사설 monitoring DB(기존 `postgres` 인스턴스에 신설, raw/public 2스키마). target=캠페인 단위, 스냅샷=관측 대상(계정·게시물) 단위. dev 스택에도 dev-monitoring 편입.
 
 **Tech Stack:** Java 21, Spring Boot 4.1(starter-web·jdbc), Flyway(수동 빈), Postgres 17, Jackson 3(`tools.jackson.*`), Testcontainers 2.x.
 
@@ -21,7 +21,8 @@
 - Spring Boot 4 주의: `@WebMvcTest`는 `org.springframework.boot.webmvc.test.autoconfigure`, Testcontainers는 `org.testcontainers.postgresql.PostgreSQLContainer`. Flyway 자동설정 모듈 없음 — 수동 빈이 유일 Flyway.
 - 포트 8083. 서버 크론은 UTC 표기(KST 02:00 = `0 0 17 * * *`).
 - 상태 어휘: target `WATCHING/TRACKING/EXPIRED/CANCELED/FAILED`, 후보 `PENDING/APPROVED/REJECTED`, 에러 코드 어휘는 계약 문서 §2 표.
-- 이 계획의 범위 밖: was 쪽 구현(`/v1/monitoring`·이메일 크론·app 매핑), dev 스테이징 편입.
+- 명령 API 인증은 **토큰 없음** — 전용 도커 네트워크 `monitoring-net` 소속(was뿐)이 곧 인증(스펙 결정 11). 호스트 포트 매핑 금지.
+- 이 계획의 범위 밖: was 쪽 구현(`/v1/monitoring`·이메일 크론·app 매핑).
 
 ---
 
@@ -147,7 +148,6 @@ server:
   port: 8083   # crawler 8080 · was 8081 · analytics 8082 다음
 
 monitoring:
-  api-token: ${MONITORING_API_TOKEN:}   # 미설정 시 명령 API 503 (fail-closed)
   hiker:
     api-key: ${HIKER_API_KEY:}
     base-url: https://api.hikerapi.com
@@ -996,10 +996,11 @@ public void upsertPost(LocalDate on, PostInfo p) {
 
 ---
 
-### Task 6: 등록 API (토큰 인증 + 멱등 + 동기 첫 수집)
+### Task 6: 등록 API (멱등 + 동기 첫 수집)
+
+인증 없음 — 접근 통제는 전용 도커 네트워크(`monitoring-net`, Task 11)가 강제한다. 토큰 필터를 만들지 않는다.
 
 **Files:**
-- Create: `monitoring/src/main/java/com/celfit/monitoring/web/ApiTokenFilter.java`
 - Create: `monitoring/src/main/java/com/celfit/monitoring/web/ApiExceptionHandler.java`
 - Create: `monitoring/src/main/java/com/celfit/monitoring/web/TargetController.java`
 - Create: `monitoring/src/main/java/com/celfit/monitoring/service/RegistrationService.java`
@@ -1011,9 +1012,9 @@ public void upsertPost(LocalDate on, PostInfo p) {
 - Produces:
   - `POST /api/targets` — 계약 문서 §2-1의 JSON 그대로. 응답 `{targetId, status, firstSnapshot}` (201, 멱등 replay 200).
   - `CollectService.collectAccount(String username) → AccountCollectResult(ProfileInfo profile, List<PostInfo> posts)` — 원형 저장+스냅샷 upsert까지 수행. `CollectService.collectPost(String shortCode) → PostInfo` — 동일. (Task 8 스윕이 재사용)
-  - `ApiExceptionHandler` — 계약 §2 에러 어휘(JSON `{code, message}`): `VALIDATION` 400 / `TARGET_NOT_FOUND`·`CANDIDATE_NOT_FOUND`·`SUBJECT_NOT_FOUND` 404 / `PRIVATE_ACCOUNT` 422 / `INVALID_STATE` 409 / `FETCH_FAILED` 502. 토큰은 필터에서 `UNAUTHORIZED` 401 / `TOKEN_UNSET` 503.
+  - `ApiExceptionHandler` — 계약 §2 에러 어휘(JSON `{code, message}`): `VALIDATION` 400 / `TARGET_NOT_FOUND`·`CANDIDATE_NOT_FOUND`·`SUBJECT_NOT_FOUND` 404 / `PRIVATE_ACCOUNT` 422 / `INVALID_STATE` 409 / `FETCH_FAILED` 502. (인증 에러 없음 — 네트워크 격리)
 
-- [ ] **Step 1: 실패하는 테스트** — `@SpringBootTest` + Testcontainers + fake `HikerHttp` 빈(픽스처 반환). 케이스: ①토큰 미설정 503 ②토큰 불일치 401 ③ACCOUNT 등록 201 + target·스냅샷·원형 적재 ④같은 registrationKey 재호출 200·행 1개 ⑤keywordRule and·any 모두 빈 배열 → 400 VALIDATION ⑥Hiker 404 → 404 SUBJECT_NOT_FOUND·target 미생성:
+- [ ] **Step 1: 실패하는 테스트** — `@SpringBootTest` + Testcontainers + fake `HikerHttp` 빈(픽스처 반환). 케이스: ①ACCOUNT 등록 201 + target·스냅샷·원형 적재 ②같은 registrationKey 재호출 200·행 1개 ③keywordRule and·any 모두 빈 배열 → 400 VALIDATION ④Hiker 404 → 404 SUBJECT_NOT_FOUND·target 미생성:
 
 ```java
 package com.celfit.monitoring.web;
@@ -1044,7 +1045,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
-@SpringBootTest(properties = "monitoring.api-token=test-token")
+@SpringBootTest
 class RegistrationApiTest {
 
 	static class SwitchableHiker implements HikerHttp {
@@ -1109,15 +1110,8 @@ class RegistrationApiTest {
 	}
 
 	@Test
-	void 토큰_불일치는_401() throws Exception {
-		mvc.perform(post("/api/targets").header("X-Api-Token", "wrong")
-				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
-				.andExpect(status().isUnauthorized());
-	}
-
-	@Test
 	void 계정_등록은_동기_첫_수집까지_하고_201() throws Exception {
-		mvc.perform(post("/api/targets").header("X-Api-Token", "test-token")
+		mvc.perform(post("/api/targets")
 				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
 				.andExpect(status().isCreated())
 				.andExpect(jsonPath("$.status").value("WATCHING"))
@@ -1128,10 +1122,10 @@ class RegistrationApiTest {
 
 	@Test
 	void 같은_registrationKey는_replay_200_행_1개() throws Exception {
-		mvc.perform(post("/api/targets").header("X-Api-Token", "test-token")
+		mvc.perform(post("/api/targets")
 				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
 				.andExpect(status().isCreated());
-		mvc.perform(post("/api/targets").header("X-Api-Token", "test-token")
+		mvc.perform(post("/api/targets")
 				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
 				.andExpect(status().isOk());
 		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isEqualTo(1);
@@ -1140,7 +1134,7 @@ class RegistrationApiTest {
 	@Test
 	void 키워드_and_any_모두_비면_400_VALIDATION() throws Exception {
 		String bad = ACCOUNT_BODY.replace("\"any\":[\"샤넬\"]", "\"any\":[]");
-		mvc.perform(post("/api/targets").header("X-Api-Token", "test-token")
+		mvc.perform(post("/api/targets")
 				.contentType(MediaType.APPLICATION_JSON).content(bad))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION"));
@@ -1149,7 +1143,7 @@ class RegistrationApiTest {
 	@Test
 	void 계정_없음은_404_SUBJECT_NOT_FOUND_target_미생성() throws Exception {
 		hiker.notFound = true;
-		mvc.perform(post("/api/targets").header("X-Api-Token", "test-token")
+		mvc.perform(post("/api/targets")
 				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("SUBJECT_NOT_FOUND"));
@@ -1160,55 +1154,7 @@ class RegistrationApiTest {
 
 - [ ] **Step 2: 실행 → FAIL 확인**
 
-- [ ] **Step 3: 구현** — `ApiTokenFilter`(`OncePerRequestFilter`, `/api/**`만):
-
-```java
-package com.celfit.monitoring.web;
-
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
-
-/** 내부 명령 API 인증 — 사전 공유 정적 토큰. 미설정이면 전체 503(fail-closed, manual-discovery 전례). */
-@Component
-public class ApiTokenFilter extends OncePerRequestFilter {
-
-	private final String token;
-
-	public ApiTokenFilter(@Value("${monitoring.api-token:}") String token) {
-		this.token = token;
-	}
-
-	@Override
-	protected boolean shouldNotFilter(HttpServletRequest request) {
-		return !request.getRequestURI().startsWith("/api/");
-	}
-
-	@Override
-	protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
-			throws IOException, jakarta.servlet.ServletException {
-		if (token == null || token.isBlank()) {
-			res.setStatus(503);
-			res.setContentType("application/json;charset=UTF-8");
-			res.getWriter().write("{\"code\":\"TOKEN_UNSET\",\"message\":\"MONITORING_API_TOKEN 미설정\"}");
-			return;
-		}
-		if (!token.equals(req.getHeader("X-Api-Token"))) {
-			res.setStatus(401);
-			res.setContentType("application/json;charset=UTF-8");
-			res.getWriter().write("{\"code\":\"UNAUTHORIZED\",\"message\":\"토큰 불일치\"}");
-			return;
-		}
-		chain.doFilter(req, res);
-	}
-}
-```
-
-`CollectService` — 원형 저장 + 스냅샷 upsert를 한 곳에(등록·스윕 공용):
+- [ ] **Step 3: 구현** — `CollectService` — 원형 저장 + 스냅샷 upsert를 한 곳에(등록·스윕 공용):
 
 ```java
 package com.celfit.monitoring.service;
@@ -1275,7 +1221,7 @@ public class CollectService {
 
 - [ ] **Step 4: 실행 → PASS** — `./gradlew :monitoring:test --tests '*RegistrationApiTest'`
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(monitoring): 등록 API — 토큰 fail-closed·registration_key 멱등·동기 첫 수집·에러 어휘"`
+- [ ] **Step 5: Commit** — `git commit -m "feat(monitoring): 등록 API — registration_key 멱등·동기 첫 수집·에러 어휘"`
 
 ---
 
@@ -1576,24 +1522,42 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO was_reader;
 - Consumes: Task 2~10 완성된 모듈.
 - Produces: main 머지 시 monitoring 컨테이너가 배포되는 CD 경로. **서버 postgres에 DB·계정 생성은 수동 1회 ops**(README 체크리스트) — CD보다 먼저 실행돼야 한다.
 
-- [ ] **Step 1: compose 서비스 추가** — `deploy/compose.yaml`의 `was:` 서비스 블록 뒤에 (analytics 블록 관용구 준수):
+- [ ] **Step 1: compose 서비스 추가 + 전용 네트워크** — `deploy/compose.yaml`:
+
+파일 하단 `volumes:` 옆에 최상위 네트워크 정의 추가:
+
+```yaml
+networks:
+  # 명령 API 접근 통제 — was↔monitoring 전용(스펙 결정 11). 토큰 없음:
+  # 이 네트워크 미소속 컨테이너(dev 스택 포함)는 monitoring 호스트명 해석부터 실패.
+  monitoring-net: {}
+```
+
+기존 `was:` 서비스에 두 줄 추가 (다른 서비스는 무접촉 — networks를 선언하지 않은 서비스는 default에 그대로 남는다):
+
+```yaml
+  was:
+    # …기존 정의 유지…
+    networks: [default, monitoring-net]
+```
+
+`was:` 블록 뒤에 monitoring 서비스 (analytics 블록 관용구 준수 — **ports 매핑 없음**: 어드민 UI가 없고 유일한 클라이언트 was는 네트워크로 붙는다. 호스트 8083은 dev-analytics 터널이 이미 점유 중이라 충돌 회피이기도 함):
 
 ```yaml
   # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 스윕 KST 02:00(UTC 17:00).
+  # 호스트 포트 미노출 — 디버깅은 docker exec deploy-was-1 curl http://monitoring:8083/… 경유.
   monitoring:
     image: ghcr.io/subtle-madness/hypenow-monitoring:latest
     restart: unless-stopped
     logging: *logging
+    networks: [default, monitoring-net]   # default는 postgres 접속용
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
-      MONITORING_API_TOKEN: ${MONITORING_API_TOKEN}
       HIKER_API_KEY: ${HIKER_API_KEY}
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       JAVA_OPTS: "-Xms128m -Xmx384m"
-    ports:
-      - "127.0.0.1:8083:8083"   # 내부 전용 — Caddy 미노출, was가 도커 네트워크로 호출
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8083' || exit 1"]
       interval: 10s
@@ -1605,7 +1569,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO was_reader;
         condition: service_healthy
 ```
 
-- [ ] **Step 2: CD 매트릭스** — `.github/workflows/cd.yml`: `service: [was, analytics, crawler]` → `service: [was, analytics, crawler, monitoring]`, 서버 배포 스텝의 `docker compose pull was analytics crawler`에 `monitoring` 추가, 마지막 `/health` 확인 대상에도 8083 추가(기존 방식 그대로).
+- [ ] **Step 2: CD 매트릭스** — `.github/workflows/cd.yml`: `service: [was, analytics, crawler]` → `service: [was, analytics, crawler, monitoring]`, 서버 배포 스텝의 `docker compose pull was analytics crawler`에 `monitoring` 추가. 배포 후 확인은 호스트 포트가 없으므로 `/health` curl 대신 `docker compose ps monitoring` 출력의 `(healthy)` 문자열 grep으로 판정.
 
 - [ ] **Step 3: 백업** — `deploy/scripts/backup.sh`의 analysis pg_dump 옆에 같은 관용구로 monitoring DB 덤프 1줄 + Drive 롤링(기존 crawler/analysis 경로 준수, `hypenow-backups/monitoring/`).
 
@@ -1617,8 +1581,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO was_reader;
 1. 서버 postgres 컨테이너에 DB·계정 생성 (db/init/02와 동일, 비밀번호는 실값):
    docker exec -it deploy-postgres-1 psql -U $DB_USER -d postgres -c \
      "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'; CREATE ROLE was_reader LOGIN PASSWORD '<실값>'; CREATE DATABASE monitoring OWNER monitoring;"
-2. ~/deploy/.env에 추가: MONITORING_DB_USER, MONITORING_DB_PASSWORD, MONITORING_API_TOKEN, (기존) HIKER_API_KEY
+2. ~/deploy/.env에 추가: MONITORING_DB_USER, MONITORING_DB_PASSWORD, (기존 확인) HIKER_API_KEY
 3. develop→main 머지로 배포 → docker compose ps에서 monitoring healthy 확인
+   (호스트 포트 없음 — 수동 확인은 docker exec deploy-was-1 curl http://monitoring:8083/… 경유)
 4. 컨테이너 다운 알람 대상에 monitoring 추가 (post-container-metrics.py의 감시 목록)
 ```
 
@@ -1630,7 +1595,75 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO was_reader;
 
 ---
 
-### Task 12: 문서 정리
+### Task 12: dev 스택 편입 (dev-monitoring)
+
+**Files:**
+- Modify: `deploy/compose.dev.yaml` (dev-monitoring 서비스 + dev-monitoring-net)
+- Modify: `.github/workflows/cd-dev.yml` (빌드 매트릭스·pull·up 대상)
+- Modify: `deploy/README.md` (§12 dev 개통 체크리스트에 monitoring DB 생성 항목)
+
+**Interfaces:**
+- Consumes: Task 11의 운영 배선 패턴(같은 구조의 dev 판).
+- Produces: develop 푸시마다 `dev-monitoring`이 자동 배포되고, dev-was가 `http://dev-monitoring:8083`으로 호출 가능한 환경.
+
+- [ ] **Step 1: compose.dev.yaml** — 파일 하단에 네트워크 정의, dev-was에 networks 추가, dev-monitoring 서비스 추가 (K 원칙 "dev 스케줄 전부 off" — 스윕 크론 미설정, 등록 동기 수집만 동작. Hiker 키는 운영 공유 — 등록 테스트 소량 전제):
+
+```yaml
+networks:
+  dev-monitoring-net: {}   # dev-was ↔ dev-monitoring 전용 (운영 monitoring-net과 상호 불가침)
+```
+
+```yaml
+  dev-was:
+    # …기존 정의 유지…
+    networks: [default, dev-monitoring-net]
+```
+
+```yaml
+  # dev 모니터링 — dev-postgres의 monitoring DB. 스윕 크론 off(K 원칙), 등록 동기 수집만.
+  dev-monitoring:
+    image: ghcr.io/subtle-madness/hypenow-monitoring:develop
+    profiles: ["dev"]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    cpus: 0.5
+    networks: [default, dev-monitoring-net]   # default는 dev-postgres 접속용
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://dev-postgres:5432/monitoring
+      SPRING_DATASOURCE_USERNAME: monitoring
+      SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
+      HIKER_API_KEY: ${HIKER_API_KEY:-}
+      JAVA_OPTS: "-Xms128m -Xmx256m"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8083' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    depends_on:
+      dev-postgres:
+        condition: service_healthy
+```
+
+- [ ] **Step 2: cd-dev.yml** — 빌드 매트릭스 `service: [was, analytics]` → `[was, analytics, monitoring]`, 재기동 스텝의 pull 대상에 `dev-monitoring`, up 대상에 `dev-monitoring` 추가.
+
+- [ ] **Step 3: dev DB 생성 항목** — `deploy/README.md` §12(dev 개통 체크리스트)에 추가:
+
+```markdown
+- dev-postgres에 monitoring DB·계정 생성 (1회):
+  docker exec -it deploy-dev-postgres-1 psql -U $DEV_DB_USER -d analysis -c \
+    "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'; CREATE ROLE was_reader LOGIN PASSWORD '<실값>'; CREATE DATABASE monitoring OWNER monitoring;"
+- ~/deploy/.env에 DEV_MONITORING_DB_PASSWORD 추가
+```
+
+- [ ] **Step 4: 검증** — `docker compose -f deploy/compose.yaml -f deploy/compose.dev.yaml --profile dev config -q` 통과.
+
+- [ ] **Step 5: Commit** — `git commit -m "chore(monitoring): dev 스택 편입 — dev-monitoring·전용 네트워크·dev CD 배선"`
+
+---
+
+### Task 13: 문서 정리
 
 **Files:**
 - Modify: `ARCHITECTURE.md` (§2 모듈 표 "신설 예정" 해제, §5 MON 트랙 상태 ⬜→✅, §7은 구현 완료 한 줄)
@@ -1646,6 +1679,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO was_reader;
 
 ## Self-Review 결과
 
-- **스펙 커버리지**: 결정 1~10 전부 태스크에 대응(1·2→Task 2·4, 3→Task 6·7·10, 4·5→Task 2·10, 6→Task 8·9, 7→Task 7·8, 8→Task 7, 10→Task 5·8). 결정 9(이메일)는 was 몫 — 범위 밖 명시. 원형 롤링 삭제·종결 데이터 청소는 스펙에서도 "나중 결정"이라 미포함(YAGNI).
+- **스펙 커버리지**: 결정 1~12 전부 태스크에 대응(1·2→Task 2·4, 3→Task 6·7·10, 4·5→Task 2·10, 6→Task 8·9, 7→Task 7·8, 8→Task 7, 10→Task 5·8, 11→Task 6·11, 12→Task 12). 결정 9(이메일)는 was 몫 — 범위 밖 명시. 원형 롤링 삭제·종결 데이터 청소는 스펙에서도 "나중 결정"이라 미포함(YAGNI).
 - **타입 일관성**: `TargetRow`/`CandidateRow`/`ProfileInfo`/`PostInfo`/`KeywordRule` 시그니처를 Interfaces 블록에 고정, 태스크 간 참조 일치 확인.
 - **주의점**: Task 4·6·8의 픽스처 의존 단언은 Task 1 실측 결과에 따라 조정 여지가 있음을 해당 스텝에 명시(플레이스홀더 아님 — 조정 규칙 포함).
