@@ -129,6 +129,24 @@ public class JobConfig {
 				new ParImageStore(imageParUrl), ImageDownloader.http(), settings, reporter);
 	}
 
+	/** trait 어휘 매핑 원샷(2026-07-29 스펙 §3-3) — 어드민 수동 트리거 전용, 스케줄 없음. */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.admin-enabled:false}")
+	public com.celfit.analytics.analyze.TraitCanonJob traitCanonJob(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader,
+			com.celfit.analytics.llm.TraitMappingPort mappingPort,
+			ObjectProvider<JobProgressRegistry> progressRegistry) {
+		JobProgressRegistry registry = progressRegistry.getIfAvailable();
+		ProgressReporter dry = registry != null
+				? registry.reporter(JobName.TRAIT_CANON_DRY) : ProgressReporter.NOOP;
+		ProgressReporter apply = registry != null
+				? registry.reporter(JobName.TRAIT_CANON_APPLY) : ProgressReporter.NOOP;
+		return new com.celfit.analytics.analyze.TraitCanonJob(
+				analysisDataSource, traitLoader, mappingPort, dry, apply);
+	}
+
 	/**
 	 * 구독 버스트 one-shot(07-19) — Gemini 무료 일 한도를 넘는 일회 물량을 Claude 구독 컴퓨트로 소화.
 	 * export → 드라이버(analytics/export/claude_burst_driver.py, claude -p 병렬) → collect 3단 실행.

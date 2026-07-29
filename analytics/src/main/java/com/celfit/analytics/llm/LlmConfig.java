@@ -102,6 +102,14 @@ public class LlmConfig {
 		return new GeminiAccountSynthesizer(gemini.getObject(), settings::geminiModel, traitLoader::get);
 	}
 
+	/** trait 배치 매핑(원샷 이행) — ContentSynthesisPort와 같은 이유로 Gemini/Vertex만 지원. */
+	@Bean
+	@Lazy
+	public TraitMappingPort traitMappingPort(AnalyticsSettings settings,
+			ObjectProvider<GeminiApi> gemini, TraitTaxonomyLoader traitLoader) {
+		return new GeminiTraitMapper(gemini.getObject(), settings::geminiModel, traitLoader::get);
+	}
+
 	/**
 	 * 해석 문구 전용 포트 — 갱신 잡이 쓴다. Anthropic 경로는 아직 없어 Gemini/Vertex만 지원한다
 	 * (갱신은 일회성 배치라 프로바이더 폴백까지 둘 필요가 없다).

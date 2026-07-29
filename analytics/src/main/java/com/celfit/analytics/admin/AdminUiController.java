@@ -31,10 +31,12 @@ public class AdminUiController {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
 
-	/** 대시보드에 활성 잡으로 노출하는 5종. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시. */
+	/** 대시보드에 활성 잡으로 노출하는 잡. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시.
+	 *  TRAIT_CANON 2종은 어휘 이행 원샷(2026-07-29 스펙) — 이행 완결 후 목록에서 빼도 된다. */
 	private static final List<JobName> DASHBOARD_JOBS =
 			List.of(JobName.MIRROR, JobName.ANALYZE, JobName.LATE_BACKFILL_ANALYZE,
-					JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE);
+					JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE,
+					JobName.TRAIT_CANON_DRY, JobName.TRAIT_CANON_APPLY);
 
 	/** 잡 카드 뷰모델 — 시각·경과는 컨트롤러에서 KST 포맷해 문자열로 넘긴다(#temporals 미탑재). */
 	public record JobCard(JobName job, String label, boolean running,
