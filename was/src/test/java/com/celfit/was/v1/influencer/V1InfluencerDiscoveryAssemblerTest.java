@@ -37,6 +37,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 		assertThat(card.email()).isNull(); // 크롤러 미수집(V31)
 		assertThat(card.bio()).isEqualTo("소개\n둘째줄"); // 개행 유지
 		assertThat(card.followingCount()).isEqualTo(380);
+		assertThat(card.hypeScore()).isEqualTo(72);
 	}
 
 	@Test
@@ -51,6 +52,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 		assertThat(card.collaboratedBrands()).isEmpty();
 		assertThat(card.categoryShares()).isEmpty();
 		assertThat(card.recentThumbs()).isEmpty();
+		assertThat(card.hypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
 	}
 
 	@Test

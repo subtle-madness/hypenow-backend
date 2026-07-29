@@ -54,6 +54,7 @@ class V1InfluencerDiscoveryControllerTest {
 				.andExpect(jsonPath("$.data[0].handle").value("glow"))
 				.andExpect(jsonPath("$.data[0].email").value((String) null)) // null 노출(부재 아님)
 				.andExpect(jsonPath("$.data[0].reachMultiplier").value(12.4))
+				.andExpect(jsonPath("$.data[0].hypeScore").value(72))
 				.andExpect(jsonPath("$.data[0].collaboratedBrands").isArray())
 				.andExpect(jsonPath("$.error").value((String) null))
 				.andExpect(jsonPath("$.meta.total").value(109))
