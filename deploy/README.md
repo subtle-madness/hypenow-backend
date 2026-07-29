@@ -66,11 +66,43 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 
 **정본은 CD (07-20~)**: `main`에 푸시(=staging→main 머지 — 승격 흐름은 develop→staging→main,
 07-29 staging 브랜치 전환)하면 `.github/workflows/cd.yml`이
-was·analytics·crawler 이미지 빌드·push → 서버 compose pull·재기동 → **분석 뷰 raw DB 적용**(멱등,
+was·analytics·crawler 이미지 빌드·push → 서버 compose pull → analytics·crawler 재기동(`--wait`) →
+**was 롤링(§5-1, 무중단)** → 나머지 정합 `up -d` → caddy reload → **분석 뷰 raw DB 적용**(멱등,
 §4-1의 수동 절차를 대체) → `/health` 확인까지 수행한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
   `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
 - 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
+
+### 5-1. was 무중단 롤링과 expand-contract 규율 (07-29, 트랙 X)
+
+**롤링 대상은 was 하나** — analytics·crawler는 내부 배치/어드민이라 재기동 다운타임이 무해하고,
+test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis라 복제 2개 공존이 안전하다.
+
+- **동작**(`scripts/rollout.sh`, CD가 서버로 동기화 후 호출): 신 컨테이너를 `--scale was=2
+  --no-recreate`로 추가 기동 → healthcheck healthy 대기(최대 180초) → 구 컨테이너
+  `stop -t 40`(graceful drain)·제거. caddy는 서비스명 도커 DNS로 프록시하므로 교대 중 양쪽에
+  분산되고, 교대 순간 dial 실패는 Caddyfile `lb_try_duration 10s` 재시도가 흡수한다.
+- **실패 모드 = 무중단 실패**: 신이 healthy에 못 가면 신만 제거하고 구가 계속 서빙, CD만 빨간불.
+- **전제 3가지**(rollout.sh 머리 주석과 동일): was는 host 포트 미점유 · compose healthcheck 정의 ·
+  Spring `server.shutdown: graceful`(application-prod.yml) + compose `stop_grace_period: 40s`.
+- **순서 규약**: rollout 전에 `up -d --wait analytics`로 analysis Flyway 완료를 보장한다
+  (07-20 "새 분석 컬럼 참조 500" 가드의 롤링판 — was의 depends_on은 `--no-deps`로 우회되므로
+  CD 순서가 그 역할을 대신한다).
+- 긴급 경로 `deploy.sh`는 **단순 재기동 유지**(다운타임 있음) — 긴급 시 단순함이 우선.
+
+**expand-contract 규율** — 롤링 중 구버전 코드와 신버전 코드가 같은 DB를 몇십 초 공존해서 본다.
+따라서 마이그레이션은 "현재 배포된 코드"와 호환되어야 한다:
+
+- **같은 릴리스 금지**: `DROP TABLE`/`DROP COLUMN`, `RENAME`(테이블·컬럼), 타입 변경,
+  `SET NOT NULL` — 구버전을 즉사시키는 변경. CI `migration-guard` 잡
+  (`.github/scripts/check-migration-safety.sh`)이 PR에서 차단한다.
+- **rename은 rename하지 않는다**: 새 컬럼 추가 → 코드 전환(필요시 dual-write·백필) →
+  **다음 릴리스**에서 구 컬럼 drop(contract 단계).
+- **추가는 자유**: 새 컬럼은 nullable 또는 `DEFAULT` 포함(`NOT NULL DEFAULT`는 안전 — 단
+  DEFAULT 없는 `ADD COLUMN … NOT NULL`은 구버전 INSERT를 깨뜨리니 금지. 가드가 못 잡는
+  케이스라 리뷰에서 볼 것).
+- **의도된 contract 마이그레이션**은 파일에 `-- allow-destructive: <사유>` 주석으로 가드를
+  통과시킨다 — 사유에 "참조 코드가 언제 제거됐는지"를 적는다.
 
 수동·긴급 경로(맥에서) — **CD 불능·긴급 롤백 전용**. 스크립트가 HEAD≠origin/main이면 거부한다
 (07-20 장애 재발 방지 가드 — `:latest`는 마지막 push가 이겨서 CD 배포를 덮는다):

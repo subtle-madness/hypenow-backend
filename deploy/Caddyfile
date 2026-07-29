@@ -9,7 +9,12 @@
 		reverse_proxy crawler:8080
 	}
 	handle {
-		reverse_proxy was:8081
+		# 롤링 배포(scripts/rollout.sh) 중 신구 was 교대 순간의 dial 실패를 재시도로 흡수 —
+		# 도커 DNS가 재해석돼 살아 있는 쪽에 붙는다. 평상시엔 무영향(성공한 요청은 재시도 없음).
+		reverse_proxy was:8081 {
+			lb_try_duration 10s
+			lb_try_interval 250ms
+		}
 	}
 }
 

@@ -84,19 +84,36 @@ jobs:
       # compose.yaml·Caddyfile은 서버 ~/deploy가 실물 — 레포를 정본으로 동기화해 드리프트 방지.
       # 동기화 후 config 검증: 레포에 새로 참조된 ${VAR}가 서버 .env에 없으면
       # 컨테이너가 빈 값으로 침묵 기동하므로, 그 전에 배포를 실패시킨다.
-      - name: compose·Caddyfile 동기화·검증
+      - name: compose·Caddyfile·롤링 스크립트 동기화·검증
         run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'mkdir -p ~/deploy/scripts'
           scp -i ~/.ssh/id_deploy deploy/compose.yaml deploy/Caddyfile "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
+          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && out=$(docker compose config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
              if echo "$out" | grep -q "is not set"; then
                echo "$out"; echo "compose가 참조하는 env 변수가 서버 .env에 없음 — .env 갱신 후 재배포"; exit 1
              fi'
 
-      - name: compose pull·재기동
+      # was만 무중단 롤링(트랙 X) — 순서가 규약: ① analytics·crawler는 재기동(내부 서비스,
+      # 다운타임 무해) + --wait로 analytics healthy(=analysis Flyway 완료)까지 대기 → 07-20
+      # "새 분석 컬럼 참조 500" 가드를 롤링 경로에서도 유지 ② rollout.sh가 신 was를 먼저 띄워
+      # healthy 확인 후 구를 제거(실패 시 구가 계속 서빙 — 무중단 실패) ③ 마지막 up -d는 나머지
+      # (redis·caddy·ons-relay) 정합 — orphan 경고(test-*)는 정상, --remove-orphans 금지(README §12)
+      - name: compose pull·재기동 (was는 롤링)
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-            'cd ~/deploy && docker compose pull was analytics crawler && docker compose up -d && docker compose ps'
+            'cd ~/deploy && docker compose pull was analytics crawler \
+             && docker compose up -d --wait analytics crawler \
+             && bash scripts/rollout.sh was \
+             && docker compose up -d && docker compose ps'
+
+      # scp로 갱신된 Caddyfile은 컨테이너 재생성 없이는 반영되지 않는다 — 명시 reload(멱등,
+      # cd-test와 동일 관용구). 기존엔 이 스텝이 없어 운영 라우팅 변경이 조용히 미반영되던 갭 해소.
+      - name: caddy 설정 리로드
+        run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
+            'cd ~/deploy && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile'
 
       # crawler가 기동 중 Flyway로 raw 마이그레이션을 적용하므로, 새 컬럼 의존 뷰 대비 재시도
       - name: 분석 뷰 적용 (raw DB, 멱등)
