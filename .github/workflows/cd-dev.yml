@@ -1,4 +1,4 @@
-# develop CI 성공마다 dev 스테이징 배포 (태스크 K) — 대상: was·analytics 2종(:develop, arm64 단일).
+# develop CI 성공마다 dev 스테이징 배포 (태스크 K) — 대상: was·analytics·monitoring 3종(:develop, arm64 단일).
 # 뷰는 analytics_dev 스키마로 치환 적용(analytics_dev 계정 실행 = 권한 fail-closed) 후 잔존 참조 검사.
 # 최초 개통은 deploy/README.md dev 체크리스트(.env 변수·DNS·가입 코드) 선행 — 미비 시 이 워크플로가 명시 실패.
 name: CD dev
@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        service: [was, analytics]
+        service: [was, analytics, monitoring]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -135,8 +135,8 @@ jobs:
       - name: dev compose pull·재기동
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-            'cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev pull dev-analytics dev-was && \
-             docker compose -f compose.yaml -f compose.dev.yaml --profile dev up -d dev-postgres dev-analytics dev-was && \
+            'cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev pull dev-analytics dev-was dev-monitoring && \
+             docker compose -f compose.yaml -f compose.dev.yaml --profile dev up -d dev-postgres dev-analytics dev-was dev-monitoring && \
              docker compose -f compose.yaml -f compose.dev.yaml --profile dev ps'
 
       - name: caddy 설정 리로드 (dev-api 라우팅 반영)

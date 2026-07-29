@@ -161,7 +161,7 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 - 접속: `https://dev-api.hypenow.io` (was 로그인 월 — dev 전용 가입 코드 필요)
 - dev 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
 - dev analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
-- 배치는 **운영 인스턴스 동거** — dev 3종의 정의는 별도 파일 **`deploy/compose.dev.yaml`**에 있고
+- 배치는 **운영 인스턴스 동거** — dev 4종(postgres·analytics·was·monitoring)의 정의는 별도 파일 **`deploy/compose.dev.yaml`**에 있고
   운영 `compose.yaml`에 겹쳐 쓴다(`-f compose.yaml -f compose.dev.yaml --profile dev`).
   파일을 나눈 이유: **dev CD는 이 dev 파일만 서버로 보낸다** — 운영 서비스 정의는 main 배포로만
   서버에 도달하므로, develop의 운영 정의 변경이 dev 배포로 먼저 발효되거나 `depends_on` 연쇄로
@@ -184,7 +184,8 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 1. **DNS A 레코드**: `dev-api.hypenow.io` → 서버 공인 IP (운영과 동일 IP, TTL 300)
 2. **서버 `~/deploy/.env`에 추가** (값 생성: `openssl rand -base64 24`):
    `DEV_DB_USER=devapp` · `DEV_DB_PASSWORD=<생성>` · `DEV_RAW_DB_PASSWORD=<생성>` ·
-   `DEV_CODES_API_KEY=<생성>` (미설정 시 가입 코드 적재 API는 503 fail-closed)
+   `DEV_CODES_API_KEY=<생성>` (미설정 시 가입 코드 적재 API는 503 fail-closed) ·
+   `DEV_MONITORING_DB_PASSWORD=<생성>` (6번에서 만들 dev monitoring 계정 비밀번호와 일치시킬 것)
 3. **`~/deploy/caddy.d` 디렉토리를 ubuntu 소유로 먼저 만든다 — main 배포보다 앞서야 한다**:
    ```bash
    ssh ubuntu@<IP> 'mkdir -p ~/deploy/caddy.d && ls -ld ~/deploy/caddy.d'   # 소유자 ubuntu 확인
@@ -197,7 +198,18 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
    (무해 — 4번 완료 후 워크플로 재실행하면 된다).
 5. **develop에 푸시**(또는 `CD dev` 재실행) → `CI` 성공 → `CD dev` 전 스텝 성공 확인
    (계정 준비·뷰 치환 적용·잔존 참조 검사·pull/재기동·caddy reload·`/health`)
-6. **dev 가입 코드 시드** — 둘 중 하나:
+6. **dev monitoring DB·계정 생성** (dev-postgres가 뜬 5번 이후 1회 — 운영 §13의 dev 판):
+   ```bash
+   # 서버에서 (-c를 나눠 쓴다 — 한 -c에 여러 문장을 넣으면 암묵 트랜잭션이라 CREATE DATABASE가 거부된다)
+   docker exec -it deploy-dev-postgres-1 psql -U $DEV_DB_USER -d analysis \
+     -c "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'" \
+     -c "CREATE ROLE was_reader LOGIN PASSWORD '<실값>'" \
+     -c "CREATE DATABASE monitoring OWNER monitoring"
+   ```
+   비밀번호는 2번의 `DEV_MONITORING_DB_PASSWORD`와 같은 값. **이 DB가 생기기 전까지
+   `deploy-dev-monitoring-1`은 접속 실패로 재기동을 반복**한다(무해 — 생성 후 스스로 붙는다).
+   운영과 다른 postgres 클러스터라 계정 이름이 겹쳐도 무관하다.
+7. **dev 가입 코드 시드** — 둘 중 하나:
    ```bash
    # (a) API — 토큰은 .env의 DEV_CODES_API_KEY
    curl -fsS -X POST https://dev-api.hypenow.io/admin/signup-codes \
@@ -207,7 +219,7 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
    deploy/scripts/generate-signup-codes.sh DEV 10 | \
      ssh ubuntu@<IP> 'docker exec -i deploy-dev-postgres-1 psql -U <DEV_DB_USER> -d analysis'
    ```
-7. **검증**: `https://dev-api.hypenow.io`에서 가입·로그인 → `/v1/contents` 응답 확인.
+8. **검증**: `https://dev-api.hypenow.io`에서 가입·로그인 → `/v1/contents` 응답 확인.
    이메일 인증 코드는 Resend 미설정(로깅 폴백)이라
    `ssh ubuntu@<IP> 'docker logs deploy-dev-was-1 | grep 인증'`에서 확인.
 
@@ -219,6 +231,9 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 - dev 스케줄은 전부 off(`ANALYTICS_SCHEDULE_ENABLED: "false"`) — 미러·분석·LLM 잡은 어드민 수동
   트리거만. LLM은 운영 자격증명 공유라 소량으로(쿼터·비용 공유 인지). 이미지 아카이브는
   `ANALYTICS_IMAGE_PAR_URL: ""`이라 실행 시 fail-fast(운영 버킷 오염 방지).
+  dev-monitoring도 같은 원칙 — 스윕 크론을 아예 안 넣어 기본값 `"-"`(off)이고, 등록 시 동기 수집만
+  돈다. Hiker 키는 운영 공유라 등록 테스트는 소량으로. dev-was는 `http://dev-monitoring:8083`으로
+  호출한다(전용 네트워크 `dev-monitoring-net` — 운영 `monitoring`은 dev에서 해석 자체가 안 된다).
 - 뷰만 다시 적용(맥에서 — cd-dev와 같은 절차):
   ```bash
   cat analytics/views/*.sql | deploy/scripts/rewrite-views-dev-schema.sh | \
@@ -227,10 +242,11 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 - 스냅샷 캐시 refresh(필요 시):
   `ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -c "SELECT analytics_dev.refresh_snapshot_cache();"'`
 - dev 스택 정지:
-  `cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev stop dev-was dev-analytics dev-postgres`
+  `cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev stop dev-monitoring dev-was dev-analytics dev-postgres`
   (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 같은 `-f`·프로파일 인자에 `up -d`.
 - 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-dev-was-1` ·
-  `deploy-dev-analytics-1` · `deploy-dev-postgres-1`. 모니터링 `SERVICES` 목록(§9)에는 dev를 넣지
+  `deploy-dev-analytics-1` · `deploy-dev-postgres-1` · `deploy-dev-monitoring-1`.
+  모니터링 `SERVICES` 목록(§9)에는 dev를 넣지
   않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.
 
 ### 주의 (함정 2건)
@@ -238,7 +254,7 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 - **orphan 경고는 정상, `--remove-orphans` 금지.** dev 기동 후 운영 경로(`docker compose up -d`,
   deploy.sh)는 매번 `Found orphan containers (deploy-dev-was-1 …)` 경고를 낸다 — dev 서비스가
   `compose.dev.yaml`에 있어 운영 파일 단독 실행엔 "고아"로 보일 뿐이다. 경고문이 권하는
-  `--remove-orphans`를 붙이면 **dev 컨테이너 3종이 제거된다.** 절대 붙이지 말 것.
+  `--remove-orphans`를 붙이면 **dev 컨테이너 4종이 제거된다.** 절대 붙이지 말 것.
 - **운영 배포가 cancelled로 끝났으면 재실행.** 운영 CD와 dev CD는 같은 concurrency 그룹
   (`deploy-server`)으로 직렬화되는데, GitHub는 그룹당 대기 1개만 유지한다 — dev 배포 실행 중에
   운영 배포가 대기하다가 새 dev 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
