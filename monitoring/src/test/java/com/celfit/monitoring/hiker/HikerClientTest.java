@@ -172,6 +172,15 @@ class HikerClientTest {
 		assertThat(posts).allSatisfy(p -> assertThat(p.views()).isNull());
 	}
 
+	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */
+	@Test
+	void 단건_응답에_소유_계정이_없으면_HikerFetch로() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1}]}""");
+		assertThatThrownBy(() -> client.fetchPost("Xx1"))
+				.isInstanceOf(HikerFetchException.class);
+	}
+
 	@Test
 	void 단건_응답이_비면_SubjectNotFound로() {
 		HikerClient client = new HikerClient(path -> "{\"num_results\":0,\"items\":[]}");

@@ -10,15 +10,14 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * monitoring의 유일한 외부 수집 경로 — HikerAPI v2 3종(프로필·열거·단건) 파싱.
  * 엔드포인트·필드 매핑의 정본은 docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md.
+ * 빈 조립은 {@code HikerConfig} — 전송은 항상 RecordingHikerHttp로 감싸져 들어온다(원형 적재).
  */
-@Component
 public class HikerClient {
 
 	private static final Logger log = LoggerFactory.getLogger(HikerClient.class);
@@ -116,7 +115,13 @@ public class HikerClient {
 		if (items.isEmpty()) {
 			throw new SubjectNotFoundException("게시물 응답이 비어 있음: " + shortCode);
 		}
-		return toPost(items.getFirst(), null, body, Map.of());
+		PostInfo post = toPost(items.getFirst(), null, body, Map.of());
+		// 단건 응답에는 usernameHint가 없어 소유 계정을 user.username에서만 얻는다.
+		// 없으면 스냅샷 적재(post_snapshot.username NOT NULL)도 target 등록도 불가 → 셰이프 이상으로 본다.
+		if (post.username() == null) {
+			throw new HikerFetchException("단건 응답에 소유 계정(user.username)이 없음: " + shortCode);
+		}
+		return post;
 	}
 
 	private static String pageParam(String cursor) {

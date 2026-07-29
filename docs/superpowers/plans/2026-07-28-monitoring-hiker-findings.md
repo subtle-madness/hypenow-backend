@@ -188,3 +188,15 @@ Task 4를 픽스처 5종으로 TDD 구현한 결과 §2·§4·§5의 매핑이 *
 | `HikerFetchException` | 메시지 생성자만 | `(String, Throwable)` 추가 | `JdkHikerHttp`가 `IOException`을 감싸 던짐 |
 
 콜 비용(§7)은 그대로 계정당 프로필 1 + 열거 `pages` + 클립 `pages`. 기본 `enumerate-pages: 1` 기준 3콜.
+
+## 9. Task 6(등록 API) 추기 — 2026-07-29
+
+- **원형(`raw.fetch_payload`) 적재를 전송 계층으로 옮겼다** — `RecordingHikerHttp`(HikerHttp 데코레이터)가
+  성공 응답을 콜 단위로 저장한다. 파싱 결과(`PostInfo.rawJson`)를 호출자가 저장하던 방식은
+  **콜 3개 중 1개만 남았다**: `rawJson`은 그 게시물이 아니라 body 전체라 열거 12건이 같은 값을 공유하고,
+  clips 응답과 2페이지 이후는 아예 기록되지 않았다. 이제 §7의 콜 수(계정당 3콜)와 적재 행 수가 1:1이다.
+  kind·subject는 경로로 판정한다: `by/username`→`PROFILE`/username, `medias`·`clips`→`POSTS`/user_id,
+  `media/by/code`→`POST`/code.
+- **`fetchPost`는 `user.username` 부재를 셰이프 이상으로 본다**(`HikerFetchException` → 502).
+  단건 응답에는 usernameHint가 없어 여기가 소유 계정의 유일한 출처이고,
+  `post_snapshot.username`·`target.username`이 둘 다 NOT NULL이라 없으면 적재 자체가 불가능하다.

@@ -2,7 +2,6 @@ package com.celfit.monitoring.service;
 
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
@@ -74,13 +73,13 @@ public class RegistrationService {
 		return new Result(id, TargetStatus.WATCHING.name(), snapshot, false);
 	}
 
-	/** POST 등록은 감지·승인 단계가 없다 — 등록 즉시 그 게시물을 추적한다(TRACKING). */
+	/**
+	 * POST 등록은 감지·승인 단계가 없다 — 등록 즉시 그 게시물을 추적한다(TRACKING).
+	 * username(소유 계정)은 사용자가 주지 않고 단건 응답에서 얻는다 — 부재 판정은 HikerClient.fetchPost가
+	 * 이미 했다(셰이프 이상 → FETCH_FAILED 502). 여기서 다시 보면 upsert가 먼저 터져서 죽은 가드가 된다.
+	 */
 	private Result registerPost(RegisterCommand cmd) {
 		PostInfo post = collect.collectPost(cmd.shortCode());
-		if (post.username() == null) {
-			// target.username은 NOT NULL이고 프로필 추이 조인의 키다 — 소유 계정을 모르면 등록을 세울 수 없다.
-			throw new HikerFetchException("게시물 응답에 소유 계정이 없음: " + cmd.shortCode());
-		}
 		long id = targets.insert(TargetType.POST, post.username(), cmd.shortCode(), null,
 				TargetStatus.TRACKING, cmd.shortCode(), cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
