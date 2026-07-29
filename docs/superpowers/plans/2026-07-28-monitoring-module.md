@@ -1473,7 +1473,11 @@ public class DailySweepJob {
 		for (TargetRow t : accountTargets) {
 			if (t.status() == TargetStatus.WATCHING && t.keywordRule() != null) {
 				for (PostInfo p : posts) {
-					if (t.keywordRule().matches(p.caption())) {
+					// 등록 시각 이후 게시물만 감지(07-29 확정) — 등록 전 옛 키워드 게시물 노이즈 차단.
+					// taken_at 미상은 보수적으로 제외. TargetRow에 registeredAt 필드 필요(11번째).
+					boolean postedAfterRegistration = p.takenAt() != null
+							&& !Instant.ofEpochSecond(p.takenAt()).isBefore(t.registeredAt());
+					if (postedAfterRegistration && t.keywordRule().matches(p.caption())) {
 						candidates.insertPending(t.id(), p.shortCode(), excerpt(p.caption()));
 					}
 				}

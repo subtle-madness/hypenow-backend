@@ -158,6 +158,8 @@ target이 활성(WATCHING/TRACKING)이 아니면 409 `INVALID_STATE` — 종결�
 | `status` | text | `PENDING` / `APPROVED` / `REJECTED` |
 
 같은 (target_id, short_code)는 한 번만 생성 — 거절해도 재감지로 되살아나지 않는다.
+**등록 시각 이후에 게시된 게시물만 감지 대상** — 캠페인 등록 전의 옛 키워드 게시물은
+후보로 오르지 않는다(게시 시각 ≥ target.registered_at).
 
 ### profile_snapshot / post_snapshot — 관측치 (계정·게시물 단위, 캠페인 간 공유)
 
