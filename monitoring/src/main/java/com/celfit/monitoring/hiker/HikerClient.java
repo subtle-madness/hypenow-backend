@@ -56,12 +56,20 @@ public class HikerClient {
 		for (int page = 0; page < wanted; page++) {
 			String body = http.get("/v2/user/medias?user_id=" + enc(userId) + pageParam(cursor));
 			JsonNode root = root(body);
+			int before = byCode.size();
 			for (JsonNode item : items(root)) {
 				PostInfo post = toPost(item, username, body, plays);
 				byCode.putIfAbsent(post.shortCode(), post);   // 페이지 경계 중복 방지
 			}
+			// 커서 전진 가드: 커서 파라미터명이 틀리면 API가 같은 1페이지를 계속 돌려주는데
+			// dedupe가 이를 조용히 흡수해 "누락 없는 정상"으로 보인다(콜만 2배 과금).
+			// 새 숏코드가 0건이면 전진하지 않은 것으로 보고 중단한다.
+			if (page > 0 && byCode.size() == before) {
+				log.warn("커서 미전진 의심 — user_id {} {}페이지에서 새 게시물 0건, 열거 중단", userId, page + 1);
+				break;
+			}
 			cursor = nextPageId(root);
-			if (cursor == null) {
+			if (cursor == null || !moreAvailable(root)) {
 				break;
 			}
 		}
@@ -79,6 +87,7 @@ public class HikerClient {
 			String cursor = null;
 			for (int page = 0; page < pages; page++) {
 				JsonNode root = root(http.get("/v2/user/clips?user_id=" + enc(userId) + pageParam(cursor)));
+				int before = plays.size();
 				for (JsonNode item : root.path("response").path("items")) {
 					JsonNode m = item.path("media");
 					Long play = firstLong(m, "play_count", "ig_play_count");
@@ -86,8 +95,12 @@ public class HikerClient {
 						plays.put(m.path("code").asString(), play);
 					}
 				}
+				if (page > 0 && plays.size() == before) {   // 열거와 동일한 커서 전진 가드
+					log.warn("클립 커서 미전진 의심 — user_id {} {}페이지에서 새 릴스 0건, 보강 중단", userId, page + 1);
+					break;
+				}
 				cursor = nextPageId(root);
-				if (cursor == null) {
+				if (cursor == null || !moreAvailable(root)) {
 					break;
 				}
 			}
@@ -114,6 +127,19 @@ public class HikerClient {
 	private static String nextPageId(JsonNode root) {
 		String cursor = root.path("next_page_id").asString(null);
 		return cursor == null || cursor.isBlank() ? null : cursor;
+	}
+
+	/**
+	 * 더 있음 플래그 — 열거는 `response.more_available`, 클립은 `response.paging_info.more_available`(findings §3).
+	 * 키가 없는 셰이프에서는 true로 보고 페이지 수 상한·무진전 가드에 맡긴다.
+	 */
+	private static boolean moreAvailable(JsonNode root) {
+		JsonNode res = root.has("response") ? root.path("response") : root;
+		JsonNode flag = res.path("more_available");
+		if (flag.isMissingNode() || flag.isNull()) {
+			flag = res.path("paging_info").path("more_available");
+		}
+		return flag.isMissingNode() || flag.isNull() || flag.asBoolean(true);
 	}
 
 	private static String enc(String value) {

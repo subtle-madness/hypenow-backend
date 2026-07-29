@@ -102,16 +102,23 @@ class HikerClientTest {
 				.isInstanceOf(PrivateAccountException.class);
 	}
 
+	/** 2페이지째로 내려오는 정상 응답 — 새 숏코드 1건, more_available=false로 종료. */
+	private static final String PAGE2 = """
+			{"response":{"items":[{"code":"ZzPage2Only","taken_at":1700000000,"product_type":"feed",
+			"like_count":7,"comment_count":3,"media_repost_count":1,"caption":{"text":"2페이지"}}],
+			"more_available":false,"num_results":1},"next_page_id":null}""";
+
 	@Test
-	void 열거_2페이지는_next_page_id를_커서로_전달하고_중복은_숏코드로_제거() {
+	void 열거_2페이지는_next_page_id를_커서로_전달하고_다음_페이지를_이어붙인다() {
 		List<String> calls = new ArrayList<>();
 		HikerClient client = new HikerClient(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
-			return fixture("medias.json");
+			return path.contains("page_id=") ? PAGE2 : fixture("medias.json");
 		});
-		// 같은 픽스처를 두 번 돌려주므로 12건이 두 벌 — 숏코드 중복 제거로 여전히 12건이어야 한다
-		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 2)).hasSize(12);
+		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 2);
+		assertThat(posts).hasSize(13);                        // 1페이지 12 + 2페이지 1
+		assertThat(posts).extracting(PostInfo::shortCode).contains("ZzPage2Only");
 		var medias = calls.stream().filter(p -> p.startsWith("/v2/user/medias")).toList();
 		assertThat(medias).hasSize(2);
 		assertThat(medias.get(0)).doesNotContain("page_id");
@@ -120,6 +127,38 @@ class HikerClientTest {
 		var clips = calls.stream().filter(p -> p.startsWith("/v2/user/clips")).toList();
 		assertThat(clips).hasSize(2);
 		assertThat(clips.get(1)).contains("&page_id=QVFD").endsWith("%3D%3D");
+	}
+
+	@Test
+	void 커서가_전진하지_않으면_경고하고_중단한다() {
+		// 커서 파라미터명이 틀려 API가 같은 1페이지를 계속 돌려주는 상황.
+		// dedupe가 결과를 12건으로 보정해버려 조용히 넘어가면 콜만 배로 나간다 → 즉시 중단해야 한다.
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
+			return fixture("medias.json");
+		});
+		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 5)).hasSize(12);
+		// 5페이지를 요청했어도 2페이지째에서 새 숏코드 0건을 감지하고 멈춘다
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/medias"))).hasSize(2);
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/clips"))).hasSize(2);
+	}
+
+	@Test
+	void more_available가_false면_페이지가_남아도_멈춘다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
+			// next_page_id는 있지만 more_available=false — 커서만 믿고 더 부르면 안 된다
+			return """
+					{"response":{"items":[{"code":"Only1","taken_at":1700000000,"product_type":"feed",
+					"like_count":1,"comment_count":1,"media_repost_count":1}],"more_available":false},
+					"next_page_id":"cursor-should-not-be-used"}""";
+		});
+		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 3)).hasSize(1);
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/medias"))).hasSize(1);
 	}
 
 	@Test
