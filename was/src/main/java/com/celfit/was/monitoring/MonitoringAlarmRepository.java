@@ -6,6 +6,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public class MonitoringAlarmRepository {
+
+	private static final Logger log = LoggerFactory.getLogger(MonitoringAlarmRepository.class);
 
 	private final JdbcClient jdbcClient;
 
@@ -49,13 +53,19 @@ public class MonitoringAlarmRepository {
 
 	/** 전진만 허용(후퇴 방지 가드) — 과거 값으로 호출돼도 무해. */
 	public void advanceWatermark(String eventType, OffsetDateTime to) {
-		jdbcClient.sql("""
+		int updated = jdbcClient.sql("""
 				UPDATE app.monitoring_alarm_state SET last_notified_at = :to
 				WHERE event_type = :eventType AND last_notified_at < :to
 				""")
 				.param("to", to)
 				.param("eventType", eventType)
 				.update();
+		if (updated == 0 && jdbcClient.sql(
+				"SELECT count(*) FROM app.monitoring_alarm_state WHERE event_type = :e")
+				.param("e", eventType).query(Long.class).single() == 0) {
+			// 후퇴 방지로 걸러진 게 아니라 행 자체가 없음 — 새 이벤트의 워터마크 시드 누락 신호
+			log.warn("워터마크 행 없음 — 마이그레이션 시드 누락 의심: event_type={}", eventType);
+		}
 	}
 
 	public Map<Long, String> emailsByUserIds(Collection<Long> userIds) {

@@ -1,6 +1,7 @@
 package com.celfit.was.monitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
 import java.time.OffsetDateTime;
@@ -11,6 +12,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 class MonitoringAlarmRepositoryTest extends IntegrationTest {
@@ -55,6 +57,8 @@ class MonitoringAlarmRepositoryTest extends IntegrationTest {
 		assertThat(optedOut).containsExactly(userA);   // userB는 다른 이벤트만 껐다
 	}
 
+	// 주의: monitoring_alarm_state는 공유 컨테이너 전역 1행 — 이 테스트는 상대값(seeded 기준)으로만
+	// 단언한다. 이 테이블을 건드리는 새 테스트는 절대값 단언 전에 반드시 자체 리셋할 것.
 	@Test
 	void 워터마크는_시드돼_있고_전진만_허용된다() {
 		OffsetDateTime seeded = repository.watermark("POST_DETECTED");
@@ -76,5 +80,14 @@ class MonitoringAlarmRepositoryTest extends IntegrationTest {
 		assertThat(emails).hasSize(2);
 		assertThat(emails.get(userA)).contains("@test.io");
 		assertThat(repository.emailsByUserIds(List.of())).isEmpty();
+	}
+
+	@Test
+	void 정의되지_않은_이벤트_타입은_DB가_거부한다() {
+		assertThatThrownBy(() -> jdbcClient.sql("""
+				INSERT INTO app.monitoring_email_opt_outs (user_id, event_type)
+				VALUES (:u, 'NOT_A_REAL_EVENT')
+				""").param("u", userA).update())
+				.isInstanceOf(DataIntegrityViolationException.class);
 	}
 }
