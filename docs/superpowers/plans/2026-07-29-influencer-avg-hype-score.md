@@ -1,6 +1,6 @@
 # 계정 하입 스코어 (발굴 목록) Implementation Plan
 
-> 상태: 🟢 활성 (실행 대기)
+> 상태: 🟢 활성 · ✅ 실행됨(2026-07-29, 5개 태스크 완료 — 머지 후 archive 이동 예정)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -145,7 +145,7 @@ git commit -m "feat(analytics): 계정 요약에 avg_hype_score 추가 — 최�
 
 **Files:**
 - Modify: `contract-analysis/src/main/java/com/celfit/contract/analysis/AccountSummary.java`
-- Create: `analytics/src/main/resources/db/migration/analysis/V41__account_summaries_avg_hype_score.sql` (번호는 전제 확인 결과 기준)
+- Create: `analytics/src/main/resources/db/migration/analysis/V42__account_summaries_avg_hype_score.sql` (번호는 전제 확인 결과 기준)
 - Test: 기존 `analytics/src/test/java/com/celfit/analytics/mirror/FlywaySchemaTest.java` (수정 없음 — DDL=record 대조 가드)
 
 - [ ] **Step 1: record에 필드 먼저 추가 (실패 확인용)**
@@ -183,7 +183,7 @@ Expected: FAIL — `account_summaries 컬럼이 record와 다름` (record에만 
 
 - [ ] **Step 3: 마이그레이션 작성**
 
-Create `analytics/src/main/resources/db/migration/analysis/V41__account_summaries_avg_hype_score.sql`:
+Create `analytics/src/main/resources/db/migration/analysis/V42__account_summaries_avg_hype_score.sql`:
 
 ```sql
 -- 계정 하입 스코어(스펙 2026-07-29-influencer-avg-hype-score): 최근창 콘텐츠 hype_score 단순 평균(0~100).
@@ -202,8 +202,8 @@ Expected: PASS. (뷰=record 경계는 MirrorJob 런타임 가드 — Task 1에�
 - [ ] **Step 5: Commit**
 
 ```bash
-git add contract-analysis/src/main/java/com/celfit/contract/analysis/AccountSummary.java analytics/src/main/resources/db/migration/analysis/V41__account_summaries_avg_hype_score.sql
-git commit -m "feat(analytics): account_summaries.avg_hype_score 미러 형상 — V41 + 계약 record"
+git add contract-analysis/src/main/java/com/celfit/contract/analysis/AccountSummary.java analytics/src/main/resources/db/migration/analysis/V42__account_summaries_avg_hype_score.sql
+git commit -m "feat(analytics): account_summaries.avg_hype_score 미러 형상 — V42 + 계약 record"
 ```
 
 ---
@@ -515,7 +515,7 @@ git commit -m "docs: 계정 하입 스코어 트랙 반영 — ARCHITECTURE §5�
 ```
 
 `superpowers:finishing-a-development-branch` 스킬로 마무리 — develop 대상 PR. PR 본문에 반드시 포함:
-- **배포 순서**: 뷰 수동 적용(origin/develop 기준, lock_timeout 재시도 런북) → analytics 배포(Flyway V41) → 미러 → was 배포. was가 먼저 뜨면 `su.avg_hype_score` 미존재로 발굴 목록 500.
+- **배포 순서**: 뷰 수동 적용(origin/develop 기준, lock_timeout 재시도 런북) → analytics 배포(Flyway V42) → 미러 → was 배포. was가 먼저 뜨면 `su.avg_hype_score` 미존재로 발굴 목록 500.
 - **머지 직전 V41 번호 재확인** (V18 경합 전례).
 - **프론트 통지**: 카드 `hypeScore`(0~100, null 가능 — null 표시 정책은 프론트 몫) + `sort=hype` 추가, 유사 카드에도 동일 필드 포함.
 

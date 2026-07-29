@@ -136,7 +136,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev pull dev-analytics dev-was && \
-             docker compose -f compose.yaml -f compose.dev.yaml --profile dev up -d dev-postgres dev-analytics dev-was && \
+             docker compose -f compose.yaml -f compose.dev.yaml --profile dev up -d dev-postgres dev-redis dev-analytics dev-was && \
              docker compose -f compose.yaml -f compose.dev.yaml --profile dev ps'
 
       - name: caddy 설정 리로드 (dev-api 라우팅 반영)

@@ -52,3 +52,7 @@
 - Spring Boot 4 주의: `@WebMvcTest`는 `org.springframework.boot.webmvc.test.autoconfigure` 패키지,
   Testcontainers 2.x는 `org.testcontainers.postgresql.PostgreSQLContainer`.
 - **피드 게시물은 조회수(views)가 항상 NULL** — 조회수 집계·비율 계산에는 항상 NULL 규칙이 따라붙는다.
+- **"분석 잔여 몇 건 / 왜 분석 안 됐나" 카운트는 `analytics/check/pending.sh` 정본으로.** 미분석
+  콘텐츠의 timely 여부는 분석 완료 전엔 어디에도 영속화되지 않는다(`v_analysis_candidates.timely`가
+  유일한 판정 지점) — `content_analyses` 단독 카운트나 즉석 쿼리는 "제때창(3일) 놓쳐서 분석 안
+  함(영구 제외·상세 트랙)"과 "분석 대상인데 대기"를 뭉갠다(07-21·07-28 오답 전력).

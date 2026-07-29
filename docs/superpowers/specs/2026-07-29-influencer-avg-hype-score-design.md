@@ -1,6 +1,6 @@
 # 인플루언서 발굴 목록 계정 하입 스코어 설계
 
-> 상태: 🟢 활성 (설계만 — 구현 계획·구현 미착수)
+> 상태: 🟢 활성 · ✅ 구현됨(배포 대기)
 
 ## 1. 배경·목표
 
@@ -62,10 +62,17 @@ avg_hype_score = round(avg(analytics.hype_score(
 
 ## 6. 엣지·배포 리스크
 
-- **배포 순서**: was 쿼리가 `su.avg_hype_score`를 참조하므로 **analysis 마이그레이션(analytics
-  Flyway)이 was 배포보다 먼저** 적용돼야 한다. ALTER 후 미러 전이라 값이 NULL이어도 쿼리는
-  성공 — 깨지는 건 컬럼 미존재뿐. 운영 반영 순서: 뷰 수동 적용(origin/develop 기준,
-  lock_timeout 재시도 런북) → analytics 배포(Flyway) → 미러 → was 배포.
+- **배포 순서** *(07-29 최종 리뷰에서 정정 — 초안의 "뷰 선적용" 순서는 위험)*: 배포 정본은
+  CD(develop→main). cd.yml 순서(컨테이너 pull·기동 → 뷰 적용)가 안전한 순서다 — was는
+  compose `depends_on: analytics healthy`(=Flyway V41 완료)를 대기하므로 `su.avg_hype_score`
+  미존재 500 레이스가 없고, "신 record ↔ 구 뷰" 창은 초 단위라 무해하다.
+  **뷰 수동 선적용 금지**: 구 analytics 이미지(26컬럼 record)가 도는 상태에서 신 뷰(27컬럼)를
+  먼저 적용하면 미러 런타임 가드(verifyColumns)가 던져 등록부 후순위 미러까지 그날 전부
+  스킵된다(데이터 파손은 없음 — TRUNCATE 전에 실패). 수동 적용이 꼭 필요하면 analytics
+  재배포 **이후**에.
+- **배포 직후 운영 절차**: 스케줄 미러는 KST 04:30뿐이라 첫 미러 전까지 hypeScore는 전건
+  NULL(sort=hype는 handle 순). 배포 → 수동 미러 1회(`ssh` 터널 후
+  `curl -X POST 127.0.0.1:8082/ui/jobs/mirror`) → 값 스팟체크 → 그다음 프론트 통지 순서로.
 - 정렬은 미러 테이블 실컬럼 기준이라 상관 서브쿼리 성능 이슈 없음.
 - 앵커·상수 튜닝은 기존 콘텐츠 hype와 동일 `app_setting` 키를 그대로 공유(함수 재사용이므로
   계정 쪽 별도 상수 없음). 콘텐츠 hype 재보정 시 계정 점수도 자동 추종한다.

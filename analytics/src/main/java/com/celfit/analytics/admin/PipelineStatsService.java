@@ -1,5 +1,6 @@
 package com.celfit.analytics.admin;
 
+import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.config.AnalyticsSettings;
 import java.sql.Connection;
@@ -256,21 +257,33 @@ public class PipelineStatsService {
 				qualified - beautyIndividual - beautyCompany, num(r.get("judged_today")));
 	}
 
-	/** 계정 카피 대상 수 — AccountAnalysisJob.run()의 대상 쿼리를 count로. */
-	private long accountTarget() {
+	/**
+	 * 계정 카피 대상 수 — AccountAnalysisJob.ELIGIBLE_WHERE(잡의 대상 정의와 단일 정본)를 count로.
+	 * 07-27 개편(perf_summary 3컬럼) 백필 대상(구 스키마 행)까지 잡과 동형으로 잡아야 대시보드
+	 * "대상" 수치가 실제 재분석 후보와 어긋나지 않는다.
+	 * 패키지 가시성 — PipelineStatsServiceTest가 raw DB 픽스처 없이 이 쿼리만 대고 검증한다.
+	 */
+	long accountTarget() {
 		Long v = analysis.queryForObject("""
 				SELECT count(*)
 				FROM account_summaries s
-				LEFT JOIN LATERAL (
-				  SELECT a.input_last_posted_at, a.analyzed_at
-				  FROM account_analyses a WHERE a.handle = s.handle
-				  ORDER BY a.analyzed_at DESC LIMIT 1
-				) latest ON true
-				WHERE latest.analyzed_at IS NULL
-				   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-				       AND latest.analyzed_at < now() - make_interval(days => ?))""",
+				""" + AccountAnalysisJob.ELIGIBLE_WHERE,
 				Long.class, settings.accountAnalyzeCooldownDays());
 		return v == null ? 0 : v;
+	}
+
+	/**
+	 * "카피 완료" 핸들 집합 — 계정별 최신 행이 신 스키마(perf_summary 3컬럼, V40)를 보유할 때만.
+	 * 행 존재만으로 세면 07-27 개편 백필 대상(구 스키마 최신 행)까지 완료로 잘못 잡힌다. 개편 직후엔
+	 * G1 카피율이 0%대에서 시작해 백필 진행대로 차오르는 게 의도된 표시다.
+	 * 패키지 가시성 — PipelineStatsServiceTest가 raw DB 픽스처 없이 이 쿼리만 대고 검증한다.
+	 */
+	Set<String> copiedHandles() {
+		return new HashSet<>(analysis.queryForList("""
+				SELECT handle FROM (
+				  SELECT DISTINCT ON (handle) handle, perf_summary
+				  FROM account_analyses ORDER BY handle, analyzed_at DESC
+				) latest WHERE perf_summary IS NOT NULL""", String.class));
 	}
 
 	/**
@@ -341,8 +354,7 @@ public class PipelineStatsService {
 	private Heavy computeHeavy() {
 		Set<String> analyzedCodes = new HashSet<>(
 				analysis.queryForList("SELECT short_code FROM content_analyses", String.class));
-		Set<String> copiedHandles = new HashSet<>(
-				analysis.queryForList("SELECT DISTINCT handle FROM account_analyses", String.class));
+		Set<String> copiedHandles = copiedHandles();
 		// 아카이브 기록 셋 — 다른 DB(analysis)라 raw 스냅샷과 정합 불가는 기존 셋들과 같은 한계.
 		Set<String> archivedThumbs = new HashSet<>(analysis.queryForList(
 				"SELECT key FROM image_assets WHERE kind = 'thumbnail'", String.class));

@@ -260,9 +260,10 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				  ('sim_me', 10000), ('sim_true', 10500), ('sim_mid', 50000),
 				  ('sim_dup', 10001), ('sim_far_tie', 90000), ('sim_other_cat', 10200)""");
 		jdbcTemplate.update("""
-				INSERT INTO account_summaries (handle, followers) VALUES
-				  ('sim_me', 10000), ('sim_true', 10500), ('sim_mid', 50000),
-				  ('sim_dup', 10001), ('sim_far_tie', 90000), ('sim_other_cat', 10200)""");
+				INSERT INTO account_summaries (handle, followers, last_posted_at) VALUES
+				  ('sim_me', 10000, now()), ('sim_true', 10500, now()), ('sim_mid', 50000, now()),
+				  ('sim_dup', 10001, now()), ('sim_far_tie', 90000, now()),
+				  ('sim_other_cat', 10200, now())""");
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
 				  content_type, views, likes, comments, sponsored) VALUES
@@ -407,7 +408,9 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 	 */
 	private void seedSimAccount(String handle, long followers, String traitsJson, String... mixCounts) {
 		jdbcTemplate.update("INSERT INTO accounts (handle, followers) VALUES (?, ?)", handle, followers);
-		jdbcTemplate.update("INSERT INTO account_summaries (handle, followers) VALUES (?, ?)", handle, followers);
+		// 기본은 활동 계정(방금 업로드) — 휴면 케이스는 각 테스트가 last_posted_at을 덮어쓴다.
+		jdbcTemplate.update("INSERT INTO account_summaries (handle, followers, last_posted_at) VALUES (?, ?, now())",
+				handle, followers);
 		jdbcTemplate.update(
 				"INSERT INTO account_analyses (handle, analyzed_at, traits) VALUES (?, now(), ?::jsonb)",
 				handle, traitsJson);
@@ -555,5 +558,49 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("skewed", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "4");
 
 		assertThat(repository.findSimilarHandles("me")).isEmpty();
+	}
+
+	@Test
+	void 휴면_후보는_제외된다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// 점수는 둘 다 1.0(완전 일치)이지만 dormant는 최근 업로드가 3개월 밖 → 휴면 제외.
+		seedSimAccount("active", 12_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		seedSimAccount("dormant", 11_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		jdbcTemplate.update(
+				"UPDATE account_summaries SET last_posted_at = now() - interval '4 months' WHERE handle = 'dormant'");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("active");
+	}
+
+	@Test
+	void 최근_업로드일_미확인_후보는_제외된다() {
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// last_posted_at NULL = 활동 확인 불가 → 휴면과 동일하게 제외.
+		seedSimAccount("unknown", 11_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		jdbcTemplate.update("UPDATE account_summaries SET last_posted_at = NULL WHERE handle = 'unknown'");
+
+		assertThat(repository.findSimilarHandles("me")).isEmpty();
+	}
+
+	@Test
+	void 요약_행_없는_후보는_제외된다() {
+		// account_peer_stats(V39)가 account_summaries를 base로 파생되므로 요약 행이 없는 계정은
+		// 후보 풀 자체에 없다 — 휴면 필터 도입 전에도 성립하던 불변식의 회귀 그물.
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		seedSimAccount("nosummary", 11_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		jdbcTemplate.update("DELETE FROM account_summaries WHERE handle = 'nosummary'");
+
+		assertThat(repository.findSimilarHandles("me")).isEmpty();
+	}
+
+	@Test
+	void 기준_계정이_휴면이어도_유사_목록은_반환된다() {
+		// 휴면 필터는 후보에게만 적용된다 — 휴면 계정의 리포트 페이지에서도 유사 목록은 정상 동작.
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		seedSimAccount("active", 12_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		jdbcTemplate.update(
+				"UPDATE account_summaries SET last_posted_at = now() - interval '4 months' WHERE handle = 'me'");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("active");
 	}
 }

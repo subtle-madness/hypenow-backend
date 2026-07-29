@@ -34,6 +34,7 @@ public class AnalyticsJobService {
 	private final ObjectProvider<AccountAnalysisJob> accountAnalyzeJob;
 	private final ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob;
 	private final ObjectProvider<ImageArchiveJob> archiveJob;
+	private final ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob;
 	private final JobProgressRegistry progress;
 	private final RunHistory history;
 
@@ -44,6 +45,7 @@ public class AnalyticsJobService {
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
+			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
 			JobProgressRegistry progress, RunHistory history) {
 		this.lock = lock;
 		this.executor = executor;
@@ -54,6 +56,7 @@ public class AnalyticsJobService {
 		this.accountAnalyzeJob = accountAnalyzeJob;
 		this.synthesisRefreshJob = synthesisRefreshJob;
 		this.archiveJob = archiveJob;
+		this.traitCanonJob = traitCanonJob;
 		this.progress = progress;
 		this.history = history;
 	}
@@ -128,6 +131,9 @@ public class AnalyticsJobService {
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
 			case SYNTHESIS_REFRESH -> synthesisRefreshJob.getObject().run();
 			case ARCHIVE -> archiveJob.getObject().run();
+			// trait 어휘 매핑 원샷(2026-07-29 스펙) — 스케줄 없음, 어드민 수동 트리거 전용
+			case TRAIT_CANON_DRY -> traitCanonJob.getObject().run(true);
+			case TRAIT_CANON_APPLY -> traitCanonJob.getObject().run(false);
 		};
 	}
 }

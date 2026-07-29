@@ -4,6 +4,7 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.TraitTaxonomyLoader;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -25,18 +26,38 @@ public class AccountAnalysisJob {
 	private static final Logger log = LoggerFactory.getLogger(AccountAnalysisJob.class);
 	static final int CAPTION_CHARS = 300;
 
+	/**
+	 * 계정 카피 대상 자격 정의 — 단일 정본 (07-28 드리프트 재발 방지). run()의 대상 쿼리와
+	 * 어드민 대상 카운트(PipelineStatsService.accountTarget)·Claude 버스트 export
+	 * (ClaudeBurstRunner.exportAccounts)가 이 문자열을 그대로 이어붙여 써서 세 곳의 판정이
+	 * 항상 같은 SQL이 되게 한다. 파라미터는 쿨다운 일수(accountAnalyzeCooldownDays) 하나뿐 —
+	 * 이어붙이는 쪽은 이 순서 뒤에 자기 파라미터(배치 상한 등)를 추가한다.
+	 */
+	public static final String ELIGIBLE_WHERE = """
+			LEFT JOIN LATERAL (
+			  SELECT a.input_last_posted_at, a.analyzed_at, a.perf_summary
+			  FROM account_analyses a WHERE a.handle = s.handle
+			  ORDER BY a.analyzed_at DESC LIMIT 1
+			) latest ON true
+			WHERE latest.analyzed_at IS NULL
+			   OR latest.perf_summary IS NULL  -- 07-27 개편 백필: 구 스키마 행 자연 재대상
+			   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
+			       AND latest.analyzed_at < now() - make_interval(days => ?))""";
+
 	private final JdbcTemplate analysis;
 	private final AccountSynthesisPort port;
 	private final AnalyticsSettings settings;
 	private final ProgressReporter reporter;
+	private final TraitTaxonomyLoader traitLoader;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public AccountAnalysisJob(DataSource analysisDataSource, AccountSynthesisPort port,
-			AnalyticsSettings settings, ProgressReporter reporter) {
+			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader) {
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.port = port;
 		this.settings = settings;
 		this.reporter = reporter;
+		this.traitLoader = traitLoader;
 	}
 
 	/** @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부) */
@@ -44,15 +65,8 @@ public class AccountAnalysisJob {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
-				LEFT JOIN LATERAL (
-				  SELECT a.input_last_posted_at, a.analyzed_at, a.perf_summary
-				  FROM account_analyses a WHERE a.handle = s.handle
-				  ORDER BY a.analyzed_at DESC LIMIT 1
-				) latest ON true
-				WHERE latest.analyzed_at IS NULL
-				   OR latest.perf_summary IS NULL  -- 07-27 개편 백필: 구 스키마 행 자연 재대상
-				   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-				       AND latest.analyzed_at < now() - make_interval(days => ?))
+				""" + ELIGIBLE_WHERE + """
+
 				ORDER BY s.handle
 				LIMIT ?""", String.class,
 				settings.accountAnalyzeCooldownDays(), settings.accountAnalyzeBatchLimit());
@@ -105,6 +119,6 @@ public class AccountAnalysisJob {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
 		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy, adSituation);
+				lastPostedAt, analyzedCount, copy, adSituation, traitLoader.get().names());
 	}
 }

@@ -64,15 +64,18 @@ public class ClaudeBurstRunner {
 	private final JdbcTemplate analysis;
 	private final AnalyticsSettings settings;
 	private final BeautyTaxonomyLoader taxonomyLoader;
+	private final com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader;
 	private final Path workDir;
 	private final ObjectMapper om = new ObjectMapper();
 
 	public ClaudeBurstRunner(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
-			AnalyticsSettings settings, BeautyTaxonomyLoader taxonomyLoader, Path workDir) {
+			AnalyticsSettings settings, BeautyTaxonomyLoader taxonomyLoader,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader, Path workDir) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.settings = settings;
 		this.taxonomyLoader = taxonomyLoader;
+		this.traitLoader = traitLoader;
 		this.workDir = workDir;
 	}
 
@@ -157,19 +160,13 @@ public class ClaudeBurstRunner {
 		return count;
 	}
 
-	/** 카피 대상 전량 — AccountAnalysisJob.run의 자격 정의에서 배치 상한만 뺐다. */
+	/** 카피 대상 전량 — AccountAnalysisJob.ELIGIBLE_WHERE(잡의 자격 정의와 단일 정본)에서 배치 상한만 뺐다. */
 	private int exportAccounts() {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
-				LEFT JOIN LATERAL (
-				  SELECT a.input_last_posted_at, a.analyzed_at
-				  FROM account_analyses a WHERE a.handle = s.handle
-				  ORDER BY a.analyzed_at DESC LIMIT 1
-				) latest ON true
-				WHERE latest.analyzed_at IS NULL
-				   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-				       AND latest.analyzed_at < now() - make_interval(days => ?))
+				""" + AccountAnalysisJob.ELIGIBLE_WHERE + """
+
 				ORDER BY s.handle""", String.class, settings.accountAnalyzeCooldownDays());
 		StringBuilder input = new StringBuilder();
 		StringBuilder sidecar = new StringBuilder();
@@ -191,7 +188,7 @@ public class ClaudeBurstRunner {
 					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation);
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
-					.put("system", GeminiAccountSynthesizer.instructions())
+					.put("system", GeminiAccountSynthesizer.instructions(traitLoader.get()))
 					.put("user", GeminiAccountSynthesizer.userText(account) + ACCOUNT_JSON_RULE)))
 					.append('\n');
 			var side = om.createObjectNode().put("handle", handle)
@@ -300,7 +297,7 @@ public class ClaudeBurstRunner {
 		AdSituation situation = situationName == null ? null : AdSituation.valueOf(situationName);
 		AccountAnalysisWriter.insert(analysis, om, handle, OffsetDateTime.now(), model, inputLastPostedAt,
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
-				copy, situation);
+				copy, situation, traitLoader.get().names());
 		return true;
 	}
 

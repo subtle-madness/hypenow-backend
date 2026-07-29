@@ -86,12 +86,28 @@ public class LlmConfig {
 
 	@Bean
 	@Lazy
+	public TraitTaxonomyLoader traitTaxonomyLoader(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new TraitTaxonomyLoader(analysisDataSource);
+	}
+
+	@Bean
+	@Lazy
 	public AccountSynthesisPort accountSynthesisPort(AnalyticsSettings settings,
-			ObjectProvider<AnthropicClient> anthropic, ObjectProvider<GeminiApi> gemini) {
+			ObjectProvider<AnthropicClient> anthropic, ObjectProvider<GeminiApi> gemini,
+			TraitTaxonomyLoader traitLoader) {
 		if ("anthropic".equals(settings.llmProvider())) {
-			return new AnthropicAccountSynthesizer(anthropic.getObject(), settings);
+			return new AnthropicAccountSynthesizer(anthropic.getObject(), settings, traitLoader);
 		}
-		return new GeminiAccountSynthesizer(gemini.getObject(), settings::geminiModel);
+		return new GeminiAccountSynthesizer(gemini.getObject(), settings::geminiModel, traitLoader::get);
+	}
+
+	/** trait 배치 매핑(원샷 이행) — ContentSynthesisPort와 같은 이유로 Gemini/Vertex만 지원. */
+	@Bean
+	@Lazy
+	public TraitMappingPort traitMappingPort(AnalyticsSettings settings,
+			ObjectProvider<GeminiApi> gemini, TraitTaxonomyLoader traitLoader) {
+		return new GeminiTraitMapper(gemini.getObject(), settings::geminiModel, traitLoader::get);
 	}
 
 	/**

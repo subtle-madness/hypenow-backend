@@ -148,19 +148,27 @@ class AdminUiControllerTest {
 				.andExpect(content().string(Matchers.containsString("31,038")))
 				.andExpect(content().string(Matchers.containsString("12,777")))
 				.andExpect(content().string(Matchers.containsString("7,402")))
-				// 랭킹 트랙(제때) 1,435 = 기분석 1,432 + 미분석 3
+				// 랭킹 트랙(제때) 1,435 = 기분석 1,432 + 미분석 3 — "왜"가 라벨에 드러나야 한다:
+				// 트랙 이름만으론 "3일 창 놓침이라 분석 안 함"과 "대상인데 대기"가 안 갈린다(07-28)
 				.andExpect(content().string(Matchers.containsString("랭킹 트랙")))
+				.andExpect(content().string(Matchers.containsString("제때창(3일) 안 크롤 성공")))
 				.andExpect(content().string(Matchers.containsString("1,435")))
 				.andExpect(content().string(Matchers.containsString("1,432")))
-				// 상세 트랙(윈도우) 5,967 = 기분석 5,684 + 미분석 283
+				// 상세 트랙(윈도우) 5,967 = 기분석 5,684 + 미분석 283 — 원인(제때창 놓침) 명시
 				.andExpect(content().string(Matchers.containsString("상세 트랙")))
+				.andExpect(content().string(Matchers.containsString("제때창 놓침 · 최근 윈도우 안 → 랭킹 제외")))
 				.andExpect(content().string(Matchers.containsString("5,967")))
 				.andExpect(content().string(Matchers.containsString("5,684")))
 				.andExpect(content().string(Matchers.containsString("283")))
+				// 미분석 칩은 "분석 대기"(대상임)로 읽혀야 한다 — 자격 밖(분석 안 함)과 구분
+				.andExpect(content().string(Matchers.containsString("분석 대기")))
 				// 진짜 잔여 = 자격 ∩ 미분석 286 — 사용자가 알고 싶던 그 숫자
 				.andExpect(content().string(Matchers.containsString("진짜 잔여")))
 				.andExpect(content().string(Matchers.containsString("286")))
-				.andExpect(content().string(Matchers.containsString("완주까지 <b>1</b>일")));
+				.andExpect(content().string(Matchers.containsString("완주까지 <b>1</b>일")))
+				// 자격 밖은 별도 행으로 승격 — "실패·지연 아님"이 명시돼야 잔여와 안 섞인다
+				.andExpect(content().string(Matchers.containsString("분석 안 함")))
+				.andExpect(content().string(Matchers.containsString("실패·지연 아님")));
 	}
 
 	@Test
@@ -179,11 +187,12 @@ class AdminUiControllerTest {
 				// 기타 = 16,827 − 1,745 − 14,637 = 445 (immature·마킹 전 레거시)
 				.andExpect(content().string(Matchers.containsString("445")))
 				.andExpect(content().string(Matchers.containsString("모수 리비전 혼재")))
-				// 자격 밖 분해 — 미성숙 4,000 · 영구 제외 1,104
+				// 자격 밖 분해 — 미성숙 4,000 · 영구 제외 1,104, 영구 제외엔 원인(제때창 놓침) 명시
 				.andExpect(content().string(Matchers.containsString("미성숙")))
 				.andExpect(content().string(Matchers.containsString("4,000")))
 				.andExpect(content().string(Matchers.containsString("영구 제외")))
 				.andExpect(content().string(Matchers.containsString("1,104")))
+				.andExpect(content().string(Matchers.containsString("제때창(3일) 놓침 ∧ 윈도우 밖")))
 				.andExpect(content().string(Matchers.containsString("pin <span>3</span>일")))
 				.andExpect(content().string(Matchers.containsString("slack <span>1</span>일")));
 	}
@@ -257,9 +266,9 @@ class AdminUiControllerTest {
 				// 콘텐츠 분석(timely 트랙만, 2026-07-23 분리) — 1,435 = 기분석 1,432 + 미분석 3
 				.andExpect(content().string(Matchers.containsString("후보 1,435 · 기분석 1,432 · 미분석 3")))
 				.andExpect(content().string(Matchers.containsString("오늘 +3 예정")))
-				// 늦크롤 백필(윈도우 트랙) — 5,967 = 기분석 5,684 + 미분석 283
+				// 늦크롤 백필(윈도우 트랙) — 5,967 = 기분석 5,684 + 미분석 283, 원인(제때창 놓침) 명시
 				.andExpect(content().string(Matchers.containsString("후보 5,967 · 기분석 5,684 · 미분석 283")))
-				.andExpect(content().string(Matchers.containsString("오늘 +283 예정")))
+				.andExpect(content().string(Matchers.containsString("오늘 +283 예정 · 제때창 놓침분")))
 				// 계정 카피 — 현 모수 723 중 700 · 대상 12
 				.andExpect(content().string(Matchers.containsString("현 모수 723 중 카피 700")))
 				.andExpect(content().string(Matchers.containsString("대상 12")))
