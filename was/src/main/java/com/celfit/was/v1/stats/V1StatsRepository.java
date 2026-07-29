@@ -18,11 +18,13 @@ public class V1StatsRepository {
 	/**
 	 * 랜딩 통계 1행(미러). 미러 미실행이면 empty → 컨트롤러가 404.
 	 * followers3k10k 등은 언더스코어가 없는 이름이 정본 — 미러의 toSnakeCase 변환 결과와 일치(§4-3).
+	 * followers500to3k COALESCE: V43 expand 직후 다음 미러 실행까지 NULL인 창을 0으로 방어.
 	 */
 	public Optional<LandingStats> find() {
 		return jdbcClient.sql("""
 				SELECT contents_count, influencers_count, total_views, avg_views,
-				       followers3k10k, followers10k30k, followers30k50k, updated_at
+				       followers3k10k, followers10k30k, followers30k50k, updated_at,
+				       COALESCE(followers500to3k, 0) AS followers500to3k
 				FROM landing_stats
 				LIMIT 1
 				""").query(LandingStats.class).optional();
