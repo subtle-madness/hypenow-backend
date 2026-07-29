@@ -64,6 +64,30 @@ class MonitoringReadRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 타겟_다건_조회는_등록_역순() {
+		// registered_at을 명시 고정값으로 시드 — now() 기반이면 같은 트랜잭션·짧은 간격에서
+		// 동일 timestamp가 나올 수 있어(Postgres now()는 트랜잭션 내 불변) 결정론이 깨진다.
+		long first = jdbc.sql("""
+				INSERT INTO target (type, username, status, registration_key, expires_at, registered_at)
+				VALUES ('ACCOUNT', 'acc_a', 'WATCHING', gen_random_uuid()::text,
+				        now() + interval '30 days', '2026-07-27')
+				RETURNING id
+				""").query(Long.class).single();
+		long second = jdbc.sql("""
+				INSERT INTO target (type, username, status, registration_key, expires_at, registered_at)
+				VALUES ('ACCOUNT', 'acc_b', 'WATCHING', gen_random_uuid()::text,
+				        now() + interval '30 days', '2026-07-28')
+				RETURNING id
+				""").query(Long.class).single();
+
+		List<TargetRow> rows = repository.findTargets(List.of(first, second));
+
+		assertThat(rows).hasSize(2);
+		assertThat(rows.get(0).id()).isEqualTo(second);   // registered_at DESC
+		assertThat(rows.get(1).id()).isEqualTo(first);
+	}
+
+	@Test
 	void 후보_목록과_워터마크_이후_신규_PENDING() {
 		long id = seedTarget("acc1", null, "WATCHING");
 		jdbc.sql("""

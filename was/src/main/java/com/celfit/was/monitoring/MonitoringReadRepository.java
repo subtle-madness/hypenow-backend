@@ -1,6 +1,8 @@
 package com.celfit.was.monitoring;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -55,7 +57,7 @@ public class MonitoringReadRepository {
 				WHERE c.status = 'PENDING' AND c.detected_at > :since
 				ORDER BY c.detected_at
 				""")
-				.param("since", java.sql.Timestamp.from(since))
+				.param("since", OffsetDateTime.ofInstant(since, ZoneOffset.UTC))
 				.query(PendingCandidate.class)
 				.list();
 	}
