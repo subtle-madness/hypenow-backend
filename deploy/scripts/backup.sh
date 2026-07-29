@@ -19,12 +19,20 @@ docker compose exec -T postgres-raw pg_dump -U "$RAW_DB_USER" -d crawler \
 ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.gz | tail -n +4 | xargs -r rm
 
 # monitoring은 같은 postgres 인스턴스의 별도 DB — 소유자 계정으로 덤프.
-# 개통 전(README §13 미실행)에는 .env에 계정이 없다 — set -u로 스크립트가 죽어
-# 위 analysis·crawler 백업까지 못 쓰게 되는 걸 막으려고 건너뛰고 경고만 남긴다.
+# 신규 추가분이라 통째로 비치명 처리한다 — 여기서 set -euo로 죽으면 위 analysis·crawler
+# 덤프의 Drive 업로드까지 통째로 유실된다(매일 04:10 크론, 기존 백업 경로 보호가 우선).
+#   * 변수 미설정: 개통 전(README §13 미실행) — 건너뛴다
+#   * 덤프 실패: DB 미생성·자격 불일치 등 — 경고 후 반쪽 파일 제거하고 계속
+MONITORING_DUMP=""
 if [ -n "${MONITORING_DB_USER:-}" ]; then
-  docker compose exec -T postgres pg_dump -U "$MONITORING_DB_USER" -d monitoring \
-    | gzip > "$BACKUP_DIR/monitoring-$STAMP.sql.gz"
-  ls -1t "$BACKUP_DIR"/monitoring-*.sql.gz | tail -n +8 | xargs -r rm
+  if docker compose exec -T postgres pg_dump -U "$MONITORING_DB_USER" -d monitoring \
+      | gzip > "$BACKUP_DIR/monitoring-$STAMP.sql.gz"; then
+    MONITORING_DUMP="monitoring-$STAMP.sql.gz"
+    ls -1t "$BACKUP_DIR"/monitoring-*.sql.gz | tail -n +8 | xargs -r rm
+  else
+    echo "경고: monitoring 덤프 실패 — 기존 백업은 계속(개통은 deploy/README.md §13)" >&2
+    rm -f "$BACKUP_DIR/monitoring-$STAMP.sql.gz"   # 반쪽 파일 제거 → 아래 rclone [ -f ] 가드가 자연 정합
+  fi
 else
   echo "경고: MONITORING_DB_USER 미설정 — monitoring 백업 건너뜀(개통은 deploy/README.md §13)" >&2
 fi
@@ -44,8 +52,9 @@ if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q
     rclone copy "$BACKUP_DIR/monitoring-$STAMP.sql.gz" gdrive:hypenow-backups/monitoring/
     rclone delete --min-age 30d --max-depth 1 gdrive:hypenow-backups/monitoring/
   fi
-  echo "Drive 업로드 완료: analysis-$STAMP.sql.gz, crawler-$STAMP.sql.gz"
+  echo "Drive 업로드 완료: analysis-$STAMP.sql.gz, crawler-$STAMP.sql.gz${MONITORING_DUMP:+, $MONITORING_DUMP}"
 else
   echo "경고: rclone gdrive 리모트 미설정 — 오프사이트 백업 건너뜀" >&2
 fi
-echo "백업 완료: analysis-$STAMP.sql.gz, crawler-$STAMP.sql.gz"
+# monitoring은 건너뛰거나 실패하면 목록에서 빠진다 — 크론 로그만으로 성패 판별 가능
+echo "백업 완료: analysis-$STAMP.sql.gz, crawler-$STAMP.sql.gz${MONITORING_DUMP:+, $MONITORING_DUMP}"

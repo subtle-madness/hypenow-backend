@@ -116,11 +116,13 @@ jobs:
       # monitoring은 호스트 포트를 노출하지 않아(전용 네트워크 전용) 외부 curl이 불가 —
       # compose 헬스체크 판정(8083 리슨 = Flyway 마이그레이션 완료)을 ps 출력으로 확인한다.
       # start_period 60s 여유를 위해 최대 5회 재시도.
+      #   * ps -a: 죽은 컨테이너도 열거 — 크래시 루프(Exited/Restarting)가 로그에 남아야 원인 판별이 된다
+      #   * || true: 러너 기본 셸이 bash -eo pipefail이라 일시적 ssh 실패가 재시도 루프를 통째로 죽인다
       - name: monitoring 헬스 확인 (호스트 포트 없음 — compose ps)
         run: |
           for i in 1 2 3 4 5; do
             out=$(ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-              'cd ~/deploy && docker compose ps monitoring')
+              'cd ~/deploy && docker compose ps -a monitoring' || true)
             echo "$out"
             if echo "$out" | grep -q '(healthy)'; then exit 0; fi
             echo "monitoring 아직 healthy 아님 — ${i}회차, 20초 후 재시도"
