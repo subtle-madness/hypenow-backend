@@ -1,6 +1,7 @@
 package com.celfit.was.monitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
 import java.util.UUID;
@@ -76,5 +77,11 @@ class MonitoringCampaignMappingRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findByUser(userId)).hasSize(1);
 		assertThat(repository.findByUserAndTarget(userId, 1L)).isEmpty();
+	}
+
+	@Test
+	void 무효_키로_확정하면_예외() {
+		assertThatThrownBy(() -> repository.confirmTarget(UUID.randomUUID(), 1L))
+				.isInstanceOf(IllegalStateException.class);
 	}
 }

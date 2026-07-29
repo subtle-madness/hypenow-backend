@@ -19,7 +19,11 @@ public class MonitoringCampaignMappingRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
-	/** 등록 1단계 — target_id NULL의 pending 행 선저장. 크래시 후에도 멱등키가 남아 replay 가능. */
+	/**
+	 * 등록 1단계 — target_id NULL의 pending 행 선저장. replay는 이 키로 monitoring 호출을
+	 * 반복하는 것(서비스 계층 몫)이지 이 메서드 재호출이 아니다 — 같은 키 재INSERT는 UNIQUE 위반.
+	 * 크래시로 남은 pending 행의 키 재사용은 프론트 API 작업에서 닫는다.
+	 */
 	public long insertPending(long userId, UUID registrationKey) {
 		return jdbcClient.sql("""
 				INSERT INTO app.monitoring_campaigns (user_id, registration_key)
@@ -32,15 +36,18 @@ public class MonitoringCampaignMappingRepository {
 				.single();
 	}
 
-	/** 등록 2단계 — monitoring 호출 성공 후 target_id 확정. */
+	/** 등록 2단계 — monitoring 호출 성공 후 target_id 확정. 매핑이 없으면(키 무효·정리됨) 예외. */
 	public void confirmTarget(UUID registrationKey, long targetId) {
-		jdbcClient.sql("""
+		int updated = jdbcClient.sql("""
 				UPDATE app.monitoring_campaigns SET target_id = :targetId
 				WHERE registration_key = :key
 				""")
 				.param("targetId", targetId)
 				.param("key", registrationKey)
 				.update();
+		if (updated != 1) {
+			throw new IllegalStateException("등록 확정 실패 — registration_key 매핑 없음: " + registrationKey);
+		}
 	}
 
 	/** 등록 확정 실패(monitoring이 target을 안 만든 경우) 시 pending 행 정리. */

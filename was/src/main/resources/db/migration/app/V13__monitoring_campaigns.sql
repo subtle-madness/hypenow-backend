@@ -10,3 +10,8 @@ CREATE TABLE app.monitoring_campaigns (
 );
 
 CREATE INDEX monitoring_campaigns_user_idx ON app.monitoring_campaigns (user_id);
+
+-- confirmed 행의 (user_id, target_id) 중복 방어 — findByUserAndTarget의 단일 행 가정을 DB가 보증
+-- (pending 행은 target_id NULL이라 제외)
+CREATE UNIQUE INDEX monitoring_campaigns_user_target_uidx
+    ON app.monitoring_campaigns (user_id, target_id) WHERE target_id IS NOT NULL;
