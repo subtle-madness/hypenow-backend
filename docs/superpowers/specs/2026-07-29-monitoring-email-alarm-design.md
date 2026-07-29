@@ -1,6 +1,6 @@
 # 모니터링 이메일 알람 1차 (게시물 감지) 설계
 
-> 상태: 🟢 활성 · 구현 착수 전 (2026-07-29 승인분)
+> 상태: ✅ 구현됨 (2026-07-29)
 >
 > 선행: [2026-07-28-monitoring-was-seam-design.md](2026-07-28-monitoring-was-seam-design.md) (PR #161 머지됨).
 > 계약 정본: [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md) — **v1.0 기준**

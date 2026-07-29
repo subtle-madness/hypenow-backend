@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 실행 전
+> 상태: ✅ 구현됨 (2026-07-29)
 > 스펙: [specs/2026-07-29-monitoring-email-alarm-design.md](../specs/2026-07-29-monitoring-email-alarm-design.md)
 > 계약(v1.0): [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md)
 > 작업 위치: 워크트리 `.worktrees/monitoring-email-alarm`, 브랜치 `feat/monitoring-email-alarm`
