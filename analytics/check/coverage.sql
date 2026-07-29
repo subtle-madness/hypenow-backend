@@ -45,7 +45,12 @@ WITH
   cc AS (SELECT count(*) AS total FROM comment_classifications),
   acs AS (SELECT count(*) AS total FROM account_content_series),
   su AS (SELECT count(*) AS total FROM account_summaries),
-  aa AS (SELECT count(DISTINCT handle) AS handles FROM account_analyses)
+  -- "카피 보유" = 계정별 최신 행이 신 스키마(perf_summary, V40)일 때만 — 행 존재만 보면
+  -- 07-27 개편 백필 대상(구 스키마 최신 행)까지 완료로 잘못 잡힌다.
+  aa AS (SELECT count(*) AS handles FROM (
+    SELECT DISTINCT ON (handle) handle, perf_summary
+    FROM account_analyses ORDER BY handle, analyzed_at DESC
+  ) latest WHERE perf_summary IS NOT NULL)
 SELECT "화면 요소", "소스", "채움", "상태" FROM (
   SELECT 1 AS ord, '계정 핸들·이름·프로필' AS "화면 요소", 'accounts' AS "소스",
          format('%s / %s', least(a.dname, a.pimg), a.total) AS "채움",
@@ -176,7 +181,7 @@ SELECT "화면 요소", "소스", "채움", "상태" FROM (
          CASE WHEN su.total = 0 THEN '없음' WHEN su.total < a.total THEN '부분' ELSE '준비됨' END
   FROM su, a
   UNION ALL
-  SELECT 27, '인플루언서 AI 리포트 카피', 'account_analyses',
+  SELECT 27, '인플루언서 AI 리포트 카피 5종 (07-27 개편, V40)', 'account_analyses',
          format('%s / %s', aa.handles, a.total),
          CASE WHEN aa.handles = 0 THEN '없음' WHEN aa.handles < a.total THEN '부분' ELSE '준비됨' END
   FROM aa, a

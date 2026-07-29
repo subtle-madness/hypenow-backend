@@ -10,6 +10,7 @@ import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.testsupport.TestDb;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -111,14 +112,23 @@ class ClaudeBurstRunnerTest {
 				INSERT INTO content_analyses (short_code, model, ai_content_summary)
 				VALUES ('cb_done', 'test', '기존 분석')""");
 
-		// 카피 대상 픽스처: acct1(미카피 — 대상), acct_done(이미 카피 — 제외)
+		// 카피 대상 픽스처: acct1(미카피 — 대상), acct_done(신 스키마 카피 완료 — 제외),
+		// acct_legacy(07-27 개편 이전 구 스키마 행 — 입력 동일·쿨다운 미경과인데도 대상)
 		db.update("""
 				INSERT INTO account_summaries (handle, analyzed_count, last_posted_at, organic_avg, ad_avg)
 				VALUES ('acct1', 3, timestamptz '2026-07-15 09:00:00+09', NULL, NULL),
-				       ('acct_done', 2, timestamptz '2026-07-14 09:00:00+09', NULL, NULL)""");
+				       ('acct_done', 2, timestamptz '2026-07-14 09:00:00+09', NULL, NULL),
+				       ('acct_legacy', 2, timestamptz '2026-07-01 09:00:00+09', NULL, NULL)""");
+		db.update("""
+				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
+				  tagline, perf_summary, content_summary)
+				VALUES ('acct_done', now(), 'test', timestamptz '2026-07-14 09:00:00+09',
+				  't', '성과 요약', '콘텐츠 요약')""");
+		// 구 스키마 행: perf_summary NULL, 입력 동일(stale 아님)+쿨다운(기본 7일) 미경과(1시간 전)
 		db.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at, tagline, summary)
-				VALUES ('acct_done', now(), 'test', timestamptz '2026-07-14 09:00:00+09', 't', 's')""");
+				VALUES ('acct_legacy', now() - interval '1 hour', 'test',
+				  timestamptz '2026-07-01 09:00:00+09', '옛 태그라인', '옛 요약')""");
 	}
 
 	/**
@@ -154,7 +164,9 @@ class ClaudeBurstRunnerTest {
 		ClaudeBurstRunner.ExportResult result = runner().export();
 
 		assertEquals(3, result.contents()); // cb_a, cb_b, cb_out — cb_done(분석됨) 제외
-		assertEquals(1, result.accounts()); // acct1 — acct_done 제외
+		// acct1(미카피) + acct_legacy(07-27 개편 이전 구 스키마 행 — 입력 동일해도 자연 재대상)
+		// — acct_done(신 스키마 카피 완료)만 제외
+		assertEquals(2, result.accounts());
 
 		var contentLines = Files.readAllLines(workDir.resolve("contents-input.jsonl"));
 		assertEquals(3, contentLines.size());
@@ -184,6 +196,23 @@ class ClaudeBurstRunnerTest {
 		JsonNode sidecar = om.readTree(Files.readAllLines(workDir.resolve("accounts-sidecar.jsonl")).get(0));
 		assertEquals("acct1", sidecar.path("handle").asString());
 		assertFalse(sidecar.path("input_last_posted_at").isNull());
+	}
+
+	/**
+	 * 07-28 드리프트 재발 방지 — AccountAnalysisJob.ELIGIBLE_WHERE와 export가 같은 SQL을 써야 한다.
+	 * acct_legacy는 입력 동일(stale 아님)·쿨다운(기본 7일) 미경과인데도 최신 행이 구 스키마
+	 * (perf_summary NULL)라 export 대상에 잡혀야 한다(잡의 대상 정의와 재동형화 검증).
+	 */
+	@Test
+	void export는_구_스키마_행만_있는_계정도_대상에_포함한다() throws Exception {
+		runner().export();
+
+		var accountLines = Files.readAllLines(workDir.resolve("accounts-input.jsonl"));
+		List<String> keys = accountLines.stream()
+				.map(l -> om.readTree(l).path("key").asString())
+				.toList();
+		assertTrue(keys.contains("acct_legacy"), keys.toString());
+		assertFalse(keys.contains("acct_done"), keys.toString());
 	}
 
 	@Test
@@ -227,7 +256,9 @@ class ClaudeBurstRunnerTest {
 		// 재실행 멱등 — 콘텐츠는 ON CONFLICT, 계정은 동일 입력 스냅샷 재수집 방지
 		runner().collect();
 		assertEquals(3L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
-		assertEquals(2L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		// 픽스처(acct_done·acct_legacy) 2행 + 신규 acct1 카피 1행 — acct_legacy는 이번 세션의
+		// export/collect 픽스처가 아니라 07-27 개편 이전 구 스키마 잔재 시늉이라 여기선 안 건드린다.
+		assertEquals(3L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 	}
 
 	@Test
