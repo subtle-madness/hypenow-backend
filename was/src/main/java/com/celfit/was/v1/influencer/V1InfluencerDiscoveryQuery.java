@@ -1,5 +1,6 @@
 package com.celfit.was.v1.influencer;
 
+import com.celfit.was.v1.common.CacheKeys;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.Arrays;
 import java.util.List;
@@ -43,6 +44,22 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 		return new V1InfluencerDiscoveryQuery(keywords(q), main, mid, sub, fo,
 				ac == null ? null : Integer.valueOf(ac.substring(0, ac.length() - 1)),
 				sp, co != null, so, lim, off);
+	}
+
+	/**
+	 * 캐시 키(스펙 §4) — of()가 정규화를 끝낸 컴포넌트를 선언 순서 그대로 나열해 단사 인코딩.
+	 * 필드 추가 시 여기도 같이(빠뜨리면 다른 조건이 같은 키가 됨). toString() 직접 사용 금지 —
+	 * null과 리터럴 "null"이 같은 문자열이 되는 캐시 오염 취약점이 있었다(2026-07-29 리뷰).
+	 */
+	public String cacheKey() {
+		return CacheKeys.sha256(CacheKeys.canonical(keywords, mainCategory, midCategory,
+				subCategory, follower, activityDays, sponsored, contactOpen, sort, limit, offset));
+	}
+
+	/** 다음 페이지 쿼리 — 프리페치용(스펙 §5). */
+	public V1InfluencerDiscoveryQuery next() {
+		return new V1InfluencerDiscoveryQuery(keywords, mainCategory, midCategory, subCategory,
+				follower, activityDays, sponsored, contactOpen, sort, limit, offset + limit);
 	}
 
 	/** 쉼표 분리 후 트림, 빈 조각 제거 — 키워드 안 쉼표는 프론트 입력에서 차단(스펙 6.21). */

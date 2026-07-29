@@ -18,5 +18,12 @@ services:
       # task 1에서 수동으로 생성했음 — 이 마운트는 새로 셋업하는 환경을 위한 것.
       - ./db/init:/docker-entrypoint-initdb.d
 
+  # was 조회 캐시 — 데이터 휘발 OK(재시작=콜드 캐시), 볼륨 없음
+  redis:
+    image: 'redis:7-alpine'
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - '6379:6379'
+
 volumes:
   celfit-crawler-pg:

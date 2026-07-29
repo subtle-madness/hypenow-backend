@@ -3,6 +3,11 @@ plugins {
 	id 'io.spring.dependency-management'
 }
 
+// 캐시 prefix용 빌드 정보(META-INF/build-info.properties) — 배포마다 캐시 네임스페이스가 바뀌어 구 스키마 페이로드를 안 읽는다
+springBoot {
+	buildInfo()
+}
+
 dependencies {
 	implementation project(':contract-analysis')
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
@@ -11,6 +16,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	// Boot 4는 자동구성이 모듈로 분리 — spring-session-jdbc 단독으론 자동구성이 없어 starter를 쓴다
 	implementation 'org.springframework.boot:spring-boot-starter-session-jdbc'
+	// 조회 캐시(Redis) — 세션은 JDBC 유지(2026-07-28 결정: Redis는 순수 캐시 전용, specs/2026-07-28-redis-caching-design.md)
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.flywaydb:flyway-core'
 	// /v1 표면 자동 문서화(보조 문서 — 정본은 프론트 API 스펙). prod에서는 비활성(application-prod.yml)
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'

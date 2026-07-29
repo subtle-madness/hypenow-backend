@@ -4,6 +4,7 @@ import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AdSituation;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.ObjectMapper;
 
@@ -29,16 +30,22 @@ final class AccountAnalysisWriter {
 		return copy.traits() != null && !copy.traits().isEmpty();
 	}
 
+	/** 어휘 통제(2026-07-29 스펙 §3-2): 어휘 밖 드롭 → 중복 제거(입력 순서 유지) → MAX_TRAITS 절단. */
+	static List<String> sanitize(List<String> raw, Set<String> vocabulary) {
+		return raw.stream().filter(vocabulary::contains).distinct().limit(MAX_TRAITS).toList();
+	}
+
 	/**
 	 * account_analyses 이력 INSERT. 호출 전 {@link #isValid}로 가드된 copy를 넘겨야 한다.
-	 * adSituation이 {@link AdSituation#writesHeadline()}가 아니면(근거 없음) adSummary는 NULL로 버려진다.
+	 * traits는 {@link #sanitize}를 거친다 — sanitize 후 0개면 빈 배열로 저장(어휘 통제 스펙:
+	 * 믹스 성분으로 유사도 후보는 유지). adSituation이 {@link AdSituation#writesHeadline()}가
+	 * 아니면(근거 없음) adSummary는 NULL로 버려진다.
 	 * 구 카피 5컬럼(summary·trend/chart_note·ad_headline·pace_note)은 07-27 개편 후 미기록.
 	 */
 	static void insert(JdbcTemplate analysis, ObjectMapper json, String handle, OffsetDateTime analyzedAt,
 			String model, OffsetDateTime inputLastPostedAt, Long inputAnalyzedCount,
-			AccountCopy copy, AdSituation adSituation) {
-		List<String> traits = List.copyOf(copy.traits().size() > MAX_TRAITS
-				? copy.traits().subList(0, MAX_TRAITS) : copy.traits());
+			AccountCopy copy, AdSituation adSituation, Set<String> vocabulary) {
+		List<String> traits = sanitize(copy.traits(), vocabulary);
 		String adSummary = adSituation != null && adSituation.writesHeadline()
 				? blankToNull(copy.adSummary()) : null;
 		analysis.update("""

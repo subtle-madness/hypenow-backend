@@ -107,6 +107,9 @@ public class V2InfluencerReportRepository {
 	/** 유사 인플루언서 핸들 — 혼합 점수 = 0.6×traits Jaccard + 0.4×카테고리 믹스 히스토그램 교집합.
 	 *  같은 피어 카테고리 내에서 컷 0.30 미달 제외, 점수 내림차순·팔로워 근접·handle 순 상위 10
 	 *  (07-28 유사도 v2 — 스펙 6.23의 9는 10으로 변경 확정). 점수는 정렬·컷 전용이라 반환하지 않는다.
+	 *  휴면 계정(최근 업로드 3개월 밖 또는 미확인) 후보 제외 — 휴면 정의 정본은 아래 su 조인 조건
+	 *  하나뿐이다(저장 플래그·스케줄러 없음, 다른 표면에서 숨길 때 이 조건을 재사용). 기준 계정
+	 *  자신은 휴면이어도 목록을 받는다.
 	 *  카피 없는 계정은 후보 제외(LATERAL INNER). 믹스는 집합 기반 CTE — 상관 서브쿼리는 운영 규모
 	 *  실측 1,981ms 성능 절벽(집합 기반 85ms, 컷 0.30 근거는 운영 dry-run: 10위 점수 최솟값 0.400).
 	 *  scored MATERIALIZED는 점수식의 WHERE/ORDER BY 이중 평가 방지. 카드 조립은
@@ -148,6 +151,8 @@ public class V2InfluencerReportRepository {
 				  FROM account_peer_stats c
 				  JOIN me ON c.peer_category = me.peer_category
 				  JOIN accounts ac ON ac.handle = c.handle
+				  JOIN account_summaries su ON su.handle = c.handle
+				       AND su.last_posted_at >= now() - interval '3 months'
 				  JOIN LATERAL (SELECT traits FROM account_analyses
 				                WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
 				  LEFT JOIN cand_mix cm ON cm.account_handle = c.handle
