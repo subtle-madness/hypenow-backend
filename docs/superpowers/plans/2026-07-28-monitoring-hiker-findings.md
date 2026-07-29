@@ -159,3 +159,32 @@ API 키는 픽스처·문서 어디에도 없다(커밋 전 grep 0건 확인).
 - **`/v2/user/medias`는 계획서에 없던 엔드포인트**다. crawler는 `/v1/user/medias/chunk`·`/gql/user/medias`를
   쓰고 있으므로 monitoring이 첫 사용처다. IG 업스트림 장애 시 폴백으로 `/v1/user/medias/chunk`
   (좋아요·댓글만) 강등 경로를 열어둘 수 있다.
+
+---
+
+## 8. Task 4(파서 구현) 추기 — 2026-07-29
+
+### 8-1. 필드 매핑 조정: **없음**
+
+Task 4를 픽스처 5종으로 TDD 구현한 결과 §2·§4·§5의 매핑이 **전부 그대로 통과**했다.
+파서를 픽스처에 맞춰 고칠 부분은 나오지 않았다. 재확인된 사항:
+
+- `medias.json` 12건 = 릴스 3(`DbV7LgZsKG8`·`DbTV2SAum6h`·`DbQei8FCh7i`) + 캐러셀 6 + 피드 3.
+  릴스만 `save_count`·`reshare_count`가 있고 `play_count`는 **12건 전부 부재** → clips 머지 없이는 조회수 전량 null.
+- 클립 머지 커버리지: `clips.json`(앞 5건)에 릴스 3건이 모두 포함돼 열거 릴스의 조회수가 전부 채워진다.
+- `medias.json` 첫 항목이 핀 고정 `Cq87mzyPyvs`(taken_at 1681336758 = 2023-04-12)라 **정렬 없이는 테스트가 실패한다** —
+  §3 정렬 함정이 회귀 테스트로 고정됐다.
+- `caption_text` 키는 v2 응답에 없다(`has("caption_text")` = false) → 폴백 분기가 항상 `caption.text`를 탄다.
+
+### 8-2. 브리프 코드 대비 추가한 것(공개 시그니처는 불변)
+
+| 항목 | 브리프 | 구현 | 이유 |
+|---|---|---|---|
+| `pages` 인자 | 무시(1페이지 고정, YAGNI) | `next_page_id` → `&page_id=` 커서 루프 | 인자를 조용히 무시하면 스윕이 `enumerate-pages` 설정을 반영하지 못한다. crawler `HikerV2ClipsFetcher`/`HikerDiscoverFetcher`의 검증된 관용구(`&page_id=` + URL 인코딩)를 그대로 사용 |
+| 중복 | 없음 | `LinkedHashMap` 숏코드 dedupe | 페이지 경계에서 같은 게시물이 겹칠 수 있음 |
+| 클립 페이징 | 1페이지 | medias와 동일 페이지 수 | 2페이지째 릴스가 조회수 없이 남는 비대칭 방지 |
+| 쿼리 파라미터 | 문자열 연결 | `URLEncoder.encode` | `username`은 API 입력이고, clips 커서는 `==`로 끝나는 base64라 인코딩이 **필수**(`%3D%3D`) |
+| `fetchPost` 빈 응답 | `getFirst()` (NoSuchElement) | `SubjectNotFoundException` | 게시물 삭제 시 호출자가 종결 처리할 수 있게 |
+| `HikerFetchException` | 메시지 생성자만 | `(String, Throwable)` 추가 | `JdkHikerHttp`가 `IOException`을 감싸 던짐 |
+
+콜 비용(§7)은 그대로 계정당 프로필 1 + 열거 `pages` + 클립 `pages`. 기본 `enumerate-pages: 1` 기준 3콜.
