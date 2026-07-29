@@ -49,7 +49,7 @@ public class V1InfluencerDiscoveryRepository {
 						       a.followers,
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
-						       su.avg_views, su.avg_likes, su.avg_comments,
+						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
 						       COALESCE(sp.cnt, 0) AS sponsored_count
 						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
@@ -75,7 +75,7 @@ public class V1InfluencerDiscoveryRepository {
 				       a.followers,
 				       su.posts_count, su.follows_count, su.biography, cp.tagline,
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
-				       su.avg_views, su.avg_likes, su.avg_comments,
+				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
 				       COALESCE(sp.cnt, 0) AS sponsored_count
 				""" + FROM_JOINS + """
 
@@ -188,6 +188,7 @@ public class V1InfluencerDiscoveryRepository {
 		return switch (sort) {
 			case "views" -> "\nORDER BY su.avg_views DESC NULLS LAST, a.handle";
 			case "followers" -> "\nORDER BY a.followers DESC NULLS LAST, a.handle";
+			case "hype" -> "\nORDER BY su.avg_hype_score DESC NULLS LAST, a.handle";
 			default -> "\nORDER BY su.views_per_follower DESC NULLS LAST, a.handle";
 		};
 	}
@@ -269,7 +270,7 @@ public class V1InfluencerDiscoveryRepository {
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
 			Long postsCount, Long followsCount, String biography,
 			String tagline, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgViews,
-			Long avgLikes, Long avgComments, Long sponsoredCount) {
+			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount) {
 	}
 
 	public record ShareRow(String accountHandle, String mainCategory, Integer pct) {

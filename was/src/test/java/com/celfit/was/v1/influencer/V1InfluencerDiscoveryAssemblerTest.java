@@ -23,7 +23,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 	private static CardRow row(String handle, Long followers) {
 		return new CardRow(handle, "이름", "/img/p.jpg", followers, 214L, 380L,
 				"소개\n둘째줄", "태그라인", new BigDecimal("12.42"), new BigDecimal("3.84"),
-				413200L, 10370L, 152L, 3L);
+				413200L, 10370L, 152L, 72L, 3L);
 	}
 
 	@Test
@@ -37,12 +37,13 @@ class V1InfluencerDiscoveryAssemblerTest {
 		assertThat(card.email()).isNull(); // 크롤러 미수집(V31)
 		assertThat(card.bio()).isEqualTo("소개\n둘째줄"); // 개행 유지
 		assertThat(card.followingCount()).isEqualTo(380);
+		assertThat(card.hypeScore()).isEqualTo(72);
 	}
 
 	@Test
 	void bio_tagline_부재는_빈문자열_배열은_빈배열() {
 		var bare = new CardRow("mute", "이름", null, 40000L, 40L, 50L, null, null,
-				null, null, null, 300L, 10L, 0L);
+				null, null, null, 300L, 10L, null, 0L);
 		var card = assembler.toCards(List.of(bare), List.of(), List.of(), List.of(), List.of()).get(0);
 		assertThat(card.bio()).isEmpty();
 		assertThat(card.tagline()).isEmpty();
@@ -51,6 +52,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 		assertThat(card.collaboratedBrands()).isEmpty();
 		assertThat(card.categoryShares()).isEmpty();
 		assertThat(card.recentThumbs()).isEmpty();
+		assertThat(card.hypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
 	}
 
 	@Test

@@ -75,6 +75,13 @@ services:
       postgres-raw:
         condition: service_healthy
 
+  dev-redis:
+    image: redis:7-alpine
+    profiles: ["dev"]
+    restart: unless-stopped
+    logging: *logging
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
   dev-was:
     image: ghcr.io/subtle-madness/hypenow-was:develop
     profiles: ["dev"]
@@ -89,6 +96,7 @@ services:
       DB_PASSWORD: ${DEV_DB_PASSWORD:-}
       # RESEND 미설정 = 로깅 폴백 — dev 이메일 인증 코드는 docker logs deploy-dev-was-1 에서 확인
       CODES_API_KEY: ${DEV_CODES_API_KEY:-}
+      REDIS_HOST: dev-redis
       JAVA_OPTS: "-Xms512m -Xmx512m"
     # 기동 순서는 운영과 동일 규율 — dev-analytics healthy(=dev analysis DB 마이그레이션 완료) 후
     depends_on:
