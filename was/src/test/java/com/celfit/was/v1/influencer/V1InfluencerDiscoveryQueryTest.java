@@ -78,6 +78,26 @@ class V1InfluencerDiscoveryQueryTest {
 	}
 
 	@Test
+	void 자유입력_리터럴_null은_필터_생략과_다른_키() {
+		// midCategory="null"(자유입력 리터럴)과 midCategory 생략(실제 null)은 다른 조건이어야 한다.
+		V1InfluencerDiscoveryQuery literalNull = V1InfluencerDiscoveryQuery.of(null, "makeup", "null",
+				null, null, null, null, null, null, 50, 0);
+		V1InfluencerDiscoveryQuery omitted = V1InfluencerDiscoveryQuery.of(null, "makeup", null, null,
+				null, null, null, null, null, 50, 0);
+		assertThat(literalNull.cacheKey()).isNotEqualTo(omitted.cacheKey());
+	}
+
+	@Test
+	void 기본값_명시와_all은_생략과_같은_키() {
+		// main=all이면 mid·sub는 연쇄 무시(스펙 6.21) — 명시한 값과 상관없이 생략과 동일 조건·동일 키.
+		V1InfluencerDiscoveryQuery explicit = V1InfluencerDiscoveryQuery.of(null, "all", "립메이크업",
+				"립틴트", "all", null, "all", null, "reach", 100, 0);
+		V1InfluencerDiscoveryQuery omitted = V1InfluencerDiscoveryQuery.of(null, null, null, null,
+				null, null, null, null, null, null, null);
+		assertThat(explicit.cacheKey()).isEqualTo(omitted.cacheKey());
+	}
+
+	@Test
 	void 잘못된_enum과_음수_경계는_400() {
 		assertThatThrownBy(() -> of(null, "nail", null, null, null, null, null, null, null, null, null))
 				.isInstanceOf(V1ApiException.class);

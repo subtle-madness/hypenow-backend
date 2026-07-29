@@ -55,9 +55,15 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 				ct, main, mid, sub, fo, blankToNull(keyword), ad, dist, so, lim, off);
 	}
 
-	/** 캐시 키(스펙 §4) — of()가 정규화를 끝낸 컴포넌트 전체의 toString 축약. record toString은 결정적. */
+	/**
+	 * 캐시 키(스펙 §4) — of()가 정규화를 끝낸 컴포넌트를 선언 순서 그대로 나열해 단사 인코딩.
+	 * 필드 추가 시 여기도 같이(빠뜨리면 다른 조건이 같은 키가 됨). toString() 직접 사용 금지 —
+	 * null과 리터럴 "null"이 같은 문자열이 되는 캐시 오염 취약점이 있었다(2026-07-29 리뷰).
+	 */
 	public String cacheKey() {
-		return CacheKeys.sha256(toString());
+		return CacheKeys.sha256(CacheKeys.canonical(startInstant, endExclusive, contentType,
+				mainCategory, midCategory, subCategory, follower, keyword, adType, distributorId,
+				sort, limit, offset));
 	}
 
 	/** 다음 페이지 쿼리 — 프리페치용(스펙 §5). */

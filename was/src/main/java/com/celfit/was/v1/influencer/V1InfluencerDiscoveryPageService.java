@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 /**
  * 6.21 발굴 목록 페이지 묶음 — Redis 캐시 단위(스펙 §4). 응답에 개인화 필드가 없어(저장 여부는
  * 프론트가 6.9 캐시에서 파생) 본 쿼리+보강 4쿼리+조립까지 통째로 캐싱한다.
+ * activity 필터는 SQL now() 기준이라 캐시가 KST 자정을 최대 TTL(1h)만큼 넘길 수 있다 —
+ * TTL 연장 시 재검토.
  */
 @Service
 public class V1InfluencerDiscoveryPageService {

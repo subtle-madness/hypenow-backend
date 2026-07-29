@@ -27,6 +27,15 @@ class V1ContentQueryTest {
 	}
 
 	@Test
+	void 자유입력_리터럴_null은_필터_생략과_다른_키() {
+		// keyword="null"(자유입력 리터럴)과 keyword 생략(실제 null)은 다른 조건 — 같은 캐시 키면 안 된다.
+		V1ContentQuery literalNull = V1ContentQuery.of(LocalDate.of(2026, 7, 1),
+				LocalDate.of(2026, 7, 28), null, null, null, null, null, "null", null, null, null,
+				null, null);
+		assertThat(literalNull.cacheKey()).isNotEqualTo(q(null, null).cacheKey());
+	}
+
+	@Test
 	void next는_offset만_limit만큼_전진() {
 		V1ContentQuery next = q(50, 0).next();
 		assertThat(next.offset()).isEqualTo(50);
