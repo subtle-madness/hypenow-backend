@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -72,6 +74,10 @@ class V1AuthControllerTest {
 	@MockitoBean
 	SignupService signupService;
 
+	// 가입 시도 이벤트는 fire-and-forget(void) — 실 적재·detail 형태는 SignupEventIntegrationTest가 실 DB로 커버
+	@MockitoBean
+	SignupEventRecorder signupEventRecorder;
+
 	private Authentication authenticated(String email) {
 		return UsernamePasswordAuthenticationToken.authenticated(email, null, List.of());
 	}
@@ -135,6 +141,9 @@ class V1AuthControllerTest {
 				.andExpect(jsonPath("$.data.name").value("김우민"))
 				.andExpect(jsonPath("$.data.userType").value("brand"))
 				.andExpect(jsonPath("$.error").value(nullValue()));
+
+		then(signupEventRecorder).should().record(eq("user@example.com"),
+				eq(SignupEventRecorder.OUTCOME_OK), anyString(), anyMap());
 	}
 
 	// 가입 경량화(2026-07-19) — 프론트 요청서의 최소 페이로드 예시 그대로 201
@@ -168,6 +177,10 @@ class V1AuthControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		// 실패한 시도도 이벤트로 남는다 — 중도 이탈 추적(2026-07-29)
+		then(signupEventRecorder).should().record(eq("user@example.com"), eq("VALIDATION_FAILED"),
+				anyString(), anyMap());
 	}
 
 	@Test
