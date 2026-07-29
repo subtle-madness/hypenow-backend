@@ -53,4 +53,9 @@ class MonitoringEnabledConfigTest extends IntegrationTest {
 		Integer one = config.monitoringJdbc().sql("SELECT 1").query(Integer.class).single();
 		assertThat(one).isEqualTo(1);
 	}
+
+	@Test
+	void 활성이면_알람_잡이_뜬다() {
+		assertThat(context.getBeanNamesForType(com.celfit.was.monitoring.MonitoringAlarmJob.class)).hasSize(1);
+	}
 }

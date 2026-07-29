@@ -23,4 +23,9 @@ class MonitoringDisabledTest extends IntegrationTest {
 	void 기본_JdbcClient는_하나뿐이다() {
 		assertThat(context.getBeansOfType(JdbcClient.class)).hasSize(1);
 	}
+
+	@Test
+	void 비활성이면_알람_잡도_없다() {
+		assertThat(context.getBeanNamesForType(com.celfit.was.monitoring.MonitoringAlarmJob.class)).isEmpty();
+	}
 }

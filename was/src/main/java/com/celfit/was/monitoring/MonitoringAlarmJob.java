@@ -70,10 +70,12 @@ public class MonitoringAlarmJob {
 		Map<Long, String> emails = alarmRepository.emailsByUserIds(byUser.keySet());
 
 		int failures = 0;
+		int skippedNoEmail = 0;
 		for (Map.Entry<Long, List<PendingCandidate>> entry : byUser.entrySet()) {
 			String email = emails.get(entry.getKey());
 			if (email == null) {
 				// findByTargetIds~emailsByUserIds 사이 탈퇴(CASCADE) 레이스 — 발송 불가, 다음 회차엔 매핑도 사라진다
+				skippedNoEmail++;
 				log.warn("모니터링 알람: 이메일 없음(유저 삭제 레이스 추정) — 스킵 userId={}", entry.getKey());
 				continue;
 			}
@@ -90,8 +92,8 @@ public class MonitoringAlarmJob {
 			OffsetDateTime maxDetected = fresh.stream().map(PendingCandidate::detectedAt)
 					.max(Comparator.naturalOrder()).orElseThrow();
 			alarmRepository.advanceWatermark(EVENT_POST_DETECTED, maxDetected);
-			log.info("모니터링 알람: {}명 발송(옵트아웃 {}명 제외), 워터마크 {} 전진",
-					byUser.size(), optedOut.size(), maxDetected);
+			log.info("모니터링 알람: 대상 {}명 중 {}명 발송(옵트아웃 {}명·이메일없음 {}명 제외), 워터마크 {} 전진",
+					byUser.size(), byUser.size() - skippedNoEmail, optedOut.size(), skippedNoEmail, maxDetected);
 		} else {
 			log.error("모니터링 알람: 발송 대상 {}명 중 실패 {}건 — 워터마크 유지(다음 회차 재발송, 중복 수신 가능)",
 					byUser.size(), failures);

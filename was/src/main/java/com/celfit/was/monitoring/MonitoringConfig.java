@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import com.celfit.was.mail.MailSender;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
@@ -13,6 +14,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -23,6 +25,7 @@ import org.springframework.web.client.RestClient;
  */
 @Configuration
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
+@EnableScheduling // 스케줄링은 이 조건부 Config에만 — 비활성 환경엔 스케줄러 자체가 없다
 public class MonitoringConfig {
 
 	private static final Logger log = LoggerFactory.getLogger(MonitoringConfig.class);
@@ -82,6 +85,13 @@ public class MonitoringConfig {
 	MonitoringCampaignService monitoringCampaignService(MonitoringCommandClient client,
 			MonitoringCampaignMappingRepository mappings) {
 		return new MonitoringCampaignService(client, mappings);
+	}
+
+	@Bean
+	MonitoringAlarmJob monitoringAlarmJob(MonitoringCampaignMappingRepository mappings,
+			MonitoringAlarmRepository alarmRepository, MailSender mailSender) {
+		return new MonitoringAlarmJob(monitoringReadRepository(), mappings, alarmRepository,
+				new MonitoringAlarmMailComposer(), mailSender);
 	}
 
 	@PreDestroy
