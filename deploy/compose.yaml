@@ -177,6 +177,13 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 어드민 가입 코드 일괄 적재(POST /admin/signup-codes) 정적 토큰 — 서버 .env에 등록. 미설정 시 엔드포인트 fail-closed(503)
       CODES_API_KEY: ${CODES_API_KEY:-}
+      # 모니터링 통신 계층(계약: docs/contracts/monitoring-was-contract.md) — 기본 off(빈 자체가 안 뜸).
+      # 개통은 서버 .env에 MONITORING_ENABLED=true + was_reader 비밀번호 등록(README §13-5).
+      # Spring 완화 바인딩으로 monitoring.* 프로퍼티에 매핑된다.
+      MONITORING_ENABLED: ${MONITORING_ENABLED:-false}
+      MONITORING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
+      MONITORING_DATASOURCE_USERNAME: ${MONITORING_WAS_READER_USER:-was_reader}
+      MONITORING_DATASOURCE_PASSWORD: ${MONITORING_WAS_READER_PASSWORD:-}
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
     # 롤링 배포(scripts/rollout.sh)의 전환 판정 — 8081 리슨 = Spring 기동 완료(app Flyway 포함).
