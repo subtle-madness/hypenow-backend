@@ -11,6 +11,10 @@ import java.util.UUID;
  * 주의: registrationKey 멱등성은 "같은 논리적 요청의 재시도"에만 유효하다 — 같은 유저가 같은
  * 대상을 새 요청으로 두 번 등록하면 별개 캠페인 2개가 정상 생성된다(계약 §2-1). 동일 대상
  * 중복 등록을 막을지는 이 서비스 책임 밖(프론트 API 계층에서 판단할 것).
+ *
+ * 이 서비스(특히 등록)를 @Transactional로 감싸지 말 것 — insertPending이 HTTP 호출 전에
+ * 커밋되는 것이 멱등키 replay·크래시 복구의 전제다. 트랜잭션으로 묶으면 전송 실패 시 pending
+ * 행까지 롤백되어 설계가 무력화되고, 최대 ~20초(10s×2회) 커넥션을 점유한다.
  */
 public class MonitoringCampaignService {
 

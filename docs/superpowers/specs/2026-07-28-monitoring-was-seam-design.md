@@ -53,6 +53,9 @@ analysis DB 기본 연결(세션 JDBC·app Flyway 포함)이 깨진다. 따라�
 - 접속 계정은 계약대로 읽기 전용(`public` 스키마 SELECT만 GRANT) — 쓰기 시도는 DB 권한
   오류로 fail-closed(의도된 동작, was에서 방어 로직 불필요).
 - 풀 크기 최소(max 2~3) — 조회 전용·저트래픽.
+- 커넥션 풀은 지연 초기화(`initializationFailTimeout=-1`) — monitoring DB 장애·오설정이 was
+  부팅을 막지 않는다(부가 서브시스템이 본체를 끌어내리지 않게, 07-20 전면 500 교훈). 오설정은
+  첫 조회 시점에 드러난다 (최종 리뷰 반영).
 
 ## 4. 명령 클라이언트
 
@@ -111,6 +114,8 @@ created_at       timestamptz NOT NULL
 - 즉시 재시도까지 실패했는데 monitoring엔 target이 생긴 경우(응답 유실) 고아 target이
   가능하다. pending 행이 남아 있으므로, 프론트 API 설계 때 같은 요청의 재시도가 pending
   행의 키를 재사용하도록 마저 닫는다. pending 행 청소 잡도 그때 함께 판단.
+- 탈퇴(deleteAccount)는 users FK CASCADE로 매핑을 cancel 없이 지운다 — monitoring target은
+  고아가 되지만 expires_at 자연 만료로 수렴(유계). 탈퇴 시 cancel 루프는 후속(§8).
 
 ## 7. 테스트·검증
 
@@ -128,5 +133,8 @@ created_at       timestamptz NOT NULL
 
 - 계약 스냅샷은 `docs/contracts/monitoring-was-contract.md` — 정본 갱신 시 사본 교체.
 - ARCHITECTURE §5(작업 트랙)·§7(결정 기록) 갱신은 구현 PR에서 함께.
+- 탈퇴 시 캠페인 cancel 루프
+- 조회 표면의 유저 스코프 가드(컨트롤러 — MonitoringReadRepository Javadoc 참조)
+- 이메일 크론용 역방향 조회 findByTargetIds(Collection) 추가
 - 후속(이 설계 밖): 프론트용 `/v1/monitoring/**` 컨트롤러(프론트 스펙 수령 후), 이메일
   알람 크론(+워터마크 마이그레이션), 초안 뷰 확정 반영, DDL 픽스처 대조.

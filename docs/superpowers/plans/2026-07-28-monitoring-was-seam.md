@@ -1604,6 +1604,6 @@ git commit -m "docs: ARCHITECTURE §5·§7 모니터링 seam 반영 + 플랜 상
 
 ## Self-Review 결과 (작성 시 반영 완료)
 
-- 스펙 커버리지: §2 구성요소 7종 → Task 1~5, §3 back-off 회피 → Task 2 테스트가 직접 검증, §4 에러 2계열 → Task 3, §5 베이스 테이블·null 규칙 → Task 4, §6 2단계·재시도·소유·삭제 순서 → Task 5, §7 테스트 전략 전 항목 → 각 Task + Task 6 전체 실행. 컨트롤러·크론은 스펙에서 명시 제외.
+- 스펙 커버리지: §2 구성요소 7종 → Task 1~5(실구현에서 MonitoringProperties는 MonitoringConfig의 @Value 4개로 대체 — 기능 동등, 코드베이스 @Value 관례 준수), §3 back-off 회피 → Task 2 테스트가 직접 검증, §4 에러 2계열 → Task 3, §5 베이스 테이블·null 규칙 → Task 4, §6 2단계·재시도·소유·삭제 순서 → Task 5, §7 테스트 전략 전 항목 → 각 Task + Task 6 전체 실행. 컨트롤러·크론은 스펙에서 명시 제외.
 - 타입 일관성: `MonitoringCommandClient` 시그니처(Task 3)와 서비스 사용처(Task 5), `MonitoringConfig` 접근자(Task 2)와 빈 추가(Task 3~5) 대조 완료.
 - 유의: Jackson 3에서 `JsonNode`는 `tools.jackson.databind.JsonNode`, 애노테이션은 `com.fasterxml.jackson.annotation` — 혼동 금지. `MonitoringEnabledConfigTest`는 `POSTGRES` 접근 때문에 반드시 `com.celfit.was` 패키지.

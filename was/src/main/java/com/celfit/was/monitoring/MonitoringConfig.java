@@ -51,6 +51,7 @@ public class MonitoringConfig {
 		hikari.setUsername(dbUsername);
 		hikari.setPassword(dbPassword);
 		hikari.setMaximumPoolSize(3);          // 조회 전용·저트래픽 (스펙 §3)
+		hikari.setInitializationFailTimeout(-1);   // 지연 초기화 — monitoring DB 장애가 was 부팅을 막지 않게(부가 서브시스템). 오설정은 첫 조회 시점 예외로 드러난다
 		hikari.setPoolName("monitoring-ro");
 		this.monitoringDataSource = new HikariDataSource(hikari);
 		this.monitoringJdbc = JdbcClient.create(monitoringDataSource);
