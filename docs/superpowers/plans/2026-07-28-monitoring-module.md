@@ -531,7 +531,7 @@ public enum CandidateStatus { PENDING, APPROVED, REJECTED }
   - `HikerClient.fetchRecentPosts(String username, String userId, int pages) → List<PostInfo>`
   - `HikerClient.fetchPost(String shortCode) → PostInfo`
   - `ProfileInfo(String username, String userId, Long followers, Long following, Long mediaCount, String rawJson)`
-  - `PostInfo(String shortCode, String username, String contentType, String caption, Long likes, Long comments, Long views, Long saves, Long shares, Long reposts, String rawJson)` — 취득 불가 지표는 null.
+  - `PostInfo(String shortCode, String username, String contentType, String caption, Long takenAt, Long likes, Long comments, Long views, Long saves, Long shares, Long reposts, String rawJson)` — 취득 불가 지표는 null. `takenAt`은 `taken_at` epoch초 — 핀 고정 게시물 함정(findings §3) 재정렬용, `fetchRecentPosts`는 takenAt 내림차순 정렬해 반환.
   - 예외: `SubjectNotFoundException`(404) / `PrivateAccountException` / `HikerFetchException`(그 외).
 
 - [ ] **Step 1: 실패하는 테스트** — 픽스처 기반. Task 1에서 확보한 실제 응답을 fake `HikerHttp`로 돌려준다:
@@ -587,6 +587,8 @@ class HikerClientTest {
 			assertThat(p.comments()).isNotNull();
 			assertThat(p.reposts()).isNotNull();             // media_repost_count는 전 타입 제공
 		});
+		// 핀 고정(2023년) 게시물이 맨 앞에 오지 않게 taken_at 내림차순 재정렬됨(findings §3)
+		assertThat(posts.getFirst().takenAt()).isGreaterThanOrEqualTo(posts.getLast().takenAt());
 		var reel = posts.stream().filter(p -> p.contentType().equals("REELS")).findFirst().orElseThrow();
 		assertThat(reel.saves()).isNotNull();
 		assertThat(reel.shares()).isNotNull();
@@ -773,6 +775,9 @@ public class HikerClient {
 		for (JsonNode item : items(root(body))) {
 			out.add(toPost(item, username, body, plays));
 		}
+		// 핀 고정 게시물이 배열 맨 앞에 옴(taken_at 2023년 사례 — findings §3) → 게시 시각 내림차순 재정렬
+		out.sort(java.util.Comparator.comparing(PostInfo::takenAt,
+				java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())));
 		return out;
 	}
 
@@ -827,9 +832,10 @@ public class HikerClient {
 		String contentType = "clips".equals(m.path("product_type").asString("")) ? "REELS" : "FEED";
 		String caption = m.path("caption_text").isMissingNode()
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
-		// view_count는 v2에서 항상 null → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
+		// view_count 키는 v2 응답에 부재 → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
 		Long views = firstLong(m, "play_count", "ig_play_count");
 		return new PostInfo(code, username, contentType, caption,
+				firstLong(m, "taken_at"),
 				firstLong(m, "like_count"), firstLong(m, "comment_count"),
 				views != null ? views : clipPlays.get(code),
 				firstLong(m, "save_count"),          // 릴스 전용 — 피드·캐러셀은 키 부재 → null
@@ -864,8 +870,8 @@ public record ProfileInfo(String username, String userId, Long followers, Long f
 package com.celfit.monitoring.hiker;
 
 public record PostInfo(String shortCode, String username, String contentType, String caption,
-                       Long likes, Long comments, Long views, Long saves, Long shares,
-                       Long reposts, String rawJson) {}
+                       Long takenAt, Long likes, Long comments, Long views, Long saves,
+                       Long shares, Long reposts, String rawJson) {}
 ```
 
 - [ ] **Step 4: 실행 → PASS** — 픽스처 실제 셰이프에 맞춰 파서(경로·필드 후보)를 조정하며 GREEN까지. **조정 내용은 findings 문서에 추기.**
@@ -951,9 +957,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", 10L, 2L, 100L, null, null, null, "{}");
+		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 10L, 2L, 100L, null, null, null, "{}");
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", 12L, 3L, 110L, null, null, null, "{}");
+		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 12L, 3L, 110L, null, null, null, "{}");
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
