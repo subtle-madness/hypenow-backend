@@ -18,7 +18,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(properties = "spring.data.redis.port=1")
 public abstract class IntegrationTest {
 
-	static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+	// 컨텍스트 캐시에 살아있는 컨텍스트마다 Hikari 풀(기본 10)이 이 컨테이너 하나에 붙는다 —
+	// 캐시·모니터링 컨텍스트 합류로 기본 max_connections(100)이 소진돼("too many clients already")
+	// 상한을 올리고, 테스트 풀도 아래에서 축소한다.
+	static final PostgreSQLContainer POSTGRES =
+			new PostgreSQLContainer("postgres:17-alpine")
+					.withCommand("postgres", "-c", "max_connections=300");
 
 	static {
 		POSTGRES.start();
@@ -29,5 +34,7 @@ public abstract class IntegrationTest {
 		registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
 		registry.add("spring.datasource.username", POSTGRES::getUsername);
 		registry.add("spring.datasource.password", POSTGRES::getPassword);
+		// 프리페치(비동기 조회) 동시성까지 감안한 최소 풀 — 컨텍스트당 10개 점유가 근본 원인
+		registry.add("spring.datasource.hikari.maximum-pool-size", () -> 4);
 	}
 }
