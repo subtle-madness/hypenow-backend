@@ -40,17 +40,19 @@ class AccountAnalysisJobTest {
 	AccountAnalysisJob job;
 	List<AccountToAnalyze> calls;
 
-	/** fake 포트: 호출 기록 + 고정 응답. adSummary는 항상 채워 반환 — 조건부 NULL 처리는 잡(AdSituation)이 맡는다. */
+	/** fake 포트: 호출 기록 + 고정 응답(traits는 V41 어휘 값 — 어휘 밖은 sanitize가 드롭한다).
+	 *  adSummary는 항상 채워 반환 — 조건부 NULL 처리는 잡(AdSituation)이 맡는다. */
 	AccountSynthesisPort fakePort() {
 		return account -> {
 			calls.add(account);
 			return new AccountCopy("태그라인: " + account.handle(),
-					List.of("저자극", "성분리뷰", "정보형"), "성과 요약", "콘텐츠 요약", "광고 요약");
+					List.of("성분 분석", "정보형 콘텐츠", "솔직 리뷰"), "성과 요약", "콘텐츠 요약", "광고 요약");
 		};
 	}
 
 	void rewireJob(AccountSynthesisPort port) {
-		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db), ProgressReporter.NOOP);
+		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db), ProgressReporter.NOOP,
+				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds));
 	}
 
 	@BeforeEach
@@ -123,7 +125,7 @@ class AccountAnalysisJobTest {
 		assertEquals("태그라인: acct_ad", db.queryForObject(
 				"SELECT tagline FROM account_analyses WHERE handle = 'acct_ad'", String.class));
 		// traits는 jsonb 배열로 저장된다
-		assertEquals("저자극", db.queryForObject(
+		assertEquals("성분 분석", db.queryForObject(
 				"SELECT traits->>0 FROM account_analyses WHERE handle = 'acct_ad'", String.class));
 		// input 스냅샷 = 분석 당시 미러 값
 		assertEquals(1L, db.queryForObject(
@@ -197,7 +199,8 @@ class AccountAnalysisJobTest {
 	/** 프롬프트 지시문이 평가·권유를 금지하고 상황별 진술을 요구해야 한다. */
 	@Test
 	void 지시문이_평가를_금지하고_상황별_진술을_지시한다() {
-		String instructions = com.celfit.analytics.llm.GeminiAccountSynthesizer.instructions();
+		String instructions = com.celfit.analytics.llm.GeminiAccountSynthesizer.instructions(
+				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds).get());
 
 		assertTrue(instructions.contains("좋다"), instructions);
 		assertTrue(instructions.contains(AdSituation.NO_ADS.label()), instructions);
@@ -350,14 +353,30 @@ class AccountAnalysisJobTest {
 		rewireJob(account -> {
 			calls.add(account);
 			return new AccountCopy("태그라인",
-					List.of("t1", "t2", "t3", "t4", "t5", "t6"), "성과 요약", "콘텐츠 요약", "");
+					List.of("릴스 중심", "브이로그", "튜토리얼", "언박싱", "하울", "GRWM"),
+					"성과 요약", "콘텐츠 요약", "");
 		});
 
 		job.run();
 
 		assertEquals(5, db.queryForObject(
 				"SELECT jsonb_array_length(traits) FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
-		assertEquals("t5", db.queryForObject(
+		assertEquals("하울", db.queryForObject(
 				"SELECT traits->>4 FROM account_analyses WHERE handle = 'acct_ad'", String.class));
+	}
+
+	/** 어휘 통제(2026-07-29 스펙 §3-2): 어휘 밖 산출은 저장에서 드롭 — 전부 밖이면 빈 배열. */
+	@Test
+	void 어휘_밖_traits는_드롭되고_빈_배열이_허용된다() {
+		rewireJob(account -> {
+			calls.add(account);
+			return new AccountCopy("태그라인",
+					List.of("저자극", "임의조어"), "성과 요약", "콘텐츠 요약", "");
+		});
+
+		job.run();
+
+		assertEquals(0, db.queryForObject(
+				"SELECT jsonb_array_length(traits) FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
 	}
 }

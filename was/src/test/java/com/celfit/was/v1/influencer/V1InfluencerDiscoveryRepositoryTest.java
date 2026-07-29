@@ -68,6 +68,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    avg_er_pct         numeric,
 				    avg_likes          bigint,
 				    avg_comments       bigint,
+				    avg_hype_score     bigint,
 				    last_posted_at     timestamptz
 				)""");
 		jdbcTemplate.execute("""
@@ -131,15 +132,15 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update("""
 				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
 				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
-				  last_posted_at) VALUES
+				  avg_hype_score, last_posted_at) VALUES
 				  ('glow', 20000, 380, 214, E'수분크림 기록\\n문의는 DM', 50000, 12.42, 4.0, 3000, 150,
-				   now() - interval '1 day'),
+				   72, now() - interval '1 day'),
 				  ('calm', 30000, 100, 90, '차분한 후기', 30000, 5.0, 2.0, 500, 30,
-				   now() - interval '10 days'),
+				   80, now() - interval '10 days'),
 				  ('mute', 40000, 50, 40, NULL, NULL, NULL, 1.0, 300, 10,
-				   now() - interval '40 days'),
+				   NULL, now() - interval '40 days'),
 				  ('tiny', 1000, 10, 20, '새싹', 2000, 2.0, 3.0, 25, 3,
-				   now() - interval '5 days')""");
+				   45, now() - interval '5 days')""");
 		// glow 창 5개: g1(1일 전)~g5(5일 전). 분류 5개 중 스킨케어 4·메이크업 1, 협찬 g2·g4.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
@@ -212,10 +213,12 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(glow.tagline()).isEqualTo("저자극 스킨케어 리뷰 톤"); // 이력 중 최신
 		assertThat(glow.avgViews()).isEqualTo(50000);
 		assertThat(glow.sponsoredCount()).isEqualTo(2); // ad_type 정본 (series.sponsored 아님)
+		assertThat(glow.avgHypeScore()).isEqualTo(72);
 
 		CardRow mute = rows.get(3);
 		assertThat(mute.avgViews()).isNull(); // 릴스 없는 계정
 		assertThat(mute.profileImageUrl()).isNull();
+		assertThat(mute.avgHypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
 	}
 
 	@Test
@@ -302,6 +305,13 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(repository.findCards(page2)).extracting(CardRow::handle)
 				.containsExactly("tiny", "mute");
 		assertThat(repository.countCards(page2)).isEqualTo(4); // total은 오프셋 무관
+	}
+
+	@Test
+	void 정렬_hype는_avg_hype_score_내림차순_NULL_마지막() {
+		var hype = query(null, null, null, null, null, null, null, null, "hype", null, null);
+		assertThat(repository.findCards(hype)).extracting(CardRow::handle)
+				.containsExactly("calm", "glow", "tiny", "mute");
 	}
 
 	@Test

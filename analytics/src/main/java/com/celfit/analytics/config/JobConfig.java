@@ -91,11 +91,12 @@ public class JobConfig {
 	public AccountAnalysisJob accountAnalysisJob(
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			AccountSynthesisPort port, AnalyticsSettings settings,
-			ObjectProvider<JobProgressRegistry> progressRegistry) {
+			ObjectProvider<JobProgressRegistry> progressRegistry,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null
 				? registry.reporter(JobName.ACCOUNT_ANALYZE) : ProgressReporter.NOOP;
-		return new AccountAnalysisJob(analysisDataSource, port, settings, reporter);
+		return new AccountAnalysisJob(analysisDataSource, port, settings, reporter, traitLoader);
 	}
 
 	/** 해석 문구 갱신 — 기준선 정의·문구 의미가 바뀌었을 때 낡은 행만 부분 갱신(사실 추출 보존). */
@@ -128,6 +129,24 @@ public class JobConfig {
 				new ParImageStore(imageParUrl), ImageDownloader.http(), settings, reporter);
 	}
 
+	/** trait 어휘 매핑 원샷(2026-07-29 스펙 §3-3) — 어드민 수동 트리거 전용, 스케줄 없음. */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.admin-enabled:false}")
+	public com.celfit.analytics.analyze.TraitCanonJob traitCanonJob(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader,
+			com.celfit.analytics.llm.TraitMappingPort mappingPort,
+			ObjectProvider<JobProgressRegistry> progressRegistry) {
+		JobProgressRegistry registry = progressRegistry.getIfAvailable();
+		ProgressReporter dry = registry != null
+				? registry.reporter(JobName.TRAIT_CANON_DRY) : ProgressReporter.NOOP;
+		ProgressReporter apply = registry != null
+				? registry.reporter(JobName.TRAIT_CANON_APPLY) : ProgressReporter.NOOP;
+		return new com.celfit.analytics.analyze.TraitCanonJob(
+				analysisDataSource, traitLoader, mappingPort, dry, apply);
+	}
+
 	/**
 	 * 구독 버스트 one-shot(07-19) — Gemini 무료 일 한도를 넘는 일회 물량을 Claude 구독 컴퓨트로 소화.
 	 * export → 드라이버(analytics/export/claude_burst_driver.py, claude -p 병렬) → collect 3단 실행.
@@ -143,6 +162,7 @@ public class JobConfig {
 			com.celfit.analytics.analyze.ClaudeBurstRunner runner =
 					new com.celfit.analytics.analyze.ClaudeBurstRunner(rawJdbcTemplate, analysisDataSource,
 							settings, new com.celfit.analytics.llm.BeautyTaxonomyLoader(analysisDataSource),
+							new com.celfit.analytics.llm.TraitTaxonomyLoader(analysisDataSource),
 							java.nio.file.Path.of(dir));
 			switch (mode) {
 				case "export" -> runner.export();

@@ -43,3 +43,77 @@ BEGIN
   ASSERT (SELECT sponsored FROM analytics.v_account_content_series WHERE short_code = 'dummy_r3') = true,
     'v_account_content_series r3 sponsored != true';
 END $$;
+
+-- avg_hype_score (스펙 2026-07-29-influencer-avg-hype-score): 최근창 콘텐츠 hype_score 단순 평균.
+-- 기대값을 고정하지 않고 v_contents(랭킹)와의 항등식으로 검증한다 — 같은 함수·같은 핀·같은 now()(트랜잭션 고정)라
+-- 두 경로가 반드시 일치해야 하고, 시간이 지나 신선도 감쇠로 절대값이 변해도 테스트가 안 깨진다.
+DO $$
+BEGIN
+  ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
+         BETWEEN 0 AND 100,
+    'summaries a avg_hype_score not in 0..100';
+  ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
+       = (SELECT round(avg(c.hype_score))::bigint
+          FROM analytics.v_contents c
+          JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
+          WHERE s.account_handle = 'dummy_a'),
+    'summaries a avg_hype_score != v_contents 창 평균 (같은 함수·핀·기준시각이어야 함)';
+END $$;
+
+-- 점수 불가 창 계정: 릴스인데 조회수 없는 스냅샷만 → hype NULL → 계정 avg_hype_score NULL.
+-- 다른 테스트 파일과 시드(dummy.sql)를 공유하므로 시드는 건드리지 않고 이 파일 안에서만 추가한다
+-- (위 DO 블록의 기존 카운트 단언들은 이 INSERT보다 먼저 실행돼 영향 없음).
+INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at)
+VALUES (99990006, 'dummy_h', 'QUALIFIED', 3000, true, false, timestamptz '2026-06-01 00:00:00+09');
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts)
+VALUES (99990109, 'dummy_h1', 'REELS', 'dummy_h', 99990006, timestamptz '2026-06-01 09:00:00+09',
+        'PENDING', timestamptz '2026-06-01 12:00:00+09', 'ENUMERATION', 0);
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at)
+VALUES (99990006, 99990000, 'HIKER_MOBILE', 'dummy_h', 3000,
+  '{"status":"ok","user":{"username":"dummy_h","full_name":"더미 에이치","follower_count":3000}}'::jsonb,
+  timestamptz '2026-06-01 12:00:00+09');
+-- play_count·ig_play_count 둘 다 없음 → views NULL → 릴스 hype NULL (스냅샷 1건이라 우선순위 무관하게 핀됨)
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
+VALUES (99990006, 99990000, 'HIKER_V2_CLIPS',
+  '{"response":{"status":"ok","items":[{"media":{"code":"dummy_h1","product_type":"clips","taken_at":1780272000,"like_count":100,"comment_count":10,"caption":{"text":"cap h1"}}}]}}'::jsonb,
+  timestamptz '2026-06-07 12:00:00+09');
+SELECT analytics.refresh_snapshot_cache();
+
+DO $$
+BEGIN
+  ASSERT (SELECT count(*) FROM analytics.v_account_summaries WHERE handle = 'dummy_h') = 1,
+    'summaries h row missing (점수 불가 콘텐츠도 창에는 있어야 함)';
+  ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_h') IS NULL,
+    'summaries h avg_hype_score not null (창 전체 점수 불가면 NULL)';
+  ASSERT (SELECT avg_likes FROM analytics.v_account_summaries WHERE handle = 'dummy_h') = 100,
+    'summaries h avg_likes != 100 (다른 집계는 살아야 함)';
+END $$;
+
+-- 혼재 창: 유효 점수 + NULL 점수가 섞였을 때 NULL만 분모에서 빠지는지 (스펙 §7-1).
+-- dummy_a(전부 유효)에 점수 불가 릴스 1건을 더해 혼재로 만든 뒤 항등식 재단언 —
+-- 구현이 COALESCE(...,0)·sum/count(*)로 회귀하면 v_contents(avg는 NULL 자연 제외) 기준과 어긋나 잡힌다.
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts)
+VALUES (99990110, 'dummy_rx', 'REELS', 'dummy_a', 99990001, timestamptz '2026-06-02 10:00:00+09',
+        'PENDING', timestamptz '2026-06-02 12:00:00+09', 'ENUMERATION', 0);
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
+VALUES (99990001, 99990000, 'HIKER_V2_CLIPS',
+  '{"response":{"status":"ok","items":[{"media":{"code":"dummy_rx","product_type":"clips","taken_at":1780365600,"like_count":50,"comment_count":5,"caption":{"text":"cap rx"}}}]}}'::jsonb,
+  timestamptz '2026-06-08 12:00:00+09');
+SELECT analytics.refresh_snapshot_cache();
+
+DO $$
+BEGIN
+  ASSERT (SELECT count(*) FROM analytics.v_account_content_series
+          WHERE account_handle = 'dummy_a' AND short_code = 'dummy_rx') = 1,
+    'dummy_rx not in window (혼재 픽스처 자체가 안 만들어짐)';
+  ASSERT (SELECT hype_score FROM analytics.v_contents WHERE short_code = 'dummy_rx') IS NULL,
+    'dummy_rx hype not null (점수 불가 조건이 깨짐 — views가 생겼나)';
+  ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
+       = (SELECT round(avg(c.hype_score))::bigint
+          FROM analytics.v_contents c
+          JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
+          WHERE s.account_handle = 'dummy_a'),
+    'summaries a 혼재 창 항등식 실패 (NULL이 분모에 섞였을 가능성)';
+END $$;

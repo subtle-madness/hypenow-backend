@@ -215,14 +215,15 @@ class V1MeControllerTest {
 		then(userRepository).should(never()).updatePasswordHash(anyLong(), anyString());
 	}
 
+	// 복잡도 정책 제거(2026-07-29) — 백엔드는 빈 값만 차단
 	@Test
-	void 정책_미달_새_비밀번호는_400_VALIDATION_FAILED고_세션도_유지된다() throws Exception {
+	void 빈_새_비밀번호는_400_VALIDATION_FAILED고_세션도_유지된다() throws Exception {
 		givenAppUser();
 
 		mockMvc.perform(put("/v1/me/password").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
-								{"currentPassword":"%s","newPassword":"weak"}""".formatted(PASSWORD)))
+								{"currentPassword":"%s","newPassword":" "}""".formatted(PASSWORD)))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 

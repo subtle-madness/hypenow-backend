@@ -43,7 +43,7 @@ class ClaudeBurstRunnerTest {
 			.replace("\n", "");
 
 	static final String COPY_JSON = """
-			{"tagline":"저자극 스킨케어 리뷰","traits":["정보형","리뷰"],
+			{"tagline":"저자극 스킨케어 리뷰","traits":["정보형 콘텐츠","솔직 리뷰"],
 			 "perfSummary":"성과 요약 문장","contentSummary":"콘텐츠 요약 문장","adSummary":"광고 요약"}"""
 			.replace("\n", "");
 
@@ -56,7 +56,7 @@ class ClaudeBurstRunnerTest {
 
 	ClaudeBurstRunner runner() {
 		return new ClaudeBurstRunner(db, ds, new AnalyticsSettings(db),
-				new BeautyTaxonomyLoader(ds), workDir);
+				new BeautyTaxonomyLoader(ds), new com.celfit.analytics.llm.TraitTaxonomyLoader(ds), workDir);
 	}
 
 	@BeforeEach

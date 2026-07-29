@@ -6,8 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.celfit.was.config.ClockConfig;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.BrandRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.CategoryRow;
@@ -15,27 +15,33 @@ import com.celfit.was.v1.influencer.V1InfluencerReportRepository.CopyRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.SeriesRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportRepository.SummaryRow;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
-// V1ContentControllerTest와 같은 구성 — Clock은 ClockConfig(시스템 시계, 문구 검증은 어셈블러 테스트 몫).
+// 서비스가 리포지토리·조립을 캡슐화하므로 컨트롤러 테스트는 서비스만 목킹한다.
+// 정상 케이스는 어셈블러를 테스트 안에서 직접 인스턴스화해(시스템 시계 — ClockConfig와 동일 관용구,
+// 문구 검증은 V1InfluencerReportAssemblerTest 몫) 같은 스텁 입력으로 기대 리포트를 조립한다.
 @WebMvcTest(controllers = V1InfluencerReportController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000")
-@Import({V1InfluencerReportAssembler.class, ClockConfig.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({V1ExceptionAdvice.class, SecurityConfig.class})
 class V1InfluencerReportControllerTest {
 
 	@Autowired
 	MockMvc mockMvc;
 
 	@MockitoBean
-	V1InfluencerReportRepository repository;
+	V1InfluencerReportService service;
+
+	private final V1InfluencerReportAssembler assembler =
+			new V1InfluencerReportAssembler(Clock.systemUTC(), new ObjectMapper());
 
 	private SummaryRow fullSummary() {
 		return new SummaryRow(24L, 321L, "views", 52000L, new BigDecimal("0.42"),
@@ -46,15 +52,16 @@ class V1InfluencerReportControllerTest {
 
 	@Test
 	void 성공_응답은_스펙_6_5_구조를_가진다() throws Exception {
-		given(repository.findSummary("zingdong__")).willReturn(Optional.of(fullSummary()));
-		given(repository.findLatestCopy("zingdong__")).willReturn(Optional.of(
-				new CopyRow("태그라인", "요약", "추세 노트", "차트 노트",
-						"[\"뷰티\",\"유머\"]", "광고 헤드라인", "페이스 노트")));
-		given(repository.findSeries("zingdong__")).willReturn(List.of(
+		SummaryRow summary = fullSummary();
+		CopyRow copy = new CopyRow("태그라인", "요약", "추세 노트", "차트 노트",
+				"[\"뷰티\",\"유머\"]", "광고 헤드라인", "페이스 노트");
+		List<SeriesRow> series = List.of(
 				new SeriesRow(OffsetDateTime.parse("2026-06-30T20:30:00Z"), "reels", 1000L, 100L, 10L, false),
-				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "reels", 500L, 200L, 20L, true)));
-		given(repository.findCategories("zingdong__")).willReturn(List.of(new CategoryRow("메이크업", 5L)));
-		given(repository.findBrands("zingdong__")).willReturn(List.of(new BrandRow("머지", 3L)));
+				new SeriesRow(OffsetDateTime.parse("2026-07-05T03:00:00Z"), "reels", 500L, 200L, 20L, true));
+		List<CategoryRow> categories = List.of(new CategoryRow("메이크업", 5L));
+		List<BrandRow> brands = List.of(new BrandRow("머지", 3L));
+		given(service.report("zingdong__"))
+				.willReturn(assembler.toReport(summary, copy, series, categories, brands));
 
 		mockMvc.perform(get("/v1/influencers/zingdong__/ai-report").with(user("tester")))
 				.andExpect(status().isOk())
@@ -81,7 +88,7 @@ class V1InfluencerReportControllerTest {
 
 	@Test
 	void 없는_인플루언서는_NOT_FOUND() throws Exception {
-		given(repository.findSummary("ghost")).willReturn(Optional.empty());
+		given(service.report("ghost")).willThrow(V1ApiException.notFound("인플루언서를 찾을 수 없습니다."));
 
 		mockMvc.perform(get("/v1/influencers/ghost/ai-report").with(user("tester")))
 				.andExpect(status().isNotFound())
@@ -91,11 +98,8 @@ class V1InfluencerReportControllerTest {
 
 	@Test
 	void 카피_미생성이어도_200에_블록_구조는_유지된다() throws Exception {
-		given(repository.findSummary("h")).willReturn(Optional.of(fullSummary()));
-		given(repository.findLatestCopy("h")).willReturn(Optional.empty());
-		given(repository.findSeries("h")).willReturn(List.of());
-		given(repository.findCategories("h")).willReturn(List.of());
-		given(repository.findBrands("h")).willReturn(List.of());
+		given(service.report("h"))
+				.willReturn(assembler.toReport(fullSummary(), null, List.of(), List.of(), List.of()));
 
 		mockMvc.perform(get("/v1/influencers/h/ai-report").with(user("tester")))
 				.andExpect(status().isOk())

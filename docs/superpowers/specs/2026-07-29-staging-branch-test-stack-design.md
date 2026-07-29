@@ -32,7 +32,7 @@ feat/* ──PR──▶ develop ──머지──▶ staging ──머지─�
 
 | 항목 | 구 | 신 |
 |---|---|---|
-| 서비스/컨테이너 | dev-postgres·dev-analytics·dev-was | **test-postgres·test-analytics·test-was** (`deploy-test-*-1`) |
+| 서비스/컨테이너 | dev-postgres·dev-analytics·dev-was(·dev-redis — 07-29 develop 유입) | **test-postgres·test-analytics·test-was·test-redis** (`deploy-test-*-1`) |
 | compose 파일 | compose.dev.yaml | **compose.test.yaml** |
 | 프로파일 | `--profile dev` | **`--profile test`** |
 | 워크플로 | cd-dev.yml (CD dev) | **cd-test.yml (CD test)** |
@@ -52,7 +52,7 @@ feat/* ──PR──▶ develop ──머지──▶ staging ──머지─�
 compose.yaml(운영 정의 — main CD 공급)에 브리지 네트워크 2개를 선언, 전 서비스 소속 명시:
 
 - **prod**: postgres, analytics, crawler, was, ons-relay
-- **test**: test-postgres, test-analytics, test-was
+- **test**: test-postgres, test-redis, test-analytics, test-was
 - **양쪽(dual-homed)**: caddy(운영·test 도메인 라우팅), postgres-raw(test-analytics의 raw 읽기 —
   기존 `analytics_dev` 읽기 전용 계정 경로 유지)
 
@@ -107,7 +107,8 @@ monitoring 스펙의 `monitoring-net`(was↔monitoring 전용)·`dev-monitoring`
 ### 문서
 
 CLAUDE.md(브랜치 규칙·배포 경로), deploy/README.md(§5 배포·§12 test 스테이징 전면 갱신),
-ARCHITECTURE.md(§5 트랙 S 추가·§7 결정 기록), 구 스펙(2026-07-26)은 상태 헤더로 본 문서 연결.
+ARCHITECTURE.md(§5 트랙 W 추가 — S·T·U·V는 develop 병렬 트랙이 선점·§7 결정 기록),
+구 스펙(2026-07-26)은 상태 헤더로 본 문서 연결.
 
 ## 검증
 

@@ -164,14 +164,14 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   `dev-pg-data`도 구명 유지(의도적 예외 — 리네임 비용 대비 이득 없음, 볼륨은 데이터 유실 방지).
 - test 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
 - test analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
-- 배치는 **운영 인스턴스 동거** — test 3종의 정의는 별도 파일 **`deploy/compose.test.yaml`**에 있고
+- 배치는 **운영 인스턴스 동거** — test 4종(was·analytics·postgres·redis)의 정의는 별도 파일 **`deploy/compose.test.yaml`**에 있고
   운영 `compose.yaml`에 겹쳐 쓴다(`-f compose.yaml -f compose.test.yaml --profile test`).
   파일을 나눈 이유: **test CD는 이 test 파일만 서버로 보낸다** — 운영 서비스 정의는 main 배포로만
   서버에 도달하므로, staging의 운영 정의 변경이 test 배포로 먼저 발효되거나 `depends_on` 연쇄로
   운영 컨테이너가 재생성되는 사고가 구조적으로 불가능하다(caddy.d 분리와 같은 원리).
   `profiles: ["test"]`도 유지 — `--profile test` 없이는 뜨지도 멈추지도 않는다(이중 가드).
   mem_limit로 상한을 걸어 운영 메모리를 침식하지 않는다.
-- **네트워크 격리 (07-29)** — `compose.yaml`이 브리지 `prod`·`test`를 선언하고 test 3종은 `test`에만
+- **네트워크 격리 (07-29)** — `compose.yaml`이 브리지 `prod`·`test`를 선언하고 test 서비스는 `test`에만
   소속: test 컨테이너에서 운영 postgres·analytics·crawler로 가는 경로가 커널(iptables) 수준에서
   차단된다. 양쪽 소속은 의도된 접점 둘뿐 — `caddy`(도메인 분기)·`postgres-raw`(raw 읽기).
   compose에 서비스를 추가할 땐 **`networks:` 명시 필수**(커스텀 네트워크 체제라 기본 네트워크가
@@ -236,10 +236,10 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 스냅샷 캐시 refresh(필요 시):
   `ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -c "SELECT analytics_dev.refresh_snapshot_cache();"'`
 - test 스택 정지:
-  `cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test stop test-was test-analytics test-postgres`
+  `cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test stop test-was test-analytics test-postgres test-redis`
   (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 같은 `-f`·프로파일 인자에 `up -d`.
 - 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-test-was-1` ·
-  `deploy-test-analytics-1` · `deploy-test-postgres-1`. 모니터링 `SERVICES` 목록(§9)에는 test를 넣지
+  `deploy-test-analytics-1` · `deploy-test-postgres-1` · `deploy-test-redis-1`. 모니터링 `SERVICES` 목록(§9)에는 test를 넣지
   않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.
 
 ### 주의 (함정 3건)

@@ -143,7 +143,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test pull test-analytics test-was && \
-             docker compose -f compose.yaml -f compose.test.yaml --profile test up -d --remove-orphans test-postgres test-analytics test-was && \
+             docker compose -f compose.yaml -f compose.test.yaml --profile test up -d --remove-orphans test-postgres test-redis test-analytics test-was && \
              docker compose -f compose.yaml -f compose.test.yaml --profile test ps'
 
       - name: caddy 설정 리로드 (test-api 라우팅 반영)

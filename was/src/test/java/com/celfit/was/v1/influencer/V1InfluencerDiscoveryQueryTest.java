@@ -60,6 +60,44 @@ class V1InfluencerDiscoveryQueryTest {
 	}
 
 	@Test
+	void 같은_조건은_같은_캐시_키_페이지가_다르면_다른_키() {
+		V1InfluencerDiscoveryQuery a = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 0);
+		V1InfluencerDiscoveryQuery b = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 0);
+		assertThat(a.cacheKey()).isEqualTo(b.cacheKey());
+		assertThat(a.cacheKey()).isNotEqualTo(a.next().cacheKey());
+	}
+
+	@Test
+	void next는_offset만_limit만큼_전진() {
+		V1InfluencerDiscoveryQuery next = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 100).next();
+		assertThat(next.offset()).isEqualTo(150);
+		assertThat(next.limit()).isEqualTo(50);
+	}
+
+	@Test
+	void 자유입력_리터럴_null은_필터_생략과_다른_키() {
+		// midCategory="null"(자유입력 리터럴)과 midCategory 생략(실제 null)은 다른 조건이어야 한다.
+		V1InfluencerDiscoveryQuery literalNull = V1InfluencerDiscoveryQuery.of(null, "makeup", "null",
+				null, null, null, null, null, null, 50, 0);
+		V1InfluencerDiscoveryQuery omitted = V1InfluencerDiscoveryQuery.of(null, "makeup", null, null,
+				null, null, null, null, null, 50, 0);
+		assertThat(literalNull.cacheKey()).isNotEqualTo(omitted.cacheKey());
+	}
+
+	@Test
+	void 기본값_명시와_all은_생략과_같은_키() {
+		// main=all이면 mid·sub는 연쇄 무시(스펙 6.21) — 명시한 값과 상관없이 생략과 동일 조건·동일 키.
+		V1InfluencerDiscoveryQuery explicit = V1InfluencerDiscoveryQuery.of(null, "all", "립메이크업",
+				"립틴트", "all", null, "all", null, "reach", 100, 0);
+		V1InfluencerDiscoveryQuery omitted = V1InfluencerDiscoveryQuery.of(null, null, null, null,
+				null, null, null, null, null, null, null);
+		assertThat(explicit.cacheKey()).isEqualTo(omitted.cacheKey());
+	}
+
+	@Test
 	void 잘못된_enum과_음수_경계는_400() {
 		assertThatThrownBy(() -> of(null, "nail", null, null, null, null, null, null, null, null, null))
 				.isInstanceOf(V1ApiException.class);
@@ -71,7 +109,7 @@ class V1InfluencerDiscoveryQueryTest {
 				.isInstanceOf(V1ApiException.class);
 		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, "closed", null, null, null))
 				.isInstanceOf(V1ApiException.class);
-		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, "hype", null, null))
+		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, "zzz", null, null))
 				.isInstanceOf(V1ApiException.class);
 		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, null, 101, null))
 				.isInstanceOf(V1ApiException.class);
@@ -79,5 +117,11 @@ class V1InfluencerDiscoveryQueryTest {
 				.isInstanceOf(V1ApiException.class);
 		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, null, null, -1))
 				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void sort_hype는_허용된다() {
+		assertThat(of(null, null, null, null, null, null, null, null, "hype", null, null)
+				.sort()).isEqualTo("hype");
 	}
 }
