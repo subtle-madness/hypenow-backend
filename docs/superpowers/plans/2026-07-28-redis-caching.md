@@ -611,6 +611,8 @@ git add was/src/main/java/com/celfit/was/v1/content/ was/src/test/java/com/celfi
 git commit -m "feat(was): 랭킹 목록 공통 페이지 Redis 캐시 + 다음 페이지 프리페치 (6.1)"
 ```
 
+> 구현 노트(리뷰 반영): ① 스펙 §4의 커스텀 KeyGenerator 대신 SpEL `#q.cacheKey()` 채택(더 명시적). ② 스펙 §5의 '캐시에 있으면 스킵'은 `@Cacheable(sync=true)` 위임으로 충족(Redis GET 1회 = 사실상 스킵; 단 Redis 장애 시 프리페치가 실DB 조회가 되는 부작용 있음 — 상한은 풀 max 2). ③ 캐시 값 스키마 세대를 빌드 시각 epoch로 prefix에 반영(`buildInfo()`) — 배포마다 콜드 캐시(수용). 부작용: `:was:test`가 매 빌드 재실행됨(build-info 갱신 때문, 로컬 증분 빌드 비용으로 수용).
+
 ---
 
 ### Task 4: 발굴 목록 — V1InfluencerDiscoveryPageService + 컨트롤러 전환 + 프리페치

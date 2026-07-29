@@ -37,8 +37,10 @@ public class CacheConfig implements CachingConfigurer {
 
 	public CacheConfig(ObjectProvider<BuildProperties> buildProperties) {
 		BuildProperties bp = buildProperties.getIfAvailable();
-		// 빌드 시각 = 값 스키마 세대. 배포(새 빌드)마다 prefix가 바뀌어 콜드 스타트 — 스펙 §3 "재시작=콜드 캐시" 수용 범위.
-		this.cacheEpoch = bp == null ? "dev" : String.valueOf(bp.getTime().getEpochSecond());
+		// getTime()은 build.time 제거 시 null — 그 경우 "dev" 폴백으로 기동은 지키되, 캐시 세대 무효화(배포별 prefix)는
+		// 죽는다. 재현 빌드 등으로 time을 꺼야 하면 commit sha를 buildInfo additional로 넣고 여기서 읽도록 바꿀 것.
+		this.cacheEpoch = (bp == null || bp.getTime() == null) ? "dev"
+				: String.valueOf(bp.getTime().getEpochSecond());
 	}
 
 	@Bean
