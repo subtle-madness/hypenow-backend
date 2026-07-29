@@ -48,5 +48,8 @@ was:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:
     dir: ./data/profile-images          # 프로필 이미지 저장 디렉토리 — /profile-images/** 로 정적 서빙
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
+    from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트
 monitoring:
   enabled: false   # true면 monitoring.datasource.*(읽기 전용 계정) 필수, monitoring.api.base-url은 기본값 http://monitoring:8083(계약 §1) — 계약: docs/contracts/monitoring-was-contract.md
