@@ -82,13 +82,16 @@ jobs:
           docker run -d --name crawler-postgres-1 \
             -e POSTGRES_USER=crawler -e POSTGRES_PASSWORD=crawler -e POSTGRES_DB=crawler \
             postgres:16
+          # 대기는 실쿼리로 — pg_isready는 initdb 중 임시 서버(소켓)에도 OK를 줘서
+          # POSTGRES_DB 생성 전에 통과하는 레이스가 있다(07-29 PR #178에서 실발생:
+          # "database crawler does not exist"). SELECT 1이 돼야 초기화 완료다.
           for i in $(seq 1 30); do
-            if docker exec crawler-postgres-1 pg_isready -U crawler -d crawler -q 2>/dev/null; then
+            if docker exec crawler-postgres-1 psql -U crawler -d crawler -c 'SELECT 1' -q >/dev/null 2>&1; then
               break
             fi
             sleep 1
           done
-          docker exec crawler-postgres-1 pg_isready -U crawler -d crawler
+          docker exec crawler-postgres-1 psql -U crawler -d crawler -c 'SELECT 1' -q >/dev/null
           for f in $(ls crawler/src/main/resources/db/migration/*.sql | sort -t V -k 2 -n); do
             echo "migrate $f"
             docker exec -i crawler-postgres-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q < "$f"
