@@ -243,6 +243,17 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isZero();
 	}
 
+	/**
+	 * 스윕 스케줄러가 실제 컨텍스트에 뜨는지 — 별도 @SpringBootTest 클래스를 새로 세우면
+	 * 컨텍스트를 하나 더 띄우게 되므로 이미 뜬 여기에 얹는다. 잡히는 회귀는 둘이다:
+	 * @Component가 빠져 크론이 조용히 안 도는 것, 그리고 application.yml의 sweep-cron 값이
+	 * 크론으로 파싱 불가라 컨텍스트가 뜨다 죽는 것(그 경우 이 클래스 전체가 실패한다).
+	 */
+	@Test
+	void 스윕_스케줄러는_기본_설정에서도_빈으로_뜬다() {
+		assertThat(ctx.getBean(com.celfit.monitoring.service.SweepScheduler.class)).isNotNull();
+	}
+
 	/** 캐치올 advice가 프레임워크 4xx를 500으로 강등하면 배선 오류를 장애로 오인하게 된다. */
 	@Test
 	void 없는_경로는_500이_아니라_404로_남는다() throws Exception {
