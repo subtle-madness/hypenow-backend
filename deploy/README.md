@@ -65,8 +65,8 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 ## 5. 배포 (코드 변경 반영)
 
 **정본은 CD (07-20~)**: `main`에 푸시(=develop→main 머지)하면 `.github/workflows/cd.yml`이
-was·analytics·crawler 이미지 빌드·push → 서버 compose pull·재기동 → **분석 뷰 raw DB 적용**(멱등,
-§4-1의 수동 절차를 대체) → `/health` 확인까지 수행한다.
+was·analytics·crawler·monitoring 이미지 빌드·push → 서버 compose pull·재기동 → **분석 뷰 raw DB 적용**(멱등,
+§4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인까지 수행한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
   `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
 - 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
@@ -85,6 +85,8 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
   - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버 3일 롤링 +
     Drive `hypenow-backups/crawler/` **최신 3개** 롤링 — 덤프가 GB급(07-20 실측 ~1.5GB,
     DB 기준 하루 ~0.6GB씩 증가)이라 Drive 무료 15GB에 맞춰 개수 제한. 용량 증설 시 개수 상향.
+  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 7일 롤링 +
+    Drive `hypenow-backups/monitoring/` 30일 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
@@ -124,7 +126,7 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
   구독 확인은 릴레이가 자동 컨펌. PAYG 전환 시 OCI Functions로 릴레이 대체 검토):
   **API 외형 감시**(Health Checks `hypenow-api-health` — 외부 관측점 3곳에서 60초마다
   `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
-  **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
+  **컨테이너 다운**(deploy-*-1 7종 — monitoring 포함, §13), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
 - 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
   (버킷은 스크립트가 5분 결에만 조회 — OCI가 StoredBytes를 자동 게시하지 않아 직접 게시):
   `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
@@ -242,3 +244,38 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
   운영 배포가 대기하다가 새 dev 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
   있다. develop→main 머지 후엔 Actions에서 CD 런이 success로 끝났는지 확인하고, cancelled면
   Re-run으로 재실행한다(07-20 "배포가 조용히 안 나감" 계열 방지).
+
+## 13. monitoring 모듈 개통 (1회 ops — 첫 CD 배포 전에)
+
+시딩 캠페인 모니터링 컨테이너(사설 `monitoring` DB, 호스트 포트 미노출). **아래 1·2번을
+먼저 끝내지 않으면 CD가 실패한다** — compose 동기화 스텝이 `.env`에 없는 `${VAR}` 참조를
+발견하면 배포를 중단시킨다(§5).
+
+1. 서버 postgres 컨테이너에 DB·계정 생성 (`db/init/02-create-monitoring-db.sql`과 동일, 비밀번호는 실값):
+   ```bash
+   docker exec -it deploy-postgres-1 psql -U $DB_USER -d postgres -c \
+     "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'; CREATE ROLE was_reader LOGIN PASSWORD '<실값>'; CREATE DATABASE monitoring OWNER monitoring;"
+   ```
+   (`was_reader`에는 접속 권한만 — 객체 GRANT는 monitoring Flyway가 소유자로서 부여한다)
+2. `~/deploy/.env`에 추가: `MONITORING_DB_USER`, `MONITORING_DB_PASSWORD`, (기존 확인) `HIKER_API_KEY`
+   — `.env.example`에 항목이 있다. 1번의 실값과 일치시킬 것.
+3. develop→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
+   (CD의 "monitoring 헬스 확인" 스텝이 같은 판정을 자동 수행 — 호스트 포트가 없어 외부 curl은 불가)
+4. 컨테이너 다운 알람 대상에 monitoring 추가 — `post-container-metrics.py`의 `SERVICES` 목록(§9).
+   레포에는 반영돼 있으니 서버 스크립트를 rsync로 갱신할 것.
+
+### 접근 통제·디버깅
+
+- 명령 API는 토큰이 없다 — 전용 네트워크 `monitoring-net`에 **was와 monitoring만** 소속시켜
+  통제한다. 이 네트워크 밖 컨테이너(dev 스택 포함)는 `monitoring` 호스트명 해석부터 실패한다.
+- 호스트 포트를 열지 않는다(어드민 UI 없음 + 호스트 8083은 dev-analytics 터널이 점유).
+  수동 호출은 같은 네트워크에 임시 컨테이너를 붙여서:
+  ```bash
+  docker run --rm --network deploy_monitoring-net curlimages/curl -s http://monitoring:8083/…
+  ```
+  (was·monitoring 이미지엔 curl이 없어 `docker exec deploy-was-1 curl`은 안 된다)
+- 일일 스윕은 컨테이너 env `MONITORING_SCHEDULE_SWEEP_CRON`(UTC 17:00 = KST 02:00).
+  임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
+  다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
+- 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
+  서버 `~/backups/monitoring-*.sql.gz` 7일 + Drive `hypenow-backups/monitoring/` 30일 롤링(§6).

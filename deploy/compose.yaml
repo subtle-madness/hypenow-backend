@@ -143,6 +143,8 @@ services:
       CODES_API_KEY: ${CODES_API_KEY:-}
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
+    # monitoring 명령 API의 유일한 클라이언트 — 전용 네트워크에 함께 소속(하단 networks 주석)
+    networks: [default, monitoring-net]
     # analytics healthy(=analysis DB 마이그레이션 완료) 후 기동 — was 코드가 새 분석 컬럼을
     # 참조하는 배포에서 기동 직후 500 레이스 차단(07-20 장애의 일시 변형). analytics가
     # healthy 실패하면 was도 안 뜨는 결합이 생기니, 그때는 up -d에 --no-deps로 우회.
@@ -150,6 +152,37 @@ services:
       postgres:
         condition: service_healthy
       analytics:
+        condition: service_healthy
+
+  # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 스윕 KST 02:00(UTC 17:00).
+  # 호스트 포트 미노출 — 어드민 UI가 없고 유일한 클라이언트 was는 monitoring-net으로 붙는다
+  # (호스트 8083은 dev-analytics 터널이 이미 점유 중이라 충돌 회피이기도 함).
+  # 수동 디버깅은 같은 네트워크에 임시 컨테이너를 붙여서 —
+  #   docker run --rm --network deploy_monitoring-net curlimages/curl -s http://monitoring:8083/…
+  #   (was·monitoring 이미지엔 curl이 없다 — analytics 헬스체크 주석과 같은 이유)
+  monitoring:
+    image: ghcr.io/subtle-madness/hypenow-monitoring:latest
+    restart: unless-stopped
+    logging: *logging
+    networks: [default, monitoring-net]   # default는 postgres 접속용
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
+      SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
+      HIKER_API_KEY: ${HIKER_API_KEY}
+      # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
+      MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
+      JAVA_OPTS: "-Xms128m -Xmx384m"
+    # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
+    # 이미지에 curl이 없어 bash /dev/tcp로 확인(analytics와 동일 관용구).
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8083' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    depends_on:
+      postgres:
         condition: service_healthy
 
   # OCI ONS 알람 → 디스코드 웹훅 릴레이 — ONS가 SLACK 엔드포인트를 hooks.slack.com만
@@ -185,3 +218,9 @@ volumes:
   pg-raw-data:
   caddy-data:
   caddy-config:
+
+networks:
+  # 명령 API 접근 통제 — was↔monitoring 전용(스펙 결정 11). 토큰 없음:
+  # 이 네트워크 미소속 컨테이너(dev 스택 포함)는 monitoring 호스트명 해석부터 실패.
+  # networks를 선언하지 않은 서비스는 default에 그대로 남는다 — 나머지 서비스는 무접촉.
+  monitoring-net: {}
