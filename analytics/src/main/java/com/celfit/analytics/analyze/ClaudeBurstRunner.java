@@ -64,15 +64,18 @@ public class ClaudeBurstRunner {
 	private final JdbcTemplate analysis;
 	private final AnalyticsSettings settings;
 	private final BeautyTaxonomyLoader taxonomyLoader;
+	private final com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader;
 	private final Path workDir;
 	private final ObjectMapper om = new ObjectMapper();
 
 	public ClaudeBurstRunner(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
-			AnalyticsSettings settings, BeautyTaxonomyLoader taxonomyLoader, Path workDir) {
+			AnalyticsSettings settings, BeautyTaxonomyLoader taxonomyLoader,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader, Path workDir) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.settings = settings;
 		this.taxonomyLoader = taxonomyLoader;
+		this.traitLoader = traitLoader;
 		this.workDir = workDir;
 	}
 
@@ -185,7 +188,7 @@ public class ClaudeBurstRunner {
 					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation);
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
-					.put("system", GeminiAccountSynthesizer.instructions())
+					.put("system", GeminiAccountSynthesizer.instructions(traitLoader.get()))
 					.put("user", GeminiAccountSynthesizer.userText(account) + ACCOUNT_JSON_RULE)))
 					.append('\n');
 			var side = om.createObjectNode().put("handle", handle)
@@ -294,7 +297,7 @@ public class ClaudeBurstRunner {
 		AdSituation situation = situationName == null ? null : AdSituation.valueOf(situationName);
 		AccountAnalysisWriter.insert(analysis, om, handle, OffsetDateTime.now(), model, inputLastPostedAt,
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
-				copy, situation);
+				copy, situation, traitLoader.get().names());
 		return true;
 	}
 
