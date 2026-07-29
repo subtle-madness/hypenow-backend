@@ -52,7 +52,9 @@ public class V1InfluencerDiscoveryAssembler {
 				null, // email — 크롤러 미수집(V31), 데이터가 생기면 배선
 				blankIfNull(r.tagline()),
 				scale1(r.viewsPerFollower()), scale1(r.avgErPct()),
-				r.avgViews(), r.avgLikes(), r.avgComments(), r.sponsoredCount(),
+				r.avgViews(), r.avgLikes(), r.avgComments(),
+				r.avgHypeScore() == null ? null : r.avgHypeScore().intValue(),
+				r.sponsoredCount(),
 				brands.stream().map(BrandRow::name).toList(),
 				shares.stream().limit(3)
 						.map(s -> new InfluencerCard.CategoryShare(s.mainCategory(), s.pct()))

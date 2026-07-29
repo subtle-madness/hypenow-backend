@@ -23,7 +23,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 	private static CardRow row(String handle) {
 		return new CardRow(handle, "글로우", "/img/p/" + handle + ".jpg", 20000L, 214L, 380L,
 				"소개", "저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
-				413200L, 10370L, 152L, 3L);
+				413200L, 10370L, 152L, 72L, 3L);
 	}
 
 	@Test

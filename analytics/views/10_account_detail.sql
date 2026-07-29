@@ -14,13 +14,15 @@ JOIN analytics.v_base_profile p ON p.username = r.owner_username;
 -- 계정 1행 요약.
 -- 기준 지표(metric) 폴백: 조회수 있는 게시물이 max(3, n/2) 미만이면 좋아요 기준 (프론트 상수 — 키로 빼지 않음).
 -- 트렌드/광고 비교는 metric 값 > 0인 게시물만 (피드 views NULL은 자연 제외).
+-- avg_hype_score: 창 콘텐츠 hype_score(02_serving 함수, now() 신선도 — v_contents와 동일) 단순 평균.
+-- 점수 불가(hype NULL) 콘텐츠는 avg가 자연 제외, 전무하면 NULL (스펙 2026-07-29-influencer-avg-hype-score).
 CREATE OR REPLACE VIEW analytics.v_account_summaries AS
 WITH cfg AS (
   SELECT COALESCE((SELECT value::numeric FROM app_setting
                    WHERE key = 'analytics.trend-threshold'), 0.15) AS trend_threshold
 ),
 win AS (
-  SELECT owner_username, content_id, uploaded_at, likes, comments_count, views, ad_marked,
+  SELECT owner_username, content_id, uploaded_at, content_type, likes, comments_count, views, ad_marked,
          profile_followers AS followers,
          row_number() OVER (PARTITION BY owner_username ORDER BY uploaded_at ASC, content_id ASC) AS seq,
          count(*)     OVER (PARTITION BY owner_username)                                          AS n
@@ -35,6 +37,10 @@ base AS (
          round(avg((likes + comments_count)::numeric / NULLIF(followers, 0)) * 100, 1) AS avg_er_pct,
          round(avg(likes))::bigint                          AS avg_likes,
          round(avg(comments_count))::bigint                 AS avg_comments,
+         round(avg(analytics.hype_score(lower(content_type), views, likes, comments_count,
+                                        followers,
+                                        extract(epoch FROM (now() - uploaded_at)) / 86400.0)))::bigint
+                                                            AS avg_hype_score,
          min(uploaded_at)                                   AS first_posted_at,
          max(uploaded_at)                                   AS last_posted_at
   FROM win
@@ -109,7 +115,8 @@ SELECT
   CASE WHEN b.analyzed_count > 1
        THEN round((EXTRACT(EPOCH FROM (b.last_posted_at - b.first_posted_at)) / 86400.0
                    / (b.analyzed_count - 1))::numeric, 1)
-  END AS avg_interval_days
+  END AS avg_interval_days,
+  b.avg_hype_score
 FROM base b
 JOIN metric m USING (owner_username)
 JOIN trend  t USING (owner_username)

@@ -43,7 +43,7 @@ class V1InfluencerDiscoveryControllerTest {
 	private static CardRow row(String handle) {
 		return new CardRow(handle, "글로우", "/img/p/glow.jpg", 20000L, 214L, 380L,
 				"소개", "저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
-				413200L, 10370L, 152L, 3L);
+				413200L, 10370L, 152L, 72L, 3L);
 	}
 
 	@Test
@@ -59,6 +59,7 @@ class V1InfluencerDiscoveryControllerTest {
 				.andExpect(jsonPath("$.data[0].handle").value("glow"))
 				.andExpect(jsonPath("$.data[0].email").value((String) null)) // null 노출(부재 아님)
 				.andExpect(jsonPath("$.data[0].reachMultiplier").value(12.4))
+				.andExpect(jsonPath("$.data[0].hypeScore").value(72))
 				.andExpect(jsonPath("$.data[0].collaboratedBrands").isArray())
 				.andExpect(jsonPath("$.error").value((String) null))
 				.andExpect(jsonPath("$.meta.total").value(109))
@@ -68,7 +69,7 @@ class V1InfluencerDiscoveryControllerTest {
 
 	@Test
 	void 잘못된_enum은_400_VALIDATION_FAILED() throws Exception {
-		mockMvc.perform(get("/v1/influencers?sort=hype"))
+		mockMvc.perform(get("/v1/influencers?sort=zzz"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));

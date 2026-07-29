@@ -14,7 +14,7 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 		String midCategory, String subCategory, String follower, Integer activityDays,
 		String sponsored, boolean contactOpen, String sort, int limit, int offset) {
 
-	private static final Set<String> SORTS = Set.of("reach", "views", "followers");
+	private static final Set<String> SORTS = Set.of("reach", "views", "followers", "hype");
 	private static final Set<String> FOLLOWERS = Set.of("500-3k", "3k-10k", "10k-30k", "30k-50k");
 	private static final Set<String> SPONSORED = Set.of("none", "1-2", "3-5", "6plus");
 	private static final Set<String> MAIN_CATEGORIES =
