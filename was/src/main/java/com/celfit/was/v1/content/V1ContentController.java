@@ -17,9 +17,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 6.1 리더보드 — 인증 Optional(SecurityConfig permitAll). 공통 페이지는 Redis 캐시(pageService),
- * 로그인 시에만 카드에 isContentsSaved를 캐시 밖에서 오버레이하고, 비로그인이면 필드 자체가 없다
- * (스펙 2절 규약). principal은 익명이면 null(AppUserDetails 미일치).
+ * 6.1 리더보드 — 인증 필수(로그인 월, 비로그인은 401). 공통 페이지는 Redis 캐시(pageService),
+ * 로그인한 사용자마다 카드에 isContentsSaved를 캐시 밖에서 오버레이한다(스펙 2절 규약).
+ * principal은 스웨거·테스트 등에서 인증이 우회된 경로면 null일 수 있어 방어적으로 분기한다
+ * (AppUserDetails 미일치 시 null).
  */
 @RestController
 public class V1ContentController {

@@ -3,6 +3,8 @@ package com.celfit.was.config;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.cache.Cache;
 import org.springframework.cache.annotation.CachingConfigurer;
 import org.springframework.cache.annotation.EnableCaching;
@@ -31,12 +33,20 @@ public class CacheConfig implements CachingConfigurer {
 
 	private static final Logger log = LoggerFactory.getLogger(CacheConfig.class);
 
+	private final String cacheEpoch;
+
+	public CacheConfig(ObjectProvider<BuildProperties> buildProperties) {
+		BuildProperties bp = buildProperties.getIfAvailable();
+		// 빌드 시각 = 값 스키마 세대. 배포(새 빌드)마다 prefix가 바뀌어 콜드 스타트 — 스펙 §3 "재시작=콜드 캐시" 수용 범위.
+		this.cacheEpoch = bp == null ? "dev" : String.valueOf(bp.getTime().getEpochSecond());
+	}
+
 	@Bean
 	public RedisCacheManager cacheManager(RedisConnectionFactory factory) {
 		// 주의: 캐시 값의 OffsetDateTime은 왕복 시 offset이 UTC로 정규화된다(instant는 보존) —
 		// 캐시 DTO의 시간 필드는 instant 기반으로만 소비할 것.
 		RedisCacheConfiguration base = RedisCacheConfiguration.defaultCacheConfig()
-				.computePrefixWith(name -> "hypenow:cache:" + name + ":")
+				.computePrefixWith(name -> "hypenow:cache:" + cacheEpoch + ":" + name + ":")
 				.serializeValuesWith(RedisSerializationContext.SerializationPair
 						.fromSerializer(RedisSerializer.json()));
 		// TTL 근거: 미러 KST 04:30~07:00 → 최악 stale 6h면 오전 중 자연 갱신(스펙 §4)

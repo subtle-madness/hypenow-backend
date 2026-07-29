@@ -1,7 +1,11 @@
 package com.celfit.was.v1.content;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -20,7 +24,9 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -108,6 +114,47 @@ class V1ContentControllerTest {
 						.param("offset", "20"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.meta.offset").value(20));
+	}
+
+	// 프리페치 배선(I1) — 응답 반환 후 다음 페이지를 pageService에 선요청하는지, 그 쿼리가 offset만
+	// 전진했는지를 검증한다. query record가 캐시 키를 겸하므로 매핑 실수는 곧 캐시 공유 사고다(M6).
+	@Test
+	void 다음_페이지가_있으면_프리페치가_다음_쿼리로_page를_호출한다() throws Exception {
+		List<ContentCardRow> rows = IntStream.range(0, 50).mapToObj(i -> row("c" + i)).toList();
+		given(pageService.page(any())).willReturn(new ContentPage(rows, 200L));
+		given(pageService.distributorOptions()).willReturn(List.of());
+
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
+						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
+						.param("limit", "50").param("contentType", "feed"))
+				.andExpect(status().isOk());
+
+		ArgumentCaptor<Runnable> prefetchTask = ArgumentCaptor.forClass(Runnable.class);
+		verify(prefetcher).prefetch(prefetchTask.capture());
+		prefetchTask.getValue().run();
+
+		ArgumentCaptor<V1ContentQuery> query = ArgumentCaptor.forClass(V1ContentQuery.class);
+		verify(pageService, times(2)).page(query.capture());
+		// 1차 호출 — 요청 파라미터가 쿼리(=캐시 키)에 정확히 반영됐는지.
+		assertThat(query.getAllValues().get(0).limit()).isEqualTo(50);
+		assertThat(query.getAllValues().get(0).contentType()).isEqualTo("feed");
+		assertThat(query.getAllValues().get(0).offset()).isEqualTo(0);
+		// 2차 호출(프리페치) — offset만 limit만큼 전진.
+		assertThat(query.getAllValues().get(1).offset()).isEqualTo(50);
+		assertThat(query.getAllValues().get(1).limit()).isEqualTo(50);
+	}
+
+	@Test
+	void 마지막_페이지면_프리페치하지_않는다() throws Exception {
+		given(pageService.page(any())).willReturn(new ContentPage(List.of(row("c1")), 1L));
+		given(pageService.distributorOptions()).willReturn(List.of());
+
+		mockMvc.perform(get("/v1/contents").with(user(principal()))
+						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
+						.param("limit", "50"))
+				.andExpect(status().isOk());
+
+		verify(prefetcher, never()).prefetch(any());
 	}
 
 	@Test

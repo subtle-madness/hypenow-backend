@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * 6.1 목록의 공통 페이지 묶음(개인화 제외) — Redis 캐시 단위(스펙 §4). isSaved 오버레이는
- * 컨트롤러가 캐시 밖에서 얹는다 → 익명 간 캐시 완전 공유 + 저장 직후에도 항상 실시간 정확(스펙 §6).
+ * 컨트롤러가 캐시 밖에서 얹는다 → 사용자 간 캐시 공유(개인화는 캐시 밖) + 저장 직후에도 항상 실시간 정확(스펙 §6).
  */
 @Service
 public class V1ContentPageService {
