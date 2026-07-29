@@ -71,7 +71,7 @@ class V1InfluencerDiscoveryQueryTest {
 				.isInstanceOf(V1ApiException.class);
 		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, "closed", null, null, null))
 				.isInstanceOf(V1ApiException.class);
-		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, "hype", null, null))
+		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, "zzz", null, null))
 				.isInstanceOf(V1ApiException.class);
 		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, null, 101, null))
 				.isInstanceOf(V1ApiException.class);
@@ -79,5 +79,11 @@ class V1InfluencerDiscoveryQueryTest {
 				.isInstanceOf(V1ApiException.class);
 		assertThatThrownBy(() -> of(null, null, null, null, null, null, null, null, null, null, -1))
 				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void sort_hype는_허용된다() {
+		assertThat(of(null, null, null, null, null, null, null, null, "hype", null, null)
+				.sort()).isEqualTo("hype");
 	}
 }
