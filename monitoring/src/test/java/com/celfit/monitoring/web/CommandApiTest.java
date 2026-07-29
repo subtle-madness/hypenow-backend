@@ -58,6 +58,7 @@ class CommandApiTest {
 	@Autowired JdbcTemplate db;
 	@Autowired TargetRepository targets;
 	@Autowired CandidateRepository candidates;
+	@Autowired RegistrationApiTest.SwitchableHiker hiker;
 	MockMvc mvc;
 
 	/** 픽스처(media-by-code.json)의 숏코드 — 승인 후 적재되는 post_snapshot 행과 맞물린다. */
@@ -76,6 +77,7 @@ class CommandApiTest {
 		db.update("DELETE FROM profile_snapshot");
 		db.update("DELETE FROM post_snapshot");
 		db.update("DELETE FROM raw.fetch_payload");
+		hiker.notFound = false;
 	}
 
 	private long seedTarget(TargetStatus status, String trackedShortCode) {
@@ -154,6 +156,43 @@ class CommandApiTest {
 		assertThat(db.queryForObject("SELECT tracked_short_code FROM target WHERE id=?", String.class,
 				targetId)).isEqualTo("DoldTracked");
 		assertThat(candidateStatus(candidateId)).isEqualTo("PENDING");
+	}
+
+	/** 거절은 되돌릴 수 없다 — 같은 후보를 다시 승인하면 사용자가 닫은 판단이 조용히 뒤집힌다. */
+	@Test
+	void 이미_거절한_후보_재승인은_409_INVALID_STATE() throws Exception {
+		long targetId = seedTarget(TargetStatus.WATCHING, null);
+		long candidateId = seedCandidate(targetId, SHORT_CODE);
+		mvc.perform(post("/api/targets/{id}/candidates/{cid}/reject", targetId, candidateId))
+				.andExpect(status().isOk());
+
+		mvc.perform(post("/api/targets/{id}/candidates/{cid}/approve", targetId, candidateId))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("INVALID_STATE"));
+
+		assertThat(candidateStatus(candidateId)).isEqualTo("REJECTED");
+		assertThat(targetStatus(targetId)).isEqualTo("WATCHING");
+	}
+
+	/**
+	 * 승인 중 수집이 실패하면 전량 롤백 — 후보는 PENDING, 캠페인은 WATCHING으로 남아야
+	 * was가 같은 명령을 그대로 재시도할 수 있다. 부분 커밋되면 "TRACKING인데 지표가 없는" 캠페인이 굳는다.
+	 */
+	@Test
+	void 승인_중_수집_실패는_전량_롤백된다() throws Exception {
+		long targetId = seedTarget(TargetStatus.WATCHING, null);
+		long candidateId = seedCandidate(targetId, SHORT_CODE);
+		hiker.notFound = true;
+
+		mvc.perform(post("/api/targets/{id}/candidates/{cid}/approve", targetId, candidateId))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("SUBJECT_NOT_FOUND"));
+
+		assertThat(candidateStatus(candidateId)).isEqualTo("PENDING");
+		assertThat(targetStatus(targetId)).isEqualTo("WATCHING");
+		assertThat(db.queryForObject("SELECT tracked_short_code FROM target WHERE id=?", String.class,
+				targetId)).isNull();
+		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot", Long.class)).isZero();
 	}
 
 	@Test

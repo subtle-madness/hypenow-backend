@@ -108,6 +108,9 @@ WATCHING 캠페인의 PENDING 후보를 승인 → 그 게시물로 TRACKING 전
 
 후보만 REJECTED로 닫고 WATCHING 지속. `// 200 { "candidateId": 3, "status": "REJECTED" }`
 
+target이 활성(WATCHING/TRACKING)이 아니면 409 `INVALID_STATE` — 종결된 캠페인의 잔여 후보는
+거절 불가(이미 감시가 끝났으므로).
+
 ### 2-4. 기간 연장 — `PATCH /api/targets/{id}`
 
 ```json
