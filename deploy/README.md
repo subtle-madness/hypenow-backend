@@ -66,9 +66,9 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 
 **정본은 CD (07-20~)**: `main`에 푸시(=staging→main 머지 — 승격 흐름은 develop→staging→main,
 07-29 staging 브랜치 전환)하면 `.github/workflows/cd.yml`이
-was·analytics·crawler 이미지 빌드·push → 서버 compose pull → analytics·crawler 재기동(`--wait`) →
-**was 롤링(§5-1, 무중단)** → 나머지 정합 `up -d` → caddy reload → **분석 뷰 raw DB 적용**(멱등,
-§4-1의 수동 절차를 대체) → `/health` 확인까지 수행한다.
+was·analytics·crawler·monitoring 이미지 빌드·push → 서버 compose pull → caddy reload →
+analytics·crawler·monitoring 재기동(`--wait`) → **was 롤링(§5-1, 무중단)** → 나머지 정합 `up -d` →
+**분석 뷰 raw DB 적용**(멱등, §4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인까지 수행한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
   `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
 - 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
@@ -135,6 +135,8 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
   - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버 3일 롤링 +
     Drive `hypenow-backups/crawler/` **최신 3개** 롤링 — 덤프가 GB급(07-20 실측 ~1.5GB,
     DB 기준 하루 ~0.6GB씩 증가)이라 Drive 무료 15GB에 맞춰 개수 제한. 용량 증설 시 개수 상향.
+  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 7일 롤링 +
+    Drive `hypenow-backups/monitoring/` 30일 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
@@ -174,7 +176,7 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
   구독 확인은 릴레이가 자동 컨펌. PAYG 전환 시 OCI Functions로 릴레이 대체 검토):
   **API 외형 감시**(Health Checks `hypenow-api-health` — 외부 관측점 3곳에서 60초마다
   `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
-  **컨테이너 다운**(deploy-*-1 6종), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
+  **컨테이너 다운**(deploy-*-1 7종 — monitoring 포함, §13), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
 - 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
   (버킷은 스크립트가 5분 결에만 조회 — OCI가 StoredBytes를 자동 게시하지 않아 직접 게시):
   `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
@@ -213,7 +215,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   `dev-pg-data`도 구명 유지(의도적 예외 — 리네임 비용 대비 이득 없음, 볼륨은 데이터 유실 방지).
 - test 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
 - test analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
-- 배치는 **운영 인스턴스 동거** — test 4종(was·analytics·postgres·redis)의 정의는 별도 파일 **`deploy/compose.test.yaml`**에 있고
+- 배치는 **운영 인스턴스 동거** — test 5종(was·analytics·postgres·redis·monitoring)의 정의는 별도 파일 **`deploy/compose.test.yaml`**에 있고
   운영 `compose.yaml`에 겹쳐 쓴다(`-f compose.yaml -f compose.test.yaml --profile test`).
   파일을 나눈 이유: **test CD는 이 test 파일만 서버로 보낸다** — 운영 서비스 정의는 main 배포로만
   서버에 도달하므로, staging의 운영 정의 변경이 test 배포로 먼저 발효되거나 `depends_on` 연쇄로
@@ -224,7 +226,8 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   소속: test 컨테이너에서 운영 postgres·analytics·crawler로 가는 경로가 커널(iptables) 수준에서
   차단된다. 양쪽 소속은 의도된 접점 둘뿐 — `caddy`(도메인 분기)·`postgres-raw`(raw 읽기).
   compose에 서비스를 추가할 땐 **`networks:` 명시 필수**(커스텀 네트워크 체제라 기본 네트워크가
-  없다 — 누락 시 통신 고립).
+  없다 — 누락 시 통신 고립). 예외는 `test-monitoring-net`(compose.test.yaml 선언) —
+  test-was↔test-monitoring 전용 소네트워크로 test 안에서만 닫혀 있어 격리를 깨지 않는다.
 - raw는 운영 `postgres-raw` **공유** — test 계정 `analytics_dev`는 crawler 테이블(public) 읽기 전용,
   뷰·캐시는 자기 소유 `analytics_dev` 스키마에 치환 설치(`rewrite-views-dev-schema.sh`).
   운영 `analytics` 스키마엔 USAGE도 없다 — 치환 누락은 권한 오류로 즉사(fail-closed).
@@ -241,7 +244,9 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 1. **DNS A 레코드**: `dev-api.hypenow.io` → 서버 공인 IP (운영과 동일 IP, TTL 300)
 2. **서버 `~/deploy/.env`에 추가** (값 생성: `openssl rand -base64 24`):
    `DEV_DB_USER=devapp` · `DEV_DB_PASSWORD=<생성>` · `DEV_RAW_DB_PASSWORD=<생성>` ·
-   `DEV_CODES_API_KEY=<생성>` (미설정 시 가입 코드 적재 API는 503 fail-closed)
+   `DEV_CODES_API_KEY=<생성>` (미설정 시 가입 코드 적재 API는 503 fail-closed) ·
+   `DEV_MONITORING_DB_PASSWORD=<생성>` (6번에서 만들 test monitoring 계정 비밀번호와 일치시킬 것 —
+   변수명은 `DEV_*` 구명 유지)
 3. **`~/deploy/caddy.d` 디렉토리를 ubuntu 소유로 먼저 만든다 — main 배포보다 앞서야 한다**:
    ```bash
    ssh ubuntu@<IP> 'mkdir -p ~/deploy/caddy.d && ls -ld ~/deploy/caddy.d'   # 소유자 ubuntu 확인
@@ -254,7 +259,20 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    (무해 — 4번 완료 후 워크플로 재실행하면 된다).
 5. **staging에 머지**(또는 `CD test` 재실행) → `CI` 성공 → `CD test` 전 스텝 성공 확인
    (계정 준비·뷰 치환 적용·잔존 참조 검사·pull/재기동·caddy reload·`/health`)
-6. **test 가입 코드 시드** — 둘 중 하나:
+6. **test monitoring DB·계정 생성** (test-postgres가 뜬 5번 이후 1회 — 운영 §13의 test 판):
+   ```bash
+   # 서버에서 (-c를 나눠 쓴다 — 한 -c에 여러 문장을 넣으면 암묵 트랜잭션이라 CREATE DATABASE가 거부된다)
+   docker exec -it deploy-test-postgres-1 psql -U <DEV_DB_USER> -d analysis \
+     -c "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'" \
+     -c "CREATE ROLE was_reader LOGIN PASSWORD '<실값>'" \
+     -c "CREATE DATABASE monitoring OWNER monitoring"
+   # 확인 — 이 DB가 생기기 전까지는 Restarting/Exited가 보인다
+   cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test ps -a test-monitoring
+   ```
+   비밀번호는 2번의 `DEV_MONITORING_DB_PASSWORD`와 같은 값(env 변수명은 `DEV_*` 구명 유지).
+   **이 DB가 생기기 전까지 `deploy-test-monitoring-1`은 접속 실패로 재기동을 반복**한다
+   (무해 — 생성 후 스스로 붙는다). 운영과 다른 postgres 클러스터라 계정 이름이 겹쳐도 무관하다.
+7. **test 가입 코드 시드** — 둘 중 하나:
    ```bash
    # (a) API — 토큰은 .env의 DEV_CODES_API_KEY
    curl -fsS -X POST https://dev-api.hypenow.io/admin/signup-codes \
@@ -264,7 +282,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    deploy/scripts/generate-signup-codes.sh DEV 10 | \
      ssh ubuntu@<IP> 'docker exec -i deploy-test-postgres-1 psql -U <DEV_DB_USER> -d analysis'
    ```
-7. **검증**: `https://dev-api.hypenow.io`에서 가입·로그인 → `/v1/contents` 응답 확인.
+8. **검증**: `https://dev-api.hypenow.io`에서 가입·로그인 → `/v1/contents` 응답 확인.
    이메일 인증 코드는 Resend 미설정(로깅 폴백)이라
    `ssh ubuntu@<IP> 'docker logs deploy-test-was-1 | grep 인증'`에서 확인.
 
@@ -277,6 +295,9 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - test 스케줄은 전부 off(`ANALYTICS_SCHEDULE_ENABLED: "false"`) — 미러·분석·LLM 잡은 어드민 수동
   트리거만. LLM은 운영 자격증명 공유라 소량으로(쿼터·비용 공유 인지). 이미지 아카이브는
   `ANALYTICS_IMAGE_PAR_URL: ""`이라 실행 시 fail-fast(운영 버킷 오염 방지).
+  test-monitoring도 같은 원칙 — 스윕 크론을 아예 안 넣어 기본값 `"-"`(off)이고, 등록 시 동기 수집만
+  돈다. Hiker 키는 운영 공유라 등록 테스트는 소량으로. test-was는 `http://test-monitoring:8083`으로
+  호출한다(전용 네트워크 `test-monitoring-net` — 운영 `monitoring`은 test에서 해석 자체가 안 된다).
 - 뷰만 다시 적용(맥에서 — cd-test와 같은 절차):
   ```bash
   cat analytics/views/*.sql | deploy/scripts/rewrite-views-dev-schema.sh | \
@@ -285,10 +306,11 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 스냅샷 캐시 refresh(필요 시):
   `ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -c "SELECT analytics_dev.refresh_snapshot_cache();"'`
 - test 스택 정지:
-  `cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test stop test-was test-analytics test-postgres test-redis`
+  `cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test stop test-monitoring test-was test-analytics test-postgres test-redis`
   (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 같은 `-f`·프로파일 인자에 `up -d`.
 - 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-test-was-1` ·
-  `deploy-test-analytics-1` · `deploy-test-postgres-1` · `deploy-test-redis-1`. 모니터링 `SERVICES` 목록(§9)에는 test를 넣지
+  `deploy-test-analytics-1` · `deploy-test-postgres-1` · `deploy-test-redis-1` ·
+  `deploy-test-monitoring-1`. 모니터링 `SERVICES` 목록(§9)에는 test를 넣지
   않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.
 
 ### 주의 (함정 3건)
@@ -300,7 +322,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   경로(`docker compose up -d`, deploy.sh — compose.yaml 단독)는 매번
   `Found orphan containers (deploy-test-was-1 …)` 경고를 낸다 — test 서비스가 `compose.test.yaml`에
   있어 운영 파일 단독 실행엔 "고아"로 보일 뿐이다. 경고문이 권하는 `--remove-orphans`를 붙이면
-  **test 컨테이너 3종이 제거된다.** 절대 붙이지 말 것. (cd-test의 up에 붙은 `--remove-orphans`는
+  **test 컨테이너 전량(현재 5종)이 제거된다.** 절대 붙이지 말 것. (cd-test의 up에 붙은 `--remove-orphans`는
   다른 얘기 — 전체 파일 세트 기준이라 고아 = 정의가 사라진 컨테이너뿐이며, 07-29 전환 때 구
   `deploy-dev-*` 3종을 이걸로 정리했다.)
 - **운영 배포가 cancelled로 끝났으면 재실행.** 운영 CD와 test CD는 같은 concurrency 그룹
@@ -308,3 +330,53 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   운영 배포가 대기하다가 새 test 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
   있다. staging→main 머지 후엔 Actions에서 CD 런이 success로 끝났는지 확인하고, cancelled면
   Re-run으로 재실행한다(07-20 "배포가 조용히 안 나감" 계열 방지).
+
+## 13. monitoring 모듈 개통 (1회 ops — 첫 CD 배포 전에)
+
+시딩 캠페인 모니터링 컨테이너(사설 `monitoring` DB, 호스트 포트 미노출). **아래 1·2번을
+먼저 끝내지 않으면 CD가 실패한다** — compose 동기화 스텝이 `.env`에 없는 `${VAR}` 참조를
+발견하면 배포를 중단시킨다(§5).
+
+1. 서버 postgres 컨테이너에 DB·계정 생성 (`db/init/02-create-monitoring-db.sql`과 동일, 비밀번호는 실값):
+   ```bash
+   # -c를 나눠 쓴다 — 한 -c에 여러 문장을 넣으면 암묵 트랜잭션이라 CREATE DATABASE가 거부된다
+   docker exec -it deploy-postgres-1 psql -U <DB_USER> -d postgres \
+     -c "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'" \
+     -c "CREATE ROLE was_reader LOGIN PASSWORD '<실값>'" \
+     -c "CREATE DATABASE monitoring OWNER monitoring"
+   ```
+   (`was_reader`에는 접속 권한만 — 객체 GRANT는 monitoring Flyway가 소유자로서 부여한다)
+2. `~/deploy/.env`에 추가: `MONITORING_DB_USER`, `MONITORING_DB_PASSWORD`
+   — `.env.example`에 항목이 있다. 1번의 실값과 일치시킬 것.
+   **⚠ 머지 전 필수 확인 — `HIKER_API_KEY` 실값이 서버 `~/deploy/.env`에 있어야 한다.**
+   compose는 기본값 없는 `${HIKER_API_KEY}`를 참조하므로(fail loud), 값이 없으면 env 게이트가
+   monitoring뿐 아니라 **기존 3종(was·crawler·analytics) 배포까지 통째로 차단**한다.
+   ```bash
+   ssh ubuntu@<IP> 'grep -c "^HIKER_API_KEY=." ~/deploy/.env'   # 1이어야 함
+   ```
+3. staging→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
+   (CD의 "monitoring 헬스 확인" 스텝이 같은 판정을 자동 수행 — 호스트 포트가 없어 외부 curl은 불가)
+4. 서버 스크립트 갱신 — 레포에는 반영돼 있지만 **CD는 스크립트를 배포하지 않는다**(compose·이미지만).
+   두 파일 모두 rsync로 직접 올릴 것:
+   - `post-container-metrics.py` — 컨테이너 다운 알람 대상 `SERVICES`에 monitoring 추가(§9)
+   - `backup.sh` — monitoring DB 덤프 추가(§6). 안 올리면 백업 크론이 옛 스크립트를 계속 돌려
+     monitoring만 백업에서 조용히 빠진다.
+   ```bash
+   rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
+   ```
+
+### 접근 통제·디버깅
+
+- 명령 API는 토큰이 없다 — 전용 네트워크 `monitoring-net`에 **was와 monitoring만** 소속시켜
+  통제한다. 이 네트워크 밖 컨테이너(test 스택 포함)는 `monitoring` 호스트명 해석부터 실패한다.
+- 호스트 포트를 열지 않는다(어드민 UI 없음 + 호스트 8083은 dev-analytics 터널이 점유).
+  수동 호출은 같은 네트워크에 임시 컨테이너를 붙여서:
+  ```bash
+  docker run --rm --network deploy_monitoring-net curlimages/curl -s http://monitoring:8083/…
+  ```
+  (was·monitoring 이미지엔 curl이 없어 `docker exec deploy-was-1 curl`은 안 된다)
+- 일일 스윕은 컨테이너 env `MONITORING_SCHEDULE_SWEEP_CRON`(UTC 17:00 = KST 02:00).
+  임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
+  다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
+- 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
+  서버 `~/backups/monitoring-*.sql.gz` 7일 + Drive `hypenow-backups/monitoring/` 30일 롤링(§6).

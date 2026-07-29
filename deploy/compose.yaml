@@ -11,9 +11,14 @@ x-logging: &logging
 # 사라지므로 모든 서비스에 networks: 명시 필수(누락 = 통신 고립). 의도된 공유 접점 둘만
 # 양쪽 소속: caddy(운영·test 도메인 라우팅), postgres-raw(test-analytics의 raw 읽기 —
 # analytics_dev 읽기 전용 계정). test 서비스 정의는 compose.test.yaml 참조.
+#
+# monitoring-net은 prod 안의 한 겹 더 좁은 통제 — 명령 API 접근을 was↔monitoring으로
+# 한정한다(스펙 결정 11). 토큰 없음: 이 네트워크 미소속 컨테이너(test 스택 포함)는
+# monitoring 호스트명 해석부터 실패한다. test 대응물은 compose.test.yaml의 test-monitoring-net.
 networks:
   prod:
   test:
+  monitoring-net:
 
 services:
   postgres:
@@ -159,7 +164,9 @@ services:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
     logging: *logging
-    networks: [prod]
+    # prod는 postgres·redis·analytics 접속용, monitoring-net은 monitoring 명령 API 전용
+    # (was가 그 유일한 클라이언트 — 상단 networks 주석).
+    networks: [prod, monitoring-net]
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DB_URL: jdbc:postgresql://postgres:5432/analysis
@@ -192,6 +199,37 @@ services:
       analytics:
         condition: service_healthy
 
+  # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 스윕 KST 02:00(UTC 17:00).
+  # 호스트 포트 미노출 — 어드민 UI가 없고 유일한 클라이언트 was는 monitoring-net으로 붙는다
+  # (호스트 8083은 test-analytics 터널이 이미 점유 중이라 충돌 회피이기도 함).
+  # 수동 디버깅은 같은 네트워크에 임시 컨테이너를 붙여서 —
+  #   docker run --rm --network deploy_monitoring-net curlimages/curl -s http://monitoring:8083/…
+  #   (was·monitoring 이미지엔 curl이 없다 — analytics 헬스체크 주석과 같은 이유)
+  monitoring:
+    image: ghcr.io/subtle-madness/hypenow-monitoring:latest
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod, monitoring-net]   # prod는 postgres 접속용
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
+      SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
+      HIKER_API_KEY: ${HIKER_API_KEY}
+      # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
+      MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
+      JAVA_OPTS: "-Xms128m -Xmx384m"
+    # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
+    # 이미지에 curl이 없어 bash /dev/tcp로 확인(analytics와 동일 관용구).
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8083' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # OCI ONS 알람 → 디스코드 웹훅 릴레이 — ONS가 SLACK 엔드포인트를 hooks.slack.com만
   # 허용해 디스코드 직결 불가(2026-07 실측). caddy가 /internal/ons-relay/*를 이쪽으로 라우팅.
   ons-relay:
@@ -221,6 +259,8 @@ services:
       - ./caddy.d:/etc/caddy/caddy.d:ro
       - caddy-data:/data
       - caddy-config:/config
+      # 액세스 로그(2026-07-29) — 호스트에서 바로 grep/jq 가능하게 바인드(로테이션은 Caddy roll이 담당)
+      - ./logs/caddy:/var/log/caddy
 
 volumes:
   pg-data:
