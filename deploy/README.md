@@ -278,12 +278,24 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
      -c "CREATE DATABASE monitoring OWNER monitoring"
    ```
    (`was_reader`에는 접속 권한만 — 객체 GRANT는 monitoring Flyway가 소유자로서 부여한다)
-2. `~/deploy/.env`에 추가: `MONITORING_DB_USER`, `MONITORING_DB_PASSWORD`, (기존 확인) `HIKER_API_KEY`
+2. `~/deploy/.env`에 추가: `MONITORING_DB_USER`, `MONITORING_DB_PASSWORD`
    — `.env.example`에 항목이 있다. 1번의 실값과 일치시킬 것.
+   **⚠ 머지 전 필수 확인 — `HIKER_API_KEY` 실값이 서버 `~/deploy/.env`에 있어야 한다.**
+   compose는 기본값 없는 `${HIKER_API_KEY}`를 참조하므로(fail loud), 값이 없으면 env 게이트가
+   monitoring뿐 아니라 **기존 3종(was·crawler·analytics) 배포까지 통째로 차단**한다.
+   ```bash
+   ssh ubuntu@<IP> 'grep -c "^HIKER_API_KEY=." ~/deploy/.env'   # 1이어야 함
+   ```
 3. develop→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
    (CD의 "monitoring 헬스 확인" 스텝이 같은 판정을 자동 수행 — 호스트 포트가 없어 외부 curl은 불가)
-4. 컨테이너 다운 알람 대상에 monitoring 추가 — `post-container-metrics.py`의 `SERVICES` 목록(§9).
-   레포에는 반영돼 있으니 서버 스크립트를 rsync로 갱신할 것.
+4. 서버 스크립트 갱신 — 레포에는 반영돼 있지만 **CD는 스크립트를 배포하지 않는다**(compose·이미지만).
+   두 파일 모두 rsync로 직접 올릴 것:
+   - `post-container-metrics.py` — 컨테이너 다운 알람 대상 `SERVICES`에 monitoring 추가(§9)
+   - `backup.sh` — monitoring DB 덤프 추가(§6). 안 올리면 백업 크론이 옛 스크립트를 계속 돌려
+     monitoring만 백업에서 조용히 빠진다.
+   ```bash
+   rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
+   ```
 
 ### 접근 통제·디버깅
 

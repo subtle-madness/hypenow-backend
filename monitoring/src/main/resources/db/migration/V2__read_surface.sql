@@ -10,8 +10,11 @@ SELECT t.id AS target_id, t.type, t.username, t.short_code, t.keyword_rule, t.st
        -- 추적 게시물의 최신 지표 — 미추적(WATCHING) 캠페인은 전부 null.
        xs.captured_on AS post_captured_on, xs.content_type,
        xs.likes, xs.comments, xs.views, xs.saves, xs.shares, xs.reposts,
+       -- 활성 캠페인만 집계 — 종결(EXPIRED/CANCELED/FAILED) 후엔 승인·거절이 모두 409라
+       -- 잔여 PENDING을 세면 FE가 해소 불가능한 "승인 대기 N건"을 영원히 보게 된다.
        (SELECT count(*) FROM detected_candidate c
-         WHERE c.target_id = t.id AND c.status = 'PENDING') AS pending_candidates
+         WHERE c.target_id = t.id AND c.status = 'PENDING'
+           AND t.status IN ('WATCHING', 'TRACKING')) AS pending_candidates
 FROM target t
 LEFT JOIN LATERAL (
     -- 컬럼은 명시 — SELECT *면 스냅샷 테이블에 컬럼이 늘 때 뷰 계약이 조용히 바뀐다.

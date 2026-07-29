@@ -79,6 +79,20 @@ class ReadSurfaceTest {
 	}
 
 	@Test
+	void 종결된_캠페인은_잔여_PENDING_후보를_세지_않는다() {
+		// 종결 후엔 승인·거절이 모두 409 — 세면 FE가 해소 못 하는 "승인 대기"가 영원히 남는다.
+		String count = "SELECT pending_candidates FROM v_target_overview WHERE registration_key = 'key-watching'";
+		assertThat(db.queryForObject(count, Long.class)).isEqualTo(1);
+
+		db.update("UPDATE target SET status = 'CANCELED', closed_at = now() WHERE registration_key = 'key-watching'");
+
+		assertThat(db.queryForObject(count, Long.class)).isEqualTo(0);
+		// 후보 행 자체는 이력으로 남는다 — 뷰에서만 빠진다.
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM detected_candidate WHERE status = 'PENDING'", Long.class)).isEqualTo(1);
+	}
+
+	@Test
 	void 개요_뷰는_추적_게시물의_최신_지표를_같이_준다() {
 		// 캠페인 목록 화면은 이 뷰 하나로 서빙된다 — 추적 중이면 최신 하루치 지표가 붙는다.
 		var tracking = db.queryForMap("SELECT * FROM v_target_overview WHERE registration_key = 'key-tracking'");

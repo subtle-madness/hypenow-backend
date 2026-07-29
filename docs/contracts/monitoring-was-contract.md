@@ -190,7 +190,7 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 | target (14) | `target_id`(= target.id), `type`, `username`, `short_code`, `keyword_rule`, `status`, `tracked_short_code`, `tracked_since`, `registration_key`, `expires_at`, `registered_at`, `closed_at`, `last_fetched_at`, `fail_reason` |
 | 최신 프로필 스냅샷 (3) | `profile_captured_on`, `followers`, `media_count` |
 | 최신 게시물 스냅샷 (8) | `post_captured_on`, `content_type`, `likes`, `comments`, `views`, `saves`, `shares`, `reposts` |
-| 후보 (1) | `pending_candidates` — PENDING 후보 수 |
+| 후보 (1) | `pending_candidates` — PENDING 후보 수 (활성 캠페인만) |
 
 - 스냅샷 구획은 **각각 최신 1행**(captured_on DESC LIMIT 1)이고, 프로필과 게시물의
   `captured_on`은 서로 다를 수 있어 별도 컬럼(`profile_captured_on` / `post_captured_on`)이다.
@@ -198,6 +198,10 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
   아직 프로필 수집 전이면 프로필 구획 3컬럼도 null (LEFT JOIN — target 행 자체는 항상 나온다).
 - `followers`/`media_count`만 노출한다(스냅샷의 `following`은 뷰에 없음 — 필요하면
   `profile_snapshot`을 직접 조회).
+- **`pending_candidates`는 활성(`WATCHING`·`TRACKING`) 캠페인만 집계한다** — 종결
+  (`EXPIRED`·`CANCELED`·`FAILED`) 후 남은 PENDING 행은 `detected_candidate`에 이력으로
+  남지만 이 컬럼에는 세지 않고 항상 0이다. 종결 캠페인에는 승인·거절이 모두 409라,
+  세면 FE가 해소할 수 없는 "승인 대기 N건"을 영원히 보게 된다.
 
 #### `v_target_timeseries` — 추적 게시물 일별 추이 (target_id × captured_on)
 
@@ -223,9 +227,11 @@ was가 `captured_on` 간격을 같이 읽어 나눠 쓸 것.
 
 ```sql
 -- 이메일 알람 크론 (09:00): 워터마크 이후 신규 감지 후보
+-- target 상태 조건 필수 — 종결 캠페인의 잔여 PENDING은 승인·거절이 모두 409라 알람이 나가면 안 된다.
 SELECT c.id, c.target_id, c.short_code, c.caption_excerpt, c.detected_at, t.username
 FROM detected_candidate c JOIN target t ON t.id = c.target_id
 WHERE c.status = 'PENDING' AND c.detected_at > :last_notified_at
+  AND t.status IN ('WATCHING', 'TRACKING')
 ORDER BY c.detected_at;
 
 -- 캠페인 상세: 추적 게시물 추이

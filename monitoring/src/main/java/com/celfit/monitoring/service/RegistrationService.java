@@ -80,8 +80,11 @@ public class RegistrationService {
 	 */
 	private Result registerPost(RegisterCommand cmd) {
 		PostInfo post = collect.collectPost(cmd.shortCode());
-		long id = targets.insert(TargetType.POST, post.username(), cmd.shortCode(), null,
-				TargetStatus.TRACKING, cmd.shortCode(), cmd.registrationKey(), cmd.expiresAt());
+		// short_code는 Hiker 응답을 정본으로 쓴다 — 스냅샷도 응답값으로 적재되므로, 요청값을 그대로
+		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
+		String shortCode = post.shortCode() != null ? post.shortCode() : cmd.shortCode();
+		long id = targets.insert(TargetType.POST, post.username(), shortCode, null,
+				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
