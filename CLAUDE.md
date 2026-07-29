@@ -49,7 +49,8 @@
 - **스키마 변경은 expand-contract** (07-29 was 롤링 배포 도입~): 롤링 중 신구 코드가 같은 DB를
   공존해서 본다 — `DROP`·`RENAME`·타입 변경·`SET NOT NULL`은 참조 코드가 끊긴 **다음 릴리스**에서만.
   CI `migration-guard`가 차단하며, 의도된 contract 단계는 `-- allow-destructive: <사유>` 주석으로
-  통과([deploy/README.md §5-1](deploy/README.md)).
+  통과. **DROP COLUMN 파일은 그 컬럼을 참조하는 보정 UPDATE 동봉 필수**(가드 v2 짝 검사 —
+  롤링 창 유실분 최종 백필. 불필요하면 `-- no-backfill: <사유>`)([deploy/README.md §5-1](deploy/README.md)).
 
 ## 함정
 
