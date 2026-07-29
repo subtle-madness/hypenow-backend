@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.RedisSerializer;
@@ -52,7 +53,11 @@ public class CacheConfig implements CachingConfigurer {
 				.serializeValuesWith(RedisSerializationContext.SerializationPair
 						.fromSerializer(RedisSerializer.json()));
 		// TTL 근거: 미러 KST 04:30~07:00 → 최악 stale 6h면 오전 중 자연 갱신(스펙 §4)
-		return RedisCacheManager.builder(factory)
+		// SDR 4.1 기본은 비동기 쓰기(put/evict 실패가 로그 없이 소실 — errorHandler 도달 불가).
+		// immediateWrites로 동기화해 fail-open 로그 계약(§7)을 지킨다. 4경로 전부 sync=true라
+		// 실측 지연 변화 없음(2026-07-29 리뷰).
+		return RedisCacheManager.builder(RedisCacheWriter.create(factory,
+						RedisCacheWriter.RedisCacheWriterConfigurer::immediateWrites))
 				.cacheDefaults(base.entryTtl(Duration.ofHours(1)))
 				.withCacheConfiguration(CONTENT_RANKING, base.entryTtl(Duration.ofHours(1)))
 				.withCacheConfiguration(INFLUENCER_DISCOVERY, base.entryTtl(Duration.ofHours(1)))

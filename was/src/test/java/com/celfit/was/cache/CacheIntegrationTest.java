@@ -48,6 +48,7 @@ import com.celfit.was.v1.influencer.V1InfluencerReportService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.stream.Stream;
@@ -69,6 +70,8 @@ import org.testcontainers.containers.GenericContainer;
  * (하드코딩 금지 — epoch는 테스트 실행마다 build-info.properties 값에 좌우된다).
  */
 class CacheIntegrationTest extends IntegrationTest {
+
+	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
 	static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine")
 			.withExposedPorts(6379);
@@ -99,14 +102,17 @@ class CacheIntegrationTest extends IntegrationTest {
 	V1InfluencerReportService influencerReportService;
 
 	@BeforeEach
-	void setUp() {
+	void setUp() throws Exception {
 		ContentCacheSeed.reset(jdbcTemplate);
-		cacheManager.getCacheNames()
-				.forEach(name -> cacheManager.getCache(name).clear());
+		// cacheManager.getCache(name).clear()는 (immediateWrites 적용 전) 비동기 evict라 다음 테스트로
+		// 값이 새는 사례가 실측됐다 — flushall은 동기 명령이라 확실하고, resolve된 캐시 이름 목록에
+		// 의존하지 않아 런타임에 새로 생성되는 캐시도 같이 비운다.
+		REDIS.execInContainer("redis-cli", "flushall");
 	}
 
 	private static V1ContentQuery q(int limit, int offset) {
-		return V1ContentQuery.of(LocalDate.now().minusDays(7), LocalDate.now(),
+		LocalDate today = LocalDate.now(KST);
+		return V1ContentQuery.of(today.minusDays(7), today,
 				null, null, null, null, null, null, null, null, null, limit, offset);
 	}
 
@@ -124,6 +130,9 @@ class CacheIntegrationTest extends IntegrationTest {
 		assertThat(second.rows().get(0).caption()).isEqualTo("수분크림 리뷰"); // 캐시 히트 증거(TTL 내 stale 허용)
 		// 미스 응답(first)과 히트 응답(second)이 record 단위로 완전 동일 — JSON 왕복(BigDecimal scale·
 		// 중첩 record 포함)이 원본과 다른 값을 만들지 않는다는 것을 한 단언으로 고정(리뷰 체크리스트 A).
+		// postedAt·metricCapturedAt은 Postgres JDBC 드라이버가 애초에 UTC offset으로 돌려주므로
+		// (OffsetDateTime 오프셋 정규화 테스트가 잡는 +09:00 케이스와 무관) 이 단언은 offset 정규화가
+		// 아니라 순수 JSON 왕복 무손실만 검증한다.
 		assertThat(second).isEqualTo(first);
 	}
 
@@ -150,9 +159,13 @@ class CacheIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 응답_후_다음_페이지가_프리페치된다() throws Exception {
-		controller.contents(null, LocalDate.now().minusDays(7), LocalDate.now(),
+		// 컨트롤러 호출과 next() 캐시 키 조립이 같은 "오늘"을 봐야 한다 — 각각 LocalDate.now()를
+		// 따로 부르면 자정 경계에서 날짜가 어긋나 두 캐시 키가 서로 달라질 수 있다.
+		LocalDate today = LocalDate.now(KST);
+		controller.contents(null, today.minusDays(7), today,
 				null, null, null, null, null, null, null, null, null, 1, 0);
-		V1ContentQuery next = q(1, 0).next();
+		V1ContentQuery next = V1ContentQuery.of(today.minusDays(7), today,
+				null, null, null, null, null, null, null, null, null, 1, 0).next();
 		Cache cache = cacheManager.getCache(CacheConfig.CONTENT_RANKING);
 		awaitCached(cache, next.cacheKey());
 		var cached = (ContentPage) cache.get(next.cacheKey()).get();
@@ -160,7 +173,7 @@ class CacheIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void OffsetDateTime은_왕복시_인스턴트는_보존되고_오프셋은_UTC로_정규화된다() throws InterruptedException {
+	void OffsetDateTime은_왕복시_인스턴트는_보존되고_오프셋은_UTC로_정규화된다() {
 		OffsetDateTime kstTime = OffsetDateTime.now(ZoneOffset.ofHours(9)).withNano(0);
 		ContentCardRow row = new ContentCardRow("c1", null, "caption", kstTime, "reels", null, null,
 				100L, 10L, 1L, 50L, kstTime, null, null, null, null, null, null, "glow", "글로우",
@@ -169,7 +182,7 @@ class CacheIntegrationTest extends IntegrationTest {
 
 		Cache cache = cacheManager.getCache(CacheConfig.CONTENT_RANKING);
 		cache.put("offset-normalize-test", page);
-		ContentPage back = (ContentPage) awaitCacheValue(cache, "offset-normalize-test");
+		ContentPage back = (ContentPage) cache.get("offset-normalize-test").get();
 
 		OffsetDateTime roundTripped = back.rows().get(0).postedAt();
 		// CacheConfig 주석의 계약: 같은 순간이지만(instant 비교 true) 문자 그대로는 다르다(offset이
@@ -186,7 +199,7 @@ class CacheIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void 발굴_카드_중첩_레코드가_JSON_왕복된다() throws InterruptedException {
+	void 발굴_카드_중첩_레코드가_JSON_왕복된다() {
 		InfluencerCard card = new V1InfluencerDiscoveryAssembler().toCards(
 				// CardRow(handle, displayName, profileImageUrl, followers, postsCount, followsCount,
 				// biography, tagline, viewsPerFollower, avgErPct, avgViews, avgLikes, avgComments,
@@ -212,13 +225,13 @@ class CacheIntegrationTest extends IntegrationTest {
 
 		Cache cache = cacheManager.getCache(CacheConfig.INFLUENCER_DISCOVERY);
 		cache.put("roundtrip", page);
-		DiscoveryPage back = (DiscoveryPage) awaitCacheValue(cache, "roundtrip");
+		DiscoveryPage back = (DiscoveryPage) cache.get("roundtrip").get();
 
 		assertThat(back).isEqualTo(page);
 	}
 
 	@Test
-	void 콘텐츠_AI_리포트_전체_필드가_JSON_왕복된다() throws InterruptedException {
+	void 콘텐츠_AI_리포트_전체_필드가_JSON_왕복된다() {
 		ContentAiReport report = new ContentAiReport(
 				new Scope("recent12", 12),
 				"요약 문구",
@@ -246,13 +259,13 @@ class CacheIntegrationTest extends IntegrationTest {
 
 		Cache cache = cacheManager.getCache(CacheConfig.CONTENT_REPORT);
 		cache.put("content-report-full", report);
-		ContentAiReport back = (ContentAiReport) awaitCacheValue(cache, "content-report-full");
+		ContentAiReport back = (ContentAiReport) cache.get("content-report-full").get();
 
 		assertThat(back).isEqualTo(report);
 	}
 
 	@Test
-	void 콘텐츠_AI_리포트_카테고리_맥락_null도_JSON_왕복된다() throws InterruptedException {
+	void 콘텐츠_AI_리포트_카테고리_맥락_null도_JSON_왕복된다() {
 		ContentAiReport report = new ContentAiReport(
 				new Scope("recent12", 3),
 				"요약 문구",
@@ -268,19 +281,19 @@ class CacheIntegrationTest extends IntegrationTest {
 
 		Cache cache = cacheManager.getCache(CacheConfig.CONTENT_REPORT);
 		cache.put("content-report-no-category", report);
-		ContentAiReport back = (ContentAiReport) awaitCacheValue(cache, "content-report-no-category");
+		ContentAiReport back = (ContentAiReport) cache.get("content-report-no-category").get();
 
 		assertThat(back).isEqualTo(report);
 		assertThat(back.categoryContext()).isNull();
 	}
 
 	@Test
-	void 인플루언서_AI_리포트_카피_없음_케이스가_JSON_왕복된다() throws InterruptedException {
+	void 인플루언서_AI_리포트_카피_없음_케이스가_JSON_왕복된다() {
 		InfluencerAiReport report = influencerAiReportNoCopy();
 
 		Cache cache = cacheManager.getCache(CacheConfig.INFLUENCER_REPORT);
 		cache.put("influencer-report-no-copy", report);
-		InfluencerAiReport back = (InfluencerAiReport) awaitCacheValue(cache, "influencer-report-no-copy");
+		InfluencerAiReport back = (InfluencerAiReport) cache.get("influencer-report-no-copy").get();
 
 		assertThat(back).isEqualTo(report);
 	}
@@ -292,6 +305,21 @@ class CacheIntegrationTest extends IntegrationTest {
 
 		Cache cache = cacheManager.getCache(CacheConfig.INFLUENCER_REPORT);
 		assertThat(cache.get("no-such-influencer")).isNull();
+	}
+
+	@Test
+	void 인플루언서_리포트는_서비스_경유_두번째_호출도_캐시_히트다() {
+		// @Cacheable 배선 자체를 실증한다 — 지금까지의 리포트 라운드트립 테스트는 cacheManager에 직접
+		// put/get한 것이라 @Cacheable을 지워도 초록으로 남는다(리뷰 지적). account_summaries 시드
+		// 행(handle='glow')을 거쳐 실제 서비스 캐시 히트를 확인한다.
+		InfluencerAiReport first = influencerReportService.report("glow");
+		assertThat(first.stats().avgViews()).isEqualTo(50000L);
+
+		jdbcTemplate.update("UPDATE account_summaries SET avg_views = 999999 WHERE handle = 'glow'");
+
+		InfluencerAiReport second = influencerReportService.report("glow");
+		assertThat(second.stats().avgViews()).isEqualTo(50000L); // 캐시 히트 증거(DB 변경이 안 보임)
+		assertThat(second).isEqualTo(first);
 	}
 
 	/** account_analyses(계정 LLM 카피) 미생성 케이스 — tagline·summary 등 카피 계열은 null,
@@ -323,41 +351,13 @@ class CacheIntegrationTest extends IntegrationTest {
 		Assertions.fail("프리페치 미적재: " + key);
 	}
 
-	/**
-	 * put() 직후 즉시 get()하면 Lettuce 명령이 컨테이너 소켓 너머로 아직 flush되지 않아 드물게 miss로
-	 * 보이는 레이스가 있다(2026-07-29 실증 — 같은 테스트를 반복 실행하면 매번 다른 조합이 NPE로 실패).
-	 * 값은 실제로 쓰였고(같은 키를 redis-cli로 확인하면 항상 존재) 가시성만 늦게 따라오므로, 캐시
-	 * 히트를 프리페치와 동일하게 짧은 폴링으로 기다린다 — awaitCached와 같은 관용구.
-	 */
-	private static Object awaitCacheValue(Cache cache, String key) throws InterruptedException {
-		for (int i = 0; i < 50; i++) {
-			Cache.ValueWrapper wrapper = cache.get(key);
-			if (wrapper != null) {
-				return wrapper.get();
-			}
-			Thread.sleep(100);
-		}
-		throw new AssertionError("캐시 값이 반영되지 않음(레이스 폴링 타임아웃): " + key);
-	}
-
-	/**
-	 * cacheEpoch(빌드 시각)가 prefix에 섞여 들어가 정확한 키를 조립할 수 없으므로(CacheConfig
-	 * 참조) --scan으로 접미사 매치를 찾는다. 접미사는 해시(hex)거나 캐시명:id라 glob 특수문자가 없다.
-	 * put() 직후 조회라 awaitCacheValue와 같은 이유로 짧게 재시도한다(가시성 레이스 방어).
-	 */
+	/** cacheEpoch(빌드 시각)가 prefix에 섞여 들어가 정확한 키를 조립할 수 없으므로(CacheConfig
+	 *  참조) --scan으로 접미사 매치를 찾는다. 접미사는 해시(hex)거나 캐시명:id라 glob 특수문자가 없다. */
 	private static String findRedisKey(String suffix) throws Exception {
-		for (int i = 0; i < 20; i++) {
-			var scan = REDIS.execInContainer("redis-cli", "--scan", "--pattern", "*" + suffix);
-			List<String> keys = Stream.of(scan.getStdout().split("\n"))
-					.map(String::trim).filter(s -> !s.isEmpty()).toList();
-			if (keys.size() == 1) {
-				return keys.get(0);
-			}
-			if (keys.size() > 1) {
-				throw new AssertionError("redis key matching suffix " + suffix + " 여러 개: " + keys);
-			}
-			Thread.sleep(100);
-		}
-		throw new AssertionError("redis key matching suffix " + suffix + " 를 찾지 못함(타임아웃)");
+		var scan = REDIS.execInContainer("redis-cli", "--scan", "--pattern", "*" + suffix);
+		List<String> keys = Stream.of(scan.getStdout().split("\n"))
+				.map(String::trim).filter(s -> !s.isEmpty()).toList();
+		assertThat(keys).as("redis key matching suffix " + suffix).hasSize(1);
+		return keys.get(0);
 	}
 }

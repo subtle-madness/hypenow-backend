@@ -5,8 +5,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * 캐시 통합 테스트용 6.1 콘텐츠 경로 최소 형상 DDL·시드 — 분석 DB 형상 사본(필요 컬럼만,
  * {@link com.celfit.was.v1.content.ContentCardRow#SELECT}·{@code V1ContentRepository.buildWhere}
- * 참조 컬럼 기준으로 검증됨). account_summaries는 6.5 인플루언서 리포트 404(캐시 미적재) 검증용으로
- * 빈 테이블만 얹는다({@code V1InfluencerReportRepository.findSummary} 참조 컬럼).
+ * 참조 컬럼 기준으로 검증됨). account_summaries·account_analyses·account_content_series·
+ * beauty_taxonomy는 6.5 인플루언서 리포트 경로(캐시 통합 테스트: 404 비캐싱 + 서비스 경유 캐시
+ * 히트 검증)용 — handle='glow' 1행만 account_summaries에 채우고 나머지 보강 조회 테이블은
+ * {@code V1InfluencerReportRepository}의 findLatestCopy/findSeries/findCategories/findBrands가
+ * 참조하는 형태만 갖춘 빈 테이블(어셈블러가 빈 리스트·null copy를 정상 처리 — V1InfluencerReportAssembler
+ * 참조)로 둔다.
  */
 public final class ContentCacheSeed {
 
@@ -20,6 +24,9 @@ public final class ContentCacheSeed {
 		jdbc.execute("DROP TABLE IF EXISTS image_assets");
 		jdbc.execute("DROP TABLE IF EXISTS beauty_distributors");
 		jdbc.execute("DROP TABLE IF EXISTS account_summaries");
+		jdbc.execute("DROP TABLE IF EXISTS account_analyses");
+		jdbc.execute("DROP TABLE IF EXISTS account_content_series");
+		jdbc.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbc.execute("""
 				CREATE TABLE contents (
 				    short_code         text PRIMARY KEY,
@@ -57,8 +64,9 @@ public final class ContentCacheSeed {
 				)""");
 		jdbc.execute("CREATE TABLE image_assets (kind text NOT NULL, key text NOT NULL, object_path text)");
 		jdbc.execute("CREATE TABLE beauty_distributors (slug text PRIMARY KEY, name text)");
-		// 6.5 인플루언서 리포트 404 경로(캐시 통합 테스트 F)용 — 항상 비워둔다(행 없음 = findSummary
-		// empty → 404). 컬럼은 V1InfluencerReportRepository.SummaryRow SELECT 목록과 1:1.
+		// 6.5 인플루언서 리포트 경로용. handle='glow' 1행만 채우고(캐시 히트 검증이 UPDATE로
+		// 변경을 걸 대상) 나머지 handle 조회는 전부 empty → findSummary 404(캐시 통합 테스트 F).
+		// 컬럼은 V1InfluencerReportRepository.SummaryRow SELECT 목록과 1:1.
 		jdbc.execute("""
 				CREATE TABLE account_summaries (
 				    handle                    text PRIMARY KEY,
@@ -81,11 +89,48 @@ public final class ContentCacheSeed {
 				    last_posted_at            timestamptz,
 				    avg_interval_days         numeric
 				)""");
+		// findLatestCopy(계정 LLM 카피, 없으면 카피 필드만 null)·findSeries/findCategories/findBrands
+		// (시계열·보강 조회) 참조 테이블 — 전부 비워둔다. 어셈블러가 빈 리스트·null copy를 정상
+		// 처리하므로(V1InfluencerReportAssembler) 리포트 조립 자체는 account_summaries 1행만으로 성립.
+		jdbc.execute("""
+				CREATE TABLE account_analyses (
+				    handle      text,
+				    analyzed_at timestamptz,
+				    tagline     text,
+				    summary     text,
+				    trend_note  text,
+				    chart_note  text,
+				    traits      jsonb,
+				    ad_headline text,
+				    pace_note   text
+				)""");
+		jdbc.execute("""
+				CREATE TABLE account_content_series (
+				    short_code     text,
+				    account_handle text,
+				    posted_at      timestamptz,
+				    content_type   text,
+				    views          bigint,
+				    likes          bigint,
+				    comments       bigint
+				)""");
+		jdbc.execute("CREATE TABLE beauty_taxonomy (main_value text, main_label text)");
 		jdbc.execute("INSERT INTO accounts VALUES ('glow', '글로우', null, 20000)");
+		jdbc.execute("""
+				INSERT INTO account_summaries (handle, analyzed_count, posts_count, metric, avg_views,
+				    views_per_follower, avg_er_pct, avg_likes, avg_comments, trend_direction,
+				    sponsored_count, organic_avg, ad_avg, ad_drop_pct, comparison_organic_count,
+				    comparison_ad_count, last_ad_posted_at, last_posted_at, avg_interval_days)
+				VALUES ('glow', 12, 30, 'views', 50000, 2.5, 4.0, 1000, 50, 'up',
+				    2, 45000, 30000, 33, 10,
+				    2, null, now() - interval '1 day', 3.5)""");
 		// hype 내림차순: c1(90) → c2(80). c1은 video_duration을 채워 캐시 히트 단언(A)에서
 		// BigDecimal scale 왕복까지 같이 잡는다(2026-07-29 리뷰 누적 체크리스트 A).
 		jdbc.execute("""
-				INSERT INTO contents VALUES
+				INSERT INTO contents (short_code, account_handle, caption, thumbnail_url, posted_at,
+				    content_type, video_duration, original_url, views, likes, comments, hype_score,
+				    metric_captured_at)
+				VALUES
 				  ('c1', 'glow', '수분크림 리뷰', null, now() - interval '1 day', 'reels', 15.5, null, 1000, 100, 10, 90, now()),
 				  ('c2', 'glow', '선크림 리뷰',   null, now() - interval '2 day', 'reels', null, null,  800,  80,  8, 80, now())""");
 		jdbc.execute("""
