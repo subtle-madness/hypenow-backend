@@ -1,0 +1,289 @@
+package com.celfit.was.v1.influencer;
+
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+/**
+ * 6.21 발굴 목록 조회 — 모수는 account_summaries 보유 계정(최근 12창 분석 계정) ⋈ accounts.
+ * 광고 판정 정본은 content_analyses.ad_type='sponsored'(캡션 분류) — series.sponsored(raw 플래그)는
+ * 쓰지 않는다(리포트 개편 07-27과 동일 결정). 중분류 확장은 어휘 테이블(beauty_taxonomy)로 SQL 안에서
+ * 처리(§4-4). 필터·정렬·페이지는 본 쿼리 1회 + count 1회, 반환 페이지 핸들에 대해서만 보강 4쿼리
+ * (카테고리 비중·협업 브랜드·최근 썸네일·유효 팔로워 시계열)를 더 친다. 유효 팔로워 자체는
+ * SQL이 아니라 Java(EffectiveFollowers, 6.21/6.22 공용 산식)에서 계산한다(스펙 7절 17번).
+ */
+@Repository
+public class V1InfluencerDiscoveryRepository {
+
+	// cp(최신 태그라인)·sp(광고 수)는 q·sponsored 필터가 참조하므로 count 쿼리에도 함께 붙인다.
+	// findCardsByHandles(6.23 유사 카드 재사용)도 같은 조인을 그대로 공유한다.
+	private static final String FROM_JOINS = """
+
+			FROM account_summaries su
+			JOIN accounts a ON a.handle = su.handle
+			LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+			LEFT JOIN LATERAL (SELECT aa.tagline FROM account_analyses aa
+			                   WHERE aa.handle = su.handle
+			                   ORDER BY aa.analyzed_at DESC LIMIT 1) cp ON true
+			LEFT JOIN (SELECT s.account_handle, count(*) AS cnt
+			           FROM account_content_series s
+			           JOIN content_analyses an ON an.short_code = s.short_code
+			                                   AND an.ad_type = 'sponsored'
+			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle""";
+
+	private final JdbcClient jdbcClient;
+
+	public V1InfluencerDiscoveryRepository(JdbcClient jdbcClient) {
+		this.jdbcClient = jdbcClient;
+	}
+
+	public List<CardRow> findCards(V1InfluencerDiscoveryQuery q) {
+		Sql sql = build(q);
+		return jdbcClient.sql("""
+						SELECT a.handle, a.display_name,
+						       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+						       a.followers,
+						       su.posts_count, su.follows_count, su.biography, cp.tagline,
+						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
+						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
+						       COALESCE(sp.cnt, 0) AS sponsored_count
+						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
+						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
+				.params(sql.params)
+				.query(CardRow.class)
+				.list();
+	}
+
+	public long countCards(V1InfluencerDiscoveryQuery q) {
+		Sql sql = build(q);
+		return jdbcClient.sql("SELECT count(*)" + sql.fromJoins + "\n" + sql.where)
+				.params(sql.params).query(Long.class).single();
+	}
+
+	/** 핸들 목록 카드 일괄 조회(6.23 유사 카드 재사용) — 필터·정렬 없음, 순서는 호출부가 복원. */
+	public List<CardRow> findCardsByHandles(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+				SELECT a.handle, a.display_name,
+				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
+				       a.followers,
+				       su.posts_count, su.follows_count, su.biography, cp.tagline,
+				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
+				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
+				       COALESCE(sp.cnt, 0) AS sponsored_count
+				""" + FROM_JOINS + """
+
+				WHERE a.handle IN (:handles)
+				""").param("handles", handles).query(CardRow.class).list();
+	}
+
+	private record Sql(String fromJoins, String where, Map<String, Object> params) {
+	}
+
+	private Sql build(V1InfluencerDiscoveryQuery q) {
+		String fromJoins = FROM_JOINS;
+		StringBuilder where = new StringBuilder("WHERE true");
+		Map<String, Object> params = new HashMap<>();
+		if (q.mainCategory() != null) {
+			// 비중 임계값 매칭(포함 여부 아님) — 분모·round가 categoryShares.pct와 동일해야 한다(스펙 6.21)
+			where.append("""
+
+					  AND COALESCE((SELECT round(100.0 * count(*) FILTER (WHERE an.main_category = :mainCategory)
+					                             / NULLIF(count(*), 0))
+					                FROM account_content_series s
+					                JOIN content_analyses an ON an.short_code = s.short_code
+					                WHERE s.account_handle = su.handle
+					                  AND an.is_beauty IS TRUE AND an.main_category IS NOT NULL), 0) >= 20""");
+			params.put("mainCategory", q.mainCategory());
+		}
+		if (q.midCategory() != null) {
+			// 중분류 → 소속 소분류 확장 매칭 (스펙 5.5) — 어휘는 beauty_taxonomy가 원천
+			where.append("""
+
+					  AND EXISTS (SELECT 1 FROM account_content_series s
+					              JOIN content_analyses an ON an.short_code = s.short_code
+					              JOIN beauty_taxonomy t ON t.main_value = :mainCategory
+					                                    AND t.mid_label = :midCategory
+					              WHERE s.account_handle = su.handle
+					                AND jsonb_exists(an.sub_categories, t.sub_label))""");
+			params.put("midCategory", q.midCategory());
+		}
+		if (q.subCategory() != null) {
+			where.append("""
+
+					  AND EXISTS (SELECT 1 FROM account_content_series s
+					              JOIN content_analyses an ON an.short_code = s.short_code
+					              WHERE s.account_handle = su.handle
+					                AND jsonb_exists(an.sub_categories, :subCategory))""");
+			params.put("subCategory", q.subCategory());
+		}
+		if (q.follower() != null) {
+			long min = switch (q.follower()) {
+				case "500-3k" -> 500; case "3k-10k" -> 3_000;
+				case "10k-30k" -> 10_000; default -> 30_000; };
+			long max = switch (q.follower()) {
+				case "500-3k" -> 3_000; case "3k-10k" -> 10_000;
+				case "10k-30k" -> 30_000; default -> 50_000; };
+			where.append(" AND a.followers >= :fMin AND a.followers < :fMax");
+			params.put("fMin", min);
+			params.put("fMax", max);
+		}
+		if (q.activityDays() != null) {
+			// 마지막 업로드 경과일 ≤ N(inclusive) — 기준 날짜는 KST 달력 날짜(스펙 3.4)
+			where.append("""
+
+					  AND su.last_posted_at IS NOT NULL
+					  AND (now() AT TIME ZONE 'Asia/Seoul')::date
+					      - (su.last_posted_at AT TIME ZONE 'Asia/Seoul')::date <= :activityDays""");
+			params.put("activityDays", q.activityDays());
+		}
+		if (q.sponsored() != null) {
+			switch (q.sponsored()) {
+				case "none" -> where.append(" AND COALESCE(sp.cnt, 0) = 0");
+				case "1-2" -> where.append(" AND COALESCE(sp.cnt, 0) BETWEEN 1 AND 2");
+				case "3-5" -> where.append(" AND COALESCE(sp.cnt, 0) BETWEEN 3 AND 5");
+				default -> where.append(" AND COALESCE(sp.cnt, 0) >= 6");
+			}
+		}
+		if (q.contactOpen()) {
+			// email은 크롤러 미수집(V31: "email은 미수집이라 필드 없음") — 데이터가 생길 때까지 0건 매칭.
+			where.append(" AND false");
+		}
+		for (int i = 0; i < q.keywords().size(); i++) {
+			// 키워드 전부(AND) 부분일치 — 대상: handle·displayName·bio·tagline·캡션·협업 브랜드명·소분류 라벨
+			String p = "kw" + i;
+			where.append("""
+
+					  AND (a.handle ILIKE :%1$s OR a.display_name ILIKE :%1$s
+					       OR su.biography ILIKE :%1$s OR cp.tagline ILIKE :%1$s
+					       OR EXISTS (SELECT 1 FROM account_content_series s
+					                  JOIN contents c ON c.short_code = s.short_code
+					                  WHERE s.account_handle = su.handle AND c.caption ILIKE :%1$s)
+					       OR EXISTS (SELECT 1 FROM account_content_series s
+					                  JOIN content_analyses an ON an.short_code = s.short_code
+					                                          AND an.ad_type = 'sponsored'
+					                  WHERE s.account_handle = su.handle
+					                    AND EXISTS (SELECT 1 FROM jsonb_array_elements(
+					                                       COALESCE(an.detected_brands, '[]'::jsonb)) b
+					                                WHERE b->>'name' ILIKE :%1$s))
+					       OR EXISTS (SELECT 1 FROM account_content_series s
+					                  JOIN content_analyses an ON an.short_code = s.short_code
+					                  WHERE s.account_handle = su.handle
+					                    AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+					                                       COALESCE(an.sub_categories, '[]'::jsonb)) sc
+					                                WHERE sc ILIKE :%1$s)))""".formatted(p));
+			params.put(p, "%" + q.keywords().get(i) + "%");
+		}
+		return new Sql(fromJoins, where.toString(), params);
+	}
+
+	/** 전부 내림차순, 동점 2차 정렬은 id(=handle) 오름차순 (스펙 6.21 안정 정렬). */
+	private String orderBy(String sort) {
+		return switch (sort) {
+			case "views" -> "\nORDER BY su.avg_views DESC NULLS LAST, a.handle";
+			case "followers" -> "\nORDER BY a.followers DESC NULLS LAST, a.handle";
+			case "hype" -> "\nORDER BY su.avg_hype_score DESC NULLS LAST, a.handle";
+			default -> "\nORDER BY su.views_per_follower DESC NULLS LAST, a.handle";
+		};
+	}
+
+	/** categoryShares 재료 — 분모는 창 내 "뷰티 판정 + 대분류 보유" 게시물 수, 비중 내림차순. */
+	public List<ShareRow> findShares(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+						SELECT account_handle, main_category, round(100.0 * cnt / total)::int AS pct
+						FROM (SELECT s.account_handle, an.main_category, count(*) AS cnt,
+						             sum(count(*)) OVER (PARTITION BY s.account_handle) AS total
+						      FROM account_content_series s
+						      JOIN content_analyses an ON an.short_code = s.short_code
+						      WHERE s.account_handle IN (:handles)
+						        AND an.is_beauty IS TRUE AND an.main_category IS NOT NULL
+						      GROUP BY s.account_handle, an.main_category) x
+						ORDER BY account_handle, pct DESC, main_category
+						""").param("handles", handles).query(ShareRow.class).list();
+	}
+
+	/** collaboratedBrands 재료 — 협찬(ad_type='sponsored') 콘텐츠의 detected_brands name, 빈도 내림차순. */
+	public List<BrandRow> findBrands(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+						SELECT account_handle, name FROM (
+						  SELECT s.account_handle, b->>'name' AS name, count(*) AS cnt
+						  FROM account_content_series s
+						  JOIN content_analyses an ON an.short_code = s.short_code
+						                          AND an.ad_type = 'sponsored'
+						  CROSS JOIN LATERAL jsonb_array_elements(
+						                     COALESCE(an.detected_brands, '[]'::jsonb)) b
+						  WHERE s.account_handle IN (:handles) AND b->>'name' IS NOT NULL
+						  GROUP BY s.account_handle, b->>'name') x
+						ORDER BY account_handle, cnt DESC, name
+						""").param("handles", handles).query(BrandRow.class).list();
+	}
+
+	/** recentThumbs 재료 — postedAt 내림차순 최대 4개. 썸네일은 아카이브 /img/ 경로 우선(카드 관용구). */
+	public List<ThumbRow> findThumbs(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+						SELECT account_handle, short_code, thumbnail_url, content_type, main_category,
+						       ad_type, posted_at, views, likes, comments
+						FROM (SELECT s.account_handle, s.short_code,
+						             COALESCE('/img/' || it.object_path, c.thumbnail_url) AS thumbnail_url,
+						             s.content_type, an.main_category,
+						             COALESCE(an.ad_type, 'organic') AS ad_type,
+						             s.posted_at, s.views, s.likes, s.comments,
+						             row_number() OVER (PARTITION BY s.account_handle
+						                                ORDER BY s.posted_at DESC, s.short_code) AS rn
+						      FROM account_content_series s
+						      LEFT JOIN contents c ON c.short_code = s.short_code
+						      LEFT JOIN content_analyses an ON an.short_code = s.short_code
+						      LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = s.short_code
+						      WHERE s.account_handle IN (:handles)) x
+						WHERE rn <= 4
+						ORDER BY account_handle, rn
+						""").param("handles", handles).query(ThumbRow.class).list();
+	}
+
+	/** 유효 팔로워 재료 — 페이지 핸들의 창 내 시계열(순서 무관, 산식이 평균이라). 계산은 Java(EffectiveFollowers). */
+	public List<EngagementRow> findEngagements(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+						SELECT account_handle, views, likes, comments
+						FROM account_content_series
+						WHERE account_handle IN (:handles)
+						""").param("handles", handles).query(EngagementRow.class).list();
+	}
+
+	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
+			Long postsCount, Long followsCount, String biography,
+			String tagline, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgViews,
+			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount) {
+	}
+
+	public record ShareRow(String accountHandle, String mainCategory, Integer pct) {
+	}
+
+	public record BrandRow(String accountHandle, String name) {
+	}
+
+	public record ThumbRow(String accountHandle, String shortCode, String thumbnailUrl,
+			String contentType, String mainCategory, String adType, OffsetDateTime postedAt,
+			Long views, Long likes, Long comments) {
+	}
+
+	public record EngagementRow(String accountHandle, Long views, Long likes, Long comments) {
+	}
+}

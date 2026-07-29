@@ -24,8 +24,8 @@
 |---|---|
 | 명령 API | `http://monitoring:8083` — **전용 도커 네트워크 `monitoring-net`** 경유(was 컨테이너가 이 네트워크에 소속돼야 이름이 해석됨). 호스트 포트·Caddy 미노출 |
 | 인증 | **없음 — 네트워크 소속이 곧 인증.** `monitoring-net`에는 was와 monitoring만 소속. 헤더·토큰 불필요 |
-| dev 환경 | `http://dev-monitoring:8083` — `dev-monitoring-net`(dev-was와 둘만 소속). 운영 monitoring은 dev에서 DNS 해석 자체가 안 됨(오배선 fail-closed) |
-| 조회 DB | `postgres` 인스턴스의 `monitoring` DB, 읽기 전용 계정(`public` 스키마만 GRANT). dev는 dev-postgres의 monitoring DB |
+| test(스테이징) 환경 | `http://test-monitoring:8083` — `test-monitoring-net`(test-was와 둘만 소속). 운영 monitoring은 test에서 DNS 해석 자체가 안 됨(오배선 fail-closed) |
+| 조회 DB | `postgres` 인스턴스의 `monitoring` DB, 읽기 전용 계정(`public` 스키마만 GRANT). test는 test-postgres의 monitoring DB |
 | 타임아웃 권고 | 등록 POST 10s (동기 Hiker 수집 포함) / 나머지 명령 5s (승인도 즉시 수집 포함 시 10s) |
 
 ## 2. 명령 API

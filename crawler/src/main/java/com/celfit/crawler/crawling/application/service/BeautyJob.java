@@ -44,7 +44,7 @@ public class BeautyJob {
     /** 캡션 1개당 최대 길이(문자) — 캡션 앞부분에 주제가 드러나므로 뒷부분은 잘라도 판정에 충분. */
     static final int CAPTION_MAX_CHARS = 100;
 
-    public record Summary(int judgedBeauty, int judgedService, int judgedNotBeauty,
+    public record Summary(int judgedBeauty, int judgedService, int judgedForeign, int judgedNotBeauty,
                           int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
@@ -103,7 +103,7 @@ public class BeautyJob {
             byUsername.put(inf.getUsername(), inf);
         }
 
-        int beauty = 0, service = 0, notBeauty = 0, failedBatches = 0;
+        int beauty = 0, service = 0, foreign = 0, notBeauty = 0, failedBatches = 0;
         List<List<BeautyJudge.ProfileCard>> chunks = ActorInputs.chunk(cards, JUDGE_CHUNK);
         log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}), 배치 {}개", cards.size(), skipped, chunks.size());
         int total = chunks.size(), i = 0;
@@ -121,15 +121,16 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
-            int done = beauty + service + notBeauty;
+            int done = beauty + service + foreign + notBeauty;
             ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername, done, cards.size()));
             beauty += r.beauty();
             service += r.service();
+            foreign += r.foreign();
             notBeauty += r.notBeauty();
-            log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 시술·서비스 {} / 비뷰티 {}",
-                    i, total, beauty, service, notBeauty);
+            log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 시술·서비스 {} / 외국인 {} / 비뷰티 {}",
+                    i, total, beauty, service, foreign, notBeauty);
         }
-        return new Summary(beauty, service, notBeauty, skipped, failedBatches);
+        return new Summary(beauty, service, foreign, notBeauty, skipped, failedBatches);
     }
 
     /** 판정 재료 캡션 정책 적용 — 최근 CAPTION_COUNT개, 각 CAPTION_MAX_CHARS자까지. */
@@ -152,7 +153,7 @@ public class BeautyJob {
         return c.substring(0, end);
     }
 
-    private record ChunkResult(int beauty, int service, int notBeauty) {}
+    private record ChunkResult(int beauty, int service, int foreign, int notBeauty) {}
 
     /**
      * 판정 결과 적용(트랜잭션 안). targets 조회가 트랜잭션 밖(레포 자체 트랜잭션)에서 이뤄져 Influencer가
@@ -161,7 +162,7 @@ public class BeautyJob {
      */
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
                                       int done, int totalCards) {
-        int beauty = 0, service = 0, notBeauty = 0;
+        int beauty = 0, service = 0, foreign = 0, notBeauty = 0;
         for (BeautyJudge.Verdict v : verdicts) {
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
@@ -171,6 +172,7 @@ public class BeautyJob {
             switch (v.beautyClass()) {
                 case INFLUENCER, COMPANY -> beauty++;
                 case BEAUTY_SERVICE -> service++;
+                case FOREIGN_INFLUENCER -> foreign++;
                 case NOT_BEAUTY -> notBeauty++;
             }
             done++;
@@ -178,10 +180,11 @@ public class BeautyJob {
                 case INFLUENCER -> "뷰티(인플루언서)";
                 case COMPANY -> "뷰티(회사)";
                 case BEAUTY_SERVICE -> "뷰티(시술·서비스)";
+                case FOREIGN_INFLUENCER -> "뷰티(외국인)";
                 case NOT_BEAUTY -> "비뷰티";
             };
             log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(), label, v.reason());
         }
-        return new ChunkResult(beauty, service, notBeauty);
+        return new ChunkResult(beauty, service, foreign, notBeauty);
     }
 }

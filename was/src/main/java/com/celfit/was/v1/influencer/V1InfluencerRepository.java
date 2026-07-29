@@ -33,7 +33,9 @@ public class V1InfluencerRepository {
 	 * 최근 12개 Content 카드 — 게시일 내림차순, 분석 미완 게시물도 포함(LEFT JOIN).
 	 * 목록(6.1)은 분석 완료만 노출(INNER)이지만, 인플루언서 상세는 "실제 최신 12개"를 보여준다.
 	 * 미분석 게시물은 카드의 분석 필드(main_category·ad_type·brands 등)가 null/빈배열이 된다.
-	 * 확정 비뷰티(is_beauty=false)는 제외하되 미분석(LEFT JOIN null)은 유지 — "실제 최신 12개".
+	 * 게시물 단위 뷰티 판정(is_beauty)은 걸지 않는다 — 성과 지표(account_summaries·시계열)의
+	 * 모수인 "실제 최신 12개"와 화면 카드가 1:1로 맞아야 하고(v2 리포트 차트 contentIds가
+	 * 이 카드와 short_code 조인), 비뷰티 게시물 제외는 랭킹(6.1)만의 정책이다(07-28 결정).
 	 */
 	public List<ContentCardRow> findRecentCards(String handle) {
 		return jdbcClient.sql(ContentCardRow.SELECT + """
@@ -43,7 +45,6 @@ public class V1InfluencerRepository {
 				JOIN accounts a ON a.handle = c.account_handle
 				""" + ContentCardRow.IMAGE_JOINS + """
 				WHERE c.account_handle = :h
-				  AND (an.is_beauty IS DISTINCT FROM false)
 				ORDER BY c.posted_at DESC, c.short_code
 				LIMIT 12
 				""").param("h", handle).query(ContentCardRow.class).list();

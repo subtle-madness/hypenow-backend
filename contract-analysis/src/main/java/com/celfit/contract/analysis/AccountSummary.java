@@ -10,6 +10,8 @@ import java.time.OffsetDateTime;
  * avgErPct: 계정 평균 ER(팔로워 분모, %) — 게시물 ER(조회수 분모)과 정의가 다르다.
  * trendDirection 'flat'은 "변화 ±threshold 이내"와 "비교 불가(표본 부족)"를 겸한다 —
  * 후자는 trendOlderAvg가 NULL이고 trendChangePct가 0인 것으로 구분.
+ * avgHypeScore: 최근창 콘텐츠 hype_score 단순 평균(0~100), 점수 가능 콘텐츠 없으면 NULL
+ * (스펙 2026-07-29-influencer-avg-hype-score).
  */
 public record AccountSummary(String handle, Long followers, Long followsCount, Long postsCount,
 		String biography, Long analyzedCount, Long viewsCount, String metric, Long avgViews,
@@ -17,5 +19,5 @@ public record AccountSummary(String handle, Long followers, Long followsCount, L
 		String trendDirection, Integer trendChangePct, Long trendOlderAvg, Long trendNewerAvg,
 		Long sponsoredCount, Long organicAvg, Long adAvg, Integer adDropPct,
 		Long comparisonOrganicCount, Long comparisonAdCount, OffsetDateTime lastAdPostedAt,
-		OffsetDateTime lastPostedAt, BigDecimal avgIntervalDays) {
+		OffsetDateTime lastPostedAt, BigDecimal avgIntervalDays, Long avgHypeScore) {
 }

@@ -31,10 +31,12 @@ public class AdminUiController {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
 
-	/** 대시보드에 활성 잡으로 노출하는 5종. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시. */
+	/** 대시보드에 활성 잡으로 노출하는 잡. CLASSIFY(댓글 분류)는 휴면 카드로 별도 표시.
+	 *  TRAIT_CANON 2종은 어휘 이행 원샷(2026-07-29 스펙) — 이행 완결 후 목록에서 빼도 된다. */
 	private static final List<JobName> DASHBOARD_JOBS =
 			List.of(JobName.MIRROR, JobName.ANALYZE, JobName.LATE_BACKFILL_ANALYZE,
-					JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE);
+					JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE,
+					JobName.TRAIT_CANON_DRY, JobName.TRAIT_CANON_APPLY);
 
 	/** 잡 카드 뷰모델 — 시각·경과는 컨트롤러에서 KST 포맷해 문자열로 넘긴다(#temporals 미탑재). */
 	public record JobCard(JobName job, String label, boolean running,
@@ -248,7 +250,8 @@ public class AdminUiController {
 			case ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
 					: "오늘 +%s 예정 · 랭킹 노출은 제때(timely) 분석분만".formatted(comma(f.heavy().timelyPending()));
 			case LATE_BACKFILL_ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
-					: "오늘 +%s 예정 · 인플루언서 상세에만 노출".formatted(comma(f.heavy().windowPending()));
+					: "오늘 +%s 예정 · 제때창 놓침분 — 인플루언서 상세에만 노출"
+							.formatted(comma(f.heavy().windowPending()));
 			case ACCOUNT_ANALYZE -> "stale + 쿨다운 경과분 재분석";
 			case MIRROR -> "분석 무관 — 서빙 뷰 전체 재적재";
 			// 미아카이브 중 CDN 만료(~4일)분은 재크롤로 URL이 갱신돼야 구제 — 수치는 30분 캐시.

@@ -3,7 +3,10 @@ package com.celfit.was.v1.account;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -13,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
@@ -70,9 +74,9 @@ class V1AuthControllerTest {
 	@MockitoBean
 	SignupService signupService;
 
-	// requireVerified·consume 기본 no-op(void) — 이메일 인증 게이트는 EmailVerificationIntegrationTest가 실 DB로 커버
+	// 가입 시도 이벤트는 fire-and-forget(void) — 실 적재·detail 형태는 SignupEventIntegrationTest가 실 DB로 커버
 	@MockitoBean
-	EmailVerificationService emailVerificationService;
+	SignupEventRecorder signupEventRecorder;
 
 	private Authentication authenticated(String email) {
 		return UsernamePasswordAuthenticationToken.authenticated(email, null, List.of());
@@ -83,6 +87,12 @@ class V1AuthControllerTest {
 		return new UserProfile(7L, "user@example.com", "김우민", null, "brand",
 				"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
 				false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"));
+	}
+
+	/** 이메일 중복 확인(6.24)이 findByEmail로 존재만 확인하므로 필요한 필드만 채운 최소 픽스처. */
+	private AppUser existingUser() {
+		return new AppUser(7L, "dup@example.com", "{bcrypt}hash", "USER",
+				OffsetDateTime.parse("2026-06-01T00:00:00Z"));
 	}
 
 	@Test
@@ -131,6 +141,9 @@ class V1AuthControllerTest {
 				.andExpect(jsonPath("$.data.name").value("김우민"))
 				.andExpect(jsonPath("$.data.userType").value("brand"))
 				.andExpect(jsonPath("$.error").value(nullValue()));
+
+		then(signupEventRecorder).should().record(eq("user@example.com"),
+				eq(SignupEventRecorder.OUTCOME_OK), anyString(), anyMap());
 	}
 
 	// 가입 경량화(2026-07-19) — 프론트 요청서의 최소 페이로드 예시 그대로 201
@@ -160,10 +173,14 @@ class V1AuthControllerTest {
 
 		mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(VALID_SIGNUP_BODY.replace("Passw0rd!", "passw0rd!")))
+						.content(VALID_SIGNUP_BODY.replace("Passw0rd!", " ")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		// 실패한 시도도 이벤트로 남는다 — 중도 이탈 추적(2026-07-29)
+		then(signupEventRecorder).should().record(eq("user@example.com"), eq("VALIDATION_FAILED"),
+				anyString(), anyMap());
 	}
 
 	@Test
@@ -333,5 +350,56 @@ class V1AuthControllerTest {
 		mockMvc.perform(get("/api/me"))
 				.andExpect(status().isUnauthorized())
 				.andExpect(content().string(""));
+	}
+
+	// 가입 전 이메일 중복 확인(스펙 6.24) — 위저드 2스텝 디바운스 호출
+	@Test
+	void 이메일_사용_가능() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+		given(userRepository.findByEmail("new@example.com")).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/auth/email-availability").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"email":"new@example.com"}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.available").value(true));
+	}
+
+	@Test
+	void 이메일_이미_가입() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+		given(userRepository.findByEmail("dup@example.com")).willReturn(Optional.of(existingUser()));
+
+		mockMvc.perform(post("/v1/auth/email-availability").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"email":"dup@example.com"}"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.available").value(false));
+	}
+
+	@Test
+	void 이메일_형식_위반은_400() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+
+		mockMvc.perform(post("/v1/auth/email-availability").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"email":"not-an-email"}"""))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void 레이트리밋_초과는_429() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(false);
+
+		mockMvc.perform(post("/v1/auth/email-availability").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"email":"new@example.com"}"""))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
 	}
 }

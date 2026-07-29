@@ -31,8 +31,10 @@
 
 - 주석·로그·커밋 메시지는 한국어. 커밋 prefix는 `feat(모듈):`/`docs:` 식.
 - **브랜치·PR**: 기본 브랜치는 `develop`. 작업은 `feat/*`(또는 `docs/*`, `chore/*`) 브랜치에서 하고
-  **develop 대상 PR**로 합친다. develop·main 직접 push 금지. `main`은 릴리스용.
-- **배포는 develop→main 머지(CD)로만 한다.** `deploy/scripts/deploy.sh` 수동 실행 금지 —
+  **develop 대상 PR**로 합친다. develop·staging·main 직접 push 금지(승격 머지 제외). `main`은 릴리스용.
+- **승격 흐름은 develop→staging→main** (07-29~): develop 머지는 CI만(배포 없음),
+  **develop→staging 머지 = test 스테이징 배포**(dev-api.hypenow.io — cd-test.yml),
+  **staging→main 머지 = 운영 배포**. 배포는 이 CD로만 한다. `deploy/scripts/deploy.sh` 수동 실행 금지 —
   긴급 롤백·CD 불능 시에만, 반드시 사용자 확인 후 `--force`로. (07-20: develop 체크아웃 상태의
   수동 배포가 CD의 main 배포를 덮어 was/analytics 버전 불일치 → 랭킹 API 전면 500.
   `:latest`는 마지막 push가 이긴다.)
@@ -53,3 +55,7 @@
 - Spring Boot 4 주의: `@WebMvcTest`는 `org.springframework.boot.webmvc.test.autoconfigure` 패키지,
   Testcontainers 2.x는 `org.testcontainers.postgresql.PostgreSQLContainer`.
 - **피드 게시물은 조회수(views)가 항상 NULL** — 조회수 집계·비율 계산에는 항상 NULL 규칙이 따라붙는다.
+- **"분석 잔여 몇 건 / 왜 분석 안 됐나" 카운트는 `analytics/check/pending.sh` 정본으로.** 미분석
+  콘텐츠의 timely 여부는 분석 완료 전엔 어디에도 영속화되지 않는다(`v_analysis_candidates.timely`가
+  유일한 판정 지점) — `content_analyses` 단독 카운트나 즉석 쿼리는 "제때창(3일) 놓쳐서 분석 안
+  함(영구 제외·상세 트랙)"과 "분석 대상인데 대기"를 뭉갠다(07-21·07-28 오답 전력).

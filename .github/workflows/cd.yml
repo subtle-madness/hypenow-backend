@@ -1,5 +1,6 @@
 # main 푸시마다 이미지 빌드·push + 오라클 서버 배포 — 수동 deploy.sh(deploy/scripts)의 CD 버전.
-# 대상: was·analytics·crawler·monitoring 4종. develop→main 머지가 곧 배포 트리거 (develop CI 통과가 전제).
+# 대상: was·analytics·crawler·monitoring 4종. staging→main 머지가 곧 배포 트리거 (staging CI 통과가 전제 —
+# 승격 경로는 develop→staging(test 배포)→main. 07-29 staging 브랜치 전환).
 #
 # 분석 뷰(analytics/views)는 이미지에 안 들어가므로(운영 런북 §4-1) 배포 후 raw DB에 직접 적용 —
 # 전부 CREATE OR REPLACE라 멱등이고, CI sql-harness가 프레시 DB 적용을 사전 검증한다.
@@ -13,7 +14,7 @@ on:
     branches: [main]
 
 # 배포 겹침 방지 — 진행 중 배포는 취소하지 않고 다음 배포가 대기.
-# dev CD(cd-dev.yml)와 같은 그룹 — 두 CD가 같은 서버 ~/deploy를 쓰므로 직렬화한다
+# test CD(cd-test.yml)와 같은 그룹 — 두 CD가 같은 서버 ~/deploy를 쓰므로 직렬화한다
 concurrency:
   group: deploy-server
   cancel-in-progress: false

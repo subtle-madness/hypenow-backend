@@ -24,9 +24,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * 계정 카피 배치 계약 (스펙 §2·§4):
- * ① 신규 즉시 분석·저장(adHeadline 조건부·traits jsonb 포함) ② 입력 동일 스킵
- * ③ stale인데 쿨다운 미경과 제외 ④ stale+쿨다운 경과 재분석 — 이력 2행
- * ⑤ 배치 상한 ⑥ 빈 카피 실패 격리 ⑦ traits 5개 절단.
+ * ① 신규 즉시 분석·저장(perf_summary·content_summary·ad_summary 신 3컬럼, 구 5컬럼은 전부 NULL,
+ * ad_summary는 AdSituation 4분기에 따라 조건부) ② 입력 동일 스킵 ③ stale인데 쿨다운 미경과 제외
+ * ④ stale+쿨다운 경과 재분석 — 이력 2행 ⑤ 배치 상한 ⑥ 빈 카피 실패 격리 ⑦ traits 5개 절단
+ * ⑧ 구 스키마 행(perf_summary NULL)은 입력 동일해도 자연 재대상(07-27 개편 백필).
  */
 @Testcontainers
 class AccountAnalysisJobTest {
@@ -39,17 +40,19 @@ class AccountAnalysisJobTest {
 	AccountAnalysisJob job;
 	List<AccountToAnalyze> calls;
 
-	/** fake 포트: 호출 기록 + 고정 응답. adHeadline은 항상 채워 반환 — 조건부 NULL은 잡의 책임임을 검증. */
+	/** fake 포트: 호출 기록 + 고정 응답(traits는 V41 어휘 값 — 어휘 밖은 sanitize가 드롭한다).
+	 *  adSummary는 항상 채워 반환 — 조건부 NULL 처리는 잡(AdSituation)이 맡는다. */
 	AccountSynthesisPort fakePort() {
 		return account -> {
 			calls.add(account);
-			return new AccountCopy("태그라인: " + account.handle(), "요약 문단", "흐름 문구", "차트 캡션",
-					List.of("저자극", "성분리뷰", "정보형"), "광고 헤드라인", "페이스 문구");
+			return new AccountCopy("태그라인: " + account.handle(),
+					List.of("성분 분석", "정보형 콘텐츠", "솔직 리뷰"), "성과 요약", "콘텐츠 요약", "광고 요약");
 		};
 	}
 
 	void rewireJob(AccountSynthesisPort port) {
-		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db), ProgressReporter.NOOP);
+		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db), ProgressReporter.NOOP,
+				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds));
 	}
 
 	@BeforeEach
@@ -62,11 +65,12 @@ class AccountAnalysisJobTest {
 
 		// C1 미러 시드 — 광고 정본은 content_analyses.ad_type(캡션 분류)이고, 미러의
 		// account_summaries.organic_avg/ad_avg·series.sponsored는 옛 소스(ad_marked, 릴스 전용)다.
-		// 네 계정으로 두 소스가 어긋나는 경우를 모두 덮는다:
+		// 다섯 계정으로 두 소스가 어긋나는 경우를 모두 덮는다:
 		//   acct_ad     — 두 소스 모두 광고 있음
 		//   acct_noad   — 광고 없음
 		//   acct_caption— 캡션 고지만(릴스 태그 없음): 옛 소스로는 차단됐던 케이스
 		//   acct_tagonly— 릴스 태그만(캡션 분류는 organic): 화면에 비교가 안 뜨는 케이스
+		//   acct_allads — 측정 가능분이 전량 협찬(비교 대상 organic 없음)
 		db.update("""
 				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
 				  organic_avg, ad_avg, last_posted_at) VALUES
@@ -121,21 +125,31 @@ class AccountAnalysisJobTest {
 		assertEquals("태그라인: acct_ad", db.queryForObject(
 				"SELECT tagline FROM account_analyses WHERE handle = 'acct_ad'", String.class));
 		// traits는 jsonb 배열로 저장된다
-		assertEquals("저자극", db.queryForObject(
+		assertEquals("성분 분석", db.queryForObject(
 				"SELECT traits->>0 FROM account_analyses WHERE handle = 'acct_ad'", String.class));
 		// input 스냅샷 = 분석 당시 미러 값
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad' AND input_last_posted_at = timestamptz '2026-07-01 09:00:00+09'",
 				Long.class));
+		// 신 요약 3종 저장
+		assertEquals("성과 요약", db.queryForObject(
+				"SELECT perf_summary FROM account_analyses WHERE handle = 'acct_ad'", String.class));
+		assertEquals("콘텐츠 요약", db.queryForObject(
+				"SELECT content_summary FROM account_analyses WHERE handle = 'acct_ad'", String.class));
+		// 구 카피 5컬럼은 07-27 개편 후 미기록(NULL)
+		assertEquals(0L, db.queryForObject("""
+				SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad'
+				  AND (summary IS NOT NULL OR trend_note IS NOT NULL OR chart_note IS NOT NULL
+				       OR ad_headline IS NOT NULL OR pace_note IS NOT NULL)""", Long.class));
 	}
 
 	AccountToAnalyze callFor(String handle) {
 		return calls.stream().filter(c -> c.handle().equals(handle)).findFirst().orElseThrow();
 	}
 
-	String headlineOf(String handle) {
+	String adSummaryOf(String handle) {
 		return db.queryForObject(
-				"SELECT ad_headline FROM account_analyses WHERE handle = ?", String.class, handle);
+				"SELECT ad_summary FROM account_analyses WHERE handle = ?", String.class, handle);
 	}
 
 	@Test
@@ -144,10 +158,10 @@ class AccountAnalysisJobTest {
 
 		// ① 비교 가능(organic·협찬 둘 다 측정 가능) — 현행 그대로 생성
 		assertEquals(AdSituation.COMPARABLE, callFor("acct_ad").adSituation());
-		assertEquals("광고 헤드라인", headlineOf("acct_ad"));
+		assertEquals("광고 요약", adSummaryOf("acct_ad"));
 		// ④ 지표 부족(측정 가능 게시물 없음 — 피드 조회수 NULL) — 근거가 없어 NULL 유지
 		assertEquals(AdSituation.INSUFFICIENT, callFor("acct_noad").adSituation());
-		assertNull(headlineOf("acct_noad"));
+		assertNull(adSummaryOf("acct_noad"));
 	}
 
 	/** 버그 정본 케이스 — 캡션으로 협찬 고지했지만 릴스 유료파트너십 태그가 없는 계정. */
@@ -156,7 +170,7 @@ class AccountAnalysisJobTest {
 		job.run();
 
 		assertEquals(AdSituation.COMPARABLE, callFor("acct_caption").adSituation());
-		assertEquals("광고 헤드라인", headlineOf("acct_caption"));
+		assertEquals("광고 요약", adSummaryOf("acct_caption"));
 	}
 
 	/**
@@ -168,7 +182,7 @@ class AccountAnalysisJobTest {
 		job.run();
 
 		assertEquals(AdSituation.NO_ADS, callFor("acct_tagonly").adSituation());
-		assertEquals("광고 헤드라인", headlineOf("acct_tagonly"));
+		assertEquals("광고 요약", adSummaryOf("acct_tagonly"));
 	}
 
 	/**
@@ -179,13 +193,14 @@ class AccountAnalysisJobTest {
 		job.run();
 
 		assertEquals(AdSituation.ALL_ADS, callFor("acct_allads").adSituation());
-		assertEquals("광고 헤드라인", headlineOf("acct_allads"));
+		assertEquals("광고 요약", adSummaryOf("acct_allads"));
 	}
 
 	/** 프롬프트 지시문이 평가·권유를 금지하고 상황별 진술을 요구해야 한다. */
 	@Test
 	void 지시문이_평가를_금지하고_상황별_진술을_지시한다() {
-		String instructions = com.celfit.analytics.llm.GeminiAccountSynthesizer.instructions();
+		String instructions = com.celfit.analytics.llm.GeminiAccountSynthesizer.instructions(
+				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds).get());
 
 		assertTrue(instructions.contains("좋다"), instructions);
 		assertTrue(instructions.contains(AdSituation.NO_ADS.label()), instructions);
@@ -282,38 +297,86 @@ class AccountAnalysisJobTest {
 		assertEquals(1L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 	}
 
+	/** perfSummary·contentSummary 둘 다 빈 카피 가드 대상 — 어느 쪽이 비어도 저장을 막는다. */
 	@Test
 	void 빈_카피는_저장하지_않고_다른_계정은_처리된다() {
 		rewireJob(account -> {
 			calls.add(account);
 			if (account.handle().equals("acct_ad")) {
-				return new AccountCopy("", "", "흐름", "차트", List.of("태그"), "", "페이스");
+				return new AccountCopy("태그라인", List.of("태그"), "", "콘텐츠 요약", "광고 요약"); // perfSummary 공백
 			}
-			return new AccountCopy("태그라인", "요약", "흐름", "차트", List.of("태그", "태그2", "태그3"), "", "페이스");
+			if (account.handle().equals("acct_noad")) {
+				return new AccountCopy("태그라인", List.of("태그"), "성과 요약", "", "광고 요약"); // contentSummary 공백
+			}
+			return new AccountCopy("태그라인", List.of("태그", "태그2", "태그3"), "성과 요약", "콘텐츠 요약", "광고 요약");
 		});
 
 		int processed = job.run().processed(); // 예외가 전파되지 않아야 한다
 
-		assertEquals(4, processed); // acct_ad만 실패
+		assertEquals(3, processed); // acct_ad·acct_noad만 실패
 		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad'", Long.class));
-		assertEquals(1L, db.queryForObject(
+		assertEquals(0L, db.queryForObject(
 				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_noad'", Long.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_caption'", Long.class));
+	}
+
+	/**
+	 * 07-27 개편 백필 — 신 스키마 이전에 쌓인 행은 input(last_posted_at)이 미러와 같아도
+	 * perf_summary가 없으면 스킵 대상에서 빠져 재분석된다(구 스키마 자연 재대상).
+	 * analyzed_at을 쿨다운(기본 7일) 창 안(1시간 전)으로 둬 "쿨다운을 무시하고 즉시 재대상"임을
+	 * 증명한다 — stale 재분석 분기(쿨다운 경과 필요)와 섞이면 이 테스트가 false negative를 놓친다.
+	 */
+	@Test
+	void 구_스키마_행은_perf_summary가_비어_재대상이_된다() {
+		// 신 스키마 이전에 쌓인 행: 입력 동일(stale 아님)+쿨다운 미경과인데도 perf_summary가 없다
+		db.update("""
+				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
+				  input_analyzed_count, tagline, summary, traits)
+				VALUES ('acct_ad', now() - interval '1 hour', 'm',
+				  timestamptz '2026-07-01 09:00:00+09', 6, '옛 태그라인', '옛 요약', '["a"]'::jsonb)""");
+		rewireJob(fakePort());
+
+		job.run();
+
+		// 재분석돼 이력 2행, 최신 행에는 perf_summary가 있다
+		assertEquals(2, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
+		assertEquals("성과 요약", db.queryForObject("""
+				SELECT perf_summary FROM account_analyses WHERE handle = 'acct_ad'
+				ORDER BY analyzed_at DESC LIMIT 1""", String.class));
 	}
 
 	@Test
 	void traits가_5개를_넘으면_앞_5개만_저장한다() {
 		rewireJob(account -> {
 			calls.add(account);
-			return new AccountCopy("태그라인", "요약", "흐름", "차트",
-					List.of("t1", "t2", "t3", "t4", "t5", "t6"), "", "페이스");
+			return new AccountCopy("태그라인",
+					List.of("릴스 중심", "브이로그", "튜토리얼", "언박싱", "하울", "GRWM"),
+					"성과 요약", "콘텐츠 요약", "");
 		});
 
 		job.run();
 
 		assertEquals(5, db.queryForObject(
 				"SELECT jsonb_array_length(traits) FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
-		assertEquals("t5", db.queryForObject(
+		assertEquals("하울", db.queryForObject(
 				"SELECT traits->>4 FROM account_analyses WHERE handle = 'acct_ad'", String.class));
+	}
+
+	/** 어휘 통제(2026-07-29 스펙 §3-2): 어휘 밖 산출은 저장에서 드롭 — 전부 밖이면 빈 배열. */
+	@Test
+	void 어휘_밖_traits는_드롭되고_빈_배열이_허용된다() {
+		rewireJob(account -> {
+			calls.add(account);
+			return new AccountCopy("태그라인",
+					List.of("저자극", "임의조어"), "성과 요약", "콘텐츠 요약", "");
+		});
+
+		job.run();
+
+		assertEquals(0, db.queryForObject(
+				"SELECT jsonb_array_length(traits) FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
 	}
 }

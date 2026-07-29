@@ -4,7 +4,7 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
-import com.celfit.contract.analysis.AccountAnalysis;
+import com.celfit.analytics.llm.TraitTaxonomyLoader;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -17,27 +17,47 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 계정 카피 배치 (스펙 §4). content_analyses(불변 1회)와 달리 stale 재분석 —
  * 행은 INSERT로만 쌓고 was/E는 계정별 최신 1행을 읽는다.
- * 대상: ① 분석 없음 → 즉시 ② input_last_posted_at ≠ 미러 last_posted_at(새 게시물, stale)
+ * 대상: ① 분석 없음 → 즉시 ② 최신 행이 구 스키마(perf_summary NULL) → 즉시(07-27 개편 백필)
+ *       ③ input_last_posted_at ≠ 미러 last_posted_at(새 게시물, stale)
  *       AND 마지막 분석 후 쿨다운(일) 경과. 계정 단위 실패 격리.
  */
 public class AccountAnalysisJob {
 
 	private static final Logger log = LoggerFactory.getLogger(AccountAnalysisJob.class);
-	static final int MAX_TRAITS = 5; // ClaudeBurstRunner(구독 버스트 collect)와 공유
 	static final int CAPTION_CHARS = 300;
+
+	/**
+	 * 계정 카피 대상 자격 정의 — 단일 정본 (07-28 드리프트 재발 방지). run()의 대상 쿼리와
+	 * 어드민 대상 카운트(PipelineStatsService.accountTarget)·Claude 버스트 export
+	 * (ClaudeBurstRunner.exportAccounts)가 이 문자열을 그대로 이어붙여 써서 세 곳의 판정이
+	 * 항상 같은 SQL이 되게 한다. 파라미터는 쿨다운 일수(accountAnalyzeCooldownDays) 하나뿐 —
+	 * 이어붙이는 쪽은 이 순서 뒤에 자기 파라미터(배치 상한 등)를 추가한다.
+	 */
+	public static final String ELIGIBLE_WHERE = """
+			LEFT JOIN LATERAL (
+			  SELECT a.input_last_posted_at, a.analyzed_at, a.perf_summary
+			  FROM account_analyses a WHERE a.handle = s.handle
+			  ORDER BY a.analyzed_at DESC LIMIT 1
+			) latest ON true
+			WHERE latest.analyzed_at IS NULL
+			   OR latest.perf_summary IS NULL  -- 07-27 개편 백필: 구 스키마 행 자연 재대상
+			   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
+			       AND latest.analyzed_at < now() - make_interval(days => ?))""";
 
 	private final JdbcTemplate analysis;
 	private final AccountSynthesisPort port;
 	private final AnalyticsSettings settings;
 	private final ProgressReporter reporter;
+	private final TraitTaxonomyLoader traitLoader;
 	private final ObjectMapper json = new ObjectMapper();
 
 	public AccountAnalysisJob(DataSource analysisDataSource, AccountSynthesisPort port,
-			AnalyticsSettings settings, ProgressReporter reporter) {
+			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader) {
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.port = port;
 		this.settings = settings;
 		this.reporter = reporter;
+		this.traitLoader = traitLoader;
 	}
 
 	/** @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부) */
@@ -45,14 +65,8 @@ public class AccountAnalysisJob {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
-				LEFT JOIN LATERAL (
-				  SELECT a.input_last_posted_at, a.analyzed_at
-				  FROM account_analyses a WHERE a.handle = s.handle
-				  ORDER BY a.analyzed_at DESC LIMIT 1
-				) latest ON true
-				WHERE latest.analyzed_at IS NULL
-				   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-				       AND latest.analyzed_at < now() - make_interval(days => ?))
+				""" + ELIGIBLE_WHERE + """
+
 				ORDER BY s.handle
 				LIMIT ?""", String.class,
 				settings.accountAnalyzeCooldownDays(), settings.accountAnalyzeBatchLimit());
@@ -99,36 +113,12 @@ public class AccountAnalysisJob {
 		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
 				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation));
 
-		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지)
-		if (isBlank(copy.tagline()) || isBlank(copy.summary())) {
+		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지).
+		// 절단·INSERT는 AccountAnalysisWriter 단일 원천(ClaudeBurstRunner와 공유 — 07-17 재발 방지).
+		if (!AccountAnalysisWriter.isValid(copy)) {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
-		if (copy.traits() == null || copy.traits().isEmpty()) {
-			throw new IllegalStateException("traits가 비어 있음: " + handle);
-		}
-		List<String> traits = List.copyOf(copy.traits().size() > MAX_TRAITS
-				? copy.traits().subList(0, MAX_TRAITS) : copy.traits());
-
-		AccountAnalysis row = new AccountAnalysis(handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy.tagline(), copy.summary(), copy.trendNote(),
-				copy.chartNote(), traits,
-				adSituation.writesHeadline() ? blankToNull(copy.adHeadline()) : null, copy.paceNote());
-		analysis.update("""
-				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
-				  ad_headline, pace_note)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)""",
-				row.handle(), row.analyzedAt(), row.model(), row.inputLastPostedAt(),
-				row.inputAnalyzedCount(), row.tagline(), row.summary(), row.trendNote(),
-				row.chartNote(), json.writeValueAsString(row.traits()), row.adHeadline(),
-				row.paceNote());
-	}
-
-	private static boolean isBlank(String s) {
-		return s == null || s.isBlank();
-	}
-
-	private static String blankToNull(String s) {
-		return isBlank(s) ? null : s;
+		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
+				lastPostedAt, analyzedCount, copy, adSituation, traitLoader.get().names());
 	}
 }

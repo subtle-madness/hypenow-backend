@@ -46,7 +46,7 @@
 | 9 | **감지 이메일 알람 발송은 was — 매일 KST 09:00 고정 크론** — 수신자 매핑·이메일 주소·알람 on/off·발송 채널이 전부 app 스키마/was 소유. was 크론이 신규 감지 후보를 읽기 전용 SELECT로 조회(결정 3)해 알람 on 유저에게만 발송, 발송 워터마크는 app 스키마. monitoring은 감지 사실 기록까지 | monitoring 발송(PII·설정을 monitoring에 복제하거나 app 스키마를 읽어야 함 — 캡슐화 위반), monitoring→was 웹훅(감지 02:00·발송 09:00 고정이라 즉시성 이득 0, 역방향 의존만 추가) |
 | 10 | **target은 캠페인(등록) 단위, 스냅샷은 관측 대상(계정·게시물) 단위** — 같은 인플루언서를 키워드가 다른 캠페인 여럿이 동시 감시 가능(감지 후보는 target 소속이라 귀속 모호성 없음), 수집·스냅샷은 계정당 1회로 공유(중복 크롤·중복 적재 없음) | target=인플루언서 단위(브랜드 b·c가 키워드 d·e로 같은 계정을 감시할 때 감지가 누구 캠페인인지 구분 불가), 스냅샷을 target별 중복 적재(같은 계정 N개 캠페인이면 N배 크롤·저장) |
 | 11 | **명령 API 인증은 토큰이 아니라 전용 도커 네트워크(`monitoring-net`)** — was와 monitoring만 소속, 호스트 포트 미노출(`ports` 매핑 없음). 미소속 컨테이너(dev-was·crawler·caddy 등)는 DNS 해석부터 실패 → dev/운영 오배선이 connection error로 즉사(fail-closed), 유출될 공유 비밀 없음 | 정적 토큰(공유 비밀 — was가 뚫리면 토큰도 같이 뚫려 네트워크 격리 대비 추가 방어 0, env·검사 코드 관리 비용만. 07-29 대체), 무인증+평면 네트워크(dev-was 오배선이 조용히 운영 오염) |
-| 12 | **dev 스택 편입 — `dev-monitoring` 신설** — dev-postgres에 monitoring DB, dev 전용 `dev-monitoring-net`(dev-was와 둘만), 스윕 크론 off(K 트랙 "dev 스케줄 전부 off" 원칙 — 등록 동기 수집만 동작, Hiker 실키 소량 사용) | dev 제외(dev-was의 모니터링 기능이 검증 불가 — 07-29 편입 결정) |
+| 12 | **dev 스택 편입 — `dev-monitoring` 신설** — dev-postgres에 monitoring DB, dev 전용 `dev-monitoring-net`(dev-was와 둘만), 스윕 크론 off(K 트랙 "dev 스케줄 전부 off" 원칙 — 등록 동기 수집만 동작, Hiker 실키 소량 사용) | dev 제외(dev-was의 모니터링 기능이 검증 불가 — 07-29 편입 결정) (07-29 트랙 W 리네임: dev-monitoring→test-monitoring·`:develop`→`:staging` — 정본은 ARCHITECTURE §7) |
 
 ### 통신 방식의 근거 (결정 3 상세)
 

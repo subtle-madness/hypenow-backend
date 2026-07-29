@@ -3,6 +3,7 @@ package com.celfit.analytics.analyze;
 import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.BeautyTaxonomy;
 import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.llm.ContentInsightPort.ContentInsight;
@@ -52,8 +53,8 @@ public class ClaudeBurstRunner {
 			aiCommentInsight, commentAuthenticityGrade, commentAuthenticityNote""";
 	private static final String ACCOUNT_JSON_RULE = """
 
-			출력 형식: 아래 7개 키를 모두 가진 JSON 객체 하나만 출력하라. 코드펜스·설명·다른 텍스트 금지.
-			키: tagline, summary, trendNote, chartNote, traits(문자열 배열), adHeadline, paceNote""";
+			출력 형식: 아래 5개 키를 모두 가진 JSON 객체 하나만 출력하라. 코드펜스·설명·다른 텍스트 금지.
+			키: tagline, traits(문자열 배열), perfSummary, contentSummary, adSummary""";
 
 	public record ExportResult(int contents, int accounts) {}
 
@@ -63,15 +64,18 @@ public class ClaudeBurstRunner {
 	private final JdbcTemplate analysis;
 	private final AnalyticsSettings settings;
 	private final BeautyTaxonomyLoader taxonomyLoader;
+	private final com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader;
 	private final Path workDir;
 	private final ObjectMapper om = new ObjectMapper();
 
 	public ClaudeBurstRunner(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
-			AnalyticsSettings settings, BeautyTaxonomyLoader taxonomyLoader, Path workDir) {
+			AnalyticsSettings settings, BeautyTaxonomyLoader taxonomyLoader,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader, Path workDir) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.settings = settings;
 		this.taxonomyLoader = taxonomyLoader;
+		this.traitLoader = traitLoader;
 		this.workDir = workDir;
 	}
 
@@ -156,19 +160,13 @@ public class ClaudeBurstRunner {
 		return count;
 	}
 
-	/** 카피 대상 전량 — AccountAnalysisJob.run의 자격 정의에서 배치 상한만 뺐다. */
+	/** 카피 대상 전량 — AccountAnalysisJob.ELIGIBLE_WHERE(잡의 자격 정의와 단일 정본)에서 배치 상한만 뺐다. */
 	private int exportAccounts() {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
-				LEFT JOIN LATERAL (
-				  SELECT a.input_last_posted_at, a.analyzed_at
-				  FROM account_analyses a WHERE a.handle = s.handle
-				  ORDER BY a.analyzed_at DESC LIMIT 1
-				) latest ON true
-				WHERE latest.analyzed_at IS NULL
-				   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-				       AND latest.analyzed_at < now() - make_interval(days => ?))
+				""" + AccountAnalysisJob.ELIGIBLE_WHERE + """
+
 				ORDER BY s.handle""", String.class, settings.accountAnalyzeCooldownDays());
 		StringBuilder input = new StringBuilder();
 		StringBuilder sidecar = new StringBuilder();
@@ -185,12 +183,12 @@ public class ClaudeBurstRunner {
 			// AccountAnalysisJob.analyzeOne과 동일 정본 — 판정·수치 모두 AccountAdCanon 단일 원천.
 			AccountAdCanon.AdMetrics ad =
 					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
-			com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
+			AdSituation adSituation = ad.situation();
 			AccountToAnalyze account = new AccountToAnalyze(handle,
 					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation);
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
-					.put("system", GeminiAccountSynthesizer.instructions())
+					.put("system", GeminiAccountSynthesizer.instructions(traitLoader.get()))
 					.put("user", GeminiAccountSynthesizer.userText(account) + ACCOUNT_JSON_RULE)))
 					.append('\n');
 			var side = om.createObjectNode().put("handle", handle)
@@ -276,9 +274,8 @@ public class ClaudeBurstRunner {
 			return false;
 		}
 		AccountCopy copy = om.readValue(json, AccountCopy.class);
-		// AccountAnalysisJob.analyzeOne과 동일 가드 — 빈 카피가 최신 행으로 서빙되는 것 차단
-		if (isBlank(copy.tagline()) || isBlank(copy.summary())
-				|| copy.traits() == null || copy.traits().isEmpty()) {
+		// 가드·절단·INSERT는 AccountAnalysisWriter 단일 원천(AccountAnalysisJob과 공유 — 07-17 재발 방지)
+		if (!AccountAnalysisWriter.isValid(copy)) {
 			return false;
 		}
 		OffsetDateTime inputLastPostedAt = side.get("input_last_posted_at") == null
@@ -291,24 +288,16 @@ public class ClaudeBurstRunner {
 		if (dup != null && dup > 0) {
 			return false;
 		}
-		List<String> traits = List.copyOf(copy.traits().size() > AccountAnalysisJob.MAX_TRAITS
-				? copy.traits().subList(0, AccountAnalysisJob.MAX_TRAITS) : copy.traits());
-		// 사이드카에 없는 옛 파일(has_ad_comparison 시절)이면 근거 없음으로 보수적 처리
+		// ad_situation은 export 시점에 사이드카에 적어둔 값(AdSituation.name()) — AccountAnalysisWriter가
+		// INSUFFICIENT(근거 없음)일 때만 adSummary를 버린다. 구 export 산출물처럼 필드 자체가 없으면
+		// (사이드카에 ad_situation 키 없음) AccountAdCanon을 재조회하는 대신 보수적으로 NULL 처리 —
+		// 근거 재현이 안 되는 값을 함부로 서빙하지 않는다는 이 파일의 기존 관용구(base==null → 실패 취급,
+		// 다른 개별 필드 null-safe 파싱)를 따른 것이다.
 		String situationName = side.get("ad_situation");
-		com.celfit.analytics.llm.AdSituation adSituation = situationName == null
-				? com.celfit.analytics.llm.AdSituation.INSUFFICIENT
-				: com.celfit.analytics.llm.AdSituation.valueOf(situationName);
-		analysis.update("""
-				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, summary, trend_note, chart_note, traits,
-				  ad_headline, pace_note)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)""",
-				handle, OffsetDateTime.now(), model, inputLastPostedAt,
+		AdSituation situation = situationName == null ? null : AdSituation.valueOf(situationName);
+		AccountAnalysisWriter.insert(analysis, om, handle, OffsetDateTime.now(), model, inputLastPostedAt,
 				side.get("analyzed_count") == null ? null : Long.parseLong(side.get("analyzed_count")),
-				copy.tagline(), copy.summary(), copy.trendNote(), copy.chartNote(),
-				om.writeValueAsString(traits),
-				adSituation.writesHeadline() && !isBlank(copy.adHeadline()) ? copy.adHeadline() : null,
-				copy.paceNote());
+				copy, situation, traitLoader.get().names());
 		return true;
 	}
 
@@ -368,10 +357,6 @@ public class ClaudeBurstRunner {
 				longOrNull(b.get("recent12_avg_like_count")), longOrNull(b.get("recent12_avg_comment_count")),
 				intOrNull(b.get("category_top_percentile")), longOrNull(b.get("category_avg_views")),
 				longOrNull(b.get("category_sample_size")));
-	}
-
-	private static boolean isBlank(String s) {
-		return s == null || s.isBlank();
 	}
 
 	private static Long longOrNull(String v) {

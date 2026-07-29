@@ -136,18 +136,20 @@
         <!-- 트랙 4분할(G1) — 자격을 트랙별 기분석/미분석으로 쪼갠다. 항등식: 자격 = 기분석 + 미분석 -->
         <div th:unless="${funnel.heavyPending() or funnel.heavyFailed()}">
             <div class="split">
-                <span class="split-label">랭킹 트랙 <span class="off">제때 크롤</span></span>
+                <span class="split-label">랭킹 트랙 <span class="off">제때창(3일) 안 크롤 성공</span></span>
                 <span class="chip ok">자격 <b th:text="${funnel.timelyTotal()}">0</b></span>
                 <span class="chip">기분석 <b th:text="${funnel.timelyDone()}">0</b>
                     <span class="off">랭킹 노출</span></span>
-                <span class="chip alt">미분석 <b th:text="${funnel.timelyPending()}">0</b></span>
+                <span class="chip alt">미분석 <b th:text="${funnel.timelyPending()}">0</b>
+                    <span class="off">분석 대기</span></span>
             </div>
             <div class="split">
-                <span class="split-label">상세 트랙 <span class="off">최근 윈도우 · 랭킹 제외</span></span>
+                <span class="split-label">상세 트랙 <span class="off">제때창 놓침 · 최근 윈도우 안 → 랭킹 제외</span></span>
                 <span class="chip ok">자격 <b th:text="${funnel.windowTotal()}">0</b></span>
                 <span class="chip">기분석 <b th:text="${funnel.windowDone()}">0</b>
                     <span class="off">인플루언서 상세 전용</span></span>
-                <span class="chip alt">미분석 <b th:text="${funnel.windowPending()}">0</b></span>
+                <span class="chip alt">미분석 <b th:text="${funnel.windowPending()}">0</b>
+                    <span class="off">분석 대기</span></span>
             </div>
             <div class="split">
                 <span class="split-label">진짜 잔여</span>
@@ -156,6 +158,15 @@
                 <span class="chip">오늘 +<b th:text="${funnel.todayPlanned()}">0</b> 예정</span>
                 <span class="chip mute" th:if="${funnel.daysToFull() > 0}">완주까지 <b
                         th:text="${funnel.daysToFull()}">0</b>일</span>
+            </div>
+            <!-- 자격 밖 — "왜 분석이 없나"의 나머지 절반. 잔여(대기)와 헷갈리지 않게 원인을 명시:
+                 미성숙은 판정 전, 영구 제외는 제때창(3일) 놓침 ∧ 윈도우 밖이라 애초에 분석 대상이 아니다 -->
+            <div class="split">
+                <span class="split-label">분석 안 함 <span class="off">자격 밖 — 실패·지연 아님</span></span>
+                <span class="chip mute">미성숙 <b th:text="${funnel.immature()}">0</b>
+                    <span class="off">제때창 안 닫힘 — 판정 대기</span></span>
+                <span class="chip mute">영구 제외 <b th:text="${funnel.lateExcluded()}">0</b>
+                    <span class="off">제때창(3일) 놓침 ∧ 윈도우 밖</span></span>
             </div>
         </div>
 
@@ -178,15 +189,11 @@
             <span class="off" th:if="${funnel.computedText() != null}">집계 <span th:text="${funnel.computedText()}"></span> 기준</span>
         </div>
 
-        <!-- 자격 밖 분해 + 제때 크롤 가드 — 서빙→자격 낙차의 이유를 수치로 설명 -->
+        <!-- 제때 크롤 가드 수식 — 자격 판정 정의 각주 (자격 밖 수치는 위 "분석 안 함" 행으로 승격) -->
         <div class="meta guard">
             <span>자격 = 성숙(제때창 완전 경과) ∩ (제때 크롤 or 최근 윈도우)
                 <span class="off">(pin <span th:text="${funnel.pinDays()}"></span>일 + slack <span
-                        th:text="${funnel.slackDays()}"></span>일)</span><span
-                th:unless="${funnel.heavyPending() or funnel.heavyFailed()}"> · 자격 밖 = 미성숙 <b
-                    th:text="${funnel.immature()}"></b> + 영구 제외 <b
-                    th:text="${funnel.lateExcluded()}"></b>
-                <span class="off">— 늦크롤이면서 윈도우 밖</span></span></span>
+                        th:text="${funnel.slackDays()}"></span>일)</span></span>
         </div>
 
         <!-- 누적 각주 — 역대 분석 저장 총량. 모수 리비전(판정 v1/v2)이 섞여 커버리지 분자가 아니다(v3 §2) -->

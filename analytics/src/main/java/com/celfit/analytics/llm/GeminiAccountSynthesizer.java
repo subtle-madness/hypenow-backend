@@ -3,50 +3,64 @@ package com.celfit.analytics.llm;
 import java.util.function.Supplier;
 import tools.jackson.databind.ObjectMapper;
 
-/** 계정 카피 Gemini 어댑터 — 카피 7종 1콜. 프롬프트·GUARD는 골드셋(07-18) 문구 검증 통과본. */
+/** 계정 카피 Gemini 어댑터 — 카피 5종 1콜(07-27 개편). 07-18 골드셋 검증 통과본에서 재작성 — 재검증은 Task 12. */
 public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
 	static final int MAX_OUTPUT_TOKENS = 4096;
 
 	static final String RESPONSE_SCHEMA = """
 			{"type":"object","properties":{
-			  "tagline":{"type":"string"},"summary":{"type":"string"},"trendNote":{"type":"string"},
-			  "chartNote":{"type":"string"},"traits":{"type":"array","items":{"type":"string"}},
-			  "adHeadline":{"type":"string"},"paceNote":{"type":"string"}},
-			 "required":["tagline","summary","trendNote","chartNote","traits","adHeadline","paceNote"]}""";
+			  "tagline":{"type":"string"},"traits":{"type":"array","items":{"type":"string"}},
+			  "perfSummary":{"type":"string"},"contentSummary":{"type":"string"},
+			  "adSummary":{"type":"string"}},
+			 "required":["tagline","traits","perfSummary","contentSummary","adSummary"]}""";
 
-	static final String INSTRUCTIONS = """
+	static final String INSTRUCTIONS_TEMPLATE = """
 			당신은 뷰티 브랜드 마케터를 위한 인스타그램 인플루언서 분석가다. 주어진 수치·캡션만
 			근거로 삼고 수치를 지어내지 마라. 한국어. 화면에 그대로 노출되는 짧은 문구이므로 분량을 지켜라.
 
-			- tagline: 프로필 헤더 한 줄 소개 — 콘텐츠 성격·톤 (예: "저자극 스킨케어 중심 · 성분과 사용감을 짚는 정보형 리뷰 톤"). 40자 이내
-			- summary: 마케터 관점의 계정 분석 요약, 3~4문장
-			- trendNote: 최근 흐름 한 문장 (trend_direction·trend_change_pct 근거)
-			- chartNote: 게시물별 성과 분포의 특징 한 문장 (예: "잘 터진 3개가 평균을 끌어올림")
-			- traits: 콘텐츠 성향 태그 3~5개, 각 2~6자 명사구
-			- adHeadline: 이 계정의 광고 활동을 요약한 한 문장. 입력의 "광고 활동" 값에 따라 아래처럼 쓴다.
+			- tagline: 프로필 헤더 한 줄 소개. 무엇을 다루는 계정인지에 더해 말투·전개 방식·설득
+			  방식(예: 성분 근거 제시, 사용 전후 비교, 브이로그형)까지 구체적으로. "·"로 구획, 70자 이내
+			  (예: "저자극 스킨케어 중심 · 성분표를 짚어가며 사용 전후 비교로 설득하는 정보형 리뷰 톤")
+			- traits: 콘텐츠 성향 태그 3~5개 — 아래 어휘에서만 고른다(임의 조어·변형 금지, 표기 그대로).
+			  계정을 가장 잘 설명하는 원자 태그를 조합한다(예: 감성 브이로그 계정이면 "브이로그"와 "감성 무드" 2개).
+			  어휘:
+			%s
+			- perfSummary: 성과 요약 2~3문장 — 평균 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
+			  반응 차이 중심 (avg_views·avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물
+			  목록(content_type·views·likes) 근거 — 포맷별 반응 차이는 게시물 목록에서만 확인 가능하니
+			  그 밖은 단정하지 마라). **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면
+			  스탯 타일이고 이 문장은 매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편",
+			  "완만한 상승세", "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
+			- contentSummary: 콘텐츠 성격 요약 2~3문장 — 무엇을 어떤 방식으로 다루는지, 반복되는 형식·톤
+			  (카테고리 믹스·캡션 근거)
+			- adSummary: 광고 활동 요약 2~3문장. 입력의 "광고 활동" 값에 따라 아래처럼 쓴다.
 			  어느 경우든 **좋다·나쁘다·유리하다·적합하다 같은 평가나 권유는 쓰지 마라** — 수치와 사실만
 			  객관적으로 진술하고 판단은 읽는 사람에게 맡긴다.
-			  · "비교 가능": organic 평균과 협찬 평균의 차이를 수치로 (organic_avg·ad_avg·ad_drop_pct 근거)
+			  · "비교 가능": organic 평균과 협찬 평균의 차이, 광고에서의 톤 변화 여부를 수치·캡션 근거로
 			  · "협찬 없음": 협찬 표기 게시물이 없다는 사실과 해당 기간의 지표를 그대로 진술
 			  · "전량 협찬": 협찬 건수·비중과 그 성과 수치를 진술하고, 비교할 organic이 없다는 점을 밝힌다
 			  · "판단 불가": 빈 문자열
-			- paceNote: 업로드 페이스 한 문장 (avg_interval_days 근거, 예: "주 2~3회 올리는 페이스")
 
-			%s""".formatted(LlmGuard.RULES);
+			%s""";
 
 	private final GeminiApi api;
 	private final Supplier<String> model;
+	private final Supplier<TraitTaxonomy> vocab;
 	private final ObjectMapper om = new ObjectMapper();
 
-	public GeminiAccountSynthesizer(GeminiApi api, Supplier<String> model) {
+	public GeminiAccountSynthesizer(GeminiApi api, Supplier<String> model, Supplier<TraitTaxonomy> vocab) {
 		this.api = api;
 		this.model = model;
+		this.vocab = vocab;
 	}
 
-	/** 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다. */
-	public static String instructions() {
-		return INSTRUCTIONS;
+	/**
+	 * 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다.
+	 * traits는 어휘 내 선택(2026-07-29 어휘 통제 스펙) — 어휘 블록은 V41 시드 스냅샷을 주입한다.
+	 */
+	public static String instructions(TraitTaxonomy vocab) {
+		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(), LlmGuard.RULES);
 	}
 
 	/** 유저 입력 — synthesize와 버스트 export가 공유 (프롬프트 정합 단일 원천). */
@@ -62,7 +76,7 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
 	@Override
 	public AccountCopy synthesize(AccountToAnalyze account) {
-		String out = api.generateJson(model.get(), INSTRUCTIONS, userText(account), null,
+		String out = api.generateJson(model.get(), instructions(vocab.get()), userText(account), null,
 				RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
 		return om.readValue(out, AccountCopy.class);
 	}
