@@ -42,20 +42,17 @@ public class V1AuthController {
 	private final SignupCodeRepository signupCodeRepository;
 	private final SignupService signupService;
 	private final AuthenticationManager authenticationManager;
-	private final EmailVerificationService emailVerificationService;
 	private final SecurityContextRepository securityContextRepository = new HttpSessionSecurityContextRepository();
 
 	public V1AuthController(SignupValidator signupValidator, RateLimiter rateLimiter,
 			UserRepository userRepository, SignupCodeRepository signupCodeRepository,
-			SignupService signupService, AuthenticationManager authenticationManager,
-			EmailVerificationService emailVerificationService) {
+			SignupService signupService, AuthenticationManager authenticationManager) {
 		this.signupValidator = signupValidator;
 		this.rateLimiter = rateLimiter;
 		this.userRepository = userRepository;
 		this.signupCodeRepository = signupCodeRepository;
 		this.signupService = signupService;
 		this.authenticationManager = authenticationManager;
-		this.emailVerificationService = emailVerificationService;
 	}
 
 	@PostMapping("/v1/auth/signup")
@@ -66,15 +63,11 @@ public class V1AuthController {
 		if (!rateLimiter.tryAcquire("signup:" + httpRequest.getRemoteAddr())) {
 			throw V1ApiException.rateLimited();
 		}
-		// 빠른 실패(검증·인증 확인 전) — 원자적 소진 보장은 register 안의 claim이 담당
+		// 빠른 실패(검증 전) — 원자적 소진 보장은 register 안의 claim이 담당
 		requireUsableCode(request.signupCode());
 		signupValidator.validate(request);
-		// 이메일 소유권 인증(설계 2026-07-18) — 가입 전 강제. verified 30분 이내가 아니면 403
-		String email = UserRepository.normalizeEmail(request.email());
-		emailVerificationService.requireVerified(email);
-
+		// 이메일 소유권 인증 게이트는 제거(2026-07-29) — 클로즈베타 정책 변경, 가입 관문은 1회용 코드만
 		UserProfile profile = signupService.register(request);
-		emailVerificationService.consume(email);
 
 		// 가입 직후 자동 로그인 — 방금 저장한 자격증명이라 실패할 수 없는 경로(실패 시 500이 맞다)
 		Authentication authResult = authenticationManager.authenticate(

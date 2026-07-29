@@ -44,23 +44,9 @@ public final class V1AuthTestSteps {
 				.formatted(SIGNUP_CODE, email, PASSWORD);
 	}
 
-	/**
-	 * 이메일 인증 우회 시드 — 가입 전 강제(설계 2026-07-18) 이후 signup 전에 필요.
-	 * send/confirm 왕복 없이 verified 행을 직접 심는다(코드 해시는 무관 값).
-	 */
-	public static void markEmailVerified(JdbcClient jdbcClient, String email) {
-		jdbcClient.sql("""
-				INSERT INTO app.email_verifications (email, code_hash, code_expires_at, verified_at)
-				VALUES (lower(trim(:email)), 'seeded', now(), now())
-				ON CONFLICT (email) DO UPDATE SET verified_at = now()""")
-				.param("email", email)
-				.update();
-	}
-
-	/** 가입(자동 로그인) 후 hypenow-session 쿠키 반환 — 이메일 인증·가입 코드 시드 포함(코드는 1회용이라 매번 리셋). */
+	/** 가입(자동 로그인) 후 hypenow-session 쿠키 반환 — 가입 코드 시드 포함(코드는 1회용이라 매번 리셋). */
 	public static Cookie signUp(MockMvc mockMvc, JdbcClient jdbcClient, String email) throws Exception {
 		enableSignupCode(jdbcClient);
-		markEmailVerified(jdbcClient, email);
 		MvcResult result = mockMvc.perform(post("/v1/auth/signup").with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content(signupBody(email)))
 				.andExpect(status().isCreated())
