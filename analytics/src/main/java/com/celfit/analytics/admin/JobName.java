@@ -8,7 +8,9 @@ public enum JobName {
 	ACCOUNT_ANALYZE("계정 카피 (LLM)"),
 	SYNTHESIS_REFRESH("해석 문구 갱신 (LLM) — 사실 보존"),
 	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지"),
-	LATE_BACKFILL_ANALYZE("늦크롤 백필 분석 (LLM)");
+	LATE_BACKFILL_ANALYZE("늦크롤 백필 분석 (LLM)"),
+	TRAIT_CANON_DRY("trait 어휘 매핑 dry-run (LLM) — canon_log 기록만"),
+	TRAIT_CANON_APPLY("trait 어휘 매핑 실행 (LLM) — traits UPDATE");
 
 	private final String label;
 

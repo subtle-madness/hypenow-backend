@@ -15,14 +15,17 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			  "adSummary":{"type":"string"}},
 			 "required":["tagline","traits","perfSummary","contentSummary","adSummary"]}""";
 
-	static final String INSTRUCTIONS = """
+	static final String INSTRUCTIONS_TEMPLATE = """
 			당신은 뷰티 브랜드 마케터를 위한 인스타그램 인플루언서 분석가다. 주어진 수치·캡션만
 			근거로 삼고 수치를 지어내지 마라. 한국어. 화면에 그대로 노출되는 짧은 문구이므로 분량을 지켜라.
 
 			- tagline: 프로필 헤더 한 줄 소개. 무엇을 다루는 계정인지에 더해 말투·전개 방식·설득
 			  방식(예: 성분 근거 제시, 사용 전후 비교, 브이로그형)까지 구체적으로. "·"로 구획, 70자 이내
 			  (예: "저자극 스킨케어 중심 · 성분표를 짚어가며 사용 전후 비교로 설득하는 정보형 리뷰 톤")
-			- traits: 콘텐츠 성향 태그 3~5개, 각 2~6자 명사구
+			- traits: 콘텐츠 성향 태그 3~5개 — 아래 어휘에서만 고른다(임의 조어·변형 금지, 표기 그대로).
+			  계정을 가장 잘 설명하는 원자 태그를 조합한다(예: 감성 브이로그 계정이면 "브이로그"와 "감성 무드" 2개).
+			  어휘:
+			%s
 			- perfSummary: 성과 요약 2~3문장 — 평균 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
 			  반응 차이 중심 (avg_views·avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물
 			  목록(content_type·views·likes) 근거 — 포맷별 반응 차이는 게시물 목록에서만 확인 가능하니
@@ -39,20 +42,25 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			  · "전량 협찬": 협찬 건수·비중과 그 성과 수치를 진술하고, 비교할 organic이 없다는 점을 밝힌다
 			  · "판단 불가": 빈 문자열
 
-			%s""".formatted(LlmGuard.RULES);
+			%s""";
 
 	private final GeminiApi api;
 	private final Supplier<String> model;
+	private final Supplier<TraitTaxonomy> vocab;
 	private final ObjectMapper om = new ObjectMapper();
 
-	public GeminiAccountSynthesizer(GeminiApi api, Supplier<String> model) {
+	public GeminiAccountSynthesizer(GeminiApi api, Supplier<String> model, Supplier<TraitTaxonomy> vocab) {
 		this.api = api;
 		this.model = model;
+		this.vocab = vocab;
 	}
 
-	/** 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다. */
-	public static String instructions() {
-		return INSTRUCTIONS;
+	/**
+	 * 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다.
+	 * traits는 어휘 내 선택(2026-07-29 어휘 통제 스펙) — 어휘 블록은 V41 시드 스냅샷을 주입한다.
+	 */
+	public static String instructions(TraitTaxonomy vocab) {
+		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(), LlmGuard.RULES);
 	}
 
 	/** 유저 입력 — synthesize와 버스트 export가 공유 (프롬프트 정합 단일 원천). */
@@ -68,7 +76,7 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
 	@Override
 	public AccountCopy synthesize(AccountToAnalyze account) {
-		String out = api.generateJson(model.get(), INSTRUCTIONS, userText(account), null,
+		String out = api.generateJson(model.get(), instructions(vocab.get()), userText(account), null,
 				RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
 		return om.readValue(out, AccountCopy.class);
 	}
