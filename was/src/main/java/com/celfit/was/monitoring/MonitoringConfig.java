@@ -5,6 +5,8 @@ import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +24,8 @@ import org.springframework.web.client.RestClient;
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class MonitoringConfig {
 
+	private static final Logger log = LoggerFactory.getLogger(MonitoringConfig.class);
+
 	private final HikariDataSource monitoringDataSource;
 	private final JdbcClient monitoringJdbc;
 	private final RestClient monitoringRestClient;
@@ -31,6 +35,16 @@ public class MonitoringConfig {
 			@Value("${monitoring.datasource.url}") String dbUrl,
 			@Value("${monitoring.datasource.username}") String dbUsername,
 			@Value("${monitoring.datasource.password}") String dbPassword) {
+		// PATCH(기간 연장) 때문에 JDK HttpClient 팩토리 — 타임아웃은 계약 §1 권고 최대치로 단일화(스펙 §4)
+		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+		JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(http);
+		requestFactory.setReadTimeout(Duration.ofSeconds(10));
+		this.monitoringRestClient = RestClient.builder()
+				.requestFactory(requestFactory)
+				.baseUrl(baseUrl)
+				.build();
+
+		// 커넥션 풀 획득은 마지막 — 이후 라인이 예외를 던지면 @PreDestroy 미등록 상태로 풀이 새기 때문
 		HikariConfig hikari = new HikariConfig();
 		hikari.setJdbcUrl(dbUrl);
 		hikari.setUsername(dbUsername);
@@ -40,14 +54,7 @@ public class MonitoringConfig {
 		this.monitoringDataSource = new HikariDataSource(hikari);
 		this.monitoringJdbc = JdbcClient.create(monitoringDataSource);
 
-		// PATCH(기간 연장) 때문에 JDK HttpClient 팩토리 — 타임아웃은 계약 §1 권고 최대치로 단일화(스펙 §4)
-		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
-		JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(http);
-		requestFactory.setReadTimeout(Duration.ofSeconds(10));
-		this.monitoringRestClient = RestClient.builder()
-				.requestFactory(requestFactory)
-				.baseUrl(baseUrl)
-				.build();
+		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3)", baseUrl);
 	}
 
 	/** 내부 접근자 — 빈이 아니다. 도메인 빈 조립과 테스트에서만 쓴다. */

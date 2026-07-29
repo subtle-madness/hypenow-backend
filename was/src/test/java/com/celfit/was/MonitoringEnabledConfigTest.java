@@ -40,6 +40,14 @@ class MonitoringEnabledConfigTest extends IntegrationTest {
 	}
 
 	@Test
+	void 기본_JdbcClient는_모니터링_내부_것과_다른_인스턴스다() {
+		// 사고 시나리오(모니터링 JdbcClient가 빈으로 새어 자동구성 back-off)에서는 컨텍스트의
+		// 유일한 JdbcClient가 모니터링 것이 된다 — 개수 단언으로는 구분 불가, identity로 잡는다
+		MonitoringConfig config = context.getBean(MonitoringConfig.class);
+		assertThat(context.getBean(JdbcClient.class)).isNotSameAs(config.monitoringJdbc());
+	}
+
+	@Test
 	void 모니터링_DB_조회가_동작한다() {
 		MonitoringConfig config = context.getBean(MonitoringConfig.class);
 		Integer one = config.monitoringJdbc().sql("SELECT 1").query(Integer.class).single();
