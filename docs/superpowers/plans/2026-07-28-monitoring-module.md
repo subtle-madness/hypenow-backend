@@ -28,16 +28,23 @@
 
 ### Task 1: Hiker 엔드포인트 실측 + 픽스처 확보
 
+> ✅ 완료(2026-07-29). 결과: `docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md`.
+> **실측으로 엔드포인트 3종이 전부 v2 계열로 바뀌었다** — v1 계열은 6지표 중 좋아요·댓글만 준다.
+> 열거는 `/v2/user/medias`(+릴스 조회수 보강용 `/v2/user/clips`), 단건은 `/v2/media/by/code`.
+> 아래 Step 1~2의 v1 curl 예시는 실행 당시의 초안이며, 정본은 findings 문서다.
+
 **Files:**
 - Create: `monitoring/src/test/resources/hiker/profile.json`
 - Create: `monitoring/src/test/resources/hiker/medias.json`
+- Create: `monitoring/src/test/resources/hiker/clips.json` (실측 중 추가 — 릴스 재생수)
 - Create: `monitoring/src/test/resources/hiker/media-by-code.json`
+- Create: `monitoring/src/test/resources/hiker/media-by-code-feed.json` (실측 중 추가 — 널 규칙)
 - Create: `docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md`
 
 **Interfaces:**
-- Produces: 픽스처 3종(이후 Task 4 파서 테스트의 입력)과 6지표 필드 매핑 확정 메모.
+- Produces: 픽스처 5종(이후 Task 4 파서 테스트의 입력)과 6지표 필드 매핑 확정 메모.
 
-- [ ] **Step 1: 실측 호출 3종** — `HIKER_API_KEY`는 셸 export 필요(.env 자동 로드 안 됨). 공개 계정 하나(예: 최근 릴스·피드가 섞인 뷰티 계정)로:
+- [x] **Step 1: 실측 호출 3종** — `HIKER_API_KEY`는 셸 export 필요(.env 자동 로드 안 됨). 공개 계정 하나(예: 최근 릴스·피드가 섞인 뷰티 계정)로:
 
 ```bash
 mkdir -p monitoring/src/test/resources/hiker
@@ -45,26 +52,33 @@ mkdir -p monitoring/src/test/resources/hiker
 curl -s -H "x-access-key: $HIKER_API_KEY" \
   "https://api.hikerapi.com/v2/user/by/username?username=<공개계정>" \
   | tee monitoring/src/test/resources/hiker/profile.json | head -c 400
-# ② 게시물 열거 (릴스+피드) — v1 medias chunk(전체 미디어). user_id는 ①의 pk 값
+# ② 게시물 열거 (릴스+피드, 1페이지 12건). user_id는 ①의 pk 값
 curl -s -H "x-access-key: $HIKER_API_KEY" \
-  "https://api.hikerapi.com/v1/user/medias/chunk?user_id=<pk>" \
+  "https://api.hikerapi.com/v2/user/medias?user_id=<pk>" \
   | tee monitoring/src/test/resources/hiker/medias.json | head -c 400
-# ③ 게시물 단건
+# ②' 릴스 재생수 보강 — ②는 play_count를 안 준다
 curl -s -H "x-access-key: $HIKER_API_KEY" \
-  "https://api.hikerapi.com/v1/media/by/code?code=<shortCode>" \
+  "https://api.hikerapi.com/v2/user/clips?user_id=<pk>" \
+  | tee monitoring/src/test/resources/hiker/clips.json | head -c 400
+# ③ 게시물 단건 (릴스 하나 + 피드 하나)
+curl -s -H "x-access-key: $HIKER_API_KEY" \
+  "https://api.hikerapi.com/v2/media/by/code?code=<릴스shortCode>" \
   | tee monitoring/src/test/resources/hiker/media-by-code.json | head -c 400
+curl -s -H "x-access-key: $HIKER_API_KEY" \
+  "https://api.hikerapi.com/v2/media/by/code?code=<피드shortCode>" \
+  | tee monitoring/src/test/resources/hiker/media-by-code-feed.json | head -c 400
 ```
 
-- [ ] **Step 2: 6지표 필드 존재 확인** — 각 픽스처에서 다음 후보 필드를 grep으로 확인하고 결과를 기록:
+- [x] **Step 2: 6지표 필드 존재 확인** — 각 픽스처에서 다음 후보 필드를 grep으로 확인하고 결과를 기록:
 
 ```bash
 for f in monitoring/src/test/resources/hiker/*.json; do echo "== $f"; \
-  grep -o '"like_count"\|"comment_count"\|"play_count"\|"view_count"\|"save_count"\|"saved_count"\|"share_count"\|"reshare_count"\|"repost_count"' $f | sort | uniq -c; done
+  grep -o '"like_count"\|"comment_count"\|"play_count"\|"ig_play_count"\|"view_count"\|"save_count"\|"reshare_count"\|"media_repost_count"' $f | sort | uniq -c; done
 ```
 
-- [ ] **Step 3: findings 문서 작성** — `docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md`에 기록: 사용 엔드포인트 3종 확정, 지표별 소스 필드(없으면 "미제공 → null"), 열거 응답만으로 저장·공유·리포스트가 나오는지(안 나오면 "TRACKING 게시물만 단건 콜로 보강" 결정 명시), 열거 1페이지 게시물 수. **Task 4의 파서 필드 후보 목록과 다르면 Task 4 코드의 `firstLong(...)` 후보 나열을 이 findings 기준으로 수정한다.**
+- [x] **Step 3: findings 문서 작성** — `docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md`에 기록: 사용 엔드포인트 3종 확정, 지표별 소스 필드(없으면 "미제공 → null"), 열거 응답만으로 저장·공유·리포스트가 나오는지(안 나오면 "TRACKING 게시물만 단건 콜로 보강" 결정 명시), 열거 1페이지 게시물 수. **Task 4의 파서 필드 후보 목록과 다르면 Task 4 코드의 `firstLong(...)` 후보 나열을 이 findings 기준으로 수정한다.**
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add monitoring/src/test/resources/hiker docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md
@@ -508,7 +522,9 @@ public enum CandidateStatus { PENDING, APPROVED, REJECTED }
 - Test: `monitoring/src/test/java/com/celfit/monitoring/hiker/HikerClientTest.java`
 
 **Interfaces:**
-- Consumes: Task 1 픽스처 3종. Task 1 findings의 필드 매핑이 아래 `firstLong` 후보 나열과 다르면 findings가 정본.
+- Consumes: Task 1 픽스처 5종(`profile.json`·`medias.json`·`clips.json`·`media-by-code.json`·`media-by-code-feed.json`).
+  필드 매핑·엔드포인트의 정본은 `docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md`
+  (아래 코드는 그 findings를 이미 반영한 상태).
 - Produces:
   - `HikerHttp { String get(String path); }` — 테스트 fake 지점.
   - `HikerClient.fetchProfile(String username) → ProfileInfo`
@@ -541,30 +557,69 @@ class HikerClientTest {
 		}
 	}
 
+	/** 경로별로 픽스처를 돌려주는 fake — 열거는 medias·clips 두 콜을 쏜다. */
+	private static HikerHttp fakeHttp() {
+		return path -> {
+			if (path.startsWith("/v2/user/by/username")) return fixture("profile.json");
+			if (path.startsWith("/v2/user/medias")) return fixture("medias.json");
+			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
+			return fixture("media-by-code.json");
+		};
+	}
+
 	@Test
 	void 프로필_파싱() {
-		HikerClient client = new HikerClient(path -> fixture("profile.json"));
-		ProfileInfo p = client.fetchProfile("someuser");
+		HikerClient client = new HikerClient(fakeHttp());
+		ProfileInfo p = client.fetchProfile("rarebeauty");
 		assertThat(p.userId()).isNotBlank();
 		assertThat(p.followers()).isPositive();
 		assertThat(p.rawJson()).isNotBlank();
 	}
 
 	@Test
-	void 열거_파싱_지표_6종은_없으면_null() {
-		HikerClient client = new HikerClient(path -> fixture("medias.json"));
-		var posts = client.fetchRecentPosts("someuser", "12345", 1);
-		assertThat(posts).isNotEmpty();
-		var first = posts.getFirst();
-		assertThat(first.shortCode()).isNotBlank();
-		assertThat(first.likes()).isNotNull();   // Task 1 findings 기준으로 단언 조정
+	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
+		HikerClient client = new HikerClient(fakeHttp());
+		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 1);
+		assertThat(posts).hasSize(12);                       // 1페이지 12건(findings §3)
+		assertThat(posts).allSatisfy(p -> {
+			assertThat(p.shortCode()).isNotBlank();
+			assertThat(p.likes()).isNotNull();
+			assertThat(p.comments()).isNotNull();
+			assertThat(p.reposts()).isNotNull();             // media_repost_count는 전 타입 제공
+		});
+		var reel = posts.stream().filter(p -> p.contentType().equals("REELS")).findFirst().orElseThrow();
+		assertThat(reel.saves()).isNotNull();
+		assertThat(reel.shares()).isNotNull();
+		assertThat(reel.views()).isPositive();               // clips 열거에서 머지된 play_count
+		var feed = posts.stream().filter(p -> p.contentType().equals("FEED")).findFirst().orElseThrow();
+		assertThat(feed.views()).isNull();                   // 피드는 조회수 영구 null
+		assertThat(feed.saves()).isNull();
+		assertThat(feed.shares()).isNull();
 	}
 
 	@Test
-	void 단건_파싱() {
+	void 단건_파싱_릴스는_6지표_전량() {
 		HikerClient client = new HikerClient(path -> fixture("media-by-code.json"));
-		PostInfo p = client.fetchPost("AbCdEf");
+		PostInfo p = client.fetchPost("DbV7LgZsKG8");
+		assertThat(p.contentType()).isEqualTo("REELS");
 		assertThat(p.caption()).isNotNull();
+		assertThat(p.likes()).isPositive();
+		assertThat(p.comments()).isPositive();
+		assertThat(p.views()).isPositive();
+		assertThat(p.saves()).isPositive();
+		assertThat(p.shares()).isPositive();
+		assertThat(p.reposts()).isPositive();
+	}
+
+	@Test
+	void 단건_파싱_피드는_조회_저장_공유가_null() {
+		HikerClient client = new HikerClient(path -> fixture("media-by-code-feed.json"));
+		PostInfo p = client.fetchPost("DbOMP1_CY18");
+		assertThat(p.contentType()).isEqualTo("FEED");
+		assertThat(p.likes()).isPositive();
+		assertThat(p.views()).isNull();
+		assertThat(p.saves()).isNull();
+		assertThat(p.shares()).isNull();
 	}
 
 	@Test
@@ -675,7 +730,11 @@ public class JdkHikerHttp implements HikerHttp {
 package com.celfit.monitoring.hiker;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -683,6 +742,7 @@ import tools.jackson.databind.json.JsonMapper;
 @Component
 public class HikerClient {
 
+	private static final Logger log = LoggerFactory.getLogger(HikerClient.class);
 	private static final JsonMapper MAPPER = JsonMapper.builder().build();
 	private final HikerHttp http;
 
@@ -705,29 +765,50 @@ public class HikerClient {
 	}
 
 	public List<PostInfo> fetchRecentPosts(String username, String userId, int pages) {
-		// v1 medias chunk — 릴스+피드 전체 미디어. pages>1 확장은 next_page_id 파라미터(YAGNI: 1페이지).
-		String body = http.get("/v1/user/medias/chunk?user_id=" + userId);
+		// v2 user/medias — 릴스+피드 전체 미디어(1페이지 12건). pages>1 확장은 next_page_id(YAGNI: 1페이지).
+		// 단, 이 엔드포인트는 릴스여도 play_count를 안 준다(Task 1 findings §2) → clips 열거로 조회수 머지.
+		Map<String, Long> plays = fetchClipPlays(userId);
+		String body = http.get("/v2/user/medias?user_id=" + userId);
 		List<PostInfo> out = new ArrayList<>();
 		for (JsonNode item : items(root(body))) {
-			out.add(toPost(item, username, body));
+			out.add(toPost(item, username, body, plays));
 		}
 		return out;
 	}
 
+	/** 릴스 재생수 보강 — /v2/user/clips는 items[].media로 한 겹 더 감싼다. 실패해도 스윕은 계속(조회수만 null). */
+	private Map<String, Long> fetchClipPlays(String userId) {
+		Map<String, Long> plays = new HashMap<>();
+		try {
+			JsonNode root = root(http.get("/v2/user/clips?user_id=" + userId));
+			for (JsonNode item : root.path("response").path("items")) {
+				JsonNode m = item.path("media");
+				Long play = firstLong(m, "play_count", "ig_play_count");
+				if (play != null) {
+					plays.put(m.path("code").asString(), play);
+				}
+			}
+		} catch (RuntimeException e) {
+			log.warn("클립 재생수 보강 실패 — user_id {}: {}", userId, e.getMessage());
+		}
+		return plays;
+	}
+
 	public PostInfo fetchPost(String shortCode) {
-		String body = http.get("/v1/media/by/code?code=" + shortCode);
-		return toPost(root(body), null, body);
+		String body = http.get("/v2/media/by/code?code=" + shortCode);
+		return toPost(items(root(body)).getFirst(), null, body, Map.of());
 	}
 
 	private static JsonNode root(String body) {
 		return MAPPER.readTree(body);
 	}
 
-	/** 응답 최상위가 배열이거나 {items|medias:[...]}거나 단일 객체 — 셰이프 유연 대응. */
+	/** {response:{items:[...]}} / {items:[...]} / 배열 / 단일 객체 — 셰이프 유연 대응. */
 	private static List<JsonNode> items(JsonNode root) {
-		JsonNode arr = root.isArray() ? root
-				: root.has("items") ? root.path("items")
-				: root.has("medias") ? root.path("medias") : root;
+		JsonNode node = root.has("response") ? root.path("response") : root;
+		JsonNode arr = node.isArray() ? node
+				: node.has("items") ? node.path("items")
+				: node.has("medias") ? node.path("medias") : node;
 		List<JsonNode> out = new ArrayList<>();
 		if (arr.isArray()) {
 			arr.forEach(out::add);
@@ -737,17 +818,23 @@ public class HikerClient {
 		return out;
 	}
 
-	private static PostInfo toPost(JsonNode m, String usernameHint, String rawJson) {
+	private static PostInfo toPost(JsonNode node, String usernameHint, String rawJson,
+			Map<String, Long> clipPlays) {
+		JsonNode m = node.has("media") ? node.path("media") : node;   // clips 열거는 한 겹 더 감쌈
+		String code = m.path("code").asString();
 		String username = usernameHint != null ? usernameHint : m.path("user").path("username").asString();
-		String contentType = m.path("media_type").asInt(0) == 2 ? "REELS" : "FEED";  // 2=video
+		// media_type==2는 일반 비디오 피드도 포함 → 릴스 판별은 product_type
+		String contentType = "clips".equals(m.path("product_type").asString("")) ? "REELS" : "FEED";
 		String caption = m.path("caption_text").isMissingNode()
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
-		return new PostInfo(m.path("code").asString(), username, contentType, caption,
+		// view_count는 v2에서 항상 null → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
+		Long views = firstLong(m, "play_count", "ig_play_count");
+		return new PostInfo(code, username, contentType, caption,
 				firstLong(m, "like_count"), firstLong(m, "comment_count"),
-				firstLong(m, "play_count", "view_count"),
-				firstLong(m, "save_count", "saved_count"),
-				firstLong(m, "share_count"),
-				firstLong(m, "reshare_count", "repost_count"),
+				views != null ? views : clipPlays.get(code),
+				firstLong(m, "save_count"),          // 릴스 전용 — 피드·캐러셀은 키 부재 → null
+				firstLong(m, "reshare_count"),       // 공유. 릴스 전용
+				firstLong(m, "media_repost_count"),  // 리포스트. 전 타입 제공
 				rawJson);
 	}
 
@@ -1067,8 +1154,11 @@ class RegistrationApiTest {
 			if (path.startsWith("/v2/user/by/username")) {
 				return fixture("profile.json");
 			}
-			if (path.startsWith("/v1/user/medias")) {
+			if (path.startsWith("/v2/user/medias")) {
 				return fixture("medias.json");
+			}
+			if (path.startsWith("/v2/user/clips")) {
+				return fixture("clips.json");
 			}
 			return fixture("media-by-code.json");
 		}

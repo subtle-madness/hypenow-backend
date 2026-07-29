@@ -1,0 +1,161 @@
+# monitoring — HikerAPI 엔드포인트 실측 findings
+
+> 상태: 🟢 활성 · 실측일 2026-07-29 · 대상 계정 `rarebeauty`(공개, pk `3109786630`, 팔로워 864만, media_count 5047)
+> 근거 픽스처: `monitoring/src/test/resources/hiker/*.json` (응답 원문, 공개 데이터)
+
+Task 1(실측·픽스처)의 결과 문서. **Task 4 파서의 필드 후보는 이 문서가 정본**이며,
+계획서(`2026-07-28-monitoring-module.md`) Task 4 코드 블록도 이 결론에 맞춰 이미 수정했다.
+
+---
+
+## 1. 확정 엔드포인트
+
+브리프의 초안은 `v1` 계열이었으나 실측 결과 **v1 계열은 6지표 중 2종(좋아요·댓글)밖에 못 준다**.
+아래 v2 계열로 전량 교체한다(모두 HTTP 200 실측).
+
+| 용도 | 확정 경로 | 응답 셰이프 | 비고 |
+|---|---|---|---|
+| ① 프로필 | `GET /v2/user/by/username?username=<username>` | `{ "user": {...}, "status": "ok" }` | 브리프안 그대로 유지 |
+| ② 게시물 열거(릴스+피드) | `GET /v2/user/medias?user_id=<pk>` | `{ "response": { "items": [...], "num_results", "more_available", "next_max_id" }, "next_page_id" }` | **브리프의 `/v1/user/medias/chunk`를 대체** |
+| ②' 릴스 재생수 보강 | `GET /v2/user/clips?user_id=<pk>` | `{ "response": { "items": [ { "media": {...} } ], "paging_info" }, "next_page_id" }` | ②가 릴스 `play_count`를 안 주므로 **추가 1콜** |
+| ③ 게시물 단건 | `GET /v2/media/by/code?code=<shortCode>` | `{ "num_results", "more_available", "items": [ {...} ] }` | **브리프의 `/v1/media/by/code`를 대체** |
+
+헤더는 기존 crawler 관용구와 동일하게 `x-access-key: <API_KEY>`.
+
+### 폐기한 v1 후보 (실측 근거)
+
+| 경로 | 결과 |
+|---|---|
+| `/v1/user/medias/chunk?user_id=` | 200, `[[items…], "next_page_id"]`. 12건. **`play_count`·`view_count`가 전부 `0`(릴스 포함), `save_count`·`reshare_count`·`media_repost_count` 키 자체가 없음** → 지표 2종만. 폐기 |
+| `/v1/user/medias?user_id=&amount=12` | 위와 동일한 정규화 셰이프·동일 한계. 폐기 |
+| `/v1/media/by/code?code=` | 200. `play_count`는 정상(900,733)이나 `save_count`·`reshare_count`·`media_repost_count` **키 없음** → 저장·공유·리포스트 취득 불가. 폐기 |
+
+정리: hikerapi의 v1 계열은 "정규화된 축약 스키마"라 IG 원본의 인게이지먼트 필드가 깎여 나온다.
+v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
+
+---
+
+## 2. 지표별 소스 필드
+
+### ① 프로필 (`/v2/user/by/username` → `user`)
+
+| 항목 | 필드 | 실측값 |
+|---|---|---|
+| 팔로워 | `user.follower_count` | 8,643,561 |
+| 팔로잉 | `user.following_count` | 412 |
+| 게시물 수 | `user.media_count` | 5,047 |
+| 내부 pk | `user.pk` (**숫자 타입**), `user.pk_id`/`user.id`(문자열) | 3109786630 |
+| 비공개 여부 | `user.is_private` | false |
+
+주의: `user.pk`는 JSON number다(게시물의 `pk`도 number). 문자열로 쓰려면 `asString()` 코어션 필요.
+
+### ② 게시물 6지표
+
+`E` = 열거 `/v2/user/medias`, `C` = 클립 열거 `/v2/user/clips`(`items[].media`), `S` = 단건 `/v2/media/by/code`(`items[0]`).
+✅=값 있음, ⛔=키 자체 없음, —=해당 없음.
+
+| 지표 | 소스 필드 | E(릴스) | E(피드/캐러셀) | C(릴스) | S(릴스) | S(피드/캐러셀) |
+|---|---|---|---|---|---|---|
+| 좋아요 | `like_count` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 댓글 | `comment_count` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 조회 | `play_count` (동일값 `ig_play_count`) | ⛔ | ⛔ | ✅ | ✅ | ⛔ |
+| 저장 | `save_count` | ✅ | ⛔ | ✅ | ✅ | ⛔ |
+| 공유 | `reshare_count` | ✅ | ⛔ | ✅ | ✅ | ⛔ |
+| 리포스트 | `media_repost_count` | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+실측 샘플(릴스 `DbV7LgZsKG8`, 단건 `S`): like 48,833 / comment 595 / play 900,812 / save 1,066 / reshare 809 / repost 657.
+피드 `DbOMP1_CY18`(`S`): like 92,262 / comment 664 / repost 917, **나머지 3종은 키 부재**.
+
+#### 결론 3가지
+
+1. **저장·공유는 릴스 전용이다.** 피드·캐러셀 응답에는 `save_count`·`reshare_count` 키가 아예 없다
+   (null이 아니라 **키 부재**). 단건 콜로 보강해도 안 나온다 → **피드·캐러셀은 저장·공유 영구 null**.
+2. **리포스트는 전 타입 제공된다.** 필드명이 `reshare_count`/`repost_count`가 아니라 **`media_repost_count`**다.
+   `reshare_count`(공유)와 `media_repost_count`(리포스트)는 **서로 다른 값**이다
+   (릴스 `DbQei8FCh7i`: reshare 7,680 vs repost 3,924). 6지표에서 공유≠리포스트로 분리 유지 타당.
+3. **조회수는 릴스만, 그리고 열거 ②에서는 안 나온다.** `/v2/user/medias`는 프로필 그리드 API라
+   릴스여도 `play_count` 키가 없다. `/v2/user/clips` 또는 단건 `/v2/media/by/code`에서만 나온다.
+   → **스윕에서 계정당 `②`+`②'` 2콜을 쏘고 `code` 기준으로 릴스 재생수를 머지**한다(권장·채택).
+   CLAUDE.md의 "피드 게시물은 조회수(views)가 항상 NULL"과 정확히 일치.
+   `view_count`는 v2에서 항상 `null`(릴스 포함)이므로 후보에서 제외한다.
+
+---
+
+## 3. 열거 응답 형태
+
+| 항목 | `/v2/user/medias` | `/v2/user/clips` |
+|---|---|---|
+| 1페이지 게시물 수 | **12** (`response.num_results` = 12) | **12** (릴스만) |
+| 아이템 경로 | `response.items[]` (미디어 객체 직접) | `response.items[].media` (**한 겹 더 감쌈**) |
+| 다음 페이지 커서 | `next_page_id`(최상위) = `response.next_max_id` (예: `3946974539133803409_3109786630`) | `next_page_id`(최상위) = `response.paging_info.max_id` (불투명 base64 커서) |
+| 더 있음 플래그 | `response.more_available` | `response.paging_info.more_available` |
+
+**정렬 함정**: `/v2/user/medias` 1페이지의 **첫 항목이 고정(pinned) 게시물**이라
+`taken_at`이 2023-04-12로 튄다(나머지 11건은 최신순). "최근 N개" 로직은 배열 순서가 아니라
+`taken_at`으로 재정렬해야 한다. `/v2/user/clips`에는 이 현상이 없었다.
+
+---
+
+## 4. 판별·캡션 필드
+
+| 항목 | 필드 | 값 |
+|---|---|---|
+| 미디어 타입 | `media_type` | `1`=이미지, `2`=비디오, `8`=캐러셀 |
+| 상품 타입 | `product_type` | `feed` / `clips` / `carousel_container` |
+| 캡션 | **`caption.text`** (v2). v1은 `caption_text` | `caption` 자체가 null일 수 있음 |
+| 숏코드 | `code` | 예: `DbV7LgZsKG8` |
+| 게시 시각 | `taken_at`(epoch seconds, **number**) | v1은 ISO 문자열 `taken_at`이라 서로 다름 — v2 기준으로 통일 |
+| 캐러셀 장수 | `carousel_media_count` | 캐러셀만 |
+
+**content_type 판별은 `media_type == 2`가 아니라 `product_type == "clips"`로 한다.**
+`media_type == 2`는 릴스가 아닌 일반 비디오 피드 게시물(`product_type == "feed"`)도 포함하기 때문.
+→ `"clips".equals(product_type) ? "REELS" : "FEED"`.
+
+부수 함정: 협업(coauthor) 게시물은 `id`의 `_` 뒤 소유자 세그먼트가 대상 계정 pk가 아니다
+(실측: `rarebeauty` 그리드의 릴스 `id`가 `3951324523536622012_23818608`). **소유자 식별에 `id` 접미사를 쓰지 말 것**,
+`code`/`pk`만 사용.
+
+---
+
+## 5. Task 4 파서(`firstLong`) 후보 — 브리프 초안과 달라진 점
+
+계획서 Task 4의 `toPost()`를 아래로 교체했다(이미 반영 완료).
+
+| PostInfo 필드 | 브리프 초안 후보 | **실측 확정 후보** | 변경 사유 |
+|---|---|---|---|
+| `contentType` | `media_type == 2 ? REELS : FEED` | `"clips".equals(product_type)` | 일반 비디오 피드 오분류 방지 |
+| `caption` | `caption_text` → `caption.text` | 동일(유지) | v2는 `caption.text`, 폴백 유지로 무해 |
+| `views` | `play_count`, `view_count` | **`play_count`, `ig_play_count`** | `view_count`는 v2에서 항상 null |
+| `saves` | `save_count`, `saved_count` | **`save_count`** | `saved_count`는 존재하지 않음 |
+| `shares` | `share_count` | **`reshare_count`** | `share_count`는 존재하지 않음(`share_count_disabled` 불리언만 있음) |
+| `reposts` | `reshare_count`, `repost_count` | **`media_repost_count`** | `reshare_count`는 공유 지표로 이동, `repost_count`는 없음 |
+
+엔드포인트도 함께 교체: 열거 `/v1/user/medias/chunk` → `/v2/user/medias`(+`/v2/user/clips` 머지),
+단건 `/v1/media/by/code` → `/v2/media/by/code`. 응답 언랩 경로가 `response.items[]` /
+`response.items[].media` / `items[0]`로 늘었으므로 파서의 `items()` 헬퍼도 `response` 언랩을 추가했다.
+
+---
+
+## 6. 픽스처
+
+| 파일 | 출처 | 크기 | 비고 |
+|---|---|---|---|
+| `hiker/profile.json` | `/v2/user/by/username?username=rarebeauty` | 21KB | 원문 그대로 |
+| `hiker/medias.json` | `/v2/user/medias?user_id=3109786630` | 413KB | 원문 그대로(12건: 릴스 3·캐러셀 6·피드 3) |
+| `hiker/clips.json` | `/v2/user/clips?user_id=3109786630` | 231KB | **items를 앞 5건으로 잘라 저장**(원본 517KB/12건). `num_results`류 메타는 원본값 유지 |
+| `hiker/media-by-code.json` | `/v2/media/by/code?code=DbV7LgZsKG8` (릴스) | 47KB | 6지표 전량 존재 케이스 |
+| `hiker/media-by-code-feed.json` | `/v2/media/by/code?code=DbOMP1_CY18` (피드) | 11KB | 저장·공유·조회 **키 부재** 케이스(널 규칙 테스트용) |
+
+API 키는 픽스처·문서 어디에도 없다(커밋 전 grep 0건 확인).
+
+---
+
+## 7. 운영 시 유의
+
+- **콜 비용**: 계정당 스윕 1회에 프로필 1 + 열거 1 + 클립 1 = **3콜**. 릴스 조회수를 포기하면 2콜.
+  추적 게시물이 열거 범위 밖으로 밀려나면 게시물당 단건 1콜 추가.
+- **지표는 계속 움직인다**: 같은 릴스를 몇 초 간격으로 다른 엔드포인트로 찍었더니
+  like 48,811→48,833→48,857로 변했다. 스냅샷 간 delta 계산 시 "같은 시각 기준"을 기대하지 말 것.
+- **`/v2/user/medias`는 계획서에 없던 엔드포인트**다. crawler는 `/v1/user/medias/chunk`·`/gql/user/medias`를
+  쓰고 있으므로 monitoring이 첫 사용처다. IG 업스트림 장애 시 폴백으로 `/v1/user/medias/chunk`
+  (좋아요·댓글만) 강등 경로를 열어둘 수 있다.
