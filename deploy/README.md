@@ -201,10 +201,12 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 6. **dev monitoring DB·계정 생성** (dev-postgres가 뜬 5번 이후 1회 — 운영 §13의 dev 판):
    ```bash
    # 서버에서 (-c를 나눠 쓴다 — 한 -c에 여러 문장을 넣으면 암묵 트랜잭션이라 CREATE DATABASE가 거부된다)
-   docker exec -it deploy-dev-postgres-1 psql -U $DEV_DB_USER -d analysis \
+   docker exec -it deploy-dev-postgres-1 psql -U <DEV_DB_USER> -d analysis \
      -c "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'" \
      -c "CREATE ROLE was_reader LOGIN PASSWORD '<실값>'" \
      -c "CREATE DATABASE monitoring OWNER monitoring"
+   # 확인 — 이 DB가 생기기 전까지는 Restarting/Exited가 보인다
+   cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev ps -a dev-monitoring
    ```
    비밀번호는 2번의 `DEV_MONITORING_DB_PASSWORD`와 같은 값. **이 DB가 생기기 전까지
    `deploy-dev-monitoring-1`은 접속 실패로 재기동을 반복**한다(무해 — 생성 후 스스로 붙는다).
@@ -269,8 +271,11 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
 
 1. 서버 postgres 컨테이너에 DB·계정 생성 (`db/init/02-create-monitoring-db.sql`과 동일, 비밀번호는 실값):
    ```bash
-   docker exec -it deploy-postgres-1 psql -U $DB_USER -d postgres -c \
-     "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'; CREATE ROLE was_reader LOGIN PASSWORD '<실값>'; CREATE DATABASE monitoring OWNER monitoring;"
+   # -c를 나눠 쓴다 — 한 -c에 여러 문장을 넣으면 암묵 트랜잭션이라 CREATE DATABASE가 거부된다
+   docker exec -it deploy-postgres-1 psql -U <DB_USER> -d postgres \
+     -c "CREATE ROLE monitoring LOGIN PASSWORD '<실값>'" \
+     -c "CREATE ROLE was_reader LOGIN PASSWORD '<실값>'" \
+     -c "CREATE DATABASE monitoring OWNER monitoring"
    ```
    (`was_reader`에는 접속 권한만 — 객체 GRANT는 monitoring Flyway가 소유자로서 부여한다)
 2. `~/deploy/.env`에 추가: `MONITORING_DB_USER`, `MONITORING_DB_PASSWORD`, (기존 확인) `HIKER_API_KEY`
