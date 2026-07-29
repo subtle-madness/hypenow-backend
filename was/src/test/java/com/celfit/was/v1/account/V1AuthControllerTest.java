@@ -72,10 +72,6 @@ class V1AuthControllerTest {
 	@MockitoBean
 	SignupService signupService;
 
-	// requireVerified·consume 기본 no-op(void) — 이메일 인증 게이트는 EmailVerificationIntegrationTest가 실 DB로 커버
-	@MockitoBean
-	EmailVerificationService emailVerificationService;
-
 	private Authentication authenticated(String email) {
 		return UsernamePasswordAuthenticationToken.authenticated(email, null, List.of());
 	}

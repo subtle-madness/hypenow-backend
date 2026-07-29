@@ -92,7 +92,6 @@ class LoginWallIntegrationTest extends IntegrationTest {
 		jdbcClient.sql("""
 				INSERT INTO app.signup_codes (code, channel) VALUES ('WALL-TEST', 'TEST')
 				ON CONFLICT (code) DO UPDATE SET used_by = NULL, used_at = NULL""").update();
-		V1AuthTestSteps.markEmailVerified(jdbcClient, "wall@example.com");
 		try {
 			MvcResult signup = mockMvc.perform(post("/v1/auth/signup").with(csrf())
 							.contentType(MediaType.APPLICATION_JSON).content(SIGNUP_BODY))

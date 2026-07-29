@@ -59,7 +59,6 @@ class SignupCodeIntegrationTest extends IntegrationTest {
 	}
 
 	private org.springframework.test.web.servlet.ResultActions signup(String code, String email) throws Exception {
-		V1AuthTestSteps.markEmailVerified(jdbcClient, email);
 		String body = """
 				{"signupCode":"%s","email":"%s","password":"Passw0rd!","name":"김우민",
 				 "userType":"brand","signupRoute":"portal_search","phoneCountryCode":"+82",

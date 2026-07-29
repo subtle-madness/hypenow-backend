@@ -8,6 +8,7 @@ import com.celfit.was.v2.influencer.V2InfluencerReportRepository.CategoryRow;
 import com.celfit.was.v2.influencer.V2InfluencerReportRepository.SeriesRow;
 import com.celfit.was.v2.influencer.V2InfluencerReportRepository.SummaryRow;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -289,6 +290,15 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				  ('sim_dup', now(), '["a","a","a","a"]'::jsonb),
 				  ('sim_far_tie', now(), '["a"]'::jsonb),
 				  ('sim_other_cat', now(), '["a","b","c"]'::jsonb)""");
+	}
+
+	@AfterEach
+	void tearDownViews() {
+		// 컨테이너는 JVM 전체 공유(IntegrationTest static 싱글턴)라 이 클래스가 만든 뷰를 남겨두면,
+		// 다른 클래스의 DROP TABLE content_analyses 등(CASCADE 없음)이 의존성 오류로 깨진다 —
+		// 클래스 실행 순서가 비결정적이라 간헐 실패로만 드러난다. peer가 category에 의존하므로 역순 드랍.
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
 	}
 
 	@Test
