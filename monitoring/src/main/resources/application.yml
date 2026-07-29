@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: monitoring
+  datasource:
+    url: jdbc:postgresql://localhost:5433/monitoring
+    username: monitoring
+    password: monitoring
+
+server:
+  port: 8083   # crawler 8080 · was 8081 · analytics 8082 다음
+
+monitoring:
+  hiker:
+    api-key: ${HIKER_API_KEY:}
+    base-url: https://api.hikerapi.com
+    request-timeout: 15s
+  schedule:
+    sweep-cron: "-"     # "-"=비활성. 운영은 UTC 17:00(KST 02:00)을 env로 주입
+  enumerate-pages: 1    # 게시물 열거 페이지 수(최근 N개 범위) — Task 1 findings로 조정

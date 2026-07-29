@@ -1,6 +1,6 @@
 # test 스테이징 스택 (태스크 K, 07-29 test 리네임·staging 전환) — staging 브랜치 검증용.
 # 운영 compose.yaml과 겹쳐 쓴다:
-#   docker compose -f compose.yaml -f compose.test.yaml --profile test up -d test-postgres test-redis test-analytics test-was
+#   docker compose -f compose.yaml -f compose.test.yaml --profile test up -d test-postgres test-redis test-analytics test-was test-monitoring
 # 파일을 나눈 이유: 이 파일만 test CD(cd-test.yml)가 서버로 보낸다 — 운영 서비스 정의는
 # main 배포(운영 CD)로만 서버에 도달하므로, staging의 운영 정의 변경이 test 배포로 먼저
 # 발효되거나(뒷문) depends_on 연쇄로 운영 컨테이너가 재생성되는 사고를 구조로 막는다.
@@ -9,6 +9,8 @@
 # 네트워크: test 서비스는 test 브리지에만 소속(선언은 compose.yaml — main 배포 공급) —
 # 운영 postgres·analytics·crawler로 가는 경로가 커널 수준에서 차단된다. 운영과의 공유
 # 접점은 postgres-raw(양쪽 소속, analytics_dev 읽기 전용)와 caddy(도메인 분기)뿐.
+# 예외로 test-monitoring-net(이 파일 하단 선언)은 test-was↔test-monitoring 전용 —
+# test 안에서만 닫혀 있어 격리를 깨지 않는다.
 #
 # YAML 앵커는 파일 경계를 못 넘으므로 로그 로테이션 정의를 compose.yaml과 동일하게 복제한다.
 x-logging: &logging
@@ -98,7 +100,9 @@ services:
     logging: *logging
     mem_limit: 1024m
     cpus: 1.0
-    networks: [test]
+    # test-monitoring 명령 API의 유일한 클라이언트 — test 전용 네트워크에 함께 소속(하단 networks 주석).
+    # test 브리지를 반드시 같이 적는다 — 빠지면 test-postgres·test-analytics 이름 해석이 끊긴다.
+    networks: [test, test-monitoring-net]
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DB_URL: jdbc:postgresql://test-postgres:5432/analysis
@@ -115,5 +119,42 @@ services:
       test-analytics:
         condition: service_healthy
 
+  # test 모니터링 — test-postgres 안의 사설 monitoring DB. 호스트 포트 미노출(운영과 동일 관용구,
+  # 어드민 UI 없음). 스윕 크론 미설정 = 기본값 "-" = off(K 원칙 "test 스케줄 전부 off") —
+  # 등록 시 동기 수집만 동작한다. Hiker 키는 운영 공유라 등록 테스트는 소량 전제.
+  # env 변수명은 DEV_* 관용구 유지(서버 .env 무변경 — 리네임의 의도적 예외).
+  test-monitoring:
+    image: ghcr.io/subtle-madness/hypenow-monitoring:staging
+    profiles: ["test"]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
+    cpus: 0.5
+    networks: [test, test-monitoring-net]   # test 브리지는 test-postgres 접속용
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
+      SPRING_DATASOURCE_USERNAME: monitoring
+      SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
+      HIKER_API_KEY: ${HIKER_API_KEY:-}
+      JAVA_OPTS: "-Xms128m -Xmx256m"
+    # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
+    # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8083' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+
 volumes:
   dev-pg-data:
+
+networks:
+  # test-was ↔ test-monitoring 전용 — 운영 monitoring-net(compose.yaml)과 이름이 다르므로
+  # 두 파일을 겹쳐 써도 병합 충돌이 없고, 서로의 명령 API에 닿지도 않는다(상호 불가침).
+  # test 컨테이너는 운영 monitoring 호스트명 해석부터 실패 = 오배선 fail-closed.
+  # 선언이 이 파일에 있는 이유는 test 전용이기 때문 — test CD만으로 자족한다.
+  test-monitoring-net: {}
