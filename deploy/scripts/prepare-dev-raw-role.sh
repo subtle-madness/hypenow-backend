@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev raw 계정·스키마 준비(멱등) — 태스크 K. cd-dev가 서버에서 실행한다.
+# test raw 계정·스키마 준비(멱등) — 태스크 K. cd-test가 서버에서 실행한다.
 # analytics_dev: crawler 테이블(public) 읽기 전용 + analytics_dev 스키마 소유.
 # analytics 스키마엔 USAGE도 주지 않는다 — 치환 누락 시 권한 오류로 즉사(fail-closed).
 set -euo pipefail

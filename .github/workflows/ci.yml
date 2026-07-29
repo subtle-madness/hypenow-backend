@@ -1,5 +1,6 @@
-# develop 대상 push·PR + main 대상 PR(배포 관문 — develop→main 머지 전 검증)마다
+# develop·staging 대상 push·PR + main 대상 PR(배포 관문 — staging→main 머지 전 검증)마다
 # 전체 Gradle 테스트 + 분석 뷰 SQL 하니스를 돌린다.
+# staging push CI는 test 스테이징 배포(cd-test.yml)의 게이트 — 성공 시에만 workflow_run이 발화.
 # 테스트는 Testcontainers(PostgreSQL)를 쓰므로 러너의 Docker(ubuntu-latest 기본 제공)로 충분 —
 # 외부 API 키·별도 서비스 컨테이너 불필요.
 #
@@ -10,9 +11,9 @@ name: CI
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, staging]
   pull_request:
-    branches: [develop, main]
+    branches: [develop, staging, main]
 
 concurrency:
   group: ci-${{ github.ref }}

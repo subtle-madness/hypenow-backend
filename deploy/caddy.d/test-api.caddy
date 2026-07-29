@@ -1,0 +1,8 @@
+# test 스테이징 (태스크 K, 07-29 test 리네임) — 보호는 was 로그인 월(별도 test 가입 코드) 그대로.
+# 도메인은 dev-api 유지(DNS 무변경 — 의도적 예외). test 프로파일 미기동 시 502 —
+# caddy는 요청 시점에 업스트림을 찾으므로 설정 로드는 무해.
+{$DEV_API_DOMAIN:dev-api.hypenow.io} {
+	handle {
+		reverse_proxy test-was:8081
+	}
+}

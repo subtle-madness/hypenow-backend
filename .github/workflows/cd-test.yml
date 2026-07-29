@@ -1,13 +1,16 @@
-# develop CI 성공마다 dev 스테이징 배포 (태스크 K) — 대상: was·analytics 2종(:develop, arm64 단일).
+# staging CI 성공마다 test 스테이징 배포 (태스크 K → 07-29 S: staging 브랜치 전환) —
+# 대상: was·analytics 2종(:staging, arm64 단일). develop 머지는 CI만(배포 없음),
+# test 배포는 develop→staging 머지가 트리거, 운영 승격은 staging→main 머지.
 # 뷰는 analytics_dev 스키마로 치환 적용(analytics_dev 계정 실행 = 권한 fail-closed) 후 잔존 참조 검사.
-# 최초 개통은 deploy/README.md dev 체크리스트(.env 변수·DNS·가입 코드) 선행 — 미비 시 이 워크플로가 명시 실패.
-name: CD dev
+# 서버 compose.yaml(main 배포 공급)에 prod/test 네트워크 선언이 있어야 config 검증이 통과한다 —
+# 전환 순서·근거: docs/superpowers/specs/2026-07-29-staging-branch-test-stack-design.md
+name: CD test
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [develop]
+    branches: [staging]
 
 # 운영 CD(cd.yml)와 같은 그룹 — 두 CD가 같은 서버 ~/deploy를 쓰므로 배포를 직렬화한다
 concurrency:
@@ -20,7 +23,7 @@ permissions:
 
 jobs:
   build-push:
-    name: dev 이미지 빌드·push (${{ matrix.service }})
+    name: test 이미지 빌드·push (${{ matrix.service }})
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -38,13 +41,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # 캐시 쓰기는 기본 브랜치(develop) push에서만 — staging CI·이 잡은 읽기 재사용
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v6
 
       - name: bootJar 빌드
         run: ./gradlew :${{ matrix.service }}:bootJar
 
-      # 서버(오라클 A1)가 arm64 단일이라 dev는 멀티아치 불필요 — 운영 CD보다 빠르게
+      # 서버(오라클 A1)가 arm64 단일이라 test는 멀티아치 불필요 — 운영 CD보다 빠르게
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -55,15 +59,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: arm64 빌드·push (:develop)
+      - name: arm64 빌드·push (:staging)
         run: |
-          SHA_TAG="develop-sha-$(git rev-parse --short HEAD)"
+          SHA_TAG="staging-sha-$(git rev-parse --short HEAD)"
           REPO="ghcr.io/${{ github.repository_owner }}/hypenow-${{ matrix.service }}"
           docker buildx build --platform linux/arm64 \
-            -t "$REPO:develop" -t "$REPO:$SHA_TAG" --push ${{ matrix.service }}
+            -t "$REPO:staging" -t "$REPO:$SHA_TAG" --push ${{ matrix.service }}
 
   deploy:
-    name: dev 서버 배포
+    name: test 서버 배포
     needs: build-push
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
@@ -80,28 +84,27 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      # 본 Caddyfile(운영 라우팅)은 보내지 않는다 — dev 라우팅은 caddy.d/dev-api.caddy만 갱신.
-      # develop에만 있는 운영 라우팅 변경이 main 배포 전에 발효되는 뒷문을 막는 게 요점.
-      # 주의: caddy 볼륨 마운트(caddy.d)와 본 Caddyfile의 import 라인은 main 배포(운영 CD)로
-      # 서버에 반영된 뒤부터 dev 라우팅이 살아난다.
-      # 운영 compose.yaml은 보내지 않는다 — dev 서비스 정의는 compose.dev.yaml에만 있고
-      # 이 파일만 dev CD가 공급한다(운영 정의는 main 배포로만 서버에 도달). develop의 운영
-      # 서비스 정의 변경이 dev 배포 때 먼저 발효되거나, depends_on 연쇄로 운영 컨테이너가
-      # 재생성되는 사고를 구조로 차단. config 검증은 서버의 compose.yaml(=main 버전)에
-      # dev 오버레이를 겹친 실제 조합으로 수행한다.
-      - name: dev compose·라우팅·스크립트 동기화·검증
+      # 본 Caddyfile(운영 라우팅)은 보내지 않는다 — test 라우팅은 caddy.d/test-api.caddy만 갱신.
+      # staging에만 있는 운영 라우팅 변경이 main 배포 전에 발효되는 뒷문을 막는 게 요점.
+      # 운영 compose.yaml도 보내지 않는다 — test 서비스 정의는 compose.test.yaml에만 있고
+      # 이 파일만 test CD가 공급한다(운영 정의는 main 배포로만 서버에 도달). config 검증은
+      # 서버의 compose.yaml(=main 버전)에 test 오버레이를 겹친 실제 조합으로 수행한다.
+      # 구 명칭 파일(compose.dev.yaml·dev-api.caddy)은 제거(멱등) — 특히 구 caddy 파일이 남으면
+      # 같은 도메인(dev-api) 이중 선언으로 caddy reload가 깨진다(07-29 리네임 잔재 정리).
+      - name: test compose·라우팅·스크립트 동기화·검증
         run: |
-          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'mkdir -p ~/deploy/scripts ~/deploy/caddy.d'
-          scp -i ~/.ssh/id_deploy deploy/compose.dev.yaml "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
-          scp -i ~/.ssh/id_deploy deploy/caddy.d/dev-api.caddy "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/caddy.d/"
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
+            'mkdir -p ~/deploy/scripts ~/deploy/caddy.d && rm -f ~/deploy/compose.dev.yaml ~/deploy/caddy.d/dev-api.caddy'
+          scp -i ~/.ssh/id_deploy deploy/compose.test.yaml "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
+          scp -i ~/.ssh/id_deploy deploy/caddy.d/test-api.caddy "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/caddy.d/"
           scp -i ~/.ssh/id_deploy deploy/scripts/prepare-dev-raw-role.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-            'cd ~/deploy && out=$(docker compose -f compose.yaml -f compose.dev.yaml --profile dev config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
+            'cd ~/deploy && out=$(docker compose -f compose.yaml -f compose.test.yaml --profile test config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
              if echo "$out" | grep -q "is not set"; then
                echo "$out"; echo "compose가 참조하는 env 변수가 서버 .env에 없음 — .env 갱신 후 재배포"; exit 1
              fi'
 
-      - name: dev DB 계정·스키마 준비 (멱등)
+      - name: test DB 계정·스키마 준비 (멱등)
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'bash ~/deploy/scripts/prepare-dev-raw-role.sh'
 
@@ -109,7 +112,7 @@ jobs:
         run: deploy/scripts/rewrite-views-dev-schema.test.sh
 
       # analytics_dev 계정으로 적용 — 치환 누락 시 analytics 스키마 쓰기 권한이 없어 즉시 실패
-      - name: dev 뷰 적용 (analytics_dev 치환)
+      - name: test 뷰 적용 (analytics_dev 치환)
         run: |
           cat analytics/views/*.sql | deploy/scripts/rewrite-views-dev-schema.sh | \
             ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
@@ -132,14 +135,18 @@ jobs:
             echo "analytics_dev 안에 운영 analytics 참조 잔존:"; echo "$residue"; exit 1
           fi
 
-      - name: dev compose pull·재기동
+      # --remove-orphans는 이 경로 한정 안전 — 전체 파일 세트(-f 둘 다) 기준이라 고아 = 정의가
+      # 사라진 컨테이너(07-29 전환 시점의 구 deploy-dev-* 3종)뿐, 운영 서비스는 compose.yaml에
+      # 정의돼 무관. README §12의 "--remove-orphans 금지"는 운영 파일 단독 실행 경로(test
+      # 서비스가 고아로 보이는 케이스) 이야기로, 이 경로와 혼동하지 말 것.
+      - name: test compose pull·재기동
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-            'cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev pull dev-analytics dev-was && \
-             docker compose -f compose.yaml -f compose.dev.yaml --profile dev up -d dev-postgres dev-redis dev-analytics dev-was && \
-             docker compose -f compose.yaml -f compose.dev.yaml --profile dev ps'
+            'cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test pull test-analytics test-was && \
+             docker compose -f compose.yaml -f compose.test.yaml --profile test up -d --remove-orphans test-postgres test-redis test-analytics test-was && \
+             docker compose -f compose.yaml -f compose.test.yaml --profile test ps'
 
-      - name: caddy 설정 리로드 (dev-api 라우팅 반영)
+      - name: caddy 설정 리로드 (test-api 라우팅 반영)
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile'

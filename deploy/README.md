@@ -60,11 +60,12 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 - 어드민 UI: `ssh -L 8080:localhost:8080 <host>` 후 http://localhost:8080/ui — 대시보드에서
   잡 수동 트리거(실행 스트립)·예상 비용·실행 로그·최근 실행 확인
 - 롤백: compose의 `CRAWLER_SCHEDULE_ENABLED: "false"` 후 `docker compose up -d crawler`
-  — 서버에서 직접 고친 값은 다음 CD 배포가 레포 compose로 덮어쓴다. 영구 off는 레포 compose 수정 후 develop→main 머지.
+  — 서버에서 직접 고친 값은 다음 CD 배포가 레포 compose로 덮어쓴다. 영구 off는 레포 compose 수정 후 main까지 승격(develop→staging→main).
 
 ## 5. 배포 (코드 변경 반영)
 
-**정본은 CD (07-20~)**: `main`에 푸시(=develop→main 머지)하면 `.github/workflows/cd.yml`이
+**정본은 CD (07-20~)**: `main`에 푸시(=staging→main 머지 — 승격 흐름은 develop→staging→main,
+07-29 staging 브랜치 전환)하면 `.github/workflows/cd.yml`이
 was·analytics·crawler 이미지 빌드·push → 서버 compose pull·재기동 → **분석 뷰 raw DB 적용**(멱등,
 §4-1의 수동 절차를 대체) → `/health` 확인까지 수행한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
@@ -150,34 +151,43 @@ ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # �
   토큰 미설정이면 API는 503(fail-closed). 등록된 계정은 DISCOVERED로 들어가 기존 qualify→beauty가 처리.
 - 익스텐션은 별도 저장소 `hypenow-extension` — 옵션에 엔드포인트 URL·토큰을 넣어 사용.
 
-## 12. dev 스테이징 (태스크 K, 07-28~)
+## 12. test 스테이징 (태스크 K 07-28 개통 · 07-29 staging 브랜치 전환 — 구명 "dev 스테이징")
 
-develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflows/cd-dev.yml`이 자동 배포한다
-(`workflow_run` 트리거 — CI가 실패하면 dev 배포도 없다). 구조·결정 근거:
-[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/2026-07-26-dev-staging-environment-design.md)
+staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflows/cd-test.yml`이 자동 배포한다
+(`workflow_run` 트리거 — CI가 실패하면 test 배포도 없다). develop 머지는 CI만 돌고 배포하지
+않는다 — **승격 흐름: develop→staging(test 배포)→main(운영 배포)**. 구조·결정 근거:
+[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/2026-07-26-dev-staging-environment-design.md) ·
+[specs/2026-07-29-staging-branch-test-stack-design.md](../docs/superpowers/specs/2026-07-29-staging-branch-test-stack-design.md)
 
-- 접속: `https://dev-api.hypenow.io` (was 로그인 월 — dev 전용 가입 코드 필요)
-- dev 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
-- dev analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
-- 배치는 **운영 인스턴스 동거** — dev 3종의 정의는 별도 파일 **`deploy/compose.dev.yaml`**에 있고
-  운영 `compose.yaml`에 겹쳐 쓴다(`-f compose.yaml -f compose.dev.yaml --profile dev`).
-  파일을 나눈 이유: **dev CD는 이 dev 파일만 서버로 보낸다** — 운영 서비스 정의는 main 배포로만
-  서버에 도달하므로, develop의 운영 정의 변경이 dev 배포로 먼저 발효되거나 `depends_on` 연쇄로
+- 접속: `https://dev-api.hypenow.io` (도메인은 구명 유지 — DNS 무변경. was 로그인 월 —
+  test 전용 가입 코드 필요). 서버 `.env`의 `DEV_*` 변수·raw 계정 `analytics_dev`·데이터 볼륨
+  `dev-pg-data`도 구명 유지(의도적 예외 — 리네임 비용 대비 이득 없음, 볼륨은 데이터 유실 방지).
+- test 어드민(analytics): `ssh -L 8083:localhost:8083 ubuntu@<IP>` 후 http://localhost:8083/ui
+- test analysis DB: `ssh -L 5434:localhost:5434 ubuntu@<IP>` (계정은 서버 `.env`의 `DEV_DB_*`)
+- 배치는 **운영 인스턴스 동거** — test 4종(was·analytics·postgres·redis)의 정의는 별도 파일 **`deploy/compose.test.yaml`**에 있고
+  운영 `compose.yaml`에 겹쳐 쓴다(`-f compose.yaml -f compose.test.yaml --profile test`).
+  파일을 나눈 이유: **test CD는 이 test 파일만 서버로 보낸다** — 운영 서비스 정의는 main 배포로만
+  서버에 도달하므로, staging의 운영 정의 변경이 test 배포로 먼저 발효되거나 `depends_on` 연쇄로
   운영 컨테이너가 재생성되는 사고가 구조적으로 불가능하다(caddy.d 분리와 같은 원리).
-  `profiles: ["dev"]`도 유지 — `--profile dev` 없이는 뜨지도 멈추지도 않는다(이중 가드).
+  `profiles: ["test"]`도 유지 — `--profile test` 없이는 뜨지도 멈추지도 않는다(이중 가드).
   mem_limit로 상한을 걸어 운영 메모리를 침식하지 않는다.
-- raw는 운영 `postgres-raw` **공유** — dev 계정 `analytics_dev`는 crawler 테이블(public) 읽기 전용,
+- **네트워크 격리 (07-29)** — `compose.yaml`이 브리지 `prod`·`test`를 선언하고 test 서비스는 `test`에만
+  소속: test 컨테이너에서 운영 postgres·analytics·crawler로 가는 경로가 커널(iptables) 수준에서
+  차단된다. 양쪽 소속은 의도된 접점 둘뿐 — `caddy`(도메인 분기)·`postgres-raw`(raw 읽기).
+  compose에 서비스를 추가할 땐 **`networks:` 명시 필수**(커스텀 네트워크 체제라 기본 네트워크가
+  없다 — 누락 시 통신 고립).
+- raw는 운영 `postgres-raw` **공유** — test 계정 `analytics_dev`는 crawler 테이블(public) 읽기 전용,
   뷰·캐시는 자기 소유 `analytics_dev` 스키마에 치환 설치(`rewrite-views-dev-schema.sh`).
   운영 `analytics` 스키마엔 USAGE도 없다 — 치환 누락은 권한 오류로 즉사(fail-closed).
 - 스키마 선택 방식: analytics의 조회 SQL은 **뷰 이름을 무접두어로** 쓰고, raw DataSource의
   `connection-init-sql`(`SET search_path TO ${analytics.raw-schema:analytics}, public`)이 스키마를
-  결정한다. dev만 compose env `ANALYTICS_RAW_SCHEMA=analytics_dev`로 오버라이드 — 운영 동작 불변.
-- **dev 라우팅은 본 `Caddyfile`이 아니라 `deploy/caddy.d/dev-api.caddy`**에 있고, 본 Caddyfile은
-  `import /etc/caddy/caddy.d/*.caddy` 한 줄만 갖는다. dev CD는 이 dev 파일만 서버로 보내고
-  reload하므로 **운영 라우팅은 main 배포로만 바뀐다**(develop에만 있는 운영 라우팅 변경이 먼저
+  결정한다. test만 compose env `ANALYTICS_RAW_SCHEMA=analytics_dev`로 오버라이드 — 운영 동작 불변.
+- **test 라우팅은 본 `Caddyfile`이 아니라 `deploy/caddy.d/test-api.caddy`**에 있고, 본 Caddyfile은
+  `import /etc/caddy/caddy.d/*.caddy` 한 줄만 갖는다. test CD는 이 test 파일만 서버로 보내고
+  reload하므로 **운영 라우팅은 main 배포로만 바뀐다**(staging에만 있는 운영 라우팅 변경이 먼저
   발효되는 뒷문 차단).
 
-### 최초 개통 체크리스트 (1회, 사용자 실행 — **순서가 중요**)
+### 최초 개통 체크리스트 (1회, 사용자 실행 — **순서가 중요**. 07-28 실행 완료 — 기록 보존)
 
 1. **DNS A 레코드**: `dev-api.hypenow.io` → 서버 공인 IP (운영과 동일 IP, TTL 300)
 2. **서버 `~/deploy/.env`에 추가** (값 생성: `openssl rand -base64 24`):
@@ -188,60 +198,64 @@ develop 브랜치 검증용 스택. **develop CI 성공마다** `.github/workflo
    ssh ubuntu@<IP> 'mkdir -p ~/deploy/caddy.d && ls -ld ~/deploy/caddy.d'   # 소유자 ubuntu 확인
    ```
    순서가 뒤집히면 4번 운영 배포의 caddy 컨테이너 재생성이 이 디렉토리를 **root 소유로 생성**해,
-   이후 dev CD의 `scp dev-api.caddy`가 Permission denied로 실패한다.
-4. **develop→main 머지 1회(운영 배포)** — caddy의 `caddy.d` 볼륨 마운트와 본 Caddyfile의 `import`
-   라인이 이 배포로 서버에 반영된다(compose 정의 변경이라 caddy가 자동 재생성). **그 전까지 dev
-   라우팅은 살아나지 않는다** — 이 배포보다 dev CD가 먼저 돌면 마지막 헬스체크 스텝만 실패한다
+   이후 test CD의 `scp test-api.caddy`가 Permission denied로 실패한다.
+4. **main 머지 1회(운영 배포)** — caddy의 `caddy.d` 볼륨 마운트와 본 Caddyfile의 `import`
+   라인이 이 배포로 서버에 반영된다(compose 정의 변경이라 caddy가 자동 재생성). **그 전까지 test
+   라우팅은 살아나지 않는다** — 이 배포보다 test CD가 먼저 돌면 마지막 헬스체크 스텝만 실패한다
    (무해 — 4번 완료 후 워크플로 재실행하면 된다).
-5. **develop에 푸시**(또는 `CD dev` 재실행) → `CI` 성공 → `CD dev` 전 스텝 성공 확인
+5. **staging에 머지**(또는 `CD test` 재실행) → `CI` 성공 → `CD test` 전 스텝 성공 확인
    (계정 준비·뷰 치환 적용·잔존 참조 검사·pull/재기동·caddy reload·`/health`)
-6. **dev 가입 코드 시드** — 둘 중 하나:
+6. **test 가입 코드 시드** — 둘 중 하나:
    ```bash
    # (a) API — 토큰은 .env의 DEV_CODES_API_KEY
    curl -fsS -X POST https://dev-api.hypenow.io/admin/signup-codes \
      -H "Authorization: Bearer $DEV_CODES_API_KEY" -H 'Content-Type: application/json' \
      -d '{"codes":["DEV-AAAA","DEV-BBBB"]}'
-   # (b) 스크립트로 INSERT SQL 생성 → dev analysis DB에 직접 (맥에서)
+   # (b) 스크립트로 INSERT SQL 생성 → test analysis DB에 직접 (맥에서)
    deploy/scripts/generate-signup-codes.sh DEV 10 | \
-     ssh ubuntu@<IP> 'docker exec -i deploy-dev-postgres-1 psql -U <DEV_DB_USER> -d analysis'
+     ssh ubuntu@<IP> 'docker exec -i deploy-test-postgres-1 psql -U <DEV_DB_USER> -d analysis'
    ```
 7. **검증**: `https://dev-api.hypenow.io`에서 가입·로그인 → `/v1/contents` 응답 확인.
    이메일 인증 코드는 Resend 미설정(로깅 폴백)이라
-   `ssh ubuntu@<IP> 'docker logs deploy-dev-was-1 | grep 인증'`에서 확인.
+   `ssh ubuntu@<IP> 'docker logs deploy-test-was-1 | grep 인증'`에서 확인.
 
 ### 일상 사용
 
-- 기능 확인 절차: PR→develop 머지 → CI 성공 → cd-dev 완료 대기 → 어드민(8083)에서 미러 수동 실행 →
-  dev-api로 API 응답 확인 → 이상 없으면 develop→main 머지(운영 배포). **승격 = 머지 그 자체** —
-  코드·설정 수정 0, 같은 아티팩트에 배포 설정만 다르다.
-- dev 스케줄은 전부 off(`ANALYTICS_SCHEDULE_ENABLED: "false"`) — 미러·분석·LLM 잡은 어드민 수동
+- 기능 확인 절차: PR→develop 머지(CI만 — 배포 없음) → **develop→staging 머지** → CI 성공 →
+  cd-test 완료 대기 → 어드민(8083)에서 미러 수동 실행 → dev-api로 API 응답 확인 → 이상 없으면
+  **staging→main 머지(운영 배포)**. **승격 = 머지 그 자체** — 코드·설정 수정 0, 같은 아티팩트에
+  배포 설정만 다르다.
+- test 스케줄은 전부 off(`ANALYTICS_SCHEDULE_ENABLED: "false"`) — 미러·분석·LLM 잡은 어드민 수동
   트리거만. LLM은 운영 자격증명 공유라 소량으로(쿼터·비용 공유 인지). 이미지 아카이브는
   `ANALYTICS_IMAGE_PAR_URL: ""`이라 실행 시 fail-fast(운영 버킷 오염 방지).
-- 뷰만 다시 적용(맥에서 — cd-dev와 같은 절차):
+- 뷰만 다시 적용(맥에서 — cd-test와 같은 절차):
   ```bash
   cat analytics/views/*.sql | deploy/scripts/rewrite-views-dev-schema.sh | \
     ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -v ON_ERROR_STOP=1 -q'
   ```
 - 스냅샷 캐시 refresh(필요 시):
   `ssh ubuntu@<IP> 'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -c "SELECT analytics_dev.refresh_snapshot_cache();"'`
-- dev 스택 정지:
-  `cd ~/deploy && docker compose -f compose.yaml -f compose.dev.yaml --profile dev stop dev-was dev-analytics dev-postgres`
+- test 스택 정지:
+  `cd ~/deploy && docker compose -f compose.yaml -f compose.test.yaml --profile test stop test-was test-analytics test-postgres test-redis`
   (운영 무영향 — 프로파일 밖 서비스는 건드리지 않는다). 재기동은 같은 `-f`·프로파일 인자에 `up -d`.
-- 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-dev-was-1` ·
-  `deploy-dev-analytics-1` · `deploy-dev-postgres-1`. 모니터링 `SERVICES` 목록(§9)에는 dev를 넣지
+- 컨테이너 이름은 compose 프로젝트명(`~/deploy` 디렉토리) 기준: `deploy-test-was-1` ·
+  `deploy-test-analytics-1` · `deploy-test-postgres-1` · `deploy-test-redis-1`. 모니터링 `SERVICES` 목록(§9)에는 test를 넣지
   않는다 — 수동 정지가 정상 상태라 알람이 오탐이 된다.
 
-### 주의 (함정 2건)
+### 주의 (함정 3건)
 
-- **develop 머지는 실행 중인 dev 잡을 끊는다.** cd-dev가 dev 컨테이너를 새 이미지로 재생성하므로,
+- **staging 머지는 실행 중인 test 잡을 끊는다.** cd-test가 test 컨테이너를 새 이미지로 재생성하므로,
   미러·분석 잡이 돌던 중이면 그대로 중단된다(07-28 첫 미러가 이렇게 유실 — 재실행으로 해소).
-  긴 잡을 돌릴 땐 develop 머지 타이밍을 피하거나, 끊겼으면 어드민에서 재트리거하면 된다.
-- **orphan 경고는 정상, `--remove-orphans` 금지.** dev 기동 후 운영 경로(`docker compose up -d`,
-  deploy.sh)는 매번 `Found orphan containers (deploy-dev-was-1 …)` 경고를 낸다 — dev 서비스가
-  `compose.dev.yaml`에 있어 운영 파일 단독 실행엔 "고아"로 보일 뿐이다. 경고문이 권하는
-  `--remove-orphans`를 붙이면 **dev 컨테이너 3종이 제거된다.** 절대 붙이지 말 것.
-- **운영 배포가 cancelled로 끝났으면 재실행.** 운영 CD와 dev CD는 같은 concurrency 그룹
-  (`deploy-server`)으로 직렬화되는데, GitHub는 그룹당 대기 1개만 유지한다 — dev 배포 실행 중에
-  운영 배포가 대기하다가 새 dev 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
-  있다. develop→main 머지 후엔 Actions에서 CD 런이 success로 끝났는지 확인하고, cancelled면
+  긴 잡을 돌릴 땐 staging 머지 타이밍을 피하거나, 끊겼으면 어드민에서 재트리거하면 된다.
+- **orphan 경고는 정상 — 운영 파일 단독 경로에서 `--remove-orphans` 금지.** test 기동 후 운영
+  경로(`docker compose up -d`, deploy.sh — compose.yaml 단독)는 매번
+  `Found orphan containers (deploy-test-was-1 …)` 경고를 낸다 — test 서비스가 `compose.test.yaml`에
+  있어 운영 파일 단독 실행엔 "고아"로 보일 뿐이다. 경고문이 권하는 `--remove-orphans`를 붙이면
+  **test 컨테이너 3종이 제거된다.** 절대 붙이지 말 것. (cd-test의 up에 붙은 `--remove-orphans`는
+  다른 얘기 — 전체 파일 세트 기준이라 고아 = 정의가 사라진 컨테이너뿐이며, 07-29 전환 때 구
+  `deploy-dev-*` 3종을 이걸로 정리했다.)
+- **운영 배포가 cancelled로 끝났으면 재실행.** 운영 CD와 test CD는 같은 concurrency 그룹
+  (`deploy-server`)으로 직렬화되는데, GitHub는 그룹당 대기 1개만 유지한다 — test 배포 실행 중에
+  운영 배포가 대기하다가 새 test 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
+  있다. staging→main 머지 후엔 Actions에서 CD 런이 success로 끝났는지 확인하고, cancelled면
   Re-run으로 재실행한다(07-20 "배포가 조용히 안 나감" 계열 방지).
