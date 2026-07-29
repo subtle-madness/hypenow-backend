@@ -61,11 +61,38 @@ ALTER TABLE app.example ADD COLUMN extra text;
 SQL
 expect 0 "주석 속 패턴은 무시" "$TMP/comment-only.sql"
 
-cat > "$TMP/allowed.sql" <<'SQL'
--- allow-destructive: v_old_summary 참조 코드는 V50 릴리스에서 제거 완료 — contract 단계
+cat > "$TMP/contract-with-backfill.sql" <<'SQL'
+-- allow-destructive: note 참조 코드는 릴리스 N에서 제거 완료 — contract 단계
+UPDATE app.example SET memo = COALESCE(memo, note);
 ALTER TABLE app.example DROP COLUMN note;
 SQL
-expect 0 "allow-destructive 승인 주석 통과" "$TMP/allowed.sql"
+expect 0 "contract(보정 UPDATE 동봉) 통과" "$TMP/contract-with-backfill.sql"
+
+cat > "$TMP/contract-no-backfill-tag.sql" <<'SQL'
+-- allow-destructive: 미러 소유 컬럼 — 참조 코드 릴리스 N에서 제거 완료
+-- no-backfill: 미러가 매일 전체 재기록 — 창 유실 없음
+ALTER TABLE app.example DROP COLUMN note;
+SQL
+expect 0 "contract(no-backfill 사유 명시) 통과" "$TMP/contract-no-backfill-tag.sql"
+
+cat > "$TMP/contract-missing-backfill.sql" <<'SQL'
+-- allow-destructive: note 참조 코드는 릴리스 N에서 제거 완료
+ALTER TABLE app.example DROP COLUMN note;
+SQL
+expect 1 "contract에 보정 UPDATE도 no-backfill 태그도 없으면 차단" "$TMP/contract-missing-backfill.sql"
+
+cat > "$TMP/contract-wrong-backfill.sql" <<'SQL'
+-- allow-destructive: note 참조 코드는 릴리스 N에서 제거 완료
+UPDATE app.example SET memo = other_column;
+ALTER TABLE app.example DROP COLUMN note;
+SQL
+expect 1 "보정 UPDATE가 drop 대상 컬럼을 참조 안 하면 차단" "$TMP/contract-wrong-backfill.sql"
+
+cat > "$TMP/contract-drop-table.sql" <<'SQL'
+-- allow-destructive: example_old 참조 코드는 릴리스 N에서 제거 완료
+DROP TABLE app.example_old;
+SQL
+expect 0 "DROP TABLE은 짝 검사 대상 아님(컬럼 이행이 아님)" "$TMP/contract-drop-table.sql"
 
 cat > "$TMP/not-null-default.sql" <<'SQL'
 ALTER TABLE app.example ADD COLUMN flag boolean NOT NULL DEFAULT false;
