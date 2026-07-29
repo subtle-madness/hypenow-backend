@@ -4,7 +4,7 @@
 > 전말)은 `docs/superpowers/specs/`의 dated 문서에 남기고, 여기서는 **현재 유효한 그림**만 유지한다.
 > 각 섹션을 고칠 때 하단 [결정 기록](#7-결정-기록)에 한 줄을 추가한다.
 >
-> 마지막 갱신: 2026-07-21
+> 마지막 갱신: 2026-07-29
 
 ## 1. 제품 한 장 요약
 
@@ -235,6 +235,7 @@ DISCOVERED 유입, 이후 qualify→beauty는 기존 파이프라인 동일 처�
 | O | timely 캘린더일 정합 | `ContentAnalysisJob` 후보 선정을 raw 후보 뷰(04, 캘린더일 timely) 직접 소비로 교체 — 간격식 판정 이원화 제거(일 수백 건 late_backfill 누수→랭킹 영구 제외 해소). 기존 마킹 양방향 소급 런북 포함 — [specs/2026-07-28-timely-calendar-alignment-design.md](docs/superpowers/specs/2026-07-28-timely-calendar-alignment-design.md) [plans/2026-07-28-timely-calendar-alignment.md](docs/superpowers/plans/2026-07-28-timely-calendar-alignment.md) | B1(미러), 04 뷰 | 🔨 (PR 리뷰 대기 · 소급 런북은 배포 후 실행) |
 | Q | 인플루언서 리포트 개편(백엔드) | 피어 퍼센타일·중앙값 ER 파생 뷰(V39 `account_peer_stats` — 주 카테고리×팔로워 버킷) + `account_analyses` 요약 3분할(V40, perf/content/ad_summary) + 계정 카피 7종→5종(tagline 상세화, ad_headline·성장세·유효 팔로워·유사도는 LLM 제거하고 was 알고리즘 산출로 전환) + was 리포트 DTO v2(전체/광고 2행 스탯·성장세·상위%, 유효 팔로워, 미리보기 bars에 캡션·썸네일·브랜드) + 신규 `GET /v1/brands/{brand}/influencers`·`GET /v1/influencers/{id}/similar`(traits Jaccard). **07-28 프론트 확정 스펙 정렬(6.22 리포트 v2·6.23 유사 카드·6.24 이메일 중복 확인) 포함**: v1(6.5)은 프론트 라이브 소비 중이라 원형 보존하고 v2를 `/v2` 병행 신설, 브랜드 hover 엔드포인트는 6.22 `ads.brands` 인라인으로 흡수·삭제, 유효 팔로워는 발굴 목록(6.21)과 산식 단일화(`EffectiveFollowers` 유틸) — [plans/2026-07-27-influencer-report-redesign-backend.md](docs/superpowers/plans/2026-07-27-influencer-report-redesign-backend.md) [plans/2026-07-28-influencer-report-v2-spec-alignment.md](docs/superpowers/plans/2026-07-28-influencer-report-v2-spec-alignment.md) | C1, C2, B4 | 🔨 (PR 리뷰 대기) |
 | R | 유사 인플루언서 유사도 v2 1단계 | Q가 얹은 유사 인플루언서 정렬(traits Jaccard 단독)이 운영 실측 난수화(traits 고유값 5,847/28,387, 67% 1회 등장)돼 혼합 점수(Jaccard 0.6 + 카테고리 믹스 히스토그램 교집합 0.4, 집합 기반 SQL — 운영 규모 실측 85ms)·컷 0.30(운영 dry-run 실측)·동점 시 팔로워 근접→handle 타이브레이크로 교체. 착수 중 Q 최종본이 v1 similar 표면을 삭제하고 `/v2/influencers/{id}/similar`(6.21 카드 재사용)로 신설해, 알고리즘을 `V2InfluencerReportRepository.findSimilarHandles`로 이식 — 겸사겸사 스펙 6.23의 서버 고정 9명을 **10명으로 변경**(사용자 확정). 어휘 통제(2단계)는 보류 — [specs/2026-07-28-similar-influencer-similarity-v2-design.md](docs/superpowers/specs/2026-07-28-similar-influencer-similarity-v2-design.md) [plans/archive/2026-07-28-similar-influencer-similarity-v2-phase1.md](docs/superpowers/plans/archive/2026-07-28-similar-influencer-similarity-v2-phase1.md) | Q | ✅ (PR 리뷰 대기) |
+| S | 모니터링 was seam | was ↔ monitoring 통신 계층 — 명령 클라이언트·읽기 전용 조회·app 매핑(V13)·조건부 활성화(monitoring.enabled). 프론트 /v1 컨트롤러·이메일 크론은 후속 — [specs/2026-07-28-monitoring-was-seam-design.md](docs/superpowers/specs/2026-07-28-monitoring-was-seam-design.md) | — | ✅ (구현 완료, PR 대기) |
 **API 스펙 정렬 트랙** (2026-07-15 프론트 계약 채택 — [specs/2026-07-15-hypenow-api-spec-alignment-design.md](docs/superpowers/specs/2026-07-15-hypenow-api-spec-alignment-design.md)):
 
 | # | 태스크 | 내용 | 의존 | 상태 |
@@ -284,6 +285,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 | 날짜 | 결정 | 근거/상세 |
 |---|---|---|
+| 2026-07-28 | **모니터링 seam(was)** — monitoring용 DataSource·JdbcClient·RestClient는 빈 비노출(자동구성 back-off 회피 — 도메인 빈 3개만 노출), 등록은 멱등키 선저장 2단계+전송실패 1회 재시도, 조회는 계약 베이스 테이블 4개만. 내부망 전용이라 명령 API 토큰 인증 제거. 계약 스냅샷 docs/contracts/ 반입 | [specs/2026-07-28-monitoring-was-seam-design.md](docs/superpowers/specs/2026-07-28-monitoring-was-seam-design.md) |
 | 2026-07-28 | **미분석 "왜" 가시화 — 상태 분해 정본 스크립트 + 대시보드 원인 라벨 승격** — "제때창(3일) 놓쳐서 분석 안 함"과 "분석 대상인데 대기"가 구분 안 되던 문제(세션 보고·대시보드 해석 양쪽 재발). 원인: 미분석 콘텐츠의 timely 여부는 분석 완료 전엔 영속화되지 않아(`v_analysis_candidates.timely`가 유일한 판정 지점) 즉석 카운트 쿼리가 트랙을 뭉갬 + /ui 라벨이 결과 분류("상세 트랙"·"영구 제외")만 있고 원인(제때창 놓침)이 없었음. 조치: ①`analytics/check/pending.sh` — 미분석 상태 12분해(미성숙/랭킹·상세 트랙별 기분석·대기·댓글 게이트·미러 갭/영구 제외/캡션 없음) + /ui 항등식 대조 + 마킹·뷰 불일치(소급 런북 잔여 감지) 크로스 DB 리포트, 잔여 카운트는 이 정본만 사용(CLAUDE.md 함정 등재) ②/ui 콘텐츠 보드 — 트랙 라벨에 원인 명시("제때창(3일) 안 크롤 성공"/"제때창 놓침"), 미분석 칩에 "분석 대기", 자격 밖(미성숙·영구 제외)을 각주에서 "분석 안 함 — 실패·지연 아님" 행으로 승격 | [analytics/check/pending.sh](analytics/check/pending.sh) |
 | 2026-07-28 | **유사 인플루언서 유사도 v2 1단계 — v1→v2 표면 이식 + 최대 9→10명 변경** — traits 자유 서술의 Jaccard가 난수화(고유값 5,847/28,387, 67%가 1회 등장)되어 혼합 점수(Jaccard 0.6 + 카테고리 믹스 히스토그램 교집합 0.4, 집합 기반 SQL — 운영 규모 실측 85ms)·컷 0.30(운영 dry-run 실측)·handle 타이브레이크로 교체하는 작업 도중, `/v1/influencers/{id}/similar`가 #149 최종본(f8da9d4d)에서 삭제되고 `/v2/influencers/{id}/similar`(7c67a411, 6.21 카드 재사용)로 신설돼 알고리즘을 `V2InfluencerReportRepository.findSimilarHandles`로 이식했다. 응답이 카드 목록이라 유사도 %·점수 비노출은 표면 형태로 자연 충족. 겸사겸사 스펙 6.23의 서버 고정 9명을 **10명으로 변경**(사용자 확정, 코드 주석·문서 동기화). 어휘 통제(2단계)는 보류 — 카테고리·태그라인 변경 반영 분석 후 재결정 | [specs/2026-07-28-similar-influencer-similarity-v2-design.md](docs/superpowers/specs/2026-07-28-similar-influencer-similarity-v2-design.md) |
 | 2026-07-28 | **6.22 리포트 v2는 `/v2` 병행 신설** — v1(6.5)은 프론트가 라이브 소비 중이라 원형 보존, 프론트 전환 완료 후 별도 PR로 v1 폐기 | [plans/2026-07-28-influencer-report-v2-spec-alignment.md](docs/superpowers/plans/2026-07-28-influencer-report-v2-spec-alignment.md) |
