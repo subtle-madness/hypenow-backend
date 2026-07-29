@@ -200,3 +200,14 @@ Task 4를 픽스처 5종으로 TDD 구현한 결과 §2·§4·§5의 매핑이 *
 - **`fetchPost`는 `user.username` 부재를 셰이프 이상으로 본다**(`HikerFetchException` → 502).
   단건 응답에는 usernameHint가 없어 여기가 소유 계정의 유일한 출처이고,
   `post_snapshot.username`·`target.username`이 둘 다 NOT NULL이라 없으면 적재 자체가 불가능하다.
+
+### §9-1. 원형 적재의 트랜잭션 한계 (Task 6 리뷰 보류 — Task 8에서 재검토)
+
+- 데코레이터의 raw 저장이 `CollectService`의 `@Transactional` 안에서 돌아 **수집 실패 시
+  원형도 함께 롤백**된다. 예: `collectPost`의 셰이프 이상(502) 경로 — 왜 이상했는지 확인할
+  유일한 증거인 응답 body가 사라진다.
+- Task 8 권고: `REQUIRES_NEW`보다 먼저 **fetch를 트랜잭션 밖으로 빼고 쓰기만 짧은
+  트랜잭션으로** 묶는 구조를 검토할 것 — 원형 자동 커밋 + Hiker 레이턴시 동안 커넥션
+  점유(스윕 N대상×3콜의 풀 고갈 위험)가 한 번에 풀린다.
+- 부기: raw.fetch_payload의 subject는 PROFILE=username, POSTS=user_id(숫자 pk), POST=short_code —
+  계정 단위 감사 쿼리는 PROFILE 행의 payload에서 pk를 얻어 2단계로.
