@@ -1,5 +1,5 @@
 -- 계약 §3(v0.1)에서 유도한 monitoring DB 픽스처 — 테스트 전용.
--- ⚠️ monitoring 구현 확정 시 실제 스키마와 대조 필요(스펙 §7 잔여 작업).
+-- monitoring/src/main/resources/db/migration/V1__core_tables.sql과 대조 완료(2026-07-29) — 계약 변경 시 재대조.
 CREATE TABLE IF NOT EXISTS target (
     id                 bigserial PRIMARY KEY,
     type               text NOT NULL,             -- ACCOUNT / POST

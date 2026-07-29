@@ -241,6 +241,11 @@ WHERE short_code = (SELECT tracked_short_code FROM target WHERE id = :target_id)
 ORDER BY captured_on;
 ```
 
+> **was 소비자 노트(07-29)**: was의 알람 워터마크 전진은 `max(detected_at)` 기준이며, 02:00 스윕이
+> **순차 실행·09:00 전 완료**임을 전제한다(커밋 순서와 detected_at 순서가 어긋나면 조용한 유실).
+> 스윕을 병렬화하거나 스케줄을 옮길 땐 was에 먼저 알릴 것 — 그때는 candidate id 기반 발송 대장으로 교체 필요.
+> 또한 설정 화면의 "게시물 숨김" 알람은 현 계약에 감지 신호가 없어 미구현 — 계약 확장 요청(스펙 2026-07-29 §1).
+
 ## 4. 플로우
 
 ### 등록 (프론트 → was → monitoring)

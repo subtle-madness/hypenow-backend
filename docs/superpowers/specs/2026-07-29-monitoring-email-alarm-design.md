@@ -100,3 +100,5 @@ app.monitoring_alarm_state (
 - 후속: 설정 토글 API(프론트 /v1), 모니터링 종료·미업로드 확정 알람(해석 확인 후 — 워터마크
   행 INSERT + 크론 메서드 추가로 확장), 게시물 숨김(monitoring 계약 확장 필요 — **팀원 전달**),
   앱 내 알림(프론트 API), 문안 정식 교체 + 딥링크(프론트 경로 확정 후).
+- `@EnableScheduling`이 `MonitoringConfig`(조건부 Config) 종속 — was에 다른 스케줄러가 생기는
+  시점에 루트(`WasApplication` 등)로 승격 필요.

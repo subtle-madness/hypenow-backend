@@ -376,6 +376,14 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    ```bash
    rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
    ```
+5. **was 쪽 활성화**(이메일 알람 1차 — 게시물 감지, V15) — was 컨테이너에 env 3종 필요
+   (Spring 완화 바인딩으로 `monitoring.*` 프로퍼티에 매핑됨): `MONITORING_ENABLED=true`,
+   `MONITORING_DATASOURCE_URL`(monitoring DB, **was_reader** 계정 — 1번에서 만든 읽기 전용 롤),
+   `MONITORING_DATASOURCE_USERNAME`/`MONITORING_DATASOURCE_PASSWORD`.
+   **`RESEND_API_KEY` 실값도 같이 확인할 것** — 07-29 이메일 인증 제거로 죽은 설정처럼 보이지만
+   **지금은 알람 크론이 유일한 소비자**다. 미설정이면 부팅은 되지만 `LoggingMailSender`로
+   로그만 남고 실발송은 안 된다(운영이라면 설정 누락). 개통 후 첫 09:00 KST가 지난 다음
+   `docker logs deploy-was-1`에서 `"모니터링 알람:"` 로그로 정상 동작을 확인한다.
 
 ### 접근 통제·디버깅
 
