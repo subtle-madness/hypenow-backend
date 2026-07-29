@@ -107,6 +107,24 @@ class MonitoringReadRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 종결_캠페인의_잔여_PENDING은_알람_조회에서_제외된다() {
+		// 계약 v1.0: 종결 캠페인 후보는 승인·거절이 모두 409라 알람이 나가면 안 된다
+		long active = seedTarget("acc_live", null, "WATCHING");
+		long closed = seedTarget("acc_closed", null, "EXPIRED");
+		jdbc.sql("""
+				INSERT INTO detected_candidate (target_id, short_code, detected_at, caption_excerpt, status)
+				VALUES (:a, 'LIVE1', now(), '…', 'PENDING'),
+				       (:c, 'DEAD1', now(), '…', 'PENDING')
+				""").param("a", active).param("c", closed).update();
+
+		List<PendingCandidate> fresh = repository.findPendingCandidatesSince(
+				Instant.now().minusSeconds(3600));
+
+		assertThat(fresh).hasSize(1);
+		assertThat(fresh.get(0).shortCode()).isEqualTo("LIVE1");
+	}
+
+	@Test
 	void 프로필_추이는_날짜순() {
 		jdbc.sql("""
 				INSERT INTO profile_snapshot (username, captured_on, followers, following, media_count)

@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -78,6 +79,21 @@ public class MonitoringCampaignMappingRepository {
 				ORDER BY created_at DESC
 				""")
 				.param("userId", userId)
+				.query(MonitoringCampaignMapping.class)
+				.list();
+	}
+
+	/** 알람 크론용 역방향 조회 — 후보의 target들을 소유 유저로 해석한다(스펙 2026-07-29 §4). */
+	public List<MonitoringCampaignMapping> findByTargetIds(Collection<Long> targetIds) {
+		if (targetIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbcClient.sql("""
+				SELECT id, user_id, registration_key, target_id, created_at
+				FROM app.monitoring_campaigns
+				WHERE target_id IN (:targetIds)
+				""")
+				.param("targetIds", targetIds)
 				.query(MonitoringCampaignMapping.class)
 				.list();
 	}

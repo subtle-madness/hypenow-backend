@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,22 @@ class MonitoringCampaignMappingRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findByUser(userId)).hasSize(1);
 		assertThat(repository.findByUserAndTarget(userId, 1L)).isEmpty();
+	}
+
+	@Test
+	void target_다건_역방향_조회() {
+		UUID key1 = UUID.randomUUID();
+		UUID key2 = UUID.randomUUID();
+		repository.insertPending(userId, key1);
+		repository.confirmTarget(key1, 101L);
+		repository.insertPending(userId, key2);
+		repository.confirmTarget(key2, 102L);
+
+		List<MonitoringCampaignMapping> found = repository.findByTargetIds(List.of(101L, 102L, 999L));
+
+		assertThat(found).hasSize(2);
+		assertThat(found).allSatisfy(m -> assertThat(m.userId()).isEqualTo(userId));
+		assertThat(repository.findByTargetIds(List.of())).isEmpty();
 	}
 
 	@Test

@@ -54,12 +54,13 @@ public class MonitoringReadRepository {
 				.list();
 	}
 
-	/** 워터마크 이후 신규 PENDING(계약 §3 알람 쿼리 그대로) — 이메일 크론 대비. */
+	/** 워터마크 이후 신규 PENDING(계약 §3 알람 쿼리 그대로 — v1.0: 활성 캠페인만). */
 	public List<PendingCandidate> findPendingCandidatesSince(Instant since) {
 		return jdbc.sql("""
 				SELECT c.id, c.target_id, c.short_code, c.caption_excerpt, c.detected_at, t.username
 				FROM detected_candidate c JOIN target t ON t.id = c.target_id
 				WHERE c.status = 'PENDING' AND c.detected_at > :since
+				  AND t.status IN ('WATCHING', 'TRACKING')
 				ORDER BY c.detected_at
 				""")
 				.param("since", OffsetDateTime.ofInstant(since, ZoneOffset.UTC))
