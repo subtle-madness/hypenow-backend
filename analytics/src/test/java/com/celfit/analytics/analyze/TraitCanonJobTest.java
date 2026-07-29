@@ -109,6 +109,24 @@ class TraitCanonJobTest {
 				"SELECT traits::text FROM account_analyses WHERE handle='a'", String.class));
 	}
 
+	/**
+	 * 캐노니컬의 공백 변형은 어휘 정본 표기로 역치환해 기록한다 — 2026-07-29 dev DRY 샘플에서
+	 * 모델이 "가을 웜톤"(어휘는 "가을웜톤")처럼 띄어 반환하면 정확일치 필터에 탈락해
+	 * 매핑 가능한 raw가 '' 센티널로 영구 드롭되는 실측 결함의 회귀 고정.
+	 */
+	@Test
+	void 공백_변형_캐노니컬은_어휘_정본_표기로_기록된다() {
+		db.update("""
+				INSERT INTO account_analyses (handle, analyzed_at, model, tagline, traits, perf_summary, content_summary)
+				VALUES ('c', now(), 'test', 't', '["가을 웜 뮤트"]'::jsonb, 'p', 'c')""");
+		TraitMappingPort spaced = raws -> Map.of("가을 웜 뮤트", List.of("가을 웜톤"));
+
+		job(spaced).run(true);
+
+		assertEquals("가을웜톤", db.queryForObject(
+				"SELECT canon_value FROM trait_canon_log WHERE raw_value='가을 웜 뮤트'", String.class));
+	}
+
 	/** 응답에서 누락된 raw는 기록하지 않는다 — 다음 실행에서 재시도(일시 누락을 영구 드롭으로 만들지 않기). */
 	@Test
 	void 응답_누락_raw는_다음_실행_재대상으로_남는다() {
