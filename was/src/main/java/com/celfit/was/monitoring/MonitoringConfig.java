@@ -72,6 +72,11 @@ public class MonitoringConfig {
 		return new MonitoringCommandClient(monitoringRestClient);
 	}
 
+	@Bean
+	MonitoringReadRepository monitoringReadRepository() {
+		return new MonitoringReadRepository(monitoringJdbc);
+	}
+
 	@PreDestroy
 	void close() {
 		monitoringDataSource.close();
