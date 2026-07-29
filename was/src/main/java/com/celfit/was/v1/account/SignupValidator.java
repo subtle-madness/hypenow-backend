@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 public class SignupValidator {
 
 	private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
-	private static final int PASSWORD_MIN_LENGTH = 8;
 	private static final int USAGE_PURPOSE_MAX_LENGTH = 2000;
 
 	private static final Set<String> USER_TYPES = Set.of("brand", "agency", "distributor", "influencer");
@@ -68,16 +67,13 @@ public class SignupValidator {
 		requireIn(PHONE_COUNTRY_CODES, value, "phoneCountryCode");
 	}
 
-	/** 비밀번호 정책(스펙 6.15) — 8자 이상 + 영대문자·소문자·숫자·특수문자 각 1자 이상. PUT /v1/me/password도 재사용. */
+	/**
+	 * 비밀번호 복잡도 정책 제거(2026-07-29) — 규칙은 프론트 단일 관할, 백엔드는 빈 값만 차단
+	 * (null이 encoder까지 가면 NPE). PUT /v1/me/password도 재사용.
+	 */
 	public void validatePassword(String password) {
-		boolean ok = password != null
-				&& password.length() >= PASSWORD_MIN_LENGTH
-				&& password.chars().anyMatch(Character::isUpperCase)
-				&& password.chars().anyMatch(Character::isLowerCase)
-				&& password.chars().anyMatch(Character::isDigit)
-				&& password.chars().anyMatch(c -> !Character.isLetterOrDigit(c));
-		if (!ok) {
-			throw V1ApiException.validation("비밀번호는 8자 이상, 영문 대·소문자와 숫자, 특수문자를 모두 포함해야 해요.");
+		if (password == null || password.isBlank()) {
+			throw V1ApiException.validation("비밀번호를 입력해 주세요.");
 		}
 	}
 
