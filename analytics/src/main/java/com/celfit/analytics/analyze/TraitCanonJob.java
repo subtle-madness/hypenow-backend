@@ -57,7 +57,11 @@ public class TraitCanonJob {
 
 	/** 1단계(두 모드 공통): 어휘 밖·미기록 고유 raw 수집 → LLM 매핑 → canon_log INSERT. */
 	private int mapUnmapped(TraitTaxonomy vocab, ProgressReporter reporter) {
-		Set<String> names = vocab.names();
+		// 캐노니컬 대조는 공백 무시 — 모델이 "가을웜톤"을 "가을 웜톤"처럼 띄어 반환하면 정확일치
+		// 필터에서 탈락해 매핑 가능한 raw가 '' 센티널로 영구 드롭되는 실측 결함(07-29 dev DRY).
+		// 정규화 키로 찾되 기록은 항상 어휘 정본 표기로 남긴다.
+		Map<String, String> canonByNorm = new HashMap<>();
+		vocab.names().forEach(n -> canonByNorm.put(squashSpaces(n), n));
 		List<String> raws = analysis.queryForList("""
 				SELECT DISTINCT t FROM account_analyses, jsonb_array_elements_text(traits) AS t
 				WHERE t NOT IN (SELECT name FROM trait_taxonomy)
@@ -74,7 +78,9 @@ public class TraitCanonJob {
 					continue; // 응답 누락 — 다음 실행에서 재시도
 				}
 				List<String> valid = canon.stream()
-						.filter(names::contains).distinct().limit(MAX_CANON_PER_RAW).toList();
+						.map(c -> canonByNorm.get(squashSpaces(c)))
+						.filter(java.util.Objects::nonNull)
+						.distinct().limit(MAX_CANON_PER_RAW).toList();
 				if (valid.isEmpty()) {
 					insertLog(raw, ""); // 매핑 불가(어휘 밖 캐노니컬만 온 배신 응답 포함) — 드롭 확정
 				} else {
@@ -85,6 +91,11 @@ public class TraitCanonJob {
 			reporter.report(Math.min(from + BATCH, raws.size()), 0, raws.size());
 		}
 		return recorded;
+	}
+
+	/** 어휘 대조용 정규화 — 모든 공백류 제거. */
+	private static String squashSpaces(String s) {
+		return s.replaceAll("\\s+", "");
 	}
 
 	private void insertLog(String raw, String canon) {

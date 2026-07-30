@@ -5,6 +5,9 @@ spring:
     username: ${DB_USER}
     password: ${DB_PASSWORD}
 server:
+  # 롤링 배포(deploy/scripts/rollout.sh) 전제 — SIGTERM에 신규 수신을 막고 진행 중 요청을
+  # 드레인(기본 30s)한다. Boot 3.4+ 기본값이지만 배포 무중단의 전제 조건이라 명시 고정.
+  shutdown: graceful
   # caddy 뒤에서 X-Forwarded-* 를 신뢰 — Secure 쿠키·scheme 판정 + 클라이언트 IP 복원.
   # remoteAddr 복원은 레이트리밋 키(IP별 버킷)의 전제 — 깨지면 전 사용자가 Caddy IP 버킷 하나를
   # 공유한다. ProdForwardedHeadersTest가 회귀 가드. 스푸핑은 Caddy(2.5+)가 외부 유입

@@ -1,4 +1,21 @@
 {$API_DOMAIN} {
+	# 액세스 로그(2026-07-29) — 전 요청의 경로·상태·소요시간 전수 기록(JSON, 롤링 캡 ~250MB).
+	# 자격증명 헤더(세션 쿠키·인증·CSRF)는 로그에 절대 남기지 않는다.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers>X-Xsrf-Token delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
 	# OCI ONS 알람 → 디스코드 릴레이 (경로 토큰은 릴레이가 검증)
 	handle /internal/ons-relay/* {
 		reverse_proxy ons-relay:9099
@@ -9,7 +26,12 @@
 		reverse_proxy crawler:8080
 	}
 	handle {
-		reverse_proxy was:8081
+		# 롤링 배포(scripts/rollout.sh) 중 신구 was 교대 순간의 dial 실패를 재시도로 흡수 —
+		# 도커 DNS가 재해석돼 살아 있는 쪽에 붙는다. 평상시엔 무영향(성공한 요청은 재시도 없음).
+		reverse_proxy was:8081 {
+			lb_try_duration 10s
+			lb_try_interval 250ms
+		}
 	}
 }
 

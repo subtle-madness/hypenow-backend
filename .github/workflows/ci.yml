@@ -34,7 +34,7 @@ jobs:
         run: |
           fail=0
           for d in analytics/src/main/resources/db/migration/analysis \
-                   was/src/main/resources/db/migration \
+                   was/src/main/resources/db/migration/app \
                    crawler/src/main/resources/db/migration; do
             [ -d "$d" ] || continue
             dup=$(ls "$d" | grep -oE '^V[0-9]+' | sort | uniq -d)
@@ -67,6 +67,27 @@ jobs:
           path: '**/build/reports/tests/test/'
           retention-days: 7
 
+  # was 롤링 배포(트랙 X) 중 신구 코드가 같은 DB를 공존해서 본다 — 파괴적 DDL(DROP·RENAME·
+  # 타입 변경·SET NOT NULL)은 참조 코드가 사라진 다음 릴리스로 분리(expand-contract,
+  # deploy/README.md §5-1). 의도된 contract 단계는 `-- allow-destructive: <사유>` 주석으로 통과.
+  # 대상은 analysis DB(was app + analytics)만 — crawler(raw)는 재기동 배포라 공존이 없고
+  # was는 raw 접근 금지(시스템 경계)라 대상 외. PR에서만 — base_ref 기준 diff가 검사 대상.
+  migration-guard:
+    name: 마이그레이션 롤링 호환 가드
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # base 브랜치와의 diff에 전체 refs 필요
+
+      - name: 가드 셀프테스트
+        run: .github/scripts/check-migration-safety.test.sh
+
+      - name: 파괴적 마이그레이션 검사 (expand-contract)
+        run: .github/scripts/check-migration-safety.sh "origin/${{ github.base_ref }}"
+
   sql-harness:
     name: 분석 뷰 SQL 하니스
     runs-on: ubuntu-latest
@@ -82,13 +103,16 @@ jobs:
           docker run -d --name crawler-postgres-1 \
             -e POSTGRES_USER=crawler -e POSTGRES_PASSWORD=crawler -e POSTGRES_DB=crawler \
             postgres:16
+          # 대기는 실쿼리로 — pg_isready는 initdb 중 임시 서버(소켓)에도 OK를 줘서
+          # POSTGRES_DB 생성 전에 통과하는 레이스가 있다(07-29 PR #178에서 실발생:
+          # "database crawler does not exist"). SELECT 1이 돼야 초기화 완료다.
           for i in $(seq 1 30); do
-            if docker exec crawler-postgres-1 pg_isready -U crawler -d crawler -q 2>/dev/null; then
+            if docker exec crawler-postgres-1 psql -U crawler -d crawler -c 'SELECT 1' -q >/dev/null 2>&1; then
               break
             fi
             sleep 1
           done
-          docker exec crawler-postgres-1 pg_isready -U crawler -d crawler
+          docker exec crawler-postgres-1 psql -U crawler -d crawler -c 'SELECT 1' -q >/dev/null
           for f in $(ls crawler/src/main/resources/db/migration/*.sql | sort -t V -k 2 -n); do
             echo "migrate $f"
             docker exec -i crawler-postgres-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q < "$f"

@@ -1,10 +1,9 @@
 # monitoring ↔ was 계약 — was 개발자용
 
-> **⚠️ 사본(스냅샷)** — 정본은 monitoring 모듈 쪽에서 유지·갱신한다. 이 파일은 was 쪽 구현이
-> 참조한 시점(2026-07-28, v0.1 초안)의 스냅샷이며, 정본이 갱신되면 이 사본도 교체한다.
-> (07-28 구두 결정 반영: 내부망 전용이므로 정적 토큰 인증 제거 — 원본 v0.1에서 이 사본이 앞서 반영한 유일한 델타)
-> 배경·설계 근거 문서(specs/2026-07-28-monitoring-module-design.md)는 monitoring 쪽 소유 — 이 repo엔 없음.
-> 상태: v0.1 초안 (monitoring 구현 미착수 — 필드·에러 어휘는 구현 중 조정될 수 있음, 변경 시 정본이 먼저 갱신됨)
+> **living 문서** — monitoring 모듈이 was에 제공하는 계약의 정본. 구현과 함께 갱신한다.
+> 배경·설계 근거는 [specs/2026-07-28-monitoring-module-design.md](../superpowers/specs/2026-07-28-monitoring-module-design.md) 참조.
+> 상태: **v1.0 (구현 반영 — 2026-07-29)** · 명령 API 5종·조회 표면(테이블 4 + 뷰 2)·에러 어휘 전부 구현과 일치.
+> 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
 
@@ -23,9 +22,10 @@
 
 | 항목 | 값 |
 |---|---|
-| 명령 API | `http://monitoring:8083` (도커 내부망 전용, Caddy 미노출) |
-| 인증 | 없음 — 도커 내부망 전용이라 토큰 인증 제거 (07-28 결정) |
-| 조회 DB | `postgres` 인스턴스의 `monitoring` DB, 읽기 전용 계정(`public` 스키마만 GRANT) |
+| 명령 API | `http://monitoring:8083` — **전용 도커 네트워크 `monitoring-net`** 경유(was 컨테이너가 이 네트워크에 소속돼야 이름이 해석됨). 호스트 포트·Caddy 미노출 |
+| 인증 | **없음 — 네트워크 소속이 곧 인증.** `monitoring-net`에는 was와 monitoring만 소속. 헤더·토큰 불필요 |
+| test(스테이징) 환경 | `http://test-monitoring:8083` — `test-monitoring-net`(test-was와 둘만 소속). 운영 monitoring은 test에서 DNS 해석 자체가 안 됨(오배선 fail-closed) |
+| 조회 DB | `postgres` 인스턴스의 `monitoring` DB, 읽기 전용 계정(`public` 스키마만 GRANT). test는 test-postgres의 monitoring DB |
 | 타임아웃 권고 | 등록 POST 10s (동기 Hiker 수집 포함) / 나머지 명령 5s (승인도 즉시 수집 포함 시 10s) |
 
 ## 2. 명령 API
@@ -44,6 +44,12 @@
 | `PRIVATE_ACCOUNT` | 422 | 비공개 계정이라 수집 불가 |
 | `INVALID_STATE` | 409 | 상태상 불가한 명령 (예: 종결된 target 승인) |
 | `FETCH_FAILED` | 502 | Hiker 일시 오류 — was는 그대로 프론트에 실패 전달, 재시도는 사용자 몫 |
+
+(인증 에러 없음 — 접근 통제는 네트워크 소속으로 강제되므로, 연결 자체가 안 되면 배선 문제다.)
+
+위 표 밖으로 나갈 수 있는 응답은 두 가지뿐이다: 예기치 못한 서버 오류
+`{"code":"INTERNAL"}` 500(§4대로 재시도 가능), 그리고 계약 밖 경로·메서드로 보냈을 때의
+프레임워크 상태 보존 응답(`{"code":"NOT_FOUND"}` 404 등 — 이건 오배선 신호다).
 
 ### 2-1. 등록 — `POST /api/targets`
 
@@ -74,6 +80,10 @@
 같은 `registrationKey` 재호출은 새로 만들지 않고 기존 target을 200으로 반환(크래시
 복구용). 키가 다르면 같은 계정·키워드라도 별도 캠페인이 생긴다.
 
+**replay(200) 응답의 `firstSnapshot`은 `null`이다** — 재시도마다 Hiker를 다시 부르면
+콜 과금이 배로 늘어서 재수집을 하지 않는다. 첫 수집분은 이미 스냅샷 테이블에 있으니
+필요하면 §3 조회 표면에서 SELECT로 읽는다.
+
 ```json
 // 201 Created (재시도 replay는 200)
 {
@@ -98,6 +108,9 @@ WATCHING 캠페인의 PENDING 후보를 승인 → 그 게시물로 TRACKING 전
 ### 2-3. 후보 기각 — `POST /api/targets/{id}/candidates/{candidateId}/reject`
 
 후보만 REJECTED로 닫고 WATCHING 지속. `// 200 { "candidateId": 3, "status": "REJECTED" }`
+
+target이 활성(WATCHING/TRACKING)이 아니면 409 `INVALID_STATE` — 종결된 캠페인의 잔여 후보는
+거절 불가(이미 감시가 끝났으므로).
 
 ### 2-4. 기간 연장 — `PATCH /api/targets/{id}`
 
@@ -146,12 +159,14 @@ WATCHING 캠페인의 PENDING 후보를 승인 → 그 게시물로 TRACKING 전
 | `status` | text | `PENDING` / `APPROVED` / `REJECTED` |
 
 같은 (target_id, short_code)는 한 번만 생성 — 거절해도 재감지로 되살아나지 않는다.
+**등록 시각 이후에 게시된 게시물만 감지 대상** — 캠페인 등록 전의 옛 키워드 게시물은
+후보로 오르지 않는다(게시 시각 ≥ target.registered_at).
 
 ### profile_snapshot / post_snapshot — 관측치 (계정·게시물 단위, 캠페인 간 공유)
 
 ```
-profile_snapshot(username, captured_on date, followers, following, media_count, …)
-                 PK (username, captured_on) — 일 1회 upsert
+profile_snapshot(username, captured_on date, followers, following, media_count)
+                 PK (username, captured_on) — 일 1회 upsert. 컬럼은 이 5개가 전부다
 
 post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
               likes, comments, views, saves, shares, reposts)
@@ -159,24 +174,64 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 ```
 
 - 지표 6종: 좋아요·댓글·조회·저장·공유·리포스트. **취득 불가 지표는 null**
-  (예: 피드 조회수 — Hiker 필드 매핑은 구현 시 확정, null 규칙 준수 필수).
+  (예: 피드 조회수 — 항상 null. Hiker 필드 매핑의 정본은
+  [plans/2026-07-28-monitoring-hiker-findings.md](../superpowers/plans/2026-07-28-monitoring-hiker-findings.md)).
 - 캠페인 추이는 target을 조인해 본다: `target.username` → profile_snapshot,
   `target.tracked_short_code` → post_snapshot.
 
-### 조회 뷰 (구현 시 확정 — 이름·컬럼은 초안)
+### 조회 뷰 (구현 확정 — v1.0)
 
-- `v_target_overview` — target + 최신 프로필/게시물 스냅샷 + PENDING 후보 수.
-  캠페인 목록 화면은 이것 하나로 서빙 가능하게 유지한다.
-- `v_target_timeseries` — target_id × captured_on 일별 지표 + 전일 대비 증감.
-  파생 집계(증감률·이동평균)는 뷰 안에서 계산돼 나온다.
+#### `v_target_overview` — 캠페인 목록 (target 1행당 1행, 26컬럼)
+
+캠페인 목록 화면은 이 뷰 하나로 서빙 가능하게 유지한다. 컬럼:
+
+| 구획 | 컬럼 |
+|---|---|
+| target (14) | `target_id`(= target.id), `type`, `username`, `short_code`, `keyword_rule`, `status`, `tracked_short_code`, `tracked_since`, `registration_key`, `expires_at`, `registered_at`, `closed_at`, `last_fetched_at`, `fail_reason` |
+| 최신 프로필 스냅샷 (3) | `profile_captured_on`, `followers`, `media_count` |
+| 최신 게시물 스냅샷 (8) | `post_captured_on`, `content_type`, `likes`, `comments`, `views`, `saves`, `shares`, `reposts` |
+| 후보 (1) | `pending_candidates` — PENDING 후보 수 (활성 캠페인만) |
+
+- 스냅샷 구획은 **각각 최신 1행**(captured_on DESC LIMIT 1)이고, 프로필과 게시물의
+  `captured_on`은 서로 다를 수 있어 별도 컬럼(`profile_captured_on` / `post_captured_on`)이다.
+- 추적 게시물이 없는 캠페인(WATCHING·미승인)은 **게시물 구획 8컬럼이 전부 null**.
+  아직 프로필 수집 전이면 프로필 구획 3컬럼도 null (LEFT JOIN — target 행 자체는 항상 나온다).
+- `followers`/`media_count`만 노출한다(스냅샷의 `following`은 뷰에 없음 — 필요하면
+  `profile_snapshot`을 직접 조회).
+- **`pending_candidates`는 활성(`WATCHING`·`TRACKING`) 캠페인만 집계한다** — 종결
+  (`EXPIRED`·`CANCELED`·`FAILED`) 후 남은 PENDING 행은 `detected_candidate`에 이력으로
+  남지만 이 컬럼에는 세지 않고 항상 0이다. 종결 캠페인에는 승인·거절이 모두 409라,
+  세면 FE가 해소할 수 없는 "승인 대기 N건"을 영원히 보게 된다.
+
+#### `v_target_timeseries` — 추적 게시물 일별 추이 (target_id × captured_on)
+
+| 구획 | 컬럼 |
+|---|---|
+| 키 (3) | `target_id`, `captured_on`, `content_type` |
+| 지표 6종 | `likes`, `comments`, `views`, `saves`, `shares`, `reposts` |
+| 전일 대비 증감 6종 | `likes_delta`, `comments_delta`, `views_delta`, `saves_delta`, `shares_delta`, `reposts_delta` |
+
+- 추적 게시물이 있는 캠페인만 행이 나온다(INNER JOIN — WATCHING 캠페인은 0행).
+- 첫날 행의 `*_delta`는 null(직전 행 없음). 원지표가 null이면 delta도 null.
+
+**⚠ delta는 직전 '행' 기준이지 '전일' 기준이 아니다** — `lag()`는 같은 target의
+captured_on 순서상 바로 앞 행과 비교한다. 수집이 하루 빠지면(장애·일시 실패) 그 다음
+행의 delta는 **2일치 증감이 하나로 합쳐져** 나온다. 일 단위 정규화가 필요하면
+was가 `captured_on` 간격을 같이 읽어 나눠 쓸 것.
+
+**⚠ 두 뷰를 조인하지 말 것** — 지표 컬럼명(`likes`·`comments`·…·`content_type`)이
+겹쳐서 조인하면 어느 쪽 값인지 모호해진다. 용도가 다르므로 각각 조회한다:
+**overview = 최신 1일 스냅 (목록·상세 헤더)**, **timeseries = 일별 시계열 (추이 그래프)**.
 
 ### 자주 쓸 쿼리 예
 
 ```sql
 -- 이메일 알람 크론 (09:00): 워터마크 이후 신규 감지 후보
+-- target 상태 조건 필수 — 종결 캠페인의 잔여 PENDING은 승인·거절이 모두 409라 알람이 나가면 안 된다.
 SELECT c.id, c.target_id, c.short_code, c.caption_excerpt, c.detected_at, t.username
 FROM detected_candidate c JOIN target t ON t.id = c.target_id
 WHERE c.status = 'PENDING' AND c.detected_at > :last_notified_at
+  AND t.status IN ('WATCHING', 'TRACKING')
 ORDER BY c.detected_at;
 
 -- 캠페인 상세: 추적 게시물 추이

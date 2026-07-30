@@ -22,6 +22,7 @@
 - 전체 테스트: `./gradlew test` (Java 21, Spring Boot 4.1, Gradle 멀티모듈: crawler/analytics/was)
 - 분석 뷰 검증: SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리) 컨벤션 — 기존 run.sh는 07-12 초기화로 삭제, 태스크 A에서 재구축
 - 실행: `./gradlew :was:bootRun`(8081) / `:crawler:bootRun`(8080, 어드민 `/ui`) / `:analytics:bootRun`(8082, 어드민 `/ui` — 잡 트리거·로그. one-shot 미러는 `--analytics.mirror-on-startup=true --spring.main.web-application-type=none`)
+- 실행(monitoring): `./gradlew :monitoring:bootRun`(8083) — 로컬은 기존 DB 볼륨에 `db/init/02-create-monitoring-db.sql`을 수동 적용해야 뜬다(init 스크립트는 새 볼륨에만 자동 실행).
 - DB: docker `crawler-postgres-1` (포트 5433, crawler/crawler, DB `crawler`·`analysis`) —
   컨테이너 이름은 compose 디렉토리명 기반이라 머신마다 다를 수 있음(예: `hypenow-crawler-postgres-1`).
   스크립트는 `PG_CONTAINER` 환경변수로 오버라이드.
@@ -45,6 +46,11 @@
   07-20 수동 등록분 유실 사고 후 확립). 기준값 추가·변경은 후속 마이그레이션으로,
   수동 UPDATE는 런타임 토글(프로바이더 전환·임시 상향)만.
 - 배열 저장은 `text[]` 대신 `jsonb` (기존 `RawComment.payload` 매핑 관용구 재사용).
+- **스키마 변경은 expand-contract** (07-29 was 롤링 배포 도입~): 롤링 중 신구 코드가 같은 DB를
+  공존해서 본다 — `DROP`·`RENAME`·타입 변경·`SET NOT NULL`은 참조 코드가 끊긴 **다음 릴리스**에서만.
+  CI `migration-guard`가 차단하며, 의도된 contract 단계는 `-- allow-destructive: <사유>` 주석으로
+  통과. **DROP COLUMN 파일은 그 컬럼을 참조하는 보정 UPDATE 동봉 필수**(가드 v2 짝 검사 —
+  롤링 창 유실분 최종 백필. 불필요하면 `-- no-backfill: <사유>`)([deploy/README.md §5-1](deploy/README.md)).
 
 ## 함정
 
