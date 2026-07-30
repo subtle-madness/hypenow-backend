@@ -6,6 +6,7 @@ import com.celfit.was.IntegrationTest;
 import java.sql.Connection;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -52,7 +53,7 @@ class DigestJobTest extends IntegrationTest {
 		monitoringJdbc.sql("TRUNCATE alarm_event RESTART IDENTITY").update();
 		monitoringReadRepository = new MonitoringReadRepository(monitoringJdbc);
 		Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-		job = new DigestJob(monitoringReadRepository, digestRepository, new ObjectMapper(), clock);
+		job = new DigestJob(monitoringReadRepository, digestRepository, new ObjectMapper(), clock, 2);
 	}
 
 	private long seedUser() {
@@ -78,6 +79,28 @@ class DigestJobTest extends IntegrationTest {
 	private List<Map<String, Object>> items(long userId) {
 		DigestRow row = digestRepository.findRecentByUser(userId, 1).get(0);
 		return new ObjectMapper().readValue(row.itemsJson(), List.class);
+	}
+
+	/**
+	 * date를 지정해 특정 다이제스트 행을 찾는다 — findRecentByUser(userId, 1)은 digest_date DESC라
+	 * 유저당 다이제스트가 2건 이상(회고 창으로 날짜별 행이 각각 생기는 경우)이면 최신 날짜만 잡히므로
+	 * 이 테스트 전용 헬퍼로 우회한다. DigestRepository의 프로덕션 API는 늘리지 않는다.
+	 */
+	private DigestRow rowOn(long userId, LocalDate date) {
+		return digestRepository.findRecentByUser(userId, 30).stream()
+				.filter(row -> row.digestDate().equals(date))
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("다이제스트 없음 — user " + userId + ", date " + date));
+	}
+
+	@SuppressWarnings("unchecked")
+	private List<Map<String, Object>> items(long userId, LocalDate date) {
+		return new ObjectMapper().readValue(rowOn(userId, date).itemsJson(), List.class);
+	}
+
+	private boolean digestExists(long userId, LocalDate date) {
+		return digestRepository.findRecentByUser(userId, 30).stream()
+				.anyMatch(row -> row.digestDate().equals(date));
 	}
 
 	@Test
@@ -118,7 +141,10 @@ class DigestJobTest extends IntegrationTest {
 	}
 
 	@Test
-	void 오늘_KST_날짜가_아닌_이벤트는_집계에서_빠진다() {
+	void 회고_창_밖_미래_날짜_이벤트는_집계에서_빠진다() {
+		// 회고 창(기본 2일=어제·오늘)의 상한 경계 — 미래(07-31) 이벤트는 여전히 배제되지만,
+		// 어제(07-29) 이벤트는 이제 date=2026-07-29 다이제스트로 집계된다(이번 수정의 본체 —
+		// 구 설계에선 이 어제 이벤트가 영구 유실됐다).
 		long userA = seedUser();
 		OffsetDateTime yesterday = OffsetDateTime.of(2026, 7, 29, 23, 59, 0, 0, ZoneOffset.ofHours(9));
 		OffsetDateTime tomorrow = OffsetDateTime.of(2026, 7, 31, 0, 0, 1, 0, ZoneOffset.ofHours(9));
@@ -127,7 +153,88 @@ class DigestJobTest extends IntegrationTest {
 
 		job.run();
 
-		assertThat(digestRepository.countByUser(userA)).isZero();   // 오늘 이벤트가 없으니 다이제스트 자체가 안 생긴다
+		assertThat(digestRepository.countByUser(userA)).isEqualTo(1);   // 어제 1건만 생성(오늘 이벤트 없음, 내일은 회고 창 밖)
+		assertThat(digestExists(userA, LocalDate.of(2026, 7, 31))).isFalse();
+		assertThat(items(userA, LocalDate.of(2026, 7, 29))).extracting(i -> i.get("type"))
+				.containsExactly("collection_started");
+	}
+
+	@Test
+	void 자정_직전_도착_이벤트가_다음날_실행에서_어제_다이제스트로_집계된다() {
+		// 구 설계에서 유실되던 지점: 따라잡기 마지막 틱(23:50) 이후 자정 전에 도착한 이벤트.
+		// 고정 Clock NOW = 2026-07-30 09:30 KST 기준 "오늘 실행"이 "어제(07-29)"를 다시 집계해야 한다.
+		long userA = seedUser();
+		OffsetDateTime lastMinute = OffsetDateTime.of(2026, 7, 29, 23, 55, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userA, "COLLECTION_STARTED", lastMinute);
+		// 같은 유저에게 오늘(07-30) 이벤트도 심어 두 날짜가 각각 따로 다이제스트로 남는지 확인
+		// (계약 §6.25 "이틀치가 한 알림에 섞이면 안 된다").
+		OffsetDateTime todayNoon = OffsetDateTime.of(2026, 7, 30, 12, 0, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(2, userA, "COLLECTION_ENDED", todayNoon);
+
+		job.run();
+
+		assertThat(digestRepository.countByUser(userA)).isEqualTo(2);
+		assertThat(items(userA, LocalDate.of(2026, 7, 29))).extracting(i -> i.get("type"))
+				.containsExactly("collection_started");
+		assertThat(items(userA, LocalDate.of(2026, 7, 30))).extracting(i -> i.get("type"))
+				.containsExactly("collection_ended");
+	}
+
+	@Test
+	void 늦게_흡수된_어제_다이제스트도_read_at과_created_at이_보존된다() {
+		long userA = seedUser();
+		OffsetDateTime firstEvent = OffsetDateTime.of(2026, 7, 29, 23, 55, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userA, "COLLECTION_STARTED", firstEvent);
+
+		job.run();
+		LocalDate yesterday = LocalDate.of(2026, 7, 29);
+		long digestId = rowOn(userA, yesterday).id();
+		digestRepository.markRead(userA, List.of(digestId));
+		DigestRow beforeRerun = rowOn(userA, yesterday);
+		assertThat(beforeRerun.readAt()).isNotNull();
+
+		OffsetDateTime laterYesterdayEvent = OffsetDateTime.of(2026, 7, 29, 23, 58, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(2, userA, "METRICS_HIDDEN", laterYesterdayEvent);
+		job.run();
+
+		DigestRow afterRerun = rowOn(userA, yesterday);
+		assertThat(afterRerun.id()).isEqualTo(digestId);   // 새 행이 아니라 같은 행
+		assertThat(items(userA, yesterday)).extracting(i -> i.get("type"))
+				.containsExactly("collection_started", "metrics_private");   // items만 최신으로 갱신
+		assertThat(afterRerun.readAt()).isEqualTo(beforeRerun.readAt());
+		assertThat(afterRerun.createdAt()).isEqualTo(beforeRerun.createdAt());
+	}
+
+	@Test
+	void 회고_창_밖_과거_날짜_이벤트는_재계산_대상이_아니다() {
+		// 기본 창(2일=어제·오늘)의 하한 경계 — 그제(07-28) 이벤트는 회고 창 밖이라 재집계되지 않는다.
+		long userA = seedUser();
+		OffsetDateTime dayBeforeYesterday = OffsetDateTime.of(2026, 7, 28, 12, 0, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userA, "COLLECTION_STARTED", dayBeforeYesterday);
+
+		job.run();
+
+		assertThat(digestExists(userA, LocalDate.of(2026, 7, 28))).isFalse();
+		assertThat(digestRepository.countByUser(userA)).isZero();
+	}
+
+	/**
+	 * 고장 주입 회귀 가드 — 회고 창을 1일(오늘만)로 되돌리면 (a)가 고치는 유실 시나리오가
+	 * 그대로 재현됨을 실행 가능한 형태로 못박는다. 이 테스트는 유실을 의도적으로 재현해
+	 * lookbackDays 기본값(2)의 실효성을 검증하는 것이 목적이다.
+	 */
+	@Test
+	void 회고_창을_1일로_되돌리면_자정_직전_이벤트가_유실된다() {
+		DigestJob jobWithLookback1 = new DigestJob(monitoringReadRepository, digestRepository, new ObjectMapper(),
+				Clock.fixed(NOW, ZoneOffset.UTC), 1);
+		long userA = seedUser();
+		OffsetDateTime lastMinute = OffsetDateTime.of(2026, 7, 29, 23, 55, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userA, "COLLECTION_STARTED", lastMinute);
+
+		jobWithLookback1.run();
+
+		assertThat(digestExists(userA, LocalDate.of(2026, 7, 29))).isFalse();   // 창을 좁히면 유실이 재현된다
+		assertThat(digestRepository.countByUser(userA)).isZero();
 	}
 
 	@Test
