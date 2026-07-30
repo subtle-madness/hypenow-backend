@@ -396,6 +396,24 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(repository.countCards(all())).isEqualTo(handles.size());
 	}
 
+	@Test
+	void 창_전체가_분석_미판정이면_0으로_나누기_없이_통과한다() {
+		// account_beauty_ratio는 content_analyses 조인 행이 1건이라도 있으면 그룹이 생긴다 — 창 내
+		// 게시물 전부가 is_beauty IS NULL(캡션·썸네일 둘 다 없어 판정 불가)이면 행은 존재하되
+		// analyzed_count=0이 된다. Postgres는 OR 단축 평가를 보장하지 않아 NULLIF 방어가 없으면
+		// division by zero로 발굴 목록 전체가 500이 난다 — 예외 없이 조회되고, 표본 부족과 동일하게
+		// 통과(포함)되는지 검증한다.
+		seedBeautyRatioAccount("unjudged", 10, 0); // beautyCount=0이지만 핵심은 is_beauty 자체가 NULL
+		jdbcTemplate.update("""
+				UPDATE content_analyses SET is_beauty = NULL
+				WHERE short_code IN (SELECT short_code FROM account_content_series
+				                     WHERE account_handle = 'unjudged')""");
+
+		List<String> handles = repository.findCards(all()).stream().map(CardRow::handle).toList();
+		assertThat(handles).contains("unjudged");
+		assertThat(repository.countCards(all())).isEqualTo(handles.size());
+	}
+
 	/** 뷰티 비율 게이트 전용 최소 픽스처 — analyzedCount건 중 앞 beautyCount건만 is_beauty=true. */
 	private void seedBeautyRatioAccount(String handle, int analyzedCount, int beautyCount) {
 		jdbcTemplate.update("""

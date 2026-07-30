@@ -163,9 +163,11 @@ public class V2InfluencerReportRepository {
 				                WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
 				  LEFT JOIN cand_mix cm ON cm.account_handle = c.handle
 				  LEFT JOIN account_beauty_ratio br ON br.account_handle = c.handle
+				  -- NULLIF(analyzed_count, 0) 필수 — OR 단축 평가 미보장 + 창 전체가 is_beauty NULL인
+				  -- 계정 가능성(V1InfluencerDiscoveryRepository와 동일 이유, division by zero 방지).
 				  WHERE c.handle <> :h
 				    AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
-				         OR 100.0 * br.beauty_count / br.analyzed_count >= :minBeautyRatio)
+				         OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)
 				)
 				SELECT handle
 				FROM scored

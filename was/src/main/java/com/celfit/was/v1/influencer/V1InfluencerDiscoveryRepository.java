@@ -104,10 +104,14 @@ public class V1InfluencerDiscoveryRepository {
 		Map<String, Object> params = new HashMap<>();
 		// 뷰티 게시물 비율 게이트 — 항상 적용(스펙 §4). 분석 표본이 minAnalyzed 미만이면 통과,
 		// 그 이상이면 뷰티 비율이 minBeautyRatio 이상인 계정만 통과.
+		// NULLIF(analyzed_count, 0) 필수 — Postgres는 OR 단축 평가를 보장하지 않아 실행 계획에 따라
+		// 두 번째 항도 평가될 수 있다. 창 내 게시물이 전부 is_beauty NULL(캡션·썸네일 둘 다 없음)이면
+		// account_beauty_ratio에 행은 존재하되 analyzed_count=0이라 division by zero로 500이 난다.
+		// NULLIF로 그 경우 두 번째 항을 NULL로 만들면 첫 항(TRUE)과 OR돼 TRUE — 표본 부족 보류와 동일 취급.
 		where.append("""
 
 				  AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
-				       OR 100.0 * br.beauty_count / br.analyzed_count >= :minBeautyRatio)""");
+				       OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)""");
 		params.put("minAnalyzed", MIN_ANALYZED);
 		params.put("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
 		if (q.mainCategory() != null) {
