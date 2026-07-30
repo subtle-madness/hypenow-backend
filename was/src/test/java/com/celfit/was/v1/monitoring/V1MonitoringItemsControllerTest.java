@@ -196,6 +196,19 @@ class V1MonitoringItemsControllerTest {
 	}
 
 	@Test
+	void keywords_배열_원소가_문자열이_아니면_400() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/items").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"accounts":["glowdeep"],"trackingDays":14,
+								 "keywords":{"and":[1,2],"or":[],"exclude":[]}}"""))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(registrationRepository).should(never()).insert(anyLong());
+	}
+
+	@Test
 	void campaignId_campaignName_동시_전달은_400() throws Exception {
 		mockMvc.perform(post("/v1/monitoring/items").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
