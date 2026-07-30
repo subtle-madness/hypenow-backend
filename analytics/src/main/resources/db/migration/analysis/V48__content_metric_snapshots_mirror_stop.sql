@@ -6,8 +6,9 @@
 --
 -- expand-contract: 테이블·컬럼은 DROP하지 않는다(DROP은 CI migration-guard가 차단 + 참조 코드가
 -- 완전히 끊긴 다음 릴리스에서만). TRUNCATE는 가드의 명시적 블라인드스팟(check-migration-safety.sh
--- DESTRUCTIVE 패턴 목록 주석 참조)이라 별도 allow-destructive 없이 통과하지만, 의도를 명시해 둔다.
--- allow-destructive: 미러 중단에 따른 데이터 정리(TRUNCATE) — DDL 변경 아님, 참조 테이블은 유지.
+-- DESTRUCTIVE 패턴 목록 주석 참조)이라 별도 allow-destructive 없이 통과한다. 여기에 그 주석을
+-- 달아두지 않는 이유: 이 파일에 나중에 DROP이 추가될 때 가드가 조용히 통과시켜 버린다.
+-- 리뷰 확인 사항 — 가드가 기계로 못 잡는 데이터 정리이므로 사람이 봐야 한다.
 TRUNCATE TABLE content_metric_snapshots;
 
 COMMENT ON TABLE content_metric_snapshots IS
