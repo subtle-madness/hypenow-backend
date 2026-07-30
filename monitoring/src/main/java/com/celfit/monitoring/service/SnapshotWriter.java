@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
 import java.time.Instant;
@@ -33,11 +34,14 @@ public class SnapshotWriter {
 
 	private final SnapshotRepository snapshots;
 	private final ProfileMetaRepository profileMeta;
+	private final PostMetaRepository postMeta;
 	private final AlarmRecorder alarms;
 
-	public SnapshotWriter(SnapshotRepository snapshots, ProfileMetaRepository profileMeta, AlarmRecorder alarms) {
+	public SnapshotWriter(SnapshotRepository snapshots, ProfileMetaRepository profileMeta,
+			PostMetaRepository postMeta, AlarmRecorder alarms) {
 		this.snapshots = snapshots;
 		this.profileMeta = profileMeta;
+		this.postMeta = postMeta;
 		this.alarms = alarms;
 	}
 
@@ -58,10 +62,22 @@ public class SnapshotWriter {
 		savePostRow(on, post);
 	}
 
-	/** 순서 고정: 비교 → upsert. 뒤집으면 방금 쓴 값과 자기 자신을 비교해 전이가 영원히 안 잡힌다. */
+	/**
+	 * 순서 고정: 비교 → upsert. 뒤집으면 방금 쓴 값과 자기 자신을 비교해 전이가 영원히 안 잡힌다.
+	 *
+	 * <p>post_meta도 여기서 함께 upsert한다(계약 §3 post_meta) — 이 메서드가 등록 동기 수집·스윕 열거·
+	 * 단건 보강 전 경로의 단일 깔때기라, "게시물을 처음 만나는 모든 곳에서 적재" 요구가 자동 충족된다.
+	 * taken_at을 못 얻은 게시물은 잘못된 게시일을 만들지 않도록 post_meta upsert 자체를 스킵한다
+	 * (스냅샷 적재는 그대로 진행 — post_snapshot은 taken_at에 의존하지 않는다).
+	 */
 	private void savePostRow(LocalDate on, PostInfo post) {
 		alarms.recordMetricsHidden(on, post);
 		snapshots.upsertPost(on, post);
+		if (post.takenAt() != null) {
+			LocalDate uploadedAt = Instant.ofEpochSecond(post.takenAt()).atZone(KST).toLocalDate();
+			String caption = post.caption() != null ? post.caption() : "";   // 캡션 없는 게시물은 빈 문자열(계약 §3)
+			postMeta.upsert(post.shortCode(), post.username(), post.contentType(), uploadedAt, caption, post.thumbnailUrl());
+		}
 	}
 
 	private static LocalDate lastUploadedAt(List<PostInfo> posts) {

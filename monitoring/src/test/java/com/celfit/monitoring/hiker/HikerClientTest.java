@@ -53,6 +53,8 @@ class HikerClientTest {
 			assertThat(p.likes()).isNotNull();
 			assertThat(p.comments()).isNotNull();
 			assertThat(p.reposts()).isNotNull();             // media_repost_count는 전 타입 제공
+			// post_meta 썸네일(계약 §3) — image_versions2.candidates[0].url(픽스처 실측: 전 게시물 존재)
+			assertThat(p.thumbnailUrl()).isNotBlank();
 		});
 		// 핀 고정(2023년) 게시물이 맨 앞에 오지 않게 taken_at 내림차순 재정렬됨(findings §3)
 		assertThat(posts.getFirst().takenAt()).isGreaterThanOrEqualTo(posts.getLast().takenAt());
@@ -78,6 +80,8 @@ class HikerClientTest {
 		assertThat(p.saves()).isPositive();
 		assertThat(p.shares()).isPositive();
 		assertThat(p.reposts()).isPositive();
+		// post_meta 썸네일(계약 §3) — 단건 응답도 image_versions2.candidates[0].url에서 추출
+		assertThat(p.thumbnailUrl()).isNotBlank();
 	}
 
 	@Test

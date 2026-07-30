@@ -67,7 +67,7 @@ class AlarmRecorderTest {
 	}
 
 	private PostInfo post(String contentType, Long likes, Long views, Long saves, boolean viewsTrusted) {
-		return new PostInfo("SC1", "acct_a", contentType, "캡션", 1_785_000_000L,
+		return new PostInfo("SC1", "acct_a", contentType, "캡션", null, 1_785_000_000L,
 				likes, 5L, views, saves, null, 1L, "{}", viewsTrusted);
 	}
 

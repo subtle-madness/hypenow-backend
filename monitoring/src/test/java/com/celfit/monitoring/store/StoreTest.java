@@ -26,6 +26,7 @@ class StoreTest {
 	RawPayloadRepository rawPayloads;
 	CommentRepository comments;
 	ProfileMetaRepository profileMeta;
+	PostMetaRepository postMeta;
 
 	@BeforeEach
 	void setUp() {
@@ -38,6 +39,7 @@ class StoreTest {
 		rawPayloads = new RawPayloadRepository(db);
 		comments = new CommentRepository(db);
 		profileMeta = new ProfileMetaRepository(db);
+		postMeta = new PostMetaRepository(db);
 	}
 
 	@Test
@@ -111,9 +113,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
+		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
+		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -249,5 +251,47 @@ class StoreTest {
 		assertThat(db.queryForObject(
 				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class))
 				.isEqualTo(LocalDate.of(2026, 7, 20));
+	}
+
+	// ── post_meta(v2.2) ──────────────────────────────────────────────────────
+
+	@Test
+	void 게시물_메타는_신규_삽입된다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("username")).isEqualTo("acct_a");
+		assertThat(row.get("content_type")).isEqualTo("REELS");
+		assertThat(row.get("uploaded_at")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 28)));
+		assertThat(row.get("caption")).isEqualTo("캡션 원문");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
+		assertThat(row.get("first_seen_at")).isNotNull();
+	}
+
+	/** 재수집은 캡션·썸네일을 덮어쓴다(수정 반영) — first_seen_at만 최초 관측을 보존한다. */
+	@Test
+	void 게시물_메타_갱신은_캡션_썸네일을_덮고_first_seen_at은_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+		var firstSeenAt = db.queryForObject(
+				"SELECT first_seen_at FROM post_meta WHERE short_code='SC1'", java.sql.Timestamp.class);
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 수정본", "https://cdn/thumb2.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("캡션 수정본");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb2.jpg");
+		assertThat(row.get("first_seen_at")).isEqualTo(firstSeenAt);
+	}
+
+	/** 일시적으로 썸네일을 못 얻은 수집이 기존 유효 URL을 지우면 안 된다(계약 §3 post_meta). */
+	@Test
+	void 썸네일_null_수집은_기존_썸네일_url을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), "캡션 갱신", null);
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
+		assertThat(row.get("caption")).isEqualTo("캡션 갱신");   // 캡션은 그대로 덮인다
 	}
 }

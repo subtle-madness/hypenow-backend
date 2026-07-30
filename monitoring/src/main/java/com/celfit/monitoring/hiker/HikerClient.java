@@ -286,7 +286,7 @@ public class HikerClient {
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
 		// view_count 키는 v2 응답에 부재 → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
 		Long views = firstLong(m, "play_count", "ig_play_count");
-		return new PostInfo(code, username, contentType, caption,
+		return new PostInfo(code, username, contentType, caption, thumbnailUrl(m),
 				firstLong(m, "taken_at"),
 				firstLong(m, "like_count"), firstLong(m, "comment_count"),
 				views != null ? views : clipPlays.get(code),
@@ -294,6 +294,12 @@ public class HikerClient {
 				firstLong(m, "reshare_count"),       // 공유. 릴스 전용
 				firstLong(m, "media_repost_count"),  // 리포스트. 전 타입 제공
 				rawJson, viewsTrusted);
+	}
+
+	/** post_meta 썸네일(계약 §3) — image_versions2.candidates[0].url. 픽스처 실측(2026-07-30): 전 게시물 존재, 없으면 null. */
+	private static String thumbnailUrl(JsonNode m) {
+		JsonNode candidates = m.path("image_versions2").path("candidates");
+		return candidates.isArray() && !candidates.isEmpty() ? candidates.get(0).path("url").asString(null) : null;
 	}
 
 	/** 후보 필드 중 처음 존재하는 값. 전부 없으면 null(취득 불가 지표 규칙). */

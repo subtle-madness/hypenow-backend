@@ -15,6 +15,7 @@ import com.celfit.monitoring.hiker.RecordingHikerHttp;
 import com.celfit.monitoring.hiker.ShortCodes;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.CommentRepository;
+import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
@@ -273,7 +274,7 @@ class DailySweepJobTest {
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var snapshotRepo = new SnapshotRepository(db);
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshotRepo);
-		var writer = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), alarms);
+		var writer = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1);
 		job = new DailySweepJob(targets, collect, alarms, 3, Duration.ZERO);
 	}
@@ -768,7 +769,7 @@ class DailySweepJobTest {
 		var snapshotRepo = new SnapshotRepository(db);
 		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshotRepo);
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var throwingWriter = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), throwingAlarms);
+		var throwingWriter = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
 		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1);
 		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, 3, Duration.ZERO);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
