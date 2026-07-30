@@ -112,6 +112,13 @@
         <button type="submit" class="danger" th:formaction="@{/ui/jobs/SIMILAR/stop}"
                 title="진행 중인 시드까지 마치고 멈춘다">중지</button>
     </form>
+    <form method="post" th:action="@{/ui/jobs/caption-backfill}">
+        <span class="job-strip-name">caption-backfill</span>
+        <button type="submit" class="primary"
+                title="저장된 raw 원형에서 캡션 소급 적재 (인스타 호출 없음 · 워터마크로 재개)">실행</button>
+        <button type="submit" class="danger" th:formaction="@{/ui/jobs/CAPTION_BACKFILL/stop}"
+                title="진행 중인 페이지 청크까지 마치고 멈춘다">중지</button>
+    </form>
 </div>
 <h2>예상 비용</h2>
 <div class="job-costs">
