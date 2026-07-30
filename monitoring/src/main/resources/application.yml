@@ -28,3 +28,14 @@ monitoring:
   schedule:
     sweep-cron: "-"     # "-"=비활성. 운영은 UTC 17:00(KST 02:00)을 env로 주입
   enumerate-pages: 1    # 게시물 열거 페이지 수(최근 N개 범위)
+  alarm:
+    dispatch-cron: "-"   # "-"=비활성. 운영은 5분 틱(0 */5 * * * *)을 env로 주입
+    debounce: 10m        # 즉시 레인 몰아치기 흡수 — 마지막 이벤트가 이 시간 안이면 다음 틱으로 미룬다
+    max-attempts: 5      # 행별 발송 시도 상한. 도달하면 due 조회에서 빠진다(영구 실패 수신자 무한 재시도 차단)
+    reader:              # analysis DB app 스키마 읽기 전용(계약 v2 §6 — 두 객체만 GRANT)
+      url: ${MONITORING_ALARM_READER_URL:}
+      username: ${MONITORING_ALARM_READER_USERNAME:}
+      password: ${MONITORING_ALARM_READER_PASSWORD:}
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}          # 미설정이면 로깅 폴백(실발송 없음)
+    from: hypenow <no-reply@hypenow.io>

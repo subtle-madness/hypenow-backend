@@ -42,4 +42,27 @@ public final class TestDb {
 				END $$""");
 		Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
 	}
+
+	/**
+	 * 알람 발송기가 읽는 analysis DB app 스키마 흉내 — 계약 v2 §6이 정의한 **두 객체만** 만든다.
+	 * was Flyway를 여기서 돌리지 않는 이유: monitoring이 was 마이그레이션에 빌드 의존을 갖게 되고,
+	 * 실제로 읽는 컬럼(email·event_type)보다 훨씬 넓은 표면을 테스트가 보증하게 된다.
+	 * resetAndMigrate가 public·raw만 지우므로 app은 여기서 따로 초기화한다.
+	 */
+	public static void resetAppFixture(JdbcTemplate db) {
+		db.update("DROP SCHEMA IF EXISTS app CASCADE");
+		db.update("CREATE SCHEMA app");
+		db.update("""
+				CREATE TABLE app.users (
+				    id    bigserial PRIMARY KEY,
+				    email text
+				)""");
+		db.update("""
+				CREATE TABLE app.monitoring_email_opt_outs (
+				    user_id    bigint      NOT NULL,
+				    event_type text        NOT NULL,
+				    created_at timestamptz NOT NULL DEFAULT now(),
+				    PRIMARY KEY (user_id, event_type)
+				)""");
+	}
 }
