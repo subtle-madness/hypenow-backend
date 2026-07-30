@@ -1,8 +1,5 @@
 package com.celfit.was.monitoring;
 
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -39,31 +36,6 @@ public class MonitoringReadRepository {
 				""")
 				.param("ids", targetIds)
 				.query(TargetRow.class)
-				.list();
-	}
-
-	public List<CandidateRow> findCandidates(long targetId) {
-		return jdbc.sql("""
-				SELECT id, target_id, short_code, detected_at, caption_excerpt, status
-				FROM detected_candidate
-				WHERE target_id = :targetId
-				ORDER BY detected_at DESC
-				""")
-				.param("targetId", targetId)
-				.query(CandidateRow.class)
-				.list();
-	}
-
-	/** 워터마크 이후 신규 PENDING(계약 §3 알람 쿼리 그대로) — 이메일 크론 대비. */
-	public List<PendingCandidate> findPendingCandidatesSince(Instant since) {
-		return jdbc.sql("""
-				SELECT c.id, c.target_id, c.short_code, c.caption_excerpt, c.detected_at, t.username
-				FROM detected_candidate c JOIN target t ON t.id = c.target_id
-				WHERE c.status = 'PENDING' AND c.detected_at > :since
-				ORDER BY c.detected_at
-				""")
-				.param("since", OffsetDateTime.ofInstant(since, ZoneOffset.UTC))
-				.query(PendingCandidate.class)
 				.list();
 	}
 

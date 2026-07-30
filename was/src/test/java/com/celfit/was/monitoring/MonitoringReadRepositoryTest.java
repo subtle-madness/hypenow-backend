@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.IntegrationTest;
 import java.sql.Connection;
-import java.time.Instant;
 import java.util.List;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,25 +84,6 @@ class MonitoringReadRepositoryTest extends IntegrationTest {
 		assertThat(rows).hasSize(2);
 		assertThat(rows.get(0).id()).isEqualTo(second);   // registered_at DESC
 		assertThat(rows.get(1).id()).isEqualTo(first);
-	}
-
-	@Test
-	void 후보_목록과_워터마크_이후_신규_PENDING() {
-		long id = seedTarget("acc1", null, "WATCHING");
-		jdbc.sql("""
-				INSERT INTO detected_candidate (target_id, short_code, detected_at, caption_excerpt, status)
-				VALUES (:t, 'OLD1', now() - interval '2 days', '…샤넬…', 'PENDING'),
-				       (:t, 'NEW1', now(), '…샤넬 립스틱…', 'PENDING'),
-				       (:t, 'REJ1', now(), '…', 'REJECTED')
-				""").param("t", id).update();
-
-		assertThat(repository.findCandidates(id)).hasSize(3);
-
-		List<PendingCandidate> fresh = repository.findPendingCandidatesSince(
-				Instant.now().minusSeconds(3600));
-		assertThat(fresh).hasSize(1);
-		assertThat(fresh.get(0).shortCode()).isEqualTo("NEW1");
-		assertThat(fresh.get(0).username()).isEqualTo("acc1");
 	}
 
 	@Test
