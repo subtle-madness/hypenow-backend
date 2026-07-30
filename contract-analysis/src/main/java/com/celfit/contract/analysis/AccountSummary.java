@@ -24,10 +24,14 @@ import java.time.OffsetDateTime;
  * (스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절) — 표시값과 정렬 키를
  * 분리해 재발을 막는다. avgHypeScore가 NULL이면 이 값도 NULL.
  * avgHypeScorePrecise(맨 끝 필드 — 위와 같은 이유로 avgHypeRaw 뒤에 추가, 스펙 §10): 콘텐츠 출력
- * 매핑까지 반영한 창 콘텐츠 평균(avgHypeRaw와는 다른 재료 — 새 anchor로 별도 적합)을
- * analytics.hype_account_score_precise()로 매핑해 소수 4자리로 자른 값. avgHypeScore·avgHypeRaw는
- * 이 필드 추가로 값·의미가 바뀌지 않는다(완전히 독립된 산식). was 발굴 목록은 이제 표시·정렬
- * 모두 이 필드를 쓴다.
+ * 매핑까지 반영한 창 콘텐츠 점수의 합 / 최근창 크기(analytics.recent-window, 고정 분모 —
+ * avgHypeRaw와는 다른 재료·다른 집계 방식으로 새 anchor를 별도 적합, 2026-07-31 스펙
+ * 2026-07-31-account-score-fixed-denominator-design.md)를
+ * analytics.hype_account_score_precise()로 매핑해 소수 4자리로 자른 값. **단순 평균이 아니다** —
+ * 분모가 창에 실제로 든 콘텐츠 수가 아니라 창 크기로 고정돼, likes/comments 수집 누락으로 점수산출
+ * 콘텐츠가 창을 못 채운 계정은 자연히 감점된다(화면에 안 뜨는 게시물은 유저에게 없는 것과 같다는
+ * 정합성 결정). avgHypeScore·avgHypeRaw는 이 필드 추가로 값·의미가 바뀌지 않는다(완전히 독립된
+ * 산식). was 발굴 목록은 이제 표시·정렬 모두 이 필드를 쓴다.
  */
 public record AccountSummary(String handle, Long followers, Long followsCount, Long postsCount,
 		String biography, Long analyzedCount, Long viewsCount, String metric, Long avgViews,
