@@ -311,14 +311,51 @@ public class DailySweepJob {
 	 * 첫 감지 1건 — 캠페인:추적 게시물은 1:1이라 같은 스윕에 여러 개가 걸려도 하나만 고른다.
 	 * 기준은 게시 시각 최신: 열거 순서에 기대면 핀 고정 게시물(taken_at 2023년 사례 — findings §3)이
 	 * 먼저 잡힐 수 있고, HikerClient의 재정렬에 암묵 의존하는 코드가 된다.
+	 *
+	 * <p><b>같은 유저 이중 추적 배제</b>(계약 §6.25) — 키워드 매칭 후보 중 같은 user_id의 다른 활성
+	 * target이 이미 추적 중인 shortcode는 후보에서 뺀다. 유저 스코프를 빼고 전역으로 구현하면 다른
+	 * 유저가 먼저 추적 중인 게시물이 이 유저의 감지에서 조용히 빠진다 — 브랜드와 대행사가 같은
+	 * 인플루언서를 각자 시딩하는 건 정상 시나리오라 이걸 막으면 안 된다(§6.25). "활성"은 hidden
+	 * (tracked_hidden_at)·error(fetch_failing) 상태도 포함한다(사용자 결정) — 비공개 전환으로 hidden된
+	 * 행이 재공개 시 tracking으로 복귀하는데, 그 사이 감지가 새 행을 만들면 이중 추적이 되기 때문이다.
+	 * 배제 쿼리는 매칭 후보가 1건 이상일 때만 호출한다 — 평상시(매칭 없음) 스윕에 DB 콜을 더하지 않는다.
+	 *
+	 * <p>후보가 배제로 전부 사라지면 이번 스윕은 전환하지 않고 WATCHING을 유지한다 — 다음 스윕에서
+	 * 자연 재시도된다(같은 유저의 다른 target이 그사이 종결되면 그때 잡힌다).
+	 *
+	 * <p>알려진 한계: was의 pending 행(등록 접수됐으나 monitoring target이 아직 없는 상태)은 이 배제가
+	 * 볼 수 없다 — monitoring은 시스템 경계상 was DB에 접근하지 않는다. 등록 접수 직후 수 분의 창에서는
+	 * 감지가 같은 게시물을 잡을 수 있다(수용된 한계, 계약 §6.25).
 	 */
-	private static PostInfo firstDetection(TargetRow t, List<PostInfo> posts) {
-		return posts.stream()
+	private PostInfo firstDetection(TargetRow t, List<PostInfo> posts) {
+		List<PostInfo> candidates = posts.stream()
 				.filter(p -> postedAfterRegistration(p, t) && t.keywordRule().matches(p.caption()))
+				.toList();
+		if (candidates.isEmpty()) {
+			return null;   // 매칭 자체가 없으면 배제 쿼리를 부를 이유가 없다.
+		}
+		Set<String> excluded = excludedShortCodes(t);
+		List<PostInfo> allowed = excluded.isEmpty() ? candidates
+				: candidates.stream().filter(p -> !excluded.contains(p.shortCode())).toList();
+		if (allowed.isEmpty()) {
+			log.info("감지 후보 전부 이중 추적 배제 — target {} 후보 {}건이 같은 유저의 다른 활성 target에서 이미 추적 중",
+					t.id(), candidates.size());
+			return null;
+		}
+		return allowed.stream()
 				// taken_at 동률이면 short_code 사전순 — API 응답 순서에 기대지 않는 결정론
 				.max(Comparator.comparing(PostInfo::takenAt)   // 필터가 takenAt != null을 보장한다
 						.thenComparing(PostInfo::shortCode))
 				.orElse(null);
+	}
+
+	/** user_id가 없는 target(V3 이전 등록분)은 유저 스코프 배제가 불가하다 — 건너뛰고 기존 동작을 유지한다. */
+	private Set<String> excludedShortCodes(TargetRow t) {
+		if (t.userId() == null) {
+			log.warn("user_id 없음 — 이중 추적 배제 스킵(V3 이전 등록분): target {}", t.id());
+			return Set.of();
+		}
+		return targets.findTrackedShortCodesByUser(t.userId(), t.id());
 	}
 
 	/**
