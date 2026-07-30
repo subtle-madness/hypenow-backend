@@ -294,4 +294,73 @@ class StoreTest {
 		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
 		assertThat(row.get("caption")).isEqualTo("캡션 갱신");   // 캡션은 그대로 덮인다
 	}
+
+	// ── hidden/error 신호·matched_keywords(v2.2) ────────────────────────────
+
+	@Test
+	void markTracking은_matched_keywords를_jsonb로_기록한다() {
+		long id = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-mt1", Instant.now().plusSeconds(3600));
+
+		targets.markTracking(id, "SC1", List.of("샤넬", "립스틱"));
+
+		var row = targets.findById(id).orElseThrow();
+		assertThat(row.status()).isEqualTo(TargetStatus.TRACKING);
+		assertThat(row.trackedShortCode()).isEqualTo("SC1");
+		String json = db.queryForObject("SELECT matched_keywords::text FROM target WHERE id=?", String.class, id);
+		assertThat(json).contains("샤넬", "립스틱");
+	}
+
+	/** markHidden은 null→값 전이일 때만 true — 이미 hidden인 target의 재호출은 전이가 아니라 false다. */
+	@Test
+	void markHidden은_최초_호출만_전이를_반환한다() {
+		long id = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-h1", Instant.now().plusSeconds(3600));
+
+		assertThat(targets.markHidden(id)).isTrue();
+		assertThat(targets.markHidden(id)).isFalse();   // 이미 hidden — 재호출은 전이가 아니다
+		assertThat(targets.findById(id).orElseThrow().trackedHiddenAt()).isNotNull();
+	}
+
+	/** markFetchFailing은 false→true로 실제 전이된 행만 반환한다 — 이미 failing인 target은 빠진다. */
+	@Test
+	void markFetchFailing은_전이된_행만_반환한다() {
+		long a = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-f1", Instant.now().plusSeconds(3600));
+		long b = targets.insert(TargetType.ACCOUNT, 7L, "acct_b", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-f2", Instant.now().plusSeconds(3600));
+
+		var firstCall = targets.markFetchFailing(List.of(a, b));
+		assertThat(firstCall).extracting(FailingTarget::id).containsExactlyInAnyOrder(a, b);
+
+		var secondCall = targets.markFetchFailing(List.of(a, b));   // 둘 다 이미 failing이라 갱신 대상이 없다
+		assertThat(secondCall).isEmpty();
+	}
+
+	@Test
+	void markFetchFailing에_빈_컬렉션을_주면_쿼리_없이_빈_목록이다() {
+		assertThat(targets.markFetchFailing(List.of())).isEmpty();
+	}
+
+	/** touchFetched(수집 성공)이 hidden·fetch_failing 두 신호의 유일한 복귀 지점이다(계약 §3). */
+	@Test
+	void touchFetched은_hidden과_fetch_failing을_동시에_복귀시킨다() {
+		long id = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-t1", Instant.now().plusSeconds(3600));
+		targets.markHidden(id);
+		targets.markFetchFailing(List.of(id));
+
+		targets.touchFetched(id);
+
+		var row = targets.findById(id).orElseThrow();
+		assertThat(row.trackedHiddenAt()).isNull();
+		assertThat(row.fetchFailing()).isFalse();
+		assertThat(db.queryForObject(
+				"SELECT last_fetched_at IS NOT NULL FROM target WHERE id=?", Boolean.class, id)).isTrue();
+	}
 }

@@ -47,7 +47,7 @@ class SweepSchedulerTest {
 	@Test
 	void sweep은_일일_스윕_잡에_위임한다() {
 		var calls = new int[1];
-		var job = new DailySweepJob(null, null, null, 0, Duration.ZERO) {
+		var job = new DailySweepJob(null, null, null, null, 0, Duration.ZERO) {
 			@Override
 			public void run() {
 				calls[0]++;
