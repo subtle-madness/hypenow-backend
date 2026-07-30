@@ -48,15 +48,17 @@ public class V1MeController {
 	private final SignupValidator signupValidator;
 	private final SessionService sessionService;
 	private final ProfileImageStore profileImageStore;
+	private final AccountDeletionService accountDeletionService;
 
 	public V1MeController(UserRepository userRepository, PasswordEncoder passwordEncoder,
 			SignupValidator signupValidator, SessionService sessionService,
-			ProfileImageStore profileImageStore) {
+			ProfileImageStore profileImageStore, AccountDeletionService accountDeletionService) {
 		this.userRepository = userRepository;
 		this.passwordEncoder = passwordEncoder;
 		this.signupValidator = signupValidator;
 		this.sessionService = sessionService;
 		this.profileImageStore = profileImageStore;
+		this.accountDeletionService = accountDeletionService;
 	}
 
 	record PasswordChangeRequest(String currentPassword, String newPassword) {
@@ -189,8 +191,10 @@ public class V1MeController {
 	}
 
 	/**
-	 * 탈퇴(스펙 6.13) — 비밀번호 본인 확인 후 DB 삭제는 한 트랜잭션(UserRepository.deleteAccount),
-	 * 커밋 후 전 세션 무효화·이미지 파일 정리(DB 밖 자원이라 트랜잭션 밖).
+	 * 탈퇴(스펙 6.13) — 비밀번호 본인 확인 후 모니터링 target 해지(프론트 계약 4절 31번, 갭 B-2) →
+	 * DB 삭제는 한 트랜잭션(AccountDeletionService.deleteAccount), 커밋 후 전 세션 무효화·이미지
+	 * 파일 정리(DB 밖 자원이라 트랜잭션 밖). 모니터링 해지는 fail-open — 실패해도 탈퇴는 진행한다
+	 * (AccountDeletionService 참조).
 	 * DB 삭제가 정본 — 커밋 후 정리가 실패해도 500을 내리면 "탈퇴 실패"로 오해되고, 잔존 세션이
 	 * 다른 인증 엔드포인트에서 삭제된 userId로 FK 위반을 일으키므로 정리는 best-effort + 204를 지킨다.
 	 */
@@ -199,7 +203,7 @@ public class V1MeController {
 	public void deleteAccount(@AuthenticationPrincipal AppUserDetails principal,
 			@RequestBody DeleteAccountRequest request, HttpServletRequest httpRequest) {
 		verifyPassword(principal.getUserId(), request.password());
-		userRepository.deleteAccount(principal.getUserId());
+		accountDeletionService.deleteAccount(principal.getUserId());
 		try {
 			sessionService.deleteAll(principal.getUsername());
 		} catch (RuntimeException e) {

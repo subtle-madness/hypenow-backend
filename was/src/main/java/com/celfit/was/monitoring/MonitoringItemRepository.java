@@ -141,6 +141,21 @@ public class MonitoringItemRepository {
 				.update();
 	}
 
+	/**
+	 * 탈퇴 해지 루프(AccountDeletionService) 전용 — target 확정 & 미종결 행의 target_id만.
+	 * id ASC로 정렬해 해지 호출 순서를 결정론적으로 만든다(테스트 재현성).
+	 */
+	public List<Long> findActiveTargetIds(long userId) {
+		return jdbcClient.sql("""
+				SELECT target_id FROM app.monitoring_items
+				WHERE user_id = :userId AND target_id IS NOT NULL AND canceled_at IS NULL
+				ORDER BY id ASC
+				""")
+				.param("userId", userId)
+				.query(Long.class)
+				.list();
+	}
+
 	/** pending(target 미확정) 상태로 age 이상 방치된 행 — 크래시 복구 배치 후보. */
 	public List<MonitoringItemRow> findPendingOlderThan(Duration age) {
 		return jdbcClient.sql("""
