@@ -136,6 +136,10 @@ services:
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
+      MONITORING_ALARM_DISPATCH_CRON: "-"   # test는 실발송 금지 — 켜지 않는다
+      MONITORING_ALARM_READER_URL: jdbc:postgresql://test-postgres:5432/analysis
+      MONITORING_ALARM_READER_USERNAME: alarm_reader
+      MONITORING_ALARM_READER_PASSWORD: ${DEV_ALARM_READER_PASSWORD:-}
       JAVA_OPTS: "-Xms128m -Xmx256m"
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).

@@ -19,7 +19,8 @@ public class TargetRepository {
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private static final RowMapper<TargetRow> ROW = (rs, i) -> new TargetRow(
-			rs.getLong("id"), TargetType.valueOf(rs.getString("type")),
+			rs.getLong("id"), rs.getObject("user_id", Long.class),
+			TargetType.valueOf(rs.getString("type")),
 			rs.getString("username"), rs.getString("short_code"),
 			rs.getString("keyword_rule") == null ? null
 					: JSON.readValue(rs.getString("keyword_rule"), KeywordRule.class),
@@ -35,17 +36,18 @@ public class TargetRepository {
 		this.db = db;
 	}
 
-	public long insert(TargetType type, String username, String shortCode, KeywordRule rule,
+	/** userId는 nullable — V3 이전 등록분과의 호환을 위해 열어 두지만, 신규 등록은 API가 필수로 막는다. */
+	public long insert(TargetType type, Long userId, String username, String shortCode, KeywordRule rule,
 			TargetStatus status, String trackedShortCode, String registrationKey, Instant expiresAt) {
 		// tracked_since는 tracked_short_code가 있을 때만 채운다.
 		// IS NOT NULL 자리의 파라미터는 ::text 캐스팅이 필수 — 없으면 PG가 타입을 못 정해
 		// "could not determine data type of parameter"로 실패한다.
 		return db.queryForObject("""
-				INSERT INTO target (type, username, short_code, keyword_rule, status,
+				INSERT INTO target (type, user_id, username, short_code, keyword_rule, status,
 				                    tracked_short_code, tracked_since, registration_key, expires_at)
-				VALUES (?, ?, ?, ?::jsonb, ?, ?, CASE WHEN ?::text IS NOT NULL THEN now() END, ?, ?)
+				VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, CASE WHEN ?::text IS NOT NULL THEN now() END, ?, ?)
 				RETURNING id""",
-				Long.class, type.name(), username, shortCode,
+				Long.class, type.name(), userId, username, shortCode,
 				rule == null ? null : JSON.writeValueAsString(rule), status.name(),
 				trackedShortCode, trackedShortCode, registrationKey,
 				Timestamp.from(expiresAt));
@@ -81,10 +83,27 @@ public class TargetRepository {
 		db.update("UPDATE target SET last_fetched_at=now() WHERE id=?", id);
 	}
 
-	/** 만료 스윕 — 활성 상태만 EXPIRED로 종결. */
-	public int expireOverdue() {
-		return db.update("""
+	/**
+	 * 만료 스윕 — 활성 상태만 EXPIRED로 종결하고 **종결된 행을 돌려준다**.
+	 * RETURNING이 필요한 이유: 만료는 이 UPDATE가 유일한 발생 지점이라, 반환이 없으면
+	 * "방금 무엇이 끝났는지"를 다시 알아낼 방법이 없다(closed_at 시각 재조회는 경합에 취약).
+	 */
+	public List<ExpiredTarget> expireOverdue() {
+		return db.query("""
 				UPDATE target SET status='EXPIRED', closed_at=now()
-				WHERE status IN ('WATCHING','TRACKING') AND expires_at < now()""");
+				WHERE status IN ('WATCHING','TRACKING') AND expires_at < now()
+				RETURNING id, user_id, username, tracked_short_code""",
+				(rs, i) -> new ExpiredTarget(rs.getLong("id"), rs.getObject("user_id", Long.class),
+						rs.getString("username"), rs.getString("tracked_short_code")));
+	}
+
+	/** 이 게시물을 추적 중인 활성 캠페인 — 지표 비공개 알람의 수신자(스냅샷은 캠페인 간 공유라 N건일 수 있다). */
+	public List<TargetOwner> findTrackingOwners(String shortCode) {
+		return db.query("""
+				SELECT id, user_id, username FROM target
+				WHERE tracked_short_code = ? AND status IN ('WATCHING','TRACKING')""",
+				(rs, i) -> new TargetOwner(rs.getLong("id"), rs.getObject("user_id", Long.class),
+						rs.getString("username")),
+				shortCode);
 	}
 }

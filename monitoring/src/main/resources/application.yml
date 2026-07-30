@@ -5,6 +5,12 @@ spring:
     url: jdbc:postgresql://localhost:5433/monitoring
     username: monitoring
     password: monitoring
+  task:
+    scheduling:
+      pool:
+        # 기본 1이면 스윕의 재시도 라운드 대기(최대 간격×라운드 합)가 스케줄러 스레드를 붙잡아
+        # 그 사이 알람 발송 틱이 통째로 밀린다 — 스윕과 발송을 분리하려면 최소 2가 필요하다.
+        size: 2
 
 server:
   port: 8083   # crawler 8080 · was 8081 · analytics 8082 다음
@@ -14,7 +20,24 @@ monitoring:
     api-key: ${HIKER_API_KEY:}
     base-url: https://api.hikerapi.com
     request-timeout: 15s
+    max-retries: 2       # 일시 오류(5xx·IO) 전용. 404는 재시도하지 않는다
+    retry-backoff: 2s    # 회차마다 × n (2s → 4s)
+  sweep:
+    retry-rounds: 3      # 스윕 말미 일시 실패 계정 재시도 라운드 수
+    retry-interval: 10m  # 라운드 간격 × 라운드 번호 (10m → 20m → 30m)
   schedule:
     sweep-cron: "-"     # "-"=비활성. 운영은 UTC 17:00(KST 02:00)을 env로 주입
   enumerate-pages: 1    # 게시물 열거 페이지 수(최근 N개 범위) — Task 1 findings로 조정
   comment-pages: 1      # 추적 게시물 댓글 페이지 수(1페이지 15건 상한 — findings §10-1)
+  alarm:
+    dispatch-cron: "-"   # "-"=비활성. 운영은 5분 틱(0 */5 * * * *)을 env로 주입
+    debounce: 10m        # 즉시 레인 몰아치기 흡수 — 마지막 이벤트가 이 시간 안이면 다음 틱으로 미룬다
+    debounce-cap: 30m    # 디바운스 최대 대기 — 가장 오래된 due가 이 시간을 넘기면 유입 중이어도 발송
+    max-attempts: 5      # 행별 발송 시도 상한. 도달하면 due 조회에서 빠진다(영구 실패 수신자 무한 재시도 차단)
+    reader:              # analysis DB app 스키마 읽기 전용(계약 v2 §6 — 두 객체만 GRANT)
+      url: ${MONITORING_ALARM_READER_URL:}
+      username: ${MONITORING_ALARM_READER_USERNAME:}
+      password: ${MONITORING_ALARM_READER_PASSWORD:}
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}          # 미설정이면 로깅 폴백(실발송 없음)
+    from: hypenow <no-reply@hypenow.io>

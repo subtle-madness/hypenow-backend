@@ -35,7 +35,8 @@ jobs:
           fail=0
           for d in analytics/src/main/resources/db/migration/analysis \
                    was/src/main/resources/db/migration/app \
-                   crawler/src/main/resources/db/migration; do
+                   crawler/src/main/resources/db/migration \
+                   monitoring/src/main/resources/db/migration; do
             [ -d "$d" ] || continue
             dup=$(ls "$d" | grep -oE '^V[0-9]+' | sort | uniq -d)
             if [ -n "$dup" ]; then

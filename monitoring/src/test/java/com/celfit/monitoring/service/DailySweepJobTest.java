@@ -2,6 +2,9 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.monitoring.alarm.AlarmEventRepository;
+import com.celfit.monitoring.alarm.AlarmEventType;
+import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
@@ -11,7 +14,6 @@ import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
 import com.celfit.monitoring.hiker.ShortCodes;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
-import com.celfit.monitoring.store.CandidateRepository;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
@@ -20,6 +22,7 @@ import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,7 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * 일일 스윕 배치 — 만료 종결 → 계정당 1회 수집 → 캠페인별 키워드 감지 → 추적 게시물 보강 → 실패 격리.
+ * 일일 스윕 배치 — 만료 종결 → 계정당 1회 수집 → 캠페인별 키워드 감지 시 즉시 추적 전환 → 추적 게시물 보강 → 실패 격리.
  * @SpringBootTest 없이 리포지토리 + fake 전송으로 조립한다(서비스 레벨이라 웹 컨텍스트가 불필요).
  */
 class DailySweepJobTest {
@@ -57,6 +60,10 @@ class DailySweepJobTest {
 		private final Set<String> missingCodes = new HashSet<>();
 		private final Map<String, String> commentsJsonByMediaId = new HashMap<>();
 		private final Set<String> brokenCommentMediaIds = new HashSet<>();
+		/** 라운드 N번째부터 성공하는 계정 — 스윕 말미 재시도 라운드가 실제로 회복시키는지 본다. */
+		private final Map<String, Integer> flakyRemaining = new HashMap<>();
+		/** 단건 수집(추적 게시물 보강) 경로의 일시 실패 — 열거 밖 추적 게시물도 재시도 라운드가 회복시키는지 본다. */
+		private final Map<String, Integer> flakyCodesRemaining = new HashMap<>();
 
 		int profileCalls;
 		int mediasCalls;
@@ -100,6 +107,18 @@ class DailySweepJobTest {
 			return this;
 		}
 
+		/** 라운드 N번째부터 성공하는 계정 — 스윕 말미 재시도 라운드가 실제로 회복시키는지 본다. */
+		FakeHiker flakyAccount(String username, int failures, String userId, FakePost... posts) {
+			flakyRemaining.put(username, failures);
+			return account(username, userId, posts);
+		}
+
+		/** 단건 조회(추적 게시물 보강)가 라운드 N번째부터 성공하는 게시물 — standalonePost와 함께 쓴다. */
+		FakeHiker flakyPost(String code, int failures) {
+			flakyCodesRemaining.put(code, failures);
+			return this;
+		}
+
 		/** 게시물 삭제 — 단건 조회가 404. */
 		FakeHiker missingPost(String code) {
 			missingCodes.add(code);
@@ -139,6 +158,11 @@ class DailySweepJobTest {
 				if (brokenUsernames.contains(username)) {
 					throw new HikerFetchException("502 " + username);
 				}
+				Integer remaining = flakyRemaining.get(username);
+				if (remaining != null && remaining > 0) {
+					flakyRemaining.put(username, remaining - 1);
+					throw new HikerFetchException("502 일시 " + username);
+				}
 				// 비공개는 200 응답의 is_private 플래그다 — 판정은 HikerClient가 한다(fake가 대신 던지지 않는다).
 				if (privateUsernames.contains(username)) {
 					return "{\"user\":{\"pk\":9,\"username\":\"" + username + "\",\"is_private\":true},\"status\":\"ok\"}";
@@ -155,6 +179,11 @@ class DailySweepJobTest {
 			}
 			postCalls++;
 			String code = param(path, "code");
+			Integer remaining = flakyCodesRemaining.get(code);
+			if (remaining != null && remaining > 0) {
+				flakyCodesRemaining.put(code, remaining - 1);
+				throw new HikerFetchException("502 일시 " + code);
+			}
 			if (missingCodes.contains(code) || !postByCode.containsKey(code)) {
 				throw new SubjectNotFoundException("404 " + code);
 			}
@@ -205,6 +234,22 @@ class DailySweepJobTest {
 		}
 	}
 
+	/**
+	 * insert()가 항상 던지는 대장 리포지토리 — 알람 적재 실패가 스윕 본 작업(자동 전환)을
+	 * 막지 않고, "일시 실패"로 오분류돼 재시도 라운드에 편입되지도 않는지 검증한다.
+	 */
+	private static final class ThrowingAlarmEventRepository extends AlarmEventRepository {
+		ThrowingAlarmEventRepository() {
+			super(null);
+		}
+
+		@Override
+		public long insert(long targetId, long userId, AlarmEventType type, String payloadJson,
+				Instant occurredAt, Instant dispatchAfter) {
+			throw new RuntimeException("DB 폭발(테스트)");
+		}
+	}
+
 	private static final Instant FUTURE = Instant.now().plusSeconds(86_400);
 	private static final Instant PAST = Instant.now().minusSeconds(60);
 	/** 감지 하한선(target.registered_at = 등록 시점의 now()) 위쪽 게시 시각. */
@@ -214,9 +259,9 @@ class DailySweepJobTest {
 
 	JdbcTemplate db;
 	TargetRepository targets;
-	CandidateRepository candidates;
 	FakeHiker hiker;
 	DailySweepJob job;
+	AlarmRecorder alarms;
 
 	@BeforeEach
 	void setUp() {
@@ -224,12 +269,17 @@ class DailySweepJobTest {
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 		targets = new TargetRepository(db);
-		candidates = new CandidateRepository(db);
 		hiker = new FakeHiker();
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var writer = new SnapshotWriter(new SnapshotRepository(db), new ProfileMetaRepository(db));
+		var snapshotRepo = new SnapshotRepository(db);
+		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshotRepo);
+		var writer = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1);
-		job = new DailySweepJob(targets, candidates, collect);
+		job = new DailySweepJob(targets, collect, alarms, 3, Duration.ZERO);
+	}
+
+	private List<String> alarmTypes() {
+		return db.queryForList("SELECT event_type FROM alarm_event ORDER BY id", String.class);
 	}
 
 	private static KeywordRule any(String keyword) {
@@ -237,24 +287,21 @@ class DailySweepJobTest {
 	}
 
 	private long watching(String username, KeywordRule rule, String key, Instant expiresAt) {
-		return targets.insert(TargetType.ACCOUNT, username, null, rule,
+		return targets.insert(TargetType.ACCOUNT, 7L, username, null, rule,
 				TargetStatus.WATCHING, null, key, expiresAt);
 	}
 
 	private long tracking(String username, String trackedShortCode, String key) {
-		return targets.insert(TargetType.ACCOUNT, username, null, any("무관"),
+		return targets.insert(TargetType.ACCOUNT, 7L, username, null, any("무관"),
 				TargetStatus.TRACKING, trackedShortCode, key, FUTURE);
 	}
 
-	private List<String> candidateCodes(long targetId) {
-		return db.queryForList("""
-				SELECT short_code FROM detected_candidate WHERE target_id=? ORDER BY short_code""",
-				String.class, targetId);
+	private String trackedOf(long targetId) {
+		return db.queryForObject("SELECT tracked_short_code FROM target WHERE id=?", String.class, targetId);
 	}
 
-	private long candidateCount(long targetId) {
-		return db.queryForObject("SELECT count(*) FROM detected_candidate WHERE target_id=?",
-				Long.class, targetId);
+	private long candidateCount() {
+		return db.queryForObject("SELECT count(*) FROM detected_candidate", Long.class);
 	}
 
 	private TargetStatus statusOf(long targetId) {
@@ -272,7 +319,7 @@ class DailySweepJobTest {
 		assertThat(statusOf(expired)).isEqualTo(TargetStatus.EXPIRED);
 		// 만기 지난 캠페인까지 수집하면 종료된 캠페인만큼 매일 Hiker 콜이 새어 나간다.
 		assertThat(hiker.profileCalls).isZero();
-		assertThat(candidateCount(expired)).isZero();
+		assertThat(trackedOf(expired)).isNull();
 	}
 
 	// ② 계정당 1회 수집 + 캠페인별 규칙
@@ -291,8 +338,11 @@ class DailySweepJobTest {
 		// 열거 1회는 clips(조회수 보강) + medias 2콜이다 — 과금 단위가 콜이라 이 구성을 못박는다.
 		assertThat(hiker.clipsCalls).isEqualTo(1);
 		assertThat(hiker.mediasCalls).isEqualTo(1);
-		assertThat(candidateCount(a)).isEqualTo(1);
-		assertThat(candidateCount(b)).isZero();
+		// 감지 즉시 추적 전환 — 승인 대기 단계가 없다(스펙 §2-2).
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(trackedOf(a)).isEqualTo("AAA");
+		assertThat(statusOf(b)).isEqualTo(TargetStatus.WATCHING);
+		assertThat(trackedOf(b)).isNull();
 		// 스냅샷도 관측 대상 단위 1행(캠페인 2개여도 프로필 1행·게시물 2행).
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot", Long.class)).isEqualTo(2);
@@ -300,34 +350,67 @@ class DailySweepJobTest {
 				SELECT last_fetched_at IS NOT NULL FROM target WHERE id=?""", Boolean.class, a)).isTrue();
 	}
 
-	// ③ 후보 축적 + 재실행 멱등
+	/**
+	 * 첫 감지 1건 규칙 — 같은 스윕에서 여러 게시물이 걸려도 캠페인:추적 게시물은 1:1이다.
+	 * 채택 기준은 taken_at 최신(가장 최근 협찬 게시물이 캠페인의 그것일 확률이 높다).
+	 * 열거 순서에 기대면 핀 고정 게시물이 앞에 오는 응답에서 옛 게시물이 뽑힌다.
+	 */
 	@Test
-	void 매칭_게시물은_PENDING_후보로_쌓이고_재실행해도_중복되지_않는다() {
+	void 같은_스윕_다중_매칭은_게시_시각_최신_1건만_추적한다() {
 		hiker.account("someuser", "111",
-				new FakePost("AAA", "Rare Beginnings 신상 런칭", AFTER),
-				new FakePost("BBB", "Rare Beginnings 앵콜", AFTER - 100),
-				new FakePost("CCC", "무관한 게시물", AFTER - 200));
+				new FakePost("OLDER", "Rare Beginnings 앵콜", AFTER),
+				new FakePost("NEWER", "Rare Beginnings 신상 런칭", AFTER + 100),
+				new FakePost("CCC", "무관한 게시물", AFTER + 200));
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		assertThat(trackedOf(a)).isEqualTo("NEWER");
+		// 후보 적재는 중단됐다 — detected_candidate에 새 행이 생기면 승인 화면이 되살아난다.
+		assertThat(candidateCount()).isZero();
+		// 매칭 게시물은 방금 열거에서 스냅샷이 남았다 — 단건 보강 콜이 나가면 콜이 두 배가 된다.
+		assertThat(hiker.postCalls).isZero();
+	}
+
+	/**
+	 * taken_at이 완전히 같으면 열거 순서 말고는 결정 근거가 없다 — API 응답 순서에 기대면
+	 * 스윕마다(또는 재정렬 방식이 바뀔 때마다) 채택 게시물이 흔들릴 수 있다.
+	 * short_code 사전순(뒤쪽=최대)으로 고정해 결정론을 확보한다.
+	 */
+	@Test
+	void 게시_시각_동률이면_short_code_사전순으로_결정된다() {
+		hiker.account("someuser", "111",
+				new FakePost("AAA", "Rare Beginnings 신상", AFTER),
+				new FakePost("ZZZ", "Rare Beginnings 앵콜", AFTER));
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		// 사전순 뒤쪽(최대)이 승자 — "AAA"가 열거에서 먼저 나와도 결과가 흔들리지 않는다.
+		assertThat(trackedOf(a)).isEqualTo("ZZZ");
+	}
+
+	/** 전환은 한 번뿐 — 이미 TRACKING인 캠페인은 새 매칭이 떠도 추적 대상이 바뀌지 않는다. */
+	@Test
+	void 이미_추적_중인_캠페인은_새_매칭으로_갈아치우지_않는다() {
+		hiker.account("someuser", "111",
+				new FakePost("AAA", "Rare Beginnings 신상", AFTER),
+				new FakePost("BBB", "Rare Beginnings 앵콜", AFTER + 100));
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 
 		job.run();
 		job.run();
 
-		assertThat(candidateCount(a)).isEqualTo(2);
-		assertThat(db.queryForObject("""
-				SELECT count(*) FROM detected_candidate WHERE status='PENDING'""", Long.class))
-				.isEqualTo(2);
-		// 캡션 발췌가 비면 was 검토 화면에서 무엇이 걸렸는지 알 수 없다.
-		assertThat(db.queryForObject("""
-				SELECT caption_excerpt FROM detected_candidate WHERE short_code='AAA'""", String.class))
-				.contains("Rare Beginnings");
+		assertThat(trackedOf(a)).isEqualTo("BBB");   // 첫 스윕에서 최신 1건 채택
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
 	}
 
 	/**
-	 * 감지 하한선 — 등록 시각 이후 게시물만 후보가 된다(설계 §5, 07-29 확정).
-	 * 없으면 첫 스윕에서 등록 전 옛 키워드 게시물이 통째로 올라와 검토 화면이 노이즈로 찬다.
+	 * 감지 하한선 — 등록 시각 이후 게시물만 잡는다(설계 §5, 07-29 확정).
+	 * 없으면 첫 스윕에서 등록 전 옛 키워드 게시물을 추적 대상으로 잡아 캠페인이 통째로 헛돈다.
 	 */
 	@Test
-	void 등록_시각_이전_게시물은_키워드가_맞아도_후보가_아니다() {
+	void 등록_시각_이전_게시물은_키워드가_맞아도_추적되지_않는다() {
 		hiker.account("someuser", "111",
 				new FakePost("OLDPOST", "Rare Beginnings 신상 런칭", BEFORE),
 				new FakePost("NEWPOST", "Rare Beginnings 앵콜", AFTER));
@@ -335,22 +418,23 @@ class DailySweepJobTest {
 
 		job.run();
 
-		assertThat(candidateCodes(a)).containsExactly("NEWPOST");
+		assertThat(trackedOf(a)).isEqualTo("NEWPOST");
 		// 감지에서 빠졌을 뿐 관측은 한다 — 지표 스냅샷은 등록 전 게시물도 남는다.
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='OLDPOST'""", Long.class))
 				.isEqualTo(1);
 	}
 
-	/** 게시 시각을 모르면 하한선 판정 자체가 불가능하다 — 잘못 올린 후보는 사람이 지워야 하므로 보수적으로 뺀다. */
+	/** 게시 시각을 모르면 하한선 판정 자체가 불가능하다 — 잘못 잡은 추적은 되돌릴 수 없으므로 보수적으로 뺀다. */
 	@Test
-	void 게시_시각을_모르는_게시물은_보수적으로_후보에서_제외한다() {
+	void 게시_시각을_모르는_게시물은_보수적으로_추적하지_않는다() {
 		hiker.account("someuser", "111", new FakePost("NOTIME", "Rare Beginnings 신상 런칭", null));
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 
 		job.run();
 
-		assertThat(candidateCount(a)).isZero();
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.WATCHING);
+		assertThat(trackedOf(a)).isNull();
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='NOTIME'""", Long.class))
 				.isEqualTo(1);
@@ -380,7 +464,7 @@ class DailySweepJobTest {
 	@Test
 	void 게시물_단독_캠페인은_열거_없이_단건만_수집한다() {
 		hiker.standalonePost("P111", "postowner", "게시물 등록 캡션");
-		targets.insert(TargetType.POST, "postowner", "P111", null,
+		targets.insert(TargetType.POST, 7L, "postowner", "P111", null,
 				TargetStatus.TRACKING, "P111", "rk-post", FUTURE);
 
 		job.run();
@@ -402,10 +486,10 @@ class DailySweepJobTest {
 
 		job.run();
 
-		assertThat(candidateCount(good)).isEqualTo(1);
+		assertThat(trackedOf(good)).isEqualTo("GGG");
 		// 일반 실패는 종결하지 않는다 — 다음 스윕에서 재시도할 여지를 남긴다.
 		assertThat(statusOf(bad)).isEqualTo(TargetStatus.WATCHING);
-		assertThat(candidateCount(bad)).isZero();
+		assertThat(trackedOf(bad)).isNull();
 	}
 
 	// ⑥ 404 계정
@@ -423,8 +507,9 @@ class DailySweepJobTest {
 		assertThat(statusOf(gone2)).isEqualTo(TargetStatus.FAILED);
 		assertThat(db.queryForObject("SELECT fail_reason FROM target WHERE id=?", String.class, gone1))
 				.isEqualTo("SUBJECT_NOT_FOUND");
-		assertThat(statusOf(good)).isEqualTo(TargetStatus.WATCHING);
-		assertThat(candidateCount(good)).isEqualTo(1);
+		// good은 다른 계정 소속이라 계정 실패와 무관하게 정상 감지·자동 전환된다.
+		assertThat(statusOf(good)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(trackedOf(good)).isEqualTo("GGG");
 	}
 
 	/**
@@ -443,8 +528,9 @@ class DailySweepJobTest {
 		assertThat(statusOf(dead)).isEqualTo(TargetStatus.FAILED);
 		assertThat(db.queryForObject("SELECT fail_reason FROM target WHERE id=?", String.class, dead))
 				.isEqualTo("SUBJECT_NOT_FOUND");
-		assertThat(statusOf(alive)).isEqualTo(TargetStatus.WATCHING);
-		assertThat(candidateCount(alive)).isEqualTo(1);
+		// alive는 같은 계정이지만 다른 캠페인이라 정상 감지·자동 전환된다.
+		assertThat(statusOf(alive)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(trackedOf(alive)).isEqualTo("AAA");
 	}
 
 	/**
@@ -466,7 +552,8 @@ class DailySweepJobTest {
 		// fail_reason 어휘는 계약 §2와 같은 것을 쓴다 — was가 사유별 안내를 갈라 보여준다.
 		assertThat(db.queryForList("SELECT fail_reason FROM target WHERE id IN (?,?)",
 				String.class, shy1, shy2)).containsOnly("PRIVATE_ACCOUNT");
-		assertThat(statusOf(good)).isEqualTo(TargetStatus.WATCHING);
+		assertThat(statusOf(good)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(trackedOf(good)).isEqualTo("GGG");
 	}
 
 	/** 콜 카운트 단언이 fake 배선 실수로 0이 되는 걸 막는 최소 가드. */
@@ -576,16 +663,123 @@ class DailySweepJobTest {
 		assertThat(row.get("last_uploaded_at")).isNotNull();   // AAA의 taken_at(AFTER)에서 유도된 KST 날짜
 	}
 
-	/** matched_keywords는 KeywordRule.matchedTerms 결과가 그대로 실린다(계약 §3). */
+	/**
+	 * 일시 오류는 알람이 아니라 재시도 대상이다(스펙 §2-3) — 시스템이 당일 안에 수집을 완수해야 한다.
+	 * 라운드가 없으면 5xx 한 번에 그 계정의 하루가 통째로 비고, 캠페인은 상태도 안 바뀌어 아무도 모른다.
+	 */
 	@Test
-	void 후보에_matched_keywords가_저장된다() {
-		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상 런칭", AFTER));
-		long a = watching("someuser", any("Rare Beginnings"), "rk-mk", FUTURE);
+	void 일시_실패_계정은_스윕_말미_재시도_라운드에서_회복된다() {
+		hiker.flakyAccount("flaky_user", 2, "333",
+				new FakePost("FFF", "Rare Beginnings 신상", AFTER));
+		long flaky = watching("flaky_user", any("Rare Beginnings"), "rk-flaky", FUTURE);
 
 		job.run();
 
-		String json = db.queryForObject(
-				"SELECT matched_keywords::text FROM detected_candidate WHERE target_id=?", String.class, a);
-		assertThat(json).contains("Rare Beginnings");
+		assertThat(trackedOf(flaky)).isEqualTo("FFF");
+		assertThat(hiker.profileCalls).isEqualTo(3);   // 최초 + 라운드 2
+	}
+
+	/** 라운드를 다 써도 안 되면 상태는 그대로 둔다 — 다음날 스윕이 자연 회복시킨다(알람 없음). */
+	@Test
+	void 라운드를_다_써도_실패하면_상태를_건드리지_않는다() {
+		hiker.brokenAccount("bad_user");
+		long bad = watching("bad_user", any("Rare Beginnings"), "rk-bad", FUTURE);
+
+		job.run();
+
+		assertThat(statusOf(bad)).isEqualTo(TargetStatus.WATCHING);
+		assertThat(hiker.profileCalls).isEqualTo(4);   // 최초 + 라운드 3
+	}
+
+	/** 결정적 실패(404·비공개)는 재시도 대상이 아니다 — 라운드에 넣으면 종결이 라운드 수만큼 늦어진다. */
+	@Test
+	void 계정_404는_재시도_라운드에_들어가지_않는다() {
+		hiker.missingAccount("gone_user");
+		watching("gone_user", any("Rare Beginnings"), "rk-gone", FUTURE);
+
+		job.run();
+
+		assertThat(hiker.profileCalls).isEqualTo(1);
+	}
+
+	/**
+	 * 열거 밖 추적 게시물 단건 콜의 일시 실패도 재시도 대상이다 — "일시 오류는 당일 안에 무조건
+	 * 수집"이라는 요구는 계정 열거뿐 아니라 캠페인별 단건 보강 콜에도 예외 없이 적용돼야 한다.
+	 * 계정 갈래(sweepAccount)는 예외 없이 반환하지만 그 안 캠페인 하나가 일시 실패했으므로,
+	 * 그 계정 전체가 재시도 라운드에 편입돼야 한다.
+	 */
+	@Test
+	void 추적_게시물_단건_수집의_일시_실패도_재시도_라운드에서_회복된다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
+				.standalonePost("OLD9", "someuser", "예전 협찬 게시물")
+				.flakyPost("OLD9", 1);
+		long stale = tracking("someuser", "OLD9", "rk-stale");
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(2);   // 최초 실패 1 + 라운드 성공 1
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_snapshot WHERE short_code='OLD9'""", Long.class)).isEqualTo(1);
+		assertThat(statusOf(stale)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	@Test
+	void 자동_전환은_수집_시작_알람을_아침_레인으로_남긴다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		assertThat(alarmTypes()).containsExactly("COLLECTION_STARTED");
+		assertThat(db.queryForObject("""
+				SELECT dispatch_after <> occurred_at FROM alarm_event""", Boolean.class)).isTrue();
+	}
+
+	@Test
+	void 만료_종결은_수집_종료_알람을_남긴다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		watching("someuser", any("Rare Beginnings"), "rk-expired", PAST);
+
+		job.run();
+
+		assertThat(alarmTypes()).containsExactly("COLLECTION_ENDED");
+	}
+
+	/** 계정 소멸·비공개는 재시도로 해소되지 않는다 — 사용자에게 알려야 다른 게시물로 재등록한다. */
+	@Test
+	void 결정적_실패_종결은_콘텐츠_이용불가_알람을_남긴다() {
+		hiker.missingAccount("gone_user").privateAccount("shy_user");
+		watching("gone_user", any("Rare Beginnings"), "rk-gone", FUTURE);
+		watching("shy_user", any("Rare Beginnings"), "rk-shy", FUTURE);
+
+		job.run();
+
+		assertThat(alarmTypes()).containsExactly("CONTENT_UNAVAILABLE", "CONTENT_UNAVAILABLE");
+	}
+
+	/**
+	 * 알람 적재 실패가 RuntimeException으로 새면 sweepAccount의 catch(RuntimeException)에 걸려
+	 * "일시 실패"로 오분류되고, 그 계정 전체가 재시도 라운드에 편입된다 — 자동 전환은 이미 끝났는데
+	 * 계정을 다시 훑어 콜만 새는 것이다. AlarmRecorder가 스스로 삼키므로 이 오분류가 생기지 않는다.
+	 */
+	@Test
+	void 알람_적재가_실패해도_자동_전환은_완료되고_재시도_라운드에_들어가지_않는다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		var snapshotRepo = new SnapshotRepository(db);
+		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshotRepo);
+		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var throwingWriter = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), throwingAlarms);
+		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1);
+		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, 3, Duration.ZERO);
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		throwingJob.run();
+
+		// 전환(본 작업)은 알람 적재 실패와 무관하게 정상 완료된다.
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(trackedOf(a)).isEqualTo("AAA");
+		// 재시도 라운드가 돌았다면 profileCalls가 최초 1콜을 넘어선다 — 여기선 1이어야 오분류가 없다는 뜻.
+		assertThat(hiker.profileCalls).isEqualTo(1);
+		assertThat(db.queryForObject("SELECT count(*) FROM alarm_event", Long.class)).isZero();
 	}
 }
