@@ -291,3 +291,48 @@ CONFIDENCE_COLUMNS`, §3-3-0 재정의로 `median_views`·`median_er_pct`는 빠
 **코드 가드가 못 막는 부분**: 뷰를 아예 올리지 않으면 스킵이 무한히 반복된다 — 가드는 사고를
 안전하게(저품질 영구 고정 없이) 견디게 할 뿐, 뷰 적용 자체를 대신해주지 않는다. 배포 순서(①→②→③)
 준수는 여전히 운영자의 책임이다.
+
+## 8. test 실측 보완 (2026-07-30) — `LlmGuard` 전역 규칙과의 상충
+
+트랙 검증 중 test 스테이징에서 계정 `0_tsuki2`(§3-3-1에도 등장 — 조회수 모수 2건 계정)의
+`perf_summary`가 다음과 같이 나왔다.
+
+> "…분석 기간 내 게시물들의 평균 좋아요 수는 **1,605개** 수준입니다."
+
+`GeminiAccountSynthesizer.INSTRUCTIONS_TEMPLATE`의 perfSummary 절은 "**구체 수치를 문장에 그대로
+인용하지 마라**"를 명시한다(§1에서 이미 언급한 그 지시 — 수치 정본은 화면 스탯 타일이고, 계정 카피는
+`ELIGIBLE_WHERE`(§4) 재대상 전까지 며칠간 그대로 서빙되는 캐시라 낡은 값을 계속 노출하게 된다).
+그런데 콘텐츠·계정 카피 프롬프트 조립부가 공유하던 `LlmGuard.RULES`(당시 유일한 상수)에 **"핵심
+주장에는 근거 수치를 함께 인용하라"**는 상충 지시가 항상 붙어 있었다 — perfSummary 절 바로 뒤에
+`%s`로 주입되는 절제 규칙 블록의 마지막 줄이 정면으로 반대되는 걸 요구한 것이다. LLM은 후자를
+따랐다.
+
+**정체**: 이 상충은 이번 트랙이 만든 게 아니라 `LlmGuard`가 계정 카피(GeminiAccountSynthesizer)와
+콘텐츠 해석 문구(GeminiContentSynthesizer·AnthropicSynthesizer·GeminiContentAnalyzer 파트 B)에 같은
+규칙 세트를 공유해 온 이래로 존재했던 구조적 결함이다. 콘텐츠 경로는 특정 게시물 1건의 확정된
+사실(views·likes·comments)을 다루므로 수치가 낡지 않아 "근거 수치를 함께 인용하라"가 타당하지만,
+계정 카피는 캐시·노후화 성질이 달라 이 지시가 애초부터 맞지 않았다. 지금까지 드러나지 않은 건
+운 좋게 LLM이 규칙 순서·다른 지시와의 우선순위상 perfSummary 절을 따라준 표본이 많았을 뿐이다.
+
+**결정 — 규칙을 전역에서 빼지 않고 계정 카피 경로에서만 스코프를 분리한다.** `LlmGuard`에
+공통 3줄(표본 헤지·추론 금지·조언 금지)을 `COMMON`으로 묶고, 근거 수치 인용 지시는 `BODY`/`RULES`
+(콘텐츠 경로 전용, 기존 값 그대로 유지)에만 남긴 뒤, `ACCOUNT_BODY`/`ACCOUNT_RULES`(계정 카피
+전용, 인용 지시 제외)를 새로 추가했다. `GeminiAccountSynthesizer.instructions()`가 `LlmGuard.RULES`
+대신 `LlmGuard.ACCOUNT_RULES`를 쓰도록 한 곳만 바꿨다 — `AnthropicAccountSynthesizer`는 이 메서드를
+그대로 호출해 프롬프트를 만들므로(복제가 아니라 참조), 한 곳을 고치는 것으로 Gemini·Anthropic 양쪽
+계정 카피 경로가 함께 바뀐다. 콘텐츠 경로 세 어댑터는 여전히 `LlmGuard.RULES`/`BODY`를 그대로 써서
+동작이 바뀌지 않는다.
+
+**§3-3-1 원칙("금지는 지시가 아니라 입력 제거로 강제한다")과의 관계**: 이 건은 같은 원칙을 그대로
+적용할 수 없다 — `avg_likes`·`avg_comments` 등 수치는 perfSummary가 근거로 반드시 필요해 입력에서
+뺄 수 없다(§3-3-0의 always-strip과 반대로, 이 수치들은 프롬프트에 남아 있어야 하는 값이다). 따라서
+이 건은 지시 정리(상충 지시 제거)가 유일한 강제 수단이다. 대신 **생성 후 검증**을 관측 장치로
+추가했다 — `AccountAnalysisWriter.hasNumericCitation()`이 저장 직전 `perf_summary`에 숫자가
+있으면 WARN 로그를 남긴다(차단은 하지 않는다 — 계정 카피 배치는 실패 격리 원칙이라 이 검사로 정상
+계정의 카피 저장을 막을 이유가 없고, 지시 정리 자체가 이미 §3-3-1의 실측처럼 "입력에서 제거한
+것은 100% 지켜졌다"는 신뢰를 준다). 목적은 상충 지시가 다시 생기거나 이번 수정이 우회되는 회귀를
+조기에 알아채는 것 — 곧 있을 운영 계정 7,033건 전량 재생성에서 특히 값어치가 있다.
+
+관련 코드: [LlmGuard.java](../../../analytics/src/main/java/com/celfit/analytics/llm/LlmGuard.java),
+[GeminiAccountSynthesizer.java](../../../analytics/src/main/java/com/celfit/analytics/llm/GeminiAccountSynthesizer.java),
+[AccountAnalysisWriter.java](../../../analytics/src/main/java/com/celfit/analytics/analyze/AccountAnalysisWriter.java).
