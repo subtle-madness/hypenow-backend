@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,6 +42,7 @@ class AlarmDispatchJobTest {
 
 	private static final Instant NOW = Instant.parse("2026-07-30T01:00:00Z");
 
+	DataSource ds;
 	JdbcTemplate db;
 	AlarmEventRepository events;
 	FakeMailSender mail;
@@ -48,14 +50,16 @@ class AlarmDispatchJobTest {
 
 	@BeforeEach
 	void setUp() {
-		var ds = TestDb.dataSource(TestDb.container());
+		ds = TestDb.dataSource(TestDb.container());
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 		TestDb.resetAppFixture(db);
 		events = new AlarmEventRepository(db);
 		mail = new FakeMailSender();
+		// debounceCap은 넉넉히(3시간) — 이 클래스의 기존 시나리오는 전부 SETTLED(1시간 전) 기준이라
+		// 캡 자체를 검증하는 전용 테스트만 별도로 좁은 캡을 준 job을 직접 만든다.
 		job = new AlarmDispatchJob(events, new AlarmRecipientReader(ds), new AlarmMailComposer(),
-				mail, Duration.ofMinutes(10), 5, Clock.fixed(NOW, ZoneOffset.UTC));
+				mail, Duration.ofMinutes(10), Duration.ofHours(3), 5, Clock.fixed(NOW, ZoneOffset.UTC));
 	}
 
 	private long user(long id, String email) {
@@ -126,6 +130,30 @@ class AlarmDispatchJobTest {
 
 		assertThat(mail.sent).isEmpty();
 		assertThat(statusOf(fresh)).isEqualTo("PENDING");   // 다음 틱에 함께 나간다
+	}
+
+	/**
+	 * 디바운스 최대 대기 캡 — 즉시 레인이 끊이지 않고 계속 들어와도 무기한 밀리면 안 된다.
+	 * 가장 오래된 due(dispatch_after)가 캡을 넘기면, 방금 들어온 행이 있어 여전히 "몰아치는 중"이어도
+	 * 이번 틱에 보낸다 — 디바운스는 묶음 최적화지 지연 보장이 아니다.
+	 */
+	@Test
+	void 유입이_계속돼도_가장_오래된_행이_캡을_넘기면_발송한다() {
+		user(7, "a@test.io");
+		// 이 테스트 전용 job — 캡을 좁게 잡아야 "유입 지속 중에도 캡이 이긴다"를 명확히 볼 수 있다.
+		AlarmDispatchJob capped = new AlarmDispatchJob(events, new AlarmRecipientReader(ds),
+				new AlarmMailComposer(), mail, Duration.ofMinutes(10), Duration.ofMinutes(30), 5,
+				Clock.fixed(NOW, ZoneOffset.UTC));
+		long oldest = event(7, AlarmEventType.COLLECTION_STARTED,
+				NOW.minusSeconds(45 * 60), NOW.minusSeconds(45 * 60));   // 캡(30분) 밖
+		long fresh = event(7, AlarmEventType.COLLECTION_STARTED,
+				NOW.minusSeconds(60), NOW.minusSeconds(60));   // 디바운스 창(10분) 안 — 여전히 유입 중
+
+		capped.run();
+
+		assertThat(mail.sent).hasSize(1);
+		assertThat(statusOf(oldest)).isEqualTo("SENT");
+		assertThat(statusOf(fresh)).isEqualTo("SENT");
 	}
 
 	@Test

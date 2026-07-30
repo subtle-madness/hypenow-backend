@@ -35,7 +35,7 @@ class AlarmDispatchSchedulerTest {
 	@Test
 	void dispatch는_발송_잡에_위임한다() {
 		var calls = new int[1];
-		var job = new AlarmDispatchJob(null, null, null, null, null, 5, null) {
+		var job = new AlarmDispatchJob(null, null, null, null, null, null, 5, null) {
 			@Override
 			public void run() {
 				calls[0]++;

@@ -15,6 +15,13 @@ public final class TestDb {
 
 	private static PostgreSQLContainer container;
 
+	/** was_reader 롤 생성 DO 블록 — container()·resetAndMigrate() 두 곳이 같은 문장을 쓴다(드리프트 방지). */
+	private static final String CREATE_READER_ROLE_SQL = """
+			DO $$ BEGIN
+			  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'was_reader')
+			  THEN CREATE ROLE was_reader LOGIN PASSWORD 'was_reader'; END IF;
+			END $$""";
+
 	private TestDb() {
 	}
 
@@ -36,11 +43,7 @@ public final class TestDb {
 	private static void createReaderRole(PostgreSQLContainer pg) {
 		try (Connection conn = DriverManager.getConnection(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
 				Statement stmt = conn.createStatement()) {
-			stmt.execute("""
-					DO $$ BEGIN
-					  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'was_reader')
-					  THEN CREATE ROLE was_reader LOGIN PASSWORD 'was_reader'; END IF;
-					END $$""");
+			stmt.execute(CREATE_READER_ROLE_SQL);
 		} catch (SQLException e) {
 			throw new IllegalStateException("was_reader 롤 생성 실패 — 테스트 컨테이너 초기화 불가", e);
 		}
@@ -59,11 +62,7 @@ public final class TestDb {
 		db.update("DROP SCHEMA IF EXISTS raw CASCADE");
 		db.update("DROP SCHEMA public CASCADE");
 		db.update("CREATE SCHEMA public");
-		db.update("""
-				DO $$ BEGIN
-				  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'was_reader')
-				  THEN CREATE ROLE was_reader LOGIN PASSWORD 'was_reader'; END IF;
-				END $$""");
+		db.update(CREATE_READER_ROLE_SQL);
 		Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
 	}
 

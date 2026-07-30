@@ -35,18 +35,21 @@ public class AlarmDispatchJob {
 	private final AlarmMailComposer composer;
 	private final MailSender mailSender;
 	private final Duration debounce;
+	private final Duration debounceCap;
 	private final int maxAttempts;
 	private final Clock clock;
 
 	public AlarmDispatchJob(AlarmEventRepository events, AlarmRecipientReader recipients,
 			AlarmMailComposer composer, MailSender mailSender,
 			@Value("${monitoring.alarm.debounce:10m}") Duration debounce,
+			@Value("${monitoring.alarm.debounce-cap:30m}") Duration debounceCap,
 			@Value("${monitoring.alarm.max-attempts:5}") int maxAttempts, Clock clock) {
 		this.events = events;
 		this.recipients = recipients;
 		this.composer = composer;
 		this.mailSender = mailSender;
 		this.debounce = debounce;
+		this.debounceCap = debounceCap;
 		this.maxAttempts = maxAttempts;
 		this.clock = clock;
 	}
@@ -111,8 +114,17 @@ public class AlarmDispatchJob {
 	 * "즉시 레인만" 보지 않고 due 전체를 보는 건 의도다: 09:00 레인 이벤트는 새벽 스윕에서 나와
 	 * occurred_at이 몇 시간 전이라 애초에 창에 걸리지 않고, 레인 구분을 위해 컬럼을 하나 더 두는 것보다
 	 * "최근에 뭔가 들어왔으면 잠깐 기다린다"가 더 단순하고 틀릴 여지가 적다.
+	 *
+	 * <p>다만 디바운스만으로는 유입이 끊이지 않는 유저의 due가 무기한 밀릴 수 있다(즉시 레인이
+	 * 계속 들어오면 아침 레인 실패 알림 같은 다른 행까지 덩달아 갇힌다) — debounceCap이 상한이다.
 	 */
 	private boolean stillArriving(List<AlarmEvent> rows, Instant now) {
+		Instant oldestDispatchAfter = rows.stream().map(AlarmEvent::dispatchAfter)
+				.min(Comparator.naturalOrder()).orElseThrow();
+		if (oldestDispatchAfter.isBefore(now.minus(debounceCap))) {
+			// 디바운스는 묶음 최적화지 지연 보장이 아니다 — 가장 오래된 due가 캡을 넘기면 유입 중이어도 발송
+			return false;
+		}
 		Instant newest = rows.stream().map(AlarmEvent::occurredAt).max(Comparator.naturalOrder())
 				.orElseThrow();
 		return newest.isAfter(now.minus(debounce));
