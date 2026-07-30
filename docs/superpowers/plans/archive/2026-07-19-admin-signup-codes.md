@@ -1,5 +1,7 @@
 # 가입 코드↔유저 관리자 조회 Implementation Plan
 
+> 상태: ✅ 구현됨 (PR #68 머지·운영 배포, 2026-07-20)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 관리자가 `GET /admin/signups`로 "어떤 유저가 어떤 코드로 가입했는지"(소진+미소진 코드)를 브라우저에서 JSON으로 열람한다.

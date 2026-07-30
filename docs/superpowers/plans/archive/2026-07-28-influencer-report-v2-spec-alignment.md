@@ -1,6 +1,6 @@
 # 인플루언서 리포트 v2 스펙 정렬 (6.22·6.23·6.24) — PR #149 증분 구현 계획
 
-> 상태: 🟢 활성 · ✅ 구현됨(머지 대기)
+> 상태: ✅ 구현됨 (PR #149 머지, 2026-07-28 — 07-27 계획과 동일 PR)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

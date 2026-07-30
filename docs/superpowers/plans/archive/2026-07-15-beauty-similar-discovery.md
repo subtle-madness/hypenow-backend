@@ -1,5 +1,7 @@
 # 뷰티 판정 + 유사 계정 발굴 구현 계획
 
+> 상태: ✅ 구현됨 — 배치 상한 500(`crawler.beauty.batch-limit`) 안전장치 실제 반영. 스펙: [specs/2026-07-15-beauty-similar-discovery-design.md](../../specs/2026-07-15-beauty-similar-discovery-design.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** QUALIFIED 인플루언서를 로컬 Claude로 뷰티 판정(BEAUTY 잡)하고, 뷰티 시드의 유사 계정을 HikerAPI로 발굴해 DISCOVERED로 유입(SIMILAR 잡)시키며, 명단 페이지에서 뷰티 판정을 수동 오버라이드할 수 있게 한다.

@@ -1,5 +1,7 @@
 # 프로필 소스 셀렉터 + HikerAPI 보충 Implementation Plan
 
+> 상태: ✅ 구현됨 — 단 게시물 보충(`HikerMediasSupplement`·`profile.supplement.posts`)은 07-14 인플루언서 파이프라인 전환에서 폐기, suggested 보충만 잔존. 스펙: [specs/2026-07-11-profile-source-selector-design.md](../../specs/2026-07-11-profile-source-selector-design.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 프로필(Qualify) 단계의 데이터 소스를 런타임에 선택 가능하게 만든다 — 베이스 4종(SELF/ACTOR/HIKER_MOBILE/HIKER_WEB_GQL) + 독립 HikerAPI 보충 2종(posts/related).

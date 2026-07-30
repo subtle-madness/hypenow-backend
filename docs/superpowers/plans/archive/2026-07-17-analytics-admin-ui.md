@@ -9,7 +9,7 @@
 
 **Tech Stack:** Spring Boot 4.1 (starter-web·thymeleaf 추가), htmx(CDN), logback appender, `@Scheduled`(게이트 off).
 
-**스펙:** [specs/2026-07-17-analytics-admin-ui-design.md](../specs/2026-07-17-analytics-admin-ui-design.md)
+**스펙:** [specs/2026-07-17-analytics-admin-ui-design.md](../../specs/2026-07-17-analytics-admin-ui-design.md)
 
 **스펙과의 차이 1건:** 스펙 §3은 "기존 CommandLineRunner 무변경"이라 했지만, 잡 빈이 러너 설정
 클래스(`*-on-startup` 조건) 안에 있어 서버 모드에선 빈 자체가 없다는 걸 계획 단계에서 발견했다.
