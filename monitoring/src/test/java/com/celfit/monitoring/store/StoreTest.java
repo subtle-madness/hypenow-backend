@@ -113,9 +113,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
+		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
+		var post2 = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -251,6 +251,42 @@ class StoreTest {
 		assertThat(db.queryForObject(
 				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class))
 				.isEqualTo(LocalDate.of(2026, 7, 20));
+	}
+
+	// ── profile_meta POST 등록분(트랙 II) ─────────────────────────────────────
+
+	@Test
+	void upsertOwnerFromPost는_행이_없으면_신규_생성한다() {
+		profileMeta.upsertOwnerFromPost("acct_a", "표시이름", "https://img/owner.jpg");
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
+		assertThat(row.get("profile_image_url")).isEqualTo("https://img/owner.jpg");
+		assertThat(row.get("last_uploaded_at")).isNull();   // 단건 경로는 최근 게시일을 알 수 없다
+	}
+
+	/** 계정 갈래(upsert)가 채운 last_uploaded_at을 POST 갈래(upsertOwnerFromPost)가 건드리면 안 된다. */
+	@Test
+	void upsertOwnerFromPost는_기존_last_uploaded_at을_보존한다() {
+		profileMeta.upsert("acct_a", "계정갈래이름", "https://img/account.jpg", LocalDate.of(2026, 7, 20));
+
+		profileMeta.upsertOwnerFromPost("acct_a", "표시이름", "https://img/owner.jpg");
+
+		assertThat(db.queryForObject(
+				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class))
+				.isEqualTo(LocalDate.of(2026, 7, 20));
+	}
+
+	/** 단건 응답 셰이프에 owner 필드가 없어 null이 들어와도 기존 display_name·profile_image_url을 지우면 안 된다. */
+	@Test
+	void upsertOwnerFromPost는_null_인자로_기존_값을_지우지_않는다() {
+		profileMeta.upsertOwnerFromPost("acct_a", "표시이름", "https://img/owner.jpg");
+
+		profileMeta.upsertOwnerFromPost("acct_a", null, null);
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
+		assertThat(row.get("profile_image_url")).isEqualTo("https://img/owner.jpg");
 	}
 
 	// ── post_meta(v2.2) ──────────────────────────────────────────────────────

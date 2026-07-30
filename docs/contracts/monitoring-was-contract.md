@@ -280,8 +280,14 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 | `updated_at` | timestamptz | 마지막 갱신 시각 |
 
 - 계정 수집(등록 동기 수집·일일 스윕)마다 upsert — 스냅샷과 달리 이력 없이 최신 1행.
-- POST 등록만 있는 계정은 프로필 콜을 안 하므로 행이 없을 수 있다 — was는 없으면
-  전부 null로 폴백(프론트 계약상 3필드 모두 nullable).
+- **POST 등록만 있는 계정도 07-30(트랙 II)부터 `display_name`·`profile_image_url`은 채워진다** —
+  단건 응답(`/v2/media/by/code`)의 `user.full_name`·`user.profile_pic_url`을 게시물 수집(등록 동기
+  수집·일일 스윕 단건 보강) 경로에서 제로 콜로 파싱해 upsert(Hiker 콜 추가 없음). **다만
+  `last_uploaded_at`은 이 경로로 채울 수 없어 POST 전용 계정에서는 계속 null로 남는다** —
+  단건 응답은 게시물 1건의 게시일만 알 뿐 계정 열거 전체의 최댓값(계정 갈래의 정의)을 알 수 없다.
+  마찬가지 이유로 `followers`도 POST 전용 계정에서는 profile_snapshot 자체가 없어 미수집(단건
+  응답 `user` 노드에 `follower_count`가 없어 채우려면 프로필 콜 +1 필요 — 제로 콜 원칙상 보류).
+  was는 세 필드 모두 여전히 null 가능성을 전제해야 한다(프론트 계약상 nullable 유지).
 
 ### post_meta — 추적 게시물 표시 메타 (v2.2 · 게시물 단위 최신 1행, 캠페인 간 공유)
 

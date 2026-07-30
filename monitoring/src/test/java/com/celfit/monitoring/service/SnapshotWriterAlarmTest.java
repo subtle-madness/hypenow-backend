@@ -43,7 +43,8 @@ class SnapshotWriterAlarmTest {
 	}
 
 	private PostInfo post(Long views) {
-		return new PostInfo("SC1", "acct_a", "REELS", "캡션", "https://cdn/thumb.jpg", 1_785_000_000L,
+		return new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션",
+				"https://cdn/thumb.jpg", 1_785_000_000L,
 				100L, 5L, views, 20L, 3L, 1L, "{}", true);
 	}
 
@@ -120,7 +121,8 @@ class SnapshotWriterAlarmTest {
 	/** takenAt을 못 얻은 게시물은 잘못된 게시일을 만들지 않도록 post_meta upsert 자체를 스킵한다(계약 §3). */
 	@Test
 	void takenAt이_null이면_post_meta_upsert를_스킵한다() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", "https://cdn/thumb.jpg", null,
+		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션",
+				"https://cdn/thumb.jpg", null,
 				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
 
 		writer.savePost(LocalDate.of(2026, 7, 30), post);
@@ -135,12 +137,54 @@ class SnapshotWriterAlarmTest {
 	/** 캡션 없는 게시물은 post_meta.caption NOT NULL 제약을 지키기 위해 빈 문자열로 폴백한다(계약 §3). */
 	@Test
 	void 캡션이_null이면_빈_문자열로_폴백한다() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", null, "https://cdn/thumb.jpg", 1_785_000_000L,
+		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", null,
+				"https://cdn/thumb.jpg", 1_785_000_000L,
 				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
 
 		writer.savePost(LocalDate.of(2026, 7, 30), post);
 
 		assertThat(db.queryForObject(
 				"SELECT caption FROM post_meta WHERE short_code='SC1'", String.class)).isEqualTo("");
+	}
+
+	// ── profile_meta POST 등록분(트랙 II) ─────────────────────────────────────
+
+	/** POST 등록분은 계정 갈래(saveAccount)를 영구히 안 타므로 savePost가 유일한 profile_meta 적재 경로다. */
+	@Test
+	void savePost는_단건_응답_owner_필드로_profile_meta_행을_만든다() {
+		var post = new PostInfo("SC1", "acct_a", "표시이름", "https://cdn/owner.jpg", "REELS", "캡션",
+				"https://cdn/thumb.jpg", 1_785_000_000L,
+				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+
+		writer.savePost(LocalDate.of(2026, 7, 30), post);
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
+		assertThat(row.get("profile_image_url")).isEqualTo("https://cdn/owner.jpg");
+	}
+
+	/**
+	 * 공존 계정 회귀 방어 — 같은 계정에 ACCOUNT·POST 캠페인이 공존하면 같은 스윕에서
+	 * saveAccount(정본, last_uploaded_at 채움) 뒤에 savePost가 돌 수 있다. 이때 savePost의
+	 * upsertOwnerFromPost가 last_uploaded_at을 건드리면 안 된다(COALESCE 방어의 실사용처).
+	 */
+	@Test
+	void saveAccount로_채운_last_uploaded_at은_savePost_이후에도_보존된다() {
+		var profile = new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}");
+		var enumerated = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null,
+				1_785_000_000L, 100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+		writer.saveAccount("acct_a", LocalDate.of(2026, 7, 29), profile, List.of(enumerated));
+		var lastUploadedAtAfterAccount = db.queryForObject(
+				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class);
+
+		var postOnly = new PostInfo("SC1", "acct_a", "표시이름", "https://cdn/owner.jpg", "REELS", "캡션",
+				"https://cdn/thumb.jpg", 1_785_000_000L,
+				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+		writer.savePost(LocalDate.of(2026, 7, 30), postOnly);
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("last_uploaded_at")).isEqualTo(java.sql.Date.valueOf(lastUploadedAtAfterAccount));
+		// owner 필드는 savePost 값으로 갱신된다(COALESCE는 null만 방어, 실값은 갱신 대상)
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
 	}
 }
