@@ -26,12 +26,15 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			  계정을 가장 잘 설명하는 원자 태그를 조합한다(예: 감성 브이로그 계정이면 "브이로그"와 "감성 무드" 2개).
 			  어휘:
 			%s
-			- perfSummary: 성과 요약 2~3문장 — 평균 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
-			  반응 차이 중심 (avg_views·avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물
-			  목록(content_type·views·likes) 근거 — 포맷별 반응 차이는 게시물 목록에서만 확인 가능하니
-			  그 밖은 단정하지 마라). **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면
-			  스탯 타일이고 이 문장은 매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편",
-			  "완만한 상승세", "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
+			- perfSummary: 성과 요약 2~3문장 — 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
+			  반응 차이 중심. 수준 판정의 근거는 median_views·median_er_pct를 우선으로 삼고, 둘 중
+			  하나라도 NULL이면 그 지표만 avg_views·avg_er_pct로 대신한다. avg_likes·avg_comments·
+			  trend_direction·trend_change_pct와 게시물 목록(content_type·views·likes)도 근거로 쓴다 —
+			  포맷별 반응 차이는 게시물 목록에서만 확인 가능하니 그 밖은 단정하지 마라.
+			  **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면 스탯 타일이고 이 문장은
+			  매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편", "완만한 상승세",
+			  "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
+			%s
 			- contentSummary: 콘텐츠 성격 요약 2~3문장 — 무엇을 어떤 방식으로 다루는지, 반복되는 형식·톤
 			  (카테고리 믹스·캡션 근거)
 			- adSummary: 광고 활동 요약 2~3문장. 입력의 "광고 활동" 값에 따라 아래처럼 쓴다.
@@ -56,11 +59,12 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 	}
 
 	/**
-	 * 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다.
+	 * 시스템 프롬프트 — 성과 요약 통계 왜곡 가드(설계 2026-07-30) 판정을 반영한 신뢰도 지침 포함.
 	 * traits는 어휘 내 선택(2026-07-29 어휘 통제 스펙) — 어휘 블록은 V41 시드 스냅샷을 주입한다.
 	 */
-	public static String instructions(TraitTaxonomy vocab) {
-		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(), LlmGuard.RULES);
+	public static String instructions(TraitTaxonomy vocab, PerfConfidence confidence) {
+		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(),
+				confidence.promptBlock(), LlmGuard.RULES);
 	}
 
 	/** 유저 입력 — synthesize와 버스트 export가 공유 (프롬프트 정합 단일 원천). */
@@ -76,8 +80,8 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
 	@Override
 	public AccountCopy synthesize(AccountToAnalyze account) {
-		String out = api.generateJson(model.get(), instructions(vocab.get()), userText(account), null,
-				RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
+		String out = api.generateJson(model.get(), instructions(vocab.get(), account.confidence()),
+				userText(account), null, RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
 		return om.readValue(out, AccountCopy.class);
 	}
 }

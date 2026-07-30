@@ -10,6 +10,7 @@ import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
 import com.celfit.analytics.llm.AdSituation;
+import com.celfit.analytics.llm.CopyRules;
 import com.celfit.analytics.testsupport.TestDb;
 import java.util.ArrayList;
 import java.util.List;
@@ -71,14 +72,24 @@ class AccountAnalysisJobTest {
 		//   acct_caption— 캡션 고지만(릴스 태그 없음): 옛 소스로는 차단됐던 케이스
 		//   acct_tagonly— 릴스 태그만(캡션 분류는 organic): 화면에 비교가 안 뜨는 케이스
 		//   acct_allads — 측정 가능분이 전량 협찬(비교 대상 organic 없음)
+		// 신뢰도 판정 재료 9컬럼(V44)도 함께 채워 "정상적으로 미러된 계정" 상태를 흉내낸다 — 값 자체는
+		// 이 테스트들의 관심사가 아니라 임의로 골랐다. 9개 전부 NULL(=데이터 미비/미러 갭)인 케이스는
+		// 별도 픽스처(아래 dataIncomplete 관련 테스트)에서만 재현한다.
 		db.update("""
 				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
-				  organic_avg, ad_avg, last_posted_at) VALUES
-				  ('acct_ad',      10000, 6, 6, 'views', 13500, 15000, timestamptz '2026-07-01 09:00:00+09'),
-				  ('acct_noad',     8000, 4, 4, 'views', 10375, NULL,  timestamptz '2026-07-02 09:00:00+09'),
-				  ('acct_caption',  9000, 4, 4, 'views', 12000, NULL,  timestamptz '2026-07-03 09:00:00+09'),
-				  ('acct_tagonly',  7000, 4, 4, 'views', 11000, 30000, timestamptz '2026-07-04 09:00:00+09'),
-				  ('acct_allads',   6000, 4, 4, 'views', NULL,  9000,  timestamptz '2026-07-05 09:00:00+09')""");
+				  organic_avg, ad_avg, last_posted_at,
+				  views_sample_count, likes_sample_count, comments_sample_count, reels_count, feed_count,
+				  median_views, median_er_pct, top_views_share_pct, window_span_days) VALUES
+				  ('acct_ad',      10000, 6, 6, 'views', 13500, 15000, timestamptz '2026-07-01 09:00:00+09',
+				    6, 6, 6, 6, 0, 15000, 2.0, 55, 30),
+				  ('acct_noad',     8000, 4, 4, 'views', 10375, NULL,  timestamptz '2026-07-02 09:00:00+09',
+				    4, 4, 4, 0, 4, NULL, 1.5, NULL, 10),
+				  ('acct_caption',  9000, 4, 4, 'views', 12000, NULL,  timestamptz '2026-07-03 09:00:00+09',
+				    4, 4, 4, 4, 0, 8000, 1.2, 60, 30),
+				  ('acct_tagonly',  7000, 4, 4, 'views', 11000, 30000, timestamptz '2026-07-04 09:00:00+09',
+				    4, 4, 4, 4, 0, 11000, 1.4, 65, 30),
+				  ('acct_allads',   6000, 4, 4, 'views', NULL,  9000,  timestamptz '2026-07-05 09:00:00+09',
+				    4, 4, 4, 4, 0, 9000, 1.1, 70, 30)""");
 		db.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
 				  views, likes, comments, sponsored) VALUES
@@ -200,7 +211,8 @@ class AccountAnalysisJobTest {
 	@Test
 	void 지시문이_평가를_금지하고_상황별_진술을_지시한다() {
 		String instructions = com.celfit.analytics.llm.GeminiAccountSynthesizer.instructions(
-				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds).get());
+				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds).get(),
+				com.celfit.analytics.llm.PerfConfidence.none());
 
 		assertTrue(instructions.contains("좋다"), instructions);
 		assertTrue(instructions.contains(AdSituation.NO_ADS.label()), instructions);
@@ -378,5 +390,105 @@ class AccountAnalysisJobTest {
 
 		assertEquals(0, db.queryForObject(
 				"SELECT jsonb_array_length(traits) FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
+	}
+
+	/**
+	 * 성과 요약 통계 왜곡 가드(설계 §3-3) — 판정에 쓴 내부 컬럼 9개는 LLM 프롬프트로 넘어가는
+	 * summary 맵에서 제거돼야 한다(수치가 그대로 인용될 여지 차단). 판정 자체(PerfConfidence)는
+	 * PerfConfidenceTest가 별도로 검증한다.
+	 */
+	@Test
+	void 프롬프트_요약에서_내부_판정_컬럼이_제거된다() {
+		db.update("""
+				UPDATE account_summaries SET
+				  views_sample_count = 1, likes_sample_count = 6, comments_sample_count = 6,
+				  reels_count = 6, feed_count = 0, median_views = 9000, median_er_pct = 1.2,
+				  top_views_share_pct = 100, window_span_days = 10
+				WHERE handle = 'acct_ad'""");
+
+		job.run();
+
+		Map<String, Object> summary = callFor("acct_ad").summary();
+		for (String key : List.of("views_sample_count", "likes_sample_count", "comments_sample_count",
+				"reels_count", "feed_count", "median_views", "median_er_pct",
+				"top_views_share_pct", "window_span_days")) {
+			assertFalse(summary.containsKey(key), key + "가 프롬프트 입력에 남아 있음: " + summary);
+		}
+	}
+
+	/** 새로 생성된 카피는 항상 현재 CopyRules.VERSION으로 저장된다(설계 §4) — 아니면 무한 재대상 루프. */
+	@Test
+	void 신규_카피는_현재_카피_버전으로_저장된다() {
+		job.run();
+
+		assertEquals(CopyRules.VERSION, db.queryForObject(
+				"SELECT copy_version FROM account_analyses WHERE handle = 'acct_ad'", Integer.class));
+	}
+
+	/**
+	 * 버전 게이트(설계 §4) — 최신 행의 copy_version이 CopyRules.VERSION보다 낮으면, 입력이
+	 * 동일하고 쿨다운도 미경과인 상태여도(다른 재대상 사유가 전혀 없어도) 재대상이 돼야 한다.
+	 * 판정 규칙이 바뀌었을 때 기존 문구가 낡음으로 표시돼 자연 재생성되는 경로.
+	 */
+	@Test
+	void 카피_버전이_낮으면_입력_동일_쿨다운_미경과여도_재대상이_된다() {
+		job.run(); // acct_ad 최초 분석 — copy_version = CopyRules.VERSION으로 저장됨
+		calls.clear();
+		db.update("UPDATE account_analyses SET copy_version = 0 WHERE handle = 'acct_ad'");
+
+		int processed = job.run().processed();
+
+		assertTrue(calls.stream().anyMatch(c -> c.handle().equals("acct_ad")));
+		assertEquals(1, processed); // acct_ad만 — 나머지는 입력 동일 + 최신 버전
+		assertEquals(2L, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_ad'", Long.class));
+	}
+
+	/**
+	 * 배포 과도기 가드 — 뷰(10_account_detail.sql) 선적용 없이 V44 마이그레이션만 배포되면 미러가
+	 * 신뢰도 판정 컬럼 9개를 채우지 못한 채 ADD COLUMN 기본값(NULL)으로 남는다. 이 상태에서 카피를
+	 * 만들면 모든 문장이 최대 억제 등급을 받고 그게 CopyRules.VERSION으로 영구 고정되므로(설계 §7),
+	 * 잡은 아예 생성을 건너뛰어야 한다 — 이 테스트는 그 스킵을 못 박는다.
+	 */
+	@Test
+	void 신뢰도_컬럼_9개가_전부_NULL이면_카피_생성을_건너뛴다() {
+		// 9컬럼을 아예 지정하지 않아 ADD COLUMN 기본값(NULL)인 "미러 갭" 상태를 그대로 재현한다.
+		db.update("""
+				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
+				  last_posted_at)
+				VALUES ('acct_mirror_gap', 5000, 6, 6, 'views', timestamptz '2026-07-06 09:00:00+09')""");
+
+		int processed = job.run().processed();
+
+		// 나머지 5계정은 정상 처리되고(setUp에서 9컬럼을 채워둠), 미러 갭 계정만 스킵된다.
+		assertEquals(5, processed);
+		assertFalse(calls.stream().anyMatch(c -> c.handle().equals("acct_mirror_gap")),
+				"미러 갭 계정이 LLM 호출까지 가면 안 된다: " + calls);
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_mirror_gap'", Long.class));
+	}
+
+	/**
+	 * 피드 전용 계정(조회수 관측 자체가 없음)은 데이터 미비가 아니라 정상 판정을 받아야 한다 —
+	 * views_sample_count=0·reels_count=0·feed_count=12처럼 값이 채워지지 NULL이 되지 않기 때문이다
+	 * (뷰의 count(*) FILTER는 매치 0건이어도 정수 0을 반환 — PerfConfidence 클래스 javadoc 참조).
+	 * 이 케이스를 데이터 미비로 오판하면 정상 계정이 영구 스킵된다.
+	 */
+	@Test
+	void 피드_전용_계정은_데이터_미비가_아니라_정상_처리된다() {
+		db.update("""
+				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
+				  last_posted_at,
+				  views_sample_count, likes_sample_count, comments_sample_count, reels_count, feed_count,
+				  median_views, median_er_pct, top_views_share_pct, window_span_days)
+				VALUES ('acct_feed_only', 5000, 12, 0, 'likes', timestamptz '2026-07-06 09:00:00+09',
+				  0, 12, 12, 0, 12, NULL, 1.8, NULL, 45)""");
+
+		job.run();
+
+		assertTrue(calls.stream().anyMatch(c -> c.handle().equals("acct_feed_only")),
+				"피드 전용 계정이 데이터 미비로 오판돼 스킵됨: " + calls);
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_feed_only'", Long.class));
 	}
 }

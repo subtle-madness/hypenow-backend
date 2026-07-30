@@ -1,6 +1,7 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.llm.AdSituation;
+import com.celfit.analytics.llm.PerfConfidence;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -110,6 +111,35 @@ final class AccountAdCanon {
 		out.put("comparison_ad_count", ad.comparisonAdCount());
 		out.put("last_ad_posted_at", ad.lastAdPostedAt());
 		return out;
+	}
+
+	/**
+	 * 판정 전용 내부 컬럼 9개(설계 2026-07-30-perf-summary-statistical-guards §3-1·§3-3) — PerfConfidence
+	 * 계산에만 쓰고 LLM 프롬프트에는 노출하지 않는다(수치가 그대로 인용될 여지 차단).
+	 *
+	 * <p>AccountAnalysisJob(일상 배치)·ClaudeBurstRunner(구독 버스트 export) 양쪽이 이 목록으로
+	 * 프롬프트 summary를 벗겨낸다 — 한쪽만 벗겨내면 신뢰도 가드가 조용히 우회되는 구멍이 된다
+	 * (07-30 재발 방지: 버스트 경로가 구 5-arg 생성자로 가드를 건너뛰던 문제).
+	 *
+	 * <p>{@link PerfConfidence#CONFIDENCE_COLUMNS}를 그대로 재사용한다 — 판정에 쓰는 컬럼 목록과
+	 * 프롬프트에서 벗겨낼 컬럼 목록이 서로 다른 상수로 따로 관리되면 한쪽만 고쳤을 때 조용히
+	 * 어긋나는 드리프트가 생긴다.
+	 */
+	static final List<String> INTERNAL_CONFIDENCE_COLUMNS = PerfConfidence.CONFIDENCE_COLUMNS;
+
+	/** canonicalSummary 사본 + 그 사본에서 신뢰도 등급 계산에만 쓴 9컬럼을 제거한 프롬프트용 결과. */
+	record SummaryWithConfidence(Map<String, Object> promptSummary, PerfConfidence confidence) {}
+
+	/**
+	 * 원본 스냅샷(9컬럼 포함)에서 신뢰도 등급을 판정하고, 광고 정본으로 치환한 프롬프트 사본에서는
+	 * 그 9컬럼을 제거해 함께 돌려준다 — 판정은 반드시 원본에서 해야 한다(치환·제거 이후에는 판정 근거
+	 * 자체가 사라진다).
+	 */
+	static SummaryWithConfidence withConfidence(Map<String, Object> summary, AdMetrics ad) {
+		PerfConfidence confidence = PerfConfidence.of(summary);
+		Map<String, Object> promptSummary = canonicalSummary(summary, ad);
+		INTERNAL_CONFIDENCE_COLUMNS.forEach(promptSummary::remove);
+		return new SummaryWithConfidence(promptSummary, confidence);
 	}
 
 	/**
