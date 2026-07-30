@@ -677,9 +677,20 @@ class DailySweepJobTest {
 				"SELECT author FROM post_comment WHERE short_code='AAA'", String.class)).isEqualTo("fan1");
 	}
 
-	/** 게시물당 전량 교체 갱신 — 스윕을 두 번 돌리면 이전 수집분이 사라지고 이번 수집분만 남는다. */
+	private static final String TWO_COMMENTS_UPDATED = """
+			{"response":{"comments":[
+				{"pk":"999","text":"좋아요","comment_like_count":10,
+				 "created_at_utc":1700000000,"user":{"username":"fan1"},"preview_child_comments":[]},
+				{"pk":"1000","text":"저도요","comment_like_count":1,
+				 "created_at_utc":1700000100,"user":{"username":"fan2"},"preview_child_comments":[]}]},
+			"has_more_comments":false,"next_page_id":null}""";
+
+	/**
+	 * 게시물당 누적 합집합 upsert — 스윕을 두 번 돌리면 이전 수집분(id)이 보존되고 신규 id가
+	 * 추가되며, 같은 id를 재관측하면 like_count 같은 갱신 대상 컬럼만 새 값으로 바뀐다(계약 §3 post_comment).
+	 */
 	@Test
-	void 댓글은_스윕마다_전량_교체_갱신된다() {
+	void 댓글은_스윕마다_누적_합집합으로_upsert된다() {
 		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
 				.comments("AAA", ONE_COMMENT);
 		tracking("someuser", "AAA", "rk-t1");
@@ -687,12 +698,19 @@ class DailySweepJobTest {
 		job.run();
 		assertThat(db.queryForObject(
 				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isEqualTo(1);
-
-		hiker.comments("AAA", "{\"response\":{\"comments\":[],\"has_more_comments\":false},"
-				+ "\"next_page_id\":null}");
-		job.run();
 		assertThat(db.queryForObject(
-				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isZero();
+				"SELECT like_count FROM post_comment WHERE short_code='AAA' AND id='999'", Long.class))
+				.isEqualTo(3L);
+
+		hiker.comments("AAA", TWO_COMMENTS_UPDATED);
+		job.run();
+
+		var ids = db.queryForList(
+				"SELECT id FROM post_comment WHERE short_code='AAA' ORDER BY id", String.class);
+		assertThat(ids).containsExactly("1000", "999");   // 이전 수집분(999)이 보존되고 신규(1000)가 추가된다
+		assertThat(db.queryForObject(
+				"SELECT like_count FROM post_comment WHERE short_code='AAA' AND id='999'", Long.class))
+				.isEqualTo(10L);   // 재관측 시 like_count가 갱신된다
 	}
 
 	/** 댓글 콜 실패는 그 게시물만 격리한다 — 계정 스냅샷·다른 게시물 댓글 수집은 계속된다. */
