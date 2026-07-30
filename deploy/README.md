@@ -143,26 +143,32 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 KST 04:10 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
-  - **analysis**: 서버 `~/backups/` 7일 롤링 + Google Drive `hypenow-backups/` 30일 롤링
-  - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버 3일 롤링 +
-    Drive `hypenow-backups/crawler/` **최신 3개** 롤링 — 덤프가 GB급(07-20 실측 ~1.5GB,
-    DB 기준 하루 ~0.6GB씩 증가)이라 Drive 무료 15GB에 맞춰 개수 제한. 용량 증설 시 개수 상향.
+  - **analysis**: 서버 `~/backups/` 7일 롤링 + B2 `hypenow-backups/analysis/` 30일(기간) 롤링
+  - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버는 **오프사이트
+    업로드 성패에 따라 1개(성공) / 3개(실패)** 롤링(`backup.sh`의 `offsite_ok` 분기 — B2가
+    막혀도 로컬 3개로 버틴다) + B2 `hypenow-backups/crawler/` **최신 `B2_CRAWLER_KEEP`개**
+    (`backup.sh` 상단 상수, 기본 5) 롤링. 덤프가 하루 ~1GiB씩 느는 GB급이라 개수가 곧 용량 —
+    B2 버킷 캡 초과 시 업로드가 `403 storage_cap_exceeded`로 전량 실패한다(07-27~30 실측: 기존
+    "최신 30개" 정책이 요구한 ~240GB가 캡을 초과해 며칠간 오프사이트 백업 공백 발생). 용량
+    여유가 생기면 `B2_CRAWLER_KEEP`만 올릴 것.
   - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 7일 롤링 +
-    Drive `hypenow-backups/monitoring/` 30일 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
+    B2 `hypenow-backups/monitoring/` 30일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
-### 6-1. rclone(Google Drive) 1회 설정
+### 6-1. rclone(Backblaze B2) 1회 설정
 ```bash
-# 맥에서 (브라우저 OAuth 필요)
+# 맥에서 (B2 계정의 Application Key 필요 — B2 콘솔에서 발급)
 brew install rclone
-rclone config          # n → 이름 gdrive → storage: drive → 기본값들 → 브라우저 승인
-rclone lsd gdrive:     # 동작 확인
+rclone config          # n → 이름 b2 → storage: b2 → Account ID·Application Key 입력
+rclone lsd b2:         # 동작 확인
 ssh ubuntu@<IP> 'mkdir -p ~/.config/rclone'
 scp ~/.config/rclone/rclone.conf ubuntu@<IP>:~/.config/rclone/rclone.conf   # 서버로 복사
-ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # 서버에서 확인
+ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에서 확인
 ```
-※ rclone.conf에는 구글 OAuth 토큰이 들어 있다 — repo에 커밋 금지, 서버 홈에만.
+※ rclone.conf에는 B2 Application Key가 들어 있다 — repo에 커밋 금지, 서버 홈에만.
+※ (07-26: Google Drive 무료 15GB 초과로 B2 전환. 07-27~30: B2도 종량제가 아니라 캡이 있어
+  다시 걸림 — 위 crawler 개수 축소로 대응. `backup.sh` 상단 주석에 상세 경위 기록.)
 
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
@@ -368,14 +374,17 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    ```
 3. staging→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
    (CD의 "monitoring 헬스 확인" 스텝이 같은 판정을 자동 수행 — 호스트 포트가 없어 외부 curl은 불가)
-4. 서버 스크립트 갱신 — 레포에는 반영돼 있지만 **CD는 스크립트를 배포하지 않는다**(compose·이미지만).
-   두 파일 모두 rsync로 직접 올릴 것:
-   - `post-container-metrics.py` — 컨테이너 다운 알람 대상 `SERVICES`에 monitoring 추가(§9)
-   - `backup.sh` — monitoring DB 덤프 추가(§6). 안 올리면 백업 크론이 옛 스크립트를 계속 돌려
-     monitoring만 백업에서 조용히 빠진다.
+4. 서버 스크립트 갱신 — `backup.sh`는 07-30부터 CD의 "compose·Caddyfile·롤링 스크립트 동기화"
+   스텝이 `rollout.sh`와 함께 매 배포마다 자동으로 올린다(cd.yml). **`post-container-metrics.py`는
+   여전히 CD가 배포하지 않으므로** 컨테이너 다운 알람 대상 `SERVICES`에 monitoring을 추가했다면(§9)
+   수동으로 올릴 것:
    ```bash
-   rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
+   rsync -av deploy/scripts/post-container-metrics.py ubuntu@<IP>:~/deploy/scripts/
    ```
+   (07-30 이전엔 `backup.sh`도 CD가 안 올려 레포↔서버가 반대 방향으로 갈라졌었다 — 레포엔
+   monitoring 덤프 블록이 있는데 서버엔 없어 monitoring이 운영 백업에서 조용히 누락되고,
+   반대로 서버가 먼저 전환한 B2 오프사이트는 레포에 반영이 안 되는 상태였다. `backup.sh`
+   자동 동기화로 이 드리프트 재발을 막는다.)
 
 ### 접근 통제·디버깅
 
@@ -391,4 +400,4 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
   다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
-  서버 `~/backups/monitoring-*.sql.gz` 7일 + Drive `hypenow-backups/monitoring/` 30일 롤링(§6).
+  서버 `~/backups/monitoring-*.sql.gz` 7일 + B2 `hypenow-backups/monitoring/` 30일 롤링(§6).
