@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -90,7 +91,17 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 
 	@Override
 	public void submit(long registrationId) {
-		executorPool.execute(() -> processSafely(registrationId));
+		try {
+			executorPool.execute(() -> processSafely(registrationId));
+		} catch (RejectedExecutionException e) {
+			// 풀(코어 2)+큐(100)가 모두 찬 경우 AbortPolicy가 여기로 던진다. submit()은 접수 트랜잭션의
+			// afterCommit 콜백으로 요청 스레드에서 도는 경로라(RegistrationExecutor 인터페이스 문서 참조),
+			// CallerRunsPolicy였다면 웹 스레드가 큐 소진분을 대신 처리하느라 최대 awaitTerminationSeconds급
+			// (수 초~수십 초)으로 블로킹될 수 있었다. 즉시 실패시키고 이 등록은 pending인 채로 남겨
+			// recoverStalePending()이 다음 배치에서 집어가게 한다 — 유실이 아니라 지연일 뿐이다.
+			log.warn("등록 실행기 큐 초과 — 접수는 유지, pending 상태로 recoverStalePending 대기 registrationId={}",
+					registrationId, e);
+		}
 	}
 
 	/** 크래시 복구 — pending(target 미확정) 상태로 5분 넘게 방치된 monitoring_items를 같은 registrationKey로 replay한다.
@@ -209,6 +220,12 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		UUID itemKey = UUID.randomUUID();
 		long itemId = itemRepository.insertPending(userId, MODE_URL, itemKey, registration.campaignId(),
 				resolved.shortCode(), canonicalUrl, null, trackingDays, registeredOn);
+		// item_id를 여기서 즉시 연결해 둔다(아직 result는 pending 그대로) — register 호출이
+		// MonitoringUnavailableException으로 끝나면 아래 catch에서 entry를 건드리지 않는데, 이때도
+		// entries.item_id가 비어 있으면 recoverStalePending()이 나중에 성공시켜도 findEntryByItemId가
+		// 못 찾아 entry·registration이 영영 pending으로 남는다(item_id를 나중에 걸면 이미 늦다).
+		registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_PENDING, null, null,
+				canonicalUrl, itemId);
 
 		OffsetDateTime expiresAt = MonitoringExpiry.computeExpiresAt(registeredOn, trackingDays);
 		try {

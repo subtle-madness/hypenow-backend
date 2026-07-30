@@ -61,15 +61,18 @@ public class MonitoringConfig {
 		this.monitoringJdbc = JdbcClient.create(monitoringDataSource);
 
 		// 등록 백그라운드 실행기 전용 풀 — 등록 접수(6.27)는 동기로 끝나고, 첫 확인(monitoring 호출)만
-		// 여기서 돈다. 코어=최대=2(등록 트래픽이 아직 낮아 상한 고정), 큐 100으로 스파이크 흡수하고
-		// 큐까지 찬 초과분은 CallerRunsPolicy로 제출 스레드에서 직접 돌려 유실 없이 배압을 건다.
-		// 롤링 배포(was-rolling-deploy) 중 SIGTERM이 와도 waitForTasksToCompleteOnShutdown+
-		// awaitTerminationSeconds(15)로 진행 중이던 등록 확인을 마저 끝내고 종료한다.
+		// 여기서 돈다. 코어=최대=2(등록 트래픽이 아직 낮아 상한 고정), 큐 100으로 스파이크 흡수한다.
+		// 큐까지 찬 초과분은 AbortPolicy로 즉시 거부한다 — submit()이 접수 트랜잭션의 afterCommit
+		// 콜백으로 요청(웹) 스레드에서 돌기 때문에, CallerRunsPolicy를 쓰면 그 웹 스레드가 큐 소진분을
+		// 대신 처리하느라 블로킹되는 트레이드오프가 생긴다. 거부된 등록은 pending인 채로 남고
+		// recoverStalePending()이 다음 배치에서 집어가므로 유실은 아니다(MonitoringRegistrationExecutor.submit
+		// 참조). 롤링 배포(was-rolling-deploy) 중 SIGTERM이 와도 waitForTasksToCompleteOnShutdown+
+		// awaitTerminationSeconds(15)로 진행 중이던 등록 확인은 마저 끝내고 종료한다.
 		ThreadPoolTaskExecutor pool = new ThreadPoolTaskExecutor();
 		pool.setCorePoolSize(2);
 		pool.setMaxPoolSize(2);
 		pool.setQueueCapacity(100);
-		pool.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+		pool.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
 		pool.setWaitForTasksToCompleteOnShutdown(true);
 		pool.setAwaitTerminationSeconds(15);
 		pool.setThreadNamePrefix("monitoring-registration-");

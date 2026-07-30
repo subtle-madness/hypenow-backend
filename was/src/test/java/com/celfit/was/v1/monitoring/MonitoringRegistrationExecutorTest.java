@@ -13,11 +13,13 @@ import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.RegistrationEntryRow;
 import com.celfit.was.monitoring.RegistrationRepository;
+import com.celfit.was.monitoring.RegistrationRow;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpMethod;
@@ -299,5 +301,94 @@ class MonitoringRegistrationExecutorTest extends IntegrationTest {
 		RegistrationEntryRow entry = onlyEntry(registrationId);
 		assertThat(entry.result()).isEqualTo("success");
 		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
+	}
+
+	@Test
+	void entry_처리_중_예외가_나도_다른_entry는_계속_처리되고_완료_마킹이_시도된다() {
+		// entry #1: keywords가 깨진 JSON이라 readKeywordRule()에서 예외가 난다 — per-entry
+		// try-catch로 격리돼야 entry #2 처리·완료 마킹 시도가 막히지 않는다.
+		// "not-json"은 jsonb 컬럼 자체가 거부해 insertPending에서 바로 DB 예외가 난다(테스트 셋업
+		// 단계에서 실패) — 유효한 JSON이되 Map으로 역직렬화할 수 없는 형태(JSON 문자열 리터럴)를 써야
+		// readKeywordRule() 내부(실행기 처리 중)에서 예외가 재현된다.
+		long brokenItemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "broken.acct",
+				null, "\"not-a-map\"", 14, LocalDate.of(2026, 7, 30));
+		long okItemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "OK2",
+				"https://www.instagram.com/p/OK2/", null, 14, LocalDate.of(2026, 7, 30));
+		long registrationId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(registrationId, 0, "broken.acct", "account", "pending", null, null, null,
+				brokenItemId);
+		registrationRepository.insertEntry(registrationId, 1, "https://www.instagram.com/p/OK2/", "post", "pending",
+				null, null, null, okItemId);
+
+		// registrationRepository(Spring 빈)는 이미 CGLIB 프록시라 Mockito.spy()로 한 겹 더 감싸면
+		// "is not a mock" 오탐이 난다 — jdbcClient로 프록시 없는 raw 인스턴스를 새로 만들어 spy한다
+		// (real DB는 그대로 공유하므로 이후 registrationRepository.findById() 조회와 정합).
+		RegistrationRepository spyRegistrationRepository = Mockito.spy(new RegistrationRepository(jdbcClient));
+		RestClient.Builder builder = RestClient.builder().baseUrl(BASE);
+		MockRestServiceServer isolatedServer = MockRestServiceServer.bindTo(builder).build();
+		MonitoringRegistrationExecutor isolatedExecutor = new MonitoringRegistrationExecutor(
+				new MonitoringCommandClient(builder.build()), itemRepository, spyRegistrationRepository,
+				new ObjectMapper(), (TaskExecutor) Runnable::run);
+
+		isolatedServer.expect(requestTo(BASE + "/api/targets"))
+				.andExpect(jsonPath("$.shortCode").value("OK2"))
+				.andRespond(withSuccess("{ \"targetId\": 930, \"status\": \"TRACKING\" }", MediaType.APPLICATION_JSON));
+
+		isolatedExecutor.submit(registrationId);
+
+		RegistrationRow row = registrationRepository.findById(registrationId).orElseThrow();
+		assertThat(row.entries().get(0).result()).isEqualTo("pending");   // 예외로 격리 — 원상태 유지
+		assertThat(row.entries().get(1).result()).isEqualTo("success");   // 뒤 entry는 정상 처리됨
+		assertThat(itemRepository.findByIdAndUser(okItemId, userId).orElseThrow().targetId()).isEqualTo(930L);
+		assertThat(itemRepository.findByIdAndUser(brokenItemId, userId)).isPresent();   // 삭제되지 않고 그대로
+
+		// entry #1이 예외로 pending 남아 실제 완료는 안 되지만(markCompletedIfAllSettled의 no-op 분기),
+		// 루프 종료 후 호출 자체는 항상 시도돼야 한다.
+		Mockito.verify(spyRegistrationRepository).markCompletedIfAllSettled(registrationId);
+		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNull();
+		isolatedServer.verify();
+	}
+
+	@Test
+	void share_해소_후_전송_실패해도_item_id가_바로_연결돼_복구되면_entry가_따라간다() {
+		// 1번 갭 회귀: item_id를 register 호출 *이전에* 미리 연결해 두지 않으면, 여기서 전송 실패로
+		// pending인 채 끝난 뒤 recoverStalePending()이 target을 확정시켜도 entries.item_id가 비어
+		// findEntryByItemId가 못 찾아 entry·registration이 영영 미완료로 남는다.
+		long registrationId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(registrationId, 0, "https://www.instagram.com/share/reel/laterFail/",
+				"post", "pending", null, null, null, null);
+
+		// MockRestServiceServer는 실제 요청이 한 번이라도 나간 뒤에는 새 expect()를 추가할 수 없다 —
+		// submit() 단계(resolve 성공 + register 2회 실패)와 recoverStalePending() 단계(register 성공,
+		// 다른 테스트가 남긴 leaked pending 행까지 함께 올 수 있어 manyTimes)를 전부 미리 선언해 둔다.
+		server.expect(requestTo(BASE + "/api/share/resolve"))
+				.andRespond(withSuccess("""
+						{ "shortCode": "LATER1", "username": "acct", "contentType": "FEED" }
+						""", MediaType.APPLICATION_JSON));
+		server.expect(requestTo(BASE + "/api/targets")).andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+		server.expect(requestTo(BASE + "/api/targets")).andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+		server.expect(ExpectedCount.manyTimes(), requestTo(BASE + "/api/targets"))
+				.andRespond(withSuccess("{ \"targetId\": 940, \"status\": \"TRACKING\" }", MediaType.APPLICATION_JSON));
+
+		executor.submit(registrationId);
+
+		RegistrationEntryRow midway = onlyEntry(registrationId);
+		assertThat(midway.result()).isEqualTo("pending");
+		assertThat(midway.itemId()).isNotNull();   // 전송 실패에도 item_id는 이미 연결돼 있어야 한다
+		long itemId = midway.itemId();
+		assertThat(itemRepository.findByIdAndUser(itemId, userId)).isPresent();
+
+		// 복구 대상이 되도록 오래된 것으로 표시하고 replay — 이번엔 성공.
+		jdbcClient.sql("UPDATE app.monitoring_items SET created_at = now() - interval '10 minutes' WHERE id = :id")
+				.param("id", itemId)
+				.update();
+
+		executor.recoverStalePending();
+
+		RegistrationEntryRow finalEntry = onlyEntry(registrationId);
+		assertThat(finalEntry.result()).isEqualTo("success");
+		assertThat(itemRepository.findByIdAndUser(itemId, userId).orElseThrow().targetId()).isEqualTo(940L);
+		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
+		server.verify();
 	}
 }
