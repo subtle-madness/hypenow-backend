@@ -58,7 +58,23 @@ public class HikerClient {
 		Map<String, PostInfo> byCode = new LinkedHashMap<>();
 		String cursor = null;
 		for (int page = 0; page < wanted; page++) {
-			String body = http.get("/v2/user/medias?user_id=" + enc(userId) + pageParam(cursor));
+			String body;
+			try {
+				body = http.get("/v2/user/medias?user_id=" + enc(userId) + pageParam(cursor));
+			} catch (SubjectNotFoundException e) {
+				// Hiker는 열거할 엔트리가 없으면 200 빈 배열이 아니라 404 {"detail":"Entries not found"}를
+				// 준다(릴스 0건 계정의 /v2/user/clips와 동일 규칙 — fetchClipPlays는 이미 이걸 삼킨다).
+				// collectAccount는 fetchProfile이 200으로 계정 존재를 확인한 직후에만 이 경로를 타므로,
+				// 여기서의 404는 "계정 부재"가 아니라 "열거할 게시물이 없음"이다. 계정 삭제·개명은
+				// fetchProfile 단계에서 이미 SubjectNotFoundException으로 걸러진다.
+				//
+				// page 구분 없이 동일하게 처리한다: page==0 404는 "게시물 0건", page>0 404는 커서가
+				// 끝에 도달했다는 신호일 수 있다 — 어느 쪽이든 지금까지 모은 결과(0건 또는 이전 페이지분)를
+				// 그대로 반환하고 열거만 조용히 중단하는 것이 안전하다(커서 미전진 가드와 같은 성격의
+				// "조용한 종료" — 예외로 계정 전체 등록·스윕을 실패시키지 않는다).
+				log.info("게시물 열거 404 — user_id {} {}페이지, 게시물 없음/커서 종료로 간주하고 중단", userId, page + 1);
+				break;
+			}
 			JsonNode root = root(body);
 			int before = byCode.size();
 			for (JsonNode item : items(root)) {

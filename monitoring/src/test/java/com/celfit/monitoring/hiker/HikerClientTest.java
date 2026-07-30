@@ -175,6 +175,43 @@ class HikerClientTest {
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/medias"))).hasSize(1);
 	}
 
+	/**
+	 * 게시물 0건 계정 — Hiker는 열거할 엔트리가 없으면 200이 아니라 404
+	 * {"detail":"Entries not found"}를 준다(릴스 0건 계정의 /v2/user/clips와 동일 규칙).
+	 * collectAccount는 fetchProfile이 200으로 계정 존재를 확인한 직후에만 이 경로를 타므로,
+	 * 여기서의 404는 계정 부재가 아니라 "열거할 게시물이 없음"이다 — 예외 대신 빈 리스트로 강등해야
+	 * 등록(RegistrationService.registerAccount)이 404 SUBJECT_NOT_FOUND로 중단되지 않는다.
+	 */
+	@Test
+	void 게시물_0건_계정은_medias_404를_빈_리스트로_강등한다() {
+		HikerClient client = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/medias")) throw new SubjectNotFoundException("404 Entries not found");
+			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
+			throw new IllegalStateException("예상 밖 호출: " + path);
+		});
+		var posts = client.fetchRecentPosts("newuser", "999", 1);
+		assertThat(posts).isEmpty();
+	}
+
+	/**
+	 * 2페이지째(page>0) medias 404 — 계정 부재가 아니라 커서가 끝에 도달했다는 신호일 수 있다.
+	 * 이미 1페이지에서 모은 결과가 있다면 그걸 버리지 않고 그대로 반환하며 열거만 중단한다
+	 * (커서 미전진 가드와 같은 성격의 "조용한 종료" — 예외로 계정 전체 스윕을 실패시키지 않는다).
+	 */
+	@Test
+	void 둘째페이지_medias_404는_1페이지_결과를_보존하고_중단한다() {
+		HikerClient client = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
+			if (path.startsWith("/v2/user/medias")) {
+				if (path.contains("page_id=")) throw new SubjectNotFoundException("404 Entries not found");
+				return fixture("medias.json");
+			}
+			throw new IllegalStateException("예상 밖 호출: " + path);
+		});
+		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 2);
+		assertThat(posts).hasSize(12);   // 1페이지 결과는 살아남는다
+	}
+
 	@Test
 	void 클립_보강이_실패해도_열거는_계속되고_조회수만_null() {
 		HikerClient client = new HikerClient(path -> {

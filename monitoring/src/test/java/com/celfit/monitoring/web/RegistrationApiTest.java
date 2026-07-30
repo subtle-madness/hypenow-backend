@@ -41,6 +41,8 @@ class RegistrationApiTest {
 		volatile boolean postWithoutOwner = false;
 		/** 프로필·clips는 성공하고 열거(medias)만 터지는 부분 실패 — 이미 나간 콜의 원형이 살아남는지 본다. */
 		volatile boolean mediasFail = false;
+		/** 게시물 0건 계정 — 프로필은 200이지만 medias 열거가 404 "Entries not found"를 준다. */
+		volatile boolean mediasNotFound = false;
 		/** POST 등록 직후 즉시 댓글 수집(best-effort)이 실패해도 등록이 성공하는지 보는 스위치. */
 		volatile boolean commentsFail = false;
 		/**
@@ -78,6 +80,9 @@ class RegistrationApiTest {
 			if (path.startsWith("/v2/user/medias")) {
 				if (mediasFail) {
 					throw new HikerFetchException("열거 실패");
+				}
+				if (mediasNotFound) {
+					throw new SubjectNotFoundException("404 Entries not found");
 				}
 				return fixture("medias.json");
 			}
@@ -153,6 +158,7 @@ class RegistrationApiTest {
 		hiker.privateAccount = false;
 		hiker.postWithoutOwner = false;
 		hiker.mediasFail = false;
+		hiker.mediasNotFound = false;
 		hiker.commentsFail = false;
 		hiker.commentsHasMorePages = false;
 		hiker.commentsCalls = 0;
@@ -186,6 +192,27 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isZero();
 		// 프로필 스냅샷도 없다 — 수집 1회분은 SnapshotWriter가 한 트랜잭션으로 묶어 통째로 커밋한다.
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isZero();
+	}
+
+	/**
+	 * 게시물 0건 계정 — Hiker는 프로필(200)은 정상 응답하지만 열거(medias)에 404
+	 * {"detail":"Entries not found"}를 준다(릴스 0건 계정이 /v2/user/clips에서 겪는 것과 동일 규칙).
+	 * HikerClient.fetchRecentPosts가 이 404를 빈 리스트로 강등하지 않으면 SubjectNotFoundException이
+	 * 전파돼 등록이 404 SUBJECT_NOT_FOUND로 죽고 target 행이 생기지 않는다(실제 계정 wo_om3 재현 사례).
+	 */
+	@Test
+	void 게시물_0건_계정도_WATCHING으로_등록되고_target_행이_생긴다() throws Exception {
+		hiker.mediasNotFound = true;
+
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.status").value("WATCHING"))
+				.andExpect(jsonPath("$.firstSnapshot.recentPostCount").value(0));
+		assertThat(db.queryForObject("SELECT count(*) FROM target WHERE registration_key='rk-1'", Long.class))
+				.isEqualTo(1);
+		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
+		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot", Long.class)).isZero();
 	}
 
 	@Test
