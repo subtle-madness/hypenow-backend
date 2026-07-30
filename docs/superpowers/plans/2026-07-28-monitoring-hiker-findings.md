@@ -212,3 +212,33 @@ Task 4를 픽스처 5종으로 TDD 구현한 결과 §2·§4·§5의 매핑이 *
   점유(스윕 N대상×3콜의 풀 고갈 위험)가 한 번에 풀린다.
 - 부기: raw.fetch_payload의 subject는 PROFILE=username, POSTS=user_id(숫자 pk), POST=short_code —
   계정 단위 감사 쿼리는 PROFILE 행의 payload에서 pk를 얻어 2단계로.
+
+## 10. P2 실측 추기 (2026-07-30) — 댓글·share 해소
+
+대상: `rarebeauty` 릴스 `DbV7LgZsKG8`(픽스처 §6과 동일 게시물). 총 4콜.
+
+### 10-1. 댓글 — `GET /v2/media/comments?id=<media_pk>` (확정)
+
+- **media_pk는 저장 없이 shortcode에서 산술 유도**된다: shortcode = pk의 base64url 인코딩
+  (알파벳 `A-Za-z0-9-_`). 실측 검증: `DbV7LgZsKG8` → `3951324523536622012` 일치.
+- 응답 셰이프: `{ response: { comments: [...], has_more_comments, next_min_id, ... }, next_page_id }`
+  — **1콜 15건**, 커서는 medias/clips와 같은 최상위 `next_page_id`.
+- 정렬은 IG 기본(랭킹, `is_ranked: true`) — 최신순 아님. 정렬 파라미터 없음.
+- 댓글 필드: `pk`(댓글 ID, **문자열**), `text`, `comment_like_count`,
+  `created_at_utc`(epoch seconds), `user.username`·`user.full_name`·`user.profile_pic_url`.
+- **답글은 `preview_child_comments[]`로 동봉**되며 자식에 **`is_created_by_media_owner`
+  불리언이 있다** — 작성자 본인 답글 판정에 별도 `/v2/media/comments/replies` 콜 불필요.
+  ⚠️ 협업(coauthor) 게시물에서는 media owner ≠ 추적 계정일 수 있다(실측: rarebeauty
+  그리드의 이 릴스에서 owner는 sephora). 판정은 `is_created_by_media_owner ∨
+  (자식 user.username = 게시물 username)`로.
+- 픽스처: `hiker/comments.json`(자식 있는 3건 + 없는 3건으로 축약, 메타 원본 유지).
+
+### 10-2. share 해소 — `GET /v2/media/info/by/url?url=<원문 URL>` (채택)
+
+- 응답: `{ media_or_ad: {...}, status }` — `code`·`user.username`·`product_type` 존재.
+  스펙 명세: 200=정상 / 404=삭제·비접근 / 400=URL 불량 → 계약 에러 어휘로 1:1 매핑.
+- `/v1/share/by/url`은 스토리·하이라이트(`/s/` 링크) 전용이라 게시물 share 토큰에는
+  부적합. `/v1/share/reel/by/url`(릴스 전용)은 폴백 후보로 남김.
+- ⚠️ **실제 `instagram.com/share/…` 토큰 실측은 잔여**(샘플 확보 불가 — 일반
+  `/reel/` URL로만 셰이프 검증). 픽스처: `hiker/media-info-by-url.json`(미디어 버전
+  배열 등 무거운 키 제거, 파서 필드 생존).

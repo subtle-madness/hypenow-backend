@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
@@ -32,10 +33,12 @@ public class RegistrationService {
 
 	private final CollectService collect;
 	private final TargetRepository targets;
+	private final AlarmRecorder alarms;
 
-	public RegistrationService(CollectService collect, TargetRepository targets) {
+	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms) {
 		this.collect = collect;
 		this.targets = targets;
+		this.alarms = alarms;
 	}
 
 	public Result register(RegisterCommand cmd) {
@@ -63,7 +66,7 @@ public class RegistrationService {
 
 	private Result registerAccount(RegisterCommand cmd) {
 		var collected = collect.collectAccount(cmd.username());
-		long id = targets.insert(TargetType.ACCOUNT, cmd.username(), null, cmd.keywordRule(),
+		long id = targets.insert(TargetType.ACCOUNT, cmd.userId(), cmd.username(), null, cmd.keywordRule(),
 				TargetStatus.WATCHING, null, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
 		var p = collected.profile();
@@ -84,9 +87,14 @@ public class RegistrationService {
 		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
 		// null이 아니라 isBlank로 본다 — HikerClient.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
 		String shortCode = isBlank(post.shortCode()) ? cmd.shortCode() : post.shortCode();
-		long id = targets.insert(TargetType.POST, post.username(), shortCode, null,
+		long id = targets.insert(TargetType.POST, cmd.userId(), post.username(), shortCode, null,
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
+		// 게시물 직접 등록은 등록 = 수집 시작이다. replay 경로는 여기 오지 않으므로 재시도로 중복되지 않는다.
+		// alarms.collectionStartedImmediate는 AlarmRecorder 정책상 예외를 던지지 않는다 — 적재가
+		// 실패해도 등록 자체는 계속 201로 성공하고, 그 알람 이벤트는 재시도 없이 유실된다(로그로만 관측).
+		// replay는 target 중복 방지(멱등)만 보장할 뿐 이 알람 유실을 복구하지 않는다.
+		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
 		return new Result(id, TargetStatus.TRACKING.name(), snapshot, false);
@@ -98,6 +106,10 @@ public class RegistrationService {
 		}
 		if (cmd.type() == null) {
 			throw new ValidationException("type은 ACCOUNT 또는 POST여야 합니다.");
+		}
+		if (cmd.userId() == null) {
+			// 뒤늦게 채울 방법이 없다 — 캠페인이 만들어지고 나면 그 소유자를 monitoring이 알 길이 없다.
+			throw new ValidationException("userId는 필수입니다.");
 		}
 		if (cmd.expiresAt() == null) {
 			throw new ValidationException("expiresAt은 필수입니다.");
