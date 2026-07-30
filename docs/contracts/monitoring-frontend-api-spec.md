@@ -301,6 +301,7 @@ status와 다른 필드의 조합 불변식:
 | startDate / endDate | string 또는 null | `YYYY-MM-DD`. 상태(예정/진행 중/종료/기간 미설정)는 클라 파생 |
 | brand | string 또는 null | 브랜드명. **최대 30자** |
 | budget | number 또는 null | 예산. **선택 입력이며 미입력은 null이다.** 값이 있으면 **원 단위 0 이상 정수**로만 받는다(소수가 들어오면 만원 단위 표기와 원 단위 저장 사이 왕복에서 값이 100배로 어긋난다). 화면은 null을 `-`로, 0을 "0만원"으로 구분해 표시한다 |
+| seedingCount | number 또는 null | 시딩 인원 수(이행률=등록 대비 시딩의 모수). **선택 입력이며 미입력은 null이다.** 값이 있으면 **0 이상 정수**로만 받는다. **유저가 직접 선언하는 입력값이며 서버 집계가 아니다** — "시딩은 했지만 계정을 등록하지 않은 사람"은 추적 행 자체가 없어 행 카운트로는 절대 구할 수 없다. 그래서 등록된 추적 행 수보다 작아도 에러가 아니다(예: 40명이라 적고 43명에게 추가 발송한 경우) — 값 사이 불일치는 화면 안내로 처리한다 |
 | createdAt | string | 생성 시각 ISO 8601(목록 기본 정렬 근거) |
 
 `name` 정규화·제약: 캠페인 이름은 라우트 세그먼트(`/monitoring/campaign/[name]`)이자 추적 행과의 조인 키다.
@@ -312,7 +313,7 @@ status와 다른 필드의 조합 불변식:
 
 #### 서버가 하지 않는 것
 
-목록 필터·검색·정렬·상태별 카운트·캠페인 집계(합산 지표, 참여율, CPE=budget/(likes+comments), CPV=budget/views)는 전부 프론트가 전량 데이터에서 계산한다. 카드 레벨의 "콘텐츠당 비용" 계열 수치(예산을 캠페인 콘텐츠 수로 나눈 뒤 지표로 나누는 산식)도 동일하게 클라 파생이며 API 필드가 아니다. MVP 규모 전제이며 목록 상한은 4절 24번.
+목록 필터·검색·정렬·상태별 카운트·캠페인 집계(합산 지표, 참여율, CPE=budget/(likes+comments), CPV=budget/views)는 전부 프론트가 전량 데이터에서 계산한다. 카드 레벨의 "콘텐츠당 비용" 계열 수치(예산을 캠페인 콘텐츠 수로 나눈 뒤 지표로 나누는 산식)도 동일하게 클라 파생이며 API 필드가 아니다. MVP 규모 전제이며 목록 상한은 4절 24번. **주의**: 이 절이 말하는 "서버가 하지 않는 것"은 budget·seedingCount 등 필드값으로부터의 2차 계산(파생)이다. seedingCount 자체는 계산값이 아니라 위 표대로 유저가 입력한 값을 그대로 저장·반환하는 필드라 이 규칙과 모순되지 않는다.
 
 ### 6.26 GET /v1/monitoring/items
 
@@ -415,8 +416,8 @@ Response 200: 수정된 TrackingItem. 에러: 400 VALIDATION_FAILED(과거 종�
 캠페인 CRUD. 인증: Required.
 
 - `GET /v1/monitoring/campaigns`: 전량 반환, `createdAt` 오름차순(동일 시각은 `id` 오름차순). Response 200: Campaign 배열, meta.total.
-- `POST /v1/monitoring/campaigns`: body `{ name(필수), description?, startDate?, endDate?, brand?, budget? }`. 이름 중복 시 409 CAMPAIGN_NAME_EXISTS. Response 201: Campaign.
-- `PATCH /v1/monitoring/campaigns/{campaignId}`: 같은 필드의 부분 업데이트(기간 인라인 수정 포함). 이름 변경 시 소속 행의 campaignName은 서버가 일관 반영(id 참조라 별도 캐스케이드 불필요). null 의미론: **키가 없으면 값 유지, 키가 있고 `null`이면 값 해제**다. 이 구분이 없으면 유저가 한 번 입력한 예산·설명·기간을 지울 수 없다. 동시 수정은 last-write-wins이며 버전 충돌 검사를 하지 않는다. Response 200: Campaign.
+- `POST /v1/monitoring/campaigns`: body `{ name(필수), description?, startDate?, endDate?, brand?, budget?, seedingCount? }`. `seedingCount`는 0 이상 정수, 생략하거나 `null`이면 미설정(등록된 추적 행 수와의 불일치는 에러가 아니다 — 6.25 참조). 이름 중복 시 409 CAMPAIGN_NAME_EXISTS. Response 201: Campaign.
+- `PATCH /v1/monitoring/campaigns/{campaignId}`: 같은 필드(`seedingCount` 포함)의 부분 업데이트(기간 인라인 수정 포함). 이름 변경 시 소속 행의 campaignName은 서버가 일관 반영(id 참조라 별도 캐스케이드 불필요). null 의미론: **키가 없으면 값 유지, 키가 있고 `null`이면 값 해제**다. 이 구분이 없으면 유저가 한 번 입력한 예산·시딩 인원·설명·기간을 지울 수 없다. 동시 수정은 last-write-wins이며 버전 충돌 검사를 하지 않는다. Response 200: Campaign.
 - `DELETE /v1/monitoring/campaigns/{campaignId}`: 캠페인만 삭제한다. **소속 추적 행은 지우지 않고 캠페인 연결만 해제**(campaignId·campaignName을 null로). 진행 중인 모니터링은 그대로 계속된다. Response 204. 프론트는 삭제 전 연결 건수를 확인 모달에 표시한다.
 
 start/endDate 검증: 둘 다 있으면 start ≤ end. 한쪽만 null 허용(프론트는 쌍으로 지우지만 서버는 관대하게).

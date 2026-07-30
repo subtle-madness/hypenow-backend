@@ -309,7 +309,7 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 	@Test
 	void 댓글은_최신순_상한_8건이고_캠페인_짝이_함께_조립된다() {
 		LocalDate registeredOn = LocalDate.now();
-		CampaignRow campaign = campaignRepository.insert(userId, "테스트 캠페인", null, null, null, null, null);
+		CampaignRow campaign = campaignRepository.insert(userId, "테스트 캠페인", null, null, null, null, null, null);
 		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
 		long itemId = seedAccountItem(campaign.id(), registeredOn, "glowdeep");
 		itemRepository.confirmTarget(itemId, targetId);
@@ -418,7 +418,7 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		long otherUserId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "mon-assembler-other-" + UUID.randomUUID() + "@test.io")
 				.query(Long.class).single();
-		CampaignRow foreignCampaign = campaignRepository.insert(otherUserId, "남의 캠페인", null, null, null, null, null);
+		CampaignRow foreignCampaign = campaignRepository.insert(otherUserId, "남의 캠페인", null, null, null, null, null, null);
 		LocalDate registeredOn = LocalDate.now();
 		seedAccountItem(foreignCampaign.id(), registeredOn, "glowdeep");
 
