@@ -49,7 +49,6 @@ class LoginWallIntegrationTest extends IntegrationTest {
 	void 내부_페이지와_구_api_표면도_익명_401이다() throws Exception {
 		mockMvc.perform(get("/")).andExpect(status().isUnauthorized());
 		mockMvc.perform(get("/dashboard")).andExpect(status().isUnauthorized());
-		mockMvc.perform(get("/api/contents")).andExpect(status().isUnauthorized());
 		mockMvc.perform(get("/api/auth/login").contentType(MediaType.APPLICATION_JSON))
 				.andExpect(status().isUnauthorized()); // 레거시 auth도 잠금 — 인증 입구는 /v1뿐
 		mockMvc.perform(get("/profile-images/x.png")).andExpect(status().isUnauthorized());

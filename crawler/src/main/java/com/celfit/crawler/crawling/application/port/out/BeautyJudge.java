@@ -13,10 +13,12 @@ public interface BeautyJudge {
                        List<String> captions) {}
 
     /**
-     * 4분류 판정 결과(v2) — 파생 boolean(beauty/company)은 BeautyClass 규칙을 위임한다.
+     * 5분류 판정 결과 — 파생 boolean(beauty/company)은 BeautyClass 규칙을 위임한다.
      * BEAUTY_SERVICE(시술·서비스)는 beauty=false — 리스트업 세그먼트로만 남고 수집·유사발굴 제외.
+     * basis는 판정의 주근거(CAPTION·BIO·CATEGORY_ONLY) — 모델이 밝히지 않거나 알 수 없는 값이면 null.
      */
-    record Verdict(String username, com.celfit.crawler.crawling.domain.BeautyClass beautyClass, String reason) {
+    record Verdict(String username, com.celfit.crawler.crawling.domain.BeautyClass beautyClass, String reason,
+                   String basis) {
         public boolean beauty() {
             return beautyClass.beauty();
         }

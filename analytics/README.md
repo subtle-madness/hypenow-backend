@@ -15,7 +15,8 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     `v_base_comment`). **raw 테이블·payload를 만지는 유일한 SQL.**
   - `01_recent_window.sql` — 계정별 최근 N개 윈도우 (`v_recent_content`)
   - `02_serving.sql` — 서빙 형태 뷰 (`v_serving_content`·`v_accounts`·`v_contents`·
-    `v_content_comments`·`v_content_metric_snapshots`) — 미러 대상과 1:1
+    `v_content_comments`·`v_content_metric_snapshots`) — 미러 대상과 1:1.
+    단 `v_content_metric_snapshots`는 07-30 미러 중단(소비자 부재) — 뷰만 존속하고 미러는 안 한다.
   - `03_analysis_baseline.sql` — 콘텐츠별 기준선 뷰 (`v_analysis_baseline`, 분석 잡 전용, 미러 안 함)
   - `04_analysis_candidates.sql` — LLM 캡션 선분석 후보 뷰 (`v_analysis_candidates`, 숙성 가드 3일·캡션 필수, 미러 안 함)
   - `10_account_detail.sql` — 계정 상세 뷰 3종 (`v_account_recent`·`v_account_summaries`·
@@ -24,7 +25,9 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   - `20_landing_stats.sql` — 랜딩 통계 뷰 (`v_landing_stats`)
 - `mirror/` — 타입 기반 미러: 뷰 SELECT → 공유 record 매핑 → analysis DB 테이블
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
-  대상: accounts·contents·content_comments·content_metric_snapshots (등록: MirrorConfig).
+  대상: accounts·contents·content_comments (등록: MirrorConfig).
+  `content_metric_snapshots`는 07-30 제외 — 소비자(was 레거시 `/api`)가 사라졌는데 약 70만 행으로
+  미러 12분 30초 중 6~7분을 차지했다. 지표 이력은 raw의 `analytics.v_content_metric_snapshots`로 직접 조회.
 - `test/` — SQL 하니스. 더미 시드를 BEGIN/ROLLBACK으로 격리해 뷰 기대값을 고정.
 - `check/` — 실DB 상태 점검. `coverage.sh`: celfit-front 실소비 /v1 필드별로
   analysis DB 미러의 채움율을 보고 (골격 미러가 비면 실패, LLM 분석·랭킹 구간은 보고만).

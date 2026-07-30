@@ -29,22 +29,19 @@ jobs:
 
       # 병행 PR이 같은 Flyway 번호를 선점하면 머지 후에야 터진다(07-21 V35·V36 연속 선점) —
       # 테스트 전체를 기다리지 않고 수 초 안에 명확히 실패시킨다. PR CI는 base와의
-      # 머지 결과(refs/pull/N/merge)를 체크아웃하므로 develop에 먼저 들어간 번호와의 중복도 잡힌다.
+      # 머지 결과(refs/pull/N/merge)를 체크아웃하므로 develop에 먼저 들어간 번호와의 중복도
+      # 논리적으로는 잡힌다. **다만 그것만으론 부족하다(07-30 실측, #181 3차 재발)**: base가
+      # 바뀐 뒤 PR CI가 재실행되지 않으면 이 스텝은 낡은 머지 스냅샷을 보고 통과시킨다 —
+      # #181의 실제 원인은 검사 부재가 아니라 재실행 부재였다(CI 실행 이후 develop이 같은
+      # 번호를 선점, 그 뒤 재실행 없이 머지). 이 스텝은 그 레이스를 고치지 못한다(고치려면
+      # 브랜치 보호 룰셋의 required+strict 필요, 워크플로 범위 밖) — push 이벤트(이 잡은
+      # push에서도 돈다, base_ref 없음)를 포함해 "현재 트리 내부에서 번호가 겹치는" 실패
+      # 모드는 여전히 여기서 잡는다. PR 전용 `migration-guard` 잡의 base 대조 모드
+      # (`check-migration-safety.sh <base-ref>`)가 그 위에 base 충돌 검사를 더한다.
+      # 로직은 check-migration-safety.sh(셀프테스트 보호) 하나로 통합 — monitoring 디렉토리
+      # 포함·선행 0 정규화(V07==V7)까지 여기 인라인 버전엔 없던 걸 얻는다.
       - name: Flyway 마이그레이션 버전 중복 검사
-        run: |
-          fail=0
-          for d in analytics/src/main/resources/db/migration/analysis \
-                   was/src/main/resources/db/migration/app \
-                   crawler/src/main/resources/db/migration \
-                   monitoring/src/main/resources/db/migration; do
-            [ -d "$d" ] || continue
-            dup=$(ls "$d" | grep -oE '^V[0-9]+' | sort | uniq -d)
-            if [ -n "$dup" ]; then
-              echo "::error::마이그레이션 버전 중복 ($d): $(echo $dup | tr '\n' ' ') — 뒤에 온 PR이 다음 번호로 재번호할 것"
-              fail=1
-            fi
-          done
-          exit $fail
+        run: .github/scripts/check-migration-safety.sh --versions-tree
 
       - name: JDK 21 설치
         uses: actions/setup-java@v5

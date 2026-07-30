@@ -1,5 +1,11 @@
 -- [일회성 운영 SQL] content_analyses 재조정 — 04 뷰 날짜기준 가드(feat/analysis-date-based-window) 후속.
 --
+-- ⚠️ 2026-07-30: content_metric_snapshots 미러가 제거됐다(소비자 부재·미러 시간 12분 30초 중 6~7분 차지).
+--   이 스크립트는 MAX/COUNT가 아니라 short_code별 날짜창 안 개별 스냅샷 존재 여부를 확인하므로
+--   contents.metric_captured_at(콘텐츠당 핀 값 1개)으로는 대체 불가 — 재실행하려면 아래
+--   content_metric_snapshots 참조를 raw DB의 analytics.v_content_metric_snapshots(또는
+--   content_snapshot_cache) 직접 조회로 고쳐야 한다. 로직 자체는 그대로 둔다(1회성 스크립트).
+--
 -- 배경: content_analyses는 append-only라, 가드 기준이 바뀌기 전(시간 간격·느슨한 slack) 분석된 행이 잔존한다.
 --   날짜기준 가드(캡처 캘린더일 = 업로드일 + pin(3) ~ +pin+slack)로는 후보가 아닌 행을 정리한다.
 --   삭제는 안전하다: 지금 자격 없는 행만 지우므로 후보 뷰가 재선택하지 않는다. 나중에 크롤이
