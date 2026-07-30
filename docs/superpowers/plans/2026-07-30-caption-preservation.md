@@ -915,6 +915,24 @@ class CaptionBackfillJobIntegrationTest extends IntegrationTest {
 
 - [ ] **Step 4: `CaptionBackfillJob`을 구현한다**
 
+> **2026-07-30 수정 이력 — 왜 파싱과 쓰기를 트랜잭션 경계로 분리했는가.**
+> 최초 구현은 `upsertPage()`의 `try/catch(RuntimeException)`가 `txTemplate.execute` 콜백 **안**에
+> 있었다. 스펙 리뷰가 별도 Postgres에서 프로토콜 레벨로 재현한 결함: SQL 레벨 실패(제약 위반·
+> 인코딩 오류 등)가 나면 그 트랜잭션이 aborted 상태가 되는데, catch가 예외를 그 자리에서
+> 삼켜버려 `txTemplate.execute`가 예외 없이 반환된다. 그러면 커밋이 시도되고, **Postgres는
+> aborted 트랜잭션의 COMMIT을 에러 없이 조용히 ROLLBACK으로 치환한다**(클라이언트에 예외가
+> 전달되지 않음 — `BEGIN; INSERT(성공); INSERT(제약 위반→ERROR); COMMIT;` 하면 응답 태그가
+> ROLLBACK인데도 호출자는 정상 종료로 본다). 그 결과 그 청크에서 이미 성공했던 캡션까지
+> 전부 유실되는데 `saveWatermark()`는 무조건 실행돼 커서가 유실된 페이지 너머로 전진한다 —
+> 재실행으로도 영구 복구 불가. 당시엔 `MediaItem.caption`이 절대 null이 아니라 우연히
+> 트리거되지 않았을 뿐 코드가 보장한 게 아니었다.
+>
+> 수정: 파싱(`MediaItemExtractor.extract`, DB 무접촉)을 트랜잭션 **밖**에서 먼저 끝내
+> "형태 불일치인 페이지만 건너뛴다"는 원래 의도를 그대로 살리고, 쓰기(`captionUpserter.upsert`)는
+> 트랜잭션 **안**에서 예외를 삼키지 않는다. `saveWatermark()`도 트랜잭션 안으로 옮겨 캡션 적재와
+> 원자적으로 커밋된다 — 실패하면 캡션도 워터마크도 함께 롤백되고, 재실행이 그 청크를 통째로
+> 다시 처리한다. 아래 코드는 이 수정이 반영된 최종본이다.
+
 `crawler/src/main/java/com/celfit/crawler/crawling/application/service/CaptionBackfillJob.java`:
 
 ```java
@@ -931,6 +949,7 @@ import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.port.out.AppSettingRepository;
 import com.celfit.crawler.settings.domain.AppSetting;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -950,6 +969,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>재개는 app_setting 워터마크(페이지 id)로 한다. upsert가 멱등이라 중복 실행도 안전하고,
  * 청크 1개 = 트랜잭션 1개라 중간에 죽어도 처리한 만큼은 커밋돼 있다(BeautyJob과 같은 경계).
+ *
+ * <p>청크 안에서 파싱(DB 무접촉)과 쓰기(트랜잭션 안)를 분리한다 — 파싱 실패를 트랜잭션 안에서
+ * 삼키면, SQL 레벨 실패가 그 트랜잭션을 aborted 상태로 만들어도 예외가 호출자에 전달되지 않고
+ * Postgres가 COMMIT을 조용히 ROLLBACK으로 치환한다(응답 태그만 보고는 구분 불가). 그러면 이미
+ * 성공한 캡션까지 그 청크 전체가 유실되는데 워터마크는 무조건 전진해 재실행으로도 복구 불가가
+ * 된다. 그래서 형태 불일치만 안전하게 건너뛰는 파싱을 트랜잭션 밖에서 먼저 끝내고, 쓰기는
+ * 예외를 삼키지 않는 트랜잭션 안에서 워터마크 저장과 함께 원자적으로 수행한다.
  */
 @Service
 public class CaptionBackfillJob {
@@ -1001,18 +1027,28 @@ public class CaptionBackfillJob {
             List<RawMediaPage> chunk =
                     mediaPages.findByIdGreaterThanOrderById(cursor, PageRequest.of(0, PAGE_CHUNK));
             if (chunk.isEmpty()) break;
+
+            // 파싱은 트랜잭션 밖에서 — DB를 만지지 않으므로 형태 불일치인 페이지만 안전하게 건너뛴다.
+            // (트랜잭션 안에서 삼키면 SQL 실패 시 Postgres가 커밋을 조용히 ROLLBACK으로 치환해
+            //  그 청크에서 이미 성공한 캡션까지 유실되고, 워터마크는 전진해 영구 복구 불가가 된다.)
+            List<PageItems> parsed = new ArrayList<>();
+            for (RawMediaPage page : chunk) {
+                parseInto(parsed, page.getPayload(), page.getSource(), page.getCapturedAt());
+            }
             long last = chunk.get(chunk.size() - 1).getId();
+            // 쓰기는 트랜잭션 안에서 — SQL 실패는 삼키지 않는다(청크 롤백 + 워터마크 미전진 =
+            // 요란한 실패로 드러나고 재실행이 그 청크를 다시 처리한다).
             Integer n = txTemplate.execute(status -> {
                 int c = 0;
-                for (var page : chunk) {
-                    c += upsertPage(page.getPayload(), page.getSource(), page.getCapturedAt());
+                for (PageItems p : parsed) {
+                    c += captionUpserter.upsert(p.items(), p.source(), p.capturedAt());
                 }
+                saveWatermark(MEDIA_WATERMARK, last);   // 캡션과 워터마크를 원자적으로
                 return c;
             });
             captions += n == null ? 0 : n;
             pages += chunk.size();
             cursor = last;
-            saveWatermark(MEDIA_WATERMARK, cursor);
             log.info("캡션 백필(media_page) — 누계 페이지 {}건 / 캡션 {}건 (cursor={})",
                     pages, captions, cursor);
         }
@@ -1024,37 +1060,48 @@ public class CaptionBackfillJob {
         int pages = 0, captions = 0;
         long cursor = watermark(PROFILE_WATERMARK);
         while (!stopFlag.isRequested(JobName.CAPTION_BACKFILL)) {
-            List<RawProfile> chunk =
-                    profiles.findBySourceAndIdGreaterThanOrderById(
-                            RawSource.SELF_GQL, cursor, PageRequest.of(0, PAGE_CHUNK));
+            List<RawProfile> chunk = profiles.findBySourceAndIdGreaterThanOrderById(
+                    RawSource.SELF_GQL, cursor, PageRequest.of(0, PAGE_CHUNK));
             if (chunk.isEmpty()) break;
+
+            List<PageItems> parsed = new ArrayList<>();
+            for (RawProfile p : chunk) {
+                parseInto(parsed, p.getPayload(), RawSource.SELF_GQL, p.getCapturedAt());
+            }
             long last = chunk.get(chunk.size() - 1).getId();
             Integer n = txTemplate.execute(status -> {
                 int c = 0;
-                for (var p : chunk) {
-                    c += upsertPage(p.getPayload(), RawSource.SELF_GQL, p.getCapturedAt());
+                for (PageItems p : parsed) {
+                    c += captionUpserter.upsert(p.items(), p.source(), p.capturedAt());
                 }
+                saveWatermark(PROFILE_WATERMARK, last);   // 캡션과 워터마크를 원자적으로
                 return c;
             });
             captions += n == null ? 0 : n;
             pages += chunk.size();
             cursor = last;
-            saveWatermark(PROFILE_WATERMARK, cursor);
             log.info("캡션 백필(profile) — 누계 페이지 {}건 / 캡션 {}건 (cursor={})",
                     pages, captions, cursor);
         }
         return new Stats(pages, captions);
     }
 
-    /** 페이지 1건 처리 — 파싱 실패·형태 불일치는 그 페이지만 건너뛴다(원형은 남아 있으니 유실 아님). */
-    private int upsertPage(Map<String, Object> payload, RawSource source, Instant capturedAt) {
-        if (payload == null) return 0;
+    /** 트랜잭션 밖에서 파싱한 페이지 1건의 결과. */
+    private record PageItems(List<MediaItemExtractor.MediaItem> items, RawSource source,
+                             Instant capturedAt) {}
+
+    /**
+     * 페이지 1건 파싱 — DB를 만지지 않는다. 형태 불일치·파싱 실패는 그 페이지만 건너뛴다
+     * (원형은 raw 테이블에 남아 있으니 유실이 아니다). 빈 결과는 담지 않는다.
+     */
+    private void parseInto(List<PageItems> out, Map<String, Object> payload, RawSource source,
+                           Instant capturedAt) {
+        if (payload == null) return;
         try {
-            return captionUpserter.upsert(
-                    MediaItemExtractor.extract(payload, source), source, capturedAt);
+            var items = MediaItemExtractor.extract(payload, source);
+            if (!items.isEmpty()) out.add(new PageItems(items, source, capturedAt));
         } catch (RuntimeException e) {
-            log.warn("캡션 백필 페이지 건너뜀 (source={}): {}", source, e.toString());
-            return 0;
+            log.warn("캡션 백필 페이지 파싱 실패 — 건너뜀 (source={}): {}", source, e.toString());
         }
     }
 
@@ -1067,6 +1114,18 @@ public class CaptionBackfillJob {
     }
 }
 ```
+
+- [ ] **Step 4-1: 청크 안 쓰기 실패에 대한 회귀 테스트를 추가한다**
+
+`CaptionBackfillJobIntegrationTest`에 `@MockitoSpyBean ContentCaptionUpserter captionUpserter`
+필드를 추가하고, 정상 페이지 하나와 스텁으로 실패시킨 페이지 하나를 같은 청크에 섞어
+`job.run()`이 예외를 전파하는지·그 청크의 캡션이 전혀 커밋되지 않는지·워터마크가 전진하지
+않는지를 검증한다. NUL 바이트로 진짜 Postgres 인코딩 오류를 유도하는 안은 raw_media_page를
+심는 시딩 단계의 jsonb 캐스팅 자체가 거부해 막혔다(psql로 직접 확인 — `unsupported Unicode
+escape sequence`). 이 코드베이스의 파싱 계약이 정상 흐름에서 그 상태를 만들지 못하게 해
+순수 통합 테스트만으로는 진짜 SQL 레벨 실패를 재현할 수 없었다. 이 회귀 테스트는 옛 버그
+(쓰기 트랜잭션 콜백 안에서 예외를 삼키는 코드)를 일시적으로 재도입해 실제로 실패하는 것까지
+확인했다.
 
 - [ ] **Step 5: `JobName`에 `CAPTION_BACKFILL`을 추가한다**
 
@@ -1084,8 +1143,9 @@ public class CaptionBackfillJob {
 ./gradlew :crawler:test --tests "com.celfit.crawler.crawling.application.service.CaptionBackfillJobIntegrationTest"
 ```
 
-기대: PASS (4개 테스트). `JobService`가 exhaustive switch라 여기서 **컴파일 에러**가 날 수 있다 —
-그러면 Task 6 Step 1을 먼저 적용한 뒤 이 단계를 다시 실행한다.
+기대: PASS (5개 테스트 — Step 2의 4개 + Step 4-1 회귀 테스트 1개). `JobService`가 exhaustive
+switch라 여기서 **컴파일 에러**가 날 수 있다 — 그러면 Task 6 Step 1을 먼저 적용한 뒤 이 단계를
+다시 실행한다.
 
 - [ ] **Step 7: 커밋**
 
