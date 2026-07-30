@@ -58,6 +58,9 @@ JOIN analytics.v_base_profile p ON p.username = r.owner_username;
 -- 평균은 반올림하지 않고 그대로 매핑 함수에 넘긴다(이중 반올림 제거) — 매핑 함수 안에서 최종 round.
 -- 점수 불가(hype NULL) 콘텐츠는 avg가 자연 제외, 전무하면 avg 자체가 NULL → 매핑 함수도 NULL 유지
 -- (스펙 2026-07-29-influencer-avg-hype-score, 2026-07-30-hype-score-v3-decay-after-mapping §9).
+-- avg_hype_raw: 위 반올림 전 평균 그 자체(정렬 전용, 스펙 §9 하위절 — 발굴 목록 상위권 동점 정렬 정합).
+-- avg_hype_score와 같은 base 행에서 avg(...)를 한 번만 계산해 두 컬럼이 반드시 같은 값에서 파생되게 한다
+-- (매핑 함수를 두 번 다른 식으로 부르면 표류할 수 있어 base CTE 안에서 값을 고정하고 밖에서 재사용).
 CREATE OR REPLACE VIEW analytics.v_account_summaries AS
 WITH cfg AS (
   SELECT COALESCE((SELECT value::numeric FROM app_setting
@@ -79,10 +82,10 @@ base AS (
          round(avg((likes + comments_count)::numeric / NULLIF(followers, 0)) * 100, 1) AS avg_er_pct,
          round(avg(likes))::bigint                          AS avg_likes,
          round(avg(comments_count))::bigint                 AS avg_comments,
-         analytics.hype_account_score(avg(analytics.hype_score(lower(content_type), views, likes, comments_count,
-                                        followers,
-                                        extract(epoch FROM (now() - uploaded_at)) / 86400.0)))
-                                                            AS avg_hype_score,
+         avg(analytics.hype_score(lower(content_type), views, likes, comments_count,
+                                   followers,
+                                   extract(epoch FROM (now() - uploaded_at)) / 86400.0))
+                                                            AS avg_hype_raw,
          min(uploaded_at)                                   AS first_posted_at,
          max(uploaded_at)                                   AS last_posted_at,
          -- 통계 왜곡 가드 재료 (스펙 2026-07-30-perf-summary-statistical-guards-design.md §3-1):
@@ -176,7 +179,7 @@ SELECT
        THEN round((EXTRACT(EPOCH FROM (b.last_posted_at - b.first_posted_at)) / 86400.0
                    / (b.analyzed_count - 1))::numeric, 1)
   END AS avg_interval_days,
-  b.avg_hype_score,
+  analytics.hype_account_score(b.avg_hype_raw) AS avg_hype_score,
   b.views_sample_count,
   b.likes_sample_count,
   b.comments_sample_count,
@@ -190,7 +193,11 @@ SELECT
   -- 이메일(스펙 2026-07-30-influencer-email-from-bio): bio 정규식 파싱, 첫 매치만·소문자 정규화.
   -- POSIX substring은 leftmost match만 반환하므로 "첫 번째만"이 자연히 성립. biography NULL이면 NULL.
   -- 운영 실측(37.5%, 오탐 0/30) 근거로 LLM 없이 정규식만 채택 — 뷰티 필터는 v_recent_content가 이미 적용.
-  lower(substring(p.biography from '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')) AS email
+  lower(substring(p.biography from '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')) AS email,
+  -- avg_hype_raw는 맨 끝에 붙는다 — CREATE OR REPLACE VIEW는 기존 컬럼 사이에 새 컬럼을 끼워 넣지
+  -- 못하고(DROP 없이는 위치 변경 불가) 끝에 추가하는 것만 허용한다. avg_hype_score·email도 같은
+  -- 이유로 항상 그 시점의 맨 끝에 추가돼 왔다 — 이 컬럼도 그 선례를 따른다.
+  b.avg_hype_raw
 FROM base b
 JOIN metric m USING (owner_username)
 JOIN trend  t USING (owner_username)

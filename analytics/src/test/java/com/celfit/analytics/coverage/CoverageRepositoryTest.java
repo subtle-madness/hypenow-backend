@@ -56,7 +56,6 @@ class CoverageRepositoryTest {
 
 		assertThat(tiles).isNotNull();
 		assertThat(tiles.contents()).isZero();
-		assertThat(tiles.snapshotLatest()).isNull();
 	}
 
 	@Test

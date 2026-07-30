@@ -23,7 +23,7 @@ class BeautyClassTest {
     @Test
     void classify는_beauty_class와_파생값을_함께_세팅하고_judgedAt은_건드리지_않는다() {
         Influencer inf = new Influencer("a");
-        inf.classify(BeautyClass.BEAUTY_SERVICE, Influencer.BEAUTY_SOURCE_CLAUDE, "피부과 시술 홍보");
+        inf.classify(BeautyClass.BEAUTY_SERVICE, Influencer.BEAUTY_SOURCE_CLAUDE, "피부과 시술 홍보", null);
 
         assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.BEAUTY_SERVICE);
         assertThat(inf.getBeauty()).isFalse();

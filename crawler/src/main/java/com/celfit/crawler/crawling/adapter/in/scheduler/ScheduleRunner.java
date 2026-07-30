@@ -43,9 +43,14 @@ public class ScheduleRunner {
         log.info("스케줄 reels: {}", jobService.trigger(JobName.REELS, TriggerType.SCHEDULED));
     }
 
-    /** 신규 QUALIFIED 유입분의 뷰티 4분류 — qualify 이후로 배치. */
+    /**
+     * 신규 QUALIFIED 유입분의 뷰티 4분류 — qualify 이후로 배치.
+     * rejudge=true — 캡션 0건으로 판정된 계정에 릴스(실측 캡션)가 쌓이면 자동 재판정한다.
+     * 이게 꺼져 있으면 뷰티로 잘못 통과한 계정이 영구 고착된다(2026-07-30 오판 886개 실측).
+     * 미판정분이 배치 한도를 먼저 쓰고 남은 한도만 재판정에 가므로 신규 판정을 굶기지 않는다.
+     */
     @Scheduled(cron = "${crawler.schedule.beauty-cron}")
     void beauty() {
-        log.info("스케줄 beauty: {}", jobService.trigger(JobName.BEAUTY, TriggerType.SCHEDULED));
+        log.info("스케줄 beauty: {}", jobService.trigger(JobName.BEAUTY, TriggerType.SCHEDULED, true));
     }
 }

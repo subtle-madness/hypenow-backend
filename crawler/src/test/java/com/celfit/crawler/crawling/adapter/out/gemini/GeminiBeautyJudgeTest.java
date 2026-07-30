@@ -1,5 +1,6 @@
 package com.celfit.crawler.crawling.adapter.out.gemini;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -48,5 +49,12 @@ class GeminiBeautyJudgeTest {
     @Test
     void 본문_없는_응답은_ApifyException으로_배치_실패_계약을_지킨다() {
         assertThrows(ApifyException.class, () -> GeminiBeautyJudge.extractText(om, "{}"));
+    }
+
+    @Test
+    void 응답_스키마가_프롬프트의_5분류와_basis를_모두_담는다() {
+        assertThat(GeminiBeautyJudge.RESPONSE_SCHEMA)
+                .contains("FOREIGN_INFLUENCER")
+                .contains("CATEGORY_ONLY");
     }
 }

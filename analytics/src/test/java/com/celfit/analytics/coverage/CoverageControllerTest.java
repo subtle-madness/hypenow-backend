@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
-import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +29,7 @@ class CoverageControllerTest {
 	void 커버리지_페이지는_모수_타일과_매트릭스를_렌더한다() throws Exception {
 		given(coverageRepository.source()).willReturn(new CoverageSource(1496, 20000));
 		given(coverageRepository.tiles())
-				.willReturn(new CoverageTiles(16686, 12638, 16686, LocalDate.of(2026, 7, 18), 88));
+				.willReturn(new CoverageTiles(16686, 12638, 88));
 		given(coverageRepository.matrix())
 				.willReturn(List.of(CoverageRow.of(1, "계정 핸들·이름·프로필", "accounts", "12638 / 12638", "준비됨")));
 

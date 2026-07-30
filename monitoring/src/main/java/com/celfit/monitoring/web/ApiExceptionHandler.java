@@ -2,8 +2,8 @@ package com.celfit.monitoring.web;
 
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PrivateAccountException;
+import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
-import com.celfit.monitoring.service.CandidateNotFoundException;
 import com.celfit.monitoring.service.InvalidStateException;
 import com.celfit.monitoring.service.TargetNotFoundException;
 import com.celfit.monitoring.service.ValidationException;
@@ -44,11 +44,6 @@ public class ApiExceptionHandler {
 		return body(HttpStatus.NOT_FOUND, "TARGET_NOT_FOUND", e.getMessage());
 	}
 
-	@ExceptionHandler(CandidateNotFoundException.class)
-	public ResponseEntity<ApiError> handleCandidateNotFound(CandidateNotFoundException e) {
-		return body(HttpStatus.NOT_FOUND, "CANDIDATE_NOT_FOUND", e.getMessage());
-	}
-
 	@ExceptionHandler(SubjectNotFoundException.class)
 	public ResponseEntity<ApiError> handleSubjectNotFound(SubjectNotFoundException e) {
 		log.info("대상 부재: {}", e.getMessage());
@@ -60,6 +55,13 @@ public class ApiExceptionHandler {
 		log.info("비공개 계정: {}", e.getMessage());
 		// UNPROCESSABLE_CONTENT == 422 (Spring 7에서 UNPROCESSABLE_ENTITY가 이 이름으로 대체됨)
 		return body(HttpStatus.UNPROCESSABLE_CONTENT, "PRIVATE_ACCOUNT", "비공개 계정이라 수집할 수 없습니다.");
+	}
+
+	/** share URL 형식 불량·해소 불가(Hiker 400 등) — 계약 §2-6 SHARE_LINK_UNRESOLVED. */
+	@ExceptionHandler(ShareLinkUnresolvedException.class)
+	public ResponseEntity<ApiError> handleShareLinkUnresolved(ShareLinkUnresolvedException e) {
+		log.info("share 링크 해소 불가: {}", e.getMessage());
+		return body(HttpStatus.UNPROCESSABLE_CONTENT, "SHARE_LINK_UNRESOLVED", "공유 링크를 확인해 주세요.");
 	}
 
 	@ExceptionHandler(InvalidStateException.class)
@@ -85,7 +87,7 @@ public class ApiExceptionHandler {
 			HttpStatusCode statusCode = framework.getStatusCode();
 			HttpStatus status = HttpStatus.resolve(statusCode.value());
 			log.warn("계약 밖 요청 — {} {}", statusCode.value(), e.getMessage());
-			// 여기 code는 §2 어휘가 아니다 — 계약 표면(§2의 명령 5종) 밖 요청에만 나간다.
+			// 여기 code는 §2 어휘가 아니다 — 계약 표면(§2의 명령 3종: 등록·연장·해지) 밖 요청에만 나간다.
 			return ResponseEntity.status(statusCode).body(new ApiError(
 					status == null ? "HTTP_" + statusCode.value() : status.name(),
 					status == null ? "요청을 처리할 수 없습니다." : status.getReasonPhrase()));

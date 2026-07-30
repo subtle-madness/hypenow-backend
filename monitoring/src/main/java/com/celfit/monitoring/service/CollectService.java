@@ -1,8 +1,10 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.CommentRepository;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
@@ -15,7 +17,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>여기에는 트랜잭션이 없다. Hiker 호출(계정 1회당 최대 3콜)이 트랜잭션 안에 들어가면
  * 그 레이턴시 내내 DB 커넥션을 점유하고, 스윕이 계정 수만큼 이 경로를 도는 동안 풀이 마른다.
- * 쓰기만 {@link SnapshotWriter}가 짧은 트랜잭션으로 묶는다.
+ * 쓰기만 {@link SnapshotWriter}(계정·게시물)와 {@link CommentRepository}(댓글)가 짧은 트랜잭션으로 묶는다.
  */
 @Service
 public class CollectService {
@@ -26,16 +28,21 @@ public class CollectService {
 
 	private final HikerClient hiker;
 	private final SnapshotWriter writer;
+	private final CommentRepository comments;
 	private final int enumeratePages;
+	private final int commentPages;
 
-	public CollectService(HikerClient hiker, SnapshotWriter writer,
-			@Value("${monitoring.enumerate-pages:1}") int enumeratePages) {
+	public CollectService(HikerClient hiker, SnapshotWriter writer, CommentRepository comments,
+			@Value("${monitoring.enumerate-pages:1}") int enumeratePages,
+			@Value("${monitoring.comment-pages:1}") int commentPages) {
 		this.hiker = hiker;
 		this.writer = writer;
+		this.comments = comments;
 		this.enumeratePages = enumeratePages;
+		this.commentPages = commentPages;
 	}
 
-	/** 계정 1회 수집 — 프로필·게시물 스냅샷 upsert. */
+	/** 계정 1회 수집 — 프로필·게시물 스냅샷 + profile_meta upsert. */
 	public AccountCollectResult collectAccount(String username) {
 		LocalDate today = LocalDate.now(KST);
 		ProfileInfo profile = hiker.fetchProfile(username);
@@ -49,5 +56,14 @@ public class CollectService {
 		PostInfo post = hiker.fetchPost(shortCode);
 		writer.savePost(LocalDate.now(KST), post);
 		return post;
+	}
+
+	/**
+	 * 추적 게시물 댓글 수집 — 게시물당 전량 교체 갱신(계약 §3 post_comment).
+	 * postUsername은 owner_reply_text 판정 기준(게시물 소유 계정)이다.
+	 */
+	public void collectComments(String shortCode, String postUsername) {
+		List<CommentInfo> fetched = hiker.fetchComments(shortCode, postUsername, commentPages);
+		comments.replaceForPost(shortCode, fetched);
 	}
 }

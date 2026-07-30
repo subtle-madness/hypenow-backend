@@ -10,7 +10,7 @@ import java.util.Set;
 
 /**
  * 6.1 쿼리 홀더. 'all'은 null로 정규화(필터 미적용). 검증 위반은 V1ApiException.validation.
- * KST 경계 규칙은 기존 ContentListQuery와 동일: [start 0시, end 다음날 0시).
+ * KST 경계 규칙: [start 0시, end 다음날 0시).
  */
 public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExclusive,
 		String contentType, String mainCategory, String midCategory, String subCategory,

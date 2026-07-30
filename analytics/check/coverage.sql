@@ -1,7 +1,8 @@
 -- celfit-front가 실제 소비하는 /v1 응답 필드 ↔ analysis DB 채움율 보고.
 -- 대상: analysis DB (미러·분석 산출물). 뷰 하니스(test/)와 달리 실데이터를 그대로 읽는다.
 -- 행 구성은 프론트 소비 지점 기준: 카드·필터(6.1) → 상세 드로어 AI 리포트(6.3) → 인플루언서(6.4/6.5).
--- 타입에만 있고 UI 미소비인 필드(email·external_link 등)와 /v1 미사용 미러(content_metric_snapshots 등)는 싣지 않는다.
+-- 타입에만 있고 UI 미소비인 필드(email·external_link 등)는 싣지 않는다.
+-- content_metric_snapshots 미러는 2026-07-30 제거됨(소비자 부재·미러 시간 절반 차지) — 더는 대상 밖.
 -- ※ analytics 어드민 /ui/coverage 페이지(src/.../coverage/CoverageRepository.java)와 매트릭스 정의가 쌍 —
 --   항목·판정을 바꾸면 둘 다 고칠 것. (07-19 was /coverage에서 이전 — 내부 화면은 어드민 소속)
 -- 구간 구분:
@@ -206,8 +207,9 @@ DO $$
 BEGIN
   ASSERT (SELECT count(*) FROM contents) > 0, 'contents 미러가 비어 있음';
   ASSERT (SELECT count(*) FROM accounts) > 0, 'accounts 미러가 비어 있음';
-  -- 매트릭스에서는 빠졌지만(프론트 직접 소비 없음) metric_captured_at의 원천이라 골격 가드는 유지.
-  ASSERT (SELECT count(*) FROM content_metric_snapshots) > 0, 'content_metric_snapshots 미러가 비어 있음';
+  -- content_metric_snapshots 미러 제거(2026-07-30) — metric_captured_at 원천은 이제 contents 자체.
+  -- 핀 지표(v_pinned_metrics)가 채워졌는지를 이 컬럼 완비 여부로 가드한다.
+  ASSERT (SELECT count(*) FROM contents WHERE metric_captured_at IS NOT NULL) > 0, 'contents.metric_captured_at이 전부 비어 있음';
   ASSERT (SELECT count(*) FROM beauty_taxonomy) > 0, 'beauty_taxonomy 어휘가 비어 있음';
   ASSERT (SELECT count(*) FROM beauty_distributors) > 0, 'beauty_distributors 어휘가 비어 있음';
   ASSERT NOT EXISTS (
