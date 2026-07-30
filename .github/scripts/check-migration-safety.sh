@@ -26,9 +26,22 @@
 # monitoring도 포함해 4개 전부를 대상으로 한다(crawler는 파괴적 DDL 검사 스코프 밖이지만
 # 버전 중복 검사는 별개 실패 모드라 대상).
 #
-# 사용법: check-migration-safety.sh <base-ref>                           # git diff 기반 (CI)
-#         check-migration-safety.sh --scan <파일…>                        # 파괴적 DDL만 파일 직접 검사 (셀프테스트용)
-#         check-migration-safety.sh --versions <base-목록파일> <head-목록파일>  # 버전 중복만 직접 검사 (셀프테스트용)
+# v3.1 (07-30): ci.yml `test` 잡에 v3 이전부터 있던 인라인 버전 중복 검사(현재 트리 하나만
+# `ls`+`uniq -d`로 훑는 단순 버전 — monitoring 누락·선행 0 미정규화)를 이 스크립트로 통합했다.
+# 실측 결과 그 인라인 검사는 로직상 #181을 잡을 수 있었다(PR CI가 `refs/pull/N/merge`를
+# 체크아웃해 머지 트리에 V43 2개가 보였을 것) — 실제 사고 원인은 검사 부재가 아니라
+# **재실행 부재**였다(#181 CI 실행은 base가 V43-trait을 얻기 전, 그 뒤 재실행이 없었다).
+# 이 통합은 그 레이스를 고치지 못한다(고치려면 브랜치 보호 룰셋의 required+strict가 필요,
+# 코드 범위 밖) — 얻는 건 **단일 구현**(로직이 셀프테스트로 보호됨)·monitoring 포함·선행 0
+# 정규화·그리고 base 대조 모드(`--versions`, PR CI 전용 `migration-guard` 잡)뿐이다.
+# `test` 잡은 push 이벤트에서도 돌아 base_ref가 없으므로, 그 경로는 "현재 트리 내부 중복"만
+# 검사한다(`--versions-tree`) — base 대조 없이도 잡히는 실패 모드(같은 트리 안에서 번호가
+# 겹치는 사고)에는 여전히 유효하다.
+#
+# 사용법: check-migration-safety.sh <base-ref>                             # git diff 기반 (CI, PR 전용)
+#         check-migration-safety.sh --scan <파일…>                          # 파괴적 DDL만 파일 직접 검사 (셀프테스트용)
+#         check-migration-safety.sh --versions <base-목록파일> <head-목록파일>    # 버전 중복 base 대조 (셀프테스트용)
+#         check-migration-safety.sh --versions-tree [<루트경로>]              # 버전 중복 트리 단독 검사 (CI push 경로 + 셀프테스트용, git 비의존)
 set -euo pipefail
 
 # 파괴적 패턴 — 구버전이 참조 중인 객체를 없애거나 바꾸는 DDL만. 추가(ADD/CREATE)는 자유.
@@ -240,8 +253,29 @@ elif [ "${1:-}" = "--versions" ]; then
   else
     fail=1
   fi
+elif [ "${1:-}" = "--versions-tree" ]; then
+  # base 대조가 불가능한 경로(push 이벤트 — base_ref 없음, 얕은 클론)를 위한 트리 단독
+  # 검사. git을 쓰지 않고 파일시스템만 본다 — check_versions의 "HEAD 트리 내부 중복" 로직을
+  # base 쪽을 빈 목록으로 넘겨 그대로 재사용한다(교차 충돌 쪽은 base가 비어 자연히 무동작).
+  ROOT="${2:-.}"
+  VTTMP="$(mktemp -d)"
+  trap 'rm -rf "$VTTMP"' EXIT
+  : > "$VTTMP/empty.list"
+  : > "$VTTMP/tree.list"
+  for d in "${VERSION_DIRS[@]}"; do
+    dirpath="$ROOT/$d"
+    [ -d "$dirpath" ] || continue
+    while IFS= read -r -d '' f; do
+      printf '%s/%s\n' "$d" "$(basename "$f")" >> "$VTTMP/tree.list"
+    done < <(find "$dirpath" -maxdepth 1 -type f -print0 2>/dev/null)
+  done
+  if check_versions "$VTTMP/empty.list" "$VTTMP/tree.list"; then
+    echo "OK   버전 중복 없음 (트리: $ROOT)"
+  else
+    fail=1
+  fi
 else
-  BASE="${1:?사용법: check-migration-safety.sh <base-ref> | --scan <파일…> | --versions <base-목록파일> <head-목록파일>}"
+  BASE="${1:?사용법: check-migration-safety.sh <base-ref> | --scan <파일…> | --versions <base-목록파일> <head-목록파일> | --versions-tree [<루트경로>]}"
   while IFS= read -r f; do
     [ -n "$f" ] && [ -f "$f" ] || continue
     scan_file "$f" || fail=1

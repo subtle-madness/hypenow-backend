@@ -119,8 +119,9 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
   들고 있는 사이 develop이 `V43__trait_taxonomy_makeup_review.sql`을 선점, 그대로 머지되면
   같은 버전 2개로 Flyway 기동이 거부된다(V18·V43에 이어 3번째 재발). PR 브랜치 자기 트리만
   봐서는 못 잡는다 — 그 브랜치엔 V43이 1개뿐이라 충돌은 base와 합쳐질 때만 드러나므로,
-  이 검사는 **base ref와 HEAD의 트리 스냅샷을 직접 대조**한다(`git ls-tree`, diff가 아님 —
-  diff 기반이면 "이번 PR이 안 건드린 기존 파일과의 충돌"을 놓친다).
+  `migration-guard` 잡의 `check-migration-safety.sh <base-ref>` 경로에 **base ref와 HEAD의
+  트리 스냅샷을 직접 대조**하는 검사를 추가했다(`git ls-tree`, diff가 아님 — diff 기반이면
+  "이번 PR이 안 건드린 기존 파일과의 충돌"을 놓친다).
   **스코프가 위 파괴적 DDL 검사와 다르다(의도)**: 파괴적 DDL 검사는 was 롤링 공존 근거가
   있는 analysis DB만 보지만, 버전 중복은 근거가 다르다 — 어느 Flyway 인스턴스든 중복
   버전이면 그 인스턴스 자체가 기동을 거부한다(신구 공존 여부와 무관한 실패 모드). Flyway
@@ -129,6 +130,21 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
   대상으로 한다. 버전 비교는 Flyway와 동일하게 숫자 기준(선행 0 정규화 — `V07` == `V7`).
   집합 단위 검사라 파일 단위 `--scan`과는 별도 seam인 `--versions <base-목록> <head-목록>`으로
   git 없이도 테스트 가능(`check-migration-safety.test.sh`).
+  - **v3.1(같은 날, 후속 실측) — #181의 진짜 원인 정정, 인라인 검사 통합.** v3 도입 시점엔
+    "버전 중복을 잡는 검사가 없어서" #181이 났다고 서술했으나 부정확했다: `ci.yml`의
+    `test` 잡에는 이미 07-21(V35·V36 재발) 이후 붙은 인라인 버전 중복 검사가 있었고,
+    실측해보니 **그 검사도 로직상 #181을 잡을 수 있었다**(PR CI가 `refs/pull/N/merge`를
+    체크아웃하므로 머지 트리엔 V43이 2개 보였을 것). 실제 원인은 검사 부재가 아니라
+    **PR CI 재실행 부재**였다 — #181의 CI는 base가 V43-trait을 얻기 전에 실행됐고, 그 뒤
+    base가 바뀌었는데도 재실행 없이 머지됐다. **이 통합(v3.1)은 그 레이스를 고치지
+    못한다** — 고치려면 브랜치 보호 룰셋에 "머지 전 최신 상태 요구(required + strict)"를
+    거는 게 근본 해법이고, 이건 워크플로/코드 범위 밖이라 별도 조치가 필요하다. v3.1이
+    실제로 주는 이득은: ①검사 로직이 셀프테스트로 보호되는 **단일 구현**이 됨(인라인
+    `ls | uniq -d` 중복 삭제) ②인라인 검사가 빠뜨렸던 monitoring 디렉토리 포함
+    ③선행 0 정규화(`V07`==`V7`, 인라인엔 없었음) ④base 대조 모드(PR 전용)까지 갖춤.
+    `test` 잡은 push 이벤트에서도 돌아 base_ref가 없으므로, 그 경로는 트리 단독 검사
+    (`check-migration-safety.sh --versions-tree`, git 비의존 — `test` 잡 checkout이
+    `fetch-depth` 없는 얕은 클론이라 git 이력에 의존할 수 없음)로 대체했다.
 - **rename은 rename하지 않는다 — 컬럼 이행 레시피**(타입 변경도 동일):
   1. expand 릴리스: `ADD COLUMN` + **백필 UPDATE를 같은 마이그레이션에**(Flyway가 실행 보장) +
      코드를 새 컬럼으로 전환. 백필 통째 누락은 신 컬럼 전 행 NULL = 기능이 비어 보이므로

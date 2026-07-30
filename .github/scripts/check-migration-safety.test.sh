@@ -151,5 +151,44 @@ expect_versions 1 "V07과 V7은 같은 버전으로 취급되어 차단" \
 expect_versions 0 "빈 목록/신규 디렉토리는 통과(크래시 금지)" \
   "$TMP/does-not-exist-base.txt" "$TMP/does-not-exist-head.txt"
 
+# --versions-tree 모드 — base 대조가 불가능한 경로(push 이벤트, 얕은 클론)용 트리 단독 검사.
+# git 비의존 — 임시 디렉토리에 실제 파일을 만들어 검사한다.
+expect_tree() { # expect_tree <기대코드> <설명> <트리루트>
+  local want="$1" desc="$2" root="$3" got=0
+  total=$((total+1))
+  "$SCRIPT" --versions-tree "$root" >/dev/null 2>&1 || got=$?
+  if [ "$got" -eq "$want" ]; then
+    pass=$((pass+1)); echo "ok   $desc"
+  else
+    echo "FAIL $desc — 기대 $want, 실제 $got"
+  fi
+}
+
+TREE="$TMP/tree"
+mkdir -p "$TREE/$DIR_A" "$TREE/$DIR_B" \
+  "$TREE/crawler/src/main/resources/db/migration"
+# monitoring 디렉토리는 의도적으로 안 만든다 — "디렉토리가 아예 없음" 케이스 겸용
+
+: > "$TREE/$DIR_A/V43__trait.sql"
+: > "$TREE/$DIR_B/V14__signup_events.sql"
+expect_tree 0 "정상 트리(중복 없음) 통과" "$TREE"
+
+: > "$TREE/$DIR_A/V44__dup_a.sql"
+: > "$TREE/$DIR_A/V44__dup_b.sql"
+expect_tree 1 "한 디렉토리에 같은 번호 2개는 차단" "$TREE"
+rm -f "$TREE/$DIR_A/V44__dup_a.sql" "$TREE/$DIR_A/V44__dup_b.sql"
+
+: > "$TREE/$DIR_B/V1__init.sql"
+: > "$TREE/$DIR_A/V1__init.sql"
+expect_tree 0 "서로 다른 디렉토리의 같은 번호(app V1 + analysis V1)는 통과" "$TREE"
+rm -f "$TREE/$DIR_B/V1__init.sql" "$TREE/$DIR_A/V1__init.sql"
+
+: > "$TREE/crawler/src/main/resources/db/migration/V07__a.sql"
+: > "$TREE/crawler/src/main/resources/db/migration/V7__b.sql"
+expect_tree 1 "V07/V7 동시 존재는 차단" "$TREE"
+rm -f "$TREE/crawler/src/main/resources/db/migration"/*.sql
+
+expect_tree 0 "디렉토리가 아예 없음(신규 루트)은 통과(크래시 금지)" "$TMP/no-such-root"
+
 echo "셀프테스트: $pass/$total"
 [ "$pass" -eq "$total" ]
