@@ -169,4 +169,77 @@ class V1CampaignServiceTest extends IntegrationTest {
 
 		assertThat(list).extracting(CampaignRow::id).containsExactly(c1.id(), c2.id());
 	}
+
+	@Test
+	void create_시작일이_종료일보다_늦으면_400() {
+		assertThatThrownBy(() -> service.create(userId, "기간역전캠페인", null, "2026-08-31", "2026-07-01", null, null))
+				.isInstanceOf(V1ApiException.class);
+
+		assertThat(repository.findByNameAndUser("기간역전캠페인", userId)).isEmpty();
+	}
+
+	@Test
+	void patch_기존_종료일보다_늦은_시작일만_주면_400() {
+		// 기존 기간 2026-01-01~2026-02-01. endDate는 그대로 두고 startDate만 그보다 늦게 patch하면
+		// 머지된 (startDate, 기존 endDate) 조합이 역전되므로 400이어야 한다(회귀 안전망).
+		CampaignRow created = repository.insert(userId, "기간패치캠페인", null, LocalDate.of(2026, 1, 1),
+				LocalDate.of(2026, 2, 1), null, null);
+
+		Map<String, Object> body = new HashMap<>();
+		body.put("startDate", "2026-03-01"); // 기존 endDate(2026-02-01)보다 늦음
+
+		assertThatThrownBy(() -> service.patch(userId, created.id(), body))
+				.isInstanceOf(V1ApiException.class);
+
+		CampaignRow reloaded = repository.findByIdAndUser(created.id(), userId).orElseThrow();
+		assertThat(reloaded.startDate()).isEqualTo(LocalDate.of(2026, 1, 1)); // DB는 변경되지 않음
+	}
+
+	@Test
+	void create_설명_200자는_통과한다() {
+		String description = "가".repeat(200);
+
+		CampaignRow row = service.create(userId, "설명이백자캠페인", description, null, null, null, null);
+
+		assertThat(row.description()).hasSize(200);
+	}
+
+	@Test
+	void create_설명_201자는_거부한다() {
+		String description = "가".repeat(201);
+
+		assertThatThrownBy(() -> service.create(userId, "설명이백일자캠페인", description, null, null, null, null))
+				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void create_브랜드_30자는_통과한다() {
+		String brand = "가".repeat(30);
+
+		CampaignRow row = service.create(userId, "브랜드삼십자캠페인", null, null, null, brand, null);
+
+		assertThat(row.brand()).hasSize(30);
+	}
+
+	@Test
+	void create_브랜드_31자는_거부한다() {
+		String brand = "가".repeat(31);
+
+		assertThatThrownBy(() -> service.create(userId, "브랜드삼십일자캠페인", null, null, null, brand, null))
+				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void create_budget_음수는_400() {
+		assertThatThrownBy(() -> service.create(userId, "예산음수캠페인", null, null, null, null, -1))
+				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void create_budget_문자열은_정수가_아니라서_400() {
+		// 스펙(6.25)은 budget을 "원 단위 0 이상 정수"로만 받는다 — JSON에 문자열로 온 "300"은
+		// 타입 자체가 정수가 아니므로 거부한다(현재 parseBudget 로직: Integer/Long만 허용).
+		assertThatThrownBy(() -> service.create(userId, "예산문자열캠페인", null, null, null, null, "300"))
+				.isInstanceOf(V1ApiException.class);
+	}
 }

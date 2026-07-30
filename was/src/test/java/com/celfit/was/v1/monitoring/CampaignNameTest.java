@@ -51,6 +51,18 @@ class CampaignNameTest {
 	}
 
 	@Test
+	void 캐리지리턴_단독도_금지_문자다() {
+		assertThatThrownBy(() -> CampaignName.normalize("여름\r캠페인"))
+				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void CRLF_개행도_금지_문자다() {
+		assertThatThrownBy(() -> CampaignName.normalize("여름\r\n캠페인"))
+				.isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
 	void 빈_문자열은_거부한다() {
 		assertThatThrownBy(() -> CampaignName.normalize("   "))
 				.isInstanceOf(V1ApiException.class);

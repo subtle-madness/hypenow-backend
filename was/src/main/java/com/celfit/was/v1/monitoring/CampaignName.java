@@ -30,7 +30,8 @@ public final class CampaignName {
 		if (normalized.length() > MAX_LENGTH) {
 			throw V1ApiException.validation("캠페인 이름은 40자 이하여야 해요.");
 		}
-		if (normalized.indexOf('/') >= 0 || normalized.indexOf('%') >= 0 || normalized.indexOf('\n') >= 0) {
+		if (normalized.indexOf('/') >= 0 || normalized.indexOf('%') >= 0 || normalized.indexOf('\n') >= 0
+				|| normalized.indexOf('\r') >= 0) {
 			throw V1ApiException.validation("캠페인 이름에는 /, %, 줄바꿈을 쓸 수 없어요.");
 		}
 		return normalized;
