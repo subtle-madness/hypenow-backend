@@ -49,6 +49,17 @@ public class SnapshotRepository {
 	 * `<`로 당일을 건너뛰면 같은 날 두 번째 수집이 어제 값과 다시 비교돼 이미 적재한 METRICS_HIDDEN을
 	 * 또 적재한다(리뷰 I1 — 오늘 값이 아직 없는 그날 첫 수집에서는 당일 행 자체가 없으니 결과가 같다).
 	 */
+	/**
+	 * 팔로워 1회 수집(트랙 II 후속) — 해당 계정에 profile_snapshot 행이 하나라도 있는지 판정.
+	 * POST 등록분만 있는 계정은 계정 갈래를 영구히 안 타 이 행이 계속 없다 — DailySweepJob이
+	 * 이 메서드로 "아직 안 채워졌으면 1회만" 여부를 판단한다.
+	 */
+	public boolean hasProfileSnapshot(String username) {
+		Boolean exists = db.queryForObject(
+				"SELECT EXISTS(SELECT 1 FROM profile_snapshot WHERE username = ?)", Boolean.class, username);
+		return Boolean.TRUE.equals(exists);
+	}
+
 	public Optional<PostMetrics> findLatestPostUpTo(String shortCode, LocalDate on) {
 		return db.query("""
 				SELECT content_type, likes, comments, views, saves, shares, reposts

@@ -51,6 +51,17 @@ public class CollectService {
 		return new AccountCollectResult(profile, posts);
 	}
 
+	/**
+	 * 프로필 전용 1콜 수집(팔로워 1회 수집, 트랙 II 후속) — {@link #collectAccount}(프로필+열거)와
+	 * 달리 열거(+클립 보강)를 하지 않는다. POST 등록분만 있는 계정에 profile_snapshot 행이 아직
+	 * 없을 때 DailySweepJob이 계정당 평생 1회만 호출한다.
+	 */
+	public ProfileInfo collectProfileOnly(String username) {
+		ProfileInfo profile = hiker.fetchProfile(username);
+		writer.saveProfileOnly(username, LocalDate.now(KST), profile);
+		return profile;
+	}
+
 	/** 게시물 1회 수집 — 스냅샷 upsert. */
 	public PostInfo collectPost(String shortCode) {
 		PostInfo post = hiker.fetchPost(shortCode);
