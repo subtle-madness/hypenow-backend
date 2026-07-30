@@ -121,8 +121,10 @@ public class DailySweepJob {
 	private void sweepTarget(TargetRow t, List<PostInfo> posts, Set<String> enumerated) {
 		if (t.status() == TargetStatus.WATCHING && t.keywordRule() != null) {
 			for (PostInfo p : posts) {
-				if (postedAfterRegistration(p, t) && t.keywordRule().matches(p.caption())) {
-					candidates.insertPending(t.id(), p.shortCode(), excerpt(p.caption()));
+				// matchedTerms가 비어 있으면 미매칭이다 — matches()+matchedTerms() 이중 계산을 피한다.
+				List<String> matched = t.keywordRule().matchedTerms(p.caption());
+				if (postedAfterRegistration(p, t) && !matched.isEmpty()) {
+					candidates.insertPending(t.id(), p.shortCode(), excerpt(p.caption()), matched);
 				}
 			}
 		}

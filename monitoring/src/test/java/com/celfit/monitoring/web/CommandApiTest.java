@@ -93,7 +93,7 @@ class CommandApiTest {
 
 	/** 후보는 감지 배치를 거치지 않고 직접 심는다 — 이 테스트가 검증하는 건 승인/거절 전이뿐이다. */
 	private long seedCandidate(long targetId, String shortCode) {
-		candidates.insertPending(targetId, shortCode, "샤넬 립스틱 발색샷");
+		candidates.insertPending(targetId, shortCode, "샤넬 립스틱 발색샷", List.of("샤넬"));
 		return db.queryForObject("""
 				SELECT id FROM detected_candidate WHERE target_id=? AND short_code=?""",
 				Long.class, targetId, shortCode);
