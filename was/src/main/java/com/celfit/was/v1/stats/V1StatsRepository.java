@@ -18,7 +18,7 @@ public class V1StatsRepository {
 	/**
 	 * 랜딩 통계 1행(미러). 미러 미실행이면 empty → 컨트롤러가 404.
 	 * followers3k10k 등은 언더스코어가 없는 이름이 정본 — 미러의 toSnakeCase 변환 결과와 일치(§4-3).
-	 * followers500to3k COALESCE: V43 expand 직후 다음 미러 실행까지 NULL인 창을 0으로 방어.
+	 * followers500to3k COALESCE: V47 expand 직후 다음 미러 실행까지 NULL인 창을 0으로 방어.
 	 */
 	public Optional<LandingStats> find() {
 		return jdbcClient.sql("""

@@ -12,7 +12,7 @@ import java.time.OffsetDateTime;
  * <p>컬럼명: followers3k10k는 대문자가 없어 toSnakeCase가 그대로 통과시킨다 —
  * 뷰·DDL 컬럼도 언더스코어 없는 {@code followers3k10k}여야 한다(§4-3).
  *
- * <p>컴포넌트 순서: followers500to3k가 updatedAt 뒤(마지막)인 게 정본 — expand 단계(V43 ADD
+ * <p>컴포넌트 순서: followers500to3k가 updatedAt 뒤(마지막)인 게 정본 — expand 단계(V47 ADD
  * COLUMN)로 미러 테이블 끝에 붙었고, MirrorJob·FlywaySchemaTest가 뷰=record=DDL 순서를 대조한다.
  */
 public record LandingStats(Long contentsCount, Long influencersCount, Long totalViews, Long avgViews,

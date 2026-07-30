@@ -10,7 +10,7 @@
 -- 컬럼명 주의: followers3k10k 등은 언더스코어 없는 이름이 정본 —
 -- MirrorJob.toSnakeCase는 대문자 앞에만 '_'를 넣으므로 record 컴포넌트 followers3k10k가
 -- 그대로 컬럼명이 된다 (§4-3: 뷰·DDL을 record 변환 결과에 맞춘다).
--- 컬럼 순서 주의: followers500to3k는 updated_at **뒤**가 정본 — expand 단계(V43 ADD COLUMN)로
+-- 컬럼 순서 주의: followers500to3k는 updated_at **뒤**가 정본 — expand 단계(V47 ADD COLUMN)로
 -- 미러 테이블 끝에 붙었고, MirrorJob·FlywaySchemaTest가 뷰=record=DDL 순서를 대조하기 때문.
 -- 타입 주의: sum()/round(avg())는 numeric을 돌려준다 — record가 Long이라 ::bigint 캐스트 필수.
 CREATE OR REPLACE VIEW analytics.v_landing_stats AS

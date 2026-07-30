@@ -30,7 +30,7 @@ class V1StatsControllerTest {
 	@MockitoBean
 	V1StatsRepository repository;
 
-	// 4구간 모수(65명 = 10/22/25/8, 콘텐츠 66) — followers500to3k는 record 마지막 컴포넌트(V43 expand).
+	// 4구간 모수(65명 = 10/22/25/8, 콘텐츠 66) — followers500to3k는 record 마지막 컴포넌트(V47 expand).
 	private LandingStats stats() {
 		return new LandingStats(66L, 65L, 17_453_444L, 484_818L, 22L, 25L, 8L,
 				OffsetDateTime.parse("2026-07-17T04:30:00Z"), 10L);
