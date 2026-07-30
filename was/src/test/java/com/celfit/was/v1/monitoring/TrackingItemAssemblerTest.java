@@ -362,4 +362,69 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		assertThat(mapped.shares()).isEqualTo(5L);
 		assertThat(mapped.reposts()).isEqualTo(6L);
 	}
+
+	@Test
+	void 불명_content_type_스냅샷은_REELS_아니면_보수적으로_FEED로_접는다() {
+		TrackedSnapshotRow unknown =
+				new TrackedSnapshotRow("SHORT1", LocalDate.now(), "SOMETHING_UNKNOWN", 1L, 2L, 3L, 4L, 5L, 6L);
+		var mapped = TrackingItemAssembler.toSnapshotResponse(unknown, false);
+		assertThat(mapped.views()).isNull();
+		assertThat(mapped.shares()).isNull();
+		assertThat(mapped.reposts()).isNull();
+	}
+
+	// ── 리뷰 반영(2026-07-30) — pending 만료 유도 ────────────────────────────────
+
+	@Test
+	void pending_url_행이_만료되면_ended이고_post는_없다() {
+		LocalDate registeredOn = LocalDate.now().minusDays(30);   // trackingDays(14)와 합쳐 이미 만료.
+		seedUrlItem(null, registeredOn, "SHORT1", "https://www.instagram.com/p/SHORT1/");
+		// target 확정 없음 — 끝까지 pending인 채로 만료된 경우를 재현한다.
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.status()).isEqualTo("ended");
+		assertThat(item.post()).isNull();   // 계약 경계: "collecting으로 기간이 만료된 url 모드는 post가 null인 빈 상자"
+	}
+
+	@Test
+	void pending_account_행이_만료되면_not_uploaded다() {
+		LocalDate registeredOn = LocalDate.now().minusDays(30);
+		seedAccountItem(null, registeredOn, "glowdeep");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.status()).isEqualTo("not_uploaded");
+		assertThat(item.post()).isNull();
+	}
+
+	@Test
+	void pending_행이_미만료면_기존대로_collecting_detecting을_유지한다() {
+		LocalDate registeredOn = LocalDate.now();   // 방금 등록 — 전혀 만료 아님.
+		seedUrlItem(null, registeredOn, "SHORT1", "https://www.instagram.com/p/SHORT1/");
+		seedAccountItem(null, registeredOn, "glowdeep");
+
+		List<TrackingItemResponse> items = assembler.assembleList(userId).items();
+
+		assertThat(items).extracting(TrackingItemResponse::status).containsExactlyInAnyOrder("collecting", "detecting");
+	}
+
+	// ── 리뷰 반영(2026-07-30) — campaignId·campaignName 짝 방어 ──────────────────
+
+	@Test
+	void campaignId가_있어도_소유자가_다른_캠페인이면_짝을_맞춰_둘_다_null이다() {
+		// FK는 campaign_id가 "존재하는 행"이면 통과시킨다 — 다른 유저 소유 캠페인을 가리키는 이론상
+		// 오상태(orphan)를 흉내내, campaignRepository.findByUser(이 유저)의 맵에 없는 경우를 재현한다.
+		long otherUserId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "mon-assembler-other-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		CampaignRow foreignCampaign = campaignRepository.insert(otherUserId, "남의 캠페인", null, null, null, null, null);
+		LocalDate registeredOn = LocalDate.now();
+		seedAccountItem(foreignCampaign.id(), registeredOn, "glowdeep");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.campaignId()).isNull();
+		assertThat(item.campaignName()).isNull();
+	}
 }

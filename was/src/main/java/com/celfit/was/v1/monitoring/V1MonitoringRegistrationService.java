@@ -223,16 +223,16 @@ public class V1MonitoringRegistrationService {
 
 	/**
 	 * 같은 유저의 진행 중(canceled_at IS NULL) 행 중 target 유도 상태가 종결 3종이 아닌 행이 하나라도
-	 * 있으면 true(계약 6.27 duplicate 판정). target 미확정(pending) 행은 target 조회 없이 항상
-	 * 진행 중으로 친다(collecting/detecting은 종결이 아니므로 무조건 duplicate 기여).
+	 * 있으면 true(계약 6.27 duplicate 판정). target 미확정(pending) 행도 {@link ItemStatus}에 today를
+	 * 넘겨 만료 여부를 함께 본다 — 등록일+기간이 지난 채 target이 안 붙은 pending 행(리뷰 반영, v2.2)은
+	 * ended/not_uploaded로 유도돼 더 이상 무조건 duplicate가 아니다.
 	 */
 	private boolean hasActiveDuplicate(long userId, String mode, String inputValue) {
 		List<MonitoringItemRow> candidates = itemRepository.findActiveByInput(userId, mode, inputValue);
+		LocalDate today = LocalDate.now(KstTimestamps.KST);
 		for (MonitoringItemRow candidate : candidates) {
-			if (candidate.targetId() == null) {
-				return true;
-			}
-			String status = ItemStatus.derive(candidate, fetchTarget(candidate.targetId()));
+			TargetRow target = candidate.targetId() == null ? null : fetchTarget(candidate.targetId());
+			String status = ItemStatus.derive(candidate, target, today);
 			if (!TERMINAL_STATUSES.contains(status)) {
 				return true;
 			}

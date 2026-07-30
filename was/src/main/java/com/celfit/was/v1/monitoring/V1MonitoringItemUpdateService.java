@@ -103,10 +103,12 @@ public class V1MonitoringItemUpdateService {
 			itemRepository.updateTrackingDays(item.id(), trackingDays);
 		}
 
-		Long campaignId = item.campaignId();
 		String campaignName = resolveCampaignName(item.campaignId(), userId);
+		Long campaignId = CampaignPairing.pair(item.campaignId(), campaignName);
 		CampaignResponse newlyCreated = null;
 		if (campaignChange != null) {
+			// campaignChange는 resolveOrCreate(항상 존재)·findByIdAndUser(항상 존재)·명시적 해제(null,null)만
+			// 만들어 이미 짝이 맞다 — 방어 페어링이 불필요하다.
 			campaignId = campaignChange.campaignId();
 			campaignName = campaignChange.campaignName();
 			newlyCreated = campaignChange.newlyCreated();
@@ -128,7 +130,7 @@ public class V1MonitoringItemUpdateService {
 				.orElseThrow(() -> V1ApiException.notFound("대상을 찾을 수 없습니다."));
 
 		TargetRow target = fetchTarget(item);
-		String status = ItemStatus.derive(item, target);
+		String status = ItemStatus.derive(item, target, LocalDate.now(KstTimestamps.KST));
 		if (!CANCELABLE_STATUSES.contains(status)) {
 			throw V1ApiException.validation("현재 상태(" + ItemStatus.label(status) + ")에서는 취소할 수 없어요.");
 		}
@@ -140,7 +142,8 @@ public class V1MonitoringItemUpdateService {
 
 		String newStatus = ItemStatus.DETECTING.equals(status) ? ItemStatus.NOT_UPLOADED : ItemStatus.ENDED;
 		String campaignName = resolveCampaignName(item.campaignId(), userId);
-		return assembler.assembleSingle(item, target, newStatus, item.trackingDays(), item.campaignId(), campaignName);
+		Long campaignId = CampaignPairing.pair(item.campaignId(), campaignName);
+		return assembler.assembleSingle(item, target, newStatus, item.trackingDays(), campaignId, campaignName);
 	}
 
 	/**
@@ -154,7 +157,7 @@ public class V1MonitoringItemUpdateService {
 		if (!endDate.isAfter(today)) {
 			throw V1ApiException.validation("모니터링 종료일은 오늘 이후여야 해요.");
 		}
-		String status = ItemStatus.derive(item, fetchTarget(item));
+		String status = ItemStatus.derive(item, fetchTarget(item), today);
 		if (!IN_PROGRESS_STATUSES.contains(status)) {
 			throw V1ApiException.validation("현재 상태(" + ItemStatus.label(status) + ")에서는 기간을 변경할 수 없어요.");
 		}
@@ -196,7 +199,7 @@ public class V1MonitoringItemUpdateService {
 	private TrackingItemResponse assembleAfterPatch(MonitoringItemRow item, int trackingDays, Long campaignId,
 			String campaignName) {
 		TargetRow target = fetchTarget(item);
-		String status = ItemStatus.derive(item, target);
+		String status = ItemStatus.derive(item, target, LocalDate.now(KstTimestamps.KST));
 		return assembler.assembleSingle(item, target, status, trackingDays, campaignId, campaignName);
 	}
 

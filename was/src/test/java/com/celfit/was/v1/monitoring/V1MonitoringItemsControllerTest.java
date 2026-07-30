@@ -469,6 +469,25 @@ class V1MonitoringItemsControllerTest {
 		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
 	}
 
+	// ── 리뷰 반영(2026-07-30) 회귀 — pending 만료 유도가 붙은 뒤에도 6.29 진행 중 게이트가 정합한다.
+
+	@Test
+	void PATCH_만료된_pending_행은_not_uploaded로_유도돼_기간_변경_불가_400() throws Exception {
+		// registeredOn(30일 전) + 기존 trackingDays(14) = 이미 만료 → 유도 status=not_uploaded(진행 중 아님).
+		// 요청 trackingDays(90)는 그 자체로는 미래 종료일이라 "종료일 검증"은 통과하고 상태 게이트에서 막힌다.
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST).minusDays(30);
+		given(itemRepository.findByIdAndUser(26L, 7L)).willReturn(Optional.of(accountItem(26L, null, registeredOn)));
+
+		mockMvc.perform(patch("/v1/monitoring/items/26").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":90}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"))
+				.andExpect(jsonPath("$.error.message", Matchers.containsString("미업로드")));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
 	@Test
 	void PATCH_campaignId_campaignName_동시_전달은_400() throws Exception {
 		given(itemRepository.findByIdAndUser(14L, 7L))
@@ -603,6 +622,20 @@ class V1MonitoringItemsControllerTest {
 				.willReturn(Optional.of(urlItem(21L, null, LocalDate.now(KstTimestamps.KST))));
 
 		mockMvc.perform(post("/v1/monitoring/items/21/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(commandClient).should(never()).cancel(anyLong());
+		then(itemRepository).should(never()).markCanceled(anyLong(), anyString(), any());
+	}
+
+	@Test
+	void cancel_만료된_pending_url_행은_ended로_유도돼_취소_불가_400() throws Exception {
+		// registeredOn(30일 전) + trackingDays(14) = 이미 만료 → url 모드 pending은 ended로 유도(진행 중 아님).
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST).minusDays(30);
+		given(itemRepository.findByIdAndUser(27L, 7L)).willReturn(Optional.of(urlItem(27L, null, registeredOn)));
+
+		mockMvc.perform(post("/v1/monitoring/items/27/cancel").with(user(principal())).with(csrf()))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 

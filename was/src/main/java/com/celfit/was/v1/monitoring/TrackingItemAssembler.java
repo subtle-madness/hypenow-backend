@@ -41,7 +41,6 @@ public class TrackingItemAssembler {
 	private static final String MODE_ACCOUNT = "account";
 	private static final String MODE_URL = "url";
 	private static final String CONTENT_TYPE_REELS = "REELS";
-	private static final String CONTENT_TYPE_FEED = "FEED";
 
 	private final MonitoringItemRepository itemRepository;
 	private final CampaignRepository campaignRepository;
@@ -77,11 +76,13 @@ public class TrackingItemAssembler {
 				.filter(Objects::nonNull).collect(Collectors.toSet());
 		PostBundle bundle = fetchPostBundle(shortCodes, usernames, lastCollectedDate);
 
+		// meta.today와 pending 만료 판정이 같은 날짜를 봐야 자정 경계에서 어긋나지 않는다.
+		LocalDate today = LocalDate.now(KstTimestamps.KST);
 		List<TrackingItemResponse> responses = items.stream()
-				.map(item -> assembleForList(item, targetsById.get(item.targetId()), campaignsById, bundle))
+				.map(item -> assembleForList(item, targetsById.get(item.targetId()), campaignsById, bundle, today))
 				.toList();
 
-		return new AssembledList(responses, lastCollectedAt, LocalDate.now(KstTimestamps.KST));
+		return new AssembledList(responses, lastCollectedAt, today);
 	}
 
 	/**
@@ -105,11 +106,12 @@ public class TrackingItemAssembler {
 	}
 
 	private TrackingItemResponse assembleForList(MonitoringItemRow item, TargetRow target,
-			Map<Long, CampaignRow> campaignsById, PostBundle bundle) {
-		String status = ItemStatus.derive(item, target);
+			Map<Long, CampaignRow> campaignsById, PostBundle bundle, LocalDate today) {
+		String status = ItemStatus.derive(item, target, today);
 		Long campaignId = item.campaignId();
 		String campaignName = campaignId == null ? null
 				: Optional.ofNullable(campaignsById.get(campaignId)).map(CampaignRow::name).orElse(null);
+		campaignId = CampaignPairing.pair(campaignId, campaignName);
 		return build(item, target, status, item.trackingDays(), campaignId, campaignName, bundle);
 	}
 
@@ -210,7 +212,9 @@ public class TrackingItemAssembler {
 	// 패키지 가시성(private 아님) — 댓글·스냅샷 매핑 규칙을 DB 왕복 없이 단위 테스트하기 위한 테스트 심.
 	static TrackingItemResponse.SnapshotResponse toSnapshotResponse(TrackedSnapshotRow s,
 			boolean postLevelIsFeed) {
-		boolean isFeed = s.contentType() == null ? postLevelIsFeed : CONTENT_TYPE_FEED.equalsIgnoreCase(s.contentType());
+		// buildPost의 isFeed 계산과 방향을 통일: 불명·비정상 content_type은 "REELS가 아니면 feed"로 보수적으로
+		// 접는다(0/거짓 지표 노출 방지가 우선 — REELS로 잘못 단정해 views·shares·reposts를 노출시키면 안 됨).
+		boolean isFeed = s.contentType() == null ? postLevelIsFeed : !CONTENT_TYPE_REELS.equalsIgnoreCase(s.contentType());
 		Long views = isFeed ? null : s.views();
 		Long shares = isFeed ? null : s.shares();
 		Long reposts = isFeed ? null : s.reposts();
