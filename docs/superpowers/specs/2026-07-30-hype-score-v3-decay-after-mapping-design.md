@@ -119,7 +119,10 @@ v2.1에서 릴스만 재적합하고 피드는 v2 원값을 남긴 것이 그대
 
 - `c` CTE에서 `* power(0.5, GREATEST(elapsed_days,0)/s.hl)`를 제거해 순수 `Q`만 계산
 - 매핑 `CASE`의 비교 대상을 `qf`→`Q`로 교체
-- 매핑 결과에 `* power(0.5, GREATEST(elapsed_days,0)/s.hl)`를 곱한 뒤 `round`·`[0,100]` 클램프
+- **매핑 결과를 먼저 `[0,100]`으로 클램프**한 뒤 `* power(0.5, GREATEST(elapsed_days,0)/s.hl)`를 곱하고 `round`.
+  클램프를 곱하기 전에 두어야 `base ∈ [0,100]`이 되어 "품질 백분위 × 신선도"라는 의미가 성립한다.
+  곱한 뒤 클램프하면 앵커 p99를 크게 넘는 콘텐츠(매핑값 100 초과)가 오래된 뒤에도 부당하게 높은
+  점수를 유지한다(`base=107 × 0.5 = 54` vs 올바른 `100 × 0.5 = 50`).
 - 앵커 기본값 8개 교체(§4)
 - **app_setting 앵커 키 이름 변경**: `analytics.hype-anchor-{reels,feed}-{p05,p50,p90,p99}`
   → `analytics.hype-anchor-q-{reels,feed}-{p05,p50,p90,p99}`.
