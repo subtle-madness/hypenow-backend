@@ -39,6 +39,14 @@
 
 ### B-1. monitoring 표면 부재 — **개통 완전 차단** (P1 잔여, 팀/후속 세션 전달)
 
+> ✅ **해소됨 (2026-07-30)** — 아래 4종 전부 `feat/monitoring-p1` 브랜치에서 구현 완료(계약
+> [v2.2](../../contracts/monitoring-was-contract.md)·Flyway V5, `:monitoring:test` 190/190).
+> `feat/monitoring-v3-was` 위 통합은 was 세션 몫. hidden/error는 컬럼 추가가 아니라 예상대로
+> 상태 머신 재설계로 감(FAILED 종결 폐지 — status 유지+`tracked_hidden_at`/`fetch_failing` 신호,
+> 복귀는 수집 성공 단일 지점). matched_keywords는 `target.matched_keywords`로 이설.
+> B-3의 픽스처 의존 금지도 함께 풀렸다 — 단 was 픽스처에 `target.matched_keywords`·`user_id`
+> 반영 필요(계약 §7-2).
+
 | 항목 | 프론트 계약 | 실측 |
 |---|---|---|
 | `post_meta`(caption·uploaded_at·thumbnail_url) | TrackedPost.caption·uploadedAt **null 불가** | V1~V4 어디에도 없음. Hiker PostInfo가 캡션을 갖고도 감지 매칭 후 폐기(영속화 안 함) |
