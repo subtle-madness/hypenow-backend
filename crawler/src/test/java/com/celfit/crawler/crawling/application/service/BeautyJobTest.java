@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -172,6 +173,66 @@ class BeautyJobTest {
             assertThat(msgs).anyMatch(m -> m.contains("뷰티 판정 시작") && m.contains("2명"));
             assertThat(msgs).anyMatch(m -> m.contains("(1/2) a — 뷰티") && m.contains("메이크업 중심"));
             assertThat(msgs).anyMatch(m -> m.contains("(2/2) b — 비뷰티") && m.contains("여행 계정"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void 응답에서_누락된_계정을_경고로_남긴다() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer a = qualified(1L, "acc1");
+            Influencer b = qualified(2L, "acc2");
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                    .thenReturn(List.of(a, b));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(anyLong()))
+                    .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+            when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                    .thenReturn(Optional.empty());
+            when(judge.judge(any())).thenReturn(List.of(
+                    new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "BIO")));
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> warns = appender.list.stream()
+                    .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).anyMatch(m -> m.contains("누락") && m.contains("acc2"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void 응답_중복을_경고로_남긴다() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer a = qualified(1L, "acc1");
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                    .thenReturn(List.of(a));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(anyLong()))
+                    .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+            when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                    .thenReturn(Optional.empty());
+            when(judge.judge(any())).thenReturn(List.of(
+                    new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "BIO"),
+                    new BeautyJudge.Verdict("acc1", BeautyClass.NOT_BEAUTY, "다른 이유", "BIO")));
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> warns = appender.list.stream()
+                    .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).anyMatch(m -> m.contains("중복") && m.contains("acc1"));
         } finally {
             logger.detachAppender(appender);
         }

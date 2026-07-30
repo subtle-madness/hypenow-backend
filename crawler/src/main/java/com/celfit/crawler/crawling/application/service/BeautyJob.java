@@ -16,8 +16,10 @@ import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -143,6 +145,7 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
+            logResponseGaps(chunk, verdicts);
             int done = beauty + service + foreign + notBeauty;
             ChunkResult r = txTemplate.execute(
                     status -> applyVerdicts(verdicts, byUsername, captionCounts, done, cards.size()));
@@ -188,6 +191,30 @@ public class BeautyJob {
     }
 
     private record ChunkResult(int beauty, int service, int foreign, int notBeauty) {}
+
+    /**
+     * 응답 누락·중복 관측 — 모델이 요청한 계정 일부를 빼먹어도 예외가 아니라서(나머지 판정을
+     * 버릴 이유가 없다) 조용히 지나가던 것을 로그로 드러낸다. 누락분은 미판정으로 남아 다음 실행에
+     * 재시도되므로 데이터 유실은 아니지만, 빈도가 높아지면 프롬프트·청크 크기를 의심해야 한다.
+     */
+    private static void logResponseGaps(List<BeautyJudge.ProfileCard> chunk,
+                                        List<BeautyJudge.Verdict> verdicts) {
+        Set<String> returned = new LinkedHashSet<>();
+        List<String> dups = new ArrayList<>();
+        for (BeautyJudge.Verdict v : verdicts) {
+            if (!returned.add(v.username())) dups.add(v.username());
+        }
+        List<String> missing = chunk.stream()
+                .map(BeautyJudge.ProfileCard::username)
+                .filter(u -> !returned.contains(u))
+                .toList();
+        if (!missing.isEmpty()) {
+            log.warn("뷰티 판정 응답 누락 {}건 — 미판정 유지, 다음 실행 재시도: {}", missing.size(), missing);
+        }
+        if (!dups.isEmpty()) {
+            log.warn("뷰티 판정 응답 중복 {}건 — 마지막 값이 적용됨: {}", dups.size(), dups);
+        }
+    }
 
     /**
      * 판정 결과 적용(트랜잭션 안). targets 조회가 트랜잭션 밖(레포 자체 트랜잭션)에서 이뤄져 Influencer가
