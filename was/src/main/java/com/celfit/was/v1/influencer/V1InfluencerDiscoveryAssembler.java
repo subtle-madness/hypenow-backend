@@ -49,7 +49,7 @@ public class V1InfluencerDiscoveryAssembler {
 						.toList()),
 				r.postsCount(), r.followsCount(),
 				blankIfNull(r.biography()),
-				null, // email — 크롤러 미수집(V31), 데이터가 생기면 배선
+				r.email(), // biography 정규식 파싱(V46) — 매치 없으면 null
 				blankIfNull(r.tagline()),
 				scale1(r.viewsPerFollower()), scale1(r.avgErPct()),
 				r.avgViews(), r.avgLikes(), r.avgComments(),

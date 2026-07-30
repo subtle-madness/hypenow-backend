@@ -44,20 +44,22 @@ BEGIN
     'v_account_content_series r3 sponsored != true';
 END $$;
 
--- avg_hype_score (스펙 2026-07-29-influencer-avg-hype-score): 최근창 콘텐츠 hype_score 단순 평균.
+-- avg_hype_score (스펙 2026-07-29-influencer-avg-hype-score + 2026-07-30-hype-score-v3-decay-after-mapping §9):
+-- 최근창 콘텐츠 hype_score 단순 평균을 analytics.hype_account_score()로 매핑한 값(척도 재교정, 트랙 Z 후속).
 -- 기대값을 고정하지 않고 v_contents(랭킹)와의 항등식으로 검증한다 — 같은 함수·같은 핀·같은 now()(트랜잭션 고정)라
 -- 두 경로가 반드시 일치해야 하고, 시간이 지나 신선도 감쇠로 절대값이 변해도 테스트가 안 깨진다.
+-- 평균은 반올림하지 않고 그대로 매핑 함수에 넘겨야 하므로(이중 반올림 제거) round는 매핑 함수 밖에서 하지 않는다.
 DO $$
 BEGIN
   ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
          BETWEEN 0 AND 100,
     'summaries a avg_hype_score not in 0..100';
   ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
-       = (SELECT round(avg(c.hype_score))::bigint
+       = (SELECT analytics.hype_account_score(avg(c.hype_score))
           FROM analytics.v_contents c
           JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
           WHERE s.account_handle = 'dummy_a'),
-    'summaries a avg_hype_score != v_contents 창 평균 (같은 함수·핀·기준시각이어야 함)';
+    'summaries a avg_hype_score != hype_account_score(v_contents 창 평균) (같은 함수·핀·기준시각이어야 함)';
 END $$;
 
 -- 점수 불가 창 계정: 릴스인데 조회수 없는 스냅샷만 → hype NULL → 계정 avg_hype_score NULL.
@@ -111,7 +113,7 @@ BEGIN
   ASSERT (SELECT hype_score FROM analytics.v_contents WHERE short_code = 'dummy_rx') IS NULL,
     'dummy_rx hype not null (점수 불가 조건이 깨짐 — views가 생겼나)';
   ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
-       = (SELECT round(avg(c.hype_score))::bigint
+       = (SELECT analytics.hype_account_score(avg(c.hype_score))
           FROM analytics.v_contents c
           JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
           WHERE s.account_handle = 'dummy_a'),
