@@ -65,19 +65,20 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
-				    short_code         text PRIMARY KEY,
-				    account_handle     text NOT NULL,
-				    thumbnail_url      text,
-				    caption            text,
-				    posted_at          timestamptz,
-				    content_type       text,
-				    video_duration     numeric,
-				    original_url       text,
-				    views              bigint,
-				    likes              bigint,
-				    comments           bigint,
-				    hype_score         bigint,
-				    metric_captured_at timestamptz
+				    short_code          text PRIMARY KEY,
+				    account_handle      text NOT NULL,
+				    thumbnail_url       text,
+				    caption             text,
+				    posted_at           timestamptz,
+				    content_type        text,
+				    video_duration      numeric,
+				    original_url        text,
+				    views               bigint,
+				    likes               bigint,
+				    comments            bigint,
+				    hype_score          bigint,
+				    metric_captured_at  timestamptz,
+				    hype_score_precise  numeric
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE content_analyses (
@@ -109,13 +110,14 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 		// a1(분석 완료, 이른 게시), a2(분석 미완, 더 최신 게시), a3(비뷰티 확정, 가장 최신 게시).
 		jdbcTemplate.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, posted_at, content_type,
-				  video_duration, original_url, views, likes, comments, hype_score, metric_captured_at) VALUES
+				  video_duration, original_url, views, likes, comments, hype_score, metric_captured_at,
+				  hype_score_precise) VALUES
 				 ('a1', 'alpha', 'https://thumb/a1.jpg', '분석 완료 릴스', '2026-07-02T03:00:00Z', 'reels',
-				  20, 'https://ig/a1', 1000, 100, 10, 500, '2026-07-05T03:00:00Z'),
+				  20, 'https://ig/a1', 1000, 100, 10, 500, '2026-07-05T03:00:00Z', 500),
 				 ('a2', 'alpha', 'https://thumb/a2.jpg', '분석 미완 릴스', '2026-07-04T03:00:00Z', 'reels',
-				  15, 'https://ig/a2', 9999, 999, 99, 999, '2026-07-07T03:00:00Z'),
+				  15, 'https://ig/a2', 9999, 999, 99, 999, '2026-07-07T03:00:00Z', 999),
 				 ('a3', 'alpha', 'https://thumb/a3.jpg', '일상 브이로그', '2026-07-06T03:00:00Z', 'reels',
-				  18, 'https://ig/a3', 3000, 300, 30, 700, '2026-07-09T03:00:00Z')
+				  18, 'https://ig/a3', 3000, 300, 30, 700, '2026-07-09T03:00:00Z', 700)
 				""");
 
 		// a1은 뷰티로 분석 완료, a3는 비뷰티로 분석 완료 — a2는 content_analyses에 없음(미분석).

@@ -53,6 +53,13 @@ public class UiJobController {
         return respond(JobName.REELS, jobService.trigger(JobName.REELS, TriggerType.MANUAL), ra);
     }
 
+    /** 저장된 raw 원형에서 캡션 소급 적재 — 인스타 호출 없음. 일회성 운영 작업. */
+    @PostMapping("/caption-backfill")
+    public String captionBackfill(RedirectAttributes ra) {
+        return respond(JobName.CAPTION_BACKFILL,
+                jobService.trigger(JobName.CAPTION_BACKFILL, TriggerType.MANUAL), ra);
+    }
+
     /** 협조적 중지 — 진행 중인 단위 작업(키워드·청크·방문·시드)까지 마치고 잡이 조기 종료된다. */
     @PostMapping("/{job}/stop")
     public String stop(@PathVariable JobName job, RedirectAttributes ra) {

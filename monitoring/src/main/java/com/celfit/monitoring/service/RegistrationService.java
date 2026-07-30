@@ -7,6 +7,8 @@ import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Instant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class RegistrationService {
+
+	private static final Logger log = LoggerFactory.getLogger(RegistrationService.class);
 
 	/** 등록 결과 — replayed는 HTTP 코드(201/200) 결정용이라 응답 본문에는 싣지 않는다. */
 	public record Result(long targetId, String status, Object firstSnapshot, boolean replayed) {}
@@ -87,6 +91,16 @@ public class RegistrationService {
 		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
 		// null이 아니라 isBlank로 본다 — HikerClient.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
 		String shortCode = isBlank(post.shortCode()) ? cmd.shortCode() : post.shortCode();
+		// 등록 직후 댓글까지 즉시 수집한다 — 그렇지 않으면 DailySweepJob.sweepComments가 도는
+		// 다음 스윕까지 최대 24시간 댓글 본문이 비어 있다(ACCOUNT 모드는 첫 감지가 스윕 안에서
+		// 일어나 같은 런에서 수집되므로 이 공백이 없다 — POST 모드에서만 발생).
+		// best-effort: 실패해도 등록은 성공시킨다 — 당일 스윕이 이미 백스톱이라 손실은
+		// "현행 동작(공백 24시간)으로 되돌아감"뿐이다. 게시물 스냅샷이 커밋된 뒤에만 시도한다.
+		try {
+			collect.collectComments(shortCode, post.username());
+		} catch (RuntimeException e) {
+			log.warn("댓글 수집 실패(격리) — 게시물 {}: {}", shortCode, e.toString());
+		}
 		long id = targets.insert(TargetType.POST, cmd.userId(), post.username(), shortCode, null,
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);

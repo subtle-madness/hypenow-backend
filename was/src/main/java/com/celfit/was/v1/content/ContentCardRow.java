@@ -30,7 +30,10 @@ public record ContentCardRow(
 		String handle,
 		String displayName,
 		String profileImageUrl,
-		Long followers) {
+		Long followers,
+		// 하입 스코어 소수점 노출(2026-07-30, 스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md
+		// §10) — hypeScore(정수, 값·의미 불변)는 그대로 두고 표시·정렬은 이 필드로 옮긴다.
+		BigDecimal hypeScorePrecise) {
 
 	/** 카드 SELECT 절 공통 상수 — 목록(6.1)·recentContents(6.4) 리포지토리가 같이 쓴다.
 	 *  아카이브된 이미지는 /img/ 상대경로(Vercel rewrite→오브젝트 스토리지), 미아카이브는 원본 CDN 폴백. */
@@ -46,7 +49,7 @@ public record ContentCardRow(
 			       an.detected_distributors::text AS distributors_json,
 			       a.handle, a.display_name,
 			       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
-			       a.followers
+			       a.followers, c.hype_score_precise
 			""";
 
 	/** SELECT의 it·ip 별칭 공급 — 카드 FROM 절에 반드시 함께 붙인다. */

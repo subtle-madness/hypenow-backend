@@ -192,34 +192,46 @@ class StoreTest {
 
 	// ── post_comment(v1.1) ───────────────────────────────────────────────────
 
+	/** 이전 id는 보존되고 재관측 시 body·like_count·owner_reply_text만 갱신된다(누적 합집합 — 계약 §3 post_comment). */
 	@Test
-	void 댓글은_게시물당_전량_교체_갱신된다() {
+	void 댓글은_게시물당_누적_합집합으로_upsert된다() {
 		var first = new CommentInfo("1", "user1", "본문1", 5L, Instant.parse("2026-07-28T00:00:00Z"), null);
-		comments.replaceForPost("SC1", List.of(first));
+		comments.upsertForPost("SC1", List.of(first));
 		assertThat(db.queryForObject(
 				"SELECT count(*) FROM post_comment WHERE short_code='SC1'", Long.class)).isEqualTo(1);
 
+		// 다음 수집에서 새 댓글(2)이 추가되고, 같은 댓글(1)은 like_count·body가 갱신된다.
+		var firstUpdated = new CommentInfo("1", "user1", "본문1 수정", 9L, Instant.parse("2026-07-28T00:00:00Z"), null);
 		var second = new CommentInfo("2", "user2", "본문2", 1L, Instant.parse("2026-07-29T00:00:00Z"), "답글");
-		comments.replaceForPost("SC1", List.of(second));
+		comments.upsertForPost("SC1", List.of(firstUpdated, second));
 
-		var ids = db.queryForList("SELECT id FROM post_comment WHERE short_code='SC1'", String.class);
-		assertThat(ids).containsExactly("2");   // 이전 수집분(1)은 사라지고 이번 수집분만 남는다
+		var ids = db.queryForList(
+				"SELECT id FROM post_comment WHERE short_code='SC1' ORDER BY id", String.class);
+		assertThat(ids).containsExactly("1", "2");   // 이전 수집분(1)이 보존되고 이번 수집분(2)이 추가된다
 		assertThat(db.queryForObject(
-				"SELECT owner_reply_text FROM post_comment WHERE short_code='SC1'", String.class))
+				"SELECT like_count FROM post_comment WHERE short_code='SC1' AND id='1'", Long.class))
+				.isEqualTo(9L);
+		assertThat(db.queryForObject(
+				"SELECT body FROM post_comment WHERE short_code='SC1' AND id='1'", String.class))
+				.isEqualTo("본문1 수정");
+		assertThat(db.queryForObject(
+				"SELECT owner_reply_text FROM post_comment WHERE short_code='SC1' AND id='2'", String.class))
 				.isEqualTo("답글");
 	}
 
 	@Test
-	void 댓글_교체는_다른_게시물에_영향을_주지_않는다() {
-		comments.replaceForPost("SC1", List.of(
+	void 댓글_upsert는_다른_게시물에_영향을_주지_않는다() {
+		comments.upsertForPost("SC1", List.of(
 				new CommentInfo("1", "user1", "본문", 1L, Instant.now(), null)));
-		comments.replaceForPost("SC2", List.of(
+		comments.upsertForPost("SC2", List.of(
 				new CommentInfo("2", "user2", "본문", 1L, Instant.now(), null)));
 
-		comments.replaceForPost("SC1", List.of());   // SC1만 전량 비움(예: 재수집 결과 0건)
+		// SC1에 새 댓글을 추가해도 SC2는 그대로다.
+		comments.upsertForPost("SC1", List.of(
+				new CommentInfo("3", "user3", "본문", 1L, Instant.now(), null)));
 
 		assertThat(db.queryForObject(
-				"SELECT count(*) FROM post_comment WHERE short_code='SC1'", Long.class)).isZero();
+				"SELECT count(*) FROM post_comment WHERE short_code='SC1'", Long.class)).isEqualTo(2);
 		assertThat(db.queryForObject(
 				"SELECT count(*) FROM post_comment WHERE short_code='SC2'", Long.class)).isEqualTo(1);
 	}

@@ -48,4 +48,15 @@ class UiJobControllerTest {
         assertThat(view).isEqualTo("redirect:/ui");
         assertThat(ra.getFlashAttributes().get("message").toString()).contains("실행 시작");
     }
+
+    @Test
+    void 캡션_백필_트리거는_대시보드로_리다이렉트하고_시작_메시지를_남긴다() {
+        when(jobService.trigger(JobName.CAPTION_BACKFILL, TriggerType.MANUAL)).thenReturn(TriggerResult.ACCEPTED);
+        var ra = new RedirectAttributesModelMap();
+
+        String view = controller.captionBackfill(ra);
+
+        assertThat(view).isEqualTo("redirect:/ui");
+        assertThat(ra.getFlashAttributes().get("message").toString()).contains("실행 시작");
+    }
 }

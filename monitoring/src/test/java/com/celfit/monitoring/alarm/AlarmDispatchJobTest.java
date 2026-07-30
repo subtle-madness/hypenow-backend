@@ -59,7 +59,7 @@ class AlarmDispatchJobTest {
 		// debounceCap은 넉넉히(3시간) — 이 클래스의 기존 시나리오는 전부 SETTLED(1시간 전) 기준이라
 		// 캡 자체를 검증하는 전용 테스트만 별도로 좁은 캡을 준 job을 직접 만든다.
 		job = new AlarmDispatchJob(events, new AlarmRecipientReader(ds), new AlarmMailComposer(),
-				mail, Duration.ofMinutes(10), Duration.ofHours(3), 5, Clock.fixed(NOW, ZoneOffset.UTC));
+				mail, Duration.ofMinutes(10), Duration.ofHours(3), 5, "", Clock.fixed(NOW, ZoneOffset.UTC));
 	}
 
 	private long user(long id, String email) {
@@ -142,7 +142,7 @@ class AlarmDispatchJobTest {
 		user(7, "a@test.io");
 		// 이 테스트 전용 job — 캡을 좁게 잡아야 "유입 지속 중에도 캡이 이긴다"를 명확히 볼 수 있다.
 		AlarmDispatchJob capped = new AlarmDispatchJob(events, new AlarmRecipientReader(ds),
-				new AlarmMailComposer(), mail, Duration.ofMinutes(10), Duration.ofMinutes(30), 5,
+				new AlarmMailComposer(), mail, Duration.ofMinutes(10), Duration.ofMinutes(30), 5, "",
 				Clock.fixed(NOW, ZoneOffset.UTC));
 		long oldest = event(7, AlarmEventType.COLLECTION_STARTED,
 				NOW.minusSeconds(45 * 60), NOW.minusSeconds(45 * 60));   // 캡(30분) 밖
@@ -166,7 +166,7 @@ class AlarmDispatchJobTest {
 	void 아침_레인_dispatch_after가_캡을_넘기면_occurred_at과_무관하게_즉시_레인_유입_중에도_발송한다() {
 		user(7, "a@test.io");
 		AlarmDispatchJob capped = new AlarmDispatchJob(events, new AlarmRecipientReader(ds),
-				new AlarmMailComposer(), mail, Duration.ofMinutes(10), Duration.ofMinutes(30), 5,
+				new AlarmMailComposer(), mail, Duration.ofMinutes(10), Duration.ofMinutes(30), 5, "",
 				Clock.fixed(NOW, ZoneOffset.UTC));
 		// 아침 레인: 실제 발생(occurred_at)은 새벽이라 dispatch_after보다 훨씬 이전이지만,
 		// 캡 판정에 쓰이는 건 dispatch_after(과거 09:00 = 45분 전, 캡 30분 초과)다.
@@ -295,6 +295,51 @@ class AlarmDispatchJobTest {
 
 		job.run();
 		job.run();
+
+		assertThat(mail.sent).hasSize(1);
+		assertThat(statusOf(e1)).isEqualTo("SENT");
+	}
+
+	private AlarmDispatchJob jobWithAllowlist(String allowlist) {
+		return new AlarmDispatchJob(events, new AlarmRecipientReader(ds), new AlarmMailComposer(),
+				mail, Duration.ofMinutes(10), Duration.ofHours(3), 5, allowlist,
+				Clock.fixed(NOW, ZoneOffset.UTC));
+	}
+
+	/** dev/test 안전판 회귀 가드 — 허용목록이 비어 있으면(운영 기본) 기존과 동일하게 발송된다. */
+	@Test
+	void 허용목록이_비어있으면_기존대로_발송된다() {
+		user(7, "a@test.io");
+		long e1 = event(7, AlarmEventType.COLLECTION_STARTED, SETTLED, SETTLED);
+
+		jobWithAllowlist("").run();
+
+		assertThat(mail.sent).hasSize(1);
+		assertThat(statusOf(e1)).isEqualTo("SENT");
+	}
+
+	/** 허용목록에 없는 수신자는 발송되지 않고 SKIPPED_NO_RECIPIENT로 종결되어 다음 틱에도 다시 집히지 않는다. */
+	@Test
+	void 허용목록_밖_수신자는_발송되지_않고_SKIPPED_NO_RECIPIENT로_종결된다() {
+		user(7, "a@test.io");
+		long e1 = event(7, AlarmEventType.COLLECTION_STARTED, SETTLED, SETTLED);
+		AlarmDispatchJob gated = jobWithAllowlist("verified@test.io");
+
+		gated.run();
+		assertThat(mail.sent).isEmpty();
+		assertThat(statusOf(e1)).isEqualTo("SKIPPED_NO_RECIPIENT");
+
+		gated.run();   // 다음 틱에도 재시도되지 않는다(종결 상태)
+		assertThat(mail.sent).isEmpty();
+	}
+
+	/** 허용목록 매칭은 대소문자·공백을 가리지 않는다 — 이메일은 case-insensitive다. */
+	@Test
+	void 허용목록_매칭은_대소문자와_공백을_무시한다() {
+		user(7, "Verified@Test.io");
+		long e1 = event(7, AlarmEventType.COLLECTION_STARTED, SETTLED, SETTLED);
+
+		jobWithAllowlist(" verified@test.io , other@test.io ").run();
 
 		assertThat(mail.sent).hasSize(1);
 		assertThat(statusOf(e1)).isEqualTo("SENT");

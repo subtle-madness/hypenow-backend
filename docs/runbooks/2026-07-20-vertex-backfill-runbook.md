@@ -1,6 +1,6 @@
 # Vertex 전환·백필 실행 런북 (2026-07-20)
 
-> 상태: 🟢 활성 · 스펙: [../superpowers/specs/2026-07-20-vertex-migration-recent12-backfill-design.md](../superpowers/specs/2026-07-20-vertex-migration-recent12-backfill-design.md)
+> 상태: ✅ 실행됨(07-30 — 백필 총 16,827건 완료, [계획 문서](../superpowers/plans/archive/2026-07-20-vertex-migration-recent12-backfill.md) 참고) · 스펙: [../superpowers/specs/2026-07-20-vertex-migration-recent12-backfill-design.md](../superpowers/specs/2026-07-20-vertex-migration-recent12-backfill-design.md)
 
 ## 1. GCP 준비 (사용자 직접 — 계정·결제는 에이전트 불가)
 

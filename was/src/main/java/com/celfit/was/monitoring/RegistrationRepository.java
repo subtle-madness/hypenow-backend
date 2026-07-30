@@ -95,7 +95,7 @@ public class RegistrationRepository {
 	/** 최근 등록 이력 — requested_at DESC(id DESC tie-break), 각 행의 entries는 seq ASC로 채워 반환. */
 	public List<RegistrationRow> findRecentByUser(long userId, int limit) {
 		List<RegistrationHeader> headers = jdbcClient.sql("""
-				SELECT id, user_id, requested_at, completed_at, tracking_days, campaign_id
+				SELECT id, user_id, requested_at, completed_at, tracking_days, campaign_id, acknowledged_at
 				FROM app.monitoring_registrations
 				WHERE user_id = :userId
 				ORDER BY requested_at DESC, id DESC
@@ -114,14 +114,15 @@ public class RegistrationRepository {
 
 		return headers.stream()
 				.map(h -> new RegistrationRow(h.id(), h.userId(), h.requestedAt(), h.completedAt(),
-						h.trackingDays(), h.campaignId(), byRegistration.getOrDefault(h.id(), List.of())))
+						h.trackingDays(), h.campaignId(), h.acknowledgedAt(),
+						byRegistration.getOrDefault(h.id(), List.of())))
 				.toList();
 	}
 
 	/** 단건 조회 — 유저 스코프 없음(실행기가 registrationId만 갖고 백그라운드에서 부른다). */
 	public Optional<RegistrationRow> findById(long registrationId) {
 		Optional<RegistrationHeader> header = jdbcClient.sql("""
-				SELECT id, user_id, requested_at, completed_at, tracking_days, campaign_id
+				SELECT id, user_id, requested_at, completed_at, tracking_days, campaign_id, acknowledged_at
 				FROM app.monitoring_registrations
 				WHERE id = :id
 				""")
@@ -135,7 +136,37 @@ public class RegistrationRepository {
 		List<RegistrationEntryRow> entries = entriesByRegistration(List.of(registrationId))
 				.getOrDefault(registrationId, List.of());
 		return Optional.of(new RegistrationRow(h.id(), h.userId(), h.requestedAt(), h.completedAt(),
-				h.trackingDays(), h.campaignId(), entries));
+				h.trackingDays(), h.campaignId(), h.acknowledgedAt(), entries));
+	}
+
+	/**
+	 * 본인 소유 행만 확인 처리 — 존재하지 않는 id·타 유저 id는 WHERE 절이 걸러내고, 이미 확인한 행은
+	 * acknowledged_at IS NULL 조건이 걸러내 최초 확인 시각을 보존한다(멱등, DigestRepository.markRead와
+	 * 동일한 패턴). 빈 리스트는 IN () SQL 오류를 피하려 no-op.
+	 */
+	public void markAcknowledged(long userId, List<Long> ids) {
+		if (ids.isEmpty()) {
+			return;
+		}
+		jdbcClient.sql("""
+				UPDATE app.monitoring_registrations
+				SET acknowledged_at = now()
+				WHERE user_id = :userId AND id IN (:ids) AND acknowledged_at IS NULL
+				""")
+				.param("userId", userId)
+				.param("ids", ids)
+				.update();
+	}
+
+	/** 미확인 전체 확인 처리 — 응답 창(최근 50건) 제한 없이 유저 전체 대상. */
+	public void markAllAcknowledged(long userId) {
+		jdbcClient.sql("""
+				UPDATE app.monitoring_registrations
+				SET acknowledged_at = now()
+				WHERE user_id = :userId AND acknowledged_at IS NULL
+				""")
+				.param("userId", userId)
+				.update();
 	}
 
 	/** item_id로 소속 entry 역조회 — 실행기의 pending 복구가 registration_id·seq를 모른 채 항목만 갖고 있을 때 쓴다. */
@@ -175,6 +206,6 @@ public class RegistrationRepository {
 
 	/** entries 없이 헤더만 매핑하기 위한 내부 전용 행 — RecordRowMapper 컬럼 매칭용. */
 	private record RegistrationHeader(long id, long userId, OffsetDateTime requestedAt, OffsetDateTime completedAt,
-			Integer trackingDays, Long campaignId) {
+			Integer trackingDays, Long campaignId, OffsetDateTime acknowledgedAt) {
 	}
 }

@@ -178,7 +178,7 @@ class CacheIntegrationTest extends IntegrationTest {
 		OffsetDateTime kstTime = OffsetDateTime.now(ZoneOffset.ofHours(9)).withNano(0);
 		ContentCardRow row = new ContentCardRow("c1", null, "caption", kstTime, "reels", null, null,
 				100L, 10L, 1L, 50L, kstTime, null, null, null, null, null, null, "glow", "글로우",
-				null, 20000L);
+				null, 20000L, new BigDecimal("50"));
 		ContentPage page = new ContentPage(List.of(row), 1L);
 
 		Cache cache = cacheManager.getCache(CacheConfig.CONTENT_RANKING);
@@ -204,10 +204,11 @@ class CacheIntegrationTest extends IntegrationTest {
 		InfluencerCard card = new V1InfluencerDiscoveryAssembler().toCards(
 				// CardRow(handle, displayName, profileImageUrl, followers, postsCount, followsCount,
 				// biography, tagline, viewsPerFollower, avgErPct, avgViews, avgLikes, avgComments,
-				// avgHypeScore, sponsoredCount, email) — 계획 스니펫이 필드 수와 어긋나 실 record 기준으로 바로잡음(2026-07-29).
+				// avgHypeScore, sponsoredCount, email, avgHypeScorePrecise) — 계획 스니펫이 필드 수와
+				// 어긋나 실 record 기준으로 바로잡음(2026-07-29). avgHypeScorePrecise는 2026-07-30 신설(스펙 §10).
 				List.of(new CardRow("glow", "글로우", null, 20000L, 214L, 380L, "소개",
 						"저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
-						413200L, 10370L, 152L, 72L, 3L, "glow@example.com")),
+						413200L, 10370L, 152L, 72L, 3L, "glow@example.com", new BigDecimal("72.5000"))),
 				List.of(new ShareRow("glow", "skincare", 80), new ShareRow("glow", "makeup", 20)),
 				List.of(new BrandRow("glow", "롬앤")),
 				List.of(new ThumbRow("glow", "c1", null, "reels", "skincare", "organic",
