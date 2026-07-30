@@ -35,20 +35,49 @@ true라 POST 전용 등록 계정은 계정 갈래(`collectAccount`→`saveAccou
 
 | 필드 | 제외 이유 |
 |---|---|
-| `followers` | 단건 응답 `user` 노드에 `follower_count`가 없다(픽스처 전체 필드 열람으로 확인) — 채우려면 `/v2/user/by/username` 프로필 콜 +1이 필요해 제로 콜 원칙 위반. POST 전용 계정은 `profile_snapshot` 자체가 없어 계속 미수집. |
 | `lastUploadedAt` | 정확값은 게시물 열거(`/v2/user/medias`) +2콜(clips 보강 포함)이 필요. 단건 응답은 게시물 1건의 게시일만 알아 "계정의 최근 게시일"(열거 전체 최댓값)을 대체할 수 없다. |
 
-두 필드 모두 POST 전용 계정에서 계속 null로 남는다(계약 문서에 명시).
+이 필드는 POST 전용 계정에서 계속 null로 남는다(계약 문서에 명시).
+
+## 후속 결정(07-31) — followers는 "기록 없을 때 1회"로 수집
+
+최초 구현 당시 `followers`도 위 표에 있었다("단건 응답에 `follower_count`가 없어 프로필 콜 +1
+필요, 제로 콜 원칙 위반"이 사유). **사용자가 이 결정을 뒤집어 followers 수집을 승인** —
+단, 조건이 붙었다: **매일 갱신이 아니라 "팔로워 기록이 아직 없는 계정만, 프로필을 1회 조회"**.
+was가 서빙하는 `followers`는 `MonitoringReadRepository.findLatestProfileSnapshots`가 읽는
+최신 1행 단일값이지 시계열이 아니라서, 매일 갱신할 실익이 없고 계정당 평생 약 1콜로 끝난다.
+
+- 신설: `CollectService.collectProfileOnly`(프로필 1콜만, 열거 없음) →
+  `SnapshotWriter.saveProfileOnly`(`@Transactional`, `profile_snapshot` upsert +
+  `profileMeta.upsert(..., lastUploadedAt=null)` — COALESCE가 기존값 보존) →
+  `SnapshotRepository.hasProfileSnapshot`(존재 여부 판정).
+- `DailySweepJob.sweepAccount`가 `needsEnumeration`이 false인 갈래(POST 전용 계정)에서
+  `hasProfileSnapshot`이 false일 때만 이 경로를 1회 호출한다.
+- **best-effort**: 프로필 조회 실패는 try/catch로 전부 삼키고 `log.warn`만 남긴다
+  (`PrivateAccountException`·`SubjectNotFoundException` 포함). 팔로워는 부가 표시 정보라 여기서
+  예외가 새면 `sweepRound`의 catch가 그 계정의 캠페인을 통째로 hidden 전이시킨다 — 추적 게시물은
+  멀쩡한데 프로필 조회 실패만으로 캠페인이 죽는 새 고장 경로가 생긴다. POST 등록분의 생존 판정은
+  지금까지처럼 단건 게시물 수집 성공 여부 하나로만 유지한다.
+- ACCOUNT 타입이 섞인 계정(`needsEnumeration`이 true)은 건드리지 않는다 — 지금처럼 매일
+  `collectAccount`(프로필+열거)가 그대로 followers를 갱신한다.
+
+**한계**: 값이 최초 수집 시점에 고정된다 — 캠페인 후반에도 계정의 첫 수집 시점 팔로워 수가
+그대로 노출된다. 실패해도 best-effort라 캠페인 생존 판정에는 영향이 없다(수집이 안 됐을 뿐,
+캠페인은 계속 살아있는 것으로 취급).
+
+**되돌리는 법**: 이 후속 결정만 되돌리려면 신설 메서드 3개(`CollectService.collectProfileOnly`·
+`SnapshotWriter.saveProfileOnly`·`SnapshotRepository.hasProfileSnapshot`)와
+`DailySweepJob.sweepAccount`의 조건부 호출 블록(`collectProfileOnlyOnce`)만 지우면 된다 —
+최초 구현(display_name·profile_image_url 제로 콜 파싱)과는 독립된 별도 커밋이라 분리 롤백이 가능하다.
 
 ## 검증
 
-`./gradlew :monitoring:test` 전체 통과(195건, 실패 0) — 신규 테스트: `HikerClientTest`(단건 파싱
-owner 필드 2건 확장), `StoreTest`(`upsertOwnerFromPost` 신규 3건 — 신규 생성·last_uploaded_at
-보존·null 인자 비파괴), `SnapshotWriterAlarmTest`(`savePost` 호출 후 profile_meta 행 생성·
-공존 계정 회귀 방어 2건).
+`./gradlew :monitoring:test` 전체 통과(210건, 실패 0) — 최초 구현(195건)에 이번 후속 결정의
+신규 테스트 5건(`DailySweepJobTest` — 미보유 계정 1회 수집·기보유 계정 재호출 안 함·프로필 조회
+실패 3종 best-effort·ACCOUNT 혼재 계정 중복 호출 안 함)이 더해졌다.
 
 ## 관련 문서
 
 [monitoring-was-contract.md](../contracts/monitoring-was-contract.md) profile_meta 절(v2.2) —
-POST 등록분도 `display_name`·`profile_image_url`이 채워진다는 점과 `followers`·`last_uploaded_at`
-미수집 한계를 명시.
+POST 등록분도 `display_name`·`profile_image_url`이 채워진다는 점과, followers는 최초 1회만
+수집되고 이후 갱신되지 않는다는 점, `last_uploaded_at` 미수집 한계를 명시.

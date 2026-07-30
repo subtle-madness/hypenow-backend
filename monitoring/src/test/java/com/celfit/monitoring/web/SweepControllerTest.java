@@ -55,7 +55,7 @@ class SweepControllerTest {
 
 		ControllableSweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
 				SweepRunRepository sweepRuns) {
-			super(targets, collect, alarms, sweepRuns, 0, Duration.ZERO);
+			super(targets, collect, alarms, sweepRuns, null, 0, Duration.ZERO);
 			reset();
 		}
 

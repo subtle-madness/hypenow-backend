@@ -44,6 +44,17 @@ public class SnapshotRepository {
 	}
 
 	/**
+	 * 팔로워 1회 수집(트랙 II 후속) — 해당 계정에 profile_snapshot 행이 하나라도 있는지 판정.
+	 * POST 등록분만 있는 계정은 계정 갈래를 영구히 안 타 이 행이 계속 없다 — DailySweepJob이
+	 * 이 메서드로 "아직 안 채워졌으면 1회만" 여부를 판단한다.
+	 */
+	public boolean hasProfileSnapshot(String username) {
+		Boolean exists = db.queryForObject(
+				"SELECT EXISTS(SELECT 1 FROM profile_snapshot WHERE username = ?)", Boolean.class, username);
+		return Boolean.TRUE.equals(exists);
+	}
+
+	/**
 	 * 직전 스냅샷 — 지표 비공개 판정 기준. 호출 시점이 그날 upsert **직전**이므로 당일 행이 있다면
 	 * 그게 바로 "직전 관측"이다(오늘 두 번째 이후 수집) — **당일 포함**(`<=`)으로 조회해야 한다.
 	 * `<`로 당일을 건너뛰면 같은 날 두 번째 수집이 어제 값과 다시 비교돼 이미 적재한 METRICS_HIDDEN을
