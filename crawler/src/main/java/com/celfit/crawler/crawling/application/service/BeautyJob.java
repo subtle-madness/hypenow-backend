@@ -4,12 +4,14 @@ import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawProfile;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.util.ArrayList;
@@ -49,17 +51,20 @@ public class BeautyJob {
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
+    private final RawMediaPageRepository rawMediaPages;
     private final BeautyJudge judge;
     private final SettingsService settings;
     private final JobStopFlag stopFlag;
     private final java.time.Clock clock;
     private final TransactionTemplate txTemplate;
 
-    public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles, BeautyJudge judge,
+    public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles,
+                     RawMediaPageRepository rawMediaPages, BeautyJudge judge,
                      SettingsService settings, JobStopFlag stopFlag, java.time.Clock clock,
                      TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
+        this.rawMediaPages = rawMediaPages;
         this.judge = judge;
         this.settings = settings;
         this.stopFlag = stopFlag;
@@ -89,18 +94,23 @@ public class BeautyJob {
         // 판정 재료 준비 — raw_profile이 아직 없으면 판정 불가(qualify가 언젠가 채우면 재시도)
         List<BeautyJudge.ProfileCard> cards = new ArrayList<>();
         Map<String, Influencer> byUsername = new HashMap<>();
+        Map<String, Integer> captionCounts = new HashMap<>();
         int skipped = 0;
         for (Influencer inf : targets) {
             if (byUsername.containsKey(inf.getUsername())) continue;  // 두 선정 쿼리 중복 방어
             var rp = rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(inf.getId());
             if (rp.isEmpty()) { skipped++; continue; }
             RawProfile p = rp.get();
+            List<String> captions = trimCaptions(
+                    ProfileExtractor.recentCaptions(p.getPayload(), p.getSource()));
+            if (captions.isEmpty()) captions = trimCaptions(mediaCaptions(inf.getId()));
             cards.add(new BeautyJudge.ProfileCard(inf.getUsername(),
                     ProfileExtractor.fullName(p.getPayload(), p.getSource()),
                     ProfileExtractor.category(p.getPayload(), p.getSource()),
                     ProfileExtractor.biography(p.getPayload(), p.getSource()),
-                    trimCaptions(ProfileExtractor.recentCaptions(p.getPayload(), p.getSource()))));
+                    captions));
             byUsername.put(inf.getUsername(), inf);
+            captionCounts.put(inf.getUsername(), captions.size());
         }
 
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0, failedBatches = 0;
@@ -122,7 +132,8 @@ public class BeautyJob {
                 continue;
             }
             int done = beauty + service + foreign + notBeauty;
-            ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername, done, cards.size()));
+            ChunkResult r = txTemplate.execute(
+                    status -> applyVerdicts(verdicts, byUsername, captionCounts, done, cards.size()));
             beauty += r.beauty();
             service += r.service();
             foreign += r.foreign();
@@ -131,6 +142,17 @@ public class BeautyJob {
                     i, total, beauty, service, foreign, notBeauty);
         }
         return new Summary(beauty, service, foreign, notBeauty, skipped, failedBatches);
+    }
+
+    /**
+     * 프로필 응답에 게시물이 없는 소스(HIKER_MOBILE·DATALIKERS)의 폴백 — 이미 수집된 릴스 페이지의
+     * 실측 캡션을 판정 재료로 쓴다. 추가 크롤 없음(raw_media_page는 REELS 잡이 이미 채운 것).
+     */
+    private List<String> mediaCaptions(Long influencerId) {
+        return rawMediaPages
+                .findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(influencerId, RawSource.HIKER_V2_CLIPS)
+                .map(page -> MediaItemExtractor.captions(page.getPayload(), page.getSource()))
+                .orElseGet(List::of);
     }
 
     /** 판정 재료 캡션 정책 적용 — 최근 CAPTION_COUNT개, 각 CAPTION_MAX_CHARS자까지. */
@@ -161,13 +183,15 @@ public class BeautyJob {
      * (CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — CollectJobIntegrationTest 참고).
      */
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
-                                      int done, int totalCards) {
+                                      Map<String, Integer> captionCounts, int done, int totalCards) {
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0;
         for (BeautyJudge.Verdict v : verdicts) {
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
             inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
             inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
+            // 판정에 실제로 쓴 캡션 건수 — 0이면 나중에 캡션이 쌓였을 때 재판정 대상이 된다
+            inf.setBeautyCaptionCount(captionCounts.getOrDefault(v.username(), 0).shortValue());
             influencers.save(inf);
             switch (v.beautyClass()) {
                 case INFLUENCER, COMPANY -> beauty++;

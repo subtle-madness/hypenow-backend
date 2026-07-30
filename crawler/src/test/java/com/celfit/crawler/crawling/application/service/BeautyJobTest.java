@@ -8,25 +8,31 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static org.mockito.Mockito.verifyNoInteractions;
+
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -39,6 +45,7 @@ class BeautyJobTest {
 
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
+    RawMediaPageRepository rawMediaPages = mock(RawMediaPageRepository.class);
     BeautyJudge judge = mock(BeautyJudge.class);
     SettingsService settings = mock(SettingsService.class);
     // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 배치 단위 트랜잭션 래핑을 그대로 재현한다.
@@ -46,7 +53,7 @@ class BeautyJobTest {
 
     JobStopFlag stopFlag = new JobStopFlag();
 
-    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, settings, stopFlag,
+    BeautyJob job = new BeautyJob(influencers, rawProfiles, rawMediaPages, judge, settings, stopFlag,
             java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), txTemplate);
 
     @BeforeEach
@@ -69,6 +76,16 @@ class BeautyJobTest {
         payload.put("fullName", fullName);
         payload.put("biography", bio);
         return new RawProfile(influencerId, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH);
+    }
+
+    /** 프로필에 캡션이 없는 소스(HIKER_MOBILE·DATALIKERS)의 폴백 재료 — 릴스 페이지 원형. */
+    static RawMediaPage clipsPage(Long influencerId, String... captions) {
+        List<Object> items = new ArrayList<>();
+        for (String c : captions) {
+            items.add(Map.of("media", Map.of("caption", Map.of("text", c))));
+        }
+        Map<String, Object> payload = Map.of("response", Map.of("items", items));
+        return new RawMediaPage(influencerId, null, RawSource.HIKER_V2_CLIPS, payload, Instant.EPOCH);
     }
 
     @Test
@@ -395,5 +412,63 @@ class BeautyJobTest {
         assertThat(com1.getBeauty()).isTrue();
         assertThat(com1.getBeautyCompany()).isTrue();
         assertThat(no1.getBeauty()).isFalse();
+    }
+
+    @Test
+    void 프로필에_캡션이_없으면_릴스_페이지_캡션을_쓴다() {
+        Influencer inf = qualified(1L, "acc1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(1L, RawSource.HIKER_V2_CLIPS))
+                .thenReturn(Optional.of(clipsPage(1L, "스킨케어 루틴", "쿠션 발색")));
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "뷰티 캡션", "CAPTION")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        ArgumentCaptor<List<BeautyJudge.ProfileCard>> cards = ArgumentCaptor.forClass(List.class);
+        verify(judge).judge(cards.capture());
+        assertThat(cards.getValue().getFirst().captions())
+                .containsExactly("스킨케어 루틴", "쿠션 발색");
+        assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 2);
+    }
+
+    @Test
+    void 프로필_캡션이_있으면_릴스_페이지를_조회하지_않는다() {
+        Influencer inf = qualified(1L, "acc1");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("biography", "bio");
+        payload.put("latestPosts", List.of(Map.of("caption", "프로필 캡션")));
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L)).thenReturn(Optional.of(
+                new RawProfile(1L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "CAPTION")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        verifyNoInteractions(rawMediaPages);
+        assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 1);
+    }
+
+    @Test
+    void 캡션을_어디서도_못_구하면_0으로_기록한다() {
+        Influencer inf = qualified(1L, "acc1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(1L, RawSource.HIKER_V2_CLIPS))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "CATEGORY_ONLY")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 0);
     }
 }
