@@ -603,11 +603,17 @@ content 행이 없는 short_code는 FK 위반 대신 조용히 건너뛴다."
 
 ## Task 4: 라이브 수집 경로 배선
 
+> 상태: ✅ 구현·검증 완료(2026-07-30). 코드 커밋 `3430b4af`, 회귀 가드 테스트 커밋(별도) —
+> 아래 Step 3·5·6은 코드 리뷰 반영 후의 최종 형태로 갱신했다(원래 계획의 삼항 비교 방식은
+> 리뷰에서 "불리언을 분기에 남기고 소스를 파생시키는 편이 직접적"이라는 지적으로 교체됨).
+
 **Files:**
 - Modify: `crawler/src/main/java/com/celfit/crawler/crawling/application/service/CollectJob.java:184-195`
 - Modify: `crawler/src/main/java/com/celfit/crawler/crawling/application/service/ReelsJob.java:141-142`
+- Modify(회귀 가드): `crawler/src/test/java/com/celfit/crawler/crawling/application/service/CollectJobTest.java`,
+  `ReelsJobTest.java`, `CollectJobIntegrationTest.java`
 
-- [ ] **Step 1: `ReelsJob`에 `ContentCaptionUpserter`를 주입한다**
+- [x] **Step 1: `ReelsJob`에 `ContentCaptionUpserter`를 주입한다**
 
 `ReelsJob.java` 상단 import에 추가한다:
 
@@ -629,7 +635,7 @@ import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
         this.captionUpserter = captionUpserter;
 ```
 
-- [ ] **Step 2: `ReelsJob.visit()`에서 raw 저장과 캡션이 같은 capturedAt을 쓰게 한다**
+- [x] **Step 2: `ReelsJob.visit()`에서 raw 저장과 캡션이 같은 capturedAt을 쓰게 한다**
 
 `ReelsJob.java:139-142` (`rawMediaPages.save(...)`부터 `contentUpserter.upsert(...)`까지 4줄)을
 아래 6줄로 **한 번에 교체**한다. `capturedAt`을 한 번만 선언해 raw 원형과 캡션이 같은 시각을
@@ -641,24 +647,27 @@ import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
                 payload, capturedAt));
         var items = MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
         int upserted = contentUpserter.upsert(items, inf);
-        // 캡션은 content 행이 생긴 뒤에 적재한다(content_id FK).
+        // 캡션 적재는 content 행이 생긴 뒤에 온다 — 이유는 CollectJob과 동일(content_id FK).
         captionUpserter.upsert(items, RawSource.HIKER_V2_CLIPS, capturedAt);
 ```
 
-`java.time.Instant` import가 없으면 추가한다.
+`java.time.Instant` import가 없으면 추가한다. (코드 리뷰 반영: 캡션 주석을 `CollectJob`과 중복시키지
+않고 상호 참조로 바꿨다 — 이 두 파일의 기존 관례.)
 
-- [ ] **Step 3: `CollectJob`에 캡션 적재를 붙인다**
+- [x] **Step 3: `CollectJob`에 캡션 적재를 붙인다**
 
 `CollectJob.java`에도 Step 1과 같은 방식으로 `ContentCaptionUpserter` 필드·생성자 파라미터·대입·import를 추가한다.
 
-`CollectJob.java:184-195`를 아래로 **교체**한다:
+`CollectJob.java:184-195`를 아래로 **교체**한다(코드 리뷰 반영 최종형 — 원래 계획은
+`feedSource == RawSource.SELF_GQL`로 다시 비교했는데, 분기 자체는 불리언에 남기고 소스는
+나란히 파생시키는 편이 더 직접적이라는 지적으로 바꿨다):
 
 ```java
         // 소스를 지역 변수로 고정한다 — 캡션 provenance로 아래에서 다시 쓴다.
+        boolean hasEmbedded = MediaItemExtractor.hasEmbeddedTimeline(payload);
+        RawSource feedSource = hasEmbedded ? RawSource.SELF_GQL : RawSource.HIKER_V1_MEDIAS;
         Map<String, MediaItemExtractor.MediaItem> inWindow = new LinkedHashMap<>();
-        RawSource feedSource = MediaItemExtractor.hasEmbeddedTimeline(payload)
-                ? RawSource.SELF_GQL : RawSource.HIKER_V1_MEDIAS;
-        if (feedSource == RawSource.SELF_GQL) {
+        if (hasEmbedded) {
             for (var it : MediaItemExtractor.extract(payload, RawSource.SELF_GQL)) {
                 inWindow.putIfAbsent(it.shortCode(), it);
             }
@@ -673,25 +682,40 @@ import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
         captionUpserter.upsert(inWindow.values(), feedSource, clock.instant());
 ```
 
-- [ ] **Step 4: 컴파일과 기존 테스트를 확인한다**
+- [x] **Step 4: 컴파일과 기존 테스트를 확인한다**
 
 ```bash
 ./gradlew :crawler:test --tests "com.celfit.crawler.crawling.application.service.*"
 ```
 
-기대: PASS. `CollectJobIntegrationTest`·`BeautyJobTest`가 깨지면 생성자 파라미터 추가를 그 테스트의
-객체 생성부에도 반영해야 한다(`CollectJob`/`ReelsJob`을 직접 `new` 하는 테스트가 있으면 인자 추가).
+기대: PASS. `CollectJobIntegrationTest`·`CollectJobTest`·`ReelsJobTest`가 `CollectJob`/`ReelsJob`을
+직접 `new` 하고 있어 생성자 인자 추가를 그 객체 생성부에도 반영해야 했다(단위 테스트는
+`mock(ContentCaptionUpserter.class)`, `CollectJobIntegrationTest`는 `@Autowired` 실빈).
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
-git add crawler/src/main/java/com/celfit/crawler/crawling/application/service/CollectJob.java crawler/src/main/java/com/celfit/crawler/crawling/application/service/ReelsJob.java
-git commit -m "feat(crawler): 라이브 수집 경로가 캡션을 적재한다
-
-COLLECT는 피드 소스(SELF_GQL 내장 타임라인 / HIKER_V1_MEDIAS 보충)를 지역
-변수로 고정해 캡션 provenance로 넘기고, REELS는 raw 저장과 같은 capturedAt을
-공유한다. 캡션 적재는 content_id FK 때문에 content upsert 뒤에 온다."
+git commit -m "feat(crawler): 라이브 수집 경로가 캡션을 적재한다 ..."   # 3430b4af
 ```
+
+- [x] **Step 6(코드 리뷰 후 추가): 소스 provenance·capturedAt 공유 회귀 가드**
+
+Step 4까지의 테스트는 `mock(ContentCaptionUpserter.class)`를 주입만 하고 `verify()`가 없어
+`feedSource` 삼항이 뒤바뀌거나 `ReelsJob`의 `capturedAt` 공유가 없어져도(=`clock.instant()`를
+캡션 적재에 또 불러도) 전부 통과하는 사각지대가 있었다(코드 리뷰에서 지적). 대응:
+
+- `CollectJobTest`: `captionUpserter`를 필드 mock으로 승격해 두 기존 테스트(내장 타임라인 있음/
+  없음 각각)에 `verify(captionUpserter).upsert(any(), eq(RawSource.SELF_GQL/HIKER_V1_MEDIAS), any())`
+  추가.
+- `ReelsJobTest`: 전용 신규 테스트 `raw_원형과_캡션이_같은_capturedAt을_공유한다()` 추가.
+  **주의**: 이 클래스 공용 `CLOCK`은 `Clock.fixed`라 매 호출이 같은 값을 반환하므로
+  `clock.instant()`를 한 번 부르든 두 번 부르든 결과가 같아 회귀를 못 잡는다 — 이 테스트만
+  호출마다 다른 값(tick1/tick2/tick3)을 주는 mock `Clock`을 `ReelsJob`에 직접 주입해서 우회했다.
+  (`RevisitCutoff.boundary()`가 `run()` 안에서 `clock.instant()`를 한 번 먼저 소비하는 것도
+  고려해 tick을 3개로 뒀다 — 최초 시도는 tick 2개로 충분하다고 잘못 가정해 테스트 자체의
+  버그로 "회귀를 잡은 것처럼 보이는" 거짓 양성을 한 번 겪었다.)
+- 두 회귀 모두 **실제로 되돌려서 새 단정이 실패하는 것을 확인**한 뒤 원복함(feedSource 삼항
+  반전 → `ArgumentsAreDifferent`; `ReelsJob` capturedAt 공유 제거 → `AssertionFailedError`).
 
 ---
 

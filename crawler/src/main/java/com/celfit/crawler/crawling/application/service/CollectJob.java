@@ -186,10 +186,10 @@ public class CollectJob {
         // (HIKER_MOBILE 등)는 /v1/user/medias/chunk 1페이지로 보충한다. SELF 실패의 유료 폴백이
         // 아니라(그건 방문 실패·재시도 유지) 소스가 원래 타임라인을 안 주는 경우의 열거 경로다.
         // 소스를 지역 변수로 고정한다 — 캡션 provenance로 아래에서 다시 쓴다.
+        boolean hasEmbedded = MediaItemExtractor.hasEmbeddedTimeline(payload);
+        RawSource feedSource = hasEmbedded ? RawSource.SELF_GQL : RawSource.HIKER_V1_MEDIAS;
         Map<String, MediaItemExtractor.MediaItem> inWindow = new LinkedHashMap<>();
-        RawSource feedSource = MediaItemExtractor.hasEmbeddedTimeline(payload)
-                ? RawSource.SELF_GQL : RawSource.HIKER_V1_MEDIAS;
-        if (feedSource == RawSource.SELF_GQL) {
+        if (hasEmbedded) {
             for (var it : MediaItemExtractor.extract(payload, RawSource.SELF_GQL)) {
                 inWindow.putIfAbsent(it.shortCode(), it);
             }

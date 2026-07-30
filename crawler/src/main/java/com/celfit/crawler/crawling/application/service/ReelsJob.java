@@ -145,7 +145,7 @@ public class ReelsJob {
                 payload, capturedAt));
         var items = MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
         int upserted = contentUpserter.upsert(items, inf);
-        // 캡션은 content 행이 생긴 뒤에 적재한다(content_id FK).
+        // 캡션 적재는 content 행이 생긴 뒤에 온다 — 이유는 CollectJob과 동일(content_id FK).
         captionUpserter.upsert(items, RawSource.HIKER_V2_CLIPS, capturedAt);
         inf.setLastReelsAt(clock.instant());
         influencers.save(inf);

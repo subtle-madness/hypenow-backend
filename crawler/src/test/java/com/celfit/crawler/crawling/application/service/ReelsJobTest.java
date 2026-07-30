@@ -49,6 +49,7 @@ class ReelsJobTest {
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawMediaPageRepository rawMediaPages = mock(RawMediaPageRepository.class);
     ContentRepository contents = mock(ContentRepository.class);
+    ContentCaptionUpserter captionUpserter = mock(ContentCaptionUpserter.class);
     CrawlExecutor executor = mock(CrawlExecutor.class);
     SettingsService settings = mock(SettingsService.class);
     JobProgress progress = mock(JobProgress.class);
@@ -94,7 +95,7 @@ class ReelsJobTest {
 
     ReelsJob job(List<UserMediaPageFetcher> fetchers) {
         return new ReelsJob(influencers, rawMediaPages, new ContentUpserter(contents, CLOCK),
-                mock(ContentCaptionUpserter.class), fetchers, executor, settings, CLOCK, progress,
+                captionUpserter, fetchers, executor, settings, CLOCK, progress,
                 stopFlag, txTemplate);
     }
 
@@ -174,6 +175,47 @@ class ReelsJobTest {
         assertThat(captor.getValue().getPayload()).isEqualTo(page);
         assertThat(contentStore).containsKeys("R1", "R2");
         assertThat(contentStore.get("R1").getOrigin()).isEqualTo(ContentOrigin.ENUMERATION);
+    }
+
+    /**
+     * raw 원형과 캡션이 같은 capturedAt을 공유해야 한다(clock.instant() 재호출 회귀 가드).
+     * 이 클래스 공용 CLOCK은 Clock.fixed라 매 호출이 같은 값을 반환 — capturedAt을 지역
+     * 변수로 공유하든 clock.instant()를 두 번 부르든 결과가 똑같아 회귀를 못 잡는다. 그래서
+     * 이 테스트만 호출마다 다른 값을 주는 ticking mock Clock을 ReelsJob에 직접 주입한다
+     * (ContentUpserter는 영향받지 않게 별도로 공용 CLOCK을 그대로 쓴다).
+     */
+    @Test
+    void raw_원형과_캡션이_같은_capturedAt을_공유한다() {
+        // 3개의 서로 다른 tick — run() 안 RevisitCutoff.boundary()가 clock.instant()를 한 번 먼저
+        // 소비하므로(tick1), 실제 캡션·raw 공유 여부를 가르는 것은 tick2·tick3다. 두 값을 같게 두면
+        // clock.instant()를 따로 두 번 불러도 우연히 같은 값이 나와 회귀를 못 잡는다(실측으로 확인함).
+        Instant tick1 = NOW;
+        Instant tick2 = NOW.plusSeconds(1);
+        Instant tick3 = NOW.plusSeconds(2);
+        Clock tickingClock = mock(Clock.class);
+        when(tickingClock.instant()).thenReturn(tick1, tick2, tick3, tick3, tick3);
+        when(tickingClock.getZone()).thenReturn(ZoneOffset.UTC);   // RevisitCutoff.boundary가 LocalDate.now(clock)에 씀
+
+        Influencer inf = beautyTarget(1L, "alice", "PK1");
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(inf));
+        Map<String, Object> page = clipsPage(List.of(clipsItem("RT1", RECENT)));
+
+        ReelsJob job = new ReelsJob(influencers, rawMediaPages,
+                new ContentUpserter(contents, CLOCK), captionUpserter,
+                List.of(clipsFetcher(Map.of("PK1", page))), executor, settings, tickingClock,
+                progress, stopFlag, txTemplate);
+
+        job.run(TriggerType.MANUAL);
+
+        ArgumentCaptor<RawMediaPage> pageCaptor = ArgumentCaptor.forClass(RawMediaPage.class);
+        verify(rawMediaPages).save(pageCaptor.capture());
+        ArgumentCaptor<Instant> capturedAtCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(captionUpserter).upsert(any(), eq(RawSource.HIKER_V2_CLIPS), capturedAtCaptor.capture());
+
+        // 핵심 불변식: raw 원형과 캡션이 같은 capturedAt을 공유해야 한다. run() 안 RevisitCutoff.boundary()가
+        // clock.instant()를 먼저 한 번 소비하므로 실제 값은 tick2이지만(구현 세부), 여기서 확인할 것은
+        // "raw와 캡션이 서로 같은 값을 받았는가"뿐이다 — 각자 새로 불렀다면 서로 다른 tick을 받아 어긋난다.
+        assertThat(capturedAtCaptor.getValue()).isEqualTo(pageCaptor.getValue().getCapturedAt());
     }
 
     @Test
