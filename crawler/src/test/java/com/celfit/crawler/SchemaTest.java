@@ -21,7 +21,8 @@ class SchemaTest extends IntegrationTest {
         assertThat(tables).contains(
                 "search_keyword", "influencer", "influencer_discovery",
                 "content", "crawl_run", "raw_discovery_post", "raw_post_detail",
-                "raw_comment", "raw_profile", "raw_media_page", "app_setting", "raw_run_item");
+                "raw_comment", "raw_profile", "raw_media_page", "app_setting", "raw_run_item",
+                "content_caption");
         // V8에서 인플루언서 중심으로 개편되며 카테고리 체계는 완전히 걷어냈다.
         assertThat(tables).doesNotContain("category", "category_keyword", "collection_rule", "account");
     }
