@@ -43,7 +43,7 @@ class ContentUpserterTest {
     }
 
     static MediaItemExtractor.MediaItem item(String shortCode) {
-        return new MediaItemExtractor.MediaItem(shortCode, TAKEN, ContentType.FEED, false);
+        return new MediaItemExtractor.MediaItem(shortCode, TAKEN, ContentType.FEED, false, "");
     }
 
     static Content discovery(String shortCode) {

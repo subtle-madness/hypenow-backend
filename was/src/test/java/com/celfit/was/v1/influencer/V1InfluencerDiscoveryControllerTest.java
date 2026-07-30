@@ -43,7 +43,7 @@ class V1InfluencerDiscoveryControllerTest {
 	private static CardRow row(String handle) {
 		return new CardRow(handle, "글로우", "/img/p/glow.jpg", 20000L, 214L, 380L,
 				"소개", "저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
-				413200L, 10370L, 152L, 72L, 3L, null);
+				413200L, 10370L, 152L, 72L, 3L, null, new BigDecimal("72.5000"));
 	}
 
 	@Test
@@ -59,7 +59,8 @@ class V1InfluencerDiscoveryControllerTest {
 				.andExpect(jsonPath("$.data[0].handle").value("glow"))
 				.andExpect(jsonPath("$.data[0].email").value((String) null)) // null 노출(부재 아님)
 				.andExpect(jsonPath("$.data[0].reachMultiplier").value(12.4))
-				.andExpect(jsonPath("$.data[0].hypeScore").value(72))
+				// hypeScore는 2026-07-30부터 소수(스펙 §10) — avgHypeScorePrecise(72.5)를 그대로 싣는다.
+				.andExpect(jsonPath("$.data[0].hypeScore").value(72.5))
 				.andExpect(jsonPath("$.data[0].collaboratedBrands").isArray())
 				.andExpect(jsonPath("$.error").value((String) null))
 				.andExpect(jsonPath("$.meta.total").value(109))

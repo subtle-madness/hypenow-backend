@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.IntegrationTest;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,7 +25,11 @@ class RegistrationRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void 유저_시드() {
-		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+		userId = seedUser();
+	}
+
+	private long seedUser() {
+		return jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "mon-reg-" + UUID.randomUUID() + "@test.io")
 				.query(Long.class).single();
 	}
@@ -45,7 +50,9 @@ class RegistrationRepositoryTest extends IntegrationTest {
 		long regId = repository.insert(userId, 14, null);
 		repository.insertEntry(regId, 1, "pending-input", "post", "pending", null, null, null, null);
 
-		RegistrationEntryRow entry = repository.findRecentByUser(userId, 10).get(0).entries().get(0);
+		RegistrationRow row = repository.findRecentByUser(userId, 10).get(0);
+		assertThat(row.acknowledgedAt()).isNull();
+		RegistrationEntryRow entry = row.entries().get(0);
 		assertThat(entry.reasonCode()).isNull();
 		assertThat(entry.reason()).isNull();
 		assertThat(entry.resolvedUrl()).isNull();
@@ -153,5 +160,59 @@ class RegistrationRepositoryTest extends IntegrationTest {
 	@Test
 	void findEntryByItemId_없는_item은_빈값() {
 		assertThat(repository.findEntryByItemId(999_999L)).isEmpty();
+	}
+
+	@Test
+	void markAcknowledged는_본인_소유_행만_처리한다() {
+		long otherUserId = seedUser();
+		long myRegId = repository.insert(userId, 14, null);
+		long otherRegId = repository.insert(otherUserId, 14, null);
+
+		// 타 유저 id·존재하지 않는 id를 섞어도 본인 것만 확인 처리된다(멱등, 404·403 없음).
+		repository.markAcknowledged(userId, List.of(myRegId, otherRegId, 999_999L));
+
+		assertThat(repository.findRecentByUser(userId, 10).get(0).acknowledgedAt()).isNotNull();
+		assertThat(repository.findRecentByUser(otherUserId, 10).get(0).acknowledgedAt()).isNull();
+	}
+
+	@Test
+	void markAcknowledged는_멱등이며_최초_확인_시각을_보존한다() throws InterruptedException {
+		long regId = repository.insert(userId, 14, null);
+
+		repository.markAcknowledged(userId, List.of(regId));
+		OffsetDateTime firstAckAt = repository.findRecentByUser(userId, 10).get(0).acknowledgedAt();
+		assertThat(firstAckAt).isNotNull();
+
+		Thread.sleep(10); // now()가 다른 값을 찍을 여유를 준다 — 재적용돼도 안 바뀌어야 한다.
+		repository.markAcknowledged(userId, List.of(regId));
+		OffsetDateTime secondAckAt = repository.findRecentByUser(userId, 10).get(0).acknowledgedAt();
+
+		assertThat(secondAckAt).isEqualTo(firstAckAt);
+	}
+
+	@Test
+	void markAcknowledged_빈_리스트는_no_op() {
+		long regId = repository.insert(userId, 14, null);
+
+		repository.markAcknowledged(userId, List.of());
+
+		assertThat(repository.findRecentByUser(userId, 10).get(0).acknowledgedAt()).isNull();
+	}
+
+	@Test
+	void markAllAcknowledged는_응답_창_50건_밖의_행까지_전부_확인_처리한다() {
+		for (int i = 0; i < 51; i++) {
+			repository.insert(userId, 14, null);
+		}
+		assertThat(repository.countByUser(userId)).isEqualTo(51);
+
+		repository.markAllAcknowledged(userId);
+
+		long unacknowledgedCount = jdbcClient.sql(
+				"SELECT count(*) FROM app.monitoring_registrations WHERE user_id = :userId AND acknowledged_at IS NULL")
+				.param("userId", userId)
+				.query(Long.class)
+				.single();
+		assertThat(unacknowledgedCount).isZero();
 	}
 }

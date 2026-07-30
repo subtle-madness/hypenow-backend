@@ -6,7 +6,7 @@
 
 **Goal:** 백지 상태의 analytics 모듈에 분석 층의 기반 4종을 세운다 — ① base 뷰(raw 접촉 격리) ② 최근 N개 윈도우 뷰 + 설정 키 ③ 타입 기반 미러 잡(뷰→record→TRUNCATE+INSERT) ④ SQL 테스트 하니스. 계약 모듈 `contract-analysis`도 골격을 만든다.
 
-**Architecture:** [스펙](../specs/2026-07-12-analytics-data-layer-design.md) §4·§5, [ARCHITECTURE.md](../../../ARCHITECTURE.md) §4-3·§4-4. raw DB(crawler)의 `analytics` 스키마에 뷰를 정의하고, 미러 잡이 뷰 결과를 공유 record로 매핑해 analysis DB 테이블에 한 트랜잭션 TRUNCATE+INSERT로 붓는다. 이 태스크에서는 미러 **기계**까지만 만들고(대상 등록은 B1), 뷰는 base·윈도우 2층까지만 만든다(서빙 형태 뷰는 B1).
+**Architecture:** [스펙](../../specs/2026-07-12-analytics-data-layer-design.md) §4·§5, [ARCHITECTURE.md](../../../../ARCHITECTURE.md) §4-3·§4-4. raw DB(crawler)의 `analytics` 스키마에 뷰를 정의하고, 미러 잡이 뷰 결과를 공유 record로 매핑해 analysis DB 테이블에 한 트랜잭션 TRUNCATE+INSERT로 붓는다. 이 태스크에서는 미러 **기계**까지만 만들고(대상 등록은 B1), 뷰는 base·윈도우 2층까지만 만든다(서빙 형태 뷰는 B1).
 
 **Tech Stack:** Spring Boot 4.1 (JdbcTemplate ×2, web 없음), Java 21 record, PostgreSQL 16 (로컬: docker `crawler-postgres-1`, 포트 5433, raw=`crawler` DB / analysis=`analysis` DB, 계정 crawler/crawler), Testcontainers, bash+psql SQL 하니스.
 
@@ -923,7 +923,7 @@ git commit -m "feat(analytics): 미러 등록부·기동 러너 (등록은 B1에
 # analytics — 분석 층
 
 raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
-설계: [../docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md](../docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+설계: [../docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md](../../specs/2026-07-12-analytics-data-layer-design.md)
 
 ## 구성
 

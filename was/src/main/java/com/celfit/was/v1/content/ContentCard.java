@@ -9,6 +9,9 @@ import java.util.List;
  * 날짜 규약(스펙 3.4): postedAt=KST 달력 날짜(YYYY-MM-DD), updatedAt=ISO 8601 UTC(Z).
  * 개인화 필드(isContentsSaved, 마지막 컴포넌트): 스펙 2절 Optional 규약 — 로그인 시에만 true/false,
  * 비로그인이면 null로 두어 @JsonInclude(NON_NULL)이 키 자체를 생략한다(null이 아니라 키 부재).
+ * hypeScore: 2026-07-30부터 소수(BigDecimal) — contents.hype_score_precise(출력 매핑 적용, 소수
+ * 4자리) 값을 그대로 싣는다(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10).
+ * 자리수 조정은 프론트 몫 — 여기서 반올림하지 않는다.
  */
 public record ContentCard(
 		String id,
@@ -22,7 +25,7 @@ public record ContentCard(
 		BigDecimal videoDuration,
 		String originalUrl,
 		String updatedAt,
-		Long hypeScore,
+		BigDecimal hypeScore,
 		Long views,
 		Long likes,
 		Long comments,

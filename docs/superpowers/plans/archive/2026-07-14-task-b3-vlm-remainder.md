@@ -5,7 +5,7 @@
 
 **Goal:** content_analyses의 VLM 컬럼(전부 NULL 상태)을 실데이터로 개통한다 — F-2 스파이크 검증, 유통사 감지 컬럼 신설, 분류 어휘를 celfit-front 배포본과 일치시키고, 비용 가드 하에 게이트를 켠다.
 
-**Architecture:** [스펙](../specs/2026-07-12-analytics-data-layer-design.md) §3·§6·§7. 분류값·라벨은 생산자(분석 층)가 확정하고 was는 verbatim 전달만 한다(ARCHITECTURE §4-4). was 목록 API(태스크 H, 별도 세션)가 이 어휘로 필터·카드 칩을 서빙한다.
+**Architecture:** [스펙](../../specs/2026-07-12-analytics-data-layer-design.md) §3·§6·§7. 분류값·라벨은 생산자(분석 층)가 확정하고 was는 verbatim 전달만 한다(ARCHITECTURE §4-4). was 목록 API(태스크 H, 별도 세션)가 이 어휘로 필터·카드 칩을 서빙한다.
 
 **Tech Stack:** Spring Boot 4.1 (analytics 모듈), Anthropic SDK structured outputs, Flyway, Testcontainers(포트 fake — 실 API 금지), SQL 하니스.
 

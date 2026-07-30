@@ -306,12 +306,22 @@ class DailySweepJobTest {
 	}
 
 	private long watching(String username, KeywordRule rule, String key, Instant expiresAt) {
-		return targets.insert(TargetType.ACCOUNT, 7L, username, null, rule,
+		return watching(username, rule, key, expiresAt, 7L);
+	}
+
+	/** userId를 명시하는 오버로드 — 이중 추적 배제 테스트는 유저별 시나리오가 필요하다(null 포함). */
+	private long watching(String username, KeywordRule rule, String key, Instant expiresAt, Long userId) {
+		return targets.insert(TargetType.ACCOUNT, userId, username, null, rule,
 				TargetStatus.WATCHING, null, key, expiresAt);
 	}
 
 	private long tracking(String username, String trackedShortCode, String key) {
-		return targets.insert(TargetType.ACCOUNT, 7L, username, null, any("무관"),
+		return tracking(username, trackedShortCode, key, 7L);
+	}
+
+	/** userId를 명시하는 오버로드 — "다른 유저가 이미 추적 중"인 시나리오를 만들 때 쓴다. */
+	private long tracking(String username, String trackedShortCode, String key, Long userId) {
+		return targets.insert(TargetType.ACCOUNT, userId, username, null, any("무관"),
 				TargetStatus.TRACKING, trackedShortCode, key, FUTURE);
 	}
 
@@ -667,9 +677,20 @@ class DailySweepJobTest {
 				"SELECT author FROM post_comment WHERE short_code='AAA'", String.class)).isEqualTo("fan1");
 	}
 
-	/** 게시물당 전량 교체 갱신 — 스윕을 두 번 돌리면 이전 수집분이 사라지고 이번 수집분만 남는다. */
+	private static final String TWO_COMMENTS_UPDATED = """
+			{"response":{"comments":[
+				{"pk":"999","text":"좋아요","comment_like_count":10,
+				 "created_at_utc":1700000000,"user":{"username":"fan1"},"preview_child_comments":[]},
+				{"pk":"1000","text":"저도요","comment_like_count":1,
+				 "created_at_utc":1700000100,"user":{"username":"fan2"},"preview_child_comments":[]}]},
+			"has_more_comments":false,"next_page_id":null}""";
+
+	/**
+	 * 게시물당 누적 합집합 upsert — 스윕을 두 번 돌리면 이전 수집분(id)이 보존되고 신규 id가
+	 * 추가되며, 같은 id를 재관측하면 like_count 같은 갱신 대상 컬럼만 새 값으로 바뀐다(계약 §3 post_comment).
+	 */
 	@Test
-	void 댓글은_스윕마다_전량_교체_갱신된다() {
+	void 댓글은_스윕마다_누적_합집합으로_upsert된다() {
 		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
 				.comments("AAA", ONE_COMMENT);
 		tracking("someuser", "AAA", "rk-t1");
@@ -677,12 +698,19 @@ class DailySweepJobTest {
 		job.run();
 		assertThat(db.queryForObject(
 				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isEqualTo(1);
-
-		hiker.comments("AAA", "{\"response\":{\"comments\":[],\"has_more_comments\":false},"
-				+ "\"next_page_id\":null}");
-		job.run();
 		assertThat(db.queryForObject(
-				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isZero();
+				"SELECT like_count FROM post_comment WHERE short_code='AAA' AND id='999'", Long.class))
+				.isEqualTo(3L);
+
+		hiker.comments("AAA", TWO_COMMENTS_UPDATED);
+		job.run();
+
+		var ids = db.queryForList(
+				"SELECT id FROM post_comment WHERE short_code='AAA' ORDER BY id", String.class);
+		assertThat(ids).containsExactly("1000", "999");   // 이전 수집분(999)이 보존되고 신규(1000)가 추가된다
+		assertThat(db.queryForObject(
+				"SELECT like_count FROM post_comment WHERE short_code='AAA' AND id='999'", Long.class))
+				.isEqualTo(10L);   // 재관측 시 like_count가 갱신된다
 	}
 
 	/** 댓글 콜 실패는 그 게시물만 격리한다 — 계정 스냅샷·다른 게시물 댓글 수집은 계속된다. */
@@ -991,5 +1019,86 @@ class DailySweepJobTest {
 		// 재시도 라운드가 돌았다면 profileCalls가 최초 1콜을 넘어선다 — 여기선 1이어야 오분류가 없다는 뜻.
 		assertThat(hiker.profileCalls).isEqualTo(1);
 		assertThat(db.queryForObject("SELECT count(*) FROM alarm_event", Long.class)).isZero();
+	}
+
+	// ⑬ 같은 유저 이중 추적 배제(계약 §6.25) — 감지 후보 중 같은 user_id가 이미 추적 중인 shortcode는 뺀다.
+
+	/** 배제 후 다음 후보가 잡혀야 한다 — 배제가 "감지 자체를 막는" 게 아니라 "그 후보만 빼는" 것임을 검증. */
+	@Test
+	void 같은_유저가_이미_추적중인_게시물은_감지에서_제외되고_다음_게시물이_잡힌다() {
+		hiker.account("someuser", "111",
+				new FakePost("A", "Rare Beginnings 신상 런칭", AFTER + 100),   // taken_at 최신 — 배제 없으면 이게 뽑힌다
+				new FakePost("B", "Rare Beginnings 앵콜", AFTER));
+		tracking("otherusername", "A", "rk-existing", 7L);   // 유저 7이 이미 A를 추적 중
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE, 7L);
+
+		job.run();
+
+		// A는 배제되고 taken_at 다음 순위인 B가 채택된다.
+		assertThat(trackedOf(a)).isEqualTo("B");
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	/**
+	 * 가장 중요한 회귀 가드 — 배제를 유저 스코프 없이 전역으로 구현하면 이 테스트가 깨진다.
+	 * 브랜드와 대행사가 같은 인플루언서를 각자 시딩하는 건 정상 시나리오다(계약 §6.25).
+	 */
+	@Test
+	void 다른_유저가_추적중인_게시물은_감지에서_제외되지_않는다() {
+		hiker.account("someuser", "111", new FakePost("A", "Rare Beginnings 신상 런칭", AFTER));
+		tracking("otherusername", "A", "rk-existing", 8L);   // 유저 8이 A를 추적 중
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE, 7L);   // 감지는 유저 7
+
+		job.run();
+
+		// 다른 유저(8)의 추적은 유저 7의 감지에 영향을 주지 않는다.
+		assertThat(trackedOf(a)).isEqualTo("A");
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	/**
+	 * hidden도 배제 대상이다(사용자 결정) — 비공개 전환으로 hidden된 행이 재공개 시 tracking으로
+	 * 복귀하는데, 그 사이 감지가 새 행을 만들면 이중 추적이 되기 때문이다.
+	 */
+	@Test
+	void 숨김_상태로_추적중인_게시물도_감지에서_제외된다() {
+		hiker.account("someuser", "111",
+				new FakePost("A", "Rare Beginnings 신상 런칭", AFTER + 100),
+				new FakePost("B", "Rare Beginnings 앵콜", AFTER));
+		long existing = tracking("otherusername", "A", "rk-existing", 7L);
+		targets.markHidden(existing);   // A는 hidden 상태로 추적 중
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE, 7L);
+
+		job.run();
+
+		assertThat(trackedOf(a)).isEqualTo("B");
+	}
+
+	/** 후보가 전부 배제되면 이번 스윕은 전환하지 않는다 — WATCHING 유지, 알람도 없다(다음 스윕이 자연 재시도). */
+	@Test
+	void 후보가_전부_배제되면_WATCHING을_유지하고_알람도_남기지_않는다() {
+		hiker.account("someuser", "111", new FakePost("A", "Rare Beginnings 신상 런칭", AFTER));
+		tracking("otherusername", "A", "rk-existing", 7L);   // 유일한 후보 A가 이미 유저 7의 추적 대상
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE, 7L);
+
+		job.run();
+
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.WATCHING);
+		assertThat(trackedOf(a)).isNull();
+		assertThat(alarmTypes()).doesNotContain("COLLECTION_STARTED");
+	}
+
+	/** V3 이전 등록분(user_id null)은 유저 스코프 배제 자체가 불가하다 — 건너뛰고 기존 동작 그대로 감지한다. */
+	@Test
+	void user_id가_없는_행은_배제_없이_기존대로_감지된다() {
+		hiker.account("someuser", "111", new FakePost("A", "Rare Beginnings 신상 런칭", AFTER));
+		tracking("otherusername", "A", "rk-existing", 7L);   // A는 유저 7이 이미 추적 중이지만
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE, null);   // 이 행은 userId null
+
+		job.run();
+
+		// 유저 스코프가 없어 배제 판단 자체가 불가 — 기존 동작대로 A가 채택된다.
+		assertThat(trackedOf(a)).isEqualTo("A");
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
 	}
 }

@@ -118,12 +118,19 @@ public class V1ContentRepository {
 		return new Sql(sb.toString(), params);
 	}
 
-	/** 동점 2차 정렬은 항상 short_code 오름차순 (스펙 6.1 안정 정렬). */
+	/**
+	 * 동점 2차 정렬은 항상 short_code 오름차순 (스펙 6.1 안정 정렬).
+	 * 기본(hype) 정렬 키는 2026-07-30부터 hype_score_precise(소수) — hype_score(정수)는 랭킹 경로
+	 * n=110,488+ 규모라 동점 밀도가 낮아 계정처럼 정렬이 알파벳순에 지배되는 문제는 없었지만,
+	 * 소수점 노출 자체가 표시·정렬 일원화가 목적이라 정렬 키도 표시값을 그대로 따른다
+	 * (스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10). short_code 동점 처리는
+	 * 그대로 무해하게 남는다.
+	 */
 	private String orderBy(String sort) {
 		return switch (sort) {
 			case "latest" -> "\nORDER BY c.posted_at DESC, c.short_code";
 			case "views" -> "\nORDER BY c.views DESC NULLS LAST, c.short_code";
-			default -> "\nORDER BY c.hype_score DESC NULLS LAST, c.short_code";
+			default -> "\nORDER BY c.hype_score_precise DESC NULLS LAST, c.short_code";
 		};
 	}
 }

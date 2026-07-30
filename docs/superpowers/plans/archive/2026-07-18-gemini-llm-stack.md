@@ -1921,7 +1921,7 @@ git commit -m "feat(analytics): 초기 백필 one-shot — 유료 키 Gemini Bat
 §7 맨 위에 결정 행 추가:
 
 ```markdown
-| 2026-07-18 | **LLM 스택 Gemini 3.1 Flash-Lite 전환** — 골드셋 40건 실측(Opus 기준 mainCategory 90%·adType 98%·subCat Jaccard 0.62·브랜드 88%, Haiku 4.5보다 우수·5.5배 저렴)으로 전 분석 축 통일. ②속성+③종합은 통합 1콜(ContentInsightPort — Anthropic은 2콜 컴포지트 롤백 경로), 문구 프롬프트에 절제 규칙(LlmGuard — 표본 3건 미만 단정 금지·조언 금지·수치 인용) 필수. 이원 운영: 일상=무료 키 동기+페이싱(RPM 15, 일 예산은 batch-limit, 429/한도 소진은 이월) / 백필 2만 건=유료 키 Batch one-shot(~$9). 판정은 크롤러 BeautyJudge 포트 뒤 Gemini 어댑터(팀 프롬프트·파서 재사용). 댓글 분류는 MVP 휴면이라 Anthropic 유지. 구모델(2.5)은 신규 키 404 — 3.1이 유일 | [plans/2026-07-18-gemini-llm-stack.md](docs/superpowers/plans/2026-07-18-gemini-llm-stack.md) |
+| 2026-07-18 | **LLM 스택 Gemini 3.1 Flash-Lite 전환** — 골드셋 40건 실측(Opus 기준 mainCategory 90%·adType 98%·subCat Jaccard 0.62·브랜드 88%, Haiku 4.5보다 우수·5.5배 저렴)으로 전 분석 축 통일. ②속성+③종합은 통합 1콜(ContentInsightPort — Anthropic은 2콜 컴포지트 롤백 경로), 문구 프롬프트에 절제 규칙(LlmGuard — 표본 3건 미만 단정 금지·조언 금지·수치 인용) 필수. 이원 운영: 일상=무료 키 동기+페이싱(RPM 15, 일 예산은 batch-limit, 429/한도 소진은 이월) / 백필 2만 건=유료 키 Batch one-shot(~$9). 판정은 크롤러 BeautyJudge 포트 뒤 Gemini 어댑터(팀 프롬프트·파서 재사용). 댓글 분류는 MVP 휴면이라 Anthropic 유지. 구모델(2.5)은 신규 키 404 — 3.1이 유일 | [plans/2026-07-18-gemini-llm-stack.md](2026-07-18-gemini-llm-stack.md) |
 ```
 
 §8 "LLM 모델" 행을 해소로:

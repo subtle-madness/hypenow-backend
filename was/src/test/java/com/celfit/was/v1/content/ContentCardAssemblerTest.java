@@ -20,7 +20,7 @@ class ContentCardAssemblerTest {
 				"[{\"name\":\"머지\",\"evidence\":\"e\"}]",
 				"[{\"name\":\"삼각형 웨지 퍼프\",\"brand\":\"머지\"}]",
 				"[\"다이소\"]",
-				"zingdong__", "현징이", "/avatars/z.jpg", 33325L);
+				"zingdong__", "현징이", "/avatars/z.jpg", 33325L, new BigDecimal("62.4321"));
 	}
 
 	@Test
@@ -34,18 +34,22 @@ class ContentCardAssemblerTest {
 		assertThat(card.distributors()).containsExactly("다이소");
 		assertThat(card.subCategories()).containsExactly("아이라이너");
 		assertThat(card.influencer().handle()).isEqualTo("zingdong__");
+		// hypeScore는 2026-07-30부터 hypeScorePrecise(소수, 출력 매핑 반영)를 그대로 싣는다 —
+		// hype_score(정수, 62)가 아니라 hype_score_precise(62.4321)와 일치해야 한다(스펙 §10).
+		assertThat(card.hypeScore()).isEqualByComparingTo("62.4321");
 	}
 
 	@Test
 	void jsonb_null은_빈_배열로_내린다() {
 		ContentCardRow r = new ContentCardRow("SC2", null, "c", OffsetDateTime.now(), "feed",
 				null, "u", null, 10L, 2L, 30L, OffsetDateTime.now(),
-				"skincare", null, "organic", null, null, null, "h", "d", "p", 100L);
+				"skincare", null, "organic", null, null, null, "h", "d", "p", 100L, null);
 		ContentCard card = assembler.toCard(r);
 		assertThat(card.brands()).isEmpty();
 		assertThat(card.products()).isEmpty();
 		assertThat(card.distributors()).isEmpty();
 		assertThat(card.subCategories()).isEmpty();
 		assertThat(card.views()).isNull(); // 피드 views null 규약 (스펙 3.6)
+		assertThat(card.hypeScore()).isNull();
 	}
 }

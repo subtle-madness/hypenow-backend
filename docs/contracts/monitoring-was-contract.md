@@ -5,7 +5,7 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.2 (P1 확장 4종 — 2026-07-30)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.3 (같은 유저 이중 추적 배제 — 2026-07-30)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
@@ -13,7 +13,9 @@
 > 알람 소유 이동·승인 폐지·`target.user_id`·알람 이벤트 대장, `feat/monitoring-alarm-module`) — **v1.1과 v2.0은
 > 공통 조상에서 병렬 개발**(서로 다른 파일을 확장해 파일 충돌 없이 진행), 이 머지로 **v2.1**로 통합 →
 > **v2.2**(2026-07-30, P1 확장 4종 — `post_meta`·hidden/error 상태 신호(`target.tracked_hidden_at`·
-> `target.fetch_failing`)·`sweep_run`·`target.matched_keywords` 산지 이설).
+> `target.fetch_failing`)·`sweep_run`·`target.matched_keywords` 산지 이설) →
+> **v2.3**(2026-07-30, 같은 유저 이중 추적 배제 — 감지가 같은 `user_id`의 다른 활성 target이 이미
+> 추적 중인 shortcode를 후보에서 뺀다. 프론트 계약 §6.25 요구, `feat/monitoring-duplicate-tracking-exclusion`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -379,10 +381,21 @@ ORDER BY captured_on;
 4. 실패 시: monitoring 에러 code를 프론트 어휘로 변환해 전달. 5xx·타임아웃이면
    같은 `registrationKey`로 재시도 가능(중복 캠페인 안 생김)
 
-### 감지 → 자동 추적 (v2)
+### 감지 → 자동 추적 (v2, **v2.3**: 같은 유저 이중 추적 배제 추가)
 
 1. 02:00 monitoring 스윕: 등록 시각 이후 게시물 중 키워드 매칭 → **그 자리에서 TRACKING 전환**
    (같은 스윕에 여러 건이면 게시 시각 최신 1건. 캠페인:추적 게시물 = 1:1)
+   - **(v2.3) 같은 유저 이중 추적 배제**: 매칭 후보 중 같은 `user_id`의 다른 활성 target
+     (`status IN ('WATCHING','TRACKING') AND tracked_short_code IS NOT NULL`)이 이미 추적 중인
+     shortcode는 후보에서 뺀다. 유저 스코프를 빼고 전역으로 하면 **다른 유저**가 먼저 추적 중인
+     게시물이 조용히 빠져 버린다 — 브랜드와 대행사가 같은 인플루언서를 각자 시딩하는 건 정상
+     시나리오라 이걸 막으면 안 된다. "활성"에는 **hidden**(`tracked_hidden_at` 세팅됨)·**error**
+     (`fetch_failing=true`)도 포함한다 — 비공개 전환으로 hidden된 행이 재공개 시 tracking으로
+     복귀하는 사이 감지가 새 행을 만들면 다시 이중 추적이 되기 때문이다. 후보가 전부 배제되면
+     이번 스윕은 전환하지 않고 WATCHING을 유지 — 다음 스윕이 자연 재시도한다.
+   - **알려진 한계**: was의 pending 행(등록 접수됐으나 monitoring target이 아직 없는 상태)은 이
+     배제가 볼 수 없다 — monitoring은 시스템 경계상 was DB에 접근하지 않는다. 등록 접수 직후
+     수 분의 창에서는 감지가 같은 게시물을 잡을 수 있다(수용된 한계).
 2. `COLLECTION_STARTED` 알람 이벤트 적재(아침 레인)
 3. was는 별도 명령 없이 조회 표면에서 상태 변화를 본다 — 사용자 승인 단계가 없다
 

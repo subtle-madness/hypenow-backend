@@ -18,7 +18,9 @@ Q = wr·reach + we·engage   (릴스)
 Q = engage                 (피드 — views를 쓰지 않는다)
 
 base  = clamp( 타입별 4점 앵커 구간선형(Q), 0, 100 )
-score = round( base × 0.5^(max(경과일, 0) / halflife) )
+raw   = base × 0.5^(max(경과일, 0) / halflife)        -- 반올림 전 연속값 (analytics.hype_score_raw)
+score = round( raw )                                  -- 정수 — contents.hype_score (값·의미 불변, 07-30~)
+표시  = round( 출력매핑(raw), 4 )                      -- 소수 — contents.hype_score_precise (07-30~, §1-1)
 ```
 
 **감쇠는 앵커 매핑 뒤에 곱하고, 클램프는 감쇠 앞에 둔다**(v3~). 둘 다 이유가 있다:
@@ -28,6 +30,22 @@ score = round( base × 0.5^(max(경과일, 0) / halflife) )
 - 클램프를 감쇠 뒤에 두면 앵커 p99를 크게 넘는 콘텐츠(매핑값 100 초과)가 오래된 뒤에도 부당하게
   높은 점수를 유지한다(`base=107 × 0.5 = 54` vs 올바른 `100 × 0.5 = 50`).
   `base ∈ [0,100]`이어야 "품질 백분위 × 신선도"라는 의미가 성립한다.
+
+### 1-1. 출력 매핑과 소수점 노출 (2026-07-30~)
+
+`score`(정수)는 랭킹 경로(`is_beauty AND (metric_timeliness='timely' OR NULL)`)에서 실측
+p05=5·p50=23·p90=44·p99=60.8·**max=76**이었다 — 1등이 76점에 그쳐 0~100 척도의 상단(77~100)이
+전혀 쓰이지 않았다. `analytics.hype_score_output()`이 `raw`를 **타입 무관 단일 앵커 세트**로 한 번
+더 재매핑해 이 문제를 편다 — 매핑 형태는 콘텐츠 Q 앵커·계정 앵커와 같은 4점 구간선형
+(`p05→10·p50→45·p90→80·p99→97`, `[0,100]` 클램프)이고, 타입을 다시 구분하지 않는다(타입
+정규화는 `raw`를 만드는 `Q` 기준 앵커가 이미 끝냈으므로).
+
+**정수 반올림 대신 소수 4자리**로 노출하는 이유: 정수 반올림은 랭킹 경로 상위 54건을 4개
+정수값으로 압축해 표시·정렬이 `short_code` 알파벳순에 지배되는 동점을 만든다(계정 쪽
+`avg_hype_score`에서 이미 실측된 것과 같은 구조적 결함, §2). `hype_score_precise`는 이 동점을
+없애면서 동시에 척도도 넓힌다. `contents.hype_score`(정수)는 **값·의미가 바뀌지 않는다** —
+`round(raw)::bigint`로, 리팩터 전과 항등이다. 자리수 조정은 프론트 몫이므로 소수는 자르기만
+하고(반올림 아님) 그대로 응답에 싣는다.
 
 ### NULL 규칙
 
@@ -44,20 +62,30 @@ score = round( base × 0.5^(max(경과일, 0) / halflife) )
 [`analytics/views/10_account_detail.sql`](../analytics/views/10_account_detail.sql) `v_account_summaries`.
 
 ```
-raw   = avg(콘텐츠 score)            -- 최근 N개 창(v_account_recent), NULL 제외
-표시  = hype_account_score(raw)      -- 계정 앵커로 0~100 매핑
-정렬  = raw                          -- 반올림 전 값
+raw           = avg(콘텐츠 score)                  -- 최근 N개 창(v_account_recent), NULL 제외
+표시(구)      = hype_account_score(raw)            -- 계정 앵커로 0~100 매핑 (정수, 값·의미 불변)
+정렬(구, 폐기예정) = raw                            -- 반올림 전 값
+
+precise_raw   = avg(콘텐츠 출력매핑값)              -- 창 콘텐츠의 hype_score_output(hype_score_raw(...)) 평균
+표시=정렬(신) = hype_account_score_precise(precise_raw)  -- 새 앵커로 0~100 매핑, 소수 4자리로 자름
 ```
 
-**표시값과 정렬 키가 분리되어 있다.** 계정 앵커 최상단 구간이 `97 + 3·(raw−a99)/(a99−a90)`이라
+**(구) 표시값과 정렬 키가 분리되어 있었다.** 계정 앵커 최상단 구간이 `97 + 3·(raw−a99)/(a99−a90)`이라
 raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 실측에서 ≥97점에 54개 계정이 4개 값을
 공유해 동점이 `handle` 알파벳순으로 깨지며 상위권 순서를 지배했다. 그래서 표시는 `avg_hype_score`
-(정수), 정렬은 `avg_hype_raw`(반올림 전)를 쓴다.
+(정수), 정렬은 `avg_hype_raw`(반올림 전)를 썼다.
 
 콘텐츠 점수에는 같은 문제가 없다 — 11만 건이라 상위 1%가 1,100건 이상이고 정수 100개 구간에
 충분히 퍼진다. 계정은 약 6,900개라 상위 1%가 54개뿐이었다.
 
-창 전체가 점수 불가면 `avg_hype_score`·`avg_hype_raw` 모두 NULL이다.
+**(신) 2026-07-30부터 `avg_hype_score_precise`(소수)가 표시·정렬을 겸한다** — 정수 자체가 없으니
+정수 동점→알파벳순 지배 문제가 애초에 생기지 않는다. 입력(`precise_raw`)도 `raw`와 다르다 — 창
+콘텐츠의 **출력 매핑까지 반영된** 점수(`hype_score_output(hype_score_raw(...))`)를 평균 낸 것이라,
+계정 앵커도 이 새 기준량에 맞춰 별도로 재적합했다(`hype_account_score_precise`, §3). `raw`·
+`hype_account_score`·`avg_hype_raw`(구)는 **값·의미가 바뀌지 않는다** — was는 더는 이 둘을 정렬에
+쓰지 않지만 다음 릴리스까지 컬럼 자체는 유지된다(§6).
+
+창 전체가 점수 불가면 신·구 네 컬럼(`avg_hype_score`·`avg_hype_raw`·`avg_hype_score_precise`) 모두 NULL이다.
 
 ## 3. 상수 — 값·근거·표류 위험
 
@@ -75,7 +103,9 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 | `halflife` | 14일 | 신선도 반감기 | `analytics.hype-fresh-halflife-days` | v3에서 유지 결정 — 서비스가 hypenow이므로 신선도를 강하게 반영 | — |
 | 콘텐츠 앵커 (릴스) | `0.1373 / 1.3798 / 4.5716 / 10.3883` | `Q`→0~100 | `analytics.hype-anchor-q-reels-{p05,p50,p90,p99}` | **전체 서빙 코퍼스**의 `Q` 분위수 | 재적합 절차 있음(§5) |
 | 콘텐츠 앵커 (피드) | `0.0447 / 0.6135 / 1.6320 / 3.0144` | 같음 | `analytics.hype-anchor-q-feed-{...}` | 같음 | 같음 |
-| 계정 앵커 | `1.0833 / 12.8333 / 31.2000 / 44.8600` | `raw`→0~100 | `analytics.hype-anchor-acct-{...}` | **0점 제외** 계정 모수. 전량으로 잡으면 p05=0이라 `NULLIF`로 전 계정이 NULL이 된다 | ⚠️ 이미 표류 중 |
+| **콘텐츠 출력 앵커** (2026-07-30~) | `5 / 23 / 44 / 60.8` | `raw`(hype_score 정수와 같은 연속값)→0~100 재매핑, **타입 무관 단일 세트** | `analytics.hype-anchor-out-{p05,p50,p90,p99}` | **랭킹 경로**(`is_beauty AND (metric_timeliness='timely' OR NULL)`) 실측 분포(n=5,321·재확인 5,683) — 발굴 목록·랭킹 API가 둘 다 이 모수의 부분집합 | 재적합 절차 있음(§5) |
+| 계정 앵커 (구) | `1.0833 / 12.8333 / 31.2000 / 44.8600` | `raw`→0~100 | `analytics.hype-anchor-acct-{...}` | **0점 제외** 계정 모수. 전량으로 잡으면 p05=0이라 `NULLIF`로 전 계정이 NULL이 된다 | ⚠️ 이미 표류 중. 다음 릴리스 드롭 후보(§6) |
+| **계정 소수 앵커** (2026-07-30~) | `1.4856 / 23.6566 / 56.3961 / 77.0479` | `precise_raw`(콘텐츠 출력 매핑 반영 창 평균)→0~100 | `analytics.hype-anchor-acct-precise-{...}` | **0점 제외**(및 반올림 시 0이 되는 `raw<0.5`도 제외) 계정 모수 — 콘텐츠 출력 매핑 도입으로 입력 기준량이 바뀌어 계정 앵커(구)와 공유 불가, 별도 재적합 | 재적합 절차 있음(§5) |
 | 최근창 | 12 | 계정 점수 모수 | `analytics.recent-window` | 뷰가 직접 읽는다 | — |
 
 매핑은 네 앵커를 `p05→10 · p50→45 · p90→80 · p99→97`로 잇는 구간선형이고, p99 초과는
@@ -89,12 +119,18 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 
 | 표면 | 정렬 | 필터 |
 |---|---|---|
-| `/v1/contents` 랭킹 | `contents.hype_score DESC NULLS LAST, short_code` | `is_beauty AND (metric_timeliness='timely' OR NULL)` — `late_backfill`·`immature` 제외 |
-| `/v1/influencers?sort=hype` | `account_summaries.avg_hype_raw DESC NULLS LAST, handle` (표시는 `avg_hype_score`) | 계정 요약 보유 계정 |
+| `/v1/contents` 랭킹 | `contents.hype_score_precise DESC NULLS LAST, short_code`(2026-07-30~, 표시도 동일 컬럼) | `is_beauty AND (metric_timeliness='timely' OR NULL)` — `late_backfill`·`immature` 제외 |
+| `/v1/influencers?sort=hype` | `account_summaries.avg_hype_score_precise DESC NULLS LAST, handle`(2026-07-30~, 표시도 동일 컬럼) | 계정 요약 보유 계정 |
 | `v_content_metric_snapshots` | — | as-of 조회. 감쇠 기준 시각이 `now()`가 아니라 `captured_at` |
 
 `v_contents`는 감쇠 기준을 `now()`로 잡으므로 **점수가 조회 시점마다 재계산된다**(스냅샷 저장이 아니다).
 미러 테이블 `contents.hype_score`는 마지막 미러 시점의 값이다.
+
+**expand-contract 상태(2026-07-30~)**: `contents.hype_score`(bigint)·`account_summaries.avg_hype_score`
+(bigint)·`account_summaries.avg_hype_raw`(numeric, 구 정렬 키)는 값·의미가 이번 릴리스에서 바뀌지
+않았고 코드도 여전히 참조한다(구 대시보드 `/dashboard`·`/posts/{shortCode}` 등 프론트 전환 전
+잔존 소비자). was의 표시·정렬은 전부 `_precise` 컬럼으로 옮겼으므로, 참조가 완전히 끊기는
+**다음 릴리스에서 이 세 컬럼을 DROP한다**(소수 표시값이 정렬 키도 겸해 raw는 더는 필요 없다).
 
 ## 5. 재적합 절차
 
@@ -114,6 +150,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 |---|---|
 | 운영(main) | **v2.1** — 감쇠 후 매핑, 피드 앵커 미재적합, 계정 점수 `round(avg)`. **타입 편향 살아 있음** |
 | staging / test | v3 + 계정 척도 재교정 + 정렬 키 분리 |
+| develop(이 PR) | 위 + **소수점 노출**(`hype_score_precise`·`avg_hype_score_precise`, 출력 매핑) |
 
 **분석 뷰는 수동 적용이다** — PR 머지만으로 운영 점수가 바뀌지 않는다. 롤아웃 순서:
 마이그레이션 → 뷰 적용(`--single-transaction`) → 미러 잡 → 스팟체크 → 프론트 통지.
@@ -138,6 +175,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 | v2 (07-20) | 하드캡 제거, 연속 로그 축, 타입별 앵커 | [2026-07-20-hype-score-v2-redesign](superpowers/specs/2026-07-20-hype-score-v2-redesign-design.md) |
 | v2.1 (07-20) | 릴스 참여 축 분모를 조회수→팔로워로 교체(저조회수 뭉침 해소). 릴스 앵커만 재적합 | [2026-07-20-reels-hype-engage-follower-normalization](superpowers/specs/2026-07-20-reels-hype-engage-follower-normalization-design.md) |
 | v3 (07-30) | 감쇠를 앵커 매핑 뒤로, 클램프를 감쇠 앞으로. 앵커를 `Q` 기준·전체 서빙 코퍼스로 재적합. 계정 척도 재교정과 정렬 키 분리 동반 | [2026-07-30-hype-score-v3-decay-after-mapping](superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md) |
+| v3 + 소수점 노출 (07-30) | 콘텐츠 출력 매핑(`hype_score_output`) 신설·타입 무관 단일 앵커(랭킹 경로 실측). `hype_score_precise`·`avg_hype_score_precise`(둘 다 소수 4자리) 신설, was 표시·정렬을 이 컬럼들로 이전. 구 정수 컬럼 3종은 값·의미 불변·다음 릴리스 드롭 대상 | [2026-07-30-hype-score-v3-decay-after-mapping §10](superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md) |
 
 ### 실측으로 폐기된 안 (재도입 금지)
 
@@ -148,3 +186,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 - **무감쇠(신선도 제거)** — 발굴 목록 상위 50이 피드 100%로 도배되고 기존 상위 50과 2/50만 겹친다.
   활동을 멈춘 계정의 옛 대박 게시물이 최근창에 영구히 박혀 평균을 밀어올린다.
 - **`B` 제거** — §7 참조. 초소형 계정이 폭주해 악화된다.
+- **계정 소수 앵커를 `hype_account_score`(구) 자체의 기본값 교체로 구현** — 문구상 자연스러워
+  보이지만, `avg_hype_score`(bigint, 값·의미 불변 약속)가 `hype_account_score(avg_hype_raw)`로
+  정의돼 있어 앵커를 바꾸면 그 값도 함께 바뀐다. 별도 함수(`hype_account_score_precise`)·별도
+  app_setting 키(`hype-anchor-acct-precise-*`)로 완전히 분리해야 구 컬럼이 안 깨진다.
