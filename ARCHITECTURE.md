@@ -69,10 +69,23 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 | `app_setting` | 런타임 설정 key-value (분석 뷰도 여기서 임계값을 읽음) |
 
 **캡션을 찾을 때**: `content_caption`을 본다 — `SELECT caption FROM content_caption WHERE content_id = ?`.
-jsonb 원형에서 직접 파는 경로도 여전히 유효하지만(릴스는 `raw_media_page.payload#>>'{response,items,N,media,caption,text}'`,
-피드는 `raw_profile.payload#>>'{data,user,edge_owner_to_timeline_media,edges,N,node,edge_media_to_caption,edges,0,node,text}'`)
-정본은 `content_caption`이다. **`raw_discovery_post`는 `origin='DISCOVERY'`만 커버하므로 캡션 조회의 정본이 아니다** —
-이것과 `raw_post_detail`(0행, V24에서 제거)을 조인해 "캡션이 DB에 없다"고 오판한 전력이 있다(07-30).
+jsonb 원형에서 직접 파는 경로도 여전히 유효하지만 `raw_media_page`·`raw_profile` 둘 다 여러
+source가 섞여 있어 `source=` 조건이 필수다 — 릴스는
+`raw_media_page.payload#>>'{response,items,N,media,caption,text}'`(`WHERE source='HIKER_V2_CLIPS'`),
+SELF_GQL 내장 타임라인은
+`raw_profile.payload#>>'{data,user,edge_owner_to_timeline_media,edges,N,node,edge_media_to_caption,edges,0,node,text}'`
+(`WHERE source='SELF_GQL'`)로 읽는다. **이 타임라인은 피드 전용이 아니다** —
+`product_type='clips'` 노드(릴스)도 다수 담겨 있어 릴스 스냅샷 폴백 소스로도 쓰인다
+(`analytics/views/00_base.sql:99-100`). 조건 없이 "피드=raw_profile, 릴스=raw_media_page"로
+배타적으로 단정하면, 릴스 캡션을 릴스 전용 경로에서만 찾고 없다고 결론 내리는 오조사가
+재현된다.
+정본은 `content_caption`이다. 다만 `content_caption.source`는 **"이 게시물의 정본 소스"가
+아니라 "마지막에 이긴 파싱 경로"**다 — 타임라인이 릴스도 담으므로 같은 REELS content가
+어느 시점엔 `SELF_GQL`로, 다른 시점엔 `HIKER_V2_CLIPS`로 찍힐 수 있다.
+`GROUP BY (content_type, source)` 식으로 집계하면 "이 컨텐츠 타입은 이 소스가 정본"이라고
+오해하게 된다. **`raw_discovery_post`는 `origin='DISCOVERY'`만 커버하므로 캡션 조회의 정본이
+아니다** — 이것과 `raw_post_detail`(0행, V24에서 제거)을 조인해 "캡션이 DB에 없다"고 오판한
+전력이 있다(07-30).
 
 ### 분석 뷰 (raw DB의 `analytics` 스키마)
 

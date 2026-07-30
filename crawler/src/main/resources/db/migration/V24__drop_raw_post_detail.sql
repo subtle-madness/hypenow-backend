@@ -9,6 +9,10 @@
 -- 캡션 조회 시 이 테이블을 조인해 "캡션이 DB에 없다"는 오조사가 실제로 발생했다(2026-07-30) —
 -- 빈 테이블이 살아 있는 것 자체가 오답의 원인이므로 정리한다.
 --
--- 주의: crawler 마이그레이션은 CI migration-guard 검사 대상이 아니다(was·analytics만 검사).
--- 위 주석은 자동 통과용이 아니라 사람 리뷰어용이다.
+-- 주의: check-migration-safety.sh의 파괴적 DDL 검사(DROP TABLE 포함)는 was·analytics만
+-- 대상이다(was 롤링 배포 중 신구 코드 공존 근거가 그 두 DB에만 있다) — 이 DROP은 자동
+-- 차단되지 않으므로 위 주석은 사람 리뷰어용이다. 단, 같은 스크립트의 버전 중복 검사는
+-- crawler·monitoring까지 4개 디렉토리 전부를 본다(check-migration-safety.sh v3, 실패 모드가
+-- 달라서다 — 어느 Flyway 인스턴스든 중복 버전이면 그 인스턴스 자체가 기동을 거부한다).
+-- 이번 V22 번호 경합(open PR #216 선점)은 그 버전 중복 검사로도 기계적으로 잡혔을 사안이다.
 DROP TABLE raw_post_detail;

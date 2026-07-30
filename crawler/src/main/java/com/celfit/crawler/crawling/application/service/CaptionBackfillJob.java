@@ -44,8 +44,15 @@ public class CaptionBackfillJob {
 
     private static final Logger log = LoggerFactory.getLogger(CaptionBackfillJob.class);
 
-    /** 페이지 1건이 jsonb 수십~수백 KB다 — 청크를 크게 잡으면 힙이 위험하다. */
-    static final int PAGE_CHUNK = 200;
+    /**
+     * 페이지 1건이 jsonb 수십~수백 KB다 — 최대 소스 HIKER_V2_CLIPS 실측 평균이 그 범위
+     * 상단인 약 196KB/행(36,759행/7,040MB)이라, 청크 200이면 밀집 최악 200×196KB ≈ 38MB
+     * 원시 JSON을 한 트랜잭션 안에서 다룬다. 이게 Map&lt;String,Object&gt;로 파싱된 채(Jackson
+     * Map/String 그래프는 원시 바이트의 수 배로 팽창) `chunk` 지역변수로 트랜잭션 끝까지
+     * 강참조되는데, 운영 크롤러 힙은 -Xmx1g고 컨테이너 메모리 제한이 없어 위험하다. 원샷
+     * 잡이라 런타임이 무의미하므로 50으로 낮춘다(media 루프 233회 → 약 930회, 여전히 사소).
+     */
+    static final int PAGE_CHUNK = 50;
 
     static final String MEDIA_WATERMARK = "caption.backfill.media-page-id";
     static final String PROFILE_WATERMARK = "caption.backfill.profile-id";

@@ -26,16 +26,25 @@
 (`media` → `node` → 그대로). 따라서 캡션 추출은 정규화된 맵 하나를 받는 **단일 헬퍼**로 끝난다.
 소스별 분기가 필요 없다.
 
-**빈 캡션 정책:** 캡션이 없는 게시물도 행을 만들고 `caption=''`로 저장한다. 행 존재 = "확인했음",
-`caption=''` = "게시물에 캡션 없음". 이렇게 하면 미백필과 무캡션이 SQL로 구분된다. 따라서
-`captionOf()`는 **절대 null을 반환하지 않는다** — 못 찾으면 `""`.
+**빈 캡션 정책 (2026-07-30 최종 종합 리뷰로 개정 — 아래 "Task 10" 참고):** 최초 구현은 `captionOf()`가
+절대 null을 반환하지 않고 못 찾으면 `""`를 반환했다. 그런데 이 `""`는 "캡션이 없다"와 "이 payload
+형태에서 캡션을 읽는 방법을 모른다"를 구분하지 못해, 같은 content가 다른 소스 페이지에 다시
+등장할 때(타임라인은 릴스도 담고 V1_MEDIAS는 피드·릴스를 함께 담는다) 더 최신 페이지의 `""`가
+실제 캡션을 덮어쓰는 결함이 있었다(머지 차단급). 최종 형태는 3-상태다: `captionOf()`가
+**미확인(형태를 못 알아봄)은 `null`**, **확인된 무캡션(형태는 인식했고 값이 비어 있음)은 `""`**를
+반환하고, `ContentCaptionUpserter.upsert()`가 `caption == null`인 아이템을 배치에서 제외한다.
+행 존재 = "확인했음"이 이 개정으로 비로소 참이 된다.
 
 **`RawSource` enum 값 전체:** `LEGACY_ENVELOPE, APIFY_ACTOR, HIKER_MOBILE, HIKER_HASHTAG, SELF_GQL,
 HIKER_GQL_MEDIAS, HIKER_V2_CLIPS, HIKER_V1_MEDIAS, DATALIKERS`
 
-**주의 — CI 안전망 없음:** `.github/scripts/check-migration-safety.sh`는 `was`+`analytics`
-마이그레이션만 검사한다. crawler 마이그레이션은 파괴 가드가 **자동 차단하지 않는다**. 그러니
-`-- allow-destructive:` 주석은 사람 리뷰어용으로 남기고, DDL은 직접 더 조심해서 검토한다.
+**주의 — CI 안전망 범위:** `.github/scripts/check-migration-safety.sh`의 **파괴적 DDL 검사**는
+`was`+`analytics` 마이그레이션만 본다(롤링 배포 중 신구 코드 공존 근거가 그 두 DB에만 있다) —
+crawler 마이그레이션은 이 검사가 **자동 차단하지 않는다**. 그러니 `-- allow-destructive:` 주석은
+사람 리뷰어용으로 남기고, DDL은 직접 더 조심해서 검토한다. 단, 같은 스크립트의 **버전 중복
+검사(v3)는 crawler·monitoring까지 4개 디렉토리 전부를 대상**으로 한다 — 실패 모드가 달라서다
+(어느 Flyway 인스턴스든 중복 버전이면 그 인스턴스 자체가 기동을 거부하므로 신구 공존 여부와
+무관). Task 7의 V22 번호 경합(open PR #216 선점)은 이 검사로도 기계적으로 잡혔을 사안이다.
 
 **테스트 명령:**
 - 전체: `./gradlew test`
@@ -992,8 +1001,12 @@ public class CaptionBackfillJob {
 
     private static final Logger log = LoggerFactory.getLogger(CaptionBackfillJob.class);
 
-    /** 페이지 1건이 jsonb 수십~수백 KB다 — 청크를 크게 잡으면 힙이 위험하다. */
-    static final int PAGE_CHUNK = 200;
+    /**
+     * 페이지 1건이 jsonb 수십~수백 KB다(2026-07-30 최종 종합 리뷰로 200→50 하향 — Task 10 참고,
+     * 최대 소스 HIKER_V2_CLIPS 실측 평균이 그 범위 상단인 약 196KB/행이라 청크를 크게 잡으면
+     * 힙이 위험하다는 게 실측으로 확인됨).
+     */
+    static final int PAGE_CHUNK = 50;
 
     static final String MEDIA_WATERMARK = "caption.backfill.media-page-id";
     static final String PROFILE_WATERMARK = "caption.backfill.profile-id";
@@ -1354,8 +1367,12 @@ ssh hypenow 'docker exec deploy-postgres-raw-1 psql -U crawler -d crawler -At -c
 -- 캡션 조회 시 이 테이블을 조인해 "캡션이 DB에 없다"는 오조사가 실제로 발생했다(2026-07-30) —
 -- 빈 테이블이 살아 있는 것 자체가 오답의 원인이므로 정리한다.
 --
--- 주의: crawler 마이그레이션은 CI migration-guard 검사 대상이 아니다(was·analytics만 검사).
--- 위 주석은 자동 통과용이 아니라 사람 리뷰어용이다.
+-- 주의: check-migration-safety.sh의 파괴적 DDL 검사(DROP TABLE 포함)는 was·analytics만
+-- 대상이다(was 롤링 배포 중 신구 코드 공존 근거가 그 두 DB에만 있다) — 이 DROP은 자동
+-- 차단되지 않으므로 위 주석은 사람 리뷰어용이다. 단, 같은 스크립트의 버전 중복 검사는
+-- crawler·monitoring까지 4개 디렉토리 전부를 본다(check-migration-safety.sh v3, 실패 모드가
+-- 달라서다 — 어느 Flyway 인스턴스든 중복 버전이면 그 인스턴스 자체가 기동을 거부한다).
+-- 이번 V22 번호 경합(open PR #216 선점)은 그 버전 중복 검사로도 기계적으로 잡혔을 사안이다.
 DROP TABLE raw_post_detail;
 ```
 
@@ -1538,7 +1555,7 @@ gh pr create --base develop --title "feat(crawler): 게시물 캡션 원문 보�
 
 ## 주의
 
-- **crawler 마이그레이션은 CI migration-guard 검사 대상이 아니다**(was·analytics만). 파괴 DDL 자동 차단이 없으니 V24(DROP)를 사람이 검토해주기 바란다.
+- **migration-guard의 파괴적 DDL 검사는 was·analytics만 대상이다** — crawler 마이그레이션은 이 검사가 자동 차단하지 않으니 V24(DROP)를 사람이 검토해주기 바란다. (버전 중복 검사는 별개로 crawler도 포함한다.)
 - 백필은 jsonb 약 14GB를 1회 읽는다 — 크롤 잡과 겹치지 않는 시각에 `/ui`에서 수동 실행할 것.
 
 설계 문서: `docs/superpowers/specs/2026-07-30-caption-preservation-design.md`
@@ -1556,6 +1573,55 @@ git mv docs/superpowers/plans/2026-07-30-caption-preservation.md docs/superpower
 git commit -m "docs: 캡션 보존 구현 계획 아카이브 이동 (실행 완료)"
 git push
 ```
+
+---
+
+## Task 10: 최종 종합 리뷰 반영 (2026-07-30)
+
+Task 9 완료 후 PR #236에 대한 최종 종합 리뷰가 머지 차단급 결함 1건과 후속 3건을 찾아 전부
+반영했다.
+
+- [x] **수정 1 (Critical, 머지 차단) — 빈 문자열이 실제 캡션을 조용히 덮는 결함.**
+  `captionOf()`가 "캡션이 없다"와 "이 payload 형태에서 캡션을 읽는 방법을 모른다"를 똑같이
+  `""`로 만들었다. 같은 content가 여러 소스 페이지에 등장할 때(타임라인은 릴스도 담고
+  V1_MEDIAS는 피드·릴스를 함께 담는다) 더 최신 페이지의 `""`가 실제 캡션을 덮었고, 라이브는
+  `clock.instant()`(현재)를 쓰므로 항상 백필을 이겨 백필로 건진 캡션(~6,240건, 이 PR의
+  헤드라인 가치)이 영구 소실될 수 있었다. 위 "빈 캡션 정책" 절이 이 결함이 있던 최초 계약을
+  그대로 남기고 있었다 — 최종 형태는 그 절의 개정 내용대로 `captionOf()`가 미확인은 `null`,
+  확인된 무캡션은 `""`를 반환하고 `ContentCaptionUpserter.upsert()`가 `null` 아이템을 배치에서
+  제외한다. 회귀 확인: `captionOf()`를 옛 동작(못 찾으면 `""`)으로 되돌리자
+  `MediaItemExtractorTest` 7건이 실패했고, upserter의 null 제외 가드를 제거하자
+  `ContentCaptionUpserterIntegrationTest` 1건이 `caption NOT NULL` 제약 위반
+  (`DataIntegrityViolationException`)으로 실패하는 것을 확인한 뒤 원복했다. 별도 커밋.
+
+- [x] **수정 2 (후속) — `PAGE_CHUNK`를 200→50으로 낮춘다.** 운영 크롤러 힙이 `-Xmx1g`(컨테이너
+  메모리 제한 없음)인데, 최대 소스 HIKER_V2_CLIPS 실측 평균이 약 196KB/행(36,759행/7,040MB)이라
+  밀집 청크 최악이 200×196KB ≈ 38MB 원시 JSON — Jackson Map/String 그래프로 파싱되면 수 배
+  팽창한 채 `chunk` 지역변수로 트랜잭션 끝까지 강참조된다. 원샷 잡이라 런타임이 무의미하므로
+  50으로 낮췄다(media 루프 233회 → 약 930회). 위 "Task 5" 코드 블록·주석과
+  `CaptionBackfillJobIntegrationTest`의 하드코딩된 200/205 언급도 함께 정합화했다(테스트 자체는
+  `CaptionBackfillJob.PAGE_CHUNK` 상수를 참조해 값을 자동으로 따라간다).
+
+- [x] **수정 3 (후속) — ARCHITECTURE.md §3 "캡션을 찾을 때" 정확도 수정.** `00_base.sql`을
+  직접 대조한 결과 세 가지가 부정확했다: ① "피드는 raw_profile"이라는 배타적 라벨이
+  틀렸다 — `00_base.sql:99-100`이 명시하듯 SELF_GQL 내장 타임라인은 릴스(`product_type='clips'`)도
+  담아 릴스 스냅샷 폴백 소스로 쓰인다. ② jsonb 경로 예시에 `source=` 조건이 빠져 있었다 —
+  `raw_media_page`·`raw_profile` 둘 다 여러 source가 섞여 있으므로 `source='HIKER_V2_CLIPS'`·
+  `source='SELF_GQL'`을 명시했다. ③ `content_caption.source`가 "이 게시물의 정본 소스"가 아니라
+  "마지막에 이긴 파싱 경로"라는 점을 추가했다 — 타임라인이 릴스도 담으므로 같은 REELS
+  content가 시점에 따라 `SELF_GQL`·`HIKER_V2_CLIPS`로 갈릴 수 있어 `(content_type, source)`
+  집계는 오해를 낳는다.
+
+- [x] **수정 4 (정정) — migration-guard 스코프 서술 정정.** `.github/scripts/check-migration-safety.sh`를
+  직접 읽어 확인한 결과, "crawler 마이그레이션은 CI migration-guard 검사 대상이 아니다"는
+  **파괴적 DDL 검사에만** 참이었다(was·analytics만 대상 — 롤링 공존 근거가 그 두 DB에만 있다).
+  **버전 중복 검사(v3)는 crawler·monitoring까지 4개 디렉토리 전부를 본다** — 어느 Flyway
+  인스턴스든 중복 버전이면 그 인스턴스 자체가 기동을 거부하는 별개의 실패 모드라서다. 이번
+  V22 번호 경합(Task 7의 "번호 노트" — open PR #216 선점)은 그 버전 중복 검사로도 기계적으로
+  잡혔을 사안이었다. `V24__drop_raw_post_detail.sql`과 이 계획서 곳곳의 관련 주석을 정정했다.
+
+- [x] **검증**: `./gradlew test --rerun` 전 모듈 PASS. 병합 후 기준치는 위 "테스트 명령" 절
+  참고 — 이 리뷰로 crawler 테스트 수가 늘었다(캡션 3-상태 회귀 테스트 추가).
 
 ---
 

@@ -219,14 +219,14 @@ class CaptionBackfillJobIntegrationTest extends IntegrationTest {
 
     /**
      * 회귀 테스트 - "DB 재조회 커서 루프"는 이 잡이 이 코드베이스에 처음 도입한 패턴이다(다른 잡은
-     * 후보를 한 쿼리로 메모리에 다 가져와 청크한다). PAGE_CHUNK(200)건 이하로만 심으면 청크
+     * 후보를 한 쿼리로 메모리에 다 가져와 청크한다). PAGE_CHUNK건 이하로만 심으면 청크
      * 루프가 단 한 번만 돌아 커서 전진 로직이 전혀 실행되지 않으므로, PAGE_CHUNK보다 많은 행을
      * 심어 청크가 최소 2번 돌게 한다.
      *
      * <p>검증 완료 — `long last = chunk.get(chunk.size() - 1).getId();`를 `chunk.get(0).getId();`로
      * 바꿔 커서가 청크의 마지막이 아니라 첫 id로 전진하도록 일부러 깨뜨린 뒤 이 테스트만 단독
      * 실행해봤다: cursor가 반복마다 1씩만 전진해 같은 행을 계속 재처리하면서 `stats.pages()`가
-     * 기대값(205)을 한참 초과했다 — FAILED로 확인 후 원복했다.
+     * 기대값(PAGE_CHUNK + 5)을 한참 초과했다 — FAILED로 확인 후 원복했다.
      */
     @Test
     void 청크_경계를_넘겨도_커서가_이어지고_전건_캡션이_적재된다() {
