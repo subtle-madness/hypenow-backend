@@ -54,8 +54,26 @@ class SweepSchedulerTest {
 			}
 		};
 
-		new SweepScheduler(job).sweep();
+		new SweepScheduler(job, new SweepGuard()).sweep();
 
 		assertThat(calls[0]).isEqualTo(1);
+	}
+
+	/** 가드가 이미 잡혀 있으면(수동 트리거 진행 중 등) 크론 틱은 스윕을 건드리지 않고 스킵한다. */
+	@Test
+	void 가드가_이미_잡혀있으면_크론_스윕은_스킵된다() {
+		var calls = new int[1];
+		var job = new DailySweepJob(null, null, null, null, null, 0, Duration.ZERO) {
+			@Override
+			public void run() {
+				calls[0]++;
+			}
+		};
+		var guard = new SweepGuard();
+		assertThat(guard.tryAcquire()).isTrue();   // 수동 트리거가 이미 잡고 있다고 흉내
+
+		new SweepScheduler(job, guard).sweep();
+
+		assertThat(calls[0]).isZero();
 	}
 }

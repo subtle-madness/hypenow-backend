@@ -79,7 +79,18 @@ public class DailySweepJob {
 	 * 남기고 예외를 그대로 재전파한다 — try/finally라 별도 catch 없이도 이 순서가 보장된다.
 	 */
 	public void run() {
-		Long runId = startSweepRun();
+		runWithId(startSweepRun());
+	}
+
+	/**
+	 * 이미 발급된 sweep_run id로 스윕 1회를 실행 — {@link #run()}의 try/finally 격리 계약(정상
+	 * 완주 ok=true, 예외 이탈 ok=false 후 재전파)과 완전히 동일하다. 시작 기록만 호출부가 먼저 얻어둔
+	 * 경우를 위해 분리했다: 수동 트리거(SweepCommandService)가 202 응답 본문에 runId를 실으려면
+	 * sweep_run INSERT가 HTTP 응답 전에 동기로 끝나야 하는데, {@link #run()}은 그 값을 밖으로
+	 * 내주지 않기 때문이다. protected인 이유는 테스트(SweepControllerTest)가 스윕 실행 타이밍
+	 * (동시 실행 가드 검증)을 통제하려고 오버라이드하기 때문 — 웹 계층 테스트라 다른 패키지에서 상속한다.
+	 */
+	protected void runWithId(Long runId) {
 		boolean ok = false;
 		try {
 			runSweep();
@@ -89,7 +100,8 @@ public class DailySweepJob {
 		}
 	}
 
-	private Long startSweepRun() {
+	/** package-private — SweepCommandService가 수동 트리거 응답에 실을 runId를 동기로 미리 받아간다. */
+	Long startSweepRun() {
 		try {
 			return sweepRuns.start();
 		} catch (RuntimeException e) {

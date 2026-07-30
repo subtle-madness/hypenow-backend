@@ -1,12 +1,22 @@
 package com.celfit.was.v2.influencer;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.auth.AppUser;
+import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.ClockConfig;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.account.RateLimiter;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryAssembler;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository;
@@ -17,7 +27,9 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -39,6 +51,20 @@ class V2InfluencerReportControllerTest {
 
 	@MockitoBean
 	V1InfluencerDiscoveryRepository discoveryRepository;
+
+	@MockitoBean
+	RateLimiter rateLimiter;
+
+	@BeforeEach
+	void allowRate() {
+		// 기본은 통과 — 레이트리밋 테스트에서만 false로 덮어쓴다(boolean mock 기본값 false 방지).
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+	}
+
+	private static AppUserDetails principal() {
+		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
+				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
+	}
 
 	// V2InfluencerReportAssemblerTest와 동일 픽스처
 	private SummaryRow fullSummary() {
@@ -113,5 +139,63 @@ class V2InfluencerReportControllerTest {
 		given(repository.findSummary("ghost")).willReturn(Optional.empty());
 		mockMvc.perform(get("/v2/influencers/ghost/similar"))
 				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void ai_리포트_익명_레이트리밋_초과는_429_RATE_LIMITED() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(false);
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/ai-report"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
+
+		verify(repository, never()).findSummary(anyString());
+	}
+
+	@Test
+	void similar_익명_레이트리밋_초과는_429_RATE_LIMITED() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(false);
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/similar"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
+
+		verify(repository, never()).findSummary(anyString());
+	}
+
+	@Test
+	void ai_리포트_익명_요청은_IP_키_로그인_요청은_사용자_키로_레이트리밋된다() throws Exception {
+		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
+		given(repository.findLatestCopy("haeun.log")).willReturn(Optional.of(copy()));
+		given(repository.findSeries("haeun.log")).willReturn(List.of());
+		given(repository.findCategories("haeun.log")).willReturn(List.of());
+		given(repository.findBrandCollabs("haeun.log")).willReturn(List.of());
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/ai-report")).andExpect(status().isOk());
+		ArgumentCaptor<String> anonKey = ArgumentCaptor.forClass(String.class);
+		verify(rateLimiter).tryAcquire(anonKey.capture(), anyInt());
+		assertThat(anonKey.getValue()).startsWith("ai-report:ip:");
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/ai-report").with(user(principal())))
+				.andExpect(status().isOk());
+		ArgumentCaptor<String> userKey = ArgumentCaptor.forClass(String.class);
+		verify(rateLimiter, times(2)).tryAcquire(userKey.capture(), anyInt());
+		assertThat(userKey.getAllValues().get(1)).isEqualTo("ai-report:user:7");
+	}
+
+	@Test
+	void similar_익명_요청은_IP_키_로그인_요청은_사용자_키로_레이트리밋된다() throws Exception {
+		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
+		given(repository.findSimilarHandles("haeun.log")).willReturn(List.of());
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/similar")).andExpect(status().isOk());
+		mockMvc.perform(get("/v2/influencers/haeun.log/similar").with(user(principal())))
+				.andExpect(status().isOk());
+
+		ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+		verify(rateLimiter, times(2)).tryAcquire(key.capture(), anyInt());
+		assertThat(key.getAllValues().get(0)).startsWith("similar:ip:");
+		assertThat(key.getAllValues().get(1)).isEqualTo("similar:user:7");
 	}
 }
