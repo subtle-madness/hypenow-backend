@@ -20,11 +20,15 @@ class SchemaTest extends IntegrationTest {
                 String.class);
         assertThat(tables).contains(
                 "search_keyword", "influencer", "influencer_discovery",
-                "content", "crawl_run", "raw_discovery_post", "raw_post_detail",
+                "content", "crawl_run", "raw_discovery_post",
                 "raw_comment", "raw_profile", "raw_media_page", "app_setting", "raw_run_item",
                 "content_caption");
         // V8에서 인플루언서 중심으로 개편되며 카테고리 체계는 완전히 걷어냈다.
-        assertThat(tables).doesNotContain("category", "category_keyword", "collection_rule", "account");
+        // raw_post_detail은 구 파이프라인 상세 payload 테이블 — 신 파이프라인은 게시물 상세를
+        // 따로 수집하지 않고(릴스는 raw_media_page, 피드는 raw_profile 내장 타임라인이 원형),
+        // 07-22 열람 화면 제거로 접근 코드도 이미 끊겨 V24에서 제거했다.
+        assertThat(tables).doesNotContain(
+                "category", "category_keyword", "collection_rule", "account", "raw_post_detail");
     }
 
     /**
