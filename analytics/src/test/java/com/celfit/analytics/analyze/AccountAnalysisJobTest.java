@@ -393,27 +393,106 @@ class AccountAnalysisJobTest {
 	}
 
 	/**
-	 * 성과 요약 통계 왜곡 가드(설계 §3-3) — 판정에 쓴 내부 컬럼 9개는 LLM 프롬프트로 넘어가는
-	 * summary 맵에서 제거돼야 한다(수치가 그대로 인용될 여지 차단). 판정 자체(PerfConfidence)는
-	 * PerfConfidenceTest가 별도로 검증한다.
+	 * 성과 요약 통계 왜곡 가드(설계 §3-3 재정의) — 항상 제거할 판정 전용 내부 컬럼은 7개뿐이다.
+	 * {@code median_views}·{@code median_er_pct}는 여기 없다 — "수준 판정의 근거를 median으로
+	 * 옮긴다"는 간판 결정 그 자체라 LLM이 봐야 하는 값이다(예전엔 이 둘도 always-strip에 있어서
+	 * 간판 변경이 무력화됐었다 — {@code 777minseo} 사례, PerfConfidence.CONFIDENCE_COLUMNS javadoc
+	 * 참조). 다만 median이 존재하면 대응 avg는 "선택지"가 아니라 median을 유일한 근거로 만들기
+	 * 위해 제거된다(뒤 테스트에서 검증). 판정 자체(PerfConfidence)는 PerfConfidenceTest가
+	 * 별도로 검증한다.
 	 */
 	@Test
-	void 프롬프트_요약에서_내부_판정_컬럼이_제거된다() {
+	void 프롬프트_요약에서_always_strip_7개만_제거되고_median_두_개는_남는다() {
 		db.update("""
 				UPDATE account_summaries SET
-				  views_sample_count = 1, likes_sample_count = 6, comments_sample_count = 6,
+				  views_sample_count = 6, likes_sample_count = 6, comments_sample_count = 6,
 				  reels_count = 6, feed_count = 0, median_views = 9000, median_er_pct = 1.2,
-				  top_views_share_pct = 100, window_span_days = 10
+				  top_views_share_pct = 55, window_span_days = 10
 				WHERE handle = 'acct_ad'""");
 
 		job.run();
 
 		Map<String, Object> summary = callFor("acct_ad").summary();
 		for (String key : List.of("views_sample_count", "likes_sample_count", "comments_sample_count",
-				"reels_count", "feed_count", "median_views", "median_er_pct",
-				"top_views_share_pct", "window_span_days")) {
+				"reels_count", "feed_count", "top_views_share_pct", "window_span_days")) {
 			assertFalse(summary.containsKey(key), key + "가 프롬프트 입력에 남아 있음: " + summary);
 		}
+		assertTrue(summary.containsKey("median_views"),
+				"median_views가 프롬프트 입력에서 빠짐(간판 변경 무력화): " + summary);
+		assertTrue(summary.containsKey("median_er_pct"),
+				"median_er_pct가 프롬프트 입력에서 빠짐(간판 변경 무력화): " + summary);
+		// median이 존재하니 대응 avg는 선택지가 아니라 제거 대상 — median을 유일한 근거로 만든다.
+		assertFalse(summary.containsKey("avg_views"), "median_views가 있는데 avg_views가 남아 있음: " + summary);
+		assertFalse(summary.containsKey("views_per_follower"),
+				"median_views가 있는데 views_per_follower가 남아 있음: " + summary);
+		assertFalse(summary.containsKey("avg_er_pct"), "median_er_pct가 있는데 avg_er_pct가 남아 있음: " + summary);
+	}
+
+	/**
+	 * 조건부 제거(설계 §3-3 실측 보완 + §3-3 재정의) — "언급하지 마라"뿐인 지침은 안 지켜졌고
+	 * 입력에서 아예 뺀 것만 지켜졌다. TOO_LONG이면 추세 4컬럼, 조회수 INSUFFICIENT면 avg_views·
+	 * views_per_follower가 프롬프트 요약에서 빠지고, 게시물 목록에서도 views 필드가 빠져야 한다.
+	 * 좋아요·댓글은 OK 등급이라 avg_likes·avg_comments는 그대로 남아야 한다.
+	 *
+	 * <p>이 픽스처는 median_views = NULL(조회수 관측 자체가 부족해 계산 불가)인데, 조회수가
+	 * INSUFFICIENT라는 것만으로도 (median_views가 애초에 NULL이라 "존재 시 제거" 규칙과는
+	 * 무관하게) 제거 대상에 들어가야 한다 — 두 규칙(모수 게이트 제거 vs median 존재 시 제거)이
+	 * 중복 없이 합성되는지 확인한다. median_er_pct는 1.2로 채워져 있고 조회수와 무관한 지표라
+	 * 그대로 노출되되, 존재하므로 대응 avg_er_pct는 제거돼야 한다.
+	 */
+	@Test
+	void TOO_LONG과_조회수_INSUFFICIENT면_추세와_조회수_집계_median까지_프롬프트에서_빠진다() {
+		db.update("""
+				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
+				  avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
+				  trend_direction, trend_change_pct, trend_older_avg, trend_newer_avg,
+				  last_posted_at,
+				  views_sample_count, likes_sample_count, comments_sample_count, reels_count, feed_count,
+				  median_views, median_er_pct, top_views_share_pct, window_span_days)
+				VALUES ('acct_insufficient', 5000, 3, 1, 'views',
+				  9000, 1.8, 3.0, 500, 50,
+				  'down', -12, 12000, 8000,
+				  timestamptz '2026-07-06 09:00:00+09',
+				  1, 6, 6, 3, 0,
+				  NULL, 1.2, 100, 400)""");
+		db.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
+				  views, likes, comments, sponsored) VALUES
+				  ('q1', 'acct_insufficient', timestamptz '2026-07-06 09:00:00+09', 'reels', 20000, 500, 50, false)""");
+
+		job.run();
+
+		Map<String, Object> summary = callFor("acct_insufficient").summary();
+		for (String key : List.of("avg_views", "views_per_follower", "median_views", "avg_er_pct",
+				"trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg")) {
+			assertFalse(summary.containsKey(key), key + "가 프롬프트 입력에 남아 있음: " + summary);
+		}
+		assertTrue(summary.containsKey("median_er_pct"),
+				"조회수와 무관한 median_er_pct가 빠짐(조회수 INSUFFICIENT가 과잉 적용됨): " + summary);
+		assertTrue(summary.containsKey("avg_likes"), "OK 등급인 avg_likes가 빠짐: " + summary);
+		assertTrue(summary.containsKey("avg_comments"), "OK 등급인 avg_comments가 빠짐: " + summary);
+
+		Map<String, Object> post = callFor("acct_insufficient").posts().get(0);
+		assertFalse(post.containsKey("views"), "조회수 INSUFFICIENT인데 게시물 views가 남아 있음: " + post);
+		assertTrue(post.containsKey("likes"), "OK 등급인 게시물 likes가 빠짐: " + post);
+		assertTrue(post.containsKey("comments"), "OK 등급인 게시물 comments가 빠짐: " + post);
+	}
+
+	/** WEAK(3~5건)는 톤 연화만 목적이라 값이 필요하다 — 집계 키·게시물 필드 모두 그대로 남아야 한다. */
+	@Test
+	void WEAK_등급은_집계_키와_게시물_필드를_그대로_남긴다() {
+		// acct_noad(setUp) — views/likes/comments_sample_count 전부 4(WEAK), window_span_days=10(OK)
+		job.run();
+
+		Map<String, Object> summary = callFor("acct_noad").summary();
+		assertTrue(summary.containsKey("avg_views"), summary.toString());
+		assertTrue(summary.containsKey("avg_likes"), summary.toString());
+		assertTrue(summary.containsKey("avg_comments"), summary.toString());
+
+		Map<String, Object> post = callFor("acct_noad").posts().get(0);
+		assertTrue(post.containsKey("views"), post.toString());
+		assertTrue(post.containsKey("likes"), post.toString());
+		assertTrue(post.containsKey("comments"), post.toString());
 	}
 
 	/** 새로 생성된 카피는 항상 현재 CopyRules.VERSION으로 저장된다(설계 §4) — 아니면 무한 재대상 루프. */
@@ -446,12 +525,13 @@ class AccountAnalysisJobTest {
 
 	/**
 	 * 배포 과도기 가드 — 뷰(10_account_detail.sql) 선적용 없이 V44 마이그레이션만 배포되면 미러가
-	 * 신뢰도 판정 컬럼 9개를 채우지 못한 채 ADD COLUMN 기본값(NULL)으로 남는다. 이 상태에서 카피를
-	 * 만들면 모든 문장이 최대 억제 등급을 받고 그게 CopyRules.VERSION으로 영구 고정되므로(설계 §7),
-	 * 잡은 아예 생성을 건너뛰어야 한다 — 이 테스트는 그 스킵을 못 박는다.
+	 * 신뢰도 판정 컬럼(뷰가 새로 추가한 9개 중 배포 과도기 감지에 쓰는 always-strip 7개,
+	 * PerfConfidence.CONFIDENCE_COLUMNS)을 채우지 못한 채 ADD COLUMN 기본값(NULL)으로 남는다.
+	 * 이 상태에서 카피를 만들면 모든 문장이 최대 억제 등급을 받고 그게 CopyRules.VERSION으로
+	 * 영구 고정되므로(설계 §7), 잡은 아예 생성을 건너뛰어야 한다 — 이 테스트는 그 스킵을 못 박는다.
 	 */
 	@Test
-	void 신뢰도_컬럼_9개가_전부_NULL이면_카피_생성을_건너뛴다() {
+	void 신뢰도_컬럼_7개가_전부_NULL이면_카피_생성을_건너뛴다() {
 		// 9컬럼을 아예 지정하지 않아 ADD COLUMN 기본값(NULL)인 "미러 갭" 상태를 그대로 재현한다.
 		db.update("""
 				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
