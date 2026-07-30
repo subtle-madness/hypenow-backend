@@ -63,6 +63,15 @@
   **기준값은 crawler Flyway 마이그레이션으로 시드**(`ON CONFLICT DO NOTHING`, V16 참조 —
   07-20 수동 등록분 유실 사고 후 확립). 기준값 추가·변경은 후속 마이그레이션으로,
   수동 UPDATE는 런타임 토글(프로바이더 전환·임시 상향)만.
+- **신규 Flyway 마이그레이션은 UTC 타임스탬프로 채번한다**(`V<YYYYMMDDHHMMSS>__<설명>.sql`,
+  07-30~ — 예: `V20260730153000__account_summary_note.sql`). 정수 연번(`V1`~`V49` 등)은 병행
+  세션이 같은 다음 번호를 집는 경합이 반복됐다(V18→V19, V22→V23, PR #181). Flyway는 버전을
+  숫자로 비교하므로(선행 0 무시) 14자리 타임스탬프는 항상 기존 정수보다 커서 순서가 자동
+  보장된다(`MigrationVersion.compareTo` 실측 확인, 가드 v3.2 참고). **기존 `V1`~`V49` 파일은
+  절대 rename 금지** — `schema_history`에 버전·체크섬이 기록돼 있어 rename하면 운영 DB
+  마이그레이션이 깨진다. 대상은 독립 버전 공간 4개(각자 다음 자유 번호를 자유 채번) 전부 —
+  crawler, analytics `db/migration/analysis`, was `db/migration/app`, monitoring. 번호 경합 검사
+  (`check-migration-safety.sh`)는 자릿수 제한 없는 정규식이라 무수정으로 호환.
 - 배열 저장은 `text[]` 대신 `jsonb` (기존 `RawComment.payload` 매핑 관용구 재사용).
 - **스키마 변경은 expand-contract** (07-29 was 롤링 배포 도입~): 롤링 중 신구 코드가 같은 DB를
   공존해서 본다 — `DROP`·`RENAME`·타입 변경·`SET NOT NULL`은 참조 코드가 끊긴 **다음 릴리스**에서만.
