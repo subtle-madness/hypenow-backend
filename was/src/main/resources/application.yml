@@ -33,7 +33,7 @@ server:
         path: /
 # UI는 /swagger-ui, 스키마는 /v3/api-docs
 springdoc:
-  paths-to-match: /v1/**, /v2/**, /admin/**   # /v1·/v2 표면 + 어드민 API(07-22) — 구 /api·내부 페이지(postdemo 등)는 제외. /v2는 07-27 리포트 v2 신설 때 누락됐던 것을 07-30 보강
+  paths-to-match: /v*/**, /admin/**   # 버전 표면 전체(v1·v2·미래 v3…) + 어드민 API(07-22) — 구 /api·내부 페이지(postdemo 등)는 제외. 열거식은 /v2 신설(07-27) 때 누락된 전례가 있어 와일드카드로 일반화(07-30)
   swagger-ui:
     path: /swagger-ui                 # 베이스 URL을 진입 리다이렉트로 매핑 — 기본값(/swagger-ui.html)만 있으면
                                       # /swagger-ui가 매핑 없는 404(Whitelabel)로 떨어진다. 시큐리티 매처
