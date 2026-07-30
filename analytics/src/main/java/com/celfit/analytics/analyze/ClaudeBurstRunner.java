@@ -203,8 +203,9 @@ public class ClaudeBurstRunner {
 				continue;
 			}
 
+			List<Map<String, Object>> promptPosts = AccountAdCanon.withPostConfidence(posts, sc.confidence());
 			AccountToAnalyze account = new AccountToAnalyze(handle,
-					sc.promptSummary(), categories, posts, adSituation, sc.confidence());
+					sc.promptSummary(), categories, promptPosts, adSituation, sc.confidence());
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
 					.put("system", GeminiAccountSynthesizer.instructions(traitLoader.get(), sc.confidence()))

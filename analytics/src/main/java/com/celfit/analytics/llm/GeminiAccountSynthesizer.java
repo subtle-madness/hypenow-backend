@@ -31,6 +31,9 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			  하나라도 NULL이면 그 지표만 avg_views·avg_er_pct로 대신한다. avg_likes·avg_comments·
 			  trend_direction·trend_change_pct와 게시물 목록(content_type·views·likes)도 근거로 쓴다 —
 			  포맷별 반응 차이는 게시물 목록에서만 확인 가능하니 그 밖은 단정하지 마라.
+			  **아래 "계정 지표"·"게시물" 입력에 특정 지표 키가 아예 없으면 그 지표는 표본이 부족해서
+			  데이터 자체가 제공되지 않은 것이다 — "언급하지 말라는 지표"가 아니라 "가진 게 없는 지표"로
+			  여기고, 다른 지표에서 없는 값을 유추하거나 대신 채워 넣지 마라.**
 			  **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면 스탯 타일이고 이 문장은
 			  매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편", "완만한 상승세",
 			  "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.

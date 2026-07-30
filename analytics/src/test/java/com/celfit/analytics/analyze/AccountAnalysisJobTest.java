@@ -416,6 +416,65 @@ class AccountAnalysisJobTest {
 		}
 	}
 
+	/**
+	 * 조건부 제거(설계 §3-3 실측 보완, 2026-07-30 test 실측) — "언급하지 마라"뿐인 지침은 안 지켜졌고
+	 * 입력에서 아예 뺀 것만 지켜졌다. TOO_LONG이면 추세 4컬럼, 조회수 INSUFFICIENT면 avg_views·
+	 * views_per_follower가 프롬프트 요약에서 빠지고, 게시물 목록에서도 views 필드가 빠져야 한다.
+	 * 좋아요·댓글은 OK 등급이라 avg_likes·avg_comments는 그대로 남아야 한다.
+	 */
+	@Test
+	void TOO_LONG과_조회수_INSUFFICIENT면_추세와_조회수_집계가_프롬프트에서_빠진다() {
+		db.update("""
+				INSERT INTO account_summaries (handle, followers, analyzed_count, views_count, metric,
+				  avg_views, views_per_follower, avg_likes, avg_comments,
+				  trend_direction, trend_change_pct, trend_older_avg, trend_newer_avg,
+				  last_posted_at,
+				  views_sample_count, likes_sample_count, comments_sample_count, reels_count, feed_count,
+				  median_views, median_er_pct, top_views_share_pct, window_span_days)
+				VALUES ('acct_insufficient', 5000, 3, 1, 'views',
+				  9000, 1.8, 500, 50,
+				  'down', -12, 12000, 8000,
+				  timestamptz '2026-07-06 09:00:00+09',
+				  1, 6, 6, 3, 0,
+				  NULL, 1.2, 100, 400)""");
+		db.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
+				  views, likes, comments, sponsored) VALUES
+				  ('q1', 'acct_insufficient', timestamptz '2026-07-06 09:00:00+09', 'reels', 20000, 500, 50, false)""");
+
+		job.run();
+
+		Map<String, Object> summary = callFor("acct_insufficient").summary();
+		for (String key : List.of("avg_views", "views_per_follower",
+				"trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg")) {
+			assertFalse(summary.containsKey(key), key + "가 프롬프트 입력에 남아 있음: " + summary);
+		}
+		assertTrue(summary.containsKey("avg_likes"), "OK 등급인 avg_likes가 빠짐: " + summary);
+		assertTrue(summary.containsKey("avg_comments"), "OK 등급인 avg_comments가 빠짐: " + summary);
+
+		Map<String, Object> post = callFor("acct_insufficient").posts().get(0);
+		assertFalse(post.containsKey("views"), "조회수 INSUFFICIENT인데 게시물 views가 남아 있음: " + post);
+		assertTrue(post.containsKey("likes"), "OK 등급인 게시물 likes가 빠짐: " + post);
+		assertTrue(post.containsKey("comments"), "OK 등급인 게시물 comments가 빠짐: " + post);
+	}
+
+	/** WEAK(3~5건)는 톤 연화만 목적이라 값이 필요하다 — 집계 키·게시물 필드 모두 그대로 남아야 한다. */
+	@Test
+	void WEAK_등급은_집계_키와_게시물_필드를_그대로_남긴다() {
+		// acct_noad(setUp) — views/likes/comments_sample_count 전부 4(WEAK), window_span_days=10(OK)
+		job.run();
+
+		Map<String, Object> summary = callFor("acct_noad").summary();
+		assertTrue(summary.containsKey("avg_views"), summary.toString());
+		assertTrue(summary.containsKey("avg_likes"), summary.toString());
+		assertTrue(summary.containsKey("avg_comments"), summary.toString());
+
+		Map<String, Object> post = callFor("acct_noad").posts().get(0);
+		assertTrue(post.containsKey("views"), post.toString());
+		assertTrue(post.containsKey("likes"), post.toString());
+		assertTrue(post.containsKey("comments"), post.toString());
+	}
+
 	/** 새로 생성된 카피는 항상 현재 CopyRules.VERSION으로 저장된다(설계 §4) — 아니면 무한 재대상 루프. */
 	@Test
 	void 신규_카피는_현재_카피_버전으로_저장된다() {

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -211,12 +212,104 @@ class PerfConfidenceTest {
 
 		String block = PerfConfidence.of(m).promptBlock();
 
-		assertTrue(block.contains("조회수 표본이 2건 이하다"), block);
+		// "언급하지 마라"가 아니라 "데이터 자체가 없다"는 사실 서술이어야 한다(§1 실측 보완 — "있지만
+		// 언급 마라"는 test 실측에서 안 지켜졌다).
+		assertTrue(block.contains("조회수 데이터는 제공되지 않는다"), block);
 		assertTrue(block.contains("성장세·추세에 대한 서술은 아예 하지 마라"), block);
 	}
 
 	@Test
 	void 등급이_전부_OK면_지침_블록이_비어있다() {
 		assertEquals("", PerfConfidence.of(baseSummary()).promptBlock());
+	}
+
+	/**
+	 * WEAK 지침은 완화 표현이 지표 서술 앞에 오고, 어느 지표가 약한지 지표명을 담아야 한다(2026-07-30
+	 * test 실측 {@code 0n_neww}: "안정적인 흐름을 보입니다. 릴스 콘텐츠의 경우 표본이 적어 단정하기
+	 * 어렵지만…"처럼 단정을 먼저 하고 뒤늦게 발뺌하는 순서로 나와 지침이 무력화됐다).
+	 */
+	@Test
+	void WEAK_지침은_완화_표현이_먼저_오고_지표명을_담는다() {
+		Map<String, Object> m = baseSummary();
+		m.put("likes_sample_count", 4);
+
+		String directive = PerfConfidence.of(m).directives().stream()
+				.filter(d -> d.contains("좋아요"))
+				.findFirst().orElseThrow();
+
+		assertTrue(directive.startsWith("\"좋아요 표본이 적어 단정하기 어렵지만\""), directive);
+		assertTrue(directive.contains("좋아요 수준을 언급하라"), directive);
+	}
+
+	/** 포맷 비교 금지 지침은 부정형 회피 서술("차이가 없다" 등)도 비교 진술로 명시해 막아야 한다
+	 *  (2026-07-30 test 실측 {@code 0_tsuki2}: "반응 차이는 뚜렷하게 나타나지 않으며"로 회피). */
+	@Test
+	void 포맷_비교_금지_지침이_회피_서술도_금지한다() {
+		Map<String, Object> m = baseSummary();
+		m.put("reels_count", 2);
+
+		String directive = PerfConfidence.of(m).directives().stream()
+				.filter(d -> d.contains("포맷"))
+				.findFirst().orElseThrow();
+
+		assertTrue(directive.contains("차이가 없다"), directive);
+		assertTrue(directive.contains("뚜렷하지 않다"), directive);
+	}
+
+	/**
+	 * 조건부 제거 대상(§1 실측 보완) — TOO_LONG이면 추세 4키가, 지표가 INSUFFICIENT면 그 지표의
+	 * 계정 집계 키가 excludedSummaryKeys()에 잡혀야 한다.
+	 */
+	@Test
+	void TOO_LONG이면_추세_4키가_제거_대상에_잡힌다() {
+		Map<String, Object> m = baseSummary();
+		m.put("window_span_days", 400);
+
+		List<String> excluded = PerfConfidence.of(m).excludedSummaryKeys();
+
+		assertTrue(excluded.containsAll(
+				List.of("trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg")), excluded.toString());
+	}
+
+	@Test
+	void INSUFFICIENT_지표의_계정_집계_키가_제거_대상에_잡힌다() {
+		Map<String, Object> m = baseSummary();
+		m.put("views_sample_count", 2);
+		m.put("likes_sample_count", 1);
+		m.put("comments_sample_count", 2);
+
+		List<String> excluded = PerfConfidence.of(m).excludedSummaryKeys();
+
+		assertTrue(excluded.containsAll(List.of("avg_views", "views_per_follower", "avg_likes", "avg_comments")),
+				excluded.toString());
+	}
+
+	/** WEAK(3~5)·OK는 톤 연화·정상 서술에 값이 필요하므로 제거 대상에 잡히면 안 된다. */
+	@Test
+	void WEAK와_OK는_집계_키를_제거하지_않는다() {
+		Map<String, Object> m = baseSummary(); // 전부 10(OK), window_span_days=30(OK)
+		assertTrue(PerfConfidence.of(m).excludedSummaryKeys().isEmpty());
+
+		m.put("views_sample_count", 4); // WEAK
+		m.put("likes_sample_count", 5); // WEAK
+		m.put("comments_sample_count", 3); // WEAK
+		assertTrue(PerfConfidence.of(m).excludedSummaryKeys().isEmpty(), PerfConfidence.of(m).excludedSummaryKeys().toString());
+	}
+
+	/** 가드 미적용(none())에서는 아무 키도 제거 대상이 아니다 — 기존 호출부 온전성. */
+	@Test
+	void none은_제거_대상_키가_없다() {
+		assertTrue(PerfConfidence.none().excludedSummaryKeys().isEmpty());
+		assertTrue(PerfConfidence.none().excludedPostFields().isEmpty());
+	}
+
+	@Test
+	void INSUFFICIENT_지표의_게시물_필드가_제거_대상에_잡힌다() {
+		Map<String, Object> m = baseSummary();
+		m.put("views_sample_count", 2);
+
+		List<String> excluded = PerfConfidence.of(m).excludedPostFields();
+
+		assertEquals(List.of("views"), excluded);
 	}
 }

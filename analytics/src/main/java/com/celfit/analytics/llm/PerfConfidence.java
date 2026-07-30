@@ -61,6 +61,16 @@ public final class PerfConfidence {
 			"reels_count", "feed_count", "median_views", "median_er_pct",
 			"top_views_share_pct", "window_span_days");
 
+	/**
+	 * account_summaries의 추세 요약 계열 4컬럼 — TOO_LONG일 때 프롬프트에서 조건부로 벗겨낼 대상
+	 * (설계 §3-3 실측 보완, 2026-07-30 test 실측: {@code 180.e_cm}, window_span_days=691로 TOO_LONG인데
+	 * trend_direction·trend_change_pct가 프롬프트 입력에 그대로 남아 있어 "성장세 서술 금지" 지침을
+	 * 무시하고 하향 곡선 문구를 만들었다). CONFIDENCE_COLUMNS(판정 재료·항상 제거)와 달리 이 4컬럼은
+	 * 원래 account_summaries에 있던 화면용 컬럼이라 등급이 OK·LONG_SPAN이면 그대로 둬야 한다.
+	 */
+	private static final List<String> TREND_SUMMARY_KEYS = List.of(
+			"trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg");
+
 	private final Grade viewsGrade;
 	private final Grade likesGrade;
 	private final Grade commentsGrade;
@@ -174,6 +184,52 @@ public final class PerfConfidence {
 		return reelsCount >= FORMAT_COMPARABLE_MIN && feedCount >= FORMAT_COMPARABLE_MIN;
 	}
 
+	/**
+	 * 판정 결과에 따라 프롬프트 입력 맵({@code account_summaries} 사본)에서 조건부로 벗겨낼 계정
+	 * 집계 키(설계 §3-3 실측 보완). {@link #CONFIDENCE_COLUMNS}(판정 재료 9컬럼·항상 제거)와는
+	 * 별개다 — 이건 "지시만으론 안 지켜졌다"는 test 실측(2026-07-30)에 대한 대응으로, 지표별
+	 * 등급이 INSUFFICIENT거나 추세가 TOO_LONG일 때만 해당 지표의 원래 화면용 컬럼까지 벗겨낸다.
+	 * WEAK는 톤 연화가 목적이라 값이 필요하므로 벗기지 않는다.
+	 */
+	public List<String> excludedSummaryKeys() {
+		List<String> out = new ArrayList<>();
+		if (trendValidity == TrendValidity.TOO_LONG) {
+			out.addAll(TREND_SUMMARY_KEYS);
+		}
+		if (viewsGrade == Grade.INSUFFICIENT) {
+			out.add("avg_views");
+			out.add("views_per_follower");
+		}
+		if (likesGrade == Grade.INSUFFICIENT) {
+			out.add("avg_likes");
+		}
+		if (commentsGrade == Grade.INSUFFICIENT) {
+			out.add("avg_comments");
+		}
+		return out;
+	}
+
+	/**
+	 * 판정 결과에 따라 프롬프트용 게시물 목록(posts)에서 조건부로 벗겨낼 필드명. 계정 집계 키를
+	 * 지웠어도 게시물별 원값(views·likes·comments)이 남아 있으면 모수 2건짜리 지표라도 목록에서
+	 * 수준을 유추해 서술할 수 있다(2026-07-30 test 실측: {@code 0_tsuki2}, views_sample_count=2인데
+	 * 포맷 비교 문장을 만듦 — 게시물 목록의 조회수를 읽은 것으로 추정). content_type·caption·
+	 * sponsored는 contentSummary·adSummary에도 쓰여 절대 벗기지 않는다.
+	 */
+	public List<String> excludedPostFields() {
+		List<String> out = new ArrayList<>();
+		if (viewsGrade == Grade.INSUFFICIENT) {
+			out.add("views");
+		}
+		if (likesGrade == Grade.INSUFFICIENT) {
+			out.add("likes");
+		}
+		if (commentsGrade == Grade.INSUFFICIENT) {
+			out.add("comments");
+		}
+		return out;
+	}
+
 	private static Long asLong(Map<String, Object> summary, String key) {
 		return summary.get(key) instanceof Number n ? n.longValue() : null;
 	}
@@ -193,21 +249,25 @@ public final class PerfConfidence {
 					+ "끌어올린 구조라는 관점으로 써라.");
 		}
 		if (trendValidity == TrendValidity.TOO_LONG) {
-			out.add("게시물 간 기간이 1년을 넘는다 — 성장세·추세에 대한 서술은 아예 하지 마라.");
+			out.add("게시물 간 기간이 1년을 넘어 추세 데이터는 제공되지 않는다 — 성장세·추세에 대한 서술은 아예 하지 마라.");
 		} else if (trendValidity == TrendValidity.LONG_SPAN) {
 			out.add("게시물 간 기간이 길다(3개월~1년) — 최근 추세로 단정하지 말고 \"장기간에 걸친 변화\"처럼 완만하게 표현하라.");
 		}
 		if (!formatComparable) {
-			out.add("릴스 또는 피드 게시물이 3건 미만이다 — 포맷(릴스/피드)별 반응 차이는 언급하지 마라.");
+			out.add("릴스 또는 피드 게시물이 3건 미만이라 포맷 비교 데이터는 제공되지 않는다 — 포맷(릴스/피드)별 반응 차이는"
+					+ " 언급하지 마라. \"차이가 없다\"·\"뚜렷하지 않다\"·\"비슷하다\"처럼 부정형으로 에둘러 비교하는 것도"
+					+ " 비교 진술이므로 마찬가지로 금지다 — 포맷을 언급하는 문장 자체를 만들지 마라.");
 		}
 		return out;
 	}
 
 	private static void addMetricDirective(List<String> out, Grade grade, String label) {
 		switch (grade) {
-			case INSUFFICIENT -> out.add(label + " 표본이 2건 이하다 — " + label + " 수준에 대한 서술은 아예 하지 마라.");
-			case WEAK -> out.add(label + " 표본이 적다(3~5건) — " + label
-					+ " 수준을 언급하되 \"표본이 적어 단정하기 어렵지만\"처럼 톤을 낮춰라.");
+			case INSUFFICIENT -> out.add(label + " 데이터는 제공되지 않는다(표본 2건 이하) — "
+					+ label + " 수준에 대한 서술은 아예 하지 마라.");
+			case WEAK -> out.add("\"" + label + " 표본이 적어 단정하기 어렵지만\"으로 먼저 운을 뗀 뒤에 " + label
+					+ " 수준을 언급하라(표본 3~5건) — 단정부터 하고 뒤늦게 발뺌하는 순서로 쓰지 마라. 표본이 충분한"
+					+ " 다른 지표까지 이 완화 표현으로 묶어 쓰지 마라.");
 			case OK -> {
 			}
 		}

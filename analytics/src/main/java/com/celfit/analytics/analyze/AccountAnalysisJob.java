@@ -148,8 +148,9 @@ public class AccountAnalysisJob {
 			return Outcome.SKIPPED_DATA_INCOMPLETE;
 		}
 
+		List<Map<String, Object>> promptPosts = AccountAdCanon.withPostConfidence(posts, sc.confidence());
 		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
-				sc.promptSummary(), categories, posts, adSituation, sc.confidence()));
+				sc.promptSummary(), categories, promptPosts, adSituation, sc.confidence()));
 
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지).
 		// 절단·INSERT는 AccountAnalysisWriter 단일 원천(ClaudeBurstRunner와 공유 — 07-17 재발 방지).
