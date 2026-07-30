@@ -45,7 +45,8 @@ public class ContentCaptionUpserter {
     }
 
     /**
-     * 적재를 시도한 행 수를 반환한다(content 행이 없어 건너뛴 것은 제외).
+     * 적재를 시도한 행 수를 반환한다(content 행이 없어 건너뛴 것·캡션이 미확인(null)이라
+     * 건너뛴 것은 제외).
      * 호출자 트랜잭션에 합류한다(JdbcTemplate이 DataSourceUtils로 스레드 바운드 커넥션을 공유) —
      * 이 메서드 자체는 트랜잭션 경계를 열지 않는다.
      *
@@ -63,6 +64,10 @@ public class ContentCaptionUpserter {
 
         List<Object[]> batch = new ArrayList<>();
         for (MediaItem it : byShortCode.values()) {
+            // 미확인(null) 캡션은 배치에서 제외한다 — 이 값을 그대로 넣으면 이 payload 형태에서
+            // 캡션을 못 읽었을 뿐인데도 실제로 확보된 캡션(다른 소스 페이지가 이미 넣은 값)을
+            // ""로 덮어쓰게 된다(MediaItem.caption 3-상태 계약 참고).
+            if (it.caption() == null) continue;
             Content c = found.get(it.shortCode());
             if (c == null) continue;   // 열거 창 밖 등으로 content가 없는 경우 — 조용히 건너뛴다
             batch.add(new Object[] {

@@ -97,6 +97,25 @@ class ContentCaptionUpserterIntegrationTest extends IntegrationTest {
         assertThat(captionOf("SC4")).isEqualTo("최신 캡션");
     }
 
+    /**
+     * 미확인(null) 캡션은 배치에서 제외되므로, captured_at이 더 최신이어도 기존 캡션을 덮지
+     * 않는다 — 이게 이 수정의 핵심 산출물이다. 라이브가 now()를 쓰므로 항상 백필을 이기는데,
+     * 라이브가 새 페이지 형태를 못 읽어 null을 만들면(옛 구현은 이걸 ""로 바꿔 넣었다) 백필로
+     * 건진 실제 캡션이 영구 소실될 뻔한 시나리오를 재현한다.
+     */
+    @Test
+    void 미확인_null_캡션은_captured_at이_더_최신이어도_기존_캡션을_덮지_않는다() {
+        seedContent("SC9");
+        upserter.upsert(List.of(item("SC9", "백필로_건진_실제_캡션")), RawSource.HIKER_V1_MEDIAS, OLD);
+
+        int n = upserter.upsert(List.of(item("SC9", null)), RawSource.SELF_GQL, NEW);
+
+        assertThat(n).isZero();
+        assertThat(captionOf("SC9")).isEqualTo("백필로_건진_실제_캡션");
+        assertThat(jdbc.queryForObject("select source from content_caption", String.class))
+                .isEqualTo("HIKER_V1_MEDIAS");
+    }
+
     /** content 행이 없는 short_code는 FK 위반으로 터지지 말고 조용히 건너뛴다. */
     @Test
     void content_행이_없는_short_code는_건너뛴다() {

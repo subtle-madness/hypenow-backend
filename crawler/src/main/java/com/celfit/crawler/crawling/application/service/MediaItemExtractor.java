@@ -15,8 +15,12 @@ import java.util.Map;
 public final class MediaItemExtractor {
 
     /**
-     * @param caption 캡션 원문 — 없으면 빈 문자열(null 아님). "미확인"과 "캡션 없음"을 DB에서
-     *                구분하기 위해 추출 단계에서 이미 정규화한다.
+     * @param caption 캡션 원문 — 3-상태다. {@code null}=이 payload 형태에서 캡션을 읽는 방법을
+     *                모름(미확인), {@code ""}=형태를 인식했고 캡션이 없음을 확인함, 그 외=캡션
+     *                원문. null과 ""를 구분하는 이유: 구분하지 않으면 같은 content가 다른(더
+     *                최신) 소스 페이지에 다시 등장했을 때 "미확인"의 빈 문자열이 이미 확보한
+     *                실제 캡션을 조용히 덮어쓴다(ContentCaptionUpserter는 null 아이템을 아예
+     *                배치에서 제외한다).
      */
     public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned,
                             String caption) {}
@@ -118,17 +122,28 @@ public final class MediaItemExtractor {
      * 캡션 원문 — unwrapMedia()가 media/node/item을 이미 벗겨냈으므로 정규화된 맵 하나에서
      * 세 형태를 순서대로 시도한다. HIKER_V2_CLIPS는 caption.text(중첩 객체),
      * HIKER_V1_MEDIAS는 caption_text(평문), SELF_GQL은 edge_media_to_caption.edges[0].node.text.
-     * 못 찾으면 빈 문자열 — 캡션 없는 게시물도 행을 남겨 "미확인"과 구분한다.
+     *
+     * <p>반환은 3-상태다 — {@code null}=이 형태의 캡션 키 자체를 못 찾음(미확인),
+     * {@code ""}=키는 찾았고 값이 비어 있음(확인된 무캡션), 그 외=캡션 원문. 이 구분이 없으면
+     * (옛 구현처럼 못 찾을 때도 "") 같은 content가 여러 소스 페이지에 등장할 때(타임라인은
+     * 릴스도 담고 V1_MEDIAS는 피드·릴스를 함께 담는다) 더 최신 페이지에서 이 형태를 못 읽으면
+     * ""가 실제로 확보해 둔 캡션을 조용히 덮어쓴다.
      */
     private static String captionOf(Map<String, Object> m) {
-        if (m.get("caption") instanceof Map<?, ?> c && c.get("text") instanceof String s) return s;
-        if (m.get("caption_text") instanceof String s) return s;
-        if (m.get("edge_media_to_caption") instanceof Map<?, ?> e
-                && e.get("edges") instanceof List<?> l && !l.isEmpty()
-                && l.get(0) instanceof Map<?, ?> first
-                && first.get("node") instanceof Map<?, ?> node
-                && node.get("text") instanceof String s) return s;
-        return "";
+        if (m.get("caption") instanceof Map<?, ?> c) {
+            return c.get("text") instanceof String s ? s : null;
+        }
+        if (m.get("caption_text") instanceof String s) {
+            return s;
+        }
+        if (m.get("edge_media_to_caption") instanceof Map<?, ?> e) {
+            if (!(e.get("edges") instanceof List<?> edges)) return null;
+            if (edges.isEmpty()) return "";
+            return edges.get(0) instanceof Map<?, ?> first
+                    && first.get("node") instanceof Map<?, ?> node
+                    && node.get("text") instanceof String s ? s : null;
+        }
+        return null;
     }
 
     private static String firstString(Object... candidates) {
