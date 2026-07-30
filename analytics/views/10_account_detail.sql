@@ -5,6 +5,45 @@
 -- 신 스키마 이식(2026-07-17 스펙): 밑판 소스만 교체, ad_marked는 릴스 is_paid_partnership
 -- 기반이라 sponsored 지표는 릴스 유료 협찬만 잡힌다(피드 광고는 B4 캡션 분류가 대체 소스).
 
+-- 계정 하입 스코어 매핑 함수 (트랙 Z 후속 — 계정 점수 척도 재교정, 2026-07-30. 스펙
+-- 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9).
+-- 왜 필요한가: avg_hype_score는 창(최근 최대 12개) 콘텐츠 hype_score의 **평균**인데, 콘텐츠 함수가
+-- 이미 신선도 감쇠(0.5^(경과일/14))를 적용한 값들을 평균 내다 보니 창 스팬(가장 활발한 계정도
+-- 17일 안팎)에 걸쳐 뒤쪽(오래된) 게시물이 깎여 평균 자체가 눌린다 — test 스택 실측 최상위 계정
+-- (beauty_linyas2, 창 1.8~16.9일)의 반올림 전 평균이 58.9에 그쳐 0~100 척도인데 상위 40점
+-- 구간이 사실상 도달 불가였다. 게시 빈도가 계정 점수를 좌우하는 것 자체는 의도된 동작
+-- (hypenow 결정) — 순위는 그대로 두고 척도만 콘텐츠 함수(analytics.hype_score)와 같은 4점
+-- 구간선형 매핑으로 재교정한다. 콘텐츠 점수 산식·반감기는 이 변경으로 건드리지 않는다.
+-- 앵커는 계정 raw 평균(0점 제외 모수) 분위수로 별도 적합 — 콘텐츠 앵커(Q 기준)와 기준량이
+-- 달라 공유 불가. 재산출 절차·정밀값 근거는 analytics/check/hype-anchor-refit.sql 계정 섹션.
+-- app_setting 키: analytics.hype-anchor-acct-{p05,p50,p90,p99}(미설정/0이면 COALESCE 기본값 —
+-- 단일 소스는 함수 기본값, hype_score와 동일 관용구).
+-- raw IS NULL(창 전체 점수 불가 — 기존 동작)은 NULL 유지. raw=0은 10×0/a05=0으로 자연 0점.
+CREATE OR REPLACE FUNCTION analytics.hype_account_score(raw numeric) RETURNS bigint
+LANGUAGE sql STABLE AS $$
+  WITH s AS (
+    SELECT
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p05'),0),1.0833)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p50'),0),12.8333) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p90'),0),31.2000) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p99'),0),44.8600) AS a99
+  )
+  SELECT CASE
+    WHEN raw IS NULL THEN NULL
+    ELSE round(
+      GREATEST(LEAST(
+        CASE
+          WHEN raw <= s.a05 THEN 10*raw/NULLIF(s.a05,0)
+          WHEN raw <= s.a50 THEN 10 + 35*(raw-s.a05)/NULLIF(s.a50-s.a05,0)
+          WHEN raw <= s.a90 THEN 45 + 35*(raw-s.a50)/NULLIF(s.a90-s.a50,0)
+          WHEN raw <= s.a99 THEN 80 + 17*(raw-s.a90)/NULLIF(s.a99-s.a90,0)
+          ELSE 97 + 3*(raw-s.a99)/NULLIF(s.a99-s.a90,0)
+        END, 100), 0)
+    )::bigint
+  END
+  FROM s
+$$;
+
 -- 밑판 (미러 안 함): 윈도우 행 + 팔로워. 프로필 없는 계정은 서빙에서 제외 (INNER JOIN 의도 — 프론트가 팔로워를 요구).
 CREATE OR REPLACE VIEW analytics.v_account_recent AS
 SELECT r.*, p.followers AS profile_followers
@@ -14,8 +53,11 @@ JOIN analytics.v_base_profile p ON p.username = r.owner_username;
 -- 계정 1행 요약.
 -- 기준 지표(metric) 폴백: 조회수 있는 게시물이 max(3, n/2) 미만이면 좋아요 기준 (프론트 상수 — 키로 빼지 않음).
 -- 트렌드/광고 비교는 metric 값 > 0인 게시물만 (피드 views NULL은 자연 제외).
--- avg_hype_score: 창 콘텐츠 hype_score(02_serving 함수, now() 신선도 — v_contents와 동일) 단순 평균.
--- 점수 불가(hype NULL) 콘텐츠는 avg가 자연 제외, 전무하면 NULL (스펙 2026-07-29-influencer-avg-hype-score).
+-- avg_hype_score: 창 콘텐츠 hype_score(02_serving 함수, now() 신선도 — v_contents와 동일) 단순 평균을
+-- analytics.hype_account_score()로 매핑한 값(트랙 Z 후속 — 계정 점수 척도 재교정, 2026-07-30).
+-- 평균은 반올림하지 않고 그대로 매핑 함수에 넘긴다(이중 반올림 제거) — 매핑 함수 안에서 최종 round.
+-- 점수 불가(hype NULL) 콘텐츠는 avg가 자연 제외, 전무하면 avg 자체가 NULL → 매핑 함수도 NULL 유지
+-- (스펙 2026-07-29-influencer-avg-hype-score, 2026-07-30-hype-score-v3-decay-after-mapping §9).
 CREATE OR REPLACE VIEW analytics.v_account_summaries AS
 WITH cfg AS (
   SELECT COALESCE((SELECT value::numeric FROM app_setting
@@ -37,9 +79,9 @@ base AS (
          round(avg((likes + comments_count)::numeric / NULLIF(followers, 0)) * 100, 1) AS avg_er_pct,
          round(avg(likes))::bigint                          AS avg_likes,
          round(avg(comments_count))::bigint                 AS avg_comments,
-         round(avg(analytics.hype_score(lower(content_type), views, likes, comments_count,
+         analytics.hype_account_score(avg(analytics.hype_score(lower(content_type), views, likes, comments_count,
                                         followers,
-                                        extract(epoch FROM (now() - uploaded_at)) / 86400.0)))::bigint
+                                        extract(epoch FROM (now() - uploaded_at)) / 86400.0)))
                                                             AS avg_hype_score,
          min(uploaded_at)                                   AS first_posted_at,
          max(uploaded_at)                                   AS last_posted_at,
