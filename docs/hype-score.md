@@ -66,7 +66,8 @@ raw           = avg(콘텐츠 score)                  -- 최근 N개 창(v_accou
 표시(구)      = hype_account_score(raw)            -- 계정 앵커로 0~100 매핑 (정수, 값·의미 불변)
 정렬(구, 폐기예정) = raw                            -- 반올림 전 값
 
-precise_raw   = avg(콘텐츠 출력매핑값)              -- 창 콘텐츠의 hype_score_output(hype_score_raw(...)) 평균
+precise_raw   = sum(콘텐츠 출력매핑값) / 최근창 크기  -- 고정 분모(2026-07-31~, 아래 (재신) 참조). sum은
+                                                    창 콘텐츠 hype_score_output(hype_score_raw(...)) 합(NULL 무시)
 표시=정렬(신) = hype_account_score_precise(precise_raw)  -- 새 앵커로 0~100 매핑, 소수 4자리로 자름
 ```
 
@@ -80,10 +81,24 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 
 **(신) 2026-07-30부터 `avg_hype_score_precise`(소수)가 표시·정렬을 겸한다** — 정수 자체가 없으니
 정수 동점→알파벳순 지배 문제가 애초에 생기지 않는다. 입력(`precise_raw`)도 `raw`와 다르다 — 창
-콘텐츠의 **출력 매핑까지 반영된** 점수(`hype_score_output(hype_score_raw(...))`)를 평균 낸 것이라,
+콘텐츠의 **출력 매핑까지 반영된** 점수(`hype_score_output(hype_score_raw(...))`)를 재료로 쓰고,
 계정 앵커도 이 새 기준량에 맞춰 별도로 재적합했다(`hype_account_score_precise`, §3). `raw`·
 `hype_account_score`·`avg_hype_raw`(구)는 **값·의미가 바뀌지 않는다** — was는 더는 이 둘을 정렬에
 쓰지 않지만 다음 릴리스까지 컬럼 자체는 유지된다(§6).
+
+**(재신) 2026-07-31부터 `precise_raw`의 집계가 평균에서 고정 분모 합으로 바뀌었다**(계정 점수
+표본 하한 없음 결함 해소, §7 해소 항목·스펙
+[2026-07-31-account-score-fixed-denominator-design](superpowers/specs/2026-07-31-account-score-fixed-denominator-design.md)).
+구 `precise_raw`는 `avg()`라 분모가 창에 실제로 든 콘텐츠 수(`analyzed_count`)였는데, 창이
+12로 꽉 찬 계정 41%가 likes/comments 수집 누락으로 점수산출 콘텐츠 <12건이었고, 그중 점수산출
+1~2건뿐인 계정이 그 1~2건의 평균만으로 12건 채운 계정과 동일하게 평가돼 상위권에 섞였다(test
+스택 실측 — 배경은 위 스펙 §1). 신 `precise_raw = sum(...) / analytics.recent-window`는 분모를
+창 크기로 고정한다 — `sum()`이 NULL을 무시하므로 점수산출 불가 콘텐츠는 분자에 0 기여(=감점)가
+되고, 표본이 적을수록 유리해지는 구조가 없어진다. 앵커도 새 raw 분포(전반적으로 하향 이동)에
+맞춰 재적합했다(1.4856/23.6566/56.3961/77.0479 → **1.2417/19.4383/52.2401/74.0179**, §3).
+창 전체가 점수산출 불가면 `sum()`도 NULL이라 `NULL/분모=NULL` — "창 전체 점수 불가 → NULL"
+계약은 그대로 유지된다. `raw`·`hype_account_score`·`avg_hype_raw`(구, 여전히 단순 평균)는
+이 변경과 무관 — 다음 릴리스 DROP 대상이라 재교정하지 않는다.
 
 창 전체가 점수 불가면 신·구 네 컬럼(`avg_hype_score`·`avg_hype_raw`·`avg_hype_score_precise`) 모두 NULL이다.
 
@@ -105,7 +120,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 | 콘텐츠 앵커 (피드) | `0.0447 / 0.6135 / 1.6320 / 3.0144` | 같음 | `analytics.hype-anchor-q-feed-{...}` | 같음 | 같음 |
 | **콘텐츠 출력 앵커** (2026-07-30~) | `5 / 23 / 44 / 60.8` | `raw`(hype_score 정수와 같은 연속값)→0~100 재매핑, **타입 무관 단일 세트** | `analytics.hype-anchor-out-{p05,p50,p90,p99}` | **랭킹 경로**(`is_beauty AND (metric_timeliness='timely' OR NULL)`) 실측 분포(n=5,321·재확인 5,683) — 발굴 목록·랭킹 API가 둘 다 이 모수의 부분집합 | 재적합 절차 있음(§5) |
 | 계정 앵커 (구) | `1.0833 / 12.8333 / 31.2000 / 44.8600` | `raw`→0~100 | `analytics.hype-anchor-acct-{...}` | **0점 제외** 계정 모수. 전량으로 잡으면 p05=0이라 `NULLIF`로 전 계정이 NULL이 된다 | ⚠️ 이미 표류 중. 다음 릴리스 드롭 후보(§6) |
-| **계정 소수 앵커** (2026-07-30~) | `1.4856 / 23.6566 / 56.3961 / 77.0479` | `precise_raw`(콘텐츠 출력 매핑 반영 창 평균)→0~100 | `analytics.hype-anchor-acct-precise-{...}` | **0점 제외**(및 반올림 시 0이 되는 `raw<0.5`도 제외) 계정 모수 — 콘텐츠 출력 매핑 도입으로 입력 기준량이 바뀌어 계정 앵커(구)와 공유 불가, 별도 재적합 | 재적합 절차 있음(§5) |
+| **계정 소수 앵커** (2026-07-31 재적합) | `1.2417 / 19.4383 / 52.2401 / 74.0179` (구 2026-07-30값 `1.4856 / 23.6566 / 56.3961 / 77.0479`) | `precise_raw`(콘텐츠 출력 매핑 반영 창 점수 합 / 고정 분모)→0~100 | `analytics.hype-anchor-acct-precise-{...}` | **0점 제외**(및 반올림 시 0이 되는 `raw<0.5`도 제외) 계정 모수 — 2026-07-31 `precise_raw` 집계를 평균→고정 분모 합으로 바꾸며 raw 분포가 하향 이동해 재적합(계정 표본 하한 없음 결함 해소, §7) | 재적합 절차 있음(§5) |
 | 최근창 | 12 | 계정 점수 모수 | `analytics.recent-window` | 뷰가 직접 읽는다 | — |
 
 매핑은 네 앵커를 `p05→10 · p50→45 · p90→80 · p99→97`로 잇는 구간선형이고, p99 초과는
@@ -162,7 +177,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 |---|---|
 | **팔로워 정규화로 소형 계정 우대** | 상위 50 계정의 팔로워 중앙값이 전체 중앙값의 **0.57배**다(상위권이 평균보다 작은 계정으로 채워진다). 실측: `B`를 1200으로 올리면 비율 1.02로 규모 중립이 되고 타입 중립도 유지된다(0.856→0.867). **`B`를 빼면 악화된다**(비율 0.31 — 초소형 계정 폭주) |
 | **`B`는 규칙이 아니라 상수** | 규모 중립을 주는 값은 대략 `0.3 × 전체 팔로워 중앙값`이다. `B`가 절대 단위 상수라 코퍼스가 자라면 자동으로 따라가지 않는다 — 앵커는 재적합되는데 `B`는 안 되는 비대칭 |
-| **계정 점수 표본 하한 없음** | 최근창에서 점수 산출된 콘텐츠가 1~2건뿐인 계정이 상위권에 섞인다 |
+| ~~계정 점수 표본 하한 없음~~ | **2026-07-31 해소.** `avg_hype_score_precise`의 재료 `precise_raw`를 단순 평균(분모=창에 실제로 든 콘텐츠 수)에서 `sum(...) / analytics.recent-window`(분모=창 크기 고정)로 바꿔, 점수산출 콘텐츠가 창을 못 채운 계정이 자연히 감점되게 했다(수집 누락이어도 감점 — 화면에 안 뜨는 게시물은 유저에게 없는 것과 같다는 정합성 결정). 앵커도 새 raw 분포로 재적합(§3). 스펙 [2026-07-31-account-score-fixed-denominator-design](superpowers/specs/2026-07-31-account-score-fixed-denominator-design.md) |
 | **`followers`가 게시 시점 아닌 현재값** | 성장한 계정의 옛 콘텐츠 `Q`가 과소평가된다. 적합·서빙이 같은 결함을 공유하므로 일관성은 유지된다 |
 | **계정 순위는 사실상 게시 빈도 순위** | 창 스팬 구간별 감쇠 전 품질(`base`)이 35~43으로 평평한데 최종 점수는 10배 벌어진다. hypenow이므로 **의도된 동작으로 확정**했으나, 품질 신호가 거의 안 들어간다는 뜻이다 |
 | 댓글 ×3 엣지 | 댓글유도·경품 게시물 과대평가 |
@@ -176,6 +191,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 | v2.1 (07-20) | 릴스 참여 축 분모를 조회수→팔로워로 교체(저조회수 뭉침 해소). 릴스 앵커만 재적합 | [2026-07-20-reels-hype-engage-follower-normalization](superpowers/specs/2026-07-20-reels-hype-engage-follower-normalization-design.md) |
 | v3 (07-30) | 감쇠를 앵커 매핑 뒤로, 클램프를 감쇠 앞으로. 앵커를 `Q` 기준·전체 서빙 코퍼스로 재적합. 계정 척도 재교정과 정렬 키 분리 동반 | [2026-07-30-hype-score-v3-decay-after-mapping](superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md) |
 | v3 + 소수점 노출 (07-30) | 콘텐츠 출력 매핑(`hype_score_output`) 신설·타입 무관 단일 앵커(랭킹 경로 실측). `hype_score_precise`·`avg_hype_score_precise`(둘 다 소수 4자리) 신설, was 표시·정렬을 이 컬럼들로 이전. 구 정수 컬럼 3종은 값·의미 불변·다음 릴리스 드롭 대상 | [2026-07-30-hype-score-v3-decay-after-mapping §10](superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md) |
+| 계정 점수 고정 분모 (07-31) | `precise_raw` 집계를 단순 평균(분모=창에 실제로 든 콘텐츠 수)에서 `sum(...) / analytics.recent-window`(분모=창 크기 고정)로 교체 — 점수산출 콘텐츠가 창을 못 채운 계정(수집 누락 41%)이 자연히 감점되도록 해 계정 점수 표본 하한 없음 결함 해소. 계정 소수 앵커 재적합(§3) | [2026-07-31-account-score-fixed-denominator-design](superpowers/specs/2026-07-31-account-score-fixed-denominator-design.md) |
 
 ### 실측으로 폐기된 안 (재도입 금지)
 

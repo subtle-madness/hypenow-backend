@@ -47,7 +47,7 @@ class SweepSchedulerTest {
 	@Test
 	void sweep은_일일_스윕_잡에_위임한다() {
 		var calls = new int[1];
-		var job = new DailySweepJob(null, null, null, null, 0, Duration.ZERO) {
+		var job = new DailySweepJob(null, null, null, null, null, 0, Duration.ZERO) {
 			@Override
 			public void run() {
 				calls[0]++;
@@ -63,7 +63,7 @@ class SweepSchedulerTest {
 	@Test
 	void 가드가_이미_잡혀있으면_크론_스윕은_스킵된다() {
 		var calls = new int[1];
-		var job = new DailySweepJob(null, null, null, null, 0, Duration.ZERO) {
+		var job = new DailySweepJob(null, null, null, null, null, 0, Duration.ZERO) {
 			@Override
 			public void run() {
 				calls[0]++;

@@ -180,12 +180,18 @@ WHERE raw_avg >= 0.5;  -- 0점(및 반올림하면 0이 되는 0.5 미만) 제�
 -- — 콘텐츠 출력 매핑 도입에 따른 계정 앵커 재적합, 스펙 위 문서 §10, 구현
 -- analytics/views/10_account_detail.sql의 analytics.hype_account_score_precise()).
 --
--- 위 계정 raw 앵커와 다른 점은 딱 하나 — per-content 점수를 **반올림 없이(qc.q 매핑 후 감쇠, 정수
--- 캐스트 생략)** 구하고, 거기에 콘텐츠 출력 매핑(analytics.hype_score_output, 랭킹 경로 앵커
--- 5/23/44/60.8 — 위 콘텐츠 출력 앵커 섹션과 동일 상수)까지 적용한 값을 평균 낸다. 이 평균이
+-- 위 계정 raw 앵커와 다른 점 — per-content 점수를 **반올림 없이(qc.q 매핑 후 감쇠, 정수 캐스트
+-- 생략)** 구하고, 거기에 콘텐츠 출력 매핑(analytics.hype_score_output, 랭킹 경로 앵커
+-- 5/23/44/60.8 — 위 콘텐츠 출력 앵커 섹션과 동일 상수)까지 적용한다. 이 raw2/scored2가
 -- avg_hype_precise_raw(10_account_detail.sql base CTE)와 같은 재료다 — avg_hype_raw(위 섹션,
 -- hype_account_score 재료)와는 입력 기준량이 완전히 달라 앵커를 공유할 수 없다(hype_account_score는
 -- 값·의미 불변이라 건드리지 않는다 — 위 섹션 그대로 둔 이유).
+--
+-- 집계는 **단순 평균이 아니라 고정 분모 합**이다(2026-07-31 — 계정 표본 하한 없음 결함 해소,
+-- 스펙 2026-07-31-account-score-fixed-denominator-design.md, 10_account_detail.sql base CTE
+-- avg_hype_precise_raw 주석 참조). 분모는 콘텐츠 함수 상수(cs2)와 동일 관용구로 읽는
+-- analytics.recent-window(기본 12) — sum()이 NULL을 무시하므로 점수산출 <창크기 계정은 분자에
+-- 0 기여로 자연 감점된다.
 --
 -- 0점 제외 모수는 위와 동일 원칙(raw_avg < 0.5 포함 제외).
 --
@@ -260,8 +266,10 @@ scored2 AS (
     END AS precise_score
   ) m
 ),
-raw2 AS (  -- 계정별 raw = 창 콘텐츠 정밀 점수(출력 매핑 반영) 단순 평균 — avg_hype_precise_raw와 동일 재료
-  SELECT owner_username, avg(precise_score) AS raw_avg
+raw2 AS (  -- 계정별 raw = 창 콘텐츠 정밀 점수(출력 매핑 반영) 합 / 고정 분모(recent-window) — avg_hype_precise_raw와 동일 재료
+  SELECT owner_username,
+         sum(precise_score) / NULLIF(COALESCE(
+           (SELECT value::int FROM app_setting WHERE key = 'analytics.recent-window'), 12), 0) AS raw_avg
   FROM scored2
   GROUP BY owner_username
 )

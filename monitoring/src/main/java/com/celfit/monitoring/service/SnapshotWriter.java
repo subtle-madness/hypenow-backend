@@ -58,6 +58,19 @@ public class SnapshotWriter {
 	}
 
 	/**
+	 * 팔로워 1회 수집(트랙 II 후속) — POST 등록분만 있는 계정에 {@code profile_snapshot} 행이
+	 * 아직 없을 때 1회만 호출되는 프로필 전용 저장. {@link #saveAccount}와 달리 게시물 열거를
+	 * 하지 않으므로 {@code lastUploadedAt}을 모른다 — null을 넘겨 {@link ProfileMetaRepository#upsert}의
+	 * COALESCE가 기존 값(있다면)을 보존하게 한다. 프로필 응답은 정본이라 display_name·
+	 * profile_image_url을 덮어쓰는 기존 {@code upsert} 의미가 여기서도 그대로 맞다.
+	 */
+	@Transactional
+	public void saveProfileOnly(String username, LocalDate on, ProfileInfo profile) {
+		snapshots.upsertProfile(username, on, profile);
+		profileMeta.upsert(username, profile.fullName(), profile.profilePicUrl(), null);
+	}
+
+	/**
 	 * POST 등록분은 계정 갈래({@link #saveAccount}의 {@code profileMeta.upsert})를 영구히 타지 않는다
 	 * ({@code needsEnumeration}이 ACCOUNT 타입 target 존재를 전제로 하기 때문, 트랙 II) — 여기서 안
 	 * 채우면 profile_meta 행이 아예 안 생긴다. 단건 응답(/v2/media/by/code)에 owner 필드가 이미

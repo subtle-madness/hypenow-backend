@@ -58,14 +58,20 @@ $$;
 -- 기본값 — 단일 소스는 함수 기본값, hype_account_score·hype_score_output과 동일 관용구).
 -- raw IS NULL(창 전체 점수 불가)은 NULL 유지. 최종 반올림은 호출부(v_account_summaries)가
 -- round(...,4)로 한다 — 이 함수 자체는 정수로 자르지 않는다(소수점 노출이 목적이므로).
+-- 앵커 재적합(2026-07-31, 스펙 2026-07-31-account-score-fixed-denominator-design.md): 입력
+-- raw의 집계 방식이 avg(분모=analyzed_count)에서 sum/고정분모(분모=analytics.recent-window)로
+-- 바뀌면서(base CTE의 avg_hype_precise_raw 참조) raw 분포 자체가 이동해 앵커를 다시 적합했다
+-- (1.4856/23.6566/56.3961/77.0479 → 1.2417/19.4383/52.2401/74.0179). 새 분포는 옛 분포보다
+-- 살짝 낮게 이동한다 — 점수산출 콘텐츠가 창을 못 채운 계정들이 분모 고정으로 감점되면서 raw
+-- 모집단 자체의 분위수가 내려간 것(계정 표본 하한 없음 결함 해소가 목적이므로 의도된 이동).
 CREATE OR REPLACE FUNCTION analytics.hype_account_score_precise(raw numeric) RETURNS numeric
 LANGUAGE sql STABLE AS $$
   WITH s AS (
     SELECT
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p05'),0),1.4856)  AS a05,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p50'),0),23.6566) AS a50,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p90'),0),56.3961) AS a90,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p99'),0),77.0479) AS a99
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p05'),0),1.2417)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p50'),0),19.4383) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p90'),0),52.2401) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p99'),0),74.0179) AS a99
   )
   SELECT CASE
     WHEN raw IS NULL THEN NULL
@@ -123,15 +129,29 @@ base AS (
                                    followers,
                                    extract(epoch FROM (now() - uploaded_at)) / 86400.0))
                                                             AS avg_hype_raw,
-         -- avg_hype_precise_raw (내부 전용, 노출 안 함): 위 avg_hype_raw와 같은 구조지만 입력이
-         -- hype_score(정수)가 아니라 hype_score_output(hype_score_raw(...))(반올림 전, 02_serving.sql
-         -- 신설) — 콘텐츠 출력 매핑까지 반영된 창 평균이다. hype_account_score_precise()에 넘겨
-         -- avg_hype_score_precise를 만드는 재료일 뿐이라 avg_hype_raw처럼 별도 컬럼으로 내지 않는다
-         -- (정렬 키가 필요 없다 — avg_hype_score_precise 자체가 이미 소수라 동점이 나지 않는다).
-         avg(analytics.hype_score_output(
+         -- avg_hype_precise_raw (내부 전용, 노출 안 함): 위 avg_hype_raw와 입력은 같은 구조지만
+         -- (hype_score_output(hype_score_raw(...)), 반올림 전, 02_serving.sql 신설), 집계는
+         -- **단순 평균이 아니라 고정 분모 합**이다(2026-07-31 — 계정 표본 하한 없음 결함 해소,
+         -- 스펙 2026-07-31-account-score-fixed-denominator-design.md). 이유: avg()는 분모가
+         -- analyzed_count(창에 실제로 든 행 수)라, 창이 12로 꽉 찼어도 likes/comments 수집 누락으로
+         -- 점수산출 콘텐츠가 1~2건뿐인 계정이 그 1~2건의 avg만으로 12건을 채운 계정과 동일하게
+         -- 평가됐다(test 스택 실측: ynp.ny 2건 7위·sunyvvin 1건 8위·zero_lyrical 1건 12위 — 창이
+         -- 꽉 찬 계정 6,350개 중 2,633개(41%)가 점수산출 <12건, 결손의 99.9%가 likes/comments NULL).
+         -- 사용자 결정: 수집 누락이어도 감점한다 — 그 게시물은 인플루언서 상세 화면(최근 12개 카드)에
+         -- 아예 뜨지 않아 유저 입장에서 "1개만 올린 계정"과 구분되지 않으므로 화면·점수 정합성이
+         -- 우선이다. sum()은 NULL을 무시하므로 점수 불가 콘텐츠는 분자에 0 기여(=감점)가 되고,
+         -- 분모는 창 크기(analyzed_count 아님)로 고정해 "표본이 적을수록 유리해지는" 구조를 없앤다.
+         -- 분모는 01_recent_window.sql·04_analysis_candidates.sql과 동일하게 app_setting
+         -- 'analytics.recent-window'(기본 12)를 읽는다 — 새 상수를 만들지 않는다. NULLIF(...,0)은
+         -- 설정값이 실수로 0이 되어도 나눗셈 오류 없이 폴백 12로 떨어지게 하는 방어(이 파일의 다른
+         -- 분모 NULLIF 관용구와 동일). 창 전체가 NULL이면 sum() 자체가 NULL이라 NULL/분모=NULL로
+         -- "창 전체 점수 불가 → NULL" 기존 계약이 그대로 유지된다.
+         sum(analytics.hype_score_output(
                analytics.hype_score_raw(lower(content_type), views, likes, comments_count,
                                          followers,
                                          extract(epoch FROM (now() - uploaded_at)) / 86400.0)))
+           / NULLIF(COALESCE(
+               (SELECT value::int FROM app_setting WHERE key = 'analytics.recent-window'), 12), 0)
                                                             AS avg_hype_precise_raw,
          min(uploaded_at)                                   AS first_posted_at,
          max(uploaded_at)                                   AS last_posted_at,
