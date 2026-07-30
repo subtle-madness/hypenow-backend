@@ -2,9 +2,13 @@ package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AdSituation;
+import com.celfit.analytics.llm.CopyRules;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.ObjectMapper;
 
@@ -13,6 +17,9 @@ import tools.jackson.databind.ObjectMapper;
  * 공유한다. 컬럼 변경 시 이 한 곳만 (ContentAnalysisWriter와 동일 취지 — 07-17 "한쪽만 고쳐지는 재발" 방지).
  */
 final class AccountAnalysisWriter {
+
+	private static final Logger log = LoggerFactory.getLogger(AccountAnalysisWriter.class);
+	private static final Pattern DIGIT = Pattern.compile("\\d");
 
 	/** 5개 초과 traits는 앞 5개만 저장 — AccountAnalysisJob·ClaudeBurstRunner 공유. */
 	static final int MAX_TRAITS = 5;
@@ -41,20 +48,42 @@ final class AccountAnalysisWriter {
 	 * 믹스 성분으로 유사도 후보는 유지). adSituation이 {@link AdSituation#writesHeadline()}가
 	 * 아니면(근거 없음) adSummary는 NULL로 버려진다.
 	 * 구 카피 5컬럼(summary·trend/chart_note·ad_headline·pace_note)은 07-27 개편 후 미기록.
+	 *
+	 * <p>copy_version은 항상 현재 {@link CopyRules#VERSION}으로 찍는다(호출자와 무관 — 일상 잡·
+	 * 버스트 러너 어느 경로로 생성됐든 "지금 규칙으로 만든 카피"라는 사실은 같다). 판정 규칙이
+	 * 바뀌어 VERSION이 오르면 이 값보다 낮은 기존 행만 ELIGIBLE_WHERE가 재대상으로 잡는다(설계 §4).
 	 */
 	static void insert(JdbcTemplate analysis, ObjectMapper json, String handle, OffsetDateTime analyzedAt,
 			String model, OffsetDateTime inputLastPostedAt, Long inputAnalyzedCount,
 			AccountCopy copy, AdSituation adSituation, Set<String> vocabulary) {
+		if (hasNumericCitation(copy)) {
+			// 차단하지 않는다 — 계정 카피는 avg_likes 등 수치를 입력에서 뺄 수 없어(근거로 필요)
+			// "입력 제거로 강제"가 불가능한 케이스다. 프롬프트 지시 정리(LlmGuard.ACCOUNT_RULES,
+			// 2026-07-30)가 유일한 강제 수단이라 완벽을 보장 못 한다 — 이 로그는 그 지시가 다시
+			// 뚫렸을 때(0_tsuki2 재발) 운영자가 알아챌 관측 신호일 뿐이다.
+			log.warn("계정 {} perfSummary에 숫자 포함 — 수치 인용 금지 지시 위반 의심(관측 전용): {}",
+					handle, copy.perfSummary());
+		}
 		List<String> traits = sanitize(copy.traits(), vocabulary);
 		String adSummary = adSituation != null && adSituation.writesHeadline()
 				? blankToNull(copy.adSummary()) : null;
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary)
-				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)""",
+				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary,
+				  copy_version)
+				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)""",
 				handle, analyzedAt, model, inputLastPostedAt, inputAnalyzedCount,
 				copy.tagline(), json.writeValueAsString(traits),
-				copy.perfSummary(), copy.contentSummary(), adSummary);
+				copy.perfSummary(), copy.contentSummary(), adSummary, CopyRules.VERSION);
+	}
+
+	/**
+	 * perfSummary 수치 인용 금지 지시(GeminiAccountSynthesizer.INSTRUCTIONS_TEMPLATE의 "구체 수치를
+	 * 문장에 그대로 인용하지 마라") 위반 관측용 — 숫자 하나라도 있으면 의심 신호로 본다(과탐 감수,
+	 * 이 감지는 차단이 아니라 로그일 뿐이라 비용이 낮다).
+	 */
+	static boolean hasNumericCitation(AccountCopy copy) {
+		return copy.perfSummary() != null && DIGIT.matcher(copy.perfSummary()).find();
 	}
 
 	private static boolean isBlank(String s) {

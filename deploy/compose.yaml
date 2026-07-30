@@ -177,6 +177,14 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 어드민 가입 코드 일괄 적재(POST /admin/signup-codes) 정적 토큰 — 서버 .env에 등록. 미설정 시 엔드포인트 fail-closed(503)
       CODES_API_KEY: ${CODES_API_KEY:-}
+      # 모니터링 v3 조회 개통(was 계약 §1) — 기본 off. 개통은 .env의 MONITORING_ENABLED=true +
+      # WAS_READER_PASSWORD 설정(README §13-6). false면 MonitoringConfig 자체가 안 뜬다(부가 서브시스템 무영향).
+      MONITORING_ENABLED: "${MONITORING_ENABLED:-false}"
+      # monitoring 사설 DB(postgres 인스턴스 내 monitoring DB)를 읽기 전용 계정으로 — 객체 GRANT는
+      # monitoring Flyway(V2)가 소유자로서 부여, was_reader에는 접속 권한만(db/init/02 참조)
+      MONITORING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
+      MONITORING_DATASOURCE_USERNAME: was_reader
+      MONITORING_DATASOURCE_PASSWORD: ${WAS_READER_PASSWORD:-}
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
     # 롤링 배포(scripts/rollout.sh)의 전환 판정 — 8081 리슨 = Spring 기동 완료(app Flyway 포함).
@@ -217,6 +225,13 @@ services:
       HIKER_API_KEY: ${HIKER_API_KEY}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
+      # 알람 발송(07-30~) — 기본 비활성. 개통 절차는 README §13-5
+      MONITORING_ALARM_DISPATCH_CRON: "-"
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # 수신자 해석용 analysis DB 읽기 전용(두 객체만 GRANT — 계약 v2 §6)
+      MONITORING_ALARM_READER_URL: jdbc:postgresql://postgres:5432/analysis
+      MONITORING_ALARM_READER_USERNAME: alarm_reader
+      MONITORING_ALARM_READER_PASSWORD: ${ALARM_READER_PASSWORD:-}
       JAVA_OPTS: "-Xms128m -Xmx384m"
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(analytics와 동일 관용구).
