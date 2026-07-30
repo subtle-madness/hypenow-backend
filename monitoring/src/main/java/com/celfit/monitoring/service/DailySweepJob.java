@@ -9,6 +9,7 @@ import com.celfit.monitoring.store.CandidateRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -68,7 +69,30 @@ public class DailySweepJob {
 				failedAccounts++;
 			}
 		}
+		// 계정·게시물 스냅샷과 독립된 갈래 — 댓글 콜 실패가 지표 수집에 번지면 안 된다.
+		// 계정 스윕이 끝난 뒤 상태를 다시 읽어, 이번 스윕에서 방금 FAILED로 닫힌 캠페인은 자연히 제외된다.
+		sweepComments(targets.findActive());
 		log.info("스윕 완료 — 계정 {}건(실패 {}), 만료 {}건", byUsername.size(), failedAccounts, expired);
+	}
+
+	/**
+	 * 추적 게시물 댓글 수집 — 게시물(short_code) 단위로 캠페인 간 공유한다(계약 §3 post_comment).
+	 * 같은 게시물을 여러 캠페인이 추적해도 콜은 1회, 실패는 그 게시물만 격리한다.
+	 */
+	private void sweepComments(List<TargetRow> active) {
+		Map<String, String> ownerByShortCode = new LinkedHashMap<>();
+		for (TargetRow t : active) {
+			if (t.status() == TargetStatus.TRACKING && t.trackedShortCode() != null) {
+				ownerByShortCode.putIfAbsent(t.trackedShortCode(), t.username());
+			}
+		}
+		for (var entry : ownerByShortCode.entrySet()) {
+			try {
+				collect.collectComments(entry.getKey(), entry.getValue());
+			} catch (RuntimeException e) {
+				log.warn("댓글 수집 실패(격리) — 게시물 {}: {}", entry.getKey(), e.toString());
+			}
+		}
 	}
 
 	/**

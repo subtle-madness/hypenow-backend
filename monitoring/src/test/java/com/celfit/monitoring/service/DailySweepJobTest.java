@@ -9,8 +9,11 @@ import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
+import com.celfit.monitoring.hiker.ShortCodes;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.CandidateRepository;
+import com.celfit.monitoring.store.CommentRepository;
+import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
 import com.celfit.monitoring.store.TargetRepository;
@@ -52,11 +55,14 @@ class DailySweepJobTest {
 		private final Set<String> privateUsernames = new HashSet<>();
 		private final Set<String> brokenUsernames = new HashSet<>();
 		private final Set<String> missingCodes = new HashSet<>();
+		private final Map<String, String> commentsJsonByMediaId = new HashMap<>();
+		private final Set<String> brokenCommentMediaIds = new HashSet<>();
 
 		int profileCalls;
 		int mediasCalls;
 		int clipsCalls;
 		int postCalls;
+		int commentsCalls;
 
 		/** 정상 계정 등록 — userId는 계정마다 달라야 열거 응답이 계정별로 갈린다. */
 		FakeHiker account(String username, String userId, FakePost... posts) {
@@ -100,8 +106,30 @@ class DailySweepJobTest {
 			return this;
 		}
 
+		/** 특정 게시물의 댓글 응답을 지정 — shortCode에서 산술 유도되는 media pk로 매핑해 둔다. */
+		FakeHiker comments(String shortCode, String commentsJson) {
+			commentsJsonByMediaId.put(String.valueOf(ShortCodes.toMediaId(shortCode)), commentsJson);
+			return this;
+		}
+
+		/** 댓글 콜만 실패(5xx) — 계정·스냅샷 수집은 멀쩡한데 댓글만 격리돼야 하는 시나리오용. */
+		FakeHiker brokenComments(String shortCode) {
+			brokenCommentMediaIds.add(String.valueOf(ShortCodes.toMediaId(shortCode)));
+			return this;
+		}
+
 		@Override
 		public String get(String path) {
+			if (path.startsWith("/v2/media/comments")) {
+				commentsCalls++;
+				String mediaId = param(path, "id");
+				if (brokenCommentMediaIds.contains(mediaId)) {
+					throw new HikerFetchException("댓글 500");
+				}
+				String json = commentsJsonByMediaId.get(mediaId);
+				return json != null ? json
+						: "{\"response\":{\"comments\":[],\"has_more_comments\":false},\"next_page_id\":null}";
+			}
 			if (path.startsWith("/v2/user/by/username")) {
 				profileCalls++;
 				String username = param(path, "username");
@@ -136,8 +164,9 @@ class DailySweepJobTest {
 		private static String profileJson(String username, String userId) {
 			return """
 					{"user":{"pk":%s,"username":"%s","is_private":false,
+					"full_name":"%s Full Name","profile_pic_url":"https://img/%s.jpg",
 					"follower_count":1000,"following_count":10,"media_count":42},"status":"ok"}"""
-					.formatted(userId, username);
+					.formatted(userId, username, username, username);
 		}
 
 		private static String mediasJson(List<FakePost> posts) {
@@ -198,7 +227,8 @@ class DailySweepJobTest {
 		candidates = new CandidateRepository(db);
 		hiker = new FakeHiker();
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var collect = new CollectService(client, new SnapshotWriter(new SnapshotRepository(db)), 1);
+		var writer = new SnapshotWriter(new SnapshotRepository(db), new ProfileMetaRepository(db));
+		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1);
 		job = new DailySweepJob(targets, candidates, collect);
 	}
 
@@ -454,5 +484,108 @@ class DailySweepJobTest {
 				Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot WHERE username='u2'",
 				Long.class)).isEqualTo(2);
+	}
+
+	// ⑦ 댓글 수집(v1.1)
+
+	private static final String ONE_COMMENT = """
+			{"response":{"comments":[{"pk":"999","text":"좋아요","comment_like_count":3,
+			"created_at_utc":1700000000,"user":{"username":"fan1"},"preview_child_comments":[]}]},
+			"has_more_comments":false,"next_page_id":null}""";
+
+	/** 같은 게시물을 두 캠페인이 추적해도 댓글 콜은 1회다 — 계약 §3 "게시물 단위로 캠페인 간 공유". */
+	@Test
+	void 같은_게시물을_추적하는_캠페인이_여러_개여도_댓글은_한_번만_수집한다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
+				.comments("AAA", ONE_COMMENT);
+		tracking("someuser", "AAA", "rk-t1");
+		tracking("someuser", "AAA", "rk-t2");
+
+		job.run();
+
+		assertThat(hiker.commentsCalls).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT author FROM post_comment WHERE short_code='AAA'", String.class)).isEqualTo("fan1");
+	}
+
+	/** 게시물당 전량 교체 갱신 — 스윕을 두 번 돌리면 이전 수집분이 사라지고 이번 수집분만 남는다. */
+	@Test
+	void 댓글은_스윕마다_전량_교체_갱신된다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
+				.comments("AAA", ONE_COMMENT);
+		tracking("someuser", "AAA", "rk-t1");
+
+		job.run();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isEqualTo(1);
+
+		hiker.comments("AAA", "{\"response\":{\"comments\":[],\"has_more_comments\":false},"
+				+ "\"next_page_id\":null}");
+		job.run();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isZero();
+	}
+
+	/** 댓글 콜 실패는 그 게시물만 격리한다 — 계정 스냅샷·다른 게시물 댓글 수집은 계속된다. */
+	@Test
+	void 댓글_수집_실패는_해당_게시물만_격리한다() {
+		hiker.account("someuser", "111",
+						new FakePost("AAA", "최근 게시물", AFTER), new FakePost("BBB", "다른 게시물", AFTER - 10))
+				.brokenComments("AAA")
+				.comments("BBB", ONE_COMMENT);
+		long trackedBad = tracking("someuser", "AAA", "rk-bad");
+		tracking("someuser", "BBB", "rk-good");
+
+		job.run();
+
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='AAA'", Long.class)).isZero();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='BBB'", Long.class)).isEqualTo(1);
+		// 댓글 실패가 계정 스냅샷·캠페인 상태에는 번지지 않는다.
+		assertThat(statusOf(trackedBad)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(1);
+	}
+
+	/** 종결된 캠페인의 추적 게시물은 댓글 콜 대상에서 빠진다 — 이미 FAILED로 닫힌 뒤라 콜을 낭비하지 않는다. */
+	@Test
+	void 계정_수집_실패로_종결된_캠페인은_댓글을_수집하지_않는다() {
+		hiker.missingAccount("gone_user");
+		tracking("gone_user", "ZZZ", "rk-gone");
+
+		job.run();
+
+		assertThat(hiker.commentsCalls).isZero();
+	}
+
+	// ⑧ profile_meta upsert(v1.1)
+
+	@Test
+	void 계정_수집마다_profile_meta가_upsert된다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER));
+		watching("someuser", any("무관"), "rk-pm", FUTURE);
+
+		job.run();
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='someuser'");
+		assertThat(row.get("display_name")).isEqualTo("someuser Full Name");
+		assertThat(row.get("profile_image_url")).isEqualTo("https://img/someuser.jpg");
+		assertThat(row.get("last_uploaded_at")).isNotNull();   // AAA의 taken_at(AFTER)에서 유도된 KST 날짜
+	}
+
+	/** matched_keywords는 KeywordRule.matchedTerms 결과가 그대로 실린다(계약 §3). */
+	@Test
+	void 후보에_matched_keywords가_저장된다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상 런칭", AFTER));
+		long a = watching("someuser", any("Rare Beginnings"), "rk-mk", FUTURE);
+
+		job.run();
+
+		String json = db.queryForObject(
+				"SELECT matched_keywords::text FROM detected_candidate WHERE target_id=?", String.class, a);
+		assertThat(json).contains("Rare Beginnings");
 	}
 }
