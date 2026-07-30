@@ -37,9 +37,12 @@ CREATE TABLE app.monitoring_items (
     started_notified_on date,              -- collection_started 다이제스트 반영일(중복 발화 방지)
     created_at          timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX monitoring_items_user_idx ON app.monitoring_items (user_id);
+-- (user_id, registered_on, id): 목록 조회 정렬 키(registered_on ASC, id ASC)를 인덱스가 그대로 커버.
+CREATE INDEX monitoring_items_user_idx ON app.monitoring_items (user_id, registered_on, id);
 CREATE UNIQUE INDEX monitoring_items_user_target_uidx
     ON app.monitoring_items (user_id, target_id) WHERE target_id IS NOT NULL;
+-- 캠페인 삭제(ON DELETE SET NULL) 시 이 FK로 자식 행을 찾는데, 인덱스 없으면 매 삭제마다 전체 스캔.
+CREATE INDEX monitoring_items_campaign_idx ON app.monitoring_items (campaign_id);
 
 -- 등록 처리 내역(6.28) — 요청 1행 + 건별 결과(입력 순서 보존).
 CREATE TABLE app.monitoring_registrations (
@@ -63,6 +66,9 @@ CREATE TABLE app.monitoring_registration_entries (
 );
 CREATE INDEX monitoring_registrations_user_idx
     ON app.monitoring_registrations (user_id, requested_at DESC);
+-- 아이템 삭제(ON DELETE SET NULL) 시 이 FK로 자식 행을 찾는데, 인덱스 없으면 매 삭제마다 전체 스캔.
+CREATE INDEX monitoring_registration_entries_item_idx
+    ON app.monitoring_registration_entries (item_id);
 
 -- 데일리 다이제스트(6.32) — (user, date) 유니크가 하루 1건 계약.
 CREATE TABLE app.monitoring_digests (

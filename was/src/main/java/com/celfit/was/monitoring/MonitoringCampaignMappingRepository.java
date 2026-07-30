@@ -28,6 +28,8 @@ public class MonitoringCampaignMappingRepository {
 	 * mode·input_value·tracking_days·registered_on은 v3 컬럼이라 NOT NULL — 이 메서드는 구v2
 	 * 시그니처(userId, key)만 받으므로 임시 기본값(mode='url', input_value='', tracking_days=1,
 	 * registered_on=CURRENT_DATE)을 채운다. 후속 태스크에서 v3 시그니처로 교체 예정.
+	 * ⚠️ 배포 순서 경고: Task 2(v3 시그니처 교체) 전에 monitoring.enabled=true로 배포하면
+	 * account 모드 등록도 이 임시값(mode='url' 등)으로 저장된다 — 교체 전 활성화 금지.
 	 */
 	public long insertPending(long userId, UUID registrationKey) {
 		return jdbcClient.sql("""
