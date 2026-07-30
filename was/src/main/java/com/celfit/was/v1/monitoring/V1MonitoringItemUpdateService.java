@@ -70,6 +70,14 @@ public class V1MonitoringItemUpdateService {
 	 * 편집 대상은 기간(trackingDays)과 캠페인(campaignId/campaignName) 둘뿐(스펙 6.29). 캠페인은
 	 * 모든 상태에서 허용, 기간은 진행 중 상태 + 미래 종료일만 허용. campaignName으로 캠페인이 새로
 	 * 생성된 경우에만 응답에 campaign을 동봉한다(6.27과 동일 규약).
+	 *
+	 * <p><b>순서 불변식(2026-07-30 리뷰 픽스)</b>: 되돌릴 수 없는 원격 부수효과(monitoring extend)는
+	 * 이 요청의 검증·해석이 전부 끝난 뒤에만 낸다. trackingDays·campaign 두 필드가 함께 오는 정상
+	 * 경로(수정 모달)에서, trackingDays를 먼저 원격 확정해 버리면 뒤이은 campaign 검증 실패(404·400)로
+	 * 트랜잭션이 롤백돼도 monitoring 쪽 연장은 이미 반영된 채라 로컬·원격이 결정론적으로 어긋난다.
+	 * 그래서 1단계(validateTrackingDays·resolveCampaignChange)는 전부 순수 검증/조회이거나 롤백
+	 * 안전한 로컬 쓰기(resolveOrCreate의 캠페인 insert — 같은 트랜잭션이라 실패 시 함께 롤백)만 하고,
+	 * 2단계에서만 extend 호출 → app 갱신 순서로 실제 부수효과를 낸다.
 	 */
 	@Transactional
 	public MonitoringItemPatchResponse patch(long userId, long itemId, Map<String, Object> body) {
@@ -82,39 +90,31 @@ public class V1MonitoringItemUpdateService {
 			throw V1ApiException.validation("campaignId와 campaignName을 동시에 지정할 수 없어요.");
 		}
 
+		// 1단계 — 검증·해석만(원격 호출 없음). 여기서 던지는 예외는 아직 아무 부수효과도 없어 안전하다.
+		Integer newTrackingDays = body.containsKey("trackingDays")
+				? validateTrackingDays(item, body.get("trackingDays"))
+				: null;
+		CampaignChange campaignChange = resolveCampaignChange(userId, hasCampaignId, hasCampaignName,
+				body.get("campaignId"), body.get("campaignName"));
+
+		// 2단계 — 검증 통과 확정. 이제부터 원격 extend(되돌릴 수 없음) → 로컬 갱신 순서로 부수효과를 낸다.
 		int trackingDays = item.trackingDays();
-		if (body.containsKey("trackingDays")) {
-			trackingDays = applyTrackingDays(item, body.get("trackingDays"));
+		if (newTrackingDays != null) {
+			trackingDays = newTrackingDays;
+			if (item.targetId() != null) {
+				OffsetDateTime expiresAt = MonitoringExpiry.computeExpiresAt(item.registeredOn(), trackingDays);
+				requireCommandClient().extend(item.targetId(), expiresAt);
+			}
+			itemRepository.updateTrackingDays(item.id(), trackingDays);
 		}
 
 		Long campaignId = item.campaignId();
 		String campaignName = resolveCampaignName(item.campaignId(), userId);
 		CampaignResponse newlyCreated = null;
-		if (hasCampaignName) {
-			Object raw = body.get("campaignName");
-			if (raw == null) {
-				campaignId = null;
-				campaignName = null;
-			} else {
-				V1CampaignService.Resolved resolved = campaignService.resolveOrCreate(userId, raw.toString());
-				campaignId = resolved.row().id();
-				campaignName = resolved.row().name();
-				if (resolved.created()) {
-					newlyCreated = CampaignResponse.from(resolved.row());
-				}
-			}
-			itemRepository.updateCampaign(itemId, campaignId);
-		} else if (hasCampaignId) {
-			Object raw = body.get("campaignId");
-			if (raw == null) {
-				campaignId = null;
-				campaignName = null;
-			} else {
-				CampaignRow campaign = campaignRepository.findByIdAndUser(parseCampaignId(raw), userId)
-						.orElseThrow(() -> V1ApiException.notFound("캠페인을 찾을 수 없습니다."));
-				campaignId = campaign.id();
-				campaignName = campaign.name();
-			}
+		if (campaignChange != null) {
+			campaignId = campaignChange.campaignId();
+			campaignName = campaignChange.campaignName();
+			newlyCreated = campaignChange.newlyCreated();
 			itemRepository.updateCampaign(itemId, campaignId);
 		}
 
@@ -149,11 +149,10 @@ public class V1MonitoringItemUpdateService {
 	}
 
 	/**
-	 * trackingDays 검증(범위·미래 종료일·진행 중 상태) → 통과 시 target 확정 행은 monitoring
-	 * extend 호출 후 app 갱신(계약 순서 그대로 — 원격 확정 실패 시 app을 건드리지 않는다),
-	 * pending 행(target 미확정)은 app만 갱신한다(실행기가 register 시점에 새 값을 읽는다).
+	 * trackingDays 검증만(범위·미래 종료일·진행 중 상태) — 원격 호출·로컬 쓰기 없음(순서 불변식,
+	 * patch() 클래스 javadoc 참조). 호출부가 검증 통과를 확인한 뒤에야 extend·updateTrackingDays를 낸다.
 	 */
-	private int applyTrackingDays(MonitoringItemRow item, Object raw) {
+	private int validateTrackingDays(MonitoringItemRow item, Object raw) {
 		int trackingDays = parseTrackingDays(raw);
 		LocalDate endDate = item.registeredOn().plusDays(trackingDays);
 		LocalDate today = LocalDate.now(KstTimestamps.KST);
@@ -164,12 +163,38 @@ public class V1MonitoringItemUpdateService {
 		if (!IN_PROGRESS_STATUSES.contains(status)) {
 			throw V1ApiException.validation("현재 상태(" + ItemStatus.label(status) + ")에서는 기간을 변경할 수 없어요.");
 		}
-		if (item.targetId() != null) {
-			OffsetDateTime expiresAt = MonitoringExpiry.computeExpiresAt(item.registeredOn(), trackingDays);
-			requireCommandClient().extend(item.targetId(), expiresAt);
-		}
-		itemRepository.updateTrackingDays(item.id(), trackingDays);
 		return trackingDays;
+	}
+
+	/**
+	 * 캠페인 필드 검증·해석만 — campaignId 부재는 404(즉시 던짐), campaignName은 resolveOrCreate까지
+	 * 마친다(신규 insert는 로컬 트랜잭션 안이라 이후 다른 검증이 실패해도 함께 롤백돼 안전, 순서
+	 * 불변식 javadoc 참조). null 반환은 "캠페인 필드 미지정 — 기존 값 유지"를 뜻한다(호출부가
+	 * item.campaignId() 폴백).
+	 */
+	private CampaignChange resolveCampaignChange(long userId, boolean hasCampaignId, boolean hasCampaignName,
+			Object campaignIdRaw, Object campaignNameRaw) {
+		if (hasCampaignName) {
+			if (campaignNameRaw == null) {
+				return new CampaignChange(null, null, null);
+			}
+			V1CampaignService.Resolved resolved = campaignService.resolveOrCreate(userId, campaignNameRaw.toString());
+			CampaignResponse newlyCreated = resolved.created() ? CampaignResponse.from(resolved.row()) : null;
+			return new CampaignChange(resolved.row().id(), resolved.row().name(), newlyCreated);
+		}
+		if (hasCampaignId) {
+			if (campaignIdRaw == null) {
+				return new CampaignChange(null, null, null);
+			}
+			CampaignRow campaign = campaignRepository.findByIdAndUser(parseCampaignId(campaignIdRaw), userId)
+					.orElseThrow(() -> V1ApiException.notFound("캠페인을 찾을 수 없습니다."));
+			return new CampaignChange(campaign.id(), campaign.name(), null);
+		}
+		return null;
+	}
+
+	/** resolveCampaignChange 결과 — campaignId==null && campaignName==null은 "해제"와 "미확정" 둘 다 표현 가능하므로 이 레코드 자체의 존재(null 아님)로 "변경 요청 있음"을 구분한다. */
+	private record CampaignChange(Long campaignId, String campaignName, CampaignResponse newlyCreated) {
 	}
 
 	private TrackingItemResponse assembleAfterPatch(MonitoringItemRow item, int trackingDays, Long campaignId,
