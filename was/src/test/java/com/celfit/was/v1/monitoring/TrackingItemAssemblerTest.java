@@ -116,6 +116,16 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 				.update();
 	}
 
+	private void seedProfileMeta(String username, String displayName, String profileImageUrl) {
+		monitoringJdbc.sql("""
+				INSERT INTO profile_meta (username, display_name, profile_image_url, updated_at)
+				VALUES (:username, :displayName, :profileImageUrl, now())
+				""")
+				.param("username", username).param("displayName", displayName)
+				.param("profileImageUrl", profileImageUrl)
+				.update();
+	}
+
 	private void seedSuccessfulSweep(LocalDate completedOn) {
 		monitoringJdbc.sql("""
 				INSERT INTO sweep_run (started_at, completed_at, ok)
@@ -407,6 +417,35 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		List<TrackingItemResponse> items = assembler.assembleList(userId).items();
 
 		assertThat(items).extracting(TrackingItemResponse::status).containsExactlyInAnyOrder("collecting", "detecting");
+	}
+
+	// ── profile_meta 이미지 URL 스킴 방어(결함 ②) ──────────────────────────────
+
+	@Test
+	void 유효한_profile_image_url은_그대로_서빙된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedProfileMeta("glowdeep", "표시이름", "https://img.cdn/1.jpg");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.profileImageUrl()).isEqualTo("https://img.cdn/1.jpg");
+	}
+
+	/** 저장 측(monitoring)이 막아도 이미 DB에 박힌 무효 스킴 값이 있을 수 있어 서빙 측도 이중 방어한다. */
+	@Test
+	void 무효_스킴_profile_image_url은_null로_서빙된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedProfileMeta("glowdeep", "표시이름", "exception://");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.profileImageUrl()).isNull();
 	}
 
 	// ── 리뷰 반영(2026-07-30) — campaignId·campaignName 짝 방어 ──────────────────
