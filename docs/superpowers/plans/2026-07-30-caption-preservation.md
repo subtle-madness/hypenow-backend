@@ -932,6 +932,16 @@ class CaptionBackfillJobIntegrationTest extends IntegrationTest {
 > 트랜잭션 **안**에서 예외를 삼키지 않는다. `saveWatermark()`도 트랜잭션 안으로 옮겨 캡션 적재와
 > 원자적으로 커밋된다 — 실패하면 캡션도 워터마크도 함께 롤백되고, 재실행이 그 청크를 통째로
 > 다시 처리한다. 아래 코드는 이 수정이 반영된 최종본이다.
+>
+> **2026-07-30 수정 이력 2 — 커버리지 공백 보강.** 코드 품질 리뷰가 승인하며 두 가지를 짚었다:
+> (1) 기존 테스트가 전부 raw 행 1~2건이라 `PAGE_CHUNK`(200) 경계를 넘는 커서 전진이 한 번도
+> 실행되지 않았다 — "DB 재조회 커서 루프"는 이 잡이 이 코드베이스에 처음 도입한 패턴이라 기존
+> 테스트가 전혀 커버하지 못했고, 운영에서는 raw_media_page 46,450행 기준 약 233회 청크
+> 루프를 돈다. (2) `stopFlag` 중지 경로("중지해도 재개 가능"이라는 클래스 Javadoc의 주장)도
+> 테스트가 없었다. 여기에 `Stats.skippedParse`도 추가했다 — 형태 불일치로 건너뛴 페이지가
+> `log.warn`에만 남고 반환값에 없어, 백필을 운영에서 돌린 뒤 "건너뛴 페이지가 0인지"를
+> 판단할 방법이 없었다(`BeautyJob.Summary`가 `skippedNoProfile`·`failedBatches`를 명시
+> 집계하는 것과 같은 결). Step 4-2에 상세.
 
 `crawler/src/main/java/com/celfit/crawler/crawling/application/service/CaptionBackfillJob.java`:
 
@@ -988,8 +998,8 @@ public class CaptionBackfillJob {
     static final String MEDIA_WATERMARK = "caption.backfill.media-page-id";
     static final String PROFILE_WATERMARK = "caption.backfill.profile-id";
 
-    /** 처리한 페이지 수와 적재 시도한 캡션 수. */
-    public record Stats(int pages, int captions) {}
+    /** 처리한 페이지 수, 적재 시도한 캡션 수, 파싱 실패로 건너뛴 페이지 수. */
+    public record Stats(int pages, int captions, int skippedParse) {}
 
     private final RawMediaPageRepository mediaPages;
     private final RawProfileRepository profiles;
@@ -1014,14 +1024,22 @@ public class CaptionBackfillJob {
         Stats media = backfillMediaPages();
         Stats profile = backfillProfiles();
         Stats total = new Stats(media.pages() + profile.pages(),
-                media.captions() + profile.captions());
-        log.info("캡션 백필 완료 — 페이지 {}건 처리, 캡션 {}건 적재", total.pages(), total.captions());
+                media.captions() + profile.captions(),
+                media.skippedParse() + profile.skippedParse());
+        // 건너뛴 페이지가 0인지가 백필이 제대로 됐는지의 핵심 지표라 warn으로 승격한다
+        // (BeautyJob이 부분 실패를 warn으로 승격하는 관용구와 같은 결).
+        if (total.skippedParse() > 0) {
+            log.warn("캡션 백필 완료 — 페이지 {}건 / 캡션 {}건 / 파싱 실패 건너뜀 {}건",
+                    total.pages(), total.captions(), total.skippedParse());
+        } else {
+            log.info("캡션 백필 완료 — 페이지 {}건 처리, 캡션 {}건 적재", total.pages(), total.captions());
+        }
         return total;
     }
 
     /** raw_media_page: HIKER_V2_CLIPS·HIKER_V1_MEDIAS·HIKER_GQL_MEDIAS 전부 — source는 행에서 읽는다. */
     private Stats backfillMediaPages() {
-        int pages = 0, captions = 0;
+        int pages = 0, captions = 0, skippedParse = 0;
         long cursor = watermark(MEDIA_WATERMARK);
         while (!stopFlag.isRequested(JobName.CAPTION_BACKFILL)) {
             List<RawMediaPage> chunk =
@@ -1032,8 +1050,11 @@ public class CaptionBackfillJob {
             // (트랜잭션 안에서 삼키면 SQL 실패 시 Postgres가 커밋을 조용히 ROLLBACK으로 치환해
             //  그 청크에서 이미 성공한 캡션까지 유실되고, 워터마크는 전진해 영구 복구 불가가 된다.)
             List<PageItems> parsed = new ArrayList<>();
+            int skippedInChunk = 0;
             for (RawMediaPage page : chunk) {
-                parseInto(parsed, page.getPayload(), page.getSource(), page.getCapturedAt());
+                if (parseInto(parsed, page.getPayload(), page.getSource(), page.getCapturedAt())) {
+                    skippedInChunk++;
+                }
             }
             long last = chunk.get(chunk.size() - 1).getId();
             // 쓰기는 트랜잭션 안에서 — SQL 실패는 삼키지 않는다(청크 롤백 + 워터마크 미전진 =
@@ -1048,16 +1069,17 @@ public class CaptionBackfillJob {
             });
             captions += n == null ? 0 : n;
             pages += chunk.size();
+            skippedParse += skippedInChunk;
             cursor = last;
             log.info("캡션 백필(media_page) — 누계 페이지 {}건 / 캡션 {}건 (cursor={})",
                     pages, captions, cursor);
         }
-        return new Stats(pages, captions);
+        return new Stats(pages, captions, skippedParse);
     }
 
     /** raw_profile: 내장 타임라인을 담는 SELF_GQL만 — 다른 source엔 게시물 배열이 없다. */
     private Stats backfillProfiles() {
-        int pages = 0, captions = 0;
+        int pages = 0, captions = 0, skippedParse = 0;
         long cursor = watermark(PROFILE_WATERMARK);
         while (!stopFlag.isRequested(JobName.CAPTION_BACKFILL)) {
             List<RawProfile> chunk = profiles.findBySourceAndIdGreaterThanOrderById(
@@ -1065,8 +1087,11 @@ public class CaptionBackfillJob {
             if (chunk.isEmpty()) break;
 
             List<PageItems> parsed = new ArrayList<>();
+            int skippedInChunk = 0;
             for (RawProfile p : chunk) {
-                parseInto(parsed, p.getPayload(), RawSource.SELF_GQL, p.getCapturedAt());
+                if (parseInto(parsed, p.getPayload(), RawSource.SELF_GQL, p.getCapturedAt())) {
+                    skippedInChunk++;
+                }
             }
             long last = chunk.get(chunk.size() - 1).getId();
             Integer n = txTemplate.execute(status -> {
@@ -1079,11 +1104,12 @@ public class CaptionBackfillJob {
             });
             captions += n == null ? 0 : n;
             pages += chunk.size();
+            skippedParse += skippedInChunk;
             cursor = last;
             log.info("캡션 백필(profile) — 누계 페이지 {}건 / 캡션 {}건 (cursor={})",
                     pages, captions, cursor);
         }
-        return new Stats(pages, captions);
+        return new Stats(pages, captions, skippedParse);
     }
 
     /** 트랜잭션 밖에서 파싱한 페이지 1건의 결과. */
@@ -1091,17 +1117,21 @@ public class CaptionBackfillJob {
                              Instant capturedAt) {}
 
     /**
-     * 페이지 1건 파싱 — DB를 만지지 않는다. 형태 불일치·파싱 실패는 그 페이지만 건너뛴다
-     * (원형은 raw 테이블에 남아 있으니 유실이 아니다). 빈 결과는 담지 않는다.
+     * 페이지 1건 파싱 — DB를 만지지 않는다. 형태 불일치·파싱 실패는 그 페이지만 건너뛰고 true를
+     * 반환한다(원형은 raw 테이블에 남아 있으니 유실이 아니다 — 다만 백필이 제대로 됐는지를
+     * 판단하는 운영 지표로 집계한다). 정상적으로 아이템이 0개인 페이지는 담지 않되 실패로
+     * 세지는 않는다(형태 불일치와 구분).
      */
-    private void parseInto(List<PageItems> out, Map<String, Object> payload, RawSource source,
-                           Instant capturedAt) {
-        if (payload == null) return;
+    private boolean parseInto(List<PageItems> out, Map<String, Object> payload, RawSource source,
+                              Instant capturedAt) {
+        if (payload == null) return false;
         try {
             var items = MediaItemExtractor.extract(payload, source);
             if (!items.isEmpty()) out.add(new PageItems(items, source, capturedAt));
+            return false;
         } catch (RuntimeException e) {
             log.warn("캡션 백필 페이지 파싱 실패 — 건너뜀 (source={}): {}", source, e.toString());
+            return true;
         }
     }
 
@@ -1127,6 +1157,42 @@ escape sequence`). 이 코드베이스의 파싱 계약이 정상 흐름에서 �
 (쓰기 트랜잭션 콜백 안에서 예외를 삼키는 코드)를 일시적으로 재도입해 실제로 실패하는 것까지
 확인했다.
 
+- [ ] **Step 4-2: 멀티청크 커서 전진·중지 경로 회귀 테스트를 추가하고 `Stats`에 `skippedParse`를 더한다**
+
+두 가지 커버리지 공백을 메운다:
+
+1. **청크 경계 테스트** — `PAGE_CHUNK + 5`(205)건을 `insert ... select ... from generate_series`로
+   대량 시딩해 청크가 최소 2번 돈다. content도 같은 방식으로 205건 시딩해 전건 캡션 적재까지
+   검증하고, 워터마크가 정확히 마지막으로 심은 행의 id까지 전진했는지 단정한다. **주의**:
+   Postgres `format()` 함수의 `%s`는 이 SQL이 JdbcTemplate을 통해 그대로 전달되는 리터럴
+   문자열이라(Java `String.format()`을 거치지 않는다) `%%s`로 이스케이프하면 안 된다 — psql로
+   직접 확인한 결과 `%%s`는 모든 행에 리터럴 "%s" 문자열을 남겨 short_code가 전부 같아진다.
+   단일 `%s`가 맞다.
+
+   검증: `long last = chunk.get(chunk.size() - 1).getId();`를 `chunk.get(0).getId();`로 바꿔
+   커서 전진을 일부러 깨뜨린 뒤 이 테스트만 단독 실행 → `expected: 205 but was: 21100`으로
+   FAILED 확인(커서가 1씩만 전진해 겹치는 청크를 반복 재처리) → 원복.
+
+2. **중지 재개 테스트** — 실제 `JobStopFlag`는 다른 스레드가 비동기로 호출하는 구조라, 단일
+   스레드 테스트에서 "첫 청크 처리 후 중지"라는 타이밍을 결정적으로 재현하려면 스텁이
+   필요하다. 첫 번째 확인(첫 청크 진입 전)은 통과시키고 그다음부터는 중지가 걸린 것처럼 구는
+   `JobStopFlag` 서브클래스로 `CaptionBackfillJob`을 수동 조립한다(다른 협력자는 `@Autowired`로
+   가져온 실제 Spring 빈을 그대로 쓴다). 이 인스턴스는 그 테스트 안에서만 쓰고 버리므로
+   공유되는 실제 `JobStopFlag` 빈 상태는 건드리지 않는다. 검증 대상: 첫 청크(200건)만
+   처리되고 워터마크도 거기까지만 전진하며, 이후 실제 `job` 빈으로 재실행하면 나머지
+   5건을 이어서 처리한다.
+
+   검증: `while (!stopFlag.isRequested(...))`를 `while (true)`로 바꿔 중지 체크 자체를
+   무력화한 뒤 이 테스트만 단독 실행 → `expected: 200 but was: 205`로 FAILED 확인(중지 요청을
+   무시하고 전건을 처리) → 원복.
+
+3. **`Stats.skippedParse`** — `record Stats(int pages, int captions)`를
+   `record Stats(int pages, int captions, int skippedParse)`로 바꾸고, `parseInto()`가
+   `void` 대신 `boolean`(건너뛰었으면 true)을 반환하도록 고쳐 두 `backfillXxx()` 메서드가
+   청크별로 집계하게 한다. `run()`의 완료 로그는 `skippedParse > 0`이면 `log.warn`, 아니면
+   `log.info`로 승격한다(`BeautyJob`이 부분 실패를 warn으로 승격하는 관용구와 같은 결).
+   `JobService`의 `case CAPTION_BACKFILL` 로그도 같은 분기를 넣는다.
+
 - [ ] **Step 5: `JobName`에 `CAPTION_BACKFILL`을 추가한다**
 
 `JobName.java`의 `RESNAPSHOT, AGGREGATE;` 줄을 아래로 **교체**한다:
@@ -1143,9 +1209,9 @@ escape sequence`). 이 코드베이스의 파싱 계약이 정상 흐름에서 �
 ./gradlew :crawler:test --tests "com.celfit.crawler.crawling.application.service.CaptionBackfillJobIntegrationTest"
 ```
 
-기대: PASS (5개 테스트 — Step 2의 4개 + Step 4-1 회귀 테스트 1개). `JobService`가 exhaustive
-switch라 여기서 **컴파일 에러**가 날 수 있다 — 그러면 Task 6 Step 1을 먼저 적용한 뒤 이 단계를
-다시 실행한다.
+기대: PASS (7개 테스트 — Step 2의 4개 + Step 4-1 회귀 테스트 1개 + Step 4-2 회귀 테스트 2개).
+`JobService`가 exhaustive switch라 여기서 **컴파일 에러**가 날 수 있다 — 그러면 Task 6 Step 1을
+먼저 적용한 뒤 이 단계를 다시 실행한다.
 
 - [ ] **Step 7: 커밋**
 

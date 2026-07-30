@@ -89,7 +89,8 @@ public class JobService implements TriggerJobUseCase {
                     }
                     case CAPTION_BACKFILL -> {
                         var s = captionBackfillJob.run(triggerType);
-                        log.info("caption-backfill 완료: {}", s);
+                        if (s.skippedParse() > 0) log.warn("caption-backfill 완료(파싱 실패 있음): {}", s);
+                        else log.info("caption-backfill 완료: {}", s);
                     }
                     case RESNAPSHOT, AGGREGATE -> log.warn("{}은(는) 판독 전용 — 실행 경로 없음", job);
                 }

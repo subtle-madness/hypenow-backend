@@ -50,8 +50,8 @@ public class CaptionBackfillJob {
     static final String MEDIA_WATERMARK = "caption.backfill.media-page-id";
     static final String PROFILE_WATERMARK = "caption.backfill.profile-id";
 
-    /** 처리한 페이지 수와 적재 시도한 캡션 수. */
-    public record Stats(int pages, int captions) {}
+    /** 처리한 페이지 수, 적재 시도한 캡션 수, 파싱 실패로 건너뛴 페이지 수. */
+    public record Stats(int pages, int captions, int skippedParse) {}
 
     private final RawMediaPageRepository mediaPages;
     private final RawProfileRepository profiles;
@@ -76,14 +76,22 @@ public class CaptionBackfillJob {
         Stats media = backfillMediaPages();
         Stats profile = backfillProfiles();
         Stats total = new Stats(media.pages() + profile.pages(),
-                media.captions() + profile.captions());
-        log.info("캡션 백필 완료 — 페이지 {}건 처리, 캡션 {}건 적재", total.pages(), total.captions());
+                media.captions() + profile.captions(),
+                media.skippedParse() + profile.skippedParse());
+        // 건너뛴 페이지가 0인지가 백필이 제대로 됐는지의 핵심 지표라 warn으로 승격한다
+        // (BeautyJob이 부분 실패를 warn으로 승격하는 관용구와 같은 결).
+        if (total.skippedParse() > 0) {
+            log.warn("캡션 백필 완료 — 페이지 {}건 / 캡션 {}건 / 파싱 실패 건너뜀 {}건",
+                    total.pages(), total.captions(), total.skippedParse());
+        } else {
+            log.info("캡션 백필 완료 — 페이지 {}건 처리, 캡션 {}건 적재", total.pages(), total.captions());
+        }
         return total;
     }
 
     /** raw_media_page: HIKER_V2_CLIPS·HIKER_V1_MEDIAS·HIKER_GQL_MEDIAS 전부 — source는 행에서 읽는다. */
     private Stats backfillMediaPages() {
-        int pages = 0, captions = 0;
+        int pages = 0, captions = 0, skippedParse = 0;
         long cursor = watermark(MEDIA_WATERMARK);
         while (!stopFlag.isRequested(JobName.CAPTION_BACKFILL)) {
             List<RawMediaPage> chunk =
@@ -94,8 +102,11 @@ public class CaptionBackfillJob {
             // (트랜잭션 안에서 삼키면 SQL 실패 시 Postgres가 커밋을 조용히 ROLLBACK으로 치환해
             //  그 청크에서 이미 성공한 캡션까지 유실되고, 워터마크는 전진해 영구 복구 불가가 된다.)
             List<PageItems> parsed = new ArrayList<>();
+            int skippedInChunk = 0;
             for (RawMediaPage page : chunk) {
-                parseInto(parsed, page.getPayload(), page.getSource(), page.getCapturedAt());
+                if (parseInto(parsed, page.getPayload(), page.getSource(), page.getCapturedAt())) {
+                    skippedInChunk++;
+                }
             }
             long last = chunk.get(chunk.size() - 1).getId();
             // 쓰기는 트랜잭션 안에서 — SQL 실패는 삼키지 않는다(청크 롤백 + 워터마크 미전진 =
@@ -110,16 +121,17 @@ public class CaptionBackfillJob {
             });
             captions += n == null ? 0 : n;
             pages += chunk.size();
+            skippedParse += skippedInChunk;
             cursor = last;
             log.info("캡션 백필(media_page) — 누계 페이지 {}건 / 캡션 {}건 (cursor={})",
                     pages, captions, cursor);
         }
-        return new Stats(pages, captions);
+        return new Stats(pages, captions, skippedParse);
     }
 
     /** raw_profile: 내장 타임라인을 담는 SELF_GQL만 — 다른 source엔 게시물 배열이 없다. */
     private Stats backfillProfiles() {
-        int pages = 0, captions = 0;
+        int pages = 0, captions = 0, skippedParse = 0;
         long cursor = watermark(PROFILE_WATERMARK);
         while (!stopFlag.isRequested(JobName.CAPTION_BACKFILL)) {
             List<RawProfile> chunk = profiles.findBySourceAndIdGreaterThanOrderById(
@@ -127,8 +139,11 @@ public class CaptionBackfillJob {
             if (chunk.isEmpty()) break;
 
             List<PageItems> parsed = new ArrayList<>();
+            int skippedInChunk = 0;
             for (RawProfile p : chunk) {
-                parseInto(parsed, p.getPayload(), RawSource.SELF_GQL, p.getCapturedAt());
+                if (parseInto(parsed, p.getPayload(), RawSource.SELF_GQL, p.getCapturedAt())) {
+                    skippedInChunk++;
+                }
             }
             long last = chunk.get(chunk.size() - 1).getId();
             Integer n = txTemplate.execute(status -> {
@@ -141,11 +156,12 @@ public class CaptionBackfillJob {
             });
             captions += n == null ? 0 : n;
             pages += chunk.size();
+            skippedParse += skippedInChunk;
             cursor = last;
             log.info("캡션 백필(profile) — 누계 페이지 {}건 / 캡션 {}건 (cursor={})",
                     pages, captions, cursor);
         }
-        return new Stats(pages, captions);
+        return new Stats(pages, captions, skippedParse);
     }
 
     /** 트랜잭션 밖에서 파싱한 페이지 1건의 결과. */
@@ -153,17 +169,21 @@ public class CaptionBackfillJob {
                              Instant capturedAt) {}
 
     /**
-     * 페이지 1건 파싱 — DB를 만지지 않는다. 형태 불일치·파싱 실패는 그 페이지만 건너뛴다
-     * (원형은 raw 테이블에 남아 있으니 유실이 아니다). 빈 결과는 담지 않는다.
+     * 페이지 1건 파싱 — DB를 만지지 않는다. 형태 불일치·파싱 실패는 그 페이지만 건너뛰고 true를
+     * 반환한다(원형은 raw 테이블에 남아 있으니 유실이 아니다 — 다만 백필이 제대로 됐는지를
+     * 판단하는 운영 지표로 집계한다). 정상적으로 아이템이 0개인 페이지는 담지 않되 실패로
+     * 세지는 않는다(형태 불일치와 구분).
      */
-    private void parseInto(List<PageItems> out, Map<String, Object> payload, RawSource source,
-                           Instant capturedAt) {
-        if (payload == null) return;
+    private boolean parseInto(List<PageItems> out, Map<String, Object> payload, RawSource source,
+                              Instant capturedAt) {
+        if (payload == null) return false;
         try {
             var items = MediaItemExtractor.extract(payload, source);
             if (!items.isEmpty()) out.add(new PageItems(items, source, capturedAt));
+            return false;
         } catch (RuntimeException e) {
             log.warn("캡션 백필 페이지 파싱 실패 — 건너뜀 (source={}): {}", source, e.toString());
+            return true;
         }
     }
 
