@@ -27,7 +27,7 @@ public final class AnthropicAccountSynthesizer implements AccountSynthesisPort {
 		StructuredMessageCreateParams<AccountCopy> params = MessageCreateParams.builder()
 				.model(settings.llmModel())
 				.maxTokens(4096L)
-				.system(GeminiAccountSynthesizer.instructions(traitLoader.get()))
+				.system(GeminiAccountSynthesizer.instructions(traitLoader.get(), account.confidence()))
 				.outputConfig(AccountCopy.class)
 				.addUserMessage(input)
 				.build();

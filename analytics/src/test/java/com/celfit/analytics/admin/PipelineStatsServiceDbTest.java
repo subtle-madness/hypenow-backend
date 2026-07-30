@@ -3,6 +3,7 @@ package com.celfit.analytics.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.CopyRules;
 import com.celfit.analytics.testsupport.TestDb;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,7 +58,12 @@ class PipelineStatsServiceDbTest {
 		assertThat(service.accountTarget()).isEqualTo(1);
 	}
 
-	/** 신 스키마(perf_summary 있음)를 갖고 입력도 동일·쿨다운도 미경과인 계정은 대상 밖이어야 한다. */
+	/**
+	 * 신 스키마(perf_summary 있음)를 갖고 입력도 동일·쿨다운도 미경과·카피 버전도 최신인 계정은
+	 * 대상 밖이어야 한다. copy_version을 CopyRules.VERSION으로 명시하지 않으면 기본값 0이라
+	 * 버전 게이트(설계 §4)에 걸려 오히려 대상으로 잡힌다 — 이 테스트가 검증하려는 "완료" 상태를
+	 * 나타내려면 최신 버전임을 명시해야 한다.
+	 */
 	@Test
 	void accountTarget은_신_스키마_카피를_보유한_계정은_대상에서_뺀다() {
 		db.update("""
@@ -65,11 +71,29 @@ class PipelineStatsServiceDbTest {
 				VALUES ('acct_done', 3, timestamptz '2026-07-01 09:00:00+09')""");
 		db.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  tagline, perf_summary, content_summary)
+				  tagline, perf_summary, content_summary, copy_version)
 				VALUES ('acct_done', now(), 'm', timestamptz '2026-07-01 09:00:00+09',
-				  '태그라인', '성과 요약', '콘텐츠 요약')""");
+				  '태그라인', '성과 요약', '콘텐츠 요약', ?)""", CopyRules.VERSION);
 
 		assertThat(service.accountTarget()).isZero();
+	}
+
+	/**
+	 * 버전 게이트(설계 §4) — 신 스키마라도 copy_version이 CopyRules.VERSION보다 낮으면(구 배치가
+	 * 만든 행) 대상으로 잡혀야 한다. 판정 규칙이 바뀌었을 때 낡은 문구가 자연 재생성되는 경로.
+	 */
+	@Test
+	void accountTarget은_카피_버전이_낮은_계정을_대상으로_센다() {
+		db.update("""
+				INSERT INTO account_summaries (handle, analyzed_count, last_posted_at)
+				VALUES ('acct_stale_version', 3, timestamptz '2026-07-01 09:00:00+09')""");
+		db.update("""
+				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
+				  tagline, perf_summary, content_summary, copy_version)
+				VALUES ('acct_stale_version', now(), 'm', timestamptz '2026-07-01 09:00:00+09',
+				  '태그라인', '성과 요약', '콘텐츠 요약', 0)""");
+
+		assertThat(service.accountTarget()).isEqualTo(1);
 	}
 
 	@Test

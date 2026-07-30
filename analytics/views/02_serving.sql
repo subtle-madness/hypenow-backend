@@ -1,19 +1,26 @@
 -- 서빙 형태 뷰: 미러 테이블과 1:1 (컬럼 이름·순서 = Flyway DDL = contract-analysis record).
 -- 컬럼을 바꾸면 세 곳을 같은 PR에서 바꾼다 (ARCHITECTURE.md §4-5).
 
--- hype_score v2 (2026-07-20 재설계 — v1 하드캡 방식(min(x,1) 정규화) 폐기. 스펙 docs/.../2026-07-20-hype-score-v2-redesign).
+-- hype_score v3 (2026-07-30 — 감쇠를 앵커 매핑 뒤로 이동. 스펙
+-- docs/superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md).
 -- 결과 0~100. 두 서빙 뷰(v_contents·v_content_metric_snapshots)가 공유 — 신선도 기준 시각만 호출부가 정한다.
--- 하드캡을 걷어내 "도달·참여 높을수록 항상 점수 ↑"(연속·무제한 로그 축), 타입별 앵커로 피드·릴스 동일 스케일 비교.
+-- 왜 바꿨나: v2.1까지는 감쇠 후 qf에 앵커를 맞췄는데, qf가 콘텐츠 연령에 의존해서 앵커 캘리브레이션이
+-- 코퍼스 연령 구성에 오염됐다 — 피드가 릴스보다 옛날 꼬리가 두꺼워 타입별로 다르게 눌렸고, 그게 발굴
+-- 목록 피드 편향의 구조적 원인이었다. 앵커 재적합만으로는 적합 모수를 벗어나면 다시(반대 방향으로)
+-- 어긋난다 — 근본 해법은 앵커 기준량 자체를 연령 무관 Q로 바꾸는 것.
 --   연속 축(무제한): reach = ln(1 + views/(followers+1000))
 --                    engage(릴스) = ln(1 + ((likes+comments×3)/(followers+1000)) / e0)  -- v2.1(2026-07-20): 조회수→팔로워 정규화(저조회수 뭉침 해소). 조회수는 도달 축에만.
 --                    engage(피드) = ln(1 + ((likes+comments×3)/(followers+1000)) / f0)   -- 피드는 views 없음
---   합성 Q: 릴스 = wr·reach + we·engage ,  피드 = engage(피드)
---   qf = Q · 0.5^(경과일/halflife)      -- elapsed_days는 호출부가 계산해 넘김, 음수 클램프는 함수 안(GREATEST 0)
---   점수 = qf를 타입별 4점 앵커로 구간 선형 매핑(p05→10·p50→45·p90→80·p99→97, [0,100] 클램프).
---   앵커값은 운영 분석 집합(v_analysis_candidates) 산출·동결 — 릴스는 2026-07-20 v2.1 재적합(팔로워 정규화 분포). 모집단 이동 시 재보정(스펙 §6·2026-07-20-reels-hype-engage-follower-normalization §Task3).
+--   합성 Q: 릴스 = wr·reach + we·engage ,  피드 = engage(피드)   -- Q는 연령과 무관(v3~)
+--   점수 = clamp(Q를 타입별 4점 앵커로 구간 선형 매핑(p05→10·p50→45·p90→80·p99→97), 0, 100)
+--          × 0.5^(경과일/halflife)   -- elapsed_days는 호출부가 계산해 넘김, 음수 클램프는 함수 안(GREATEST 0)
+--   클램프는 감쇠 **전** — base가 [0,100]이어야 "품질 백분위 × 신선도"가 성립한다.
+--   앵커는 **감쇠 전 Q** 기준·**전체 서빙 코퍼스**로 적합(v3~. v2.1까지는 qf 기준·분석 후보 집합이었다 —
+--   구 키(hype-anchor-{reels,feed}-*)에 옛 스펙 값을 넣어도 기준량이 달라 조용히 망가지므로 무시된다).
+--   재산출은 analytics/check/hype-anchor-refit.sh(재현 절차를 저장소에 둔 이유는 스펙 §5-2).
 -- 튜닝 상수는 함수가 app_setting에서 직접 읽는다(STABLE) — 호출부는 6-인자로 단순, 재배포 없이 튜닝.
 --   키: hype-fresh-halflife-days(14)·hype-reels-e0(0.01: v2.1부터 팔로워당 참여 기준, 릴스 참여율 중앙값≈0.0094)·hype-feed-f0(0.03)·hype-reach-weight(1)·hype-engage-weight(1)
---       ·hype-anchor-{reels,feed}-{p05,p50,p90,p99}. 미설정/0이면 함수 내 COALESCE 기본값(단일 소스).
+--       ·hype-anchor-q-{reels,feed}-{p05,p50,p90,p99}. 미설정/0이면 함수 내 COALESCE 기본값(단일 소스).
 -- NULL 규칙: likes·comments 중 NULL → NULL, 릴스인데 views NULL → NULL (피드 조회수 항상 NULL은 정상 — CLAUDE.md 함정).
 CREATE OR REPLACE FUNCTION analytics.hype_score(
   content_type text, views bigint, likes bigint, comments bigint,
@@ -28,17 +35,17 @@ LANGUAGE sql STABLE AS $$
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reach-weight'),1)                   AS wr,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p05'),0.0736)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p05'),0.0111) END  AS a05,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1373)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0447) END  AS a05,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p50'),0.7379)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p50'),0.1398) END  AS a50,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p50'),1.3798)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p50'),0.6135) END  AS a50,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p90'),2.6312)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p90'),0.6746) END  AS a90,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p90'),4.5716)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p90'),1.6320) END  AS a90,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-reels-p99'),5.5619)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-feed-p99'),1.4890) END  AS a99
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p99'),10.3883)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p99'),3.0144) END  AS a99
   ),
   c AS (
     SELECT s.*,
@@ -46,19 +53,22 @@ LANGUAGE sql STABLE AS $$
         THEN s.wr * ln(1 + views::numeric/(COALESCE(followers,0)+1000))
            + s.we * ln(1 + ((likes + comments*3)::numeric/(COALESCE(followers,0)+1000))/s.e0)
         ELSE ln(1 + ((likes + comments*3)::numeric/(COALESCE(followers,0)+1000))/s.f0)
-      END) * power(0.5, GREATEST(elapsed_days,0)/s.hl) AS qf
+      END) AS q
     FROM s
   )
   SELECT CASE
     WHEN likes IS NULL OR comments IS NULL OR (content_type='reels' AND views IS NULL) THEN NULL
-    ELSE GREATEST(LEAST(round(
-      CASE
-        WHEN qf <= a05 THEN 10*qf/NULLIF(a05,0)
-        WHEN qf <= a50 THEN 10 + 35*(qf-a05)/NULLIF(a50-a05,0)
-        WHEN qf <= a90 THEN 45 + 35*(qf-a50)/NULLIF(a90-a50,0)
-        WHEN qf <= a99 THEN 80 + 17*(qf-a90)/NULLIF(a99-a90,0)
-        ELSE 97 + 3*(qf-a99)/NULLIF(a99-a90,0)
-      END), 100), 0)::bigint
+    ELSE round(
+      GREATEST(LEAST(
+        CASE
+          WHEN q <= a05 THEN 10*q/NULLIF(a05,0)
+          WHEN q <= a50 THEN 10 + 35*(q-a05)/NULLIF(a50-a05,0)
+          WHEN q <= a90 THEN 45 + 35*(q-a50)/NULLIF(a90-a50,0)
+          WHEN q <= a99 THEN 80 + 17*(q-a90)/NULLIF(a99-a90,0)
+          ELSE 97 + 3*(q-a99)/NULLIF(a99-a90,0)
+        END, 100), 0)
+      * power(0.5, GREATEST(elapsed_days,0)/hl)
+    )::bigint
   END
   FROM c
 $$;
