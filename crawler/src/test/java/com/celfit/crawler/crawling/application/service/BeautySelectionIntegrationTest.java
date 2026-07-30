@@ -117,4 +117,16 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         assertThat(order).containsExactly(legacy.getId(), stale.getId(), fresh.getId());
     }
 
+    @Test
+    void 판정_근거_필드가_저장되고_읽힌다() {
+        Influencer inf = notBeauty("evidence", Instant.parse("2026-07-01T00:00:00Z"));
+        inf.setBeautyCaptionCount((short) 0);
+        inf.setBeautyBasis("CATEGORY_ONLY");
+        influencers.save(inf);
+
+        Influencer loaded = influencers.findByUsername(PREFIX + "evidence").orElseThrow();
+        assertThat(loaded.getBeautyCaptionCount()).isEqualTo((short) 0);
+        assertThat(loaded.getBeautyBasis()).isEqualTo("CATEGORY_ONLY");
+    }
+
 }
