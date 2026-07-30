@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.RestController;
  * 요청 시각 내림차순 최근 50건(상수, 리포지토리가 정렬·건수 제한을 담당)만 data로 돌려주고,
  * meta.total은 창과 무관한 전체 처리 내역 건수다(스펙 1.4의 두 예외 목록 중 하나 — 6.32 다이제스트와
  * 같은 방식으로 meta.total > data.length가 정상 케이스).
+ *
+ * <p>서비스 계층 없이 리포지토리를 직결한다 — 정렬·limit·건수 집계 모두 리포지토리가 이미 하고
+ * 여기서는 응답 DTO로 순수 매핑만 하기 때문이다. 분기·검증 등 로직이 붙는 시점에 서비스로 승격한다.
  */
 @RestController
 public class V1RegistrationsController {
