@@ -5,7 +5,7 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.3 (같은 유저 이중 추적 배제 — 2026-07-30)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.4 (프로필 이미지 아카이브 — 2026-07-31)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
@@ -15,7 +15,10 @@
 > **v2.2**(2026-07-30, P1 확장 4종 — `post_meta`·hidden/error 상태 신호(`target.tracked_hidden_at`·
 > `target.fetch_failing`)·`sweep_run`·`target.matched_keywords` 산지 이설) →
 > **v2.3**(2026-07-30, 같은 유저 이중 추적 배제 — 감지가 같은 `user_id`의 다른 활성 target이 이미
-> 추적 중인 shortcode를 후보에서 뺀다. 프론트 계약 §6.25 요구, `feat/monitoring-duplicate-tracking-exclusion`).
+> 추적 중인 shortcode를 후보에서 뺀다. 프론트 계약 §6.25 요구, `feat/monitoring-duplicate-tracking-exclusion`)
+> → **v2.4**(2026-07-31, 프로필 이미지 아카이브 — `profile_meta`에 `image_object_path`·
+> `image_source_name`·`image_archived_at` 추가, was는 아카이브본을 우선 서빙,
+> `feat/monitoring-profile-image-archive`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -277,9 +280,12 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 |---|---|---|
 | `username` | text PK | 계정 핸들 |
 | `display_name` | text null | 계정 풀네임 (Hiker `full_name`) |
-| `profile_image_url` | text null | 프로필 이미지 URL — 인스타 CDN 서명 만료 주의(프론트 계약 4절 35번) |
+| `profile_image_url` | text null | 원본 CDN 프로필 이미지 URL — **아카이브본이 있으면 was가 이 컬럼 대신 `image_object_path`를 우선 서빙하므로 인스타 CDN 서명 만료 노출은 줄었다. 다만 아카이브 전이거나 `MONITORING_IMAGE_PAR_URL` 미설정 환경에서는 여전히 이 원본 CDN URL이 그대로 나가므로 만료(~4일, `oe=` 서명) 주의는 계속 유효하다**(프론트 계약 4절 35번) |
 | `last_uploaded_at` | date null | 계정의 최근 게시일(KST) — 열거된 게시물 `taken_at` 최댓값 |
 | `updated_at` | timestamptz | 마지막 갱신 시각 |
+| `image_object_path` | text null | **(v2.4)** monitoring이 자체 아카이브한 OCI 오브젝트 경로(`monitor-profile/<username>.jpg`). null이면 아직 아카이브 전이거나 PAR 미설정 — was가 원본 CDN URL로 폴백 |
+| `image_source_name` | text null | **(v2.4)** 마지막 아카이브 시점 원본 URL 파일명(쿼리스트링 제외) — 재다운로드 판정용 내부 컬럼, was는 읽지 않는다 |
+| `image_archived_at` | timestamptz null | **(v2.4)** 마지막 아카이브 성공 시각. was는 읽지 않는다 |
 
 - 계정 수집(등록 동기 수집·일일 스윕)마다 upsert — 스냅샷과 달리 이력 없이 최신 1행.
 - **POST 등록만 있는 계정도 07-30(트랙 II)부터 `display_name`·`profile_image_url`은 채워진다** —
@@ -295,6 +301,14 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
   스윕에서 (여전히 행이 없으므로) 다시 시도된다.
   was는 세 필드(`display_name`·`profile_image_url`·`followers`) 모두, 그리고 `last_uploaded_at`도
   여전히 null 가능성을 전제해야 한다(프론트 계약상 nullable 유지).
+
+**⚠ v2.4 계약 변화 — `profileImageUrl` 응답 값의 형태가 둘로 갈린다.** was가 프론트에 내려주는
+`profileImageUrl`은 이제 **절대 URL(원본 CDN, `https://...`)일 수도, 상대 경로(`/img/monitor-profile/<username>.jpg`)일 수도 있다** —
+`image_object_path`가 있으면 후자, 없으면 전자(§ 위 `profile_image_url` 행 참고). `/img/`는 **was
+엔드포인트가 아니라 celfit-front의 Vercel rewrite**(`/img/:path*` → OCI 공개 버킷 글롭)라서 이
+상대 경로는 **프론트에서만 해석**된다 — was가 자체적으로 `/img/`를 라우팅하거나 리다이렉트할
+필요는 없다. 이 관용구는 was v1 발굴/상세/저장 목록이 analytics 이미지 아카이브(트랙 J)에 이미
+쓰고 있는 것과 동일하다 — 신규 패턴이 아니다.
 
 ### post_meta — 추적 게시물 표시 메타 (v2.2 · 게시물 단위 최신 1행, 캠페인 간 공유)
 

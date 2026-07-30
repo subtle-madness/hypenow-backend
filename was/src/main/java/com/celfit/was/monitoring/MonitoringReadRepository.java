@@ -109,13 +109,16 @@ public class MonitoringReadRepository {
 				.list();
 	}
 
-	/** 계정 표시 메타(계약 §3 profile_meta, v1.1) — displayName·profileImageUrl·lastUploadedAt의 산지. */
+	/**
+	 * 계정 표시 메타(계약 §3 profile_meta, v1.1) — displayName·profileImageUrl·lastUploadedAt의 산지.
+	 * image_object_path(설계 스펙 §3-1)는 monitoring 자체 아카이브 결과 — null이면 아직 아카이브 전.
+	 */
 	public List<ProfileMetaRow> findProfileMeta(Collection<String> usernames) {
 		if (usernames.isEmpty()) {
 			return List.of();
 		}
 		return jdbc.sql("""
-				SELECT username, display_name, profile_image_url, last_uploaded_at
+				SELECT username, display_name, profile_image_url, last_uploaded_at, image_object_path
 				FROM profile_meta
 				WHERE username IN (:usernames)
 				""")

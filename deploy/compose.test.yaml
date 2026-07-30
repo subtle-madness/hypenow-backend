@@ -144,6 +144,8 @@ services:
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
+      # 이미지 아카이브는 test 대상 아님(운영 버킷 오염 방지) — analytics와 동일하게 빈 값이면 잡이 no-op
+      MONITORING_IMAGE_PAR_URL: ""
       # 감지 동작 검증용 — 운영(compose.yaml)에는 넣지 않는다. POST /api/sweeps는 등록 계정 수만큼
       # Hiker 콜을 내는 증폭 지점이라 기본 off(application.yml manual-trigger-enabled: false)인데,
       # test는 크론이 꺼져 있어(K 원칙) 수동 트리거 없이는 스윕 동작을 검증할 방법이 없다.

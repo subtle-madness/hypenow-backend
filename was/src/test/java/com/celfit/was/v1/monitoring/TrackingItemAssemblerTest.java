@@ -117,12 +117,17 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 	}
 
 	private void seedProfileMeta(String username, String displayName, String profileImageUrl) {
+		seedProfileMeta(username, displayName, profileImageUrl, null);
+	}
+
+	/** imageObjectPath가 있으면 monitoring 자체 아카이브(설계 스펙 §3-1) 결과가 채워진 행을 흉내낸다. */
+	private void seedProfileMeta(String username, String displayName, String profileImageUrl, String imageObjectPath) {
 		monitoringJdbc.sql("""
-				INSERT INTO profile_meta (username, display_name, profile_image_url, updated_at)
-				VALUES (:username, :displayName, :profileImageUrl, now())
+				INSERT INTO profile_meta (username, display_name, profile_image_url, updated_at, image_object_path)
+				VALUES (:username, :displayName, :profileImageUrl, now(), :imageObjectPath)
 				""")
 				.param("username", username).param("displayName", displayName)
-				.param("profileImageUrl", profileImageUrl)
+				.param("profileImageUrl", profileImageUrl).param("imageObjectPath", imageObjectPath)
 				.update();
 	}
 
@@ -446,6 +451,22 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
 
 		assertThat(item.profileImageUrl()).isNull();
+	}
+
+	// ── profile_meta 이미지 아카이브 우선 서빙(결함 ①, 설계 스펙 §3-1) ────────────
+
+	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다. */
+	@Test
+	void image_object_path가_있으면_아카이브_경로를_우선_서빙한다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedProfileMeta("glowdeep", "표시이름", "https://img.cdn/1.jpg", "monitor-profile/glowdeep.jpg");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.profileImageUrl()).isEqualTo("/img/monitor-profile/glowdeep.jpg");
 	}
 
 	// ── 리뷰 반영(2026-07-30) — campaignId·campaignName 짝 방어 ──────────────────
