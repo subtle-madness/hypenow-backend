@@ -1,13 +1,14 @@
 package com.celfit.was.v1.monitoring;
 
 import com.celfit.was.monitoring.EmailOptOutRepository;
+import com.celfit.was.monitoring.MonitoringEventTypes;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.NotificationSettingsResponse.EventSetting;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 알림 설정 매트릭스(스펙 6.33) — 저장은 EmailOptOutRepository의 옵트아웃 행(행 없음=on)이고,
@@ -17,10 +18,6 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class NotificationSettingsService {
-
-	/** 이벤트 4종 — 순서 고정(스펙 6.33 예시와 동일). */
-	static final List<String> EVENT_TYPES =
-			List.of("collection_started", "collection_ended", "metrics_private", "content_issue");
 
 	private static final String CONTENT_KEY = "content";
 	private static final String EMAIL_KEY = "email";
@@ -36,7 +33,7 @@ public class NotificationSettingsService {
 	public NotificationSettingsResponse get(long userId) {
 		Set<String> optOuts = repository.findOptOuts(userId);
 		Map<String, EventSetting> content = new LinkedHashMap<>();
-		for (String eventType : EVENT_TYPES) {
+		for (String eventType : MonitoringEventTypes.EVENT_TYPES) {
 			content.put(eventType, new EventSetting(!optOuts.contains(eventType)));
 		}
 		return new NotificationSettingsResponse(content);
@@ -45,9 +42,11 @@ public class NotificationSettingsService {
 	/**
 	 * PATCH — body는 `{"content": {"<event>": {"email": <bool>}}}` 형태의 부분 객체.
 	 * content 밖 키·미지 이벤트 키·email 아닌 채널 키·boolean 아닌 값은 전부 400 VALIDATION_FAILED.
-	 * 검증을 먼저 전부 끝낸 뒤(all-or-nothing) 옵트아웃 행을 갱신한다 — 중간에 실패해 일부만
-	 * 반영되는 것을 막는다. 반환은 get()과 동일한 전체 설정.
+	 * 검증을 먼저 전부 끝낸 뒤(all-or-nothing) 옵트아웃 행을 갱신한다 — 다중 이벤트 변경 중 하나가
+	 * DB 예외로 실패해도 부분 반영이 남지 않도록 @Transactional이 트랜잭션 경계로 보장한다
+	 * (SignupService.register와 동일 관례). 반환은 get()과 동일한 전체 설정.
 	 */
+	@Transactional
 	public NotificationSettingsResponse patch(long userId, Map<String, Object> body) {
 		Map<String, Object> safeBody = body == null ? Map.of() : body;
 		for (String key : safeBody.keySet()) {
@@ -81,7 +80,7 @@ public class NotificationSettingsService {
 	}
 
 	private static String validateEventType(Object rawKey) {
-		if (rawKey instanceof String eventType && EVENT_TYPES.contains(eventType)) {
+		if (rawKey instanceof String eventType && MonitoringEventTypes.EVENT_TYPES.contains(eventType)) {
 			return eventType;
 		}
 		throw V1ApiException.validation(VALIDATION_MESSAGE);

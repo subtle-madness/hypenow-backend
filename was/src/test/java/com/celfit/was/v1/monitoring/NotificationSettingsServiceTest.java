@@ -40,6 +40,14 @@ class NotificationSettingsServiceTest extends IntegrationTest {
 	}
 
 	@Test
+	void get_응답의_content_키_순서는_이벤트_4종_고정_순서다() {
+		NotificationSettingsResponse response = service.get(userId);
+
+		assertThat(response.content().keySet()).containsExactly(
+				"collection_started", "collection_ended", "metrics_private", "content_issue");
+	}
+
+	@Test
 	void patch_후_DB에_옵트아웃_행이_생기고_get에도_반영된다() {
 		NotificationSettingsResponse patched = service.patch(userId,
 				Map.of("content", Map.of("collection_ended", Map.of("email", false))));
