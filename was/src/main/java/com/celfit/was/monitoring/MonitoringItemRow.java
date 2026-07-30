@@ -11,5 +11,5 @@ import java.util.UUID;
 public record MonitoringItemRow(long id, long userId, String mode, UUID registrationKey,
 		Long targetId, Long campaignId, String inputValue, String sourceUrl, String keywords,
 		int trackingDays, LocalDate registeredOn, OffsetDateTime canceledAt, String canceledFrom,
-		LocalDate startedNotifiedOn, OffsetDateTime createdAt) {
+		OffsetDateTime createdAt) {
 }

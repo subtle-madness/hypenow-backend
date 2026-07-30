@@ -18,7 +18,7 @@ class ItemStatusTest {
 	private static MonitoringItemRow item(String mode, Long targetId, OffsetDateTime canceledAt,
 			String canceledFrom) {
 		return new MonitoringItemRow(1L, 7L, mode, UUID.randomUUID(), targetId, null, "input", null, null, 14,
-				LocalDate.of(2026, 7, 1), canceledAt, canceledFrom, null, OffsetDateTime.now());
+				LocalDate.of(2026, 7, 1), canceledAt, canceledFrom, OffsetDateTime.now());
 	}
 
 	private static TargetRow target(String status, String trackedShortCode) {

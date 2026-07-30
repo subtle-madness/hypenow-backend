@@ -107,7 +107,7 @@ public class DigestJob {
 			} catch (RuntimeException e) {
 				// 한 유저의 실패가 나머지 유저의 다이제스트 생성을 막으면 안 된다(격리 정책은
 				// AlarmRecorder·AlarmDispatchJob과 동일 — 부가 기능의 부분 실패는 전체를 막지 않는다).
-				log.error("다이제스트 생성 실패(격리) — user {}: {}", entry.getKey(), e.toString());
+				log.error("다이제스트 생성 실패(격리) — user {}", entry.getKey(), e);
 			}
 		}
 		log.info("다이제스트 생성 완료 — {} KST, 이벤트 {}건, 유저 {}명 upsert", today, events.size(), upserted);

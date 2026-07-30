@@ -20,6 +20,9 @@ CREATE TABLE app.monitoring_campaigns (
 
 -- 추적 행(프론트 TrackingItem) — V13 (user,target,멱등키) 매핑을 흡수·확장.
 -- target_id NULL = 백그라운드 등록 처리 중(멱등키 replay 복구 가능 상태).
+-- (폐기) started_notified_on(collection_started 다이제스트 반영일, 중복 발화 방지 마커)는
+-- 갭 문서 A-1-2 재설계로 불필요 — DigestJob이 alarm_event를 (user, date) upsert로 재계산해
+-- 워터마크·중복 방지 마커 없이도 멱등하다. 이 파일은 아직 미배포라 컬럼째 지운다.
 CREATE TABLE app.monitoring_items (
     id                  bigserial PRIMARY KEY,
     user_id             bigint NOT NULL REFERENCES app.users(id) ON DELETE CASCADE,
@@ -34,7 +37,6 @@ CREATE TABLE app.monitoring_items (
     registered_on       date   NOT NULL,   -- KST 등록일 — 모든 기간 계산 기준
     canceled_at         timestamptz,
     canceled_from       text   CHECK (canceled_from IN ('detecting', 'tracking', 'error')),
-    started_notified_on date,              -- collection_started 다이제스트 반영일(중복 발화 방지)
     created_at          timestamptz NOT NULL DEFAULT now()
 );
 -- (user_id, registered_on, id): 목록 조회 정렬 키(registered_on ASC, id ASC)를 인덱스가 그대로 커버.

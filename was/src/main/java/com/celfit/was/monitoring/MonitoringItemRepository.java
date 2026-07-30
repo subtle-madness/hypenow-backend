@@ -19,7 +19,7 @@ public class MonitoringItemRepository {
 	private static final String SELECT_COLUMNS = """
 			id, user_id, mode, registration_key, target_id, campaign_id, input_value, source_url,
 			keywords::text AS keywords, tracking_days, registered_on, canceled_at, canceled_from,
-			started_notified_on, created_at
+			created_at
 			""";
 
 	private final JdbcClient jdbcClient;
@@ -127,17 +127,6 @@ public class MonitoringItemRepository {
 				.param("at", at)
 				.param("canceledFrom", canceledFrom)
 				.param("itemId", itemId)
-				.update();
-	}
-
-	/** 다이제스트 발화 중복 방지용 마킹 — 빈 리스트는 no-op(IN () SQL 오류 방지). */
-	public void markStartedNotified(List<Long> itemIds, LocalDate on) {
-		if (itemIds.isEmpty()) {
-			return;
-		}
-		jdbcClient.sql("UPDATE app.monitoring_items SET started_notified_on = :on WHERE id IN (:itemIds)")
-				.param("on", on)
-				.param("itemIds", itemIds)
 				.update();
 	}
 

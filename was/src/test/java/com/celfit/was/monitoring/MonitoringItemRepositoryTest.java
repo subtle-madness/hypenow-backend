@@ -140,23 +140,6 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void markStartedNotified_빈리스트는_noop() {
-		repository.markStartedNotified(List.of(), LocalDate.now());
-		// 예외 없이 끝나면 성공
-	}
-
-	@Test
-	void markStartedNotified_필드_확인() {
-		long itemId = repository.insertPending(userId, "url", UUID.randomUUID(), null, "abc", "https://x/abc", null,
-				30, LocalDate.of(2026, 7, 30));
-		LocalDate on = LocalDate.of(2026, 7, 31);
-
-		repository.markStartedNotified(List.of(itemId), on);
-
-		assertThat(repository.findByIdAndUser(itemId, userId).orElseThrow().startedNotifiedOn()).isEqualTo(on);
-	}
-
-	@Test
 	void findPendingOlderThan_경계_방금_만든_행은_미포함() {
 		repository.insertPending(userId, "url", UUID.randomUUID(), null, "fresh", "https://x/fresh", null, 30,
 				LocalDate.of(2026, 7, 30));

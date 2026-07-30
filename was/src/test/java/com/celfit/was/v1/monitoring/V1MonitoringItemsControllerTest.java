@@ -90,17 +90,17 @@ class V1MonitoringItemsControllerTest {
 
 	private static MonitoringItemRow accountItem(long id, Long targetId, LocalDate registeredOn) {
 		return new MonitoringItemRow(id, 7L, "account", UUID.randomUUID(), targetId, null, "glowdeep", null,
-				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, registeredOn, null, null, null, OffsetDateTime.now());
+				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, registeredOn, null, null, OffsetDateTime.now());
 	}
 
 	private static MonitoringItemRow urlItem(long id, Long targetId, LocalDate registeredOn) {
 		return new MonitoringItemRow(id, 7L, "url", UUID.randomUUID(), targetId, null, "ABC123",
-				"https://www.instagram.com/p/ABC123/", null, 14, registeredOn, null, null, null, OffsetDateTime.now());
+				"https://www.instagram.com/p/ABC123/", null, 14, registeredOn, null, null, OffsetDateTime.now());
 	}
 
 	private static MonitoringItemRow canceledItem(long id, String canceledFrom, LocalDate registeredOn) {
 		return new MonitoringItemRow(id, 7L, "account", UUID.randomUUID(), null, null, "glowdeep", null,
-				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, registeredOn, OffsetDateTime.now(), canceledFrom, null,
+				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, registeredOn, OffsetDateTime.now(), canceledFrom,
 				OffsetDateTime.now());
 	}
 
