@@ -30,10 +30,10 @@ class V1StatsControllerTest {
 	@MockitoBean
 	V1StatsRepository repository;
 
-	// 실데이터와 같은 모수(마이크로 55명 = 22/25/8, 콘텐츠 66)를 쓴다.
+	// 4구간 모수(65명 = 10/22/25/8, 콘텐츠 66) — followers500to3k는 record 마지막 컴포넌트(V47 expand).
 	private LandingStats stats() {
-		return new LandingStats(66L, 55L, 17_453_444L, 484_818L, 22L, 25L, 8L,
-				OffsetDateTime.parse("2026-07-17T04:30:00Z"));
+		return new LandingStats(66L, 65L, 17_453_444L, 484_818L, 22L, 25L, 8L,
+				OffsetDateTime.parse("2026-07-17T04:30:00Z"), 10L);
 	}
 
 	@Test
@@ -44,15 +44,17 @@ class V1StatsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.contentsCount").value(66))
-				.andExpect(jsonPath("$.data.influencersCount").value(55))
+				.andExpect(jsonPath("$.data.influencersCount").value(65))
 				.andExpect(jsonPath("$.data.totalViews").value(17453444))
 				.andExpect(jsonPath("$.data.avgViews").value(484818))
-				.andExpect(jsonPath("$.data.followerDistribution[0].range").value("3k-10k"))
-				.andExpect(jsonPath("$.data.followerDistribution[0].pct").value(40))
-				.andExpect(jsonPath("$.data.followerDistribution[1].range").value("10k-30k"))
-				.andExpect(jsonPath("$.data.followerDistribution[1].pct").value(45))
-				.andExpect(jsonPath("$.data.followerDistribution[2].range").value("30k-50k"))
-				.andExpect(jsonPath("$.data.followerDistribution[2].pct").value(15))
+				.andExpect(jsonPath("$.data.followerDistribution[0].range").value("500-3k"))
+				.andExpect(jsonPath("$.data.followerDistribution[0].pct").value(15))
+				.andExpect(jsonPath("$.data.followerDistribution[1].range").value("3k-10k"))
+				.andExpect(jsonPath("$.data.followerDistribution[1].pct").value(34))
+				.andExpect(jsonPath("$.data.followerDistribution[2].range").value("10k-30k"))
+				.andExpect(jsonPath("$.data.followerDistribution[2].pct").value(39))
+				.andExpect(jsonPath("$.data.followerDistribution[3].range").value("30k-50k"))
+				.andExpect(jsonPath("$.data.followerDistribution[3].pct").value(12))
 				.andExpect(jsonPath("$.data.updatedAt").value("2026-07-17T04:30:00Z"));
 	}
 

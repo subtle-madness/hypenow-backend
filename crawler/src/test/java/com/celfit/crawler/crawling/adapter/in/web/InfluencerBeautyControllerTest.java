@@ -21,7 +21,7 @@ class InfluencerBeautyControllerTest {
     @Test
     void 수동_판정은_beauty_class와_파생값과_MANUAL_출처를_기록한다() {
         Influencer inf = new Influencer("a");
-        inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "이전 판정");
+        inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "이전 판정", null);
         when(influencers.findById(1L)).thenReturn(Optional.of(inf));
 
         String view = controller.override(1L, BeautyClass.BEAUTY_SERVICE, 2, null, null,

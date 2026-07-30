@@ -34,7 +34,7 @@ public class InfluencerBeautyController {
                            RedirectAttributes ra) {
         Influencer inf = influencers.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
-        inf.classify(beautyClass, Influencer.BEAUTY_SOURCE_MANUAL, "수동 판정");
+        inf.classify(beautyClass, Influencer.BEAUTY_SOURCE_MANUAL, "수동 판정", null);
         influencers.save(inf);
         ra.addAttribute("page", page);
         if (status != null && !status.isEmpty()) ra.addAttribute("status", status);

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # content-ranking 프론트가 요구하는 필드별로 analysis DB 미러의 채움 정도를 보고한다.
-# 미러 골격(contents·accounts·content_metric_snapshots)이 비어 있으면 실패.
+# 미러 골격(contents·accounts, metric_captured_at 포함)이 비어 있으면 실패.
 # 사용법: ./check/coverage.sh   (실데이터 postgres 컨테이너 필요 — 이름이 다르면 PG_CONTAINER로 지정)
 set -euo pipefail
 cd "$(dirname "$0")"

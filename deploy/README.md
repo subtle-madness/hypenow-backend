@@ -68,7 +68,12 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 07-29 staging 브랜치 전환)하면 `.github/workflows/cd.yml`이
 was·analytics·crawler·monitoring 이미지 빌드·push → 서버 compose pull → caddy reload →
 analytics·crawler·monitoring 재기동(`--wait`) → **was 롤링(§5-1, 무중단)** → 나머지 정합 `up -d` →
-**분석 뷰 raw DB 적용**(멱등, §4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인까지 수행한다.
+**분석 뷰 raw DB 적용**(멱등, §4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인 →
+**댕글링 이미지 정리**(`docker image prune -f`, 실패해도 배포는 실패 처리 안 함)까지 수행한다.
+매 배포마다 4종 이미지가 `:latest`로 덮이며 이전 레이어가 댕글링으로 쌓여 서버 디스크를
+잠식하므로(07-30 실측: 회수 가능분 88%), 헬스체크 전부 통과 뒤 마지막에 정리한다 — dangling-only만
+(`-a` 금지, 롤백용 `sha-*` 태그 이미지를 지킨다). test 스테이징 배포(`cd-test.yml`)와 긴급 경로
+(`deploy.sh`)도 같은 서버를 공유하므로 동일하게 정리한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
   `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
 - 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
@@ -115,6 +120,42 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
   `DROP VIEW`/`DROP INDEX`/`DROP CONSTRAINT`(단일 마이그레이션 안에서 DROP+재생성은
   트랜잭션이라 안전 — 재생성 없는 단독 DROP만 위험), `ADD CONSTRAINT … UNIQUE`(중복 데이터
   시 즉사), `TRUNCATE`, 그리고 **데이터 형태 변경**(미러가 값 도메인을 바꾸는 종류).
+- **v3(07-30) — Flyway 버전 번호 중복 검사.** PR #181이 `V43__landing_stats_nano_band.sql`을
+  들고 있는 사이 develop이 `V43__trait_taxonomy_makeup_review.sql`을 선점, 그대로 머지되면
+  같은 버전 2개로 Flyway 기동이 거부된다(V18·V43에 이어 3번째 재발). PR 브랜치 자기 트리만
+  봐서는 못 잡는다 — 그 브랜치엔 V43이 1개뿐이라 충돌은 base와 합쳐질 때만 드러나므로,
+  `migration-guard` 잡의 `check-migration-safety.sh <base-ref>` 경로에 **base ref와 HEAD의
+  트리 스냅샷을 직접 대조**하는 검사를 추가했다(`git ls-tree`, diff가 아님 — diff 기반이면
+  "이번 PR이 안 건드린 기존 파일과의 충돌"을 놓친다).
+  **스코프가 위 파괴적 DDL 검사와 다르다(의도)**: 파괴적 DDL 검사는 was 롤링 공존 근거가
+  있는 analysis DB만 보지만, 버전 중복은 근거가 다르다 — 어느 Flyway 인스턴스든 중복
+  버전이면 그 인스턴스 자체가 기동을 거부한다(신구 공존 여부와 무관한 실패 모드). Flyway
+  인스턴스는 4개이고 각각 독립 버전 공간(별도 히스토리 테이블)이라 디렉토리별로 독립
+  검사하며(was의 V1과 analytics의 V1은 정상), crawler·monitoring을 포함해 **4개 전부**를
+  대상으로 한다. 버전 비교는 Flyway와 동일하게 숫자 기준(선행 0 정규화 — `V07` == `V7`).
+  집합 단위 검사라 파일 단위 `--scan`과는 별도 seam인 `--versions <base-목록> <head-목록>`으로
+  git 없이도 테스트 가능(`check-migration-safety.test.sh`).
+  - **v3.1(같은 날, 후속 실측) — #181의 진짜 원인 정정, 인라인 검사 통합.** v3 도입 시점엔
+    "버전 중복을 잡는 검사가 없어서" #181이 났다고 서술했으나 부정확했다: `ci.yml`의
+    `test` 잡에는 이미 07-21(V35·V36 재발) 이후 붙은 인라인 버전 중복 검사가 있었고,
+    실측해보니 **그 검사도 로직상 #181을 잡을 수 있었다**(PR CI가 `refs/pull/N/merge`를
+    체크아웃하므로 머지 트리엔 V43이 2개 보였을 것). 실제 원인은 검사 부재가 아니라
+    **PR CI 재실행 부재**였다 — #181의 CI는 base가 V43-trait을 얻기 전에 실행됐고, 그 뒤
+    base가 바뀌었는데도 재실행 없이 머지됐다. **이 통합(v3.1)은 그 레이스를 고치지
+    못한다** — 고치는 건 브랜치 보호 룰셋이고, **07-30에 적용 완료**: 룰셋
+    `protect-release-branches`(develop·staging·main)에 `required_status_checks`를 추가하고
+    `strict_required_status_checks_policy=true`(머지 전 브랜치 최신화 요구)를 켰다.
+    요구 체크는 `Gradle 전체 테스트`·`마이그레이션 롤링 호환 가드`·`분석 뷰 SQL 하니스` 3종.
+    이제 base가 움직인 PR은 `BEHIND`로 머지가 막히고, 최신화하면 CI가 재실행되면서 이
+    버전 검사가 **최신 base 기준으로** 다시 돈다 — 그게 #181류를 실제로 막는 지점이다.
+    (부작용 2건: ①머지 시점에 "Update branch"가 필요해짐 ②`ci.yml`은 PR에서
+    `cancel-in-progress: true`라 취소된 CI는 재실행해야 머지가 풀린다.) v3.1이
+    실제로 주는 이득은: ①검사 로직이 셀프테스트로 보호되는 **단일 구현**이 됨(인라인
+    `ls | uniq -d` 중복 삭제) ②인라인 검사가 빠뜨렸던 monitoring 디렉토리 포함
+    ③선행 0 정규화(`V07`==`V7`, 인라인엔 없었음) ④base 대조 모드(PR 전용)까지 갖춤.
+    `test` 잡은 push 이벤트에서도 돌아 base_ref가 없으므로, 그 경로는 트리 단독 검사
+    (`check-migration-safety.sh --versions-tree`, git 비의존 — `test` 잡 checkout이
+    `fetch-depth` 없는 얕은 클론이라 git 이력에 의존할 수 없음)로 대체했다.
 - **rename은 rename하지 않는다 — 컬럼 이행 레시피**(타입 변경도 동일):
   1. expand 릴리스: `ADD COLUMN` + **백필 UPDATE를 같은 마이그레이션에**(Flyway가 실행 보장) +
      코드를 새 컬럼으로 전환. 백필 통째 누락은 신 컬럼 전 행 NULL = 기능이 비어 보이므로
@@ -143,26 +184,32 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 KST 04:10 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
-  - **analysis**: 서버 `~/backups/` 7일 롤링 + Google Drive `hypenow-backups/` 30일 롤링
-  - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버 3일 롤링 +
-    Drive `hypenow-backups/crawler/` **최신 3개** 롤링 — 덤프가 GB급(07-20 실측 ~1.5GB,
-    DB 기준 하루 ~0.6GB씩 증가)이라 Drive 무료 15GB에 맞춰 개수 제한. 용량 증설 시 개수 상향.
+  - **analysis**: 서버 `~/backups/` 7일 롤링 + B2 `hypenow-backups/analysis/` 30일(기간) 롤링
+  - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버는 **오프사이트
+    업로드 성패에 따라 1개(성공) / 3개(실패)** 롤링(`backup.sh`의 `offsite_ok` 분기 — B2가
+    막혀도 로컬 3개로 버틴다) + B2 `hypenow-backups/crawler/` **최신 `B2_CRAWLER_KEEP`개**
+    (`backup.sh` 상단 상수, 기본 5) 롤링. 덤프가 하루 ~1GiB씩 느는 GB급이라 개수가 곧 용량 —
+    B2 버킷 캡 초과 시 업로드가 `403 storage_cap_exceeded`로 전량 실패한다(07-27~30 실측: 기존
+    "최신 30개" 정책이 요구한 ~240GB가 캡을 초과해 며칠간 오프사이트 백업 공백 발생). 용량
+    여유가 생기면 `B2_CRAWLER_KEEP`만 올릴 것.
   - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 7일 롤링 +
-    Drive `hypenow-backups/monitoring/` 30일 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
+    B2 `hypenow-backups/monitoring/` 30일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
-### 6-1. rclone(Google Drive) 1회 설정
+### 6-1. rclone(Backblaze B2) 1회 설정
 ```bash
-# 맥에서 (브라우저 OAuth 필요)
+# 맥에서 (B2 계정의 Application Key 필요 — B2 콘솔에서 발급)
 brew install rclone
-rclone config          # n → 이름 gdrive → storage: drive → 기본값들 → 브라우저 승인
-rclone lsd gdrive:     # 동작 확인
+rclone config          # n → 이름 b2 → storage: b2 → Account ID·Application Key 입력
+rclone lsd b2:         # 동작 확인
 ssh ubuntu@<IP> 'mkdir -p ~/.config/rclone'
 scp ~/.config/rclone/rclone.conf ubuntu@<IP>:~/.config/rclone/rclone.conf   # 서버로 복사
-ssh ubuntu@<IP> 'rclone mkdir gdrive:hypenow-backups && rclone lsd gdrive:'  # 서버에서 확인
+ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에서 확인
 ```
-※ rclone.conf에는 구글 OAuth 토큰이 들어 있다 — repo에 커밋 금지, 서버 홈에만.
+※ rclone.conf에는 B2 Application Key가 들어 있다 — repo에 커밋 금지, 서버 홈에만.
+※ (07-26: Google Drive 무료 15GB 초과로 B2 전환. 07-27~30: B2도 종량제가 아니라 캡이 있어
+  다시 걸림 — 위 crawler 개수 축소로 대응. `backup.sh` 상단 주석에 상세 경위 기록.)
 
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
@@ -376,14 +423,17 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    (§13-5-1 절차는 이 배포 전에만 유효 — 아래 참조).
    staging→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
    (CD의 "monitoring 헬스 확인" 스텝이 같은 판정을 자동 수행 — 호스트 포트가 없어 외부 curl은 불가)
-4. 서버 스크립트 갱신 — 레포에는 반영돼 있지만 **CD는 스크립트를 배포하지 않는다**(compose·이미지만).
-   두 파일 모두 rsync로 직접 올릴 것:
-   - `post-container-metrics.py` — 컨테이너 다운 알람 대상 `SERVICES`에 monitoring 추가(§9)
-   - `backup.sh` — monitoring DB 덤프 추가(§6). 안 올리면 백업 크론이 옛 스크립트를 계속 돌려
-     monitoring만 백업에서 조용히 빠진다.
+4. 서버 스크립트 갱신 — `backup.sh`는 07-30부터 CD의 "compose·Caddyfile·롤링 스크립트 동기화"
+   스텝이 `rollout.sh`와 함께 매 배포마다 자동으로 올린다(cd.yml). **`post-container-metrics.py`는
+   여전히 CD가 배포하지 않으므로** 컨테이너 다운 알람 대상 `SERVICES`에 monitoring을 추가했다면(§9)
+   수동으로 올릴 것:
    ```bash
-   rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
+   rsync -av deploy/scripts/post-container-metrics.py ubuntu@<IP>:~/deploy/scripts/
    ```
+   (07-30 이전엔 `backup.sh`도 CD가 안 올려 레포↔서버가 반대 방향으로 갈라졌었다 — 레포엔
+   monitoring 덤프 블록이 있는데 서버엔 없어 monitoring이 운영 백업에서 조용히 누락되고,
+   반대로 서버가 먼저 전환한 B2 오프사이트는 레포에 반영이 안 되는 상태였다. `backup.sh`
+   자동 동기화로 이 드리프트 재발을 막는다.)
 5. **알람 개통 (07-30~, 별도 단계 — 기본 비활성이라 서두르지 않아도 된다)**
    1. **사전 확인 — user_id 없는 기존 캠페인 모수 파악**. ⚠ **이 절차는 was V16(모니터링 v3
       스키마) 배포 전에만 가능** — V16이 구 매핑 테이블 `app.monitoring_campaigns`를 v3 캠페인
@@ -447,4 +497,4 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   임시 중단은 `"-"`로 두고 재기동 — 대장(`alarm_event`)에 PENDING으로 쌓였다가 다시 켜면 그대로 나간다
   (워터마크가 없어 중단 구간 유실이 없다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
-  서버 `~/backups/monitoring-*.sql.gz` 7일 + Drive `hypenow-backups/monitoring/` 30일 롤링(§6).
+  서버 `~/backups/monitoring-*.sql.gz` 7일 + B2 `hypenow-backups/monitoring/` 30일 롤링(§6).

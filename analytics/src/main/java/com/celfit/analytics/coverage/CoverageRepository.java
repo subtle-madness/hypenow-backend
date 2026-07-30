@@ -1,6 +1,5 @@
 package com.celfit.analytics.coverage;
 
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
@@ -14,7 +13,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 매트릭스는 celfit-front가 실제 소비하는 /v1 응답 필드별 analysis DB 채움율.
  * 기준 코드는 celfit-front 배포본(origin/main) — 로컬 체크아웃이 아니라 배포본과 대조해 갱신한다.
  * 행 구성은 프론트 소비 지점 기준: 카드·필터(6.1) → 상세 드로어 AI 리포트(6.3) → 인플루언서(6.4/6.5).
- * 타입에만 있고 UI 미소비인 필드(email·external_link 등)와 /v1 미사용 미러(content_metric_snapshots 등)는 싣지 않는다.
+ * 타입에만 있고 UI 미소비인 필드(email·external_link 등)는 싣지 않는다.
+ * content_metric_snapshots 미러는 2026-07-30 제거됨(소비자 부재·미러 시간 절반 차지) — 더는 대상 밖.
  * 배포본에서 "임시 숨김"(주석 처리) 상태인 요소는 행을 유지하고 이름에 표기한다 — 계약(스펙 6.3)은 유효.
  * 매트릭스 정의는 CLI 점검 스크립트(analytics/check/coverage.sql)와 쌍 — 항목이 바뀌면 둘 다 고칠 것.
  */
@@ -220,8 +220,6 @@ public class CoverageRepository {
 	private static final String TILES_SQL = """
 			SELECT (SELECT count(*) FROM contents)                                   AS contents,
 			       (SELECT count(*) FROM accounts)                                   AS accounts,
-			       (SELECT count(*) FROM content_metric_snapshots)                   AS snapshots,
-			       (SELECT max(captured_at)::date FROM content_metric_snapshots)     AS snapshot_latest,
 			       (SELECT count(*) FROM content_analyses)                           AS analyses
 			""";
 
@@ -275,8 +273,7 @@ public class CoverageRepository {
 		try {
 			return analysis.queryForObject(TILES_SQL,
 					(rs, i) -> new CoverageTiles(
-							rs.getLong("contents"), rs.getLong("accounts"), rs.getLong("snapshots"),
-							rs.getObject("snapshot_latest", LocalDate.class), rs.getLong("analyses")));
+							rs.getLong("contents"), rs.getLong("accounts"), rs.getLong("analyses")));
 		} catch (DataAccessException e) {
 			log.warn("커버리지 타일 조회 실패, 빈 값으로 대체합니다: {}", e.getMessage());
 			return null;
