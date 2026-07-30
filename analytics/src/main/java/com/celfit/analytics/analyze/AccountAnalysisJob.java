@@ -4,6 +4,7 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.CopyRules;
 import com.celfit.analytics.llm.TraitTaxonomyLoader;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -30,19 +31,24 @@ public class AccountAnalysisJob {
 	 * 계정 카피 대상 자격 정의 — 단일 정본 (07-28 드리프트 재발 방지). run()의 대상 쿼리와
 	 * 어드민 대상 카운트(PipelineStatsService.accountTarget)·Claude 버스트 export
 	 * (ClaudeBurstRunner.exportAccounts)가 이 문자열을 그대로 이어붙여 써서 세 곳의 판정이
-	 * 항상 같은 SQL이 되게 한다. 파라미터는 쿨다운 일수(accountAnalyzeCooldownDays) 하나뿐 —
-	 * 이어붙이는 쪽은 이 순서 뒤에 자기 파라미터(배치 상한 등)를 추가한다.
+	 * 항상 같은 SQL이 되게 한다. 파라미터는 순서대로 ①쿨다운 일수(accountAnalyzeCooldownDays)
+	 * ②카피 버전 게이트({@link CopyRules#VERSION}) 둘 — 이어붙이는 쪽은 이 순서 뒤에 자기
+	 * 파라미터(배치 상한 등)를 추가한다.
+	 *
+	 * <p>{@code latest.copy_version < ?}는 설계 §4 버전 게이트 — 판정 규칙(PerfConfidence)이
+	 * 바뀌어 {@link CopyRules#VERSION}이 오르면, 기존 행은 낮은 버전에 머물러 자연 재대상이 된다.
 	 */
 	public static final String ELIGIBLE_WHERE = """
 			LEFT JOIN LATERAL (
-			  SELECT a.input_last_posted_at, a.analyzed_at, a.perf_summary
+			  SELECT a.input_last_posted_at, a.analyzed_at, a.perf_summary, a.copy_version
 			  FROM account_analyses a WHERE a.handle = s.handle
 			  ORDER BY a.analyzed_at DESC LIMIT 1
 			) latest ON true
 			WHERE latest.analyzed_at IS NULL
 			   OR latest.perf_summary IS NULL  -- 07-27 개편 백필: 구 스키마 행 자연 재대상
 			   OR (latest.input_last_posted_at IS DISTINCT FROM s.last_posted_at
-			       AND latest.analyzed_at < now() - make_interval(days => ?))""";
+			       AND latest.analyzed_at < now() - make_interval(days => ?))
+			   OR latest.copy_version < ?  -- 설계 §4: 판정 규칙 버전업 시 낡은 문구 자연 재대상""";
 
 	private final JdbcTemplate analysis;
 	private final AccountSynthesisPort port;
@@ -60,6 +66,9 @@ public class AccountAnalysisJob {
 		this.traitLoader = traitLoader;
 	}
 
+	/** analyzeOne의 처리 결과 — 데이터 미비 스킵은 실패가 아니라 별도 분기로 집계한다. */
+	private enum Outcome { PROCESSED, SKIPPED_DATA_INCOMPLETE }
+
 	/** @return 잡 실행 결과 (처리·실패 건수, 일 한도 이월 여부) */
 	public JobResult run() {
 		List<String> targets = analysis.queryForList("""
@@ -69,16 +78,20 @@ public class AccountAnalysisJob {
 
 				ORDER BY s.handle
 				LIMIT ?""", String.class,
-				settings.accountAnalyzeCooldownDays(), settings.accountAnalyzeBatchLimit());
+				settings.accountAnalyzeCooldownDays(), CopyRules.VERSION, settings.accountAnalyzeBatchLimit());
 		String model = settings.activeLlmModel();
 		int processed = 0;
 		int failed = 0;
+		int skippedIncomplete = 0;
 		boolean carriedOver = false;
 		reporter.report(0, 0, targets.size());
 		for (String handle : targets) {
 			try {
-				analyzeOne(handle, model);
-				processed++;
+				if (analyzeOne(handle, model) == Outcome.PROCESSED) {
+					processed++;
+				} else {
+					skippedIncomplete++;
+				}
 			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
 				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
@@ -90,11 +103,22 @@ public class AccountAnalysisJob {
 			}
 			reporter.report(processed, failed, targets.size());
 		}
-		log.info("account copy complete ({} accounts, {} failed)", processed, failed);
+		if (skippedIncomplete > 0) {
+			// 이 스킵은 "미러가 정상화될 때까지 매 배치에서 같은 계정이 후보로 다시 잡히는" 상태를
+			// 만든다 — 과거 무한 재대상 루프 사고(is_beauty NULL 재분류, 07-21)와 표면은 닮았지만
+			// 원인이 다르다: 그때는 재대상 조건 자체가 결정론적으로 절대 해소되지 않아 문제였고,
+			// 여기는 뷰(analytics/views/10_account_detail.sql) 적용 한 번으로 다음 미러 실행부터
+			// 9컬럼이 채워져 자연히 해소된다 — 코드 쪽에서 뭘 더 고쳐야 하는 상태가 아니다.
+			// WARN으로 남기는 건 운영자가 "뷰 적용을 안 했다"는 걸 알아챌 유일한 신호이기 때문.
+			log.warn("계정 {}건 스킵 — 신뢰도 판정 컬럼 9개가 전부 NULL이라 데이터 미비로 판단"
+					+ "(뷰 미적용/미러 실패 의심). analytics/views/10_account_detail.sql 적용 후"
+					+ " 다음 미러·배치에서 자연 재대상됨", skippedIncomplete);
+		}
+		log.info("account copy complete ({} accounts, {} failed, {} skipped)", processed, failed, skippedIncomplete);
 		return new JobResult(processed, failed, carriedOver);
 	}
 
-	private void analyzeOne(String handle, String model) {
+	private Outcome analyzeOne(String handle, String model) {
 		Map<String, Object> summary = analysis.queryForMap(
 				"SELECT * FROM account_summaries WHERE handle = ?", handle);
 		// last_posted_at(timestamptz)만 타입 지정 조회가 필요 — queryForMap은 Timestamp를 돌려줘 record 타입과 어긋남.
@@ -110,8 +134,22 @@ public class AccountAnalysisJob {
 		AccountAdCanon.AdMetrics ad = AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
 		com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
 
+		// 판정(원본 9컬럼 포함)·프롬프트 사본(9컬럼 제거) 양쪽을 한 번에 만드는 공용 헬퍼 — ClaudeBurstRunner와
+		// 공유한다(한쪽만 벗겨내면 가드가 조용히 우회되는 재발 방지).
+		AccountAdCanon.SummaryWithConfidence sc = AccountAdCanon.withConfidence(summary, ad);
+
+		// 배포 과도기 가드(설계 §7 배포 순서): 뷰 선적용 없이 마이그레이션이 먼저 배포되면 미러가
+		// 9개 신 컬럼을 채우지 못한 채로 남는다 — 이 상태에서 카피를 만들면 모든 계정이 최대
+		// 억제 등급을 받아 저품질 문구가 CopyRules.VERSION으로 찍히고, 버전 게이트 때문에 뷰를
+		// 나중에 올려도 복구되지 않는다(영구 고정). 아무것도 안 쓰고 건너뛰는 편이 안전 — 기존
+		// 문구가 그대로 서빙되고, 이 계정은 ELIGIBLE_WHERE의 "분석 이력 없음" 조건으로 다음
+		// 실행에서도 계속 후보로 잡힌다(run()의 집계 로그 참조 — 의도된 동작).
+		if (sc.confidence().dataIncomplete()) {
+			return Outcome.SKIPPED_DATA_INCOMPLETE;
+		}
+
 		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
-				AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation));
+				sc.promptSummary(), categories, posts, adSituation, sc.confidence()));
 
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지).
 		// 절단·INSERT는 AccountAnalysisWriter 단일 원천(ClaudeBurstRunner와 공유 — 07-17 재발 방지).
@@ -120,5 +158,6 @@ public class AccountAnalysisJob {
 		}
 		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
 				lastPostedAt, analyzedCount, copy, adSituation, traitLoader.get().names());
+		return Outcome.PROCESSED;
 	}
 }

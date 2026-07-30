@@ -42,7 +42,25 @@ base AS (
                                         extract(epoch FROM (now() - uploaded_at)) / 86400.0)))::bigint
                                                             AS avg_hype_score,
          min(uploaded_at)                                   AS first_posted_at,
-         max(uploaded_at)                                   AS last_posted_at
+         max(uploaded_at)                                   AS last_posted_at,
+         -- 통계 왜곡 가드 재료 (스펙 2026-07-30-perf-summary-statistical-guards-design.md §3-1):
+         -- 지표별 실질 모수 — analyzed_count는 12로 꽉 차도 조회수 관측은 1건일 수 있다.
+         count(*) FILTER (WHERE views IS NOT NULL)::int          AS views_sample_count,
+         count(*) FILTER (WHERE likes IS NOT NULL)::int          AS likes_sample_count,
+         count(*) FILTER (WHERE comments_count IS NOT NULL)::int AS comments_sample_count,
+         count(*) FILTER (WHERE content_type = 'REELS')::int     AS reels_count,
+         count(*) FILTER (WHERE content_type = 'FEED')::int      AS feed_count,
+         round(percentile_cont(0.5) WITHIN GROUP (ORDER BY views)
+               FILTER (WHERE views IS NOT NULL))::bigint    AS median_views,
+         -- avg_er_pct와 동일 산식(분모 NULLIF)의 중앙값 — 수준 판정 근거를 median으로 옮기는 게 목적(§3-3).
+         -- percentile_cont는 double precision을 반환해 round(numeric,int)와 안 맞으므로 명시 캐스트.
+         round((percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY (likes + comments_count)::numeric / NULLIF(followers, 0)) * 100)::numeric, 1)
+                                                            AS median_er_pct,
+         -- 최상위 1건의 조회수 점유율 — 관측(sum) 없거나 0이면 NULL(NULLIF).
+         round(max(views)::numeric
+               / NULLIF(sum(views) FILTER (WHERE views IS NOT NULL), 0) * 100)::int
+                                                            AS top_views_share_pct
   FROM win
   GROUP BY owner_username
 ),
@@ -116,7 +134,17 @@ SELECT
        THEN round((EXTRACT(EPOCH FROM (b.last_posted_at - b.first_posted_at)) / 86400.0
                    / (b.analyzed_count - 1))::numeric, 1)
   END AS avg_interval_days,
-  b.avg_hype_score
+  b.avg_hype_score,
+  b.views_sample_count,
+  b.likes_sample_count,
+  b.comments_sample_count,
+  b.reels_count,
+  b.feed_count,
+  b.median_views,
+  b.median_er_pct,
+  b.top_views_share_pct,
+  -- 스팬 일수(정수) — extract(day from interval)은 총 일수 성분을 그대로 준다(시:분초 절사).
+  extract(day from (b.last_posted_at - b.first_posted_at))::int AS window_span_days
 FROM base b
 JOIN metric m USING (owner_username)
 JOIN trend  t USING (owner_username)

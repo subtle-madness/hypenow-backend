@@ -114,16 +114,26 @@ class ClaudeBurstRunnerTest {
 
 		// 카피 대상 픽스처: acct1(미카피 — 대상), acct_done(신 스키마 카피 완료 — 제외),
 		// acct_legacy(07-27 개편 이전 구 스키마 행 — 입력 동일·쿨다운 미경과인데도 대상)
+		// 신뢰도 판정 재료 9컬럼(V44)도 채워 "정상 미러됨" 상태를 흉내낸다 — 전부 NULL(데이터 미비)
+		// 케이스는 별도 테스트(export는_데이터_미비_계정을_건너뛴다)에서만 재현한다.
 		db.update("""
-				INSERT INTO account_summaries (handle, analyzed_count, last_posted_at, organic_avg, ad_avg)
-				VALUES ('acct1', 3, timestamptz '2026-07-15 09:00:00+09', NULL, NULL),
-				       ('acct_done', 2, timestamptz '2026-07-14 09:00:00+09', NULL, NULL),
-				       ('acct_legacy', 2, timestamptz '2026-07-01 09:00:00+09', NULL, NULL)""");
+				INSERT INTO account_summaries (handle, analyzed_count, last_posted_at, organic_avg, ad_avg,
+				  views_sample_count, likes_sample_count, comments_sample_count, reels_count, feed_count,
+				  median_views, median_er_pct, top_views_share_pct, window_span_days)
+				VALUES ('acct1', 3, timestamptz '2026-07-15 09:00:00+09', NULL, NULL,
+				          3, 3, 3, 3, 0, 9000, 1.5, 60, 20),
+				       ('acct_done', 2, timestamptz '2026-07-14 09:00:00+09', NULL, NULL,
+				          2, 2, 2, 2, 0, 8000, 1.0, 55, 15),
+				       ('acct_legacy', 2, timestamptz '2026-07-01 09:00:00+09', NULL, NULL,
+				          2, 2, 2, 2, 0, 7000, 1.0, 50, 15)""");
+		// copy_version을 CopyRules.VERSION으로 명시 — 기본값(0)이면 버전 게이트(설계 §4)에
+		// 걸려 "카피 완료" 픽스처인데도 재대상으로 잡힌다.
 		db.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  tagline, perf_summary, content_summary)
+				  tagline, perf_summary, content_summary, copy_version)
 				VALUES ('acct_done', now(), 'test', timestamptz '2026-07-14 09:00:00+09',
-				  't', '성과 요약', '콘텐츠 요약')""");
+				  't', '성과 요약', '콘텐츠 요약', ?)""",
+				com.celfit.analytics.llm.CopyRules.VERSION);
 		// 구 스키마 행: perf_summary NULL, 입력 동일(stale 아님)+쿨다운(기본 7일) 미경과(1시간 전)
 		db.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at, tagline, summary)
@@ -213,6 +223,29 @@ class ClaudeBurstRunnerTest {
 				.toList();
 		assertTrue(keys.contains("acct_legacy"), keys.toString());
 		assertFalse(keys.contains("acct_done"), keys.toString());
+	}
+
+	/**
+	 * 배포 과도기 가드 — AccountAnalysisJob과 동일 취지(설계 §7). 뷰 선적용 없이 마이그레이션만
+	 * 배포되면 미러가 9개 신뢰도 컬럼을 못 채운 채 남는데, 이 상태로 export하면 신뢰도 가드 없이
+	 * 만든 문구가 CopyRules.VERSION으로 고정될 위험이 있다 — export 단계에서 걸러야 한다.
+	 */
+	@Test
+	void export는_데이터_미비_계정을_건너뛴다() throws Exception {
+		// 9컬럼을 아예 지정하지 않아 ADD COLUMN 기본값(NULL)인 "미러 갭" 상태를 그대로 재현한다.
+		db.update("""
+				INSERT INTO account_summaries (handle, analyzed_count, last_posted_at)
+				VALUES ('acct_mirror_gap', 5, timestamptz '2026-07-16 09:00:00+09')""");
+
+		ClaudeBurstRunner.ExportResult result = runner().export();
+
+		var accountLines = Files.readAllLines(workDir.resolve("accounts-input.jsonl"));
+		List<String> keys = accountLines.stream()
+				.map(l -> om.readTree(l).path("key").asString())
+				.toList();
+		assertFalse(keys.contains("acct_mirror_gap"), keys.toString());
+		// 나머지(acct1·acct_legacy)는 그대로 export된다 — 미비 계정만 걸린다.
+		assertEquals(2, result.accounts());
 	}
 
 	@Test

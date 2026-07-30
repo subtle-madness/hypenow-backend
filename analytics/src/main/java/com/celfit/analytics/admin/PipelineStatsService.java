@@ -3,6 +3,7 @@ package com.celfit.analytics.admin;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.CopyRules;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -268,7 +269,7 @@ public class PipelineStatsService {
 				SELECT count(*)
 				FROM account_summaries s
 				""" + AccountAnalysisJob.ELIGIBLE_WHERE,
-				Long.class, settings.accountAnalyzeCooldownDays());
+				Long.class, settings.accountAnalyzeCooldownDays(), CopyRules.VERSION);
 		return v == null ? 0 : v;
 	}
 

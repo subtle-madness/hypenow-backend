@@ -2,6 +2,7 @@ package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AdSituation;
+import com.celfit.analytics.llm.CopyRules;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
@@ -41,6 +42,10 @@ final class AccountAnalysisWriter {
 	 * 믹스 성분으로 유사도 후보는 유지). adSituation이 {@link AdSituation#writesHeadline()}가
 	 * 아니면(근거 없음) adSummary는 NULL로 버려진다.
 	 * 구 카피 5컬럼(summary·trend/chart_note·ad_headline·pace_note)은 07-27 개편 후 미기록.
+	 *
+	 * <p>copy_version은 항상 현재 {@link CopyRules#VERSION}으로 찍는다(호출자와 무관 — 일상 잡·
+	 * 버스트 러너 어느 경로로 생성됐든 "지금 규칙으로 만든 카피"라는 사실은 같다). 판정 규칙이
+	 * 바뀌어 VERSION이 오르면 이 값보다 낮은 기존 행만 ELIGIBLE_WHERE가 재대상으로 잡는다(설계 §4).
 	 */
 	static void insert(JdbcTemplate analysis, ObjectMapper json, String handle, OffsetDateTime analyzedAt,
 			String model, OffsetDateTime inputLastPostedAt, Long inputAnalyzedCount,
@@ -50,11 +55,12 @@ final class AccountAnalysisWriter {
 				? blankToNull(copy.adSummary()) : null;
 		analysis.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, model, input_last_posted_at,
-				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary)
-				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)""",
+				  input_analyzed_count, tagline, traits, perf_summary, content_summary, ad_summary,
+				  copy_version)
+				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)""",
 				handle, analyzedAt, model, inputLastPostedAt, inputAnalyzedCount,
 				copy.tagline(), json.writeValueAsString(traits),
-				copy.perfSummary(), copy.contentSummary(), adSummary);
+				copy.perfSummary(), copy.contentSummary(), adSummary, CopyRules.VERSION);
 	}
 
 	private static boolean isBlank(String s) {
