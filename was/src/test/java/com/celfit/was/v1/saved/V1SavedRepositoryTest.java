@@ -46,19 +46,20 @@ class V1SavedRepositoryTest extends IntegrationTest {
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
-				    short_code         text PRIMARY KEY,
-				    account_handle     text NOT NULL,
-				    thumbnail_url      text,
-				    caption            text,
-				    posted_at          timestamptz,
-				    content_type       text,
-				    video_duration     numeric,
-				    original_url       text,
-				    views              bigint,
-				    likes              bigint,
-				    comments           bigint,
-				    hype_score         bigint,
-				    metric_captured_at timestamptz
+				    short_code          text PRIMARY KEY,
+				    account_handle      text NOT NULL,
+				    thumbnail_url       text,
+				    caption             text,
+				    posted_at           timestamptz,
+				    content_type        text,
+				    video_duration      numeric,
+				    original_url        text,
+				    views               bigint,
+				    likes               bigint,
+				    comments            bigint,
+				    hype_score          bigint,
+				    metric_captured_at  timestamptz,
+				    hype_score_precise  numeric
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE content_analyses (
@@ -88,13 +89,14 @@ class V1SavedRepositoryTest extends IntegrationTest {
 		// c1·c2 분석 완료(카드), c3 미분석(카드 아님 — 존재 확인에서 제외)
 		jdbcTemplate.update("""
 				INSERT INTO contents (short_code, account_handle, thumbnail_url, caption, posted_at, content_type,
-				  video_duration, original_url, views, likes, comments, hype_score, metric_captured_at) VALUES
+				  video_duration, original_url, views, likes, comments, hype_score, metric_captured_at,
+				  hype_score_precise) VALUES
 				 ('c1', 'alpha', 'https://thumb/c1.jpg', '카드1', '2026-07-02T03:00:00Z', 'reels',
-				  20, 'https://ig/c1', 1000, 100, 10, 500, '2026-07-05T03:00:00Z'),
+				  20, 'https://ig/c1', 1000, 100, 10, 500, '2026-07-05T03:00:00Z', 500),
 				 ('c2', 'beta', 'https://thumb/c2.jpg', '카드2', '2026-07-03T03:00:00Z', 'reels',
-				  25, 'https://ig/c2', 3000, 300, 30, 900, '2026-07-06T03:00:00Z'),
+				  25, 'https://ig/c2', 3000, 300, 30, 900, '2026-07-06T03:00:00Z', 900),
 				 ('c3', 'alpha', 'https://thumb/c3.jpg', '미분석', '2026-07-04T03:00:00Z', 'reels',
-				  15, 'https://ig/c3', 9999, 999, 99, 999, '2026-07-07T03:00:00Z')
+				  15, 'https://ig/c3', 9999, 999, 99, 999, '2026-07-07T03:00:00Z', 999)
 				""");
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, main_category, sub_categories, ad_type,

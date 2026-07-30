@@ -151,8 +151,12 @@ final class AccountAdCanon {
 	 * 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9-6) — 표시는 avg_hype_score가
 	 * 대신하고 이 값은 순수 정렬 키라 카피 문구와 무관하다. 판정 재료도 아니므로
 	 * CONFIDENCE_COLUMNS가 아니라 여기.
+	 *
+	 * <p>{@code avg_hype_score_precise}: 하입 스코어 소수점 노출(신설 컬럼, 스펙 §10)의 표시·정렬용
+	 * 소수값 — avg_hype_score(정수)와 같은 뜻을 소수로 다시 실은 것뿐이라 카피 문구에 새로 보탤
+	 * 근거가 없다. avg_hype_raw와 동일한 이유로 여기.
 	 */
-	static final List<String> PROMPT_IRRELEVANT_COLUMNS = List.of("email", "avg_hype_raw");
+	static final List<String> PROMPT_IRRELEVANT_COLUMNS = List.of("email", "avg_hype_raw", "avg_hype_score_precise");
 
 	/**
 	 * canonicalSummary 사본 + 그 사본에서 always-strip 7컬럼·카피 무관 컬럼과 판정 결과에 따른

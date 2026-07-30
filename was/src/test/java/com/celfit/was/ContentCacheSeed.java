@@ -29,19 +29,20 @@ public final class ContentCacheSeed {
 		jdbc.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbc.execute("""
 				CREATE TABLE contents (
-				    short_code         text PRIMARY KEY,
-				    account_handle     text,
-				    caption            text,
-				    thumbnail_url      text,
-				    posted_at          timestamptz,
-				    content_type       text,
-				    video_duration     numeric,
-				    original_url       text,
-				    views              bigint,
-				    likes              bigint,
-				    comments           bigint,
-				    hype_score         bigint,
-				    metric_captured_at timestamptz
+				    short_code          text PRIMARY KEY,
+				    account_handle      text,
+				    caption             text,
+				    thumbnail_url       text,
+				    posted_at           timestamptz,
+				    content_type        text,
+				    video_duration      numeric,
+				    original_url        text,
+				    views               bigint,
+				    likes               bigint,
+				    comments            bigint,
+				    hype_score          bigint,
+				    metric_captured_at  timestamptz,
+				    hype_score_precise  numeric
 				)""");
 		jdbc.execute("""
 				CREATE TABLE content_analyses (
@@ -128,13 +129,15 @@ public final class ContentCacheSeed {
 				    2, null, now() - interval '1 day', 3.5)""");
 		// hype 내림차순: c1(90) → c2(80). c1은 video_duration을 채워 캐시 히트 단언(A)에서
 		// BigDecimal scale 왕복까지 같이 잡는다(2026-07-29 리뷰 누적 체크리스트 A).
+		// hype_score_precise는 hype_score와 같은 순서를 보존하는 소수값(2026-07-30 정렬 키 전환 —
+		// hype_score DESC → hype_score_precise DESC, ContentCardRow.SELECT 참조).
 		jdbc.execute("""
 				INSERT INTO contents (short_code, account_handle, caption, thumbnail_url, posted_at,
 				    content_type, video_duration, original_url, views, likes, comments, hype_score,
-				    metric_captured_at)
+				    metric_captured_at, hype_score_precise)
 				VALUES
-				  ('c1', 'glow', '수분크림 리뷰', null, now() - interval '1 day', 'reels', 15.5, null, 1000, 100, 10, 90, now()),
-				  ('c2', 'glow', '선크림 리뷰',   null, now() - interval '2 day', 'reels', null, null,  800,  80,  8, 80, now())""");
+				  ('c1', 'glow', '수분크림 리뷰', null, now() - interval '1 day', 'reels', 15.5, null, 1000, 100, 10, 90, now(), 90.1234),
+				  ('c2', 'glow', '선크림 리뷰',   null, now() - interval '2 day', 'reels', null, null,  800,  80,  8, 80, now(), 80.5)""");
 		jdbc.execute("""
 				INSERT INTO content_analyses (short_code, is_beauty, metric_timeliness)
 				VALUES ('c1', true, 'timely'), ('c2', true, 'timely')""");

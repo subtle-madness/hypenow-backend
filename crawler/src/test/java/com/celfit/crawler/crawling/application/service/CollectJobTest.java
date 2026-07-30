@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
@@ -66,6 +67,7 @@ class CollectJobTest {
     com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository rawMediaPages =
             mock(com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository.class);
     ContentRepository contents = mock(ContentRepository.class);
+    ContentCaptionUpserter captionUpserter = mock(ContentCaptionUpserter.class);
     RawCommentRepository rawComments = mock(RawCommentRepository.class);
     ProfileSourceSelector profileSourceSelector = mock(ProfileSourceSelector.class);
     CommentSourceSelector commentSource = mock(CommentSourceSelector.class);
@@ -177,9 +179,9 @@ class CollectJobTest {
                    List<com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher> mediaFetchers) {
         CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
         return new CollectJob(props, influencers, rawProfiles, contents,
-                new ContentUpserter(contents, CLOCK), rawComments, rawMediaPages,
-                profileSourceSelector, commentSource, mediaFetchers, executor, settings, CLOCK, progress,
-                stopFlag, txTemplate);
+                new ContentUpserter(contents, CLOCK), captionUpserter, rawComments,
+                rawMediaPages, profileSourceSelector, commentSource, mediaFetchers, executor, settings,
+                CLOCK, progress, stopFlag, txTemplate);
     }
 
     @Test
@@ -467,6 +469,8 @@ class CollectJobTest {
         assertThat(summary.postsUpserted()).isEqualTo(2);          // 날짜·고정 무관 전부 수집
         assertThat(contentStore.get("EMB_FEED").getContentType()).isEqualTo(ContentType.FEED);
         assertThat(contentStore.get("EMB_REEL").getContentType()).isEqualTo(ContentType.REELS);
+        // 내장 타임라인 경로는 캡션 provenance가 SELF_GQL로 넘어가야 한다(삼항 반전 회귀 가드).
+        verify(captionUpserter).upsert(any(), eq(RawSource.SELF_GQL), any());
     }
 
     @Test
@@ -511,6 +515,8 @@ class CollectJobTest {
         assertThat(contentStore.get("CHUNK_REEL").getContentType()).isEqualTo(ContentType.REELS);
         verify(rawMediaPages).save(any());                     // 페이지 원형 저장
         assertThat(inf.getLastCollectedAt()).isEqualTo(NOW);   // 방문 완료
+        // 보충 경로는 캡션 provenance가 HIKER_V1_MEDIAS로 넘어가야 한다(삼항 반전 회귀 가드).
+        verify(captionUpserter).upsert(any(), eq(RawSource.HIKER_V1_MEDIAS), any());
     }
 
     @Test

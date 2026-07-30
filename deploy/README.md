@@ -478,6 +478,22 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
       바꿔 커밋·배포(서버에서 직접 고친 값은 다음 CD가 레포 compose로 덮는다 — 스윕 크론과 같은 규칙)
    5. 검증: `docker logs deploy-monitoring-1 | grep -i resend` — "Resend 메일 발송 활성"이면 실발송 모드,
       "RESEND_API_KEY 미설정"이면 로깅 폴백(개통 실패)
+   6. **수신자 허용목록 안전판** (`monitoring.alarm.allowed-recipients`, env
+      `MONITORING_ALARM_ALLOWED_RECIPIENTS` — 콤마 목록, 대소문자·공백 무시). 비어 있으면(운영
+      기본) 무제한 — 위 4번처럼 그냥 켜면 이 값을 건드릴 필요 없다. 허용목록이 있으면 목록 밖
+      수신자는 발송 없이 `SKIPPED_NO_RECIPIENT`로 종결(재시도 없음) — 새 상태값을 만들지 않고
+      기존 종결 상태를 재사용한다(`AlarmDispatchJob`).
+   7. **test 스택 임시 개통(검증용, 07-30~)** — test `analysis` DB는 실사용자 이메일을 그대로
+      담고 있어, 4번처럼 크론만 켜면 실사람에게 메일이 나간다. 반드시 아래 3키를 함께 넣을 것
+      (`deploy/compose.test.yaml`이 이미 배선돼 있다 — env만 채우면 된다):
+      - `DEV_ALARM_DISPATCH_CRON="0 */5 * * * *"` (기본 `"-"`=비활성 — 검증 끝나면 즉시 원복)
+      - `DEV_ALARM_ALLOWED_RECIPIENTS=<검증용 이메일>` (콤마 목록 — 승인된 주소만)
+      - `DEV_ALARM_READER_PASSWORD` (test-postgres의 `analysis` DB에도 `alarm_reader` 롤을
+        2번과 동일하게 GRANT해 둘 것 — 운영과 test는 별도 DB라 롤도 따로 만든다)
+      ⚠️ **순서 주의 — 허용목록은 fail-OPEN이다.** 비워 둔 채 크론만 켜면 아무것도 막히지 않고
+      test DB의 실사용자 전원에게 실메일이 나간다(6번의 "비어 있으면 무제한"이 test에도 그대로
+      적용된다). 반드시 `DEV_ALARM_ALLOWED_RECIPIENTS`를 먼저 채운 뒤 크론을 켤 것.
+      검증이 끝나면 `DEV_ALARM_DISPATCH_CRON`을 비우거나 삭제해 재배포 — 계속 켜 두지 않는다.
 6. **was v3 조회 개통 (was V16 배포 후, was 서비스 environment의 `MONITORING_*` 4키 배선과 짝)**
    — was가 monitoring DB를 직접 SELECT해 목록·상태·후보 등을 조립한다(계약 §1). 기본
    비활성이라 서두르지 않아도 된다.

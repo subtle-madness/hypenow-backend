@@ -4,9 +4,11 @@ import com.celfit.monitoring.mail.MailSender;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -38,13 +40,16 @@ public class AlarmDispatchJob {
 	private final Duration debounce;
 	private final Duration debounceCap;
 	private final int maxAttempts;
+	/** 비어 있으면 무제한(운영 기본) — dev/test에서 실사용자 이메일 유출을 막는 안전판(§7-2). */
+	private final Set<String> allowedRecipients;
 	private final Clock clock;
 
 	public AlarmDispatchJob(AlarmEventRepository events, AlarmRecipientReader recipients,
 			AlarmMailComposer composer, MailSender mailSender,
 			@Value("${monitoring.alarm.debounce:10m}") Duration debounce,
 			@Value("${monitoring.alarm.debounce-cap:30m}") Duration debounceCap,
-			@Value("${monitoring.alarm.max-attempts:5}") int maxAttempts, Clock clock) {
+			@Value("${monitoring.alarm.max-attempts:5}") int maxAttempts,
+			@Value("${monitoring.alarm.allowed-recipients:}") String allowedRecipients, Clock clock) {
 		this.events = events;
 		this.recipients = recipients;
 		this.composer = composer;
@@ -52,7 +57,20 @@ public class AlarmDispatchJob {
 		this.debounce = debounce;
 		this.debounceCap = debounceCap;
 		this.maxAttempts = maxAttempts;
+		this.allowedRecipients = parseAllowlist(allowedRecipients);
 		this.clock = clock;
+	}
+
+	/** 콤마 목록 → 정규화(트림·소문자) 집합. 빈 값이면 빈 집합(=무제한). */
+	private static Set<String> parseAllowlist(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return Set.of();
+		}
+		return Arrays.stream(raw.split(","))
+				.map(String::trim)
+				.filter(s -> !s.isEmpty())
+				.map(s -> s.toLowerCase(Locale.ROOT))
+				.collect(Collectors.toUnmodifiableSet());
 	}
 
 	public void run() {
@@ -97,6 +115,14 @@ public class AlarmDispatchJob {
 		// 꺼진 종류도 대장엔 남는다 — 앱 내 알림으로는 계속 서빙된다(스펙 §3-3).
 		events.updateStatus(ids(muted), AlarmEmailStatus.SKIPPED_OPTOUT, null);
 		if (sendable.isEmpty()) {
+			return;
+		}
+		if (!allowedRecipients.isEmpty()
+				&& !allowedRecipients.contains(email.trim().toLowerCase(Locale.ROOT))) {
+			// dev/test 안전판 — 허용목록이 설정된 환경(실사용자 이메일이 있는 test DB)에서
+			// 승인된 검증 주소 밖으로는 무엇도 나가지 않는다. 새 상태값을 만들지 않는다(CHECK 제약 마이그레이션 회피).
+			log.info("허용목록 밖 수신자라 발송 생략 — user {} 알람 {}건 종결", userId, sendable.size());
+			events.updateStatus(ids(sendable), AlarmEmailStatus.SKIPPED_NO_RECIPIENT, null);
 			return;
 		}
 		AlarmMailComposer.Mail mail = composer.compose(sendable);

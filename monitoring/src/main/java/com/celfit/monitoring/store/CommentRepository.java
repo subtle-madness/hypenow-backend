@@ -8,8 +8,13 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * post_comment 테이블 접점 — 게시물당 전량 교체 갱신(계약 §3 post_comment).
- * DELETE + batch INSERT를 한 트랜잭션으로 묶어 교체 도중 부분 상태가 보이지 않게 한다.
+ * post_comment 테이블 접점.
+ *
+ * <p><b>계약</b>: post_comment는 "지금까지 관측된 top-15 댓글의 누적 합집합"이며 행을 삭제하지
+ * 않는다. IG에서 삭제된 댓글은 남는다 — Hiker 응답 정렬이 IG 랭킹 혼합(시간순이 아님)이고
+ * comment-pages=1(1페이지, 최대 15건)만 받으므로 "이번 응답에 없음"이 삭제를 뜻하는지 판정할
+ * 방법이 없기 때문이다. 어설픈 삭제 추정보다 데이터 보존을 택한다 — 이 이유로 DELETE를 되살리지
+ * 말 것.
  */
 @Repository
 public class CommentRepository {
@@ -20,16 +25,23 @@ public class CommentRepository {
 		this.db = db;
 	}
 
-	/** 이전 댓글을 지우고 이번 수집분으로 통째로 바꾼다 — 개별 upsert가 아니라 전량 교체(계약 §3). */
+	/**
+	 * 이번 수집분을 누적 upsert한다 — 이전 id는 보존되고 새 id는 추가되며, 같은 id를 재관측하면
+	 * body·like_count·owner_reply_text·commented_at만 갱신된다(위 클래스 계약 참고).
+	 */
 	@Transactional
-	public void replaceForPost(String shortCode, List<CommentInfo> comments) {
-		db.update("DELETE FROM post_comment WHERE short_code = ?", shortCode);
+	public void upsertForPost(String shortCode, List<CommentInfo> comments) {
 		if (comments.isEmpty()) {
-			return;   // batchSize 0 호출을 피한다 — 삭제만으로 "댓글 0건"이 이미 반영된 상태다.
+			return;   // batchSize 0 호출을 피한다 — 이번 수집분이 0건이면 upsert할 것이 없다.
 		}
 		db.batchUpdate("""
 				INSERT INTO post_comment (short_code, id, author, body, like_count, commented_at, owner_reply_text)
-				VALUES (?, ?, ?, ?, ?, ?, ?)""",
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (short_code, id) DO UPDATE SET
+					body = EXCLUDED.body,
+					like_count = EXCLUDED.like_count,
+					owner_reply_text = EXCLUDED.owner_reply_text,
+					commented_at = EXCLUDED.commented_at""",
 				comments, comments.size(), (ps, c) -> {
 					ps.setString(1, shortCode);
 					ps.setString(2, c.id());

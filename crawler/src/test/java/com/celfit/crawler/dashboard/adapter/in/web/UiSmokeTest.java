@@ -67,7 +67,9 @@ class UiSmokeTest extends IntegrationTest {
         mvc.perform(get("/ui")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("job-strip")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/discover")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/REELS/stop")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/caption-backfill")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("/ui/jobs/CAPTION_BACKFILL/stop")));
     }
 
     @Test

@@ -6,7 +6,7 @@
 
 **Goal:** `web_profile_info`(SELF)가 HTTP 400을 반환하는 계정만 HikerAPI로 폴백하는 새 프로필 소스 `SELF_HIKER_FALLBACK`을 추가한다.
 
-**Architecture:** 컴포지트 페처가 SELF 배치 조회 중 400 계정을 수집해 `HikerMobileProfileFetcher` 경로로 2차 조회하고 결과를 병합한다(crawl_run 1건 유지). 혼합 배치의 아이템별 소스는 `ProfileExtractor.detect` 셰이프 감지로 구분하며, 소비처 3곳(CollectJob·QualifyJob·ProfileSupplementer)이 이를 사용한다. 스펙: [specs/2026-07-26-profile-400-hiker-fallback-design.md](../specs/2026-07-26-profile-400-hiker-fallback-design.md)
+**Architecture:** 컴포지트 페처가 SELF 배치 조회 중 400 계정을 수집해 `HikerMobileProfileFetcher` 경로로 2차 조회하고 결과를 병합한다(crawl_run 1건 유지). 혼합 배치의 아이템별 소스는 `ProfileExtractor.detect` 셰이프 감지로 구분하며, 소비처 3곳(CollectJob·QualifyJob·ProfileSupplementer)이 이를 사용한다. 스펙: [specs/2026-07-26-profile-400-hiker-fallback-design.md](../../specs/2026-07-26-profile-400-hiker-fallback-design.md)
 
 **Tech Stack:** Java 21, Spring Boot 4.1, Jackson 3(`tools.jackson.*`), JUnit 5 + AssertJ + Mockito. 모듈: `crawler`.
 

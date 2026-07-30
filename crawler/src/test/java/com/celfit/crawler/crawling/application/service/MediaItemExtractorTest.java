@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.domain.RawSource;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -28,8 +29,10 @@ class MediaItemExtractorTest {
 
         assertThat(items).hasSize(3);
         assertThat(items.get(0).pinned()).isTrue();
+        // 이 소스(HIKER_GQL_MEDIAS)는 캡션 3형태(caption/caption_text/edge_media_to_caption) 중
+        // 어느 키도 없다 — 미확인이므로 null(캡션 없음이 아니라 이 payload로는 판단 불가).
         assertThat(items.get(1)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "NEW1", Instant.ofEpochSecond(1783474981L), ContentType.REELS, false));
+                "NEW1", Instant.ofEpochSecond(1783474981L), ContentType.REELS, false, null));
         assertThat(items.get(2).type()).isEqualTo(ContentType.FEED);
         assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_GQL_MEDIAS)).isEqualTo("CURSOR_X");
     }
@@ -45,8 +48,9 @@ class MediaItemExtractorTest {
         List<MediaItemExtractor.MediaItem> items =
                 MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
 
+        // 이 픽스처엔 "caption" 키 자체가 없다 — 미확인이므로 null.
         assertThat(items).containsExactly(new MediaItemExtractor.MediaItem(
-                "CLIP1", Instant.ofEpochSecond(1783223195L), ContentType.REELS, false));
+                "CLIP1", Instant.ofEpochSecond(1783223195L), ContentType.REELS, false, null));
         assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V2_CLIPS)).isEqualTo("PAGE2");
     }
 
@@ -86,10 +90,11 @@ class MediaItemExtractorTest {
                 MediaItemExtractor.extract(payload, RawSource.SELF_GQL);
 
         assertThat(items).hasSize(3);
+        // 이 픽스처엔 "edge_media_to_caption" 키가 없다 — 미확인이므로 null.
         assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "FEED1", Instant.ofEpochSecond(1773630245L), ContentType.FEED, true));
+                "FEED1", Instant.ofEpochSecond(1773630245L), ContentType.FEED, true, null));
         assertThat(items.get(1)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "REEL1", Instant.ofEpochSecond(1781092809L), ContentType.REELS, false));
+                "REEL1", Instant.ofEpochSecond(1781092809L), ContentType.REELS, false, null));
         assertThat(items.get(2).pinned()).isFalse();
     }
 
@@ -133,8 +138,9 @@ class MediaItemExtractorTest {
                 MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS);
 
         assertThat(items).hasSize(3);
+        // 이 픽스처엔 "caption_text" 키가 없다 — 미확인이므로 null.
         assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "C_FEED", Instant.parse("2026-07-18T01:00:00Z"), ContentType.FEED, false));
+                "C_FEED", Instant.parse("2026-07-18T01:00:00Z"), ContentType.FEED, false, null));
         assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
         assertThat(items.get(2).takenAt()).isEqualTo(Instant.ofEpochSecond(1773630245L));
         assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V1_MEDIAS)).isEqualTo("CUR9");
@@ -152,6 +158,141 @@ class MediaItemExtractorTest {
         assertThat(items).hasSize(2);
         assertThat(items.get(0).shortCode()).isEqualTo("HFEED");
         assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
+    }
+
+    // ---- 캡션 원문 추출 — 세 소스가 형태가 다르다(중첩 객체 / edges 배열 / 평문) ----
+
+    @Test
+    void v2_clips는_caption_text_중첩객체에서_캡션을_뽑는다() {
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(
+                        Map.of("media", Map.of("code", "CLIP1", "taken_at", 1783223195L,
+                                "product_type", "clips",
+                                "caption", Map.of("text", "#광고 여름 메리제인 🤍"))))));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).caption()).isEqualTo("#광고 여름 메리제인 🤍");
+    }
+
+    @Test
+    void self_gql은_edge_media_to_caption_첫_노드에서_캡션을_뽑는다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "FEED1", "taken_at_timestamp", 1773630245L,
+                        "edge_media_to_caption", Map.of("edges", List.of(
+                                Map.of("node", Map.of("text", "매일 쓰는 메이크업 도구")))))));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.SELF_GQL);
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).caption()).isEqualTo("매일 쓰는 메이크업 도구");
+    }
+
+    @Test
+    void v1_medias는_caption_text_평문필드에서_캡션을_뽑는다() {
+        Map<String, Object> payload = Map.of("medias", List.of(
+                Map.of("code", "C_FEED", "taken_at", 1773630245L,
+                        "caption_text", "고마어 잘 쓸게~~ 🤍")));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS);
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).caption()).isEqualTo("고마어 잘 쓸게~~ 🤍");
+    }
+
+    // ---- 캡션 3-상태: 미확인(캡션 키 자체를 못 찾음) → null / 확인된 무캡션(키는 있고 값이 비어있음) → ""
+    // 이 구분이 없으면(옛 구현처럼 둘 다 "") 같은 content가 다른 소스 페이지에 다시 등장할 때
+    // 더 최신 페이지의 ""가 이미 확보된 실제 캡션을 덮어쓴다.
+
+    /** caption_text 키 자체가 없다 — "캡션 없음"이 아니라 "미확인"이므로 null. */
+    @Test
+    void v1_medias는_caption_text_키가_없으면_미확인_null이다() {
+        Map<String, Object> payload = Map.of("medias", List.of(
+                Map.of("code", "NOCAP", "taken_at", 1773630245L)));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS).get(0).caption())
+                .isNull();
+    }
+
+    /** caption_text 키는 있고 값이 빈 문자열 — 형태를 인식했고 캡션 없음을 확인한 경우. */
+    @Test
+    void v1_medias는_caption_text가_빈문자열이면_확인된_무캡션이다() {
+        Map<String, Object> payload = Map.of("medias", List.of(
+                Map.of("code", "EMPTYCAP", "taken_at", 1773630245L, "caption_text", "")));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS).get(0).caption())
+                .isEqualTo("");
+    }
+
+    /** caption 키 자체가 없다 — 미확인이므로 null. */
+    @Test
+    void v2_clips는_caption_키가_없으면_미확인_null이다() {
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(
+                        Map.of("media", Map.of("code", "NOCAP2", "taken_at", 1783223195L)))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS).get(0).caption())
+                .isNull();
+    }
+
+    /** caption.text가 빈 문자열 — 형태를 인식했고 캡션 없음을 확인한 경우. */
+    @Test
+    void v2_clips는_caption_text가_빈문자열이면_확인된_무캡션이다() {
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(
+                        Map.of("media", Map.of("code", "EMPTYCAP2", "taken_at", 1783223195L,
+                                "caption", Map.of("text", ""))))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS).get(0).caption())
+                .isEqualTo("");
+    }
+
+    /**
+     * caption 키는 있고 값이 명시적 JSON null — 운영 실측(2026-07-30, 표본 2,905건 중
+     * 24건=0.83%)에서 확인된 실제 표현. Map.get()은 "키 부재"와 "값이 JSON null"을 구분하지
+     * 못해 예전 구현은 이를 "미확인"(null)으로 오판했고, 그 결과 ContentCaptionUpserter가
+     * 해당 행을 배치에서 제외해 이 0.83%가 커버리지에서 통째로 누락됐다. containsKey로
+     * 판정해 "확인된 무캡션"(빈 문자열)으로 다뤄야 한다.
+     */
+    @Test
+    void v2_clips는_caption이_명시적_null이면_확인된_무캡션이다() {
+        Map<String, Object> media = new HashMap<>();
+        media.put("code", "NULLCAP");
+        media.put("taken_at", 1783223195L);
+        media.put("caption", null);
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(Map.of("media", media))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS).get(0).caption())
+                .isEqualTo("");
+    }
+
+    /** edge_media_to_caption 키 자체가 없다 — 미확인이므로 null. */
+    @Test
+    void self_gql은_edge_media_to_caption_키가_없으면_미확인_null이다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "NOCAPSELF", "taken_at_timestamp", 1773630245L)));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.SELF_GQL).get(0).caption())
+                .isNull();
+    }
+
+    /**
+     * hasEmbeddedTimeline의 빈 edges 검증과 짝 — edge_media_to_caption 키는 있고 edges가 비어도
+     * IndexOutOfBounds 없이, 형태를 인식했고 캡션 없음을 확인한 것으로("") 처리한다.
+     */
+    @Test
+    void self_gql은_edges가_비어있으면_확인된_무캡션이다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "FEED1", "taken_at_timestamp", 1773630245L,
+                        "edge_media_to_caption", Map.of("edges", List.of()))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.SELF_GQL).get(0).caption())
+                .isEqualTo("");
     }
 
     // ---- captions: 저장된 릴스 페이지에서 캡션 추출 ----

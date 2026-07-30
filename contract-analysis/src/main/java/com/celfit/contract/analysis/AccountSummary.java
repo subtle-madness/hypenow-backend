@@ -23,6 +23,11 @@ import java.time.OffsetDateTime;
  * 목록 정렬이 사실상 handle 알파벳순에 지배되는 결함이 있었다
  * (스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절) — 표시값과 정렬 키를
  * 분리해 재발을 막는다. avgHypeScore가 NULL이면 이 값도 NULL.
+ * avgHypeScorePrecise(맨 끝 필드 — 위와 같은 이유로 avgHypeRaw 뒤에 추가, 스펙 §10): 콘텐츠 출력
+ * 매핑까지 반영한 창 콘텐츠 평균(avgHypeRaw와는 다른 재료 — 새 anchor로 별도 적합)을
+ * analytics.hype_account_score_precise()로 매핑해 소수 4자리로 자른 값. avgHypeScore·avgHypeRaw는
+ * 이 필드 추가로 값·의미가 바뀌지 않는다(완전히 독립된 산식). was 발굴 목록은 이제 표시·정렬
+ * 모두 이 필드를 쓴다.
  */
 public record AccountSummary(String handle, Long followers, Long followsCount, Long postsCount,
 		String biography, Long analyzedCount, Long viewsCount, String metric, Long avgViews,
@@ -33,5 +38,5 @@ public record AccountSummary(String handle, Long followers, Long followsCount, L
 		OffsetDateTime lastPostedAt, BigDecimal avgIntervalDays, Long avgHypeScore,
 		Integer viewsSampleCount, Integer likesSampleCount, Integer commentsSampleCount, Integer reelsCount,
 		Integer feedCount, Long medianViews, BigDecimal medianErPct, Integer topViewsSharePct,
-		Integer windowSpanDays, String email, BigDecimal avgHypeRaw) {
+		Integer windowSpanDays, String email, BigDecimal avgHypeRaw, BigDecimal avgHypeScorePrecise) {
 }

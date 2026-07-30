@@ -8,13 +8,22 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 저장된 열거 페이지 원형에서 제어 필드만 추출. 원형은 이미 raw_media_page에 있으므로
+ * 저장된 열거 페이지 원형에서 제어 필드와 캡션 원문을 추출. 원형은 이미 raw_media_page에 있으므로
  * 여기서의 결손·실패는 데이터 유실이 아니다(해당 아이템만 건너뜀).
  * Hiker gql flat은 숫자 필드에 1l/1f 접두사를 붙인다 — get()이 3형을 순서대로 조회.
  */
 public final class MediaItemExtractor {
 
-    public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned) {}
+    /**
+     * @param caption 캡션 원문 — 3-상태다. {@code null}=이 payload 형태에서 캡션을 읽는 방법을
+     *                모름(미확인), {@code ""}=형태를 인식했고 캡션이 없음을 확인함, 그 외=캡션
+     *                원문. null과 ""를 구분하는 이유: 구분하지 않으면 같은 content가 다른(더
+     *                최신) 소스 페이지에 다시 등장했을 때 "미확인"의 빈 문자열이 이미 확보한
+     *                실제 캡션을 조용히 덮어쓴다(ContentCaptionUpserter는 null 아이템을 아예
+     *                배치에서 제외한다).
+     */
+    public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned,
+                            String caption) {}
 
     public static List<MediaItem> extract(Map<String, Object> payload, RawSource source) {
         List<MediaItem> out = new ArrayList<>();
@@ -30,7 +39,7 @@ public final class MediaItemExtractor {
             boolean pinned = nonEmptyList(m.get("timeline_pinned_user_ids"))
                     || nonEmptyList(m.get("clips_tab_pinned_user_ids"))
                     || nonEmptyList(m.get("pinned_for_users"));              // SELF_GQL
-            out.add(new MediaItem(code, takenAt, type, pinned));
+            out.add(new MediaItem(code, takenAt, type, pinned, captionOf(m)));
         }
         return out;
     }
@@ -107,6 +116,44 @@ public final class MediaItemExtractor {
         if (item.get("media") instanceof Map<?, ?> m) return (Map<String, Object>) m;
         if (item.get("node") instanceof Map<?, ?> n) return (Map<String, Object>) n;  // SELF_GQL edges
         return (Map<String, Object>) item;
+    }
+
+    /**
+     * 캡션 원문 — unwrapMedia()가 media/node/item을 이미 벗겨냈으므로 정규화된 맵 하나에서
+     * 세 형태를 순서대로 시도한다. HIKER_V2_CLIPS는 caption.text(중첩 객체),
+     * HIKER_V1_MEDIAS는 caption_text(평문), SELF_GQL은 edge_media_to_caption.edges[0].node.text.
+     *
+     * <p>반환은 3-상태다 — {@code null}=이 형태의 캡션 키 자체를 못 찾음(미확인),
+     * {@code ""}=키는 찾았고 값이 비어 있음(확인된 무캡션), 그 외=캡션 원문. 이 구분이 없으면
+     * (옛 구현처럼 못 찾을 때도 "") 같은 content가 여러 소스 페이지에 등장할 때(타임라인은
+     * 릴스도 담고 V1_MEDIAS는 피드·릴스를 함께 담는다) 더 최신 페이지에서 이 형태를 못 읽으면
+     * ""가 실제로 확보해 둔 캡션을 조용히 덮어쓴다.
+     *
+     * <p>HIKER_V2_CLIPS는 키 존재 여부(containsKey)로 판정한다 — 운영 실측(2026-07-30,
+     * 표본 2,905건)에서 캡션 없는 게시물은 키 부재가 아니라 {@code "caption": null}로
+     * 표현됨을 확인했다(24건, 0.83%). {@code Map.get()}은 "키 없음"과 "값이 JSON null"을
+     * 구분하지 못해 이 값을 "미확인"으로 오판하면 해당 0.83%에 대해 행이 생성되지 않는다
+     * (커버리지 누락, "행 부재=미확인" 계약 위반). 그래서 키가 있으면 값이 null이거나
+     * 캡션 객체가 아니어도 "확인된 무캡션"(빈 문자열)으로 다룬다. caption_text
+     * (V1_MEDIAS)도 이론상 같은 함정이 가능하지만 실측(표본 2,393건)에서 명시적 null이
+     * 0건이라 이 세션에서는 건드리지 않는다 — 향후 재현되면 같은 패턴을 적용할 것.
+     */
+    private static String captionOf(Map<String, Object> m) {
+        if (m.containsKey("caption")) {
+            Object c = m.get("caption");
+            return c instanceof Map<?, ?> cm && cm.get("text") instanceof String s ? s : "";
+        }
+        if (m.get("caption_text") instanceof String s) {
+            return s;
+        }
+        if (m.get("edge_media_to_caption") instanceof Map<?, ?> e) {
+            if (!(e.get("edges") instanceof List<?> edges)) return null;
+            if (edges.isEmpty()) return "";
+            return edges.get(0) instanceof Map<?, ?> first
+                    && first.get("node") instanceof Map<?, ?> node
+                    && node.get("text") instanceof String s ? s : null;
+        }
+        return null;
     }
 
     private static String firstString(Object... candidates) {

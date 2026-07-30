@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawCommentRepository;
@@ -50,10 +51,14 @@ class CollectJobIntegrationTest extends IntegrationTest {
     static final String USERNAME_NOT_BEAUTY = "it-collect-not-beauty";
     static final String USERNAME_UNJUDGED = "it-collect-beauty-unjudged";
     static final String USERNAME_COMPANY = "it-collect-beauty-company";
+    static final String USERNAME_CAPTION = "it-collect-caption-user";
+    static final String CAPTION_SHORT_CODE = "it-caption-post";
+    static final String CAPTION_TEXT = "오늘의 데일리룩 #ootd";
 
     @Autowired InfluencerRepository influencers;
     @Autowired RawProfileRepository rawProfiles;
     @Autowired ContentRepository contents;
+    @Autowired ContentCaptionUpserter captionUpserter;
     @Autowired RawCommentRepository rawComments;
     @Autowired com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository rawMediaPages;
     @Autowired CrawlRunRepository crawlRuns;
@@ -74,6 +79,14 @@ class CollectJobIntegrationTest extends IntegrationTest {
         jdbc.update("delete from influencer where username in (?, ?, ?, ?, ?, ?)",
                 USERNAME_BACKFILL, USERNAME_DUE, USERNAME_RECENT, USERNAME_NOT_BEAUTY, USERNAME_UNJUDGED,
                 USERNAME_COMPANY);
+        // content_caption(content_id FK RESTRICT) → content → raw_profile → crawl_run → influencer 순.
+        jdbc.update("delete from content_caption where content_id in (select id from content where short_code = ?)",
+                CAPTION_SHORT_CODE);
+        jdbc.update("delete from content where short_code = ?", CAPTION_SHORT_CODE);
+        jdbc.update("delete from raw_profile where influencer_id in (select id from influencer where username = ?)", USERNAME_CAPTION);
+        jdbc.update("delete from raw_run_item where crawl_run_id in (select id from crawl_run where target_username = ?)", USERNAME_CAPTION);
+        jdbc.update("delete from crawl_run where target_username = ?", USERNAME_CAPTION);
+        jdbc.update("delete from influencer where username = ?", USERNAME_CAPTION);
     }
 
     @Test
@@ -101,7 +114,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
         CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
                 influencers, rawProfiles, contents,
-                new ContentUpserter(contents, clock), rawComments, rawMediaPages,
+                new ContentUpserter(contents, clock), captionUpserter, rawComments, rawMediaPages,
                 profileSource, commentSource, java.util.List.of(), executor, settings, clock,
                 progress, new JobStopFlag(), new TransactionTemplate(txManager));
 
@@ -115,6 +128,59 @@ class CollectJobIntegrationTest extends IntegrationTest {
         assertThat(reloaded.getFirstCollectedAt()).as("first_collected_at(백필 완료 표식)").isNotNull();
         assertThat(reloaded.getFollowers()).isEqualTo(4321L);
         assertThat(reloaded.getLastProfiledAt()).isNotNull();
+    }
+
+    // ---------------------------------------------------------------------
+    // Task 4 — COLLECT 방문이 실제로 content_caption에 캡션을 적재하는지(배선 자체의 증거).
+    // 내장 타임라인(SELF_GQL) 캡션 경로: data.user.edge_owner_to_timeline_media.edges[].node
+    //   .edge_media_to_caption.edges[0].node.text
+    // ---------------------------------------------------------------------
+    @Test
+    void 방문하면_캡션이_content_caption에_적재된다() {
+        Influencer inf = new Influencer(USERNAME_CAPTION);
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
+        influencers.save(inf);
+
+        CrawlRun profileRun = crawlRuns.save(new CrawlRun(JobName.COLLECT, TriggerType.MANUAL,
+                null, USERNAME_CAPTION, "it-profile-source", Instant.now()));
+
+        Map<String, Object> mediaNode = new LinkedHashMap<>();
+        mediaNode.put("shortcode", CAPTION_SHORT_CODE);
+        mediaNode.put("taken_at_timestamp", Instant.now().getEpochSecond());
+        mediaNode.put("product_type", "");
+        mediaNode.put("edge_media_to_caption", Map.of("edges", List.of(
+                Map.of("node", Map.of("text", CAPTION_TEXT)))));
+
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("username", USERNAME_CAPTION);
+        user.put("id", "IT-CAPTION-USERID");
+        user.put("edge_followed_by", Map.of("count", 500L));
+        user.put("edge_owner_to_timeline_media", Map.of("edges", List.of(Map.of("node", mediaNode))));
+        Map<String, Object> profilePayload = Map.of("data", Map.of("user", user));
+
+        ProfileSourceSelector profileSource = mock(ProfileSourceSelector.class);
+        when(profileSource.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(profileSource.fetchAndSupplement(any(), any(), any()))
+                .thenReturn(new CrawlExecutor.Execution(profileRun.getId(), List.of(profilePayload)));
+
+        CommentSourceSelector commentSource = mock(CommentSourceSelector.class); // 빈 열거 → 댓글 호출 없음
+
+        CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
+                influencers, rawProfiles, contents,
+                new ContentUpserter(contents, clock), captionUpserter, rawComments, rawMediaPages,
+                profileSource, commentSource, java.util.List.of(), executor, settings, clock,
+                progress, new JobStopFlag(), new TransactionTemplate(txManager));
+
+        var summary = job.run(TriggerType.MANUAL);
+        assertThat(summary.visited()).isEqualTo(1);
+        assertThat(summary.postsUpserted()).isEqualTo(1);
+
+        Long contentId = jdbc.queryForObject(
+                "select id from content where short_code = ?", Long.class, CAPTION_SHORT_CODE);
+        String caption = jdbc.queryForObject(
+                "select caption from content_caption where content_id = ?", String.class, contentId);
+        assertThat(caption).isEqualTo(CAPTION_TEXT);
     }
 
     // ---------------------------------------------------------------------

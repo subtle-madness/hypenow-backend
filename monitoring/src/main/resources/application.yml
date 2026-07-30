@@ -34,6 +34,7 @@ monitoring:
     debounce: 10m        # 즉시 레인 몰아치기 흡수 — 마지막 이벤트가 이 시간 안이면 다음 틱으로 미룬다
     debounce-cap: 30m    # 디바운스 최대 대기 — 가장 오래된 due가 이 시간을 넘기면 유입 중이어도 발송
     max-attempts: 5      # 행별 발송 시도 상한. 도달하면 due 조회에서 빠진다(영구 실패 수신자 무한 재시도 차단)
+    allowed-recipients: ${MONITORING_ALARM_ALLOWED_RECIPIENTS:}   # 콤마 목록. 비어있으면(운영 기본) 무제한 — dev/test에서 실사용자 이메일 유출 방지용 안전판
     reader:              # analysis DB app 스키마 읽기 전용(계약 v2 §6 — 두 객체만 GRANT)
       url: ${MONITORING_ALARM_READER_URL:}
       username: ${MONITORING_ALARM_READER_USERNAME:}
