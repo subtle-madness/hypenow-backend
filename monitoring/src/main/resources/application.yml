@@ -5,6 +5,12 @@ spring:
     url: jdbc:postgresql://localhost:5433/monitoring
     username: monitoring
     password: monitoring
+  task:
+    scheduling:
+      pool:
+        # 기본 1이면 스윕의 재시도 라운드 대기(최대 간격×라운드 합)가 스케줄러 스레드를 붙잡아
+        # 그 사이 알람 발송 틱이 통째로 밀린다 — 스윕과 발송을 분리하려면 최소 2가 필요하다.
+        size: 2
 
 server:
   port: 8083   # crawler 8080 · was 8081 · analytics 8082 다음
@@ -14,6 +20,11 @@ monitoring:
     api-key: ${HIKER_API_KEY:}
     base-url: https://api.hikerapi.com
     request-timeout: 15s
+    max-retries: 2       # 일시 오류(5xx·IO) 전용. 404는 재시도하지 않는다
+    retry-backoff: 2s    # 회차마다 × n (2s → 4s)
+  sweep:
+    retry-rounds: 3      # 스윕 말미 일시 실패 계정 재시도 라운드 수
+    retry-interval: 10m  # 라운드 간격 × 라운드 번호 (10m → 20m → 30m)
   schedule:
     sweep-cron: "-"     # "-"=비활성. 운영은 UTC 17:00(KST 02:00)을 env로 주입
-  enumerate-pages: 1    # 게시물 열거 페이지 수(최근 N개 범위) — Task 1 findings로 조정
+  enumerate-pages: 1    # 게시물 열거 페이지 수(최근 N개 범위)

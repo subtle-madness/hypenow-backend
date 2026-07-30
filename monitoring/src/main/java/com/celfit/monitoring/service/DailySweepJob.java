@@ -7,14 +7,17 @@ import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -35,37 +38,74 @@ public class DailySweepJob {
 
 	private final TargetRepository targets;
 	private final CollectService collect;
+	private final int retryRounds;
+	private final Duration retryInterval;
 
-	public DailySweepJob(TargetRepository targets, CollectService collect) {
+	public DailySweepJob(TargetRepository targets, CollectService collect,
+			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
+			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval) {
 		this.targets = targets;
 		this.collect = collect;
+		this.retryRounds = retryRounds;
+		this.retryInterval = retryInterval;
 	}
 
 	public void run() {
 		// 만료를 먼저 닫아야 만기 지난 캠페인이 그날 스윕 대상에서 빠진다 — 순서가 바뀌면 종료된 캠페인만큼 콜이 샌다.
 		int expired = targets.expireOverdue();
+		Set<String> pending = sweepRound(null);
+		int accounts = pending.size();   // 라운드 로그용 초기 실패 수(전체 계정 수는 sweepRound가 남긴다)
+		for (int round = 1; round <= retryRounds && !pending.isEmpty(); round++) {
+			// 간격 × 라운드 — 상대가 회복할 시간을 회차마다 늘려 준다.
+			sleep(retryInterval.multipliedBy(round));
+			log.info("일시 실패 재시도 라운드 {}/{} — 계정 {}건", round, retryRounds, pending.size());
+			pending = sweepRound(pending);
+		}
+		log.info("스윕 완료 — 만료 {}건, 미해소 일시 실패 {}건(최초 {}건)", expired, pending.size(), accounts);
+	}
+
+	/**
+	 * 한 바퀴. {@code only}가 null이면 전체, 아니면 그 계정들만 돈다.
+	 * 활성 target을 매 라운드 다시 읽는다 — 앞 라운드에서 전환·종결된 행을 그대로 들고 돌면
+	 * 이미 TRACKING인 캠페인을 WATCHING으로 착각해 감지를 두 번 한다.
+	 *
+	 * @return 재시도 여지가 있는 실패(일시 오류) 계정. 결정적 실패(404·비공개)는 이미 종결됐으므로 빠진다.
+	 */
+	private Set<String> sweepRound(Set<String> only) {
 		Map<String, List<TargetRow>> byUsername = targets.findActive().stream()
+				.filter(t -> only == null || only.contains(t.username()))
 				.collect(Collectors.groupingBy(TargetRow::username));
-		int failedAccounts = 0;
+		Set<String> transientFailures = new LinkedHashSet<>();
 		for (var entry : byUsername.entrySet()) {
 			try {
 				sweepAccount(entry.getKey(), entry.getValue());
 			} catch (SubjectNotFoundException e) {
 				// 계정 자체가 없어졌다(삭제·개명) — 재시도해도 결과가 같으니 그 계정의 캠페인을 전부 종결한다.
 				closeAll(entry.getKey(), entry.getValue(), NOT_FOUND);
-				failedAccounts++;
 			} catch (PrivateAccountException e) {
 				// 비공개 전환도 결정적 수집 불가다(설계 §5 "계정 소멸·비공개 등 → FAILED").
 				// 일반 실패로 두면 만료일까지 매일 1콜을 태우면서 영원히 WATCHING으로 남는다.
 				closeAll(entry.getKey(), entry.getValue(), PRIVATE_ACCOUNT);
-				failedAccounts++;
 			} catch (RuntimeException e) {
-				// 재시도 여지가 있는 실패(5xx·타임아웃·셰이프 이상)는 상태를 건드리지 않는다 — Task 3의 재시도 라운드가 다시 본다.
+				// 재시도 여지가 있는 실패(5xx·타임아웃·셰이프 이상)는 상태를 건드리지 않고 다음 라운드로 넘긴다.
 				log.warn("스윕 실패(격리) — 계정 {}: {}", entry.getKey(), e.toString());
-				failedAccounts++;
+				transientFailures.add(entry.getKey());
 			}
 		}
-		log.info("스윕 완료 — 계정 {}건(실패 {}), 만료 {}건", byUsername.size(), failedAccounts, expired);
+		return transientFailures;
+	}
+
+	/** 라운드 사이 대기. 인터럽트는 종료 신호라 남은 라운드를 포기한다(다음날 스윕이 회복시킨다). */
+	private static void sleep(Duration duration) {
+		if (duration.isZero() || duration.isNegative()) {
+			return;
+		}
+		try {
+			Thread.sleep(duration.toMillis());
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("스윕 재시도 대기 중단", e);
+		}
 	}
 
 	/**

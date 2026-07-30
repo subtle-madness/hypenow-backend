@@ -16,6 +16,7 @@ import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -51,6 +52,8 @@ class DailySweepJobTest {
 		private final Set<String> privateUsernames = new HashSet<>();
 		private final Set<String> brokenUsernames = new HashSet<>();
 		private final Set<String> missingCodes = new HashSet<>();
+		/** 라운드 N번째부터 성공하는 계정 — 스윕 말미 재시도 라운드가 실제로 회복시키는지 본다. */
+		private final Map<String, Integer> flakyRemaining = new HashMap<>();
 
 		int profileCalls;
 		int mediasCalls;
@@ -93,6 +96,12 @@ class DailySweepJobTest {
 			return this;
 		}
 
+		/** 라운드 N번째부터 성공하는 계정 — 스윕 말미 재시도 라운드가 실제로 회복시키는지 본다. */
+		FakeHiker flakyAccount(String username, int failures, String userId, FakePost... posts) {
+			flakyRemaining.put(username, failures);
+			return account(username, userId, posts);
+		}
+
 		/** 게시물 삭제 — 단건 조회가 404. */
 		FakeHiker missingPost(String code) {
 			missingCodes.add(code);
@@ -109,6 +118,11 @@ class DailySweepJobTest {
 				}
 				if (brokenUsernames.contains(username)) {
 					throw new HikerFetchException("502 " + username);
+				}
+				Integer remaining = flakyRemaining.get(username);
+				if (remaining != null && remaining > 0) {
+					flakyRemaining.put(username, remaining - 1);
+					throw new HikerFetchException("502 일시 " + username);
 				}
 				// 비공개는 200 응답의 is_private 플래그다 — 판정은 HikerClient가 한다(fake가 대신 던지지 않는다).
 				if (privateUsernames.contains(username)) {
@@ -196,7 +210,7 @@ class DailySweepJobTest {
 		hiker = new FakeHiker();
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var collect = new CollectService(client, new SnapshotWriter(new SnapshotRepository(db)), 1);
-		job = new DailySweepJob(targets, collect);
+		job = new DailySweepJob(targets, collect, 3, Duration.ZERO);
 	}
 
 	private static KeywordRule any(String keyword) {
@@ -488,5 +502,44 @@ class DailySweepJobTest {
 				Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot WHERE username='u2'",
 				Long.class)).isEqualTo(2);
+	}
+
+	/**
+	 * 일시 오류는 알람이 아니라 재시도 대상이다(스펙 §2-3) — 시스템이 당일 안에 수집을 완수해야 한다.
+	 * 라운드가 없으면 5xx 한 번에 그 계정의 하루가 통째로 비고, 캠페인은 상태도 안 바뀌어 아무도 모른다.
+	 */
+	@Test
+	void 일시_실패_계정은_스윕_말미_재시도_라운드에서_회복된다() {
+		hiker.flakyAccount("flaky_user", 2, "333",
+				new FakePost("FFF", "Rare Beginnings 신상", AFTER));
+		long flaky = watching("flaky_user", any("Rare Beginnings"), "rk-flaky", FUTURE);
+
+		job.run();
+
+		assertThat(trackedOf(flaky)).isEqualTo("FFF");
+		assertThat(hiker.profileCalls).isEqualTo(3);   // 최초 + 라운드 2
+	}
+
+	/** 라운드를 다 써도 안 되면 상태는 그대로 둔다 — 다음날 스윕이 자연 회복시킨다(알람 없음). */
+	@Test
+	void 라운드를_다_써도_실패하면_상태를_건드리지_않는다() {
+		hiker.brokenAccount("bad_user");
+		long bad = watching("bad_user", any("Rare Beginnings"), "rk-bad", FUTURE);
+
+		job.run();
+
+		assertThat(statusOf(bad)).isEqualTo(TargetStatus.WATCHING);
+		assertThat(hiker.profileCalls).isEqualTo(4);   // 최초 + 라운드 3
+	}
+
+	/** 결정적 실패(404·비공개)는 재시도 대상이 아니다 — 라운드에 넣으면 종결이 라운드 수만큼 늦어진다. */
+	@Test
+	void 계정_404는_재시도_라운드에_들어가지_않는다() {
+		hiker.missingAccount("gone_user");
+		watching("gone_user", any("Rare Beginnings"), "rk-gone", FUTURE);
+
+		job.run();
+
+		assertThat(hiker.profileCalls).isEqualTo(1);
 	}
 }
