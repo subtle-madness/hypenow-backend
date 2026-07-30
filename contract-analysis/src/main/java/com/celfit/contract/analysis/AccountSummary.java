@@ -15,6 +15,8 @@ import java.time.OffsetDateTime;
  * 통계 왜곡 가드 재료(스펙 2026-07-30-perf-summary-statistical-guards-design.md §3-1): *SampleCount는
  * 지표별 실질 모수(analyzedCount와 달리 NULL 관측은 빠진다), medianViews·medianErPct·topViewsSharePct는
  * 관측이 없거나(0건) 분모가 0이면 NULL. windowSpanDays는 최초~최근 게시 간격(일).
+ * email: biography 정규식 파싱(스펙 2026-07-30-influencer-email-from-bio) — 첫 매치만·소문자 정규화,
+ * biography 없거나 매치 없으면 NULL(LLM 미사용, 운영 실측 오탐 0건 근거).
  */
 public record AccountSummary(String handle, Long followers, Long followsCount, Long postsCount,
 		String biography, Long analyzedCount, Long viewsCount, String metric, Long avgViews,
@@ -25,5 +27,5 @@ public record AccountSummary(String handle, Long followers, Long followsCount, L
 		OffsetDateTime lastPostedAt, BigDecimal avgIntervalDays, Long avgHypeScore,
 		Integer viewsSampleCount, Integer likesSampleCount, Integer commentsSampleCount, Integer reelsCount,
 		Integer feedCount, Long medianViews, BigDecimal medianErPct, Integer topViewsSharePct,
-		Integer windowSpanDays) {
+		Integer windowSpanDays, String email) {
 }

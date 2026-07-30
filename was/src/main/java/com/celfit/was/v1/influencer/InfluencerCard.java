@@ -5,7 +5,8 @@ import java.util.List;
 
 /**
  * 스펙 6.21 발굴 목록 카드. 모든 파생 지표의 근거는 최근 12개 게시물 창(account_content_series).
- * id는 handle 그대로(6.4 확정 준용). email은 크롤러 미수집(V31)이라 현재 항상 null.
+ * id는 handle 그대로(6.4 확정 준용). email은 biography 정규식 파싱(V46, 스펙
+ * 2026-07-30-influencer-email-from-bio) — 매치 없으면 null.
  * effectiveFollowers·avgViews·er는 산출 불가(ER·릴스 없음)면 null, bio·tagline 부재는 빈 문자열.
  * hypeScore: 계정 하입 스코어(최근창 콘텐츠 hype_score 단순 평균, 0~100) — 점수 가능 콘텐츠 없으면 null
  * (스펙 2026-07-29-influencer-avg-hype-score).

@@ -91,8 +91,8 @@ class V2InfluencerReportControllerTest {
 		given(repository.findSimilarHandles("haeun.log")).willReturn(List.of("b", "a"));
 		// discoveryRepository.findCardsByHandles가 ["a","b"] 순(비유사도 순)으로 돌려줘도 응답은 ["b","a"]
 		given(discoveryRepository.findCardsByHandles(List.of("b", "a"))).willReturn(List.of(
-				new CardRow("a", "A", null, 1000L, 10L, 5L, "bio-a", null, null, null, null, null, null, 77L, 0L),
-				new CardRow("b", "B", null, 2000L, 20L, 6L, "bio-b", null, null, null, null, null, null, null, 0L)));
+				new CardRow("a", "A", null, 1000L, 10L, 5L, "bio-a", null, null, null, null, null, null, 77L, 0L, null),
+				new CardRow("b", "B", null, 2000L, 20L, 6L, "bio-b", null, null, null, null, null, null, null, 0L, null)));
 		given(discoveryRepository.findShares(List.of("b", "a"))).willReturn(List.of());
 		given(discoveryRepository.findBrands(List.of("b", "a"))).willReturn(List.of());
 		given(discoveryRepository.findThumbs(List.of("b", "a"))).willReturn(List.of());

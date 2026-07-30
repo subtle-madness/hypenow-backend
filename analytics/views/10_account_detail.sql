@@ -186,7 +186,11 @@ SELECT
   b.median_er_pct,
   b.top_views_share_pct,
   -- 스팬 일수(정수) — extract(day from interval)은 총 일수 성분을 그대로 준다(시:분초 절사).
-  extract(day from (b.last_posted_at - b.first_posted_at))::int AS window_span_days
+  extract(day from (b.last_posted_at - b.first_posted_at))::int AS window_span_days,
+  -- 이메일(스펙 2026-07-30-influencer-email-from-bio): bio 정규식 파싱, 첫 매치만·소문자 정규화.
+  -- POSIX substring은 leftmost match만 반환하므로 "첫 번째만"이 자연히 성립. biography NULL이면 NULL.
+  -- 운영 실측(37.5%, 오탐 0/30) 근거로 LLM 없이 정규식만 채택 — 뷰티 필터는 v_recent_content가 이미 적용.
+  lower(substring(p.biography from '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')) AS email
 FROM base b
 JOIN metric m USING (owner_username)
 JOIN trend  t USING (owner_username)
