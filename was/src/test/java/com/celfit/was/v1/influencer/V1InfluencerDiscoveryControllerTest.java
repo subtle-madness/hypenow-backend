@@ -2,22 +2,31 @@ package com.celfit.was.v1.influencer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.auth.AppUser;
+import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.account.RateLimiter;
 import com.celfit.was.v1.common.PagePrefetcher;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryPageService.DiscoveryPage;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.stream.IntStream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +48,20 @@ class V1InfluencerDiscoveryControllerTest {
 
 	@MockitoBean
 	PagePrefetcher prefetcher;
+
+	@MockitoBean
+	RateLimiter rateLimiter;
+
+	@BeforeEach
+	void allowRate() {
+		// 기본은 통과 — 레이트리밋 테스트에서만 false로 덮어쓴다(boolean mock 기본값 false 방지).
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+	}
+
+	private static AppUserDetails principal() {
+		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
+				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
+	}
 
 	private static CardRow row(String handle) {
 		return new CardRow(handle, "글로우", "/img/p/glow.jpg", 20000L, 214L, 380L,
@@ -116,5 +139,46 @@ class V1InfluencerDiscoveryControllerTest {
 				.andExpect(status().isOk());
 
 		verify(prefetcher, never()).prefetch(any());
+	}
+
+	@Test
+	void 익명_레이트리밋_초과는_429_RATE_LIMITED() throws Exception {
+		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(false);
+
+		mockMvc.perform(get("/v1/influencers"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"))
+				.andExpect(jsonPath("$.error.message").value("요청이 너무 잦아요. 잠시 후 다시 시도해 주세요."));
+
+		verify(pageService, never()).page(any());
+	}
+
+	@Test
+	void 익명_요청은_IP_키로_레이트리밋된다() throws Exception {
+		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
+				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 1L));
+
+		mockMvc.perform(get("/v1/influencers")).andExpect(status().isOk());
+
+		ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+		verify(rateLimiter).tryAcquire(key.capture(), anyInt());
+		assertThat(key.getValue()).startsWith("influencers-list:ip:");
+	}
+
+	// 로그인 사용자는 IP가 아닌 사용자 단위 키로 카운트된다 — 사무실 NAT 등 IP 공유 환경에서
+	// 동료의 조회량 때문에 억울하게 막히지 않도록(과제 요구사항 4).
+	@Test
+	void 로그인_사용자는_사용자_단위_키로_레이트리밋된다() throws Exception {
+		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
+				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 1L));
+
+		mockMvc.perform(get("/v1/influencers").with(user(principal()))).andExpect(status().isOk());
+
+		ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+		verify(rateLimiter).tryAcquire(key.capture(), anyInt());
+		assertThat(key.getValue()).isEqualTo("influencers-list:user:7");
 	}
 }
