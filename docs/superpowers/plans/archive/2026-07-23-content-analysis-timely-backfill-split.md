@@ -1,5 +1,7 @@
 # ContentAnalysisJob timely/late_backfill 분리 Implementation Plan
 
+> 상태: ✅ 구현됨 (PR #128 머지, 2026-07-23) — 후속 크론 점화는 PR #144·릴리스 #146으로 완결(07-28)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `ContentAnalysisJob`의 후보 선정을 timely 전용(`run()`)과 late_backfill 전용(`runLateBackfill()`)
@@ -12,7 +14,7 @@ LLM 429 quota + 기존 carryover 로직), 두 진입점은 각자 `JobName`·cro
 **Tech Stack:** Java 21, Spring Boot 4.1 (analytics 모듈), JdbcTemplate, JUnit 5 + Testcontainers
 (PostgreSQL), Mockito, AssertJ.
 
-**참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-timely-backfill-split-design.md](../specs/2026-07-23-content-analysis-timely-backfill-split-design.md)
+**참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-timely-backfill-split-design.md](../../specs/2026-07-23-content-analysis-timely-backfill-split-design.md)
 
 > **실행 환경 주의(2026-07-23 실행 세션에서 발견):** 샌드박스 세션에서는 Testcontainers가 로컬
 > colima Docker 소켓에 접근하지 못한다(`docker info` 자체가 실패 — 호스트 소켓이 샌드박스에서

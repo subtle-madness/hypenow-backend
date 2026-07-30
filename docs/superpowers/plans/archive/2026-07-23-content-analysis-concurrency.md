@@ -1,5 +1,7 @@
 # ContentAnalysisJob 동시 처리(병렬화) Implementation Plan
 
+> 상태: ✅ 구현됨 (PR #134 머지, 2026-07-24)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `ContentAnalysisJob.runQuery()`의 순차 처리 루프를 app_setting으로 조정 가능한
@@ -13,7 +15,7 @@
 **Tech Stack:** Java 21 (`ExecutorService`/`Callable`/`Atomic*`), Spring Boot 4.1 analytics 모듈,
 JUnit 5 + Testcontainers.
 
-**참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-concurrency-design.md](../specs/2026-07-23-content-analysis-concurrency-design.md)
+**참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-concurrency-design.md](../../specs/2026-07-23-content-analysis-concurrency-design.md)
 
 > **실행 환경 참고:** 이 세션의 샌드박스에서 Testcontainers를 실제로 돌리려면
 > `export TESTCONTAINERS_RYUK_DISABLED=true DOCKER_HOST=unix:///Users/woomin/.colima/default/docker.sock`
