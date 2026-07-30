@@ -130,6 +130,32 @@ class V1MonitoringItemsControllerTest {
 	}
 
 	@Test
+	void trackingDays_경계값_1은_통과한다() throws Exception {
+		given(itemRepository.insertPending(anyLong(), eq("url"), any(), any(), anyString(), anyString(), any(),
+				eq(1), any())).willReturn(400L);
+
+		mockMvc.perform(post("/v1/monitoring/items").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"posts":["https://www.instagram.com/p/ABC123/"],"trackingDays":1}"""))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.data.items[0].trackingDays").value(1));
+	}
+
+	@Test
+	void trackingDays_경계값_90은_통과한다() throws Exception {
+		given(itemRepository.insertPending(anyLong(), eq("url"), any(), any(), anyString(), anyString(), any(),
+				eq(90), any())).willReturn(401L);
+
+		mockMvc.perform(post("/v1/monitoring/items").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"posts":["https://www.instagram.com/p/ABC123/"],"trackingDays":90}"""))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.data.items[0].trackingDays").value(90));
+	}
+
+	@Test
 	void trackingDays_비정수_문자열은_400() throws Exception {
 		mockMvc.perform(post("/v1/monitoring/items").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)

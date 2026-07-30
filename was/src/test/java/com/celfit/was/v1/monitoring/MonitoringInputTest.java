@@ -63,6 +63,19 @@ class MonitoringInputTest {
 	}
 
 	@Test
+	void 대문자_URL도_파싱되고_shortcode_대소문자는_보존된다() {
+		MonitoringInput result = MonitoringInput.parsePost("HTTPS://WWW.INSTAGRAM.COM/REEL/AbC123/");
+
+		assertThat(result).isInstanceOf(MonitoringInput.Post.class);
+		MonitoringInput.Post post = (MonitoringInput.Post) result;
+		// shortcode는 인스타그램이 대소문자를 구분해 발급하는 식별자라 소문자화하면 다른 게시물을
+		// 가리키게 된다 — 스킴·도메인·경로 타입(REEL)은 대소문자 무관 매칭이어도 shortcode 값 자체는
+		// 입력 그대로 보존해야 한다.
+		assertThat(post.shortCode()).isEqualTo("AbC123");
+		assertThat(post.canonicalUrl()).isEqualTo("https://www.instagram.com/reel/AbC123/");
+	}
+
+	@Test
 	void share_링크는_해소_없이_원문_그대로_ShareLink로_넘긴다() {
 		MonitoringInput result = MonitoringInput.parsePost("https://www.instagram.com/share/abcDEF123/");
 
