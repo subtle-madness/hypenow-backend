@@ -8,6 +8,7 @@ import com.celfit.analytics.llm.BeautyTaxonomy;
 import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.llm.ContentInsightPort.ContentInsight;
 import com.celfit.analytics.llm.ContentToAnalyze;
+import com.celfit.analytics.llm.CopyRules;
 import com.celfit.analytics.llm.GeminiAccountSynthesizer;
 import com.celfit.analytics.llm.GeminiContentAnalyzer;
 import java.nio.file.Files;
@@ -160,16 +161,20 @@ public class ClaudeBurstRunner {
 		return count;
 	}
 
-	/** 카피 대상 전량 — AccountAnalysisJob.ELIGIBLE_WHERE(잡의 자격 정의와 단일 정본)에서 배치 상한만 뺐다. */
+	/** 카피 대상 전량 — AccountAnalysisJob.ELIGIBLE_WHERE(잡의 자격 정의와 단일 정본)에서 배치 상한만 뺐다.
+	 * 파라미터 순서·개수는 ELIGIBLE_WHERE 정의(쿨다운 일수, 카피 버전 게이트)와 동형이어야 한다. */
 	private int exportAccounts() {
 		List<String> targets = analysis.queryForList("""
 				SELECT s.handle
 				FROM account_summaries s
 				""" + AccountAnalysisJob.ELIGIBLE_WHERE + """
 
-				ORDER BY s.handle""", String.class, settings.accountAnalyzeCooldownDays());
+				ORDER BY s.handle""", String.class, settings.accountAnalyzeCooldownDays(),
+				CopyRules.VERSION);
 		StringBuilder input = new StringBuilder();
 		StringBuilder sidecar = new StringBuilder();
+		int exported = 0;
+		int skippedIncomplete = 0;
 		for (String handle : targets) {
 			Map<String, Object> summary = analysis.queryForMap(
 					"SELECT * FROM account_summaries WHERE handle = ?", handle);
@@ -184,11 +189,25 @@ public class ClaudeBurstRunner {
 			AccountAdCanon.AdMetrics ad =
 					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
 			AdSituation adSituation = ad.situation();
+			// 판정(원본 9컬럼 포함)·프롬프트 사본(9컬럼 제거) — AccountAnalysisJob과 공유하는 헬퍼.
+			// 여기서 빠뜨리면 신뢰도 가드 없이 만든 문구가 CopyRules.VERSION으로 기록돼(AccountAnalysisWriter)
+			// 버전 게이트를 무력화한다(07-30 재발 방지).
+			AccountAdCanon.SummaryWithConfidence sc = AccountAdCanon.withConfidence(summary, ad);
+
+			// 배포 과도기 가드(AccountAnalysisJob.analyzeOne과 동일 취지) — 9개 신뢰도 컬럼이
+			// 전부 NULL이면 뷰 미적용/미러 실패로 보고 export 자체를 건너뛴다. 이 스킵은 뷰가
+			// 올라갈 때까지 매 export에서 같은 계정이 다시 잡히는 상태를 만들지만, 저품질 문구가
+			// CopyRules.VERSION으로 영구 고정되는 것보다 안전하다 — 뷰 적용 한 번으로 해소된다.
+			if (sc.confidence().dataIncomplete()) {
+				skippedIncomplete++;
+				continue;
+			}
+
 			AccountToAnalyze account = new AccountToAnalyze(handle,
-					AccountAdCanon.canonicalSummary(summary, ad), categories, posts, adSituation);
+					sc.promptSummary(), categories, posts, adSituation, sc.confidence());
 			input.append(om.writeValueAsString(om.createObjectNode()
 					.put("key", handle)
-					.put("system", GeminiAccountSynthesizer.instructions(traitLoader.get()))
+					.put("system", GeminiAccountSynthesizer.instructions(traitLoader.get(), sc.confidence()))
 					.put("user", GeminiAccountSynthesizer.userText(account) + ACCOUNT_JSON_RULE)))
 					.append('\n');
 			var side = om.createObjectNode().put("handle", handle)
@@ -205,10 +224,16 @@ public class ClaudeBurstRunner {
 				side.put("input_last_posted_at", lastPostedAt.toString());
 			}
 			sidecar.append(om.writeValueAsString(side)).append('\n');
+			exported++;
 		}
 		write("accounts-input.jsonl", input.toString());
 		write("accounts-sidecar.jsonl", sidecar.toString());
-		return targets.size();
+		if (skippedIncomplete > 0) {
+			log.warn("계정 {}건 export 스킵 — 신뢰도 판정 컬럼 9개가 전부 NULL이라 데이터 미비로 판단"
+					+ "(뷰 미적용/미러 실패 의심). analytics/views/10_account_detail.sql 적용 후"
+					+ " 다음 export에서 자연 재대상됨", skippedIncomplete);
+		}
+		return exported;
 	}
 
 	public CollectResult collect() {
