@@ -82,6 +82,9 @@ class HikerClientTest {
 		assertThat(p.reposts()).isPositive();
 		// post_meta 썸네일(계약 §3) — 단건 응답도 image_versions2.candidates[0].url에서 추출
 		assertThat(p.thumbnailUrl()).isNotBlank();
+		// POST 등록분 profile_meta 채움(트랙 II) — 단건 응답 user 노드에서 제로 콜로 추출
+		assertThat(p.ownerFullName()).isEqualTo("Sephora");
+		assertThat(p.ownerProfilePicUrl()).isNotBlank();
 	}
 
 	@Test
@@ -93,6 +96,9 @@ class HikerClientTest {
 		assertThat(p.views()).isNull();
 		assertThat(p.saves()).isNull();
 		assertThat(p.shares()).isNull();
+		// 트랙 II — 다른 픽스처(다른 계정)로도 owner 필드가 정상 채워지는지 재확인
+		assertThat(p.ownerFullName()).isEqualTo("Rare Beauty by Selena Gomez");
+		assertThat(p.ownerProfilePicUrl()).isNotBlank();
 	}
 
 	@Test

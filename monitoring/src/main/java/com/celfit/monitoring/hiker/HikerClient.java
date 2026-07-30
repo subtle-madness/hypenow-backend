@@ -279,6 +279,9 @@ public class HikerClient {
 		JsonNode m = node.has("media") ? node.path("media") : node;   // clips 열거는 한 겹 더 감쌈
 		String code = m.path("code").asString();
 		String username = usernameHint != null ? usernameHint : m.path("user").path("username").asString(null);
+		// user 노드에서 같이 뽑는다(제로 콜 원칙, 트랙 II) — 단건 응답에만 실값, 열거 경로는 소비처 없음.
+		String ownerFullName = m.path("user").path("full_name").asString(null);
+		String ownerProfilePicUrl = m.path("user").path("profile_pic_url").asString(null);
 		// media_type==2는 일반 비디오 피드도 포함 → 릴스 판별은 product_type(findings §4)
 		String contentType = "clips".equals(m.path("product_type").asString("")) ? "REELS" : "FEED";
 		// v2는 caption.text, v1은 caption_text — caption 자체가 null일 수 있다
@@ -286,7 +289,7 @@ public class HikerClient {
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
 		// view_count 키는 v2 응답에 부재 → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
 		Long views = firstLong(m, "play_count", "ig_play_count");
-		return new PostInfo(code, username, contentType, caption, thumbnailUrl(m),
+		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, contentType, caption, thumbnailUrl(m),
 				firstLong(m, "taken_at"),
 				firstLong(m, "like_count"), firstLong(m, "comment_count"),
 				views != null ? views : clipPlays.get(code),
