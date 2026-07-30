@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: [2026-07-20-vertex-migration-recent12-backfill-design.md](../specs/2026-07-20-vertex-migration-recent12-backfill-design.md)
+> 상태: ✅ 실행됨(07-30 — 백필 총 16,827건 완료. 운영 런북: [runbooks/2026-07-20-vertex-backfill-runbook.md](../../../runbooks/2026-07-20-vertex-backfill-runbook.md)) · 스펙: [2026-07-20-vertex-migration-recent12-backfill-design.md](../../specs/2026-07-20-vertex-migration-recent12-backfill-design.md)
 
 **Goal:** analytics LLM 경로(동기+배치)를 Vertex AI(서비스 계정 OAuth, global 엔드포인트)로 전환하고, 분석 자격을 "최근 N개(기본 12) 윈도우 포함" OR 조건으로 확장해 백필을 재도입한다.
 
