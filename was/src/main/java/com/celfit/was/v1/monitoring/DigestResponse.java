@@ -1,5 +1,6 @@
 package com.celfit.was.v1.monitoring;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
 /**
@@ -13,6 +14,15 @@ import java.util.List;
  */
 public record DigestResponse(String id, String date, String createdAt, String readAt, List<Item> items) {
 
-	public record Item(String category, String type, String summary, int count) {
+	public record Item(
+			// "content" 단일값 — DigestJob.digestItem이 항상 이 상수만 채운다(현재 다이제스트
+			// 대상이 콘텐츠 알림뿐이라 컴파일 상수로 직접 참조할 수 없어 문자열 그대로 표기).
+			@Schema(allowableValues = "content")
+			String category,
+			// MonitoringEventTypes.EVENT_TYPES가 정본(프론트 노출용 4종) — 컴파일 상수 참조 불가라
+			// 문자열 그대로 표기.
+			@Schema(allowableValues = {"collection_started", "collection_ended", "metrics_private", "content_issue"})
+			String type,
+			String summary, int count) {
 	}
 }

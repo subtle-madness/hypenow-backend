@@ -10,11 +10,13 @@ import java.util.List;
  * 등록 처리 내역 응답(스펙 6.28) — 요청 1건 + 건별 처리 결과. entries는 리포지토리가 이미
  * seq ASC(입력 순서)로 정렬해 조립해 두므로 여기서는 그대로 매핑만 한다.
  *
- * <p>nullable 필드(completedAt, entries[].reasonCode·reason·resolvedUrl·itemId)는 계약
- * 무결성 규칙 #1(1.8)에 따라 키를 생략하지 않고 명시적 null로 직렬화한다(record 기본 동작 —
- * NON_NULL 미적용).
+ * <p>nullable 필드(completedAt, acknowledgedAt, entries[].reasonCode·reason·resolvedUrl·itemId)는
+ * 계약 무결성 규칙 #1(1.8)에 따라 키를 생략하지 않고 명시적 null로 직렬화한다(record 기본 동작 —
+ * NON_NULL 미적용). acknowledgedAt은 프론트가 localStorage로 임시 처리하던 확인(읽음) 상태를
+ * 서버로 옮긴 필드 — POST /v1/monitoring/registrations/read가 채운다.
  */
-public record RegistrationResponse(String id, String requestedAt, String completedAt, List<Entry> entries) {
+public record RegistrationResponse(String id, String requestedAt, String completedAt, String acknowledgedAt,
+		List<Entry> entries) {
 
 	public record Entry(String input, String kind, String result,
 			// 값 6종 — invalid_format만 MonitoringInput.REASON_INVALID_FORMAT(공개 상수)로 참조 가능하고
@@ -36,6 +38,7 @@ public record RegistrationResponse(String id, String requestedAt, String complet
 				String.valueOf(row.id()),
 				KstTimestamps.toKstIso(row.requestedAt()),
 				KstTimestamps.toKstIso(row.completedAt()),
+				KstTimestamps.toKstIso(row.acknowledgedAt()),
 				row.entries().stream().map(Entry::from).toList());
 	}
 }
