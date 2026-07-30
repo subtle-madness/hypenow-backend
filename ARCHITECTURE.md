@@ -484,6 +484,7 @@ Drizzle/메모리 모드 — seam만 준비됨).
 
 - **이 문서** — 현재 유효한 구조·상태·결정. 문서의 유일한 진입점, 항상 최신 유지
 - [crawler/README.md](crawler/README.md) — 수집 파이프라인 실행·운영
+- [docs/hype-score.md](docs/hype-score.md) — 하입 스코어 산식·상수 정본 지도(**항상 최신**). 산식·상수·표면·배포 상태가 바뀌면 같은 PR에서 갱신. 상수의 적합 모수·근거·표류 위험이 여기 모여 있다
 - `docs/superpowers/specs/` — 설계 기록(ADR 성격). **영구 보존·내용 불변** — 대체되면 첫머리 상태 헤더만 갱신
 - `docs/superpowers/plans/` — 상세 구현 계획(소모품). 태스크 착수 시 작성, **실행 완료·폐기 시 `plans/archive/`로 이동**
 - **상태 헤더 규칙**: 모든 dated 문서는 첫머리에 상태를 단다 —
