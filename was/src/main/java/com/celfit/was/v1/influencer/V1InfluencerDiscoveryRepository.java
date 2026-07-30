@@ -19,8 +19,19 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class V1InfluencerDiscoveryRepository {
 
-	// cp(최신 태그라인)·sp(광고 수)는 q·sponsored 필터가 참조하므로 count 쿼리에도 함께 붙인다.
-	// findCardsByHandles(6.23 유사 카드 재사용)도 같은 조인을 그대로 공유한다.
+	// 뷰티 게시물 비율 게이트 (07-30) — 계정 단위 뷰티 판정(crawler influencer.beauty_class)이
+	// bio 키워드·자기신고 카테고리에 낚여 육아·다이어트·여행·피트니스 계정을 뷰티 인플루언서로
+	// 잘못 서빙하는 사례(0% 구간 스팟체크 20개 중 오판 17개)를 게시물 실측으로 걸러낸다.
+	// analyzed_count(분석 완료 창 내 게시물 수) < 8이면 판단 근거가 얇아 게이트를 보류(통과시킨다) —
+	// 표본이 적을수록 비율 하나로 계정을 판정하는 게 오히려 오분류를 늘린다.
+	private static final int MIN_ANALYZED = 8;
+	// 20%는 기존 카테고리 게이트(build() 내 mainCategory 임계값)와 동일 기준을 그대로 재사용한다.
+	private static final double MIN_BEAUTY_RATIO_PERCENT = 20.0;
+
+	// cp(최신 태그라인)·sp(광고 수)·br(뷰티 비율)는 q·sponsored 필터·게이트가 참조하므로
+	// count 쿼리에도 함께 붙인다. findCardsByHandles(6.23 유사 카드 재사용)도 같은 조인을
+	// 그대로 공유하지만, 그쪽 후보는 findSimilarHandles에서 이미 게이트를 통과한 핸들만
+	// 들어오므로 별도 WHERE 재적용은 하지 않는다.
 	private static final String FROM_JOINS = """
 
 			FROM account_summaries su
@@ -33,7 +44,8 @@ public class V1InfluencerDiscoveryRepository {
 			           FROM account_content_series s
 			           JOIN content_analyses an ON an.short_code = s.short_code
 			                                   AND an.ad_type = 'sponsored'
-			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle""";
+			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle
+			LEFT JOIN account_beauty_ratio br ON br.account_handle = su.handle""";
 
 	private final JdbcClient jdbcClient;
 
@@ -50,7 +62,7 @@ public class V1InfluencerDiscoveryRepository {
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-						       COALESCE(sp.cnt, 0) AS sponsored_count
+						       COALESCE(sp.cnt, 0) AS sponsored_count, su.email
 						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
@@ -76,7 +88,7 @@ public class V1InfluencerDiscoveryRepository {
 				       su.posts_count, su.follows_count, su.biography, cp.tagline,
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-				       COALESCE(sp.cnt, 0) AS sponsored_count
+				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email
 				""" + FROM_JOINS + """
 
 				WHERE a.handle IN (:handles)
@@ -90,6 +102,18 @@ public class V1InfluencerDiscoveryRepository {
 		String fromJoins = FROM_JOINS;
 		StringBuilder where = new StringBuilder("WHERE true");
 		Map<String, Object> params = new HashMap<>();
+		// 뷰티 게시물 비율 게이트 — 항상 적용(스펙 §4). 분석 표본이 minAnalyzed 미만이면 통과,
+		// 그 이상이면 뷰티 비율이 minBeautyRatio 이상인 계정만 통과.
+		// NULLIF(analyzed_count, 0) 필수 — Postgres는 OR 단축 평가를 보장하지 않아 실행 계획에 따라
+		// 두 번째 항도 평가될 수 있다. 창 내 게시물이 전부 is_beauty NULL(캡션·썸네일 둘 다 없음)이면
+		// account_beauty_ratio에 행은 존재하되 analyzed_count=0이라 division by zero로 500이 난다.
+		// NULLIF로 그 경우 두 번째 항을 NULL로 만들면 첫 항(TRUE)과 OR돼 TRUE — 표본 부족 보류와 동일 취급.
+		where.append("""
+
+				  AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
+				       OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)""");
+		params.put("minAnalyzed", MIN_ANALYZED);
+		params.put("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
 		if (q.mainCategory() != null) {
 			// 비중 임계값 매칭(포함 여부 아님) — 분모·round가 categoryShares.pct와 동일해야 한다(스펙 6.21)
 			where.append("""
@@ -152,8 +176,8 @@ public class V1InfluencerDiscoveryRepository {
 			}
 		}
 		if (q.contactOpen()) {
-			// email은 크롤러 미수집(V31: "email은 미수집이라 필드 없음") — 데이터가 생길 때까지 0건 매칭.
-			where.append(" AND false");
+			// email은 biography 정규식 파싱(V46, 스펙 2026-07-30-influencer-email-from-bio)으로 채워진다.
+			where.append(" AND su.email IS NOT NULL");
 		}
 		for (int i = 0; i < q.keywords().size(); i++) {
 			// 키워드 전부(AND) 부분일치 — 대상: handle·displayName·bio·tagline·캡션·협업 브랜드명·소분류 라벨
@@ -270,7 +294,7 @@ public class V1InfluencerDiscoveryRepository {
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
 			Long postsCount, Long followsCount, String biography,
 			String tagline, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgViews,
-			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount) {
+			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount, String email) {
 	}
 
 	public record ShareRow(String accountHandle, String mainCategory, Integer pct) {

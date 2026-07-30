@@ -13,8 +13,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 캠페인 명령 API — 계약 §2. 인증 없음: 접근 통제는 전용 도커 네트워크(monitoring-net) 소속이 강제한다.
- * 토큰·헤더 검사를 여기에 추가하지 말 것(계약 §1 — 연결이 되면 곧 인가된 호출자다).
+ * 캠페인 명령 API — 계약 v2 §2(등록·연장·해지 3종). 인증 없음: 접근 통제는 전용 도커
+ * 네트워크(monitoring-net) 소속이 강제한다. 토큰·헤더 검사를 여기에 추가하지 말 것
+ * (계약 §1 — 연결이 되면 곧 인가된 호출자다).
+ * 승인·기각(구 §2-2·2-3)은 v2에서 폐지 — 감지 즉시 자동 추적으로 대체됐다.
  */
 @RestController
 @RequestMapping("/api/targets")
@@ -34,20 +36,6 @@ public class TargetController {
 		var result = registration.register(request.toCommand());
 		return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED)
 				.body(new RegisterResponse(result.targetId(), result.status(), result.firstSnapshot()));
-	}
-
-	/** 후보 승인 — TRACKING 전환 + 즉시 1회 수집(권고 타임아웃 10s). */
-	@PostMapping("/{id}/candidates/{candidateId}/approve")
-	public ApproveResponse approve(@PathVariable long id, @PathVariable long candidateId) {
-		var target = command.approve(id, candidateId);
-		return new ApproveResponse(target.id(), target.status().name(), target.trackedShortCode());
-	}
-
-	/** 후보 기각 — 후보만 닫고 캠페인은 WATCHING 지속. */
-	@PostMapping("/{id}/candidates/{candidateId}/reject")
-	public RejectResponse reject(@PathVariable long id, @PathVariable long candidateId) {
-		var candidate = command.reject(id, candidateId);
-		return new RejectResponse(candidate.id(), candidate.status().name());
 	}
 
 	/** 기간 연장. */

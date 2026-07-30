@@ -48,7 +48,22 @@ jobs:
       - name: bootJar 빌드
         run: ./gradlew :${{ matrix.service }}:bootJar
 
-      # 서버(오라클 A1)가 arm64 단일이라 test는 멀티아치 불필요 — 운영 CD보다 빠르게
+      # 레이어 추출(Spring Boot layered jar) — Dockerfile이 build/extracted/*를 COPY하므로 필수
+      # (운영 CD와 동일 관용구, 근거는 그쪽 주석 참조). 목적지가 비어있지 않으면 실패하므로 rm -rf 선행.
+      - name: bootJar 레이어 추출
+        run: |
+          JAR=$(find ${{ matrix.service }}/build/libs -name '*.jar' ! -name '*-plain.jar')
+          COUNT=$(echo "$JAR" | grep -c . || true)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "bootJar 후보가 1개가 아님(plain jar 제외 후 $COUNT개) — 스테일 빌드 산출물 의심:"; echo "$JAR"
+            exit 1
+          fi
+          rm -rf ${{ matrix.service }}/build/extracted
+          java -Djarmode=tools -jar "$JAR" extract --layers --launcher \
+            --destination ${{ matrix.service }}/build/extracted
+
+      # 서버(오라클 A1)가 arm64 단일이라 test는 멀티아치 불필요 — 운영 CD보다 빠르게.
+      # QEMU는 러너(amd64)에서 arm64 이미지를 크로스 빌드하는 데 필요(제거 불가)
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -111,12 +126,33 @@ jobs:
       - name: 치환 셀프테스트
         run: deploy/scripts/rewrite-views-dev-schema.test.sh
 
-      # analytics_dev 계정으로 적용 — 치환 누락 시 analytics 스키마 쓰기 권한이 없어 즉시 실패
-      - name: test 뷰 적용 (analytics_dev 치환)
+      # analytics_dev 계정으로 적용 — 치환 누락 시 analytics 스키마 쓰기 권한이 없어 즉시 실패.
+      # 운영 CD와 동일한 스킵 기법(해시 비교 + 스키마 존재 프로브, 파일은 analytics_dev 전용
+      # ~/deploy/views-test.sha256로 분리) + lock_timeout 15s·--single-transaction을 그대로 적용 —
+      # 치환은 psql로 보내기 직전 필터라 스킵 판단(치환 전 원본 해시 비교)과 서로 무관해 복잡해지지 않는다.
+      - name: test 뷰 적용 (analytics_dev 치환, 변경 없으면 스킵, lock_timeout 15s)
         run: |
-          cat analytics/views/*.sql | deploy/scripts/rewrite-views-dev-schema.sh | \
+          HASH=$(cat analytics/views/*.sql | sha256sum | cut -d' ' -f1)
+          SKIP=$(ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" bash -s -- "$HASH" <<'REMOTE'
+            hash_file=~/deploy/views-test.sha256
+            if [ "$(cat "$hash_file" 2>/dev/null)" = "$1" ] && \
+               docker exec deploy-postgres-raw-1 psql -U crawler -d crawler -tAc \
+                 "select 1 from pg_views where schemaname='analytics_dev' limit 1" | grep -q 1; then
+              echo skip
+            else
+              echo apply
+            fi
+          REMOTE
+          )
+          if [ "$SKIP" = "skip" ]; then
+            echo "뷰 해시 동일(analytics/views/*.sql) + analytics_dev 스키마 뷰 존재 확인 — 적용 스킵"
+            exit 0
+          fi
+          { echo "SET lock_timeout = '15s';"; cat analytics/views/*.sql; } | \
+            deploy/scripts/rewrite-views-dev-schema.sh | \
             ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-              'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -v ON_ERROR_STOP=1 -q'
+              'docker exec -i deploy-postgres-raw-1 psql -U analytics_dev -d crawler -v ON_ERROR_STOP=1 -q --single-transaction'
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" "echo '$HASH' > ~/deploy/views-test.sha256"
 
       # 뷰 정의·함수 본문에 analytics.(비-따옴표) 참조가 남았으면 치환 누락 — 배포 실패 처리
       - name: 잔존 참조 검사

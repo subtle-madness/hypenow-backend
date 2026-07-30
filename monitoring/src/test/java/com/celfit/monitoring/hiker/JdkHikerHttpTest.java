@@ -9,6 +9,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ class JdkHikerHttpTest {
 	private HttpServer server;
 	private final AtomicReference<String> seenKey = new AtomicReference<>();
 	private final AtomicReference<String> seenPath = new AtomicReference<>();
+	private final AtomicInteger calls = new AtomicInteger();
 
 	@AfterEach
 	void tearDown() {
@@ -45,8 +47,32 @@ class JdkHikerHttpTest {
 		return "http://127.0.0.1:" + server.getAddress().getPort();
 	}
 
+	/** 앞선 N회는 실패하고 그 다음 성공하는 서버 — 재시도가 실제로 다시 쏘는지 본다. */
+	private String startFlakyServer(int failures, int failStatus) throws IOException {
+		AtomicInteger seen = new AtomicInteger();
+		server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+		server.createContext("/", exchange -> {
+			int n = seen.incrementAndGet();
+			calls.set(n);
+			boolean fail = n <= failures;
+			byte[] bytes = (fail ? "boom" : "{\"status\":\"ok\"}").getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(fail ? failStatus : 200, bytes.length);
+			try (var out = exchange.getResponseBody()) {
+				out.write(bytes);
+			}
+		});
+		server.start();
+		return "http://127.0.0.1:" + server.getAddress().getPort();
+	}
+
+	/** 기본 헬퍼는 재시도 0 — 상태코드 매핑 테스트가 백오프로 느려지지 않게 한다. */
 	private static JdkHikerHttp http(String baseUrl, String apiKey) {
-		return new JdkHikerHttp(new HikerProperties(apiKey, baseUrl, Duration.ofSeconds(5)));
+		return new JdkHikerHttp(new HikerProperties(apiKey, baseUrl, Duration.ofSeconds(5), 0, Duration.ZERO));
+	}
+
+	private static JdkHikerHttp retryingHttp(String baseUrl, int maxRetries) {
+		return new JdkHikerHttp(new HikerProperties("test-key", baseUrl, Duration.ofSeconds(5),
+				maxRetries, Duration.ZERO));
 	}
 
 	@Test
@@ -66,6 +92,16 @@ class JdkHikerHttpTest {
 				.hasMessageContaining("not found");
 	}
 
+	/** 400은 share 해소(§2-6) 등에서 다른 실패와 구분해야 해서 별도 타입으로 던진다(HikerFetchException 상속). */
+	@Test
+	void _400은_HikerBadRequest() throws IOException {
+		String baseUrl = startServer(400, "{\"detail\":\"bad url\"}");
+		assertThatThrownBy(() -> http(baseUrl, "test-key").get("/v2/media/info/by/url?url=bad"))
+				.isInstanceOf(HikerBadRequestException.class)
+				.isInstanceOf(HikerFetchException.class)
+				.hasMessageContaining("bad url");
+	}
+
 	@Test
 	void _500은_HikerFetch() throws IOException {
 		String baseUrl = startServer(500, "boom");
@@ -79,5 +115,38 @@ class JdkHikerHttpTest {
 		assertThatThrownBy(() -> http("http://127.0.0.1:1", "  ").get("/v2/user/medias?user_id=1"))
 				.isInstanceOf(HikerFetchException.class)
 				.hasMessageContaining("HIKER_API_KEY");
+	}
+
+	/**
+	 * 5xx는 일시 오류라 당일 안에 다시 시도해야 한다 — 예전에는 첫 실패로 그 계정이 하루 통째로 비었다.
+	 * 재시도가 없으면 스윕 하루치 지표가 조용히 구멍 난다(다음 날 스냅샷의 delta가 이틀치로 합쳐짐).
+	 */
+	@Test
+	void _5xx는_설정된_횟수만큼_재시도하고_성공하면_본문을_준다() throws IOException {
+		String baseUrl = startFlakyServer(2, 500);
+
+		assertThat(retryingHttp(baseUrl, 2).get("/v2/user/medias?user_id=1"))
+				.isEqualTo("{\"status\":\"ok\"}");
+		assertThat(calls.get()).isEqualTo(3);   // 최초 1 + 재시도 2
+	}
+
+	@Test
+	void 재시도를_다_써도_실패하면_마지막_오류를_던진다() throws IOException {
+		String baseUrl = startFlakyServer(9, 500);
+
+		assertThatThrownBy(() -> retryingHttp(baseUrl, 2).get("/v2/user/medias?user_id=1"))
+				.isInstanceOf(HikerFetchException.class)
+				.hasMessageContaining("500");
+		assertThat(calls.get()).isEqualTo(3);
+	}
+
+	/** 404는 대상 부재라 몇 번을 더 쏴도 같다 — 재시도는 콜 과금만 늘리고 종결을 늦춘다. */
+	@Test
+	void _404는_재시도하지_않는다() throws IOException {
+		String baseUrl = startFlakyServer(9, 404);
+
+		assertThatThrownBy(() -> retryingHttp(baseUrl, 2).get("/v2/user/by/username?username=ghost"))
+				.isInstanceOf(SubjectNotFoundException.class);
+		assertThat(calls.get()).isEqualTo(1);
 	}
 }

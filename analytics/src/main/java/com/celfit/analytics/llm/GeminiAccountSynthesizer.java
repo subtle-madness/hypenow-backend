@@ -26,12 +26,20 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			  계정을 가장 잘 설명하는 원자 태그를 조합한다(예: 감성 브이로그 계정이면 "브이로그"와 "감성 무드" 2개).
 			  어휘:
 			%s
-			- perfSummary: 성과 요약 2~3문장 — 평균 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
-			  반응 차이 중심 (avg_views·avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물
-			  목록(content_type·views·likes) 근거 — 포맷별 반응 차이는 게시물 목록에서만 확인 가능하니
-			  그 밖은 단정하지 마라). **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면
-			  스탯 타일이고 이 문장은 매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편",
-			  "완만한 상승세", "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
+			- perfSummary: 성과 요약 2~3문장 — 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
+			  반응 차이 중심. median_views·median_er_pct가 입력에 있으면 그게 해당 지표 수준 판정의
+			  근거다(둘 다 있을 때 avg_views·avg_er_pct와 비교해 고르는 게 아니라, 있는 값이 곧
+			  근거다). 그 지표에 median 없이 avg_views·avg_er_pct만 있으면 그게 근거다.
+			  avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물 목록
+			  (content_type·views·likes)도 근거로 쓴다 — 포맷별 반응 차이는 게시물 목록에서만
+			  확인 가능하니 그 밖은 단정하지 마라.
+			  **아래 "계정 지표"·"게시물" 입력에 특정 지표 키가 아예 없으면 그 지표는 표본이 부족해서
+			  데이터 자체가 제공되지 않은 것이다 — "언급하지 말라는 지표"가 아니라 "가진 게 없는 지표"로
+			  여기고, 다른 지표에서 없는 값을 유추하거나 대신 채워 넣지 마라.**
+			  **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면 스탯 타일이고 이 문장은
+			  매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편", "완만한 상승세",
+			  "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
+			%s
 			- contentSummary: 콘텐츠 성격 요약 2~3문장 — 무엇을 어떤 방식으로 다루는지, 반복되는 형식·톤
 			  (카테고리 믹스·캡션 근거)
 			- adSummary: 광고 활동 요약 2~3문장. 입력의 "광고 활동" 값에 따라 아래처럼 쓴다.
@@ -56,11 +64,16 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 	}
 
 	/**
-	 * 시스템 프롬프트 — 구독 버스트 러너(ClaudeBurstRunner)도 같은 검증 통과본을 쓴다.
+	 * 시스템 프롬프트 — 성과 요약 통계 왜곡 가드(설계 2026-07-30) 판정을 반영한 신뢰도 지침 포함.
 	 * traits는 어휘 내 선택(2026-07-29 어휘 통제 스펙) — 어휘 블록은 V41 시드 스냅샷을 주입한다.
 	 */
-	public static String instructions(TraitTaxonomy vocab) {
-		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(), LlmGuard.RULES);
+	public static String instructions(TraitTaxonomy vocab, PerfConfidence confidence) {
+		// 계정 카피는 LlmGuard.ACCOUNT_RULES를 쓴다(RULES 아님) — RULES의 "근거 수치를 함께
+		// 인용하라"는 콘텐츠 경로 전용 지시라 이 클래스의 perfSummary 절(수치 인용 금지)과
+		// 정면 충돌한다(2026-07-30 test 실측). Anthropic 어댑터도 이 메서드를 그대로 호출하므로
+		// 프로바이더 양쪽이 함께 고쳐진다.
+		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(),
+				confidence.promptBlock(), LlmGuard.ACCOUNT_RULES);
 	}
 
 	/** 유저 입력 — synthesize와 버스트 export가 공유 (프롬프트 정합 단일 원천). */
@@ -76,8 +89,8 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
 	@Override
 	public AccountCopy synthesize(AccountToAnalyze account) {
-		String out = api.generateJson(model.get(), instructions(vocab.get()), userText(account), null,
-				RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
+		String out = api.generateJson(model.get(), instructions(vocab.get(), account.confidence()),
+				userText(account), null, RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
 		return om.readValue(out, AccountCopy.class);
 	}
 }

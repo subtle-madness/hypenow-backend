@@ -13,7 +13,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-/** V41 시드 ↔ 스펙 부록 A(2026-07-29, 사용자 확정 172개·13축) 계약 검증. */
+/**
+ * V41 시드 ↔ 스펙 부록 A(2026-07-29, 사용자 확정 172개·13축) 계약 검증.
+ * V43(07-30) '메이크업 리뷰' 추가분 포함 — 총 173개·13축(축 개수는 불변, B. 리뷰 방식만 +1).
+ */
 @Testcontainers
 class TraitTaxonomySeedTest {
 
@@ -32,8 +35,8 @@ class TraitTaxonomySeedTest {
 	}
 
 	@Test
-	void 시드는_172개_13축이다() {
-		assertEquals(172L, db.queryForObject("SELECT count(*) FROM trait_taxonomy", Long.class));
+	void 시드는_173개_13축이다() {
+		assertEquals(173L, db.queryForObject("SELECT count(*) FROM trait_taxonomy", Long.class));
 		assertEquals(13L, db.queryForObject("SELECT count(DISTINCT facet) FROM trait_taxonomy", Long.class));
 	}
 

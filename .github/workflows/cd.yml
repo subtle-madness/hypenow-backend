@@ -47,7 +47,25 @@ jobs:
       - name: bootJar 빌드
         run: ./gradlew :${{ matrix.service }}:bootJar
 
-      # 서버가 arm64(오라클 A1)라 멀티아치 필수 — Dockerfile은 jar 복사뿐이라 QEMU 부담 미미
+      # 레이어 추출(Spring Boot layered jar) — dependencies(변경 적음)/spring-boot-loader/
+      # snapshot-dependencies(빈 디렉토리)/application(변경 잦음) 4레이어로 분리해 Docker
+      # 레이어 캐시가 dependencies에서 히트하게 한다. 실측: 이미지 22~84M 중 dependencies가
+      # 대부분이고 불변 — 코드만 바뀐 재배포는 application 레이어(280K~1.5M)만 push·pull된다.
+      # 목적지가 비어있지 않으면 실패하므로 매 빌드 전 rm -rf로 초기화.
+      - name: bootJar 레이어 추출
+        run: |
+          JAR=$(find ${{ matrix.service }}/build/libs -name '*.jar' ! -name '*-plain.jar')
+          COUNT=$(echo "$JAR" | grep -c . || true)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "bootJar 후보가 1개가 아님(plain jar 제외 후 $COUNT개) — 스테일 빌드 산출물 의심:"; echo "$JAR"
+            exit 1
+          fi
+          rm -rf ${{ matrix.service }}/build/extracted
+          java -Djarmode=tools -jar "$JAR" extract --layers --launcher \
+            --destination ${{ matrix.service }}/build/extracted
+
+      # 러너는 amd64, 서버(오라클 A1)는 arm64 단일 — 크로스 빌드(arm64 이미지를 amd64 러너에서 빌드)에
+      # QEMU가 필요하다. amd64 이미지는 어디서도 실행되지 않아(로컬 colima도 arm64) 빌드하지 않는다.
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -59,11 +77,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # deploy.sh와 동일 태깅 — :latest + :sha-<short> (롤백 절차: deploy/README.md §5)
-      - name: 멀티아치 빌드·push
+      - name: arm64 빌드·push
         run: |
           SHA_TAG="sha-$(git rev-parse --short HEAD)"
           REPO="ghcr.io/${{ github.repository_owner }}/hypenow-${{ matrix.service }}"
-          docker buildx build --platform linux/arm64,linux/amd64 \
+          docker buildx build --platform linux/arm64 \
             -t "$REPO:latest" -t "$REPO:$SHA_TAG" --push ${{ matrix.service }}
 
   deploy:
@@ -118,15 +136,40 @@ jobs:
              && bash scripts/rollout.sh was \
              && docker compose up -d && docker compose ps'
 
-      # crawler가 기동 중 Flyway로 raw 마이그레이션을 적용하므로, 새 컬럼 의존 뷰 대비 재시도
-      - name: 분석 뷰 적용 (raw DB, 멱등)
+      # crawler가 기동 중 Flyway로 raw 마이그레이션을 적용하므로, 새 컬럼 의존 뷰 대비 재시도.
+      # (a) 변경 없으면 스킵 — analytics/views/*.sql 해시를 서버 ~/deploy/views.sha256(위 동기화
+      #     스텝과 동일 경로)에 기록해두고, 해시 일치 + analytics 스키마에 뷰가 실제 존재할 때만
+      #     생략(적용 성공 후에만 해시를 쓴다 — 실패한 걸 기록하면 다음 배포가 잘못 스킵한다).
+      # (b) lock_timeout 15s + --single-transaction — DDL이 락 큐에 무한정 앉아 뒤따르는
+      #     리더까지 줄 세우는 걸 막는다(89초 락 대기 실측은 앞쪽 CREATE OR REPLACE VIEW 9개가
+      #     원인). lock_timeout으로 중간에 끊길 수 있어 원자성 확보에 --single-transaction 필수
+      #     (기존 수동 런북과 동일 조합).
+      - name: 분석 뷰 적용 (raw DB, 멱등 — 변경 없으면 스킵, lock_timeout 15s)
         run: |
+          HASH=$(cat analytics/views/*.sql | sha256sum | cut -d' ' -f1)
+          SKIP=$(ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" bash -s -- "$HASH" <<'REMOTE'
+            hash_file=~/deploy/views.sha256
+            if [ "$(cat "$hash_file" 2>/dev/null)" = "$1" ] && \
+               docker exec deploy-postgres-raw-1 psql -U crawler -d crawler -tAc \
+                 "select 1 from pg_views where schemaname='analytics' limit 1" | grep -q 1; then
+              echo skip
+            else
+              echo apply
+            fi
+          REMOTE
+          )
+          if [ "$SKIP" = "skip" ]; then
+            echo "뷰 해시 동일(analytics/views/*.sql) + analytics 스키마 뷰 존재 확인 — 적용 스킵"
+            exit 0
+          fi
           for i in 1 2 3 4 5; do
-            if cat analytics/views/*.sql | ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
-              'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q'; then
+            if { echo "SET lock_timeout = '15s';"; cat analytics/views/*.sql; } | \
+              ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
+              'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q --single-transaction'; then
+              ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" "echo '$HASH' > ~/deploy/views.sha256"
               exit 0
             fi
-            echo "뷰 적용 실패 — ${i}회차, 15초 후 재시도 (crawler Flyway 마이그레이션 대기 가능성)"
+            echo "뷰 적용 실패 — ${i}회차, 15초 후 재시도 (lock_timeout 15s 초과=락 대기 가능성, 그 외는 crawler Flyway 마이그레이션 대기 가능성)"
             sleep 15
           done
           exit 1

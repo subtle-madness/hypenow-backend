@@ -11,6 +11,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class V2InfluencerReportRepository {
 
+	// 뷰티 게시물 비율 게이트 (07-30) — 발굴 목록(V1InfluencerDiscoveryRepository)과 동일 기준.
+	// 추천 표면(유사 인플루언서)이므로 게이트에 걸리는 계정이 후보로 튀어나오면 안 된다.
+	private static final int MIN_ANALYZED = 8;
+	private static final double MIN_BEAUTY_RATIO_PERCENT = 20.0;
+
 	private final JdbcClient jdbcClient;
 
 	public V2InfluencerReportRepository(JdbcClient jdbcClient) {
@@ -113,7 +118,8 @@ public class V2InfluencerReportRepository {
 	 *  카피 없는 계정은 후보 제외(LATERAL INNER). 믹스는 집합 기반 CTE — 상관 서브쿼리는 운영 규모
 	 *  실측 1,981ms 성능 절벽(집합 기반 85ms, 컷 0.30 근거는 운영 dry-run: 10위 점수 최솟값 0.400).
 	 *  scored MATERIALIZED는 점수식의 WHERE/ORDER BY 이중 평가 방지. 카드 조립은
-	 *  발굴 목록(6.21) 표면 재사용 — 기준 계정이 풀에 없으면 빈 목록. */
+	 *  발굴 목록(6.21) 표면 재사용 — 기준 계정이 풀에 없으면 빈 목록.
+	 *  뷰티 게시물 비율 게이트(07-30)도 후보 단계에서 적용 — 발굴 목록과 동일 기준, br LEFT JOIN. */
 	public List<String> findSimilarHandles(String handle) {
 		return jdbcClient.sql("""
 				WITH me AS (
@@ -156,14 +162,22 @@ public class V2InfluencerReportRepository {
 				  JOIN LATERAL (SELECT traits FROM account_analyses
 				                WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
 				  LEFT JOIN cand_mix cm ON cm.account_handle = c.handle
+				  LEFT JOIN account_beauty_ratio br ON br.account_handle = c.handle
+				  -- NULLIF(analyzed_count, 0) 필수 — OR 단축 평가 미보장 + 창 전체가 is_beauty NULL인
+				  -- 계정 가능성(V1InfluencerDiscoveryRepository와 동일 이유, division by zero 방지).
 				  WHERE c.handle <> :h
+				    AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
+				         OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)
 				)
 				SELECT handle
 				FROM scored
 				WHERE score >= 0.30
 				ORDER BY score DESC, abs(followers - my_followers) ASC, handle ASC
 				LIMIT 10
-				""").param("h", handle).query(String.class).list();
+				""").param("h", handle)
+				.param("minAnalyzed", MIN_ANALYZED)
+				.param("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT)
+				.query(String.class).list();
 	}
 
 	public record SummaryRow(Long followers, Long analyzedCount, Long postsCount, Long avgViews,

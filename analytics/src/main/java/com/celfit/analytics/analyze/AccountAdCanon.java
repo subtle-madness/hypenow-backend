@@ -1,7 +1,9 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.llm.AdSituation;
+import com.celfit.analytics.llm.PerfConfidence;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -109,6 +111,89 @@ final class AccountAdCanon {
 		out.put("comparison_organic_count", ad.comparisonOrganicCount());
 		out.put("comparison_ad_count", ad.comparisonAdCount());
 		out.put("last_ad_posted_at", ad.lastAdPostedAt());
+		return out;
+	}
+
+	/**
+	 * 판정 전용 내부 컬럼 7개(설계 2026-07-30-perf-summary-statistical-guards §3-1·§3-3 재정의) —
+	 * PerfConfidence 계산에만 쓰고 LLM 프롬프트에는 항상 노출하지 않는다. {@code median_views}·
+	 * {@code median_er_pct}는 여기 없다 — 그 둘은 "수준 판정의 근거를 median으로 옮긴다"는 이
+	 * 트랙의 간판 결정 그 자체라 always-strip 대상이 아니다(PerfConfidence.CONFIDENCE_COLUMNS
+	 * javadoc 참조). 노출 후 대응 평균 키를 지울지는 {@link PerfConfidence#excludedSummaryKeys()}가
+	 * 조건부로 판단한다.
+	 *
+	 * <p>AccountAnalysisJob(일상 배치)·ClaudeBurstRunner(구독 버스트 export) 양쪽이 이 목록으로
+	 * 프롬프트 summary를 벗겨낸다 — 한쪽만 벗겨내면 신뢰도 가드가 조용히 우회되는 구멍이 된다
+	 * (07-30 재발 방지: 버스트 경로가 구 5-arg 생성자로 가드를 건너뛰던 문제).
+	 *
+	 * <p>{@link PerfConfidence#CONFIDENCE_COLUMNS}를 그대로 재사용한다 — 판정에 쓰는 컬럼 목록과
+	 * 프롬프트에서 벗겨낼 컬럼 목록이 서로 다른 상수로 따로 관리되면 한쪽만 고쳤을 때 조용히
+	 * 어긋나는 드리프트가 생긴다.
+	 */
+	static final List<String> INTERNAL_CONFIDENCE_COLUMNS = PerfConfidence.CONFIDENCE_COLUMNS;
+
+	/**
+	 * 카피 생성과 무관해 프롬프트에서 항상 제거할 컬럼 — {@link PerfConfidence#CONFIDENCE_COLUMNS}
+	 * (판정 재료·{@code dataIncomplete()} 판정 근거로도 재사용됨)와는 다른 목록이다. 여기 컬럼은
+	 * 판정에 전혀 관여하지 않으므로 거기 섞으면 "판정 전용 내부 입력"이라는 의미가 흐려지고,
+	 * dataIncomplete()의 "7개 전부 NULL=미러 갭" 판정 기준도 오염된다(email은 biography 미기재·
+	 * 정규식 미매치로 정상 계정에서도 흔히 NULL).
+	 *
+	 * <p>{@code email}: biography 정규식 파싱 이메일(V46, 스펙 2026-07-30-influencer-email-from-bio).
+	 * 카피 생성 어디에도 쓰이지 않는데, 프롬프트 summary가 {@code account_summaries}의
+	 * {@code SELECT *} 사본이라 컬럼이 추가되는 즉시 자동으로 프롬프트에 실렸다 — 실 연락처가
+	 * 외부 LLM(Gemini) API로 전송되는 개인정보 유출이었다(07-30 발견, 운영 재생성 전 차단).
+	 * {@code account_summaries}에 컬럼이 추가될 때마다 이 함정이 재발하므로, 새 컬럼이 카피와
+	 * 무관하면 여기 추가해야 한다(AccountSummaryStatGuardMappingTest 유사 취지의 재발 방지는
+	 * PerfConfidenceTest의 프롬프트 키 집합 고정 테스트 참조).
+	 */
+	static final List<String> PROMPT_IRRELEVANT_COLUMNS = List.of("email");
+
+	/**
+	 * canonicalSummary 사본 + 그 사본에서 always-strip 7컬럼·카피 무관 컬럼과 판정 결과에 따른
+	 * 조건부 제거를 적용한 프롬프트용 결과. {@code median_views}·{@code median_er_pct}는
+	 * always-strip이 아니라 판정 근거로 노출된다(대응 평균이 조건부로 밀려날 뿐).
+	 */
+	record SummaryWithConfidence(Map<String, Object> promptSummary, PerfConfidence confidence) {}
+
+	/**
+	 * 원본 스냅샷(9컬럼 포함)에서 신뢰도 등급을 판정하고, 광고 정본으로 치환한 프롬프트 사본에서는
+	 * always-strip 7컬럼·카피 무관 컬럼과 판정 결과에 따라 조건부로 갈리는 화면용 집계 컬럼(추세
+	 * 4종·지표별 평균·조건부 median)까지 제거해 함께 돌려준다 — 판정은 반드시 원본에서 해야 한다
+	 * (치환·제거 이후에는 판정 근거 자체가 사라진다).
+	 *
+	 * <p>조건부 제거는 {@link PerfConfidence#excludedSummaryKeys()} 위임(설계 §3-3 실측 보완,
+	 * 2026-07-30 test 실측 — "있지만 언급 마라" 지침은 안 지켜지고 "아예 없음"만 지켜졌다).
+	 */
+	static SummaryWithConfidence withConfidence(Map<String, Object> summary, AdMetrics ad) {
+		PerfConfidence confidence = PerfConfidence.of(summary);
+		Map<String, Object> promptSummary = canonicalSummary(summary, ad);
+		INTERNAL_CONFIDENCE_COLUMNS.forEach(promptSummary::remove);
+		PROMPT_IRRELEVANT_COLUMNS.forEach(promptSummary::remove);
+		confidence.excludedSummaryKeys().forEach(promptSummary::remove);
+		return new SummaryWithConfidence(promptSummary, confidence);
+	}
+
+	/**
+	 * 프롬프트용 게시물 목록에서 판정 결과에 따라 조건부로 벗겨낼 필드를 제거한 사본을 돌려준다
+	 * (설계 §3-3 실측 보완). 대상 필드는 {@link PerfConfidence#excludedPostFields()} 위임 —
+	 * INSUFFICIENT 지표의 계정 집계 키를 지워도 게시물별 원값이 남아 있으면 모수 2건짜리 지표라도
+	 * 목록에서 수준을 유추할 수 있어(2026-07-30 test 실측 {@code 0_tsuki2}), 같은 원칙을 게시물
+	 * 단위에도 적용한다. content_type·caption·sponsored는 contentSummary·adSummary에도 쓰여
+	 * 절대 벗기지 않는다 — 벗길 필드가 없으면 원본 리스트를 그대로 돌려준다(사본 생성 생략).
+	 */
+	static List<Map<String, Object>> withPostConfidence(List<Map<String, Object>> posts,
+			PerfConfidence confidence) {
+		List<String> excluded = confidence.excludedPostFields();
+		if (excluded.isEmpty()) {
+			return posts;
+		}
+		List<Map<String, Object>> out = new ArrayList<>(posts.size());
+		for (Map<String, Object> post : posts) {
+			Map<String, Object> copy = new LinkedHashMap<>(post);
+			excluded.forEach(copy::remove);
+			out.add(copy);
+		}
 		return out;
 	}
 
