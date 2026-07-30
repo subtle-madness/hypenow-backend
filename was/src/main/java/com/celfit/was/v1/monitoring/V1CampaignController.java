@@ -4,6 +4,8 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.V1ApiException;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,16 +48,24 @@ public class V1CampaignController {
 
 	@PostMapping("/v1/monitoring/campaigns")
 	public ResponseEntity<ApiResponse<CampaignResponse>> create(@AuthenticationPrincipal AppUserDetails principal,
+			// Swagger 문서 전용 스키마 지정 — 런타임 역직렬화는 아래 Map<String,Object> 그대로(CampaignRequestDocs 참조).
+			@io.swagger.v3.oas.annotations.parameters.RequestBody(
+					content = @Content(schema = @Schema(implementation = CampaignRequestDocs.Create.class)))
 			@RequestBody(required = false) Map<String, Object> body) {
 		Map<String, Object> fields = body == null ? Map.of() : body;
 		CampaignRow row = service.create(principal.getUserId(), fields.get("name"), fields.get("description"),
-				fields.get("startDate"), fields.get("endDate"), fields.get("brand"), fields.get("budget"));
+				fields.get("startDate"), fields.get("endDate"), fields.get("brand"), fields.get("budget"),
+				fields.get("seedingCount"));
 		return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(CampaignResponse.from(row)));
 	}
 
 	@PatchMapping("/v1/monitoring/campaigns/{campaignId}")
 	public ApiResponse<CampaignResponse> patch(@AuthenticationPrincipal AppUserDetails principal,
-			@PathVariable String campaignId, @RequestBody(required = false) Map<String, Object> body) {
+			@PathVariable String campaignId,
+			// Swagger 문서 전용 스키마 지정 — 런타임 역직렬화는 아래 Map<String,Object> 그대로(CampaignRequestDocs 참조).
+			@io.swagger.v3.oas.annotations.parameters.RequestBody(
+					content = @Content(schema = @Schema(implementation = CampaignRequestDocs.Patch.class)))
+			@RequestBody(required = false) Map<String, Object> body) {
 		Map<String, Object> fields = body == null ? Map.of() : body;
 		CampaignRow row = service.patch(principal.getUserId(), parseCampaignId(campaignId), fields);
 		return ApiResponse.ok(CampaignResponse.from(row));

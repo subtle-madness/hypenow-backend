@@ -2,6 +2,7 @@ package com.celfit.was.v1.monitoring;
 
 import com.celfit.was.monitoring.KeywordRule;
 import com.celfit.was.v1.common.KstTimestamps;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -16,7 +17,11 @@ import java.util.List;
  */
 public record TrackingItemResponse(
 		String id,
-		String mode,
+		// 값은 "url"/"account" — TrackingItemAssembler.MODE_URL/MODE_ACCOUNT(비공개 상수)가 정본이라
+		// 컴파일 상수로 직접 참조할 수 없어 문자열 그대로 표기한다(런타임 타입은 String 그대로 유지).
+		@Schema(allowableValues = {"url", "account"}) String mode,
+		@Schema(allowableValues = {ItemStatus.COLLECTING, ItemStatus.DETECTING, ItemStatus.TRACKING,
+				ItemStatus.NOT_UPLOADED, ItemStatus.ENDED, ItemStatus.HIDDEN, ItemStatus.ERROR})
 		String status,
 		String handle,
 		String displayName,
@@ -43,7 +48,9 @@ public record TrackingItemResponse(
 	/** TrackedPost(6.25) — target 확정 & tracked_short_code가 있는 행에서만 값을 가진다. */
 	public record TrackedPostResponse(
 			String url,
-			String contentType,
+			// 값은 "reels"/"feed" — TrackingItemAssembler.buildPost의 리터럴 조립이 정본(별도 상수 없음),
+			// 런타임 타입은 String 그대로 유지.
+			@Schema(allowableValues = {"reels", "feed"}) String contentType,
 			String uploadedAt,
 			String caption,
 			List<String> matchedKeywords,
