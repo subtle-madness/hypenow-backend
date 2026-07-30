@@ -106,5 +106,50 @@ ALTER TABLE app.example
 SQL
 expect 1 "여러 줄에 걸친 DROP COLUMN 차단" "$TMP/multiline.sql"
 
+# --versions 모드 — 버전 중복 검사(v3). 파일 단위가 아니라 집합 단위라 --scan과 별도 seam.
+expect_versions() { # expect_versions <기대코드> <설명> <base-목록> <head-목록>
+  local want="$1" desc="$2" base="$3" head="$4" got=0
+  total=$((total+1))
+  "$SCRIPT" --versions "$base" "$head" >/dev/null 2>&1 || got=$?
+  if [ "$got" -eq "$want" ]; then
+    pass=$((pass+1)); echo "ok   $desc"
+  else
+    echo "FAIL $desc — 기대 $want, 실제 $got"
+  fi
+}
+
+DIR_A=analytics/src/main/resources/db/migration/analysis
+DIR_B=was/src/main/resources/db/migration/app
+
+printf '%s/V43__trait_taxonomy_makeup_review.sql\n' "$DIR_A" > "$TMP/v-base-collision.txt"
+printf '%s/V43__landing_stats_nano_band.sql\n' "$DIR_A" > "$TMP/v-head-collision.txt"
+expect_versions 1 "base V43(trait)·head V43(landing) 교차 충돌 차단 (#181 재현)" \
+  "$TMP/v-base-collision.txt" "$TMP/v-head-collision.txt"
+
+printf '%s/V43__trait.sql\n' "$DIR_A" > "$TMP/v-base-nextver.txt"
+printf '%s/V44__perf.sql\n' "$DIR_A" > "$TMP/v-head-nextver.txt"
+expect_versions 0 "base V43·head V44는 통과" "$TMP/v-base-nextver.txt" "$TMP/v-head-nextver.txt"
+
+printf '%s/V43__trait.sql\n' "$DIR_A" > "$TMP/v-base-same.txt"
+printf '%s/V43__trait.sql\n' "$DIR_A" > "$TMP/v-head-same.txt"
+expect_versions 0 "base·head 동일 파일명 V43은 통과(변경 없음)" "$TMP/v-base-same.txt" "$TMP/v-head-same.txt"
+
+: > "$TMP/v-base-empty.txt"
+printf '%s/V43__a.sql\n%s/V43__b.sql\n' "$DIR_A" "$DIR_A" > "$TMP/v-head-dup.txt"
+expect_versions 1 "HEAD 트리 내 V43 2개는 통과 아님(차단)" "$TMP/v-base-empty.txt" "$TMP/v-head-dup.txt"
+
+printf '%s/V1__init.sql\n' "$DIR_B" > "$TMP/v-base-crossdir.txt"
+printf '%s/V1__init.sql\n%s/V1__init.sql\n' "$DIR_B" "$DIR_A" > "$TMP/v-head-crossdir.txt"
+expect_versions 0 "다른 디렉토리의 같은 번호(app V1 + analysis V1)는 통과(독립 공간)" \
+  "$TMP/v-base-crossdir.txt" "$TMP/v-head-crossdir.txt"
+
+printf 'crawler/src/main/resources/db/migration/V07__a.sql\n' > "$TMP/v-base-leadingzero.txt"
+printf 'crawler/src/main/resources/db/migration/V7__b.sql\n' > "$TMP/v-head-leadingzero.txt"
+expect_versions 1 "V07과 V7은 같은 버전으로 취급되어 차단" \
+  "$TMP/v-base-leadingzero.txt" "$TMP/v-head-leadingzero.txt"
+
+expect_versions 0 "빈 목록/신규 디렉토리는 통과(크래시 금지)" \
+  "$TMP/does-not-exist-base.txt" "$TMP/does-not-exist-head.txt"
+
 echo "셀프테스트: $pass/$total"
 [ "$pass" -eq "$total" ]

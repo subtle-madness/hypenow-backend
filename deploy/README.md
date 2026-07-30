@@ -115,6 +115,20 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
   `DROP VIEW`/`DROP INDEX`/`DROP CONSTRAINT`(단일 마이그레이션 안에서 DROP+재생성은
   트랜잭션이라 안전 — 재생성 없는 단독 DROP만 위험), `ADD CONSTRAINT … UNIQUE`(중복 데이터
   시 즉사), `TRUNCATE`, 그리고 **데이터 형태 변경**(미러가 값 도메인을 바꾸는 종류).
+- **v3(07-30) — Flyway 버전 번호 중복 검사.** PR #181이 `V43__landing_stats_nano_band.sql`을
+  들고 있는 사이 develop이 `V43__trait_taxonomy_makeup_review.sql`을 선점, 그대로 머지되면
+  같은 버전 2개로 Flyway 기동이 거부된다(V18·V43에 이어 3번째 재발). PR 브랜치 자기 트리만
+  봐서는 못 잡는다 — 그 브랜치엔 V43이 1개뿐이라 충돌은 base와 합쳐질 때만 드러나므로,
+  이 검사는 **base ref와 HEAD의 트리 스냅샷을 직접 대조**한다(`git ls-tree`, diff가 아님 —
+  diff 기반이면 "이번 PR이 안 건드린 기존 파일과의 충돌"을 놓친다).
+  **스코프가 위 파괴적 DDL 검사와 다르다(의도)**: 파괴적 DDL 검사는 was 롤링 공존 근거가
+  있는 analysis DB만 보지만, 버전 중복은 근거가 다르다 — 어느 Flyway 인스턴스든 중복
+  버전이면 그 인스턴스 자체가 기동을 거부한다(신구 공존 여부와 무관한 실패 모드). Flyway
+  인스턴스는 4개이고 각각 독립 버전 공간(별도 히스토리 테이블)이라 디렉토리별로 독립
+  검사하며(was의 V1과 analytics의 V1은 정상), crawler·monitoring을 포함해 **4개 전부**를
+  대상으로 한다. 버전 비교는 Flyway와 동일하게 숫자 기준(선행 0 정규화 — `V07` == `V7`).
+  집합 단위 검사라 파일 단위 `--scan`과는 별도 seam인 `--versions <base-목록> <head-목록>`으로
+  git 없이도 테스트 가능(`check-migration-safety.test.sh`).
 - **rename은 rename하지 않는다 — 컬럼 이행 레시피**(타입 변경도 동일):
   1. expand 릴리스: `ADD COLUMN` + **백필 UPDATE를 같은 마이그레이션에**(Flyway가 실행 보장) +
      코드를 새 컬럼으로 전환. 백필 통째 누락은 신 컬럼 전 행 NULL = 기능이 비어 보이므로
