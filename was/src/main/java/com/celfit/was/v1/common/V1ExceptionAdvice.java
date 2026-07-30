@@ -1,7 +1,9 @@
 package com.celfit.was.v1.common;
 
+import com.celfit.was.monitoring.MonitoringUnavailableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -26,6 +28,19 @@ public class V1ExceptionAdvice {
 	@ExceptionHandler(V1ApiException.class)
 	public ResponseEntity<ApiResponse<Void>> handle(V1ApiException e) {
 		return ResponseEntity.status(e.status()).body(ApiResponse.fail(e.code(), e.getMessage()));
+	}
+
+	/**
+	 * monitoring 전송 실패(연결 불가·타임아웃·해석 불가 응답) — 계약 1.3 SERVICE_UNAVAILABLE.
+	 * 같은 요청을 잠시 후 재시도 가능하다는 신호로 Retry-After를 함께 보낸다(초 단위, 계약이 정확한
+	 * 값을 못 박지 않아 5초로 고정 — 등록 POST 10s·연장·해지 5s의 타임아웃 권고와 같은 자리수).
+	 */
+	@ExceptionHandler(MonitoringUnavailableException.class)
+	public ResponseEntity<ApiResponse<Void>> handleMonitoringUnavailable(MonitoringUnavailableException e) {
+		log.warn("monitoring 연결 실패 — 503 처리: {}", e.getMessage());
+		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+				.header(HttpHeaders.RETRY_AFTER, "5")
+				.body(ApiResponse.fail("SERVICE_UNAVAILABLE", "일시적으로 연결이 어려워요. 잠시 후 다시 시도해 주세요."));
 	}
 
 	@ExceptionHandler({MethodArgumentTypeMismatchException.class,
