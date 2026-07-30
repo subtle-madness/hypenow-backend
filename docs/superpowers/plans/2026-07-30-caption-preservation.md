@@ -710,12 +710,23 @@ Step 4까지의 테스트는 `mock(ContentCaptionUpserter.class)`를 주입만 �
 - `ReelsJobTest`: 전용 신규 테스트 `raw_원형과_캡션이_같은_capturedAt을_공유한다()` 추가.
   **주의**: 이 클래스 공용 `CLOCK`은 `Clock.fixed`라 매 호출이 같은 값을 반환하므로
   `clock.instant()`를 한 번 부르든 두 번 부르든 결과가 같아 회귀를 못 잡는다 — 이 테스트만
-  호출마다 다른 값(tick1/tick2/tick3)을 주는 mock `Clock`을 `ReelsJob`에 직접 주입해서 우회했다.
+  호출마다 새 값을 주는 mock `Clock`을 `ReelsJob`에 직접 주입해서 우회했다.
   (`RevisitCutoff.boundary()`가 `run()` 안에서 `clock.instant()`를 한 번 먼저 소비하는 것도
-  고려해 tick을 3개로 뒀다 — 최초 시도는 tick 2개로 충분하다고 잘못 가정해 테스트 자체의
-  버그로 "회귀를 잡은 것처럼 보이는" 거짓 양성을 한 번 겪었다.)
+  영향을 준다.)
+  **tick 생성기는 유한 목록이 아니라 호출마다 새 값을 뽑는 무한 시퀀스로 구현한다**
+  (`AtomicLong` 카운터 + `thenAnswer(inv -> NOW.plusSeconds(seq.incrementAndGet()))`) — 처음엔
+  유한 목록(`tick1,tick2,tick3,tick3,tick3` 식, Mockito가 소진 후 마지막 값을 반복)으로 짰다가
+  두 가지 거짓 양성을 실측으로 겪었다: ① tick을 2개만 두었을 때 `RevisitCutoff.boundary()`의
+  숨은 소비를 놓쳐 raw·caption 호출이 같은 반복 값에 걸림, ② 이후 3개로 늘려 회귀를 잡는 데는
+  성공했지만, 유한 목록 자체가 "나중에 capturedAt 대입 이전에 clock 호출이 하나 더 늘면
+  회귀 시나리오의 두 호출이 다시 반복 구간에 함께 걸려 조용히 무의미해지는" 구조적 결함을
+  안고 있다는 코드 리뷰 지적을 받아 무한 생성기로 교체(별도 커밋). 단정은 특정 tick 번호를
+  하드코딩하지 않고 캡처한 두 값끼리 비교하는 형태를 유지한다.
 - 두 회귀 모두 **실제로 되돌려서 새 단정이 실패하는 것을 확인**한 뒤 원복함(feedSource 삼항
   반전 → `ArgumentsAreDifferent`; `ReelsJob` capturedAt 공유 제거 → `AssertionFailedError`).
+  무한 생성기 교체 후에도 같은 되돌리기로 재확인했고, 추가로 "capturedAt 대입 이전에
+  `clock.instant()` 호출이 하나 더 늘어도(로깅 등 미래 변경 모의) 정상 코드는 여전히 PASS"까지
+  확인했다 — 이게 무한 생성기로 바꾼 목적 자체를 검증한 것이다.
 
 ---
 
