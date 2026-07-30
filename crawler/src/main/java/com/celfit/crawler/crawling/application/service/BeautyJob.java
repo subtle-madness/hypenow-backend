@@ -46,6 +46,12 @@ public class BeautyJob {
     /** 캡션 1개당 최대 길이(문자) — 캡션 앞부분에 주제가 드러나므로 뒷부분은 잘라도 판정에 충분. */
     static final int CAPTION_MAX_CHARS = 100;
 
+    /**
+     * 캡션 재판정에 필요한 릴스 페이지 최소 아이템 수 — 아이템 1~2개짜리 페이지로 재판정을 돌리면
+     * 근거가 캡션 0건 때와 별로 다르지 않아 LLM 호출만 낭비된다.
+     */
+    static final int REJUDGE_MIN_ITEMS = 3;
+
     public record Summary(int judgedBeauty, int judgedService, int judgedForeign, int judgedNotBeauty,
                           int skippedNoProfile, int failedBatches) {}
 
@@ -89,6 +95,12 @@ public class BeautyJob {
             targets.addAll(influencers.findRejudgeTargets(
                     InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
                     PageRequest.of(0, limit - targets.size())));
+        }
+        if (rejudge && targets.size() < limit) {
+            // 캡션 0건으로 판정된 뒤 릴스가 쌓인 계정 — 뷰티 판정분도 포함해 실측으로 되돌린다
+            targets.addAll(influencers.findCaptionRejudgeTargets(
+                    InfluencerStatus.QUALIFIED.name(), Influencer.BEAUTY_SOURCE_CLAUDE,
+                    REJUDGE_MIN_ITEMS, PageRequest.of(0, limit - targets.size())));
         }
 
         // 판정 재료 준비 — raw_profile이 아직 없으면 판정 불가(qualify가 언젠가 채우면 재시도)
