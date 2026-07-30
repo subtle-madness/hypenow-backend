@@ -39,7 +39,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * 커버하므로 여기서는 리포지토리를 목킹해 컨트롤러 로직만 본다.
  */
 @WebMvcTest(controllers = V1NotificationsController.class, properties = "was.cors.allowed-origins=http://localhost:3000")
-@Import({V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({DigestAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
 class V1NotificationsControllerTest {
 
 	@Autowired
@@ -193,6 +193,16 @@ class V1NotificationsControllerTest {
 				.andExpect(status().isNoContent());
 
 		then(repository).should().markRead(eq(7L), eq(List.of(5L)));
+	}
+
+	@Test
+	void POST_전_원소가_숫자가_아닌_ids면_no_op_204() throws Exception {
+		mockMvc.perform(post("/v1/notifications/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"ids\":[\"abc\",\"def\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(repository).should().markRead(eq(7L), eq(List.of()));
 	}
 
 	@Test

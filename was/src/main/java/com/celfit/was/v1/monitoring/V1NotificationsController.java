@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * 알림 다이제스트 조회·읽음 처리 /v1(스펙 6.32) — 인증 필수(SecurityConfig anyRequest().authenticated()가
@@ -26,13 +25,15 @@ import tools.jackson.databind.ObjectMapper;
 public class V1NotificationsController {
 
 	private static final int RECENT_LIMIT = 30;
+	/** body 없는 POST(RequestBody required=false → null)를 빈 요청과 동일하게 다루기 위한 정규화 상수. */
+	private static final NotificationReadRequest EMPTY_REQUEST = new NotificationReadRequest(null, null);
 
 	private final DigestRepository repository;
-	private final ObjectMapper objectMapper;
+	private final DigestAssembler assembler;
 
-	public V1NotificationsController(DigestRepository repository, ObjectMapper objectMapper) {
+	public V1NotificationsController(DigestRepository repository, DigestAssembler assembler) {
 		this.repository = repository;
-		this.objectMapper = objectMapper;
+		this.assembler = assembler;
 	}
 
 	/** 최근 다이제스트 — date DESC 최대 30건(상수, 1.4의 두 예외 중 하나), meta.total은 창과 무관한 전체 건수. */
@@ -40,7 +41,7 @@ public class V1NotificationsController {
 	public ApiResponse<List<DigestResponse>> list(@AuthenticationPrincipal AppUserDetails principal) {
 		long userId = principal.getUserId();
 		List<DigestResponse> items = repository.findRecentByUser(userId, RECENT_LIMIT).stream()
-				.map(row -> DigestResponse.from(row, objectMapper))
+				.map(assembler::toResponse)
 				.toList();
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", repository.countByUser(userId));
@@ -58,17 +59,16 @@ public class V1NotificationsController {
 	public void read(@AuthenticationPrincipal AppUserDetails principal,
 			@RequestBody(required = false) NotificationReadRequest body) {
 		long userId = principal.getUserId();
-		Boolean all = body == null ? null : body.all();
-		if (Boolean.TRUE.equals(all)) {
+		NotificationReadRequest request = body == null ? EMPTY_REQUEST : body;
+
+		if (Boolean.TRUE.equals(request.all())) {
 			repository.markAllRead(userId);
 			return;
 		}
-
-		List<String> ids = body == null ? null : body.ids();
-		if (ids == null) {
+		if (request.ids() == null) {
 			throw V1ApiException.validation("읽음 처리할 알림을 지정해 주세요.");
 		}
-		List<Long> parsedIds = ids.stream()
+		List<Long> parsedIds = request.ids().stream()
 				.map(V1NotificationsController::tryParseId)
 				.filter(Objects::nonNull)
 				.toList();
