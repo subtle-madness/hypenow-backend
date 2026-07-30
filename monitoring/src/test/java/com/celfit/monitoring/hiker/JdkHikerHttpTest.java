@@ -66,6 +66,16 @@ class JdkHikerHttpTest {
 				.hasMessageContaining("not found");
 	}
 
+	/** 400은 share 해소(§2-6) 등에서 다른 실패와 구분해야 해서 별도 타입으로 던진다(HikerFetchException 상속). */
+	@Test
+	void _400은_HikerBadRequest() throws IOException {
+		String baseUrl = startServer(400, "{\"detail\":\"bad url\"}");
+		assertThatThrownBy(() -> http(baseUrl, "test-key").get("/v2/media/info/by/url?url=bad"))
+				.isInstanceOf(HikerBadRequestException.class)
+				.isInstanceOf(HikerFetchException.class)
+				.hasMessageContaining("bad url");
+	}
+
 	@Test
 	void _500은_HikerFetch() throws IOException {
 		String baseUrl = startServer(500, "boom");

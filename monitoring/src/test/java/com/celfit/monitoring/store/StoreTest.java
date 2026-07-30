@@ -104,9 +104,9 @@ class StoreTest {
 	@Test
 	void 프로필_스냅샷도_일_1회_upsert() {
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "{}"));
+				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}"));
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "{}"));
+				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "이름", "https://img", "{}"));
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject(
 				"SELECT followers FROM profile_snapshot WHERE username='acct_a'", Long.class)).isEqualTo(120);
