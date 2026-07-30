@@ -1,8 +1,10 @@
 package com.celfit.monitoring.service;
 
+import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,9 +28,29 @@ public class SweepCommandService {
 	 * 코멘트에 이미 적혀 있듯, 스윕의 재시도 라운드 대기가 스케줄러 풀 스레드를 붙잡으면 알람 발송
 	 * 틱이 그 사이 통째로 밀린다. 수동 트리거는 그 풀과 아예 무관한 스레드에서 돌려야 같은 문제가
 	 * 되풀이되지 않는다 — 그래서 스프링 TaskScheduler를 재사용하지 않고 별도 executor를 둔다.
+	 *
+	 * <p><b>데몬 스레드여야 한다.</b> 단일 스레드 executor의 코어 스레드는 한 번 생성되면
+	 * 유휴 타임아웃 없이 영구히 살아남는데, non-daemon이면 SIGTERM 후 스프링 컨텍스트가 닫혀도
+	 * JVM이 이 스레드를 기다리느라 종료되지 않는다 — 컨테이너 정지가 유예시간을 다 쓰고 SIGKILL로
+	 * 끝난다. 데몬으로 두면 진행 중인 스윕이 종료 시 잘리지만, 그건 이미 정의된 동작이다:
+	 * 중단된 실행은 {@code sweep_run.ok}가 true가 되지 않아 워터마크에서 자연 제외된다
+	 * ({@link com.celfit.monitoring.store.SweepRunRepository} 클래스 주석).
 	 */
-	private final ExecutorService executor = Executors.newSingleThreadExecutor(
-			r -> new Thread(r, "manual-sweep"));
+	private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+		Thread t = new Thread(r, "manual-sweep");
+		t.setDaemon(true);
+		return t;
+	});
+
+	/**
+	 * 종료 시 executor를 정리한다 — 데몬 스레드라 JVM 종료를 막지는 않지만, 컨텍스트가 닫힌 뒤에도
+	 * 스윕이 DB·HTTP를 계속 건드리며 종료 로그를 어지럽히는 걸 막는다. 진행 중인 스윕의 완료를
+	 * 기다리지 않는 것은 의도적이다(최대 1시간 블로킹된다).
+	 */
+	@PreDestroy
+	void shutdown() {
+		executor.shutdownNow();
+	}
 
 	public SweepCommandService(DailySweepJob job, SweepGuard guard) {
 		this.job = job;
@@ -62,16 +84,23 @@ public class SweepCommandService {
 			throw e;
 		}
 		Instant startedAt = Instant.now();
-		executor.submit(() -> {
-			try {
-				job.runWithId(runId);
-			} catch (RuntimeException e) {
-				// executor 안에서 삼키지 않으면 조용히 사라진다 — 반드시 로그로 남긴다.
-				log.error("수동 스윕 실행 실패(runId={})", runId, e);
-			} finally {
-				guard.release();
-			}
-		});
+		try {
+			executor.submit(() -> {
+				try {
+					job.runWithId(runId);
+				} catch (RuntimeException e) {
+					// executor 안에서 삼키지 않으면 조용히 사라진다 — 반드시 로그로 남긴다.
+					log.error("수동 스윕 실행 실패(runId={})", runId, e);
+				} finally {
+					guard.release();
+				}
+			});
+		} catch (RejectedExecutionException e) {
+			// 종료 중(@PreDestroy 이후)에만 나는 경로 — Runnable이 아예 안 돌아 위 finally도 못 돈다.
+			// 여기서 풀지 않으면 가드가 눌린 채 남는다.
+			guard.release();
+			throw e;
+		}
 		return new Started(runId, startedAt);
 	}
 }
