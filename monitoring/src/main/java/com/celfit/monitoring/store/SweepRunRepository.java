@@ -1,5 +1,8 @@
 package com.celfit.monitoring.store;
 
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -28,5 +31,21 @@ public class SweepRunRepository {
 
 	public void complete(long id, boolean ok) {
 		db.update("UPDATE sweep_run SET completed_at = now(), ok = ? WHERE id = ?", ok, id);
+	}
+
+	/**
+	 * 가장 최근 실행 1행 — GET /api/sweeps/latest(수동 트리거 검증 루프의 폴링 대상). 크론·수동
+	 * 트리거 구분 없이 같은 대장에 적재되므로 "가장 최근"이 곧 마지막 스윕이다. 이력이 아예 없으면
+	 * {@link Optional#empty()} — 호출부가 404가 아니라 빈 표현으로 내려야 한다(이력 부재는 오류가 아니다).
+	 */
+	public Optional<SweepRunRow> latest() {
+		List<SweepRunRow> rows = db.query("""
+				SELECT id, started_at, completed_at, ok FROM sweep_run
+				ORDER BY id DESC LIMIT 1""",
+				(rs, i) -> new SweepRunRow(rs.getLong("id"),
+						rs.getTimestamp("started_at").toInstant(),
+						rs.getTimestamp("completed_at") == null ? null : rs.getTimestamp("completed_at").toInstant(),
+						(Boolean) rs.getObject("ok")));
+		return rows.stream().findFirst();
 	}
 }
