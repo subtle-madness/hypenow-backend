@@ -1,10 +1,15 @@
 package com.celfit.was.v1.monitoring;
 
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.never;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -23,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -56,7 +62,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void 응답_형태와_entries_순서를_그대로_반환한다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"),
-				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null,
+				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null, null,
 				List.of(
 						entry(1L, 1, "https://www.instagram.com/p/ABC123/", "post", "success", null, null, null, 200L),
 						entry(1L, 2, "glowdeep", "account", "duplicate", "duplicate", "이미 진행 중인 대상이에요.", null, null)));
@@ -78,7 +84,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void requestedAt은_KST_오프셋_09_00_문자열이다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
-				14, null, List.of());
+				14, null, null, List.of());
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
 		given(repository.countByUser(7L)).willReturn(1L);
 
@@ -91,7 +97,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void nullable_필드_5종은_키가_존재하며_명시적으로_null이다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
-				14, null,
+				14, null, null,
 				List.of(entry(1L, 1, "https://www.instagram.com/p/ABC123/", "post", "pending", null, null, null,
 						null)));
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
@@ -102,6 +108,9 @@ class V1RegistrationsControllerTest {
 				// completedAt(진행 중)
 				.andExpect(jsonPath("$.data[0]", Matchers.hasKey("completedAt")))
 				.andExpect(jsonPath("$.data[0].completedAt").value(Matchers.nullValue()))
+				// acknowledgedAt(미확인)
+				.andExpect(jsonPath("$.data[0]", Matchers.hasKey("acknowledgedAt")))
+				.andExpect(jsonPath("$.data[0].acknowledgedAt").value(Matchers.nullValue()))
 				// entries[].reason·reasonCode·resolvedUrl·itemId(성공 대기 중)
 				.andExpect(jsonPath("$.data[0].entries[0]", Matchers.hasKey("reason")))
 				.andExpect(jsonPath("$.data[0].entries[0].reason").value(Matchers.nullValue()))
@@ -116,7 +125,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void itemId가_값이면_문자열로_직렬화된다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"),
-				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null,
+				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null, null,
 				List.of(entry(1L, 1, "https://www.instagram.com/p/ABC123/", "post", "success", null, null, null,
 						12345L)));
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
@@ -128,10 +137,23 @@ class V1RegistrationsControllerTest {
 	}
 
 	@Test
+	void acknowledgedAt이_값이면_KST_오프셋으로_직렬화된다() throws Exception {
+		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"),
+				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null,
+				OffsetDateTime.parse("2026-07-29T01:00:00Z"), List.of());
+		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
+		given(repository.countByUser(7L)).willReturn(1L);
+
+		mockMvc.perform(get("/v1/monitoring/registrations").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].acknowledgedAt").value("2026-07-29T10:00:00+09:00"));
+	}
+
+	@Test
 	void meta_total은_최근_50건_창과_무관하게_전체_건수다() throws Exception {
 		List<RegistrationRow> fiftyRows = IntStream.rangeClosed(1, 50)
 				.mapToObj(i -> new RegistrationRow(i, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
-						14, null, List.of()))
+						14, null, null, List.of()))
 				.toList();
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(fiftyRows);
 		given(repository.countByUser(7L)).willReturn(60L);
@@ -145,6 +167,79 @@ class V1RegistrationsControllerTest {
 	@Test
 	void 비로그인은_401이다() throws Exception {
 		mockMvc.perform(get("/v1/monitoring/registrations"))
+				.andExpect(status().isUnauthorized());
+
+		then(repository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void POST_ids로_확인_처리하면_204() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"ids\":[\"1\",\"2\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(repository).should().markAcknowledged(eq(7L), eq(List.of(1L, 2L)));
+	}
+
+	@Test
+	void POST_all_true면_204이고_창_제한_없이_전체_처리한다() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"all\":true}"))
+				.andExpect(status().isNoContent());
+
+		then(repository).should().markAllAcknowledged(7L);
+		then(repository).should(never()).markAcknowledged(anyLong(), anyList());
+	}
+
+	@Test
+	void POST_ids와_all_둘_다_없으면_400() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(repository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void POST_all_false만_오면_400() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"all\":false}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(repository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void POST_숫자가_아닌_id는_무시하고_204() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"ids\":[\"abc\",\"5\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(repository).should().markAcknowledged(eq(7L), eq(List.of(5L)));
+	}
+
+	@Test
+	void POST_전_원소가_숫자가_아닌_ids면_no_op_204() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"ids\":[\"abc\",\"def\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(repository).should().markAcknowledged(eq(7L), eq(List.of()));
+	}
+
+	@Test
+	void 비로그인_POST는_401이다() throws Exception {
+		mockMvc.perform(post("/v1/monitoring/registrations/read").with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"all\":true}"))
 				.andExpect(status().isUnauthorized());
 
 		then(repository).shouldHaveNoInteractions();
