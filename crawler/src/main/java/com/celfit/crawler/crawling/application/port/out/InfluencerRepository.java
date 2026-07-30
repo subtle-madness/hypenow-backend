@@ -74,6 +74,29 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
                                         Pageable pageable);
 
     /**
+     * BEAUTY 캡션 재판정 대상: 캡션 0건으로 판정됐지만 그 뒤로 릴스 페이지(실측 캡션)가 쌓인 계정.
+     * 기존 findRejudgeTargets와 달리 beauty 값을 조건에 걸지 않는다 — 뷰티로 잘못 통과한
+     * false positive를 실측 캡션으로 되돌리는 것이 이 경로의 목적이다(2026-07-30 오판 886개).
+     * beauty_caption_count가 NULL인 기록 이전 판정분은 대상이 아니다(V22 백필이 0으로 표시한 것만).
+     * minItems는 "캡션이 실제로 있을 만한 페이지"의 하한 — 아이템 수가 캡션 수의 근사다.
+     * 재판정하면 judged_at이 갱신돼 조건이 닫힌다 — 캡션을 못 뽑아 count가 0으로 남아도
+     * captured_at은 고정이라 같은 페이지로 다시 선정되지 않는다(무한 재대상 방지).
+     */
+    @Query(value = "select i.* from influencer i "
+            + "where i.status = :status and i.beauty_source = :beautySource "
+            + "and i.beauty_caption_count = 0 "
+            + "and exists (select 1 from raw_media_page rmp "
+            + "  where rmp.influencer_id = i.id and rmp.source = 'HIKER_V2_CLIPS' "
+            + "  and jsonb_typeof(jsonb_extract_path(rmp.payload, 'response', 'items')) = 'array' "
+            + "  and jsonb_array_length(jsonb_extract_path(rmp.payload, 'response', 'items')) >= :minItems "
+            + "  and (i.beauty_judged_at is null or rmp.captured_at > i.beauty_judged_at)) "
+            + "order by i.beauty_judged_at asc nulls first, i.id", nativeQuery = true)
+    List<Influencer> findCaptionRejudgeTargets(@Param("status") String status,
+                                               @Param("beautySource") String beautySource,
+                                               @Param("minItems") int minItems,
+                                               Pageable pageable);
+
+    /**
      * REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만.
      * 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 있고 릴스가 없는 "짝 안 맞는" 계정부터 채운다.
      */

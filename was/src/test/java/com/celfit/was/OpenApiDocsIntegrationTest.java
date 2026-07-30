@@ -93,8 +93,8 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.info.title").value("hypenow API"))
 				.andExpect(jsonPath("$.paths['/v1/contents']").exists())
-				// 구 /api 표면·내부 페이지는 paths-to-match(/v1/**) 밖 — 문서에 없어야 한다
-				.andExpect(jsonPath("$.paths['/api/contents']").doesNotExist());
+				// 구 /api 표면(레거시 /api/auth 등)·내부 페이지는 paths-to-match(/v1/**, /admin/**) 밖 — 문서에 없어야 한다
+				.andExpect(jsonPath("$.paths['/api/auth/login']").doesNotExist());
 	}
 
 	@Test

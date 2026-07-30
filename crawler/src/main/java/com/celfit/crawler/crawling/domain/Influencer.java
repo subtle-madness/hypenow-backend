@@ -66,6 +66,20 @@ public class Influencer {
     @Column(name = "beauty_judged_at")
     private Instant beautyJudgedAt;
 
+    /**
+     * 판정에 실제로 넣은 캡션 건수. 0이면 실측 근거 없이 판정된 것 — 게시물 캡션이 쌓이면
+     * 재판정 대상이 된다. NULL은 이 기록 도입 이전 판정분.
+     */
+    @Column(name = "beauty_caption_count")
+    private Short beautyCaptionCount;
+
+    /**
+     * LLM이 밝힌 판정 주근거 — CAPTION·BIO·CATEGORY_ONLY 중 하나. CATEGORY_ONLY는 인스타그램
+     * 자기신고 category만 보고 판단한 저확신 판정(계정주가 자율 선택하는 미검증 필드).
+     */
+    @Column(name = "beauty_basis")
+    private String beautyBasis;
+
     /** SIMILAR 잡이 이 시드의 유사 계정 수확을 마친(또는 수확 불가로 확정한) 시각. NULL이면 시드 후보. */
     @Column(name = "similar_processed_at")
     private Instant similarProcessedAt;
@@ -86,11 +100,12 @@ public class Influencer {
     }
 
     /** 판정 결과 일괄 적용 — 파생 boolean을 beauty_class와 항상 일치시킨다. judgedAt은 호출자 몫. */
-    public void classify(BeautyClass cls, String source, String reason) {
+    public void classify(BeautyClass cls, String source, String reason, String basis) {
         this.beautyClass = cls;
         this.beauty = cls.beauty();
         this.beautyCompany = cls.company();
         this.beautySource = source;
         this.beautyReason = reason;
+        this.beautyBasis = basis;
     }
 }
