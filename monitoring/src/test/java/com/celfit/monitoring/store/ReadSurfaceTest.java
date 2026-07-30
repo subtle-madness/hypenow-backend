@@ -32,11 +32,11 @@ class ReadSurfaceTest {
 	 */
 	private void seed() {
 		long watching = db.queryForObject("""
-				INSERT INTO target (type, username, keyword_rule, status, registration_key, expires_at)
-				VALUES ('ACCOUNT', 'acct_a', '{"and":["샤넬"],"any":[],"exclude":[]}'::jsonb,
+				INSERT INTO target (type, user_id, username, keyword_rule, status, registration_key, expires_at)
+				VALUES ('ACCOUNT', 7, 'acct_a', '{"and":["샤넬"],"any":[],"exclude":[]}'::jsonb,
 				        'WATCHING', 'key-watching', now() + interval '30 days')
 				RETURNING id""", Long.class);
-		// PENDING 1건 + REJECTED 1건 — 상태 필터가 없으면 후보 수가 2로 샌다.
+		// 후보 행은 남는다(신규 적재는 중단됐지만 기존 행은 이력) — 뷰에서 빠졌는지 확인하는 데 쓴다.
 		db.update("INSERT INTO detected_candidate (target_id, short_code, status) VALUES (?, 'SC_P', 'PENDING')",
 				watching);
 		db.update("INSERT INTO detected_candidate (target_id, short_code, status) VALUES (?, 'SC_R', 'REJECTED')",
@@ -61,13 +61,14 @@ class ReadSurfaceTest {
 	}
 
 	@Test
-	void 개요_뷰는_최신_프로필_스냅샷과_PENDING_후보_수를_준다() {
+	void 개요_뷰는_user_id와_최신_프로필_스냅샷을_준다() {
 		assertThat(db.queryForObject("SELECT count(*) FROM v_target_overview", Long.class)).isEqualTo(2);
 
 		var row = db.queryForMap("SELECT * FROM v_target_overview WHERE username = 'acct_a'");
 		assertThat(row.get("status")).isEqualTo("WATCHING");
 		assertThat(row.get("registration_key")).isEqualTo("key-watching");
-		assertThat(row.get("pending_candidates")).isEqualTo(1L);
+		// 알람 수신자·소유 스코프 조회의 근거 — 뷰에서 빠지면 was가 target을 직접 읽어야 한다.
+		assertThat(row.get("user_id")).isEqualTo(7L);
 		assertThat(row.get("profile_captured_on")).isEqualTo(Date.valueOf(LocalDate.of(2026, 7, 28)));
 		assertThat(row.get("followers")).isEqualTo(1200L);
 		assertThat(row.get("media_count")).isEqualTo(52L);
@@ -75,21 +76,22 @@ class ReadSurfaceTest {
 		// 프로필 스냅샷이 없는 캠페인도 목록에서 빠지지 않는다(LEFT JOIN LATERAL).
 		var noProfile = db.queryForMap("SELECT * FROM v_target_overview WHERE username = 'acct_b'");
 		assertThat(noProfile.get("followers")).isNull();
-		assertThat(noProfile.get("pending_candidates")).isEqualTo(0L);
+		assertThat(noProfile.get("user_id")).isNull();   // 백필 전 기존 행
+	}
+
+	/** 승인 플로우가 사라져 "승인 대기 N건"은 화면에서 의미가 없다 — 컬럼이 남아 있으면 FE가 다시 붙인다. */
+	@Test
+	void 개요_뷰에_후보_수_컬럼은_없다() {
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM information_schema.columns
+				WHERE table_name='v_target_overview' AND column_name='pending_candidates'""",
+				Long.class)).isZero();
 	}
 
 	@Test
-	void 종결된_캠페인은_잔여_PENDING_후보를_세지_않는다() {
-		// 종결 후엔 승인·거절이 모두 409 — 세면 FE가 해소 못 하는 "승인 대기"가 영원히 남는다.
-		String count = "SELECT pending_candidates FROM v_target_overview WHERE registration_key = 'key-watching'";
-		assertThat(db.queryForObject(count, Long.class)).isEqualTo(1);
-
-		db.update("UPDATE target SET status = 'CANCELED', closed_at = now() WHERE registration_key = 'key-watching'");
-
-		assertThat(db.queryForObject(count, Long.class)).isEqualTo(0);
-		// 후보 행 자체는 이력으로 남는다 — 뷰에서만 빠진다.
-		assertThat(db.queryForObject(
-				"SELECT count(*) FROM detected_candidate WHERE status = 'PENDING'", Long.class)).isEqualTo(1);
+	void was_reader는_알람_대장을_읽을_수_있다() {
+		// 앱 내 알림·히스토리는 was가 이 테이블을 읽어 서빙한다(계약 v2 §3).
+		assertThat(wasReader.queryForObject("SELECT count(*) FROM alarm_event", Long.class)).isZero();
 	}
 
 	@Test

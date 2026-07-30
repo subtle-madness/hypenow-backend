@@ -207,12 +207,12 @@ class DailySweepJobTest {
 	}
 
 	private long watching(String username, KeywordRule rule, String key, Instant expiresAt) {
-		return targets.insert(TargetType.ACCOUNT, username, null, rule,
+		return targets.insert(TargetType.ACCOUNT, 7L, username, null, rule,
 				TargetStatus.WATCHING, null, key, expiresAt);
 	}
 
 	private long tracking(String username, String trackedShortCode, String key) {
-		return targets.insert(TargetType.ACCOUNT, username, null, any("무관"),
+		return targets.insert(TargetType.ACCOUNT, 7L, username, null, any("무관"),
 				TargetStatus.TRACKING, trackedShortCode, key, FUTURE);
 	}
 
@@ -350,7 +350,7 @@ class DailySweepJobTest {
 	@Test
 	void 게시물_단독_캠페인은_열거_없이_단건만_수집한다() {
 		hiker.standalonePost("P111", "postowner", "게시물 등록 캡션");
-		targets.insert(TargetType.POST, "postowner", "P111", null,
+		targets.insert(TargetType.POST, 7L, "postowner", "P111", null,
 				TargetStatus.TRACKING, "P111", "rk-post", FUTURE);
 
 		job.run();

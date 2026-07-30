@@ -19,7 +19,8 @@ public class TargetRepository {
 	private static final JsonMapper JSON = JsonMapper.builder().build();
 
 	private static final RowMapper<TargetRow> ROW = (rs, i) -> new TargetRow(
-			rs.getLong("id"), TargetType.valueOf(rs.getString("type")),
+			rs.getLong("id"), rs.getObject("user_id", Long.class),
+			TargetType.valueOf(rs.getString("type")),
 			rs.getString("username"), rs.getString("short_code"),
 			rs.getString("keyword_rule") == null ? null
 					: JSON.readValue(rs.getString("keyword_rule"), KeywordRule.class),
@@ -35,17 +36,18 @@ public class TargetRepository {
 		this.db = db;
 	}
 
-	public long insert(TargetType type, String username, String shortCode, KeywordRule rule,
+	/** userId는 nullable — V3 이전 등록분과의 호환을 위해 열어 두지만, 신규 등록은 API가 필수로 막는다. */
+	public long insert(TargetType type, Long userId, String username, String shortCode, KeywordRule rule,
 			TargetStatus status, String trackedShortCode, String registrationKey, Instant expiresAt) {
 		// tracked_since는 tracked_short_code가 있을 때만 채운다.
 		// IS NOT NULL 자리의 파라미터는 ::text 캐스팅이 필수 — 없으면 PG가 타입을 못 정해
 		// "could not determine data type of parameter"로 실패한다.
 		return db.queryForObject("""
-				INSERT INTO target (type, username, short_code, keyword_rule, status,
+				INSERT INTO target (type, user_id, username, short_code, keyword_rule, status,
 				                    tracked_short_code, tracked_since, registration_key, expires_at)
-				VALUES (?, ?, ?, ?::jsonb, ?, ?, CASE WHEN ?::text IS NOT NULL THEN now() END, ?, ?)
+				VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, CASE WHEN ?::text IS NOT NULL THEN now() END, ?, ?)
 				RETURNING id""",
-				Long.class, type.name(), username, shortCode,
+				Long.class, type.name(), userId, username, shortCode,
 				rule == null ? null : JSON.writeValueAsString(rule), status.name(),
 				trackedShortCode, trackedShortCode, registrationKey,
 				Timestamp.from(expiresAt));

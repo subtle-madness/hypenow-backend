@@ -63,7 +63,7 @@ public class RegistrationService {
 
 	private Result registerAccount(RegisterCommand cmd) {
 		var collected = collect.collectAccount(cmd.username());
-		long id = targets.insert(TargetType.ACCOUNT, cmd.username(), null, cmd.keywordRule(),
+		long id = targets.insert(TargetType.ACCOUNT, cmd.userId(), cmd.username(), null, cmd.keywordRule(),
 				TargetStatus.WATCHING, null, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
 		var p = collected.profile();
@@ -84,7 +84,7 @@ public class RegistrationService {
 		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
 		// null이 아니라 isBlank로 본다 — HikerClient.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
 		String shortCode = isBlank(post.shortCode()) ? cmd.shortCode() : post.shortCode();
-		long id = targets.insert(TargetType.POST, post.username(), shortCode, null,
+		long id = targets.insert(TargetType.POST, cmd.userId(), post.username(), shortCode, null,
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
@@ -98,6 +98,10 @@ public class RegistrationService {
 		}
 		if (cmd.type() == null) {
 			throw new ValidationException("type은 ACCOUNT 또는 POST여야 합니다.");
+		}
+		if (cmd.userId() == null) {
+			// 뒤늦게 채울 방법이 없다 — 캠페인이 만들어지고 나면 그 소유자를 monitoring이 알 길이 없다.
+			throw new ValidationException("userId는 필수입니다.");
 		}
 		if (cmd.expiresAt() == null) {
 			throw new ValidationException("expiresAt은 필수입니다.");

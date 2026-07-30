@@ -38,7 +38,7 @@ class StoreTest {
 	@Test
 	void 등록키_조회와_keyword_rule_왕복() {
 		var rule = new KeywordRule(List.of("샤넬"), List.of("신상", "협찬"), List.of("이벤트"));
-		long id = targets.insert(TargetType.ACCOUNT, "acct_a", null, rule,
+		long id = targets.insert(TargetType.ACCOUNT, null, "acct_a", null, rule,
 				TargetStatus.WATCHING, null, "key-1", Instant.parse("2026-08-28T00:00:00Z"));
 		var found = targets.findByRegistrationKey("key-1").orElseThrow();
 		assertThat(found.id()).isEqualTo(id);
@@ -50,8 +50,21 @@ class StoreTest {
 	}
 
 	@Test
+	void user_id는_저장_왕복하고_없으면_null이다() {
+		var rule = new KeywordRule(List.of("샤넬"), List.of(), List.of());
+		targets.insert(TargetType.ACCOUNT, 42L, "acct_a", null, rule,
+				TargetStatus.WATCHING, null, "key-uid", Instant.now().plusSeconds(3600));
+		// 기존 행(백필 전 운영 데이터)을 흉내 — user_id 없이 들어온 캠페인도 그대로 저장된다.
+		targets.insert(TargetType.ACCOUNT, null, "acct_b", null, rule,
+				TargetStatus.WATCHING, null, "key-nouid", Instant.now().plusSeconds(3600));
+
+		assertThat(targets.findByRegistrationKey("key-uid").orElseThrow().userId()).isEqualTo(42L);
+		assertThat(targets.findByRegistrationKey("key-nouid").orElseThrow().userId()).isNull();
+	}
+
+	@Test
 	void 같은_후보는_한_번만_생성() {
-		long id = targets.insert(TargetType.ACCOUNT, "acct_a", null,
+		long id = targets.insert(TargetType.ACCOUNT, null, "acct_a", null,
 				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
 				TargetStatus.WATCHING, null, "key-2", Instant.now().plusSeconds(3600));
 		candidates.insertPending(id, "SC1", "…샤넬…");
@@ -61,7 +74,7 @@ class StoreTest {
 
 	@Test
 	void 후보_상태_전이() {
-		long targetId = targets.insert(TargetType.ACCOUNT, "acct_a", null,
+		long targetId = targets.insert(TargetType.ACCOUNT, null, "acct_a", null,
 				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
 				TargetStatus.WATCHING, null, "key-4", Instant.now().plusSeconds(3600));
 		candidates.insertPending(targetId, "SC9", "…샤넬…");
@@ -77,7 +90,7 @@ class StoreTest {
 
 	@Test
 	void 거절된_후보는_재감지돼도_되살아나지_않는다() {
-		long targetId = targets.insert(TargetType.ACCOUNT, "acct_a", null,
+		long targetId = targets.insert(TargetType.ACCOUNT, null, "acct_a", null,
 				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
 				TargetStatus.WATCHING, null, "key-5", Instant.now().plusSeconds(3600));
 		candidates.insertPending(targetId, "SC7", "…샤넬…");
@@ -114,10 +127,10 @@ class StoreTest {
 
 	@Test
 	void 만료_스윕은_활성만_EXPIRED로() {
-		targets.insert(TargetType.POST, "acct_a", "SC1", null,
+		targets.insert(TargetType.POST, null, "acct_a", "SC1", null,
 				TargetStatus.TRACKING, "SC1", "key-3", Instant.now().minusSeconds(60));
 		// 이미 종결된 행도 만기는 지났다 — 활성 필터가 없으면 이 행까지 EXPIRED로 덮인다.
-		targets.insert(TargetType.POST, "acct_b", "SC2", null,
+		targets.insert(TargetType.POST, null, "acct_b", "SC2", null,
 				TargetStatus.CANCELED, "SC2", "key-3b", Instant.now().minusSeconds(60));
 
 		int expired = targets.expireOverdue();

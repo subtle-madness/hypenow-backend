@@ -99,12 +99,12 @@ class RegistrationApiTest {
 	MockMvc mvc;
 
 	private static final String ACCOUNT_BODY = """
-			{"registrationKey":"rk-1","type":"ACCOUNT","username":"someuser",
+			{"registrationKey":"rk-1","type":"ACCOUNT","userId":7,"username":"someuser",
 			 "keywordRule":{"and":[],"any":["샤넬"],"exclude":[]},
 			 "expiresAt":"2027-01-01T00:00:00+09:00"}""";
 
 	private static final String POST_BODY = """
-			{"registrationKey":"rk-post","type":"POST","shortCode":"DbV7LgZsKG8",
+			{"registrationKey":"rk-post","type":"POST","userId":7,"shortCode":"DbV7LgZsKG8",
 			 "expiresAt":"2027-01-01T00:00:00+09:00"}""";
 
 	@BeforeEach
@@ -209,6 +209,26 @@ class RegistrationApiTest {
 				.contentType(MediaType.APPLICATION_JSON).content(bad))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION"));
+	}
+
+	/** userId가 없으면 알람 수신자를 영원히 알 수 없다 — 등록 자체를 막는다(계약 v2 §2-1 필수 필드). */
+	@Test
+	void userId_누락은_400_VALIDATION_target_미생성() throws Exception {
+		String bad = ACCOUNT_BODY.replace("\"userId\":7,", "");
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(bad))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isZero();
+	}
+
+	@Test
+	void 등록된_캠페인에_user_id가_실린다() throws Exception {
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
+				.andExpect(status().isCreated());
+		assertThat(db.queryForObject("""
+				SELECT user_id FROM target WHERE registration_key='rk-1'""", Long.class)).isEqualTo(7L);
 	}
 
 	@Test

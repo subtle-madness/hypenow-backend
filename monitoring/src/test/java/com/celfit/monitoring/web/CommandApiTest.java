@@ -87,7 +87,7 @@ class CommandApiTest {
 	}
 
 	private long seedTarget(TargetStatus status, String trackedShortCode) {
-		return targets.insert(TargetType.ACCOUNT, "someuser", null, RULE, status, trackedShortCode,
+		return targets.insert(TargetType.ACCOUNT, 7L, "someuser", null, RULE, status, trackedShortCode,
 				"rk-" + keySeq.incrementAndGet(), EXPIRES);
 	}
 
