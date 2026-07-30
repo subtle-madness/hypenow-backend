@@ -11,8 +11,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -30,6 +32,7 @@ public class MonitoringConfig {
 	private final HikariDataSource monitoringDataSource;
 	private final JdbcClient monitoringJdbc;
 	private final RestClient monitoringRestClient;
+	private final ThreadPoolTaskExecutor registrationTaskExecutor;
 
 	public MonitoringConfig(
 			@Value("${monitoring.api.base-url:http://monitoring:8083}") String baseUrl,
@@ -56,7 +59,16 @@ public class MonitoringConfig {
 		this.monitoringDataSource = new HikariDataSource(hikari);
 		this.monitoringJdbc = JdbcClient.create(monitoringDataSource);
 
-		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3)", baseUrl);
+		// 등록 백그라운드 실행기 전용 풀 — 등록 접수(6.27)는 동기로 끝나고, 첫 확인(monitoring 호출)만
+		// 여기서 돈다. 코어=최대=2(등록 트래픽이 아직 낮아 상한 고정, 큐잉으로 스파이크 흡수).
+		ThreadPoolTaskExecutor pool = new ThreadPoolTaskExecutor();
+		pool.setCorePoolSize(2);
+		pool.setMaxPoolSize(2);
+		pool.setThreadNamePrefix("monitoring-registration-");
+		pool.initialize();
+		this.registrationTaskExecutor = pool;
+
+		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3 / 등록 실행기 풀 2)", baseUrl);
 	}
 
 	/** 내부 접근자 — 빈이 아니다. 도메인 빈 조립과 테스트에서만 쓴다. */
@@ -78,8 +90,19 @@ public class MonitoringConfig {
 		return new MonitoringReadRepository(monitoringJdbc);
 	}
 
+	/**
+	 * 등록 실행기 전용 스레드풀 — 이름을 명시 지정해 Spring Boot 기본 applicationTaskExecutor
+	 * (동일 타입 ThreadPoolTaskExecutor)와 자동배선 충돌을 피한다. 소비자는
+	 * MonitoringRegistrationExecutor(v1.monitoring, monitoring.enabled 조건부 동일 게이트)뿐이다.
+	 */
+	@Bean(name = "monitoringRegistrationTaskExecutor")
+	TaskExecutor monitoringRegistrationTaskExecutor() {
+		return registrationTaskExecutor;
+	}
+
 	@PreDestroy
 	void close() {
+		registrationTaskExecutor.shutdown();
 		monitoringDataSource.close();
 	}
 }

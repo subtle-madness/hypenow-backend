@@ -64,7 +64,7 @@ class V1MonitoringItemsControllerTest {
 
 	@BeforeEach
 	void 등록_요청_기본_스텁() {
-		given(registrationRepository.insert(anyLong())).willReturn(555L);
+		given(registrationRepository.insert(anyLong(), anyInt(), any())).willReturn(555L);
 	}
 
 	@Test
@@ -76,7 +76,7 @@ class V1MonitoringItemsControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		then(registrationRepository).should(never()).insert(anyLong());
+		then(registrationRepository).should(never()).insert(anyLong(), anyInt(), any());
 	}
 
 	@Test
@@ -96,7 +96,7 @@ class V1MonitoringItemsControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		then(registrationRepository).should(never()).insert(anyLong());
+		then(registrationRepository).should(never()).insert(anyLong(), anyInt(), any());
 	}
 
 	@Test
@@ -231,7 +231,7 @@ class V1MonitoringItemsControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		then(registrationRepository).should(never()).insert(anyLong());
+		then(registrationRepository).should(never()).insert(anyLong(), anyInt(), any());
 	}
 
 	@Test
@@ -292,7 +292,7 @@ class V1MonitoringItemsControllerTest {
 				.andExpect(status().isCreated())
 				.andExpect(jsonPath("$.data.items.length()").value(0));
 
-		then(registrationRepository).should().insert(7L);
+		then(registrationRepository).should().insert(7L, 14, null);
 	}
 
 	@Test

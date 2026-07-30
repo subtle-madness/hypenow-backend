@@ -56,7 +56,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void 응답_형태와_entries_순서를_그대로_반환한다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"),
-				OffsetDateTime.parse("2026-07-29T00:05:00Z"),
+				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null,
 				List.of(
 						entry(1L, 1, "https://www.instagram.com/p/ABC123/", "post", "success", null, null, null, 200L),
 						entry(1L, 2, "glowdeep", "account", "duplicate", "duplicate", "이미 진행 중인 대상이에요.", null, null)));
@@ -78,7 +78,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void requestedAt은_KST_오프셋_09_00_문자열이다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
-				List.of());
+				14, null, List.of());
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
 		given(repository.countByUser(7L)).willReturn(1L);
 
@@ -91,6 +91,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void nullable_필드_5종은_키가_존재하며_명시적으로_null이다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
+				14, null,
 				List.of(entry(1L, 1, "https://www.instagram.com/p/ABC123/", "post", "pending", null, null, null,
 						null)));
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
@@ -115,7 +116,7 @@ class V1RegistrationsControllerTest {
 	@Test
 	void itemId가_값이면_문자열로_직렬화된다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"),
-				OffsetDateTime.parse("2026-07-29T00:05:00Z"),
+				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null,
 				List.of(entry(1L, 1, "https://www.instagram.com/p/ABC123/", "post", "success", null, null, null,
 						12345L)));
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
@@ -130,7 +131,7 @@ class V1RegistrationsControllerTest {
 	void meta_total은_최근_50건_창과_무관하게_전체_건수다() throws Exception {
 		List<RegistrationRow> fiftyRows = IntStream.rangeClosed(1, 50)
 				.mapToObj(i -> new RegistrationRow(i, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
-						List.of()))
+						14, null, List.of()))
 				.toList();
 		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(fiftyRows);
 		given(repository.countByUser(7L)).willReturn(60L);

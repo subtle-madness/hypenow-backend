@@ -3,6 +3,9 @@ package com.celfit.was;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.monitoring.MonitoringConfig;
+import com.celfit.was.v1.monitoring.MonitoringRegistrationExecutor;
+import com.celfit.was.v1.monitoring.NoopRegistrationExecutor;
+import com.celfit.was.v1.monitoring.RegistrationExecutor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
@@ -52,5 +55,12 @@ class MonitoringEnabledConfigTest extends IntegrationTest {
 		MonitoringConfig config = context.getBean(MonitoringConfig.class);
 		Integer one = config.monitoringJdbc().sql("SELECT 1").query(Integer.class).single();
 		assertThat(one).isEqualTo(1);
+	}
+
+	@Test
+	void 활성이면_실_실행기가_뜨고_Noop은_안_뜬다() {
+		assertThat(context.getBeansOfType(RegistrationExecutor.class)).hasSize(1);
+		assertThat(context.getBean(RegistrationExecutor.class)).isInstanceOf(MonitoringRegistrationExecutor.class);
+		assertThat(context.getBeanNamesForType(NoopRegistrationExecutor.class)).isEmpty();
 	}
 }

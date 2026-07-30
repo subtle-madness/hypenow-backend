@@ -105,7 +105,7 @@ public class V1MonitoringRegistrationService {
 			campaignName = campaign.name();
 		}
 
-		long registrationId = registrationRepository.insert(userId);
+		long registrationId = registrationRepository.insert(userId, trackingDays, campaignId);
 		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
 		OffsetDateTime nextCheckAt = OffsetDateTime.now(KstTimestamps.KST).plusMinutes(5);
 		RegistrationContext context =
