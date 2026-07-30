@@ -6,8 +6,10 @@ import com.celfit.monitoring.domain.TargetType;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -143,6 +145,20 @@ public class TargetRepository {
 				RETURNING id, user_id, username, tracked_short_code""",
 				(rs, i) -> new ExpiredTarget(rs.getLong("id"), rs.getObject("user_id", Long.class),
 						rs.getString("username"), rs.getString("tracked_short_code")));
+	}
+
+	/**
+	 * 같은 유저의 다른 활성 target이 이미 추적 중인 shortcode — 감지 후보 배제용(계약 §6.25, 같은
+	 * 유저의 이중 추적 방지). 활성 = status IN ('WATCHING','TRACKING'), tracked_short_code IS NOT
+	 * NULL만 대상이다. hidden(tracked_hidden_at)·error(fetch_failing) 여부는 걸지 않는다 — 그 신호들은
+	 * status를 바꾸지 않으므로(v2.2) 이 조건에 자연히 포함된다(대칭 — hidden도 error도 배제 대상).
+	 */
+	public Set<String> findTrackedShortCodesByUser(long userId, long excludeTargetId) {
+		return new LinkedHashSet<>(db.queryForList("""
+				SELECT tracked_short_code FROM target
+				WHERE user_id = ? AND id <> ? AND status IN ('WATCHING','TRACKING')
+				  AND tracked_short_code IS NOT NULL""",
+				String.class, userId, excludeTargetId));
 	}
 
 	/** 이 게시물을 추적 중인 활성 캠페인 — 지표 비공개 알람의 수신자(스냅샷은 캠페인 간 공유라 N건일 수 있다). */
