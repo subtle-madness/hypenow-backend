@@ -44,14 +44,16 @@ public class SnapshotRepository {
 	}
 
 	/**
-	 * 직전 스냅샷 — 지표 비공개 판정 기준. 같은 날 재수집은 upsert로 덮이므로 **그 이전 날짜**만 본다:
-	 * 당일 행까지 포함하면 등록 직후 스윕처럼 하루에 두 번 들어오는 경로에서 자기 자신과 비교하게 된다.
+	 * 직전 스냅샷 — 지표 비공개 판정 기준. 호출 시점이 그날 upsert **직전**이므로 당일 행이 있다면
+	 * 그게 바로 "직전 관측"이다(오늘 두 번째 이후 수집) — **당일 포함**(`<=`)으로 조회해야 한다.
+	 * `<`로 당일을 건너뛰면 같은 날 두 번째 수집이 어제 값과 다시 비교돼 이미 적재한 METRICS_HIDDEN을
+	 * 또 적재한다(리뷰 I1 — 오늘 값이 아직 없는 그날 첫 수집에서는 당일 행 자체가 없으니 결과가 같다).
 	 */
-	public Optional<PostMetrics> findLatestPostBefore(String shortCode, LocalDate on) {
+	public Optional<PostMetrics> findLatestPostUpTo(String shortCode, LocalDate on) {
 		return db.query("""
 				SELECT content_type, likes, comments, views, saves, shares, reposts
 				FROM post_snapshot
-				WHERE short_code = ? AND captured_on < ?
+				WHERE short_code = ? AND captured_on <= ?
 				ORDER BY captured_on DESC LIMIT 1""",
 				(rs, i) -> new PostMetrics(rs.getString("content_type"),
 						rs.getObject("likes", Long.class), rs.getObject("comments", Long.class),

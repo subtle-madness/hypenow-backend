@@ -88,7 +88,7 @@ public class AlarmRecorder {
 			if (owners.isEmpty()) {
 				return;
 			}
-			PostMetrics previous = snapshots.findLatestPostBefore(post.shortCode(), capturedOn).orElse(null);
+			PostMetrics previous = snapshots.findLatestPostUpTo(post.shortCode(), capturedOn).orElse(null);
 			if (previous == null) {
 				return;   // 첫 수집 — 비교 대상 없음
 			}

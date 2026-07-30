@@ -78,4 +78,23 @@ class SnapshotWriterAlarmTest {
 
 		assertThat(alarmCount()).isEqualTo(1);
 	}
+
+	/**
+	 * 리뷰 I1 — 같은 날 두 번째 이후 수집은 비교 기준이 **당일 행**(직전 관측)이어야 한다.
+	 * `<`로 당일을 건너뛰면 두 번째 수집이 어제 값과 또 비교돼 이미 적재한 이벤트를 중복 적재한다.
+	 */
+	@Test
+	void 같은_날_재수집은_지표_비공개를_중복_적재하지_않는다() {
+		targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of(), List.of("샤넬"), List.of()),
+				TargetStatus.TRACKING, "SC1", "rk-1", Instant.now().plusSeconds(86_400));
+
+		writer.savePost(LocalDate.of(2026, 7, 29), post(5000L));      // 어제: views=5000
+		writer.savePost(LocalDate.of(2026, 7, 30), post(null));       // 오늘 1차 수집: 비공개 감지(이벤트 1)
+		assertThat(alarmCount()).isEqualTo(1);
+
+		writer.savePost(LocalDate.of(2026, 7, 30), post(null));       // 오늘 2차 수집(재스윕 등): null→null
+
+		assertThat(alarmCount()).isEqualTo(1);   // 여전히 1행 — 재적재 없음
+	}
 }
