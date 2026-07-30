@@ -54,6 +54,8 @@ class DailySweepJobTest {
 		private final Set<String> missingCodes = new HashSet<>();
 		/** 라운드 N번째부터 성공하는 계정 — 스윕 말미 재시도 라운드가 실제로 회복시키는지 본다. */
 		private final Map<String, Integer> flakyRemaining = new HashMap<>();
+		/** 단건 수집(추적 게시물 보강) 경로의 일시 실패 — 열거 밖 추적 게시물도 재시도 라운드가 회복시키는지 본다. */
+		private final Map<String, Integer> flakyCodesRemaining = new HashMap<>();
 
 		int profileCalls;
 		int mediasCalls;
@@ -102,6 +104,12 @@ class DailySweepJobTest {
 			return account(username, userId, posts);
 		}
 
+		/** 단건 조회(추적 게시물 보강)가 라운드 N번째부터 성공하는 게시물 — standalonePost와 함께 쓴다. */
+		FakeHiker flakyPost(String code, int failures) {
+			flakyCodesRemaining.put(code, failures);
+			return this;
+		}
+
 		/** 게시물 삭제 — 단건 조회가 404. */
 		FakeHiker missingPost(String code) {
 			missingCodes.add(code);
@@ -140,6 +148,11 @@ class DailySweepJobTest {
 			}
 			postCalls++;
 			String code = param(path, "code");
+			Integer remaining = flakyCodesRemaining.get(code);
+			if (remaining != null && remaining > 0) {
+				flakyCodesRemaining.put(code, remaining - 1);
+				throw new HikerFetchException("502 일시 " + code);
+			}
 			if (missingCodes.contains(code) || !postByCode.containsKey(code)) {
 				throw new SubjectNotFoundException("404 " + code);
 			}
@@ -541,5 +554,26 @@ class DailySweepJobTest {
 		job.run();
 
 		assertThat(hiker.profileCalls).isEqualTo(1);
+	}
+
+	/**
+	 * 열거 밖 추적 게시물 단건 콜의 일시 실패도 재시도 대상이다 — "일시 오류는 당일 안에 무조건
+	 * 수집"이라는 요구는 계정 열거뿐 아니라 캠페인별 단건 보강 콜에도 예외 없이 적용돼야 한다.
+	 * 계정 갈래(sweepAccount)는 예외 없이 반환하지만 그 안 캠페인 하나가 일시 실패했으므로,
+	 * 그 계정 전체가 재시도 라운드에 편입돼야 한다.
+	 */
+	@Test
+	void 추적_게시물_단건_수집의_일시_실패도_재시도_라운드에서_회복된다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
+				.standalonePost("OLD9", "someuser", "예전 협찬 게시물")
+				.flakyPost("OLD9", 1);
+		long stale = tracking("someuser", "OLD9", "rk-stale");
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(2);   // 최초 실패 1 + 라운드 성공 1
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_snapshot WHERE short_code='OLD9'""", Long.class)).isEqualTo(1);
+		assertThat(statusOf(stale)).isEqualTo(TargetStatus.TRACKING);
 	}
 }

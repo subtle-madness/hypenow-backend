@@ -53,32 +53,43 @@ public class DailySweepJob {
 	public void run() {
 		// 만료를 먼저 닫아야 만기 지난 캠페인이 그날 스윕 대상에서 빠진다 — 순서가 바뀌면 종료된 캠페인만큼 콜이 샌다.
 		int expired = targets.expireOverdue();
-		Set<String> pending = sweepRound(null);
-		int accounts = pending.size();   // 라운드 로그용 초기 실패 수(전체 계정 수는 sweepRound가 남긴다)
+		SweepRoundResult first = sweepRound(null);
+		int totalAccounts = first.accountCount();   // 전체 계정 수 — 첫 라운드(only=null)가 활성 계정 전부를 훑은 결과
+		int initialFailures = first.transientFailures().size();
+		Set<String> pending = first.transientFailures();
 		for (int round = 1; round <= retryRounds && !pending.isEmpty(); round++) {
 			// 간격 × 라운드 — 상대가 회복할 시간을 회차마다 늘려 준다.
 			sleep(retryInterval.multipliedBy(round));
 			log.info("일시 실패 재시도 라운드 {}/{} — 계정 {}건", round, retryRounds, pending.size());
-			pending = sweepRound(pending);
+			pending = sweepRound(pending).transientFailures();
 		}
-		log.info("스윕 완료 — 만료 {}건, 미해소 일시 실패 {}건(최초 {}건)", expired, pending.size(), accounts);
+		log.info("스윕 완료 — 계정 {}건 중 미해소 일시 실패 {}건(최초 {}건), 만료 {}건",
+				totalAccounts, pending.size(), initialFailures, expired);
 	}
+
+	/** 한 라운드의 결과 — 전체 계정 수(완료 로그의 분모)와 재시도 여지가 있는 실패 계정. */
+	private record SweepRoundResult(int accountCount, Set<String> transientFailures) {}
 
 	/**
 	 * 한 바퀴. {@code only}가 null이면 전체, 아니면 그 계정들만 돈다.
 	 * 활성 target을 매 라운드 다시 읽는다 — 앞 라운드에서 전환·종결된 행을 그대로 들고 돌면
 	 * 이미 TRACKING인 캠페인을 WATCHING으로 착각해 감지를 두 번 한다.
 	 *
-	 * @return 재시도 여지가 있는 실패(일시 오류) 계정. 결정적 실패(404·비공개)는 이미 종결됐으므로 빠진다.
+	 * @return 이 라운드가 훑은 계정 수와, 결정적 실패(404·비공개)는 이미 종결됐으므로 빠진 일시 실패 계정.
 	 */
-	private Set<String> sweepRound(Set<String> only) {
+	private SweepRoundResult sweepRound(Set<String> only) {
 		Map<String, List<TargetRow>> byUsername = targets.findActive().stream()
 				.filter(t -> only == null || only.contains(t.username()))
 				.collect(Collectors.groupingBy(TargetRow::username));
 		Set<String> transientFailures = new LinkedHashSet<>();
 		for (var entry : byUsername.entrySet()) {
 			try {
-				sweepAccount(entry.getKey(), entry.getValue());
+				// 계정 갈래(sweepAccount)가 예외 없이 반환해도 그 안의 캠페인 하나가 단건 수집에서
+				// 일시 실패했을 수 있다 — 그 경우도 계정 단위로 재시도 라운드에 편입한다(사용자 요구:
+				// "일시 오류는 당일 안에 무조건 수집" — 열거 밖 추적 게시물 단건 콜도 예외 없다).
+				if (sweepAccount(entry.getKey(), entry.getValue())) {
+					transientFailures.add(entry.getKey());
+				}
 			} catch (SubjectNotFoundException e) {
 				// 계정 자체가 없어졌다(삭제·개명) — 재시도해도 결과가 같으니 그 계정의 캠페인을 전부 종결한다.
 				closeAll(entry.getKey(), entry.getValue(), NOT_FOUND);
@@ -92,7 +103,7 @@ public class DailySweepJob {
 				transientFailures.add(entry.getKey());
 			}
 		}
-		return transientFailures;
+		return new SweepRoundResult(byUsername.size(), transientFailures);
 	}
 
 	/** 라운드 사이 대기. 인터럽트는 종료 신호라 남은 라운드를 포기한다(다음날 스윕이 회복시킨다). */
@@ -111,13 +122,18 @@ public class DailySweepJob {
 	/**
 	 * 계정 1개분 — 열거는 캠페인 수와 무관하게 한 번만 하고, 그 결과를 캠페인들이 나눠 본다.
 	 * 여기서 던지는 예외는 계정 전체의 실패다(호출자가 종결 판단).
+	 *
+	 * @return 이 계정의 캠페인 중 일시 실패(단건 수집 등)가 하나라도 있었는지. 있으면 호출자가
+	 * 계정 단위로 재시도 라운드에 편입한다 — "일시 오류는 당일 안에 무조건 수집"이 열거 게시물뿐
+	 * 아니라 열거 밖 추적 게시물 단건 콜에도 적용돼야 하기 때문이다.
 	 */
-	private void sweepAccount(String username, List<TargetRow> accountTargets) {
+	private boolean sweepAccount(String username, List<TargetRow> accountTargets) {
 		// POST 등록분만 있는 계정은 열거할 이유가 없다 — 프로필·열거 2~3콜이 통째로 낭비된다.
 		List<PostInfo> posts = needsEnumeration(accountTargets)
 				? collect.collectAccount(username).posts()
 				: List.of();
 		Set<String> enumerated = posts.stream().map(PostInfo::shortCode).collect(Collectors.toSet());
+		boolean transientFailure = false;
 		for (TargetRow t : accountTargets) {
 			try {
 				sweepTarget(t, posts, enumerated);
@@ -132,9 +148,13 @@ public class DailySweepJob {
 				log.info("추적 게시물 비공개 — 캠페인 {} 종결: {}", t.id(), t.trackedShortCode());
 				closeFailed(t, PRIVATE_ACCOUNT);
 			} catch (RuntimeException e) {
+				// 재시도 여지가 있는 실패(단건 수집 5xx·타임아웃 등) — 상태는 건드리지 않고
+				// 계정을 재시도 라운드에 편입시킨다(스냅샷 upsert가 멱등이라 계정 재스윕은 안전).
 				log.warn("캠페인 스윕 실패(격리) — target {}: {}", t.id(), e.toString());
+				transientFailure = true;
 			}
 		}
+		return transientFailure;
 	}
 
 	/** 결정적 수집 불가 — 그 계정의 활성 캠페인을 한꺼번에 종결한다. */
