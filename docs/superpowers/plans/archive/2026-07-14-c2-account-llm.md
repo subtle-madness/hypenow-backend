@@ -6,7 +6,7 @@
 
 **Goal:** 계정마다 LLM 1콜로 AccountReport 카피 7종을 생성해 `account_analyses`(V11)에 이력 INSERT하는 배치를 만든다.
 
-**Architecture:** [스펙](../specs/2026-07-14-c2-account-llm-design.md) 그대로 — B2·B3 LLM 골격(포트/어댑터·structured output·게이트·상한) 재사용. 대상 선별 = 신규 즉시 / stale(새 게시물)+쿨다운 7일. 계약 record `AccountAnalysis`를 생산자(잡)와 소비자(was/E)가 공유. 프롬프트 입력은 전부 C1 미러(`account_summaries`·`account_category_stats`·`account_content_series`+`contents.caption`).
+**Architecture:** [스펙](../../specs/2026-07-14-c2-account-llm-design.md) 그대로 — B2·B3 LLM 골격(포트/어댑터·structured output·게이트·상한) 재사용. 대상 선별 = 신규 즉시 / stale(새 게시물)+쿨다운 7일. 계약 record `AccountAnalysis`를 생산자(잡)와 소비자(was/E)가 공유. 프롬프트 입력은 전부 C1 미러(`account_summaries`·`account_category_stats`·`account_content_series`+`contents.caption`).
 
 **Tech Stack:** Java 21, Spring Boot 4.1(analytics 평탄 패키지), Anthropic SDK structured output, Flyway, Testcontainers(`postgres:16-alpine`) + `TestDb.resetAndMigrate`, Jackson 3(`tools.jackson.*`).
 

@@ -156,6 +156,21 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
     `test` 잡은 push 이벤트에서도 돌아 base_ref가 없으므로, 그 경로는 트리 단독 검사
     (`check-migration-safety.sh --versions-tree`, git 비의존 — `test` 잡 checkout이
     `fetch-depth` 없는 얕은 클론이라 git 이력에 의존할 수 없음)로 대체했다.
+  - **v3.2(07-30) — 신규 마이그레이션은 UTC 타임스탬프로 채번, 경합을 애초에 없앤다.**
+    v3·v3.1은 "충돌을 잡는" 검사였지만 근본 원인(병행 세션이 같은 다음 정수 번호를 집는 것)은
+    그대로였다 — V18→V19, V22→V23에 이어 V43(#181)까지 3연속 재발. 그래서 **신규 파일**은
+    `V<YYYYMMDDHHMMSS>__<설명>.sql`(UTC)로 채번하기로 정했다(CLAUDE.md 컨벤션 절). **기존
+    `V1`~`V49` 파일은 rename하지 않는다** — `schema_history`에 버전·체크섬이 기록돼 있어
+    rename하면 운영 DB에서 마이그레이션이 깨진다. 정렬 전제(`V42 < V20260730112500`)는 Flyway
+    자체 API로 실측 확인했다: `flyway-core` 12.4.0의 `MigrationVersion.fromVersion("42")
+    .compareTo(MigrationVersion.fromVersion("20260730112500"))`가 음수를 반환하고, `V07`과
+    `V7`도 여전히 동일 버전으로 취급된다(선행 0 정규화) — Flyway가 버전을 정수(BigInteger)로
+    비교하는 한 자릿수는 비교 결과에 영향을 주지 않는다. **가드 스크립트는 무수정**으로
+    호환된다: `normalize_version`의 정규식(`^V[0-9]+(\.[0-9]+)*__`)과 `10#$p` 정규화 둘 다
+    자릿수 제한이 없어 14자리 타임스탬프를 그대로 파싱한다 — 셀프테스트에 정수·타임스탬프
+    공존/충돌 케이스 4건을 추가해 회귀를 막았다(31케이스). 대상은 v3와 동일하게 독립 버전
+    공간 4개(crawler, analytics `db/migration/analysis`, was `db/migration/app`, monitoring)
+    전부 — 각 디렉토리 안에서 정수 연번과 타임스탬프가 영구 공존한다.
 - **rename은 rename하지 않는다 — 컬럼 이행 레시피**(타입 변경도 동일):
   1. expand 릴리스: `ADD COLUMN` + **백필 UPDATE를 같은 마이그레이션에**(Flyway가 실행 보장) +
      코드를 새 컬럼으로 전환. 백필 통째 누락은 신 컬럼 전 행 NULL = 기능이 비어 보이므로

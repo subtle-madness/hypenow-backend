@@ -5,7 +5,7 @@
 
 **Goal:** celfit-front 인플루언서 패널(`AccountReport`)의 결정적(비LLM) 필드 전부를 계산하는 분석 뷰 3종을 만들고 analysis DB로 미러한다.
 
-**Architecture:** [스펙](../specs/2026-07-13-c1-account-detail-design.md) 그대로 — raw DB `analytics` 스키마에 뷰(`10_account_detail.sql`) → 타입 미러(뷰 SQL / Flyway `V10` DDL / contract record, `MirrorJob` 재사용·무수정) → `account_summaries`·`account_category_stats`·`account_content_series`. 산식 정본은 celfit-front `parse_accounts_recent.py`. 프로필 확장 컬럼 3개(`follows_count`·`posts_count`·`biography`)만 base 뷰에 additive 추가.
+**Architecture:** [스펙](../../specs/2026-07-13-c1-account-detail-design.md) 그대로 — raw DB `analytics` 스키마에 뷰(`10_account_detail.sql`) → 타입 미러(뷰 SQL / Flyway `V10` DDL / contract record, `MirrorJob` 재사용·무수정) → `account_summaries`·`account_category_stats`·`account_content_series`. 산식 정본은 celfit-front `parse_accounts_recent.py`. 프로필 확장 컬럼 3개(`follows_count`·`posts_count`·`biography`)만 base 뷰에 additive 추가.
 
 **Tech Stack:** PostgreSQL 뷰 + SQL 하니스(`analytics/test/run.sh`, BEGIN/ROLLBACK 격리), Java 21 record(contract-analysis, 순수 JDK), Flyway, Testcontainers(`postgres:16-alpine`).
 
@@ -755,7 +755,7 @@ Expected: 세 테이블 모두 0보다 큰 행 수 (실데이터 규모에 따�
 - §7 결정 기록 맨 위에 추가:
 
 ```markdown
-| 2026-07-13 | C1은 **celfit-front 실계약(AccountReport) 기준**으로 구현 — v4 목업 지표(중앙값·히트율·변동성·구간포지션 등) 폐기. 계정 평균 ER은 **followers 분모**(`avg_er_pct`, 게시물 ER의 views 분모와 공존), 기준 지표 폴백 `metric`('views'\|'likes')은 데이터에 확정 | [specs/2026-07-13-c1-account-detail-design.md](docs/superpowers/specs/2026-07-13-c1-account-detail-design.md) |
+| 2026-07-13 | C1은 **celfit-front 실계약(AccountReport) 기준**으로 구현 — v4 목업 지표(중앙값·히트율·변동성·구간포지션 등) 폐기. 계정 평균 ER은 **followers 분모**(`avg_er_pct`, 게시물 ER의 views 분모와 공존), 기준 지표 폴백 `metric`('views'\|'likes')은 데이터에 확정 | [specs/2026-07-13-c1-account-detail-design.md](../../specs/2026-07-13-c1-account-detail-design.md) |
 ```
 
 - [ ] **Step 3: 플랜 아카이브 + Commit**

@@ -5,7 +5,7 @@
 
 **Goal:** LLM 호출 골격(포트/어댑터·설정·비용 가드)을 세우고, 첫 소비자인 **댓글 6분류 배치**를 개통한다 — 미분류 콘텐츠의 댓글을 Claude로 분류해 `comment_classifications`에 저장. 골드셋 스파이크 러너(F-1 도구)도 만들되 **실 API 실행은 사용자 결정으로 남긴다**.
 
-**Architecture:** [스펙](../specs/2026-07-12-analytics-data-layer-design.md) §6·§7, ARCHITECTURE.md §4-2(절차·외부 연동은 Java). **LLM 코드의 모듈 소속 = analytics로 확정** (미결 §8 해소 — raw를 읽어 분석 결과를 쓰는 일의 한 종류이므로). 포트/어댑터: 테스트는 실 API를 절대 안 때린다(포트 fake) — Anthropic 어댑터는 클라이언트 빈이 게이트 뒤에 있어 API 키 없이도 미러 실행에 영향 없음.
+**Architecture:** [스펙](../../specs/2026-07-12-analytics-data-layer-design.md) §6·§7, ARCHITECTURE.md §4-2(절차·외부 연동은 Java). **LLM 코드의 모듈 소속 = analytics로 확정** (미결 §8 해소 — raw를 읽어 분석 결과를 쓰는 일의 한 종류이므로). 포트/어댑터: 테스트는 실 API를 절대 안 때린다(포트 fake) — Anthropic 어댑터는 클라이언트 빈이 게이트 뒤에 있어 API 키 없이도 미러 실행에 영향 없음.
 
 **Tech Stack:** Anthropic Java SDK (`com.anthropic:anthropic-java:2.34.0`), structured outputs(record 자동 스키마·타입 파싱), 기본 모델 `claude-opus-4-8`(설정으로 교체 가능 — 스파이크 결과 반영 지점). Flyway V2, Testcontainers.
 
@@ -634,7 +634,7 @@ public class GoldsetSpikeRunner {
   1. §5 표: F 행 상태 ⬜→✅ (내용 뒤에 `— F-2(VLM)는 B3에서 실험` 추가), B2 행 상태 ⬜→✅
   2. §8 미결: "LLM 코드 모듈 소속" 행 삭제 (확정됨), "LLM 모델" 행은 유지(스파이크 실행 대기)
   3. §7 결정 기록 맨 위에 행 추가:
-     `| 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](docs/superpowers/plans/archive/2026-07-12-task-f-b2-llm-comment-classification.md) |`
+     `| 2026-07-12 | LLM 코드 모듈 소속 = analytics 확정 (포트/어댑터, 테스트는 fake). 댓글 분류 배치 개통 — 기본 게이트 off, 비용 가드 app_setting | [plans/2026-07-12-task-f-b2-llm-comment-classification.md](2026-07-12-task-f-b2-llm-comment-classification.md) |`
 
 - [ ] **Step 3: 계획 아카이브** — 이 파일 상태 헤더 ✅로 바꾸고 `git mv`로 plans/archive/로 이동
 

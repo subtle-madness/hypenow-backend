@@ -431,7 +431,7 @@ git commit -m "feat(was): 운영 Swagger 재노출 — 07-17 미노출 결정을
 `ARCHITECTURE.md` §7 표의 **맨 위**(헤더 구분선 바로 아래)에 행 추가:
 
 ```markdown
-| 2026-07-19 | **Swagger 운영 노출 + admin 게이트(07-17 미노출 결정 대체)** — users.role(USER/ADMIN, V8) 최소 권한 체계 도입, 스웨거 경로 전용 @Order(1) 체인(HTTP Basic 팝업·STATELESS·hasRole ADMIN). AppUserDetails.role은 transient — 세션 직렬화 형상 불변, 권한은 Basic 인증 시점에만 유효. 운영 반영엔 admin 계정 승격(수동 SQL `UPDATE app.users SET role='ADMIN'`) 필요 | [specs/2026-07-19-swagger-admin-gate-design.md](docs/superpowers/specs/2026-07-19-swagger-admin-gate-design.md) |
+| 2026-07-19 | **Swagger 운영 노출 + admin 게이트(07-17 미노출 결정 대체)** — users.role(USER/ADMIN, V8) 최소 권한 체계 도입, 스웨거 경로 전용 @Order(1) 체인(HTTP Basic 팝업·STATELESS·hasRole ADMIN). AppUserDetails.role은 transient — 세션 직렬화 형상 불변, 권한은 Basic 인증 시점에만 유효. 운영 반영엔 admin 계정 승격(수동 SQL `UPDATE app.users SET role='ADMIN'`) 필요 | [specs/2026-07-19-swagger-admin-gate-design.md](../../specs/2026-07-19-swagger-admin-gate-design.md) |
 ```
 
 문서 상단 `> 마지막 갱신: 2026-07-18`을 `> 마지막 갱신: 2026-07-19`로 수정 (이미 07-19면 그대로 둔다).
