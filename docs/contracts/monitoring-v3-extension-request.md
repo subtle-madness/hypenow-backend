@@ -1,6 +1,6 @@
 # monitoring 모듈 확장 요구 — v3 프론트 계약 대응 (팀원 전달)
 
-> 상태: 🟢 활성 · 요청 (2026-07-30 작성, was 구현 세션)
+> 상태: ✅ 반영됨(P1·P2 구현 완료 — 계약 v2.2)
 > 수신: monitoring 모듈 담당자. 계약 정본 [monitoring-was-contract.md](monitoring-was-contract.md)(v1.0)의
 > 확장 요청이다 — 채택 시 계약 문서를 먼저 갱신한 뒤 코드에 반영하는 기존 절차를 따른다.
 > 근거 계약: [monitoring-frontend-api-spec.md](monitoring-frontend-api-spec.md)(프론트 v3, 6.25~6.33).

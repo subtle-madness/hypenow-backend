@@ -1,6 +1,6 @@
 # 모니터링 v3 3-트랙 병합 후 갭 파악
 
-> 상태: 🟢 활성 · 파악 완료 (2026-07-30) — 후속 작업 목록의 입력
+> 상태: ✅ 해소 완료 (2026-07-30) — 아래 파악 결과 전 항목 처리, 해소 내역은 말미 "해소 결과" 절 참조
 >
 > feat/monitoring-v3-was에 feat/monitoring-v3-p2(댓글·계정 메타)와
 > feat/monitoring-alarm-module(승인 폐지·alarm_event·메일 발송)을 병합(1fbda87c)하고
@@ -63,3 +63,16 @@
 2. A-1-2 재설계 확정 → 다이제스트 생성·6.32 재정렬
 3. 6.26 어셈블러 — B-1 중 post_meta·hidden/error·sweep_run이 채워진 뒤(그 전엔 caption 폴백 불가로 계약 위반 확정)
 4. B-1은 monitoring 쪽 확장(상태 머신 포함)이 필요 — 확장 요구 문서 개정판으로 전달
+
+## 해소 결과 (2026-07-30)
+
+권장 순서대로 전 항목 처리 완료. was 638 · monitoring 167 테스트는 병합 시점 기준이며 이후 태스크마다 회귀 그린 유지.
+
+- **A-1-1 (userId)** — 해소. `RegisterRequest`에 `userId` 필드 추가, `RegistrationExecutor`·`NoopRegistrationExecutor` 전달 경로 배선. 등록 실행기 구현으로 이어짐.
+- **A-1-2 (다이제스트 재설계)** — 해소. `alarm_event` 단일 원천 기반으로 6.32를 재설계: 생성 크론이 유저·날짜 단위로 **멱등 재계산**(워터마크 폐지), 늦은 배치 따라잡기 크론을 별도 배선해 그날 발송을 보장. `monitoring_alarm_state`(구 DIGEST 워터마크)는 폐기.
+- **A-2 (죽은 표면 제거)** — 해소. `MonitoringCommandClient.approve/reject`·`ApproveResult`/`RejectResult`, `findCandidates`/`findPendingCandidatesSince`·`CandidateRow`/`PendingCandidate` 제거. 상태 유도표의 "WATCHING+PENDING→collecting" 3행 삭제(승인 폐지로 도달 불가 확정). `TargetRow`에 `user_id` 반영.
+- **B-1 (monitoring 표면 부재)** — `feat/monitoring-p1` 머지로 해소. post_meta(캡션·게시일·썸네일)·hidden/error 상태 신호(+복귀)·`sweep_run` 배치 워터마크·`matched_keywords` 산지 4종 전부 반입(계약 v2.2). 픽스처가 선반영해둔 4객체(post_meta·tracked_hidden_at·fetch_failing·sweep_run)를 실구현과 재대조 완료 — 표류 없음.
+- **B-2 (was 작업 잔여)** — 해소. 6.26 GET 목록 완전 어셈블러(`TrackingItemAssembler`), 6.29 PATCH·6.30 cancel, 등록 실행기(Noop 대체), 다이제스트 생성 경로, 6.27 중복 판정의 자연 종결 제외(재등록 허용), 탈퇴 시 모니터링 해지 루프(배치 대상 즉시 제외) 전부 구현.
+- **B-3 (픽스처 표류)** — 해소. `was/src/test/resources/monitoring-schema.sql`을 P1 실구현(V5) 기준으로 재대조·정합 확인.
+
+**잔여 미해소**: 23:50 이후 도착 이벤트 유실 가능성(스윕 배치 경계 부근, `sweep_run` 완료 가드로 후속 최적화 여지 — 현재는 허용 범위로 수용).

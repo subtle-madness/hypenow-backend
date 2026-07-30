@@ -1,6 +1,6 @@
 # 콘텐츠 모니터링 백엔드 구현 요청
 
-> 상태: 🟢 활성 · 구현 진행 중 (2026-07-30 착수)
+> 상태: 🟢 활성 · ✅ 구현 완료(2026-07-30)
 >
 > 프론트(celfit-front) 쪽에서 작성된 구현 요청 브리프의 스냅샷. 계약 정본은
 > [contracts/monitoring-frontend-api-spec.md](../../contracts/monitoring-frontend-api-spec.md)(6.25~6.33).

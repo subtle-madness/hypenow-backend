@@ -1,6 +1,6 @@
 # 모니터링 v3 was 구현 계획
 
-> 상태: 🟢 활성 · 실행 대기
+> 상태: ✅ 구현됨(2026-07-30) — 실행 이력·개정 내역은 본문, 최종 구조는 merge-gaps 문서와 계약 v2.2 참조
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
