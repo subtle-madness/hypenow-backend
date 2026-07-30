@@ -38,6 +38,14 @@
 # 검사한다(`--versions-tree`) — base 대조 없이도 잡히는 실패 모드(같은 트리 안에서 번호가
 # 겹치는 사고)에는 여전히 유효하다.
 #
+# v3.2 (07-30): 신규 마이그레이션은 UTC 타임스탬프로 채번(`V<YYYYMMDDHHMMSS>__`, CLAUDE.md
+# 컨벤션 절)해 애초에 경합할 다음 정수 번호가 없게 한다 — 이 검사 자체는 **무수정**으로
+# 호환된다: `normalize_version`의 정규식(`^V[0-9]+(\.[0-9]+)*__`)과 `10#$p` 산술 둘 다
+# 자릿수 제한이 없고, Flyway 자신도 버전을 정수(BigInteger)로 비교하므로 14자리 타임스탬프는
+# 기존 `V1`~`V49`류보다 항상 크다(`MigrationVersion.compareTo` 실측 확인). 기존 파일은 rename
+# 금지(schema_history 체크섬 고정)이므로 정수·타임스탬프가 각 디렉토리 안에 영구 공존한다 —
+# 셀프테스트에 그 공존·충돌 케이스를 추가했다(check-migration-safety.test.sh).
+#
 # 사용법: check-migration-safety.sh <base-ref>                             # git diff 기반 (CI, PR 전용)
 #         check-migration-safety.sh --scan <파일…>                          # 파괴적 DDL만 파일 직접 검사 (셀프테스트용)
 #         check-migration-safety.sh --versions <base-목록파일> <head-목록파일>    # 버전 중복 base 대조 (셀프테스트용)

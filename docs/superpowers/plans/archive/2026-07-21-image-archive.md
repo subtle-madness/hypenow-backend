@@ -6,7 +6,7 @@
 
 **Goal:** CDN 만료(~4일) 전에 프로필·릴스 썸네일·게시글 썸네일을 OCI `hypenow-images` 버킷에 적재하고, was가 `/img/` 상대경로로 서빙하게 한다.
 
-**Architecture:** analytics에 데일리 아카이브 잡 신설(raw 뷰에서 URL 읽기 → HTTP 다운로드 → 쓰기 PAR로 OCI PUT → analysis DB `image_assets` 기록). was는 조회 SQL에 `image_assets` LEFT JOIN + `COALESCE('/img/'||object_path, 원본 URL)`만 추가(읽기 전용 유지). 프론트 Vercel rewrite(`/img/:path*` → OCI)는 이미 배포됨. 설계 근거: [specs/2026-07-21-image-archive-design.md](../specs/2026-07-21-image-archive-design.md).
+**Architecture:** analytics에 데일리 아카이브 잡 신설(raw 뷰에서 URL 읽기 → HTTP 다운로드 → 쓰기 PAR로 OCI PUT → analysis DB `image_assets` 기록). was는 조회 SQL에 `image_assets` LEFT JOIN + `COALESCE('/img/'||object_path, 원본 URL)`만 추가(읽기 전용 유지). 프론트 Vercel rewrite(`/img/:path*` → OCI)는 이미 배포됨. 설계 근거: [specs/2026-07-21-image-archive-design.md](../../specs/2026-07-21-image-archive-design.md).
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · `java.net.http.HttpClient`(SDK 무추가 — 업로드는 OCI 쓰기 PAR에 PUT) · Flyway(analysis DB) · Testcontainers 2.x(`org.testcontainers.postgresql.PostgreSQLContainer`)
 

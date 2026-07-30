@@ -34,7 +34,7 @@ class CampaignRepositoryTest extends IntegrationTest {
 	@Test
 	void insert_RETURNING_값_확인() {
 		CampaignRow row = repository.insert(userId, "여름 캠페인", "설명", LocalDate.of(2026, 7, 1),
-				LocalDate.of(2026, 8, 31), "브랜드A", 1_000_000L);
+				LocalDate.of(2026, 8, 31), "브랜드A", 1_000_000L, 40);
 
 		assertThat(row.id()).isPositive();
 		assertThat(row.userId()).isEqualTo(userId);
@@ -44,21 +44,22 @@ class CampaignRepositoryTest extends IntegrationTest {
 		assertThat(row.endDate()).isEqualTo(LocalDate.of(2026, 8, 31));
 		assertThat(row.brand()).isEqualTo("브랜드A");
 		assertThat(row.budget()).isEqualTo(1_000_000L);
+		assertThat(row.seedingCount()).isEqualTo(40);
 		assertThat(row.createdAt()).isNotNull();
 	}
 
 	@Test
 	void 이름_유니크_충돌은_DuplicateKeyException() {
-		repository.insert(userId, "중복 캠페인", null, null, null, null, null);
+		repository.insert(userId, "중복 캠페인", null, null, null, null, null, null);
 
-		assertThatThrownBy(() -> repository.insert(userId, "중복 캠페인", null, null, null, null, null))
+		assertThatThrownBy(() -> repository.insert(userId, "중복 캠페인", null, null, null, null, null, null))
 				.isInstanceOf(DuplicateKeyException.class);
 	}
 
 	@Test
 	void findByUser_정렬은_created_at_ASC_id_ASC() {
-		CampaignRow c1 = repository.insert(userId, "캠페인1", null, null, null, null, null);
-		CampaignRow c2 = repository.insert(userId, "캠페인2", null, null, null, null, null);
+		CampaignRow c1 = repository.insert(userId, "캠페인1", null, null, null, null, null, null);
+		CampaignRow c2 = repository.insert(userId, "캠페인2", null, null, null, null, null, null);
 
 		List<CampaignRow> byUser = repository.findByUser(userId);
 		assertThat(byUser).extracting(CampaignRow::id).containsExactly(c1.id(), c2.id());
@@ -66,7 +67,7 @@ class CampaignRepositoryTest extends IntegrationTest {
 
 	@Test
 	void findByNameAndUser() {
-		repository.insert(userId, "찾는캠페인", null, null, null, null, null);
+		repository.insert(userId, "찾는캠페인", null, null, null, null, null, null);
 
 		assertThat(repository.findByNameAndUser("찾는캠페인", userId)).isPresent();
 		assertThat(repository.findByNameAndUser("없는캠페인", userId)).isEmpty();
@@ -75,10 +76,10 @@ class CampaignRepositoryTest extends IntegrationTest {
 	@Test
 	void update_왕복() {
 		CampaignRow created = repository.insert(userId, "원래이름", "원래설명", LocalDate.of(2026, 1, 1),
-				LocalDate.of(2026, 2, 1), "원래브랜드", 100L);
+				LocalDate.of(2026, 2, 1), "원래브랜드", 100L, 40);
 
 		CampaignRow updated = repository.update(created.id(), "바뀐이름", "바뀐설명", LocalDate.of(2026, 3, 1),
-				LocalDate.of(2026, 4, 1), "바뀐브랜드", 200L);
+				LocalDate.of(2026, 4, 1), "바뀐브랜드", 200L, 80);
 
 		assertThat(updated.name()).isEqualTo("바뀐이름");
 		assertThat(updated.description()).isEqualTo("바뀐설명");
@@ -86,6 +87,7 @@ class CampaignRepositoryTest extends IntegrationTest {
 		assertThat(updated.endDate()).isEqualTo(LocalDate.of(2026, 4, 1));
 		assertThat(updated.brand()).isEqualTo("바뀐브랜드");
 		assertThat(updated.budget()).isEqualTo(200L);
+		assertThat(updated.seedingCount()).isEqualTo(80);
 
 		CampaignRow reloaded = repository.findByIdAndUser(created.id(), userId).orElseThrow();
 		assertThat(reloaded.name()).isEqualTo("바뀐이름");
@@ -93,16 +95,16 @@ class CampaignRepositoryTest extends IntegrationTest {
 
 	@Test
 	void update_이름_유니크_충돌_전파() {
-		repository.insert(userId, "선점캠페인", null, null, null, null, null);
-		CampaignRow target = repository.insert(userId, "변경대상", null, null, null, null, null);
+		repository.insert(userId, "선점캠페인", null, null, null, null, null, null);
+		CampaignRow target = repository.insert(userId, "변경대상", null, null, null, null, null, null);
 
-		assertThatThrownBy(() -> repository.update(target.id(), "선점캠페인", null, null, null, null, null))
+		assertThatThrownBy(() -> repository.update(target.id(), "선점캠페인", null, null, null, null, null, null))
 				.isInstanceOf(DuplicateKeyException.class);
 	}
 
 	@Test
 	void delete_후_배정된_items의_campaign_id는_NULL() {
-		CampaignRow campaign = repository.insert(userId, "삭제될캠페인", null, null, null, null, null);
+		CampaignRow campaign = repository.insert(userId, "삭제될캠페인", null, null, null, null, null, null);
 		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), campaign.id(), "abc",
 				"https://x/abc", null, 30, LocalDate.of(2026, 7, 30));
 
@@ -117,7 +119,7 @@ class CampaignRepositoryTest extends IntegrationTest {
 
 	@Test
 	void countItems() {
-		CampaignRow campaign = repository.insert(userId, "카운트캠페인", null, null, null, null, null);
+		CampaignRow campaign = repository.insert(userId, "카운트캠페인", null, null, null, null, null, null);
 		assertThat(repository.countItems(campaign.id())).isZero();
 
 		itemRepository.insertPending(userId, "url", UUID.randomUUID(), campaign.id(), "a", "https://x/a", null, 30,

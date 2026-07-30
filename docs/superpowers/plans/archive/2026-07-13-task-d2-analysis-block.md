@@ -709,7 +709,7 @@ docker exec -i crawler-postgres-1 psql -U crawler -d analysis -tAc \
 - [ ] **Step 2: §7 결정 기록 맨 위에 추가**
 
 ```markdown
-| 2026-07-13 | 태스크 D2: 상세 API에 B2·B3 산출물 additive 확장 — comments.items[].aiCategory(LEFT JOIN, 미분류 null) + analysis 블록(content_analyses 1행, 미분석 null). 읽기 record는 was 로컬(분석 층 소유 테이블은 공유 형태 미성립 — §4-4), jsonb는 실 JSON 구조로 서빙. 릴스 개별 바 차트는 인플루언서 상세(E) 소관 | [plans/2026-07-13-task-d2-analysis-block.md](docs/superpowers/plans/2026-07-13-task-d2-analysis-block.md) |
+| 2026-07-13 | 태스크 D2: 상세 API에 B2·B3 산출물 additive 확장 — comments.items[].aiCategory(LEFT JOIN, 미분류 null) + analysis 블록(content_analyses 1행, 미분석 null). 읽기 record는 was 로컬(분석 층 소유 테이블은 공유 형태 미성립 — §4-4), jsonb는 실 JSON 구조로 서빙. 릴스 개별 바 차트는 인플루언서 상세(E) 소관 | [plans/2026-07-13-task-d2-analysis-block.md](2026-07-13-task-d2-analysis-block.md) |
 ```
 
 - [ ] **Step 3: 이 계획 상태 헤더** — `🟢 활성` → `✅ 구현/실행/반영됨 (2026-07-13)`

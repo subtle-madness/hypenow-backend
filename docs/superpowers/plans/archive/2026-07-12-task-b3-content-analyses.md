@@ -5,7 +5,7 @@
 
 **Goal:** 데이터 층의 마지막 조각 — 콘텐츠 1건당 분석 결과를 `content_analyses` 한 행으로 고정 저장하는 분석 잡. 기준선 스냅샷(SQL 집계 뷰) + VLM(F-2 검증 전까지 게이트 off) + 종합 텍스트(LLM) + 댓글 진정성 판정.
 
-**Architecture:** [스펙](../specs/2026-07-12-analytics-data-layer-design.md) §3·§6. 집합 연산(기준선)은 raw DB 뷰에, 절차(LLM/VLM 호출→저장)는 Java에 (§4-2). 저장은 분석 시점 고정·불변 — 재실행 없음, 미분석 콘텐츠만 추가. B2에서 배운 규칙 반영: **콘텐츠 단위 실패 격리(try/catch continue)**, 포트 fake 테스트, 게이트 뒤 빈.
+**Architecture:** [스펙](../../specs/2026-07-12-analytics-data-layer-design.md) §3·§6. 집합 연산(기준선)은 raw DB 뷰에, 절차(LLM/VLM 호출→저장)는 Java에 (§4-2). 저장은 분석 시점 고정·불변 — 재실행 없음, 미분석 콘텐츠만 추가. B2에서 배운 규칙 반영: **콘텐츠 단위 실패 격리(try/catch continue)**, 포트 fake 테스트, 게이트 뒤 빈.
 
 **참여율(ER) 정의 주의:** 노션 확정안 기준 **ER = (likes+comments)/views** (팔로워 분모 아님). 피드는 views NULL → ER NULL → 평균에서 자연 제외.
 
