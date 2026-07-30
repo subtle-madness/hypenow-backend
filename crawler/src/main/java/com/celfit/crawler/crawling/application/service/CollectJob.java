@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import com.celfit.crawler.common.config.CollectProperties;
 import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
@@ -62,6 +63,7 @@ public class CollectJob {
     private final RawProfileRepository rawProfiles;
     private final ContentRepository contents;
     private final ContentUpserter contentUpserter;
+    private final ContentCaptionUpserter captionUpserter;
     private final RawCommentRepository rawComments;
     private final RawMediaPageRepository rawMediaPages;
     private final ProfileSourceSelector profileSourceSelector;
@@ -76,7 +78,8 @@ public class CollectJob {
 
     public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
                       RawProfileRepository rawProfiles, ContentRepository contents,
-                      ContentUpserter contentUpserter, RawCommentRepository rawComments,
+                      ContentUpserter contentUpserter, ContentCaptionUpserter captionUpserter,
+                      RawCommentRepository rawComments,
                       RawMediaPageRepository rawMediaPages,
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
                       List<UserMediaPageFetcher> mediaFetchers,
@@ -87,6 +90,7 @@ public class CollectJob {
         this.rawProfiles = rawProfiles;
         this.contents = contents;
         this.contentUpserter = contentUpserter;
+        this.captionUpserter = captionUpserter;
         this.rawComments = rawComments;
         this.rawMediaPages = rawMediaPages;
         this.profileSourceSelector = profileSourceSelector;
@@ -181,8 +185,11 @@ public class CollectJob {
         // 2) 피드: 프로필 원형에 내장된 최근 12개(SELF·WebGQL) — 내장 타임라인이 없는 소스
         // (HIKER_MOBILE 등)는 /v1/user/medias/chunk 1페이지로 보충한다. SELF 실패의 유료 폴백이
         // 아니라(그건 방문 실패·재시도 유지) 소스가 원래 타임라인을 안 주는 경우의 열거 경로다.
+        // 소스를 지역 변수로 고정한다 — 캡션 provenance로 아래에서 다시 쓴다.
         Map<String, MediaItemExtractor.MediaItem> inWindow = new LinkedHashMap<>();
-        if (MediaItemExtractor.hasEmbeddedTimeline(payload)) {
+        RawSource feedSource = MediaItemExtractor.hasEmbeddedTimeline(payload)
+                ? RawSource.SELF_GQL : RawSource.HIKER_V1_MEDIAS;
+        if (feedSource == RawSource.SELF_GQL) {
             for (var it : MediaItemExtractor.extract(payload, RawSource.SELF_GQL)) {
                 inWindow.putIfAbsent(it.shortCode(), it);
             }
@@ -193,6 +200,8 @@ public class CollectJob {
         // 3) content upsert — 신규 생성·DISCOVERY 승격은 ContentUpserter(REELS 잡과 공유) 규칙.
         // 릴스 1페이지는 별도 REELS 잡으로 분리됐다(유료 HikerAPI 구간).
         int upserted = contentUpserter.upsert(inWindow.values(), inf);
+        // 캡션은 content 행이 생긴 뒤에 적재한다(content_id FK).
+        captionUpserter.upsert(inWindow.values(), feedSource, clock.instant());
 
         // 4) 게시물별 댓글 수집 — 현재는 불필요해 기본 꺼짐(crawler.collect.comments-enabled, yml 전용).
         // 나중에 다시 필요할 수 있어 로직은 유지한다. 켜면: 이번 열거분이 아니라 이 인플루언서의

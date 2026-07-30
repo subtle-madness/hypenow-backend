@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentStatus;
@@ -177,9 +178,9 @@ class CollectJobTest {
                    List<com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher> mediaFetchers) {
         CollectProperties props = new CollectProperties(10, 50, 3, 7, commentsEnabled);
         return new CollectJob(props, influencers, rawProfiles, contents,
-                new ContentUpserter(contents, CLOCK), rawComments, rawMediaPages,
-                profileSourceSelector, commentSource, mediaFetchers, executor, settings, CLOCK, progress,
-                stopFlag, txTemplate);
+                new ContentUpserter(contents, CLOCK), mock(ContentCaptionUpserter.class), rawComments,
+                rawMediaPages, profileSourceSelector, commentSource, mediaFetchers, executor, settings,
+                CLOCK, progress, stopFlag, txTemplate);
     }
 
     @Test

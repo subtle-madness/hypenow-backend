@@ -1,6 +1,7 @@
 package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.common.time.RevisitCutoff;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
@@ -42,6 +43,7 @@ public class ReelsJob {
     private final InfluencerRepository influencers;
     private final RawMediaPageRepository rawMediaPages;
     private final ContentUpserter contentUpserter;
+    private final ContentCaptionUpserter captionUpserter;
     private final List<UserMediaPageFetcher> mediaFetchers;
     private final CrawlExecutor executor;
     private final SettingsService settings;
@@ -51,12 +53,14 @@ public class ReelsJob {
     private final TransactionTemplate txTemplate;
 
     public ReelsJob(InfluencerRepository influencers, RawMediaPageRepository rawMediaPages,
-                    ContentUpserter contentUpserter, List<UserMediaPageFetcher> mediaFetchers,
+                    ContentUpserter contentUpserter, ContentCaptionUpserter captionUpserter,
+                    List<UserMediaPageFetcher> mediaFetchers,
                     CrawlExecutor executor, SettingsService settings, Clock clock,
                     JobProgress progress, JobStopFlag stopFlag, TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawMediaPages = rawMediaPages;
         this.contentUpserter = contentUpserter;
+        this.captionUpserter = captionUpserter;
         this.mediaFetchers = mediaFetchers;
         this.executor = executor;
         this.settings = settings;
@@ -136,10 +140,13 @@ public class ReelsJob {
             return 0;
         }
         Map<String, Object> payload = ex.items().get(0);
+        Instant capturedAt = clock.instant();
         rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), RawSource.HIKER_V2_CLIPS,
-                payload, clock.instant()));
-        int upserted = contentUpserter.upsert(
-                MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS), inf);
+                payload, capturedAt));
+        var items = MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
+        int upserted = contentUpserter.upsert(items, inf);
+        // 캡션은 content 행이 생긴 뒤에 적재한다(content_id FK).
+        captionUpserter.upsert(items, RawSource.HIKER_V2_CLIPS, capturedAt);
         inf.setLastReelsAt(clock.instant());
         influencers.save(inf);
         return upserted;

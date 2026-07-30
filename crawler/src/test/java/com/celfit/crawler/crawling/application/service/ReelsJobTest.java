@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
@@ -93,7 +94,8 @@ class ReelsJobTest {
 
     ReelsJob job(List<UserMediaPageFetcher> fetchers) {
         return new ReelsJob(influencers, rawMediaPages, new ContentUpserter(contents, CLOCK),
-                fetchers, executor, settings, CLOCK, progress, stopFlag, txTemplate);
+                mock(ContentCaptionUpserter.class), fetchers, executor, settings, CLOCK, progress,
+                stopFlag, txTemplate);
     }
 
     @Test
