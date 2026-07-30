@@ -30,6 +30,9 @@ true라 POST 전용 등록 계정은 계정 갈래(`collectAccount`→`saveAccou
   saveAccount의 게시물 순회에서 게시물 수만큼 중복 upsert가 돈다. 스윕이 매일 이 경로를 타므로
   인스타 CDN 서명 만료(~4일)도 자동 갱신된다 — monitoring의 profile_meta는 analytics 이미지
   아카이브 대상이 아니라 이 갱신이 유일한 만료 방어.
+  **07-31 트랙 KK로 해소** — monitoring이 자체 프로필 이미지 아카이브 잡(`ProfileImageArchiveJob`)을
+  붙여, 이 스윕 갱신과 별도로 종료(CANCELED/EXPIRED)된 캠페인까지 커버하는 영구 보존 경로가
+  생겼다([KK-모니터링-프로필-이미지.md](KK-모니터링-프로필-이미지.md)).
 
 **의도적으로 제외(구현 안 함)**:
 

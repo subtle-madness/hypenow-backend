@@ -128,7 +128,7 @@ public class TrackingItemAssembler {
 			handle = username.toLowerCase(Locale.ROOT);
 			ProfileMetaRow meta = bundle.profileMetaByUsername().get(username);
 			displayName = meta != null && meta.displayName() != null ? meta.displayName() : handle;
-			profileImageUrl = meta == null ? null : meta.profileImageUrl();
+			profileImageUrl = meta == null ? null : resolveImageUrl(meta);
 			lastUploadedAt = meta == null || meta.lastUploadedAt() == null ? null : meta.lastUploadedAt().toString();
 			followers = bundle.followersByUsername().get(username);
 		} else if (MODE_ACCOUNT.equals(item.mode())) {
@@ -151,6 +151,31 @@ public class TrackingItemAssembler {
 		return TrackingItemResponse.full(item.id(), item.mode(), status, handle, displayName, profileImageUrl,
 				followers, lastUploadedAt, campaignId, campaignName, item.sourceUrl(), item.registeredOn(),
 				trackingDays, keywords, post, nextCheckAt);
+	}
+
+	/**
+	 * 프로필 이미지 URL 산지 — image_object_path(monitoring이 자체 아카이브한 OCI 오브젝트, 설계 스펙
+	 * §3-1)가 있으면 그걸 우선 서빙하고, 없으면 원본 CDN URL로 폴백한다(기존 sanitizeImageUrl 가드는
+	 * 폴백 경로에 그대로 유지). {@code /img/}는 was 엔드포인트가 아니라 celfit-front의 Vercel rewrite
+	 * ({@code /img/:path*} 글롭)라서 프론트 변경이 필요 없다.
+	 */
+	private static String resolveImageUrl(ProfileMetaRow meta) {
+		if (meta.imageObjectPath() != null) {
+			return "/img/" + meta.imageObjectPath();
+		}
+		return sanitizeImageUrl(meta.profileImageUrl());
+	}
+
+	/**
+	 * 저장 측(monitoring ProfileMetaRepository)이 무효 스킴을 걸러도 이미 DB에 박힌 값이 있을 수 있어
+	 * 서빙 측에서 한 번 더 방어한다(이중 방어) — http(s)가 아니면 null로 강등.
+	 */
+	private static String sanitizeImageUrl(String profileImageUrl) {
+		if (profileImageUrl == null) {
+			return null;
+		}
+		String lower = profileImageUrl.toLowerCase(Locale.ROOT);
+		return lower.startsWith("http://") || lower.startsWith("https://") ? profileImageUrl : null;
 	}
 
 	/** post는 target 확정 & tracked_short_code가 있을 때만 값(6.25 상태 불변식 표). */

@@ -8,6 +8,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.monitoring.alarm.AlarmRecorder;
+import com.celfit.monitoring.image.ImageDownloader;
+import com.celfit.monitoring.image.ParImageStore;
+import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.service.CollectService;
 import com.celfit.monitoring.service.DailySweepJob;
 import com.celfit.monitoring.store.SweepRunRepository;
@@ -55,7 +58,10 @@ class SweepControllerTest {
 
 		ControllableSweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
 				SweepRunRepository sweepRuns) {
-			super(targets, collect, alarms, sweepRuns, null, 0, Duration.ZERO);
+			// PAR URL 미설정 = no-op(설계 스펙 §3-1) — 이 컨트롤러 테스트는 이미지 아카이브를 검증하지
+			// 않으므로 실제 HTTP를 태우지 않는 no-op 잡을 그대로 물린다.
+			super(targets, collect, alarms, sweepRuns, null, 0, Duration.ZERO,
+					new ProfileImageArchiveJob(null, new ParImageStore(""), ImageDownloader.http(), "", 1000));
 			reset();
 		}
 
