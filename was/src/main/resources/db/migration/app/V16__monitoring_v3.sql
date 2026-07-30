@@ -82,14 +82,7 @@ CREATE TABLE app.monitoring_digests (
 );
 CREATE INDEX monitoring_digests_user_idx ON app.monitoring_digests (user_id, digest_date DESC);
 
--- 알림 설정: 이메일 옵트아웃(행 없음=on) — 6.33의 저장소.
-CREATE TABLE app.monitoring_email_opt_outs (
-    user_id    bigint NOT NULL REFERENCES app.users(id) ON DELETE CASCADE,
-    event_type text   NOT NULL CHECK (event_type IN
-                      ('collection_started', 'collection_ended', 'metrics_private', 'content_issue')),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, event_type)
-);
+-- 옵트아웃 테이블은 V15가 생성 — 어휘 정본은 monitoring AlarmEventType(대문자), 6.33 소문자 매핑은 was 코드 몫.
 
 -- 다이제스트 생성 워터마크(9시 크론 창의 시작점). 시드는 마이그레이션 시각 — 적용 이전 이벤트 일괄 발화 방지.
 CREATE TABLE app.monitoring_alarm_state (
