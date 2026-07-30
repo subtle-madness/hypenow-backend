@@ -29,7 +29,7 @@ class MediaItemExtractorTest {
         assertThat(items).hasSize(3);
         assertThat(items.get(0).pinned()).isTrue();
         assertThat(items.get(1)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "NEW1", Instant.ofEpochSecond(1783474981L), ContentType.REELS, false));
+                "NEW1", Instant.ofEpochSecond(1783474981L), ContentType.REELS, false, ""));
         assertThat(items.get(2).type()).isEqualTo(ContentType.FEED);
         assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_GQL_MEDIAS)).isEqualTo("CURSOR_X");
     }
@@ -46,7 +46,7 @@ class MediaItemExtractorTest {
                 MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
 
         assertThat(items).containsExactly(new MediaItemExtractor.MediaItem(
-                "CLIP1", Instant.ofEpochSecond(1783223195L), ContentType.REELS, false));
+                "CLIP1", Instant.ofEpochSecond(1783223195L), ContentType.REELS, false, ""));
         assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V2_CLIPS)).isEqualTo("PAGE2");
     }
 
@@ -87,9 +87,9 @@ class MediaItemExtractorTest {
 
         assertThat(items).hasSize(3);
         assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "FEED1", Instant.ofEpochSecond(1773630245L), ContentType.FEED, true));
+                "FEED1", Instant.ofEpochSecond(1773630245L), ContentType.FEED, true, ""));
         assertThat(items.get(1)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "REEL1", Instant.ofEpochSecond(1781092809L), ContentType.REELS, false));
+                "REEL1", Instant.ofEpochSecond(1781092809L), ContentType.REELS, false, ""));
         assertThat(items.get(2).pinned()).isFalse();
     }
 
@@ -134,7 +134,7 @@ class MediaItemExtractorTest {
 
         assertThat(items).hasSize(3);
         assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
-                "C_FEED", Instant.parse("2026-07-18T01:00:00Z"), ContentType.FEED, false));
+                "C_FEED", Instant.parse("2026-07-18T01:00:00Z"), ContentType.FEED, false, ""));
         assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
         assertThat(items.get(2).takenAt()).isEqualTo(Instant.ofEpochSecond(1773630245L));
         assertThat(MediaItemExtractor.nextCursor(payload, RawSource.HIKER_V1_MEDIAS)).isEqualTo("CUR9");
@@ -205,6 +205,17 @@ class MediaItemExtractorTest {
                 Map.of("code", "NOCAP", "taken_at", 1773630245L)));
 
         assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS).get(0).caption())
+                .isEqualTo("");
+    }
+
+    /** hasEmbeddedTimeline의 빈 edges 검증과 짝 — edges가 비어도 IndexOutOfBounds 없이 빈 문자열. */
+    @Test
+    void self_gql은_edges가_비어있으면_빈_문자열이다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "FEED1", "taken_at_timestamp", 1773630245L,
+                        "edge_media_to_caption", Map.of("edges", List.of()))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.SELF_GQL).get(0).caption())
                 .isEqualTo("");
     }
 }

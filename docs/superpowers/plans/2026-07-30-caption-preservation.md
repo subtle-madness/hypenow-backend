@@ -63,7 +63,7 @@ Testcontainers가 필요하므로 Docker(colima)가 떠 있어야 통합 테스�
 
 | 파일 | 변경 |
 |---|---|
-| `MediaItemExtractor.java` | `MediaItem`에 `caption` 추가 + `captionOf()` 헬퍼 + 4-인자 호환 생성자 |
+| `MediaItemExtractor.java` | `MediaItem`에 `caption` 추가(캐노니컬 5-인자 생성자만) + `captionOf()` 헬퍼 |
 | `MediaItemExtractorTest.java` | 세 소스 캡션 추출 테스트 추가 |
 | `CollectJob.java:184-195` | 피드 소스를 지역 변수로 명시 + 캡션 upsert 호출 |
 | `ReelsJob.java:141-142` | 캡션 upsert 호출 |
@@ -166,14 +166,15 @@ Testcontainers가 필요하므로 Docker(colima)가 떠 있어야 통합 테스�
      *                구분하기 위해 추출 단계에서 이미 정규화한다.
      */
     public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned,
-                            String caption) {
-
-        /** 캡션을 다루지 않는 호출자·테스트용 — 캡션은 "미확인"이 아니라 "없음"으로 둔다. */
-        public MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned) {
-            this(shortCode, takenAt, type, pinned, "");
-        }
-    }
+                            String caption) {}
 ```
+
+**4-인자 호환 생성자를 추가하지 않는다.** 이 필드의 존재 이유가 "미확인"과 "캡션 없음"의 구분인데,
+캡션을 다루지 않는 호출자에게 조용히 `""`(=캡션 없음)를 부여하는 생성자는 그 구분을 프로덕션 API
+표면에서 다시 흐린다(코드 품질 리뷰 지적, 07-30). 호출자는 기존 테스트 6곳뿐이므로 각각에
+`""`를 명시적으로 넘긴다: `ContentUpserterTest.java:46`의 로컬 팩토리 1곳,
+`MediaItemExtractorTest.java`의 기존 `new MediaItemExtractor.MediaItem(...)` 호출 5곳
+(각 인자 끝에 `, ""` 추가).
 
 `MediaItemExtractor.java:33`의 `out.add(...)` 한 줄을 아래로 **교체**한다:
 
@@ -215,8 +216,24 @@ Testcontainers가 필요하므로 Docker(colima)가 떠 있어야 통합 테스�
 ./gradlew :crawler:test --tests "com.celfit.crawler.crawling.application.service.MediaItemExtractorTest"
 ```
 
-기대: PASS. **기존 테스트 5개도 함께 통과해야 한다** — 4-인자 호환 생성자가 `caption=""`을 채우고,
-기존 픽스처에는 캡션이 없어 `captionOf()`도 `""`를 반환하므로 record equals가 성립한다.
+기대: PASS. **기존 테스트 5개도 함께 통과해야 한다** — 각 호출부에 명시한 `""`와, 기존 픽스처는
+캡션이 없어 `captionOf()`도 `""`를 반환하는 것이 맞아떨어져 record equals가 성립한다.
+
+빈 `edges` 경계 케이스도 하나 추가한다(`self_gql_타임라인_내장_여부를_판별한다`가 이미 "빈 edges도
+내장 있음"을 검증하는 관례와 짝):
+
+```java
+    /** hasEmbeddedTimeline의 빈 edges 검증과 짝 — edges가 비어도 IndexOutOfBounds 없이 빈 문자열. */
+    @Test
+    void self_gql은_edges가_비어있으면_빈_문자열이다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "FEED1", "taken_at_timestamp", 1773630245L,
+                        "edge_media_to_caption", Map.of("edges", List.of()))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.SELF_GQL).get(0).caption())
+                .isEqualTo("");
+    }
+```
 
 - [ ] **Step 5: `ContentUpserterTest`도 함께 통과하는지 확인한다**
 
@@ -224,7 +241,7 @@ Testcontainers가 필요하므로 Docker(colima)가 떠 있어야 통합 테스�
 ./gradlew :crawler:test --tests "com.celfit.crawler.crawling.application.service.ContentUpserterTest"
 ```
 
-기대: PASS. (이 테스트는 `ContentUpserterTest.java:46`에서 4-인자 생성자를 쓰므로 호환 생성자로 그대로 컴파일된다.)
+기대: PASS. (`ContentUpserterTest.java:46`의 로컬 팩토리가 `""`를 명시한 5-인자 생성자를 쓴다.)
 
 - [ ] **Step 6: 커밋**
 

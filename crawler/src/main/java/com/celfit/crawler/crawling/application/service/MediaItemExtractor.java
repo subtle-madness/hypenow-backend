@@ -19,13 +19,7 @@ public final class MediaItemExtractor {
      *                구분하기 위해 추출 단계에서 이미 정규화한다.
      */
     public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned,
-                            String caption) {
-
-        /** 캡션을 다루지 않는 호출자·테스트용 — 캡션은 "미확인"이 아니라 "없음"으로 둔다. */
-        public MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned) {
-            this(shortCode, takenAt, type, pinned, "");
-        }
-    }
+                            String caption) {}
 
     public static List<MediaItem> extract(Map<String, Object> payload, RawSource source) {
         List<MediaItem> out = new ArrayList<>();
