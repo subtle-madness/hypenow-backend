@@ -71,6 +71,9 @@ class V1MeControllerTest {
 	@MockitoBean
 	ProfileImageStore profileImageStore;
 
+	@MockitoBean
+	AccountDeletionService accountDeletionService;
+
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", PASSWORD_HASH, "USER",
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
@@ -343,8 +346,8 @@ class V1MeControllerTest {
 								{"password":"%s"}""".formatted(PASSWORD)))
 				.andExpect(status().isNoContent());
 
-		InOrder order = inOrder(userRepository, sessionService, profileImageStore);
-		order.verify(userRepository).deleteAccount(7L);
+		InOrder order = inOrder(accountDeletionService, sessionService, profileImageStore);
+		order.verify(accountDeletionService).deleteAccount(7L);
 		order.verify(sessionService).deleteAll("user@example.com");
 		order.verify(profileImageStore).delete(7L);
 	}
@@ -364,7 +367,7 @@ class V1MeControllerTest {
 								{"password":"%s"}""".formatted(PASSWORD)))
 				.andExpect(status().isNoContent());
 
-		then(userRepository).should().deleteAccount(7L);
+		then(accountDeletionService).should().deleteAccount(7L);
 		then(profileImageStore).should().delete(7L); // 세션 실패와 무관하게 후속 정리 진행
 		assertThat(session.isInvalid()).isTrue(); // 저장소 우회 서블릿 로컬 invalidate
 	}
@@ -395,7 +398,7 @@ class V1MeControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("CURRENT_PASSWORD_MISMATCH"));
 
-		then(userRepository).should(never()).deleteAccount(anyLong());
+		then(accountDeletionService).should(never()).deleteAccount(anyLong());
 		then(sessionService).should(never()).deleteAll(anyString());
 	}
 }
