@@ -128,10 +128,20 @@ public final class MediaItemExtractor {
      * (옛 구현처럼 못 찾을 때도 "") 같은 content가 여러 소스 페이지에 등장할 때(타임라인은
      * 릴스도 담고 V1_MEDIAS는 피드·릴스를 함께 담는다) 더 최신 페이지에서 이 형태를 못 읽으면
      * ""가 실제로 확보해 둔 캡션을 조용히 덮어쓴다.
+     *
+     * <p>HIKER_V2_CLIPS는 키 존재 여부(containsKey)로 판정한다 — 운영 실측(2026-07-30,
+     * 표본 2,905건)에서 캡션 없는 게시물은 키 부재가 아니라 {@code "caption": null}로
+     * 표현됨을 확인했다(24건, 0.83%). {@code Map.get()}은 "키 없음"과 "값이 JSON null"을
+     * 구분하지 못해 이 값을 "미확인"으로 오판하면 해당 0.83%에 대해 행이 생성되지 않는다
+     * (커버리지 누락, "행 부재=미확인" 계약 위반). 그래서 키가 있으면 값이 null이거나
+     * 캡션 객체가 아니어도 "확인된 무캡션"(빈 문자열)으로 다룬다. caption_text
+     * (V1_MEDIAS)도 이론상 같은 함정이 가능하지만 실측(표본 2,393건)에서 명시적 null이
+     * 0건이라 이 세션에서는 건드리지 않는다 — 향후 재현되면 같은 패턴을 적용할 것.
      */
     private static String captionOf(Map<String, Object> m) {
-        if (m.get("caption") instanceof Map<?, ?> c) {
-            return c.get("text") instanceof String s ? s : null;
+        if (m.containsKey("caption")) {
+            Object c = m.get("caption");
+            return c instanceof Map<?, ?> cm && cm.get("text") instanceof String s ? s : "";
         }
         if (m.get("caption_text") instanceof String s) {
             return s;

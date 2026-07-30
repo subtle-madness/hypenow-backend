@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.domain.RawSource;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -245,6 +246,26 @@ class MediaItemExtractorTest {
                 "response", Map.of("items", List.of(
                         Map.of("media", Map.of("code", "EMPTYCAP2", "taken_at", 1783223195L,
                                 "caption", Map.of("text", ""))))));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS).get(0).caption())
+                .isEqualTo("");
+    }
+
+    /**
+     * caption 키는 있고 값이 명시적 JSON null — 운영 실측(2026-07-30, 표본 2,905건 중
+     * 24건=0.83%)에서 확인된 실제 표현. Map.get()은 "키 부재"와 "값이 JSON null"을 구분하지
+     * 못해 예전 구현은 이를 "미확인"(null)으로 오판했고, 그 결과 ContentCaptionUpserter가
+     * 해당 행을 배치에서 제외해 이 0.83%가 커버리지에서 통째로 누락됐다. containsKey로
+     * 판정해 "확인된 무캡션"(빈 문자열)으로 다뤄야 한다.
+     */
+    @Test
+    void v2_clips는_caption이_명시적_null이면_확인된_무캡션이다() {
+        Map<String, Object> media = new HashMap<>();
+        media.put("code", "NULLCAP");
+        media.put("taken_at", 1783223195L);
+        media.put("caption", null);
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(Map.of("media", media))));
 
         assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS).get(0).caption())
                 .isEqualTo("");
