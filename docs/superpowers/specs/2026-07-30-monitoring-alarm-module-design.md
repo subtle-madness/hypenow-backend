@@ -194,8 +194,11 @@ CREATE TABLE app.monitoring_email_opt_outs (
 
 ## 8. 후속 (이 설계 밖)
 
-- PR②: was 정렬 — 명령 클라이언트 approve/reject 제거, RegisterRequest userId, 관련 테스트.
+- PR②: was 정렬 — 명령 클라이언트 approve/reject 제거·userId + **죽은 읽기 표면 정리**
+  (`findCandidates`·`findPendingCandidatesSince`·`CandidateRow`·`PendingCandidate` — v2에서
+  영구 빈 결과, `detected_candidate` DROP 전에 필수).
 - 프론트 API 때: 알람 히스토리 서빙(/v1 — alarm_event 읽기), 읽음 워터마크(app), 설정 토글 API.
 - 정식 문안 + 딥링크(프론트 경로 확정 후).
 - `detected_candidate`·approve 흔적 DROP(다음 릴리스 contract 단계), `target.user_id` NOT NULL 승격 검토.
 - 탈퇴 시 캠페인 cancel 루프(기존 후속 유지).
+- clips 보강 실패 시 스냅샷 `views=NULL` 기록 문제(타임시리즈 delta 왜곡) — 미취득 표기 방안 검토.

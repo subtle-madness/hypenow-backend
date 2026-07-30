@@ -377,7 +377,17 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
    ```
 5. **알람 개통 (07-30~, 별도 단계 — 기본 비활성이라 서두르지 않아도 된다)**
-   1. analysis DB에 읽기 전용 롤 생성 + 두 객체만 GRANT (계약 v2 §6):
+   1. **사전 확인 — user_id 없는 기존 캠페인 모수 파악**:
+      ```bash
+      docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+        -c "SELECT count(*) FROM target WHERE user_id IS NULL AND status IN ('WATCHING','TRACKING')"
+      ```
+      0이 아니면 `app.monitoring_campaigns`(was 매핑 테이블)에서 해당 target_id의 user_id 매핑
+      유무를 확인한다 — **있으면** 백필 UPDATE 런북(dry-run → 승인 → 실행, `target.user_id`를
+      매핑값으로 채움)을 작성해 실행하고, **없으면** "해당 기존 캠페인은 알람 대상 외"를 명시적
+      결정으로 기록해 둔다(나중에 "알람이 안 온다"가 버그로 재조사되지 않게 — 수신자 미상 행은
+      `AlarmRecorder.record()`가 조용히 스킵한다).
+   2. analysis DB에 읽기 전용 롤 생성 + 두 객체만 GRANT (계약 v2 §6):
       ```bash
       docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
         -c "CREATE ROLE alarm_reader LOGIN PASSWORD '<실값>'" \
@@ -386,11 +396,11 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
         -c "GRANT SELECT ON app.monitoring_email_opt_outs TO alarm_reader"
       ```
       (`app.monitoring_email_opt_outs`는 was Flyway V15가 만든다 — **was 배포 후**에 실행할 것)
-   2. `~/deploy/.env`에 `ALARM_READER_PASSWORD`, `RESEND_API_KEY` 실값 등록
+   3. `~/deploy/.env`에 `ALARM_READER_PASSWORD`, `RESEND_API_KEY` 실값 등록
       (`RESEND_API_KEY`는 was가 이미 쓰던 값과 같은 키를 공유한다)
-   3. 발송 크론 켜기 — `deploy/compose.yaml`의 `MONITORING_ALARM_DISPATCH_CRON`을 `"0 */5 * * * *"`로
+   4. 발송 크론 켜기 — `deploy/compose.yaml`의 `MONITORING_ALARM_DISPATCH_CRON`을 `"0 */5 * * * *"`로
       바꿔 커밋·배포(서버에서 직접 고친 값은 다음 CD가 레포 compose로 덮는다 — 스윕 크론과 같은 규칙)
-   4. 검증: `docker logs deploy-monitoring-1 | grep -i resend` — "Resend 메일 발송 활성"이면 실발송 모드,
+   5. 검증: `docker logs deploy-monitoring-1 | grep -i resend` — "Resend 메일 발송 활성"이면 실발송 모드,
       "RESEND_API_KEY 미설정"이면 로깅 폴백(개통 실패)
 
 ### 접근 통제·디버깅

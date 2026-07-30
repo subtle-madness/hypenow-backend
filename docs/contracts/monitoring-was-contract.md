@@ -177,6 +177,8 @@
   (`email_status`가 SKIPPED_OPTOUT이어도 앱 내에서는 보여준다 — 옵트아웃은 메일만 끈다).
 - 읽음 상태는 was가 자기 `app` 스키마에 워터마크로 보관한다(프론트 API 작업 때).
 - 화면 문구: 수집 시작 / 수집 종료 / 일부 지표 비공개 / 콘텐츠 비공개·삭제·수집 오류.
+- 실 스키마에는 `email_attempts`(발송 시도 횟수) 컬럼도 있지만 **계약 밖**(발송 크론 내부
+  재시도 상한용) — was는 읽지 말 것.
 
 ### profile_snapshot / post_snapshot — 관측치 (계정·게시물 단위, 캠페인 간 공유)
 
@@ -274,7 +276,8 @@ ORDER BY captured_on;
 1. monitoring이 이벤트 발생 지점 5곳에서 `alarm_event`에 적재한다
    (직접 등록·자동 전환·만료·지표 비공개·결정적 실패)
 2. monitoring 발송 크론(5분 틱)이 `dispatch_after <= now()`인 행을 유저별로 묶어 **1통**으로 보낸다.
-   디바운스 10분 — 시딩 연속 등록은 잦아든 뒤 한 통으로 나간다
+   디바운스 10분 — 시딩 연속 등록은 잦아든 뒤 한 통으로 나간다. 단 가장 오래된 due가 30분
+   (debounce-cap)을 넘기면 유입 중이어도 발송 — 시딩이 30분 넘게 이어지면 여러 통으로 나뉠 수 있다
 3. 옵트아웃(`app.monitoring_email_opt_outs`)은 메일만 끈다 — 대장 행은 남는다
 4. **was는 발송에 관여하지 않는다.** 앱 내 알림·히스토리 서빙만 한다(§3 `alarm_event`)
 
@@ -289,7 +292,9 @@ ORDER BY captured_on;
 - 스냅샷은 KST 기준 `captured_on` 하루 1행. 등록 직후엔 당일 1행만 있다
   (추이 그래프는 다음 날부터 의미가 생김).
 - **v2 호환 주의** — 구 was의 `approve`/`reject` 호출은 **404**(경로 삭제), `userId` 없는 등록은 **400**이다.
-  현재 프론트 `/v1` 미배선이라 실호출자는 없다(dev 스모크만 주의). PR②가 was 클라이언트를 정렬한다.
+  현재 프론트 `/v1` 미배선이라 실호출자는 없다(dev 스모크만 주의). PR②가 was 클라이언트를 정렬하고,
+  monitoring의 죽은 읽기 표면(`findCandidates`·`findPendingCandidatesSince` 등 — v2에서 영구 빈 결과)도
+  `detected_candidate` DROP 전에 함께 정리한다.
 
 ## 6. 알람 모듈 → app 읽기 전용 (역방향)
 
