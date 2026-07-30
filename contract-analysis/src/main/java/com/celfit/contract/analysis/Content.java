@@ -5,8 +5,9 @@ import java.time.OffsetDateTime;
 
 /**
  * 서빙 콘텐츠 1행 (미러: analytics.v_contents → contents).
- * hypeScore: 스펙 5.4 산식 0~100 — 릴스 = cbrt(도달×참여질×신선도)×100,
- * 피드 = cbrt(팔로워ER축²×신선도)×100 (신선도는 미러 갱신 시점 기준).
+ * hypeScore: 0~100. 산식 정본은 analytics.hype_score()(analytics/views/02_serving.sql) —
+ * clamp(타입별 앵커 매핑(Q), 0, 100) × 0.5^(경과일/halflife) (경과일은 미러 갱신 시점 기준).
+ * Java에는 계산 로직이 없다(미러 값 통과).
  * 릴스인데 조회수 NULL이면 NULL (정렬은 NULLS LAST).
  * metricCapturedAt: 지표 고정(+3일) 스냅샷의 수집 시각 (스펙 updatedAt 재료).
  * adMarked: 인스타 유료 파트너십 태그(릴스 전용, 피드 false) — LLM 분석 프롬프트에 싣는 확정 사실.
