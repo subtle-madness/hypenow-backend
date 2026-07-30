@@ -6,6 +6,18 @@ spring:
     username: crawler
     password: crawler
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # 명시적으로 10 유지 — 상향은 개선이 아니라 악화(07-30 풀 고갈 사건 실측). 운영 호스트는 CPU
+      # 2코어뿐이고 병목은 CPU 바운드 분석 쿼리(Seq Scan)라, 풀을 20으로 올려도 20개 쿼리가 2코어를
+      # 다투게 될 뿐 처리량이 늘지 않는다(오히려 컨텍스트 스위칭으로 악화 가능). 진짜 방어는
+      # ConcurrencyLimiter(벌크헤드)로 진입 자체를 제한하는 것 — was.concurrency-limit.* 참고.
+      maximum-pool-size: 10
+      # 기본 30초는 풀이 마르면 톰캣 스레드를 30초씩 묶어 장애를 길게 만든다(07-30: 66초 500).
+      # 5초로 단축해 빠르게 실패시킨다 — 정상 시 획득은 1ms 미만이라 부작용 없음.
+      connection-timeout: 5000
+      # 향후 릭 진단용 — 이번 07-30 건은 릭이 아니라 CPU 바운드 지연이었지만, 다음에 진짜 릭이면
+      # 20초 이상 보유된 커넥션이 로그로 바로 드러난다.
+      leak-detection-threshold: 20000
   session:
     jdbc:
       initialize-schema: never          # DDL은 Flyway(app 스키마)가 소유 — V2__spring_session.sql
