@@ -3,10 +3,10 @@
 ## 세션 시작
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)를 먼저 읽는다** — 구조·경계·원칙만 담은 경량 문서(살아있는 문서, 항상 최신).
-  결정 기록([DECISIONS.md](DECISIONS.md))·작업 트랙 상세(§5)는 필요할 때만 연다.
-- 구조가 바뀌는 작업을 했으면 ARCHITECTURE.md §5(작업 트랙 표)를 갱신한다. 새 결정은
-  [DECISIONS.md](DECISIONS.md) 맨 위에 추가한다 — ARCHITECTURE.md §7은 그 파일로의 포인터 스텁이라
-  갱신 대상이 아니다.
+  결정 기록([DECISIONS.md](DECISIONS.md))·작업 트랙 상세([`docs/tracks/`](docs/tracks/))는 필요할 때만 연다.
+- 구조나 태스크 상태가 바뀌는 작업을 했으면 **새 결정은 [DECISIONS.md](DECISIONS.md) 맨 위에**,
+  **트랙 상태는 해당 `docs/tracks/<트랙문자>-<슬러그>.md`**(트랙 1개 = 파일 1개, §5 참조)에 갱신한다.
+  ARCHITECTURE.md의 §5·§7은 둘 다 그 파일들로의 포인터 스텁이라 갱신 대상이 아니다.
 - 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변) /
   `docs/superpowers/plans/`(구현 계획 — 실행 완료 시 `plans/archive/`로 이동).
   dated 문서는 첫머리 상태 헤더(`> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 · ⏸ 보류`)를 유지한다.
@@ -81,6 +81,10 @@
   CI `migration-guard`가 차단하며, 의도된 contract 단계는 `-- allow-destructive: <사유>` 주석으로
   통과. **DROP COLUMN 파일은 그 컬럼을 참조하는 보정 UPDATE 동봉 필수**(가드 v2 짝 검사 —
   롤링 창 유실분 최종 백필. 불필요하면 `-- no-backfill: <사유>`)([deploy/README.md §5-1](deploy/README.md)).
+- **세션 위생**(여러 세션 동시 작업 전제): 작업이 끝나면 머지 준비가 안 됐더라도 **PR을 즉시 연다**(draft
+  가능) — 열린 PR이 "이 영역은 점유 중"이라는 세션 간 유일한 신호다. 작업 종료 시 자기 worktree와
+  머지된 브랜치를 정리한다 — 방치된 worktree가 쌓이면 어느 작업이 살아있는지 식별 불가능해진다
+  (07-30 기준 25개 방치 확인).
 
 ## 함정
 

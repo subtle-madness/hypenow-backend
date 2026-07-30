@@ -1,6 +1,8 @@
 package com.celfit.was;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -123,6 +125,67 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 		mockMvc.perform(get("/v3/api-docs").cookie(session))
 				.andExpect(status().isUnauthorized())
 				.andExpect(header().exists("WWW-Authenticate"));
+	}
+
+	/**
+	 * 07-30 프론트 요청 A-2 — Map&lt;String,Object&gt; 바디라 스키마가 비던 5개 엔드포인트에
+	 * {@code @RequestBody(content=@Content(schema=@Schema(implementation=...)))}로 문서 전용
+	 * record(CampaignRequestDocs 등)를 붙였다. "붙였으니 나올 것"이 아니라 실제 생성된
+	 * /v3/api-docs에 필드가 들어있는지 단언한다.
+	 */
+	@Test
+	void POST_PATCH_5개_엔드포인트의_requestBody_스키마에_필드가_노출된다() throws Exception {
+		mockMvc.perform(get("/v3/api-docs").with(httpBasic(ADMIN_EMAIL, PASSWORD)))
+				.andExpect(status().isOk())
+				// 캠페인 POST — seedingCount 포함, name이 required
+				.andExpect(jsonPath(
+						"$.paths['/v1/monitoring/campaigns'].post.requestBody.content['application/json'].schema['$ref']")
+						.value("#/components/schemas/CampaignCreateRequest"))
+				.andExpect(jsonPath("$.components.schemas.CampaignCreateRequest.properties.seedingCount").exists())
+				.andExpect(jsonPath("$.components.schemas.CampaignCreateRequest.properties.budget").exists())
+				.andExpect(jsonPath("$.components.schemas.CampaignCreateRequest.required", hasItem("name")))
+				// 캠페인 PATCH — 같은 필드(seedingCount 포함), 전부 선택
+				.andExpect(jsonPath(
+						"$.paths['/v1/monitoring/campaigns/{campaignId}'].patch.requestBody.content['application/json'].schema['$ref']")
+						.value("#/components/schemas/CampaignPatchRequest"))
+				.andExpect(jsonPath("$.components.schemas.CampaignPatchRequest.properties.seedingCount").exists())
+				// 모니터링 items POST — trackingDays·posts·accounts·keywords·campaignName
+				.andExpect(jsonPath(
+						"$.paths['/v1/monitoring/items'].post.requestBody.content['application/json'].schema['$ref']")
+						.value("#/components/schemas/MonitoringRegisterRequest"))
+				.andExpect(jsonPath("$.components.schemas.MonitoringRegisterRequest.properties.trackingDays").exists())
+				.andExpect(jsonPath("$.components.schemas.MonitoringRegisterRequest.properties.posts").exists())
+				.andExpect(jsonPath("$.components.schemas.MonitoringRegisterRequest.properties.keywords['$ref']")
+						.value("#/components/schemas/MonitoringItemKeywords"))
+				.andExpect(jsonPath("$.components.schemas.MonitoringRegisterRequest.required", hasItem("trackingDays")))
+				// 모니터링 items PATCH — trackingDays·campaignName·campaignId
+				.andExpect(jsonPath(
+						"$.paths['/v1/monitoring/items/{itemId}'].patch.requestBody.content['application/json'].schema['$ref']")
+						.value("#/components/schemas/MonitoringItemPatchRequest"))
+				.andExpect(jsonPath("$.components.schemas.MonitoringItemPatchRequest.properties.campaignName").exists())
+				// 알림 설정 PATCH — content(이벤트별 부분 맵)
+				.andExpect(jsonPath(
+						"$.paths['/v1/notification-settings'].patch.requestBody.content['application/json'].schema['$ref']")
+						.value("#/components/schemas/NotificationSettingsPatchRequest"))
+				.andExpect(
+						jsonPath("$.components.schemas.NotificationSettingsPatchRequest.properties.content").exists());
+	}
+
+	/** status·mode·contentType·reasonCode가 프론트 분기용 허용값 목록(enum)으로 노출되는지 확인한다. */
+	@Test
+	void 응답의_상태값_필드가_enum_허용값_목록으로_노출된다() throws Exception {
+		mockMvc.perform(get("/v3/api-docs").with(httpBasic(ADMIN_EMAIL, PASSWORD)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.components.schemas.TrackingItemResponse.properties.status.enum",
+						containsInAnyOrder("collecting", "detecting", "tracking", "not_uploaded", "ended", "hidden",
+								"error")))
+				.andExpect(jsonPath("$.components.schemas.TrackingItemResponse.properties.mode.enum",
+						containsInAnyOrder("url", "account")))
+				.andExpect(jsonPath("$.components.schemas.TrackedPostResponse.properties.contentType.enum",
+						containsInAnyOrder("reels", "feed")))
+				.andExpect(jsonPath("$.components.schemas.Entry.properties.reasonCode.enum",
+						containsInAnyOrder("invalid_format", "not_found", "private_account", "share_link_unresolved",
+								"duplicate", "internal_error")));
 	}
 
 	@Test

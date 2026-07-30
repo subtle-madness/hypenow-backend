@@ -131,7 +131,7 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 		repository.updateTrackingDays(itemId, 60);
 		assertThat(repository.findByIdAndUser(itemId, userId).orElseThrow().trackingDays()).isEqualTo(60);
 
-		CampaignRow campaign = campaignRepository.insert(userId, "배정캠페인", null, null, null, null, null);
+		CampaignRow campaign = campaignRepository.insert(userId, "배정캠페인", null, null, null, null, null, null);
 		repository.updateCampaign(itemId, campaign.id());
 		assertThat(repository.findByIdAndUser(itemId, userId).orElseThrow().campaignId()).isEqualTo(campaign.id());
 
