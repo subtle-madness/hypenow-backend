@@ -138,8 +138,15 @@ public class PipelineStatsService {
 	/**
 	 * 파이프라인 건강·처리량 — 전부 싼 쿼리(인메모리 RunHistory와 달리 재시작에도 영속).
 	 * last*At은 각 산출물의 최신 시각(신선도), today*는 오늘(KST) 처리량.
-	 * lastMirrorAt은 미러된 지표 스냅샷 최신(captured_at) — 크롤 지표 신선도. 미러 잡 시각이 아니라
-	 * "크롤이 지표를 마지막으로 잡은 때"다(07-20 크롤 정지를 이 신호가 잡았다 — 라벨도 그렇게 붙인다).
+	 * lastMirrorAt은 2026-07-30부터 소스가 content_metric_snapshots 미러(제거됨)가 아니라
+	 * contents.metric_captured_at(핀 지표 캡처 시각)이다 — 이름은 유지하되 실체가 바뀌었다.
+	 * 대체가 안전한 근거(실측): MAX(contents.metric_captured_at) = MAX(content_metric_snapshots.captured_at)
+	 * (마이크로초까지 일치). 이유는 v_pinned_metrics의 핀 우선순위 — 성숙한(3일 지난) 콘텐츠만
+	 * "+3일 시점 스냅샷"으로 고정되고, 미성숙 콘텐츠는 우선순위 ②(완비된 최신 스냅샷)로 폴백해
+	 * 최신 크롤 시각을 그대로 반영한다. 핀 값은 스냅샷 captured_at의 부분집합이라
+	 * MAX(pinned) ≤ MAX(snapshot)이 항상 성립 — 이 신호가 실제보다 더 신선하게 보고할 수 없다(과대
+	 * 신선 보고 불가, 크롤 정지를 놓칠 수 없다). 여전히 "크롤이 지표를 마지막으로 잡은 때"다
+	 * (07-20 크롤 정지를 이 신호가 잡았다 — 라벨도 그렇게 붙인다).
 	 */
 	public record Health(long todayAnalyzed, long todayAccountCopied,
 			Instant lastAnalysisAt, Instant lastMirrorAt, Instant lastAccountCopyAt) {
@@ -235,8 +242,9 @@ public class PipelineStatsService {
 				       count(*) FILTER (WHERE analyzed_at AT TIME ZONE 'Asia/Seoul'
 				                        >= (now() AT TIME ZONE 'Asia/Seoul')::date) AS today
 				FROM account_analyses""");
+		// content_metric_snapshots 미러 제거(2026-07-30)로 소스 교체 — 위 Health 클래스 주석 참조.
 		Instant lastMirror = instant(analysis,
-				"SELECT max(captured_at) FROM content_metric_snapshots");
+				"SELECT max(metric_captured_at) FROM contents");
 		return new Health(num(c.get("today")), num(a.get("today")),
 				toInstant(c.get("last_at")), lastMirror, toInstant(a.get("last_at")));
 	}

@@ -49,11 +49,6 @@
         <div class="tile-desc" th:if="${source != null}"
              th:text="'모수 ' + ${#numbers.formatInteger(source.contents, 0, 'COMMA')} + ' 대비'"></div>
     </div>
-    <div class="tile">
-        <div class="num" th:text="${#numbers.formatInteger(tiles.snapshots, 0, 'COMMA')}">0</div>
-        <div class="label">지표 스냅샷</div>
-        <div class="tile-desc" th:text="${tiles.snapshotLatest != null} ? '최신 ' + ${tiles.snapshotLatest} : '수집 없음'">-</div>
-    </div>
     <div class="tile" th:classappend="${tiles.analyses < tiles.contents} ? 'highlight' : ''">
         <div class="num" th:text="${#numbers.formatInteger(tiles.analyses, 0, 'COMMA')} + ' / ' + ${#numbers.formatInteger(tiles.contents, 0, 'COMMA')}">0</div>
         <div class="label">LLM 분석 (content_analyses)</div>
