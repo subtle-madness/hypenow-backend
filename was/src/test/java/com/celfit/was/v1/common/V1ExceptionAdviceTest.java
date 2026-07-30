@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -109,5 +110,68 @@ class V1ExceptionAdviceTest {
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("INTERNAL_ERROR"))
 				.andExpect(jsonPath("$.error.message").value("일시적인 오류가 발생했어요."));
+	}
+
+	// ── MonitoringApiException → 프론트 어휘 변환(스펙 1.3) ─────────────────────
+	// 분기는 monitoring code가 아니라 httpStatus 기준이라, 계약에 없는 임의 code로도 표를 고정한다.
+
+	@Test
+	void monitoring_400은_VALIDATION_FAILED_400이고_원문_메시지를_누출하지_않는다() throws Exception {
+		mockMvc.perform(get("/v1/stub/monitoring-error").with(user("tester"))
+						.param("code", "VALIDATION").param("status", "400"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"))
+				.andExpect(jsonPath("$.error.message").value("올바른 형식이 아니에요."))
+				.andExpect(header().doesNotExist("Retry-After"));
+	}
+
+	@Test
+	void monitoring_404은_NOT_FOUND_404이고_원문_메시지를_누출하지_않는다() throws Exception {
+		mockMvc.perform(get("/v1/stub/monitoring-error").with(user("tester"))
+						.param("code", "TARGET_NOT_FOUND").param("status", "404"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+				.andExpect(jsonPath("$.error.message").value("대상을 찾을 수 없습니다."))
+				.andExpect(header().doesNotExist("Retry-After"));
+	}
+
+	@Test
+	void monitoring_409은_409대신_VALIDATION_FAILED_400이다() throws Exception {
+		// 스펙 6.30: INVALID_STATE는 409가 아니라 400 VALIDATION_FAILED로 내려간다 — 프론트 어휘엔 409가 없다.
+		mockMvc.perform(get("/v1/stub/monitoring-error").with(user("tester"))
+						.param("code", "INVALID_STATE").param("status", "409"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"))
+				.andExpect(jsonPath("$.error.message").value("올바른 형식이 아니에요."));
+	}
+
+	@Test
+	void monitoring_422도_VALIDATION_FAILED_400이다() throws Exception {
+		// 프론트 어휘엔 422도 없다 — 404가 아닌 4xx는 전부 400으로 뭉갠다.
+		mockMvc.perform(get("/v1/stub/monitoring-error").with(user("tester"))
+						.param("code", "PRIVATE_ACCOUNT").param("status", "422"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"))
+				.andExpect(jsonPath("$.error.message").value("올바른 형식이 아니에요."));
+	}
+
+	@Test
+	void monitoring_502는_SERVICE_UNAVAILABLE_503이고_Retry_After가_있다() throws Exception {
+		mockMvc.perform(get("/v1/stub/monitoring-error").with(user("tester"))
+						.param("code", "FETCH_FAILED").param("status", "502"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(jsonPath("$.error.message").value("일시적으로 연결이 어려워요. 잠시 후 다시 시도해 주세요."))
+				.andExpect(header().string("Retry-After", "5"));
+	}
+
+	@Test
+	void monitoring_500도_5xx라서_SERVICE_UNAVAILABLE_503이고_Retry_After가_있다() throws Exception {
+		mockMvc.perform(get("/v1/stub/monitoring-error").with(user("tester"))
+						.param("code", "INTERNAL").param("status", "500"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(jsonPath("$.error.message").value("일시적으로 연결이 어려워요. 잠시 후 다시 시도해 주세요."))
+				.andExpect(header().string("Retry-After", "5"));
 	}
 }

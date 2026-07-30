@@ -113,7 +113,8 @@ public class UiController {
                 jobStatus(JobName.BEAUTY, "뷰티판정"),
                 jobStatus(JobName.SIMILAR, "유사발굴"),
                 jobStatus(JobName.COLLECT, "프로필수집"),
-                jobStatus(JobName.REELS, "릴스수집")));
+                jobStatus(JobName.REELS, "릴스수집"),
+                jobStatus(JobName.CAPTION_BACKFILL, "캡션백필")));
         return "fragments/status :: bar";
     }
 

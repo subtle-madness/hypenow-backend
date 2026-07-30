@@ -1,5 +1,6 @@
 package com.celfit.was.v1.common;
 
+import com.celfit.was.monitoring.MonitoringApiException;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,6 +35,14 @@ class StubController {
 	@GetMapping("/v1/stub/boom")
 	ApiResponse<Void> boom() {
 		throw new RuntimeException("내부 사정");
+	}
+
+	// monitoring 에러 응답 매핑(V1ExceptionAdvice.handleMonitoringApi) 검증용 — code·httpStatus를
+	// 쿼리 파라미터로 받아 그대로 실어 던진다. monitoring 원문 code·message가 응답에 새지 않는지도
+	// 이 스텁으로 확인한다(일부러 눈에 띄는 값을 넣는다).
+	@GetMapping("/v1/stub/monitoring-error")
+	ApiResponse<Void> monitoringError(@RequestParam String code, @RequestParam int status) {
+		throw new MonitoringApiException(code, "monitoring 내부 사정 — 절대 노출 금지", status);
 	}
 
 	// 핸들러 선택 후(인자 해석 단계) 415/본문 파싱 400이 나는 경로 — advice의 명시 매핑 검증용.

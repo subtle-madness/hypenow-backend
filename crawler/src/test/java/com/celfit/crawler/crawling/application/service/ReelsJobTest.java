@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
+import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
 import com.celfit.crawler.content.domain.Content;
 import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
@@ -48,6 +49,7 @@ class ReelsJobTest {
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawMediaPageRepository rawMediaPages = mock(RawMediaPageRepository.class);
     ContentRepository contents = mock(ContentRepository.class);
+    ContentCaptionUpserter captionUpserter = mock(ContentCaptionUpserter.class);
     CrawlExecutor executor = mock(CrawlExecutor.class);
     SettingsService settings = mock(SettingsService.class);
     JobProgress progress = mock(JobProgress.class);
@@ -93,7 +95,8 @@ class ReelsJobTest {
 
     ReelsJob job(List<UserMediaPageFetcher> fetchers) {
         return new ReelsJob(influencers, rawMediaPages, new ContentUpserter(contents, CLOCK),
-                fetchers, executor, settings, CLOCK, progress, stopFlag, txTemplate);
+                captionUpserter, fetchers, executor, settings, CLOCK, progress,
+                stopFlag, txTemplate);
     }
 
     @Test
@@ -172,6 +175,49 @@ class ReelsJobTest {
         assertThat(captor.getValue().getPayload()).isEqualTo(page);
         assertThat(contentStore).containsKeys("R1", "R2");
         assertThat(contentStore.get("R1").getOrigin()).isEqualTo(ContentOrigin.ENUMERATION);
+    }
+
+    /**
+     * raw 원형과 캡션이 같은 capturedAt을 공유해야 한다(clock.instant() 재호출 회귀 가드).
+     * 이 클래스 공용 CLOCK은 Clock.fixed라 매 호출이 같은 값을 반환 — capturedAt을 지역
+     * 변수로 공유하든 clock.instant()를 두 번 부르든 결과가 똑같아 회귀를 못 잡는다. 그래서
+     * 이 테스트만 호출마다 다른 값을 주는 ticking mock Clock을 ReelsJob에 직접 주입한다
+     * (ContentUpserter는 영향받지 않게 별도로 공용 CLOCK을 그대로 쓴다).
+     *
+     * <p>tick 생성기는 유한 목록이 아니라 호출마다 새 값을 뽑는 무한 시퀀스여야 한다 — 유한
+     * 목록(예: tick1,tick2,tick3,tick3,tick3)은 Mockito가 소진 후 마지막 값을 반복하므로,
+     * 나중에 capturedAt 대입 이전에 clock.instant() 호출이 늘어나면(로깅·새 체크 등) 회귀
+     * 시나리오의 두 호출이 둘 다 "소진 후 반복" 구간에 걸려 우연히 같아져 테스트가 회귀를
+     * 놓친 채 계속 통과한다(구현 중 실제로 이 함정에 두 번 걸림). 그래서 몇 번을 부르든,
+     * 몇 번째 호출인지와 무관하게 "서로 다른 두 호출은 항상 다른 값"만 보장하면 된다 —
+     * 단정도 특정 tick 번호가 아니라 캡처한 값끼리 비교한다.
+     */
+    @Test
+    void raw_원형과_캡션이_같은_capturedAt을_공유한다() {
+        Clock tickingClock = mock(Clock.class);
+        AtomicLong seq = new AtomicLong();
+        when(tickingClock.instant()).thenAnswer(inv -> NOW.plusSeconds(seq.incrementAndGet()));
+        when(tickingClock.getZone()).thenReturn(ZoneOffset.UTC);   // RevisitCutoff.boundary가 LocalDate.now(clock)에 씀
+
+        Influencer inf = beautyTarget(1L, "alice", "PK1");
+        when(influencers.findReelsTargets(any(), any())).thenReturn(List.of(inf));
+        Map<String, Object> page = clipsPage(List.of(clipsItem("RT1", RECENT)));
+
+        ReelsJob job = new ReelsJob(influencers, rawMediaPages,
+                new ContentUpserter(contents, CLOCK), captionUpserter,
+                List.of(clipsFetcher(Map.of("PK1", page))), executor, settings, tickingClock,
+                progress, stopFlag, txTemplate);
+
+        job.run(TriggerType.MANUAL);
+
+        ArgumentCaptor<RawMediaPage> pageCaptor = ArgumentCaptor.forClass(RawMediaPage.class);
+        verify(rawMediaPages).save(pageCaptor.capture());
+        ArgumentCaptor<Instant> capturedAtCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(captionUpserter).upsert(any(), eq(RawSource.HIKER_V2_CLIPS), capturedAtCaptor.capture());
+
+        // 핵심 불변식: raw 원형과 캡션이 같은 capturedAt을 공유해야 한다 — 각자 새로 불렀다면
+        // (무한 생성기라) 반드시 서로 다른 값을 받아 어긋난다. 특정 tick 번호는 하드코딩하지 않는다.
+        assertThat(capturedAtCaptor.getValue()).isEqualTo(pageCaptor.getValue().getCapturedAt());
     }
 
     @Test

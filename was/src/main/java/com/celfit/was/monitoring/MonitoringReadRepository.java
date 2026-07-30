@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import com.celfit.was.v1.common.KstTimestamps;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -181,18 +182,24 @@ public class MonitoringReadRepository {
 	}
 
 	/**
-	 * KST 달력일 기준 알람 이벤트(갭 문서 A-1-2, 다이제스트 크론의 유일한 입력).
-	 * `(occurred_at AT TIME ZONE 'Asia/Seoul')::date`로 걸러 워터마크 없이 날짜 재계산이 가능하게 한다
-	 * (V1InfluencerDiscoveryRepository의 KST date 캐스팅 관용구와 동일).
+	 * KST 날짜 구간([fromKstDate, toKstDateInclusive])의 알람 이벤트(갭 문서 A-1-2, 다이제스트
+	 * 크론의 유일한 입력) — 회고 창 재계산(DigestJob 클래스 Javadoc "자정 넘김 유실 해소" 절
+	 * 참조). 워터마크 없이 구간 전체를 매번 다시 읽으므로 몇 번을 재실행해도 안전하다.
+	 * 하한은 fromKstDate의 KST 자정(포함), 상한은 toKstDateInclusive **다음 날**의 KST 자정
+	 * (배타) — 고정 Clock 테스트에서 미래 날짜 이벤트가 섞이지 않도록 KST 날짜 경계 배제
+	 * 시맨틱을 그대로 보존한다.
 	 */
-	public List<AlarmEventRow> findAlarmEventsOn(LocalDate kstDate) {
+	public List<AlarmEventRow> findAlarmEventsBetween(LocalDate fromKstDate, LocalDate toKstDateInclusive) {
+		OffsetDateTime from = fromKstDate.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
+		OffsetDateTime to = toKstDateInclusive.plusDays(1).atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 		return jdbc.sql("""
 				SELECT id, target_id, user_id, event_type, occurred_at
 				FROM alarm_event
-				WHERE (occurred_at AT TIME ZONE 'Asia/Seoul')::date = :kstDate
+				WHERE occurred_at >= :from AND occurred_at < :to
 				ORDER BY user_id, occurred_at
 				""")
-				.param("kstDate", kstDate)
+				.param("from", from)
+				.param("to", to)
 				.query(AlarmEventRow.class)
 				.list();
 	}
