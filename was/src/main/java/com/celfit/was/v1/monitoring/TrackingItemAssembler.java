@@ -37,7 +37,10 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class TrackingItemAssembler {
 
-	private static final int COMMENT_LIMIT = 8;
+	// 저장 상한(monitoring comment-pages=3, 45건 — application.yml 주석)과 같은 수준으로 맞춘다.
+	// 예전엔 8이라 monitoring이 45건까지 수집해도 화면엔 8건만 보였다(07-31 결함 B) — 저장은
+	// 했는데 못 보는 상태를 만들지 않기 위해 서빙 상한을 수집 상한과 동일하게 둔다.
+	private static final int COMMENT_LIMIT = 45;
 	private static final String MODE_ACCOUNT = "account";
 	private static final String MODE_URL = "url";
 	private static final String CONTENT_TYPE_REELS = "REELS";

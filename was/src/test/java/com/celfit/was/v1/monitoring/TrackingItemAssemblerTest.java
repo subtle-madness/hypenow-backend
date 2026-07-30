@@ -322,21 +322,23 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 	}
 
 	@Test
-	void 댓글은_최신순_상한_8건이고_캠페인_짝이_함께_조립된다() {
+	void 댓글은_최신순_상한_45건이고_캠페인_짝이_함께_조립된다() {
+		// 상한(45)은 monitoring 수집 상한(comment-pages=3, 45건)과 동일 — 07-31 결함 B: 저장은
+		// 45건까지 하는데 서빙이 8건에 잘려 화면에 못 보이던 문제의 회귀 테스트.
 		LocalDate registeredOn = LocalDate.now();
 		CampaignRow campaign = campaignRepository.insert(userId, "테스트 캠페인", null, null, null, null, null, null);
 		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
 		long itemId = seedAccountItem(campaign.id(), registeredOn, "glowdeep");
 		itemRepository.confirmTarget(itemId, targetId);
 		seedPostMeta("SHORT1", "glowdeep", "REELS", registeredOn, "캡션", null);
-		for (int i = 0; i < 10; i++) {
+		for (int i = 0; i < 50; i++) {
 			seedComment("SHORT1", "c" + i, "author_" + i, "댓글" + i, i, OffsetDateTime.now().plusMinutes(i), null);
 		}
 
 		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
 
-		assertThat(item.post().recentComments()).hasSize(8);
-		assertThat(item.post().recentComments().get(0).id()).isEqualTo("c9");   // 최신순
+		assertThat(item.post().recentComments()).hasSize(45);
+		assertThat(item.post().recentComments().get(0).id()).isEqualTo("c49");   // 최신순
 		assertThat(item.campaignId()).isEqualTo(String.valueOf(campaign.id()));
 		assertThat(item.campaignName()).isEqualTo("테스트 캠페인");
 	}
