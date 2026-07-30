@@ -151,3 +151,17 @@ jobs:
           done
           echo "monitoring 컨테이너가 healthy에 도달하지 못함 — 서버 로그 확인(docker compose logs monitoring)"
           exit 1
+
+      # 배포마다 4종(was·analytics·crawler·monitoring)이 :latest로 덮이며 이전 레이어가
+      # 댕글링으로 쌓여 디스크를 잠식한다(오라클 서버 실측 07-30: Images 186개/22.41GB 중
+      # 회수 가능 19.83GB=88%, 댕글링 167개). 서버는 GHA 러너와 달리 상주 호스트라 여기서만
+      # 정리 의미가 있다(러너는 ephemeral). 모든 헬스체크 통과 뒤 마지막에 두어 롤링 전환
+      # 중(rollout.sh의 docker image inspect 이미지ID 비교)과 절대 겹치지 않게 한다.
+      # dangling-only(-f, 필터 없음)만 — -a는 실행 중이 아닌 태그된 이미지(롤백용 sha-* 등)까지
+      # 지워 위험하다. 서버는 docker build를 직접 하지 않으므로(이미지는 GHA/맥에서 buildx로
+      # 빌드해 push, 서버는 pull만) builder 캐시는 대상에서 제외. 실패해도 배포는 이미 끝난
+      # 뒤이므로 흡수만 하고 잡을 실패시키지 않는다(다음 배포 때 재시도됨).
+      - name: 댕글링 이미지 정리 (서버)
+        run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'docker image prune -f' \
+            || echo "이미지 정리 실패(무시) — 다음 배포에서 재시도됨"

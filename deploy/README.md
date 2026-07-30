@@ -68,7 +68,12 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 07-29 staging 브랜치 전환)하면 `.github/workflows/cd.yml`이
 was·analytics·crawler·monitoring 이미지 빌드·push → 서버 compose pull → caddy reload →
 analytics·crawler·monitoring 재기동(`--wait`) → **was 롤링(§5-1, 무중단)** → 나머지 정합 `up -d` →
-**분석 뷰 raw DB 적용**(멱등, §4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인까지 수행한다.
+**분석 뷰 raw DB 적용**(멱등, §4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인 →
+**댕글링 이미지 정리**(`docker image prune -f`, 실패해도 배포는 실패 처리 안 함)까지 수행한다.
+매 배포마다 4종 이미지가 `:latest`로 덮이며 이전 레이어가 댕글링으로 쌓여 서버 디스크를
+잠식하므로(07-30 실측: 회수 가능분 88%), 헬스체크 전부 통과 뒤 마지막에 정리한다 — dangling-only만
+(`-a` 금지, 롤백용 `sha-*` 태그 이미지를 지킨다). test 스테이징 배포(`cd-test.yml`)와 긴급 경로
+(`deploy.sh`)도 같은 서버를 공유하므로 동일하게 정리한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
   `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
 - 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
