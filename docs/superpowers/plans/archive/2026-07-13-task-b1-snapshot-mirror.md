@@ -5,7 +5,7 @@
 
 **Goal:** 게시물 지표 스냅샷 이력(`content_metric_snapshots`)을 raw→analysis DB로 흘려보낸다 — 타입 미러 3점 세트(뷰 SQL / Flyway DDL / 계약 record) + 미러 등록. 완료 시 was의 as-of 조회(태스크 D)가 이 테이블을 읽을 수 있다.
 
-**Architecture:** [스펙](../specs/2026-07-12-analytics-data-layer-design.md) §3·§4, ARCHITECTURE.md §4-3. B1 전례([archive/2026-07-12-task-b1-serving-mirror.md](archive/2026-07-12-task-b1-serving-mirror.md)) 패턴 그대로. base 뷰가 최신 1건(`v_base_detail`, DISTINCT ON)만 노출 중이므로 이력용 base 뷰 `v_base_detail_history`를 추가한다(스펙 §4-2가 예고한 확장 — §4-5 추가는 자유).
+**Architecture:** [스펙](../../specs/2026-07-12-analytics-data-layer-design.md) §3·§4, ARCHITECTURE.md §4-3. B1 전례([archive/2026-07-12-task-b1-serving-mirror.md](2026-07-12-task-b1-serving-mirror.md)) 패턴 그대로. base 뷰가 최신 1건(`v_base_detail`, DISTINCT ON)만 노출 중이므로 이력용 base 뷰 `v_base_detail_history`를 추가한다(스펙 §4-2가 예고한 확장 — §4-5 추가는 자유).
 
 **Tech Stack:** 기존 미러 인프라(MirrorJob·MirrorRegistry·FlywayConfig) 재사용 — 신규 배선 없음. SQL 하니스(`analytics/test/run.sh`), Testcontainers(FlywaySchemaTest).
 

@@ -1,5 +1,7 @@
 # 콘텐츠 뷰티 판별 + main_category NULL 정합 — 구현 계획
 
+> 상태: ✅ 구현됨 (PR #83 머지·운영 배포, 2026-07-20 — V34)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 통합 1콜 속성 분석에 `isBeauty`를 신설해 콘텐츠 단위 뷰티 여부를 판별하고, main_category NULL 342건의 두 원인(비뷰티 미표현·sanitize 드랍)을 고쳐 서빙에서 비뷰티를 제외한다.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4 · Gradle 멀티모듈(analytics/was) · Flyway(analysis DB) · JUnit5 · Testcontainers · AssertJ · Gemini/Anthropic LLM 어댑터(포트 fake 테스트)
 
-**설계 근거:** [specs/2026-07-20-content-beauty-flag-and-category-fix-design.md](../specs/2026-07-20-content-beauty-flag-and-category-fix-design.md)
+**설계 근거:** [specs/2026-07-20-content-beauty-flag-and-category-fix-design.md](../../specs/2026-07-20-content-beauty-flag-and-category-fix-design.md)
 
 ---
 
@@ -813,7 +815,7 @@ git commit -m "feat(was): recentContents에서 비뷰티 제외, 미분석은 �
 - [ ] **Step 2: §7 결정 기록 맨 위에 행 추가**
 
 ```markdown
-| 2026-07-20 | **콘텐츠 단위 뷰티 판별 + main_category NULL 정합** — 운영 811건 중 342건(42%) main_category NULL의 두 원인((a)비뷰티 미표현 (b)sanitize 드랍)을 통합 처리. ①통합 1콜 속성 프롬프트·스키마에 `isBeauty` 추가(별도 콜 없음)·`content_analyses.is_beauty`(V34, main_category 있는 기존 행은 true 백필). ②sanitize가 어휘 밖 대분류를 드랍 대신 sub_categories·detectedProductCategories 유효 라벨로 **역유도 복구**(`BeautyTaxonomy.deriveMain`, 최다 득표·동점은 분류표 순 tie-break, 재질의 없음). ③실패 시맨틱: 뷰티인데 복구 후에도 미분류면 **행 미기록→NOT EXISTS 재대상**(self-heal), 비뷰티는 is_beauty=false 저장해 루프 이탈. ④서빙: 비뷰티는 계약 확장 없이 API에서 제외 — 랭킹 `is_beauty=true`, recentContents `IS DISTINCT FROM false`(미분석 유지), 카테고리 믹스는 기존 main_category NOT NULL로 자동 제외. ⑤기존 342건은 `ops/reprocess_uncategorized_content_analyses.sql`(is_beauty NULL∧main NULL 삭제→재자격, 멱등). 04 후보 뷰는 raw 계층이라 무변경(SQL 하니스 회귀 없음). 트레이드오프: sub 없이 isBeauty=true만 주는 극소수는 매 실행 재시도(무료 쿼터 무해, 시도 상한은 후속). 자매 태스크(커버리지 최신12 확장)는 이 머지 후 별도 세션 | [specs/2026-07-20-content-beauty-flag-and-category-fix-design.md](docs/superpowers/specs/2026-07-20-content-beauty-flag-and-category-fix-design.md) |
+| 2026-07-20 | **콘텐츠 단위 뷰티 판별 + main_category NULL 정합** — 운영 811건 중 342건(42%) main_category NULL의 두 원인((a)비뷰티 미표현 (b)sanitize 드랍)을 통합 처리. ①통합 1콜 속성 프롬프트·스키마에 `isBeauty` 추가(별도 콜 없음)·`content_analyses.is_beauty`(V34, main_category 있는 기존 행은 true 백필). ②sanitize가 어휘 밖 대분류를 드랍 대신 sub_categories·detectedProductCategories 유효 라벨로 **역유도 복구**(`BeautyTaxonomy.deriveMain`, 최다 득표·동점은 분류표 순 tie-break, 재질의 없음). ③실패 시맨틱: 뷰티인데 복구 후에도 미분류면 **행 미기록→NOT EXISTS 재대상**(self-heal), 비뷰티는 is_beauty=false 저장해 루프 이탈. ④서빙: 비뷰티는 계약 확장 없이 API에서 제외 — 랭킹 `is_beauty=true`, recentContents `IS DISTINCT FROM false`(미분석 유지), 카테고리 믹스는 기존 main_category NOT NULL로 자동 제외. ⑤기존 342건은 `ops/reprocess_uncategorized_content_analyses.sql`(is_beauty NULL∧main NULL 삭제→재자격, 멱등). 04 후보 뷰는 raw 계층이라 무변경(SQL 하니스 회귀 없음). 트레이드오프: sub 없이 isBeauty=true만 주는 극소수는 매 실행 재시도(무료 쿼터 무해, 시도 상한은 후속). 자매 태스크(커버리지 최신12 확장)는 이 머지 후 별도 세션 | [specs/2026-07-20-content-beauty-flag-and-category-fix-design.md](../../specs/2026-07-20-content-beauty-flag-and-category-fix-design.md) |
 ```
 
 - [ ] **Step 3: 마지막 갱신 날짜 갱신** — 문서 상단 `> 마지막 갱신: 2026-07-19` → `2026-07-20`.

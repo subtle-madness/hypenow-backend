@@ -1,5 +1,7 @@
 # 발굴 소스 셀렉터 (ACTOR/HIKER) Implementation Plan
 
+> 상태: ✅ 구현됨 — `DiscoverSourceSelector` 현재도 사용 중(변경 없음). 스펙: [specs/2026-07-11-discover-source-selector-design.md](../../specs/2026-07-11-discover-source-selector-design.md)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 발굴(Discover) 단계를 런타임 토글(ACTOR=Apify 해시태그 액터 / HIKER=HikerAPI `/v2/hashtag/medias/top`, 기본 HIKER)로 전환한다.

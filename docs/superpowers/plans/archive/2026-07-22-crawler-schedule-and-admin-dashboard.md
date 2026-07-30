@@ -1,5 +1,7 @@
 # 크롤링 스케줄 자동화 + 크롤러 어드민 대시보드 개편 — 구현 계획
 
+> 상태: ✅ 구현됨 — `ScheduleRunner` 자동화 배선, "잡 실행"·"수집 게시물" 탭 제거·dashboard.html 통합 반영 확인
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 크롤링 4종 잡(qualify·beauty·collect·reels)을 운영 서버에서 윈도우 반복 크론으로 자동화하고, 크롤러 어드민의 잡 실행 UI를 대시보드로 통합하며 "잡 실행"·"수집 게시물" 탭을 코드까지 제거한다.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Spring Boot 4.1 (Java 21), Thymeleaf + htmx, JPA, Gradle 멀티모듈(`:crawler`), MockMvc(@AutoConfigureMockMvc + Testcontainers `IntegrationTest` 베이스).
 
-**설계 문서:** [specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md](../specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md)
+**설계 문서:** [specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md](../../specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md)
 
 ## Global Constraints
 
@@ -548,7 +550,7 @@ crawler 파이프라인(discover→qualify→beauty→collect·reels — 07-22�
 3. §7 결정 기록 맨 위에 행 추가:
 
 ```markdown
-| 2026-07-22 | **크롤링 데일리 자동화 + 크롤러 어드민 대시보드 개편** — 스케줄은 코드 무변경(기존 ScheduleRunner를 compose env로 점화). 단발 크론 대신 **윈도우 반복 발사**(collect 01:00~03:30/30분 · reels 01:10~03:55/15분 · qualify 02:00~03:30/30분 · beauty 03:00·03:30, KST): 잡이 "남은 대상만" 선정하므로 반복이 안전하고 일시 실패·컨테이너 재기동을 윈도우 안에서 흡수, analytics 미러 04:30 전 완결로 같은 날 반영(썸네일 CDN 만료 전 처리). 발굴(discover·similar)은 수동 유지, 실패 알림은 후속(컨테이너 다운은 기존 OCI 알람 담당). 어드민은 잡 실행 폼·예상 비용·실행 로그를 대시보드로 통합하고 잡 실행·수집 게시물 탭을 코드까지 제거(LEGACY RawPostDetail 엔티티·리포지토리 삭제, 테이블 잔존) | [specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md](docs/superpowers/specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md) |
+| 2026-07-22 | **크롤링 데일리 자동화 + 크롤러 어드민 대시보드 개편** — 스케줄은 코드 무변경(기존 ScheduleRunner를 compose env로 점화). 단발 크론 대신 **윈도우 반복 발사**(collect 01:00~03:30/30분 · reels 01:10~03:55/15분 · qualify 02:00~03:30/30분 · beauty 03:00·03:30, KST): 잡이 "남은 대상만" 선정하므로 반복이 안전하고 일시 실패·컨테이너 재기동을 윈도우 안에서 흡수, analytics 미러 04:30 전 완결로 같은 날 반영(썸네일 CDN 만료 전 처리). 발굴(discover·similar)은 수동 유지, 실패 알림은 후속(컨테이너 다운은 기존 OCI 알람 담당). 어드민은 잡 실행 폼·예상 비용·실행 로그를 대시보드로 통합하고 잡 실행·수집 게시물 탭을 코드까지 제거(LEGACY RawPostDetail 엔티티·리포지토리 삭제, 테이블 잔존) | [specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md](../../specs/2026-07-22-crawler-schedule-and-admin-dashboard-design.md) |
 ```
 
 4. §8 미결 표에서 `| 미러 갱신 주기 | ...` 행의 설명을 다음으로 교체:

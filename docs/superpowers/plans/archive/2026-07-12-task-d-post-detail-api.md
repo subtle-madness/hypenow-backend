@@ -902,7 +902,7 @@ git status   # 잔여 변경 없음 확인
 - [ ] **Step 2: §7 결정 기록 맨 위에 한 줄 추가**
 
 ```markdown
-| 2026-07-12 | 태스크 D: 상세 API 계약 확정 — 응답 블록=소스 테이블 1:1(post/account/comments), 참여율=(좋아요+댓글)/조회수(피드 null)·경과일은 was 표현 조립, 댓글은 수집분 전체 서빙(좋아요순). LLM 블록은 필드 부재→B2·B3 additive. as-of 규칙은 스냅샷 미러 도입 시로 보류 유지 | [plans/2026-07-12-task-d-post-detail-api.md](docs/superpowers/plans/2026-07-12-task-d-post-detail-api.md) |
+| 2026-07-12 | 태스크 D: 상세 API 계약 확정 — 응답 블록=소스 테이블 1:1(post/account/comments), 참여율=(좋아요+댓글)/조회수(피드 null)·경과일은 was 표현 조립, 댓글은 수집분 전체 서빙(좋아요순). LLM 블록은 필드 부재→B2·B3 additive. as-of 규칙은 스냅샷 미러 도입 시로 보류 유지 | [plans/2026-07-12-task-d-post-detail-api.md](2026-07-12-task-d-post-detail-api.md) |
 ```
 
 - [ ] **Step 3: 이 계획 문서 상태 헤더 갱신** — `> 상태: 🟢 활성` → `> 상태: ✅ 구현/실행/반영됨 (2026-07-12)`

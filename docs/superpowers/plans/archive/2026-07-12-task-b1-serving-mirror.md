@@ -5,7 +5,7 @@
 
 **Goal:** 프론트가 소비할 서빙 데이터 3종(`accounts`·`contents`·`content_comments`)을 raw→analysis DB로 흘려보낸다 — 서빙 형태 뷰 3종 + analysis DB Flyway DDL + contract-analysis record 3종 + 미러 등록. 완료 시 `bootRun` 한 번으로 실데이터가 analysis DB에 채워진다.
 
-**Architecture:** [스펙](../specs/2026-07-12-analytics-data-layer-design.md) §3·§4, ARCHITECTURE.md §4-3. 한 형태를 세 아티팩트(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=그릇)가 나눠 들고, 세 곳의 컬럼 이름·순서가 정확히 일치해야 한다 — 런타임은 MirrorJob 가드가, 테스트 타임은 새 FlywaySchemaTest가 지킨다.
+**Architecture:** [스펙](../../specs/2026-07-12-analytics-data-layer-design.md) §3·§4, ARCHITECTURE.md §4-3. 한 형태를 세 아티팩트(뷰 SQL=계산 / Flyway DDL=저장 / 공유 record=그릇)가 나눠 들고, 세 곳의 컬럼 이름·순서가 정확히 일치해야 한다 — 런타임은 MirrorJob 가드가, 테스트 타임은 새 FlywaySchemaTest가 지킨다.
 
 **Tech Stack:** 태스크 A 산출물 위에서. Flyway (analysis DB 전용 수동 빈 — raw DB는 crawler 소유라 건드리지 않음), Testcontainers 2.x.
 

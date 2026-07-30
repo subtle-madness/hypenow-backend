@@ -3,8 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > 상태: ✅ 구현됨 (2026-07-30, feat/monitoring-alarm-module)
-> 스펙: [specs/2026-07-30-monitoring-alarm-module-design.md](../specs/2026-07-30-monitoring-alarm-module-design.md)
-> 계약 정본: [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md) — 이 트랙에서 **v2.0**으로 개정
+> 스펙: [specs/2026-07-30-monitoring-alarm-module-design.md](../../specs/2026-07-30-monitoring-alarm-module-design.md)
+> 계약 정본: [docs/contracts/monitoring-was-contract.md](../../../contracts/monitoring-was-contract.md) — 이 트랙에서 **v2.0**으로 개정
 > 작업 위치: 워크트리 `.worktrees/monitoring-alarm`, 브랜치 `feat/monitoring-alarm-module`
 
 **Goal:** 스펙 **PR① 전체** — monitoring 개편(target.user_id·승인 플로우 제거·첫 감지 자동 수집·일시 오류 당일 재시도) + 알람 모듈(`alarm_event` 대장·적재 5지점·발송 크론) + app 옵트아웃 테이블(was Flyway V15, was 코드 무변경) + 계약 v2.0 개정. **PR②(was 정렬 — 명령 클라이언트 approve/reject 제거·userId 전달)는 범위 밖.**
@@ -3968,7 +3968,7 @@ DEV_ALARM_READER_PASSWORD=
 §5 작업 트랙 표에 행 추가(문자는 기존 최댓값 다음 — **표를 열어 실제 최대 문자를 확인한 뒤** 그 다음 글자를 쓴다):
 
 ```
-| <다음 문자> | 모니터링 알람 모듈 | 알람 소유를 monitoring으로 이동 — `alarm_event` 대장(워터마크 없음)·적재 5지점·발송 크론(디바운스·옵트아웃·유저당 1통) + 승인 플로우 제거(첫 감지 자동 추적) + 일시 오류 당일 재시도 + `target.user_id`(V3)·app 옵트아웃(was V15) + 계약 **v2.0**. PR②(was 클라이언트 정렬)·프론트 알림 API는 후속 — [specs/2026-07-30-monitoring-alarm-module-design.md](docs/superpowers/specs/2026-07-30-monitoring-alarm-module-design.md) | S | 🔨 |
+| <다음 문자> | 모니터링 알람 모듈 | 알람 소유를 monitoring으로 이동 — `alarm_event` 대장(워터마크 없음)·적재 5지점·발송 크론(디바운스·옵트아웃·유저당 1통) + 승인 플로우 제거(첫 감지 자동 추적) + 일시 오류 당일 재시도 + `target.user_id`(V3)·app 옵트아웃(was V15) + 계약 **v2.0**. PR②(was 클라이언트 정렬)·프론트 알림 API는 후속 — [specs/2026-07-30-monitoring-alarm-module-design.md](../../specs/2026-07-30-monitoring-alarm-module-design.md) | S | 🔨 |
 ```
 
 §7 결정 기록에 추가:

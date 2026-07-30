@@ -1,5 +1,5 @@
-# develop·staging 대상 push·PR + main 대상 PR(배포 관문 — staging→main 머지 전 검증)마다
-# 전체 Gradle 테스트 + 분석 뷰 SQL 하니스를 돌린다.
+# develop·staging·main 대상 PR과 머지 큐(merge_group), staging push(배포 관문)마다
+# 전체 Gradle 테스트 + 분석 뷰 SQL 하니스를 돌린다. develop push만 예외로 캐시 시딩만 한다(아래).
 # staging push CI는 test 스테이징 배포(cd-test.yml)의 게이트 — 성공 시에만 workflow_run이 발화.
 # 테스트는 Testcontainers(PostgreSQL)를 쓰므로 러너의 Docker(ubuntu-latest 기본 제공)로 충분 —
 # 외부 API 키·별도 서비스 컨테이너 불필요.
@@ -7,6 +7,15 @@
 # sql-harness 잡은 raw 스키마의 사실상 계약 테스트(ARCHITECTURE §4-5) — 프레시 Postgres에
 # crawler 마이그레이션 전체를 적용하고 run.sh(뷰 적용 + 시드/기대값)를 실행한다.
 # 뷰·하니스가 신스키마로 전환(07-18)돼 프레시 DB 재현이 가능해졌다(§8 블로커 해소).
+#
+# develop push는 검증이 아니라 **Gradle 캐시 시딩 전용**이다(07-30, 머지 큐 도입 후 정리).
+# 머지 큐를 켠 뒤로 develop에 들어오는 커밋은 예외 없이 merge_group에서 세 잡을 이미 통과한
+# 바로 그 머지 커밋이라(룰셋이 직접 push를 막는다) push에서 전체 테스트를 또 도는 건 순수 중복
+# — 승격 PR·staging push에서 배포 전에 한 번 더 돈다. 그런데 push 런을 통째로 없앨 수는 없다:
+# `gradle/actions/setup-gradle`은 **기본 브랜치(develop) push에서만 캐시를 쓰고** PR·merge_group은
+# 읽기만 한다(머지 큐 임시 브랜치에서 쓴 캐시는 그 ref 스코프라 재사용 불가). 시딩이 끊기면
+# 모든 PR CI가 캐시 미스로 느려진다(실측 1m16s → 3m). 그래서 develop push에서는 test·sql-harness
+# 대신 컴파일까지만 도는 `cache-warm` 잡 하나만 남긴다.
 #
 # merge_group(07-30, 머지 큐 도입 선행 작업): 룰셋 `protect-release-branches`가 이 워크플로의
 # 세 잡(test·migration-guard·sql-harness)을 develop·main에 required status check로 건다.
@@ -33,8 +42,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # develop push 전용 — 검증이 아니라 공유 Gradle 캐시를 채우는 자리다(파일 상단 주석).
+  # 테스트를 돌리지 않는 이유: 이 커밋은 merge_group에서 세 잡을 이미 통과했다.
+  # `testClasses`까지만 도는 이유: PR CI가 실제로 아끼는 건 의존성 다운로드와 컴파일 산출물이고,
+  # 테스트 실행 결과는 어차피 코드가 다르면 재사용되지 않는다.
+  cache-warm:
+    name: Gradle 캐시 시딩 (develop push)
+    if: github.event_name == 'push' && github.ref_name == 'develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: JDK 21 설치
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle 설정
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: 컴파일 (캐시 채우기)
+        run: ./gradlew testClasses
+
   test:
     name: Gradle 전체 테스트
+    # develop push에서는 위 cache-warm이 대신한다(merge_group에서 이미 통과한 커밋).
+    # staging push는 그대로 돈다 — cd-test.yml이 이 CI 성공을 배포 게이트로 쓴다.
+    if: github.event_name != 'push' || github.ref_name != 'develop'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -63,8 +99,8 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Gradle 캐시·래퍼 검증 포함. 캐시 쓰기는 기본 브랜치(develop) push에서만 일어나고
-      # PR은 읽기 전용으로 재사용한다.
+      # Gradle 캐시·래퍼 검증 포함. 캐시 쓰기는 기본 브랜치(develop) push에서만 일어나므로
+      # 이 잡(PR·merge_group·staging push)에서는 읽기 전용 재사용이고, 쓰기는 cache-warm 잡이 맡는다.
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v6
 
@@ -119,6 +155,8 @@ jobs:
 
   sql-harness:
     name: 분석 뷰 SQL 하니스
+    # test 잡과 같은 이유로 develop push에서는 건너뛴다(merge_group에서 이미 통과).
+    if: github.event_name != 'push' || github.ref_name != 'develop'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
