@@ -42,12 +42,13 @@ public class SavedRepository {
 				.single();
 	}
 
+	/** 최근 갱신 순 — 동률이면 handle로 갈라 순서를 결정적으로 만든다(v1.saved와 동일 관례). */
 	public List<SavedInfluencer> findInfluencers(long userId) {
 		return jdbcClient.sql("""
 				SELECT handle, status, memo, created_at, updated_at
 				FROM app.saved_influencers
 				WHERE user_id = :userId
-				ORDER BY updated_at DESC
+				ORDER BY updated_at DESC, handle
 				""")
 				.param("userId", userId)
 				.query(SavedInfluencer.class)
@@ -77,12 +78,13 @@ public class SavedRepository {
 				.single();
 	}
 
+	/** 최근 저장 순 — 동률이면 short_code로 갈라 순서를 결정적으로 만든다(v1.saved와 동일 관례). */
 	public List<SavedContent> findContents(long userId) {
 		return jdbcClient.sql("""
 				SELECT short_code, created_at
 				FROM app.saved_contents
 				WHERE user_id = :userId
-				ORDER BY created_at DESC
+				ORDER BY created_at DESC, short_code
 				""")
 				.param("userId", userId)
 				.query(SavedContent.class)
