@@ -76,6 +76,7 @@ class CommandApiTest {
 	void setUp() {
 		mvc = MockMvcBuilders.webAppContextSetup(ctx).build();
 		db.update("DELETE FROM detected_candidate");
+		db.update("DELETE FROM alarm_event");
 		db.update("DELETE FROM target");
 		// 다른 테스트 클래스가 남긴 스냅샷·원형이 섞이면 아래 절대값 단언이 실행 순서에 따라 흔들린다.
 		db.update("DELETE FROM profile_snapshot");
@@ -117,7 +118,7 @@ class CommandApiTest {
 	@Test
 	void 스냅샷_쓰기는_바깥_트랜잭션에_참여한다() {
 		var post = new PostInfo("TXPROBE1", "someuser", "REELS", "캡션", 1_785_000_000L,
-				1L, 1L, 1L, null, null, null, "{}");
+				1L, 1L, 1L, null, null, null, "{}", true);
 
 		tx.executeWithoutResult(status -> {
 			snapshotWriter.savePost(LocalDate.of(2026, 7, 29), post);

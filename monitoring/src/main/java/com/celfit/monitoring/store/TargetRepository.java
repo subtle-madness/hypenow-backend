@@ -83,10 +83,27 @@ public class TargetRepository {
 		db.update("UPDATE target SET last_fetched_at=now() WHERE id=?", id);
 	}
 
-	/** 만료 스윕 — 활성 상태만 EXPIRED로 종결. */
-	public int expireOverdue() {
-		return db.update("""
+	/**
+	 * 만료 스윕 — 활성 상태만 EXPIRED로 종결하고 **종결된 행을 돌려준다**.
+	 * RETURNING이 필요한 이유: 만료는 이 UPDATE가 유일한 발생 지점이라, 반환이 없으면
+	 * "방금 무엇이 끝났는지"를 다시 알아낼 방법이 없다(closed_at 시각 재조회는 경합에 취약).
+	 */
+	public List<ExpiredTarget> expireOverdue() {
+		return db.query("""
 				UPDATE target SET status='EXPIRED', closed_at=now()
-				WHERE status IN ('WATCHING','TRACKING') AND expires_at < now()""");
+				WHERE status IN ('WATCHING','TRACKING') AND expires_at < now()
+				RETURNING id, user_id, username, tracked_short_code""",
+				(rs, i) -> new ExpiredTarget(rs.getLong("id"), rs.getObject("user_id", Long.class),
+						rs.getString("username"), rs.getString("tracked_short_code")));
+	}
+
+	/** 이 게시물을 추적 중인 활성 캠페인 — 지표 비공개 알람의 수신자(스냅샷은 캠페인 간 공유라 N건일 수 있다). */
+	public List<TargetOwner> findTrackingOwners(String shortCode) {
+		return db.query("""
+				SELECT id, user_id, username FROM target
+				WHERE tracked_short_code = ? AND status IN ('WATCHING','TRACKING')""",
+				(rs, i) -> new TargetOwner(rs.getLong("id"), rs.getObject("user_id", Long.class),
+						rs.getString("username")),
+				shortCode);
 	}
 }

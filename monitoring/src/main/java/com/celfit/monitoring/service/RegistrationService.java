@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
@@ -32,10 +33,12 @@ public class RegistrationService {
 
 	private final CollectService collect;
 	private final TargetRepository targets;
+	private final AlarmRecorder alarms;
 
-	public RegistrationService(CollectService collect, TargetRepository targets) {
+	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms) {
 		this.collect = collect;
 		this.targets = targets;
+		this.alarms = alarms;
 	}
 
 	public Result register(RegisterCommand cmd) {
@@ -87,6 +90,9 @@ public class RegistrationService {
 		long id = targets.insert(TargetType.POST, cmd.userId(), post.username(), shortCode, null,
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
+		// 게시물 직접 등록은 등록 = 수집 시작이다. replay 경로는 여기 오지 않으므로 재시도로 중복되지 않는다.
+		// 적재가 실패하면 등록도 500으로 실패하지만, 같은 registrationKey replay로 안전하게 복구된다.
+		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
 		return new Result(id, TargetStatus.TRACKING.name(), snapshot, false);

@@ -28,6 +28,9 @@ public class HikerClient {
 		this.http = http;
 	}
 
+	/** 클립 보강 결과 — complete=false면 조회수 null이 "부재"가 아니라 "미취득"이다(오탐 방지 근거). */
+	private record ClipPlays(Map<String, Long> plays, boolean complete) {}
+
 	public ProfileInfo fetchProfile(String username) {
 		String body = http.get("/v2/user/by/username?username=" + enc(username));
 		JsonNode user = root(body).path("user");
@@ -49,7 +52,7 @@ public class HikerClient {
 	 */
 	public List<PostInfo> fetchRecentPosts(String username, String userId, int pages) {
 		int wanted = Math.max(1, pages);
-		Map<String, Long> plays = fetchClipPlays(userId, wanted);
+		ClipPlays clips = fetchClipPlays(userId, wanted);
 		Map<String, PostInfo> byCode = new LinkedHashMap<>();
 		String cursor = null;
 		for (int page = 0; page < wanted; page++) {
@@ -57,7 +60,7 @@ public class HikerClient {
 			JsonNode root = root(body);
 			int before = byCode.size();
 			for (JsonNode item : items(root)) {
-				PostInfo post = toPost(item, username, body, plays);
+				PostInfo post = toPost(item, username, body, clips.plays(), clips.complete());
 				byCode.putIfAbsent(post.shortCode(), post);   // 페이지 경계 중복 방지
 			}
 			// 커서 전진 가드: 커서 파라미터명이 틀리면 API가 같은 1페이지를 계속 돌려주는데
@@ -80,7 +83,7 @@ public class HikerClient {
 	}
 
 	/** 릴스 재생수 보강 — /v2/user/clips는 items[].media로 한 겹 더 감싼다. 실패해도 스윕은 계속(조회수만 null). */
-	private Map<String, Long> fetchClipPlays(String userId, int pages) {
+	private ClipPlays fetchClipPlays(String userId, int pages) {
 		Map<String, Long> plays = new HashMap<>();
 		try {
 			String cursor = null;
@@ -104,9 +107,11 @@ public class HikerClient {
 				}
 			}
 		} catch (RuntimeException e) {
+			// 삼키되 실패 사실은 남긴다 — 이 플래그가 없으면 하류가 "조회수 비공개"로 오탐한다.
 			log.warn("클립 재생수 보강 실패 — user_id {}: {}", userId, e.getMessage());
+			return new ClipPlays(plays, false);
 		}
-		return plays;
+		return new ClipPlays(plays, true);
 	}
 
 	public PostInfo fetchPost(String shortCode) {
@@ -115,7 +120,8 @@ public class HikerClient {
 		if (items.isEmpty()) {
 			throw new SubjectNotFoundException("게시물 응답이 비어 있음: " + shortCode);
 		}
-		PostInfo post = toPost(items.getFirst(), null, body, Map.of());
+		// 단건 응답에는 play_count가 그대로 실린다 — clips 보강 경로를 타지 않으므로 조회수는 항상 신뢰 가능하다.
+		PostInfo post = toPost(items.getFirst(), null, body, Map.of(), true);
 		// 단건 응답에는 usernameHint가 없어 소유 계정을 user.username에서만 얻는다.
 		// 없으면 스냅샷 적재(post_snapshot.username NOT NULL)도 target 등록도 불가 → 셰이프 이상으로 본다.
 		if (post.username() == null) {
@@ -171,7 +177,7 @@ public class HikerClient {
 	}
 
 	private static PostInfo toPost(JsonNode node, String usernameHint, String rawJson,
-			Map<String, Long> clipPlays) {
+			Map<String, Long> clipPlays, boolean viewsTrusted) {
 		JsonNode m = node.has("media") ? node.path("media") : node;   // clips 열거는 한 겹 더 감쌈
 		String code = m.path("code").asString();
 		String username = usernameHint != null ? usernameHint : m.path("user").path("username").asString(null);
@@ -189,7 +195,7 @@ public class HikerClient {
 				firstLong(m, "save_count"),          // 릴스 전용 — 피드·캐러셀은 키 부재 → null
 				firstLong(m, "reshare_count"),       // 공유. 릴스 전용
 				firstLong(m, "media_repost_count"),  // 리포스트. 전 타입 제공
-				rawJson);
+				rawJson, viewsTrusted);
 	}
 
 	/** 후보 필드 중 처음 존재하는 값. 전부 없으면 null(취득 불가 지표 규칙). */

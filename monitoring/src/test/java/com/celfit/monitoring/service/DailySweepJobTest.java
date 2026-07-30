@@ -2,6 +2,8 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.monitoring.alarm.AlarmEventRepository;
+import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
@@ -213,6 +215,7 @@ class DailySweepJobTest {
 	TargetRepository targets;
 	FakeHiker hiker;
 	DailySweepJob job;
+	AlarmRecorder alarms;
 
 	@BeforeEach
 	void setUp() {
@@ -222,8 +225,14 @@ class DailySweepJobTest {
 		targets = new TargetRepository(db);
 		hiker = new FakeHiker();
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var collect = new CollectService(client, new SnapshotWriter(new SnapshotRepository(db)), 1);
-		job = new DailySweepJob(targets, collect, 3, Duration.ZERO);
+		var snapshotRepo = new SnapshotRepository(db);
+		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshotRepo);
+		var collect = new CollectService(client, new SnapshotWriter(snapshotRepo, alarms), 1);
+		job = new DailySweepJob(targets, collect, alarms, 3, Duration.ZERO);
+	}
+
+	private List<String> alarmTypes() {
+		return db.queryForList("SELECT event_type FROM alarm_event ORDER BY id", String.class);
 	}
 
 	private static KeywordRule any(String keyword) {
@@ -575,5 +584,39 @@ class DailySweepJobTest {
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='OLD9'""", Long.class)).isEqualTo(1);
 		assertThat(statusOf(stale)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	@Test
+	void 자동_전환은_수집_시작_알람을_아침_레인으로_남긴다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		assertThat(alarmTypes()).containsExactly("COLLECTION_STARTED");
+		assertThat(db.queryForObject("""
+				SELECT dispatch_after <> occurred_at FROM alarm_event""", Boolean.class)).isTrue();
+	}
+
+	@Test
+	void 만료_종결은_수집_종료_알람을_남긴다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		watching("someuser", any("Rare Beginnings"), "rk-expired", PAST);
+
+		job.run();
+
+		assertThat(alarmTypes()).containsExactly("COLLECTION_ENDED");
+	}
+
+	/** 계정 소멸·비공개는 재시도로 해소되지 않는다 — 사용자에게 알려야 다른 게시물로 재등록한다. */
+	@Test
+	void 결정적_실패_종결은_콘텐츠_이용불가_알람을_남긴다() {
+		hiker.missingAccount("gone_user").privateAccount("shy_user");
+		watching("gone_user", any("Rare Beginnings"), "rk-gone", FUTURE);
+		watching("shy_user", any("Rare Beginnings"), "rk-shy", FUTURE);
+
+		job.run();
+
+		assertThat(alarmTypes()).containsExactly("CONTENT_UNAVAILABLE", "CONTENT_UNAVAILABLE");
 	}
 }

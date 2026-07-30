@@ -1,10 +1,12 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.store.ExpiredTarget;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Duration;
@@ -38,21 +40,31 @@ public class DailySweepJob {
 
 	private final TargetRepository targets;
 	private final CollectService collect;
+	private final AlarmRecorder alarms;
 	private final int retryRounds;
 	private final Duration retryInterval;
 
-	public DailySweepJob(TargetRepository targets, CollectService collect,
+	public DailySweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
 			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
 			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval) {
 		this.targets = targets;
 		this.collect = collect;
+		this.alarms = alarms;
 		this.retryRounds = retryRounds;
 		this.retryInterval = retryInterval;
 	}
 
 	public void run() {
 		// 만료를 먼저 닫아야 만기 지난 캠페인이 그날 스윕 대상에서 빠진다 — 순서가 바뀌면 종료된 캠페인만큼 콜이 샌다.
-		int expired = targets.expireOverdue();
+		List<ExpiredTarget> expired = targets.expireOverdue();
+		for (ExpiredTarget e : expired) {
+			try {
+				alarms.collectionEnded(e.id(), e.userId(), e.username(), e.trackedShortCode());
+			} catch (RuntimeException ex) {
+				// 알람 하나가 스윕 전체를 막으면 그날 수집이 통째로 빈다 — 로그만 남기고 계속한다.
+				log.warn("만료 알람 적재 실패(격리) — target {}: {}", e.id(), ex.toString());
+			}
+		}
 		SweepRoundResult first = sweepRound(null);
 		int totalAccounts = first.accountCount();   // 전체 계정 수 — 첫 라운드(only=null)가 활성 계정 전부를 훑은 결과
 		int initialFailures = first.transientFailures().size();
@@ -64,7 +76,7 @@ public class DailySweepJob {
 			pending = sweepRound(pending).transientFailures();
 		}
 		log.info("스윕 완료 — 계정 {}건 중 미해소 일시 실패 {}건(최초 {}건), 만료 {}건",
-				totalAccounts, pending.size(), initialFailures, expired);
+				totalAccounts, pending.size(), initialFailures, expired.size());
 	}
 
 	/** 한 라운드의 결과 — 전체 계정 수(완료 로그의 분모)와 재시도 여지가 있는 실패 계정. */
@@ -170,6 +182,7 @@ public class DailySweepJob {
 	private void closeFailed(TargetRow t, String failReason) {
 		try {
 			targets.close(t.id(), TargetStatus.FAILED, failReason);
+			alarms.contentUnavailable(t.id(), t.userId(), t.username(), t.trackedShortCode(), failReason);
 		} catch (RuntimeException e) {
 			log.warn("종결 실패(격리) — target {} → FAILED/{}: {}", t.id(), failReason, e.toString());
 		}
@@ -182,6 +195,7 @@ public class DailySweepJob {
 				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2). 지표는 방금 열거에서 이미 적재됐으므로
 				// 추가 단건 콜을 쏘지 않는다 — 감지 대상 자체가 열거 결과라 항상 enumerated 안에 있다.
 				targets.markTracking(t.id(), detected.shortCode());
+				alarms.collectionStartedScheduled(t.id(), t.userId(), t.username(), detected.shortCode());
 				log.info("첫 감지 자동 전환 — target {} → TRACKING {}", t.id(), detected.shortCode());
 				targets.touchFetched(t.id());
 				return;

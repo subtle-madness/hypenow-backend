@@ -106,9 +106,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 10L, 2L, 100L, null, null, null, "{}");
+		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 12L, 3L, 110L, null, null, null, "{}");
+		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -133,9 +133,11 @@ class StoreTest {
 		targets.insert(TargetType.POST, null, "acct_b", "SC2", null,
 				TargetStatus.CANCELED, "SC2", "key-3b", Instant.now().minusSeconds(60));
 
-		int expired = targets.expireOverdue();
+		var expired = targets.expireOverdue();
 
-		assertThat(expired).isEqualTo(1);
+		assertThat(expired).hasSize(1);
+		assertThat(expired.getFirst().username()).isEqualTo("acct_a");
+		assertThat(expired.getFirst().trackedShortCode()).isEqualTo("SC1");
 		assertThat(targets.findActive()).isEmpty();
 		assertThat(targets.findByRegistrationKey("key-3").orElseThrow().status())
 				.isEqualTo(TargetStatus.EXPIRED);
