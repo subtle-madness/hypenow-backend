@@ -59,11 +59,11 @@ public class CollectService {
 	}
 
 	/**
-	 * 추적 게시물 댓글 수집 — 게시물당 전량 교체 갱신(계약 §3 post_comment).
+	 * 추적 게시물 댓글 수집 — 게시물당 누적 합집합 upsert(계약은 {@link CommentRepository} 참고).
 	 * postUsername은 owner_reply_text 판정 기준(게시물 소유 계정)이다.
 	 */
 	public void collectComments(String shortCode, String postUsername) {
 		List<CommentInfo> fetched = hiker.fetchComments(shortCode, postUsername, commentPages);
-		comments.replaceForPost(shortCode, fetched);
+		comments.upsertForPost(shortCode, fetched);
 	}
 }

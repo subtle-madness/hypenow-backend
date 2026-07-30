@@ -40,6 +40,8 @@ class RegistrationApiTest {
 		volatile boolean postWithoutOwner = false;
 		/** 프로필·clips는 성공하고 열거(medias)만 터지는 부분 실패 — 이미 나간 콜의 원형이 살아남는지 본다. */
 		volatile boolean mediasFail = false;
+		/** POST 등록 직후 즉시 댓글 수집(best-effort)이 실패해도 등록이 성공하는지 보는 스위치. */
+		volatile boolean commentsFail = false;
 
 		/** 단건 응답에서 user만 빠진 변형 — 소유 계정을 알 수 없어 등록도 스냅샷 적재도 불가한 셰이프. */
 		private static final String POST_WITHOUT_OWNER = """
@@ -71,6 +73,12 @@ class RegistrationApiTest {
 			}
 			if (path.startsWith("/v2/user/clips")) {
 				return fixture("clips.json");
+			}
+			if (path.startsWith("/v2/media/comments")) {
+				if (commentsFail) {
+					throw new HikerFetchException("댓글 수집 실패");
+				}
+				return fixture("comments.json");
 			}
 			return postWithoutOwner ? POST_WITHOUT_OWNER : fixture("media-by-code.json");
 		}
@@ -117,11 +125,13 @@ class RegistrationApiTest {
 		// 아래 절대값 단언(1행·2행)이 실행 순서에 따라 흔들린다.
 		db.update("DELETE FROM profile_snapshot");
 		db.update("DELETE FROM post_snapshot");
+		db.update("DELETE FROM post_comment");
 		db.update("DELETE FROM raw.fetch_payload");
 		hiker.notFound = false;
 		hiker.privateAccount = false;
 		hiker.postWithoutOwner = false;
 		hiker.mediasFail = false;
+		hiker.commentsFail = false;
 	}
 
 	/**
@@ -315,6 +325,37 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("""
 				SELECT dispatch_after = occurred_at FROM alarm_event""", Boolean.class)).isTrue();
 		assertThat(db.queryForObject("SELECT user_id FROM alarm_event", Long.class)).isEqualTo(7L);
+	}
+
+	/**
+	 * 등록 직후 최대 24시간 댓글 공백을 없애는 핵심 동작 — POST 등록은 collectPost 직후
+	 * collectComments까지 동기로 호출해 그 자리에서 post_comment를 채운다.
+	 */
+	@Test
+	void 게시물_등록은_댓글도_즉시_수집한다() throws Exception {
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
+				.andExpect(status().isCreated());
+
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_comment WHERE short_code='DbV7LgZsKG8'""", Long.class))
+				.isEqualTo(6);   // comments.json 픽스처의 유효 댓글(top-level) 개수
+	}
+
+	/** 댓글 수집은 best-effort다 — 실패해도 등록 자체는 201로 성공해야 한다(당일 스윕이 백스톱). */
+	@Test
+	void 댓글_수집_실패는_게시물_등록을_막지_않는다() throws Exception {
+		hiker.commentsFail = true;
+
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.status").value("TRACKING"));
+
+		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isEqualTo(1);
+		assertThat(db.queryForObject("""
+				SELECT count(*) FROM post_comment WHERE short_code='DbV7LgZsKG8'""", Long.class))
+				.isZero();
 	}
 
 	/** 계정 등록은 아직 수집 시작이 아니다(WATCHING) — 여기서 알람이 나가면 "시작"이 두 번 온다. */
