@@ -1,5 +1,9 @@
 package com.celfit.monitoring.testsupport;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -18,8 +22,28 @@ public final class TestDb {
 		if (container == null) {
 			container = new PostgreSQLContainer("postgres:17-alpine");
 			container.start();
+			// was_reader 롤은 V2 마이그레이션의 GRANT 대상이라 Flyway가 돌기 전에 반드시 있어야 한다.
+			// resetAndMigrate()를 거치는 테스트만 믿으면, 그 헬퍼를 부르지 않고 @DynamicPropertySource로
+			// 이 컨테이너를 직접 가리키는 @SpringBootTest(예: RegistrationApiTest)는 같은 JVM에서
+			// resetAndMigrate가 먼저 실행됐는지에 따라 결과가 갈린다 — 실행 순서는 머신·파일시스템마다
+			// 다를 수 있어 "가끔 되는" 플레이크가 된다. 컨테이너 기동 직후 한 번, 여기서 만들어 두면
+			// 어떤 소비자가 먼저 오든 항상 있다.
+			createReaderRole(container);
 		}
 		return container;
+	}
+
+	private static void createReaderRole(PostgreSQLContainer pg) {
+		try (Connection conn = DriverManager.getConnection(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+				Statement stmt = conn.createStatement()) {
+			stmt.execute("""
+					DO $$ BEGIN
+					  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'was_reader')
+					  THEN CREATE ROLE was_reader LOGIN PASSWORD 'was_reader'; END IF;
+					END $$""");
+		} catch (SQLException e) {
+			throw new IllegalStateException("was_reader 롤 생성 실패 — 테스트 컨테이너 초기화 불가", e);
+		}
 	}
 
 	public static DriverManagerDataSource dataSource(PostgreSQLContainer pg) {
