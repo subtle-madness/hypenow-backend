@@ -156,6 +156,19 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void findPendingOlderThan_age_넘은_pending_행은_포함() {
+		long itemId = repository.insertPending(userId, "url", UUID.randomUUID(), null, "stale", "https://x/stale",
+				null, 30, LocalDate.of(2026, 7, 30));
+		jdbcClient.sql("UPDATE app.monitoring_items SET created_at = now() - interval '2 hours' WHERE id = :id")
+				.param("id", itemId)
+				.update();
+
+		List<MonitoringItemRow> oldPending = repository.findPendingOlderThan(Duration.ofHours(1));
+
+		assertThat(oldPending).anyMatch(row -> row.id() == itemId);
+	}
+
+	@Test
 	void findPendingOlderThan_target_확정된_행은_제외() {
 		long itemId = repository.insertPending(userId, "url", UUID.randomUUID(), null, "confirmed", "https://x/c",
 				null, 30, LocalDate.of(2026, 7, 30));
