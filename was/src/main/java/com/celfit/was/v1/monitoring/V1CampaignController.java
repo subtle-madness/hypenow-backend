@@ -49,7 +49,8 @@ public class V1CampaignController {
 			@RequestBody(required = false) Map<String, Object> body) {
 		Map<String, Object> fields = body == null ? Map.of() : body;
 		CampaignRow row = service.create(principal.getUserId(), fields.get("name"), fields.get("description"),
-				fields.get("startDate"), fields.get("endDate"), fields.get("brand"), fields.get("budget"));
+				fields.get("startDate"), fields.get("endDate"), fields.get("brand"), fields.get("budget"),
+				fields.get("seedingCount"));
 		return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(CampaignResponse.from(row)));
 	}
 

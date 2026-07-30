@@ -340,8 +340,8 @@ class V1MonitoringItemsControllerTest {
 	@Test
 	void 신규로_생성된_캠페인만_응답에_동봉된다() throws Exception {
 		given(campaignRepository.findByNameAndUser(eq("새 캠페인"), eq(7L))).willReturn(Optional.empty());
-		given(campaignRepository.insert(eq(7L), eq("새 캠페인"), isNull(), isNull(), isNull(), isNull(), isNull()))
-				.willReturn(new CampaignRow(50L, 7L, "새 캠페인", null, null, null, null, null,
+		given(campaignRepository.insert(eq(7L), eq("새 캠페인"), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
+				.willReturn(new CampaignRow(50L, 7L, "새 캠페인", null, null, null, null, null, null,
 						OffsetDateTime.parse("2026-07-30T00:00:00Z")));
 		given(itemRepository.insertPending(anyLong(), eq("url"), any(), eq(50L), anyString(), anyString(), any(),
 				anyInt(), any())).willReturn(200L);
@@ -361,7 +361,7 @@ class V1MonitoringItemsControllerTest {
 	@Test
 	void 기존_캠페인에_연결되면_campaign을_동봉하지_않는다() throws Exception {
 		given(campaignRepository.findByNameAndUser(eq("기존 캠페인"), eq(7L)))
-				.willReturn(Optional.of(new CampaignRow(60L, 7L, "기존 캠페인", null, null, null, null, null,
+				.willReturn(Optional.of(new CampaignRow(60L, 7L, "기존 캠페인", null, null, null, null, null, null,
 						OffsetDateTime.parse("2026-07-01T00:00:00Z"))));
 		given(itemRepository.insertPending(anyLong(), eq("url"), any(), eq(60L), anyString(), anyString(), any(),
 				anyInt(), any())).willReturn(201L);
@@ -518,8 +518,8 @@ class V1MonitoringItemsControllerTest {
 		given(itemRepository.findByIdAndUser(16L, 7L))
 				.willReturn(Optional.of(urlItem(16L, null, LocalDate.now(KstTimestamps.KST))));
 		given(campaignRepository.findByNameAndUser(eq("새 캠페인"), eq(7L))).willReturn(Optional.empty());
-		given(campaignRepository.insert(eq(7L), eq("새 캠페인"), isNull(), isNull(), isNull(), isNull(), isNull()))
-				.willReturn(new CampaignRow(50L, 7L, "새 캠페인", null, null, null, null, null,
+		given(campaignRepository.insert(eq(7L), eq("새 캠페인"), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
+				.willReturn(new CampaignRow(50L, 7L, "새 캠페인", null, null, null, null, null, null,
 						OffsetDateTime.parse("2026-07-30T00:00:00Z")));
 
 		mockMvc.perform(patch("/v1/monitoring/items/16").with(user(principal())).with(csrf())
@@ -539,7 +539,7 @@ class V1MonitoringItemsControllerTest {
 		given(itemRepository.findByIdAndUser(17L, 7L))
 				.willReturn(Optional.of(urlItem(17L, null, LocalDate.now(KstTimestamps.KST))));
 		given(campaignRepository.findByNameAndUser(eq("기존 캠페인"), eq(7L)))
-				.willReturn(Optional.of(new CampaignRow(60L, 7L, "기존 캠페인", null, null, null, null, null,
+				.willReturn(Optional.of(new CampaignRow(60L, 7L, "기존 캠페인", null, null, null, null, null, null,
 						OffsetDateTime.parse("2026-07-01T00:00:00Z"))));
 
 		mockMvc.perform(patch("/v1/monitoring/items/17").with(user(principal())).with(csrf())
