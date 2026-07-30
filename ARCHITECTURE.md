@@ -249,7 +249,7 @@ DISCOVERED 유입, 이후 qualify→beauty는 기존 파이프라인 동일 처�
 
 ## 7. 결정 기록
 
-> 정본은 [DECISIONS.md](DECISIONS.md) — 결정 이력 전체 156건(최신순)이 있다.
+> 정본은 [DECISIONS.md](DECISIONS.md) — 결정 이력 전체(최신순)가 있다.
 > 새 결정도 여기가 아니라 그 파일 맨 위에 추가한다.
 
 ## 8. 미결 (팀 논의 대기)
