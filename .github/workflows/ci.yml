@@ -7,6 +7,14 @@
 # sql-harness 잡은 raw 스키마의 사실상 계약 테스트(ARCHITECTURE §4-5) — 프레시 Postgres에
 # crawler 마이그레이션 전체를 적용하고 run.sh(뷰 적용 + 시드/기대값)를 실행한다.
 # 뷰·하니스가 신스키마로 전환(07-18)돼 프레시 DB 재현이 가능해졌다(§8 블로커 해소).
+#
+# merge_group(07-30, 머지 큐 도입 선행 작업): 룰셋 `protect-release-branches`가 이 워크플로의
+# 세 잡(test·migration-guard·sql-harness)을 develop·main에 required status check로 건다.
+# 머지 큐를 켜면 GitHub이 큐 엔트리마다 임시 브랜치(refs/heads/gh-readonly-queue/<base>/pr-N-<sha>)를
+# merge_group 이벤트로 만들고 그 위에서 required check 셋이 전부 보고되길 기다린다 — 이 이벤트를
+# 안 받으면 세 잡 중 하나가 영영 안 돌아 큐 엔트리가 타임아웃까지 매달린다. branches 필터는
+# pull_request와 동일 범위로 맞춰둔다(당장은 develop만 큐를 켜지만, staging·main으로 큐를
+# 넓힐 때 이 파일을 다시 건드리지 않아도 되게).
 name: CI
 
 on:
@@ -14,9 +22,14 @@ on:
     branches: [develop, staging]
   pull_request:
     branches: [develop, staging, main]
+  merge_group:
+    branches: [develop, staging, main]
 
 concurrency:
   group: ci-${{ github.ref }}
+  # merge_group에서는 github.ref가 큐 엔트리마다 고유한 임시 브랜치라 그룹이 겹치지 않고,
+  # required check는 취소되면 안 되므로 cancel-in-progress는 pull_request에서만 true로 둔다
+  # (merge_group·push는 false — 특히 merge_group을 취소하면 큐 엔트리가 그대로 멈춘다).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -36,8 +49,9 @@ jobs:
       # 번호를 선점, 그 뒤 재실행 없이 머지). 이 스텝은 그 레이스를 고치지 못한다(고치려면
       # 브랜치 보호 룰셋의 required+strict 필요, 워크플로 범위 밖) — push 이벤트(이 잡은
       # push에서도 돈다, base_ref 없음)를 포함해 "현재 트리 내부에서 번호가 겹치는" 실패
-      # 모드는 여전히 여기서 잡는다. PR 전용 `migration-guard` 잡의 base 대조 모드
-      # (`check-migration-safety.sh <base-ref>`)가 그 위에 base 충돌 검사를 더한다.
+      # 모드는 여전히 여기서 잡는다. PR·merge_group 대상 `migration-guard` 잡의 base 대조 모드
+      # (`check-migration-safety.sh <base-ref>`, 07-30 merge_group 추가)가 그 위에 base 충돌
+      # 검사를 더한다.
       # 로직은 check-migration-safety.sh(셀프테스트 보호) 하나로 통합 — monitoring 디렉토리
       # 포함·선행 0 정규화(V07==V7)까지 여기 인라인 버전엔 없던 걸 얻는다.
       - name: Flyway 마이그레이션 버전 중복 검사
@@ -69,10 +83,12 @@ jobs:
   # 타입 변경·SET NOT NULL)은 참조 코드가 사라진 다음 릴리스로 분리(expand-contract,
   # deploy/README.md §5-1). 의도된 contract 단계는 `-- allow-destructive: <사유>` 주석으로 통과.
   # 대상은 analysis DB(was app + analytics)만 — crawler(raw)는 재기동 배포라 공존이 없고
-  # was는 raw 접근 금지(시스템 경계)라 대상 외. PR에서만 — base_ref 기준 diff가 검사 대상.
+  # was는 raw 접근 금지(시스템 경계)라 대상 외. PR·merge_group에서만 — base와의 diff가
+  # 검사 대상(push엔 base 개념이 없다). merge_group에서도 도는 이유는 이 잡이 required
+  # status check라서다(파일 상단 주석) — base ref 정규화는 아래 "대조 base 결정" 스텝 참고.
   migration-guard:
     name: 마이그레이션 롤링 호환 가드
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -83,8 +99,23 @@ jobs:
       - name: 가드 셀프테스트
         run: .github/scripts/check-migration-safety.test.sh
 
+      # base ref 표현이 이벤트마다 다르다 — pull_request의 github.base_ref는 브랜치명만
+      # (예: develop), merge_group의 github.event.merge_group.base_ref는 풀 ref
+      # (예: refs/heads/develop)를 준다. check-migration-safety.sh는 "origin/<branch>" 형태의
+      # git ref를 기대하므로(파일 하단 스크립트 사용법) 여기서 이벤트별로 정규화해 맞춘다.
+      - name: 대조 base 결정
+        id: base
+        env:
+          MERGE_GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=origin/${MERGE_GROUP_BASE_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 파괴적 마이그레이션 검사 (expand-contract)
-        run: .github/scripts/check-migration-safety.sh "origin/${{ github.base_ref }}"
+        run: .github/scripts/check-migration-safety.sh "${{ steps.base.outputs.ref }}"
 
   sql-harness:
     name: 분석 뷰 SQL 하니스
