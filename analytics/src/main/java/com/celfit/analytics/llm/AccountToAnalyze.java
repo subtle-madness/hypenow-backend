@@ -10,8 +10,11 @@ import java.util.Map;
  * <p>광고 관련 값(adSituation, summary의 organic_avg·ad_avg·ad_drop_pct·sponsored_count,
  * posts의 sponsored)은 미러 원본이 아니라 캡션 분류 정본(content_analyses.ad_type)으로
  * 치환된 값이다 — 산출 규칙은 AccountAdCanon 참조.
+ *
+ * <p>confidence는 성과 요약 통계 왜곡 가드(설계 2026-07-30) 판정 결과 — summary에서 새 9컬럼을
+ * 근거로 계산한 뒤 그 컬럼 자체는 summary에서 제거하고 넘어온다(내부 수치 노출 차단, §3-3).
  */
 public record AccountToAnalyze(String handle, Map<String, Object> summary,
 		List<Map<String, Object>> categoryStats, List<Map<String, Object>> posts,
-		AdSituation adSituation) {
+		AdSituation adSituation, PerfConfidence confidence) {
 }

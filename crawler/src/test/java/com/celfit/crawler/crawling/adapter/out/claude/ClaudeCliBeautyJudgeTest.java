@@ -78,4 +78,16 @@ class ClaudeCliBeautyJudgeTest {
                 .contains("FOREIGN_INFLUENCER").contains("한국어")
                 .contains("시딩·협찬").contains("피부과").contains("captions는 최근 게시물 캡션");
     }
+
+    @Test
+    void 프롬프트는_판정_기준이_서술_언어이지_제품_주제_국적이_아님을_명시한다() {
+        // v4(07-30): 한국 화장품을 외국어로 리뷰하는 계정이 INFLUENCER로 오분류되던 결함
+        // (post-v3 표본 33/33 일본 계정) 대응 — 국적과 서술 언어를 분리하는 규칙이 프롬프트에
+        // 들어가는지 검증한다.
+        String p = ClaudeCliBeautyJudge.buildPrompt(om,
+                List.of(new BeautyJudge.ProfileCard("u1", "이름", "Beauty", "bio", List.of())));
+        assertThat(p).contains("다루는 제품·주제의 국적이 아니다")
+                .contains("FOREIGN_INFLUENCER")
+                .contains("INFLUENCER").contains("COMPANY").contains("BEAUTY_SERVICE").contains("NOT_BEAUTY");
+    }
 }

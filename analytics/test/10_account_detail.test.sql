@@ -44,20 +44,22 @@ BEGIN
     'v_account_content_series r3 sponsored != true';
 END $$;
 
--- avg_hype_score (스펙 2026-07-29-influencer-avg-hype-score): 최근창 콘텐츠 hype_score 단순 평균.
+-- avg_hype_score (스펙 2026-07-29-influencer-avg-hype-score + 2026-07-30-hype-score-v3-decay-after-mapping §9):
+-- 최근창 콘텐츠 hype_score 단순 평균을 analytics.hype_account_score()로 매핑한 값(척도 재교정, 트랙 Z 후속).
 -- 기대값을 고정하지 않고 v_contents(랭킹)와의 항등식으로 검증한다 — 같은 함수·같은 핀·같은 now()(트랜잭션 고정)라
 -- 두 경로가 반드시 일치해야 하고, 시간이 지나 신선도 감쇠로 절대값이 변해도 테스트가 안 깨진다.
+-- 평균은 반올림하지 않고 그대로 매핑 함수에 넘겨야 하므로(이중 반올림 제거) round는 매핑 함수 밖에서 하지 않는다.
 DO $$
 BEGIN
   ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
          BETWEEN 0 AND 100,
     'summaries a avg_hype_score not in 0..100';
   ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
-       = (SELECT round(avg(c.hype_score))::bigint
+       = (SELECT analytics.hype_account_score(avg(c.hype_score))
           FROM analytics.v_contents c
           JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
           WHERE s.account_handle = 'dummy_a'),
-    'summaries a avg_hype_score != v_contents 창 평균 (같은 함수·핀·기준시각이어야 함)';
+    'summaries a avg_hype_score != hype_account_score(v_contents 창 평균) (같은 함수·핀·기준시각이어야 함)';
 END $$;
 
 -- 점수 불가 창 계정: 릴스인데 조회수 없는 스냅샷만 → hype NULL → 계정 avg_hype_score NULL.
@@ -111,9 +113,100 @@ BEGIN
   ASSERT (SELECT hype_score FROM analytics.v_contents WHERE short_code = 'dummy_rx') IS NULL,
     'dummy_rx hype not null (점수 불가 조건이 깨짐 — views가 생겼나)';
   ASSERT (SELECT avg_hype_score FROM analytics.v_account_summaries WHERE handle = 'dummy_a')
-       = (SELECT round(avg(c.hype_score))::bigint
+       = (SELECT analytics.hype_account_score(avg(c.hype_score))
           FROM analytics.v_contents c
           JOIN analytics.v_account_content_series s ON s.short_code = c.short_code
           WHERE s.account_handle = 'dummy_a'),
     'summaries a 혼재 창 항등식 실패 (NULL이 분모에 섞였을 가능성)';
+END $$;
+
+-- 통계 왜곡 가드 신규 컬럼 9개(스펙 2026-07-30-perf-summary-statistical-guards-design.md §6) 픽스처.
+-- dummy_i: 조회수 관측 1건 + top1 점유율 100% (릴스 1건 + 피드 1건 — 릴스가 유일한 조회수 관측이라
+-- max/sum이 같은 값이 되어 점유율이 자동 100%).
+INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at)
+VALUES (99990007, 'dummy_i', 'QUALIFIED', 4000, true, false, timestamptz '2026-06-01 00:00:00+09');
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts) VALUES
+ (99990111,'dummy_i1','REELS','dummy_i',99990007, timestamptz '2026-06-01 09:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
+ (99990112,'dummy_i2','FEED' ,'dummy_i',99990007, timestamptz '2026-06-02 09:00:00+09','PENDING', timestamptz '2026-06-02 12:00:00+09','ENUMERATION',0);
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at)
+VALUES (99990007, 99990000, 'HIKER_MOBILE', 'dummy_i', 4000,
+  '{"status":"ok","user":{"username":"dummy_i","full_name":"더미 아이","follower_count":4000}}'::jsonb,
+  timestamptz '2026-06-01 12:00:00+09');
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at) VALUES
+ (99990007,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_i1","product_type":"clips","taken_at":1780272000,"like_count":200,"comment_count":20,"play_count":5000,"caption":{"text":"cap i1"}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09'),
+ (99990007,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_i2","product_type":"clips","taken_at":1780358400,"like_count":50,"comment_count":5,"caption":{"text":"cap i2"}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09');
+
+-- dummy_j: 창 길이 장기(365일+) — 릴스 2건이 1년 넘게 떨어져 있다.
+INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at)
+VALUES (99990008, 'dummy_j', 'QUALIFIED', 6000, true, false, timestamptz '2026-06-01 00:00:00+09');
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts) VALUES
+ (99990113,'dummy_j1','REELS','dummy_j',99990008, timestamptz '2025-01-01 09:00:00+09','PENDING', timestamptz '2025-01-01 12:00:00+09','ENUMERATION',0),
+ (99990114,'dummy_j2','REELS','dummy_j',99990008, timestamptz '2026-06-01 09:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0);
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at)
+VALUES (99990008, 99990000, 'HIKER_MOBILE', 'dummy_j', 6000,
+  '{"status":"ok","user":{"username":"dummy_j","full_name":"더미 제이","follower_count":6000}}'::jsonb,
+  timestamptz '2025-01-01 12:00:00+09');
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at) VALUES
+ (99990008,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_j1","product_type":"clips","taken_at":1735686000,"like_count":100,"comment_count":10,"play_count":2000,"caption":{"text":"cap j1"}}}]}}'::jsonb, timestamptz '2025-01-05 12:00:00+09'),
+ (99990008,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_j2","product_type":"clips","taken_at":1780358400,"like_count":200,"comment_count":20,"play_count":3000,"caption":{"text":"cap j2"}}}]}}'::jsonb, timestamptz '2026-06-05 12:00:00+09');
+
+-- dummy_k: 피드 전용(조회수 전무) — 릴스가 없어 median_views·top_views_share_pct가 NULL이어야 한다.
+INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at)
+VALUES (99990009, 'dummy_k', 'QUALIFIED', 7000, true, false, timestamptz '2026-06-01 00:00:00+09');
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts) VALUES
+ (99990115,'dummy_k1','FEED','dummy_k',99990009, timestamptz '2026-06-01 09:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
+ (99990116,'dummy_k2','FEED','dummy_k',99990009, timestamptz '2026-06-02 09:00:00+09','PENDING', timestamptz '2026-06-02 12:00:00+09','ENUMERATION',0);
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at)
+VALUES (99990009, 99990000, 'HIKER_MOBILE', 'dummy_k', 7000,
+  '{"status":"ok","user":{"username":"dummy_k","full_name":"더미 케이","follower_count":7000}}'::jsonb,
+  timestamptz '2026-06-01 12:00:00+09');
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at) VALUES
+ (99990009,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_k1","product_type":"clips","taken_at":1780272000,"like_count":30,"comment_count":3,"caption":{"text":"cap k1"}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09'),
+ (99990009,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_k2","product_type":"clips","taken_at":1780358400,"like_count":40,"comment_count":4,"caption":{"text":"cap k2"}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09');
+
+SELECT analytics.refresh_snapshot_cache();
+
+DO $$
+BEGIN
+  -- dummy_i: 조회수 관측 1건(views_sample_count) & top1 점유율 100%.
+  ASSERT (SELECT views_sample_count FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 1,
+    'summaries i views_sample_count != 1';
+  ASSERT (SELECT reels_count FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 1,
+    'summaries i reels_count != 1';
+  ASSERT (SELECT feed_count FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 1,
+    'summaries i feed_count != 1';
+  ASSERT (SELECT likes_sample_count FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 2,
+    'summaries i likes_sample_count != 2';
+  ASSERT (SELECT comments_sample_count FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 2,
+    'summaries i comments_sample_count != 2';
+  ASSERT (SELECT median_views FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 5000,
+    'summaries i median_views != 5000 (관측 1건 — median = 그 값)';
+  ASSERT (SELECT top_views_share_pct FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 100,
+    'summaries i top_views_share_pct != 100 (관측 1건이면 max=sum)';
+  ASSERT (SELECT median_er_pct FROM analytics.v_account_summaries WHERE handle = 'dummy_i') = 3.4,
+    'summaries i median_er_pct != 3.4 (median(220/4000, 55/4000)*100)';
+
+  -- dummy_j: 창 길이 장기(365일+) — 날짜 산술과의 항등식으로 검증(수기 일수 계산 오류 방지).
+  ASSERT (SELECT window_span_days FROM analytics.v_account_summaries WHERE handle = 'dummy_j')
+       = (DATE '2026-06-01' - DATE '2025-01-01'),
+    'summaries j window_span_days != 날짜차 (동일 시각대라 시분초 성분 없음)';
+  ASSERT (SELECT window_span_days FROM analytics.v_account_summaries WHERE handle = 'dummy_j') > 365,
+    'summaries j window_span_days <= 365 (365일+ 케이스가 안 됨)';
+
+  -- dummy_k: 피드 전용(조회수 전무) — median/share가 NULL이어야 한다.
+  ASSERT (SELECT reels_count FROM analytics.v_account_summaries WHERE handle = 'dummy_k') = 0,
+    'summaries k reels_count != 0';
+  ASSERT (SELECT feed_count FROM analytics.v_account_summaries WHERE handle = 'dummy_k') = 2,
+    'summaries k feed_count != 2';
+  ASSERT (SELECT views_sample_count FROM analytics.v_account_summaries WHERE handle = 'dummy_k') = 0,
+    'summaries k views_sample_count != 0';
+  ASSERT (SELECT median_views FROM analytics.v_account_summaries WHERE handle = 'dummy_k') IS NULL,
+    'summaries k median_views not null (피드 전용은 조회수 관측이 없어야 함)';
+  ASSERT (SELECT top_views_share_pct FROM analytics.v_account_summaries WHERE handle = 'dummy_k') IS NULL,
+    'summaries k top_views_share_pct not null (관측 없으면 NULL)';
+  ASSERT (SELECT likes_sample_count FROM analytics.v_account_summaries WHERE handle = 'dummy_k') = 2,
+    'summaries k likes_sample_count != 2';
 END $$;

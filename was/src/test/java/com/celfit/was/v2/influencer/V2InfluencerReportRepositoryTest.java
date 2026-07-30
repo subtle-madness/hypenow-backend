@@ -43,9 +43,10 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void setUpTables() {
-		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V3·V10·V20·V30·V34·V35·V39·V40 참조
+		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V3·V10·V20·V30·V34·V35·V39·V40·V45 참조
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_content_series");
@@ -182,6 +183,16 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				CROSS JOIN gmed g
 				WINDOW peer AS (PARTITION BY b.peer_category, b.follower_bucket)
 				""");
+		// V45 그대로 — 유사 인플루언서 후보 게이트가 이 뷰를 조인한다(findSimilarHandles).
+		jdbcTemplate.execute("""
+				CREATE VIEW account_beauty_ratio AS
+				SELECT s.account_handle,
+				       count(*) FILTER (WHERE an.is_beauty IS NOT NULL) AS analyzed_count,
+				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count
+				FROM account_content_series s
+				JOIN content_analyses an ON an.short_code = s.short_code
+				GROUP BY s.account_handle
+				""");
 
 		jdbcTemplate.update("""
 				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
@@ -299,6 +310,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// 클래스 실행 순서가 비결정적이라 간헐 실패로만 드러난다. peer가 category에 의존하므로 역순 드랍.
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 	}
 
 	@Test
@@ -602,5 +614,40 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				"UPDATE account_summaries SET last_posted_at = now() - interval '4 months' WHERE handle = 'me'");
 
 		assertThat(repository.findSimilarHandles("me")).containsExactly("active");
+	}
+
+	@Test
+	void 뷰티_비율_게이트_미달_후보는_점수가_같아도_제외된다() {
+		// 07-30 뷰티 비율 게이트 — 발굴 목록과 동일 기준(분석 8건 이상 & 20% 미만 제외)을 유사 인플루언서
+		// 후보 단계에도 적용한다. goodcand·badcand는 traits·팔로워·카테고리가 완전히 동일해 게이트가
+		// 없다면 둘 다 점수 1.0으로 동률 후보다 — badcand만 뷰티 비율(15%)이 문턱(20%) 미달이라 게이트가
+		// 실제로 결과를 바꾼다는 걸 증명한다.
+		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		seedSimAccountWithBeautyRatio("goodcand", 12_000, "[\"정보형 리뷰\"]", 100, 25, "탄력케어");
+		seedSimAccountWithBeautyRatio("badcand", 12_000, "[\"정보형 리뷰\"]", 100, 15, "탄력케어");
+
+		assertThat(repository.findSimilarHandles("me")).containsExactly("goodcand");
+	}
+
+	/** 뷰티 비율 게이트 검증 전용 — analyzedCount건 중 앞 beautyCount건만 is_beauty=true, 나머지는 false. */
+	private void seedSimAccountWithBeautyRatio(String handle, long followers, String traitsJson,
+			int analyzedCount, int beautyCount, String category) {
+		jdbcTemplate.update("INSERT INTO accounts (handle, followers) VALUES (?, ?)", handle, followers);
+		jdbcTemplate.update("INSERT INTO account_summaries (handle, followers, last_posted_at) VALUES (?, ?, now())",
+				handle, followers);
+		jdbcTemplate.update(
+				"INSERT INTO account_analyses (handle, analyzed_at, traits) VALUES (?, now(), ?::jsonb)",
+				handle, traitsJson);
+		for (int i = 0; i < analyzedCount; i++) {
+			String shortCode = handle + "_bp" + i;
+			jdbcTemplate.update("""
+					INSERT INTO account_content_series (short_code, account_handle, posted_at,
+					  content_type, views, likes, comments, sponsored) VALUES
+					  (?, ?, now(), 'reels', 1000, 10, 1, false)""", shortCode, handle);
+			jdbcTemplate.update("""
+					INSERT INTO content_analyses (short_code, is_beauty, main_category, ad_type,
+					  detected_brands) VALUES (?, ?, ?, 'organic', NULL)""",
+					shortCode, i < beautyCount, category);
+		}
 	}
 }
