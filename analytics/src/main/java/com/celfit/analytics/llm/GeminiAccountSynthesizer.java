@@ -27,10 +27,15 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 			  어휘:
 			%s
 			- perfSummary: 성과 요약 2~3문장 — 지표의 수준(팔로워 대비), 최근 흐름, 포맷(릴스/피드)별
-			  반응 차이 중심. 수준 판정의 근거는 median_views·median_er_pct를 우선으로 삼고, 둘 중
-			  하나라도 NULL이면 그 지표만 avg_views·avg_er_pct로 대신한다. avg_likes·avg_comments·
-			  trend_direction·trend_change_pct와 게시물 목록(content_type·views·likes)도 근거로 쓴다 —
-			  포맷별 반응 차이는 게시물 목록에서만 확인 가능하니 그 밖은 단정하지 마라.
+			  반응 차이 중심. median_views·median_er_pct가 입력에 있으면 그게 해당 지표 수준 판정의
+			  근거다(둘 다 있을 때 avg_views·avg_er_pct와 비교해 고르는 게 아니라, 있는 값이 곧
+			  근거다). 그 지표에 median 없이 avg_views·avg_er_pct만 있으면 그게 근거다.
+			  avg_likes·avg_comments·trend_direction·trend_change_pct와 게시물 목록
+			  (content_type·views·likes)도 근거로 쓴다 — 포맷별 반응 차이는 게시물 목록에서만
+			  확인 가능하니 그 밖은 단정하지 마라.
+			  **아래 "계정 지표"·"게시물" 입력에 특정 지표 키가 아예 없으면 그 지표는 표본이 부족해서
+			  데이터 자체가 제공되지 않은 것이다 — "언급하지 말라는 지표"가 아니라 "가진 게 없는 지표"로
+			  여기고, 다른 지표에서 없는 값을 유추하거나 대신 채워 넣지 마라.**
 			  **구체 수치를 문장에 그대로 인용하지 마라** — 수치 정본은 화면 스탯 타일이고 이 문장은
 			  매일 갱신되지 않아 며칠 뒤 낡는다. "팔로워 대비 높은 편", "완만한 상승세",
 			  "릴스 반응이 뚜렷이 좋다"처럼 수준·방향 표현만 쓴다.
