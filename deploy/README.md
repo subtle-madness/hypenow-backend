@@ -66,11 +66,72 @@ CLOUD_DB_USER=celfit CLOUD_DB_PASSWORD=<위 .env 값> \
 
 **정본은 CD (07-20~)**: `main`에 푸시(=staging→main 머지 — 승격 흐름은 develop→staging→main,
 07-29 staging 브랜치 전환)하면 `.github/workflows/cd.yml`이
-was·analytics·crawler·monitoring 이미지 빌드·push → 서버 compose pull·재기동 → **분석 뷰 raw DB 적용**(멱등,
-§4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인까지 수행한다.
+was·analytics·crawler·monitoring 이미지 빌드·push → 서버 compose pull → caddy reload →
+analytics·crawler·monitoring 재기동(`--wait`) → **was 롤링(§5-1, 무중단)** → 나머지 정합 `up -d` →
+**분석 뷰 raw DB 적용**(멱등, §4-1의 수동 절차를 대체) → `/health`·monitoring healthy 확인까지 수행한다.
 - 필요 시크릿(GitHub → Settings → Secrets and variables → Actions):
   `DEPLOY_SSH_KEY`(서버 ssh 개인키), `DEPLOY_HOST`(서버 호스트/IP — ssh 사용자는 ubuntu)
 - 컬럼 이름·타입이 바뀌는 뷰 변경은 `CREATE OR REPLACE` 불가 — 해당 SQL에 `DROP VIEW` 포함 필요
+
+### 5-1. was 무중단 롤링과 expand-contract 규율 (07-29, 트랙 X)
+
+**롤링 대상은 was 하나** — analytics·crawler는 내부 배치/어드민이라 재기동 다운타임이 무해하고,
+test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis라 복제 2개 공존이 안전하다.
+
+- **동작**(`scripts/rollout.sh`, CD가 서버로 동기화 후 호출): 잔재 검사(정지분 포함 1개 확인 —
+  정지 잔재가 있으면 `--scale`이 그걸 재기동해 구버전이 신으로 둔갑한다, 리뷰 C1) → 신 컨테이너를
+  `--scale was=2 --no-recreate`로 추가 기동 → 이미지 일치 검증 → healthcheck healthy 대기(최대
+  180초) → **스모크**(`/v1/stats` — TCP 리슨만으론 "기동됐는데 쿼리가 깨지는" 07-20 계열을 못
+  잡아서, analysis DB 실조회 경로를 신 컨테이너 안에서 확인) → 구 컨테이너 `stop -t 40`(graceful
+  drain)·제거. caddy는 서비스명 도커 DNS로 프록시하므로 교대 중 양쪽에 분산된다.
+- **무중단의 범위**: 교대 순간의 신규 연결 실패는 Caddy `lb_try_duration 10s` 재시도가 전
+  메서드에서 흡수한다(연결 실패는 메서드 무관 재시도 — Caddy 문서 기준). 잔여 리스크는 구
+  컨테이너 종료 직전 **유휴 keep-alive 커넥션에 실린 비-GET 요청**(수 ms 창, 재시도 불가 —
+  중복 실행 위험이 더 커서 의도적으로 안 덮는다) 뿐. 배포 중 502 한두 건이 보이면 이 케이스다.
+- **실패 모드 = 무중단 실패**: 신이 healthy·스모크에 못 가면 신만 제거하고 구가 계속 서빙, CD만
+  빨간불. 단 그 시점엔 **신 analytics + 구 was 스큐**가 남는다(analytics·crawler는 롤링 전에 이미
+  교체됨) — expand-contract가 지켜졌으면 안전한 조합이며, 조치는 원인 수정 후 재배포(또는 CD 런
+  Re-run). 스큐를 오래 방치하지 말 것.
+- **전제 3가지**(rollout.sh 머리 주석과 동일): was는 host 포트 미점유 · compose healthcheck 정의 ·
+  Spring `server.shutdown: graceful`(application-prod.yml) + compose `stop_grace_period: 40s`.
+- **순서 규약**: rollout 전에 `up -d --wait analytics`로 analysis Flyway 완료를 보장한다
+  (07-20 "새 분석 컬럼 참조 500" 가드의 롤링판 — was의 depends_on은 `--no-deps`로 우회되므로
+  CD 순서가 그 역할을 대신한다).
+- **운영 특성 2가지**: ①롤링 반복마다 컨테이너 이름 번호가 증가한다(`deploy-was-2`, `-3`… —
+  무해, 이름으로 스크립트 짜지 말 것) ②교대 중 최대 ~3분간 was 2개가 공존하므로 인메모리
+  레이트리밋(로그인·가입)이 그 창에서 실효 2배가 된다(수용).
+- 긴급 경로 `deploy.sh`는 **단순 재기동 유지**(다운타임 있음) — 긴급 시 단순함이 우선.
+
+**expand-contract 규율** — 롤링 중 구버전 코드와 신버전 코드가 같은 DB를 몇십 초 공존해서 본다.
+따라서 마이그레이션은 "현재 배포된 코드"와 호환되어야 한다:
+
+- **같은 릴리스 금지**: `DROP TABLE`/`DROP COLUMN`, `RENAME`(테이블·컬럼), 타입 변경,
+  `SET NOT NULL` — 구버전을 즉사시키는 변경. CI `migration-guard` 잡
+  (`.github/scripts/check-migration-safety.sh`)이 PR에서 차단한다.
+- **가드 스코프와 한계** — 가드는 보조 장치지 규율의 대체물이 아니다. 대상은 analysis DB
+  마이그레이션(was `db/migration/app` + `analytics …/analysis`)만 — crawler(raw)는 재기동
+  배포라 공존이 없고 was는 raw 접근 금지라 대상 외. **가드가 못 잡는 파괴적 변경**(리뷰에서
+  확인 — 리뷰어가 볼 것): DEFAULT 없는 `ADD COLUMN … NOT NULL`(구버전 INSERT 즉사),
+  `DROP VIEW`/`DROP INDEX`/`DROP CONSTRAINT`(단일 마이그레이션 안에서 DROP+재생성은
+  트랜잭션이라 안전 — 재생성 없는 단독 DROP만 위험), `ADD CONSTRAINT … UNIQUE`(중복 데이터
+  시 즉사), `TRUNCATE`, 그리고 **데이터 형태 변경**(미러가 값 도메인을 바꾸는 종류).
+- **rename은 rename하지 않는다 — 컬럼 이행 레시피**(타입 변경도 동일):
+  1. expand 릴리스: `ADD COLUMN` + **백필 UPDATE를 같은 마이그레이션에**(Flyway가 실행 보장) +
+     코드를 새 컬럼으로 전환. 백필 통째 누락은 신 컬럼 전 행 NULL = 기능이 비어 보이므로
+     staging(test 스택) 검증 관문에서 걸린다.
+  2. 롤링 창(수십 초) 동안 구코드가 구 컬럼에만 쓴 행은 새 컬럼이 낡는다 — 이 유실분은
+     contract 시점의 **보정 UPDATE**(아래 3)가 쓸어 담는다. 트래픽이 커져 창 유실을 초 단위로도
+     못 참게 되면 그때 dual-write 릴리스를 끼운다(현 규모에선 불요).
+  3. contract 릴리스(참조 코드가 사라진 뒤 아무 때나): **보정 UPDATE(멱등) + `DROP COLUMN`을
+     같은 파일에**. 가드 v2가 이 짝을 기계로 강제한다 — DROP COLUMN이 있는 파일에 그 컬럼을
+     참조하는 UPDATE가 없으면 CI 실패. 보정이 원리적으로 불필요한 컬럼(미러가 매일 전체
+     재기록하는 분석 테이블 등)은 `-- no-backfill: <사유>` 주석으로 통과시킨다.
+- **추가는 자유**: 새 컬럼은 nullable 또는 `DEFAULT` 포함.
+- **의도된 contract 마이그레이션**은 파일에 `-- allow-destructive: <사유>` 주석으로 가드를
+  통과시킨다 — 사유에 "참조 코드가 언제 제거됐는지"를 적는다. DROP COLUMN이면 위 3의
+  보정 짝 검사가 추가로 걸린다(allow-destructive와 독립).
+- **실시간 쓰기 컬럼(app 스키마)은 애초에 이행 자체를 피한다** — 이행 비용이 이름값을 넘는다.
+  분석 테이블은 미러 소유라 이 고민이 없다.
 
 수동·긴급 경로(맥에서) — **CD 불능·긴급 롤백 전용**. 스크립트가 HEAD≠origin/main이면 거부한다
 (07-20 장애 재발 방지 가드 — `:latest`는 마지막 push가 이겨서 CD 배포를 덮는다):

@@ -179,9 +179,20 @@ services:
       CODES_API_KEY: ${CODES_API_KEY:-}
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
+    # 롤링 배포(scripts/rollout.sh)의 전환 판정 — 8081 리슨 = Spring 기동 완료(app Flyway 포함).
+    # 이미지에 curl이 없어 bash /dev/tcp(analytics와 동일 관용구). start_period는 2g pre-touch 여유.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8081' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+    # SIGTERM 후 graceful drain(스프링 기본 30s) 여유 — 컨테이너 기본 10s면 드레인 중 SIGKILL
+    stop_grace_period: 40s
     # analytics healthy(=analysis DB 마이그레이션 완료) 후 기동 — was 코드가 새 분석 컬럼을
     # 참조하는 배포에서 기동 직후 500 레이스 차단(07-20 장애의 일시 변형). analytics가
     # healthy 실패하면 was도 안 뜨는 결합이 생기니, 그때는 up -d에 --no-deps로 우회.
+    # 롤링 경로(rollout.sh)는 --no-deps로 이 결합을 건너뛴다 — analytics healthy 선행은 CD가 보장.
     depends_on:
       postgres:
         condition: service_healthy
