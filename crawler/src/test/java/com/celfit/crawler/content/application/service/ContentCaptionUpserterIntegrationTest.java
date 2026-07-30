@@ -114,4 +114,29 @@ class ContentCaptionUpserterIntegrationTest extends IntegrationTest {
     void 빈_컬렉션은_아무것도_하지_않는다() {
         assertThat(upserter.upsert(List.of(), RawSource.SELF_GQL, OLD)).isZero();
     }
+
+    @Test
+    void 여러_content를_한_번에_적재한다() {
+        seedContent("SC6");
+        seedContent("SC7");
+
+        int n = upserter.upsert(
+                List.of(item("SC6", "A"), item("SC7", "B")), RawSource.SELF_GQL, OLD);
+
+        assertThat(n).isEqualTo(2);
+        assertThat(captionOf("SC6")).isEqualTo("A");
+        assertThat(captionOf("SC7")).isEqualTo("B");
+    }
+
+    /** Javadoc이 명시하는 계약 — dedup이 사라지면 결과가 드라이버 배치 재작성 설정에 의존하게 된다. */
+    @Test
+    void 배치_안_중복_short_code는_마지막_것만_반영된다() {
+        seedContent("SC8");
+
+        int n = upserter.upsert(
+                List.of(item("SC8", "옛"), item("SC8", "새")), RawSource.SELF_GQL, OLD);
+
+        assertThat(n).isEqualTo(1);
+        assertThat(captionOf("SC8")).isEqualTo("새");
+    }
 }

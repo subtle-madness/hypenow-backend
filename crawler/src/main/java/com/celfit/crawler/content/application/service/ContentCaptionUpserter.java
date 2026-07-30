@@ -46,8 +46,12 @@ public class ContentCaptionUpserter {
 
     /**
      * 적재를 시도한 행 수를 반환한다(content 행이 없어 건너뛴 것은 제외).
-     * 같은 short_code가 중복되면 마지막 것만 남긴다 — 배치 안에서 같은 PK를 두 번 건드리면
-     * ON CONFLICT가 "같은 명령에서 두 번 갱신" 오류를 낸다.
+     * 호출자 트랜잭션에 합류한다(JdbcTemplate이 DataSourceUtils로 스레드 바운드 커넥션을 공유) —
+     * 이 메서드 자체는 트랜잭션 경계를 열지 않는다.
+     *
+     * <p>같은 short_code가 배치에 중복되면 마지막 것만 남긴다 — 결과를 드라이버의 배치 재작성
+     * 설정에 의존시키지 않기 위함이다. reWriteBatchedInserts=true면 배치가 하나의 다중행
+     * INSERT로 합쳐져 같은 충돌 대상이 두 번 나오는 순간 Postgres가 실패시킨다.
      */
     public int upsert(Collection<MediaItem> items, RawSource source, Instant capturedAt) {
         if (items.isEmpty()) return 0;

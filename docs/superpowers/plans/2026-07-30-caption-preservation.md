@@ -462,6 +462,31 @@ class ContentCaptionUpserterIntegrationTest extends IntegrationTest {
     void 빈_컬렉션은_아무것도_하지_않는다() {
         assertThat(upserter.upsert(List.of(), RawSource.SELF_GQL, OLD)).isZero();
     }
+
+    @Test
+    void 여러_content를_한_번에_적재한다() {
+        seedContent("SC6");
+        seedContent("SC7");
+
+        int n = upserter.upsert(
+                List.of(item("SC6", "A"), item("SC7", "B")), RawSource.SELF_GQL, OLD);
+
+        assertThat(n).isEqualTo(2);
+        assertThat(captionOf("SC6")).isEqualTo("A");
+        assertThat(captionOf("SC7")).isEqualTo("B");
+    }
+
+    /** Javadoc이 명시하는 계약 — dedup이 사라지면 결과가 드라이버 배치 재작성 설정에 의존하게 된다. */
+    @Test
+    void 배치_안_중복_short_code는_마지막_것만_반영된다() {
+        seedContent("SC8");
+
+        int n = upserter.upsert(
+                List.of(item("SC8", "옛"), item("SC8", "새")), RawSource.SELF_GQL, OLD);
+
+        assertThat(n).isEqualTo(1);
+        assertThat(captionOf("SC8")).isEqualTo("새");
+    }
 }
 ```
 
@@ -526,8 +551,12 @@ public class ContentCaptionUpserter {
 
     /**
      * 적재를 시도한 행 수를 반환한다(content 행이 없어 건너뛴 것은 제외).
-     * 같은 short_code가 중복되면 마지막 것만 남긴다 — 배치 안에서 같은 PK를 두 번 건드리면
-     * ON CONFLICT가 "같은 명령에서 두 번 갱신" 오류를 낸다.
+     * 호출자 트랜잭션에 합류한다(JdbcTemplate이 DataSourceUtils로 스레드 바운드 커넥션을 공유) —
+     * 이 메서드 자체는 트랜잭션 경계를 열지 않는다.
+     *
+     * <p>같은 short_code가 배치에 중복되면 마지막 것만 남긴다 — 결과를 드라이버의 배치 재작성
+     * 설정에 의존시키지 않기 위함이다. reWriteBatchedInserts=true면 배치가 하나의 다중행
+     * INSERT로 합쳐져 같은 충돌 대상이 두 번 나오는 순간 Postgres가 실패시킨다.
      */
     public int upsert(Collection<MediaItem> items, RawSource source, Instant capturedAt) {
         if (items.isEmpty()) return 0;
@@ -557,7 +586,7 @@ public class ContentCaptionUpserter {
 ./gradlew :crawler:test --tests "com.celfit.crawler.content.application.service.ContentCaptionUpserterIntegrationTest"
 ```
 
-기대: PASS (7개 테스트 전부).
+기대: PASS (8개 테스트 전부).
 
 - [ ] **Step 5: 커밋**
 
