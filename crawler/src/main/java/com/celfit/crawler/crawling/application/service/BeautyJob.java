@@ -16,6 +16,7 @@ import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -212,7 +213,7 @@ public class BeautyJob {
             log.warn("뷰티 판정 응답 누락 {}건 — 미판정 유지, 다음 실행 재시도: {}", missing.size(), missing);
         }
         if (!dups.isEmpty()) {
-            log.warn("뷰티 판정 응답 중복 {}건 — 마지막 값이 적용됨: {}", dups.size(), dups);
+            log.warn("뷰티 판정 응답 중복 {}건 — 첫 값이 적용됨: {}", dups.size(), dups);
         }
     }
 
@@ -224,7 +225,9 @@ public class BeautyJob {
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
                                       Map<String, Integer> captionCounts, int done, int totalCards) {
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0;
+        Set<String> applied = new HashSet<>();  // 중복 응답 방어 — 첫 값만 채택(logResponseGaps가 경고)
         for (BeautyJudge.Verdict v : verdicts) {
+            if (!applied.add(v.username())) continue;  // 같은 username 재등장 — 카운터·save·로그 모두 건너뜀
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
             inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());

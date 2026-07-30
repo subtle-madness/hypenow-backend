@@ -430,6 +430,29 @@ class BeautyJobTest {
     }
 
     @Test
+    void 한_응답_안에서_같은_username이_중복되면_첫_값만_적용하고_카운터도_한_번만_센다() {
+        // acc1에 대해 서로 다른 두 판정(INFLUENCER → NOT_BEAUTY)이 온 상황 — 첫 값 채택 규칙 검증.
+        Influencer a = qualified(1L, "acc1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "첫 판정", null),
+                new BeautyJudge.Verdict("acc1", BeautyClass.NOT_BEAUTY, "두번째 판정", null)));
+
+        var s = job.run(TriggerType.MANUAL, false);
+
+        // 검증 A: 카운터 합계가 실제 판정 계정 수(1)와 일치 — 중복분이 이중 계상되지 않는다
+        assertThat(s.judgedBeauty() + s.judgedService() + s.judgedForeign() + s.judgedNotBeauty()).isEqualTo(1);
+        // 검증 B: 첫 값(INFLUENCER)이 채택된다 — beauty_class와 카운터 둘 다
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+        assertThat(s.judgedNotBeauty()).isEqualTo(0);
+        assertThat(a.getBeautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(a.getBeautyReason()).isEqualTo("첫 판정");
+    }
+
+    @Test
     void 판정_결과가_beauty_class와_파생_boolean으로_저장되고_Summary가_구분_집계한다() {
         Influencer inf1 = qualified(1L, "inf1");
         Influencer com1 = qualified(2L, "com1");
