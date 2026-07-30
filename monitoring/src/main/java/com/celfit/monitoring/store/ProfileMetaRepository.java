@@ -1,6 +1,9 @@
 package com.celfit.monitoring.store;
 
 import java.time.LocalDate;
+import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -10,6 +13,8 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public class ProfileMetaRepository {
+
+	private static final Logger log = LoggerFactory.getLogger(ProfileMetaRepository.class);
 
 	private final JdbcTemplate db;
 
@@ -22,15 +27,18 @@ public class ProfileMetaRepository {
 	 * 없었을 뿐인데 "최근 게시일 없음"으로 보이면 안 되므로 COALESCE(EXCLUDED, 기존값) 패턴을 쓴다.
 	 */
 	public void upsert(String username, String displayName, String profileImageUrl, LocalDate lastUploadedAt) {
+		String normalizedImageUrl = normalizeImageUrl(username, profileImageUrl);
 		db.update("""
 				INSERT INTO profile_meta (username, display_name, profile_image_url, last_uploaded_at, updated_at)
 				VALUES (?, ?, ?, ?, now())
 				ON CONFLICT (username) DO UPDATE SET
 				  display_name = EXCLUDED.display_name,
-				  profile_image_url = EXCLUDED.profile_image_url,
+				  -- 업스트림이 일시적으로 무효 스킴을 주면 정규화 결과가 null이 되는데, 그대로 덮으면
+				  -- 기존 유효 이미지가 날아간다 — POST 모드(upsertOwnerFromPost)와 보존 시맨틱을 통일.
+				  profile_image_url = COALESCE(EXCLUDED.profile_image_url, profile_meta.profile_image_url),
 				  last_uploaded_at = COALESCE(EXCLUDED.last_uploaded_at, profile_meta.last_uploaded_at),
 				  updated_at = now()""",
-				username, displayName, profileImageUrl, lastUploadedAt);
+				username, displayName, normalizedImageUrl, lastUploadedAt);
 	}
 
 	/**
@@ -47,6 +55,7 @@ public class ProfileMetaRepository {
 	 * 정확한 값을 부정확한 값으로 덮어쓰게 된다.
 	 */
 	public void upsertOwnerFromPost(String username, String fullName, String profilePicUrl) {
+		String normalizedImageUrl = normalizeImageUrl(username, profilePicUrl);
 		db.update("""
 				INSERT INTO profile_meta (username, display_name, profile_image_url, updated_at)
 				VALUES (?, ?, ?, now())
@@ -54,6 +63,23 @@ public class ProfileMetaRepository {
 				  display_name = COALESCE(EXCLUDED.display_name, profile_meta.display_name),
 				  profile_image_url = COALESCE(EXCLUDED.profile_image_url, profile_meta.profile_image_url),
 				  updated_at = now()""",
-				username, fullName, profilePicUrl);
+				username, fullName, normalizedImageUrl);
+	}
+
+	/**
+	 * Hiker 업스트림이 이따금 {@code "exception://"} 같은 무효 스킴을 준다(실측: cherish__sy). http(s)가
+	 * 아니면 null로 강등해 저장·서빙에 무효 URL이 흘러가지 않게 한다.
+	 */
+	private static String normalizeImageUrl(String username, String profileImageUrl) {
+		if (profileImageUrl == null || profileImageUrl.isBlank()) {
+			return null;
+		}
+		String lower = profileImageUrl.toLowerCase(Locale.ROOT);
+		if (lower.startsWith("http://") || lower.startsWith("https://")) {
+			return profileImageUrl;
+		}
+		String excerpt = profileImageUrl.length() > 100 ? profileImageUrl.substring(0, 100) : profileImageUrl;
+		log.warn("무효 스킴 profile_image_url 폐기: username={}, value={}", username, excerpt);
+		return null;
 	}
 }
