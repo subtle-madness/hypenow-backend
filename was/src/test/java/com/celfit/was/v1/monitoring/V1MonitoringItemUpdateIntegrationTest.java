@@ -74,8 +74,10 @@ class V1MonitoringItemUpdateIntegrationTest extends IntegrationTest {
 		MonitoringCommandClient commandClient = new MonitoringCommandClient(builder.build());
 		MonitoringReadRepository readRepository = new MonitoringReadRepository(monitoringJdbc);
 		V1CampaignService campaignService = new V1CampaignService(campaignRepository);
+		TrackingItemAssembler assembler = new TrackingItemAssembler(itemRepository, campaignRepository,
+				Optional.of(readRepository), new ObjectMapper());
 		service = new V1MonitoringItemUpdateService(itemRepository, campaignRepository, campaignService,
-				Optional.of(readRepository), Optional.of(commandClient), new ObjectMapper());
+				Optional.of(readRepository), Optional.of(commandClient), assembler);
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "mon-update-" + UUID.randomUUID() + "@test.io")

@@ -2,32 +2,28 @@ package com.celfit.was.v1.monitoring;
 
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
-import com.celfit.was.monitoring.KeywordRule;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.MonitoringReadRepository;
-import com.celfit.was.monitoring.ProfileSnapshotRow;
 import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZonedDateTime;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * 행 수정(6.29)·모니터링 취소(6.30) 비즈니스 로직. 진행 중 판정은 {@link ItemStatus}(유도 헬퍼)를
- * 공용으로 쓴다. target 확정 행의 완전 조립(post·recentComments·profileImageUrl 등)은 6.26
- * 어셈블러 후속 태스크 몫이라, 여기서는 현재 조회 표면(target·profile_snapshot)에서 바로 얻을 수
- * 있는 필드만 채운다({@link TrackingItemResponse#interim}, post는 항상 null — TODO).
+ * 공용으로 쓴다. 응답 조립(post·recentComments·profileImageUrl·followers 등 완전 조립)은
+ * {@link TrackingItemAssembler}에 위임한다(PATCH/cancel 응답도 6.26과 같은 full 조립으로 승격 —
+ * 구 pending 고정 status 조립·private 헬퍼(fetchTarget·latestFollowers·nextSweepAt·readKeywordRule)는
+ * 전부 어셈블러로 흡수됐다).
  *
  * <p>{@link MonitoringReadRepository}·{@link MonitoringCommandClient}는 monitoring.enabled=false면
  * 빈 자체가 없다(MonitoringConfig 조건부) — 이 서비스는 항상 뜨는 컨트롤러 배선을 지원해야 하므로
@@ -39,7 +35,6 @@ public class V1MonitoringItemUpdateService {
 
 	private static final int MIN_TRACKING_DAYS = 1;
 	private static final int MAX_TRACKING_DAYS = 90;
-	private static final String MODE_ACCOUNT = "account";
 
 	/** 6.29 trackingDays 변경 허용 상태 — "진행 중" = 종결(not_uploaded/ended/hidden) 아닌 4종. */
 	private static final Set<String> IN_PROGRESS_STATUSES =
@@ -53,17 +48,17 @@ public class V1MonitoringItemUpdateService {
 	private final V1CampaignService campaignService;
 	private final Optional<MonitoringReadRepository> readRepository;
 	private final Optional<MonitoringCommandClient> commandClient;
-	private final ObjectMapper objectMapper;
+	private final TrackingItemAssembler assembler;
 
 	public V1MonitoringItemUpdateService(MonitoringItemRepository itemRepository, CampaignRepository campaignRepository,
 			V1CampaignService campaignService, Optional<MonitoringReadRepository> readRepository,
-			Optional<MonitoringCommandClient> commandClient, ObjectMapper objectMapper) {
+			Optional<MonitoringCommandClient> commandClient, TrackingItemAssembler assembler) {
 		this.itemRepository = itemRepository;
 		this.campaignRepository = campaignRepository;
 		this.campaignService = campaignService;
 		this.readRepository = readRepository;
 		this.commandClient = commandClient;
-		this.objectMapper = objectMapper;
+		this.assembler = assembler;
 	}
 
 	/**
@@ -145,7 +140,7 @@ public class V1MonitoringItemUpdateService {
 
 		String newStatus = ItemStatus.DETECTING.equals(status) ? ItemStatus.NOT_UPLOADED : ItemStatus.ENDED;
 		String campaignName = resolveCampaignName(item.campaignId(), userId);
-		return assembleInterim(item, target, newStatus, item.trackingDays(), item.campaignId(), campaignName);
+		return assembler.assembleSingle(item, target, newStatus, item.trackingDays(), item.campaignId(), campaignName);
 	}
 
 	/**
@@ -197,49 +192,12 @@ public class V1MonitoringItemUpdateService {
 	private record CampaignChange(Long campaignId, String campaignName, CampaignResponse newlyCreated) {
 	}
 
+	/** target 유무·status 유도까지 마친 뒤 어셈블러(full 조립)에 위임 — pending·target 확정 모두 공용. */
 	private TrackingItemResponse assembleAfterPatch(MonitoringItemRow item, int trackingDays, Long campaignId,
 			String campaignName) {
-		if (item.canceledAt() == null && item.targetId() == null) {
-			// PATCH는 취소를 유발하지 않으므로 pending 행의 유도 상태는 항상 mode 그대로
-			// (url→collecting/account→detecting) — 기존 pending 팩토리를 그대로 재사용한다.
-			OffsetDateTime nextCheckAt = OffsetDateTime.now(KstTimestamps.KST).plusMinutes(5);
-			if (MODE_ACCOUNT.equals(item.mode())) {
-				return TrackingItemResponse.pendingAccount(item.id(), item.inputValue(),
-						readKeywordRule(item.keywords()), campaignId, campaignName, item.registeredOn(), trackingDays,
-						nextCheckAt);
-			}
-			return TrackingItemResponse.pendingPost(item.id(), item.sourceUrl(), campaignId, campaignName,
-					item.registeredOn(), trackingDays, nextCheckAt);
-		}
 		TargetRow target = fetchTarget(item);
 		String status = ItemStatus.derive(item, target);
-		return assembleInterim(item, target, status, trackingDays, campaignId, campaignName);
-	}
-
-	/** 취소로 종결된 pending 행(status가 not_uploaded — pendingAccount의 고정 status로 표현 불가) 포함, 공용 조립. */
-	private TrackingItemResponse assembleInterim(MonitoringItemRow item, TargetRow target, String status,
-			int trackingDays, Long campaignId, String campaignName) {
-		String handle;
-		String displayName;
-		Long followers = null;
-		if (target != null) {
-			handle = target.username().toLowerCase(Locale.ROOT);
-			displayName = handle;
-			followers = latestFollowers(target.username());
-		} else if (MODE_ACCOUNT.equals(item.mode())) {
-			handle = item.inputValue();   // 등록 입력 그대로 정규화된 소문자 핸들(registration 단계에서 이미 정규화)
-			displayName = handle;
-		} else {
-			handle = "";
-			displayName = "";
-		}
-		TrackingItemResponse.Keywords keywords =
-				MODE_ACCOUNT.equals(item.mode()) ? TrackingItemResponse.Keywords.from(readKeywordRule(item.keywords())) : null;
-		// TODO(6.26 어셈블러): profileImageUrl·lastUploadedAt은 profile_meta 조회 표면이 붙으면 채운다.
-		OffsetDateTime nextCheckAt = ItemStatus.DETECTING.equals(status) ? nextSweepAt() : null;
-		return TrackingItemResponse.interim(item.id(), item.mode(), status, handle, displayName, null, followers,
-				null, campaignId, campaignName, item.sourceUrl(), item.registeredOn(), trackingDays, keywords,
-				nextCheckAt);
+		return assembler.assembleSingle(item, target, status, trackingDays, campaignId, campaignName);
 	}
 
 	private TargetRow fetchTarget(MonitoringItemRow item) {
@@ -248,14 +206,6 @@ public class V1MonitoringItemUpdateService {
 		}
 		List<TargetRow> rows = readRepository.get().findTargets(List.of(item.targetId()));
 		return rows.isEmpty() ? null : rows.get(0);
-	}
-
-	private Long latestFollowers(String username) {
-		if (readRepository.isEmpty()) {
-			return null;
-		}
-		List<ProfileSnapshotRow> rows = readRepository.get().profileTimeseries(username);
-		return rows.isEmpty() ? null : rows.get(rows.size() - 1).followers();
 	}
 
 	private MonitoringCommandClient requireCommandClient() {
@@ -268,14 +218,6 @@ public class V1MonitoringItemUpdateService {
 			return null;
 		}
 		return campaignRepository.findByIdAndUser(campaignId, userId).map(CampaignRow::name).orElse(null);
-	}
-
-	/** 다음 일일 스윕(KST 02:00) 예정 시각 — detecting 상태의 nextCheckAt 근사값. */
-	private static OffsetDateTime nextSweepAt() {
-		ZonedDateTime now = ZonedDateTime.now(KstTimestamps.KST);
-		ZonedDateTime today2am = now.toLocalDate().atTime(2, 0).atZone(KstTimestamps.KST);
-		ZonedDateTime next = now.isBefore(today2am) ? today2am : today2am.plusDays(1);
-		return next.toOffsetDateTime();
 	}
 
 	private static int parseTrackingDays(Object raw) {
@@ -298,16 +240,5 @@ public class V1MonitoringItemUpdateService {
 		} catch (NumberFormatException e) {
 			throw V1ApiException.notFound("캠페인을 찾을 수 없습니다.");
 		}
-	}
-
-	/** 저장 키는 or지만 계약·모니터링 어휘는 any다(MonitoringRegistrationExecutor.readKeywordRule와 동일 변환). */
-	private KeywordRule readKeywordRule(String keywordsJson) {
-		Map<?, ?> map = objectMapper.readValue(keywordsJson, Map.class);
-		return new KeywordRule(castList(map.get("and")), castList(map.get("or")), castList(map.get("exclude")));
-	}
-
-	@SuppressWarnings("unchecked")
-	private static List<String> castList(Object raw) {
-		return raw == null ? List.of() : (List<String>) raw;
 	}
 }

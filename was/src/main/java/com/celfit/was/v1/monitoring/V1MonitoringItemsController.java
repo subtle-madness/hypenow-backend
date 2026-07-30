@@ -2,11 +2,15 @@ package com.celfit.was.v1.monitoring;
 
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.v1.common.ApiResponse;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,20 +18,36 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 모니터링 등록 접수(6.27)·행 수정(6.29)·취소(6.30) /v1 — 인증 필수(SecurityConfig
- * anyRequest().authenticated()가 처리). GET(6.26, 전량 조회)은 어셈블러 후속 태스크가 이
- * 컨트롤러에 추가한다.
+ * 모니터링 목록 조회(6.26)·등록 접수(6.27)·행 수정(6.29)·취소(6.30) /v1 — 인증 필수(SecurityConfig
+ * anyRequest().authenticated()가 처리).
  */
 @RestController
 public class V1MonitoringItemsController {
 
 	private final V1MonitoringRegistrationService registrationService;
 	private final V1MonitoringItemUpdateService updateService;
+	private final TrackingItemAssembler assembler;
 
 	public V1MonitoringItemsController(V1MonitoringRegistrationService registrationService,
-			V1MonitoringItemUpdateService updateService) {
+			V1MonitoringItemUpdateService updateService, TrackingItemAssembler assembler) {
 		this.registrationService = registrationService;
 		this.updateService = updateService;
+		this.assembler = assembler;
+	}
+
+	/**
+	 * 유저 소유 추적 행 전량 조회(registeredAt ASC·id ASC — MonitoringItemRepository.findByUser가 정렬을
+	 * 보장). meta.total은 항상 data.length와 같다(전량 반환 목록, 스펙 1.4). meta.lastCollectedAt·today는
+	 * {@link TrackingItemAssembler.AssembledList}가 함께 계산해 온다.
+	 */
+	@GetMapping("/v1/monitoring/items")
+	public ApiResponse<List<TrackingItemResponse>> list(@AuthenticationPrincipal AppUserDetails principal) {
+		TrackingItemAssembler.AssembledList assembled = assembler.assembleList(principal.getUserId());
+		Map<String, Object> meta = new LinkedHashMap<>();
+		meta.put("total", assembled.items().size());
+		meta.put("lastCollectedAt", KstTimestamps.toKstIso(assembled.lastCollectedAt()));
+		meta.put("today", assembled.today().toString());
+		return ApiResponse.ok(assembled.items(), meta);
 	}
 
 	@PostMapping("/v1/monitoring/items")

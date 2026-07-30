@@ -22,8 +22,14 @@ class ItemStatusTest {
 	}
 
 	private static TargetRow target(String status, String trackedShortCode) {
+		return target(status, trackedShortCode, null, false);
+	}
+
+	private static TargetRow target(String status, String trackedShortCode, OffsetDateTime trackedHiddenAt,
+			boolean fetchFailing) {
 		return new TargetRow(99L, "ACCOUNT", "some_influencer", null, null, status, trackedShortCode, null,
-				"key", OffsetDateTime.now(), OffsetDateTime.now(), null, null, null);
+				"key", OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null, trackedHiddenAt,
+				fetchFailing, null);
 	}
 
 	@Test
@@ -115,5 +121,45 @@ class ItemStatusTest {
 		MonitoringItemRow row = item("account", 5L, null, null);
 
 		assertThat(ItemStatus.derive(row, target("FAILED", null))).isEqualTo(ItemStatus.ERROR);
+	}
+
+	// ── P1 합류(v2.2) — TRACKING 진행 중 재전이(hidden·error) + 만료 후 hidden 유지 ──────
+
+	@Test
+	void 규칙5_TRACKING_tracked_hidden_at_있으면_hidden() {
+		MonitoringItemRow row = item("account", 5L, null, null);
+
+		assertThat(ItemStatus.derive(row, target("TRACKING", "SHORT1", OffsetDateTime.now(), false)))
+				.isEqualTo(ItemStatus.HIDDEN);
+	}
+
+	@Test
+	void 규칙5_TRACKING_fetch_failing이면_error() {
+		MonitoringItemRow row = item("account", 5L, null, null);
+
+		assertThat(ItemStatus.derive(row, target("TRACKING", "SHORT1", null, true))).isEqualTo(ItemStatus.ERROR);
+	}
+
+	@Test
+	void 규칙5_TRACKING_hidden이_error보다_우선() {
+		MonitoringItemRow row = item("account", 5L, null, null);
+
+		assertThat(ItemStatus.derive(row, target("TRACKING", "SHORT1", OffsetDateTime.now(), true)))
+				.isEqualTo(ItemStatus.HIDDEN);
+	}
+
+	@Test
+	void 규칙6_EXPIRED_tracked_hidden_at_있으면_만료_후에도_hidden_유지() {
+		MonitoringItemRow row = item("account", 5L, null, null);
+
+		assertThat(ItemStatus.derive(row, target("EXPIRED", "SHORT1", OffsetDateTime.now(), false)))
+				.isEqualTo(ItemStatus.HIDDEN);
+	}
+
+	@Test
+	void 규칙6_EXPIRED_fetch_failing은_만료로_이어지지_않고_ended() {
+		MonitoringItemRow row = item("account", 5L, null, null);
+
+		assertThat(ItemStatus.derive(row, target("EXPIRED", "SHORT1", null, true))).isEqualTo(ItemStatus.ENDED);
 	}
 }

@@ -59,7 +59,7 @@ import com.celfit.was.monitoring.RegistrationRepository;
  */
 @WebMvcTest(controllers = V1MonitoringItemsController.class, properties = "was.cors.allowed-origins=http://localhost:3000")
 @Import({V1MonitoringRegistrationService.class, V1MonitoringItemUpdateService.class, V1CampaignService.class,
-		V1ExceptionAdvice.class, SecurityConfig.class})
+		TrackingItemAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
 class V1MonitoringItemsControllerTest {
 
 	@Autowired
@@ -106,7 +106,7 @@ class V1MonitoringItemsControllerTest {
 
 	private static TargetRow targetRow(String status, String username, String trackedShortCode) {
 		return new TargetRow(900L, "ACCOUNT", username, null, null, status, trackedShortCode, null, "key",
-				OffsetDateTime.now(), OffsetDateTime.now(), null, null, null);
+				OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null, null, false, null);
 	}
 
 	@Test
@@ -554,13 +554,18 @@ class V1MonitoringItemsControllerTest {
 				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
 		given(commandClient.extend(eq(900L), any())).willReturn(new ExtendResult(900L, OffsetDateTime.now()));
 
+		// target 확정 + tracked_short_code가 있으면 post는 full 조립된다(PATCH/cancel 응답도 6.26
+		// 어셈블러로 승격 — post_meta 미조회 상태에서도 caption=""·contentType=feed 기본값으로 채워진다).
 		mockMvc.perform(patch("/v1/monitoring/items/19").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"trackingDays\":30}"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.status").value("tracking"))
 				.andExpect(jsonPath("$.data.handle").value("glowdeep"))
-				.andExpect(jsonPath("$.data.post").value(Matchers.nullValue()));
+				.andExpect(jsonPath("$.data.post").value(Matchers.notNullValue()))
+				.andExpect(jsonPath("$.data.post.url").value("https://www.instagram.com/p/SHORT1/"))
+				.andExpect(jsonPath("$.data.post.snapshots").isArray())
+				.andExpect(jsonPath("$.data.post.recentComments").isArray());
 	}
 
 	@Test
