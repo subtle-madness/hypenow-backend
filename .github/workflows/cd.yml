@@ -49,7 +49,8 @@ jobs:
 
       # 레이어 추출(Spring Boot layered jar) — dependencies(변경 적음)/spring-boot-loader/
       # snapshot-dependencies(빈 디렉토리)/application(변경 잦음) 4레이어로 분리해 Docker
-      # 레이어 캐시가 dependencies에서 히트하게 한다(배포당 이미지 전송량 35M→1.2M 실측).
+      # 레이어 캐시가 dependencies에서 히트하게 한다. 실측: 이미지 22~84M 중 dependencies가
+      # 대부분이고 불변 — 코드만 바뀐 재배포는 application 레이어(280K~1.5M)만 push·pull된다.
       # 목적지가 비어있지 않으면 실패하므로 매 빌드 전 rm -rf로 초기화.
       - name: bootJar 레이어 추출
         run: |
