@@ -68,8 +68,12 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 	 * traits는 어휘 내 선택(2026-07-29 어휘 통제 스펙) — 어휘 블록은 V41 시드 스냅샷을 주입한다.
 	 */
 	public static String instructions(TraitTaxonomy vocab, PerfConfidence confidence) {
+		// 계정 카피는 LlmGuard.ACCOUNT_RULES를 쓴다(RULES 아님) — RULES의 "근거 수치를 함께
+		// 인용하라"는 콘텐츠 경로 전용 지시라 이 클래스의 perfSummary 절(수치 인용 금지)과
+		// 정면 충돌한다(2026-07-30 test 실측). Anthropic 어댑터도 이 메서드를 그대로 호출하므로
+		// 프로바이더 양쪽이 함께 고쳐진다.
 		return INSTRUCTIONS_TEMPLATE.formatted(vocab.promptBlock().indent(2).stripTrailing(),
-				confidence.promptBlock(), LlmGuard.RULES);
+				confidence.promptBlock(), LlmGuard.ACCOUNT_RULES);
 	}
 
 	/** 유저 입력 — synthesize와 버스트 export가 공유 (프롬프트 정합 단일 원천). */

@@ -11,8 +11,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 성과 요약 통계 왜곡 가드 판정 경계값 (설계 2026-07-30-perf-summary-statistical-guards §3-2·§6):
- * 모수 2/3·5/6 경계, top_views_share_pct 74/75, window_span_days 90/365 경계, 모수 게이트와 한 건
- * 지배 플래그의 중복 배제, NULL·키 부재 입력에서의 NPE 없는 보수적 등급.
+ * 모수 2/3·5/6 경계, top_views_share_pct 74/75, window_span_days 90 경계(LONG_SPAN 폐지 이후
+ * 90일 초과는 전부 UNAVAILABLE), 모수 게이트와 한 건 지배 플래그의 중복 배제, NULL·키 부재
+ * 입력에서의 NPE 없는 보수적 등급.
  */
 class PerfConfidenceTest {
 
@@ -80,24 +81,34 @@ class PerfConfidenceTest {
 		assertFalse(PerfConfidence.of(m).singlePostDominance());
 	}
 
+	/**
+	 * 창 길이 90/91 경계 — LONG_SPAN 폐지(3차 test 실측, 설계 §3-2) 이후 90일 초과는 전부
+	 * UNAVAILABLE 하나로 통합됐다. 91일에서 예전엔 LONG_SPAN(값 유지+지시로만 통제)이었는데,
+	 * 그 구간에서 지시가 새어나온 실측(0205s.y·02_10.13·119irl)에 따라 91일도 이제 trend_* 값이
+	 * 제거되는 UNAVAILABLE이어야 한다.
+	 */
 	@Test
-	void 창_길이_90은_OK_91은_LONG_SPAN이다() {
+	void 창_길이_90은_OK_91은_추세_사용불가다() {
 		Map<String, Object> m = baseSummary();
 		m.put("window_span_days", 90);
 		assertEquals(PerfConfidence.TrendValidity.OK, PerfConfidence.of(m).trendValidity());
 
 		m.put("window_span_days", 91);
-		assertEquals(PerfConfidence.TrendValidity.LONG_SPAN, PerfConfidence.of(m).trendValidity());
+		assertEquals(PerfConfidence.TrendValidity.UNAVAILABLE, PerfConfidence.of(m).trendValidity());
 	}
 
+	/**
+	 * 창 길이 365/366 — LONG_SPAN 폐지로 이 경계 자체가 무의미해졌다(90일 초과는 365일 이하든
+	 * 초과든 전부 UNAVAILABLE). 90일 초과 구간 내부에서 동작 차이가 없다는 것 자체를 단언한다.
+	 */
 	@Test
-	void 창_길이_365는_LONG_SPAN_366은_TOO_LONG이다() {
+	void 창_길이_365도_366도_추세_사용불가로_동일하다() {
 		Map<String, Object> m = baseSummary();
 		m.put("window_span_days", 365);
-		assertEquals(PerfConfidence.TrendValidity.LONG_SPAN, PerfConfidence.of(m).trendValidity());
+		assertEquals(PerfConfidence.TrendValidity.UNAVAILABLE, PerfConfidence.of(m).trendValidity());
 
 		m.put("window_span_days", 366);
-		assertEquals(PerfConfidence.TrendValidity.TOO_LONG, PerfConfidence.of(m).trendValidity());
+		assertEquals(PerfConfidence.TrendValidity.UNAVAILABLE, PerfConfidence.of(m).trendValidity());
 	}
 
 	@Test
@@ -122,7 +133,7 @@ class PerfConfidenceTest {
 		assertEquals(PerfConfidence.Grade.INSUFFICIENT, c.viewsGrade());
 		assertEquals(PerfConfidence.Grade.INSUFFICIENT, c.likesGrade());
 		assertEquals(PerfConfidence.Grade.INSUFFICIENT, c.commentsGrade());
-		assertEquals(PerfConfidence.TrendValidity.TOO_LONG, c.trendValidity());
+		assertEquals(PerfConfidence.TrendValidity.UNAVAILABLE, c.trendValidity());
 		assertFalse(c.singlePostDominance());
 		assertFalse(c.formatComparable());
 	}
@@ -142,7 +153,7 @@ class PerfConfidenceTest {
 		PerfConfidence c = PerfConfidence.of(m);
 
 		assertEquals(PerfConfidence.Grade.INSUFFICIENT, c.viewsGrade());
-		assertEquals(PerfConfidence.TrendValidity.TOO_LONG, c.trendValidity());
+		assertEquals(PerfConfidence.TrendValidity.UNAVAILABLE, c.trendValidity());
 		assertFalse(c.singlePostDominance());
 		assertFalse(c.formatComparable());
 	}
@@ -206,6 +217,31 @@ class PerfConfidenceTest {
 		assertFalse(PerfConfidence.of(m).dataIncomplete());
 	}
 
+	/**
+	 * 회귀 방지 — email(V46, 스펙 2026-07-30-influencer-email-from-bio)은 CONFIDENCE_COLUMNS에
+	 * 섞이지 않았으므로 dataIncomplete() 판정에 전혀 관여하면 안 된다. email 유무가 판정을
+	 * 바꾼다면 그 자체가 email이 판정 재료로 잘못 섞였다는 신호다(요구사항 설계 §3-3 재정의 —
+	 * "판정 입력이 아니고 정상 계정에서도 흔히 NULL이라 섞으면 의미가 흐려진다").
+	 */
+	@Test
+	void email_컬럼_유무가_dataIncomplete_판정에_영향을_주지_않는다() {
+		Map<String, Object> ok = baseSummary(); // 7개 신뢰도 컬럼 정상 → 데이터 미비 아님
+		Map<String, Object> okWithEmail = new HashMap<>(ok);
+		okWithEmail.put("email", "person@example.com");
+		assertFalse(PerfConfidence.of(ok).dataIncomplete());
+		assertFalse(PerfConfidence.of(okWithEmail).dataIncomplete());
+
+		Map<String, Object> gap = new HashMap<>();
+		for (String key : PerfConfidence.CONFIDENCE_COLUMNS) {
+			gap.put(key, null);
+		}
+		Map<String, Object> gapWithEmail = new HashMap<>(gap);
+		gapWithEmail.put("email", "person@example.com"); // 미러 갭인데 email만 채워진 비정상 상태를 가정해도
+		assertTrue(PerfConfidence.of(gap).dataIncomplete());
+		assertTrue(PerfConfidence.of(gapWithEmail).dataIncomplete(),
+				"email 값 존재가 '미러 갭 아님'의 근거가 되면 안 된다");
+	}
+
 	@Test
 	void 지침_문구가_판정에_맞게_생성된다() {
 		Map<String, Object> m = baseSummary();
@@ -223,6 +259,23 @@ class PerfConfidenceTest {
 	@Test
 	void 등급이_전부_OK면_지침_블록이_비어있다() {
 		assertEquals("", PerfConfidence.of(baseSummary()).promptBlock());
+	}
+
+	/**
+	 * LONG_SPAN 폐지(3차 test 실측) 이후 "완만하게 표현하라"류 톤 연화 지시는 어떤 창 길이에서도
+	 * 더 이상 나오면 안 된다 — 90일 초과는 이제 값 제거(UNAVAILABLE)로만 통제하고, 지시로 절반쯤
+	 * 통제하던 중간 단계 자체가 사라졌다.
+	 */
+	@Test
+	void 지침_문구에_완만하게_계열_표현이_없다() {
+		Map<String, Object> m = baseSummary();
+		for (int windowSpanDays : new int[] {91, 200, 365, 366, 1000}) {
+			m.put("window_span_days", windowSpanDays);
+			String block = PerfConfidence.of(m).promptBlock();
+			assertFalse(block.contains("완만하게"), windowSpanDays + "일: " + block);
+			assertFalse(block.contains("장기간에 걸친 변화"), windowSpanDays + "일: " + block);
+			assertTrue(block.contains("성장세·추세에 대한 서술은 아예 하지 마라"), windowSpanDays + "일: " + block);
+		}
 	}
 
 	/**
@@ -259,11 +312,11 @@ class PerfConfidenceTest {
 	}
 
 	/**
-	 * 조건부 제거 대상(§1 실측 보완) — TOO_LONG이면 추세 4키가, 지표가 INSUFFICIENT면 그 지표의
-	 * 계정 집계 키가 excludedSummaryKeys()에 잡혀야 한다.
+	 * 조건부 제거 대상(§1 실측 보완) — 추세 UNAVAILABLE이면 추세 4키가, 지표가 INSUFFICIENT면 그
+	 * 지표의 계정 집계 키가 excludedSummaryKeys()에 잡혀야 한다.
 	 */
 	@Test
-	void TOO_LONG이면_추세_4키가_제거_대상에_잡힌다() {
+	void 추세_사용불가면_추세_4키가_제거_대상에_잡힌다() {
 		Map<String, Object> m = baseSummary();
 		m.put("window_span_days", 400);
 
@@ -271,6 +324,33 @@ class PerfConfidenceTest {
 
 		assertTrue(excluded.containsAll(
 				List.of("trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg")), excluded.toString());
+	}
+
+	/**
+	 * LONG_SPAN 폐지(3차 test 실측) 핵심 회귀 방지 — 90일 초과는 91일이든 366일이든 값을 남긴 채
+	 * 지시로만 통제하던 옛 LONG_SPAN 구간(90~365일)이 이제 UNAVAILABLE과 동일하게 trend_* 4키를
+	 * 제거해야 한다. 90일 정확히는 여전히 남아야 한다(경계).
+	 */
+	@Test
+	void 창_91일과_366일_둘_다_추세_4키가_제거되고_90일은_남는다() {
+		Map<String, Object> m = baseSummary();
+
+		m.put("window_span_days", 91);
+		assertTrue(PerfConfidence.of(m).excludedSummaryKeys().containsAll(
+				List.of("trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg")),
+				PerfConfidence.of(m).excludedSummaryKeys().toString());
+
+		m.put("window_span_days", 366);
+		assertTrue(PerfConfidence.of(m).excludedSummaryKeys().containsAll(
+				List.of("trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg")),
+				PerfConfidence.of(m).excludedSummaryKeys().toString());
+
+		m.put("window_span_days", 90);
+		List<String> excludedAt90 = PerfConfidence.of(m).excludedSummaryKeys();
+		assertFalse(excludedAt90.contains("trend_direction"), excludedAt90.toString());
+		assertFalse(excludedAt90.contains("trend_change_pct"), excludedAt90.toString());
+		assertFalse(excludedAt90.contains("trend_older_avg"), excludedAt90.toString());
+		assertFalse(excludedAt90.contains("trend_newer_avg"), excludedAt90.toString());
 	}
 
 	@Test

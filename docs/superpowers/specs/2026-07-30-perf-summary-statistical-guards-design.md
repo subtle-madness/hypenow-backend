@@ -98,11 +98,51 @@
 
 | `window_span_days` | 판정 | 문구 처리 | 해당 비율 |
 |---|---|---|---|
-| > 365 | `TOO_LONG` | 성장세 문장 **생략** | 11.7% |
-| 90–365 | `LONG_SPAN` | "장기간에 걸친 변화"로 연화 | 22.9% |
+| > 90 | `UNAVAILABLE` | `trend_*` 4컬럼을 프롬프트 입력에서 제거 — 성장세 문장 **생략** | 34.6% |
 | ≤ 90 | `OK` | 그대로 | 65.3% |
 
+> **3차 test 실측(2026-07-30)으로 2단계로 단순화**. 초판은 `TOO_LONG`(>365일, 값 제거)과
+> `LONG_SPAN`(90–365일, 값은 남긴 채 "장기간에 걸친 변화처럼 완만하게 표현하라"는 지시로만
+> 통제) 3단계였다. 그런데 3차 실측 30개 표본에서 `LONG_SPAN` 구간이 그대로 새어나왔다 —
+> `0205s.y`(창 207일)가 "최근 게시물들의 조회수가 급격히 상승하는 뚜렷한 우상향 추세를
+> 보입니다", `02_10.13`(157일)이 "최근 게시물 반응이 이전보다 상승하는 추세입니다"(완화
+> 없이 단정), `119irl`(201일)이 "조회수 흐름은 상승세를 보이고 있으나"(완화 없이 방향성
+> 단정)로 나왔다 — `0205s.y`의 문구는 207일에 걸친 12건을 최근 급등으로 읽히게 만드는,
+> 이 트랙이 애초에 잡으려던 왜곡 그 자체다. 반면 값을 아예 제거한 `TOO_LONG`·always-strip
+> 7컬럼은 누출 0건이었다(§3-3-1의 1차 실측과 일치) — **"프롬프트 입력에서 제거한 항목은
+> 지켜지고, 값을 남긴 채 지시로만 통제한 항목은 새어나온다"**는 결론이 세 번째 실측에서도
+> 재확인됐다.
+>
+> **결정**: `LONG_SPAN`을 폐지하고 90일 초과 전 구간을 `TOO_LONG`과 동일하게(`trend_*` 4컬럼
+> 제거) 처리한다. 두 상태가 완전히 같은 동작(값 제거)을 하게 됐으므로 `TrendValidity`도
+> `OK`/`UNAVAILABLE` 2상태로 단순화한다(`PerfConfidence.TrendValidity`) — 같은 동작을 하는
+> 상태를 두 개로 나눠 두는 건 불필요한 복잡도다.
+>
+> **트레이드오프(의도된 수용)**: 창 90일 초과가 실측 34.6%이므로, 이전에는 연화된 문장이라도
+> 받았던 그만큼의 계정에서 성장세 문장이 완전히 사라진다. 정보 손실이지만, 부정확한(또는
+> 실측처럼 왜곡된) 추세 서술보다 아예 없는 게 낫다는 판단이다 — 이 트랙의 간판 원칙("금지는
+> 입력 제거로 강제한다", §3-3-1)을 성장세 유효성 판정에도 예외 없이 적용한 결과다.
+
 **포맷 비교 가능성**: `reels_count < 3` 또는 `feed_count < 3` → 포맷별 반응 차이 언급 금지.
+
+### 3-2-1. 알려진 한계 — 입력 제거를 적용할 수 없는 잔여 항목 (미해결, 3차 test 실측)
+
+`LONG_SPAN`과 달리 `WEAK` 등급·한 건 지배(dominance) 프레이밍은 같은 실측에서 결함이 확인됐지만
+**이번에 고치지 않는다** — 값을 제거하는 검증된 수단 자체를 적용할 수 없는 항목들이기 때문이다.
+
+- **`WEAK` 헤지 누락**: `0o0.soni`는 헤지 표현("표본이 적어 단정하기 어렵지만") 자체가 문구에
+  없었고, `000bk`는 좋아요 서술에만 헤지가 빠졌다(다른 지표엔 붙음). `WEAK`는 톤 연화가
+  목적이라 값(표본 3~5건의 실제 수치)이 있어야 문장이 성립한다 — 값을 지우면 `INSUFFICIENT`
+  (생략)와 구별이 없어져 등급 자체가 무의미해진다. 즉 "값은 남기고 표현만 다듬어라"는 지시
+  의존적 통제를 이 등급에서는 포기할 수 없다.
+- **dominance 프레이밍 미반영**: `00.young__da`(top1 조회수 점유율 85% → `singlePostDominance()`
+  true)가 "계정 성장을 견인"처럼 계정 전체 추세로 서술했다. 지침("대표작 1건이 끌어올린 구조라는
+  관점으로 써라")은 `median_views`·게시물 목록(posts)의 원값이 근거로 필요해 그 값들을 제거할 수
+  없다 — 제거하면 dominance 서술 자체가 근거를 잃는다.
+
+**향후 선택지**: 두 항목 다 "프롬프트 지시"가 아니라 "코드가 결정론적으로 문장을 조립"하는
+방식(예: 템플릿에 표본 수·대표작 여부를 코드가 직접 끼워 넣고 LLM은 다듬기만 하는 구조)으로
+옮기면 같은 문제(지시 무시)를 근본적으로 피할 수 있다 — 이번 트랙 범위 밖으로 남긴다.
 
 ### 3-3. 문구 층 — 프롬프트 주입
 
@@ -182,6 +222,9 @@ excludedSummaryKeys()`·`excludedPostFields()`, `AccountAdCanon.withConfidence`�
 
 - `TrendValidity.TOO_LONG` → `trend_direction`·`trend_change_pct`·`trend_older_avg`·
   `trend_newer_avg` 4컬럼을 프롬프트 요약에서 제거. `LONG_SPAN`은 톤만 연화하므로 그대로 둔다.
+  (**이후 갱신**: 이 문단은 1차 실측 시점의 상태를 기록한 것이다. 3차 실측에서 `LONG_SPAN`
+  구간도 새어나온 게 확인돼 §3-2에서 `LONG_SPAN`을 폐지하고 `TOO_LONG`과 통합했다 —
+  `TrendValidity`는 이제 `OK`/`UNAVAILABLE` 2상태다. 아래 서술도 그 시점 기준이다.)
 - 지표 등급이 `INSUFFICIENT`(모수 ≤2)면 그 지표의 계정 집계 키를 제거 — 조회수는 `avg_views`·
   `views_per_follower`·`median_views`(§3-3-0 재정의 후 median도 always-strip이 아니므로 여기서
   명시적으로 같이 지운다), 좋아요는 `avg_likes`, 댓글은 `avg_comments`. `WEAK`(3~5)는 톤 연화가
@@ -202,6 +245,26 @@ excludedSummaryKeys()`·`excludedPostFields()`, `AccountAdCanon.withConfidence`�
 
 `CopyRules.VERSION`은 이 수정으로 올리지 않는다 — 운영에는 아직 버전 1로 생성된 행이 없다(운영
 미배포). test에 남은 버전 1 문구 5건은 test DB에서 직접 되돌린다(검증 담당 몫, 코드 변경 아님).
+
+### 3-3-2. test 실측 보완 (2026-07-30) — email 컬럼 유출과 "카피 무관 컬럼" 제외 원칙
+
+트랙 BB(PR #209)가 `account_summaries`에 `email`(인플루언서 소개글 정규식 파싱, 스펙
+2026-07-30-influencer-email-from-bio) 컬럼을 추가했다. §3-3의 "부작용 차단" 원칙(`summary`가
+`SELECT *`로 통째로 프롬프트에 들어간다)이 여기서 실제로 재현됐다 — `email`은 카피 생성 어디에도
+쓰이지 않는데, `SELECT *` 구조 때문에 아무 코드 변경 없이도 자동으로 프롬프트에 실려 **실
+연락처가 외부 LLM(Gemini) API로 전송**되고 있었다. `PerfConfidence.CONFIDENCE_COLUMNS`
+(always-strip 7컬럼)는 판정 재료 목록이자 `dataIncomplete()`(§7) 판정 근거이기도 해서, `email`
+처럼 판정과 무관한 컬럼을 여기 섞으면 "7개 전부 NULL=미러 갭"이라는 판정 기준이 오염된다(email은
+정상 계정에서도 소개글 미기재·정규식 미매치로 흔히 NULL이라 판정 재료로 부적합하다).
+
+그래서 판정 재료(`CONFIDENCE_COLUMNS`)와는 별개로 "카피 생성과 무관해 프롬프트에서 항상 제거할
+컬럼" 목록(`AccountAdCanon.PROMPT_IRRELEVANT_COLUMNS`)을 신설했다 — 현재는 `email` 하나뿐이다.
+`AccountAdCanon.withConfidence`가 만드는 프롬프트 입력 = always-strip 7컬럼 + 이 목록 +
+`excludedSummaryKeys()`(조건부 제거)를 합성해서 제거한 결과다. **원칙**: `account_summaries`에
+컬럼이 추가될 때마다 이 함정이 재발한다 — 새 컬럼이 카피 문구 생성에 쓰이지 않는다면 반드시
+`PROMPT_IRRELEVANT_COLUMNS`(또는 판정에 쓰인다면 `CONFIDENCE_COLUMNS`)에 명시적으로 추가해야
+한다. 이 결정을 코드 리뷰에만 의존하지 않도록, 프롬프트에 실리는 키 집합 전체를 하드코딩된
+기대 목록과 대조하는 회귀 테스트(`AccountAdCanonTest`)를 두어 새 컬럼이 조용히 새는 것을 막는다.
 
 ## 4. 기존 문구 재생성
 
@@ -237,8 +300,9 @@ UPDATE이고 재생성이 실패한 계정은 문구가 빈 상태로 노출된�
 
 - **SQL 하니스**: `analytics/test/10_*.test.sql`에 새 컬럼 케이스 추가 — 모수 1건 계정,
   top1 점유율 100% 계정, 창 길이 장기 계정, 피드 전용 계정(조회수 전무).
-- **Java 단위 테스트**: `PerfConfidence` 등급 경계값(2/3/5/6, 74/75, 90/365), 미러
-  필드명↔컬럼명 매핑, 프롬프트 입력 맵에서 내부 컬럼이 제거되는지.
+- **Java 단위 테스트**: `PerfConfidence` 등급 경계값(2/3/5/6, 74/75, 90 — `LONG_SPAN` 폐지 이후
+  90일 초과는 전 구간 `UNAVAILABLE`), 미러 필드명↔컬럼명 매핑, 프롬프트 입력 맵에서 내부 컬럼이
+  제거되는지(91일·366일 둘 다 `trend_*` 4컬럼 제거, 90일은 유지).
 - **재생성 게이트**: `copy_version < VERSION`인 행이 후보로 잡히고 생성 후 현재 버전으로
   기록되는지.
 
@@ -291,3 +355,48 @@ CONFIDENCE_COLUMNS`, §3-3-0 재정의로 `median_views`·`median_er_pct`는 빠
 **코드 가드가 못 막는 부분**: 뷰를 아예 올리지 않으면 스킵이 무한히 반복된다 — 가드는 사고를
 안전하게(저품질 영구 고정 없이) 견디게 할 뿐, 뷰 적용 자체를 대신해주지 않는다. 배포 순서(①→②→③)
 준수는 여전히 운영자의 책임이다.
+
+## 8. test 실측 보완 (2026-07-30) — `LlmGuard` 전역 규칙과의 상충
+
+트랙 검증 중 test 스테이징에서 계정 `0_tsuki2`(§3-3-1에도 등장 — 조회수 모수 2건 계정)의
+`perf_summary`가 다음과 같이 나왔다.
+
+> "…분석 기간 내 게시물들의 평균 좋아요 수는 **1,605개** 수준입니다."
+
+`GeminiAccountSynthesizer.INSTRUCTIONS_TEMPLATE`의 perfSummary 절은 "**구체 수치를 문장에 그대로
+인용하지 마라**"를 명시한다(§1에서 이미 언급한 그 지시 — 수치 정본은 화면 스탯 타일이고, 계정 카피는
+`ELIGIBLE_WHERE`(§4) 재대상 전까지 며칠간 그대로 서빙되는 캐시라 낡은 값을 계속 노출하게 된다).
+그런데 콘텐츠·계정 카피 프롬프트 조립부가 공유하던 `LlmGuard.RULES`(당시 유일한 상수)에 **"핵심
+주장에는 근거 수치를 함께 인용하라"**는 상충 지시가 항상 붙어 있었다 — perfSummary 절 바로 뒤에
+`%s`로 주입되는 절제 규칙 블록의 마지막 줄이 정면으로 반대되는 걸 요구한 것이다. LLM은 후자를
+따랐다.
+
+**정체**: 이 상충은 이번 트랙이 만든 게 아니라 `LlmGuard`가 계정 카피(GeminiAccountSynthesizer)와
+콘텐츠 해석 문구(GeminiContentSynthesizer·AnthropicSynthesizer·GeminiContentAnalyzer 파트 B)에 같은
+규칙 세트를 공유해 온 이래로 존재했던 구조적 결함이다. 콘텐츠 경로는 특정 게시물 1건의 확정된
+사실(views·likes·comments)을 다루므로 수치가 낡지 않아 "근거 수치를 함께 인용하라"가 타당하지만,
+계정 카피는 캐시·노후화 성질이 달라 이 지시가 애초부터 맞지 않았다. 지금까지 드러나지 않은 건
+운 좋게 LLM이 규칙 순서·다른 지시와의 우선순위상 perfSummary 절을 따라준 표본이 많았을 뿐이다.
+
+**결정 — 규칙을 전역에서 빼지 않고 계정 카피 경로에서만 스코프를 분리한다.** `LlmGuard`에
+공통 3줄(표본 헤지·추론 금지·조언 금지)을 `COMMON`으로 묶고, 근거 수치 인용 지시는 `BODY`/`RULES`
+(콘텐츠 경로 전용, 기존 값 그대로 유지)에만 남긴 뒤, `ACCOUNT_BODY`/`ACCOUNT_RULES`(계정 카피
+전용, 인용 지시 제외)를 새로 추가했다. `GeminiAccountSynthesizer.instructions()`가 `LlmGuard.RULES`
+대신 `LlmGuard.ACCOUNT_RULES`를 쓰도록 한 곳만 바꿨다 — `AnthropicAccountSynthesizer`는 이 메서드를
+그대로 호출해 프롬프트를 만들므로(복제가 아니라 참조), 한 곳을 고치는 것으로 Gemini·Anthropic 양쪽
+계정 카피 경로가 함께 바뀐다. 콘텐츠 경로 세 어댑터는 여전히 `LlmGuard.RULES`/`BODY`를 그대로 써서
+동작이 바뀌지 않는다.
+
+**§3-3-1 원칙("금지는 지시가 아니라 입력 제거로 강제한다")과의 관계**: 이 건은 같은 원칙을 그대로
+적용할 수 없다 — `avg_likes`·`avg_comments` 등 수치는 perfSummary가 근거로 반드시 필요해 입력에서
+뺄 수 없다(§3-3-0의 always-strip과 반대로, 이 수치들은 프롬프트에 남아 있어야 하는 값이다). 따라서
+이 건은 지시 정리(상충 지시 제거)가 유일한 강제 수단이다. 대신 **생성 후 검증**을 관측 장치로
+추가했다 — `AccountAnalysisWriter.hasNumericCitation()`이 저장 직전 `perf_summary`에 숫자가
+있으면 WARN 로그를 남긴다(차단은 하지 않는다 — 계정 카피 배치는 실패 격리 원칙이라 이 검사로 정상
+계정의 카피 저장을 막을 이유가 없고, 지시 정리 자체가 이미 §3-3-1의 실측처럼 "입력에서 제거한
+것은 100% 지켜졌다"는 신뢰를 준다). 목적은 상충 지시가 다시 생기거나 이번 수정이 우회되는 회귀를
+조기에 알아채는 것 — 곧 있을 운영 계정 7,033건 전량 재생성에서 특히 값어치가 있다.
+
+관련 코드: [LlmGuard.java](../../../analytics/src/main/java/com/celfit/analytics/llm/LlmGuard.java),
+[GeminiAccountSynthesizer.java](../../../analytics/src/main/java/com/celfit/analytics/llm/GeminiAccountSynthesizer.java),
+[AccountAnalysisWriter.java](../../../analytics/src/main/java/com/celfit/analytics/analyze/AccountAnalysisWriter.java).

@@ -121,6 +121,18 @@ class GeminiContentAnalyzerTest {
 		assertTrue(user.contains("views=11000"));
 	}
 
+	/**
+	 * 회귀 방지(2026-07-30 계정/콘텐츠 스코프 분리) — 콘텐츠 해석 문구는 특정 게시물 1건의 사실을
+	 * 다뤄 수치가 낡지 않으므로, LlmGuard의 "근거 수치를 함께 인용하라" 지시는 이 경로에서 그대로
+	 * 유지돼야 한다(계정 카피 경로에서만 뺐다 — GeminiAccountSynthesizerTest 참조).
+	 */
+	@Test
+	void 프롬프트에_근거_수치_인용_지시가_그대로_남아있다() {
+		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy).analyze(content(), null);
+		String system = calls.get(0).system();
+		assertTrue(system.contains("핵심 주장에는 근거 수치를 함께 인용하라"), system);
+	}
+
 	@Test
 	void 스키마는_속성11_종합5_필드를_모두_요구한다() {
 		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy).analyze(content(), null);
