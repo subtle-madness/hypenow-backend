@@ -42,11 +42,11 @@ class AccountSummaryStatGuardMappingTest {
 
 	@Test
 	void AccountSummary_record_필드_순서_끝_9개가_스펙_컬럼_순서와_일치한다() {
-		// V46(email, 스펙 2026-07-30-influencer-email-from-bio)이 그 뒤에 한 필드 더 이어붙어
-		// "끝 9개"가 이제 email 바로 앞 구간이다 — skip(...).limit(9)로 그 구간만 자른다.
+		// V46(email)·V49(avg_hype_raw)이 차례로 그 뒤에 필드를 이어붙여 "끝 9개"가 이제
+		// email·avg_hype_raw 앞 구간이다 — skip(...).limit(9)로 그 구간만 자른다.
 		RecordComponent[] components = AccountSummary.class.getRecordComponents();
 		String[] tail = Arrays.stream(components)
-				.skip(components.length - 10)
+				.skip(components.length - 11)
 				.limit(9)
 				.map(RecordComponent::getName)
 				.map(MirrorJob::toSnakeCase)
@@ -60,12 +60,21 @@ class AccountSummaryStatGuardMappingTest {
 	}
 
 	@Test
-	void AccountSummary_record_마지막_필드가_email이다() {
-		// V46(스펙 2026-07-30-influencer-email-from-bio) — biography 정규식 파싱 컬럼이 맨 끝에 이어붙었다.
+	void AccountSummary_record_마지막_필드가_avg_hype_raw이다() {
+		// V49(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절) — 정렬 전용
+		// raw 평균 컬럼이 email 뒤에 맨 끝으로 이어붙었다(CREATE OR REPLACE VIEW 중간 삽입 불가 제약).
 		RecordComponent[] components = AccountSummary.class.getRecordComponents();
 		RecordComponent last = components[components.length - 1];
 
-		assertEquals("email", MirrorJob.toSnakeCase(last.getName()));
+		assertEquals("avg_hype_raw", MirrorJob.toSnakeCase(last.getName()));
+	}
+
+	@Test
+	void AccountSummary_record_끝에서_두번째_필드가_email이다() {
+		RecordComponent[] components = AccountSummary.class.getRecordComponents();
+		RecordComponent secondLast = components[components.length - 2];
+
+		assertEquals("email", MirrorJob.toSnakeCase(secondLast.getName()));
 	}
 
 	@Test
