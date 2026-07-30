@@ -26,6 +26,7 @@ class StoreTest {
 	RawPayloadRepository rawPayloads;
 	CommentRepository comments;
 	ProfileMetaRepository profileMeta;
+	PostMetaRepository postMeta;
 
 	@BeforeEach
 	void setUp() {
@@ -38,6 +39,7 @@ class StoreTest {
 		rawPayloads = new RawPayloadRepository(db);
 		comments = new CommentRepository(db);
 		profileMeta = new ProfileMetaRepository(db);
+		postMeta = new PostMetaRepository(db);
 	}
 
 	@Test
@@ -111,9 +113,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
+		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
+		var post2 = new PostInfo("SC1", "acct_a", "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -249,5 +251,116 @@ class StoreTest {
 		assertThat(db.queryForObject(
 				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class))
 				.isEqualTo(LocalDate.of(2026, 7, 20));
+	}
+
+	// ── post_meta(v2.2) ──────────────────────────────────────────────────────
+
+	@Test
+	void 게시물_메타는_신규_삽입된다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("username")).isEqualTo("acct_a");
+		assertThat(row.get("content_type")).isEqualTo("REELS");
+		assertThat(row.get("uploaded_at")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 28)));
+		assertThat(row.get("caption")).isEqualTo("캡션 원문");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
+		assertThat(row.get("first_seen_at")).isNotNull();
+	}
+
+	/** 재수집은 캡션·썸네일을 덮어쓴다(수정 반영) — first_seen_at만 최초 관측을 보존한다. */
+	@Test
+	void 게시물_메타_갱신은_캡션_썸네일을_덮고_first_seen_at은_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+		var firstSeenAt = db.queryForObject(
+				"SELECT first_seen_at FROM post_meta WHERE short_code='SC1'", java.sql.Timestamp.class);
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 수정본", "https://cdn/thumb2.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("캡션 수정본");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb2.jpg");
+		assertThat(row.get("first_seen_at")).isEqualTo(firstSeenAt);
+	}
+
+	/** 일시적으로 썸네일을 못 얻은 수집이 기존 유효 URL을 지우면 안 된다(계약 §3 post_meta). */
+	@Test
+	void 썸네일_null_수집은_기존_썸네일_url을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), "캡션 갱신", null);
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
+		assertThat(row.get("caption")).isEqualTo("캡션 갱신");   // 캡션은 그대로 덮인다
+	}
+
+	// ── hidden/error 신호·matched_keywords(v2.2) ────────────────────────────
+
+	@Test
+	void markTracking은_matched_keywords를_jsonb로_기록한다() {
+		long id = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-mt1", Instant.now().plusSeconds(3600));
+
+		targets.markTracking(id, "SC1", List.of("샤넬", "립스틱"));
+
+		var row = targets.findById(id).orElseThrow();
+		assertThat(row.status()).isEqualTo(TargetStatus.TRACKING);
+		assertThat(row.trackedShortCode()).isEqualTo("SC1");
+		String json = db.queryForObject("SELECT matched_keywords::text FROM target WHERE id=?", String.class, id);
+		assertThat(json).contains("샤넬", "립스틱");
+	}
+
+	/** markHidden은 null→값 전이일 때만 true — 이미 hidden인 target의 재호출은 전이가 아니라 false다. */
+	@Test
+	void markHidden은_최초_호출만_전이를_반환한다() {
+		long id = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-h1", Instant.now().plusSeconds(3600));
+
+		assertThat(targets.markHidden(id)).isTrue();
+		assertThat(targets.markHidden(id)).isFalse();   // 이미 hidden — 재호출은 전이가 아니다
+		assertThat(targets.findById(id).orElseThrow().trackedHiddenAt()).isNotNull();
+	}
+
+	/** markFetchFailing은 false→true로 실제 전이된 행만 반환한다 — 이미 failing인 target은 빠진다. */
+	@Test
+	void markFetchFailing은_전이된_행만_반환한다() {
+		long a = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-f1", Instant.now().plusSeconds(3600));
+		long b = targets.insert(TargetType.ACCOUNT, 7L, "acct_b", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-f2", Instant.now().plusSeconds(3600));
+
+		var firstCall = targets.markFetchFailing(List.of(a, b));
+		assertThat(firstCall).extracting(FailingTarget::id).containsExactlyInAnyOrder(a, b);
+
+		var secondCall = targets.markFetchFailing(List.of(a, b));   // 둘 다 이미 failing이라 갱신 대상이 없다
+		assertThat(secondCall).isEmpty();
+	}
+
+	@Test
+	void markFetchFailing에_빈_컬렉션을_주면_쿼리_없이_빈_목록이다() {
+		assertThat(targets.markFetchFailing(List.of())).isEmpty();
+	}
+
+	/** touchFetched(수집 성공)이 hidden·fetch_failing 두 신호의 유일한 복귀 지점이다(계약 §3). */
+	@Test
+	void touchFetched은_hidden과_fetch_failing을_동시에_복귀시킨다() {
+		long id = targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-t1", Instant.now().plusSeconds(3600));
+		targets.markHidden(id);
+		targets.markFetchFailing(List.of(id));
+
+		targets.touchFetched(id);
+
+		var row = targets.findById(id).orElseThrow();
+		assertThat(row.trackedHiddenAt()).isNull();
+		assertThat(row.fetchFailing()).isFalse();
+		assertThat(db.queryForObject(
+				"SELECT last_fetched_at IS NOT NULL FROM target WHERE id=?", Boolean.class, id)).isTrue();
 	}
 }

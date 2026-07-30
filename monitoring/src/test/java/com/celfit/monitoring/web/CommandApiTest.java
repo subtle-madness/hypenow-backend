@@ -117,7 +117,7 @@ class CommandApiTest {
 	 */
 	@Test
 	void 스냅샷_쓰기는_바깥_트랜잭션에_참여한다() {
-		var post = new PostInfo("TXPROBE1", "someuser", "REELS", "캡션", 1_785_000_000L,
+		var post = new PostInfo("TXPROBE1", "someuser", "REELS", "캡션", null, 1_785_000_000L,
 				1L, 1L, 1L, null, null, null, "{}", true);
 
 		tx.executeWithoutResult(status -> {

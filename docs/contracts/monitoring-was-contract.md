@@ -5,13 +5,15 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.1 (v2.0 알람 재편 + v1.1 P2 표면 병합 — 2026-07-30)** · 명령 API **3종**(등록·연장·해지) +
-> share 해소 1종·조회 표면(테이블 6 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
+> 상태: **v2.2 (P1 확장 4종 — 2026-07-30)** · 명령 API **3종**(등록·연장·해지) +
+> share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
 > post_comment·profile_meta·matched_keywords·share 해소, `feat/monitoring-v3-p2`) → **v2.0**(2026-07-30,
 > 알람 소유 이동·승인 폐지·`target.user_id`·알람 이벤트 대장, `feat/monitoring-alarm-module`) — **v1.1과 v2.0은
-> 공통 조상에서 병렬 개발**(서로 다른 파일을 확장해 파일 충돌 없이 진행), 이 머지로 **v2.1**로 통합.
+> 공통 조상에서 병렬 개발**(서로 다른 파일을 확장해 파일 충돌 없이 진행), 이 머지로 **v2.1**로 통합 →
+> **v2.2**(2026-07-30, P1 확장 4종 — `post_meta`·hidden/error 상태 신호(`target.tracked_hidden_at`·
+> `target.fetch_failing`)·`sweep_run`·`target.matched_keywords` 산지 이설).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -171,11 +173,24 @@
 | `registered_at` / `closed_at` | timestamptz | 등록 / 종결(EXPIRED·CANCELED·FAILED) 시각 |
 | `last_fetched_at` | timestamptz null | 마지막 수집 시각 |
 | `fail_reason` | text null | FAILED 사유 (`SUBJECT_NOT_FOUND` 등 §2 어휘) |
+| `tracked_hidden_at` | timestamptz null | **(v2.2)** 추적 대상 접근 불가(게시물 삭제·비공개, 계정 삭제·비공개 전환) 감지 시각. 스윕이 결정적 수집 불가(`SUBJECT_NOT_FOUND`·`PRIVATE_ACCOUNT`)를 만나면 세팅하고 **status는 유지**(재스윕 계속) — 재공개가 감지되면(수집 성공) null로 복귀. 프론트 hidden 상태의 산지(TRACKING+값 → hidden, 만료 후에도 값 유지 → "만료 후 hidden 유지") |
+| `fetch_failing` | boolean NOT NULL default false | **(v2.2)** 일시 수집 오류(5xx·타임아웃)가 당일 재시도 라운드 소진까지 해소되지 않은 target 표시. 수집 성공 시 false로 복귀. 프론트 error 상태의 산지 |
+| `matched_keywords` | jsonb null | **(v2.2)** 감지 자동 전환 시점에 실제 매칭된 키워드 배열(and 전부 + any 중 캡션에 실제 존재한 것, 등록 원문·순서 유지). POST 직접 등록·감지 전 WATCHING은 null — was는 null이면 빈 배열로 폴백(프론트 계약 "url 등록이면 빈 배열"과 정합). 매칭 판정 정본은 monitoring |
+
+**status 의미 개정 (v2.2)** — v2.2부터 스윕은 target을 FAILED로 종결하지 않는다. 결정적 수집
+불가는 `tracked_hidden_at`, 재시도 소진 일시 오류는 `fetch_failing`으로 신호하고 상태를 유지한다
+(재공개·복구 시 자동 복귀 — 프론트 상태 머신의 "hidden 재공개 복귀·error 복구 복귀"와 정합).
+FAILED는 **등록 시점 실패 전용**으로 축소되는데, 등록은 동기 수집 성공 후에만 행을 만들므로 현
+구조에서 신규 FAILED는 사실상 발생하지 않는다(기존 행은 이력으로 잔존). EXPIRED(기간 만료)는
+기존대로.
 
 ### detected_candidate — 감지 후보 (캠페인 소속)
 
 > **⚠ deprecated (v2)** — 신규 적재가 중단됐다(승인 플로우 폐지). 테이블과 기존 행은 이력으로 남지만
 > 새 행은 생기지 않으므로 조회하지 말 것. DROP은 참조가 끊긴 다음 릴리스의 contract 단계.
+> **v2.2**: `matched_keywords`의 산지가 `target.matched_keywords`로 이설됐다 — 승인 폐지로 이
+> 테이블에 새 행이 안 생겨 v1.1 시점에 도입한 `matched_keywords`는 사실상 무산됐던 것을 정정한다
+> (아래 행은 이력 참고용).
 
 | 컬럼 | 타입 | 의미 |
 |---|---|---|
@@ -185,7 +200,7 @@
 | `detected_at` | timestamptz | 감지 시각 (02:00 배치) |
 | `caption_excerpt` | text | 키워드 주변 캡션 발췌 (FE 노출용) |
 | `status` | text | `PENDING` / `APPROVED` / `REJECTED` |
-| `matched_keywords` | jsonb null | **(v1.1)** 매칭된 키워드 배열(등록 키워드 원문 그대로 — and 전부 + any 중 캡션에 실제 존재한 것). v1.1 이전 감지분은 null — was는 null이면 빈 배열로 폴백. 매칭 판정의 정본은 monitoring이다(캡션 전문으로 was가 재계산하지 말 것) |
+| `matched_keywords` | jsonb null | **(v1.1 · deprecated)** 매칭된 키워드 배열(등록 키워드 원문 그대로 — and 전부 + any 중 캡션에 실제 존재한 것). v1.1 이전 감지분은 null. **v2.2부터 산지는 `target.matched_keywords`** — 이 컬럼은 이력값만 남고 새로 채워지지 않는다(승인 폐지 이후 이 테이블에 신규 행 자체가 없음) |
 
 같은 (target_id, short_code)는 한 번만 생성 — 거절해도 재감지로 되살아나지 않는다.
 **등록 시각 이후에 게시된 게시물만 감지 대상** — 캠페인 등록 전의 옛 키워드 게시물은
@@ -211,6 +226,10 @@
 - 화면 문구: 수집 시작 / 수집 종료 / 일부 지표 비공개 / 콘텐츠 비공개·삭제·수집 오류.
 - 실 스키마에는 `email_attempts`(발송 시도 횟수) 컬럼도 있지만 **계약 밖**(발송 크론 내부
   재시도 상한용) — was는 읽지 말 것.
+- **CONTENT_UNAVAILABLE 발화 시점(v2.2)**: 전이 시점에만 1회 발화한다 — `target.tracked_hidden_at`이
+  null→값으로 전이될 때(`payload.failReason` = `SUBJECT_NOT_FOUND` | `PRIVATE_ACCOUNT`),
+  `target.fetch_failing`이 false→true로 전이될 때(`failReason` = `FETCH_FAILED`). 이미
+  hidden/failing인 target의 반복 실패는 재발화하지 않는다. 복귀(재공개·복구)는 이벤트가 아니다.
 
 ### profile_snapshot / post_snapshot — 관측치 (계정·게시물 단위, 캠페인 간 공유)
 
@@ -264,15 +283,44 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 - POST 등록만 있는 계정은 프로필 콜을 안 하므로 행이 없을 수 있다 — was는 없으면
   전부 null로 폴백(프론트 계약상 3필드 모두 nullable).
 
-### 조회 뷰 (구현 확정 — v1.0, v2.1까지 무변경)
+### post_meta — 추적 게시물 표시 메타 (v2.2 · 게시물 단위 최신 1행, 캠페인 간 공유)
 
-#### `v_target_overview` — 캠페인 목록 (target 1행당 1행, 26컬럼)
+| 컬럼 | 타입 | 의미 |
+|---|---|---|
+| `short_code` | text PK | 게시물 |
+| `username` | text NOT NULL | 게시물 소유 계정 |
+| `content_type` | text | `REELS` / `FEED`. **캐러셀(sidecar)은 FEED로 접는다**(Hiker `product_type='carousel_container'` — 피드 조회수 null 규약과 일치, 실측 2026-07-30) |
+| `uploaded_at` | date NOT NULL | 게시일(`taken_at`의 KST 날짜) |
+| `caption` | text NOT NULL | 캡션 원문 전문(개행 유지). 캡션 없는 게시물은 빈 문자열(프론트 계약 caption null 불가) |
+| `thumbnail_url` | text null | 썸네일(Hiker `image_versions2` 첫 후보). 스윕마다 갱신 — 인스타 CDN 서명 만료 대응 |
+| `first_seen_at` | timestamptz NOT NULL | 최초 관측 시각(upsert에도 보존) |
+
+- 수집이 게시물을 지나는 모든 경로(등록 동기 수집·스윕 열거·단건 보강)에서 upsert된다.
+- `taken_at`을 못 얻은 게시물은 upsert하지 않는다(잘못된 게시일을 만들지 않음 — 기존 행 보존).
+- `post_snapshot`이 있는 게시물은 `post_meta`도 있다고 봐도 된다(같은 경로에서 적재).
+
+### sweep_run — 일일 스윕 실행 대장 (v2.2 · 1실행 1행)
+
+| 컬럼 | 타입 | 의미 |
+|---|---|---|
+| `id` | bigserial PK | 실행 id |
+| `started_at` | timestamptz NOT NULL | 시작 시각 |
+| `completed_at` | timestamptz null | 완료 시각 |
+| `ok` | boolean null | 정상 완주 여부 |
+
+- was는 `max(completed_at) WHERE ok`로 6.26 `meta.lastCollectedAt`(마지막 성공 배치 완료 시각)을 읽는다.
+- `ok=true`는 스윕 루프 정상 완주(계정 단위 격리 실패 포함 — 부분 실패는 `target.fetch_failing`으로
+  표현), 크래시·중단된 실행은 `ok`가 true가 되지 않아 워터마크에서 자연 제외된다.
+
+### 조회 뷰 (v1.0 구현 확정 — v2.2에서 target 구획 3컬럼 추가)
+
+#### `v_target_overview` — 캠페인 목록 (target 1행당 1행, 29컬럼)
 
 캠페인 목록 화면은 이 뷰 하나로 서빙 가능하게 유지한다. 컬럼:
 
 | 구획 | 컬럼 |
 |---|---|
-| target (15) | `target_id`(= target.id), `user_id`, `type`, `username`, `short_code`, `keyword_rule`, `status`, `tracked_short_code`, `tracked_since`, `registration_key`, `expires_at`, `registered_at`, `closed_at`, `last_fetched_at`, `fail_reason` |
+| target (18) | `target_id`(= target.id), `user_id`, `type`, `username`, `short_code`, `keyword_rule`, `status`, `tracked_short_code`, `tracked_since`, `registration_key`, `expires_at`, `registered_at`, `closed_at`, `last_fetched_at`, `fail_reason`, `tracked_hidden_at`, `fetch_failing`, `matched_keywords` |
 | 최신 프로필 스냅샷 (3) | `profile_captured_on`, `followers`, `media_count` |
 | 최신 게시물 스냅샷 (8) | `post_captured_on`, `content_type`, `likes`, `comments`, `views`, `saves`, `shares`, `reposts` |
 
@@ -341,7 +389,8 @@ ORDER BY captured_on;
 ### 알람 (monitoring 소유 — was 무관여)
 
 1. monitoring이 이벤트 발생 지점 5곳에서 `alarm_event`에 적재한다
-   (직접 등록·자동 전환·만료·지표 비공개·결정적 실패)
+   (직접 등록·자동 전환·만료·지표 비공개·콘텐츠 접근 불가/수집 실패 — **v2.2**: 마지막 항목의
+   발화 조건은 §3 `alarm_event`의 CONTENT_UNAVAILABLE 발화 시점 서술 참고)
 2. monitoring 발송 크론(5분 틱)이 `dispatch_after <= now()`인 행을 유저별로 묶어 **1통**으로 보낸다.
    디바운스 10분 — 시딩 연속 등록은 잦아든 뒤 한 통으로 나간다. 단 가장 오래된 due가 30분
    (debounce-cap)을 넘기면 유입 중이어도 발송 — 시딩이 30분 넘게 이어지면 여러 통으로 나뉠 수 있다
@@ -350,8 +399,9 @@ ORDER BY captured_on;
 
 ## 5. was 구현 시 주의
 
-- **target 행은 사라지지 않는다** — 해지·만료·실패 전부 상태 전이. 유저의 "캠페인
-  삭제"는 was가 자기 매핑을 지우는 것으로 완결하고, monitoring엔 DELETE(해지)만
+- **target 행은 사라지지 않는다** — 해지·만료 전부 상태 전이(**v2.2**: FAILED는 등록 시점
+  전용으로 축소돼 스윕에서는 사실상 발생하지 않는다 — §3 target·status 의미 개정 참고).
+  유저의 "캠페인 삭제"는 was가 자기 매핑을 지우는 것으로 완결하고, monitoring엔 DELETE(해지)만
   보낸다. 오래된 target_id 조회는 404가 아니라 종결 상태 행으로 돌아온다.
 - **status·fail_reason 어휘는 monitoring이 확정** — was는 해석·분기 없이 전달
   (기존 "분류값·라벨은 생산자가 확정" 원칙).
@@ -377,7 +427,9 @@ monitoring 알람 모듈이 analysis DB의 `app` 스키마를 **두 객체만** 
 - `event_type` 어휘의 정본은 monitoring(`alarm_event.event_type`과 같은 목록) — was는 그대로 저장만 한다.
 - 이 둘 밖을 읽으려 하면 권한 오류로 fail-closed다(의도).
 
-## 7. v1.1 P2 표면 변경점 요약 — was 세션 대조 사항 (2026-07-30)
+## 7. was 세션 대조 사항
+
+### 7-1. v1.1 P2 표면 변경점 요약 (2026-07-30)
 
 was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 대조:
 
@@ -393,3 +445,14 @@ was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 �
   자동 부여(V2 확립) — 별도 GRANT 불필요 확인함.
 - P2 표면은 v2.0(알람 재편)과 무관하게 병렬 개발됐다 — 승인 제거·user_id·이벤트 대장은
   §2·§6의 v2.0 변경점을 참조.
+
+### 7-2. v2.2 P1 확장 변경점 요약 (2026-07-30)
+
+was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 대조:
+
+| 표면 | 픽스처 대비 |
+|---|---|
+| `post_meta` / `sweep_run` / `target.tracked_hidden_at` / `target.fetch_failing` | **was 픽스처와 동일 형태 채택** — 대조 불필요 |
+| `target.matched_keywords` | 픽스처에 없음 — **픽스처 갱신 필요**(jsonb null). 픽스처의 `detected_candidate.matched_keywords`는 죽은 산지(참조 금지) |
+
+- (참고) 픽스처 target에 `user_id`·`matched_keywords`가 빠져 있음을 알림.

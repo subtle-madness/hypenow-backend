@@ -10,7 +10,10 @@ package com.celfit.monitoring.hiker;
  * <p>viewsTrusted는 "views가 null인 게 진짜 부재인가"를 하류에 알린다: 열거 경로의 조회수는
  * /v2/user/clips 보강으로만 채워지는데 그 보강은 실패해도 스윕을 계속한다(조용히 null).
  * 이 플래그가 없으면 보강 실패가 "조회수 비공개 전환"으로 오탐돼 알람이 나간다(스펙 §3-2).
+ *
+ * <p>thumbnailUrl은 post_meta 표시 메타용(계약 §3 post_meta) — image_versions2.candidates[0].url.
+ * 인스타 CDN 서명 만료가 있어 스윕마다 갱신 대상이다(썸네일 자체는 스냅샷 지표가 아니다).
  */
-public record PostInfo(String shortCode, String username, String contentType, String caption,
+public record PostInfo(String shortCode, String username, String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long saves,
 		Long shares, Long reposts, String rawJson, boolean viewsTrusted) {}

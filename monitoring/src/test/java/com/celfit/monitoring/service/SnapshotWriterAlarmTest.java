@@ -9,6 +9,7 @@ import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
 import com.celfit.monitoring.store.TargetRepository;
@@ -38,11 +39,11 @@ class SnapshotWriterAlarmTest {
 		targets = new TargetRepository(db);
 		var snapshots = new SnapshotRepository(db);
 		var recorder = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
-		writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), recorder);
+		writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), recorder);
 	}
 
 	private PostInfo post(Long views) {
-		return new PostInfo("SC1", "acct_a", "REELS", "캡션", 1_785_000_000L,
+		return new PostInfo("SC1", "acct_a", "REELS", "캡션", "https://cdn/thumb.jpg", 1_785_000_000L,
 				100L, 5L, views, 20L, 3L, 1L, "{}", true);
 	}
 
@@ -97,5 +98,49 @@ class SnapshotWriterAlarmTest {
 		writer.savePost(LocalDate.of(2026, 7, 30), post(null));       // 오늘 2차 수집(재스윕 등): null→null
 
 		assertThat(alarmCount()).isEqualTo(1);   // 여전히 1행 — 재적재 없음
+	}
+
+	// ── post_meta 단일 깔때기(계약 v2.2 §3) ─────────────────────────────────
+
+	@Test
+	void savePost는_post_meta도_함께_적재한다() {
+		writer.savePost(LocalDate.of(2026, 7, 30), post(5000L));
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("username")).isEqualTo("acct_a");
+		assertThat(row.get("content_type")).isEqualTo("REELS");
+		assertThat(row.get("caption")).isEqualTo("캡션");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb.jpg");
+		// taken_at=1_785_000_000(epoch) → KST 날짜로 변환돼 저장된다.
+		assertThat(row.get("uploaded_at")).isEqualTo(java.sql.Date.valueOf(
+				java.time.Instant.ofEpochSecond(1_785_000_000L)
+						.atZone(java.time.ZoneId.of("Asia/Seoul")).toLocalDate()));
+	}
+
+	/** takenAt을 못 얻은 게시물은 잘못된 게시일을 만들지 않도록 post_meta upsert 자체를 스킵한다(계약 §3). */
+	@Test
+	void takenAt이_null이면_post_meta_upsert를_스킵한다() {
+		var post = new PostInfo("SC1", "acct_a", "REELS", "캡션", "https://cdn/thumb.jpg", null,
+				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+
+		writer.savePost(LocalDate.of(2026, 7, 30), post);
+
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_meta WHERE short_code='SC1'", Long.class)).isZero();
+		// 스냅샷 적재는 taken_at과 무관하게 그대로 진행된다.
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(1);
+	}
+
+	/** 캡션 없는 게시물은 post_meta.caption NOT NULL 제약을 지키기 위해 빈 문자열로 폴백한다(계약 §3). */
+	@Test
+	void 캡션이_null이면_빈_문자열로_폴백한다() {
+		var post = new PostInfo("SC1", "acct_a", "REELS", null, "https://cdn/thumb.jpg", 1_785_000_000L,
+				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+
+		writer.savePost(LocalDate.of(2026, 7, 30), post);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM post_meta WHERE short_code='SC1'", String.class)).isEqualTo("");
 	}
 }
