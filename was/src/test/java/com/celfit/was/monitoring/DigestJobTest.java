@@ -176,4 +176,32 @@ class DigestJobTest extends IntegrationTest {
 		assertThat(afterRerun.readAt()).isEqualTo(beforeRerun.readAt());
 		assertThat(afterRerun.createdAt()).isEqualTo(beforeRerun.createdAt());
 	}
+
+	@Test
+	void 따라잡기_크론이_09시_이후_도착한_이벤트를_같은_날_다이제스트에_반영한다() {
+		// 6.32 "배치가 9시 이후에 끝나면 늦게라도 그날 발송" — 09:00 run() 이후 스윕이 끝나
+		// 이벤트가 뒤늦게 적재되는 시나리오. catchUp()이 같은 (user, date) 행을 재계산해야 한다.
+		long userA = seedUser();
+		OffsetDateTime todayNoon = OffsetDateTime.of(2026, 7, 30, 12, 0, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userA, "COLLECTION_STARTED", todayNoon);
+
+		job.run();   // 09:00 실행
+		long digestId = digestRepository.findRecentByUser(userA, 1).get(0).id();
+		digestRepository.markRead(userA, List.of(digestId));
+		DigestRow beforeCatchUp = digestRepository.findRecentByUser(userA, 1).get(0);
+		assertThat(beforeCatchUp.readAt()).isNotNull();
+
+		// 09:00 이후 도착한 이벤트 — 다음 "정시" 실행은 내일 날짜를 집계하므로 run()이 아니라
+		// catchUp()만이 오늘 다이제스트에 반영할 수 있다.
+		OffsetDateTime lateAfternoon = OffsetDateTime.of(2026, 7, 30, 14, 20, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(2, userA, "CONTENT_UNAVAILABLE", lateAfternoon);
+		job.catchUp();
+
+		DigestRow afterCatchUp = digestRepository.findRecentByUser(userA, 1).get(0);
+		assertThat(afterCatchUp.id()).isEqualTo(digestId);   // 새 행이 아니라 같은 행
+		assertThat(items(userA)).extracting(i -> i.get("type"))
+				.containsExactly("collection_started", "content_issue");
+		assertThat(afterCatchUp.readAt()).isEqualTo(beforeCatchUp.readAt());   // 읽음 상태 보존
+		assertThat(afterCatchUp.createdAt()).isEqualTo(beforeCatchUp.createdAt());
+	}
 }

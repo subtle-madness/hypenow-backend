@@ -26,7 +26,7 @@ import org.springframework.test.context.TestPropertySource;
  * 이 클래스는 빈 배선만 검증하고, run() 자체는 DigestJobTest가 직접 호출해 결정론적으로 검증한다.
  */
 @TestPropertySource(properties = { "monitoring.enabled=true", "monitoring.digest.cron=-",
-		"monitoring.recover.cron=-" })
+		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-" })
 class MonitoringEnabledConfigTest extends IntegrationTest {
 
 	@DynamicPropertySource

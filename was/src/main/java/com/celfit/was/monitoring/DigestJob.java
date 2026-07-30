@@ -24,9 +24,21 @@ import tools.jackson.databind.ObjectMapper;
  * v2.1은 alarm_event가 유일한 원천이라 그럴 필요가 없다 — 매 실행마다 "occurred_at의 KST 날짜 =
  * 오늘"인 이벤트를 다시 전부 읽어 다이제스트를 재계산한다. {@link DigestRepository#upsert}가
  * (user_id, digest_date) 유니크로 재실행을 안전하게 만든다(같은 날짜를 몇 번 다시 돌려도 행이
- * 늘지 않고, items만 최신 집계로 덮인다) — 늦게 도착한 이벤트(예: 09:00 이후 완료된 스윕의
- * COLLECTION_STARTED 아침 레인)도 다음 실행에서 자연히 반영된다. created_at·read_at은 upsert의
- * SET 절에 없어 그대로 보존된다.
+ * 늘지 않고, items만 최신 집계로 덮인다). created_at·read_at은 upsert의 SET 절에 없어 그대로
+ * 보존된다.
+ *
+ * <h2>늦은 배치 — 따라잡기 크론(6.32 "배치가 9시 이후에 끝나면 늦게라도 그날 발송")</h2>
+ * 09:00 단발 실행만으로는 이 요구를 만족하지 못한다 — 스윕이 09:00을 넘겨 끝나면(재시도 라운드가
+ * 겹치면 실측 가능) 그 늦은 이벤트는 09:00 실행에 안 잡히고, "다음 실행"은 내일 날짜를 집계하므로
+ * 영구히 어느 다이제스트에도 반영되지 않는다. 그래서 {@link #catchUp()}이 09:10부터 10분 간격으로
+ * 같은 날짜를 재실행한다 — 멱등 upsert 설계를 그대로 재사용(이미 생성된 다이제스트도 items를
+ * 다시 계산해 늦게 도착한 이벤트를 흡수, read_at·created_at은 여전히 보존). 이벤트가 그새 없으면
+ * findAlarmEventsOn이 빈 리스트를 주므로 매 틱이 조회 1번으로 저렴하다.
+ *
+ * <p><b>한계</b>: 이 가드도 23:50(마지막 틱)까지만 돈다 — 스윕이 자정을 넘겨서까지 안 끝나는
+ * 경우(장애 수준 지연)는 다음날 크론이 "어제 이벤트"를 오늘 날짜로 집계하지 않으므로 여전히
+ * 유실된다. sweep_run(P1 확장) 합류 시 "오늘 02:00 이후 성공한 스윕이 없으면 스킵" 완료 가드로
+ * 정확히 판단할 수 있게 될 것 — 지금은 발생 확률이 낮은 장애 시나리오라 범위 밖으로 둔다.
  *
  * <h2>취소 제외 — 코드로 확인한 결과 별도 처리 불필요</h2>
  * 계약 6.30은 "취소로 종결된 행은 다음 날 다이제스트의 collection_ended에 포함하지 않는다"고
@@ -66,6 +78,20 @@ public class DigestJob {
 
 	@Scheduled(cron = "${monitoring.digest.cron:0 0 9 * * *}", zone = "Asia/Seoul")
 	public void run() {
+		digestForToday();
+	}
+
+	/**
+	 * 따라잡기 틱(09:10~23:50, 10분 간격) — {@link #run()}과 완전히 같은 재계산을 반복한다.
+	 * 09:00 실행 이후 도착한 이벤트(늦게 끝난 스윕 등)를 그날 안에 다이제스트로 흡수하기 위한
+	 * 가드(클래스 Javadoc "늦은 배치" 절 참조).
+	 */
+	@Scheduled(cron = "${monitoring.digest.catchup-cron:0 10-50/10 9-23 * * *}", zone = "Asia/Seoul")
+	public void catchUp() {
+		digestForToday();
+	}
+
+	private void digestForToday() {
 		LocalDate today = Instant.now(clock).atZone(KstTimestamps.KST).toLocalDate();
 		List<AlarmEventRow> events = monitoringReadRepository.findAlarmEventsOn(today);
 		if (events.isEmpty()) {
