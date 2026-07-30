@@ -1,6 +1,9 @@
--- 계약 §3(v0.1)에서 유도한 monitoring DB 픽스처 — 테스트 전용.
--- ⚠️ monitoring 구현 확정 시 실제 스키마와 대조 필요(스펙 §7 잔여 작업).
--- P1 확장 선반영(docs/contracts/monitoring-v3-extension-request.md) — monitoring 실구현 확정 시 대조
+-- 계약 §3에서 유도한 monitoring DB 픽스처 — 테스트 전용.
+-- 2026-07-30 계약 v1.1(feat/monitoring-v3-p2, V4__p2_surfaces.sql)과 대조 완료:
+--   post_comment·profile_meta·detected_candidate.matched_keywords는 실구현 DDL과 일치.
+-- P1 확장 선반영분(docs/contracts/monitoring-v3-extension-request.md — post_meta·
+--   target.tracked_hidden_at·fetch_failing·sweep_run)은 아직 실구현 미착수 —
+--   v2.0(feat/monitoring-alarm-module) 재편 확정 시 재대조할 것.
 CREATE TABLE IF NOT EXISTS target (
     id                 bigserial PRIMARY KEY,
     type               text NOT NULL,             -- ACCOUNT / POST
@@ -21,13 +24,23 @@ CREATE TABLE IF NOT EXISTS target (
 );
 
 CREATE TABLE IF NOT EXISTS detected_candidate (
-    id              bigserial PRIMARY KEY,
-    target_id       bigint NOT NULL,
-    short_code      text NOT NULL,
-    detected_at     timestamptz NOT NULL,
-    caption_excerpt text,
-    status          text NOT NULL,                -- PENDING/APPROVED/REJECTED
+    id               bigserial PRIMARY KEY,
+    target_id        bigint NOT NULL,
+    short_code       text NOT NULL,
+    detected_at      timestamptz NOT NULL,
+    caption_excerpt  text,
+    status           text NOT NULL,               -- PENDING/APPROVED/REJECTED
+    matched_keywords jsonb,                       -- v1.1 이전 감지분은 null(was는 빈 배열 폴백)
     UNIQUE (target_id, short_code)
+);
+
+-- 계정 표시 메타 — 계정 단위 최신 1행(계약 v1.1 §3 profile_meta)
+CREATE TABLE IF NOT EXISTS profile_meta (
+    username          text PRIMARY KEY,
+    display_name      text,
+    profile_image_url text,
+    last_uploaded_at  date,
+    updated_at        timestamptz NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS profile_snapshot (
