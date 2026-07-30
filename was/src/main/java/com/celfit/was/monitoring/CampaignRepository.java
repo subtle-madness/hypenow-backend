@@ -14,7 +14,7 @@ import org.springframework.stereotype.Repository;
 public class CampaignRepository {
 
 	private static final String RETURNING_COLUMNS =
-			"id, user_id, name, description, start_date, end_date, brand, budget, created_at";
+			"id, user_id, name, description, start_date, end_date, brand, budget, seeding_count, created_at";
 
 	private final JdbcClient jdbcClient;
 
@@ -23,10 +23,11 @@ public class CampaignRepository {
 	}
 
 	public CampaignRow insert(long userId, String name, String description, LocalDate startDate,
-			LocalDate endDate, String brand, Long budget) {
+			LocalDate endDate, String brand, Long budget, Integer seedingCount) {
 		return jdbcClient.sql("""
-				INSERT INTO app.monitoring_campaigns (user_id, name, description, start_date, end_date, brand, budget)
-				VALUES (:userId, :name, :description, :startDate, :endDate, :brand, :budget)
+				INSERT INTO app.monitoring_campaigns
+				    (user_id, name, description, start_date, end_date, brand, budget, seeding_count)
+				VALUES (:userId, :name, :description, :startDate, :endDate, :brand, :budget, :seedingCount)
 				RETURNING %s
 				""".formatted(RETURNING_COLUMNS))
 				.param("userId", userId)
@@ -36,6 +37,7 @@ public class CampaignRepository {
 				.param("endDate", endDate)
 				.param("brand", brand)
 				.param("budget", budget)
+				.param("seedingCount", seedingCount)
 				.query(CampaignRow.class)
 				.single();
 	}
@@ -71,11 +73,11 @@ public class CampaignRepository {
 
 	/** 전 필드 갱신 — 부분 갱신 의미론(미지정 필드는 기존 값 유지)은 서비스가 기존 값과 머지해서 호출. */
 	public CampaignRow update(long id, String name, String description, LocalDate startDate,
-			LocalDate endDate, String brand, Long budget) {
+			LocalDate endDate, String brand, Long budget, Integer seedingCount) {
 		return jdbcClient.sql("""
 				UPDATE app.monitoring_campaigns
 				SET name = :name, description = :description, start_date = :startDate, end_date = :endDate,
-				    brand = :brand, budget = :budget
+				    brand = :brand, budget = :budget, seeding_count = :seedingCount
 				WHERE id = :id
 				RETURNING %s
 				""".formatted(RETURNING_COLUMNS))
@@ -86,6 +88,7 @@ public class CampaignRepository {
 				.param("endDate", endDate)
 				.param("brand", brand)
 				.param("budget", budget)
+				.param("seedingCount", seedingCount)
 				.query(CampaignRow.class)
 				.single();
 	}

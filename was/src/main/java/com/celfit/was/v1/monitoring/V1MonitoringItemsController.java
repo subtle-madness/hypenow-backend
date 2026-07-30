@@ -4,6 +4,8 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +54,11 @@ public class V1MonitoringItemsController {
 
 	@PostMapping("/v1/monitoring/items")
 	public ResponseEntity<ApiResponse<MonitoringRegistrationResponse>> register(
-			@AuthenticationPrincipal AppUserDetails principal, @RequestBody(required = false) Map<String, Object> body) {
+			@AuthenticationPrincipal AppUserDetails principal,
+			// Swagger 문서 전용 스키마 지정 — 런타임 역직렬화는 아래 Map<String,Object> 그대로(MonitoringItemRequestDocs 참조).
+			@io.swagger.v3.oas.annotations.parameters.RequestBody(
+					content = @Content(schema = @Schema(implementation = MonitoringItemRequestDocs.Register.class)))
+			@RequestBody(required = false) Map<String, Object> body) {
 		Map<String, Object> fields = body == null ? Map.of() : body;
 		MonitoringRegistrationResponse response = registrationService.register(principal.getUserId(), fields);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(response));
@@ -61,7 +67,11 @@ public class V1MonitoringItemsController {
 	/** 편집 대상은 기간(trackingDays)과 캠페인(campaignId/campaignName)뿐(6.29). */
 	@PatchMapping("/v1/monitoring/items/{itemId}")
 	public ApiResponse<MonitoringItemPatchResponse> patch(@AuthenticationPrincipal AppUserDetails principal,
-			@PathVariable String itemId, @RequestBody(required = false) Map<String, Object> body) {
+			@PathVariable String itemId,
+			// Swagger 문서 전용 스키마 지정 — 런타임 역직렬화는 아래 Map<String,Object> 그대로(MonitoringItemRequestDocs 참조).
+			@io.swagger.v3.oas.annotations.parameters.RequestBody(
+					content = @Content(schema = @Schema(implementation = MonitoringItemRequestDocs.Patch.class)))
+			@RequestBody(required = false) Map<String, Object> body) {
 		Map<String, Object> fields = body == null ? Map.of() : body;
 		MonitoringItemPatchResponse response = updateService.patch(principal.getUserId(), parseItemId(itemId), fields);
 		return ApiResponse.ok(response);
