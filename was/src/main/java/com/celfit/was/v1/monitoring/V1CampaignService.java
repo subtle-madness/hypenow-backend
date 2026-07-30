@@ -64,8 +64,10 @@ public class V1CampaignService {
 		String name = existing.name();
 		if (body.containsKey("name")) {
 			Object raw = body.get("name");
+			// name만 해제 불가 — CampaignName.normalize의 빈 값 메시지와 통일해 null·빈 문자열이
+			// 유저에게 같은 문구로 보이게 한다("캠페인 이름을 입력해 주세요.").
 			if (raw == null) {
-				throw V1ApiException.validation("캠페인 이름은 비워둘 수 없어요.");
+				throw V1ApiException.validation("캠페인 이름을 입력해 주세요.");
 			}
 			name = CampaignName.normalize(raw.toString());
 		}
@@ -115,6 +117,7 @@ public class V1CampaignService {
 
 	/** 소유 검증 → 삭제. FK ON DELETE SET NULL이 소속 추적 행의 campaign_id를 해제한다(캐스케이드 삭제 아님). */
 	public void delete(long userId, long campaignId) {
+		// 반환값은 소유 검증(존재 + 이 유저 소유)에만 쓰고 버린다 — 실제 삭제는 아래 repository.delete.
 		CampaignRow unused = repository.findByIdAndUser(campaignId, userId)
 				.orElseThrow(() -> V1ApiException.notFound("캠페인을 찾을 수 없습니다."));
 		repository.delete(campaignId);

@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * DB 권한 오류로 fail-closed. app 스키마·분석 결과와의 크로스 DB 조인 금지(조합은 was 코드).
  *
  * 주의 2가지: ① 이 리포지토리는 targetId·username을 검증 없이 그대로 조회한다 — 유저 소유
- * 스코프는 호출자(향후 컨트롤러) 책임이며, 반드시 app 매핑(MonitoringCampaignMappingRepository)에서
+ * 스코프는 호출자(향후 컨트롤러) 책임이며, 반드시 app 매핑(CampaignRepository.findByIdAndUser)에서
  * 얻은 값만 넘길 것(임의 id 통과 = 남의 캠페인 열람). ② 명령 계층과 달리 예외를 승격하지 않고
  * DataAccessException을 원시 전파한다 — 조회 실패 처리 방식은 컨트롤러 작업 때 결정(의도된 보류).
  */
