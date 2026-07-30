@@ -105,6 +105,16 @@ class RegistrationRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void findRecentByUser_51건_시드해도_50건_한도로_잘린다() {
+		for (int i = 0; i < 51; i++) {
+			repository.insert(userId);
+		}
+
+		assertThat(repository.findRecentByUser(userId, 50)).hasSize(50);
+		assertThat(repository.countByUser(userId)).isEqualTo(51);
+	}
+
+	@Test
 	void countByUser() {
 		assertThat(repository.countByUser(userId)).isZero();
 
