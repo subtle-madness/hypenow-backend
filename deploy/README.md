@@ -366,7 +366,15 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    ```bash
    ssh ubuntu@<IP> 'grep -c "^HIKER_API_KEY=." ~/deploy/.env'   # 1이어야 함
    ```
-3. staging→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
+3. **was V16(모니터링 v3 스키마) 포함 배포라면 머지 전에 확인 필수**:
+   ```bash
+   docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+     -c "SELECT count(*) FROM app.monitoring_campaigns"
+   ```
+   0이어야 한다 — V16이 이 테이블을 `DROP`·v3 캠페인 테이블로 재정의한다(`allow-destructive`,
+   전제는 "기능 미개통·운영 0행"). 0이 아니면 머지를 중단하고 먼저 잔여 행을 파악할 것
+   (§13-5-1 절차는 이 배포 전에만 유효 — 아래 참조).
+   staging→main 머지로 배포 → `docker compose ps`에서 monitoring `(healthy)` 확인
    (CD의 "monitoring 헬스 확인" 스텝이 같은 판정을 자동 수행 — 호스트 포트가 없어 외부 curl은 불가)
 4. 서버 스크립트 갱신 — 레포에는 반영돼 있지만 **CD는 스크립트를 배포하지 않는다**(compose·이미지만).
    두 파일 모두 rsync로 직접 올릴 것:
@@ -377,16 +385,19 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
    ```
 5. **알람 개통 (07-30~, 별도 단계 — 기본 비활성이라 서두르지 않아도 된다)**
-   1. **사전 확인 — user_id 없는 기존 캠페인 모수 파악**:
+   1. **사전 확인 — user_id 없는 기존 캠페인 모수 파악**. ⚠ **이 절차는 was V16(모니터링 v3
+      스키마) 배포 전에만 가능** — V16이 구 매핑 테이블 `app.monitoring_campaigns`를 v3 캠페인
+      테이블로 `DROP`·재정의한다(위 3번 확인 스텝 참조). V16 이후에는 아래 역추적 근거 자체가
+      없으므로 이 절차는 생략하고 해당 기존 캠페인은 "대상 외"로 기록한다:
       ```bash
       docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
         -c "SELECT count(*) FROM target WHERE user_id IS NULL AND status IN ('WATCHING','TRACKING')"
       ```
-      0이 아니면 `app.monitoring_campaigns`(was 매핑 테이블)에서 해당 target_id의 user_id 매핑
-      유무를 확인한다 — **있으면** 백필 UPDATE 런북(dry-run → 승인 → 실행, `target.user_id`를
-      매핑값으로 채움)을 작성해 실행하고, **없으면** "해당 기존 캠페인은 알람 대상 외"를 명시적
-      결정으로 기록해 둔다(나중에 "알람이 안 온다"가 버그로 재조사되지 않게 — 수신자 미상 행은
-      `AlarmRecorder.record()`가 조용히 스킵한다).
+      0이 아니면 (V16 배포 전이라면) `app.monitoring_campaigns`(구 was 매핑 테이블)에서 해당
+      target_id의 user_id 매핑 유무를 확인한다 — **있으면** 백필 UPDATE 런북(dry-run → 승인 →
+      실행, `target.user_id`를 매핑값으로 채움)을 작성해 실행하고, **없으면** "해당 기존 캠페인은
+      알람 대상 외"를 명시적 결정으로 기록해 둔다(나중에 "알람이 안 온다"가 버그로 재조사되지
+      않게 — 수신자 미상 행은 `AlarmRecorder.record()`가 조용히 스킵한다).
    2. analysis DB에 읽기 전용 롤 생성 + 두 객체만 GRANT (계약 v2 §6):
       ```bash
       docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
@@ -402,6 +413,22 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
       바꿔 커밋·배포(서버에서 직접 고친 값은 다음 CD가 레포 compose로 덮는다 — 스윕 크론과 같은 규칙)
    5. 검증: `docker logs deploy-monitoring-1 | grep -i resend` — "Resend 메일 발송 활성"이면 실발송 모드,
       "RESEND_API_KEY 미설정"이면 로깅 폴백(개통 실패)
+6. **was v3 조회 개통 (was V16 배포 후, was 서비스 environment의 `MONITORING_*` 4키 배선과 짝)**
+   — was가 monitoring DB를 직접 SELECT해 목록·상태·후보 등을 조립한다(계약 §1). 기본
+   비활성이라 서두르지 않아도 된다.
+   1. `~/deploy/.env`에 `MONITORING_ENABLED=true` + `WAS_READER_PASSWORD`(1번에서 만든 `was_reader`
+      실값과 일치) 등록 — `.env.example`에 항목이 있다.
+   2. was 재배포(compose 정의 변경 없이 값만 바뀌었다면 `docker compose up -d --no-deps was`로 충분,
+      아니면 다음 CD로).
+   3. **첫 스윕을 1회 수동으로 성공시켜 `sweep_run`을 시드한다** — `sweep_run`은 `DailySweepJob`
+      전체 실행(`SweepScheduler`)에서만 생성되고, 등록 시 동기 수집(`CollectService`)은 이 대장에
+      쓰지 않는다. 그 전까지는 was의 목록·추이 스냅샷 조회가 전부 빈 배열을 반환한다(최종 리뷰
+      I2). 어드민 UI가 없어 수동 트리거 엔드포인트도 없으므로, 서버 `~/deploy/compose.yaml`의
+      `MONITORING_SCHEDULE_SWEEP_CRON` 값을 다음 1~2분 내로 잠깐 당겨 `docker compose up -d monitoring`으로
+      재기동 → 1회 태우고 확인 → 원래 값(KST 02:00, 아래 "접근 통제·디버깅" 참조)으로 되돌려
+      다시 재기동한다(서버에서 직접 고친 값은 다음 CD가 레포 compose로 덮는 것과 같은 관용구 —
+      되돌리지 않아도 다음 CD가 덮지만, 그 사이 매분 스윕이 도는 걸 막으려면 직접 되돌릴 것).
+   4. was 목록 응답이 채워지는지 확인 후 프론트 연동 시작.
 
 ### 접근 통제·디버깅
 

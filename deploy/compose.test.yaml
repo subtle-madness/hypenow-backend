@@ -111,6 +111,12 @@ services:
       # RESEND 미설정 = 로깅 폴백 — test 이메일 인증 코드는 docker logs deploy-test-was-1 에서 확인
       CODES_API_KEY: ${DEV_CODES_API_KEY:-}
       REDIS_HOST: test-redis
+      # 모니터링 v3 조회 개통 — 운영과 동일 관용구, 기본 off. test-monitoring이 쓰는 test-postgres의
+      # monitoring DB를 was_reader 읽기 전용 계정으로(계정 이름은 운영과 동일, 비밀번호만 DEV_* 구명)
+      MONITORING_ENABLED: "${DEV_MONITORING_ENABLED:-false}"
+      MONITORING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
+      MONITORING_DATASOURCE_USERNAME: was_reader
+      MONITORING_DATASOURCE_PASSWORD: ${DEV_WAS_READER_PASSWORD:-}
       JAVA_OPTS: "-Xms512m -Xmx512m"
     # 기동 순서는 운영과 동일 규율 — test-analytics healthy(=test analysis DB 마이그레이션 완료) 후
     depends_on:
