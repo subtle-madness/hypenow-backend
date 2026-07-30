@@ -53,7 +53,7 @@ Testcontainers가 필요하므로 Docker(colima)가 떠 있어야 통합 테스�
 | 파일 | 책임 |
 |---|---|
 | `crawler/src/main/resources/db/migration/V23__content_caption.sql` | `content_caption` 테이블 + 백필 워터마크 `app_setting` 시드 |
-| `crawler/src/main/resources/db/migration/V23__drop_raw_post_detail.sql` | 죽은 테이블 제거 (contract 단계) |
+| `crawler/src/main/resources/db/migration/V24__drop_raw_post_detail.sql` | 죽은 테이블 제거 (contract 단계) |
 | `crawler/src/main/java/com/celfit/crawler/content/application/service/ContentCaptionUpserter.java` | 캡션 배치 upsert 1개 책임. 라이브·백필 공용 |
 | `crawler/src/main/java/com/celfit/crawler/crawling/application/service/CaptionBackfillJob.java` | 저장된 raw 페이지를 훑어 캡션 소급 적재 |
 | `crawler/src/test/java/com/celfit/crawler/content/application/service/ContentCaptionUpserterIntegrationTest.java` | upsert 규칙(신규·최신승리·구버전무시·content 부재 스킵) 검증 |
@@ -1435,8 +1435,12 @@ jsonb 원형에서 직접 파는 경로(`raw_media_page.payload#>>'{response,ite
 행(`Z`) 바로 아래에 추가한다:
 
 ```markdown
-| AA | 게시물 캡션 원문 보존 | 캡션 원문이 raw jsonb(`raw_media_page`·`raw_profile`)에 실재하는데도 `MediaItemExtractor`가 파싱하지 않아 사장돼 있었고(유실이 아니라 추출 부재), 도달 경로가 5~7단 jsonb 표현식뿐이라 "캡션이 DB에 없다"는 오조사가 실제로 발생(07-30, `raw_post_detail` 0행·`raw_discovery_post` DISCOVERY 전용을 조인). `content_caption` 신설(V23 — content_id PK·최신 1건·96MB, 압축 불필요: pglz 실측 이득 7%) + 추출기가 세 소스에서 캡션 추출(`unwrapMedia()`가 이미 정규화하므로 단일 헬퍼) + 라이브 배선 + `CAPTION_BACKFILL` 원샷 잡(저장된 원형 소급 적재·인스타 호출 0회·라이브와 동일 파서 재사용·app_setting 워터마크 재개). **어떤 analytics 뷰도 읽지 않는 현역 소스 `HIKER_V1_MEDIAS`**(9,691행·1GB·07-18~) 캡션 약 6,240건을 재크롤 0원으로 건짐(표본 40건 중 33건=82.5% 실측) — 단 **저장 측면만** 해소, 서빙 반영(뷰가 `content_caption`을 읽도록 전환)은 analytics 트랙 후속. `raw_post_detail`(0행·참조 코드 부재) DROP 동반(V23) — [specs/2026-07-30-caption-preservation-design.md](docs/superpowers/specs/2026-07-30-caption-preservation-design.md) | — | 🔨 (구현 완료 — PR·배포·백필 수동 실행 대기) |
+| AA | 게시물 캡션 원문 보존 | 캡션 원문이 raw jsonb(`raw_media_page`·`raw_profile`)에 실재하는데도 `MediaItemExtractor`가 파싱하지 않아 사장돼 있었고(유실이 아니라 추출 부재), 도달 경로가 5~7단 jsonb 표현식뿐이라 "캡션이 DB에 없다"는 오조사가 실제로 발생(07-30, `raw_post_detail` 0행·`raw_discovery_post` DISCOVERY 전용을 조인). `content_caption` 신설(V23 — content_id PK·최신 1건·96MB, 압축 불필요: pglz 실측 이득 7%) + 추출기가 세 소스에서 캡션 추출(`unwrapMedia()`가 이미 정규화하므로 단일 헬퍼) + 라이브 배선 + `CAPTION_BACKFILL` 원샷 잡(저장된 원형 소급 적재·인스타 호출 0회·라이브와 동일 파서 재사용·app_setting 워터마크 재개). **어떤 analytics 뷰도 읽지 않는 현역 소스 `HIKER_V1_MEDIAS`**(9,691행·1GB·07-18~) 캡션 약 6,240건을 재크롤 0원으로 건짐(표본 40건 중 33건=82.5% 실측) — 단 **저장 측면만** 해소, 서빙 반영(뷰가 `content_caption`을 읽도록 전환)은 analytics 트랙 후속. `raw_post_detail`(0행·참조 코드 부재) DROP 동반(V24) — [specs/2026-07-30-caption-preservation-design.md](docs/superpowers/specs/2026-07-30-caption-preservation-design.md) | — | 🔨 (구현 완료 — PR·배포·백필 수동 실행 대기) |
 ```
+
+> **실행 노트(Task 8 사후)**: 위 예시는 트랙 문자를 `AA`로 적었으나, 실제 문서화 시점(07-30)에
+> 같은 날 다른 세션이 트랙 `AA`(발굴 표면 뷰티 비율 게이트)를 먼저 커밋해 선점한 상태였다 —
+> 이 트랙은 실제로 **`AB`**로 배정됐다(ARCHITECTURE.md §5·§7 확인).
 
 **주의:** 트랙 문자 체계가 두 글자로 확장됐다는 사실을 §5 표 위 설명이나 §7에 한 줄로 남겨,
 다음 사람이 어디서 이어야 할지 알 수 있게 한다.
@@ -1479,8 +1483,9 @@ git commit -m "docs: 캡션 보존 반영 — §3 조회 경로·§5 트랙·§7
 git fetch origin --quiet && git ls-tree -r origin/develop --name-only -- crawler/src/main/resources/db/migration/ | sed 's|.*/||' | sort -t V -k2 -n | tail -3 && ls crawler/src/main/resources/db/migration/ | sort -t V -k2 -n | tail -3
 ```
 
-기대: `origin/develop`의 최대가 V21이고 내 브랜치가 V22·V23. **develop에 V22 이상이 생겼으면
-파일명을 재번호하고 커밋한다** (07-20 V18 경합 사고 재발 방지).
+기대: `origin/develop`의 최대가 V21이고 내 브랜치가 V23·V24(V22는 open PR #216이 먼저 점유해
+재번호됨 — Task 7 번호 노트 참고). **develop에 V22 이상이 새로 생겼으면 파일명을 재번호하고
+커밋한다** (07-20 V18 경합 사고 재발 방지).
 
 - [ ] **Step 3: 커밋 로그를 확인한다**
 
@@ -1523,7 +1528,7 @@ gh pr create --base develop --title "feat(crawler): 게시물 캡션 원문 보�
 - `MediaItemExtractor`가 세 소스에서 캡션 추출 — `unwrapMedia()`가 이미 정규화하므로 단일 헬퍼
 - 라이브 수집(COLLECT·REELS) 배선 — 앞으로 유실 없음
 - `CAPTION_BACKFILL` 잡 — 저장된 원형 소급 적재, **인스타 호출 0회**. 라이브와 같은 파서 재사용
-- `raw_post_detail` DROP (V23) — 0행·참조 코드 부재로 contract 조건 충족
+- `raw_post_detail` DROP (V24) — 0행·참조 코드 부재로 contract 조건 충족
 
 ## 범위 밖 (의도적)
 
@@ -1533,7 +1538,7 @@ gh pr create --base develop --title "feat(crawler): 게시물 캡션 원문 보�
 
 ## 주의
 
-- **crawler 마이그레이션은 CI migration-guard 검사 대상이 아니다**(was·analytics만). 파괴 DDL 자동 차단이 없으니 V23을 사람이 검토해주기 바란다.
+- **crawler 마이그레이션은 CI migration-guard 검사 대상이 아니다**(was·analytics만). 파괴 DDL 자동 차단이 없으니 V24(DROP)를 사람이 검토해주기 바란다.
 - 백필은 jsonb 약 14GB를 1회 읽는다 — 크롤 잡과 겹치지 않는 시각에 `/ui`에서 수동 실행할 것.
 
 설계 문서: `docs/superpowers/specs/2026-07-30-caption-preservation-design.md`
@@ -1560,7 +1565,7 @@ git push
 
 1. develop 머지 → CI만 돎(배포 없음)
 2. develop → staging 머지 = test 스테이징 배포(dev-api.hypenow.io)
-3. staging → main 머지 = 운영 배포. Flyway V22·V23이 이때 적용된다
+3. staging → main 머지 = 운영 배포. Flyway V23·V24가 이때 적용된다
 4. 배포 후 `/ui`에서 `caption-backfill` **수동 실행** — 크롤 잡(KST 06:00 전후)과 겹치지 않는 시각
 5. 백필 후 커버리지 검증:
 

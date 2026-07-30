@@ -19,13 +19,14 @@ $env:APIFY_TOKEN = 'apify_api_...'
 ```
 
 - UI: http://localhost:8080/ui (대시보드 — 잡 실행 스트립·예상 비용·실행 로그 포함 · 데일리 수집 · 인플루언서 · 검색 키워드 · 설정)
-- DB: localhost:5433 / crawler / crawler — raw 테이블(`raw_media_page`/
-  `raw_comment`/`raw_profile`)은 `payload`(jsonb, Apify/HikerAPI 응답 원형)와 함께
-  추출된 실컬럼(`short_code`/`caption`/`writer`/`text`/`followers` 등)을 갖고 있어
-  `select writer, text from raw_comment` 식으로 일반 테이블처럼 바로 조회 가능
-  (generated column이 아니라 실컬럼 — 추출 실패 시 NULL 허용, 원형은 `payload`에 그대로 남음).
-  게시물 캡션 원문은 `content_caption`(content_id PK, 최신 1건)에 별도 보존 —
-  raw jsonb에서 추출한 정본, 조회는 `select caption from content_caption where content_id = ?`
+- DB: localhost:5433 / crawler / crawler — raw 테이블 중 `raw_comment`/`raw_profile`은
+  `payload`(jsonb, Apify/HikerAPI 응답 원형)와 함께 추출된 실컬럼(`writer`/`text`/`written_at`/
+  `username`/`followers`)을 갖고 있어 `select writer, text from raw_comment` 식으로 일반
+  테이블처럼 바로 조회 가능(generated column이 아니라 실컬럼 — 추출 실패 시 NULL 허용, 원형은
+  `payload`에 그대로 남음). `raw_media_page`는 이런 실컬럼이 없고 `payload`만 갖는다(릴스
+  캡션·지표는 jsonb에서만 읽힌다). 게시물 캡션 원문은 `content_caption`(content_id PK, 최신
+  1건)에 별도 보존 — raw jsonb에서 추출한 정본, 조회는
+  `select caption from content_caption where content_id = ?`
 - Apify 인증은 Authorization Bearer 헤더로 나감 (URL·로그에 토큰 노출 없음)
 
 ## 테스트
