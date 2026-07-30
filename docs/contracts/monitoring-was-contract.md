@@ -2,8 +2,13 @@
 
 > **living 문서** — monitoring 모듈이 was에 제공하는 계약의 정본. 구현과 함께 갱신한다.
 > 배경·설계 근거는 [specs/2026-07-28-monitoring-module-design.md](../superpowers/specs/2026-07-28-monitoring-module-design.md) 참조.
-> 상태: **v1.0 (구현 반영 — 2026-07-29)** · 명령 API 5종·조회 표면(테이블 4 + 뷰 2)·에러 어휘 전부 구현과 일치.
+> 상태: **v1.1 (P2 표면 추가 — 2026-07-30)** · 명령 API 5종 + share 해소 1종·조회 표면(테이블 6 + 뷰 2)·에러 어휘 전부 구현과 일치.
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
+>
+> ⚠️ **v2.0 예고**: 승인 플로우 제거(감지 즉시 자동 TRACKING)·`target.user_id`·알람 이벤트 대장은
+> 별도 트랙(`feat/monitoring-alarm-module`)이 진행 중이며 그 PR이 이 문서를 v2.0으로 재편한다.
+> v1.1은 그와 독립적인 **P2 표면 추가만** 담는다(확장 요구
+> [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2 — 댓글·매칭 키워드·계정 메타·share 해소).
 
 ## 0. 한 장 요약
 
@@ -123,6 +128,31 @@ target이 활성(WATCHING/TRACKING)이 아니면 409 `INVALID_STATE` — 종결�
 상태를 CANCELED로 전이(행·스냅샷 보존 — 물리 삭제 아님). 멱등: 이미 종결이면 현재
 상태 그대로 200. `// 200 { "targetId": 17, "status": "CANCELED" }`
 
+### 2-6. 공유 단축 링크 해소 — `POST /api/share/resolve` (v1.1)
+
+`instagram.com/share/…` 토큰은 shortcode가 아니라서 해소가 필요하다. was에는 인스타
+접속 수단이 없으므로 monitoring이 Hiker(`/v2/media/info/by/url`)로 해소해 준다.
+**등록과 분리된 전처리 API다** — was가 등록 전에 이걸 호출해 shortcode를 얻고, 등록은
+기존 2-1 그대로 진행한다(확장 요구 P2-8의 "등록 API에 shareUrl 통합" 제안과 다른 형태 —
+등록 플로우 무변경으로 채택. 타임아웃 권고 10s).
+
+```json
+// 요청
+{ "url": "https://www.instagram.com/share/reel/AbCdEfG/" }
+// 200 — 해소 성공
+{ "shortCode": "DbV7LgZsKG8", "username": "rarebeauty", "contentType": "REELS" }
+```
+
+| code | HTTP | 의미 |
+|---|---|---|
+| `SHARE_LINK_UNRESOLVED` | 422 | URL 형식 불량·해소 불가(Hiker 400 등) — 유저에게 "링크를 확인해 주세요" |
+| `SUBJECT_NOT_FOUND` | 404 | 해소는 됐으나 게시물이 삭제·비공개(Hiker 404) |
+| `FETCH_FAILED` | 502 | Hiker 일시 오류 — 재시도는 사용자 몫 |
+
+- 일반 게시물 URL(`/p/`·`/reel/`·`/reels/`)을 넣어도 동작한다(shortcode를 그대로 확인 반환).
+- ⚠️ **실제 share 토큰 URL 실측은 잔여**(샘플 확보 불가로 일반 게시물 URL만 실측 —
+  2026-07-30). share 토큰에서 해소 실패율이 높으면 Hiker 다른 엔드포인트로 보강한다.
+
 ## 3. 조회 표면 (`public` 스키마 — 읽기 전용 SELECT)
 
 아래 테이블·뷰가 계약이다. 여기 없는 객체는 내부 구현이므로 조회하지 말 것
@@ -157,6 +187,7 @@ target이 활성(WATCHING/TRACKING)이 아니면 409 `INVALID_STATE` — 종결�
 | `detected_at` | timestamptz | 감지 시각 (02:00 배치) |
 | `caption_excerpt` | text | 키워드 주변 캡션 발췌 (FE 노출용) |
 | `status` | text | `PENDING` / `APPROVED` / `REJECTED` |
+| `matched_keywords` | jsonb null | **(v1.1)** 매칭된 키워드 배열(등록 키워드 원문 그대로 — and 전부 + any 중 캡션에 실제 존재한 것). v1.1 이전 감지분은 null — was는 null이면 빈 배열로 폴백. 매칭 판정의 정본은 monitoring이다(캡션 전문으로 was가 재계산하지 말 것) |
 
 같은 (target_id, short_code)는 한 번만 생성 — 거절해도 재감지로 되살아나지 않는다.
 **등록 시각 이후에 게시된 게시물만 감지 대상** — 캠페인 등록 전의 옛 키워드 게시물은
@@ -178,6 +209,41 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
   [plans/2026-07-28-monitoring-hiker-findings.md](../superpowers/plans/2026-07-28-monitoring-hiker-findings.md)).
 - 캠페인 추이는 target을 조인해 본다: `target.username` → profile_snapshot,
   `target.tracked_short_code` → post_snapshot.
+
+### post_comment — 추적 게시물 댓글 (v1.1 · 게시물 단위, 캠페인 간 공유)
+
+| 컬럼 | 타입 | 의미 |
+|---|---|---|
+| `short_code` + `id` | text, PK 복합 | 게시물 × 인스타 댓글 ID |
+| `author` | text | **원본 핸들** — 마스킹은 was 응답 생성 단계 책임(프론트 계약 6.25 PostComment) |
+| `body` | text | 댓글 본문 |
+| `like_count` | bigint | 댓글 좋아요 수 |
+| `commented_at` | timestamptz | 작성 시각 |
+| `owner_reply_text` | text null | **게시물 작성자 본인 답글**(첫 건의 본문). 제3자 답글은 수집 안 함 |
+
+- **일일 스윕 동승, 게시물당 전량 교체 갱신**(추적 게시물당 Hiker 1콜 —
+  `monitoring.comment-pages` 기본 1페이지 = **15건 상한**. 확장 요구의 "20건 제안"과
+  다른 이유: Hiker 페이지가 15건 단위라 20건은 2콜이다. 프론트 표시 8건을 충분히 커버).
+- ⚠️ **수집 모수는 IG 기본(랭킹) 정렬 상위 15건**이다 — "전체 중 최신 15건" 보장이
+  아니다. was는 `commented_at` 내림차순으로 정렬해 응답한다(프론트 계약의 "최신순"은
+  이 수집 모수 안에서의 정렬).
+- 본문·좋아요 등 필드 결손 댓글은 **저장하지 않는다**(프론트에 부분 결손 렌더 경로 없음).
+- 답글은 댓글 응답에 동봉되는 미리보기(`preview_child_comments`) 범위에서만 판정한다 —
+  미리보기 밖 답글은 놓칠 수 있다(보수 수집).
+
+### profile_meta — 계정 표시 메타 (v1.1 · 계정 단위 최신 1행, 캠페인 간 공유)
+
+| 컬럼 | 타입 | 의미 |
+|---|---|---|
+| `username` | text PK | 계정 핸들 |
+| `display_name` | text null | 계정 풀네임 (Hiker `full_name`) |
+| `profile_image_url` | text null | 프로필 이미지 URL — 인스타 CDN 서명 만료 주의(프론트 계약 4절 35번) |
+| `last_uploaded_at` | date null | 계정의 최근 게시일(KST) — 열거된 게시물 `taken_at` 최댓값 |
+| `updated_at` | timestamptz | 마지막 갱신 시각 |
+
+- 계정 수집(등록 동기 수집·일일 스윕)마다 upsert — 스냅샷과 달리 이력 없이 최신 1행.
+- POST 등록만 있는 계정은 프로필 콜을 안 하므로 행이 없을 수 있다 — was는 없으면
+  전부 null로 폴백(프론트 계약상 3필드 모두 nullable).
 
 ### 조회 뷰 (구현 확정 — v1.0)
 
@@ -275,3 +341,20 @@ ORDER BY captured_on;
 - **읽기 전용 계정으로 쓰기 시도는 권한 오류** — 의도된 fail-closed.
 - 스냅샷은 KST 기준 `captured_on` 하루 1행. 등록 직후엔 당일 1행만 있다
   (추이 그래프는 다음 날부터 의미가 생김).
+
+## 6. v1.1 변경점 요약 — was 세션 대조 사항 (2026-07-30)
+
+was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 대조:
+
+| 표면 | 픽스처 대비 |
+|---|---|
+| `post_comment` | **픽스처와 동일 형태 채택** — 대조 불필요 |
+| `detected_candidate.matched_keywords` | 픽스처에 없음 — **컬럼 추가 필요**(jsonb null) |
+| `profile_meta` | 픽스처에 없음 — **테이블 추가 필요**(위 §3 DDL) |
+| `POST /api/share/resolve` | 확장 요구 P2-8의 "등록 API 통합" 제안과 **다른 형태**(별도 전처리 API) — was 등록 플로우에서 share URL 감지 시 선호출로 배선 |
+
+- P1(post_meta·숨김 신호·fetch_failing·sweep_run)과 승인 제거·user_id·이벤트 대장은
+  이 버전 범위 밖 — 각각 별도 트랙에서 진행(문서 머리 v2.0 예고 참조).
+- Hiker 콜 비용(운영 참고): 스윕 계정당 3콜 + **추적 게시물당 댓글 1콜 추가**,
+  share 해소는 등록 시도당 1콜. 신규 표면의 was_reader SELECT는 default privileges로
+  자동 부여(V2 확립) — 별도 GRANT 불필요 확인함.

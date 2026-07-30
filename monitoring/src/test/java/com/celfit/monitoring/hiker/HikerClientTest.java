@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,9 @@ class HikerClientTest {
 		assertThat(p.userId()).isNotBlank();
 		assertThat(p.followers()).isPositive();
 		assertThat(p.rawJson()).isNotBlank();
+		// profile_meta 저장용(계약 §3, v1.1) — full_name·profile_pic_url
+		assertThat(p.fullName()).isEqualTo("Rare Beauty by Selena Gomez");
+		assertThat(p.profilePicUrl()).isNotBlank();
 	}
 
 	@Test
@@ -185,6 +189,100 @@ class HikerClientTest {
 	void 단건_응답이_비면_SubjectNotFound로() {
 		HikerClient client = new HikerClient(path -> "{\"num_results\":0,\"items\":[]}");
 		assertThatThrownBy(() -> client.fetchPost("gone"))
+				.isInstanceOf(SubjectNotFoundException.class);
+	}
+
+	// ── 댓글(§10-1) ──────────────────────────────────────────────────────────
+
+	/**
+	 * 픽스처 comments.json — 6건 중 3건은 preview_child_comments의 is_created_by_media_owner==true로
+	 * 작성자 본인 답글이 잡힌다(협업 게시물이라 실제 owner는 sephora — postUsername="rarebeauty"로 불러도
+	 * is_created_by_media_owner 경로가 잡히는지가 이 테스트의 핵심).
+	 */
+	@Test
+	void 댓글_파싱_6건_owner_답글_판정() {
+		HikerClient client = new HikerClient(path -> fixture("comments.json"));
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1);
+
+		assertThat(comments).hasSize(6);
+		assertThat(comments).filteredOn(c -> c.ownerReplyText() != null).hasSize(3);
+
+		var withReply = comments.stream().filter(c -> c.id().equals("18197804143375437")).findFirst().orElseThrow();
+		assertThat(withReply.author()).isEqualTo("colorowyy");
+		assertThat(withReply.body()).isEqualTo("IT WAS AMAZING EXPERIENCE 💚");
+		assertThat(withReply.likeCount()).isEqualTo(84L);
+		assertThat(withReply.commentedAt()).isEqualTo(Instant.ofEpochSecond(1785255052L));
+		assertThat(withReply.ownerReplyText()).contains("so glad you were a part of it");
+
+		var withoutReply = comments.stream()
+				.filter(c -> c.id().equals("18197038627373746")).findFirst().orElseThrow();
+		assertThat(withoutReply.ownerReplyText()).isNull();
+	}
+
+	/** 협업 게시물이 아닌 일반 케이스 — is_created_by_media_owner 없이 username 일치만으로도 답글이 잡혀야 한다. */
+	private static final String USERNAME_MATCH_COMMENTS = """
+			{"response":{"comments":[{"pk":"1","text":"댓글","comment_like_count":1,
+			"created_at_utc":1700000000,"user":{"username":"fan1"},
+			"preview_child_comments":[{"is_created_by_media_owner":false,
+			"user":{"username":"RareBeauty"},"text":"고마워요"}]}]},"has_more_comments":false,
+			"next_page_id":null}""";
+
+	@Test
+	void owner_답글_판정은_username_대소문자_무시_일치도_잡는다() {
+		HikerClient client = new HikerClient(path -> USERNAME_MATCH_COMMENTS);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1);
+
+		assertThat(comments).hasSize(1);
+		assertThat(comments.getFirst().ownerReplyText()).isEqualTo("고마워요");
+	}
+
+	/** 필수 필드(pk·text·좋아요·작성 시각·작성자) 중 하나라도 빠지면 저장 대상에서 제외한다. */
+	private static final String MISSING_FIELD_COMMENTS = """
+			{"response":{"comments":[
+			  {"pk":"1","text":"정상","comment_like_count":1,"created_at_utc":1700000000,"user":{"username":"ok"}},
+			  {"text":"pk없음","comment_like_count":1,"created_at_utc":1700000000,"user":{"username":"x"}},
+			  {"pk":"3","comment_like_count":1,"created_at_utc":1700000000,"user":{"username":"x"}},
+			  {"pk":"4","text":"좋아요없음","created_at_utc":1700000000,"user":{"username":"x"}},
+			  {"pk":"5","text":"시간없음","comment_like_count":1,"user":{"username":"x"}},
+			  {"pk":"6","text":"작성자없음","comment_like_count":1,"created_at_utc":1700000000}
+			]},"has_more_comments":false,"next_page_id":null}""";
+
+	@Test
+	void 결손_필드_댓글은_제외된다() {
+		HikerClient client = new HikerClient(path -> MISSING_FIELD_COMMENTS);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1);
+
+		assertThat(comments).hasSize(1);
+		assertThat(comments.getFirst().id()).isEqualTo("1");
+	}
+
+	// ── share 해소(§10-2) ────────────────────────────────────────────────────
+
+	@Test
+	void 단축링크_해소_파싱() {
+		HikerClient client = new HikerClient(path -> fixture("media-info-by-url.json"));
+		MediaRef ref = client.resolveMediaByUrl("https://www.instagram.com/reel/DbV7LgZsKG8/");
+
+		assertThat(ref.shortCode()).isEqualTo("DbV7LgZsKG8");
+		assertThat(ref.username()).isEqualTo("sephora");
+		assertThat(ref.contentType()).isEqualTo("REELS");
+	}
+
+	@Test
+	void 단축링크_해소_400은_ShareLinkUnresolved로() {
+		HikerClient client = new HikerClient(path -> {
+			throw new HikerBadRequestException("400");
+		});
+		assertThatThrownBy(() -> client.resolveMediaByUrl("https://www.instagram.com/share/reel/bad/"))
+				.isInstanceOf(ShareLinkUnresolvedException.class);
+	}
+
+	@Test
+	void 단축링크_해소_404는_SubjectNotFound로() {
+		HikerClient client = new HikerClient(path -> {
+			throw new SubjectNotFoundException("404");
+		});
+		assertThatThrownBy(() -> client.resolveMediaByUrl("https://www.instagram.com/reel/gone/"))
 				.isInstanceOf(SubjectNotFoundException.class);
 	}
 }

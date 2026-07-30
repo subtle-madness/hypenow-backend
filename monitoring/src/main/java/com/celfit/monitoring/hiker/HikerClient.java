@@ -2,6 +2,7 @@ package com.celfit.monitoring.hiker;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -40,7 +41,8 @@ public class HikerClient {
 		// user.pk는 JSON number라 문자열화가 필요하다(findings §2-①).
 		return new ProfileInfo(username, user.path("pk").asString(),
 				firstLong(user, "follower_count"), firstLong(user, "following_count"),
-				firstLong(user, "media_count"), body);
+				firstLong(user, "media_count"),
+				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null), body);
 	}
 
 	/**
@@ -122,6 +124,102 @@ public class HikerClient {
 			throw new HikerFetchException("단건 응답에 소유 계정(user.username)이 없음: " + shortCode);
 		}
 		return post;
+	}
+
+	/**
+	 * 추적 게시물 댓글 — /v2/media/comments?id=<media pk>(findings §10-1). media pk는 저장 없이
+	 * shortcode에서 산술 유도한다({@link ShortCodes}). 결손 필드(pk·text·좋아요·작성 시각·작성자) 댓글은
+	 * 저장 대상이 아니라 리스트에서 제외한다(계약 §3 post_comment).
+	 */
+	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages) {
+		int wanted = Math.max(1, pages);
+		long mediaId = ShortCodes.toMediaId(shortCode);
+		List<CommentInfo> out = new ArrayList<>();
+		String cursor = null;
+		for (int page = 0; page < wanted; page++) {
+			String body = http.get("/v2/media/comments?id=" + mediaId + pageParam(cursor));
+			JsonNode root = root(body);
+			int before = out.size();
+			for (JsonNode c : root.path("response").path("comments")) {
+				CommentInfo comment = toComment(c, postUsername);
+				if (comment != null) {
+					out.add(comment);
+				}
+			}
+			if (page > 0 && out.size() == before) {
+				log.warn("댓글 커서 미전진 의심 — media {} {}페이지에서 새 댓글 0건, 수집 중단", mediaId, page + 1);
+				break;
+			}
+			cursor = nextPageId(root);
+			if (cursor == null || !moreCommentsAvailable(root)) {
+				break;
+			}
+		}
+		return out;
+	}
+
+	private static CommentInfo toComment(JsonNode c, String postUsername) {
+		JsonNode pk = c.path("pk");
+		JsonNode text = c.path("text");
+		JsonNode likeCount = c.path("comment_like_count");
+		JsonNode createdAt = c.path("created_at_utc");
+		JsonNode username = c.path("user").path("username");
+		// 결손 필드 댓글은 프론트에 부분 결손 렌더 경로가 없어 저장하지 않는다(계약 §3).
+		if (pk.isMissingNode() || pk.isNull() || text.isMissingNode() || text.isNull()
+				|| !likeCount.isNumber() || !createdAt.isNumber()
+				|| username.isMissingNode() || username.isNull() || username.asString("").isBlank()) {
+			return null;
+		}
+		return new CommentInfo(pk.asString(), username.asString(), text.asString(), likeCount.asLong(),
+				Instant.ofEpochSecond(createdAt.asLong()), ownerReplyText(c, postUsername));
+	}
+
+	/**
+	 * 작성자 본인 답글 판정 — preview_child_comments 중 is_created_by_media_owner==true 이거나
+	 * 답글 작성자 username이 게시물 소유 계정과 대소문자 무시 일치하는 첫 건(findings §10-1).
+	 * 협업(coauthor) 게시물은 media owner ≠ 추적 계정일 수 있어 두 조건을 or로 본다.
+	 */
+	private static String ownerReplyText(JsonNode c, String postUsername) {
+		for (JsonNode child : c.path("preview_child_comments")) {
+			boolean isOwner = child.path("is_created_by_media_owner").asBoolean(false);
+			String childUsername = child.path("user").path("username").asString(null);
+			boolean usernameMatches = postUsername != null && childUsername != null
+					&& childUsername.equalsIgnoreCase(postUsername);
+			if (isOwner || usernameMatches) {
+				return child.path("text").asString(null);
+			}
+		}
+		return null;
+	}
+
+	/** 댓글 페이지 잔여 플래그 — response.has_more_comments(열거·클립의 more_available과 키가 다르다). */
+	private static boolean moreCommentsAvailable(JsonNode root) {
+		JsonNode flag = root.path("response").path("has_more_comments");
+		return flag.isMissingNode() || flag.isNull() || flag.asBoolean(true);
+	}
+
+	/**
+	 * share 단축 링크 해소 — /v2/media/info/by/url(계약 §2-6). 404는 게시물 부재로 전송 계층이 이미
+	 * SubjectNotFoundException을 던진다. 400(URL 형식 불량)만 여기서 ShareLinkUnresolvedException으로 바꾼다.
+	 */
+	public MediaRef resolveMediaByUrl(String url) {
+		String body;
+		try {
+			body = http.get("/v2/media/info/by/url?url=" + enc(url));
+		} catch (HikerBadRequestException e) {
+			throw new ShareLinkUnresolvedException("URL 해소 실패: " + url);
+		}
+		JsonNode media = root(body).path("media_or_ad");
+		if (media.isMissingNode() || media.isNull()) {
+			throw new HikerFetchException("share 해소 응답에 media_or_ad 없음: " + url);
+		}
+		String code = media.path("code").asString(null);
+		String username = media.path("user").path("username").asString(null);
+		if (code == null || username == null) {
+			throw new HikerFetchException("share 해소 응답 셰이프 이상(code·username 없음): " + url);
+		}
+		String contentType = "clips".equals(media.path("product_type").asString("")) ? "REELS" : "FEED";
+		return new MediaRef(code, username, contentType);
 	}
 
 	private static String pageParam(String cursor) {

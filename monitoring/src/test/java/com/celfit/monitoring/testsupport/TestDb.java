@@ -18,8 +18,22 @@ public final class TestDb {
 		if (container == null) {
 			container = new PostgreSQLContainer("postgres:17-alpine");
 			container.start();
+			// was_reader 역할은 여기서 한 번만 만든다. 예전에는 resetAndMigrate()(JdbcTemplate 기반 테스트만
+			// 호출)가 만들었는데, @SpringBootTest 클래스는 FlywayConfig가 컨텍스트 기동 시 곧장 V2를 적용해서
+			// 역할이 먼저 안 만들어져 있으면 GRANT ... TO was_reader가 "role does not exist"로 죽는다.
+			// 실행 순서가 우연히 맞아떨어질 때만 통과하던 문제라 컨테이너 시작 시점에 못박는다.
+			ensureWasReaderRole();
 		}
 		return container;
+	}
+
+	private static void ensureWasReaderRole() {
+		var ds = dataSource(container);
+		new JdbcTemplate(ds).update("""
+				DO $$ BEGIN
+				  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'was_reader')
+				  THEN CREATE ROLE was_reader LOGIN PASSWORD 'was_reader'; END IF;
+				END $$""");
 	}
 
 	public static DriverManagerDataSource dataSource(PostgreSQLContainer pg) {

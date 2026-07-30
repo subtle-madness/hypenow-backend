@@ -2,6 +2,7 @@ package com.celfit.monitoring.web;
 
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PrivateAccountException;
+import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.CandidateNotFoundException;
 import com.celfit.monitoring.service.InvalidStateException;
@@ -60,6 +61,13 @@ public class ApiExceptionHandler {
 		log.info("비공개 계정: {}", e.getMessage());
 		// UNPROCESSABLE_CONTENT == 422 (Spring 7에서 UNPROCESSABLE_ENTITY가 이 이름으로 대체됨)
 		return body(HttpStatus.UNPROCESSABLE_CONTENT, "PRIVATE_ACCOUNT", "비공개 계정이라 수집할 수 없습니다.");
+	}
+
+	/** share URL 형식 불량·해소 불가(Hiker 400 등) — 계약 §2-6 SHARE_LINK_UNRESOLVED. */
+	@ExceptionHandler(ShareLinkUnresolvedException.class)
+	public ResponseEntity<ApiError> handleShareLinkUnresolved(ShareLinkUnresolvedException e) {
+		log.info("share 링크 해소 불가: {}", e.getMessage());
+		return body(HttpStatus.UNPROCESSABLE_CONTENT, "SHARE_LINK_UNRESOLVED", "공유 링크를 확인해 주세요.");
 	}
 
 	@ExceptionHandler(InvalidStateException.class)

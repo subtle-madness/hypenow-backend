@@ -2,9 +2,14 @@ package com.celfit.monitoring.service;
 
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,21 +25,39 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class SnapshotWriter {
 
-	private final SnapshotRepository snapshots;
+	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-	public SnapshotWriter(SnapshotRepository snapshots) {
+	private final SnapshotRepository snapshots;
+	private final ProfileMetaRepository profileMeta;
+
+	public SnapshotWriter(SnapshotRepository snapshots, ProfileMetaRepository profileMeta) {
 		this.snapshots = snapshots;
+		this.profileMeta = profileMeta;
 	}
 
-	/** 계정 1회 수집분 — 프로필 1행 + 게시물 N행을 한 트랜잭션으로. */
+	/**
+	 * 계정 1회 수집분 — 프로필 1행 + 게시물 N행 + profile_meta 1행을 한 트랜잭션으로(계약 §3 profile_meta).
+	 * last_uploaded_at은 열거된 게시물 taken_at 최댓값의 KST 날짜 — 게시물이 없거나 taken_at이
+	 * 전부 미상이면 null을 넘겨 ProfileMetaRepository가 기존 값을 보존하게 한다.
+	 */
 	@Transactional
 	public void saveAccount(String username, LocalDate on, ProfileInfo profile, List<PostInfo> posts) {
 		snapshots.upsertProfile(username, on, profile);
 		posts.forEach(p -> snapshots.upsertPost(on, p));
+		profileMeta.upsert(username, profile.fullName(), profile.profilePicUrl(), lastUploadedAt(posts));
 	}
 
 	@Transactional
 	public void savePost(LocalDate on, PostInfo post) {
 		snapshots.upsertPost(on, post);
+	}
+
+	private static LocalDate lastUploadedAt(List<PostInfo> posts) {
+		return posts.stream()
+				.map(PostInfo::takenAt)
+				.filter(Objects::nonNull)
+				.max(Comparator.naturalOrder())
+				.map(epoch -> Instant.ofEpochSecond(epoch).atZone(KST).toLocalDate())
+				.orElse(null);
 	}
 }

@@ -6,6 +6,7 @@ import com.celfit.monitoring.domain.CandidateStatus;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
+import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.testsupport.TestDb;
@@ -23,6 +24,8 @@ class StoreTest {
 	CandidateRepository candidates;
 	SnapshotRepository snapshots;
 	RawPayloadRepository rawPayloads;
+	CommentRepository comments;
+	ProfileMetaRepository profileMeta;
 
 	@BeforeEach
 	void setUp() {
@@ -33,6 +36,8 @@ class StoreTest {
 		candidates = new CandidateRepository(db);
 		snapshots = new SnapshotRepository(db);
 		rawPayloads = new RawPayloadRepository(db);
+		comments = new CommentRepository(db);
+		profileMeta = new ProfileMetaRepository(db);
 	}
 
 	@Test
@@ -54,8 +59,8 @@ class StoreTest {
 		long id = targets.insert(TargetType.ACCOUNT, "acct_a", null,
 				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
 				TargetStatus.WATCHING, null, "key-2", Instant.now().plusSeconds(3600));
-		candidates.insertPending(id, "SC1", "…샤넬…");
-		candidates.insertPending(id, "SC1", "…샤넬…");
+		candidates.insertPending(id, "SC1", "…샤넬…", List.of("샤넬"));
+		candidates.insertPending(id, "SC1", "…샤넬…", List.of("샤넬"));
 		assertThat(db.queryForObject("SELECT count(*) FROM detected_candidate", Long.class)).isEqualTo(1);
 	}
 
@@ -64,7 +69,7 @@ class StoreTest {
 		long targetId = targets.insert(TargetType.ACCOUNT, "acct_a", null,
 				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
 				TargetStatus.WATCHING, null, "key-4", Instant.now().plusSeconds(3600));
-		candidates.insertPending(targetId, "SC9", "…샤넬…");
+		candidates.insertPending(targetId, "SC9", "…샤넬…", List.of("샤넬"));
 		long candidateId = db.queryForObject("SELECT id FROM detected_candidate WHERE short_code='SC9'", Long.class);
 
 		var pending = candidates.find(candidateId).orElseThrow();
@@ -80,12 +85,12 @@ class StoreTest {
 		long targetId = targets.insert(TargetType.ACCOUNT, "acct_a", null,
 				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
 				TargetStatus.WATCHING, null, "key-5", Instant.now().plusSeconds(3600));
-		candidates.insertPending(targetId, "SC7", "…샤넬…");
+		candidates.insertPending(targetId, "SC7", "…샤넬…", List.of("샤넬"));
 		long candidateId = db.queryForObject("SELECT id FROM detected_candidate WHERE short_code='SC7'", Long.class);
 		candidates.setStatus(candidateId, CandidateStatus.REJECTED);
 
 		// 다음 스윕에서 같은 게시물이 또 걸려도 DO NOTHING — PENDING으로 되돌아가지 않는다.
-		candidates.insertPending(targetId, "SC7", "…샤넬…");
+		candidates.insertPending(targetId, "SC7", "…샤넬…", List.of("샤넬"));
 
 		assertThat(db.queryForObject("SELECT count(*) FROM detected_candidate", Long.class)).isEqualTo(1);
 		assertThat(candidates.find(candidateId).orElseThrow().status()).isEqualTo(CandidateStatus.REJECTED);
@@ -104,9 +109,9 @@ class StoreTest {
 	@Test
 	void 프로필_스냅샷도_일_1회_upsert() {
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "{}"));
+				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}"));
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "{}"));
+				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "이름", "https://img", "{}"));
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject(
 				"SELECT followers FROM profile_snapshot WHERE username='acct_a'", Long.class)).isEqualTo(120);
@@ -137,5 +142,97 @@ class StoreTest {
 				SELECT payload ->> 'username' FROM raw.fetch_payload
 				WHERE kind='PROFILE' AND subject='acct_a' AND http_status=200""", String.class))
 				.isEqualTo("acct_a");
+	}
+
+	// ── matched_keywords(v1.1) ──────────────────────────────────────────────
+
+	@Test
+	void matched_keywords는_jsonb로_저장되고_조회된다() {
+		long id = targets.insert(TargetType.ACCOUNT, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of("립스틱"), List.of()),
+				TargetStatus.WATCHING, null, "key-mk1", Instant.now().plusSeconds(3600));
+		candidates.insertPending(id, "SCK1", "…샤넬 립스틱…", List.of("샤넬", "립스틱"));
+
+		String json = db.queryForObject("""
+				SELECT matched_keywords::text FROM detected_candidate WHERE target_id=?""",
+				String.class, id);
+		assertThat(json).contains("샤넬", "립스틱");
+	}
+
+	/** v1.1 이전 감지분과 동일한 상황(매칭 키워드를 안 넘긴 경우) — was가 null이면 빈 배열로 폴백한다(계약 §3). */
+	@Test
+	void matched_keywords를_주지_않으면_컬럼도_null이다() {
+		long id = targets.insert(TargetType.ACCOUNT, "acct_a", null,
+				new KeywordRule(List.of("샤넬"), List.of(), List.of()),
+				TargetStatus.WATCHING, null, "key-mk2", Instant.now().plusSeconds(3600));
+		candidates.insertPending(id, "SCK2", "…샤넬…", null);
+
+		Boolean isNull = db.queryForObject("""
+				SELECT matched_keywords IS NULL FROM detected_candidate WHERE target_id=?""",
+				Boolean.class, id);
+		assertThat(isNull).isTrue();
+	}
+
+	// ── post_comment(v1.1) ───────────────────────────────────────────────────
+
+	@Test
+	void 댓글은_게시물당_전량_교체_갱신된다() {
+		var first = new CommentInfo("1", "user1", "본문1", 5L, Instant.parse("2026-07-28T00:00:00Z"), null);
+		comments.replaceForPost("SC1", List.of(first));
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='SC1'", Long.class)).isEqualTo(1);
+
+		var second = new CommentInfo("2", "user2", "본문2", 1L, Instant.parse("2026-07-29T00:00:00Z"), "답글");
+		comments.replaceForPost("SC1", List.of(second));
+
+		var ids = db.queryForList("SELECT id FROM post_comment WHERE short_code='SC1'", String.class);
+		assertThat(ids).containsExactly("2");   // 이전 수집분(1)은 사라지고 이번 수집분만 남는다
+		assertThat(db.queryForObject(
+				"SELECT owner_reply_text FROM post_comment WHERE short_code='SC1'", String.class))
+				.isEqualTo("답글");
+	}
+
+	@Test
+	void 댓글_교체는_다른_게시물에_영향을_주지_않는다() {
+		comments.replaceForPost("SC1", List.of(
+				new CommentInfo("1", "user1", "본문", 1L, Instant.now(), null)));
+		comments.replaceForPost("SC2", List.of(
+				new CommentInfo("2", "user2", "본문", 1L, Instant.now(), null)));
+
+		comments.replaceForPost("SC1", List.of());   // SC1만 전량 비움(예: 재수집 결과 0건)
+
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='SC1'", Long.class)).isZero();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM post_comment WHERE short_code='SC2'", Long.class)).isEqualTo(1);
+	}
+
+	// ── profile_meta(v1.1) ───────────────────────────────────────────────────
+
+	@Test
+	void 프로필_메타는_upsert된다() {
+		profileMeta.upsert("acct_a", "표시이름", "https://img/1.jpg", LocalDate.of(2026, 7, 20));
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
+		assertThat(row.get("profile_image_url")).isEqualTo("https://img/1.jpg");
+		assertThat(row.get("last_uploaded_at")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 20)));
+
+		profileMeta.upsert("acct_a", "새이름", "https://img/2.jpg", LocalDate.of(2026, 7, 25));
+		var updated = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(updated.get("display_name")).isEqualTo("새이름");
+		assertThat(updated.get("last_uploaded_at")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 25)));
+	}
+
+	/** 열거 0건(POST 단독 스윕 등)으로 lastUploadedAt이 null이면 기존 최근 게시일을 지우지 않는다. */
+	@Test
+	void last_uploaded_at이_null이면_기존_값을_보존한다() {
+		profileMeta.upsert("acct_a", "이름", "https://img", LocalDate.of(2026, 7, 20));
+
+		profileMeta.upsert("acct_a", "이름", "https://img", null);
+
+		assertThat(db.queryForObject(
+				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class))
+				.isEqualTo(LocalDate.of(2026, 7, 20));
 	}
 }

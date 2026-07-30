@@ -40,6 +40,10 @@ public class JdkHikerHttp implements HikerHttp {
 				// 대상 부재(계정 삭제·개명 등) — 재시도 무의미, 호출자가 종결 처리
 				throw new SubjectNotFoundException("Hiker 404: " + res.body());
 			}
+			if (res.statusCode() == 400) {
+				// 요청 형식 불량 — share 해소(§2-6)는 이를 SHARE_LINK_UNRESOLVED로 갈아 끼운다.
+				throw new HikerBadRequestException("Hiker 400: " + res.body());
+			}
 			if (res.statusCode() >= 300) {
 				throw new HikerFetchException("Hiker HTTP " + res.statusCode() + ": " + res.body());
 			}

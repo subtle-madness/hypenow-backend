@@ -36,8 +36,12 @@ if [ -z "$NEW" ] || [ "$(printf '%s\n' "$NEW" | grep -c .)" -ne 1 ]; then
   exit 1
 fi
 
-# 신 컨테이너 = 방금 pull 된 이미지인지 독립 검증 — 잔재 부활 계열(C1)의 근본 방어
-WANT_ID="$(docker image inspect -f '{{.Id}}' "$(docker compose config --images "$SVC" | head -1)")"
+# 신 컨테이너 = 방금 pull 된 이미지인지 독립 검증 — 잔재 부활 계열(C1)의 근본 방어.
+# `config --images <svc>`는 의존 서비스 이미지까지 반환해 head -1이 엉뚱한 서비스를 집는다
+# (07-30 첫 실전 롤링이 analytics 이미지를 기준 삼아 오탐 중단) — config JSON에서 서비스명으로 뽑는다.
+WANT_IMG="$(docker compose config --format json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"][sys.argv[1]]["image"])' "$SVC")"
+WANT_ID="$(docker image inspect -f '{{.Id}}' "$WANT_IMG")"
 if [ "$(docker inspect -f '{{.Image}}' "$NEW")" != "$WANT_ID" ]; then
   echo "중단: 신 $SVC 컨테이너가 최신 이미지가 아님(구 잔재 부활 의심) — 신만 제거" >&2
   docker rm -f "$NEW" >/dev/null
