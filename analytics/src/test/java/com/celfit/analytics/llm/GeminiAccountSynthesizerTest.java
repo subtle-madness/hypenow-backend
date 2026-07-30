@@ -85,6 +85,19 @@ class GeminiAccountSynthesizerTest {
 		assertTrue(system.contains("구체 수치를 문장에 그대로 인용하지 마라"), system);
 	}
 
+	/**
+	 * LlmGuard의 "핵심 주장에는 근거 수치를 함께 인용하라"는 콘텐츠 경로 전용 지시다 — 계정 카피
+	 * perfSummary 절의 수치 인용 금지와 정면 충돌해 test 실측(2026-07-30, {@code 0_tsuki2})에서
+	 * "평균 좋아요 수는 1,605개 수준"처럼 낡는 수치가 박혔다. 계정 카피 프롬프트에는 이 지시가
+	 * 아예 없어야 한다(LlmGuard.ACCOUNT_RULES 채택 확인).
+	 */
+	@Test
+	void 지시문에_근거_수치_인용_지시가_없다() {
+		String system = GeminiAccountSynthesizer.instructions(vocab(), PerfConfidence.none());
+		assertTrue(system.contains("[절제 규칙 — 반드시 지켜라]"), system);
+		assertTrue(!system.contains("핵심 주장에는 근거 수치를 함께 인용하라"), system);
+	}
+
 	/** 어휘 통제(2026-07-29 스펙 §3-2): traits는 어휘 내 선택만 — 어휘 블록이 축별 구획으로 실린다. */
 	@Test
 	void 지시문이_어휘_내_선택을_강제하고_어휘_블록을_담는다() {
