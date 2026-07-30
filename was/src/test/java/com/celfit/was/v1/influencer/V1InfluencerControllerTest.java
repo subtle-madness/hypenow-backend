@@ -57,7 +57,7 @@ class V1InfluencerControllerTest {
 				OffsetDateTime.parse("2026-07-02T03:00:00Z"), "reels", new BigDecimal("20"),
 				"https://ig/" + code, 1000L, 100L, 10L, 500L,
 				OffsetDateTime.parse("2026-07-05T03:00:00Z"), "makeup", null, "organic", null, null, null,
-				"hype_official", "하입 오피셜", "https://pic/hype.jpg", 12345L);
+				"hype_official", "하입 오피셜", "https://pic/hype.jpg", 12345L, new BigDecimal("500"));
 	}
 
 	@Test

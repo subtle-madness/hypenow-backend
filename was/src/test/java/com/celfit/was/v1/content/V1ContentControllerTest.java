@@ -61,7 +61,7 @@ class V1ContentControllerTest {
 				OffsetDateTime.parse("2026-07-02T03:00:00Z"), "reels", new BigDecimal("20"),
 				"https://ig/" + code, 1000L, 100L, 10L, 500L,
 				OffsetDateTime.parse("2026-07-05T03:00:00Z"), "makeup", null, "organic", null, null, null,
-				"alpha", "알파", "https://pic/alpha.jpg", 5000L);
+				"alpha", "알파", "https://pic/alpha.jpg", 5000L, new BigDecimal("500"));
 	}
 
 	// 로그인 월(07-17) — 읽기도 인증 필수라 "비로그인 개인화 필드 없음" 계약은 401로 대체됐다
