@@ -419,7 +419,7 @@ git commit -m "feat(deploy): 서버 셋업·배포·터널·백업 스크립트 
 ````markdown
 # 운영 런북 — was+DB 오라클 배포
 
-스펙: [2026-07-15-oracle-deploy-design.md](../docs/superpowers/specs/2026-07-15-oracle-deploy-design.md)
+스펙: [2026-07-15-oracle-deploy-design.md](../specs/2026-07-15-oracle-deploy-design.md)
 
 ## 0. 준비물 (사용자 직접)
 - 오라클 계정 (홈 리전 **도쿄** — 춘천은 무료 A1 생성 불가. 해외 결제 가능 신용카드)
@@ -524,7 +524,7 @@ git commit -m "docs(deploy): 운영 런북 — 인스턴스 생성~기동~배포
 - [ ] **Step 1: §7 결정 기록 맨 위에 추가**
 
 ```markdown
-| 2026-07-15 | **was+DB 오라클 배포 체계 + 도메인 hypenow.io** — 배포 범위는 was+analysis DB만(크롤·분석은 로컬 유지, 미러가 SSH 터널로 push). 오라클 A1 무료(도쿄, 2/12) + docker compose 3컨테이너(postgres 루프백/was/caddy HTTPS), 이미지 GHCR multi-arch로 타사 30분 이사 가능 구조. 일일 pg_dump+맥 pull 백업. 도메인 확보: 프론트 `www.hypenow.io`(Vercel) / API `api.hypenow.io` — 프론트 연동은 Vercel rewrite로 같은 오리진화(CSRF 쿠키), prod CORS는 www.hypenow.io만. was `prod`·analytics `cloud` 프로파일 신설 — Flyway `*:missing` 완화는 dev 기본값으로 국한(§8 해소) | [specs/2026-07-15-oracle-deploy-design.md](docs/superpowers/specs/2026-07-15-oracle-deploy-design.md) |
+| 2026-07-15 | **was+DB 오라클 배포 체계 + 도메인 hypenow.io** — 배포 범위는 was+analysis DB만(크롤·분석은 로컬 유지, 미러가 SSH 터널로 push). 오라클 A1 무료(도쿄, 2/12) + docker compose 3컨테이너(postgres 루프백/was/caddy HTTPS), 이미지 GHCR multi-arch로 타사 30분 이사 가능 구조. 일일 pg_dump+맥 pull 백업. 도메인 확보: 프론트 `www.hypenow.io`(Vercel) / API `api.hypenow.io` — 프론트 연동은 Vercel rewrite로 같은 오리진화(CSRF 쿠키), prod CORS는 www.hypenow.io만. was `prod`·analytics `cloud` 프로파일 신설 — Flyway `*:missing` 완화는 dev 기본값으로 국한(§8 해소) | [specs/2026-07-15-oracle-deploy-design.md](../specs/2026-07-15-oracle-deploy-design.md) |
 ```
 
 - [ ] **Step 2: §8 미결 표의 "Flyway missing 완화 국한" 행을 갱신**

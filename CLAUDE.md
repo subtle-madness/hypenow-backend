@@ -2,8 +2,11 @@
 
 ## 세션 시작
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)를 먼저 읽는다** — 시스템 구조·작업 트랙 상태·결정 기록의 기준(살아있는 문서).
-- 구조나 태스크 상태가 바뀌는 작업을 했으면 ARCHITECTURE.md의 §5(작업 트랙 표)와 §7(결정 기록)을 같이 갱신한다.
+- **[ARCHITECTURE.md](ARCHITECTURE.md)를 먼저 읽는다** — 구조·경계·원칙만 담은 경량 문서(살아있는 문서, 항상 최신).
+  결정 기록([DECISIONS.md](DECISIONS.md))·작업 트랙 상세(§5)는 필요할 때만 연다.
+- 구조가 바뀌는 작업을 했으면 ARCHITECTURE.md §5(작업 트랙 표)를 갱신한다. 새 결정은
+  [DECISIONS.md](DECISIONS.md) 맨 위에 추가한다 — ARCHITECTURE.md §7은 그 파일로의 포인터 스텁이라
+  갱신 대상이 아니다.
 - 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변) /
   `docs/superpowers/plans/`(구현 계획 — 실행 완료 시 `plans/archive/`로 이동).
   dated 문서는 첫머리 상태 헤더(`> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 · ⏸ 보류`)를 유지한다.
@@ -98,3 +101,6 @@
   콘텐츠의 timely 여부는 분석 완료 전엔 어디에도 영속화되지 않는다(`v_analysis_candidates.timely`가
   유일한 판정 지점) — `content_analyses` 단독 카운트나 즉석 쿼리는 "제때창(3일) 놓쳐서 분석 안
   함(영구 제외·상세 트랙)"과 "분석 대상인데 대기"를 뭉갠다(07-21·07-28 오답 전력).
+- **뷰 이름·컬럼명·API 경로 등을 grep할 때는 `docs/`를 제외한다** — `docs/`가 3.9MB 한글 마크다운이라
+  문서 히트가 코드보다 많아 실제 정의·사용처 탐색이 묻힌다. 예:
+  `grep -rn 'v_account_summaries' --exclude-dir=docs .`

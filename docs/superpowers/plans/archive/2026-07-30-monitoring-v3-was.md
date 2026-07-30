@@ -4,7 +4,7 @@
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 프론트 모니터링 v3 계약(6.25~6.33, [contracts/monitoring-frontend-api-spec.md](../../contracts/monitoring-frontend-api-spec.md))을 기존 monitoring seam 위에 was `/v1` API 9종 + 크론 2종으로 구현한다.
+**Goal:** 프론트 모니터링 v3 계약(6.25~6.33, [contracts/monitoring-frontend-api-spec.md](../../../contracts/monitoring-frontend-api-spec.md))을 기존 monitoring seam 위에 was `/v1` API 9종 + 크론 2종으로 구현한다.
 
 **Architecture:** 수집·감지는 monitoring 모듈(별도 컨테이너, 팀원 소유)이 담당하고 was는 그 위의 유저 표면이다. was는 ① app 스키마에 유저 소유 데이터(추적 행·캠페인·처리 내역·다이제스트·알림 설정)를 보관하고 ② monitoring 명령 API(등록·승인·거절·연장·해지)와 읽기 전용 조회 표면으로 target을 오케스트레이션하며 ③ 프론트 상태 6종·알림 이벤트 4종을 monitoring 원시 상태에서 **유도**한다(영속화 최소). 승인 큐는 was가 자동 approve 크론으로 대행해 프론트에는 승인 없는 자동 수집으로 보인다.
 
@@ -15,7 +15,7 @@
 ## 전제 (실행 전 확인)
 
 1. ~~PR #183 머지 선행~~ → **#183은 2026-07-30 클로즈됨(방향 전환).** 클로즈 코멘트: 알람은 monitoring 서버의 알람 모듈로 이전, 감지→승인 플로우 제거, target.user_id 저장, 알람 이벤트 대장, 이벤트 어휘 4종 신규. 따라서 ① 이 계획의 마이그레이션은 **V15**(develop 최신이 V14), 옵트아웃 테이블은 교체가 아니라 **v3 어휘로 신규 생성** ② mail 인프라 반입은 보류 — **이메일 발송 주체(monitoring vs was)가 새 계약 미결 포인트**(확장 요구 문서에 질의 추가) ③ Task 13(자동 승인 크론)·Task 14(이벤트 유도)는 monitoring 새 계약 확정 시 대폭 단순화되므로 **monitoring 무관 태스크를 먼저 실행**하고 의존 태스크는 계약 확정 후 착수.
-2. **monitoring P1 확장은 팀원 병행** ([contracts/monitoring-v3-extension-request.md](../../contracts/monitoring-v3-extension-request.md)) — 팀원이 이미 같은 방향(#183 클로즈 코멘트)의 개편을 선언했으므로 요구 문서와 새 설계의 정합을 확인한다. was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`)는 P1 확장(post_meta·tracked_hidden_at·fetch_failing·sweep_run)을 **계약 유도로 선반영**해 작성하고, 팀원 실구현 확정 시 대조한다(07-29 이메일 알람과 같은 관례). P1 합류 전 개통 불가 항목: hidden/error 상태, content_issue 알림, 캡션·썸네일·게시일 실값.
+2. **monitoring P1 확장은 팀원 병행** ([contracts/monitoring-v3-extension-request.md](../../../contracts/monitoring-v3-extension-request.md)) — 팀원이 이미 같은 방향(#183 클로즈 코멘트)의 개편을 선언했으므로 요구 문서와 새 설계의 정합을 확인한다. was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`)는 P1 확장(post_meta·tracked_hidden_at·fetch_failing·sweep_run)을 **계약 유도로 선반영**해 작성하고, 팀원 실구현 확정 시 대조한다(07-29 이메일 알람과 같은 관례). P1 합류 전 개통 불가 항목: hidden/error 상태, content_issue 알림, 캡션·썸네일·게시일 실값.
 
 **실행 순서(의존성 기준 재배열):** monitoring 무관 — Task 1(V15)→2→3→4(캠페인)→5(알림 설정)→6(파서)→7(등록 동기 구간)→9(처리 내역)→15(알림 API) / monitoring 계약 의존(신 계약 확정 후) — Task 8(실행기)→10·11(어셈블러·목록)→12(수정·취소)→13(자동 승인 — 신 계약에서 불필요해지면 삭제)→14(다이제스트)→16(탈퇴)→17(마무리).
 3. 운영은 `MONITORING_ENABLED=false`·V13 테이블 0행(미개통) — V16의 파괴적 재구성이 안전한 근거다. 실행 전 운영 DB에서 `SELECT count(*) FROM app.monitoring_campaigns`가 0인지 확인한다.
