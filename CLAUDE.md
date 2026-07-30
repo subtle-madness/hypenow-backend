@@ -75,6 +75,13 @@
 - `docker compose up`은 디렉토리명 기반 프로젝트로 **빈 컨테이너를 새로 만든다** — 실데이터는
   기존 컨테이너(`crawler-postgres-1`, 머신에 따라 이름 상이)에 있음. `docker start`로 기동할 것.
 - `.env`는 JVM에 자동 로드되지 않는다 — `APIFY_TOKEN` 등은 셸 `export` 필요.
+- **셸에 `DOCKER_HOST`가 없으면 Testcontainers 테스트가 대량 실패한다** — colima 소켓은
+  `unix://$HOME/.colima/default/docker.sock`이고, 미설정 시 `DockerClientProviderStrategy` 초기화가
+  깨져 통합 테스트가 무더기로 죽는다(07-30 실측: `:was:test` 714개 중 331개 실패). **테스트 코드
+  결함이나 플레이키로 오진하기 쉬운 실패 양상**이니, 대량 실패를 보면 먼저 이걸 확인할 것.
+  ```
+  export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+  ```
 - Spring Boot 4 주의: `@WebMvcTest`는 `org.springframework.boot.webmvc.test.autoconfigure` 패키지,
   Testcontainers 2.x는 `org.testcontainers.postgresql.PostgreSQLContainer`.
 - **피드 게시물은 조회수(views)가 항상 NULL** — 조회수 집계·비율 계산에는 항상 NULL 규칙이 따라붙는다.
