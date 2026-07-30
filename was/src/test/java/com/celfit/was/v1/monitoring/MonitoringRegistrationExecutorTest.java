@@ -14,6 +14,7 @@ import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.RegistrationEntryRow;
 import com.celfit.was.monitoring.RegistrationRepository;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -251,6 +252,26 @@ class MonitoringRegistrationExecutorTest extends IntegrationTest {
 
 		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
 		server.verify();
+	}
+
+	@Test
+	void 취소된_행은_백그라운드_등록을_건너뛴다() {
+		// 접수(6.27) 커밋 ~ 백그라운드 첫 확인 사이에 6.30 cancel이 먼저 온 경합 — item은
+		// markCanceled로 이미 종결됐지만 entry는 여전히 pending인 채 남아 있다(V1MonitoringItemUpdateService
+		// 참조). 실행기는 target 생성 없이 건너뛰어야 한다(monitoring에 등록 요청을 보내면 안 됨).
+		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "CANCELED1",
+				"https://www.instagram.com/p/CANCELED1/", null, 14, LocalDate.of(2026, 7, 30));
+		long registrationId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(registrationId, 0, "https://www.instagram.com/p/CANCELED1/", "post",
+				"pending", null, null, null, itemId);
+		itemRepository.markCanceled(itemId, "detecting", OffsetDateTime.now());
+
+		executor.submit(registrationId);
+
+		assertThat(itemRepository.findByIdAndUser(itemId, userId).orElseThrow().targetId()).isNull();
+		RegistrationEntryRow entry = onlyEntry(registrationId);
+		assertThat(entry.result()).isEqualTo("pending");   // 취소된 행은 건드리지 않고 원상태로 둔다
+		server.verify();   // 등록되지 않았어야 하므로 /api/targets로 어떤 요청도 안 갔다(기대 0건)
 	}
 
 	@Test

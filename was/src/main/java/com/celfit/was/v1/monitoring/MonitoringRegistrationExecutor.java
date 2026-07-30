@@ -145,6 +145,13 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 	}
 
 	private void processItem(RegistrationEntryRow entry, MonitoringItemRow item) {
+		if (item.canceledAt() != null) {
+			// 접수(6.27)~백그라운드 첫 확인 사이에 6.30 cancel이 먼저 온 경우 — target 생성 없이
+			// pending 그대로 종결(취소는 이미 markCanceled로 반영됨). entry는 success/failed/duplicate
+			// 어휘에 "취소" 개념이 없어 원상태(pending) 그대로 둔다(위 itemOpt.isEmpty() 분기와 동일 패턴).
+			log.info("취소된 행 — 백그라운드 등록 건너뜀 itemId={}", item.id());
+			return;
+		}
 		RegisterRequest request = toRegisterRequest(item);
 		try {
 			RegisterResult result = registerWithRetry(request);
@@ -195,7 +202,7 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		long itemId = itemRepository.insertPending(userId, MODE_URL, itemKey, registration.campaignId(),
 				resolved.shortCode(), canonicalUrl, null, trackingDays, registeredOn);
 
-		OffsetDateTime expiresAt = computeExpiresAt(registeredOn, trackingDays);
+		OffsetDateTime expiresAt = MonitoringExpiry.computeExpiresAt(registeredOn, trackingDays);
 		try {
 			RegisterResult result = registerWithRetry(RegisterRequest.post(itemKey, userId, resolved.shortCode(),
 					expiresAt));
@@ -238,7 +245,7 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 	}
 
 	private RegisterRequest toRegisterRequest(MonitoringItemRow item) {
-		OffsetDateTime expiresAt = computeExpiresAt(item.registeredOn(), item.trackingDays());
+		OffsetDateTime expiresAt = MonitoringExpiry.computeExpiresAt(item.registeredOn(), item.trackingDays());
 		if (MODE_ACCOUNT.equals(item.mode())) {
 			return RegisterRequest.account(item.registrationKey(), item.userId(), item.inputValue(),
 					readKeywordRule(item.keywords()), expiresAt);
@@ -278,11 +285,6 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 	private static String canonicalUrl(ShareResolveResult resolved) {
 		String type = "REELS".equals(resolved.contentType()) ? "reel" : "p";
 		return "https://www.instagram.com/" + type + "/" + resolved.shortCode() + "/";
-	}
-
-	/** 유도표 공식: registered_on + tracking_days일의 KST 자정(exclusive). */
-	private static OffsetDateTime computeExpiresAt(LocalDate registeredOn, int trackingDays) {
-		return registeredOn.plusDays(trackingDays).atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 	}
 
 	private static String mapReasonCode(String monitoringCode) {

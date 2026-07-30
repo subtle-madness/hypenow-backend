@@ -11,7 +11,9 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -20,10 +22,21 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
+import com.celfit.was.monitoring.CancelResult;
+import com.celfit.was.monitoring.ExtendResult;
+import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.monitoring.MonitoringItemRow;
+import com.celfit.was.monitoring.MonitoringReadRepository;
+import com.celfit.was.monitoring.MonitoringUnavailableException;
+import com.celfit.was.monitoring.TargetRow;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,13 +49,17 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.celfit.was.monitoring.RegistrationRepository;
 
 /**
- * /v1/monitoring/items POST(스펙 6.27) — 구조 검증 400 전종·201 정상(혼합 등록)·campaign 동봉
- * 조건·전체 실패 시 빈 items·nullable 키 명시적 존재를 컨트롤러 슬라이스로 검증한다. V1CampaignService는
- * 실 빈으로 붙여 resolveOrCreate 경로까지 통과시키고, DB 접근은 리포지토리 3종만 mock한다
- * (V1CampaignControllerTest 관용구와 동일).
+ * /v1/monitoring/items 컨트롤러 슬라이스 — POST(6.27) 구조 검증 400 전종·201 정상(혼합 등록)·
+ * campaign 동봉 조건·전체 실패 시 빈 items·nullable 키 명시적 존재, PATCH(6.29) 400 전종·404·
+ * campaign 동봉·503, cancel(6.30) 400 전종·404·상태 전이·503을 검증한다. V1CampaignService는
+ * 실 빈으로 붙여 resolveOrCreate 경로까지 통과시키고, DB·monitoring 접근은 리포지토리·클라이언트를
+ * mock한다(V1CampaignControllerTest 관용구와 동일). MonitoringReadRepository·MonitoringCommandClient는
+ * V1MonitoringItemUpdateService가 Optional로 받으므로, 여기서 mock 빈을 등록해 두면 Optional.of(mock)로
+ * 주입된다(둘 다 등록하지 않아도 컨텍스트는 뜨지만 target 확정 행 케이스를 검증할 수 없다).
  */
 @WebMvcTest(controllers = V1MonitoringItemsController.class, properties = "was.cors.allowed-origins=http://localhost:3000")
-@Import({V1MonitoringRegistrationService.class, V1CampaignService.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({V1MonitoringRegistrationService.class, V1MonitoringItemUpdateService.class, V1CampaignService.class,
+		V1ExceptionAdvice.class, SecurityConfig.class})
 class V1MonitoringItemsControllerTest {
 
 	@Autowired
@@ -56,6 +73,10 @@ class V1MonitoringItemsControllerTest {
 	CampaignRepository campaignRepository;
 	@MockitoBean
 	RegistrationExecutor executor;
+	@MockitoBean
+	MonitoringReadRepository readRepository;
+	@MockitoBean
+	MonitoringCommandClient commandClient;
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
@@ -65,6 +86,27 @@ class V1MonitoringItemsControllerTest {
 	@BeforeEach
 	void 등록_요청_기본_스텁() {
 		given(registrationRepository.insert(anyLong(), anyInt(), any())).willReturn(555L);
+	}
+
+	private static MonitoringItemRow accountItem(long id, Long targetId, LocalDate registeredOn) {
+		return new MonitoringItemRow(id, 7L, "account", UUID.randomUUID(), targetId, null, "glowdeep", null,
+				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, registeredOn, null, null, null, OffsetDateTime.now());
+	}
+
+	private static MonitoringItemRow urlItem(long id, Long targetId, LocalDate registeredOn) {
+		return new MonitoringItemRow(id, 7L, "url", UUID.randomUUID(), targetId, null, "ABC123",
+				"https://www.instagram.com/p/ABC123/", null, 14, registeredOn, null, null, null, OffsetDateTime.now());
+	}
+
+	private static MonitoringItemRow canceledItem(long id, String canceledFrom, LocalDate registeredOn) {
+		return new MonitoringItemRow(id, 7L, "account", UUID.randomUUID(), null, null, "glowdeep", null,
+				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, registeredOn, OffsetDateTime.now(), canceledFrom, null,
+				OffsetDateTime.now());
+	}
+
+	private static TargetRow targetRow(String status, String username, String trackedShortCode) {
+		return new TargetRow(900L, "ACCOUNT", username, null, null, status, trackedShortCode, null, "key",
+				OffsetDateTime.now(), OffsetDateTime.now(), null, null, null);
 	}
 
 	@Test
@@ -348,5 +390,275 @@ class V1MonitoringItemsControllerTest {
 				.andExpect(jsonPath("$.data.items[0].post").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.items[0]", Matchers.hasKey("profileImageUrl")))
 				.andExpect(jsonPath("$.data.items[0].profileImageUrl").value(Matchers.nullValue()));
+	}
+
+	// ── PATCH /v1/monitoring/items/{itemId} (6.29) ─────────────────────────────
+
+	@Test
+	void PATCH_존재하지_않는_itemId는_404() throws Exception {
+		given(itemRepository.findByIdAndUser(999L, 7L)).willReturn(Optional.empty());
+
+		mockMvc.perform(patch("/v1/monitoring/items/999").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void PATCH_숫자가_아닌_itemId도_404() throws Exception {
+		mockMvc.perform(patch("/v1/monitoring/items/abc").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void PATCH_trackingDays_0은_400() throws Exception {
+		given(itemRepository.findByIdAndUser(10L, 7L))
+				.willReturn(Optional.of(accountItem(10L, null, LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(patch("/v1/monitoring/items/10").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":0}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void PATCH_trackingDays_91은_400() throws Exception {
+		given(itemRepository.findByIdAndUser(11L, 7L))
+				.willReturn(Optional.of(accountItem(11L, null, LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(patch("/v1/monitoring/items/11").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":91}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void PATCH_변경후_종료일이_오늘_이후가_아니면_400() throws Exception {
+		// registeredOn+10일 = 오늘-10일 — "당일 종료도 거부" 포함해 오늘 이후가 아닌 경우 전부 400.
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST).minusDays(20);
+		given(itemRepository.findByIdAndUser(12L, 7L)).willReturn(Optional.of(accountItem(12L, null, registeredOn)));
+
+		mockMvc.perform(patch("/v1/monitoring/items/12").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":10}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
+	@Test
+	void PATCH_종결_상태에서_trackingDays_변경은_400_현재_상태_안내() throws Exception {
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);   // +30일 = 미래 — 종료일 검증은 통과, 상태만 걸린다.
+		given(itemRepository.findByIdAndUser(13L, 7L))
+				.willReturn(Optional.of(canceledItem(13L, "tracking", registeredOn)));   // canceled_from=tracking → 유도 status=ended
+
+		mockMvc.perform(patch("/v1/monitoring/items/13").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"))
+				.andExpect(jsonPath("$.error.message", Matchers.containsString("종료")));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
+	@Test
+	void PATCH_campaignId_campaignName_동시_전달은_400() throws Exception {
+		given(itemRepository.findByIdAndUser(14L, 7L))
+				.willReturn(Optional.of(urlItem(14L, null, LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(patch("/v1/monitoring/items/14").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"campaignId\":\"1\",\"campaignName\":\"이름\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void PATCH_존재하지_않는_campaignId는_404() throws Exception {
+		given(itemRepository.findByIdAndUser(15L, 7L))
+				.willReturn(Optional.of(urlItem(15L, null, LocalDate.now(KstTimestamps.KST))));
+		given(campaignRepository.findByIdAndUser(999L, 7L)).willReturn(Optional.empty());
+
+		mockMvc.perform(patch("/v1/monitoring/items/15").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"campaignId\":\"999\"}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void PATCH_campaignName으로_신규_생성되면_campaign이_동봉된다() throws Exception {
+		given(itemRepository.findByIdAndUser(16L, 7L))
+				.willReturn(Optional.of(urlItem(16L, null, LocalDate.now(KstTimestamps.KST))));
+		given(campaignRepository.findByNameAndUser(eq("새 캠페인"), eq(7L))).willReturn(Optional.empty());
+		given(campaignRepository.insert(eq(7L), eq("새 캠페인"), isNull(), isNull(), isNull(), isNull(), isNull()))
+				.willReturn(new CampaignRow(50L, 7L, "새 캠페인", null, null, null, null, null,
+						OffsetDateTime.parse("2026-07-30T00:00:00Z")));
+
+		mockMvc.perform(patch("/v1/monitoring/items/16").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"campaignName\":\"새 캠페인\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.campaign.id").value("50"))
+				.andExpect(jsonPath("$.data.campaign.name").value("새 캠페인"))
+				.andExpect(jsonPath("$.data.campaignId").value("50"))
+				.andExpect(jsonPath("$.data.campaignName").value("새 캠페인"));
+
+		then(itemRepository).should().updateCampaign(16L, 50L);
+	}
+
+	@Test
+	void PATCH_기존_캠페인에_연결되면_campaign을_동봉하지_않는다() throws Exception {
+		given(itemRepository.findByIdAndUser(17L, 7L))
+				.willReturn(Optional.of(urlItem(17L, null, LocalDate.now(KstTimestamps.KST))));
+		given(campaignRepository.findByNameAndUser(eq("기존 캠페인"), eq(7L)))
+				.willReturn(Optional.of(new CampaignRow(60L, 7L, "기존 캠페인", null, null, null, null, null,
+						OffsetDateTime.parse("2026-07-01T00:00:00Z"))));
+
+		mockMvc.perform(patch("/v1/monitoring/items/17").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"campaignName\":\"기존 캠페인\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data", Matchers.not(Matchers.hasKey("campaign"))))
+				.andExpect(jsonPath("$.data.campaignId").value("60"));
+	}
+
+	@Test
+	void PATCH_campaignName_null이면_캠페인_연결이_해제된다() throws Exception {
+		given(itemRepository.findByIdAndUser(18L, 7L))
+				.willReturn(Optional.of(urlItem(18L, null, LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(patch("/v1/monitoring/items/18").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"campaignName\":null}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.campaignId").value(Matchers.nullValue()))
+				.andExpect(jsonPath("$.data.campaignName").value(Matchers.nullValue()));
+
+		then(itemRepository).should().updateCampaign(18L, null);
+	}
+
+	@Test
+	void PATCH_target_확정_행은_상태와_소문자_핸들을_유도해_응답한다() throws Exception {
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
+		given(itemRepository.findByIdAndUser(19L, 7L)).willReturn(Optional.of(accountItem(19L, 900L, registeredOn)));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.extend(eq(900L), any())).willReturn(new ExtendResult(900L, OffsetDateTime.now()));
+
+		mockMvc.perform(patch("/v1/monitoring/items/19").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.status").value("tracking"))
+				.andExpect(jsonPath("$.data.handle").value("glowdeep"))
+				.andExpect(jsonPath("$.data.post").value(Matchers.nullValue()));
+	}
+
+	@Test
+	void PATCH_target_확정_행의_연장_실패면_503이고_Retry_After가_있다() throws Exception {
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
+		given(itemRepository.findByIdAndUser(20L, 7L)).willReturn(Optional.of(accountItem(20L, 900L, registeredOn)));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.extend(eq(900L), any())).willThrow(new MonitoringUnavailableException("연결 실패", null));
+
+		mockMvc.perform(patch("/v1/monitoring/items/20").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(header().string("Retry-After", "5"));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
+	// ── POST /v1/monitoring/items/{itemId}/cancel (6.30) ───────────────────────
+
+	@Test
+	void cancel_존재하지_않는_itemId는_404() throws Exception {
+		given(itemRepository.findByIdAndUser(999L, 7L)).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/monitoring/items/999/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void cancel_collecting_상태의_pending_url_행은_취소_불가_400() throws Exception {
+		given(itemRepository.findByIdAndUser(21L, 7L))
+				.willReturn(Optional.of(urlItem(21L, null, LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(post("/v1/monitoring/items/21/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(commandClient).should(never()).cancel(anyLong());
+		then(itemRepository).should(never()).markCanceled(anyLong(), anyString(), any());
+	}
+
+	@Test
+	void cancel_이미_종결된_행은_취소_불가_400() throws Exception {
+		given(itemRepository.findByIdAndUser(22L, 7L))
+				.willReturn(Optional.of(canceledItem(22L, "tracking", LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(post("/v1/monitoring/items/22/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void cancel_pending_detecting_행은_monitoring_호출_없이_not_uploaded로_전이한다() throws Exception {
+		given(itemRepository.findByIdAndUser(23L, 7L))
+				.willReturn(Optional.of(accountItem(23L, null, LocalDate.now(KstTimestamps.KST))));
+
+		mockMvc.perform(post("/v1/monitoring/items/23/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.status").value("not_uploaded"))
+				.andExpect(jsonPath("$.data.handle").value("glowdeep"));
+
+		then(commandClient).should(never()).cancel(anyLong());
+		then(itemRepository).should().markCanceled(eq(23L), eq("detecting"), any());
+	}
+
+	@Test
+	void cancel_target_확정_tracking_행은_monitoring_cancel_후_ended로_전이한다() throws Exception {
+		given(itemRepository.findByIdAndUser(24L, 7L)).willReturn(Optional.of(accountItem(24L, 900L,
+				LocalDate.now(KstTimestamps.KST))));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.cancel(900L)).willReturn(new CancelResult(900L, "CANCELED"));
+
+		mockMvc.perform(post("/v1/monitoring/items/24/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.status").value("ended"))
+				.andExpect(jsonPath("$.data.handle").value("glowdeep"));
+
+		then(commandClient).should().cancel(900L);
+		then(itemRepository).should().markCanceled(eq(24L), eq("tracking"), any());
+	}
+
+	@Test
+	void cancel_monitoring_호출_실패면_503이고_Retry_After가_있다() throws Exception {
+		given(itemRepository.findByIdAndUser(25L, 7L)).willReturn(Optional.of(accountItem(25L, 900L,
+				LocalDate.now(KstTimestamps.KST))));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.cancel(900L)).willThrow(new MonitoringUnavailableException("연결 실패", null));
+
+		mockMvc.perform(post("/v1/monitoring/items/25/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(header().string("Retry-After", "5"));
+
+		then(itemRepository).should(never()).markCanceled(anyLong(), anyString(), any());
 	}
 }

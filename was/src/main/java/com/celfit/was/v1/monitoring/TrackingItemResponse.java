@@ -67,4 +67,22 @@ public record TrackingItemResponse(
 				null, registeredOn.toString(), trackingDays, Keywords.from(keywords), null,
 				KstTimestamps.toKstIso(nextCheckAt));
 	}
+
+	/**
+	 * 6.29(PATCH)·6.30(cancel) 응답 조립 — target 확정 행, 또는 취소로 종결된 pending 행처럼
+	 * pendingPost/pendingAccount의 고정 status(collecting/detecting)로는 표현할 수 없는 상태를
+	 * 유도 헬퍼({@link ItemStatus}) 결과값으로 채운다. post·recentComments·profileImageUrl·
+	 * lastUploadedAt 등의 완전 조립은 6.26 어셈블러 후속 태스크 몫이라 지금은 post=null 고정,
+	 * 나머지도 현재 조회 표면에서 값을 알 수 없으면 명시적 null로 넘긴다(계약 무결성 규칙 #1).
+	 */
+	public static TrackingItemResponse interim(long itemId, String mode, String status, String handle,
+			String displayName, String profileImageUrl, Long followers, String lastUploadedAt, Long campaignId,
+			String campaignName, String sourceUrl, LocalDate registeredOn, int trackingDays, Keywords keywords,
+			OffsetDateTime nextCheckAt) {
+		return new TrackingItemResponse(
+				String.valueOf(itemId), mode, status, handle, displayName, profileImageUrl, followers,
+				lastUploadedAt, campaignId == null ? null : String.valueOf(campaignId), campaignName,
+				sourceUrl, registeredOn.toString(), trackingDays, keywords, null,
+				KstTimestamps.toKstIso(nextCheckAt));
+	}
 }
