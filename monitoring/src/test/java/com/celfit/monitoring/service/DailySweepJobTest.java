@@ -289,6 +289,24 @@ class DailySweepJobTest {
 		assertThat(hiker.postCalls).isZero();
 	}
 
+	/**
+	 * taken_at이 완전히 같으면 열거 순서 말고는 결정 근거가 없다 — API 응답 순서에 기대면
+	 * 스윕마다(또는 재정렬 방식이 바뀔 때마다) 채택 게시물이 흔들릴 수 있다.
+	 * short_code 사전순(뒤쪽=최대)으로 고정해 결정론을 확보한다.
+	 */
+	@Test
+	void 게시_시각_동률이면_short_code_사전순으로_결정된다() {
+		hiker.account("someuser", "111",
+				new FakePost("AAA", "Rare Beginnings 신상", AFTER),
+				new FakePost("ZZZ", "Rare Beginnings 앵콜", AFTER));
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		job.run();
+
+		// 사전순 뒤쪽(최대)이 승자 — "AAA"가 열거에서 먼저 나와도 결과가 흔들리지 않는다.
+		assertThat(trackedOf(a)).isEqualTo("ZZZ");
+	}
+
 	/** 전환은 한 번뿐 — 이미 TRACKING인 캠페인은 새 매칭이 떠도 추적 대상이 바뀌지 않는다. */
 	@Test
 	void 이미_추적_중인_캠페인은_새_매칭으로_갈아치우지_않는다() {

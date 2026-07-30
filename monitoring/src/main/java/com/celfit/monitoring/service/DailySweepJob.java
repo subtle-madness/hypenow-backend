@@ -143,7 +143,9 @@ public class DailySweepJob {
 	private static PostInfo firstDetection(TargetRow t, List<PostInfo> posts) {
 		return posts.stream()
 				.filter(p -> postedAfterRegistration(p, t) && t.keywordRule().matches(p.caption()))
-				.max(Comparator.comparing(PostInfo::takenAt))   // 필터가 takenAt != null을 보장한다
+				// taken_at 동률이면 short_code 사전순 — API 응답 순서에 기대지 않는 결정론
+				.max(Comparator.comparing(PostInfo::takenAt)   // 필터가 takenAt != null을 보장한다
+						.thenComparing(PostInfo::shortCode))
 				.orElse(null);
 	}
 

@@ -79,7 +79,7 @@ public class ApiExceptionHandler {
 			HttpStatusCode statusCode = framework.getStatusCode();
 			HttpStatus status = HttpStatus.resolve(statusCode.value());
 			log.warn("계약 밖 요청 — {} {}", statusCode.value(), e.getMessage());
-			// 여기 code는 §2 어휘가 아니다 — 계약 표면(§2의 명령 5종) 밖 요청에만 나간다.
+			// 여기 code는 §2 어휘가 아니다 — 계약 표면(§2의 명령 3종: 등록·연장·해지) 밖 요청에만 나간다.
 			return ResponseEntity.status(statusCode).body(new ApiError(
 					status == null ? "HTTP_" + statusCode.value() : status.name(),
 					status == null ? "요청을 처리할 수 없습니다." : status.getReasonPhrase()));
