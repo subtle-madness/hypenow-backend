@@ -19,8 +19,26 @@
 
 ## 빌드·검증
 
-- 전체 테스트: `./gradlew test` (Java 21, Spring Boot 4.1, Gradle 멀티모듈: crawler/analytics/was)
-- 분석 뷰 검증: SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리) 컨벤션 — 기존 run.sh는 07-12 초기화로 삭제, 태스크 A에서 재구축
+- **테스트는 모듈 단위가 기본**: `./gradlew :was:test`, 단일은 `./gradlew :was:test --tests
+  "com.celfit.was.SomeTest"`. **전체 `./gradlew test`는 PR 직전에만** — `org.gradle.parallel=true`라
+  모듈 4개가 각자 Testcontainers Postgres를 띄워서, 로컬에선 컨테이너 4개가 VM 자원을 두고 경합한다.
+  (Java 21, Spring Boot 4.1, Gradle 멀티모듈: crawler/analytics/was/monitoring)
+- 통합 테스트는 Testcontainers(PostgreSQL) — 로컬 도커는 **colima가 정본**(Docker Desktop 아님).
+  **colima는 8 CPU / 12 GiB 이상으로 기동**한다: 기본값 4 CPU / 4 GiB에서는 병렬 테스트가 VM을 굶겨
+  느려지고, 컨테이너 `now()`가 주기적으로 역행하는 플레이키를 유발한다(07-30 실측 —
+  [test-wall-clock-backward-steps] 계열 원인). 재기동 후 실데이터 컨테이너는 `docker start`로 올릴 것.
+  ```
+  colima stop && colima start --cpu 8 --memory 12
+  ```
+  테스트 시간의 본체는 테스트 로직이 아니라 **컨테이너 부팅 + Flyway 재생**이다(07-30 실측: 68개
+  클래스 64.6초 중 51초가 컨테이너를 띄우는 2개 클래스). 느려졌다고 느끼면 먼저 colima 자원을 볼 것.
+- 정적분석: Error Prone이 `net.ltgt.errorprone` 플러그인으로 컴파일에 붙는다 — ERROR 등급만 빌드 실패,
+  WARNING은 노이즈 감안해 전부 끔(루트 `build.gradle` subprojects 블록).
+- 분석 뷰 검증: SQL 하니스(더미 시드 + BEGIN/ROLLBACK 격리) — `analytics/test/run.sh`(전체) /
+  `analytics/test/run.sh test/NN_*.test.sql`(단일). 실데이터 postgres 컨테이너 필요(기본
+  `crawler-postgres-1`, `PG_CONTAINER`로 오버라이드).
+- CI(`ci.yml`): develop push·develop/main 대상 PR마다 `./gradlew test` 전체 + `sql-harness` 잡(프레시
+  Postgres에 crawler 마이그레이션 전체 적용 후 위 SQL 하니스 실행)이 자동으로 돈다.
 - 실행: `./gradlew :was:bootRun`(8081) / `:crawler:bootRun`(8080, 어드민 `/ui`) / `:analytics:bootRun`(8082, 어드민 `/ui` — 잡 트리거·로그. one-shot 미러는 `--analytics.mirror-on-startup=true --spring.main.web-application-type=none`)
 - 실행(monitoring): `./gradlew :monitoring:bootRun`(8083) — 로컬은 기존 DB 볼륨에 `db/init/02-create-monitoring-db.sql`을 수동 적용해야 뜬다(init 스크립트는 새 볼륨에만 자동 실행).
 - DB: docker `crawler-postgres-1` (포트 5433, crawler/crawler, DB `crawler`·`analysis`) —
