@@ -10,6 +10,12 @@
 
 **설계 문서:** [docs/superpowers/specs/2026-07-30-caption-preservation-design.md](../specs/2026-07-30-caption-preservation-design.md)
 
+> **재채번 이력(07-30):** 이 계획서 곳곳에 등장하는 `V23__content_caption.sql`·
+> `V24__drop_raw_post_detail.sql`은 실행 당시 번호다. develop이 이후 신규 Flyway 마이그레이션의
+> UTC 타임스탬프 채번을 규약화하면서(PR #237), 머지 전이라 안전한 이 두 파일을
+> `V20260730122500__content_caption.sql`·`V20260730122600__drop_raw_post_detail.sql`로
+> 재번호했다(상대 순서 보존). 아래 본문의 V23/V24 언급은 당시 기록 그대로 남긴다.
+
 ---
 
 ## 배경 지식 (이 코드베이스를 모르는 사람을 위해)

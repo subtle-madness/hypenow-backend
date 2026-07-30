@@ -166,6 +166,12 @@ CREATE TABLE content_caption (
 `origin/develop` 기준 최대는 `V21__beauty_foreign_influencer.sql`이므로 **V22부터**.
 **머지 직전 재확인 필수** — 과거 V18 번호 경합 사고 전력이 있다.
 
+> **재채번 이력(07-30):** 실제 구현 중 V22가 open PR #216에 선점돼 V23·V24로 밀렸고(경합
+> 재확인이 실전에서 그대로 발생한 사례), 이후 develop이 신규 Flyway 마이그레이션의 UTC
+> 타임스탬프 채번을 규약화하면서 미머지 상태였던 두 파일을 다시
+> `V20260730122500__content_caption.sql`·`V20260730122600__drop_raw_post_detail.sql`로
+> 재번호했다(상대 순서 보존). 위 "V22부터" 원칙은 설계 당시 컨벤션 기록으로 남겨둔다.
+
 ## 5. CI 안전망 부재 — 주의
 
 [.github/scripts/check-migration-safety.sh](../../../.github/scripts/check-migration-safety.sh)의
