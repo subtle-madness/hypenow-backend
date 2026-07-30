@@ -56,7 +56,7 @@ BEGIN
     'v_content_comments author_masked != dum***';
 END $$;
 
--- hype_score v2 (연속 절대식·타입별 앵커) — 인자 순서 (type, views, likes, comments, followers, elapsed_days)
+-- hype_score v3 (Q 기준 앵커·매핑 후 감쇠) — 인자 순서 (type, views, likes, comments, followers, elapsed_days)
 --   튜닝 상수는 함수가 app_setting에서 직접 읽음(STABLE). 시드가 analytics.% 키를 지워 기본값으로 시작.
 DO $$
 DECLARE lo bigint; hi bigint; mid bigint; base bigint; v_old numeric; v_new numeric;
@@ -93,11 +93,11 @@ BEGIN
   ASSERT hi > lo, format('반감기 100(%s) > 1(%s)', hi, lo);
   DELETE FROM app_setting WHERE key='analytics.hype-fresh-halflife-days';
 
-  -- app_setting 반영 ②: 앵커 (릴스 p50·p90·p99를 크게 올리면 같은 qf가 더 낮은 점수)
+  -- app_setting 반영 ②: 앵커 (릴스 p50·p90·p99를 크게 올리면 같은 Q가 더 낮은 점수)
   base := analytics.hype_score('reels', 50000, 1000, 50, 10000, 3);
   INSERT INTO app_setting(key,value) VALUES
-    ('analytics.hype-anchor-reels-p50','5.0'),('analytics.hype-anchor-reels-p90','8.0'),('analytics.hype-anchor-reels-p99','12.0');
-  ASSERT analytics.hype_score('reels', 50000, 1000, 50, 10000, 3) < base, '앵커 p50↑ → 같은 qf 더 낮은 점수';
+    ('analytics.hype-anchor-q-reels-p50','5.0'),('analytics.hype-anchor-q-reels-p90','8.0'),('analytics.hype-anchor-q-reels-p99','12.0');
+  ASSERT analytics.hype_score('reels', 50000, 1000, 50, 10000, 3) < base, '앵커 p50↑ → 같은 Q 더 낮은 점수';
   DELETE FROM app_setting WHERE key LIKE 'analytics.hype-anchor-%';
 
   -- app_setting 반영 ③: engage 가중치 ↑ → 고참여 콘텐츠 점수 ↑
