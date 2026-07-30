@@ -4,7 +4,10 @@ import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.monitoring.KeywordRule;
 import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.monitoring.MonitoringItemRow;
+import com.celfit.was.monitoring.MonitoringReadRepository;
 import com.celfit.was.monitoring.RegistrationRepository;
+import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import java.time.LocalDate;
@@ -14,6 +17,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -24,14 +28,20 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 등록 접수(6.27) 동기 구간 — 검증 → registration·entries·pending 행 생성 → 실행기 트리거 →
- * 즉시 응답. 실제 첫 확인(크롤)은 {@link RegistrationExecutor}(후속 태스크 구현)가 비동기로 한다.
+ * 즉시 응답. 실제 첫 확인(크롤)은 {@link RegistrationExecutor}가 비동기로 한다.
  *
- * <p>중복 판정: 같은 유저의 진행 중(canceled_at IS NULL) 행과 겹치면 duplicate — target 상태
- * (예: EXPIRED류 종결 상태) 기반의 정교한 "진행 중" 재정의는 어셈블러 태스크에서 target 매핑이
- * 붙은 뒤 재방문한다(TODO, MonitoringItemRepository.findActiveByInput 참조).
+ * <p>중복 판정: 같은 유저의 진행 중(canceled_at IS NULL) 행과 겹치면 duplicate다. target이 아직
+ * 미확정(pending)이면 무조건 진행 중(collecting/detecting)이라 duplicate. target이 확정된 행은
+ * {@link ItemStatus}로 유도한 상태가 종결 3종(not_uploaded/ended/hidden)이면 duplicate 모수에서
+ * 제외한다(계약 6.27 "종결 상태와의 중복은 허용(재등록)" — error는 "진행 중 상태"라 계약대로 계속
+ * duplicate 판정에 포함된다).
  */
 @Service
 public class V1MonitoringRegistrationService {
+
+	/** 종결 3종 — 이 상태의 행과는 중복이 아니다(재등록 허용, 계약 6.27). error는 진행 중이라 제외 대상 아님. */
+	private static final Set<String> TERMINAL_STATUSES =
+			Set.of(ItemStatus.NOT_UPLOADED, ItemStatus.ENDED, ItemStatus.HIDDEN);
 
 	private static final int MAX_ITEMS = 100;
 	private static final int MAX_TRACKING_DAYS = 90;
@@ -52,16 +62,19 @@ public class V1MonitoringRegistrationService {
 	private final V1CampaignService campaignService;
 	private final RegistrationExecutor executor;
 	private final ObjectMapper objectMapper;
+	private final Optional<MonitoringReadRepository> readRepository;
 
 	public V1MonitoringRegistrationService(MonitoringItemRepository itemRepository,
 			RegistrationRepository registrationRepository, CampaignRepository campaignRepository,
-			V1CampaignService campaignService, RegistrationExecutor executor, ObjectMapper objectMapper) {
+			V1CampaignService campaignService, RegistrationExecutor executor, ObjectMapper objectMapper,
+			Optional<MonitoringReadRepository> readRepository) {
 		this.itemRepository = itemRepository;
 		this.registrationRepository = registrationRepository;
 		this.campaignRepository = campaignRepository;
 		this.campaignService = campaignService;
 		this.executor = executor;
 		this.objectMapper = objectMapper;
+		this.readRepository = readRepository;
 	}
 
 	@Transactional
@@ -168,7 +181,7 @@ public class V1MonitoringRegistrationService {
 		// Set.add()는 "이미 봤는지 확인"과 "지금 봤다고 기록"을 한 호출로 겸한다 — 이번 항목이 최초든
 		// 아니든 항상 seen에 남겨야 이후 같은 값의 항목도 계속 duplicate로 잡힌다(부작용 의도적).
 		if (!seenPostShortCodes.add(post.shortCode())
-				|| !itemRepository.findActiveByInput(userId, MODE_URL, post.shortCode()).isEmpty()) {
+				|| hasActiveDuplicate(userId, MODE_URL, post.shortCode())) {
 			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_DUPLICATE,
 					DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
 			return;
@@ -193,7 +206,7 @@ public class V1MonitoringRegistrationService {
 		MonitoringInput.Account account = (MonitoringInput.Account) parsed;
 		// 위 processPost와 동일한 겸용 패턴 — add()가 "이미 봤는지"와 "지금 기록"을 동시에 처리한다.
 		if (!seenAccountHandles.add(account.handle())
-				|| !itemRepository.findActiveByInput(userId, MODE_ACCOUNT, account.handle()).isEmpty()) {
+				|| hasActiveDuplicate(userId, MODE_ACCOUNT, account.handle())) {
 			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT,
 					RESULT_DUPLICATE, DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
 			return;
@@ -206,6 +219,33 @@ public class V1MonitoringRegistrationService {
 				null, null, null, itemId);
 		items.add(TrackingItemResponse.pendingAccount(itemId, account.handle(), keywordRule, context.campaignId(),
 				context.campaignName(), context.registeredOn(), context.trackingDays(), context.nextCheckAt()));
+	}
+
+	/**
+	 * 같은 유저의 진행 중(canceled_at IS NULL) 행 중 target 유도 상태가 종결 3종이 아닌 행이 하나라도
+	 * 있으면 true(계약 6.27 duplicate 판정). target 미확정(pending) 행은 target 조회 없이 항상
+	 * 진행 중으로 친다(collecting/detecting은 종결이 아니므로 무조건 duplicate 기여).
+	 */
+	private boolean hasActiveDuplicate(long userId, String mode, String inputValue) {
+		List<MonitoringItemRow> candidates = itemRepository.findActiveByInput(userId, mode, inputValue);
+		for (MonitoringItemRow candidate : candidates) {
+			if (candidate.targetId() == null) {
+				return true;
+			}
+			String status = ItemStatus.derive(candidate, fetchTarget(candidate.targetId()));
+			if (!TERMINAL_STATUSES.contains(status)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private TargetRow fetchTarget(long targetId) {
+		if (readRepository.isEmpty()) {
+			return null;
+		}
+		List<TargetRow> rows = readRepository.get().findTargets(List.of(targetId));
+		return rows.isEmpty() ? null : rows.get(0);
 	}
 
 	private String writeKeywordsJson(KeywordRule rule) {
