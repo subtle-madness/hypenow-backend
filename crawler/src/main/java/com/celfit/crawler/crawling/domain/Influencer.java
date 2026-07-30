@@ -100,11 +100,12 @@ public class Influencer {
     }
 
     /** 판정 결과 일괄 적용 — 파생 boolean을 beauty_class와 항상 일치시킨다. judgedAt은 호출자 몫. */
-    public void classify(BeautyClass cls, String source, String reason) {
+    public void classify(BeautyClass cls, String source, String reason, String basis) {
         this.beautyClass = cls;
         this.beauty = cls.beauty();
         this.beautyCompany = cls.company();
         this.beautySource = source;
         this.beautyReason = reason;
+        this.beautyBasis = basis;
     }
 }

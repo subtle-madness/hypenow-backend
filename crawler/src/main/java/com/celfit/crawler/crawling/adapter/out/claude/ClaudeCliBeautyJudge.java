@@ -104,9 +104,14 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
                 콘텐츠(INFLUENCER)로 판정하라(한국 계정이 영어 bio를 쓰는 경우가 흔하다).
                 - 한국어·외국어를 섞어 쓰면 주 오디언스가 한국인지 기준으로 판정하라.
                 - 캡션이 빈 배열(미수집)이고 bio만으로 모호하면 이름·bio의 한국어 여부로 판정하라.
+                - category는 계정주가 자율 선택한 미검증 자기신고 필드다 — bio·캡션의 실제 내용과 \
+                상충하면 실제 내용을 우선하라.
                 captions는 최근 게시물 캡션 일부다(앞부분만 잘림·빈 배열은 미수집) — bio가 모호하면 \
                 캡션의 실제 콘텐츠 주제를 근거로 판정하라.
-                출력은 JSON 배열만: [{"username":"...","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|BEAUTY_SERVICE|NOT_BEAUTY","reason":"한 줄"}]
+                basis는 판정의 주근거다 — 캡션의 콘텐츠 주제를 근거로 했으면 CAPTION, bio·이름을 \
+                근거로 했으면 BIO, 캡션도 bio도 근거가 되지 못해 category만 보고 판단했으면 CATEGORY_ONLY.
+                reason(근거)을 먼저 쓰고, 그 근거와 일관된 class를 마지막에 쓰라.
+                출력은 JSON 배열만: [{"username":"...","reason":"한 줄","basis":"CAPTION|BIO|CATEGORY_ONLY","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|BEAUTY_SERVICE|NOT_BEAUTY"}]
                 입력의 모든 username에 대해 정확히 한 항목씩. 다른 텍스트 금지.
 
                 """ + om.writeValueAsString(cards);
@@ -127,16 +132,30 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
             String cls = n.path("class").asString(null);
             if (username == null || username.isBlank() || cls == null) continue;
             // 5분류 외 값(모델 일탈)은 건너뛴다 — 해당 계정은 미판정 유지, 다음 실행 재시도
-            switch (cls) {
-                case "INFLUENCER" -> out.add(new Verdict(username, BeautyClass.INFLUENCER, n.path("reason").asString(null)));
-                case "FOREIGN_INFLUENCER" -> out.add(new Verdict(username, BeautyClass.FOREIGN_INFLUENCER, n.path("reason").asString(null)));
-                case "COMPANY" -> out.add(new Verdict(username, BeautyClass.COMPANY, n.path("reason").asString(null)));
-                case "BEAUTY_SERVICE" -> out.add(new Verdict(username, BeautyClass.BEAUTY_SERVICE, n.path("reason").asString(null)));
-                case "NOT_BEAUTY" -> out.add(new Verdict(username, BeautyClass.NOT_BEAUTY, n.path("reason").asString(null)));
-                default -> { }
-            }
+            BeautyClass parsed = switch (cls) {
+                case "INFLUENCER" -> BeautyClass.INFLUENCER;
+                case "FOREIGN_INFLUENCER" -> BeautyClass.FOREIGN_INFLUENCER;
+                case "COMPANY" -> BeautyClass.COMPANY;
+                case "BEAUTY_SERVICE" -> BeautyClass.BEAUTY_SERVICE;
+                case "NOT_BEAUTY" -> BeautyClass.NOT_BEAUTY;
+                default -> null;
+            };
+            if (parsed == null) continue;
+            out.add(new Verdict(username, parsed, n.path("reason").asString(null),
+                    normalizeBasis(n.path("basis").asString(null))));
         }
         return out;
+    }
+
+    /**
+     * class와 달리 basis는 알 수 없는 값이어도 판정을 버릴 이유가 없다 — 근거 표시만 비우고 판정은 살린다.
+     */
+    private static String normalizeBasis(String basis) {
+        if (basis == null) return null;
+        return switch (basis) {
+            case "CAPTION", "BIO", "CATEGORY_ONLY" -> basis;
+            default -> null;
+        };
     }
 
     /** 모델이 지시를 어기고 ```json 펜스로 감싼 경우 벗긴다. */

@@ -39,9 +39,10 @@ public class GeminiBeautyJudge implements BeautyJudge {
     static final String RESPONSE_SCHEMA = """
             {"type":"array","items":{"type":"object","properties":{
               "username":{"type":"string"},
-              "class":{"type":"string","enum":["INFLUENCER","COMPANY","BEAUTY_SERVICE","NOT_BEAUTY"]},
-              "reason":{"type":"string"}},
-             "required":["username","class","reason"]}}""";
+              "reason":{"type":"string"},
+              "basis":{"type":"string","enum":["CAPTION","BIO","CATEGORY_ONLY"]},
+              "class":{"type":"string","enum":["INFLUENCER","FOREIGN_INFLUENCER","COMPANY","BEAUTY_SERVICE","NOT_BEAUTY"]}},
+             "required":["username","reason","basis","class"]}}""";
 
     private final ObjectMapper om;
     private final String model;

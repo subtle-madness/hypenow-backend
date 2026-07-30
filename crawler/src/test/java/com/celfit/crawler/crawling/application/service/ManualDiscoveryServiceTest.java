@@ -66,7 +66,7 @@ class ManualDiscoveryServiceTest {
         Influencer existing = new Influencer("known.user");
         existing.setId(7L);
         existing.setStatus(InfluencerStatus.QUALIFIED);
-        existing.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "근거");
+        existing.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "근거", null);
         when(influencers.findByUsername("known.user")).thenReturn(Optional.of(existing));
 
         var result = service.register("known.user");
