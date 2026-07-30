@@ -54,6 +54,17 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void delete_후_조회되지_않는다() {
+		long itemId = repository.insertPending(userId, "url", UUID.randomUUID(), null, "abc123",
+				"https://instagram.com/p/abc123", null, 30, LocalDate.of(2026, 7, 30));
+		assertThat(repository.findByIdAndUser(itemId, userId)).isPresent();
+
+		repository.delete(itemId);
+
+		assertThat(repository.findByIdAndUser(itemId, userId)).isEmpty();
+	}
+
+	@Test
 	void confirmTarget_무효_id면_예외() {
 		assertThatThrownBy(() -> repository.confirmTarget(999_999L, 1L))
 				.isInstanceOf(IllegalStateException.class);

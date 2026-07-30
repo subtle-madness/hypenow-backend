@@ -41,6 +41,18 @@ class RegistrationRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void nullable_필드는_null로_매핑된다() {
+		long regId = repository.insert(userId);
+		repository.insertEntry(regId, 1, "pending-input", "post", "pending", null, null, null, null);
+
+		RegistrationEntryRow entry = repository.findRecentByUser(userId, 10).get(0).entries().get(0);
+		assertThat(entry.reasonCode()).isNull();
+		assertThat(entry.reason()).isNull();
+		assertThat(entry.resolvedUrl()).isNull();
+		assertThat(entry.itemId()).isNull();
+	}
+
+	@Test
 	void updateEntryResult_왕복() {
 		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "abc123",
 				"https://x/abc123", null, 30, LocalDate.of(2026, 7, 30));

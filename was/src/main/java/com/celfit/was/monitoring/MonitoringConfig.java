@@ -78,12 +78,6 @@ public class MonitoringConfig {
 		return new MonitoringReadRepository(monitoringJdbc);
 	}
 
-	@Bean
-	MonitoringCampaignService monitoringCampaignService(MonitoringCommandClient client,
-			MonitoringCampaignMappingRepository mappings) {
-		return new MonitoringCampaignService(client, mappings);
-	}
-
 	@PreDestroy
 	void close() {
 		monitoringDataSource.close();

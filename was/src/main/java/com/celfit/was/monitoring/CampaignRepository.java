@@ -97,10 +97,10 @@ public class CampaignRepository {
 	}
 
 	/** 캠페인 삭제 확인 모달·검증용 — 배정된 추적 아이템 수. */
-	public int countItems(long campaignId) {
-		return jdbcClient.sql("SELECT count(*)::int FROM app.monitoring_items WHERE campaign_id = :campaignId")
+	public long countItems(long campaignId) {
+		return jdbcClient.sql("SELECT count(*) FROM app.monitoring_items WHERE campaign_id = :campaignId")
 				.param("campaignId", campaignId)
-				.query(Integer.class)
+				.query(Long.class)
 				.single();
 	}
 }
