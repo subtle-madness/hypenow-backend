@@ -21,6 +21,6 @@ public class NoopRegistrationExecutor implements RegistrationExecutor {
 
 	@Override
 	public void submit(long registrationId) {
-		log.info("실행기 미구현: 후속 태스크에서 대체 (registrationId={})", registrationId);
+		log.info("monitoring 비활성 — 등록 접수만 기록 (registrationId={})", registrationId);
 	}
 }

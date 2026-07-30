@@ -125,7 +125,15 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 			if (!RESULT_PENDING.equals(entry.result())) {
 				continue;
 			}
-			processEntry(registration, entry);
+			try {
+				processEntry(registration, entry);
+			} catch (RuntimeException e) {
+				// entry 하나의 예외가 나머지 entry 처리·완료 마킹까지 끌고 내려가지 않게 격리한다
+				// (recoverStalePending의 per-item try-catch와 대칭). 원인 불명 예외는 재시도 여지가
+				// 있으니 failed 대신 pending 유지 — 다음 실행 또는 recoverStalePending()이 다시 본다.
+				log.error("entry 처리 중 예외 — pending 유지(재시도 여지) registrationId={} seq={}",
+						registration.id(), entry.seq(), e);
+			}
 		}
 		registrationRepository.markCompletedIfAllSettled(registrationId);
 	}

@@ -5,6 +5,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.concurrent.ThreadPoolExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,10 +61,17 @@ public class MonitoringConfig {
 		this.monitoringJdbc = JdbcClient.create(monitoringDataSource);
 
 		// 등록 백그라운드 실행기 전용 풀 — 등록 접수(6.27)는 동기로 끝나고, 첫 확인(monitoring 호출)만
-		// 여기서 돈다. 코어=최대=2(등록 트래픽이 아직 낮아 상한 고정, 큐잉으로 스파이크 흡수).
+		// 여기서 돈다. 코어=최대=2(등록 트래픽이 아직 낮아 상한 고정), 큐 100으로 스파이크 흡수하고
+		// 큐까지 찬 초과분은 CallerRunsPolicy로 제출 스레드에서 직접 돌려 유실 없이 배압을 건다.
+		// 롤링 배포(was-rolling-deploy) 중 SIGTERM이 와도 waitForTasksToCompleteOnShutdown+
+		// awaitTerminationSeconds(15)로 진행 중이던 등록 확인을 마저 끝내고 종료한다.
 		ThreadPoolTaskExecutor pool = new ThreadPoolTaskExecutor();
 		pool.setCorePoolSize(2);
 		pool.setMaxPoolSize(2);
+		pool.setQueueCapacity(100);
+		pool.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+		pool.setWaitForTasksToCompleteOnShutdown(true);
+		pool.setAwaitTerminationSeconds(15);
 		pool.setThreadNamePrefix("monitoring-registration-");
 		pool.initialize();
 		this.registrationTaskExecutor = pool;

@@ -5,3 +5,9 @@
 ALTER TABLE app.monitoring_registrations
     ADD COLUMN tracking_days int,
     ADD COLUMN campaign_id   bigint REFERENCES app.monitoring_campaigns(id) ON DELETE SET NULL;
+
+-- RegistrationRepository.findEntryByItemId는 item_id당 entry가 최대 1개라고 가정한다(실행기가
+-- item_id로 소속 entry를 역조회 — 복구·완료 마킹 경로). 지금까지는 애플리케이션 코드가 이 불변식을
+-- 지켰을 뿐 DB가 강제하지 않았다 — 부분 유니크 인덱스로 승격(null은 여러 개 허용해야 하므로 WHERE로 제한).
+CREATE UNIQUE INDEX monitoring_registration_entries_item_id_uidx
+    ON app.monitoring_registration_entries (item_id) WHERE item_id IS NOT NULL;
