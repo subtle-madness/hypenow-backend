@@ -81,7 +81,8 @@ CREATE TABLE alarm_event (
     occurred_at    timestamptz NOT NULL DEFAULT now(),
     dispatch_after timestamptz NOT NULL,          -- 발송 레인: 즉시(=occurred_at) 또는 당일 09:00 KST
     email_status   text NOT NULL DEFAULT 'PENDING' CHECK (email_status IN
-                   ('PENDING','SENT','SKIPPED_OPTOUT','FAILED')),
+                   ('PENDING','SENT','SKIPPED_OPTOUT','SKIPPED_NO_RECIPIENT','FAILED')),
+    email_attempts smallint NOT NULL DEFAULT 0,   -- 발송 시도 횟수 — FAILED 재시도 상한 관리
     email_sent_at  timestamptz
 );
 CREATE INDEX alarm_event_pending_idx ON alarm_event (dispatch_after) WHERE email_status = 'PENDING';
@@ -89,7 +90,11 @@ CREATE INDEX alarm_event_user_idx ON alarm_event (user_id, occurred_at DESC);   
 ```
 
 - **id 기반 대장 = 워터마크 없음** — 순서·유실 문제 원천 제거. 발송 실패는 행 단위
-  FAILED → 다음 틱 그 행만 재시도(전체 재발송 없음).
+  FAILED → 다음 틱 그 행만 재시도(전체 재발송 없음). **재시도 상한 5회**(프로퍼티) —
+  due 조회는 `email_status IN ('PENDING','FAILED') AND email_attempts < 상한`.
+  상한 도달 행은 FAILED로 종결(무한 Resend 호출 방지 — 구현 검토 중 발견·정정).
+- 수신자 확인 불가(유저 삭제·이메일 부재)는 `SKIPPED_NO_RECIPIENT`로 종결 —
+  옵트아웃 관측치와 분리(구현 검토 중 발견·정정).
 - 앱 내 알림·히스토리의 단일 원천: was가 읽기 전용 SELECT로 서빙(v2 조회 표면에 추가).
   읽음 상태는 app 스키마 워터마크(프론트 API 작업 때).
 
