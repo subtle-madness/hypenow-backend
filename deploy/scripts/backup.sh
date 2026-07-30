@@ -60,17 +60,29 @@ if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q
   if rclone copy "$BACKUP_DIR/analysis-$STAMP.sql.gz" "$B2/analysis/" \
      && rclone copy "$BACKUP_DIR/crawler-$STAMP.sql.gz" "$B2/crawler/"; then
     offsite_ok=true
-    rclone delete --min-age 30d "$B2/analysis/"
+    # ⚠ 이 아래 뒷정리(기간 롤링·개수 트리밍·monitoring 업로드)는 **전부 비치명이어야 한다**.
+    # 여기는 if 본문이라 set -e가 살아 있어서 한 줄이라도 실패하면 스크립트가 즉사하고,
+    # 그러면 파일 끝의 **crawler 로컬 보관 정리가 건너뛰어져** 로컬 덤프가 하루 ~8.5GiB씩
+    # 무한 누적된다(디스크 만재 → 07-30에 87%까지 찬 그 사고의 재발). 지켜야 할 본질인
+    # analysis·crawler 오프사이트 사본은 이미 위 조건절에서 성공했으므로, 뒷정리 실패는
+    # 경고만 남기고 다음 실행에서 재시도하면 된다.
+    rclone delete --min-age 30d "$B2/analysis/" \
+      || echo "경고: B2 analysis 기간 롤링 실패 — 다음 실행에서 재시도" >&2
     # 최신 $B2_CRAWLER_KEEP개만 유지 (파일명 타임스탬프 기준 정렬) — 캡 초과의 직접 원인이라
     # 개수를 상단 상수로 관리한다(용량 여유 생기면 상수만 올릴 것)
-    rclone lsf "$B2/crawler/" | sort | head -n -"$B2_CRAWLER_KEEP" \
-      | while read -r f; do rclone deletefile "$B2/crawler/$f"; done
+    { rclone lsf "$B2/crawler/" | sort | head -n -"$B2_CRAWLER_KEEP" \
+        | while read -r f; do rclone deletefile "$B2/crawler/$f"; done; } \
+      || echo "경고: B2 crawler 개수 트리밍 실패 — 다음 실행에서 재시도" >&2
 
     # 덤프가 작아 analysis와 같은 30일 기간 롤링. analysis·crawler 업로드가 이미 성공한
-    # 뒤라 캡 여유가 있다고 보고 시도 — monitoring 실패가 위 offsite_ok를 되돌리지는 않는다.
+    # 뒤라 캡 여유가 있다고 보고 시도 — monitoring 실패가 위 offsite_ok를 되돌리지 않는다.
     if [ -f "$BACKUP_DIR/monitoring-$STAMP.sql.gz" ]; then
-      rclone copy "$BACKUP_DIR/monitoring-$STAMP.sql.gz" "$B2/monitoring/"
-      rclone delete --min-age 30d "$B2/monitoring/"
+      if rclone copy "$BACKUP_DIR/monitoring-$STAMP.sql.gz" "$B2/monitoring/"; then
+        rclone delete --min-age 30d "$B2/monitoring/" \
+          || echo "경고: B2 monitoring 기간 롤링 실패 — 다음 실행에서 재시도" >&2
+      else
+        echo "경고: monitoring B2 업로드 실패 — analysis·crawler 오프사이트는 정상" >&2
+      fi
     fi
     echo "B2 업로드 완료: analysis-$STAMP.sql.gz, crawler-$STAMP.sql.gz${MONITORING_DUMP:+, $MONITORING_DUMP}"
   fi
