@@ -18,6 +18,8 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -106,6 +108,8 @@ public class V1MonitoringRegistrationService {
 		long registrationId = registrationRepository.insert(userId);
 		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
 		OffsetDateTime nextCheckAt = OffsetDateTime.now(KstTimestamps.KST).plusMinutes(5);
+		RegistrationContext context =
+				new RegistrationContext(registrationId, campaignId, campaignName, registeredOn, trackingDays, nextCheckAt);
 
 		List<TrackingItemResponse> items = new ArrayList<>();
 		Set<String> seenPostShortCodes = new HashSet<>();
@@ -113,78 +117,95 @@ public class V1MonitoringRegistrationService {
 
 		int seq = 0;
 		for (String rawPost : posts) {
-			processPost(userId, registrationId, seq, rawPost, seenPostShortCodes, campaignId, campaignName,
-					registeredOn, trackingDays, nextCheckAt, items);
+			processPost(userId, context, seq, rawPost, seenPostShortCodes, items);
 			seq++;
 		}
 		for (String rawAccount : accounts) {
-			processAccount(userId, registrationId, seq, rawAccount, seenAccountHandles, keywordRule, campaignId,
-					campaignName, registeredOn, trackingDays, nextCheckAt, items);
+			processAccount(userId, context, seq, rawAccount, seenAccountHandles, keywordRule, items);
 			seq++;
 		}
 
 		registrationRepository.markCompletedIfAllSettled(registrationId);
-		executor.submit(registrationId);
+		triggerExecutor(registrationId);
 
 		return MonitoringRegistrationResponse.of(registrationId, items, newlyCreatedCampaign);
 	}
 
-	private void processPost(long userId, long registrationId, int seq, String rawPost,
-			Set<String> seenPostShortCodes, Long campaignId, String campaignName, LocalDate registeredOn,
-			int trackingDays, OffsetDateTime nextCheckAt, List<TrackingItemResponse> items) {
+	/**
+	 * 실행기 트리거는 접수 트랜잭션의 물리 커밋 이후로 미룬다(계약은 {@link RegistrationExecutor} 참조) —
+	 * 비동기 실행기가 READ COMMITTED에서 아직 커밋 안 된 pending 행을 못 보는 경합을 막는다.
+	 * 트랜잭션 동기화가 비활성(예: 트랜잭션 매니저가 없는 슬라이스 테스트)이면 즉시 호출로 대체한다.
+	 */
+	private void triggerExecutor(long registrationId) {
+		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+			executor.submit(registrationId);
+			return;
+		}
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				executor.submit(registrationId);
+			}
+		});
+	}
+
+	private void processPost(long userId, RegistrationContext context, int seq, String rawPost,
+			Set<String> seenPostShortCodes, List<TrackingItemResponse> items) {
 		MonitoringInput parsed = MonitoringInput.parsePost(rawPost);
 		if (parsed instanceof MonitoringInput.Invalid invalid) {
-			registrationRepository.insertEntry(registrationId, seq, rawPost, KIND_POST, RESULT_FAILED,
+			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_FAILED,
 					invalid.reasonCode(), invalid.reason(), null, null);
 			return;
 		}
 		if (parsed instanceof MonitoringInput.ShareLink) {
 			// share 링크는 리다이렉트 해소 전엔 실제 게시물을 특정할 수 없어 행을 만들지 않는다 —
 			// TODO: share 해소 후 행 생성은 실행기 태스크(후속)에서 담당.
-			registrationRepository.insertEntry(registrationId, seq, rawPost, KIND_POST, RESULT_PENDING,
+			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_PENDING,
 					null, null, null, null);
 			return;
 		}
 		MonitoringInput.Post post = (MonitoringInput.Post) parsed;
+		// Set.add()는 "이미 봤는지 확인"과 "지금 봤다고 기록"을 한 호출로 겸한다 — 이번 항목이 최초든
+		// 아니든 항상 seen에 남겨야 이후 같은 값의 항목도 계속 duplicate로 잡힌다(부작용 의도적).
 		if (!seenPostShortCodes.add(post.shortCode())
 				|| !itemRepository.findActiveByInput(userId, MODE_URL, post.shortCode()).isEmpty()) {
-			registrationRepository.insertEntry(registrationId, seq, rawPost, KIND_POST, RESULT_DUPLICATE,
+			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_DUPLICATE,
 					DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
 			return;
 		}
 
-		long itemId = itemRepository.insertPending(userId, MODE_URL, UUID.randomUUID(), campaignId,
-				post.shortCode(), post.canonicalUrl(), null, trackingDays, registeredOn);
-		registrationRepository.insertEntry(registrationId, seq, rawPost, KIND_POST, RESULT_PENDING,
+		long itemId = itemRepository.insertPending(userId, MODE_URL, UUID.randomUUID(), context.campaignId(),
+				post.shortCode(), post.canonicalUrl(), null, context.trackingDays(), context.registeredOn());
+		registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_PENDING,
 				null, null, null, itemId);
-		items.add(TrackingItemResponse.pendingPost(itemId, post.canonicalUrl(), campaignId, campaignName,
-				registeredOn, trackingDays, nextCheckAt));
+		items.add(TrackingItemResponse.pendingPost(itemId, post.canonicalUrl(), context.campaignId(),
+				context.campaignName(), context.registeredOn(), context.trackingDays(), context.nextCheckAt()));
 	}
 
-	private void processAccount(long userId, long registrationId, int seq, String rawAccount,
-			Set<String> seenAccountHandles, KeywordRule keywordRule, Long campaignId, String campaignName,
-			LocalDate registeredOn, int trackingDays, OffsetDateTime nextCheckAt, List<TrackingItemResponse> items) {
+	private void processAccount(long userId, RegistrationContext context, int seq, String rawAccount,
+			Set<String> seenAccountHandles, KeywordRule keywordRule, List<TrackingItemResponse> items) {
 		MonitoringInput parsed = MonitoringInput.parseAccount(rawAccount);
 		if (parsed instanceof MonitoringInput.Invalid invalid) {
-			registrationRepository.insertEntry(registrationId, seq, rawAccount, KIND_ACCOUNT, RESULT_FAILED,
+			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT, RESULT_FAILED,
 					invalid.reasonCode(), invalid.reason(), null, null);
 			return;
 		}
 		MonitoringInput.Account account = (MonitoringInput.Account) parsed;
+		// 위 processPost와 동일한 겸용 패턴 — add()가 "이미 봤는지"와 "지금 기록"을 동시에 처리한다.
 		if (!seenAccountHandles.add(account.handle())
 				|| !itemRepository.findActiveByInput(userId, MODE_ACCOUNT, account.handle()).isEmpty()) {
-			registrationRepository.insertEntry(registrationId, seq, rawAccount, KIND_ACCOUNT, RESULT_DUPLICATE,
-					DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
+			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT,
+					RESULT_DUPLICATE, DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
 			return;
 		}
 
 		String keywordsJson = writeKeywordsJson(keywordRule);
-		long itemId = itemRepository.insertPending(userId, MODE_ACCOUNT, UUID.randomUUID(), campaignId,
-				account.handle(), null, keywordsJson, trackingDays, registeredOn);
-		registrationRepository.insertEntry(registrationId, seq, rawAccount, KIND_ACCOUNT, RESULT_PENDING,
+		long itemId = itemRepository.insertPending(userId, MODE_ACCOUNT, UUID.randomUUID(), context.campaignId(),
+				account.handle(), null, keywordsJson, context.trackingDays(), context.registeredOn());
+		registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT, RESULT_PENDING,
 				null, null, null, itemId);
-		items.add(TrackingItemResponse.pendingAccount(itemId, account.handle(), keywordRule, campaignId,
-				campaignName, registeredOn, trackingDays, nextCheckAt));
+		items.add(TrackingItemResponse.pendingAccount(itemId, account.handle(), keywordRule, context.campaignId(),
+				context.campaignName(), context.registeredOn(), context.trackingDays(), context.nextCheckAt()));
 	}
 
 	private String writeKeywordsJson(KeywordRule rule) {
@@ -278,5 +299,10 @@ public class V1MonitoringRegistrationService {
 	}
 
 	private record ParsedKeywords(List<String> and, List<String> or, List<String> exclude) {
+	}
+
+	/** processPost/processAccount 공용 등록 컨텍스트 — 요청 1건 안에서 항목마다 반복되는 값 묶음. */
+	private record RegistrationContext(long registrationId, Long campaignId, String campaignName,
+			LocalDate registeredOn, int trackingDays, OffsetDateTime nextCheckAt) {
 	}
 }
