@@ -225,8 +225,10 @@ services:
       HIKER_API_KEY: ${HIKER_API_KEY}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
-      # 알람 발송(07-30~) — 기본 비활성. 개통 절차는 README §13-5
-      MONITORING_ALARM_DISPATCH_CRON: "-"
+      # 알람 발송(07-30~) — 07-31 개통(README §13-5-4). 5분 주기.
+      # 선행 필수: analysis DB `alarm_reader` 롤 + `.env`의 ALARM_READER_PASSWORD·RESEND_API_KEY.
+      # 끄려면 "-"로 되돌려 커밋·배포(서버 직접 수정은 다음 CD가 덮는다).
+      MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 수신자 해석용 analysis DB 읽기 전용(두 객체만 GRANT — 계약 v2 §6)
       MONITORING_ALARM_READER_URL: jdbc:postgresql://postgres:5432/analysis
