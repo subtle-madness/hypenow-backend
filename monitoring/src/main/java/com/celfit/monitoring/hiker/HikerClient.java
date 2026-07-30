@@ -172,8 +172,13 @@ public class HikerClient {
 				log.warn("댓글 커서 미전진 의심 — media {} {}페이지에서 새 댓글 0건, 수집 중단", mediaId, page + 1);
 				break;
 			}
+			// response.has_more_comments는 신뢰하지 않는다 — 운영 실측(media 3929190553799320931,
+			// 댓글 2,325건): 1페이지가 has_more_comments=false를 주면서도 next_page_id를 들고 있었고,
+			// 그 커서로 2페이지를 재요청하면 1페이지와 중복 0건인 신규 댓글 15건이 나왔다(플래그가 거짓).
+			// 그래서 종료 조건은 커서 유무만 본다 — 무한 루프 위험은 위의 "커서 미전진" 가드가 막는다
+			// (page>0에서 신규 0건이면 경고 로그 남기고 break, 이미 여기서 실질적 안전장치 역할).
 			cursor = nextPageId(root);
-			if (cursor == null || !moreCommentsAvailable(root)) {
+			if (cursor == null) {
 				break;
 			}
 		}
@@ -212,12 +217,6 @@ public class HikerClient {
 			}
 		}
 		return null;
-	}
-
-	/** 댓글 페이지 잔여 플래그 — response.has_more_comments(열거·클립의 more_available과 키가 다르다). */
-	private static boolean moreCommentsAvailable(JsonNode root) {
-		JsonNode flag = root.path("response").path("has_more_comments");
-		return flag.isMissingNode() || flag.isNull() || flag.asBoolean(true);
 	}
 
 	/**
