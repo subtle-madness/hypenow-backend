@@ -3,7 +3,6 @@ package com.celfit.monitoring.web;
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
-import com.celfit.monitoring.service.CandidateNotFoundException;
 import com.celfit.monitoring.service.InvalidStateException;
 import com.celfit.monitoring.service.TargetNotFoundException;
 import com.celfit.monitoring.service.ValidationException;
@@ -42,11 +41,6 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(TargetNotFoundException.class)
 	public ResponseEntity<ApiError> handleTargetNotFound(TargetNotFoundException e) {
 		return body(HttpStatus.NOT_FOUND, "TARGET_NOT_FOUND", e.getMessage());
-	}
-
-	@ExceptionHandler(CandidateNotFoundException.class)
-	public ResponseEntity<ApiError> handleCandidateNotFound(CandidateNotFoundException e) {
-		return body(HttpStatus.NOT_FOUND, "CANDIDATE_NOT_FOUND", e.getMessage());
 	}
 
 	@ExceptionHandler(SubjectNotFoundException.class)

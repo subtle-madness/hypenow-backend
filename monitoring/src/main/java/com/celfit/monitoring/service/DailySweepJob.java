@@ -5,10 +5,10 @@ import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
-import com.celfit.monitoring.store.CandidateRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -19,28 +19,25 @@ import org.springframework.stereotype.Service;
 
 /**
  * 일일 스윕(KST 02:00) — 만료 처리 → 계정별 1회 수집(캠페인 수와 무관) →
- * WATCHING 키워드 감지 → TRACKING 게시물 보강. 실패는 계정·캠페인 단위로 격리한다.
+ * WATCHING 키워드 감지 시 즉시 추적 전환 → TRACKING 게시물 보강. 실패는 계정·캠페인 단위로 격리한다.
  *
  * <p>트랜잭션을 걸지 않는다: 스윕 한 번은 계정 수만큼 외부 콜을 돌기 때문에
  * 전체를 한 트랜잭션으로 묶으면 커넥션을 몇 분씩 잡고, 마지막 계정의 실패가 앞선 전 계정의
  * 수집을 되돌린다. 커밋 단위는 수집 1회({@link SnapshotWriter})와 상태 전이 1건이다.
+ * 구 approve의 "트랜잭션 안에서 외부 콜"은 승계하지 않는다(스펙 §2-2).
  */
 @Service
 public class DailySweepJob {
 
 	private static final Logger log = LoggerFactory.getLogger(DailySweepJob.class);
-	private static final int EXCERPT_LEN = 120;
 	private static final String NOT_FOUND = "SUBJECT_NOT_FOUND";
 	private static final String PRIVATE_ACCOUNT = "PRIVATE_ACCOUNT";
 
 	private final TargetRepository targets;
-	private final CandidateRepository candidates;
 	private final CollectService collect;
 
-	public DailySweepJob(TargetRepository targets, CandidateRepository candidates,
-			CollectService collect) {
+	public DailySweepJob(TargetRepository targets, CollectService collect) {
 		this.targets = targets;
-		this.candidates = candidates;
 		this.collect = collect;
 	}
 
@@ -63,7 +60,7 @@ public class DailySweepJob {
 				closeAll(entry.getKey(), entry.getValue(), PRIVATE_ACCOUNT);
 				failedAccounts++;
 			} catch (RuntimeException e) {
-				// 재시도 여지가 있는 실패(5xx·타임아웃·셰이프 이상)는 상태를 건드리지 않는다 — 내일 스윕이 다시 본다.
+				// 재시도 여지가 있는 실패(5xx·타임아웃·셰이프 이상)는 상태를 건드리지 않는다 — Task 3의 재시도 라운드가 다시 본다.
 				log.warn("스윕 실패(격리) — 계정 {}: {}", entry.getKey(), e.toString());
 				failedAccounts++;
 			}
@@ -87,13 +84,13 @@ public class DailySweepJob {
 			} catch (SubjectNotFoundException e) {
 				// 추적 게시물만 삭제된 경우 — 계정은 멀쩡하니 이 캠페인 하나만 종결한다.
 				log.info("추적 게시물 부재 — 캠페인 {} 종결: {}", t.id(), t.trackedShortCode());
-				closeFailed(t.id(), NOT_FOUND);
+				closeFailed(t, NOT_FOUND);
 			} catch (PrivateAccountException e) {
 				// 지금은 도달 불가다 — 비공개 판정은 프로필 응답에만 있고 그건 계정 갈래에서 걸린다.
 				// 그래도 계정 갈래와 대칭으로 둔다: 단건 경로(fetchPost)에 비공개 판정이 생기는 순간
 				// 이 갈래가 없으면 "일반 실패"로 조용히 새어 만료까지 매일 재시도하게 된다.
 				log.info("추적 게시물 비공개 — 캠페인 {} 종결: {}", t.id(), t.trackedShortCode());
-				closeFailed(t.id(), PRIVATE_ACCOUNT);
+				closeFailed(t, PRIVATE_ACCOUNT);
 			} catch (RuntimeException e) {
 				log.warn("캠페인 스윕 실패(격리) — target {}: {}", t.id(), e.toString());
 			}
@@ -103,27 +100,31 @@ public class DailySweepJob {
 	/** 결정적 수집 불가 — 그 계정의 활성 캠페인을 한꺼번에 종결한다. */
 	private void closeAll(String username, List<TargetRow> accountTargets, String failReason) {
 		log.info("계정 수집 불가({}) — {} 캠페인 {}건 종결", failReason, username, accountTargets.size());
-		accountTargets.forEach(t -> closeFailed(t.id(), failReason));
+		accountTargets.forEach(t -> closeFailed(t, failReason));
 	}
 
 	/**
 	 * 종결도 실패할 수 있다(DB 순단·락 타임아웃). 여기서 예외가 새면 남은 계정이 통째로 안 돌아
 	 * "캠페인 하나 종결 실패"가 "그날 스윕 전면 중단"으로 번진다 — 로그만 남기고 계속한다.
 	 */
-	private void closeFailed(long targetId, String failReason) {
+	private void closeFailed(TargetRow t, String failReason) {
 		try {
-			targets.close(targetId, TargetStatus.FAILED, failReason);
+			targets.close(t.id(), TargetStatus.FAILED, failReason);
 		} catch (RuntimeException e) {
-			log.warn("종결 실패(격리) — target {} → FAILED/{}: {}", targetId, failReason, e.toString());
+			log.warn("종결 실패(격리) — target {} → FAILED/{}: {}", t.id(), failReason, e.toString());
 		}
 	}
 
 	private void sweepTarget(TargetRow t, List<PostInfo> posts, Set<String> enumerated) {
 		if (t.status() == TargetStatus.WATCHING && t.keywordRule() != null) {
-			for (PostInfo p : posts) {
-				if (postedAfterRegistration(p, t) && t.keywordRule().matches(p.caption())) {
-					candidates.insertPending(t.id(), p.shortCode(), excerpt(p.caption()));
-				}
+			PostInfo detected = firstDetection(t, posts);
+			if (detected != null) {
+				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2). 지표는 방금 열거에서 이미 적재됐으므로
+				// 추가 단건 콜을 쏘지 않는다 — 감지 대상 자체가 열거 결과라 항상 enumerated 안에 있다.
+				targets.markTracking(t.id(), detected.shortCode());
+				log.info("첫 감지 자동 전환 — target {} → TRACKING {}", t.id(), detected.shortCode());
+				targets.touchFetched(t.id());
+				return;
 			}
 		}
 		String tracked = t.status() == TargetStatus.TRACKING ? t.trackedShortCode() : null;
@@ -135,10 +136,22 @@ public class DailySweepJob {
 	}
 
 	/**
-	 * 감지 하한선 — 캠페인 등록 시각 이후에 게시된 것만 후보로 본다(설계 §5, 07-29 확정).
-	 * 없으면 첫 스윕에서 등록 전의 옛 키워드 게시물이 통째로 후보로 떠 검토 화면이 노이즈로 찬다.
-	 * taken_at을 못 얻은 게시물은 보수적으로 제외한다 — 잘못 올린 후보는 사람이 지워야 하지만,
-	 * 빠뜨린 게시물은 다음 스윕에서 taken_at이 채워지면 다시 걸린다(후보 생성은 멱등).
+	 * 첫 감지 1건 — 캠페인:추적 게시물은 1:1이라 같은 스윕에 여러 개가 걸려도 하나만 고른다.
+	 * 기준은 게시 시각 최신: 열거 순서에 기대면 핀 고정 게시물(taken_at 2023년 사례 — findings §3)이
+	 * 먼저 잡힐 수 있고, HikerClient의 재정렬에 암묵 의존하는 코드가 된다.
+	 */
+	private static PostInfo firstDetection(TargetRow t, List<PostInfo> posts) {
+		return posts.stream()
+				.filter(p -> postedAfterRegistration(p, t) && t.keywordRule().matches(p.caption()))
+				.max(Comparator.comparing(PostInfo::takenAt))   // 필터가 takenAt != null을 보장한다
+				.orElse(null);
+	}
+
+	/**
+	 * 감지 하한선 — 캠페인 등록 시각 이후에 게시된 것만 본다(설계 §5, 07-29 확정).
+	 * 없으면 첫 스윕에서 등록 전의 옛 키워드 게시물을 추적 대상으로 잡아 캠페인이 통째로 헛돈다.
+	 * taken_at을 못 얻은 게시물은 보수적으로 제외한다 — 잘못 잡은 추적은 되돌릴 수 없지만,
+	 * 빠뜨린 게시물은 다음 스윕에서 taken_at이 채워지면 다시 걸린다.
 	 */
 	private static boolean postedAfterRegistration(PostInfo p, TargetRow t) {
 		return p.takenAt() != null
@@ -151,12 +164,5 @@ public class DailySweepJob {
 	 */
 	private static boolean needsEnumeration(List<TargetRow> ts) {
 		return ts.stream().anyMatch(t -> t.type() == TargetType.ACCOUNT);
-	}
-
-	private static String excerpt(String caption) {
-		if (caption == null) {
-			return null;
-		}
-		return caption.length() <= EXCERPT_LEN ? caption : caption.substring(0, EXCERPT_LEN) + "…";
 	}
 }
