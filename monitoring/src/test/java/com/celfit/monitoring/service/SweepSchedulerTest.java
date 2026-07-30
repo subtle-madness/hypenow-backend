@@ -2,6 +2,7 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import org.junit.jupiter.api.Test;
@@ -46,7 +47,7 @@ class SweepSchedulerTest {
 	@Test
 	void sweep은_일일_스윕_잡에_위임한다() {
 		var calls = new int[1];
-		var job = new DailySweepJob(null, null, null) {
+		var job = new DailySweepJob(null, null, null, null, 0, Duration.ZERO) {
 			@Override
 			public void run() {
 				calls[0]++;

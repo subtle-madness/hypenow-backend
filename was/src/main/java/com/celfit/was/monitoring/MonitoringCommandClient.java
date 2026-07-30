@@ -10,7 +10,9 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
- * monitoring 내부 명령 API 5개(계약 §2). 인증 없음 — 도커 내부망 전용(07-28 토큰 제거 결정).
+ * monitoring 내부 명령 API — 등록·연장·해지 3종 + share 해소 1종(계약 v2.1 §2). 인증 없음 —
+ * 도커 내부망 전용(07-28 토큰 제거 결정). 승인·기각(v1)은 v2에서 감지 즉시 자동 추적으로 폐지돼
+ * was 클라이언트에서도 제거됐다(호출 시 monitoring이 404).
  * 에러는 2계열로 승격: 에러 바디 {code, message} → MonitoringApiException(code 그대로),
  * 전송 실패·해석 불가 → MonitoringUnavailableException(같은 멱등키 재시도 가능 신호).
  */
@@ -29,16 +31,10 @@ public class MonitoringCommandClient {
 				.body(request).retrieve().body(RegisterResult.class));
 	}
 
-	public ApproveResult approve(long targetId, long candidateId) {
-		return exchange(() -> restClient.post()
-				.uri("/api/targets/{id}/candidates/{cid}/approve", targetId, candidateId)
-				.retrieve().body(ApproveResult.class));
-	}
-
-	public RejectResult reject(long targetId, long candidateId) {
-		return exchange(() -> restClient.post()
-				.uri("/api/targets/{id}/candidates/{cid}/reject", targetId, candidateId)
-				.retrieve().body(RejectResult.class));
+	/** 공유 단축 링크 해소(계약 §2-6) — 등록과 분리된 전처리 API. 등록 전 shortcode를 얻을 때 호출한다. */
+	public ShareResolveResult resolveShare(String url) {
+		return exchange(() -> restClient.post().uri("/api/share/resolve")
+				.body(new ShareResolveRequest(url)).retrieve().body(ShareResolveResult.class));
 	}
 
 	public ExtendResult extend(long targetId, OffsetDateTime expiresAt) {
@@ -80,5 +76,8 @@ public class MonitoringCommandClient {
 	}
 
 	record ErrorBody(String code, String message) {
+	}
+
+	record ShareResolveRequest(String url) {
 	}
 }

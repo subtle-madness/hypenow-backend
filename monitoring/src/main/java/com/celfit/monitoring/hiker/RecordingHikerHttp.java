@@ -61,15 +61,23 @@ public class RecordingHikerHttp implements HikerHttp {
 		if (path.startsWith("/v2/media/by/code")) {
 			return "POST";
 		}
+		if (path.startsWith("/v2/media/comments")) {
+			return "COMMENTS";
+		}
+		if (path.startsWith("/v2/media/info/by/url")) {
+			return "MEDIA_INFO";
+		}
 		return "OTHER";
 	}
 
-	/** subject는 조회 키 — 프로필은 username, 열거는 user_id, 단건은 code. */
+	/** subject는 조회 키 — 프로필은 username, 열거는 user_id, 단건은 code, 댓글은 media id, share 해소는 url. */
 	private static String subjectOf(String path) {
 		String key = switch (kindOf(path)) {
 			case "PROFILE" -> "username";
 			case "POSTS" -> "user_id";
 			case "POST" -> "code";
+			case "COMMENTS" -> "id";
+			case "MEDIA_INFO" -> "url";
 			default -> null;
 		};
 		String value = key == null ? null : param(path, key);
