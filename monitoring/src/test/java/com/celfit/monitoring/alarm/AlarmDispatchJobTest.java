@@ -156,6 +156,33 @@ class AlarmDispatchJobTest {
 		assertThat(statusOf(fresh)).isEqualTo("SENT");
 	}
 
+	/**
+	 * 캡 판정은 dispatch_after 기준이다 — occurred_at과 갈라지는(아침 레인처럼 실제 발생은 훨씬
+	 * 이전인데 발송은 당일 09:00로 미뤄진) 행에서도 캡이 occurred_at이 아니라 dispatch_after를
+	 * 봐야 한다는 걸 고정한다. 즉시 레인 유입이 디바운스 창 안에서 계속돼도(=newest occurred_at이
+	 * 방금이라 "몰아치는 중"처럼 보여도) 아침 레인 행의 dispatch_after가 캡을 넘겼으면 발송된다.
+	 */
+	@Test
+	void 아침_레인_dispatch_after가_캡을_넘기면_occurred_at과_무관하게_즉시_레인_유입_중에도_발송한다() {
+		user(7, "a@test.io");
+		AlarmDispatchJob capped = new AlarmDispatchJob(events, new AlarmRecipientReader(ds),
+				new AlarmMailComposer(), mail, Duration.ofMinutes(10), Duration.ofMinutes(30), 5,
+				Clock.fixed(NOW, ZoneOffset.UTC));
+		// 아침 레인: 실제 발생(occurred_at)은 새벽이라 dispatch_after보다 훨씬 이전이지만,
+		// 캡 판정에 쓰이는 건 dispatch_after(과거 09:00 = 45분 전, 캡 30분 초과)다.
+		long morning = event(7, AlarmEventType.METRICS_HIDDEN,
+				NOW.minusSeconds(8 * 3600), NOW.minusSeconds(45 * 60));
+		// 즉시 레인: 방금 들어와 디바운스 창(10분) 안 — 캡이 없다면 "몰아치는 중"으로 계속 미뤄진다.
+		long fresh = event(7, AlarmEventType.COLLECTION_STARTED,
+				NOW.minusSeconds(60), NOW.minusSeconds(60));
+
+		capped.run();
+
+		assertThat(mail.sent).hasSize(1);
+		assertThat(statusOf(morning)).isEqualTo("SENT");
+		assertThat(statusOf(fresh)).isEqualTo("SENT");
+	}
+
 	@Test
 	void 발송_시각이_안_된_행은_대상이_아니다() {
 		user(7, "a@test.io");
