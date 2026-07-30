@@ -4,18 +4,23 @@ import com.celfit.crawler.crawling.application.port.out.ActorInputs;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawProfile;
+import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -44,22 +49,31 @@ public class BeautyJob {
     /** 캡션 1개당 최대 길이(문자) — 캡션 앞부분에 주제가 드러나므로 뒷부분은 잘라도 판정에 충분. */
     static final int CAPTION_MAX_CHARS = 100;
 
+    /**
+     * 캡션 재판정에 필요한 릴스 페이지 최소 아이템 수 — 아이템 1~2개짜리 페이지로 재판정을 돌리면
+     * 근거가 캡션 0건 때와 별로 다르지 않아 LLM 호출만 낭비된다.
+     */
+    static final int REJUDGE_MIN_ITEMS = 3;
+
     public record Summary(int judgedBeauty, int judgedService, int judgedForeign, int judgedNotBeauty,
                           int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
+    private final RawMediaPageRepository rawMediaPages;
     private final BeautyJudge judge;
     private final SettingsService settings;
     private final JobStopFlag stopFlag;
     private final java.time.Clock clock;
     private final TransactionTemplate txTemplate;
 
-    public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles, BeautyJudge judge,
+    public BeautyJob(InfluencerRepository influencers, RawProfileRepository rawProfiles,
+                     RawMediaPageRepository rawMediaPages, BeautyJudge judge,
                      SettingsService settings, JobStopFlag stopFlag, java.time.Clock clock,
                      TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
+        this.rawMediaPages = rawMediaPages;
         this.judge = judge;
         this.settings = settings;
         this.stopFlag = stopFlag;
@@ -85,22 +99,33 @@ public class BeautyJob {
                     InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
                     PageRequest.of(0, limit - targets.size())));
         }
+        if (rejudge && targets.size() < limit) {
+            // 캡션 0건으로 판정된 뒤 릴스가 쌓인 계정 — 뷰티 판정분도 포함해 실측으로 되돌린다
+            targets.addAll(influencers.findCaptionRejudgeTargets(
+                    InfluencerStatus.QUALIFIED.name(), Influencer.BEAUTY_SOURCE_CLAUDE,
+                    REJUDGE_MIN_ITEMS, PageRequest.of(0, limit - targets.size())));
+        }
 
         // 판정 재료 준비 — raw_profile이 아직 없으면 판정 불가(qualify가 언젠가 채우면 재시도)
         List<BeautyJudge.ProfileCard> cards = new ArrayList<>();
         Map<String, Influencer> byUsername = new HashMap<>();
+        Map<String, Integer> captionCounts = new HashMap<>();
         int skipped = 0;
         for (Influencer inf : targets) {
             if (byUsername.containsKey(inf.getUsername())) continue;  // 두 선정 쿼리 중복 방어
             var rp = rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(inf.getId());
             if (rp.isEmpty()) { skipped++; continue; }
             RawProfile p = rp.get();
+            List<String> captions = trimCaptions(
+                    ProfileExtractor.recentCaptions(p.getPayload(), p.getSource()));
+            if (captions.isEmpty()) captions = trimCaptions(mediaCaptions(inf.getId()));
             cards.add(new BeautyJudge.ProfileCard(inf.getUsername(),
                     ProfileExtractor.fullName(p.getPayload(), p.getSource()),
                     ProfileExtractor.category(p.getPayload(), p.getSource()),
                     ProfileExtractor.biography(p.getPayload(), p.getSource()),
-                    trimCaptions(ProfileExtractor.recentCaptions(p.getPayload(), p.getSource()))));
+                    captions));
             byUsername.put(inf.getUsername(), inf);
+            captionCounts.put(inf.getUsername(), captions.size());
         }
 
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0, failedBatches = 0;
@@ -121,8 +146,10 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
+            logResponseGaps(chunk, verdicts);
             int done = beauty + service + foreign + notBeauty;
-            ChunkResult r = txTemplate.execute(status -> applyVerdicts(verdicts, byUsername, done, cards.size()));
+            ChunkResult r = txTemplate.execute(
+                    status -> applyVerdicts(verdicts, byUsername, captionCounts, done, cards.size()));
             beauty += r.beauty();
             service += r.service();
             foreign += r.foreign();
@@ -131,6 +158,17 @@ public class BeautyJob {
                     i, total, beauty, service, foreign, notBeauty);
         }
         return new Summary(beauty, service, foreign, notBeauty, skipped, failedBatches);
+    }
+
+    /**
+     * 프로필 응답에 게시물이 없는 소스(HIKER_MOBILE·DATALIKERS)의 폴백 — 이미 수집된 릴스 페이지의
+     * 실측 캡션을 판정 재료로 쓴다. 추가 크롤 없음(raw_media_page는 REELS 잡이 이미 채운 것).
+     */
+    private List<String> mediaCaptions(Long influencerId) {
+        return rawMediaPages
+                .findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(influencerId, RawSource.HIKER_V2_CLIPS)
+                .map(page -> MediaItemExtractor.captions(page.getPayload(), page.getSource()))
+                .orElseGet(List::of);
     }
 
     /** 판정 재료 캡션 정책 적용 — 최근 CAPTION_COUNT개, 각 CAPTION_MAX_CHARS자까지. */
@@ -156,18 +194,46 @@ public class BeautyJob {
     private record ChunkResult(int beauty, int service, int foreign, int notBeauty) {}
 
     /**
+     * 응답 누락·중복 관측 — 모델이 요청한 계정 일부를 빼먹어도 예외가 아니라서(나머지 판정을
+     * 버릴 이유가 없다) 조용히 지나가던 것을 로그로 드러낸다. 누락분은 미판정으로 남아 다음 실행에
+     * 재시도되므로 데이터 유실은 아니지만, 빈도가 높아지면 프롬프트·청크 크기를 의심해야 한다.
+     */
+    private static void logResponseGaps(List<BeautyJudge.ProfileCard> chunk,
+                                        List<BeautyJudge.Verdict> verdicts) {
+        Set<String> returned = new LinkedHashSet<>();
+        List<String> dups = new ArrayList<>();
+        for (BeautyJudge.Verdict v : verdicts) {
+            if (!returned.add(v.username())) dups.add(v.username());
+        }
+        List<String> missing = chunk.stream()
+                .map(BeautyJudge.ProfileCard::username)
+                .filter(u -> !returned.contains(u))
+                .toList();
+        if (!missing.isEmpty()) {
+            log.warn("뷰티 판정 응답 누락 {}건 — 미판정 유지, 다음 실행 재시도: {}", missing.size(), missing);
+        }
+        if (!dups.isEmpty()) {
+            log.warn("뷰티 판정 응답 중복 {}건 — 첫 값이 적용됨: {}", dups.size(), dups);
+        }
+    }
+
+    /**
      * 판정 결과 적용(트랜잭션 안). targets 조회가 트랜잭션 밖(레포 자체 트랜잭션)에서 이뤄져 Influencer가
      * detached 상태다 — 세터만으로는 저장되지 않으므로 influencers.save(inf) 명시 호출이 필수다
      * (CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — CollectJobIntegrationTest 참고).
      */
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
-                                      int done, int totalCards) {
+                                      Map<String, Integer> captionCounts, int done, int totalCards) {
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0;
+        Set<String> applied = new HashSet<>();  // 중복 응답 방어 — 첫 값만 채택(logResponseGaps가 경고)
         for (BeautyJudge.Verdict v : verdicts) {
+            if (!applied.add(v.username())) continue;  // 같은 username 재등장 — 카운터·save·로그 모두 건너뜀
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
-            inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason());
+            inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
             inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
+            // 판정에 실제로 쓴 캡션 건수 — 0이면 나중에 캡션이 쌓였을 때 재판정 대상이 된다
+            inf.setBeautyCaptionCount(captionCounts.getOrDefault(v.username(), 0).shortValue());
             influencers.save(inf);
             switch (v.beautyClass()) {
                 case INFLUENCER, COMPANY -> beauty++;
