@@ -24,6 +24,7 @@ import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.monitoring.CancelResult;
 import com.celfit.was.monitoring.ExtendResult;
+import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
@@ -605,6 +606,64 @@ class V1MonitoringItemsControllerTest {
 		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
 	}
 
+	// MonitoringApiException(계약 §2 code) → 프론트 어휘(스펙 1.3) 변환이 실제 extend 경로에서도
+	// 동작하는지 고정한다(advice 단독 테스트는 V1ExceptionAdviceTest 참조). 분기는 httpStatus 기준.
+
+	@Test
+	void PATCH_target_확정_행의_연장이_monitoring_400이면_VALIDATION_FAILED_400이다() throws Exception {
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
+		given(itemRepository.findByIdAndUser(28L, 7L)).willReturn(Optional.of(accountItem(28L, 900L, registeredOn)));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.extend(eq(900L), any()))
+				.willThrow(new MonitoringApiException("VALIDATION", "monitoring 검증 실패", 400));
+
+		mockMvc.perform(patch("/v1/monitoring/items/28").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
+	@Test
+	void PATCH_target_확정_행의_연장이_monitoring_404이면_NOT_FOUND_404이다() throws Exception {
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
+		given(itemRepository.findByIdAndUser(29L, 7L)).willReturn(Optional.of(accountItem(29L, 900L, registeredOn)));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.extend(eq(900L), any()))
+				.willThrow(new MonitoringApiException("TARGET_NOT_FOUND", "monitoring에 target 없음", 404));
+
+		mockMvc.perform(patch("/v1/monitoring/items/29").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
+	@Test
+	void PATCH_target_확정_행의_연장이_monitoring_502이면_SERVICE_UNAVAILABLE_503이고_Retry_After가_있다() throws Exception {
+		LocalDate registeredOn = LocalDate.now(KstTimestamps.KST);
+		given(itemRepository.findByIdAndUser(30L, 7L)).willReturn(Optional.of(accountItem(30L, 900L, registeredOn)));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.extend(eq(900L), any()))
+				.willThrow(new MonitoringApiException("FETCH_FAILED", "monitoring 상류 조회 실패", 502));
+
+		mockMvc.perform(patch("/v1/monitoring/items/30").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"trackingDays\":30}"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(header().string("Retry-After", "5"));
+
+		then(itemRepository).should(never()).updateTrackingDays(anyLong(), anyInt());
+	}
+
 	// ── POST /v1/monitoring/items/{itemId}/cancel (6.30) ───────────────────────
 
 	@Test
@@ -693,6 +752,42 @@ class V1MonitoringItemsControllerTest {
 		given(commandClient.cancel(900L)).willThrow(new MonitoringUnavailableException("연결 실패", null));
 
 		mockMvc.perform(post("/v1/monitoring/items/25/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(header().string("Retry-After", "5"));
+
+		then(itemRepository).should(never()).markCanceled(anyLong(), anyString(), any());
+	}
+
+	// MonitoringApiException(계약 §2 code) → 프론트 어휘(스펙 1.3) 변환이 실제 cancel 경로에서도
+	// 동작하는지 고정한다(advice 단독 테스트는 V1ExceptionAdviceTest 참조). 분기는 httpStatus 기준.
+
+	@Test
+	void cancel_monitoring_409이면_409대신_VALIDATION_FAILED_400이다() throws Exception {
+		// 스펙 6.30: INVALID_STATE는 400 VALIDATION_FAILED로 내려간다(로컬 선검증에서 대부분 걸러지지만
+		// monitoring 쪽 경합으로 도달해도 동일하게 매핑).
+		given(itemRepository.findByIdAndUser(31L, 7L)).willReturn(Optional.of(accountItem(31L, 900L,
+				LocalDate.now(KstTimestamps.KST))));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.cancel(900L)).willThrow(new MonitoringApiException("INVALID_STATE", "monitoring 상태 불일치", 409));
+
+		mockMvc.perform(post("/v1/monitoring/items/31/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(itemRepository).should(never()).markCanceled(anyLong(), anyString(), any());
+	}
+
+	@Test
+	void cancel_monitoring_500이면_5xx라서_SERVICE_UNAVAILABLE_503이고_Retry_After가_있다() throws Exception {
+		given(itemRepository.findByIdAndUser(32L, 7L)).willReturn(Optional.of(accountItem(32L, 900L,
+				LocalDate.now(KstTimestamps.KST))));
+		given(readRepository.findTargets(List.of(900L)))
+				.willReturn(List.of(targetRow("TRACKING", "GlowDeep", "SHORT1")));
+		given(commandClient.cancel(900L)).willThrow(new MonitoringApiException("INTERNAL", "monitoring 내부 오류", 500));
+
+		mockMvc.perform(post("/v1/monitoring/items/32/cancel").with(user(principal())).with(csrf()))
 				.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
 				.andExpect(header().string("Retry-After", "5"));

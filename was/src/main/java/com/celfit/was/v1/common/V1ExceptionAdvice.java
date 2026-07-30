@@ -1,5 +1,6 @@
 package com.celfit.was.v1.common;
 
+import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringUnavailableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,39 @@ public class V1ExceptionAdvice {
 		return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
 				.header(HttpHeaders.RETRY_AFTER, "5")
 				.body(ApiResponse.fail("SERVICE_UNAVAILABLE", "일시적으로 연결이 어려워요. 잠시 후 다시 시도해 주세요."));
+	}
+
+	/**
+	 * monitoring이 명시 에러 응답 {code, message}을 준 경우(계약 §2) — 그대로 흘리지 않고 프론트
+	 * 어휘(스펙 1.3)로 변환한다. 분기는 code가 아니라 httpStatus 기준(신규 code가 늘어도 매핑이
+	 * 안 깨지도록):
+	 *  - httpStatus >= 500 → 503 SERVICE_UNAVAILABLE + Retry-After: 5. monitoring 장애를 was 자체
+	 *    캐치올 500과 구분해야 프론트가 "연동 서비스 문제"와 "우리 쪽 문제"를 가를 수 있다.
+	 *  - httpStatus == 404 → 404 NOT_FOUND.
+	 *  - 나머지 4xx(400 VALIDATION·409 INVALID_STATE·422 PRIVATE_ACCOUNT 등) → 400 VALIDATION_FAILED.
+	 *    프론트 어휘엔 422·502가 없고, 스펙 6.30이 취소 INVALID_STATE를 "409 대신 400 VALIDATION_FAILED"로
+	 *    못박아 둬서 4xx는 404 외엔 전부 여기로 뭉갠다.
+	 * message는 monitoring 원문(필드명·enum 노출)을 절대 흘리지 않고 위 세 고정 문구만 쓴다.
+	 * httpStatus가 4xx·5xx 밖인 경우는 도달 불가하다 — MonitoringCommandClient는
+	 * RestClientResponseException(= HTTP 응답을 실제로 받은 경우)에서만 이 예외를 만들어 status가
+	 * 항상 유효 HTTP 상태 코드다. 별도 else 분기를 두지 않는다.
+	 * 4xx 매핑분도 포함해 전부 log.warn — 아래 4xx 핸들러들과 달리(그쪽은 로그 없음) 여기는
+	 * 크로스 서비스 이상 신호라 운영 관찰이 필요해서 의도적으로 로그를 남긴다.
+	 */
+	@ExceptionHandler(MonitoringApiException.class)
+	public ResponseEntity<ApiResponse<Void>> handleMonitoringApi(MonitoringApiException e) {
+		log.warn("monitoring 에러 응답 — code={}, httpStatus={}: {}", e.code(), e.httpStatus(), e.getMessage());
+		if (e.httpStatus() >= 500) {
+			return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+					.header(HttpHeaders.RETRY_AFTER, "5")
+					.body(ApiResponse.fail("SERVICE_UNAVAILABLE", "일시적으로 연결이 어려워요. 잠시 후 다시 시도해 주세요."));
+		}
+		if (e.httpStatus() == 404) {
+			return ResponseEntity.status(HttpStatus.NOT_FOUND)
+					.body(ApiResponse.fail("NOT_FOUND", "대상을 찾을 수 없습니다."));
+		}
+		return ResponseEntity.badRequest()
+				.body(ApiResponse.fail("VALIDATION_FAILED", "올바른 형식이 아니에요."));
 	}
 
 	@ExceptionHandler({MethodArgumentTypeMismatchException.class,
