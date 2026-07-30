@@ -96,7 +96,9 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
 - **실패 모드 = 무중단 실패**: 신이 healthy·스모크에 못 가면 신만 제거하고 구가 계속 서빙, CD만
   빨간불. 단 그 시점엔 **신 analytics + 구 was 스큐**가 남는다(analytics·crawler는 롤링 전에 이미
   교체됨) — expand-contract가 지켜졌으면 안전한 조합이며, 조치는 원인 수정 후 재배포(또는 CD 런
-  Re-run). 스큐를 오래 방치하지 말 것.
+  Re-run). 스큐를 오래 방치하지 말 것. **CD가 아예 안 도는(cancelled) 경우도 별도로 있다** — 대기
+  중이던 운영 CD가 뒤이은 test 배포 큐잉에 조용히 취소되는 함정, 대응은 §12 "주의(함정 3건)"
+  참조(07-30 staging→main 승격에서 재확인).
 - **전제 3가지**(rollout.sh 머리 주석과 동일): was는 host 포트 미점유 · compose healthcheck 정의 ·
   Spring `server.shutdown: graceful`(application-prod.yml) + compose `stop_grace_period: 40s`.
 - **순서 규약**: rollout 전에 `up -d --wait analytics`로 analysis Flyway 완료를 보장한다
@@ -403,7 +405,10 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   (`deploy-server`)으로 직렬화되는데, GitHub는 그룹당 대기 1개만 유지한다 — test 배포 실행 중에
   운영 배포가 대기하다가 새 test 배포가 또 큐잉되면 **대기 중이던 운영 배포가 조용히 취소**될 수
   있다. staging→main 머지 후엔 Actions에서 CD 런이 success로 끝났는지 확인하고, cancelled면
-  Re-run으로 재실행한다(07-20 "배포가 조용히 안 나감" 계열 방지).
+  Re-run으로 재실행한다(07-20 "배포가 조용히 안 나감" 계열 방지). **`cancel-in-progress: false`는
+  "취소 안 됨"을 보장하지 않는다** — 이 설정은 "실행 중인 잡을 안 죽인다"는 뜻일 뿐, 대기 슬롯이
+  1개뿐이라는 GitHub Actions concurrency 제약 자체는 못 바꾼다. 07-30 staging→main 승격(PR #247)
+  때 이 패턴이 실제로 재현돼 `gh run rerun`으로 재실행·success 확인함(DECISIONS.md 07-30 참조).
 
 ## 13. monitoring 모듈 개통 (1회 ops — 첫 CD 배포 전에)
 
