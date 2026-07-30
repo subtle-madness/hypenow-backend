@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.v1.common.V1ApiException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,6 +62,36 @@ class NotificationSettingsServiceTest extends IntegrationTest {
 
 		assertThat(restored.content().get("collection_ended").email()).isTrue();
 		assertThat(service.get(userId).content().get("collection_ended").email()).isTrue();
+	}
+
+	@Test
+	void patch_한_요청에_이벤트_2개_이상_동시_변경() {
+		NotificationSettingsResponse patched = service.patch(userId,
+				Map.of("content", Map.of(
+						"collection_ended", Map.of("email", false),
+						"content_issue", Map.of("email", false))));
+
+		assertThat(patched.content().get("collection_ended").email()).isFalse();
+		assertThat(patched.content().get("content_issue").email()).isFalse();
+		assertThat(patched.content().get("collection_started").email()).isTrue();
+		assertThat(patched.content().get("metrics_private").email()).isTrue();
+
+		// 응답뿐 아니라 DB에도 두 이벤트 모두 옵트아웃 행이 생겼는지 재조회로 확인.
+		NotificationSettingsResponse reloaded = service.get(userId);
+		assertThat(reloaded.content().get("collection_ended").email()).isFalse();
+		assertThat(reloaded.content().get("content_issue").email()).isFalse();
+		assertThat(reloaded.content().get("collection_started").email()).isTrue();
+		assertThat(reloaded.content().get("metrics_private").email()).isTrue();
+	}
+
+	@Test
+	void patch_content가_null이면_400() {
+		Map<String, Object> body = new HashMap<>();
+		body.put("content", null);
+
+		assertThatThrownBy(() -> service.patch(userId, body))
+				.isInstanceOf(V1ApiException.class)
+				.satisfies(e -> assertThat(((V1ApiException) e).code()).isEqualTo("VALIDATION_FAILED"));
 	}
 
 	@Test
