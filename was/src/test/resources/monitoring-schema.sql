@@ -1,6 +1,9 @@
 -- 계약 §3에서 유도한 monitoring DB 픽스처 — 테스트 전용.
 -- 2026-07-30 계약 v1.1(feat/monitoring-v3-p2, V4__p2_surfaces.sql)과 대조 완료:
 --   post_comment·profile_meta·detected_candidate.matched_keywords는 실구현 DDL과 일치.
+-- 2026-07-30 계약 v2.1(feat/monitoring-alarm-module, V3__user_id_and_alarm_event.sql)과 대조 완료:
+--   alarm_event는 was 소비 컬럼(id·target_id·user_id·event_type·payload·occurred_at)만 축약해
+--   실구현 DDL과 일치(email_status·dispatch_after 등 monitoring 내부 컬럼도 동봉해 실 스키마와 형태를 맞춘다).
 -- P1 확장 선반영분(docs/contracts/monitoring-v3-extension-request.md — post_meta·
 --   target.tracked_hidden_at·fetch_failing·sweep_run)은 아직 실구현 미착수 —
 --   v2.0(feat/monitoring-alarm-module) 재편 확정 시 재대조할 것.
@@ -90,4 +93,20 @@ CREATE TABLE IF NOT EXISTS sweep_run (
     started_at   timestamptz NOT NULL,
     completed_at timestamptz,
     ok           boolean
+);
+
+-- 알람 이벤트 대장(v2.1 §3) — 앱 내 다이제스트·히스토리의 단일 원천. 실 DDL(V3)과 동일 형태.
+CREATE TABLE IF NOT EXISTS alarm_event (
+    id             bigserial   PRIMARY KEY,
+    target_id      bigint      NOT NULL,
+    user_id        bigint      NOT NULL,
+    event_type     text        NOT NULL CHECK (event_type IN
+                   ('COLLECTION_STARTED','COLLECTION_ENDED','METRICS_HIDDEN','CONTENT_UNAVAILABLE')),
+    payload        jsonb       NOT NULL,
+    occurred_at    timestamptz NOT NULL DEFAULT now(),
+    dispatch_after timestamptz NOT NULL,
+    email_status   text        NOT NULL DEFAULT 'PENDING' CHECK (email_status IN
+                   ('PENDING','SENT','SKIPPED_OPTOUT','SKIPPED_NO_RECIPIENT','FAILED')),
+    email_attempts smallint    NOT NULL DEFAULT 0,
+    email_sent_at  timestamptz
 );

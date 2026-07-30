@@ -2,14 +2,13 @@ package com.celfit.was.monitoring;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
  * app.monitoring_digests CRUD(v3, V15, 6.32) — 데일리 다이제스트 저장·조회·읽음 처리.
- * 생성(insertIfAbsent)은 이 태스크에서는 재실행 안전한 기반만 두고, 실제 9시 크론 호출은
- * 후속 태스크(다이제스트 생성) 범위다.
+ * 생성은 {@link #upsert}(DigestJob, 갭 문서 A-1-2) — 워터마크 없이 날짜 재계산이라 재실행마다
+ * items를 덮어써도 안전하다(created_at·read_at은 SET 절에 없어 자연히 보존).
  */
 @Repository
 public class DigestRepository {
@@ -21,21 +20,22 @@ public class DigestRepository {
 	}
 
 	/**
-	 * (user, date) 유니크 위반 시 조용히 무시 — 크론이 같은 날짜를 재실행해도 안전. 삽입되면
-	 * id를 담아 반환하고, 이미 존재하면 빈 Optional(ON CONFLICT DO NOTHING이라 RETURNING 행이 없다).
+	 * (user, date) 재계산 upsert — 이미 있으면 items만 덮어쓴다(늦게 도착한 alarm_event 반영,
+	 * DigestJob 재실행 안전). created_at·read_at은 SET 절에 없어 자연히 보존된다. ON CONFLICT DO
+	 * UPDATE는 항상 행을 반환하므로(신규든 갱신이든) id는 항상 존재 — Optional이 필요 없다.
 	 */
-	public Optional<Long> insertIfAbsent(long userId, LocalDate digestDate, String itemsJson) {
+	public long upsert(long userId, LocalDate digestDate, String itemsJson) {
 		return jdbcClient.sql("""
 				INSERT INTO app.monitoring_digests (user_id, digest_date, items)
 				VALUES (:userId, :digestDate, CAST(:items AS jsonb))
-				ON CONFLICT (user_id, digest_date) DO NOTHING
+				ON CONFLICT (user_id, digest_date) DO UPDATE SET items = EXCLUDED.items
 				RETURNING id
 				""")
 				.param("userId", userId)
 				.param("digestDate", digestDate)
 				.param("items", itemsJson)
 				.query(Long.class)
-				.optional();
+				.single();
 	}
 
 	/** 최근 다이제스트 — digest_date DESC(id DESC tie-break). limit은 컨트롤러가 넘기는 상한(6.32는 30건). */

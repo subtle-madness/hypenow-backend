@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -61,6 +62,23 @@ public class MonitoringReadRepository {
 				""")
 				.param("targetId", targetId)
 				.query(PostSnapshotRow.class)
+				.list();
+	}
+
+	/**
+	 * KST 달력일 기준 알람 이벤트(갭 문서 A-1-2, 다이제스트 크론의 유일한 입력).
+	 * `(occurred_at AT TIME ZONE 'Asia/Seoul')::date`로 걸러 워터마크 없이 날짜 재계산이 가능하게 한다
+	 * (V1InfluencerDiscoveryRepository의 KST date 캐스팅 관용구와 동일).
+	 */
+	public List<AlarmEventRow> findAlarmEventsOn(LocalDate kstDate) {
+		return jdbc.sql("""
+				SELECT id, target_id, user_id, event_type, occurred_at
+				FROM alarm_event
+				WHERE (occurred_at AT TIME ZONE 'Asia/Seoul')::date = :kstDate
+				ORDER BY user_id, occurred_at
+				""")
+				.param("kstDate", kstDate)
+				.query(AlarmEventRow.class)
 				.list();
 	}
 }

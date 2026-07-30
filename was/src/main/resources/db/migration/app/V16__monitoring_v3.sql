@@ -84,11 +84,6 @@ CREATE INDEX monitoring_digests_user_idx ON app.monitoring_digests (user_id, dig
 
 -- 옵트아웃 테이블은 V15가 생성 — 어휘 정본은 monitoring AlarmEventType(대문자), 6.33 소문자 매핑은 was 코드 몫.
 
--- 다이제스트 생성 워터마크(9시 크론 창의 시작점). 시드는 마이그레이션 시각 — 적용 이전 이벤트 일괄 발화 방지.
-CREATE TABLE app.monitoring_alarm_state (
-    event_type       text PRIMARY KEY,
-    last_notified_at timestamptz NOT NULL
-);
-INSERT INTO app.monitoring_alarm_state (event_type, last_notified_at)
-VALUES ('DIGEST', now())
-ON CONFLICT DO NOTHING;
+-- (폐기) 다이제스트 생성 워터마크 — 갭 문서 A-1-2 재설계로 폐지. alarm_event 대장(v2.1)이 단일
+-- 원천이 되면서 워터마크 없이 "occurred_at의 KST 날짜 = 오늘" 재계산 upsert로 대체됐다(DigestJob).
+-- 이 파일은 아직 미배포(로컬 전용, V16)라 CREATE 자체를 지운다 — expand-contract 대상이 아니다.
