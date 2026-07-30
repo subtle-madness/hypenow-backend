@@ -1,6 +1,6 @@
 # 인플루언서 리포트 개편 — 백엔드(analytics·was) 구현 계획
 
-> 상태: 🟢 활성 · ✅ 구현됨(머지 대기)
+> 상태: ✅ 구현됨 (PR #149 머지, 2026-07-28)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

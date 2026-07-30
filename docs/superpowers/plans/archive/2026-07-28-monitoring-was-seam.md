@@ -3,8 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > 상태: ✅ 구현됨 (2026-07-29, feat/monitoring-was-seam)
-> 스펙: [specs/2026-07-28-monitoring-was-seam-design.md](../specs/2026-07-28-monitoring-was-seam-design.md)
-> 계약 스냅샷: [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md)
+> 스펙: [specs/2026-07-28-monitoring-was-seam-design.md](../../specs/2026-07-28-monitoring-was-seam-design.md)
+> 계약 스냅샷: [docs/contracts/monitoring-was-contract.md](../../../contracts/monitoring-was-contract.md)
 > 작업 위치: 워크트리 `.worktrees/monitoring-seam`, 브랜치 `feat/monitoring-was-seam`
 
 **Goal:** was가 monitoring 컨테이너와 통신하는 계층 전부 — 명령 클라이언트(5개), 읽기 전용 조회 계층, app 매핑 테이블, 오케스트레이션 서비스. 프론트 `/v1` 컨트롤러·이메일 크론은 범위 밖.

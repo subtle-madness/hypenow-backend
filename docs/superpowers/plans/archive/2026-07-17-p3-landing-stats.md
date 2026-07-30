@@ -276,7 +276,7 @@ curl -si 'localhost:8081/v1/stats' | head -20
 
 - [ ] **Step 7: 문서** —
   - ARCHITECTURE.md §5 "API 스펙 정렬 트랙" 표: **P3 행을 수정** — 내용에서 유사 콘텐츠를 빼고 `/v1/stats`만 남기며 상태 ✅("07-17 개통"). 유사 콘텐츠 제외 사실을 행 내용에 명시.
-  - §7 결정 기록 맨 위에 1행: `| 2026-07-17 | **P3 랜딩 통계 개통 + 유사 콘텐츠 제외 확정** — GET /v1/stats(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 강한 HTTP 캐시(1시간). **모수는 마이크로 구간 계정(팔로워 3천~5만)과 그 콘텐츠로 통일** — 랜딩 카피·스펙 분포 합계 100과 일치(수집 114 중 55). 조회수는 릴스만(회신표 #16). 분포 %·합계 100 보정은 was 표현 계층(최대 잔여). updatedAt은 미러 실행 시각. **유사 콘텐츠(스펙 6.2)는 제품 고려 대상이 아니라 구현하지 않기로 확정** — 스펙 6.2·회신표 #3은 미구현으로 남김 | [plans/archive/2026-07-17-p3-landing-stats.md](docs/superpowers/plans/archive/2026-07-17-p3-landing-stats.md) |`
+  - §7 결정 기록 맨 위에 1행: `| 2026-07-17 | **P3 랜딩 통계 개통 + 유사 콘텐츠 제외 확정** — GET /v1/stats(스펙 6.20)를 분석 층 1행 뷰·미러(landing_stats V32)로 서빙, 강한 HTTP 캐시(1시간). **모수는 마이크로 구간 계정(팔로워 3천~5만)과 그 콘텐츠로 통일** — 랜딩 카피·스펙 분포 합계 100과 일치(수집 114 중 55). 조회수는 릴스만(회신표 #16). 분포 %·합계 100 보정은 was 표현 계층(최대 잔여). updatedAt은 미러 실행 시각. **유사 콘텐츠(스펙 6.2)는 제품 고려 대상이 아니라 구현하지 않기로 확정** — 스펙 6.2·회신표 #3은 미구현으로 남김 | [plans/archive/2026-07-17-p3-landing-stats.md](2026-07-17-p3-landing-stats.md) |`
   - 이 계획 문서 상태 헤더 `✅ 구현/실행/반영됨` + `git mv`로 `plans/archive/`로 이동(상대링크 `../../specs/` 보정).
 - [ ] **Step 8: 커밋 & PR** — 코드 커밋 `feat(was): GET /v1/stats 랜딩 통계 (스펙 6.20)`, 문서 커밋 `docs: P3 개통 반영 — 유사 콘텐츠 제외 확정·ARCHITECTURE §5/§7 갱신`(Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>). push 후 `gh pr create --base develop --title "feat: P3 랜딩 통계 — GET /v1/stats (유사 콘텐츠 제외 확정)"`. 본문: 요약(모수 결정 근거 포함)·스모크 결과·유사 콘텐츠 제외 명시·프론트 액션(랜딩 상수 → API 교체). 끝에 "🤖 Generated with [Claude Code](https://claude.com/claude-code)".
 

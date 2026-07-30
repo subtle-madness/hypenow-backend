@@ -1,5 +1,7 @@
 # 가입 코드 일괄 적재 API Implementation Plan
 
+> 상태: ✅ 구현됨 (PR #72 머지·운영 배포, 2026-07-20)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** `POST /admin/signup-codes` (정적 토큰 인증)로 코드 배열을 `app.signup_codes`에 일괄 저장, `{inserted, skipped}` 반환.

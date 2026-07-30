@@ -5,8 +5,8 @@
 > feat/monitoring-v3-was에 feat/monitoring-v3-p2(댓글·계정 메타)와
 > feat/monitoring-alarm-module(승인 폐지·alarm_event·메일 발송)을 병합(1fbda87c)하고
 > V15 경합을 해소(c5cd7aaf)한 시점의 전수 정합 검사 결과. 계약 기준:
-> [monitoring-was-contract.md](../../contracts/monitoring-was-contract.md) v2.1 /
-> [monitoring-frontend-api-spec.md](../../contracts/monitoring-frontend-api-spec.md) 6.25~6.33.
+> [monitoring-was-contract.md](../../../contracts/monitoring-was-contract.md) v2.1 /
+> [monitoring-frontend-api-spec.md](../../../contracts/monitoring-frontend-api-spec.md) 6.25~6.33.
 > 테스트: :was: 638 · :monitoring: 167 전부 그린.
 
 ## A. 잘못된 부분 (정합 어긋남)
