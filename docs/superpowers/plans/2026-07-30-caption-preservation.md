@@ -52,7 +52,7 @@ Testcontainers가 필요하므로 Docker(colima)가 떠 있어야 통합 테스�
 
 | 파일 | 책임 |
 |---|---|
-| `crawler/src/main/resources/db/migration/V22__content_caption.sql` | `content_caption` 테이블 + 백필 워터마크 `app_setting` 시드 |
+| `crawler/src/main/resources/db/migration/V23__content_caption.sql` | `content_caption` 테이블 + 백필 워터마크 `app_setting` 시드 |
 | `crawler/src/main/resources/db/migration/V23__drop_raw_post_detail.sql` | 죽은 테이블 제거 (contract 단계) |
 | `crawler/src/main/java/com/celfit/crawler/content/application/service/ContentCaptionUpserter.java` | 캡션 배치 upsert 1개 책임. 라이브·백필 공용 |
 | `crawler/src/main/java/com/celfit/crawler/crawling/application/service/CaptionBackfillJob.java` | 저장된 raw 페이지를 훑어 캡션 소급 적재 |
@@ -262,7 +262,7 @@ SELF_GQL(edges 배열)·HIKER_V1_MEDIAS(평문) 셋 다 unwrapMedia()가 정규�
 ## Task 2: `content_caption` 테이블
 
 **Files:**
-- Create: `crawler/src/main/resources/db/migration/V22__content_caption.sql`
+- Create: `crawler/src/main/resources/db/migration/V23__content_caption.sql`
 - Modify: `crawler/src/test/java/com/celfit/crawler/SchemaTest.java:23`
 
 - [ ] **Step 1: 마이그레이션 번호를 확인한다**
@@ -276,7 +276,7 @@ git fetch origin --quiet && git ls-tree -r origin/develop --name-only -- crawler
 
 - [ ] **Step 2: 마이그레이션 파일을 작성한다**
 
-`crawler/src/main/resources/db/migration/V22__content_caption.sql`:
+`crawler/src/main/resources/db/migration/V23__content_caption.sql`:
 
 ```sql
 -- 게시물 캡션 원문 보존 (2026-07-30).
@@ -321,14 +321,14 @@ ON CONFLICT (key) DO NOTHING;
 ./gradlew :crawler:test --tests "com.celfit.crawler.SchemaTest"
 ```
 
-기대: PASS (Flyway가 V22를 적용하고 테이블이 생긴다). Docker가 안 떠 있으면 Testcontainers 기동
+기대: PASS (Flyway가 V23을 적용하고 테이블이 생긴다). Docker가 안 떠 있으면 Testcontainers 기동
 실패이므로 colima를 먼저 확인한다.
 
 - [ ] **Step 5: 커밋**
 
 ```bash
-git add crawler/src/main/resources/db/migration/V22__content_caption.sql crawler/src/test/java/com/celfit/crawler/SchemaTest.java
-git commit -m "feat(crawler): content_caption 테이블 + 백필 워터마크 시드 (V22)
+git add crawler/src/main/resources/db/migration/V23__content_caption.sql crawler/src/test/java/com/celfit/crawler/SchemaTest.java
+git commit -m "feat(crawler): content_caption 테이블 + 백필 워터마크 시드 (V23)
 
 content 단위 최신 캡션 1건 보존. 빈 문자열은 '캡션 없음', 행 부재는 '미확인'.
 신규 테이블이라 expand-contract 무해(DROP·RENAME·기존 컬럼 NOT NULL 없음)."
@@ -1230,7 +1230,7 @@ jsonb 원형에서 직접 파는 경로(`raw_media_page.payload#>>'{response,ite
 행(`Z`) 바로 아래에 추가한다:
 
 ```markdown
-| AA | 게시물 캡션 원문 보존 | 캡션 원문이 raw jsonb(`raw_media_page`·`raw_profile`)에 실재하는데도 `MediaItemExtractor`가 파싱하지 않아 사장돼 있었고(유실이 아니라 추출 부재), 도달 경로가 5~7단 jsonb 표현식뿐이라 "캡션이 DB에 없다"는 오조사가 실제로 발생(07-30, `raw_post_detail` 0행·`raw_discovery_post` DISCOVERY 전용을 조인). `content_caption` 신설(V22 — content_id PK·최신 1건·96MB, 압축 불필요: pglz 실측 이득 7%) + 추출기가 세 소스에서 캡션 추출(`unwrapMedia()`가 이미 정규화하므로 단일 헬퍼) + 라이브 배선 + `CAPTION_BACKFILL` 원샷 잡(저장된 원형 소급 적재·인스타 호출 0회·라이브와 동일 파서 재사용·app_setting 워터마크 재개). **어떤 analytics 뷰도 읽지 않는 현역 소스 `HIKER_V1_MEDIAS`**(9,691행·1GB·07-18~) 캡션 약 6,240건을 재크롤 0원으로 건짐(표본 40건 중 33건=82.5% 실측) — 단 **저장 측면만** 해소, 서빙 반영(뷰가 `content_caption`을 읽도록 전환)은 analytics 트랙 후속. `raw_post_detail`(0행·참조 코드 부재) DROP 동반(V23) — [specs/2026-07-30-caption-preservation-design.md](docs/superpowers/specs/2026-07-30-caption-preservation-design.md) | — | 🔨 (구현 완료 — PR·배포·백필 수동 실행 대기) |
+| AA | 게시물 캡션 원문 보존 | 캡션 원문이 raw jsonb(`raw_media_page`·`raw_profile`)에 실재하는데도 `MediaItemExtractor`가 파싱하지 않아 사장돼 있었고(유실이 아니라 추출 부재), 도달 경로가 5~7단 jsonb 표현식뿐이라 "캡션이 DB에 없다"는 오조사가 실제로 발생(07-30, `raw_post_detail` 0행·`raw_discovery_post` DISCOVERY 전용을 조인). `content_caption` 신설(V23 — content_id PK·최신 1건·96MB, 압축 불필요: pglz 실측 이득 7%) + 추출기가 세 소스에서 캡션 추출(`unwrapMedia()`가 이미 정규화하므로 단일 헬퍼) + 라이브 배선 + `CAPTION_BACKFILL` 원샷 잡(저장된 원형 소급 적재·인스타 호출 0회·라이브와 동일 파서 재사용·app_setting 워터마크 재개). **어떤 analytics 뷰도 읽지 않는 현역 소스 `HIKER_V1_MEDIAS`**(9,691행·1GB·07-18~) 캡션 약 6,240건을 재크롤 0원으로 건짐(표본 40건 중 33건=82.5% 실측) — 단 **저장 측면만** 해소, 서빙 반영(뷰가 `content_caption`을 읽도록 전환)은 analytics 트랙 후속. `raw_post_detail`(0행·참조 코드 부재) DROP 동반(V23) — [specs/2026-07-30-caption-preservation-design.md](docs/superpowers/specs/2026-07-30-caption-preservation-design.md) | — | 🔨 (구현 완료 — PR·배포·백필 수동 실행 대기) |
 ```
 
 **주의:** 트랙 문자 체계가 두 글자로 확장됐다는 사실을 §5 표 위 설명이나 §7에 한 줄로 남겨,
@@ -1314,7 +1314,7 @@ gh pr create --base develop --title "feat(crawler): 게시물 캡션 원문 보�
 
 ## 변경
 
-- `content_caption` 신설 (V22) — `content_id` PK, 최신 1건, `source` provenance 기록
+- `content_caption` 신설 (V23) — `content_id` PK, 최신 1건, `source` provenance 기록
 - `MediaItemExtractor`가 세 소스에서 캡션 추출 — `unwrapMedia()`가 이미 정규화하므로 단일 헬퍼
 - 라이브 수집(COLLECT·REELS) 배선 — 앞으로 유실 없음
 - `CAPTION_BACKFILL` 잡 — 저장된 원형 소급 적재, **인스타 호출 0회**. 라이브와 같은 파서 재사용
