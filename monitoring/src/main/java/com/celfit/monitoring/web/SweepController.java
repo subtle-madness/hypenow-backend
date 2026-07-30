@@ -3,6 +3,7 @@ package com.celfit.monitoring.web;
 import com.celfit.monitoring.service.SweepCommandService;
 import com.celfit.monitoring.service.SweepGuard;
 import com.celfit.monitoring.store.SweepRunRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,11 +17,15 @@ import org.springframework.web.bind.annotation.RestController;
  * 수작업을 대체). 인증 없음: TargetController와 같은 전용 도커 네트워크 소속 전제(계약 §1).
  *
  * <p><b>이 엔드포인트는 Hiker API 콜을 유발한다</b>(계정 수만큼 프로필·열거 콜 — POST /api/targets와
- * 노출 수준이 같다). 프로퍼티 게이팅은 두지 않는다 — 오남용 방어는 동시 실행 가드({@link SweepGuard})
- * 하나뿐이다(중복 트리거로 콜이 배로 나가는 것만 막는다).
+ * 노출 수준이 같다). monitoring은 인터넷에서 도달 불가능하지만(Caddyfile 무배선) 그 방어가 한 겹뿐이라
+ * {@code monitoring.sweep.manual-trigger-enabled}로 프로퍼티 게이트를 둔다(기본 false — AdminUiController·
+ * CoverageController와 동일한 {@code @ConditionalOnProperty} 관용구, 빈 자체가 등록되지 않아 비활성 시
+ * 404). {@code GET /latest}는 콜을 유발하지 않는 단순 조회지만 컨트롤러를 쪼개는 대신 함께 묶었다 —
+ * 별도 프로퍼티를 두면 조합이 늘어 검증 부담만 커지고, latest 단독 노출의 실이익이 없다.
  */
 @RestController
 @RequestMapping("/api/sweeps")
+@ConditionalOnProperty(name = "monitoring.sweep.manual-trigger-enabled", havingValue = "true")
 public class SweepController {
 
 	private final SweepCommandService command;

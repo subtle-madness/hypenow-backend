@@ -35,9 +35,11 @@ import org.springframework.web.context.WebApplicationContext;
  * 실제 DailySweepJob 대신 {@link ControllableSweepJob}(runWithId를 오버라이드해 타이밍을 통제하는
  * 서브클래스, target이 하나도 없으니 실행 자체는 아무 Hiker 콜도 내지 않는다)을 @Primary로 꽂아
  * "동시 실행 가드가 크론/수동 경로 없이도 단독으로 막는지", "예외로 죽어도 가드가 finally로 풀리는지"를
- * CountDownLatch로 결정론적으로 검증한다(폴링·sleep 없이).
+ * CountDownLatch로 결정론적으로 검증한다(폴링·sleep 없이). manual-trigger-enabled 기본값은 false(운영
+ * 공격면 최소화)라 이 컨트롤러 자체를 검증하려면 프로퍼티를 켜야 한다 — 게이트가 꺼졌을 때의 동작(404)은
+ * {@link SweepControllerDisabledTest}가 별도 컨텍스트로 검증한다.
  */
-@SpringBootTest
+@SpringBootTest(properties = "monitoring.sweep.manual-trigger-enabled=true")
 class SweepControllerTest {
 
 	/**
