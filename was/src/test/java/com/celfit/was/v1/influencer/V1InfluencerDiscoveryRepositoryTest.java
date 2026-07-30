@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +41,8 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void setUpTables() {
-		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V10·V20·V30·V37 참조
+		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V10·V20·V30·V37·V45 참조
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_content_series");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_analyses");
@@ -122,6 +124,16 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    object_path text NOT NULL,
 				    PRIMARY KEY (kind, key)
 				)""");
+		// analytics V45 그대로 — 뷰티 게시물 비율 게이트가 이 뷰를 조인한다.
+		jdbcTemplate.execute("""
+				CREATE VIEW account_beauty_ratio AS
+				SELECT s.account_handle,
+				       count(*) FILTER (WHERE an.is_beauty IS NOT NULL) AS analyzed_count,
+				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count
+				FROM account_content_series s
+				JOIN content_analyses an ON an.short_code = s.short_code
+				GROUP BY s.account_handle
+				""");
 
 		jdbcTemplate.update("""
 				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
@@ -194,6 +206,14 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				INSERT INTO image_assets (kind, key, object_path) VALUES
 				  ('profile', 'glow', 'p/glow.jpg'),
 				  ('thumbnail', 'g1', 't/g1.jpg')""");
+	}
+
+	@AfterEach
+	void tearDownView() {
+		// 컨테이너는 JVM 전체 공유(IntegrationTest static 싱글턴) — 이 클래스가 만든 뷰가 남으면
+		// 다른 테스트 클래스의 DROP TABLE content_analyses(CASCADE 없음)가 의존성 오류로 깨진다
+		// (V2InfluencerReportRepositoryTest의 account_peer_stats·account_category_stats와 같은 이유).
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 	}
 
 	@Test
@@ -359,5 +379,43 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		var calm = engagements.stream()
 				.filter(e -> e.accountHandle().equals("calm")).toList();
 		assertThat(calm).hasSize(3);
+	}
+
+	@Test
+	void 뷰티_비율_게이트_경계값() {
+		// MIN_ANALYZED(8) 미만이면 비율과 무관하게 게이트 보류(통과) — 뷰티 0%라도 표본이 얇아 판단 보류.
+		seedBeautyRatioAccount("few", 7, 0);
+		// 정확한 퍼센트 경계 검증을 위해 분모를 100으로 잡는다(8건 문턱 자체는 위 few가 별도 검증) —
+		// 19%는 MIN_BEAUTY_RATIO_PERCENT(20) 미달로 제외, 20%는 경계 포함(>=)으로 통과.
+		seedBeautyRatioAccount("low", 100, 19);
+		seedBeautyRatioAccount("at", 100, 20);
+
+		List<String> handles = repository.findCards(all()).stream().map(CardRow::handle).toList();
+		assertThat(handles).contains("few", "at");
+		assertThat(handles).doesNotContain("low");
+		assertThat(repository.countCards(all())).isEqualTo(handles.size());
+	}
+
+	/** 뷰티 비율 게이트 전용 최소 픽스처 — analyzedCount건 중 앞 beautyCount건만 is_beauty=true. */
+	private void seedBeautyRatioAccount(String handle, int analyzedCount, int beautyCount) {
+		jdbcTemplate.update("""
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers)
+				VALUES (?, ?, NULL, 5000)""", handle, handle);
+		jdbcTemplate.update("""
+				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
+				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
+				  avg_hype_score, last_posted_at)
+				VALUES (?, 5000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL, NULL, now())""", handle);
+		for (int i = 0; i < analyzedCount; i++) {
+			String shortCode = handle + "_p" + i;
+			jdbcTemplate.update("""
+					INSERT INTO account_content_series (short_code, account_handle, posted_at,
+					  content_type, views, likes, comments, sponsored)
+					VALUES (?, ?, now(), 'feed', NULL, 0, 0, false)""", shortCode, handle);
+			jdbcTemplate.update("""
+					INSERT INTO content_analyses (short_code, is_beauty, main_category, sub_categories,
+					  ad_type, detected_brands)
+					VALUES (?, ?, 'skincare', NULL, 'organic', NULL)""", shortCode, i < beautyCount);
+		}
 	}
 }
