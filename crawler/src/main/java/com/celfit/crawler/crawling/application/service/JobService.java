@@ -22,10 +22,12 @@ public class JobService implements TriggerJobUseCase {
     private final BeautyJob beautyJob;
     private final SimilarJob similarJob;
     private final ReelsJob reelsJob;
+    private final CaptionBackfillJob captionBackfillJob;
     private final TaskExecutor taskExecutor;
 
     public JobService(JobLock lock, JobStopFlag stopFlag, DiscoverJob discoverJob, QualifyJob qualifyJob,
                       CollectJob collectJob, BeautyJob beautyJob, SimilarJob similarJob, ReelsJob reelsJob,
+                      CaptionBackfillJob captionBackfillJob,
                       @Qualifier("jobTaskExecutor") TaskExecutor taskExecutor) {
         this.lock = lock;
         this.stopFlag = stopFlag;
@@ -35,6 +37,7 @@ public class JobService implements TriggerJobUseCase {
         this.beautyJob = beautyJob;
         this.similarJob = similarJob;
         this.reelsJob = reelsJob;
+        this.captionBackfillJob = captionBackfillJob;
         this.taskExecutor = taskExecutor;
     }
 
@@ -83,6 +86,10 @@ public class JobService implements TriggerJobUseCase {
                         var s = reelsJob.run(triggerType);
                         if (s.failedVisits() > 0) log.warn("reels 완료(방문 부분 실패): {}", s);
                         else log.info("reels 완료: {}", s);
+                    }
+                    case CAPTION_BACKFILL -> {
+                        var s = captionBackfillJob.run(triggerType);
+                        log.info("caption-backfill 완료: {}", s);
                     }
                     case RESNAPSHOT, AGGREGATE -> log.warn("{}은(는) 판독 전용 — 실행 경로 없음", job);
                 }
