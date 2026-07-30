@@ -3,7 +3,8 @@
 ## 세션 시작
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)를 먼저 읽는다** — 시스템 구조·작업 트랙 상태·결정 기록의 기준(살아있는 문서).
-- 구조나 태스크 상태가 바뀌는 작업을 했으면 ARCHITECTURE.md의 §5(작업 트랙 표)와 §7(결정 기록)을 같이 갱신한다.
+- 구조나 태스크 상태가 바뀌는 작업을 했으면 ARCHITECTURE.md의 §7(결정 기록)과 해당 트랙의
+  `docs/tracks/<트랙문자>-<슬러그>.md`(작업 트랙 — 트랙 1개 = 파일 1개, §5 참조)를 같이 갱신한다.
 - 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변) /
   `docs/superpowers/plans/`(구현 계획 — 실행 완료 시 `plans/archive/`로 이동).
   dated 문서는 첫머리 상태 헤더(`> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 · ⏸ 보류`)를 유지한다.
@@ -45,12 +46,25 @@
   **기준값은 crawler Flyway 마이그레이션으로 시드**(`ON CONFLICT DO NOTHING`, V16 참조 —
   07-20 수동 등록분 유실 사고 후 확립). 기준값 추가·변경은 후속 마이그레이션으로,
   수동 UPDATE는 런타임 토글(프로바이더 전환·임시 상향)만.
+- **신규 Flyway 마이그레이션은 UTC 타임스탬프로 채번한다**(`V<YYYYMMDDHHMMSS>__<설명>.sql`,
+  07-30~ — 예: `V20260730153000__account_summary_note.sql`). 정수 연번(`V1`~`V49` 등)은 병행
+  세션이 같은 다음 번호를 집는 경합이 반복됐다(V18→V19, V22→V23, PR #181). Flyway는 버전을
+  숫자로 비교하므로(선행 0 무시) 14자리 타임스탬프는 항상 기존 정수보다 커서 순서가 자동
+  보장된다(`MigrationVersion.compareTo` 실측 확인, 가드 v3.2 참고). **기존 `V1`~`V49` 파일은
+  절대 rename 금지** — `schema_history`에 버전·체크섬이 기록돼 있어 rename하면 운영 DB
+  마이그레이션이 깨진다. 대상은 독립 버전 공간 4개(각자 다음 자유 번호를 자유 채번) 전부 —
+  crawler, analytics `db/migration/analysis`, was `db/migration/app`, monitoring. 번호 경합 검사
+  (`check-migration-safety.sh`)는 자릿수 제한 없는 정규식이라 무수정으로 호환.
 - 배열 저장은 `text[]` 대신 `jsonb` (기존 `RawComment.payload` 매핑 관용구 재사용).
 - **스키마 변경은 expand-contract** (07-29 was 롤링 배포 도입~): 롤링 중 신구 코드가 같은 DB를
   공존해서 본다 — `DROP`·`RENAME`·타입 변경·`SET NOT NULL`은 참조 코드가 끊긴 **다음 릴리스**에서만.
   CI `migration-guard`가 차단하며, 의도된 contract 단계는 `-- allow-destructive: <사유>` 주석으로
   통과. **DROP COLUMN 파일은 그 컬럼을 참조하는 보정 UPDATE 동봉 필수**(가드 v2 짝 검사 —
   롤링 창 유실분 최종 백필. 불필요하면 `-- no-backfill: <사유>`)([deploy/README.md §5-1](deploy/README.md)).
+- **세션 위생**(여러 세션 동시 작업 전제): 작업이 끝나면 머지 준비가 안 됐더라도 **PR을 즉시 연다**(draft
+  가능) — 열린 PR이 "이 영역은 점유 중"이라는 세션 간 유일한 신호다. 작업 종료 시 자기 worktree와
+  머지된 브랜치를 정리한다 — 방치된 worktree가 쌓이면 어느 작업이 살아있는지 식별 불가능해진다
+  (07-30 기준 25개 방치 확인).
 
 ## 함정
 

@@ -37,7 +37,7 @@ public class V1CampaignService {
 	}
 
 	public CampaignRow create(long userId, Object rawName, Object rawDescription, Object rawStartDate,
-			Object rawEndDate, Object rawBrand, Object rawBudget) {
+			Object rawEndDate, Object rawBrand, Object rawBudget, Object rawSeedingCount) {
 		String name = CampaignName.normalize(toStringOrNull(rawName));
 		String description = validateDescription(toStringOrNull(rawDescription));
 		String brand = validateBrand(toStringOrNull(rawBrand));
@@ -45,9 +45,10 @@ public class V1CampaignService {
 		LocalDate endDate = parseDate(rawEndDate, "endDate");
 		validateDateRange(startDate, endDate);
 		Long budget = parseBudget(rawBudget);
+		Integer seedingCount = parseSeedingCount(rawSeedingCount);
 
 		try {
-			return repository.insert(userId, name, description, startDate, endDate, brand, budget);
+			return repository.insert(userId, name, description, startDate, endDate, brand, budget, seedingCount);
 		} catch (DuplicateKeyException e) {
 			throw V1ApiException.conflict(CAMPAIGN_NAME_EXISTS, NAME_EXISTS_MESSAGE);
 		}
@@ -97,8 +98,14 @@ public class V1CampaignService {
 			budget = parseBudget(body.get("budget"));
 		}
 
+		Integer seedingCount = existing.seedingCount();
+		if (body.containsKey("seedingCount")) {
+			seedingCount = parseSeedingCount(body.get("seedingCount"));
+		}
+
 		try {
-			return repository.update(campaignId, name, description, startDate, endDate, brand, budget);
+			return repository.update(campaignId, name, description, startDate, endDate, brand, budget,
+					seedingCount);
 		} catch (DuplicateKeyException e) {
 			throw V1ApiException.conflict(CAMPAIGN_NAME_EXISTS, NAME_EXISTS_MESSAGE);
 		}
@@ -112,7 +119,8 @@ public class V1CampaignService {
 		String name = CampaignName.normalize(rawName);
 		return repository.findByNameAndUser(name, userId)
 				.map(row -> new Resolved(row, false))
-				.orElseGet(() -> new Resolved(repository.insert(userId, name, null, null, null, null, null), true));
+				.orElseGet(() -> new Resolved(
+						repository.insert(userId, name, null, null, null, null, null, null), true));
 	}
 
 	/** 소유 검증 → 삭제. FK ON DELETE SET NULL이 소속 추적 행의 campaign_id를 해제한다(캐스케이드 삭제 아님). */
@@ -171,6 +179,25 @@ public class V1CampaignService {
 			return value;
 		}
 		throw V1ApiException.validation("예산은 0 이상의 정수로 입력해 주세요.");
+	}
+
+	/**
+	 * seedingCount: null 또는 0 이상 정수만 허용한다(budget과 동일한 타입 판별 방식 — 소수는 Double로
+	 * 들어와 여기서 400). 등록된 추적 행 수와는 무관한 유저 선언 입력값(이행률 모수)이라 행 수와의
+	 * 대소 관계는 검증하지 않는다 — "40명이라 적고 43명에게 추가 발송"이 정상 시나리오다.
+	 */
+	private static Integer parseSeedingCount(Object raw) {
+		if (raw == null) {
+			return null;
+		}
+		if (raw instanceof Integer || raw instanceof Long) {
+			long value = ((Number) raw).longValue();
+			if (value < 0 || value > Integer.MAX_VALUE) {
+				throw V1ApiException.validation("시딩 인원은 0 이상의 정수로 입력해 주세요.");
+			}
+			return (int) value;
+		}
+		throw V1ApiException.validation("시딩 인원은 0 이상의 정수로 입력해 주세요.");
 	}
 
 	private static String toStringOrNull(Object raw) {
