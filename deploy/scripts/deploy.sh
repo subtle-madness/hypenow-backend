@@ -42,3 +42,7 @@ for svc in "${SERVICES[@]}"; do
 done
 ssh "$HOST" "cd ~/deploy && docker compose pull ${SERVICES[*]} && docker compose up -d && docker compose ps"
 echo "배포 완료 — 서비스: ${SERVICES[*]}, 이미지 태그: latest, $SHA_TAG"
+# 댕글링 이미지 정리 — CD(cd.yml)와 같은 서버·같은 목적(회수 가능 디스크 회수, dangling-only).
+# 이 경로도 같은 서버에 :latest를 덮어써 댕글링을 남기므로 CD와 일관되게 정리한다.
+# 배포 자체는 위에서 이미 끝났으므로 실패는 흡수만 하고 스크립트를 실패시키지 않는다.
+ssh "$HOST" 'docker image prune -f' || echo "이미지 정리 실패(무시) — 다음 배포에서 재시도됨"

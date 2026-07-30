@@ -189,3 +189,10 @@ jobs:
 
       - name: 헬스체크
         run: curl -fsS --retry 10 --retry-delay 10 --retry-all-errors https://dev-api.hypenow.io/health
+
+      # 운영 CD(cd.yml)와 같은 서버·같은 docker 데몬을 test 배포도 공유해 댕글링 이미지가
+      # 함께 쌓인다 — 상세 근거는 cd.yml의 동일 단계 주석 참고. dangling-only(-f)만, 실패는 흡수.
+      - name: 댕글링 이미지 정리 (서버)
+        run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'docker image prune -f' \
+            || echo "이미지 정리 실패(무시) — 다음 배포에서 재시도됨"
