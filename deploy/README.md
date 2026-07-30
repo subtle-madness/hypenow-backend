@@ -376,6 +376,22 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
    ```bash
    rsync -av deploy/scripts/post-container-metrics.py deploy/scripts/backup.sh ubuntu@<IP>:~/deploy/scripts/
    ```
+5. **알람 개통 (07-30~, 별도 단계 — 기본 비활성이라 서두르지 않아도 된다)**
+   1. analysis DB에 읽기 전용 롤 생성 + 두 객체만 GRANT (계약 v2 §6):
+      ```bash
+      docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+        -c "CREATE ROLE alarm_reader LOGIN PASSWORD '<실값>'" \
+        -c "GRANT USAGE ON SCHEMA app TO alarm_reader" \
+        -c "GRANT SELECT (id, email) ON app.users TO alarm_reader" \
+        -c "GRANT SELECT ON app.monitoring_email_opt_outs TO alarm_reader"
+      ```
+      (`app.monitoring_email_opt_outs`는 was Flyway V15가 만든다 — **was 배포 후**에 실행할 것)
+   2. `~/deploy/.env`에 `ALARM_READER_PASSWORD`, `RESEND_API_KEY` 실값 등록
+      (`RESEND_API_KEY`는 was가 이미 쓰던 값과 같은 키를 공유한다)
+   3. 발송 크론 켜기 — `deploy/compose.yaml`의 `MONITORING_ALARM_DISPATCH_CRON`을 `"0 */5 * * * *"`로
+      바꿔 커밋·배포(서버에서 직접 고친 값은 다음 CD가 레포 compose로 덮는다 — 스윕 크론과 같은 규칙)
+   4. 검증: `docker logs deploy-monitoring-1 | grep -i resend` — "Resend 메일 발송 활성"이면 실발송 모드,
+      "RESEND_API_KEY 미설정"이면 로깅 폴백(개통 실패)
 
 ### 접근 통제·디버깅
 
@@ -390,5 +406,8 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 일일 스윕은 컨테이너 env `MONITORING_SCHEDULE_SWEEP_CRON`(UTC 17:00 = KST 02:00).
   임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
   다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
+- 알람 발송은 컨테이너 env `MONITORING_ALARM_DISPATCH_CRON`(기본 `"-"`=비활성, 운영 5분 틱).
+  임시 중단은 `"-"`로 두고 재기동 — 대장(`alarm_event`)에 PENDING으로 쌓였다가 다시 켜면 그대로 나간다
+  (워터마크가 없어 중단 구간 유실이 없다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.gz` 7일 + Drive `hypenow-backups/monitoring/` 30일 롤링(§6).

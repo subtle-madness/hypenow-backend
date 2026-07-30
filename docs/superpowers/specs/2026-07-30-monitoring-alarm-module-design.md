@@ -1,6 +1,6 @@
 # 모니터링 알람 모듈 + 승인 플로우 제거 (계약 v2) 설계
 
-> 상태: 🟢 활성 · 구현 착수 전 (2026-07-30 승인 대기)
+> 상태: ✅ 구현됨 (2026-07-30, feat/monitoring-alarm-module)
 >
 > 대체: [2026-07-29-monitoring-email-alarm-design.md](2026-07-29-monitoring-email-alarm-design.md)
 > (was 크론 방식 — PR #183 미머지 폐기. 알람 소유가 monitoring으로 이동하며 전면 재설계).
