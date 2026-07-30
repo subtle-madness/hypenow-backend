@@ -153,4 +153,58 @@ class MediaItemExtractorTest {
         assertThat(items.get(0).shortCode()).isEqualTo("HFEED");
         assertThat(items.get(1).type()).isEqualTo(ContentType.REELS);
     }
+
+    // ---- 캡션 원문 추출 — 세 소스가 형태가 다르다(중첩 객체 / edges 배열 / 평문) ----
+
+    @Test
+    void v2_clips는_caption_text_중첩객체에서_캡션을_뽑는다() {
+        Map<String, Object> payload = Map.of(
+                "response", Map.of("items", List.of(
+                        Map.of("media", Map.of("code", "CLIP1", "taken_at", 1783223195L,
+                                "product_type", "clips",
+                                "caption", Map.of("text", "#광고 여름 메리제인 🤍"))))));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V2_CLIPS);
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).caption()).isEqualTo("#광고 여름 메리제인 🤍");
+    }
+
+    @Test
+    void self_gql은_edge_media_to_caption_첫_노드에서_캡션을_뽑는다() {
+        Map<String, Object> payload = profileWithTimeline(List.of(
+                Map.of("shortcode", "FEED1", "taken_at_timestamp", 1773630245L,
+                        "edge_media_to_caption", Map.of("edges", List.of(
+                                Map.of("node", Map.of("text", "매일 쓰는 메이크업 도구")))))));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.SELF_GQL);
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).caption()).isEqualTo("매일 쓰는 메이크업 도구");
+    }
+
+    @Test
+    void v1_medias는_caption_text_평문필드에서_캡션을_뽑는다() {
+        Map<String, Object> payload = Map.of("medias", List.of(
+                Map.of("code", "C_FEED", "taken_at", 1773630245L,
+                        "caption_text", "고마어 잘 쓸게~~ 🤍")));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS);
+
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).caption()).isEqualTo("고마어 잘 쓸게~~ 🤍");
+    }
+
+    /** 캡션 없는 게시물은 null이 아니라 빈 문자열 — "미확인"과 "캡션 없음"을 DB에서 구분하기 위함. */
+    @Test
+    void 캡션이_없으면_빈_문자열이다() {
+        Map<String, Object> payload = Map.of("medias", List.of(
+                Map.of("code", "NOCAP", "taken_at", 1773630245L)));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.HIKER_V1_MEDIAS).get(0).caption())
+                .isEqualTo("");
+    }
 }

@@ -8,13 +8,24 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 저장된 열거 페이지 원형에서 제어 필드만 추출. 원형은 이미 raw_media_page에 있으므로
+ * 저장된 열거 페이지 원형에서 제어 필드와 캡션 원문을 추출. 원형은 이미 raw_media_page에 있으므로
  * 여기서의 결손·실패는 데이터 유실이 아니다(해당 아이템만 건너뜀).
  * Hiker gql flat은 숫자 필드에 1l/1f 접두사를 붙인다 — get()이 3형을 순서대로 조회.
  */
 public final class MediaItemExtractor {
 
-    public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned) {}
+    /**
+     * @param caption 캡션 원문 — 없으면 빈 문자열(null 아님). "미확인"과 "캡션 없음"을 DB에서
+     *                구분하기 위해 추출 단계에서 이미 정규화한다.
+     */
+    public record MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned,
+                            String caption) {
+
+        /** 캡션을 다루지 않는 호출자·테스트용 — 캡션은 "미확인"이 아니라 "없음"으로 둔다. */
+        public MediaItem(String shortCode, Instant takenAt, ContentType type, boolean pinned) {
+            this(shortCode, takenAt, type, pinned, "");
+        }
+    }
 
     public static List<MediaItem> extract(Map<String, Object> payload, RawSource source) {
         List<MediaItem> out = new ArrayList<>();
@@ -30,7 +41,7 @@ public final class MediaItemExtractor {
             boolean pinned = nonEmptyList(m.get("timeline_pinned_user_ids"))
                     || nonEmptyList(m.get("clips_tab_pinned_user_ids"))
                     || nonEmptyList(m.get("pinned_for_users"));              // SELF_GQL
-            out.add(new MediaItem(code, takenAt, type, pinned));
+            out.add(new MediaItem(code, takenAt, type, pinned, captionOf(m)));
         }
         return out;
     }
@@ -86,6 +97,23 @@ public final class MediaItemExtractor {
         if (item.get("media") instanceof Map<?, ?> m) return (Map<String, Object>) m;
         if (item.get("node") instanceof Map<?, ?> n) return (Map<String, Object>) n;  // SELF_GQL edges
         return (Map<String, Object>) item;
+    }
+
+    /**
+     * 캡션 원문 — unwrapMedia()가 media/node/item을 이미 벗겨냈으므로 정규화된 맵 하나에서
+     * 세 형태를 순서대로 시도한다. HIKER_V2_CLIPS는 caption.text(중첩 객체),
+     * HIKER_V1_MEDIAS는 caption_text(평문), SELF_GQL은 edge_media_to_caption.edges[0].node.text.
+     * 못 찾으면 빈 문자열 — 캡션 없는 게시물도 행을 남겨 "미확인"과 구분한다.
+     */
+    private static String captionOf(Map<String, Object> m) {
+        if (m.get("caption") instanceof Map<?, ?> c && c.get("text") instanceof String s) return s;
+        if (m.get("caption_text") instanceof String s) return s;
+        if (m.get("edge_media_to_caption") instanceof Map<?, ?> e
+                && e.get("edges") instanceof List<?> l && !l.isEmpty()
+                && l.get(0) instanceof Map<?, ?> first
+                && first.get("node") instanceof Map<?, ?> node
+                && node.get("text") instanceof String s) return s;
+        return "";
     }
 
     private static String firstString(Object... candidates) {
