@@ -29,10 +29,16 @@ public class V1InfluencerDiscoveryRepository {
 	private static final double MIN_BEAUTY_RATIO_PERCENT = 20.0;
 
 	// cp(최신 태그라인)·sp(광고 수)·br(뷰티 비율)는 q·sponsored 필터·게이트가 참조하므로
-	// count 쿼리에도 함께 붙인다. findCardsByHandles(6.23 유사 카드 재사용)도 같은 조인을
-	// 그대로 공유하지만, 그쪽 후보는 findSimilarHandles에서 이미 게이트를 통과한 핸들만
-	// 들어오므로 별도 WHERE 재적용은 하지 않는다.
-	private static final String FROM_JOINS = """
+	// count 쿼리에도 함께 붙인다. findCardsByHandles(6.23 유사 카드 재사용)도 이 조인을
+	// 공유하지만, 그쪽 후보는 findSimilarHandles에서 이미 게이트를 통과한 핸들만 들어오므로
+	// 별도 WHERE 재적용은 하지 않는다.
+	//
+	// %s는 sp(협찬 게시물 수) 서브쿼리의 핸들 푸시다운 슬롯 — 두 경로가 조인을 공유하되 여기만
+	// 갈린다. 발굴 목록은 모수 전체를 필터링해야 하므로 빈 문자열(=기존 SQL과 바이트 동일),
+	// 핸들 지정 조회는 대상 핸들로 좁힌다. sp는 su.handle에 LEFT JOIN되고 su.handle = a.handle
+	// 이라 바깥이 핸들을 고정하는 경로에서는 나머지 계정의 집계 행이 애초에 조인되지 않는다 —
+	// 푸시다운은 결과 동일·스캔만 축소다(실데이터 6,584계정 전수 대조로 확인, 2026-07-30).
+	private static final String FROM_JOINS_TEMPLATE = """
 
 			FROM account_summaries su
 			JOIN accounts a ON a.handle = su.handle
@@ -43,9 +49,17 @@ public class V1InfluencerDiscoveryRepository {
 			LEFT JOIN (SELECT s.account_handle, count(*) AS cnt
 			           FROM account_content_series s
 			           JOIN content_analyses an ON an.short_code = s.short_code
-			                                   AND an.ad_type = 'sponsored'
+			                                   AND an.ad_type = 'sponsored'%s
 			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle
 			LEFT JOIN account_beauty_ratio br ON br.account_handle = su.handle""";
+
+	/** 발굴 목록(전체 모수 필터링) 경로 — sp는 전 계정 집계 그대로. */
+	private static final String FROM_JOINS = FROM_JOINS_TEMPLATE.formatted("");
+
+	// 핸들 지정 조회 경로 — sp를 대상 핸들로 좁힌다. 좁히지 않으면 카드 10장을 위해 계정 6.6천 개의
+	// 협찬 수를 전부 집계했다(2026-07-30 실측: findCardsByHandles 158ms 중 121ms가 이 서브쿼리).
+	private static final String FROM_JOINS_BY_HANDLES =
+			FROM_JOINS_TEMPLATE.formatted("\n           WHERE s.account_handle IN (:handles)");
 
 	private final JdbcClient jdbcClient;
 
@@ -76,7 +90,12 @@ public class V1InfluencerDiscoveryRepository {
 				.params(sql.params).query(Long.class).single();
 	}
 
-	/** 핸들 목록 카드 일괄 조회(6.23 유사 카드 재사용) — 필터·정렬 없음, 순서는 호출부가 복원. */
+	/**
+	 * 핸들 목록 카드 일괄 조회(6.23 유사 카드 재사용) — 필터·정렬 없음, 순서는 호출부가 복원.
+	 * FROM 절은 발굴 목록과 같은 템플릿이되 sp 서브쿼리만 :handles로 좁힌 변형을 쓴다
+	 * (FROM_JOINS_BY_HANDLES 주석 참조) — :handles가 sp 안팎에서 두 번 참조되지만 JdbcClient의
+	 * 명명 파라미터는 이름 기준이라 바인딩 1개로 양쪽에 들어간다.
+	 */
 	public List<CardRow> findCardsByHandles(List<String> handles) {
 		if (handles.isEmpty()) {
 			return List.of();
@@ -89,7 +108,7 @@ public class V1InfluencerDiscoveryRepository {
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
 				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
-				""" + FROM_JOINS + """
+				""" + FROM_JOINS_BY_HANDLES + """
 
 				WHERE a.handle IN (:handles)
 				""").param("handles", handles).query(CardRow.class).list();
