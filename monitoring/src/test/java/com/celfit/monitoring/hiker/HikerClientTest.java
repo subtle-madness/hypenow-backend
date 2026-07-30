@@ -260,6 +260,99 @@ class HikerClientTest {
 		assertThat(comments.getFirst().id()).isEqualTo("1");
 	}
 
+	// ── 댓글 다중 페이지(07-31, comment-pages 1→3 상향) ─────────────────────────
+	// comment-pages가 1이던 동안은 2페이지 이후 커서 경로가 테스트도 없고 운영에서 돈 적도 없다.
+	// 3으로 올리는 이번 변경이 그 경로를 처음 타므로 열거(medias) 쪽과 대칭으로 반드시 덮는다.
+
+	private static final String COMMENTS_PAGE1 = """
+			{"response":{"comments":[
+			{"pk":"101","text":"1페이지 댓글","comment_like_count":1,
+			 "created_at_utc":1700000001,"user":{"username":"fan1"},"preview_child_comments":[]}
+			],"has_more_comments":true},"next_page_id":"cmt-cursor-2"}""";
+
+	private static final String COMMENTS_PAGE2 = """
+			{"response":{"comments":[
+			{"pk":"102","text":"2페이지 댓글","comment_like_count":2,
+			 "created_at_utc":1700000002,"user":{"username":"fan2"},"preview_child_comments":[]}
+			],"has_more_comments":false},"next_page_id":null}""";
+
+	@Test
+	void 댓글_2페이지는_next_page_id를_커서로_전달하고_다음_페이지를_이어붙인다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return path.contains("page_id=") ? COMMENTS_PAGE2 : COMMENTS_PAGE1;
+		});
+
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 2);
+
+		assertThat(comments).extracting(CommentInfo::id).containsExactly("101", "102");
+		assertThat(calls).hasSize(2);
+		assertThat(calls.get(0)).doesNotContain("page_id");
+		assertThat(calls.get(1)).contains("&page_id=cmt-cursor-2");
+	}
+
+	/** has_more_comments가 false면 next_page_id가 남아 있어도 커서만 믿고 더 부르면 안 된다. */
+	@Test
+	void has_more_comments가_false면_next_page_id가_있어도_더_부르지_않는다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return """
+					{"response":{"comments":[
+					{"pk":"1","text":"단일 댓글","comment_like_count":1,
+					 "created_at_utc":1700000000,"user":{"username":"fan1"},"preview_child_comments":[]}
+					],"has_more_comments":false},"next_page_id":"should-not-be-used"}""";
+		});
+
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3);
+
+		assertThat(comments).hasSize(1);
+		assertThat(calls).hasSize(1);
+	}
+
+	/** 요청한 페이지 수(예: 2)에 도달하면 응답이 계속 더 있다고 해도(has_more_comments=true) 멈춘다. */
+	@Test
+	void 요청한_페이지_수에_도달하면_next_page_id가_남아도_멈춘다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			int page = calls.size();
+			return """
+					{"response":{"comments":[
+					{"pk":"%d","text":"댓글%d","comment_like_count":1,
+					 "created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}
+					],"has_more_comments":true},"next_page_id":"cmt-cursor-%d"}""".formatted(page, page, page);
+		});
+
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 2);
+
+		assertThat(calls).hasSize(2);   // 3페이지째도 있다고 응답해도 요청한 2에서 멈춘다
+		assertThat(comments).hasSize(2);
+	}
+
+	/** 무진전 가드 — 2페이지째에서 유효 댓글이 0건이면(전부 결손 필드) 남은 페이지를 더 부르지 않는다. */
+	@Test
+	void 댓글_커서가_전진하지_않으면_경고하고_중단한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.contains("page_id=")) {
+				// 2페이지째: comments 배열은 있지만 전부 결손 필드라 유효 댓글 0건 — 새 댓글 없음
+				return """
+						{"response":{"comments":[
+						{"text":"pk없음","comment_like_count":1,"created_at_utc":1700000000,"user":{"username":"x"}}
+						],"has_more_comments":true},"next_page_id":"cmt-cursor-3"}""";
+			}
+			return COMMENTS_PAGE1;   // has_more_comments:true, next_page_id:"cmt-cursor-2"
+		});
+
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 5);
+
+		assertThat(comments).hasSize(1);   // 1페이지 유효 댓글 1건만
+		assertThat(calls).hasSize(2);      // 2페이지째에서 신규 0건 감지, 5페이지 요청해도 중단
+	}
+
 	// ── share 해소(§10-2) ────────────────────────────────────────────────────
 
 	@Test
