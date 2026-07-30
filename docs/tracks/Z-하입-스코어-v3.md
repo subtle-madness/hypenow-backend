@@ -2,7 +2,8 @@
 
 - **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: —
-- **상태**: 🔨 (구현·PR·운영 뷰 적용·미러 전부 완료, 2026-07-30 — 잔여는 프론트 통지뿐)
+- **상태**: 🔨 (07-30분 구현·PR·운영 뷰 적용·미러 전부 완료 — 잔여는 프론트 통지뿐. 07-31 후속(§11,
+  계정 점수 고정 분모)은 구현 완료·PR 대기, 운영 미반영)
 
 ## 내용
 
@@ -15,4 +16,27 @@ account_summaries 7,033 / account_content_series 82,388 / landing_stats 1.
 `account_summaries.avg_hype_raw`는 6,869계정에 값이 채워짐(전체 7,033행 중 — 나머지는 최근 12창
 콘텐츠가 없는 계정으로 추정, NULL 자체는 정상). 정렬키 스팟체크: 표시값 99 구간에서 raw가
 55.14 → 53.17로 갈리는 사례를 확인 — §9-6이 의도한 대로 반올림 동점이 `avg_hype_raw` 정렬로
-정확히 분리됨을 운영 데이터로 검증. **잔여**: 프론트 통지(사용자가 직접 할 항목) 하나뿐.
+정확히 분리됨을 운영 데이터로 검증. (07-30분 잔여였던 프론트 통지는 07-31 후속과 함께 처리 예정.)
+
+**07-31 후속(§11) — 계정 점수 표본 하한 없음 해소(고정 분모)**: test 스택 실측으로 최근창
+점수산출 콘텐츠가 1~2건뿐인 계정이 상위권에 섞이는 걸 확인(`ynp.ny` 2건 7위·`sunyvvin` 1건
+8위·`zero_lyrical` 1건 12위) — `docs/hype-score.md` §7에 이미 기록돼 있던 "계정 점수 표본
+하한 없음" 결함의 원인을 실측: 창이 12로 꽉 찬 계정 6,350개 중 2,633개(41%)가 점수산출 콘텐츠
+<12건이고 결손의 99.9%가 `likes`/`comments_count` NULL(크롤러 수집 누락). **사용자 결정**:
+원인이 수집 누락이어도 감점한다 — 점수산출 불가 게시물은 인플루언서 상세 화면(최근 12개
+카드)에 애초에 뜨지 않아 유저 입장에서 "1개만 올린 계정"과 구분되지 않으므로 화면·점수
+정합성이 우선. `v_account_summaries.avg_hype_precise_raw`를 `avg(콘텐츠 출력매핑 점수)`
+(분모=창에 실제로 든 콘텐츠 수)에서 `sum(...) / analytics.recent-window`(분모=창 크기 고정,
+새 상수 없이 `01_recent_window.sql`과 동일 설정 키 재사용)로 교체 — `sum()`이 NULL을 무시해
+점수산출 불가 콘텐츠는 분자에 0 기여로 자연 감점되고, 창 전체 NULL이면 `sum()`도 NULL이라
+"창 전체 점수 불가 → NULL" 계약은 유지된다. 분모 변경으로 raw 분포가 하향 이동해 계정 소수
+앵커 재적합(`1.4856/23.6566/56.3961/77.0479` → `1.2417/19.4383/52.2401/74.0179`,
+`hype-anchor-acct-precise-*` 키는 그대로, COALESCE 기본값만 교체). `avg_hype_score`(bigint)·
+`avg_hype_raw`(구, 값·의미 불변 동결·다음 릴리스 DROP 대상)는 무변경. 회귀 테스트 3종을
+`10_account_score_rescale.test.sql`에 추가 — 핵심 회귀는 개별 콘텐츠 점수가 완전히 동일한
+1건 vs 12건 계정을 만들어, 구 코드(avg)라면 두 계정의 raw가 완전히 같아(66.3988... 동일 →
+91.0525 동일) 이 단언이 실패했을 것을 테스트 추가 전 수동 SQL로 직접 확인한 뒤, 신 코드에서
+뚜렷한 격차(18.2545 vs 91.0525, 약 4.99배, 여유를 두고 3배로 단언)를 검증. 그 외 창 전체
+NULL 보존·0점 보존 회귀도 추가. 마이그레이션 없음(새 컬럼 없음, 함수 COALESCE 기본값·뷰
+SQL만 교체) — `analytics/test/run.sh` ALL GREEN. **잔여**: PR·운영 뷰 적용·미러·프론트
+통지(07-30분과 함께 처리) 전부 대기 — [specs/2026-07-31-account-score-fixed-denominator-design.md](../superpowers/specs/2026-07-31-account-score-fixed-denominator-design.md)
