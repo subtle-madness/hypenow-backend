@@ -59,6 +59,36 @@ GROUP BY content_type
 ORDER BY content_type;
 
 -- =====================================================================================================
+-- 콘텐츠 출력 앵커(analytics.hype-anchor-out-{p05,p50,p90,p99}) 재적합 후보값 산출 (2026-07-30 — 소수점
+-- 노출·출력 매핑 도입, 스펙 docs/superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md
+-- §10, 구현 analytics/views/02_serving.sql의 analytics.hype_score_output()).
+--
+-- 크로스 DB (위 콘텐츠 Q 앵커·아래 계정 앵커와 다른 점): 모수가 "전체 서빙 코퍼스"가 아니라
+-- **랭킹 경로**(is_beauty ∧ (metric_timeliness='timely' OR NULL) — /v1/contents가 실제로 노출하는
+-- 집합, late_backfill·immature 제외)다. 발굴 목록·랭킹 API 둘 다 체감하는 척도가 이 경로라서다.
+-- 이 필터(is_beauty·metric_timeliness)는 content_analyses(analysis DB)에만 있어 crawler DB 단독
+-- 쿼리로는 못 만든다 — hype-anchor-refit.sh가 pending.sh(analytics/check/pending.sh)와 같은
+-- 방식으로 analysis DB에서 CSV로 뽑아 crawler 세션의 임시 테이블 _ranking_hype_scores로 주입한
+-- 뒤 아래를 실행한다(따라서 이 섹션만 이 스크립트 밖에서 psql에 그냥 붙여넣으면 실패한다 —
+-- _ranking_hype_scores가 먼저 만들어져 있어야 한다. hype-anchor-refit.sh를 통째로 실행할 것).
+--
+-- 왜 타입 무관 단일 세트인가: 위 콘텐츠 Q 앵커가 릴스·피드 타입 정규화를 이미 끝냈으므로(v3 결정,
+-- 스펙 §3) 출력 매핑에서 또 타입을 나누면 그 타입 중립이 도로 깨진다 — 출력 매핑은 이미 타입
+-- 무관해진 hype_score(정수, contents.hype_score — 이 시점 기준 아직 출력 매핑이 없는 v3 원 표시값)
+-- 의 척도만 0~100 전체로 펴 바르는 역할이라 타입을 다시 볼 이유가 없다.
+--
+-- 산출값 반영 절차: 위 콘텐츠 Q 앵커와 동일 — 1) 스크립트 실행 → 2) 02_serving.sql의
+-- hype_score_output() 함수 내 COALESCE 기본값 교체 → 3) 뷰 재적용 → 미러 잡 → 스팟체크.
+SELECT
+  count(*) AS n,
+  round(percentile_cont(0.05) WITHIN GROUP (ORDER BY hype_score)::numeric, 4) AS anchor_p05,
+  round(percentile_cont(0.50) WITHIN GROUP (ORDER BY hype_score)::numeric, 4) AS anchor_p50,
+  round(percentile_cont(0.90) WITHIN GROUP (ORDER BY hype_score)::numeric, 4) AS anchor_p90,
+  round(percentile_cont(0.99) WITHIN GROUP (ORDER BY hype_score)::numeric, 4) AS anchor_p99,
+  max(hype_score) AS anchor_max
+FROM _ranking_hype_scores;
+
+-- =====================================================================================================
 -- 계정 앵커(analytics.hype-anchor-acct-{p05,p50,p90,p99}) 재적합 후보값 산출 (트랙 Z 후속 — 계정 점수
 -- 척도 재교정, 스펙 docs/superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md §9,
 -- 구현 analytics/views/10_account_detail.sql의 analytics.hype_account_score()).
@@ -143,4 +173,103 @@ SELECT
   round(percentile_cont(0.90) WITHIN GROUP (ORDER BY raw_avg)::numeric, 4) AS anchor_p90,
   round(percentile_cont(0.99) WITHIN GROUP (ORDER BY raw_avg)::numeric, 4) AS anchor_p99
 FROM raw
+WHERE raw_avg >= 0.5;  -- 0점(및 반올림하면 0이 되는 0.5 미만) 제외
+
+-- =====================================================================================================
+-- 계정 소수점 앵커(analytics.hype-anchor-acct-precise-{p05,p50,p90,p99}) 재적합 후보값 산출 (2026-07-30
+-- — 콘텐츠 출력 매핑 도입에 따른 계정 앵커 재적합, 스펙 위 문서 §10, 구현
+-- analytics/views/10_account_detail.sql의 analytics.hype_account_score_precise()).
+--
+-- 위 계정 raw 앵커와 다른 점은 딱 하나 — per-content 점수를 **반올림 없이(qc.q 매핑 후 감쇠, 정수
+-- 캐스트 생략)** 구하고, 거기에 콘텐츠 출력 매핑(analytics.hype_score_output, 랭킹 경로 앵커
+-- 5/23/44/60.8 — 위 콘텐츠 출력 앵커 섹션과 동일 상수)까지 적용한 값을 평균 낸다. 이 평균이
+-- avg_hype_precise_raw(10_account_detail.sql base CTE)와 같은 재료다 — avg_hype_raw(위 섹션,
+-- hype_account_score 재료)와는 입력 기준량이 완전히 달라 앵커를 공유할 수 없다(hype_account_score는
+-- 값·의미 불변이라 건드리지 않는다 — 위 섹션 그대로 둔 이유).
+--
+-- 0점 제외 모수는 위와 동일 원칙(raw_avg < 0.5 포함 제외).
+--
+-- 산출값 반영 절차: 위 계정 raw 앵커와 동일 — 1) 스크립트 실행 → 2) 10_account_detail.sql의
+-- hype_account_score_precise() 함수 내 COALESCE 기본값 교체 → 3) 뷰 재적용 → 미러 잡 → 스팟체크.
+WITH cs2 AS (
+  SELECT
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-fresh-halflife-days'),0),14) AS hl,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reels-e0'),0),0.01)          AS e0,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-feed-f0'),0),0.03)           AS f0,
+    COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reach-weight'),1)                   AS wr,
+    COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0),0.1373)  AS r05,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p50'),0),1.3798)  AS r50,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p90'),0),4.5716)  AS r90,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p99'),0),10.3883) AS r99,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0),0.0447)   AS f05,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p50'),0),0.6135)   AS f50,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p90'),0),1.6320)   AS f90,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p99'),0),3.0144)   AS f99,
+    -- 출력 앵커 — 위 콘텐츠 출력 앵커 섹션의 default와 동일값(랭킹 경로 실측)
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p05'),0),5)    AS o05,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p50'),0),23)   AS o50,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p90'),0),44)   AS o90,
+    COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p99'),0),60.8) AS o99
+),
+win2 AS (
+  SELECT owner_username, content_type, likes, comments_count, views, profile_followers AS followers, uploaded_at
+  FROM analytics.v_account_recent
+),
+scored2 AS (
+  SELECT w.owner_username, m.precise_score
+  FROM win2 w
+  CROSS JOIN cs2
+  CROSS JOIN LATERAL (  -- Q (연령 무관)
+    SELECT CASE WHEN lower(w.content_type)='reels'
+             THEN cs2.wr * ln(1 + w.views::numeric/(COALESCE(w.followers,0)+1000))
+                + cs2.we * ln(1 + ((w.likes + w.comments_count*3)::numeric/(COALESCE(w.followers,0)+1000))/cs2.e0)
+             ELSE ln(1 + ((w.likes + w.comments_count*3)::numeric/(COALESCE(w.followers,0)+1000))/cs2.f0)
+           END AS q
+  ) qc
+  CROSS JOIN LATERAL (  -- 매핑 후 감쇠 = hype_score_raw()와 동일 산식(반올림 없음 — 위 raw 섹션과의 차이)
+    SELECT CASE
+      WHEN w.likes IS NULL OR w.comments_count IS NULL
+        OR (lower(w.content_type)='reels' AND w.views IS NULL) THEN NULL
+      ELSE
+        GREATEST(LEAST(
+          CASE WHEN lower(w.content_type)='reels' THEN
+            CASE WHEN qc.q <= cs2.r05 THEN 10*qc.q/NULLIF(cs2.r05,0)
+                 WHEN qc.q <= cs2.r50 THEN 10 + 35*(qc.q-cs2.r05)/NULLIF(cs2.r50-cs2.r05,0)
+                 WHEN qc.q <= cs2.r90 THEN 45 + 35*(qc.q-cs2.r50)/NULLIF(cs2.r90-cs2.r50,0)
+                 WHEN qc.q <= cs2.r99 THEN 80 + 17*(qc.q-cs2.r90)/NULLIF(cs2.r99-cs2.r90,0)
+                 ELSE 97 + 3*(qc.q-cs2.r99)/NULLIF(cs2.r99-cs2.r90,0) END
+          ELSE
+            CASE WHEN qc.q <= cs2.f05 THEN 10*qc.q/NULLIF(cs2.f05,0)
+                 WHEN qc.q <= cs2.f50 THEN 10 + 35*(qc.q-cs2.f05)/NULLIF(cs2.f50-cs2.f05,0)
+                 WHEN qc.q <= cs2.f90 THEN 45 + 35*(qc.q-cs2.f50)/NULLIF(cs2.f90-cs2.f50,0)
+                 WHEN qc.q <= cs2.f99 THEN 80 + 17*(qc.q-cs2.f90)/NULLIF(cs2.f99-cs2.f90,0)
+                 ELSE 97 + 3*(qc.q-cs2.f99)/NULLIF(cs2.f99-cs2.f90,0) END
+          END, 100), 0)
+        * power(0.5, GREATEST(extract(epoch FROM (now() - w.uploaded_at)) / 86400.0, 0)/cs2.hl)
+    END AS raw
+  ) rw
+  CROSS JOIN LATERAL (  -- 출력 매핑 = hype_score_output()와 동일 산식
+    SELECT CASE WHEN rw.raw IS NULL THEN NULL
+      ELSE GREATEST(LEAST(
+        CASE WHEN rw.raw <= cs2.o05 THEN 10*rw.raw/NULLIF(cs2.o05,0)
+             WHEN rw.raw <= cs2.o50 THEN 10 + 35*(rw.raw-cs2.o05)/NULLIF(cs2.o50-cs2.o05,0)
+             WHEN rw.raw <= cs2.o90 THEN 45 + 35*(rw.raw-cs2.o50)/NULLIF(cs2.o90-cs2.o50,0)
+             WHEN rw.raw <= cs2.o99 THEN 80 + 17*(rw.raw-cs2.o90)/NULLIF(cs2.o99-cs2.o90,0)
+             ELSE 97 + 3*(rw.raw-cs2.o99)/NULLIF(cs2.o99-cs2.o90,0) END, 100), 0)
+    END AS precise_score
+  ) m
+),
+raw2 AS (  -- 계정별 raw = 창 콘텐츠 정밀 점수(출력 매핑 반영) 단순 평균 — avg_hype_precise_raw와 동일 재료
+  SELECT owner_username, avg(precise_score) AS raw_avg
+  FROM scored2
+  GROUP BY owner_username
+)
+SELECT
+  count(*) AS n,
+  round(percentile_cont(0.05) WITHIN GROUP (ORDER BY raw_avg)::numeric, 4) AS anchor_p05,
+  round(percentile_cont(0.50) WITHIN GROUP (ORDER BY raw_avg)::numeric, 4) AS anchor_p50,
+  round(percentile_cont(0.90) WITHIN GROUP (ORDER BY raw_avg)::numeric, 4) AS anchor_p90,
+  round(percentile_cont(0.99) WITHIN GROUP (ORDER BY raw_avg)::numeric, 4) AS anchor_p99
+FROM raw2
 WHERE raw_avg >= 0.5;  -- 0점(및 반올림하면 0이 되는 0.5 미만) 제외

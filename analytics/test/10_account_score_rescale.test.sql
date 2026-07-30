@@ -163,3 +163,77 @@ BEGIN
 
   RAISE NOTICE '10_account_score_rescale (정렬 키 분리): 모든 단언 통과';
 END $$;
+
+-- 계정 소수점 매핑 함수(analytics.hype_account_score_precise) 회귀 — 콘텐츠 출력 매핑 도입에 따른
+-- 계정 앵커 재적합, 스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10.
+-- 순수 함수 검증 — hype_account_score()(정수, 값·의미 불변)와는 완전히 독립된 새 앵커·새 입력
+-- 기준량이라 여기 단언은 위 hype_account_score 단언과 겹치지 않는다.
+DO $$
+DECLARE
+  s1 numeric; s2 numeric; s3 numeric; s4 numeric; top numeric;
+  a05 numeric; a50 numeric; a90 numeric; a99 numeric;
+  base numeric;
+BEGIN
+  -- 1) 단조성: 기본 앵커(p05=1.4856·p50=23.6566·p90=56.3961·p99=77.0479) 5개 구간을 고루 지나는 표본.
+  s1  := analytics.hype_account_score_precise(1);    -- < a05
+  s2  := analytics.hype_account_score_precise(10);   -- a05~a50
+  s3  := analytics.hype_account_score_precise(40);   -- a50~a90
+  s4  := analytics.hype_account_score_precise(65);   -- a90~a99
+  top := analytics.hype_account_score_precise(90);   -- > a99 (초과구간)
+  IF NOT (s1 <= s2 AND s2 <= s3 AND s3 <= s4 AND s4 <= top) THEN
+    RAISE EXCEPTION '단조성 위반: %, %, %, %, %', s1, s2, s3, s4, top;
+  END IF;
+
+  -- 2) 앵커점 매핑: 기본 앵커 4점이 각각 10·45·80·97로 정확히 잡힌다.
+  a05 := analytics.hype_account_score_precise(1.4856);
+  a50 := analytics.hype_account_score_precise(23.6566);
+  a90 := analytics.hype_account_score_precise(56.3961);
+  a99 := analytics.hype_account_score_precise(77.0479);
+  ASSERT a05 = 10, format('p05 앵커점 불일치: %s (기대 10)', a05);
+  ASSERT a50 = 45, format('p50 앵커점 불일치: %s (기대 45)', a50);
+  ASSERT a90 = 80, format('p90 앵커점 불일치: %s (기대 80)', a90);
+  ASSERT a99 = 97, format('p99 앵커점 불일치: %s (기대 97)', a99);
+
+  -- 3) [0,100] 클램프 + 0 보존.
+  ASSERT analytics.hype_account_score_precise(1000) BETWEEN 0 AND 100, '상한 클램프 위반';
+  ASSERT analytics.hype_account_score_precise(0) = 0, 'raw=0 보존 실패';
+
+  -- 4) NULL 보존: 창 전체 점수 불가(raw NULL) 계정은 여전히 NULL.
+  ASSERT analytics.hype_account_score_precise(NULL) IS NULL, 'raw=NULL 보존 실패';
+
+  -- 5) 앵커 오버라이드 반응 — 재배포 없는 튜닝 가능(hype_account_score·hype_score_output과 동일 관용구).
+  base := analytics.hype_account_score_precise(40);
+  INSERT INTO app_setting(key,value) VALUES
+    ('analytics.hype-anchor-acct-precise-p50','60'),
+    ('analytics.hype-anchor-acct-precise-p90','80'),
+    ('analytics.hype-anchor-acct-precise-p99','95');
+  ASSERT analytics.hype_account_score_precise(40) < base,
+    format('앵커 오버라이드 무반응: base=%s, p50↑ 후=%s (더 낮아야 함)', base, analytics.hype_account_score_precise(40));
+  DELETE FROM app_setting WHERE key LIKE 'analytics.hype-anchor-acct-precise-%';
+
+  RAISE NOTICE '10_account_score_precise: 모든 단언 통과';
+END $$;
+
+-- 핵심 회귀: avg_hype_score(정수)가 동점인 dummy_alpha·dummy_zeta(위에서 이미 검증한 픽스처, 두
+-- 계정 다 avg_hype_score=85)라도 avg_hype_score_precise(소수, 콘텐츠 출력 매핑 반영 창 평균)는
+-- 갈려야 한다 — dummy_zeta의 게시물 좋아요(17100·17800)가 dummy_alpha(16400·17800)보다 앞쪽이
+-- 크거나 같아 창 평균이 항상 높으므로, 단조 매핑을 거쳐도 순서가 보존돼야 한다.
+DO $$
+DECLARE precise_alpha numeric; precise_zeta numeric; score_alpha bigint; score_zeta bigint;
+BEGIN
+  SELECT avg_hype_score, avg_hype_score_precise INTO score_alpha, precise_alpha
+  FROM analytics.v_account_summaries WHERE handle = 'dummy_alpha';
+  SELECT avg_hype_score, avg_hype_score_precise INTO score_zeta, precise_zeta
+  FROM analytics.v_account_summaries WHERE handle = 'dummy_zeta';
+
+  ASSERT score_alpha = score_zeta,
+    format('동점 전제 무효: avg_hype_score alpha=%s, zeta=%s (동점이어야 회귀 테스트가 성립)',
+           score_alpha, score_zeta);
+  ASSERT precise_alpha IS NOT NULL AND precise_zeta IS NOT NULL,
+    'avg_hype_score_precise가 NULL (전제 붕괴)';
+  ASSERT precise_zeta > precise_alpha,
+    format('avg_hype_score_precise가 정수 동점을 못 갈랐음: alpha=%s, zeta=%s (zeta가 더 커야 함)',
+           precise_alpha, precise_zeta);
+
+  RAISE NOTICE '10_account_score_precise (동점 제거 회귀): 모든 단언 통과';
+END $$;

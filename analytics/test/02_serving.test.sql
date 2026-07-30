@@ -31,6 +31,14 @@ BEGIN
     'v_contents r1 content_type != reels (lower)';
   ASSERT (SELECT hype_score FROM analytics.v_contents WHERE short_code = 'dummy_r1') IS NOT NULL,
     'v_contents r1 hype_score is null';
+  -- hype_score_precise(2026-07-30, 스펙 §10) — 신설 컬럼. 피드 dummy_f1도 views NULL 규약이
+  -- 정상이라 precise도 hype_score와 마찬가지로 NULL이 아니어야 한다.
+  ASSERT (SELECT hype_score_precise FROM analytics.v_contents WHERE short_code = 'dummy_r1') IS NOT NULL,
+    'v_contents r1 hype_score_precise is null';
+  ASSERT (SELECT hype_score_precise FROM analytics.v_contents WHERE short_code = 'dummy_f1') IS NOT NULL,
+    'v_contents f1(피드) hype_score_precise is null (views NULL은 피드 정상 — CLAUDE.md 함정)';
+  ASSERT (SELECT hype_score_precise FROM analytics.v_contents WHERE short_code = 'dummy_r1') BETWEEN 0 AND 100,
+    'v_contents r1 hype_score_precise가 [0,100] 밖';
   -- 인스타 유료 파트너십 태그가 핀 스냅샷에서 v_contents까지 통과한다 (07-21 — LLM 프롬프트 입력용,
   -- 미러 contents.ad_marked로 내려가 일상 잡이 확정 사실로 싣는다). 피드는 소스가 항상 false.
   ASSERT (SELECT ad_marked FROM analytics.v_contents WHERE short_code = 'dummy_r1') = false,
@@ -112,4 +120,37 @@ BEGIN
   UPDATE app_setting SET value = '100' WHERE key = 'analytics.hype-fresh-halflife-days';
   v_new := (SELECT sum(hype_score) FROM analytics.v_content_metric_snapshots WHERE short_code = 'dummy_r1');
   ASSERT v_new > v_old, format('뷰 반감기 100(%s) > 7(%s)', v_new, v_old);
+END $$;
+
+-- v_contents 일관성 회귀(2026-07-30, 스펙 §10): hype_score(구, 값·의미 불변)와 hype_score_precise
+-- (신)가 반드시 "같은 base 행"에서 파생돼야 한다 — dummy_r1의 실제 지표를 그대로 함수에 다시
+-- 넣어(now()는 트랜잭션 내에서 안정값이라 뷰가 쓴 것과 동일) 두 컬럼을 독립 재계산·대조한다.
+DO $$
+DECLARE
+  v_ct text; v_views bigint; v_likes bigint; v_comments bigint; v_followers bigint; v_uploaded timestamptz;
+  v_hype bigint; v_precise numeric;
+  expected_raw numeric; expected_precise numeric;
+BEGIN
+  SELECT e.content_type, p.views, p.likes, p.comments_count, pr.followers, e.uploaded_at
+  INTO v_ct, v_views, v_likes, v_comments, v_followers, v_uploaded
+  FROM analytics.v_serving_content e
+  JOIN analytics.v_pinned_metrics p USING (content_id)
+  LEFT JOIN analytics.v_base_profile pr ON pr.username = e.owner_username
+  WHERE e.short_code = 'dummy_r1';
+
+  SELECT hype_score, hype_score_precise INTO v_hype, v_precise
+  FROM analytics.v_contents WHERE short_code = 'dummy_r1';
+
+  expected_raw := analytics.hype_score_raw(lower(v_ct), v_views, v_likes, v_comments, v_followers,
+                    extract(epoch FROM (now() - v_uploaded)) / 86400.0);
+  expected_precise := round(analytics.hype_score_output(expected_raw), 4);
+
+  ASSERT v_hype = round(expected_raw)::bigint,
+    format('v_contents.hype_score(%s) != round(hype_score_raw(...))::bigint(%s) — 구 정수 값 불변 계약 깨짐',
+           v_hype, round(expected_raw)::bigint);
+  ASSERT v_precise = expected_precise,
+    format('v_contents.hype_score_precise(%s) != round(hype_score_output(hype_score_raw(...)),4)(%s) — 신 컬럼이 구 컬럼과 다른 base에서 파생됨',
+           v_precise, expected_precise);
+
+  RAISE NOTICE '02_serving (hype_score_precise 일관성): 모든 단언 통과';
 END $$;

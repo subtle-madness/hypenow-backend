@@ -44,6 +44,43 @@ LANGUAGE sql STABLE AS $$
   FROM s
 $$;
 
+-- 계정 하입 스코어 소수점 매핑 함수 (2026-07-30 — 콘텐츠 출력 매핑 도입에 따른 계정 앵커 재적합,
+-- 스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10). 별도 함수인 이유: 콘텐츠에
+-- 출력 매핑(analytics.hype_score_output, 02_serving.sql)이 붙으면서 계정 raw 평균의 입력 기준량
+-- 자체가 바뀐다(창 콘텐츠의 hype_score_output(hype_score_raw(...)) 평균 — 기존 avg_hype_raw는
+-- 여전히 hype_score()의 정수 평균으로 **값·의미 불변**) — 같은 함수·같은 app_setting 키에 새
+-- 앵커를 덮어쓰면 avg_hype_score(bigint, 기존 그대로 유지해야 하는 표시값)가 따라 바뀐다. 그래서
+-- hype_account_score는 건드리지 않고, 새 입력 기준량 전용으로 앵커를 다시 적합한 이 함수를 둔다.
+-- 앵커는 계정 raw 평균(0점 및 반올림하면 0이 되는 raw<0.5 제외 모수) 분위수로 적합 — 콘텐츠
+-- 출력 앵커(랭킹 경로 단일 세트)와도 기준량이 달라 공유 불가. 재산출 절차·정밀값 근거는
+-- analytics/check/hype-anchor-refit.sql 계정 섹션(출력 매핑 반영판).
+-- app_setting 키: analytics.hype-anchor-acct-precise-{p05,p50,p90,p99}(미설정/0이면 COALESCE
+-- 기본값 — 단일 소스는 함수 기본값, hype_account_score·hype_score_output과 동일 관용구).
+-- raw IS NULL(창 전체 점수 불가)은 NULL 유지. 최종 반올림은 호출부(v_account_summaries)가
+-- round(...,4)로 한다 — 이 함수 자체는 정수로 자르지 않는다(소수점 노출이 목적이므로).
+CREATE OR REPLACE FUNCTION analytics.hype_account_score_precise(raw numeric) RETURNS numeric
+LANGUAGE sql STABLE AS $$
+  WITH s AS (
+    SELECT
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p05'),0),1.4856)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p50'),0),23.6566) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p90'),0),56.3961) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p99'),0),77.0479) AS a99
+  )
+  SELECT CASE
+    WHEN raw IS NULL THEN NULL
+    ELSE GREATEST(LEAST(
+      CASE
+        WHEN raw <= s.a05 THEN 10*raw/NULLIF(s.a05,0)
+        WHEN raw <= s.a50 THEN 10 + 35*(raw-s.a05)/NULLIF(s.a50-s.a05,0)
+        WHEN raw <= s.a90 THEN 45 + 35*(raw-s.a50)/NULLIF(s.a90-s.a50,0)
+        WHEN raw <= s.a99 THEN 80 + 17*(raw-s.a90)/NULLIF(s.a99-s.a90,0)
+        ELSE 97 + 3*(raw-s.a99)/NULLIF(s.a99-s.a90,0)
+      END, 100), 0)
+  END
+  FROM s
+$$;
+
 -- 밑판 (미러 안 함): 윈도우 행 + 팔로워. 프로필 없는 계정은 서빙에서 제외 (INNER JOIN 의도 — 프론트가 팔로워를 요구).
 CREATE OR REPLACE VIEW analytics.v_account_recent AS
 SELECT r.*, p.followers AS profile_followers
@@ -86,6 +123,16 @@ base AS (
                                    followers,
                                    extract(epoch FROM (now() - uploaded_at)) / 86400.0))
                                                             AS avg_hype_raw,
+         -- avg_hype_precise_raw (내부 전용, 노출 안 함): 위 avg_hype_raw와 같은 구조지만 입력이
+         -- hype_score(정수)가 아니라 hype_score_output(hype_score_raw(...))(반올림 전, 02_serving.sql
+         -- 신설) — 콘텐츠 출력 매핑까지 반영된 창 평균이다. hype_account_score_precise()에 넘겨
+         -- avg_hype_score_precise를 만드는 재료일 뿐이라 avg_hype_raw처럼 별도 컬럼으로 내지 않는다
+         -- (정렬 키가 필요 없다 — avg_hype_score_precise 자체가 이미 소수라 동점이 나지 않는다).
+         avg(analytics.hype_score_output(
+               analytics.hype_score_raw(lower(content_type), views, likes, comments_count,
+                                         followers,
+                                         extract(epoch FROM (now() - uploaded_at)) / 86400.0)))
+                                                            AS avg_hype_precise_raw,
          min(uploaded_at)                                   AS first_posted_at,
          max(uploaded_at)                                   AS last_posted_at,
          -- 통계 왜곡 가드 재료 (스펙 2026-07-30-perf-summary-statistical-guards-design.md §3-1):
@@ -197,7 +244,13 @@ SELECT
   -- avg_hype_raw는 맨 끝에 붙는다 — CREATE OR REPLACE VIEW는 기존 컬럼 사이에 새 컬럼을 끼워 넣지
   -- 못하고(DROP 없이는 위치 변경 불가) 끝에 추가하는 것만 허용한다. avg_hype_score·email도 같은
   -- 이유로 항상 그 시점의 맨 끝에 추가돼 왔다 — 이 컬럼도 그 선례를 따른다.
-  b.avg_hype_raw
+  b.avg_hype_raw,
+  -- avg_hype_score_precise (2026-07-30, 스펙 §10) — 맨 끝에 추가(위와 동일 이유). avg_hype_precise_raw
+  -- (콘텐츠 출력 매핑 반영 창 평균, base CTE)를 hype_account_score_precise()로 매핑한 소수값,
+  -- round(...,4)로 자른다. avg_hype_score(bigint)·avg_hype_raw는 이 컬럼 추가로 값·의미가 바뀌지
+  -- 않는다 — 완전히 독립된 새 함수·새 앵커가 새 raw 재료에 적용된다(위 hype_account_score_precise
+  -- 주석 참조). was 발굴 목록 표시·정렬은 이제 이 컬럼을 쓴다.
+  round(analytics.hype_account_score_precise(b.avg_hype_precise_raw), 4) AS avg_hype_score_precise
 FROM base b
 JOIN metric m USING (owner_username)
 JOIN trend  t USING (owner_username)
