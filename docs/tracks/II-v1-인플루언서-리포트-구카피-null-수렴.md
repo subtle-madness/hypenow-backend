@@ -6,7 +6,7 @@
 
 ## 내용
 
-`V1InfluencerReportRepository.findLatestCopy`(`was/src/main/java/com/celfit/was/v1/influencer/V1InfluencerReportRepository.java:32-42`)가 `account_analyses`에서 `ORDER BY analyzed_at DESC LIMIT 1`로 계정별 최신 1행만 읽고, v2(`V2InfluencerReportRepository`)와 달리 `perf_summary IS NOT NULL` 필터가 없다. Q(인플루언서 리포트 개편, 07-27)에서 계정 카피가 7종→5종으로 개편되며 구 카피 5필드(tagline 제외 — `ad_headline`·`summary`·`trend_note`·`chart_note`·`pace_note`)가 `AccountAnalysisWriter.insert`(`analytics/src/main/java/.../analyze/AccountAnalysisWriter.java:71`)의 INSERT 컬럼 목록에서 빠졌다(`:50` 주석: "구 카피 5컬럼은 07-27 개편 후 미기록"). 결과적으로 07-27 이후 재분석된 계정은 `findLatestCopy`가 최신 행(5컬럼 전부 NULL)을 집어 `GET /v1/influencers/{id}/ai-report`(`V1InfluencerReportController.java:20`)가 이 5필드를 점차 NULL로 서빙하게 된다 — 재분석이 쌓일수록 확산되는 시한부 결함.
+`V1InfluencerReportRepository.findLatestCopy`(`was/src/main/java/com/celfit/was/v1/influencer/V1InfluencerReportRepository.java:32-42`)가 `account_analyses`에서 `ORDER BY analyzed_at DESC LIMIT 1`로 계정별 최신 1행만 읽고, v2(`V2InfluencerReportRepository`)와 달리 `perf_summary IS NOT NULL` 필터가 없다. Q(인플루언서 리포트 개편, 07-27)에서 계정 카피가 7종→5종으로 개편되며 구 카피 5필드(tagline 제외 — `ad_headline`·`summary`·`trend_note`·`chart_note`·`pace_note`)가 `AccountAnalysisWriter.insert`(`analytics/src/main/java/.../analyze/AccountAnalysisWriter.java:71`)의 INSERT 컬럼 목록에서 빠졌다(`:50` 주석: "구 카피 5컬럼은 07-27 개편 후 미기록"). 결과적으로 07-27 이후 재분석된 계정은 `findLatestCopy`가 최신 행(5컬럼 전부 NULL)을 집어 `GET /v1/influencers/{id}/ai-report`(`V1InfluencerReportController.java:18-20`)가 이 5필드를 점차 NULL로 서빙하게 된다 — 재분석이 쌓일수록 확산되는 시한부 결함.
 
 **전례**: 구 `GET /api/influencers/{handle}`을 07-27에 제거한 사유가 정확히 이 문제였다(`docs/tracks/E-인플루언서-api.md:9` — "카피 7종→5종 개편(V40)으로 구 카피 컬럼이 NULL로 쌓여 점차 빈 카피를 서빙하게 되는 표면이었음"). v1은 그때 제거 대상에서 제외되고 남아, 같은 결함을 다시 안고 있다.
 
