@@ -106,7 +106,11 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'mkdir -p ~/deploy/scripts'
           scp -i ~/.ssh/id_deploy deploy/compose.yaml deploy/Caddyfile "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
-          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
+          # backup.sh도 여기서 함께 동기화 — 예전엔 CD가 안 올려 레포↔서버가 갈라졌고(monitoring
+          # 덤프 블록이 레포에만 있고 서버엔 없어 monitoring이 운영 백업에서 조용히 누락됨,
+          # 07-30 실측: md5sum 불일치·서버 backups/에 monitoring-*.sql.gz 0개), 그 결과 오프사이트
+          # 전환(B2)도 서버에만 있고 레포에 반영이 안 되는 반대 방향 드리프트까지 겹쳤다.
+          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh deploy/scripts/backup.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && out=$(docker compose config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
              if echo "$out" | grep -q "is not set"; then
