@@ -111,6 +111,27 @@ class V1SavedRepositoryTest extends IntegrationTest {
 				"INSERT INTO app.users (email, password_hash) VALUES ('u@example.com', 'x') RETURNING id", Long.class);
 	}
 
+	/**
+	 * 순서 단언을 위해 저장 시각을 과거로 명시 고정한다. 저장 간격을 벌리는 방식(sleep)은 쓰지 않는다 —
+	 * now()는 벽시계라 컨테이너 시계가 뒤로 튀면(이 머신 실측: 약 118ms 역행이 주기적으로 발생) 나중
+	 * 저장이 더 이른 시각으로 박혀 정렬이 뒤집힌다. 시각이 완전 동률일 때도 타이브레이크가
+	 * short_code·handle 오름차순이라 "최근 저장 순" 기대와 반대로 나오는데, 1시간 마진은 두 경우를 다 막는다.
+	 */
+	private void 콘텐츠_저장시각_과거로(String shortCode) {
+		jdbcTemplate.update(
+				"UPDATE app.saved_contents SET created_at = now() - interval '1 hour' "
+						+ "WHERE user_id = ? AND short_code = ?",
+				userId, shortCode);
+	}
+
+	/** 위와 같은 이유. v1 인플루언서 목록은 updated_at이 아니라 created_at 기준이다. */
+	private void 인플루언서_저장시각_과거로(String handle) {
+		jdbcTemplate.update(
+				"UPDATE app.saved_influencers SET created_at = now() - interval '1 hour' "
+						+ "WHERE user_id = ? AND handle = ?",
+				userId, handle);
+	}
+
 	// --- 콘텐츠 ---
 
 	@Test
@@ -137,6 +158,7 @@ class V1SavedRepositoryTest extends IntegrationTest {
 	void 저장_목록은_최근_저장_순이다() {
 		repository.upsertContent(userId, "c1", null);
 		repository.upsertContent(userId, "c2", "메모");
+		콘텐츠_저장시각_과거로("c1");
 
 		List<SavedContentRow> rows = repository.findSavedContents(userId);
 
@@ -256,6 +278,7 @@ class V1SavedRepositoryTest extends IntegrationTest {
 	void 인플루언서_목록은_최근_저장_순이고_삭제는_멱등이다() {
 		repository.upsertInfluencer(userId, "alpha", null);
 		repository.upsertInfluencer(userId, "beta", null);
+		인플루언서_저장시각_과거로("alpha");
 
 		List<SavedInfluencerRow> rows = repository.findSavedInfluencers(userId);
 		assertThat(rows).extracting(SavedInfluencerRow::handle).containsExactly("beta", "alpha");
