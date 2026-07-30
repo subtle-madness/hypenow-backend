@@ -1,0 +1,339 @@
+package com.celfit.analytics.llm;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 성과 요약 통계 왜곡 가드 — 결정론적 등급 판정
+ * (설계 2026-07-30-perf-summary-statistical-guards §2·§3-2).
+ *
+ * <p>{@code account_summaries} 스냅샷(Map, snake_case 컬럼명)에서 지표별 표본 신뢰도·추세
+ * 유효성·한 건 지배·포맷 비교 가능성을 판정한다. 임계값은 §2 실측 분위수에 붙이되 SQL이 아니라
+ * 여기 상수로 관리한다 — 운영 뷰 적용은 수동 런북이라 임계값 조정마다 운영 DDL이 붙는 것을 피하려는
+ * 설계 의도(§3 서문).
+ *
+ * <p><b>NULL 안전</b>: median·share·span 계열 컬럼은 관측 없는 계정에서 NULL이고, 새 컬럼이 아직
+ * 미러되지 않은 과도기에는 맵에 키 자체가 없을 수 있다. 판정 불가는 전부 "그 지표에 대한 서술을
+ * 억제하는" 방향의 보수적 등급으로 접는다({@link #gradeOf}는 null을 INSUFFICIENT로, {@link #trendOf}는
+ * null을 UNAVAILABLE로, 포맷 비교는 null을 비교 불가로 처리) — 절대 NPE를 내지 않는다.
+ *
+ * <p><b>배포 과도기 감지({@link #dataIncomplete()})</b>: 위 등급 접힘과는 별개로, {@link #CONFIDENCE_COLUMNS}
+ * 7개 컬럼이 <b>전부</b> NULL/부재면 "표본이 진짜 부족한 계정"이 아니라 "뷰 선적용 없이 마이그레이션이
+ * 먼저 배포돼 미러가 새 컬럼을 채우지 못한 상태"로 본다. 이 둘은 구분된다 — {@code views_sample_count}·
+ * {@code likes_sample_count}·{@code comments_sample_count}·{@code reels_count}·{@code feed_count}는
+ * 뷰(10_account_detail.sql)에서 {@code count(*) FILTER (...)}로 계산되는데, 이 집계 함수는 매치되는
+ * 행이 0건이어도 SQL NULL이 아니라 정수 0을 반환한다 — 계정에 분석 이력이 하나라도 있으면
+ * (GROUP BY 자체가 성립하는 조건) 이 5개 컬럼은 절대 NULL일 수 없다. 예를 들어 피드 전용 계정은
+ * {@code views_sample_count=0}·{@code reels_count=0}·{@code feed_count=12}처럼 값이 채워지지,
+ * NULL이 되지 않는다. 따라서 7개 전부 NULL은 정상 운영에서 발생 불가능하고, 미러가 이 컬럼들에
+ * 아무것도 쓰지 못한 배포 과도기에서만 성립한다 — 판정 근거는 설계
+ * 2026-07-30-perf-summary-statistical-guards-design.md 배포 순서 절 참조. (뷰는 여전히 신 컬럼 9개를
+ * 추가하지만, {@code median_views}·{@code median_er_pct}는 §3-3 재정의로 always-strip에서 빠져
+ * 이 감지 목록에도 없다 — 어차피 5개 count 컬럼이 이미 "전부 NULL 불가능"을 보장하므로 무관하다.)
+ *
+ * <p>{@link #none()}(가드 미적용 기본값)과 {@link #dataIncomplete()}는 서로 다른 상태다 — {@code none()}은
+ * "이 호출부는 신뢰도 판정 자체를 적용하지 않는다"는 뜻이고, {@code dataIncomplete()}는 "판정을
+ * 적용했는데 입력 자체가 배포 과도기라 신뢰할 수 없다"는 뜻이다. 후자는 카피 생성을 아예 건너뛰어야
+ * 한다는 신호로 쓰인다({@code AccountAnalysisJob}·{@code ClaudeBurstRunner} 참조).
+ */
+public final class PerfConfidence {
+
+	/** 지표별 실질 모수 등급 (§3-2 표) — ≤2 INSUFFICIENT, 3~5 WEAK, ≥6 OK. */
+	public enum Grade { OK, WEAK, INSUFFICIENT }
+
+	/**
+	 * 성장세 유효성 — 건수가 아니라 시간 축(window_span_days) 기준. 3차 test 실측(2026-07-30,
+	 * 트랙 Y)까지는 {@code OK}/{@code LONG_SPAN}/{@code TOO_LONG} 3단계였고 LONG_SPAN(90~365일)은
+	 * trend_* 값을 프롬프트 입력에 남긴 채 "완만하게 표현하라"는 지시만으로 통제했다. 그런데 이
+	 * 구간(실측 22.9%)에서 지시가 새어나왔다 — {@code 0205s.y}(창 207일)가 "뚜렷한 우상향 추세를
+	 * 보입니다"로, {@code 02_10.13}(157일)이 "상승하는 추세입니다"로, {@code 119irl}(201일)이
+	 * "상승세를 보이고 있으나"로 완화 없이 단정했다. 반면 TOO_LONG(값을 아예 제거)은 새어나온
+	 * 사례가 0건이었다(180.e_cm 등) — "입력에서 제거한 것만 지켜진다"는 §3-3-1 원칙이 여기서도
+	 * 재확인됐다. 그래서 LONG_SPAN을 폐지하고 90일 초과는 전부 TOO_LONG과 동일하게 값을 제거하는
+	 * 쪽으로 통합했다({@code UNAVAILABLE}) — 두 상태가 같은 동작(값 제거)을 하면 구분 자체가
+	 * 불필요한 복잡도이기 때문이다. 트레이드오프: 창 90일 초과 34.6%(§2 실측) 계정에서 성장세
+	 * 서술이 통째로 사라진다 — 부정확한 추세 서술보다 없는 게 낫다는 판단의 의도된 수용이다
+	 * (설계 2026-07-30-perf-summary-statistical-guards-design.md §3-2 참조).
+	 */
+	public enum TrendValidity { OK, UNAVAILABLE }
+
+	private static final int INSUFFICIENT_MAX = 2;
+	private static final int WEAK_MAX = 5;
+	private static final int DOMINANCE_MIN_SAMPLE = 3;
+	private static final int DOMINANCE_SHARE_PCT = 75;
+	private static final int TREND_MAX_DAYS = 90;
+	private static final int FORMAT_COMPARABLE_MIN = 3;
+
+	/**
+	 * 프롬프트에서 <b>항상</b> 제거할 판정 전용 내부 입력 7컬럼(설계 §3-3 재정의) — 이 목록이
+	 * 정본이다. {@code AccountAdCanon}이 LLM 프롬프트 사본에서 같은 컬럼을 제거할 때도 이 목록을
+	 * 재사용해, 판정용 컬럼 목록이 두 곳에서 따로 놀다 어긋나는 드리프트를 막는다.
+	 *
+	 * <p><b>{@code median_views}·{@code median_er_pct}는 여기 없다.</b> 애초 설계(§3-3 초판)는
+	 * 뷰가 새로 추가한 9컬럼을 전부 이 목록에 넣었는데, 그러면 "수준 판정의 근거를 median으로
+	 * 옮긴다"는 이 트랙(Y)의 간판 결정(§2·§3-3)이 무력화된다 — 프롬프트는 "median을 우선 근거로
+	 * 삼아라"라고 지시하는데 LLM은 그 값을 애초에 못 보니 항상 avg 폴백으로 떨어진다. test 실측
+	 * (2026-07-30)에서 {@code 777minseo}(top1 점유율 81%)가 "조회수 성과가 매우 높은 편"으로 나온
+	 * 게 이 증상이었다. median은 "내부 판정 수치"가 아니라 "판정의 정당한 근거"이므로 always-strip
+	 * 에 있어서는 안 된다 — 노출 자체는 문제가 아니고(구체 수치 인용 금지는 별도 프롬프트 규칙이
+	 * 이미 담당), 노출된 median이 대응 avg를 밀어내는지 여부만 {@link #excludedSummaryKeys()}가
+	 * 조건부로 판단한다.
+	 */
+	public static final List<String> CONFIDENCE_COLUMNS = List.of(
+			"views_sample_count", "likes_sample_count", "comments_sample_count",
+			"reels_count", "feed_count", "top_views_share_pct", "window_span_days");
+
+	/**
+	 * account_summaries의 추세 요약 계열 4컬럼 — {@code TrendValidity.UNAVAILABLE}(window_span_days
+	 * &gt; 90)일 때 프롬프트에서 조건부로 벗겨낼 대상(설계 §3-2, §3-3 실측 보완). 2026-07-30 1차
+	 * test 실측: {@code 180.e_cm}(window_span_days=691)가 trend_direction·trend_change_pct를 그대로
+	 * 읽고 하향 곡선 문구를 만들었다(당시 TOO_LONG, 값 미제거 상태). 3차 실측에서는 LONG_SPAN(90~365일,
+	 * 값을 남긴 채 지시로만 통제하던 구간)에서도 같은 누출이 재현됐다({@code 0205s.y}·{@code 02_10.13}·
+	 * {@code 119irl}) — 그래서 LONG_SPAN을 폐지하고 90일 초과 전 구간에서 이 4컬럼을 제거한다.
+	 * CONFIDENCE_COLUMNS(판정 재료·항상 제거)와 달리 이 4컬럼은 원래 account_summaries에 있던
+	 * 화면용 컬럼이라 등급이 OK(≤90일)면 그대로 둬야 한다.
+	 */
+	private static final List<String> TREND_SUMMARY_KEYS = List.of(
+			"trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg");
+
+	private final Grade viewsGrade;
+	private final Grade likesGrade;
+	private final Grade commentsGrade;
+	private final TrendValidity trendValidity;
+	private final boolean singlePostDominance;
+	private final boolean formatComparable;
+	private final boolean dataIncomplete;
+	private final boolean hasMedianViews;
+	private final boolean hasMedianErPct;
+
+	private PerfConfidence(Grade viewsGrade, Grade likesGrade, Grade commentsGrade,
+			TrendValidity trendValidity, boolean singlePostDominance, boolean formatComparable,
+			boolean dataIncomplete, boolean hasMedianViews, boolean hasMedianErPct) {
+		this.viewsGrade = viewsGrade;
+		this.likesGrade = likesGrade;
+		this.commentsGrade = commentsGrade;
+		this.trendValidity = trendValidity;
+		this.singlePostDominance = singlePostDominance;
+		this.formatComparable = formatComparable;
+		this.dataIncomplete = dataIncomplete;
+		this.hasMedianViews = hasMedianViews;
+		this.hasMedianErPct = hasMedianErPct;
+	}
+
+	/** account_summaries 스냅샷(SELECT * 결과)에서 등급을 계산한다. */
+	public static PerfConfidence of(Map<String, Object> summary) {
+		Long viewsN = asLong(summary, "views_sample_count");
+		Long likesN = asLong(summary, "likes_sample_count");
+		Long commentsN = asLong(summary, "comments_sample_count");
+		Grade views = gradeOf(viewsN);
+		Grade likes = gradeOf(likesN);
+		Grade comments = gradeOf(commentsN);
+		TrendValidity trend = trendOf(asLong(summary, "window_span_days"));
+		boolean dominance = dominanceOf(viewsN, asInt(summary, "top_views_share_pct"));
+		boolean comparable = comparableOf(asLong(summary, "reels_count"), asLong(summary, "feed_count"));
+		boolean dataIncomplete = CONFIDENCE_COLUMNS.stream().allMatch(k -> summary.get(k) == null);
+		boolean hasMedianViews = summary.get("median_views") != null;
+		boolean hasMedianErPct = summary.get("median_er_pct") != null;
+		return new PerfConfidence(views, likes, comments, trend, dominance, comparable, dataIncomplete,
+				hasMedianViews, hasMedianErPct);
+	}
+
+	/** 신뢰도 제약 없음 — 판정을 아예 건너뛰는 경로(버스트 export 등 구 호출부) 호환용 기본값. */
+	public static PerfConfidence none() {
+		return new PerfConfidence(Grade.OK, Grade.OK, Grade.OK, TrendValidity.OK, false, true, false,
+				false, false);
+	}
+
+	public Grade viewsGrade() {
+		return viewsGrade;
+	}
+
+	public Grade likesGrade() {
+		return likesGrade;
+	}
+
+	public Grade commentsGrade() {
+		return commentsGrade;
+	}
+
+	public TrendValidity trendValidity() {
+		return trendValidity;
+	}
+
+	public boolean singlePostDominance() {
+		return singlePostDominance;
+	}
+
+	public boolean formatComparable() {
+		return formatComparable;
+	}
+
+	/**
+	 * 배포 과도기 감지 — {@link #CONFIDENCE_COLUMNS} 7개 신뢰도 재료 컬럼이 전부 NULL/부재면
+	 * true(클래스 javadoc 참조).
+	 * 호출부는 이 값이 true면 카피 생성을 건너뛰어야 한다 — 저품질 문구를 최신 버전으로 찍어
+	 * 영구 고정하는 것보다 아무것도 안 쓰는 게 안전하다(뷰 적용 후 자연 재대상됨).
+	 */
+	public boolean dataIncomplete() {
+		return dataIncomplete;
+	}
+
+	private static Grade gradeOf(Long sampleCount) {
+		if (sampleCount == null || sampleCount <= INSUFFICIENT_MAX) {
+			return Grade.INSUFFICIENT;
+		}
+		if (sampleCount <= WEAK_MAX) {
+			return Grade.WEAK;
+		}
+		return Grade.OK;
+	}
+
+	private static TrendValidity trendOf(Long windowSpanDays) {
+		if (windowSpanDays == null || windowSpanDays > TREND_MAX_DAYS) {
+			return TrendValidity.UNAVAILABLE;
+		}
+		return TrendValidity.OK;
+	}
+
+	/**
+	 * 한 건 지배 — 조회수 실질 모수가 3건 이상일 때만 판정한다. 모수 1~2건은 점유율이 자동
+	 * 100%라 모수 게이트(gradeOf)와 뜻이 겹치므로 이 플래그는 세우지 않는다(§3-2).
+	 * top_views_share_pct가 NULL(과도기 미러 지연 등)이면 근거 없이 "1건이 끌어올린 구조"라는
+	 * 구체적 서술을 지시하지 않도록 false로 접는다 — 증거 없는 주장을 만들지 않는다는 원칙.
+	 */
+	private static boolean dominanceOf(Long viewsSampleCount, Integer topViewsSharePct) {
+		if (viewsSampleCount == null || viewsSampleCount < DOMINANCE_MIN_SAMPLE) {
+			return false;
+		}
+		return topViewsSharePct != null && topViewsSharePct >= DOMINANCE_SHARE_PCT;
+	}
+
+	private static boolean comparableOf(Long reelsCount, Long feedCount) {
+		if (reelsCount == null || feedCount == null) {
+			return false;
+		}
+		return reelsCount >= FORMAT_COMPARABLE_MIN && feedCount >= FORMAT_COMPARABLE_MIN;
+	}
+
+	/**
+	 * 판정 결과에 따라 프롬프트 입력 맵({@code account_summaries} 사본)에서 조건부로 벗겨낼 계정
+	 * 집계 키(설계 §3-3 실측 보완 + §3-3 재정의). {@link #CONFIDENCE_COLUMNS}(always-strip 7컬럼)
+	 * 와는 별개다 — 이건 "지시만으론 안 지켜졌다"는 test 실측(2026-07-30)에 대한 대응과, "median이
+	 * 선택지가 아니라 유일한 근거여야 한다"는 원칙을 합성한 것이다.
+	 *
+	 * <p>조회수: {@code viewsGrade}가 INSUFFICIENT(모수 ≤2)면 {@code avg_views}·
+	 * {@code views_per_follower}뿐 아니라 {@code median_views}까지 제거한다 — 모수가 부족하면
+	 * 중앙값도 판정 근거가 될 수 없다(상위 5개 계정 사례처럼 모수 1인데 median이 그 1건 값 그대로
+	 * 노출되는 경우). 모수가 OK·WEAK(즉 INSUFFICIENT가 아님)이고 {@code median_views}가 실제로
+	 * 존재(non-NULL)하면, 대응 평균 키(avg_views·views_per_follower)를 제거해 median을 "선택지"가
+	 * 아니라 "유일한 근거"로 만든다 — 둘 다 보이면 LLM이 avg를 골라 쓸 여지가 남기 때문이다.
+	 * {@code median_views}가 NULL(조회수 관측 0건인 피드 전용 계정 등, 실측 949/6,653건)이면
+	 * avg_views를 그대로 남겨 폴백 경로를 살려둔다.
+	 *
+	 * <p>ER: {@code median_er_pct}가 존재하면 {@code avg_er_pct}를 제거한다(대응 평균 키는
+	 * avg_er_pct 하나뿐 — views_per_follower 같은 파생 키가 없다). 좋아요·댓글은 대응 median
+	 * 컬럼 자체가 없으므로(설계 §3-1) 이 규칙과 무관하고, 등급이 INSUFFICIENT일 때만
+	 * {@code avg_likes}·{@code avg_comments}를 제거한다. WEAK는 톤 연화가 목적이라 값이
+	 * 필요하므로 벗기지 않는다.
+	 */
+	public List<String> excludedSummaryKeys() {
+		List<String> out = new ArrayList<>();
+		if (trendValidity == TrendValidity.UNAVAILABLE) {
+			out.addAll(TREND_SUMMARY_KEYS);
+		}
+		if (viewsGrade == Grade.INSUFFICIENT) {
+			out.add("avg_views");
+			out.add("views_per_follower");
+			out.add("median_views");
+		} else if (hasMedianViews) {
+			out.add("avg_views");
+			out.add("views_per_follower");
+		}
+		if (likesGrade == Grade.INSUFFICIENT) {
+			out.add("avg_likes");
+		}
+		if (commentsGrade == Grade.INSUFFICIENT) {
+			out.add("avg_comments");
+		}
+		if (hasMedianErPct) {
+			out.add("avg_er_pct");
+		}
+		return out;
+	}
+
+	/**
+	 * 판정 결과에 따라 프롬프트용 게시물 목록(posts)에서 조건부로 벗겨낼 필드명. 계정 집계 키를
+	 * 지웠어도 게시물별 원값(views·likes·comments)이 남아 있으면 모수 2건짜리 지표라도 목록에서
+	 * 수준을 유추해 서술할 수 있다(2026-07-30 test 실측: {@code 0_tsuki2}, views_sample_count=2인데
+	 * 포맷 비교 문장을 만듦 — 게시물 목록의 조회수를 읽은 것으로 추정). content_type·caption·
+	 * sponsored는 contentSummary·adSummary에도 쓰여 절대 벗기지 않는다.
+	 */
+	public List<String> excludedPostFields() {
+		List<String> out = new ArrayList<>();
+		if (viewsGrade == Grade.INSUFFICIENT) {
+			out.add("views");
+		}
+		if (likesGrade == Grade.INSUFFICIENT) {
+			out.add("likes");
+		}
+		if (commentsGrade == Grade.INSUFFICIENT) {
+			out.add("comments");
+		}
+		return out;
+	}
+
+	private static Long asLong(Map<String, Object> summary, String key) {
+		return summary.get(key) instanceof Number n ? n.longValue() : null;
+	}
+
+	private static Integer asInt(Map<String, Object> summary, String key) {
+		return summary.get(key) instanceof Number n ? n.intValue() : null;
+	}
+
+	/** 위 등급을 한국어 프롬프트 지침 문장으로 변환한다 — 각 지침은 독립적이라 여러 개가 동시에 뜰 수 있다. */
+	public List<String> directives() {
+		List<String> out = new ArrayList<>();
+		addMetricDirective(out, viewsGrade, "조회수");
+		addMetricDirective(out, likesGrade, "좋아요");
+		addMetricDirective(out, commentsGrade, "댓글");
+		if (singlePostDominance) {
+			out.add("조회수가 특정 1건에 쏠려 있다 — 평균적 성과로 서술하지 말고 대표작 1건이 "
+					+ "끌어올린 구조라는 관점으로 써라.");
+		}
+		if (trendValidity == TrendValidity.UNAVAILABLE) {
+			out.add("게시물 간 기간이 길어(3개월 초과) 추세 데이터는 제공되지 않는다 — 성장세·추세에 대한 서술은 아예 하지 마라.");
+		}
+		if (!formatComparable) {
+			out.add("릴스 또는 피드 게시물이 3건 미만이라 포맷 비교 데이터는 제공되지 않는다 — 포맷(릴스/피드)별 반응 차이는"
+					+ " 언급하지 마라. \"차이가 없다\"·\"뚜렷하지 않다\"·\"비슷하다\"처럼 부정형으로 에둘러 비교하는 것도"
+					+ " 비교 진술이므로 마찬가지로 금지다 — 포맷을 언급하는 문장 자체를 만들지 마라.");
+		}
+		return out;
+	}
+
+	private static void addMetricDirective(List<String> out, Grade grade, String label) {
+		switch (grade) {
+			case INSUFFICIENT -> out.add(label + " 데이터는 제공되지 않는다(표본 2건 이하) — "
+					+ label + " 수준에 대한 서술은 아예 하지 마라.");
+			case WEAK -> out.add("\"" + label + " 표본이 적어 단정하기 어렵지만\"으로 먼저 운을 뗀 뒤에 " + label
+					+ " 수준을 언급하라(표본 3~5건) — 단정부터 하고 뒤늦게 발뺌하는 순서로 쓰지 마라. 표본이 충분한"
+					+ " 다른 지표까지 이 완화 표현으로 묶어 쓰지 마라.");
+			case OK -> {
+			}
+		}
+	}
+
+	/** 프롬프트에 그대로 삽입할 블록 — 해당 지침이 없으면 빈 문자열(섹션 자체를 만들지 않는다). */
+	public String promptBlock() {
+		List<String> d = directives();
+		if (d.isEmpty()) {
+			return "";
+		}
+		StringBuilder sb = new StringBuilder("신뢰도 지침 — 아래에 해당하면 반드시 지켜라:\n");
+		for (String line : d) {
+			sb.append("  - ").append(line).append('\n');
+		}
+		return sb.toString().stripTrailing();
+	}
+}

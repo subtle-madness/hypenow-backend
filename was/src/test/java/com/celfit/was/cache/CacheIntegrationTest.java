@@ -204,10 +204,10 @@ class CacheIntegrationTest extends IntegrationTest {
 		InfluencerCard card = new V1InfluencerDiscoveryAssembler().toCards(
 				// CardRow(handle, displayName, profileImageUrl, followers, postsCount, followsCount,
 				// biography, tagline, viewsPerFollower, avgErPct, avgViews, avgLikes, avgComments,
-				// avgHypeScore, sponsoredCount) — 계획 스니펫이 필드 수와 어긋나 실 record 기준으로 바로잡음(2026-07-29).
+				// avgHypeScore, sponsoredCount, email) — 계획 스니펫이 필드 수와 어긋나 실 record 기준으로 바로잡음(2026-07-29).
 				List.of(new CardRow("glow", "글로우", null, 20000L, 214L, 380L, "소개",
 						"저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
-						413200L, 10370L, 152L, 72L, 3L)),
+						413200L, 10370L, 152L, 72L, 3L, "glow@example.com")),
 				List.of(new ShareRow("glow", "skincare", 80), new ShareRow("glow", "makeup", 20)),
 				List.of(new BrandRow("glow", "롬앤")),
 				List.of(new ThumbRow("glow", "c1", null, "reels", "skincare", "organic",
@@ -220,7 +220,7 @@ class CacheIntegrationTest extends IntegrationTest {
 		assertThat(card.categoryShares()).isNotEmpty();
 		assertThat(card.recentThumbs()).isNotEmpty();
 		assertThat(card.reachMultiplier().scale()).isEqualTo(1);
-		assertThat(card.email()).isNull(); // 상시 null 필드(크롤러 미수집, V31) — 부재 아니라 값이 null
+		assertThat(card.email()).isEqualTo("glow@example.com"); // biography 정규식 파싱(V46) 캐시 왕복 확인
 
 		DiscoveryPage page = new DiscoveryPage(List.of(card), 1L);
 
