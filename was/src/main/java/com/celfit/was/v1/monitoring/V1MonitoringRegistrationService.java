@@ -181,7 +181,7 @@ public class V1MonitoringRegistrationService {
 		// Set.add()는 "이미 봤는지 확인"과 "지금 봤다고 기록"을 한 호출로 겸한다 — 이번 항목이 최초든
 		// 아니든 항상 seen에 남겨야 이후 같은 값의 항목도 계속 duplicate로 잡힌다(부작용 의도적).
 		if (!seenPostShortCodes.add(post.shortCode())
-				|| hasActiveDuplicate(userId, MODE_URL, post.shortCode())) {
+				|| hasActiveDuplicate(userId, MODE_URL, post.shortCode(), context.registeredOn())) {
 			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_DUPLICATE,
 					DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
 			return;
@@ -206,7 +206,7 @@ public class V1MonitoringRegistrationService {
 		MonitoringInput.Account account = (MonitoringInput.Account) parsed;
 		// 위 processPost와 동일한 겸용 패턴 — add()가 "이미 봤는지"와 "지금 기록"을 동시에 처리한다.
 		if (!seenAccountHandles.add(account.handle())
-				|| hasActiveDuplicate(userId, MODE_ACCOUNT, account.handle())) {
+				|| hasActiveDuplicate(userId, MODE_ACCOUNT, account.handle(), context.registeredOn())) {
 			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT,
 					RESULT_DUPLICATE, DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
 			return;
@@ -227,9 +227,8 @@ public class V1MonitoringRegistrationService {
 	 * 넘겨 만료 여부를 함께 본다 — 등록일+기간이 지난 채 target이 안 붙은 pending 행(리뷰 반영, v2.2)은
 	 * ended/not_uploaded로 유도돼 더 이상 무조건 duplicate가 아니다.
 	 */
-	private boolean hasActiveDuplicate(long userId, String mode, String inputValue) {
+	private boolean hasActiveDuplicate(long userId, String mode, String inputValue, LocalDate today) {
 		List<MonitoringItemRow> candidates = itemRepository.findActiveByInput(userId, mode, inputValue);
-		LocalDate today = LocalDate.now(KstTimestamps.KST);
 		for (MonitoringItemRow candidate : candidates) {
 			TargetRow target = candidate.targetId() == null ? null : fetchTarget(candidate.targetId());
 			String status = ItemStatus.derive(candidate, target, today);

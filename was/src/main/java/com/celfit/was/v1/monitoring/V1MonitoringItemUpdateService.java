@@ -85,9 +85,13 @@ public class V1MonitoringItemUpdateService {
 			throw V1ApiException.validation("campaignId와 campaignName을 동시에 지정할 수 없어요.");
 		}
 
+		// 요청 전체가 같은 '오늘'을 쓴다 — 검증(1단계)과 응답 조립(assembleAfterPatch)이 각자 시계를
+		// 읽으면 KST 자정이 걸친 요청에서 판정 기준이 어긋난다(6.26 리뷰 잔여 지적).
+		LocalDate today = LocalDate.now(KstTimestamps.KST);
+
 		// 1단계 — 검증·해석만(원격 호출 없음). 여기서 던지는 예외는 아직 아무 부수효과도 없어 안전하다.
 		Integer newTrackingDays = body.containsKey("trackingDays")
-				? validateTrackingDays(item, body.get("trackingDays"))
+				? validateTrackingDays(item, body.get("trackingDays"), today)
 				: null;
 		CampaignChange campaignChange = resolveCampaignChange(userId, hasCampaignId, hasCampaignName,
 				body.get("campaignId"), body.get("campaignName"));
@@ -115,7 +119,7 @@ public class V1MonitoringItemUpdateService {
 			itemRepository.updateCampaign(itemId, campaignId);
 		}
 
-		TrackingItemResponse response = assembleAfterPatch(item, trackingDays, campaignId, campaignName);
+		TrackingItemResponse response = assembleAfterPatch(item, trackingDays, campaignId, campaignName, today);
 		return MonitoringItemPatchResponse.of(response, newlyCreated);
 	}
 
@@ -150,10 +154,9 @@ public class V1MonitoringItemUpdateService {
 	 * trackingDays 검증만(범위·미래 종료일·진행 중 상태) — 원격 호출·로컬 쓰기 없음(순서 불변식,
 	 * patch() 클래스 javadoc 참조). 호출부가 검증 통과를 확인한 뒤에야 extend·updateTrackingDays를 낸다.
 	 */
-	private int validateTrackingDays(MonitoringItemRow item, Object raw) {
+	private int validateTrackingDays(MonitoringItemRow item, Object raw, LocalDate today) {
 		int trackingDays = parseTrackingDays(raw);
 		LocalDate endDate = item.registeredOn().plusDays(trackingDays);
-		LocalDate today = LocalDate.now(KstTimestamps.KST);
 		if (!endDate.isAfter(today)) {
 			throw V1ApiException.validation("모니터링 종료일은 오늘 이후여야 해요.");
 		}
@@ -197,9 +200,9 @@ public class V1MonitoringItemUpdateService {
 
 	/** target 유무·status 유도까지 마친 뒤 어셈블러(full 조립)에 위임 — pending·target 확정 모두 공용. */
 	private TrackingItemResponse assembleAfterPatch(MonitoringItemRow item, int trackingDays, Long campaignId,
-			String campaignName) {
+			String campaignName, LocalDate today) {
 		TargetRow target = fetchTarget(item);
-		String status = ItemStatus.derive(item, target, LocalDate.now(KstTimestamps.KST));
+		String status = ItemStatus.derive(item, target, today);
 		return assembler.assembleSingle(item, target, status, trackingDays, campaignId, campaignName);
 	}
 
