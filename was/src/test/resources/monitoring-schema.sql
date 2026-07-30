@@ -4,9 +4,11 @@
 -- 2026-07-30 계약 v2.1(feat/monitoring-alarm-module, V3__user_id_and_alarm_event.sql)과 대조 완료:
 --   alarm_event는 was 소비 컬럼(id·target_id·user_id·event_type·payload·occurred_at)만 축약해
 --   실구현 DDL과 일치(email_status·dispatch_after 등 monitoring 내부 컬럼도 동봉해 실 스키마와 형태를 맞춘다).
--- P1 확장 선반영분(docs/contracts/monitoring-v3-extension-request.md — post_meta·
---   target.tracked_hidden_at·fetch_failing·sweep_run)은 아직 실구현 미착수 —
---   v2.0(feat/monitoring-alarm-module) 재편 확정 시 재대조할 것.
+-- 2026-07-30 계약 v2.2(V5__p1_surfaces.sql)와 재대조 완료: post_meta·sweep_run·
+--   target.tracked_hidden_at·fetch_failing은 이미 실구현과 동일 형태였고, target.user_id(V3)·
+--   matched_keywords(V5)만 빠져 있어 이번에 추가했다. v_target_overview는 조회 표면 계약에
+--   포함되지만 was는 뷰가 아닌 베이스 테이블만 SELECT하므로(두 뷰를 조인하지 말라는 계약 주의사항과
+--   무관하게 어셈블러는 베이스 테이블 직접 조회) 픽스처에 뷰를 별도로 만들지 않는다.
 CREATE TABLE IF NOT EXISTS target (
     id                 bigserial PRIMARY KEY,
     type               text NOT NULL,             -- ACCOUNT / POST
@@ -22,8 +24,10 @@ CREATE TABLE IF NOT EXISTS target (
     closed_at          timestamptz,
     last_fetched_at    timestamptz,
     fail_reason        text,
+    user_id            bigint,                    -- 알람 수신자(V3) — V3 이전 등록분은 null
     tracked_hidden_at  timestamptz,
-    fetch_failing      boolean NOT NULL DEFAULT false
+    fetch_failing      boolean NOT NULL DEFAULT false,
+    matched_keywords   jsonb                       -- 감지 자동 전환 시 실제 매칭 키워드(V5) — POST 등록·감지 전은 null
 );
 
 CREATE TABLE IF NOT EXISTS detected_candidate (
