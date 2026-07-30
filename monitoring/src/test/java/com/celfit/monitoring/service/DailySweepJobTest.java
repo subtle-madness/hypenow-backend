@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.alarm.AlarmEventRepository;
+import com.celfit.monitoring.alarm.AlarmEventType;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
@@ -201,6 +202,22 @@ class DailySweepJobTest {
 				}
 			}
 			return null;
+		}
+	}
+
+	/**
+	 * insert()가 항상 던지는 대장 리포지토리 — 알람 적재 실패가 스윕 본 작업(자동 전환)을
+	 * 막지 않고, "일시 실패"로 오분류돼 재시도 라운드에 편입되지도 않는지 검증한다.
+	 */
+	private static final class ThrowingAlarmEventRepository extends AlarmEventRepository {
+		ThrowingAlarmEventRepository() {
+			super(null);
+		}
+
+		@Override
+		public long insert(long targetId, long userId, AlarmEventType type, String payloadJson,
+				Instant occurredAt, Instant dispatchAfter) {
+			throw new RuntimeException("DB 폭발(테스트)");
 		}
 	}
 
@@ -618,5 +635,31 @@ class DailySweepJobTest {
 		job.run();
 
 		assertThat(alarmTypes()).containsExactly("CONTENT_UNAVAILABLE", "CONTENT_UNAVAILABLE");
+	}
+
+	/**
+	 * 알람 적재 실패가 RuntimeException으로 새면 sweepAccount의 catch(RuntimeException)에 걸려
+	 * "일시 실패"로 오분류되고, 그 계정 전체가 재시도 라운드에 편입된다 — 자동 전환은 이미 끝났는데
+	 * 계정을 다시 훑어 콜만 새는 것이다. AlarmRecorder가 스스로 삼키므로 이 오분류가 생기지 않는다.
+	 */
+	@Test
+	void 알람_적재가_실패해도_자동_전환은_완료되고_재시도_라운드에_들어가지_않는다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		var snapshotRepo = new SnapshotRepository(db);
+		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshotRepo);
+		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var throwingCollect = new CollectService(throwingClient,
+				new SnapshotWriter(snapshotRepo, throwingAlarms), 1);
+		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, 3, Duration.ZERO);
+		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
+
+		throwingJob.run();
+
+		// 전환(본 작업)은 알람 적재 실패와 무관하게 정상 완료된다.
+		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(trackedOf(a)).isEqualTo("AAA");
+		// 재시도 라운드가 돌았다면 profileCalls가 최초 1콜을 넘어선다 — 여기선 1이어야 오분류가 없다는 뜻.
+		assertThat(hiker.profileCalls).isEqualTo(1);
+		assertThat(db.queryForObject("SELECT count(*) FROM alarm_event", Long.class)).isZero();
 	}
 }

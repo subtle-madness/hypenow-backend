@@ -57,13 +57,10 @@ public class DailySweepJob {
 	public void run() {
 		// 만료를 먼저 닫아야 만기 지난 캠페인이 그날 스윕 대상에서 빠진다 — 순서가 바뀌면 종료된 캠페인만큼 콜이 샌다.
 		List<ExpiredTarget> expired = targets.expireOverdue();
+		// AlarmRecorder가 격리 정책을 스스로 갖는다(record()는 예외를 던지지 않는다) — 여기서 또
+		// try/catch로 감싸면 같은 격리를 두 곳에서 반복하는 것이라 격리 코드를 없앤다.
 		for (ExpiredTarget e : expired) {
-			try {
-				alarms.collectionEnded(e.id(), e.userId(), e.username(), e.trackedShortCode());
-			} catch (RuntimeException ex) {
-				// 알람 하나가 스윕 전체를 막으면 그날 수집이 통째로 빈다 — 로그만 남기고 계속한다.
-				log.warn("만료 알람 적재 실패(격리) — target {}: {}", e.id(), ex.toString());
-			}
+			alarms.collectionEnded(e.id(), e.userId(), e.username(), e.trackedShortCode());
 		}
 		SweepRoundResult first = sweepRound(null);
 		int totalAccounts = first.accountCount();   // 전체 계정 수 — 첫 라운드(only=null)가 활성 계정 전부를 훑은 결과
@@ -178,14 +175,17 @@ public class DailySweepJob {
 	/**
 	 * 종결도 실패할 수 있다(DB 순단·락 타임아웃). 여기서 예외가 새면 남은 계정이 통째로 안 돌아
 	 * "캠페인 하나 종결 실패"가 "그날 스윕 전면 중단"으로 번진다 — 로그만 남기고 계속한다.
+	 * 아래 catch는 이제 {@code targets.close()} 실패만 잡는다 — {@code alarms.contentUnavailable}은
+	 * AlarmRecorder가 자체 격리해 예외를 던지지 않으므로, 여기서 걸리는 예외는 항상 종결(close) 실패다.
 	 */
 	private void closeFailed(TargetRow t, String failReason) {
 		try {
 			targets.close(t.id(), TargetStatus.FAILED, failReason);
-			alarms.contentUnavailable(t.id(), t.userId(), t.username(), t.trackedShortCode(), failReason);
 		} catch (RuntimeException e) {
 			log.warn("종결 실패(격리) — target {} → FAILED/{}: {}", t.id(), failReason, e.toString());
+			return;
 		}
+		alarms.contentUnavailable(t.id(), t.userId(), t.username(), t.trackedShortCode(), failReason);
 	}
 
 	private void sweepTarget(TargetRow t, List<PostInfo> posts, Set<String> enumerated) {

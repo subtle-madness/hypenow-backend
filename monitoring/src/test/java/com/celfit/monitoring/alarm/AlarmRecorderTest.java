@@ -1,6 +1,7 @@
 package com.celfit.monitoring.alarm;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
@@ -19,6 +20,22 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /** 알람 적재 규칙 — 수신자 스킵과 METRICS_HIDDEN 오탐 방지가 핵심이다. */
 class AlarmRecorderTest {
+
+	/**
+	 * insert()가 항상 던지는 대장 리포지토리 — AlarmRecorder의 격리 정책(record()는 예외를
+	 * 던지지 않는다)을 검증하는 유일한 방법은 실제로 적재를 실패시켜 보는 것뿐이다.
+	 */
+	private static final class ThrowingEventRepository extends AlarmEventRepository {
+		ThrowingEventRepository() {
+			super(null);
+		}
+
+		@Override
+		public long insert(long targetId, long userId, AlarmEventType type, String payloadJson,
+				Instant occurredAt, Instant dispatchAfter) {
+			throw new RuntimeException("DB 폭발(테스트)");
+		}
+	}
 
 	private static final Instant FUTURE = Instant.now().plusSeconds(86_400);
 
@@ -184,5 +201,39 @@ class AlarmRecorderTest {
 		recorder.recordMetricsHidden(LocalDate.of(2026, 7, 30), post("REELS", null, null, null, true));
 
 		assertThat(allEvents()).isEmpty();
+	}
+
+	/**
+	 * 격리 정책의 핵심 단언 — 적재(insert)가 매번 던져도 4개 단순 진입점은 예외를 밖으로 내지 않는다.
+	 * 알람은 부가 기능이라 실패가 등록·스윕·종결 같은 본 작업을 막으면 안 된다(재시도 없이 유실 수용).
+	 */
+	@Test
+	void 적재_실패는_밖으로_던지지_않고_삼킨다() {
+		long id = tracking(7L, "SC1", "rk-1");
+		var throwingRecorder = new AlarmRecorder(new ThrowingEventRepository(), targets, snapshots);
+
+		assertThatCode(() -> {
+			throwingRecorder.collectionStartedImmediate(id, 7L, "acct_a", "SC1");
+			throwingRecorder.collectionStartedScheduled(id, 7L, "acct_a", "SC1");
+			throwingRecorder.collectionEnded(id, 7L, "acct_a", "SC1");
+			throwingRecorder.contentUnavailable(id, 7L, "acct_a", "SC1", "PRIVATE_ACCOUNT");
+		}).doesNotThrowAnyException();
+
+		assertThat(allEvents()).isEmpty();   // 재시도 경로 없이 전부 유실 — 정책대로다.
+	}
+
+	/**
+	 * recordMetricsHidden은 다른 4개 진입점과 달리 record() 앞에 owners·previous 조회가 있다 —
+	 * 그 조회 실패까지 포함해 이 진입점 전체가 예외를 던지지 않아야 한다(SnapshotWriter 트랜잭션 보호).
+	 */
+	@Test
+	void 지표_비공개_적재_실패도_예외를_던지지_않는다() {
+		tracking(7L, "SC1", "rk-1");
+		seedYesterday("REELS", 100L, 5000L, 20L);
+		var throwingRecorder = new AlarmRecorder(new ThrowingEventRepository(), targets, snapshots);
+
+		assertThatCode(() -> throwingRecorder.recordMetricsHidden(LocalDate.of(2026, 7, 30),
+				post("REELS", 100L, null, null, true)))
+				.doesNotThrowAnyException();
 	}
 }
