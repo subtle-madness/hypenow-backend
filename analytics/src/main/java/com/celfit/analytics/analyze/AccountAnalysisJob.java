@@ -110,7 +110,9 @@ public class AccountAnalysisJob {
 			// 여기는 뷰(analytics/views/10_account_detail.sql) 적용 한 번으로 다음 미러 실행부터
 			// 9컬럼이 채워져 자연히 해소된다 — 코드 쪽에서 뭘 더 고쳐야 하는 상태가 아니다.
 			// WARN으로 남기는 건 운영자가 "뷰 적용을 안 했다"는 걸 알아챌 유일한 신호이기 때문.
-			log.warn("계정 {}건 스킵 — 신뢰도 판정 컬럼 9개가 전부 NULL이라 데이터 미비로 판단"
+			// (dataIncomplete()는 always-strip 7컬럼만 검사한다 — median 2개는 정상 운영에서도
+			// NULL일 수 있어 이 감지에서 빠졌다. PerfConfidence.CONFIDENCE_COLUMNS javadoc 참조.)
+			log.warn("계정 {}건 스킵 — 신뢰도 판정 컬럼 7개가 전부 NULL이라 데이터 미비로 판단"
 					+ "(뷰 미적용/미러 실패 의심). analytics/views/10_account_detail.sql 적용 후"
 					+ " 다음 미러·배치에서 자연 재대상됨", skippedIncomplete);
 		}
@@ -134,8 +136,9 @@ public class AccountAnalysisJob {
 		AccountAdCanon.AdMetrics ad = AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
 		com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
 
-		// 판정(원본 9컬럼 포함)·프롬프트 사본(9컬럼 제거) 양쪽을 한 번에 만드는 공용 헬퍼 — ClaudeBurstRunner와
-		// 공유한다(한쪽만 벗겨내면 가드가 조용히 우회되는 재발 방지).
+		// 판정(원본 9컬럼 포함)·프롬프트 사본(always-strip 7컬럼 + 조건부 제거, median 2개는 판정
+		// 근거로 노출) 양쪽을 한 번에 만드는 공용 헬퍼 — ClaudeBurstRunner와 공유한다(한쪽만
+		// 벗겨내면 가드가 조용히 우회되는 재발 방지).
 		AccountAdCanon.SummaryWithConfidence sc = AccountAdCanon.withConfidence(summary, ad);
 
 		// 배포 과도기 가드(설계 §7 배포 순서): 뷰 선적용 없이 마이그레이션이 먼저 배포되면 미러가

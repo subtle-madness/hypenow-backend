@@ -18,17 +18,19 @@ import java.util.Map;
  * 억제하는" 방향의 보수적 등급으로 접는다({@link #gradeOf}는 null을 INSUFFICIENT로, {@link #trendOf}는
  * null을 TOO_LONG으로, 포맷 비교는 null을 비교 불가로 처리) — 절대 NPE를 내지 않는다.
  *
- * <p><b>배포 과도기 감지({@link #dataIncomplete()})</b>: 위 등급 접힘과는 별개로, 9개 신 컬럼이
- * <b>전부</b> NULL/부재면 "표본이 진짜 부족한 계정"이 아니라 "뷰 선적용 없이 마이그레이션이 먼저
- * 배포돼 미러가 새 컬럼을 채우지 못한 상태"로 본다. 이 둘은 구분된다 — {@code views_sample_count}·
+ * <p><b>배포 과도기 감지({@link #dataIncomplete()})</b>: 위 등급 접힘과는 별개로, {@link #CONFIDENCE_COLUMNS}
+ * 7개 컬럼이 <b>전부</b> NULL/부재면 "표본이 진짜 부족한 계정"이 아니라 "뷰 선적용 없이 마이그레이션이
+ * 먼저 배포돼 미러가 새 컬럼을 채우지 못한 상태"로 본다. 이 둘은 구분된다 — {@code views_sample_count}·
  * {@code likes_sample_count}·{@code comments_sample_count}·{@code reels_count}·{@code feed_count}는
  * 뷰(10_account_detail.sql)에서 {@code count(*) FILTER (...)}로 계산되는데, 이 집계 함수는 매치되는
  * 행이 0건이어도 SQL NULL이 아니라 정수 0을 반환한다 — 계정에 분석 이력이 하나라도 있으면
  * (GROUP BY 자체가 성립하는 조건) 이 5개 컬럼은 절대 NULL일 수 없다. 예를 들어 피드 전용 계정은
  * {@code views_sample_count=0}·{@code reels_count=0}·{@code feed_count=12}처럼 값이 채워지지,
- * NULL이 되지 않는다. 따라서 9개 전부 NULL은 정상 운영에서 발생 불가능하고, 미러가 이 컬럼들에
+ * NULL이 되지 않는다. 따라서 7개 전부 NULL은 정상 운영에서 발생 불가능하고, 미러가 이 컬럼들에
  * 아무것도 쓰지 못한 배포 과도기에서만 성립한다 — 판정 근거는 설계
- * 2026-07-30-perf-summary-statistical-guards-design.md 배포 순서 절 참조.
+ * 2026-07-30-perf-summary-statistical-guards-design.md 배포 순서 절 참조. (뷰는 여전히 신 컬럼 9개를
+ * 추가하지만, {@code median_views}·{@code median_er_pct}는 §3-3 재정의로 always-strip에서 빠져
+ * 이 감지 목록에도 없다 — 어차피 5개 count 컬럼이 이미 "전부 NULL 불가능"을 보장하므로 무관하다.)
  *
  * <p>{@link #none()}(가드 미적용 기본값)과 {@link #dataIncomplete()}는 서로 다른 상태다 — {@code none()}은
  * "이 호출부는 신뢰도 판정 자체를 적용하지 않는다"는 뜻이고, {@code dataIncomplete()}는 "판정을
@@ -52,14 +54,23 @@ public final class PerfConfidence {
 	private static final int FORMAT_COMPARABLE_MIN = 3;
 
 	/**
-	 * 판정 재료 9컬럼(설계 §3-1) — 이 목록이 정본이다. {@code AccountAdCanon}이 LLM 프롬프트
-	 * 사본에서 같은 컬럼을 제거할 때도 이 목록을 재사용해, 판정용 컬럼 목록이 두 곳에서 따로
-	 * 놀다 어긋나는 드리프트를 막는다.
+	 * 프롬프트에서 <b>항상</b> 제거할 판정 전용 내부 입력 7컬럼(설계 §3-3 재정의) — 이 목록이
+	 * 정본이다. {@code AccountAdCanon}이 LLM 프롬프트 사본에서 같은 컬럼을 제거할 때도 이 목록을
+	 * 재사용해, 판정용 컬럼 목록이 두 곳에서 따로 놀다 어긋나는 드리프트를 막는다.
+	 *
+	 * <p><b>{@code median_views}·{@code median_er_pct}는 여기 없다.</b> 애초 설계(§3-3 초판)는
+	 * 뷰가 새로 추가한 9컬럼을 전부 이 목록에 넣었는데, 그러면 "수준 판정의 근거를 median으로
+	 * 옮긴다"는 이 트랙(Y)의 간판 결정(§2·§3-3)이 무력화된다 — 프롬프트는 "median을 우선 근거로
+	 * 삼아라"라고 지시하는데 LLM은 그 값을 애초에 못 보니 항상 avg 폴백으로 떨어진다. test 실측
+	 * (2026-07-30)에서 {@code 777minseo}(top1 점유율 81%)가 "조회수 성과가 매우 높은 편"으로 나온
+	 * 게 이 증상이었다. median은 "내부 판정 수치"가 아니라 "판정의 정당한 근거"이므로 always-strip
+	 * 에 있어서는 안 된다 — 노출 자체는 문제가 아니고(구체 수치 인용 금지는 별도 프롬프트 규칙이
+	 * 이미 담당), 노출된 median이 대응 avg를 밀어내는지 여부만 {@link #excludedSummaryKeys()}가
+	 * 조건부로 판단한다.
 	 */
 	public static final List<String> CONFIDENCE_COLUMNS = List.of(
 			"views_sample_count", "likes_sample_count", "comments_sample_count",
-			"reels_count", "feed_count", "median_views", "median_er_pct",
-			"top_views_share_pct", "window_span_days");
+			"reels_count", "feed_count", "top_views_share_pct", "window_span_days");
 
 	/**
 	 * account_summaries의 추세 요약 계열 4컬럼 — TOO_LONG일 때 프롬프트에서 조건부로 벗겨낼 대상
@@ -78,10 +89,12 @@ public final class PerfConfidence {
 	private final boolean singlePostDominance;
 	private final boolean formatComparable;
 	private final boolean dataIncomplete;
+	private final boolean hasMedianViews;
+	private final boolean hasMedianErPct;
 
 	private PerfConfidence(Grade viewsGrade, Grade likesGrade, Grade commentsGrade,
 			TrendValidity trendValidity, boolean singlePostDominance, boolean formatComparable,
-			boolean dataIncomplete) {
+			boolean dataIncomplete, boolean hasMedianViews, boolean hasMedianErPct) {
 		this.viewsGrade = viewsGrade;
 		this.likesGrade = likesGrade;
 		this.commentsGrade = commentsGrade;
@@ -89,6 +102,8 @@ public final class PerfConfidence {
 		this.singlePostDominance = singlePostDominance;
 		this.formatComparable = formatComparable;
 		this.dataIncomplete = dataIncomplete;
+		this.hasMedianViews = hasMedianViews;
+		this.hasMedianErPct = hasMedianErPct;
 	}
 
 	/** account_summaries 스냅샷(SELECT * 결과)에서 등급을 계산한다. */
@@ -103,12 +118,16 @@ public final class PerfConfidence {
 		boolean dominance = dominanceOf(viewsN, asInt(summary, "top_views_share_pct"));
 		boolean comparable = comparableOf(asLong(summary, "reels_count"), asLong(summary, "feed_count"));
 		boolean dataIncomplete = CONFIDENCE_COLUMNS.stream().allMatch(k -> summary.get(k) == null);
-		return new PerfConfidence(views, likes, comments, trend, dominance, comparable, dataIncomplete);
+		boolean hasMedianViews = summary.get("median_views") != null;
+		boolean hasMedianErPct = summary.get("median_er_pct") != null;
+		return new PerfConfidence(views, likes, comments, trend, dominance, comparable, dataIncomplete,
+				hasMedianViews, hasMedianErPct);
 	}
 
 	/** 신뢰도 제약 없음 — 판정을 아예 건너뛰는 경로(버스트 export 등 구 호출부) 호환용 기본값. */
 	public static PerfConfidence none() {
-		return new PerfConfidence(Grade.OK, Grade.OK, Grade.OK, TrendValidity.OK, false, true, false);
+		return new PerfConfidence(Grade.OK, Grade.OK, Grade.OK, TrendValidity.OK, false, true, false,
+				false, false);
 	}
 
 	public Grade viewsGrade() {
@@ -136,7 +155,8 @@ public final class PerfConfidence {
 	}
 
 	/**
-	 * 배포 과도기 감지 — 9개 신뢰도 재료 컬럼이 전부 NULL/부재면 true(클래스 javadoc 참조).
+	 * 배포 과도기 감지 — {@link #CONFIDENCE_COLUMNS} 7개 신뢰도 재료 컬럼이 전부 NULL/부재면
+	 * true(클래스 javadoc 참조).
 	 * 호출부는 이 값이 true면 카피 생성을 건너뛰어야 한다 — 저품질 문구를 최신 버전으로 찍어
 	 * 영구 고정하는 것보다 아무것도 안 쓰는 게 안전하다(뷰 적용 후 자연 재대상됨).
 	 */
@@ -186,10 +206,24 @@ public final class PerfConfidence {
 
 	/**
 	 * 판정 결과에 따라 프롬프트 입력 맵({@code account_summaries} 사본)에서 조건부로 벗겨낼 계정
-	 * 집계 키(설계 §3-3 실측 보완). {@link #CONFIDENCE_COLUMNS}(판정 재료 9컬럼·항상 제거)와는
-	 * 별개다 — 이건 "지시만으론 안 지켜졌다"는 test 실측(2026-07-30)에 대한 대응으로, 지표별
-	 * 등급이 INSUFFICIENT거나 추세가 TOO_LONG일 때만 해당 지표의 원래 화면용 컬럼까지 벗겨낸다.
-	 * WEAK는 톤 연화가 목적이라 값이 필요하므로 벗기지 않는다.
+	 * 집계 키(설계 §3-3 실측 보완 + §3-3 재정의). {@link #CONFIDENCE_COLUMNS}(always-strip 7컬럼)
+	 * 와는 별개다 — 이건 "지시만으론 안 지켜졌다"는 test 실측(2026-07-30)에 대한 대응과, "median이
+	 * 선택지가 아니라 유일한 근거여야 한다"는 원칙을 합성한 것이다.
+	 *
+	 * <p>조회수: {@code viewsGrade}가 INSUFFICIENT(모수 ≤2)면 {@code avg_views}·
+	 * {@code views_per_follower}뿐 아니라 {@code median_views}까지 제거한다 — 모수가 부족하면
+	 * 중앙값도 판정 근거가 될 수 없다(상위 5개 계정 사례처럼 모수 1인데 median이 그 1건 값 그대로
+	 * 노출되는 경우). 모수가 OK·WEAK(즉 INSUFFICIENT가 아님)이고 {@code median_views}가 실제로
+	 * 존재(non-NULL)하면, 대응 평균 키(avg_views·views_per_follower)를 제거해 median을 "선택지"가
+	 * 아니라 "유일한 근거"로 만든다 — 둘 다 보이면 LLM이 avg를 골라 쓸 여지가 남기 때문이다.
+	 * {@code median_views}가 NULL(조회수 관측 0건인 피드 전용 계정 등, 실측 949/6,653건)이면
+	 * avg_views를 그대로 남겨 폴백 경로를 살려둔다.
+	 *
+	 * <p>ER: {@code median_er_pct}가 존재하면 {@code avg_er_pct}를 제거한다(대응 평균 키는
+	 * avg_er_pct 하나뿐 — views_per_follower 같은 파생 키가 없다). 좋아요·댓글은 대응 median
+	 * 컬럼 자체가 없으므로(설계 §3-1) 이 규칙과 무관하고, 등급이 INSUFFICIENT일 때만
+	 * {@code avg_likes}·{@code avg_comments}를 제거한다. WEAK는 톤 연화가 목적이라 값이
+	 * 필요하므로 벗기지 않는다.
 	 */
 	public List<String> excludedSummaryKeys() {
 		List<String> out = new ArrayList<>();
@@ -199,12 +233,19 @@ public final class PerfConfidence {
 		if (viewsGrade == Grade.INSUFFICIENT) {
 			out.add("avg_views");
 			out.add("views_per_follower");
+			out.add("median_views");
+		} else if (hasMedianViews) {
+			out.add("avg_views");
+			out.add("views_per_follower");
 		}
 		if (likesGrade == Grade.INSUFFICIENT) {
 			out.add("avg_likes");
 		}
 		if (commentsGrade == Grade.INSUFFICIENT) {
 			out.add("avg_comments");
+		}
+		if (hasMedianErPct) {
+			out.add("avg_er_pct");
 		}
 		return out;
 	}

@@ -189,15 +189,17 @@ public class ClaudeBurstRunner {
 			AccountAdCanon.AdMetrics ad =
 					AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
 			AdSituation adSituation = ad.situation();
-			// 판정(원본 9컬럼 포함)·프롬프트 사본(9컬럼 제거) — AccountAnalysisJob과 공유하는 헬퍼.
-			// 여기서 빠뜨리면 신뢰도 가드 없이 만든 문구가 CopyRules.VERSION으로 기록돼(AccountAnalysisWriter)
-			// 버전 게이트를 무력화한다(07-30 재발 방지).
+			// 판정(원본 9컬럼 포함)·프롬프트 사본(always-strip 7컬럼 + 조건부 제거, median 2개는
+			// 판정 근거로 노출) — AccountAnalysisJob과 공유하는 헬퍼. 여기서 빠뜨리면 신뢰도 가드
+			// 없이 만든 문구가 CopyRules.VERSION으로 기록돼(AccountAnalysisWriter) 버전 게이트를
+			// 무력화한다(07-30 재발 방지).
 			AccountAdCanon.SummaryWithConfidence sc = AccountAdCanon.withConfidence(summary, ad);
 
-			// 배포 과도기 가드(AccountAnalysisJob.analyzeOne과 동일 취지) — 9개 신뢰도 컬럼이
-			// 전부 NULL이면 뷰 미적용/미러 실패로 보고 export 자체를 건너뛴다. 이 스킵은 뷰가
-			// 올라갈 때까지 매 export에서 같은 계정이 다시 잡히는 상태를 만들지만, 저품질 문구가
-			// CopyRules.VERSION으로 영구 고정되는 것보다 안전하다 — 뷰 적용 한 번으로 해소된다.
+			// 배포 과도기 가드(AccountAnalysisJob.analyzeOne과 동일 취지) — always-strip 7개
+			// 신뢰도 컬럼이 전부 NULL이면 뷰 미적용/미러 실패로 보고 export 자체를 건너뛴다. 이
+			// 스킵은 뷰가 올라갈 때까지 매 export에서 같은 계정이 다시 잡히는 상태를 만들지만,
+			// 저품질 문구가 CopyRules.VERSION으로 영구 고정되는 것보다 안전하다 — 뷰 적용 한
+			// 번으로 해소된다.
 			if (sc.confidence().dataIncomplete()) {
 				skippedIncomplete++;
 				continue;
@@ -230,7 +232,7 @@ public class ClaudeBurstRunner {
 		write("accounts-input.jsonl", input.toString());
 		write("accounts-sidecar.jsonl", sidecar.toString());
 		if (skippedIncomplete > 0) {
-			log.warn("계정 {}건 export 스킵 — 신뢰도 판정 컬럼 9개가 전부 NULL이라 데이터 미비로 판단"
+			log.warn("계정 {}건 export 스킵 — 신뢰도 판정 컬럼 7개가 전부 NULL이라 데이터 미비로 판단"
 					+ "(뷰 미적용/미러 실패 의심). analytics/views/10_account_detail.sql 적용 후"
 					+ " 다음 export에서 자연 재대상됨", skippedIncomplete);
 		}

@@ -115,8 +115,12 @@ final class AccountAdCanon {
 	}
 
 	/**
-	 * 판정 전용 내부 컬럼 9개(설계 2026-07-30-perf-summary-statistical-guards §3-1·§3-3) — PerfConfidence
-	 * 계산에만 쓰고 LLM 프롬프트에는 노출하지 않는다(수치가 그대로 인용될 여지 차단).
+	 * 판정 전용 내부 컬럼 7개(설계 2026-07-30-perf-summary-statistical-guards §3-1·§3-3 재정의) —
+	 * PerfConfidence 계산에만 쓰고 LLM 프롬프트에는 항상 노출하지 않는다. {@code median_views}·
+	 * {@code median_er_pct}는 여기 없다 — 그 둘은 "수준 판정의 근거를 median으로 옮긴다"는 이
+	 * 트랙의 간판 결정 그 자체라 always-strip 대상이 아니다(PerfConfidence.CONFIDENCE_COLUMNS
+	 * javadoc 참조). 노출 후 대응 평균 키를 지울지는 {@link PerfConfidence#excludedSummaryKeys()}가
+	 * 조건부로 판단한다.
 	 *
 	 * <p>AccountAnalysisJob(일상 배치)·ClaudeBurstRunner(구독 버스트 export) 양쪽이 이 목록으로
 	 * 프롬프트 summary를 벗겨낸다 — 한쪽만 벗겨내면 신뢰도 가드가 조용히 우회되는 구멍이 된다
@@ -128,13 +132,18 @@ final class AccountAdCanon {
 	 */
 	static final List<String> INTERNAL_CONFIDENCE_COLUMNS = PerfConfidence.CONFIDENCE_COLUMNS;
 
-	/** canonicalSummary 사본 + 그 사본에서 신뢰도 등급 계산에만 쓴 9컬럼을 제거한 프롬프트용 결과. */
+	/**
+	 * canonicalSummary 사본 + 그 사본에서 always-strip 7컬럼과 판정 결과에 따른 조건부 제거를
+	 * 적용한 프롬프트용 결과. {@code median_views}·{@code median_er_pct}는 always-strip이 아니라
+	 * 판정 근거로 노출된다(대응 평균이 조건부로 밀려날 뿐).
+	 */
 	record SummaryWithConfidence(Map<String, Object> promptSummary, PerfConfidence confidence) {}
 
 	/**
 	 * 원본 스냅샷(9컬럼 포함)에서 신뢰도 등급을 판정하고, 광고 정본으로 치환한 프롬프트 사본에서는
-	 * 그 9컬럼과 판정 결과에 따라 조건부로 갈리는 화면용 집계 컬럼(추세 4종·지표별 평균)까지 제거해
-	 * 함께 돌려준다 — 판정은 반드시 원본에서 해야 한다(치환·제거 이후에는 판정 근거 자체가 사라진다).
+	 * always-strip 7컬럼과 판정 결과에 따라 조건부로 갈리는 화면용 집계 컬럼(추세 4종·지표별 평균·
+	 * 조건부 median)까지 제거해 함께 돌려준다 — 판정은 반드시 원본에서 해야 한다(치환·제거 이후에는
+	 * 판정 근거 자체가 사라진다).
 	 *
 	 * <p>조건부 제거는 {@link PerfConfidence#excludedSummaryKeys()} 위임(설계 §3-3 실측 보완,
 	 * 2026-07-30 test 실측 — "있지만 언급 마라" 지침은 안 지켜지고 "아예 없음"만 지켜졌다).

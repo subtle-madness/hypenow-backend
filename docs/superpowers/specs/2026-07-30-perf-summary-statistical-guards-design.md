@@ -114,12 +114,50 @@
 새 컬럼을 그대로 두면 `views_sample_count=1` 같은 **내부 수치가 LLM에 노출되어 문구에 인용될
 여지**가 생긴다. 판정에 쓴 뒤 프롬프트 입력 맵에서는 제거한다.
 
+#### 3-3-0. always-strip 재정의 — median을 always-strip에 넣어 간판 변경이 무력화됐던 사고 (2026-07-30)
+
+초판 구현은 뷰가 새로 추가한 9컬럼(§3-1) 전부를 판정 재료 목록(`PerfConfidence.
+CONFIDENCE_COLUMNS`)에 넣고, 이 목록을 그대로 "프롬프트에서 항상 제거할 컬럼"으로도 재사용했다.
+그런데 이 9컬럼에는 `median_views`·`median_er_pct`도 포함돼 있었다 — 그 결과 **이 트랙의 간판
+결정("수준 판정의 근거를 평균에서 중앙값으로 옮긴다", §2)이 실제로는 전혀 적용되지 않는 상태가
+됐다.** 지침 문구는 "median을 우선 근거로 삼고 NULL이면 avg로 대신하라"고 지시하는데, LLM은
+median 값을 애초에 입력에서 보지 못하니 항상 avg 폴백으로 떨어진다. test 실측에서 `777minseo`
+(top1 조회수 점유율 81% — 한 건이 조회수 대부분을 끌어올린 극단 사례)가 "조회수 성과가 매우
+높은 편"으로 나온 게 이 증상이다 — 근거가 median이었다면 이렇게 나오지 않았을 것이다.
+
+**재정의**: always-strip은 판정 전용 내부 입력 **7개**로 한정한다 — `views_sample_count`·
+`likes_sample_count`·`comments_sample_count`·`reels_count`·`feed_count`·
+`top_views_share_pct`·`window_span_days`. `median_views`·`median_er_pct`는 여기서 뺀다 —
+이 둘은 "내부 판정 수치"가 아니라 **판정의 정당한 근거**이므로, 노출 자체가 문제였던 적이 없다
+(구체 수치 인용 금지는 별도 프롬프트 규칙이 이미 담당한다). `PerfConfidence.CONFIDENCE_COLUMNS`가
+이 7개 목록의 정본이고, `AccountAdCanon.INTERNAL_CONFIDENCE_COLUMNS`가 그대로 재사용한다.
+
+**median을 "선택지"가 아니라 "유일한 근거"로 만든다**: median이 존재하는데 대응 avg도 함께
+보이면 LLM이 avg를 골라 쓸 여지가 남는다 — "지켜주길 바라는 지시"가 아니라 "입력 제거로 강제"
+한다는 §3-3-1 실측 보완의 원칙을 여기에도 적용한다. `PerfConfidence.excludedSummaryKeys()`가
+다음을 조건부로 계산한다:
+
+- `median_views`가 non-NULL이면 `avg_views`·`views_per_follower`를 제거 대상에 추가한다.
+- `median_er_pct`가 non-NULL이면 `avg_er_pct`를 제거 대상에 추가한다(대응 평균 키는 이거
+  하나뿐 — `views_per_follower` 같은 파생 키가 없다).
+- median이 NULL(조회수 관측이 없는 계정 등)이면 대응 avg는 그대로 남긴다 — 폴백 경로가
+  실제로 쓰인다(실측: `median_views` NULL 949/6,653건, `median_er_pct` NULL 148건).
+- 조회수가 `INSUFFICIENT`(모수 ≤2)면 `median_views`가 존재하더라도 **함께 제거**한다(§3-3-1
+  기존 조건부 제거 규칙과 합성) — 모수가 부족하면 median도 판정 근거가 될 수 없다(모수 1인
+  계정은 median이 그 1건 값 그대로다). 좋아요·댓글은 대응 median 컬럼 자체가 없어 이 규칙과
+  무관하다.
+
+지침 문구도 "median 우선, NULL이면 avg 폴백"이라는 선택지 표현을 걷어내고 "median이 입력에
+있으면 그게 근거, median 없이 avg만 있으면 그게 근거"로 단순화했다 — 입력에 무엇이 있는지가
+곧 근거이지, 모델이 선택할 여지를 주지 않는다.
+
 ### 3-3-1. test 실측 보완 (2026-07-30) — 지시만으로는 안 지켜진다
 
 test 스테이징에 배포해 계정 5개로 실제 문구를 뽑아본 결과, **판정 로직(§3-2)은 정확했는데 LLM이
 지침의 절반을 무시했다.** 결정적 대비:
 
-- **프롬프트 입력에서 제거한 것**(§3-3의 신 컬럼 9개)**은 100% 지켜졌다** — 내부 수치 누출 0건.
+- **프롬프트 입력에서 제거한 것**(당시 always-strip 목록 — §3-3-0 재정의 이전에는 신 컬럼 9개
+  전부)**은 100% 지켜졌다** — 내부 수치 누출 0건.
 - **"보이지만 언급하지 마라"로 지시만 한 것은 안 지켜졌다**:
   - `180.e_cm`(`window_span_days=691` → `TrendValidity.TOO_LONG`, 성장세 서술 전면 금지)인데
     생성 문구가 "최근 전체적인 지표는 하향 곡선을 그리고 있습니다" — `trend_direction`·
@@ -145,9 +183,9 @@ excludedSummaryKeys()`·`excludedPostFields()`, `AccountAdCanon.withConfidence`�
 - `TrendValidity.TOO_LONG` → `trend_direction`·`trend_change_pct`·`trend_older_avg`·
   `trend_newer_avg` 4컬럼을 프롬프트 요약에서 제거. `LONG_SPAN`은 톤만 연화하므로 그대로 둔다.
 - 지표 등급이 `INSUFFICIENT`(모수 ≤2)면 그 지표의 계정 집계 키를 제거 — 조회수는 `avg_views`·
-  `views_per_follower`, 좋아요는 `avg_likes`, 댓글은 `avg_comments`. `median_views`·
-  `median_er_pct`는 이미 §3-3 본문의 9컬럼 제거 대상이라 별도 처리가 필요 없다. `WEAK`(3~5)는
-  톤 연화가 목적이라 값이 필요하므로 제거하지 않는다.
+  `views_per_follower`·`median_views`(§3-3-0 재정의 후 median도 always-strip이 아니므로 여기서
+  명시적으로 같이 지운다), 좋아요는 `avg_likes`, 댓글은 `avg_comments`. `WEAK`(3~5)는 톤 연화가
+  목적이라 값이 필요하므로 제거하지 않는다.
 - **게시물 목록(posts)도 동일 원칙을 적용한다** — `views_sample_count` 등이 INSUFFICIENT면
   집계 키를 지워도 `posts`의 게시물별 원값(`views`·`likes`·`comments`)이 남아 있으면 모수
   2건짜리 지표라도 목록에서 수준을 유추해 서술할 수 있다(`0_tsuki2` 사례가 실제로 이 경로로
@@ -230,14 +268,17 @@ UPDATE이고 재생성이 실패한 계정은 문구가 빈 상태로 노출된�
 
 ### 코드 가드가 막아주는 부분
 
-`PerfConfidence.dataIncomplete()`(§3-2 확장)가 9개 컬럼 전부 NULL/부재 상태를 감지한다.
-`views_sample_count`·`likes_sample_count`·`comments_sample_count`·`reels_count`·`feed_count`는
-뷰에서 `count(*) FILTER (...)`로 계산되는데, 이 집계 함수는 매치되는 행이 0건이어도 SQL NULL이
-아니라 정수 0을 반환한다 — 분석 이력이 하나라도 있는 계정(`GROUP BY`가 성립하는 조건)이라면 이
-5개 컬럼은 **정상 운영에서 절대 NULL이 될 수 없다**. 예를 들어 피드 전용 계정은
-`views_sample_count=0`·`reels_count=0`·`feed_count=12`처럼 값이 채워지지 NULL이 되지 않는다.
-따라서 9개 전부 NULL은 "표본이 진짜 없는 계정"에서는 발생 불가능하고, 미러가 이 컬럼들에 아무것도
-쓰지 못한 배포 과도기(위 시나리오 3단계)에서만 성립한다.
+`PerfConfidence.dataIncomplete()`(§3-2 확장)가 always-strip 7컬럼(`PerfConfidence.
+CONFIDENCE_COLUMNS`, §3-3-0 재정의로 `median_views`·`median_er_pct`는 빠졌다) 전부 NULL/부재
+상태를 감지한다. `views_sample_count`·`likes_sample_count`·`comments_sample_count`·
+`reels_count`·`feed_count`는 뷰에서 `count(*) FILTER (...)`로 계산되는데, 이 집계 함수는 매치되는
+행이 0건이어도 SQL NULL이 아니라 정수 0을 반환한다 — 분석 이력이 하나라도 있는 계정(`GROUP BY`가
+성립하는 조건)이라면 이 5개 컬럼은 **정상 운영에서 절대 NULL이 될 수 없다**. 예를 들어 피드 전용
+계정은 `views_sample_count=0`·`reels_count=0`·`feed_count=12`처럼 값이 채워지지 NULL이 되지
+않는다. 따라서 7개 전부 NULL은 "표본이 진짜 없는 계정"에서는 발생 불가능하고, 미러가 이 컬럼들에
+아무것도 쓰지 못한 배포 과도기(위 시나리오 3단계)에서만 성립한다. (`median_views`·
+`median_er_pct`는 정상 운영에서도 NULL일 수 있어 이 감지에서 뺐다 — 5개 count 컬럼만으로 이미
+불가능성이 보장돼 median 2개를 더해도 판정이 달라지지 않는다.)
 
 `AccountAnalysisJob.analyzeOne`·`ClaudeBurstRunner.exportAccounts`는 (`AccountAdCanon.withConfidence`
 경유로) 이 신호를 받으면 **카피를 생성하지 않고 건너뛴다** — 아무것도 안 쓰는 게 저품질 문구를

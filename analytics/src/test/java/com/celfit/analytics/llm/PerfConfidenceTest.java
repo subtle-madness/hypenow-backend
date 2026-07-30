@@ -163,13 +163,15 @@ class PerfConfidenceTest {
 	}
 
 	/**
-	 * 배포 과도기 감지(설계 2026-07-30-perf-summary-statistical-guards §7) — 신뢰도 재료 9컬럼이
-	 * 전부 NULL/부재면 "표본 부족"이 아니라 "뷰 미적용/미러 실패"로 판단해야 한다. 뷰의 count(*)
-	 * FILTER 계열 5컬럼은 분석 이력이 있는 계정에서 정상적으로는 절대 NULL이 될 수 없으므로
-	 * (매치 0건이면 0을 반환), 9개 전부 NULL은 미러 갭의 신호로만 성립한다.
+	 * 배포 과도기 감지(설계 2026-07-30-perf-summary-statistical-guards §7·§3-3 재정의) — 신뢰도
+	 * always-strip 7컬럼({@link PerfConfidence#CONFIDENCE_COLUMNS}, §3-3 재정의로 median_views·
+	 * median_er_pct는 여기서 빠졌다)이 전부 NULL/부재면 "표본 부족"이 아니라 "뷰 미적용/미러 실패"로
+	 * 판단해야 한다. 뷰의 count(*) FILTER 계열 5컬럼은 분석 이력이 있는 계정에서 정상적으로는 절대
+	 * NULL이 될 수 없으므로(매치 0건이면 0을 반환), 7개 전부 NULL은 미러 갭의 신호로만 성립한다 —
+	 * median 2컬럼은 정상 운영(피드 전용 계정 등)에서도 NULL일 수 있어 이 판정에서 뺐다.
 	 */
 	@Test
-	void 신뢰도_컬럼_9개가_전부_NULL이면_데이터_미비로_판정된다() {
+	void 신뢰도_컬럼_7개가_전부_NULL이면_데이터_미비로_판정된다() {
 		Map<String, Object> m = new HashMap<>();
 		for (String key : PerfConfidence.CONFIDENCE_COLUMNS) {
 			m.put(key, null);
@@ -311,5 +313,69 @@ class PerfConfidenceTest {
 		List<String> excluded = PerfConfidence.of(m).excludedPostFields();
 
 		assertEquals(List.of("views"), excluded);
+	}
+
+	/**
+	 * always-strip 재정의(설계 §3-3) — 항상 제거할 판정 전용 입력은 7개뿐이고, median_views·
+	 * median_er_pct는 여기 없어야 한다. 이 목록에 median이 들어 있으면 "수준 판정 근거를 median으로
+	 * 옮긴다"는 간판 결정이 무력화된다(777minseo 사례).
+	 */
+	@Test
+	void always_strip_목록은_7개고_median_두_컬럼은_포함되지_않는다() {
+		assertEquals(7, PerfConfidence.CONFIDENCE_COLUMNS.size());
+		assertFalse(PerfConfidence.CONFIDENCE_COLUMNS.contains("median_views"));
+		assertFalse(PerfConfidence.CONFIDENCE_COLUMNS.contains("median_er_pct"));
+		assertTrue(PerfConfidence.CONFIDENCE_COLUMNS.containsAll(List.of(
+				"views_sample_count", "likes_sample_count", "comments_sample_count",
+				"reels_count", "feed_count", "top_views_share_pct", "window_span_days")));
+	}
+
+	/**
+	 * median을 "선택지"가 아니라 "유일한 근거"로 만든다(설계 §3-3 재정의) — median_views가
+	 * 존재(non-NULL)하면 대응 평균 키(avg_views·views_per_follower)가 제거 대상에 들어가야
+	 * LLM이 둘 중 avg를 골라 쓸 여지가 없어진다. median_views가 NULL(키 자체가 없는 경우 포함,
+	 * 조회수 관측이 없는 계정)이면 avg 폴백 경로를 살려둬야 한다(실측 949/6,653건).
+	 */
+	@Test
+	void median_views가_있으면_대응_avg가_제거되고_NULL이면_남는다() {
+		Map<String, Object> m = baseSummary(); // views_sample_count=10(OK) — INSUFFICIENT와 무관
+		m.put("median_views", 9000L);
+		List<String> excludedWithMedian = PerfConfidence.of(m).excludedSummaryKeys();
+		assertTrue(excludedWithMedian.containsAll(List.of("avg_views", "views_per_follower")),
+				excludedWithMedian.toString());
+
+		m.remove("median_views"); // 키 부재 = NULL과 동일 취급
+		List<String> excludedWithoutMedian = PerfConfidence.of(m).excludedSummaryKeys();
+		assertFalse(excludedWithoutMedian.contains("avg_views"), excludedWithoutMedian.toString());
+		assertFalse(excludedWithoutMedian.contains("views_per_follower"), excludedWithoutMedian.toString());
+	}
+
+	/** median_er_pct도 같은 원칙 — 대응 평균 키는 avg_er_pct 하나뿐이다. */
+	@Test
+	void median_er_pct가_있으면_avg_er_pct가_제거되고_NULL이면_남는다() {
+		Map<String, Object> m = baseSummary();
+		m.put("median_er_pct", 2.0);
+		assertTrue(PerfConfidence.of(m).excludedSummaryKeys().contains("avg_er_pct"));
+
+		m.remove("median_er_pct");
+		assertFalse(PerfConfidence.of(m).excludedSummaryKeys().contains("avg_er_pct"));
+	}
+
+	/**
+	 * 규칙 합성(설계 §3-3 요구사항 (3)) — 조회수가 INSUFFICIENT(모수 ≤2)면 median_views가
+	 * 존재하더라도 함께 제거돼야 한다. 모수가 부족하면 중앙값도 판정 근거가 될 수 없다 — "median
+	 * 존재 시 제거" 규칙과 "INSUFFICIENT 지표는 집계 키 전부 제거" 규칙이 중복 없이 합성되는지
+	 * 확인한다(둘 다 median_views를 한 번만 제거 목록에 올리면 된다).
+	 */
+	@Test
+	void 조회수_INSUFFICIENT면_median_views가_있어도_함께_제거된다() {
+		Map<String, Object> m = baseSummary();
+		m.put("views_sample_count", 1); // INSUFFICIENT
+		m.put("median_views", 9000L); // 모수 1인 계정은 median이 그 1건 값 그대로일 수 있다
+
+		List<String> excluded = PerfConfidence.of(m).excludedSummaryKeys();
+
+		assertTrue(excluded.containsAll(List.of("avg_views", "views_per_follower", "median_views")),
+				excluded.toString());
 	}
 }
