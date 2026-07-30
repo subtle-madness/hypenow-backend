@@ -16,7 +16,7 @@ import java.util.Map;
  * <p><b>NULL 안전</b>: median·share·span 계열 컬럼은 관측 없는 계정에서 NULL이고, 새 컬럼이 아직
  * 미러되지 않은 과도기에는 맵에 키 자체가 없을 수 있다. 판정 불가는 전부 "그 지표에 대한 서술을
  * 억제하는" 방향의 보수적 등급으로 접는다({@link #gradeOf}는 null을 INSUFFICIENT로, {@link #trendOf}는
- * null을 TOO_LONG으로, 포맷 비교는 null을 비교 불가로 처리) — 절대 NPE를 내지 않는다.
+ * null을 UNAVAILABLE로, 포맷 비교는 null을 비교 불가로 처리) — 절대 NPE를 내지 않는다.
  *
  * <p><b>배포 과도기 감지({@link #dataIncomplete()})</b>: 위 등급 접힘과는 별개로, {@link #CONFIDENCE_COLUMNS}
  * 7개 컬럼이 <b>전부</b> NULL/부재면 "표본이 진짜 부족한 계정"이 아니라 "뷰 선적용 없이 마이그레이션이
@@ -42,15 +42,27 @@ public final class PerfConfidence {
 	/** 지표별 실질 모수 등급 (§3-2 표) — ≤2 INSUFFICIENT, 3~5 WEAK, ≥6 OK. */
 	public enum Grade { OK, WEAK, INSUFFICIENT }
 
-	/** 성장세 유효성 — 건수가 아니라 시간 축(window_span_days) 기준. */
-	public enum TrendValidity { OK, LONG_SPAN, TOO_LONG }
+	/**
+	 * 성장세 유효성 — 건수가 아니라 시간 축(window_span_days) 기준. 3차 test 실측(2026-07-30,
+	 * 트랙 Y)까지는 {@code OK}/{@code LONG_SPAN}/{@code TOO_LONG} 3단계였고 LONG_SPAN(90~365일)은
+	 * trend_* 값을 프롬프트 입력에 남긴 채 "완만하게 표현하라"는 지시만으로 통제했다. 그런데 이
+	 * 구간(실측 22.9%)에서 지시가 새어나왔다 — {@code 0205s.y}(창 207일)가 "뚜렷한 우상향 추세를
+	 * 보입니다"로, {@code 02_10.13}(157일)이 "상승하는 추세입니다"로, {@code 119irl}(201일)이
+	 * "상승세를 보이고 있으나"로 완화 없이 단정했다. 반면 TOO_LONG(값을 아예 제거)은 새어나온
+	 * 사례가 0건이었다(180.e_cm 등) — "입력에서 제거한 것만 지켜진다"는 §3-3-1 원칙이 여기서도
+	 * 재확인됐다. 그래서 LONG_SPAN을 폐지하고 90일 초과는 전부 TOO_LONG과 동일하게 값을 제거하는
+	 * 쪽으로 통합했다({@code UNAVAILABLE}) — 두 상태가 같은 동작(값 제거)을 하면 구분 자체가
+	 * 불필요한 복잡도이기 때문이다. 트레이드오프: 창 90일 초과 34.6%(§2 실측) 계정에서 성장세
+	 * 서술이 통째로 사라진다 — 부정확한 추세 서술보다 없는 게 낫다는 판단의 의도된 수용이다
+	 * (설계 2026-07-30-perf-summary-statistical-guards-design.md §3-2 참조).
+	 */
+	public enum TrendValidity { OK, UNAVAILABLE }
 
 	private static final int INSUFFICIENT_MAX = 2;
 	private static final int WEAK_MAX = 5;
 	private static final int DOMINANCE_MIN_SAMPLE = 3;
 	private static final int DOMINANCE_SHARE_PCT = 75;
-	private static final int LONG_SPAN_MAX_DAYS = 90;
-	private static final int TOO_LONG_DAYS = 365;
+	private static final int TREND_MAX_DAYS = 90;
 	private static final int FORMAT_COMPARABLE_MIN = 3;
 
 	/**
@@ -73,11 +85,14 @@ public final class PerfConfidence {
 			"reels_count", "feed_count", "top_views_share_pct", "window_span_days");
 
 	/**
-	 * account_summaries의 추세 요약 계열 4컬럼 — TOO_LONG일 때 프롬프트에서 조건부로 벗겨낼 대상
-	 * (설계 §3-3 실측 보완, 2026-07-30 test 실측: {@code 180.e_cm}, window_span_days=691로 TOO_LONG인데
-	 * trend_direction·trend_change_pct가 프롬프트 입력에 그대로 남아 있어 "성장세 서술 금지" 지침을
-	 * 무시하고 하향 곡선 문구를 만들었다). CONFIDENCE_COLUMNS(판정 재료·항상 제거)와 달리 이 4컬럼은
-	 * 원래 account_summaries에 있던 화면용 컬럼이라 등급이 OK·LONG_SPAN이면 그대로 둬야 한다.
+	 * account_summaries의 추세 요약 계열 4컬럼 — {@code TrendValidity.UNAVAILABLE}(window_span_days
+	 * &gt; 90)일 때 프롬프트에서 조건부로 벗겨낼 대상(설계 §3-2, §3-3 실측 보완). 2026-07-30 1차
+	 * test 실측: {@code 180.e_cm}(window_span_days=691)가 trend_direction·trend_change_pct를 그대로
+	 * 읽고 하향 곡선 문구를 만들었다(당시 TOO_LONG, 값 미제거 상태). 3차 실측에서는 LONG_SPAN(90~365일,
+	 * 값을 남긴 채 지시로만 통제하던 구간)에서도 같은 누출이 재현됐다({@code 0205s.y}·{@code 02_10.13}·
+	 * {@code 119irl}) — 그래서 LONG_SPAN을 폐지하고 90일 초과 전 구간에서 이 4컬럼을 제거한다.
+	 * CONFIDENCE_COLUMNS(판정 재료·항상 제거)와 달리 이 4컬럼은 원래 account_summaries에 있던
+	 * 화면용 컬럼이라 등급이 OK(≤90일)면 그대로 둬야 한다.
 	 */
 	private static final List<String> TREND_SUMMARY_KEYS = List.of(
 			"trend_direction", "trend_change_pct", "trend_older_avg", "trend_newer_avg");
@@ -175,11 +190,8 @@ public final class PerfConfidence {
 	}
 
 	private static TrendValidity trendOf(Long windowSpanDays) {
-		if (windowSpanDays == null || windowSpanDays > TOO_LONG_DAYS) {
-			return TrendValidity.TOO_LONG;
-		}
-		if (windowSpanDays > LONG_SPAN_MAX_DAYS) {
-			return TrendValidity.LONG_SPAN;
+		if (windowSpanDays == null || windowSpanDays > TREND_MAX_DAYS) {
+			return TrendValidity.UNAVAILABLE;
 		}
 		return TrendValidity.OK;
 	}
@@ -227,7 +239,7 @@ public final class PerfConfidence {
 	 */
 	public List<String> excludedSummaryKeys() {
 		List<String> out = new ArrayList<>();
-		if (trendValidity == TrendValidity.TOO_LONG) {
+		if (trendValidity == TrendValidity.UNAVAILABLE) {
 			out.addAll(TREND_SUMMARY_KEYS);
 		}
 		if (viewsGrade == Grade.INSUFFICIENT) {
@@ -289,10 +301,8 @@ public final class PerfConfidence {
 			out.add("조회수가 특정 1건에 쏠려 있다 — 평균적 성과로 서술하지 말고 대표작 1건이 "
 					+ "끌어올린 구조라는 관점으로 써라.");
 		}
-		if (trendValidity == TrendValidity.TOO_LONG) {
-			out.add("게시물 간 기간이 1년을 넘어 추세 데이터는 제공되지 않는다 — 성장세·추세에 대한 서술은 아예 하지 마라.");
-		} else if (trendValidity == TrendValidity.LONG_SPAN) {
-			out.add("게시물 간 기간이 길다(3개월~1년) — 최근 추세로 단정하지 말고 \"장기간에 걸친 변화\"처럼 완만하게 표현하라.");
+		if (trendValidity == TrendValidity.UNAVAILABLE) {
+			out.add("게시물 간 기간이 길어(3개월 초과) 추세 데이터는 제공되지 않는다 — 성장세·추세에 대한 서술은 아예 하지 마라.");
 		}
 		if (!formatComparable) {
 			out.add("릴스 또는 피드 게시물이 3건 미만이라 포맷 비교 데이터는 제공되지 않는다 — 포맷(릴스/피드)별 반응 차이는"
