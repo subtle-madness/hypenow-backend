@@ -42,9 +42,12 @@ class AccountSummaryStatGuardMappingTest {
 
 	@Test
 	void AccountSummary_record_필드_순서_끝_9개가_스펙_컬럼_순서와_일치한다() {
+		// V46(email, 스펙 2026-07-30-influencer-email-from-bio)이 그 뒤에 한 필드 더 이어붙어
+		// "끝 9개"가 이제 email 바로 앞 구간이다 — skip(...).limit(9)로 그 구간만 자른다.
 		RecordComponent[] components = AccountSummary.class.getRecordComponents();
 		String[] tail = Arrays.stream(components)
-				.skip(components.length - 9)
+				.skip(components.length - 10)
+				.limit(9)
 				.map(RecordComponent::getName)
 				.map(MirrorJob::toSnakeCase)
 				.toArray(String[]::new);
@@ -54,6 +57,15 @@ class AccountSummaryStatGuardMappingTest {
 						"reels_count", "feed_count", "median_views", "median_er_pct",
 						"top_views_share_pct", "window_span_days"),
 				java.util.List.of(tail));
+	}
+
+	@Test
+	void AccountSummary_record_마지막_필드가_email이다() {
+		// V46(스펙 2026-07-30-influencer-email-from-bio) — biography 정규식 파싱 컬럼이 맨 끝에 이어붙었다.
+		RecordComponent[] components = AccountSummary.class.getRecordComponents();
+		RecordComponent last = components[components.length - 1];
+
+		assertEquals("email", MirrorJob.toSnakeCase(last.getName()));
 	}
 
 	@Test

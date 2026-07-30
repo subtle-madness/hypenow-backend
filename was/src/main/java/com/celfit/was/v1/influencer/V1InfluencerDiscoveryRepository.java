@@ -62,7 +62,7 @@ public class V1InfluencerDiscoveryRepository {
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-						       COALESCE(sp.cnt, 0) AS sponsored_count
+						       COALESCE(sp.cnt, 0) AS sponsored_count, su.email
 						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
@@ -88,7 +88,7 @@ public class V1InfluencerDiscoveryRepository {
 				       su.posts_count, su.follows_count, su.biography, cp.tagline,
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-				       COALESCE(sp.cnt, 0) AS sponsored_count
+				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email
 				""" + FROM_JOINS + """
 
 				WHERE a.handle IN (:handles)
@@ -176,8 +176,8 @@ public class V1InfluencerDiscoveryRepository {
 			}
 		}
 		if (q.contactOpen()) {
-			// email은 크롤러 미수집(V31: "email은 미수집이라 필드 없음") — 데이터가 생길 때까지 0건 매칭.
-			where.append(" AND false");
+			// email은 biography 정규식 파싱(V46, 스펙 2026-07-30-influencer-email-from-bio)으로 채워진다.
+			where.append(" AND su.email IS NOT NULL");
 		}
 		for (int i = 0; i < q.keywords().size(); i++) {
 			// 키워드 전부(AND) 부분일치 — 대상: handle·displayName·bio·tagline·캡션·협업 브랜드명·소분류 라벨
@@ -294,7 +294,7 @@ public class V1InfluencerDiscoveryRepository {
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
 			Long postsCount, Long followsCount, String biography,
 			String tagline, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgViews,
-			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount) {
+			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount, String email) {
 	}
 
 	public record ShareRow(String accountHandle, String mainCategory, Integer pct) {

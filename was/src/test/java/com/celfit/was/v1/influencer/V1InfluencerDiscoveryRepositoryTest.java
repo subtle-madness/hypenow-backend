@@ -71,7 +71,8 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    avg_likes          bigint,
 				    avg_comments       bigint,
 				    avg_hype_score     bigint,
-				    last_posted_at     timestamptz
+				    last_posted_at     timestamptz,
+				    email              text
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_content_series (
@@ -144,15 +145,15 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update("""
 				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
 				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
-				  avg_hype_score, last_posted_at) VALUES
+				  avg_hype_score, last_posted_at, email) VALUES
 				  ('glow', 20000, 380, 214, E'수분크림 기록\\n문의는 DM', 50000, 12.42, 4.0, 3000, 150,
-				   72, now() - interval '1 day'),
+				   72, now() - interval '1 day', 'contact@glow.co'),
 				  ('calm', 30000, 100, 90, '차분한 후기', 30000, 5.0, 2.0, 500, 30,
-				   80, now() - interval '10 days'),
+				   80, now() - interval '10 days', NULL),
 				  ('mute', 40000, 50, 40, NULL, NULL, NULL, 1.0, 300, 10,
-				   NULL, now() - interval '40 days'),
+				   NULL, now() - interval '40 days', NULL),
 				  ('tiny', 1000, 10, 20, '새싹', 2000, 2.0, 3.0, 25, 3,
-				   45, now() - interval '5 days')""");
+				   45, now() - interval '5 days', NULL)""");
 		// glow 창 5개: g1(1일 전)~g5(5일 전). 분류 5개 중 스킨케어 4·메이크업 1, 협찬 g2·g4.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
@@ -234,11 +235,13 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(glow.avgViews()).isEqualTo(50000);
 		assertThat(glow.sponsoredCount()).isEqualTo(2); // ad_type 정본 (series.sponsored 아님)
 		assertThat(glow.avgHypeScore()).isEqualTo(72);
+		assertThat(glow.email()).isEqualTo("contact@glow.co"); // account_summaries.email(V46) 그대로 노출
 
 		CardRow mute = rows.get(3);
 		assertThat(mute.avgViews()).isNull(); // 릴스 없는 계정
 		assertThat(mute.profileImageUrl()).isNull();
 		assertThat(mute.avgHypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
+		assertThat(mute.email()).isNull(); // biography 매치 없음(또는 미보유)
 	}
 
 	@Test
@@ -307,10 +310,11 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void contact_open은_이메일_미수집이라_0건() {
+	void contact_open은_이메일_보유_계정만() {
+		// 시드 중 email이 채워진 건 glow뿐(biography 정규식 파싱, V46) — calm·mute·tiny는 NULL이라 제외.
 		var open = query(null, null, null, null, null, null, null, "open", null, null, null);
-		assertThat(repository.findCards(open)).isEmpty();
-		assertThat(repository.countCards(open)).isZero();
+		assertThat(repository.findCards(open)).extracting(CardRow::handle).containsExactly("glow");
+		assertThat(repository.countCards(open)).isEqualTo(1);
 	}
 
 	@Test
