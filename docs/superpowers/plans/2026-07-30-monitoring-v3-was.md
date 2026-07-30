@@ -14,8 +14,10 @@
 
 ## 전제 (실행 전 확인)
 
-1. **PR #183(이메일 알람) 머지 선행.** V15(옵트아웃·워터마크)·mail 인프라(ResendMailSender)·크론 골격을 재사용한다. 머지가 늦어지면 이 계획의 V16이 V15가 되도록 번호를 재확인한다(**마이그레이션 번호는 머지 직전 재확인** — V18 경합 사례).
-2. **monitoring P1 확장은 팀원 병행** ([contracts/monitoring-v3-extension-request.md](../../contracts/monitoring-v3-extension-request.md)). was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`)는 P1 확장(post_meta·tracked_hidden_at·fetch_failing·sweep_run)을 **계약 유도로 선반영**해 작성하고, 팀원 실구현 확정 시 대조한다(07-29 이메일 알람과 같은 관례). P1 합류 전 개통 불가 항목: hidden/error 상태, content_issue 알림, 캡션·썸네일·게시일 실값.
+1. ~~PR #183 머지 선행~~ → **#183은 2026-07-30 클로즈됨(방향 전환).** 클로즈 코멘트: 알람은 monitoring 서버의 알람 모듈로 이전, 감지→승인 플로우 제거, target.user_id 저장, 알람 이벤트 대장, 이벤트 어휘 4종 신규. 따라서 ① 이 계획의 마이그레이션은 **V15**(develop 최신이 V14), 옵트아웃 테이블은 교체가 아니라 **v3 어휘로 신규 생성** ② mail 인프라 반입은 보류 — **이메일 발송 주체(monitoring vs was)가 새 계약 미결 포인트**(확장 요구 문서에 질의 추가) ③ Task 13(자동 승인 크론)·Task 14(이벤트 유도)는 monitoring 새 계약 확정 시 대폭 단순화되므로 **monitoring 무관 태스크를 먼저 실행**하고 의존 태스크는 계약 확정 후 착수.
+2. **monitoring P1 확장은 팀원 병행** ([contracts/monitoring-v3-extension-request.md](../../contracts/monitoring-v3-extension-request.md)) — 팀원이 이미 같은 방향(#183 클로즈 코멘트)의 개편을 선언했으므로 요구 문서와 새 설계의 정합을 확인한다. was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`)는 P1 확장(post_meta·tracked_hidden_at·fetch_failing·sweep_run)을 **계약 유도로 선반영**해 작성하고, 팀원 실구현 확정 시 대조한다(07-29 이메일 알람과 같은 관례). P1 합류 전 개통 불가 항목: hidden/error 상태, content_issue 알림, 캡션·썸네일·게시일 실값.
+
+**실행 순서(의존성 기준 재배열):** monitoring 무관 — Task 1(V15)→2→3→4(캠페인)→5(알림 설정)→6(파서)→7(등록 동기 구간)→9(처리 내역)→15(알림 API) / monitoring 계약 의존(신 계약 확정 후) — Task 8(실행기)→10·11(어셈블러·목록)→12(수정·취소)→13(자동 승인 — 신 계약에서 불필요해지면 삭제)→14(다이제스트)→16(탈퇴)→17(마무리).
 3. 운영은 `MONITORING_ENABLED=false`·V13 테이블 0행(미개통) — V16의 파괴적 재구성이 안전한 근거다. 실행 전 운영 DB에서 `SELECT count(*) FROM app.monitoring_campaigns`가 0인지 확인한다.
 4. 작업 워크트리: `.worktrees/monitoring-v3`, 브랜치 `feat/monitoring-v3-was`, PR은 develop 대상.
 
@@ -41,10 +43,10 @@
 
 ## Phase 1 — app 스키마 V16 + 저장 계층
 
-### Task 1: V16 마이그레이션
+### Task 1: V15 마이그레이션
 
 **Files:**
-- Create: `was/src/main/resources/db/migration/app/V16__monitoring_v3.sql`
+- Create: `was/src/main/resources/db/migration/app/V15__monitoring_v3.sql`
 - Modify: `was/src/test/resources/monitoring-schema.sql` (P1 확장 선반영)
 
 - [ ] **Step 1: 마이그레이션 작성**
@@ -128,20 +130,24 @@ CREATE TABLE app.monitoring_digests (
 );
 CREATE INDEX monitoring_digests_user_idx ON app.monitoring_digests (user_id, digest_date DESC);
 
--- 알림 설정: V15 옵트아웃(행 없음=on)의 이벤트 어휘를 v3 4종으로 교체.
--- allow-destructive: 개통 전 빈 테이블 — 구 어휘(POST_DETECTED 등) 행 없음
-ALTER TABLE app.monitoring_email_opt_outs DROP CONSTRAINT monitoring_email_opt_outs_event_type_check;
-DELETE FROM app.monitoring_email_opt_outs;
-ALTER TABLE app.monitoring_email_opt_outs ADD CONSTRAINT monitoring_email_opt_outs_event_type_check
-    CHECK (event_type IN ('collection_started', 'collection_ended', 'metrics_private', 'content_issue'));
+-- 알림 설정: 이메일 옵트아웃(행 없음=on) — 6.33의 저장소. (#183의 V15 설계를 v3 어휘로 신규 생성)
+CREATE TABLE app.monitoring_email_opt_outs (
+    user_id    bigint NOT NULL REFERENCES app.users(id) ON DELETE CASCADE,
+    event_type text   NOT NULL CHECK (event_type IN
+                      ('collection_started', 'collection_ended', 'metrics_private', 'content_issue')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, event_type)
+);
 
--- 다이제스트 생성 워터마크(9시 크론 창의 시작점). V15 alarm_state 재사용, 새 키 시드.
+-- 다이제스트 생성 워터마크(9시 크론 창의 시작점). 시드는 마이그레이션 시각 — 적용 이전 이벤트 일괄 발화 방지.
+CREATE TABLE app.monitoring_alarm_state (
+    event_type       text PRIMARY KEY,
+    last_notified_at timestamptz NOT NULL
+);
 INSERT INTO app.monitoring_alarm_state (event_type, last_notified_at)
 VALUES ('DIGEST', now())
 ON CONFLICT DO NOTHING;
 ```
-
-주의: V15의 CHECK 제약 이름은 머지된 실제 DDL에서 확인 후 맞춘다(익명 제약이면 `\d` 로 생성명 확인 또는 `DROP CONSTRAINT` 대신 컬럼 재정의).
 
 - [ ] **Step 2: 테스트 픽스처에 monitoring P1 확장 선반영**
 
@@ -257,10 +263,10 @@ id 직렬화: `String.valueOf(row.id())` — 프론트 계약 "ID는 문자열".
 **Files:**
 - Create: `was/src/main/java/com/celfit/was/v1/monitoring/V1NotificationSettingsController.java`
 - Create: `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsService.java`
-- Modify: `was/src/main/java/com/celfit/was/monitoring/MonitoringAlarmRepository.java` (#183의 옵트아웃 조회에 유저별 조회·토글 추가)
+- Create: `was/src/main/java/com/celfit/was/monitoring/EmailOptOutRepository.java` (유저별 옵트아웃 조회·토글 — #183은 클로즈됐으므로 신규 작성)
 - Test: `was/src/test/java/com/celfit/was/v1/monitoring/V1NotificationSettingsControllerTest.java`
 
-저장 모델 = V15 옵트아웃(행 없음=on) 그대로. GET은 **4종 키 완전체**를 항상 조립(옵트아웃 행이 있는 유형만 false). PATCH는 부분 객체 머지: `email:false` → INSERT ON CONFLICT DO NOTHING, `email:true` → DELETE. 알 수 없는 이벤트 키·`content` 밖 카테고리 → 400 VALIDATION_FAILED.
+저장 모델 = V15 옵트아웃(행 없음=on). GET은 **4종 키 완전체**를 항상 조립(옵트아웃 행이 있는 유형만 false). PATCH는 부분 객체 머지: `email:false` → INSERT ON CONFLICT DO NOTHING, `email:true` → DELETE. 알 수 없는 이벤트 키·`content` 밖 카테고리 → 400 VALIDATION_FAILED.
 
 응답 형태(6.33 예시 그대로 — `data.content.<event>.email`):
 
