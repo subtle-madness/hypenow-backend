@@ -144,6 +144,10 @@ services:
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
+      # 감지 동작 검증용 — 운영(compose.yaml)에는 넣지 않는다. POST /api/sweeps는 등록 계정 수만큼
+      # Hiker 콜을 내는 증폭 지점이라 기본 off(application.yml manual-trigger-enabled: false)인데,
+      # test는 크론이 꺼져 있어(K 원칙) 수동 트리거 없이는 스윕 동작을 검증할 방법이 없다.
+      MONITORING_SWEEP_MANUAL_TRIGGER_ENABLED: "true"
       # 스윕 크론은 K 원칙(test 스케줄 전부 off)대로 미설정 유지 — v3 개통 검증 시에는 아래를 임시로
       # 근접 시각(UTC)으로 넣어 1회 실행(sweep_run 시드)한 뒤 제거·재기동한다(README §13-6).
       # MONITORING_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
