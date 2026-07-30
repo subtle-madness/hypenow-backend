@@ -3,8 +3,9 @@
 -- 파싱하지 않아 버려졌고, 도달 경로가 5~7단 jsonb 표현식뿐이어서 "캡션이 DB에 없다"는
 -- 오조사가 실제로 발생했다. content 단위 최신 1건만 보존 — 전량 스냅샷은 570MB, 최신만 96MB.
 -- content에 컬럼을 붙이지 않는 이유: 148k행 백필 UPDATE가 content를 블로트시키고 TOAST를 만든다.
--- CASCADE를 쓰지 않는다: content를 참조하는 기존 raw_* 4개 테이블(raw_discovery_post·raw_post_detail·
--- raw_comment·raw_media_page)이 전부 CASCADE 없는 RESTRICT 규약이다. content_caption만 CASCADE면
+-- CASCADE를 쓰지 않는다: content를 참조하는 기존 raw_* 3개 테이블(raw_discovery_post·raw_comment·
+-- raw_media_page — raw_post_detail은 V24에서 제거)이 전부 CASCADE 없는 RESTRICT 규약이다.
+-- content_caption만 CASCADE면
 -- content 삭제 경로가 생겼을 때 raw_*는 FK 위반으로 삭제를 막는데 캡션만 조용히 사라지는 비대칭이
 -- 생긴다. jsonb 보존기간 정책이 도입되면 이 테이블이 캡션의 마지막 사본이 되므로, 조용한 유실보다
 -- 요란한 실패가 낫다.

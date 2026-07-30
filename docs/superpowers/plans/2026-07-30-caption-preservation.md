@@ -1321,29 +1321,36 @@ JobService switch·트리거 엔드포인트·대시보드 버튼·진행 바 4�
 이미 끊긴 상태라 expand-contract의 contract 단계 조건을 충족한다.
 
 **Files:**
-- Create: `crawler/src/main/resources/db/migration/V23__drop_raw_post_detail.sql`
+- Create: `crawler/src/main/resources/db/migration/V24__drop_raw_post_detail.sql`
 - Modify: `crawler/src/test/java/com/celfit/crawler/SchemaTest.java:23`
+- Modify: `crawler/src/main/resources/db/migration/V23__content_caption.sql` (CASCADE 주석 stale 해소)
 
-- [ ] **Step 1: 운영에서 0행임을 다시 확인한다**
+> **번호 노트**: 이 브랜치는 도중에 `V22__beauty_judgment_evidence.sql`을 열려던 open PR #216에
+> 선점당해 캡션 마이그레이션이 V22→V23으로 재번호됐다. 그래서 이 Task의 DROP은 계획 초안의
+> V23이 아니라 **V24**다.
+
+- [x] **Step 1: 운영에서 0행임을 다시 확인한다**
 
 ```bash
 ssh hypenow 'docker exec deploy-postgres-raw-1 psql -U crawler -d crawler -At -c "select count(*) from raw_post_detail"'
 ```
 
 기대: `0`. **0이 아니면 이 태스크를 중단하고 사용자에게 보고한다** — 데이터가 있는 테이블을 지우는
-것은 이 계획의 범위가 아니다.
+것은 이 계획의 범위가 아니다. (실행 결과: `0` — 진행.)
 
-- [ ] **Step 2: 마이그레이션을 작성한다**
+- [x] **Step 2: 마이그레이션을 작성한다**
 
-`crawler/src/main/resources/db/migration/V23__drop_raw_post_detail.sql`:
+`crawler/src/main/resources/db/migration/V24__drop_raw_post_detail.sql`:
 
 ```sql
 -- allow-destructive: 구 파이프라인 상세 payload 테이블. 운영 0행이며 참조 코드가 이미 끊겼다.
--- no-backfill: 0행이라 보정할 데이터가 없다.
+--
+-- 운영 0행이라 보정할 데이터가 없다(DROP COLUMN 짝 검사의 no-backfill 태그는 컬럼 제거에만
+-- 적용되는 규칙이라 여기서는 쓰지 않는다).
 --
 -- 배경: 신 파이프라인(V15~)은 게시물 상세를 따로 수집하지 않는다 — 릴스는 raw_media_page,
 -- 피드는 raw_profile 내장 타임라인이 원형이다. 07-22 열람 화면 제거로 접근 코드까지 삭제되어
--- 엔티티·리포지토리가 존재하지 않고, 남은 참조는 이 마이그레이션 이력과 주석뿐이었다.
+-- 엔티티·리포지토리가 존재하지 않고, 남은 참조는 마이그레이션 이력과 문서성 주석뿐이었다.
 -- 캡션 조회 시 이 테이블을 조인해 "캡션이 DB에 없다"는 오조사가 실제로 발생했다(2026-07-30) —
 -- 빈 테이블이 살아 있는 것 자체가 오답의 원인이므로 정리한다.
 --
@@ -1352,36 +1359,44 @@ ssh hypenow 'docker exec deploy-postgres-raw-1 psql -U crawler -d crawler -At -c
 DROP TABLE raw_post_detail;
 ```
 
-- [ ] **Step 3: `SchemaTest`를 고친다**
+(최초 초안엔 `-- no-backfill:` 태그가 있었으나, 코드 리뷰에서 그 태그가 `DROP COLUMN` 짝 검사
+전용 컨벤션(가드 정규식이 `drop column`만 매칭)이라 `DROP TABLE`에는 적용되지 않는다는 지적을
+받아 평문 문장으로 흡수했다 — 태그로 남기면 다음 사람에게 잘못된 컨벤션을 가르치게 된다.)
 
-`SchemaTest.java`의 `contains(...)` 목록에서 `"raw_post_detail",` 을 **삭제**하고, 아래
-`doesNotContain` 단정에 추가한다. `doesNotContain` 줄을 아래로 **교체**한다:
+- [x] **Step 2b: V23의 CASCADE 주석을 고친다 (코드 리뷰 지적)**
+
+V23이 "content를 참조하는 raw_* 4개 테이블"을 열거하며 `raw_post_detail`을 포함했는데, 같은 PR
+안에서 V24가 그 테이블을 지운다 — 머지되는 순간 개수·목록이 틀린 진술이 된다(결론인 RESTRICT
+일관성 자체는 유효). `crawler/src/main/resources/db/migration/V23__content_caption.sql`의 해당
+문장을 3개 테이블(raw_discovery_post·raw_comment·raw_media_page, raw_post_detail은 V24에서
+제거되었다고 괄호로 명시)로 고쳤다.
+
+- [x] **Step 3: `SchemaTest`를 고친다**
+
+`SchemaTest.java`의 `contains(...)` 목록에서 `"raw_post_detail",` 을 **삭제**하고, `doesNotContain`
+단정을 사건별로 분리한다(코드 리뷰 지적 — V8 카테고리 개편분과 V24 제거분이 한 배열에 섞이면
+빠르게 훑을 때 전부 "V8에서"로 오독된다):
 
 ```java
         // V8에서 인플루언서 중심으로 개편되며 카테고리 체계는 완전히 걷어냈다.
-        // raw_post_detail은 구 파이프라인 상세 payload — V23에서 제거(운영 0행·참조 코드 부재).
-        assertThat(tables).doesNotContain("category", "category_keyword", "collection_rule", "account",
-                "raw_post_detail");
+        assertThat(tables).doesNotContain("category", "category_keyword", "collection_rule", "account");
+        // raw_post_detail은 구 파이프라인 상세 payload — 07-22 접근 코드 삭제 후 V24에서 제거했다.
+        assertThat(tables).doesNotContain("raw_post_detail");
 ```
 
-- [ ] **Step 4: 테스트가 통과하는 것을 확인한다**
+- [x] **Step 4: 테스트가 통과하는 것을 확인한다**
 
 ```bash
-./gradlew :crawler:test --tests "com.celfit.crawler.SchemaTest"
+./gradlew :crawler:test --rerun
 ```
 
-기대: PASS.
+기대: 380개 전부 PASS. (실행 결과: 380 tests, 0 failures, 0 errors.)
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
-```bash
-git add crawler/src/main/resources/db/migration/V23__drop_raw_post_detail.sql crawler/src/test/java/com/celfit/crawler/SchemaTest.java
-git commit -m "chore(crawler): 죽은 테이블 raw_post_detail 제거 (V23)
-
-운영 0행·엔티티/리포지토리 부재로 contract 단계 조건 충족. 빈 테이블이
-살아 있어 캡션 조사가 여기를 조인하고 '캡션이 DB에 없다'는 오답에 도달한
-전력이 있다(07-30)."
-```
+원 커밋(`chore(crawler): 죽은 테이블 raw_post_detail 제거 (V24)`, sha `b8995625`)과, 코드 리뷰
+지적 3건을 반영한 후속 커밋(`fix(crawler): V23 주석 stale 해소 + SchemaTest 단언 분리`)으로
+나뉘어 있다 — amend 대신 별도 커밋 원칙을 따랐다.
 
 ---
 
