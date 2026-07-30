@@ -134,7 +134,7 @@ class UiSmokeTest extends IntegrationTest {
         Influencer inf = new Influencer("smoke-v2-beautyclass");
         inf.setStatus(InfluencerStatus.QUALIFIED);
         inf.classify(com.celfit.crawler.crawling.domain.BeautyClass.BEAUTY_SERVICE,
-                Influencer.BEAUTY_SOURCE_CLAUDE, "시술 중심 계정");
+                Influencer.BEAUTY_SOURCE_CLAUDE, "시술 중심 계정", null);
         influencers.save(inf);
 
         mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
@@ -174,12 +174,12 @@ class UiSmokeTest extends IntegrationTest {
         Influencer beauty = new Influencer("smoke-bf-beauty");
         beauty.setStatus(InfluencerStatus.QUALIFIED);
         beauty.classify(com.celfit.crawler.crawling.domain.BeautyClass.INFLUENCER,
-                Influencer.BEAUTY_SOURCE_CLAUDE, "뷰티 계정");
+                Influencer.BEAUTY_SOURCE_CLAUDE, "뷰티 계정", null);
         influencers.save(beauty);
         Influencer company = new Influencer("smoke-bf-company");
         company.setStatus(InfluencerStatus.QUALIFIED);
         company.classify(com.celfit.crawler.crawling.domain.BeautyClass.COMPANY,
-                Influencer.BEAUTY_SOURCE_CLAUDE, "브랜드 계정");
+                Influencer.BEAUTY_SOURCE_CLAUDE, "브랜드 계정", null);
         influencers.save(company);
         Influencer unjudged = new Influencer("smoke-bf-unjudged");
         unjudged.setStatus(InfluencerStatus.QUALIFIED);

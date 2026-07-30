@@ -40,6 +40,7 @@ class MonitoringCommandClientTest {
 		server.expect(requestTo(BASE + "/api/targets"))
 				.andExpect(method(HttpMethod.POST))
 				.andExpect(jsonPath("$.registrationKey").value(key.toString()))
+				.andExpect(jsonPath("$.userId").value(12345))
 				.andExpect(jsonPath("$.type").value("ACCOUNT"))
 				.andExpect(jsonPath("$.keywordRule.and[0]").value("샤넬"))
 				.andExpect(jsonPath("$.shortCode").doesNotExist())   // NON_NULL — POST 전용 필드 미직렬화
@@ -48,7 +49,7 @@ class MonitoringCommandClientTest {
 						  "firstSnapshot": { "profile": { "followers": 12345 }, "recentPostCount": 12 } }
 						""", MediaType.APPLICATION_JSON));
 
-		RegisterResult result = client.register(RegisterRequest.account(key, "some_influencer",
+		RegisterResult result = client.register(RegisterRequest.account(key, 12345L, "some_influencer",
 				new KeywordRule(List.of("샤넬"), List.of(), List.of("이벤트")),
 				OffsetDateTime.parse("2026-08-28T23:59:59+09:00")));
 
@@ -65,7 +66,7 @@ class MonitoringCommandClientTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("{ \"code\": \"SUBJECT_NOT_FOUND\", \"message\": \"계정을 찾을 수 없음: @foo\" }"));
 
-		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
+		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), 12345L, "DAbC",
 				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))
 				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
 					assertThat(e.code()).isEqualTo("SUBJECT_NOT_FOUND");
@@ -78,7 +79,7 @@ class MonitoringCommandClientTest {
 		server.expect(requestTo(BASE + "/api/targets"))
 				.andRespond(withStatus(HttpStatus.BAD_GATEWAY));
 
-		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
+		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), 12345L, "DAbC",
 				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
@@ -88,7 +89,7 @@ class MonitoringCommandClientTest {
 		server.expect(requestTo(BASE + "/api/targets"))
 				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
 
-		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
+		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), 12345L, "DAbC",
 				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
@@ -98,22 +99,13 @@ class MonitoringCommandClientTest {
 		server.expect(requestTo(BASE + "/api/targets"))
 				.andRespond(withSuccess("{ 깨진 json", MediaType.APPLICATION_JSON));
 
-		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), "DAbC",
+		assertThatThrownBy(() -> client.register(RegisterRequest.post(UUID.randomUUID(), 12345L, "DAbC",
 				OffsetDateTime.parse("2026-08-28T23:59:59+09:00"))))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
 
 	@Test
-	void 승인_기각_연장_해지_경로() {
-		server.expect(requestTo(BASE + "/api/targets/17/candidates/3/approve"))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withSuccess(
-						"{ \"targetId\": 17, \"status\": \"TRACKING\", \"trackedShortCode\": \"DAbC\" }",
-						MediaType.APPLICATION_JSON));
-		server.expect(requestTo(BASE + "/api/targets/17/candidates/4/reject"))
-				.andExpect(method(HttpMethod.POST))
-				.andRespond(withSuccess("{ \"candidateId\": 4, \"status\": \"REJECTED\" }",
-						MediaType.APPLICATION_JSON));
+	void 연장_해지_경로() {
 		server.expect(requestTo(BASE + "/api/targets/17"))
 				.andExpect(method(HttpMethod.PATCH))
 				.andExpect(jsonPath("$.expiresAt").exists())
@@ -125,10 +117,37 @@ class MonitoringCommandClientTest {
 				.andRespond(withSuccess("{ \"targetId\": 17, \"status\": \"CANCELED\" }",
 						MediaType.APPLICATION_JSON));
 
-		assertThat(client.approve(17, 3).trackedShortCode()).isEqualTo("DAbC");
-		assertThat(client.reject(17, 4).status()).isEqualTo("REJECTED");
 		assertThat(client.extend(17, OffsetDateTime.parse("2026-09-30T23:59:59+09:00")).targetId()).isEqualTo(17L);
 		assertThat(client.cancel(17).status()).isEqualTo("CANCELED");
 		server.verify();
+	}
+
+	@Test
+	void share_해소_요청과_응답_파싱() {
+		server.expect(requestTo(BASE + "/api/share/resolve"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(jsonPath("$.url").value("https://www.instagram.com/share/reel/AbCdEfG/"))
+				.andRespond(withSuccess("""
+						{ "shortCode": "DbV7LgZsKG8", "username": "rarebeauty", "contentType": "REELS" }
+						""", MediaType.APPLICATION_JSON));
+
+		ShareResolveResult result = client.resolveShare("https://www.instagram.com/share/reel/AbCdEfG/");
+
+		assertThat(result.shortCode()).isEqualTo("DbV7LgZsKG8");
+		assertThat(result.username()).isEqualTo("rarebeauty");
+		assertThat(result.contentType()).isEqualTo("REELS");
+		server.verify();
+	}
+
+	@Test
+	void share_해소_실패_코드가_그대로_승격된다() {
+		server.expect(requestTo(BASE + "/api/share/resolve"))
+				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"SHARE_LINK_UNRESOLVED\", \"message\": \"링크를 해소할 수 없음\" }"));
+
+		assertThatThrownBy(() -> client.resolveShare("https://www.instagram.com/share/reel/bad/"))
+				.isInstanceOfSatisfying(MonitoringApiException.class,
+						e -> assertThat(e.code()).isEqualTo("SHARE_LINK_UNRESOLVED"));
 	}
 }

@@ -111,6 +111,14 @@ services:
       # RESEND 미설정 = 로깅 폴백 — test 이메일 인증 코드는 docker logs deploy-test-was-1 에서 확인
       CODES_API_KEY: ${DEV_CODES_API_KEY:-}
       REDIS_HOST: test-redis
+      # 모니터링 v3 조회 개통 — 운영과 동일 관용구, 기본 off. test-monitoring이 쓰는 test-postgres의
+      # monitoring DB를 was_reader 읽기 전용 계정으로(계정 이름은 운영과 동일, 비밀번호만 DEV_* 구명)
+      MONITORING_ENABLED: "${DEV_MONITORING_ENABLED:-false}"
+      # 명령 API도 test 스택으로 — 기본값(http://monitoring:8083)은 운영 이름이라 test에선 DNS 해석 실패(fail-closed)
+      MONITORING_API_BASE_URL: http://test-monitoring:8083
+      MONITORING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
+      MONITORING_DATASOURCE_USERNAME: was_reader
+      MONITORING_DATASOURCE_PASSWORD: ${DEV_WAS_READER_PASSWORD:-}
       JAVA_OPTS: "-Xms512m -Xmx512m"
     # 기동 순서는 운영과 동일 규율 — test-analytics healthy(=test analysis DB 마이그레이션 완료) 후
     depends_on:
@@ -136,6 +144,13 @@ services:
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
+      # 스윕 크론은 K 원칙(test 스케줄 전부 off)대로 미설정 유지 — v3 개통 검증 시에는 아래를 임시로
+      # 근접 시각(UTC)으로 넣어 1회 실행(sweep_run 시드)한 뒤 제거·재기동한다(README §13-6).
+      # MONITORING_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
+      MONITORING_ALARM_DISPATCH_CRON: "-"   # test는 실발송 금지 — 켜지 않는다
+      MONITORING_ALARM_READER_URL: jdbc:postgresql://test-postgres:5432/analysis
+      MONITORING_ALARM_READER_USERNAME: alarm_reader
+      MONITORING_ALARM_READER_PASSWORD: ${DEV_ALARM_READER_PASSWORD:-}
       JAVA_OPTS: "-Xms128m -Xmx256m"
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).

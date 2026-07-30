@@ -62,7 +62,7 @@ public class V1InfluencerDiscoveryRepository {
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-						       COALESCE(sp.cnt, 0) AS sponsored_count
+						       COALESCE(sp.cnt, 0) AS sponsored_count, su.email
 						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
@@ -88,7 +88,7 @@ public class V1InfluencerDiscoveryRepository {
 				       su.posts_count, su.follows_count, su.biography, cp.tagline,
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-				       COALESCE(sp.cnt, 0) AS sponsored_count
+				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email
 				""" + FROM_JOINS + """
 
 				WHERE a.handle IN (:handles)
@@ -176,8 +176,8 @@ public class V1InfluencerDiscoveryRepository {
 			}
 		}
 		if (q.contactOpen()) {
-			// email은 크롤러 미수집(V31: "email은 미수집이라 필드 없음") — 데이터가 생길 때까지 0건 매칭.
-			where.append(" AND false");
+			// email은 biography 정규식 파싱(V46, 스펙 2026-07-30-influencer-email-from-bio)으로 채워진다.
+			where.append(" AND su.email IS NOT NULL");
 		}
 		for (int i = 0; i < q.keywords().size(); i++) {
 			// 키워드 전부(AND) 부분일치 — 대상: handle·displayName·bio·tagline·캡션·협업 브랜드명·소분류 라벨
@@ -207,12 +207,19 @@ public class V1InfluencerDiscoveryRepository {
 		return new Sql(fromJoins, where.toString(), params);
 	}
 
-	/** 전부 내림차순, 동점 2차 정렬은 id(=handle) 오름차순 (스펙 6.21 안정 정렬). */
+	/**
+	 * 전부 내림차순, 동점 2차 정렬은 id(=handle) 오름차순 (스펙 6.21 안정 정렬).
+	 * hype 정렬 키는 표시값 avg_hype_score(정수)가 아니라 반올림 전 avg_hype_raw다 — 정수 반올림이
+	 * 상위권(상위 1% 54개가 4개 값으로 압축)에서 동점을 대량으로 만들어 정렬이 사실상 handle
+	 * 알파벳순에 지배되는 결함이 있었다(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md
+	 * §9 하위절). 표시는 계속 avg_hype_score — avg_hype_raw는 SELECT 목록에 없어도 ORDER BY에서
+	 * su 별칭으로 바로 참조 가능하다(Postgres는 SELECT 미포함 컬럼도 허용).
+	 */
 	private String orderBy(String sort) {
 		return switch (sort) {
 			case "views" -> "\nORDER BY su.avg_views DESC NULLS LAST, a.handle";
 			case "followers" -> "\nORDER BY a.followers DESC NULLS LAST, a.handle";
-			case "hype" -> "\nORDER BY su.avg_hype_score DESC NULLS LAST, a.handle";
+			case "hype" -> "\nORDER BY su.avg_hype_raw DESC NULLS LAST, a.handle";
 			default -> "\nORDER BY su.views_per_follower DESC NULLS LAST, a.handle";
 		};
 	}
@@ -294,7 +301,7 @@ public class V1InfluencerDiscoveryRepository {
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
 			Long postsCount, Long followsCount, String biography,
 			String tagline, BigDecimal viewsPerFollower, BigDecimal avgErPct, Long avgViews,
-			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount) {
+			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount, String email) {
 	}
 
 	public record ShareRow(String accountHandle, String mainCategory, Integer pct) {

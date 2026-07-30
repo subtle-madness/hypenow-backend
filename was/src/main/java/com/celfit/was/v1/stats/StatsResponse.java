@@ -12,15 +12,18 @@ public record StatsResponse(Long contentsCount, Long influencersCount, Long tota
 
 	private static final DateTimeFormatter ISO_Z = DateTimeFormatter.ISO_INSTANT;
 
-	/** 6.1 follower enum과 동일 문자열 — 뷰의 구간 경계(3k/10k/30k/50k)와 순서가 일치한다. */
-	private static final List<String> RANGES = List.of("3k-10k", "10k-30k", "30k-50k");
+	/**
+	 * 디스커버리 follower enum(500-3k 포함)과 동일 문자열 — 뷰의 구간 경계(500/3k/10k/30k/50k)와
+	 * 순서가 일치한다. 07-29 모수 확장(하한 3천→500)으로 500-3k 구간 추가.
+	 */
+	private static final List<String> RANGES = List.of("500-3k", "3k-10k", "10k-30k", "30k-50k");
 
 	public record Band(String range, int pct) {
 	}
 
 	public static StatsResponse from(LandingStats s) {
 		return new StatsResponse(s.contentsCount(), s.influencersCount(), s.totalViews(), s.avgViews(),
-				distribution(s.followers3k10k(), s.followers10k30k(), s.followers30k50k()),
+				distribution(s.followers500to3k(), s.followers3k10k(), s.followers10k30k(), s.followers30k50k()),
 				ISO_Z.format(s.updatedAt().toInstant()));
 	}
 
@@ -30,9 +33,9 @@ public record StatsResponse(Long contentsCount, Long influencersCount, Long tota
 	 * 잔여가 동률이면 앞 구간(작은 팔로워 구간)이 우선 — 결정적 출력 보장.
 	 * 계정이 0명이면 합계 100 규칙보다 "데이터 없음"이 우선이라 전 구간 0을 낸다.
 	 */
-	static List<Band> distribution(long b3k, long b10k, long b30k) {
-		long[] counts = {b3k, b10k, b30k};
-		long total = b3k + b10k + b30k;
+	static List<Band> distribution(long b500, long b3k, long b10k, long b30k) {
+		long[] counts = {b500, b3k, b10k, b30k};
+		long total = b500 + b3k + b10k + b30k;
 		if (total <= 0) {
 			return RANGES.stream().map(r -> new Band(r, 0)).toList();
 		}
@@ -48,7 +51,11 @@ public record StatsResponse(Long contentsCount, Long influencersCount, Long tota
 		byRemainder.sort(Comparator.<Integer, Long>comparing(i -> counts[i] * 100 % total).reversed()
 				.thenComparing(Comparator.naturalOrder()));
 
-		int remaining = 100 - (pct[0] + pct[1] + pct[2]);
+		int assigned = 0;
+		for (int p : pct) {
+			assigned += p;
+		}
+		int remaining = 100 - assigned;
 		for (int i = 0; i < remaining; i++) {
 			pct[byRemainder.get(i)]++;
 		}

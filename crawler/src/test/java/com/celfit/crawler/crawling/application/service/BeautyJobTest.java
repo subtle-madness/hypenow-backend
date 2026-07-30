@@ -2,31 +2,38 @@ package com.celfit.crawler.crawling.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static org.mockito.Mockito.verifyNoInteractions;
+
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawProfile;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -39,6 +46,7 @@ class BeautyJobTest {
 
     InfluencerRepository influencers = mock(InfluencerRepository.class);
     RawProfileRepository rawProfiles = mock(RawProfileRepository.class);
+    RawMediaPageRepository rawMediaPages = mock(RawMediaPageRepository.class);
     BeautyJudge judge = mock(BeautyJudge.class);
     SettingsService settings = mock(SettingsService.class);
     // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 배치 단위 트랜잭션 래핑을 그대로 재현한다.
@@ -46,7 +54,7 @@ class BeautyJobTest {
 
     JobStopFlag stopFlag = new JobStopFlag();
 
-    BeautyJob job = new BeautyJob(influencers, rawProfiles, judge, settings, stopFlag,
+    BeautyJob job = new BeautyJob(influencers, rawProfiles, rawMediaPages, judge, settings, stopFlag,
             java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), txTemplate);
 
     @BeforeEach
@@ -69,6 +77,16 @@ class BeautyJobTest {
         payload.put("fullName", fullName);
         payload.put("biography", bio);
         return new RawProfile(influencerId, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH);
+    }
+
+    /** 프로필에 캡션이 없는 소스(HIKER_MOBILE·DATALIKERS)의 폴백 재료 — 릴스 페이지 원형. */
+    static RawMediaPage clipsPage(Long influencerId, String... captions) {
+        List<Object> items = new ArrayList<>();
+        for (String c : captions) {
+            items.add(Map.of("media", Map.of("caption", Map.of("text", c))));
+        }
+        Map<String, Object> payload = Map.of("response", Map.of("items", items));
+        return new RawMediaPage(influencerId, null, RawSource.HIKER_V2_CLIPS, payload, Instant.EPOCH);
     }
 
     @Test
@@ -96,8 +114,8 @@ class BeautyJobTest {
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(2L))
                 .thenReturn(Optional.of(legacyProfile(2L, "여행", "여행기")));
         when(judge.judge(any())).thenReturn(List.of(
-                new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 중심"),
-                new BeautyJudge.Verdict("b", BeautyClass.NOT_BEAUTY, "여행 계정")));
+                new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 중심", null),
+                new BeautyJudge.Verdict("b", BeautyClass.NOT_BEAUTY, "여행 계정", null)));
 
         var s = job.run(TriggerType.MANUAL, false);
 
@@ -120,7 +138,7 @@ class BeautyJobTest {
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "에텔랑화장품", "화장품 브랜드")));
         when(judge.judge(any())).thenReturn(List.of(
-                new BeautyJudge.Verdict("brand_acc", BeautyClass.COMPANY, "화장품 브랜드 공식 계정")));
+                new BeautyJudge.Verdict("brand_acc", BeautyClass.COMPANY, "화장품 브랜드 공식 계정", null)));
 
         job.run(TriggerType.MANUAL, false);
 
@@ -145,8 +163,8 @@ class BeautyJobTest {
             when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(2L))
                     .thenReturn(Optional.of(legacyProfile(2L, "여행", "여행기")));
             when(judge.judge(any())).thenReturn(List.of(
-                    new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 중심"),
-                    new BeautyJudge.Verdict("b", BeautyClass.NOT_BEAUTY, "여행 계정")));
+                    new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 중심", null),
+                    new BeautyJudge.Verdict("b", BeautyClass.NOT_BEAUTY, "여행 계정", null)));
 
             job.run(TriggerType.MANUAL, false);
 
@@ -155,6 +173,66 @@ class BeautyJobTest {
             assertThat(msgs).anyMatch(m -> m.contains("뷰티 판정 시작") && m.contains("2명"));
             assertThat(msgs).anyMatch(m -> m.contains("(1/2) a — 뷰티") && m.contains("메이크업 중심"));
             assertThat(msgs).anyMatch(m -> m.contains("(2/2) b — 비뷰티") && m.contains("여행 계정"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void 응답에서_누락된_계정을_경고로_남긴다() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer a = qualified(1L, "acc1");
+            Influencer b = qualified(2L, "acc2");
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                    .thenReturn(List.of(a, b));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(anyLong()))
+                    .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+            when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                    .thenReturn(Optional.empty());
+            when(judge.judge(any())).thenReturn(List.of(
+                    new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "BIO")));
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> warns = appender.list.stream()
+                    .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).anyMatch(m -> m.contains("누락") && m.contains("acc2"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void 응답_중복을_경고로_남긴다() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer a = qualified(1L, "acc1");
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                    .thenReturn(List.of(a));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(anyLong()))
+                    .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+            when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                    .thenReturn(Optional.empty());
+            when(judge.judge(any())).thenReturn(List.of(
+                    new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "BIO"),
+                    new BeautyJudge.Verdict("acc1", BeautyClass.NOT_BEAUTY, "다른 이유", "BIO")));
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> warns = appender.list.stream()
+                    .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).anyMatch(m -> m.contains("중복") && m.contains("acc1"));
         } finally {
             logger.detachAppender(appender);
         }
@@ -177,7 +255,7 @@ class BeautyJobTest {
             assertThat(cards).hasSize(1);
             assertThat(cards.get(0).captions()).containsExactly(
                     "긴캡션".repeat(50).substring(0, BeautyJob.CAPTION_MAX_CHARS), "둘", "셋", "넷", "다섯");
-            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok"));
+            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok", null));
         });
 
         var s = job.run(TriggerType.MANUAL, false);
@@ -204,7 +282,7 @@ class BeautyJobTest {
             // 쌍을 통째로 버리고 99자에서 끊는다 — 반쪽 서로게이트가 남으면 안 된다
             assertThat(trimmed).isEqualTo("가".repeat(BeautyJob.CAPTION_MAX_CHARS - 1));
             assertThat(Character.isHighSurrogate(trimmed.charAt(trimmed.length() - 1))).isFalse();
-            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok"));
+            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok", null));
         });
 
         var s = job.run(TriggerType.MANUAL, false);
@@ -244,7 +322,7 @@ class BeautyJobTest {
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "x", "y")));
-        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("ghost", BeautyClass.INFLUENCER, "?")));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("ghost", BeautyClass.INFLUENCER, "?", null)));
 
         var s = job.run(TriggerType.MANUAL, false);
 
@@ -271,7 +349,7 @@ class BeautyJobTest {
         when(judge.judge(any())).thenAnswer(inv -> {
             List<BeautyJudge.ProfileCard> cards = inv.getArgument(0);
             assertThat(cards).hasSize(3);
-            return cards.stream().map(cd -> new BeautyJudge.Verdict(cd.username(), BeautyClass.INFLUENCER, "ok")).toList();
+            return cards.stream().map(cd -> new BeautyJudge.Verdict(cd.username(), BeautyClass.INFLUENCER, "ok", null)).toList();
         });
 
         var s = job.run(TriggerType.MANUAL, true);
@@ -287,7 +365,7 @@ class BeautyJobTest {
                 .thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
-        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok")));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "ok", null)));
 
         job.run(TriggerType.MANUAL, true);
 
@@ -324,7 +402,7 @@ class BeautyJobTest {
                 .thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
-        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "재판정")));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "재판정", null)));
 
         job.run(TriggerType.MANUAL, true);
 
@@ -343,12 +421,35 @@ class BeautyJobTest {
         when(judge.judge(any())).thenAnswer(inv -> {
             List<BeautyJudge.ProfileCard> cards = inv.getArgument(0);
             assertThat(cards).hasSize(1);
-            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업"));
+            return List.of(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업", null));
         });
 
         var s = job.run(TriggerType.MANUAL, true);
 
         assertThat(s.judgedBeauty()).isEqualTo(1);
+    }
+
+    @Test
+    void 한_응답_안에서_같은_username이_중복되면_첫_값만_적용하고_카운터도_한_번만_센다() {
+        // acc1에 대해 서로 다른 두 판정(INFLUENCER → NOT_BEAUTY)이 온 상황 — 첫 값 채택 규칙 검증.
+        Influencer a = qualified(1L, "acc1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "첫 판정", null),
+                new BeautyJudge.Verdict("acc1", BeautyClass.NOT_BEAUTY, "두번째 판정", null)));
+
+        var s = job.run(TriggerType.MANUAL, false);
+
+        // 검증 A: 카운터 합계가 실제 판정 계정 수(1)와 일치 — 중복분이 이중 계상되지 않는다
+        assertThat(s.judgedBeauty() + s.judgedService() + s.judgedForeign() + s.judgedNotBeauty()).isEqualTo(1);
+        // 검증 B: 첫 값(INFLUENCER)이 채택된다 — beauty_class와 카운터 둘 다
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+        assertThat(s.judgedNotBeauty()).isEqualTo(0);
+        assertThat(a.getBeautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(a.getBeautyReason()).isEqualTo("첫 판정");
     }
 
     @Test
@@ -365,11 +466,11 @@ class BeautyJobTest {
                     .thenReturn(Optional.of(legacyProfile(id, "이름", "bio")));
         }
         when(judge.judge(any())).thenReturn(List.of(
-                new BeautyJudge.Verdict("inf1", BeautyClass.INFLUENCER, "메이크업 크리에이터"),
-                new BeautyJudge.Verdict("com1", BeautyClass.COMPANY, "화장품 브랜드"),
-                new BeautyJudge.Verdict("svc1", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보"),
-                new BeautyJudge.Verdict("no1", BeautyClass.NOT_BEAUTY, "여행 계정"),
-                new BeautyJudge.Verdict("for1", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠")));
+                new BeautyJudge.Verdict("inf1", BeautyClass.INFLUENCER, "메이크업 크리에이터", null),
+                new BeautyJudge.Verdict("com1", BeautyClass.COMPANY, "화장품 브랜드", null),
+                new BeautyJudge.Verdict("svc1", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보", null),
+                new BeautyJudge.Verdict("no1", BeautyClass.NOT_BEAUTY, "여행 계정", null),
+                new BeautyJudge.Verdict("for1", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠", null)));
 
         BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
 
@@ -395,5 +496,63 @@ class BeautyJobTest {
         assertThat(com1.getBeauty()).isTrue();
         assertThat(com1.getBeautyCompany()).isTrue();
         assertThat(no1.getBeauty()).isFalse();
+    }
+
+    @Test
+    void 프로필에_캡션이_없으면_릴스_페이지_캡션을_쓴다() {
+        Influencer inf = qualified(1L, "acc1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(1L, RawSource.HIKER_V2_CLIPS))
+                .thenReturn(Optional.of(clipsPage(1L, "스킨케어 루틴", "쿠션 발색")));
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "뷰티 캡션", "CAPTION")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        ArgumentCaptor<List<BeautyJudge.ProfileCard>> cards = ArgumentCaptor.forClass(List.class);
+        verify(judge).judge(cards.capture());
+        assertThat(cards.getValue().getFirst().captions())
+                .containsExactly("스킨케어 루틴", "쿠션 발색");
+        assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 2);
+    }
+
+    @Test
+    void 프로필_캡션이_있으면_릴스_페이지를_조회하지_않는다() {
+        Influencer inf = qualified(1L, "acc1");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("biography", "bio");
+        payload.put("latestPosts", List.of(Map.of("caption", "프로필 캡션")));
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L)).thenReturn(Optional.of(
+                new RawProfile(1L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "CAPTION")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        verifyNoInteractions(rawMediaPages);
+        assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 1);
+    }
+
+    @Test
+    void 캡션을_어디서도_못_구하면_0으로_기록한다() {
+        Influencer inf = qualified(1L, "acc1");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any()))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(1L, RawSource.HIKER_V2_CLIPS))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(
+                new BeautyJudge.Verdict("acc1", BeautyClass.INFLUENCER, "이유", "CATEGORY_ONLY")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 0);
     }
 }

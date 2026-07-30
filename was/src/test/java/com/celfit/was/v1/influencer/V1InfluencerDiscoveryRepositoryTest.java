@@ -71,7 +71,9 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    avg_likes          bigint,
 				    avg_comments       bigint,
 				    avg_hype_score     bigint,
-				    last_posted_at     timestamptz
+				    last_posted_at     timestamptz,
+				    email              text,
+				    avg_hype_raw       numeric
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_content_series (
@@ -141,18 +143,22 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('calm', '카암', 'https://cdn/calm.jpg', 30000),
 				  ('mute', '뮤트', NULL, 40000),
 				  ('tiny', '타이니', NULL, 1000)""");
+		// avg_hype_raw는 avg_hype_score(정수 반올림)를 만드는 반올림 전 평균 — 정렬은 이 컬럼을 쓴다
+		// (스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절). 여기서는 각 계정의
+		// 표시 점수와 같은 상대 순서를 갖는 근사값을 넣어 기존 정렬 기대값(calm>glow>tiny>mute)이 유지된다 —
+		// 동점 시나리오는 tieHi/tieLo 전용 픽스처(seedTiedHypeAccount)로 별도 검증한다.
 		jdbcTemplate.update("""
 				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
 				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
-				  avg_hype_score, last_posted_at) VALUES
+				  avg_hype_score, avg_hype_raw, last_posted_at, email) VALUES
 				  ('glow', 20000, 380, 214, E'수분크림 기록\\n문의는 DM', 50000, 12.42, 4.0, 3000, 150,
-				   72, now() - interval '1 day'),
+				   72, 71.6, now() - interval '1 day', 'contact@glow.co'),
 				  ('calm', 30000, 100, 90, '차분한 후기', 30000, 5.0, 2.0, 500, 30,
-				   80, now() - interval '10 days'),
+				   80, 79.8, now() - interval '10 days', NULL),
 				  ('mute', 40000, 50, 40, NULL, NULL, NULL, 1.0, 300, 10,
-				   NULL, now() - interval '40 days'),
+				   NULL, NULL, now() - interval '40 days', NULL),
 				  ('tiny', 1000, 10, 20, '새싹', 2000, 2.0, 3.0, 25, 3,
-				   45, now() - interval '5 days')""");
+				   45, 44.7, now() - interval '5 days', NULL)""");
 		// glow 창 5개: g1(1일 전)~g5(5일 전). 분류 5개 중 스킨케어 4·메이크업 1, 협찬 g2·g4.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
@@ -234,11 +240,13 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(glow.avgViews()).isEqualTo(50000);
 		assertThat(glow.sponsoredCount()).isEqualTo(2); // ad_type 정본 (series.sponsored 아님)
 		assertThat(glow.avgHypeScore()).isEqualTo(72);
+		assertThat(glow.email()).isEqualTo("contact@glow.co"); // account_summaries.email(V46) 그대로 노출
 
 		CardRow mute = rows.get(3);
 		assertThat(mute.avgViews()).isNull(); // 릴스 없는 계정
 		assertThat(mute.profileImageUrl()).isNull();
 		assertThat(mute.avgHypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
+		assertThat(mute.email()).isNull(); // biography 매치 없음(또는 미보유)
 	}
 
 	@Test
@@ -307,10 +315,11 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void contact_open은_이메일_미수집이라_0건() {
+	void contact_open은_이메일_보유_계정만() {
+		// 시드 중 email이 채워진 건 glow뿐(biography 정규식 파싱, V46) — calm·mute·tiny는 NULL이라 제외.
 		var open = query(null, null, null, null, null, null, null, "open", null, null, null);
-		assertThat(repository.findCards(open)).isEmpty();
-		assertThat(repository.countCards(open)).isZero();
+		assertThat(repository.findCards(open)).extracting(CardRow::handle).containsExactly("glow");
+		assertThat(repository.countCards(open)).isEqualTo(1);
 	}
 
 	@Test
@@ -328,10 +337,44 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 정렬_hype는_avg_hype_score_내림차순_NULL_마지막() {
+	void 정렬_hype는_avg_hype_raw_내림차순_NULL_마지막() {
+		// 표시값(avg_hype_score)이 아니라 반올림 전 avg_hype_raw로 정렬한다 — 시드 순서는 우연히
+		// 둘 다 같은 상대 순서지만(동점 없음), 정렬 컬럼 자체가 raw임은 아래 동점 테스트가 못박는다.
 		var hype = query(null, null, null, null, null, null, null, null, "hype", null, null);
 		assertThat(repository.findCards(hype)).extracting(CardRow::handle)
 				.containsExactly("calm", "glow", "tiny", "mute");
+	}
+
+	@Test
+	void 정렬_hype는_표시_점수가_동점이어도_raw_순서를_따른다() {
+		// 회귀 재현(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절): 정수
+		// 반올림이 상위권에서 동점을 대량으로 만들어 정렬이 사실상 handle 알파벳순에 지배됐다.
+		// tieAlphaLo(avg_hype_score=88, avg_hype_raw=87.6)와 tieZetaHi(avg_hype_score=88,
+		// avg_hype_raw=88.4) — 표시 점수는 동점이지만 raw는 zeta가 더 크다. 핸들 알파벳순은
+		// alpha가 zeta보다 앞이라(구코드 ORDER BY avg_hype_score DESC, handle ASC였다면 tieAlphaLo가
+		// 먼저 나왔을 것 — 알파벳순과 raw 내림차순이 정반대를 가리키도록 이름을 골랐다),
+		// raw 정렬은 tieZetaHi가 먼저 나와야 한다.
+		jdbcTemplate.update("""
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
+				  ('tieAlphaLo', '타이알파로', NULL, 15000),
+				  ('tieZetaHi', '타이제타하이', NULL, 15000)""");
+		jdbcTemplate.update("""
+				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
+				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
+				  avg_hype_score, avg_hype_raw, last_posted_at) VALUES
+				  ('tieAlphaLo', 15000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL,
+				   88, 87.6, now() - interval '3 days'),
+				  ('tieZetaHi', 15000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL,
+				   88, 88.4, now() - interval '3 days')""");
+
+		var hype = query(null, null, null, null, null, null, null, null, "hype", null, null);
+		List<String> handles = repository.findCards(hype).stream().map(CardRow::handle).toList();
+		int hi = handles.indexOf("tieZetaHi");
+		int lo = handles.indexOf("tieAlphaLo");
+		assertThat(hi).isGreaterThanOrEqualTo(0);
+		assertThat(lo).isGreaterThanOrEqualTo(0);
+		assertThat(hi).as("tieZetaHi(raw 88.4)가 tieAlphaLo(raw 87.6)보다 앞이어야 함 — handle 알파벳순(구코드)이면 반대")
+				.isLessThan(lo);
 	}
 
 	@Test
@@ -422,8 +465,8 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update("""
 				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
 				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
-				  avg_hype_score, last_posted_at)
-				VALUES (?, 5000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL, NULL, now())""", handle);
+				  avg_hype_score, avg_hype_raw, last_posted_at)
+				VALUES (?, 5000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, now())""", handle);
 		for (int i = 0; i < analyzedCount; i++) {
 			String shortCode = handle + "_p" + i;
 			jdbcTemplate.update("""

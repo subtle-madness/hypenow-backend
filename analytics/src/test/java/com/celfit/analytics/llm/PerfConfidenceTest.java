@@ -217,6 +217,31 @@ class PerfConfidenceTest {
 		assertFalse(PerfConfidence.of(m).dataIncomplete());
 	}
 
+	/**
+	 * 회귀 방지 — email(V46, 스펙 2026-07-30-influencer-email-from-bio)은 CONFIDENCE_COLUMNS에
+	 * 섞이지 않았으므로 dataIncomplete() 판정에 전혀 관여하면 안 된다. email 유무가 판정을
+	 * 바꾼다면 그 자체가 email이 판정 재료로 잘못 섞였다는 신호다(요구사항 설계 §3-3 재정의 —
+	 * "판정 입력이 아니고 정상 계정에서도 흔히 NULL이라 섞으면 의미가 흐려진다").
+	 */
+	@Test
+	void email_컬럼_유무가_dataIncomplete_판정에_영향을_주지_않는다() {
+		Map<String, Object> ok = baseSummary(); // 7개 신뢰도 컬럼 정상 → 데이터 미비 아님
+		Map<String, Object> okWithEmail = new HashMap<>(ok);
+		okWithEmail.put("email", "person@example.com");
+		assertFalse(PerfConfidence.of(ok).dataIncomplete());
+		assertFalse(PerfConfidence.of(okWithEmail).dataIncomplete());
+
+		Map<String, Object> gap = new HashMap<>();
+		for (String key : PerfConfidence.CONFIDENCE_COLUMNS) {
+			gap.put(key, null);
+		}
+		Map<String, Object> gapWithEmail = new HashMap<>(gap);
+		gapWithEmail.put("email", "person@example.com"); // 미러 갭인데 email만 채워진 비정상 상태를 가정해도
+		assertTrue(PerfConfidence.of(gap).dataIncomplete());
+		assertTrue(PerfConfidence.of(gapWithEmail).dataIncomplete(),
+				"email 값 존재가 '미러 갭 아님'의 근거가 되면 안 된다");
+	}
+
 	@Test
 	void 지침_문구가_판정에_맞게_생성된다() {
 		Map<String, Object> m = baseSummary();

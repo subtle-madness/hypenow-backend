@@ -218,4 +218,37 @@ class MediaItemExtractorTest {
         assertThat(MediaItemExtractor.extract(payload, RawSource.SELF_GQL).get(0).caption())
                 .isEqualTo("");
     }
+
+    // ---- captions: 저장된 릴스 페이지에서 캡션 추출 ----
+
+    @Test
+    void 릴스_페이지에서_캡션을_뽑는다() {
+        Map<String, Object> payload = Map.of("response", Map.of("items", List.of(
+                Map.of("media", Map.of("code", "AAA", "taken_at", 1_700_000_000L,
+                        "caption", Map.of("text", "오늘의 스킨케어 루틴"))),
+                Map.of("media", Map.of("code", "BBB", "taken_at", 1_700_000_100L,
+                        "caption", Map.of("text", "신상 쿠션 발색샷"))))));
+
+        assertThat(MediaItemExtractor.captions(payload, RawSource.HIKER_V2_CLIPS))
+                .containsExactly("오늘의 스킨케어 루틴", "신상 쿠션 발색샷");
+    }
+
+    @Test
+    void 캡션이_없거나_빈_아이템은_건너뛴다() {
+        Map<String, Object> payload = Map.of("response", Map.of("items", List.of(
+                Map.of("media", Map.of("code", "AAA", "caption", Map.of("text", "  "))),
+                Map.of("media", Map.of("code", "BBB")),
+                Map.of("media", Map.of("code", "CCC", "caption", Map.of("text", "유효 캡션"))))));
+
+        assertThat(MediaItemExtractor.captions(payload, RawSource.HIKER_V2_CLIPS))
+                .containsExactly("유효 캡션");
+    }
+
+    @Test
+    void 검증되지_않은_소스는_빈_리스트다() {
+        Map<String, Object> payload = Map.of("medias", List.of(
+                Map.of("code", "AAA", "caption", Map.of("text", "피드 캡션"))));
+
+        assertThat(MediaItemExtractor.captions(payload, RawSource.HIKER_V1_MEDIAS)).isEmpty();
+    }
 }

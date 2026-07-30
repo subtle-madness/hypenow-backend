@@ -41,6 +41,27 @@ public final class MediaItemExtractor {
     }
 
     /**
+     * 저장된 열거 페이지에서 게시물 캡션 추출 — 뷰티 재판정의 실측 근거다.
+     * HIKER_V2_CLIPS만 지원한다: response.items[].media.caption.text
+     * (analytics v_base_reel_item이 캡션을 뽑는 경로와 동일).
+     * HIKER_V1_MEDIAS는 payload에 캡션이 있는지 검증한 뷰도 픽스처도 없어 제외한다 —
+     * 근거 없는 경로로 빈 문자열을 판정 재료에 섞느니 아예 넣지 않는다.
+     */
+    public static List<String> captions(Map<String, Object> payload, RawSource source) {
+        if (source != RawSource.HIKER_V2_CLIPS) return List.of();
+        List<String> out = new ArrayList<>();
+        for (Object o : items(payload, source)) {
+            if (!(o instanceof Map<?, ?> raw)) continue;
+            Map<String, Object> m = unwrapMedia(raw);
+            if (m.get("caption") instanceof Map<?, ?> cap
+                    && cap.get("text") instanceof String t && !t.isBlank()) {
+                out.add(t);
+            }
+        }
+        return out;
+    }
+
+    /**
      * 프로필 원형(web_profile_info)에 최근 타임라인이 내장돼 있는지 — 빈 edges도 "내장 있음"
      * (게시물 0개 계정에 피드 폴백 요청을 낭비하지 않기 위해 존재 여부와 아이템 유무를 구분).
      */

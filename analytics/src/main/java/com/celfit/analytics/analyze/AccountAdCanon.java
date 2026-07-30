@@ -133,17 +133,39 @@ final class AccountAdCanon {
 	static final List<String> INTERNAL_CONFIDENCE_COLUMNS = PerfConfidence.CONFIDENCE_COLUMNS;
 
 	/**
-	 * canonicalSummary 사본 + 그 사본에서 always-strip 7컬럼과 판정 결과에 따른 조건부 제거를
-	 * 적용한 프롬프트용 결과. {@code median_views}·{@code median_er_pct}는 always-strip이 아니라
-	 * 판정 근거로 노출된다(대응 평균이 조건부로 밀려날 뿐).
+	 * 카피 생성과 무관해 프롬프트에서 항상 제거할 컬럼 — {@link PerfConfidence#CONFIDENCE_COLUMNS}
+	 * (판정 재료·{@code dataIncomplete()} 판정 근거로도 재사용됨)와는 다른 목록이다. 여기 컬럼은
+	 * 판정에 전혀 관여하지 않으므로 거기 섞으면 "판정 전용 내부 입력"이라는 의미가 흐려지고,
+	 * dataIncomplete()의 "7개 전부 NULL=미러 갭" 판정 기준도 오염된다(email은 biography 미기재·
+	 * 정규식 미매치로 정상 계정에서도 흔히 NULL).
+	 *
+	 * <p>{@code email}: biography 정규식 파싱 이메일(V46, 스펙 2026-07-30-influencer-email-from-bio).
+	 * 카피 생성 어디에도 쓰이지 않는데, 프롬프트 summary가 {@code account_summaries}의
+	 * {@code SELECT *} 사본이라 컬럼이 추가되는 즉시 자동으로 프롬프트에 실렸다 — 실 연락처가
+	 * 외부 LLM(Gemini) API로 전송되는 개인정보 유출이었다(07-30 발견, 운영 재생성 전 차단).
+	 * {@code account_summaries}에 컬럼이 추가될 때마다 이 함정이 재발하므로, 새 컬럼이 카피와
+	 * 무관하면 여기 추가해야 한다(AccountSummaryStatGuardMappingTest 유사 취지의 재발 방지는
+	 * PerfConfidenceTest의 프롬프트 키 집합 고정 테스트 참조).
+	 *
+	 * <p>{@code avg_hype_raw}: 발굴 목록 정렬 전용 raw 평균(V49, 스펙
+	 * 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9-6) — 표시는 avg_hype_score가
+	 * 대신하고 이 값은 순수 정렬 키라 카피 문구와 무관하다. 판정 재료도 아니므로
+	 * CONFIDENCE_COLUMNS가 아니라 여기.
+	 */
+	static final List<String> PROMPT_IRRELEVANT_COLUMNS = List.of("email", "avg_hype_raw");
+
+	/**
+	 * canonicalSummary 사본 + 그 사본에서 always-strip 7컬럼·카피 무관 컬럼과 판정 결과에 따른
+	 * 조건부 제거를 적용한 프롬프트용 결과. {@code median_views}·{@code median_er_pct}는
+	 * always-strip이 아니라 판정 근거로 노출된다(대응 평균이 조건부로 밀려날 뿐).
 	 */
 	record SummaryWithConfidence(Map<String, Object> promptSummary, PerfConfidence confidence) {}
 
 	/**
 	 * 원본 스냅샷(9컬럼 포함)에서 신뢰도 등급을 판정하고, 광고 정본으로 치환한 프롬프트 사본에서는
-	 * always-strip 7컬럼과 판정 결과에 따라 조건부로 갈리는 화면용 집계 컬럼(추세 4종·지표별 평균·
-	 * 조건부 median)까지 제거해 함께 돌려준다 — 판정은 반드시 원본에서 해야 한다(치환·제거 이후에는
-	 * 판정 근거 자체가 사라진다).
+	 * always-strip 7컬럼·카피 무관 컬럼과 판정 결과에 따라 조건부로 갈리는 화면용 집계 컬럼(추세
+	 * 4종·지표별 평균·조건부 median)까지 제거해 함께 돌려준다 — 판정은 반드시 원본에서 해야 한다
+	 * (치환·제거 이후에는 판정 근거 자체가 사라진다).
 	 *
 	 * <p>조건부 제거는 {@link PerfConfidence#excludedSummaryKeys()} 위임(설계 §3-3 실측 보완,
 	 * 2026-07-30 test 실측 — "있지만 언급 마라" 지침은 안 지켜지고 "아예 없음"만 지켜졌다).
@@ -152,6 +174,7 @@ final class AccountAdCanon {
 		PerfConfidence confidence = PerfConfidence.of(summary);
 		Map<String, Object> promptSummary = canonicalSummary(summary, ad);
 		INTERNAL_CONFIDENCE_COLUMNS.forEach(promptSummary::remove);
+		PROMPT_IRRELEVANT_COLUMNS.forEach(promptSummary::remove);
 		confidence.excludedSummaryKeys().forEach(promptSummary::remove);
 		return new SummaryWithConfidence(promptSummary, confidence);
 	}

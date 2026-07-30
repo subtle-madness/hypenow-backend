@@ -88,10 +88,10 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
                 메이크업·향수·헤어/바디케어 제품 등)을 시딩·협찬·광고할 한국인 인플루언서와, 그런 \
                 인플루언서를 필요로 하는 뷰티 제품 회사를 찾는 것.
                 다음 인스타그램 계정 프로필 목록(JSON)의 각 계정을 다섯 중 하나로 분류하라:
-                - INFLUENCER: 한국어 콘텐츠 중심의 뷰티 제품 개인 크리에이터. 광고·협찬 게시물만이 \
-                아니라 오가닉 뷰티 콘텐츠를 올리는 개인도 포함.
-                - FOREIGN_INFLUENCER: 뷰티 제품 개인 크리에이터지만 한국어 콘텐츠 중심이 아닌 계정\
-                (외국어 bio·캡션으로 해외 오디언스 대상)
+                - INFLUENCER: 게시물 캡션·bio를 한국어로 쓰는 뷰티 제품 개인 크리에이터. 광고·협찬 \
+                게시물만이 아니라 오가닉 뷰티 콘텐츠를 올리는 개인도 포함.
+                - FOREIGN_INFLUENCER: 뷰티 제품 개인 크리에이터지만 글을 한국어로 쓰지 않는 계정\
+                (일본어·중국어·태국어·영어 등 외국어 bio·캡션으로 해외 오디언스 대상)
                 - COMPANY: 뷰티 제품을 제작·판매하는 회사(브랜드·쇼핑몰) 공식 계정 — 언어 무관
                 - BEAUTY_SERVICE: 뷰티 영역이지만 시술·서비스 중심 — 피부과·성형외과·에스테틱·헤어샵/\
                 미용실·네일샵·왁싱·속눈썹·반영구 등 시술을 파는 업체, 그리고 헤어 디자이너·네일 아티스트·\
@@ -101,12 +101,25 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
                 - 시술 업체가 자체 제품도 팔면 콘텐츠 주력 기준으로 — 시술·매장 홍보 중심이면 \
                 BEAUTY_SERVICE, 제품 판매 중심이면 COMPANY.
                 - 한국어 판정은 캡션이 최우선 신호다 — bio가 영어라도 캡션이 주로 한국어면 한국어 \
-                콘텐츠(INFLUENCER)로 판정하라(한국 계정이 영어 bio를 쓰는 경우가 흔하다).
+                콘텐츠(INFLUENCER)로 판정하라(한국 계정이 영어 bio를 쓰는 경우가 흔하다). 반대도 \
+                같다 — bio에 한국어가 섞여 있어도 캡션이 주로 외국어면 FOREIGN_INFLUENCER다.
                 - 한국어·외국어를 섞어 쓰면 주 오디언스가 한국인지 기준으로 판정하라.
                 - 캡션이 빈 배열(미수집)이고 bio만으로 모호하면 이름·bio의 한국어 여부로 판정하라.
+                - 판정 기준은 계정이 글을 쓰는 언어이지, 다루는 제품·주제의 국적이 아니다. 한국 \
+                브랜드·K-뷰티 제품을 리뷰해도, 한국에 거주해도, bio·캡션을 일본어·중국어·영어 등으로 \
+                쓰면 FOREIGN_INFLUENCER다(한국 시장 시딩 대상이 아니므로). 예: "韓国コスメ"를 일본어로 \
+                리뷰하는 일본 계정 → FOREIGN_INFLUENCER.
+                - bio·이름이 히라가나·가타카나·한자(중국어)·태국어·키릴 문자 등으로 된 문장이면 강한 \
+                외국어 신호다. 단, ヽ( ´ー｀)ノ·ﾟ·・ 같은 장식용 카오모지 문자는 한국 계정도 흔히 \
+                쓰므로 신호가 아니다 — 낱글자 장식인지 문장을 이루는지로 구분하라.
+                - category는 계정주가 자율 선택한 미검증 자기신고 필드다 — bio·캡션의 실제 내용과 \
+                상충하면 실제 내용을 우선하라.
                 captions는 최근 게시물 캡션 일부다(앞부분만 잘림·빈 배열은 미수집) — bio가 모호하면 \
                 캡션의 실제 콘텐츠 주제를 근거로 판정하라.
-                출력은 JSON 배열만: [{"username":"...","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|BEAUTY_SERVICE|NOT_BEAUTY","reason":"한 줄"}]
+                basis는 판정의 주근거다 — 캡션의 콘텐츠 주제를 근거로 했으면 CAPTION, bio·이름을 \
+                근거로 했으면 BIO, 캡션도 bio도 근거가 되지 못해 category만 보고 판단했으면 CATEGORY_ONLY.
+                reason(근거)을 먼저 쓰고, 그 근거와 일관된 class를 마지막에 쓰라.
+                출력은 JSON 배열만: [{"username":"...","reason":"한 줄","basis":"CAPTION|BIO|CATEGORY_ONLY","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|BEAUTY_SERVICE|NOT_BEAUTY"}]
                 입력의 모든 username에 대해 정확히 한 항목씩. 다른 텍스트 금지.
 
                 """ + om.writeValueAsString(cards);
@@ -127,16 +140,30 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
             String cls = n.path("class").asString(null);
             if (username == null || username.isBlank() || cls == null) continue;
             // 5분류 외 값(모델 일탈)은 건너뛴다 — 해당 계정은 미판정 유지, 다음 실행 재시도
-            switch (cls) {
-                case "INFLUENCER" -> out.add(new Verdict(username, BeautyClass.INFLUENCER, n.path("reason").asString(null)));
-                case "FOREIGN_INFLUENCER" -> out.add(new Verdict(username, BeautyClass.FOREIGN_INFLUENCER, n.path("reason").asString(null)));
-                case "COMPANY" -> out.add(new Verdict(username, BeautyClass.COMPANY, n.path("reason").asString(null)));
-                case "BEAUTY_SERVICE" -> out.add(new Verdict(username, BeautyClass.BEAUTY_SERVICE, n.path("reason").asString(null)));
-                case "NOT_BEAUTY" -> out.add(new Verdict(username, BeautyClass.NOT_BEAUTY, n.path("reason").asString(null)));
-                default -> { }
-            }
+            BeautyClass parsed = switch (cls) {
+                case "INFLUENCER" -> BeautyClass.INFLUENCER;
+                case "FOREIGN_INFLUENCER" -> BeautyClass.FOREIGN_INFLUENCER;
+                case "COMPANY" -> BeautyClass.COMPANY;
+                case "BEAUTY_SERVICE" -> BeautyClass.BEAUTY_SERVICE;
+                case "NOT_BEAUTY" -> BeautyClass.NOT_BEAUTY;
+                default -> null;
+            };
+            if (parsed == null) continue;
+            out.add(new Verdict(username, parsed, n.path("reason").asString(null),
+                    normalizeBasis(n.path("basis").asString(null))));
         }
         return out;
+    }
+
+    /**
+     * class와 달리 basis는 알 수 없는 값이어도 판정을 버릴 이유가 없다 — 근거 표시만 비우고 판정은 살린다.
+     */
+    private static String normalizeBasis(String basis) {
+        if (basis == null) return null;
+        return switch (basis) {
+            case "CAPTION", "BIO", "CATEGORY_ONLY" -> basis;
+            default -> null;
+        };
     }
 
     /** 모델이 지시를 어기고 ```json 펜스로 감싼 경우 벗긴다. */

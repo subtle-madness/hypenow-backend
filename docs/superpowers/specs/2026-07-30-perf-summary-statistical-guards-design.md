@@ -246,6 +246,26 @@ excludedSummaryKeys()`·`excludedPostFields()`, `AccountAdCanon.withConfidence`�
 `CopyRules.VERSION`은 이 수정으로 올리지 않는다 — 운영에는 아직 버전 1로 생성된 행이 없다(운영
 미배포). test에 남은 버전 1 문구 5건은 test DB에서 직접 되돌린다(검증 담당 몫, 코드 변경 아님).
 
+### 3-3-2. test 실측 보완 (2026-07-30) — email 컬럼 유출과 "카피 무관 컬럼" 제외 원칙
+
+트랙 BB(PR #209)가 `account_summaries`에 `email`(인플루언서 소개글 정규식 파싱, 스펙
+2026-07-30-influencer-email-from-bio) 컬럼을 추가했다. §3-3의 "부작용 차단" 원칙(`summary`가
+`SELECT *`로 통째로 프롬프트에 들어간다)이 여기서 실제로 재현됐다 — `email`은 카피 생성 어디에도
+쓰이지 않는데, `SELECT *` 구조 때문에 아무 코드 변경 없이도 자동으로 프롬프트에 실려 **실
+연락처가 외부 LLM(Gemini) API로 전송**되고 있었다. `PerfConfidence.CONFIDENCE_COLUMNS`
+(always-strip 7컬럼)는 판정 재료 목록이자 `dataIncomplete()`(§7) 판정 근거이기도 해서, `email`
+처럼 판정과 무관한 컬럼을 여기 섞으면 "7개 전부 NULL=미러 갭"이라는 판정 기준이 오염된다(email은
+정상 계정에서도 소개글 미기재·정규식 미매치로 흔히 NULL이라 판정 재료로 부적합하다).
+
+그래서 판정 재료(`CONFIDENCE_COLUMNS`)와는 별개로 "카피 생성과 무관해 프롬프트에서 항상 제거할
+컬럼" 목록(`AccountAdCanon.PROMPT_IRRELEVANT_COLUMNS`)을 신설했다 — 현재는 `email` 하나뿐이다.
+`AccountAdCanon.withConfidence`가 만드는 프롬프트 입력 = always-strip 7컬럼 + 이 목록 +
+`excludedSummaryKeys()`(조건부 제거)를 합성해서 제거한 결과다. **원칙**: `account_summaries`에
+컬럼이 추가될 때마다 이 함정이 재발한다 — 새 컬럼이 카피 문구 생성에 쓰이지 않는다면 반드시
+`PROMPT_IRRELEVANT_COLUMNS`(또는 판정에 쓰인다면 `CONFIDENCE_COLUMNS`)에 명시적으로 추가해야
+한다. 이 결정을 코드 리뷰에만 의존하지 않도록, 프롬프트에 실리는 키 집합 전체를 하드코딩된
+기대 목록과 대조하는 회귀 테스트(`AccountAdCanonTest`)를 두어 새 컬럼이 조용히 새는 것을 막는다.
+
 ## 4. 기존 문구 재생성
 
 `AccountCopy`에는 버전 게이트가 **없다**. `ELIGIBLE_WHERE`의 재생성 조건은 ①분석 이력 없음
@@ -292,6 +312,9 @@ UPDATE이고 재생성이 실패한 계정은 문구가 빈 상태로 노출된�
 따른 **수동 적용**이다. 반면 미러 테이블 컬럼(V44)은 Flyway로 자동 배포된다. 이 둘의 배포 경로가
 다르다는 사실 자체가 순서를 어기면 실패하는 근본 원인이다.
 
+> **정정(2026-07-30)**: 위 "뷰=수동 런북" 전제는 틀렸다 — main 배포 CD가 뷰를 자동 적용한다.
+> 아래 실패 시나리오와 코드 가드는 여전히 유효하다. 상세는 이 섹션 끝의 정정 서브섹션 참고.
+
 **필수 순서**: ① 뷰(`analytics/views/10_account_detail.sql`) 운영 DB에 수동 적용 → ② 미러
 실행(`MirrorJob`, 뷰 컬럼을 읽어 `account_summaries`에 반영) → ③ 분석 잡(`AccountAnalysisJob`·
 `ClaudeBurstRunner`) 실행. **V44(신 컬럼 `ADD COLUMN`) 배포는 이 순서와 별개로 아무 때나 가능** —
@@ -335,6 +358,28 @@ CONFIDENCE_COLUMNS`, §3-3-0 재정의로 `median_views`·`median_er_pct`는 빠
 **코드 가드가 못 막는 부분**: 뷰를 아예 올리지 않으면 스킵이 무한히 반복된다 — 가드는 사고를
 안전하게(저품질 영구 고정 없이) 견디게 할 뿐, 뷰 적용 자체를 대신해주지 않는다. 배포 순서(①→②→③)
 준수는 여전히 운영자의 책임이다.
+
+### 정정 (2026-07-30) — 뷰 적용은 CD 자동화다, 수동 런북이 아니다
+
+위 "§3-1의 데이터 층은 Flyway가 아니라 운영 런북에 따른 수동 적용"이라는 전제는 **틀렸다.** 실측:
+
+- `.github/workflows/cd.yml`에 "분석 뷰 적용 (raw DB, 멱등)" 스텝이 있고, **07-20부터 main 배포마다
+  `analytics/views/*.sql`을 자동 적용**한다(07-30 최적화로 해시가 동일하고 뷰가 이미 있으면 스킵).
+- 트랙 Y 배포(main `5aa340cc`)에서 이 스텝이 08:45:52 UTC에 실제 실행됐고, 서버의
+  `~/deploy/views.sha256`가 `origin/main`의 뷰 파일 해시와 정확히 일치함을 확인했다.
+
+즉 **"운영자가 뷰 선적용을 잊는다"는 시나리오는 main 배포(CD) 경로에서는 발생하지 않는다** — 뷰
+적용이 배포 파이프라인에 편입돼 사람이 순서를 놓칠 여지가 없다.
+
+**다만 위 실패 시나리오와 코드 가드가 무의미해진 것은 아니다.** 아래 경로에서는 여전히 미러가
+뷰보다 먼저 도는 상황이 성립한다:
+
+- CD의 뷰 적용 스텝 자체가 실패하는 경우(멱등 적용이라도 DDL 에러·권한 문제 등은 배제되지 않는다).
+- 운영자가 수동으로 미러를 먼저 트리거하는 경우(analytics 어드민 `/ui`의 잡 트리거).
+- 뷰 적용 스텝의 순서·존재 여부가 main과 다를 수 있는 test/dev 배포 경로(`cd-test.yml`).
+
+따라서 `PerfConfidence.dataIncomplete()` 가드와 위 실패 시나리오 서술(①~⑤) 자체는 그대로 유효하다
+— 고쳐야 했던 것은 "뷰 적용이 사람 손에 달려 있다"는 전제뿐, 가드를 없애자는 뜻이 아니다.
 
 ## 8. test 실측 보완 (2026-07-30) — `LlmGuard` 전역 규칙과의 상충
 

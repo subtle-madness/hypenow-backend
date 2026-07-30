@@ -99,18 +99,19 @@ class RegistrationApiTest {
 	MockMvc mvc;
 
 	private static final String ACCOUNT_BODY = """
-			{"registrationKey":"rk-1","type":"ACCOUNT","username":"someuser",
+			{"registrationKey":"rk-1","type":"ACCOUNT","userId":7,"username":"someuser",
 			 "keywordRule":{"and":[],"any":["샤넬"],"exclude":[]},
 			 "expiresAt":"2027-01-01T00:00:00+09:00"}""";
 
 	private static final String POST_BODY = """
-			{"registrationKey":"rk-post","type":"POST","shortCode":"DbV7LgZsKG8",
+			{"registrationKey":"rk-post","type":"POST","userId":7,"shortCode":"DbV7LgZsKG8",
 			 "expiresAt":"2027-01-01T00:00:00+09:00"}""";
 
 	@BeforeEach
 	void setUp() {
 		mvc = MockMvcBuilders.webAppContextSetup(ctx).build();
 		db.update("DELETE FROM detected_candidate");
+		db.update("DELETE FROM alarm_event");
 		db.update("DELETE FROM target");
 		// 스냅샷·원형도 비운다 — 다른 테스트 클래스(StoreTest)가 남긴 행이 섞이면
 		// 아래 절대값 단언(1행·2행)이 실행 순서에 따라 흔들린다.
@@ -211,6 +212,26 @@ class RegistrationApiTest {
 				.andExpect(jsonPath("$.code").value("VALIDATION"));
 	}
 
+	/** userId가 없으면 알람 수신자를 영원히 알 수 없다 — 등록 자체를 막는다(계약 v2 §2-1 필수 필드). */
+	@Test
+	void userId_누락은_400_VALIDATION_target_미생성() throws Exception {
+		String bad = ACCOUNT_BODY.replace("\"userId\":7,", "");
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(bad))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isZero();
+	}
+
+	@Test
+	void 등록된_캠페인에_user_id가_실린다() throws Exception {
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
+				.andExpect(status().isCreated());
+		assertThat(db.queryForObject("""
+				SELECT user_id FROM target WHERE registration_key='rk-1'""", Long.class)).isEqualTo(7L);
+	}
+
 	@Test
 	void 계정_없음은_404_SUBJECT_NOT_FOUND_target_미생성() throws Exception {
 		hiker.notFound = true;
@@ -280,5 +301,42 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='DbV7LgZsKG8'""", Long.class))
 				.isEqualTo(1);
+	}
+
+	/** 게시물 직접 등록은 그 자리에서 수집이 시작된다 — 사용자가 방금 누른 행동이라 즉시 레인이다. */
+	@Test
+	void 게시물_등록은_즉시_레인_수집_시작_알람을_남긴다() throws Exception {
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
+				.andExpect(status().isCreated());
+
+		assertThat(db.queryForObject("""
+				SELECT event_type FROM alarm_event""", String.class)).isEqualTo("COLLECTION_STARTED");
+		assertThat(db.queryForObject("""
+				SELECT dispatch_after = occurred_at FROM alarm_event""", Boolean.class)).isTrue();
+		assertThat(db.queryForObject("SELECT user_id FROM alarm_event", Long.class)).isEqualTo(7L);
+	}
+
+	/** 계정 등록은 아직 수집 시작이 아니다(WATCHING) — 여기서 알람이 나가면 "시작"이 두 번 온다. */
+	@Test
+	void 계정_등록은_알람을_남기지_않는다() throws Exception {
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
+				.andExpect(status().isCreated());
+
+		assertThat(db.queryForObject("SELECT count(*) FROM alarm_event", Long.class)).isZero();
+	}
+
+	/** replay(200)는 새 캠페인이 아니다 — 재시도마다 알람이 쌓이면 사용자가 같은 메일을 반복해 받는다. */
+	@Test
+	void 같은_키_replay는_알람을_추가로_남기지_않는다() throws Exception {
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
+				.andExpect(status().isCreated());
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
+				.andExpect(status().isOk());
+
+		assertThat(db.queryForObject("SELECT count(*) FROM alarm_event", Long.class)).isEqualTo(1);
 	}
 }
