@@ -293,7 +293,7 @@ app_setting 키: `analytics.hype-anchor-acct-{p05,p50,p90,p99}`(미설정/0이�
 **정렬만 반올림 전 raw 평균(`avg_hype_raw`, 신설 컬럼)을 따르게 한다.** 표시값이 동점이어도
 정렬은 정확하고, 계정 수가 늘어 상위 1%가 더 조밀해져도(코퍼스가 자라 재발할 수 있는 유형의
 결함이 아니라 "정수 100개 구간에 몇 개 계정이 몰리는가"의 문제라서) 재발하지 않는다.
-`v_account_summaries`에 `avg_hype_raw numeric`을 추가하고(Flyway V47, contract-analysis
+`v_account_summaries`에 `avg_hype_raw numeric`을 추가하고(Flyway V49, contract-analysis
 `AccountSummary.avgHypeRaw` — 둘 다 `CREATE OR REPLACE VIEW`가 기존 컬럼 사이 삽입을 지원하지
 않아 맨 끝에 추가), was `V1InfluencerDiscoveryRepository.orderBy()`의 `sort=hype` 정렬을
 `su.avg_hype_score` → `su.avg_hype_raw`로 바꿨다. API 응답에는 `avg_hype_raw`를 노출하지

@@ -147,7 +147,7 @@ final class AccountAdCanon {
 	 * 무관하면 여기 추가해야 한다(AccountSummaryStatGuardMappingTest 유사 취지의 재발 방지는
 	 * PerfConfidenceTest의 프롬프트 키 집합 고정 테스트 참조).
 	 *
-	 * <p>{@code avg_hype_raw}: 발굴 목록 정렬 전용 raw 평균(V47, 스펙
+	 * <p>{@code avg_hype_raw}: 발굴 목록 정렬 전용 raw 평균(V49, 스펙
 	 * 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9-6) — 표시는 avg_hype_score가
 	 * 대신하고 이 값은 순수 정렬 키라 카피 문구와 무관하다. 판정 재료도 아니므로
 	 * CONFIDENCE_COLUMNS가 아니라 여기.
