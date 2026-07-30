@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.service.CollectService;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -40,8 +41,19 @@ class RegistrationApiTest {
 		volatile boolean postWithoutOwner = false;
 		/** 프로필·clips는 성공하고 열거(medias)만 터지는 부분 실패 — 이미 나간 콜의 원형이 살아남는지 본다. */
 		volatile boolean mediasFail = false;
+		/** 게시물 0건 계정 — 프로필은 200이지만 medias 열거가 404 "Entries not found"를 준다. */
+		volatile boolean mediasNotFound = false;
 		/** POST 등록 직후 즉시 댓글 수집(best-effort)이 실패해도 등록이 성공하는지 보는 스위치. */
 		volatile boolean commentsFail = false;
+		/**
+		 * 응답이 계속 더 있다고(has_more_comments=true) 말하는 댓글 픽스처로 전환 — 등록이
+		 * registration-comment-pages(1)만 쓰는지, comment-pages(스윕용, 3)로 새지 않는지를
+		 * 콜 횟수로 검증하기 위한 스위치. comments.json은 has_more_comments=false라 페이지
+		 * 설정값과 무관하게 항상 1콜로 끝나 이 분리를 검증할 수 없다.
+		 */
+		volatile boolean commentsHasMorePages = false;
+		/** /v2/media/comments 콜 횟수 — 등록/스윕 페이지 수 분리 검증용. */
+		volatile int commentsCalls = 0;
 
 		/** 단건 응답에서 user만 빠진 변형 — 소유 계정을 알 수 없어 등록도 스냅샷 적재도 불가한 셰이프. */
 		private static final String POST_WITHOUT_OWNER = """
@@ -69,14 +81,28 @@ class RegistrationApiTest {
 				if (mediasFail) {
 					throw new HikerFetchException("열거 실패");
 				}
+				if (mediasNotFound) {
+					throw new SubjectNotFoundException("404 Entries not found");
+				}
 				return fixture("medias.json");
 			}
 			if (path.startsWith("/v2/user/clips")) {
 				return fixture("clips.json");
 			}
 			if (path.startsWith("/v2/media/comments")) {
+				commentsCalls++;
 				if (commentsFail) {
 					throw new HikerFetchException("댓글 수집 실패");
+				}
+				if (commentsHasMorePages) {
+					// pk를 콜 순번으로 바꿔 무진전 가드에 걸리지 않게 한다 — 페이지 수 설정이 실제로
+					// 콜 횟수를 좌우하는지만 보면 되므로 다른 필드는 최소로 채운다.
+					return """
+							{"response":{"comments":[
+							{"pk":"multi-%d","text":"댓글","comment_like_count":1,
+							 "created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}
+							],"has_more_comments":true},"next_page_id":"cursor-%d"}"""
+							.formatted(commentsCalls, commentsCalls);
 				}
 				return fixture("comments.json");
 			}
@@ -104,6 +130,7 @@ class RegistrationApiTest {
 	@Autowired WebApplicationContext ctx;
 	@Autowired JdbcTemplate db;
 	@Autowired SwitchableHiker hiker;
+	@Autowired CollectService collectService;
 	MockMvc mvc;
 
 	private static final String ACCOUNT_BODY = """
@@ -131,7 +158,10 @@ class RegistrationApiTest {
 		hiker.privateAccount = false;
 		hiker.postWithoutOwner = false;
 		hiker.mediasFail = false;
+		hiker.mediasNotFound = false;
 		hiker.commentsFail = false;
+		hiker.commentsHasMorePages = false;
+		hiker.commentsCalls = 0;
 	}
 
 	/**
@@ -162,6 +192,27 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("SELECT count(*) FROM target", Long.class)).isZero();
 		// 프로필 스냅샷도 없다 — 수집 1회분은 SnapshotWriter가 한 트랜잭션으로 묶어 통째로 커밋한다.
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isZero();
+	}
+
+	/**
+	 * 게시물 0건 계정 — Hiker는 프로필(200)은 정상 응답하지만 열거(medias)에 404
+	 * {"detail":"Entries not found"}를 준다(릴스 0건 계정이 /v2/user/clips에서 겪는 것과 동일 규칙).
+	 * HikerClient.fetchRecentPosts가 이 404를 빈 리스트로 강등하지 않으면 SubjectNotFoundException이
+	 * 전파돼 등록이 404 SUBJECT_NOT_FOUND로 죽고 target 행이 생기지 않는다(실제 계정 wo_om3 재현 사례).
+	 */
+	@Test
+	void 게시물_0건_계정도_WATCHING으로_등록되고_target_행이_생긴다() throws Exception {
+		hiker.mediasNotFound = true;
+
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.status").value("WATCHING"))
+				.andExpect(jsonPath("$.firstSnapshot.recentPostCount").value(0));
+		assertThat(db.queryForObject("SELECT count(*) FROM target WHERE registration_key='rk-1'", Long.class))
+				.isEqualTo(1);
+		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
+		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot", Long.class)).isZero();
 	}
 
 	@Test
@@ -340,6 +391,36 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_comment WHERE short_code='DbV7LgZsKG8'""", Long.class))
 				.isEqualTo(6);   // comments.json 픽스처의 유효 댓글(top-level) 개수
+	}
+
+	/**
+	 * 등록/스윕 페이지 수 분리(07-31) — application.yml의 comment-pages(스윕용)는 3이지만
+	 * 등록은 registration-comment-pages(1)만 써야 한다. has_more_comments=true로 계속 더
+	 * 있다고 응답해도 등록 경로에서 콜이 1회로 끝나는지로 이 분리가 실제 배선까지 지켜지는지 본다.
+	 */
+	@Test
+	void 게시물_등록의_댓글_수집은_스윕_페이지_수와_무관하게_1페이지만_부른다() throws Exception {
+		hiker.commentsHasMorePages = true;
+
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
+				.andExpect(status().isCreated());
+
+		assertThat(hiker.commentsCalls).isEqualTo(1);
+	}
+
+	/**
+	 * 위 테스트의 반대쪽 — application.yml의 comment-pages(스윕용)=3이 실 배선된 CollectService
+	 * 빈에 실제로 들어갔는지 확인한다. 등록 경로가 1로 멈추는 것만 봐서는 "설정을 안 읽어서 우연히
+	 * 1"인지 "3인데 등록만 1로 분리된 것"인지 구별이 안 된다 — 스윕용 메서드를 직접 호출해 3을 본다.
+	 */
+	@Test
+	void 스윕용_댓글_수집은_설정된_comment_pages_3을_쓴다() {
+		hiker.commentsHasMorePages = true;
+
+		collectService.collectComments("DbV7LgZsKG8", "sephora");
+
+		assertThat(hiker.commentsCalls).isEqualTo(3);
 	}
 
 	/** 댓글 수집은 best-effort다 — 실패해도 등록 자체는 201로 성공해야 한다(당일 스윕이 백스톱). */

@@ -13,7 +13,12 @@ package com.celfit.monitoring.hiker;
  *
  * <p>thumbnailUrl은 post_meta 표시 메타용(계약 §3 post_meta) — image_versions2.candidates[0].url.
  * 인스타 CDN 서명 만료가 있어 스윕마다 갱신 대상이다(썸네일 자체는 스냅샷 지표가 아니다).
+ *
+ * <p>ownerFullName·ownerProfilePicUrl은 **단건 응답(/v2/media/by/code)에만** 실값이 실려 온다
+ * (user.full_name·user.profile_pic_url). 계정 열거 경로(/v2/user/medias)에서도 같은 노드라 파싱은
+ * 되지만 소비하지 않는다 — 응답 셰이프에 따라 둘 다 null일 수 있다(트랙 II).
  */
-public record PostInfo(String shortCode, String username, String contentType, String caption, String thumbnailUrl,
+public record PostInfo(String shortCode, String username, String ownerFullName, String ownerProfilePicUrl,
+		String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long saves,
 		Long shares, Long reposts, String rawJson, boolean viewsTrusted) {}

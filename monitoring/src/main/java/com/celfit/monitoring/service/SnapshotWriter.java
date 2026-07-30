@@ -57,9 +57,22 @@ public class SnapshotWriter {
 		profileMeta.upsert(username, profile.fullName(), profile.profilePicUrl(), lastUploadedAt(posts));
 	}
 
+	/**
+	 * POST 등록분은 계정 갈래({@link #saveAccount}의 {@code profileMeta.upsert})를 영구히 타지 않는다
+	 * ({@code needsEnumeration}이 ACCOUNT 타입 target 존재를 전제로 하기 때문, 트랙 II) — 여기서 안
+	 * 채우면 profile_meta 행이 아예 안 생긴다. 단건 응답(/v2/media/by/code)에 owner 필드가 이미
+	 * 실려 오므로 Hiker 콜은 늘지 않는다(제로 콜 원칙). 스윕이 매일 이 경로를 타므로 인스타 CDN
+	 * 서명 만료(~4일, docs/superpowers/specs/2026-07-21-image-archive-design.md:7)도 자동
+	 * 갱신된다 — monitoring의 profile_meta는 analytics 이미지 아카이브(트랙 J) 대상이 아니라서
+	 * 이 갱신이 유일한 만료 방어다.
+	 *
+	 * <p>{@code savePostRow}(공용 private, saveAccount의 게시물 순회에서도 호출됨)가 아니라 여기서
+	 * upsert하는 이유: savePostRow에 넣으면 saveAccount 한 번에 게시물 수만큼 중복 upsert가 돈다.
+	 */
 	@Transactional
 	public void savePost(LocalDate on, PostInfo post) {
 		savePostRow(on, post);
+		profileMeta.upsertOwnerFromPost(post.username(), post.ownerFullName(), post.ownerProfilePicUrl());
 	}
 
 	/**

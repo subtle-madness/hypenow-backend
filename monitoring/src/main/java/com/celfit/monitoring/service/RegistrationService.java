@@ -96,8 +96,9 @@ public class RegistrationService {
 		// 일어나 같은 런에서 수집되므로 이 공백이 없다 — POST 모드에서만 발생).
 		// best-effort: 실패해도 등록은 성공시킨다 — 당일 스윕이 이미 백스톱이라 손실은
 		// "현행 동작(공백 24시간)으로 되돌아감"뿐이다. 게시물 스냅샷이 커밋된 뒤에만 시도한다.
+		// 등록은 1페이지만 부른다(collectCommentsForRegistration) — 나머지는 그날 스윕(3페이지)이 채운다.
 		try {
-			collect.collectComments(shortCode, post.username());
+			collect.collectCommentsForRegistration(shortCode, post.username());
 		} catch (RuntimeException e) {
 			log.warn("댓글 수집 실패(격리) — 게시물 {}: {}", shortCode, e.toString());
 		}
