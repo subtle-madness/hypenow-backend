@@ -8,10 +8,12 @@ import java.util.List;
  * id는 handle 그대로(6.4 확정 준용). email은 biography 정규식 파싱(V46, 스펙
  * 2026-07-30-influencer-email-from-bio) — 매치 없으면 null.
  * effectiveFollowers·avgViews·er는 산출 불가(ER·릴스 없음)면 null, bio·tagline 부재는 빈 문자열.
- * hypeScore: 계정 하입 스코어(최근창 콘텐츠 출력 매핑 반영 평균, 0~100) — 점수 가능 콘텐츠 없으면
- * null(스펙 2026-07-29-influencer-avg-hype-score). 2026-07-30부터 소수(BigDecimal) —
- * account_summaries.avg_hype_score_precise를 그대로 싣는다(스펙
- * 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10). 자리수 조정은 프론트 몫.
+ * hypeScore: 계정 하입 스코어(최근창 콘텐츠 출력 매핑 점수 합 / 최근창 크기 고정 분모, 0~100) —
+ * 점수 가능 콘텐츠 없으면 null(스펙 2026-07-29-influencer-avg-hype-score). 2026-07-30부터
+ * 소수(BigDecimal) — account_summaries.avg_hype_score_precise를 그대로 싣는다(스펙
+ * 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10). 2026-07-31부터 분모가 창에 실제로
+ * 든 콘텐츠 수가 아니라 창 크기로 고정돼(스펙 2026-07-31-account-score-fixed-denominator-design.md)
+ * 단순 평균이 아니다 — 수집 누락으로 창을 못 채운 계정은 자연히 감점된다. 자리수 조정은 프론트 몫.
  */
 public record InfluencerCard(String id, String handle, String displayName, String profileImageUrl,
 		Long followers, Long effectiveFollowers, Long postsCount, Long followingCount, String bio,

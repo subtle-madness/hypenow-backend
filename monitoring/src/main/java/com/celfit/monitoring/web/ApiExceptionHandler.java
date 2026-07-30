@@ -5,6 +5,7 @@ import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.InvalidStateException;
+import com.celfit.monitoring.service.SweepAlreadyRunningException;
 import com.celfit.monitoring.service.TargetNotFoundException;
 import com.celfit.monitoring.service.ValidationException;
 import org.slf4j.Logger;
@@ -67,6 +68,13 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(InvalidStateException.class)
 	public ResponseEntity<ApiError> handleInvalidState(InvalidStateException e) {
 		return body(HttpStatus.CONFLICT, "INVALID_STATE", e.getMessage());
+	}
+
+	/** 스윕 수동 트리거가 이미 실행 중인 스윕과 겹쳤다 — SweepGuard 획득 실패. */
+	@ExceptionHandler(SweepAlreadyRunningException.class)
+	public ResponseEntity<ApiError> handleSweepAlreadyRunning(SweepAlreadyRunningException e) {
+		log.info("스윕 중복 트리거 차단");
+		return body(HttpStatus.CONFLICT, "SWEEP_ALREADY_RUNNING", "이미 스윕이 실행 중입니다. 완료 후 다시 시도해 주세요.");
 	}
 
 	/** Hiker 일시 오류 — was는 그대로 실패를 전달하고, 재시도는 같은 registrationKey로 사용자 몫(계약 §4). */

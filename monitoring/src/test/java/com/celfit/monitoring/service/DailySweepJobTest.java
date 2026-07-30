@@ -264,6 +264,7 @@ class DailySweepJobTest {
 	JdbcTemplate db;
 	TargetRepository targets;
 	SweepRunRepository sweepRuns;
+	SnapshotRepository snapshots;
 	FakeHiker hiker;
 	DailySweepJob job;
 	AlarmRecorder alarms;
@@ -277,11 +278,11 @@ class DailySweepJobTest {
 		sweepRuns = new SweepRunRepository(db);
 		hiker = new FakeHiker();
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var snapshotRepo = new SnapshotRepository(db);
-		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshotRepo);
-		var writer = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1);
-		job = new DailySweepJob(targets, collect, alarms, sweepRuns, 3, Duration.ZERO);
+		snapshots = new SnapshotRepository(db);
+		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
+		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
+		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO);
 	}
 
 	private List<String> alarmTypes() {
@@ -489,20 +490,29 @@ class DailySweepJobTest {
 		assertThat(statusOf(fresh)).isEqualTo(TargetStatus.TRACKING);
 	}
 
-	/** POST 등록분만 있는 계정은 열거할 이유가 없다 — 프로필·열거 콜이 나가면 그대로 낭비다. */
+	/**
+	 * POST 등록분만 있는 계정은 열거할 이유가 없다 — 열거(medias·clips)는 그대로 낭비라 안 탄다.
+	 * 다만 프로필 콜은 예외다: profile_snapshot 행이 아직 없어 팔로워 1회 수집(트랙 II 후속, 사용자
+	 * 결정)이 이 스윕에서 1회 나간다 — {@link #profile_snapshot_행이_이미_있으면_프로필_콜이_다시_나가지_않는다}가
+	 * "1회만"의 반대쪽 반쪽을 검증한다.
+	 */
 	@Test
-	void 게시물_단독_캠페인은_열거_없이_단건만_수집한다() {
+	void 게시물_단독_캠페인은_열거_없이_단건과_팔로워_1회_수집만_한다() {
 		hiker.standalonePost("P111", "postowner", "게시물 등록 캡션");
 		targets.insert(TargetType.POST, 7L, "postowner", "P111", null,
 				TargetStatus.TRACKING, "P111", "rk-post", FUTURE);
 
 		job.run();
 
-		assertThat(hiker.profileCalls).isZero();
 		assertThat(hiker.mediasCalls).isZero();
+		assertThat(hiker.clipsCalls).isZero();
 		assertThat(hiker.postCalls).isEqualTo(1);
+		assertThat(hiker.profileCalls).isEqualTo(1);
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='P111'""", Long.class)).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT followers FROM profile_snapshot WHERE username='postowner'", Long.class))
+				.isEqualTo(1000L);   // FakeHiker.profileJson의 follower_count 고정값
 	}
 
 	// ⑤ 실패 격리
@@ -599,10 +609,9 @@ class DailySweepJobTest {
 		hiker = new FakeHiker();
 		hiker.account("flip_user", "555", new FakePost("REV1", "Rare Beginnings 복귀", AFTER));
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var snapshotRepo = new SnapshotRepository(db);
-		var writer = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1);
-		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, 3, Duration.ZERO);
+		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
+		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO);
 
 		revivedJob.run();
 
@@ -934,11 +943,10 @@ class DailySweepJobTest {
 	void sweep_run은_도중_크래시시_ok가_true로_남지_않는다() {
 		var crashingTargets = new CrashingExpireTargetRepository(db);
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var snapshotRepo = new SnapshotRepository(db);
-		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshotRepo);
-		var writer = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
-		var crashCollect = new CollectService(client, writer, new CommentRepository(db), 1, 1);
-		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, 3, Duration.ZERO);
+		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
+		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
+		var crashCollect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3, Duration.ZERO);
 
 		assertThatThrownBy(crashingJob::run).isInstanceOf(RuntimeException.class);
 
@@ -1003,12 +1011,11 @@ class DailySweepJobTest {
 	@Test
 	void 알람_적재가_실패해도_자동_전환은_완료되고_재시도_라운드에_들어가지_않는다() {
 		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
-		var snapshotRepo = new SnapshotRepository(db);
-		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshotRepo);
+		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshots);
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
-		var throwingWriter = new SnapshotWriter(snapshotRepo, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
-		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1);
-		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, 3, Duration.ZERO);
+		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
+		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1, 1);
+		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 
 		throwingJob.run();
@@ -1100,5 +1107,100 @@ class DailySweepJobTest {
 		// 유저 스코프가 없어 배제 판단 자체가 불가 — 기존 동작대로 A가 채택된다.
 		assertThat(trackedOf(a)).isEqualTo("A");
 		assertThat(statusOf(a)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	// ⑭ 팔로워 1회 수집(트랙 II 후속, 사용자 결정) — POST 등록분만 있는 계정에 profile_snapshot 행이
+	// 아직 없을 때만 프로필을 1콜 조회한다. 매일 갱신하지 않고, 실패해도 스윕·캠페인 생존에 영향을 주지 않는다.
+
+	/** "1회만"의 반대쪽 반쪽 — 이미 채워진 계정은 다시 프로필 콜을 태우지 않는다. */
+	@Test
+	void profile_snapshot_행이_이미_있으면_프로필_콜이_다시_나가지_않는다() {
+		hiker.standalonePost("P222", "postowner2", "게시물 등록 캡션");
+		targets.insert(TargetType.POST, 7L, "postowner2", "P222", null,
+				TargetStatus.TRACKING, "P222", "rk-post2", FUTURE);
+
+		job.run();
+		assertThat(hiker.profileCalls).isEqualTo(1);   // 첫 스윕 — 아직 행이 없어 1회 채운다
+
+		job.run();
+
+		// 둘째 스윕에서도 postCalls(단건 게시물 보강)는 매일 그대로 나가지만, 프로필 콜은 늘지 않는다.
+		assertThat(hiker.profileCalls).isEqualTo(1);
+		assertThat(hiker.postCalls).isEqualTo(2);
+	}
+
+	/**
+	 * best-effort 검증(가장 중요한 회귀 방어) — 프로필 조회가 어떤 예외로 실패해도 스윕은 계속되고,
+	 * 그 계정의 캠페인은 hidden 전이되지 않는다. POST 등록분의 생존 판정은 지금까지처럼 단건 게시물
+	 * 수집 성공 여부 하나로만 유지된다 — 프로필 콜 실패가 새 고장 경로가 되면 안 된다.
+	 */
+	@Test
+	void 프로필_조회가_SUBJECT_NOT_FOUND로_실패해도_스윕은_계속되고_캠페인은_hidden_전이되지_않는다() {
+		hiker.standalonePost("P333", "profile404_user", "게시물 등록 캡션")
+				.missingAccount("profile404_user");
+		long post = targets.insert(TargetType.POST, 7L, "profile404_user", "P333", null,
+				TargetStatus.TRACKING, "P333", "rk-post3", FUTURE);
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(1);   // 게시물 단건 수집은 프로필 실패와 무관하게 성공한다
+		assertThat(statusOf(post)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(hiddenOf(post)).isFalse();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM alarm_event WHERE target_id=?", Long.class, post)).isEqualTo(0L);
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM profile_snapshot WHERE username='profile404_user'", Long.class)).isZero();
+	}
+
+	@Test
+	void 프로필_조회가_PRIVATE_ACCOUNT로_실패해도_스윕은_계속되고_캠페인은_hidden_전이되지_않는다() {
+		hiker.standalonePost("P444", "profileprivate_user", "게시물 등록 캡션")
+				.privateAccount("profileprivate_user");
+		long post = targets.insert(TargetType.POST, 7L, "profileprivate_user", "P444", null,
+				TargetStatus.TRACKING, "P444", "rk-post4", FUTURE);
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(1);
+		assertThat(statusOf(post)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(hiddenOf(post)).isFalse();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM alarm_event WHERE target_id=?", Long.class, post)).isEqualTo(0L);
+	}
+
+	@Test
+	void 프로필_조회가_일반_오류로_실패해도_스윕은_계속되고_캠페인은_hidden_전이되지_않는다() {
+		hiker.standalonePost("P555", "profilebroken_user", "게시물 등록 캡션")
+				.brokenAccount("profilebroken_user");
+		long post = targets.insert(TargetType.POST, 7L, "profilebroken_user", "P555", null,
+				TargetStatus.TRACKING, "P555", "rk-post5", FUTURE);
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(1);
+		assertThat(statusOf(post)).isEqualTo(TargetStatus.TRACKING);
+		assertThat(hiddenOf(post)).isFalse();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM alarm_event WHERE target_id=?", Long.class, post)).isEqualTo(0L);
+	}
+
+	/**
+	 * ACCOUNT 타입이 섞인 계정은 기존대로 collectAccount(열거 포함)만 타고, 프로필 전용 경로가
+	 * 중복 호출되지 않는다 — profileCalls가 1을 넘으면 이 계정에 콜이 두 배로 나간다는 뜻이다.
+	 */
+	@Test
+	void ACCOUNT_타입이_섞인_계정은_열거_경로만_타고_프로필_전용_경로가_중복_호출되지_않는다() {
+		hiker.account("mixeduser", "999", new FakePost("MX1", "무관 게시물", AFTER));
+		watching("mixeduser", any("절대없는키워드zz"), "rk-mixed-a", FUTURE);
+		targets.insert(TargetType.POST, 7L, "mixeduser", "MX1", null,
+				TargetStatus.TRACKING, "MX1", "rk-mixed-p", FUTURE);
+
+		job.run();
+
+		assertThat(hiker.profileCalls).isEqualTo(1);
+		assertThat(hiker.mediasCalls).isEqualTo(1);
+		assertThat(hiker.postCalls).isZero();   // MX1은 이미 열거에 포함돼 단건 보강이 필요 없다
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM profile_snapshot WHERE username='mixeduser'", Long.class)).isEqualTo(1);
 	}
 }

@@ -58,7 +58,23 @@ public class HikerClient {
 		Map<String, PostInfo> byCode = new LinkedHashMap<>();
 		String cursor = null;
 		for (int page = 0; page < wanted; page++) {
-			String body = http.get("/v2/user/medias?user_id=" + enc(userId) + pageParam(cursor));
+			String body;
+			try {
+				body = http.get("/v2/user/medias?user_id=" + enc(userId) + pageParam(cursor));
+			} catch (SubjectNotFoundException e) {
+				// Hiker는 열거할 엔트리가 없으면 200 빈 배열이 아니라 404 {"detail":"Entries not found"}를
+				// 준다(릴스 0건 계정의 /v2/user/clips와 동일 규칙 — fetchClipPlays는 이미 이걸 삼킨다).
+				// collectAccount는 fetchProfile이 200으로 계정 존재를 확인한 직후에만 이 경로를 타므로,
+				// 여기서의 404는 "계정 부재"가 아니라 "열거할 게시물이 없음"이다. 계정 삭제·개명은
+				// fetchProfile 단계에서 이미 SubjectNotFoundException으로 걸러진다.
+				//
+				// page 구분 없이 동일하게 처리한다: page==0 404는 "게시물 0건", page>0 404는 커서가
+				// 끝에 도달했다는 신호일 수 있다 — 어느 쪽이든 지금까지 모은 결과(0건 또는 이전 페이지분)를
+				// 그대로 반환하고 열거만 조용히 중단하는 것이 안전하다(커서 미전진 가드와 같은 성격의
+				// "조용한 종료" — 예외로 계정 전체 등록·스윕을 실패시키지 않는다).
+				log.info("게시물 열거 404 — user_id {} {}페이지, 게시물 없음/커서 종료로 간주하고 중단", userId, page + 1);
+				break;
+			}
 			JsonNode root = root(body);
 			int before = byCode.size();
 			for (JsonNode item : items(root)) {
@@ -279,6 +295,9 @@ public class HikerClient {
 		JsonNode m = node.has("media") ? node.path("media") : node;   // clips 열거는 한 겹 더 감쌈
 		String code = m.path("code").asString();
 		String username = usernameHint != null ? usernameHint : m.path("user").path("username").asString(null);
+		// user 노드에서 같이 뽑는다(제로 콜 원칙, 트랙 II) — 단건 응답에만 실값, 열거 경로는 소비처 없음.
+		String ownerFullName = m.path("user").path("full_name").asString(null);
+		String ownerProfilePicUrl = m.path("user").path("profile_pic_url").asString(null);
 		// media_type==2는 일반 비디오 피드도 포함 → 릴스 판별은 product_type(findings §4)
 		String contentType = "clips".equals(m.path("product_type").asString("")) ? "REELS" : "FEED";
 		// v2는 caption.text, v1은 caption_text — caption 자체가 null일 수 있다
@@ -286,7 +305,7 @@ public class HikerClient {
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
 		// view_count 키는 v2 응답에 부재 → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
 		Long views = firstLong(m, "play_count", "ig_play_count");
-		return new PostInfo(code, username, contentType, caption, thumbnailUrl(m),
+		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, contentType, caption, thumbnailUrl(m),
 				firstLong(m, "taken_at"),
 				firstLong(m, "like_count"), firstLong(m, "comment_count"),
 				views != null ? views : clipPlays.get(code),

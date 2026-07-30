@@ -282,8 +282,19 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 | `updated_at` | timestamptz | 마지막 갱신 시각 |
 
 - 계정 수집(등록 동기 수집·일일 스윕)마다 upsert — 스냅샷과 달리 이력 없이 최신 1행.
-- POST 등록만 있는 계정은 프로필 콜을 안 하므로 행이 없을 수 있다 — was는 없으면
-  전부 null로 폴백(프론트 계약상 3필드 모두 nullable).
+- **POST 등록만 있는 계정도 07-30(트랙 II)부터 `display_name`·`profile_image_url`은 채워진다** —
+  단건 응답(`/v2/media/by/code`)의 `user.full_name`·`user.profile_pic_url`을 게시물 수집(등록 동기
+  수집·일일 스윕 단건 보강) 경로에서 제로 콜로 파싱해 upsert(Hiker 콜 추가 없음). **다만
+  `last_uploaded_at`은 이 경로로 채울 수 없어 POST 전용 계정에서는 계속 null로 남는다** —
+  단건 응답은 게시물 1건의 게시일만 알 뿐 계정 열거 전체의 최댓값(계정 갈래의 정의)을 알 수 없다.
+- **`followers`는 07-31(트랙 II 후속)부터 POST 전용 계정에서도 채워지되, "최초 1회만" 수집되고
+  이후 갱신되지 않는다** — `DailySweepJob`이 `profile_snapshot` 행이 아직 없는 계정에 한해
+  프로필을 1콜(열거 없음) 조회해 채운다. was가 서빙하는 `followers`는 시계열이 아니라 최신 1행
+  단일값이라 매일 갱신할 실익이 없어 의도적으로 최초 수집 시점 값에 고정한다(계정당 평생 약
+  1콜). 이 조회는 best-effort라 실패해도 캠페인 생존 판정에 영향이 없고, 실패한 계정은 다음
+  스윕에서 (여전히 행이 없으므로) 다시 시도된다.
+  was는 세 필드(`display_name`·`profile_image_url`·`followers`) 모두, 그리고 `last_uploaded_at`도
+  여전히 null 가능성을 전제해야 한다(프론트 계약상 nullable 유지).
 
 ### post_meta — 추적 게시물 표시 메타 (v2.2 · 게시물 단위 최신 1행, 캠페인 간 공유)
 

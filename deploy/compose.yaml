@@ -12,9 +12,20 @@ x-logging: &logging
 # 양쪽 소속: caddy(운영·test 도메인 라우팅), postgres-raw(test-analytics의 raw 읽기 —
 # analytics_dev 읽기 전용 계정). test 서비스 정의는 compose.test.yaml 참조.
 #
-# monitoring-net은 prod 안의 한 겹 더 좁은 통제 — 명령 API 접근을 was↔monitoring으로
-# 한정한다(스펙 결정 11). 토큰 없음: 이 네트워크 미소속 컨테이너(test 스택 포함)는
-# monitoring 호스트명 해석부터 실패한다. test 대응물은 compose.test.yaml의 test-monitoring-net.
+# monitoring-net은 명령 API 접근을 was↔monitoring으로 한정하려는 의도였다(스펙 결정 11).
+# ⚠️ 실제로는 그 격리가 성립하지 않는다 — monitoring 자신이 postgres 접속 때문에 prod에도
+# 소속돼 있어(아래 monitoring 서비스 networks), prod에 붙은 컨테이너는 전부 monitoring을
+# 해석·도달할 수 있다. 07-31 실측:
+#   $ docker exec deploy-caddy-1 getent hosts monitoring
+#   172.21.0.9  monitoring
+# 따라서 monitoring API를 외부로부터 막는 실질 방어는 네트워크 격리가 아니라 ①호스트 포트
+# 미노출 ②Caddyfile에 monitoring 라우트 부재, 이 두 가지다. 여기에 의존하는 판단을 할 때는
+# 이 사실을 전제로 할 것(스윕 수동 트리거는 그래서 프로퍼티 게이트를 2차 방어로 둔다 —
+# monitoring.sweep.manual-trigger-enabled, 기본 off).
+# monitoring-net이 실제로 차단하는 건 prod 밖(test 스택)뿐인데, 그건 prod↔test 분리가
+# 이미 하는 일이다. 격리를 의도대로 되살리려면 postgres를 monitoring-net에 넣고 monitoring을
+# prod에서 빼야 한다(미실행 — 배포 영향 검토 필요).
+# test 대응물은 compose.test.yaml의 test-monitoring-net.
 networks:
   prod:
   test:
@@ -225,8 +236,9 @@ services:
       HIKER_API_KEY: ${HIKER_API_KEY}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
-      # 알람 발송(07-30~) — 기본 비활성. 개통 절차는 README §13-5
-      MONITORING_ALARM_DISPATCH_CRON: "-"
+      # 알람 발송(07-31 개통) — 5분 간격. 개통 절차는 README §13-5
+      # 수신자는 .env의 ALARM_ALLOWED_RECIPIENTS 허용목록으로 제한한다(fail-OPEN이므로 비우면 전원 발송).
+      MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 수신자 해석용 analysis DB 읽기 전용(두 객체만 GRANT — 계약 v2 §6)
       MONITORING_ALARM_READER_URL: jdbc:postgresql://postgres:5432/analysis

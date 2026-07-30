@@ -8,6 +8,7 @@ import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.ExpiredTarget;
 import com.celfit.monitoring.store.FailingTarget;
+import com.celfit.monitoring.store.SnapshotRepository;
 import com.celfit.monitoring.store.SweepRunRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
@@ -54,17 +55,19 @@ public class DailySweepJob {
 	private final CollectService collect;
 	private final AlarmRecorder alarms;
 	private final SweepRunRepository sweepRuns;
+	private final SnapshotRepository snapshots;
 	private final int retryRounds;
 	private final Duration retryInterval;
 
 	public DailySweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
-			SweepRunRepository sweepRuns,
+			SweepRunRepository sweepRuns, SnapshotRepository snapshots,
 			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
 			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval) {
 		this.targets = targets;
 		this.collect = collect;
 		this.alarms = alarms;
 		this.sweepRuns = sweepRuns;
+		this.snapshots = snapshots;
 		this.retryRounds = retryRounds;
 		this.retryInterval = retryInterval;
 	}
@@ -76,7 +79,18 @@ public class DailySweepJob {
 	 * 남기고 예외를 그대로 재전파한다 — try/finally라 별도 catch 없이도 이 순서가 보장된다.
 	 */
 	public void run() {
-		Long runId = startSweepRun();
+		runWithId(startSweepRun());
+	}
+
+	/**
+	 * 이미 발급된 sweep_run id로 스윕 1회를 실행 — {@link #run()}의 try/finally 격리 계약(정상
+	 * 완주 ok=true, 예외 이탈 ok=false 후 재전파)과 완전히 동일하다. 시작 기록만 호출부가 먼저 얻어둔
+	 * 경우를 위해 분리했다: 수동 트리거(SweepCommandService)가 202 응답 본문에 runId를 실으려면
+	 * sweep_run INSERT가 HTTP 응답 전에 동기로 끝나야 하는데, {@link #run()}은 그 값을 밖으로
+	 * 내주지 않기 때문이다. protected인 이유는 테스트(SweepControllerTest)가 스윕 실행 타이밍
+	 * (동시 실행 가드 검증)을 통제하려고 오버라이드하기 때문 — 웹 계층 테스트라 다른 패키지에서 상속한다.
+	 */
+	protected void runWithId(Long runId) {
 		boolean ok = false;
 		try {
 			runSweep();
@@ -86,7 +100,8 @@ public class DailySweepJob {
 		}
 	}
 
-	private Long startSweepRun() {
+	/** package-private — SweepCommandService가 수동 트리거 응답에 실을 runId를 동기로 미리 받아간다. */
+	Long startSweepRun() {
 		try {
 			return sweepRuns.start();
 		} catch (RuntimeException e) {
@@ -229,9 +244,13 @@ public class DailySweepJob {
 	 */
 	private Set<Long> sweepAccount(String username, List<TargetRow> accountTargets) {
 		// POST 등록분만 있는 계정은 열거할 이유가 없다 — 프로필·열거 2~3콜이 통째로 낭비된다.
-		List<PostInfo> posts = needsEnumeration(accountTargets)
+		boolean needsEnumeration = needsEnumeration(accountTargets);
+		List<PostInfo> posts = needsEnumeration
 				? collect.collectAccount(username).posts()
 				: List.of();
+		if (!needsEnumeration) {
+			collectProfileOnlyOnce(username);
+		}
 		Set<String> enumerated = posts.stream().map(PostInfo::shortCode).collect(Collectors.toSet());
 		Set<Long> transientFailureIds = new LinkedHashSet<>();
 		for (TargetRow t : accountTargets) {
@@ -255,6 +274,31 @@ public class DailySweepJob {
 			}
 		}
 		return transientFailureIds;
+	}
+
+	/**
+	 * 팔로워 1회 수집(사용자 결정, 트랙 II 후속) — POST 등록분만 있는 계정에 profile_snapshot 행이
+	 * 아직 없을 때만 프로필을 1콜 조회해 채운다. 이미 채워졌으면(재공개 포함, 한 번이라도 성공한
+	 * 적이 있으면) 다시 부르지 않는다 — 매일 갱신이 목적이 아니라 was가 서빙하는 followers가
+	 * 최신 1행 단일값(시계열 아님)이라 최초 수집 이후 갱신 실익이 없기 때문이다.
+	 *
+	 * <p><b>반드시 best-effort여야 한다.</b> 팔로워 수는 부가 표시 정보다. 여기서 예외가 새면
+	 * {@link #sweepRound}의 catch가 그 계정의 캠페인을 통째로 hidden 전이시킨다({@link #closeAll}) —
+	 * 추적 게시물은 멀쩡한데 프로필 조회 실패만으로 캠페인이 죽는 새 고장 경로가 생긴다. POST
+	 * 등록분의 생존 판정은 지금까지처럼 단건 게시물 수집 성공 여부 하나로만 유지해야 하므로,
+	 * {@link com.celfit.monitoring.hiker.PrivateAccountException}·
+	 * {@link com.celfit.monitoring.hiker.SubjectNotFoundException}을 포함한 모든 예외를 여기서 삼킨다
+	 * (기존 판정 경로를 바꾸지 않는다는 뜻 — 이 계정이 실제로 없어졌는지 비공개인지는 단건 게시물
+	 * 콜이 이미 스윕 나머지 갈래에서 판정한다).
+	 */
+	private void collectProfileOnlyOnce(String username) {
+		try {
+			if (!snapshots.hasProfileSnapshot(username)) {
+				collect.collectProfileOnly(username);
+			}
+		} catch (RuntimeException e) {
+			log.warn("팔로워 1회 수집 실패(격리, best-effort) — 계정 {}: {}", username, e.toString());
+		}
 	}
 
 	/** 결정적 수집 불가 — 그 계정의 활성 캠페인을 한꺼번에 hidden 전이한다(status는 유지). */

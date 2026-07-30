@@ -96,6 +96,10 @@ BEGIN
     'dummy_rawnull avg_hype_score not null (전제 붕괴)';
   ASSERT (SELECT avg_hype_raw FROM analytics.v_account_summaries WHERE handle = 'dummy_rawnull') IS NULL,
     'dummy_rawnull avg_hype_raw not null (avg_hype_score NULL이면 avg_hype_raw도 NULL이어야 함)';
+  -- 고정 분모 도입(2026-07-31) 후에도 유지되어야 하는 계약: 창 전체 점수 불가면 sum()도 NULL이라
+  -- NULL/고정분모=NULL이고, 매핑 함수도 raw NULL을 NULL로 통과시키므로 avg_hype_score_precise도 NULL.
+  ASSERT (SELECT avg_hype_score_precise FROM analytics.v_account_summaries WHERE handle = 'dummy_rawnull') IS NULL,
+    'dummy_rawnull avg_hype_score_precise not null (창 전체 점수 불가면 NULL이어야 함 — 고정 분모 도입 회귀)';
 END $$;
 
 -- 핵심 회귀: 표시 점수가 동점인 두 계정을 만들어 정렬이 raw 순서를 따르는지 확인한다.
@@ -174,7 +178,9 @@ DECLARE
   a05 numeric; a50 numeric; a90 numeric; a99 numeric;
   base numeric;
 BEGIN
-  -- 1) 단조성: 기본 앵커(p05=1.4856·p50=23.6566·p90=56.3961·p99=77.0479) 5개 구간을 고루 지나는 표본.
+  -- 1) 단조성: 기본 앵커(p05=1.2417·p50=19.4383·p90=52.2401·p99=74.0179, 2026-07-31 재적합) 5개
+  --    구간을 고루 지나는 표본 — 샘플 값(1·10·40·65·90) 자체는 구 앵커에서도 신 앵커에서도 같은
+  --    구간에 떨어져 그대로 재사용한다.
   s1  := analytics.hype_account_score_precise(1);    -- < a05
   s2  := analytics.hype_account_score_precise(10);   -- a05~a50
   s3  := analytics.hype_account_score_precise(40);   -- a50~a90
@@ -185,10 +191,12 @@ BEGIN
   END IF;
 
   -- 2) 앵커점 매핑: 기본 앵커 4점이 각각 10·45·80·97로 정확히 잡힌다.
-  a05 := analytics.hype_account_score_precise(1.4856);
-  a50 := analytics.hype_account_score_precise(23.6566);
-  a90 := analytics.hype_account_score_precise(56.3961);
-  a99 := analytics.hype_account_score_precise(77.0479);
+  --    앵커값은 2026-07-31 재적합(고정 분모 도입, 스펙 2026-07-31-account-score-fixed-denominator-design.md) —
+  --    구값(1.4856/23.6566/56.3961/77.0479)에서 갱신됨.
+  a05 := analytics.hype_account_score_precise(1.2417);
+  a50 := analytics.hype_account_score_precise(19.4383);
+  a90 := analytics.hype_account_score_precise(52.2401);
+  a99 := analytics.hype_account_score_precise(74.0179);
   ASSERT a05 = 10, format('p05 앵커점 불일치: %s (기대 10)', a05);
   ASSERT a50 = 45, format('p50 앵커점 불일치: %s (기대 45)', a50);
   ASSERT a90 = 80, format('p90 앵커점 불일치: %s (기대 80)', a90);
@@ -236,4 +244,127 @@ BEGIN
            precise_alpha, precise_zeta);
 
   RAISE NOTICE '10_account_score_precise (동점 제거 회귀): 모든 단언 통과';
+END $$;
+
+-- =====================================================================================================
+-- 고정 분모 회귀 (2026-07-31, 스펙 2026-07-31-account-score-fixed-denominator-design.md).
+-- 배경: avg_hype_precise_raw(10_account_detail.sql base CTE)가 avg()(분모=analyzed_count)에서
+-- sum()/analytics.recent-window(분모=창 크기 고정)로 바뀌었다 — 창이 12로 꽉 찼는데도 likes/comments
+-- 수집 누락으로 점수산출 콘텐츠가 1~2건뿐인 계정이 그 1~2건의 avg만으로 12건 채운 계정과 동일하게
+-- 평가되던 결함(test 스택 실측: ynp.ny 2건 7위·sunyvvin 1건 8위·zero_lyrical 1건 12위)을 해소한다.
+--
+-- 픽스처: dummy_fixed1(FEED 1건)과 dummy_fixed12(FEED 12건) — **개별 콘텐츠 점수를 완전히 동일하게**
+-- 만든다(같은 followers·likes·comments·content_type·uploaded_at). 이러면 avg()로는 두 계정의
+-- avg_hype_precise_raw가 항등(콘텐츠 1건짜리 평균 = 그 값 자체, 12건 동일값 평균도 그 값 자체)이라
+-- avg_hype_score_precise도 완전히 같아진다 — 이것이 바로 이번에 고친 결함이다.
+--
+-- 구 코드(avg) 회귀 여부는 이 테스트를 추가하기 전에 실 DB에서 직접 확인했다(수동 SQL, 이 파일 밖):
+--   old_raw_avg(둘 다 avg 기준) = 66.3988274056849023989769330566531719988167 (dummy_fixed1·dummy_fixed12 동일)
+--   → hype_account_score_precise(66.3988...) = 91.0525 (둘 다 동일 — 구 코드라면 이 테스트가 실패했을 조건)
+-- 신 코드(sum/12)에서는 dummy_fixed1 raw = 66.3988.../12 = 5.5332..., dummy_fixed12 raw = 66.3988...
+-- (12건이라 sum/12=sum/count=avg와 항등) → avg_hype_score_precise가 각각 약 18.25 / 91.05로 뚜렷이 갈린다.
+INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at) VALUES
+ (99990050, 'dummy_fixed1',  'QUALIFIED', 999000, true, false, timestamptz '2026-06-01 00:00:00+09'),
+ (99990051, 'dummy_fixed12', 'QUALIFIED', 999000, true, false, timestamptz '2026-06-01 00:00:00+09');
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at) VALUES
+ (99990050, 99990000, 'HIKER_MOBILE', 'dummy_fixed1', 999000,
+  '{"status":"ok","user":{"username":"dummy_fixed1","follower_count":999000}}'::jsonb, now()),
+ (99990051, 99990000, 'HIKER_MOBILE', 'dummy_fixed12', 999000,
+  '{"status":"ok","user":{"username":"dummy_fixed12","follower_count":999000}}'::jsonb, now());
+INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                    status, first_seen_at, origin, collect_attempts)
+VALUES (99990150, 'dummy_fx1_1', 'FEED', 'dummy_fixed1', 99990050, now() - interval '1 hour',
+        'PENDING', now() - interval '1 hour', 'ENUMERATION', 0);
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
+VALUES (99990050, 99990000, 'HIKER_V2_CLIPS',
+  '{"response":{"status":"ok","items":[{"media":{"code":"dummy_fx1_1","product_type":"clips","taken_at":1780272000,"like_count":17800,"comment_count":0,"caption":{"text":"cap fx1"}}}]}}'::jsonb, now());
+-- dummy_fixed12: 위와 완전히 동일한 likes·comments·followers·uploaded_at을 가진 게시물 12개
+-- (recent-window 기본값 12와 맞춰 창을 정확히 채운다 — 회귀의 전제인 "창이 12로 꽉 찬 계정" 재현).
+DO $do$
+DECLARE i int;
+BEGIN
+  FOR i IN 1..12 LOOP
+    INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                        status, first_seen_at, origin, collect_attempts)
+    VALUES (99990250 + i, 'dummy_fx12_' || i, 'FEED', 'dummy_fixed12', 99990051,
+            now() - interval '1 hour', 'PENDING', now() - interval '1 hour', 'ENUMERATION', 0);
+    INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
+    VALUES (99990051, 99990000, 'HIKER_V2_CLIPS',
+      format('{"response":{"status":"ok","items":[{"media":{"code":"%s","product_type":"clips","taken_at":1780272000,"like_count":17800,"comment_count":0,"caption":{"text":"cap fx12"}}}]}}',
+             'dummy_fx12_' || i)::jsonb, now());
+  END LOOP;
+END $do$;
+SELECT analytics.refresh_snapshot_cache();
+
+DO $$
+DECLARE
+  precise_fixed1 numeric; precise_fixed12 numeric;
+  n1 int; n12 int;
+BEGIN
+  SELECT count(*) INTO n1  FROM analytics.v_account_recent WHERE owner_username = 'dummy_fixed1';
+  SELECT count(*) INTO n12 FROM analytics.v_account_recent WHERE owner_username = 'dummy_fixed12';
+  ASSERT n1 = 1,  format('dummy_fixed1 창 크기 전제 붕괴: %s (기대 1)', n1);
+  ASSERT n12 = 12, format('dummy_fixed12 창 크기 전제 붕괴: %s (기대 12 — recent-window 기본값과 일치해야 함)', n12);
+
+  SELECT avg_hype_score_precise INTO precise_fixed1
+  FROM analytics.v_account_summaries WHERE handle = 'dummy_fixed1';
+  SELECT avg_hype_score_precise INTO precise_fixed12
+  FROM analytics.v_account_summaries WHERE handle = 'dummy_fixed12';
+
+  ASSERT precise_fixed1 IS NOT NULL AND precise_fixed12 IS NOT NULL,
+    'dummy_fixed1/dummy_fixed12 avg_hype_score_precise가 NULL (전제 붕괴)';
+
+  -- 핵심 회귀: 같은 개별 콘텐츠 점수인데 점수산출 콘텐츠 1건뿐인 계정이 12건 채운 계정보다
+  -- 뚜렷하게 낮아야 한다. 실측 비율 약 4.99배(18.2545 vs 91.0525) — 여유를 두고 3배로 단언해
+  -- 향후 앵커 재적합으로 절대값이 흔들려도 "1건 vs 12건" 구조적 격차 자체는 계속 잡는다.
+  ASSERT precise_fixed12 > precise_fixed1 * 3,
+    format('고정 분모 회귀 실패: dummy_fixed1=%s, dummy_fixed12=%s (12건이 1건의 3배 이상 높아야 함 — '
+           || '구 코드(avg)라면 두 값이 완전히 같았을 자리)', precise_fixed1, precise_fixed12);
+
+  RAISE NOTICE '10_account_score_precise (고정 분모 회귀): 모든 단언 통과 (fixed1=%, fixed12=%)',
+    precise_fixed1, precise_fixed12;
+END $$;
+
+-- =====================================================================================================
+-- 0점 보존 (고정 분모 도입으로 비활동 계정이 0에서 들려 올라가지 않는지 확인).
+-- dummy_zero12: 창이 12로 꽉 찬 FEED 계정, 전 게시물 likes=0·comments=0 → 콘텐츠별 정밀 점수가
+-- 정확히 0(Q=ln(1+0/f0)=ln(1)=0 → 출력 매핑도 0) → sum=0 → 0/12=0 → 매핑 함수가 0을 0으로 통과.
+-- sum()이 NULL을 무시하는 것과 별개로, 0점 콘텐츠는 NULL이 아니라 실제 0이 분자에 더해진다는 것과
+-- 고정 분모가 그 0을 다른 값으로 밀어올리지 않는다는 것을 함께 확인한다.
+INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at)
+VALUES (99990052, 'dummy_zero12', 'QUALIFIED', 999000, true, false, timestamptz '2026-06-01 00:00:00+09');
+INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers, payload, captured_at)
+VALUES (99990052, 99990000, 'HIKER_MOBILE', 'dummy_zero12', 999000,
+  '{"status":"ok","user":{"username":"dummy_zero12","follower_count":999000}}'::jsonb, now());
+DO $do$
+DECLARE i int;
+BEGIN
+  FOR i IN 1..12 LOOP
+    INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at,
+                        status, first_seen_at, origin, collect_attempts)
+    VALUES (99990163 + i, 'dummy_z12_' || i, 'FEED', 'dummy_zero12', 99990052,
+            now() - interval '1 hour', 'PENDING', now() - interval '1 hour', 'ENUMERATION', 0);
+    INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at)
+    VALUES (99990052, 99990000, 'HIKER_V2_CLIPS',
+      format('{"response":{"status":"ok","items":[{"media":{"code":"%s","product_type":"clips","taken_at":1780272000,"like_count":0,"comment_count":0,"caption":{"text":"cap z12"}}}]}}',
+             'dummy_z12_' || i)::jsonb, now());
+  END LOOP;
+END $do$;
+SELECT analytics.refresh_snapshot_cache();
+
+DO $$
+DECLARE precise_zero numeric; n int;
+BEGIN
+  SELECT count(*) INTO n FROM analytics.v_account_recent WHERE owner_username = 'dummy_zero12';
+  ASSERT n = 12, format('dummy_zero12 창 크기 전제 붕괴: %s (기대 12)', n);
+
+  SELECT avg_hype_score_precise INTO precise_zero
+  FROM analytics.v_account_summaries WHERE handle = 'dummy_zero12';
+
+  ASSERT precise_zero IS NOT NULL, 'dummy_zero12 avg_hype_score_precise가 NULL (0점과 NULL을 혼동하면 안 됨)';
+  ASSERT precise_zero = 0,
+    format('0점 보존 실패: dummy_zero12 avg_hype_score_precise=%s (기대 0 — 고정 분모가 0을 다른 값으로 밀어올림)',
+           precise_zero);
+
+  RAISE NOTICE '10_account_score_precise (0점 보존 회귀): 모든 단언 통과';
 END $$;
