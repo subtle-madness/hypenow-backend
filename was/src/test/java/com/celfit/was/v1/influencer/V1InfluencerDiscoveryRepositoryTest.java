@@ -60,20 +60,21 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_summaries (
-				    handle             text PRIMARY KEY,
-				    followers          bigint,
-				    follows_count      bigint,
-				    posts_count        bigint,
-				    biography          text,
-				    avg_views          bigint,
-				    views_per_follower numeric,
-				    avg_er_pct         numeric,
-				    avg_likes          bigint,
-				    avg_comments       bigint,
-				    avg_hype_score     bigint,
-				    last_posted_at     timestamptz,
-				    email              text,
-				    avg_hype_raw       numeric
+				    handle                  text PRIMARY KEY,
+				    followers               bigint,
+				    follows_count           bigint,
+				    posts_count             bigint,
+				    biography               text,
+				    avg_views               bigint,
+				    views_per_follower      numeric,
+				    avg_er_pct              numeric,
+				    avg_likes               bigint,
+				    avg_comments            bigint,
+				    avg_hype_score          bigint,
+				    last_posted_at          timestamptz,
+				    email                   text,
+				    avg_hype_raw            numeric,
+				    avg_hype_score_precise  numeric
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_content_series (
@@ -143,22 +144,25 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('calm', '카암', 'https://cdn/calm.jpg', 30000),
 				  ('mute', '뮤트', NULL, 40000),
 				  ('tiny', '타이니', NULL, 1000)""");
-		// avg_hype_raw는 avg_hype_score(정수 반올림)를 만드는 반올림 전 평균 — 정렬은 이 컬럼을 쓴다
-		// (스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절). 여기서는 각 계정의
-		// 표시 점수와 같은 상대 순서를 갖는 근사값을 넣어 기존 정렬 기대값(calm>glow>tiny>mute)이 유지된다 —
-		// 동점 시나리오는 tieHi/tieLo 전용 픽스처(seedTiedHypeAccount)로 별도 검증한다.
+		// avg_hype_raw는 avg_hype_score(정수 반올림)를 만드는 반올림 전 평균 — 2026-07-30까지는
+		// 정렬 키였다(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절).
+		// avg_hype_score_precise(2026-07-30, 스펙 §10 — 콘텐츠 출력 매핑 반영 소수 표시값) 도입 후
+		// 정렬은 이 컬럼으로 다시 옮겼다 — 표시=정렬 일원화라 avg_hype_raw 우회가 더는 필요 없다.
+		// 여기서는 각 계정의 표시 점수와 같은 상대 순서를 갖는 근사값을 넣어 기존 정렬 기대값
+		// (calm>glow>tiny>mute)이 유지된다 — 동점 시나리오는 tieAlphaLo/tieZetaHi 전용 픽스처로
+		// 별도 검증한다.
 		jdbcTemplate.update("""
 				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
 				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
-				  avg_hype_score, avg_hype_raw, last_posted_at, email) VALUES
+				  avg_hype_score, avg_hype_raw, last_posted_at, email, avg_hype_score_precise) VALUES
 				  ('glow', 20000, 380, 214, E'수분크림 기록\\n문의는 DM', 50000, 12.42, 4.0, 3000, 150,
-				   72, 71.6, now() - interval '1 day', 'contact@glow.co'),
+				   72, 71.6, now() - interval '1 day', 'contact@glow.co', 71.6000),
 				  ('calm', 30000, 100, 90, '차분한 후기', 30000, 5.0, 2.0, 500, 30,
-				   80, 79.8, now() - interval '10 days', NULL),
+				   80, 79.8, now() - interval '10 days', NULL, 79.8000),
 				  ('mute', 40000, 50, 40, NULL, NULL, NULL, 1.0, 300, 10,
-				   NULL, NULL, now() - interval '40 days', NULL),
+				   NULL, NULL, now() - interval '40 days', NULL, NULL),
 				  ('tiny', 1000, 10, 20, '새싹', 2000, 2.0, 3.0, 25, 3,
-				   45, 44.7, now() - interval '5 days', NULL)""");
+				   45, 44.7, now() - interval '5 days', NULL, 44.7000)""");
 		// glow 창 5개: g1(1일 전)~g5(5일 전). 분류 5개 중 스킨케어 4·메이크업 1, 협찬 g2·g4.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
@@ -240,12 +244,14 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(glow.avgViews()).isEqualTo(50000);
 		assertThat(glow.sponsoredCount()).isEqualTo(2); // ad_type 정본 (series.sponsored 아님)
 		assertThat(glow.avgHypeScore()).isEqualTo(72);
+		assertThat(glow.avgHypeScorePrecise()).isEqualByComparingTo("71.6000"); // 소수점 노출(스펙 §10)
 		assertThat(glow.email()).isEqualTo("contact@glow.co"); // account_summaries.email(V46) 그대로 노출
 
 		CardRow mute = rows.get(3);
 		assertThat(mute.avgViews()).isNull(); // 릴스 없는 계정
 		assertThat(mute.profileImageUrl()).isNull();
 		assertThat(mute.avgHypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
+		assertThat(mute.avgHypeScorePrecise()).isNull();
 		assertThat(mute.email()).isNull(); // biography 매치 없음(또는 미보유)
 	}
 
@@ -337,23 +343,24 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 정렬_hype는_avg_hype_raw_내림차순_NULL_마지막() {
-		// 표시값(avg_hype_score)이 아니라 반올림 전 avg_hype_raw로 정렬한다 — 시드 순서는 우연히
-		// 둘 다 같은 상대 순서지만(동점 없음), 정렬 컬럼 자체가 raw임은 아래 동점 테스트가 못박는다.
+	void 정렬_hype는_avg_hype_score_precise_내림차순_NULL_마지막() {
+		// 2026-07-30부터 정렬 키는 avg_hype_score_precise(소수, 콘텐츠 출력 매핑 반영 — 스펙
+		// 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10)다. 표시값도 이 컬럼이라
+		// 표시=정렬이 일원화됐다 — 시드 순서는 기존과 동일한 상대 순서(calm>glow>tiny>mute)를 유지.
 		var hype = query(null, null, null, null, null, null, null, null, "hype", null, null);
 		assertThat(repository.findCards(hype)).extracting(CardRow::handle)
 				.containsExactly("calm", "glow", "tiny", "mute");
 	}
 
 	@Test
-	void 정렬_hype는_표시_점수가_동점이어도_raw_순서를_따른다() {
-		// 회귀 재현(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절): 정수
-		// 반올림이 상위권에서 동점을 대량으로 만들어 정렬이 사실상 handle 알파벳순에 지배됐다.
-		// tieAlphaLo(avg_hype_score=88, avg_hype_raw=87.6)와 tieZetaHi(avg_hype_score=88,
-		// avg_hype_raw=88.4) — 표시 점수는 동점이지만 raw는 zeta가 더 크다. 핸들 알파벳순은
-		// alpha가 zeta보다 앞이라(구코드 ORDER BY avg_hype_score DESC, handle ASC였다면 tieAlphaLo가
-		// 먼저 나왔을 것 — 알파벳순과 raw 내림차순이 정반대를 가리키도록 이름을 골랐다),
-		// raw 정렬은 tieZetaHi가 먼저 나와야 한다.
+	void hype_정렬은_avg_hype_score_정수가_같아도_precise로_순서를_가른다() {
+		// 회귀 재현(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절·§10):
+		// 정수 반올림이 상위권에서 동점을 대량으로 만들어 정렬이 사실상 handle 알파벳순에 지배됐다.
+		// tieAlphaLo(avg_hype_score=88, avg_hype_score_precise=87.6000)와 tieZetaHi(avg_hype_score=88,
+		// avg_hype_score_precise=88.4000) — 표시 정수는 동점이지만 소수는 zeta가 더 크다. 핸들
+		// 알파벳순은 alpha가 zeta보다 앞이라(구코드 ORDER BY avg_hype_score DESC, handle ASC였다면
+		// tieAlphaLo가 먼저 나왔을 것 — 알파벳순과 precise 내림차순이 정반대를 가리키도록 이름을
+		// 골랐다), precise 정렬은 tieZetaHi가 먼저 나와야 한다.
 		jdbcTemplate.update("""
 				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
 				  ('tieAlphaLo', '타이알파로', NULL, 15000),
@@ -361,11 +368,11 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update("""
 				INSERT INTO account_summaries (handle, followers, follows_count, posts_count,
 				  biography, avg_views, views_per_follower, avg_er_pct, avg_likes, avg_comments,
-				  avg_hype_score, avg_hype_raw, last_posted_at) VALUES
+				  avg_hype_score, avg_hype_raw, last_posted_at, avg_hype_score_precise) VALUES
 				  ('tieAlphaLo', 15000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL,
-				   88, 87.6, now() - interval '3 days'),
+				   88, 87.6, now() - interval '3 days', 87.6000),
 				  ('tieZetaHi', 15000, 10, 20, NULL, NULL, NULL, NULL, NULL, NULL,
-				   88, 88.4, now() - interval '3 days')""");
+				   88, 88.4, now() - interval '3 days', 88.4000)""");
 
 		var hype = query(null, null, null, null, null, null, null, null, "hype", null, null);
 		List<String> handles = repository.findCards(hype).stream().map(CardRow::handle).toList();
@@ -373,7 +380,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		int lo = handles.indexOf("tieAlphaLo");
 		assertThat(hi).isGreaterThanOrEqualTo(0);
 		assertThat(lo).isGreaterThanOrEqualTo(0);
-		assertThat(hi).as("tieZetaHi(raw 88.4)가 tieAlphaLo(raw 87.6)보다 앞이어야 함 — handle 알파벳순(구코드)이면 반대")
+		assertThat(hi).as("tieZetaHi(precise 88.4)가 tieAlphaLo(precise 87.6)보다 앞이어야 함 — handle 알파벳순(구코드)이면 반대")
 				.isLessThan(lo);
 	}
 

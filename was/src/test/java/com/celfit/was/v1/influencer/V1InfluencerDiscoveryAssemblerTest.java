@@ -23,7 +23,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 	private static CardRow row(String handle, Long followers) {
 		return new CardRow(handle, "이름", "/img/p.jpg", followers, 214L, 380L,
 				"소개\n둘째줄", "태그라인", new BigDecimal("12.42"), new BigDecimal("3.84"),
-				413200L, 10370L, 152L, 72L, 3L, "contact@glow.co");
+				413200L, 10370L, 152L, 72L, 3L, "contact@glow.co", new BigDecimal("72.5000"));
 	}
 
 	@Test
@@ -37,13 +37,16 @@ class V1InfluencerDiscoveryAssemblerTest {
 		assertThat(card.email()).isEqualTo("contact@glow.co"); // biography 정규식 파싱(V46) 그대로 전달
 		assertThat(card.bio()).isEqualTo("소개\n둘째줄"); // 개행 유지
 		assertThat(card.followingCount()).isEqualTo(380);
-		assertThat(card.hypeScore()).isEqualTo(72);
+		// hypeScore는 2026-07-30부터 avgHypeScorePrecise(소수)를 그대로 싣는다 — avgHypeScore(정수
+		// 72)가 아니라 avgHypeScorePrecise(72.5000)와 일치해야 어셈블러가 실제로 precise 필드를
+		// 통과시키는지 잡는다(둘 다 72였다면 이 단언이 무의미했을 것).
+		assertThat(card.hypeScore()).isEqualByComparingTo("72.5000");
 	}
 
 	@Test
 	void bio_tagline_부재는_빈문자열_배열은_빈배열() {
 		var bare = new CardRow("mute", "이름", null, 40000L, 40L, 50L, null, null,
-				null, null, null, 300L, 10L, null, 0L, null);
+				null, null, null, 300L, 10L, null, 0L, null, null);
 		var card = assembler.toCards(List.of(bare), List.of(), List.of(), List.of(), List.of()).get(0);
 		assertThat(card.bio()).isEmpty();
 		assertThat(card.tagline()).isEmpty();

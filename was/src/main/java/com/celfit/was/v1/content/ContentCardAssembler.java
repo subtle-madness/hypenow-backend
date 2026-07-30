@@ -42,7 +42,7 @@ public class ContentCardAssembler {
 				r.contentType(), r.mainCategory(), strings(r.subCategoriesJson()), r.adType(),
 				r.videoDuration(), r.originalUrl(),
 				r.metricCapturedAt() == null ? null : ISO_Z.format(r.metricCapturedAt().toInstant()),
-				r.hypeScore(), r.views(), r.likes(), r.comments(),
+				r.hypeScorePrecise(), r.views(), r.likes(), r.comments(),
 				names(r.brandsJson()), names(r.productsJson()), strings(r.distributorsJson()),
 				new ContentCard.Influencer(r.handle(), r.handle(), r.displayName(),
 						r.profileImageUrl(), r.followers()),

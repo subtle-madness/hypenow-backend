@@ -53,7 +53,7 @@ public class V1InfluencerDiscoveryAssembler {
 				blankIfNull(r.tagline()),
 				scale1(r.viewsPerFollower()), scale1(r.avgErPct()),
 				r.avgViews(), r.avgLikes(), r.avgComments(),
-				r.avgHypeScore() == null ? null : r.avgHypeScore().intValue(),
+				r.avgHypeScorePrecise(),
 				r.sponsoredCount(),
 				brands.stream().map(BrandRow::name).toList(),
 				shares.stream().limit(3)
