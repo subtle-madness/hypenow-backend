@@ -52,3 +52,8 @@ monitoring:
   mail:
     resend-api-key: ${RESEND_API_KEY:}          # 미설정이면 로깅 폴백(실발송 없음)
     from: hypenow <no-reply@hypenow.io>
+  image:
+    # 프로필 이미지 아카이브(설계 스펙 §3-1) — 미설정이면 잡이 로그만 남기고 no-op(기동 실패 아님).
+    # 운영은 analytics와 같은 버킷·쓰기 PAR을 재사용(compose.yaml MONITORING_IMAGE_PAR_URL 참고).
+    par-url: ${MONITORING_IMAGE_PAR_URL:}
+    archive-batch-limit: 1000   # 1회 스윕당 다운로드+업로드 상한 — 초과분은 다음 스윕으로 이월

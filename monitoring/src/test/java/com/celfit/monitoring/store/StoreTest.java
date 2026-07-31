@@ -265,6 +265,28 @@ class StoreTest {
 				.isEqualTo(LocalDate.of(2026, 7, 20));
 	}
 
+	/** Hiker 업스트림이 "exception://" 같은 무효 스킴을 주면 null로 저장된다(결함 ②). */
+	@Test
+	void 무효_스킴_profile_image_url은_null로_저장된다() {
+		profileMeta.upsert("acct_a", "표시이름", "exception://", LocalDate.of(2026, 7, 20));
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
+		assertThat(row.get("profile_image_url")).isNull();
+	}
+
+	/** 기존에 유효한 값이 있는 행에 무효 스킴이 오면 정규화 결과(null)로 덮지 않고 기존 값을 보존한다. */
+	@Test
+	void 무효_스킴이_와도_기존_유효_profile_image_url을_보존한다() {
+		profileMeta.upsert("acct_a", "이름", "https://img/1.jpg", LocalDate.of(2026, 7, 20));
+
+		profileMeta.upsert("acct_a", "새이름", "exception://", LocalDate.of(2026, 7, 25));
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("새이름");
+		assertThat(row.get("profile_image_url")).isEqualTo("https://img/1.jpg");
+	}
+
 	// ── profile_meta POST 등록분(트랙 II) ─────────────────────────────────────
 
 	@Test
@@ -299,6 +321,16 @@ class StoreTest {
 		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
 		assertThat(row.get("display_name")).isEqualTo("표시이름");
 		assertThat(row.get("profile_image_url")).isEqualTo("https://img/owner.jpg");
+	}
+
+	/** upsertOwnerFromPost 경로도 무효 스킴을 걸러낸다(결함 ②) — 계정 갈래(upsert)와 동일 규칙. */
+	@Test
+	void upsertOwnerFromPost도_무효_스킴을_걸러낸다() {
+		profileMeta.upsertOwnerFromPost("acct_a", "표시이름", "exception://");
+
+		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
+		assertThat(row.get("display_name")).isEqualTo("표시이름");
+		assertThat(row.get("profile_image_url")).isNull();
 	}
 
 	// ── post_meta(v2.2) ──────────────────────────────────────────────────────

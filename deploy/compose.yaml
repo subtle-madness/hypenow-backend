@@ -234,10 +234,13 @@ services:
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
       HIKER_API_KEY: ${HIKER_API_KEY}
+      # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
+      MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
-      # 알람 발송(07-30~) — 기본 비활성. 개통 절차는 README §13-5
-      MONITORING_ALARM_DISPATCH_CRON: "-"
+      # 알람 발송(07-31 개통) — 5분 간격. 개통 절차는 README §13-5
+      # 수신자는 .env의 ALARM_ALLOWED_RECIPIENTS 허용목록으로 제한한다(fail-OPEN이므로 비우면 전원 발송).
+      MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # 수신자 해석용 analysis DB 읽기 전용(두 객체만 GRANT — 계약 v2 §6)
       MONITORING_ALARM_READER_URL: jdbc:postgresql://postgres:5432/analysis

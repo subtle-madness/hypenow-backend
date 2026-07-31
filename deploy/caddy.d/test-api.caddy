@@ -2,6 +2,39 @@
 # 도메인은 dev-api 유지(DNS 무변경 — 의도적 예외). test 프로파일 미기동 시 502 —
 # caddy는 요청 시점에 업스트림을 찾으므로 설정 로드는 무해.
 {$DEV_API_DOMAIN:dev-api.hypenow.io} {
+	# 액세스 로그(2026-07-31) — 운영 블록과 같은 JSON+필터 형식, 출력 파일만 분리.
+	# 이 지시어가 없던 동안 test 도메인 요청은 **어디에도 기록되지 않았다** — 운영
+	# access.log의 host 필드 전수 집계에서 dev-api.hypenow.io 0건(로테이션 유실이 아니라
+	# 미기록). 07-30 test HikariCP 풀 고갈(PR #268) 조사에서 사건 시각 요청 재구성이
+	# 불가능했던 원인이다.
+	# 자격증명 헤더(세션 쿠키·인증·CSRF)는 운영과 동일하게 절대 남기지 않는다.
+	#
+	# 파일을 분리하는 이유: 한 파일에 섞으면 운영 로그를 볼 때마다 host로 걸러야 하고,
+	# 운영 로그의 롤링 창(약 25일)이 test 트래픽 때문에 짧아진다.
+	#
+	# 로테이션 캡은 운영(50MiB×5 ≈ 250MB)보다 작게 잡는다 — 서버 디스크가 과거 부족했던
+	# 이력이 있어 캡을 명시한다(07-31 실측 96G 중 63% 사용, 운영 access.log 6.9MB/16.4h ≈
+	# 10MB/일). test 트래픽은 CD 헬스체크·수동 검증이 대부분이라 운영보다 훨씬 적으므로
+	# 10MiB×5로도 수십 일치가 남고, 최악값도 60MB 미만이다(롤 파일은 gzip이라 실사용은 그 이하).
+	#
+	# 운영 블록과 공용 스니펫으로 묶지 않는 이유: 본 Caddyfile은 main 배포로만 서버에
+	# 도달하는데 이 파일은 test CD가 따로 보낸다(caddy.d 분리 원칙) — 스니펫을 참조하면
+	# 정의가 아직 없는 서버에서 caddy reload가 깨진다. 중복을 감수하고 자기완결로 둔다.
+	log {
+		output file /var/log/caddy/test-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers>X-Xsrf-Token delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
 	handle {
 		reverse_proxy test-was:8081
 	}

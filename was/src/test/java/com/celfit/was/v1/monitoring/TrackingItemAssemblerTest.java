@@ -116,6 +116,21 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 				.update();
 	}
 
+	private void seedProfileMeta(String username, String displayName, String profileImageUrl) {
+		seedProfileMeta(username, displayName, profileImageUrl, null);
+	}
+
+	/** imageObjectPath가 있으면 monitoring 자체 아카이브(설계 스펙 §3-1) 결과가 채워진 행을 흉내낸다. */
+	private void seedProfileMeta(String username, String displayName, String profileImageUrl, String imageObjectPath) {
+		monitoringJdbc.sql("""
+				INSERT INTO profile_meta (username, display_name, profile_image_url, updated_at, image_object_path)
+				VALUES (:username, :displayName, :profileImageUrl, now(), :imageObjectPath)
+				""")
+				.param("username", username).param("displayName", displayName)
+				.param("profileImageUrl", profileImageUrl).param("imageObjectPath", imageObjectPath)
+				.update();
+	}
+
 	private void seedSuccessfulSweep(LocalDate completedOn) {
 		monitoringJdbc.sql("""
 				INSERT INTO sweep_run (started_at, completed_at, ok)
@@ -307,21 +322,23 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 	}
 
 	@Test
-	void 댓글은_최신순_상한_8건이고_캠페인_짝이_함께_조립된다() {
+	void 댓글은_최신순_상한_45건이고_캠페인_짝이_함께_조립된다() {
+		// 상한(45)은 monitoring 수집 상한(comment-pages=3, 45건)과 동일 — 07-31 결함 B: 저장은
+		// 45건까지 하는데 서빙이 8건에 잘려 화면에 못 보이던 문제의 회귀 테스트.
 		LocalDate registeredOn = LocalDate.now();
 		CampaignRow campaign = campaignRepository.insert(userId, "테스트 캠페인", null, null, null, null, null, null);
 		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
 		long itemId = seedAccountItem(campaign.id(), registeredOn, "glowdeep");
 		itemRepository.confirmTarget(itemId, targetId);
 		seedPostMeta("SHORT1", "glowdeep", "REELS", registeredOn, "캡션", null);
-		for (int i = 0; i < 10; i++) {
+		for (int i = 0; i < 50; i++) {
 			seedComment("SHORT1", "c" + i, "author_" + i, "댓글" + i, i, OffsetDateTime.now().plusMinutes(i), null);
 		}
 
 		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
 
-		assertThat(item.post().recentComments()).hasSize(8);
-		assertThat(item.post().recentComments().get(0).id()).isEqualTo("c9");   // 최신순
+		assertThat(item.post().recentComments()).hasSize(45);
+		assertThat(item.post().recentComments().get(0).id()).isEqualTo("c49");   // 최신순
 		assertThat(item.campaignId()).isEqualTo(String.valueOf(campaign.id()));
 		assertThat(item.campaignName()).isEqualTo("테스트 캠페인");
 	}
@@ -407,6 +424,51 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		List<TrackingItemResponse> items = assembler.assembleList(userId).items();
 
 		assertThat(items).extracting(TrackingItemResponse::status).containsExactlyInAnyOrder("collecting", "detecting");
+	}
+
+	// ── profile_meta 이미지 URL 스킴 방어(결함 ②) ──────────────────────────────
+
+	@Test
+	void 유효한_profile_image_url은_그대로_서빙된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedProfileMeta("glowdeep", "표시이름", "https://img.cdn/1.jpg");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.profileImageUrl()).isEqualTo("https://img.cdn/1.jpg");
+	}
+
+	/** 저장 측(monitoring)이 막아도 이미 DB에 박힌 무효 스킴 값이 있을 수 있어 서빙 측도 이중 방어한다. */
+	@Test
+	void 무효_스킴_profile_image_url은_null로_서빙된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedProfileMeta("glowdeep", "표시이름", "exception://");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.profileImageUrl()).isNull();
+	}
+
+	// ── profile_meta 이미지 아카이브 우선 서빙(결함 ①, 설계 스펙 §3-1) ────────────
+
+	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다. */
+	@Test
+	void image_object_path가_있으면_아카이브_경로를_우선_서빙한다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedProfileMeta("glowdeep", "표시이름", "https://img.cdn/1.jpg", "monitor-profile/glowdeep.jpg");
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.profileImageUrl()).isEqualTo("/img/monitor-profile/glowdeep.jpg");
 	}
 
 	// ── 리뷰 반영(2026-07-30) — campaignId·campaignName 짝 방어 ──────────────────
