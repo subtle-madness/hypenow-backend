@@ -9,6 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -17,6 +18,7 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.ClockConfig;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.v1.account.RateLimiter;
+import com.celfit.was.v1.common.ConcurrencyLimiter;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryAssembler;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository;
@@ -55,10 +57,14 @@ class V2InfluencerReportControllerTest {
 	@MockitoBean
 	RateLimiter rateLimiter;
 
+	@MockitoBean
+	ConcurrencyLimiter concurrencyLimiter;
+
 	@BeforeEach
 	void allowRate() {
-		// 기본은 통과 — 레이트리밋 테스트에서만 false로 덮어쓴다(boolean mock 기본값 false 방지).
+		// 기본은 통과 — 레이트리밋/동시성제한 테스트에서만 false로 덮어쓴다(boolean mock 기본값 false 방지).
 		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+		given(concurrencyLimiter.tryAcquire()).willReturn(true);
 	}
 
 	private static AppUserDetails principal() {
@@ -197,5 +203,71 @@ class V2InfluencerReportControllerTest {
 		verify(rateLimiter, times(2)).tryAcquire(key.capture(), anyInt());
 		assertThat(key.getAllValues().get(0)).startsWith("similar:ip:");
 		assertThat(key.getAllValues().get(1)).isEqualTo("similar:user:7");
+	}
+
+	@Test
+	void ai_리포트_동시성_제한_초과는_429_RATE_LIMITED() throws Exception {
+		given(concurrencyLimiter.tryAcquire()).willReturn(false);
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/ai-report"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"))
+				.andExpect(header().string("Retry-After", "1"));
+
+		verify(repository, never()).findSummary(anyString());
+	}
+
+	@Test
+	void similar_동시성_제한_초과는_429_RATE_LIMITED() throws Exception {
+		given(concurrencyLimiter.tryAcquire()).willReturn(false);
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/similar"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"))
+				.andExpect(header().string("Retry-After", "1"));
+
+		verify(repository, never()).findSummary(anyString());
+	}
+
+	@Test
+	void ai_리포트_정상_처리_후_permit이_release된다() throws Exception {
+		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
+		given(repository.findLatestCopy("haeun.log")).willReturn(Optional.of(copy()));
+		given(repository.findSeries("haeun.log")).willReturn(List.of());
+		given(repository.findCategories("haeun.log")).willReturn(List.of());
+		given(repository.findBrandCollabs("haeun.log")).willReturn(List.of());
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/ai-report")).andExpect(status().isOk());
+
+		verify(concurrencyLimiter).release();
+	}
+
+	@Test
+	void ai_리포트_처리_중_예외가_발생해도_permit이_release된다() throws Exception {
+		given(repository.findSummary("haeun.log")).willThrow(new RuntimeException("의도된 예외 — 처리 실패 시나리오"));
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/ai-report")).andExpect(status().isInternalServerError());
+
+		verify(concurrencyLimiter).release();
+	}
+
+	@Test
+	void similar_정상_처리_후_permit이_release된다() throws Exception {
+		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
+		given(repository.findSimilarHandles("haeun.log")).willReturn(List.of());
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/similar")).andExpect(status().isOk());
+
+		verify(concurrencyLimiter).release();
+	}
+
+	@Test
+	void similar_처리_중_예외가_발생해도_permit이_release된다() throws Exception {
+		given(repository.findSummary("haeun.log")).willThrow(new RuntimeException("의도된 예외 — 처리 실패 시나리오"));
+
+		mockMvc.perform(get("/v2/influencers/haeun.log/similar")).andExpect(status().isInternalServerError());
+
+		verify(concurrencyLimiter).release();
 	}
 }
