@@ -51,13 +51,23 @@ share 링크 entry가 `resolveShare` 단계에서 `MonitoringUnavailableExceptio
 같은 계열로, `process()`의 미분류 `RuntimeException`과 `recoverItem()`의 무한 replay에도
 종결 조건이 없다.
 
+### 2-2. 세 번째 구멍 — target은 붙었는데 entry가 pending (설계 리뷰 중 발견)
+
+`MonitoringRegistrationExecutor`에는 `@Transactional`이 없어 리포지토리 호출마다 개별 커밋된다.
+따라서 `confirmTarget()`과 `updateEntryResult(SUCCESS)`는 **서로 다른 트랜잭션**이고, 그 사이에
+프로세스가 죽으면 **target은 붙었는데 entry는 `pending`**인 행이 남는다. `findPendingOlderThan`은
+`target_id IS NULL`로 필터하므로 이 행은 복구 대상에서도 빠진다 — 또 하나의 영구 pending이다.
+
+이 구멍은 §4-3의 설계를 바꾼다. **나이만 보고 일괄 `failed`로 확정하면 실제로는 등록에 성공한
+건을 실패로 거짓 보고하게 된다.** 스윕은 나이가 아니라 item 실제 상태로 판정해야 한다.
+
 ## 3. 결정
 
 | # | 결정 | 대안 | 근거 |
 |---|---|---|---|
 | 1 | `result`에 새 값 `canceled` 추가 (+ `reason_code='canceled'`) | `failed`+reason_code / `success`+reason_code | `failed`는 유저 본인이 누른 취소를 "실패"로 표시해 오해를 부른다. `success`는 실측 케이스가 target 미확정 상태라 사실과 다르다 |
 | 2 | 소급 보정을 Flyway 마이그레이션으로 동봉 | 코드만 고치고 수동 SQL | 멱등하고, 배포 시점까지 새로 갇히는 건까지 커버한다. UPDATE라 migration-guard 대상 아님 |
-| 3 | 나이 기반 entry 스윕 추가 (임계 24시간) | 별도 트랙 분리 / 재시도 횟수 컬럼 | 스키마 변경 없이 §2-1의 share-resolve 구멍까지 한 번에 막는다 |
+| 3 | 나이 기반 entry 스윕 추가 (임계 24시간), 확정 값은 item 실제 상태로 판정 | 별도 트랙 분리 / 재시도 횟수 컬럼 / 나이 초과분 일괄 failed | 스키마 변경 없이 §2-1·§2-2 두 구멍을 함께 막는다. 일괄 failed는 §2-2에서 성공 건을 실패로 오보한다 |
 
 ### 3-1. 임계시간의 의미 (24시간)
 
@@ -75,8 +85,8 @@ result = 'pending' AND requested_at < now() - <임계시간>
   실무상 문제없다.
 - 기존 `recoverStalePending`의 5분(`STALE_AGE`)과 **다른 축**이다. 그쪽은
   `monitoring_items.created_at` 기준으로 "복구를 **시도**할 대상"을 고르는 값이고(10분 주기 재시도),
-  이 임계시간은 "그만 시도하고 **실패로 확정**할" 값이다. 항상 5분보다 훨씬 커야 하고, 그 간격이
-  곧 재시도에 허용하는 총 시간이다.
+  이 임계시간은 "그만 시도하고 **실제 상태에 맞춰 확정**할" 시점이다. 항상 5분보다 훨씬 커야 하고,
+  그 간격이 곧 재시도에 허용하는 총 시간이다.
 - 값의 의미는 **"monitoring 서브시스템 장애를 몇 시간까지 견디며 재시도할 것인가"**. 24시간이면
   하루짜리 장애도 흡수한다. 프로퍼티(`monitoring.registration.stale-entry-timeout`)로 조정 가능.
 
@@ -118,10 +128,24 @@ RETURNING registration_id
 
 ### 4-3. 나이 기반 entry 스윕 — 신규 `RegistrationRepository.settleStaleEntries(Duration)`
 
-`requested_at` 기준 임계 초과 `pending` entry를 `failed` + `reason_code='internal_error'`로 확정하고
-영향받은 `registration_id`를 반환한다. 호출부가 각 registration에 `markCompletedIfAllSettled`를 돌린다.
+`requested_at` 기준 임계 초과 `pending` entry를 확정하고 영향받은 `registration_id`를 반환한다.
+호출부가 각 registration에 `markCompletedIfAllSettled`를 돌린다.
 
-item 존재 여부와 무관한 **entry 기준**이라 §2-1의 share-resolve 구멍까지 같이 막힌다.
+**나이는 "이제 판정할 때가 됐다"는 트리거일 뿐이고, 확정 값은 item의 실제 상태로 정한다**
+(§2-2 — 나이만 보고 일괄 `failed`로 밀면 성공한 건을 실패로 오보한다):
+
+| entry의 item 상태 | 확정 값 |
+|---|---|
+| `target_id` 있음 (등록은 실제로 성공, §2-2 크래시 창) | `success` |
+| `canceled_at` 있음 (§2-1 취소 경로 누락분의 최종 안전망) | `canceled` + `reason_code='canceled'` |
+| item 없음(share-resolve 실패) / target 미확정 | `failed` + `reason_code='internal_error'` |
+
+이 판정은 `entries LEFT JOIN monitoring_items ON entries.item_id = items.id` 한 문장의 CASE로
+표현한다 — item이 없으면(`item_id IS NULL` 또는 삭제됨) LEFT JOIN이 NULL을 주므로 자연히 세 번째
+행으로 떨어진다.
+
+즉 이 스윕은 "포기 선언"이 아니라 **실제 상태와의 정합 맞추기**이고, 그래서 §2-1(share-resolve)과
+§2-2(크래시 창) 두 구멍을 함께 메운다.
 
 **배선 순서**: `RecoverStalePendingScheduler`의 같은 틱 안에서 **item 복구 → 나이 확정** 순서.
 역순이면 복구 가능한 건을 먼저 죽인다.
@@ -160,7 +184,7 @@ TDD로 진행한다.
 | 대상 | 케이스 |
 |---|---|
 | `settleCanceledByItem` | pending만 정산 / 이미 success인 entry 불변 / 없는 itemId no-op / registration_id 반환 |
-| `settleStaleEntries` | 임계 미달 불변 / 초과분 failed 확정 / item 없는 share entry도 대상 / 반환 목록 |
+| `settleStaleEntries` | 임계 미달 불변 / item 없는 share entry → failed / target 붙은 entry → success(§2-2) / 취소된 item → canceled / 반환 목록 |
 | 취소 API 통합 | cancel → entry `canceled` + `completed_at` 채워짐 |
 | 실행기 | 취소된 item 분기에서 entry가 `canceled`로 정산 |
 | 스윕 배선 | item 복구가 나이 확정보다 먼저 도는지 |
