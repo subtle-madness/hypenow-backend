@@ -42,12 +42,17 @@ CREATE TABLE IF NOT EXISTS detected_candidate (
 );
 
 -- 계정 표시 메타 — 계정 단위 최신 1행(계약 v1.1 §3 profile_meta)
+-- image_object_path·image_source_name·image_archived_at은 monitoring 자체 프로필 이미지
+-- 아카이브(설계 스펙 §3-1, V20260730192350) 추가 컬럼 — was는 image_object_path만 읽는다.
 CREATE TABLE IF NOT EXISTS profile_meta (
-    username          text PRIMARY KEY,
-    display_name      text,
-    profile_image_url text,
-    last_uploaded_at  date,
-    updated_at        timestamptz NOT NULL
+    username           text PRIMARY KEY,
+    display_name       text,
+    profile_image_url  text,
+    last_uploaded_at   date,
+    updated_at         timestamptz NOT NULL,
+    image_object_path  text,
+    image_source_name  text,
+    image_archived_at  timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS profile_snapshot (

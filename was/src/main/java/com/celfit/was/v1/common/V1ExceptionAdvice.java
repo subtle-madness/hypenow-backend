@@ -28,7 +28,11 @@ public class V1ExceptionAdvice {
 
 	@ExceptionHandler(V1ApiException.class)
 	public ResponseEntity<ApiResponse<Void>> handle(V1ApiException e) {
-		return ResponseEntity.status(e.status()).body(ApiResponse.fail(e.code(), e.getMessage()));
+		var builder = ResponseEntity.status(e.status());
+		if (e.retryAfterSeconds() != null) {
+			builder.header(HttpHeaders.RETRY_AFTER, String.valueOf(e.retryAfterSeconds()));
+		}
+		return builder.body(ApiResponse.fail(e.code(), e.getMessage()));
 	}
 
 	/**

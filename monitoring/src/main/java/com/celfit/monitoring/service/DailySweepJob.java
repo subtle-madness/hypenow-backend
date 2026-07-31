@@ -6,6 +6,7 @@ import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.store.ExpiredTarget;
 import com.celfit.monitoring.store.FailingTarget;
 import com.celfit.monitoring.store.SnapshotRepository;
@@ -58,11 +59,13 @@ public class DailySweepJob {
 	private final SnapshotRepository snapshots;
 	private final int retryRounds;
 	private final Duration retryInterval;
+	private final ProfileImageArchiveJob imageArchive;
 
 	public DailySweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
 			SweepRunRepository sweepRuns, SnapshotRepository snapshots,
 			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
-			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval) {
+			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval,
+			ProfileImageArchiveJob imageArchive) {
 		this.targets = targets;
 		this.collect = collect;
 		this.alarms = alarms;
@@ -70,6 +73,7 @@ public class DailySweepJob {
 		this.snapshots = snapshots;
 		this.retryRounds = retryRounds;
 		this.retryInterval = retryInterval;
+		this.imageArchive = imageArchive;
 	}
 
 	/**
@@ -89,6 +93,12 @@ public class DailySweepJob {
 	 * sweep_run INSERT가 HTTP 응답 전에 동기로 끝나야 하는데, {@link #run()}은 그 값을 밖으로
 	 * 내주지 않기 때문이다. protected인 이유는 테스트(SweepControllerTest)가 스윕 실행 타이밍
 	 * (동시 실행 가드 검증)을 통제하려고 오버라이드하기 때문 — 웹 계층 테스트라 다른 패키지에서 상속한다.
+	 *
+	 * <p>프로필 이미지 아카이브({@link ProfileImageArchiveJob})는 finally 안에서, sweep_run 완료
+	 * 기록 직후 마지막 단계로 돈다(설계 스펙 §3-1) — 별도 크론이 아니라 스윕이 갓 갱신한 신선한 URL을
+	 * 바로 잡기 위함이다. finally라 스윕이 예외로 이탈해도(ok=false) 반드시 실행되고, 반대로 아카이브
+	 * 쪽 실패는 {@link #runProfileImageArchiveSafely()}가 전부 삼켜 이 finally 밖으로 새지 않으므로
+	 * 이미 기록된 sweep_run.ok를 오염시키지 않는다.
 	 */
 	protected void runWithId(Long runId) {
 		boolean ok = false;
@@ -97,6 +107,16 @@ public class DailySweepJob {
 			ok = true;
 		} finally {
 			completeSweepRun(runId, ok);
+			runProfileImageArchiveSafely();
+		}
+	}
+
+	/** 건 단위가 아니라 잡 전체를 격리한다 — 스윕 결과(sweep_run)와 무관한 부수 작업이라 예외를 밖으로 내지 않는다. */
+	private void runProfileImageArchiveSafely() {
+		try {
+			imageArchive.run();
+		} catch (RuntimeException e) {
+			log.warn("프로필 이미지 아카이브 잡 실행 실패(격리) — 스윕 결과에는 영향 없음: {}", e.toString());
 		}
 	}
 
