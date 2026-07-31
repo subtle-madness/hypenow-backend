@@ -264,6 +264,36 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 - 컨테이너 추가·이름 변경 시 스크립트의 `SERVICES` 목록도 갱신할 것(목록 고정 방식 —
   사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `BUCKETS` 목록 갱신.
 
+### 9-1. Caddy 액세스 로그 (운영 07-29~ · test 07-31~)
+
+장애 사후 재구성의 1차 재료(어떤 요청이 언제 몇 건 들어왔나). **도메인마다 파일이 다르다** —
+Caddy는 사이트 블록 단위로 로거를 붙이므로, `log` 지시어가 없는 블록의 요청은 **다른 블록의
+로그에도 남지 않는다**(07-31 실측: test 도메인이 6.8MB 운영 로그에 host 0건 — 로테이션 유실이
+아니라 애초에 미기록이었다. 07-30 test HikariCP 풀 고갈 조사 PR #268이 여기서 막혔다).
+
+| 도메인 | 파일(호스트 경로 `~/deploy/logs/caddy/`) | 롤링 | 설정 위치 |
+|---|---|---|---|
+| `api.hypenow.io` (운영) | `access.log` | 50MiB × 5 (≈250MB) | `deploy/Caddyfile` |
+| `dev-api.hypenow.io` (test) | `test-access.log` | 10MiB × 5 (<60MB) | `deploy/caddy.d/test-api.caddy` |
+
+- 형식은 둘 다 JSON + `format filter` — **자격증명 헤더(Cookie·Authorization·X-Xsrf-Token·
+  Set-Cookie)는 기록하지 않는다**. 사이트 블록을 새로 추가할 땐 이 `log` 블록을 함께 복사할 것
+  (운영·test 공용 스니펫으로 묶지 않는다 — 본 Caddyfile은 main 배포로만, `caddy.d/*`는 test CD로
+  따로 서버에 도달하므로 스니펫 참조는 "정의가 아직 없는 서버"에서 reload를 깨뜨린다).
+- **로테이션·디스크**: Caddy 내장 `roll`이 담당(logrotate 불필요). 롤된 파일은 gzip이라 실사용은
+  캡보다 작다. 두 파일 합쳐 최악 310MB — 96G 디스크(07-31 63% 사용) 기준 무의미한 증분이며
+  디스크 85% 알람 대상에도 영향 없다. 실측 증가율은 운영 약 10MB/일(6.9MB/16.4h), test는 CD
+  헬스체크·수동 검증이 대부분이라 그보다 훨씬 적다 — 캡 소진까지 각각 수십 일치가 남는다.
+- 파일은 컨테이너가 root:600으로 만든다 → 호스트에서 읽을 때 `sudo` 필요:
+  ```bash
+  # test 도메인의 사건 시각 요청 재구성 (상태·소요시간·경로)
+  sudo jq -r 'select(.ts > 1785400000) | [(.ts|todate), .status, (.duration|tostring), .request.method, .request.uri] | @tsv' \
+    ~/deploy/logs/caddy/test-access.log
+  # 도메인별 기록 여부 확인(빈 결과 = 그 블록에 log 지시어가 없다는 신호)
+  sudo jq -r '.request.host' ~/deploy/logs/caddy/*.log | sort | uniq -c
+  ```
+- 커밋 금지 — `deploy/logs/`는 `.gitignore` 대상이다(클라이언트 IP가 담긴다).
+
 ## 10. 이사 절차 (오라클 → 아무 VPS, 목표 30분)
 1. 새 Ubuntu 서버: §3 최초 기동 그대로 (rsync → setup → .env → up)
 2. 데이터: `pull-backup.sh`의 최신 덤프를 새 서버에 넣고
@@ -314,6 +344,8 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   `import /etc/caddy/caddy.d/*.caddy` 한 줄만 갖는다. test CD는 이 test 파일만 서버로 보내고
   reload하므로 **운영 라우팅은 main 배포로만 바뀐다**(staging에만 있는 운영 라우팅 변경이 먼저
   발효되는 뒷문 차단).
+- **액세스 로그는 `~/deploy/logs/caddy/test-access.log`**(07-31~, 운영과 별도 파일) — §9-1 참조.
+  test 스택 장애를 사후 조사할 땐 여기가 첫 삽이다.
 
 ### 최초 개통 체크리스트 (1회, 사용자 실행 — **순서가 중요**. 07-28 실행 완료 — 기록 보존)
 

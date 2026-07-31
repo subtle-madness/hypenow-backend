@@ -8,6 +8,8 @@ build/
 bin/
 .DS_Store
 backup/
+# Caddy 액세스 로그 바인드 마운트(deploy/README.md §9-1) — 클라이언트 IP가 담긴다
+deploy/logs/
 
 # 모노레포
 mac-migration-kit/

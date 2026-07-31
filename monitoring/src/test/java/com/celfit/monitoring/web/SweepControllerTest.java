@@ -13,6 +13,7 @@ import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.service.CollectService;
 import com.celfit.monitoring.service.DailySweepJob;
+import com.celfit.monitoring.service.SweepGuard;
 import com.celfit.monitoring.store.SweepRunRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
@@ -41,6 +42,14 @@ import org.springframework.web.context.WebApplicationContext;
  * CountDownLatch로 결정론적으로 검증한다(폴링·sleep 없이). manual-trigger-enabled 기본값은 false(운영
  * 공격면 최소화)라 이 컨트롤러 자체를 검증하려면 프로퍼티를 켜야 한다 — 게이트가 꺼졌을 때의 동작(404)은
  * {@link SweepControllerDisabledTest}가 별도 컨텍스트로 검증한다.
+ *
+ * <p><b>"완료" 신호는 {@link ControllableGuard#released}로 잡는다, job의 완료가 아니다.</b> 호출
+ * 순서는 {@code ControllableSweepJob.runWithId → super.runWithId(finally에서 sweep_run 완료 기록)
+ * → (job의 finally) → (한 프레임 바깥) SweepCommandService.start()의 executor 람다 finally →
+ * guard.release()} 순이다. GET /api/sweeps/latest의 running 필드는 guard.isRunning()으로 확정되므로,
+ * job 쪽 완료만 보고 곧바로 GET을 쏘면 guard.release()가 아직 안 돈 짧은 창에 걸려 running이 아직
+ * true로 남아있을 수 있다(실측: CPU 부하 하에서 1,600회 중 3회 재현). 그래서 job이 아니라 가드 해제
+ * 자체를 래치로 관측한다.
  */
 @SpringBootTest(properties = "monitoring.sweep.manual-trigger-enabled=true")
 class SweepControllerTest {
@@ -53,7 +62,6 @@ class SweepControllerTest {
 	static class ControllableSweepJob extends DailySweepJob {
 		volatile CountDownLatch entered;
 		volatile CountDownLatch release;
-		volatile CountDownLatch finished;
 		volatile boolean throwOnRelease;
 
 		ControllableSweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
@@ -69,7 +77,6 @@ class SweepControllerTest {
 		void reset() {
 			entered = new CountDownLatch(1);
 			release = new CountDownLatch(1);
-			finished = new CountDownLatch(1);
 			throwOnRelease = false;
 		}
 
@@ -77,14 +84,10 @@ class SweepControllerTest {
 		protected void runWithId(Long runId) {
 			entered.countDown();
 			awaitQuietly(release);
-			try {
-				if (throwOnRelease) {
-					throw new IllegalStateException("테스트 유도 실패 — 가드 누수 회귀 검증용");
-				}
-				super.runWithId(runId);   // target이 없어 실제 수집 콜 없이 sweep_run만 완료 기록된다.
-			} finally {
-				finished.countDown();
+			if (throwOnRelease) {
+				throw new IllegalStateException("테스트 유도 실패 — 가드 누수 회귀 검증용");
 			}
+			super.runWithId(runId);   // target이 없어 실제 수집 콜 없이 sweep_run만 완료 기록된다.
 		}
 
 		private static void awaitQuietly(CountDownLatch latch) {
@@ -98,6 +101,28 @@ class SweepControllerTest {
 		}
 	}
 
+	/**
+	 * 테스트 전용 가드 서브클래스 — {@link SweepGuard#release()}가 실제로 도는 시점을 래치로 잡는다.
+	 * {@code super.release()}(AtomicBoolean.set(false)) 다음에 {@code countDown()}이라, happens-before로
+	 * {@code released.await()}가 성립한 시점엔 {@code guard.isRunning() == false}가 반드시 관측된다.
+	 * job 완료(ControllableSweepJob의 runWithId 반환)와 실제 가드 해제 사이엔 한 프레임(
+	 * SweepCommandService.start()의 executor 람다 finally)이 더 있어, job 완료만 보고 GET을 쏘면
+	 * 그 창에 걸려 running이 아직 true로 남아있는 채로 관측될 수 있었다(클래스 javadoc 참고).
+	 */
+	static class ControllableGuard extends SweepGuard {
+		volatile CountDownLatch released = new CountDownLatch(1);
+
+		@Override
+		public void release() {
+			super.release();
+			released.countDown();
+		}
+
+		void reset() {
+			released = new CountDownLatch(1);
+		}
+	}
+
 	@TestConfiguration
 	static class Fakes {
 		@Bean
@@ -105,6 +130,12 @@ class SweepControllerTest {
 		ControllableSweepJob controllableSweepJob(TargetRepository targets, CollectService collect,
 				AlarmRecorder alarms, SweepRunRepository sweepRuns) {
 			return new ControllableSweepJob(targets, collect, alarms, sweepRuns);
+		}
+
+		@Bean
+		@Primary
+		ControllableGuard controllableGuard() {
+			return new ControllableGuard();
 		}
 	}
 
@@ -119,6 +150,7 @@ class SweepControllerTest {
 	@Autowired WebApplicationContext ctx;
 	@Autowired JdbcTemplate db;
 	@Autowired ControllableSweepJob job;
+	@Autowired ControllableGuard guard;
 	MockMvc mvc;
 
 	@BeforeEach
@@ -126,6 +158,7 @@ class SweepControllerTest {
 		mvc = MockMvcBuilders.webAppContextSetup(ctx).build();
 		db.update("DELETE FROM sweep_run");
 		job.reset();
+		guard.reset();
 	}
 
 	@Test
@@ -138,7 +171,7 @@ class SweepControllerTest {
 		// 컨트롤러 스레드가 아니라 별도 스레드에서 실행됐다는 증거 — 여기서 걸리면 동기 실행이라는 뜻.
 		assertThat(job.entered.await(5, TimeUnit.SECONDS)).isTrue();
 		job.release.countDown();
-		assertThat(job.finished.await(5, TimeUnit.SECONDS)).isTrue();
+		assertThat(guard.released.await(5, TimeUnit.SECONDS)).isTrue();
 
 		// run()과 동일한 sweep_run 격리 계약 — 정상 완주는 ok=true 1행.
 		assertThat(db.queryForObject("SELECT count(*) FROM sweep_run", Long.class)).isEqualTo(1);
@@ -155,17 +188,15 @@ class SweepControllerTest {
 				.andExpect(jsonPath("$.code").value("SWEEP_ALREADY_RUNNING"));
 
 		job.release.countDown();
-		assertThat(job.finished.await(5, TimeUnit.SECONDS)).isTrue();
+		assertThat(guard.released.await(5, TimeUnit.SECONDS)).isTrue();
 	}
 
 	/**
 	 * 가드 누수 회귀 가드 — 스윕이 (재시도 대기 인터럽트 등으로) 예외로 죽어도 SweepCommandService의
 	 * finally가 가드를 풀어야 한다. 여기서 풀리지 않으면 다음 트리거가 영원히 409만 받는다.
 	 *
-	 * <p>job.finished는 ControllableSweepJob.runWithId 자신의 finally에서 풀린다 — 그런데 실제 가드
-	 * 해제(guard.release())는 그 한 단계 바깥, SweepCommandService의 executor 람다 finally다.
-	 * 예외가 runWithId → 그 람다로 전파되는 사이 아주 짧은 창이 있어, finished만 보고 바로 재시도하면
-	 * 드물게 409가 뜬다 — 그래서 가드가 실제로 풀릴 때까지 짧게 재시도한다(최대 2초).
+	 * <p>가드 해제를 래치(guard.released)로 기다리므로 그 뒤의 두 번째 POST는 409를 받을 수 없다 —
+	 * 재시도 없이 평범하게 202를 단언한다.
 	 */
 	@Test
 	void 스윕이_예외로_죽어도_가드는_풀리고_다음_트리거는_다시_202를_받는다() throws Exception {
@@ -174,24 +205,14 @@ class SweepControllerTest {
 		mvc.perform(post("/api/sweeps")).andExpect(status().isAccepted());
 		assertThat(job.entered.await(5, TimeUnit.SECONDS)).isTrue();
 		job.release.countDown();
-		assertThat(job.finished.await(5, TimeUnit.SECONDS)).isTrue();
+		assertThat(guard.released.await(5, TimeUnit.SECONDS)).isTrue();
 
 		job.reset();   // 예외 경로에서 super.runWithId를 안 탔으니 sweep_run 완료 기록도 없다 — 다음 트리거로 새 라운드
-		int status = retryPostUntilNotConflict();
-		assertThat(status).isEqualTo(202);
+		guard.reset();   // 2라운드용 래치 재장전 — 반드시 위 released.await 이후, 다음 POST 이전에 해야 한다
+		mvc.perform(post("/api/sweeps")).andExpect(status().isAccepted());
 		assertThat(job.entered.await(5, TimeUnit.SECONDS)).isTrue();
 		job.release.countDown();
-		assertThat(job.finished.await(5, TimeUnit.SECONDS)).isTrue();
-	}
-
-	/** guard.release()가 예외 경로에서 완전히 반영될 때까지 짧게 재시도 — 실행 스레드 종료와의 경합 흡수. */
-	private int retryPostUntilNotConflict() throws Exception {
-		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-		int status;
-		do {
-			status = mvc.perform(post("/api/sweeps")).andReturn().getResponse().getStatus();
-		} while (status == 409 && System.nanoTime() < deadline);
-		return status;
+		assertThat(guard.released.await(5, TimeUnit.SECONDS)).isTrue();
 	}
 
 	@Test
@@ -207,7 +228,7 @@ class SweepControllerTest {
 		mvc.perform(post("/api/sweeps")).andExpect(status().isAccepted());
 		assertThat(job.entered.await(5, TimeUnit.SECONDS)).isTrue();
 		job.release.countDown();
-		assertThat(job.finished.await(5, TimeUnit.SECONDS)).isTrue();
+		assertThat(guard.released.await(5, TimeUnit.SECONDS)).isTrue();
 
 		mvc.perform(get("/api/sweeps/latest"))
 				.andExpect(status().isOk())
@@ -228,6 +249,6 @@ class SweepControllerTest {
 				.andExpect(jsonPath("$.running").value(true));
 
 		job.release.countDown();
-		assertThat(job.finished.await(5, TimeUnit.SECONDS)).isTrue();
+		assertThat(guard.released.await(5, TimeUnit.SECONDS)).isTrue();
 	}
 }

@@ -7,11 +7,18 @@ public class V1ApiException extends RuntimeException {
 
 	private final HttpStatus status;
 	private final String code;
+	private final Integer retryAfterSeconds;
 
 	public V1ApiException(HttpStatus status, String code, String message) {
+		this(status, code, message, null);
+	}
+
+	/** retryAfterSeconds가 null이 아니면 advice가 Retry-After 헤더를 함께 내려보낸다. */
+	public V1ApiException(HttpStatus status, String code, String message, Integer retryAfterSeconds) {
 		super(message);
 		this.status = status;
 		this.code = code;
+		this.retryAfterSeconds = retryAfterSeconds;
 	}
 
 	public static V1ApiException notFound(String message) {
@@ -48,11 +55,21 @@ public class V1ApiException extends RuntimeException {
 		return new V1ApiException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청이 너무 잦아요. 잠시 후 다시 시도해 주세요.");
 	}
 
+	/** 동시 실행 제한(ConcurrencyLimiter bulkhead) 초과 — 짧은 재시도를 유도하는 Retry-After 포함. */
+	public static V1ApiException rateLimited(int retryAfterSeconds) {
+		return new V1ApiException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED",
+				"요청이 너무 잦아요. 잠시 후 다시 시도해 주세요.", retryAfterSeconds);
+	}
+
 	public HttpStatus status() {
 		return status;
 	}
 
 	public String code() {
 		return code;
+	}
+
+	public Integer retryAfterSeconds() {
+		return retryAfterSeconds;
 	}
 }
