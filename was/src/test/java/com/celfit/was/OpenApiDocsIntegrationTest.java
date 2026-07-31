@@ -185,7 +185,7 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 						containsInAnyOrder("reels", "feed")))
 				.andExpect(jsonPath("$.components.schemas.Entry.properties.reasonCode.enum",
 						containsInAnyOrder("invalid_format", "not_found", "private_account", "share_link_unresolved",
-								"duplicate", "internal_error")));
+								"duplicate", "internal_error", "canceled")));
 	}
 
 	@Test

@@ -14,6 +14,7 @@ import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.RegistrationEntryRow;
 import com.celfit.was.monitoring.RegistrationRepository;
 import com.celfit.was.monitoring.RegistrationRow;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -257,10 +258,11 @@ class MonitoringRegistrationExecutorTest extends IntegrationTest {
 	}
 
 	@Test
-	void 취소된_행은_백그라운드_등록을_건너뛴다() {
+	void 취소된_행은_백그라운드_등록을_건너뛰고_entry가_canceled로_정산된다() {
 		// 접수(6.27) 커밋 ~ 백그라운드 첫 확인 사이에 6.30 cancel이 먼저 온 경합 — item은
 		// markCanceled로 이미 종결됐지만 entry는 여전히 pending인 채 남아 있다(V1MonitoringItemUpdateService
-		// 참조). 실행기는 target 생성 없이 건너뛰어야 한다(monitoring에 등록 요청을 보내면 안 됨).
+		// 참조). 실행기는 target 생성 없이 건너뛰고(monitoring에 등록 요청을 보내면 안 됨), 대신
+		// entry를 canceled로 정산한다(트랙 LL §4-2 — 예전엔 pending 그대로 방치해 영구 미완료로 남았다).
 		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "CANCELED1",
 				"https://www.instagram.com/p/CANCELED1/", null, 14, LocalDate.of(2026, 7, 30));
 		long registrationId = registrationRepository.insert(userId, 14, null);
@@ -272,8 +274,33 @@ class MonitoringRegistrationExecutorTest extends IntegrationTest {
 
 		assertThat(itemRepository.findByIdAndUser(itemId, userId).orElseThrow().targetId()).isNull();
 		RegistrationEntryRow entry = onlyEntry(registrationId);
-		assertThat(entry.result()).isEqualTo("pending");   // 취소된 행은 건드리지 않고 원상태로 둔다
+		assertThat(entry.result()).isEqualTo("canceled");
+		assertThat(entry.reasonCode()).isEqualTo("canceled");
+		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
 		server.verify();   // 등록되지 않았어야 하므로 /api/targets로 어떤 요청도 안 갔다(기대 0건)
+	}
+
+	@Test
+	void settleStaleRegistrationEntries는_임계_초과_pending_entry를_item_상태로_확정하고_완료_마킹한다() {
+		// RegistrationRepository.settleStaleEntries 자체의 판정 로직(target 유무·취소 여부별 분기)은
+		// RegistrationRepositoryTest가 촘촘히 덮는다 — 여기서는 executor가 그 결과를 받아
+		// markCompletedIfAllSettled까지 마저 돌리는 배선만 확인한다.
+		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "STALEENTRY1",
+				"https://www.instagram.com/p/STALEENTRY1/", null, 14, LocalDate.of(2026, 7, 30));
+		itemRepository.confirmTarget(itemId, 950L);
+		long registrationId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(registrationId, 0, "https://www.instagram.com/p/STALEENTRY1/", "post",
+				"pending", null, null, null, itemId);
+		jdbcClient.sql(
+				"UPDATE app.monitoring_registrations SET requested_at = now() - interval '25 hours' WHERE id = :id")
+				.param("id", registrationId)
+				.update();
+
+		executor.settleStaleRegistrationEntries(Duration.ofHours(24));
+
+		RegistrationEntryRow entry = onlyEntry(registrationId);
+		assertThat(entry.result()).isEqualTo("success");
+		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
 	}
 
 	@Test

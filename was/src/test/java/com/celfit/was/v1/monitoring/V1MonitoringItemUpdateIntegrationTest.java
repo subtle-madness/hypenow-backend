@@ -13,6 +13,8 @@ import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.MonitoringReadRepository;
+import com.celfit.was.monitoring.RegistrationRepository;
+import com.celfit.was.monitoring.RegistrationRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import java.sql.Connection;
@@ -57,6 +59,7 @@ class V1MonitoringItemUpdateIntegrationTest extends IntegrationTest {
 
 	MockRestServiceServer server;
 	V1MonitoringItemUpdateService service;
+	RegistrationRepository registrationRepository;
 	JdbcClient monitoringJdbc;
 	long userId;
 
@@ -76,8 +79,9 @@ class V1MonitoringItemUpdateIntegrationTest extends IntegrationTest {
 		V1CampaignService campaignService = new V1CampaignService(campaignRepository);
 		TrackingItemAssembler assembler = new TrackingItemAssembler(itemRepository, campaignRepository,
 				Optional.of(readRepository), new ObjectMapper());
+		registrationRepository = new RegistrationRepository(jdbcClient);
 		service = new V1MonitoringItemUpdateService(itemRepository, campaignRepository, campaignService,
-				Optional.of(readRepository), Optional.of(commandClient), assembler);
+				Optional.of(readRepository), Optional.of(commandClient), assembler, registrationRepository);
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "mon-update-" + UUID.randomUUID() + "@test.io")
@@ -164,6 +168,48 @@ class V1MonitoringItemUpdateIntegrationTest extends IntegrationTest {
 		MonitoringItemRow row = itemRepository.findByIdAndUser(itemId, userId).orElseThrow();
 		assertThat(row.canceledAt()).isNotNull();
 		assertThat(row.canceledFrom()).isEqualTo("detecting");
+		server.verify();
+	}
+
+	@Test
+	void cancel하면_매달린_pending_entry가_canceled로_정산되고_registration이_완료된다() {
+		// 트랙 LL 회귀 — 예전엔 cancel()이 entry를 건드리지 않아 pending에 영구히 갇히고
+		// registration.completed_at도 영영 안 채워졌다(운영 실측 registration id=2, 11시간+).
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "glowdeep", null,
+				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, LocalDate.now(KstTimestamps.KST));
+		long regId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(regId, 1, "glowdeep", "account", "pending", null, null, null, itemId);
+		// server에 어떤 expect()도 등록하지 않는다 — pending(detecting) 행은 monitoring cancel 호출이 없다.
+
+		service.cancel(userId, itemId);
+
+		RegistrationRow row = registrationRepository.findById(regId).orElseThrow();
+		assertThat(row.entries().get(0).result()).isEqualTo("canceled");
+		assertThat(row.entries().get(0).reasonCode()).isEqualTo("canceled");
+		assertThat(row.completedAt()).isNotNull();
+		server.verify();
+	}
+
+	@Test
+	void cancel_이미_success로_정산된_entry는_canceled로_되돌리지_않는다() {
+		// 실행기 스레드와 취소 요청이 같은 entry를 동시에 만지는 경합 방어(설계 §4-2) —
+		// settleCanceledByItem의 result='pending' 조건이 이미 정산된 entry를 지켜야 한다.
+		long targetId = seedTarget("glowdeep", "TRACKING", "SHORT1");
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "glowdeep", null,
+				"{\"and\":[],\"or\":[],\"exclude\":[]}", 14, LocalDate.now(KstTimestamps.KST));
+		itemRepository.confirmTarget(itemId, targetId);
+		long regId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(regId, 1, "glowdeep", "account", "success", null, null, null, itemId);
+
+		server.expect(requestTo(BASE + "/api/targets/" + targetId))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withSuccess("{ \"targetId\": " + targetId + ", \"status\": \"CANCELED\" }",
+						MediaType.APPLICATION_JSON));
+
+		service.cancel(userId, itemId);
+
+		RegistrationRow row = registrationRepository.findById(regId).orElseThrow();
+		assertThat(row.entries().get(0).result()).isEqualTo("success");
 		server.verify();
 	}
 

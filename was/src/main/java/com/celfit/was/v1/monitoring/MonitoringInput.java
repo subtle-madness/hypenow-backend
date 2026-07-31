@@ -1,5 +1,6 @@
 package com.celfit.was.v1.monitoring;
 
+import com.celfit.was.monitoring.RegistrationResult;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -12,7 +13,10 @@ import java.util.regex.Pattern;
  */
 public sealed interface MonitoringInput {
 
-	String REASON_INVALID_FORMAT = "invalid_format";
+	/** {@link RegistrationResult#REASON_INVALID_FORMAT}로 위임 — 정본은 상수 홀더, 여기는 기존 공개
+	 * 소비처(RegistrationResponse의 @Schema 등) 호환을 위한 재노출이다. 다른 참조 대상과 어긋날 일이
+	 * 없다(같은 상수 참조라 컴파일 상수로도 계속 동작). */
+	String REASON_INVALID_FORMAT = RegistrationResult.REASON_INVALID_FORMAT;
 
 	/** 게시물 링크 파싱 성공 — shortCode는 중복·저장 비교 키, canonicalUrl은 저장·표시용. */
 	record Post(String shortCode, String canonicalUrl) implements MonitoringInput {

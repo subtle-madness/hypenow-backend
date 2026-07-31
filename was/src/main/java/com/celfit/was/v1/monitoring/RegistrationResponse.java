@@ -1,6 +1,7 @@
 package com.celfit.was.v1.monitoring;
 
 import com.celfit.was.monitoring.RegistrationEntryRow;
+import com.celfit.was.monitoring.RegistrationResult;
 import com.celfit.was.monitoring.RegistrationRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -19,11 +20,13 @@ public record RegistrationResponse(String id, String requestedAt, String complet
 		List<Entry> entries) {
 
 	public record Entry(String input, String kind, String result,
-			// 값 6종 — invalid_format만 MonitoringInput.REASON_INVALID_FORMAT(공개 상수)로 참조 가능하고
-			// 나머지 5종은 MonitoringRegistrationExecutor의 REASON_*(비공개 상수)가 정본이라 컴파일 상수로
-			// 직접 참조할 수 없어 문자열 그대로 표기한다(런타임 타입은 String 그대로 유지).
-			@Schema(allowableValues = {MonitoringInput.REASON_INVALID_FORMAT, "not_found", "private_account",
-					"share_link_unresolved", "duplicate", "internal_error"})
+			// 값 7종 — 전부 RegistrationResult(상수 홀더, 트랙 LL)가 정본이다. 이전엔 invalid_format만
+			// MonitoringInput의 공개 상수로 참조 가능하고 나머지는 executor의 비공개 상수라 문자열
+			// 리터럴을 직접 박아 뒀는데, 홀더가 생기면서 전부 컴파일 상수 참조로 정리됐다.
+			@Schema(allowableValues = {RegistrationResult.REASON_INVALID_FORMAT, RegistrationResult.REASON_NOT_FOUND,
+					RegistrationResult.REASON_PRIVATE_ACCOUNT, RegistrationResult.REASON_SHARE_LINK_UNRESOLVED,
+					RegistrationResult.REASON_DUPLICATE, RegistrationResult.REASON_INTERNAL_ERROR,
+					RegistrationResult.REASON_CANCELED})
 			String reasonCode, String reason,
 			String resolvedUrl, String itemId) {
 
