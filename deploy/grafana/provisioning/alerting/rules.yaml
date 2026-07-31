@@ -1,0 +1,54 @@
+# "미완료 등록 30분 초과" 알림 — 대시보드 패널1(미완료 등록)과 같은 판정 기준.
+# A: 원본 SQL(30분 초과 미완료 건수) → B: reduce(last) → C: threshold(> 0)가 firing 조건.
+# interval 5m — 2코어 서버 부담 최소화(대시보드 자동새로고침과 동일 주기). for: 0m —
+# SQL 자체가 이미 "30분 경과"를 조건에 넣고 있어 추가 유지시간을 둘 필요가 없다.
+#
+# ⚠ 프로비저닝으로 처음 반영한 뒤 Grafana UI(Alerting > Alert rules)에서 규칙이 정상 로드됐는지
+# 반드시 확인할 것 — 이 스키마는 문서 기준으로 작성했고 실제 기동 검증은 못 했다(README §14 참조).
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: hypenow-registrations
+    folder: HypeNow
+    interval: 5m
+    rules:
+      - uid: incomplete-registration-30m
+        title: "미완료 등록 30분 초과"
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: "completed_at IS NULL 상태로 30분 넘게 남아있는 등록이 있습니다. 대시보드 '미완료 등록' 패널 확인."
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: hypenow-analysis-pg
+            model:
+              refId: A
+              format: table
+              rawSql: >-
+                SELECT count(*) AS value FROM app.monitoring_registrations
+                WHERE completed_at IS NULL AND now() - requested_at > interval '30 minutes'
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]

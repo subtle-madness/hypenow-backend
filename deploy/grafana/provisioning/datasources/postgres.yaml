@@ -1,0 +1,24 @@
+# analysis DB(app 스키마) 읽기 전용 데이터소스 — 롤 grafana_reader는 Flyway가 아닌 수동 런북으로
+# 생성한다(README §14 — was_reader·alarm_reader와 같은 관례, CREATE ROLE은 앱 Flyway 권한 밖).
+# 내부 도커 네트워크(prod)로만 통신 — 다른 서비스(analytics·crawler·was)의 JDBC URL도 SSL 파라미터가
+# 없어 postgres 컨테이너가 SSL을 켜지 않은 상태(sslmode: disable)에 맞춘다.
+apiVersion: 1
+
+datasources:
+  - name: HypeNow analysis (app 스키마, 읽기 전용)
+    uid: hypenow-analysis-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: analysis
+    user: grafana_reader
+    isDefault: true
+    editable: false
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1700 # postgres:17-alpine과 동일
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $__env{GRAFANA_READER_PASSWORD}

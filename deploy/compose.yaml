@@ -273,6 +273,45 @@ services:
       - ./ons-discord-relay.py:/relay.py:ro
     command: python /relay.py
 
+  # 서비스 현황 대시보드(app 스키마 읽기 전용) — 호스트 포트 미노출, Caddy가 grafana:3000으로 프록시.
+  # CPU 2코어 제약 고려: 익명접속·회원가입·원격 리포팅/업데이트체크류 전부 끔, mem_limit 512m로 상한.
+  # 대시보드 자동 새로고침은 패널 JSON(provisioning/dashboards/json)에서 5분으로 고정 — 1분 미만 금지.
+  grafana:
+    image: grafana/grafana:13.1.1
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 512m
+    environment:
+      GF_SERVER_ROOT_URL: https://${GRAFANA_DOMAIN}
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # 2코어 서버에서 불필요한 백그라운드 잡(원격 리포팅·업데이트 체크·피드백 링크) 차단
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_ANALYTICS_FEEDBACK_LINKS_ENABLED: "false"
+      # 프로비저닝 파일의 $__env{} 치환용 — analysis DB grafana_reader 비밀번호(README §14 런북에서 생성)
+      GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD}
+      # "미완료 등록 30분 초과" 알림 contact point가 재사용(ons-relay와 같은 웹훅, §9)
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    # /api/health는 인증 불필요. wget은 Grafana 공식 이미지가 기본 포함(공식 문서 헬스체크 예시와 동일
+    # 관용구) — 다른 서비스들의 "이미지에 curl이 없어 bash /dev/tcp" 사유와 달리 grafana는 wget 사용.
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -283,6 +322,7 @@ services:
       - "443:443"
     environment:
       API_DOMAIN: ${API_DOMAIN}
+      GRAFANA_DOMAIN: ${GRAFANA_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy.d:/etc/caddy/caddy.d:ro
@@ -296,3 +336,4 @@ volumes:
   pg-raw-data:
   caddy-data:
   caddy-config:
+  grafana-data:
