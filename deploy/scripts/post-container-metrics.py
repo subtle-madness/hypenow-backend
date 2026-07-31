@@ -11,8 +11,11 @@ import subprocess
 import oci
 
 # compose 서비스 고정 목록 — 실행 중인 것만 열거하면 "사라진 컨테이너"가 메트릭 스트림에서
-# 빠져 알람이 못 잡는다. 목록에 있는데 inspect가 실패하면 0(다운)으로 게시된다.
+# 빠져 알람이 못 잡는다. 목록에 있는데 컨테이너를 못 찾으면 0(다운)으로 게시된다.
 SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", "monitoring"]
+# 운영 compose 프로젝트명(디렉토리 ~/deploy 기반). test-* 서비스는 같은 프로젝트지만
+# 서비스 라벨이 달라(test-was 등) 아래 필터에 걸리지 않는다.
+PROJECT = "deploy"
 NAMESPACE = "hypenow_custom"
 COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaat36ksxqom5nzid6jzx2tglneiyganxbjk7t5pgmlvgpc44eozllq"
 
@@ -22,19 +25,38 @@ BUCKETS = ["hypenow-images"]
 OS_NAMESPACE = "nr4nxrxoojw8"
 
 
+def container_ids(service: str) -> list[str]:
+	"""compose 라벨로 서비스의 컨테이너를 전부 찾는다(정지분 포함). 이름(deploy-<svc>-1)을 쓰면
+	안 되는 이유: 롤링 재기동(rollout.sh)이 `--scale <svc>=2`로 다음 빈 인덱스에 신 컨테이너를
+	띄우고 구 1번을 제거해서, 첫 롤링 이후로는 -1이 영영 존재하지 않는다 — 07-30 롤링 도입 직후
+	was가 상시 다운으로 오탐해 hypenow-container-down이 16시간 넘게 울렸다."""
+	result = subprocess.run(
+		["docker", "ps", "-aq",
+		 "--filter", f"label=com.docker.compose.project={PROJECT}",
+		 "--filter", f"label=com.docker.compose.service={service}"],
+		capture_output=True, text=True, timeout=10)
+	return result.stdout.split() if result.returncode == 0 else []
+
+
 def container_up(service: str) -> int:
 	"""1=정상(running이고, 헬스체크가 있으면 healthy/starting). starting을 살아있음으로 치는 건
-	배포 재기동(analytics start_period 90s) 동안의 오탐 방지 — 기동 실패는 곧 unhealthy/exit로 떨어진다."""
-	name = f"deploy-{service}-1"
+	배포 재기동(analytics start_period 90s) 동안의 오탐 방지 — 기동 실패는 곧 unhealthy/exit로 떨어진다.
+	롤링 중 복제 2개가 공존하므로 하나라도 살아있으면 1(서비스는 계속 서빙 중이다)."""
 	try:
+		ids = container_ids(service)
+		if not ids:
+			return 0
+		# returncode는 보지 않는다 — ps~inspect 사이에 한 컨테이너가 사라지면 0이 아니지만
+		# 나머지 줄은 유효하다. 판정은 "살아있는 줄이 하나라도 있는가"로 충분하다.
 		result = subprocess.run(
 			["docker", "inspect", "--format",
-			 "{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}", name],
+			 "{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}", *ids],
 			capture_output=True, text=True, timeout=10)
-		if result.returncode != 0:
-			return 0
-		running, health = result.stdout.strip().split("|")
-		return 1 if running == "true" and health in ("", "healthy", "starting") else 0
+		for line in result.stdout.splitlines():
+			running, _, health = line.strip().partition("|")
+			if running == "true" and health in ("", "healthy", "starting"):
+				return 1
+		return 0
 	except Exception:
 		return 0
 
