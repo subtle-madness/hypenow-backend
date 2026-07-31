@@ -595,6 +595,13 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 `DISCORD_WEBHOOK_URL`은 **재사용**(§9, ons-relay와 같은 웹훅) — 새 변수 불필요. 이미 설정돼
 있어야 아래 14-5 알림이 동작한다.
 
+> **`GRAFANA_DOMAIN` 누락은 원래 운영 전면 다운이었다** (07-31 실측·방어됨). Caddyfile의
+> 사이트 주소가 빈 문자열이 되면 어댑트가 통째로 실패해(`server block without any key is
+> global configuration`) caddy 컨테이너가 못 뜨고, 이 파일은 운영 라우팅 본체라 API가 전부
+> 죽는다. 그래서 Caddyfile에 `{$GRAFANA_DOMAIN:grafana.localhost}` **기본값을 박아 뒀다** —
+> `.env`를 채우기 전에 배포되는 순서 사고가 나도 caddy는 정상 기동하고, grafana만 내부
+> 도메인으로 떠서 외부에 노출되지 않는다. 이 기본값을 지우지 말 것.
+
 ### 14-4. DNS (사용자 직접, §2와 동일 패턴)
 
 - A레코드 `<GRAFANA_DOMAIN>` → 서버 공인 IP (TTL 300 권장). 운영 IP와 동일 — 새 인스턴스가 아니다.

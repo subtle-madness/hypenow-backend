@@ -39,7 +39,13 @@
 # ARCHITECTURE 지침: caddy.d는 dev CD 전용 갱신 영역). 로그 파일은 API 액세스 로그(access.log)와
 # 분리 — grafana는 어드민 소수 트래픽이라 섞으면 API 로그의 50MiB×5롤 보존 기간을 갉아먹고,
 # grep으로 API 요청만 추적하던 기존 습관(운영 조사 관례)도 방해한다.
-{$GRAFANA_DOMAIN} {
+#
+# ⚠️ 기본값 `grafana.localhost`는 장식이 아니라 안전장치다 — 07-31 실측: 기본값 없이
+# `{$GRAFANA_DOMAIN}`만 두면 .env에 값이 없을 때 Caddy 어댑트가 통째로 실패한다
+# ("server block without any key is global configuration"). 그러면 caddy 컨테이너가 못 떠서
+# **운영 API 전면 다운**이다(이 파일은 운영 라우팅 본체). .env 채우기 전에 배포되는 순서
+# 사고를 코드로 막는다. 미설정 시엔 .localhost로 떠서 외부 노출도 ACME 발급 시도도 없다.
+{$GRAFANA_DOMAIN:grafana.localhost} {
 	log {
 		output file /var/log/caddy/grafana-access.log {
 			roll_size 50MiB
