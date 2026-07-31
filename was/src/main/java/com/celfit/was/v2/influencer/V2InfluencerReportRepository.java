@@ -119,12 +119,23 @@ public class V2InfluencerReportRepository {
 	 *  실측 1,981ms 성능 절벽(집합 기반 85ms, 컷 0.30 근거는 운영 dry-run: 10위 점수 최솟값 0.400).
 	 *  scored MATERIALIZED는 점수식의 WHERE/ORDER BY 이중 평가 방지. 카드 조립은
 	 *  발굴 목록(6.21) 표면 재사용 — 기준 계정이 풀에 없으면 빈 목록.
-	 *  뷰티 게시물 비율 게이트(07-30)도 후보 단계에서 적용 — 발굴 목록과 동일 기준, br LEFT JOIN. */
+	 *  뷰티 게시물 비율 게이트(07-30)도 후보 단계에서 적용 — 발굴 목록과 동일 기준, br LEFT JOIN.
+	 *  07-31 최적화: account_peer_stats는 me·c에서, account_category_stats는 my_shares·cand_mix에서
+	 *  각각 2번씩 참조돼 일반 VIEW라 매번 인라인 재계산되고 있었다 — peers·cats MATERIALIZED CTE로
+	 *  한 번만 평가하도록 묶었다. test DB 핸들 13개 전수 결과 완전 일치(순서 포함) 확인, 중앙값
+	 *  1560.7ms → 753.4ms(약 2.1배), content_analyses(94,433행)·account_content_series(77,943행)
+	 *  Seq Scan 6회 → 4회로 감소(EXPLAIN ANALYZE 실측). */
 	public List<String> findSimilarHandles(String handle) {
 		return jdbcClient.sql("""
-				WITH me AS (
+				WITH peers AS MATERIALIZED (
+				  SELECT handle, peer_category FROM account_peer_stats
+				),
+				cats AS MATERIALIZED (
+				  SELECT account_handle, main_group, content_count FROM account_category_stats
+				),
+				me AS (
 				  SELECT p.peer_category, ac.followers, la.traits
-				  FROM account_peer_stats p
+				  FROM peers p
 				  JOIN accounts ac ON ac.handle = p.handle
 				  JOIN LATERAL (SELECT traits FROM account_analyses
 				                WHERE handle = p.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
@@ -133,7 +144,7 @@ public class V2InfluencerReportRepository {
 				my_shares AS (
 				  SELECT main_group,
 				         content_count::numeric / sum(content_count) OVER () AS share
-				  FROM account_category_stats
+				  FROM cats
 				  WHERE account_handle = :h
 				),
 				cand_mix AS (
@@ -141,7 +152,7 @@ public class V2InfluencerReportRepository {
 				  FROM (SELECT account_handle, main_group,
 				               content_count::numeric / sum(content_count)
 				                 OVER (PARTITION BY account_handle) AS share
-				        FROM account_category_stats) s
+				        FROM cats) s
 				  JOIN my_shares ms ON ms.main_group = s.main_group
 				  GROUP BY s.account_handle
 				),
@@ -154,7 +165,7 @@ public class V2InfluencerReportRepository {
 				               SELECT value FROM jsonb_array_elements_text(la.traits)
 				               UNION ALL SELECT value FROM jsonb_array_elements_text(me.traits)) u), 0), 0)
 				         + 0.4 * COALESCE(cm.mix_overlap, 0) AS score
-				  FROM account_peer_stats c
+				  FROM peers c
 				  JOIN me ON c.peer_category = me.peer_category
 				  JOIN accounts ac ON ac.handle = c.handle
 				  JOIN account_summaries su ON su.handle = c.handle

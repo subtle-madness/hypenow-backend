@@ -335,23 +335,35 @@ class HikerClientTest {
 		assertThat(calls.get(1)).contains("&page_id=cmt-cursor-2");
 	}
 
-	/** has_more_comments가 false면 next_page_id가 남아 있어도 커서만 믿고 더 부르면 안 된다. */
+	/**
+	 * has_more_comments는 신뢰하지 않는다(07-31 defect A) — 운영 실측(media 3929190553799320931,
+	 * 댓글 2,325건)에서 1페이지가 has_more_comments=false를 주면서도 next_page_id를 들고 있었고,
+	 * 그 커서로 재요청한 2페이지에서 1페이지와 중복 0건인 신규 댓글이 나왔다(플래그가 거짓말).
+	 * 그래서 has_more_comments=false여도 next_page_id가 있으면 요청한 페이지 수만큼 계속 가져와야 한다.
+	 */
 	@Test
-	void has_more_comments가_false면_next_page_id가_있어도_더_부르지_않는다() {
+	void has_more_comments가_false여도_next_page_id가_있으면_계속_가져온다() {
 		List<String> calls = new ArrayList<>();
 		HikerClient client = new HikerClient(path -> {
 			calls.add(path);
+			if (path.contains("page_id=")) {
+				return """
+						{"response":{"comments":[
+						{"pk":"2","text":"2페이지 댓글","comment_like_count":1,
+						 "created_at_utc":1700000001,"user":{"username":"fan2"},"preview_child_comments":[]}
+						],"has_more_comments":false},"next_page_id":null}""";
+			}
 			return """
 					{"response":{"comments":[
-					{"pk":"1","text":"단일 댓글","comment_like_count":1,
+					{"pk":"1","text":"1페이지 댓글","comment_like_count":1,
 					 "created_at_utc":1700000000,"user":{"username":"fan1"},"preview_child_comments":[]}
-					],"has_more_comments":false},"next_page_id":"should-not-be-used"}""";
+					],"has_more_comments":false},"next_page_id":"cmt-cursor-2"}""";
 		});
 
 		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3);
 
-		assertThat(comments).hasSize(1);
-		assertThat(calls).hasSize(1);
+		assertThat(comments).extracting(CommentInfo::id).containsExactly("1", "2");
+		assertThat(calls).hasSize(2);   // has_more_comments=false에 속지 않고 커서를 따라 2페이지까지 갔다
 	}
 
 	/** 요청한 페이지 수(예: 2)에 도달하면 응답이 계속 더 있다고 해도(has_more_comments=true) 멈춘다. */
