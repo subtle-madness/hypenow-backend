@@ -187,6 +187,22 @@ class AdminApiIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
+	/**
+	 * NUMERIC_ID(^[0-9]+$)는 자릿수 무제한이라 Long.MAX_VALUE 초과 숫자 문자열도 통과시킨다 — 방어 없으면
+	 * Long.parseLong이 NumberFormatException을 던져 필터 밖으로 전파되고 envelope 깨진 Boot 기본 에러
+	 * 응답이 나간다(코드 리뷰 지적). AdminUsersController.parseId와 동일한 try/catch로 404에 흡수한다.
+	 */
+	@Test
+	void Long_오버플로우_대상_id는_전파되지_않고_404_NOT_FOUND다() throws Exception {
+		Cookie adminSession = login(ADMIN_EMAIL);
+
+		mockMvc.perform(get("/v1/me").cookie(adminSession)
+						.header("X-Act-As-User", "99999999999999999999"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
 	@Test
 	void 어드민_표면으로의_헤더는_무시하고_어드민_본인_기준으로_동작한다() throws Exception {
 		Cookie adminSession = login(ADMIN_EMAIL);
@@ -196,6 +212,33 @@ class AdminApiIntegrationTest extends IntegrationTest {
 						.header("X-Act-As-User", String.valueOf(targetId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.ok").value(true));
+	}
+
+	// --- §1·§2 세션 authority 신선도 재확인(코드 리뷰 지적) ---
+
+	/**
+	 * 세션엔 로그인 시점 authorities가 그대로 남는다(AppUserDetails 클래스 주석) — 로그인 후 DB에서
+	 * role을 USER로 강등해도 같은 세션 쿠키는 로그아웃 전까지 ROLE_ADMIN을 계속 주장한다. 두 어드민
+	 * 판정(AdminRoleFreshnessFilter의 /v1/admin/** 게이트, ActAsUserFilter.isAdmin)이 매 요청 DB
+	 * role을 재확인하는지 검증한다.
+	 */
+	@Test
+	void 로그인_후_DB에서_강등되면_admin_게이트는_403이고_act_as_헤더는_무시된다() throws Exception {
+		Cookie adminSession = login(ADMIN_EMAIL);
+
+		jdbcClient.sql("UPDATE app.users SET role = 'USER' WHERE id = :id").param("id", adminId).update();
+
+		mockMvc.perform(get("/v1/admin/users").cookie(adminSession))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		// act-as 헤더도 무시되고 (강등된) 본인 기준 응답이 그대로 나온다 — 대상 유저로 스왑되지 않는다.
+		mockMvc.perform(get("/v1/me").cookie(adminSession)
+						.header("X-Act-As-User", String.valueOf(targetId)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.id").value(String.valueOf(adminId)))
+				.andExpect(jsonPath("$.data.email").value(ADMIN_EMAIL));
 	}
 
 	// --- §3 last_active_at ---

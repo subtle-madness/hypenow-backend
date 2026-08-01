@@ -39,6 +39,21 @@
   envelope(`FORBIDDEN`) JSON을 쓴다(현재는 403 빈 본문).
 - 기존 `/admin/**` Basic 체인·codes 토큰 체인은 무관하게 유지(경로가 `/v1/admin/**`과 겹치지 않음).
 
+### 1-1. 세션 authority 신선도 재확인 (코드 리뷰 반영, 08-01)
+
+`hasRole("ADMIN")`은 세션에 영속된 로그인 시점 authorities 스냅샷만 본다(`AppUserDetails` — role은
+principal 쪽에선 transient지만 세션에 저장되는 건 principal이 아니라
+`UsernamePasswordAuthenticationToken`이고 그 authorities 필드는 non-transient라 그대로 남는다).
+즉 DB에서 role을 USER로 강등해도 로그아웃 전까지 기존 세션은 계속 ADMIN으로 통과한다 — 기존
+`/admin/**` Basic 체인이 STATELESS + 매 요청 재인증을 쓰는 이유가 정확히 이 신선도 문제였다.
+`/v1/admin/**`은 세션 기반이라 같은 문제를 그대로 안는다. 대응: `AdminRoleFreshnessFilter`
+(`com.celfit.was.security`)를 @Order(2) 체인의 `AuthorizationFilter` 바로 뒤에 추가해, `/v1/admin/**`
+요청마다 `UserRepository.findRoleById`(role 컬럼만 읽는 경량 SELECT)로 현재 DB role을 재확인한다.
+ADMIN이 아니면 403 FORBIDDEN envelope. 어드민 조회 API는 운영팀 내부 도구라 트래픽이 낮아 요청당
+SELECT 1회를 캐시 없이 그대로 수용한다. `@WebMvcTest` 슬라이스처럼 `UserRepository` 빈이 없으면
+재확인만 건너뛴다 — 이 필터에 도달한 시점에 이미 세션 `hasRole(ADMIN)` 검사를 통과했으므로 fail-open
+(게이트 무력화)이 아니라 신선도만 못 얻는 것이다.
+
 ## 2. X-Act-As-User (impersonation)
 
 `OncePerRequestFilter`를 @Order(2) 체인의 AuthorizationFilter **뒤에** 등록.
@@ -58,6 +73,14 @@
     쿼리스트링은 기록하지 않는다(개인정보 유입 차단, 요청서가 백엔드 판단 위임).
 - CSRF는 GET/HEAD라 비관여. 세션 인가 판정(hasRole)은 필터보다 앞서 이미 어드민 본인으로
   끝났으므로 principal 교체가 어드민 인증을 잠그지 않는다(요청서 3절의 기대와 일치).
+
+**세션 authority 신선도 재확인(코드 리뷰 반영, 08-01, §1-1과 동일 배경)**: "세션 principal이
+ADMIN이 아님"의 ADMIN 판정도 세션 authority만으로는 신선도가 없다 — DB에서 강등된 어드민의
+기존 세션은 로그아웃 전까지 계속 사칭을 시도할 수 있다. `ActAsUserFilter.isAdmin`을 세션
+authority(ROLE_ADMIN) 확인 뒤 `UserRepository.findRoleById`로 현재 DB role까지 재확인하도록
+바꿨다 — DB가 ADMIN일 때만 act-as 적용, 강등돼 있으면 기존 "비어드민 사칭 시도" 분기(무시 +
+WARN)로 합류한다. `UserRepository` 빈이 없으면(슬라이스 테스트 등) 재확인 자체가 불가능하므로
+안전하게 비어드민으로 취급한다.
 
 ## 3. 신규 스키마 (app, expand-only)
 

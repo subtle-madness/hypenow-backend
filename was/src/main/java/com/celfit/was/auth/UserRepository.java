@@ -186,6 +186,19 @@ public class UserRepository {
 				.optional();
 	}
 
+	/**
+	 * 세션 authority 신선도 재확인 전용 경량 조회(어드민 백엔드 API 설계 §1·§2, 세션 스냅샷 재확인
+	 * 결정) — role 컬럼 하나만 읽는다. 세션엔 로그인 시점 authorities가 영속돼 DB에서 강등해도
+	 * 로그아웃 전까지 그대로 남으므로, 어드민 판정 두 곳(/v1/admin/** 게이트, ActAsUserFilter)이
+	 * 매 요청 이 메서드로 현재 DB role을 다시 확인한다.
+	 */
+	public Optional<String> findRoleById(long id) {
+		return jdbcClient.sql("SELECT role FROM app.users WHERE id = :id")
+				.param("id", id)
+				.query(String.class)
+				.optional();
+	}
+
 	/** email 정규화 규칙(단일 정본) — 저장·조회와 레이트리밋 키(V1AuthController)가 같은 규칙을 공유한다. */
 	public static String normalizeEmail(String email) {
 		return email.toLowerCase();

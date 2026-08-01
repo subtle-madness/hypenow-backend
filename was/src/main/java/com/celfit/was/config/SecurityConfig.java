@@ -42,6 +42,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import com.celfit.was.admin.CodesApiKeyAuthFilter;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.security.ActAsUserFilter;
+import com.celfit.was.security.AdminRoleFreshnessFilter;
 import com.celfit.was.security.LastActiveAtFilter;
 import com.celfit.was.v1.admin.AdminAuditLogRepository;
 import java.time.Clock;
@@ -166,6 +167,8 @@ public class SecurityConfig {
 								"/v2/influencers/*/similar").permitAll() // 발굴 리포트 v2(스펙 6.22·6.23) — 잠금 표현은 프론트(7절 15번)
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
 						// 어드민 백엔드 API(설계 2026-08-01 §1) — /v1/admin/** 전체는 ADMIN만, anyRequest보다 앞.
+						// 이 hasRole 판정은 세션 authority(로그인 시점 스냅샷)만 본다 — 강등 신선도는
+						// AdminRoleFreshnessFilter(AuthorizationFilter 뒤)가 DB role을 재확인해 보강한다.
 						.requestMatchers("/v1/admin/**").hasRole("ADMIN")
 						.anyRequest().authenticated())
 				.exceptionHandling(ex -> ex
@@ -174,9 +177,13 @@ public class SecurityConfig {
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
 				.logout(AbstractHttpConfigurer::disable)
+				// /v1/admin/** 세션 role 신선도 재확인(§1, 세션 스냅샷 재확인 결정) — AuthorizationFilter의
+				// hasRole 판정 바로 뒤에서 DB role을 다시 읽는다. 뒤이은 LastActiveAtFilter·ActAsUserFilter보다
+				// 먼저 두어 강등된 세션은 다른 부가 효과 전에 즉시 403으로 끊는다.
+				.addFilterAfter(new AdminRoleFreshnessFilter(userRepositoryProvider), AuthorizationFilter.class)
 				// last_active_at 갱신(§3, A3)은 원 principal 기준이어야 하므로 act-as 스왑보다 앞에 둔다.
 				.addFilterAfter(new LastActiveAtFilter(userRepositoryProvider, clockProvider),
-						AuthorizationFilter.class)
+						AdminRoleFreshnessFilter.class)
 				// X-Act-As-User(§2) — 인가(hasRole) 판정 뒤에 붙어야 어드민 인가를 잠그지 않는다.
 				.addFilterAfter(new ActAsUserFilter(userRepositoryProvider, adminAuditLogRepositoryProvider),
 						LastActiveAtFilter.class);
