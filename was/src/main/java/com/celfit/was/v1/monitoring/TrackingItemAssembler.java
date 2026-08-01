@@ -170,8 +170,21 @@ public class TrackingItemAssembler {
 	}
 
 	/**
-	 * 저장 측(monitoring ProfileMetaRepository)이 무효 스킴을 걸러도 이미 DB에 박힌 값이 있을 수 있어
-	 * 서빙 측에서 한 번 더 방어한다(이중 방어) — http(s)가 아니면 null로 강등.
+	 * 썸네일 URL 산지(트랙 KK 확장 — resolveImageUrl과 동형) — image_object_path(monitoring이 자체
+	 * 아카이브한 OCI 오브젝트)가 있으면 그걸 우선 서빙하고, 없으면 원본 CDN URL로 폴백한다(sanitizeImageUrl
+	 * 가드는 폴백 경로에 그대로 유지). {@code /img/}는 was 엔드포인트가 아니라 celfit-front의 Vercel
+	 * rewrite({@code /img/:path*} 글롭)라서 프론트 변경이 필요 없다.
+	 */
+	private static String resolveThumbnailUrl(PostMetaRow meta) {
+		if (meta.imageObjectPath() != null) {
+			return "/img/" + meta.imageObjectPath();
+		}
+		return sanitizeImageUrl(meta.thumbnailUrl());
+	}
+
+	/**
+	 * 저장 측(monitoring ProfileMetaRepository·PostMetaRepository)이 무효 스킴을 걸러도 이미 DB에 박힌
+	 * 값이 있을 수 있어 서빙 측에서 한 번 더 방어한다(이중 방어) — http(s)가 아니면 null로 강등.
 	 */
 	private static String sanitizeImageUrl(String profileImageUrl) {
 		if (profileImageUrl == null) {
@@ -195,7 +208,7 @@ public class TrackingItemAssembler {
 		String url = buildPostUrl(item, contentType, shortCode);
 		String uploadedAt = meta != null && meta.uploadedAt() != null ? meta.uploadedAt().toString() : null;
 		String caption = meta != null && meta.caption() != null ? meta.caption() : "";
-		String thumbnailUrl = meta == null ? null : meta.thumbnailUrl();
+		String thumbnailUrl = meta == null ? null : resolveThumbnailUrl(meta);
 
 		List<String> matchedKeywords =
 				MODE_URL.equals(item.mode()) ? List.of() : readMatchedKeywords(target.matchedKeywords());

@@ -5,7 +5,7 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.4 (프로필 이미지 아카이브 — 2026-07-31)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.5 (게시물 썸네일 아카이브 — 2026-08-01)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
@@ -18,7 +18,9 @@
 > 추적 중인 shortcode를 후보에서 뺀다. 프론트 계약 §6.25 요구, `feat/monitoring-duplicate-tracking-exclusion`)
 > → **v2.4**(2026-07-31, 프로필 이미지 아카이브 — `profile_meta`에 `image_object_path`·
 > `image_source_name`·`image_archived_at` 추가, was는 아카이브본을 우선 서빙,
-> `feat/monitoring-profile-image-archive`).
+> `feat/monitoring-profile-image-archive`) → **v2.5**(2026-08-01, 게시물 썸네일 아카이브(트랙 KK
+> 확장, v2.4와 동형) — `post_meta`에도 `image_object_path`·`image_source_name`·`image_archived_at`
+> 추가, was는 `post.thumbnailUrl`도 아카이브본을 우선 서빙, `fix/monitoring-post-thumbnail-archive`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -310,7 +312,7 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 필요는 없다. 이 관용구는 was v1 발굴/상세/저장 목록이 analytics 이미지 아카이브(트랙 J)에 이미
 쓰고 있는 것과 동일하다 — 신규 패턴이 아니다.
 
-### post_meta — 추적 게시물 표시 메타 (v2.2 · 게시물 단위 최신 1행, 캠페인 간 공유)
+### post_meta — 추적 게시물 표시 메타 (v2.5 · 게시물 단위 최신 1행, 캠페인 간 공유)
 
 | 컬럼 | 타입 | 의미 |
 |---|---|---|
@@ -319,12 +321,19 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
 | `content_type` | text | `REELS` / `FEED`. **캐러셀(sidecar)은 FEED로 접는다**(Hiker `product_type='carousel_container'` — 피드 조회수 null 규약과 일치, 실측 2026-07-30) |
 | `uploaded_at` | date NOT NULL | 게시일(`taken_at`의 KST 날짜) |
 | `caption` | text NOT NULL | 캡션 원문 전문(개행 유지). 캡션 없는 게시물은 빈 문자열(프론트 계약 caption null 불가) |
-| `thumbnail_url` | text null | 썸네일(Hiker `image_versions2` 첫 후보). 스윕마다 갱신 — 인스타 CDN 서명 만료 대응 |
+| `thumbnail_url` | text null | 원본 CDN 썸네일 URL(Hiker `image_versions2` 첫 후보). 스윕마다 갱신 — **아카이브본이 있으면 was가 이 컬럼 대신 `image_object_path`를 우선 서빙하므로 인스타 CDN 서명 만료 노출은 줄었다. 다만 아카이브 전이거나 `MONITORING_IMAGE_PAR_URL` 미설정 환경에서는 여전히 이 원본 CDN URL이 그대로 나가므로 만료(~4일, `oe=` 서명) 주의는 계속 유효하다** |
 | `first_seen_at` | timestamptz NOT NULL | 최초 관측 시각(upsert에도 보존) |
+| `image_object_path` | text null | **(v2.5)** monitoring이 자체 아카이브한 OCI 오브젝트 경로(`monitor-post/<short_code>.jpg`, 트랙 KK 확장 — profile_meta와 동형). null이면 아직 아카이브 전이거나 PAR 미설정 — was가 원본 CDN URL로 폴백 |
+| `image_source_name` | text null | **(v2.5)** 마지막 아카이브 시점 원본 URL 파일명(쿼리스트링 제외) — 재다운로드 판정용 내부 컬럼, was는 읽지 않는다 |
+| `image_archived_at` | timestamptz null | **(v2.5)** 마지막 아카이브 성공 시각. was는 읽지 않는다 |
 
 - 수집이 게시물을 지나는 모든 경로(등록 동기 수집·스윕 열거·단건 보강)에서 upsert된다.
 - `taken_at`을 못 얻은 게시물은 upsert하지 않는다(잘못된 게시일을 만들지 않음 — 기존 행 보존).
 - `post_snapshot`이 있는 게시물은 `post_meta`도 있다고 봐도 된다(같은 경로에서 적재).
+- **⚠ v2.5 계약 변화 — `post.thumbnailUrl` 응답 값의 형태가 둘로 갈린다.** `profileImageUrl`(v2.4)과
+  동일 관용구 — `image_object_path`가 있으면 상대 경로 `/img/monitor-post/<short_code>.jpg`, 없으면
+  원본 CDN 절대 URL이다. `/img/`는 was 엔드포인트가 아니라 celfit-front의 Vercel rewrite라서
+  프론트에서만 해석된다.
 
 ### sweep_run — 일일 스윕 실행 대장 (v2.2 · 1실행 1행)
 
