@@ -78,14 +78,19 @@ CREATE TABLE IF NOT EXISTS post_snapshot (
     PRIMARY KEY (short_code, captured_on)
 );
 
+-- image_object_path·image_source_name·image_archived_at은 monitoring 자체 게시물 썸네일
+-- 아카이브(트랙 KK 확장, V20260801064345) 추가 컬럼 — was는 image_object_path만 읽는다.
 CREATE TABLE IF NOT EXISTS post_meta (
-    short_code    text PRIMARY KEY,
-    username      text NOT NULL,
-    content_type  text,
-    uploaded_at   date NOT NULL,
-    caption       text NOT NULL,
-    thumbnail_url text,
-    first_seen_at timestamptz NOT NULL DEFAULT now()
+    short_code         text PRIMARY KEY,
+    username           text NOT NULL,
+    content_type       text,
+    uploaded_at        date NOT NULL,
+    caption            text NOT NULL,
+    thumbnail_url      text,
+    first_seen_at      timestamptz NOT NULL DEFAULT now(),
+    image_object_path  text,
+    image_source_name  text,
+    image_archived_at  timestamptz
 );
 CREATE TABLE IF NOT EXISTS post_comment (
     id               text NOT NULL,
