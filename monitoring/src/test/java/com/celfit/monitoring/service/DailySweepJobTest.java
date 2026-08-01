@@ -17,6 +17,7 @@ import com.celfit.monitoring.hiker.ShortCodes;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.image.ImageDownloader;
 import com.celfit.monitoring.image.ParImageStore;
+import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.ExpiredTarget;
@@ -273,6 +274,8 @@ class DailySweepJobTest {
 	AlarmRecorder alarms;
 	/** PAR URL 미설정 = no-op(설계 스펙 §3-1) — 스윕 본 시나리오와 무관해 실제 HTTP를 절대 태우지 않는다. */
 	ProfileImageArchiveJob imageArchive;
+	/** 위 imageArchive와 동형(트랙 KK 확장) — PAR URL 미설정 no-op. */
+	PostThumbnailArchiveJob thumbnailArchive;
 
 	@BeforeEach
 	void setUp() {
@@ -288,7 +291,9 @@ class DailySweepJobTest {
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
 		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
-		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive);
+		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
+		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
+				thumbnailArchive);
 	}
 
 	private List<String> alarmTypes() {
@@ -617,7 +622,8 @@ class DailySweepJobTest {
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
-		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive);
+		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
+				thumbnailArchive);
 
 		revivedJob.run();
 
@@ -952,7 +958,8 @@ class DailySweepJobTest {
 		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
 		var crashCollect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
-		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive);
+		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3,
+				Duration.ZERO, imageArchive, thumbnailArchive);
 
 		assertThatThrownBy(crashingJob::run).isInstanceOf(RuntimeException.class);
 
@@ -1021,7 +1028,8 @@ class DailySweepJobTest {
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
 		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1, 1);
-		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive);
+		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
+				thumbnailArchive);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 
 		throwingJob.run();

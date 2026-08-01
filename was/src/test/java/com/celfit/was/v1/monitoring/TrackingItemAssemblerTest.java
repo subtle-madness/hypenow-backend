@@ -84,12 +84,19 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 
 	private void seedPostMeta(String shortCode, String username, String contentType, LocalDate uploadedAt,
 			String caption, String thumbnailUrl) {
+		seedPostMeta(shortCode, username, contentType, uploadedAt, caption, thumbnailUrl, null);
+	}
+
+	/** imageObjectPath가 있으면 monitoring 자체 썸네일 아카이브(트랙 KK 확장) 결과가 채워진 행을 흉내낸다. */
+	private void seedPostMeta(String shortCode, String username, String contentType, LocalDate uploadedAt,
+			String caption, String thumbnailUrl, String imageObjectPath) {
 		monitoringJdbc.sql("""
-				INSERT INTO post_meta (short_code, username, content_type, uploaded_at, caption, thumbnail_url)
-				VALUES (:shortCode, :username, :contentType, :uploadedAt, :caption, :thumbnailUrl)
+				INSERT INTO post_meta (short_code, username, content_type, uploaded_at, caption, thumbnail_url, image_object_path)
+				VALUES (:shortCode, :username, :contentType, :uploadedAt, :caption, :thumbnailUrl, :imageObjectPath)
 				""")
 				.param("shortCode", shortCode).param("username", username).param("contentType", contentType)
 				.param("uploadedAt", uploadedAt).param("caption", caption).param("thumbnailUrl", thumbnailUrl)
+				.param("imageObjectPath", imageObjectPath)
 				.update();
 	}
 
@@ -469,6 +476,53 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
 
 		assertThat(item.profileImageUrl()).isEqualTo("/img/monitor-profile/glowdeep.jpg");
+	}
+
+	// ── post_meta 썸네일 URL 스킴 방어·아카이브 우선 서빙(트랙 KK 확장, profile_meta와 동형) ────
+
+	@Test
+	void 유효한_thumbnail_url은_그대로_서빙된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedPostMeta("SHORT1", "glowdeep", "FEED", registeredOn, "캡션", "https://cdn.example/thumb.jpg");
+		seedSuccessfulSweep(LocalDate.now());
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.post().thumbnailUrl()).isEqualTo("https://cdn.example/thumb.jpg");
+	}
+
+	/** 저장 측(monitoring)이 막아도 이미 DB에 박힌 무효 스킴 값이 있을 수 있어 서빙 측도 이중 방어한다. */
+	@Test
+	void 무효_스킴_thumbnail_url은_null로_서빙된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedPostMeta("SHORT1", "glowdeep", "FEED", registeredOn, "캡션", "exception://");
+		seedSuccessfulSweep(LocalDate.now());
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.post().thumbnailUrl()).isNull();
+	}
+
+	/** image_object_path(monitoring 자체 썸네일 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다. */
+	@Test
+	void 게시물_썸네일_image_object_path가_있으면_아카이브_경로를_우선_서빙한다() {
+		LocalDate registeredOn = LocalDate.now();
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "TRACKING", "SHORT1", null, null, false, null);
+		long itemId = seedAccountItem(null, registeredOn, "glowdeep");
+		itemRepository.confirmTarget(itemId, targetId);
+		seedPostMeta("SHORT1", "glowdeep", "FEED", registeredOn, "캡션", "https://cdn.example/thumb.jpg",
+				"monitor-post/SHORT1.jpg");
+		seedSuccessfulSweep(LocalDate.now());
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.post().thumbnailUrl()).isEqualTo("/img/monitor-post/SHORT1.jpg");
 	}
 
 	// ── 리뷰 반영(2026-07-30) — campaignId·campaignName 짝 방어 ──────────────────
