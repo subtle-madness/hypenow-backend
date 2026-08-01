@@ -83,7 +83,7 @@ class V1MeControllerTest {
 		return new UserProfile(7L, "user@example.com", "김우민", "우민", "brand",
 				"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
 				true, OffsetDateTime.parse("2026-07-01T00:00:00Z"), null,
-				OffsetDateTime.parse("2026-06-01T00:00:00Z"));
+				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER");
 	}
 
 	private void givenAppUser() {
@@ -115,7 +115,23 @@ class V1MeControllerTest {
 				.andExpect(jsonPath("$.data.agreedMarketing").value(true))
 				.andExpect(jsonPath("$.data.marketingUpdatedAt").value("2026-07-01T00:00:00Z"))
 				.andExpect(jsonPath("$.data.profileImageUrl").value(nullValue()))
-				.andExpect(jsonPath("$.data.createdAt").value("2026-06-01T00:00:00Z"));
+				.andExpect(jsonPath("$.data.createdAt").value("2026-06-01T00:00:00Z"))
+				.andExpect(jsonPath("$.data.role").value("user"));
+	}
+
+	// 어드민 백엔드 API 설계 2026-08-01 §1 — role은 DB ADMIN/USER를 소문자로 매핑한다.
+	@Test
+	void 어드민_유저의_role은_소문자_admin으로_내려온다() throws Exception {
+		AppUserDetails adminPrincipal = new AppUserDetails(new AppUser(9L, "admin@example.com", PASSWORD_HASH,
+				"ADMIN", OffsetDateTime.parse("2026-06-01T00:00:00Z")));
+		given(userRepository.findProfileById(9L)).willReturn(Optional.of(
+				new UserProfile(9L, "admin@example.com", "관리자", null, "brand",
+						"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
+						false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"), "ADMIN")));
+
+		mockMvc.perform(get("/v1/me").with(user(adminPrincipal)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.role").value("admin"));
 	}
 
 	// --- PATCH /v1/me (스펙 6.13) ---

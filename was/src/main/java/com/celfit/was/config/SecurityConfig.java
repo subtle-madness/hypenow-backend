@@ -2,6 +2,7 @@ package com.celfit.was.config;
 
 import java.util.Arrays;
 import java.util.List;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,6 +40,16 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import com.celfit.was.admin.CodesApiKeyAuthFilter;
+import com.celfit.was.auth.UserRepository;
+import com.celfit.was.security.ActAsUserFilter;
+import com.celfit.was.security.LastActiveAtFilter;
+import com.celfit.was.v1.admin.AdminAuditLogRepository;
+import java.time.Clock;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.access.AccessDeniedHandlerImpl;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.web.csrf.CsrfException;
 
 /**
  * 세션 쿠키 인증 — DaoAuthenticationProvider(AppUserDetailsService + BCrypt)는
@@ -129,7 +140,10 @@ public class SecurityConfig {
 
 	@Bean
 	@Order(2)
-	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+	public SecurityFilterChain securityFilterChain(HttpSecurity http,
+			ObjectProvider<UserRepository> userRepositoryProvider,
+			ObjectProvider<AdminAuditLogRepository> adminAuditLogRepositoryProvider,
+			ObjectProvider<Clock> clockProvider) throws Exception {
 		http
 				.csrf(csrf -> csrf
 						.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
@@ -151,11 +165,21 @@ public class SecurityConfig {
 						.requestMatchers(HttpMethod.GET, "/v2/influencers/*/ai-report",
 								"/v2/influencers/*/similar").permitAll() // 발굴 리포트 v2(스펙 6.22·6.23) — 잠금 표현은 프론트(7절 15번)
 						.requestMatchers("/health").permitAll()          // 배포 헬스체크(익명 curl)
+						// 어드민 백엔드 API(설계 2026-08-01 §1) — /v1/admin/** 전체는 ADMIN만, anyRequest보다 앞.
+						.requestMatchers("/v1/admin/**").hasRole("ADMIN")
 						.anyRequest().authenticated())
-				.exceptionHandling(ex -> ex.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint()))
+				.exceptionHandling(ex -> ex
+						.authenticationEntryPoint(new V1AwareAuthenticationEntryPoint())
+						.accessDeniedHandler(new V1AwareAccessDeniedHandler()))
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
-				.logout(AbstractHttpConfigurer::disable);
+				.logout(AbstractHttpConfigurer::disable)
+				// last_active_at 갱신(§3, A3)은 원 principal 기준이어야 하므로 act-as 스왑보다 앞에 둔다.
+				.addFilterAfter(new LastActiveAtFilter(userRepositoryProvider, clockProvider),
+						AuthorizationFilter.class)
+				// X-Act-As-User(§2) — 인가(hasRole) 판정 뒤에 붙어야 어드민 인가를 잠그지 않는다.
+				.addFilterAfter(new ActAsUserFilter(userRepositoryProvider, adminAuditLogRepositoryProvider),
+						LastActiveAtFilter.class);
 		return http.build();
 	}
 
@@ -208,6 +232,33 @@ public class SecurityConfig {
 			} else {
 				fallback.commence(request, response, authException);
 			}
+		}
+	}
+
+	/**
+	 * 인가 실패 403 핸들러(어드민 백엔드 API 설계 2026-08-01 §1) — /v1 경로는 스펙 3.1 envelope
+	 * JSON(FORBIDDEN)을 직접 쓴다. CSRF 실패(CsrfException 계열)는 이 설계의 범위 밖 — 기존 동작
+	 * (Spring Security 기본 AccessDeniedHandlerImpl, 빈 403 본문)을 그대로 유지해 CSRF 실패 계약을
+	 * 건드리지 않는다. /v1 밖 경로(구 /api 등)도 기존 동작 유지.
+	 */
+	static final class V1AwareAccessDeniedHandler implements AccessDeniedHandler {
+
+		private static final String V1_FORBIDDEN_BODY =
+				"{\"success\":false,\"data\":null,\"error\":{\"code\":\"FORBIDDEN\",\"message\":\"권한이 없습니다.\"}}";
+
+		private final AccessDeniedHandler fallback = new AccessDeniedHandlerImpl();
+
+		@Override
+		public void handle(HttpServletRequest request, HttpServletResponse response,
+				AccessDeniedException accessDeniedException) throws IOException, ServletException {
+			if (accessDeniedException instanceof CsrfException || !request.getRequestURI().startsWith("/v1/")) {
+				fallback.handle(request, response, accessDeniedException);
+				return;
+			}
+			response.setStatus(HttpStatus.FORBIDDEN.value());
+			response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+			response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+			response.getWriter().write(V1_FORBIDDEN_BODY);
 		}
 	}
 

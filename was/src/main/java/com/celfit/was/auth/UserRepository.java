@@ -16,7 +16,7 @@ public class UserRepository {
 	private static final String PROFILE_COLUMNS = """
 			id, email, name, nickname, user_type, signup_route, phone_country_code, phone_number,
 			company_name, company_size, industry, job_title, agreed_marketing, marketing_updated_at,
-			profile_image_url, created_at""";
+			profile_image_url, created_at, role""";
 
 	/**
 	 * PATCH /v1/me가 갱신할 수 있는 컬럼 화이트리스트(스펙 6.13) — 동적 SET 절은 이 목록만 순회하므로
@@ -131,6 +131,16 @@ public class UserRepository {
 	public void updatePasswordHash(long id, String passwordHash) {
 		jdbcClient.sql("UPDATE app.users SET password_hash = :hash WHERE id = :id")
 				.param("hash", passwordHash)
+				.param("id", id)
+				.update();
+	}
+
+	/**
+	 * 최종 활동 시각 갱신(어드민 백엔드 API 설계 2026-08-01 §3, A3) — 인증된 요청마다 필터가
+	 * 5분 스로틀로 호출한다. 실패는 호출부(필터)가 관측 부가 기능으로 간주해 무시한다.
+	 */
+	public void updateLastActiveAt(long id) {
+		jdbcClient.sql("UPDATE app.users SET last_active_at = now() WHERE id = :id")
 				.param("id", id)
 				.update();
 	}
