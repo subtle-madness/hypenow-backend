@@ -16,7 +16,7 @@ public class UserRepository {
 	private static final String PROFILE_COLUMNS = """
 			id, email, name, nickname, user_type, signup_route, phone_country_code, phone_number,
 			company_name, company_size, industry, job_title, agreed_marketing, marketing_updated_at,
-			profile_image_url, created_at""";
+			profile_image_url, created_at, role""";
 
 	/**
 	 * PATCH /v1/me가 갱신할 수 있는 컬럼 화이트리스트(스펙 6.13) — 동적 SET 절은 이 목록만 순회하므로
@@ -135,6 +135,16 @@ public class UserRepository {
 				.update();
 	}
 
+	/**
+	 * 최종 활동 시각 갱신(어드민 백엔드 API 설계 2026-08-01 §3, A3) — 인증된 요청마다 필터가
+	 * 5분 스로틀로 호출한다. 실패는 호출부(필터)가 관측 부가 기능으로 간주해 무시한다.
+	 */
+	public void updateLastActiveAt(long id) {
+		jdbcClient.sql("UPDATE app.users SET last_active_at = now() WHERE id = :id")
+				.param("id", id)
+				.update();
+	}
+
 	/** 프로필 이미지 URL 갱신(스펙 6.13) — null이면 이미지 제거. */
 	public void updateProfileImageUrl(long id, String profileImageUrl) {
 		jdbcClient.sql("UPDATE app.users SET profile_image_url = :url WHERE id = :id")
@@ -173,6 +183,19 @@ public class UserRepository {
 				""")
 				.param("id", id)
 				.query(AppUser.class)
+				.optional();
+	}
+
+	/**
+	 * 세션 authority 신선도 재확인 전용 경량 조회(어드민 백엔드 API 설계 §1·§2, 세션 스냅샷 재확인
+	 * 결정) — role 컬럼 하나만 읽는다. 세션엔 로그인 시점 authorities가 영속돼 DB에서 강등해도
+	 * 로그아웃 전까지 그대로 남으므로, 어드민 판정 두 곳(/v1/admin/** 게이트, ActAsUserFilter)이
+	 * 매 요청 이 메서드로 현재 DB role을 다시 확인한다.
+	 */
+	public Optional<String> findRoleById(long id) {
+		return jdbcClient.sql("SELECT role FROM app.users WHERE id = :id")
+				.param("id", id)
+				.query(String.class)
 				.optional();
 	}
 
