@@ -3,9 +3,12 @@ package com.celfit.was.monitoring;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -156,5 +159,56 @@ public class MonitoringItemRepository {
 				.param("seconds", (double) age.toMillis() / 1000.0)
 				.query(MonitoringItemRow.class)
 				.list();
+	}
+
+	/**
+	 * 어드민 조회 전용(설계 2026-08-01 §4 AdminMonitoringHealthService) — 유저 스코프 없이 전체 활성
+	 * 후보(취소되지 않은 행 전부)를 가져온다. "활성" 최종 판정(pending 기간 만료·target 상태)은
+	 * 서비스가 오늘(KST) 날짜를 받아 순수 함수로 가린다 — 여기서는 canceled_at만 거른다.
+	 */
+	public List<MonitoringItemRow> findAllNotCanceled() {
+		return jdbcClient.sql("""
+				SELECT %s
+				FROM app.monitoring_items
+				WHERE canceled_at IS NULL
+				ORDER BY id ASC
+				""".formatted(SELECT_COLUMNS))
+				.query(MonitoringItemRow.class)
+				.list();
+	}
+
+	/** 어드민 유저 상세(설계 §4 GET /v1/admin/users/{id})의 등록 이력 이벤트 — item_id로 배치 조회. */
+	public List<MonitoringItemRow> findByIds(Collection<Long> ids) {
+		if (ids.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+				SELECT %s
+				FROM app.monitoring_items
+				WHERE id IN (:ids)
+				""".formatted(SELECT_COLUMNS))
+				.param("ids", ids)
+				.query(MonitoringItemRow.class)
+				.list();
+	}
+
+	/**
+	 * 어드민 유저 목록(설계 §4 GET /v1/admin/users)의 monitoringCount — 취소 포함 전량 누적이라
+	 * canceled_at 조건 없이 유저별 전체 행 수를 센다.
+	 */
+	public Map<Long, Long> countByUsers(Collection<Long> userIds) {
+		if (userIds.isEmpty()) {
+			return Map.of();
+		}
+		return jdbcClient.sql("""
+				SELECT user_id, count(*) AS cnt
+				FROM app.monitoring_items
+				WHERE user_id IN (:ids)
+				GROUP BY user_id
+				""")
+				.param("ids", userIds)
+				.query((rs, rowNum) -> Map.entry(rs.getLong("user_id"), rs.getLong("cnt")))
+				.list().stream()
+				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 	}
 }
