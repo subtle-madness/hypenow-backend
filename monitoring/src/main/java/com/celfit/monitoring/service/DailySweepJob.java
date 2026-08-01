@@ -6,6 +6,7 @@ import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.store.ExpiredTarget;
 import com.celfit.monitoring.store.FailingTarget;
@@ -60,12 +61,13 @@ public class DailySweepJob {
 	private final int retryRounds;
 	private final Duration retryInterval;
 	private final ProfileImageArchiveJob imageArchive;
+	private final PostThumbnailArchiveJob thumbnailArchive;
 
 	public DailySweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
 			SweepRunRepository sweepRuns, SnapshotRepository snapshots,
 			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
 			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval,
-			ProfileImageArchiveJob imageArchive) {
+			ProfileImageArchiveJob imageArchive, PostThumbnailArchiveJob thumbnailArchive) {
 		this.targets = targets;
 		this.collect = collect;
 		this.alarms = alarms;
@@ -74,6 +76,7 @@ public class DailySweepJob {
 		this.retryRounds = retryRounds;
 		this.retryInterval = retryInterval;
 		this.imageArchive = imageArchive;
+		this.thumbnailArchive = thumbnailArchive;
 	}
 
 	/**
@@ -94,11 +97,12 @@ public class DailySweepJob {
 	 * 내주지 않기 때문이다. protected인 이유는 테스트(SweepControllerTest)가 스윕 실행 타이밍
 	 * (동시 실행 가드 검증)을 통제하려고 오버라이드하기 때문 — 웹 계층 테스트라 다른 패키지에서 상속한다.
 	 *
-	 * <p>프로필 이미지 아카이브({@link ProfileImageArchiveJob})는 finally 안에서, sweep_run 완료
-	 * 기록 직후 마지막 단계로 돈다(설계 스펙 §3-1) — 별도 크론이 아니라 스윕이 갓 갱신한 신선한 URL을
-	 * 바로 잡기 위함이다. finally라 스윕이 예외로 이탈해도(ok=false) 반드시 실행되고, 반대로 아카이브
-	 * 쪽 실패는 {@link #runProfileImageArchiveSafely()}가 전부 삼켜 이 finally 밖으로 새지 않으므로
-	 * 이미 기록된 sweep_run.ok를 오염시키지 않는다.
+	 * <p>프로필 이미지 아카이브({@link ProfileImageArchiveJob})·게시물 썸네일 아카이브({@link
+	 * PostThumbnailArchiveJob}, 트랙 KK 확장)는 finally 안에서, sweep_run 완료 기록 직후 마지막
+	 * 단계로 돈다(설계 스펙 §3-1) — 별도 크론이 아니라 스윕이 갓 갱신한 신선한 URL을 바로 잡기
+	 * 위함이다. finally라 스윕이 예외로 이탈해도(ok=false) 반드시 실행되고, 반대로 두 아카이브 잡의
+	 * 실패는 각각 격리 래퍼가 전부 삼켜 이 finally 밖으로 새지 않으므로 이미 기록된 sweep_run.ok를
+	 * 오염시키지 않는다(두 잡도 서로 독립 — 하나가 실패해도 다른 하나는 그대로 실행된다).
 	 */
 	protected void runWithId(Long runId) {
 		boolean ok = false;
@@ -108,6 +112,7 @@ public class DailySweepJob {
 		} finally {
 			completeSweepRun(runId, ok);
 			runProfileImageArchiveSafely();
+			runPostThumbnailArchiveSafely();
 		}
 	}
 
@@ -117,6 +122,15 @@ public class DailySweepJob {
 			imageArchive.run();
 		} catch (RuntimeException e) {
 			log.warn("프로필 이미지 아카이브 잡 실행 실패(격리) — 스윕 결과에는 영향 없음: {}", e.toString());
+		}
+	}
+
+	/** runProfileImageArchiveSafely와 동형(트랙 KK 확장) — 두 아카이브 잡은 서로 독립적으로 격리된다. */
+	private void runPostThumbnailArchiveSafely() {
+		try {
+			thumbnailArchive.run();
+		} catch (RuntimeException e) {
+			log.warn("게시물 썸네일 아카이브 잡 실행 실패(격리) — 스윕 결과에는 영향 없음: {}", e.toString());
 		}
 	}
 

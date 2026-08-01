@@ -48,13 +48,16 @@ public class MonitoringReadRepository {
 				.list();
 	}
 
-	/** 추적 게시물 표시 메타(계약 §3 post_meta, v2.2) — caption·uploadedAt·thumbnailUrl의 유일한 산지. */
+	/**
+	 * 추적 게시물 표시 메타(계약 §3 post_meta, v2.2) — caption·uploadedAt·thumbnailUrl의 유일한 산지.
+	 * image_object_path(트랙 KK 확장)는 monitoring 자체 썸네일 아카이브 결과 — null이면 아직 아카이브 전.
+	 */
 	public List<PostMetaRow> findPostMeta(Collection<String> shortCodes) {
 		if (shortCodes.isEmpty()) {
 			return List.of();
 		}
 		return jdbc.sql("""
-				SELECT short_code, username, content_type, uploaded_at, caption, thumbnail_url
+				SELECT short_code, username, content_type, uploaded_at, caption, thumbnail_url, image_object_path
 				FROM post_meta
 				WHERE short_code IN (:shortCodes)
 				""")

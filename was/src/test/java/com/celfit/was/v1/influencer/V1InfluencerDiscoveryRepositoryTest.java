@@ -1,6 +1,7 @@
 package com.celfit.was.v1.influencer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
@@ -273,6 +274,37 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		var oneTwo = query(null, null, null, null, null, null, "1-2", null, null, null, null);
 		assertThat(repository.findCards(oneTwo)).extracting(CardRow::handle)
 				.containsExactly("glow");
+	}
+
+	// sp(협찬 수) 서브쿼리는 핸들 지정 경로에서 :handles로 좁혀 집계한다(전체 계정 집계 금지 —
+	// 2026-07-30 실측 158ms 중 121ms). 좁힌 뒤에도 계정별 값이 전체 집계와 같아야 한다.
+	@Test
+	void 핸들_지정_조회는_요청_부분집합에서도_협찬_수가_전체집계와_같다() {
+		// glow만 협찬 2건(g2·g4). 요청 집합을 좁혀도 glow는 2, 미보유 계정은 COALESCE로 0.
+		assertThat(repository.findCardsByHandles(List.of("glow", "calm")))
+				.extracting(CardRow::handle, CardRow::sponsoredCount)
+				.containsExactlyInAnyOrder(tuple("glow", 2L), tuple("calm", 0L));
+		// 단건(가장 좁은 집합)에서도 동일 — 푸시다운이 자기 계정 집계를 깎지 않는다
+		assertThat(repository.findCardsByHandles(List.of("glow")))
+				.singleElement()
+				.extracting(CardRow::sponsoredCount).isEqualTo(2L);
+		// 협찬 보유 계정(glow)을 뺀 요청에 그 값이 새어들지 않는다
+		assertThat(repository.findCardsByHandles(List.of("calm", "mute", "tiny")))
+				.extracting(CardRow::sponsoredCount).containsOnly(0L);
+	}
+
+	@Test
+	void 핸들_지정_조회는_필터_없이_존재하는_핸들만_카드_필드째로_반환한다() {
+		// 발굴 목록과 같은 FROM(ip·cp·sp·br)을 공유하는지 — 보강 필드까지 그대로 채워져야 한다.
+		List<CardRow> rows = repository.findCardsByHandles(List.of("glow", "__없는핸들__"));
+		assertThat(rows).extracting(CardRow::handle).containsExactly("glow");
+		CardRow glow = rows.get(0);
+		assertThat(glow.profileImageUrl()).isEqualTo("/img/p/glow.jpg"); // ip 조인
+		assertThat(glow.tagline()).isEqualTo("저자극 스킨케어 리뷰 톤"); // cp LATERAL(최신 1행)
+		assertThat(glow.sponsoredCount()).isEqualTo(2L); // sp 조인
+		assertThat(glow.avgHypeScorePrecise()).isEqualByComparingTo("71.6000");
+		// 뷰티 비율 게이트·정렬은 이 경로에 적용되지 않는다(호출부가 순서 복원)
+		assertThat(repository.findCardsByHandles(List.of("mute"))).hasSize(1);
 	}
 
 	@Test

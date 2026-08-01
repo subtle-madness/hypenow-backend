@@ -375,6 +375,28 @@ class StoreTest {
 		assertThat(row.get("caption")).isEqualTo("캡션 갱신");   // 캡션은 그대로 덮인다
 	}
 
+	/** profile_meta 결함 ②와 동형(트랙 KK 확장) — Hiker 업스트림이 무효 스킴을 주면 null로 저장된다. */
+	@Test
+	void 무효_스킴_thumbnail_url은_null로_저장된다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션", "exception://");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("캡션");
+		assertThat(row.get("thumbnail_url")).isNull();
+	}
+
+	/** 기존에 유효한 썸네일이 있는 행에 무효 스킴이 오면 정규화 결과(null)로 덮지 않고 기존 값을 보존한다. */
+	@Test
+	void 무효_스킴이_와도_기존_유효_thumbnail_url을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), "캡션 갱신", "exception://");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("캡션 갱신");
+		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
+	}
+
 	// ── hidden/error 신호·matched_keywords(v2.2) ────────────────────────────
 
 	@Test

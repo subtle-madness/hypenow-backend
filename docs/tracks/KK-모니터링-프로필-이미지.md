@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 트랙 S(monitoring was seam)·트랙 II(POST 등록 profile_meta 채움) 위에서 동작. 트랙 J(서빙 이미지 아카이브)와는 **OCI 버킷만 공유하고 코드·후보군은 완전히 분리**(키 프리픽스로 소유권 구분 — 아래 참고).
-- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR 대기)
+- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 PR 대기)
 - **트랙 문자 배정 메모**: `docs/tracks/`에 FF·GG가 아직 파일로 없지만 다른 세션이 PR #235·#243으로 점유 중이고, A~JJ 중 KK가 다음 미사용 문자라 배정.
 
 ## 내용
@@ -106,15 +106,49 @@ was: image_object_path 있으면 '/img/' || path, 없으면 원본 CDN 폴백
 - **기존 오염행**: monitoring Flyway 신규 마이그레이션(`V20260730191710__profile_image_url_scheme_cleanup.sql`)으로
   `profile_image_url !~ '^https?://'` 행을 NULL 정정.
 
+### 게시물 썸네일 아카이브 (트랙 KK 확장, 2026-08-01 — 프로필 이미지와 동형)
+
+`post_meta.thumbnail_url`도 `profile_meta.profile_image_url`과 같은 인스타 CDN 서명 만료(~4일) 문제를
+그대로 겪는다 — `PostMetaRepository`도 종전엔 스킴 검증 없이 저장했고, 종료(CANCELED/EXPIRED)된
+캠페인의 추적 게시물 썸네일은 아카이브 없이는 영구히 깨진다. **결함①·②와 완전히 같은 형태라
+새 설계 없이 그대로 이식**했다.
+
+- **스키마**: `post_meta`에 profile_meta와 동일한 3컬럼 — `image_object_path`, `image_source_name`,
+  `image_archived_at`(`V20260801064345__post_meta_thumbnail_archive.sql`). 같은 마이그레이션 파일에
+  `thumbnail_url !~* '^https?://'` 오염행 정정 UPDATE를 동봉했다(V20260730191710과 동형 — 별도 파일로
+  안 쪼갠 이유: 이번 확장은 배포 시점에 이미 스킴 검증이 코드에 포함돼 나가므로 결함①·②처럼 먼저
+  작은 PR로 검증부터 배포할 필요가 없다).
+- **키 스킴**: `monitor-post/<short_code>.jpg`. `monitor-profile/`(이 트랙)·analytics `thumb/`(트랙 J)와
+  프리픽스가 셋 다 분리돼 같은 버킷에서 소유권이 충돌하지 않는다.
+- **저장 측 정규화**: `PostMetaRepository.upsert`는 애초에 진입점이 하나뿐이라(profile_meta처럼
+  upsert/upsertOwnerFromPost 두 갈래로 나뉘지 않는다) `normalizeThumbnailUrl` 하나만 추가하면 된다.
+  기존 COALESCE(EXCLUDED, 기존값) 보존 시맨틱은 이미 있었으므로(v2.2부터) 보존 시맨틱 통일 작업은
+  불필요했다 — profile_meta 결함②에서 필요했던 "계정 갈래 upsert가 무조건 덮어쓰기였다"는 문제가
+  post_meta에는 애초에 없었다.
+- **아카이브 잡**: `ProfileImageArchiveJob`을 일반화하지 않고 `PostThumbnailArchiveJob`을 나란히
+  추가했다(과도한 리팩터링 금지 지침) — 대상 테이블·컬럼·키 프리픽스만 다르고 나머지(배치 상한·
+  건 단위 격리·source_name 재다운로드 판정·PAR 미설정 no-op)는 완전히 동형이다. `ImageDownloader`/
+  `ImageStore`/`ParImageStore`는 이미 범용이라 그대로 재사용(추가 복제 없음). `DailySweepJob`의
+  finally 블록에서 프로필 아카이브 직후 독립적으로 실행되고(하나가 실패해도 다른 하나는 그대로
+  진행), `MONITORING_IMAGE_PAR_URL`·`monitoring.image.archive-batch-limit` 설정을 그대로 공유한다 —
+  두 잡이 같은 버킷·같은 배치 상한 정책을 쓰는 것이 자연스러워 별도 env 분리는 하지 않았다.
+- **was 서빙**: `TrackingItemAssembler.buildPost`가 `resolveThumbnailUrl`(resolveImageUrl과 동형)로
+  `image_object_path` 우선 서빙 + `sanitizeImageUrl` 이중 방어를 적용한다. `MonitoringReadRepository
+  .findPostMeta`·`PostMetaRow`에 `imageObjectPath` 추가.
+- **판단이 갈린 지점**: 캐시 제어값을 analytics `ImageArchiveJob`의 썸네일 전용 immutable 값
+  (`public, max-age=31536000, immutable`)이 아니라 프로필 이미지와 같은 `public, max-age=86400`으로
+  맞췄다 — profile_meta와 "동형"을 유지하는 것이 이번 작업 범위이고, post 썸네일도 source_name
+  비교로 변경 감지를 하는 이상(완전 불변으로 취급하지 않음) 짧은 캐시가 더 안전하다는 판단.
+
 ## 검증
 
-- `./gradlew :monitoring:test` — 239건 통과.
-- `./gradlew :was:test` — 763건 통과.
+- `./gradlew :monitoring:test` — 결함①·② + 게시물 썸네일 확장 포함 전체 통과(개별 수치는 PR 본문 참고).
+- `./gradlew :was:test` — 전체 통과(개별 수치는 PR 본문 참고).
 - monitoring: fake `ImageStore`/`ImageDownloader`로 신규 아카이브·source_name 미변경 시 스킵·건
-  단위 실패 격리·PAR 미설정 no-op·`ProfileMetaRepository` 스킴 정규화(무효값 → null, 기존 유효값
-  보존)를 검증.
-- was: `TrackingItemAssembler`가 `image_object_path` 있으면 `/img/...` 서빙, 없으면 원본 CDN 폴백,
-  무효 스킴이면 null임을 검증.
+  단위 실패 격리·PAR 미설정 no-op·`ProfileMetaRepository`/`PostMetaRepository` 스킴 정규화(무효값 →
+  null, 기존 유효값 보존)를 검증(`PostThumbnailArchiveJobTest`가 `ProfileImageArchiveJobTest`와 동형).
+- was: `TrackingItemAssembler`가 profile_meta·post_meta 양쪽 모두 `image_object_path` 있으면
+  `/img/...` 서빙, 없으면 원본 CDN 폴백, 무효 스킴이면 null임을 검증.
 
 ## 관련 문서
 
