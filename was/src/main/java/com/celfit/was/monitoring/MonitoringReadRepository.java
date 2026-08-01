@@ -151,6 +151,30 @@ public class MonitoringReadRepository {
 	}
 
 	/**
+	 * 게시물별 최신 스냅샷 1건(계약 §3 post_snapshot) — 어드민 모니터링 상태 유도(설계 2026-08-01 §4
+	 * AdminMonitoringHealthService, collect_stalled 판정용)가 쓴다. {@link #findSnapshots}와 달리
+	 * 워터마크(maxCapturedOn) 없이 순수 최신값만 필요해 별도 메서드를 둔다.
+	 */
+	public List<TrackedSnapshotRow> findLatestSnapshots(Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();
+		}
+		return jdbc.sql("""
+				SELECT short_code, captured_on, content_type, likes, comments, views, saves, shares, reposts
+				FROM (
+				    SELECT short_code, captured_on, content_type, likes, comments, views, saves, shares, reposts,
+				           row_number() OVER (PARTITION BY short_code ORDER BY captured_on DESC) AS rn
+				    FROM post_snapshot
+				    WHERE short_code IN (:shortCodes)
+				) ranked
+				WHERE rn = 1
+				""")
+				.param("shortCodes", shortCodes)
+				.query(TrackedSnapshotRow.class)
+				.list();
+	}
+
+	/**
 	 * 마지막으로 성공한 배치 완료 시각(계약 §3 sweep_run, 6.26 meta.lastCollectedAt) — 성공한 실행이
 	 * 없으면 null. 집계 함수라 행은 항상 1개지만 값 자체가 null일 수 있어(JdbcClient의 단일 컬럼
 	 * 매핑은 null 값을 예외로 다뤄) RowMapper로 직접 ResultSet에서 읽는다.

@@ -1,5 +1,6 @@
 package com.celfit.was.v1.account;
 
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -41,6 +42,17 @@ public class SignupCodeRepository {
 				.param("code", normalized)
 				.update();
 		return updated == 1;
+	}
+
+	/**
+	 * 어드민 유저 상세(설계 2026-08-01 §4 GET /v1/admin/users/{id})의 signupCode 역참조 —
+	 * used_by는 코드 소진 시 1회만 세팅되므로(가입 트랜잭션) 유저당 최대 1건.
+	 */
+	public Optional<String> findCodeByUsedBy(long userId) {
+		return jdbcClient.sql("SELECT code FROM app.signup_codes WHERE used_by = :userId")
+				.param("userId", userId)
+				.query(String.class)
+				.optional();
 	}
 
 	private static String normalize(String code) {

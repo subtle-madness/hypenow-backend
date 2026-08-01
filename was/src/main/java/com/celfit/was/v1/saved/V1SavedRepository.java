@@ -3,8 +3,11 @@ package com.celfit.was.v1.saved;
 import com.celfit.was.v1.content.ContentCard;
 import com.celfit.was.v1.content.ContentCardRow;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -140,6 +143,29 @@ public class V1SavedRepository {
 				.param("userId", userId)
 				.param("handle", handle)
 				.update();
+	}
+
+	/**
+	 * 어드민 유저 목록(설계 2026-08-01 §4)의 savedCount — saved_contents + saved_influencers 합산을
+	 * 유저 id 묶음 IN절로 한 번에 집계(전 유저 스캔 금지). 두 테이블 다 이 리포지토리 소유라
+	 * UNION ALL이 §4-4 크로스 스키마 조인 금지에 해당하지 않는다(둘 다 app 스키마).
+	 */
+	public Map<Long, Long> countSavedByUsers(Collection<Long> userIds) {
+		if (userIds.isEmpty()) {
+			return Map.of();
+		}
+		return jdbcClient.sql("""
+				SELECT user_id, count(*) AS cnt FROM (
+				    SELECT user_id FROM app.saved_contents WHERE user_id IN (:ids)
+				    UNION ALL
+				    SELECT user_id FROM app.saved_influencers WHERE user_id IN (:ids)
+				) combined
+				GROUP BY user_id
+				""")
+				.param("ids", userIds)
+				.query((rs, rowNum) -> Map.entry(rs.getLong("user_id"), rs.getLong("cnt")))
+				.list().stream()
+				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 	}
 
 	// --- analysis 미러 읽기 (읽기 전용, app과 별도 쿼리) ---

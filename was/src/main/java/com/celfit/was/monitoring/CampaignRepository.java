@@ -1,8 +1,11 @@
 package com.celfit.was.monitoring;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -105,5 +108,38 @@ public class CampaignRepository {
 				.param("campaignId", campaignId)
 				.query(Long.class)
 				.single();
+	}
+
+	/**
+	 * 어드민 조회 전용(설계 2026-08-01 §4) — 여러 유저에 걸친 캠페인 id 묶음의 이름 조회
+	 * (GET /v1/admin/monitoring/registrations의 campaignName Java 결합용). 유저 스코프 없음.
+	 */
+	public List<CampaignRow> findByIds(Collection<Long> ids) {
+		if (ids.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+				SELECT %s FROM app.monitoring_campaigns WHERE id IN (:ids)
+				""".formatted(RETURNING_COLUMNS))
+				.param("ids", ids)
+				.query(CampaignRow.class)
+				.list();
+	}
+
+	/** 어드민 유저 목록(설계 §4)의 campaignCount — 유저 id 묶음 IN절 집계(전 유저 스캔 금지). */
+	public Map<Long, Long> countByUsers(Collection<Long> userIds) {
+		if (userIds.isEmpty()) {
+			return Map.of();
+		}
+		return jdbcClient.sql("""
+				SELECT user_id, count(*) AS cnt
+				FROM app.monitoring_campaigns
+				WHERE user_id IN (:ids)
+				GROUP BY user_id
+				""")
+				.param("ids", userIds)
+				.query((rs, rowNum) -> Map.entry(rs.getLong("user_id"), rs.getLong("cnt")))
+				.list().stream()
+				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 	}
 }
