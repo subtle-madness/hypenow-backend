@@ -1,11 +1,13 @@
 package com.celfit.was.archive;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /** archive 스키마가 Flyway로 실제 생성되는지 검증 — DDL 하드코딩 없음. */
@@ -39,5 +41,15 @@ class ArchiveSchemaTest extends IntegrationTest {
 				.list();
 
 		assertThat(types).containsExactly("jsonb", "jsonb");
+	}
+
+	@Test
+	void 허용되지_않은_archived_reason_값은_거부된다() {
+		assertThatThrownBy(() -> jdbcClient.sql("""
+						INSERT INTO archive.archived_rows (table_name, row_pk, payload, archived_reason)
+						VALUES ('app.saved_contents', '{}'::jsonb, '{}'::jsonb, 'NOPE')
+						""")
+				.update())
+				.isInstanceOf(DataIntegrityViolationException.class);
 	}
 }

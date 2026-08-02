@@ -13,8 +13,8 @@ CREATE TABLE archive.archived_rows (
     -- to_jsonb(원본 행) 전체. users만 직접 식별 컬럼을 뺀 가명화 형태로 넣는다
     payload         jsonb       NOT NULL,
     archived_at     timestamptz NOT NULL DEFAULT now(),
-    -- ACCOUNT_DELETION / SAVED_REMOVED / CAMPAIGN_DELETED / REGISTRATION_ROLLBACK
     archived_reason text        NOT NULL
+        CHECK (archived_reason IN ('ACCOUNT_DELETION', 'SAVED_REMOVED', 'CAMPAIGN_DELETED', 'REGISTRATION_ROLLBACK'))
 );
 
 CREATE INDEX idx_archived_rows_table_time ON archive.archived_rows (table_name, archived_at);
