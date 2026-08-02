@@ -3,11 +3,16 @@ package com.celfit.was.archive;
 import java.util.List;
 
 /**
- * 아카이브 대상 카탈로그 — 단일 정본. 여기 없는 테이블은 ArchiveInventoryTest(Task 7에서 추가 예정)가
- * EXCLUDED에 사유와 함께 등재돼 있는지 검사한다.
+ * 아카이브 대상 카탈로그 — 단일 정본. 여기 없는 테이블은 ArchiveInventoryTest가 EXCLUDED에
+ * 사유와 함께 등재돼 있는지 검사한다.
  *
- * <p>ACCOUNT_DELETION_ORDER는 탈퇴 시 이관 순서다. 이관(INSERT)은 전부 삭제(DELETE)보다
- * 먼저 일어나므로 순서 자체가 정확성에 영향을 주진 않지만, 자식 → 부모 순으로 읽히게 둔다.
+ * <p>{@link #CATALOG}와 {@link #ACCOUNT_DELETION_ORDER}는 서로 다른 질문에 답한다 —
+ * "어떤 삭제 경로로든 아카이브되는 테이블 전부"(CATALOG) vs "탈퇴가 이관하는 테이블과 순서"
+ * (ACCOUNT_DELETION_ORDER). 지금은 두 목록의 원소가 우연히 같지만(9개 전부 탈퇴 캐스케이드에도
+ * 걸린다), SAVED_REMOVED·CAMPAIGN_DELETED·REGISTRATION_ROLLBACK처럼 탈퇴와 무관한 개별 삭제
+ * 경로 전용 테이블이 생기면 갈라진다 — 그런 테이블은 CATALOG엔 있지만 ACCOUNT_DELETION_ORDER엔
+ * 없어야 맞다. 두 목록은 서로 파생시키지 않고 각각 독립적으로 나열한다(파생시키면 아래
+ * ACCOUNT_DELETION_ORDER ⊆ CATALOG 검사가 항진명제가 돼 무의미해진다).
  */
 public final class ArchiveTables {
 
@@ -58,7 +63,28 @@ public final class ArchiveTables {
 			"app.users", List.of("id"), "t.id",
 			USER_PII, "t.id = :userId");
 
-	/** 탈퇴 시 이관 대상 전체 — 자식 8개 + users. */
+	/**
+	 * 아카이브 카탈로그 전체 — 어떤 삭제 경로(탈퇴 이관, 저장 해제, 캠페인 삭제, 등록 롤백 등)로든
+	 * 아카이브되는 테이블 전부. ArchiveInventoryTest의 "분류됨" 판정 기준이 이 목록이다 — 여기 없는
+	 * app 테이블은 EXCLUDED에 사유와 함께 있어야 한다. ACCOUNT_DELETION_ORDER와 달리 순서·CASCADE
+	 * 가정이 없다(단순 소속 목록).
+	 */
+	public static final List<ArchiveTable> CATALOG = List.of(
+			SAVED_CONTENTS,
+			SAVED_INFLUENCERS,
+			MONITORING_CAMPAIGNS,
+			MONITORING_EMAIL_OPT_OUTS,
+			MONITORING_ITEMS,
+			MONITORING_REGISTRATIONS,
+			MONITORING_DIGESTS,
+			MONITORING_REGISTRATION_ENTRIES,
+			USERS);
+
+	/**
+	 * 탈퇴 시 이관 대상과 순서 — 자식 8개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
+	 * 이관(INSERT)은 전부 삭제(DELETE)보다 먼저 일어나므로 순서 자체가 정확성에 영향을 주진
+	 * 않지만, 자식 → 부모 순으로 읽히게 둔다.
+	 */
 	public static final List<ArchiveTable> ACCOUNT_DELETION_ORDER = List.of(
 			SAVED_CONTENTS,
 			SAVED_INFLUENCERS,
