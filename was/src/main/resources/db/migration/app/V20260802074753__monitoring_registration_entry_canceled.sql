@@ -1,6 +1,16 @@
 -- 모니터링 등록 entry 영구 pending 정산(트랙 LL) — result·reason_code 어휘에 'canceled' 추가.
 -- 설계: docs/superpowers/specs/2026-07-31-monitoring-registration-pending-settlement-design.md
 --
+-- ⚠️ 채번 주의: 내용은 07-31 작업인데 버전이 20260802074753인 이유 — 원래 V20260731083455였으나
+-- develop 머지가 늦어지는 사이 트랙 MM의 V20260801062836이 test·운영에 먼저 적용됐고, 그 결과
+-- Flyway가 "이미 지나간 번호의 새 마이그레이션"으로 보고 validate에서 거부해 was가 부팅에
+-- 실패했다(08-02 test 배포 실측: `Detected resolved migration not applied to database:
+-- 20260731083455`, 헬스체크 502). 어느 DB에도 적용된 적이 없어(schema_history 부재 확인) rename이
+-- 안전했다 — 이미 적용된 파일이었다면 체크섬이 깨지므로 절대 금지다.
+-- 교훈: UTC 타임스탬프 채번은 "기존 정수보다 크다"만 보장할 뿐, 타임스탬프끼리는 **생성 시각 순서지
+-- 머지 순서가 아니다.** 브랜치를 오래 열어두면 언제든 재발한다 — 머지 직전에 대상 DB의
+-- schema_history 최신 버전보다 큰지 확인할 것.
+--
 -- 롤링 안전성: 값 추가는 제약을 넓히는 방향이라 구 코드가 위배할 일이 없다. 구 코드는 result를
 -- String으로 통과시키기만 하므로(RegistrationResponse.Entry.from) 'canceled'를 읽어도 깨지지 않는다.
 -- expand 단계로 안전(deploy/README.md §5-1). DROP CONSTRAINT는 migration-guard의 DESTRUCTIVE
