@@ -65,6 +65,28 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 등록_롤백으로_item을_지우면_아카이브에_남는다() {
+		long itemId = repository.insertPending(userId, "url", UUID.randomUUID(), null, "abc123",
+				"https://instagram.com/p/abc123", null, 30, LocalDate.of(2026, 7, 30));
+
+		repository.delete(itemId);
+
+		String reason = jdbcClient.sql("""
+						SELECT archived_reason FROM archive.archived_rows
+						 WHERE table_name = 'app.monitoring_items' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(reason).isEqualTo("REGISTRATION_ROLLBACK");
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.monitoring_items WHERE id = :id")
+				.param("id", itemId)
+				.query(Long.class)
+				.single()).isZero();
+	}
+
+	@Test
 	void confirmTarget_무효_id면_예외() {
 		assertThatThrownBy(() -> repository.confirmTarget(999_999L, 1L))
 				.isInstanceOf(IllegalStateException.class);

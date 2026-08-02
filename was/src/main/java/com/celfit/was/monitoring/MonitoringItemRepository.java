@@ -1,5 +1,8 @@
 package com.celfit.was.monitoring;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -11,6 +14,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * app.monitoring_items CRUD(v3, V15) — 항상 활성(app 기본 DataSource, monitoring 서브시스템
@@ -26,9 +30,11 @@ public class MonitoringItemRepository {
 			""";
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public MonitoringItemRepository(JdbcClient jdbcClient) {
+	public MonitoringItemRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	/** 등록 1단계 — target_id NULL의 pending 행 선저장. RETURNING id. */
@@ -66,10 +72,15 @@ public class MonitoringItemRepository {
 		}
 	}
 
+	/** 등록 실패 롤백 — 삭제 전 아카이브(트랙 NN). 실패한 등록 시도의 원인 이력이 남는다. */
+	@Transactional
 	public void delete(long itemId) {
-		jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_ITEMS, ArchiveReason.REGISTRATION_ROLLBACK,
+				Map.of("id", itemId));
+		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
 				.param("itemId", itemId)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.MONITORING_ITEMS, archived, deleted);
 	}
 
 	public Optional<MonitoringItemRow> findByIdAndUser(long id, long userId) {
