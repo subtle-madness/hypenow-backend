@@ -282,8 +282,13 @@ services:
     logging: *logging
     networks: [prod]
     mem_limit: 512m
+    ports:
+      - "127.0.0.1:3000:3000"   # 루프백 전용 — 어드민은 SSH 터널로만(analytics 8082·crawler 8080과 동일 관례)
     environment:
-      GF_SERVER_ROOT_URL: https://${GRAFANA_DOMAIN}
+      # 터널로만 접근하므로 root_url은 사용자 쪽 로컬 포트 기준이다 — 로컬 3000은 Next.js가 쓸 수
+      # 있어 3001로 잡았다(`ssh -L 3001:localhost:3000 <host>`). 이 값이 실제 접속 주소와 어긋나면
+      # 로그인 리다이렉트·알림 링크가 깨진다.
+      GF_SERVER_ROOT_URL: http://localhost:3001
       GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
@@ -322,7 +327,6 @@ services:
       - "443:443"
     environment:
       API_DOMAIN: ${API_DOMAIN}
-      GRAFANA_DOMAIN: ${GRAFANA_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy.d:/etc/caddy/caddy.d:ro

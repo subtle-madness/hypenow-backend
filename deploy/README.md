@@ -537,15 +537,29 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 
 ## 14. Grafana 서비스 현황 대시보드 (07-31~)
 
-`app` 스키마(서비스 데이터)의 유저 행동·실패를 보는 운영 대시보드. 호스트 포트 미노출 —
-Caddy가 `{$GRAFANA_DOMAIN}` 도메인으로 `grafana:3000`을 프록시한다. 정의는
-`deploy/compose.yaml`(grafana 서비스) + `deploy/Caddyfile`(사이트 블록) + `deploy/grafana/provisioning/`
-(데이터소스·대시보드 JSON·알림 규칙, 전부 파일 기반 자동 프로비저닝).
+`app` 스키마(서비스 데이터)의 유저 행동·실패를 보는 운영 대시보드. **Caddy 라우트가 없다** —
+호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler 어드민(§10)과 같은
+**SSH 터널 방식**으로만 접근한다. 정의는 `deploy/compose.yaml`(grafana 서비스) +
+`deploy/grafana/provisioning/`(데이터소스·대시보드 JSON·알림 규칙, 전부 파일 기반 자동 프로비저닝).
+
+> **왜 공개 도메인이 아닌가**(07-31 결정): 이 대시보드의 핵심 가치인 "미완료 등록 30분 초과"
+> 알림은 Grafana가 디스코드로 **직접** 발송하므로 터널이 닫혀 있어도 동작한다. 즉 도메인을
+> 붙여 얻는 건 북마크 편의뿐인데, Grafana는 인증 우회 계열 CVE가 주기적으로 나오는
+> 소프트웨어라 공개 표면을 늘리는 비용이 그보다 크다. DNS·인증서·Caddy 블록이 전부 불필요해져
+> 개통 절차도 `.env` 3개 + 롤 생성으로 줄었다. **트레이드오프**: 휴대폰에서 대시보드를 볼 수
+> 없다(급한 신호는 디스코드 알림으로 오므로 실질 손해는 작다고 판단).
 
 ### 14-1. 접속
 
-- `https://<GRAFANA_DOMAIN>` — 로그인은 `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`
+```bash
+ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
+```
+
+- 이후 브라우저에서 `http://localhost:3001` — 로그인은 `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`
   (익명 접속·회원가입 둘 다 꺼둠, `GF_AUTH_ANONYMOUS_ENABLED=false`/`GF_USERS_ALLOW_SIGN_UP=false`).
+- 로컬 3000이 아니라 **3001**인 이유: 로컬 3000은 Next.js 개발 서버가 쓴다. compose의
+  `GF_SERVER_ROOT_URL`도 `http://localhost:3001`로 맞춰져 있다 — 다른 포트로 터널을 열면
+  로그인 리다이렉트가 어긋나므로 둘을 함께 바꿀 것.
 - 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 패널 6개:
   미완료 등록(Table, 30분 초과 빨강 강조) · 정산 안 된 entry(Table) · 등록 결과 분포(일별) ·
   가입 추이(일별) · 가입 시도 결과(일별) · 세션 수(Stat, 500 초과 경고).
@@ -587,26 +601,16 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 
 | 변수 | 설명 |
 |---|---|
-| `GRAFANA_DOMAIN` | 예: `grafana.hypenow.io` — 아래 14-4 DNS 필요 |
 | `GF_SECURITY_ADMIN_USER` | Grafana 관리자 계정 (예: `admin`) |
 | `GF_SECURITY_ADMIN_PASSWORD` | Grafana 관리자 비밀번호 — 강한 값 |
 | `GRAFANA_READER_PASSWORD` | 위 14-2에서 만든 `grafana_reader` 비밀번호와 동일 값 |
 
 `DISCORD_WEBHOOK_URL`은 **재사용**(§9, ons-relay와 같은 웹훅) — 새 변수 불필요. 이미 설정돼
-있어야 아래 14-5 알림이 동작한다.
+있어야 아래 14-4 알림이 동작한다.
 
-> **`GRAFANA_DOMAIN` 누락은 원래 운영 전면 다운이었다** (07-31 실측·방어됨). Caddyfile의
-> 사이트 주소가 빈 문자열이 되면 어댑트가 통째로 실패해(`server block without any key is
-> global configuration`) caddy 컨테이너가 못 뜨고, 이 파일은 운영 라우팅 본체라 API가 전부
-> 죽는다. 그래서 Caddyfile에 `{$GRAFANA_DOMAIN:grafana.localhost}` **기본값을 박아 뒀다** —
-> `.env`를 채우기 전에 배포되는 순서 사고가 나도 caddy는 정상 기동하고, grafana만 내부
-> 도메인으로 떠서 외부에 노출되지 않는다. 이 기본값을 지우지 말 것.
+**DNS·인증서는 필요 없다** — SSH 터널 전용이라 도메인을 쓰지 않는다(§14 머리말의 결정 근거 참조).
 
-### 14-4. DNS (사용자 직접, §2와 동일 패턴)
-
-- A레코드 `<GRAFANA_DOMAIN>` → 서버 공인 IP (TTL 300 권장). 운영 IP와 동일 — 새 인스턴스가 아니다.
-
-### 14-5. 알림 — "미완료 등록 30분 초과"
+### 14-4. 알림 — "미완료 등록 30분 초과"
 
 Grafana unified alerting을 파일 프로비저닝으로 구성했다
 (`deploy/grafana/provisioning/alerting/{contact-points,policies,rules}.yaml`) — contact point는
@@ -625,12 +629,13 @@ Grafana unified alerting을 파일 프로비저닝으로 구성했다
 Contact point는 프로비저닝된 `discord-ops`를 그대로 지정하면 된다(이건 대개 성공한다 — 실패
 가능성이 큰 쪽은 규칙 스키마다).
 
-### 14-6. 최초 기동 절차
+### 14-5. 최초 기동 절차
 
-1. 위 14-2 롤 생성 (서버, 최초 1회)
-2. `~/deploy/.env`에 14-3 표의 4개 변수 등록 (`GRAFANA_READER_PASSWORD`는 14-2 값과 일치)
-3. DNS(14-4) 반영 확인
-4. develop→staging→main 승격으로 배포 (또는 긴급 경로 §5) — CD가 `docker compose pull && up -d`로
-   grafana 컨테이너를 기동, Caddy가 새 사이트 블록으로 재기동돼 인증서 자동 발급
-5. `https://<GRAFANA_DOMAIN>` 접속 → 관리자 로그인 → 대시보드 "HypeNow 서비스 현황" 확인
-6. 14-5의 알림 규칙 로드 여부 확인, 필요 시 수동 보완
+1. 위 14-2 롤 생성 (서버, 최초 1회) — **배포보다 먼저**. 없으면 컨테이너는 뜨지만 모든 패널이
+   권한 오류로 빈다.
+2. `~/deploy/.env`에 14-3 표의 3개 변수 등록 (`GRAFANA_READER_PASSWORD`는 14-2 값과 일치)
+3. develop→staging→main 승격으로 배포 (또는 긴급 경로 §5) — CD가 `docker compose pull && up -d`로
+   grafana 컨테이너를 기동. **Caddy는 무관하다**(라우트 없음 — 재기동도 인증서 발급도 없다)
+4. `ssh -L 3001:localhost:3000 ubuntu@<IP>` 후 `http://localhost:3001` 접속 → 관리자 로그인 →
+   대시보드 "HypeNow 서비스 현황" 확인
+5. 14-4의 알림 규칙 로드 여부 확인, 필요 시 수동 보완

@@ -35,34 +35,11 @@
 	}
 }
 
-# Grafana 서비스 현황 대시보드 — 어드민 전용(운영 도메인이므로 caddy.d가 아닌 본 파일에 둔다,
-# ARCHITECTURE 지침: caddy.d는 dev CD 전용 갱신 영역). 로그 파일은 API 액세스 로그(access.log)와
-# 분리 — grafana는 어드민 소수 트래픽이라 섞으면 API 로그의 50MiB×5롤 보존 기간을 갉아먹고,
-# grep으로 API 요청만 추적하던 기존 습관(운영 조사 관례)도 방해한다.
-#
-# ⚠️ 기본값 `grafana.localhost`는 장식이 아니라 안전장치다 — 07-31 실측: 기본값 없이
-# `{$GRAFANA_DOMAIN}`만 두면 .env에 값이 없을 때 Caddy 어댑트가 통째로 실패한다
-# ("server block without any key is global configuration"). 그러면 caddy 컨테이너가 못 떠서
-# **운영 API 전면 다운**이다(이 파일은 운영 라우팅 본체). .env 채우기 전에 배포되는 순서
-# 사고를 코드로 막는다. 미설정 시엔 .localhost로 떠서 외부 노출도 ACME 발급 시도도 없다.
-{$GRAFANA_DOMAIN:grafana.localhost} {
-	log {
-		output file /var/log/caddy/grafana-access.log {
-			roll_size 50MiB
-			roll_keep 5
-		}
-		format filter {
-			wrap json
-			fields {
-				request>headers>Cookie delete
-				request>headers>Authorization delete
-				request>headers>X-Xsrf-Token delete
-				resp_headers>Set-Cookie delete
-			}
-		}
-	}
-	reverse_proxy grafana:3000
-}
+# Grafana(서비스 현황 대시보드)는 여기에 라우트가 없다 — 의도된 것이다. analytics·crawler 어드민과
+# 같은 SSH 터널 방식으로만 접근한다(README §14): 컨테이너가 호스트 루프백에만 포트를 열고,
+# 사용자는 `ssh -L 3001:localhost:3000 <host>`로 붙는다. 알림(미완료 등록 30분 초과)은 Grafana가
+# 디스코드로 직접 발송하므로 터널이 닫혀 있어도 동작한다 — 즉 공개 표면을 늘려 얻을 게 없다.
+# Grafana는 인증 우회 계열 CVE가 주기적으로 나오는 소프트웨어라 노출 자체가 비용이다.
 
 # dev 등 부가 라우팅은 caddy.d/*.caddy로 분리 — dev CD가 dev 파일만 갱신·리로드하므로
 # 이 본 파일(운영 라우팅)은 main 배포로만 바뀐다. glob이라 파일이 없어도 무해.
