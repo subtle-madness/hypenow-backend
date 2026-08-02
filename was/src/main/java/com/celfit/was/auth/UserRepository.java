@@ -1,6 +1,11 @@
 package com.celfit.was.auth;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTable;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,9 +31,11 @@ public class UserRepository {
 			"phone_country_code", "phone_number", "company_name", "agreed_marketing");
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public UserRepository(JdbcClient jdbcClient) {
+	public UserRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	/** 중복 이메일이면 DataIntegrityViolationException(구현체: DuplicateKeyException) — app.users.email UNIQUE 제약. */
@@ -156,12 +163,32 @@ public class UserRepository {
 	/**
 	 * 탈퇴(스펙 6.13) — saved 2종은 users FK가 CASCADE가 아니라 자식부터 순서 삭제, 한 트랜잭션.
 	 * 세션 무효화·이미지 파일 정리는 DB 밖 자원이라 호출부가 커밋 후에 수행한다.
+	 *
+	 * <p>삭제 전 원본 행을 전부 아카이브한다(트랙 NN). CASCADE(V16)로 사라지는 자식과
+	 * registrations를 거치는 간접 CASCADE(entries)까지 ArchiveTables.ACCOUNT_DELETION_ORDER가
+	 * 전부 담고 있다 — 새 자식 테이블이 생기면 ArchiveCascadeReachabilityTest가 CI에서 막는다.
 	 */
 	@Transactional
 	public void deleteAccount(long id) {
-		jdbcClient.sql("DELETE FROM app.saved_contents WHERE user_id = :id").param("id", id).update();
-		jdbcClient.sql("DELETE FROM app.saved_influencers WHERE user_id = :id").param("id", id).update();
-		jdbcClient.sql("DELETE FROM app.users WHERE id = :id").param("id", id).update();
+		Map<ArchiveTable, Integer> archived = new HashMap<>();
+		for (ArchiveTable table : ArchiveTables.ACCOUNT_DELETION_ORDER) {
+			archived.put(table, archiveWriter.archiveUserScope(table, ArchiveReason.ACCOUNT_DELETION, id));
+		}
+		deleteAndVerify(ArchiveTables.SAVED_CONTENTS, archived,
+				"DELETE FROM app.saved_contents WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.SAVED_INFLUENCERS, archived,
+				"DELETE FROM app.saved_influencers WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.USERS, archived,
+				"DELETE FROM app.users WHERE id = :id", id);
+	}
+
+	/**
+	 * CASCADE로 사라지는 자식 8종은 DB가 지우므로 삭제 건수를 관측할 수 없다 — 코드가 직접
+	 * DELETE하는 3개만 이관 건수와 대조한다.
+	 */
+	private void deleteAndVerify(ArchiveTable table, Map<ArchiveTable, Integer> archived, String sql, long id) {
+		int deleted = jdbcClient.sql(sql).param("id", id).update();
+		archiveWriter.verifyMatched(table, archived.get(table), deleted);
 	}
 
 	public Optional<AppUser> findByEmail(String email) {

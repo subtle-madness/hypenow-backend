@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -257,5 +258,94 @@ class UserRepositoryTest extends IntegrationTest {
 				.param("id", userId)
 				.query(Long.class)
 				.single();
+	}
+
+	// --- 탈퇴 아카이브(트랙 NN, Task 3) ---
+
+	@Test
+	void 탈퇴하면_유저와_자식_행이_모두_아카이브된다() {
+		AppUser user = repository.insert("archive-me@example.com", "hashed");
+		jdbcClient.sql("INSERT INTO app.saved_contents (user_id, short_code) VALUES (:id, 'SC1')")
+				.param("id", user.id())
+				.update();
+		jdbcClient.sql("INSERT INTO app.saved_influencers (user_id, handle) VALUES (:id, 'someone')")
+				.param("id", user.id())
+				.update();
+
+		repository.deleteAccount(user.id());
+
+		List<String> archived = jdbcClient.sql("""
+						SELECT table_name FROM archive.archived_rows
+						 WHERE user_id = :id ORDER BY table_name
+						""")
+				.param("id", user.id())
+				.query(String.class)
+				.list();
+
+		assertThat(archived).contains("app.users", "app.saved_contents", "app.saved_influencers");
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.users WHERE id = :id")
+				.param("id", user.id())
+				.query(Long.class)
+				.single()).isZero();
+	}
+
+	@Test
+	void 탈퇴_아카이브의_users_payload에는_이메일이_없다() {
+		AppUser user = repository.insert("secret@example.com", "hashed");
+
+		repository.deleteAccount(user.id());
+
+		String payload = jdbcClient.sql("""
+						SELECT payload::text FROM archive.archived_rows
+						 WHERE table_name = 'app.users' AND user_id = :id
+						""")
+				.param("id", user.id())
+				.query(String.class)
+				.single();
+
+		assertThat(payload).doesNotContain("secret@example.com").doesNotContain("hashed");
+	}
+
+	/**
+	 * app.monitoring_registration_entries는 user_id 컬럼이 없는 유일한 아카이브 대상이라
+	 * userScopeWhere가 registration을 거치는 서브쿼리다(ArchiveTables 참고). 탈퇴 경로가 이
+	 * 조합을 상시로 쓰므로 여기서 영구 커버리지를 만든다 — Task 2 리뷰에서는 임시 테스트로만
+	 * 확인하고 지워 상시 검증이 비어 있었다.
+	 */
+	@Test
+	void 탈퇴하면_모니터링_등록_엔트리도_registration_id_경유로_이관된다() {
+		AppUser user = repository.insert("monitoring-archive@example.com", "hashed");
+		long registrationId = jdbcClient.sql("""
+						INSERT INTO app.monitoring_registrations (user_id) VALUES (:userId)
+						RETURNING id
+						""")
+				.param("userId", user.id())
+				.query(Long.class)
+				.single();
+		jdbcClient.sql("""
+						INSERT INTO app.monitoring_registration_entries
+						        (registration_id, seq, input, kind, result)
+						VALUES (:regId, 1, 'https://instagram.com/p/ABC', 'post', 'success'),
+						       (:regId, 2, 'someone', 'account', 'duplicate')
+						""")
+				.param("regId", registrationId)
+				.update();
+
+		repository.deleteAccount(user.id());
+
+		List<Map<String, Object>> rows = jdbcClient.sql("""
+						SELECT user_id, row_pk::text AS row_pk_text FROM archive.archived_rows
+						 WHERE table_name = 'app.monitoring_registration_entries'
+						   AND (row_pk ->> 'registration_id')::bigint = :regId
+						""")
+				.param("regId", registrationId)
+				.query()
+				.listOfRows();
+
+		assertThat(rows).hasSize(2);
+		assertThat(rows).allSatisfy(row -> {
+			assertThat(row.get("user_id")).isNull();
+			assertThat((String) row.get("row_pk_text")).contains("registration_id").contains("seq");
+		});
 	}
 }
