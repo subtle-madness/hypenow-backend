@@ -201,13 +201,19 @@ SELECT 'app.saved_contents',
 `users`만 특별 취급한다. 행은 보존하되 직접 식별 컬럼을 payload에서 제거한다.
 
 ```sql
-to_jsonb(t) - 'email' - 'password_hash' - 'name' - 'profile_image_path'
+to_jsonb(t) - 'email' - 'password_hash' - 'name' - 'nickname'
+            - 'phone_country_code' - 'phone_number' - 'profile_image_url'
 ```
 
 `id`는 남기므로 자식 행과의 조인이 살아 있다. 즉 **익명화가 아니라 가명화**이며,
-아카이브 내부에서 유저 단위 행동 분석이 가능하다. 실제 제거 대상 컬럼 목록은 구현
-시점의 `users` 스키마로 확정한다(V3 프로필 필드, V9 usage_purpose, V11 role 포함 여부
-판단 필요 — role·usage_purpose는 식별 정보가 아니므로 보존이 기본).
+아카이브 내부에서 유저 단위 행동 분석이 가능하다.
+
+제거 대상은 자연인을 직접 식별하는 7개 컬럼으로 한정한다. `company_name`,
+`company_size`, `industry`, `job_title`, `user_type`, `usage_purpose`, `signup_route`,
+`agreed_*`, `role`, `created_at`, `last_active_at`는 **보존한다** — 어떤 업종·직무의
+사용자가 무엇을 저장하고 이탈했는지가 이 아카이브의 핵심 자산이기 때문이다.
+`company_name`은 법인명이라 조합하면 식별 가능성이 있으나, 보존 가치가 크고 단독
+식별자가 아니므로 유지한다(재검토 여지 있음).
 
 ## 6. 오류 처리
 
@@ -263,7 +269,8 @@ expand-contract 원칙상 2단계로 나눈다.
 
 | 항목 | 내용 | 대응 |
 |---|---|---|
-| Flyway 스키마 설정 | `app`이 유일 스키마였으므로 `CREATE SCHEMA archive`가 Flyway 설정·DB 권한상 통과하는지 미확인 | 구현 착수 시 최우선 확인. 불가하면 `app.archived_rows`로 후퇴 |
+| Flyway 스키마 설정 | **해소** — `AppFlywayConfig`가 `.schemas("app").defaultSchema("app")`인데, 이는 Flyway가 자기 관리·생성 대상으로 삼는 목록일 뿐 스크립트가 실행할 DDL 범위를 제한하지 않는다. `CREATE SCHEMA archive`는 DB 유저 권한 내에서 그대로 실행된다 | 부작용 1건 인지: `archive`는 Flyway `schemas` 목록 밖이라 `clean` 대상에서 빠진다(운영에서 clean을 쓰지 않으므로 무해) |
+| 트랜잭션 경계 부재 | 6개 삭제 경로 중 `@Transactional`이 걸린 곳은 `UserRepository.deleteAccount` 하나뿐이다. 나머지는 리포지토리·서비스·컨트롤러 어디에도 경계가 없다 | 아카이브를 붙이는 경로마다 `@Transactional`을 함께 추가한다(§6 fail-closed의 전제) |
 | V1 테이블 스키마 한정자 부재 | `users`/`saved_*` DDL에 `app.` 접두사가 없다(V2부터는 명시). 실질 `app` 소속임은 이후 파일들이 `app.users`로 참조하는 것으로 확인되나 원인 미규명 | 조사만. 이번 트랙에서 건드리지 않는다 |
 | 디스크 증가 | 서비스 DB에 무한 축적. 오라클 서버 디스크가 한 번 찬 이력 있음 | 별도 스키마라 분리는 쉬움. 크기 모니터링 필요 |
 | 개인정보 보유 | 가명화해도 탈퇴 유저의 행동 데이터를 보유한다. 파기 의무와의 관계는 법률 판단 영역 | 법무 확인 권고. 확인 전까지는 이 설계가 최소 보유안 |
