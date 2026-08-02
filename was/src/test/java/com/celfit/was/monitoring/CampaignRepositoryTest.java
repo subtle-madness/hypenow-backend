@@ -118,6 +118,27 @@ class CampaignRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 캠페인을_삭제하면_아카이브에_남는다() {
+		CampaignRow campaign = repository.insert(userId, "여름 캠페인", null, null, null, null, null, null);
+
+		repository.delete(campaign.id());
+
+		String name = jdbcClient.sql("""
+						SELECT payload ->> 'name' FROM archive.archived_rows
+						 WHERE table_name = 'app.monitoring_campaigns' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(name).isEqualTo("여름 캠페인");
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.monitoring_campaigns WHERE id = :id")
+				.param("id", campaign.id())
+				.query(Long.class)
+				.single()).isZero();
+	}
+
+	@Test
 	void countItems() {
 		CampaignRow campaign = repository.insert(userId, "카운트캠페인", null, null, null, null, null, null);
 		assertThat(repository.countItems(campaign.id())).isZero();
