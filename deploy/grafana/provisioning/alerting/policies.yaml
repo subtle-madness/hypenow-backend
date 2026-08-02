@@ -1,0 +1,10 @@
+# 루트 정책 — 현재 알림 규칙이 1개뿐이라 세분화된 라우팅 트리 없이 전부 discord-ops로.
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: discord-ops
+    group_by: ["alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 3h

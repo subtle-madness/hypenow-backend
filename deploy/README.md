@@ -577,3 +577,108 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   (워터마크가 없어 중단 구간 유실이 없다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.gz` 7일 + B2 `hypenow-backups/monitoring/` 30일 롤링(§6).
+
+## 14. Grafana 서비스 현황 대시보드 (07-31~)
+
+`app` 스키마(서비스 데이터)의 유저 행동·실패를 보는 운영 대시보드. **Caddy 라우트가 없다** —
+호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler 어드민(§10)과 같은
+**SSH 터널 방식**으로만 접근한다. 정의는 `deploy/compose.yaml`(grafana 서비스) +
+`deploy/grafana/provisioning/`(데이터소스·대시보드 JSON·알림 규칙, 전부 파일 기반 자동 프로비저닝).
+
+> **왜 공개 도메인이 아닌가**(07-31 결정): 이 대시보드의 핵심 가치인 "미완료 등록 30분 초과"
+> 알림은 Grafana가 디스코드로 **직접** 발송하므로 터널이 닫혀 있어도 동작한다. 즉 도메인을
+> 붙여 얻는 건 북마크 편의뿐인데, Grafana는 인증 우회 계열 CVE가 주기적으로 나오는
+> 소프트웨어라 공개 표면을 늘리는 비용이 그보다 크다. DNS·인증서·Caddy 블록이 전부 불필요해져
+> 개통 절차도 `.env` 3개 + 롤 생성으로 줄었다. **트레이드오프**: 휴대폰에서 대시보드를 볼 수
+> 없다(급한 신호는 디스코드 알림으로 오므로 실질 손해는 작다고 판단).
+
+### 14-1. 접속
+
+```bash
+ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
+```
+
+- 이후 브라우저에서 `http://localhost:3001` — 로그인은 `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`
+  (익명 접속·회원가입 둘 다 꺼둠, `GF_AUTH_ANONYMOUS_ENABLED=false`/`GF_USERS_ALLOW_SIGN_UP=false`).
+- 로컬 3000이 아니라 **3001**인 이유: 로컬 3000은 Next.js 개발 서버가 쓴다. compose의
+  `GF_SERVER_ROOT_URL`도 `http://localhost:3001`로 맞춰져 있다 — 다른 포트로 터널을 열면
+  로그인 리다이렉트가 어긋나므로 둘을 함께 바꿀 것.
+- 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 패널 6개:
+  미완료 등록(Table, 30분 초과 빨강 강조) · 정산 안 된 entry(Table) · 등록 결과 분포(일별) ·
+  가입 추이(일별) · 가입 시도 결과(일별) · 세션 수(Stat, 500 초과 경고).
+  앞의 두 Table 패널은 상태 기반 잔여 목록이라 **전역 시간 필터를 의도적으로 적용하지 않는다**
+  (대시보드 상단 시간 범위를 바꿔도 두 패널은 그대로다 — SQL에 `$__timeFilter`를 안 넣었을 뿐이라
+  정상 동작).
+
+### 14-2. `grafana_reader` 롤 생성 (1회, 사용자 수동 — Flyway 아님)
+
+**조사 결론**: 이 레포에서 읽기 전용 롤(`was_reader`·`alarm_reader`·`monitoring` 소유 롤 자체)은
+전부 **수동 런북**으로 생성한다(§13-1·§13-5-2, `db/init/02-create-monitoring-db.sql`). Flyway가
+하는 일은 그렇게 만들어진 롤에 **객체 GRANT를 부여**하는 것뿐 — `CREATE ROLE`은 어느 앱의
+Flyway 마이그레이션에도 없다. 이유: `CREATE ROLE`은 `CREATEROLE` 권한(사실상 슈퍼유저 — 여기서는
+postgres 컨테이너의 `POSTGRES_USER`인 `DB_USER`)이 있어야 하는데, 이를 앱 Flyway 이력에 넣으면
+"서버 1회 셋업"과 "앱 코드 버전"이라는 서로 다른 수명주기가 섞인다. `grafana_reader`도 같은
+이유로 같은 방식(수동 런북)을 따른다 — 임의로 새 방식을 만들지 않았다.
+
+```bash
+# 서버에서 (-c를 나눠 쓴다 — 한 -c에 여러 문장을 넣으면 암묵 트랜잭션이라 거부된다)
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "CREATE ROLE grafana_reader LOGIN PASSWORD '<실값>'" \
+  -c "GRANT USAGE ON SCHEMA app TO grafana_reader" \
+  -c "GRANT SELECT (id, user_id, requested_at, completed_at) ON app.monitoring_registrations TO grafana_reader" \
+  -c "GRANT SELECT (registration_id, seq, input, kind, result, reason_code) ON app.monitoring_registration_entries TO grafana_reader" \
+  -c "GRANT SELECT (created_at) ON app.users TO grafana_reader" \
+  -c "GRANT SELECT (outcome, created_at) ON app.signup_events TO grafana_reader" \
+  -c "GRANT SELECT (primary_id) ON app.spring_session TO grafana_reader"
+```
+
+- **시스템 경계 준수**: `app` 스키마 외 접근 없음(raw DB·analysis 결과 스키마 GRANT 전혀 없음).
+  컬럼도 대시보드 6패널이 실제 쓰는 것만 — `app.users.email`·`password_hash`,
+  `app.signup_events.email`·`ip`·`detail`(PII 가능성) 등은 제외(alarm_reader가 `id, email`만
+  받은 것과 같은 최소권한 원칙, 다만 이메일 자체도 대시보드엔 불필요해 더 좁혔다).
+  `spring_session`은 `count(*)`만 필요해 `primary_id` 한 컬럼만 부여(컬럼 단위 GRANT에서
+  `count(*)`가 동작하려면 최소 한 컬럼의 SELECT 권한이 있어야 한다).
+- 비밀번호는 `~/deploy/.env`의 `GRAFANA_READER_PASSWORD`와 일치시킬 것.
+
+### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
+
+| 변수 | 설명 |
+|---|---|
+| `GF_SECURITY_ADMIN_USER` | Grafana 관리자 계정 (예: `admin`) |
+| `GF_SECURITY_ADMIN_PASSWORD` | Grafana 관리자 비밀번호 — 강한 값 |
+| `GRAFANA_READER_PASSWORD` | 위 14-2에서 만든 `grafana_reader` 비밀번호와 동일 값 |
+
+`DISCORD_WEBHOOK_URL`은 **재사용**(§9, ons-relay와 같은 웹훅) — 새 변수 불필요. 이미 설정돼
+있어야 아래 14-4 알림이 동작한다.
+
+**DNS·인증서는 필요 없다** — SSH 터널 전용이라 도메인을 쓰지 않는다(§14 머리말의 결정 근거 참조).
+
+### 14-4. 알림 — "미완료 등록 30분 초과"
+
+Grafana unified alerting을 파일 프로비저닝으로 구성했다
+(`deploy/grafana/provisioning/alerting/{contact-points,policies,rules}.yaml`) — contact point는
+디스코드 웹훅 재사용, 규칙은 대시보드 패널1과 같은 SQL(30분 초과 미완료 건수 > 0)을 5분마다 평가.
+
+**판단 근거**: 알림 프로비저닝 스키마(특히 `data[]`의 reduce/threshold 표현식 체인, `folder`
+필드 처리)는 공식 문서에 완전한 예시가 없어 서버 미접속 제약(이 작업은 파일만 작성) 하에서
+실기동 검증을 못 했다. 다만 스키마 자체는 Grafana 9 이후 안정적으로 문서화된 표준 패턴이라
+"억지로 만든" 수준은 아니라고 판단해 프로비저닝을 시도했고, 실패 시 폴백으로 아래 수동 확인
+절차와 대시보드 임계치 강조(패널1·2 빨강, 패널6 경고색)를 이미 준비해 뒀다.
+
+**최초 기동 후 반드시 확인**: Grafana UI → Alerting → Alert rules에서 "미완료 등록 30분 초과"
+규칙이 `HypeNow` 폴더 아래 정상 로드됐는지 확인. 로드에 실패하면(프로비저닝 오류는 보통
+컨테이너 로그에 남는다 — `docker logs deploy-grafana-1 | grep -i provision`) UI에서 수동으로
+같은 조건(위 rules.yaml의 SQL·reduce last·threshold gt 0, 평가주기 5분)으로 규칙을 만들고,
+Contact point는 프로비저닝된 `discord-ops`를 그대로 지정하면 된다(이건 대개 성공한다 — 실패
+가능성이 큰 쪽은 규칙 스키마다).
+
+### 14-5. 최초 기동 절차
+
+1. 위 14-2 롤 생성 (서버, 최초 1회) — **배포보다 먼저**. 없으면 컨테이너는 뜨지만 모든 패널이
+   권한 오류로 빈다.
+2. `~/deploy/.env`에 14-3 표의 3개 변수 등록 (`GRAFANA_READER_PASSWORD`는 14-2 값과 일치)
+3. develop→staging→main 승격으로 배포 (또는 긴급 경로 §5) — CD가 `docker compose pull && up -d`로
+   grafana 컨테이너를 기동. **Caddy는 무관하다**(라우트 없음 — 재기동도 인증서 발급도 없다)
+4. `ssh -L 3001:localhost:3000 ubuntu@<IP>` 후 `http://localhost:3001` 접속 → 관리자 로그인 →
+   대시보드 "HypeNow 서비스 현황" 확인
+5. 14-4의 알림 규칙 로드 여부 확인, 필요 시 수동 보완

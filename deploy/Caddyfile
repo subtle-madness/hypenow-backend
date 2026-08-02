@@ -68,6 +68,12 @@
 	}
 }
 
+# Grafana(서비스 현황 대시보드)는 여기에 라우트가 없다 — 의도된 것이다. analytics·crawler 어드민과
+# 같은 SSH 터널 방식으로만 접근한다(README §14): 컨테이너가 호스트 루프백에만 포트를 열고,
+# 사용자는 `ssh -L 3001:localhost:3000 <host>`로 붙는다. 알림(미완료 등록 30분 초과)은 Grafana가
+# 디스코드로 직접 발송하므로 터널이 닫혀 있어도 동작한다 — 즉 공개 표면을 늘려 얻을 게 없다.
+# Grafana는 인증 우회 계열 CVE가 주기적으로 나오는 소프트웨어라 노출 자체가 비용이다.
+
 # dev 등 부가 라우팅은 caddy.d/*.caddy로 분리 — dev CD가 dev 파일만 갱신·리로드하므로
 # 이 본 파일(운영 라우팅)은 main 배포로만 바뀐다. glob이라 파일이 없어도 무해.
 import /etc/caddy/caddy.d/*.caddy
