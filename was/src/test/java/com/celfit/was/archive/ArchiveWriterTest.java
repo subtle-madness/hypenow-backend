@@ -173,6 +173,32 @@ class ArchiveWriterTest extends IntegrationTest {
 	}
 
 	@Test
+	void archiveByPk는_PK_전체로_스코프해서_동일한_비PK_값을_가진_다른_유저_행을_건드리지_않는다() {
+		long userA = insertUser("writer-cross-a@example.com");
+		long userB = insertUser("writer-cross-b@example.com");
+		jdbcClient.sql("INSERT INTO app.saved_contents (user_id, short_code) VALUES (:id, 'SHARED')")
+				.param("id", userA)
+				.update();
+		jdbcClient.sql("INSERT INTO app.saved_contents (user_id, short_code) VALUES (:id, 'SHARED')")
+				.param("id", userB)
+				.update();
+
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userA, "short_code", "SHARED"));
+
+		assertThat(archived).isEqualTo(1);
+
+		List<Long> archivedUserIds = jdbcClient.sql("""
+						SELECT user_id FROM archive.archived_rows
+						 WHERE table_name = 'app.saved_contents' AND row_pk ->> 'short_code' = 'SHARED'
+						""")
+				.query(Long.class)
+				.list();
+
+		assertThat(archivedUserIds).containsExactly(userA);
+	}
+
+	@Test
 	void archiveByPk에_pkColumns와_다른_키를_주면_예외() {
 		assertThatThrownBy(() -> archiveWriter.archiveByPk(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
 				Map.of("user_id", 1L, "wrong_column", "ABC123")))
