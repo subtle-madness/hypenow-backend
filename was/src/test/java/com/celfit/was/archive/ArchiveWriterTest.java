@@ -172,6 +172,13 @@ class ArchiveWriterTest extends IntegrationTest {
 		assertThat(archived).isEqualTo(2);
 	}
 
+	/**
+	 * 실제로 지키는 것은 <b>WHERE 절이 PK 컬럼 전체를 쓰는가</b>다 — 조립에서 컬럼 하나가 빠지면
+	 * 남의 행까지 이관된다. 단일 유저·단일 행 테스트로는 못 잡는 결함이라 여기서만 커버된다.
+	 *
+	 * <p>카탈로그의 pkColumns를 좁히는 시나리오는 이 테스트가 아니라 archiveByPk의 키셋 검사가
+	 * 먼저 막는다(IllegalArgumentException) — 그쪽을 기대하고 읽지 말 것.
+	 */
 	@Test
 	void archiveByPk는_PK_전체로_스코프해서_동일한_비PK_값을_가진_다른_유저_행을_건드리지_않는다() {
 		long userA = insertUser("writer-cross-a@example.com");
@@ -191,7 +198,10 @@ class ArchiveWriterTest extends IntegrationTest {
 		List<Long> archivedUserIds = jdbcClient.sql("""
 						SELECT user_id FROM archive.archived_rows
 						 WHERE table_name = 'app.saved_contents' AND row_pk ->> 'short_code' = 'SHARED'
+						   AND user_id IN (:userA, :userB)
 						""")
+				.param("userA", userA)
+				.param("userB", userB)
 				.query(Long.class)
 				.list();
 
