@@ -7,7 +7,7 @@ import com.celfit.was.IntegrationTest;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -55,15 +55,14 @@ class ArchiveSchemaTest extends IntegrationTest {
 				.isInstanceOf(DataIntegrityViolationException.class);
 	}
 
-	// Task 2에서 ArchiveReason enum이 생기면 이 파라미터를 ArchiveReason.values() 순회로 교체한다.
 	@ParameterizedTest
-	@ValueSource(strings = {"ACCOUNT_DELETION", "SAVED_REMOVED", "CAMPAIGN_DELETED", "REGISTRATION_ROLLBACK"})
-	void 허용된_archived_reason_값은_insert에_성공한다(String reason) {
+	@EnumSource(ArchiveReason.class)
+	void 허용된_archived_reason_값은_insert에_성공한다(ArchiveReason reason) {
 		int updated = jdbcClient.sql("""
 						INSERT INTO archive.archived_rows (table_name, row_pk, payload, archived_reason)
 						VALUES ('test.check_constraint', '{}'::jsonb, '{}'::jsonb, :reason)
 						""")
-				.param("reason", reason)
+				.param("reason", reason.name())
 				.update();
 
 		assertThat(updated).isEqualTo(1);
