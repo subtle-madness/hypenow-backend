@@ -10,6 +10,7 @@ import com.celfit.was.monitoring.RegisterRequest;
 import com.celfit.was.monitoring.RegisterResult;
 import com.celfit.was.monitoring.RegistrationEntryRow;
 import com.celfit.was.monitoring.RegistrationRepository;
+import com.celfit.was.monitoring.RegistrationResult;
 import com.celfit.was.monitoring.RegistrationRow;
 import com.celfit.was.monitoring.ShareResolveResult;
 import com.celfit.was.v1.common.KstTimestamps;
@@ -57,20 +58,9 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 	/** findPendingOlderThan 기준 age — 실행기가 커밋 직후 잡지 못한(프로세스 재기동 등) pending 행 복구 임계값. */
 	private static final Duration STALE_AGE = Duration.ofMinutes(5);
 
-	private static final String RESULT_SUCCESS = "success";
-	private static final String RESULT_FAILED = "failed";
-	private static final String RESULT_DUPLICATE = "duplicate";
-	private static final String RESULT_PENDING = "pending";
-
 	private static final String MODE_ACCOUNT = "account";
 	private static final String MODE_URL = "url";
 
-	private static final String REASON_NOT_FOUND = "not_found";
-	private static final String REASON_PRIVATE_ACCOUNT = "private_account";
-	private static final String REASON_INVALID_FORMAT = "invalid_format";
-	private static final String REASON_INTERNAL_ERROR = "internal_error";
-	private static final String REASON_SHARE_UNRESOLVED = "share_link_unresolved";
-	private static final String REASON_DUPLICATE = "duplicate";
 	private static final String DUPLICATE_MESSAGE = "이미 모니터링 중인 대상이에요.";
 
 	private final MonitoringCommandClient client;
@@ -117,6 +107,25 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		}
 	}
 
+	/**
+	 * 나이 기반 entry 확정(트랙 LL §4-3) — {@code age}보다 오래(requested_at 기준) pending인 entry를
+	 * item 실제 상태로 확정한다({@link RegistrationRepository#settleStaleEntries} 참조). 이건
+	 * "재시도를 시도할 대상"을 고르는 {@link #recoverStalePending()}과는 다른 축이다: recover는
+	 * "다시 시도해볼" 대상을, 이건 "그만 시도하고 상태에 맞춰 못 박을" 대상을 고른다.
+	 *
+	 * <p><b>호출 순서 불변식</b> — 반드시 {@link #recoverStalePending()} 다음에 호출해야 한다
+	 * (호출부: {@code RecoverStalePendingScheduler}). 역순이면 아직 recover로 살릴 수 있는 pending
+	 * item을 이 스윕이 먼저 failed로 확정해 버릴 수 있다 — age 임계(기본 24시간)는 recover 주기(기본
+	 * 10분)보다 훨씬 크게 잡아 두 스윕이 서로 다른 항목을 보게 설계했지만, 순서 자체는 그 크기 차이에
+	 * 기대지 않고 항상 지켜야 하는 불변식이다.
+	 */
+	public void settleStaleRegistrationEntries(Duration age) {
+		List<Long> registrationIds = registrationRepository.settleStaleEntries(age);
+		for (Long registrationId : registrationIds) {
+			registrationRepository.markCompletedIfAllSettled(registrationId);
+		}
+	}
+
 	private void processSafely(long registrationId) {
 		try {
 			process(registrationId);
@@ -133,7 +142,7 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		}
 		RegistrationRow registration = registrationOpt.get();
 		for (RegistrationEntryRow entry : registration.entries()) {
-			if (!RESULT_PENDING.equals(entry.result())) {
+			if (!RegistrationResult.PENDING.equals(entry.result())) {
 				continue;
 			}
 			try {
@@ -165,21 +174,24 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 
 	private void processItem(RegistrationEntryRow entry, MonitoringItemRow item) {
 		if (item.canceledAt() != null) {
-			// 접수(6.27)~백그라운드 첫 확인 사이에 6.30 cancel이 먼저 온 경우 — target 생성 없이
-			// pending 그대로 종결(취소는 이미 markCanceled로 반영됨). entry는 success/failed/duplicate
-			// 어휘에 "취소" 개념이 없어 원상태(pending) 그대로 둔다(위 itemOpt.isEmpty() 분기와 동일 패턴).
-			log.info("취소된 행 — 백그라운드 등록 건너뜀 itemId={}", item.id());
+			// 접수(6.27)~백그라운드 첫 확인 사이에 6.30 cancel이 먼저 온 경우 — target 생성 없이 건너뛰고
+			// entry를 canceled로 정산한다(트랙 LL, §4-2 — 예전엔 pending 그대로 방치해 영구 미완료로
+			// 남았다). settleCanceledByItem은 result='pending' 조건부 UPDATE라 이미 다른 경로로 정산된
+			// entry는 건드리지 않는다.
+			log.info("취소된 행 — 백그라운드 등록 건너뛰고 entry 정산 itemId={}", item.id());
+			registrationRepository.settleCanceledByItem(item.id())
+					.ifPresent(registrationRepository::markCompletedIfAllSettled);
 			return;
 		}
 		RegisterRequest request = toRegisterRequest(item);
 		try {
 			RegisterResult result = registerWithRetry(request);
 			itemRepository.confirmTarget(item.id(), result.targetId());
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_SUCCESS, null, null,
-					null, item.id());
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.SUCCESS,
+					null, null, null, item.id());
 		} catch (MonitoringApiException e) {
 			itemRepository.delete(item.id());
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_FAILED,
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.FAILED,
 					mapReasonCode(e.code()), e.getMessage(), null, null);
 		} catch (MonitoringUnavailableException e) {
 			log.warn("등록 전송 실패 — pending 유지(복구 대상) itemId={}", item.id(), e);
@@ -191,7 +203,7 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		try {
 			resolved = resolveWithRetry(entry.input());
 		} catch (MonitoringApiException e) {
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_FAILED,
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.FAILED,
 					mapShareReasonCode(e.code()), e.getMessage(), null, null);
 			return;
 		} catch (MonitoringUnavailableException e) {
@@ -201,8 +213,8 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 
 		long userId = registration.userId();
 		if (!itemRepository.findActiveByInput(userId, MODE_URL, resolved.shortCode()).isEmpty()) {
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_DUPLICATE,
-					REASON_DUPLICATE, DUPLICATE_MESSAGE, null, null);
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.DUPLICATE,
+					RegistrationResult.REASON_DUPLICATE, DUPLICATE_MESSAGE, null, null);
 			return;
 		}
 
@@ -210,8 +222,8 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		if (trackingDays == null) {
 			// V17 이전(마이그레이션 이전) 등록 잔재 방어 — 정상 플로우에선 등록 접수 시점에 항상 채워진다.
 			log.error("registration에 trackingDays 없음 — share 처리 불가 registrationId={}", registration.id());
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_FAILED,
-					REASON_INTERNAL_ERROR, "등록 정보 결손(trackingDays 없음)", null, null);
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.FAILED,
+					RegistrationResult.REASON_INTERNAL_ERROR, "등록 정보 결손(trackingDays 없음)", null, null);
 			return;
 		}
 		LocalDate registeredOn = KstTimestamps.toKstDate(registration.requestedAt());
@@ -224,19 +236,19 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		// MonitoringUnavailableException으로 끝나면 아래 catch에서 entry를 건드리지 않는데, 이때도
 		// entries.item_id가 비어 있으면 recoverStalePending()이 나중에 성공시켜도 findEntryByItemId가
 		// 못 찾아 entry·registration이 영영 pending으로 남는다(item_id를 나중에 걸면 이미 늦다).
-		registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_PENDING, null, null,
-				canonicalUrl, itemId);
+		registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.PENDING,
+				null, null, canonicalUrl, itemId);
 
 		OffsetDateTime expiresAt = MonitoringExpiry.computeExpiresAt(registeredOn, trackingDays);
 		try {
 			RegisterResult result = registerWithRetry(RegisterRequest.post(itemKey, userId, resolved.shortCode(),
 					expiresAt));
 			itemRepository.confirmTarget(itemId, result.targetId());
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_SUCCESS, null, null,
-					canonicalUrl, itemId);
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.SUCCESS,
+					null, null, canonicalUrl, itemId);
 		} catch (MonitoringApiException e) {
 			itemRepository.delete(itemId);
-			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_FAILED,
+			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.FAILED,
 					mapReasonCode(e.code()), e.getMessage(), null, null);
 		} catch (MonitoringUnavailableException e) {
 			log.warn("share 등록 전송 실패 — pending 유지(복구 대상) itemId={}", itemId, e);
@@ -253,14 +265,14 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 			RegisterResult result = client.register(request);   // 멱등 replay 1회 — 실패는 다음 배치로 이월
 			itemRepository.confirmTarget(item.id(), result.targetId());
 			entryOpt.ifPresent(entry -> {
-				registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_SUCCESS, null,
-						null, entry.resolvedUrl(), item.id());
+				registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.SUCCESS,
+						null, null, entry.resolvedUrl(), item.id());
 				registrationRepository.markCompletedIfAllSettled(entry.registrationId());
 			});
 		} catch (MonitoringApiException e) {
 			itemRepository.delete(item.id());
 			entryOpt.ifPresent(entry -> {
-				registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RESULT_FAILED,
+				registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.FAILED,
 						mapReasonCode(e.code()), e.getMessage(), null, null);
 				registrationRepository.markCompletedIfAllSettled(entry.registrationId());
 			});
@@ -314,18 +326,18 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 
 	private static String mapReasonCode(String monitoringCode) {
 		return switch (monitoringCode) {
-			case "SUBJECT_NOT_FOUND" -> REASON_NOT_FOUND;
-			case "PRIVATE_ACCOUNT" -> REASON_PRIVATE_ACCOUNT;
-			case "VALIDATION" -> REASON_INVALID_FORMAT;
-			default -> REASON_INTERNAL_ERROR;
+			case "SUBJECT_NOT_FOUND" -> RegistrationResult.REASON_NOT_FOUND;
+			case "PRIVATE_ACCOUNT" -> RegistrationResult.REASON_PRIVATE_ACCOUNT;
+			case "VALIDATION" -> RegistrationResult.REASON_INVALID_FORMAT;
+			default -> RegistrationResult.REASON_INTERNAL_ERROR;
 		};
 	}
 
 	private static String mapShareReasonCode(String monitoringCode) {
 		return switch (monitoringCode) {
-			case "SHARE_LINK_UNRESOLVED" -> REASON_SHARE_UNRESOLVED;
-			case "SUBJECT_NOT_FOUND" -> REASON_NOT_FOUND;
-			default -> REASON_INTERNAL_ERROR;
+			case "SHARE_LINK_UNRESOLVED" -> RegistrationResult.REASON_SHARE_LINK_UNRESOLVED;
+			case "SUBJECT_NOT_FOUND" -> RegistrationResult.REASON_NOT_FOUND;
+			default -> RegistrationResult.REASON_INTERNAL_ERROR;
 		};
 	}
 }

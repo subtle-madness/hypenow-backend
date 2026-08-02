@@ -1,0 +1,16 @@
+# 대시보드 JSON 자동 로드 — json/ 하위 파일을 "HypeNow" 폴더에 등록한다.
+# allowUiUpdates: false — 수정은 이 리포 파일로만(운영 UI에서 손댄 변경은 다음 재기동에 덮인다,
+# compose·Caddyfile이 레포로만 갱신되는 것과 같은 규율).
+apiVersion: 1
+
+providers:
+  - name: hypenow-dashboards
+    orgId: 1
+    folder: HypeNow
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false
