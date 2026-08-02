@@ -603,12 +603,24 @@ ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
 - 로컬 3000이 아니라 **3001**인 이유: 로컬 3000은 Next.js 개발 서버가 쓴다. compose의
   `GF_SERVER_ROOT_URL`도 `http://localhost:3001`로 맞춰져 있다 — 다른 포트로 터널을 열면
   로그인 리다이렉트가 어긋나므로 둘을 함께 바꿀 것.
-- 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 패널 6개:
-  미완료 등록(Table, 30분 초과 빨강 강조) · 정산 안 된 entry(Table) · 등록 결과 분포(일별) ·
-  가입 추이(일별) · 가입 시도 결과(일별) · 세션 수(Stat, 500 초과 경고).
-  앞의 두 Table 패널은 상태 기반 잔여 목록이라 **전역 시간 필터를 의도적으로 적용하지 않는다**
-  (대시보드 상단 시간 범위를 바꿔도 두 패널은 그대로다 — SQL에 `$__timeFilter`를 안 넣었을 뿐이라
-  정상 동작).
+- 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 08-02 개편으로 Row 4개 +
+  패널 13개로 재구성(패널 개수는 Row 제외):
+  - **이상 징후**(최상단) — 처리 중 멈춘 등록(Stat, 0=초록/1+=빨강) · 결과 미확정 등록 항목(Stat,
+    동일 기준) · 세션 수(Stat, 500 초과 경고) · 위 두 Stat의 상세 Table 각 1개("└ ~ 상세").
+    Stat 패널은 `count(*)` 쿼리라 결과가 항상 1행이므로 **0건도 명시적으로 보인다** — 기존엔 0건일
+    때 Table이 "No data"만 떠서 정상/고장 구분이 안 됐던 문제를 해소한 게 이번 개편의 핵심.
+  - **유저 유입** — 가입 추이(일별) · 가입 시도 결과(일별) · 가입 코드 소진 현황(Stat, 발급/발송/사용
+    누적) · 도입 문의(일별, user_type별 — PII 컬럼 미조회).
+  - **모니터링 사용 현황** — 등록 결과 분포(일별) · 모니터링 추적 항목 현황(Table, mode별 활성/취소) ·
+    다이제스트 발송·읽음(일별).
+  - **콘텐츠 참여** — 저장 활동 추이(일별, 인플루언서 저장 + 콘텐츠 저장).
+  이상 징후 Row의 Stat 2종·상세 Table 2종과 유저 유입의 "가입 코드 소진 현황", 모니터링 사용
+  현황의 "모니터링 추적 항목 현황"은 상태 기반 스냅샷이라 **전역 시간 필터를 의도적으로 적용하지
+  않는다**(대시보드 상단 시간 범위를 바꿔도 그대로다 — SQL에 `$__timeFilter`를 안 넣었을 뿐이라
+  정상 동작). 나머지 시계열 패널은 전부 `$__timeFilter`를 쓴다.
+  - ⚠️ **가입 코드 소진 현황·모니터링 추적 항목 현황·도입 문의·다이제스트 발송·읽음·저장 활동 추이
+    5개 패널은 아래 14-2-1의 추가 GRANT를 실행하기 전까지 권한 오류로 빈다** — 08-02 개편 시점엔
+    아직 미적용.
 
 ### 14-2. `grafana_reader` 롤 생성 (1회, 사용자 수동 — Flyway 아님)
 
@@ -639,6 +651,32 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   `spring_session`은 `count(*)`만 필요해 `primary_id` 한 컬럼만 부여(컬럼 단위 GRANT에서
   `count(*)`가 동작하려면 최소 한 컬럼의 SELECT 권한이 있어야 한다).
 - 비밀번호는 `~/deploy/.env`의 `GRAFANA_READER_PASSWORD`와 일치시킬 것.
+
+#### 14-2-1. 추가 GRANT (08-02 대시보드 개편, **아직 미적용**)
+
+08-02 대시보드 개편으로 패널 5개가 새 테이블을 조회한다. 아래 GRANT는 **작성만 해두고 실행하지
+않았다** — 다음 서버 접속 시 관리자 계정으로 실행할 것. 컬럼 단위 최소권한 원칙 유지, PII 컬럼
+(`app.inquiries.name`·`email`·`organization`·`message`)은 절대 포함하지 않는다.
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT SELECT (is_sent, used_at) ON app.signup_codes TO grafana_reader" \
+  -c "GRANT SELECT (mode, canceled_at) ON app.monitoring_items TO grafana_reader" \
+  -c "GRANT SELECT (created_at) ON app.saved_influencers TO grafana_reader" \
+  -c "GRANT SELECT (created_at) ON app.saved_contents TO grafana_reader" \
+  -c "GRANT SELECT (created_at, user_type) ON app.inquiries TO grafana_reader" \
+  -c "GRANT SELECT (created_at, read_at) ON app.monitoring_digests TO grafana_reader"
+```
+
+- `app.signup_codes` — 가입 코드 소진 현황 Stat. `code`는 조회하지 않는다(값 자체는 필요 없고
+  발급·발송·사용 여부만 집계).
+- `app.monitoring_items` — 모니터링 추적 항목 현황 Table. mode(url/account)별 활성·취소 집계.
+- `app.saved_influencers`·`app.saved_contents` — 저장 활동 추이. `created_at`만 필요(집계만, 어떤
+  유저가 무엇을 저장했는지는 조회하지 않는다).
+- `app.inquiries` — 도입 문의(일별). `user_type`·`created_at`만 — PII 4컬럼(`name`·`email`·
+  `organization`·`message`)은 GRANT하지 않는다.
+- `app.monitoring_digests` — 다이제스트 발송·읽음(일별). `items`(jsonb, 다이제스트 본문)는
+  조회하지 않는다.
 
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
