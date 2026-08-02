@@ -59,7 +59,7 @@
     {
       "id": 2,
       "type": "table",
-      "title": "정산 안 된 등록 entry (NOT IN success/duplicate)",
+      "title": "정산 안 된 등록 entry (success/duplicate/canceled 제외)",
       "description": "전역 시간 필터 미적용 — 상태 기반 잔여 목록이라 발생 시점과 무관하게 전부 보여준다.",
       "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
@@ -68,7 +68,7 @@
           "refId": "A",
           "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
           "format": "table",
-          "rawSql": "SELECT e.input, e.kind, e.result, e.reason_code,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE e.result NOT IN ('success', 'duplicate')\nORDER BY r.requested_at"
+          "rawSql": "SELECT e.input, e.kind, e.result, e.reason_code,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE e.result NOT IN ('success', 'duplicate', 'canceled')\nORDER BY r.requested_at"
         }
       ],
       "fieldConfig": {
