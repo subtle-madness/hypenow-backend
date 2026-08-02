@@ -19,6 +19,11 @@ import org.springframework.stereotype.Component;
  * 넘길 일이 없다. 두 메서드 모두 이관된 행 수를 돌려준다 — whereClause가 대상과 안 맞아 0건이 이관되고
  * 삭제만 커밋되는 사고를 호출부가 확인할 수 있게 하기 위해서다. {@link #verifyMatched}는 그 확인을
  * 강제하는 마지막 관문 — 호출부가 이관 건수와 삭제 건수를 대조해 어긋나면 예외를 던진다.
+ *
+ * <p>payload는 <b>삭제 직전이 아니라 이관 시점의 스냅샷</b>이다. SELECT가 원본 행을 잠그지 않으므로
+ * READ COMMITTED에서 이관과 삭제 사이에 커밋된 UPDATE는 반영되지 않는다. saved_* 2종은 사실상
+ * 불변이라 무해하지만 monitoring_items는 갱신되는 행이라(confirmTarget·cancel) 한 필드가 stale일 수
+ * 있다. 창이 밀리초 단위라 FOR UPDATE는 넣지 않았다.
  */
 @Component
 public class ArchiveWriter {

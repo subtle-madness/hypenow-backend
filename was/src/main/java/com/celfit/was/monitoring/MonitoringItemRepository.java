@@ -72,7 +72,18 @@ public class MonitoringItemRepository {
 		}
 	}
 
-	/** 등록 실패 롤백 — 삭제 전 아카이브(트랙 NN). 실패한 등록 시도의 원인 이력이 남는다. */
+	/**
+	 * 등록 실패 롤백 — 삭제되는 item 행을 아카이브한다(트랙 NN).
+	 *
+	 * <p><b>실패 사유는 남지 않는다.</b> 사유는 monitoring_registration_entries의 reason_code·reason에
+	 * 있는데, 그 조인 키인 entries.item_id는 이 삭제로 두 번 끊긴다 — FK가 ON DELETE SET NULL이고,
+	 * 호출부가 곧이어 updateEntryResult(..., null, null)로 명시적으로도 지운다. 아카이브만으로
+	 * "왜 실패했나"는 알 수 없으니 사유가 필요하면 entries를 봐야 한다.
+	 *
+	 * <p>호출부 3곳이 전부 등록 실패 롤백이라 사유를 REGISTRATION_ROLLBACK으로 못박았다. 다른 사유의
+	 * item 삭제 지점이 생기면 ArchiveReason에 값을 추가하고 메서드를 나눌 것 — 이 메서드를 재사용하면
+	 * 틀린 사유가 아카이브에 남는다.
+	 */
 	@Transactional
 	public void delete(long itemId) {
 		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_ITEMS, ArchiveReason.REGISTRATION_ROLLBACK,
