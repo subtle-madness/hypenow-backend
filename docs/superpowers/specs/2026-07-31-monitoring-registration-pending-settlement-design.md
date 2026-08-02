@@ -168,14 +168,34 @@ String으로 흐른다. enum 전환은 별개의 큰 리팩터링이고, 같은 
 `entry.item_id`가 먼저 null이 되어 실제로는 share 분기로 빠지는, 사실상 도달 불가 경로다.
 §4-3의 나이 기반 스윕이 최종 안전망으로 덮는다.
 
-## 5. 계약 영향
+## 5. 계약 영향 — DB엔 `canceled`, API엔 `failed`로 접는다
 
-`result` 값이 4종 → **5종**(`success`/`failed`/`duplicate`/`pending`/`canceled`)이 된다.
-`reason_code`는 6종 → **7종**(`canceled` 추가).
+**결정(설계 리뷰 최종)**: `result` 컬럼에는 `canceled`를 그대로 저장하되, API 응답에서만 `failed`로
+매핑한다. 매핑 지점은 `RegistrationResponse.Entry.from()` 한 곳이다(전수 확인 — `RegistrationEntryRow`의
+`result`를 외부로 내보내는 seam은 여기뿐. 다이제스트·이메일은 이 테이블을 참조하지 않는다).
 
-`RegistrationResponse.Entry.result`에는 `@Schema(allowableValues)`가 없고 값이 매핑 없이 그대로
-프론트로 나간다(`GET /v1/monitoring/registrations`). 프론트가 5번째 값을 표시 어휘에 반영해야 하며,
-반영 전에는 알 수 없는 값으로 렌더링된다 — **프론트 통지 필요**.
+| 층 | `result` | `reason_code` |
+|---|---|---|
+| DB | 5종 — `canceled` 포함 | 7종 — `canceled` 포함 |
+| API | **4종 — 기존 그대로** | 7종 — `canceled` 노출 |
+
+**왜 접는가**: item 쪽 status가 이미 취소를 `not_uploaded`(미업로드)로 접어 보여준다
+(`ItemStatus.derive` 1번 규칙 — `canceled_from='detecting'` → `not_uploaded`). entry가 `canceled`로
+정산되는 케이스는 정확히 그 미업로드로 보이는 케이스들이므로, registration 쪽만 새 어휘를 노출해
+프론트 계약을 넓힐 실익이 적다. 발생 빈도도 좁다(§3-1 — 계정 모드 등록이 처리 중일 때의 취소, 정상이면
+수 초짜리 창).
+
+**왜 DB엔 남기는가**: `failed`로 접어 저장하면 원본이 원천에서 사라져 "취소 때문에 안 끝난 건이 몇
+건인가"를 나중에 물을 수 없다. DB에 남겨 두면 운영·분석 질의가 취소를 구분해 셀 수 있고, 노출 정책이
+바뀌어도 이 매핑만 걷어내면 된다 — 소급 마이그레이션이 필요 없다.
+
+**왜 `reason_code`는 안 접는가**: `internal_error` 등으로 같이 접으면 운영 지표에서 취소가 시스템
+오류로 오독된다. `result='failed'` + `reason_code='canceled'`로 두면 프론트는 "실패했고 사유는 취소"로
+읽을 수 있고, 원인 정보가 API 표면에 남는다.
+
+**프론트 영향**: `result`는 기존 4종 그대로라 변경 없음. `reason_code`만 6종 → 7종이며, 이는 선택적
+상세 필드다. 프론트가 `canceled` 사유를 구분해 표시할지는 선택이고, 안 해도 기존 실패 표시로 폴백된다.
+`result`에 `@Schema(allowableValues)`를 새로 명시해 "`canceled`는 API에 안 나온다"를 계약에 못박았다.
 
 ## 6. 검증
 
