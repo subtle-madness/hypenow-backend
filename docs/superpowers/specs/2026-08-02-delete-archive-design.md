@@ -145,7 +145,7 @@ event_type)`, `monitoring_registration_entries(registration_id, seq)`. 단일 �
 캠페인 삭제 시 `monitoring_items.campaign_id`는 `SET NULL`이라 item은 남는다 —
 아카이브 대상 아님.
 
-### 4-3. `app` 스키마 전체 분류 (17개)
+### 4-3. `app` 스키마 전체 분류 (18개)
 
 §7-1 인벤토리 테스트가 이 표를 코드로 강제한다. 모든 테이블이 둘 중 하나여야 한다.
 
@@ -166,8 +166,26 @@ event_type)`, `monitoring_registration_entries(registration_id, seq)`. 단일 �
 | `app_setting` | EXCLUDED | was 런타임 설정값 |
 | `email_verifications` | EXCLUDED | 만료성 인증 코드 |
 | `signup_codes` | EXCLUDED | 삭제 경로 없음(`used_by`가 SET NULL로 끊길 뿐) |
-| `signup_events` | EXCLUDED | 삭제 경로 없음 |
+| `signup_events` | EXCLUDED | 삭제 경로 없음. **단 아래 §4-4 재식별 경로 참조** |
 | `inquiries` | EXCLUDED | 삭제 경로 없음 |
+| `admin_audit_logs` | EXCLUDED | 삭제 경로 없음. `target_user_id`에 FK가 없어 탈퇴에도 남는다(V20260801062836) |
+
+### 4-4. 가명화를 무력화하는 재식별 경로 — `signup_events`
+
+`users`를 가명화해 아카이브해도 **같은 DB 안에 직접 재식별 경로가 남는다.**
+
+`app.signup_events`는 `email` 컬럼을 그대로 보유하고, 가입 성공 시 `detail` jsonb에 `userId`를
+담는다(`V1AuthController`). 이 테이블은 탈퇴에 삭제되지 않고 FK도 없다.
+
+```
+archive.archived_rows (table_name='app.users', user_id=42, payload에 email 없음)
+  → app.signup_events WHERE detail->>'userId' = '42'   → email 복원
+```
+
+즉 §5의 가명화는 아카이브 테이블 단독으로 봤을 때만 성립하며, 서비스 DB 전체를 놓고 보면
+탈퇴 유저의 이메일이 여전히 조회 가능하다. 이 트랙에서 `signup_events`를 건드리지는 않지만
+(삭제 경로가 없어 아카이브 대상이 아니다), **법무 확인 시 "가명화 아카이브 + 미삭제
+signup_events" 조합으로 함께 올려야 한다** — 아카이브만 놓고 판단하면 실제 노출을 과소평가한다.
 
 **타 모듈 제외** (인벤토리 테스트 범위 밖, 판단만 기록)
 

@@ -40,6 +40,28 @@ export TESTCONTAINERS_RYUK_DISABLED=true
 
 수정 대상: `UserRepository`, `SavedRepository`, `V1SavedRepository`, `CampaignRepository`, `MonitoringItemRepository`와 각각의 기존 테스트.
 
+## API 정정 (Task 2 코드 리뷰 반영)
+
+Task 2 리뷰에서 원안의 `archive(table, reason, String whereClause, Map params)`가 두 가지 문제를 안고 있다는 것이 실측으로 드러나 API를 좁혔다. **Task 3~6은 아래 API를 쓴다.**
+
+1. 반환값이 void라 **"이관 0건인데 삭제는 N건"이 예외 없이 커밋된다** — 술어가 한 글자만 어긋나도 자산이 조용히 유실된다
+2. raw String 술어라 `"t.id = " + id` 같은 결합을 막을 방법이 주석밖에 없다
+
+```java
+/** 이 유저에 속한 행 전체를 이관하고 이관된 행 수를 돌려준다. */
+public int archiveUserScope(ArchiveTable table, ArchiveReason reason, long userId)
+
+/** PK로 특정되는 행을 이관하고 이관된 행 수를 돌려준다. pkValues 키는 table.pkColumns()와 정확히 일치해야 한다. */
+public int archiveByPk(ArchiveTable table, ArchiveReason reason, Map<String, Object> pkValues)
+
+/** 이관 건수와 삭제 건수가 다르면 즉시 실패시킨다 — 조용한 유실을 막는 마지막 관문. */
+public void verifyMatched(ArchiveTable table, int archived, int deleted)
+```
+
+술어를 카탈로그가 소유하므로 호출부가 다른 테이블의 술어를 넘기는 경로가 원천 차단된다.
+
+**모든 삭제 경로는 `archived == deleted`를 검증한다.** 단 탈퇴의 CASCADE 자식 8종은 DB가 지우므로 삭제 건수를 관측할 수 없다 — 코드가 직접 DELETE하는 3개(`saved_contents`, `saved_influencers`, `users`)만 대조 가능하다.
+
 ---
 
 ### Task 1: 아카이브 스키마·테이블 마이그레이션
@@ -601,6 +623,7 @@ import com.celfit.was.archive.ArchiveReason;
 import com.celfit.was.archive.ArchiveTable;
 import com.celfit.was.archive.ArchiveTables;
 import com.celfit.was.archive.ArchiveWriter;
+import java.util.HashMap;
 import java.util.Map;
 ```
 
@@ -625,12 +648,25 @@ import java.util.Map;
 	 */
 	@Transactional
 	public void deleteAccount(long id) {
+		Map<ArchiveTable, Integer> archived = new HashMap<>();
 		for (ArchiveTable table : ArchiveTables.ACCOUNT_DELETION_ORDER) {
-			archiveWriter.archive(table, ArchiveReason.ACCOUNT_DELETION, table.userScopeWhere(), Map.of("userId", id));
+			archived.put(table, archiveWriter.archiveUserScope(table, ArchiveReason.ACCOUNT_DELETION, id));
 		}
-		jdbcClient.sql("DELETE FROM app.saved_contents WHERE user_id = :id").param("id", id).update();
-		jdbcClient.sql("DELETE FROM app.saved_influencers WHERE user_id = :id").param("id", id).update();
-		jdbcClient.sql("DELETE FROM app.users WHERE id = :id").param("id", id).update();
+		deleteAndVerify(ArchiveTables.SAVED_CONTENTS, archived,
+				"DELETE FROM app.saved_contents WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.SAVED_INFLUENCERS, archived,
+				"DELETE FROM app.saved_influencers WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.USERS, archived,
+				"DELETE FROM app.users WHERE id = :id", id);
+	}
+
+	/**
+	 * CASCADE로 사라지는 자식 8종은 DB가 지우므로 삭제 건수를 관측할 수 없다 — 코드가 직접
+	 * DELETE하는 3개만 이관 건수와 대조한다.
+	 */
+	private void deleteAndVerify(ArchiveTable table, Map<ArchiveTable, Integer> archived, String sql, long id) {
+		int deleted = jdbcClient.sql(sql).param("id", id).update();
+		archiveWriter.verifyMatched(table, archived.get(table), deleted);
 	}
 ```
 
@@ -771,25 +807,27 @@ import org.springframework.transaction.annotation.Transactional;
 	/** 멱등 — 없는 행을 지워도 예외 없이 0건 삭제로 끝난다(스펙 6.8). 삭제 전 아카이브(트랙 NN). */
 	@Transactional
 	public void deleteContent(long userId, String shortCode) {
-		archiveWriter.archive(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
-				"t.user_id = :userId AND t.short_code = :shortCode",
-				Map.of("userId", userId, "shortCode", shortCode));
-		jdbcClient.sql("DELETE FROM app.saved_contents WHERE user_id = :userId AND short_code = :shortCode")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userId, "short_code", shortCode));
+		int deleted = jdbcClient
+				.sql("DELETE FROM app.saved_contents WHERE user_id = :userId AND short_code = :shortCode")
 				.param("userId", userId)
 				.param("shortCode", shortCode)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_CONTENTS, archived, deleted);
 	}
 
 	/** 멱등 — 없는 행을 지워도 0건 삭제(스펙 6.11). 구 saved.SavedRepository와 동일 SQL(별 bean이라 재구현). */
 	@Transactional
 	public void deleteInfluencer(long userId, String handle) {
-		archiveWriter.archive(ArchiveTables.SAVED_INFLUENCERS, ArchiveReason.SAVED_REMOVED,
-				"t.user_id = :userId AND t.handle = :handle",
-				Map.of("userId", userId, "handle", handle));
-		jdbcClient.sql("DELETE FROM app.saved_influencers WHERE user_id = :userId AND handle = :handle")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_INFLUENCERS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userId, "handle", handle));
+		int deleted = jdbcClient
+				.sql("DELETE FROM app.saved_influencers WHERE user_id = :userId AND handle = :handle")
 				.param("userId", userId)
 				.param("handle", handle)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_INFLUENCERS, archived, deleted);
 	}
 ```
 
@@ -799,25 +837,27 @@ import org.springframework.transaction.annotation.Transactional;
 	/** 멱등 — 없는 행을 지워도 예외 없이 0건 삭제로 끝난다. 삭제 전 아카이브(트랙 NN). */
 	@Transactional
 	public void deleteInfluencer(long userId, String handle) {
-		archiveWriter.archive(ArchiveTables.SAVED_INFLUENCERS, ArchiveReason.SAVED_REMOVED,
-				"t.user_id = :userId AND t.handle = :handle",
-				Map.of("userId", userId, "handle", handle));
-		jdbcClient.sql("DELETE FROM app.saved_influencers WHERE user_id = :userId AND handle = :handle")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_INFLUENCERS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userId, "handle", handle));
+		int deleted = jdbcClient
+				.sql("DELETE FROM app.saved_influencers WHERE user_id = :userId AND handle = :handle")
 				.param("userId", userId)
 				.param("handle", handle)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_INFLUENCERS, archived, deleted);
 	}
 
 	/** 멱등 — 없는 행을 지워도 예외 없이 0건 삭제로 끝난다. 삭제 전 아카이브(트랙 NN). */
 	@Transactional
 	public void deleteContent(long userId, String shortCode) {
-		archiveWriter.archive(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
-				"t.user_id = :userId AND t.short_code = :shortCode",
-				Map.of("userId", userId, "shortCode", shortCode));
-		jdbcClient.sql("DELETE FROM app.saved_contents WHERE user_id = :userId AND short_code = :shortCode")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userId, "short_code", shortCode));
+		int deleted = jdbcClient
+				.sql("DELETE FROM app.saved_contents WHERE user_id = :userId AND short_code = :shortCode")
 				.param("userId", userId)
 				.param("shortCode", shortCode)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_CONTENTS, archived, deleted);
 	}
 ```
 
@@ -937,11 +977,12 @@ import org.springframework.transaction.annotation.Transactional;
 	/** 삭제 전 아카이브(트랙 NN). items는 campaign_id가 SET NULL로 풀릴 뿐이라 대상 아님. */
 	@Transactional
 	public void delete(long id) {
-		archiveWriter.archive(ArchiveTables.MONITORING_CAMPAIGNS, ArchiveReason.CAMPAIGN_DELETED,
-				"t.id = :campaignId", Map.of("campaignId", id));
-		jdbcClient.sql("DELETE FROM app.monitoring_campaigns WHERE id = :id")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_CAMPAIGNS, ArchiveReason.CAMPAIGN_DELETED,
+				Map.of("id", id));
+		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_campaigns WHERE id = :id")
 				.param("id", id)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.MONITORING_CAMPAIGNS, archived, deleted);
 	}
 ```
 
@@ -1050,11 +1091,12 @@ import org.springframework.transaction.annotation.Transactional;
 	/** 등록 실패 롤백 — 삭제 전 아카이브(트랙 NN). 실패한 등록 시도의 원인 이력이 남는다. */
 	@Transactional
 	public void delete(long itemId) {
-		archiveWriter.archive(ArchiveTables.MONITORING_ITEMS, ArchiveReason.REGISTRATION_ROLLBACK,
-				"t.id = :targetItemId", Map.of("targetItemId", itemId));
-		jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_ITEMS, ArchiveReason.REGISTRATION_ROLLBACK,
+				Map.of("id", itemId));
+		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
 				.param("itemId", itemId)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.MONITORING_ITEMS, archived, deleted);
 	}
 ```
 
@@ -1113,8 +1155,10 @@ class ArchiveInventoryTest extends IntegrationTest {
 			Map.entry("app_setting", "was 런타임 설정값"),
 			Map.entry("email_verifications", "만료성 인증 코드"),
 			Map.entry("signup_codes", "삭제 경로 없음(used_by가 SET NULL로 끊길 뿐)"),
-			Map.entry("signup_events", "삭제 경로 없음"),
-			Map.entry("inquiries", "삭제 경로 없음"));
+			Map.entry("signup_events", "삭제 경로 없음. 단 email + detail->>'userId'를 보존해 "
+					+ "탈퇴 유저의 가명화 아카이브를 재식별할 수 있다(설계 §4-4)"),
+			Map.entry("inquiries", "삭제 경로 없음"),
+			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"));
 
 	@Autowired
 	JdbcClient jdbcClient;
@@ -1147,6 +1191,28 @@ class ArchiveInventoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 가명화_대상_컬럼은_실제로_users에_존재해야_한다() {
+		List<String> actual = jdbcClient.sql("""
+						SELECT column_name FROM information_schema.columns
+						 WHERE table_schema = 'app' AND table_name = 'users'
+						""")
+				.query(String.class)
+				.list();
+
+		List<String> missing = ArchiveTables.USERS.omitColumns().stream()
+				.filter(column -> !actual.contains(column))
+				.toList();
+
+		assertThat(missing)
+				.as("""
+						가명화 대상으로 등재됐지만 app.users에 없는 컬럼이 있다: %s
+						`to_jsonb(t) - '없는컬럼'`은 에러 없이 no-op라 이 오타는 런타임에 드러나지 않는다 —
+						개인정보가 payload에 그대로 남는다. 컬럼명이 바뀌었으면 USER_PII를 갱신하라.
+						""".formatted(missing))
+				.isEmpty();
+	}
+
+	@Test
 	void 제외_목록에_죽은_항목이_없어야_한다() {
 		List<String> actual = jdbcClient.sql("""
 						SELECT table_name FROM information_schema.tables
@@ -1170,7 +1236,7 @@ class ArchiveInventoryTest extends IntegrationTest {
 ./gradlew :was:test --tests "com.celfit.was.archive.ArchiveInventoryTest"
 ```
 
-Expected: PASS (2 tests). **FAIL이면 그것이 발견이다** — 계획 작성 시점(17개) 이후 테이블이 늘었다는 뜻이니, 실패 메시지가 지목한 테이블을 `ArchiveTables` 또는 `EXCLUDED` 중 맞는 쪽에 사유와 함께 등재하고 다시 돌려라.
+Expected: PASS (3 tests). **FAIL이면 그것이 발견이다** — 계획 작성 시점(18개) 이후 테이블이 늘었다는 뜻이니, 실패 메시지가 지목한 테이블을 `ArchiveTables` 또는 `EXCLUDED` 중 맞는 쪽에 사유와 함께 등재하고 다시 돌려라.
 
 - [ ] **Step 3: 가드가 실제로 작동하는지 확인**
 
