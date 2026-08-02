@@ -18,7 +18,10 @@
 
 ```bash
 export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
 ```
+
+`DOCKER_HOST`만으로는 부족하다 — Ryuk 컨테이너가 colima에서 bind-mount 실패(`operation not supported`)로 죽어 기동 자체가 안 된다(Task 1 실측). 둘 다 export할 것. Ryuk을 꺼도 Testcontainers 컨테이너는 정상 종료되므로 잔여물은 남지 않는다(`docker ps -a`로 확인함).
 
 작업 디렉토리는 워크트리 `.worktrees/delete-archive` (브랜치 `feat/delete-archive`)다.
 
@@ -1321,7 +1324,7 @@ Expected: PASS. 로컬에서 느리면 colima 자원(`--cpu 8 --memory 12`)을 �
 - [ ] **Step 3: 마이그레이션 가드 확인**
 
 ```bash
-./deploy/scripts/check-migration-safety.sh
+./.github/scripts/check-migration-safety.sh develop
 ```
 
 Expected: PASS — 이번 마이그레이션은 순수 추가(CREATE)라 파괴적 변경이 없다.
