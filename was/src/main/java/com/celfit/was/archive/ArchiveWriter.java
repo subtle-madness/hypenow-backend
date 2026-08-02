@@ -14,10 +14,11 @@ import org.springframework.stereotype.Component;
  * 않는다. 자산 보존이 목적인데 조용히 유실되면 의미가 없기 때문이다. 따라서 호출부에는
  * 반드시 트랜잭션 경계가 있어야 한다.
  *
- * <p>공개 API는 두 형태로 좁혀져 있다 — "이 유저의 행 전체"(탈퇴)와 "이 PK 한 행"(저장 해제·캠페인
+ * <p>이관 메서드는 두 형태로 좁혀져 있다 — "이 유저의 행 전체"(탈퇴)와 "이 PK 한 행"(저장 해제·캠페인
  * 삭제·등록 롤백). 둘 다 술어를 {@link ArchiveTable}이 소유해서 조립하므로, 호출부가 raw SQL 문자열을
  * 넘길 일이 없다. 두 메서드 모두 이관된 행 수를 돌려준다 — whereClause가 대상과 안 맞아 0건이 이관되고
- * 삭제만 커밋되는 사고를 호출부가 확인할 수 있게 하기 위해서다.
+ * 삭제만 커밋되는 사고를 호출부가 확인할 수 있게 하기 위해서다. {@link #verifyMatched}는 그 확인을
+ * 강제하는 마지막 관문 — 호출부가 이관 건수와 삭제 건수를 대조해 어긋나면 예외를 던진다.
  */
 @Component
 public class ArchiveWriter {
@@ -58,6 +59,20 @@ public class ArchiveWriter {
 		Map<String, Object> params = pkValues.entrySet().stream()
 				.collect(Collectors.toMap(e -> "pk_" + e.getKey(), Map.Entry::getValue));
 		return execute(table, reason, whereClause, params);
+	}
+
+	/**
+	 * 이관 건수와 삭제 건수가 다르면 즉시 실패시킨다 — 조용한 유실을 막는 마지막 관문.
+	 *
+	 * <p>fail-closed는 예외만 막는다. 아카이브 술어와 삭제 술어가 어긋나 0건이 이관되고 N건이
+	 * 삭제되는 경우는 예외 없이 커밋되므로, 건수 대조가 유일한 탐지 수단이다.
+	 */
+	public void verifyMatched(ArchiveTable table, int archived, int deleted) {
+		if (archived != deleted) {
+			throw new IllegalStateException(
+					"이관 건수와 삭제 건수가 다르다: table=%s, archived=%d, deleted=%d"
+							.formatted(table.qualifiedName(), archived, deleted));
+		}
 	}
 
 	private int execute(ArchiveTable table, ArchiveReason reason, String whereClause, Map<String, Object> params) {

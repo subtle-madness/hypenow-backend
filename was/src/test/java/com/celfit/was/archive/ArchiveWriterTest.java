@@ -184,4 +184,19 @@ class ArchiveWriterTest extends IntegrationTest {
 		assertThatThrownBy(() -> new ArchiveTable("app.whatever", List.of(), "t.user_id", List.of(), "t.user_id = :userId"))
 				.isInstanceOf(IllegalArgumentException.class);
 	}
+
+	@Test
+	void verifyMatched는_이관_건수와_삭제_건수가_다르면_예외() {
+		assertThatThrownBy(() -> archiveWriter.verifyMatched(ArchiveTables.SAVED_CONTENTS, 0, 1))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("app.saved_contents")
+				.hasMessageContaining("0")
+				.hasMessageContaining("1");
+	}
+
+	@Test
+	void verifyMatched는_이관_건수와_삭제_건수가_같으면_통과한다() {
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_CONTENTS, 3, 3);
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_CONTENTS, 0, 0);   // 대상 자체가 없던 경우도 일치로 취급
+	}
 }
