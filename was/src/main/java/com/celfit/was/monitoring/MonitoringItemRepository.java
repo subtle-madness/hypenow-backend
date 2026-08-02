@@ -211,4 +211,25 @@ public class MonitoringItemRepository {
 				.list().stream()
 				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 	}
+
+	/**
+	 * 어드민 캠페인 목록(GET /v1/admin/campaigns, 08-02)의 registrationCount — 캠페인 id 묶음 IN절
+	 * 집계(N+1 금지). CampaignRepository.countItems와 동일하게 canceled_at 조건 없이 전량 누적
+	 * (배정된 추적 행 총수 — 취소된 등록도 "한때 배정됐던" 기록으로 센다).
+	 */
+	public Map<Long, Long> countByCampaigns(Collection<Long> campaignIds) {
+		if (campaignIds.isEmpty()) {
+			return Map.of();
+		}
+		return jdbcClient.sql("""
+				SELECT campaign_id, count(*) AS cnt
+				FROM app.monitoring_items
+				WHERE campaign_id IN (:ids)
+				GROUP BY campaign_id
+				""")
+				.param("ids", campaignIds)
+				.query((rs, rowNum) -> Map.entry(rs.getLong("campaign_id"), rs.getLong("cnt")))
+				.list().stream()
+				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+	}
 }

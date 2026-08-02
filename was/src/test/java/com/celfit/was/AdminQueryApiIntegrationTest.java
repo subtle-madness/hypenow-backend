@@ -13,6 +13,7 @@ import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.RegistrationRepository;
 import com.celfit.was.v1.account.SignupCodeRepository;
 import com.celfit.was.v1.admin.AdminAuditLogRepository;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.saved.V1SavedRepository;
 import jakarta.servlet.http.Cookie;
 import java.sql.Connection;
@@ -42,7 +43,12 @@ import org.springframework.test.web.servlet.MvcResult;
  */
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {"monitoring.enabled=true", "monitoring.digest.cron=-",
-		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-"})
+		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-",
+		// @BeforeEach마다 adminSession을 새로 로그인해 얻는다 — 테스트 메서드 수가 늘수록 같은
+		// (email|ip) 키가 분당 기본 상한(10, RateLimiter)에 부딪힌다(08-02, 12번째 테스트 추가 후
+		// 429 실측). 실제 레이트리밋 동작 자체는 RateLimiterTest가 별도로 커버하므로 여기선 상한만
+		// 넉넉히 올린다.
+		"was.rate-limit.per-minute=100"})
 class AdminQueryApiIntegrationTest extends IntegrationTest {
 
 	@DynamicPropertySource
@@ -160,6 +166,8 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.data[1].monitoringCount").value(2))
 				.andExpect(jsonPath("$.data[1].savedCount").value(1))
 				.andExpect(jsonPath("$.data[1].lastActiveAt").value(org.hamcrest.Matchers.nullValue()))
+				// companyName은 상세와 동일하게 미설정 시 ''(app.users.company_name NOT NULL DEFAULT '').
+				.andExpect(jsonPath("$.data[1].companyName").value(""))
 				.andExpect(jsonPath("$.meta.total").value(org.hamcrest.Matchers.greaterThanOrEqualTo(3)));
 
 		mockMvc.perform(get("/v1/admin/users").cookie(adminSession).param("query", "alpha"))
@@ -168,6 +176,21 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.data[0].email").value("alpha@test.io"));
 
 		assertThat(activeItem).isNotEqualTo(canceledItem);   // 시딩 자체의 자명한 확인(가독용)
+	}
+
+	@Test
+	void 목록의_companyName은_상세와_동일하게_설정값을_그대로_내보낸다() throws Exception {
+		long userId = insertUser("company@test.io", "USER", "컴퍼니", null);
+		jdbcClient.sql("UPDATE app.users SET company_name = :companyName WHERE id = :id")
+				.param("companyName", "글로우딥 주식회사").param("id", userId).update();
+
+		mockMvc.perform(get("/v1/admin/users").cookie(adminSession).param("query", "company@test.io"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].companyName").value("글로우딥 주식회사"));
+
+		mockMvc.perform(get("/v1/admin/users/" + userId).cookie(adminSession))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.companyName").value("글로우딥 주식회사"));
 	}
 
 	// --- GET /v1/admin/users/{id} ---
@@ -341,6 +364,66 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.meta.offset").value(0));
 	}
 
+	// --- GET /v1/admin/campaigns ---
+
+	@Test
+	void campaigns는_상태_4종_경계와_registrationCount_생성일_내림차순_seedingTarget_meta_total을_반영한다() throws Exception {
+		long userA = insertUser("campaign-user-a@test.io", "USER", "캠페인유저A", null);
+		LocalDate today = LocalDate.now(KstTimestamps.KST);
+
+		CampaignRow noDate = campaignRepository.insert(userA, "노데이트", null, null, null, null, null, null);
+		CampaignRow pending =
+				campaignRepository.insert(userA, "펜딩", null, today.plusDays(5), null, null, null, 50);
+		// start_date==end_date==오늘 — 시작·종료 경계값이 둘 다 active로 포함되는지 함께 검증.
+		CampaignRow activeBoundary =
+				campaignRepository.insert(userA, "액티브경계", null, today, today, null, null, null);
+		CampaignRow ended = campaignRepository.insert(userA, "엔디드", null, null, today.minusDays(1), null, null, null);
+
+		OffsetDateTime base = OffsetDateTime.now().minusDays(10);
+		updateCampaignCreatedAt(noDate.id(), base);
+		updateCampaignCreatedAt(pending.id(), base.plusHours(1));
+		updateCampaignCreatedAt(activeBoundary.id(), base.plusHours(2));
+		updateCampaignCreatedAt(ended.id(), base.plusHours(3));   // 가장 최근 → 내림차순 맨 앞.
+
+		// activeBoundary에 등록 2건(활성 1 + 취소 1) — registrationCount는 취소 포함 전량 누적.
+		itemRepository.insertPending(userA, "account", UUID.randomUUID(), activeBoundary.id(), "someacct", null,
+				"{}", 14, LocalDate.now());
+		long canceledItem = itemRepository.insertPending(userA, "account", UUID.randomUUID(), activeBoundary.id(),
+				"otheracct", null, "{}", 14, LocalDate.now());
+		itemRepository.markCanceled(canceledItem, "detecting", OffsetDateTime.now());
+
+		mockMvc.perform(get("/v1/admin/campaigns").cookie(adminSession))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.total").value(4))
+				.andExpect(jsonPath("$.data[0].id").value(String.valueOf(ended.id())))
+				.andExpect(jsonPath("$.data[0].status").value("ended"))
+				.andExpect(jsonPath("$.data[1].id").value(String.valueOf(activeBoundary.id())))
+				.andExpect(jsonPath("$.data[1].status").value("active"))
+				.andExpect(jsonPath("$.data[1].registrationCount").value(2))
+				.andExpect(jsonPath("$.data[1].userId").value(String.valueOf(userA)))
+				.andExpect(jsonPath("$.data[1].userName").value("캠페인유저A"))
+				.andExpect(jsonPath("$.data[2].id").value(String.valueOf(pending.id())))
+				.andExpect(jsonPath("$.data[2].status").value("pending"))
+				.andExpect(jsonPath("$.data[2].seedingTarget").value(50))
+				.andExpect(jsonPath("$.data[3].id").value(String.valueOf(noDate.id())))
+				.andExpect(jsonPath("$.data[3].status").value("no_date"))
+				.andExpect(jsonPath("$.data[3].seedingTarget").value(org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$.data[3].registrationCount").value(0));
+	}
+
+	@Test
+	void campaigns는_비ADMIN_401_403_게이트를_지킨다() throws Exception {
+		insertUser("campaign-gate-user@test.io", "USER", "게이트유저", null);
+		Cookie userSession = login("campaign-gate-user@test.io");
+
+		mockMvc.perform(get("/v1/admin/campaigns"))
+				.andExpect(status().isUnauthorized());
+
+		mockMvc.perform(get("/v1/admin/campaigns").cookie(userSession))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+	}
+
 	// --- 정합 불변식: users의 health와 registrations의 rows가 같은 모집단 ---
 
 	@Test
@@ -392,6 +475,11 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 		Cookie session = result.getResponse().getCookie("hypenow-session");
 		assertThat(session).isNotNull();
 		return session;
+	}
+
+	private void updateCampaignCreatedAt(long campaignId, OffsetDateTime at) {
+		jdbcClient.sql("UPDATE app.monitoring_campaigns SET created_at = :at WHERE id = :id")
+				.param("at", at).param("id", campaignId).update();
 	}
 
 	private long seedTarget(String username, String status, String trackedShortCode, OffsetDateTime trackedSince,
