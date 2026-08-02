@@ -4,9 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
+import com.celfit.was.monitoring.CampaignRepository;
+import com.celfit.was.monitoring.DigestRepository;
+import com.celfit.was.monitoring.EmailOptOutRepository;
+import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.monitoring.RegistrationRepository;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
@@ -20,6 +27,21 @@ class UserRepositoryTest extends IntegrationTest {
 
 	@Autowired
 	JdbcClient jdbcClient;
+
+	@Autowired
+	CampaignRepository campaignRepository;
+
+	@Autowired
+	MonitoringItemRepository monitoringItemRepository;
+
+	@Autowired
+	RegistrationRepository registrationRepository;
+
+	@Autowired
+	DigestRepository digestRepository;
+
+	@Autowired
+	EmailOptOutRepository emailOptOutRepository;
 
 	private NewUser newUser(String email, boolean agreedMarketing) {
 		return new NewUser(email, "김우민", "우민", "brand", "portal_search",
@@ -282,7 +304,7 @@ class UserRepositoryTest extends IntegrationTest {
 				.query(String.class)
 				.list();
 
-		assertThat(archived).contains("app.users", "app.saved_contents", "app.saved_influencers");
+		assertThat(archived).containsExactlyInAnyOrder("app.users", "app.saved_contents", "app.saved_influencers");
 		assertThat(jdbcClient.sql("SELECT count(*) FROM app.users WHERE id = :id")
 				.param("id", user.id())
 				.query(Long.class)
@@ -347,5 +369,61 @@ class UserRepositoryTest extends IntegrationTest {
 			assertThat(row.get("user_id")).isNull();
 			assertThat((String) row.get("row_pk_text")).contains("registration_id").contains("seq");
 		});
+	}
+
+	/**
+	 * 코드 리뷰 지적 — CASCADE로 사라지는 6종(monitoring_campaigns·items·registrations·digests·
+	 * email_opt_outs·registration_entries)은 코드가 직접 DELETE하지 않아 verifyMatched의 건수 대조가
+	 * 닿지 않는다. userScopeWhere 술어가 잘못돼 0건만 이관되고 CASCADE로 조용히 사라져도 지금까지는
+	 * 아무 테스트도 못 잡았다(리뷰어가 MONITORING_ITEMS.userScopeWhere를 항상-거짓 조건으로 바꿔
+	 * 실증). ACCOUNT_DELETION_ORDER 9개 전부에 실제로 행을 시드하고 결과(아카이브된 테이블 집합)를
+	 * 단언해 이 공백을 메운다 — 카탈로그의 술어 문자열을 다시 읽어 비교하면 항진명제가 되므로
+	 * (Task 2에서 이미 밟은 함정) 시드 데이터와 archive.archived_rows 실제 행만으로 판정한다.
+	 */
+	@Test
+	void 탈퇴하면_ACCOUNT_DELETION_ORDER_9종_전부_1건_이상_아카이브된다() {
+		AppUser user = repository.insert("archive-order@example.com", "hashed-order");
+		long userId = user.id();
+
+		jdbcClient.sql("INSERT INTO app.saved_contents (user_id, short_code) VALUES (:id, 'ORDSC')")
+				.param("id", userId)
+				.update();
+		jdbcClient.sql("INSERT INTO app.saved_influencers (user_id, handle) VALUES (:id, 'order-handle')")
+				.param("id", userId)
+				.update();
+		campaignRepository.insert(userId, "아카이브 순서 검증", null, null, null, null, null, null);
+		monitoringItemRepository.insertPending(userId, "account", UUID.randomUUID(), null,
+				"order-handle", null, null, 30, LocalDate.now());
+		long registrationId = registrationRepository.insert(userId, 30, null);
+		registrationRepository.insertEntry(registrationId, 1, "order-handle", "account", "success",
+				null, null, null, null);
+		digestRepository.upsert(userId, LocalDate.now(), "[]");
+		emailOptOutRepository.optOut(userId, "collection_started");
+
+		repository.deleteAccount(userId);
+
+		// registration_entries는 user_id가 NULL이라 이 스코프에는 안 잡힌다 — 아래에서 별도 확인.
+		List<String> archivedByUser = jdbcClient.sql("""
+						SELECT DISTINCT table_name FROM archive.archived_rows
+						 WHERE archived_reason = 'ACCOUNT_DELETION' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.list();
+		assertThat(archivedByUser).containsExactlyInAnyOrder(
+				"app.saved_contents", "app.saved_influencers",
+				"app.monitoring_campaigns", "app.monitoring_items", "app.monitoring_registrations",
+				"app.monitoring_digests", "app.monitoring_email_opt_outs", "app.users");
+
+		long entryCount = jdbcClient.sql("""
+						SELECT count(*) FROM archive.archived_rows
+						 WHERE table_name = 'app.monitoring_registration_entries'
+						   AND archived_reason = 'ACCOUNT_DELETION'
+						   AND (row_pk ->> 'registration_id')::bigint = :regId
+						""")
+				.param("regId", registrationId)
+				.query(Long.class)
+				.single();
+		assertThat(entryCount).isEqualTo(1);
 	}
 }
