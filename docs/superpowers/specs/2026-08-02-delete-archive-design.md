@@ -293,3 +293,27 @@ expand-contract 원칙상 2단계로 나눈다.
 | 디스크 증가 | 서비스 DB에 무한 축적. 오라클 서버 디스크가 한 번 찬 이력 있음 | 별도 스키마라 분리는 쉬움. 크기 모니터링 필요 |
 | 개인정보 보유 | 가명화해도 탈퇴 유저의 행동 데이터를 보유한다. 파기 의무와의 관계는 법률 판단 영역 | 법무 확인 권고. 확인 전까지는 이 설계가 최소 보유안 |
 | 롤링 창 유실 | 릴리스 2 배포 중 구 인스턴스 처리분은 아카이브되지 않음 | 수용 |
+| **탈퇴 롤백 시 외부 부작용만 남음** | 아래 §10-1 | **결정 필요** |
+| `signup_codes.used_by` SET NULL | 탈퇴 시 "어떤 코드를 누가 소진했는가"가 소실된다. 행은 남으므로 아카이브 대상은 아니다 | Task 7 EXCLUDED 사유에 명시 |
+
+### 10-1. 탈퇴 롤백 시 외부 부작용만 남는 문제 (Task 3 리뷰 지적)
+
+`AccountDeletionService.deleteAccount`는 **외부 monitoring target 해지(fail-open) → DB 삭제(fail-closed)**
+순서다. 이 트랙이 DB 단계에 이관 9건 + 건수 대조를 추가하면서 그 단계의 실패 확률이 올라갔다.
+
+실패 시나리오:
+
+1. `cancelActiveMonitoring`이 외부 target 3건을 **되돌릴 수 없게** 해지
+2. `deleteAccount`가 이관 중 예외(statement timeout, 아카이브 INSERT 실패, 동시 쓰기로 `verifyMatched` 불일치)
+3. 트랜잭션 롤백 → **계정은 살아있는데 그 유저의 target은 이미 전부 죽었다**
+4. `monitoring_items`는 롤백으로 되살아나 UI에는 "추적 중"으로 보이지만 실제 수집은 멈춰 있다
+
+기존 javadoc은 "해지 → DB 삭제 순서가 고정"이라 쓰지만, **그 제약이 묶는 것은 `target_id` 조회이지
+해지 호출이 아니다**(CASCADE로 `monitoring_items`가 사라지기 전에 id를 확보해야 한다는 뜻).
+
+가능한 재배치: `targetIds` 확보 → `deleteAccount`(커밋) → **커밋 후** 해지.
+롤백 시 외부 부작용이 0이 되고, fail-open 성질도 보존된다(커밋 후 프로세스가 죽으면 고아 target이
+남지만 이는 이미 수용된 실패 모드 — `expires_at` 자연 만료).
+
+**이 트랙에서는 아직 바꾸지 않았다.** `AccountDeletionService`는 계획 범위 밖이고 기존 계약을
+바꾸는 변경이라, 실행 여부를 별도 결정으로 남긴다.
