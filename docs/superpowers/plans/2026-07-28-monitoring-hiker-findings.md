@@ -79,6 +79,15 @@ v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
    → **스윕에서 계정당 `②`+`②'` 2콜을 쏘고 `code` 기준으로 릴스 재생수를 머지**한다(권장·채택).
    CLAUDE.md의 "피드 게시물은 조회수(views)가 항상 NULL"과 정확히 일치.
    `view_count`는 v2에서 항상 `null`(릴스 포함)이므로 후보에서 제외한다.
+4. **(08-02 정정) `play_count`는 세션 의존이라 조회수 정본이 아니다 — `ig_play_count`를 우선한다.**
+   07-29 실측 당시엔 `play_count == ig_play_count`(동일값)였지만, 운영 원형 적재
+   (`raw.fetch_payload` 49건 단건 + 클립 열거) 재실측 결과 Hiker가 콜마다 다른 IG 세션을 태우며,
+   FB 교차게시 데이터가 보이는 세션에서만 `fb_play_count` 키가 실리고 그때
+   `play_count = ig_play_count + fb_play_count`(합산)로 커진다. 그 결과 `play_count` 우선 파싱은
+   같은 릴스 조회수가 **221 → 305 → 222로 역행**하는 "랜덤 조회수"를 만든다(단건 `DX0U76Xy1D2`,
+   클립 열거 `DXx7gtszvSV` 32,264→31,944 등 다수). `ig_play_count`는 전 콜에서 존재했고 단조
+   증가 — **조회수는 `ig_play_count` 우선, `play_count`는 폴백**(HikerClient 2곳: 단건 `toPost`·
+   클립 머지 `fetchClipPlays`). 세션 종류는 Hiker 쪽 풀이라 우리가 고정할 수 없다.
 
 ---
 
@@ -126,7 +135,7 @@ v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
 |---|---|---|---|
 | `contentType` | `media_type == 2 ? REELS : FEED` | `"clips".equals(product_type)` | 일반 비디오 피드 오분류 방지 |
 | `caption` | `caption_text` → `caption.text` | 동일(유지) | v2는 `caption.text`, 폴백 유지로 무해 |
-| `views` | `play_count`, `view_count` | **`play_count`, `ig_play_count`** | `view_count`는 v2에서 항상 null |
+| `views` | `play_count`, `view_count` | **`ig_play_count`, `play_count`** (08-02 순서 정정 — §2 결론 4) | `view_count`는 v2에서 항상 null. `play_count`는 세션 따라 FB 합산 여부가 바뀌어 역행함 |
 | `saves` | `save_count`, `saved_count` | **`save_count`** | `saved_count`는 존재하지 않음 |
 | `shares` | `share_count` | **`reshare_count`** | `share_count`는 존재하지 않음(`share_count_disabled` 불리언만 있음) |
 | `reposts` | `reshare_count`, `repost_count` | **`media_repost_count`** | `reshare_count`는 공유 지표로 이동, `repost_count`는 없음 |

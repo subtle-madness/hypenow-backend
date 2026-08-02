@@ -239,6 +239,41 @@ class HikerClientTest {
 				.isInstanceOf(SubjectNotFoundException.class);
 	}
 
+	// ── 조회수 세션 일관성(08-02) ─────────────────────────────────────────────
+	// 운영 raw.fetch_payload 실측: Hiker가 콜마다 다른 IG 세션을 태우는데, FB 교차게시 데이터가
+	// 보이는 세션에서는 play_count = ig_play_count + fb_play_count(합산)이고, 아닌 세션에서는
+	// fb_play_count 키가 아예 없고 play_count == ig_play_count다. 그래서 play_count를 우선하면
+	// 같은 게시물 조회수가 콜마다 오르내린다(DX0U76Xy1D2: 221 → 305 → 222 역행 실측).
+	// ig_play_count는 전 콜에서 존재했고 단조 증가 — 조회수의 정본은 ig_play_count다.
+
+	@Test
+	void 단건_조회수는_세션따라_흔들리는_play_count가_아니라_ig_play_count를_쓴다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.views()).isEqualTo(222L);
+	}
+
+	@Test
+	void 열거_클립_머지_조회수도_ig_play_count를_쓴다() {
+		HikerClient client = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/clips")) {
+				return """
+						{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+						"play_count":305,"ig_play_count":222,"fb_play_count":83}}],
+						"paging_info":{"more_available":false}},"next_page_id":null}""";
+			}
+			return """
+					{"response":{"items":[{"code":"ReelA","taken_at":1700000000,"product_type":"clips",
+					"like_count":1,"comment_count":1,"media_repost_count":1}],
+					"more_available":false},"next_page_id":null}""";
+		});
+		var posts = client.fetchRecentPosts("acct", "999", 1);
+		assertThat(posts).hasSize(1);
+		assertThat(posts.getFirst().views()).isEqualTo(222L);
+	}
+
 	// ── 댓글(§10-1) ──────────────────────────────────────────────────────────
 
 	/**

@@ -110,7 +110,7 @@ public class HikerClient {
 				int before = plays.size();
 				for (JsonNode item : root.path("response").path("items")) {
 					JsonNode m = item.path("media");
-					Long play = firstLong(m, "play_count", "ig_play_count");
+					Long play = firstLong(m, "ig_play_count", "play_count");
 					if (play != null) {
 						plays.put(m.path("code").asString(), play);
 					}
@@ -303,7 +303,10 @@ public class HikerClient {
 		String caption = m.path("caption_text").isMissingNode()
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
 		// view_count 키는 v2 응답에 부재 → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
-		Long views = firstLong(m, "play_count", "ig_play_count");
+		// ig_play_count 우선(08-02): Hiker가 콜마다 다른 세션을 태워서 play_count는 FB 교차게시
+		// 조회수가 섞였다 빠졌다 한다(합산 여부가 세션 의존 — 같은 릴스가 221→305→222로 역행 실측).
+		// ig_play_count는 전 콜 존재·단조 증가라 이것만 조회수 정본으로 쓴다.
+		Long views = firstLong(m, "ig_play_count", "play_count");
 		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, contentType, caption, thumbnailUrl(m),
 				firstLong(m, "taken_at"),
 				firstLong(m, "like_count"), firstLong(m, "comment_count"),
