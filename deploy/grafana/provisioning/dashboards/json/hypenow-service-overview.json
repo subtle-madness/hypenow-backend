@@ -1,0 +1,175 @@
+{
+  "uid": "hypenow-service-overview",
+  "title": "HypeNow 서비스 현황",
+  "tags": ["hypenow", "app-schema"],
+  "timezone": "Asia/Seoul",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "미완료 등록 (completed_at IS NULL)",
+      "description": "전역 시간 필터 미적용 — 등록 시점과 무관하게 '지금 막혀 있는' 건을 항상 전부 보여준다.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT r.id, r.user_id, r.requested_at,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registrations r\nWHERE r.completed_at IS NULL\nORDER BY r.requested_at"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "elapsed_seconds" },
+            "properties": [
+              { "id": "displayName", "value": "경과시간" },
+              { "id": "unit", "value": "s" },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "red", "value": 1800 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "requested_at" },
+            "properties": [{ "id": "displayName", "value": "요청 시각" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "user_id" },
+            "properties": [{ "id": "displayName", "value": "유저 ID" }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "정산 안 된 등록 entry (NOT IN success/duplicate)",
+      "description": "전역 시간 필터 미적용 — 상태 기반 잔여 목록이라 발생 시점과 무관하게 전부 보여준다.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT e.input, e.kind, e.result, e.reason_code,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE e.result NOT IN ('success', 'duplicate')\nORDER BY r.requested_at"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "elapsed_seconds" },
+            "properties": [
+              { "id": "displayName", "value": "경과시간" },
+              { "id": "unit", "value": "s" },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "red", "value": 1800 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "등록 결과 분포 (일별)",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', r.requested_at) AS time, e.result AS metric, count(*) AS value\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE $__timeFilter(r.requested_at)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "가입 추이 (일별)",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, count(*) AS value\nFROM app.users\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "가입 시도 결과 (일별)",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, outcome AS metric, count(*) AS value\nFROM app.signup_events\nWHERE $__timeFilter(created_at)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "세션 수",
+      "description": "app.spring_session 전체 행 수 — 유저 23명 대비 1,411 세션(07-31 실측)처럼 비정상 누적을 감시.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM app.spring_session"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

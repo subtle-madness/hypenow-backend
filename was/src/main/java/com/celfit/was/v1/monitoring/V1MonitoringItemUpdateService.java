@@ -6,6 +6,7 @@ import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.MonitoringReadRepository;
+import com.celfit.was.monitoring.RegistrationRepository;
 import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
@@ -49,16 +50,19 @@ public class V1MonitoringItemUpdateService {
 	private final Optional<MonitoringReadRepository> readRepository;
 	private final Optional<MonitoringCommandClient> commandClient;
 	private final TrackingItemAssembler assembler;
+	private final RegistrationRepository registrationRepository;
 
 	public V1MonitoringItemUpdateService(MonitoringItemRepository itemRepository, CampaignRepository campaignRepository,
 			V1CampaignService campaignService, Optional<MonitoringReadRepository> readRepository,
-			Optional<MonitoringCommandClient> commandClient, TrackingItemAssembler assembler) {
+			Optional<MonitoringCommandClient> commandClient, TrackingItemAssembler assembler,
+			RegistrationRepository registrationRepository) {
 		this.itemRepository = itemRepository;
 		this.campaignRepository = campaignRepository;
 		this.campaignService = campaignService;
 		this.readRepository = readRepository;
 		this.commandClient = commandClient;
 		this.assembler = assembler;
+		this.registrationRepository = registrationRepository;
 	}
 
 	/**
@@ -127,6 +131,11 @@ public class V1MonitoringItemUpdateService {
 	 * 허용 상태(유도) ∈ {detecting, tracking, error}. target 확정 행은 monitoring cancel(멱등) 성공
 	 * 후 markCanceled, pending 행(target 미확정 — detecting만 도달 가능)은 monitoring 호출 없이
 	 * markCanceled만 한다(계약: pending url 모드의 유도 상태 collecting은 애초에 취소 대상 밖).
+	 *
+	 * <p>markCanceled 직후 {@link RegistrationRepository#settleCanceledByItem}로 매달린 pending
+	 * entry를 canceled로 정산한다(트랙 LL §4-2) — 예전엔 이 호출이 없어 entry가 영구 pending에
+	 * 갇히고 registration.completed_at도 영영 안 채워졌다(운영 실측, 11시간+). 같은 트랜잭션이라
+	 * markCanceled와 함께 원자적으로 반영된다.
 	 */
 	@Transactional
 	public TrackingItemResponse cancel(long userId, long itemId) {
@@ -143,6 +152,7 @@ public class V1MonitoringItemUpdateService {
 			requireCommandClient().cancel(item.targetId());
 		}
 		itemRepository.markCanceled(itemId, status, OffsetDateTime.now(KstTimestamps.KST));
+		registrationRepository.settleCanceledByItem(itemId).ifPresent(registrationRepository::markCompletedIfAllSettled);
 
 		String newStatus = ItemStatus.DETECTING.equals(status) ? ItemStatus.NOT_UPLOADED : ItemStatus.ENDED;
 		String campaignName = resolveCampaignName(item.campaignId(), userId);

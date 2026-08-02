@@ -82,6 +82,22 @@ class V1RegistrationsControllerTest {
 	}
 
 	@Test
+	void DB에_canceled로_저장된_entry는_API에서_failed_reasonCode_canceled로_나온다() throws Exception {
+		// 트랙 LL 계약 노출 방식 결정(2026-08-02) — DB엔 canceled를 그대로 두고 API 응답에서만
+		// RegistrationResponse.Entry.from()이 failed로 접는다. reasonCode는 canceled 그대로 노출한다.
+		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"),
+				OffsetDateTime.parse("2026-07-29T00:05:00Z"), 14, null, null,
+				List.of(entry(1L, 1, "glowdeep", "account", "canceled", "canceled", "등록을 취소했어요.", null, null)));
+		given(repository.findRecentByUser(eq(7L), eq(50))).willReturn(List.of(row));
+		given(repository.countByUser(7L)).willReturn(1L);
+
+		mockMvc.perform(get("/v1/monitoring/registrations").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].entries[0].result").value("failed"))
+				.andExpect(jsonPath("$.data[0].entries[0].reasonCode").value("canceled"));
+	}
+
+	@Test
 	void requestedAt은_KST_오프셋_09_00_문자열이다() throws Exception {
 		RegistrationRow row = new RegistrationRow(1L, 7L, OffsetDateTime.parse("2026-07-29T00:00:00Z"), null,
 				14, null, null, List.of());
