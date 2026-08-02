@@ -3,9 +3,11 @@ package com.celfit.was.monitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.IntegrationTest;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -214,5 +216,138 @@ class RegistrationRepositoryTest extends IntegrationTest {
 				.query(Long.class)
 				.single();
 		assertThat(unacknowledgedCount).isZero();
+	}
+
+	// ── settleCanceledByItem(트랙 LL §4-2) ──────────────────────────────────────
+
+	@Test
+	void settleCanceledByItem_pending_entry를_canceled로_정산한다() {
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "glowdeep", null,
+				null, 14, LocalDate.of(2026, 7, 30));
+		long regId = repository.insert(userId, 14, null);
+		repository.insertEntry(regId, 1, "glowdeep", "account", "pending", null, null, null, itemId);
+
+		Optional<Long> registrationId = repository.settleCanceledByItem(itemId);
+
+		assertThat(registrationId).contains(regId);
+		RegistrationEntryRow entry = repository.findById(regId).orElseThrow().entries().get(0);
+		assertThat(entry.result()).isEqualTo("canceled");
+		assertThat(entry.reasonCode()).isEqualTo("canceled");
+	}
+
+	@Test
+	void settleCanceledByItem_이미_success인_entry는_덮어쓰지_않는다() {
+		// 실행기 스레드와 취소 요청이 같은 entry를 동시에 만지는 경합 방어(설계 §4-2) — 이미 정산된
+		// entry를 canceled로 되돌리면 안 된다.
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "glowdeep", null,
+				null, 14, LocalDate.of(2026, 7, 30));
+		long regId = repository.insert(userId, 14, null);
+		repository.insertEntry(regId, 1, "glowdeep", "account", "pending", null, null, null, itemId);
+		repository.updateEntryResult(regId, 1, "success", null, null, null, itemId);
+
+		Optional<Long> registrationId = repository.settleCanceledByItem(itemId);
+
+		assertThat(registrationId).isEmpty();
+		RegistrationEntryRow entry = repository.findById(regId).orElseThrow().entries().get(0);
+		assertThat(entry.result()).isEqualTo("success");
+	}
+
+	@Test
+	void settleCanceledByItem_없는_itemId는_no_op이다() {
+		assertThat(repository.settleCanceledByItem(999_999L)).isEmpty();
+	}
+
+	// ── settleStaleEntries(트랙 LL §4-3) ────────────────────────────────────────
+
+	private void backdateRequestedAt(long registrationId, Duration age) {
+		jdbcClient.sql("UPDATE app.monitoring_registrations SET requested_at = now() - make_interval(secs => :secs) WHERE id = :id")
+				.param("secs", (double) age.toMillis() / 1000.0)
+				.param("id", registrationId)
+				.update();
+	}
+
+	@Test
+	void settleStaleEntries_임계_미달이면_불변이다() {
+		long regId = repository.insert(userId, 14, null);
+		repository.insertEntry(regId, 1, "glowdeep", "account", "pending", null, null, null, null);
+		backdateRequestedAt(regId, Duration.ofHours(23));
+
+		List<Long> affected = repository.settleStaleEntries(Duration.ofHours(24));
+
+		assertThat(affected).isEmpty();
+		assertThat(repository.findById(regId).orElseThrow().entries().get(0).result()).isEqualTo("pending");
+	}
+
+	@Test
+	void settleStaleEntries_item_없는_entry는_failed로_확정된다() {
+		// share-resolve 실패로 monitoring_items 행 자체가 없는 경우(설계 §2-1) — item_id가 NULL.
+		long regId = repository.insert(userId, 14, null);
+		repository.insertEntry(regId, 1, "https://www.instagram.com/share/reel/x/", "post", "pending", null, null,
+				null, null);
+		backdateRequestedAt(regId, Duration.ofHours(25));
+
+		List<Long> affected = repository.settleStaleEntries(Duration.ofHours(24));
+
+		assertThat(affected).containsExactly(regId);
+		RegistrationEntryRow entry = repository.findById(regId).orElseThrow().entries().get(0);
+		assertThat(entry.result()).isEqualTo("failed");
+		assertThat(entry.reasonCode()).isEqualTo("internal_error");
+	}
+
+	@Test
+	void settleStaleEntries_target_붙은_entry는_success로_확정된다() {
+		// 실행기에 @Transactional이 없어 confirmTarget과 updateEntryResult(SUCCESS)가 서로 다른
+		// 트랜잭션인 크래시 창(설계 §2-2) — target은 붙었는데 entry는 pending인 채로 남을 수 있다.
+		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "abc123",
+				"https://x/abc123", null, 30, LocalDate.of(2026, 7, 30));
+		itemRepository.confirmTarget(itemId, 900L);
+		long regId = repository.insert(userId, 14, null);
+		repository.insertEntry(regId, 1, "abc123", "post", "pending", null, null, null, itemId);
+		backdateRequestedAt(regId, Duration.ofHours(25));
+
+		List<Long> affected = repository.settleStaleEntries(Duration.ofHours(24));
+
+		assertThat(affected).containsExactly(regId);
+		RegistrationEntryRow entry = repository.findById(regId).orElseThrow().entries().get(0);
+		assertThat(entry.result()).isEqualTo("success");
+		assertThat(entry.reasonCode()).isNull();
+	}
+
+	@Test
+	void settleStaleEntries_취소된_item은_canceled로_확정된다() {
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "glowdeep", null,
+				null, 14, LocalDate.of(2026, 7, 30));
+		itemRepository.markCanceled(itemId, "detecting", OffsetDateTime.now());
+		long regId = repository.insert(userId, 14, null);
+		repository.insertEntry(regId, 1, "glowdeep", "account", "pending", null, null, null, itemId);
+		backdateRequestedAt(regId, Duration.ofHours(25));
+
+		List<Long> affected = repository.settleStaleEntries(Duration.ofHours(24));
+
+		assertThat(affected).containsExactly(regId);
+		RegistrationEntryRow entry = repository.findById(regId).orElseThrow().entries().get(0);
+		assertThat(entry.result()).isEqualTo("canceled");
+		assertThat(entry.reasonCode()).isEqualTo("canceled");
+	}
+
+	@Test
+	void settleStaleEntries_반환_목록은_영향받은_registration만_중복없이_담는다() {
+		long okItemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), null, "OK1",
+				"https://x/OK1", null, 30, LocalDate.of(2026, 7, 30));
+		itemRepository.confirmTarget(okItemId, 901L);
+		long staleRegId = repository.insert(userId, 14, null);
+		repository.insertEntry(staleRegId, 1, "OK1", "post", "pending", null, null, null, okItemId);
+		repository.insertEntry(staleRegId, 2, "https://www.instagram.com/share/reel/y/", "post", "pending", null,
+				null, null, null);
+		backdateRequestedAt(staleRegId, Duration.ofHours(25));
+
+		long freshRegId = repository.insert(userId, 14, null);
+		repository.insertEntry(freshRegId, 1, "https://www.instagram.com/share/reel/z/", "post", "pending", null,
+				null, null, null);
+		backdateRequestedAt(freshRegId, Duration.ofHours(1));
+
+		List<Long> affected = repository.settleStaleEntries(Duration.ofHours(24));
+
+		assertThat(affected).containsExactly(staleRegId);
 	}
 }

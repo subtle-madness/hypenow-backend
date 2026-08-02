@@ -7,6 +7,7 @@ import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.MonitoringReadRepository;
 import com.celfit.was.monitoring.RegistrationRepository;
+import com.celfit.was.monitoring.RegistrationResult;
 import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
@@ -46,15 +47,11 @@ public class V1MonitoringRegistrationService {
 	private static final int MAX_ITEMS = 100;
 	private static final int MAX_TRACKING_DAYS = 90;
 	private static final int MAX_KEYWORD_LIST_SIZE = 5;
-	private static final String DUPLICATE_REASON_CODE = "duplicate";
 	private static final String DUPLICATE_REASON = "이미 모니터링 중인 대상이에요.";
 	private static final String KIND_POST = "post";
 	private static final String KIND_ACCOUNT = "account";
 	private static final String MODE_URL = "url";
 	private static final String MODE_ACCOUNT = "account";
-	private static final String RESULT_PENDING = "pending";
-	private static final String RESULT_FAILED = "failed";
-	private static final String RESULT_DUPLICATE = "duplicate";
 
 	private final MonitoringItemRepository itemRepository;
 	private final RegistrationRepository registrationRepository;
@@ -166,15 +163,15 @@ public class V1MonitoringRegistrationService {
 			Set<String> seenPostShortCodes, List<TrackingItemResponse> items) {
 		MonitoringInput parsed = MonitoringInput.parsePost(rawPost);
 		if (parsed instanceof MonitoringInput.Invalid invalid) {
-			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_FAILED,
-					invalid.reasonCode(), invalid.reason(), null, null);
+			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST,
+					RegistrationResult.FAILED, invalid.reasonCode(), invalid.reason(), null, null);
 			return;
 		}
 		if (parsed instanceof MonitoringInput.ShareLink) {
 			// share 링크는 리다이렉트 해소 전엔 실제 게시물을 특정할 수 없어 행을 만들지 않는다 —
 			// TODO: share 해소 후 행 생성은 실행기 태스크(후속)에서 담당.
-			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_PENDING,
-					null, null, null, null);
+			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST,
+					RegistrationResult.PENDING, null, null, null, null);
 			return;
 		}
 		MonitoringInput.Post post = (MonitoringInput.Post) parsed;
@@ -182,15 +179,15 @@ public class V1MonitoringRegistrationService {
 		// 아니든 항상 seen에 남겨야 이후 같은 값의 항목도 계속 duplicate로 잡힌다(부작용 의도적).
 		if (!seenPostShortCodes.add(post.shortCode())
 				|| hasActiveDuplicate(userId, MODE_URL, post.shortCode(), context.registeredOn())) {
-			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_DUPLICATE,
-					DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
+			registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST,
+					RegistrationResult.DUPLICATE, RegistrationResult.REASON_DUPLICATE, DUPLICATE_REASON, null, null);
 			return;
 		}
 
 		long itemId = itemRepository.insertPending(userId, MODE_URL, UUID.randomUUID(), context.campaignId(),
 				post.shortCode(), post.canonicalUrl(), null, context.trackingDays(), context.registeredOn());
-		registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST, RESULT_PENDING,
-				null, null, null, itemId);
+		registrationRepository.insertEntry(context.registrationId(), seq, rawPost, KIND_POST,
+				RegistrationResult.PENDING, null, null, null, itemId);
 		items.add(TrackingItemResponse.pendingPost(itemId, post.canonicalUrl(), context.campaignId(),
 				context.campaignName(), context.registeredOn(), context.trackingDays(), context.nextCheckAt()));
 	}
@@ -199,8 +196,8 @@ public class V1MonitoringRegistrationService {
 			Set<String> seenAccountHandles, KeywordRule keywordRule, List<TrackingItemResponse> items) {
 		MonitoringInput parsed = MonitoringInput.parseAccount(rawAccount);
 		if (parsed instanceof MonitoringInput.Invalid invalid) {
-			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT, RESULT_FAILED,
-					invalid.reasonCode(), invalid.reason(), null, null);
+			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT,
+					RegistrationResult.FAILED, invalid.reasonCode(), invalid.reason(), null, null);
 			return;
 		}
 		MonitoringInput.Account account = (MonitoringInput.Account) parsed;
@@ -208,15 +205,15 @@ public class V1MonitoringRegistrationService {
 		if (!seenAccountHandles.add(account.handle())
 				|| hasActiveDuplicate(userId, MODE_ACCOUNT, account.handle(), context.registeredOn())) {
 			registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT,
-					RESULT_DUPLICATE, DUPLICATE_REASON_CODE, DUPLICATE_REASON, null, null);
+					RegistrationResult.DUPLICATE, RegistrationResult.REASON_DUPLICATE, DUPLICATE_REASON, null, null);
 			return;
 		}
 
 		String keywordsJson = writeKeywordsJson(keywordRule);
 		long itemId = itemRepository.insertPending(userId, MODE_ACCOUNT, UUID.randomUUID(), context.campaignId(),
 				account.handle(), null, keywordsJson, context.trackingDays(), context.registeredOn());
-		registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT, RESULT_PENDING,
-				null, null, null, itemId);
+		registrationRepository.insertEntry(context.registrationId(), seq, rawAccount, KIND_ACCOUNT,
+				RegistrationResult.PENDING, null, null, null, itemId);
 		items.add(TrackingItemResponse.pendingAccount(itemId, account.handle(), keywordRule, context.campaignId(),
 				context.campaignName(), context.registeredOn(), context.trackingDays(), context.nextCheckAt()));
 	}

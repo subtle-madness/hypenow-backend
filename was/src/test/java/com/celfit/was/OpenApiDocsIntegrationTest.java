@@ -185,7 +185,11 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 						containsInAnyOrder("reels", "feed")))
 				.andExpect(jsonPath("$.components.schemas.Entry.properties.reasonCode.enum",
 						containsInAnyOrder("invalid_format", "not_found", "private_account", "share_link_unresolved",
-								"duplicate", "internal_error")));
+								"duplicate", "internal_error", "canceled")))
+				// result는 4종만 노출(트랙 LL 계약 노출 방식 결정) — DB엔 canceled까지 5종이 있지만
+				// API에서 canceled는 failed로 접혀 나가 계약에는 등장하지 않는다.
+				.andExpect(jsonPath("$.components.schemas.Entry.properties.result.enum",
+						containsInAnyOrder("success", "failed", "duplicate", "pending")));
 	}
 
 	@Test
