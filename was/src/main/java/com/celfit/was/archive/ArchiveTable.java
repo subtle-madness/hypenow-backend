@@ -18,4 +18,15 @@ public record ArchiveTable(
 		String userIdExpr,
 		List<String> omitColumns,
 		String userScopeWhere) {
+
+	public ArchiveTable {
+		if (qualifiedName == null || qualifiedName.isBlank()) {
+			throw new IllegalArgumentException("qualifiedName은 비어 있을 수 없다");
+		}
+		if (pkColumns == null || pkColumns.isEmpty()) {
+			// 비면 jsonb_build_object()가 유효 SQL로 통과해 row_pk가 조용히 {}로 들어간다 —
+			// 원본 행을 특정할 방법이 사라진 아카이브 행이 아무 저항 없이 쌓이게 된다.
+			throw new IllegalArgumentException("pkColumns은 비어 있을 수 없다: " + qualifiedName);
+		}
+	}
 }

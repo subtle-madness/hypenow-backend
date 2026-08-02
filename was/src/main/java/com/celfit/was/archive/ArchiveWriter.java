@@ -1,6 +1,7 @@
 package com.celfit.was.archive;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
@@ -12,11 +13,16 @@ import org.springframework.stereotype.Component;
  * <p>fail-closed — 이관이 실패하면 예외가 그대로 전파돼 트랜잭션이 롤백되고 삭제도 일어나지
  * 않는다. 자산 보존이 목적인데 조용히 유실되면 의미가 없기 때문이다. 따라서 호출부에는
  * 반드시 트랜잭션 경계가 있어야 한다.
+ *
+ * <p>공개 API는 두 형태로 좁혀져 있다 — "이 유저의 행 전체"(탈퇴)와 "이 PK 한 행"(저장 해제·캠페인
+ * 삭제·등록 롤백). 둘 다 술어를 {@link ArchiveTable}이 소유해서 조립하므로, 호출부가 raw SQL 문자열을
+ * 넘길 일이 없다. 두 메서드 모두 이관된 행 수를 돌려준다 — whereClause가 대상과 안 맞아 0건이 이관되고
+ * 삭제만 커밋되는 사고를 호출부가 확인할 수 있게 하기 위해서다.
  */
 @Component
 public class ArchiveWriter {
 
-	/** whereClause의 named parameter와 충돌하면 안 되는 예약 이름. */
+	/** 조립되는 WHERE 절의 named parameter와 충돌하면 안 되는 예약 이름. */
 	private static final String REASON_PARAM = "archiveReason";
 
 	private final JdbcClient jdbcClient;
@@ -26,10 +32,35 @@ public class ArchiveWriter {
 	}
 
 	/**
-	 * @param whereClause 원본 테이블 별칭 t를 쓰는 WHERE 절. 코드 상수여야 한다(외부 입력 금지)
-	 * @param params      whereClause의 named parameter 값. "archiveReason" 키는 쓸 수 없다
+	 * 이 유저에 속한 행 전체를 이관한다({@link ArchiveTable#userScopeWhere()} 사용).
+	 *
+	 * @return 이관된 행 수
 	 */
-	public void archive(ArchiveTable table, ArchiveReason reason, String whereClause, Map<String, Object> params) {
+	public int archiveUserScope(ArchiveTable table, ArchiveReason reason, long userId) {
+		return execute(table, reason, table.userScopeWhere(), Map.of("userId", userId));
+	}
+
+	/**
+	 * PK로 특정되는 행 1개를 이관한다.
+	 *
+	 * @param pkValues 키 집합이 {@code table.pkColumns()}와 정확히 일치해야 한다
+	 * @return 이관된 행 수
+	 */
+	public int archiveByPk(ArchiveTable table, ArchiveReason reason, Map<String, Object> pkValues) {
+		if (!pkValues.keySet().equals(Set.copyOf(table.pkColumns()))) {
+			throw new IllegalArgumentException(
+					"pkValues 키가 table.pkColumns()와 다르다. expected=" + table.pkColumns()
+							+ ", actual=" + pkValues.keySet());
+		}
+		String whereClause = table.pkColumns().stream()
+				.map(column -> "t." + column + " = :pk_" + column)
+				.collect(Collectors.joining(" AND "));
+		Map<String, Object> params = pkValues.entrySet().stream()
+				.collect(Collectors.toMap(e -> "pk_" + e.getKey(), Map.Entry::getValue));
+		return execute(table, reason, whereClause, params);
+	}
+
+	private int execute(ArchiveTable table, ArchiveReason reason, String whereClause, Map<String, Object> params) {
 		if (params.containsKey(REASON_PARAM)) {
 			throw new IllegalArgumentException("예약된 파라미터명이다: " + REASON_PARAM);
 		}
@@ -38,7 +69,7 @@ public class ArchiveWriter {
 		for (Map.Entry<String, Object> entry : params.entrySet()) {
 			spec = spec.param(entry.getKey(), entry.getValue());
 		}
-		spec.update();
+		return spec.update();
 	}
 
 	private static String buildSql(ArchiveTable table, String whereClause) {
