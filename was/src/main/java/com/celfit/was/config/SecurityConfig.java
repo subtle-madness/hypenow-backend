@@ -15,6 +15,7 @@ import org.springframework.security.config.annotation.authentication.configurati
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.RequestCacheConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -177,6 +178,11 @@ public class SecurityConfig {
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
 				.logout(AbstractHttpConfigurer::disable)
+				// 폼 로그인 리다이렉트 흐름이 없어(JSON 로그인) SavedRequest를 아무도 소비하지 않는데,
+				// 기본 HttpSessionRequestCache가 미인증 401(404→ERROR 포워드 포함)마다 세션을 새로
+				// 만들어 익명 세션이 누적됐다(08-02: app.spring_session 1,509행 중 97%가
+				// SAVED_REQUEST만 가진 고아 세션).
+				.requestCache(RequestCacheConfigurer::disable)
 				// /v1/admin/** 세션 role 신선도 재확인(§1, 세션 스냅샷 재확인 결정) — AuthorizationFilter의
 				// hasRole 판정 바로 뒤에서 DB role을 다시 읽는다. 뒤이은 LastActiveAtFilter·ActAsUserFilter보다
 				// 먼저 두어 강등된 세션은 다른 부가 효과 전에 즉시 403으로 끊는다.
