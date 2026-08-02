@@ -15,6 +15,13 @@ datasources:
     isDefault: true
     editable: false
     jsonData:
+      # ⚠️ 최상위 `database:`(위)만으로는 대시보드 패널이 동작하지 않는다 — Grafana 13의 Postgres
+      # 플러그인은 프론트엔드에서 jsonData.database를 읽는다. 08-02 운영 실측: 최상위에만 두면
+      # 백엔드로 도는 알림 규칙은 정상 동작하는데(grafana_reader 세션이 실제로 쿼리하는 것을
+      # pg_stat_activity로 확인) 브라우저가 그리는 패널만 전부 No data가 되고 콘솔에
+      # "You do not currently have a default database configured for this data source"가 찍힌다.
+      # 최상위 database는 하위 호환용으로 남겨 둔다(백엔드 경로가 그걸 쓴다).
+      database: analysis
       sslmode: disable
       postgresVersion: 1700 # postgres:17-alpine과 동일
       maxOpenConns: 5
