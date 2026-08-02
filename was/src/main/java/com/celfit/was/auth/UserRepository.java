@@ -166,7 +166,8 @@ public class UserRepository {
 	 *
 	 * <p>삭제 전 원본 행을 전부 아카이브한다(트랙 NN). CASCADE(V16)로 사라지는 자식과
 	 * registrations를 거치는 간접 CASCADE(entries)까지 ArchiveTables.ACCOUNT_DELETION_ORDER가
-	 * 전부 담고 있다 — 새 자식 테이블이 생기면 ArchiveCascadeReachabilityTest가 CI에서 막는다.
+	 * 전부 담고 있다 — 새 자식 테이블이 생기면 ArchiveCascadeReachabilityTest(Task 8에서 추가 예정,
+	 * 아직 없음)가 CI에서 막을 계획이다. 그 전까지는 이 목록에 테이블을 추가하는 리뷰가 유일한 방어선.
 	 */
 	@Transactional
 	public void deleteAccount(long id) {
@@ -183,12 +184,20 @@ public class UserRepository {
 	}
 
 	/**
-	 * CASCADE로 사라지는 자식 8종은 DB가 지우므로 삭제 건수를 관측할 수 없다 — 코드가 직접
-	 * DELETE하는 3개만 이관 건수와 대조한다.
+	 * CASCADE로 사라지는 자식 6종(campaigns·items·registrations·digests·email_opt_outs·
+	 * registration_entries)은 DB가 지우므로 삭제 건수를 관측할 수 없다 — 코드가 직접 DELETE하는
+	 * 3개만 이관 건수와 대조한다.
 	 */
 	private void deleteAndVerify(ArchiveTable table, Map<ArchiveTable, Integer> archived, String sql, long id) {
+		Integer archivedCount = archived.get(table);
+		if (archivedCount == null) {
+			// ACCOUNT_DELETION_ORDER에서 항목이 빠졌는데 deleteAndVerify 호출부에는 남아있는 경우 —
+			// int 언박싱 NPE로 원인 불명 스택트레이스를 던지는 대신 무엇이 어긋났는지 바로 말한다.
+			throw new IllegalStateException(
+					"이관 목록(ACCOUNT_DELETION_ORDER)에 없는 테이블: " + table.qualifiedName());
+		}
 		int deleted = jdbcClient.sql(sql).param("id", id).update();
-		archiveWriter.verifyMatched(table, archived.get(table), deleted);
+		archiveWriter.verifyMatched(table, archivedCount, deleted);
 	}
 
 	public Optional<AppUser> findByEmail(String email) {
