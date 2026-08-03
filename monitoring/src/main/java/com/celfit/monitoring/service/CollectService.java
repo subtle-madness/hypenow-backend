@@ -61,21 +61,33 @@ public class CollectService {
 		this.registrationCommentPages = registrationCommentPages;
 	}
 
-	/** 계정 1회 수집 — 프로필·게시물 스냅샷 + profile_meta upsert. */
+	/** 계정 1회 수집(스윕용) — 프로필·게시물 스냅샷 + profile_meta upsert. FB 몫 재시도 없음. */
 	public AccountCollectResult collectAccount(String username) {
+		return collectAccount(username, false);
+	}
+
+	/** 계정 1회 수집(등록 전용) — 스윕용과 달리 fb 미관측 신규 릴스에 한해 clips 1회 재조회. */
+	public AccountCollectResult collectAccountForRegistration(String username) {
+		return collectAccount(username, true);
+	}
+
+	private AccountCollectResult collectAccount(String username, boolean retryFb) {
 		LocalDate today = LocalDate.now(KST);
 		ProfileInfo profile = hiker.fetchProfile(username);
 		List<PostInfo> posts = hiker.fetchRecentPosts(username, profile.userId(), enumeratePages);
-		posts = retryFbForNewReels(profile.userId(), posts);
+		if (retryFb) {
+			posts = retryFbForNewReels(profile.userId(), posts);
+		}
 		writer.saveAccount(username, today, profile, posts);
 		return new AccountCollectResult(profile, posts);
 	}
 
-	// ── FB 몫 최초 1회 재시도(findings §2 결론 4) ────────────────────────────
-	// Hiker 세션의 20~30%만 fb_play_count(FB 교차게시 몫)를 실어 준다. 관측 이력이 있으면
-	// 저장 계층 캐리포워드로 충분하지만, 한 번도 못 본 릴스는 합산 세션에 걸릴 때까지 화면보다
-	// 낮은 값(IG 전용)으로 보인다 — 그 공백을 딱 1회의 재조회로만 줄인다(매번 재시도하면
-	// 기대 콜 비용이 3~5배). 재시도는 최선 노력이다: 실패·재차 미실림이어도 수집은 그대로 간다.
+	// ── FB 몫 재시도는 등록(진짜 최초 1회)에만(findings §2 결론 4, 08-03 축소) ──
+	// Hiker 세션의 20~30%만 fb_play_count(FB 교차게시 몫)를 실어 준다. 처음엔 "관측 이력이 생길
+	// 때까지 스윕마다 재시도"였지만, 교차게시 안 한 릴스는 fb 키가 영영 안 잡힐 수 있어(실측:
+	// _milking 8콜 연속 미관측) 헛 재시도가 매일 반복됐다(test 스윕 실측 단건 +65%). 역전파가
+	// 있어 관측이 늦어도 과거가 소급 정정되므로, 재시도는 등록 시 1회로만 남긴다 — 게시물당
+	// 평생 최대 1콜. 재시도는 최선 노력이다: 실패·재차 미실림이어도 수집은 그대로 간다.
 
 	/** 열거 경로 — fb 미관측 신규 릴스가 남아 있으면 clips 콜만 1회 다시 태워 FB 몫을 머지한다. */
 	private List<PostInfo> retryFbForNewReels(String userId, List<PostInfo> posts) {
@@ -123,8 +135,15 @@ public class CollectService {
 		return profile;
 	}
 
-	/** 게시물 1회 수집 — 스냅샷 upsert. */
+	/** 게시물 1회 수집(스윕용) — 스냅샷 upsert. FB 몫 재시도 없음. */
 	public PostInfo collectPost(String shortCode) {
+		PostInfo post = hiker.fetchPost(shortCode);
+		writer.savePost(LocalDate.now(KST), post);
+		return post;
+	}
+
+	/** 게시물 1회 수집(등록 전용) — fb 미관측이면 단건 1회 재조회 후 저장. */
+	public PostInfo collectPostForRegistration(String shortCode) {
 		PostInfo post = retryFbForNewReel(hiker.fetchPost(shortCode));
 		writer.savePost(LocalDate.now(KST), post);
 		return post;
