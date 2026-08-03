@@ -5,9 +5,14 @@ import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.CommentRepository;
+import com.celfit.monitoring.store.SnapshotRepository;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -26,9 +31,12 @@ public class CollectService {
 
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+	private static final Logger log = LoggerFactory.getLogger(CollectService.class);
+
 	private final HikerClient hiker;
 	private final SnapshotWriter writer;
 	private final CommentRepository comments;
+	private final SnapshotRepository snapshots;
 	private final int enumeratePages;
 	private final int commentPages;
 	private final int registrationCommentPages;
@@ -40,12 +48,14 @@ public class CollectService {
 	 * 배선하면 등록이 조용히 3페이지를 부르게 된다.
 	 */
 	public CollectService(HikerClient hiker, SnapshotWriter writer, CommentRepository comments,
+			SnapshotRepository snapshots,
 			@Value("${monitoring.enumerate-pages:1}") int enumeratePages,
 			@Value("${monitoring.comment-pages:1}") int commentPages,
 			@Value("${monitoring.registration-comment-pages:1}") int registrationCommentPages) {
 		this.hiker = hiker;
 		this.writer = writer;
 		this.comments = comments;
+		this.snapshots = snapshots;
 		this.enumeratePages = enumeratePages;
 		this.commentPages = commentPages;
 		this.registrationCommentPages = registrationCommentPages;
@@ -56,8 +66,50 @@ public class CollectService {
 		LocalDate today = LocalDate.now(KST);
 		ProfileInfo profile = hiker.fetchProfile(username);
 		List<PostInfo> posts = hiker.fetchRecentPosts(username, profile.userId(), enumeratePages);
+		posts = retryFbForNewReels(profile.userId(), posts);
 		writer.saveAccount(username, today, profile, posts);
 		return new AccountCollectResult(profile, posts);
+	}
+
+	// ── FB 몫 최초 1회 재시도(findings §2 결론 4) ────────────────────────────
+	// Hiker 세션의 20~30%만 fb_play_count(FB 교차게시 몫)를 실어 준다. 관측 이력이 있으면
+	// 저장 계층 캐리포워드로 충분하지만, 한 번도 못 본 릴스는 합산 세션에 걸릴 때까지 화면보다
+	// 낮은 값(IG 전용)으로 보인다 — 그 공백을 딱 1회의 재조회로만 줄인다(매번 재시도하면
+	// 기대 콜 비용이 3~5배). 재시도는 최선 노력이다: 실패·재차 미실림이어도 수집은 그대로 간다.
+
+	/** 열거 경로 — fb 미관측 신규 릴스가 남아 있으면 clips 콜만 1회 다시 태워 FB 몫을 머지한다. */
+	private List<PostInfo> retryFbForNewReels(String userId, List<PostInfo> posts) {
+		List<String> candidates = posts.stream()
+				.filter(p -> "REELS".equals(p.contentType()) && p.views() != null && p.fbPlays() == null)
+				.map(PostInfo::shortCode)
+				.toList();
+		if (candidates.isEmpty() || snapshots.codesWithFbObserved(candidates).containsAll(candidates)) {
+			return posts;
+		}
+		log.info("FB 몫 미관측 신규 릴스 감지 — clips 1회 재조회: user_id {}", userId);
+		Map<String, HikerClient.ClipCounts> retried = hiker.fetchClipCounts(userId, enumeratePages);
+		return posts.stream()
+				.map(p -> {
+					HikerClient.ClipCounts c = retried.get(p.shortCode());
+					return p.fbPlays() == null && c != null && c.fbPlays() != null
+							? p.withFbPlays(c.fbPlays()) : p;
+				})
+				.toList();
+	}
+
+	/** 단건 경로 — 같은 규칙. 재시도 응답에 fb가 실렸으면 그 응답 전체(더 신선)를 쓴다. */
+	private PostInfo retryFbForNewReel(PostInfo post) {
+		boolean needsFb = "REELS".equals(post.contentType()) && post.views() != null && post.fbPlays() == null;
+		if (!needsFb || !snapshots.codesWithFbObserved(Set.of(post.shortCode())).isEmpty()) {
+			return post;
+		}
+		try {
+			PostInfo retried = hiker.fetchPost(post.shortCode());
+			return retried.fbPlays() != null ? retried : post;
+		} catch (RuntimeException e) {
+			log.warn("FB 몫 재조회 실패 — 원 결과로 진행: {} {}", post.shortCode(), e.getMessage());
+			return post;
+		}
 	}
 
 	/**
@@ -73,7 +125,7 @@ public class CollectService {
 
 	/** 게시물 1회 수집 — 스냅샷 upsert. */
 	public PostInfo collectPost(String shortCode) {
-		PostInfo post = hiker.fetchPost(shortCode);
+		PostInfo post = retryFbForNewReel(hiker.fetchPost(shortCode));
 		writer.savePost(LocalDate.now(KST), post);
 		return post;
 	}

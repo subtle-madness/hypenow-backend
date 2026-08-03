@@ -227,7 +227,8 @@ class DailySweepJobTest {
 			String takenAt = post.takenAt() == null ? "" : "\"taken_at\":" + post.takenAt() + ",";
 			return """
 					{"code":"%s","product_type":"clips",%s"caption":{"text":"%s"},
-					"like_count":10,"comment_count":2,"play_count":100,"user":{"username":"%s"}}"""
+					"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
+					"fb_play_count":0,"user":{"username":"%s"}}"""
 					.formatted(post.code(), takenAt, post.caption(), owner);
 		}
 
@@ -289,7 +290,7 @@ class DailySweepJobTest {
 		snapshots = new SnapshotRepository(db);
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1);
 		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
@@ -621,7 +622,7 @@ class DailySweepJobTest {
 		hiker.account("flip_user", "555", new FakePost("REV1", "Rare Beginnings 복귀", AFTER));
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1);
 		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
 				thumbnailArchive);
 
@@ -957,7 +958,7 @@ class DailySweepJobTest {
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
-		var crashCollect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var crashCollect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1);
 		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3,
 				Duration.ZERO, imageArchive, thumbnailArchive);
 
@@ -1027,7 +1028,7 @@ class DailySweepJobTest {
 		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshots);
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
-		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1, 1);
+		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1);
 		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
 				thumbnailArchive);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);

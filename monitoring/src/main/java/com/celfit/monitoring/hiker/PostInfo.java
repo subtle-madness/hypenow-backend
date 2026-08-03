@@ -17,8 +17,21 @@ package com.celfit.monitoring.hiker;
  * <p>ownerFullName·ownerProfilePicUrl은 **단건 응답(/v2/media/by/code)에만** 실값이 실려 온다
  * (user.full_name·user.profile_pic_url). 계정 열거 경로(/v2/user/medias)에서도 같은 노드라 파싱은
  * 되지만 소비하지 않는다 — 응답 셰이프에 따라 둘 다 null일 수 있다(트랙 II).
+ *
+ * <p>views는 **IG 몫**(ig_play_count)이다 — Hiker가 콜마다 다른 세션을 태워 합산 play_count는
+ * 콜 간 역행한다(findings §2 결론 4). fbPlays는 FB 교차게시 몫으로, **null=이 응답에 fb 키 부재
+ * (FB를 못 보는 세션), 0=관측된 0** — 이 구분이 저장 시 캐리포워드·최초 1회 재시도 판정 기준이라
+ * 뭉개면 안 된다. 화면 합산값(views + fb)은 저장 계층(SnapshotRepository)이 조립한다.
  */
 public record PostInfo(String shortCode, String username, String ownerFullName, String ownerProfilePicUrl,
 		String contentType, String caption, String thumbnailUrl,
-		Long takenAt, Long likes, Long comments, Long views, Long saves,
-		Long shares, Long reposts, String rawJson, boolean viewsTrusted) {}
+		Long takenAt, Long likes, Long comments, Long views, Long fbPlays, Long saves,
+		Long shares, Long reposts, String rawJson, boolean viewsTrusted) {
+
+	/** 재시도 콜에서 얻은 FB 몫만 갈아끼운 사본 — 나머지 지표는 원 콜 값을 유지한다. */
+	public PostInfo withFbPlays(Long newFbPlays) {
+		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, contentType, caption,
+				thumbnailUrl, takenAt, likes, comments, views, newFbPlays, saves, shares, reposts,
+				rawJson, viewsTrusted);
+	}
+}
