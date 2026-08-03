@@ -270,6 +270,30 @@ class HikerClientTest {
 		assertThat(zero.fetchPost("Xx1").fbPlays()).isEqualTo(0L);
 	}
 
+	/**
+	 * fb 키 없이도 합산 play를 주는 세션이 있다(운영 실측 DUrj0iGEn6G: play 570,331 vs ig 512,077,
+	 * fb 키 부재) — play > ig면 fb 몫을 play - ig로 유도해 관측으로 인정한다. fb 키가 있을 때
+	 * play - ig == fb임은 실측 검산됨(305-222=83 등). fb 키가 0인데 play > ig인 모순 응답
+	 * (DPQoGI1APa_)도 화면값(play) 기준으로 유도값을 우선한다.
+	 */
+	@Test
+	void fb_키가_없어도_play가_ig보다_크면_차이를_fb몫으로_유도한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":570331,"ig_play_count":512077,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.views()).isEqualTo(512077L);
+		assertThat(p.fbPlays()).isEqualTo(58254L);
+	}
+
+	@Test
+	void fb_키가_0이어도_play가_ig보다_크면_유도값을_우선한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":916881,"ig_play_count":869438,"fb_play_count":0,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").fbPlays()).isEqualTo(47443L);
+	}
+
 	/** 방어: ig 키가 없는 응답이 오면 play - fb로 IG 몫을 복원한다(합산 이중 계상 방지). */
 	@Test
 	void ig_play_count가_없으면_play에서_fb를_빼서_IG_몫을_복원한다() {
