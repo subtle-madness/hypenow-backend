@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -29,6 +30,9 @@ import org.springframework.test.web.servlet.MockMvc;
  * 클래스 전용 테이블이라 각 테스트 전에 TRUNCATE로 격리한다(다른 테스트 클래스는 건드리지 않음).
  */
 @AutoConfigureMockMvc
+@TestPropertySource(properties = "was.rate-limit.per-minute=100")
+// signup 레이트리밋 키가 "signup:" + IP(이메일 무관)라, 테스트 메서드마다 다른 이메일로 가입해도
+// 같은 버킷을 공유해 기본 상한(10/분)에 부딪힌다(AdminQueryApiIntegrationTest와 동일 원인·동일 처방).
 class V1NoticesIntegrationTest extends IntegrationTest {
 
 	@Autowired
