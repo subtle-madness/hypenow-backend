@@ -125,7 +125,7 @@ class CollectServiceTest {
 	}
 
 	@Test
-	void 열거_fb_미관측_신규_릴스는_clips를_1회_재조회해_fb를_머지한다() {
+	void 등록_열거_fb_미관측_신규_릴스는_clips를_1회_재조회해_fb를_머지한다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
@@ -139,7 +139,7 @@ class CollectServiceTest {
 		var writer = new RecordingWriter();
 		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1);
 
-		collect.collectAccount("acct");
+		collect.collectAccountForRegistration("acct");
 
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/clips"))).hasSize(2);
 		assertThat(writer.savedPosts).hasSize(1);
@@ -148,7 +148,7 @@ class CollectServiceTest {
 	}
 
 	@Test
-	void 열거_fb_관측_이력이_있으면_재시도하지_않는다() {
+	void 등록_열거_fb_관측_이력이_있으면_재시도하지_않는다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
@@ -159,13 +159,13 @@ class CollectServiceTest {
 		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of("ReelA")), 1, 1, 1);
 
-		collect.collectAccount("acct");
+		collect.collectAccountForRegistration("acct");
 
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/clips"))).hasSize(1);
 	}
 
 	@Test
-	void 열거_이번_콜에_fb가_실렸으면_재시도하지_않는다() {
+	void 등록_열거_이번_콜에_fb가_실렸으면_재시도하지_않는다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
@@ -176,7 +176,7 @@ class CollectServiceTest {
 		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1);
 
-		collect.collectAccount("acct");
+		collect.collectAccountForRegistration("acct");
 
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/clips"))).hasSize(1);
 	}
@@ -192,7 +192,7 @@ class CollectServiceTest {
 	}
 
 	@Test
-	void 단건_fb_미관측이면_1회_재조회하고_재시도_응답을_쓴다() {
+	void 등록_단건_fb_미관측이면_1회_재조회하고_재시도_응답을_쓴다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
@@ -201,14 +201,14 @@ class CollectServiceTest {
 		var writer = new RecordingWriter();
 		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1);
 
-		collect.collectPost("Xx1");
+		collect.collectPostForRegistration("Xx1");
 
 		assertThat(calls).hasSize(2);
 		assertThat(writer.savedPosts.getFirst().fbPlays()).isEqualTo(83L);
 	}
 
 	@Test
-	void 단건_재시도도_fb가_없으면_원_결과로_저장하고_더_부르지_않는다() {
+	void 등록_단건_재시도도_fb가_없으면_원_결과로_저장하고_더_부르지_않는다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
@@ -217,7 +217,7 @@ class CollectServiceTest {
 		var writer = new RecordingWriter();
 		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1);
 
-		collect.collectPost("Xx1");
+		collect.collectPostForRegistration("Xx1");
 
 		assertThat(calls).hasSize(2);   // 재시도는 딱 1회 — "1회만"이 안 지켜지면 여기가 3 이상이 된다
 		assertThat(writer.savedPosts.getFirst().fbPlays()).isNull();
@@ -225,7 +225,7 @@ class CollectServiceTest {
 	}
 
 	@Test
-	void 단건_fb_관측_이력이_있으면_재조회하지_않는다() {
+	void 등록_단건_fb_관측_이력이_있으면_재조회하지_않는다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
@@ -234,6 +234,43 @@ class CollectServiceTest {
 		var writer = new RecordingWriter();
 		var collect = new CollectService(client, writer, new NoopCommentRepository(),
 				new FbRepo(Set.of("Xx1")), 1, 1, 1);
+
+		collect.collectPostForRegistration("Xx1");
+
+		assertThat(calls).hasSize(1);
+	}
+
+	// ── 스윕 경로는 재시도 금지(08-03) ────────────────────────────────────────
+	// 교차게시 안 한 릴스는 fb 키가 영영 안 잡힐 수 있어(실측: _milking 8콜 연속 미관측),
+	// 스윕마다 재시도하면 헛 콜이 매일 반복된다(test 스윕 실측 +65%). 역전파가 있으므로
+	// 관측이 늦어도 과거가 소급 정정된다 — 재시도는 등록(진짜 최초 1회)에만 남긴다.
+
+	@Test
+	void 스윕_열거는_fb_미관측이어도_재조회하지_않는다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/by/username")) return PROFILE;
+			if (path.startsWith("/v2/user/clips")) return clips(false);
+			return MEDIAS_ONE_REEL;
+		});
+		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
+				new FbRepo(Set.of()), 1, 1, 1);
+
+		collect.collectAccount("acct");
+
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/clips"))).hasSize(1);
+	}
+
+	@Test
+	void 스윕_단건은_fb_미관측이어도_재조회하지_않는다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return singlePost(false);
+		});
+		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
+				new FbRepo(Set.of()), 1, 1, 1);
 
 		collect.collectPost("Xx1");
 
