@@ -334,6 +334,11 @@ public class HikerClient {
 	 * media 노드에서 IG·FB 재생수 몫 추출. ig_play_count가 없는 응답(미실측 셰이프 방어)에서는
 	 * play_count - fb_play_count로 IG 몫을 복원한다 — play_count를 그대로 views에 두면 저장 계층의
 	 * fb 합산과 겹쳐 FB 몫이 이중 계상된다.
+	 *
+	 * <p>FB 몫은 play > ig면 play - ig로 유도한다(fb 키보다 우선) — fb 키 없이 합산 play만 주는
+	 * 세션(실측 DUrj0iGEn6G)과 fb 키가 0인데 play > ig인 모순 세션(DPQoGI1APa_)이 실존하고,
+	 * fb 키가 정상일 때는 play - ig == fb라 결과가 같다(실측 검산). 화면 표시값이 play이므로
+	 * 유도값이 화면 기준에 더 충실하다.
 	 */
 	private static ClipCounts playCounts(JsonNode m) {
 		Long ig = firstLong(m, "ig_play_count");
@@ -341,7 +346,8 @@ public class HikerClient {
 		Long play = firstLong(m, "play_count");
 		// Long.valueOf 명시 박싱 — primitive(play-fb)와 Long(play) 혼합 삼항은 null 언박싱 NPE를 낸다
 		Long igPlays = ig != null ? ig : play != null && fb != null ? Long.valueOf(play - fb) : play;
-		return new ClipCounts(igPlays, fb);
+		Long fbPlays = igPlays != null && play != null && play > igPlays ? Long.valueOf(play - igPlays) : fb;
+		return new ClipCounts(igPlays, fbPlays);
 	}
 
 	/** post_meta 썸네일(계약 §3) — image_versions2.candidates[0].url. 픽스처 실측(2026-07-30): 전 게시물 존재, 없으면 null. */
