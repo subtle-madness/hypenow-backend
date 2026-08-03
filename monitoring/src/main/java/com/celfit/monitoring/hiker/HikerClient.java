@@ -320,9 +320,14 @@ public class HikerClient {
 		ClipCounts clip = clipPlays.get(code);
 		Long views = own.igPlays() != null ? own.igPlays() : clip != null ? clip.igPlays() : null;
 		Long fbPlays = own.fbPlays() != null ? own.fbPlays() : clip != null ? clip.fbPlays() : null;
+		// 좋아요 숨김(like_and_view_counts_disabled) 시 like_count는 실측이 아니라 프리뷰 잔여값이다
+		// (운영 실측 08-03: 서로 다른 두 게시물이 똑같이 3) — 취득 불가로 null 처리해야 값→null 전이가
+		// METRICS_HIDDEN 감지에 걸린다. 댓글·조회수는 숨김과 무관하게 실측이 계속 온다.
+		Long likes = m.path("like_and_view_counts_disabled").asBoolean(false)
+				? null : firstLong(m, "like_count");
 		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, contentType, caption, thumbnailUrl(m),
 				firstLong(m, "taken_at"),
-				firstLong(m, "like_count"), firstLong(m, "comment_count"),
+				likes, firstLong(m, "comment_count"),
 				views, fbPlays,
 				firstLong(m, "save_count"),          // 릴스 전용 — 피드·캐러셀은 키 부재 → null
 				firstLong(m, "reshare_count"),       // 공유. 릴스 전용

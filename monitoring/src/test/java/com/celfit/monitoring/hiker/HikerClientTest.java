@@ -223,6 +223,32 @@ class HikerClientTest {
 		assertThat(posts).allSatisfy(p -> assertThat(p.views()).isNull());
 	}
 
+	// ── 좋아요 숨김(08-03) ──────────────────────────────────────────────────
+	// 운영 raw.fetch_payload 실측: like_and_view_counts_disabled=true인 게시물은 like_count가
+	// 실측이 아니라 프리뷰 잔여값(서로 다른 두 게시물이 똑같이 3)으로 잘려 온다. 그대로 저장하면
+	// 화면에 83→3 급감으로 보이고 비공개 감지(값→null 전이)도 안 걸린다 — 취득 불가로 null 처리.
+
+	@Test
+	void 좋아요_숨김이면_like_count는_프리뷰_잔여값이라_null_처리한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":3,
+				"like_and_view_counts_disabled":true,"comment_count":13,
+				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.likes()).isNull();
+		// 숨김은 좋아요만 잘린다 — 댓글·조회수는 실측값이 계속 온다(운영 실측: ig_play_count 단조 증가)
+		assertThat(p.comments()).isEqualTo(13L);
+		assertThat(p.views()).isEqualTo(1551L);
+	}
+
+	@Test
+	void 숨김_플래그가_없거나_false면_like_count를_그대로_쓴다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":83,
+				"like_and_view_counts_disabled":false,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").likes()).isEqualTo(83L);
+	}
+
 	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */
 	@Test
 	void 단건_응답에_소유_계정이_없으면_HikerFetch로() {
