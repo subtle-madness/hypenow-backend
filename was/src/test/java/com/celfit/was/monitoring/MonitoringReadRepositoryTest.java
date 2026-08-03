@@ -175,6 +175,23 @@ class MonitoringReadRepositoryTest extends IntegrationTest {
 
 		assertThat(rows).hasSize(2);   // 2026-07-29 행은 상한(07-27) 이후라 제외
 		assertThat(rows).extracting(TrackedSnapshotRow::shortCode).containsExactlyInAnyOrder("SHORT1", "SHORT2");
+		assertThat(rows).allSatisfy(r -> assertThat(r.likesHidden()).isFalse());   // 미지정 시 기본 false
+	}
+
+	/** 좋아요 숨김 관측 행 — likes null과 함께 likes_hidden이 읽혀야 FE 구분 표시가 성립한다. */
+	@Test
+	void 좋아요_숨김_행은_likes_hidden이_같이_읽힌다() {
+		jdbc.sql("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
+				                           likes, likes_hidden, comments, views, saves, shares, reposts)
+				VALUES ('acc1', 'SHORT1', '2026-07-27', 'REELS', NULL, true, 13, 100, 2, 3, 0)
+				""").update();
+
+		List<TrackedSnapshotRow> rows = repository.findSnapshots(List.of("SHORT1"), LocalDate.of(2026, 7, 27));
+
+		assertThat(rows).hasSize(1);
+		assertThat(rows.get(0).likes()).isNull();
+		assertThat(rows.get(0).likesHidden()).isTrue();
 	}
 
 	@Test

@@ -259,8 +259,8 @@ public class TrackingItemAssembler {
 		Long views = isFeed ? null : s.views();
 		Long shares = isFeed ? null : s.shares();
 		Long reposts = isFeed ? null : s.reposts();
-		return new TrackingItemResponse.SnapshotResponse(s.capturedOn().toString(), views, s.likes(), s.comments(),
-				s.saves(), shares, reposts);
+		return new TrackingItemResponse.SnapshotResponse(s.capturedOn().toString(), views, s.likes(),
+				s.likesHidden(), s.comments(), s.saves(), shares, reposts);
 	}
 
 	/** 필드 결손 댓글(author·body·likeCount·commentedAt 중 하나라도 null)은 통째로 제외(계약 PostComment). */
