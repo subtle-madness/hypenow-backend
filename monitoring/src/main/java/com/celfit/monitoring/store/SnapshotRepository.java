@@ -3,7 +3,10 @@ package com.celfit.monitoring.store;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import java.time.LocalDate;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -30,17 +33,53 @@ public class SnapshotRepository {
 				username, on, p.followers(), p.following(), p.mediaCount());
 	}
 
-	/** 스냅샷은 지표만 담는다 — takenAt·캡션 같은 게시물 속성은 저장 대상이 아니다. */
+	/**
+	 * 스냅샷은 지표만 담는다 — takenAt·캡션 같은 게시물 속성은 저장 대상이 아니다.
+	 *
+	 * <p>views는 **화면 합산값**(IG 몫 + FB 몫)으로 조립해 저장한다(findings §2 결론 4).
+	 * FB 몫이 이번 콜에 안 실렸으면(IG 전용 세션, {@code fbPlays()==null}) 직전 관측 fb_plays를
+	 * 캐리포워드한다 — FB 몫은 실측상 며칠 단위로 거의 정적이라 오차가 작고, 이 규칙 덕에 세션
+	 * 복불복에도 views 시계열이 역행하지 않는다. 관측된 0은 캐리포워드가 아니라 0으로 덮는다.
+	 * views가 null(피드·클립 보강 실패)이면 fb와 무관하게 null 유지 — 비공개 오탐 방지 계약 그대로.
+	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
+		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
+		Long views = p.views() == null ? null : p.views() + (fb != null ? fb : 0);
 		db.update("""
 				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
-				                           likes, comments, views, saves, shares, reposts)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				                           likes, comments, views, fb_plays, saves, shares, reposts)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (short_code, captured_on) DO UPDATE SET
 				  likes=EXCLUDED.likes, comments=EXCLUDED.comments, views=EXCLUDED.views,
+				  fb_plays=EXCLUDED.fb_plays,
 				  saves=EXCLUDED.saves, shares=EXCLUDED.shares, reposts=EXCLUDED.reposts""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.comments(), p.views(), p.saves(), p.shares(), p.reposts());
+				p.likes(), p.comments(), views, fb, p.saves(), p.shares(), p.reposts());
+	}
+
+	/**
+	 * FB 몫 관측 이력이 있는 코드들(최초 1회 재시도 판정용, CollectService) — 이력이 있으면 캐리포워드가
+	 * 가능하므로 재시도 대상이 아니다. 계정 열거 12건을 한 번에 묻는 배치 조회(IN절)라 수집당 1쿼리다.
+	 */
+	public Set<String> codesWithFbObserved(Collection<String> codes) {
+		if (codes.isEmpty()) {
+			return Set.of();
+		}
+		String placeholders = String.join(",", java.util.Collections.nCopies(codes.size(), "?"));
+		return new HashSet<>(db.queryForList(
+				"SELECT DISTINCT short_code FROM post_snapshot WHERE fb_plays IS NOT NULL AND short_code IN ("
+						+ placeholders + ")",
+				String.class, codes.toArray()));
+	}
+
+	/** 직전 관측 FB 몫 — 당일 포함(<=, 같은 날 재수집도 이어받는다). 관측 이력이 없으면 null. */
+	private Long latestFbPlays(String shortCode, LocalDate on) {
+		return db.query("""
+				SELECT fb_plays FROM post_snapshot
+				WHERE short_code = ? AND captured_on <= ? AND fb_plays IS NOT NULL
+				ORDER BY captured_on DESC LIMIT 1""",
+				(rs, i) -> rs.getObject("fb_plays", Long.class), shortCode, on)
+				.stream().findFirst().orElse(null);
 	}
 
 	/**

@@ -45,7 +45,7 @@ class SnapshotWriterAlarmTest {
 	private PostInfo post(Long views) {
 		return new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션",
 				"https://cdn/thumb.jpg", 1_785_000_000L,
-				100L, 5L, views, 20L, 3L, 1L, "{}", true);
+				100L, 5L, views, null, 20L, 3L, 1L, "{}", true);
 	}
 
 	private long alarmCount() {
@@ -123,7 +123,7 @@ class SnapshotWriterAlarmTest {
 	void takenAt이_null이면_post_meta_upsert를_스킵한다() {
 		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션",
 				"https://cdn/thumb.jpg", null,
-				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+				100L, 5L, 1000L, null, 20L, 3L, 1L, "{}", true);
 
 		writer.savePost(LocalDate.of(2026, 7, 30), post);
 
@@ -139,7 +139,7 @@ class SnapshotWriterAlarmTest {
 	void 캡션이_null이면_빈_문자열로_폴백한다() {
 		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", null,
 				"https://cdn/thumb.jpg", 1_785_000_000L,
-				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+				100L, 5L, 1000L, null, 20L, 3L, 1L, "{}", true);
 
 		writer.savePost(LocalDate.of(2026, 7, 30), post);
 
@@ -154,7 +154,7 @@ class SnapshotWriterAlarmTest {
 	void savePost는_단건_응답_owner_필드로_profile_meta_행을_만든다() {
 		var post = new PostInfo("SC1", "acct_a", "표시이름", "https://cdn/owner.jpg", "REELS", "캡션",
 				"https://cdn/thumb.jpg", 1_785_000_000L,
-				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+				100L, 5L, 1000L, null, 20L, 3L, 1L, "{}", true);
 
 		writer.savePost(LocalDate.of(2026, 7, 30), post);
 
@@ -172,14 +172,14 @@ class SnapshotWriterAlarmTest {
 	void saveAccount로_채운_last_uploaded_at은_savePost_이후에도_보존된다() {
 		var profile = new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}");
 		var enumerated = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null,
-				1_785_000_000L, 100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+				1_785_000_000L, 100L, 5L, 1000L, null, 20L, 3L, 1L, "{}", true);
 		writer.saveAccount("acct_a", LocalDate.of(2026, 7, 29), profile, List.of(enumerated));
 		var lastUploadedAtAfterAccount = db.queryForObject(
 				"SELECT last_uploaded_at FROM profile_meta WHERE username='acct_a'", LocalDate.class);
 
 		var postOnly = new PostInfo("SC1", "acct_a", "표시이름", "https://cdn/owner.jpg", "REELS", "캡션",
 				"https://cdn/thumb.jpg", 1_785_000_000L,
-				100L, 5L, 1000L, 20L, 3L, 1L, "{}", true);
+				100L, 5L, 1000L, null, 20L, 3L, 1L, "{}", true);
 		writer.savePost(LocalDate.of(2026, 7, 30), postOnly);
 
 		var row = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
