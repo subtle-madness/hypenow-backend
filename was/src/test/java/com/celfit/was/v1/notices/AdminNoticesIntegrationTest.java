@@ -86,7 +86,7 @@ class AdminNoticesIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void 검증_5종은_400이다() throws Exception {
+	void 검증_6종은_400이다() throws Exception {
 		assertValidation("""
 				{"title":"  ","publishedAt":"2026-08-03T09:00","items":[
 				  {"tag":"new","summary":"요약","body":"본문","link":null}]}
@@ -105,6 +105,10 @@ class AdminNoticesIntegrationTest extends IntegrationTest {
 		assertValidation("""
 				{"title":"제목","publishedAt":"2026-08-03T09:00","items":[
 				  {"tag":"new","summary":"요약","body":"본문","link":{"href":"https://a","label":"  "}}]}
+				""");
+		// 리뷰 결함: items 배열에 null 원소가 오면 item.summary()에서 NPE → 500이었다.
+		assertValidation("""
+				{"title":"제목","publishedAt":"2026-08-03T09:00","items":[null]}
 				""");
 	}
 

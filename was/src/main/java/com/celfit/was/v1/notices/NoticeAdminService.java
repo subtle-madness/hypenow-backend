@@ -62,6 +62,9 @@ public class NoticeAdminService {
 			throw V1ApiException.validation("항목을 1개 이상 입력해 주세요.");
 		}
 		for (NoticeUpsertRequest.Item item : request.items()) {
+			if (item == null) {
+				throw V1ApiException.validation("항목에 빈 값이 있습니다.");
+			}
 			if (item.summary() == null || item.summary().isBlank()) {
 				throw V1ApiException.validation("요약을 입력해 주세요.");
 			}
