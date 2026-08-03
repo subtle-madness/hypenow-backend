@@ -69,7 +69,7 @@ public class RegistrationService {
 	}
 
 	private Result registerAccount(RegisterCommand cmd) {
-		var collected = collect.collectAccount(cmd.username());
+		var collected = collect.collectAccountForRegistration(cmd.username());
 		long id = targets.insert(TargetType.ACCOUNT, cmd.userId(), cmd.username(), null, cmd.keywordRule(),
 				TargetStatus.WATCHING, null, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
@@ -86,7 +86,7 @@ public class RegistrationService {
 	 * 이미 했다(셰이프 이상 → FETCH_FAILED 502). 여기서 다시 보면 upsert가 먼저 터져서 죽은 가드가 된다.
 	 */
 	private Result registerPost(RegisterCommand cmd) {
-		PostInfo post = collect.collectPost(cmd.shortCode());
+		PostInfo post = collect.collectPostForRegistration(cmd.shortCode());
 		// short_code는 Hiker 응답을 정본으로 쓴다 — 스냅샷도 응답값으로 적재되므로, 요청값을 그대로
 		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
 		// null이 아니라 isBlank로 본다 — HikerClient.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
