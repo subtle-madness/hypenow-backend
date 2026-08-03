@@ -1,6 +1,6 @@
 # 업데이트 소식(제품 공지) API 구현 계획
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현됨
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 운영팀이 어드민에서 작성한 제품 업데이트 소식을 유저 대시보드 패널에 서빙하는 `/v1/notices` + `/v1/admin/notices` API를 was 모듈에 추가한다.
