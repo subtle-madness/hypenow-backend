@@ -79,6 +79,24 @@ v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
    → **스윕에서 계정당 `②`+`②'` 2콜을 쏘고 `code` 기준으로 릴스 재생수를 머지**한다(권장·채택).
    CLAUDE.md의 "피드 게시물은 조회수(views)가 항상 NULL"과 정확히 일치.
    `view_count`는 v2에서 항상 `null`(릴스 포함)이므로 후보에서 제외한다.
+4. **(08-02 정정) `play_count`는 세션 의존이라 조회수 정본이 아니다 — `ig_play_count`를 우선한다.**
+   07-29 실측 당시엔 `play_count == ig_play_count`(동일값)였지만, 운영 원형 적재
+   (`raw.fetch_payload` 49건 단건 + 클립 열거) 재실측 결과 Hiker가 콜마다 다른 IG 세션을 태우며,
+   FB 교차게시 데이터가 보이는 세션에서만 `fb_play_count` 키가 실리고 그때
+   `play_count = ig_play_count + fb_play_count`(합산)로 커진다. 그 결과 `play_count` 우선 파싱은
+   같은 릴스 조회수가 **221 → 305 → 222로 역행**하는 "랜덤 조회수"를 만든다(단건 `DX0U76Xy1D2`,
+   클립 열거 `DXx7gtszvSV` 32,264→31,944 등 다수). `ig_play_count`는 전 콜에서 존재했고 단조
+   증가 — **조회수는 `ig_play_count` 우선, `play_count`는 폴백**(HikerClient 2곳: 단건 `toPost`·
+   클립 머지 `fetchClipPlays`). 세션 종류는 Hiker 쪽 풀이라 우리가 고정할 수 없다.
+   **(08-03 확장) 화면(모바일 앱)에 보이는 조회수는 합산값이다** — 저장되는 `post_snapshot.views`는
+   화면 기준을 따르기로 결정(08-03): `views = IG 몫 + fb_plays`. FB 몫이 안 실린 콜(IG 전용 세션)은
+   **직전 관측 `fb_plays`를 캐리포워드**한다(FB 몫은 실측상 며칠 단위 정적 — `DXg4DAUE0NU` 720 고정
+   등 — 이라 오차 미미). 합산 세션 비율은 콜 단위 실측 단건 18.5%·클립 33.3%뿐이라 "실릴 때까지
+   재시도"는 기대 비용 3~5배 — 대신 **fb 관측 이력이 전무한 신규 릴스에 한해 1회만 재조회**
+   (CollectService, 열거는 clips 콜만·단건은 단건 콜). 판별 마커: 합산 세션 응답에만 `fb_*` 키 3종
+   (`fb_play_count`·`fb_like_count`·`fb_comment_count`)이 실리며, 교차게시 없는 릴스도 합산 세션은
+   `fb_play_count: 0`을 준다(키 부재 = 세션이 FB를 못 봄, 0 = 관측된 0 — 이 구분이 캐리포워드·재시도
+   판정 기준).
 
 ---
 
@@ -126,7 +144,7 @@ v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
 |---|---|---|---|
 | `contentType` | `media_type == 2 ? REELS : FEED` | `"clips".equals(product_type)` | 일반 비디오 피드 오분류 방지 |
 | `caption` | `caption_text` → `caption.text` | 동일(유지) | v2는 `caption.text`, 폴백 유지로 무해 |
-| `views` | `play_count`, `view_count` | **`play_count`, `ig_play_count`** | `view_count`는 v2에서 항상 null |
+| `views` | `play_count`, `view_count` | **`ig_play_count`, `play_count`** (08-02 순서 정정 — §2 결론 4) | `view_count`는 v2에서 항상 null. `play_count`는 세션 따라 FB 합산 여부가 바뀌어 역행함 |
 | `saves` | `save_count`, `saved_count` | **`save_count`** | `saved_count`는 존재하지 않음 |
 | `shares` | `share_count` | **`reshare_count`** | `share_count`는 존재하지 않음(`share_count_disabled` 불리언만 있음) |
 | `reposts` | `reshare_count`, `repost_count` | **`media_repost_count`** | `reshare_count`는 공유 지표로 이동, `repost_count`는 없음 |
