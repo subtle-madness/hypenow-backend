@@ -134,7 +134,21 @@ class AlarmRecorderTest {
 
 		var row = allEvents().getFirst();
 		assertThat(row.get("event_type")).isEqualTo("METRICS_HIDDEN");
-		assertThat(row.get("payload").toString()).contains("views").contains("saves");
+		assertThat(row.get("payload").toString()).contains("views").doesNotContain("saves");
+	}
+
+	/** 화면 문구는 조회수·좋아요수·댓글수 3종이다 — 저장·공유·리포스트 전이는 알람 대상이 아니다. */
+	@Test
+	void 저장_공유_리포스트_전이는_이벤트가_아니다() {
+		tracking(7L, "SC1", "rk-1");
+		seedYesterday("REELS", 100L, 5000L, 20L);   // reposts=1도 함께 시드된다
+
+		// 판정 3종(likes·comments·views)은 그대로, saves·reposts만 값→null 전이
+		recorder.recordMetricsHidden(LocalDate.of(2026, 7, 30),
+				new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1_785_000_000L,
+						100L, 5L, 5000L, null, null, null, null, "{}", true));
+
+		assertThat(allEvents()).isEmpty();
 	}
 
 	/** 좋아요 숨김은 파서가 likes를 null로 내린다(HikerClient) — 그 전이가 알람까지 이어져야 한다. */
