@@ -68,7 +68,7 @@ class AlarmRecorderTest {
 
 	private PostInfo post(String contentType, Long likes, Long views, Long saves, boolean viewsTrusted) {
 		return new PostInfo("SC1", "acct_a", null, null, contentType, "캡션", null, 1_785_000_000L,
-				likes, 5L, views, saves, null, 1L, "{}", viewsTrusted);
+				likes, 5L, views, null, saves, null, 1L, "{}", viewsTrusted);
 	}
 
 	private void seedYesterday(String contentType, Long likes, Long views, Long saves) {
@@ -135,6 +135,19 @@ class AlarmRecorderTest {
 		var row = allEvents().getFirst();
 		assertThat(row.get("event_type")).isEqualTo("METRICS_HIDDEN");
 		assertThat(row.get("payload").toString()).contains("views").contains("saves");
+	}
+
+	/** 좋아요 숨김은 파서가 likes를 null로 내린다(HikerClient) — 그 전이가 알람까지 이어져야 한다. */
+	@Test
+	void 좋아요가_값에서_null로_바뀌면_비공개_이벤트를_남긴다() {
+		tracking(7L, "SC1", "rk-1");
+		seedYesterday("REELS", 83L, 5000L, 20L);
+
+		recorder.recordMetricsHidden(LocalDate.of(2026, 7, 30), post("REELS", null, 5000L, 20L, true));
+
+		var row = allEvents().getFirst();
+		assertThat(row.get("event_type")).isEqualTo("METRICS_HIDDEN");
+		assertThat(row.get("payload").toString()).contains("likes");
 	}
 
 	/** 피드는 조회·저장·공유 키가 응답에 아예 없다 — 상시 null을 비교하면 매일 오탐이 나간다. */

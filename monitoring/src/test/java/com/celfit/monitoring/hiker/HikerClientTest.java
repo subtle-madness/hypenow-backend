@@ -223,6 +223,32 @@ class HikerClientTest {
 		assertThat(posts).allSatisfy(p -> assertThat(p.views()).isNull());
 	}
 
+	// ── 좋아요 숨김(08-03) ──────────────────────────────────────────────────
+	// 운영 raw.fetch_payload 실측: like_and_view_counts_disabled=true인 게시물은 like_count가
+	// 실측이 아니라 프리뷰 잔여값(서로 다른 두 게시물이 똑같이 3)으로 잘려 온다. 그대로 저장하면
+	// 화면에 83→3 급감으로 보이고 비공개 감지(값→null 전이)도 안 걸린다 — 취득 불가로 null 처리.
+
+	@Test
+	void 좋아요_숨김이면_like_count는_프리뷰_잔여값이라_null_처리한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":3,
+				"like_and_view_counts_disabled":true,"comment_count":13,
+				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.likes()).isNull();
+		// 숨김은 좋아요만 잘린다 — 댓글·조회수는 실측값이 계속 온다(운영 실측: ig_play_count 단조 증가)
+		assertThat(p.comments()).isEqualTo(13L);
+		assertThat(p.views()).isEqualTo(1551L);
+	}
+
+	@Test
+	void 숨김_플래그가_없거나_false면_like_count를_그대로_쓴다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":83,
+				"like_and_view_counts_disabled":false,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").likes()).isEqualTo(83L);
+	}
+
 	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */
 	@Test
 	void 단건_응답에_소유_계정이_없으면_HikerFetch로() {
@@ -237,6 +263,107 @@ class HikerClientTest {
 		HikerClient client = new HikerClient(path -> "{\"num_results\":0,\"items\":[]}");
 		assertThatThrownBy(() -> client.fetchPost("gone"))
 				.isInstanceOf(SubjectNotFoundException.class);
+	}
+
+	// ── 조회수 세션 일관성(08-02) ─────────────────────────────────────────────
+	// 운영 raw.fetch_payload 실측: Hiker가 콜마다 다른 IG 세션을 태우는데, FB 교차게시 데이터가
+	// 보이는 세션에서는 play_count = ig_play_count + fb_play_count(합산)이고, 아닌 세션에서는
+	// fb_play_count 키가 아예 없고 play_count == ig_play_count다. 그래서 play_count를 우선하면
+	// 같은 게시물 조회수가 콜마다 오르내린다(DX0U76Xy1D2: 221 → 305 → 222 역행 실측).
+	// ig_play_count는 전 콜에서 존재했고 단조 증가 — 조회수의 정본은 ig_play_count다.
+
+	@Test
+	void 단건_조회수는_세션따라_흔들리는_play_count가_아니라_ig_play_count를_쓴다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.views()).isEqualTo(222L);
+		assertThat(p.fbPlays()).isEqualTo(83L);   // FB 몫은 별도 보존 — 저장 시 views 합산 재료
+	}
+
+	/** fb 키 부재(IG 전용 세션)와 fb=0(합산 세션이지만 FB 재생 0)은 다르다 — 캐리포워드·재시도 판정 기준. */
+	@Test
+	void fb_play_count_키_부재는_null이고_0은_0이다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":222,"ig_play_count":222,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").fbPlays()).isNull();
+
+		HikerClient zero = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":222,"ig_play_count":222,"fb_play_count":0,"user":{"username":"acct"}}]}""");
+		assertThat(zero.fetchPost("Xx1").fbPlays()).isEqualTo(0L);
+	}
+
+	/**
+	 * fb 키 없이도 합산 play를 주는 세션이 있다(운영 실측 DUrj0iGEn6G: play 570,331 vs ig 512,077,
+	 * fb 키 부재) — play > ig면 fb 몫을 play - ig로 유도해 관측으로 인정한다. fb 키가 있을 때
+	 * play - ig == fb임은 실측 검산됨(305-222=83 등). fb 키가 0인데 play > ig인 모순 응답
+	 * (DPQoGI1APa_)도 화면값(play) 기준으로 유도값을 우선한다.
+	 */
+	@Test
+	void fb_키가_없어도_play가_ig보다_크면_차이를_fb몫으로_유도한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":570331,"ig_play_count":512077,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.views()).isEqualTo(512077L);
+		assertThat(p.fbPlays()).isEqualTo(58254L);
+	}
+
+	@Test
+	void fb_키가_0이어도_play가_ig보다_크면_유도값을_우선한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":916881,"ig_play_count":869438,"fb_play_count":0,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").fbPlays()).isEqualTo(47443L);
+	}
+
+	/** 방어: ig 키가 없는 응답이 오면 play - fb로 IG 몫을 복원한다(합산 이중 계상 방지). */
+	@Test
+	void ig_play_count가_없으면_play에서_fb를_빼서_IG_몫을_복원한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":305,"fb_play_count":83,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.views()).isEqualTo(222L);
+		assertThat(p.fbPlays()).isEqualTo(83L);
+	}
+
+	@Test
+	void 열거_클립_머지_조회수도_ig_play_count를_쓰고_fb몫도_머지된다() {
+		HikerClient client = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/clips")) {
+				return """
+						{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+						"play_count":305,"ig_play_count":222,"fb_play_count":83}}],
+						"paging_info":{"more_available":false}},"next_page_id":null}""";
+			}
+			return """
+					{"response":{"items":[{"code":"ReelA","taken_at":1700000000,"product_type":"clips",
+					"like_count":1,"comment_count":1,"media_repost_count":1}],
+					"more_available":false},"next_page_id":null}""";
+		});
+		var posts = client.fetchRecentPosts("acct", "999", 1);
+		assertThat(posts).hasSize(1);
+		assertThat(posts.getFirst().views()).isEqualTo(222L);
+		assertThat(posts.getFirst().fbPlays()).isEqualTo(83L);
+	}
+
+	/** 클립 콜만 따로 재조회하는 재시도 경로용 — 코드별 IG·FB 몫을 그대로 돌려준다. */
+	@Test
+	void fetchClipCounts는_코드별_IG_FB_몫을_준다() {
+		HikerClient client = new HikerClient(path -> """
+				{"response":{"items":[
+				{"media":{"code":"ReelA","play_count":305,"ig_play_count":222,"fb_play_count":83}},
+				{"media":{"code":"ReelB","play_count":10,"ig_play_count":10}}],
+				"paging_info":{"more_available":false}},"next_page_id":null}""");
+		var counts = client.fetchClipCounts("999", 1);
+		assertThat(counts.get("ReelA").igPlays()).isEqualTo(222L);
+		assertThat(counts.get("ReelA").fbPlays()).isEqualTo(83L);
+		assertThat(counts.get("ReelB").igPlays()).isEqualTo(10L);
+		assertThat(counts.get("ReelB").fbPlays()).isNull();
 	}
 
 	// ── 댓글(§10-1) ──────────────────────────────────────────────────────────

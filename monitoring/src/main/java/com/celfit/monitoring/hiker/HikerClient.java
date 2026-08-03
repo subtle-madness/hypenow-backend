@@ -29,8 +29,11 @@ public class HikerClient {
 		this.http = http;
 	}
 
+	/** 코드별 재생수 몫 — igPlays는 IG 전용, fbPlays는 null(키 부재)과 0(관측된 0)을 구분한다. */
+	public record ClipCounts(Long igPlays, Long fbPlays) {}
+
 	/** 클립 보강 결과 — complete=false면 조회수 null이 "부재"가 아니라 "미취득"이다(오탐 방지 근거). */
-	private record ClipPlays(Map<String, Long> plays, boolean complete) {}
+	private record ClipPlays(Map<String, ClipCounts> plays, boolean complete) {}
 
 	public ProfileInfo fetchProfile(String username) {
 		String body = http.get("/v2/user/by/username?username=" + enc(username));
@@ -100,9 +103,17 @@ public class HikerClient {
 		return out;
 	}
 
+	/**
+	 * 클립 콜만 따로 다시 부르는 재시도 경로용(최초 1회 재시도 — CollectService) — 코드별 IG·FB 몫.
+	 * 실패는 fetchClipPlays와 같은 규칙으로 삼킨다(재시도는 최선 노력, 빈 맵이면 머지가 안 일어날 뿐).
+	 */
+	public Map<String, ClipCounts> fetchClipCounts(String userId, int pages) {
+		return fetchClipPlays(userId, pages).plays();
+	}
+
 	/** 릴스 재생수 보강 — /v2/user/clips는 items[].media로 한 겹 더 감싼다. 실패해도 스윕은 계속(조회수만 null). */
 	private ClipPlays fetchClipPlays(String userId, int pages) {
-		Map<String, Long> plays = new HashMap<>();
+		Map<String, ClipCounts> plays = new HashMap<>();
 		try {
 			String cursor = null;
 			for (int page = 0; page < pages; page++) {
@@ -110,9 +121,9 @@ public class HikerClient {
 				int before = plays.size();
 				for (JsonNode item : root.path("response").path("items")) {
 					JsonNode m = item.path("media");
-					Long play = firstLong(m, "play_count", "ig_play_count");
-					if (play != null) {
-						plays.put(m.path("code").asString(), play);
+					ClipCounts counts = playCounts(m);
+					if (counts.igPlays() != null) {
+						plays.put(m.path("code").asString(), counts);
 					}
 				}
 				if (page > 0 && plays.size() == before) {   // 열거와 동일한 커서 전진 가드
@@ -290,7 +301,7 @@ public class HikerClient {
 	}
 
 	private static PostInfo toPost(JsonNode node, String usernameHint, String rawJson,
-			Map<String, Long> clipPlays, boolean viewsTrusted) {
+			Map<String, ClipCounts> clipPlays, boolean viewsTrusted) {
 		JsonNode m = node.has("media") ? node.path("media") : node;   // clips 열거는 한 겹 더 감쌈
 		String code = m.path("code").asString();
 		String username = usernameHint != null ? usernameHint : m.path("user").path("username").asString(null);
@@ -303,15 +314,45 @@ public class HikerClient {
 		String caption = m.path("caption_text").isMissingNode()
 				? m.path("caption").path("text").asString(null) : m.path("caption_text").asString(null);
 		// view_count 키는 v2 응답에 부재 → 후보에서 제외. 열거 응답엔 play_count가 없어 clips 머지로 보강.
-		Long views = firstLong(m, "play_count", "ig_play_count");
+		// views는 IG 몫(ig_play_count 우선), fbPlays는 FB 몫 — play_count는 세션 따라 FB 합산 여부가
+		// 바뀌어 역행하므로(findings §2 결론 4) 정본이 아니다. 화면 합산은 저장 계층이 조립한다.
+		ClipCounts own = playCounts(m);
+		ClipCounts clip = clipPlays.get(code);
+		Long views = own.igPlays() != null ? own.igPlays() : clip != null ? clip.igPlays() : null;
+		Long fbPlays = own.fbPlays() != null ? own.fbPlays() : clip != null ? clip.fbPlays() : null;
+		// 좋아요 숨김(like_and_view_counts_disabled) 시 like_count는 실측이 아니라 프리뷰 잔여값이다
+		// (운영 실측 08-03: 서로 다른 두 게시물이 똑같이 3) — 취득 불가로 null 처리해야 값→null 전이가
+		// METRICS_HIDDEN 감지에 걸린다. 댓글·조회수는 숨김과 무관하게 실측이 계속 온다.
+		Long likes = m.path("like_and_view_counts_disabled").asBoolean(false)
+				? null : firstLong(m, "like_count");
 		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, contentType, caption, thumbnailUrl(m),
 				firstLong(m, "taken_at"),
-				firstLong(m, "like_count"), firstLong(m, "comment_count"),
-				views != null ? views : clipPlays.get(code),
+				likes, firstLong(m, "comment_count"),
+				views, fbPlays,
 				firstLong(m, "save_count"),          // 릴스 전용 — 피드·캐러셀은 키 부재 → null
 				firstLong(m, "reshare_count"),       // 공유. 릴스 전용
 				firstLong(m, "media_repost_count"),  // 리포스트. 전 타입 제공
 				rawJson, viewsTrusted);
+	}
+
+	/**
+	 * media 노드에서 IG·FB 재생수 몫 추출. ig_play_count가 없는 응답(미실측 셰이프 방어)에서는
+	 * play_count - fb_play_count로 IG 몫을 복원한다 — play_count를 그대로 views에 두면 저장 계층의
+	 * fb 합산과 겹쳐 FB 몫이 이중 계상된다.
+	 *
+	 * <p>FB 몫은 play > ig면 play - ig로 유도한다(fb 키보다 우선) — fb 키 없이 합산 play만 주는
+	 * 세션(실측 DUrj0iGEn6G)과 fb 키가 0인데 play > ig인 모순 세션(DPQoGI1APa_)이 실존하고,
+	 * fb 키가 정상일 때는 play - ig == fb라 결과가 같다(실측 검산). 화면 표시값이 play이므로
+	 * 유도값이 화면 기준에 더 충실하다.
+	 */
+	private static ClipCounts playCounts(JsonNode m) {
+		Long ig = firstLong(m, "ig_play_count");
+		Long fb = firstLong(m, "fb_play_count");
+		Long play = firstLong(m, "play_count");
+		// Long.valueOf 명시 박싱 — primitive(play-fb)와 Long(play) 혼합 삼항은 null 언박싱 NPE를 낸다
+		Long igPlays = ig != null ? ig : play != null && fb != null ? Long.valueOf(play - fb) : play;
+		Long fbPlays = igPlays != null && play != null && play > igPlays ? Long.valueOf(play - igPlays) : fb;
+		return new ClipCounts(igPlays, fbPlays);
 	}
 
 	/** post_meta 썸네일(계약 §3) — image_versions2.candidates[0].url. 픽스처 실측(2026-07-30): 전 게시물 존재, 없으면 null. */
