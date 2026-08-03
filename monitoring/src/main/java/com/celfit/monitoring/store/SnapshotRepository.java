@@ -45,6 +45,16 @@ public class SnapshotRepository {
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
 		Long views = p.views() == null ? null : p.views() + (fb != null ? fb : 0);
+		if (p.fbPlays() != null) {
+			// 역전파 — fb를 처음 관측하면 이전의 미관측 행에도 소급 적용한다. 안 하면 fb 관측 시작일에
+			// 시계열이 +fb만큼 점프해 성과 추이가 "증가"로 오표시된다(FB 몫은 실측상 정적이라 소급이
+			// 근사적으로 정확). fb_plays가 이미 있는 행(관측·캐리포워드)은 건드리지 않는다 — 이중 가산 금지.
+			// 대부분의 콜에서 0행 UPDATE(이미 전파됨)라 비용은 무시 가능.
+			db.update("""
+					UPDATE post_snapshot SET fb_plays = ?, views = views + ?
+					WHERE short_code = ? AND captured_on < ? AND fb_plays IS NULL AND views IS NOT NULL""",
+					p.fbPlays(), p.fbPlays(), p.shortCode(), on);
+		}
 		db.update("""
 				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
 				                           likes, comments, views, fb_plays, saves, shares, reposts)
