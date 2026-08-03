@@ -223,6 +223,32 @@ class HikerClientTest {
 		assertThat(posts).allSatisfy(p -> assertThat(p.views()).isNull());
 	}
 
+	// ── 좋아요 숨김(08-03) ──────────────────────────────────────────────────
+	// 운영 raw.fetch_payload 실측: like_and_view_counts_disabled=true인 게시물은 like_count가
+	// 실측이 아니라 프리뷰 잔여값(서로 다른 두 게시물이 똑같이 3)으로 잘려 온다. 그대로 저장하면
+	// 화면에 83→3 급감으로 보이고 비공개 감지(값→null 전이)도 안 걸린다 — 취득 불가로 null 처리.
+
+	@Test
+	void 좋아요_숨김이면_like_count는_프리뷰_잔여값이라_null_처리한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":3,
+				"like_and_view_counts_disabled":true,"comment_count":13,
+				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.likes()).isNull();
+		// 숨김은 좋아요만 잘린다 — 댓글·조회수는 실측값이 계속 온다(운영 실측: ig_play_count 단조 증가)
+		assertThat(p.comments()).isEqualTo(13L);
+		assertThat(p.views()).isEqualTo(1551L);
+	}
+
+	@Test
+	void 숨김_플래그가_없거나_false면_like_count를_그대로_쓴다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":83,
+				"like_and_view_counts_disabled":false,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").likes()).isEqualTo(83L);
+	}
+
 	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */
 	@Test
 	void 단건_응답에_소유_계정이_없으면_HikerFetch로() {
@@ -268,6 +294,30 @@ class HikerClientTest {
 				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":222,"ig_play_count":222,"fb_play_count":0,"user":{"username":"acct"}}]}""");
 		assertThat(zero.fetchPost("Xx1").fbPlays()).isEqualTo(0L);
+	}
+
+	/**
+	 * fb 키 없이도 합산 play를 주는 세션이 있다(운영 실측 DUrj0iGEn6G: play 570,331 vs ig 512,077,
+	 * fb 키 부재) — play > ig면 fb 몫을 play - ig로 유도해 관측으로 인정한다. fb 키가 있을 때
+	 * play - ig == fb임은 실측 검산됨(305-222=83 등). fb 키가 0인데 play > ig인 모순 응답
+	 * (DPQoGI1APa_)도 화면값(play) 기준으로 유도값을 우선한다.
+	 */
+	@Test
+	void fb_키가_없어도_play가_ig보다_크면_차이를_fb몫으로_유도한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":570331,"ig_play_count":512077,"user":{"username":"acct"}}]}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.views()).isEqualTo(512077L);
+		assertThat(p.fbPlays()).isEqualTo(58254L);
+	}
+
+	@Test
+	void fb_키가_0이어도_play가_ig보다_크면_유도값을_우선한다() {
+		HikerClient client = new HikerClient(path -> """
+				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":916881,"ig_play_count":869438,"fb_play_count":0,"user":{"username":"acct"}}]}""");
+		assertThat(client.fetchPost("Xx1").fbPlays()).isEqualTo(47443L);
 	}
 
 	/** 방어: ig 키가 없는 응답이 오면 play - fb로 IG 몫을 복원한다(합산 이중 계상 방지). */
