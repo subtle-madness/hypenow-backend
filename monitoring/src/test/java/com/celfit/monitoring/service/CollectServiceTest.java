@@ -184,11 +184,11 @@ class CollectServiceTest {
 	private static String singlePost(boolean withFb) {
 		return withFb
 				? """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}}]}"""
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}},"status":"ok"}"""
 				: """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":222,"ig_play_count":222,"user":{"username":"acct"}}]}""";
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":222,"ig_play_count":222,"user":{"username":"acct"}},"status":"ok"}""";
 	}
 
 	@Test

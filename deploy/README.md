@@ -218,7 +218,9 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
   - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 3일 롤링 +
     B2 `hypenow-backups/monitoring/` 7일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
-- 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
+- 복원 리허설(로컬): `zstdcat analysis-*.sql.zst | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
+  (08-04 이전 덤프는 `.sql.gz` — `gunzip -c`로. 압축은 08-04 gzip→zstd 전환: 2 vCPU에서
+  gzip이 백업 CPU를 알람 문턱 직하까지 밀어 올려서다)
 
 ### 6-1. rclone(Backblaze B2) 1회 설정
 ```bash
@@ -315,7 +317,7 @@ Caddy는 사이트 블록 단위로 로거를 붙이므로, `log` 지시어가 �
 1. 새 Ubuntu 서버: §3 최초 기동 그대로 (rsync → setup → .env → up)
 2. 데이터: `pull-backup.sh`의 최신 덤프를 새 서버에 넣고
    `cd ~/deploy && set -a && source .env && set +a` 후
-   `gunzip -c dump.sql.gz | docker compose exec -T postgres psql -U $DB_USER -d analysis`
+   `zstdcat dump.sql.zst | docker compose exec -T postgres psql -U $DB_USER -d analysis`
    (또는 로컬 raw에서 미러 재실행 — §4)
 3. DNS A레코드를 새 IP로 변경 → caddy가 인증서 자동 재발급
 
@@ -582,7 +584,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
   임시 중단은 `"-"`로 두고 재기동 — 대장(`alarm_event`)에 PENDING으로 쌓였다가 다시 켜면 그대로 나간다
   (워터마크가 없어 중단 구간 유실이 없다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
-  서버 `~/backups/monitoring-*.sql.gz` 7일 + B2 `hypenow-backups/monitoring/` 30일 롤링(§6).
+  서버 `~/backups/monitoring-*.sql.zst` 3일 + B2 `hypenow-backups/monitoring/` 7일 롤링(§6).
 
 ## 14. Grafana 서비스 현황 대시보드 (07-31~)
 
