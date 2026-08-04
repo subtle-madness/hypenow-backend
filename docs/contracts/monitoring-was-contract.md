@@ -5,7 +5,7 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.5 (게시물 썸네일 아카이브 — 2026-08-01)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.6 (좋아요 숨김 관측 플래그 — 2026-08-03)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
@@ -20,7 +20,10 @@
 > `image_source_name`·`image_archived_at` 추가, was는 아카이브본을 우선 서빙,
 > `feat/monitoring-profile-image-archive`) → **v2.5**(2026-08-01, 게시물 썸네일 아카이브(트랙 KK
 > 확장, v2.4와 동형) — `post_meta`에도 `image_object_path`·`image_source_name`·`image_archived_at`
-> 추가, was는 `post.thumbnailUrl`도 아카이브본을 우선 서빙, `fix/monitoring-post-thumbnail-archive`).
+> 추가, was는 `post.thumbnailUrl`도 아카이브본을 우선 서빙, `fix/monitoring-post-thumbnail-archive`)
+> → **v2.6**(2026-08-03, 좋아요 숨김 관측 플래그 — `post_snapshot.likes_hidden` 추가, was는
+> Snapshot 응답에 `likesHidden`으로 노출해 FE가 "숨김"과 "수집 실패"를 구분 표시,
+> `feat/likes-hidden-flag`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -245,13 +248,18 @@ profile_snapshot(username, captured_on date, followers, following, media_count)
                  PK (username, captured_on) — 일 1회 upsert. 컬럼은 이 5개가 전부다
 
 post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
-              likes, comments, views, saves, shares, reposts)
+              likes, likes_hidden boolean NOT NULL default false,
+              comments, views, saves, shares, reposts)
               PK (short_code, captured_on) — 일 1회 upsert
 ```
 
 - 지표 6종: 좋아요·댓글·조회·저장·공유·리포스트. **취득 불가 지표는 null**
   (예: 피드 조회수 — 항상 null. Hiker 필드 매핑의 정본은
   [plans/2026-07-28-monitoring-hiker-findings.md](../superpowers/plans/2026-07-28-monitoring-hiker-findings.md)).
+- `likes_hidden` **(v2.6)**: 게시자의 좋아요 수 숨김(`like_and_view_counts_disabled`) 관측.
+  숨김이면 like_count가 실측이 아니라 프리뷰 잔여값으로 잘려 와(운영 실측 08-03: 서로 다른
+  두 게시물이 똑같이 3) likes를 null로 저장하는데, was·FE가 "숨김"(행 있음 + true)과
+  "그날 수집 실패"(행 부재)를 구분 표시하는 유일한 신호가 이 플래그다. 해제 관측 시 false 복귀.
 - 캠페인 추이는 target을 조인해 본다: `target.username` → profile_snapshot,
   `target.tracked_short_code` → post_snapshot.
 

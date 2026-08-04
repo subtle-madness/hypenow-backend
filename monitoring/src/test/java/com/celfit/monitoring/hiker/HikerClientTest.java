@@ -236,6 +236,8 @@ class HikerClientTest {
 				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}}]}""");
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.likes()).isNull();
+		// "숨김"과 "수집 실패"를 FE가 구분해야 해서 null과 별개로 플래그를 관통시킨다
+		assertThat(p.likesHidden()).isTrue();
 		// 숨김은 좋아요만 잘린다 — 댓글·조회수는 실측값이 계속 온다(운영 실측: ig_play_count 단조 증가)
 		assertThat(p.comments()).isEqualTo(13L);
 		assertThat(p.views()).isEqualTo(1551L);
@@ -246,7 +248,9 @@ class HikerClientTest {
 		HikerClient client = new HikerClient(path -> """
 				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":83,
 				"like_and_view_counts_disabled":false,"user":{"username":"acct"}}]}""");
-		assertThat(client.fetchPost("Xx1").likes()).isEqualTo(83L);
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.likes()).isEqualTo(83L);
+		assertThat(p.likesHidden()).isFalse();
 	}
 
 	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */

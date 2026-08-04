@@ -60,11 +60,16 @@ public record TrackingItemResponse(
 			List<PostCommentResponse> recentComments) {
 	}
 
-	/** Snapshot(6.25) — 하루치 누적 지표. FEED는 views·shares·reposts를 어셈블러가 null로 강제한다. */
+	/**
+	 * Snapshot(6.25) — 하루치 누적 지표. FEED는 views·shares·reposts를 어셈블러가 null로 강제한다.
+	 * likesHidden은 게시자의 좋아요 수 숨김 관측(추가 필드, 하위 호환) — true면 likes는 null이고
+	 * FE는 "-" 대신 숨김 상태로 구분 표시한다. 날짜 자체가 없는 것(수집 실패)과 다른 상태다.
+	 */
 	public record SnapshotResponse(
 			String date,
 			Long views,
 			Long likes,
+			boolean likesHidden,
 			Long comments,
 			Long saves,
 			Long shares,
