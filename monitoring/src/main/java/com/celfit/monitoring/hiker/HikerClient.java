@@ -29,8 +29,18 @@ public class HikerClient {
 		this.http = http;
 	}
 
-	/** 코드별 재생수 몫 — igPlays는 IG 전용, fbPlays는 null(키 부재)과 0(관측된 0)을 구분한다. */
-	public record ClipCounts(Long igPlays, Long fbPlays) {}
+	/**
+	 * 코드별 관측 지표 — igPlays는 IG 전용, fbPlays는 null(키 부재)과 0(관측된 0)을 구분한다.
+	 * saves·shares·reposts도 함께 나른다(08-04): 저장·리포스트 키는 세션 복권(콜 단위 전부/전무,
+	 * clips 존재율 ~45%)이라 clips 관측을 버리면 medias(~30%)보다 좋은 공급원을 매일 흘리게 된다.
+	 */
+	public record ClipCounts(Long igPlays, Long fbPlays, Long saves, Long shares, Long reposts) {
+
+		/** 저장·공유·리포스트 중 하나라도 실렸는가 — 세션 복권 당첨 판정(재시도 중단 기준). */
+		public boolean hasMetricKeys() {
+			return saves != null || shares != null || reposts != null;
+		}
+	}
 
 	/** 클립 보강 결과 — complete=false면 조회수 null이 "부재"가 아니라 "미취득"이다(오탐 방지 근거). */
 	private record ClipPlays(Map<String, ClipCounts> plays, boolean complete) {}
@@ -122,7 +132,8 @@ public class HikerClient {
 				for (JsonNode item : root.path("response").path("items")) {
 					JsonNode m = item.path("media");
 					ClipCounts counts = playCounts(m);
-					if (counts.igPlays() != null) {
+					// 재생수 없는 셰이프여도 저장·리포스트 관측(세션 복권 당첨분)은 버리지 않는다.
+					if (counts.igPlays() != null || counts.hasMetricKeys()) {
 						plays.put(m.path("code").asString(), counts);
 					}
 				}
@@ -144,13 +155,16 @@ public class HikerClient {
 	}
 
 	public PostInfo fetchPost(String shortCode) {
-		String body = http.get("/v2/media/by/code?code=" + enc(shortCode));
-		List<JsonNode> items = items(root(body));
-		if (items.isEmpty()) {
-			throw new SubjectNotFoundException("게시물 응답이 비어 있음: " + shortCode);
+		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
+		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
+		String body = http.get("/v2/media/info/by/code?code=" + enc(shortCode));
+		JsonNode media = root(body).path("media_or_ad");
+		if (media.isMissingNode() || media.isNull()) {
+			// 실존 부재는 전송 계층 404가 정상 경로 — 200인데 media_or_ad가 없는 건 부재로 강등한다.
+			throw new SubjectNotFoundException("게시물 응답에 media_or_ad 없음: " + shortCode);
 		}
 		// 단건 응답에는 play_count가 그대로 실린다 — clips 보강 경로를 타지 않으므로 조회수는 항상 신뢰 가능하다.
-		PostInfo post = toPost(items.getFirst(), null, body, Map.of(), true);
+		PostInfo post = toPost(media, null, body, Map.of(), true);
 		// 단건 응답에는 usernameHint가 없어 소유 계정을 user.username에서만 얻는다.
 		// 없으면 스냅샷 적재(post_snapshot.username NOT NULL)도 target 등록도 불가 → 셰이프 이상으로 본다.
 		if (post.username() == null) {
@@ -308,6 +322,9 @@ public class HikerClient {
 		// user 노드에서 같이 뽑는다(제로 콜 원칙, 트랙 II) — 단건 응답에만 실값, 열거 경로는 소비처 없음.
 		String ownerFullName = m.path("user").path("full_name").asString(null);
 		String ownerProfilePicUrl = m.path("user").path("profile_pic_url").asString(null);
+		// 소유 계정 IG pk — 프로필의 user.pk처럼 JSON number라 asString 코어션(findings §2-①).
+		// POST 등록만 있는 계정의 clips 재시도(저장·리포스트 보강)가 user_id로 쓴다.
+		String ownerUserId = m.path("user").path("pk").isNumber() ? m.path("user").path("pk").asString() : null;
 		// media_type==2는 일반 비디오 피드도 포함 → 릴스 판별은 product_type(findings §4)
 		String contentType = "clips".equals(m.path("product_type").asString("")) ? "REELS" : "FEED";
 		// v2는 caption.text, v1은 caption_text — caption 자체가 null일 수 있다
@@ -325,13 +342,17 @@ public class HikerClient {
 		// METRICS_HIDDEN 감지에 걸린다. 댓글·조회수는 숨김과 무관하게 실측이 계속 온다.
 		boolean likesHidden = m.path("like_and_view_counts_disabled").asBoolean(false);
 		Long likes = likesHidden ? null : firstLong(m, "like_count");
-		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, contentType, caption, thumbnailUrl(m),
-				firstLong(m, "taken_at"),
+		// 저장·공유·리포스트는 세션 복권(콜 단위 전부/전무, 08-04 실측) — 이 응답이 꽝이어도
+		// 같은 스윕의 clips 콜이 당첨이면 그 관측으로 채운다(조회수 머지와 같은 상호보완).
+		// 피드는 저장·공유 키가 전 세션 부재라 own·clip 모두 null → 기존 영구 null 규칙 그대로.
+		Long saves = own.saves() != null ? own.saves() : clip != null ? clip.saves() : null;
+		Long shares = own.shares() != null ? own.shares() : clip != null ? clip.shares() : null;
+		Long reposts = own.reposts() != null ? own.reposts() : clip != null ? clip.reposts() : null;
+		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType, caption,
+				thumbnailUrl(m), firstLong(m, "taken_at"),
 				likes, firstLong(m, "comment_count"),
 				views, fbPlays,
-				firstLong(m, "save_count"),          // 릴스 전용 — 피드·캐러셀은 키 부재 → null
-				firstLong(m, "reshare_count"),       // 공유. 릴스 전용
-				firstLong(m, "media_repost_count"),  // 리포스트. 전 타입 제공
+				saves, shares, reposts,
 				rawJson, viewsTrusted, likesHidden);
 	}
 
@@ -352,7 +373,8 @@ public class HikerClient {
 		// Long.valueOf 명시 박싱 — primitive(play-fb)와 Long(play) 혼합 삼항은 null 언박싱 NPE를 낸다
 		Long igPlays = ig != null ? ig : play != null && fb != null ? Long.valueOf(play - fb) : play;
 		Long fbPlays = igPlays != null && play != null && play > igPlays ? Long.valueOf(play - igPlays) : fb;
-		return new ClipCounts(igPlays, fbPlays);
+		return new ClipCounts(igPlays, fbPlays,
+				firstLong(m, "save_count"), firstLong(m, "reshare_count"), firstLong(m, "media_repost_count"));
 	}
 
 	/** post_meta 썸네일(계약 §3) — image_versions2.candidates[0].url. 픽스처 실측(2026-07-30): 전 게시물 존재, 없으면 null. */
