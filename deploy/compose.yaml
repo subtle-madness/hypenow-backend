@@ -6,6 +6,16 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+# 메모리 격리 (08-04) — 전 서비스 mem_limit + oom_score_adj. 상한은 느슨한 오버커밋(평소치·
+# 힙 상한 × 1.5~2, 합계 ~15.7G > 물리 12G 의도) — 단일 컨테이너 폭주가 호스트 OOM으로 번져
+# 무고한 컨테이너(postgres 등)가 죽는 경로만 차단하고 평소 운영엔 무영향. oom_score_adj는
+# 동시 폭주로 그래도 호스트 OOM에 몰렸을 때의 희생 순서: test +800 → 배치(crawler·analytics)
+# +500 → 기본 0 → was -300(자동 재기동되는 가용성 문제) → postgres×2·caddy·ons-relay -800
+# (데이터·전면 다운·알람 실명 — 영향 비대칭). 커널 선정은 RSS 비율(≈RSS/전체×1000)+adj라
+# ±100으론 순서가 안 뒤집히고, -1000은 사살 불가(극단 상황 커널 패닉)라 금지. postgres류
+# 상한은 페이지 캐시가 cgroup에 동반 과금되는 특성상 OOM이 아니라 캐시 축소(쿼리 지연)로
+# 먼저 발현 — 미러 잡이 느려지면 postgres-raw 상한만 상향하면 된다.
+#
 # 네트워크 분리 (07-29) — 운영(prod)과 test 스테이징(test)을 브리지로 격리해 test→운영
 # 경로를 커널(iptables) 수준에서 차단한다. 커스텀 네트워크 선언 시 compose 기본 네트워크가
 # 사라지므로 모든 서비스에 networks: 명시 필수(누락 = 통신 고립). 의도된 공유 접점 둘만
@@ -36,6 +46,8 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 1536m
+    oom_score_adj: -800
     networks: [prod]
     environment:
       POSTGRES_DB: analysis
@@ -56,6 +68,8 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 2g   # raw 대용량(덤프 11GiB급) — 미러 잡 페이지 캐시 몫을 analysis보다 여유 있게
+    oom_score_adj: -800
     networks: [prod, test]   # test-analytics가 analytics_dev 계정으로 raw를 읽는다 — 의도된 공유 접점
     environment:
       POSTGRES_DB: crawler
@@ -78,6 +92,8 @@ services:
     image: ghcr.io/subtle-madness/hypenow-analytics:latest
     restart: unless-stopped
     logging: *logging
+    mem_limit: 1280m   # 힙 768m + 오프힙 여유
+    oom_score_adj: 500   # 지정 희생양 — 재기동 무해 배치, 새벽 폭주 주범이 먼저 죽게
     networks: [prod]
     environment:
       APP_DATASOURCE_RAW_JDBC_URL: jdbc:postgresql://postgres-raw:5432/crawler
@@ -124,6 +140,8 @@ services:
     image: ghcr.io/subtle-madness/hypenow-crawler:latest
     restart: unless-stopped
     logging: *logging
+    mem_limit: 1536m   # 힙 1g + 오프힙 여유
+    oom_score_adj: 500   # 지정 희생양 — analytics와 동일 사유
     networks: [prod]
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-raw:5432/crawler
@@ -163,6 +181,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 512m   # maxmemory 256mb + RDB fork COW 여유
     networks: [prod]   # 커스텀 네트워크 체제 — 누락 시 was에서 도달 불가(조용한 캐시 미스 fail-open이라 증상도 안 보인다)
     command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
@@ -175,6 +194,8 @@ services:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
     logging: *logging
+    mem_limit: 3g   # 힙 2g pre-touch 상시 점유 + 오프힙 여유 — 힙을 줄이면 이 상한도 같이 재조정
+    oom_score_adj: -300   # 완만한 보호 — postgres(-800)와 단차 유지(사망 = 자동 복구되는 가용성 문제)
     # prod는 postgres·redis·analytics 접속용, monitoring-net은 monitoring 명령 API 전용
     # (was가 그 유일한 클라이언트 — 상단 networks 주석).
     networks: [prod, monitoring-net]
@@ -228,6 +249,7 @@ services:
     image: ghcr.io/subtle-madness/hypenow-monitoring:latest
     restart: unless-stopped
     logging: *logging
+    mem_limit: 768m   # 힙 384m + 오프힙 여유
     networks: [prod, monitoring-net]   # prod는 postgres 접속용
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
@@ -267,6 +289,8 @@ services:
     image: python:3.12-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 128m
+    oom_score_adj: -800   # 알람 전달 경로 — 죽으면 "알람이 안 오는 것"과 "정상"을 구분 못 한다
     networks: [prod]
     environment:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
@@ -323,6 +347,8 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 256m
+    oom_score_adj: -800   # 유일한 엣지 — 죽으면 운영+test 전면 다운
     networks: [prod, test]   # api(운영)·dev-api(test) 도메인을 한 caddy가 라우팅 — 의도된 공유 접점
     ports:
       - "80:80"
