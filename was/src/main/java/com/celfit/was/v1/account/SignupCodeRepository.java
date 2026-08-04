@@ -60,6 +60,7 @@ public class SignupCodeRepository {
 	/**
 	 * 어드민 유저 상세(설계 2026-08-01 §4 GET /v1/admin/users/{id})의 signupCode 역참조 —
 	 * used_by는 코드 소진 시 1회만 세팅되므로(가입 트랜잭션) 유저당 최대 1건.
+	 * super 코드(2026-08-04) 가입자는 used_by가 안 찍혀 빈 결과 — 추적 정본은 signup_events.
 	 */
 	public Optional<String> findCodeByUsedBy(long userId) {
 		return jdbcClient.sql("SELECT code FROM app.signup_codes WHERE used_by = :userId")
