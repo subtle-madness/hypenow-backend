@@ -57,14 +57,15 @@ public class SnapshotRepository {
 		}
 		db.update("""
 				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
-				                           likes, comments, views, fb_plays, saves, shares, reposts)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				                           likes, likes_hidden, comments, views, fb_plays, saves, shares, reposts)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (short_code, captured_on) DO UPDATE SET
-				  likes=EXCLUDED.likes, comments=EXCLUDED.comments, views=EXCLUDED.views,
+				  likes=EXCLUDED.likes, likes_hidden=EXCLUDED.likes_hidden,
+				  comments=EXCLUDED.comments, views=EXCLUDED.views,
 				  fb_plays=EXCLUDED.fb_plays,
 				  saves=EXCLUDED.saves, shares=EXCLUDED.shares, reposts=EXCLUDED.reposts""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.comments(), views, fb, p.saves(), p.shares(), p.reposts());
+				p.likes(), p.likesHidden(), p.comments(), views, fb, p.saves(), p.shares(), p.reposts());
 	}
 
 	/**
