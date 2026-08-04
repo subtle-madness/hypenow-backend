@@ -48,6 +48,14 @@ class SignupCodeIntegrationTest extends IntegrationTest {
 				.update();
 	}
 
+	private void seedSuperCode(String code) {
+		jdbcClient.sql("""
+				INSERT INTO app.signup_codes (code, channel, is_super) VALUES (:code, 'TEST', true)
+				ON CONFLICT (code) DO UPDATE SET used_by = NULL, used_at = NULL, is_super = true""")
+				.param("code", code)
+				.update();
+	}
+
 	private org.springframework.test.web.servlet.ResultActions verify(String code) throws Exception {
 		return mockMvc.perform(post("/v1/auth/signup-code/verify").with(csrf())
 				.with(request -> {
@@ -150,6 +158,58 @@ class SignupCodeIntegrationTest extends IntegrationTest {
 	@Test
 	void 코드_테이블에_없는_코드로_가입은_403이다() throws Exception {
 		signup("GHOST-CODE", "signup-code-ghost@example.com")
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
+	}
+
+	@Test
+	void super_코드는_여러_명이_가입할_수_있고_used_at이_찍히지_않는다() throws Exception {
+		seedSuperCode("SUPER-MULTI");
+		signup("SUPER-MULTI", "super-multi-1@example.com").andExpect(status().isCreated());
+		signup("SUPER-MULTI", "super-multi-2@example.com").andExpect(status().isCreated());
+
+		Map<String, Object> row = jdbcClient.sql(
+				"SELECT used_by, used_at FROM app.signup_codes WHERE code = 'SUPER-MULTI'")
+				.query().singleRow();
+		assertThat(row.get("used_by")).isNull();
+		assertThat(row.get("used_at")).isNull();
+
+		// 두 명 가입 후에도 사전 검증은 계속 valid
+		verify("SUPER-MULTI")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.valid").value(true));
+	}
+
+	@Test
+	void 소진된_일반_코드를_super로_승격하면_다시_가입할_수_있다() throws Exception {
+		seedCode("THREADS-PROMO");
+		signup("THREADS-PROMO", "promo-first@example.com").andExpect(status().isCreated());
+		// 소진 확인 후 승격 — 기존 used_at 스탬프는 보존된 채 무제한이 된다(설계 §동작 규칙).
+		jdbcClient.sql("UPDATE app.signup_codes SET is_super = true WHERE code = 'THREADS-PROMO'").update();
+
+		signup("THREADS-PROMO", "promo-second@example.com").andExpect(status().isCreated());
+		verify("THREADS-PROMO").andExpect(status().isOk());
+	}
+
+	@Test
+	void super를_강등하면_일반_1회용_규칙으로_복귀한다() throws Exception {
+		seedSuperCode("SUPER-DEMOTE");
+		signup("SUPER-DEMOTE", "demote-first@example.com").andExpect(status().isCreated());
+		// 강등 — super 가입은 used_at을 안 찍었으므로 미소진 일반 코드가 된다.
+		jdbcClient.sql("UPDATE app.signup_codes SET is_super = false WHERE code = 'SUPER-DEMOTE'").update();
+
+		signup("SUPER-DEMOTE", "demote-second@example.com").andExpect(status().isCreated());
+		// 두 번째 가입이 스탬프를 찍었으니 이제 소진 — 세 번째는 403.
+		signup("SUPER-DEMOTE", "demote-third@example.com")
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
+	}
+
+	@Test
+	void 일반_코드_소진은_super_도입_후에도_그대로다() throws Exception {
+		seedCode("THREADS-STILL1");
+		signup("THREADS-STILL1", "still-first@example.com").andExpect(status().isCreated());
+		signup("THREADS-STILL1", "still-second@example.com")
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("INVALID_SIGNUP_CODE"));
 	}
