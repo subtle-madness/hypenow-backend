@@ -65,7 +65,7 @@ class CommandApiTest {
 	@Autowired TransactionTemplate tx;
 	MockMvc mvc;
 
-	/** 픽스처(media-by-code.json)의 숏코드 — 해지 테스트의 추적 게시물 값으로 재사용한다. */
+	/** 픽스처(media-info-by-code.json)의 숏코드 — 해지 테스트의 추적 게시물 값으로 재사용한다. */
 	private static final String SHORT_CODE = "DbV7LgZsKG8";
 	private static final KeywordRule RULE = new KeywordRule(List.of(), List.of("샤넬"), List.of());
 	private static final Instant EXPIRES = Instant.now().plus(30, ChronoUnit.DAYS);

@@ -27,7 +27,7 @@ class HikerClientTest {
 			if (path.startsWith("/v2/user/by/username")) return fixture("profile.json");
 			if (path.startsWith("/v2/user/medias")) return fixture("medias.json");
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
-			return fixture("media-by-code.json");
+			return fixture("media-info-by-code.json");
 		};
 	}
 
@@ -70,8 +70,14 @@ class HikerClientTest {
 
 	@Test
 	void 단건_파싱_릴스는_6지표_전량() {
-		HikerClient client = new HikerClient(path -> fixture("media-by-code.json"));
+		// 단건은 /v2/media/info/by/code(media_or_ad 셰이프)로 이전됐다(08-04 — 구 by/code와 응답 동등성 실측).
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("media-info-by-code.json");
+		});
 		PostInfo p = client.fetchPost("DbV7LgZsKG8");
+		assertThat(calls).containsExactly("/v2/media/info/by/code?code=DbV7LgZsKG8");
 		assertThat(p.contentType()).isEqualTo("REELS");
 		assertThat(p.caption()).isNotNull();
 		assertThat(p.likes()).isPositive();
@@ -89,7 +95,7 @@ class HikerClientTest {
 
 	@Test
 	void 단건_파싱_피드는_조회_저장_공유가_null() {
-		HikerClient client = new HikerClient(path -> fixture("media-by-code-feed.json"));
+		HikerClient client = new HikerClient(path -> fixture("media-info-by-code-feed.json"));
 		PostInfo p = client.fetchPost("DbOMP1_CY18");
 		assertThat(p.contentType()).isEqualTo("FEED");
 		assertThat(p.likes()).isPositive();
@@ -231,9 +237,9 @@ class HikerClientTest {
 	@Test
 	void 좋아요_숨김이면_like_count는_프리뷰_잔여값이라_null_처리한다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":3,
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":3,
 				"like_and_view_counts_disabled":true,"comment_count":13,
-				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}}]}""");
+				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.likes()).isNull();
 		// "숨김"과 "수집 실패"를 FE가 구분해야 해서 null과 별개로 플래그를 관통시킨다
@@ -246,8 +252,8 @@ class HikerClientTest {
 	@Test
 	void 숨김_플래그가_없거나_false면_like_count를_그대로_쓴다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":83,
-				"like_and_view_counts_disabled":false,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":83,
+				"like_and_view_counts_disabled":false,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.likes()).isEqualTo(83L);
 		assertThat(p.likesHidden()).isFalse();
@@ -257,14 +263,15 @@ class HikerClientTest {
 	@Test
 	void 단건_응답에_소유_계정이_없으면_HikerFetch로() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1},"status":"ok"}""");
 		assertThatThrownBy(() -> client.fetchPost("Xx1"))
 				.isInstanceOf(HikerFetchException.class);
 	}
 
 	@Test
-	void 단건_응답이_비면_SubjectNotFound로() {
-		HikerClient client = new HikerClient(path -> "{\"num_results\":0,\"items\":[]}");
+	void 단건_응답에_media_or_ad가_없으면_SubjectNotFound로() {
+		// 실존 부재는 전송 계층 404가 정상 경로 — 200인데 media_or_ad가 없는 건 부재로 강등한다.
+		HikerClient client = new HikerClient(path -> "{\"status\":\"ok\"}");
 		assertThatThrownBy(() -> client.fetchPost("gone"))
 				.isInstanceOf(SubjectNotFoundException.class);
 	}
@@ -279,8 +286,8 @@ class HikerClientTest {
 	@Test
 	void 단건_조회수는_세션따라_흔들리는_play_count가_아니라_ig_play_count를_쓴다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.views()).isEqualTo(222L);
 		assertThat(p.fbPlays()).isEqualTo(83L);   // FB 몫은 별도 보존 — 저장 시 views 합산 재료
@@ -290,13 +297,13 @@ class HikerClientTest {
 	@Test
 	void fb_play_count_키_부재는_null이고_0은_0이다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":222,"ig_play_count":222,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":222,"ig_play_count":222,"user":{"username":"acct"}},"status":"ok"}""");
 		assertThat(client.fetchPost("Xx1").fbPlays()).isNull();
 
 		HikerClient zero = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":222,"ig_play_count":222,"fb_play_count":0,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":222,"ig_play_count":222,"fb_play_count":0,"user":{"username":"acct"}},"status":"ok"}""");
 		assertThat(zero.fetchPost("Xx1").fbPlays()).isEqualTo(0L);
 	}
 
@@ -309,8 +316,8 @@ class HikerClientTest {
 	@Test
 	void fb_키가_없어도_play가_ig보다_크면_차이를_fb몫으로_유도한다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":570331,"ig_play_count":512077,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":570331,"ig_play_count":512077,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.views()).isEqualTo(512077L);
 		assertThat(p.fbPlays()).isEqualTo(58254L);
@@ -319,8 +326,8 @@ class HikerClientTest {
 	@Test
 	void fb_키가_0이어도_play가_ig보다_크면_유도값을_우선한다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":916881,"ig_play_count":869438,"fb_play_count":0,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":916881,"ig_play_count":869438,"fb_play_count":0,"user":{"username":"acct"}},"status":"ok"}""");
 		assertThat(client.fetchPost("Xx1").fbPlays()).isEqualTo(47443L);
 	}
 
@@ -328,8 +335,8 @@ class HikerClientTest {
 	@Test
 	void ig_play_count가_없으면_play에서_fb를_빼서_IG_몫을_복원한다() {
 		HikerClient client = new HikerClient(path -> """
-				{"num_results":1,"items":[{"code":"Xx1","product_type":"clips","like_count":1,
-				"play_count":305,"fb_play_count":83,"user":{"username":"acct"}}]}""");
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
+				"play_count":305,"fb_play_count":83,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.views()).isEqualTo(222L);
 		assertThat(p.fbPlays()).isEqualTo(83L);

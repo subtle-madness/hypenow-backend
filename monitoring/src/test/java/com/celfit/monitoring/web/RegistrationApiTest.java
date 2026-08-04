@@ -57,8 +57,8 @@ class RegistrationApiTest {
 
 		/** 단건 응답에서 user만 빠진 변형 — 소유 계정을 알 수 없어 등록도 스냅샷 적재도 불가한 셰이프. */
 		private static final String POST_WITHOUT_OWNER = """
-				{"num_results":1,"items":[{"code":"DbV7LgZsKG8","product_type":"clips",
-				"taken_at":1785254651,"like_count":1,"comment_count":1,"media_repost_count":1}]}""";
+				{"media_or_ad":{"code":"DbV7LgZsKG8","product_type":"clips",
+				"taken_at":1785254651,"like_count":1,"comment_count":1,"media_repost_count":1},"status":"ok"}""";
 
 		private static String fixture(String name) {
 			try (var in = RegistrationApiTest.class.getResourceAsStream("/hiker/" + name)) {
@@ -106,7 +106,7 @@ class RegistrationApiTest {
 				}
 				return fixture("comments.json");
 			}
-			return postWithoutOwner ? POST_WITHOUT_OWNER : fixture("media-by-code.json");
+			return postWithoutOwner ? POST_WITHOUT_OWNER : fixture("media-info-by-code.json");
 		}
 	}
 
