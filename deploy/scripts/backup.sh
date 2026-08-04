@@ -9,16 +9,26 @@
 # 파일 상단 상수로 뽑아 용량 사고를 예방한다(B2_CRAWLER_KEEP).
 #
 # 보관 정책:
-#   - analysis:   서버 7일 롤링 + B2 30일(기간) 롤링 — 덤프가 작아(105MB급) 캡 영향 없음
-#   - crawler:    서버는 오프사이트 성패에 따라 1개(성공) / 3개(실패) 롤링(offsite_ok 분기 —
-#                 B2가 막혀도 로컬 3개로 버틴다), B2는 최신 $B2_CRAWLER_KEEP개(개수) 롤링
-#   - monitoring: 서버 7일 롤링 + B2 30일(기간) 롤링 — 캠페인·스냅샷뿐이라 덤프가 작다
+#   - analysis:   서버 3일 롤링 + B2 7일(기간) 롤링 — 덤프가 작지만(105MB급) 분석 결과는
+#                 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 길게 들 이유가 없다
+#   - crawler:    서버는 오프사이트 성패에 따라 1개(성공) / $LOCAL_CRAWLER_KEEP개(실패) 롤링
+#                 (offsite_ok 분기 — B2가 막혀도 로컬 사본 + 수동 pull(pull-backup.sh)로 버팀),
+#                 B2는 최신 $B2_CRAWLER_KEEP개(개수) 롤링. 덤프 전 선-회전으로 구 사본을
+#                 KEEP-1개까지 줄여 "구 사본 + 신규 덤프" 동시 존재 피크를 없앤다
+#                 (08-03 hypenow-disk-high: 구 3 + 신규 1 공존으로 루트 디스크 85% 순간 초과).
+#   - monitoring: 서버 3일 롤링 + B2 7일(기간) 롤링 — 캠페인·스냅샷뿐이라 덤프가 작다
 #
 # (07-26: Google Drive 무료 15GB가 crawler 덤프 증가로 초과되어 B2로 전환.
-#  07-27~30: 전환한 B2도 무제한이 아니라 캡에 걸림 → 보관 개수 축소로 재대응)
+#  07-27~30: 전환한 B2도 무제한이 아니라 캡에 걸림 → 보관 개수 축소로 재대응.
+#  08-04: B2 캡 초과가 07-29부터 지속돼 로컬 3개 폴백이 매일 새벽 디스크 알람을 유발
+#  → 로컬 2개 + 선-회전으로 재대응. 오프사이트 공백은 수동 pull이 보완.
+#  08-04: B2 유료 전환(캡 상향) 준비하며 보관 전반 축소 — crawler 5→3개,
+#  analysis·monitoring 서버 7→3일·B2 30→7일. 덤프 세트가 개수×일일증가로 불어나는
+#  구조라(월 +90GB급) 복원 창을 실사용 기준 3일/7일로 맞춘 것.)
 set -euo pipefail
 
-B2_CRAWLER_KEEP=5   # B2에 유지할 crawler 덤프 개수 — 하루 ~1GiB 증가 기준, 캡 재발 방지의 핵심 상수
+B2_CRAWLER_KEEP=3     # B2에 유지할 crawler 덤프 개수 — 복원 창 3일, 덤프가 11GiB급이라 개수가 곧 용량(08-04 5→3)
+LOCAL_CRAWLER_KEEP=2  # B2 실패 시 서버에 남길 crawler 덤프 개수 — 로컬 pull 사본 전제(08-04 축소)
 
 BACKUP_DIR="$HOME/backups"
 DEPLOY_DIR="$HOME/deploy"
@@ -29,10 +39,18 @@ cd "$DEPLOY_DIR"
 
 docker compose exec -T postgres pg_dump -U "$DB_USER" -d analysis \
   | gzip > "$BACKUP_DIR/analysis-$STAMP.sql.gz"
-ls -1t "$BACKUP_DIR"/analysis-*.sql.gz | tail -n +8 | xargs -r rm
+ls -1t "$BACKUP_DIR"/analysis-*.sql.gz | tail -n +4 | xargs -r rm
 
+# crawler 덤프는 GB급이라 신규 덤프와 구 사본이 겹치는 동안 디스크 피크가 생긴다 —
+# 덤프 전에 구 사본을 KEEP-1개까지 선-회전해 피크를 정상 상태 수준으로 유지한다.
+# 반쪽 파일이 다음 날 선-회전에서 정상본을 밀어내지 않도록 임시 이름(.tmp, 롤링 글롭
+# crawler-[0-9]* 비매치)으로 받고 성공 시에만 편입한다(set -euo로 실패 시 즉사 → mv 미도달).
+# 선-회전은 비치명 — 사본이 0개인 첫 실행(서버 재구축 §14)에서 ls가 실패해도 덤프는 계속.
+rm -f "$BACKUP_DIR"/.crawler-*.sql.gz.tmp
+{ ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.gz 2>/dev/null | tail -n +"$LOCAL_CRAWLER_KEEP" | xargs -r rm; } || true
 docker compose exec -T postgres-raw pg_dump -U "$RAW_DB_USER" -d crawler \
-  | gzip > "$BACKUP_DIR/crawler-$STAMP.sql.gz"
+  | gzip > "$BACKUP_DIR/.crawler-$STAMP.sql.gz.tmp"
+mv "$BACKUP_DIR/.crawler-$STAMP.sql.gz.tmp" "$BACKUP_DIR/crawler-$STAMP.sql.gz"
 
 # monitoring은 같은 postgres 인스턴스의 별도 DB — 소유자 계정으로 덤프.
 # 신규 추가분이라 통째로 비치명 처리한다 — 여기서 set -euo로 죽으면 위 analysis·crawler
@@ -44,7 +62,7 @@ if [ -n "${MONITORING_DB_USER:-}" ]; then
   if docker compose exec -T postgres pg_dump -U "$MONITORING_DB_USER" -d monitoring \
       | gzip > "$BACKUP_DIR/monitoring-$STAMP.sql.gz"; then
     MONITORING_DUMP="monitoring-$STAMP.sql.gz"
-    ls -1t "$BACKUP_DIR"/monitoring-*.sql.gz | tail -n +8 | xargs -r rm
+    ls -1t "$BACKUP_DIR"/monitoring-*.sql.gz | tail -n +4 | xargs -r rm
   else
     echo "경고: monitoring 덤프 실패 — 기존 백업은 계속(개통은 deploy/README.md §13)" >&2
     rm -f "$BACKUP_DIR/monitoring-$STAMP.sql.gz"   # 반쪽 파일 제거 → 아래 [ -f ] 가드가 자연 정합
@@ -66,7 +84,7 @@ if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q
     # 무한 누적된다(디스크 만재 → 07-30에 87%까지 찬 그 사고의 재발). 지켜야 할 본질인
     # analysis·crawler 오프사이트 사본은 이미 위 조건절에서 성공했으므로, 뒷정리 실패는
     # 경고만 남기고 다음 실행에서 재시도하면 된다.
-    rclone delete --min-age 30d "$B2/analysis/" \
+    rclone delete --min-age 7d "$B2/analysis/" \
       || echo "경고: B2 analysis 기간 롤링 실패 — 다음 실행에서 재시도" >&2
     # 최신 $B2_CRAWLER_KEEP개만 유지 (파일명 타임스탬프 기준 정렬) — 캡 초과의 직접 원인이라
     # 개수를 상단 상수로 관리한다(용량 여유 생기면 상수만 올릴 것)
@@ -74,11 +92,11 @@ if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q
         | while read -r f; do rclone deletefile "$B2/crawler/$f"; done; } \
       || echo "경고: B2 crawler 개수 트리밍 실패 — 다음 실행에서 재시도" >&2
 
-    # 덤프가 작아 analysis와 같은 30일 기간 롤링. analysis·crawler 업로드가 이미 성공한
+    # 덤프가 작아 analysis와 같은 7일 기간 롤링. analysis·crawler 업로드가 이미 성공한
     # 뒤라 캡 여유가 있다고 보고 시도 — monitoring 실패가 위 offsite_ok를 되돌리지 않는다.
     if [ -f "$BACKUP_DIR/monitoring-$STAMP.sql.gz" ]; then
       if rclone copy "$BACKUP_DIR/monitoring-$STAMP.sql.gz" "$B2/monitoring/"; then
-        rclone delete --min-age 30d "$B2/monitoring/" \
+        rclone delete --min-age 7d "$B2/monitoring/" \
           || echo "경고: B2 monitoring 기간 롤링 실패 — 다음 실행에서 재시도" >&2
       else
         echo "경고: monitoring B2 업로드 실패 — analysis·crawler 오프사이트는 정상" >&2
@@ -92,8 +110,8 @@ fi
 if "$offsite_ok"; then
   ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.gz | tail -n +2 | xargs -r rm
 else
-  echo "경고: B2 업로드 실패(캡 초과 등) 또는 리모트 미설정 — 서버 로컬 3개 유지로 버팀" >&2
-  ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.gz | tail -n +4 | xargs -r rm
+  echo "경고: B2 업로드 실패(캡 초과 등) 또는 리모트 미설정 — 서버 로컬 ${LOCAL_CRAWLER_KEEP}개 유지로 버팀" >&2
+  ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.gz | tail -n +"$((LOCAL_CRAWLER_KEEP + 1))" | xargs -r rm
 fi
 # monitoring은 건너뛰거나 실패하면 목록에서 빠진다 — 크론 로그만으로 성패 판별 가능
 echo "백업 완료: analysis-$STAMP.sql.gz, crawler-$STAMP.sql.gz${MONITORING_DUMP:+, $MONITORING_DUMP}"
