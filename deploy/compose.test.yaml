@@ -30,6 +30,9 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 512m
+    # 호스트 OOM 희생 순서 최우선(+800) — 스테이징은 죽어도 무해, 운영 압박 시 제일 먼저
+    # 비켜준다(전 test 서비스 동일. 정책 전체는 compose.yaml 상단 "메모리 격리" 주석).
+    oom_score_adj: 800
     cpus: 1.0
     networks: [test]
     environment:
@@ -52,6 +55,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 1536m
+    oom_score_adj: 800
     cpus: 1.0
     networks: [test]
     environment:
@@ -90,6 +94,8 @@ services:
     profiles: ["test"]
     restart: unless-stopped
     logging: *logging
+    mem_limit: 256m   # maxmemory 128mb + fork 여유 — test 스택에서 유일하게 상한이 없었다(08-04)
+    oom_score_adj: 800
     networks: [test]
     command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
 
@@ -99,6 +105,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 1024m
+    oom_score_adj: 800
     cpus: 1.0
     # test-monitoring 명령 API의 유일한 클라이언트 — test 전용 네트워크에 함께 소속(하단 networks 주석).
     # test 브리지를 반드시 같이 적는다 — 빠지면 test-postgres·test-analytics 이름 해석이 끊긴다.
@@ -137,6 +144,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 512m
+    oom_score_adj: 800
     cpus: 0.5
     networks: [test, test-monitoring-net]   # test 브리지는 test-postgres 접속용
     environment:
