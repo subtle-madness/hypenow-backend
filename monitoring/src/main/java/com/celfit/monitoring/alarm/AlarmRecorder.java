@@ -110,8 +110,10 @@ public class AlarmRecorder {
 	}
 
 	/**
-	 * 값 → null로 바뀐 지표 목록. 오탐 규칙 두 가지가 여기 있다(스펙 §3-2):
-	 * ① 조회·저장·공유는 릴스 전용이라 피드에서는 상시 null — 비교 대상에서 뺀다.
+	 * 값 → null로 바뀐 지표 목록. 판정 대상은 화면 문구와 1:1인 3종(조회수·좋아요·댓글)뿐이다 —
+	 * 저장·공유·리포스트는 알림 설정 화면이 약속하지 않은 지표라 전이가 있어도 알람을 만들지 않는다.
+	 * 오탐 규칙 두 가지(스펙 §3-2):
+	 * ① 조회수는 릴스 전용이라 피드에서는 상시 null — 비교 대상에서 뺀다.
 	 * ② 릴스 조회수는 clips 보강이 성공했을 때만 신뢰한다 — 보강 실패도 views를 null로 만든다.
 	 * null→null·null→값(복귀)은 이벤트가 아니다. 같은 지표의 반복 알람은 "전이"만 잡으므로 자연히 1회다.
 	 */
@@ -121,9 +123,6 @@ public class AlarmRecorder {
 		addIfHidden(hidden, "likes", before.likes(), now.likes(), true);
 		addIfHidden(hidden, "comments", before.comments(), now.comments(), true);
 		addIfHidden(hidden, "views", before.views(), now.views(), reels && now.viewsTrusted());
-		addIfHidden(hidden, "saves", before.saves(), now.saves(), reels);
-		addIfHidden(hidden, "shares", before.shares(), now.shares(), reels);
-		addIfHidden(hidden, "reposts", before.reposts(), now.reposts(), true);   // 전 타입 제공(findings §2)
 		return hidden;
 	}
 
