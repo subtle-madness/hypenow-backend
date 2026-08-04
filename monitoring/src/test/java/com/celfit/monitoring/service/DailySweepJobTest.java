@@ -232,8 +232,9 @@ class DailySweepJobTest {
 		}
 
 		private String postJson(FakePost post, String owner) {
+			// 단건은 /v2/media/info/by/code의 media_or_ad 셰이프(#337) — 단건 전용 추가 필드(#330)는 유지.
 			return """
-					{"num_results":1,"more_available":false,"items":[%s],"status":"ok"}"""
+					{"media_or_ad":%s,"status":"ok"}"""
 					.formatted(itemJson(post, owner, singleExtraByCode.get(post.code())));
 		}
 

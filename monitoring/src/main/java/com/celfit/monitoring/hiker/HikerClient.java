@@ -144,13 +144,16 @@ public class HikerClient {
 	}
 
 	public PostInfo fetchPost(String shortCode) {
-		String body = http.get("/v2/media/by/code?code=" + enc(shortCode));
-		List<JsonNode> items = items(root(body));
-		if (items.isEmpty()) {
-			throw new SubjectNotFoundException("게시물 응답이 비어 있음: " + shortCode);
+		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
+		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
+		String body = http.get("/v2/media/info/by/code?code=" + enc(shortCode));
+		JsonNode media = root(body).path("media_or_ad");
+		if (media.isMissingNode() || media.isNull()) {
+			// 실존 부재는 전송 계층 404가 정상 경로 — 200인데 media_or_ad가 없는 건 부재로 강등한다.
+			throw new SubjectNotFoundException("게시물 응답에 media_or_ad 없음: " + shortCode);
 		}
 		// 단건 응답에는 play_count가 그대로 실린다 — clips 보강 경로를 타지 않으므로 조회수는 항상 신뢰 가능하다.
-		PostInfo post = toPost(items.getFirst(), null, body, Map.of(), true);
+		PostInfo post = toPost(media, null, body, Map.of(), true);
 		// 단건 응답에는 usernameHint가 없어 소유 계정을 user.username에서만 얻는다.
 		// 없으면 스냅샷 적재(post_snapshot.username NOT NULL)도 target 등록도 불가 → 셰이프 이상으로 본다.
 		if (post.username() == null) {
