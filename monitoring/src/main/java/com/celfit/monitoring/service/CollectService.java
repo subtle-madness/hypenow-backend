@@ -142,6 +142,21 @@ public class CollectService {
 		return post;
 	}
 
+	/**
+	 * 추적 게시물 수집(열거 포함분, 1번 결정 08-04) — 방금 열거로 스냅샷이 남았어도 단건 1콜을
+	 * 정본으로 다시 수집한다. 열거 응답은 세션에 따라 공유·저장·리포스트 키를 실었다 뺐다 하지만
+	 * (운영 채움율 11~58% 요동) 단건 응답은 좋아요·댓글·조회·공유 4지표를 확정적으로 준다(08-04
+	 * 실측 25/25). 단건에 빠진 지표는 열거 관측을 폴백으로 머지해 두 응답이 상호보완된다 —
+	 * 같은 날 upsert 덮어쓰기라 머지 없이는 방금 열거가 관측한 값을 null로 유실한다.
+	 * 비용은 추적 게시물당 +1콜/일. FB 몫 재시도 없음(스윕 경로 규칙 그대로).
+	 */
+	public PostInfo collectTrackedPost(String shortCode, PostInfo enumerated) {
+		PostInfo single = hiker.fetchPost(shortCode);
+		PostInfo merged = enumerated == null ? single : single.mergedWith(enumerated);
+		writer.savePost(LocalDate.now(KST), merged);
+		return merged;
+	}
+
 	/** 게시물 1회 수집(등록 전용) — fb 미관측이면 단건 1회 재조회 후 저장. */
 	public PostInfo collectPostForRegistration(String shortCode) {
 		PostInfo post = retryFbForNewReel(hiker.fetchPost(shortCode));

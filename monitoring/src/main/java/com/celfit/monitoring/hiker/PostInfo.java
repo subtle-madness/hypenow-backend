@@ -38,4 +38,38 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				thumbnailUrl, takenAt, likes, comments, views, newFbPlays, saves, shares, reposts,
 				rawJson, viewsTrusted, likesHidden);
 	}
+
+	/**
+	 * 이 응답(단건, 정본)에 빠진 값을 같은 스윕의 다른 관측(열거)으로 채운 사본 — 지표별 non-null 우선.
+	 * 세션이 저장·공유·리포스트 키를 실었다 뺐다 하는데(운영 채움율 11~58% 요동, 08-04 실측) 같은
+	 * 시각에도 응답 경로별로 다르게 걸리므로, 정본이 폴백을 null로 덮으면 방금 관측한 값을 유실한다.
+	 *
+	 * <p>likes만 예외로 정본의 숨김 판정을 따른다 — 숨김 게시물의 likes는 마스킹값이라 null로 비웠는데
+	 * (레코드 주석 참조), 폴백의 값으로 coalesce하면 비워둔 마스킹값이 되살아난다.
+	 * views는 값과 viewsTrusted 플래그가 한 몸이라 같은 쪽에서 함께 가져온다.
+	 */
+	public PostInfo mergedWith(PostInfo fallback) {
+		boolean viewsFromFallback = views == null && fallback.views != null;
+		return new PostInfo(shortCode, username,
+				coalesce(ownerFullName, fallback.ownerFullName),
+				coalesce(ownerProfilePicUrl, fallback.ownerProfilePicUrl),
+				contentType,
+				coalesce(caption, fallback.caption),
+				coalesce(thumbnailUrl, fallback.thumbnailUrl),
+				coalesce(takenAt, fallback.takenAt),
+				likesHidden ? null : coalesce(likes, fallback.likes),
+				coalesce(comments, fallback.comments),
+				viewsFromFallback ? fallback.views : views,
+				coalesce(fbPlays, fallback.fbPlays),
+				coalesce(saves, fallback.saves),
+				coalesce(shares, fallback.shares),
+				coalesce(reposts, fallback.reposts),
+				rawJson,
+				viewsFromFallback ? fallback.viewsTrusted : viewsTrusted,
+				likesHidden);
+	}
+
+	private static <T> T coalesce(T primary, T secondary) {
+		return primary != null ? primary : secondary;
+	}
 }
