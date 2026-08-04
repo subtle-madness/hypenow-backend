@@ -45,9 +45,10 @@ public class AdminSignupCodeService {
 			}
 			parsed.add(new CodeChannel(code, code.substring(0, code.indexOf('-'))));
 		}
+		boolean isSuper = Boolean.TRUE.equals(request.isSuper());
 		int inserted = 0;
 		for (CodeChannel cc : parsed) {
-			inserted += repository.insert(cc.code(), cc.channel());
+			inserted += repository.insert(cc.code(), cc.channel(), isSuper);
 		}
 		return new SignupCodeCreateResponse(inserted, raw.size() - inserted);
 	}
