@@ -68,7 +68,7 @@ class AlarmRecorderTest {
 
 	private PostInfo post(String contentType, Long likes, Long views, Long saves, boolean viewsTrusted) {
 		return new PostInfo("SC1", "acct_a", null, null, contentType, "캡션", null, 1_785_000_000L,
-				likes, 5L, views, null, saves, null, 1L, "{}", viewsTrusted);
+				likes, 5L, views, null, saves, null, 1L, "{}", viewsTrusted, false);
 	}
 
 	private void seedYesterday(String contentType, Long likes, Long views, Long saves) {

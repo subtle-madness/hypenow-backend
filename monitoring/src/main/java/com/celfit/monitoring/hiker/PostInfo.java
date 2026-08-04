@@ -22,16 +22,20 @@ package com.celfit.monitoring.hiker;
  * 콜 간 역행한다(findings §2 결론 4). fbPlays는 FB 교차게시 몫으로, **null=이 응답에 fb 키 부재
  * (FB를 못 보는 세션), 0=관측된 0** — 이 구분이 저장 시 캐리포워드·최초 1회 재시도 판정 기준이라
  * 뭉개면 안 된다. 화면 합산값(views + fb)은 저장 계층(SnapshotRepository)이 조립한다.
+ *
+ * <p>likesHidden은 게시자의 좋아요 수 숨김(like_and_view_counts_disabled) 관측 여부다.
+ * 숨김이면 likes는 null인데, "숨김"과 "그날 수집 실패(행 부재)"를 FE가 구분해 표시해야 해서
+ * null로 뭉개지 않고 플래그를 스냅샷까지 관통시킨다(운영 실측 08-03).
  */
 public record PostInfo(String shortCode, String username, String ownerFullName, String ownerProfilePicUrl,
 		String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long fbPlays, Long saves,
-		Long shares, Long reposts, String rawJson, boolean viewsTrusted) {
+		Long shares, Long reposts, String rawJson, boolean viewsTrusted, boolean likesHidden) {
 
 	/** 재시도 콜에서 얻은 FB 몫만 갈아끼운 사본 — 나머지 지표는 원 콜 값을 유지한다. */
 	public PostInfo withFbPlays(Long newFbPlays) {
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, contentType, caption,
 				thumbnailUrl, takenAt, likes, comments, views, newFbPlays, saves, shares, reposts,
-				rawJson, viewsTrusted);
+				rawJson, viewsTrusted, likesHidden);
 	}
 }

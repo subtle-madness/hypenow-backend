@@ -8,5 +8,5 @@ import java.time.LocalDate;
  * 왕복으로 가져온 뒤 shortCode로 그룹핑해야 해서 별도 레코드를 둔다.
  */
 public record TrackedSnapshotRow(String shortCode, LocalDate capturedOn, String contentType, Long likes,
-		Long comments, Long views, Long saves, Long shares, Long reposts) {
+		boolean likesHidden, Long comments, Long views, Long saves, Long shares, Long reposts) {
 }

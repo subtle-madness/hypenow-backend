@@ -380,21 +380,31 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 
 	@Test
 	void 스냅샷_매핑은_FEED_강제_외에는_원값을_보존한다() {
-		TrackedSnapshotRow reels = new TrackedSnapshotRow("SHORT1", LocalDate.now(), "REELS", 1L, 2L, 3L, 4L, 5L, 6L);
+		TrackedSnapshotRow reels = new TrackedSnapshotRow("SHORT1", LocalDate.now(), "REELS", 1L, false, 2L, 3L, 4L, 5L, 6L);
 		var mapped = TrackingItemAssembler.toSnapshotResponse(reels, false);
 		assertThat(mapped.views()).isEqualTo(3L);
 		assertThat(mapped.shares()).isEqualTo(5L);
 		assertThat(mapped.reposts()).isEqualTo(6L);
+		assertThat(mapped.likesHidden()).isFalse();
 	}
 
 	@Test
 	void 불명_content_type_스냅샷은_REELS_아니면_보수적으로_FEED로_접는다() {
 		TrackedSnapshotRow unknown =
-				new TrackedSnapshotRow("SHORT1", LocalDate.now(), "SOMETHING_UNKNOWN", 1L, 2L, 3L, 4L, 5L, 6L);
+				new TrackedSnapshotRow("SHORT1", LocalDate.now(), "SOMETHING_UNKNOWN", 1L, false, 2L, 3L, 4L, 5L, 6L);
 		var mapped = TrackingItemAssembler.toSnapshotResponse(unknown, false);
 		assertThat(mapped.views()).isNull();
 		assertThat(mapped.shares()).isNull();
 		assertThat(mapped.reposts()).isNull();
+	}
+
+	/** 좋아요 숨김 관측 — likes null과 별개로 플래그가 FE까지 통과해야 "숨김"과 "수집 실패"가 구분된다. */
+	@Test
+	void 좋아요_숨김_스냅샷은_플래그가_응답까지_통과한다() {
+		TrackedSnapshotRow hidden = new TrackedSnapshotRow("SHORT1", LocalDate.now(), "REELS", null, true, 2L, 3L, 4L, 5L, 6L);
+		var mapped = TrackingItemAssembler.toSnapshotResponse(hidden, false);
+		assertThat(mapped.likes()).isNull();
+		assertThat(mapped.likesHidden()).isTrue();
 	}
 
 	// ── 리뷰 반영(2026-07-30) — pending 만료 유도 ────────────────────────────────
