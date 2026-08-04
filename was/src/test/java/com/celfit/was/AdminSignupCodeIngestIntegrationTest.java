@@ -124,4 +124,26 @@ class AdminSignupCodeIngestIntegrationTest extends IntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.inserted").value(500));
 	}
+
+	@Test
+	void isSuper_true로_적재하면_is_super가_켜진다() throws Exception {
+		String code = uniqueCode("PARTNER");
+		submit(TOKEN, "{\"codes\":[\"" + code + "\"],\"isSuper\":true}")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.inserted").value(1));
+		Boolean isSuper = jdbcClient.sql("SELECT is_super FROM app.signup_codes WHERE code = :c")
+				.param("c", code).query(Boolean.class).single();
+		assertThat(isSuper).isTrue();
+	}
+
+	@Test
+	void isSuper_생략하면_일반_코드로_적재된다() throws Exception {
+		String code = uniqueCode("THREADS");
+		submit(TOKEN, "{\"codes\":[\"" + code + "\"]}")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.inserted").value(1));
+		Boolean isSuper = jdbcClient.sql("SELECT is_super FROM app.signup_codes WHERE code = :c")
+				.param("c", code).query(Boolean.class).single();
+		assertThat(isSuper).isFalse();
+	}
 }
