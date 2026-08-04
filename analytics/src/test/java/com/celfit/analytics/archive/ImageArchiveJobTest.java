@@ -21,7 +21,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * 아카이브 잡 계약:
  * ① 신규 썸네일·프로필 업로드+기록 ② 기록된 썸네일은 다운로드 자체 생략(12개 윈도우 중복 무해)
  * ③ 프로필은 파일명 동일하면 생략·바뀌면 같은 키 덮어쓰기 ④ 배치 상한 초과분 이월(carriedOver)
- * ⑤ 한 건 실패 격리(계속 진행) ⑥ Cache-Control 종류별 차등.
+ * ⑤ 한 건 실패 격리(계속 진행) ⑥ Cache-Control 종류별 차등
+ * ⑦ oe(CDN 서명 만료) 지난 URL은 시도 없이 제외 ⑧ 만료 임박 순 처리.
  */
 @Testcontainers
 class ImageArchiveJobTest {
@@ -180,6 +181,44 @@ class ImageArchiveJobTest {
 			assertThat(m.get("path")).startsWith("profile/");
 			assertThat(m.get("cacheControl")).isEqualTo("public, max-age=86400");
 		});
+	}
+
+	/** 인스타 CDN URL의 oe 파라미터(hex unix 초) 생성 — 만료 판정 테스트용. */
+	static String oeUrl(String name, long epochSecond) {
+		return "https://cdn.example/v/" + name + "?stp=dst-jpg&oe="
+				+ Long.toHexString(epochSecond).toUpperCase() + "&_nc_sid=8b3546";
+	}
+
+	@Test
+	void 만료된_URL은_다운로드_시도_없이_제외한다() {
+		long now = java.time.Instant.now().getEpochSecond();
+		seedContent("dead", oeUrl("dead_n.jpg", now - 3600));      // 이미 만료
+		seedContent("live", oeUrl("live_n.jpg", now + 86400));     // 유효
+		seedContent("noOe", "https://cdn.example/v/no_oe_n.jpg");  // oe 없음 → 시도 유지
+
+		JobResult result = job(1000).run();
+
+		assertThat(result.processed()).isEqualTo(2);
+		assertThat(result.failed()).isZero();
+		assertThat(result.carriedOver()).isFalse(); // 만료 제외분은 이월이 아니다
+		assertThat(downloads).noneMatch(u -> u.contains("dead_n.jpg"));
+		Integer rows = db.queryForObject(
+				"SELECT count(*) FROM image_assets WHERE key='dead'", Integer.class);
+		assertThat(rows).isZero();
+	}
+
+	@Test
+	void 만료_임박한_URL부터_처리한다() {
+		long now = java.time.Instant.now().getEpochSecond();
+		seedContent("far", oeUrl("far_n.jpg", now + 86400 * 3));
+		seedContent("soon", oeUrl("soon_n.jpg", now + 3600));
+		seedContent("noOe", "https://cdn.example/v/no_oe_n.jpg"); // 만료 미상 → 뒤로
+
+		JobResult result = job(1).run();
+
+		assertThat(result.processed()).isEqualTo(1);
+		assertThat(result.carriedOver()).isTrue();
+		assertThat(downloads).containsExactly(oeUrl("soon_n.jpg", now + 3600));
 	}
 
 	@Test

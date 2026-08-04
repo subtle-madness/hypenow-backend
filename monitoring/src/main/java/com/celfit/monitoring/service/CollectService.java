@@ -6,8 +6,10 @@ import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,23 +42,34 @@ public class CollectService {
 	private final int enumeratePages;
 	private final int commentPages;
 	private final int registrationCommentPages;
+	private final int metricsRetryMax;
+	private final Duration metricsRetryDelay;
 
 	/**
 	 * 스윕용 commentPages(운영 3페이지)와 등록용 registrationCommentPages(항상 1페이지)를 분리해서
 	 * 받는다. 등록은 동기 경로라 was 10초 read timeout 예산을 쓰므로 페이지 수를 스윕과 다르게
 	 * 묶어야 한다(설계 §배경). 둘을 같은 값으로 채우는 편의 생성자는 두지 않는다 — 그 경로로
 	 * 배선하면 등록이 조용히 3페이지를 부르게 된다.
+	 *
+	 * <p>metricsRetryMax·metricsRetryDelay는 저장·리포스트 세션 복권 재시도({@link #retryReelsMetrics})의
+	 * 상한(운영 6회 — 당첨률 ~45%로 6회면 당일 확보율 ~98.5%)과 재콜 간격이다. 간격이 필요한 이유:
+	 * Hiker가 수 초 단위로 같은 응답을 돌려주는 캐시가 관측돼(08-04, 연속 3콜 동일) 즉시 재콜하면
+	 * 같은 꽝 세션을 되받아 재시도가 헛돈다.
 	 */
 	public CollectService(HikerClient hiker, SnapshotWriter writer, CommentRepository comments,
 			SnapshotRepository snapshots,
 			@Value("${monitoring.enumerate-pages:1}") int enumeratePages,
 			@Value("${monitoring.comment-pages:1}") int commentPages,
-			@Value("${monitoring.registration-comment-pages:1}") int registrationCommentPages) {
+			@Value("${monitoring.registration-comment-pages:1}") int registrationCommentPages,
+			@Value("${monitoring.metrics-retry-max:6}") int metricsRetryMax,
+			@Value("${monitoring.metrics-retry-delay:10s}") Duration metricsRetryDelay) {
 		this.hiker = hiker;
 		this.writer = writer;
 		this.comments = comments;
 		this.snapshots = snapshots;
 		this.enumeratePages = enumeratePages;
+		this.metricsRetryMax = metricsRetryMax;
+		this.metricsRetryDelay = metricsRetryDelay;
 		this.commentPages = commentPages;
 		this.registrationCommentPages = registrationCommentPages;
 	}
@@ -142,11 +155,93 @@ public class CollectService {
 		return post;
 	}
 
+	/**
+	 * 추적 게시물 수집(열거 포함분, 1번 결정 08-04) — 방금 열거로 스냅샷이 남았어도 단건 1콜을
+	 * 정본으로 다시 수집한다. 열거 응답은 세션에 따라 공유·저장·리포스트 키를 실었다 뺐다 하지만
+	 * (운영 채움율 11~58% 요동) 단건 응답은 좋아요·댓글·조회·공유 4지표를 확정적으로 준다(08-04
+	 * 실측 25/25). 단건에 빠진 지표는 열거 관측을 폴백으로 머지해 두 응답이 상호보완된다 —
+	 * 같은 날 upsert 덮어쓰기라 머지 없이는 방금 열거가 관측한 값을 null로 유실한다.
+	 * 비용은 추적 게시물당 +1콜/일. FB 몫 재시도 없음(스윕 경로 규칙 그대로).
+	 */
+	public PostInfo collectTrackedPost(String shortCode, PostInfo enumerated) {
+		PostInfo single = hiker.fetchPost(shortCode);
+		PostInfo merged = enumerated == null ? single : single.mergedWith(enumerated);
+		writer.savePost(LocalDate.now(KST), merged);
+		return merged;
+	}
+
 	/** 게시물 1회 수집(등록 전용) — fb 미관측이면 단건 1회 재조회 후 저장. */
 	public PostInfo collectPostForRegistration(String shortCode) {
 		PostInfo post = retryFbForNewReel(hiker.fetchPost(shortCode));
 		writer.savePost(LocalDate.now(KST), post);
 		return post;
+	}
+
+	// ── 저장·리포스트 세션 복권 재시도(08-04 결정, 상한 metricsRetryMax) ──────────
+	// 저장·리포스트 키는 Hiker 세션의 ~45%(clips 콜 기준)에만 실리고, 한 콜 안에서는 전부
+	// 실리거나 전부 빠진다(운영 원형 151콜 전수: 혼재 0건). fb 몫과 달리 "영영 안 오는" 게시물이
+	// 없어(당첨 세션은 전 릴스에 싣는다) 스윕 재시도가 헛돌지 않고, 당첨 1회로 계정의 릴스 전체가
+	// 채워진다. 피드는 저장·공유 키가 전 세션 부재(0/181)라 대상에서 제외한다(사용자 결정 08-04).
+
+	/**
+	 * 미관측 추적 릴스의 저장·리포스트 보강 — clips 열거를 당첨(키 실림)까지 최대 metricsRetryMax회
+	 * 재콜하고, 관측을 non-null 머지해 재저장한다. 실패·미당첨은 그대로 종료(best-effort) —
+	 * 스냅샷은 이미 단건 정본으로 저장돼 있고, 여기서 예외가 새면 스윕 재시도 라운드가 이 계정을
+	 * 통째로 다시 돌게 된다.
+	 */
+	public void retryReelsMetrics(String userId, List<PostInfo> trackedPosts) {
+		List<PostInfo> pending = new ArrayList<>(trackedPosts.stream()
+				.filter(p -> "REELS".equals(p.contentType()))
+				.filter(p -> p.saves() == null || p.reposts() == null)
+				.toList());
+		for (int attempt = 1; attempt <= metricsRetryMax && !pending.isEmpty(); attempt++) {
+			if (!sleepQuietly(metricsRetryDelay)) {
+				return;   // 인터럽트는 종료 신호 — 보강만 포기한다(내일 스윕이 다시 시도).
+			}
+			Map<String, HikerClient.ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
+			List<PostInfo> next = new ArrayList<>();
+			for (PostInfo p : pending) {
+				HikerClient.ClipCounts c = observed.get(p.shortCode());
+				if (c == null) {
+					if (!observed.isEmpty()) {
+						// 응답은 정상인데 이 게시물이 없다 — 최근 릴스 창(12건×페이지) 밖. 재콜해도 안 잡힌다.
+						log.info("저장·리포스트 재시도 중단 — {} 열거 창 밖(user_id {})", p.shortCode(), userId);
+					} else {
+						next.add(p);   // 빈 맵은 콜 실패(fetchClipCounts가 삼킴) — 다음 시도에 맡긴다.
+					}
+					continue;
+				}
+				if (!c.hasMetricKeys()) {
+					next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
+					continue;
+				}
+				PostInfo merged = p.mergedMetrics(c.saves(), c.shares(), c.reposts());
+				writer.savePost(LocalDate.now(KST), merged);
+				log.info("저장·리포스트 당첨 머지 — {} saves={} reposts={} ({}번째 시도)",
+						p.shortCode(), merged.saves(), merged.reposts(), attempt);
+				if (merged.saves() == null || merged.reposts() == null) {
+					next.add(merged);   // 드문 부분 세션(저장만/리포스트만) — 남은 지표는 계속 시도.
+				}
+			}
+			pending = next;
+		}
+		if (!pending.isEmpty()) {
+			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, pending.size());
+		}
+	}
+
+	/** 재콜 간격 대기 — 인터럽트면 false(플래그 복원). 응답 캐시 회피용이라 실패해도 치명적이지 않다. */
+	private static boolean sleepQuietly(Duration duration) {
+		if (duration.isZero() || duration.isNegative()) {
+			return true;
+		}
+		try {
+			Thread.sleep(duration.toMillis());
+			return true;
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return false;
+		}
 	}
 
 	/**

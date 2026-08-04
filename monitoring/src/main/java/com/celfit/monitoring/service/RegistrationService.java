@@ -7,8 +7,11 @@ import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -38,11 +41,19 @@ public class RegistrationService {
 	private final CollectService collect;
 	private final TargetRepository targets;
 	private final AlarmRecorder alarms;
+	private final Executor metricsBackfill;
 
-	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms) {
+	/**
+	 * metricsBackfill은 등록 직후 저장·리포스트 세션 복권 재시도(08-04)를 동기 응답 밖에서 돌리는
+	 * executor다 — 등록은 was 10초 read timeout 예산 안의 동기 경로라 재시도 루프(최대 6회×10s)를
+	 * 품을 수 없고, 그렇다고 안 돌리면 등록 당일 스냅샷이 다음날 새벽 스윕까지 빈다.
+	 */
+	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms,
+			@Qualifier("metricsBackfillExecutor") Executor metricsBackfill) {
 		this.collect = collect;
 		this.targets = targets;
 		this.alarms = alarms;
+		this.metricsBackfill = metricsBackfill;
 	}
 
 	public Result register(RegisterCommand cmd) {
@@ -110,9 +121,33 @@ public class RegistrationService {
 		// 실패해도 등록 자체는 계속 201로 성공하고, 그 알람 이벤트는 재시도 없이 유실된다(로그로만 관측).
 		// replay는 target 중복 방지(멱등)만 보장할 뿐 이 알람 유실을 복구하지 않는다.
 		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
+		scheduleMetricsBackfill(post);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
 		return new Result(id, TargetStatus.TRACKING.name(), snapshot, false);
+	}
+
+	/**
+	 * 등록 직후 저장·리포스트 백필(08-04) — 단건 응답이 꽝 세션(저장·리포스트 키 부재)이면 응답을
+	 * 보낸 뒤 백그라운드에서 clips 재시도(규칙·상한은 {@link CollectService#retryReelsMetrics})를 돌려
+	 * 등록 당일 스냅샷 공백을 없앤다. 동기 응답의 firstSnapshot은 여전히 null일 수 있다 —
+	 * FE 조회 표면은 스냅샷 테이블 SELECT라 백필 완료(최대 ~1분) 후 새로고침이면 채워진다.
+	 * best-effort: 실패해도 등록은 이미 성공했고, 다음날 새벽 스윕이 백스톱이다.
+	 * ACCOUNT 등록은 대상이 아니다 — 추적 게시물이 아직 없고(WATCHING) 감지는 스윕 안에서 일어난다.
+	 */
+	private void scheduleMetricsBackfill(PostInfo post) {
+		boolean needsBackfill = "REELS".equals(post.contentType())
+				&& (post.saves() == null || post.reposts() == null);
+		if (!needsBackfill || post.ownerUserId() == null) {
+			return;   // ownerUserId 부재(구형 셰이프)면 clips를 태울 user_id가 없다 — 스윕에 맡긴다.
+		}
+		metricsBackfill.execute(() -> {
+			try {
+				collect.retryReelsMetrics(post.ownerUserId(), List.of(post));
+			} catch (RuntimeException e) {
+				log.warn("등록 직후 저장·리포스트 백필 실패(격리) — {}: {}", post.shortCode(), e.toString());
+			}
+		});
 	}
 
 	private static void validate(RegisterCommand cmd) {
