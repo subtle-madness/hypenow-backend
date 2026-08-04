@@ -46,11 +46,14 @@ ALTER TABLE app.signup_codes ADD COLUMN is_super boolean NOT NULL DEFAULT false;
 
 ## 어드민 API
 
-1. **적재** `POST /admin/signup-codes` — `SignupCodeCreateRequest`에 `super` 필드 추가
-   (boolean, 생략 시 false, 배치 전체에 적용). 기존 검증 규칙(접두사 정규식·≤500·중복 스킵) 불변.
+1. **적재** `POST /admin/signup-codes` — `SignupCodeCreateRequest`에 `isSuper` 필드 추가
+   (Boolean, 생략·null 시 false, 배치 전체에 적용 — `super`는 Java 예약어라 record 컴포넌트명
+   불가). 기존 검증 규칙(접두사 정규식·≤500·중복 스킵) 불변.
 2. **승격·강등** `PATCH /admin/signup-codes/{code}` — 기존 `isSent` 갱신 요청에 `isSuper`
-   옵션 필드 추가. 둘 다 옵션이고 온 필드만 갱신(부분 갱신). 둘 다 없으면 400.
-   record 요청 DTO의 null 체크는 서비스에서 수동으로 (기존 컨벤션).
+   옵션 필드 추가. 둘 다 옵션이고 온 필드만 갱신(부분 갱신, COALESCE). 둘 다 없으면 400.
+   record 요청 DTO의 null 체크는 컨트롤러/서비스에서 수동으로 (기존 컨벤션).
+   DTO는 용도가 넓어지므로 `SignupCodePatchRequest`/`SignupCodePatchResponse`로 개명하고
+   응답은 반영된 최종 상태 `(code, isSent, isSuper)`를 돌려준다 (UPDATE ... RETURNING).
 3. **조회** `GET /admin/signups` — 응답 row에 `isSuper` 추가.
 
 ## 동작 규칙 (엣지 케이스)
@@ -59,6 +62,8 @@ ALTER TABLE app.signup_codes ADD COLUMN is_super boolean NOT NULL DEFAULT false;
 - super 강등 → 보존된 `used_at` 상태로 복귀. 스탬프 없으면 1명 더 가입 가능한 일반 코드.
 - super 코드 가입자 추적은 `signup_events`(detail.signupCode, detail.userId)가 정본.
   `used_by`는 super 코드에선 항상 NULL(또는 승격 전 스탬프)이며 가입자를 대표하지 않는다.
+- 알려진 한계: 어드민 유저 상세(`GET /v1/admin/users/{id}`)의 signupCode 역참조는
+  `used_by` 기반이라 super 코드 가입자에겐 null이다 — 필요 시 signup_events 조회로 보완(이번 범위 밖).
 
 ## 테스트
 
