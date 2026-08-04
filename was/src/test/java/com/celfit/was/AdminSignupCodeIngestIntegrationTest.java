@@ -124,4 +124,40 @@ class AdminSignupCodeIngestIntegrationTest extends IntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.inserted").value(500));
 	}
+
+	@Test
+	void isSuper_true로_적재하면_is_super가_켜진다() throws Exception {
+		String code = uniqueCode("PARTNER");
+		submit(TOKEN, "{\"codes\":[\"" + code + "\"],\"isSuper\":true}")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.inserted").value(1));
+		Boolean isSuper = jdbcClient.sql("SELECT is_super FROM app.signup_codes WHERE code = :c")
+				.param("c", code).query(Boolean.class).single();
+		assertThat(isSuper).isTrue();
+	}
+
+	@Test
+	void isSuper_생략하면_일반_코드로_적재된다() throws Exception {
+		String code = uniqueCode("THREADS");
+		submit(TOKEN, "{\"codes\":[\"" + code + "\"]}")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.inserted").value(1));
+		Boolean isSuper = jdbcClient.sql("SELECT is_super FROM app.signup_codes WHERE code = :c")
+				.param("c", code).query(Boolean.class).single();
+		assertThat(isSuper).isFalse();
+	}
+
+	@Test
+	void 기존_일반_코드를_isSuper_true로_재적재해도_승격되지_않고_스킵된다() throws Exception {
+		String existing = uniqueCode("THREADS");
+		jdbcClient.sql("INSERT INTO app.signup_codes (code, channel) VALUES (:c, 'THREADS')")
+				.param("c", existing).update();
+		submit(TOKEN, "{\"codes\":[\"" + existing + "\"],\"isSuper\":true}")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.inserted").value(0))
+				.andExpect(jsonPath("$.skipped").value(1));
+		Boolean isSuper = jdbcClient.sql("SELECT is_super FROM app.signup_codes WHERE code = :c")
+				.param("c", existing).query(Boolean.class).single();
+		assertThat(isSuper).isFalse();
+	}
 }

@@ -9,8 +9,9 @@ import java.time.OffsetDateTime;
  * (소진 판정의 정본은 used_at이지 used_by가 아니다 — V8 `signup_codes` 주석 참고). ③ 소진+생존 —
  * 셋 다 채워진다.
  * isSent는 발송 여부(설계 2026-07-22) — 소진과 별개 축, PATCH /admin/signup-codes/{code}로 변경.
+ * isSuper는 인원 제한 없이 가입 가능한 super 코드 여부(설계 2026-08-04) — 마찬가지로 PATCH로 변경.
  * JdbcClient의 query(Class) 매핑 규약에 맞춰 SQL 별칭 user_id → userId, used_at → usedAt.
  */
 public record SignupUsageRow(String code, String channel, String email, Long userId,
-		OffsetDateTime usedAt, boolean isSent) {
+		OffsetDateTime usedAt, boolean isSent, boolean isSuper) {
 }

@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 관리자 가입 코드 조회 API(설계 2026-07-19) — GET /admin/signups.
- * 발송 표시 변경(설계 2026-07-22) — PATCH /admin/signup-codes/{code}.
+ * 발송 표시·super 승격 변경(설계 2026-07-22 → 2026-08-04 확장) — PATCH /admin/signup-codes/{code}.
  * 인증은 07-23부터 두 경로 모두 @Order(0) 토큰 체인(Bearer CODES_API_KEY)이 담당한다 —
  * 어드민 FE가 키 헤더 방식만 써서 Basic에서 전환(SecurityConfig 매처 참조). 여기선 인증 검사를 하지 않는다.
  */
@@ -28,14 +28,12 @@ public class AdminSignupController {
 	}
 
 	@PatchMapping("/admin/signup-codes/{code}")
-	public SignupCodeSentResponse updateSent(@PathVariable String code,
-			@RequestBody SignupCodeSentRequest request) {
-		if (request.isSent() == null) {
-			throw new AdminApiException(400, "isSent가 필요합니다.");
+	public SignupCodePatchResponse patch(@PathVariable String code,
+			@RequestBody SignupCodePatchRequest request) {
+		if (request.isSent() == null && request.isSuper() == null) {
+			throw new AdminApiException(400, "isSent 또는 isSuper 중 하나는 필요합니다.");
 		}
-		if (repository.updateIsSent(code, request.isSent()) == 0) {
-			throw new AdminApiException(404, "존재하지 않는 코드입니다: " + code);
-		}
-		return new SignupCodeSentResponse(code, request.isSent());
+		return repository.updatePartial(code, request.isSent(), request.isSuper())
+				.orElseThrow(() -> new AdminApiException(404, "존재하지 않는 코드입니다: " + code));
 	}
 }
