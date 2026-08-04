@@ -265,6 +265,25 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
+	void PATCH_isSent와_isSuper를_동시에_갱신할_수_있다() throws Exception {
+		String code = uniqueCode("DM-BOTH");
+		seedUnusedCode(code, "DM");
+
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.header("Authorization", "Bearer " + TOKEN)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSent\": true, \"isSuper\": true}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.isSent").value(true))
+				.andExpect(jsonPath("$.isSuper").value(true));
+
+		SignupUsageRow row = repository.findAll().stream()
+				.filter(r -> r.code().equals(code)).findFirst().orElseThrow();
+		assertThat(row.isSent()).isTrue();
+		assertThat(row.isSuper()).isTrue();
+	}
+
+	@Test
 	void 조회_응답에_isSuper가_노출된다() throws Exception {
 		String code = uniqueCode("DM-SHOW");
 		seedUnusedCode(code, "DM");
