@@ -368,21 +368,36 @@ public class DailySweepJob {
 		if (t.status() == TargetStatus.WATCHING && t.keywordRule() != null) {
 			PostInfo detected = firstDetection(t, posts);
 			if (detected != null) {
-				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2). 지표는 방금 열거에서 이미 적재됐으므로
-				// 추가 단건 콜을 쏘지 않는다 — 감지 대상 자체가 열거 결과라 항상 enumerated 안에 있다.
+				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2).
 				targets.markTracking(t.id(), detected.shortCode(), t.keywordRule().matchedTerms(detected.caption()));
 				alarms.collectionStartedScheduled(t.id(), t.userId(), t.username(), detected.shortCode());
 				log.info("첫 감지 자동 전환 — target {} → TRACKING {}", t.id(), detected.shortCode());
+				// 감지 당일도 추적 게시물 규칙(아래)과 동일하게 단건 정본 수집 — 열거 스냅샷만 남기면
+				// 캠페인 첫날부터 공유수가 세션 복불복에 걸린다(1번 결정, 08-04).
+				collect.collectTrackedPost(detected.shortCode(), detected);
 				targets.touchFetched(t.id());
 				return;
 			}
 		}
 		String tracked = t.status() == TargetStatus.TRACKING ? t.trackedShortCode() : null;
-		// 열거 안에 있으면 이미 방금 스냅샷을 남겼다 — 단건을 또 부르면 콜이 두 배가 된다.
-		if (tracked != null && !enumerated.contains(tracked)) {
-			collect.collectPost(tracked);
+		if (tracked != null) {
+			// 추적 게시물은 열거 포함 여부와 무관하게 단건 1콜이 정본이다(1번 결정, 08-04) — 열거 응답은
+			// 세션에 따라 공유·저장·리포스트 키가 빠지지만 단건은 좋아요·댓글·조회·공유를 확정적으로
+			// 준다. 열거에 있었으면 그 관측을 폴백으로 머지해 방금 적재한 값의 유실을 막는다.
+			collect.collectTrackedPost(tracked, enumeratedPost(posts, tracked, enumerated));
 		}
 		targets.touchFetched(t.id());
+	}
+
+	/** 열거 결과에서 추적 게시물 1건 — 열거 밖(또는 열거 안 탄 계정)이면 null, 머지 폴백 없이 단건만 쓴다. */
+	private static PostInfo enumeratedPost(List<PostInfo> posts, String shortCode, Set<String> enumerated) {
+		if (!enumerated.contains(shortCode)) {
+			return null;
+		}
+		return posts.stream()
+				.filter(p -> shortCode.equals(p.shortCode()))
+				.findFirst()
+				.orElse(null);
 	}
 
 	/**

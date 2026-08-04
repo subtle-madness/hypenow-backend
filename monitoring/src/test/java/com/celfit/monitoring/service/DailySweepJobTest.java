@@ -97,6 +97,24 @@ class DailySweepJobTest {
 			return this;
 		}
 
+		/**
+		 * 열거(medias) 응답에만 싣는 추가 필드 — 세션이 저장·공유·리포스트 키를 실었다 뺐다 하는
+		 * 실제 응답 셰이프(findings §2 계열)를 응답 경로별로 다르게 재현한다. singleOnlyFields와 짝.
+		 */
+		FakeHiker enumOnlyFields(String code, String jsonFields) {
+			enumExtraByCode.put(code, jsonFields);
+			return this;
+		}
+
+		/** 단건(media/by/code) 응답에만 싣는 추가 필드 — enumOnlyFields의 반대쪽. */
+		FakeHiker singleOnlyFields(String code, String jsonFields) {
+			singleExtraByCode.put(code, jsonFields);
+			return this;
+		}
+
+		private final Map<String, String> enumExtraByCode = new HashMap<>();
+		private final Map<String, String> singleExtraByCode = new HashMap<>();
+
 		/** 계정 삭제·개명 — 프로필 조회가 404. */
 		FakeHiker missingAccount(String username) {
 			missingUsernames.add(username);
@@ -206,29 +224,30 @@ class DailySweepJobTest {
 					.formatted(userId, username, username, username);
 		}
 
-		private static String mediasJson(List<FakePost> posts) {
-			String items = posts.stream().map(FakeHiker::itemJson).collect(Collectors.joining(","));
+		private String mediasJson(List<FakePost> posts) {
+			String items = posts.stream()
+					.map(p -> itemJson(p, "unused", enumExtraByCode.get(p.code())))
+					.collect(Collectors.joining(","));
 			return "{\"response\":{\"items\":[" + items + "],\"more_available\":false}}";
 		}
 
-		private static String postJson(FakePost post, String owner) {
+		private String postJson(FakePost post, String owner) {
+			// 단건은 /v2/media/info/by/code의 media_or_ad 셰이프(#337) — 단건 전용 추가 필드(#330)는 유지.
 			return """
-					{"media_or_ad":%s,"status":"ok"}""".formatted(itemJson(post, owner));
-		}
-
-		private static String itemJson(FakePost post) {
-			return itemJson(post, "unused");
+					{"media_or_ad":%s,"status":"ok"}"""
+					.formatted(itemJson(post, owner, singleExtraByCode.get(post.code())));
 		}
 
 		/** 캡션에 따옴표·역슬래시를 쓰지 않는다는 전제 — 픽스처 문자열이라 이스케이프를 생략한다. */
-		private static String itemJson(FakePost post, String owner) {
+		private static String itemJson(FakePost post, String owner, String extraFields) {
 			// taken_at이 null이면 키를 통째로 뺀다 — 실제 응답의 "게시 시각 미상" 셰이프와 같다.
 			String takenAt = post.takenAt() == null ? "" : "\"taken_at\":" + post.takenAt() + ",";
+			String extra = extraFields == null ? "" : extraFields + ",";
 			return """
-					{"code":"%s","product_type":"clips",%s"caption":{"text":"%s"},
+					{"code":"%s","product_type":"clips",%s%s"caption":{"text":"%s"},
 					"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
 					"fb_play_count":0,"user":{"username":"%s"}}"""
-					.formatted(post.code(), takenAt, post.caption(), owner);
+					.formatted(post.code(), takenAt, extra, post.caption(), owner);
 		}
 
 		private static String param(String path, String name) {
@@ -409,8 +428,8 @@ class DailySweepJobTest {
 		assertThat(trackedOf(a)).isEqualTo("NEWER");
 		// 후보 적재는 중단됐다 — detected_candidate에 새 행이 생기면 승인 화면이 되살아난다.
 		assertThat(candidateCount()).isZero();
-		// 매칭 게시물은 방금 열거에서 스냅샷이 남았다 — 단건 보강 콜이 나가면 콜이 두 배가 된다.
-		assertThat(hiker.postCalls).isZero();
+		// 감지 당일도 추적 게시물 규칙과 동일 — 채택된 NEWER 1건만 단건 정본 수집(1번 결정, 08-04).
+		assertThat(hiker.postCalls).isEqualTo(1);
 	}
 
 	/**
@@ -482,8 +501,52 @@ class DailySweepJobTest {
 	}
 
 	// ④ 추적 게시물 보강
+
+	/**
+	 * 추적 게시물은 열거 안에 있어도 단건 1콜을 정본으로 다시 수집한다(1번 결정, 08-04) —
+	 * 열거 응답은 세션에 따라 공유·저장·리포스트 키를 실었다 뺐다 하지만(운영 채움율 11~58% 요동),
+	 * 단건 응답은 좋아요·댓글·조회·공유 4지표를 확정적으로 준다(08-04 실측 25/25).
+	 * 비용은 추적 게시물당 +1콜/일(현 운영 49건 기준 월 +$1.47).
+	 */
 	@Test
-	void 열거_밖으로_밀려난_추적_게시물만_단건_콜로_보강한다() {
+	void 열거_안의_추적_게시물도_단건_콜을_정본으로_지표를_보강한다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "협찬 게시물", AFTER))
+				.singleOnlyFields("AAA", "\"reshare_count\":5");
+		long fresh = tracking("someuser", "AAA", "rk-fresh");
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(1);
+		// 열거 스냅샷에는 없던 공유수가 단건 응답에서 채워져야 한다 — 같은 날 upsert 덮어쓰기.
+		assertThat(db.queryForObject(
+				"SELECT shares FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(5);
+		assertThat(statusOf(fresh)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	/**
+	 * 머지는 non-null 우선 — 단건 응답에 빠진 지표를 방금 열거 관측으로 보존한다. 세션 복불복은
+	 * 같은 시각에도 응답 경로별로 다르게 걸리므로(08-04 실측: 열거에만 저장수, 단건에만 공유수)
+	 * 두 응답이 상호보완돼야 하고, 단건이 열거 값을 null로 덮으면 방금 관측한 값을 유실한다.
+	 */
+	@Test
+	void 단건_응답에_빠진_지표는_같은_스윕의_열거_관측을_보존한다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "협찬 게시물", AFTER))
+				.enumOnlyFields("AAA", "\"save_count\":7,\"media_repost_count\":2")
+				.singleOnlyFields("AAA", "\"reshare_count\":5");
+		tracking("someuser", "AAA", "rk-fresh");
+
+		job.run();
+
+		assertThat(db.queryForObject(
+				"SELECT saves FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(7);
+		assertThat(db.queryForObject(
+				"SELECT reposts FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(2);
+		assertThat(db.queryForObject(
+				"SELECT shares FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(5);
+	}
+
+	@Test
+	void 열거_밖으로_밀려난_추적_게시물도_단건_콜로_수집한다() {
 		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
 				.standalonePost("OLD9", "someuser", "예전 협찬 게시물");
 		long stale = tracking("someuser", "OLD9", "rk-stale");
@@ -491,8 +554,8 @@ class DailySweepJobTest {
 
 		job.run();
 
-		// 열거에 이미 들어온 추적 게시물까지 단건으로 또 부르면 콜이 두 배가 된다.
-		assertThat(hiker.postCalls).isEqualTo(1);
+		// 추적 게시물은 열거 포함 여부와 무관하게 각자 단건 1콜(1번 결정, 08-04) — OLD9 + AAA.
+		assertThat(hiker.postCalls).isEqualTo(2);
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='OLD9'""", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject("""
@@ -1213,7 +1276,7 @@ class DailySweepJobTest {
 
 		assertThat(hiker.profileCalls).isEqualTo(1);
 		assertThat(hiker.mediasCalls).isEqualTo(1);
-		assertThat(hiker.postCalls).isZero();   // MX1은 이미 열거에 포함돼 단건 보강이 필요 없다
+		assertThat(hiker.postCalls).isEqualTo(1);   // MX1은 열거에 포함돼도 단건 정본 수집(1번 결정, 08-04)
 		assertThat(db.queryForObject(
 				"SELECT count(*) FROM profile_snapshot WHERE username='mixeduser'", Long.class)).isEqualTo(1);
 	}

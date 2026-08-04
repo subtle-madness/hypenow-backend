@@ -201,16 +201,22 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 KST 04:10 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
-  - **analysis**: 서버 `~/backups/` 7일 롤링 + B2 `hypenow-backups/analysis/` 30일(기간) 롤링
+  - **analysis**: 서버 `~/backups/` 3일 롤링 + B2 `hypenow-backups/analysis/` 7일(기간) 롤링
+    — 분석 결과는 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 짧게 유지(08-04 7일/30일에서 축소)
   - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): 서버는 **오프사이트
-    업로드 성패에 따라 1개(성공) / 3개(실패)** 롤링(`backup.sh`의 `offsite_ok` 분기 — B2가
-    막혀도 로컬 3개로 버틴다) + B2 `hypenow-backups/crawler/` **최신 `B2_CRAWLER_KEEP`개**
-    (`backup.sh` 상단 상수, 기본 5) 롤링. 덤프가 하루 ~1GiB씩 느는 GB급이라 개수가 곧 용량 —
+    업로드 성패에 따라 1개(성공) / `LOCAL_CRAWLER_KEEP`개(실패, 기본 2)** 롤링(`backup.sh`의
+    `offsite_ok` 분기 — B2가 막혀도 로컬 사본 + 수동 pull로 버팀) + B2
+    `hypenow-backups/crawler/` **최신 `B2_CRAWLER_KEEP`개**(`backup.sh` 상단 상수, 기본 3 —
+    08-04 5에서 축소, 복원 창 3일) 롤링.
+    덤프 전 **선-회전**으로 구 사본을 KEEP-1개까지 줄여 신규 덤프와의 동시 존재 피크를 없앤다
+    (08-03 `hypenow-disk-high` 알람 원인 — 구 3 + 신규 1 공존으로 루트 디스크 85% 순간 초과).
+    덤프가 하루 ~1GiB씩 느는 GB급이라 개수가 곧 용량 —
     B2 버킷 캡 초과 시 업로드가 `403 storage_cap_exceeded`로 전량 실패한다(07-27~30 실측: 기존
-    "최신 30개" 정책이 요구한 ~240GB가 캡을 초과해 며칠간 오프사이트 백업 공백 발생). 용량
+    "최신 30개" 정책이 요구한 ~240GB가 캡을 초과해 며칠간 오프사이트 백업 공백 발생. 07-29~
+    재발 — 캡 상향 전까지 오프사이트 공백은 `pull-backup.sh` 수동 pull이 보완). 용량
     여유가 생기면 `B2_CRAWLER_KEEP`만 올릴 것.
-  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 7일 롤링 +
-    B2 `hypenow-backups/monitoring/` 30일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
+  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 3일 롤링 +
+    B2 `hypenow-backups/monitoring/` 7일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `gunzip -c analysis-*.sql.gz | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
 
