@@ -213,8 +213,7 @@ class DailySweepJobTest {
 
 		private static String postJson(FakePost post, String owner) {
 			return """
-					{"num_results":1,"more_available":false,"items":[%s],"status":"ok"}"""
-					.formatted(itemJson(post, owner));
+					{"media_or_ad":%s,"status":"ok"}""".formatted(itemJson(post, owner));
 		}
 
 		private static String itemJson(FakePost post) {

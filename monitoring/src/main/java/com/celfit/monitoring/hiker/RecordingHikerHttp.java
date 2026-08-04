@@ -58,7 +58,9 @@ public class RecordingHikerHttp implements HikerHttp {
 		if (path.startsWith("/v2/user/medias") || path.startsWith("/v2/user/clips")) {
 			return "POSTS";
 		}
-		if (path.startsWith("/v2/media/by/code")) {
+		// 단건은 /v2/media/info/by/code로 이전(08-04) — kind='POST' 필터 기반 백필·포렌식이
+		// 새 행을 계속 보도록 kind는 유지한다. 구 경로 분기는 이행기 방어로 남긴다.
+		if (path.startsWith("/v2/media/by/code") || path.startsWith("/v2/media/info/by/code")) {
 			return "POST";
 		}
 		if (path.startsWith("/v2/media/comments")) {
