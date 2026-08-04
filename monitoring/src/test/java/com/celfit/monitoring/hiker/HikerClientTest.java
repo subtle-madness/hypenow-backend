@@ -68,6 +68,31 @@ class HikerClientTest {
 		assertThat(feed.shares()).isNull();
 	}
 
+	/** 저장·리포스트 키를 안 실은 세션의 medias 응답 — 같은 릴스가 clips 응답에는 키와 함께 실려 있다. */
+	private static final String MEDIAS_NO_METRIC_KEYS = """
+			{"response":{"items":[{"code":"ReelM","taken_at":1700000000,"product_type":"clips",
+			"like_count":11,"comment_count":2,"caption":{"text":"m"}}],
+			"more_available":false},"next_page_id":null}""";
+
+	private static final String CLIPS_WITH_METRIC_KEYS = """
+			{"response":{"items":[{"media":{"code":"ReelM","product_type":"clips",
+			"ig_play_count":100,"save_count":10,"reshare_count":20,"media_repost_count":30}}],
+			"paging_info":{"more_available":false}},"next_page_id":null}""";
+
+	@Test
+	void 열거_medias가_저장공유리포스트를_안_실어도_clips_관측을_머지한다() {
+		// 세션 복권(08-04 실측): 저장·리포스트 키는 콜 단위로 전부 실리거나 전부 빠진다.
+		// medias가 꽝 세션이어도 clips가 당첨 세션이면 그 관측을 버리면 안 된다(존재율 45% vs 30%).
+		HikerClient client = new HikerClient(path ->
+				path.startsWith("/v2/user/clips") ? CLIPS_WITH_METRIC_KEYS : MEDIAS_NO_METRIC_KEYS);
+		var posts = client.fetchRecentPosts("acct", "999", 1);
+		assertThat(posts).hasSize(1);
+		assertThat(posts.getFirst().saves()).isEqualTo(10L);
+		assertThat(posts.getFirst().shares()).isEqualTo(20L);
+		assertThat(posts.getFirst().reposts()).isEqualTo(30L);
+		assertThat(posts.getFirst().views()).isEqualTo(100L);
+	}
+
 	@Test
 	void 단건_파싱_릴스는_6지표_전량() {
 		// 단건은 /v2/media/info/by/code(media_or_ad 셰이프)로 이전됐다(08-04 — 구 by/code와 응답 동등성 실측).
@@ -91,6 +116,8 @@ class HikerClientTest {
 		// POST 등록분 profile_meta 채움(트랙 II) — 단건 응답 user 노드에서 제로 콜로 추출
 		assertThat(p.ownerFullName()).isEqualTo("Sephora");
 		assertThat(p.ownerProfilePicUrl()).isNotBlank();
+		// 소유 계정 IG pk(제로 콜) — POST 등록만 있는 계정의 clips 열거 재시도가 user_id로 쓴다
+		assertThat(p.ownerUserId()).isEqualTo("23818608");
 	}
 
 	@Test
