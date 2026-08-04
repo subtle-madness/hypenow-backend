@@ -212,7 +212,7 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void isSent_누락_PATCH는_400() throws Exception {
+	void isSent_isSuper_둘_다_누락한_PATCH는_400() throws Exception {
 		String code = uniqueCode("DM-400");
 		seedUnusedCode(code, "DM");
 
@@ -222,6 +222,63 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 				.content("{}"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error").exists());
+	}
+
+	@Test
+	void PATCH_isSuper로_승격하고_강등할_수_있다() throws Exception {
+		String code = uniqueCode("DM-SUPER");
+		seedUnusedCode(code, "DM");
+
+		// 승격 — isSent는 안 보냈으므로 기존 값(false) 유지(부분 갱신).
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.header("Authorization", "Bearer " + TOKEN)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSuper\": true}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.code").value(code))
+				.andExpect(jsonPath("$.isSuper").value(true))
+				.andExpect(jsonPath("$.isSent").value(false));
+
+		// 강등.
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.header("Authorization", "Bearer " + TOKEN)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSuper\": false}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.isSuper").value(false));
+	}
+
+	@Test
+	void PATCH_isSent만_보내면_isSuper는_유지된다() throws Exception {
+		String code = uniqueCode("DM-KEEP");
+		seedUnusedCode(code, "DM");
+		jdbcClient.sql("UPDATE app.signup_codes SET is_super = true WHERE code = :c")
+				.param("c", code).update();
+
+		mockMvc.perform(patch("/admin/signup-codes/" + code)
+				.header("Authorization", "Bearer " + TOKEN)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isSent\": true}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.isSent").value(true))
+				.andExpect(jsonPath("$.isSuper").value(true));
+	}
+
+	@Test
+	void 조회_응답에_isSuper가_노출된다() throws Exception {
+		String code = uniqueCode("DM-SHOW");
+		seedUnusedCode(code, "DM");
+		jdbcClient.sql("UPDATE app.signup_codes SET is_super = true WHERE code = :c")
+				.param("c", code).update();
+
+		mockMvc.perform(get("/admin/signups").header("Authorization", "Bearer " + TOKEN))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[?(@.code=='" + code + "')].isSuper")
+						.value(org.hamcrest.Matchers.contains(true)));
+
+		SignupUsageRow row = repository.findAll().stream()
+				.filter(r -> r.code().equals(code)).findFirst().orElseThrow();
+		assertThat(row.isSuper()).isTrue();
 	}
 
 	@Test
