@@ -760,6 +760,25 @@ class DailySweepJobTest {
 	}
 
 	@Test
+	void 전일_0_간주_이력_게시물은_재시도_없이_0을_잇는다() {
+		// 리포스트 0 게시물은 키가 영영 안 온다 — 어제 0 간주로 끝났고 양수 이력이 없으면
+		// 오늘은 상한까지 헛 재시도를 돌지 않고 캐리 판정이 즉시 0을 기록해야 한다(08-05).
+		db.update("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type, saves, shares, reposts)
+				VALUES ('carry_user', 'P562', CURRENT_DATE - 1, 'REELS', 4, 9, 0)""");
+		hiker.standalonePost("P562", "carry_user", "캡션")
+				.singleOnlyFields("P562", "\"save_count\":4,\"reshare_count\":9");   // 오늘도 리포스트 키 부재
+		targets.insert(TargetType.POST, 7L, "carry_user", "P562", null,
+				TargetStatus.TRACKING, "P562", "rk-mr9", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();                  // 재시도 자체가 안 돈다
+		assertThat(snapshotMetric("reposts", "P562")).isEqualTo(0L);
+		assertThat(snapshotMetric("saves", "P562")).isEqualTo(4L);
+	}
+
+	@Test
 	void 공유_숨김_게시물은_공유만_미관측이어도_재시도를_돌지_않는다() {
 		// 게시자가 공유 횟수를 숨긴 게시물(share_count_disabled)의 공유는 영영 안 온다 —
 		// 재시도 대상에 넣으면 매일 상한까지 헛 콜을 태운다(08-05 실측 숨김 11건).

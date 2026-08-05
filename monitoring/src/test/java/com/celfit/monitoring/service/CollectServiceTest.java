@@ -70,18 +70,36 @@ class CollectServiceTest {
 	// fb 없는 응답을 받으면 딱 1회만 재조회한다 — 관측 이력이 생긴 뒤에는 캐리포워드가 있어 재시도가
 	// 필요 없고, 매번 재시도하면 콜 비용이 기대 3~5배가 된다.
 
-	/** fb 관측 이력 조회를 고정 응답으로 갈아 끼운 대역 — DB 없이 재시도 분기만 검증한다. */
+	/** fb 관측·0 캐리 이력 조회를 고정 응답으로 갈아 끼운 대역 — DB 없이 재시도 분기만 검증한다. */
 	private static final class FbRepo extends SnapshotRepository {
 		private final Set<String> observed;
+		private final Set<String> repostsCarry;
+		private final Set<String> sharesCarry;
 
 		FbRepo(Set<String> observed) {
+			this(observed, Set.of(), Set.of());
+		}
+
+		FbRepo(Set<String> observed, Set<String> repostsCarry, Set<String> sharesCarry) {
 			super(null);
 			this.observed = observed;
+			this.repostsCarry = repostsCarry;
+			this.sharesCarry = sharesCarry;
 		}
 
 		@Override
 		public Set<String> codesWithFbObserved(Collection<String> codes) {
 			return observed;
+		}
+
+		@Override
+		public Set<String> codesWithRepostsZeroCarry(Collection<String> codes, LocalDate today) {
+			return repostsCarry;
+		}
+
+		@Override
+		public Set<String> codesWithSharesZeroCarry(Collection<String> codes, LocalDate today) {
+			return sharesCarry;
 		}
 	}
 
@@ -663,6 +681,77 @@ class CollectServiceTest {
 		assertThat(calls).hasSize(1);                              // 당첨 1콜로 즉시 종료
 		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
 		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(7L);
+	}
+
+	// ── 0 캐리(08-05) — 구조적 키 부재 게시물은 재시도 없이 0을 잇는다 ──────────
+	// 리포스트 0·공유 미상 게시물은 키가 영영 안 와 매일 상한까지 헛 재시도를 돌았다. 양수 관측
+	// 이력이 전무하고 전일이 0 간주로 끝난 게시물은(판정은 SnapshotRepository) 해당 지표를
+	// 재시도에서 빼고 즉시 0을 기록한다. 실제 값이 생기면 키가 오기 시작해 자동 해제된다.
+
+	private static CollectService carryingCollect(HikerClient client, RecordingWriter writer,
+			Set<String> repostsCarry, Set<String> sharesCarry) {
+		return new CollectService(client, writer, new NoopCommentRepository(),
+				new FbRepo(Set.of(), repostsCarry, sharesCarry), 1, 1, 1, 6, java.time.Duration.ZERO);
+	}
+
+	@Test
+	void 리포스트_0_캐리_게시물은_재시도_없이_즉시_0을_기록한다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+		// 저장·공유는 관측됐고 리포스트만 남은 게시물 — 캐리 대상이면 콜 없이 끝나야 한다.
+		PostInfo repostsOnly = new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, 3L, null, "{}", true, false, false);
+
+		carryingCollect(client, writer, Set.of("ReelA"), Set.of())
+				.retryReelsMetrics("999", List.of(repostsOnly));
+
+		assertThat(calls).isEmpty();
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(0L);
+		assertThat(writer.savedPosts.getFirst().saves()).isEqualTo(4L);   // 기존 관측 유지
+	}
+
+	@Test
+	void 공유_0_캐리_게시물도_재시도_없이_즉시_0을_기록한다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+		PostInfo sharesOnly = new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, "{}", true, false, false);
+
+		carryingCollect(client, writer, Set.of(), Set.of("ReelA"))
+				.retryReelsMetrics("999", List.of(sharesOnly));
+
+		assertThat(calls).isEmpty();
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().shares()).isEqualTo(0L);
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(7L);
+	}
+
+	@Test
+	void 캐리_후_남은_지표가_있으면_그_지표만_재시도한다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+		// 리포스트는 캐리, 저장·공유는 미관측 — 캐리 0 기록 후 남은 지표는 정상 재시도로 채운다.
+		carryingCollect(client, writer, Set.of("ReelA"), Set.of())
+				.retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(calls).hasSize(1);                              // 당첨 1콜 — 캐리분 재콜 없음
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(0L);   // 캐리 즉시 기록
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getLast().shares()).isEqualTo(9L);
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(0L);    // 캐리 0 유지
 	}
 
 	@Test

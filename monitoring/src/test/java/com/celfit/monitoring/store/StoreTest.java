@@ -153,6 +153,45 @@ class StoreTest {
 				.containsEntry("shares", 7L).containsEntry("shares_hidden", false);
 	}
 
+	// ── 0 캐리 판정(08-05) — 구조적 키 부재 게시물의 매일 헛 재시도 차단 ────────
+	// 양수 관측 이력이 전무하고 전일 행이 0으로 끝났으면(0 간주 산물) 오늘은 재시도 없이 0을
+	// 잇는다. 양수 이력이 있거나 전일이 null(전부 꽝 이월)이면 대상이 아니다 — 근거 없는 캐리 금지.
+
+	private void seedSnapshotRow(String code, String day, Long shares, Long reposts) {
+		db.update("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type, saves, shares, reposts)
+				VALUES ('acct_a', ?, ?::date, 'REELS', 1, ?, ?)""", code, day, shares, reposts);
+	}
+
+	@Test
+	void 리포스트_0_캐리는_양수_이력_없이_전일_0으로_끝난_게시물만_잡는다() {
+		seedSnapshotRow("CARRY", "2026-07-27", 3L, 0L);    // 전일 0 간주 산물 → 대상
+		seedSnapshotRow("POSITIVE", "2026-07-27", 3L, 5L); // 양수 실측 이력 → 제외
+		seedSnapshotRow("MISSED", "2026-07-27", 3L, null); // 전부 꽝 이월(null) → 제외
+		var today = LocalDate.of(2026, 7, 28);
+
+		assertThat(snapshots.codesWithRepostsZeroCarry(
+				java.util.List.of("CARRY", "POSITIVE", "MISSED", "NOROW"), today))
+				.containsExactly("CARRY");
+	}
+
+	@Test
+	void 리포스트_0_캐리는_과거_양수_이력이_있으면_전일이_0이어도_제외한다() {
+		seedSnapshotRow("ONCE", "2026-07-26", 3L, 7L);     // 과거 실측 7 — 키가 오는 게시물
+		seedSnapshotRow("ONCE", "2026-07-27", 3L, 0L);
+		assertThat(snapshots.codesWithRepostsZeroCarry(
+				java.util.List.of("ONCE"), LocalDate.of(2026, 7, 28))).isEmpty();
+	}
+
+	@Test
+	void 공유_0_캐리도_같은_규칙으로_판정한다() {
+		seedSnapshotRow("SCARRY", "2026-07-27", 0L, 1L);
+		seedSnapshotRow("SPOS", "2026-07-27", 9L, 1L);
+		assertThat(snapshots.codesWithSharesZeroCarry(
+				java.util.List.of("SCARRY", "SPOS"), LocalDate.of(2026, 7, 28)))
+				.containsExactly("SCARRY");
+	}
+
 	// ── 조회수 세션 일관성(08-03, findings §2 결론 4) ─────────────────────────
 	// PostInfo.views는 IG 몫, fbPlays는 FB 교차게시 몫(null=미관측/0=관측된 0).
 	// 저장되는 views는 화면 합산값 = IG 몫 + fb — fb가 이번 콜에 안 실렸으면(IG 전용 세션)

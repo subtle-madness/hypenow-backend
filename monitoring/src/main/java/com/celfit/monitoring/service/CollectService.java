@@ -216,7 +216,7 @@ public class CollectService {
 	public void retryReelsMetrics(String userId, List<PostInfo> trackedPosts) {
 		List<PostInfo> clipsPending = new ArrayList<>();
 		List<PostInfo> singlePending = new ArrayList<>();
-		for (PostInfo p : trackedPosts) {
+		for (PostInfo p : applyZeroCarry(trackedPosts)) {
 			if (!needsMetricsRetry(p)) {
 				continue;
 			}
@@ -251,6 +251,52 @@ public class CollectService {
 		if (leftover > 0) {
 			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, leftover);
 		}
+	}
+
+	// ── 0 캐리(08-05) — 구조적 키 부재 게시물의 매일 헛 재시도 차단 ──────────────
+	// 리포스트 0·공유 미상 게시물은 키가 영영 안 와 매일 소진 후 0 간주로 끝났다 — 스냅샷이 일
+	// 단위라 다음날이면 또 null에서 시작해 상한까지 헛 재시도를 반복한다(하루 ~100콜 낭비 실측).
+	// 양수 관측 이력이 전무하고 전일 행이 0으로 끝났으면(판정은 SnapshotRepository, 이중 근거)
+	// 해당 지표를 재시도 전에 즉시 0으로 잇는다. 실제 값이 생기면 키가 오기 시작하고 양수 관측이
+	// non-null 머지·이력 판정 양쪽에서 이기므로 자동 해제된다.
+
+	/** 재시도 진입 전 0 캐리 적용 — 캐리로 지표가 채워진 게시물은 재저장하고 갱신본을 돌려준다. */
+	private List<PostInfo> applyZeroCarry(List<PostInfo> trackedPosts) {
+		Set<String> repostsCandidates = new java.util.HashSet<>();
+		Set<String> sharesCandidates = new java.util.HashSet<>();
+		for (PostInfo p : trackedPosts) {
+			if (!"REELS".equals(p.contentType())) {
+				continue;
+			}
+			if (p.reposts() == null) {
+				repostsCandidates.add(p.shortCode());
+			}
+			if (p.shares() == null && !p.sharesHidden()) {
+				sharesCandidates.add(p.shortCode());
+			}
+		}
+		if (repostsCandidates.isEmpty() && sharesCandidates.isEmpty()) {
+			return trackedPosts;
+		}
+		LocalDate today = LocalDate.now(KST);
+		Set<String> repostsCarry = snapshots.codesWithRepostsZeroCarry(repostsCandidates, today);
+		Set<String> sharesCarry = snapshots.codesWithSharesZeroCarry(sharesCandidates, today);
+		List<PostInfo> result = new ArrayList<>(trackedPosts.size());
+		for (PostInfo p : trackedPosts) {
+			Long zeroReposts = p.reposts() == null && repostsCarry.contains(p.shortCode()) ? 0L : null;
+			Long zeroShares = p.shares() == null && !p.sharesHidden()
+					&& sharesCarry.contains(p.shortCode()) ? 0L : null;
+			if (zeroReposts == null && zeroShares == null) {
+				result.add(p);
+				continue;
+			}
+			PostInfo merged = p.mergedMetrics(null, zeroShares, zeroReposts);
+			writer.savePost(today, merged);
+			log.info("0 캐리 — {} shares={} reposts={} (양수 이력 없음·전일 0 종료, 재시도 제외)",
+					p.shortCode(), merged.shares(), merged.reposts());
+			result.add(merged);
+		}
+		return result;
 	}
 
 	// ── 키 부재 = 0 간주(08-05 사용자 결정) ──────────────────────────────────
