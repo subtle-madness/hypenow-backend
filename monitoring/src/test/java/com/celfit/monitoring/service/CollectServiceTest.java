@@ -54,7 +54,7 @@ class CollectServiceTest {
 			return alwaysMorePage(calls.size());
 		});
 		// enumeratePages=1(이 테스트와 무관), commentPages=3(스윕), registrationCommentPages=1(등록)
-		var collect = new CollectService(client, null, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 3, 1);
+		var collect = new CollectService(client, null, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 3, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectComments("DbV7LgZsKG8", "rarebeauty");
 		assertThat(calls).hasSize(3);   // 응답이 계속 더 있다고 해도 설정된 3페이지에서 멈춘다
@@ -137,7 +137,7 @@ class CollectServiceTest {
 			return MEDIAS_ONE_REEL;
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1);
+		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
 
@@ -157,7 +157,7 @@ class CollectServiceTest {
 			return MEDIAS_ONE_REEL;
 		});
 		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
-				new FbRepo(Set.of("ReelA")), 1, 1, 1);
+				new FbRepo(Set.of("ReelA")), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
 
@@ -174,7 +174,7 @@ class CollectServiceTest {
 			return MEDIAS_ONE_REEL;
 		});
 		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
-				new FbRepo(Set.of()), 1, 1, 1);
+				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
 
@@ -199,7 +199,7 @@ class CollectServiceTest {
 			return singlePost(calls.size() >= 2);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1);
+		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -215,7 +215,7 @@ class CollectServiceTest {
 			return singlePost(false);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1);
+		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -233,7 +233,7 @@ class CollectServiceTest {
 		});
 		var writer = new RecordingWriter();
 		var collect = new CollectService(client, writer, new NoopCommentRepository(),
-				new FbRepo(Set.of("Xx1")), 1, 1, 1);
+				new FbRepo(Set.of("Xx1")), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -255,7 +255,7 @@ class CollectServiceTest {
 			return MEDIAS_ONE_REEL;
 		});
 		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
-				new FbRepo(Set.of()), 1, 1, 1);
+				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccount("acct");
 
@@ -270,10 +270,118 @@ class CollectServiceTest {
 			return singlePost(false);
 		});
 		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
-				new FbRepo(Set.of()), 1, 1, 1);
+				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPost("Xx1");
 
 		assertThat(calls).hasSize(1);
+	}
+
+	// ── 저장·리포스트 세션 복권 재시도(08-04, 상한 metricsRetryMax) ─────────────
+	// 저장·리포스트 키는 콜 단위 전부/전무의 세션 복권이다(clips 존재율 ~45%). 미관측 추적 릴스가
+	// 있으면 clips 열거를 당첨까지 재콜한다 — fb와 달리 키가 "영영 안 오는" 게시물이 없어(전 릴스
+	// 대상) 스윕 재시도가 헛돌지 않고, 당첨 1회면 계정의 릴스 전체가 채워진다.
+
+	/** 미관측 세션(꽝) — 재생수는 있지만 저장·공유·리포스트 키가 없다. */
+	private static final String CLIPS_MISS = """
+			{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+			"ig_play_count":222}}],"paging_info":{"more_available":false}},"next_page_id":null}""";
+
+	/** 당첨 세션 — 저장·공유·리포스트가 전 릴스에 실린다. */
+	private static final String CLIPS_HIT = """
+			{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+			"ig_play_count":222,"save_count":5,"reshare_count":9,"media_repost_count":7}}],
+			"paging_info":{"more_available":false}},"next_page_id":null}""";
+
+	/** 단건 정본 수집을 마친 추적 릴스 — 공유는 단건이 확정 제공, 저장·리포스트만 미관측. */
+	private static PostInfo trackedReel(String contentType) {
+		return new PostInfo("ReelA", "acct", null, null, "999", contentType, "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, null, 3L, null, "{}", true, false);
+	}
+
+	private static CollectService retryingCollect(HikerClient client, RecordingWriter writer, int retryMax) {
+		return new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()),
+				1, 1, 1, retryMax, java.time.Duration.ZERO);
+	}
+
+	@Test
+	void 저장리포스트_재시도는_당첨까지_재콜하고_관측을_머지해_저장한다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return calls.size() >= 3 ? CLIPS_HIT : CLIPS_MISS;   // 꽝·꽝·당첨
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReel("REELS")));
+
+		assertThat(calls).hasSize(3);                            // 당첨 즉시 중단
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(7L);
+		assertThat(writer.savedPosts.getFirst().shares()).isEqualTo(3L);   // 단건 관측 유지(non-null 우선)
+	}
+
+	@Test
+	void 저장리포스트_재시도는_상한에서_멈추고_저장하지_않는다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_MISS;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReel("REELS")));
+
+		assertThat(calls).hasSize(6);
+		assertThat(writer.savedPosts).isEmpty();
+	}
+
+	@Test
+	void 저장리포스트_재시도는_열거_창_밖_게시물이면_즉시_포기한다() {
+		// 응답에 다른 릴스만 있음 — 추적 게시물이 최근 릴스 창(12건×페이지) 밖이면 재콜해도 안 잡힌다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return """
+					{"response":{"items":[{"media":{"code":"OtherReel","product_type":"clips",
+					"ig_play_count":1}}],"paging_info":{"more_available":false}},"next_page_id":null}""";
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReel("REELS")));
+
+		assertThat(calls).hasSize(1);                            // 첫 콜에서 창 밖 판정 → 재콜 없음
+		assertThat(writer.savedPosts).isEmpty();
+	}
+
+	@Test
+	void 저장리포스트_재시도는_피드를_대상에서_제외한다() {
+		// 피드는 저장·공유 키가 전 세션 부재(08-04 실측 0/181) — 재시도 대상 자체가 아니다(사용자 결정).
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReel("FEED")));
+
+		assertThat(calls).isEmpty();
+		assertThat(writer.savedPosts).isEmpty();
+	}
+
+	@Test
+	void 저장리포스트_재시도는_상한_0이면_아무_콜도_하지_않는다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 0).retryReelsMetrics("999", List.of(trackedReel("REELS")));
+
+		assertThat(calls).isEmpty();
 	}
 }

@@ -78,6 +78,14 @@ class DailySweepJobTest {
 		int clipsCalls;
 		int postCalls;
 		int commentsCalls;
+		String lastClipsUserId;
+		private final java.util.ArrayDeque<String> scriptedClips = new java.util.ArrayDeque<>();
+
+		/** clips 응답을 콜 순서대로 스크립트한다 — 저장·리포스트 세션 복권(꽝→당첨) 재현용. */
+		FakeHiker clipsResponses(String... bodies) {
+			scriptedClips.addAll(List.of(bodies));
+			return this;
+		}
 
 		/** 정상 계정 등록 — userId는 계정마다 달라야 열거 응답이 계정별로 갈린다. */
 		FakeHiker account(String username, String userId, FakePost... posts) {
@@ -197,6 +205,11 @@ class DailySweepJobTest {
 			}
 			if (path.startsWith("/v2/user/clips")) {
 				clipsCalls++;
+				lastClipsUserId = param(path, "user_id");
+				// 저장·리포스트 재시도 시나리오용 스크립트 — 비어 있으면 기본(빈 목록)으로 돌아간다.
+				if (!scriptedClips.isEmpty()) {
+					return scriptedClips.poll();
+				}
 				return "{\"response\":{\"items\":[],\"paging_info\":{\"more_available\":false}}}";
 			}
 			if (path.startsWith("/v2/user/medias")) {
@@ -243,10 +256,11 @@ class DailySweepJobTest {
 			// taken_at이 null이면 키를 통째로 뺀다 — 실제 응답의 "게시 시각 미상" 셰이프와 같다.
 			String takenAt = post.takenAt() == null ? "" : "\"taken_at\":" + post.takenAt() + ",";
 			String extra = extraFields == null ? "" : extraFields + ",";
+			// user.pk는 소유 계정 IG pk(고정 424242) — 단건형 계정 clips 재시도의 user_id 공급원.
 			return """
 					{"code":"%s","product_type":"clips",%s%s"caption":{"text":"%s"},
 					"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
-					"fb_play_count":0,"user":{"username":"%s"}}"""
+					"fb_play_count":0,"user":{"username":"%s","pk":424242}}"""
 					.formatted(post.code(), takenAt, extra, post.caption(), owner);
 		}
 
@@ -308,7 +322,7 @@ class DailySweepJobTest {
 		snapshots = new SnapshotRepository(db);
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
@@ -589,6 +603,89 @@ class DailySweepJobTest {
 				.isEqualTo(1000L);   // FakeHiker.profileJson의 follower_count 고정값
 	}
 
+	// ④-1 저장·리포스트 세션 복권 재시도 배선(08-04) — 재시도 자체의 규칙(상한·당첨 중단·피드 제외)은
+	// CollectServiceTest가 검증하고, 여기서는 스윕이 어느 경로로 무엇을 넘기는지(배선)만 본다.
+	// 기본 job은 재시도 0(비활성)으로 조립되므로 이 시나리오들만 전용 job을 만든다.
+
+	/** 꽝 세션 clips 응답 — 재생수만 있고 저장·공유·리포스트 키가 없다. */
+	private static String clipsMiss(String code) {
+		return """
+				{"response":{"items":[{"media":{"code":"%s","product_type":"clips",
+				"ig_play_count":100}}],"paging_info":{"more_available":false}},"next_page_id":null}"""
+				.formatted(code);
+	}
+
+	/** 당첨 세션 clips 응답 — 저장 5·공유 9·리포스트 7. */
+	private static String clipsHit(String code) {
+		return """
+				{"response":{"items":[{"media":{"code":"%s","product_type":"clips","ig_play_count":100,
+				"save_count":5,"reshare_count":9,"media_repost_count":7}}],
+				"paging_info":{"more_available":false}},"next_page_id":null}"""
+				.formatted(code);
+	}
+
+	/** 저장·리포스트 재시도(상한 6회)를 켠 job — 기본 setUp 조립(비활성 0)과 같은 리포지토리를 공유한다. */
+	private DailySweepJob retryEnabledJob() {
+		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots,
+				1, 1, 1, 6, Duration.ZERO);
+		return new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO,
+				imageArchive, thumbnailArchive);
+	}
+
+	private Long snapshotMetric(String column, String shortCode) {
+		return db.queryForObject(
+				"SELECT " + column + " FROM post_snapshot WHERE short_code=? ORDER BY captured_on DESC LIMIT 1",
+				Long.class, shortCode);
+	}
+
+	@Test
+	void 단건형_계정도_저장리포스트_미관측이면_단건_응답의_pk로_clips_열거를_새로_태운다() {
+		// POST 등록만 있는 계정은 열거가 없어 저장·리포스트가 단건 복권(15~23%)에만 걸려 있었다 —
+		// 단건 응답 user.pk(424242)를 user_id 삼아 clips를 꽝→당첨까지 재콜한다(사용자 결정 08-04).
+		hiker.standalonePost("P555", "postonly_user", "캡션")
+				.clipsResponses(clipsMiss("P555"), clipsHit("P555"));
+		targets.insert(TargetType.POST, 7L, "postonly_user", "P555", null,
+				TargetStatus.TRACKING, "P555", "rk-mr1", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(2);                  // 꽝 1 + 당첨 1, 당첨 즉시 중단
+		assertThat(hiker.lastClipsUserId).isEqualTo("424242");      // 단건 응답 user.pk에서 유도
+		assertThat(snapshotMetric("saves", "P555")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "P555")).isEqualTo(7L);
+	}
+
+	@Test
+	void 계정형_추적_릴스도_미관측이면_프로필_user_id로_clips_재시도한다() {
+		// 열거 계정은 기본 clips 보강 콜(1번째 스크립트)이 꽝이어도 재시도(2번째)가 당첨을 잡는다.
+		hiker.account("acct_mr", "777", new FakePost("R777", "캡션", AFTER))
+				.clipsResponses(clipsMiss("R777"), clipsHit("R777"));
+		targets.insert(TargetType.ACCOUNT, 7L, "acct_mr", null, null,
+				TargetStatus.TRACKING, "R777", "rk-mr2", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(2);                  // 열거 기본 보강 1 + 재시도 1
+		assertThat(hiker.lastClipsUserId).isEqualTo("777");         // 열거 계정은 프로필 user_id를 쓴다
+		assertThat(snapshotMetric("saves", "R777")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "R777")).isEqualTo(7L);
+	}
+
+	@Test
+	void 피드_추적_게시물은_저장리포스트_재시도_대상이_아니다() {
+		// 피드는 저장·공유 키가 전 세션 부재(08-04 실측 0/181) — 재시도를 태워도 헛 콜이다(사용자 결정).
+		hiker.standalonePost("P666", "feedonly_user", "캡션")
+				.singleOnlyFields("P666", "\"product_type\":\"feed\"");
+		targets.insert(TargetType.POST, 7L, "feedonly_user", "P666", null,
+				TargetStatus.TRACKING, "P666", "rk-mr3", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();
+	}
+
 	// ⑤ 실패 격리
 	@Test
 	void 한_계정_수집_오류가_다른_계정_처리를_막지_않는다() {
@@ -684,7 +781,7 @@ class DailySweepJobTest {
 		hiker.account("flip_user", "555", new FakePost("REV1", "Rare Beginnings 복귀", AFTER));
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
 				thumbnailArchive);
 
@@ -1020,7 +1117,7 @@ class DailySweepJobTest {
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
-		var crashCollect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1);
+		var crashCollect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3,
 				Duration.ZERO, imageArchive, thumbnailArchive);
 
@@ -1090,7 +1187,7 @@ class DailySweepJobTest {
 		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshots);
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
-		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1);
+		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
 				thumbnailArchive);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);

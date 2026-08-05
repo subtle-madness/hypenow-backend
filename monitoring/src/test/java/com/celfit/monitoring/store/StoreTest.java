@@ -113,9 +113,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, "{}", true, false);
+		var post = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, "{}", true, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, "{}", true, false);
+		var post2 = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, "{}", true, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -124,13 +124,13 @@ class StoreTest {
 	/** 숨김 관측은 likes=null + likes_hidden=true로 저장 — 해제 관측이 오면 false로 덮인다. */
 	@Test
 	void 좋아요_숨김_플래그는_저장되고_해제되면_덮인다() {
-		var hidden = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L,
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
 				null, 2L, 100L, null, null, null, null, "{}", true, true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
 		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("likes", null).containsEntry("likes_hidden", true);
 
-		var visible = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L,
+		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
 				90L, 2L, 100L, null, null, null, null, "{}", true, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
 		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
@@ -143,7 +143,7 @@ class StoreTest {
 	// 직전 관측 fb_plays를 캐리포워드한다(FB 몫은 실측상 거의 정적 — 며칠 단위 고정).
 
 	private static PostInfo reels(Long igViews, Long fbPlays) {
-		return new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L,
+		return new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
 				10L, 2L, igViews, fbPlays, null, null, null, "{}", true, false);
 	}
 
