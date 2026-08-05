@@ -259,8 +259,10 @@ public class TrackingItemAssembler {
 		Long views = isFeed ? null : s.views();
 		Long shares = isFeed ? null : s.shares();
 		Long reposts = isFeed ? null : s.reposts();
+		// 피드는 공유 자체가 미지원(null 강제)이라 "숨김" 신호도 접는다 — 미지원과 비공개는 다른 상태다.
+		boolean sharesHidden = !isFeed && s.sharesHidden();
 		return new TrackingItemResponse.SnapshotResponse(s.capturedOn().toString(), views, s.likes(),
-				s.likesHidden(), s.comments(), s.saves(), shares, reposts);
+				s.likesHidden(), s.comments(), s.saves(), shares, sharesHidden, reposts);
 	}
 
 	/** 필드 결손 댓글(author·body·likeCount·commentedAt 중 하나라도 null)은 통째로 제외(계약 PostComment). */

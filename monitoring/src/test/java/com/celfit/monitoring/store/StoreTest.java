@@ -137,6 +137,22 @@ class StoreTest {
 				.containsEntry("likes", 90L).containsEntry("likes_hidden", false);
 	}
 
+	/** 공유 숨김 관측(08-05)은 shares_hidden=true로 저장 — 해제 관측이 오면 false로 덮인다. */
+	@Test
+	void 공유_숨김_플래그는_저장되고_해제되면_덮인다() {
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, null, null, "{}", true, false, true);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", null).containsEntry("shares_hidden", true);
+
+		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, 7L, null, "{}", true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", 7L).containsEntry("shares_hidden", false);
+	}
+
 	// ── 조회수 세션 일관성(08-03, findings §2 결론 4) ─────────────────────────
 	// PostInfo.views는 IG 몫, fbPlays는 FB 교차게시 몫(null=미관측/0=관측된 0).
 	// 저장되는 views는 화면 합산값 = IG 몫 + fb — fb가 이번 콜에 안 실렸으면(IG 전용 세션)

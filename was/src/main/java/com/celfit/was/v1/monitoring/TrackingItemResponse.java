@@ -64,6 +64,8 @@ public record TrackingItemResponse(
 	 * Snapshot(6.25) — 하루치 누적 지표. FEED는 views·shares·reposts를 어셈블러가 null로 강제한다.
 	 * likesHidden은 게시자의 좋아요 수 숨김 관측(추가 필드, 하위 호환) — true면 likes는 null이고
 	 * FE는 "-" 대신 숨김 상태로 구분 표시한다. 날짜 자체가 없는 것(수집 실패)과 다른 상태다.
+	 * sharesHidden(v2.7)도 같은 계약 — 게시자의 공유 횟수 숨김 관측(share_count_disabled 토글
+	 * 또는 좋아요 숨김 커플링), true면 shares는 null이고 FE는 비공개로 구분 표시한다.
 	 */
 	public record SnapshotResponse(
 			String date,
@@ -73,6 +75,7 @@ public record TrackingItemResponse(
 			Long comments,
 			Long saves,
 			Long shares,
+			boolean sharesHidden,
 			Long reposts) {
 	}
 
