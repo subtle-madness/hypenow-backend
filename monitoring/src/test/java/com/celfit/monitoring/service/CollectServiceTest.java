@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.CommentRepository;
@@ -337,22 +338,134 @@ class CollectServiceTest {
 		assertThat(writer.savedPosts).isEmpty();
 	}
 
+	// ── 창 밖 게시물의 단건 콜 복권 재시도(08-05) ──────────────────────────────
+	// 열거 창(최근 12건×페이지) 밖 추적 릴스는 clips 재콜이 영영 못 잡는다. 08-04엔 "단건 응답이
+	// 공유수를 확정 제공(25/25)"이라는 전제로 즉시 포기했지만, 08-05 운영 원형 재실측(49콜)에서
+	// 단건도 3키 전부 세션 복권임이 확인됐다(reshare 59%·save 47%·repost 29%) — 창 밖 게시물은
+	// 단건 콜이 유일 공급원이므로, clips 대신 단건 콜을 당첨까지 재시도한다.
+
+	/** 창 밖 상황의 clips 응답 — 추적 게시물(ReelA)이 아닌 다른 릴스만 있다. */
+	private static final String CLIPS_WITHOUT_REEL_A = """
+			{"response":{"items":[{"media":{"code":"OtherReel","product_type":"clips",
+			"ig_play_count":1}}],"paging_info":{"more_available":false}},"next_page_id":null}""";
+
+	/** ReelA 단건 응답(media_or_ad) — extraFields로 당첨/꽝 세션을 시나리오별로 얹는다. */
+	private static String singleReelA(String extraFields) {
+		String extra = extraFields == null ? "" : extraFields + ",";
+		return """
+				{"media_or_ad":{"code":"ReelA","product_type":"clips",%s
+				"like_count":10,"comment_count":2,"ig_play_count":222,
+				"user":{"username":"acct","pk":999}},"status":"ok"}""".formatted(extra);
+	}
+
+	private static final String SINGLE_HIT_ALL = "\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7";
+
+	/** 3지표 전부 미관측인 추적 릴스 — 창 밖 시나리오는 공유수도 단건 재시도가 채워야 한다. */
+	private static PostInfo trackedReelAllMissing() {
+		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, "{}", true, false);
+	}
+
+	private static long countByPrefix(List<String> calls, String prefix) {
+		return calls.stream().filter(p -> p.startsWith(prefix)).count();
+	}
+
 	@Test
-	void 저장리포스트_재시도는_열거_창_밖_게시물이면_즉시_포기한다() {
-		// 응답에 다른 릴스만 있음 — 추적 게시물이 최근 릴스 창(12건×페이지) 밖이면 재콜해도 안 잡힌다.
+	void 저장리포스트_재시도는_열거_창_밖_게시물이면_단건_재시도로_전환해_3지표를_채운다() {
 		List<String> calls = new ArrayList<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
-			return """
-					{"response":{"items":[{"media":{"code":"OtherReel","product_type":"clips",
-					"ig_play_count":1}}],"paging_info":{"more_available":false}},"next_page_id":null}""";
+			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
+			return singleReelA(SINGLE_HIT_ALL);
 		});
 		var writer = new RecordingWriter();
 
-		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReel("REELS")));
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
 
-		assertThat(calls).hasSize(1);                            // 첫 콜에서 창 밖 판정 → 재콜 없음
+		assertThat(countByPrefix(calls, "/v2/user/clips")).isEqualTo(1);          // 창 밖 판정 1콜
+		assertThat(countByPrefix(calls, "/v2/media/info/by/code")).isEqualTo(1);  // 단건 당첨 즉시 중단
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getFirst().shares()).isEqualTo(9L);
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(7L);
+	}
+
+	@Test
+	void 창_밖_단건_재시도도_꽝이면_상한까지만_반복하고_저장하지_않는다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
+			return singleReelA(null);   // 매번 꽝 세션
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		// 상한 6회 = 창 밖 판정 clips 1콜 + 단건 재시도 5콜
+		assertThat(countByPrefix(calls, "/v2/user/clips")).isEqualTo(1);
+		assertThat(countByPrefix(calls, "/v2/media/info/by/code")).isEqualTo(5);
 		assertThat(writer.savedPosts).isEmpty();
+	}
+
+	@Test
+	void 창_밖_단건_재시도는_부분_관측을_머지하며_3지표_완비까지_계속한다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
+			long singles = countByPrefix(calls, "/v2/media/info/by/code");
+			return singles == 1 ? singleReelA("\"save_count\":5")   // 부분 세션(저장만)
+					: singleReelA("\"reshare_count\":9,\"media_repost_count\":7");
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(countByPrefix(calls, "/v2/media/info/by/code")).isEqualTo(2);
+		assertThat(writer.savedPosts).hasSize(2);                 // 부분 관측도 그때그때 저장
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);   // 1차 관측 유지
+		assertThat(writer.savedPosts.getLast().shares()).isEqualTo(9L);
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(7L);
+	}
+
+	@Test
+	void 창_밖_단건_재시도_콜_실패는_삼키고_다음_시도로_넘어간다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
+			if (countByPrefix(calls, "/v2/media/info/by/code") == 1) {
+				throw new HikerFetchException("502 일시");
+			}
+			return singleReelA(SINGLE_HIT_ALL);
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(countByPrefix(calls, "/v2/media/info/by/code")).isEqualTo(2);   // 실패 1 + 당첨 1
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().saves()).isEqualTo(5L);
+	}
+
+	@Test
+	void user_id가_없으면_clips_없이_단건_재시도만_돈다() {
+		// POST 등록만 있고 단건 응답에 user.pk도 없는 계정(구형 셰이프) — 예전엔 통째로 건너뛰었지만
+		// 단건 재시도는 short_code만 있으면 되므로 이제 보강이 돈다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return singleReelA(SINGLE_HIT_ALL);
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics(null, List.of(trackedReelAllMissing()));
+
+		assertThat(countByPrefix(calls, "/v2/user/clips")).isZero();
+		assertThat(countByPrefix(calls, "/v2/media/info/by/code")).isEqualTo(1);
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(7L);
 	}
 
 	@Test

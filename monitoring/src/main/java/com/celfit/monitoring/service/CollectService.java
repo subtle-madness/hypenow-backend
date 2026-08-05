@@ -182,52 +182,118 @@ public class CollectService {
 	// 실리거나 전부 빠진다(운영 원형 151콜 전수: 혼재 0건). fb 몫과 달리 "영영 안 오는" 게시물이
 	// 없어(당첨 세션은 전 릴스에 싣는다) 스윕 재시도가 헛돌지 않고, 당첨 1회로 계정의 릴스 전체가
 	// 채워진다. 피드는 저장·공유 키가 전 세션 부재(0/181)라 대상에서 제외한다(사용자 결정 08-04).
+	//
+	// 열거 창(최근 12건×페이지) 밖 게시물은 clips 재콜이 영영 못 잡는다 — 단건 콜로 전환해
+	// 같은 복권을 돌린다(08-05 결정). 08-04엔 "단건은 공유수 확정 제공(25/25)"이라 보고 즉시
+	// 포기했지만, 운영 원형 재실측(49콜)에서 단건도 3키 전부 세션 복권임이 확인됐다(reshare 59%
+	// ·save 47%·repost 29%) — 창 밖 게시물엔 단건 콜이 유일 공급원이라 재시도 없이는 3종이 빈다.
 
 	/**
 	 * 미관측 추적 릴스의 저장·리포스트 보강 — clips 열거를 당첨(키 실림)까지 최대 metricsRetryMax회
-	 * 재콜하고, 관측을 non-null 머지해 재저장한다. 실패·미당첨은 그대로 종료(best-effort) —
-	 * 스냅샷은 이미 단건 정본으로 저장돼 있고, 여기서 예외가 새면 스윕 재시도 라운드가 이 계정을
-	 * 통째로 다시 돌게 된다.
+	 * 재콜하고, 관측을 non-null 머지해 재저장한다. 열거 창 밖으로 판정된 게시물(과 clips를 태울
+	 * userId가 아예 없는 계정 — null 허용)은 단건 콜 재시도로 전환한다. 실패·미당첨은 그대로
+	 * 종료(best-effort) — 스냅샷은 이미 단건 정본으로 저장돼 있고, 여기서 예외가 새면 스윕 재시도
+	 * 라운드가 이 계정을 통째로 다시 돌게 된다.
+	 *
+	 * <p>시도 상한은 두 경로 합산이다(계정당 콜 예산을 하나로 묶는다). 단건 전환분의 첫 재콜은
+	 * 다음 시도(=간격 경과 후)부터 돈다 — 방금 스윕이 같은 게시물 단건 정본 콜을 마친 직후라,
+	 * 즉시 재콜하면 Hiker 응답 캐시로 같은 꽝 세션을 되받는다.
 	 */
 	public void retryReelsMetrics(String userId, List<PostInfo> trackedPosts) {
-		List<PostInfo> pending = new ArrayList<>(trackedPosts.stream()
-				.filter(p -> "REELS".equals(p.contentType()))
-				.filter(p -> p.saves() == null || p.reposts() == null)
-				.toList());
-		for (int attempt = 1; attempt <= metricsRetryMax && !pending.isEmpty(); attempt++) {
+		List<PostInfo> clipsPending = new ArrayList<>();
+		List<PostInfo> singlePending = new ArrayList<>();
+		for (PostInfo p : trackedPosts) {
+			if (!"REELS".equals(p.contentType()) || (p.saves() != null && p.reposts() != null)) {
+				continue;
+			}
+			// userId가 없으면(구형 셰이프 단건 등록분) clips를 태울 수 없다 — 전원 단건 재시도.
+			if (userId == null) {
+				singlePending.add(p);
+			} else {
+				clipsPending.add(p);
+			}
+		}
+		for (int attempt = 1;
+				attempt <= metricsRetryMax && !(clipsPending.isEmpty() && singlePending.isEmpty());
+				attempt++) {
 			if (!sleepQuietly(metricsRetryDelay)) {
 				return;   // 인터럽트는 종료 신호 — 보강만 포기한다(내일 스윕이 다시 시도).
 			}
-			Map<String, HikerClient.ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
-			List<PostInfo> next = new ArrayList<>();
-			for (PostInfo p : pending) {
-				HikerClient.ClipCounts c = observed.get(p.shortCode());
-				if (c == null) {
-					if (!observed.isEmpty()) {
-						// 응답은 정상인데 이 게시물이 없다 — 최근 릴스 창(12건×페이지) 밖. 재콜해도 안 잡힌다.
-						log.info("저장·리포스트 재시도 중단 — {} 열거 창 밖(user_id {})", p.shortCode(), userId);
-					} else {
-						next.add(p);   // 빈 맵은 콜 실패(fetchClipCounts가 삼킴) — 다음 시도에 맡긴다.
-					}
-					continue;
-				}
-				if (!c.hasMetricKeys()) {
-					next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
-					continue;
-				}
-				PostInfo merged = p.mergedMetrics(c.saves(), c.shares(), c.reposts());
-				writer.savePost(LocalDate.now(KST), merged);
-				log.info("저장·리포스트 당첨 머지 — {} saves={} reposts={} ({}번째 시도)",
-						p.shortCode(), merged.saves(), merged.reposts(), attempt);
-				if (merged.saves() == null || merged.reposts() == null) {
-					next.add(merged);   // 드문 부분 세션(저장만/리포스트만) — 남은 지표는 계속 시도.
-				}
+			// 단건을 먼저 돈다 — clips 처리에서 방금 전환된 게시물이 같은 시도에 즉시 재콜되지 않게.
+			List<PostInfo> singleNext = retrySinglesOnce(singlePending, attempt);
+			if (!clipsPending.isEmpty()) {
+				clipsPending = retryClipsOnce(userId, clipsPending, singleNext, attempt);
 			}
-			pending = next;
+			singlePending = singleNext;
 		}
-		if (!pending.isEmpty()) {
-			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, pending.size());
+		int leftover = clipsPending.size() + singlePending.size();
+		if (leftover > 0) {
+			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, leftover);
 		}
+	}
+
+	/** clips 복권 1회 — 창 밖 판정 게시물은 {@code singleNext}로 넘긴다. @return 다음 시도의 clips 대기분. */
+	private List<PostInfo> retryClipsOnce(String userId, List<PostInfo> pending,
+			List<PostInfo> singleNext, int attempt) {
+		Map<String, HikerClient.ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
+		List<PostInfo> next = new ArrayList<>();
+		for (PostInfo p : pending) {
+			HikerClient.ClipCounts c = observed.get(p.shortCode());
+			if (c == null) {
+				if (!observed.isEmpty()) {
+					// 응답은 정상인데 이 게시물이 없다 — 최근 릴스 창 밖. clips 재콜 대신 단건 복권으로.
+					log.info("저장·리포스트 열거 창 밖 — {} 단건 재시도로 전환(user_id {})", p.shortCode(), userId);
+					singleNext.add(p);
+				} else {
+					next.add(p);   // 빈 맵은 콜 실패(fetchClipCounts가 삼킴) — 다음 시도에 맡긴다.
+				}
+				continue;
+			}
+			if (!c.hasMetricKeys()) {
+				next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
+				continue;
+			}
+			PostInfo merged = p.mergedMetrics(c.saves(), c.shares(), c.reposts());
+			writer.savePost(LocalDate.now(KST), merged);
+			log.info("저장·리포스트 당첨 머지 — {} saves={} reposts={} ({}번째 시도)",
+					p.shortCode(), merged.saves(), merged.reposts(), attempt);
+			if (merged.saves() == null || merged.reposts() == null) {
+				next.add(merged);   // 드문 부분 세션(저장만/리포스트만) — 남은 지표는 계속 시도.
+			}
+		}
+		return next;
+	}
+
+	/**
+	 * 단건 복권 1회(게시물당 1콜) — 관측된 저장·공유·리포스트만 non-null 머지해 재저장한다.
+	 * 종료 조건은 3지표 완비다: clips 경로(저장·리포스트만 보면 됨 — 공유는 창 안이면 매일 단건
+	 * 정본이 다시 뽑는다)와 달리, 창 밖 게시물엔 이 재시도가 공유수의 사실상 마지막 기회다.
+	 * 콜 실패는 삼키고 다음 시도에 맡긴다(best-effort — 상한이 이미 폭주를 막는다).
+	 */
+	private List<PostInfo> retrySinglesOnce(List<PostInfo> pending, int attempt) {
+		List<PostInfo> next = new ArrayList<>();
+		for (PostInfo p : pending) {
+			PostInfo observed;
+			try {
+				observed = hiker.fetchPost(p.shortCode());
+			} catch (RuntimeException e) {
+				log.warn("저장·리포스트 단건 재시도 실패 — {} 다음 시도에 재콜: {}", p.shortCode(), e.toString());
+				next.add(p);
+				continue;
+			}
+			if (observed.saves() == null && observed.shares() == null && observed.reposts() == null) {
+				next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
+				continue;
+			}
+			PostInfo merged = p.mergedMetrics(observed.saves(), observed.shares(), observed.reposts());
+			writer.savePost(LocalDate.now(KST), merged);
+			log.info("저장·리포스트 단건 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
+					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);
+			if (merged.saves() == null || merged.shares() == null || merged.reposts() == null) {
+				next.add(merged);   // 부분 세션 — 남은 지표는 계속 시도.
+			}
+		}
+		return next;
 	}
 
 	/** 재콜 간격 대기 — 인터럽트면 false(플래그 복원). 응답 캐시 회피용이라 실패해도 치명적이지 않다. */

@@ -58,9 +58,23 @@ class RegistrationServiceTest {
 				.formatted(code, extra);
 	}
 
+	/** user.pk가 없는 단건 응답 — ownerUserId를 못 주는 구형 셰이프 재현용. */
+	private static String singleNoPk(String code, String extraFields) {
+		String extra = extraFields == null ? "" : extraFields + ",";
+		return """
+				{"media_or_ad":{"code":"%s","product_type":"clips","taken_at":1700000000,%s
+				"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
+				"caption":{"text":"c"},"user":{"username":"owner1"}},"status":"ok"}"""
+				.formatted(code, extra);
+	}
+
+	/** 창 밖 단건 재시도 당첨 세션의 추가 필드 — 저장 5·공유 9·리포스트 7. */
+	private static final String SINGLE_HIT = "\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7";
+
 	JdbcTemplate db;
 	List<String> calls;
 	ArrayDeque<String> scriptedClips;
+	ArrayDeque<String> scriptedSingles;
 	String singleBody;
 	RegistrationService registration;
 
@@ -71,6 +85,7 @@ class RegistrationServiceTest {
 		TestDb.resetAndMigrate(db, ds);
 		calls = new ArrayList<>();
 		scriptedClips = new ArrayDeque<>();
+		scriptedSingles = new ArrayDeque<>();
 		var client = new HikerClient(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/media/comments")) {
@@ -79,7 +94,8 @@ class RegistrationServiceTest {
 			if (path.startsWith("/v2/user/clips")) {
 				return scriptedClips.isEmpty() ? clipsMiss("none") : scriptedClips.poll();
 			}
-			return singleBody;
+			// 단건 스크립트(콜 순서대로 소진)가 있으면 우선 — 단건 세션 복권(꽝→당첨) 재현용.
+			return scriptedSingles.isEmpty() ? singleBody : scriptedSingles.poll();
 		});
 		var targets = new TargetRepository(db);
 		var snapshots = new SnapshotRepository(db);
@@ -136,5 +152,44 @@ class RegistrationServiceTest {
 		registerPost("P902");
 
 		assertThat(clipsCalls()).isZero();
+	}
+
+	private long singleCalls() {
+		return calls.stream().filter(p -> p.startsWith("/v2/media/info/by/code")).count();
+	}
+
+	@Test
+	void 등록_직후_창_밖_릴스는_단건_재시도로_당일_채워진다() {
+		// 등록 정본 콜은 꽝 세션(fb는 실려 fb 재시도는 안 탄다), clips는 창 밖(다른 릴스만) —
+		// 백필이 단건 재시도로 전환해 당첨을 잡아야 등록 당일 3지표가 남는다(08-05 결정).
+		scriptedSingles.addAll(List.of(
+				single("P903", "\"fb_play_count\":3"),
+				single("P903", SINGLE_HIT)));
+		scriptedClips.add(clipsMiss("OTHER"));
+
+		var result = registerPost("P903");
+
+		assertThat(result.status()).isEqualTo("TRACKING");
+		assertThat(clipsCalls()).isEqualTo(1);          // 창 밖 판정 1콜 — clips 재콜은 없다
+		assertThat(singleCalls()).isEqualTo(2);         // 정본 1 + 단건 재시도 당첨 1
+		assertThat(snapshotMetric("saves", "P903")).isEqualTo(5L);
+		assertThat(snapshotMetric("shares", "P903")).isEqualTo(9L);
+		assertThat(snapshotMetric("reposts", "P903")).isEqualTo(7L);
+	}
+
+	@Test
+	void 등록_직후_ownerUserId가_없어도_단건_재시도로_백필이_돈다() {
+		// 구형 셰이프(user.pk 부재)는 clips를 태울 user_id가 없어 예전엔 백필을 통째로 건너뛰었다 —
+		// 단건 재시도는 short_code만 있으면 되므로 이제 clips 없이 단건 복권만 돈다.
+		scriptedSingles.addAll(List.of(
+				singleNoPk("P904", "\"fb_play_count\":3"),
+				singleNoPk("P904", SINGLE_HIT)));
+
+		registerPost("P904");
+
+		assertThat(clipsCalls()).isZero();              // user_id가 없으니 clips는 애초에 못 탄다
+		assertThat(singleCalls()).isEqualTo(2);         // 정본 1 + 단건 재시도 당첨 1
+		assertThat(snapshotMetric("saves", "P904")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "P904")).isEqualTo(7L);
 	}
 }

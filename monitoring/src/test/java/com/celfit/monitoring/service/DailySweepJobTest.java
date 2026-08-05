@@ -120,8 +120,26 @@ class DailySweepJobTest {
 			return this;
 		}
 
+		/**
+		 * 단건 응답 추가 필드를 콜 순서대로 스크립트한다 — 단건 콜 세션 복권(꽝→당첨) 재현용.
+		 * 빈 문자열은 꽝(추가 필드 없음), 소진되면 singleOnlyFields(고정분)로 돌아간다.
+		 */
+		FakeHiker singleFieldsResponses(String code, String... perCallFields) {
+			singleExtraQueueByCode.computeIfAbsent(code, k -> new java.util.ArrayDeque<>())
+					.addAll(List.of(perCallFields));
+			return this;
+		}
+
+		/** 단건 응답의 user.pk를 뺀다 — ownerUserId를 못 주는 구형 셰이프 재현용. */
+		FakeHiker withoutOwnerPk(String code) {
+			pkLessCodes.add(code);
+			return this;
+		}
+
 		private final Map<String, String> enumExtraByCode = new HashMap<>();
 		private final Map<String, String> singleExtraByCode = new HashMap<>();
+		private final Map<String, java.util.ArrayDeque<String>> singleExtraQueueByCode = new HashMap<>();
+		private final Set<String> pkLessCodes = new HashSet<>();
 
 		/** 계정 삭제·개명 — 프로필 조회가 404. */
 		FakeHiker missingAccount(String username) {
@@ -246,22 +264,30 @@ class DailySweepJobTest {
 
 		private String postJson(FakePost post, String owner) {
 			// 단건은 /v2/media/info/by/code의 media_or_ad 셰이프(#337) — 단건 전용 추가 필드(#330)는 유지.
+			var queue = singleExtraQueueByCode.get(post.code());
+			String extra = queue != null && !queue.isEmpty() ? queue.poll() : singleExtraByCode.get(post.code());
+			if (extra != null && extra.isBlank()) {
+				extra = null;   // 스크립트의 빈 문자열 = 꽝 세션(추가 필드 없음)
+			}
 			return """
 					{"media_or_ad":%s,"status":"ok"}"""
-					.formatted(itemJson(post, owner, singleExtraByCode.get(post.code())));
+					.formatted(itemJson(post, owner, extra));
 		}
 
 		/** 캡션에 따옴표·역슬래시를 쓰지 않는다는 전제 — 픽스처 문자열이라 이스케이프를 생략한다. */
-		private static String itemJson(FakePost post, String owner, String extraFields) {
+		private String itemJson(FakePost post, String owner, String extraFields) {
 			// taken_at이 null이면 키를 통째로 뺀다 — 실제 응답의 "게시 시각 미상" 셰이프와 같다.
 			String takenAt = post.takenAt() == null ? "" : "\"taken_at\":" + post.takenAt() + ",";
 			String extra = extraFields == null ? "" : extraFields + ",";
 			// user.pk는 소유 계정 IG pk(고정 424242) — 단건형 계정 clips 재시도의 user_id 공급원.
+			String user = pkLessCodes.contains(post.code())
+					? "{\"username\":\"%s\"}".formatted(owner)
+					: "{\"username\":\"%s\",\"pk\":424242}".formatted(owner);
 			return """
 					{"code":"%s","product_type":"clips",%s%s"caption":{"text":"%s"},
 					"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
-					"fb_play_count":0,"user":{"username":"%s","pk":424242}}"""
-					.formatted(post.code(), takenAt, extra, post.caption(), owner);
+					"fb_play_count":0,"user":%s}"""
+					.formatted(post.code(), takenAt, extra, post.caption(), user);
 		}
 
 		private static String param(String path, String name) {
@@ -671,6 +697,46 @@ class DailySweepJobTest {
 		assertThat(hiker.lastClipsUserId).isEqualTo("777");         // 열거 계정은 프로필 user_id를 쓴다
 		assertThat(snapshotMetric("saves", "R777")).isEqualTo(5L);
 		assertThat(snapshotMetric("reposts", "R777")).isEqualTo(7L);
+	}
+
+	@Test
+	void 단건형_계정_추적_릴스가_열거_창_밖이면_단건_재시도로_3지표를_채운다() {
+		// clips 응답에 추적 게시물이 없다(최근 릴스 창 밖) — 08-04엔 즉시 포기했지만, 단건 콜도
+		// 3키 전부 세션 복권임이 확인돼(08-05 실측) 단건 재시도로 전환한다. 정본 콜(꽝) 뒤
+		// 재시도 1콜이 당첨을 잡아 저장·공유·리포스트가 그날 스냅샷에 남아야 한다.
+		hiker.standalonePost("P557", "outwin_user", "캡션")
+				.clipsResponses(clipsMiss("OTHER"))
+				.singleFieldsResponses("P557", "",
+						"\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7");
+		targets.insert(TargetType.POST, 7L, "outwin_user", "P557", null,
+				TargetStatus.TRACKING, "P557", "rk-mr4", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(1);              // 창 밖 판정 1콜 — clips 재콜은 없다
+		assertThat(hiker.postCalls).isEqualTo(2);               // 정본 1 + 단건 재시도 당첨 1
+		assertThat(snapshotMetric("saves", "P557")).isEqualTo(5L);
+		assertThat(snapshotMetric("shares", "P557")).isEqualTo(9L);
+		assertThat(snapshotMetric("reposts", "P557")).isEqualTo(7L);
+	}
+
+	@Test
+	void 단건_응답에_user_pk가_없어도_단건_재시도는_돈다() {
+		// 구형 셰이프(ownerUserId 부재)는 clips를 태울 user_id가 없어 예전엔 보강을 통째로 건너뛰었다 —
+		// 단건 재시도는 short_code만 있으면 되므로 이제 clips 없이 단건 복권만 돈다.
+		hiker.standalonePost("P558", "nopk_user", "캡션")
+				.withoutOwnerPk("P558")
+				.singleFieldsResponses("P558", "",
+						"\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7");
+		targets.insert(TargetType.POST, 7L, "nopk_user", "P558", null,
+				TargetStatus.TRACKING, "P558", "rk-mr5", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();                  // user_id가 없으니 clips는 애초에 못 탄다
+		assertThat(hiker.postCalls).isEqualTo(2);               // 정본 1 + 단건 재시도 당첨 1
+		assertThat(snapshotMetric("saves", "P558")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "P558")).isEqualTo(7L);
 	}
 
 	@Test

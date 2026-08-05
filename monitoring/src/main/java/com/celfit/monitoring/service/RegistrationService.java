@@ -134,12 +134,14 @@ public class RegistrationService {
 	 * FE 조회 표면은 스냅샷 테이블 SELECT라 백필 완료(최대 ~1분) 후 새로고침이면 채워진다.
 	 * best-effort: 실패해도 등록은 이미 성공했고, 다음날 새벽 스윕이 백스톱이다.
 	 * ACCOUNT 등록은 대상이 아니다 — 추적 게시물이 아직 없고(WATCHING) 감지는 스윕 안에서 일어난다.
+	 * ownerUserId가 없어도(구형 셰이프) 건너뛰지 않는다 — retryReelsMetrics가 null user_id면
+	 * clips 없이 단건 콜 복권으로만 보강한다(08-05).
 	 */
 	private void scheduleMetricsBackfill(PostInfo post) {
 		boolean needsBackfill = "REELS".equals(post.contentType())
 				&& (post.saves() == null || post.reposts() == null);
-		if (!needsBackfill || post.ownerUserId() == null) {
-			return;   // ownerUserId 부재(구형 셰이프)면 clips를 태울 user_id가 없다 — 스윕에 맡긴다.
+		if (!needsBackfill) {
+			return;
 		}
 		metricsBackfill.execute(() -> {
 			try {
