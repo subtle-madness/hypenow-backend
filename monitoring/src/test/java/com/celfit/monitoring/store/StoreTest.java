@@ -113,9 +113,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, "{}", true, false);
+		var post = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, "{}", true, false);
+		var post2 = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -125,16 +125,71 @@ class StoreTest {
 	@Test
 	void 좋아요_숨김_플래그는_저장되고_해제되면_덮인다() {
 		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				null, 2L, 100L, null, null, null, null, "{}", true, true);
+				null, 2L, 100L, null, null, null, null, "{}", true, true, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
 		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("likes", null).containsEntry("likes_hidden", true);
 
 		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				90L, 2L, 100L, null, null, null, null, "{}", true, false);
+				90L, 2L, 100L, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
 		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("likes", 90L).containsEntry("likes_hidden", false);
+	}
+
+	/** 공유 숨김 관측(08-05)은 shares_hidden=true로 저장 — 해제 관측이 오면 false로 덮인다. */
+	@Test
+	void 공유_숨김_플래그는_저장되고_해제되면_덮인다() {
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, null, null, "{}", true, false, true);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", null).containsEntry("shares_hidden", true);
+
+		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, 7L, null, "{}", true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", 7L).containsEntry("shares_hidden", false);
+	}
+
+	// ── 0 캐리 판정(08-05) — 구조적 키 부재 게시물의 매일 헛 재시도 차단 ────────
+	// 양수 관측 이력이 전무하고 전일 행이 0으로 끝났으면(0 간주 산물) 오늘은 재시도 없이 0을
+	// 잇는다. 양수 이력이 있거나 전일이 null(전부 꽝 이월)이면 대상이 아니다 — 근거 없는 캐리 금지.
+
+	private void seedSnapshotRow(String code, String day, Long shares, Long reposts) {
+		db.update("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type, saves, shares, reposts)
+				VALUES ('acct_a', ?, ?::date, 'REELS', 1, ?, ?)""", code, day, shares, reposts);
+	}
+
+	@Test
+	void 리포스트_0_캐리는_양수_이력_없이_전일_0으로_끝난_게시물만_잡는다() {
+		seedSnapshotRow("CARRY", "2026-07-27", 3L, 0L);    // 전일 0 간주 산물 → 대상
+		seedSnapshotRow("POSITIVE", "2026-07-27", 3L, 5L); // 양수 실측 이력 → 제외
+		seedSnapshotRow("MISSED", "2026-07-27", 3L, null); // 전부 꽝 이월(null) → 제외
+		var today = LocalDate.of(2026, 7, 28);
+
+		assertThat(snapshots.codesWithRepostsZeroCarry(
+				java.util.List.of("CARRY", "POSITIVE", "MISSED", "NOROW"), today))
+				.containsExactly("CARRY");
+	}
+
+	@Test
+	void 리포스트_0_캐리는_과거_양수_이력이_있으면_전일이_0이어도_제외한다() {
+		seedSnapshotRow("ONCE", "2026-07-26", 3L, 7L);     // 과거 실측 7 — 키가 오는 게시물
+		seedSnapshotRow("ONCE", "2026-07-27", 3L, 0L);
+		assertThat(snapshots.codesWithRepostsZeroCarry(
+				java.util.List.of("ONCE"), LocalDate.of(2026, 7, 28))).isEmpty();
+	}
+
+	@Test
+	void 공유_0_캐리도_같은_규칙으로_판정한다() {
+		seedSnapshotRow("SCARRY", "2026-07-27", 0L, 1L);
+		seedSnapshotRow("SPOS", "2026-07-27", 9L, 1L);
+		assertThat(snapshots.codesWithSharesZeroCarry(
+				java.util.List.of("SCARRY", "SPOS"), LocalDate.of(2026, 7, 28)))
+				.containsExactly("SCARRY");
 	}
 
 	// ── 조회수 세션 일관성(08-03, findings §2 결론 4) ─────────────────────────
@@ -144,7 +199,7 @@ class StoreTest {
 
 	private static PostInfo reels(Long igViews, Long fbPlays) {
 		return new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				10L, 2L, igViews, fbPlays, null, null, null, "{}", true, false);
+				10L, 2L, igViews, fbPlays, null, null, null, "{}", true, false, false);
 	}
 
 	@Test

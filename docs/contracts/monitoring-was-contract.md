@@ -23,7 +23,13 @@
 > 추가, was는 `post.thumbnailUrl`도 아카이브본을 우선 서빙, `fix/monitoring-post-thumbnail-archive`)
 > → **v2.6**(2026-08-03, 좋아요 숨김 관측 플래그 — `post_snapshot.likes_hidden` 추가, was는
 > Snapshot 응답에 `likesHidden`으로 노출해 FE가 "숨김"과 "수집 실패"를 구분 표시,
-> `feat/likes-hidden-flag`).
+> `feat/likes-hidden-flag`)
+> → **v2.7**(2026-08-05, 공유 숨김 관측 플래그 — `post_snapshot.shares_hidden` 추가(v2.6과
+> 동형), was는 Snapshot 응답에 `sharesHidden`으로 노출. 게시자가 "공유 횟수 숨기기"
+> (`share_count_disabled`)를 켜거나 좋아요 숨김(`like_and_view_counts_disabled` — IG 앱 문구대로
+> 공유 노출도 함께 끈다)을 켜면 공유 키가 영구 부재해 shares가 null로 남는데, FE는 이 플래그로
+> "비공개"와 "수집 실패"를 구분 표시. FEED는 공유 자체가 미지원(null 강제)이라 플래그도 false로
+> 접는다, `feature/reels-retry-logic-missing-content-39b848`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -249,7 +255,8 @@ profile_snapshot(username, captured_on date, followers, following, media_count)
 
 post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
               likes, likes_hidden boolean NOT NULL default false,
-              comments, views, saves, shares, reposts)
+              comments, views, saves,
+              shares, shares_hidden boolean NOT NULL default false, reposts)
               PK (short_code, captured_on) — 일 1회 upsert
 ```
 
@@ -260,6 +267,11 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
   숨김이면 like_count가 실측이 아니라 프리뷰 잔여값으로 잘려 와(운영 실측 08-03: 서로 다른
   두 게시물이 똑같이 3) likes를 null로 저장하는데, was·FE가 "숨김"(행 있음 + true)과
   "그날 수집 실패"(행 부재)를 구분 표시하는 유일한 신호가 이 플래그다. 해제 관측 시 false 복귀.
+- `shares_hidden` **(v2.7)**: 게시자의 공유 횟수 숨김 관측 — `share_count_disabled` 토글이거나
+  좋아요 숨김 커플링(IG 앱 문구 "좋아요 수 및 공유 횟수는 회원님만", 08-05 실측: lvcd=true
+  게시물 전원 공유 키 영구 부재). 숨김이면 reshare_count 키가 아예 안 와 shares가 null로
+  남는다 — 구분 표시 계약은 likes_hidden과 동일. 해제 관측 시 false 복귀. 숨김 게시물은
+  monitoring의 저장·공유·리포스트 재시도 판정에서도 공유 항이 제외된다(헛 콜 방지).
 - 캠페인 추이는 target을 조인해 본다: `target.username` → profile_snapshot,
   `target.tracked_short_code` → post_snapshot.
 
