@@ -68,7 +68,7 @@ class AlarmRecorderTest {
 
 	private PostInfo post(String contentType, Long likes, Long views, Long saves, boolean viewsTrusted) {
 		return new PostInfo("SC1", "acct_a", null, null, null, contentType, "캡션", null, 1_785_000_000L,
-				likes, 5L, views, null, saves, null, 1L, "{}", viewsTrusted, false);
+				likes, 5L, views, null, saves, null, 1L, "{}", viewsTrusted, false, false);
 	}
 
 	private void seedYesterday(String contentType, Long likes, Long views, Long saves) {
@@ -146,7 +146,7 @@ class AlarmRecorderTest {
 		// 판정 3종(likes·comments·views)은 그대로, saves·reposts만 값→null 전이
 		recorder.recordMetricsHidden(LocalDate.of(2026, 7, 30),
 				new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1_785_000_000L,
-						100L, 5L, 5000L, null, null, null, null, "{}", true, false));
+						100L, 5L, 5000L, null, null, null, null, "{}", true, false, false));
 
 		assertThat(allEvents()).isEmpty();
 	}

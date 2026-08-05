@@ -182,52 +182,210 @@ public class CollectService {
 	// 실리거나 전부 빠진다(운영 원형 151콜 전수: 혼재 0건). fb 몫과 달리 "영영 안 오는" 게시물이
 	// 없어(당첨 세션은 전 릴스에 싣는다) 스윕 재시도가 헛돌지 않고, 당첨 1회로 계정의 릴스 전체가
 	// 채워진다. 피드는 저장·공유 키가 전 세션 부재(0/181)라 대상에서 제외한다(사용자 결정 08-04).
+	//
+	// 열거 창(최근 12건×페이지) 밖 게시물은 clips 재콜이 영영 못 잡는다 — 단건 콜로 전환해
+	// 같은 복권을 돌린다(08-05 결정). 08-04엔 "단건은 공유수 확정 제공(25/25)"이라 보고 즉시
+	// 포기했지만, 운영 원형 재실측(49콜)에서 단건도 3키 전부 세션 복권임이 확인됐다(reshare 59%
+	// ·save 47%·repost 29%) — 창 밖 게시물엔 단건 콜이 유일 공급원이라 재시도 없이는 3종이 빈다.
+
+	/**
+	 * 저장·공유·리포스트 재시도 필요 판정(스윕·등록·재시도 진입이 공유하는 단일 기준) — 릴스이면서
+	 * 3지표 중 미관측이 남아 있으면 참. 단, 공유는 게시자 숨김({@link PostInfo#sharesHidden}이면
+	 * 영영 안 오므로 판정에서 제외한다 — 넣으면 숨김 게시물이 매일 상한까지 헛 재시도를 돈다.
+	 * 진입·종료 조건은 3지표 공통이다(08-05 옵션 ③): 08-04엔 "공유는 단건 정본이 확정 제공"
+	 * 전제로 저장·리포스트만 봤지만, 전제가 반증돼 부분 세션이 공유만 빠뜨린 날의 단독 누락도
+	 * 재시도가 메꿔야 한다(당첨 clips 열거는 공유를 사실상 상시 실어 추가 비용이 거의 없다).
+	 */
+	public static boolean needsMetricsRetry(PostInfo p) {
+		return "REELS".equals(p.contentType())
+				&& (p.saves() == null || p.reposts() == null
+						|| (p.shares() == null && !p.sharesHidden()));
+	}
 
 	/**
 	 * 미관측 추적 릴스의 저장·리포스트 보강 — clips 열거를 당첨(키 실림)까지 최대 metricsRetryMax회
-	 * 재콜하고, 관측을 non-null 머지해 재저장한다. 실패·미당첨은 그대로 종료(best-effort) —
-	 * 스냅샷은 이미 단건 정본으로 저장돼 있고, 여기서 예외가 새면 스윕 재시도 라운드가 이 계정을
-	 * 통째로 다시 돌게 된다.
+	 * 재콜하고, 관측을 non-null 머지해 재저장한다. 열거 창 밖으로 판정된 게시물(과 clips를 태울
+	 * userId가 아예 없는 계정 — null 허용)은 단건 콜 재시도로 전환한다. 실패·미당첨은 그대로
+	 * 종료(best-effort) — 스냅샷은 이미 단건 정본으로 저장돼 있고, 여기서 예외가 새면 스윕 재시도
+	 * 라운드가 이 계정을 통째로 다시 돌게 된다.
+	 *
+	 * <p>시도 상한은 두 경로 합산이다(계정당 콜 예산을 하나로 묶는다). 단건 전환분의 첫 재콜은
+	 * 다음 시도(=간격 경과 후)부터 돈다 — 방금 스윕이 같은 게시물 단건 정본 콜을 마친 직후라,
+	 * 즉시 재콜하면 Hiker 응답 캐시로 같은 꽝 세션을 되받는다.
 	 */
 	public void retryReelsMetrics(String userId, List<PostInfo> trackedPosts) {
-		List<PostInfo> pending = new ArrayList<>(trackedPosts.stream()
-				.filter(p -> "REELS".equals(p.contentType()))
-				.filter(p -> p.saves() == null || p.reposts() == null)
-				.toList());
-		for (int attempt = 1; attempt <= metricsRetryMax && !pending.isEmpty(); attempt++) {
+		List<PostInfo> clipsPending = new ArrayList<>();
+		List<PostInfo> singlePending = new ArrayList<>();
+		for (PostInfo p : applyZeroCarry(trackedPosts)) {
+			if (!needsMetricsRetry(p)) {
+				continue;
+			}
+			// userId가 없으면(구형 셰이프 단건 등록분) clips를 태울 수 없다 — 전원 단건 재시도.
+			if (userId == null) {
+				singlePending.add(p);
+			} else {
+				clipsPending.add(p);
+			}
+		}
+		for (int attempt = 1;
+				attempt <= metricsRetryMax && !(clipsPending.isEmpty() && singlePending.isEmpty());
+				attempt++) {
 			if (!sleepQuietly(metricsRetryDelay)) {
 				return;   // 인터럽트는 종료 신호 — 보강만 포기한다(내일 스윕이 다시 시도).
 			}
-			Map<String, HikerClient.ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
-			List<PostInfo> next = new ArrayList<>();
-			for (PostInfo p : pending) {
-				HikerClient.ClipCounts c = observed.get(p.shortCode());
-				if (c == null) {
-					if (!observed.isEmpty()) {
-						// 응답은 정상인데 이 게시물이 없다 — 최근 릴스 창(12건×페이지) 밖. 재콜해도 안 잡힌다.
-						log.info("저장·리포스트 재시도 중단 — {} 열거 창 밖(user_id {})", p.shortCode(), userId);
-					} else {
-						next.add(p);   // 빈 맵은 콜 실패(fetchClipCounts가 삼킴) — 다음 시도에 맡긴다.
-					}
-					continue;
-				}
-				if (!c.hasMetricKeys()) {
-					next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
-					continue;
-				}
-				PostInfo merged = p.mergedMetrics(c.saves(), c.shares(), c.reposts());
-				writer.savePost(LocalDate.now(KST), merged);
-				log.info("저장·리포스트 당첨 머지 — {} saves={} reposts={} ({}번째 시도)",
-						p.shortCode(), merged.saves(), merged.reposts(), attempt);
-				if (merged.saves() == null || merged.reposts() == null) {
-					next.add(merged);   // 드문 부분 세션(저장만/리포스트만) — 남은 지표는 계속 시도.
+			// 단건을 먼저 돈다 — clips 처리에서 방금 전환된 게시물이 같은 시도에 즉시 재콜되지 않게.
+			List<PostInfo> singleNext = retrySinglesOnce(singlePending, attempt);
+			if (!clipsPending.isEmpty()) {
+				clipsPending = retryClipsOnce(userId, clipsPending, singleNext, attempt);
+			}
+			singlePending = singleNext;
+		}
+		int leftover = 0;
+		for (List<PostInfo> remaining : List.of(clipsPending, singlePending)) {
+			for (PostInfo p : remaining) {
+				if (!assumeZeroForOmittedKeys(p)) {
+					leftover++;
 				}
 			}
-			pending = next;
 		}
-		if (!pending.isEmpty()) {
-			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, pending.size());
+		if (leftover > 0) {
+			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, leftover);
 		}
+	}
+
+	// ── 0 캐리(08-05) — 구조적 키 부재 게시물의 매일 헛 재시도 차단 ──────────────
+	// 리포스트 0·공유 미상 게시물은 키가 영영 안 와 매일 소진 후 0 간주로 끝났다 — 스냅샷이 일
+	// 단위라 다음날이면 또 null에서 시작해 상한까지 헛 재시도를 반복한다(하루 ~100콜 낭비 실측).
+	// 양수 관측 이력이 전무하고 전일 행이 0으로 끝났으면(판정은 SnapshotRepository, 이중 근거)
+	// 해당 지표를 재시도 전에 즉시 0으로 잇는다. 실제 값이 생기면 키가 오기 시작하고 양수 관측이
+	// non-null 머지·이력 판정 양쪽에서 이기므로 자동 해제된다.
+
+	/** 재시도 진입 전 0 캐리 적용 — 캐리로 지표가 채워진 게시물은 재저장하고 갱신본을 돌려준다. */
+	private List<PostInfo> applyZeroCarry(List<PostInfo> trackedPosts) {
+		Set<String> repostsCandidates = new java.util.HashSet<>();
+		Set<String> sharesCandidates = new java.util.HashSet<>();
+		for (PostInfo p : trackedPosts) {
+			if (!"REELS".equals(p.contentType())) {
+				continue;
+			}
+			if (p.reposts() == null) {
+				repostsCandidates.add(p.shortCode());
+			}
+			if (p.shares() == null && !p.sharesHidden()) {
+				sharesCandidates.add(p.shortCode());
+			}
+		}
+		if (repostsCandidates.isEmpty() && sharesCandidates.isEmpty()) {
+			return trackedPosts;
+		}
+		LocalDate today = LocalDate.now(KST);
+		Set<String> repostsCarry = snapshots.codesWithRepostsZeroCarry(repostsCandidates, today);
+		Set<String> sharesCarry = snapshots.codesWithSharesZeroCarry(sharesCandidates, today);
+		List<PostInfo> result = new ArrayList<>(trackedPosts.size());
+		for (PostInfo p : trackedPosts) {
+			Long zeroReposts = p.reposts() == null && repostsCarry.contains(p.shortCode()) ? 0L : null;
+			Long zeroShares = p.shares() == null && !p.sharesHidden()
+					&& sharesCarry.contains(p.shortCode()) ? 0L : null;
+			if (zeroReposts == null && zeroShares == null) {
+				result.add(p);
+				continue;
+			}
+			PostInfo merged = p.mergedMetrics(null, zeroShares, zeroReposts);
+			writer.savePost(today, merged);
+			log.info("0 캐리 — {} shares={} reposts={} (양수 이력 없음·전일 0 종료, 재시도 제외)",
+					p.shortCode(), merged.shares(), merged.reposts());
+			result.add(merged);
+		}
+		return result;
+	}
+
+	// ── 키 부재 = 0 간주(08-05 사용자 결정) ──────────────────────────────────
+	// 리포스트: media_repost_count는 값이 0이면 키 자체가 생략된다 — 운영 전 스냅샷에서 reposts=0
+	// 관측이 0건(shares=0 82건·saves=0 61건과 대조)이고, 대조 실험(08-05)에서 인접 호출로 리포스트
+	// 111 게시물엔 키가 오고 0 추정 게시물엔 6일 추적 + 추가 재콜 내내 절대 안 왔다.
+	// 공유: 게시자 숨김(sharesHidden — share_count_disabled 또는 좋아요 숨김 커플링)이 아닌데도
+	// 영구 부재인 게시물이 있다(원인 미상 — 전부 초소형·노출 정지 릴스). 숨김이 아니면 소진 시
+	// 0으로 표기한다(사용자 결정 2차). 숨김은 0이 아니라 비공개이므로 null 유지.
+	// 판정 조건에 saves 관측을 요구하는 이유: 키 실은 세션을 만났다는 근거가 있어야 "부재=생략"
+	// 해석이 성립한다(save·repost 키는 같이 실리는 짝 — 08-04 실측 566/596). 전부 꽝인 날은
+	// 근거가 없으므로 0을 쓰지 않는다(내일 스윕 이월) — null(미관측)/0(관측 해석) 구분 유지.
+
+	/** 소진된 게시물의 리포스트·공유(숨김 제외) 0 간주 — 판정 근거(저장 관측)가 있으면 저장하고 true. */
+	private boolean assumeZeroForOmittedKeys(PostInfo p) {
+		Long zeroReposts = p.reposts() == null ? 0L : null;
+		Long zeroShares = p.shares() == null && !p.sharesHidden() ? 0L : null;
+		if (p.saves() == null || (zeroReposts == null && zeroShares == null)) {
+			return false;
+		}
+		PostInfo merged = p.mergedMetrics(null, zeroShares, zeroReposts);
+		writer.savePost(LocalDate.now(KST), merged);
+		log.info("지표 키 부재 0 간주 — {} shares={} reposts={} (재시도 소진, saves={} 관측)",
+				p.shortCode(), merged.shares(), merged.reposts(), p.saves());
+		return true;
+	}
+
+	/** clips 복권 1회 — 창 밖 판정 게시물은 {@code singleNext}로 넘긴다. @return 다음 시도의 clips 대기분. */
+	private List<PostInfo> retryClipsOnce(String userId, List<PostInfo> pending,
+			List<PostInfo> singleNext, int attempt) {
+		Map<String, HikerClient.ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
+		List<PostInfo> next = new ArrayList<>();
+		for (PostInfo p : pending) {
+			HikerClient.ClipCounts c = observed.get(p.shortCode());
+			if (c == null) {
+				if (!observed.isEmpty()) {
+					// 응답은 정상인데 이 게시물이 없다 — 최근 릴스 창 밖. clips 재콜 대신 단건 복권으로.
+					log.info("저장·리포스트 열거 창 밖 — {} 단건 재시도로 전환(user_id {})", p.shortCode(), userId);
+					singleNext.add(p);
+				} else {
+					next.add(p);   // 빈 맵은 콜 실패(fetchClipCounts가 삼킴) — 다음 시도에 맡긴다.
+				}
+				continue;
+			}
+			if (!c.hasMetricKeys()) {
+				next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
+				continue;
+			}
+			PostInfo merged = p.mergedMetrics(c.saves(), c.shares(), c.reposts());
+			writer.savePost(LocalDate.now(KST), merged);
+			log.info("저장·리포스트 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
+					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);
+			if (needsMetricsRetry(merged)) {
+				next.add(merged);   // 부분 세션 — 남은 지표(숨김 아닌 공유 포함, 옵션 ③)는 계속 시도.
+			}
+		}
+		return next;
+	}
+
+	/**
+	 * 단건 복권 1회(게시물당 1콜) — 관측된 저장·공유·리포스트만 non-null 머지해 재저장한다.
+	 * 종료 조건은 clips 경로와 같은 3지표 완비(옵션 ③) — 특히 창 밖 게시물엔 이 재시도가
+	 * 공유수의 사실상 마지막 기회다. 콜 실패는 삼키고 다음 시도에 맡긴다(best-effort —
+	 * 상한이 이미 폭주를 막는다).
+	 */
+	private List<PostInfo> retrySinglesOnce(List<PostInfo> pending, int attempt) {
+		List<PostInfo> next = new ArrayList<>();
+		for (PostInfo p : pending) {
+			PostInfo observed;
+			try {
+				observed = hiker.fetchPost(p.shortCode());
+			} catch (RuntimeException e) {
+				log.warn("저장·리포스트 단건 재시도 실패 — {} 다음 시도에 재콜: {}", p.shortCode(), e.toString());
+				next.add(p);
+				continue;
+			}
+			if (observed.saves() == null && observed.shares() == null && observed.reposts() == null) {
+				next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
+				continue;
+			}
+			PostInfo merged = p.mergedMetrics(observed.saves(), observed.shares(), observed.reposts());
+			writer.savePost(LocalDate.now(KST), merged);
+			log.info("저장·리포스트 단건 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
+					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);
+			if (needsMetricsRetry(merged)) {
+				next.add(merged);   // 부분 세션 — 남은 지표(숨김 아닌 공유 포함)는 계속 시도.
+			}
+		}
+		return next;
 	}
 
 	/** 재콜 간격 대기 — 인터럽트면 false(플래그 복원). 응답 캐시 회피용이라 실패해도 치명적이지 않다. */

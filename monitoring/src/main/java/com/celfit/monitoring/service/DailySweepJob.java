@@ -293,8 +293,8 @@ public class DailySweepJob {
 		for (TargetRow t : accountTargets) {
 			try {
 				PostInfo trackedPost = sweepTarget(t, posts, enumerated);
-				if (trackedPost != null && "REELS".equals(trackedPost.contentType())
-						&& (trackedPost.saves() == null || trackedPost.reposts() == null)) {
+				// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
+				if (trackedPost != null && CollectService.needsMetricsRetry(trackedPost)) {
 					metricsPending.putIfAbsent(trackedPost.shortCode(), trackedPost);
 				}
 			} catch (SubjectNotFoundException e) {
@@ -322,7 +322,8 @@ public class DailySweepJob {
 	 * 저장·리포스트 세션 복권 재시도(08-04 결정) — 미관측 추적 릴스가 남았으면 clips 열거를 당첨까지
 	 * 재콜한다(규칙·상한은 {@link CollectService#retryReelsMetrics}). user_id는 열거 계정이면 방금
 	 * 프로필에서, POST 등록만 있는 계정이면 단건 응답의 user.pk(ownerUserId)에서 얻는다 —
-	 * 후자는 이 값이 유일한 공급원이라 없으면(구형 셰이프) 보강을 건너뛴다.
+	 * 후자가 없어도(구형 셰이프) 건너뛰지 않는다: retryReelsMetrics가 null user_id를 받으면
+	 * clips 없이 단건 콜 복권으로만 보강한다(08-05, 창 밖 전환과 같은 경로).
 	 *
 	 * <p><b>반드시 best-effort여야 한다</b>: 스냅샷은 이미 단건 정본으로 저장을 마쳤다. 여기서 예외가
 	 * 새면 성공한 수집이 "일시 실패"로 오분류돼 재시도 라운드가 계정 전체를 다시 돈다.
@@ -335,10 +336,6 @@ public class DailySweepJob {
 		String userId = enumResult != null
 				? enumResult.profile().userId()
 				: metricsPending.values().iterator().next().ownerUserId();
-		if (userId == null) {
-			log.warn("저장·리포스트 재시도 스킵 — 계정 {} user_id 미확보(단건 응답에 user.pk 없음)", username);
-			return;
-		}
 		try {
 			collect.retryReelsMetrics(userId, List.copyOf(metricsPending.values()));
 		} catch (RuntimeException e) {
