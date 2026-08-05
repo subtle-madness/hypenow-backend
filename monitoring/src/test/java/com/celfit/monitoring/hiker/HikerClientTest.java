@@ -284,6 +284,29 @@ class HikerClientTest {
 		PostInfo p = client.fetchPost("Xx1");
 		assertThat(p.likes()).isEqualTo(83L);
 		assertThat(p.likesHidden()).isFalse();
+		assertThat(p.sharesHidden()).isFalse();
+	}
+
+	@Test
+	void 공유_횟수_숨기기_토글은_share_count_disabled로_관측된다() {
+		// 운영 실측(08-05): DaHSf2uB2Vj — 이 플래그 true인 게시물은 reshare_count가 영구 부재.
+		HikerClient client = new HikerClient(path -> """
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":83,
+				"share_count_disabled":true,"user":{"username":"acct"}},"status":"ok"}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.sharesHidden()).isTrue();
+		assertThat(p.likesHidden()).isFalse();   // 공유 숨김이 좋아요까지 숨기지는 않는다
+	}
+
+	@Test
+	void 좋아요_숨김은_공유_숨김을_함의한다() {
+		// IG 앱 문구 "좋아요 수 및 공유 횟수는 회원님만" + 실측: lvcd=true 10게시물 전원 공유 영구 부재.
+		HikerClient client = new HikerClient(path -> """
+				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":3,
+				"like_and_view_counts_disabled":true,"share_count_disabled":false,
+				"user":{"username":"acct"}},"status":"ok"}""");
+		PostInfo p = client.fetchPost("Xx1");
+		assertThat(p.sharesHidden()).isTrue();
 	}
 
 	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */

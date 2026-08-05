@@ -192,6 +192,23 @@ class MonitoringReadRepositoryTest extends IntegrationTest {
 		assertThat(rows).hasSize(1);
 		assertThat(rows.get(0).likes()).isNull();
 		assertThat(rows.get(0).likesHidden()).isTrue();
+		assertThat(rows.get(0).sharesHidden()).isFalse();   // 미지정 시 기본 false
+	}
+
+	/** 공유 숨김 관측 행(v2.7) — shares null과 함께 shares_hidden이 읽혀야 FE 구분 표시가 성립한다. */
+	@Test
+	void 공유_숨김_행은_shares_hidden이_같이_읽힌다() {
+		jdbc.sql("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
+				                           likes, comments, views, saves, shares, shares_hidden, reposts)
+				VALUES ('acc1', 'SHORT1', '2026-07-27', 'REELS', 10, 13, 100, 2, NULL, true, 0)
+				""").update();
+
+		List<TrackedSnapshotRow> rows = repository.findSnapshots(List.of("SHORT1"), LocalDate.of(2026, 7, 27));
+
+		assertThat(rows).hasSize(1);
+		assertThat(rows.get(0).shares()).isNull();
+		assertThat(rows.get(0).sharesHidden()).isTrue();
 	}
 
 	@Test

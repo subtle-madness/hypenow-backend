@@ -57,15 +57,18 @@ public class SnapshotRepository {
 		}
 		db.update("""
 				INSERT INTO post_snapshot (username, short_code, captured_on, content_type,
-				                           likes, likes_hidden, comments, views, fb_plays, saves, shares, reposts)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				                           likes, likes_hidden, comments, views, fb_plays,
+				                           saves, shares, shares_hidden, reposts)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (short_code, captured_on) DO UPDATE SET
 				  likes=EXCLUDED.likes, likes_hidden=EXCLUDED.likes_hidden,
 				  comments=EXCLUDED.comments, views=EXCLUDED.views,
 				  fb_plays=EXCLUDED.fb_plays,
-				  saves=EXCLUDED.saves, shares=EXCLUDED.shares, reposts=EXCLUDED.reposts""",
+				  saves=EXCLUDED.saves, shares=EXCLUDED.shares,
+				  shares_hidden=EXCLUDED.shares_hidden, reposts=EXCLUDED.reposts""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.likesHidden(), p.comments(), views, fb, p.saves(), p.shares(), p.reposts());
+				p.likes(), p.likesHidden(), p.comments(), views, fb,
+				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
 	}
 
 	/**
@@ -81,6 +84,43 @@ public class SnapshotRepository {
 				"SELECT DISTINCT short_code FROM post_snapshot WHERE fb_plays IS NOT NULL AND short_code IN ("
 						+ placeholders + ")",
 				String.class, codes.toArray()));
+	}
+
+	/**
+	 * 리포스트 0 캐리 대상 코드(08-05) — 양수 관측 이력이 전무하고, 오늘 이전 마지막 행이 0으로
+	 * 끝난(=전일 0 간주 또는 관측 0) 게시물. 구조적으로 키가 안 오는 게시물(리포스트 0·공유 미상)이
+	 * 매일 재시도 상한까지 헛돌지 않도록, 재시도 진입 전에 이 판정으로 즉시 0을 기록한다.
+	 * 나중에 실제 값이 생기면 키가 오기 시작하고 양수 관측이 이력에 남아 이 판정이 자동 해제된다.
+	 */
+	public Set<String> codesWithRepostsZeroCarry(Collection<String> codes, LocalDate today) {
+		return zeroCarryCodes(codes, "reposts", today);
+	}
+
+	/** 공유 0 캐리 대상 코드 — 규칙은 리포스트와 동형(호출부가 숨김 게시물을 미리 제외한다). */
+	public Set<String> codesWithSharesZeroCarry(Collection<String> codes, LocalDate today) {
+		return zeroCarryCodes(codes, "shares", today);
+	}
+
+	/** column은 이 클래스의 상수 호출("reposts"/"shares")만 — 외부 입력이 아니라 SQL 조립이 안전하다. */
+	private Set<String> zeroCarryCodes(Collection<String> codes, String column, LocalDate today) {
+		if (codes.isEmpty()) {
+			return Set.of();
+		}
+		String placeholders = String.join(",", java.util.Collections.nCopies(codes.size(), "?"));
+		Object[] args = new Object[codes.size() + 1];
+		int i = 0;
+		for (String code : codes) {
+			args[i++] = code;
+		}
+		args[i] = today;
+		return new HashSet<>(db.queryForList("""
+				SELECT short_code FROM post_snapshot
+				WHERE short_code IN (%s)
+				GROUP BY short_code
+				HAVING bool_or(%s > 0) IS NOT TRUE
+				   AND (array_agg(%s ORDER BY captured_on DESC) FILTER (WHERE captured_on < ?))[1] = 0"""
+				.formatted(placeholders, column, column),
+				String.class, args));
 	}
 
 	/** 직전 관측 FB 몫 — 당일 포함(<=, 같은 날 재수집도 이어받는다). 관측 이력이 없으면 null. */
