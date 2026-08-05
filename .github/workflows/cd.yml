@@ -117,7 +117,9 @@ jobs:
           # 덤프 블록이 레포에만 있고 서버엔 없어 monitoring이 운영 백업에서 조용히 누락됨,
           # 07-30 실측: md5sum 불일치·서버 backups/에 monitoring-*.sql.gz 0개), 그 결과 오프사이트
           # 전환(B2)도 서버에만 있고 레포에 반영이 안 되는 반대 방향 드리프트까지 겹쳤다.
-          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh deploy/scripts/backup.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
+          # post-container-metrics.py도 동기화 — 서버 크론이 이 경로를 직접 실행하므로 레포만
+          # 고치면 SERVICES 목록이 갈라진다(backup.sh가 겪은 드리프트와 동일 구조, 08-05 추가).
+          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh deploy/scripts/backup.sh deploy/scripts/post-container-metrics.py "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && out=$(docker compose config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
              if echo "$out" | grep -q "is not set"; then
