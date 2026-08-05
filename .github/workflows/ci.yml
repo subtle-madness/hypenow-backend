@@ -104,8 +104,21 @@ jobs:
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v6
 
+      # --profile은 임시 측정용(CI 시간 분해) — 최적화 방향 확정 후 제거 예정.
       - name: 전체 테스트
-        run: ./gradlew test
+        run: ./gradlew test --profile
+
+      # (임시 측정 — 최적화 확정 후 제거) 태스크별 소요(profile 리포트)와 클래스별
+      # 소요(test-results XML)를 성공 시에도 업로드해 195초의 내역을 뜯어본다.
+      - name: 측정 리포트 업로드 (임시)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-profile
+          path: |
+            build/reports/profile/
+            **/build/test-results/test/*.xml
+          retention-days: 3
 
       - name: 실패 시 테스트 리포트 업로드
         if: failure()
