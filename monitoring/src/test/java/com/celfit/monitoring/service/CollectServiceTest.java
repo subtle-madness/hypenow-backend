@@ -520,6 +520,64 @@ class CollectServiceTest {
 		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(7L);
 	}
 
+	// ── 리포스트 키 부재 = 0 간주(08-05 사용자 결정) ──────────────────────────
+	// media_repost_count는 값이 0이면 키 자체가 생략된다(운영 전 스냅샷에서 reposts=0 관측 0건
+	// vs shares=0 82건·saves=0 61건 + 대조 실험: 인접 호출에서 리포스트 111 게시물은 키가 오고
+	// 0 추정 게시물은 절대 안 옴). 재시도 소진 시점에 저장수는 관측됐는데(=키 실은 세션을 만남,
+	// save·repost는 같이 실리는 짝 — 566/596) 리포스트만 없으면 0으로 기록한다.
+	// 전부 꽝인 날은 관측 근거가 없으므로 0 간주하지 않는다(내일 스윕 이월).
+
+	@Test
+	void 재시도_소진_시_저장은_관측됐는데_리포스트_키가_없으면_0으로_저장한다() {
+		// 매 콜 저장·공유만 실리고 리포스트 키가 없는 세션 — 값이 0이라 생략된 게시물 재현.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return """
+					{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+					"ig_play_count":222,"save_count":5,"reshare_count":9}}],
+					"paging_info":{"more_available":false}},"next_page_id":null}""";
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getLast().shares()).isEqualTo(9L);
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(0L);   // 키 부재 = 0 간주
+	}
+
+	@Test
+	void 재시도_소진이어도_전부_꽝이면_리포스트를_0으로_간주하지_않는다() {
+		// 키 실은 세션을 한 번도 못 만난 날 — "0이라 생략"인지 "세션 복불복"인지 판정 근거가 없다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_MISS;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(writer.savedPosts).isEmpty();   // 근거 없는 0을 쓰지 않는다
+	}
+
+	@Test
+	void 창_밖_단건_재시도_소진_시에도_같은_0_간주_규칙이_적용된다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
+			return singleReelA("\"save_count\":5,\"reshare_count\":9");   // 리포스트 키만 없는 세션
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(0L);
+	}
+
 	@Test
 	void 저장리포스트_재시도는_피드를_대상에서_제외한다() {
 		// 피드는 저장·공유 키가 전 세션 부재(08-04 실측 0/181) — 재시도 대상 자체가 아니다(사용자 결정).

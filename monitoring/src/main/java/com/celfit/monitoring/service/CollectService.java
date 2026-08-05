@@ -230,10 +230,36 @@ public class CollectService {
 			}
 			singlePending = singleNext;
 		}
-		int leftover = clipsPending.size() + singlePending.size();
+		int leftover = 0;
+		for (List<PostInfo> remaining : List.of(clipsPending, singlePending)) {
+			for (PostInfo p : remaining) {
+				if (!assumeZeroRepostsIfOmitted(p)) {
+					leftover++;
+				}
+			}
+		}
 		if (leftover > 0) {
 			log.info("저장·리포스트 재시도 소진 — user_id {} 미충족 {}건(내일 스윕이 재시도)", userId, leftover);
 		}
+	}
+
+	// ── 리포스트 키 부재 = 0 간주(08-05 사용자 결정) ──────────────────────────
+	// media_repost_count는 값이 0이면 키 자체가 생략된다: 운영 전 스냅샷에서 reposts=0 관측이
+	// 0건(shares=0 82건·saves=0 61건과 대조)이고, 대조 실험(08-05)에서 인접 호출로 리포스트 111
+	// 게시물엔 키가 오고 0 추정 게시물엔 6일 추적 + 추가 재콜 내내 절대 안 왔다. 판정 조건에
+	// saves 관측을 요구하는 이유: save·repost 키는 같이 실리는 짝(08-04 실측 566/596)이라 "저장
+	// 키를 실은 세션을 만났는데 리포스트가 없다"가 곧 생략(=0)의 근거다. 전부 꽝인 날은 관측
+	// 근거가 없으므로 0을 쓰지 않는다(내일 스윕 이월) — null(미관측)과 0(관측 해석)의 구분 유지.
+
+	/** 소진된 게시물의 리포스트 0 간주 — 판정 근거(저장 관측)가 있으면 0으로 저장하고 true. */
+	private boolean assumeZeroRepostsIfOmitted(PostInfo p) {
+		if (p.saves() == null || p.reposts() != null) {
+			return false;
+		}
+		PostInfo merged = p.mergedMetrics(null, null, 0L);
+		writer.savePost(LocalDate.now(KST), merged);
+		log.info("리포스트 키 부재 0 간주 — {} (재시도 소진, saves={} 관측)", p.shortCode(), p.saves());
+		return true;
 	}
 
 	/** clips 복권 1회 — 창 밖 판정 게시물은 {@code singleNext}로 넘긴다. @return 다음 시도의 clips 대기분. */

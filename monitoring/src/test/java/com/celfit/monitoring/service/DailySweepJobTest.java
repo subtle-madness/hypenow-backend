@@ -740,6 +740,26 @@ class DailySweepJobTest {
 	}
 
 	@Test
+	void 재시도_소진_시_리포스트_키_부재는_0으로_스냅샷에_남는다() {
+		// 리포스트가 0인 게시물은 키 자체가 생략된다(08-05 대조 실험) — 저장·공유만 실리는 세션을
+		// 상한까지 만난 뒤에도 리포스트 키가 없으면 0으로 기록해야 스냅샷 공백이 남지 않는다.
+		String saveOnly = """
+				{"response":{"items":[{"media":{"code":"P560","product_type":"clips",
+				"ig_play_count":100,"save_count":5,"reshare_count":9}}],
+				"paging_info":{"more_available":false}},"next_page_id":null}""";
+		hiker.standalonePost("P560", "zerorepost_user", "캡션")
+				.clipsResponses(saveOnly, saveOnly, saveOnly, saveOnly, saveOnly, saveOnly);
+		targets.insert(TargetType.POST, 7L, "zerorepost_user", "P560", null,
+				TargetStatus.TRACKING, "P560", "rk-mr7", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(snapshotMetric("saves", "P560")).isEqualTo(5L);
+		assertThat(snapshotMetric("shares", "P560")).isEqualTo(9L);
+		assertThat(snapshotMetric("reposts", "P560")).isEqualTo(0L);
+	}
+
+	@Test
 	void 공유수만_미관측인_추적_릴스도_재시도_대상이다() {
 		// 그날 단건 정본이 부분 세션(저장·리포스트만, 공유 키 부재)이어도 재시도가 돌아야 한다 —
 		// 진입 조건이 저장·리포스트만 보면 공유수 단독 누락이 그대로 남는다(08-05 옵션 ③).
