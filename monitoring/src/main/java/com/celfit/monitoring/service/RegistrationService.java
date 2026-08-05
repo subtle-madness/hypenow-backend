@@ -138,8 +138,9 @@ public class RegistrationService {
 	 * clips 없이 단건 콜 복권으로만 보강한다(08-05).
 	 */
 	private void scheduleMetricsBackfill(PostInfo post) {
+		// 공유수도 판정에 포함한다(08-05 옵션 ③) — 부분 세션이 공유만 빠뜨린 등록의 단독 누락 방지.
 		boolean needsBackfill = "REELS".equals(post.contentType())
-				&& (post.saves() == null || post.reposts() == null);
+				&& (post.saves() == null || post.shares() == null || post.reposts() == null);
 		if (!needsBackfill) {
 			return;
 		}

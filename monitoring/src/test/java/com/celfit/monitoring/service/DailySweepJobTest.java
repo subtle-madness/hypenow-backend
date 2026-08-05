@@ -740,6 +740,23 @@ class DailySweepJobTest {
 	}
 
 	@Test
+	void 공유수만_미관측인_추적_릴스도_재시도_대상이다() {
+		// 그날 단건 정본이 부분 세션(저장·리포스트만, 공유 키 부재)이어도 재시도가 돌아야 한다 —
+		// 진입 조건이 저장·리포스트만 보면 공유수 단독 누락이 그대로 남는다(08-05 옵션 ③).
+		hiker.standalonePost("P559", "sharemiss_user", "캡션")
+				.singleOnlyFields("P559", "\"save_count\":4,\"media_repost_count\":7")
+				.clipsResponses(clipsHit("P559"));
+		targets.insert(TargetType.POST, 7L, "sharemiss_user", "P559", null,
+				TargetStatus.TRACKING, "P559", "rk-mr6", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(1);              // 당첨 즉시 중단
+		assertThat(snapshotMetric("shares", "P559")).isEqualTo(9L);
+		assertThat(snapshotMetric("saves", "P559")).isEqualTo(4L);   // 단건 관측 유지(non-null 우선)
+	}
+
+	@Test
 	void 피드_추적_게시물은_저장리포스트_재시도_대상이_아니다() {
 		// 피드는 저장·공유 키가 전 세션 부재(08-04 실측 0/181) — 재시도를 태워도 헛 콜이다(사용자 결정).
 		hiker.standalonePost("P666", "feedonly_user", "캡션")

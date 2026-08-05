@@ -178,6 +178,20 @@ class RegistrationServiceTest {
 	}
 
 	@Test
+	void 등록_단건이_공유만_빠뜨려도_백필이_돈다() {
+		// 부분 세션이 저장·리포스트만 주고 공유를 빠뜨린 등록 — 진입 조건이 저장·리포스트만 보면
+		// 등록 당일 공유수 단독 누락이 남는다(08-05 옵션 ③).
+		singleBody = single("P905", "\"save_count\":4,\"media_repost_count\":7,\"fb_play_count\":3");
+		scriptedClips.add(clipsHit("P905"));
+
+		registerPost("P905");
+
+		assertThat(clipsCalls()).isEqualTo(1);          // 당첨 즉시 중단
+		assertThat(snapshotMetric("shares", "P905")).isEqualTo(9L);
+		assertThat(snapshotMetric("saves", "P905")).isEqualTo(4L);   // 단건 관측 유지(non-null 우선)
+	}
+
+	@Test
 	void 등록_직후_ownerUserId가_없어도_단건_재시도로_백필이_돈다() {
 		// 구형 셰이프(user.pk 부재)는 clips를 태울 user_id가 없어 예전엔 백필을 통째로 건너뛰었다 —
 		// 단건 재시도는 short_code만 있으면 되므로 이제 clips 없이 단건 복권만 돈다.

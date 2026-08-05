@@ -449,6 +449,58 @@ class CollectServiceTest {
 		assertThat(writer.savedPosts.getFirst().saves()).isEqualTo(5L);
 	}
 
+	// ── 재시도 진입·종료 조건에 공유수 포함(08-05 옵션 ③) ─────────────────────
+	// 08-04엔 "공유는 단건 정본이 확정 제공"이라는 전제로 진입 조건이 저장·리포스트만 봤다 —
+	// 전제가 반증됐으므로(단건도 복권), 부분 세션이 저장·리포스트만 주고 공유를 빠뜨린 날에도
+	// 재시도가 돌아야 공유수 단독 누락이 남지 않는다.
+
+	/** 공유수만 미관측인 추적 릴스 — 그날 단건 정본이 부분 세션(저장·리포스트만)이었던 상황. */
+	private static PostInfo trackedReelSharesMissing() {
+		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, "{}", true, false);
+	}
+
+	@Test
+	void 공유수만_미관측이어도_재시도가_돈다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelSharesMissing()));
+
+		assertThat(calls).hasSize(1);                            // 당첨 즉시 중단
+		assertThat(writer.savedPosts).hasSize(1);
+		assertThat(writer.savedPosts.getFirst().shares()).isEqualTo(9L);
+		assertThat(writer.savedPosts.getFirst().saves()).isEqualTo(4L);    // 기존 관측 유지(non-null 우선)
+		assertThat(writer.savedPosts.getFirst().reposts()).isEqualTo(7L);
+	}
+
+	@Test
+	void 클립_당첨이_공유를_안_실으면_공유_관측까지_계속한다() {
+		// 부분 세션(저장·리포스트만)이 당첨으로 잡혀도 공유가 비었으면 종료하지 않는다 —
+		// 저장·리포스트 기준으로 끝내면 공유수 단독 누락이 그대로 남는다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return calls.size() == 1
+					? """
+					{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+					"ig_play_count":222,"save_count":5,"media_repost_count":7}}],
+					"paging_info":{"more_available":false}},"next_page_id":null}"""
+					: CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(calls).hasSize(2);                            // 부분 당첨 후 공유 완비까지 1콜 더
+		assertThat(writer.savedPosts).hasSize(2);                // 부분 관측도 그때그때 저장
+		assertThat(writer.savedPosts.getLast().shares()).isEqualTo(9L);
+	}
+
 	@Test
 	void user_id가_없으면_clips_없이_단건_재시도만_돈다() {
 		// POST 등록만 있고 단건 응답에 user.pk도 없는 계정(구형 셰이프) — 예전엔 통째로 건너뛰었지만

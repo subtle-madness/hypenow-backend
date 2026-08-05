@@ -203,7 +203,11 @@ public class CollectService {
 		List<PostInfo> clipsPending = new ArrayList<>();
 		List<PostInfo> singlePending = new ArrayList<>();
 		for (PostInfo p : trackedPosts) {
-			if (!"REELS".equals(p.contentType()) || (p.saves() != null && p.reposts() != null)) {
+			// 진입·종료 조건은 3지표 공통이다(08-05 옵션 ③) — 08-04엔 "공유는 단건 정본이 확정 제공"
+			// 전제로 저장·리포스트만 봤지만, 전제가 반증돼 부분 세션이 공유만 빠뜨린 날의 단독 누락도
+			// 재시도가 메꿔야 한다(당첨 clips 열거는 공유를 사실상 상시 실어 추가 비용이 거의 없다).
+			if (!"REELS".equals(p.contentType())
+					|| (p.saves() != null && p.shares() != null && p.reposts() != null)) {
 				continue;
 			}
 			// userId가 없으면(구형 셰이프 단건 등록분) clips를 태울 수 없다 — 전원 단건 재시도.
@@ -255,10 +259,10 @@ public class CollectService {
 			}
 			PostInfo merged = p.mergedMetrics(c.saves(), c.shares(), c.reposts());
 			writer.savePost(LocalDate.now(KST), merged);
-			log.info("저장·리포스트 당첨 머지 — {} saves={} reposts={} ({}번째 시도)",
-					p.shortCode(), merged.saves(), merged.reposts(), attempt);
-			if (merged.saves() == null || merged.reposts() == null) {
-				next.add(merged);   // 드문 부분 세션(저장만/리포스트만) — 남은 지표는 계속 시도.
+			log.info("저장·리포스트 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
+					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);
+			if (merged.saves() == null || merged.shares() == null || merged.reposts() == null) {
+				next.add(merged);   // 부분 세션 — 남은 지표(공유 포함, 옵션 ③)는 계속 시도.
 			}
 		}
 		return next;
@@ -266,9 +270,9 @@ public class CollectService {
 
 	/**
 	 * 단건 복권 1회(게시물당 1콜) — 관측된 저장·공유·리포스트만 non-null 머지해 재저장한다.
-	 * 종료 조건은 3지표 완비다: clips 경로(저장·리포스트만 보면 됨 — 공유는 창 안이면 매일 단건
-	 * 정본이 다시 뽑는다)와 달리, 창 밖 게시물엔 이 재시도가 공유수의 사실상 마지막 기회다.
-	 * 콜 실패는 삼키고 다음 시도에 맡긴다(best-effort — 상한이 이미 폭주를 막는다).
+	 * 종료 조건은 clips 경로와 같은 3지표 완비(옵션 ③) — 특히 창 밖 게시물엔 이 재시도가
+	 * 공유수의 사실상 마지막 기회다. 콜 실패는 삼키고 다음 시도에 맡긴다(best-effort —
+	 * 상한이 이미 폭주를 막는다).
 	 */
 	private List<PostInfo> retrySinglesOnce(List<PostInfo> pending, int attempt) {
 		List<PostInfo> next = new ArrayList<>();
