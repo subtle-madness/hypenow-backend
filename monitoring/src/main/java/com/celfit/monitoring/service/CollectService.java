@@ -189,6 +189,20 @@ public class CollectService {
 	// ·save 47%·repost 29%) — 창 밖 게시물엔 단건 콜이 유일 공급원이라 재시도 없이는 3종이 빈다.
 
 	/**
+	 * 저장·공유·리포스트 재시도 필요 판정(스윕·등록·재시도 진입이 공유하는 단일 기준) — 릴스이면서
+	 * 3지표 중 미관측이 남아 있으면 참. 단, 공유는 게시자 숨김({@link PostInfo#sharesHidden}이면
+	 * 영영 안 오므로 판정에서 제외한다 — 넣으면 숨김 게시물이 매일 상한까지 헛 재시도를 돈다.
+	 * 진입·종료 조건은 3지표 공통이다(08-05 옵션 ③): 08-04엔 "공유는 단건 정본이 확정 제공"
+	 * 전제로 저장·리포스트만 봤지만, 전제가 반증돼 부분 세션이 공유만 빠뜨린 날의 단독 누락도
+	 * 재시도가 메꿔야 한다(당첨 clips 열거는 공유를 사실상 상시 실어 추가 비용이 거의 없다).
+	 */
+	public static boolean needsMetricsRetry(PostInfo p) {
+		return "REELS".equals(p.contentType())
+				&& (p.saves() == null || p.reposts() == null
+						|| (p.shares() == null && !p.sharesHidden()));
+	}
+
+	/**
 	 * 미관측 추적 릴스의 저장·리포스트 보강 — clips 열거를 당첨(키 실림)까지 최대 metricsRetryMax회
 	 * 재콜하고, 관측을 non-null 머지해 재저장한다. 열거 창 밖으로 판정된 게시물(과 clips를 태울
 	 * userId가 아예 없는 계정 — null 허용)은 단건 콜 재시도로 전환한다. 실패·미당첨은 그대로
@@ -203,11 +217,7 @@ public class CollectService {
 		List<PostInfo> clipsPending = new ArrayList<>();
 		List<PostInfo> singlePending = new ArrayList<>();
 		for (PostInfo p : trackedPosts) {
-			// 진입·종료 조건은 3지표 공통이다(08-05 옵션 ③) — 08-04엔 "공유는 단건 정본이 확정 제공"
-			// 전제로 저장·리포스트만 봤지만, 전제가 반증돼 부분 세션이 공유만 빠뜨린 날의 단독 누락도
-			// 재시도가 메꿔야 한다(당첨 clips 열거는 공유를 사실상 상시 실어 추가 비용이 거의 없다).
-			if (!"REELS".equals(p.contentType())
-					|| (p.saves() != null && p.shares() != null && p.reposts() != null)) {
+			if (!needsMetricsRetry(p)) {
 				continue;
 			}
 			// userId가 없으면(구형 셰이프 단건 등록분) clips를 태울 수 없다 — 전원 단건 재시도.
@@ -233,7 +243,7 @@ public class CollectService {
 		int leftover = 0;
 		for (List<PostInfo> remaining : List.of(clipsPending, singlePending)) {
 			for (PostInfo p : remaining) {
-				if (!assumeZeroRepostsIfOmitted(p)) {
+				if (!assumeZeroForOmittedKeys(p)) {
 					leftover++;
 				}
 			}
@@ -243,22 +253,28 @@ public class CollectService {
 		}
 	}
 
-	// ── 리포스트 키 부재 = 0 간주(08-05 사용자 결정) ──────────────────────────
-	// media_repost_count는 값이 0이면 키 자체가 생략된다: 운영 전 스냅샷에서 reposts=0 관측이
-	// 0건(shares=0 82건·saves=0 61건과 대조)이고, 대조 실험(08-05)에서 인접 호출로 리포스트 111
-	// 게시물엔 키가 오고 0 추정 게시물엔 6일 추적 + 추가 재콜 내내 절대 안 왔다. 판정 조건에
-	// saves 관측을 요구하는 이유: save·repost 키는 같이 실리는 짝(08-04 실측 566/596)이라 "저장
-	// 키를 실은 세션을 만났는데 리포스트가 없다"가 곧 생략(=0)의 근거다. 전부 꽝인 날은 관측
-	// 근거가 없으므로 0을 쓰지 않는다(내일 스윕 이월) — null(미관측)과 0(관측 해석)의 구분 유지.
+	// ── 키 부재 = 0 간주(08-05 사용자 결정) ──────────────────────────────────
+	// 리포스트: media_repost_count는 값이 0이면 키 자체가 생략된다 — 운영 전 스냅샷에서 reposts=0
+	// 관측이 0건(shares=0 82건·saves=0 61건과 대조)이고, 대조 실험(08-05)에서 인접 호출로 리포스트
+	// 111 게시물엔 키가 오고 0 추정 게시물엔 6일 추적 + 추가 재콜 내내 절대 안 왔다.
+	// 공유: 게시자 숨김(sharesHidden — share_count_disabled 또는 좋아요 숨김 커플링)이 아닌데도
+	// 영구 부재인 게시물이 있다(원인 미상 — 전부 초소형·노출 정지 릴스). 숨김이 아니면 소진 시
+	// 0으로 표기한다(사용자 결정 2차). 숨김은 0이 아니라 비공개이므로 null 유지.
+	// 판정 조건에 saves 관측을 요구하는 이유: 키 실은 세션을 만났다는 근거가 있어야 "부재=생략"
+	// 해석이 성립한다(save·repost 키는 같이 실리는 짝 — 08-04 실측 566/596). 전부 꽝인 날은
+	// 근거가 없으므로 0을 쓰지 않는다(내일 스윕 이월) — null(미관측)/0(관측 해석) 구분 유지.
 
-	/** 소진된 게시물의 리포스트 0 간주 — 판정 근거(저장 관측)가 있으면 0으로 저장하고 true. */
-	private boolean assumeZeroRepostsIfOmitted(PostInfo p) {
-		if (p.saves() == null || p.reposts() != null) {
+	/** 소진된 게시물의 리포스트·공유(숨김 제외) 0 간주 — 판정 근거(저장 관측)가 있으면 저장하고 true. */
+	private boolean assumeZeroForOmittedKeys(PostInfo p) {
+		Long zeroReposts = p.reposts() == null ? 0L : null;
+		Long zeroShares = p.shares() == null && !p.sharesHidden() ? 0L : null;
+		if (p.saves() == null || (zeroReposts == null && zeroShares == null)) {
 			return false;
 		}
-		PostInfo merged = p.mergedMetrics(null, null, 0L);
+		PostInfo merged = p.mergedMetrics(null, zeroShares, zeroReposts);
 		writer.savePost(LocalDate.now(KST), merged);
-		log.info("리포스트 키 부재 0 간주 — {} (재시도 소진, saves={} 관측)", p.shortCode(), p.saves());
+		log.info("지표 키 부재 0 간주 — {} shares={} reposts={} (재시도 소진, saves={} 관측)",
+				p.shortCode(), merged.shares(), merged.reposts(), p.saves());
 		return true;
 	}
 
@@ -287,8 +303,8 @@ public class CollectService {
 			writer.savePost(LocalDate.now(KST), merged);
 			log.info("저장·리포스트 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
 					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);
-			if (merged.saves() == null || merged.shares() == null || merged.reposts() == null) {
-				next.add(merged);   // 부분 세션 — 남은 지표(공유 포함, 옵션 ③)는 계속 시도.
+			if (needsMetricsRetry(merged)) {
+				next.add(merged);   // 부분 세션 — 남은 지표(숨김 아닌 공유 포함, 옵션 ③)는 계속 시도.
 			}
 		}
 		return next;
@@ -319,8 +335,8 @@ public class CollectService {
 			writer.savePost(LocalDate.now(KST), merged);
 			log.info("저장·리포스트 단건 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
 					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);
-			if (merged.saves() == null || merged.shares() == null || merged.reposts() == null) {
-				next.add(merged);   // 부분 세션 — 남은 지표는 계속 시도.
+			if (needsMetricsRetry(merged)) {
+				next.add(merged);   // 부분 세션 — 남은 지표(숨김 아닌 공유 포함)는 계속 시도.
 			}
 		}
 		return next;

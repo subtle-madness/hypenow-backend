@@ -297,7 +297,7 @@ class CollectServiceTest {
 	/** 단건 정본 수집을 마친 추적 릴스 — 공유는 단건이 확정 제공, 저장·리포스트만 미관측. */
 	private static PostInfo trackedReel(String contentType) {
 		return new PostInfo("ReelA", "acct", null, null, "999", contentType, "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, null, 3L, null, "{}", true, false);
+				1_700_000_000L, 10L, 2L, 222L, null, null, 3L, null, "{}", true, false, false);
 	}
 
 	private static CollectService retryingCollect(HikerClient client, RecordingWriter writer, int retryMax) {
@@ -363,7 +363,7 @@ class CollectServiceTest {
 	/** 3지표 전부 미관측인 추적 릴스 — 창 밖 시나리오는 공유수도 단건 재시도가 채워야 한다. */
 	private static PostInfo trackedReelAllMissing() {
 		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, "{}", true, false);
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, "{}", true, false, false);
 	}
 
 	private static long countByPrefix(List<String> calls, String prefix) {
@@ -457,7 +457,7 @@ class CollectServiceTest {
 	/** 공유수만 미관측인 추적 릴스 — 그날 단건 정본이 부분 세션(저장·리포스트만)이었던 상황. */
 	private static PostInfo trackedReelSharesMissing() {
 		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, "{}", true, false);
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, "{}", true, false, false);
 	}
 
 	@Test
@@ -576,6 +576,93 @@ class CollectServiceTest {
 
 		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
 		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(0L);
+	}
+
+	// ── 공유수 원인 미상 부재 0 간주 + 게시자 숨김 제외(08-05 사용자 결정 2차) ──
+	// 공유 키를 영구히 안 주는 게시물은 두 부류다: 게시자가 숨긴 것(share_count_disabled 또는
+	// 좋아요 숨김 커플링 — 실측 11건)과 원인 미상(플래그 없음, 전부 초소형 — 8건). 숨김은 0이
+	// 아니라 비공개이므로 그대로 null, 원인 미상만 소진 시 0으로 표기한다(진입도 숨김이면 공유
+	// 항 제외 — 안 그러면 숨김 게시물이 매일 상한까지 헛 재시도를 돈다).
+
+	private static final String CLIPS_SAVE_ONLY = """
+			{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+			"ig_play_count":222,"save_count":5}}],
+			"paging_info":{"more_available":false}},"next_page_id":null}""";
+
+	/** 공유 숨김이 관측된 추적 릴스 — 3지표 미관측 상태. */
+	private static PostInfo trackedReelSharesHiddenAllMissing() {
+		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, "{}", true, false, true);
+	}
+
+	@Test
+	void 소진_시_공유_키_부재도_숨김이_아니면_0으로_간주한다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_SAVE_ONLY;   // 저장만 실리는 세션 — 공유·리포스트 키 부재(=둘 다 0인 게시물)
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelAllMissing()));
+
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getLast().shares()).isEqualTo(0L);    // 숨김 아님 → 부재 = 0
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(0L);
+	}
+
+	@Test
+	void 공유_숨김_게시물은_소진돼도_공유를_0으로_간주하지_않는다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_SAVE_ONLY;
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelSharesHiddenAllMissing()));
+
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getLast().shares()).isNull();         // 숨김은 0이 아니라 비공개
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(0L);   // 리포스트 0 간주는 그대로
+	}
+
+	@Test
+	void 공유_숨김이면_공유만_미관측이어도_재시도를_하지_않는다() {
+		// 숨김 게시물의 공유는 영영 안 온다 — 진입 조건에 넣으면 매일 상한까지 헛 콜을 태운다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return CLIPS_HIT;
+		});
+		var writer = new RecordingWriter();
+		PostInfo savedAndRepostsFilled = new PostInfo("ReelA", "acct", null, null, "999", "REELS",
+				"캡션", null, 1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, "{}", true, false, true);
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(savedAndRepostsFilled));
+
+		assertThat(calls).isEmpty();
+		assertThat(writer.savedPosts).isEmpty();
+	}
+
+	@Test
+	void 공유_숨김_게시물은_저장리포스트가_채워지면_재시도를_종료한다() {
+		// 종료 조건에서도 공유 항이 빠져야 당첨 후 불필요한 재콜이 없다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerClient(path -> {
+			calls.add(path);
+			return """
+					{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
+					"ig_play_count":222,"save_count":5,"media_repost_count":7}}],
+					"paging_info":{"more_available":false}},"next_page_id":null}""";
+		});
+		var writer = new RecordingWriter();
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(trackedReelSharesHiddenAllMissing()));
+
+		assertThat(calls).hasSize(1);                              // 당첨 1콜로 즉시 종료
+		assertThat(writer.savedPosts.getLast().saves()).isEqualTo(5L);
+		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(7L);
 	}
 
 	@Test

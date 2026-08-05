@@ -293,10 +293,8 @@ public class DailySweepJob {
 		for (TargetRow t : accountTargets) {
 			try {
 				PostInfo trackedPost = sweepTarget(t, posts, enumerated);
-				// 공유수도 판정에 포함한다(08-05 옵션 ③) — 부분 세션이 공유만 빠뜨린 날의 단독 누락 방지.
-				if (trackedPost != null && "REELS".equals(trackedPost.contentType())
-						&& (trackedPost.saves() == null || trackedPost.shares() == null
-								|| trackedPost.reposts() == null)) {
+				// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
+				if (trackedPost != null && CollectService.needsMetricsRetry(trackedPost)) {
 					metricsPending.putIfAbsent(trackedPost.shortCode(), trackedPost);
 				}
 			} catch (SubjectNotFoundException e) {

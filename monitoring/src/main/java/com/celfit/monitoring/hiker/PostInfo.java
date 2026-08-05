@@ -32,17 +32,24 @@ package com.celfit.monitoring.hiker;
  * <p>likesHidden은 게시자의 좋아요 수 숨김(like_and_view_counts_disabled) 관측 여부다.
  * 숨김이면 likes는 null인데, "숨김"과 "그날 수집 실패(행 부재)"를 FE가 구분해 표시해야 해서
  * null로 뭉개지 않고 플래그를 스냅샷까지 관통시킨다(운영 실측 08-03).
+ *
+ * <p>sharesHidden은 게시자의 공유 횟수 숨김 관측 여부다 — share_count_disabled 토글이거나,
+ * 좋아요 숨김(IG 앱 문구 "좋아요 수 및 공유 횟수는 회원님만" — 좋아요 숨김이 공유 노출도 함께
+ * 끈다, 08-05 실측: lvcd=true 10게시물 전원 reshare_count 영구 부재 vs 제공 31게시물 전원 false).
+ * 숨김 게시물은 저장·리포스트 재시도 판정에서 공유 항을 빼고(헛 재시도 방지), 소진 시
+ * 공유 0 간주 대상에서도 제외한다(숨김은 0이 아니라 비공개).
  */
 public record PostInfo(String shortCode, String username, String ownerFullName, String ownerProfilePicUrl,
 		String ownerUserId, String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long fbPlays, Long saves,
-		Long shares, Long reposts, String rawJson, boolean viewsTrusted, boolean likesHidden) {
+		Long shares, Long reposts, String rawJson, boolean viewsTrusted, boolean likesHidden,
+		boolean sharesHidden) {
 
 	/** 재시도 콜에서 얻은 FB 몫만 갈아끼운 사본 — 나머지 지표는 원 콜 값을 유지한다. */
 	public PostInfo withFbPlays(Long newFbPlays) {
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
 				caption, thumbnailUrl, takenAt, likes, comments, views, newFbPlays, saves, shares, reposts,
-				rawJson, viewsTrusted, likesHidden);
+				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
 	/**
@@ -54,7 +61,7 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
 				caption, thumbnailUrl, takenAt, likes, comments, views, fbPlays,
 				coalesce(saves, newSaves), coalesce(shares, newShares), coalesce(reposts, newReposts),
-				rawJson, viewsTrusted, likesHidden);
+				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
 	/**
@@ -85,7 +92,9 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				coalesce(reposts, fallback.reposts),
 				rawJson,
 				viewsFromFallback ? fallback.viewsTrusted : viewsTrusted,
-				likesHidden);
+				likesHidden,
+				// 숨김 플래그는 어느 쪽 응답에서든 관측되면 참 — 값과 달리 켜짐이 정보다.
+				sharesHidden || fallback.sharesHidden);
 	}
 
 	private static <T> T coalesce(T primary, T secondary) {

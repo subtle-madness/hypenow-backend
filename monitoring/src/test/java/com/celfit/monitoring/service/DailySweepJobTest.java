@@ -760,6 +760,23 @@ class DailySweepJobTest {
 	}
 
 	@Test
+	void 공유_숨김_게시물은_공유만_미관측이어도_재시도를_돌지_않는다() {
+		// 게시자가 공유 횟수를 숨긴 게시물(share_count_disabled)의 공유는 영영 안 온다 —
+		// 재시도 대상에 넣으면 매일 상한까지 헛 콜을 태운다(08-05 실측 숨김 11건).
+		hiker.standalonePost("P561", "sharehide_user", "캡션")
+				.singleOnlyFields("P561",
+						"\"save_count\":4,\"media_repost_count\":7,\"share_count_disabled\":true");
+		targets.insert(TargetType.POST, 7L, "sharehide_user", "P561", null,
+				TargetStatus.TRACKING, "P561", "rk-mr8", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();                  // 저장·리포스트 완비 + 공유는 숨김 → 재시도 없음
+		assertThat(snapshotMetric("saves", "P561")).isEqualTo(4L);
+		assertThat(snapshotMetric("shares", "P561")).isNull();  // 숨김은 0이 아니라 비공개(null 유지)
+	}
+
+	@Test
 	void 공유수만_미관측인_추적_릴스도_재시도_대상이다() {
 		// 그날 단건 정본이 부분 세션(저장·리포스트만, 공유 키 부재)이어도 재시도가 돌아야 한다 —
 		// 진입 조건이 저장·리포스트만 보면 공유수 단독 누락이 그대로 남는다(08-05 옵션 ③).

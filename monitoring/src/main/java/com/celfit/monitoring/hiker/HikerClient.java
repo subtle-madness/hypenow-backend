@@ -342,6 +342,9 @@ public class HikerClient {
 		// METRICS_HIDDEN 감지에 걸린다. 댓글·조회수는 숨김과 무관하게 실측이 계속 온다.
 		boolean likesHidden = m.path("like_and_view_counts_disabled").asBoolean(false);
 		Long likes = likesHidden ? null : firstLong(m, "like_count");
+		// 공유 숨김 — share_count_disabled 토글이거나, 좋아요 숨김이 공유 노출도 함께 끈다
+		// (IG 앱 문구 "좋아요 수 및 공유 횟수는 회원님만", 08-05 실측: lvcd=true 전원 reshare 영구 부재).
+		boolean sharesHidden = m.path("share_count_disabled").asBoolean(false) || likesHidden;
 		// 저장·공유·리포스트는 세션 복권(콜 단위 전부/전무, 08-04 실측) — 이 응답이 꽝이어도
 		// 같은 스윕의 clips 콜이 당첨이면 그 관측으로 채운다(조회수 머지와 같은 상호보완).
 		// 피드는 저장·공유 키가 전 세션 부재라 own·clip 모두 null → 기존 영구 null 규칙 그대로.
@@ -353,7 +356,7 @@ public class HikerClient {
 				likes, firstLong(m, "comment_count"),
 				views, fbPlays,
 				saves, shares, reposts,
-				rawJson, viewsTrusted, likesHidden);
+				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
 	/**

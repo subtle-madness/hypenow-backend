@@ -138,10 +138,8 @@ public class RegistrationService {
 	 * clips 없이 단건 콜 복권으로만 보강한다(08-05).
 	 */
 	private void scheduleMetricsBackfill(PostInfo post) {
-		// 공유수도 판정에 포함한다(08-05 옵션 ③) — 부분 세션이 공유만 빠뜨린 등록의 단독 누락 방지.
-		boolean needsBackfill = "REELS".equals(post.contentType())
-				&& (post.saves() == null || post.shares() == null || post.reposts() == null);
-		if (!needsBackfill) {
+		// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
+		if (!CollectService.needsMetricsRetry(post)) {
 			return;
 		}
 		metricsBackfill.execute(() -> {
