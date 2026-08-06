@@ -44,6 +44,43 @@ class HikerClientTest {
 	}
 
 	@Test
+	void 프로필_파싱은_biography를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		ProfileInfo p = client.fetchProfile("rarebeauty");
+		assertThat(p.biography()).isNotBlank();   // profile.json의 user.biography(실측 픽스처 실재 확인)
+	}
+
+	/**
+	 * 게시자 프로필(/v2/user/by/id — 브랜드 태그 모니터링 스펙 §2). 응답 셰이프는 라이브 미실측이라
+	 * /v2/user/by/username과 동일한 {user:{...}}로 가정(스펙이 경로만 확정) — 픽스처는 profile.json 파생.
+	 */
+	@Test
+	void 게시자_프로필_파싱_by_id() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("author-profile-by-id.json");
+		});
+		AuthorInfo a = client.fetchAuthorProfile("9876543210");
+		assertThat(calls.getFirst()).startsWith("/v2/user/by/id?user_id=9876543210");
+		assertThat(a.igUserId()).isEqualTo("9876543210");
+		assertThat(a.username()).isEqualTo("beauty_creator");
+		assertThat(a.followers()).isPositive();
+		assertThat(a.biography()).isNotBlank();
+		assertThat(a.isPrivate()).isFalse();
+	}
+
+	/** 게시자 비공개는 오류가 아니라 관측값이다 — fetchProfile과 달리 예외를 던지면 안 된다. */
+	@Test
+	void 게시자_프로필은_비공개여도_예외_없이_관측값을_준다() {
+		String privateUser = fixture("author-profile-by-id.json")
+				.replace("\"is_private\": false", "\"is_private\": true");
+		HikerClient client = new HikerClient(path -> privateUser);
+		AuthorInfo a = client.fetchAuthorProfile("9876543210");
+		assertThat(a.isPrivate()).isTrue();
+	}
+
+	@Test
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
 		HikerClient client = new HikerClient(fakeHttp());
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 1);

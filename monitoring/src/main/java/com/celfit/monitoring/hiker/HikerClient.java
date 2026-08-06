@@ -58,7 +58,29 @@ public class HikerClient {
 		return new ProfileInfo(username, user.path("pk").asString(),
 				firstLong(user, "follower_count"), firstLong(user, "following_count"),
 				firstLong(user, "media_count"),
-				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null), body);
+				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null),
+				user.path("biography").asString(null), body);
+	}
+
+	/**
+	 * 게시자 프로필 — /v2/user/by/id?user_id=(브랜드 태그 모니터링 스펙 §2). fetchProfile과 달리
+	 * 비공개를 예외로 승격하지 않는다(게시자 비공개는 관측값 — author_profile.is_private).
+	 * 응답 셰이프는 by/username과 동일한 {user:{...}}로 가정(라이브 미실측 — 스펙이 경로만 확정).
+	 */
+	public AuthorInfo fetchAuthorProfile(String userId) {
+		String body = http.get("/v2/user/by/id?user_id=" + enc(userId));
+		JsonNode user = root(body).path("user");
+		if (user.isMissingNode() || user.isNull()) {
+			throw new HikerFetchException("게시자 프로필 응답에 user 없음: " + userId);
+		}
+		// user.pk는 JSON number(findings §2-①) — 응답의 pk를 정본으로 쓰되 없으면 요청값 유지.
+		String igUserId = user.path("pk").isNumber() ? user.path("pk").asString() : userId;
+		return new AuthorInfo(igUserId, user.path("username").asString(null),
+				user.path("full_name").asString(null),
+				firstLong(user, "follower_count"), firstLong(user, "following_count"),
+				firstLong(user, "media_count"),
+				user.path("biography").asString(null), user.path("profile_pic_url").asString(null),
+				user.path("is_private").asBoolean(false));
 	}
 
 	/**
