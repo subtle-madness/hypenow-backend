@@ -23,19 +23,21 @@ public class AuthorProfileRepository {
 		this.db = db;
 	}
 
+	/** is_verified는 관측값 그대로 — 키 부재(null)를 미인증(false)으로 굳히지 않는다(계약 §3-2). */
 	public void upsert(AuthorInfo a) {
 		db.update("""
 				INSERT INTO author_profile (ig_user_id, username, full_name, followers, following,
-				                            media_count, biography, profile_pic_url, is_private, fetched_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+				                            media_count, biography, profile_pic_url, is_private,
+				                            is_verified, fetched_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
 				ON CONFLICT (ig_user_id) DO UPDATE SET
 				  username = EXCLUDED.username, full_name = EXCLUDED.full_name,
 				  followers = EXCLUDED.followers, following = EXCLUDED.following,
 				  media_count = EXCLUDED.media_count, biography = EXCLUDED.biography,
 				  profile_pic_url = EXCLUDED.profile_pic_url, is_private = EXCLUDED.is_private,
-				  fetched_at = now()""",
+				  is_verified = EXCLUDED.is_verified, fetched_at = now()""",
 				a.igUserId(), a.username(), a.fullName(), a.followers(), a.following(),
-				a.mediaCount(), a.biography(), a.profilePicUrl(), a.isPrivate());
+				a.mediaCount(), a.biography(), a.profilePicUrl(), a.isPrivate(), a.isVerified());
 	}
 
 	/**

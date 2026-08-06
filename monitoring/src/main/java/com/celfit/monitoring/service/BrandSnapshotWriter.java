@@ -44,14 +44,15 @@ public class BrandSnapshotWriter {
 			LocalDate uploadedAt = Instant.ofEpochSecond(post.takenAt()).atZone(KST).toLocalDate();
 			String caption = post.caption() != null ? post.caption() : "";
 			postMeta.upsert(post.shortCode(), post.username(), post.contentType(), uploadedAt,
-					caption, post.thumbnailUrl());
+					caption, post.thumbnailUrl(), post.videoUrl(), post.videoDuration(),
+					post.isPaidPartnership());
 		}
 	}
 
 	/** 브랜드 프로필 관측 1건 — 최신값(brand_account)과 추이(brand_profile_snapshot)를 한 트랜잭션으로. */
 	@Transactional
 	public void saveBrandProfile(long brandId, String username, LocalDate on, ProfileInfo profile) {
-		brands.refreshProfile(brandId, profile.followers(), profile.biography());
+		brands.refreshProfile(brandId, profile);
 		snapshots.upsertBrandProfile(username, on, profile);
 	}
 }

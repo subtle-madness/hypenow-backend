@@ -59,8 +59,7 @@ public class BrandRegistrationService {
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
-		long id = brands.insertOrReactivate(normalized, profile.userId(), profile.followers(),
-				profile.biography());
+		long id = brands.insertOrReactivate(normalized, profile);
 		BrandRow row = brands.findByUsername(normalized).orElseThrow();
 		backfill.execute(() -> runBackfillSafely(row));
 		return new Result(id, normalized, profile.followers(), false);
@@ -73,6 +72,8 @@ public class BrandRegistrationService {
 			brands.touchSwept(row.id(), LocalDate.now(KST));
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
+			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
+			brands.markBackfillError(row.id(), "초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
 		}
 	}
 
