@@ -3,6 +3,7 @@ package com.celfit.was.v1.account;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.v1.brandmonitoring.V1BrandAccountService;
 import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -21,6 +22,10 @@ import org.springframework.stereotype.Service;
  * 탈퇴를 막지 않음) 실패는 로그만 남긴다. monitoring.enabled=false(MonitoringConfig 조건부 —
  * 빈 자체가 없음)면 루프를 통째로 스킵한다(V1MonitoringItemUpdateService의 Optional 주입 관용구
  * 재사용).
+ *
+ * <p>브랜드 모니터링 정리(2026-08-07 스펙 §5-3)도 같은 이유로 여기 붙는다 — target과 달리 브랜드
+ * 수집은 <b>만료가 없어서</b> 방치하면 영구히 매일 돈다. app.brand_monitorings는 users CASCADE로
+ * 함께 지워지므로 "이 브랜드의 마지막 사용자였는가" 판정은 하드 삭제 <b>전</b>에만 가능하다.
  */
 @Service
 public class AccountDeletionService {
@@ -30,18 +35,39 @@ public class AccountDeletionService {
 	private final UserRepository userRepository;
 	private final MonitoringItemRepository monitoringItemRepository;
 	private final Optional<MonitoringCommandClient> monitoringCommandClient;
+	private final Optional<V1BrandAccountService> brandAccountService;
 
 	public AccountDeletionService(UserRepository userRepository,
 			MonitoringItemRepository monitoringItemRepository,
-			Optional<MonitoringCommandClient> monitoringCommandClient) {
+			Optional<MonitoringCommandClient> monitoringCommandClient,
+			Optional<V1BrandAccountService> brandAccountService) {
 		this.userRepository = userRepository;
 		this.monitoringItemRepository = monitoringItemRepository;
 		this.monitoringCommandClient = monitoringCommandClient;
+		this.brandAccountService = brandAccountService;
 	}
 
 	public void deleteAccount(long userId) {
 		cancelActiveMonitoring(userId);
+		cleanupBrandMonitoring(userId);
 		userRepository.deleteAccount(userId);
+	}
+
+	/**
+	 * 브랜드 연결 해제 + 마지막 사용자면 monitoring 브랜드 탈퇴(삭제 API와 동일 로직 재사용).
+	 * monitoring 호출은 서비스 안에서 트랜잭션 밖·best-effort로 돈다 — 여기 catch는 DB 실패까지
+	 * 흡수하는 최종 방어다(해지 루프와 같은 fail-open: 정리 실패가 탈퇴 자체를 막지 않는다).
+	 * monitoring.enabled=false면 서비스 빈이 없어 통째로 스킵된다.
+	 */
+	private void cleanupBrandMonitoring(long userId) {
+		if (brandAccountService.isEmpty()) {
+			return;
+		}
+		try {
+			brandAccountService.get().cleanupForAccountDeletion(userId);
+		} catch (RuntimeException e) {
+			log.warn("탈퇴 시 브랜드 모니터링 정리 실패 — 탈퇴는 계속 진행(고아 브랜드 수집 지속 가능). userId={}", userId, e);
+		}
 	}
 
 	private void cancelActiveMonitoring(long userId) {
