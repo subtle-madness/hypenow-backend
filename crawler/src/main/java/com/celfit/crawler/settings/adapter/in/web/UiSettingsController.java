@@ -6,6 +6,7 @@ import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
 import com.celfit.crawler.settings.application.service.ProxySourceSetting;
+import com.celfit.crawler.settings.application.service.ReelsSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.ProxySource;
 import com.celfit.crawler.settings.application.service.SettingsService.SettingView;
@@ -32,13 +33,15 @@ public class UiSettingsController {
     private final ProfileSupplementSetting profileSupplementSetting;
     private final ProxySourceSetting proxySourceSetting;
     private final ProxyProperties proxyProperties;
+    private final ReelsSourceSetting reelsSourceSetting;
 
     public UiSettingsController(SettingsService service, CommentSourceSetting commentSourceSetting,
                                  DiscoverSourceSetting discoverSourceSetting,
                                  ProfileSourceSetting profileSourceSetting,
                                  ProfileSupplementSetting profileSupplementSetting,
                                  ProxySourceSetting proxySourceSetting,
-                                 ProxyProperties proxyProperties) {
+                                 ProxyProperties proxyProperties,
+                                 ReelsSourceSetting reelsSourceSetting) {
         this.service = service;
         this.commentSourceSetting = commentSourceSetting;
         this.discoverSourceSetting = discoverSourceSetting;
@@ -46,6 +49,7 @@ public class UiSettingsController {
         this.profileSupplementSetting = profileSupplementSetting;
         this.proxySourceSetting = proxySourceSetting;
         this.proxyProperties = proxyProperties;
+        this.reelsSourceSetting = reelsSourceSetting;
     }
 
     @GetMapping
@@ -56,6 +60,7 @@ public class UiSettingsController {
         model.addAttribute("profileSource", profileSourceSetting.current().name());
         model.addAttribute("profileRelated", profileSupplementSetting.relatedEnabled());
         model.addAttribute("proxySource", proxySourceSetting.current().name());
+        model.addAttribute("reelsSource", reelsSourceSetting.current().name());
         // 각 프록시 소스에 URL이 실제로 설정돼 있는지 — UI에서 "미설정→직접 폴백"을 표시하기 위함.
         Map<String, Boolean> proxyConfigured = new java.util.LinkedHashMap<>();
         for (ProxySource s : ProxySource.values()) {
