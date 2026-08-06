@@ -1,6 +1,6 @@
 # 브랜드 태그 모니터링 수집 파이프라인 구현 계획
 
-> 상태: ✅ 실행됨 (2026-08-06 작성·같은 날 실행 완료 — :monitoring:test 364건 전건 통과)
+> 상태: ✅ 실행됨 · 🗄 부분 대체 (2026-08-06 작성·실행 — 이후 같은 날 설계 재논의로 **공용 테이블 재사용 → 전면 전용 스키마, 감지/트래킹 구분 → 매일 전량**으로 개정. 정본은 DECISIONS 08-06 개정 행)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
