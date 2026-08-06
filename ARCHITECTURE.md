@@ -62,7 +62,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 |---|---|
 | `influencer` | 계정 (username, status, followers, 뷰티 판정 5분류 beauty_class(+파생 beauty/beauty_company)/beauty_judged_at) |
 | `content` | 게시물 제어 (short_code, content_type, owner, uploaded_at, origin DISCOVERY/ENUMERATION, status) — 캡션·지표 없음 |
-| `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS jsonb) — 릴스 캡션·지표·썸네일의 소스 |
+| `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS, 임시 액터 전환 기간엔 APIFY_ACTOR `{"items":[...]}` — DECISIONS 08-06) — 릴스 캡션·지표·썸네일의 소스 |
 | `raw_profile` | 프로필 원형(SELF_GQL·HIKER_MOBILE 등 source별 jsonb) — SELF_GQL엔 내장 타임라인 12개(피드 캡션·지표의 소스) |
 | `raw_post_detail` | 구 시대 상세 payload — 신 파이프라인 미사용(LEGACY). 07-22 열람 화면 제거로 접근 코드도 삭제, 테이블만 잔존 |
 | `raw_comment` | 댓글 원문 (writer/text/written_at 실컬럼) — 수집 게이트 off, 신규 유입 없음 |
