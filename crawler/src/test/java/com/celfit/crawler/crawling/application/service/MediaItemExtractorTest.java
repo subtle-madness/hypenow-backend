@@ -327,4 +327,70 @@ class MediaItemExtractorTest {
 
         assertThat(MediaItemExtractor.captions(payload, RawSource.HIKER_V1_MEDIAS)).isEmpty();
     }
+
+    // ---- APIFY_ACTOR: 릴스 액터 아이템 — shortCode / ISO timestamp / 평문 caption / isPinned ----
+
+    @Test
+    void 액터_아이템은_shortCode와_ISO_timestamp와_평문_캡션을_추출한다() {
+        Map<String, Object> payload = Map.of("items", List.of(
+                Map.of("shortCode", "A1", "timestamp", "2026-08-01T12:00:00.000Z",
+                        "productType", "clips", "caption", "액터 캡션"),
+                // 캡션 키 자체가 없는 아이템 — 미확인(null)이어야 한다 (3-상태 계약)
+                Map.of("shortCode", "A2", "timestamp", "2026-08-02T12:00:00.000Z",
+                        "productType", "clips")));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.APIFY_ACTOR);
+
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0)).isEqualTo(new MediaItemExtractor.MediaItem(
+                "A1", Instant.parse("2026-08-01T12:00:00.000Z"), ContentType.REELS, false, "액터 캡션"));
+        assertThat(items.get(1).caption()).isNull();
+    }
+
+    @Test
+    void 액터_아이템은_productType이_없어도_REELS다() {
+        // 릴스 전용 액터 — productType 결측이 FEED 오분류로 새지 않아야 한다
+        Map<String, Object> payload = Map.of("items", List.of(
+                Map.of("shortCode", "A3", "timestamp", "2026-08-01T12:00:00.000Z")));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.APIFY_ACTOR);
+
+        assertThat(items.get(0).type()).isEqualTo(ContentType.REELS);
+    }
+
+    @Test
+    void 액터_캡션이_빈_문자열이면_확인된_무캡션이다() {
+        Map<String, Object> payload = Map.of("items", List.of(
+                Map.of("shortCode", "A4", "timestamp", "2026-08-01T12:00:00.000Z", "caption", "")));
+
+        assertThat(MediaItemExtractor.extract(payload, RawSource.APIFY_ACTOR).get(0).caption())
+                .isEqualTo("");
+    }
+
+    /** 액터 아이템에는 isPinned(boolean)가 실재한다 — 08-06 실측(핀 릴스에서 true). */
+    @Test
+    void 액터_isPinned가_true면_pinned다() {
+        Map<String, Object> payload = Map.of("items", List.of(
+                Map.of("shortCode", "AP1", "timestamp", "2026-08-01T12:00:00.000Z", "isPinned", true),
+                Map.of("shortCode", "AP2", "timestamp", "2026-08-01T12:00:00.000Z", "isPinned", false)));
+
+        List<MediaItemExtractor.MediaItem> items =
+                MediaItemExtractor.extract(payload, RawSource.APIFY_ACTOR);
+
+        assertThat(items.get(0).pinned()).isTrue();
+        assertThat(items.get(1).pinned()).isFalse();
+    }
+
+    @Test
+    void captions는_액터_payload의_평문_캡션을_모은다() {
+        Map<String, Object> payload = Map.of("items", List.of(
+                Map.of("shortCode", "A1", "timestamp", "2026-08-01T12:00:00.000Z", "caption", "캡션1"),
+                Map.of("shortCode", "A2", "timestamp", "2026-08-02T12:00:00.000Z", "caption", ""),
+                Map.of("shortCode", "A3", "timestamp", "2026-08-03T12:00:00.000Z")));
+
+        assertThat(MediaItemExtractor.captions(payload, RawSource.APIFY_ACTOR))
+                .containsExactly("캡션1");
+    }
 }

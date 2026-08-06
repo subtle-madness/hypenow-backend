@@ -9,9 +9,11 @@ import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
+import com.celfit.crawler.settings.application.service.ReelsSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
 import com.celfit.crawler.settings.domain.ProfileSource;
+import com.celfit.crawler.settings.domain.ReelsSource;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -39,6 +41,7 @@ public class JobCostEstimator {
     private final DiscoverSourceSetting discoverSource;
     private final ProfileSourceSetting profileSource;
     private final ProfileSupplementSetting profileSupplement;
+    private final ReelsSourceSetting reelsSource;
     private final SettingsService settings;
     private final HikerProperties hikerProperties;
     private final DataLikersProperties dataLikersProperties;
@@ -46,14 +49,15 @@ public class JobCostEstimator {
 
     public JobCostEstimator(SearchKeywordRepository searchKeywords, InfluencerRepository influencers,
                             DiscoverSourceSetting discoverSource, ProfileSourceSetting profileSource,
-                            ProfileSupplementSetting profileSupplement, SettingsService settings,
-                            HikerProperties hikerProperties, DataLikersProperties dataLikersProperties,
-                            Clock clock) {
+                            ProfileSupplementSetting profileSupplement, ReelsSourceSetting reelsSource,
+                            SettingsService settings, HikerProperties hikerProperties,
+                            DataLikersProperties dataLikersProperties, Clock clock) {
         this.searchKeywords = searchKeywords;
         this.influencers = influencers;
         this.discoverSource = discoverSource;
         this.profileSource = profileSource;
         this.profileSupplement = profileSupplement;
+        this.reelsSource = reelsSource;
         this.settings = settings;
         this.hikerProperties = hikerProperties;
         this.dataLikersProperties = dataLikersProperties;
@@ -143,6 +147,12 @@ public class JobCostEstimator {
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         long due = influencers.countReelsDue(revisitBefore);
         long targets = Math.min((long) settings.reelsBatchLimit(), due);
+        if (reelsSource.current() == ReelsSource.ACTOR) {
+            return new JobCost("reels", "릴스 수집",
+                    List.of("Apify instagram-reel-scraper (계정당 런 1회 · username 기반이라 pk 불필요)"),
+                    targets, 0, 0, 0, 0,
+                    "Apify 액터 과금 별도(결과 건수당 · 계정당 " + settings.reelsActorResultsLimit() + "개)");
+        }
         double cost = targets * hikerProperties.costPerRequestUsd();
         return new JobCost("reels", "릴스 수집",
                 List.of("HikerAPI /v2/user/clips (계정당 정확히 1회)"),
