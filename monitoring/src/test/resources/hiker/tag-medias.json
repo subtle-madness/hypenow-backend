@@ -1,0 +1,100 @@
+{
+  "response": {
+    "items": [
+      {
+        "pk": 3690000000000000001,
+        "code": "TagReelA",
+        "taken_at": 1785542400,
+        "media_type": 2,
+        "product_type": "clips",
+        "like_count": 4120,
+        "comment_count": 3,
+        "play_count": 52000,
+        "ig_play_count": 52000,
+        "save_count": 120,
+        "reshare_count": 80,
+        "media_repost_count": 5,
+        "caption": { "text": "#브랜드 신제품 리뷰 태그" },
+        "image_versions2": { "candidates": [ { "url": "https://instagram.example-cdn.com/v/reel_a_thumb.jpg" } ] },
+        "user": {
+          "pk": 9876543210,
+          "username": "beauty_creator",
+          "full_name": "뷰티 크리에이터",
+          "profile_pic_url": "https://instagram.example-cdn.com/v/author_profile.jpg",
+          "is_private": false,
+          "is_verified": false,
+          "account_type": 2
+        }
+      },
+      {
+        "pk": 3690000000000000002,
+        "code": "TagFeedB",
+        "taken_at": 1785456000,
+        "media_type": 1,
+        "product_type": "feed",
+        "like_count": 310,
+        "comment_count": 12,
+        "media_repost_count": 2,
+        "caption": { "text": "브랜드 피드 태그" },
+        "image_versions2": { "candidates": [ { "url": "https://instagram.example-cdn.com/v/feed_b_thumb.jpg" } ] },
+        "user": {
+          "pk": 8765432109,
+          "username": "daily_user",
+          "full_name": "데일리 유저",
+          "profile_pic_url": "https://instagram.example-cdn.com/v/author2_profile.jpg",
+          "is_private": false,
+          "is_verified": false,
+          "account_type": 1
+        }
+      },
+      {
+        "pk": 3690000000000000003,
+        "code": "TagCarouC",
+        "taken_at": 1785369600,
+        "media_type": 8,
+        "product_type": "carousel_container",
+        "like_count": 987,
+        "comment_count": 0,
+        "reshare_count": 41,
+        "media_repost_count": 1,
+        "caption": { "text": "캐러셀 태그 — 태그 열거는 캐러셀에도 공유수가 꽤 실린다(findings §11-2)" },
+        "image_versions2": { "candidates": [ { "url": "https://instagram.example-cdn.com/v/carou_c_thumb.jpg" } ] },
+        "user": {
+          "pk": 7654321098,
+          "username": "carousel_maker",
+          "full_name": "캐러셀 메이커",
+          "profile_pic_url": "https://instagram.example-cdn.com/v/author3_profile.jpg",
+          "is_private": false,
+          "is_verified": true,
+          "account_type": 2
+        }
+      },
+      {
+        "pk": 3690000000000000004,
+        "code": "TagOldD",
+        "taken_at": 1767409200,
+        "media_type": 2,
+        "product_type": "clips",
+        "like_count": 15000,
+        "comment_count": 210,
+        "play_count": 900000,
+        "ig_play_count": 900000,
+        "caption": { "text": "소급 태그 — 1월 게시물이 최신 페이지에 끼어든다(taken_at 비단조, findings §11-3)" },
+        "image_versions2": { "candidates": [ { "url": "https://instagram.example-cdn.com/v/old_d_thumb.jpg" } ] },
+        "user": {
+          "pk": 6543210987,
+          "username": "retro_tagger",
+          "full_name": "레트로 태거",
+          "profile_pic_url": "https://instagram.example-cdn.com/v/author4_profile.jpg",
+          "is_private": false,
+          "is_verified": false,
+          "account_type": 1
+        }
+      }
+    ],
+    "num_results": 4,
+    "more_available": true
+  },
+  "next_page_id": "cursor-p2",
+  "status": "ok"
+}
