@@ -14,9 +14,11 @@ import com.celfit.crawler.dashboard.application.JobCostEstimator.JobCost;
 import com.celfit.crawler.settings.application.service.DiscoverSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSourceSetting;
 import com.celfit.crawler.settings.application.service.ProfileSupplementSetting;
+import com.celfit.crawler.settings.application.service.ReelsSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import com.celfit.crawler.settings.domain.DiscoverSource;
 import com.celfit.crawler.settings.domain.ProfileSource;
+import com.celfit.crawler.settings.domain.ReelsSource;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -35,14 +37,15 @@ class JobCostEstimatorTest {
     private final DiscoverSourceSetting discoverSource = mock(DiscoverSourceSetting.class);
     private final ProfileSourceSetting profileSource = mock(ProfileSourceSetting.class);
     private final ProfileSupplementSetting profileSupplement = mock(ProfileSupplementSetting.class);
+    private final ReelsSourceSetting reelsSource = mock(ReelsSourceSetting.class);
     private final SettingsService settings = mock(SettingsService.class);
     private final HikerProperties hikerProperties = new HikerProperties("key", "http://x", null, 0.001);
     private final com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties dataLikersProperties =
             new com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties("key", "http://x", null, 0.0006);
 
     private final JobCostEstimator estimator = new JobCostEstimator(
-            searchKeywords, influencers, discoverSource, profileSource, profileSupplement, settings,
-            hikerProperties, dataLikersProperties, CLOCK);
+            searchKeywords, influencers, discoverSource, profileSource, profileSupplement, reelsSource,
+            settings, hikerProperties, dataLikersProperties, CLOCK);
 
     private static List<SearchKeyword> keywords(int n) {
         return java.util.stream.IntStream.range(0, n)
@@ -252,6 +255,7 @@ class JobCostEstimatorTest {
         when(influencers.countReelsDue(any())).thenReturn(25L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
+        when(reelsSource.current()).thenReturn(ReelsSource.HIKER);
 
         JobCost reels = byJob(estimator.estimates()).get("reels");
 
@@ -261,6 +265,33 @@ class JobCostEstimatorTest {
         assertThat(reels.maxRequests()).isEqualTo(10);
         assertThat(reels.minCostUsd()).isEqualTo(0.010);
         assertThat(reels.endpoints()).anySatisfy(e -> assertThat(e).contains("clips"));
+    }
+
+    @Test
+    void reels는_ACTOR_소스면_Hiker_비용_0에_액터_과금_별도를_표기한다() {
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.resultsLimit()).thenReturn(0);
+        when(settings.qualifyBatchLimit()).thenReturn(0);
+        when(settings.collectBatchLimit()).thenReturn(0);
+        when(settings.reelsBatchLimit()).thenReturn(10);
+        when(settings.reelsActorResultsLimit()).thenReturn(6);
+        when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
+        when(influencers.countBackfillPending()).thenReturn(0L);
+        when(influencers.countTrackDue(any())).thenReturn(0L);
+        when(influencers.countReelsDue(any())).thenReturn(25L);
+        when(profileSource.current()).thenReturn(ProfileSource.SELF);
+        when(profileSupplement.relatedEnabled()).thenReturn(false);
+        when(reelsSource.current()).thenReturn(ReelsSource.ACTOR);
+
+        JobCost reels = byJob(estimator.estimates()).get("reels");
+
+        // 대상 수는 그대로 배치 한도(10)지만 Hiker 요청·비용은 0 — 과금은 Apify 액터 쪽
+        assertThat(reels.targets()).isEqualTo(10);
+        assertThat(reels.minRequests()).isZero();
+        assertThat(reels.minCostUsd()).isZero();
+        assertThat(reels.note()).contains("Apify 액터 과금 별도");
+        assertThat(reels.endpoints()).anySatisfy(e -> assertThat(e).contains("reel-scraper"));
     }
 
     @Test
