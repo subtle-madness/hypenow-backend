@@ -1,8 +1,8 @@
 -- 최근 N개 윈도우 + 서빙 모수(뷰티 인플루언서 ∩ ENUMERATION) 기대값.
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM analytics.v_recent_content WHERE owner_username LIKE 'dummy_%') = 5,
-    'v_recent_content dummy rows != 5 (a:r1·r2·f1·rn + b:r3)';
+  ASSERT (SELECT count(*) FROM analytics.v_recent_content WHERE owner_username LIKE 'dummy_%') = 6,
+    'v_recent_content dummy rows != 6 (a:r1·r2·f1·rn + b:r3 + ra1(액터))';
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_recent_content
                      WHERE short_code IN ('dummy_d1','dummy_r4','dummy_r5')),
     'v_recent_content에 제외 대상 존재 (DISCOVERY·회사·비뷰티)';

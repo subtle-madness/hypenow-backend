@@ -8,6 +8,7 @@
 --   r2(업로드 06-02, D+3=06-05): usable 스냅 06-06(타임라인)만 → 06-05엔 없음 → timely=false, 창 안이라 후보 포함
 --   f1(업로드 06-03, D+3=06-06): usable 스냅 06-06(타임라인) → D+3 딱 맞음 → timely=true로 포함
 --   rn(업로드 어제): D+3이 미래 → 미성숙 제외(OR 양쪽 경로 공통 가드라 윈도우 안이어도 제외) / r3: 캡션 결측 제외
+--   ra1(액터 수집분, 업로드 06-05, D+3=06-08): usable 스냅 없음(좋아요 비공개) + 06-06 스냅뿐 → timely=false, 창 안이라 백필 후보 포함
 
 -- 경계 픽스처: "완전히 지난 날만" 검증 (now 기준)
 --   dummy_cl(업로드 오늘-4, D+3=오늘-1, 그 날 usable 스냅): 창이 어제 닫힘 → timely=true로 포함
@@ -46,9 +47,10 @@ BEGIN
     'dummy_cl(창 어제 닫힘·제때)이 후보에서 빠짐';
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_op'),
     'dummy_op(창이 오늘 — 아직 안 닫힘, 미성숙)이 후보에 있음';
-  -- 기본 후보 = f1·dummy_cl(timely) + r1·r2(백필, 윈도우 안) 4건 — 07-20 개정으로 2→4건.
-  ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%') = 4,
-    'date-guard 기본(slack=1) 후보 != 4 (f1·cl·r1·r2)';
+  -- 기본 후보 = f1·dummy_cl(timely) + r1·r2·ra1(백필, 윈도우 안) 5건 — 07-20 개정으로 2→4건,
+  -- 08-06 액터 분기 도입으로 +ra1(액터) → 5건.
+  ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%') = 5,
+    'date-guard 기본(slack=1) 후보 != 5 (f1·cl·r1·r2·ra1)';
 END $$;
 
 -- 비-usable 가드: D+3 당일에 스냅이 있어도 지표 미완비면 timely=false. 07-20 개정으로 그 자체가

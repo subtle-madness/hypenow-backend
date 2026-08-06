@@ -36,14 +36,30 @@ BEGIN
     'v_base_profile dummy_b external_link not null (키 없음)';
 
   -- v_base_reel_item: clips 아이템 평탄화
-  ASSERT (SELECT count(*) FROM analytics.v_base_reel_item WHERE short_code LIKE 'dummy_%') = 7,
-    'v_base_reel_item dummy rows != 7 (r1x3 + rn + r3 + r4 + r5)';
+  ASSERT (SELECT count(*) FROM analytics.v_base_reel_item WHERE short_code LIKE 'dummy_%') = 8,
+    'v_base_reel_item dummy rows != 8 (r1x3 + rn + r3 + r4 + r5 + ra1)';
   ASSERT (SELECT views FROM analytics.v_base_reel_item WHERE short_code = 'dummy_rn') = 100,
     'v_base_reel_item rn views != 100 (ig_play_count 폴백)';
   ASSERT (SELECT paid_partnership FROM analytics.v_base_reel_item WHERE short_code = 'dummy_r3') = true,
     'v_base_reel_item r3 paid_partnership != true';
   ASSERT (SELECT caption FROM analytics.v_base_reel_item WHERE short_code = 'dummy_r3') IS NULL,
     'v_base_reel_item r3 caption not null (캡션 결측)';
+
+  -- v_base_reel_item: APIFY_ACTOR 분기 (임시 액터 전환 기간 수집분)
+  ASSERT (SELECT likes FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') IS NULL,
+    'v_base_reel_item ra1 likes not null (likesCount -1 → NULL)';
+  ASSERT (SELECT views FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') = 7000,
+    'v_base_reel_item ra1 views != 7000 (videoPlayCount)';
+  ASSERT (SELECT caption FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') = '액터 캡션 ra1',
+    'v_base_reel_item ra1 caption mismatch (평문)';
+  ASSERT (SELECT comments_count FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') = 30,
+    'v_base_reel_item ra1 comments != 30';
+  ASSERT (SELECT thumbnail_url FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') = 'https://thumb/ra1.jpg',
+    'v_base_reel_item ra1 thumbnail mismatch (displayUrl)';
+  ASSERT (SELECT paid_partnership FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') = true,
+    'v_base_reel_item ra1 paid_partnership != true (paidPartnership)';
+  ASSERT (SELECT video_duration FROM analytics.v_base_reel_item WHERE short_code = 'dummy_ra1') = 22.5,
+    'v_base_reel_item ra1 video_duration != 22.5';
 
   -- v_base_timeline_item: 타임라인 노드 평탄화
   ASSERT (SELECT count(*) FROM analytics.v_base_timeline_item WHERE short_code LIKE 'dummy_%') = 4,
@@ -62,6 +78,9 @@ BEGIN
   -- v_base_content_snapshot: UNION + content_type 게이트 + 합성 id 유일성
   ASSERT (SELECT count(*) FROM analytics.v_base_content_snapshot WHERE content_id BETWEEN 99990101 AND 99990108) = 11,
     'v_base_content_snapshot dummy rows != 11 (r1:4, r2·f1·d1·rn·r3·r4·r5:1)';
+  -- 액터 수집분(ra1, content 99990120)도 동일 합성 id 규칙으로 스냅샷에 합류한다.
+  ASSERT (SELECT views FROM analytics.v_base_content_snapshot WHERE content_id = 99990120) = 7000,
+    'v_base_content_snapshot ra1(액터) views != 7000';
   ASSERT (SELECT views FROM analytics.v_base_content_snapshot WHERE content_id = 99990103) IS NULL,
     'v_base_content_snapshot f1 views not null (FEED → 무조건 NULL)';
   ASSERT (SELECT count(*) = count(DISTINCT id) FROM analytics.v_base_content_snapshot),
