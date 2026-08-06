@@ -125,6 +125,41 @@ class HikerClientTest {
 		assertThat(page.nextPageId()).isNull();
 	}
 
+	/** 매 페이지 유효 댓글 1건(pk를 콜 순번으로 바꿔 무진전 가드를 피한다) — CollectServiceTest 관용구. */
+	private static String alwaysMoreCommentPage(int callIndex) {
+		return """
+				{"response":{"comments":[
+				{"pk":"c%d","text":"댓글%d","comment_like_count":1,
+				 "created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}
+				],"has_more_comments":true},"next_page_id":"cursor-%d"}""".formatted(callIndex, callIndex, callIndex);
+	}
+
+	/** 댓글 기지 중단(태그 모니터링 스펙 §3) — 페이지 전체가 기지 댓글이면 다음 페이지를 부르지 않는다. */
+	@Test
+	void 댓글_수집은_페이지_전체가_기지면_중단한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return alwaysMoreCommentPage(calls.size());
+		});
+		// 1페이지의 댓글 id(c1)가 이미 기지 — 3페이지 허용이어도 1콜에서 멈춰야 한다.
+		var comments = client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of("c1"));
+		assertThat(calls).hasSize(1);
+		assertThat(comments).hasSize(1);   // 기지여도 이번 응답분은 반환(upsert가 body·like_count 갱신)
+	}
+
+	/** 기지 집합이 비면 기존 동작 그대로 페이지 수만큼 간다(캠페인 경로 불변 검증 겸함). */
+	@Test
+	void 댓글_수집은_기지_집합이_비면_페이지_수만큼_간다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return alwaysMoreCommentPage(calls.size());
+		});
+		client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of());
+		assertThat(calls).hasSize(3);
+	}
+
 	@Test
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
 		HikerClient client = new HikerClient(fakeHttp());

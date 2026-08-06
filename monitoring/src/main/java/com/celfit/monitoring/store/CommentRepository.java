@@ -2,7 +2,9 @@ package com.celfit.monitoring.store;
 
 import com.celfit.monitoring.hiker.CommentInfo;
 import java.sql.Timestamp;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +25,12 @@ public class CommentRepository {
 
 	public CommentRepository(JdbcTemplate db) {
 		this.db = db;
+	}
+
+	/** 게시물의 기존 댓글 id 집합 — 브랜드 태그 모니터링 댓글 수집의 기지 중단 판정용(태그 스펙 §3). */
+	public Set<String> findIds(String shortCode) {
+		return new HashSet<>(db.queryForList(
+				"SELECT id FROM post_comment WHERE short_code = ?", String.class, shortCode));
 	}
 
 	/**

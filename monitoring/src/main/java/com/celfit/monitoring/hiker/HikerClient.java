@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
@@ -233,6 +234,17 @@ public class HikerClient {
 	 * 저장 대상이 아니라 리스트에서 제외한다(계약 §3 post_comment).
 	 */
 	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages) {
+		return fetchComments(shortCode, postUsername, pages, Set.of());
+	}
+
+	/**
+	 * knownCommentIds가 주어지면(브랜드 태그 모니터링 경로) 페이지 처리 후 그 페이지의 유효 댓글이
+	 * 1건 이상 전부 기지일 때 다음 페이지를 부르지 않는다 — "최신부터 읽다 기지 댓글에서 중단"
+	 * (태그 스펙 §3). 정렬이 IG 랭킹 혼합이라 건 단위 중단은 신규를 놓칠 수 있어 페이지 단위로 본다.
+	 * 기지 댓글도 반환 목록에는 담는다(upsert가 body·like_count를 갱신).
+	 */
+	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages,
+			Set<String> knownCommentIds) {
 		int wanted = Math.max(1, pages);
 		long mediaId = ShortCodes.toMediaId(shortCode);
 		List<CommentInfo> out = new ArrayList<>();
@@ -250,6 +262,11 @@ public class HikerClient {
 			if (page > 0 && out.size() == before) {
 				log.warn("댓글 커서 미전진 의심 — media {} {}페이지에서 새 댓글 0건, 수집 중단", mediaId, page + 1);
 				break;
+			}
+			List<CommentInfo> pageComments = out.subList(before, out.size());
+			if (!knownCommentIds.isEmpty() && !pageComments.isEmpty()
+					&& pageComments.stream().allMatch(c -> knownCommentIds.contains(c.id()))) {
+				break;   // 페이지 전체 기지 — 더 내려가도 신규가 없다고 본다(기지 중단, 태그 스펙 §3)
 			}
 			// response.has_more_comments는 신뢰하지 않는다 — 운영 실측(media 3929190553799320931,
 			// 댓글 2,325건): 1페이지가 has_more_comments=false를 주면서도 next_page_id를 들고 있었고,
