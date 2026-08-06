@@ -27,10 +27,15 @@ public class BrandPostMetaRepository {
 	 * caption은 항상 EXCLUDED로 덮는다(수정 반영). first_seen_at은 갱신 안 함(최초 관측 보존).
 	 * 무효 스킴 URL은 저장 전 null로 강등(PostMetaRepository·트랙 KK 동형).
 	 *
-	 * <p>영상·협찬 3필드(was 계약 §3-2)는 관측값을 그대로 덮는다(썸네일 같은 보존 없음) —
-	 * 이 값들에서 null은 "이번에 못 얻음"이 아니라 <b>판정 unknown</b>이 계약이고(PostInfo 주석),
-	 * 옛 값을 남기면 협찬 해제 같은 변화를 영영 못 따라간다. 스윕이 매일 같은 경로(태그 열거)로
-	 * 전량 재관측하므로 플랩이 생기면 다음 날 다시 채워진다.
+	 * <p>영상·협찬 3필드(was 계약 §3-2)는 <b>컬럼마다 규칙이 다르다</b>:
+	 * <ul>
+	 * <li>video_url — COALESCE 보존. 썸네일과 같은 CDN 서명 URL(같은 media 노드·만료 갱신 대상)이라
+	 *     null이 "영상 없음"이 아니라 "이 콜이 꽝"일 수 있다(세션 복권 실측 08-04: 같은 엔드포인트가
+	 *     키를 실었다 뺐다 한다). 지우면 다음 스윕까지 하루 종일 영상이 안 나온다.</li>
+	 * <li>video_duration — COALESCE 보존. video_url과 한 몸(같은 노드에서 함께 실리고 함께 빠진다).</li>
+	 * <li>is_paid_partnership — EXCLUDED로 덮는다. 여기서 null은 취득 실패가 아니라 <b>판정
+	 *     unknown</b>이 계약이고(PostInfo 주석), 보존하면 협찬 해제를 영영 못 따라간다.</li>
+	 * </ul>
 	 */
 	public void upsert(String shortCode, String username, String contentType, LocalDate uploadedAt,
 			String caption, String thumbnailUrl, String videoUrl, Double videoDuration,
@@ -46,8 +51,8 @@ public class BrandPostMetaRepository {
 				  uploaded_at = EXCLUDED.uploaded_at,
 				  caption = EXCLUDED.caption,
 				  thumbnail_url = COALESCE(EXCLUDED.thumbnail_url, brand_post_meta.thumbnail_url),
-				  video_url = EXCLUDED.video_url,
-				  video_duration = EXCLUDED.video_duration,
+				  video_url = COALESCE(EXCLUDED.video_url, brand_post_meta.video_url),
+				  video_duration = COALESCE(EXCLUDED.video_duration, brand_post_meta.video_duration),
 				  is_paid_partnership = EXCLUDED.is_paid_partnership""",
 				shortCode, username, contentType, uploadedAt, caption, normalizedThumbnailUrl,
 				videoUrl, videoDuration, isPaidPartnership);

@@ -247,15 +247,37 @@ class BrandStoreTest {
 		assertThat(db.queryForObject(
 				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='CodeB'", Boolean.class))
 				.isTrue();
-		// 갱신 관측 — 협찬 판정은 키 부재(null=unknown)를 그대로 반영한다(PostInfo 주석 §3-2).
+		// 재관측은 영상 URL·길이를 새 값으로 갱신하고(서명 만료 방어), 협찬 판정은 키 부재
+		// (null=unknown)를 그대로 반영한다(PostInfo 주석 §3-2 — 보존하면 협찬 해제를 못 따라간다).
 		postMeta.upsert("CodeB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
 				"https://video2.mp4", 30.0, null);
 		assertThat(db.queryForObject(
 				"SELECT video_url FROM brand_post_meta WHERE short_code='CodeB'", String.class))
 				.isEqualTo("https://video2.mp4");
 		assertThat(db.queryForObject(
+				"SELECT video_duration FROM brand_post_meta WHERE short_code='CodeB'", Double.class))
+				.isEqualTo(30.0);
+		assertThat(db.queryForObject(
 				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='CodeB'", Boolean.class))
 				.isNull();
+	}
+
+	/**
+	 * 리뷰 I1 — 영상 URL·길이는 썸네일과 같은 CDN 서명 표시값이라 꽝 세션(키 부재)이 기존 값을
+	 * 지우면 안 된다(세션 복권 실측 08-04: 같은 엔드포인트가 키를 실었다 뺐다 한다).
+	 */
+	@Test
+	void 영상_필드_null_관측은_기존_값을_보존한다() {
+		postMeta.upsert("CodeC", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
+				"https://video.mp4", 12.5, true);
+		postMeta.upsert("CodeC", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", null,
+				null, null, true);
+		assertThat(db.queryForObject(
+				"SELECT video_url FROM brand_post_meta WHERE short_code='CodeC'", String.class))
+				.isEqualTo("https://video.mp4");
+		assertThat(db.queryForObject(
+				"SELECT video_duration FROM brand_post_meta WHERE short_code='CodeC'", Double.class))
+				.isEqualTo(12.5);
 	}
 
 	@Test
