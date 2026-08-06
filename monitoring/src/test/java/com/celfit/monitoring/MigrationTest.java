@@ -130,6 +130,35 @@ class MigrationTest {
 		assertThat(wasReader.queryForObject("SELECT count(*) FROM sweep_run", Long.class)).isZero();
 	}
 
+	/** 브랜드 태그 모니터링(2026-08-06 스펙) — 신규 3테이블이 생성되는지. */
+	@Test
+	void 브랜드_태그_모니터링_테이블_3종이_생성된다() {
+		var ds = TestDb.dataSource(TestDb.container());
+		var db = new JdbcTemplate(ds);
+		TestDb.resetAndMigrate(db, ds);
+
+		Long tables = db.queryForObject("""
+				SELECT count(*) FROM information_schema.tables
+				WHERE (table_schema, table_name) IN
+				  (('public','brand_account'), ('public','brand_tagged_post'), ('public','author_profile'))""",
+				Long.class);
+		assertThat(tables).isEqualTo(3);
+	}
+
+	/** 신규 표면도 was_reader가 SELECT할 수 있어야 한다 — V2 ALTER DEFAULT PRIVILEGES 자동 적용 확인. */
+	@Test
+	void was_reader는_브랜드_표면을_SELECT할_수_있다() {
+		var pg = TestDb.container();
+		var ds = TestDb.dataSource(pg);
+		var db = new JdbcTemplate(ds);
+		TestDb.resetAndMigrate(db, ds);
+		var wasReader = new JdbcTemplate(TestDb.wasReaderDataSource(pg));
+
+		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_account", Long.class)).isZero();
+		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_tagged_post", Long.class)).isZero();
+		assertThat(wasReader.queryForObject("SELECT count(*) FROM author_profile", Long.class)).isZero();
+	}
+
 	/**
 	 * 어휘 표류 안전망 — alarm_event.event_type CHECK가 {@link AlarmEventType} 전체와 정확히 같은지
 	 * 컴파일 타임 대신 여기서 잡는다. enum에 값을 추가·삭제하고 마이그레이션을 깜빡하면(혹은 그 반대)
