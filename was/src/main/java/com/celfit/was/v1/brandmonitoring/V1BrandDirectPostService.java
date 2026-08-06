@@ -2,19 +2,24 @@ package com.celfit.was.v1.brandmonitoring;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
+import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
+import com.celfit.was.monitoring.MonitoringReadRepository;
 import com.celfit.was.monitoring.RegistrationEntryRow;
 import com.celfit.was.monitoring.RegistrationRepository;
 import com.celfit.was.monitoring.RegistrationResult;
 import com.celfit.was.monitoring.RegistrationRow;
+import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
+import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.MonitoringInput;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,8 +27,11 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,20 +67,32 @@ public class V1BrandDirectPostService {
 
 	private static final String BRAND_DUPLICATE_REASON = "이미 브랜드 목록에 있는 게시물입니다.";
 
+	/**
+	 * 종결 3종 — 이 상태의 행에는 매핑을 걸지 않는다. 레거시
+	 * {@code V1MonitoringRegistrationService.TERMINAL_STATUSES}(private)와 같은 기준이며, 같은
+	 * {@link ItemStatus#derive} 판정을 재사용한다: 레거시 duplicate 판정 모수에서 빠지는 상태이므로
+	 * 여기서도 "지금 추적 중인 행"이 아니다(종결된 최신 행에 매핑이 걸리면 브랜드 화면이 죽은 행을 본다).
+	 */
+	private static final Set<String> TERMINAL_STATUSES =
+			Set.of(ItemStatus.NOT_UPLOADED, ItemStatus.ENDED, ItemStatus.HIDDEN);
+
 	private final BrandLinkRepository linkRepository;
 	private final BrandReadRepository brandReadRepository;
 	private final BrandDirectPostRepository directPostRepository;
 	private final MonitoringItemRepository itemRepository;
+	private final MonitoringReadRepository monitoringReadRepository;
 	private final V1MonitoringRegistrationService legacyRegistration;
 	private final RegistrationRepository registrationRepository;
 
 	public V1BrandDirectPostService(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
 			BrandDirectPostRepository directPostRepository, MonitoringItemRepository itemRepository,
+			MonitoringReadRepository monitoringReadRepository,
 			V1MonitoringRegistrationService legacyRegistration, RegistrationRepository registrationRepository) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.directPostRepository = directPostRepository;
 		this.itemRepository = itemRepository;
+		this.monitoringReadRepository = monitoringReadRepository;
 		this.legacyRegistration = legacyRegistration;
 		this.registrationRepository = registrationRepository;
 	}
@@ -124,21 +144,71 @@ public class V1BrandDirectPostService {
 	}
 
 	/**
-	 * 등록 상태 조회(§6-4) — 레거시 entry 테이블이 유일한 상태 저장소다. 남의 등록·없는 등록은
-	 * 존재 여부를 흘리지 않고 똑같이 404다(레거시 {@code findById}에 유저 스코프가 없어 여기서 건다).
+	 * 등록 상태 조회(§6-4) — 레거시 entry 테이블이 상태의 산지지만, <b>브랜드 소속의 정본은
+	 * {@code app.brand_direct_posts} 매핑</b>이다. 레거시 entry를 그대로 옮기면 접수 때 확정한 판정이
+	 * 폴링 한 번에 뒤집히므로(아래 두 보정), 매핑을 함께 보고 조립한다. 남의 등록·없는 등록은 존재 여부를
+	 * 흘리지 않고 똑같이 404다(레거시 {@code findById}에 유저 스코프가 없어 여기서 건다).
+	 *
+	 * <ul>
+	 *   <li><b>success 승격 유지</b>: 접수는 "이미 레거시 추적 중"(레거시 duplicate)을 매핑 생성 후
+	 *       success로 올린다. 레거시 entry는 영원히 duplicate·item_id null이라, 매핑이 있으면 여기서도
+	 *       같은 승격을 다시 적용한다 — 그러지 않으면 FE 폴링이 화면을 duplicate로 되돌린다.</li>
+	 *   <li><b>share 해소분 지연 매핑</b>: share 단축 링크는 접수 시점에 shortcode를 모르고, 해소·아이템
+	 *       생성은 레거시 실행기가 나중에 한다({@code processShareEntry} — entry에 resolved_url·item_id를
+	 *       채우고 success로 정산). 레거시엔 브랜드 훅이 없으므로(무수정 제약) 매핑이 영영 안 생겨
+	 *       "성공했는데 브랜드 화면엔 없는" 유실이 된다. 그래서 resolved_url이 채워졌고 아이템이 확정된
+	 *       entry는 이 조회에서 매핑을 만들어 준다. 브랜드는 활성 연결(유저당 1개, DB 강제)로 정하고,
+	 *       활성 연결이 없으면(해제됨) 매핑을 건너뛴다 — entry 결과는 그대로 둔다.</li>
+	 * </ul>
+	 *
+	 * <p>지연 매핑을 <b>share 해소분으로만</b> 한정한 이유: 일반 entry는 접수가 같은 트랜잭션에서 이미
+	 * 매핑했으므로 여기서 다시 만들 게 없고, 범위를 넓히면 이 엔드포인트에 레거시(비브랜드) 등록 id를
+	 * 넣는 것만으로 남의 화면이 아니라 <b>자기 캠페인 게시물이 브랜드 화면으로 끌려 들어온다</b>.
 	 *
 	 * <p>접수 때 위임에서 제외된 항목(이미 브랜드 목록에 있던 게시물)은 레거시 등록 행에 없으므로
 	 * 여기 entries에도 나타나지 않는다 — 접수 응답이 그 판정의 유일한 전달 지점이다.
 	 */
+	@Transactional
 	public BrandDirectRegistrationResponse get(long userId, String registrationId) {
 		RegistrationRow row = registrationRepository.findById(parseRegistrationId(registrationId))
 				.orElseThrow(V1BrandDirectPostService::registrationNotFound);
 		if (row.userId() != userId) {
 			throw registrationNotFound();
 		}
-		List<BrandDirectRegistrationResponse.Entry> entries = row.entries().stream()
-				.map(V1BrandDirectPostService::toEntry)
-				.toList();
+
+		Map<String, Long> mappedItemIds = new LinkedHashMap<>();
+		for (BrandDirectPostRepository.Row mapping : directPostRepository.findByUser(userId)) {
+			mappedItemIds.put(mapping.shortCode(), mapping.monitoringItemId());
+		}
+
+		List<BrandDirectRegistrationResponse.Entry> entries = new ArrayList<>(row.entries().size());
+		// 활성 연결 조회는 지연 매핑이 실제로 필요할 때 한 번만 한다(조회는 캐시하고 부재도 캐시한다).
+		Long brandId = null;
+		boolean brandResolved = false;
+		for (RegistrationEntryRow entry : row.entries()) {
+			// share 해소 결과(resolved_url)가 원문(input)보다 우선이다 — 단축 링크는 input을 파싱해도 null이다.
+			String resolvedShortCode = shortCodeOf(entry.resolvedUrl());
+			String shortCode = resolvedShortCode != null ? resolvedShortCode : shortCodeOf(entry.input());
+			Long mappedItemId = shortCode == null ? null : mappedItemIds.get(shortCode);
+
+			if (resolvedShortCode != null && entry.itemId() != null && mappedItemId == null) {
+				if (!brandResolved) {
+					brandId = linkRepository.findActiveByUser(userId).map(BrandLinkRow::brandId).orElse(null);
+					brandResolved = true;
+				}
+				if (brandId != null) {
+					directPostRepository.upsert(userId, brandId, shortCode, entry.itemId());
+					mappedItemId = entry.itemId();
+				}
+			}
+
+			if (RegistrationResult.DUPLICATE.equals(entry.result()) && mappedItemId != null) {
+				entries.add(entry(entry.input(), RegistrationResult.SUCCESS, null, null, shortCode, mappedItemId));
+				continue;
+			}
+			Long itemId = entry.itemId() != null ? entry.itemId() : mappedItemId;
+			entries.add(toEntry(entry.result(), entry.reasonCode(), entry.reason(), entry.input(), shortCode, itemId));
+		}
 		return new BrandDirectRegistrationResponse(String.valueOf(row.id()),
 				KstTimestamps.toKstIso(row.requestedAt()), entries);
 	}
@@ -156,7 +226,8 @@ public class V1BrandDirectPostService {
 			return Plan.settled(entry(url, RegistrationResult.FAILED, invalid.reasonCode(), invalid.reason(),
 					null, null));
 		}
-		// share 단축 링크는 해소 전이라 shortcode를 모른다 — 브랜드 중복 판정을 건너뛰고 레거시에 맡긴다.
+		// share 단축 링크는 해소 전이라 shortcode를 모른다 — 브랜드 중복 판정을 건너뛰고 레거시에 맡긴다
+		// (해소 후 매핑은 상태 조회의 지연 매핑이 담당한다 — get() 문서 참조).
 		String shortCode = parsed instanceof MonitoringInput.Post post ? post.shortCode() : null;
 		if (shortCode != null && alreadyInBrand.contains(shortCode)) {
 			return Plan.settled(entry(url, RegistrationResult.DUPLICATE, RegistrationResult.REASON_DUPLICATE,
@@ -211,21 +282,46 @@ public class V1BrandDirectPostService {
 	}
 
 	/**
-	 * shortcode로 진행 중인 레거시 추적 행 id — 여러 개면 가장 최근 행(id 최대)을 쓴다. 같은 입력의
-	 * 활성 행이 둘 이상 남을 수 있고(종결 상태 뒤 재등록), 매핑은 지금 추적 중인 쪽을 가리켜야 한다.
+	 * shortcode로 <b>진행 중인</b> 레거시 추적 행 id — 여러 개면 가장 최근 행(id 최대)을 쓴다. 같은
+	 * 입력의 활성 행(canceled_at IS NULL)이 둘 이상 남을 수 있어서(종결 상태 뒤 재등록이 허용된다)
+	 * id만 보고 고르면 <b>종결된 최신 행</b>에 매핑이 걸린다. 그래서 레거시 duplicate 판정과 같은
+	 * 기준({@link ItemStatus#derive} + {@link #TERMINAL_STATUSES})으로 종결분을 먼저 걷어낸다.
 	 */
 	private Optional<Long> activeItemId(long userId, String shortCode) {
-		return itemRepository.findActiveByInput(userId, MODE_URL, shortCode).stream()
+		List<MonitoringItemRow> candidates = itemRepository.findActiveByInput(userId, MODE_URL, shortCode);
+		if (candidates.isEmpty()) {
+			return Optional.empty();
+		}
+		Map<Long, TargetRow> targets = targetsOf(candidates);
+		LocalDate today = LocalDate.now(KstTimestamps.KST);
+		return candidates.stream()
+				.filter(candidate -> !TERMINAL_STATUSES.contains(ItemStatus.derive(candidate,
+						candidate.targetId() == null ? null : targets.get(candidate.targetId()), today)))
 				.max(Comparator.comparingLong(MonitoringItemRow::id))
 				.map(MonitoringItemRow::id);
 	}
 
+	/** 후보들의 target 배치 조회(N+1 방지) — target 미확정 행만 있으면 조회 자체를 돌지 않는다. */
+	private Map<Long, TargetRow> targetsOf(List<MonitoringItemRow> candidates) {
+		Set<Long> targetIds = candidates.stream()
+				.map(MonitoringItemRow::targetId)
+				.filter(Objects::nonNull)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		if (targetIds.isEmpty()) {
+			return Map.of();
+		}
+		return monitoringReadRepository.findTargets(targetIds).stream()
+				.collect(Collectors.toMap(TargetRow::id, Function.identity(), (a, b) -> a));
+	}
+
 	// ---------- 매핑 ----------
 
-	private static BrandDirectRegistrationResponse.Entry toEntry(RegistrationEntryRow row) {
-		MonitoringInput parsed = MonitoringInput.parsePost(row.input());
-		String shortCode = parsed instanceof MonitoringInput.Post post ? post.shortCode() : null;
-		return toEntry(row.result(), row.reasonCode(), row.reason(), row.input(), shortCode, row.itemId());
+	/** 게시물 링크에서 shortcode — share 단축 링크·형식 오류·계정 입력은 null. */
+	private static String shortCodeOf(String url) {
+		if (url == null) {
+			return null;
+		}
+		return MonitoringInput.parsePost(url) instanceof MonitoringInput.Post post ? post.shortCode() : null;
 	}
 
 	/** 레거시 5종 result → 계약 4종. canceled는 FE 유니언에 없어 failed로 접고 사유로 구분한다. */
