@@ -431,7 +431,8 @@ public class HikerClient {
 		// 영상 URL·길이는 릴스·비디오에만 실린다(피드·캐러셀은 키 부재 → null).
 		String videoUrl = m.path("video_versions").path(0).path("url").asString(null);
 		Double videoDuration = m.path("video_duration").isNumber() ? m.path("video_duration").asDouble() : null;
-		// 유료협찬은 키 부재(null=판정 unknown)와 관측된 false를 구분한다 — 태그 열거엔 키가 없다.
+		// 유료협찬은 키 부재(null=판정 unknown)와 관측된 false를 구분한다
+		// — 태그 열거 응답에는 키가 없다(합성 픽스처 기준, 라이브 미실측).
 		Boolean isPaidPartnership = nullableBoolean(m, "is_paid_partnership");
 		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType, caption,
 				thumbnailUrl(m), firstLong(m, "taken_at"),

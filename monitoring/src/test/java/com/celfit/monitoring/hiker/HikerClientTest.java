@@ -90,7 +90,7 @@ class HikerClientTest {
 		assertThat(a.followers()).isPositive();
 		assertThat(a.biography()).isNotBlank();
 		assertThat(a.isPrivate()).isFalse();
-		// 브랜드 was 계약 §3-2 — 게시자 인증뱃지(author-profile-by-id.json 실측: false)
+		// 브랜드 was 계약 §3-2 — 게시자 인증뱃지(author-profile-by-id.json 합성 픽스처: false)
 		assertThat(a.isVerified()).isFalse();
 	}
 
@@ -241,7 +241,7 @@ class HikerClientTest {
 	void 유료협찬_키_부재는_null이고_false와_구분된다() {
 		HikerClient client = new HikerClient(path -> fixture("tag-medias.json"));
 		var page = client.fetchTaggedPage("17841400000000000", null);
-		// tag-medias.json 실측: is_paid_partnership 키 자체가 없다
+		// tag-medias.json(합성 픽스처)에는 is_paid_partnership 키 자체가 없다
 		assertThat(page.posts()).allSatisfy(p -> assertThat(p.isPaidPartnership()).isNull());
 	}
 

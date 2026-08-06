@@ -44,7 +44,7 @@ package com.celfit.monitoring.hiker;
  * videoUrl은 video_versions[0].url(썸네일과 마찬가지로 CDN 서명 만료가 있어 스윕마다 갱신 대상),
  * videoDuration은 초 단위 실수 — 둘 다 릴스·비디오에만 실린다(피드·캐러셀은 키 부재 → null).
  * isPaidPartnership이 Boolean인 건 <b>키 부재(null = 판정 unknown)와 관측된 false(비협찬)</b>를
- * 구분하기 위해서다 — 응답 셰이프에 따라 키가 통째로 없는 경로가 있다(태그 열거 픽스처 실측).
+ * 구분하기 위해서다 — 응답 셰이프에 따라 키가 통째로 없는 경로가 있다(태그 열거 합성 픽스처 기준).
  */
 public record PostInfo(String shortCode, String username, String ownerFullName, String ownerProfilePicUrl,
 		String ownerUserId, String contentType, String caption, String thumbnailUrl,
