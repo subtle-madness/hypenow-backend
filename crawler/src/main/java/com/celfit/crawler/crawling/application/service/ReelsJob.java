@@ -2,6 +2,8 @@ package com.celfit.crawler.crawling.application.service;
 
 import com.celfit.crawler.common.time.RevisitCutoff;
 import com.celfit.crawler.content.application.service.ContentCaptionUpserter;
+import com.celfit.crawler.crawling.application.port.out.ActorInputs;
+import com.celfit.crawler.crawling.application.port.out.Actors;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
@@ -12,7 +14,9 @@ import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawMediaPage;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
+import com.celfit.crawler.settings.application.service.ReelsSourceSetting;
 import com.celfit.crawler.settings.application.service.SettingsService;
+import com.celfit.crawler.settings.domain.ReelsSource;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * last_reels_at을 북키핑한다(달력 기준 재방문 주기는 collect.revisit-interval-days 공유 — RevisitCutoff).
  * pk(ig_user_id) 없는 계정은 해석 요청을 쓰지 않고 스킵 — 프로필 수집이 pk를 채우면 다음
  * 실행에서 잡힌다. 즉 계정당 정확히 HikerAPI 1요청이다.
+ * reels.source=ACTOR면 HikerAPI 대신 계정당 Apify reel 액터 런 1회(임시 — visitActor 참조).
  */
 @Service
 public class ReelsJob {
@@ -47,6 +52,7 @@ public class ReelsJob {
     private final List<UserMediaPageFetcher> mediaFetchers;
     private final CrawlExecutor executor;
     private final SettingsService settings;
+    private final ReelsSourceSetting reelsSource;
     private final Clock clock;
     private final JobProgress progress;
     private final JobStopFlag stopFlag;
@@ -55,8 +61,9 @@ public class ReelsJob {
     public ReelsJob(InfluencerRepository influencers, RawMediaPageRepository rawMediaPages,
                     ContentUpserter contentUpserter, ContentCaptionUpserter captionUpserter,
                     List<UserMediaPageFetcher> mediaFetchers,
-                    CrawlExecutor executor, SettingsService settings, Clock clock,
-                    JobProgress progress, JobStopFlag stopFlag, TransactionTemplate txTemplate) {
+                    CrawlExecutor executor, SettingsService settings, ReelsSourceSetting reelsSource,
+                    Clock clock, JobProgress progress, JobStopFlag stopFlag,
+                    TransactionTemplate txTemplate) {
         this.influencers = influencers;
         this.rawMediaPages = rawMediaPages;
         this.contentUpserter = contentUpserter;
@@ -64,6 +71,7 @@ public class ReelsJob {
         this.mediaFetchers = mediaFetchers;
         this.executor = executor;
         this.settings = settings;
+        this.reelsSource = reelsSource;
         this.clock = clock;
         this.progress = progress;
         this.stopFlag = stopFlag;
@@ -75,6 +83,7 @@ public class ReelsJob {
      * 미점유). RuntimeException은 해당 방문만 실패 처리하고 계속한다.
      */
     public Summary run(TriggerType trigger) {
+        ReelsSource source = reelsSource.current();   // 실행당 1회 — 토글 변경은 다음 실행부터
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         List<Influencer> targets = influencers.findReelsTargets(
                 revisitBefore, PageRequest.of(0, settings.reelsBatchLimit()));
@@ -87,14 +96,16 @@ public class ReelsJob {
                             targets.size(), visited + failed);
                     break;
                 }
-                if (inf.getIgUserId() == null || inf.getIgUserId().isBlank()) {
+                if (source == ReelsSource.HIKER
+                        && (inf.getIgUserId() == null || inf.getIgUserId().isBlank())) {
                     skippedNoPk++;   // 해석 요청 안 씀 — 프로필 수집이 pk를 채우면 다음 실행에서 잡힌다
                     log.warn("릴스 수집 스킵(pk 없음) — 프로필 수집 선행 필요: {}", inf.getUsername());
                     progress.advance(JobName.REELS, 1);
                     continue;
                 }
                 try {
-                    upserted += txTemplate.execute(status -> visit(inf, trigger));
+                    upserted += txTemplate.execute(status ->
+                            source == ReelsSource.ACTOR ? visitActor(inf, trigger) : visit(inf, trigger));
                     visited++;
                 } catch (RuntimeException e) {
                     failed++;   // 계정 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
@@ -147,6 +158,35 @@ public class ReelsJob {
         int upserted = contentUpserter.upsert(items, inf);
         // 캡션 적재는 content 행이 생긴 뒤에 온다 — 이유는 CollectJob과 동일(content_id FK).
         captionUpserter.upsert(items, RawSource.HIKER_V2_CLIPS, capturedAt);
+        inf.setLastReelsAt(clock.instant());
+        influencers.save(inf);
+        return upserted;
+    }
+
+    /**
+     * ACTOR 경로 방문 1회(트랜잭션 안) — 계정당 reel 전용 액터 런 1회. 임시 전환용(오결제 Apify
+     * 크레딧 소진 — 스펙 2026-08-06). 아이템 리스트를 {"items":[...]} 래퍼로 raw_media_page에
+     * 보존한다(v_base_reel_item APIFY_ACTOR 분기가 이 형태를 파싱). 0건 응답은 Hiker 404와 동일하게
+     * 수확 완료로 마킹 — '릴스 없음'과 '액터 누락'을 구분할 수 없지만 다음 재방문 주기에 자연
+     * 재시도되므로 임시 용도로 수용한다. username 기반이라 pk 없는 계정도 수집한다.
+     */
+    private int visitActor(Influencer inf, TriggerType trigger) {
+        CrawlExecutor.Execution ex = executor.execute(JobName.REELS, trigger,
+                null, inf.getUsername(), Actors.DETAIL_REELS,
+                ActorInputs.reels(inf.getUsername(), settings.reelsActorResultsLimit()));
+        if (ex.items().isEmpty()) {
+            inf.setLastReelsAt(clock.instant());
+            influencers.save(inf);
+            log.info("릴스 0건(액터) — 수확 완료로 마킹: {}", inf.getUsername());
+            return 0;
+        }
+        Map<String, Object> payload = Map.of("items", ex.items());
+        Instant capturedAt = clock.instant();
+        rawMediaPages.save(new RawMediaPage(inf.getId(), ex.runId(), RawSource.APIFY_ACTOR,
+                payload, capturedAt));
+        var items = MediaItemExtractor.extract(payload, RawSource.APIFY_ACTOR);
+        int upserted = contentUpserter.upsert(items, inf);
+        captionUpserter.upsert(items, RawSource.APIFY_ACTOR, capturedAt);
         inf.setLastReelsAt(clock.instant());
         influencers.save(inf);
         return upserted;
