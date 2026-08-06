@@ -130,9 +130,9 @@ class MigrationTest {
 		assertThat(wasReader.queryForObject("SELECT count(*) FROM sweep_run", Long.class)).isZero();
 	}
 
-	/** 브랜드 태그 모니터링(2026-08-06 스펙) — 신규 3테이블이 생성되는지. */
+	/** 브랜드 태그 모니터링(2026-08-06 스펙 + 전면 전용 스키마 개정) — 신규 7테이블이 생성되는지. */
 	@Test
-	void 브랜드_태그_모니터링_테이블_3종이_생성된다() {
+	void 브랜드_태그_모니터링_테이블_7종이_생성된다() {
 		var ds = TestDb.dataSource(TestDb.container());
 		var db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
@@ -140,9 +140,11 @@ class MigrationTest {
 		Long tables = db.queryForObject("""
 				SELECT count(*) FROM information_schema.tables
 				WHERE (table_schema, table_name) IN
-				  (('public','brand_account'), ('public','brand_tagged_post'), ('public','author_profile'))""",
+				  (('public','brand_account'), ('public','brand_tagged_post'), ('public','author_profile'),
+				   ('public','brand_post_snapshot'), ('public','brand_post_meta'),
+				   ('public','brand_post_comment'), ('public','brand_profile_snapshot'))""",
 				Long.class);
-		assertThat(tables).isEqualTo(3);
+		assertThat(tables).isEqualTo(7);
 	}
 
 	/** 신규 표면도 was_reader가 SELECT할 수 있어야 한다 — V2 ALTER DEFAULT PRIVILEGES 자동 적용 확인. */
@@ -155,8 +157,8 @@ class MigrationTest {
 		var wasReader = new JdbcTemplate(TestDb.wasReaderDataSource(pg));
 
 		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_account", Long.class)).isZero();
-		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_tagged_post", Long.class)).isZero();
-		assertThat(wasReader.queryForObject("SELECT count(*) FROM author_profile", Long.class)).isZero();
+		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_post_snapshot", Long.class)).isZero();
+		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_post_comment", Long.class)).isZero();
 	}
 
 	/**

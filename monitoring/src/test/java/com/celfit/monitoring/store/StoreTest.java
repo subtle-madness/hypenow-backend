@@ -381,17 +381,6 @@ class StoreTest {
 				.isEqualTo("답글");
 	}
 
-	/** 태그 모니터링 댓글 기지 중단 판정 재료(스펙 §3) — 게시물의 기존 댓글 id 집합. */
-	@Test
-	void 댓글_id_집합을_조회한다() {
-		comments.upsertForPost("SC1", List.of(
-				new CommentInfo("c1", "user1", "본문1", 1L, Instant.now(), null),
-				new CommentInfo("c2", "user2", "본문2", 2L, Instant.now(), null)));
-
-		assertThat(comments.findIds("SC1")).containsExactlyInAnyOrder("c1", "c2");
-		assertThat(comments.findIds("없는코드")).isEmpty();
-	}
-
 	@Test
 	void 댓글_upsert는_다른_게시물에_영향을_주지_않는다() {
 		comments.upsertForPost("SC1", List.of(

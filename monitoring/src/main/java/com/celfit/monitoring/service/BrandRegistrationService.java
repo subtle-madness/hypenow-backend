@@ -66,11 +66,11 @@ public class BrandRegistrationService {
 		return new Result(id, normalized, profile.followers(), false);
 	}
 
-	/** 백필 = 트래킹과 같은 코드(깊이·컷 규칙 동일 — 스펙 §4 정합). 실패는 격리 — 다음 스윕이 백스톱. */
+	/** 백필 = 매일 스윕과 같은 코드(깊이·컷 규칙 동일 — 스펙 §4 정합). 실패는 격리 — 다음 스윕이 백스톱. */
 	private void runBackfillSafely(BrandRow row) {
 		try {
-			collect.track(row);
-			brands.touchTracked(row.id(), LocalDate.now(KST));
+			collect.sweep(row);
+			brands.touchSwept(row.id(), LocalDate.now(KST));
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}

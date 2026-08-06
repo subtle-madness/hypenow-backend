@@ -21,8 +21,8 @@ public class BrandRepository {
 
 	/**
 	 * 등록 또는 재가입 — CLOSED 행이 있으면 ACTIVE로 재활성하고 프로필 관측값을 갱신한다.
-	 * last_tracked_on을 null로 되돌리는 이유: 재가입 시점의 윈도우(90일)를 백필이 다시 채워야
-	 * 하는데, 옛 값이 남으면 다음 스윕이 감지(1페이지)만 돌아 탈퇴 기간의 유입을 놓친다.
+	 * last_swept_on을 null로 되돌리는 이유: 재가입 시점의 윈도우(90일)를 백필이 다시 채우기
+	 * 전까지는 "수집 준비 중"(후속 was 계약의 판별 기준)이어야 하기 때문이다.
 	 */
 	public long insertOrReactivate(String username, String igUserId, Long followers, String biography) {
 		return db.queryForObject("""
@@ -31,21 +31,21 @@ public class BrandRepository {
 				ON CONFLICT (username) DO UPDATE SET
 				  ig_user_id = EXCLUDED.ig_user_id, followers = EXCLUDED.followers,
 				  biography = EXCLUDED.biography, status = 'ACTIVE', closed_at = NULL,
-				  last_tracked_on = NULL, registered_at = now()
+				  last_swept_on = NULL, registered_at = now()
 				RETURNING id""",
 				Long.class, username, igUserId, followers, biography);
 	}
 
 	public Optional<BrandRow> findByUsername(String username) {
 		return db.query("""
-				SELECT id, username, ig_user_id, status, last_tracked_on
+				SELECT id, username, ig_user_id, status, last_swept_on
 				FROM brand_account WHERE username = ?""",
 				BrandRepository::toRow, username).stream().findFirst();
 	}
 
 	public List<BrandRow> findActive() {
 		return db.query("""
-				SELECT id, username, ig_user_id, status, last_tracked_on
+				SELECT id, username, ig_user_id, status, last_swept_on
 				FROM brand_account WHERE status = 'ACTIVE' ORDER BY id""",
 				BrandRepository::toRow);
 	}
@@ -57,14 +57,21 @@ public class BrandRepository {
 				WHERE username = ? AND status = 'ACTIVE'""", username) > 0;
 	}
 
-	public void touchTracked(long brandId, LocalDate on) {
-		db.update("UPDATE brand_account SET last_tracked_on = ? WHERE id = ?", on, brandId);
+	/** 전량 수집(스윕·백필) 완주 기록 — null이면 "수집 준비 중"(백필 상태 판별, 08-06 결정). */
+	public void touchSwept(long brandId, LocalDate on) {
+		db.update("UPDATE brand_account SET last_swept_on = ? WHERE id = ?", on, brandId);
+	}
+
+	/** 매일 스윕의 프로필 관측 반영(08-06 개정 — 등록 1회 아님). 추이는 brand_profile_snapshot에. */
+	public void refreshProfile(long brandId, Long followers, String biography) {
+		db.update("UPDATE brand_account SET followers = ?, biography = ? WHERE id = ?",
+				followers, biography, brandId);
 	}
 
 	private static BrandRow toRow(ResultSet rs, int i) throws SQLException {
-		java.sql.Date tracked = rs.getDate("last_tracked_on");
+		java.sql.Date swept = rs.getDate("last_swept_on");
 		return new BrandRow(rs.getLong("id"), rs.getString("username"), rs.getString("ig_user_id"),
 				BrandStatus.valueOf(rs.getString("status")),
-				tracked == null ? null : tracked.toLocalDate());
+				swept == null ? null : swept.toLocalDate());
 	}
 }

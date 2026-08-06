@@ -8,11 +8,12 @@ import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
+import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRow;
-import com.celfit.monitoring.store.CommentRepository;
-import com.celfit.monitoring.store.SnapshotRepository;
+import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -27,16 +28,21 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * 브랜드 태그 수집 본체(2026-08-06 스펙) — CollectServiceTest 관용구(fake HikerHttp + 스텁
- * 서브클래스, DB 없음)로 감지 1콜 고정·트래킹 105개 추종·윈도우 컷·부재=0·0 캐리·게시자 stale·
- * 댓글 게이트를 검증한다.
+ * 브랜드 태그 수집 본체(2026-08-06 스펙 + 매일 전량 개정) — CollectServiceTest 관용구(fake
+ * HikerHttp + 스텁 서브클래스, DB 없음)로 매일 전량 105개 추종·윈도우 컷·브랜드 프로필 매일
+ * 갱신·부재=0·0 캐리·게시자 stale·댓글 게이트를 검증한다.
  */
 class BrandCollectServiceTest {
 
 	private static final long NOW = Instant.now().getEpochSecond();
-	private static final long RECENT = NOW - 5L * 86400;        // 윈도우(90일) 안
+	private static final long RECENT = NOW - 5L * 86400;             // 윈도우(90일) 안
 	private static final long RETRO_IN_WINDOW = NOW - 60L * 86400;   // 소급 태그지만 윈도우 안
-	private static final long OLD_95D = NOW - 95L * 86400;      // 윈도우 밖
+	private static final long OLD_95D = NOW - 95L * 86400;           // 윈도우 밖
+
+	private static final String BRAND_PROFILE_JSON = """
+			{"user":{"pk":111,"username":"brandx","full_name":"브랜드","profile_pic_url":"https://p",
+			"biography":"소개","follower_count":1234,"following_count":10,"media_count":5,
+			"is_private":false}}""";
 
 	private final RecordingWriter writer = new RecordingWriter();
 	private final StubSnapshots snapshots = new StubSnapshots();
@@ -48,17 +54,19 @@ class BrandCollectServiceTest {
 	private final List<String> tagPages = new ArrayList<>();
 	private final Set<String> failingAuthorIds = new HashSet<>();
 	private boolean tagNotFound = false;
+	private boolean brandProfileFails = false;
 	private int tagCall = 0;
 
 	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null);
 
 	// ── 스텁 대역(CollectServiceTest NoopCommentRepository 관용구) ────────────
 
-	private static final class RecordingWriter extends SnapshotWriter {
+	private static final class RecordingWriter extends BrandSnapshotWriter {
 		final List<PostInfo> saved = new ArrayList<>();
+		final List<String> profileSaves = new ArrayList<>();
 
 		RecordingWriter() {
-			super(null, null, null, null);
+			super(null, null, null);
 		}
 
 		@Override
@@ -66,12 +74,17 @@ class BrandCollectServiceTest {
 			saved.add(post);
 		}
 
+		@Override
+		public void saveBrandProfile(long brandId, String username, LocalDate on, ProfileInfo profile) {
+			profileSaves.add(username + ":" + profile.followers());
+		}
+
 		PostInfo savedByCode(String code) {
 			return saved.stream().filter(p -> p.shortCode().equals(code)).findFirst().orElseThrow();
 		}
 	}
 
-	private static final class StubSnapshots extends SnapshotRepository {
+	private static final class StubSnapshots extends BrandSnapshotRepository {
 		Set<String> repostsCarry = Set.of();
 		Set<String> sharesCarry = Set.of();
 
@@ -90,7 +103,7 @@ class BrandCollectServiceTest {
 		}
 	}
 
-	private static final class StubComments extends CommentRepository {
+	private static final class StubComments extends BrandCommentRepository {
 		final List<String> upserted = new ArrayList<>();
 
 		StubComments() {
@@ -169,6 +182,12 @@ class BrandCollectServiceTest {
 	private HikerClient client() {
 		return new HikerClient(path -> {
 			calls.add(path);
+			if (path.startsWith("/v2/user/by/username")) {
+				if (brandProfileFails) {
+					throw new HikerFetchException("프로필 500");
+				}
+				return BRAND_PROFILE_JSON;
+			}
 			if (path.startsWith("/v2/user/tag/medias")) {
 				if (tagNotFound) {
 					throw new SubjectNotFoundException("Entries not found");
@@ -229,90 +248,90 @@ class BrandCollectServiceTest {
 				.formatted(String.join(",", items), nextPageId != null, next);
 	}
 
-	// ── 감지 ─────────────────────────────────────────────────────────────────
+	// ── 열거 워크(매일 전량) ─────────────────────────────────────────────────
 
 	@Test
-	void 감지는_정확히_1콜만_낸다() {
-		tagPages.add(page("p2", reel("NewA", RECENT, 0, 101, "")));
-		tagPages.add(page(null, reel("NewB", RECENT, 0, 102, "")));
-
-		service(105).detect(brand);
-
-		assertThat(tagCalls()).isEqualTo(1);   // 커서가 남아도 감지는 1페이지 고정(스펙 §3)
-		assertThat(tagged.inserted).containsExactly("NewA");
-	}
-
-	@Test
-	void 감지는_페이지_중간_기지_code_뒤의_소급_태그_신규를_놓치지_않는다() {
-		tagged.known.add("KnownA");
-		// 소급 태그(RETRO): 기지 게시물보다 뒤 순번에 실림 — "기지 만나면 중단"이면 놓친다(스펙 §6).
-		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, ""), reel("RetroB", RETRO_IN_WINDOW, 0, 102, "")));
-
-		service(105).detect(brand);
-
-		assertThat(tagged.inserted).containsExactly("RetroB");
-		// 기지 게시물도 스냅샷은 갱신한다(감지 페이지가 공짜로 실어 온 지표 — 설계 결정 2).
-		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("KnownA", "RetroB");
-	}
-
-	@Test
-	void 윈도우_밖_게시물은_적재하지_않는다() {
-		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 101, ""), reel("NoTakenAt", null, 0, 102, "")));
-
-		service(105).detect(brand);
-
-		assertThat(writer.saved).isEmpty();
-		assertThat(tagged.inserted).isEmpty();
-	}
-
-	@Test
-	void 태그_0건_계정은_아무것도_하지_않는다() {
-		tagNotFound = true;
-
-		service(105).detect(brand);
-
-		assertThat(writer.saved).isEmpty();
-		assertThat(tagged.inserted).isEmpty();
-		assertThat(authorCalls()).isZero();
-		assertThat(commentCalls()).isZero();
-	}
-
-	// ── 트래킹 열거 워크 ─────────────────────────────────────────────────────
-
-	@Test
-	void 트래킹은_목표_개수까지_커서를_추종한다() {
+	void 스윕은_목표_개수까지_커서를_추종한다() {
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
 		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
 
-		service(3).track(brand);   // 목표 3개 — 2페이지째에서 4개 도달, 3페이지는 부르지 않는다
+		service(3).sweep(brand);   // 목표 3개 — 2페이지째에서 4개 도달, 3페이지는 부르지 않는다
 
 		assertThat(tagCalls()).isEqualTo(2);
 		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C", "D");
 	}
 
 	@Test
-	void 트래킹은_페이지_전체가_컷_이전이면_중단한다() {
+	void 스윕은_페이지_전체가_컷_이전이면_중단한다() {
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
 		// 2페이지 전체가 90일 컷 이전 — 커서가 남아도 중단(페이지 "전체" 조건 — 스펙 §5·§6).
 		tagPages.add(page("p3", reel("Old1", OLD_95D, 0, 102, ""), reel("Old2", OLD_95D, 0, 103, "")));
 		tagPages.add(page(null, reel("NeverFetched", RECENT, 0, 104, "")));
 
-		service(105).track(brand);
+		service(105).sweep(brand);
 
 		assertThat(tagCalls()).isEqualTo(2);
 		assertThat(tagged.inserted).containsExactly("A");   // 컷 이전 게시물은 적재 대상 아님
 	}
 
 	@Test
-	void 트래킹은_기지_게시물_스냅샷을_갱신하고_신규는_감지한다() {
+	void 페이지_중간_기지_뒤의_소급_태그_신규를_놓치지_않는다() {
+		tagged.known.add("KnownA");
+		// 소급 태그: 기지 게시물보다 뒤 순번에 실림 — "기지 만나면 중단"이면 놓친다(스펙 §6).
+		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, ""), reel("RetroB", RETRO_IN_WINDOW, 0, 102, "")));
+
+		service(105).sweep(brand);
+
+		assertThat(tagged.inserted).containsExactly("RetroB");
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("KnownA", "RetroB");
+	}
+
+	@Test
+	void 기지_게시물_스냅샷을_갱신하고_신규만_링크한다() {
 		tagged.known.add("KnownA");
 		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, ""), reel("NewB", RECENT, 0, 102, "")));
 
-		service(105).track(brand);
+		service(105).sweep(brand);
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("KnownA", "NewB");
 		assertThat(tagged.inserted).containsExactly("NewB");
+	}
+
+	@Test
+	void 윈도우_밖_게시물은_적재하지_않는다() {
+		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 101, ""), reel("NoTakenAt", null, 0, 102, "")));
+
+		service(105).sweep(brand);
+
+		assertThat(writer.saved).isEmpty();
+		assertThat(tagged.inserted).isEmpty();
+	}
+
+	@Test
+	void 태그_0건_계정도_프로필_갱신은_한다() {
+		tagNotFound = true;
+
+		service(105).sweep(brand);
+
+		assertThat(writer.profileSaves).containsExactly("brandx:1234");   // 매일 프로필 갱신(08-06 개정)
+		assertThat(writer.saved).isEmpty();
+		assertThat(tagged.inserted).isEmpty();
+		assertThat(authorCalls()).isZero();
+		assertThat(commentCalls()).isZero();
+	}
+
+	// ── 브랜드 프로필 매일 갱신 ──────────────────────────────────────────────
+
+	@Test
+	void 브랜드_프로필_갱신_실패는_열거를_막지_않는다() {
+		brandProfileFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(105).sweep(brand);   // 예외가 새면 여기서 터진다
+
+		assertThat(writer.profileSaves).isEmpty();
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
 	}
 
 	// ── 복권 3종 적재 규칙(부재=0·0 캐리) ────────────────────────────────────
@@ -324,7 +343,7 @@ class BrandCollectServiceTest {
 				reel("AllMiss", RECENT, 0, 102, ""),
 				reel("HiddenShares", RECENT, 0, 103, ",\"save_count\":7,\"share_count_disabled\":true")));
 
-		service(105).track(brand);
+		service(105).sweep(brand);
 
 		PostInfo saveOnly = writer.savedByCode("SaveOnly");
 		assertThat(saveOnly.saves()).isEqualTo(10L);
@@ -346,10 +365,10 @@ class BrandCollectServiceTest {
 		snapshots.repostsCarry = Set.of("AllMiss");
 		tagPages.add(page(null, reel("AllMiss", RECENT, 0, 101, "")));
 
-		service(105).track(brand);
+		service(105).sweep(brand);
 
 		PostInfo p = writer.savedByCode("AllMiss");
-		assertThat(p.reposts()).isZero();   // 양수 이력 전무·전일 0 종료(스텁) → 0 캐리
+		assertThat(p.reposts()).isZero();   // 양수 이력 없음·전일 0 종료(스텁) → 0 캐리
 		assertThat(p.shares()).isNull();    // 공유는 캐리 판정에 없음 — null 유지
 	}
 
@@ -362,21 +381,11 @@ class BrandCollectServiceTest {
 		tagPages.add(page(null,
 				reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, ""), reel("C", RECENT, 0, 103, "")));
 
-		service(105).track(brand);
+		service(105).sweep(brand);
 
 		assertThat(authorCalls()).isEqualTo(2);              // 102·103만
 		assertThat(authors.upserted).containsExactly("103"); // 102 실패는 격리 — 103은 계속
 		assertThat(writer.saved).hasSize(3);                 // 게시자 실패가 지표 적재에 번지지 않는다
-	}
-
-	@Test
-	void 감지일_게시자_콜은_신규_게시물_작성자만_본다() {
-		tagged.known.add("KnownA");
-		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, "")));   // 101은 미보유(stale로 간주)
-
-		service(105).detect(brand);
-
-		assertThat(authorCalls()).isZero();   // 기지 게시물 작성자는 감지일 대상 아님(트래킹일에만 stale 갱신)
 	}
 
 	// ── 댓글 게이트 ──────────────────────────────────────────────────────────
@@ -392,7 +401,7 @@ class BrandCollectServiceTest {
 				reel("ZeroCnt", RECENT, 0, 103, ""),    // 0 — 콜 X
 				reel("FreshD", RECENT, 2, 104, "")));   // 신규(저장값 0) — 콜 O
 
-		service(105).track(brand);
+		service(105).sweep(brand);
 
 		assertThat(commentCalls()).isEqualTo(2);
 		assertThat(comments.upserted).containsExactlyInAnyOrder("Grown", "FreshD");

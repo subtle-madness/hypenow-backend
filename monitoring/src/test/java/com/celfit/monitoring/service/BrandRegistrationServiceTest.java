@@ -58,18 +58,18 @@ class BrandRegistrationServiceTest {
 				return false;
 			}
 			rows.put(username, new BrandRow(row.id(), row.username(), row.igUserId(),
-					BrandStatus.CLOSED, row.lastTrackedOn()));
+					BrandStatus.CLOSED, row.lastSweptOn()));
 			return true;
 		}
 
 		@Override
-		public void touchTracked(long brandId, LocalDate on) {
+		public void touchSwept(long brandId, LocalDate on) {
 			touched.add(brandId);
 		}
 	}
 
 	private static final class StubCollect extends BrandCollectService {
-		final List<String> tracked = new ArrayList<>();
+		final List<String> swept = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
 
 		StubCollect() {
@@ -77,11 +77,11 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public void track(BrandRow brand) {
+		public void sweep(BrandRow brand) {
 			if (failing.contains(brand.username())) {
 				throw new IllegalStateException("백필 실패 주입");
 			}
-			tracked.add(brand.username());
+			swept.add(brand.username());
 		}
 	}
 
@@ -105,7 +105,7 @@ class BrandRegistrationServiceTest {
 		assertThat(result.followers()).isEqualTo(1234L);
 		assertThat(hikerCalls).hasSize(1);
 		assertThat(hikerCalls.getFirst()).startsWith("/v2/user/by/username");
-		assertThat(collect.tracked).containsExactly("brandx");   // 동기 executor — 백필 즉시 실행
+		assertThat(collect.swept).containsExactly("brandx");   // 동기 executor — 백필 즉시 실행
 		assertThat(brands.touched).containsExactly(result.brandId());
 	}
 
