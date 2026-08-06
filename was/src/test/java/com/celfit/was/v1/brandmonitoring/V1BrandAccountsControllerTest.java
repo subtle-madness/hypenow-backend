@@ -11,6 +11,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -207,7 +208,30 @@ class V1BrandAccountsControllerTest {
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content("{\"username\": \"lizda_official\"}"))
 				.andExpect(status().isServiceUnavailable())
-				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"));
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				// 기존 monitoring 엔드포인트 4곳과 같은 계약 — 재시도 시점을 헤더로 준다.
+				.andExpect(header().string("Retry-After", "5"));
+	}
+
+	@Test
+	void 삭제_후_같은_계정_재등록은_계정명을_다시_저장하지_않고_202다() throws Exception {
+		// 계정명은 불변이라 삭제해도 users에 남는다(§5-4) — stored=같은 값 + 활성 연결 없음이
+		// "삭제 후 같은 username 재등록" 경로다. 이때만 저장을 건너뛰고 연결만 새로 만든다.
+		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn("lizda_official");
+		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
+		given(commandClient.registerBrand("lizda_official"))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.id").value("100"))
+				.andExpect(jsonPath("$.data.collectionStatus").value("collecting"));
+
+		then(linkRepository).should(never()).saveInstagramAccountName(anyLong(), anyString());
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
 	}
 
 	@Test

@@ -7,7 +7,6 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringCommandClient.BrandRegisterResult;
-import com.celfit.was.monitoring.MonitoringUnavailableException;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.List;
 import java.util.Optional;
@@ -185,7 +184,8 @@ public class V1BrandAccountService {
 	 * 404가 아니라 422로 올린다(FE 에러 표의 INSTAGRAM_ACCOUNT_NOT_FOUND). 422(비공개)는 code를
 	 * 그대로 전달하되 메시지는 새로 쓴다 — MonitoringApiException.getMessage()가 "[CODE] 원문"으로
 	 * 감싸져 있어 그대로 흘리면 내부 코드가 사용자에게 노출된다.
-	 * 나머지(4xx·5xx)는 V1ExceptionAdvice의 공통 매핑에 맡긴다.
+	 * 나머지(4xx·5xx)와 MonitoringUnavailableException은 V1ExceptionAdvice의 공통 매핑에 맡긴다 —
+	 * 연결 불능 503은 다른 monitoring 엔드포인트와 같이 {@code Retry-After: 5}를 달아야 계약이 맞는다.
 	 */
 	private static <T> T translate(Supplier<T> call) {
 		try {
@@ -200,10 +200,6 @@ public class V1BrandAccountService {
 						"비공개 계정이라 수집할 수 없어요. 공개 계정으로 전환한 뒤 다시 시도해 주세요.");
 			}
 			throw e;
-		} catch (MonitoringUnavailableException e) {
-			log.warn("브랜드 등록 — monitoring 연결 실패: {}", e.getMessage());
-			throw new V1ApiException(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
-					"일시적으로 연결이 어려워요. 잠시 후 다시 시도해 주세요.");
 		}
 	}
 }
