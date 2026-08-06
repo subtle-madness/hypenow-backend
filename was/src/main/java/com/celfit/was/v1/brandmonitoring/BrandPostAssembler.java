@@ -103,7 +103,13 @@ public class BrandPostAssembler {
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 	}
 
-	private List<BrandPostResponse> assembleTagged(BrandAccountRow account) {
+	/**
+	 * tagged 계열만 조립(브랜드 스윕 산지 전량). 공개 이유: 성과 대시보드(Task 9)는 레거시 전량을
+	 * 이미 자기가 조립해 두고 tagged만 얹으면 되는데, {@link #assembleForBrand}를 부르면 그 안에서
+	 * {@link TrackingItemAssembler#assembleList}가 한 번 더 돌아 유저 전량 배치 조회 5~6개가
+	 * 통째로 중복된다. 브랜드 화면(§6-1)의 진입점은 여전히 {@code assembleForBrand}다.
+	 */
+	public List<BrandPostResponse> assembleTagged(BrandAccountRow account) {
 		List<BrandTaggedPostRow> posts =
 				brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff(), TAGGED_LIMIT);
 		if (posts.isEmpty()) {
