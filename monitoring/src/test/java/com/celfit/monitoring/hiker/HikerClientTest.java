@@ -80,6 +80,51 @@ class HikerClientTest {
 		assertThat(a.isPrivate()).isTrue();
 	}
 
+	/** 태그 열거(findings §11) — 릴스 조회수가 인라인이라 clips 보강 콜 없이 1페이지 1콜이어야 한다. */
+	@Test
+	void 태그_열거는_1콜에_릴스_조회수_인라인이고_클립_콜이_없다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("tag-medias.json");
+		});
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		assertThat(calls).hasSize(1);
+		assertThat(calls.getFirst()).startsWith("/v2/user/tag/medias?user_id=");
+		assertThat(page.nextPageId()).isEqualTo("cursor-p2");
+		assertThat(page.posts()).hasSize(4);
+		var reel = page.posts().stream().filter(p -> "REELS".equals(p.contentType())).findFirst().orElseThrow();
+		assertThat(reel.views()).isPositive();        // ig_play_count 인라인(§11-2 — clips 머지 불필요)
+		assertThat(reel.viewsTrusted()).isTrue();
+		assertThat(reel.ownerUserId()).isNotBlank();  // 게시자 프로필 콜의 user_id 공급원
+		assertThat(reel.username()).isNotBlank();     // 작성자 username(usernameHint 없이 user 노드에서)
+		// 소급 태그 혼입 재현 — 응답 순서를 재정렬하지 않는다(페이지 단위 중단 판정이 순서 의존).
+		assertThat(page.posts().getLast().shortCode()).isEqualTo("TagOldD");
+	}
+
+	/** 커서 전달 — 2페이지 요청은 page_id 파라미터를 실어야 한다. */
+	@Test
+	void 태그_열거는_커서를_page_id로_전달한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("tag-medias.json");
+		});
+		client.fetchTaggedPage("17841400000000000", "cursor-p2");
+		assertThat(calls.getFirst()).contains("page_id=cursor-p2");
+	}
+
+	/** 태그 0건 계정 — Hiker는 200 빈 배열이 아니라 404를 준다(fetchRecentPosts와 동일 규칙). */
+	@Test
+	void 태그_열거_404는_빈_페이지다() {
+		HikerClient client = new HikerClient(path -> {
+			throw new SubjectNotFoundException("Entries not found");
+		});
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		assertThat(page.posts()).isEmpty();
+		assertThat(page.nextPageId()).isNull();
+	}
+
 	@Test
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
 		HikerClient client = new HikerClient(fakeHttp());

@@ -176,6 +176,38 @@ public class HikerClient {
 		return new ClipPlays(plays, true);
 	}
 
+	/** 태그 열거 1페이지 — posts는 응답 순서 그대로(태그된 시점 순 — 중단 판정은 호출자가 페이지 단위로 한다). */
+	public record TaggedPage(List<PostInfo> posts, String nextPageId) {}
+
+	/**
+	 * 계정에 태그된 게시물 열거 — /v2/user/tag/medias(findings §11). 1페이지 1콜만 하고 커서를
+	 * 그대로 반환한다: 감지(매일 1콜)·트래킹(105개 깊이)·백필(90일 컷)의 중단 규칙이 서로 달라
+	 * 페이지네이션은 호출자(BrandCollectService)가 몬다. 페이지당 건수는 IG 소관 값(실측 21)이라
+	 * 여기서 어떤 개수도 가정하지 않는다(스펙 §6 하드코딩 금지).
+	 *
+	 * <p>릴스 조회수(ig_play_count)는 이 열거에 상시 인라인이다(§11-2 — 프로필 열거와 결정적 차이)
+	 * → clips 보강 없이 viewsTrusted=true. 정렬은 태그된 시점 순이라 taken_at 비단조(소급 태그 혼입)
+	 * — 재정렬하지 않고 응답 순서를 유지한다(페이지 단위 중단 판정이 순서에 의존).
+	 */
+	public TaggedPage fetchTaggedPage(String userId, String pageId) {
+		String body;
+		try {
+			body = http.get("/v2/user/tag/medias?user_id=" + enc(userId) + pageParam(pageId));
+		} catch (SubjectNotFoundException e) {
+			// 태그된 게시물이 0건이면 Hiker는 200 빈 배열이 아니라 404를 준다(fetchRecentPosts와
+			// 동일 규칙) — 브랜드 계정에 태그가 아직 없는 건 정상 상태라 조용히 빈 페이지로 넘긴다.
+			log.info("태그 열거 404 — user_id {} page_id {}, 태그 게시물 없음/커서 종료로 간주", userId, pageId);
+			return new TaggedPage(List.of(), null);
+		}
+		JsonNode root = root(body);
+		List<PostInfo> posts = new ArrayList<>();
+		for (JsonNode item : items(root)) {
+			posts.add(toPost(item, null, body, Map.of(), true));
+		}
+		String cursor = moreAvailable(root) ? nextPageId(root) : null;
+		return new TaggedPage(posts, cursor);
+	}
+
 	public PostInfo fetchPost(String shortCode) {
 		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
 		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
