@@ -218,11 +218,34 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('SHORT1', 'c3', 'user_c', '본문3', 3, '2026-08-03T00:00:00+09:00', NULL)
 				""").update();
 
-		List<BrandCommentRow> rows = repository.findComments(List.of("SHORT1"));
+		List<BrandCommentRow> rows = repository.findComments(List.of("SHORT1"), 8);
 
 		assertThat(rows).extracting(BrandCommentRow::id).containsExactly("c3", "c2", "c1");
 		assertThat(rows.get(1).ownerReplyText()).isEqualTo("브랜드 답글");
 		assertThat(rows.get(0).likeCount()).isEqualTo(3L);
+	}
+
+	/**
+	 * 댓글은 삭제 없는 누적 합집합이라 인기 게시물은 수천 행까지 간다 — 상한은 SQL 단계에서 잘려야
+	 * 하고(힙에 올리지 않는다), 잘리는 쪽은 항상 오래된 쪽이어야 한다.
+	 */
+	@Test
+	void 댓글은_게시물별_상한을_넘으면_오래된_쪽부터_잘린다() {
+		// 게시물 2개 × 상한(2)+1건 — 상한이 게시물별로 독립 적용되는지까지 같이 잡는다
+		jdbc.sql("""
+				INSERT INTO brand_post_comment (short_code, id, author, body, like_count, commented_at)
+				VALUES ('SHORT1', 'a1', 'user_a', '본문', 1, '2026-08-01T00:00:00+09:00'),
+				       ('SHORT1', 'a2', 'user_b', '본문', 1, '2026-08-02T00:00:00+09:00'),
+				       ('SHORT1', 'a3', 'user_c', '본문', 1, '2026-08-03T00:00:00+09:00'),
+				       ('SHORT2', 'b1', 'user_d', '본문', 1, '2026-08-01T00:00:00+09:00'),
+				       ('SHORT2', 'b2', 'user_e', '본문', 1, '2026-08-02T00:00:00+09:00'),
+				       ('SHORT2', 'b3', 'user_f', '본문', 1, '2026-08-03T00:00:00+09:00')
+				""").update();
+
+		List<BrandCommentRow> rows = repository.findComments(List.of("SHORT1", "SHORT2"), 2);
+
+		assertThat(rows).hasSize(4);   // 게시물당 2건씩 — 상한은 전체가 아니라 게시물별
+		assertThat(rows).extracting(BrandCommentRow::id).containsExactly("a3", "a2", "b3", "b2");
 	}
 
 	@Test
@@ -263,11 +286,29 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(rows.get(0).followers()).isEqualTo(900L);
 	}
 
+	/**
+	 * fetched_at 동점 타이브레이크 — 같은 스윕 트랜잭션에서 적재된 행은 now()가 불변이라 시각이
+	 * 같을 수 있다. 그때도 어느 행이 남는지가 결정적이어야 한다(ig_user_id DESC 고정).
+	 */
+	@Test
+	void username_폴백_조회는_fetched_at_동점에도_결정적이다() {
+		jdbc.sql("""
+				INSERT INTO author_profile (ig_user_id, username, followers, fetched_at)
+				VALUES ('IG_1', 'influencer_a', 100, '2026-08-01T00:00:00+09:00'),
+				       ('IG_2', 'influencer_a', 900, '2026-08-01T00:00:00+09:00')
+				""").update();
+
+		List<AuthorRow> rows = repository.findAuthorsByUsername(List.of("influencer_a"));
+
+		assertThat(rows).hasSize(1);
+		assertThat(rows.get(0).igUserId()).isEqualTo("IG_2");   // 동점 시 ig_user_id DESC
+	}
+
 	@Test
 	void 빈_컬렉션은_빈_결과다() {
 		assertThat(repository.findPostMeta(List.of())).isEmpty();
 		assertThat(repository.findSnapshots(List.of())).isEmpty();
-		assertThat(repository.findComments(List.of())).isEmpty();
+		assertThat(repository.findComments(List.of(), 8)).isEmpty();
 		assertThat(repository.findAuthors(List.of())).isEmpty();
 		assertThat(repository.findAuthorsByUsername(List.of())).isEmpty();
 	}

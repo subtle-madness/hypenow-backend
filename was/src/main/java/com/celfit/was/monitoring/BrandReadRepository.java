@@ -108,20 +108,30 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 게시물별 댓글 전량(최신순) — 브랜드 댓글은 게이팅(comments_collected_count)으로 수집 자체가
-	 * 억제되므로 레거시와 달리 건수 상한 없이 가져오고, 표시 상한은 호출부가 자른다.
+	 * 게시물별 최신 댓글 상한 {@code perPostLimit}건(레거시 findComments와 같은 윈도우 관용구).
+	 *
+	 * <p>상한을 SQL 단계에서 자르는 이유: 브랜드 댓글은 매 스윕이 최대 45건씩 누적 합집합으로 쌓고
+	 * 행 삭제가 없어(08-06 스키마) 인기 게시물은 90일 윈도우 동안 수천 행까지 간다 — 상한 없이
+	 * 가져오면 "윈도우 전 게시물 × 전량"이 한 번에 힙에 올라온다. 표시 상한을 호출부가 자르는
+	 * 방식으로는 그 비용을 못 줄인다.
 	 */
-	public List<BrandCommentRow> findComments(Collection<String> shortCodes) {
+	public List<BrandCommentRow> findComments(Collection<String> shortCodes, int perPostLimit) {
 		if (shortCodes.isEmpty()) {
 			return List.of();
 		}
 		return jdbc.sql("""
 				SELECT short_code, id, author, body, like_count, commented_at, owner_reply_text
-				FROM brand_post_comment
-				WHERE short_code IN (:shortCodes)
+				FROM (
+				    SELECT short_code, id, author, body, like_count, commented_at, owner_reply_text,
+				           row_number() OVER (PARTITION BY short_code ORDER BY commented_at DESC) AS rn
+				    FROM brand_post_comment
+				    WHERE short_code IN (:shortCodes)
+				) ranked
+				WHERE rn <= :perPostLimit
 				ORDER BY short_code, commented_at DESC
 				""")
 				.param("shortCodes", shortCodes)
+				.param("perPostLimit", perPostLimit)
 				.query(BrandCommentRow.class)
 				.list();
 	}
@@ -146,6 +156,9 @@ public class BrandReadRepository {
 	 * 때 username으로 찾는다. username은 author_profile의 유니크 키가 아니라(PK는 ig_user_id) 계정
 	 * 이름 변경 이력 등으로 같은 이름이 여러 행일 수 있어, DISTINCT ON으로 계정당 최신
 	 * (fetched_at DESC) 1행만 돌려준다 — 호출부의 username→프로필 맵 구성이 중복으로 깨지지 않게.
+	 *
+	 * <p>ig_user_id DESC 타이브레이크가 붙는 이유: fetched_at은 같은 스윕 트랜잭션에서 적재된 행들이
+	 * 동일값이 될 수 있어(Postgres now()는 트랜잭션 내 불변) 동점 시 어느 행이 남는지가 비결정적이다.
 	 */
 	public List<AuthorRow> findAuthorsByUsername(Collection<String> usernames) {
 		if (usernames.isEmpty()) {
@@ -156,7 +169,7 @@ public class BrandReadRepository {
 				       ig_user_id, username, full_name, followers, profile_pic_url, is_verified
 				FROM author_profile
 				WHERE username IN (:usernames)
-				ORDER BY username, fetched_at DESC
+				ORDER BY username, fetched_at DESC, ig_user_id DESC
 				""")
 				.param("usernames", usernames)
 				.query(AuthorRow.class)
