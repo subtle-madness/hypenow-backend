@@ -18,16 +18,20 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 브랜드 게시물 표면(스펙 §6-1·§6-2) — 목록·상세. 인증 필수, monitoring 비활성 환경에선 표면 자체가
- * 없다(빈 미등록 → 404, 계정 컨트롤러와 같은 게이트).
+ * 브랜드 게시물 표면(스펙 §6-1·§6-2·§6-4) — 목록·상세 + 직접 등록 접수·상태 조회. 인증 필수,
+ * monitoring 비활성 환경에선 표면 자체가 없다(빈 미등록 → 404, 계정 컨트롤러와 같은 게이트).
  *
  * <p>필터·정렬은 전부 메모리다 — 대상이 브랜드 1계정의 90일 윈도우(~105건 + 직접 등록분)라
  * 페이지네이션 없이 전량을 조립한 뒤 자른다. {@code meta.counts}는 필터 적용 <b>전</b> 전량 기준이라
@@ -45,15 +49,21 @@ public class V1BrandPostsController {
 	private static final String SORT_UPLOADED_DESC = "uploaded_desc";
 	private static final String SORT_PERFORMANCE_DESC = "performance_desc";
 
+	/** body 없는 POST(RequestBody required=false → null) 정규화 상수 — 검증은 서비스가 한다. */
+	private static final BrandDirectPostRegisterRequest EMPTY_DIRECT_REQUEST =
+			new BrandDirectPostRegisterRequest(null, null, null);
+
 	private final BrandLinkRepository linkRepository;
 	private final BrandReadRepository brandReadRepository;
 	private final BrandPostAssembler assembler;
+	private final V1BrandDirectPostService directPostService;
 
 	public V1BrandPostsController(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
-			BrandPostAssembler assembler) {
+			BrandPostAssembler assembler, V1BrandDirectPostService directPostService) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
+		this.directPostService = directPostService;
 	}
 
 	@GetMapping("/accounts/{accountId}/posts")
@@ -102,6 +112,38 @@ public class V1BrandPostsController {
 				.findFirst()
 				.map(ApiResponse::ok)
 				.orElseThrow(V1BrandPostsController::postNotFound);
+	}
+
+	// ---------- 직접 등록(§6-4) ----------
+
+	/**
+	 * 직접 등록 접수 — 항상 202다. 레거시 등록 파이프라인이 실제 게시물 확인을 비동기로 하므로
+	 * 접수 시점에는 entry별 판정(duplicate·failed)만 확정되고 신규분은 pending이다.
+	 * 진행은 {@link #directRegistration} 폴링으로 확인한다.
+	 */
+	@PostMapping("/accounts/{accountId}/direct-posts")
+	public ResponseEntity<ApiResponse<BrandDirectRegistrationResponse>> registerDirectPosts(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId,
+			@RequestBody(required = false) BrandDirectPostRegisterRequest body) {
+		BrandDirectPostRegisterRequest request = body == null ? EMPTY_DIRECT_REQUEST : body;
+		BrandDirectRegistrationResponse response = directPostService.register(principal.getUserId(),
+				parseAccountId(accountId), request.postUrls(), request.trackingDays(), request.campaignId());
+		return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
+	}
+
+	/** 등록 상태 폴링 — 접수 응답과 같은 셰이프. 남의 등록·없는 등록은 구분 없이 404. */
+	@GetMapping("/direct-registrations/{registrationId}")
+	public ApiResponse<BrandDirectRegistrationResponse> directRegistration(
+			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String registrationId) {
+		return ApiResponse.ok(directPostService.get(principal.getUserId(), registrationId));
+	}
+
+	/**
+	 * 직접 등록 요청 본문 — postUrls는 게시물 링크 문자열(정규화·검증은 레거시 {@code MonitoringInput}),
+	 * campaignId는 문자열 id(레거시 계약과 동일하게 그대로 전달한다).
+	 */
+	public record BrandDirectPostRegisterRequest(List<String> postUrls, Integer trackingDays, String campaignId) {
 	}
 
 	// ---------- meta ----------

@@ -6,8 +6,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -24,6 +26,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
+import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
@@ -37,6 +40,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -61,6 +65,11 @@ class V1BrandPostsControllerTest {
 	BrandDirectPostRepository directPostRepository;
 	@MockitoBean
 	TrackingItemAssembler trackingItemAssembler;
+	/** 직접 등록(§6-4)의 판정 로직은 V1BrandDirectPostServiceTest가 본다 — 여기는 표면 계약만. */
+	@MockitoBean
+	V1BrandDirectPostService directPostService;
+
+	private static final String POST_URL = "https://www.instagram.com/reel/DEF/";
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
@@ -245,6 +254,50 @@ class V1BrandPostsControllerTest {
 		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
 
 		mockMvc.perform(get("/v1/brand-monitoring/posts/AAA").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	// ---------- 직접 등록(§6-4) ----------
+
+	@Test
+	void 직접_등록은_202로_접수하고_요청_본문을_그대로_서비스에_넘긴다() throws Exception {
+		given(directPostService.register(7L, 100L, List.of(POST_URL), 30, "9"))
+				.willReturn(new BrandDirectRegistrationResponse("55", "2026-08-08T10:00:00+09:00",
+						List.of(new BrandDirectRegistrationResponse.Entry(POST_URL, "pending", null, null,
+								"DEF", "301"))));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/direct-posts").with(user(principal()))
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"postUrls\":[\"" + POST_URL + "\"],\"trackingDays\":30,\"campaignId\":\"9\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.registrationId").value("55"))
+				.andExpect(jsonPath("$.data.entries[0].result").value("pending"))
+				.andExpect(jsonPath("$.data.entries[0].brandPostId").value("DEF"))
+				.andExpect(jsonPath("$.data.entries[0].monitoringItemId").value("301"))
+				// nullable 키는 생략하지 않고 명시적 null(계약 무결성 규칙 #1).
+				.andExpect(jsonPath("$.data.entries[0]", Matchers.hasKey("reasonCode")));
+	}
+
+	@Test
+	void 등록_상태_조회는_같은_셰이프를_돌려준다() throws Exception {
+		given(directPostService.get(7L, "55"))
+				.willReturn(new BrandDirectRegistrationResponse("55", "2026-08-08T10:00:00+09:00",
+						List.of(new BrandDirectRegistrationResponse.Entry(POST_URL, "success", null, null,
+								"DEF", "301"))));
+
+		mockMvc.perform(get("/v1/brand-monitoring/direct-registrations/55").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.entries[0].result").value("success"))
+				.andExpect(jsonPath("$.data.requestedAt").value("2026-08-08T10:00:00+09:00"));
+	}
+
+	@Test
+	void 없는_등록_상태는_404다() throws Exception {
+		given(directPostService.get(7L, "55")).willThrow(V1ApiException.notFound("등록 요청을 찾을 수 없습니다."));
+
+		mockMvc.perform(get("/v1/brand-monitoring/direct-registrations/55").with(user(principal())))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
