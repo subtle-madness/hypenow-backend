@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.monitoring.DigestJob;
 import com.celfit.was.monitoring.MonitoringConfig;
+import com.celfit.was.v1.account.AccountDeletionService;
+import com.celfit.was.v1.brandmonitoring.V1BrandAccountService;
+import com.celfit.was.v1.brandmonitoring.V1BrandAccountsController;
 import com.celfit.was.v1.monitoring.NoopRegistrationExecutor;
 import com.celfit.was.v1.monitoring.RecoverStalePendingScheduler;
 import com.celfit.was.v1.monitoring.RegistrationExecutor;
@@ -32,6 +35,15 @@ class MonitoringDisabledTest extends IntegrationTest {
 	void 비활성이면_Noop_실행기만_뜬다() {
 		assertThat(context.getBeansOfType(RegistrationExecutor.class)).hasSize(1);
 		assertThat(context.getBean(RegistrationExecutor.class)).isInstanceOf(NoopRegistrationExecutor.class);
+	}
+
+	@Test
+	void 비활성이면_브랜드_계정_표면이_없고_탈퇴_배선은_멀쩡하다() {
+		// 브랜드 서비스는 monitoring 전용 빈(명령 클라이언트·브랜드 조회)에 전면 의존한다 —
+		// 조건부가 아니면 여기서 부팅이 깨진다. AccountDeletionService는 Optional 주입이라 무손상.
+		assertThat(context.getBeanNamesForType(V1BrandAccountService.class)).isEmpty();
+		assertThat(context.getBeanNamesForType(V1BrandAccountsController.class)).isEmpty();
+		assertThat(context.getBeanNamesForType(AccountDeletionService.class)).hasSize(1);
 	}
 
 	@Test
