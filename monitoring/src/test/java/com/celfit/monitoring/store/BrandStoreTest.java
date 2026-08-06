@@ -84,13 +84,13 @@ class BrandStoreTest {
 
 	@Test
 	void 게시자_캐시_upsert와_stale_판정() {
-		authors.upsert(new AuthorInfo("999", "creator", "이름", 100L, 10L, 5L, "bio", "https://p", false));
+		authors.upsert(new AuthorInfo("999", "creator", "이름", 100L, 10L, 5L, "bio", "https://p", false, null));
 		assertThat(authors.freshIgUserIds(Set.of("999", "888"),
 				Instant.now().minusSeconds(30L * 24 * 3600)))
 				.containsExactly("999");                       // 888은 미보유 → 콜 필요
 		assertThat(authors.freshIgUserIds(Set.of("999"), Instant.now().plusSeconds(60))).isEmpty();
 		assertThat(authors.freshIgUserIds(List.of(), Instant.now())).isEmpty();
-		authors.upsert(new AuthorInfo("999", "creator", "이름", 200L, 10L, 5L, "bio2", "https://p", true));
+		authors.upsert(new AuthorInfo("999", "creator", "이름", 200L, 10L, 5L, "bio2", "https://p", true, null));
 		assertThat(db.queryForObject(
 				"SELECT followers FROM author_profile WHERE ig_user_id='999'", Long.class)).isEqualTo(200L);
 		assertThat(db.queryForObject("SELECT count(*) FROM author_profile", Long.class)).isEqualTo(1L);
@@ -134,7 +134,7 @@ class BrandStoreTest {
 
 	@Test
 	void 브랜드_프로필_추이_적재() {
-		var profile = new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://p", "소개", "{}");
+		var profile = new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://p", "소개", null, null, "{}");
 		snapshots.upsertBrandProfile("brandx", LocalDate.of(2026, 8, 6), profile);
 		snapshots.upsertBrandProfile("brandx", LocalDate.of(2026, 8, 6), profile);   // 같은 날 재수집 덮어쓰기
 		assertThat(db.queryForObject(
@@ -182,6 +182,6 @@ class BrandStoreTest {
 
 	private static PostInfo post(String code, long takenAt, Long views, Long fbPlays) {
 		return new PostInfo(code, "creator", null, null, "999", "REELS", "캡션", null,
-				takenAt, 10L, 2L, views, fbPlays, null, null, null, "{}", true, false, false);
+				takenAt, 10L, 2L, views, fbPlays, null, null, null, null, null, null, "{}", true, false, false);
 	}
 }
