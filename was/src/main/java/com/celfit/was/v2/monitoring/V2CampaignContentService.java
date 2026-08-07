@@ -6,6 +6,8 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
+import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.RegistrationResult;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
@@ -73,6 +75,11 @@ public class V2CampaignContentService {
 	 * 종결 3종 — 같은 shortcode의 아이템이 여럿일 때 <b>뒤로 미루는</b> 상태다(제외가 아니다).
 	 * 레거시 duplicate 판정 모수에서 빠지는 상태와 같은 기준이며({@link ItemStatus#derive}),
 	 * 종결 후 재등록이 허용돼 활성·종결 행이 공존할 수 있다(직접 등록 §6-4의 activeItemId 관용구).
+	 *
+	 * <p>단, <b>취소된 아이템은 아예 모수에서 뺀다</b>({@link #withoutCanceled}) — 자연 종결(ended)은
+	 * 이미 수집이 끝난 콘텐츠라 캠페인에 담는 게 정당하지만, 취소분에 캠페인만 붙이면 "success인데
+	 * 수집은 영영 없음"이 된다. 취소 여부는 레거시 응답(status가 ended/not_uploaded로 유도됨)으로는
+	 * 구분이 안 돼 아이템 행(canceled_at)을 직접 본다.
 	 */
 	private static final Set<String> TERMINAL_STATUSES =
 			Set.of(ItemStatus.NOT_UPLOADED, ItemStatus.ENDED, ItemStatus.HIDDEN);
@@ -82,18 +89,21 @@ public class V2CampaignContentService {
 	private final V1MonitoringItemUpdateService itemUpdateService;
 	private final V1MonitoringRegistrationService registrationService;
 	private final BrandLinkRepository linkRepository;
+	private final MonitoringItemRepository itemRepository;
 	private final Optional<BrandReadRepository> brandReadRepository;
 	private final Optional<BrandPostAssembler> brandPostAssembler;
 
 	public V2CampaignContentService(CampaignRepository campaignRepository,
 			TrackingItemAssembler trackingItemAssembler, V1MonitoringItemUpdateService itemUpdateService,
 			V1MonitoringRegistrationService registrationService, BrandLinkRepository linkRepository,
-			Optional<BrandReadRepository> brandReadRepository, Optional<BrandPostAssembler> brandPostAssembler) {
+			MonitoringItemRepository itemRepository, Optional<BrandReadRepository> brandReadRepository,
+			Optional<BrandPostAssembler> brandPostAssembler) {
 		this.campaignRepository = campaignRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
 		this.itemUpdateService = itemUpdateService;
 		this.registrationService = registrationService;
 		this.linkRepository = linkRepository;
+		this.itemRepository = itemRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.brandPostAssembler = brandPostAssembler;
 	}
@@ -114,8 +124,8 @@ public class V2CampaignContentService {
 		int days = validateTrackingDays(trackingDays);
 		String campaignKey = String.valueOf(campaign.id());
 
-		Map<String, TrackingItemResponse> itemsByShortcode = indexByShortcode(trackingItemAssembler
-				.assembleList(userId).items());
+		Map<String, TrackingItemResponse> itemsByShortcode = indexByShortcode(withoutCanceled(userId,
+				trackingItemAssembler.assembleList(userId).items()));
 
 		// 1차 판정 — 입력 순서대로 (즉시 확정) / (위임 대기) / (앞 항목의 재판정)으로 가른다.
 		List<Plan> plans = new ArrayList<>(ids.size());
@@ -152,8 +162,31 @@ public class V2CampaignContentService {
 				: createdItemIdsByShortcode(registrationService.register(userId,
 						body(delegatedUrls, days, campaignKey)));
 
+		// 202는 "새로 만들어진 아이템이 있다"일 때만 — 위임했어도 레거시가 전건을 접어 0개면
+		// 폴링할 등록 대상이 없으니 동기 완결(200)이다(§8).
 		return new Added(new V2CampaignContentsResponse(campaignKey, resolve(plans, createdItemIds)),
-				!delegatedUrls.isEmpty());
+				!createdItemIds.isEmpty());
+	}
+
+	/**
+	 * 취소 아이템 제외 — 종결 status 후보가 있을 때만 아이템 행을 읽는다(전원 활성인 평시 경로에
+	 * DB 왕복을 더하지 않는다). 취소는 반드시 종결 status로 유도되므로 이 게이트로 충분하다.
+	 */
+	private List<TrackingItemResponse> withoutCanceled(long userId, List<TrackingItemResponse> items) {
+		boolean anyTerminal = items.stream().anyMatch(item -> TERMINAL_STATUSES.contains(item.status()));
+		if (!anyTerminal) {
+			return items;
+		}
+		Set<String> canceledIds = new LinkedHashSet<>();
+		for (MonitoringItemRow row : itemRepository.findByUser(userId)) {
+			if (row.canceledAt() != null) {
+				canceledIds.add(String.valueOf(row.id()));
+			}
+		}
+		if (canceledIds.isEmpty()) {
+			return items;
+		}
+		return items.stream().filter(item -> !canceledIds.contains(item.id())).toList();
 	}
 
 	/**
@@ -192,19 +225,28 @@ public class V2CampaignContentService {
 	 *
 	 * <p>탐색 모수는 "그 캠페인 소속인 내 아이템"이다 — 같은 shortcode의 아이템이 여럿이어도
 	 * 캠페인 소속이 아닌 행은 애초에 제거 대상이 아니라 404다(남의 캠페인·비소속 구분 없이 같은 응답).
+	 *
+	 * <p>매칭되는 소속 아이템은 <b>전건</b> 연결을 끊는다 — 성과 대시보드는 레거시 아이템끼리
+	 * 중복 제거를 하지 않아(tagged↔레거시만 병합), 대표 1건만 끊으면 204 직후 재조회에 콘텐츠가
+	 * 그대로 남는다(종결 후 재등록·account 감지 중복이 같은 shortcode 행을 여럿 만들 수 있다).
 	 */
 	@Transactional
 	public void remove(long userId, long campaignId, String contentId) {
 		CampaignRow campaign = requireCampaign(userId, campaignId);
 		String campaignKey = String.valueOf(campaign.id());
+		String normalized = contentId == null ? "" : contentId.trim();
 
-		TrackingItemResponse target = trackingItemAssembler.assembleList(userId).items().stream()
-				.filter(item -> contentId.equals(shortcodeOf(item)))
+		List<TrackingItemResponse> targets = trackingItemAssembler.assembleList(userId).items().stream()
+				.filter(item -> normalized.equals(shortcodeOf(item)))
 				.filter(item -> campaignKey.equals(item.campaignId()))
-				.reduce(V2CampaignContentService::preferred)
-				.orElseThrow(() -> V1ApiException.notFound("캠페인에서 콘텐츠를 찾을 수 없습니다."));
+				.toList();
+		if (targets.isEmpty()) {
+			throw V1ApiException.notFound("캠페인에서 콘텐츠를 찾을 수 없습니다.");
+		}
 
-		itemUpdateService.patch(userId, Long.parseLong(target.id()), campaignField(null));
+		for (TrackingItemResponse target : targets) {
+			itemUpdateService.patch(userId, Long.parseLong(target.id()), campaignField(null));
+		}
 	}
 
 	// ---------- 판정 ----------
@@ -351,6 +393,7 @@ public class V2CampaignContentService {
 				.orElseThrow(() -> V1ApiException.notFound(CAMPAIGN_NOT_FOUND));
 	}
 
+	/** trim 정규화 포함 — 공백 섞인 id를 그대로 판정하면 조용한 NOT_FOUND가 된다(응답도 정규형 에코). */
 	private static List<String> validateContentIds(List<String> contentIds) {
 		if (contentIds == null || contentIds.isEmpty()) {
 			throw V1ApiException.validation("추가할 콘텐츠를 입력해 주세요.");
@@ -358,12 +401,14 @@ public class V2CampaignContentService {
 		if (contentIds.size() > MAX_CONTENTS) {
 			throw V1ApiException.validation("한 번에 추가할 수 있는 항목은 최대 100개예요.");
 		}
+		List<String> normalized = new ArrayList<>(contentIds.size());
 		for (String contentId : contentIds) {
 			if (contentId == null || contentId.isBlank()) {
 				throw V1ApiException.validation("contentIds 형식이 올바르지 않아요.");
 			}
+			normalized.add(contentId.trim());
 		}
-		return contentIds;
+		return normalized;
 	}
 
 	/**
