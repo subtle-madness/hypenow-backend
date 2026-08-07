@@ -1,0 +1,17 @@
+{
+  "user": {
+    "pk": 9876543210,
+    "pk_id": "9876543210",
+    "username": "beauty_creator",
+    "full_name": "뷰티 크리에이터",
+    "is_private": false,
+    "is_verified": false,
+    "profile_pic_url": "https://instagram.example-cdn.com/v/t51.2885-19/author_profile.jpg",
+    "biography": "뷰티 리뷰 · 협업 문의 DM",
+    "follower_count": 152000,
+    "following_count": 312,
+    "media_count": 481,
+    "account_type": 2
+  },
+  "status": "ok"
+}

@@ -35,13 +35,14 @@ public class SettingsService {
     static final String SIMILAR_BATCH_LIMIT = "similar.batch-limit";
     static final String BEAUTY_BATCH_LIMIT = "beauty.batch-limit";
     static final String REELS_BATCH_LIMIT = "reels.batch-limit";
+    static final String REELS_ACTOR_RESULTS_LIMIT = "reels.actor-results-limit";
 
     // 댓글 관련 키(comments-per-post·max-attempts)는 댓글 수집이 꺼지면서(yml comments-enabled)
     // UI 목록에서 제외 — 로직·기본값은 유지되므로 재활성화 시 다시 넣으면 된다.
     private static final List<String> KEYS = List.of(
             RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
             COLLECT_BATCH_LIMIT, COLLECT_REVISIT_INTERVAL_DAYS, SIMILAR_BATCH_LIMIT,
-            BEAUTY_BATCH_LIMIT, REELS_BATCH_LIMIT);
+            BEAUTY_BATCH_LIMIT, REELS_BATCH_LIMIT, REELS_ACTOR_RESULTS_LIMIT);
 
     private static final java.util.Map<String, String> DESCRIPTIONS = java.util.Map.of(
             RESULTS_LIMIT, "discover: 키워드당 발굴할 게시물 수 상한 (해시태그 페이지 반복량 결정)",
@@ -52,7 +53,8 @@ public class SettingsService {
             COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 달력 기준. 1이면 오늘(KST) 아직 방문 안 한 계정이 대상, 자정에 전원 리셋",
             SIMILAR_BATCH_LIMIT, "similar: 실행 1회당 유사 계정을 수확할 시드 수 (Hiker 호출량 제어)",
             BEAUTY_BATCH_LIMIT, "beauty: 판정 1회당 처리할 계정 수 상한 (실행 시간 제어 — 초과분은 다음 실행)",
-            REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)");
+            REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)",
+            REELS_ACTOR_RESULTS_LIMIT, "reels: ACTOR 소스일 때 계정당 수확할 릴스 수 (Apify 결과 건수 과금)");
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
@@ -131,6 +133,11 @@ public class SettingsService {
     }
 
     @Transactional(readOnly = true)
+    public int reelsActorResultsLimit() {
+        return effective(REELS_ACTOR_RESULTS_LIMIT);
+    }
+
+    @Transactional(readOnly = true)
     public List<SettingView> list() {
         return KEYS.stream().map(this::toView).toList();
     }
@@ -175,6 +182,7 @@ public class SettingsService {
             case SIMILAR_BATCH_LIMIT -> similarProps.batchLimit();
             case BEAUTY_BATCH_LIMIT -> beautyProps.batchLimit();
             case REELS_BATCH_LIMIT -> reelsProps.batchLimit();
+            case REELS_ACTOR_RESULTS_LIMIT -> reelsProps.actorResultsLimit();
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 설정 키: " + key);
         };
     }

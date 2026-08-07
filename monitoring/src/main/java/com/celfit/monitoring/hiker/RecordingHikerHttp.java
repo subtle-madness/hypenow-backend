@@ -55,6 +55,15 @@ public class RecordingHikerHttp implements HikerHttp {
 		if (path.startsWith("/v2/user/by/username")) {
 			return "PROFILE";
 		}
+		// 브랜드 태그 모니터링 2종(2026-08-06 스펙) — 태그 열거는 기존 열거(POSTS)와 kind를 분리해
+		// 원형 포렌식이 브랜드 유입분만 걸러 볼 수 있게 한다. 게시자 프로필은 by/username(PROFILE)과
+		// 조회 키가 달라(user_id) 별도 kind로 둔다.
+		if (path.startsWith("/v2/user/by/id")) {
+			return "PROFILE_BY_ID";
+		}
+		if (path.startsWith("/v2/user/tag/medias")) {
+			return "TAGGED";
+		}
 		if (path.startsWith("/v2/user/medias") || path.startsWith("/v2/user/clips")) {
 			return "POSTS";
 		}
@@ -76,7 +85,7 @@ public class RecordingHikerHttp implements HikerHttp {
 	private static String subjectOf(String path) {
 		String key = switch (kindOf(path)) {
 			case "PROFILE" -> "username";
-			case "POSTS" -> "user_id";
+			case "POSTS", "TAGGED", "PROFILE_BY_ID" -> "user_id";
 			case "POST" -> "code";
 			case "COMMENTS" -> "id";
 			case "MEDIA_INFO" -> "url";

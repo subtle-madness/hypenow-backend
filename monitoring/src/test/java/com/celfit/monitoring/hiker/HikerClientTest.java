@@ -44,6 +44,154 @@ class HikerClientTest {
 	}
 
 	@Test
+	void 프로필_파싱은_biography를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		ProfileInfo p = client.fetchProfile("rarebeauty");
+		assertThat(p.biography()).isNotBlank();   // profile.json의 user.biography(실측 픽스처 실재 확인)
+	}
+
+	/**
+	 * 브랜드 was 계약 §3-2 — 인증뱃지·외부링크는 추가 콜 없이 같은 프로필 응답에서 뽑는다.
+	 * is_verified는 null(키 부재)과 false(관측된 미인증)를 구분해야 해서 Boolean이다.
+	 */
+	@Test
+	void 프로필_파싱은_인증뱃지와_외부링크를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		ProfileInfo p = client.fetchProfile("rarebeauty");
+		assertThat(p.isVerified()).isTrue();   // profile.json 실측: user.is_verified = true
+		assertThat(p.externalUrl()).contains("sephora.com");   // 실측: 상품 링크
+	}
+
+	/** external_url은 없을 수 있는 필드 — 파싱이 예외 없이 null을 허용하는지가 계약이다. */
+	@Test
+	void 프로필_파싱은_외부링크_부재를_null로_허용한다() {
+		HikerClient client = new HikerClient(
+				path -> "{\"user\":{\"pk\":1,\"is_private\":false},\"status\":\"ok\"}");
+		ProfileInfo p = client.fetchProfile("nolink");
+		assertThat(p.externalUrl()).isNull();
+		assertThat(p.isVerified()).isNull();   // 키 부재는 null — false(관측된 미인증)와 구분한다
+	}
+
+	/**
+	 * 게시자 프로필(/v2/user/by/id — 브랜드 태그 모니터링 스펙 §2). 응답 셰이프는 라이브 미실측이라
+	 * /v2/user/by/username과 동일한 {user:{...}}로 가정(스펙이 경로만 확정) — 픽스처는 profile.json 파생.
+	 */
+	@Test
+	void 게시자_프로필_파싱_by_id() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("author-profile-by-id.json");
+		});
+		AuthorInfo a = client.fetchAuthorProfile("9876543210");
+		assertThat(calls.getFirst()).startsWith("/v2/user/by/id?user_id=9876543210");
+		assertThat(a.igUserId()).isEqualTo("9876543210");
+		assertThat(a.username()).isEqualTo("beauty_creator");
+		assertThat(a.followers()).isPositive();
+		assertThat(a.biography()).isNotBlank();
+		assertThat(a.isPrivate()).isFalse();
+		// 브랜드 was 계약 §3-2 — 게시자 인증뱃지(author-profile-by-id.json 합성 픽스처: false)
+		assertThat(a.isVerified()).isFalse();
+	}
+
+	/** 게시자 is_verified도 키 부재(null)와 관측된 false를 구분한다 — 화면이 뱃지 미표시와 미상을 나눈다. */
+	@Test
+	void 게시자_프로필_인증뱃지_키_부재는_null이다() {
+		HikerClient client = new HikerClient(path -> "{\"user\":{\"pk\":9876543210},\"status\":\"ok\"}");
+		assertThat(client.fetchAuthorProfile("9876543210").isVerified()).isNull();
+	}
+
+	/** 게시자 비공개는 오류가 아니라 관측값이다 — fetchProfile과 달리 예외를 던지면 안 된다. */
+	@Test
+	void 게시자_프로필은_비공개여도_예외_없이_관측값을_준다() {
+		String privateUser = fixture("author-profile-by-id.json")
+				.replace("\"is_private\": false", "\"is_private\": true");
+		HikerClient client = new HikerClient(path -> privateUser);
+		AuthorInfo a = client.fetchAuthorProfile("9876543210");
+		assertThat(a.isPrivate()).isTrue();
+	}
+
+	/** 태그 열거(findings §11) — 릴스 조회수가 인라인이라 clips 보강 콜 없이 1페이지 1콜이어야 한다. */
+	@Test
+	void 태그_열거는_1콜에_릴스_조회수_인라인이고_클립_콜이_없다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("tag-medias.json");
+		});
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		assertThat(calls).hasSize(1);
+		assertThat(calls.getFirst()).startsWith("/v2/user/tag/medias?user_id=");
+		assertThat(page.nextPageId()).isEqualTo("cursor-p2");
+		assertThat(page.posts()).hasSize(4);
+		var reel = page.posts().stream().filter(p -> "REELS".equals(p.contentType())).findFirst().orElseThrow();
+		assertThat(reel.views()).isPositive();        // ig_play_count 인라인(§11-2 — clips 머지 불필요)
+		assertThat(reel.viewsTrusted()).isTrue();
+		assertThat(reel.ownerUserId()).isNotBlank();  // 게시자 프로필 콜의 user_id 공급원
+		assertThat(reel.username()).isNotBlank();     // 작성자 username(usernameHint 없이 user 노드에서)
+		// 소급 태그 혼입 재현 — 응답 순서를 재정렬하지 않는다(페이지 단위 중단 판정이 순서 의존).
+		assertThat(page.posts().getLast().shortCode()).isEqualTo("TagOldD");
+	}
+
+	/** 커서 전달 — 2페이지 요청은 page_id 파라미터를 실어야 한다. */
+	@Test
+	void 태그_열거는_커서를_page_id로_전달한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("tag-medias.json");
+		});
+		client.fetchTaggedPage("17841400000000000", "cursor-p2");
+		assertThat(calls.getFirst()).contains("page_id=cursor-p2");
+	}
+
+	/** 태그 0건 계정 — Hiker는 200 빈 배열이 아니라 404를 준다(fetchRecentPosts와 동일 규칙). */
+	@Test
+	void 태그_열거_404는_빈_페이지다() {
+		HikerClient client = new HikerClient(path -> {
+			throw new SubjectNotFoundException("Entries not found");
+		});
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		assertThat(page.posts()).isEmpty();
+		assertThat(page.nextPageId()).isNull();
+	}
+
+	/** 매 페이지 유효 댓글 1건(pk를 콜 순번으로 바꿔 무진전 가드를 피한다) — CollectServiceTest 관용구. */
+	private static String alwaysMoreCommentPage(int callIndex) {
+		return """
+				{"response":{"comments":[
+				{"pk":"c%d","text":"댓글%d","comment_like_count":1,
+				 "created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}
+				],"has_more_comments":true},"next_page_id":"cursor-%d"}""".formatted(callIndex, callIndex, callIndex);
+	}
+
+	/** 댓글 기지 중단(태그 모니터링 스펙 §3) — 페이지 전체가 기지 댓글이면 다음 페이지를 부르지 않는다. */
+	@Test
+	void 댓글_수집은_페이지_전체가_기지면_중단한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return alwaysMoreCommentPage(calls.size());
+		});
+		// 1페이지의 댓글 id(c1)가 이미 기지 — 3페이지 허용이어도 1콜에서 멈춰야 한다.
+		var comments = client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of("c1"));
+		assertThat(calls).hasSize(1);
+		assertThat(comments).hasSize(1);   // 기지여도 이번 응답분은 반환(upsert가 body·like_count 갱신)
+	}
+
+	/** 기지 집합이 비면 기존 동작 그대로 페이지 수만큼 간다(캠페인 경로 불변 검증 겸함). */
+	@Test
+	void 댓글_수집은_기지_집합이_비면_페이지_수만큼_간다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return alwaysMoreCommentPage(calls.size());
+		});
+		client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of());
+		assertThat(calls).hasSize(3);
+	}
+
+	@Test
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
 		HikerClient client = new HikerClient(fakeHttp());
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 1);
@@ -66,6 +214,35 @@ class HikerClientTest {
 		assertThat(feed.views()).isNull();                   // 피드는 조회수 영구 null
 		assertThat(feed.saves()).isNull();
 		assertThat(feed.shares()).isNull();
+	}
+
+	/**
+	 * 브랜드 was 계약 §3-2 — 영상 재생 URL·길이·유료협찬 표시(brand_post_meta). 추가 콜 없이
+	 * 같은 열거 응답의 media 노드에서 뽑는다. is_paid_partnership은 null(키 부재 = 판정 unknown)과
+	 * false(관측된 비협찬)를 구분해야 해서 Boolean이다.
+	 */
+	@Test
+	void 게시물_파싱은_영상과_유료협찬_표시를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		List<PostInfo> posts = client.fetchRecentPosts("rarebeauty", "12345", 1);
+		PostInfo reels = posts.stream().filter(p -> "REELS".equals(p.contentType())).findFirst().orElseThrow();
+		// medias.json 실측: 릴스는 video_versions[0].url·video_duration(12.119…)이 실린다
+		assertThat(reels.videoUrl()).isNotBlank();
+		assertThat(reels.videoDuration()).isPositive();
+		assertThat(reels.isPaidPartnership()).isFalse();   // 실측: 키 존재, 값 false
+		// 피드·캐러셀은 video_versions·video_duration 자체가 없다 → null(취득 불가 규칙)
+		PostInfo feed = posts.stream().filter(p -> "FEED".equals(p.contentType())).findFirst().orElseThrow();
+		assertThat(feed.videoUrl()).isNull();
+		assertThat(feed.videoDuration()).isNull();
+	}
+
+	/** 유료협찬 키 부재는 null — false(관측된 비협찬)로 뭉개면 화면이 unknown을 표시할 근거를 잃는다. */
+	@Test
+	void 유료협찬_키_부재는_null이고_false와_구분된다() {
+		HikerClient client = new HikerClient(path -> fixture("tag-medias.json"));
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		// tag-medias.json(합성 픽스처)에는 is_paid_partnership 키 자체가 없다
+		assertThat(page.posts()).allSatisfy(p -> assertThat(p.isPaidPartnership()).isNull());
 	}
 
 	/** 저장·리포스트 키를 안 실은 세션의 medias 응답 — 같은 릴스가 clips 응답에는 키와 함께 실려 있다. */

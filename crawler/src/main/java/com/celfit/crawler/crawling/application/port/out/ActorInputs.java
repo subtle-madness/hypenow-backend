@@ -32,6 +32,14 @@ public final class ActorInputs {
         return input;
     }
 
+    /** reel 전용 상세 액터의 계정 열거 모드 — username 배열 + 계정당 결과 한도(건수 과금). */
+    public static Map<String, Object> reels(String username, int resultsLimit) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("username", List.of(username));
+        input.put("resultsLimit", resultsLimit);
+        return input;
+    }
+
     public static Map<String, Object> comments(List<String> postUrls, int perPost) {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("directUrls", postUrls);

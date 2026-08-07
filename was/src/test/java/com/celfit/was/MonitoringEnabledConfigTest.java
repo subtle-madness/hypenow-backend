@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.monitoring.DigestJob;
 import com.celfit.was.monitoring.MonitoringConfig;
+import com.celfit.was.v1.brandmonitoring.V1BrandAccountService;
+import com.celfit.was.v1.brandmonitoring.V1BrandAccountsController;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationExecutor;
 import com.celfit.was.v1.monitoring.NoopRegistrationExecutor;
 import com.celfit.was.v1.monitoring.RecoverStalePendingScheduler;
@@ -70,6 +72,14 @@ class MonitoringEnabledConfigTest extends IntegrationTest {
 		assertThat(context.getBeansOfType(RegistrationExecutor.class)).hasSize(1);
 		assertThat(context.getBean(RegistrationExecutor.class)).isInstanceOf(MonitoringRegistrationExecutor.class);
 		assertThat(context.getBeanNamesForType(NoopRegistrationExecutor.class)).isEmpty();
+	}
+
+	@Test
+	void 활성이면_브랜드_계정_표면이_실_컨텍스트에서_배선된다() {
+		// 슬라이스 테스트가 못 보는 것 — 실 컨텍스트에서 조건부 빈 5개(컨트롤러·서비스·트랜잭션·
+		// 어셈블러 + 탈퇴 훅 주입)가 실제로 조립되는지.
+		assertThat(context.getBeanNamesForType(V1BrandAccountsController.class)).hasSize(1);
+		assertThat(context.getBeanNamesForType(V1BrandAccountService.class)).hasSize(1);
 	}
 
 	@Test

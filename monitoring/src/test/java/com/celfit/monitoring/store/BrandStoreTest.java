@@ -1,0 +1,325 @@
+package com.celfit.monitoring.store;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.celfit.monitoring.domain.BrandStatus;
+import com.celfit.monitoring.hiker.AuthorInfo;
+import com.celfit.monitoring.hiker.CommentInfo;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.testsupport.TestDb;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+/**
+ * 브랜드 태그 모니터링 전용 스토어(2026-08-06 스펙 + 전면 전용 스키마 개정) —
+ * StoreTest와 같은 Testcontainers 관용구. 캠페인 테이블은 여기서 일절 건드리지 않는다.
+ */
+class BrandStoreTest {
+
+	private JdbcTemplate db;
+	private BrandRepository brands;
+	private TaggedPostRepository taggedPosts;
+	private AuthorProfileRepository authors;
+	private BrandSnapshotRepository snapshots;
+	private BrandPostMetaRepository postMeta;
+	private BrandCommentRepository comments;
+
+	@BeforeEach
+	void setUp() {
+		var ds = TestDb.dataSource(TestDb.container());
+		db = new JdbcTemplate(ds);
+		TestDb.resetAndMigrate(db, ds);
+		brands = new BrandRepository(db);
+		taggedPosts = new TaggedPostRepository(db);
+		authors = new AuthorProfileRepository(db);
+		snapshots = new BrandSnapshotRepository(db);
+		postMeta = new BrandPostMetaRepository(db);
+		comments = new BrandCommentRepository(db);
+	}
+
+	@Test
+	void 브랜드_등록과_재가입_재활성() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		assertThat(brands.findActive()).hasSize(1);
+		assertThat(brands.close("brandx")).isTrue();
+		assertThat(brands.findActive()).isEmpty();
+		assertThat(brands.close("brandx")).isFalse();          // 이미 닫힘 — 멱등
+		long reId = brands.insertOrReactivate("brandx", profile("brandx", "111", 2000L, "소개2"));
+		assertThat(reId).isEqualTo(id);                        // 같은 행 재활성(UNIQUE username)
+		BrandRow row = brands.findByUsername("brandx").orElseThrow();
+		assertThat(row.status()).isEqualTo(BrandStatus.ACTIVE);
+		assertThat(row.lastSweptOn()).isNull();                // 재가입 시 초기화 — "수집 준비 중" 복귀
+	}
+
+	@Test
+	void 등록은_프로필_전필드를_적재한다() {
+		long id = brands.insertOrReactivate("brandx", new ProfileInfo("brandx", "111", 1000L, 10L, 5L,
+				"브랜드", "https://pic", "소개", true, "https://link", "{}"));
+		assertThat(column(id, "full_name", String.class)).isEqualTo("브랜드");
+		assertThat(column(id, "profile_pic_url", String.class)).isEqualTo("https://pic");
+		assertThat(column(id, "is_verified", Boolean.class)).isTrue();
+		assertThat(column(id, "external_url", String.class)).isEqualTo("https://link");
+		assertThat(column(id, "following", Long.class)).isEqualTo(10L);
+		assertThat(column(id, "media_count", Long.class)).isEqualTo(5L);
+	}
+
+	@Test
+	void 스윕_완주일과_프로필_갱신() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		brands.touchSwept(id, LocalDate.of(2026, 8, 6));
+		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn())
+				.isEqualTo(LocalDate.of(2026, 8, 6));
+		brands.refreshProfile(id, profile("brandx", "111", 1500L, "새 소개"));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM brand_account WHERE id = " + id, Long.class)).isEqualTo(1500L);
+	}
+
+	@Test
+	void refreshProfile은_전필드를_갱신한다() {
+		long id = brands.insertOrReactivate("brand_z", profile("brand_z"));
+		brands.refreshProfile(id, new ProfileInfo("brand_z", "1", 10L, 5L, 3L,
+				"이름", "https://pic", "소개", true, "https://link", "{}"));
+		assertThat(column(id, "full_name", String.class)).isEqualTo("이름");
+		assertThat(column(id, "profile_pic_url", String.class)).isEqualTo("https://pic");
+		assertThat(column(id, "is_verified", Boolean.class)).isTrue();
+		assertThat(column(id, "external_url", String.class)).isEqualTo("https://link");
+		assertThat(column(id, "following", Long.class)).isEqualTo(5L);
+		assertThat(column(id, "media_count", Long.class)).isEqualTo(3L);
+		assertThat(column(id, "biography", String.class)).isEqualTo("소개");
+	}
+
+	@Test
+	void touchSwept는_완주시각과_오류클리어까지_기록한다() {
+		long id = brands.insertOrReactivate("brand_x", profile("brand_x"));
+		brands.markBackfillError(id, "백필 실패: 타임아웃");
+		assertThat(column(id, "backfill_error", String.class)).isEqualTo("백필 실패: 타임아웃");
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
+		assertThat(column(id, "backfill_error", String.class)).isNull();
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isNotNull();
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	@Test
+	void backfill_completed_at은_최초_완주시각을_보존한다() {
+		long id = brands.insertOrReactivate("brand_x", profile("brand_x"));
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
+		Timestamp first = column(id, "backfill_completed_at", Timestamp.class);
+		brands.touchSwept(id, LocalDate.of(2026, 8, 8));
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isEqualTo(first);
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isNotNull();   // 이쪽은 매번 전진
+	}
+
+	@Test
+	void markBackfillError는_ready_이후엔_덮지_않는다() {
+		long id = brands.insertOrReactivate("brand_y", profile("brand_y"));
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
+		brands.markBackfillError(id, "늦게 온 실패");
+		assertThat(column(id, "backfill_error", String.class)).isNull();
+	}
+
+	@Test
+	void 재가입은_백필_상태를_초기화한다() {
+		// 재등록 = 백필을 처음부터 다시 — "수집 준비 중"으로 되돌아야 was 폴링이 collecting을 본다.
+		long id = brands.insertOrReactivate("brand_y", profile("brand_y"));
+		brands.markBackfillError(id, "백필 실패");
+		brands.close("brand_y");
+		brands.insertOrReactivate("brand_y", profile("brand_y"));
+		assertThat(column(id, "backfill_error", String.class)).isNull();
+
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
+		brands.close("brand_y");
+		brands.insertOrReactivate("brand_y", profile("brand_y"));
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
+	}
+
+	@Test
+	void 태그_게시물_링크와_댓글_게이트_상태() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null));
+		taggedPosts.insert(id, post("CodeA", 1754000000L));
+		taggedPosts.insert(id, post("CodeA", 1754000000L));    // 재감지 — ON CONFLICT 무해
+		assertThat(taggedPosts.knownCodes(id)).containsExactly("CodeA");
+		assertThat(taggedPosts.commentsCollectedCounts(id, Set.of("CodeA")))
+				.containsEntry("CodeA", 0L);
+		taggedPosts.updateCommentsCollected(id, "CodeA", 7);
+		assertThat(taggedPosts.commentsCollectedCounts(id, Set.of("CodeA")))
+				.containsEntry("CodeA", 7L);
+		assertThat(taggedPosts.commentsCollectedCounts(id, List.of())).isEmpty();
+	}
+
+	@Test
+	void 게시자_캐시_upsert와_stale_판정() {
+		authors.upsert(new AuthorInfo("999", "creator", "이름", 100L, 10L, 5L, "bio", "https://p", false, true));
+		assertThat(authors.freshIgUserIds(Set.of("999", "888"),
+				Instant.now().minusSeconds(30L * 24 * 3600)))
+				.containsExactly("999");                       // 888은 미보유 → 콜 필요
+		assertThat(authors.freshIgUserIds(Set.of("999"), Instant.now().plusSeconds(60))).isEmpty();
+		assertThat(authors.freshIgUserIds(List.of(), Instant.now())).isEmpty();
+		assertThat(db.queryForObject(
+				"SELECT is_verified FROM author_profile WHERE ig_user_id='999'", Boolean.class)).isTrue();
+		authors.upsert(new AuthorInfo("999", "creator", "이름", 200L, 10L, 5L, "bio2", "https://p", true, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM author_profile WHERE ig_user_id='999'", Long.class)).isEqualTo(200L);
+		// 인증뱃지는 관측값 그대로 — 키 부재(null)를 "미인증"으로 굳히지 않는다(AuthorInfo 주석).
+		assertThat(db.queryForObject(
+				"SELECT is_verified FROM author_profile WHERE ig_user_id='999'", Boolean.class)).isNull();
+		assertThat(db.queryForObject("SELECT count(*) FROM author_profile", Long.class)).isEqualTo(1L);
+	}
+
+	// ── brand_post_snapshot — 캠페인 SnapshotRepository 동형 규칙 이식 검증 ────
+
+	@Test
+	void 스냅샷_upsert와_fb_캐리포워드() {
+		LocalDate d1 = LocalDate.of(2026, 8, 1);
+		LocalDate d2 = LocalDate.of(2026, 8, 2);
+		// 1일차: fb 관측(views = ig 1000 + fb 50)
+		snapshots.upsertPost(d1, post("ReelA", 1754000000L, 1000L, 50L));
+		assertThat(snapshotViews("ReelA", d1)).isEqualTo(1050L);
+		// 2일차: fb 미관측(IG 전용 세션) — 직전 fb를 캐리포워드해 시계열 역행 방지
+		snapshots.upsertPost(d2, post("ReelA", 1754000000L, 1100L, null));
+		assertThat(snapshotViews("ReelA", d2)).isEqualTo(1150L);
+	}
+
+	@Test
+	void 스냅샷_fb_첫_관측_역전파() {
+		LocalDate d1 = LocalDate.of(2026, 8, 1);
+		LocalDate d2 = LocalDate.of(2026, 8, 2);
+		snapshots.upsertPost(d1, post("ReelB", 1754000000L, 1000L, null));   // fb 미관측
+		snapshots.upsertPost(d2, post("ReelB", 1754000000L, 1100L, 80L));    // 첫 fb 관측
+		// 이전 미관측 행에 소급 — 안 하면 관측 시작일에 +80 유령 점프
+		assertThat(snapshotViews("ReelB", d1)).isEqualTo(1080L);
+	}
+
+	@Test
+	void 스냅샷_0_캐리_판정() {
+		LocalDate yesterday = LocalDate.of(2026, 8, 5);
+		LocalDate today = LocalDate.of(2026, 8, 6);
+		// 전일 reposts 0으로 종료 + 양수 이력 전무 → 캐리 대상
+		snapshots.upsertPost(yesterday, post("ReelC", 1754000000L, null, null).mergedMetrics(null, null, 0L));
+		assertThat(snapshots.codesWithRepostsZeroCarry(Set.of("ReelC"), today)).containsExactly("ReelC");
+		// 양수 이력이 생기면 자동 해제
+		snapshots.upsertPost(today, post("ReelC", 1754000000L, null, null).mergedMetrics(null, null, 3L));
+		assertThat(snapshots.codesWithRepostsZeroCarry(Set.of("ReelC"), today.plusDays(1))).isEmpty();
+	}
+
+	@Test
+	void 브랜드_프로필_추이_적재() {
+		var profile = new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://p", "소개", null, null, "{}");
+		snapshots.upsertBrandProfile("brandx", LocalDate.of(2026, 8, 6), profile);
+		snapshots.upsertBrandProfile("brandx", LocalDate.of(2026, 8, 6), profile);   // 같은 날 재수집 덮어쓰기
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM brand_profile_snapshot WHERE username='brandx'", Long.class))
+				.isEqualTo(1L);
+	}
+
+	// ── brand_post_meta / brand_post_comment ─────────────────────────────────
+
+	@Test
+	void 게시물_메타는_썸네일_보존_upsert다() {
+		postMeta.upsert("CodeA", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
+				null, null, null);
+		postMeta.upsert("CodeA", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션 수정", null,
+				null, null, null);
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CodeA'", String.class))
+				.isEqualTo("캡션 수정");
+		assertThat(db.queryForObject(
+				"SELECT thumbnail_url FROM brand_post_meta WHERE short_code='CodeA'", String.class))
+				.isEqualTo("https://thumb1");   // null이 기존 유효 썸네일을 지우지 않는다
+	}
+
+	@Test
+	void 게시물_메타는_영상_협찬_필드를_적재한다() {
+		postMeta.upsert("CodeB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
+				"https://video.mp4", 12.5, true);
+		assertThat(db.queryForObject(
+				"SELECT video_url FROM brand_post_meta WHERE short_code='CodeB'", String.class))
+				.isEqualTo("https://video.mp4");
+		assertThat(db.queryForObject(
+				"SELECT video_duration FROM brand_post_meta WHERE short_code='CodeB'", Double.class))
+				.isEqualTo(12.5);
+		assertThat(db.queryForObject(
+				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='CodeB'", Boolean.class))
+				.isTrue();
+		// 재관측은 영상 URL·길이를 새 값으로 갱신하고(서명 만료 방어), 협찬 판정은 키 부재
+		// (null=unknown)를 그대로 반영한다(PostInfo 주석 §3-2 — 보존하면 협찬 해제를 못 따라간다).
+		postMeta.upsert("CodeB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
+				"https://video2.mp4", 30.0, null);
+		assertThat(db.queryForObject(
+				"SELECT video_url FROM brand_post_meta WHERE short_code='CodeB'", String.class))
+				.isEqualTo("https://video2.mp4");
+		assertThat(db.queryForObject(
+				"SELECT video_duration FROM brand_post_meta WHERE short_code='CodeB'", Double.class))
+				.isEqualTo(30.0);
+		assertThat(db.queryForObject(
+				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='CodeB'", Boolean.class))
+				.isNull();
+	}
+
+	/**
+	 * 리뷰 I1 — 영상 URL·길이는 썸네일과 같은 CDN 서명 표시값이라 꽝 세션(키 부재)이 기존 값을
+	 * 지우면 안 된다(세션 복권 실측 08-04: 같은 엔드포인트가 키를 실었다 뺐다 한다).
+	 */
+	@Test
+	void 영상_필드_null_관측은_기존_값을_보존한다() {
+		postMeta.upsert("CodeC", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
+				"https://video.mp4", 12.5, true);
+		postMeta.upsert("CodeC", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", null,
+				null, null, true);
+		assertThat(db.queryForObject(
+				"SELECT video_url FROM brand_post_meta WHERE short_code='CodeC'", String.class))
+				.isEqualTo("https://video.mp4");
+		assertThat(db.queryForObject(
+				"SELECT video_duration FROM brand_post_meta WHERE short_code='CodeC'", Double.class))
+				.isEqualTo(12.5);
+	}
+
+	@Test
+	void 댓글은_누적_upsert되고_id_집합을_조회한다() {
+		comments.upsertForPost("CodeA", List.of(
+				new CommentInfo("c1", "user1", "본문1", 1L, Instant.now(), null)));
+		comments.upsertForPost("CodeA", List.of(
+				new CommentInfo("c1", "user1", "본문1 수정", 9L, Instant.now(), null),
+				new CommentInfo("c2", "user2", "본문2", 2L, Instant.now(), "답글")));
+		assertThat(comments.findIds("CodeA")).containsExactlyInAnyOrder("c1", "c2");
+		assertThat(comments.findIds("없는코드")).isEmpty();
+		assertThat(db.queryForObject(
+				"SELECT like_count FROM brand_post_comment WHERE short_code='CodeA' AND id='c1'",
+				Long.class)).isEqualTo(9L);
+	}
+
+	private Long snapshotViews(String code, LocalDate on) {
+		return db.queryForObject(
+				"SELECT views FROM brand_post_snapshot WHERE short_code=? AND captured_on=?",
+				Long.class, code, on);
+	}
+
+	/** brand_account 컬럼 직조회 — 조회 API가 아직 없어 저장 여부를 SQL로 확인한다. */
+	private <T> T column(long brandId, String name, Class<T> type) {
+		return db.queryForObject("SELECT " + name + " FROM brand_account WHERE id = ?", type, brandId);
+	}
+
+	private static ProfileInfo profile(String username) {
+		return profile(username, "1", 1L, null);
+	}
+
+	private static ProfileInfo profile(String username, String igUserId, Long followers, String biography) {
+		return new ProfileInfo(username, igUserId, followers, null, null, null, null, biography,
+				null, null, "{}");
+	}
+
+	private static PostInfo post(String code, long takenAt) {
+		return post(code, takenAt, 100L, null);
+	}
+
+	private static PostInfo post(String code, long takenAt, Long views, Long fbPlays) {
+		return new PostInfo(code, "creator", null, null, "999", "REELS", "캡션", null,
+				takenAt, 10L, 2L, views, fbPlays, null, null, null, null, null, null, "{}", true, false, false);
+	}
+}

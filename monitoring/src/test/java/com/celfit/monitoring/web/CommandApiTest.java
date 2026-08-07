@@ -118,7 +118,7 @@ class CommandApiTest {
 	@Test
 	void 스냅샷_쓰기는_바깥_트랜잭션에_참여한다() {
 		var post = new PostInfo("TXPROBE1", "someuser", null, null, null, "REELS", "캡션", null, 1_785_000_000L,
-				1L, 1L, 1L, null, null, null, null, "{}", true, false, false);
+				1L, 1L, 1L, null, null, null, null, null, null, null, "{}", true, false, false);
 
 		tx.executeWithoutResult(status -> {
 			snapshotWriter.savePost(LocalDate.of(2026, 7, 29), post);

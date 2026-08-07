@@ -113,9 +113,9 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, "{}", true, false, false);
+		var post = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, "{}", true, false, false);
+		var post2 = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
@@ -125,13 +125,13 @@ class StoreTest {
 	@Test
 	void 좋아요_숨김_플래그는_저장되고_해제되면_덮인다() {
 		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				null, 2L, 100L, null, null, null, null, "{}", true, true, false);
+				null, 2L, 100L, null, null, null, null, null, null, null, "{}", true, true, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
 		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("likes", null).containsEntry("likes_hidden", true);
 
 		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				90L, 2L, 100L, null, null, null, null, "{}", true, false, false);
+				90L, 2L, 100L, null, null, null, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
 		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("likes", 90L).containsEntry("likes_hidden", false);
@@ -141,13 +141,13 @@ class StoreTest {
 	@Test
 	void 공유_숨김_플래그는_저장되고_해제되면_덮인다() {
 		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				10L, 2L, 100L, null, null, null, null, "{}", true, false, true);
+				10L, 2L, 100L, null, null, null, null, null, null, null, "{}", true, false, true);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
 		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("shares", null).containsEntry("shares_hidden", true);
 
 		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				10L, 2L, 100L, null, null, 7L, null, "{}", true, false, false);
+				10L, 2L, 100L, null, null, 7L, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
 		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
 				.containsEntry("shares", 7L).containsEntry("shares_hidden", false);
@@ -199,7 +199,7 @@ class StoreTest {
 
 	private static PostInfo reels(Long igViews, Long fbPlays) {
 		return new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
-				10L, 2L, igViews, fbPlays, null, null, null, "{}", true, false, false);
+				10L, 2L, igViews, fbPlays, null, null, null, null, null, null, "{}", true, false, false);
 	}
 
 	@Test
@@ -286,9 +286,9 @@ class StoreTest {
 	@Test
 	void 프로필_스냅샷도_일_1회_upsert() {
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}"));
+				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null, "{}"));
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "이름", "https://img", "{}"));
+				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "이름", "https://img", null, null, null, "{}"));
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject(
 				"SELECT followers FROM profile_snapshot WHERE username='acct_a'", Long.class)).isEqualTo(120);

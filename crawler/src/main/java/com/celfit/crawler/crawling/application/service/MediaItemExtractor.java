@@ -30,15 +30,23 @@ public final class MediaItemExtractor {
         for (Object o : items(payload, source)) {
             if (!(o instanceof Map<?, ?> raw)) continue;
             Map<String, Object> m = unwrapMedia(raw);
-            String code = firstString(m.get("code"), m.get("shortcode"));   // SELF_GQL은 shortcode
+            // SELF_GQL은 shortcode, 액터(APIFY_ACTOR)는 shortCode
+            String code = firstString(m.get("code"), m.get("shortcode"), m.get("shortCode"));
             Instant takenAt = takenAtOf(get(m, "taken_at"));
             if (takenAt == null) takenAt = takenAtOf(m.get("taken_at_timestamp")); // SELF_GQL
+            if (takenAt == null) takenAt = takenAtOf(m.get("timestamp"));          // APIFY_ACTOR (ISO)
             if (code == null || takenAt == null) continue;
-            ContentType type = "clips".equals(m.get("product_type"))
-                    ? ContentType.REELS : ContentType.FEED;
+            // 액터(릴스 전용)는 productType 결측이어도 REELS — FEED 오분류 방지. 나머지 소스는 기존 규칙.
+            ContentType type = switch (source) {
+                case APIFY_ACTOR -> "feed".equals(m.get("productType"))
+                        ? ContentType.FEED : ContentType.REELS;
+                default -> "clips".equals(m.get("product_type"))
+                        ? ContentType.REELS : ContentType.FEED;
+            };
             boolean pinned = nonEmptyList(m.get("timeline_pinned_user_ids"))
                     || nonEmptyList(m.get("clips_tab_pinned_user_ids"))
-                    || nonEmptyList(m.get("pinned_for_users"));              // SELF_GQL
+                    || nonEmptyList(m.get("pinned_for_users"))                // SELF_GQL
+                    || Boolean.TRUE.equals(m.get("isPinned"));                // APIFY_ACTOR — 08-06 실측
             out.add(new MediaItem(code, takenAt, type, pinned, captionOf(m)));
         }
         return out;
@@ -46,19 +54,21 @@ public final class MediaItemExtractor {
 
     /**
      * 저장된 열거 페이지에서 게시물 캡션 추출 — 뷰티 재판정의 실측 근거다.
-     * HIKER_V2_CLIPS만 지원한다: response.items[].media.caption.text
-     * (analytics v_base_reel_item이 캡션을 뽑는 경로와 동일).
+     * HIKER_V2_CLIPS(response.items[].media.caption.text — analytics v_base_reel_item이 캡션을
+     * 뽑는 경로와 동일)와 APIFY_ACTOR(items[].caption — 평문)만 지원한다.
      * HIKER_V1_MEDIAS는 payload에 캡션이 있는지 검증한 뷰도 픽스처도 없어 제외한다 —
      * 근거 없는 경로로 빈 문자열을 판정 재료에 섞느니 아예 넣지 않는다.
      */
     public static List<String> captions(Map<String, Object> payload, RawSource source) {
-        if (source != RawSource.HIKER_V2_CLIPS) return List.of();
+        if (source != RawSource.HIKER_V2_CLIPS && source != RawSource.APIFY_ACTOR) return List.of();
         List<String> out = new ArrayList<>();
         for (Object o : items(payload, source)) {
             if (!(o instanceof Map<?, ?> raw)) continue;
             Map<String, Object> m = unwrapMedia(raw);
             if (m.get("caption") instanceof Map<?, ?> cap
                     && cap.get("text") instanceof String t && !t.isBlank()) {
+                out.add(t);
+            } else if (m.get("caption") instanceof String t && !t.isBlank()) {  // 액터 평문
                 out.add(t);
             }
         }
@@ -93,6 +103,7 @@ public final class MediaItemExtractor {
             case HIKER_V2_CLIPS -> payload.get("response") instanceof Map<?, ?> r
                     ? r.get("items") : null;
             case HIKER_V1_MEDIAS -> payload.get("medias");
+            case APIFY_ACTOR -> payload.get("items");
             case SELF_GQL -> timelineEdges(payload);
             default -> null;
         };
@@ -141,6 +152,7 @@ public final class MediaItemExtractor {
     private static String captionOf(Map<String, Object> m) {
         if (m.containsKey("caption")) {
             Object c = m.get("caption");
+            if (c instanceof String s) return s;   // 액터 아이템은 평문 — 빈 문자열도 '확인된 무캡션'
             return c instanceof Map<?, ?> cm && cm.get("text") instanceof String s ? s : "";
         }
         if (m.get("caption_text") instanceof String s) {

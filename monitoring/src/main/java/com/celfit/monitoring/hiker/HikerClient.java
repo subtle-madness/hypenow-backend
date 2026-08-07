@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
@@ -58,7 +59,34 @@ public class HikerClient {
 		return new ProfileInfo(username, user.path("pk").asString(),
 				firstLong(user, "follower_count"), firstLong(user, "following_count"),
 				firstLong(user, "media_count"),
-				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null), body);
+				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null),
+				user.path("biography").asString(null),
+				// 인증뱃지·외부링크(was 계약 §3-2) — 추가 콜 없이 같은 응답에서.
+				nullableBoolean(user, "is_verified"), user.path("external_url").asString(null),
+				body);
+	}
+
+	/**
+	 * 게시자 프로필 — /v2/user/by/id?user_id=(브랜드 태그 모니터링 스펙 §2). fetchProfile과 달리
+	 * 비공개를 예외로 승격하지 않는다(게시자 비공개는 관측값 — author_profile.is_private).
+	 * 응답 셰이프는 by/username과 동일한 {user:{...}}로 가정(라이브 미실측 — 스펙이 경로만 확정).
+	 */
+	public AuthorInfo fetchAuthorProfile(String userId) {
+		String body = http.get("/v2/user/by/id?user_id=" + enc(userId));
+		JsonNode user = root(body).path("user");
+		if (user.isMissingNode() || user.isNull()) {
+			throw new HikerFetchException("게시자 프로필 응답에 user 없음: " + userId);
+		}
+		// user.pk는 JSON number(findings §2-①) — 응답의 pk를 정본으로 쓰되 없으면 요청값 유지.
+		String igUserId = user.path("pk").isNumber() ? user.path("pk").asString() : userId;
+		return new AuthorInfo(igUserId, user.path("username").asString(null),
+				user.path("full_name").asString(null),
+				firstLong(user, "follower_count"), firstLong(user, "following_count"),
+				firstLong(user, "media_count"),
+				user.path("biography").asString(null), user.path("profile_pic_url").asString(null),
+				user.path("is_private").asBoolean(false),
+				// 인증뱃지(was 계약 §3-2) — 키 부재는 null(미인증 false와 구분).
+				nullableBoolean(user, "is_verified"));
 	}
 
 	/**
@@ -154,6 +182,38 @@ public class HikerClient {
 		return new ClipPlays(plays, true);
 	}
 
+	/** 태그 열거 1페이지 — posts는 응답 순서 그대로(태그된 시점 순 — 중단 판정은 호출자가 페이지 단위로 한다). */
+	public record TaggedPage(List<PostInfo> posts, String nextPageId) {}
+
+	/**
+	 * 계정에 태그된 게시물 열거 — /v2/user/tag/medias(findings §11). 1페이지 1콜만 하고 커서를
+	 * 그대로 반환한다: 감지(매일 1콜)·트래킹(105개 깊이)·백필(90일 컷)의 중단 규칙이 서로 달라
+	 * 페이지네이션은 호출자(BrandCollectService)가 몬다. 페이지당 건수는 IG 소관 값(실측 21)이라
+	 * 여기서 어떤 개수도 가정하지 않는다(스펙 §6 하드코딩 금지).
+	 *
+	 * <p>릴스 조회수(ig_play_count)는 이 열거에 상시 인라인이다(§11-2 — 프로필 열거와 결정적 차이)
+	 * → clips 보강 없이 viewsTrusted=true. 정렬은 태그된 시점 순이라 taken_at 비단조(소급 태그 혼입)
+	 * — 재정렬하지 않고 응답 순서를 유지한다(페이지 단위 중단 판정이 순서에 의존).
+	 */
+	public TaggedPage fetchTaggedPage(String userId, String pageId) {
+		String body;
+		try {
+			body = http.get("/v2/user/tag/medias?user_id=" + enc(userId) + pageParam(pageId));
+		} catch (SubjectNotFoundException e) {
+			// 태그된 게시물이 0건이면 Hiker는 200 빈 배열이 아니라 404를 준다(fetchRecentPosts와
+			// 동일 규칙) — 브랜드 계정에 태그가 아직 없는 건 정상 상태라 조용히 빈 페이지로 넘긴다.
+			log.info("태그 열거 404 — user_id {} page_id {}, 태그 게시물 없음/커서 종료로 간주", userId, pageId);
+			return new TaggedPage(List.of(), null);
+		}
+		JsonNode root = root(body);
+		List<PostInfo> posts = new ArrayList<>();
+		for (JsonNode item : items(root)) {
+			posts.add(toPost(item, null, body, Map.of(), true));
+		}
+		String cursor = moreAvailable(root) ? nextPageId(root) : null;
+		return new TaggedPage(posts, cursor);
+	}
+
 	public PostInfo fetchPost(String shortCode) {
 		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
 		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
@@ -179,6 +239,17 @@ public class HikerClient {
 	 * 저장 대상이 아니라 리스트에서 제외한다(계약 §3 post_comment).
 	 */
 	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages) {
+		return fetchComments(shortCode, postUsername, pages, Set.of());
+	}
+
+	/**
+	 * knownCommentIds가 주어지면(브랜드 태그 모니터링 경로) 페이지 처리 후 그 페이지의 유효 댓글이
+	 * 1건 이상 전부 기지일 때 다음 페이지를 부르지 않는다 — "최신부터 읽다 기지 댓글에서 중단"
+	 * (태그 스펙 §3). 정렬이 IG 랭킹 혼합이라 건 단위 중단은 신규를 놓칠 수 있어 페이지 단위로 본다.
+	 * 기지 댓글도 반환 목록에는 담는다(upsert가 body·like_count를 갱신).
+	 */
+	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages,
+			Set<String> knownCommentIds) {
 		int wanted = Math.max(1, pages);
 		long mediaId = ShortCodes.toMediaId(shortCode);
 		List<CommentInfo> out = new ArrayList<>();
@@ -196,6 +267,11 @@ public class HikerClient {
 			if (page > 0 && out.size() == before) {
 				log.warn("댓글 커서 미전진 의심 — media {} {}페이지에서 새 댓글 0건, 수집 중단", mediaId, page + 1);
 				break;
+			}
+			List<CommentInfo> pageComments = out.subList(before, out.size());
+			if (!knownCommentIds.isEmpty() && !pageComments.isEmpty()
+					&& pageComments.stream().allMatch(c -> knownCommentIds.contains(c.id()))) {
+				break;   // 페이지 전체 기지 — 더 내려가도 신규가 없다고 본다(기지 중단, 태그 스펙 §3)
 			}
 			// response.has_more_comments는 신뢰하지 않는다 — 운영 실측(media 3929190553799320931,
 			// 댓글 2,325건): 1페이지가 has_more_comments=false를 주면서도 next_page_id를 들고 있었고,
@@ -351,11 +427,19 @@ public class HikerClient {
 		Long saves = own.saves() != null ? own.saves() : clip != null ? clip.saves() : null;
 		Long shares = own.shares() != null ? own.shares() : clip != null ? clip.shares() : null;
 		Long reposts = own.reposts() != null ? own.reposts() : clip != null ? clip.reposts() : null;
+		// brand_post_meta 표시 메타(was 계약 §3-2) — 전부 같은 노드, 추가 콜 0.
+		// 영상 URL·길이는 릴스·비디오에만 실린다(피드·캐러셀은 키 부재 → null).
+		String videoUrl = m.path("video_versions").path(0).path("url").asString(null);
+		Double videoDuration = m.path("video_duration").isNumber() ? m.path("video_duration").asDouble() : null;
+		// 유료협찬은 키 부재(null=판정 unknown)와 관측된 false를 구분한다
+		// — 태그 열거 응답에는 키가 없다(합성 픽스처 기준, 라이브 미실측).
+		Boolean isPaidPartnership = nullableBoolean(m, "is_paid_partnership");
 		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType, caption,
 				thumbnailUrl(m), firstLong(m, "taken_at"),
 				likes, firstLong(m, "comment_count"),
 				views, fbPlays,
 				saves, shares, reposts,
+				videoUrl, videoDuration, isPaidPartnership,
 				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
@@ -384,6 +468,16 @@ public class HikerClient {
 	private static String thumbnailUrl(JsonNode m) {
 		JsonNode candidates = m.path("image_versions2").path("candidates");
 		return candidates.isArray() && !candidates.isEmpty() ? candidates.get(0).path("url").asString(null) : null;
+	}
+
+	/**
+	 * 키 부재·null을 Java null로 보존하는 boolean 파싱 — 관측된 false와 "확인 못 함"을 구분해야
+	 * 하는 필드(is_verified·is_paid_partnership)용. 존재 여부가 정보인 필드에만 쓴다
+	 * (is_private처럼 부재를 기본값으로 봐도 되는 필드는 기존대로 asBoolean(false)).
+	 */
+	private static Boolean nullableBoolean(JsonNode node, String field) {
+		JsonNode v = node.path(field);
+		return v.isMissingNode() || v.isNull() ? null : v.asBoolean();
 	}
 
 	/** 후보 필드 중 처음 존재하는 값. 전부 없으면 null(취득 불가 지표 규칙). */

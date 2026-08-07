@@ -2,11 +2,12 @@
 -- r1은 지표 핀(v_pinned_metrics, 성숙 최이른 clips 06-05=11000/520) — 랭킹과 동일 스냅샷.
 -- metric='views'(views>0 3개 ≥ max(3, 4/2)), trend: older avg(11000,8000)=9500 / newer 100(f1 NULL 제외)
 -- → -99% down. avg_er_pct = avg(572,330,2100,6 각각 /5500)*100 = 13.7(반올림 동일).
--- dummy_b: 표본 1 → metric='likes'(views_count 1 < 3), r3가 광고라 organic 표본 0 → ad_drop_pct NULL.
+-- dummy_b: 표본 2(r3 + ra1(액터)) → metric='likes'(views_count 2 < 3), 둘 다 광고라 organic 표본 0 → ad_drop_pct NULL.
+-- ra1은 좋아요 비공개(-1→NULL)라 ad_avg(likes)에는 r3만 반영된다.
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM analytics.v_account_recent WHERE owner_username LIKE 'dummy_%') = 5,
-    'v_account_recent dummy rows != 5';
+  ASSERT (SELECT count(*) FROM analytics.v_account_recent WHERE owner_username LIKE 'dummy_%') = 6,
+    'v_account_recent dummy rows != 6 (+ra1(액터))';
 
   ASSERT (SELECT analyzed_count FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 4,
     'summaries a analyzed_count != 4';
@@ -26,8 +27,8 @@ BEGIN
     'summaries a trend_change_pct != -99';
   ASSERT (SELECT metric FROM analytics.v_account_summaries WHERE handle = 'dummy_b') = 'likes',
     'summaries b metric != likes (views 표본 1 < 3)';
-  ASSERT (SELECT sponsored_count FROM analytics.v_account_summaries WHERE handle = 'dummy_b') = 1,
-    'summaries b sponsored_count != 1';
+  ASSERT (SELECT sponsored_count FROM analytics.v_account_summaries WHERE handle = 'dummy_b') = 2,
+    'summaries b sponsored_count != 2 (r3 + ra1(액터) 둘 다 유료 협찬)';
   ASSERT (SELECT ad_avg FROM analytics.v_account_summaries WHERE handle = 'dummy_b') = 1000,
     'summaries b ad_avg != 1000 (metric=likes)';
   ASSERT (SELECT ad_drop_pct FROM analytics.v_account_summaries WHERE handle = 'dummy_b') IS NULL,
@@ -38,8 +39,8 @@ BEGIN
                      WHERE schemaname = 'analytics' AND viewname = 'v_account_category_stats'),
     'analytics.v_account_category_stats still exists (V35 파생 뷰로 이관됨)';
 
-  ASSERT (SELECT count(*) FROM analytics.v_account_content_series WHERE account_handle LIKE 'dummy_%') = 5,
-    'v_account_content_series dummy rows != 5';
+  ASSERT (SELECT count(*) FROM analytics.v_account_content_series WHERE account_handle LIKE 'dummy_%') = 6,
+    'v_account_content_series dummy rows != 6 (+ra1(액터))';
   ASSERT (SELECT sponsored FROM analytics.v_account_content_series WHERE short_code = 'dummy_r3') = true,
     'v_account_content_series r3 sponsored != true';
 END $$;

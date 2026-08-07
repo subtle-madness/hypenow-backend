@@ -101,6 +101,12 @@ public class MonitoringConfig {
 		return new MonitoringReadRepository(monitoringJdbc);
 	}
 
+	/** 브랜드 조회 계층 — 레거시 조회와 같은 읽기 전용 풀(monitoring-ro)을 공유한다. */
+	@Bean
+	BrandReadRepository brandReadRepository() {
+		return new BrandReadRepository(monitoringJdbc);
+	}
+
 	/**
 	 * 등록 실행기 전용 스레드풀 — 이름을 명시 지정해 Spring Boot 기본 applicationTaskExecutor
 	 * (동일 타입 ThreadPoolTaskExecutor)와 자동배선 충돌을 피한다. 소비자는
