@@ -10,6 +10,7 @@ import com.celfit.was.v1.brandmonitoring.V1BrandAccountsController;
 import com.celfit.was.v1.monitoring.NoopRegistrationExecutor;
 import com.celfit.was.v1.monitoring.RecoverStalePendingScheduler;
 import com.celfit.was.v1.monitoring.RegistrationExecutor;
+import com.celfit.was.v1.perfdashboard.V1PerformanceDashboardController;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
@@ -44,6 +45,14 @@ class MonitoringDisabledTest extends IntegrationTest {
 		assertThat(context.getBeanNamesForType(V1BrandAccountService.class)).isEmpty();
 		assertThat(context.getBeanNamesForType(V1BrandAccountsController.class)).isEmpty();
 		assertThat(context.getBeanNamesForType(AccountDeletionService.class)).hasSize(1);
+	}
+
+	@Test
+	void 비활성이어도_성과_대시보드_표면은_살아_있다() {
+		// 대시보드는 브랜드 연동이 없는 유저(레거시 개인 추적만)도 쓰는 화면이라 브랜드 표면과 달리
+		// 조건부가 아니다 — 어셈블러가 브랜드 의존을 Optional로 받아 비활성이면 레거시만 조립한다.
+		// 실수로 @ConditionalOnProperty가 붙으면 표면이 조용히 사라지므로 여기서 못박는다.
+		assertThat(context.getBeanNamesForType(V1PerformanceDashboardController.class)).hasSize(1);
 	}
 
 	@Test

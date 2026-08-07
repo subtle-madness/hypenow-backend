@@ -94,7 +94,20 @@ class V1PerformanceDashboardControllerTest {
 	}
 
 	@Test
-	void statusCounts는_기간_외_필터를_적용한다() throws Exception {
+	void statusCounts는_status_필터를_자기_자신에게_적용하지_않는다() throws Exception {
+		givenAssembled(content("1", "tracking", "2026-08-06"), content("2", "ended", "2026-08-05"));
+
+		mockMvc.perform(get(CONTENTS + "?status=ended").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].item.status").value("ended"))
+				// 상태 축 뱃지가 자기 필터로 0이 되면 탭 바를 못 쓴다(§6-1 counts와 같은 취지).
+				.andExpect(jsonPath("$.meta.statusCounts.ended").value(1))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1));
+	}
+
+	@Test
+	void statusCounts는_분류_필터는_적용한다() throws Exception {
 		givenAssembled(
 				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
 				content("2", "SC2", "ended", "2026-08-06", "tagged", "unknown", null, "100"));
@@ -104,6 +117,19 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.meta.statusCounts.ended").value(1))
 				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(0));
+	}
+
+	@Test
+	void statusCounts는_협찬_필터도_적용한다() throws Exception {
+		// sponsorship은 카운트 키 축(상태)과 직교라 자기 0화가 없다 — 분류 범위 필터로 적용한다.
+		givenAssembled(
+				content("1", "SC1", "tracking", "2026-08-06", "individual", "sponsored", null, null),
+				content("2", "SC2", "ended", "2026-08-05", "individual", "organic", null, null));
+
+		mockMvc.perform(get(CONTENTS + "?sponsorship=sponsored").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1))
+				.andExpect(jsonPath("$.meta.statusCounts.ended").value(0));
 	}
 
 	@Test

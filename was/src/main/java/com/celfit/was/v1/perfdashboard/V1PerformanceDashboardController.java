@@ -60,14 +60,20 @@ public class V1PerformanceDashboardController {
 	}
 
 	/**
-	 * 통합 목록 — {@code data}는 전 필터 적용, {@code meta.statusCounts}는 <b>업로드 기간 필터만</b>
-	 * 빼고 같은 필터를 적용한다(스펙 §7-1). 기간을 좁혀도 상태 뱃지가 흔들리지 않게 하려는 규칙이다.
+	 * 통합 목록 — {@code data}는 전 필터 적용, {@code meta.statusCounts}는 <b>분류 필터</b>(출처·협찬·
+	 * 캠페인·brandAccountId)만 적용한 모수에서 센다(스펙 §7-1).
 	 *
-	 * <p><b>주의</b> — 그 "같은 필터"에는 {@code status} 자신도 포함된다. {@code status=ended}로
-	 * 조회하면 statusCounts의 나머지 6키가 0이 된다. 브랜드 목록(§6-1)의 {@code meta.counts}가
-	 * "필터 적용 전 전량"인 것과는 다른 규칙이라, FE가 statusCounts를 상태 탭 뱃지로 쓴다면
-	 * status만 모수에서 빼는 재검토가 필요하다(스펙 §7-1은 적용 대상으로 출처·캠페인·brandAccountId만
-	 * 열거하고 status·sponsorship은 언급하지 않는다).
+	 * <p>statusCounts 모수에서 빠지는 필터는 둘이다:
+	 * <ul>
+	 *   <li><b>업로드 기간</b>({@code uploadedFrom}·{@code uploadedTo}) — 기간을 좁혀도 상태 뱃지가
+	 *       흔들리지 않아야 한다(§7-1 명문).</li>
+	 *   <li><b>{@code status} 자신</b> — statusCounts는 상태 축 뱃지라 자기 필터를 적용하면
+	 *       {@code status=ended} 조회에서 나머지 6키가 전부 0이 되어 탭 바가 무력화된다. 형제
+	 *       엔드포인트 §6-1의 {@code meta.counts}가 "필터 적용 전 전량"인 것과 같은 취지다.</li>
+	 * </ul>
+	 *
+	 * <p>{@code sponsorship}은 <b>적용한다</b> — 카운트 키 축(상태)과 직교라 자기 0화가 없고,
+	 * §7-1이 statusCounts에 적용한다고 본 "분류 범위" 필터에 속한다.
 	 */
 	@GetMapping("/contents")
 	public ApiResponse<List<PerformanceContentResponse>> contents(
@@ -91,22 +97,23 @@ public class V1PerformanceDashboardController {
 		LocalDate from = parseDate(uploadedFrom, "uploadedFrom");
 		LocalDate to = parseDate(uploadedTo, "uploadedTo");
 
-		Predicate<PerformanceContentResponse> attributes = c ->
+		// 분류 필터 — statusCounts 모수의 술어다(status·업로드 기간은 여기 없다, 위 javadoc).
+		Predicate<PerformanceContentResponse> classification = c ->
 				(sourceFilter == null || sourceFilter.equals(c.source()))
 						&& (sponsorshipFilter == null || sponsorshipFilter.equals(c.sponsorship()))
-						&& (statusFilter == null || statusFilter.equals(c.item().status()))
 						&& matchesCampaign(c, campaignFilter)
 						&& (brandFilter == null || brandFilter.equals(c.brandAccountId()));
 
 		PerformanceContentAssembler.Assembled assembled = assembler.assemble(principal.getUserId());
-		// 기간 외 필터만 적용한 모수 — statusCounts와 data가 같은 모수에서 갈라져 나온다.
-		List<PerformanceContentResponse> beforeWindow = assembled.contents().stream().filter(attributes).toList();
-		List<PerformanceContentResponse> data = beforeWindow.stream()
+		// statusCounts 모수 — data는 여기서 status·기간을 더 걸어 갈라져 나온다(같은 모수 출신).
+		List<PerformanceContentResponse> counted = assembled.contents().stream().filter(classification).toList();
+		List<PerformanceContentResponse> data = counted.stream()
+				.filter(c -> statusFilter == null || statusFilter.equals(c.item().status()))
 				.filter(c -> withinUploadWindow(c, from, to))
 				.limit(CONTENT_LIMIT)
 				.toList();
 
-		return ApiResponse.ok(data, meta(data.size(), beforeWindow, assembled.lastCollectedAt()));
+		return ApiResponse.ok(data, meta(data.size(), counted, assembled.lastCollectedAt()));
 	}
 
 	/**
@@ -130,13 +137,13 @@ public class V1PerformanceDashboardController {
 
 	// ---------- meta ----------
 
-	/** @param beforeWindow 업로드 기간 필터만 빼고 필터링한 모수 — statusCounts의 모수다(§7-1). */
-	private static Map<String, Object> meta(int total, List<PerformanceContentResponse> beforeWindow,
+	/** @param counted 분류 필터만 적용한 모수 — statusCounts의 모수다(status·기간 미적용, §7-1). */
+	private static Map<String, Object> meta(int total, List<PerformanceContentResponse> counted,
 			OffsetDateTime lastCollectedAt) {
 		Map<String, Long> statusCounts = new LinkedHashMap<>();
 		// 7종 키는 0건이어도 전부 존재해야 한다(FE 탭 뱃지가 키 부재를 다루지 않는다).
 		STATUSES.forEach(s -> statusCounts.put(s, 0L));
-		for (PerformanceContentResponse content : beforeWindow) {
+		for (PerformanceContentResponse content : counted) {
 			// 방어적으로 merge다 — 값 공간 밖 상태가 생겨도 뭉개지 않고 키를 늘린다.
 			statusCounts.merge(content.item().status(), 1L, Long::sum);
 		}
