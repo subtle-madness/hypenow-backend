@@ -1,5 +1,6 @@
 package com.celfit.monitoring.config;
 
+import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.ImageDownloader;
 import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
@@ -30,5 +31,14 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
 		return new PostThumbnailArchiveJob(db, new ParImageStore(parUrl), ImageDownloader.http(), parUrl, batchLimit);
+	}
+
+	/** 브랜드 태그 파이프라인의 게시자 프로필 사진 — 같은 버킷·같은 PAR, 프리픽스만 monitor-author/로 분리. */
+	@Bean
+	public AuthorProfileImageArchiveJob authorProfileImageArchiveJob(JdbcTemplate db,
+			@Value("${monitoring.image.par-url:}") String parUrl,
+			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+		return new AuthorProfileImageArchiveJob(db, new ParImageStore(parUrl), ImageDownloader.http(), parUrl,
+				batchLimit);
 	}
 }
