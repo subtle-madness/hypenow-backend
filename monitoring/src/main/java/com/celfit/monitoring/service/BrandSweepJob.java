@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
@@ -27,13 +28,30 @@ public class BrandSweepJob {
 
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
+	private final AuthorProfileImageArchiveJob authorImageArchive;
 
-	public BrandSweepJob(BrandRepository brands, BrandCollectService collect) {
+	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
+			AuthorProfileImageArchiveJob authorImageArchive) {
 		this.brands = brands;
 		this.collect = collect;
+		this.authorImageArchive = authorImageArchive;
 	}
 
+	/**
+	 * 게시자 프로필 이미지 아카이브({@link AuthorProfileImageArchiveJob})는 finally 안에서 마지막
+	 * 단계로 돈다(캠페인 {@code DailySweepJob}과 동형) — 별도 크론이 아니라 스윕이 갓 재조회한
+	 * 신선한 URL을 바로 잡기 위함이다. 아카이브 실패는 격리 래퍼가 전부 삼켜 스윕 결과에
+	 * 영향을 주지 않는다.
+	 */
 	public void run() {
+		try {
+			runSweep();
+		} finally {
+			runAuthorImageArchiveSafely();
+		}
+	}
+
+	private void runSweep() {
 		LocalDate today = LocalDate.now(KST);
 		List<BrandRow> active = brands.findActive();
 		int failures = 0;
@@ -47,5 +65,14 @@ public class BrandSweepJob {
 			}
 		}
 		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건", active.size(), failures);
+	}
+
+	/** 건 단위가 아니라 잡 전체를 격리한다 — 스윕 결과와 무관한 부수 작업이라 예외를 밖으로 내지 않는다. */
+	private void runAuthorImageArchiveSafely() {
+		try {
+			authorImageArchive.run();
+		} catch (RuntimeException e) {
+			log.warn("게시자 프로필 이미지 아카이브 잡 실행 실패(격리) — 스윕 결과에는 영향 없음: {}", e.toString());
+		}
 	}
 }

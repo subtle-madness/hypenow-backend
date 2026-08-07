@@ -389,6 +389,38 @@ class BrandCollectServiceTest {
 		assertThat(writer.saved).hasSize(3);                 // 게시자 실패가 지표 적재에 번지지 않는다
 	}
 
+	// ── core/enrichment 분리(등록 백필 단계식 ready — 2026-08-07) ────────────
+
+	@Test
+	void sweepCore는_게시자_댓글_콜_없이_적재까지만_한다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		List<PostInfo> posts = service(105).sweepCore(brand);
+
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
+		assertThat(tagged.inserted).containsExactly("A");
+		assertThat(authorCalls()).isZero();     // 보강 콜은 core 밖 — ready 게이트가 여기서 끊긴다
+		assertThat(commentCalls()).isZero();
+		assertThat(posts).extracting(PostInfo::shortCode).containsExactly("A");
+	}
+
+	@Test
+	void enrich는_core가_넘긴_게시물의_게시자와_댓글만_수집한다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService service = service(105);
+		List<PostInfo> posts = service.sweepCore(brand);
+		long tagCallsAfterCore = tagCalls();
+		int savedAfterCore = writer.saved.size();
+
+		service.enrich(brand, posts);
+
+		assertThat(tagCalls()).isEqualTo(tagCallsAfterCore);   // 재열거 없음 — core 결과를 그대로 소비
+		assertThat(writer.saved).hasSize(savedAfterCore);      // 지표 재적재 없음
+		assertThat(authorCalls()).isEqualTo(1);
+		assertThat(commentCalls()).isEqualTo(1);
+		assertThat(comments.upserted).containsExactly("A");
+	}
+
 	// ── 댓글 게이트 ──────────────────────────────────────────────────────────
 
 	@Test

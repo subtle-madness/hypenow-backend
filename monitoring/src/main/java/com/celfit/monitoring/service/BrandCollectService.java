@@ -74,15 +74,28 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 브랜드 1개분 전량 수집(매일 스윕·등록 백필 공용) — ①브랜드 프로필 1콜(매일 갱신 + 추이
-	 * 적재, best-effort) ②태그 열거를 목표 개수(windowPosts=105)까지 next_page_id 추종
-	 * ③윈도우 안 전 게시물 스냅샷 + 신규 링크 + 게시자 프로필(미보유·30일 stale만) + 댓글 게이트.
+	 * 브랜드 1개분 전량 수집(매일 스윕 경로) — {@link #sweepCore}(열거+적재) 후
+	 * {@link #enrich}(게시자·댓글)까지 한 호출로 잇는다. 등록 백필은 이 메서드를 쓰지 않고
+	 * 두 단계를 각자 executor에서 따로 돈다(단계식 ready — 2026-08-07 결정): ready 판정
+	 * (last_swept_on)은 core만 요구하고, 보강 콜 수십 개(전체 콜의 ~85%)를 기다리지 않는다.
+	 */
+	public void sweep(BrandRow brand) {
+		enrich(brand, sweepCore(brand));
+	}
+
+	/**
+	 * core 단계 — ①브랜드 프로필 1콜(매일 갱신 + 추이 적재, best-effort) ②태그 열거를 목표
+	 * 개수(windowPosts=105)까지 next_page_id 추종 ③윈도우 안 전 게시물 스냅샷·메타 적재 + 신규
+	 * 링크. 여기까지가 브랜드 화면 목록 렌더에 필요한 전부다(게시자·댓글은 폴백·스냅샷 값으로
+	 * 대체 가능 — was BrandPostAssembler) → ready(touchSwept)는 이 반환 직후 찍어도 된다.
 	 *
 	 * <p>열거 중단: ①누적 unique code ≥ windowPosts ②페이지 전체가 90일 컷 이전(소급 태그
 	 * 혼입 때문에 "오래된 글 1건 발견 즉시 중단" 금지 — 스펙 §5) ③커서 소진 ④커서 미전진.
 	 * 페이지당 건수(실측 21)는 IG 소관 값이라 가정하지 않는다(스펙 §6 하드코딩 금지).
+	 *
+	 * @return 윈도우 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
 	 */
-	public void sweep(BrandRow brand) {
+	public List<PostInfo> sweepCore(BrandRow brand) {
 		refreshBrandProfileSafely(brand);
 		Instant cutoff = windowCutoff();
 		Map<String, PostInfo> byCode = new LinkedHashMap<>();
@@ -108,7 +121,22 @@ public class BrandCollectService {
 			}
 			cursor = page.nextPageId();
 		}
-		process(brand, List.copyOf(byCode.values()));
+		return processCore(brand, List.copyOf(byCode.values()));
+	}
+
+	/**
+	 * enrichment 단계 — core가 넘긴 윈도우 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
+	 * 게이트. 실패해도 core가 적재한 목록·지표는 이미 서빙 가능하고, 미수집분은 다음 스윕이
+	 * 백스톱한다(게시자는 stale 판정, 댓글은 comments_collected_count 워터마크가 남아 있어
+	 * 자동 재시도된다).
+	 */
+	public void enrich(BrandRow brand, List<PostInfo> posts) {
+		if (posts.isEmpty()) {
+			return;
+		}
+		ensureAuthors(posts);
+		collectCommentsGated(brand.id(), posts);
+		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료({}건 대상)", brand.username(), posts.size());
 	}
 
 	/**
@@ -125,8 +153,8 @@ public class BrandCollectService {
 		}
 	}
 
-	/** 열거 결과 처리 — 윈도우 필터 → 복권 지표 보정 → 스냅샷·메타 적재 → 신규 링크 → 게시자 → 댓글. */
-	private void process(BrandRow brand, List<PostInfo> posts) {
+	/** core 열거 결과 처리 — 윈도우 필터 → 복권 지표 보정 → 스냅샷·메타 적재 → 신규 링크. */
+	private List<PostInfo> processCore(BrandRow brand, List<PostInfo> posts) {
 		Instant cutoff = windowCutoff();
 		// taken_at 미상은 보수적으로 제외(잘못된 윈도우 편입 방지) — 다음 열거에서 채워지면 잡힌다.
 		List<PostInfo> inWindow = posts.stream()
@@ -134,7 +162,7 @@ public class BrandCollectService {
 						&& !Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff))
 				.toList();
 		if (inWindow.isEmpty()) {
-			return;
+			return List.of();
 		}
 		Set<String> known = taggedPosts.knownCodes(brand.id());
 		Set<String> freshCodes = inWindow.stream().map(PostInfo::shortCode)
@@ -150,10 +178,9 @@ public class BrandCollectService {
 				taggedPosts.insert(brand.id(), p);
 			}
 		}
-		ensureAuthors(adjusted);
-		collectCommentsGated(brand.id(), adjusted);
 		log.info("브랜드 태그 수집 — {} 열거 {}건, 윈도우 내 {}건, 신규 {}건",
 				brand.username(), posts.size(), inWindow.size(), freshCodes.size());
+		return adjusted;
 	}
 
 	// ── 복권 3종(저장·공유·리포스트) 적재 규칙 — 재시도 콜 없음(비용 모델에 예산 없음) ──
