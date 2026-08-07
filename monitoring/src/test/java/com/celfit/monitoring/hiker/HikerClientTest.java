@@ -44,6 +44,123 @@ class HikerClientTest {
 	}
 
 	@Test
+	void 프로필_파싱은_biography를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		ProfileInfo p = client.fetchProfile("rarebeauty");
+		assertThat(p.biography()).isNotBlank();   // profile.json의 user.biography(실측 픽스처 실재 확인)
+	}
+
+	/**
+	 * 게시자 프로필(/v2/user/by/id — 브랜드 태그 모니터링 스펙 §2). 응답 셰이프는 라이브 미실측이라
+	 * /v2/user/by/username과 동일한 {user:{...}}로 가정(스펙이 경로만 확정) — 픽스처는 profile.json 파생.
+	 */
+	@Test
+	void 게시자_프로필_파싱_by_id() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("author-profile-by-id.json");
+		});
+		AuthorInfo a = client.fetchAuthorProfile("9876543210");
+		assertThat(calls.getFirst()).startsWith("/v2/user/by/id?user_id=9876543210");
+		assertThat(a.igUserId()).isEqualTo("9876543210");
+		assertThat(a.username()).isEqualTo("beauty_creator");
+		assertThat(a.followers()).isPositive();
+		assertThat(a.biography()).isNotBlank();
+		assertThat(a.isPrivate()).isFalse();
+	}
+
+	/** 게시자 비공개는 오류가 아니라 관측값이다 — fetchProfile과 달리 예외를 던지면 안 된다. */
+	@Test
+	void 게시자_프로필은_비공개여도_예외_없이_관측값을_준다() {
+		String privateUser = fixture("author-profile-by-id.json")
+				.replace("\"is_private\": false", "\"is_private\": true");
+		HikerClient client = new HikerClient(path -> privateUser);
+		AuthorInfo a = client.fetchAuthorProfile("9876543210");
+		assertThat(a.isPrivate()).isTrue();
+	}
+
+	/** 태그 열거(findings §11) — 릴스 조회수가 인라인이라 clips 보강 콜 없이 1페이지 1콜이어야 한다. */
+	@Test
+	void 태그_열거는_1콜에_릴스_조회수_인라인이고_클립_콜이_없다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("tag-medias.json");
+		});
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		assertThat(calls).hasSize(1);
+		assertThat(calls.getFirst()).startsWith("/v2/user/tag/medias?user_id=");
+		assertThat(page.nextPageId()).isEqualTo("cursor-p2");
+		assertThat(page.posts()).hasSize(4);
+		var reel = page.posts().stream().filter(p -> "REELS".equals(p.contentType())).findFirst().orElseThrow();
+		assertThat(reel.views()).isPositive();        // ig_play_count 인라인(§11-2 — clips 머지 불필요)
+		assertThat(reel.viewsTrusted()).isTrue();
+		assertThat(reel.ownerUserId()).isNotBlank();  // 게시자 프로필 콜의 user_id 공급원
+		assertThat(reel.username()).isNotBlank();     // 작성자 username(usernameHint 없이 user 노드에서)
+		// 소급 태그 혼입 재현 — 응답 순서를 재정렬하지 않는다(페이지 단위 중단 판정이 순서 의존).
+		assertThat(page.posts().getLast().shortCode()).isEqualTo("TagOldD");
+	}
+
+	/** 커서 전달 — 2페이지 요청은 page_id 파라미터를 실어야 한다. */
+	@Test
+	void 태그_열거는_커서를_page_id로_전달한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return fixture("tag-medias.json");
+		});
+		client.fetchTaggedPage("17841400000000000", "cursor-p2");
+		assertThat(calls.getFirst()).contains("page_id=cursor-p2");
+	}
+
+	/** 태그 0건 계정 — Hiker는 200 빈 배열이 아니라 404를 준다(fetchRecentPosts와 동일 규칙). */
+	@Test
+	void 태그_열거_404는_빈_페이지다() {
+		HikerClient client = new HikerClient(path -> {
+			throw new SubjectNotFoundException("Entries not found");
+		});
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		assertThat(page.posts()).isEmpty();
+		assertThat(page.nextPageId()).isNull();
+	}
+
+	/** 매 페이지 유효 댓글 1건(pk를 콜 순번으로 바꿔 무진전 가드를 피한다) — CollectServiceTest 관용구. */
+	private static String alwaysMoreCommentPage(int callIndex) {
+		return """
+				{"response":{"comments":[
+				{"pk":"c%d","text":"댓글%d","comment_like_count":1,
+				 "created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}
+				],"has_more_comments":true},"next_page_id":"cursor-%d"}""".formatted(callIndex, callIndex, callIndex);
+	}
+
+	/** 댓글 기지 중단(태그 모니터링 스펙 §3) — 페이지 전체가 기지 댓글이면 다음 페이지를 부르지 않는다. */
+	@Test
+	void 댓글_수집은_페이지_전체가_기지면_중단한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return alwaysMoreCommentPage(calls.size());
+		});
+		// 1페이지의 댓글 id(c1)가 이미 기지 — 3페이지 허용이어도 1콜에서 멈춰야 한다.
+		var comments = client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of("c1"));
+		assertThat(calls).hasSize(1);
+		assertThat(comments).hasSize(1);   // 기지여도 이번 응답분은 반환(upsert가 body·like_count 갱신)
+	}
+
+	/** 기지 집합이 비면 기존 동작 그대로 페이지 수만큼 간다(캠페인 경로 불변 검증 겸함). */
+	@Test
+	void 댓글_수집은_기지_집합이_비면_페이지_수만큼_간다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			return alwaysMoreCommentPage(calls.size());
+		});
+		client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of());
+		assertThat(calls).hasSize(3);
+	}
+
+	@Test
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
 		HikerClient client = new HikerClient(fakeHttp());
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 1);

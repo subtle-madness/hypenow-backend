@@ -41,4 +41,24 @@ class RecordingHikerHttpTest {
 				new CapturingRepo.Saved("POST", "Xx1"),
 				new CapturingRepo.Saved("MEDIA_INFO", "https://example"));
 	}
+
+	/**
+	 * 브랜드 태그 모니터링 신규 경로 2종 — 태그 열거(/v2/user/tag/medias)와 게시자 프로필
+	 * (/v2/user/by/id)의 kind·subject 판정. 태그 열거가 기존 열거(/v2/user/medias)의 POSTS로
+	 * 오분류되지 않는지도 함께 본다(프리픽스가 다른 경로라 startsWith 충돌은 없지만 계약으로 고정).
+	 */
+	@Test
+	void 태그_열거와_게시자_프로필은_전용_kind로_적재된다() {
+		CapturingRepo repo = new CapturingRepo();
+		RecordingHikerHttp http = new RecordingHikerHttp(path -> "{\"status\":\"ok\"}", repo);
+
+		http.get("/v2/user/tag/medias?user_id=123");
+		http.get("/v2/user/by/id?user_id=456");
+		http.get("/v2/user/medias?user_id=789");
+
+		assertThat(repo.saved).containsExactly(
+				new CapturingRepo.Saved("TAGGED", "123"),
+				new CapturingRepo.Saved("PROFILE_BY_ID", "456"),
+				new CapturingRepo.Saved("POSTS", "789"));
+	}
 }

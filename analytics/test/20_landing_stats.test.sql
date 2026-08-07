@@ -21,8 +21,8 @@ INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, capture
 -- 위 시드가 스냅샷 캐시에 반영되도록 재갱신 (run.sh의 1차 갱신은 이 파일 이전에 돈다).
 SELECT analytics.refresh_snapshot_cache();
 
--- 콘텐츠 = a·b·n의 ENUMERATION(스냅샷 보유): r1·r2·f1·rn·r3·r6 = 6. d1(DISCOVERY) 제외.
--- 조회수(릴스만, 최신 스냅샷): 12000+8000+100+40000+900 = 61000, avg = 12200.
+-- 콘텐츠 = a·b·n의 ENUMERATION(스냅샷 보유): r1·r2·f1·rn·r3·r6 + ra1(액터) = 7. d1(DISCOVERY) 제외.
+-- 조회수(릴스만, 최신 스냅샷): 12000+8000+100+40000+900 + 7000(ra1(액터)) = 68000, avg = 68000/6 = 11333.
 DO $$
 BEGIN
   ASSERT (SELECT count(*) FROM analytics.v_landing_stats) = 1, 'landing_stats != 1행';
@@ -31,7 +31,7 @@ BEGIN
   ASSERT (SELECT followers3k10k FROM analytics.v_landing_stats) = 1, 'followers3k10k != 1';
   ASSERT (SELECT followers10k30k FROM analytics.v_landing_stats) = 1, 'followers10k30k != 1';
   ASSERT (SELECT followers30k50k FROM analytics.v_landing_stats) = 0, 'followers30k50k != 0';
-  ASSERT (SELECT contents_count FROM analytics.v_landing_stats) = 6, 'contents_count != 6';
-  ASSERT (SELECT total_views FROM analytics.v_landing_stats) = 61000, 'total_views != 61000';
-  ASSERT (SELECT avg_views FROM analytics.v_landing_stats) = 12200, 'avg_views != 12200';
+  ASSERT (SELECT contents_count FROM analytics.v_landing_stats) = 7, 'contents_count != 7 (+ra1(액터))';
+  ASSERT (SELECT total_views FROM analytics.v_landing_stats) = 68000, 'total_views != 68000 (+ra1(액터) 7000)';
+  ASSERT (SELECT avg_views FROM analytics.v_landing_stats) = 11333, 'avg_views != 11333 (68000/6)';
 END $$;

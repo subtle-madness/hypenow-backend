@@ -74,7 +74,7 @@ class SnapshotWriterAlarmTest {
 		targets.insert(TargetType.ACCOUNT, 7L, "acct_a", null,
 				new KeywordRule(List.of(), List.of("샤넬"), List.of()),
 				TargetStatus.TRACKING, "SC1", "rk-1", Instant.now().plusSeconds(86_400));
-		var profile = new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}");
+		var profile = new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", null, "{}");
 
 		writer.saveAccount("acct_a", LocalDate.of(2026, 7, 29), profile, List.of(post(5000L)));
 		writer.saveAccount("acct_a", LocalDate.of(2026, 7, 30), profile, List.of(post(null)));
@@ -170,7 +170,7 @@ class SnapshotWriterAlarmTest {
 	 */
 	@Test
 	void saveAccount로_채운_last_uploaded_at은_savePost_이후에도_보존된다() {
-		var profile = new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}");
+		var profile = new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", null, "{}");
 		var enumerated = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null,
 				1_785_000_000L, 100L, 5L, 1000L, null, 20L, 3L, 1L, "{}", true, false, false);
 		writer.saveAccount("acct_a", LocalDate.of(2026, 7, 29), profile, List.of(enumerated));

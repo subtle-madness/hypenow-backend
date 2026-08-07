@@ -37,6 +37,8 @@ public final class ProfileExtractor {
                 Object pk = dig(user(payload), "pk");
                 yield pk != null ? pk : dig(user(payload), "id");
             }
+            // instagram-profile-scraper 출력은 유저 ID가 최상위 "id" — "userId"는 LEGACY_ENVELOPE 키
+            case APIFY_ACTOR -> first(payload.get("userId"), payload.get("id"));
             default -> payload.get("userId");
         };
         return v == null ? null : String.valueOf(v);
