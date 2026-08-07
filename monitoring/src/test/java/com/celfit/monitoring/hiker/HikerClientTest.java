@@ -84,7 +84,8 @@ class HikerClientTest {
 			return fixture("author-profile-by-id.json");
 		});
 		AuthorInfo a = client.fetchAuthorProfile("9876543210");
-		assertThat(calls.getFirst()).startsWith("/v2/user/by/id?user_id=9876543210");
+		// 파라미터명은 id — user_id로 보내면 Hiker 422(08-07 운영 실측). 회귀 방지 고정.
+		assertThat(calls.getFirst()).startsWith("/v2/user/by/id?id=9876543210");
 		assertThat(a.igUserId()).isEqualTo("9876543210");
 		assertThat(a.username()).isEqualTo("beauty_creator");
 		assertThat(a.followers()).isPositive();

@@ -67,12 +67,14 @@ public class HikerClient {
 	}
 
 	/**
-	 * 게시자 프로필 — /v2/user/by/id?user_id=(브랜드 태그 모니터링 스펙 §2). fetchProfile과 달리
+	 * 게시자 프로필 — /v2/user/by/id?id=(브랜드 태그 모니터링 스펙 §2). 쿼리 파라미터명은 id다 —
+	 * user_id로 보내면 Hiker가 422 {"loc":["query","id"],"msg":"Field required"}를 던진다
+	 * (08-07 운영 첫 백필 실측 — woodiv.nature 게시자 4명 전원 실패로 표면화). fetchProfile과 달리
 	 * 비공개를 예외로 승격하지 않는다(게시자 비공개는 관측값 — author_profile.is_private).
-	 * 응답 셰이프는 by/username과 동일한 {user:{...}}로 가정(라이브 미실측 — 스펙이 경로만 확정).
+	 * 응답 셰이프는 by/username과 동일한 {user:{...}}로 가정(경로만 실측 — 셰이프는 미확인 유지).
 	 */
 	public AuthorInfo fetchAuthorProfile(String userId) {
-		String body = http.get("/v2/user/by/id?user_id=" + enc(userId));
+		String body = http.get("/v2/user/by/id?id=" + enc(userId));
 		JsonNode user = root(body).path("user");
 		if (user.isMissingNode() || user.isNull()) {
 			throw new HikerFetchException("게시자 프로필 응답에 user 없음: " + userId);
