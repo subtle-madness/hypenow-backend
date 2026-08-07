@@ -1,6 +1,8 @@
 # 브랜드 모니터링 was API 구현 계획
 
-> 상태: 🟢 활성 (2026-08-07 작성 — 실행 대기)
+> 상태: ✅ 실행됨 (2026-08-07 — Task 1~11 전부 구현·PR #354 머지·운영 배포. 급행 승격으로 Task 12의
+> 전체 테스트·Task 11 리뷰는 사후 수행 — 전체 스위트 green(34de6760), Task 11 사후 리뷰·문서 갱신은
+> 08-07 잔여작업 세션에서 완료. 편차·후속은 DECISIONS 08-07 행 참조)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -94,7 +96,7 @@
 - Produces: `PostInfo(..., Long reposts, String videoUrl, Double videoDuration, Boolean isPaidPartnership, String rawJson, ...)` — reposts 뒤·rawJson 앞에 3필드 삽입.
 - 이후 태스크(2·4)는 이 필드 순서를 그대로 소비한다.
 
-- [ ] **Step 1: 마이그레이션 작성**
+- [x] **Step 1: 마이그레이션 작성**
 
 ```sql
 -- 브랜드 was 계약 필드(2026-08-07 스펙 §3-2) — expand 단계, 전부 nullable ADD.
@@ -119,14 +121,14 @@ ALTER TABLE author_profile
     ADD COLUMN is_verified boolean;
 ```
 
-- [ ] **Step 2: 픽스처 실값 확인** — 파싱 기대값을 픽스처 실측으로 고정한다.
+- [x] **Step 2: 픽스처 실값 확인** — 파싱 기대값을 픽스처 실측으로 고정한다.
 
 Run: `python3 -c "import json,glob; d=json.load(open('monitoring/src/test/resources/hiker/profile.json')); u=d.get('user',d); print({k:u.get(k) for k in ['is_verified','external_url']})"`
 Run: `python3 -c "import json; d=json.load(open('monitoring/src/test/resources/hiker/medias.json')); items=d.get('response',d).get('items',[]); m=items[0].get('media',items[0]); print({k:m.get(k) for k in ['video_duration','is_paid_partnership']}, bool(m.get('video_versions')))"`
 
 키가 픽스처에 없으면(부재) 해당 필드 기대값은 null이다 — 아래 테스트의 기대 상수를 실측값으로 맞춘다.
 
-- [ ] **Step 3: 실패 테스트 작성** — `HikerClientTest`에 추가(기존 fakeHttp 관용구 그대로)
+- [x] **Step 3: 실패 테스트 작성** — `HikerClientTest`에 추가(기존 fakeHttp 관용구 그대로)
 
 ```java
 @Test
@@ -150,12 +152,12 @@ void 게시물_파싱은_영상과_유료협찬_표시를_담는다() {
 }
 ```
 
-- [ ] **Step 4: 실패 확인**
+- [x] **Step 4: 실패 확인**
 
 Run: `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :monitoring:test --tests "com.celfit.monitoring.hiker.HikerClientTest"`
 Expected: 컴파일 실패(record에 필드 없음)
 
-- [ ] **Step 5: record 3종 필드 추가 + HikerClient 파싱**
+- [x] **Step 5: record 3종 필드 추가 + HikerClient 파싱**
 
 `ProfileInfo`·`AuthorInfo`는 필드 추가만. `PostInfo`는 사본 생성자 3곳(`withFbPlays`·`mergedMetrics`·`mergedWith`) 모두에서 새 필드를 관통시킨다(`mergedWith`는 `coalesce(videoUrl, fallback.videoUrl)` 등 non-null 우선 — 캡션·썸네일과 동일 취급. `isPaidPartnership`도 coalesce).
 
@@ -176,12 +178,12 @@ Boolean isPaidPartnership = m.path("is_paid_partnership").isMissingNode() || m.p
 		? null : m.path("is_paid_partnership").asBoolean();
 ```
 
-- [ ] **Step 6: 통과 확인**
+- [x] **Step 6: 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.hiker.*"`
 Expected: PASS (기존 파싱 테스트 포함 전부)
 
-- [ ] **Step 7: 커밋**
+- [x] **Step 7: 커밋**
 
 ```bash
 git add monitoring/src
@@ -209,7 +211,7 @@ git commit -m "feat(monitoring): 브랜드 was 계약 필드 확장 — 마이�
 - Produces: `BrandRepository.markBackfillError(long brandId, String message)` — `UPDATE brand_account SET backfill_error=? WHERE id=? AND last_swept_on IS NULL` (ready 이후엔 안 덮음).
 - `insertOrReactivate`도 재활성 시 `backfill_error=NULL, backfill_completed_at=NULL` 리셋 추가(재등록 = 백필 다시 "수집 준비 중").
 
-- [ ] **Step 1: 실패 테스트** — `BrandStoreTest`에 추가(기존 TestDb 관용구):
+- [x] **Step 1: 실패 테스트** — `BrandStoreTest`에 추가(기존 TestDb 관용구):
 
 ```java
 @Test
@@ -242,11 +244,11 @@ void refreshProfile은_전필드를_갱신한다() {
 
 (`profileInfo(username)`은 테스트 로컬 헬퍼 — Task 1 확장 순서로 `new ProfileInfo(username, "1", 1L, 1L, 1L, null, null, null, null, null, "{}")`. `backfillError(id)` 등 컬럼 직조회 헬퍼도 테스트 로컬.)
 
-- [ ] **Step 2: 실패 확인** — Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.store.BrandStoreTest"` → 컴파일 실패
+- [x] **Step 2: 실패 확인** — Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.store.BrandStoreTest"` → 컴파일 실패
 
-- [ ] **Step 3: 저장 계층 구현** — Interfaces 블록의 SQL 그대로. `insertOrReactivate(String username, ProfileInfo profile)`로 시그니처 변경(전필드 INSERT + `ON CONFLICT` 갱신 목록에 신규 컬럼 추가). 호출처 `BrandRegistrationService.register`를 함께 갱신.
+- [x] **Step 3: 저장 계층 구현** — Interfaces 블록의 SQL 그대로. `insertOrReactivate(String username, ProfileInfo profile)`로 시그니처 변경(전필드 INSERT + `ON CONFLICT` 갱신 목록에 신규 컬럼 추가). 호출처 `BrandRegistrationService.register`를 함께 갱신.
 
-- [ ] **Step 4: 백필 오류 기록** — `BrandRegistrationService.runBackfillSafely` catch에 한 줄 추가:
+- [x] **Step 4: 백필 오류 기록** — `BrandRegistrationService.runBackfillSafely` catch에 한 줄 추가:
 
 ```java
 } catch (RuntimeException e) {
@@ -258,9 +260,9 @@ void refreshProfile은_전필드를_갱신한다() {
 
 `BrandRegistrationServiceTest`에 "백필 실패 시 backfill_error가 기록된다" 케이스 추가(collect.sweep 스텁이 throw).
 
-- [ ] **Step 5: 통과 확인** — Run: `./gradlew :monitoring:test` → 전체 PASS
+- [x] **Step 5: 통과 확인** — Run: `./gradlew :monitoring:test` → 전체 PASS
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add monitoring/src
@@ -290,7 +292,7 @@ git commit -m "feat(monitoring): 브랜드 저장 확장 — 프로필 전필드
   - `int countActiveByBrand(long brandId)`
   - `BrandDirectPostRepository`: `record Row(long userId, long brandId, String shortCode, long monitoringItemId)` · `List<Row> findByUser(long userId)` · `void upsert(long userId, long brandId, String shortCode, long itemId)`(ON CONFLICT DO NOTHING) · `Set<String> shortCodesByUser(long userId)`
 
-- [ ] **Step 1: 마이그레이션 작성** — 스펙 §3-1 SQL 그대로:
+- [x] **Step 1: 마이그레이션 작성** — 스펙 §3-1 SQL 그대로:
 
 ```sql
 -- 브랜드 모니터링 연결(2026-08-07 스펙 §3-1) — expand 단계.
@@ -322,7 +324,7 @@ CREATE TABLE app.brand_direct_posts (
 );
 ```
 
-- [ ] **Step 2: 실패 테스트** — 통합 테스트로 링크 라이프사이클:
+- [x] **Step 2: 실패 테스트** — 통합 테스트로 링크 라이프사이클:
 
 ```java
 @Test
@@ -341,10 +343,10 @@ void 활성_연결은_사용자당_하나다() {
 }
 ```
 
-- [ ] **Step 3: 실패 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.monitoring.BrandLinkRepositoryTest"` → 컴파일 실패
-- [ ] **Step 4: 리포지토리 구현** — JdbcClient(`MonitoringItemRepository` 관용구), Interfaces 시그니처 그대로.
-- [ ] **Step 5: 통과 확인** — 동일 명령 PASS. Flyway가 신규 마이그레이션을 적용하는지 로그 확인.
-- [ ] **Step 6: 커밋**
+- [x] **Step 3: 실패 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.monitoring.BrandLinkRepositoryTest"` → 컴파일 실패
+- [x] **Step 4: 리포지토리 구현** — JdbcClient(`MonitoringItemRepository` 관용구), Interfaces 시그니처 그대로.
+- [x] **Step 5: 통과 확인** — 동일 명령 PASS. Flyway가 신규 마이그레이션을 적용하는지 로그 확인.
+- [x] **Step 6: 커밋**
 
 ```bash
 git add was/src
@@ -381,7 +383,7 @@ git commit -m "feat(was): 브랜드 연결 저장 계층 — users.instgram_acco
   - `List<AuthorRow> findAuthors(Collection<String> igUserIds)` + `List<AuthorRow> findAuthorsByUsername(Collection<String> usernames)` (tagged 행의 author_ig_user_id null 폴백)
   - 전 메서드 빈 컬렉션 선처리(`IN ()` SQL 오류 방지 — MonitoringReadRepository 관용구)
 
-- [ ] **Step 1: 실패 테스트** — 시드 SQL(테스트 로컬)로 brand_account·brand_tagged_post·brand_post_snapshot 각 1~2행 넣고 조회 검증:
+- [x] **Step 1: 실패 테스트** — 시드 SQL(테스트 로컬)로 brand_account·brand_tagged_post·brand_post_snapshot 각 1~2행 넣고 조회 검증:
 
 ```java
 @Test
@@ -402,8 +404,8 @@ void 빈_컬렉션은_빈_결과다() {
 }
 ```
 
-- [ ] **Step 2: 실패 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.monitoring.BrandReadRepositoryTest"` → 컴파일 실패
-- [ ] **Step 3: 구현** — Interfaces의 SQL·record 그대로. `MonitoringConfig`에 빈 추가:
+- [x] **Step 2: 실패 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.monitoring.BrandReadRepositoryTest"` → 컴파일 실패
+- [x] **Step 3: 구현** — Interfaces의 SQL·record 그대로. `MonitoringConfig`에 빈 추가:
 
 ```java
 @Bean
@@ -437,8 +439,8 @@ public void deregisterBrand(String username) {
 
 (`MonitoringApiException`의 HTTP 상태 접근자 이름은 실제 클래스 정의를 확인해 맞출 것 — 생성자에 `e.getStatusCode().value()`가 들어가는 것은 확인됨.)
 
-- [ ] **Step 4: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.monitoring.*"` → PASS
-- [ ] **Step 5: 커밋**
+- [x] **Step 4: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.monitoring.*"` → PASS
+- [x] **Step 5: 커밋**
 
 ```bash
 git add was/src
@@ -469,7 +471,7 @@ git commit -m "feat(was): seam 브랜드 확장 — registerBrand/deregisterBran
   - `record Profile(String profileUrl, String username, String fullName, String profilePicUrl, boolean isVerified, Long mediaCount, Long followerCount, Long followingCount, String biography, String externalUrl)` — `profileUrl = "https://www.instagram.com/" + username + "/"`, fullName·biography는 null → `""`, isVerified null → false
   - Task 7·9가 `BrandAccountResponse`·상태 유도 규칙을 소비한다.
 
-- [ ] **Step 1: BrandUsername TDD** — 실패 테스트:
+- [x] **Step 1: BrandUsername TDD** — 실패 테스트:
 
 ```java
 @Test
@@ -489,7 +491,7 @@ void URL과_연속점과_금지문자는_거부한다() {
 
 구현(정규식 `^[a-z0-9._]{1,30}$` + `contains("..")` 거부 + `contains("/")`·`contains(":")` 거부) → PASS 확인.
 
-- [ ] **Step 2: 서비스·컨트롤러 실패 테스트** — 핵심 계약 케이스:
+- [x] **Step 2: 서비스·컨트롤러 실패 테스트** — 핵심 계약 케이스:
 
 ```java
 @Test
@@ -544,9 +546,9 @@ void 삭제는_마지막_사용자일_때만_monitoring_탈퇴를_호출한다()
 }
 ```
 
-- [ ] **Step 3: 실패 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` → 컴파일 실패
+- [x] **Step 3: 실패 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` → 컴파일 실패
 
-- [ ] **Step 4: 구현** — 서비스 register 핵심(§5-1 — 트랜잭션 경계 주의: monitoring 호출은 트랜잭션 밖):
+- [x] **Step 4: 구현** — 서비스 register 핵심(§5-1 — 트랜잭션 경계 주의: monitoring 호출은 트랜잭션 밖):
 
 ```java
 public BrandAccountResponse register(long userId, String rawUsername) {
@@ -579,8 +581,8 @@ public BrandAccountResponse register(long userId, String rawUsername) {
 
 `translate()`는 MonitoringApiException(404→422 INSTAGRAM_ACCOUNT_NOT_FOUND, 422→422 그대로 메시지 유지)·MonitoringUnavailableException(→503 SERVICE_UNAVAILABLE) 번역 — `V1ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ...)`·`(HttpStatus.SERVICE_UNAVAILABLE, ...)` 직접 생성. 상태 유도·nextScheduledAt(`@Value("${was.brand.sweep-hour-kst:3}")` — 다음 KST 그 시각)은 `BrandAccountAssembler`. 컨트롤러는 `V1MonitoringItemsController` 관용구(AuthenticationPrincipal, ApiResponse). GET 목록 meta는 `{"total": n, "limit": 10}`.
 
-- [ ] **Step 5: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` → PASS
-- [ ] **Step 6: 커밋**
+- [x] **Step 5: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` → PASS
+- [x] **Step 6: 커밋**
 
 ```bash
 git add was/src
@@ -598,7 +600,7 @@ git commit -m "feat(was): 브랜드 계정 API — 등록(동기 검증 선행)�
 **Interfaces:**
 - Produces: `static String classify(Boolean isPaidPartnership, String caption)` → `"sponsored" | "organic" | "unknown"`. Task 7·9 소비.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 ```java
 @Test
@@ -612,8 +614,8 @@ void 판정_규칙_4단계() {
 }
 ```
 
-- [ ] **Step 2: 실패 확인** → 컴파일 실패
-- [ ] **Step 3: 구현**
+- [x] **Step 2: 실패 확인** → 컴파일 실패
+- [x] **Step 3: 구현**
 
 ```java
 /** 협찬 판정(FE §4.4) — 조회 시 계산·저장 없음(캡션 원문이 있어 키워드 개선이 과거분에 즉시 소급). */
@@ -636,8 +638,8 @@ public final class BrandSponsorshipClassifier {
 }
 ```
 
-- [ ] **Step 4: 통과 확인** → PASS
-- [ ] **Step 5: 커밋** — `git commit -m "feat(was): 협찬 판정 순수 함수 — 유료협찬 플래그·캡션 확정 키워드 4단계"`
+- [x] **Step 4: 통과 확인** → PASS
+- [x] **Step 5: 커밋** — `git commit -m "feat(was): 협찬 판정 순수 함수 — 유료협찬 플래그·캡션 확정 키워드 4단계"`
 
 ---
 
@@ -658,7 +660,7 @@ public final class BrandSponsorshipClassifier {
   - `BrandPostAssembler.snapshotOf(BrandSnapshotRow row)` → `TrackingItemResponse.SnapshotResponse` — **FEED면 views·shares·reposts null 강제**, sharesHidden·likesHidden 관통
   - Task 9가 `assembleForBrand`·`BrandPostResponse`를 소비한다.
 
-- [ ] **Step 1: 어셈블러 단위 실패 테스트** — row record를 손으로 만들어 규칙 검증:
+- [x] **Step 1: 어셈블러 단위 실패 테스트** — row record를 손으로 만들어 규칙 검증:
 
 ```java
 @Test
@@ -682,8 +684,8 @@ void 스냅샷은_오름차순이고_latestSnapshot은_마지막_원소다() { /
 void 게시자_프로필_부재면_author_필드는_열거_관측값으로_폴백한다() { /* author_profile 없음 → username은 tagged 행 값, followers null */ }
 ```
 
-- [ ] **Step 2: 실패 확인** → 컴파일 실패
-- [ ] **Step 3: 어셈블러 구현** — 조립 순서:
+- [x] **Step 2: 실패 확인** → 컴파일 실패
+- [x] **Step 3: 어셈블러 구현** — 조립 순서:
 
 ```
 1. tagged: BrandReadRepository.findTaggedPostsInWindow(brandId, now-90d, 105)
@@ -705,10 +707,10 @@ void 게시자_프로필_부재면_author_필드는_열거_관측값으로_폴�
    isPaidPartnership 관측이 있으면 그것으로 재판정(정보 손실 방지)
 ```
 
-- [ ] **Step 4: 컨트롤러 + 테스트** — `GET /v1/brand-monitoring/accounts/{accountId}/posts`(소유 검증 → 어셈블 → 쿼리 필터 `source`/`sponsorship`/`sort`/`uploadedFrom`/`uploadedTo` 메모리 적용 → meta `{total, limit: 200, counts{all,tagged,direct,sponsored,organic,unknown}, lastCollectedAt}`) · `GET /v1/brand-monitoring/posts/{postId}`(shortcode — 내 tagged/direct 어디에도 없으면 404). 컨트롤러 테스트: 200 목록·counts 정합, 필터 동작(`?sponsorship=sponsored`), 남의 계정 403, 미소유 게시물 404, `performance_desc` 정렬(최신 스냅샷 views 내림차순·null 마지막).
+- [x] **Step 4: 컨트롤러 + 테스트** — `GET /v1/brand-monitoring/accounts/{accountId}/posts`(소유 검증 → 어셈블 → 쿼리 필터 `source`/`sponsorship`/`sort`/`uploadedFrom`/`uploadedTo` 메모리 적용 → meta `{total, limit: 200, counts{all,tagged,direct,sponsored,organic,unknown}, lastCollectedAt}`) · `GET /v1/brand-monitoring/posts/{postId}`(shortcode — 내 tagged/direct 어디에도 없으면 404). 컨트롤러 테스트: 200 목록·counts 정합, 필터 동작(`?sponsorship=sponsored`), 남의 계정 403, 미소유 게시물 404, `performance_desc` 정렬(최신 스냅샷 views 내림차순·null 마지막).
 
-- [ ] **Step 5: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` → PASS
-- [ ] **Step 6: 커밋**
+- [x] **Step 5: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` → PASS
+- [x] **Step 6: 커밋**
 
 ```bash
 git add was/src
@@ -732,7 +734,7 @@ git commit -m "feat(was): 브랜드 게시물 목록·상세 API — tagged+dire
   - `GET /v1/brand-monitoring/direct-registrations/{registrationId}` → 동일 셰이프(entry result `pending|success|failed|duplicate`)
   - `record BrandDirectRegistrationResponse(String registrationId, String requestedAt, List<Entry> entries)` + `record Entry(String input, String result, String reasonCode, String reason, String brandPostId, String monitoringItemId)`
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 ```java
 @Test
@@ -753,8 +755,8 @@ void 신규_URL은_레거시_등록에_위임하고_매핑을_만든다() {
 void 이미_레거시_추적_중이면_매핑만_추가하고_success다() { /* 레거시 duplicate entry(기존 item id 동반) → upsert + success */ }
 ```
 
-- [ ] **Step 2: 실패 확인** → 컴파일 실패
-- [ ] **Step 3: 구현** — 플로우(§6-4):
+- [x] **Step 2: 실패 확인** → 컴파일 실패
+- [x] **Step 3: 구현** — 플로우(§6-4):
 
 ```
 1. 계정 소유 검증(BrandLinkRepository.findActiveByUserAndBrand — 아니면 403)
@@ -767,8 +769,8 @@ void 이미_레거시_추적_중이면_매핑만_추가하고_success다() { /* 
 
 GET은 레거시 entry 조회 → 같은 셰이프 재조립(brandPostId=shortcode, 아직 미확정이면 null).
 
-- [ ] **Step 4: 통과 확인** → PASS
-- [ ] **Step 5: 커밋** — `git commit -m "feat(was): 브랜드 직접 등록 — 레거시 등록 파이프라인 위임 + direct 매핑, entry 단위 부분 성공"`
+- [x] **Step 4: 통과 확인** → PASS
+- [x] **Step 5: 커밋** — `git commit -m "feat(was): 브랜드 직접 등록 — 레거시 등록 파이프라인 위임 + direct 매핑, entry 단위 부분 성공"`
 
 ---
 
@@ -788,7 +790,7 @@ GET은 레거시 entry 조회 → 같은 셰이프 재조립(brandPostId=shortco
   - `PerformanceContentAssembler.assemble(long userId)` → `record Assembled(List<PerformanceContentResponse> contents, OffsetDateTime lastCollectedAt)` — 필터 전 전량. Task 10 소비.
   - `static List<TrackingItemResponse.SnapshotResponse> mergeSnapshots(List<...> legacy, List<...> brand)` — 순수 함수(테스트 대상)
 
-- [ ] **Step 1: 실패 테스트** — 병합 규칙 핵심:
+- [x] **Step 1: 실패 테스트** — 병합 규칙 핵심:
 
 ```java
 @Test
@@ -816,8 +818,8 @@ void tagged_only는_bt_접두_합성_아이템이다() {
 void 게시물_없는_detecting은_canonicalPostId가_null이다() { /* post null 레거시 아이템 → canonicalPostId null 유지 */ }
 ```
 
-- [ ] **Step 2: 실패 확인** → 컴파일 실패
-- [ ] **Step 3: 구현** — 조립 흐름:
+- [x] **Step 2: 실패 확인** → 컴파일 실패
+- [x] **Step 3: 구현** — 조립 흐름:
 
 ```
 1. legacy = trackingItemAssembler.assembleList(userId) — TrackingItemResponse → PerformanceItemResponse 변환
@@ -833,8 +835,8 @@ void 게시물_없는_detecting은_canonicalPostId가_null이다() { /* post nul
 6. brandAccountId: tagged 관측이 있으면 브랜드 id 문자열, 아니면 null
 ```
 
-- [ ] **Step 4: 통과 확인** → PASS
-- [ ] **Step 5: 커밋** — `git commit -m "feat(was): 성과 대시보드 통합 어셈블러 — 3계열 병합·shortcode 중복 제거·스냅샷 지표별 병합"`
+- [x] **Step 4: 통과 확인** → PASS
+- [x] **Step 5: 커밋** — `git commit -m "feat(was): 성과 대시보드 통합 어셈블러 — 3계열 병합·shortcode 중복 제거·스냅샷 지표별 병합"`
 
 ---
 
@@ -848,7 +850,7 @@ void 게시물_없는_detecting은_canonicalPostId가_null이다() { /* post nul
 - Consumes: Task 9 `PerformanceContentAssembler.assemble(long)`.
 - Produces: `GET /v1/performance-dashboard/contents`(쿼리 `uploadedFrom`·`uploadedTo`·`source`·`sponsorship`·`campaignId`(all|none|{id})·`status`·`brandAccountId`) · `GET /v1/performance-dashboard/contents/{contentId}`.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 ```java
 @Test
@@ -867,10 +869,10 @@ void campaignId_none은_캠페인_없는_콘텐츠만이다() { /* campaignId nu
 void 단건은_canonicalPostId로_찾고_없으면_404다() { /* contents/{shortcode} */ }
 ```
 
-- [ ] **Step 2: 실패 확인** → 컴파일 실패
-- [ ] **Step 3: 구현** — 필터는 전부 메모리(`data`에 전 필터, statusCounts는 uploadedFrom/To 제외 필터만 적용 — §7-1). 업로드 기간은 `item.post.uploadedAt`(post null 항목은 기간 필터 시 제외하되 statusCounts엔 포함). meta는 `{"total", "limit": 250, "lastCollectedAt", "statusCounts"}` — LinkedHashMap 관용구.
-- [ ] **Step 4: 통과 확인** → PASS
-- [ ] **Step 5: 커밋** — `git commit -m "feat(was): 성과 대시보드 API — 필터·기간 무관 statusCounts·단건 조회"`
+- [x] **Step 2: 실패 확인** → 컴파일 실패
+- [x] **Step 3: 구현** — 필터는 전부 메모리(`data`에 전 필터, statusCounts는 uploadedFrom/To 제외 필터만 적용 — §7-1). 업로드 기간은 `item.post.uploadedAt`(post null 항목은 기간 필터 시 제외하되 statusCounts엔 포함). meta는 `{"total", "limit": 250, "lastCollectedAt", "statusCounts"}` — LinkedHashMap 관용구.
+- [x] **Step 4: 통과 확인** → PASS
+- [x] **Step 5: 커밋** — `git commit -m "feat(was): 성과 대시보드 API — 필터·기간 무관 statusCounts·단건 조회"`
 
 ---
 
@@ -888,7 +890,7 @@ void 단건은_canonicalPostId로_찾고_없으면_404다() { /* contents/{short
   - `POST /v2/monitoring/campaigns/{campaignId}/contents` body `{contentIds[], trackingDays}` → 200/202 `{campaignId, results[{contentId, result, monitoringItemId, reasonCode, reason}]}`
   - `DELETE /v2/monitoring/campaigns/{campaignId}/contents/{contentId}` → 204
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 ```java
 @Test
@@ -910,10 +912,10 @@ void 제거는_campaign_연결만_끊고_204다() { /* patch({campaignId: null})
 void 남의_캠페인은_404다() { /* findByIdAndUser empty */ }
 ```
 
-- [ ] **Step 2: 실패 확인** → 컴파일 실패
-- [ ] **Step 3: 구현** — 추가 플로우(§8): 캠페인 소유 검증 → contentId(=shortcode)별 분기(기존 아이템: campaign null→patch 연결·같은 캠페인→duplicate·다른 캠페인→duplicate / 미존재: tagged에서 canonical URL 찾아 `register(userId, Map.of("posts", [url], "trackingDays", days, "campaignId", id))` → 그 결과 item id) → results 조립. contentId가 tagged에도 없으면 result failed(`NOT_FOUND`, "게시물을 찾을 수 없습니다."). 제거: shortcode→아이템 탐색(그 캠페인 소속 확인 — 아니면 404) → patch campaignId null → 204.
-- [ ] **Step 4: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v2.monitoring.*"` → PASS
-- [ ] **Step 5: 커밋** — `git commit -m "feat(was): 캠페인 v2 콘텐츠 관계 — canonicalPostId 기반 추가·제거, 1:1 유지·entry 부분 성공"`
+- [x] **Step 2: 실패 확인** → 컴파일 실패
+- [x] **Step 3: 구현** — 추가 플로우(§8): 캠페인 소유 검증 → contentId(=shortcode)별 분기(기존 아이템: campaign null→patch 연결·같은 캠페인→duplicate·다른 캠페인→duplicate / 미존재: tagged에서 canonical URL 찾아 `register(userId, Map.of("posts", [url], "trackingDays", days, "campaignId", id))` → 그 결과 item id) → results 조립. contentId가 tagged에도 없으면 result failed(`NOT_FOUND`, "게시물을 찾을 수 없습니다."). 제거: shortcode→아이템 탐색(그 캠페인 소속 확인 — 아니면 404) → patch campaignId null → 204.
+- [x] **Step 4: 통과 확인** — Run: `./gradlew :was:test --tests "com.celfit.was.v2.monitoring.*"` → PASS
+- [x] **Step 5: 커밋** — `git commit -m "feat(was): 캠페인 v2 콘텐츠 관계 — canonicalPostId 기반 추가·제거, 1:1 유지·entry 부분 성공"`
 
 ---
 
@@ -922,10 +924,10 @@ void 남의_캠페인은_404다() { /* findByIdAndUser empty */ }
 **Files:**
 - Modify: `DECISIONS.md` (맨 위 신규 행), `docs/tracks/MON-BT-브랜드-태그-모니터링.md` (상태·미결 갱신 — "was 조회 API" 미결 해소), `docs/superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md` (상태 헤더 → ✅ 구현됨), 본 계획 → `docs/superpowers/plans/archive/`로 이동
 
-- [ ] **Step 1: 레거시 회귀 확인** — Run: `./gradlew :was:test` (기존 `v1/monitoring` 테스트 전부 무수정 PASS = 레거시 계약 보존 증거). 기존 테스트 파일을 수정했다면 그 자체가 위반 — diff로 확인: `git diff --stat develop -- was/src/test/java/com/celfit/was/v1/monitoring/`은 비어 있어야 한다.
-- [ ] **Step 2: 전체 테스트** — Run: `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew test` (PR 직전 1회 규칙)
-- [ ] **Step 3: 문서 갱신** — DECISIONS 신규 행(브랜드 was API 구현 — 스펙 §2 의도적 편차 5개 요지 포함), MON-BT 트랙 상태 🔵→✅ 계열 갱신, 스펙 상태 헤더, 계획 아카이브 이동.
-- [ ] **Step 4: 커밋 + PR**
+- [x] **Step 1: 레거시 회귀 확인** — Run: `./gradlew :was:test` (기존 `v1/monitoring` 테스트 전부 무수정 PASS = 레거시 계약 보존 증거). 기존 테스트 파일을 수정했다면 그 자체가 위반 — diff로 확인: `git diff --stat develop -- was/src/test/java/com/celfit/was/v1/monitoring/`은 비어 있어야 한다.
+- [x] **Step 2: 전체 테스트** — Run: `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew test` (PR 직전 1회 규칙)
+- [x] **Step 3: 문서 갱신** — DECISIONS 신규 행(브랜드 was API 구현 — 스펙 §2 의도적 편차 5개 요지 포함), MON-BT 트랙 상태 🔵→✅ 계열 갱신, 스펙 상태 헤더, 계획 아카이브 이동.
+- [x] **Step 4: 커밋 + PR**
 
 ```bash
 git add -A

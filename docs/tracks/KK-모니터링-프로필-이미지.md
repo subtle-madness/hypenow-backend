@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 트랙 S(monitoring was seam)·트랙 II(POST 등록 profile_meta 채움) 위에서 동작. 트랙 J(서빙 이미지 아카이브)와는 **OCI 버킷만 공유하고 코드·후보군은 완전히 분리**(키 프리픽스로 소유권 구분 — 아래 참고).
-- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 PR 대기)
+- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 PR 대기)
 - **트랙 문자 배정 메모**: `docs/tracks/`에 FF·GG가 아직 파일로 없지만 다른 세션이 PR #235·#243으로 점유 중이고, A~JJ 중 KK가 다음 미사용 문자라 배정.
 
 ## 내용
@@ -139,6 +139,30 @@ was: image_object_path 있으면 '/img/' || path, 없으면 원본 CDN 폴백
   (`public, max-age=31536000, immutable`)이 아니라 프로필 이미지와 같은 `public, max-age=86400`으로
   맞췄다 — profile_meta와 "동형"을 유지하는 것이 이번 작업 범위이고, post 썸네일도 source_name
   비교로 변경 감지를 하는 이상(완전 불변으로 취급하지 않음) 짧은 캐시가 더 안전하다는 판단.
+
+### 게시자 프로필 이미지 아카이브 (트랙 KK 확장, 2026-08-07 — author_profile)
+
+브랜드 태그 모니터링(MON-BT, 08-06 개통)의 게시자 프로필 캐시 `author_profile.profile_pic_url`은
+30일 stale + 재등장 시에만 재조회되는데(태그 스펙 §8) CDN 서명은 ~4일이면 만료된다 — 매일 스윕
+upsert가 URL을 되살리는 `brand_post_meta.thumbnail_url`과 달리, **아카이브 없이는 저장된 게시자
+프로필 사진이 대부분의 기간 죽어 있다**. 프로필 이미지·게시물 썸네일과 완전히 같은 형태라 새 설계
+없이 그대로 이식했다.
+
+- **스키마**: `author_profile`에 동일한 3컬럼 — `image_object_path`, `image_source_name`,
+  `image_archived_at`(`V20260807150500__author_profile_image_archive.sql`). 오염행 정정 UPDATE는
+  불필요 — author_profile은 08-06 신설 테이블이라 스킴 정규화 이전의 변종 축적이 없다(잡의
+  `LIKE 'http%'` 필터 + RuntimeException 격리가 방어선).
+- **키 스킴**: `monitor-author/<ig_user_id>.jpg` — username이 아니라 **ig_user_id(PK) 기준**.
+  username은 개명 가능해서 키로 쓰면 개명 시 고아 오브젝트가 남는다(profile_meta는 username이
+  PK라서 username 키가 맞았고, author_profile은 ig_user_id가 PK라 기준이 다르다).
+- **실행 시점**: 캠페인 `DailySweepJob`이 아니라 **`BrandSweepJob.run()`의 finally** — author_profile을
+  갱신하는 주체가 브랜드 스윕이므로, 갓 재조회된 신선한 URL을 바로 잡으려면 브랜드 스윕 직후여야
+  한다. 격리 구조(잡 전체 격리 + 건 단위 격리)는 DailySweepJob 패턴 동형.
+- **CDN 이미 만료된 잔존행**: 재조회 전까지 건 단위 실패로 격리되고 매일 재시도된다 — 다음
+  재조회(30일 stale + 재등장)가 URL을 되살리면 그때 아카이브된다. 수용(기존 잡들과 같은 관용구).
+- **was 서빙은 이 확장 범위 밖**: 브랜드 모니터링 was API(MON-BT 잔여 작업 세션)가
+  `author_profile`을 서빙하게 되면 `image_object_path` 우선 + 원본 폴백(`TrackingItemAssembler`
+  동형)을 그쪽 계약에 얹는다.
 
 ## 검증
 
