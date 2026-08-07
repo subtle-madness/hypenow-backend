@@ -16,7 +16,6 @@ import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
-import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler;
 import com.celfit.was.v2.monitoring.V2CampaignContentsResponse.Result;
@@ -33,11 +32,12 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 캠페인 v2 콘텐츠 관계(스펙 §8) — 캠페인에 콘텐츠를 붙이고 떼는 것만 한다.
  *
- * <p><b>모니터링 자체는 전부 레거시가 정본이다</b>. 이 서비스는 레거시 서비스·테이블·응답을 한 줄도
- * 바꾸지 않고 호출만 한다:
+ * <p><b>모니터링 자체는 전부 레거시가 정본이다</b>. 레거시 코드는 한 줄도 바꾸지 않는다:
  * <ol>
- *   <li>이미 내 추적 아이템이 있는 콘텐츠 → {@link V1MonitoringItemUpdateService#patch}로
- *       {@code campaignId}만 연결(기존 검증 재사용)</li>
+ *   <li>이미 내 추적 아이템이 있는 콘텐츠 → 슬림 경로 {@link CampaignItemLinker#link}로
+ *       {@code campaignId}만 연결 — 레거시 patch의 두 소유 검증은 링커가 그대로 유지하되,
+ *       v2가 버리던 응답 전량 재조립은 생략한다(아이템당 ~9쿼리 → 3쿼리. 상한 100건이 한
+ *       트랜잭션에 몰리는 경로라 커넥션 점유 시간이 문제였다 — 트레이드오프는 링커 javadoc)</li>
  *   <li>추적 아이템이 없고 브랜드 태그 목록(tagged)에만 있는 콘텐츠 →
  *       {@link V1MonitoringRegistrationService#register}에 canonical URL을 위임해 아이템을 만든다</li>
  * </ol>
@@ -86,7 +86,7 @@ public class V2CampaignContentService {
 
 	private final CampaignRepository campaignRepository;
 	private final TrackingItemAssembler trackingItemAssembler;
-	private final V1MonitoringItemUpdateService itemUpdateService;
+	private final CampaignItemLinker linker;
 	private final V1MonitoringRegistrationService registrationService;
 	private final BrandLinkRepository linkRepository;
 	private final MonitoringItemRepository itemRepository;
@@ -94,13 +94,13 @@ public class V2CampaignContentService {
 	private final Optional<BrandPostAssembler> brandPostAssembler;
 
 	public V2CampaignContentService(CampaignRepository campaignRepository,
-			TrackingItemAssembler trackingItemAssembler, V1MonitoringItemUpdateService itemUpdateService,
+			TrackingItemAssembler trackingItemAssembler, CampaignItemLinker linker,
 			V1MonitoringRegistrationService registrationService, BrandLinkRepository linkRepository,
 			MonitoringItemRepository itemRepository, Optional<BrandReadRepository> brandReadRepository,
 			Optional<BrandPostAssembler> brandPostAssembler) {
 		this.campaignRepository = campaignRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
-		this.itemUpdateService = itemUpdateService;
+		this.linker = linker;
 		this.registrationService = registrationService;
 		this.linkRepository = linkRepository;
 		this.itemRepository = itemRepository;
@@ -113,7 +113,7 @@ public class V2CampaignContentService {
 	 * 콘텐츠마다 register를 부르면 등록 행(registration)이 그 수만큼 생겨 폴링 대상이 흩어진다.
 	 *
 	 * <p>{@code @Transactional} — 레거시 등록도 {@code @Transactional}이라 이 트랜잭션에 합류한다.
-	 * 캠페인 연결(patch)과 아이템 생성이 한 번에 커밋되고, 비동기 실행기 트리거도 커밋 뒤로 미뤄진다
+	 * 캠페인 연결(슬림 경로)과 아이템 생성이 한 번에 커밋되고, 비동기 실행기 트리거도 커밋 뒤로 미뤄진다
 	 * (레거시 triggerExecutor의 afterCommit 계약 유지). 부분 성공은 <b>응답 안의 entry 판정</b>이지
 	 * 반쯤 커밋된 DB가 아니다.
 	 */
@@ -141,7 +141,7 @@ public class V2CampaignContentService {
 			}
 			TrackingItemResponse item = itemsByShortcode.get(contentId);
 			if (item != null) {
-				plans.add(Plan.settled(link(userId, campaignKey, contentId, item)));
+				plans.add(Plan.settled(link(userId, campaign.id(), contentId, item)));
 				continue;
 			}
 			if (taggedUrls == null) {
@@ -245,16 +245,17 @@ public class V2CampaignContentService {
 		}
 
 		for (TrackingItemResponse target : targets) {
-			itemUpdateService.patch(userId, Long.parseLong(target.id()), campaignField(null));
+			linker.unlink(userId, Long.parseLong(target.id()));
 		}
 	}
 
 	// ---------- 판정 ----------
 
-	/** 기존 아이템 1건의 판정 — 캠페인 미연결이면 연결, 이미 연결돼 있으면 duplicate(이동 금지). */
-	private Result link(long userId, String campaignKey, String contentId, TrackingItemResponse item) {
+	/** 기존 아이템 1건의 판정 — 캠페인 미연결이면 연결(슬림 경로), 이미 연결돼 있으면 duplicate(이동 금지). */
+	private Result link(long userId, long campaignId, String contentId, TrackingItemResponse item) {
+		String campaignKey = String.valueOf(campaignId);
 		if (item.campaignId() == null) {
-			itemUpdateService.patch(userId, Long.parseLong(item.id()), campaignField(campaignKey));
+			linker.link(userId, campaignId, Long.parseLong(item.id()));
 			return new Result(contentId, RegistrationResult.SUCCESS, item.id(), null, null);
 		}
 		if (campaignKey.equals(item.campaignId())) {
@@ -374,16 +375,6 @@ public class V2CampaignContentService {
 			}
 		}
 		return byShortcode;
-	}
-
-	/**
-	 * 레거시 PATCH 본문 — 키 존재로 "변경 요청 있음"을, 값 null로 "연결 해제"를 뜻한다(6.29 규약).
-	 * {@code Map.of}는 null 값을 못 담아 {@link LinkedHashMap}을 쓴다.
-	 */
-	private static Map<String, Object> campaignField(String campaignId) {
-		Map<String, Object> body = new LinkedHashMap<>();
-		body.put("campaignId", campaignId);
-		return body;
 	}
 
 	// ---------- 검증 ----------

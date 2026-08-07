@@ -13,7 +13,6 @@ import com.celfit.was.monitoring.RegistrationRepository;
 import com.celfit.was.v1.monitoring.RegistrationExecutor;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.V1CampaignService;
-import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import java.sql.Connection;
 import java.time.LocalDate;
@@ -32,13 +31,13 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * v2 캠페인 콘텐츠 ↔ 레거시 위임 계약을 <b>실 DB로</b> 고정한다. 단위 테스트(mock)가 가려주는
- * 가정 두 개가 대상이다 — 레거시가 바뀌면 v2 단위 테스트는 전부 green인 채로 운영이 깨지는 지점:
+ * v2 캠페인 콘텐츠의 실 DB 계약을 고정한다. 단위 테스트(mock)가 가려주는 가정 두 개가 대상이다 —
+ * 하부가 바뀌면 v2 단위 테스트는 전부 green인 채로 운영이 깨지는 지점:
  * <ol>
- *   <li>제거의 {@code campaignField(null)} — 값 null인 campaignId 키를 레거시 patch가 "연결
- *       해제"로 읽고 실제로 행의 campaign_id를 비우는가(6.29 규약)</li>
+ *   <li>제거의 {@link CampaignItemLinker#unlink} — 슬림 경로가 실제로 행의 campaign_id를
+ *       비우는가(레거시 patch 위임을 슬림 경로로 교체한 뒤에도 유지돼야 하는 효과)</li>
  *   <li>위임 등록 본문의 {@code campaignId}는 <b>String</b>("42")이다 — 레거시 register가 문자열을
- *       파싱해 새 아이템에 캠페인을 걸어주는가(v2는 이 연결을 믿고 추가 patch를 안 한다)</li>
+ *       파싱해 새 아이템에 캠페인을 걸어주는가(v2는 이 연결을 믿고 추가 연결을 안 한다)</li>
  * </ol>
  * 배선은 V1MonitoringRegistrationDuplicateExclusionTest와 동일 — monitoring-schema.sql을 같은
  * 컨테이너의 public 스키마에 적용하고 서비스를 직접 생성한다.
@@ -76,15 +75,12 @@ class V2CampaignContentIntegrationTest extends IntegrationTest {
 		V1CampaignService campaignService = new V1CampaignService(campaignRepository);
 		TrackingItemAssembler assembler = new TrackingItemAssembler(itemRepository, campaignRepository,
 				Optional.of(readRepository), new ObjectMapper());
-		// 캠페인 연결/해제만 다루므로 원격 명령(extend)은 불필요 — commandClient 빈 없이 배선한다.
-		V1MonitoringItemUpdateService itemUpdateService = new V1MonitoringItemUpdateService(itemRepository,
-				campaignRepository, campaignService, Optional.of(readRepository), Optional.empty(), assembler,
-				registrationRepository);
 		registrationService = new V1MonitoringRegistrationService(itemRepository,
 				registrationRepository, campaignRepository, campaignService, mock(RegistrationExecutor.class),
 				new ObjectMapper(), Optional.of(readRepository));
 		// 브랜드 표면은 이 계약 검증과 무관 — tagged 경로는 비활성(Optional.empty)으로 둔다.
-		service = new V2CampaignContentService(campaignRepository, assembler, itemUpdateService,
+		service = new V2CampaignContentService(campaignRepository, assembler,
+				new CampaignItemLinker(campaignRepository, itemRepository),
 				registrationService, linkRepository, itemRepository, Optional.empty(), Optional.empty());
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
@@ -94,7 +90,7 @@ class V2CampaignContentIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void 제거는_레거시_patch를_통해_실제로_campaign_id를_비운다() {
+	void 제거는_슬림_경로를_통해_실제로_campaign_id를_비운다() {
 		long itemId = itemRepository.insertPending(userId, "url", UUID.randomUUID(), campaignId, "ABC123",
 				"https://www.instagram.com/p/ABC123/", null, 30, LocalDate.now());
 

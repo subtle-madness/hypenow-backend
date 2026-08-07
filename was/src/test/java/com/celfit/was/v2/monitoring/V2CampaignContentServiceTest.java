@@ -25,7 +25,6 @@ import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
-import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -42,9 +41,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 캠페인 v2 콘텐츠 관계(스펙 §8) 단위 검증 — 레거시(등록·행 수정 서비스)는 mock이다.
- * 이 태스크는 레거시를 한 줄도 바꾸지 않고 호출만 하므로, 검증 대상은 <b>분기 판정</b>
- * (연결/중복/이동 금지/위임/미존재)과 <b>위임 셰이프</b>(posts·trackingDays·campaignId)다.
+ * 캠페인 v2 콘텐츠 관계(스펙 §8) 단위 검증 — 레거시(등록 서비스)·슬림 링커는 mock이다.
+ * 검증 대상은 <b>분기 판정</b>(연결/중복/이동 금지/위임/미존재)과 <b>위임 셰이프</b>
+ * (posts·trackingDays·campaignId)다. 캠페인 연결은 레거시 patch가 아니라 슬림 경로
+ * ({@link CampaignItemLinker})로 간다 — 소유 검증은 링커 단위 테스트가 커버한다.
  */
 @ExtendWith(MockitoExtension.class)
 class V2CampaignContentServiceTest {
@@ -58,7 +58,7 @@ class V2CampaignContentServiceTest {
 	@Mock
 	TrackingItemAssembler trackingItemAssembler;
 	@Mock
-	V1MonitoringItemUpdateService itemUpdateService;
+	CampaignItemLinker linker;
 	@Mock
 	V1MonitoringRegistrationService registrationService;
 	@Mock
@@ -77,7 +77,7 @@ class V2CampaignContentServiceTest {
 
 	@BeforeEach
 	void setUp() {
-		service = new V2CampaignContentService(campaignRepository, trackingItemAssembler, itemUpdateService,
+		service = new V2CampaignContentService(campaignRepository, trackingItemAssembler, linker,
 				registrationService, linkRepository, itemRepository, Optional.of(brandReadRepository),
 				Optional.of(brandPostAssembler));
 	}
@@ -91,8 +91,8 @@ class V2CampaignContentServiceTest {
 
 		V2CampaignContentService.Added added = service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30);
 
-		then(itemUpdateService).should().patch(eq(USER_ID), eq(11L), bodyCaptor.capture());
-		assertThat(bodyCaptor.getValue()).containsEntry("campaignId", "42");
+		// 레거시 patch(전량 재조립)가 아니라 슬림 경로로 campaign_id만 갱신한다.
+		then(linker).should().link(USER_ID, CAMPAIGN_ID, 11L);
 		// 등록을 만들지 않았으므로 동기 완결(200)이다.
 		assertThat(added.accepted()).isFalse();
 		assertThat(added.body().campaignId()).isEqualTo("42");
@@ -117,7 +117,7 @@ class V2CampaignContentServiceTest {
 		assertThat(result.reasonCode()).isEqualTo("CAMPAIGN_CONTENT_ALREADY_EXISTS");
 		assertThat(result.reason()).isEqualTo("이미 이 캠페인에 추가된 콘텐츠입니다.");
 		assertThat(result.monitoringItemId()).isEqualTo("11");
-		then(itemUpdateService).should(never()).patch(anyLong(), anyLong(), anyMap());
+		then(linker).should(never()).link(anyLong(), anyLong(), anyLong());
 	}
 
 	@Test
@@ -132,7 +132,7 @@ class V2CampaignContentServiceTest {
 		assertThat(result.reasonCode()).isEqualTo("CAMPAIGN_CONTENT_ALREADY_EXISTS");
 		// 캠페인 1:1 유지 — 이동은 레거시 PATCH(콘텐츠 수정)의 몫이라 여기서는 손대지 않는다.
 		assertThat(result.reason()).contains("봄 캠페인");
-		then(itemUpdateService).should(never()).patch(anyLong(), anyLong(), anyMap());
+		then(linker).should(never()).link(anyLong(), anyLong(), anyLong());
 	}
 
 	@Test
@@ -165,7 +165,7 @@ class V2CampaignContentServiceTest {
 
 		// 종결(id 30)보다 활성이 우선, 활성끼리는 id 최대(11).
 		assertThat(result.monitoringItemId()).isEqualTo("11");
-		then(itemUpdateService).should().patch(eq(USER_ID), eq(11L), anyMap());
+		then(linker).should().link(USER_ID, CAMPAIGN_ID, 11L);
 	}
 
 	@Test
@@ -188,7 +188,7 @@ class V2CampaignContentServiceTest {
 
 		assertThat(result.result()).isEqualTo("pending");
 		assertThat(result.monitoringItemId()).isEqualTo("12");
-		then(itemUpdateService).should(never()).patch(anyLong(), anyLong(), anyMap());
+		then(linker).should(never()).link(anyLong(), anyLong(), anyLong());
 	}
 
 	@Test
@@ -204,7 +204,7 @@ class V2CampaignContentServiceTest {
 
 		assertThat(result.result()).isEqualTo("success");
 		assertThat(result.monitoringItemId()).isEqualTo("11");
-		then(itemUpdateService).should().patch(eq(USER_ID), eq(11L), anyMap());
+		then(linker).should().link(USER_ID, CAMPAIGN_ID, 11L);
 		then(registrationService).should(never()).register(anyLong(), anyMap());
 	}
 
@@ -231,8 +231,8 @@ class V2CampaignContentServiceTest {
 		assertThat(results.get(0).result()).isEqualTo("success");
 		assertThat(results.get(1).result()).isEqualTo("duplicate");
 		assertThat(results.get(1).reasonCode()).isEqualTo("CAMPAIGN_CONTENT_ALREADY_EXISTS");
-		// 같은 아이템에 두 번 patch하지 않는다.
-		then(itemUpdateService).should().patch(anyLong(), anyLong(), anyMap());
+		// 같은 아이템에 두 번 연결하지 않는다.
+		then(linker).should().link(anyLong(), anyLong(), anyLong());
 	}
 
 	@Test
@@ -277,7 +277,7 @@ class V2CampaignContentServiceTest {
 		V2CampaignContentsResponse.Result result = added.body().results().get(0);
 		assertThat(result.result()).isEqualTo("pending");
 		assertThat(result.monitoringItemId()).isEqualTo("11");
-		then(itemUpdateService).should(never()).patch(anyLong(), anyLong(), anyMap());
+		then(linker).should(never()).link(anyLong(), anyLong(), anyLong());
 	}
 
 	@Test
@@ -393,11 +393,8 @@ class V2CampaignContentServiceTest {
 
 		service.remove(USER_ID, CAMPAIGN_ID, "ABC");
 
-		then(itemUpdateService).should().patch(eq(USER_ID), eq(11L), bodyCaptor.capture());
-		Map<String, Object> body = bodyCaptor.getValue();
-		// 모니터링은 계속된다 — 캠페인 연결만 명시적 null로 해제한다(취소 호출 없음).
-		assertThat(body).containsKey("campaignId");
-		assertThat(body.get("campaignId")).isNull();
+		// 모니터링은 계속된다 — 캠페인 연결만 해제한다(취소 호출 없음).
+		then(linker).should().unlink(USER_ID, 11L);
 	}
 
 	@Test
@@ -410,8 +407,8 @@ class V2CampaignContentServiceTest {
 
 		service.remove(USER_ID, CAMPAIGN_ID, "ABC");
 
-		then(itemUpdateService).should().patch(eq(USER_ID), eq(11L), anyMap());
-		then(itemUpdateService).should().patch(eq(USER_ID), eq(30L), anyMap());
+		then(linker).should().unlink(USER_ID, 11L);
+		then(linker).should().unlink(USER_ID, 30L);
 	}
 
 	@Test
@@ -421,7 +418,7 @@ class V2CampaignContentServiceTest {
 
 		assertThatThrownBy(() -> service.remove(USER_ID, CAMPAIGN_ID, "ABC"))
 				.isInstanceOf(V1ApiException.class);
-		then(itemUpdateService).should(never()).patch(anyLong(), anyLong(), anyMap());
+		then(linker).should(never()).unlink(anyLong(), anyLong());
 	}
 
 	@Test
