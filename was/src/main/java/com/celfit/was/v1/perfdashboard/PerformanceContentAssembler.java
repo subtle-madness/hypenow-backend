@@ -222,28 +222,36 @@ public class PerformanceContentAssembler {
 		return new DirectMapping(byShortCode, byItemId);
 	}
 
-	/** 활성 브랜드 연결이 있을 때만 브랜드 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지 않는다. */
+	/**
+	 * 활성 브랜드 연결이 있을 때만 브랜드 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지 않는다.
+	 * 다계정(08-07 개정)은 연결 순서대로 병합한다 — 같은 shortcode가 여러 브랜드에 태그돼 있으면
+	 * 먼저 연결한 브랜드가 이긴다(putIfAbsent). lastSweptAt은 브랜드들 중 가장 늦은 값이다.
+	 */
 	private Tagged loadTagged(long userId) {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty()) {
 			return Tagged.EMPTY;   // monitoring 비활성 — 레거시 계열만
 		}
-		Optional<BrandLinkRow> link = linkRepository.findActiveByUser(userId);
-		if (link.isEmpty()) {
-			return Tagged.EMPTY;
-		}
-		Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.get().brandId());
-		if (account.isEmpty()) {
-			// 연결은 살아 있는데 monitoring 쪽 계정 행이 없는 상태 — 대시보드를 죽이지 않고 레거시만 낸다.
-			log.warn("브랜드 연결의 monitoring 계정 행 부재 — tagged 생략 userId={}, brandId={}",
-					userId, link.get().brandId());
+		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
+		if (links.isEmpty()) {
 			return Tagged.EMPTY;
 		}
 
 		Map<String, BrandPostResponse> byShortcode = new LinkedHashMap<>();
-		for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
-			byShortcode.putIfAbsent(post.shortcode(), post);
+		OffsetDateTime lastSweptAt = null;
+		for (BrandLinkRow link : links) {
+			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
+			if (account.isEmpty()) {
+				// 연결은 살아 있는데 monitoring 쪽 계정 행이 없는 상태 — 대시보드를 죽이지 않고 그 브랜드만 뺀다.
+				log.warn("브랜드 연결의 monitoring 계정 행 부재 — tagged 생략 userId={}, brandId={}",
+						userId, link.brandId());
+				continue;
+			}
+			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
+				byShortcode.putIfAbsent(post.shortcode(), post);
+			}
+			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());
 		}
-		return new Tagged(byShortcode, account.get().lastSweptAt());
+		return new Tagged(byShortcode, lastSweptAt);
 	}
 
 	// ---------- 스냅샷 병합 ----------
