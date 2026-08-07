@@ -26,6 +26,7 @@ import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -61,7 +62,7 @@ public class BrandCollectService {
 	public BrandCollectService(HikerClient hiker, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
-			Executor enrichWorker,
+			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.window-days:90}") int windowDays,
 			@Value("${monitoring.brand.window-posts:105}") int windowPosts,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
