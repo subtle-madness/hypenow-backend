@@ -157,9 +157,8 @@ public class V1BrandDirectPostService {
 	 *       생성은 레거시 실행기가 나중에 한다({@code processShareEntry} — entry에 resolved_url·item_id를
 	 *       채우고 success로 정산). 레거시엔 브랜드 훅이 없으므로(무수정 제약) 매핑이 영영 안 생겨
 	 *       "성공했는데 브랜드 화면엔 없는" 유실이 된다. 그래서 resolved_url이 채워졌고 아이템이 확정된
-	 *       entry는 이 조회에서 매핑을 만들어 준다. 브랜드는 {@link #resolveLazyMappingBrand} 판정
-	 *       (같은 등록의 기존 매핑 → 단일 활성 연결 순)으로 정하고, 판정 불가면 매핑을 보류한다 —
-	 *       entry 결과는 그대로 둔다.</li>
+	 *       entry는 이 조회에서 매핑을 만들어 준다. 브랜드는 활성 연결(유저당 1개, DB 강제)로 정하고,
+	 *       활성 연결이 없으면(해제됨) 매핑을 건너뛴다 — entry 결과는 그대로 둔다.</li>
 	 * </ul>
 	 *
 	 * <p>지연 매핑을 <b>share 해소분으로만</b> 한정한 이유: 일반 entry는 접수가 같은 트랜잭션에서 이미
@@ -178,14 +177,12 @@ public class V1BrandDirectPostService {
 		}
 
 		Map<String, Long> mappedItemIds = new LinkedHashMap<>();
-		Map<String, Long> mappedBrandIds = new LinkedHashMap<>();
 		for (BrandDirectPostRepository.Row mapping : directPostRepository.findByUser(userId)) {
 			mappedItemIds.put(mapping.shortCode(), mapping.monitoringItemId());
-			mappedBrandIds.put(mapping.shortCode(), mapping.brandId());
 		}
 
 		List<BrandDirectRegistrationResponse.Entry> entries = new ArrayList<>(row.entries().size());
-		// 브랜드 판정은 지연 매핑이 실제로 필요할 때 한 번만 한다(판정 결과는 부재 포함 캐시).
+		// 활성 연결 조회는 지연 매핑이 실제로 필요할 때 한 번만 한다(조회는 캐시하고 부재도 캐시한다).
 		Long brandId = null;
 		boolean brandResolved = false;
 		for (RegistrationEntryRow entry : row.entries()) {
@@ -196,7 +193,7 @@ public class V1BrandDirectPostService {
 
 			if (resolvedShortCode != null && entry.itemId() != null && mappedItemId == null) {
 				if (!brandResolved) {
-					brandId = resolveLazyMappingBrand(userId, row, mappedBrandIds);
+					brandId = linkRepository.findActiveByUser(userId).map(BrandLinkRow::brandId).orElse(null);
 					brandResolved = true;
 				}
 				if (brandId != null) {
@@ -214,30 +211,6 @@ public class V1BrandDirectPostService {
 		}
 		return new BrandDirectRegistrationResponse(String.valueOf(row.id()),
 				KstTimestamps.toKstIso(row.requestedAt()), entries);
-	}
-
-	/**
-	 * share 해소분 지연 매핑의 브랜드 판정(08-07 다계정 개정 — 등록 행에는 브랜드가 없다).
-	 * ① 같은 등록의 다른 entry가 이미 매핑돼 있으면 그 브랜드 — 접수 트랜잭션이 확정한 값이라 정본이다
-	 * (단, 복수 브랜드가 섞여 보이면 판정 불가로 취급). ② 힌트가 없으면 활성 연결이 정확히 1개일 때만
-	 * 그 브랜드(대부분의 사용자). ③ 그 외(연결 없음·복수 연결에 힌트 없음)는 매핑을 보류한다 —
-	 * entry 결과는 그대로 두므로 추적 자체는 유실되지 않고, 다음 폴링이 같은 판정을 재시도한다.
-	 */
-	private Long resolveLazyMappingBrand(long userId, RegistrationRow row, Map<String, Long> mappedBrandIds) {
-		Set<Long> siblingBrands = new LinkedHashSet<>();
-		for (RegistrationEntryRow entry : row.entries()) {
-			String resolved = shortCodeOf(entry.resolvedUrl());
-			String shortCode = resolved != null ? resolved : shortCodeOf(entry.input());
-			Long mapped = shortCode == null ? null : mappedBrandIds.get(shortCode);
-			if (mapped != null) {
-				siblingBrands.add(mapped);
-			}
-		}
-		if (siblingBrands.size() == 1) {
-			return siblingBrands.iterator().next();
-		}
-		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
-		return links.size() == 1 ? links.get(0).brandId() : null;
 	}
 
 	// ---------- 1차 판정 ----------

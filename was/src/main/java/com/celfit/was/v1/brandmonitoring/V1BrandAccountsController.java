@@ -30,6 +30,9 @@ import org.springframework.web.bind.annotation.RestController;
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class V1BrandAccountsController {
 
+	/** 계정 상한(FE 명세 meta.limit) — 현재 정책은 유저당 1계정이라 도달 불가한 표시값이다. */
+	private static final int ACCOUNT_LIMIT = 10;
+
 	private final V1BrandAccountService service;
 
 	public V1BrandAccountsController(V1BrandAccountService service) {
@@ -41,8 +44,7 @@ public class V1BrandAccountsController {
 		List<BrandAccountResponse> accounts = service.list(principal.getUserId());
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", accounts.size());
-		// meta.limit은 실제 강제 한도와 같은 값이다(08-07 다계정 개정 — 강제 지점은 BrandLinkTransaction).
-		meta.put("limit", BrandLinkTransaction.ACCOUNT_LIMIT);
+		meta.put("limit", ACCOUNT_LIMIT);
 		return ApiResponse.ok(accounts, meta);
 	}
 
@@ -52,11 +54,7 @@ public class V1BrandAccountsController {
 		return ApiResponse.ok(service.get(principal.getUserId(), parseAccountId(accountId)));
 	}
 
-	/**
-	 * 연결은 202다 — monitoring 프로필 검증만 동기로 끝나고 수집(백필)은 뒤에서 돈다(폴링으로 확인).
-	 * 이미 수집된 브랜드면 재수집 없이 연결만 하고 현재 상태(ready 등)를 그대로 돌려주며,
-	 * 이미 연결된 브랜드 재요청도 같은 202(멱등 — 기존 객체)다.
-	 */
+	/** 등록은 202다 — monitoring 프로필 검증만 동기로 끝나고 수집(백필)은 뒤에서 돈다(폴링으로 확인). */
 	@PostMapping
 	public ResponseEntity<ApiResponse<BrandAccountResponse>> register(
 			@AuthenticationPrincipal AppUserDetails principal,

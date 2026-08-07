@@ -3,7 +3,6 @@ package com.celfit.was.v1.brandmonitoring;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.v1.common.V1ApiException;
-import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
@@ -11,21 +10,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 브랜드 연결의 DB 트랜잭션 경계 — monitoring 호출(느리고 실패 가능)을 트랜잭션 안에 넣지 않기 위해
- * 서비스에서 분리한 단위다. 08-07 다계정 개정: POST는 "계정명 등록(불변)"이 아니라 "브랜드 연결"이다 —
- * 유저는 브랜드를 {@link #ACCOUNT_LIMIT}개까지 연결할 수 있고, 이미 연결된 브랜드 재요청은 멱등이다.
- * BRAND_ACCOUNT_IMMUTABLE·BRAND_ACCOUNT_ALREADY_EXISTS는 이 개정으로 폐기됐다.
+ * 서비스에서 분리한 단위다. {@link BrandLinkRepository#instagramAccountNameForUpdate}가 users 행을
+ * FOR UPDATE로 잠그므로 <b>반드시 트랜잭션 안에서</b> 불러야 한다(밖이면 잠금이 즉시 풀려 동시 등록
+ * 경합 방어가 무력화된다) — 그래서 사전 확인(precheck)도 여기 산다.
  *
  * <p>자기호출(self-invocation)은 프록시를 타지 않아 @Transactional이 무시되므로 서비스와 같은 클래스에
  * 두지 않았다. 사전 확인과 저장이 별도 트랜잭션인 것은 의도된 것이다: 사전 확인은 monitoring 호출
- * 전에 멱등·한도를 즉시 판정하는 빠른 경로일 뿐이고, 판정의 정본은 저장 트랜잭션 안의
- * {@code lockUser}(유저 행 FOR UPDATE) 직렬화 아래 재확인이다 — 한도는 유니크 인덱스로 표현할 수
- * 없어 이 잠금이 동시 등록의 한도 초과를 막는 유일한 장치다.
+ * 전에 명백한 409를 즉시 돌려주기 위한 빠른 경로일 뿐이고, 판정의 정본은 저장 트랜잭션 안의 재확인이다.
  */
 @Component
 class BrandLinkTransaction {
-
-	/** 유저별 브랜드 연결 한도 — 컨트롤러 meta.limit과 같은 값(실제 강제 한도, 08-07 다계정 개정). */
-	static final int ACCOUNT_LIMIT = 10;
 
 	private final BrandLinkRepository linkRepository;
 
@@ -33,81 +27,70 @@ class BrandLinkTransaction {
 		this.linkRepository = linkRepository;
 	}
 
-	/**
-	 * monitoring 호출 전 빠른 판정(§5-1 2단계) — 같은 계정명이 이미 연결돼 있으면 그 brandId를
-	 * 돌려준다(멱등 경로 — monitoring 호출 자체를 생략). 한도 초과는 즉시 409. 계정명 비교는 링크의
-	 * 등록 시점 사본 기준이라 monitoring 쪽 개명은 못 보지만, 그 경우 monitoring 등록이 같은 brandId로
-	 * replay돼 {@link #link}의 brandId 재확인이 멱등으로 접는다 — 결과는 같다.
-	 */
+	/** monitoring 호출 전 빠른 409 판정(§5-1 2단계). 통과해도 저장 트랜잭션이 같은 검사를 다시 한다. */
 	@Transactional
-	Optional<Long> precheck(long userId, String username) {
-		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
-		Optional<BrandLinkRow> same = links.stream()
-				.filter(link -> link.username().equals(username))
-				.findFirst();
-		if (same.isPresent()) {
-			return Optional.of(same.get().brandId());
-		}
-		if (links.size() >= ACCOUNT_LIMIT) {
-			throw limitReached();
-		}
-		return Optional.empty();
+	void precheck(long userId, String username) {
+		assertRegisterable(userId, username);
 	}
 
-	/**
-	 * 저장(§5-1 4단계) — 유저 잠금 → 멱등·한도 재확인 → 활성 연결 생성.
-	 * 이미 연결된 브랜드면 조용히 성공한다(멱등 — monitoring 등록은 replay라 부작용이 없다).
-	 */
+	/** 저장(§5-1 4단계) — 잠금 재확인 → 계정명 최초 저장 → 활성 연결 생성. */
 	@Transactional
 	void link(long userId, long brandId, String username) {
-		linkRepository.lockUser(userId);
-		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
-		if (links.stream().anyMatch(link -> link.brandId() == brandId)) {
-			return;
-		}
-		if (links.size() >= ACCOUNT_LIMIT) {
-			throw limitReached();
+		String stored = assertRegisterable(userId, username);
+		if (stored == null) {
+			linkRepository.saveInstagramAccountName(userId, username);
 		}
 		try {
 			linkRepository.insertLink(userId, brandId, username);
 		} catch (DuplicateKeyException e) {
-			// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 잠금 덕에 사실상 도달 불가지만,
-			// 도달해도 원하는 상태(연결됨)는 이미 성립했으므로 멱등 성공으로 접는다.
+			// 활성 유니크 인덱스가 잡은 동시 등록 — 사전 확인·잠금 재확인을 모두 통과한 경합의 최후 보루.
+			throw alreadyExists();
 		}
 	}
 
 	/**
-	 * 삭제(§5-3) — 소유권 확인 후 해당 연결만 soft-delete하고, 같은 브랜드에 남은 활성 연결 수를 같은
-	 * 트랜잭션에서 센다. 활성 연결이 없으면 남의 브랜드인지 이미 해제한 내 브랜드인지 구분할 수 없어 둘 다 403이다.
+	 * 삭제(§5-3) — 소유권 확인 후 soft-delete하고, 같은 브랜드에 남은 활성 연결 수를 같은 트랜잭션에서 센다.
+	 * 활성 연결이 없으면 남의 브랜드인지 이미 해제한 내 브랜드인지 구분할 수 없어 둘 다 403이다.
 	 */
 	@Transactional
 	UnlinkResult unlink(long userId, long brandId) {
 		BrandLinkRow link = linkRepository.findActiveByUserAndBrand(userId, brandId)
 				.orElseThrow(() -> V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요."));
-		linkRepository.softDeleteLink(userId, brandId);
+		linkRepository.softDeleteActiveLink(userId);
 		return new UnlinkResult(link.brandId(), link.username(), linkRepository.countActiveByBrand(brandId) == 0);
 	}
 
-	/**
-	 * 회원 탈퇴 훅 — 유저의 활성 연결을 전부 해제하고 브랜드별 잔여 판정을 돌려준다.
-	 * 연결이 없으면 빈 목록(할 일 없음).
-	 */
+	/** 회원 탈퇴 훅 — brandId를 모른 채 유저의 활성 연결을 해제한다. 연결이 없으면 empty(할 일 없음). */
 	@Transactional
-	List<UnlinkResult> unlinkAllForWithdrawal(long userId) {
-		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
-		if (links.isEmpty()) {
-			return List.of();
+	Optional<UnlinkResult> unlinkForWithdrawal(long userId) {
+		Optional<BrandLinkRow> link = linkRepository.findActiveByUser(userId);
+		if (link.isEmpty()) {
+			return Optional.empty();
 		}
-		linkRepository.softDeleteAllActiveByUser(userId);
-		return links.stream()
-				.map(link -> new UnlinkResult(link.brandId(), link.username(),
-						linkRepository.countActiveByBrand(link.brandId()) == 0))
-				.toList();
+		linkRepository.softDeleteActiveLink(userId);
+		long brandId = link.get().brandId();
+		return Optional.of(new UnlinkResult(brandId, link.get().username(),
+				linkRepository.countActiveByBrand(brandId) == 0));
 	}
 
-	private static V1ApiException limitReached() {
-		return V1ApiException.conflict("BRAND_ACCOUNT_LIMIT_REACHED",
-				"브랜드 계정은 최대 " + ACCOUNT_LIMIT + "개까지 연결할 수 있어요.");
+	/**
+	 * 등록 가능 여부 판정 — 통과하면 저장된 계정명(null이면 미저장)을 돌려준다.
+	 * 순서가 중요하다: 계정명 불변 위반(IMMUTABLE)이 활성 연결 중복(ALREADY_EXISTS)보다 먼저다.
+	 * 다른 계정으로 이미 저장된 유저는 활성 연결 유무와 무관하게 항상 IMMUTABLE이어야 한다(§5-4 우회 차단).
+	 */
+	private String assertRegisterable(long userId, String username) {
+		String stored = linkRepository.instagramAccountNameForUpdate(userId);
+		if (stored != null && !stored.equals(username)) {
+			throw V1ApiException.conflict("BRAND_ACCOUNT_IMMUTABLE", "이미 등록한 브랜드 계정은 변경할 수 없습니다.");
+		}
+		if (linkRepository.findActiveByUser(userId).isPresent()) {
+			throw alreadyExists();
+		}
+		return stored;
+	}
+
+	private static V1ApiException alreadyExists() {
+		return V1ApiException.conflict("BRAND_ACCOUNT_ALREADY_EXISTS", "이미 등록된 브랜드 계정입니다.");
 	}
 
 	/** 해제 결과 — lastLink=true면 이 브랜드의 마지막 활성 연결이었다(monitoring 탈퇴 대상, §5-3). */

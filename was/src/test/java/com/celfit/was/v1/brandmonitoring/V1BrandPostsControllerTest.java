@@ -79,7 +79,7 @@ class V1BrandPostsControllerTest {
 	@BeforeEach
 	void ownedBrand() {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.of(link()));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(account()));
 	}
 
@@ -251,7 +251,7 @@ class V1BrandPostsControllerTest {
 
 	@Test
 	void 브랜드_연결이_없으면_상세는_404다() throws Exception {
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of());
+		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
 
 		mockMvc.perform(get("/v1/brand-monitoring/posts/AAA").with(user(principal())))
 				.andExpect(status().isNotFound())

@@ -291,7 +291,7 @@ class PerformanceContentAssemblerTest {
 	void 활성_브랜드가_없으면_브랜드_조회를_아예_하지_않는다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
-		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findActiveByUser(USER_ID)).willReturn(Optional.empty());
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -330,7 +330,7 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(contents).hasSize(1);
 		assertThat(contents.get(0).source()).isEqualTo("individual");
-		then(linkRepository).should(never()).findAllActiveByUser(anyLong());
+		then(linkRepository).should(never()).findActiveByUser(anyLong());
 	}
 
 	@Test
@@ -389,7 +389,7 @@ class PerformanceContentAssemblerTest {
 	}
 
 	private void givenNoBrand() {
-		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findActiveByUser(USER_ID)).willReturn(Optional.empty());
 	}
 
 	private void givenBrand(BrandPostResponse... taggedPosts) {
@@ -397,7 +397,7 @@ class PerformanceContentAssemblerTest {
 	}
 
 	private void givenBrandSweptAt(OffsetDateTime lastSweptAt, BrandPostResponse... taggedPosts) {
-		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
+		given(linkRepository.findActiveByUser(USER_ID)).willReturn(Optional.of(new BrandLinkRow(1L, USER_ID,
 				BRAND_ID, "brand", LAST_COLLECTED, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active");

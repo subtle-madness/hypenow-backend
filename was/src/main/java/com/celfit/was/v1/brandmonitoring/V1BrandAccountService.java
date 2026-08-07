@@ -8,7 +8,6 @@ import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringCommandClient.BrandRegisterResult;
 import com.celfit.was.v1.common.V1ApiException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -19,14 +18,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
- * 브랜드 계정 라이프사이클(스펙 §5, 08-07 다계정 개정) — 연결·목록·단건·삭제 + 회원 탈퇴 훅.
- * POST는 "브랜드 연결"이다: 브랜드는 전역 1회 수집이고(monitoring 등록이 멱등 replay), 여러 사용자가
- * 같은 브랜드에 연결해 수집 데이터를 공유한다. 이미 연결된 브랜드 재요청은 오류가 아니라 기존 객체
- * 반환(멱등)이고, 유저별 한도({@link BrandLinkTransaction#ACCOUNT_LIMIT}) 초과만 409다.
+ * 브랜드 계정 라이프사이클(스펙 §5) — 등록·목록·단건·삭제 + 회원 탈퇴 훅.
  *
  * <p>monitoring 호출은 항상 DB 트랜잭션 <b>밖</b>이다({@link BrandLinkTransaction}이 트랜잭션 경계).
  * 등록은 "monitoring 동기 검증 → was 커밋" 순서다(FE 명세와 의도적으로 다른 지점, 스펙 §2):
- * 존재하지 않는 계정명으로 연결 행을 만드는 사고를 막아야 한다.
+ * {@code instgram_account_name}은 불변이라 존재하지 않는 계정명을 영구 저장하는 사고를 막아야 한다.
  *
  * <p>monitoring 서브시스템이 꺼진 환경(monitoring.enabled=false)에서는 빈 자체가 뜨지 않는다 —
  * 컨트롤러도 같은 조건이라 표면이 통째로 사라진다(레거시 MonitoringRegistrationExecutor 관용구).
@@ -53,18 +49,11 @@ public class V1BrandAccountService {
 		this.assembler = assembler;
 	}
 
-	/**
-	 * 연결(§5-1, 08-07 다계정 개정) — 형식 검증 → 사전 판정(멱등·한도) → monitoring 동기 등록(멱등
-	 * replay — 이미 수집 중·완료된 브랜드면 재수집 없이 기존 brandId) → was 연결 커밋 → 202 BrandAccount.
-	 * 같은 계정명이 이미 연결돼 있으면 monitoring 호출 없이 기존 계정 객체를 그대로 돌려준다(멱등).
-	 */
+	/** 등록(§5-1) — 형식 검증 → 사전 409 → monitoring 동기 등록 → was 커밋 → 202 BrandAccount. */
 	public BrandAccountResponse register(long userId, String rawUsername) {
 		String username = BrandUsername.normalize(rawUsername);
 		BrandUsername.validate(username);
-		Optional<Long> alreadyLinked = linkTransaction.precheck(userId, username);
-		if (alreadyLinked.isPresent()) {
-			return assembler.toResponse(findAccountOrThrow(alreadyLinked.get()));
-		}
+		linkTransaction.precheck(userId, username);
 
 		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username));
 		try {
@@ -78,21 +67,21 @@ public class V1BrandAccountService {
 		return assembler.toResponse(findAccountOrThrow(registered.brandId()));
 	}
 
-	/** 목록(§5-2) — 유저의 활성 연결 전체(연결 순), 유저당 최대 {@link BrandLinkTransaction#ACCOUNT_LIMIT}건. */
+	/** 목록(§5-2) — 활성 연결은 유저당 최대 1개(부분 유니크 인덱스)라 항상 0·1건이다. */
 	public List<BrandAccountResponse> list(long userId) {
-		List<BrandAccountResponse> accounts = new ArrayList<>();
-		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
-			Optional<BrandAccountRow> row = brandReadRepository.findAccount(link.brandId());
-			if (row.isEmpty()) {
-				// 도달 불가(등록이 monitoring 먼저라 연결이 있으면 brand_account도 있다). 목록 전체를
-				// 500으로 떨구는 대신 그 건만 빼고 돌려주고 로그로 드러낸다 — 폴링 화면이 죽지 않게.
-				log.warn("활성 연결의 brand_account 부재 — 목록에서 제외 userId={}, brandId={}",
-						userId, link.brandId());
-				continue;
-			}
-			accounts.add(assembler.toResponse(row.get()));
+		Optional<BrandLinkRow> link = linkRepository.findActiveByUser(userId);
+		if (link.isEmpty()) {
+			return List.of();
 		}
-		return List.copyOf(accounts);
+		long brandId = link.get().brandId();
+		Optional<BrandAccountRow> row = brandReadRepository.findAccount(brandId);
+		if (row.isEmpty()) {
+			// 도달 불가(등록이 monitoring 먼저라 연결이 있으면 brand_account도 있다). 목록 전체를
+			// 500으로 떨구는 대신 비워서 돌려주고 로그로 드러낸다 — 폴링 화면이 죽지 않게.
+			log.warn("활성 연결의 brand_account 부재 — 목록에서 제외 userId={}, brandId={}", userId, brandId);
+			return List.of();
+		}
+		return List.of(assembler.toResponse(row.get()));
 	}
 
 	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). */
@@ -113,13 +102,11 @@ public class V1BrandAccountService {
 	/**
 	 * 회원 탈퇴 훅 — users 하드 삭제(CASCADE)가 brand_monitorings를 지워버리기 <b>전에</b> 불러야
 	 * "마지막 사용자면 monitoring 탈퇴" 판정이 가능하다. 행이 먼저 사라지면 고아 브랜드가 매일
-	 * 수집을 계속한다(정리할 근거가 영영 남지 않는다). 삭제 API와 같은 로직·같은 best-effort 규율 —
-	 * 다계정이라 연결 전부를 해제하고 브랜드별로 판정한다.
+	 * 수집을 계속한다(정리할 근거가 영영 남지 않는다). 삭제 API와 같은 로직·같은 best-effort 규율.
 	 */
 	public void cleanupForAccountDeletion(long userId) {
-		for (BrandLinkTransaction.UnlinkResult unlinked : linkTransaction.unlinkAllForWithdrawal(userId)) {
-			deregisterIfLast(unlinked, "회원 탈퇴");
-		}
+		linkTransaction.unlinkForWithdrawal(userId)
+				.ifPresent(unlinked -> deregisterIfLast(unlinked, "회원 탈퇴"));
 	}
 
 	/**

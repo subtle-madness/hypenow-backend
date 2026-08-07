@@ -245,7 +245,7 @@ class V2CampaignContentServiceTest {
 	void 브랜드_연결이_없으면_tagged_조회_없이_failed다() {
 		givenCampaign();
 		givenItems();
-		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findActiveByUser(USER_ID)).willReturn(Optional.empty());
 
 		V2CampaignContentsResponse.Result result =
 				service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30).body().results().get(0);
@@ -351,8 +351,8 @@ class V2CampaignContentServiceTest {
 	}
 
 	private void givenTagged(BrandPostResponse... posts) {
-		given(linkRepository.findAllActiveByUser(USER_ID))
-				.willReturn(List.of(new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", null, null)));
+		given(linkRepository.findActiveByUser(USER_ID))
+				.willReturn(Optional.of(new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", null, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", null, null, null, null, null,
 				null, null, null, null, null, null, null, null, "ACTIVE");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));

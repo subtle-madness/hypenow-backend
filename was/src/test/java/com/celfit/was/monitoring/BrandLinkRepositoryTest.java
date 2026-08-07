@@ -13,8 +13,8 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
- * 브랜드 연결 저장 계층(2026-08-07 스펙 §3-1, 08-07 다계정 개정) — app.brand_monitorings·
- * app.brand_direct_posts 접점을 실 컨테이너 왕복으로 검증한다. 유니크 제약(유저·브랜드당 활성 1개)은
+ * 브랜드 연결 저장 계층(2026-08-07 스펙 §3-1) — app.brand_monitorings·app.brand_direct_posts와
+ * users.instgram_account_name 접점을 실 컨테이너 왕복으로 검증한다. 유니크 제약(활성 연결 1개)은
  * 서비스 계층 방어의 최후 보루라 DB에서 실제로 터지는지까지 확인한다.
  */
 class BrandLinkRepositoryTest extends IntegrationTest {
@@ -44,42 +44,38 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 활성_연결은_유저_브랜드당_하나고_다른_브랜드는_추가_연결된다() {
+	void 활성_연결은_사용자당_하나다() {
+		repository.saveInstagramAccountName(userId, "lizda_official");
 		repository.insertLink(userId, brandA, "lizda_official");
-		// 다계정(08-07 개정) — 다른 브랜드 연결은 정상 경로다.
-		repository.insertLink(userId, brandB, "other_brand");
-		assertThat(repository.findAllActiveByUser(userId)).hasSize(2);
+		assertThat(repository.findActiveByUser(userId)).isPresent();
 
-		// 같은 (유저, 브랜드) 활성 중복만 유니크 위반
-		assertThatThrownBy(() -> repository.insertLink(userId, brandA, "lizda_official"))
+		// 활성 중복은 유니크 위반
+		assertThatThrownBy(() -> repository.insertLink(userId, brandB, "other"))
 				.isInstanceOf(DuplicateKeyException.class);
 
-		// soft-delete 후 재삽입 가능(재연결 경로)
-		assertThat(repository.softDeleteLink(userId, brandA)).isTrue();
+		// soft-delete 후 재삽입 가능(재등록 경로)
+		assertThat(repository.softDeleteActiveLink(userId)).isTrue();
 		repository.insertLink(userId, brandA, "lizda_official");
 		assertThat(repository.countActiveByBrand(brandA)).isEqualTo(1);
 	}
 
 	@Test
-	void findAllActiveByUser는_soft_delete된_연결을_보지_않고_생성_순으로_돌려준다() {
-		long first = repository.insertLink(userId, brandA, "lizda_official");
-		long second = repository.insertLink(userId, brandB, "other_brand");
+	void findActiveByUser는_soft_delete된_연결을_보지_않는다() {
+		long id = repository.insertLink(userId, brandA, "lizda_official");
 
-		assertThat(repository.findAllActiveByUser(userId)).extracting(BrandLinkRow::id)
-				.containsExactly(first, second);
-		BrandLinkRow row = repository.findAllActiveByUser(userId).get(0);
+		BrandLinkRow row = repository.findActiveByUser(userId).orElseThrow();
+		assertThat(row.id()).isEqualTo(id);
 		assertThat(row.userId()).isEqualTo(userId);
 		assertThat(row.brandId()).isEqualTo(brandA);
 		assertThat(row.username()).isEqualTo("lizda_official");
 		assertThat(row.createdAt()).isNotNull();
 		assertThat(row.deletedAt()).isNull();
 
-		assertThat(repository.softDeleteLink(userId, brandA)).isTrue();
+		assertThat(repository.softDeleteActiveLink(userId)).isTrue();
 
-		assertThat(repository.findAllActiveByUser(userId)).extracting(BrandLinkRow::id)
-				.containsExactly(second);
+		assertThat(repository.findActiveByUser(userId)).isEmpty();
 		// 이미 해제된 뒤의 중복 호출은 갱신 행이 없어 false — 멱등 판정 지점.
-		assertThat(repository.softDeleteLink(userId, brandA)).isFalse();
+		assertThat(repository.softDeleteActiveLink(userId)).isFalse();
 	}
 
 	@Test
@@ -89,19 +85,8 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 		assertThat(repository.findActiveByUserAndBrand(userId, brandA)).isPresent();
 		assertThat(repository.findActiveByUserAndBrand(userId, brandB)).isEmpty();
 
-		repository.softDeleteLink(userId, brandA);
+		repository.softDeleteActiveLink(userId);
 		assertThat(repository.findActiveByUserAndBrand(userId, brandA)).isEmpty();
-	}
-
-	@Test
-	void softDeleteAllActiveByUser는_유저의_활성_연결_전부를_해제한다() {
-		repository.insertLink(userId, brandA, "lizda_official");
-		repository.insertLink(userId, brandB, "other_brand");
-
-		assertThat(repository.softDeleteAllActiveByUser(userId)).isEqualTo(2);
-
-		assertThat(repository.findAllActiveByUser(userId)).isEmpty();
-		assertThat(repository.softDeleteAllActiveByUser(userId)).isZero();
 	}
 
 	@Test
@@ -113,17 +98,25 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 		repository.insertLink(other, brandA, "lizda_official");
 		assertThat(repository.countActiveByBrand(brandA)).isEqualTo(2);
 
-		repository.softDeleteLink(other, brandA);
+		repository.softDeleteActiveLink(other);
 
 		assertThat(repository.countActiveByBrand(brandA)).isEqualTo(1);
 		assertThat(repository.countActiveByBrand(brandB)).isZero();
 	}
 
 	@Test
-	void lockUser는_존재하지_않는_유저면_예외() {
-		// 인증 전제상 도달 불가 — 도달하면 전제가 깨진 것이라 조용히 넘기지 않고 예외로 드러낸다.
-		repository.lockUser(userId);   // 존재하는 유저는 예외 없음
-		assertThatThrownBy(() -> repository.lockUser(999_999_999L))
+	void instagramAccountNameForUpdate는_미저장이면_null_저장했으면_그_값이다() {
+		assertThat(repository.instagramAccountNameForUpdate(userId)).isNull();
+
+		repository.saveInstagramAccountName(userId, "lizda_official");
+
+		assertThat(repository.instagramAccountNameForUpdate(userId)).isEqualTo("lizda_official");
+	}
+
+	@Test
+	void instagramAccountNameForUpdate는_존재하지_않는_유저면_예외() {
+		// 인증 전제상 도달 불가 — 도달하면 전제가 깨진 것이라 조용한 null 대신 예외로 드러낸다.
+		assertThatThrownBy(() -> repository.instagramAccountNameForUpdate(999_999L))
 				.isInstanceOf(IllegalStateException.class);
 	}
 
