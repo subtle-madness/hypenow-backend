@@ -51,6 +51,28 @@ class HikerClientTest {
 	}
 
 	/**
+	 * 브랜드 was 계약 §3-2 — 인증뱃지·외부링크는 추가 콜 없이 같은 프로필 응답에서 뽑는다.
+	 * is_verified는 null(키 부재)과 false(관측된 미인증)를 구분해야 해서 Boolean이다.
+	 */
+	@Test
+	void 프로필_파싱은_인증뱃지와_외부링크를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		ProfileInfo p = client.fetchProfile("rarebeauty");
+		assertThat(p.isVerified()).isTrue();   // profile.json 실측: user.is_verified = true
+		assertThat(p.externalUrl()).contains("sephora.com");   // 실측: 상품 링크
+	}
+
+	/** external_url은 없을 수 있는 필드 — 파싱이 예외 없이 null을 허용하는지가 계약이다. */
+	@Test
+	void 프로필_파싱은_외부링크_부재를_null로_허용한다() {
+		HikerClient client = new HikerClient(
+				path -> "{\"user\":{\"pk\":1,\"is_private\":false},\"status\":\"ok\"}");
+		ProfileInfo p = client.fetchProfile("nolink");
+		assertThat(p.externalUrl()).isNull();
+		assertThat(p.isVerified()).isNull();   // 키 부재는 null — false(관측된 미인증)와 구분한다
+	}
+
+	/**
 	 * 게시자 프로필(/v2/user/by/id — 브랜드 태그 모니터링 스펙 §2). 응답 셰이프는 라이브 미실측이라
 	 * /v2/user/by/username과 동일한 {user:{...}}로 가정(스펙이 경로만 확정) — 픽스처는 profile.json 파생.
 	 */
@@ -68,6 +90,15 @@ class HikerClientTest {
 		assertThat(a.followers()).isPositive();
 		assertThat(a.biography()).isNotBlank();
 		assertThat(a.isPrivate()).isFalse();
+		// 브랜드 was 계약 §3-2 — 게시자 인증뱃지(author-profile-by-id.json 합성 픽스처: false)
+		assertThat(a.isVerified()).isFalse();
+	}
+
+	/** 게시자 is_verified도 키 부재(null)와 관측된 false를 구분한다 — 화면이 뱃지 미표시와 미상을 나눈다. */
+	@Test
+	void 게시자_프로필_인증뱃지_키_부재는_null이다() {
+		HikerClient client = new HikerClient(path -> "{\"user\":{\"pk\":9876543210},\"status\":\"ok\"}");
+		assertThat(client.fetchAuthorProfile("9876543210").isVerified()).isNull();
 	}
 
 	/** 게시자 비공개는 오류가 아니라 관측값이다 — fetchProfile과 달리 예외를 던지면 안 된다. */
@@ -183,6 +214,35 @@ class HikerClientTest {
 		assertThat(feed.views()).isNull();                   // 피드는 조회수 영구 null
 		assertThat(feed.saves()).isNull();
 		assertThat(feed.shares()).isNull();
+	}
+
+	/**
+	 * 브랜드 was 계약 §3-2 — 영상 재생 URL·길이·유료협찬 표시(brand_post_meta). 추가 콜 없이
+	 * 같은 열거 응답의 media 노드에서 뽑는다. is_paid_partnership은 null(키 부재 = 판정 unknown)과
+	 * false(관측된 비협찬)를 구분해야 해서 Boolean이다.
+	 */
+	@Test
+	void 게시물_파싱은_영상과_유료협찬_표시를_담는다() {
+		HikerClient client = new HikerClient(fakeHttp());
+		List<PostInfo> posts = client.fetchRecentPosts("rarebeauty", "12345", 1);
+		PostInfo reels = posts.stream().filter(p -> "REELS".equals(p.contentType())).findFirst().orElseThrow();
+		// medias.json 실측: 릴스는 video_versions[0].url·video_duration(12.119…)이 실린다
+		assertThat(reels.videoUrl()).isNotBlank();
+		assertThat(reels.videoDuration()).isPositive();
+		assertThat(reels.isPaidPartnership()).isFalse();   // 실측: 키 존재, 값 false
+		// 피드·캐러셀은 video_versions·video_duration 자체가 없다 → null(취득 불가 규칙)
+		PostInfo feed = posts.stream().filter(p -> "FEED".equals(p.contentType())).findFirst().orElseThrow();
+		assertThat(feed.videoUrl()).isNull();
+		assertThat(feed.videoDuration()).isNull();
+	}
+
+	/** 유료협찬 키 부재는 null — false(관측된 비협찬)로 뭉개면 화면이 unknown을 표시할 근거를 잃는다. */
+	@Test
+	void 유료협찬_키_부재는_null이고_false와_구분된다() {
+		HikerClient client = new HikerClient(path -> fixture("tag-medias.json"));
+		var page = client.fetchTaggedPage("17841400000000000", null);
+		// tag-medias.json(합성 픽스처)에는 is_paid_partnership 키 자체가 없다
+		assertThat(page.posts()).allSatisfy(p -> assertThat(p.isPaidPartnership()).isNull());
 	}
 
 	/** 저장·리포스트 키를 안 실은 세션의 medias 응답 — 같은 릴스가 clips 응답에는 키와 함께 실려 있다. */

@@ -147,6 +147,29 @@ class MigrationTest {
 		assertThat(tables).isEqualTo(7);
 	}
 
+	/**
+	 * 브랜드 was 계약 필드(2026-08-07 스펙 §3-2) — expand 단계라 전부 nullable로 추가돼야 한다.
+	 * NOT NULL이면 이미 등록된 운영 브랜드 행 때문에 마이그레이션 자체가 실패한다.
+	 */
+	@Test
+	void 브랜드_테이블에_was_계약_컬럼이_nullable로_추가된다() {
+		var ds = TestDb.dataSource(TestDb.container());
+		var db = new JdbcTemplate(ds);
+		TestDb.resetAndMigrate(db, ds);
+
+		var columns = db.queryForList("""
+				SELECT table_name, column_name, is_nullable FROM information_schema.columns
+				WHERE table_schema='public'
+				  AND ((table_name='brand_account' AND column_name IN
+				        ('full_name', 'profile_pic_url', 'is_verified', 'external_url', 'following',
+				         'media_count', 'backfill_error', 'backfill_completed_at', 'last_swept_at'))
+				    OR (table_name='brand_post_meta' AND column_name IN
+				        ('video_url', 'video_duration', 'is_paid_partnership'))
+				    OR (table_name='author_profile' AND column_name='is_verified'))""");
+		assertThat(columns).hasSize(13);
+		assertThat(columns).allSatisfy(c -> assertThat(c.get("is_nullable")).isEqualTo("YES"));
+	}
+
 	/** 신규 표면도 was_reader가 SELECT할 수 있어야 한다 — V2 ALTER DEFAULT PRIVILEGES 자동 적용 확인. */
 	@Test
 	void was_reader는_브랜드_표면을_SELECT할_수_있다() {

@@ -60,7 +60,10 @@ public class HikerClient {
 				firstLong(user, "follower_count"), firstLong(user, "following_count"),
 				firstLong(user, "media_count"),
 				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null),
-				user.path("biography").asString(null), body);
+				user.path("biography").asString(null),
+				// 인증뱃지·외부링크(was 계약 §3-2) — 추가 콜 없이 같은 응답에서.
+				nullableBoolean(user, "is_verified"), user.path("external_url").asString(null),
+				body);
 	}
 
 	/**
@@ -81,7 +84,9 @@ public class HikerClient {
 				firstLong(user, "follower_count"), firstLong(user, "following_count"),
 				firstLong(user, "media_count"),
 				user.path("biography").asString(null), user.path("profile_pic_url").asString(null),
-				user.path("is_private").asBoolean(false));
+				user.path("is_private").asBoolean(false),
+				// 인증뱃지(was 계약 §3-2) — 키 부재는 null(미인증 false와 구분).
+				nullableBoolean(user, "is_verified"));
 	}
 
 	/**
@@ -422,11 +427,19 @@ public class HikerClient {
 		Long saves = own.saves() != null ? own.saves() : clip != null ? clip.saves() : null;
 		Long shares = own.shares() != null ? own.shares() : clip != null ? clip.shares() : null;
 		Long reposts = own.reposts() != null ? own.reposts() : clip != null ? clip.reposts() : null;
+		// brand_post_meta 표시 메타(was 계약 §3-2) — 전부 같은 노드, 추가 콜 0.
+		// 영상 URL·길이는 릴스·비디오에만 실린다(피드·캐러셀은 키 부재 → null).
+		String videoUrl = m.path("video_versions").path(0).path("url").asString(null);
+		Double videoDuration = m.path("video_duration").isNumber() ? m.path("video_duration").asDouble() : null;
+		// 유료협찬은 키 부재(null=판정 unknown)와 관측된 false를 구분한다
+		// — 태그 열거 응답에는 키가 없다(합성 픽스처 기준, 라이브 미실측).
+		Boolean isPaidPartnership = nullableBoolean(m, "is_paid_partnership");
 		return new PostInfo(code, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType, caption,
 				thumbnailUrl(m), firstLong(m, "taken_at"),
 				likes, firstLong(m, "comment_count"),
 				views, fbPlays,
 				saves, shares, reposts,
+				videoUrl, videoDuration, isPaidPartnership,
 				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
@@ -455,6 +468,16 @@ public class HikerClient {
 	private static String thumbnailUrl(JsonNode m) {
 		JsonNode candidates = m.path("image_versions2").path("candidates");
 		return candidates.isArray() && !candidates.isEmpty() ? candidates.get(0).path("url").asString(null) : null;
+	}
+
+	/**
+	 * 키 부재·null을 Java null로 보존하는 boolean 파싱 — 관측된 false와 "확인 못 함"을 구분해야
+	 * 하는 필드(is_verified·is_paid_partnership)용. 존재 여부가 정보인 필드에만 쓴다
+	 * (is_private처럼 부재를 기본값으로 봐도 되는 필드는 기존대로 asBoolean(false)).
+	 */
+	private static Boolean nullableBoolean(JsonNode node, String field) {
+		JsonNode v = node.path(field);
+		return v.isMissingNode() || v.isNull() ? null : v.asBoolean();
 	}
 
 	/** 후보 필드 중 처음 존재하는 값. 전부 없으면 null(취득 불가 지표 규칙). */

@@ -49,8 +49,9 @@ class AccountDeletionServiceIntegrationTest extends IntegrationTest {
 				.query(Long.class).single();
 	}
 
+	/** 브랜드 정리 훅은 여기 범위 밖 — monitoring.enabled=false와 같은 상태(빈 부재)로 고정한다. */
 	private AccountDeletionService serviceWith(Optional<MonitoringCommandClient> commandClient) {
-		return new AccountDeletionService(userRepository, itemRepository, commandClient);
+		return new AccountDeletionService(userRepository, itemRepository, commandClient, Optional.empty());
 	}
 
 	private long insertConfirmedItem(String handle, long targetId) {

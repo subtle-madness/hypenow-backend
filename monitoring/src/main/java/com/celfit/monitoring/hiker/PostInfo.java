@@ -38,17 +38,26 @@ package com.celfit.monitoring.hiker;
  * 끈다, 08-05 실측: lvcd=true 10게시물 전원 reshare_count 영구 부재 vs 제공 31게시물 전원 false).
  * 숨김 게시물은 저장·리포스트 재시도 판정에서 공유 항을 빼고(헛 재시도 방지), 소진 시
  * 공유 0 간주 대상에서도 제외한다(숨김은 0이 아니라 비공개).
+ *
+ * <p>videoUrl·videoDuration·isPaidPartnership은 브랜드 was 계약 필드(2026-08-07 스펙 §3-2 —
+ * brand_post_meta 표시 메타)다. 전부 같은 media 노드에서 추가 콜 0으로 뽑는다:
+ * videoUrl은 video_versions[0].url(썸네일과 마찬가지로 CDN 서명 만료가 있어 스윕마다 갱신 대상),
+ * videoDuration은 초 단위 실수 — 둘 다 릴스·비디오에만 실린다(피드·캐러셀은 키 부재 → null).
+ * isPaidPartnership이 Boolean인 건 <b>키 부재(null = 판정 unknown)와 관측된 false(비협찬)</b>를
+ * 구분하기 위해서다 — 응답 셰이프에 따라 키가 통째로 없는 경로가 있다(태그 열거 합성 픽스처 기준).
  */
 public record PostInfo(String shortCode, String username, String ownerFullName, String ownerProfilePicUrl,
 		String ownerUserId, String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long fbPlays, Long saves,
-		Long shares, Long reposts, String rawJson, boolean viewsTrusted, boolean likesHidden,
+		Long shares, Long reposts, String videoUrl, Double videoDuration, Boolean isPaidPartnership,
+		String rawJson, boolean viewsTrusted, boolean likesHidden,
 		boolean sharesHidden) {
 
 	/** 재시도 콜에서 얻은 FB 몫만 갈아끼운 사본 — 나머지 지표는 원 콜 값을 유지한다. */
 	public PostInfo withFbPlays(Long newFbPlays) {
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
 				caption, thumbnailUrl, takenAt, likes, comments, views, newFbPlays, saves, shares, reposts,
+				videoUrl, videoDuration, isPaidPartnership,
 				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
@@ -61,6 +70,7 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
 				caption, thumbnailUrl, takenAt, likes, comments, views, fbPlays,
 				coalesce(saves, newSaves), coalesce(shares, newShares), coalesce(reposts, newReposts),
+				videoUrl, videoDuration, isPaidPartnership,
 				rawJson, viewsTrusted, likesHidden, sharesHidden);
 	}
 
@@ -90,6 +100,11 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				coalesce(saves, fallback.saves),
 				coalesce(shares, fallback.shares),
 				coalesce(reposts, fallback.reposts),
+				// 표시 메타도 지표와 같은 non-null 우선 — 캡션·썸네일과 동일 취급(응답 셰이프에 따라
+				// 한쪽에만 실리는 필드라 정본이 폴백을 null로 덮으면 방금 관측한 값을 유실한다).
+				coalesce(videoUrl, fallback.videoUrl),
+				coalesce(videoDuration, fallback.videoDuration),
+				coalesce(isPaidPartnership, fallback.isPaidPartnership),
 				rawJson,
 				viewsFromFallback ? fallback.viewsTrusted : viewsTrusted,
 				likesHidden,

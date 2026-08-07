@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
@@ -32,6 +33,7 @@ class BrandRegistrationServiceTest {
 	private static final class InMemoryBrands extends BrandRepository {
 		final Map<String, BrandRow> rows = new HashMap<>();
 		final List<Long> touched = new ArrayList<>();
+		final Map<Long, String> backfillErrors = new HashMap<>();
 		long nextId = 1;
 
 		InMemoryBrands() {
@@ -39,11 +41,16 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public long insertOrReactivate(String username, String igUserId, Long followers, String biography) {
+		public long insertOrReactivate(String username, ProfileInfo profile) {
 			BrandRow existing = rows.get(username);
 			long id = existing != null ? existing.id() : nextId++;
-			rows.put(username, new BrandRow(id, username, igUserId, BrandStatus.ACTIVE, null));
+			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null));
 			return id;
+		}
+
+		@Override
+		public void markBackfillError(long brandId, String message) {
+			backfillErrors.put(brandId, message);
 		}
 
 		@Override
@@ -130,6 +137,24 @@ class BrandRegistrationServiceTest {
 
 		assertThat(result.replayed()).isFalse();           // 등록 자체는 성공
 		assertThat(brands.touched).isEmpty();              // 백스톱 성립 — last_tracked_on 미갱신
+	}
+
+	@Test
+	void 백필_실패는_backfill_error로_기록된다() {
+		collect.failing.add("brandx");
+
+		var result = service().register("brandx");
+
+		// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 사용자에게 보일 문구라 내부 예외를 안 싣는다.
+		assertThat(brands.backfillErrors.get(result.brandId()))
+				.isEqualTo("초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
+	}
+
+	@Test
+	void 백필_성공이면_오류를_기록하지_않는다() {
+		var result = service().register("brandx");
+
+		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());
 	}
 
 	@Test
