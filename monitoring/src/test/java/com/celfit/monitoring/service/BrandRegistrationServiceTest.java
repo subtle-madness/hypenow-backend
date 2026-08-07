@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -76,23 +77,35 @@ class BrandRegistrationServiceTest {
 	}
 
 	private static final class StubCollect extends BrandCollectService {
-		final List<String> swept = new ArrayList<>();
+		final List<String> coreSwept = new ArrayList<>();
+		final List<String> enriched = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
+		final Set<String> enrichFailing = new HashSet<>();
 
 		StubCollect() {
 			super(null, null, null, null, null, null, 90, 105, 3, 30);
 		}
 
 		@Override
-		public void sweep(BrandRow brand) {
+		public List<PostInfo> sweepCore(BrandRow brand) {
 			if (failing.contains(brand.username())) {
 				throw new IllegalStateException("백필 실패 주입");
 			}
-			swept.add(brand.username());
+			coreSwept.add(brand.username());
+			return List.of();
+		}
+
+		@Override
+		public void enrich(BrandRow brand, List<PostInfo> posts) {
+			if (enrichFailing.contains(brand.username())) {
+				throw new IllegalStateException("보강 실패 주입");
+			}
+			enriched.add(brand.username());
 		}
 	}
 
 	private final List<String> hikerCalls = new ArrayList<>();
+	private final List<Runnable> enrichQueue = new ArrayList<>();
 	private final InMemoryBrands brands = new InMemoryBrands();
 	private final StubCollect collect = new StubCollect();
 
@@ -101,7 +114,7 @@ class BrandRegistrationServiceTest {
 			hikerCalls.add(path);
 			return PROFILE_JSON;
 		});
-		return new BrandRegistrationService(hiker, brands, collect, Runnable::run);
+		return new BrandRegistrationService(hiker, brands, collect, Runnable::run, enrichQueue::add);
 	}
 
 	@Test
@@ -112,8 +125,41 @@ class BrandRegistrationServiceTest {
 		assertThat(result.followers()).isEqualTo(1234L);
 		assertThat(hikerCalls).hasSize(1);
 		assertThat(hikerCalls.getFirst()).startsWith("/v2/user/by/username");
-		assertThat(collect.swept).containsExactly("brandx");   // 동기 executor — 백필 즉시 실행
+		assertThat(collect.coreSwept).containsExactly("brandx");   // 동기 executor — 백필 즉시 실행
 		assertThat(brands.touched).containsExactly(result.brandId());
+	}
+
+	@Test
+	void core_완료_즉시_ready를_찍고_보강은_전용_큐로_넘긴다() {
+		var result = service().register("brandx");
+
+		// core만 끝난 시점 — 보강(게시자·댓글)이 실행되기 전인데 ready(touchSwept)는 이미 찍혀 있다.
+		assertThat(brands.touched).containsExactly(result.brandId());
+		assertThat(collect.enriched).isEmpty();
+		assertThat(enrichQueue).hasSize(1);
+
+		enrichQueue.getFirst().run();
+		assertThat(collect.enriched).containsExactly("brandx");
+	}
+
+	@Test
+	void 보강_실패는_ready를_되돌리지도_backfill_error를_남기지도_않는다() {
+		collect.enrichFailing.add("brandx");
+
+		var result = service().register("brandx");
+		enrichQueue.forEach(Runnable::run);   // 보강 실패는 태스크 안에서 삼켜진다 — 여기로 새면 실패
+
+		assertThat(brands.touched).containsExactly(result.brandId());
+		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());
+	}
+
+	@Test
+	void core_실패면_보강을_예약하지_않는다() {
+		collect.failing.add("brandx");
+
+		service().register("brandx");
+
+		assertThat(enrichQueue).isEmpty();   // 게시물 없이 보강만 도는 낭비 방지
 	}
 
 	@Test

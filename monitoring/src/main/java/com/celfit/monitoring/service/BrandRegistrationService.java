@@ -2,11 +2,13 @@ package com.celfit.monitoring.service;
 
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,9 +17,20 @@ import org.springframework.stereotype.Service;
 
 /**
  * 브랜드 등록/탈퇴(태그 스펙 §1·§5) — 가입 = 추적 자동 시작, 탈퇴(CLOSED)까지 지속.
- * 동기 구간은 프로필 1콜뿐(존재·공개 검증 + pk·팔로워·biography) — 백필(~160콜, 수 분)은
- * was 동기 예산(10초) 밖 전용 executor에서 돈다. 백필 실패·앱 재시작으로 끊겨도
- * last_tracked_on이 null로 남아 다음 스윕이 트래킹(=같은 깊이)으로 백스톱한다.
+ * 동기 구간은 프로필 1콜뿐(존재·공개 검증 + pk·팔로워·biography) — 백필은 was 동기 예산(10초)
+ * 밖 전용 executor에서 2단계로 돈다(단계식 ready — 2026-08-07 결정):
+ *
+ * <ul>
+ *   <li><b>core</b>(backfill executor): 열거+적재 ~6콜 → 즉시 touchSwept — 등록 후 ~30초에
+ *       was가 ready로 전환돼 게시물 목록이 뜬다(운영 실측: 구 단일 체인은 8분+ — 그중 ~85%가
+ *       목록 렌더에 필수 아닌 보강 콜, 나머지가 앞 계정 대기).</li>
+ *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 연속 등록
+ *       때 뒤 계정 core가 앞 계정 보강을 기다리지 않는다. 실패는 로그만(ready 유지) — 다음
+ *       스윕이 게시자 stale·댓글 워터마크로 백스톱한다.</li>
+ * </ul>
+ *
+ * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
+ * 두 executor 모두 단일 스레드 — 동시 Hiker 콜은 최대 2개(부하 완충 의도 유지).
  */
 @Service
 public class BrandRegistrationService {
@@ -35,13 +48,16 @@ public class BrandRegistrationService {
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
 	private final Executor backfill;
+	private final Executor enrich;
 
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
-			BrandCollectService collect, @Qualifier("brandBackfillExecutor") Executor backfill) {
+			BrandCollectService collect, @Qualifier("brandBackfillExecutor") Executor backfill,
+			@Qualifier("brandEnrichExecutor") Executor enrich) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
 		this.backfill = backfill;
+		this.enrich = enrich;
 	}
 
 	/**
@@ -65,15 +81,32 @@ public class BrandRegistrationService {
 		return new Result(id, normalized, profile.followers(), false);
 	}
 
-	/** 백필 = 매일 스윕과 같은 코드(깊이·컷 규칙 동일 — 스펙 §4 정합). 실패는 격리 — 다음 스윕이 백스톱. */
+	/**
+	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(깊이·컷 규칙 동일 — 스펙 §4 정합). 성공 즉시
+	 * touchSwept(ready 전환) 후 보강을 전용 executor로 넘긴다. core 실패는 격리 — 보강도 예약하지
+	 * 않는다(게시물 없이 보강만 도는 낭비 방지, 다음 스윕이 전체를 백스톱).
+	 */
 	private void runBackfillSafely(BrandRow row) {
 		try {
-			collect.sweep(row);
+			List<PostInfo> posts = collect.sweepCore(row);
 			brands.touchSwept(row.id(), LocalDate.now(KST));
+			enrich.execute(() -> runEnrichSafely(row, posts));
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
 			brands.markBackfillError(row.id(), "초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
+		}
+	}
+
+	/**
+	 * 보강 실패는 backfill_error를 남기지 않는다 — 목록·지표는 이미 서빙 중(ready)이라 "초기 수집
+	 * 실패" 문구가 오히려 오보고, 미수집분(게시자 stale·댓글 워터마크)은 다음 스윕이 자동 재시도한다.
+	 */
+	private void runEnrichSafely(BrandRow row, List<PostInfo> posts) {
+		try {
+			collect.enrich(row, posts);
+		} catch (RuntimeException e) {
+			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}
 	}
 
