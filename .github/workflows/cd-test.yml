@@ -41,9 +41,15 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # 캐시 쓰기는 기본 브랜치(develop) push에서만 — staging CI·이 잡은 읽기 재사용
+      # 읽기 전용 강제 필수(08-07) — workflow_run은 항상 기본 브랜치(develop) 컨텍스트로 돌아서
+      # setup-gradle의 "기본 브랜치만 쓰기" 가드를 통과해 이 잡이 캐시를 써버린다. bootJar만 돌린
+      # 빌드는 cache-cleanup이 테스트 캐시를 미사용으로 퍼지해 0.2MB 스텁을 저장하고, 이게
+      # cache-warm의 정상 캐시(4.7MB)보다 최신이 되면 PR CI의 restore-key 폴백이 스텁을 물어
+      # 전체 테스트가 캐시 0%로 풀 실행됐다(배포 직후 PR CI 4m40s 실측 — PR #345 무효화 창).
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
 
       - name: bootJar 빌드
         run: ./gradlew :${{ matrix.service }}:bootJar
