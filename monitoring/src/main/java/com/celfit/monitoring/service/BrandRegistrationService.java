@@ -31,7 +31,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
  * 두 executor 모두 단일 스레드(브랜드 단위 큐잉·순서 보장). Hiker 콜 병렬화는 enrich 내부
- * 워커 풀이 담당 — 전역 동시 콜 최대 7(= 워커 6 + core 1, BrandBackfillConfig 참조).
+ * 워커 풀이 담당 — 전역 동시 콜 최대 8(= 워커 6 + 스윕 core 1 + 등록 core 1, 스윕과 등록이
+ * 겹치는 최악의 경우. 실측 무저항 한계 8과 동치 — BrandBackfillConfig 참조).
  */
 @Service
 public class BrandRegistrationService {

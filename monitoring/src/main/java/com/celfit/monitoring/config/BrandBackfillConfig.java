@@ -23,7 +23,8 @@ import org.springframework.context.annotation.Configuration;
  * 콜 체인이라 공유하면 캠페인 등록 백필(최대 ~1분)이 그 뒤에 줄을 선다. 각 executor 단일
  * 스레드·데몬은 같은 관용구다 — 직렬화는 브랜드 단위 큐잉·순서 보장용이고, Hiker 콜 병렬화는
  * enrich 내부의 brandEnrichWorkerPool(동시 6 — 08-07 운영 실측: 동시 8까지 레이턴시 열화·429
- * 전무)이 담당한다. 전역 동시 콜은 워커 6 + core 1 = 최대 7로 실측 한계(8) 안이다. 종료로
+ * 전무)이 담당한다. 전역 동시 콜은 스윕과 등록 백필이 겹치는 최악의 경우 워커 6 + 스윕 core
+ * 스레드 1 + 등록 core 스레드 1 = <b>최대 8</b>로, 실측 무저항 한계(8)와 정확히 동치다. 종료로
  * 끊겨도 last_swept_on null(core) 또는 게시자 stale·댓글 워터마크(enrichment)로 다음 스윕이
  * 백스톱한다.
  */
