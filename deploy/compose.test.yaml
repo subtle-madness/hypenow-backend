@@ -161,6 +161,8 @@ services:
       # 스윕 크론은 K 원칙(test 스케줄 전부 off)대로 미설정 유지 — v3 개통 검증 시에는 아래를 임시로
       # 근접 시각(UTC)으로 넣어 1회 실행(sweep_run 시드)한 뒤 제거·재기동한다(README §13-6).
       # MONITORING_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
+      # 브랜드 태그 스윕도 동일 원칙 — test는 크론 off, 검증은 임시 근접 시각 1회 후 제거.
+      # MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
       # test는 기본 비활성("-")이고 .env(DEV_ALARM_DISPATCH_CRON)로만 일시 개통한다(README §13-5).
       # ⚠️ 허용목록은 fail-OPEN이다 — 비어 있으면 무제한 발송이고, test analysis DB엔 실사용자
       # 이메일이 들어 있다. 크론을 켜기 전에 DEV_ALARM_ALLOWED_RECIPIENTS를 반드시 먼저 채울 것.
