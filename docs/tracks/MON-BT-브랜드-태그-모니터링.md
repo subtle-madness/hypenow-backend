@@ -12,6 +12,8 @@
 
 백필 단계식 ready(08-07 — DECISIONS 08-07 행): 등록 백필을 `sweepCore`(열거+적재, ~30초) / `enrich`(게시자+댓글, 수 분)로 분리 — core 직후 touchSwept(ready), 보강은 `brandEnrichExecutor`(신설) 별도 큐. 운영 실측(cclime_official 등록→ready 8.5분: 앞 계정 대기 5분 + 보강 콜 ~85%)이 근거. 보강 실패는 backfill_error 미기록(로그만) — 게시자 stale·댓글 워터마크로 다음 스윕 백스톱. 매일 스윕은 `sweep`(합본) 그대로.
 
+보강 병렬화(08-07 — DECISIONS 08-07 행, [spec 2026-08-07](../superpowers/specs/2026-08-07-brand-enrich-parallel-design.md)): `enrich` 내부 Hiker 콜(게시자 프로필·댓글)을 공유 워커 풀 `brandEnrichWorkerPool`(고정 6스레드, `monitoring.brand.enrich-concurrency`)로 제한 병렬화 — 보강 ~3분 → **~30초**, 등록→보강 완료 ~3.5분 → ~1분(ready는 종전대로 ~30초). 근거는 08-07 운영 실측(순차 ×6 = 11s vs 동시 4/8 각 웨이브 2s, 동시 8까지 레이턴시 열화·429 전무) — 종전 "동시 2 = 부하 완충" 전제 반증. 공유 빈이라 스윕·등록이 겹쳐도 전역 동시 콜 최대 8(워커 6 + core 2)로 실측 한계 이내. 게이트·워터마크·격리·backfill_error 규칙, 브랜드 단위 큐잉은 불변.
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
