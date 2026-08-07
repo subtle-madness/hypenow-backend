@@ -44,7 +44,10 @@ public class HikerClient {
 	}
 
 	/** 클립 보강 결과 — complete=false면 조회수 null이 "부재"가 아니라 "미취득"이다(오탐 방지 근거). */
-	private record ClipPlays(Map<String, ClipCounts> plays, boolean complete) {}
+	private record ClipPlays(Map<String, ClipCounts> plays, Map<String, ClipItem> items, boolean complete) {}
+
+	/** clips 열거의 media 노드 원형 — 그리드 숨김 릴스를 게시물로 승격할 때 파싱 재료가 된다. */
+	private record ClipItem(JsonNode media, String rawJson) {}
 
 	public ProfileInfo fetchProfile(String username) {
 		String body = http.get("/v2/user/by/username?username=" + enc(username));
@@ -136,6 +139,17 @@ public class HikerClient {
 				break;
 			}
 		}
+		// 그리드 숨김 릴스 합류(08-07) — "프로필에 공유"를 끈 릴스는 medias에 영영 안 실리고
+		// clips에만 실린다(운영 실측 rran.e_ DbdA0j4SDUd: 7일 연속 clips 단독). clips를 조회수
+		// 머지에만 쓰면 이런 릴스는 감지·수집 양쪽의 구조적 사각지대가 되므로 게시물로 승격한다.
+		// medias와 겹치는 코드는 medias 파싱본이 이미 byCode에 있어 그대로 이긴다.
+		for (var entry : clips.items().entrySet()) {
+			if (!byCode.containsKey(entry.getKey())) {
+				byCode.put(entry.getKey(),
+						toPost(entry.getValue().media(), username, entry.getValue().rawJson(),
+								clips.plays(), true));   // clips 응답은 재생수 인라인 — 조회수 신뢰 가능
+			}
+		}
 		// 핀 고정 게시물이 배열 맨 앞에 옴(taken_at 2023년 사례 — findings §3) → 게시 시각 내림차순 재정렬
 		List<PostInfo> out = new ArrayList<>(byCode.values());
 		out.sort(Comparator.comparing(PostInfo::takenAt,
@@ -154,17 +168,23 @@ public class HikerClient {
 	/** 릴스 재생수 보강 — /v2/user/clips는 items[].media로 한 겹 더 감싼다. 실패해도 스윕은 계속(조회수만 null). */
 	private ClipPlays fetchClipPlays(String userId, int pages) {
 		Map<String, ClipCounts> plays = new HashMap<>();
+		Map<String, ClipItem> items = new LinkedHashMap<>();   // 응답 순서 유지(그리드 숨김 릴스 승격 재료)
 		try {
 			String cursor = null;
 			for (int page = 0; page < pages; page++) {
-				JsonNode root = root(http.get("/v2/user/clips?user_id=" + enc(userId) + pageParam(cursor)));
+				String body = http.get("/v2/user/clips?user_id=" + enc(userId) + pageParam(cursor));
+				JsonNode root = root(body);
 				int before = plays.size();
 				for (JsonNode item : root.path("response").path("items")) {
 					JsonNode m = item.path("media");
+					String code = m.path("code").asString(null);
+					if (code != null && !code.isBlank()) {
+						items.putIfAbsent(code, new ClipItem(m, body));
+					}
 					ClipCounts counts = playCounts(m);
 					// 재생수 없는 셰이프여도 저장·리포스트 관측(세션 복권 당첨분)은 버리지 않는다.
 					if (counts.igPlays() != null || counts.hasMetricKeys()) {
-						plays.put(m.path("code").asString(), counts);
+						plays.put(code, counts);
 					}
 				}
 				if (page > 0 && plays.size() == before) {   // 열거와 동일한 커서 전진 가드
@@ -179,9 +199,9 @@ public class HikerClient {
 		} catch (RuntimeException e) {
 			// 삼키되 실패 사실은 남긴다 — 이 플래그가 없으면 하류가 "조회수 비공개"로 오탐한다.
 			log.warn("클립 재생수 보강 실패 — user_id {}: {}", userId, e.getMessage());
-			return new ClipPlays(plays, false);
+			return new ClipPlays(plays, items, false);
 		}
-		return new ClipPlays(plays, true);
+		return new ClipPlays(plays, items, true);
 	}
 
 	/** 태그 열거 1페이지 — posts는 응답 순서 그대로(태그된 시점 순 — 중단 판정은 호출자가 페이지 단위로 한다). */

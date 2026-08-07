@@ -28,6 +28,8 @@ import com.celfit.was.monitoring.MonitoringUnavailableException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
@@ -40,11 +42,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * /v1/brand-monitoring/accounts 계약(스펙 §5-1·§5-2·§5-3) — 등록 409/422/503 분기, 상태 유도
- * (collecting/ready/error), 소유권 403, 삭제의 monitoring 탈퇴 조건을 고정한다.
+ * /v1/brand-monitoring/accounts 계약(스펙 §5-1·§5-2·§5-3, 08-07 다계정 개정) — 연결 멱등·한도
+ * 409/422/503 분기, 상태 유도(collecting/ready/error), 소유권 403, 삭제의 monitoring 탈퇴 조건을
+ * 고정한다. POST는 "브랜드 연결"이다: 이미 연결된 계정 재요청은 기존 객체 반환(멱등)이고,
+ * BRAND_ACCOUNT_LIMIT_REACHED만 409다(IMMUTABLE·ALREADY_EXISTS는 폐기).
  * V1CampaignControllerTest 관용구: SecurityConfig·V1ExceptionAdvice Import, DB·monitoring 접점은 mock.
  * 서비스·트랜잭션·어셈블러는 실 빈으로 붙여 플로우 전체가 실제로 돌게 한다(슬라이스에는 트랜잭션
- * 매니저가 없어 @Transactional은 무력하지만, 호출 순서·409 판정 로직은 그대로 검증된다).
+ * 매니저가 없어 @Transactional은 무력하지만, 호출 순서·멱등·한도 판정 로직은 그대로 검증된다).
  */
 @WebMvcTest(controllers = V1BrandAccountsController.class,
 		properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true"})
@@ -68,8 +72,21 @@ class V1BrandAccountsControllerTest {
 	}
 
 	private static BrandLinkRow link(long userId, long brandId) {
-		return new BrandLinkRow(1L, userId, brandId, "lizda_official",
+		return link(userId, brandId, "lizda_official");
+	}
+
+	private static BrandLinkRow link(long userId, long brandId, String username) {
+		return new BrandLinkRow(brandId, userId, brandId, username,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
+	}
+
+	/** 한도 검증용 — 서로 다른 브랜드 n개에 연결된 상태(요청 계정명과 겹치지 않는 이름). */
+	private static List<BrandLinkRow> links(int count) {
+		List<BrandLinkRow> links = new ArrayList<>(count);
+		for (int i = 0; i < count; i++) {
+			links.add(link(7L, 200L + i, "other_brand_" + i));
+		}
+		return links;
 	}
 
 	/** 백필 진행 중 — last_swept_on null · backfill_error null. last_swept_at은 지난 가입 잔존값. */
@@ -92,12 +109,10 @@ class V1BrandAccountsControllerTest {
 				null, null, null, null, null, null, null, null, "ACTIVE");
 	}
 
-	// ---------- 등록 ----------
+	// ---------- 연결 ----------
 
 	@Test
-	void 등록은_202와_collecting_계정을_반환한다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
+	void 연결은_202와_collecting_계정을_반환한다() throws Exception {
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
@@ -113,15 +128,13 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionCompletedAt").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 
-		then(linkRepository).should().saveInstagramAccountName(7L, "lizda_official");
 		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
 	}
 
 	@Test
-	void 등록은_collecting이면_lastDetectedAt과_lastTrackedAt을_null로_감춘다() throws Exception {
+	void 연결은_collecting이면_lastDetectedAt과_lastTrackedAt을_null로_감춘다() throws Exception {
 		// 재가입 시 monitoring last_swept_at에 지난 가입의 잔존값이 남는다(사실값 유지 결정) —
 		// ready 전에는 노출하지 않는다.
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
@@ -136,30 +149,66 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 같은_값_활성_연결이면_409_ALREADY_EXISTS다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn("lizda_official");
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.of(link(7L, 100L)));
+	void 이미_수집된_브랜드에_연결하면_재수집_없이_ready_객체를_돌려준다() throws Exception {
+		// 핵심 요구 — 다른 사용자가 이미 등록한 브랜드는 monitoring replay(수집 재시작 없음)로
+		// 같은 brandId를 받고, 연결 직후 기존 수집 상태(ready)가 그대로 보인다.
+		given(commandClient.registerBrand("lizda_official"))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"username\": \"lizda_official\"}"))
-				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_ALREADY_EXISTS"));
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.id").value("100"))
+				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
-		then(commandClient).should(never()).registerBrand(anyString());
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
 	}
 
 	@Test
-	void 다른_값이_저장돼_있으면_409_IMMUTABLE이고_monitoring을_호출하지_않는다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn("other_brand");
+	void 이미_연결된_계정_재요청은_멱등_202로_기존_객체를_돌려준다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.id").value("100"))
+				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
+
+		then(commandClient).should(never()).registerBrand(anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString());
+	}
+
+	@Test
+	void 다른_브랜드가_연결돼_있어도_추가_연결한다() throws Exception {
+		// 구 계약의 BRAND_ACCOUNT_IMMUTABLE·ALREADY_EXISTS 지점 — 다계정 개정으로 정상 연결이다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 200L, "other_brand")));
+		given(commandClient.registerBrand("lizda_official"))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.id").value("100"));
+
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
+	}
+
+	@Test
+	void 한도_10개면_409_LIMIT_REACHED이고_monitoring을_호출하지_않는다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(links(10));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content("{\"username\": \"lizda_official\"}"))
 				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_IMMUTABLE"));
+				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_LIMIT_REACHED"));
 
 		then(commandClient).should(never()).registerBrand(anyString());
-		then(linkRepository).should(never()).saveInstagramAccountName(anyLong(), anyString());
 	}
 
 	@Test
@@ -175,7 +224,6 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_404는_422_INSTAGRAM_ACCOUNT_NOT_FOUND로_번역된다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
 		given(commandClient.registerBrand("lizda_official"))
 				.willThrow(new MonitoringApiException("SUBJECT_NOT_FOUND", "인스타그램에서 계정·게시물을 찾을 수 없습니다.", 404));
 
@@ -187,7 +235,6 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_422_비공개는_422_PRIVATE_ACCOUNT로_전달된다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
 		given(commandClient.registerBrand("lizda_official"))
 				.willThrow(new MonitoringApiException("PRIVATE_ACCOUNT", "비공개 계정이라 수집할 수 없습니다.", 422));
 
@@ -201,7 +248,6 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_불능은_503_SERVICE_UNAVAILABLE이다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
 		given(commandClient.registerBrand("lizda_official"))
 				.willThrow(new MonitoringUnavailableException("연결 실패", null));
 
@@ -214,52 +260,44 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 삭제_후_같은_계정_재등록은_계정명을_다시_저장하지_않고_202다() throws Exception {
-		// 계정명은 불변이라 삭제해도 users에 남는다(§5-4) — stored=같은 값 + 활성 연결 없음이
-		// "삭제 후 같은 username 재등록" 경로다. 이때만 저장을 건너뛰고 연결만 새로 만든다.
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn("lizda_official");
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
-		given(commandClient.registerBrand("lizda_official"))
-				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
-
-		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"username\": \"lizda_official\"}"))
-				.andExpect(status().isAccepted())
-				.andExpect(jsonPath("$.data.id").value("100"))
-				.andExpect(jsonPath("$.data.collectionStatus").value("collecting"));
-
-		then(linkRepository).should(never()).saveInstagramAccountName(anyLong(), anyString());
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
-	}
-
-	@Test
-	void 등록_트랜잭션이_깨지면_보상_탈퇴를_호출하고_409를_돌려준다() throws Exception {
-		// 동시 등록 경합 — 사전 확인은 통과했지만 활성 유니크 인덱스가 최후에 막는 경로.
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
+	void 동시_같은_연결_경합은_멱등_202다() throws Exception {
+		// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 원하는 상태는 이미 성립했으므로 성공으로 접는다.
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(linkRepository.insertLink(7L, 100L, "lizda_official"))
-				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_uidx"));
-		given(linkRepository.countActiveByBrand(100L)).willReturn(0);
+				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_brand_uidx"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.id").value("100"));
+
+		then(commandClient).should(never()).deregisterBrand(anyString());
+	}
+
+	@Test
+	void 한도_경합이면_보상_탈퇴를_호출하고_409를_돌려준다() throws Exception {
+		// 사전 확인 시점엔 여유가 있었지만 저장 트랜잭션의 잠금 재확인에서 한도가 찬 경합 경로 —
+		// monitoring 등록은 이미 끝났으므로 다른 활성 사용자가 없으면 보상 탈퇴한다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(10));
+		given(commandClient.registerBrand("lizda_official"))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(linkRepository.countActiveByBrand(100L)).willReturn(0);
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content("{\"username\": \"lizda_official\"}"))
 				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_ALREADY_EXISTS"));
+				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_LIMIT_REACHED"));
 
 		then(commandClient).should().deregisterBrand("lizda_official");
 	}
 
 	@Test
-	void 등록_보상은_다른_활성_연결이_남아있으면_호출하지_않는다() throws Exception {
-		given(linkRepository.instagramAccountNameForUpdate(7L)).willReturn(null);
+	void 연결_보상은_다른_활성_연결이_남아있으면_호출하지_않는다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(10));
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
-		given(linkRepository.insertLink(7L, 100L, "lizda_official"))
-				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_uidx"));
 		given(linkRepository.countActiveByBrand(100L)).willReturn(1);
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
@@ -273,7 +311,7 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void 목록은_계정_없으면_빈_배열과_total_0이다() throws Exception {
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts").with(user(principal())))
 				.andExpect(status().isOk())
@@ -284,7 +322,7 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void 목록은_활성_연결의_계정을_돌려준다() throws Exception {
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.of(link(7L, 100L)));
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts").with(user(principal())))
@@ -293,6 +331,22 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data[0].id").value("100"))
 				.andExpect(jsonPath("$.data[0].collectionStatus").value("ready"))
 				.andExpect(jsonPath("$.meta.total").value(1));
+	}
+
+	@Test
+	void 목록은_다계정을_연결_순으로_전부_돌려준다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L))
+				.willReturn(List.of(link(7L, 100L), link(7L, 200L, "other_brand")));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(brandReadRepository.findAccount(200L)).willReturn(Optional.of(collectingRow(200L, "other_brand")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[0].id").value("100"))
+				.andExpect(jsonPath("$.data[1].id").value("200"))
+				.andExpect(jsonPath("$.data[1].collectionStatus").value("collecting"))
+				.andExpect(jsonPath("$.meta.total").value(2));
 	}
 
 	@Test
@@ -352,7 +406,7 @@ class V1BrandAccountsControllerTest {
 	@Test
 	void 삭제는_마지막_사용자일_때만_monitoring_탈퇴를_호출한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(linkRepository.softDeleteActiveLink(7L)).willReturn(true);
+		given(linkRepository.softDeleteLink(7L, 100L)).willReturn(true);
 		given(linkRepository.countActiveByBrand(100L)).willReturn(0);   // soft-delete 후 잔여 0
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
@@ -365,7 +419,7 @@ class V1BrandAccountsControllerTest {
 	@Test
 	void 삭제는_다른_활성_연결이_남으면_monitoring을_유지한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(linkRepository.softDeleteActiveLink(7L)).willReturn(true);
+		given(linkRepository.softDeleteLink(7L, 100L)).willReturn(true);
 		given(linkRepository.countActiveByBrand(100L)).willReturn(1);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100").with(user(principal())).with(csrf()))
@@ -378,7 +432,7 @@ class V1BrandAccountsControllerTest {
 	void 삭제의_monitoring_탈퇴가_실패해도_204다() throws Exception {
 		// 연결 해제는 이미 커밋됐다 — 여기서 5xx를 내면 재시도가 403(이미 해제됨)이라 복구 불능이 된다.
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(linkRepository.softDeleteActiveLink(7L)).willReturn(true);
+		given(linkRepository.softDeleteLink(7L, 100L)).willReturn(true);
 		given(linkRepository.countActiveByBrand(100L)).willReturn(0);
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		willThrow(new MonitoringUnavailableException("연결 실패", null))
@@ -395,7 +449,7 @@ class V1BrandAccountsControllerTest {
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999").with(user(principal())).with(csrf()))
 				.andExpect(status().isForbidden());
 
-		then(linkRepository).should(never()).softDeleteActiveLink(anyLong());
+		then(linkRepository).should(never()).softDeleteLink(anyLong(), anyLong());
 		then(commandClient).should(never()).deregisterBrand(anyString());
 	}
 

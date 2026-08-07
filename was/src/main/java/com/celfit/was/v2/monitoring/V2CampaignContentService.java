@@ -6,6 +6,8 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
+import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.RegistrationResult;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
@@ -14,7 +16,6 @@ import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
-import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler;
 import com.celfit.was.v2.monitoring.V2CampaignContentsResponse.Result;
@@ -31,11 +32,12 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 캠페인 v2 콘텐츠 관계(스펙 §8) — 캠페인에 콘텐츠를 붙이고 떼는 것만 한다.
  *
- * <p><b>모니터링 자체는 전부 레거시가 정본이다</b>. 이 서비스는 레거시 서비스·테이블·응답을 한 줄도
- * 바꾸지 않고 호출만 한다:
+ * <p><b>모니터링 자체는 전부 레거시가 정본이다</b>. 레거시 코드는 한 줄도 바꾸지 않는다:
  * <ol>
- *   <li>이미 내 추적 아이템이 있는 콘텐츠 → {@link V1MonitoringItemUpdateService#patch}로
- *       {@code campaignId}만 연결(기존 검증 재사용)</li>
+ *   <li>이미 내 추적 아이템이 있는 콘텐츠 → 슬림 경로 {@link CampaignItemLinker#link}로
+ *       {@code campaignId}만 연결 — 레거시 patch의 두 소유 검증은 링커가 그대로 유지하되,
+ *       v2가 버리던 응답 전량 재조립은 생략한다(아이템당 ~9쿼리 → 3쿼리. 상한 100건이 한
+ *       트랜잭션에 몰리는 경로라 커넥션 점유 시간이 문제였다 — 트레이드오프는 링커 javadoc)</li>
  *   <li>추적 아이템이 없고 브랜드 태그 목록(tagged)에만 있는 콘텐츠 →
  *       {@link V1MonitoringRegistrationService#register}에 canonical URL을 위임해 아이템을 만든다</li>
  * </ol>
@@ -73,27 +75,35 @@ public class V2CampaignContentService {
 	 * 종결 3종 — 같은 shortcode의 아이템이 여럿일 때 <b>뒤로 미루는</b> 상태다(제외가 아니다).
 	 * 레거시 duplicate 판정 모수에서 빠지는 상태와 같은 기준이며({@link ItemStatus#derive}),
 	 * 종결 후 재등록이 허용돼 활성·종결 행이 공존할 수 있다(직접 등록 §6-4의 activeItemId 관용구).
+	 *
+	 * <p>단, <b>취소된 아이템은 아예 모수에서 뺀다</b>({@link #withoutCanceled}) — 자연 종결(ended)은
+	 * 이미 수집이 끝난 콘텐츠라 캠페인에 담는 게 정당하지만, 취소분에 캠페인만 붙이면 "success인데
+	 * 수집은 영영 없음"이 된다. 취소 여부는 레거시 응답(status가 ended/not_uploaded로 유도됨)으로는
+	 * 구분이 안 돼 아이템 행(canceled_at)을 직접 본다.
 	 */
 	private static final Set<String> TERMINAL_STATUSES =
 			Set.of(ItemStatus.NOT_UPLOADED, ItemStatus.ENDED, ItemStatus.HIDDEN);
 
 	private final CampaignRepository campaignRepository;
 	private final TrackingItemAssembler trackingItemAssembler;
-	private final V1MonitoringItemUpdateService itemUpdateService;
+	private final CampaignItemLinker linker;
 	private final V1MonitoringRegistrationService registrationService;
 	private final BrandLinkRepository linkRepository;
+	private final MonitoringItemRepository itemRepository;
 	private final Optional<BrandReadRepository> brandReadRepository;
 	private final Optional<BrandPostAssembler> brandPostAssembler;
 
 	public V2CampaignContentService(CampaignRepository campaignRepository,
-			TrackingItemAssembler trackingItemAssembler, V1MonitoringItemUpdateService itemUpdateService,
+			TrackingItemAssembler trackingItemAssembler, CampaignItemLinker linker,
 			V1MonitoringRegistrationService registrationService, BrandLinkRepository linkRepository,
-			Optional<BrandReadRepository> brandReadRepository, Optional<BrandPostAssembler> brandPostAssembler) {
+			MonitoringItemRepository itemRepository, Optional<BrandReadRepository> brandReadRepository,
+			Optional<BrandPostAssembler> brandPostAssembler) {
 		this.campaignRepository = campaignRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
-		this.itemUpdateService = itemUpdateService;
+		this.linker = linker;
 		this.registrationService = registrationService;
 		this.linkRepository = linkRepository;
+		this.itemRepository = itemRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.brandPostAssembler = brandPostAssembler;
 	}
@@ -103,7 +113,7 @@ public class V2CampaignContentService {
 	 * 콘텐츠마다 register를 부르면 등록 행(registration)이 그 수만큼 생겨 폴링 대상이 흩어진다.
 	 *
 	 * <p>{@code @Transactional} — 레거시 등록도 {@code @Transactional}이라 이 트랜잭션에 합류한다.
-	 * 캠페인 연결(patch)과 아이템 생성이 한 번에 커밋되고, 비동기 실행기 트리거도 커밋 뒤로 미뤄진다
+	 * 캠페인 연결(슬림 경로)과 아이템 생성이 한 번에 커밋되고, 비동기 실행기 트리거도 커밋 뒤로 미뤄진다
 	 * (레거시 triggerExecutor의 afterCommit 계약 유지). 부분 성공은 <b>응답 안의 entry 판정</b>이지
 	 * 반쯤 커밋된 DB가 아니다.
 	 */
@@ -114,8 +124,8 @@ public class V2CampaignContentService {
 		int days = validateTrackingDays(trackingDays);
 		String campaignKey = String.valueOf(campaign.id());
 
-		Map<String, TrackingItemResponse> itemsByShortcode = indexByShortcode(trackingItemAssembler
-				.assembleList(userId).items());
+		Map<String, TrackingItemResponse> itemsByShortcode = indexByShortcode(withoutCanceled(userId,
+				trackingItemAssembler.assembleList(userId).items()));
 
 		// 1차 판정 — 입력 순서대로 (즉시 확정) / (위임 대기) / (앞 항목의 재판정)으로 가른다.
 		List<Plan> plans = new ArrayList<>(ids.size());
@@ -131,7 +141,7 @@ public class V2CampaignContentService {
 			}
 			TrackingItemResponse item = itemsByShortcode.get(contentId);
 			if (item != null) {
-				plans.add(Plan.settled(link(userId, campaignKey, contentId, item)));
+				plans.add(Plan.settled(link(userId, campaign.id(), contentId, item)));
 				continue;
 			}
 			if (taggedUrls == null) {
@@ -152,8 +162,31 @@ public class V2CampaignContentService {
 				: createdItemIdsByShortcode(registrationService.register(userId,
 						body(delegatedUrls, days, campaignKey)));
 
+		// 202는 "새로 만들어진 아이템이 있다"일 때만 — 위임했어도 레거시가 전건을 접어 0개면
+		// 폴링할 등록 대상이 없으니 동기 완결(200)이다(§8).
 		return new Added(new V2CampaignContentsResponse(campaignKey, resolve(plans, createdItemIds)),
-				!delegatedUrls.isEmpty());
+				!createdItemIds.isEmpty());
+	}
+
+	/**
+	 * 취소 아이템 제외 — 종결 status 후보가 있을 때만 아이템 행을 읽는다(전원 활성인 평시 경로에
+	 * DB 왕복을 더하지 않는다). 취소는 반드시 종결 status로 유도되므로 이 게이트로 충분하다.
+	 */
+	private List<TrackingItemResponse> withoutCanceled(long userId, List<TrackingItemResponse> items) {
+		boolean anyTerminal = items.stream().anyMatch(item -> TERMINAL_STATUSES.contains(item.status()));
+		if (!anyTerminal) {
+			return items;
+		}
+		Set<String> canceledIds = new LinkedHashSet<>();
+		for (MonitoringItemRow row : itemRepository.findByUser(userId)) {
+			if (row.canceledAt() != null) {
+				canceledIds.add(String.valueOf(row.id()));
+			}
+		}
+		if (canceledIds.isEmpty()) {
+			return items;
+		}
+		return items.stream().filter(item -> !canceledIds.contains(item.id())).toList();
 	}
 
 	/**
@@ -192,27 +225,37 @@ public class V2CampaignContentService {
 	 *
 	 * <p>탐색 모수는 "그 캠페인 소속인 내 아이템"이다 — 같은 shortcode의 아이템이 여럿이어도
 	 * 캠페인 소속이 아닌 행은 애초에 제거 대상이 아니라 404다(남의 캠페인·비소속 구분 없이 같은 응답).
+	 *
+	 * <p>매칭되는 소속 아이템은 <b>전건</b> 연결을 끊는다 — 성과 대시보드는 레거시 아이템끼리
+	 * 중복 제거를 하지 않아(tagged↔레거시만 병합), 대표 1건만 끊으면 204 직후 재조회에 콘텐츠가
+	 * 그대로 남는다(종결 후 재등록·account 감지 중복이 같은 shortcode 행을 여럿 만들 수 있다).
 	 */
 	@Transactional
 	public void remove(long userId, long campaignId, String contentId) {
 		CampaignRow campaign = requireCampaign(userId, campaignId);
 		String campaignKey = String.valueOf(campaign.id());
+		String normalized = contentId == null ? "" : contentId.trim();
 
-		TrackingItemResponse target = trackingItemAssembler.assembleList(userId).items().stream()
-				.filter(item -> contentId.equals(shortcodeOf(item)))
+		List<TrackingItemResponse> targets = trackingItemAssembler.assembleList(userId).items().stream()
+				.filter(item -> normalized.equals(shortcodeOf(item)))
 				.filter(item -> campaignKey.equals(item.campaignId()))
-				.reduce(V2CampaignContentService::preferred)
-				.orElseThrow(() -> V1ApiException.notFound("캠페인에서 콘텐츠를 찾을 수 없습니다."));
+				.toList();
+		if (targets.isEmpty()) {
+			throw V1ApiException.notFound("캠페인에서 콘텐츠를 찾을 수 없습니다.");
+		}
 
-		itemUpdateService.patch(userId, Long.parseLong(target.id()), campaignField(null));
+		for (TrackingItemResponse target : targets) {
+			linker.unlink(userId, Long.parseLong(target.id()));
+		}
 	}
 
 	// ---------- 판정 ----------
 
-	/** 기존 아이템 1건의 판정 — 캠페인 미연결이면 연결, 이미 연결돼 있으면 duplicate(이동 금지). */
-	private Result link(long userId, String campaignKey, String contentId, TrackingItemResponse item) {
+	/** 기존 아이템 1건의 판정 — 캠페인 미연결이면 연결(슬림 경로), 이미 연결돼 있으면 duplicate(이동 금지). */
+	private Result link(long userId, long campaignId, String contentId, TrackingItemResponse item) {
+		String campaignKey = String.valueOf(campaignId);
 		if (item.campaignId() == null) {
-			itemUpdateService.patch(userId, Long.parseLong(item.id()), campaignField(campaignKey));
+			linker.link(userId, campaignId, Long.parseLong(item.id()));
 			return new Result(contentId, RegistrationResult.SUCCESS, item.id(), null, null);
 		}
 		if (campaignKey.equals(item.campaignId())) {
@@ -292,17 +335,16 @@ public class V2CampaignContentService {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty()) {
 			return Map.of();
 		}
-		Optional<BrandLinkRow> link = linkRepository.findActiveByUser(userId);
-		if (link.isEmpty()) {
-			return Map.of();
-		}
-		Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.get().brandId());
-		if (account.isEmpty()) {
-			return Map.of();
-		}
+		// 다계정(08-07 개정) — 연결된 브랜드 전체의 태그 목록을 연결 순으로 병합한다(먼저 연결한 브랜드 우선).
 		Map<String, String> urls = new LinkedHashMap<>();
-		for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
-			urls.putIfAbsent(post.shortcode(), post.postUrl());
+		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
+			if (account.isEmpty()) {
+				continue;
+			}
+			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
+				urls.putIfAbsent(post.shortcode(), post.postUrl());
+			}
 		}
 		return urls;
 	}
@@ -334,16 +376,6 @@ public class V2CampaignContentService {
 		return byShortcode;
 	}
 
-	/**
-	 * 레거시 PATCH 본문 — 키 존재로 "변경 요청 있음"을, 값 null로 "연결 해제"를 뜻한다(6.29 규약).
-	 * {@code Map.of}는 null 값을 못 담아 {@link LinkedHashMap}을 쓴다.
-	 */
-	private static Map<String, Object> campaignField(String campaignId) {
-		Map<String, Object> body = new LinkedHashMap<>();
-		body.put("campaignId", campaignId);
-		return body;
-	}
-
 	// ---------- 검증 ----------
 
 	private CampaignRow requireCampaign(long userId, long campaignId) {
@@ -351,6 +383,7 @@ public class V2CampaignContentService {
 				.orElseThrow(() -> V1ApiException.notFound(CAMPAIGN_NOT_FOUND));
 	}
 
+	/** trim 정규화 포함 — 공백 섞인 id를 그대로 판정하면 조용한 NOT_FOUND가 된다(응답도 정규형 에코). */
 	private static List<String> validateContentIds(List<String> contentIds) {
 		if (contentIds == null || contentIds.isEmpty()) {
 			throw V1ApiException.validation("추가할 콘텐츠를 입력해 주세요.");
@@ -358,12 +391,14 @@ public class V2CampaignContentService {
 		if (contentIds.size() > MAX_CONTENTS) {
 			throw V1ApiException.validation("한 번에 추가할 수 있는 항목은 최대 100개예요.");
 		}
+		List<String> normalized = new ArrayList<>(contentIds.size());
 		for (String contentId : contentIds) {
 			if (contentId == null || contentId.isBlank()) {
 				throw V1ApiException.validation("contentIds 형식이 올바르지 않아요.");
 			}
+			normalized.add(contentId.trim());
 		}
-		return contentIds;
+		return normalized;
 	}
 
 	/**
