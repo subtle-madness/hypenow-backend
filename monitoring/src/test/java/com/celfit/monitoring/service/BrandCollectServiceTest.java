@@ -195,7 +195,8 @@ class BrandCollectServiceTest {
 				return tagPages.get(Math.min(tagCall++, tagPages.size() - 1));
 			}
 			if (path.startsWith("/v2/user/by/id")) {
-				String id = path.substring(path.indexOf("user_id=") + "user_id=".length());
+				// 쿼리 파라미터명은 id(08-07 실측 교정 — HikerClient.fetchAuthorProfile 주석 참조)
+				String id = path.substring(path.indexOf("?id=") + "?id=".length());
 				if (failingAuthorIds.contains(id)) {
 					throw new HikerFetchException("게시자 프로필 500");
 				}
