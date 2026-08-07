@@ -196,7 +196,8 @@ class HikerClientTest {
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
 		HikerClient client = new HikerClient(fakeHttp());
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 1);
-		assertThat(posts).hasSize(12);                       // 1페이지 12건(findings §3)
+		// medias 12건 + clips 전용(그리드 숨김) 릴스 2건 합류(Da5zz2di7C1·Da3BOMzCuhq — 08-07)
+		assertThat(posts).hasSize(14);
 		assertThat(posts).allSatisfy(p -> {
 			assertThat(p.shortCode()).isNotBlank();
 			assertThat(p.likes()).isNotNull();
@@ -271,6 +272,48 @@ class HikerClientTest {
 		assertThat(posts.getFirst().views()).isEqualTo(100L);
 	}
 
+	// ── 그리드 숨김 릴스 합류(08-07) ─────────────────────────────────────────
+	// 운영 실측(rran.e_ DbdA0j4SDUd): 작성자가 "프로필에 공유"를 끈 릴스는 medias(프로필 그리드)
+	// 열거에 영영 안 실리고 clips(릴스 탭)에만 실린다 — 7일 연속 clips에만 존재. clips 응답을
+	// 조회수 머지에만 쓰면 이런 릴스는 감지·수집 양쪽에서 보이지 않는 구조적 사각지대가 된다.
+
+	private static final String MEDIAS_FEED_ONLY = """
+			{"response":{"items":[{"code":"FeedA","taken_at":1700000000,"product_type":"feed",
+			"like_count":5,"comment_count":1,"caption":{"text":"피드"}}],
+			"more_available":false},"next_page_id":null}""";
+
+	private static final String CLIPS_WITH_GRID_HIDDEN_REEL = """
+			{"response":{"items":[{"media":{"code":"HiddenR","taken_at":1785492472,"product_type":"clips",
+			"like_count":4,"comment_count":2,"ig_play_count":333,
+			"caption":{"text":"#협찬 스카이밀크 무기자차 선블럭"}}}],
+			"paging_info":{"more_available":false}},"next_page_id":null}""";
+
+	@Test
+	void 그리드_숨김_릴스는_clips에만_있어도_열거에_합류한다() {
+		HikerClient client = new HikerClient(path ->
+				path.startsWith("/v2/user/clips") ? CLIPS_WITH_GRID_HIDDEN_REEL : MEDIAS_FEED_ONLY);
+		var posts = client.fetchRecentPosts("acct", "999", 1);
+		assertThat(posts).extracting(PostInfo::shortCode).containsExactly("HiddenR", "FeedA");
+		var reel = posts.getFirst();
+		assertThat(reel.contentType()).isEqualTo("REELS");
+		assertThat(reel.caption()).contains("스카이밀크");        // 키워드 감지가 보는 필드
+		assertThat(reel.takenAt()).isEqualTo(1785492472L);       // 등록 시각 하한선 판정 재료
+		assertThat(reel.username()).isEqualTo("acct");           // usernameHint 승계(스냅샷 NOT NULL)
+		assertThat(reel.views()).isEqualTo(333L);
+		assertThat(reel.viewsTrusted()).isTrue();                // clips 응답은 재생수 인라인
+	}
+
+	/** 게시물 0건(medias 404) 계정이어도 릴스 탭에 릴스가 있으면 그건 전부 그리드 숨김 릴스다 — 버리면 안 된다. */
+	@Test
+	void 게시물_0건_계정도_clips_릴스는_열거에_합류한다() {
+		HikerClient client = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/medias")) throw new SubjectNotFoundException("404 Entries not found");
+			return CLIPS_WITH_GRID_HIDDEN_REEL;
+		});
+		var posts = client.fetchRecentPosts("acct", "999", 1);
+		assertThat(posts).extracting(PostInfo::shortCode).containsExactly("HiddenR");
+	}
+
 	@Test
 	void 단건_파싱_릴스는_6지표_전량() {
 		// 단건은 /v2/media/info/by/code(media_or_ad 셰이프)로 이전됐다(08-04 — 구 by/code와 응답 동등성 실측).
@@ -342,7 +385,7 @@ class HikerClientTest {
 			return path.contains("page_id=") ? PAGE2 : fixture("medias.json");
 		});
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 2);
-		assertThat(posts).hasSize(13);                        // 1페이지 12 + 2페이지 1
+		assertThat(posts).hasSize(15);                        // 1페이지 12 + 2페이지 1 + clips 전용 릴스 2
 		assertThat(posts).extracting(PostInfo::shortCode).contains("ZzPage2Only");
 		var medias = calls.stream().filter(p -> p.startsWith("/v2/user/medias")).toList();
 		assertThat(medias).hasSize(2);
@@ -364,7 +407,7 @@ class HikerClientTest {
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
 			return fixture("medias.json");
 		});
-		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 5)).hasSize(12);
+		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 5)).hasSize(14);   // 12 + clips 전용 2
 		// 5페이지를 요청했어도 2페이지째에서 새 숏코드 0건을 감지하고 멈춘다
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/medias"))).hasSize(2);
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/clips"))).hasSize(2);
@@ -382,7 +425,8 @@ class HikerClientTest {
 					"like_count":1,"comment_count":1,"media_repost_count":1}],"more_available":false},
 					"next_page_id":"cursor-should-not-be-used"}""";
 		});
-		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 3)).hasSize(1);
+		// medias 1건(Only1) + clips.json의 5건 전원이 medias에 없어 그리드 숨김 릴스로 합류한다
+		assertThat(client.fetchRecentPosts("rarebeauty", "3109786630", 3)).hasSize(6);
 		assertThat(calls.stream().filter(p -> p.startsWith("/v2/user/medias"))).hasSize(1);
 	}
 
@@ -395,9 +439,11 @@ class HikerClientTest {
 	 */
 	@Test
 	void 게시물_0건_계정은_medias_404를_빈_리스트로_강등한다() {
+		// 릴스도 0건이라 clips까지 404인 진짜 0건 계정(그리드 숨김 릴스가 있는 케이스는
+		// 게시물_0건_계정도_clips_릴스는_열거에_합류한다가 별도로 덮는다).
 		HikerClient client = new HikerClient(path -> {
 			if (path.startsWith("/v2/user/medias")) throw new SubjectNotFoundException("404 Entries not found");
-			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
+			if (path.startsWith("/v2/user/clips")) throw new SubjectNotFoundException("404 Entries not found");
 			throw new IllegalStateException("예상 밖 호출: " + path);
 		});
 		var posts = client.fetchRecentPosts("newuser", "999", 1);
@@ -420,7 +466,7 @@ class HikerClientTest {
 			throw new IllegalStateException("예상 밖 호출: " + path);
 		});
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 2);
-		assertThat(posts).hasSize(12);   // 1페이지 결과는 살아남는다
+		assertThat(posts).hasSize(14);   // 1페이지 결과는 살아남는다(12 + clips 전용 2)
 	}
 
 	@Test

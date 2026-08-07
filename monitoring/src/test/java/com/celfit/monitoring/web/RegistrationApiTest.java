@@ -87,6 +87,11 @@ class RegistrationApiTest {
 				return fixture("medias.json");
 			}
 			if (path.startsWith("/v2/user/clips")) {
+				if (mediasNotFound) {
+					// 게시물 0건 계정은 릴스도 0건이라 clips도 같은 404를 준다 — clips가 살아 있으면
+					// 그 릴스들이 그리드 숨김 릴스로 열거에 합류해 "0건"이라는 전제가 깨진다(08-07).
+					throw new SubjectNotFoundException("404 Entries not found");
+				}
 				return fixture("clips.json");
 			}
 			if (path.startsWith("/v2/media/comments")) {
