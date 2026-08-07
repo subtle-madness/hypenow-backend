@@ -100,7 +100,7 @@ public class PerformanceContentAssembler {
 			if (overlap != null) {
 				consumedCodes.add(shortcode);
 			}
-			contents.add(fromLegacy(item, shortcode, direct.covers(item.id(), shortcode), overlap));
+			contents.add(fromLegacy(item, shortcode, direct.brandAccountIdFor(item.id(), shortcode), overlap));
 		}
 		for (Map.Entry<String, BrandPostResponse> entry : tagged.byShortcode().entrySet()) {
 			if (!consumedCodes.contains(entry.getKey())) {
@@ -119,22 +119,28 @@ public class PerformanceContentAssembler {
 	/**
 	 * 레거시 아이템 1건 → 대시보드 콘텐츠. 아이템 본체(상태·기간·캠페인·핸들)는 전부 레거시가 정본이고,
 	 * 겹치는 tagged가 있으면 스냅샷 병합·협찬 승격·additionalSources만 얹는다(스펙 §7-1).
+	 *
+	 * @param directBrandAccountId 직접 등록 매핑의 브랜드 id 문자열(매핑이 없으면 null) — 이 값의
+	 *                             존재 자체가 direct 판정이다.
 	 */
 	private static PerformanceContentResponse fromLegacy(TrackingItemResponse item, String shortcode,
-			boolean direct, BrandPostResponse overlap) {
+			String directBrandAccountId, BrandPostResponse overlap) {
 		PerformancePostResponse post = legacyPost(item, shortcode, overlap);
 		return new PerformanceContentResponse(
 				new PerformanceItemResponse(item.id(), item.mode(), item.status(), item.handle(),
 						item.displayName(), item.profileImageUrl(), item.followers(), item.lastUploadedAt(),
 						item.campaignId(), item.campaignName(), item.sourceUrl(), item.registeredAt(),
 						item.trackingDays(), item.keywords(), post, item.nextCheckAt()),
-				direct ? SOURCE_DIRECT : SOURCE_INDIVIDUAL,
+				directBrandAccountId != null ? SOURCE_DIRECT : SOURCE_INDIVIDUAL,
 				sponsorshipOf(item, overlap),
 				// 게시물이 아직 없는 아이템(collecting·detecting·not_uploaded)은 shortcode 자체가 없다 —
 				// 그 콘텐츠는 item.id로만 식별된다(스펙 §7-1).
 				shortcode,
 				overlap == null ? List.of() : List.of(SOURCE_TAGGED),
-				overlap == null ? null : overlap.brandAccountId());
+				// 브랜드 소속은 tagged 관측만의 속성이 아니다 — direct는 매핑 자체가 "이 게시물은 이 브랜드
+				// 소속"이라는 선언이라 tagged 관측이 아직 없어도 채운다(Task 10 brandAccountId 필터가
+				// 자기 브랜드의 direct를 떨구면 안 된다). 둘 다 있으면 같은 브랜드지만 관측값을 우선한다.
+				overlap != null ? overlap.brandAccountId() : directBrandAccountId);
 	}
 
 	private static PerformancePostResponse legacyPost(TrackingItemResponse item, String shortcode,
@@ -152,10 +158,7 @@ public class PerformanceContentAssembler {
 
 		return new PerformancePostResponse(post.url(), shortcode, post.contentType(), post.uploadedAt(),
 				post.caption(), post.matchedKeywords(), post.thumbnailUrl(), post.hiddenAt(), snapshots,
-				commentsTotal(snapshots),
-				// 레거시 수집엔 "댓글 숨김" 관측이 없다 — 브랜드 스윕이 같은 게시물을 봤을 때만 그 관측을 싣는다.
-				overlap != null && overlap.commentsHidden(),
-				comments.size(), comments);
+				commentsTotal(snapshots), commentsHidden(snapshots), comments.size(), comments);
 	}
 
 	/**
@@ -204,15 +207,19 @@ public class PerformanceContentAssembler {
 	 * shortcode를 만들 수 없다)이 첫 수집 전까지 individual로 표시된다. 매핑 행에 이미
 	 * {@code monitoring_item_id}가 있으므로 id로도 같은 판정이 가능하고, 두 키는 같은 매핑을
 	 * 가리키므로 합집합을 써도 individual → direct 방향으로만 바뀐다(오탐 없음).
+	 *
+	 * <p>매핑의 {@code brand_id}까지 관통시킨다 — direct 콘텐츠의 {@code brandAccountId}는 tagged
+	 * 관측 없이도 확정되는 값이기 때문이다(FE PerformanceContent 계약).
 	 */
 	private DirectMapping directMapping(long userId) {
-		Set<String> shortCodes = new LinkedHashSet<>();
-		Set<String> itemIds = new LinkedHashSet<>();
+		Map<String, String> byShortCode = new LinkedHashMap<>();
+		Map<String, String> byItemId = new LinkedHashMap<>();
 		for (BrandDirectPostRepository.Row row : directPostRepository.findByUser(userId)) {
-			shortCodes.add(row.shortCode());
-			itemIds.add(String.valueOf(row.monitoringItemId()));
+			String brandAccountId = String.valueOf(row.brandId());
+			byShortCode.putIfAbsent(row.shortCode(), brandAccountId);
+			byItemId.putIfAbsent(String.valueOf(row.monitoringItemId()), brandAccountId);
 		}
-		return new DirectMapping(shortCodes, itemIds);
+		return new DirectMapping(byShortCode, byItemId);
 	}
 
 	/** 활성 브랜드 연결이 있을 때만 브랜드 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지 않는다. */
@@ -248,6 +255,16 @@ public class PerformanceContentAssembler {
 	 *
 	 * <p>날짜 키는 앞 10자다 — 산지에 따라 날짜와 타임스탬프가 섞여 들어와도 같은 하루로 접힌다.
 	 * 결과는 날짜 오름차순(계약).
+	 *
+	 * <p><b>기간 경계는 의도적으로 열어 둔다</b> — 레거시 추적 기간 <b>밖</b>(등록 전·종료 후)의 브랜드
+	 * 스냅샷도 그대로 실린다. 레거시 단독 경로는 소급 금지 하한을 걸지만
+	 * ({@code TrackingItemAssembler.snapshotFloor}) 여기서는 클램프하지 않는다:
+	 * <ol>
+	 *   <li>FE 병합 규칙은 "동일 날짜·지표별 최신 수집값"만 규정하고 범위를 제한하지 않는다.</li>
+	 *   <li>FE 증가분 계산은 최신 스냅샷 2개만 쓰므로 앞쪽에 날짜가 더 붙어도 무해하다.</li>
+	 *   <li>클램프는 실제로 관측된 값을 폐기하는 것이고, 같은 게시물의 브랜드 화면(§6-1은 90일 윈도우
+	 *       전체를 노출)과 서로 다른 스냅샷 목록을 보여주게 된다.</li>
+	 * </ol>
 	 */
 	public static List<TrackingItemResponse.SnapshotResponse> mergeSnapshots(
 			List<TrackingItemResponse.SnapshotResponse> legacy,
@@ -365,9 +382,27 @@ public class PerformanceContentAssembler {
 		return raw == null || raw.length() < 10 ? null : raw.substring(0, 10);
 	}
 
+	/** 스냅샷은 날짜 오름차순 계약이라 마지막이 최신이다. */
+	private static TrackingItemResponse.SnapshotResponse latestOf(
+			List<TrackingItemResponse.SnapshotResponse> snapshots) {
+		return snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
+	}
+
 	private static Long commentsTotal(List<TrackingItemResponse.SnapshotResponse> snapshots) {
-		// 스냅샷은 날짜 오름차순 계약이라 마지막이 최신이다.
-		return snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1).comments();
+		TrackingItemResponse.SnapshotResponse latest = latestOf(snapshots);
+		return latest == null ? null : latest.comments();
+	}
+
+	/**
+	 * 댓글 숨김 = 스냅샷은 있는데 댓글 수가 비어 있는 상태(스냅샷 자체가 없으면 "아직 모름").
+	 * 반드시 {@code commentsTotal}과 <b>같은 스냅샷 목록</b>에서 유도해야 한다 — 브랜드 관측만
+	 * 단독으로 보면 "레거시가 센 댓글 5건이 실렸는데 hidden=true"인 모순이 난다(브랜드 스냅샷의
+	 * comments가 null이어도 병합 결과엔 레거시 값이 남기 때문). 형제 엔드포인트
+	 * {@code BrandPostAssembler.commentsHidden}과 같은 정의다.
+	 */
+	private static boolean commentsHidden(List<TrackingItemResponse.SnapshotResponse> snapshots) {
+		TrackingItemResponse.SnapshotResponse latest = latestOf(snapshots);
+		return latest != null && latest.comments() == null;
 	}
 
 	/** 대시보드의 "마지막 수집"은 두 파이프라인 중 늦은 쪽이다(레거시 02:00 / 브랜드 스윕 03:00). */
@@ -382,11 +417,13 @@ public class PerformanceContentAssembler {
 	public record Assembled(List<PerformanceContentResponse> contents, OffsetDateTime lastCollectedAt) {
 	}
 
-	/** 직접 등록 매핑 색인 — 같은 매핑을 shortcode·아이템 id 두 키로 조회한다. */
-	private record DirectMapping(Set<String> shortCodes, Set<String> itemIds) {
+	/** 직접 등록 매핑 색인 — 같은 매핑을 shortcode·아이템 id 두 키로 조회한다(값은 브랜드 id 문자열). */
+	private record DirectMapping(Map<String, String> byShortCode, Map<String, String> byItemId) {
 
-		boolean covers(String itemId, String shortcode) {
-			return itemIds.contains(itemId) || (shortcode != null && shortCodes.contains(shortcode));
+		/** 매핑된 브랜드 id 문자열, 직접 등록분이 아니면 null. */
+		String brandAccountIdFor(String itemId, String shortcode) {
+			String byId = byItemId.get(itemId);
+			return byId != null || shortcode == null ? byId : byShortCode.get(shortcode);
 		}
 	}
 

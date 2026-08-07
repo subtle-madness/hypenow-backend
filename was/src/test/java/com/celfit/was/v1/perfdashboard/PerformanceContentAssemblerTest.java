@@ -39,6 +39,7 @@ class PerformanceContentAssemblerTest {
 	private static final long USER_ID = 7L;
 	private static final long BRAND_ID = 42L;
 	private static final OffsetDateTime LAST_COLLECTED = OffsetDateTime.parse("2026-08-07T02:00:00+09:00");
+	private static final OffsetDateTime BRAND_SWEPT_AT = OffsetDateTime.parse("2026-08-07T03:00:00+09:00");
 
 	@Mock
 	private TrackingItemAssembler trackingItemAssembler;
@@ -153,7 +154,8 @@ class PerformanceContentAssemblerTest {
 		assertThat(contents).hasSize(1);
 		assertThat(contents.get(0).source()).isEqualTo("direct");
 		assertThat(contents.get(0).additionalSources()).isEmpty();
-		assertThat(contents.get(0).brandAccountId()).isNull();
+		// tagged 관측이 없어도 브랜드 소속은 매핑으로 확정된다(Task 10 brandAccountId 필터 대상).
+		assertThat(contents.get(0).brandAccountId()).isEqualTo("42");
 	}
 
 	@Test
@@ -167,6 +169,16 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(contents.get(0).source()).isEqualTo("direct");
 		assertThat(contents.get(0).canonicalPostId()).isNull();
+		assertThat(contents.get(0).brandAccountId()).isEqualTo("42");
+	}
+
+	@Test
+	void individual은_brandAccountId가_null이다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenNoBrand();
+
+		assertThat(assembler().assemble(USER_ID).contents().get(0).brandAccountId()).isNull();
 	}
 
 	@Test
@@ -225,6 +237,46 @@ class PerformanceContentAssemblerTest {
 	}
 
 	@Test
+	void 댓글_숨김은_병합된_최신_스냅샷에서_유도한다() {
+		// 레거시가 센 댓글 5건이 병합 결과에 남는데 브랜드 관측만 보고 hidden=true를 내면 모순이다.
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-06", 100L, null, 5L))));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenBrand(taggedPostWithCommentsHidden("ABC", List.of(snapshot("2026-08-06", 120L, 8L, null))));
+
+		var post = assembler().assemble(USER_ID).contents().get(0).item().post();
+
+		assertThat(post.commentsTotal()).isEqualTo(5L);
+		assertThat(post.commentsHidden()).isFalse();
+	}
+
+	@Test
+	void 양쪽_모두_댓글을_못_본_날은_숨김이다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-06", 100L, null, null))));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenBrand(taggedPostWithCommentsHidden("ABC", List.of(snapshot("2026-08-06", 120L, 8L, null))));
+
+		var post = assembler().assemble(USER_ID).contents().get(0).item().post();
+
+		assertThat(post.commentsTotal()).isNull();
+		assertThat(post.commentsHidden()).isTrue();
+	}
+
+	@Test
+	void 레거시_캡션이_비면_tagged_캡션으로_협찬을_판정한다() {
+		// 레거시는 메타 미수집 시 캡션이 빈 문자열이다 — 그 경우에만 tagged 캡션으로 폴백한다.
+		givenLegacy(legacyItemWithCaption("900", "https://www.instagram.com/p/ABC/", ""));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenBrand(taggedPostWithCaption("ABC", "가을 신상 #협찬"));
+
+		var content = assembler().assemble(USER_ID).contents().get(0);
+
+		// isPaidPartnership 관측은 없고(null) tagged 캡션의 확정 키워드만으로 승격된다.
+		assertThat(content.sponsorship()).isEqualTo("sponsored");
+	}
+
+	@Test
 	void 레거시_단독_협찬은_캡션_키워드로만_판정한다() {
 		givenLegacy(legacyItemWithCaption("900", "https://www.instagram.com/p/DEF/", "신상 추천 #광고"));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
@@ -246,6 +298,25 @@ class PerformanceContentAssemblerTest {
 		assertThat(assembled.contents()).hasSize(1);
 		assertThat(assembled.lastCollectedAt()).isEqualTo(LAST_COLLECTED);
 		then(brandPostAssembler).should(never()).assembleTagged(any());
+	}
+
+	@Test
+	void lastCollectedAt은_레거시와_브랜드_스윕_중_늦은_쪽이다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		// 레거시 02:00 / 브랜드 스윕 03:00 — 늦은 쪽(브랜드)이 "마지막 수집"이다.
+		givenBrandSweptAt(BRAND_SWEPT_AT, taggedPost("ABC", List.of()));
+
+		assertThat(assembler().assemble(USER_ID).lastCollectedAt()).isEqualTo(BRAND_SWEPT_AT);
+	}
+
+	@Test
+	void 브랜드_스윕이_더_이르면_레거시_시각을_쓴다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenBrandSweptAt(OffsetDateTime.parse("2026-08-06T03:00:00+09:00"), taggedPost("ABC", List.of()));
+
+		assertThat(assembler().assemble(USER_ID).lastCollectedAt()).isEqualTo(LAST_COLLECTED);
 	}
 
 	@Test
@@ -322,9 +393,13 @@ class PerformanceContentAssemblerTest {
 	}
 
 	private void givenBrand(BrandPostResponse... taggedPosts) {
+		givenBrandSweptAt(LAST_COLLECTED, taggedPosts);
+	}
+
+	private void givenBrandSweptAt(OffsetDateTime lastSweptAt, BrandPostResponse... taggedPosts) {
 		given(linkRepository.findActiveByUser(USER_ID)).willReturn(Optional.of(new BrandLinkRow(1L, USER_ID,
 				BRAND_ID, "brand", LAST_COLLECTED, null)));
-		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), LAST_COLLECTED,
+		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
 		given(brandPostAssembler.assembleTagged(account)).willReturn(List.of(taggedPosts));
@@ -361,13 +436,28 @@ class PerformanceContentAssemblerTest {
 	}
 
 	private static BrandPostResponse taggedPost(String shortcode, List<SnapshotResponse> snapshots) {
+		return taggedPost(shortcode, snapshots, "브랜드 태그 캡션", false);
+	}
+
+	private static BrandPostResponse taggedPostWithCaption(String shortcode, String caption) {
+		return taggedPost(shortcode, List.of(), caption, false);
+	}
+
+	/** 브랜드 스윕이 "댓글 숨김"을 관측한 게시물(최신 스냅샷의 comments가 null). */
+	private static BrandPostResponse taggedPostWithCommentsHidden(String shortcode,
+			List<SnapshotResponse> snapshots) {
+		return taggedPost(shortcode, snapshots, "브랜드 태그 캡션", true);
+	}
+
+	private static BrandPostResponse taggedPost(String shortcode, List<SnapshotResponse> snapshots,
+			String caption, boolean commentsHidden) {
 		SnapshotResponse latest = snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
 		return new BrandPostResponse(shortcode, String.valueOf(BRAND_ID), "tagged",
 				"https://www.instagram.com/reel/" + shortcode + "/", shortcode, "reels",
-				"2026-08-06T09:00:00+09:00", "브랜드 태그 캡션", null, null, null,
+				"2026-08-06T09:00:00+09:00", caption, null, null, null,
 				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,
 				"unknown", null, "tracking", "2026-08-06T09:30:00+09:00", null, latest, snapshots,
-				latest == null ? null : latest.comments(), false, 0L, List.of(), List.of(),
+				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), List.of(),
 				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00");
 	}
 }
