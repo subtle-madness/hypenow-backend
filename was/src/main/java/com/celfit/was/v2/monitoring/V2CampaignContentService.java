@@ -335,17 +335,16 @@ public class V2CampaignContentService {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty()) {
 			return Map.of();
 		}
-		Optional<BrandLinkRow> link = linkRepository.findActiveByUser(userId);
-		if (link.isEmpty()) {
-			return Map.of();
-		}
-		Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.get().brandId());
-		if (account.isEmpty()) {
-			return Map.of();
-		}
+		// 다계정(08-07 개정) — 연결된 브랜드 전체의 태그 목록을 연결 순으로 병합한다(먼저 연결한 브랜드 우선).
 		Map<String, String> urls = new LinkedHashMap<>();
-		for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
-			urls.putIfAbsent(post.shortcode(), post.postUrl());
+		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
+			if (account.isEmpty()) {
+				continue;
+			}
+			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
+				urls.putIfAbsent(post.shortcode(), post.postUrl());
+			}
 		}
 		return urls;
 	}

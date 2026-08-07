@@ -330,7 +330,7 @@ class V1BrandDirectPostServiceTest {
 	void share_해소분은_GET에서_지연_매핑을_만들고_brandPostId를_채운다() {
 		// 레거시 실행기(processShareEntry)가 해소 후 resolved_url·item_id를 채우고 success로 정산한 상태.
 		given(registrationRepository.findById(55L)).willReturn(Optional.of(shareEntryRegistration()));
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.of(link()));
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 
 		BrandDirectRegistrationResponse response = service.get(7L, "55");
 
@@ -343,7 +343,7 @@ class V1BrandDirectPostServiceTest {
 	@Test
 	void 활성_브랜드_연결이_없으면_지연_매핑은_건너뛰고_결과는_유지한다() {
 		given(registrationRepository.findById(55L)).willReturn(Optional.of(shareEntryRegistration()));
-		given(linkRepository.findActiveByUser(7L)).willReturn(Optional.empty());
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of());
 
 		BrandDirectRegistrationResponse response = service.get(7L, "55");
 
@@ -361,7 +361,7 @@ class V1BrandDirectPostServiceTest {
 		BrandDirectRegistrationResponse response = service.get(7L, "55");
 
 		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
-		then(linkRepository).should(never()).findActiveByUser(anyLong());
+		then(linkRepository).should(never()).findAllActiveByUser(anyLong());
 		assertThat(response.entries().get(0).brandPostId()).isEqualTo("SHR");
 	}
 
