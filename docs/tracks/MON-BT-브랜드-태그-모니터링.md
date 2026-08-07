@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 모니터링 트랙 — 2026-08-06 설계 확정: [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../superpowers/specs/2026-08-06-brand-tag-monitoring-schedule-design.md) (**주기·스키마는 같은 날 설계 재논의로 개정 — DECISIONS 08-06 개정 행이 정본**)
 - **의존**: MON
-- **상태**: 🔵 (08-06 수집 파이프라인 구현 완료 — PR #351 리뷰 대기 · was 조회 API·FE 계약은 범위 밖 — 후속 트랙)
+- **상태**: ✅ (08-07 운영 개통 — 수집 파이프라인(PR #351) + was API 전체(PR #354, [spec 2026-08-07](../superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md)) 급행 승격 배포, 스윕 크론 KST 03:00 가동)
 
 ## 내용
 
@@ -12,6 +12,10 @@
 
 ## 미결·후속
 
-- was 조회 API·FE 계약(스펙 §8 말미 — 이번 범위에서 명시 제외). `last_swept_on`이 "수집 준비 중" 판별 기준.
-- `/v2/user/by/id` 응답 셰이프는 라이브 미실측(by/username과 동형 가정) — 운영 첫 콜에서 다르면 HikerFetchException으로 표면화, 게시자 단위 격리라 수집 본체는 계속 돈다.
-- 운영 크론 env 주입(`cd-test.yml`/compose) — 개통 시점에 캠페인 스윕(KST 02:00)과 시차 확인.
+- ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
+- ~~`/v2/user/by/id` 응답 셰이프 라이브 미실측~~ → **실측 반영**(08-07): 파라미터명이 `user_id`가 아니라 `id`(422 실측 핫픽스 4ab01545). 응답 셰이프는 by/username 동형 확인.
+- ~~운영 크론 env 주입~~ → **가동 중**(08-07): KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차 확보. 서버 override 선주입분을 레포 `deploy/compose.yaml`로 정합(드리프트 해소).
+- ~~Task 11(캠페인 v2) 급행 머지로 리뷰 생략~~ → **08-07 사후 리뷰·픽스 완료**: Critical 0. Important 4 중 3(취소 아이템 재등록 경로·제거 전건 해제·레거시 위임 계약 통합 테스트)과 Minor 2(202 조건·trim)는 픽스 반영(DECISIONS 08-07 판정 행). **잔여 후속**:
+  - ~~링크 1건당 레거시 patch 전량 재조립(아이템당 ~9쿼리 × 상한 100)~~ → **슬림 경로 분리 완료**(08-07, PR #360): `CampaignItemLinker`(캠페인·아이템 소유 검증 유지 + `updateCampaign`만, 아이템당 3쿼리)로 v2 연결·해제 교체. 레거시 0줄 변경 — 트레이드오프는 DECISIONS 08-07 슬림 경로 행.
+  - reasonCode 어휘 이원화 — v2 대문자(`NOT_FOUND`·`CAMPAIGN_CONTENT_ALREADY_EXISTS`) vs 레거시 entry 소문자(`not_found`·`duplicate`). FE와 한 번 정리 필요(스펙 §9 어휘 자체가 두 갈래).
+  - tagged 윈도우(90일) 밖 게시물의 추가 실패 사유가 "게시물을 찾을 수 없습니다"로 뭉개짐 — 실해 낮음, FE 문의 오면 재론.
