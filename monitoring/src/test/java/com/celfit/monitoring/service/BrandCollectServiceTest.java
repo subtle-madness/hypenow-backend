@@ -19,12 +19,18 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -158,7 +164,8 @@ class BrandCollectServiceTest {
 
 	private static final class InMemoryAuthors extends AuthorProfileRepository {
 		Set<String> fresh = new HashSet<>();
-		final List<String> upserted = new ArrayList<>();
+		// 병렬 upsert 대비 스레드 안전 리스트(직결 executor를 쓰는 기존 테스트는 영향 없음).
+		final List<String> upserted = Collections.synchronizedList(new ArrayList<>());
 
 		InMemoryAuthors() {
 			super(null);
@@ -215,7 +222,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int windowPosts) {
 		return new BrandCollectService(client(), writer, snapshots, comments, tagged, authors,
-				90, windowPosts, 3, 30);
+				Runnable::run, 90, windowPosts, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -442,5 +449,50 @@ class BrandCollectServiceTest {
 				.containsEntry("Grown", 7L)
 				.containsEntry("FreshD", 2L)
 				.containsEntry("SameCnt", 5L);
+	}
+
+	// ── 보강 병렬화(동시 6 — 2026-08-07 스펙) ────────────────────────────────
+
+	@Test
+	void 보강_게시자_콜은_워커_풀_동시성으로_나가되_상한을_넘지_않는다() {
+		tagPages.add(page(null,
+				reel("A", RECENT, 0, 201, ""), reel("B", RECENT, 0, 202, ""),
+				reel("C", RECENT, 0, 203, ""), reel("D", RECENT, 0, 204, ""),
+				reel("E", RECENT, 0, 205, ""), reel("F", RECENT, 0, 206, "")));
+		AtomicInteger inFlight = new AtomicInteger();
+		AtomicInteger maxInFlight = new AtomicInteger();
+		CyclicBarrier trio = new CyclicBarrier(3);   // 3콜이 "동시에" 모여야 통과 — 순차면 못 모인다
+		HikerClient latched = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/by/username")) {
+				return BRAND_PROFILE_JSON;
+			}
+			if (path.startsWith("/v2/user/tag/medias")) {
+				return tagPages.get(0);
+			}
+			if (path.startsWith("/v2/user/by/id")) {
+				maxInFlight.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+				try {
+					trio.await(5, TimeUnit.SECONDS);
+				} catch (Exception e) {
+					throw new IllegalStateException("동시 3 미달 — 병렬 실행 안 됨", e);
+				} finally {
+					inFlight.decrementAndGet();
+				}
+				String id = path.substring(path.indexOf("?id=") + "?id=".length());
+				return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\"}}".formatted(id, id);
+			}
+			throw new IllegalStateException("예상 밖 콜: " + path);
+		});
+		ExecutorService pool = Executors.newFixedThreadPool(3);
+		try {
+			BrandCollectService svc = new BrandCollectService(latched, writer, snapshots,
+					comments, tagged, authors, pool, 90, 105, 3, 30);
+			svc.enrich(brand, svc.sweepCore(brand));
+		} finally {
+			pool.shutdown();
+		}
+		assertThat(maxInFlight.get()).isEqualTo(3);   // 풀 크기까지 도달, 초과 없음
+		assertThat(authors.upserted)
+				.containsExactlyInAnyOrder("201", "202", "203", "204", "205", "206");
 	}
 }
