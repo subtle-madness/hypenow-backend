@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -20,6 +21,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +52,7 @@ public class BrandCollectService {
 	private final BrandCommentRepository comments;
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
+	private final Executor enrichWorker;
 	private final int windowDays;
 	private final int windowPosts;
 	private final int commentPages;
@@ -57,6 +61,7 @@ public class BrandCollectService {
 	public BrandCollectService(HikerClient hiker, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
+			Executor enrichWorker,
 			@Value("${monitoring.brand.window-days:90}") int windowDays,
 			@Value("${monitoring.brand.window-posts:105}") int windowPosts,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
@@ -67,6 +72,7 @@ public class BrandCollectService {
 		this.comments = comments;
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
+		this.enrichWorker = enrichWorker;
 		this.windowDays = windowDays;
 		this.windowPosts = windowPosts;
 		this.commentPages = commentPages;
@@ -246,16 +252,22 @@ public class BrandCollectService {
 		}
 		Set<String> fresh = authors.freshIgUserIds(ids,
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
+		// 게시자별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
+		// 보강 시간의 본체였다). 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
+		List<CompletableFuture<Void>> tasks = new ArrayList<>();
 		for (String id : ids) {
 			if (fresh.contains(id)) {
 				continue;
 			}
-			try {
-				authors.upsert(hiker.fetchAuthorProfile(id));
-			} catch (RuntimeException e) {
-				log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", id, e.toString());
-			}
+			tasks.add(CompletableFuture.runAsync(() -> {
+				try {
+					authors.upsert(hiker.fetchAuthorProfile(id));
+				} catch (RuntimeException e) {
+					log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", id, e.toString());
+				}
+			}, enrichWorker));
 		}
+		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}
 
 	/**
@@ -271,20 +283,26 @@ public class BrandCollectService {
 		}
 		Map<String, Long> stored = taggedPosts.commentsCollectedCounts(brandId,
 				candidates.stream().map(PostInfo::shortCode).toList());
+		// 게시물별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(ensureAuthors와 같은 근거). 게이트
+		// 판정은 제출 전에, 워터마크 갱신은 태스크 안에서 — 의미 불변, 실행만 동시.
+		List<CompletableFuture<Void>> tasks = new ArrayList<>();
 		for (PostInfo p : candidates) {
 			if (p.comments() <= stored.getOrDefault(p.shortCode(), 0L)) {
 				continue;
 			}
-			try {
-				List<CommentInfo> fetched = hiker.fetchComments(p.shortCode(), p.username(),
-						commentPages, comments.findIds(p.shortCode()));
-				comments.upsertForPost(p.shortCode(), fetched);
-				// 저장값은 열거 관측치로 갱신한다 — 다음 게이트가 "그 사이 증가분"만 보게.
-				taggedPosts.updateCommentsCollected(brandId, p.shortCode(), p.comments());
-			} catch (RuntimeException e) {
-				log.warn("태그 댓글 수집 실패(격리) — 게시물 {}: {}", p.shortCode(), e.toString());
-			}
+			tasks.add(CompletableFuture.runAsync(() -> {
+				try {
+					List<CommentInfo> fetched = hiker.fetchComments(p.shortCode(), p.username(),
+							commentPages, comments.findIds(p.shortCode()));
+					comments.upsertForPost(p.shortCode(), fetched);
+					// 저장값은 열거 관측치로 갱신한다 — 다음 게이트가 "그 사이 증가분"만 보게.
+					taggedPosts.updateCommentsCollected(brandId, p.shortCode(), p.comments());
+				} catch (RuntimeException e) {
+					log.warn("태그 댓글 수집 실패(격리) — 게시물 {}: {}", p.shortCode(), e.toString());
+				}
+			}, enrichWorker));
 		}
+		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}
 
 	private Instant windowCutoff() {
