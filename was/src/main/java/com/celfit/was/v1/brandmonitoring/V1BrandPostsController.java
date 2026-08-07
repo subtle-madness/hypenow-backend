@@ -98,20 +98,27 @@ public class V1BrandPostsController {
 		return ApiResponse.ok(filtered, meta(filtered.size(), all, account));
 	}
 
-	/** 상세(§6-2) — postId는 shortcode다. 내 브랜드 목록에 없으면 존재 여부를 흘리지 않고 404. */
+	/**
+	 * 상세(§6-2) — postId는 shortcode다. 경로에 브랜드가 없어 연결된 브랜드 전체(다계정)를 순서대로
+	 * 뒤진다 — 어느 목록에도 없으면 존재 여부를 흘리지 않고 404.
+	 */
 	@GetMapping("/posts/{postId}")
 	public ApiResponse<BrandPostResponse> get(@AuthenticationPrincipal AppUserDetails principal,
 			@PathVariable String postId) {
-		BrandLinkRow link = linkRepository.findActiveByUser(principal.getUserId())
-				.orElseThrow(V1BrandPostsController::postNotFound);
-		BrandAccountRow account = brandReadRepository.findAccount(link.brandId())
-				.orElseThrow(V1BrandPostsController::postNotFound);
-
-		return assembler.assembleForBrand(principal.getUserId(), account).stream()
-				.filter(p -> p.id().equals(postId))
-				.findFirst()
-				.map(ApiResponse::ok)
-				.orElseThrow(V1BrandPostsController::postNotFound);
+		for (BrandLinkRow link : linkRepository.findAllActiveByUser(principal.getUserId())) {
+			Optional<BrandAccountRow> account = brandReadRepository.findAccount(link.brandId());
+			if (account.isEmpty()) {
+				continue;
+			}
+			Optional<BrandPostResponse> found = assembler.assembleForBrand(principal.getUserId(), account.get())
+					.stream()
+					.filter(p -> p.id().equals(postId))
+					.findFirst();
+			if (found.isPresent()) {
+				return ApiResponse.ok(found.get());
+			}
+		}
+		throw postNotFound();
 	}
 
 	// ---------- 직접 등록(§6-4) ----------
