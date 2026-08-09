@@ -34,16 +34,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /**
- * 브랜드 태그 수집 본체(2026-08-06 스펙 + 매일 전량 개정) — CollectServiceTest 관용구(fake
- * HikerHttp + 스텁 서브클래스, DB 없음)로 매일 전량 105개 추종·윈도우 컷·브랜드 프로필 매일
- * 갱신·부재=0·0 캐리·게시자 stale·댓글 게이트를 검증한다.
+ * 브랜드 태그 수집 본체(2026-08-06 스펙 + 2026-08-09 크롤링 정책 v1) — CollectServiceTest
+ * 관용구(fake HikerHttp + 스텁 서브클래스, DB 없음)로 티어 기반 열거 깊이(14일 최소 / due
+ * 확장 / 백필 365일)·편입 컷·안전 상한·last_crawled_at 갱신·브랜드 프로필 매일 갱신·부재=0·
+ * 0 캐리·게시자 stale·댓글 게이트를 검증한다.
  */
 class BrandCollectServiceTest {
 
 	private static final long NOW = Instant.now().getEpochSecond();
-	private static final long RECENT = NOW - 5L * 86400;             // 윈도우(90일) 안
-	private static final long RETRO_IN_WINDOW = NOW - 60L * 86400;   // 소급 태그지만 윈도우 안
-	private static final long OLD_95D = NOW - 95L * 86400;           // 윈도우 밖
+	private static final long RECENT = NOW - 5L * 86400;             // 매일 티어(0~14일) 안
+	private static final long OLD_20D = NOW - 20L * 86400;           // 14일 컷 밖, 추적(180일) 안
+	private static final long RETRO_IN_WINDOW = NOW - 60L * 86400;   // 소급 태그(7일 주기 티어)
+	private static final long OLD_70D = NOW - 70L * 86400;           // 60일 컷 이전 판정용
+	private static final long OLD_95D = NOW - 95L * 86400;           // 구 90일 윈도우 밖·365일 안(백필 편입)
+	private static final long OLD_200D = NOW - 200L * 86400;         // 추적 종료 구간(180~365일)
+	private static final long OLD_400D = NOW - 400L * 86400;         // 편입 컷(365일) 밖
 
 	private static final String BRAND_PROFILE_JSON = """
 			{"user":{"pk":111,"username":"brandx","full_name":"브랜드","profile_pic_url":"https://p",
@@ -64,6 +69,9 @@ class BrandCollectServiceTest {
 	private int tagCall = 0;
 
 	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null);
+	// 완주 이력 있는 브랜드 — 티어 경로(백필 아님). 어제 완주로 두어 오늘 스윕 시나리오를 만든다.
+	private final BrandRow sweptBrand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE,
+			LocalDate.now().minusDays(1));
 
 	// ── 스텁 대역(CollectServiceTest NoopCommentRepository 관용구) ────────────
 
@@ -131,6 +139,8 @@ class BrandCollectServiceTest {
 		final Set<String> known = new LinkedHashSet<>();
 		final List<String> inserted = new ArrayList<>();
 		final Map<String, Long> collectedCounts = new HashMap<>();
+		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
+		final Map<String, Instant> touched = new HashMap<>();
 
 		InMemoryTagged() {
 			super(null);
@@ -159,6 +169,18 @@ class BrandCollectServiceTest {
 		@Override
 		public void updateCommentsCollected(long brandId, String shortCode, long count) {
 			collectedCounts.put(shortCode, count);
+		}
+
+		@Override
+		public List<TaggedPostRepository.TrackedPost> trackedPosts(long brandId, Instant minTakenAt) {
+			return tracked.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
+		}
+
+		@Override
+		public void touchCrawled(long brandId, Collection<String> codes, Instant at) {
+			for (String c : codes) {
+				touched.put(c, at);
+			}
 		}
 	}
 
@@ -220,9 +242,9 @@ class BrandCollectServiceTest {
 		});
 	}
 
-	private BrandCollectService service(int windowPosts) {
+	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), writer, snapshots, comments, tagged, authors,
-				Runnable::run, 90, windowPosts, 3, 30);
+				Runnable::run, 365, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -259,12 +281,12 @@ class BrandCollectServiceTest {
 	// ── 열거 워크(매일 전량) ─────────────────────────────────────────────────
 
 	@Test
-	void 스윕은_목표_개수까지_커서를_추종한다() {
+	void 안전_상한_도달_시_열거를_중단한다() {   // 구 "스윕은_목표_개수까지_커서를_추종한다" 개칭
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
 		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
 
-		service(3).sweep(brand);   // 목표 3개 — 2페이지째에서 4개 도달, 3페이지는 부르지 않는다
+		service(3).sweep(brand);   // 상한 3 — 2페이지째에서 4개 도달, 3페이지는 부르지 않는다
 
 		assertThat(tagCalls()).isEqualTo(2);
 		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C", "D");
@@ -272,15 +294,16 @@ class BrandCollectServiceTest {
 
 	@Test
 	void 스윕은_페이지_전체가_컷_이전이면_중단한다() {
+		// due 없는 티어 경로 — 컷은 최소 깊이 14일. 2페이지 전체가 컷 이전이라 중단하되,
+		// 이미 실려 온 20일령 게시물은 365일 편입 컷 안이므로 적재는 된다(공짜 데이터 — 스펙 §4).
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
-		// 2페이지 전체가 90일 컷 이전 — 커서가 남아도 중단(페이지 "전체" 조건 — 스펙 §5·§6).
-		tagPages.add(page("p3", reel("Old1", OLD_95D, 0, 102, ""), reel("Old2", OLD_95D, 0, 103, "")));
+		tagPages.add(page("p3", reel("Old1", OLD_20D, 0, 102, ""), reel("Old2", OLD_20D, 0, 103, "")));
 		tagPages.add(page(null, reel("NeverFetched", RECENT, 0, 104, "")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(sweptBrand);
 
 		assertThat(tagCalls()).isEqualTo(2);
-		assertThat(tagged.inserted).containsExactly("A");   // 컷 이전 게시물은 적재 대상 아님
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old1", "Old2");
 	}
 
 	@Test
@@ -308,9 +331,10 @@ class BrandCollectServiceTest {
 
 	@Test
 	void 윈도우_밖_게시물은_적재하지_않는다() {
-		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 101, ""), reel("NoTakenAt", null, 0, 102, "")));
+		// 편입 컷은 365일(정책 §2 최대 12개월) — 그 밖과 taken_at 미상만 제외된다.
+		tagPages.add(page(null, reel("Old400", OLD_400D, 0, 101, ""), reel("NoTakenAt", null, 0, 102, "")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		assertThat(writer.saved).isEmpty();
 		assertThat(tagged.inserted).isEmpty();
@@ -327,6 +351,73 @@ class BrandCollectServiceTest {
 		assertThat(tagged.inserted).isEmpty();
 		assertThat(authorCalls()).isZero();
 		assertThat(commentCalls()).isZero();
+	}
+
+	// ── 티어 깊이 결정(정책 v1 — 2026-08-09 스펙 §4) ─────────────────────────
+
+	@Test
+	void due_없으면_최소_14일_깊이만_연다() {
+		// 20일령 링크가 있지만 어제 크롤됨(3일 주기 미경과) — 컷은 14일 유지
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Fresh20d",
+				Instant.ofEpochSecond(OLD_20D), Instant.ofEpochSecond(NOW - 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("Old1", OLD_20D, 0, 102, "")));
+		tagPages.add(page(null, reel("NeverFetched", RECENT, 0, 103, "")));
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(tagCalls()).isEqualTo(2);   // 2페이지 전체가 14일 컷 이전 — 중단
+	}
+
+	@Test
+	void due_게시물의_taken_at까지_깊이를_늘린다() {
+		// 60일령, 마지막 크롤 10일 전(≥ 7일 주기) — due. 컷이 60일로 내려간다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Due60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("Old1", OLD_20D, 0, 102, "")));    // 컷(60일) 이후 — 계속
+		tagPages.add(page(null, reel("Deep", OLD_70D, 0, 103, "")));    // 전체가 컷 이전 — 중단
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(tagCalls()).isEqualTo(3);   // due 없던 위 테스트(2콜)와 대조 — 깊이가 늘었다
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old1", "Deep");
+	}
+
+	@Test
+	void 백필은_365일_전체를_연다() {
+		// last_swept_on null(등록 직후·백필 실패 백스톱·재가입) — due 판정 없이 등록 윈도우 전체
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(tagCalls()).isEqualTo(2);
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old95");   // 95일령도 편입
+	}
+
+	@Test
+	void 늦은_발견은_나이에_맞게_편입한다() {
+		// 180~365일: 링크+스냅샷 1회(이후 due 판정이 영구 제외 — BrandCrawlPolicyTest가 고정).
+		// 365일 초과: 무시(정책 §2 최대 12개월).
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, ""),
+				reel("Retro200", OLD_200D, 0, 102, ""), reel("Ancient400", OLD_400D, 0, 103, "")));
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Retro200");
+		assertThat(writer.saved).extracting(PostInfo::shortCode)
+				.containsExactlyInAnyOrder("A", "Retro200");
+	}
+
+	@Test
+	void 만난_게시물은_last_crawled_at을_갱신한다() {
+		tagged.known.add("KnownA");
+		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, ""), reel("NewB", RECENT, 0, 102, "")));
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(tagged.touched).containsKeys("KnownA", "NewB");
 	}
 
 	// ── 브랜드 프로필 매일 갱신 ──────────────────────────────────────────────
@@ -486,7 +577,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, writer, snapshots,
-					comments, tagged, authors, pool, 90, 105, 3, 30);
+					comments, tagged, authors, pool, 365, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
