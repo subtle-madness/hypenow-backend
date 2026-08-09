@@ -98,6 +98,8 @@ public class BrandCollectService {
 	 * <p>열거 중단: ①페이지 전체가 깊이 컷 이전(소급 태그 혼입 때문에 "오래된 글 1건 발견 즉시
 	 * 중단" 금지 — 08-06 스펙 §5) ②커서 소진 ③커서 미전진 ④안전 상한(maxPostsPerSweep) 도달 —
 	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다).
+	 * ①②는 <b>자연 종료</b>(컷까지 다 훑었다)라 커버한 깊이 전체를 touch하고, ③④는 훑다 만
+	 * 중단이라 touch하지 않는다({@link TaggedPostRepository#touchCrawledDepth} 주석 참조).
 	 *
 	 * @return 편입 컷 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
 	 */
@@ -107,23 +109,30 @@ public class BrandCollectService {
 		Instant cutoff = enumerationCutoff(brand, now);
 		Map<String, PostInfo> byCode = new LinkedHashMap<>();
 		String cursor = null;
+		boolean coveredCutoff = false;
 		while (true) {
 			HikerClient.TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
+				// 태그 0건(404 → 빈 페이지)·커서 종료는 자연 종료. 반대로 아직 커서가 살아 있는데
+				// 빈 페이지가 오는 건 일시 오류와 구분할 수 없어 커버로 치지 않는다(보수적 판정).
+				coveredCutoff = page.nextPageId() == null || byCode.isEmpty();
 				break;
 			}
 			int before = byCode.size();
 			page.posts().forEach(p -> byCode.putIfAbsent(p.shortCode(), p));
-			if (byCode.size() >= maxPostsPerSweep) {
-				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
-						maxPostsPerSweep, brand.username());
-				break;
-			}
 			// taken_at 미상 아이템은 "컷 이전" 판정에 넣지 않는다(보수적으로 열거 계속).
 			boolean wholePageBeforeCutoff = page.posts().stream()
 					.allMatch(p -> p.takenAt() != null
 							&& Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff));
 			if (wholePageBeforeCutoff || page.nextPageId() == null) {
+				coveredCutoff = true;
+				break;
+			}
+			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
+			// 자연 종료지 폭주가 아니라, 여기서 경고를 찍으면 오보가 된다.
+			if (byCode.size() >= maxPostsPerSweep) {
+				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
+						maxPostsPerSweep, brand.username());
 				break;
 			}
 			if (byCode.size() == before) {
@@ -132,7 +141,13 @@ public class BrandCollectService {
 			}
 			cursor = page.nextPageId();
 		}
-		return processCore(brand, List.copyOf(byCode.values()), now);
+		List<PostInfo> collected = processCore(brand, List.copyOf(byCode.values()), now);
+		if (coveredCutoff) {
+			// 열거에 더 안 실리는 링크(삭제·태그 제거·비공개 전환)까지 포함해 커버한 깊이 전체를
+			// touch — 안 하면 그 링크의 due가 영구 true로 굳어 매 스윕이 같은 깊이를 다시 연다.
+			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
+		}
+		return collected;
 	}
 
 	/**
@@ -158,7 +173,7 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * enrichment 단계 — core가 넘긴 윈도우 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
+	 * enrichment 단계 — core가 넘긴 편입 컷 안 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
 	 * 게이트. 실패해도 core가 적재한 목록·지표는 이미 서빙 가능하고, 미수집분은 다음 스윕이
 	 * 백스톱한다(게시자는 stale 판정, 댓글은 comments_collected_count 워터마크가 남아 있어
 	 * 자동 재시도된다).
@@ -270,7 +285,7 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 게시자 프로필 — 윈도우 게시물 작성자 중 미보유·30일 경과(stale)만 /v2/user/by/id 1콜
+	 * 게시자 프로필 — 편입 컷 안 게시물 작성자 중 미보유·30일 경과(stale)만 /v2/user/by/id 1콜
 	 * (스펙 §2·§8: 신규 감지 시 1회 + 등장 시 stale 갱신, 월 일괄 배치 아님). 브랜드 간 전역
 	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
 	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.

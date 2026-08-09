@@ -328,6 +328,28 @@ class BrandStoreTest {
 	}
 
 	@Test
+	void touchCrawledDepth는_컷_이후_링크_전부를_갱신한다() {
+		// 자연 종료한 열거가 커버한 깊이 전체 갱신 — 열거에 안 실린 링크(삭제·태그 제거·비공개)도
+		// 포함해야 due가 영구 true로 굳지 않는다. 컷 이전 링크는 건드리지 않는다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		taggedPosts.insert(id, post("InCut", 1754000000L));
+		taggedPosts.insert(id, post("OnCut", 1753000000L));      // 경계 — 컷과 동일 시각(포함)
+		taggedPosts.insert(id, post("BeforeCut", 1752000000L));
+		Instant at = Instant.parse("2026-08-09T09:00:00Z");
+
+		taggedPosts.touchCrawledDepth(id, Instant.ofEpochSecond(1753000000L), at);
+
+		List<TaggedPostRepository.TrackedPost> after =
+				taggedPosts.trackedPosts(id, Instant.ofEpochSecond(1700000000L));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("InCut"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isEqualTo(at));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("OnCut"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isEqualTo(at));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("BeforeCut"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isNull());
+	}
+
+	@Test
 	void touchCrawled는_빈_목록에_쿼리를_내지_않는다() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
 		taggedPosts.touchCrawled(id, List.of(), Instant.now());   // 예외 없이 no-op이면 통과

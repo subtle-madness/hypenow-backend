@@ -141,6 +141,7 @@ class BrandCollectServiceTest {
 		final Map<String, Long> collectedCounts = new HashMap<>();
 		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
 		final Map<String, Instant> touched = new HashMap<>();
+		int depthCalls = 0;
 
 		InMemoryTagged() {
 			super(null);
@@ -180,6 +181,17 @@ class BrandCollectServiceTest {
 		public void touchCrawled(long brandId, Collection<String> codes, Instant at) {
 			for (String c : codes) {
 				touched.put(c, at);
+			}
+		}
+
+		@Override
+		public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
+			// 실 DB의 범위 UPDATE 대역 — 추적 링크 중 컷 이후(taken_at ≥ minTakenAt) 전부를 touch.
+			depthCalls++;
+			for (TaggedPostRepository.TrackedPost t : tracked) {
+				if (!t.takenAt().isBefore(minTakenAt)) {
+					touched.put(t.shortCode(), at);
+				}
 			}
 		}
 	}
@@ -312,7 +324,7 @@ class BrandCollectServiceTest {
 		// 소급 태그: 기지 게시물보다 뒤 순번에 실림 — "기지 만나면 중단"이면 놓친다(스펙 §6).
 		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, ""), reel("RetroB", RETRO_IN_WINDOW, 0, 102, "")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		assertThat(tagged.inserted).containsExactly("RetroB");
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("KnownA", "RetroB");
@@ -323,7 +335,7 @@ class BrandCollectServiceTest {
 		tagged.known.add("KnownA");
 		tagPages.add(page(null, reel("KnownA", RECENT, 0, 101, ""), reel("NewB", RECENT, 0, 102, "")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("KnownA", "NewB");
 		assertThat(tagged.inserted).containsExactly("NewB");
@@ -344,7 +356,7 @@ class BrandCollectServiceTest {
 	void 태그_0건_계정도_프로필_갱신은_한다() {
 		tagNotFound = true;
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		assertThat(writer.profileSaves).containsExactly("brandx:1234");   // 매일 프로필 갱신(08-06 개정)
 		assertThat(writer.saved).isEmpty();
@@ -386,14 +398,29 @@ class BrandCollectServiceTest {
 
 	@Test
 	void 백필은_365일_전체를_연다() {
-		// last_swept_on null(등록 직후·백필 실패 백스톱·재가입) — due 판정 없이 등록 윈도우 전체
-		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
-		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 102, "")));
+		// last_swept_on null(등록 직후·백필 실패 백스톱·재가입) — due 판정 없이 등록 윈도우 전체.
+		// 1페이지를 전부 95일령으로 채워 커서를 살려 둔다: 티어 경로(14일 컷)였다면 "페이지 전체가
+		// 컷 이전"으로 1콜에서 끊길 배치다 → 2콜이면 컷이 365일로 열렸다는 판별이 된다.
+		tagPages.add(page("p2", reel("Old95a", OLD_95D, 0, 101, ""), reel("Old95b", OLD_95D, 0, 102, "")));
+		tagPages.add(page(null, reel("Old95c", OLD_95D, 0, 103, "")));
 
 		service(2000).sweep(brand);
 
 		assertThat(tagCalls()).isEqualTo(2);
-		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old95");   // 95일령도 편입
+		// 95일령 전부 편입(구 90일 윈도우 밖) — 2페이지까지 갔다는 증거이기도 하다.
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("Old95a", "Old95b", "Old95c");
+	}
+
+	@Test
+	void 티어_경로는_같은_배치를_1페이지에서_끊는다() {
+		// 위 백필 테스트의 대조군 — 같은 페이지 배치를 완주 이력 있는 브랜드(14일 컷)로 돌린다.
+		tagPages.add(page("p2", reel("Old95a", OLD_95D, 0, 101, ""), reel("Old95b", OLD_95D, 0, 102, "")));
+		tagPages.add(page(null, reel("Old95c", OLD_95D, 0, 103, "")));
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(tagCalls()).isEqualTo(1);
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("Old95a", "Old95b");
 	}
 
 	@Test
@@ -420,6 +447,36 @@ class BrandCollectServiceTest {
 		assertThat(tagged.touched).containsKeys("KnownA", "NewB");
 	}
 
+	@Test
+	void 자연_종료면_열거에서_사라진_추적_게시물도_커버로_갱신한다() {
+		// 삭제·태그 제거·비공개 전환으로 열거에 더 안 실리는 due 링크 — "만난 게시물"만 touch하면
+		// 영영 갱신되지 않아 due가 영구 true로 굳고, 매 스윕이 그 taken_at까지 깊이를 다시 연다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Gone60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));   // 커서 소진 — 자연 종료
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(tagged.depthCalls).isEqualTo(1);
+		assertThat(tagged.touched).containsKeys("A", "Gone60d");
+	}
+
+	@Test
+	void 안전_상한_중단은_깊이를_갱신하지_않는다() {
+		// 훑다 만 스윕은 깊이를 커버하지 못했다 — 여기서 touch하면 자가 치유가 깨진다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Gone5d",
+				Instant.ofEpochSecond(RECENT), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(3).sweep(sweptBrand);
+
+		assertThat(tagged.depthCalls).isZero();
+		assertThat(tagged.touched).containsKeys("A", "B", "C", "D");   // 만난 게시물은 그대로 touch
+		assertThat(tagged.touched).doesNotContainKey("Gone5d");
+	}
+
 	// ── 브랜드 프로필 매일 갱신 ──────────────────────────────────────────────
 
 	@Test
@@ -427,7 +484,7 @@ class BrandCollectServiceTest {
 		brandProfileFails = true;
 		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
 
-		service(105).sweep(brand);   // 예외가 새면 여기서 터진다
+		service(2000).sweep(brand);   // 예외가 새면 여기서 터진다
 
 		assertThat(writer.profileSaves).isEmpty();
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
@@ -442,7 +499,7 @@ class BrandCollectServiceTest {
 				reel("AllMiss", RECENT, 0, 102, ""),
 				reel("HiddenShares", RECENT, 0, 103, ",\"save_count\":7,\"share_count_disabled\":true")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		PostInfo saveOnly = writer.savedByCode("SaveOnly");
 		assertThat(saveOnly.saves()).isEqualTo(10L);
@@ -464,7 +521,7 @@ class BrandCollectServiceTest {
 		snapshots.repostsCarry = Set.of("AllMiss");
 		tagPages.add(page(null, reel("AllMiss", RECENT, 0, 101, "")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		PostInfo p = writer.savedByCode("AllMiss");
 		assertThat(p.reposts()).isZero();   // 양수 이력 없음·전일 0 종료(스텁) → 0 캐리
@@ -480,7 +537,7 @@ class BrandCollectServiceTest {
 		tagPages.add(page(null,
 				reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, ""), reel("C", RECENT, 0, 103, "")));
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		assertThat(authorCalls()).isEqualTo(2);              // 102·103만
 		assertThat(authors.upserted).containsExactly("103"); // 102 실패는 격리 — 103은 계속
@@ -493,7 +550,7 @@ class BrandCollectServiceTest {
 	void sweepCore는_게시자_댓글_콜_없이_적재까지만_한다() {
 		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
 
-		List<PostInfo> posts = service(105).sweepCore(brand);
+		List<PostInfo> posts = service(2000).sweepCore(brand);
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
 		assertThat(tagged.inserted).containsExactly("A");
@@ -505,7 +562,7 @@ class BrandCollectServiceTest {
 	@Test
 	void enrich는_core가_넘긴_게시물의_게시자와_댓글만_수집한다() {
 		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
-		BrandCollectService service = service(105);
+		BrandCollectService service = service(2000);
 		List<PostInfo> posts = service.sweepCore(brand);
 		long tagCallsAfterCore = tagCalls();
 		int savedAfterCore = writer.saved.size();
@@ -532,7 +589,7 @@ class BrandCollectServiceTest {
 				reel("ZeroCnt", RECENT, 0, 103, ""),    // 0 — 콜 X
 				reel("FreshD", RECENT, 2, 104, "")));   // 신규(저장값 0) — 콜 O
 
-		service(105).sweep(brand);
+		service(2000).sweep(brand);
 
 		assertThat(commentCalls()).isEqualTo(2);
 		assertThat(comments.upserted).containsExactlyInAnyOrder("Grown", "FreshD");
