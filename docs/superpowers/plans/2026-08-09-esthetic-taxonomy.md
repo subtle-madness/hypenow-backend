@@ -252,7 +252,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 기존 표 형식(`| 날짜 | 결정 | 링크 |`)을 따라 첫 행으로 삽입:
 
 ```markdown
-| 2026-08-09 | **beauty_taxonomy 에스테틱 대분류 추가** — 게시물 단위 사각지대(디바이스·시술 후기가 is_beauty=true인데 어휘 밖이라 main_category=null) 해소. `esthetic`/'에스테틱'(main_order 7), 중분류 3(뷰티 디바이스 5·뷰티 툴 3·피부 시술·관리 6 — 경락 마사지 포함), 소분류 14 — 피부 축 한정(왁싱·반영구·네일·헤어·전문 화장품 제외, 사용자 확정). 어휘 단일 원천이라 additive 시드(V20260809063533) 하나로 프롬프트·sanitize·역유도·카테고리 믹스 뷰 자동 반영, 코드 무접촉. '필링 시술'은 클렌징 '필링'과 라벨 충돌 회피 명명. 기존 분석분 소급은 ops SQL(`analytics/ops/requalify_esthetic_candidates.sql`) 동봉만 — 정상 행 삭제라 후보 뷰 교집합으로 한정(유실 방지), 실행은 운영 건수 확인 후 별도 결정. celfit-front 필터 어휘 동기화는 별도 저장소 후속(백엔드 선행 안전) | [specs/2026-08-09-esthetic-taxonomy-design.md](docs/superpowers/specs/2026-08-09-esthetic-taxonomy-design.md) |
+| 2026-08-09 | **beauty_taxonomy 에스테틱 대분류 추가** — 게시물 단위 사각지대(디바이스·시술 후기가 is_beauty=true인데 어휘 밖이라 main_category=null) 해소. `esthetic`/'에스테틱'(main_order 7), 중분류 3(뷰티 디바이스 5·뷰티 툴 3·피부 시술·관리 6 — 경락 마사지 포함), 소분류 14 — 피부 축 한정(왁싱·반영구·네일·헤어·전문 화장품 제외, 사용자 확정). 어휘 단일 원천이라 additive 시드(V20260809063533) 하나로 프롬프트·sanitize·역유도·카테고리 믹스 뷰 자동 반영. 단 스펙의 "was 무변경"은 응답 경로만 본 오판으로 구현 중 정정 — was 요청 검증 allowlist 2곳(V1ContentQuery·V1InfluencerDiscoveryQuery `MAIN_CATEGORIES`)에 esthetic 추가(누락 시 `?mainCategory=esthetic` 400). '필링 시술'은 클렌징 '필링'과 라벨 충돌 회피 명명. 기존 분석분 소급은 ops SQL(`analytics/ops/requalify_esthetic_candidates.sql`) 동봉만 — 정상 행 삭제라 후보 뷰 교집합으로 한정(유실 방지), 실행은 운영 건수 확인 후 별도 결정. celfit-front 필터 어휘 동기화는 별도 저장소 후속(백엔드 선행 안전) | [specs/2026-08-09-esthetic-taxonomy-design.md](docs/superpowers/specs/2026-08-09-esthetic-taxonomy-design.md) |
 ```
 
 (DECISIONS.md 실제 표 헤더·컬럼 구성이 다르면 그 형식을 따른다 — 내용은 위 그대로.)
@@ -270,6 +270,116 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```bash
 git add DECISIONS.md docs/superpowers/specs/2026-08-09-esthetic-taxonomy-design.md
 git commit -m "docs: 에스테틱 대분류 결정 기록·스펙 ✅ 전환
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 4: was 대분류 allowlist 확장 (Task 1 리뷰에서 발견된 갭)
+
+> 실행 순서: Task 2 다음, Task 3(문서) 전에 실행한다. 스펙 §4-2의 "was는 verbatim 전달이라
+> 무변경"은 응답 경로만 본 오판 — 요청 검증 allowlist가 `esthetic`을 400으로 거절한다.
+
+**Files:**
+- Modify: `was/src/main/java/com/celfit/was/v1/content/V1ContentQuery.java:25-26` (`MAIN_CATEGORIES`)
+- Modify: `was/src/main/java/com/celfit/was/v1/influencer/V1InfluencerDiscoveryQuery.java:20-21` (`MAIN_CATEGORIES`)
+- Modify: `was/src/test/java/com/celfit/was/v1/content/V1ContentQueryTest.java`
+- Modify: `was/src/test/java/com/celfit/was/v1/influencer/V1InfluencerDiscoveryQueryTest.java`
+- Modify: `analytics/export/front_seed.py:31-33` (`CAT_LABEL` dict)
+- Modify: `docs/superpowers/specs/2026-08-09-esthetic-taxonomy-design.md` (§4-2 정정)
+
+**Interfaces:**
+- Consumes: Task 1이 시드한 대분류 slug `esthetic` (`beauty_taxonomy.main_value`)
+- Produces: was V1 목록·발굴 API가 `?mainCategory=esthetic`을 유효값으로 수용
+
+- [ ] **Step 1: 검증 통과 테스트 추가 (failing test)**
+
+`V1ContentQueryTest.java`에 추가 (기존 스타일 — 탭 들여쓰기, 한국어 메서드명):
+
+```java
+	@Test
+	void 에스테틱_대분류는_검증을_통과한다() {
+		// V20260809063533 시드로 추가된 어휘 — allowlist 누락 시 400 회귀 방지
+		V1ContentQuery query = V1ContentQuery.of(LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 28),
+				null, "esthetic", null, null, null, null, null, null, null, null, null);
+		assertThat(query.mainCategory()).isEqualTo("esthetic");
+	}
+```
+
+`V1InfluencerDiscoveryQueryTest.java`에 추가 (`of` 시그니처는 기존 테스트의 호출 관용구를 따르되 mainCategory 인자에 "esthetic"):
+
+```java
+	@Test
+	void 에스테틱_대분류는_검증을_통과한다() {
+		// V20260809063533 시드로 추가된 어휘 — allowlist 누락 시 400 회귀 방지
+		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, "esthetic", null,
+				null, null, null, null, null, null, null, null);
+		assertThat(query.mainCategory()).isEqualTo("esthetic");
+	}
+```
+
+- [ ] **Step 2: 테스트 실패 확인**
+
+```bash
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+./gradlew :was:test --tests "com.celfit.was.v1.content.V1ContentQueryTest" --tests "com.celfit.was.v1.influencer.V1InfluencerDiscoveryQueryTest"
+```
+
+Expected: FAIL — 두 신규 테스트가 `V1ApiException`(mainCategory 검증)으로 실패.
+
+- [ ] **Step 3: allowlist 2곳에 esthetic 추가**
+
+`V1ContentQuery.java`:
+
+```java
+	private static final Set<String> MAIN_CATEGORIES =
+			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic");
+```
+
+`V1InfluencerDiscoveryQuery.java`:
+
+```java
+	private static final Set<String> MAIN_CATEGORIES =
+			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic");
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+./gradlew :was:test --tests "com.celfit.was.v1.content.V1ContentQueryTest" --tests "com.celfit.was.v1.influencer.V1InfluencerDiscoveryQueryTest"
+```
+
+Expected: PASS (기존 + 신규 전부).
+
+- [ ] **Step 5: front_seed.py 라벨 dict 갱신**
+
+`analytics/export/front_seed.py`의 `CAT_LABEL`에 `"esthetic": "에스테틱",` 추가 (기존 dict 형식 유지):
+
+```python
+CAT_LABEL = {"makeup": "메이크업", "skincare": "스킨케어", "suncare": "선케어",
+             "cleansing": "클렌징", "haircare": "헤어케어", "hair": "헤어케어",
+             "fragrance": "향수/디퓨저", "esthetic": "에스테틱", "etc": "기타"}
+```
+
+- [ ] **Step 6: 스펙 §4-2 정정**
+
+`docs/superpowers/specs/2026-08-09-esthetic-taxonomy-design.md` §4-2의 문장
+`- was는 verbatim 전달이라 무변경. 프롬프트 문구도 무변경(\`isBeauty\`에 시술 이미 포함).` 을 다음으로 교체:
+
+```markdown
+- was 응답 경로는 verbatim 전달이라 무변경. 프롬프트 문구도 무변경(`isBeauty`에 시술 이미 포함).
+  **정정(구현 중 발견)**: was 요청 검증 allowlist 2곳(`V1ContentQuery`·`V1InfluencerDiscoveryQuery`의
+  `MAIN_CATEGORIES` 하드코딩)은 esthetic 추가 필요 — 누락 시 `?mainCategory=esthetic`이 400이라
+  프론트 필터가 동작하지 않는다.
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add was/src/main/java/com/celfit/was/v1/content/V1ContentQuery.java was/src/main/java/com/celfit/was/v1/influencer/V1InfluencerDiscoveryQuery.java was/src/test/java/com/celfit/was/v1/content/V1ContentQueryTest.java was/src/test/java/com/celfit/was/v1/influencer/V1InfluencerDiscoveryQueryTest.java analytics/export/front_seed.py docs/superpowers/specs/2026-08-09-esthetic-taxonomy-design.md
+git commit -m "feat(was): 대분류 allowlist에 esthetic 추가 — 요청 검증 400 갭 해소(스펙 §4-2 정정)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
