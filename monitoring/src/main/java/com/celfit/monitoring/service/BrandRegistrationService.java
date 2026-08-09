@@ -21,9 +21,12 @@ import org.springframework.stereotype.Service;
  * 밖 전용 executor에서 2단계로 돈다(단계식 ready — 2026-08-07 결정):
  *
  * <ul>
- *   <li><b>core</b>(backfill executor): 열거+적재 ~6콜 → 즉시 touchSwept — 등록 후 ~30초에
- *       was가 ready로 전환돼 게시물 목록이 뜬다(운영 실측: 구 단일 체인은 8분+ — 그중 ~85%가
- *       목록 렌더에 필수 아닌 보강 콜, 나머지가 앞 계정 대기).</li>
+ *   <li><b>core</b>(backfill executor): 열거+적재 → 즉시 touchSwept — 등록 후 ~1~2분에 was가
+ *       ready로 전환돼 게시물 목록이 뜬다(크롤링 정책 v1로 백필이 90일 → 365일이 되며 열거가
+ *       ~6콜 → <b>~41콜</b>로 늘어난 값 — cclime 태그 847건 실측 기준. 정책 v1 이전 서술 "~30초"는
+ *       폐기). backfill executor는 단일 스레드라 연속 등록은 계정당 그 속도로 줄을 선다. 그래도
+ *       분리 효과는 그대로다(운영 실측: 구 단일 체인은 8분+ — 그중 ~85%가 목록 렌더에 필수
+ *       아닌 보강 콜, 나머지가 앞 계정 대기).</li>
  *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 연속 등록
  *       때 뒤 계정 core가 앞 계정 보강을 기다리지 않는다. 실패는 로그만(ready 유지) — 다음
  *       스윕이 게시자 stale·댓글 워터마크로 백스톱한다.</li>
