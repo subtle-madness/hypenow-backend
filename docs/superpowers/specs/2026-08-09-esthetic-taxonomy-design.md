@@ -53,7 +53,10 @@ analytics `db/migration/analysis`에 UTC 타임스탬프 채번으로 1개 신�
 
 - LLM 프롬프트 분류표(`promptTable()`) · sanitize 어휘 · `deriveMain` 역유도
 - `account_category_stats` 뷰(V35) — `main_label` 조인이라 카테고리 믹스에 '에스테틱' 자동 등장
-- was는 verbatim 전달이라 무변경. 프롬프트 문구도 무변경(`isBeauty`에 시술 이미 포함).
+- was 응답 경로는 verbatim 전달이라 무변경. 프롬프트 문구도 무변경(`isBeauty`에 시술 이미 포함).
+  **정정(구현 중 발견)**: was 요청 검증 allowlist 2곳(`V1ContentQuery`·`V1InfluencerDiscoveryQuery`의
+  `MAIN_CATEGORIES` 하드코딩)은 esthetic 추가 필요 — 누락 시 `?mainCategory=esthetic`이 400이라
+  프론트 필터가 동작하지 않는다.
 
 시술 콘텐츠 유입 경로 확인: BEAUTY_SERVICE 계정(피부과·에스테틱샵)은 뷰티 판정 v2(07-20)대로
 계속 수집 제외 — 이 카테고리는 **인플루언서가 올리는 디바이스 리뷰·시술 후기**가 받는다.

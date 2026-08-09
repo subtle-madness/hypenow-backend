@@ -120,6 +120,14 @@ class V1InfluencerDiscoveryQueryTest {
 	}
 
 	@Test
+	void 에스테틱_대분류는_검증을_통과한다() {
+		// V20260809063533 시드로 추가된 어휘 — allowlist 누락 시 400 회귀 방지
+		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, "esthetic", null,
+				null, null, null, null, null, null, null, null);
+		assertThat(query.mainCategory()).isEqualTo("esthetic");
+	}
+
+	@Test
 	void sort_hype는_허용된다() {
 		assertThat(of(null, null, null, null, null, null, null, null, "hype", null, null)
 				.sort()).isEqualTo("hype");

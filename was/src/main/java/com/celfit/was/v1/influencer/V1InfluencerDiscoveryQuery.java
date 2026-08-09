@@ -18,7 +18,7 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 	private static final Set<String> FOLLOWERS = Set.of("500-3k", "3k-10k", "10k-30k", "30k-50k");
 	private static final Set<String> SPONSORED = Set.of("none", "1-2", "3-5", "6plus");
 	private static final Set<String> MAIN_CATEGORIES =
-			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance");
+			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic");
 
 	public static V1InfluencerDiscoveryQuery of(String q, String mainCategory, String midCategory,
 			String subCategory, String follower, String activity, String sponsored, String contact,
