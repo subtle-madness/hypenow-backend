@@ -294,6 +294,67 @@ class BrandStoreTest {
 				Long.class)).isEqualTo(9L);
 	}
 
+	// ── 티어 판정 입력(정책 v1 — 2026-08-09 스펙 §6) ─────────────────────────
+
+	@Test
+	void 링크_last_crawled_at은_null로_시작하고_touchCrawled가_갱신한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		taggedPosts.insert(id, post("A", 1754000000L));
+		taggedPosts.insert(id, post("B", 1754000000L));
+		Instant floor = Instant.ofEpochSecond(1754000000L).minusSeconds(60);
+
+		assertThat(taggedPosts.trackedPosts(id, floor)).hasSize(2)
+				.allMatch(t -> t.lastCrawledAt() == null);
+
+		Instant at = Instant.parse("2026-08-09T03:00:00Z");
+		taggedPosts.touchCrawled(id, List.of("A"), at);
+
+		List<TaggedPostRepository.TrackedPost> after = taggedPosts.trackedPosts(id, floor);
+		assertThat(after).filteredOn(t -> t.shortCode().equals("A"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isEqualTo(at));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("B"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isNull());
+	}
+
+	@Test
+	void trackedPosts는_minTakenAt_이전_링크를_거른다() {
+		// 추적 플로어(180일) 밖 링크는 티어 판정 입력에서 빠진다 — 영구 제외의 조회 측 절반
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		taggedPosts.insert(id, post("Recent", 1754000000L));
+		taggedPosts.insert(id, post("Ancient", 1700000000L));
+
+		assertThat(taggedPosts.trackedPosts(id, Instant.ofEpochSecond(1750000000L)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Recent");
+	}
+
+	@Test
+	void touchCrawledDepth는_컷_이후_링크_전부를_갱신한다() {
+		// 자연 종료한 열거가 커버한 깊이 전체 갱신 — 열거에 안 실린 링크(삭제·태그 제거·비공개)도
+		// 포함해야 due가 영구 true로 굳지 않는다. 컷 이전 링크는 건드리지 않는다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		taggedPosts.insert(id, post("InCut", 1754000000L));
+		taggedPosts.insert(id, post("OnCut", 1753000000L));      // 경계 — 컷과 동일 시각(포함)
+		taggedPosts.insert(id, post("BeforeCut", 1752000000L));
+		Instant at = Instant.parse("2026-08-09T09:00:00Z");
+
+		taggedPosts.touchCrawledDepth(id, Instant.ofEpochSecond(1753000000L), at);
+
+		List<TaggedPostRepository.TrackedPost> after =
+				taggedPosts.trackedPosts(id, Instant.ofEpochSecond(1700000000L));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("InCut"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isEqualTo(at));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("OnCut"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isEqualTo(at));
+		assertThat(after).filteredOn(t -> t.shortCode().equals("BeforeCut"))
+				.singleElement().satisfies(t -> assertThat(t.lastCrawledAt()).isNull());
+	}
+
+	@Test
+	void touchCrawled는_빈_목록에_쿼리를_내지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		taggedPosts.touchCrawled(id, List.of(), Instant.now());   // 예외 없이 no-op이면 통과
+	}
+
 	private Long snapshotViews(String code, LocalDate on) {
 		return db.queryForObject(
 				"SELECT views FROM brand_post_snapshot WHERE short_code=? AND captured_on=?",
