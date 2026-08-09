@@ -36,6 +36,14 @@ class V1ContentQueryTest {
 	}
 
 	@Test
+	void 에스테틱_대분류는_검증을_통과한다() {
+		// V20260809063533 시드로 추가된 어휘 — allowlist 누락 시 400 회귀 방지
+		V1ContentQuery query = V1ContentQuery.of(LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 28),
+				null, "esthetic", null, null, null, null, null, null, null, null, null);
+		assertThat(query.mainCategory()).isEqualTo("esthetic");
+	}
+
+	@Test
 	void next는_offset만_limit만큼_전진() {
 		V1ContentQuery next = q(50, 0).next();
 		assertThat(next.offset()).isEqualTo(50);

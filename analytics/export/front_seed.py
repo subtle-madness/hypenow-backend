@@ -29,7 +29,7 @@ TODAY = date.today()
 WEEK = [date(2026, 6, 27) + timedelta(days=i) for i in range(7)]
 CAT_LABEL = {"makeup": "메이크업", "skincare": "스킨케어", "suncare": "선케어",
              "cleansing": "클렌징", "haircare": "헤어케어", "hair": "헤어케어",
-             "fragrance": "향수/디퓨저", "etc": "기타"}
+             "fragrance": "향수/디퓨저", "esthetic": "에스테틱", "etc": "기타"}
 COMMENT_CATS = ["purchase", "friendTag", "positive", "question", "adAware", "etc"]
 
 if not os.path.isdir(OUT):
