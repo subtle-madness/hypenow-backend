@@ -23,7 +23,7 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 	private static final Set<String> SORTS = Set.of("hype", "latest", "views");
 	private static final Set<String> FOLLOWERS = Set.of("3k-10k", "10k-30k", "30k-50k");
 	private static final Set<String> MAIN_CATEGORIES =
-			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance");
+			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic");
 
 	public static V1ContentQuery of(LocalDate startDate, LocalDate endDate, String contentType,
 			String mainCategory, String midCategory, String subCategory, String follower,
