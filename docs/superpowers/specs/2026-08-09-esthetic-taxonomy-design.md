@@ -40,13 +40,13 @@
 
 ## 4. 변경 내용
 
-### 4-1. 마이그레이션 (유일한 필수 변경)
+### 4-1. 마이그레이션 (필수 변경 ① — ②는 §4-2 정정의 was allowlist)
 
 analytics `db/migration/analysis`에 UTC 타임스탬프 채번으로 1개 신규:
 `V<YYYYMMDDHHMMSS>__esthetic_taxonomy.sql` — §3 라인업 14행을 `beauty_taxonomy`에 INSERT.
 순수 additive라 expand-contract 가드 통과, 롤링 배포 안전.
 
-### 4-2. 자동 반영 (코드 무접촉)
+### 4-2. 자동 반영 (코드 무접촉 — 정정: was allowlist 예외)
 
 어휘 단일 원천(ARCHITECTURE §4-4 — 프롬프트 분류표와 sanitize가 같은 `BeautyTaxonomy`
 인스턴스) 덕에, 마이그레이션 + analytics 재시작만으로 전부 따라온다:

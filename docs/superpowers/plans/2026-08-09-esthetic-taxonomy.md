@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 계획 확정(2026-08-09) — 스펙 [2026-08-09-esthetic-taxonomy-design.md](../specs/2026-08-09-esthetic-taxonomy-design.md)
+> 상태: ✅ 실행됨(2026-08-09) — 4태스크 완료(Task 4는 구현 중 신설). 스펙은 specs/ 참조
 
 **Goal:** `beauty_taxonomy`에 대분류 `esthetic`(에스테틱, 소분류 14개)을 시드해 디바이스·툴·피부 시술 게시물이 `main_category`로 분류되게 한다.
 
-**Architecture:** 어휘는 analysis DB `beauty_taxonomy` 테이블이 단일 원천 — additive INSERT 마이그레이션 1개면 LLM 프롬프트 분류표·sanitize·역유도·카테고리 믹스 뷰가 전부 자동 반영된다(코드 무접촉). 기존 분석분 소급은 ops SQL 동봉만 하고 실행은 보류(스펙 §5).
+**Architecture:** 어휘는 analysis DB `beauty_taxonomy` 테이블이 단일 원천 — additive INSERT 마이그레이션 1개로 LLM 프롬프트 분류표·sanitize·역유도·카테고리 믹스 뷰가 자동 반영된다(단 was 요청 검증 allowlist 2곳은 수동 갱신 — Task 4). 기존 분석분 소급은 ops SQL 동봉만 하고 실행은 보류(스펙 §5).
 
 **Tech Stack:** Flyway(analytics `db/migration/analysis`), JUnit + Testcontainers(PostgreSQL), psql ops 스크립트
 

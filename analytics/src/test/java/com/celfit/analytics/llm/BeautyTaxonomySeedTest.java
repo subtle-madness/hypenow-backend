@@ -92,7 +92,9 @@ class BeautyTaxonomySeedTest {
 
 		Set<String> labels = taxonomy.allMidAndSubLabels();
 		for (String label : List.of("뷰티 디바이스", "뷰티 툴", "피부 시술·관리",
-				"LED 마스크", "미세전류 기기", "괄사", "에스테틱 관리", "경락 마사지", "필링 시술")) {
+				"LED 마스크", "미세전류 기기", "고주파 기기", "클렌징 기기", "제모 기기",
+				"괄사", "페이스 롤러", "마사지 도구",
+				"에스테틱 관리", "경락 마사지", "피부과 레이저", "스킨부스터", "리프팅 시술", "필링 시술")) {
 			assertTrue(labels.contains(label), label);
 		}
 

@@ -23,7 +23,9 @@
 --   대신 아래 dry-run에 갭 규모를 참고 카운트로 출력한다.
 --
 -- 비용: 삭제 건수만큼 LLM 콜 재발생. 실행 전 아래 dry-run 카운트로 건수 확인 후 결정할 것.
--- 재분석 전까지 해당 콘텐츠는 서빙·통계에서 일시 빠진다(데일리 잡 1회 내 복구).
+-- 재분석 전까지 해당 콘텐츠는 서빙·통계에서 일시 빠진다(데일리 잡이 순차 복구(쿼터 초과 시 수일)).
+-- ⚠️ 재분석 행은 baseline 스냅샷·analyzed_at이 재분석 시점 값으로 바뀐다(원값 복원 불가).
+-- 복구 시점: timely 삭제분은 데일리 잡, non-timely 삭제분은 LATE_BACKFILL_ANALYZE(21:00 UTC 별도 진입점)가 받는다 — 건수가 일일 쿼터를 넘으면 며칠에 걸친다.
 --
 -- 실행 위치: 운영 postgres 컨테이너 psql (crawler·analysis 두 DB를 \c로 오간다).
 --   예: docker exec -it crawler-postgres-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -f /tmp/requalify.sql
