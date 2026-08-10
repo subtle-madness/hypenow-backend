@@ -65,7 +65,8 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.data[0].item.id").value("1"))
 				.andExpect(jsonPath("$.meta.total").value(1))
-				.andExpect(jsonPath("$.meta.limit").value(250))
+				// 250건 상한 철폐(08-10) — limit은 형태 호환용으로 남고 반환 건수와 같다.
+				.andExpect(jsonPath("$.meta.limit").value(1))
 				.andExpect(jsonPath("$.meta.lastCollectedAt").value("2026-08-08T03:00:00+09:00"))
 				// 기간 필터는 statusCounts에 적용되지 않는다(스펙 §7-1) — 2건 그대로.
 				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(2));

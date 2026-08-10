@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>조립·중복 제거·정렬은 전부 {@link PerformanceContentAssembler}가 끝낸다 — 이 컨트롤러는 HTTP
  * 표면(쿼리 값 공간 검증·필터·meta)만 담당한다. 필터는 전부 메모리다(대상이 유저 1명의 레거시 아이템
- * + 브랜드 90일 윈도우라 페이지네이션 없이 전량을 조립한 뒤 자른다).
+ * + 브랜드 90일 윈도우라 페이지네이션 없이 전량을 조립해 전량 반환한다 — 08-10 250건 상한 철폐).
  *
  * <p>브랜드 표면(§5·§6)과 달리 {@code monitoring.enabled} 조건부가 <b>아니다</b> — 대시보드는 브랜드
  * 연동 없는 유저(레거시 개인 추적만)도 쓰는 화면이고, 어셈블러가 monitoring 비활성 환경에서 브랜드
@@ -35,9 +35,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/v1/performance-dashboard")
 public class V1PerformanceDashboardController {
-
-	/** 목록 상한(FE 명세 meta.limit) — 레거시 아이템 + 브랜드 윈도우 105건 규모라 실사용에선 도달하지 않는다. */
-	private static final int CONTENT_LIMIT = 250;
 
 	private static final String FILTER_ALL = "all";
 	/** campaignId 전용 값 — "캠페인에 묶이지 않은 콘텐츠만"(값이 아니라 부재를 고르는 필터라 별도 어휘). */
@@ -110,7 +107,6 @@ public class V1PerformanceDashboardController {
 		List<PerformanceContentResponse> data = counted.stream()
 				.filter(c -> statusFilter == null || statusFilter.equals(c.item().status()))
 				.filter(c -> withinUploadWindow(c, from, to))
-				.limit(CONTENT_LIMIT)
 				.toList();
 
 		return ApiResponse.ok(data, meta(data.size(), counted, assembled.lastCollectedAt()));
@@ -150,7 +146,9 @@ public class V1PerformanceDashboardController {
 
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", total);
-		meta.put("limit", CONTENT_LIMIT);
+		// 목록 상한 철폐(08-10) — 전량 반환이라 잘림이 없다. limit 키는 응답 형태 호환용으로 남기되
+		// 반환 건수와 같게 둔다(FE가 total > limit로 잘림을 판정해도 오탐이 없다).
+		meta.put("limit", total);
 		meta.put("lastCollectedAt", KstTimestamps.toKstIso(lastCollectedAt));
 		meta.put("statusCounts", statusCounts);
 		return meta;
