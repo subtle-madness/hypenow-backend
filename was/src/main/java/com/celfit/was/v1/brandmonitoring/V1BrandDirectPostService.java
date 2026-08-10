@@ -265,11 +265,11 @@ public class V1BrandDirectPostService {
 		return new Plan(url, shortCode, index, null);
 	}
 
-	/** 이미 내 브랜드 화면에 있는 게시물 집합 — 목록 API와 같은 모수(90일 윈도우 tagged + direct 매핑). */
+	/** 이미 내 브랜드 화면에 있는 게시물 집합 — 목록 API와 같은 모수(365일 윈도우 tagged + direct 매핑). */
 	private Set<String> brandShortCodes(long userId, long brandId) {
 		Set<String> codes = new LinkedHashSet<>(directPostRepository.shortCodesByUser(userId));
 		brandReadRepository
-				.findTaggedPostsInWindow(brandId, BrandPostAssembler.windowCutoff(), BrandPostAssembler.TAGGED_LIMIT)
+				.findTaggedPostsInWindow(brandId, BrandPostAssembler.windowCutoff())
 				.stream()
 				.map(BrandTaggedPostRow::shortCode)
 				.forEach(codes::add);

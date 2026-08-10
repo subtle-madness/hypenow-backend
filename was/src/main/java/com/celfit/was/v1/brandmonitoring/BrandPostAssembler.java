@@ -59,11 +59,10 @@ public class BrandPostAssembler {
 	private static final Logger log = LoggerFactory.getLogger(BrandPostAssembler.class);
 
 	/**
-	 * 표시 윈도우 90일 · 상한 105건(스펙 §6-1 — 90일치 + 여유분). 직접 등록(§6-4)의 "이미 브랜드
-	 * 목록에 있는 게시물" 판정도 같은 모수를 봐야 해서 패키지 공개다({@link V1BrandDirectPostService}).
+	 * 표시 윈도우 365일(크롤링 정책 v1 08-09 — 수집 편입 컷과 같은 깊이, 상한 없음). 직접 등록(§6-4)의
+	 * "이미 브랜드 목록에 있는 게시물" 판정도 같은 모수를 봐야 해서 패키지 공개다({@link V1BrandDirectPostService}).
 	 */
-	static final int WINDOW_DAYS = 90;
-	static final int TAGGED_LIMIT = 105;
+	static final int WINDOW_DAYS = 365;
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
 	private static final int COMMENT_LIMIT = 45;
 
@@ -97,7 +96,7 @@ public class BrandPostAssembler {
 
 	// ---------- tagged ----------
 
-	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 90일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
+	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
 	static OffsetDateTime windowCutoff() {
 		return LocalDate.now(KstTimestamps.KST).minusDays(WINDOW_DAYS)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
@@ -111,7 +110,7 @@ public class BrandPostAssembler {
 	 */
 	public List<BrandPostResponse> assembleTagged(BrandAccountRow account) {
 		List<BrandTaggedPostRow> posts =
-				brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff(), TAGGED_LIMIT);
+				brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff());
 		if (posts.isEmpty()) {
 			return List.of();
 		}
