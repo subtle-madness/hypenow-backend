@@ -1,6 +1,10 @@
 package com.celfit.was.v1.perfdashboard;
 
+import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
+import com.celfit.was.v1.common.KstTimestamps;
+import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
@@ -26,5 +30,83 @@ public class PerformanceComparisonAssembler {
 				new BucketRange("1m_3m", today.minusMonths(3), today.minusMonths(1).minusDays(1)),
 				new BucketRange("3m_6m", today.minusMonths(6), today.minusMonths(3).minusDays(1)),
 				new BucketRange("6m_12m", today.minusMonths(12), today.minusMonths(6).minusDays(1)));
+	}
+
+	/**
+	 * 계정 1개 집계 — accountContents는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
+	 * covered는 계정 단위다: 한 번이라도 스윕 완주(lastSweptAt 존재 = collectionStatus ready)면
+	 * 전 구간 true — 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과 무관하다(스펙 §covered).
+	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
+	 */
+	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account,
+			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges) {
+		boolean covered = account.lastSweptAt() != null;
+		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
+		for (BucketRange range : ranges) {
+			buckets.add(aggregate(range, covered, accountContents));
+		}
+		return new PerformanceComparisonResponse.AccountComparison(String.valueOf(account.id()),
+				account.username(), KstTimestamps.toKstIso(account.registeredAt()), List.copyOf(buckets));
+	}
+
+	/**
+	 * 구간 1개 합산 — 지표는 콘텐츠별 <b>최신 스냅샷</b>(날짜 오름차순 계약이라 마지막 원소 — 목록의
+	 * commentsTotal과 같은 관용구). 합은 non-null만 더하고 non-null이 하나도 없으면(0건 포함) null:
+	 * 합 0(전부 관측됐는데 0)과 null(전부 미제공)을 FE가 다르게 그린다(규칙 ③ — 피드는 views 항상 null).
+	 */
+	private static PerformanceComparisonResponse.Bucket aggregate(BucketRange range, boolean covered,
+			List<PerformanceContentResponse> contents) {
+		int contentCount = 0;
+		Long views = null;
+		Long likes = null;
+		Long comments = null;
+		Long followersSum = null;
+		int viewsMissing = 0;
+		int likesHidden = 0;
+		int followersMissing = 0;
+		for (PerformanceContentResponse content : contents) {
+			LocalDate uploadedOn = PerformanceContentAssembler.uploadedOn(content);
+			// 업로드일 미상(post 없는 collecting 등)·구간 밖은 어느 구간에도 안 든다(스펙 §구간).
+			if (uploadedOn == null || uploadedOn.isBefore(range.from()) || uploadedOn.isAfter(range.to())) {
+				continue;
+			}
+			contentCount++;
+
+			TrackingItemResponse.SnapshotResponse latest = latestSnapshot(content);
+			views = accumulate(views, latest == null ? null : latest.views());
+			likes = accumulate(likes, latest == null ? null : latest.likes());
+			comments = accumulate(comments, latest == null ? null : latest.comments());
+			followersSum = accumulate(followersSum, content.item().followers());
+
+			if (latest == null || latest.views() == null) {
+				viewsMissing++;
+			}
+			// 숨김은 관측이 있어야 셀 수 있다 — 스냅샷 자체가 없으면 결측이지 숨김이 아니다.
+			if (latest != null && latest.likesHidden()) {
+				likesHidden++;
+			}
+			if (content.item().followers() == null) {
+				followersMissing++;
+			}
+		}
+		return new PerformanceComparisonResponse.Bucket(range.key(), covered, contentCount,
+				views, likes, comments, followersSum, viewsMissing, likesHidden, followersMissing);
+	}
+
+	/** null 유지 합산 — 첫 non-null 값에서 합이 시작되고, value가 null이면 sum을 건드리지 않는다. */
+	private static Long accumulate(Long sum, Long value) {
+		if (value == null) {
+			return sum;
+		}
+		return sum == null ? value : sum + value;
+	}
+
+	/** 스냅샷은 날짜 오름차순 계약 — 마지막이 최신. post가 없거나 스냅샷 0개면 null(관측 전무). */
+	private static TrackingItemResponse.SnapshotResponse latestSnapshot(PerformanceContentResponse content) {
+		var post = content.item().post();
+		if (post == null || post.snapshots() == null || post.snapshots().isEmpty()) {
+			return null;
+		}
+		return post.snapshots().get(post.snapshots().size() - 1);
 	}
 }
