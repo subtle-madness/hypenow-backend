@@ -59,6 +59,15 @@
   긴급 롤백·CD 불능 시에만, 반드시 사용자 확인 후 `--force`로. (07-20: develop 체크아웃 상태의
   수동 배포가 CD의 main 배포를 덮어 was/analytics 버전 불일치 → 랭킹 API 전면 500.
   `:latest`는 마지막 push가 이긴다.)
+- **핫픽스만 예외로 main 직행**(`hotfix/*`, 08-10~ — [설계](docs/superpowers/specs/2026-08-10-hotfix-direct-to-main-design.md)):
+  운영 장애 한정. main에서 분기해 **base=main으로 PR**을 열면 CI 3종이 그대로 돌고(main엔 머지 큐가
+  없어 대기 없음) 머지 즉시 운영 배포된다. 룰셋·CI 설정은 이미 이걸 허용하므로 손댈 게 없다.
+  **staging을 건너뛰므로 운영에서 처음 도는 코드다** — 범위를 최소로 하고 **스키마 마이그레이션은
+  동반하지 않는다**(expand-contract가 전제하는 릴리스 간격이 사라진다 — 필요하면 정규 경로로).
+  머지 후 `backmerge.yml`이 main→develop·main→staging 역머지 PR을 자동으로 열고 auto-merge를 건다
+  (시크릿 `BACKMERGE_TOKEN` 필요). **승격·역머지 PR은 반드시 merge commit으로** — squash·rebase는
+  원 커밋 SHA를 새로 만들어 역머지 판정(`git log --no-merges <target>..main`)을 깨고, 그러면 평범한
+  승격마다 역머지 PR이 열려 규약이 죽는다.
 - crawler는 DDD/헥사고날(`<context>/{domain, application/{service,port}, adapter/{in,out}}`), was·analytics는 평탄 패키지.
 - DTO는 record(+정적 `from()`). was 조회는 JdbcClient. Jackson 3(`tools.jackson.*`).
 - 분석 뷰는 `analytics/views/NN_*.sql` 번호순 적용, 테스트는 같은 번호 `analytics/test/NN_*.test.sql`.
