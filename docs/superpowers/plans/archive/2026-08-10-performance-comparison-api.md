@@ -1,6 +1,6 @@
 # 성과 비교 집계 API 구현 계획
 
-> 상태: 🟢 활성
+> 상태: ✅ 실행됨 (2026-08-10 — 태스크 5개 전부 완료, 최종 리뷰 통과)
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
