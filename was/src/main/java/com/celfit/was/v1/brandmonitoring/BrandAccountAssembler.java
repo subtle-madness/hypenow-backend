@@ -12,10 +12,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>상태 유도 규칙(정본은 monitoring 컬럼 2개뿐 — 별도 상태 컬럼이 없다):
  * <ul>
- *   <li>{@code last_swept_on} 있음 → {@code ready}</li>
- *   <li>{@code last_swept_on} null + {@code backfill_error} 있음 → {@code error} + collectionError</li>
+ *   <li>{@code last_swept_at} 있음(한 번이라도 스윕 완주 = 서빙할 데이터 있음) → {@code ready}</li>
+ *   <li>{@code last_swept_at} null + {@code backfill_error} 있음 → {@code error} + collectionError</li>
  *   <li>둘 다 null → {@code collecting}</li>
  * </ul>
+ * ready 기준이 {@code last_swept_on}(이번 정책·가입 기준 완주)이 아니라 {@code last_swept_at}
+ * (완주 사실값)인 이유(08-10): 정책 리셋·스윕 실패·재가입으로 last_swept_on이 비어도 기존 수집분은
+ * 게시물 API가 그대로 서빙하므로, FE가 로딩 화면으로 데이터를 가리는 것보다 보여주는 게 맞다.
+ * collecting은 "정말 보여줄 게 없는 첫 수집"에만 해당한다.
  * {@code brand_account.status}(ACTIVE/CLOSED)는 유도에 쓰지 않는다 — 값 공간이 가입/탈퇴라 "수집
  * 준비 중"을 표현하지 못한다. 등록 응답의 status("ACTIVE" 하드코딩)도 마찬가지로 신뢰하지 않는다.
  */
@@ -35,17 +39,15 @@ public class BrandAccountAssembler {
 	}
 
 	public BrandAccountResponse toResponse(BrandAccountRow row) {
-		boolean ready = row.lastSweptOn() != null;
-		// last_swept_on이 차면 backfill_error는 항상 클리어된다(monitoring touchSwept) — ready가 우선이다.
+		boolean ready = row.lastSweptAt() != null;
+		// ready면 backfill_error가 남아 있어도 무시한다(재가입 백필 실패 등) — 데이터가 있는데
+		// 에러 화면을 띄우는 오보를 막고, 미수집분은 다음 스윕이 백스톱한다.
 		String status = ready ? STATUS_READY : (row.backfillError() != null ? STATUS_ERROR : STATUS_COLLECTING);
 		BrandAccountResponse.CollectionError error = STATUS_ERROR.equals(status)
 				? new BrandAccountResponse.CollectionError(BACKFILL_FAILED, row.backfillError())
 				: null;
 
-		// last_swept_at은 재가입 시 리셋되지 않는다(monitoring insertOrReactivate가 last_swept_on·
-		// backfill_* 만 되돌린다 — 사실값 유지 결정). 그래서 ready 전에는 지난 가입의 잔존값이 남아
-		// 있을 수 있어 노출하지 않는다: 수집 준비 중인 계정이 "어제 감지됨"으로 보이면 오독이다.
-		String sweptAt = ready ? KstTimestamps.toKstIso(row.lastSweptAt()) : null;
+		String sweptAt = KstTimestamps.toKstIso(row.lastSweptAt());
 
 		return new BrandAccountResponse(
 				String.valueOf(row.id()),
