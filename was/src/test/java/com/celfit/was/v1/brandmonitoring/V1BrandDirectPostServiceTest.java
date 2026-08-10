@@ -3,7 +3,6 @@ package com.celfit.was.v1.brandmonitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -419,7 +418,7 @@ class V1BrandDirectPostServiceTest {
 	}
 
 	private void tagged(String... shortCodes) {
-		given(brandReadRepository.findTaggedPostsInWindow(eq(100L), any(), anyInt()))
+		given(brandReadRepository.findTaggedPostsInWindow(eq(100L), any()))
 				.willReturn(Arrays.stream(shortCodes)
 						.map(code -> new BrandTaggedPostRow(code, "creator", "1",
 								OffsetDateTime.parse("2026-08-01T00:00:00Z"),
