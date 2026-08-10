@@ -256,11 +256,18 @@ public class HikerClient {
 	}
 
 	/**
+	 * 댓글 수집 결과 — complete=false면 중간 페이지 콜 실패로 뒤 페이지를 못 받은 부분 결과다.
+	 * 받은 페이지분은 그대로 저장 가능하지만, 브랜드 워터마크처럼 "이 게시물 댓글을 다 봤다"를
+	 * 전제하는 갱신은 하면 안 된다(다음 스윕이 재시도할 근거를 지운다).
+	 */
+	public record CommentsFetch(List<CommentInfo> comments, boolean complete) {}
+
+	/**
 	 * 추적 게시물 댓글 — /v2/media/comments?id=<media pk>(findings §10-1). media pk는 저장 없이
 	 * shortcode에서 산술 유도한다({@link ShortCodes}). 결손 필드(pk·text·좋아요·작성 시각·작성자) 댓글은
 	 * 저장 대상이 아니라 리스트에서 제외한다(계약 §3 post_comment).
 	 */
-	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages) {
+	public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
 		return fetchComments(shortCode, postUsername, pages, Set.of());
 	}
 
@@ -270,14 +277,27 @@ public class HikerClient {
 	 * (태그 스펙 §3). 정렬이 IG 랭킹 혼합이라 건 단위 중단은 신규를 놓칠 수 있어 페이지 단위로 본다.
 	 * 기지 댓글도 반환 목록에는 담는다(upsert가 body·like_count를 갱신).
 	 */
-	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages,
+	public CommentsFetch fetchComments(String shortCode, String postUsername, int pages,
 			Set<String> knownCommentIds) {
 		int wanted = Math.max(1, pages);
 		long mediaId = ShortCodes.toMediaId(shortCode);
 		List<CommentInfo> out = new ArrayList<>();
 		String cursor = null;
 		for (int page = 0; page < wanted; page++) {
-			String body = http.get("/v2/media/comments?id=" + mediaId + pageParam(cursor));
+			String body;
+			try {
+				body = http.get("/v2/media/comments?id=" + mediaId + pageParam(cursor));
+			} catch (RuntimeException e) {
+				if (page == 0) {
+					throw e;   // 보존할 것이 없다 — 기존 실패 의미 유지(호출자 격리 catch가 처리)
+				}
+				// 중간 페이지 실패 — 받은 페이지분을 버리지 않는다(08-10 운영 실측: 첫 백필 병렬
+				// 부하에서 27건 수신 후 3페이지 실패로 전량 폐기 24게시물). 미완주 표시로 브랜드
+				// 워터마크 전진을 막아 다음 스윕이 재시도한다.
+				log.warn("댓글 {}페이지 실패 — 받은 {}건은 보존(미완주): media {} {}",
+						page + 1, out.size(), mediaId, e.toString());
+				return new CommentsFetch(out, false);
+			}
 			JsonNode root = root(body);
 			int before = out.size();
 			for (JsonNode c : root.path("response").path("comments")) {
@@ -305,7 +325,7 @@ public class HikerClient {
 				break;
 			}
 		}
-		return out;
+		return new CommentsFetch(out, true);
 	}
 
 	private static CommentInfo toComment(JsonNode c, String postUsername) {

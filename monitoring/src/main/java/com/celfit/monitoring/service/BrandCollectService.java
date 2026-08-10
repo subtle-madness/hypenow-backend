@@ -1,6 +1,5 @@
 package com.celfit.monitoring.service;
 
-import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
@@ -338,11 +337,15 @@ public class BrandCollectService {
 			}
 			tasks.add(CompletableFuture.runAsync(() -> {
 				try {
-					List<CommentInfo> fetched = hiker.fetchComments(p.shortCode(), p.username(),
+					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
-					comments.upsertForPost(p.shortCode(), fetched);
+					comments.upsertForPost(p.shortCode(), fetch.comments());
 					// 저장값은 열거 관측치로 갱신한다 — 다음 게이트가 "그 사이 증가분"만 보게.
-					taggedPosts.updateCommentsCollected(brandId, p.shortCode(), p.comments());
+					// 단, 미완주(중간 페이지 실패)면 유지한다 — 워터마크를 올리면 다음 스윕 게이트가
+					// 닫혀 못 받은 페이지가 영영 빈다(받은 부분은 위 upsert로 이미 보존됐다).
+					if (fetch.complete()) {
+						taggedPosts.updateCommentsCollected(brandId, p.shortCode(), p.comments());
+					}
 				} catch (RuntimeException e) {
 					log.warn("태그 댓글 수집 실패(격리) — 게시물 {}: {}", p.shortCode(), e.toString());
 				}
