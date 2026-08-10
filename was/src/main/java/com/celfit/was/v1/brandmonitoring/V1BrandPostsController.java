@@ -42,8 +42,13 @@ import org.springframework.web.bind.annotation.RestController;
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class V1BrandPostsController {
 
-	/** 목록 상한(FE 명세 meta.limit) — 윈도우 105건 + 직접 등록분이라 실사용에선 도달하지 않는다. */
-	private static final int POST_LIMIT = 200;
+	/**
+	 * 목록 상한(FE 명세 meta.limit) — 수집 안전 밸브(monitoring {@code max-posts-per-sweep:2000})와
+	 * 같은 값으로, 정상 경로에선 도달하지 않는 폭주 방어다. 구 200은 90일·105건 시절의 값이라
+	 * 정책 v1(365일 윈도우·저장소 상한 폐지) 이후 12개월치가 많은 브랜드(실측 463건)를 실제로
+	 * 잘랐다 — 잘린 것은 정렬 뒤쪽, 즉 새로 백필된 소급분이었다.
+	 */
+	private static final int POST_LIMIT = 2000;
 
 	private static final String FILTER_ALL = "all";
 	private static final String SORT_UPLOADED_DESC = "uploaded_desc";
