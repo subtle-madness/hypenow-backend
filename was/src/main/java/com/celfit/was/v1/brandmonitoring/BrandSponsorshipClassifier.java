@@ -16,6 +16,9 @@ import java.util.regex.Pattern;
  * <li>라틴 해시태그 — 반드시 태그 토큰 전체 일치. substring이면 {@code #adventure}가
  *     {@code #ad}에 걸린다(08-07 운영 실측: 해외 인플루언서는 #ad류 표기만 씀).</li>
  * <li>단어 접두(터키어 reklam) — 교착어 접미사(reklamdır 등)가 붙어 태그 밖에서도 쓰인다.</li>
+ * <li>캡션 선두 접두 표기("광고 ㅣ …") — 첫 토큰이 광고/협찬/ad이고 바로 구분자가 따라올 때만.
+ *     구분자는 파이프 대용 문자들(한글 모음 ㅣ U+3163, 소문자 l — 08-10 운영 실측 DbU1UKMR7Nk·
+ *     DbSa8zcBJCn)을 포함하며, 구분자 없이 단어가 이어지면("광고 아님", "adorable") 불인정.</li>
  * </ul>
  */
 public final class BrandSponsorshipClassifier {
@@ -43,6 +46,13 @@ public final class BrandSponsorshipClassifier {
 	/** 앞이 문자·숫자가 아니면 매치 — "*reklam", "reklamdır"를 잡고 단어 중간 매치는 막는다. */
 	private static final Pattern WORD_PREFIX_MARKERS = Pattern.compile("(?<![\\p{L}\\p{N}])reklam");
 
+	/**
+	 * 캡션 선두의 "광고 ㅣ …"류 접두 표기 — 선두 앵커 + 구분자 필수라 "광고 아님"·"adorable"에는
+	 * 안 걸린다. 소문자 l은 파이프 대용으로만 쓰여서 단독 토큰(뒤가 공백)일 때만 구분자로 인정.
+	 */
+	private static final Pattern LEADING_PREFIX_DISCLOSURE =
+			Pattern.compile("^\\s*(?:광고|협찬|ad)(?:\\s*[ㅣ|｜/\\-–—:,.·~]|\\s+l(?=\\s))");
+
 	private BrandSponsorshipClassifier() {}
 
 	public static String classify(Boolean isPaidPartnership, String caption) {
@@ -63,6 +73,9 @@ public final class BrandSponsorshipClassifier {
 			}
 		}
 		if (WORD_PREFIX_MARKERS.matcher(lower).find()) {
+			return true;
+		}
+		if (LEADING_PREFIX_DISCLOSURE.matcher(lower).find()) {
 			return true;
 		}
 		Matcher tags = HASHTAG.matcher(lower);
