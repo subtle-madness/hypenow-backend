@@ -3,6 +3,7 @@ package com.celfit.was.v1.brandmonitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.monitoring.BrandReadRepository;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -16,6 +17,17 @@ import org.junit.jupiter.api.Test;
 class BrandPostAssemblerTest {
 
 	private static final OffsetDateTime SWEPT_AT = OffsetDateTime.parse("2026-08-07T18:00:00Z");
+
+	// ---------- 윈도우 컷 ----------
+
+	@Test
+	void 윈도우_컷은_KST_자정_기준_365일이다() {
+		// 크롤링 정책 v1(08-09) — 수집 편입 컷(monitoring registration-window-days 365)과 같은 깊이.
+		var expected = LocalDate.now(KstTimestamps.KST).minusDays(365)
+				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
+
+		assertThat(BrandPostAssembler.windowCutoff()).isEqualTo(expected);
+	}
 
 	// ---------- 스냅샷 ----------
 

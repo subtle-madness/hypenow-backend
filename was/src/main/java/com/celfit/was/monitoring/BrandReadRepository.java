@@ -51,21 +51,20 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 브랜드 윈도우 안 태그 게시물 — cutoff(90일 컷) 이후 taken_at만, 최신순 상한 limit건.
-	 * 컷·상한 모두 호출부가 정한다(윈도우 정책은 상위 계층 계약).
+	 * 브랜드 윈도우 안 태그 게시물 — cutoff(365일 컷) 이후 taken_at만, 최신순 전량. 컷은 호출부가
+	 * 정한다(윈도우 정책은 상위 계층 계약). 개수 상한은 정책 v1(08-09)에서 폐지 — 모수는 수집 편입
+	 * 컷(365일)이 이미 제한하고, 상한을 두면 12개월치가 많은 브랜드의 오래된 게시물이 소리 없이 잘린다.
 	 */
-	public List<BrandTaggedPostRow> findTaggedPostsInWindow(long brandId, OffsetDateTime cutoff, int limit) {
+	public List<BrandTaggedPostRow> findTaggedPostsInWindow(long brandId, OffsetDateTime cutoff) {
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
 				       comments_collected_count
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId AND taken_at >= :cutoff
 				ORDER BY taken_at DESC
-				LIMIT :limit
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.param("limit", limit)
 				.query(BrandTaggedPostRow.class)
 				.list();
 	}
@@ -111,7 +110,7 @@ public class BrandReadRepository {
 	 * 게시물별 최신 댓글 상한 {@code perPostLimit}건(레거시 findComments와 같은 윈도우 관용구).
 	 *
 	 * <p>상한을 SQL 단계에서 자르는 이유: 브랜드 댓글은 매 스윕이 최대 45건씩 누적 합집합으로 쌓고
-	 * 행 삭제가 없어(08-06 스키마) 인기 게시물은 90일 윈도우 동안 수천 행까지 간다 — 상한 없이
+	 * 행 삭제가 없어(08-06 스키마) 인기 게시물은 365일 윈도우 동안 수천 행까지 간다 — 상한 없이
 	 * 가져오면 "윈도우 전 게시물 × 전량"이 한 번에 힙에 올라온다. 표시 상한을 호출부가 자르는
 	 * 방식으로는 그 비용을 못 줄인다.
 	 */

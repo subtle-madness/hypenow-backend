@@ -216,7 +216,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findTaggedPostsInWindow(anyLong(), any(), anyInt());
+		then(brandReadRepository).should(never()).findTaggedPostsInWindow(anyLong(), any());
 	}
 
 	@Test
@@ -305,7 +305,7 @@ class V1BrandPostsControllerTest {
 	// ---------- 스텁 ----------
 
 	private void givenTagged(BrandTaggedPostRow... rows) {
-		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any(), anyInt())).willReturn(List.of(rows));
+		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
 	}
 
 	/** 직접 등록 1건 — 매핑 행 + 레거시 조립 결과를 함께 스텁한다. */
