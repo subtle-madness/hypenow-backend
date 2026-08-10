@@ -1,6 +1,9 @@
 package com.celfit.was.v1.perfdashboard;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -19,6 +22,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -43,6 +47,9 @@ class V1PerformanceDashboardControllerTest {
 	@MockitoBean
 	PerformanceContentAssembler assembler;
 
+	@MockitoBean
+	PerformanceComparisonAssembler comparisonAssembler;
+
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
@@ -65,7 +72,8 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.data[0].item.id").value("1"))
 				.andExpect(jsonPath("$.meta.total").value(1))
-				.andExpect(jsonPath("$.meta.limit").value(250))
+				// 250건 상한 철폐(08-10) — limit은 형태 호환용으로 남고 반환 건수와 같다.
+				.andExpect(jsonPath("$.meta.limit").value(1))
 				.andExpect(jsonPath("$.meta.lastCollectedAt").value("2026-08-08T03:00:00+09:00"))
 				// 기간 필터는 statusCounts에 적용되지 않는다(스펙 §7-1) — 2건 그대로.
 				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(2));
@@ -306,6 +314,63 @@ class V1PerformanceDashboardControllerTest {
 		mockMvc.perform(get(CONTENTS + "/SC2?status=tracking").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.item.id").value("2"));
+	}
+
+	// ---------- comparison ----------
+
+	private static final String COMPARISON = "/v1/performance-dashboard/comparison";
+
+	@Test
+	void comparison은_분류_필터를_걸어_비교_어셈블러에_넘긴다() throws Exception {
+		givenAssembled(
+				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
+				content("2", "SC2", "tracking", "2026-08-06", "tagged", "sponsored", null, "100"));
+		given(comparisonAssembler.assemble(eq(7L), anyList())).willReturn(
+				new PerformanceComparisonResponse(List.of(
+						new PerformanceComparisonResponse.AccountComparison("100", "cclime.beauty",
+								"2026-05-14T09:12:00+09:00", List.of(
+										new PerformanceComparisonResponse.Bucket("1w", true, 1,
+												null, 5L, 2L, 1000L, 1, 0, 0))))));
+
+		mockMvc.perform(get(COMPARISON + "?source=tagged").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(1))
+				.andExpect(jsonPath("$.data.accounts[0].brandAccountId").value("100"))
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0].key").value("1w"))
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0].covered").value(true))
+				// null 합은 키를 유지한 명시적 null이다(계약 무결성 #1 — FE 규칙 ③).
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0]", Matchers.hasKey("views")))
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0].views").value(Matchers.nullValue()));
+
+		// source=tagged 필터가 비교 모수에 적용됐는지 — individual 1건이 걸러져 tagged만 남아야 한다.
+		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
+		assertThat(captor.getValue()).hasSize(1);
+		assertThat(captor.getValue().get(0).source()).isEqualTo("tagged");
+	}
+
+	@Test
+	void comparison은_허용_값_밖_필터에_400이다() throws Exception {
+		mockMvc.perform(get(COMPARISON + "?source=banana").with(user(principal())))
+				.andExpect(status().isBadRequest());
+		then(comparisonAssembler).should(never()).assemble(anyLong(), anyList());
+	}
+
+	@Test
+	void comparison은_campaignId_none을_캠페인_없음으로_거른다() throws Exception {
+		givenAssembled(
+				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", "c-1", "100"),
+				content("2", "SC2", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
+		given(comparisonAssembler.assemble(eq(7L), anyList()))
+				.willReturn(new PerformanceComparisonResponse(List.of()));
+
+		mockMvc.perform(get(COMPARISON + "?campaignId=none").with(user(principal())))
+				.andExpect(status().isOk());
+
+		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
+		assertThat(captor.getValue()).hasSize(1);
+		assertThat(captor.getValue().get(0).item().campaignId()).isNull();
 	}
 
 	// ---------- 픽스처 ----------
