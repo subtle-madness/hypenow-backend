@@ -3,16 +3,40 @@ package com.celfit.was.v1.perfdashboard;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
+import static org.mockito.BDDMockito.given;
+
+import com.celfit.was.monitoring.BrandLinkRepository;
+import com.celfit.was.monitoring.BrandLinkRow;
+import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceComparisonAssembler.BucketRange;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 /** 비교 집계 순수 함수 검증 — 구간 산출·귀속·합산 전부 DB 없이 고정한다(스펙 2026-08-10). */
+@ExtendWith(MockitoExtension.class)
 class PerformanceComparisonAssemblerTest {
+
+	@Mock
+	BrandLinkRepository linkRepository;
+	@Mock
+	BrandReadRepository brandReadRepository;
+
+	private PerformanceComparisonAssembler assembler() {
+		return new PerformanceComparisonAssembler(linkRepository, Optional.of(brandReadRepository));
+	}
+
+	private static BrandLinkRow link(long brandId, String username) {
+		return new BrandLinkRow(brandId, 7L, brandId, username,
+				OffsetDateTime.parse("2026-05-14T00:12:00Z"), null);
+	}
 
 	// ---------- 구간 산출 ----------
 
@@ -164,5 +188,54 @@ class PerformanceComparisonAssemblerTest {
 
 		assertThat(ready.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
 		assertThat(notReady.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
+	}
+
+	// ---------- 배선(계정 로딩·그룹핑) ----------
+
+	@Test
+	void 연결_순서대로_계정이_실리고_individual은_어느_계정에도_안_붙는다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(
+				link(2L, "cclime.beauty"), link(3L, "laperi_kr")));
+		given(brandReadRepository.findAccount(2L)).willReturn(Optional.of(readyAccount()));
+		given(brandReadRepository.findAccount(3L)).willReturn(Optional.of(
+				new BrandAccountRow(3L, "laperi_kr", null, null,
+						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
+						null, null, null, "", "", null, null, null, "ACTIVE")));
+
+		var response = assembler().assemble(7L, List.of(
+				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
+				content("B", "3", "2026-08-09", 100L, snapshot(20L, 2L, false, 2L)),
+				content("C", null, "2026-08-09", 100L, snapshot(30L, 3L, false, 3L))),   // individual
+				LocalDate.parse("2026-08-10"));
+
+		assertThat(response.accounts()).extracting("brandAccountId", "username")
+				.containsExactly(
+						tuple("2", "cclime.beauty"),
+						tuple("3", "laperi_kr"));
+		// individual(brandAccountId null)은 계정 귀속 불가라 어느 막대에도 없다(스펙 §집계 규칙).
+		assertThat(response.accounts().get(0).buckets().get(0).views()).isEqualTo(10L);
+		assertThat(response.accounts().get(1).buckets().get(0).views()).isEqualTo(20L);
+		// 0건 계정도 실린다 — 두 계정 모두 5구간 전부 존재.
+		assertThat(response.accounts()).allSatisfy(a -> assertThat(a.buckets()).hasSize(5));
+	}
+
+	@Test
+	void monitoring_계정_행이_없는_연결은_경고_후_생략한다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(
+				link(2L, "cclime.beauty"), link(9L, "ghost")));
+		given(brandReadRepository.findAccount(2L)).willReturn(Optional.of(readyAccount()));
+		given(brandReadRepository.findAccount(9L)).willReturn(Optional.empty());
+
+		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
+
+		assertThat(response.accounts()).hasSize(1);
+		assertThat(response.accounts().get(0).brandAccountId()).isEqualTo("2");
+	}
+
+	@Test
+	void monitoring_비활성_환경은_빈_계정_목록이다() {
+		var disabled = new PerformanceComparisonAssembler(linkRepository, Optional.empty());
+
+		assertThat(disabled.assemble(7L, List.of(), LocalDate.parse("2026-08-10")).accounts()).isEmpty();
 	}
 }

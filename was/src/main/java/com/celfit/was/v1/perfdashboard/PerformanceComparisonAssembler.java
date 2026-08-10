@@ -1,11 +1,19 @@
 package com.celfit.was.v1.perfdashboard;
 
+import com.celfit.was.monitoring.BrandLinkRepository;
+import com.celfit.was.monitoring.BrandLinkRow;
+import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,6 +22,53 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class PerformanceComparisonAssembler {
+
+	private static final Logger log = LoggerFactory.getLogger(PerformanceComparisonAssembler.class);
+
+	private final BrandLinkRepository linkRepository;
+	private final Optional<BrandReadRepository> brandReadRepository;
+
+	public PerformanceComparisonAssembler(BrandLinkRepository linkRepository,
+			Optional<BrandReadRepository> brandReadRepository) {
+		this.linkRepository = linkRepository;
+		this.brandReadRepository = brandReadRepository;
+	}
+
+	/** 컨트롤러 진입점 — contents는 분류 필터(source·sponsorship·campaignId) 적용 후 전량. */
+	public PerformanceComparisonResponse assemble(long userId, List<PerformanceContentResponse> contents) {
+		return assemble(userId, contents, LocalDate.now(KstTimestamps.KST));
+	}
+
+	/**
+	 * 시각 주입 오버로드(테스트용). 계정 축은 활성 브랜드 연결 순서 그대로다 — 콘텐츠 0건 계정도
+	 * 실린다(비교 화면의 축은 "연결된 계정"이지 "콘텐츠 있는 계정"이 아니다).
+	 * individual(brandAccountId null)은 계정 귀속이 불가능해 어느 막대에도 안 든다(스펙 §집계 규칙
+	 * — source=individual 필터 시 전 구간이 비는 것은 의도된 동작).
+	 */
+	PerformanceComparisonResponse assemble(long userId, List<PerformanceContentResponse> contents,
+			LocalDate today) {
+		if (brandReadRepository.isEmpty()) {
+			return new PerformanceComparisonResponse(List.of());   // monitoring 비활성 — 비교 축 없음
+		}
+		List<BucketRange> ranges = bucketRanges(today);
+		Map<String, List<PerformanceContentResponse>> byBrand = contents.stream()
+				.filter(c -> c.brandAccountId() != null)
+				.collect(Collectors.groupingBy(PerformanceContentResponse::brandAccountId));
+
+		List<PerformanceComparisonResponse.AccountComparison> accounts = new ArrayList<>();
+		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
+			if (account.isEmpty()) {
+				// 연결은 살아 있는데 monitoring 계정 행이 없는 상태 — 목록 API와 동일하게 그 계정만 뺀다.
+				log.warn("브랜드 연결의 monitoring 계정 행 부재 — 비교 축 생략 userId={}, brandId={}",
+						userId, link.brandId());
+				continue;
+			}
+			accounts.add(compare(account.get(),
+					byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()), ranges));
+		}
+		return new PerformanceComparisonResponse(List.copyOf(accounts));
+	}
 
 	/** 구간 1개(양끝 포함) — 업로드일이 [from, to]에 들면 귀속. */
 	record BucketRange(String key, LocalDate from, LocalDate to) {
