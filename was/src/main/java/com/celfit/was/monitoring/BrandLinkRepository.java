@@ -81,8 +81,12 @@ public class BrandLinkRepository {
 	}
 
 	/**
-	 * 활성 연결의 타입 변경(08-12) — 재수집이 아니라 관계 속성만 바꾼다. 이미 그 타입이거나
-	 * 활성 연결이 없으면 false(호출부의 멱등·소유권 판정 지점).
+	 * 활성 연결의 타입 변경(08-12) — 재수집이 아니라 관계 속성만 바꾼다.
+	 *
+	 * <p>false는 <b>활성 연결이 없다</b>는 뜻 하나뿐이다(호출부의 소유권·멱등 판정 지점).
+	 * 이미 그 타입인 행에 호출해도 Postgres는 갱신 행으로 세므로 true다 — 즉 반환값은
+	 * "값이 실제로 달라졌나"가 아니라 "대상 행이 있었나"의 신호다. 값 비교 조건을 WHERE에 넣지
+	 * 않은 것은 의도적이다: 넣으면 false가 "행 없음"과 "이미 같은 값"을 뭉개 소유권 판정이 깨진다.
 	 */
 	public boolean updateAccountType(long userId, long brandId, String accountType) {
 		return jdbcClient.sql("""

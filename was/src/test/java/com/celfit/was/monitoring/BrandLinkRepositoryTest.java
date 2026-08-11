@@ -82,6 +82,17 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void updateAccountType은_이미_같은_타입이어도_true다() {
+		// 반환값의 의미를 못박는다 — "값이 달라졌나"가 아니라 "대상 행이 있었나"다.
+		// Postgres는 같은 값으로 덮어써도 갱신 행으로 세므로, 호출부는 이걸 변경 여부로 읽으면 안 된다.
+		repository.insertLink(userId, brandA, "lizda_official", "competitor");
+
+		assertThat(repository.updateAccountType(userId, brandA, "competitor")).isTrue();
+		assertThat(repository.findActiveByUserAndBrand(userId, brandA).orElseThrow().accountType())
+				.isEqualTo("competitor");
+	}
+
+	@Test
 	void account_type_컬럼은_기본값_own이고_값_공간_밖은_거부된다() {
 		// 롤링 안전의 근거 — 구버전 코드의 account_type 없는 INSERT에 DEFAULT가 먹는다.
 		jdbcClient.sql("INSERT INTO app.brand_monitorings (user_id, brand_id, username) "
