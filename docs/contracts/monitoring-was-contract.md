@@ -575,8 +575,8 @@ was는 아래 두 표면으로만 결과를 받는다.
 
 **⚠️ 편집은 이후 발견분에만 적용된다(비소급)** — 이미 판정·저장된 게시물의 verdict는 불변이다.
 term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 않고, term을 추가해도 이미 노출 중인
-게시물이 사라지지 않는다. FE 문구에 반드시 반영할 것. 같은 이유로 **빈 목록 교체는 422로
-거부**된다(전부 지우면 자사 게시물 — 스트림의 71~87% — 이 관련 판정으로 유입된 뒤 복구 불가).
+게시물이 사라지지 않는다. FE 문구에 반드시 반영할 것. 같은 이유로 **빈 목록 교체는 거부**된다
+(전부 지우면 자사 게시물 — 스트림의 71~87% — 이 관련 판정으로 유입된 뒤 복구 불가).
 
 ```json
 // GET 200
@@ -586,13 +586,14 @@ term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 �
 { "terms": ["일반단어1"] }
 // PUT 204
 
-// PUT 422 — 정규화 결과가 빈 목록(terms 생략·null·빈 배열·전부 blank)
+// PUT 400 — 정규화 결과가 빈 목록(terms 생략·null·빈 배열·전부 blank)
+{ "code": "VALIDATION_FAILED", ... }
 ```
 
 | 상황 | HTTP | 비고 |
 |---|---|---|
 | 정상 | GET 200 / PUT 204 | |
-| PUT 정규화 결과 빈 목록 | 422 | 비소급 오염 방지 하한 가드(monitoring `ValidationException`) |
+| PUT 정규화 결과 빈 목록 | 400 `VALIDATION_FAILED` | 비소급 오염 방지 하한 가드 — monitoring 내부는 422(`EmptyExclusionTermsException`)지만 was 공용 매핑(`V1ExceptionAdvice` — 404·5xx 외 4xx는 400 수렴)이 FE엔 400으로 내린다 |
 | 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership` — 유저의 활성 브랜드 연결에 없으면) |
 | `accountId`가 유효한 브랜드가 아님(브랜드 비정합) | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND`(브랜드 미등록·비ACTIVE) 둘 다 404로 수렴 |
 | monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 monitoring 연동 엔드포인트와 공통 매핑, `V1ExceptionAdvice`) |
