@@ -29,13 +29,16 @@ public class BrandSweepJob {
 
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
+	private final BrandHashtagCollectService hashtagCollect;
 	private final AuthorProfileImageArchiveJob authorImageArchive;
 	private final BrandProfileImageArchiveJob brandImageArchive;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
-			AuthorProfileImageArchiveJob authorImageArchive, BrandProfileImageArchiveJob brandImageArchive) {
+			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob authorImageArchive,
+			BrandProfileImageArchiveJob brandImageArchive) {
 		this.brands = brands;
 		this.collect = collect;
+		this.hashtagCollect = hashtagCollect;
 		this.authorImageArchive = authorImageArchive;
 		this.brandImageArchive = brandImageArchive;
 	}
@@ -55,6 +58,11 @@ public class BrandSweepJob {
 		}
 	}
 
+	/**
+	 * 유저태그 스윕과 해시태그 스윕은 브랜드마다 각자 try/catch로 격리한다 — 한쪽 실패가
+	 * touchSwept·failures 카운트에 영향을 주지 않고, 유저태그 스윕이 실패한 브랜드도 해시태그
+	 * 스윕은 그대로 시도된다(서로 독립된 수집 경로 — 스펙 §8).
+	 */
 	private void runSweep() {
 		LocalDate today = LocalDate.now(KST);
 		List<BrandRow> active = brands.findActive();
@@ -66,6 +74,11 @@ public class BrandSweepJob {
 			} catch (RuntimeException e) {
 				failures++;
 				log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
+			}
+			try {
+				hashtagCollect.sweep(b);
+			} catch (RuntimeException e) {
+				log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 			}
 		}
 		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건", active.size(), failures);
