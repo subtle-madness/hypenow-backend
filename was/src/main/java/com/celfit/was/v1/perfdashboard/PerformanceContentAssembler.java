@@ -99,6 +99,7 @@ public class PerformanceContentAssembler {
 		// 매핑(app.brand_direct_posts)도 같은 이유로 게이트 밖이라, 링크를 안 읽으면 경쟁사 브랜드의
 		// direct 콘텐츠가 기본 범위에 조용히 섞인다(운영 기본값 MONITORING_ENABLED=false).
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
+		Set<String> competitorIds = competitorBrandAccountIds(links);
 		Tagged tagged = loadTagged(userId, links);
 
 		List<PerformanceContentResponse> contents = new ArrayList<>();
@@ -109,7 +110,8 @@ public class PerformanceContentAssembler {
 			if (overlap != null) {
 				consumedCodes.add(shortcode);
 			}
-			contents.add(fromLegacy(item, shortcode, direct.brandAccountIdFor(item.id(), shortcode), overlap));
+			contents.add(fromLegacy(item, shortcode, direct.brandAccountIdFor(item.id(), shortcode), overlap,
+					competitorIds));
 		}
 		for (Map.Entry<String, BrandPostResponse> entry : tagged.byShortcode().entrySet()) {
 			if (!consumedCodes.contains(entry.getKey())) {
@@ -121,7 +123,7 @@ public class PerformanceContentAssembler {
 				.comparing(PerformanceContentAssembler::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
 				.thenComparing(c -> c.item().id()));
 		return new Assembled(List.copyOf(contents), lastCollectedAt(legacy.lastCollectedAt(), tagged.lastSweptAt()),
-				competitorBrandAccountIds(links));
+				competitorIds);
 	}
 
 	// ---------- 레거시 계열 ----------
@@ -132,9 +134,11 @@ public class PerformanceContentAssembler {
 	 *
 	 * @param directBrandAccountId 직접 등록 매핑의 브랜드 id 문자열(매핑이 없으면 null) — 이 값의
 	 *                             존재 자체가 direct 판정이다.
+	 * @param competitorIds 경쟁사 구독의 brandId 집합 — 귀속 동률을 own 쪽으로 푸는 데만 쓴다
+	 *                      ({@link #attributedBrandAccountId}).
 	 */
 	private static PerformanceContentResponse fromLegacy(TrackingItemResponse item, String shortcode,
-			String directBrandAccountId, BrandPostResponse overlap) {
+			String directBrandAccountId, BrandPostResponse overlap, Set<String> competitorIds) {
 		PerformancePostResponse post = legacyPost(item, shortcode, overlap);
 		return new PerformanceContentResponse(
 				new PerformanceItemResponse(item.id(), item.mode(), item.status(), item.handle(),
@@ -147,10 +151,34 @@ public class PerformanceContentAssembler {
 				// 그 콘텐츠는 item.id로만 식별된다(스펙 §7-1).
 				shortcode,
 				overlap == null ? List.of() : List.of(SOURCE_TAGGED),
-				// 브랜드 소속은 tagged 관측만의 속성이 아니다 — direct는 매핑 자체가 "이 게시물은 이 브랜드
-				// 소속"이라는 선언이라 tagged 관측이 아직 없어도 채운다(Task 10 brandAccountId 필터가
-				// 자기 브랜드의 direct를 떨구면 안 된다). 둘 다 있으면 같은 브랜드지만 관측값을 우선한다.
-				overlap != null ? overlap.brandAccountId() : directBrandAccountId);
+				attributedBrandAccountId(directBrandAccountId, overlap, competitorIds));
+	}
+
+	/**
+	 * 브랜드 귀속 결정 — 브랜드 소속은 tagged 관측만의 속성이 아니다. direct는 매핑 자체가 "이 게시물은
+	 * 이 브랜드 소속"이라는 선언이라 tagged 관측이 아직 없어도 채운다(brandAccountId 필터가 자기 브랜드의
+	 * direct를 떨구면 안 된다). 둘 다 있으면 <b>관측값(tagged)을 우선</b>한다 — 브랜드 스윕이 더 늦게
+	 * 수집한 원천이라 스냅샷 최신도가 높다.
+	 *
+	 * <p><b>단 하나의 예외</b>(08-12): direct가 내 브랜드(own 구독)를 가리키는데 겹치는 tagged 관측이
+	 * 경쟁사 브랜드면 <b>direct(own) 귀속을 지킨다</b>. 내가 내 브랜드로 직접 등록한 게시물이 "경쟁사
+	 * 계정에도 태그돼 있었다"는 이유만으로 내 성과 요약·statusCounts에서 사라지면 안 된다
+	 * (스펙 §5의 기본 범위는 "own 브랜드 콘텐츠 + individual"이다).
+	 *
+	 * <p>{@link #ownFirst}가 tagged끼리의 동률을 own 쪽으로 푸는 것과 같은 규칙을 한 층 위(direct 대
+	 * tagged)에 적용한 것이다. 이유도 같다 — 귀속이 이제 <b>표시</b>가 아니라 <b>범위</b>를 정하기
+	 * 때문이다. 양쪽이 같은 타입인 경우는 손대지 않는다(관측값 우선의 근거가 그대로 유효하다).
+	 */
+	private static String attributedBrandAccountId(String directBrandAccountId, BrandPostResponse overlap,
+			Set<String> competitorIds) {
+		if (overlap == null) {
+			return directBrandAccountId;
+		}
+		if (directBrandAccountId != null && !competitorIds.contains(directBrandAccountId)
+				&& competitorIds.contains(overlap.brandAccountId())) {
+			return directBrandAccountId;
+		}
+		return overlap.brandAccountId();
 	}
 
 	private static PerformancePostResponse legacyPost(TrackingItemResponse item, String shortcode,

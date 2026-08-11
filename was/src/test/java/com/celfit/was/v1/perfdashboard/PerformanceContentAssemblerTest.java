@@ -416,6 +416,52 @@ class PerformanceContentAssemblerTest {
 	}
 
 	@Test
+	void 내_브랜드에_직접_등록한_게시물은_경쟁사_태그_관측에_귀속을_뺏기지_않는다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		// 내 브랜드로 직접 등록된 게시물인데, 태그는 경쟁사 계정에만 달렸다.
+		given(directPostRepository.findByUser(USER_ID))
+				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, BRAND_ID, "ABC", 900L)));
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
+		BrandAccountRow rival = brandAccount(99L, "rival");
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
+		given(brandPostAssembler.assembleTagged(mine)).willReturn(List.of());
+		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+
+		var assembled = assembler().assemble(USER_ID);
+
+		var content = assembled.contents().get(0);
+		assertThat(content.source()).isEqualTo("direct");
+		// 관측값(경쟁사) 우선 규칙의 유일한 예외 — own direct 귀속을 지킨다(스펙 §5 기본 범위).
+		assertThat(content.brandAccountId()).isEqualTo(String.valueOf(BRAND_ID));
+		// 기본 범위엔 남고 accountType=competitor에는 안 잡힌다(컨트롤러 술어와 같은 판정).
+		assertThat(assembled.competitorBrandAccountIds()).doesNotContain(content.brandAccountId());
+		// tagged 관측 자체는 버리지 않는다 — 스냅샷 병합·추가 산지 표기는 그대로다.
+		assertThat(content.additionalSources()).containsExactly("tagged");
+	}
+
+	@Test
+	void 경쟁사에_직접_등록한_게시물은_경쟁사_귀속_그대로다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID))
+				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, 99L, "ABC", 900L)));
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		BrandAccountRow rival = brandAccount(99L, "rival");
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
+		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+
+		var assembled = assembler().assemble(USER_ID);
+
+		// 양쪽이 같은 타입이면 예외가 발동하지 않는다 — 기존 "관측값 우선" 그대로.
+		assertThat(assembled.contents().get(0).brandAccountId()).isEqualTo("99");
+		assertThat(assembled.competitorBrandAccountIds()).containsExactly("99");
+	}
+
+	@Test
 	void 활성_브랜드가_없으면_경쟁사_집합도_비어_있다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
