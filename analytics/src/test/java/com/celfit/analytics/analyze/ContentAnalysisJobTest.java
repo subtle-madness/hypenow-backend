@@ -112,8 +112,12 @@ class ContentAnalysisJobTest {
 
 	/** 배치 전송 경로로 재배선 — batchApi=null이면 배치 미지원(온라인 폴백) 재현용. */
 	void rewireJobWithBatch(ContentInsightPort port, GeminiBatchApi batchApi) {
+		rewireJobWithBatch(port, batchApi, false);
+	}
+
+	void rewireJobWithBatch(ContentInsightPort port, GeminiBatchApi batchApi, boolean thumbnailEnabled) {
 		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
-				false, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP,
+				thumbnailEnabled, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP,
 				batchApi, new BeautyTaxonomyLoader(ds), batchWorkDir);
 	}
 
@@ -568,6 +572,32 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 배치_제출_JSONL은_댓글_분류_분포를_실제로_싣는다() {
+		// 온라인 경로(analyzeOne)와 동일하게 shortCode별 comment_classifications 집계를 실어야
+		// 프롬프트의 aiCommentInsight 근거가 온라인·배치 양쪽에서 갈리지 않는다(2026-08-11 리뷰 반영
+		// 전에는 GeminiBatchLines.requestLine 내부가 항상 Map.of()로 비워 보내고 있었다).
+		enableBatchTransport();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+
+		job.run();
+
+		String jsonl = new String(batchUploads.get(0), StandardCharsets.UTF_8);
+		String[] lines = jsonl.strip().split("\n");
+		// 수집 최신순: post_b(댓글 없음) → post_a(purchase 1건·positive 1건, setUp 픽스처)
+		String postALine = lines[1];
+		JsonNode postA = om.readTree(postALine);
+		assertEquals("post_a", postA.path("key").asString());
+		String userText = postA.path("request").path("contents").get(0).path("parts").get(0).path("text").asString();
+		assertTrue(userText.contains("purchase=1"));
+		assertTrue(userText.contains("positive=1"));
+		// 댓글이 없는 post_b는 빈 분포({})가 정상 — 게이트 통과 대상이라 조회 자체는 동일하게 수행된다
+		JsonNode postB = om.readTree(lines[0]);
+		assertEquals("post_b", postB.path("key").asString());
+		String postBText = postB.path("request").path("contents").get(0).path("parts").get(0).path("text").asString();
+		assertTrue(postBText.contains("댓글 분류 분포: {}"));
+	}
+
+	@Test
 	void late_backfill도_배치_전송이_적용되고_timely_false로_기록된다() {
 		db.update("UPDATE analytics.candidates_fixture SET timely = false WHERE short_code = 'post_a'");
 		enableBatchTransport();
@@ -591,6 +621,26 @@ class ContentAnalysisJobTest {
 		assertEquals(2, insightCalls.size()); // 온라인 경로가 정상 동작
 		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
 		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void vlm_enabled인데_배치_전송이면_온라인으로_폴백해_썸네일이_보존된다() {
+		// 배치 JSONL은 캡션 전용(썸네일 미첨부)이라 vlm-enabled=true와 양립하지 않는다 — 배치로
+		// 내려가면 조용히 이미지 없이 분석돼 온라인과 산출물이 갈리므로, batchApi가 정상이어도
+		// 온라인으로 폴백해 멀티모달 분석을 보존해야 한다(2026-08-11 리뷰 반영).
+		enableBatchTransport();
+		pinSequentialConcurrency();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi(), true);
+
+		int processed = job.run().processed();
+
+		assertEquals(2, processed);
+		assertEquals(2, insightCalls.size()); // 온라인 경로가 정상 동작
+		assertEquals(0, batchUploads.size()); // 배치 제출은 시도되지 않는다
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+		// 온라인 경로이므로 썸네일 게이트가 살아있어 생존 썸네일이 실제로 첨부된다(회귀 방지)
+		assertEquals(List.of("https://img/b.jpg", "https://img/a.jpg"), thumbnailArgs);
 	}
 
 	@Test

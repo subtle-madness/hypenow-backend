@@ -48,12 +48,22 @@ JSONL 라인 조립(requestLine/sidecarLine)은 `GeminiBatchLines`로 추출해 
 공유한다. 배치 제출도 백필과 동일하게 **캡션 단독**(썸네일 미첨부) — 익일 수거 시점엔 서명
 URL이 대부분 만료돼 있어 애초에 시도하지 않는다.
 
+댓글 분류 분포(`ai_category`별 건수)는 온라인 경로(`analyzeOne`)와 동일하게 shortCode별로 조회해
+JSONL 요청에 싣는다 — 후보 게이트가 댓글 분류 완료를 보장하므로 여기 도달한 대상은 빈 분포가
+나올 수 없는 구조다. `GeminiBackfillRunner`(일회성 초기 백필)는 이 분포를 조회하지 않는 기존
+계약을 그대로 유지한다(`GeminiBatchLines.requestLine`에 명시적으로 빈 맵을 넘긴다).
+
 제출 성공 시 `content_batch_jobs`에 pending 행 기록. 후보 0건이면 제출 생략.
 
 **배치 미지원 프로바이더 폴백**: `GeminiApi` 빈이 `GeminiBatchApi`를 구현하지 않으면(무료 gemini
 폴백 상태 등) 배치 제출이 불가능하다 — 이 경우 경고 로그만 남기고 온라인 경로로 내려가 잡이
 죽지 않는다(`JobConfig.batchApiOrNull()`). provider=anthropic(롤백 경로)이면 GeminiApi 빈 자체를
 건드리지 않아 GEMINI_API_KEY 부재로 인한 불필요한 예외를 막는다.
+
+**VLM 게이트 제약**: 배치 JSONL은 캡션 전용이라 `vlm-enabled=true`(썸네일 첨부 게이트)와 양립하지
+않는다 — transport=batch인데 vlm-enabled=true면 경고 로그를 남기고 온라인 경로로 폴백해 멀티모달
+분석을 보존한다(운영은 현재 vlm-enabled=false라 당장은 무해하지만, 나중에 켜져도 배치가 조용히
+이미지 없이 분석하는 일이 없도록 하는 안전장치).
 
 **제출 전 pending 수거**: 제출 경로 시작 시 pending 잔여가 있으면 먼저 수거를 시도한다(전날
 미수거분 회수 — 이미 분석됨 diff + `content_analyses` INSERT의 `ON CONFLICT DO NOTHING`이

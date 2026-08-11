@@ -41,14 +41,21 @@ final class GeminiBatchLines {
 	private GeminiBatchLines() {
 	}
 
-	/** JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(camelCase — proto JSON은
-	 *  양쪽 표기를 다 받지만 AI Studio·Vertex 공용으로 통일). */
-	static ObjectNode requestLine(ObjectMapper om, String shortCode, Map<String, Object> r, String system) {
+	/**
+	 * JSONL 요청 라인 — key=short_code, request=GenerateContentRequest(camelCase — proto JSON은
+	 * 양쪽 표기를 다 받지만 AI Studio·Vertex 공용으로 통일).
+	 *
+	 * @param commentCategoryCounts 댓글 분류 분포(ai_category → 건수) — GeminiContentAnalyzer의
+	 *        시스템 프롬프트(aiCommentInsight 근거)·유저 텍스트가 요구하는 실입력이다. 호출자가
+	 *        직접 넘긴다(2026-08-11 리뷰 반영 — 이전엔 이 메서드 내부에서 Map.of()로 항상 비웠다).
+	 */
+	static ObjectNode requestLine(ObjectMapper om, String shortCode, Map<String, Object> r,
+			Map<String, Long> commentCategoryCounts, String system) {
 		Map<String, Object> baseline = PromptBaseline.ofRow(r);
 		ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 				(String) r.get("caption"), (String) r.get("content_type"),
 				numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
-				baseline, Map.of(), (Boolean) r.get("ad_marked"));
+				baseline, commentCategoryCounts, (Boolean) r.get("ad_marked"));
 		ObjectNode line = om.createObjectNode();
 		line.put("key", shortCode);
 		ObjectNode request = line.putObject("request");

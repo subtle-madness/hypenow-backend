@@ -136,12 +136,20 @@ public class ContentAnalysisJob {
 		List<String> targets = resolveTargets(timely);
 
 		if (settings.batchTransportEnabled()) {
-			if (batchApi != null) {
+			if (thumbnailEnabled) {
+				// 배치 JSONL은 캡션 전용(백필과 동일 — 익일 수거 시점엔 서명 URL이 대부분 만료돼
+				// 애초에 첨부하지 않는다). vlm-enabled=true(썸네일 첨부 게이트 on)인데 배치로
+				// 내려가면 조용히 이미지 없이 분석돼 온라인과 산출물이 갈린다 — 잡을 죽이지 않고
+				// 온라인으로 폴백해 멀티모달 분석을 보존한다(2026-08-11 리뷰 반영).
+				log.warn("analytics.analyze-transport=batch인데 vlm-enabled=true — 배치는 캡션 전용이라"
+						+ " 온라인 경로로 폴백(썸네일 첨부 보존)");
+			} else if (batchApi != null) {
 				return submitBatch(timely, targets, baselines);
+			} else {
+				// provider가 배치 미지원(무료 gemini 폴백 등)이면 잡을 죽이지 않고 온라인으로 내려간다
+				// (LlmConfig.geminiApi()의 vertex→gemini 폴백과 같은 안전망 원칙).
+				log.warn("analytics.analyze-transport=batch인데 GeminiApi가 배치 미지원 — 온라인 경로로 폴백");
 			}
-			// provider가 배치 미지원(무료 gemini 폴백 등)이면 잡을 죽이지 않고 온라인으로 내려간다
-			// (LlmConfig.geminiApi()의 vertex→gemini 폴백과 같은 안전망 원칙).
-			log.warn("analytics.analyze-transport=batch인데 GeminiApi가 배치 미지원 — 온라인 경로로 폴백");
 		}
 		return runOnline(timely, targets, baselines, progress);
 	}
@@ -214,6 +222,17 @@ public class ContentAnalysisJob {
 				Baseline accountAvg = baselines.accountBaseline().get((String) content.get("account_handle"));
 				b = accountAvg != null ? accountAvg : EMPTY_BASELINE;
 			}
+			// 댓글 분류 분포 — 온라인 경로(analyzeOne)와 동일 쿼리. 후보 게이트(resolveTargets의
+			// commentBlocked 제외)가 "댓글 없음 OR 분류 완료"를 이미 보장하므로 여기 도달한 대상은
+			// 빈 분포가 나올 수 없는 구조다(2026-08-11 리뷰 반영 — 이전엔 배치 JSONL이 분포를
+			// 항상 비워 보내 프롬프트의 aiCommentInsight 근거가 온라인과 갈렸다).
+			Map<String, Long> categoryCounts = new LinkedHashMap<>();
+			analysis.query("""
+					SELECT ai_category, count(*) AS cnt FROM comment_classifications
+					WHERE short_code = ? GROUP BY ai_category""",
+					rs -> {
+						categoryCounts.put(rs.getString(1), rs.getLong(2));
+					}, shortCode);
 			// 배치 요청 행 — GeminiBatchLines.requestLine/sidecarLine 둘 다 이 한 맵에서 필요한 키를 뽑는다
 			// (백필 러너의 raw 뷰 조인 행과 같은 키 이름 계약). 캡션 단독(백필과 동일 — 썸네일 서명 URL은
 			// 익일 수거 시점엔 대부분 만료라 애초에 첨부하지 않는다).
@@ -229,7 +248,8 @@ public class ContentAnalysisJob {
 			row.put("category_avg_views", b.categoryAvgViews());
 			row.put("category_sample_size", b.categorySampleSize());
 			row.put("timely", timely);
-			jsonl.append(json.writeValueAsString(GeminiBatchLines.requestLine(json, shortCode, row, system)))
+			jsonl.append(json.writeValueAsString(
+							GeminiBatchLines.requestLine(json, shortCode, row, categoryCounts, system)))
 					.append('\n');
 			sidecar.append(json.writeValueAsString(GeminiBatchLines.sidecarLine(json, shortCode, row)))
 					.append('\n');

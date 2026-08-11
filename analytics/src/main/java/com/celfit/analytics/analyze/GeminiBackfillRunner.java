@@ -80,7 +80,12 @@ public class GeminiBackfillRunner {
 			if (analyzed.contains(shortCode)) {
 				continue;
 			}
-			jsonl.append(om.writeValueAsString(GeminiBatchLines.requestLine(om, shortCode, r, system))).append('\n');
+			// 백필은 댓글 분류 분포를 조회하지 않는다(기존 계약 유지 — 일회성 초기 백필 시점엔
+			// comment_classifications가 아직 채워지지 않은 콘텐츠가 대부분이라 애초에 실효가 낮았다).
+			// 상시 배치 제출 경로(ContentAnalysisJob)는 후보 게이트가 댓글 분류 완료를 보장하므로
+			// 실분포를 싣는다 — 이 메서드는 명시적으로 빈 분포를 넘긴다(2026-08-11 리뷰 반영).
+			jsonl.append(om.writeValueAsString(
+					GeminiBatchLines.requestLine(om, shortCode, r, Map.of(), system))).append('\n');
 			sidecar.append(om.writeValueAsString(GeminiBatchLines.sidecarLine(om, shortCode, r))).append('\n');
 			count++;
 		}
