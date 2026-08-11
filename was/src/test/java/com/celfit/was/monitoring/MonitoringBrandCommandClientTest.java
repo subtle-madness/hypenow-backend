@@ -160,13 +160,23 @@ class MonitoringBrandCommandClientTest {
 		assertThat(client.getHashtagExclusions("brand_official")).isEmpty();
 	}
 
+	/**
+	 * 08-11 정정 — monitoring이 빈 바디 404를 주던 구 계약에서는 MonitoringUnavailableException(503
+	 * 오승격)으로 잘못 매핑됐다. 지금은 {code, message} 에러 바디가 채워져 있어 MonitoringApiException으로
+	 * 정확히 승격되고, 호출부 V1ExceptionAdvice 공용 매핑이 그대로 404를 유지한다.
+	 */
 	@Test
-	void 제외_문자열_조회_404는_승격된다() {
+	void 제외_문자열_조회_404는_MonitoringApiException으로_승격된다() {
 		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-exclusions"))
-				.andRespond(withStatus(HttpStatus.NOT_FOUND));
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"BRAND_NOT_FOUND\", \"message\": \"브랜드를 찾을 수 없습니다.\" }"));
 
 		assertThatThrownBy(() -> client.getHashtagExclusions("gone_brand"))
-				.isInstanceOf(MonitoringUnavailableException.class);
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("BRAND_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
 	}
 
 	@Test
@@ -183,11 +193,16 @@ class MonitoringBrandCommandClientTest {
 	}
 
 	@Test
-	void 제외_문자열_교체_404는_승격된다() {
+	void 제외_문자열_교체_404는_MonitoringApiException으로_승격된다() {
 		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-exclusions"))
-				.andRespond(withStatus(HttpStatus.NOT_FOUND));
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"BRAND_NOT_FOUND\", \"message\": \"브랜드를 찾을 수 없습니다.\" }"));
 
 		assertThatThrownBy(() -> client.putHashtagExclusions("gone_brand", java.util.List.of("리즈다")))
-				.isInstanceOf(MonitoringUnavailableException.class);
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("BRAND_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
 	}
 }

@@ -616,15 +616,15 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void monitoring_404가_에러_바디를_주면_제외_문자열_조회는_404로_매핑된다() throws Exception {
+	void monitoring_브랜드_비정합_404는_제외_문자열_조회에서_404로_매핑된다() throws Exception {
 		// was 링크·brand_account는 정합이지만 monitoring이 그 브랜드를 모르는 비정합 경로 —
-		// exchange가 MonitoringApiException(404)으로 승격하면 V1ExceptionAdvice 공용 매핑이 404로 접는다
-		// (500으로 터지지 않는지가 이 테스트의 핵심). {code,message} 에러 바디가 있는 경우 한정
-		// (register 계열 404가 이 셰이프) — 아래 실측 케이스와 대비할 것.
+		// BrandController가 {code:"BRAND_NOT_FOUND", message} 에러 바디를 채워 주므로(08-11 정정,
+		// 이전엔 빈 바디라 503으로 오승격됐다 — MonitoringBrandCommandClientTest 실측) exchange가
+		// MonitoringApiException(404)으로 승격하고 V1ExceptionAdvice 공용 매핑이 그대로 404로 접는다.
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(commandClient.getHashtagExclusions("lizda_official"))
-				.willThrow(new MonitoringApiException("NOT_FOUND", "브랜드를 찾을 수 없습니다.", 404));
+				.willThrow(new MonitoringApiException("BRAND_NOT_FOUND", "브랜드를 찾을 수 없습니다.", 404));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
 				.andExpect(status().isNotFound())
@@ -632,20 +632,18 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void monitoring_불능은_제외_문자열_조회에서_503이다() throws Exception {
-		// 실측(MonitoringBrandCommandClientTest): BrandController의 hashtag-exclusions 404는
-		// deregister와 같은 빈 바디(ResponseEntity.notFound().build())라 exchange()가
-		// MonitoringApiException이 아니라 MonitoringUnavailableException으로 승격한다 — 그 결과
-		// V1ExceptionAdvice가 404가 아니라 503 SERVICE_UNAVAILABLE로 매핑한다(500은 아니라 계약상
-		// 무해하지만, 위 테스트가 가정한 4xx는 아니다 — 셀프 리뷰 보고 참조).
+	void monitoring_접속_불능은_제외_문자열_조회에서_503이다() throws Exception {
+		// 에러 바디 유무와 무관한 진짜 전송 실패(타임아웃·연결 거부 등) 경로 — 다른 monitoring
+		// 엔드포인트 4곳과 같은 503+Retry-After 계약이 유지되는지 확인.
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(commandClient.getHashtagExclusions("lizda_official"))
-				.willThrow(new MonitoringUnavailableException("monitoring 응답 해석 불가 HTTP 404", null));
+				.willThrow(new MonitoringUnavailableException("monitoring 접속 실패: read timeout", null));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
 				.andExpect(status().isServiceUnavailable())
-				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"));
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(header().string("Retry-After", "5"));
 	}
 
 	@Test

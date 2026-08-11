@@ -66,26 +66,39 @@ public class BrandController {
 	}
 
 	@GetMapping("/{username}/hashtag-exclusions")
-	public ResponseEntity<HashtagExclusionsBody> exclusions(@PathVariable String username) {
-		return activeBrand(username)
-				.map(row -> ResponseEntity.ok(new HashtagExclusionsBody(hashtags.findExclusionTerms(row.id()))))
-				.orElseGet(() -> ResponseEntity.notFound().build());
+	public ResponseEntity<?> exclusions(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		return ResponseEntity.ok(new HashtagExclusionsBody(hashtags.findExclusionTerms(row.get().id())));
 	}
 
 	/** 전체 교체(PUT 계약) — 정규화 후 저장, 브랜드 미존재·비ACTIVE는 404. */
 	@PutMapping("/{username}/hashtag-exclusions")
-	public ResponseEntity<Void> replaceExclusions(@PathVariable String username,
+	public ResponseEntity<?> replaceExclusions(@PathVariable String username,
 			@RequestBody HashtagExclusionsBody body) {
-		return activeBrand(username)
-				.map(row -> {
-					hashtags.replaceExclusionTerms(row.id(), normalize(body.terms()));
-					return ResponseEntity.noContent().<Void>build();
-				})
-				.orElseGet(() -> ResponseEntity.notFound().build());
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		hashtags.replaceExclusionTerms(row.get().id(), normalize(body.terms()));
+		return ResponseEntity.noContent().build();
 	}
 
 	private Optional<BrandRow> activeBrand(String username) {
 		return brands.findByUsername(username).filter(row -> row.status() == BrandStatus.ACTIVE);
+	}
+
+	/**
+	 * 제외 문자열 GET/PUT 전용 404 — 계약 §2 어휘 {@code {code, message}}를 채운 바디다.
+	 * deregister의 빈 바디 404(멱등 삼킴을 위한 별개 계약, was가 onStatus로 흡수)와는 의도적으로 다르다 —
+	 * 여기는 was가 그대로 흘려도 되는 조회·설정 API라 에러 바디가 없으면 exchange()가 코드 없는 응답으로
+	 * 오인해 MonitoringUnavailableException(503)으로 잘못 승격한다(08-11 실측).
+	 */
+	private static ResponseEntity<ApiError> brandNotFound() {
+		return ResponseEntity.status(HttpStatus.NOT_FOUND)
+				.body(new ApiError("BRAND_NOT_FOUND", "브랜드를 찾을 수 없습니다."));
 	}
 
 	/** trim → 소문자 → blank 제거 → 중복 제거(입력 순서 보존). terms가 null이면 빈 목록. */

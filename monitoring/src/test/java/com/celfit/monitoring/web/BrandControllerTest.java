@@ -218,20 +218,31 @@ class BrandControllerTest {
 	}
 
 	@Test
-	void 미등록_브랜드는_404다() throws Exception {
+	void 미등록_브랜드는_404이고_에러_바디를_준다() throws Exception {
+		// was MonitoringCommandClient.exchange()가 code 있는 바디만 MonitoringApiException으로
+		// 승격한다(빈 바디는 MonitoringUnavailableException/503으로 오승격 — 08-11 실측) — 그래서
+		// deregister의 빈 바디 404와 달리 여기는 계약 §2 어휘를 채운 바디가 필수다.
 		brands.row = null;
 
-		mvc.perform(get("/api/brands/ghost/hashtag-exclusions")).andExpect(status().isNotFound());
+		mvc.perform(get("/api/brands/ghost/hashtag-exclusions"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 		mvc.perform(put("/api/brands/ghost/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[]}")).andExpect(status().isNotFound());
+						.content("{\"terms\":[]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
 
 	@Test
-	void 탈퇴한_브랜드도_404다() throws Exception {
+	void 탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null);
 
-		mvc.perform(get("/api/brands/brandx/hashtag-exclusions")).andExpect(status().isNotFound());
+		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[]}")).andExpect(status().isNotFound());
+						.content("{\"terms\":[]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
 }

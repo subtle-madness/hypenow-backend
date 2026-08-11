@@ -80,9 +80,10 @@ public class MonitoringCommandClient {
 
 	/**
 	 * 브랜드 제외 문자열 조회(BrandController §3) — 자사 태그 오탐 방지용 문자열 전체.
-	 * 브랜드 미등록·비ACTIVE는 404인데, deregisterBrand와 같은 빈 바디({@code ResponseEntity.notFound()})라
-	 * {@code code}가 없어 exchange()가 MonitoringApiException이 아니라 MonitoringUnavailableException으로
-	 * 승격한다 — 호출부(V1ExceptionAdvice)에서는 404가 아니라 503으로 매핑된다(500은 아니다).
+	 * 브랜드 미등록·비ACTIVE는 404 — deregisterBrand의 빈 바디 404(멱등 삼킴 전용 별개 계약)와 달리
+	 * 이 경로는 {code:"BRAND_NOT_FOUND", message} 에러 바디가 채워져 있어(08-11 정정 — 원래는 빈 바디라
+	 * MonitoringUnavailableException/503으로 오승격됐다) exchange()가 MonitoringApiException으로
+	 * 정확히 승격하고, 호출부(V1ExceptionAdvice 공용 매핑)가 그대로 404로 내려보낸다.
 	 */
 	public List<String> getHashtagExclusions(String username) {
 		HashtagExclusionsBody body = exchange(() -> restClient.get()
