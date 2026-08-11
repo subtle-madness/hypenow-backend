@@ -52,13 +52,14 @@ public class AdminConfig {
 			MirrorJob mirrorJob, MirrorRegistry mirrorRegistry,
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
+			ObjectProvider<com.celfit.analytics.analyze.ContentBatchCollectJob> batchCollectJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
 			JobProgressRegistry jobProgressRegistry, RunHistory runHistory) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
-				classifyJob, analyzeJob, accountAnalyzeJob, synthesisRefreshJob, archiveJob,
+				classifyJob, analyzeJob, batchCollectJob, accountAnalyzeJob, synthesisRefreshJob, archiveJob,
 				traitCanonJob, jobProgressRegistry, runHistory);
 	}
 
