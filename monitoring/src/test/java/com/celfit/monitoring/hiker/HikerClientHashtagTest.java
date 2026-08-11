@@ -2,6 +2,9 @@ package com.celfit.monitoring.hiker;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -15,6 +18,15 @@ class HikerClientHashtagTest {
 			calls.add(path);
 			return body;
 		});
+	}
+
+	/** HikerClientTest와 동일 관용구 — /hiker/ 클래스패스 리소스를 문자열로 읽는다. */
+	private static String fixture(String name) {
+		try (var in = HikerClientHashtagTest.class.getResourceAsStream("/hiker/" + name)) {
+			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
 	}
 
 	private static String sectionsBody(String nextPageId, String... medias) {
@@ -86,14 +98,39 @@ class HikerClientHashtagTest {
 		assertThat(page.posts().get(0).taggedUsernames()).containsExactly("cclime_official");
 	}
 
+	/**
+	 * 실측 원본(PoC 2026-08-11, 06-recent-끌리메-p1.json) 앞 2섹션(6건)을 축약 체크인한 fixture.
+	 * 봉투(sections/layout_content/medias/media, top-level next_page_id, response.more_available)는
+	 * 원형 유지 — 실셰이프 회귀를 이 리소스 하나로 계속 잡는다.
+	 */
 	@Test
-	void 실측_원본_셰이프를_파싱한다() throws Exception {
-		java.nio.file.Path p = java.nio.file.Path.of(
-				"/private/tmp/claude-501/-Users-woomin-Project-hypenow-backend/e5953728-c84c-4279-a4d8-0e0cd62f60ec/scratchpad/poc-clime/06-recent-끌리메-p1.json");
-		org.junit.jupiter.api.Assumptions.assumeTrue(java.nio.file.Files.exists(p));   // CI엔 없음 — 로컬 전용 스모크
-		HikerClient.HashtagPage page = client(java.nio.file.Files.readString(p))
+	void 실측_원본_셰이프_축약본을_파싱한다() {
+		HikerClient.HashtagPage page = client(fixture("hashtag-recent.json"))
 				.fetchHashtagRecentPage("끌리메", null);
-		assertThat(page.posts()).hasSizeGreaterThan(20);   // 실측 27건
-		assertThat(page.posts().stream().filter(hp -> !hp.taggedUsernames().isEmpty())).isNotEmpty();
+
+		assertThat(page.posts()).extracting(hp -> hp.post().shortCode())
+				.containsExactly("DbcVklphE-A", "DaxFOSOBuIF", "DbK-DgqAVoH",
+						"DbpZ83xEemI", "DbPQm7lCRiM", "Da7A5u1hfGM");
+		assertThat(page.posts().get(0).taggedUsernames()).isEmpty();
+		assertThat(page.posts().get(1).taggedUsernames()).isEmpty();
+		assertThat(page.posts().get(2).taggedUsernames()).containsExactly("cclime_rara");
+		assertThat(page.posts().get(3).taggedUsernames()).containsExactly("cclime_official", "cclime_rara");
+		assertThat(page.posts().get(4).taggedUsernames()).containsExactly("cclime_rara");
+		assertThat(page.posts().get(5).taggedUsernames()).isEmpty();
+		assertThat(page.nextPageId()).isEqualTo(
+				"WyJRVkZEZFZsMmJVZG1RbUZFY2pseFNWUlVPRFpLUXpSRGFtOVdZMWRLYUhwM1pIQXhSRFpwUm5adk5EVmZZVlI1ZVRSc"
+						+ "2FGTlRUelpOUzFOWVRXMDFUWE14YldsaWRXRmxaR2QwU1ZOaU1sVXpRMFl6Ykc5aFJnPT0iLFtdLDFd");
+	}
+
+	@Test
+	void items_평탄_셰이프_폴백에서도_파싱한다() {
+		String body = "{\"response\":{\"items\":[" + media("CCC", 1786000002L, "poster3", "cclime_official")
+				+ "],\"more_available\":false}}";
+
+		HikerClient.HashtagPage page = client(body).fetchHashtagRecentPage("cclime", null);
+
+		assertThat(page.posts()).hasSize(1);
+		assertThat(page.posts().get(0).post().shortCode()).isEqualTo("CCC");
+		assertThat(page.posts().get(0).taggedUsernames()).containsExactly("cclime_official");
 	}
 }

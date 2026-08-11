@@ -462,6 +462,8 @@ public class HikerClient {
 	/**
 	 * 해시태그 recent 응답의 medias 노드 — sections→layout_content→medias→media 중첩을 걷는다.
 	 * 섹션에 medias가 하나도 없으면(미실측 셰이프 방어) 평탄 items 셰이프로 폴백한다.
+	 * {@link #items(JsonNode)}를 재사용하지 않는다 — 그쪽은 response 바로 아래 items/medias 배열
+	 * 1단만 언랩하고, 여기는 sections→layout_content를 두 겹 더 내려가야 media 노드에 닿는다.
 	 */
 	private static List<JsonNode> hashtagItems(JsonNode root) {
 		JsonNode res = root.has("response") ? root.path("response") : root;
@@ -482,16 +484,20 @@ public class HikerClient {
 		return out;
 	}
 
-	/** 사진 태그된(usertags) 계정 목록 — 소문자 정규화(직접태그 제외 판정 재료). */
+	/**
+	 * 사진 태그된(usertags) 계정 목록 — 소문자 정규화(직접태그 제외 판정 재료).
+	 * 같은 계정이 여러 태그 위치에 찍힐 수 있어(캐러셀 등) LinkedHashSet으로 중복을 접되
+	 * 응답 순서는 유지한다.
+	 */
 	private static List<String> taggedUsernames(JsonNode media) {
-		List<String> out = new ArrayList<>();
+		java.util.Set<String> out = new java.util.LinkedHashSet<>();
 		for (JsonNode in : media.path("usertags").path("in")) {
 			String username = in.path("user").path("username").asString(null);
 			if (username != null && !username.isBlank()) {
 				out.add(username.toLowerCase(java.util.Locale.ROOT));
 			}
 		}
-		return out;
+		return new ArrayList<>(out);
 	}
 
 	private static PostInfo toPost(JsonNode node, String usernameHint, String rawJson,
