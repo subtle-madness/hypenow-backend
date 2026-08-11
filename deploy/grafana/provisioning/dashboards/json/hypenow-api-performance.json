@@ -4,6 +4,7 @@
   "schemaVersion": 39,
   "editable": false,
   "refresh": "5m",
+  "timezone": "Asia/Seoul",
   "time": { "from": "now-6h", "to": "now" },
   "panels": [
     {
@@ -61,7 +62,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[5m])) / sum(rate(http_server_requests_seconds_count[5m]))",
+          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}[5m])) / sum(rate(http_server_requests_seconds_count{uri!~\"UNKNOWN|root|/actuator.*\"}[5m]))",
           "legendFormat": "5xx 비율"
         }
       ]
@@ -71,13 +72,13 @@
       "type": "table",
       "title": "누적 실행시간 상위 SQL (pg_stat_statements, 시간필터 없음 — 누적치)",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 17 },
-      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
       "targets": [
         {
           "refId": "A",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT left(regexp_replace(query, '\\s+', ' ', 'g'), 160) AS query, calls, round(total_exec_time::numeric, 0) AS total_ms, round(mean_exec_time::numeric, 1) AS mean_ms, rows FROM pg_stat_statements WHERE query NOT ILIKE '%pg_stat_statements%' ORDER BY total_exec_time DESC LIMIT 20"
+          "rawSql": "SELECT left(regexp_replace(query, '\\s+', ' ', 'g'), 160) AS query, calls, round(total_exec_time::numeric, 0) AS total_ms, round(mean_exec_time::numeric, 1) AS mean_ms, rows FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND query NOT ILIKE '%pg_stat_statements%' ORDER BY total_exec_time DESC LIMIT 20"
         }
       ]
     }
