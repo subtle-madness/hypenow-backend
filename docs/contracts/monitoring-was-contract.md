@@ -558,7 +558,7 @@ was는 아래 두 표면으로만 결과를 받는다.
 | 댓글(`recentComments`/`commentsCollectedCount`) | 있음 | **항상 빈 배열/0** — `commentsTotal`만 열거 관측값(`comments`)을 그대로 싣는다(스냅샷 기반 tagged·direct의 `commentsTotal`과 산지가 다름) |
 | 팔로워(`authorFollowers`) | 보강으로 채워짐 | **항상 null** — 프로필 보강 없음 |
 | `id` | shortcode 그대로 | **`"bh_"+shortcode`**(합성 id — was가 발급한 숫자 id가 없다). `shortcode` 필드 자체는 순수 shortcode 유지 |
-| `sponsorship`/`isPaidPartnership` | tagged는 유료협찬 관측(`is_paid_partnership`) + 캡션 키워드 병행 | **캡션 키워드만**(`BrandSponsorshipClassifier.classify(null, caption)`) — 열거 응답에 유료협찬 플래그 자체가 없다. `isPaidPartnership`은 **항상 null** |
+| `sponsorship`/`isPaidPartnership` | tagged는 유료협찬 관측(`is_paid_partnership`) + 캡션 키워드 병행 | **캡션 키워드만**(`BrandSponsorshipClassifier.classify(null, caption)`) — 열거 응답에 유료협찬 플래그가 실리지만 **현재 미적재**(후속 확장 여지, `brand_hashtag_post`에 컬럼 없음). `isPaidPartnership`은 **항상 null** |
 | `campaignIds` | direct는 연결 가능 | **항상 빈 배열** — 해시태그 발견 게시물은 캠페인에 연결되지 않는다 |
 | 같은 shortcode 충돌 | — | **tagged·direct가 우선**(`BrandPostAssembler.mergeHashtag` — 기존 산지 유지, hashtag는 신규 shortcode만 추가). 협찬 승격도 없음(해시태그 관측엔 승격할 신호가 없음) |
 
@@ -573,18 +573,26 @@ was는 아래 두 표면으로만 결과를 받는다.
 잡을 때) 관리 API. was가 monitoring 내부 API(`GET/PUT /api/brands/{username}/hashtag-exclusions`)를
 그대로 프록시한다 — 정규화(trim·소문자·중복 제거)는 monitoring이 한다.
 
+**⚠️ 편집은 이후 발견분에만 적용된다(비소급)** — 이미 판정·저장된 게시물의 verdict는 불변이다.
+term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 않고, term을 추가해도 이미 노출 중인
+게시물이 사라지지 않는다. FE 문구에 반드시 반영할 것. 같은 이유로 **빈 목록 교체는 422로
+거부**된다(전부 지우면 자사 게시물 — 스트림의 71~87% — 이 관련 판정으로 유입된 뒤 복구 불가).
+
 ```json
 // GET 200
 { "terms": ["일반단어1", "일반단어2"] }
 
-// PUT 요청 (전체 교체 — terms 생략·null은 빈 목록으로 접어 전달)
+// PUT 요청 (전체 교체)
 { "terms": ["일반단어1"] }
 // PUT 204
+
+// PUT 422 — 정규화 결과가 빈 목록(terms 생략·null·빈 배열·전부 blank)
 ```
 
 | 상황 | HTTP | 비고 |
 |---|---|---|
 | 정상 | GET 200 / PUT 204 | |
+| PUT 정규화 결과 빈 목록 | 422 | 비소급 오염 방지 하한 가드(monitoring `ValidationException`) |
 | 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership` — 유저의 활성 브랜드 연결에 없으면) |
 | `accountId`가 유효한 브랜드가 아님(브랜드 비정합) | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND`(브랜드 미등록·비ACTIVE) 둘 다 404로 수렴 |
 | monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 monitoring 연동 엔드포인트와 공통 매핑, `V1ExceptionAdvice`) |
