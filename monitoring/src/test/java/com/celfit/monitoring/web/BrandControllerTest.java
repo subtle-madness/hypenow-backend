@@ -1,5 +1,6 @@
 package com.celfit.monitoring.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -26,13 +27,15 @@ class BrandControllerTest {
 		Result result;
 		DeregisterOutcome outcome;
 		RuntimeException toThrow;
+		String receivedBrandName;
 
 		StubService() {
-			super(null, null, null, Runnable::run, Runnable::run);
+			super(null, null, null, null, null, Runnable::run, Runnable::run);
 		}
 
 		@Override
-		public Result register(String username) {
+		public Result register(String username, String brandName) {
+			receivedBrandName = brandName;
 			if (toThrow != null) {
 				throw toThrow;
 			}
@@ -66,6 +69,28 @@ class BrandControllerTest {
 				.andExpect(jsonPath("$.username").value("brandx"))
 				.andExpect(jsonPath("$.followers").value(1234))
 				.andExpect(jsonPath("$.status").value("ACTIVE"));
+	}
+
+	@Test
+	void brandName을_함께_전달한다() throws Exception {
+		service.result = new BrandRegistrationService.Result(1L, "brandx", 1234L, false);
+
+		mvc.perform(post("/api/brands").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"brandx\",\"brandName\":\"끌리메\"}"))
+				.andExpect(status().isCreated());
+
+		assertThat(service.receivedBrandName).isEqualTo("끌리메");
+	}
+
+	@Test
+	void brandName_없는_기존_요청도_하위_호환으로_동작한다() throws Exception {
+		service.result = new BrandRegistrationService.Result(1L, "brandx", 1234L, false);
+
+		mvc.perform(post("/api/brands").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"brandx\"}"))
+				.andExpect(status().isCreated());
+
+		assertThat(service.receivedBrandName).isNull();
 	}
 
 	@Test

@@ -19,7 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/brands")
 public class BrandController {
 
-	public record BrandRegisterRequest(String username) {}
+	/** brandName은 하위 호환용 nullable — 기존 요청 바디(필드 없음)는 null로 들어와 계정명 유도 2종 태그만 시드된다. */
+	public record BrandRegisterRequest(String username, String brandName) {}
 
 	public record BrandRegisterResponse(long brandId, String username, Long followers, String status) {}
 
@@ -31,7 +32,7 @@ public class BrandController {
 
 	@PostMapping
 	public ResponseEntity<BrandRegisterResponse> register(@RequestBody BrandRegisterRequest req) {
-		BrandRegistrationService.Result result = service.register(req.username());
+		BrandRegistrationService.Result result = service.register(req.username(), req.brandName());
 		return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED)
 				.body(new BrandRegisterResponse(result.brandId(), result.username(),
 						result.followers(), "ACTIVE"));
