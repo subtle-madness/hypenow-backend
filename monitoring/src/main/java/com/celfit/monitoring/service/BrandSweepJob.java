@@ -1,6 +1,7 @@
 package com.celfit.monitoring.service;
 
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
+import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
@@ -29,25 +30,28 @@ public class BrandSweepJob {
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
 	private final AuthorProfileImageArchiveJob authorImageArchive;
+	private final BrandProfileImageArchiveJob brandImageArchive;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
-			AuthorProfileImageArchiveJob authorImageArchive) {
+			AuthorProfileImageArchiveJob authorImageArchive, BrandProfileImageArchiveJob brandImageArchive) {
 		this.brands = brands;
 		this.collect = collect;
 		this.authorImageArchive = authorImageArchive;
+		this.brandImageArchive = brandImageArchive;
 	}
 
 	/**
-	 * 게시자 프로필 이미지 아카이브({@link AuthorProfileImageArchiveJob})는 finally 안에서 마지막
-	 * 단계로 돈다(캠페인 {@code DailySweepJob}과 동형) — 별도 크론이 아니라 스윕이 갓 재조회한
-	 * 신선한 URL을 바로 잡기 위함이다. 아카이브 실패는 격리 래퍼가 전부 삼켜 스윕 결과에
-	 * 영향을 주지 않는다.
+	 * 이미지 아카이브 두 잡(게시자 {@link AuthorProfileImageArchiveJob}·브랜드 본인 {@link
+	 * BrandProfileImageArchiveJob})은 finally 안에서 마지막 단계로 돈다(캠페인 {@code DailySweepJob}과
+	 * 동형) — 별도 크론이 아니라 스윕이 갓 재조회한 신선한 URL을 바로 잡기 위함이다. 아카이브
+	 * 실패는 잡별 격리 래퍼가 전부 삼켜 스윕 결과에도, 서로에게도 영향을 주지 않는다.
 	 */
 	public void run() {
 		try {
 			runSweep();
 		} finally {
-			runAuthorImageArchiveSafely();
+			runArchiveSafely("게시자 프로필 이미지", authorImageArchive::run);
+			runArchiveSafely("브랜드 프로필 이미지", brandImageArchive::run);
 		}
 	}
 
@@ -68,11 +72,11 @@ public class BrandSweepJob {
 	}
 
 	/** 건 단위가 아니라 잡 전체를 격리한다 — 스윕 결과와 무관한 부수 작업이라 예외를 밖으로 내지 않는다. */
-	private void runAuthorImageArchiveSafely() {
+	private void runArchiveSafely(String name, Runnable archive) {
 		try {
-			authorImageArchive.run();
+			archive.run();
 		} catch (RuntimeException e) {
-			log.warn("게시자 프로필 이미지 아카이브 잡 실행 실패(격리) — 스윕 결과에는 영향 없음: {}", e.toString());
+			log.warn("{} 아카이브 잡 실행 실패(격리) — 스윕 결과에는 영향 없음: {}", name, e.toString());
 		}
 	}
 }
