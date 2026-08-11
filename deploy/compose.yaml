@@ -320,6 +320,24 @@ services:
       timeout: 5s
       retries: 3
 
+  # API 지표 저장(스펙 2026-08-10) — was:9081 스크레이프, 보관 30일 + 디스크 1GB 상한(이중 봉인).
+  # 호스트 포트 미노출 — 조회는 Grafana 데이터소스로만. 관측 도구는 oom_score_adj +500(먼저 희생).
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 256m
+    oom_score_adj: 500
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=1GB"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
   # 서비스 현황 대시보드(app 스키마 읽기 전용) — 호스트 포트 미노출, Caddy가 grafana:3000으로 프록시.
   # CPU 2코어 제약 고려: 익명접속·회원가입·원격 리포팅/업데이트체크류 전부 끔, mem_limit 512m로 상한.
   # 대시보드 자동 새로고침은 패널 JSON(provisioning/dashboards/json)에서 5분으로 고정 — 1분 미만 금지.
@@ -390,3 +408,4 @@ volumes:
   caddy-data:
   caddy-config:
   grafana-data:
+  prometheus-data:
