@@ -18,6 +18,11 @@ server:
       cookie:
         secure: true
         same-site: lax    # 스펙 확정(2026-07-17) — www↔api는 hypenow.io 하위 same-site라 Lax로 충분, CSRF 방어 이중화
+# 액추에이터는 관리 포트로 분리 — prod 도커 네트워크 내부(prometheus 스크레이프) 전용.
+# Caddy가 8081만 프록시하므로 9081은 외부에서 도달 불가.
+management:
+  server:
+    port: 9081
 # Swagger는 운영에도 노출(07-19 결정, 07-17 미노출 결정 대체) — 접근은 admin 게이트(SecurityConfig 스웨거 체인)가 통제
 was:
   cors:

@@ -175,7 +175,7 @@ class HikerClientTest {
 			return alwaysMoreCommentPage(calls.size());
 		});
 		// 1페이지의 댓글 id(c1)가 이미 기지 — 3페이지 허용이어도 1콜에서 멈춰야 한다.
-		var comments = client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of("c1"));
+		var comments = client.fetchComments("DbV7LgZsKG8", "brand", 3, java.util.Set.of("c1")).comments();
 		assertThat(calls).hasSize(1);
 		assertThat(comments).hasSize(1);   // 기지여도 이번 응답분은 반환(upsert가 body·like_count 갱신)
 	}
@@ -661,7 +661,7 @@ class HikerClientTest {
 	@Test
 	void 댓글_파싱_6건_owner_답글_판정() {
 		HikerClient client = new HikerClient(path -> fixture("comments.json"));
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1).comments();
 
 		assertThat(comments).hasSize(6);
 		assertThat(comments).filteredOn(c -> c.ownerReplyText() != null).hasSize(3);
@@ -689,7 +689,7 @@ class HikerClientTest {
 	@Test
 	void owner_답글_판정은_username_대소문자_무시_일치도_잡는다() {
 		HikerClient client = new HikerClient(path -> USERNAME_MATCH_COMMENTS);
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1).comments();
 
 		assertThat(comments).hasSize(1);
 		assertThat(comments.getFirst().ownerReplyText()).isEqualTo("고마워요");
@@ -709,7 +709,7 @@ class HikerClientTest {
 	@Test
 	void 결손_필드_댓글은_제외된다() {
 		HikerClient client = new HikerClient(path -> MISSING_FIELD_COMMENTS);
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1).comments();
 
 		assertThat(comments).hasSize(1);
 		assertThat(comments.getFirst().id()).isEqualTo("1");
@@ -739,7 +739,7 @@ class HikerClientTest {
 			return path.contains("page_id=") ? COMMENTS_PAGE2 : COMMENTS_PAGE1;
 		});
 
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 2);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 2).comments();
 
 		assertThat(comments).extracting(CommentInfo::id).containsExactly("101", "102");
 		assertThat(calls).hasSize(2);
@@ -772,7 +772,7 @@ class HikerClientTest {
 					],"has_more_comments":false},"next_page_id":"cmt-cursor-2"}""";
 		});
 
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3).comments();
 
 		assertThat(comments).extracting(CommentInfo::id).containsExactly("1", "2");
 		assertThat(calls).hasSize(2);   // has_more_comments=false에 속지 않고 커서를 따라 2페이지까지 갔다
@@ -792,10 +792,57 @@ class HikerClientTest {
 					],"has_more_comments":true},"next_page_id":"cmt-cursor-%d"}""".formatted(page, page, page);
 		});
 
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 2);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 2).comments();
 
 		assertThat(calls).hasSize(2);   // 3페이지째도 있다고 응답해도 요청한 2에서 멈춘다
 		assertThat(comments).hasSize(2);
+	}
+
+	// ── 댓글 부분 보존(08-10) — 첫 백필 병렬 부하에서 중간 페이지 콜이 일시 실패하면
+	// 이미 받은 페이지까지 통째로 버려졌다(운영 실측: 브랜드 17 백필, 27건 수신 후 3페이지
+	// 실패로 전량 폐기 24게시물). 중간 실패는 받은 만큼 반환하되 complete=false로 표시해
+	// 호출자(브랜드 워터마크)가 재시도 근거를 유지하게 한다.
+
+	@Test
+	void 댓글_중간_페이지_실패는_받은_페이지분을_보존하고_미완주로_표시한다() {
+		List<String> calls = new ArrayList<>();
+		HikerClient client = new HikerClient(path -> {
+			calls.add(path);
+			if (path.contains("page_id=")) {
+				throw new HikerFetchException("Hiker HTTP 500: 순간 과부하");
+			}
+			return COMMENTS_PAGE1;   // 1페이지 유효 댓글 1건 + 커서
+		});
+
+		var fetch = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3);
+
+		assertThat(fetch.comments()).extracting(CommentInfo::id).containsExactly("101");
+		assertThat(fetch.complete()).isFalse();   // 워터마크를 올리면 안 된다는 신호
+		assertThat(calls).hasSize(2);
+	}
+
+	/** 1페이지부터 실패하면 보존할 것이 없다 — 기존 의미(예외 전파, 호출자 격리 catch) 유지. */
+	@Test
+	void 댓글_첫_페이지_실패는_그대로_전파한다() {
+		HikerClient client = new HikerClient(path -> {
+			throw new HikerFetchException("Hiker HTTP 500");
+		});
+
+		org.assertj.core.api.Assertions.assertThatThrownBy(
+				() -> client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3))
+				.isInstanceOf(HikerFetchException.class);
+	}
+
+	/** 정상 완주(마지막 페이지 커서 없음)는 complete=true — 브랜드 워터마크 전진 조건. */
+	@Test
+	void 댓글_정상_완주는_complete_true다() {
+		HikerClient client = new HikerClient(path ->
+				path.contains("page_id=") ? COMMENTS_PAGE2 : COMMENTS_PAGE1);
+
+		var fetch = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3);
+
+		assertThat(fetch.comments()).hasSize(2);
+		assertThat(fetch.complete()).isTrue();
 	}
 
 	/** 무진전 가드 — 2페이지째에서 유효 댓글이 0건이면(전부 결손 필드) 남은 페이지를 더 부르지 않는다. */
@@ -814,7 +861,7 @@ class HikerClientTest {
 			return COMMENTS_PAGE1;   // has_more_comments:true, next_page_id:"cmt-cursor-2"
 		});
 
-		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 5);
+		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 5).comments();
 
 		assertThat(comments).hasSize(1);   // 1페이지 유효 댓글 1건만
 		assertThat(calls).hasSize(2);      // 2페이지째에서 신규 0건 감지, 5페이지 요청해도 중단

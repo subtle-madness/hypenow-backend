@@ -1,6 +1,5 @@
 package com.celfit.monitoring.service;
 
-import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
@@ -31,11 +30,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 브랜드 태그 수집 본체(2026-08-06 스펙 + 같은 날 개정) — 태그 열거 단일 경로
- * (/v2/user/tag/medias)로 <b>매일 전량 수집</b>한다: 브랜드마다 105개 깊이 열거(~5콜) 안에서
- * 신규 감지와 전 게시물 지표 갱신을 한 번에(감지/트래킹 구분 폐지 — 사용자 결정 08-06).
- * 등록 백필도 같은 코드다. 단건 게시물 콜은 전면 금지(스펙 §1 — 태그 열거는 릴스 조회수가
- * 인라인이고, 윈도우=열거 깊이 정합이라 창 밖 추적 자체가 없다).
+ * 브랜드 태그 수집 본체(2026-08-06 스펙 + 2026-08-09 크롤링 정책 v1) — 태그 열거 단일 경로
+ * (/v2/user/tag/medias)로 수집하되, 깊이는 게시물 나이 티어({@link BrandCrawlPolicy})가 정한다:
+ * 매일 최소 14일 깊이(신규 감지 겸용) + due 게시물이 있으면 그 taken_at까지 확장, 등록 백필은
+ * 365일 전체. 단건 게시물 콜은 전면 금지 유지(08-06 실측 — 열거 대비 추가 지표 없음).
  *
  * <p>저장은 전면 브랜드 전용 스키마(08-06 결정) — 캠페인 테이블(post_snapshot 계열)을 한 줄도
  * 건드리지 않는다(볼륨 격리 + 겹침 게시물 덮어쓰기 차단). 트랜잭션은 여기 없다(CollectService와
@@ -54,8 +52,8 @@ public class BrandCollectService {
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
 	private final Executor enrichWorker;
-	private final int windowDays;
-	private final int windowPosts;
+	private final int registrationWindowDays;
+	private final int maxPostsPerSweep;
 	private final int commentPages;
 	private final int authorStaleDays;
 
@@ -63,8 +61,8 @@ public class BrandCollectService {
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
-			@Value("${monitoring.brand.window-days:90}") int windowDays,
-			@Value("${monitoring.brand.window-posts:105}") int windowPosts,
+			@Value("${monitoring.brand.registration-window-days:365}") int registrationWindowDays,
+			@Value("${monitoring.brand.max-posts-per-sweep:2000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
 		this.hiker = hiker;
@@ -74,8 +72,8 @@ public class BrandCollectService {
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
 		this.enrichWorker = enrichWorker;
-		this.windowDays = windowDays;
-		this.windowPosts = windowPosts;
+		this.registrationWindowDays = registrationWindowDays;
+		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
 	}
@@ -91,25 +89,32 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * core 단계 — ①브랜드 프로필 1콜(매일 갱신 + 추이 적재, best-effort) ②태그 열거를 목표
-	 * 개수(windowPosts=105)까지 next_page_id 추종 ③윈도우 안 전 게시물 스냅샷·메타 적재 + 신규
-	 * 링크. 여기까지가 브랜드 화면 목록 렌더에 필요한 전부다(게시자·댓글은 폴백·스냅샷 값으로
-	 * 대체 가능 — was BrandPostAssembler) → ready(touchSwept)는 이 반환 직후 찍어도 된다.
+	 * core 단계 — ①브랜드 프로필 1콜(매일 갱신 + 추이 적재, best-effort) ②태그 열거를 오늘의
+	 * 깊이 컷({@link #enumerationCutoff})까지 next_page_id 추종 ③편입 컷(365일) 안 전 게시물
+	 * 스냅샷·메타 적재 + 신규 링크 + last_crawled_at 갱신. 여기까지가 브랜드 화면 목록 렌더에
+	 * 필요한 전부다 → ready(touchSwept)는 이 반환 직후 찍어도 된다.
 	 *
-	 * <p>열거 중단: ①누적 unique code ≥ windowPosts ②페이지 전체가 90일 컷 이전(소급 태그
-	 * 혼입 때문에 "오래된 글 1건 발견 즉시 중단" 금지 — 스펙 §5) ③커서 소진 ④커서 미전진.
-	 * 페이지당 건수(실측 21)는 IG 소관 값이라 가정하지 않는다(스펙 §6 하드코딩 금지).
+	 * <p>열거 중단: ①페이지 전체가 깊이 컷 이전(소급 태그 혼입 때문에 "오래된 글 1건 발견 즉시
+	 * 중단" 금지 — 08-06 스펙 §5) ②커서 소진 ③커서 미전진 ④안전 상한(maxPostsPerSweep) 도달 —
+	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다).
+	 * ①②는 <b>자연 종료</b>(컷까지 다 훑었다)라 커버한 깊이 전체를 touch하고, ③④는 훑다 만
+	 * 중단이라 touch하지 않는다({@link TaggedPostRepository#touchCrawledDepth} 주석 참조).
 	 *
-	 * @return 윈도우 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
+	 * @return 편입 컷 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand) {
 		refreshBrandProfileSafely(brand);
-		Instant cutoff = windowCutoff();
+		Instant now = Instant.now();
+		Instant cutoff = enumerationCutoff(brand, now);
 		Map<String, PostInfo> byCode = new LinkedHashMap<>();
 		String cursor = null;
+		boolean coveredCutoff = false;
 		while (true) {
 			HikerClient.TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
+				// 태그 0건(404 → 빈 페이지)·커서 종료는 자연 종료. 반대로 아직 커서가 살아 있는데
+				// 빈 페이지가 오는 건 일시 오류와 구분할 수 없어 커버로 치지 않는다(보수적 판정).
+				coveredCutoff = page.nextPageId() == null || byCode.isEmpty();
 				break;
 			}
 			int before = byCode.size();
@@ -118,8 +123,15 @@ public class BrandCollectService {
 			boolean wholePageBeforeCutoff = page.posts().stream()
 					.allMatch(p -> p.takenAt() != null
 							&& Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff));
-			if (byCode.size() >= windowPosts || wholePageBeforeCutoff
-					|| page.nextPageId() == null) {
+			if (wholePageBeforeCutoff || page.nextPageId() == null) {
+				coveredCutoff = true;
+				break;
+			}
+			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
+			// 자연 종료지 폭주가 아니라, 여기서 경고를 찍으면 오보가 된다.
+			if (byCode.size() >= maxPostsPerSweep) {
+				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
+						maxPostsPerSweep, brand.username());
 				break;
 			}
 			if (byCode.size() == before) {
@@ -128,11 +140,39 @@ public class BrandCollectService {
 			}
 			cursor = page.nextPageId();
 		}
-		return processCore(brand, List.copyOf(byCode.values()));
+		List<PostInfo> collected = processCore(brand, List.copyOf(byCode.values()), now);
+		if (coveredCutoff) {
+			// 열거에 더 안 실리는 링크(삭제·태그 제거·비공개 전환)까지 포함해 커버한 깊이 전체를
+			// touch — 안 하면 그 링크의 due가 영구 true로 굳어 매 스윕이 같은 깊이를 다시 연다.
+			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
+		}
+		return collected;
 	}
 
 	/**
-	 * enrichment 단계 — core가 넘긴 윈도우 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
+	 * 오늘의 열거 깊이 컷(정책 v1 스펙 §4) — 백필(last_swept_on null: 등록 직후·백필 실패
+	 * 백스톱·재가입)은 등록 윈도우(365일) 전체, 이후엔 min(14일 컷, 가장 오래된 due 게시물의
+	 * taken_at). due 판정은 {@link BrandCrawlPolicy} 순수 함수 — 깊은 열거가 얕은 티어를 자동
+	 * 포함하므로 정책의 중복 제거 규칙이 구조적으로 성립하고, 스윕이 하루 빠져도 다음 날 due
+	 * 계산이 밀린 깊이까지 자동 커버한다(자가 치유).
+	 */
+	private Instant enumerationCutoff(BrandRow brand, Instant now) {
+		if (brand.lastSweptOn() == null) {
+			return now.minus(Duration.ofDays(registrationWindowDays));
+		}
+		Instant cutoff = now.minus(BrandCrawlPolicy.DAILY_MAX_AGE);
+		for (TaggedPostRepository.TrackedPost t : taggedPosts.trackedPosts(brand.id(),
+				now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE))) {
+			if (t.takenAt().isBefore(cutoff)
+					&& BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now)) {
+				cutoff = t.takenAt();
+			}
+		}
+		return cutoff;
+	}
+
+	/**
+	 * enrichment 단계 — core가 넘긴 편입 컷 안 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
 	 * 게이트. 실패해도 core가 적재한 목록·지표는 이미 서빙 가능하고, 미수집분은 다음 스윕이
 	 * 백스톱한다(게시자는 stale 판정, 댓글은 comments_collected_count 워터마크가 남아 있어
 	 * 자동 재시도된다).
@@ -160,13 +200,13 @@ public class BrandCollectService {
 		}
 	}
 
-	/** core 열거 결과 처리 — 윈도우 필터 → 복권 지표 보정 → 스냅샷·메타 적재 → 신규 링크. */
-	private List<PostInfo> processCore(BrandRow brand, List<PostInfo> posts) {
-		Instant cutoff = windowCutoff();
-		// taken_at 미상은 보수적으로 제외(잘못된 윈도우 편입 방지) — 다음 열거에서 채워지면 잡힌다.
+	/** core 열거 결과 처리 — 편입 컷(365일) 필터 → 복권 지표 보정 → 스냅샷·메타 적재 → 신규 링크 → last_crawled_at 갱신. */
+	private List<PostInfo> processCore(BrandRow brand, List<PostInfo> posts, Instant now) {
+		Instant enrollCutoff = now.minus(Duration.ofDays(registrationWindowDays));
+		// taken_at 미상은 보수적으로 제외(잘못된 편입 방지) — 다음 열거에서 채워지면 잡힌다.
 		List<PostInfo> inWindow = posts.stream()
 				.filter(p -> p.takenAt() != null
-						&& !Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff))
+						&& !Instant.ofEpochSecond(p.takenAt()).isBefore(enrollCutoff))
 				.toList();
 		if (inWindow.isEmpty()) {
 			return List.of();
@@ -185,7 +225,11 @@ public class BrandCollectService {
 				taggedPosts.insert(brand.id(), p);
 			}
 		}
-		log.info("브랜드 태그 수집 — {} 열거 {}건, 윈도우 내 {}건, 신규 {}건",
+		// 만난 게시물 전부(신규 포함) — 다음 스윕의 티어 판정(due) 입력. 180일 초과분 갱신도
+		// 무해하다(판정식이 영구 제외라 이들을 위한 콜은 발생하지 않는다 — 스펙 §4).
+		taggedPosts.touchCrawled(brand.id(),
+				adjusted.stream().map(PostInfo::shortCode).toList(), now);
+		log.info("브랜드 태그 수집 — {} 열거 {}건, 편입 컷 안 {}건, 신규 {}건",
 				brand.username(), posts.size(), inWindow.size(), freshCodes.size());
 		return adjusted;
 	}
@@ -240,7 +284,7 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 게시자 프로필 — 윈도우 게시물 작성자 중 미보유·30일 경과(stale)만 /v2/user/by/id 1콜
+	 * 게시자 프로필 — 편입 컷 안 게시물 작성자 중 미보유·30일 경과(stale)만 /v2/user/by/id 1콜
 	 * (스펙 §2·§8: 신규 감지 시 1회 + 등장 시 stale 갱신, 월 일괄 배치 아님). 브랜드 간 전역
 	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
 	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.
@@ -293,20 +337,20 @@ public class BrandCollectService {
 			}
 			tasks.add(CompletableFuture.runAsync(() -> {
 				try {
-					List<CommentInfo> fetched = hiker.fetchComments(p.shortCode(), p.username(),
+					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
-					comments.upsertForPost(p.shortCode(), fetched);
+					comments.upsertForPost(p.shortCode(), fetch.comments());
 					// 저장값은 열거 관측치로 갱신한다 — 다음 게이트가 "그 사이 증가분"만 보게.
-					taggedPosts.updateCommentsCollected(brandId, p.shortCode(), p.comments());
+					// 단, 미완주(중간 페이지 실패)면 유지한다 — 워터마크를 올리면 다음 스윕 게이트가
+					// 닫혀 못 받은 페이지가 영영 빈다(받은 부분은 위 upsert로 이미 보존됐다).
+					if (fetch.complete()) {
+						taggedPosts.updateCommentsCollected(brandId, p.shortCode(), p.comments());
+					}
 				} catch (RuntimeException e) {
 					log.warn("태그 댓글 수집 실패(격리) — 게시물 {}: {}", p.shortCode(), e.toString());
 				}
 			}, enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
-	}
-
-	private Instant windowCutoff() {
-		return Instant.now().minus(Duration.ofDays(windowDays));
 	}
 }

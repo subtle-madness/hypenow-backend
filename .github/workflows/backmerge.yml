@@ -1,0 +1,107 @@
+# 핫픽스(hotfix/* → main 직행)가 main에만 들어간 뒤 develop·staging이 갈라지는 것을 막는 자동 역머지.
+# 설계: docs/superpowers/specs/2026-08-10-hotfix-direct-to-main-design.md
+#
+# 핫픽스 경로 자체는 이 워크플로와 무관하게 이미 동작한다 — ci.yml이 main 대상 PR에서 필수 체크
+# 3종을 돌리고, main 룰셋에는 소스 브랜치 제한도 머지 큐도 없다. 이 파일이 메우는 공백은 역머지뿐이다.
+# 급한 불을 끈 직후가 역머지를 가장 잊기 쉬운 시점이라 자동화한다.
+#
+# 필요 시크릿: BACKMERGE_TOKEN (repo 권한 PAT — fine-grained면 Contents: RW + Pull requests: RW).
+# GITHUB_TOKEN으로 만든 PR에는 GitHub이 워크플로를 트리거하지 않아 필수 체크가 영영 안 붙고
+# PR이 머지 불가 상태로 매달린다. 그래서 PR 생성·auto-merge에만 PAT를 쓴다(체크아웃은 기본 토큰).
+name: 역머지
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:      # 평시 수동 실행 = dry-run — 정렬돼 있으면 두 대상 모두 skip으로 끝나야 한다
+
+concurrency:
+  group: backmerge
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backmerge:
+    name: main → ${{ matrix.target }} 역머지
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false      # develop 실패가 staging 역머지를 막지 않게
+      matrix:
+        target: [develop, staging]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0    # 판정에 main·target 전체 히스토리가 필요
+
+      # 평범한 staging→main 승격마다 PR이 열리면 노이즈가 되어 규약이 죽는다.
+      # main에 있고 target에 없는 **비머지** 커밋으로 판정한다:
+      #   - 정상 승격: 새로 들어온 비머지 커밋은 전부 staging·develop 유래라 같은 SHA로 이미 존재 → 빈 목록
+      #   - 핫픽스: hotfix 브랜치 커밋이 target에 없음 → 목록 있음
+      # 승격 PR이 merge commit일 때만 성립한다(squash·rebase는 SHA를 새로 만들어 판정이 깨진다).
+      # develop 머지 큐는 MERGE 방식이라 원 커밋 SHA를 보존한다.
+      - name: 역머지 필요 여부 판정
+        id: check
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin main "$TARGET"
+          missing=$(git log --no-merges --oneline "origin/${TARGET}..origin/main")
+          if [ -z "$missing" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "main에 ${TARGET}에 없는 비머지 커밋이 없다 — 정상 승격으로 보고 skip한다." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### main → ${TARGET} 역머지 대상 커밋"
+              echo '```'
+              echo "$missing"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # 별도 역머지 브랜치를 만들지 않고 main을 직접 head로 삼는다 — 브랜치 생성·정리가 없고,
+      # 충돌이 나도 GitHub UI에서 그대로 해결되며, PR이 열려 있는 동안 main 새 커밋이 자동 반영된다.
+      #
+      # ※ 이 레포는 delete_branch_on_merge=true다. head가 main인 PR이 머지돼도 main은 지워지지
+      #    않는데, 룰셋 protect-release-branches의 `deletion` 규칙(bypass actor 없음)이 막기 때문이다.
+      #    **그 규칙을 제거하면 역머지 머지 때 main이 삭제된다** — 룰셋을 손댈 때 반드시 같이 볼 것.
+      - name: 역머지 PR 생성·auto-merge
+        if: steps.check.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BACKMERGE_TOKEN }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::BACKMERGE_TOKEN 시크릿이 없다 — 역머지 PR을 만들 수 없다. 수동으로: gh pr create --base ${TARGET} --head main"
+            exit 1
+          fi
+
+          ref=$(gh pr list --base "$TARGET" --head main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$ref" ]; then
+            echo "이미 열린 역머지 PR #${ref} — 새로 만들지 않는다(main 새 커밋은 기존 PR에 자동 반영)."
+          else
+            # 아래 heredoc 본문은 YAML 블록 스칼라의 기준 들여쓰기(10칸)에 맞춰 둔다 —
+            # 한 칸이라도 덜 들여쓰면 블록 스칼라가 거기서 끊겨 워크플로 파싱이 깨진다.
+            body=$(cat <<'EOF'
+          핫픽스가 main에 직행해 이 브랜치가 뒤처졌다 — 자동 생성된 역머지 PR이다.
+
+          - **squash·rebase 금지, merge commit으로만 머지할 것.** 원 커밋 SHA가 보존돼야 다음 역머지 판정이 성립한다.
+          - 충돌이 나면 여기서 해결한다. 방치하면 다음 승격이 핫픽스를 되돌린다.
+          - CI 통과 시 auto-merge로 자동 머지된다(develop은 머지 큐 경유).
+
+          설계: `docs/superpowers/specs/2026-08-10-hotfix-direct-to-main-design.md`
+          EOF
+            )
+            ref=$(gh pr create --base "$TARGET" --head main \
+              --title "chore: 핫픽스 역머지 main→${TARGET}" --body "$body")
+            echo "역머지 PR 생성: ${ref}"
+          fi
+
+          # --merge 고정: squash로 머지되면 위 판정식이 이후로 깨진다
+          gh pr merge "$ref" --auto --merge
+          echo "역머지 PR auto-merge 설정 완료: ${ref}" >> "$GITHUB_STEP_SUMMARY"

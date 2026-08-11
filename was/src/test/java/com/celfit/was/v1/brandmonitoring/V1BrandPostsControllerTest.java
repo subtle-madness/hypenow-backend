@@ -86,6 +86,26 @@ class V1BrandPostsControllerTest {
 	// ---------- 목록 ----------
 
 	@Test
+	void 목록은_12개월치_태그_게시물_전량을_자르지_않는다() throws Exception {
+		// 정책 v1(08-09)로 수집·저장소 상한이 폐지됐는데 컨트롤러 POST_LIMIT(구 200)만 남아
+		// 12개월치가 많은 브랜드(실측 463건)의 오래된 게시물이 소리 없이 잘렸다 — 250건 전량 서빙을 고정.
+		var tagged = new BrandTaggedPostRow[250];
+		var metas = new java.util.ArrayList<BrandPostMetaRow>(250);
+		for (int i = 0; i < 250; i++) {
+			String code = "P%03d".formatted(i);
+			tagged[i] = taggedRow(code, OffsetDateTime.parse("2026-08-01T00:00:00Z").minusDays(i).toString());
+			metas.add(meta(code, "REELS", null));
+		}
+		givenTagged(tagged);
+		given(brandReadRepository.findPostMeta(any())).willReturn(metas);
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(250))
+				.andExpect(jsonPath("$.meta.total").value(250));
+	}
+
+	@Test
 	void 목록은_tagged와_direct를_합치고_counts는_필터_전_전량이다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
@@ -98,7 +118,7 @@ class V1BrandPostsControllerTest {
 				// 기본 정렬은 업로드 최신순 — direct(8/6 업로드)와 tagged AAA(8/6)는 shortcode 타이브레이크.
 				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("AAA", "XYZ", "BBB")))
 				.andExpect(jsonPath("$.meta.total").value(3))
-				.andExpect(jsonPath("$.meta.limit").value(200))
+				.andExpect(jsonPath("$.meta.limit").value(2000))
 				.andExpect(jsonPath("$.meta.counts.all").value(3))
 				.andExpect(jsonPath("$.meta.counts.tagged").value(2))
 				.andExpect(jsonPath("$.meta.counts.direct").value(1))
@@ -216,7 +236,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findTaggedPostsInWindow(anyLong(), any(), anyInt());
+		then(brandReadRepository).should(never()).findTaggedPostsInWindow(anyLong(), any());
 	}
 
 	@Test
@@ -305,7 +325,7 @@ class V1BrandPostsControllerTest {
 	// ---------- 스텁 ----------
 
 	private void givenTagged(BrandTaggedPostRow... rows) {
-		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any(), anyInt())).willReturn(List.of(rows));
+		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
 	}
 
 	/** 직접 등록 1건 — 매핑 행 + 레거시 조립 결과를 함께 스텁한다. */

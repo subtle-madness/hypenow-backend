@@ -89,11 +89,18 @@ class V1BrandAccountsControllerTest {
 		return links;
 	}
 
-	/** 백필 진행 중 — last_swept_on null · backfill_error null. last_swept_at은 지난 가입 잔존값. */
+	/** 첫 수집 진행 중 — 스윕 완주 사실(last_swept_at)이 아예 없다. backfill_error null. */
 	private static BrandAccountRow collectingRow(long brandId, String username) {
-		return new BrandAccountRow(brandId, username, null, OffsetDateTime.parse("2026-07-01T00:00:00Z"),
+		return new BrandAccountRow(brandId, username, null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
 				30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true, "https://lizda.co.kr", "ACTIVE");
+	}
+
+	/** 백필 리셋·재가입·스윕 실패 — last_swept_on은 null이지만 지난 스윕 완주 사실이 있다. */
+	private static BrandAccountRow sweptFactRow(long brandId, String backfillError) {
+		return new BrandAccountRow(brandId, "lizda_official", null, OffsetDateTime.parse("2026-07-01T00:00:00Z"),
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, backfillError,
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE");
 	}
 
 	private static BrandAccountRow readyRow(long brandId) {
@@ -132,20 +139,30 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 연결은_collecting이면_lastDetectedAt과_lastTrackedAt을_null로_감춘다() throws Exception {
-		// 재가입 시 monitoring last_swept_at에 지난 가입의 잔존값이 남는다(사실값 유지 결정) —
-		// ready 전에는 노출하지 않는다.
-		given(commandClient.registerBrand("lizda_official"))
-				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+	void 스윕_완주_사실이_있으면_백필_리셋_중에도_ready로_기존_데이터를_노출한다() throws Exception {
+		// 정책 리셋(last_swept_on=NULL)·재가입·스윕 실패가 겹쳐도, 한 번이라도 완주한 계정은
+		// 기존 데이터가 서빙 가능하므로 collecting(로딩)이 아니라 ready다 — 08-10 결정.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(sweptFactRow(100L, null)));
 
-		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"username\": \"lizda_official\"}"))
-				.andExpect(status().isAccepted())
-				.andExpect(jsonPath("$.data", Matchers.hasKey("lastDetectedAt")))
-				.andExpect(jsonPath("$.data.lastDetectedAt").value(Matchers.nullValue()))
-				.andExpect(jsonPath("$.data.lastTrackedAt").value(Matchers.nullValue()));
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
+				.andExpect(jsonPath("$.data.lastDetectedAt").value("2026-07-01T09:00:00+09:00"))
+				.andExpect(jsonPath("$.data.lastTrackedAt").value("2026-07-01T09:00:00+09:00"));
+	}
+
+	@Test
+	void 스윕_완주_사실이_있으면_backfill_error가_있어도_ready가_이긴다() throws Exception {
+		// 재가입 백필 실패로 backfill_error가 남아도 기존 데이터가 있으면 에러 화면보다 데이터가 낫다.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L))
+				.willReturn(Optional.of(sweptFactRow(100L, "초기 수집에 실패했어요. 자동으로 재시도 중이에요.")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
+				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 	}
 
 	@Test

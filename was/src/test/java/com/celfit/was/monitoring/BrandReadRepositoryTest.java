@@ -121,14 +121,14 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 윈도우_조회는_컷과_상한을_적용하고_최신순이다() {
+	void 윈도우_조회는_컷만_적용하고_상한_없이_최신순이다() {
 		long brandId = seedBrand("brand_official");
 		OffsetDateTime now = OffsetDateTime.now();
-		seedTaggedPost(brandId, "OLD", now.minusDays(100).toString());   // 컷 밖
-		seedTaggedPost(brandId, "MID", now.minusDays(10).toString());
+		seedTaggedPost(brandId, "OLD", now.minusDays(400).toString());   // 컷 밖
+		seedTaggedPost(brandId, "MID", now.minusDays(100).toString());   // 구 90일 컷이면 잘렸을 행
 		seedTaggedPost(brandId, "NEW", now.minusDays(1).toString());
 
-		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(brandId, now.minusDays(90), 2);
+		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(brandId, now.minusDays(365));
 
 		assertThat(rows).hasSize(2);
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("NEW", "MID");
@@ -147,7 +147,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		seedTaggedPost(mine, "MINE1", now.minusDays(2).toString());
 		seedTaggedPost(other, "OTHER1", now.minusDays(1).toString());
 
-		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(mine, now.minusDays(90), 50);
+		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(mine, now.minusDays(365));
 
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("MINE1");
 	}
