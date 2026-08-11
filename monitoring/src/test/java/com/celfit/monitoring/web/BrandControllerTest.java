@@ -2,13 +2,21 @@ package com.celfit.monitoring.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
+import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandRepository;
+import com.celfit.monitoring.store.BrandRow;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -48,12 +56,50 @@ class BrandControllerTest {
 		}
 	}
 
+	/** 브랜드 해석 스텁 — row가 null이면 미등록, status로 ACTIVE/CLOSED를 가른다. */
+	private static final class StubBrandRepository extends BrandRepository {
+		BrandRow row;
+
+		StubBrandRepository() {
+			super(null);
+		}
+
+		@Override
+		public Optional<BrandRow> findByUsername(String username) {
+			return Optional.ofNullable(row);
+		}
+	}
+
+	/** 제외 문자열 저장 스텁 — 조회 목록 주입 + 교체 호출 인자 캡처. */
+	private static final class StubHashtagRepository extends BrandHashtagRepository {
+		List<String> terms = List.of();
+		Long receivedBrandId;
+		List<String> receivedTerms;
+
+		StubHashtagRepository() {
+			super(null);
+		}
+
+		@Override
+		public List<String> findExclusionTerms(long brandId) {
+			return terms;
+		}
+
+		@Override
+		public void replaceExclusionTerms(long brandId, List<String> terms) {
+			receivedBrandId = brandId;
+			receivedTerms = terms;
+		}
+	}
+
 	private final StubService service = new StubService();
+	private final StubBrandRepository brands = new StubBrandRepository();
+	private final StubHashtagRepository hashtags = new StubHashtagRepository();
 	private MockMvc mvc;
 
 	@BeforeEach
 	void setUp() {
-		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service))
+		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags))
 				.setControllerAdvice(new ApiExceptionHandler())
 				.build();
 	}
@@ -135,5 +181,57 @@ class BrandControllerTest {
 	void 미등록_탈퇴는_404다() throws Exception {
 		service.outcome = BrandRegistrationService.DeregisterOutcome.NOT_FOUND;
 		mvc.perform(delete("/api/brands/ghost")).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void 제외_문자열_조회는_현재_목록을_돌려준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		hashtags.terms = List.of("cclime", "끌리메");
+
+		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.terms[0]").value("cclime"))
+				.andExpect(jsonPath("$.terms[1]").value("끌리메"));
+	}
+
+	@Test
+	void 제외_문자열_교체는_정규화_후_전체_교체한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\":[\" CClime \",\"cclime\",\"\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.receivedBrandId).isEqualTo(1L);
+		assertThat(hashtags.receivedTerms).containsExactly("cclime");
+	}
+
+	@Test
+	void terms_null_바디는_빈_목록_교체다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.receivedTerms).isEmpty();
+	}
+
+	@Test
+	void 미등록_브랜드는_404다() throws Exception {
+		brands.row = null;
+
+		mvc.perform(get("/api/brands/ghost/hashtag-exclusions")).andExpect(status().isNotFound());
+		mvc.perform(put("/api/brands/ghost/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\":[]}")).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void 탈퇴한_브랜드도_404다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null);
+
+		mvc.perform(get("/api/brands/brandx/hashtag-exclusions")).andExpect(status().isNotFound());
+		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\":[]}")).andExpect(status().isNotFound());
 	}
 }
