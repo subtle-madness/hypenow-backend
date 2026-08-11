@@ -49,7 +49,10 @@ import org.springframework.stereotype.Component;
  * 업로드 최신순으로 돌려준다.
  *
  * <p>monitoring 서브시스템이 꺼진 환경에선 브랜드 계열 빈이 아예 없다 — 그래서 브랜드 의존은
- * {@link Optional}이고, 그 경우 레거시 계열만 조립한다(대시보드 표면은 살아 있어야 한다).
+ * {@link Optional}이고, 그 경우 tagged 계열을 건너뛴다(대시보드 표면은 살아 있어야 한다).
+ * 다만 <b>레거시만 조립하는 것은 아니다</b>: 직접 등록 매핑(app.brand_direct_posts)과 브랜드 연결
+ * (app.brand_monitorings)은 app DataSource라 그 환경에서도 살아 있어, direct 콘텐츠의 브랜드 귀속과
+ * 구독 타입(own/competitor) 판정은 그대로 성립한다(08-12).
  */
 @Component
 public class PerformanceContentAssembler {
@@ -91,7 +94,12 @@ public class PerformanceContentAssembler {
 	public Assembled assemble(long userId) {
 		TrackingItemAssembler.AssembledList legacy = trackingItemAssembler.assembleList(userId);
 		DirectMapping direct = directMapping(userId);
-		Tagged tagged = loadTagged(userId);
+		// 활성 링크는 monitoring 게이트 <b>밖</b>에서 한 번 읽는다(08-12) — 구독 타입 판정에 필요하고,
+		// BrandLinkRepository는 app DataSource라 monitoring 비활성 환경에서도 살아 있다. 직접 등록
+		// 매핑(app.brand_direct_posts)도 같은 이유로 게이트 밖이라, 링크를 안 읽으면 경쟁사 브랜드의
+		// direct 콘텐츠가 기본 범위에 조용히 섞인다(운영 기본값 MONITORING_ENABLED=false).
+		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
+		Tagged tagged = loadTagged(userId, links);
 
 		List<PerformanceContentResponse> contents = new ArrayList<>();
 		Set<String> consumedCodes = new LinkedHashSet<>();
@@ -113,7 +121,7 @@ public class PerformanceContentAssembler {
 				.comparing(PerformanceContentAssembler::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
 				.thenComparing(c -> c.item().id()));
 		return new Assembled(List.copyOf(contents), lastCollectedAt(legacy.lastCollectedAt(), tagged.lastSweptAt()),
-				tagged.competitorBrandAccountIds());
+				competitorBrandAccountIds(links));
 	}
 
 	// ---------- 레거시 계열 ----------
@@ -225,30 +233,66 @@ public class PerformanceContentAssembler {
 	}
 
 	/**
-	 * 활성 브랜드 연결이 있을 때만 브랜드 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지 않는다.
-	 * 다계정(08-07 개정)은 연결 순서대로 병합한다 — 같은 shortcode가 여러 브랜드에 태그돼 있으면
-	 * 먼저 연결한 브랜드가 이긴다(putIfAbsent). lastSweptAt은 브랜드들 중 가장 늦은 값이다.
-	 *
-	 * <p>같은 순회에서 경쟁사 구독의 brandId도 모은다(08-12) — 이미 링크 전량을 읽고 있어 추가 쿼리가
-	 * 없다. 수집은 monitoring 계정 행 존재 여부보다 <b>앞</b>이다: 구독 타입은 링크 행만으로 확정되고,
-	 * 계정 행이 없는 브랜드의 direct 콘텐츠가 경쟁사 판정에서 새는 것을 막는다.
+	 * 경쟁사 구독의 brandId 집합(08-12) — 링크 행만으로 확정된다. monitoring 계정 행 유무·서브시스템
+	 * 활성 여부와 무관하다: 그 브랜드의 direct 콘텐츠는 계정 행이 없어도 목록에 실리기 때문이다.
 	 */
-	private Tagged loadTagged(long userId) {
-		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty()) {
-			return Tagged.EMPTY;   // monitoring 비활성 — 레거시 계열만
+	private static Set<String> competitorBrandAccountIds(List<BrandLinkRow> links) {
+		Set<String> competitorIds = new LinkedHashSet<>();
+		for (BrandLinkRow link : links) {
+			if (isCompetitor(link)) {
+				competitorIds.add(String.valueOf(link.brandId()));
+			}
 		}
-		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
-		if (links.isEmpty()) {
-			return Tagged.EMPTY;
+		return Set.copyOf(competitorIds);
+	}
+
+	private static boolean isCompetitor(BrandLinkRow link) {
+		return BrandAccountType.COMPETITOR.equals(link.accountType());
+	}
+
+	/**
+	 * 같은 shortcode가 여러 브랜드에 태그된 경우의 귀속 순서(08-12) — <b>내 브랜드 귀속이 경쟁사
+	 * 귀속을 이긴다</b>. own 링크를 먼저 순회시켜 {@code putIfAbsent}의 동률이 own 쪽으로 풀리게 한다.
+	 *
+	 * <p>이 규칙이 필요한 이유: 귀속(brandAccountId)은 이제 <b>표시</b>가 아니라 <b>범위</b>를 정한다.
+	 * 내 게시물이 내 브랜드와 경쟁사 브랜드에 동시에 태그돼 있고 경쟁사 연결이 더 오래됐다는 이유만으로
+	 * 그 콘텐츠가 기본 범위·statusCounts에서 빠지면, 연결 순서가 "내 성과가 보이는지"를 정하게 된다.
+	 *
+	 * <p>타입 <b>안</b>에서는 기존 규칙(먼저 연결한 브랜드가 이긴다, 08-07 개정) 그대로다 — 원본 순서를
+	 * 유지한 채 own 묶음과 competitor 묶음의 순서만 바꾼다.
+	 */
+	private static List<BrandLinkRow> ownFirst(List<BrandLinkRow> links) {
+		List<BrandLinkRow> ordered = new ArrayList<>(links.size());
+		for (BrandLinkRow link : links) {
+			if (!isCompetitor(link)) {
+				ordered.add(link);
+			}
+		}
+		for (BrandLinkRow link : links) {
+			if (isCompetitor(link)) {
+				ordered.add(link);
+			}
+		}
+		return ordered;
+	}
+
+	/**
+	 * 활성 브랜드 연결이 있을 때만 브랜드 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지 않는다.
+	 * 다계정(08-07 개정)은 연결 순서대로 병합하되 own 묶음이 먼저다({@link #ownFirst}) — 같은 shortcode가
+	 * 여러 브랜드에 태그돼 있으면 내 브랜드가, 같은 타입 안에서는 먼저 연결한 브랜드가 이긴다
+	 * (putIfAbsent). lastSweptAt은 브랜드들 중 가장 늦은 값이라 순회 순서와 무관하다.
+	 *
+	 * @param links 호출부가 이미 읽어 둔 활성 링크 — 여기서 다시 조회하지 않는다(monitoring이 켜져 있든
+	 *              꺼져 있든 링크 조회는 요청당 한 번이다).
+	 */
+	private Tagged loadTagged(long userId, List<BrandLinkRow> links) {
+		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty() || links.isEmpty()) {
+			return Tagged.EMPTY;   // monitoring 비활성이거나 연결 0건 — 레거시 계열만
 		}
 
 		Map<String, BrandPostResponse> byShortcode = new LinkedHashMap<>();
-		Set<String> competitorIds = new LinkedHashSet<>();
 		OffsetDateTime lastSweptAt = null;
-		for (BrandLinkRow link : links) {
-			if (BrandAccountType.COMPETITOR.equals(link.accountType())) {
-				competitorIds.add(String.valueOf(link.brandId()));
-			}
+		for (BrandLinkRow link : ownFirst(links)) {
 			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
 			if (account.isEmpty()) {
 				// 연결은 살아 있는데 monitoring 쪽 계정 행이 없는 상태 — 대시보드를 죽이지 않고 그 브랜드만 뺀다.
@@ -261,7 +305,7 @@ public class PerformanceContentAssembler {
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());
 		}
-		return new Tagged(byShortcode, lastSweptAt, Set.copyOf(competitorIds));
+		return new Tagged(byShortcode, lastSweptAt);
 	}
 
 	// ---------- 스냅샷 병합 ----------
@@ -436,7 +480,8 @@ public class PerformanceContentAssembler {
 	 *
 	 * @param competitorBrandAccountIds 경쟁사 구독의 brandAccountId 집합(08-12) — 성과 요약이 경쟁사
 	 *        숫자로 오염되지 않도록 컨트롤러가 기본 필터에 쓴다. 브랜드 미귀속(individual) 콘텐츠는
-	 *        이 집합에 들 수 없어 기본 범위에 그대로 남는다. monitoring 비활성·활성 링크 0건이면 빈 집합.
+	 *        이 집합에 들 수 없어 기본 범위에 그대로 남는다. <b>monitoring 비활성 환경에서도 채워진다</b>
+	 *        — 그 환경에도 direct 콘텐츠는 브랜드에 귀속돼 실리기 때문이다. 활성 링크 0건이면 빈 집합.
 	 */
 	public record Assembled(List<PerformanceContentResponse> contents, OffsetDateTime lastCollectedAt,
 			Set<String> competitorBrandAccountIds) {
@@ -452,10 +497,9 @@ public class PerformanceContentAssembler {
 		}
 	}
 
-	/** 브랜드 계열 조회 결과 — shortcode 키 tagged 전량 + 브랜드 스윕 시각 + 경쟁사 brandId 집합. */
-	private record Tagged(Map<String, BrandPostResponse> byShortcode, OffsetDateTime lastSweptAt,
-			Set<String> competitorBrandAccountIds) {
+	/** 브랜드 계열 조회 결과 — shortcode 키 tagged 전량 + 브랜드 스윕 시각. */
+	private record Tagged(Map<String, BrandPostResponse> byShortcode, OffsetDateTime lastSweptAt) {
 
-		static final Tagged EMPTY = new Tagged(Map.of(), null, Set.of());
+		static final Tagged EMPTY = new Tagged(Map.of(), null);
 	}
 }
