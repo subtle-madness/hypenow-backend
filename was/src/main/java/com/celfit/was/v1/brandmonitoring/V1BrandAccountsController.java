@@ -41,8 +41,8 @@ public class V1BrandAccountsController {
 		List<BrandAccountResponse> accounts = service.list(principal.getUserId());
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", accounts.size());
-		// meta.limit은 실제 강제 한도와 같은 값이다(08-07 다계정 개정 — 강제 지점은 BrandLinkTransaction).
-		meta.put("limit", BrandLinkTransaction.ACCOUNT_LIMIT);
+		// TODO(08-12 Task 3): 타입별 meta로 교체 — 지금은 타입 합계라 단일 limit 계약과 의미가 어긋난다.
+		meta.put("limit", BrandAccountType.ownLimit() + BrandAccountType.competitorLimit());
 		return ApiResponse.ok(accounts, meta);
 	}
 
@@ -62,7 +62,8 @@ public class V1BrandAccountsController {
 			@AuthenticationPrincipal AppUserDetails principal,
 			@RequestBody(required = false) BrandAccountRegisterRequest body) {
 		String username = body == null ? null : body.username();
-		BrandAccountResponse response = service.register(principal.getUserId(), username);
+		String accountType = body == null ? null : body.accountType();
+		BrandAccountResponse response = service.register(principal.getUserId(), username, accountType);
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
 	}
 
@@ -82,7 +83,7 @@ public class V1BrandAccountsController {
 		}
 	}
 
-	/** 등록 요청 본문 — 계정명 한 개(정규화·검증은 BrandUsername). */
-	public record BrandAccountRegisterRequest(String username) {
+	/** 등록 요청 본문 — 계정명(정규화·검증은 BrandUsername)과 타입(생략 시 own). */
+	public record BrandAccountRegisterRequest(String username, String accountType) {
 	}
 }

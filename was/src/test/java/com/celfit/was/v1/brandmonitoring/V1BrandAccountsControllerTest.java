@@ -76,15 +76,19 @@ class V1BrandAccountsControllerTest {
 	}
 
 	private static BrandLinkRow link(long userId, long brandId, String username) {
-		return new BrandLinkRow(brandId, userId, brandId, username, BrandAccountType.OWN,
+		return link(userId, brandId, username, BrandAccountType.OWN);
+	}
+
+	private static BrandLinkRow link(long userId, long brandId, String username, String accountType) {
+		return new BrandLinkRow(brandId, userId, brandId, username, accountType,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
 	/** 한도 검증용 — 서로 다른 브랜드 n개에 연결된 상태(요청 계정명과 겹치지 않는 이름). */
-	private static List<BrandLinkRow> links(int count) {
+	private static List<BrandLinkRow> links(int count, String accountType) {
 		List<BrandLinkRow> links = new ArrayList<>(count);
 		for (int i = 0; i < count; i++) {
-			links.add(link(7L, 200L + i, "other_brand_" + i));
+			links.add(link(7L, 200L + i, "other_brand_" + i, accountType));
 		}
 		return links;
 	}
@@ -123,6 +127,8 @@ class V1BrandAccountsControllerTest {
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+		// 등록 응답은 단건 조회(get)를 거친다 — 방금 만든 연결을 다시 읽으므로 실서비스에선 항상 존재한다.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -172,6 +178,7 @@ class V1BrandAccountsControllerTest {
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -187,6 +194,7 @@ class V1BrandAccountsControllerTest {
 	void 이미_연결된_계정_재요청은_멱등_202로_기존_객체를_돌려준다() throws Exception {
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -206,6 +214,7 @@ class V1BrandAccountsControllerTest {
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
@@ -217,15 +226,45 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 한도_10개면_409_LIMIT_REACHED이고_monitoring을_호출하지_않는다() throws Exception {
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(links(10));
+	void own이_6개면_409_BRAND_ACCOUNT_LIMIT_REACHED이고_monitoring을_호출하지_않는다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(links(6, BrandAccountType.OWN));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON).content("{\"username\": \"lizda_official\"}"))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"new_brand\"}"))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_LIMIT_REACHED"));
 
 		then(commandClient).should(never()).registerBrand(anyString());
+	}
+
+	@Test
+	void competitor가_3개면_409_COMPETITOR_ACCOUNT_LIMIT_REACHED다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(links(3, BrandAccountType.COMPETITOR));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"new_brand\",\"accountType\":\"competitor\"}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error.code").value("COMPETITOR_ACCOUNT_LIMIT_REACHED"));
+
+		then(commandClient).should(never()).registerBrand(anyString());
+	}
+
+	@Test
+	void own_6개가_차도_competitor는_등록된다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(links(6, BrandAccountType.OWN));
+		given(commandClient.registerBrand("rival_brand"))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(300L, "rival_brand", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(300L)).willReturn(Optional.of(readyRow(300L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 300L))
+				.willReturn(Optional.of(link(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"rival_brand\",\"accountType\":\"competitor\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.accountType").value("competitor"));
 	}
 
 	@Test
@@ -284,6 +323,7 @@ class V1BrandAccountsControllerTest {
 		given(linkRepository.insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN))
 				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_brand_uidx"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content("{\"username\": \"lizda_official\"}"))
@@ -297,7 +337,7 @@ class V1BrandAccountsControllerTest {
 	void 한도_경합이면_보상_탈퇴를_호출하고_409를_돌려준다() throws Exception {
 		// 사전 확인 시점엔 여유가 있었지만 저장 트랜잭션의 잠금 재확인에서 한도가 찬 경합 경로 —
 		// monitoring 등록은 이미 끝났으므로 다른 활성 사용자가 없으면 보상 탈퇴한다.
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(10));
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(6, BrandAccountType.OWN));
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(linkRepository.countActiveByBrand(100L)).willReturn(0);
@@ -312,7 +352,7 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void 연결_보상은_다른_활성_연결이_남아있으면_호출하지_않는다() throws Exception {
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(10));
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(6, BrandAccountType.OWN));
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(linkRepository.countActiveByBrand(100L)).willReturn(1);
@@ -334,7 +374,8 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(0))
 				.andExpect(jsonPath("$.meta.total").value(0))
-				.andExpect(jsonPath("$.meta.limit").value(10));
+				// Task 3에서 타입별 meta로 교체된다 — 지금은 타입 합계(own 6 + competitor 3).
+				.andExpect(jsonPath("$.meta.limit").value(9));
 	}
 
 	@Test

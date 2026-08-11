@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
  * 브랜드 계정 라이프사이클(스펙 §5, 08-07 다계정 개정) — 연결·목록·단건·삭제 + 회원 탈퇴 훅.
  * POST는 "브랜드 연결"이다: 브랜드는 전역 1회 수집이고(monitoring 등록이 멱등 replay), 여러 사용자가
  * 같은 브랜드에 연결해 수집 데이터를 공유한다. 이미 연결된 브랜드 재요청은 오류가 아니라 기존 객체
- * 반환(멱등)이고, 유저별 한도({@link BrandLinkTransaction#ACCOUNT_LIMIT}) 초과만 409다.
+ * 반환(멱등)이고, 타입별 한도(own 6 / competitor 3 — {@link BrandAccountType}) 초과만 409다.
  *
  * <p>monitoring 호출은 항상 DB 트랜잭션 <b>밖</b>이다({@link BrandLinkTransaction}이 트랜잭션 경계).
  * 등록은 "monitoring 동기 검증 → was 커밋" 순서다(FE 명세와 의도적으로 다른 지점, 스펙 §2):
@@ -58,27 +58,32 @@ public class V1BrandAccountService {
 	 * replay — 이미 수집 중·완료된 브랜드면 재수집 없이 기존 brandId) → was 연결 커밋 → 202 BrandAccount.
 	 * 같은 계정명이 이미 연결돼 있으면 monitoring 호출 없이 기존 계정 객체를 그대로 돌려준다(멱등).
 	 */
-	public BrandAccountResponse register(long userId, String rawUsername) {
+	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType) {
 		String username = BrandUsername.normalize(rawUsername);
 		BrandUsername.validate(username);
-		Optional<Long> alreadyLinked = linkTransaction.precheck(userId, username);
+		String accountType = BrandAccountType.orDefault(rawAccountType);
+		// 검증은 반드시 리포지토리 도달 전에 — 잘못된 값이 그대로 내려가면 CHECK 제약 위반이 500으로 샌다.
+		if (!BrandAccountType.isValid(accountType)) {
+			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
+		}
+		Optional<Long> alreadyLinked = linkTransaction.precheck(userId, username, accountType);
 		if (alreadyLinked.isPresent()) {
-			return assembler.toResponse(findAccountOrThrow(alreadyLinked.get()));
+			return get(userId, alreadyLinked.get());
 		}
 
 		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username));
 		try {
-			linkTransaction.link(userId, registered.brandId(), username);
+			linkTransaction.link(userId, registered.brandId(), username, accountType);
 		} catch (RuntimeException e) {
 			compensate(registered.brandId(), username);
 			throw e;
 		}
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
-		return assembler.toResponse(findAccountOrThrow(registered.brandId()));
+		return get(userId, registered.brandId());
 	}
 
-	/** 목록(§5-2) — 유저의 활성 연결 전체(연결 순), 유저당 최대 {@link BrandLinkTransaction#ACCOUNT_LIMIT}건. */
+	/** 목록(§5-2) — 유저의 활성 연결 전체(연결 순), 유저당 최대 own 6 + competitor 3건. */
 	public List<BrandAccountResponse> list(long userId) {
 		List<BrandAccountResponse> accounts = new ArrayList<>();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
