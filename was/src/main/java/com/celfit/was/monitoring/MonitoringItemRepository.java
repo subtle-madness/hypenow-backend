@@ -1,5 +1,8 @@
 package com.celfit.was.monitoring;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -11,6 +14,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * app.monitoring_items CRUD(v3, V15) — 항상 활성(app 기본 DataSource, monitoring 서브시스템
@@ -26,9 +30,11 @@ public class MonitoringItemRepository {
 			""";
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public MonitoringItemRepository(JdbcClient jdbcClient) {
+	public MonitoringItemRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	/** 등록 1단계 — target_id NULL의 pending 행 선저장. RETURNING id. */
@@ -66,10 +72,52 @@ public class MonitoringItemRepository {
 		}
 	}
 
+	/**
+	 * 등록 실패 롤백 — 삭제되는 item 행을 아카이브한다(트랙 NN).
+	 *
+	 * <p><b>실패 사유는 남지 않는다.</b> 사유는 monitoring_registration_entries의 reason_code·reason에
+	 * 있는데, 그 조인 키인 entries.item_id는 이 삭제로 두 번 끊긴다 — FK가 ON DELETE SET NULL이고,
+	 * 호출부가 곧이어 updateEntryResult(..., null, null)로 명시적으로도 지운다. 아카이브만으로
+	 * "왜 실패했나"는 알 수 없으니 사유가 필요하면 entries를 봐야 한다.
+	 *
+	 * <p>호출부 3곳이 전부 등록 실패 롤백이라 사유를 REGISTRATION_ROLLBACK으로 못박았다. 다른 사유의
+	 * item 삭제 지점이 생기면 ArchiveReason에 값을 추가하고 메서드를 나눌 것 — 이 메서드를 재사용하면
+	 * 틀린 사유가 아카이브에 남는다.
+	 *
+	 * <p>app.brand_direct_posts.monitoring_item_id는 더 이상 CASCADE가 아니다(V20260811090500,
+	 * ArchiveTables.BRAND_DIRECT_POSTS 참고) — 그대로 두면 남은 매핑 행이 이 item 삭제를 FK 위반으로
+	 * 막는다. item보다 먼저 매핑 행을 찾아 아카이브·삭제한다.
+	 */
+	@Transactional
 	public void delete(long itemId) {
-		jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
+		List<BrandDirectPostKey> directPostKeys = jdbcClient.sql("""
+						SELECT user_id, short_code FROM app.brand_direct_posts WHERE monitoring_item_id = :itemId
+						""")
+				.param("itemId", itemId)
+				.query(BrandDirectPostKey.class)
+				.list();
+		for (BrandDirectPostKey key : directPostKeys) {
+			int archivedPost = archiveWriter.archiveByPk(ArchiveTables.BRAND_DIRECT_POSTS,
+					ArchiveReason.REGISTRATION_ROLLBACK,
+					Map.of("user_id", key.userId(), "short_code", key.shortCode()));
+			int deletedPost = jdbcClient.sql(
+							"DELETE FROM app.brand_direct_posts WHERE user_id = :userId AND short_code = :shortCode")
+					.param("userId", key.userId())
+					.param("shortCode", key.shortCode())
+					.update();
+			archiveWriter.verifyMatched(ArchiveTables.BRAND_DIRECT_POSTS, archivedPost, deletedPost);
+		}
+
+		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_ITEMS, ArchiveReason.REGISTRATION_ROLLBACK,
+				Map.of("id", itemId));
+		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
 				.param("itemId", itemId)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.MONITORING_ITEMS, archived, deleted);
+	}
+
+	/** app.brand_direct_posts의 복합 PK — item 롤백 시 이 item을 참조하는 매핑을 찾기 위한 내부 전용 행. */
+	private record BrandDirectPostKey(long userId, String shortCode) {
 	}
 
 	public Optional<MonitoringItemRow> findByIdAndUser(long id, long userId) {

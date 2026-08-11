@@ -1,0 +1,32 @@
+package com.celfit.was.archive;
+
+import java.util.List;
+
+/**
+ * 아카이브 대상 테이블 1개의 메타데이터. 모든 값은 코드 상수라 SQL 조립에 그대로 써도 안전하다
+ * (외부 입력이 섞이는 자리는 whereClause의 named parameter뿐).
+ *
+ * @param qualifiedName  스키마 한정 테이블명. 예: "app.saved_contents"
+ * @param pkColumns      PK 컬럼 목록. 복합 PK면 2개 이상 — row_pk jsonb의 키가 된다
+ * @param userIdExpr     archived_rows.user_id로 승격할 표현식("t.user_id" 등). 해당 컬럼이 없으면 null
+ * @param omitColumns    payload에서 제외할 컬럼(가명화). 없으면 빈 리스트
+ * @param userScopeWhere 특정 유저의 행 전체를 고르는 WHERE 절. named parameter는 :userId 하나만 쓴다
+ */
+public record ArchiveTable(
+		String qualifiedName,
+		List<String> pkColumns,
+		String userIdExpr,
+		List<String> omitColumns,
+		String userScopeWhere) {
+
+	public ArchiveTable {
+		if (qualifiedName == null || qualifiedName.isBlank()) {
+			throw new IllegalArgumentException("qualifiedName은 비어 있을 수 없다");
+		}
+		if (pkColumns == null || pkColumns.isEmpty()) {
+			// 비면 jsonb_build_object()가 유효 SQL로 통과해 row_pk가 조용히 {}로 들어간다 —
+			// 원본 행을 특정할 방법이 사라진 아카이브 행이 아무 저항 없이 쌓이게 된다.
+			throw new IllegalArgumentException("pkColumns은 비어 있을 수 없다: " + qualifiedName);
+		}
+	}
+}

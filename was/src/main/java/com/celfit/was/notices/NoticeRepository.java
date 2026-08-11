@@ -1,5 +1,8 @@
 package com.celfit.was.notices;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -19,9 +22,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class NoticeRepository {
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public NoticeRepository(JdbcClient jdbcClient) {
+	public NoticeRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	/** 항목 입력 — 리스트 순서가 그대로 position이 된다(어드민 작성 순서 보존). */
@@ -117,11 +122,29 @@ public class NoticeRepository {
 		return true;
 	}
 
-	/** app.notices만 지우면 notice_items는 ON DELETE CASCADE로 함께 삭제된다. */
+	/**
+	 * app.notices만 지우면 notice_items는 ON DELETE CASCADE로 함께 삭제된다. 삭제 전 notice·items를
+	 * 전부 아카이브한다(트랙 NN). items는 PK(id)를 모르므로 notice_id로 먼저 조회해 건별로
+	 * archiveByPk한다 — CASCADE로 사라지는 자식이라 삭제 건수는 대조하지 않는다
+	 * (UserRepository.deleteAndVerify와 같은 이유 — MonitoringItemRepository.delete 관례).
+	 */
+	@Transactional
 	public boolean delete(long id) {
+		List<Long> itemIds = jdbcClient.sql("SELECT id FROM app.notice_items WHERE notice_id = :id")
+				.param("id", id)
+				.query(Long.class)
+				.list();
+		for (Long itemId : itemIds) {
+			archiveWriter.archiveByPk(ArchiveTables.NOTICE_ITEMS, ArchiveReason.NOTICE_DELETED,
+					Map.of("id", itemId));
+		}
+
+		int archived = archiveWriter.archiveByPk(ArchiveTables.NOTICES, ArchiveReason.NOTICE_DELETED,
+				Map.of("id", id));
 		int deleted = jdbcClient.sql("DELETE FROM app.notices WHERE id = :id")
 				.param("id", id)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.NOTICES, archived, deleted);
 		return deleted > 0;
 	}
 
