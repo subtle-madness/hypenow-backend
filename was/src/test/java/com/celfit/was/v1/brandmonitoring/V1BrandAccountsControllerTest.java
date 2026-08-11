@@ -287,6 +287,10 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("100"));
 
 		then(linkRepository).should().updateAccountType(7L, 100L, BrandAccountType.COMPETITOR);
+		// 이 분기는 precheck 안에서 커밋까지 끝나 뒤에 link()의 재확인이 없다 — 유저 잠금을 잡지
+		// 않으면 동시 요청 둘이 같은 잔여 자리를 보고 둘 다 통과해 상한을 영구히 넘긴다(복구 불가).
+		// 슬라이스에서 잠금 자체의 효과는 관측할 수 없으므로 호출 사실을 고정한다.
+		then(linkRepository).should().lockUser(7L);
 		then(commandClient).should(never()).registerBrand(anyString());
 	}
 
@@ -498,6 +502,26 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
+	void meta_counts는_목록이_아니라_연결_행에서_센다() throws Exception {
+		// brand_account가 없어 목록에서 빠진 연결도 한도 자리는 차지한다(08-12 리뷰) — 목록에서 세면
+		// FE가 "1 / 6"을 그려 놓고 다음 POST에서 409를 맞는다. total은 반환 목록 기준 그대로다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(
+				link(7L, 10L, "my_brand", BrandAccountType.OWN),
+				link(7L, 11L, "ghost_brand", BrandAccountType.OWN),
+				link(7L, 12L, "rival_brand", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(10L)).willReturn(Optional.of(readyRow(10L)));
+		given(brandReadRepository.findAccount(11L)).willReturn(Optional.empty());
+		given(brandReadRepository.findAccount(12L)).willReturn(Optional.of(readyRow(12L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.meta.total").value(2))
+				.andExpect(jsonPath("$.meta.counts.own").value(2))
+				.andExpect(jsonPath("$.meta.counts.competitor").value(1));
+	}
+
+	@Test
 	void 단건은_ready_전이를_반영한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
@@ -566,6 +590,10 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.accountType").value("competitor"));
 
 		then(linkRepository).should().updateAccountType(7L, 10L, "competitor");
+		// 한도 판정이 유저 잠금 아래에서 이뤄져야 한다(BrandLinkTransaction javadoc) — 잠금이 빠지면
+		// 동시 PATCH 둘이 같은 자리를 보고 competitor 상한을 영구히 넘긴다. 슬라이스라 잠금의 효과는
+		// 관측 불가라 호출 사실을 고정한다.
+		then(linkRepository).should().lockUser(7L);
 	}
 
 	@Test

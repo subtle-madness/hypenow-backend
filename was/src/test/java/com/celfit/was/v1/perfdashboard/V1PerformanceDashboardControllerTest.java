@@ -304,6 +304,42 @@ class V1PerformanceDashboardControllerTest {
 	}
 
 	@Test
+	void contents_경쟁사_brandAccountId만_주면_그_브랜드_콘텐츠가_나온다() throws Exception {
+		// brandAccountId 명시 = accountType=all 함의(08-12 리뷰). 함의가 없으면 기본값(경쟁사 제외)과
+		// 서로를 상쇄해 오류도 힌트도 없이 빈 data + 전 상태 0이 돌아온다 — 브랜드 칩이 경쟁사까지
+		// 내려주는데 /comparison은 같은 계정 막대를 그리므로 두 표면이 어긋나는 자리다.
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?brandAccountId=11").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].brandAccountId").value("11"))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1));
+	}
+
+	@Test
+	void contents_brandAccountId에_accountType을_명시하면_명시값이_이긴다() throws Exception {
+		// 함의는 미지정일 때만이다 — own을 명시했으면 "경쟁사 브랜드라 빈 결과"가 문자 그대로의 의미다.
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?brandAccountId=11&accountType=own").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(0));
+	}
+
+	@Test
+	void contents_brandAccountId_all은_함의를_켜지_않는다() throws Exception {
+		// FE의 "전체" 탭이 brandAccountId=all로 넘어와도 브랜드를 집어 물은 게 아니다 — 기본값(경쟁사 제외) 유지.
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?brandAccountId=all").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "3")));
+	}
+
+	@Test
 	void contents_값_공간_밖_accountType은_400이다() throws Exception {
 		mockMvc.perform(get(CONTENTS + "?accountType=rival").with(user(principal())))
 				.andExpect(status().isBadRequest())

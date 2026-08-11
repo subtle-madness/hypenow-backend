@@ -9,7 +9,9 @@ import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringCommandClient.BrandRegisterResult;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -83,10 +85,17 @@ public class V1BrandAccountService {
 		return get(userId, registered.brandId());
 	}
 
-	/** 목록(§5-2) — 유저의 활성 연결 전체(연결 순). accountType은 연결 행에서 온다(08-12). */
-	public List<BrandAccountResponse> list(long userId) {
+	/**
+	 * 목록(§5-2) — 유저의 활성 연결 전체(연결 순). accountType은 연결 행에서 온다(08-12).
+	 *
+	 * <p>타입별 사용량({@link Listing#counts()})은 <b>반환 목록이 아니라 연결 행에서</b> 센다(08-12
+	 * 리뷰): 한도를 강제하는 모수가 연결이고, brand_account 행이 없어 목록에서 빠진 연결도 자리는
+	 * 그대로 차지한다. 목록에서 세면 FE가 "5 / 6"을 그려 놓고 다음 POST에서 409를 맞는다.
+	 */
+	public Listing list(long userId) {
+		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		List<BrandAccountResponse> accounts = new ArrayList<>();
-		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+		for (BrandLinkRow link : links) {
 			Optional<BrandAccountRow> row = brandReadRepository.findAccount(link.brandId());
 			if (row.isEmpty()) {
 				// 도달 불가(등록이 monitoring 먼저라 연결이 있으면 brand_account도 있다). 목록 전체를
@@ -97,7 +106,20 @@ public class V1BrandAccountService {
 			}
 			accounts.add(assembler.toResponse(row.get(), link.accountType()));
 		}
-		return List.copyOf(accounts);
+		long own = links.stream().filter(link -> BrandAccountType.OWN.equals(link.accountType())).count();
+		Map<String, Long> counts = new LinkedHashMap<>();
+		counts.put(BrandAccountType.OWN, own);
+		counts.put(BrandAccountType.COMPETITOR, links.size() - own);
+		return new Listing(List.copyOf(accounts), counts);
+	}
+
+	/**
+	 * 목록 응답 재료 — 표시용 계정 목록과 한도 게이트용 타입별 사용량을 함께 돌려준다.
+	 * 둘의 모수가 다르므로(위 javadoc) 한 번의 조회에서 같이 내려 컨트롤러가 다시 세지 않게 한다.
+	 *
+	 * @param counts 키 순서 고정(own → competitor) — meta 직렬화 순서가 JVM마다 흔들리지 않게 LinkedHashMap
+	 */
+	public record Listing(List<BrandAccountResponse> accounts, Map<String, Long> counts) {
 	}
 
 	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다. */

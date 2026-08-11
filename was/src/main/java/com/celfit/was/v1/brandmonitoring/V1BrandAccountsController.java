@@ -37,20 +37,29 @@ public class V1BrandAccountsController {
 		this.service = service;
 	}
 
+	/**
+	 * 목록 + meta. {@code total}은 <b>반환 목록</b>의 크기지만 {@code counts}는 <b>연결 행</b>에서
+	 * 온다(08-12 리뷰) — 한도의 모수가 연결이라 brand_account 부재로 목록에서 빠진 건도 자리를
+	 * 차지한다. 둘이 어긋날 수 있는 건 의도된 것이다(각자 다른 질문에 답한다).
+	 *
+	 * <p>{@code meta}·{@code limits}·{@code counts}는 전부 {@link LinkedHashMap}이다 —
+	 * {@code Map.of}는 JVM 실행마다 순회 순서가 달라져 응답 키 순서가 흔들린다(08-12 리뷰).
+	 */
 	@GetMapping
 	public ApiResponse<List<BrandAccountResponse>> list(@AuthenticationPrincipal AppUserDetails principal) {
-		List<BrandAccountResponse> accounts = service.list(principal.getUserId());
-		long own = accounts.stream().filter(a -> BrandAccountType.OWN.equals(a.accountType())).count();
+		V1BrandAccountService.Listing listing = service.list(principal.getUserId());
+		Map<String, Object> limits = new LinkedHashMap<>();
+		limits.put(BrandAccountType.OWN, BrandAccountType.ownLimit());
+		limits.put(BrandAccountType.COMPETITOR, BrandAccountType.competitorLimit());
+
 		Map<String, Object> meta = new LinkedHashMap<>();
-		meta.put("total", accounts.size());
+		meta.put("total", listing.accounts().size());
 		// limit은 호환용으로 남긴 합산 최대다(타입별로 갈려 단일 값이 의미를 잃었다) — 실제 게이트는
 		// limits·counts고, 강제 지점은 BrandLinkTransaction이다.
 		meta.put("limit", BrandAccountType.ownLimit() + BrandAccountType.competitorLimit());
-		meta.put("limits", Map.of(BrandAccountType.OWN, BrandAccountType.ownLimit(),
-				BrandAccountType.COMPETITOR, BrandAccountType.competitorLimit()));
-		meta.put("counts", Map.of(BrandAccountType.OWN, own,
-				BrandAccountType.COMPETITOR, accounts.size() - own));
-		return ApiResponse.ok(accounts, meta);
+		meta.put("limits", limits);
+		meta.put("counts", listing.counts());
+		return ApiResponse.ok(listing.accounts(), meta);
 	}
 
 	@GetMapping("/{accountId}")

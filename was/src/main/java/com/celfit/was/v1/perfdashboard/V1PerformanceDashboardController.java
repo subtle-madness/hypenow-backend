@@ -76,6 +76,14 @@ public class V1PerformanceDashboardController {
 	 *
 	 * <p>{@code sponsorship}은 <b>적용한다</b> — 카운트 키 축(상태)과 직교라 자기 0화가 없고,
 	 * §7-1이 statusCounts에 적용한다고 본 "분류 범위" 필터에 속한다.
+	 *
+	 * <p><b>{@code brandAccountId}를 명시하면 {@code accountType=all}이 함의된다</b>(08-12 리뷰):
+	 * 유저가 그 브랜드를 콕 집어 물었으므로 "경쟁사 제외" 기본값까지 겹쳐 걸면 안 된다. 겹쳐 걸면
+	 * 경쟁사 브랜드를 지정한 조회가 오류도 힌트도 없이 빈 {@code data} + 전 상태 0이 되는데,
+	 * 브랜드 칩은 경쟁사까지 내려주는 {@code /v1/brand-monitoring/accounts}로 만들고 §6의
+	 * {@code /comparison}은 같은 계정의 막대를 정상적으로 그리므로 두 표면이 서로 어긋난다.
+	 * <b>{@code accountType}을 명시하면 그쪽이 이긴다</b> — {@code brandAccountId=X&accountType=own}은
+	 * 문자 그대로 "X가 경쟁사면 빈 결과"다(명시한 값의 의미를 함의가 덮지 않는다).
 	 */
 	@GetMapping("/contents")
 	public ApiResponse<List<PerformanceContentResponse>> contents(
@@ -98,7 +106,8 @@ public class V1PerformanceDashboardController {
 		String campaignFilter = normalizeFilter(campaignId);
 		String brandFilter = normalizeFilter(brandAccountId);
 		// 공용 normalizeFilter를 쓰지 않는다 — 이 파라미터만 미지정과 all이 다르다(아래 javadoc).
-		String accountTypeFilter = normalizeAccountType(accountType);
+		// brandFilter를 같이 넘기는 이유는 "브랜드 명시 = accountType=all 함의"다(위 javadoc).
+		String accountTypeFilter = normalizeAccountType(accountType, brandFilter);
 		LocalDate from = parseDate(uploadedFrom, "uploadedFrom");
 		LocalDate to = parseDate(uploadedTo, "uploadedTo");
 
@@ -245,11 +254,15 @@ public class V1PerformanceDashboardController {
 	 * 기본, all은 전량). 그래서 공용 {@link #normalizeFilter(String, String, String...)}를 쓰지 않는다:
 	 * 그쪽에 태우면 미지정이 곧 전량이 되어 경쟁사 콘텐츠가 기본 성과 요약을 오염시킨다.
 	 *
+	 * <p>단, <b>미지정이면서 {@code brandAccountId}가 명시된 조회</b>는 전량(all)이다 — 특정 브랜드를
+	 * 집어 물은 요청에 경쟁사 제외 기본값까지 겹쳐 걸면 경쟁사 브랜드 조회가 조용히 빈다(08-12 리뷰).
+	 *
+	 * @param brandFilter 정규화된 brandAccountId(null = 브랜드 미지정) — 함의 판정에만 쓴다
 	 * @return null = 전량(all), {@code "own"} = 경쟁사 제외, {@code "competitor"} = 경쟁사만
 	 */
-	private static String normalizeAccountType(String raw) {
+	private static String normalizeAccountType(String raw, String brandFilter) {
 		if (raw == null || raw.isBlank()) {
-			return BrandAccountType.OWN;
+			return brandFilter == null ? BrandAccountType.OWN : null;
 		}
 		if (FILTER_ALL.equals(raw)) {
 			return null;
