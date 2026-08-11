@@ -1,5 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import com.celfit.was.auth.UserProfile;
+import com.celfit.was.auth.UserRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
@@ -42,15 +44,17 @@ public class V1BrandAccountService {
 	private final MonitoringCommandClient commandClient;
 	private final BrandReadRepository brandReadRepository;
 	private final BrandAccountAssembler assembler;
+	private final UserRepository userRepository;
 
 	public V1BrandAccountService(BrandLinkRepository linkRepository, BrandLinkTransaction linkTransaction,
 			MonitoringCommandClient commandClient, BrandReadRepository brandReadRepository,
-			BrandAccountAssembler assembler) {
+			BrandAccountAssembler assembler, UserRepository userRepository) {
 		this.linkRepository = linkRepository;
 		this.linkTransaction = linkTransaction;
 		this.commandClient = commandClient;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
+		this.userRepository = userRepository;
 	}
 
 	/**
@@ -66,7 +70,8 @@ public class V1BrandAccountService {
 			return assembler.toResponse(findAccountOrThrow(alreadyLinked.get()));
 		}
 
-		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username));
+		String brandName = brandNameOf(userId);
+		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName));
 		try {
 			linkTransaction.link(userId, registered.brandId(), username);
 		} catch (RuntimeException e) {
@@ -179,6 +184,15 @@ public class V1BrandAccountService {
 			// 보상 실패는 무해하다 — 같은 계정 재등록이 멱등 replay라 고아 행을 그대로 재사용한다.
 			log.warn("등록 롤백 보상 탈퇴 실패(무해 — 재등록이 같은 행을 replay) brandId={}", brandId, e);
 		}
+	}
+
+	/** 스펙 2026-08-11 §2 — company_name은 brand 유형일 때만 브랜드명(타 유형은 대행사명 등). */
+	private String brandNameOf(long userId) {
+		return userRepository.findProfileById(userId)
+				.filter(p -> "brand".equals(p.userType()))
+				.map(UserProfile::companyName)
+				.filter(name -> name != null && !name.isBlank())
+				.orElse(null);
 	}
 
 	private void requireOwnership(long userId, long brandId) {

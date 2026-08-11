@@ -1,5 +1,6 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -17,6 +18,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
+import com.celfit.was.auth.UserProfile;
+import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
@@ -65,10 +68,19 @@ class V1BrandAccountsControllerTest {
 	MonitoringCommandClient commandClient;
 	@MockitoBean
 	BrandReadRepository brandReadRepository;
+	@MockitoBean
+	UserRepository userRepository;
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
+	}
+
+	/** brandName 전달 검증용 — UserProfile 필드 중 이 테스트가 실제 쓰는 것만 채운다. */
+	private static UserProfile profileOf(String userType, String companyName) {
+		return new UserProfile(7L, "user@example.com", "테스트유저", null, userType, "EMAIL", null, null,
+				companyName, null, null, null, false, null, null,
+				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER");
 	}
 
 	private static BrandLinkRow link(long userId, long brandId) {
@@ -120,7 +132,7 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void 연결은_202와_collecting_계정을_반환한다() throws Exception {
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
 
@@ -136,6 +148,68 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 
 		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
+	}
+
+	// ---------- brandName 전달(스펙 2026-08-11 §2) ----------
+
+	@Test
+	void brand_유형_유저의_등록은_company_name을_brandName으로_전달한다() throws Exception {
+		given(userRepository.findProfileById(7L)).willReturn(Optional.of(profileOf("brand", "끌리메")));
+		given(commandClient.registerBrand("lizda_official", "끌리메"))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted());
+
+		then(commandClient).should().registerBrand("lizda_official", "끌리메");
+	}
+
+	@Test
+	void 비brand_유형은_brandName_없이_전달한다() throws Exception {
+		given(userRepository.findProfileById(7L)).willReturn(Optional.of(profileOf("agency", "대행사명")));
+		given(commandClient.registerBrand("lizda_official", null))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted());
+
+		then(commandClient).should().registerBrand("lizda_official", null);
+	}
+
+	@Test
+	void company_name이_빈_문자열이면_null로_전달한다() throws Exception {
+		given(userRepository.findProfileById(7L)).willReturn(Optional.of(profileOf("brand", "")));
+		given(commandClient.registerBrand("lizda_official", null))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted());
+
+		then(commandClient).should().registerBrand("lizda_official", null);
+	}
+
+	@Test
+	void 프로필_조회_실패여도_등록은_진행된다() throws Exception {
+		given(userRepository.findProfileById(7L)).willReturn(Optional.empty());
+		given(commandClient.registerBrand("lizda_official", null))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted());
+
+		then(commandClient).should().registerBrand("lizda_official", null);
 	}
 
 	@Test
@@ -169,7 +243,7 @@ class V1BrandAccountsControllerTest {
 	void 이미_수집된_브랜드에_연결하면_재수집_없이_ready_객체를_돌려준다() throws Exception {
 		// 핵심 요구 — 다른 사용자가 이미 등록한 브랜드는 monitoring replay(수집 재시작 없음)로
 		// 같은 brandId를 받고, 연결 직후 기존 수집 상태(ready)가 그대로 보인다.
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
@@ -195,7 +269,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("100"))
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
-		then(commandClient).should(never()).registerBrand(anyString());
+		then(commandClient).should(never()).registerBrand(anyString(), any());
 		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString());
 	}
 
@@ -203,7 +277,7 @@ class V1BrandAccountsControllerTest {
 	void 다른_브랜드가_연결돼_있어도_추가_연결한다() throws Exception {
 		// 구 계약의 BRAND_ACCOUNT_IMMUTABLE·ALREADY_EXISTS 지점 — 다계정 개정으로 정상 연결이다.
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 200L, "other_brand")));
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
 
@@ -225,7 +299,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.error.code").value("BRAND_ACCOUNT_LIMIT_REACHED"));
 
-		then(commandClient).should(never()).registerBrand(anyString());
+		then(commandClient).should(never()).registerBrand(anyString(), any());
 	}
 
 	@Test
@@ -236,12 +310,12 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		then(commandClient).should(never()).registerBrand(anyString());
+		then(commandClient).should(never()).registerBrand(anyString(), any());
 	}
 
 	@Test
 	void monitoring_404는_422_INSTAGRAM_ACCOUNT_NOT_FOUND로_번역된다() throws Exception {
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willThrow(new MonitoringApiException("SUBJECT_NOT_FOUND", "인스타그램에서 계정·게시물을 찾을 수 없습니다.", 404));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
@@ -252,7 +326,7 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_422_비공개는_422_PRIVATE_ACCOUNT로_전달된다() throws Exception {
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willThrow(new MonitoringApiException("PRIVATE_ACCOUNT", "비공개 계정이라 수집할 수 없습니다.", 422));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
@@ -265,7 +339,7 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_불능은_503_SERVICE_UNAVAILABLE이다() throws Exception {
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willThrow(new MonitoringUnavailableException("연결 실패", null));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
@@ -279,7 +353,7 @@ class V1BrandAccountsControllerTest {
 	@Test
 	void 동시_같은_연결_경합은_멱등_202다() throws Exception {
 		// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 원하는 상태는 이미 성립했으므로 성공으로 접는다.
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(linkRepository.insertLink(7L, 100L, "lizda_official"))
 				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_brand_uidx"));
@@ -298,7 +372,7 @@ class V1BrandAccountsControllerTest {
 		// 사전 확인 시점엔 여유가 있었지만 저장 트랜잭션의 잠금 재확인에서 한도가 찬 경합 경로 —
 		// monitoring 등록은 이미 끝났으므로 다른 활성 사용자가 없으면 보상 탈퇴한다.
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(10));
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(linkRepository.countActiveByBrand(100L)).willReturn(0);
 
@@ -313,7 +387,7 @@ class V1BrandAccountsControllerTest {
 	@Test
 	void 연결_보상은_다른_활성_연결이_남아있으면_호출하지_않는다() throws Exception {
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(), links(10));
-		given(commandClient.registerBrand("lizda_official"))
+		given(commandClient.registerBrand("lizda_official", null))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
 		given(linkRepository.countActiveByBrand(100L)).willReturn(1);
 

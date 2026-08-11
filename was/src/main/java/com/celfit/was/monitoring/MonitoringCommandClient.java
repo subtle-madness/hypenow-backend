@@ -51,10 +51,13 @@ public class MonitoringCommandClient {
 	 * 브랜드 태그 모니터링 등록(monitoring BrandController §2 — 동기 프로필 검증 + 비동기 백필 시작).
 	 * 201 신규 / 200 replay 모두 같은 바디라 was는 둘을 구분하지 않는다(멱등 재등록 안전).
 	 * 404(IG 계정 부재)·422(비공개 계정)는 에러 바디 code 그대로 MonitoringApiException으로 승격된다.
+	 *
+	 * <p>brandName은 해시태그 브랜드명 태그 감지의 재료(스펙 2026-08-11 §2) — 호출부가 브랜드 유형
+	 * 유저의 company_name만 채워 넣고, 그 외에는 null을 보낸다.
 	 */
-	public BrandRegisterResult registerBrand(String username) {
+	public BrandRegisterResult registerBrand(String username, String brandName) {
 		return exchange(() -> restClient.post().uri("/api/brands")
-				.body(new BrandRegisterRequest(username)).retrieve().body(BrandRegisterResult.class));
+				.body(new BrandRegisterRequest(username, brandName)).retrieve().body(BrandRegisterResult.class));
 	}
 
 	/**
@@ -108,7 +111,7 @@ public class MonitoringCommandClient {
 	record ShareResolveRequest(String url) {
 	}
 
-	record BrandRegisterRequest(String username) {
+	record BrandRegisterRequest(String username, String brandName) {
 	}
 
 	/** monitoring BrandController.BrandRegisterResponse와 동형 — followers는 등록 시점 관측값(null 가능). */

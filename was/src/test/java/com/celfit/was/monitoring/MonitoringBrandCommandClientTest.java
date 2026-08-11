@@ -3,6 +3,7 @@ package com.celfit.was.monitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -41,13 +42,14 @@ class MonitoringBrandCommandClientTest {
 		server.expect(requestTo(BASE + "/api/brands"))
 				.andExpect(method(HttpMethod.POST))
 				.andExpect(jsonPath("$.username").value("brand_official"))
+				.andExpect(jsonPath("$.brandName").value("브랜드코퍼레이션"))
 				.andRespond(withStatus(HttpStatus.CREATED)
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("""
 								{ "brandId": 42, "username": "brand_official", "followers": 12345, "status": "ACTIVE" }
 								"""));
 
-		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official");
+		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", "브랜드코퍼레이션");
 
 		assertThat(result.brandId()).isEqualTo(42L);
 		assertThat(result.username()).isEqualTo("brand_official");
@@ -60,11 +62,12 @@ class MonitoringBrandCommandClientTest {
 	@Test
 	void 브랜드_재등록은_200_replay도_같은_결과로_읽는다() {
 		server.expect(requestTo(BASE + "/api/brands"))
+				.andExpect(jsonPath("$.brandName").value(nullValue()))
 				.andRespond(withSuccess("""
 						{ "brandId": 42, "username": "brand_official", "followers": null, "status": "ACTIVE" }
 						""", MediaType.APPLICATION_JSON));
 
-		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official");
+		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", null);
 
 		assertThat(result.brandId()).isEqualTo(42L);
 		assertThat(result.followers()).isNull();
@@ -77,7 +80,7 @@ class MonitoringBrandCommandClientTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("{ \"code\": \"PRIVATE_ACCOUNT\", \"message\": \"비공개 계정\" }"));
 
-		assertThatThrownBy(() -> client.registerBrand("private_brand"))
+		assertThatThrownBy(() -> client.registerBrand("private_brand", null))
 				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
 					assertThat(e.code()).isEqualTo("PRIVATE_ACCOUNT");
 					assertThat(e.httpStatus()).isEqualTo(422);
@@ -89,7 +92,7 @@ class MonitoringBrandCommandClientTest {
 		server.expect(requestTo(BASE + "/api/brands"))
 				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
 
-		assertThatThrownBy(() -> client.registerBrand("brand_official"))
+		assertThatThrownBy(() -> client.registerBrand("brand_official", null))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
 
