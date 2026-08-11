@@ -381,7 +381,7 @@ class UserRepositoryTest extends IntegrationTest {
 	 * (Task 2에서 이미 밟은 함정) 시드 데이터와 archive.archived_rows 실제 행만으로 판정한다.
 	 */
 	@Test
-	void 탈퇴하면_ACCOUNT_DELETION_ORDER_9종_전부_1건_이상_아카이브된다() {
+	void 탈퇴하면_ACCOUNT_DELETION_ORDER_12종_전부_1건_이상_아카이브된다() {
 		AppUser user = repository.insert("archive-order@example.com", "hashed-order");
 		long userId = user.id();
 
@@ -392,13 +392,29 @@ class UserRepositoryTest extends IntegrationTest {
 				.param("id", userId)
 				.update();
 		campaignRepository.insert(userId, "아카이브 순서 검증", null, null, null, null, null, null);
-		monitoringItemRepository.insertPending(userId, "account", UUID.randomUUID(), null,
+		long itemId = monitoringItemRepository.insertPending(userId, "account", UUID.randomUUID(), null,
 				"order-handle", null, null, 30, LocalDate.now());
 		long registrationId = registrationRepository.insert(userId, 30, null);
 		registrationRepository.insertEntry(registrationId, 1, "order-handle", "account", "success",
 				null, null, null, null);
 		digestRepository.upsert(userId, LocalDate.now(), "[]");
 		emailOptOutRepository.optOut(userId, "collection_started");
+		jdbcClient.sql("INSERT INTO app.notice_seen (user_id, last_seen_at) VALUES (:id, now())")
+				.param("id", userId)
+				.update();
+		jdbcClient.sql("""
+						INSERT INTO app.brand_monitorings (user_id, brand_id, username)
+						VALUES (:id, 777, 'order-brand')
+						""")
+				.param("id", userId)
+				.update();
+		jdbcClient.sql("""
+						INSERT INTO app.brand_direct_posts (user_id, brand_id, short_code, monitoring_item_id)
+						VALUES (:id, 777, 'order-post', :itemId)
+						""")
+				.param("id", userId)
+				.param("itemId", itemId)
+				.update();
 
 		repository.deleteAccount(userId);
 
@@ -413,7 +429,8 @@ class UserRepositoryTest extends IntegrationTest {
 		assertThat(archivedByUser).containsExactlyInAnyOrder(
 				"app.saved_contents", "app.saved_influencers",
 				"app.monitoring_campaigns", "app.monitoring_items", "app.monitoring_registrations",
-				"app.monitoring_digests", "app.monitoring_email_opt_outs", "app.users");
+				"app.monitoring_digests", "app.monitoring_email_opt_outs", "app.users",
+				"app.notice_seen", "app.brand_monitorings", "app.brand_direct_posts");
 
 		long entryCount = jdbcClient.sql("""
 						SELECT count(*) FROM archive.archived_rows
@@ -425,5 +442,12 @@ class UserRepositoryTest extends IntegrationTest {
 				.query(Long.class)
 				.single();
 		assertThat(entryCount).isEqualTo(1);
+
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.notice_seen WHERE user_id = :id")
+				.param("id", userId).query(Long.class).single()).isZero();
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.brand_monitorings WHERE user_id = :id")
+				.param("id", userId).query(Long.class).single()).isZero();
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.brand_direct_posts WHERE user_id = :id")
+				.param("id", userId).query(Long.class).single()).isZero();
 	}
 }
