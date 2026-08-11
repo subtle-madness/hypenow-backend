@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
  * app 저장(memo upsert·inserted 판별·순서)과 analysis 미러 IN 조회를 실측한다. app 테이블은 Flyway가
@@ -24,6 +25,9 @@ class V1SavedRepositoryTest extends IntegrationTest {
 
 	@Autowired
 	JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	JdbcClient jdbcClient;
 
 	@Autowired
 	V1SavedRepository repository;
@@ -315,5 +319,70 @@ class V1SavedRepositoryTest extends IntegrationTest {
 
 		assertThat(archivedAlpha.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
 		assertThat(originalBeta.profileImageUrl()).isEqualTo("https://pic/beta.jpg");
+	}
+
+	// --- 저장 해제 아카이브(트랙 NN, Task 4) ---
+
+	private long insertUser(String email) {
+		return jdbcClient.sql("""
+						INSERT INTO app.users (email, password_hash) VALUES (:email, 'hash') RETURNING id
+						""")
+				.param("email", email)
+				.query(Long.class)
+				.single();
+	}
+
+	@Test
+	void 콘텐츠_저장해제하면_아카이브에_남는다() {
+		long userId = insertUser("unsave-content@example.com");
+		jdbcClient.sql("INSERT INTO app.saved_contents (user_id, short_code) VALUES (:id, 'SC9')")
+				.param("id", userId)
+				.update();
+
+		repository.deleteContent(userId, "SC9");
+
+		String reason = jdbcClient.sql("""
+						SELECT archived_reason FROM archive.archived_rows
+						 WHERE table_name = 'app.saved_contents' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(reason).isEqualTo("SAVED_REMOVED");
+	}
+
+	@Test
+	void 인플루언서_저장해제하면_아카이브에_남는다() {
+		long userId = insertUser("unsave-influencer@example.com");
+		jdbcClient.sql("INSERT INTO app.saved_influencers (user_id, handle) VALUES (:id, 'someone9')")
+				.param("id", userId)
+				.update();
+
+		repository.deleteInfluencer(userId, "someone9");
+
+		String handle = jdbcClient.sql("""
+						SELECT payload ->> 'handle' FROM archive.archived_rows
+						 WHERE table_name = 'app.saved_influencers' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(handle).isEqualTo("someone9");
+	}
+
+	@Test
+	void 없는_행을_해제해도_아카이브가_생기지_않는다() {
+		long userId = insertUser("unsave-noop@example.com");
+
+		repository.deleteContent(userId, "NOTHING");
+
+		Long count = jdbcClient.sql("SELECT count(*) FROM archive.archived_rows WHERE user_id = :id")
+				.param("id", userId)
+				.query(Long.class)
+				.single();
+
+		assertThat(count).isZero();
 	}
 }

@@ -1,5 +1,8 @@
 package com.celfit.was.monitoring;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
@@ -8,6 +11,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * app.monitoring_campaigns CRUD(v3, V15). (user_id, name) 유니크 위반은 그대로 전파시켜
@@ -20,9 +24,11 @@ public class CampaignRepository {
 			"id, user_id, name, description, start_date, end_date, brand, budget, seeding_count, created_at";
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public CampaignRepository(JdbcClient jdbcClient) {
+	public CampaignRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	public CampaignRow insert(long userId, String name, String description, LocalDate startDate,
@@ -96,10 +102,15 @@ public class CampaignRepository {
 				.single();
 	}
 
+	/** 삭제 전 아카이브(트랙 NN). items는 campaign_id가 SET NULL로 풀릴 뿐이라 대상 아님. */
+	@Transactional
 	public void delete(long id) {
-		jdbcClient.sql("DELETE FROM app.monitoring_campaigns WHERE id = :id")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_CAMPAIGNS, ArchiveReason.CAMPAIGN_DELETED,
+				Map.of("id", id));
+		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_campaigns WHERE id = :id")
 				.param("id", id)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.MONITORING_CAMPAIGNS, archived, deleted);
 	}
 
 	/** 캠페인 삭제 확인 모달·검증용 — 배정된 추적 아이템 수. */

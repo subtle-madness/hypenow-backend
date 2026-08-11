@@ -166,4 +166,52 @@ class SavedRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findContents(userId)).extracting(SavedContent::shortCode).containsExactly("h2");
 	}
+
+	// --- 저장 해제 아카이브(트랙 NN, Task 4) — v1과 별 bean으로 동일 SQL을 재구현하므로 구 표면도 검증 ---
+
+	@Test
+	void 콘텐츠_저장해제하면_아카이브에_남는다() {
+		repository.upsertContent(userId, "SC9");
+
+		repository.deleteContent(userId, "SC9");
+
+		String reason = jdbcClient.sql("""
+						SELECT archived_reason FROM archive.archived_rows
+						 WHERE table_name = 'app.saved_contents' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(reason).isEqualTo("SAVED_REMOVED");
+	}
+
+	@Test
+	void 인플루언서_저장해제하면_아카이브에_남는다() {
+		repository.upsertInfluencer(userId, "someone9", null, false, null);
+
+		repository.deleteInfluencer(userId, "someone9");
+
+		String handle = jdbcClient.sql("""
+						SELECT payload ->> 'handle' FROM archive.archived_rows
+						 WHERE table_name = 'app.saved_influencers' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(handle).isEqualTo("someone9");
+	}
+
+	@Test
+	void 없는_행을_해제해도_아카이브가_생기지_않는다() {
+		repository.deleteContent(userId, "NOTHING");
+
+		Long count = jdbcClient.sql("SELECT count(*) FROM archive.archived_rows WHERE user_id = :id")
+				.param("id", userId)
+				.query(Long.class)
+				.single();
+
+		assertThat(count).isZero();
+	}
 }

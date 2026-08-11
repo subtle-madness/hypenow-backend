@@ -40,6 +40,14 @@ networks:
   prod:
   test:
   monitoring-net:
+  # IPv6 이그레스 전용(08-11) — 인스타 지역 엣지 CDN(instagram.f*.fna.fbcdn.net)이 AAAA-only라
+  # IPv4 전용 컨테이너에선 이미지 아카이브가 Network is unreachable로 실패한다. 기존 prod에
+  # enable_ipv6를 켜면 네트워크 재생성 = 전 스택 다운이라, 별도 네트워크를 만들어 CDN 다운로드가
+  # 있는 서비스(analytics·monitoring)만 추가 소속시킨다. 서브넷 미지정 → 도커가 ULA /64 자동
+  # 할당 + NAT66(도커 27+ 기본). 전제: 호스트에 글로벌 IPv6 필요(OCI VNIC IPv6 + netplan dhcp6 —
+  # 08-11 활성화). test 스택은 이미지 아카이브가 no-op(PAR URL 빈 값)이라 대상 아님.
+  v6egress:
+    enable_ipv6: true
 
 services:
   postgres:
@@ -105,7 +113,7 @@ services:
     logging: *logging
     mem_limit: 1280m   # 힙 768m + 오프힙 여유
     oom_score_adj: 500   # 지정 희생양 — 재기동 무해 배치, 새벽 폭주 주범이 먼저 죽게
-    networks: [prod]
+    networks: [prod, v6egress]   # v6egress: 이미지 아카이브의 AAAA-only CDN 도달용(상단 networks 주석)
     environment:
       APP_DATASOURCE_RAW_JDBC_URL: jdbc:postgresql://postgres-raw:5432/crawler
       APP_DATASOURCE_RAW_USERNAME: ${RAW_DB_USER}
@@ -265,7 +273,8 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 768m   # 힙 384m + 오프힙 여유
-    networks: [prod, monitoring-net]   # prod는 postgres 접속용
+    # prod는 postgres 접속용, v6egress는 프로필·썸네일 아카이브의 AAAA-only CDN 도달용
+    networks: [prod, monitoring-net, v6egress]
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
