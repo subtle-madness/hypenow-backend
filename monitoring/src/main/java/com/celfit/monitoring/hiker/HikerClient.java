@@ -236,6 +236,33 @@ public class HikerClient {
 		return new TaggedPage(posts, cursor);
 	}
 
+	/** 해시태그 recent 스트림 게시물 + 사진 태그된 계정 목록(소문자 정규화). */
+	public record HashtagPost(PostInfo post, List<String> taggedUsernames) {}
+
+	public record HashtagPage(List<HashtagPost> posts, String nextPageId) {}
+
+	/**
+	 * 해시태그 recent 열거 1페이지(스펙 2026-08-11 §3) — 섹션 셰이프
+	 * {response:{sections:[{layout_content:{medias:[{media}]}}]}}를 우선 파싱하고,
+	 * 평탄 items 셰이프는 폴백. usertags는 직접태그 제외 판정 재료(추가 콜 없음).
+	 */
+	public HashtagPage fetchHashtagRecentPage(String tag, String pageId) {
+		String body;
+		try {
+			body = http.get("/v2/hashtag/medias/recent?name=" + enc(tag) + pageParam(pageId));
+		} catch (SubjectNotFoundException e) {
+			log.info("해시태그 열거 404 — tag {} page_id {}, 게시물 없음/커서 종료로 간주", tag, pageId);
+			return new HashtagPage(List.of(), null);
+		}
+		JsonNode root = root(body);
+		List<HashtagPost> posts = new ArrayList<>();
+		for (JsonNode item : hashtagItems(root)) {
+			posts.add(new HashtagPost(toPost(item, null, body, Map.of(), true), taggedUsernames(item)));
+		}
+		String cursor = moreAvailable(root) ? nextPageId(root) : null;
+		return new HashtagPage(posts, cursor);
+	}
+
 	public PostInfo fetchPost(String shortCode) {
 		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
 		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
@@ -428,6 +455,41 @@ public class HikerClient {
 			arr.forEach(out::add);
 		} else {
 			out.add(arr);
+		}
+		return out;
+	}
+
+	/**
+	 * 해시태그 recent 응답의 medias 노드 — sections→layout_content→medias→media 중첩을 걷는다.
+	 * 섹션에 medias가 하나도 없으면(미실측 셰이프 방어) 평탄 items 셰이프로 폴백한다.
+	 */
+	private static List<JsonNode> hashtagItems(JsonNode root) {
+		JsonNode res = root.has("response") ? root.path("response") : root;
+		List<JsonNode> out = new ArrayList<>();
+		for (JsonNode section : res.path("sections")) {
+			for (JsonNode media : section.path("layout_content").path("medias")) {
+				JsonNode m = media.path("media");
+				if (!m.isMissingNode() && !m.isNull()) {
+					out.add(m);
+				}
+			}
+		}
+		if (out.isEmpty()) {
+			for (JsonNode item : res.path("items")) {
+				out.add(item.has("media") ? item.path("media") : item);
+			}
+		}
+		return out;
+	}
+
+	/** 사진 태그된(usertags) 계정 목록 — 소문자 정규화(직접태그 제외 판정 재료). */
+	private static List<String> taggedUsernames(JsonNode media) {
+		List<String> out = new ArrayList<>();
+		for (JsonNode in : media.path("usertags").path("in")) {
+			String username = in.path("user").path("username").asString(null);
+			if (username != null && !username.isBlank()) {
+				out.add(username.toLowerCase(java.util.Locale.ROOT));
+			}
 		}
 		return out;
 	}
