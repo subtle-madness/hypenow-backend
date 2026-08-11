@@ -9,7 +9,7 @@
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, Flyway(was `app` 스키마), JUnit 5 + Mockito + `@WebMvcTest` 슬라이스.
 
 **설계 문서:** [specs/2026-08-12-competitor-account-type-design.md](../specs/2026-08-12-competitor-account-type-design.md)
-**FE 회신:** [contracts/competitor-monitoring-api-response-2026-08-12.md](../../contracts/competitor-monitoring-api-response-2026-08-12.md)
+**FE 회신:** 문서로 남기지 않고 채팅으로 전달했다(08-12). 전달 내용의 근거는 설계 문서 §요청서와 다른 점에 있다.
 
 ## Global Constraints
 
@@ -19,10 +19,7 @@
 - 값 공간 밖 `accountType` 입력은 **400 `VALIDATION_FAILED`**.
 - 신규 Flyway 마이그레이션은 UTC 타임스탬프 채번. **기존 `V1`~`V9` 파일은 rename 금지.**
 - expand-contract: 이번 릴리스에 `DROP`·`RENAME`·타입 변경·`SET NOT NULL` 없음.
-- 테스트 실행 전 셸에 `DOCKER_HOST` 설정 필요(Testcontainers). 이 계획의 테스트는 전부 `@WebMvcTest` 슬라이스라 컨테이너를 띄우지 않지만, 모듈 전체 실행(`./gradlew :was:test`) 시에는 필요하다.
-  ```
-  export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
-  ```
+- **이 머신의 도커는 Docker Desktop이다**(08-12 확인 — colima 미설치). `DOCKER_HOST`를 **설정하지 않는 것**이 정답이다. CLAUDE.md의 colima 소켓 export 지침은 이 머신에 해당하지 않으니 따르지 말 것 — 그 값을 넣으면 Testcontainers가 소켓을 못 찾아 통합 테스트가 대량 실패한다.
 - 테스트는 모듈 단위로: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"`. 전체 `./gradlew test`는 PR 직전에만.
 
 ## File Structure
@@ -223,7 +220,7 @@ Expected: PASS
 
 Run: `./gradlew :was:test --tests "com.celfit.was.*FlywayTest" --tests "com.celfit.was.*MigrationTest"`
 해당 테스트가 없으면 대신 Flyway를 태우는 통합 테스트 아무거나 하나:
-Run: `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.v1.saved.*"`
+Run: `./gradlew :was:test --tests "com.celfit.was.v1.saved.*"`
 Expected: PASS — Testcontainers Postgres에 새 마이그레이션이 적용된다. 실패하면 SQL 문법·스키마명(`app.`)을 확인한다.
 
 - [ ] **Step 8: 마이그레이션 가드 확인**
@@ -1062,10 +1059,9 @@ git commit -m "feat(was): 경쟁사 구독 게시물의 캠페인 연결 차단(
 - [ ] **Step 1: was 모듈 전체 테스트**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 ./gradlew :was:test
 ```
-Expected: PASS. 대량 실패가 나오면 `DOCKER_HOST` 미설정을 먼저 의심한다(테스트 결함으로 오진하기 쉽다).
+Expected: PASS. 대량 실패가 나오면 도커 접속을 먼저 의심한다(테스트 결함으로 오진하기 쉽다) — 이 머신은 Docker Desktop이므로 `DOCKER_HOST`는 **비어 있어야** 한다. `docker ps`가 되는지부터 확인할 것.
 
 - [ ] **Step 2: 마이그레이션 가드 + 전체 빌드**
 
@@ -1083,7 +1079,7 @@ Expected: 둘 다 PASS.
 # PP — 경쟁사 계정 타입(accountType)
 
 - **설계**: [specs/2026-08-12-competitor-account-type-design.md](../superpowers/specs/2026-08-12-competitor-account-type-design.md)
-- **FE 회신**: [contracts/competitor-monitoring-api-response-2026-08-12.md](../contracts/competitor-monitoring-api-response-2026-08-12.md)
+- **FE 회신**: 채팅으로 전달(08-12) — 문서로 남기지 않았다
 - **의존**: 브랜드 모니터링 was 표면(08-07 다계정 개정)
 - **상태**: 🔵 구현 완료 — PR 리뷰 대기
 
@@ -1140,7 +1136,7 @@ FE 요청서(08-11) P0~P2 전부.
 ## 요청서와 다르게 간 지점
 
 설계 문서 §요청서와 다른 점 참조 — 한도 초과 409 유지, 캠페인 방어 건별 실패,
-`/contents` 기본에 individual 포함, `meta.limit` 값 변경. FE 회신 문서에 전달 사항을 정리했다.
+`/contents` 기본에 individual 포함, `meta.limit` 값 변경. FE에는 채팅으로 회신했다.
 
 ## 테스트
 

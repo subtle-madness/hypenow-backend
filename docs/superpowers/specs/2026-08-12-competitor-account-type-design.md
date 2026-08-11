@@ -201,7 +201,7 @@ patch)가 각자 이미 들고 있는 링크 행에서 타입을 넘긴다. `lis
 ## 요청서와 다른 점
 
 의도는 그대로 지키되 표현을 이 코드베이스의 기존 관용구에 맞춘 지점이 넷이다.
-FE 회신 문서: [contracts/competitor-monitoring-api-response-2026-08-12.md](../../contracts/competitor-monitoring-api-response-2026-08-12.md)
+이 넷은 FE에 채팅으로 회신했다(08-12) — 별도 회신 문서는 남기지 않았다.
 
 ### ① 한도 초과는 400이 아니라 409
 
