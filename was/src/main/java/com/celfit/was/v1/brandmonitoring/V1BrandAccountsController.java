@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 브랜드 계정 표면(스펙 §5) — 등록(202)·목록·단건 폴링·삭제(204). 인증 필수(SecurityConfig
+ * 브랜드 계정 표면(스펙 §5) — 등록(202)·목록·단건 폴링·타입 변경(200, 08-12)·삭제(204). 인증 필수(SecurityConfig
  * anyRequest().authenticated()). 레거시 /v1/monitoring/**와 완전히 분리된 신규 경로다.
  *
  * <p>monitoring 서브시스템이 꺼진 환경에서는 표면 자체가 없다(빈 미등록 → 404) —
@@ -39,10 +40,16 @@ public class V1BrandAccountsController {
 	@GetMapping
 	public ApiResponse<List<BrandAccountResponse>> list(@AuthenticationPrincipal AppUserDetails principal) {
 		List<BrandAccountResponse> accounts = service.list(principal.getUserId());
+		long own = accounts.stream().filter(a -> BrandAccountType.OWN.equals(a.accountType())).count();
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", accounts.size());
-		// TODO(08-12 Task 3): 타입별 meta로 교체 — 지금은 타입 합계라 단일 limit 계약과 의미가 어긋난다.
+		// limit은 호환용으로 남긴 합산 최대다(타입별로 갈려 단일 값이 의미를 잃었다) — 실제 게이트는
+		// limits·counts고, 강제 지점은 BrandLinkTransaction이다.
 		meta.put("limit", BrandAccountType.ownLimit() + BrandAccountType.competitorLimit());
+		meta.put("limits", Map.of(BrandAccountType.OWN, BrandAccountType.ownLimit(),
+				BrandAccountType.COMPETITOR, BrandAccountType.competitorLimit()));
+		meta.put("counts", Map.of(BrandAccountType.OWN, own,
+				BrandAccountType.COMPETITOR, accounts.size() - own));
 		return ApiResponse.ok(accounts, meta);
 	}
 
@@ -67,6 +74,14 @@ public class V1BrandAccountsController {
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
 	}
 
+	/** 타입 변경(§2-3, 08-12) — 재수집 없이 구독 속성만 바꾼다. 200 + 갱신된 계정 객체. */
+	@PatchMapping("/{accountId}")
+	public ApiResponse<BrandAccountResponse> changeType(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) BrandAccountTypeRequest body) {
+		String accountType = body == null ? null : body.accountType();
+		return ApiResponse.ok(service.changeType(principal.getUserId(), parseAccountId(accountId), accountType));
+	}
+
 	@DeleteMapping("/{accountId}")
 	public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserDetails principal,
 			@PathVariable String accountId) {
@@ -85,5 +100,9 @@ public class V1BrandAccountsController {
 
 	/** 등록 요청 본문 — 계정명(정규화·검증은 BrandUsername)과 타입(생략 시 own). */
 	public record BrandAccountRegisterRequest(String username, String accountType) {
+	}
+
+	/** 타입 변경 요청 본문 — own|competitor. */
+	public record BrandAccountTypeRequest(String accountType) {
 	}
 }

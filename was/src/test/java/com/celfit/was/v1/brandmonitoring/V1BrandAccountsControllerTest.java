@@ -10,6 +10,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -266,10 +267,9 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		// 응답 필드는 mock 조회분을 되읽는 것이라 실제 저장 타입을 증명하지 못한다 — 저장 인자를 직접 고정한다.
-		// (아래 응답 필드 검증보다 앞에 둔다 — accountType 필드는 Task 3 전까지 없어서 그 뒤는 실행되지 않는다.)
 		then(linkRepository).should().insertLink(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR);
 
-		result.andExpect(jsonPath("$.data.accountType").value("competitor"));   // Task 3에서 필드 추가
+		result.andExpect(jsonPath("$.data.accountType").value("competitor"));
 	}
 
 	@Test
@@ -287,6 +287,25 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("100"));
 
 		then(linkRepository).should().updateAccountType(7L, 100L, BrandAccountType.COMPETITOR);
+		then(commandClient).should(never()).registerBrand(anyString());
+	}
+
+	@Test
+	void 재등록으로_타입을_바꾸면_monitoring을_호출하지_않는다() throws Exception {
+		// 위 테스트와 같은 경로지만 응답 필드(accountType)까지 고정한다 — 재등록 응답도 바뀐 타입을 실어야 한다.
+		given(linkRepository.findAllActiveByUser(7L))
+				.willReturn(List.of(link(7L, 10L, "my_brand", BrandAccountType.OWN)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 10L))
+				.willReturn(Optional.of(link(7L, 10L, "my_brand", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(10L)).willReturn(Optional.of(readyRow(10L)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"my_brand\",\"accountType\":\"competitor\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.accountType").value("competitor"));
+
+		then(linkRepository).should().updateAccountType(7L, 10L, "competitor");
 		then(commandClient).should(never()).registerBrand(anyString());
 	}
 
@@ -425,8 +444,10 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(0))
 				.andExpect(jsonPath("$.meta.total").value(0))
-				// Task 3에서 타입별 meta로 교체된다 — 지금은 타입 합계(own 6 + competitor 3).
-				.andExpect(jsonPath("$.meta.limit").value(9));
+				// limit은 호환용으로 남긴 합산 최대(own 6 + competitor 3) — 실제 게이트는 limits·counts다.
+				.andExpect(jsonPath("$.meta.limit").value(9))
+				.andExpect(jsonPath("$.meta.counts.own").value(0))
+				.andExpect(jsonPath("$.meta.counts.competitor").value(0));
 	}
 
 	@Test
@@ -456,6 +477,24 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data[1].id").value("200"))
 				.andExpect(jsonPath("$.data[1].collectionStatus").value("collecting"))
 				.andExpect(jsonPath("$.meta.total").value(2));
+	}
+
+	@Test
+	void 목록은_구독_타입을_그대로_돌려준다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(
+				link(7L, 10L, "my_brand", BrandAccountType.OWN),
+				link(7L, 11L, "rival_brand", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(10L)).willReturn(Optional.of(readyRow(10L)));
+		given(brandReadRepository.findAccount(11L)).willReturn(Optional.of(readyRow(11L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].accountType").value("own"))
+				.andExpect(jsonPath("$.data[1].accountType").value("competitor"))
+				.andExpect(jsonPath("$.meta.limits.own").value(6))
+				.andExpect(jsonPath("$.meta.limits.competitor").value(3))
+				.andExpect(jsonPath("$.meta.counts.own").value(1))
+				.andExpect(jsonPath("$.meta.counts.competitor").value(1));
 	}
 
 	@Test
@@ -508,6 +547,55 @@ class V1BrandAccountsControllerTest {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/brand_lizda").with(user(principal())))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	// ---------- 타입 변경(PATCH) ----------
+
+	@Test
+	void PATCH는_재수집_없이_타입만_바꾼다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L))
+				.willReturn(List.of(link(7L, 10L, "my_brand", BrandAccountType.OWN)))
+				.willReturn(List.of(link(7L, 10L, "my_brand", BrandAccountType.COMPETITOR)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 10L))
+				.willReturn(Optional.of(link(7L, 10L, "my_brand", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(10L)).willReturn(Optional.of(readyRow(10L)));
+
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/10").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountType\":\"competitor\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accountType").value("competitor"));
+
+		then(linkRepository).should().updateAccountType(7L, 10L, "competitor");
+		then(commandClient).should(never()).registerBrand(anyString());
+	}
+
+	@Test
+	void PATCH_남의_계정은_403이다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of());
+
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/999").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountType\":\"competitor\"}"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+	}
+
+	@Test
+	void PATCH_값_공간_밖_타입은_400이다() throws Exception {
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/10").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountType\":\"rival\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void PATCH_숫자가_아닌_id는_404다() throws Exception {
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/abc").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountType\":\"competitor\"}"))
+				.andExpect(status().isNotFound());
 	}
 
 	// ---------- 삭제 ----------

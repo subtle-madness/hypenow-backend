@@ -19,7 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
- * 브랜드 계정 라이프사이클(스펙 §5, 08-07 다계정 개정) — 연결·목록·단건·삭제 + 회원 탈퇴 훅.
+ * 브랜드 계정 라이프사이클(스펙 §5, 08-07 다계정 개정) — 연결·목록·단건·타입 변경(08-12)·삭제 + 회원 탈퇴 훅.
  * POST는 "브랜드 연결"이다: 브랜드는 전역 1회 수집이고(monitoring 등록이 멱등 replay), 여러 사용자가
  * 같은 브랜드에 연결해 수집 데이터를 공유한다. 이미 연결된 브랜드 재요청은 오류가 아니라 기존 객체
  * 반환(멱등)이고, 타입별 한도(own 6 / competitor 3 — {@link BrandAccountType}) 초과만 409다.
@@ -83,7 +83,7 @@ public class V1BrandAccountService {
 		return get(userId, registered.brandId());
 	}
 
-	/** 목록(§5-2) — 유저의 활성 연결 전체(연결 순), 유저당 최대 own 6 + competitor 3건. */
+	/** 목록(§5-2) — 유저의 활성 연결 전체(연결 순). accountType은 연결 행에서 온다(08-12). */
 	public List<BrandAccountResponse> list(long userId) {
 		List<BrandAccountResponse> accounts = new ArrayList<>();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
@@ -95,15 +95,29 @@ public class V1BrandAccountService {
 						userId, link.brandId());
 				continue;
 			}
-			accounts.add(assembler.toResponse(row.get()));
+			accounts.add(assembler.toResponse(row.get(), link.accountType()));
 		}
 		return List.copyOf(accounts);
 	}
 
-	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). */
+	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다. */
 	public BrandAccountResponse get(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		return assembler.toResponse(findAccountOrThrow(brandId));
+		BrandLinkRow link = requireOwnership(userId, brandId);
+		return assembler.toResponse(findAccountOrThrow(brandId), link.accountType());
+	}
+
+	/**
+	 * 타입 변경(§2-3, 08-12) — 재수집 없이 구독 속성만 바꾼다. 상한 초과는 409, 남의 계정은 403.
+	 * POST 재등록의 타입 변경과 같은 트랜잭션 메서드를 쓴다(판정이 한 곳에만 있게).
+	 */
+	public BrandAccountResponse changeType(long userId, long brandId, String rawAccountType) {
+		String accountType = BrandAccountType.orDefault(rawAccountType);
+		// 검증은 반드시 리포지토리 도달 전에 — 잘못된 값이 그대로 내려가면 CHECK 제약 위반이 500으로 샌다.
+		if (!BrandAccountType.isValid(accountType)) {
+			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
+		}
+		linkTransaction.changeType(userId, brandId, accountType);
+		return get(userId, brandId);
 	}
 
 	/**
@@ -186,10 +200,9 @@ public class V1BrandAccountService {
 		}
 	}
 
-	private void requireOwnership(long userId, long brandId) {
-		if (linkRepository.findActiveByUserAndBrand(userId, brandId).isEmpty()) {
-			throw V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요.");
-		}
+	private BrandLinkRow requireOwnership(long userId, long brandId) {
+		return linkRepository.findActiveByUserAndBrand(userId, brandId)
+				.orElseThrow(() -> V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요."));
 	}
 
 	private BrandAccountRow findAccountOrThrow(long brandId) {
