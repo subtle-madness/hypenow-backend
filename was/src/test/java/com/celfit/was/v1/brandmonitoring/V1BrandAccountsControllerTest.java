@@ -260,11 +260,62 @@ class V1BrandAccountsControllerTest {
 		given(linkRepository.findActiveByUserAndBrand(7L, 300L))
 				.willReturn(Optional.of(link(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR)));
 
-		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+		var result = mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"username\":\"rival_brand\",\"accountType\":\"competitor\"}"))
+				.andExpect(status().isAccepted());
+
+		// 응답 필드는 mock 조회분을 되읽는 것이라 실제 저장 타입을 증명하지 못한다 — 저장 인자를 직접 고정한다.
+		// (아래 응답 필드 검증보다 앞에 둔다 — accountType 필드는 Task 3 전까지 없어서 그 뒤는 실행되지 않는다.)
+		then(linkRepository).should().insertLink(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR);
+
+		result.andExpect(jsonPath("$.data.accountType").value("competitor"));   // Task 3에서 필드 추가
+	}
+
+	@Test
+	void 이미_연결된_계정을_다른_타입으로_재요청하면_재수집_없이_타입만_바꾼다() throws Exception {
+		// 08-12 FE UX — "이미 등록된 계정을 경쟁사로 다시 넣으면 옮겨진다"가 409가 아니라 정상 경로다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.COMPETITOR)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"lizda_official\",\"accountType\":\"competitor\"}"))
 				.andExpect(status().isAccepted())
-				.andExpect(jsonPath("$.data.accountType").value("competitor"));
+				.andExpect(jsonPath("$.data.id").value("100"));
+
+		then(linkRepository).should().updateAccountType(7L, 100L, BrandAccountType.COMPETITOR);
+		then(commandClient).should(never()).registerBrand(anyString());
+	}
+
+	@Test
+	void competitor가_3개면_기존_계정의_타입_변경도_409고_바꾸지_않는다() throws Exception {
+		List<BrandLinkRow> existing = new ArrayList<>(links(3, BrandAccountType.COMPETITOR));
+		existing.add(link(7L, 100L));   // own인 lizda_official — 이걸 competitor로 옮기려는 요청이다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(existing);
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"lizda_official\",\"accountType\":\"competitor\"}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error.code").value("COMPETITOR_ACCOUNT_LIMIT_REACHED"));
+
+		then(linkRepository).should(never()).updateAccountType(anyLong(), anyLong(), anyString());
+	}
+
+	@Test
+	void 값_공간_밖의_accountType은_400이고_monitoring을_호출하지_않는다() throws Exception {
+		// DB CHECK 위반이 500으로 새지 않도록 서비스 층에서 먼저 막는다(계정명은 일부러 정상값).
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"lizda_official\",\"accountType\":\"rival\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(commandClient).should(never()).registerBrand(anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
 	}
 
 	@Test

@@ -17,10 +17,17 @@ import org.springframework.transaction.annotation.Transactional;
  * BRAND_ACCOUNT_IMMUTABLE·BRAND_ACCOUNT_ALREADY_EXISTS는 이 개정으로 폐기됐다.
  *
  * <p>자기호출(self-invocation)은 프록시를 타지 않아 @Transactional이 무시되므로 서비스와 같은 클래스에
- * 두지 않았다. 사전 확인과 저장이 별도 트랜잭션인 것은 의도된 것이다: 사전 확인은 monitoring 호출
- * 전에 멱등·한도를 즉시 판정하는 빠른 경로일 뿐이고, 판정의 정본은 저장 트랜잭션 안의
- * {@code lockUser}(유저 행 FOR UPDATE) 직렬화 아래 재확인이다 — 한도는 유니크 인덱스로 표현할 수
- * 없어 이 잠금이 동시 등록의 한도 초과를 막는 유일한 장치다.
+ * 두지 않았다. 한도는 유니크 인덱스로 표현할 수 없어 {@code lockUser}(유저 행 FOR UPDATE) 아래에서
+ * 세는 것이 동시 요청의 한도 초과를 막는 유일한 장치다 — 따라서 <b>한도를 판정하고 그 판정에 기대어
+ * 쓰는 모든 경로</b>({@link #link}의 생성, {@link #precheck}의 타입 변경, {@link #changeType})는
+ * 예외 없이 잠금을 먼저 잡고 목록을 <b>다시 읽은 뒤</b> 판정한다.
+ *
+ * <p>사전 확인과 저장이 별도 트랜잭션인 것은 의도된 것이다: {@link #precheck}의 <b>읽기 전용 경로</b>
+ * (신규 연결 판정)는 monitoring 호출 전에 멱등·한도를 즉시 훑는 빠른 경로일 뿐이고 잠금을 잡지
+ * 않는다 — 그 판정의 정본은 저장 트랜잭션({@link #link}) 안의 잠금 아래 재확인이다.
+ * 반면 precheck의 <b>타입 변경 분기는 그 자리에서 커밋까지 끝내고 {@link #link}가 아예 실행되지
+ * 않으므로</b> 뒤에 정본이 없다 — 그래서 그 분기만 precheck 안에서 스스로 잠금을 잡는다(08-12).
+ * 진입 시점에 통째로 잠그지 않는 것은 등록 요청 전부를 직렬화하지 않기 위해서다.
  */
 @Component
 class BrandLinkTransaction {
@@ -37,6 +44,11 @@ class BrandLinkTransaction {
 	 * 바꾼다</b>(08-12): FE UX가 "이미 등록된 계정을 다시 넣으면 경쟁사로 옮겨진다"라 409가 아니다.
 	 * 대상 타입 한도 초과는 즉시 409.
 	 *
+	 * <p>타입 변경은 여기서 <b>커밋까지 끝나고 {@link #link}가 실행되지 않는다</b> — 뒤에 재확인이
+	 * 없으므로 이 분기만 스스로 {@code lockUser}를 잡고 목록을 다시 읽어 한도를 센다. 잠그지 않으면
+	 * 동시에 들어온 두 변경이 같은 잔여 자리를 보고 둘 다 통과해 상한을 영구히 넘긴다(복구 경로 없음).
+	 * 잠금은 타입이 <b>실제로 다를 때만</b> 잡는다 — 읽기 전용 멱등 경로까지 직렬화하지 않기 위해서다.
+	 *
 	 * <p>계정명 비교는 링크의 등록 시점 사본 기준이라 monitoring 쪽 개명은 못 보지만, 그 경우
 	 * monitoring 등록이 같은 brandId로 replay돼 {@link #link}의 brandId 재확인이 멱등으로 접는다 —
 	 * 결과는 같다.
@@ -48,12 +60,15 @@ class BrandLinkTransaction {
 				.filter(link -> link.username().equals(username))
 				.findFirst();
 		if (same.isPresent()) {
-			BrandLinkRow link = same.get();
-			if (!accountType.equals(link.accountType())) {
-				requireRoom(links, accountType, link.brandId());
-				linkRepository.updateAccountType(userId, link.brandId(), accountType);
+			long brandId = same.get().brandId();
+			if (!accountType.equals(same.get().accountType())) {
+				linkRepository.lockUser(userId);
+				// 잠금 전에 읽은 목록은 경합 상대의 커밋을 못 봤을 수 있다 — 한도 판정은 반드시 재조회분으로.
+				List<BrandLinkRow> locked = linkRepository.findAllActiveByUser(userId);
+				requireRoom(locked, accountType, brandId);
+				linkRepository.updateAccountType(userId, brandId, accountType);
 			}
-			return Optional.of(link.brandId());
+			return Optional.of(brandId);
 		}
 		requireRoom(links, accountType, null);
 		return Optional.empty();
