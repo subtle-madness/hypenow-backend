@@ -19,19 +19,27 @@ public final class GeminiHttpTransport implements GeminiHttp {
 
 	private static final Logger log = LoggerFactory.getLogger(GeminiHttpTransport.class);
 	private static final String DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
+	private static final long DEFAULT_RETRY_BASE_MILLIS = 1000;
 	private static final int MAX_ATTEMPTS = 3;
 
 	private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 	private final String baseUrl;
 	private final String apiKey;
+	private final long retryBaseMillis;
 
 	public GeminiHttpTransport(String apiKey) {
 		this(apiKey, DEFAULT_BASE_URL);
 	}
 
 	public GeminiHttpTransport(String apiKey, String baseUrl) {
+		this(apiKey, baseUrl, DEFAULT_RETRY_BASE_MILLIS);
+	}
+
+	/** retryBaseMillis — 테스트에서 백오프 대기를 줄이려고 주입(analytics GeminiHttpApi와 동형 패턴). */
+	public GeminiHttpTransport(String apiKey, String baseUrl, long retryBaseMillis) {
 		this.apiKey = apiKey;
 		this.baseUrl = baseUrl;
+		this.retryBaseMillis = retryBaseMillis;
 	}
 
 	@Override
@@ -75,9 +83,9 @@ public final class GeminiHttpTransport implements GeminiHttp {
 		throw new IllegalStateException("도달 불가");
 	}
 
-	private static void backoff(int attempt) {
+	private void backoff(int attempt) {
 		try {
-			Thread.sleep(Duration.ofSeconds(1L << attempt).toMillis());
+			Thread.sleep(retryBaseMillis * (1L << attempt));
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw new IllegalStateException("재시도 대기 중 인터럽트", e);

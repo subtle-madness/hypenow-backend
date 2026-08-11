@@ -23,8 +23,11 @@ public class BrandMentionJudge {
 	private static final String SYSTEM_INSTRUCTION = """
 			너는 인스타그램 게시물이 특정 브랜드를 실제로 언급하는지 판정하는 심사관이다.
 			같은 이름의 다른 업종·다른 제품(이름 충돌)이거나 우연히 태그만 달린 무관 게시물은 IRRELEVANT다.
+			브랜드 소개(업종·제품군)가 주어지면 캡션 내용이 그 업종과 맞는지로 이름 충돌을 가려라.
 			캡션이 없거나 정보가 부족해 판단할 수 없으면 UNCERTAIN이다.
 			실제 방문 후기, 제품 리뷰, 협찬, 브랜드 소개처럼 해당 브랜드를 실제로 다루는 게시물만 RELEVANT다.
+			캡션에 해당 브랜드를 다루는 정황이 있다면 확신이 완전하지 않아도 RELEVANT로 판정하라.
+			반대로 캡션에서 브랜드 언급 자체가 확인되지 않으면 IRRELEVANT가 아니라 UNCERTAIN으로 판정하라.
 			""";
 
 	private final GeminiHttp http;
@@ -40,7 +43,9 @@ public class BrandMentionJudge {
 		this.model = model;
 	}
 
-	public Verdict judge(String brandUsername, List<String> brandTags, String authorUsername, String caption) {
+	/** brandBiography는 이름 충돌 방어의 실질 근거(스펙 §4-6 "업종" 컨텍스트) — null 허용. */
+	public Verdict judge(String brandUsername, String brandBiography, List<String> brandTags,
+			String authorUsername, String caption) {
 		if (apiKey == null || apiKey.isBlank()) {
 			// fail-closed: 키 미설정 환경(로컬 등)에서 스윕을 죽이지 않고 비노출로 접는다 — 운영에서
 			// 조용히 전 판정이 UNCERTAIN으로 접히면 알아챌 방법이 없으므로 최초 1회는 warn으로 남긴다
@@ -51,21 +56,24 @@ public class BrandMentionJudge {
 			}
 			return Verdict.UNCERTAIN;
 		}
-		String userText = userText(brandUsername, brandTags, authorUsername, caption);
+		String userText = userText(brandUsername, brandBiography, brandTags, authorUsername, caption);
 		String body = requestBody(userText);
 		String responseBody = http.post("/v1beta/models/" + model + ":generateContent", body);
 		return parseVerdict(responseBody);
 	}
 
-	private static String userText(String brandUsername, List<String> brandTags, String authorUsername,
-			String caption) {
+	private static String userText(String brandUsername, String brandBiography, List<String> brandTags,
+			String authorUsername, String caption) {
 		String captionText = (caption == null || caption.isBlank()) ? "(캡션 없음)" : caption;
-		return """
-				브랜드 계정: @%s
-				브랜드 해시태그: %s
-				게시자: @%s
-				캡션: %s
-				""".formatted(brandUsername, String.join(", ", brandTags), authorUsername, captionText);
+		StringBuilder sb = new StringBuilder();
+		sb.append("브랜드 계정: @").append(brandUsername).append('\n');
+		if (brandBiography != null && !brandBiography.isBlank()) {
+			sb.append("브랜드 소개: ").append(brandBiography).append('\n');
+		}
+		sb.append("브랜드 해시태그: ").append(String.join(", ", brandTags)).append('\n');
+		sb.append("게시자: @").append(authorUsername).append('\n');
+		sb.append("캡션: ").append(captionText).append('\n');
+		return sb.toString();
 	}
 
 	private String requestBody(String userText) {
