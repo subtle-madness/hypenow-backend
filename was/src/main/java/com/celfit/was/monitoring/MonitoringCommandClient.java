@@ -1,6 +1,7 @@
 package com.celfit.was.monitoring;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,6 +78,25 @@ public class MonitoringCommandClient {
 				.toBodilessEntity());
 	}
 
+	/**
+	 * 브랜드 제외 문자열 조회(BrandController §3) — 자사 태그 오탐 방지용 문자열 전체.
+	 * 브랜드 미등록·비ACTIVE는 404인데, deregisterBrand와 같은 빈 바디({@code ResponseEntity.notFound()})라
+	 * {@code code}가 없어 exchange()가 MonitoringApiException이 아니라 MonitoringUnavailableException으로
+	 * 승격한다 — 호출부(V1ExceptionAdvice)에서는 404가 아니라 503으로 매핑된다(500은 아니다).
+	 */
+	public List<String> getHashtagExclusions(String username) {
+		HashtagExclusionsBody body = exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-exclusions", username)
+				.retrieve().body(HashtagExclusionsBody.class));
+		return body == null || body.terms() == null ? List.of() : body.terms();
+	}
+
+	/** 제외 문자열 전체 교체(PUT 계약) — terms는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장. */
+	public void putHashtagExclusions(String username, List<String> terms) {
+		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-exclusions", username)
+				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
+	}
+
 	private <T> T exchange(Supplier<T> call) {
 		try {
 			return call.get();
@@ -116,5 +136,9 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.BrandRegisterResponse와 동형 — followers는 등록 시점 관측값(null 가능). */
 	public record BrandRegisterResult(long brandId, String username, Long followers, String status) {
+	}
+
+	/** monitoring BrandController.HashtagExclusionsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
+	record HashtagExclusionsBody(List<String> terms) {
 	}
 }

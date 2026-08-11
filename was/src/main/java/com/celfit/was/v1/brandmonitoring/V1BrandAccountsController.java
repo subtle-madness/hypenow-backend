@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -73,6 +74,23 @@ public class V1BrandAccountsController {
 		return ResponseEntity.noContent().build();
 	}
 
+	/** 해시태그 제외 문자열 조회(스펙 2026-08-11 §2, monitoring BrandController 프록시) — 소유 브랜드만. */
+	@GetMapping("/{accountId}/hashtag-exclusions")
+	public ApiResponse<BrandHashtagExclusionsResponse> getHashtagExclusions(
+			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
+		List<String> terms = service.getHashtagExclusions(principal.getUserId(), parseAccountId(accountId));
+		return ApiResponse.ok(new BrandHashtagExclusionsResponse(terms));
+	}
+
+	/** 해시태그 제외 문자열 전체 교체 — 204(monitoring PUT 계약과 동형). */
+	@PutMapping("/{accountId}/hashtag-exclusions")
+	public ResponseEntity<Void> putHashtagExclusions(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) HashtagExclusionsRequest body) {
+		List<String> terms = body == null ? null : body.terms();
+		service.putHashtagExclusions(principal.getUserId(), parseAccountId(accountId), terms);
+		return ResponseEntity.noContent().build();
+	}
+
 	/** accountId는 문자열 path 파라미터라 숫자가 아니면 존재할 수 없는 id → 404(V1CampaignController 관용구). */
 	private static long parseAccountId(String raw) {
 		try {
@@ -84,5 +102,9 @@ public class V1BrandAccountsController {
 
 	/** 등록 요청 본문 — 계정명 한 개(정규화·검증은 BrandUsername). */
 	public record BrandAccountRegisterRequest(String username) {
+	}
+
+	/** 제외 문자열 교체 요청 본문 — terms null은 서비스에서 빈 목록으로 접는다. */
+	public record HashtagExclusionsRequest(List<String> terms) {
 	}
 }

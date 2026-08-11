@@ -12,6 +12,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -542,6 +543,109 @@ class V1BrandAccountsControllerTest {
 
 		then(linkRepository).should(never()).softDeleteLink(anyLong(), anyLong());
 		then(commandClient).should(never()).deregisterBrand(anyString());
+	}
+
+	// ---------- 해시태그 제외 문자열(스펙 2026-08-11 §2) ----------
+
+	@Test
+	void 제외_문자열_조회는_소유_브랜드만_허용한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(commandClient.getHashtagExclusions("lizda_official")).willReturn(List.of("리즈다", "lizda"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.terms.length()").value(2))
+				.andExpect(jsonPath("$.data.terms[0]").value("리즈다"))
+				.andExpect(jsonPath("$.data.terms[1]").value("lizda"));
+
+		then(commandClient).should().getHashtagExclusions("lizda_official");
+	}
+
+	@Test
+	void 미소유_브랜드의_제외_문자열_조회는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/999/hashtag-exclusions").with(user(principal())))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).getHashtagExclusions(anyString());
+	}
+
+	@Test
+	void 제외_문자열_교체는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\": [\"리즈다\", \"Lizda\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().putHashtagExclusions("lizda_official", List.of("리즈다", "Lizda"));
+	}
+
+	@Test
+	void terms_null_교체는_빈_목록으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().putHashtagExclusions("lizda_official", List.of());
+	}
+
+	@Test
+	void 미소유_브랜드의_제외_문자열_교체는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/999/hashtag-exclusions")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\": [\"리즈다\"]}"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).putHashtagExclusions(anyString(), any());
+	}
+
+	@Test
+	void monitoring_404가_에러_바디를_주면_제외_문자열_조회는_404로_매핑된다() throws Exception {
+		// was 링크·brand_account는 정합이지만 monitoring이 그 브랜드를 모르는 비정합 경로 —
+		// exchange가 MonitoringApiException(404)으로 승격하면 V1ExceptionAdvice 공용 매핑이 404로 접는다
+		// (500으로 터지지 않는지가 이 테스트의 핵심). {code,message} 에러 바디가 있는 경우 한정
+		// (register 계열 404가 이 셰이프) — 아래 실측 케이스와 대비할 것.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(commandClient.getHashtagExclusions("lizda_official"))
+				.willThrow(new MonitoringApiException("NOT_FOUND", "브랜드를 찾을 수 없습니다.", 404));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void monitoring_불능은_제외_문자열_조회에서_503이다() throws Exception {
+		// 실측(MonitoringBrandCommandClientTest): BrandController의 hashtag-exclusions 404는
+		// deregister와 같은 빈 바디(ResponseEntity.notFound().build())라 exchange()가
+		// MonitoringApiException이 아니라 MonitoringUnavailableException으로 승격한다 — 그 결과
+		// V1ExceptionAdvice가 404가 아니라 503 SERVICE_UNAVAILABLE로 매핑한다(500은 아니라 계약상
+		// 무해하지만, 위 테스트가 가정한 4xx는 아니다 — 셀프 리뷰 보고 참조).
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(commandClient.getHashtagExclusions("lizda_official"))
+				.willThrow(new MonitoringUnavailableException("monitoring 응답 해석 불가 HTTP 404", null));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"));
 	}
 
 	@Test

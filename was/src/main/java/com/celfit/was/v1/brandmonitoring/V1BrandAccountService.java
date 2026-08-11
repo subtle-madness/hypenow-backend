@@ -107,6 +107,23 @@ public class V1BrandAccountService {
 	}
 
 	/**
+	 * 해시태그 제외 문자열 조회(스펙 2026-08-11 §2) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
+	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
+	 */
+	public List<String> getHashtagExclusions(long userId, long brandId) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		return commandClient.getHashtagExclusions(username);
+	}
+
+	/** 해시태그 제외 문자열 전체 교체 — terms null은 빈 목록으로 접어 monitoring에 위임(정규화는 monitoring). */
+	public void putHashtagExclusions(long userId, long brandId, List<String> terms) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		commandClient.putHashtagExclusions(username, terms == null ? List.of() : terms);
+	}
+
+	/**
 	 * 삭제(§5-3) — 연결 soft-delete 후 그 브랜드의 마지막 사용자였으면 monitoring 탈퇴.
 	 * {@code users.instgram_account_name}은 건드리지 않는다(불변 — 같은 계정 재등록만 허용).
 	 */

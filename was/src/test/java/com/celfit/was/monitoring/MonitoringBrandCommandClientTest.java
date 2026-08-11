@@ -136,4 +136,58 @@ class MonitoringBrandCommandClientTest {
 		assertThatThrownBy(() -> client.deregisterBrand("brand_official"))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
+
+	@Test
+	void 제외_문자열_조회는_terms를_그대로_반환한다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
+				.andExpect(method(HttpMethod.GET))
+				.andRespond(withSuccess("""
+						{ "terms": ["리즈다", "lizda"] }
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.getHashtagExclusions("brand_official")).containsExactly("리즈다", "lizda");
+		server.verify();
+	}
+
+	/** terms가 null·본문이 비어도 예외 없이 빈 목록으로 접는다 — 응답 계약을 신뢰하지 않는 방어. */
+	@Test
+	void 제외_문자열_조회는_terms가_null이면_빈_목록이다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
+				.andRespond(withSuccess("""
+						{ "terms": null }
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.getHashtagExclusions("brand_official")).isEmpty();
+	}
+
+	@Test
+	void 제외_문자열_조회_404는_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-exclusions"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+		assertThatThrownBy(() -> client.getHashtagExclusions("gone_brand"))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
+	@Test
+	void 제외_문자열_교체는_terms를_그대로_전달하고_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(jsonPath("$.terms[0]").value("리즈다"))
+				.andExpect(jsonPath("$.terms[1]").value("Lizda"))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.putHashtagExclusions("brand_official", java.util.List.of("리즈다", "Lizda")))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	@Test
+	void 제외_문자열_교체_404는_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-exclusions"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+		assertThatThrownBy(() -> client.putHashtagExclusions("gone_brand", java.util.List.of("리즈다")))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
 }
