@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 트랙 S(monitoring was seam)·트랙 II(POST 등록 profile_meta 채움) 위에서 동작. 트랙 J(서빙 이미지 아카이브)와는 **OCI 버킷만 공유하고 코드·후보군은 완전히 분리**(키 프리픽스로 소유권 구분 — 아래 참고).
-- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 PR 대기)
+- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 머지 완료 · 브랜드 본인(brand_account) 동형 확장 PR 대기)
 - **트랙 문자 배정 메모**: `docs/tracks/`에 FF·GG가 아직 파일로 없지만 다른 세션이 PR #235·#243으로 점유 중이고, A~JJ 중 KK가 다음 미사용 문자라 배정.
 
 ## 내용
@@ -163,6 +163,25 @@ upsert가 URL을 되살리는 `brand_post_meta.thumbnail_url`과 달리, **아�
 - **was 서빙은 이 확장 범위 밖**: 브랜드 모니터링 was API(MON-BT 잔여 작업 세션)가
   `author_profile`을 서빙하게 되면 `image_object_path` 우선 + 원본 폴백(`TrackingItemAssembler`
   동형)을 그쪽 계약에 얹는다.
+
+### 브랜드 본인 프로필 이미지 아카이브 (트랙 KK 확장, 2026-08-11 — brand_account)
+
+`brand_account.profile_pic_url`(08-07 was 계약 필드로 추가)도 인스타 서명 CDN URL이라 며칠~2주면
+만료된다 — 스윕이 매일 재조회해 저장값은 갱신되지만, 프론트가 이 URL을 직접 쓰면 등록 후 시간이
+지난 브랜드부터 이미지가 깨진다(CLOSED 브랜드는 재조회도 멎어 영구히 깨짐). 게시자(author_profile)
+확장과 완전히 같은 형태라 새 설계 없이 그대로 이식했다.
+
+- **스키마**: `brand_account`에 동일한 3컬럼 — `image_object_path`, `image_source_name`,
+  `image_archived_at`(`V20260811023454__brand_account_image_archive.sql`). 오염행 정정 UPDATE는
+  불필요 — author_profile과 같은 근거(08-06 신설 테이블).
+- **키 스킴**: `monitor-brand/<ig_user_id>.jpg` — ig_user_id 기준(author_profile과 동일 근거:
+  username은 개명 가능). PK는 bigserial `id`라 UPDATE는 id 기준, 오브젝트 키만 ig_user_id.
+- **잡·실행 시점**: `BrandProfileImageArchiveJob`(AuthorProfileImageArchiveJob과 동형 —
+  `ImageStore`/`ImageDownloader`/`ParImageStore` 재사용, 같은 PAR·배치 상한 설정 공유).
+  `BrandSweepJob.run()`의 finally에서 게시자 아카이브 직후 독립 실행 — 잡별 격리 래퍼
+  (`runArchiveSafely`)라 한쪽 실패가 다른 쪽·스윕 결과에 영향을 주지 않는다.
+- **was 서빙은 이 확장 범위 밖**: 브랜드 계정 API가 `image_object_path` 우선 + 원본 폴백을
+  계약에 얹는 것은 후속(author_profile과 같은 위치).
 
 ## 검증
 
