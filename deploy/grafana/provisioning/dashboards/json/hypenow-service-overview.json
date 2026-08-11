@@ -5,21 +5,125 @@
   "timezone": "Asia/Seoul",
   "editable": true,
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5m",
   "time": { "from": "now-7d", "to": "now" },
   "panels": [
     {
       "id": 1,
-      "type": "table",
-      "title": "미완료 등록 (completed_at IS NULL)",
-      "description": "전역 시간 필터 미적용 — 등록 시점과 무관하게 '지금 막혀 있는' 건을 항상 전부 보여준다.",
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "type": "row",
+      "title": "이상 징후",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "처리 중 멈춘 등록",
+      "description": "모니터링 등록 요청 중 아직 완료 처리가 안 된 건수. 정상 상태는 0 — 1건이라도 있으면 등록 처리가 어딘가에서 멈춰 있다는 뜻이니 즉시 확인할 것. 전역 시간 필터 미적용(등록 시점과 무관하게 지금 막혀 있는 건을 항상 전부 센다).",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 1 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registrations WHERE completed_at IS NULL"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "결과 미확정 등록 항목",
+      "description": "등록 항목(계정/URL) 중 성공·중복·취소 어느 결과로도 안 끝난 건수. 정상 상태는 0 — 1건이라도 있으면 처리 실패나 대기 상태로 방치된 항목이 있다는 뜻. 전역 시간 필터 미적용(상태 기반 잔여 목록이라 발생 시점과 무관하게 전부 센다).",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registration_entries WHERE result NOT IN ('success', 'duplicate', 'canceled')"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "세션 수",
+      "description": "app.spring_session 전체 행 수 — 유저 24명 대비 비정상 누적을 감시(07-31 실측: 1,411건까지 쌓였던 사고 이력, #303→#305로 정리·원인 수정 완료). 500건을 넘으면 다시 누수가 시작됐다는 신호.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM app.spring_session"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "└ 처리 중 멈춘 등록 상세",
+      "description": "위 Stat이 0보다 클 때 확인하는 상세 목록 — 어떤 유저의 요청이 언제부터 멈춰 있는지. 전역 시간 필터 미적용.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
           "format": "table",
           "rawSql": "SELECT r.id, r.user_id, r.requested_at,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registrations r\nWHERE r.completed_at IS NULL\nORDER BY r.requested_at"
         }
@@ -57,16 +161,16 @@
       }
     },
     {
-      "id": 2,
+      "id": 6,
       "type": "table",
-      "title": "정산 안 된 등록 entry (success/duplicate/canceled 제외)",
-      "description": "전역 시간 필터 미적용 — 상태 기반 잔여 목록이라 발생 시점과 무관하게 전부 보여준다.",
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "title": "└ 결과 미확정 등록 항목 상세",
+      "description": "위 Stat이 0보다 클 때 확인하는 상세 목록 — 어떤 입력값이 어떤 사유로 미확정 상태인지. 전역 시간 필터 미적용.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
           "format": "table",
           "rawSql": "SELECT e.input, e.kind, e.result, e.reason_code,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE e.result NOT IN ('success', 'duplicate', 'canceled')\nORDER BY r.requested_at"
         }
@@ -96,80 +200,179 @@
       }
     },
     {
-      "id": 3,
-      "type": "timeseries",
-      "title": "등록 결과 분포 (일별)",
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-          "format": "time_series",
-          "rawSql": "SELECT date_trunc('day', r.requested_at) AS time, e.result AS metric, count(*) AS value\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE $__timeFilter(r.requested_at)\nGROUP BY 1, 2\nORDER BY 1"
-        }
-      ]
+      "id": 7,
+      "type": "row",
+      "title": "유저 유입",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "panels": []
     },
     {
-      "id": 4,
+      "id": 8,
       "type": "timeseries",
       "title": "가입 추이 (일별)",
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "description": "일별 신규 가입 완료(app.users 생성) 건수.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20 } }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
           "format": "time_series",
           "rawSql": "SELECT date_trunc('day', created_at) AS time, count(*) AS value\nFROM app.users\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1"
         }
       ]
     },
     {
-      "id": 5,
+      "id": 9,
       "type": "timeseries",
       "title": "가입 시도 결과 (일별)",
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 24 },
+      "description": "가입 시도(성공 포함 모든 결과)를 일별로 결과값(outcome)별 집계. 실패 사유가 특정 값으로 몰리면 가입 폼이나 코드 검증에 문제가 있다는 신호.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
           "format": "time_series",
           "rawSql": "SELECT date_trunc('day', created_at) AS time, outcome AS metric, count(*) AS value\nFROM app.signup_events\nWHERE $__timeFilter(created_at)\nGROUP BY 1, 2\nORDER BY 1"
         }
       ]
     },
     {
-      "id": 6,
+      "id": 10,
       "type": "stat",
-      "title": "세션 수",
-      "description": "app.spring_session 전체 행 수 — 유저 23명 대비 1,411 세션(07-31 실측)처럼 비정상 누적을 감시.",
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "title": "가입 코드 소진 현황",
+      "description": "클로즈베타 가입 코드의 발급·발송·사용 누적 건수(전체 기간, 시간 필터 미적용). 발급 대비 사용이 낮으면 코드가 안 뿌려졌거나 사용자가 코드를 입력하지 못하고 있다는 뜻 — 클로즈베타 유일한 유입 관문이라 가장 먼저 볼 지표.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "grafana-postgresql-datasource", "uid": "hypenow-analysis-pg" },
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
           "format": "table",
-          "rawSql": "SELECT count(*) AS value FROM app.spring_session"
+          "rawSql": "SELECT count(*) AS 발급,\n       count(*) FILTER (WHERE is_sent) AS 발송,\n       count(*) FILTER (WHERE used_at IS NOT NULL) AS 사용\nFROM app.signup_codes"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "도입 문의 (일별)",
+      "description": "랜딩 '도입 문의' 폼 접수 건수를 요청 유형별(브랜드/에이전시/유통사/인플루언서)로 일별 집계. PII(이름·이메일·소속·문의내용)는 절대 조회하지 않는다 — 접수 시각·유형만 센다.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, user_type AS metric, count(*) AS value\nFROM app.inquiries\nWHERE $__timeFilter(created_at)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "모니터링 사용 현황",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "등록 결과 분포 (일별)",
+      "description": "모니터링 등록 항목의 처리 결과(성공/실패/중복/대기/취소)를 일별로 집계.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', r.requested_at) AS time, e.result AS metric, count(*) AS value\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE $__timeFilter(r.requested_at)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "모니터링 추적 항목 현황",
+      "description": "현재 등록된 추적 대상(계정/URL)을 모드별로 활성·취소 구분해 집계. 전역 시간 필터 미적용(등록 시점과 무관하게 지금 존재하는 항목을 전부 센다). 활성은 실제 추적 중인 건수, 취소는 유저가 중단한 건수 — 취소 비율이 갑자기 늘면 이탈 신호로 볼 것.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawSql": "SELECT mode,\n       count(*) FILTER (WHERE canceled_at IS NULL) AS 활성,\n       count(*) FILTER (WHERE canceled_at IS NOT NULL) AS 취소\nFROM app.monitoring_items\nGROUP BY mode\nORDER BY mode"
         }
       ],
       "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 500 }
-            ]
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "mode" },
+            "properties": [{ "id": "displayName", "value": "추적 방식" }]
           }
-        },
-        "overrides": []
+        ]
       }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "다이제스트 발송·읽음 (일별)",
+      "description": "일별 인앱 다이제스트 발송 건수와 그중 읽음 처리된 건수. 발송 대비 읽음이 낮게 유지되면 알림이 노출은 되지만 안 열리고 있다는 뜻(이메일 다이제스트는 별도 미개통 상태 — 이 패널은 인앱 기준).",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 39 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time,\n       count(*) AS 발송,\n       count(*) FILTER (WHERE read_at IS NOT NULL) AS 읽음\nFROM app.monitoring_digests\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "콘텐츠 참여",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "저장 활동 추이 (일별)",
+      "description": "인플루언서 저장(발굴 리스트 찜)과 콘텐츠 저장(피드 게시물 찜)을 일별로 함께 표시. 완전히 0인 날이 이어지면 저장 기능 노출·동작을 점검할 것.",
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, '인플루언서 저장' AS metric, count(*) AS value\nFROM app.saved_influencers\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nUNION ALL\nSELECT date_trunc('day', created_at) AS time, '콘텐츠 저장' AS metric, count(*) AS value\nFROM app.saved_contents\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
     }
   ]
 }
