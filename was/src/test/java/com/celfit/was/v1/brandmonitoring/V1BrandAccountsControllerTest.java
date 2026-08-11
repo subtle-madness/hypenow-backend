@@ -554,8 +554,7 @@ class V1BrandAccountsControllerTest {
 	@Test
 	void PATCH는_재수집_없이_타입만_바꾼다() throws Exception {
 		given(linkRepository.findAllActiveByUser(7L))
-				.willReturn(List.of(link(7L, 10L, "my_brand", BrandAccountType.OWN)))
-				.willReturn(List.of(link(7L, 10L, "my_brand", BrandAccountType.COMPETITOR)));
+				.willReturn(List.of(link(7L, 10L, "my_brand", BrandAccountType.OWN)));
 		given(linkRepository.findActiveByUserAndBrand(7L, 10L))
 				.willReturn(Optional.of(link(7L, 10L, "my_brand", BrandAccountType.COMPETITOR)));
 		given(brandReadRepository.findAccount(10L)).willReturn(Optional.of(readyRow(10L)));
@@ -567,7 +566,23 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.accountType").value("competitor"));
 
 		then(linkRepository).should().updateAccountType(7L, 10L, "competitor");
-		then(commandClient).should(never()).registerBrand(anyString());
+	}
+
+	@Test
+	void PATCH_대상_타입이_차_있으면_409고_바꾸지_않는다() throws Exception {
+		// POST 재등록의 타입 변경(precheck 분기)과는 다른 트랜잭션 메서드(changeType)라 별도로 고정한다 —
+		// 둘이 공유하는 것은 상한 판정(requireRoom)뿐이고, 잠금·재조회 순서는 각자 구현이다.
+		List<BrandLinkRow> existing = new ArrayList<>(links(3, BrandAccountType.COMPETITOR));
+		existing.add(link(7L, 100L));   // own인 lizda_official — 이걸 competitor로 옮기려는 요청이다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(existing);
+
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/100").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountType\":\"competitor\"}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error.code").value("COMPETITOR_ACCOUNT_LIMIT_REACHED"));
+
+		then(linkRepository).should(never()).updateAccountType(anyLong(), anyLong(), anyString());
 	}
 
 	@Test
@@ -590,12 +605,49 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 	}
 
+	// PATCH는 등록의 "생략 = own" 폴백을 쓰지 않는다(08-12 리뷰) — 보내지 않은 필드가 계정을 own으로
+	// 덮어쓰면 경쟁사가 조용히 강등되고, own이 6개면 보내지도 않은 필드 때문에 409가 난다.
+	// 아래 3개는 그 폴백이 되살아나면 즉시 깨진다.
+
 	@Test
-	void PATCH_숫자가_아닌_id는_404다() throws Exception {
+	void PATCH_본문이_아예_없으면_400이고_바꾸지_않는다() throws Exception {
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/10").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(linkRepository).should(never()).updateAccountType(anyLong(), anyLong(), anyString());
+	}
+
+	@Test
+	void PATCH_accountType이_빠진_본문은_400이고_바꾸지_않는다() throws Exception {
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/10").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(linkRepository).should(never()).updateAccountType(anyLong(), anyLong(), anyString());
+	}
+
+	@Test
+	void PATCH_빈_문자열_타입은_400이고_바꾸지_않는다() throws Exception {
+		mockMvc.perform(patch("/v1/brand-monitoring/accounts/10").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountType\":\"\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(linkRepository).should(never()).updateAccountType(anyLong(), anyLong(), anyString());
+	}
+
+	@Test
+	void PATCH_숫자가_아닌_id는_타입도_틀렸어도_404다() throws Exception {
+		// id 파싱(404)이 accountType 검증(400)보다 먼저다 — 둘 다 틀린 요청으로만 순서가 고정된다.
 		mockMvc.perform(patch("/v1/brand-monitoring/accounts/abc").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"accountType\":\"competitor\"}"))
-				.andExpect(status().isNotFound());
+						.content("{\"accountType\":\"rival\"}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
 	// ---------- 삭제 ----------

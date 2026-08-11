@@ -108,15 +108,20 @@ public class V1BrandAccountService {
 
 	/**
 	 * 타입 변경(§2-3, 08-12) — 재수집 없이 구독 속성만 바꾼다. 상한 초과는 409, 남의 계정은 403.
-	 * POST 재등록의 타입 변경과 같은 트랜잭션 메서드를 쓴다(판정이 한 곳에만 있게).
+	 * 상한 판정은 POST 재등록의 타입 변경(precheck 분기)과 같은 규칙을 공유한다
+	 * ({@code BrandLinkTransaction.requireRoom} — 판정이 한 곳에만 있게). 트랜잭션 메서드는 서로 다르다.
+	 *
+	 * <p><b>{@code orDefault}를 쓰지 않는다</b>(08-12 리뷰): "생략 = own"은 등록(POST)의 하위 호환
+	 * 규칙이고, PATCH에서 그대로 쓰면 필드를 안 보낸 요청이 계정을 조용히 own으로 덮어쓴다
+	 * (경쟁사 강등, 심지어 own이 6개면 보내지도 않은 필드 때문에 409). 값 공간의 두 리터럴만 받고
+	 * 부재·null·공백은 전부 400이다.
 	 */
 	public BrandAccountResponse changeType(long userId, long brandId, String rawAccountType) {
-		String accountType = BrandAccountType.orDefault(rawAccountType);
 		// 검증은 반드시 리포지토리 도달 전에 — 잘못된 값이 그대로 내려가면 CHECK 제약 위반이 500으로 샌다.
-		if (!BrandAccountType.isValid(accountType)) {
+		if (!BrandAccountType.isValid(rawAccountType)) {
 			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
 		}
-		linkTransaction.changeType(userId, brandId, accountType);
+		linkTransaction.changeType(userId, brandId, rawAccountType);
 		return get(userId, brandId);
 	}
 
