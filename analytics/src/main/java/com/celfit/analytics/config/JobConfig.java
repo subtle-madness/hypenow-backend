@@ -76,13 +76,51 @@ public class JobConfig {
 			ContentInsightPort insight, AnalyticsSettings settings,
 			// vlm-enabled = 썸네일 첨부 게이트 (기본 off — 캡션 기반 5종은 항상 산출)
 			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled,
-			ObjectProvider<JobProgressRegistry> progressRegistry) {
+			ObjectProvider<JobProgressRegistry> progressRegistry,
+			ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
+			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader,
+			@Value("${analytics.batch-transport-dir:./batch-transport}") String batchDir) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
 		ProgressReporter backfillReporter = registry != null
 				? registry.reporter(JobName.LATE_BACKFILL_ANALYZE) : ProgressReporter.NOOP;
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
-				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter);
+				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter,
+				batchApiOrNull(settings, gemini), taxonomyLoader, java.nio.file.Path.of(batchDir));
+	}
+
+	/**
+	 * 배치 전송(2026-08-11) 수거 잡 — ContentAnalysisJob의 제출 전 pending 스윕과 별개로,
+	 * 어드민/스케줄(JobName.BATCH_COLLECT)이 독립적으로 트리거한다.
+	 */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.analyze-on-startup:false} or ${analytics.admin-enabled:false}")
+	public com.celfit.analytics.analyze.ContentBatchCollectJob contentBatchCollectJob(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			AnalyticsSettings settings, ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
+			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader,
+			@Value("${analytics.batch-transport-dir:./batch-transport}") String batchDir) {
+		return new com.celfit.analytics.analyze.ContentBatchCollectJob(analysisDataSource,
+				batchApiOrNull(settings, gemini), taxonomyLoader, settings, java.nio.file.Path.of(batchDir));
+	}
+
+	/**
+	 * GeminiApi 빈이 배치도 구현하면(VertexHttpApi) 그대로, 아니면(무료 gemini 폴백) null —
+	 * 호출부는 null을 "배치 미지원"으로 해석해 온라인 경로로 내려간다.
+	 *
+	 * <p>provider=anthropic(롤백 경로)이면 GeminiApi 빈을 아예 조회하지 않는다 — gemini.getIfAvailable()은
+	 * @Lazy 빈이라도 호출 즉시 생성을 강제해, GEMINI_API_KEY 없이 anthropic만으로 운영 중인 환경에서
+	 * 불필요하게 GeminiHttpApi.fromEnv()의 키 부재 예외를 낼 수 있다(LlmConfig의 "반대편 클라이언트는
+	 * 만들지 않는다" 원칙과 동형).
+	 */
+	private static com.celfit.analytics.llm.GeminiBatchApi batchApiOrNull(AnalyticsSettings settings,
+			ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini) {
+		if ("anthropic".equals(settings.llmProvider())) {
+			return null;
+		}
+		com.celfit.analytics.llm.GeminiApi api = gemini.getIfAvailable();
+		return api instanceof com.celfit.analytics.llm.GeminiBatchApi b ? b : null;
 	}
 
 	@Bean
