@@ -347,8 +347,9 @@ public class V2CampaignContentService {
 	}
 
 	/**
-	 * 내 브랜드 태그 목록의 shortcode → (canonical URL, 구독 타입). monitoring 비활성·브랜드 연결
-	 * 없음·계정 행 부재면 빈 맵이라 그 콘텐츠는 그대로 failed(NOT_FOUND)가 된다.
+	 * 내 브랜드 태그 목록의 shortcode → (canonical URL, 구독 타입). monitoring 비활성이거나 브랜드
+	 * 연결이 없으면 빈 맵이라 그 콘텐츠는 그대로 failed(NOT_FOUND)가 된다. 계정 행({@code brand_account})이
+	 * 없는 브랜드는 <b>그 브랜드만</b> 건너뛴다(08-07 다계정 개정 — 맵이 비지 않는다).
 	 *
 	 * <p>경쟁사 구독도 <b>맵에 담는다</b>(08-12) — 빼버리면 경쟁사 게시물이 NOT_FOUND로 떨어져
 	 * "존재하는 게시물을 없다고" 말하게 된다. 담아 두고 판정 지점에서 전용 사유로 거절한다.
