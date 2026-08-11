@@ -1,8 +1,9 @@
 # NN — 삭제 데이터 아카이브
 
-- **상태**: 🟢 활성 · ✅ 구현 완료(전체 검증 통과) · 배포 전(develop 대상 PR 대기)
+- **상태**: ✅ 운영 배포 완료(2026-08-11 — PR #313 develop 머지 → #401 staging → #402 main)
+  - 머지 시 흡수분: PR 대기 9일 사이 develop에 생긴 app 테이블 5종(notices·notice_items·notice_seen·brand_monitorings·brand_direct_posts)을 가드 테스트가 잡아내 카탈로그 배선 완료. notices/notice_items는 어드민 삭제 경로가 실존해 EXCLUDED가 아닌 `NOTICE_DELETED` 사유로 편입. brand_direct_posts는 monitoring_items CASCADE 제거(V20260811090500) 후 두 삭제 경로 모두 명시 아카이브. 마이그레이션은 out-of-order 회피로 `V20260811082031`로 재채번
 - **설계 문서**: [specs/2026-08-02-delete-archive-design.md](../superpowers/specs/2026-08-02-delete-archive-design.md)
-- **구현 계획**: [plans/2026-08-02-delete-archive.md](../superpowers/plans/2026-08-02-delete-archive.md)
+- **구현 계획**: [plans/archive/2026-08-02-delete-archive.md](../superpowers/plans/archive/2026-08-02-delete-archive.md)
 
 ## 목표
 
