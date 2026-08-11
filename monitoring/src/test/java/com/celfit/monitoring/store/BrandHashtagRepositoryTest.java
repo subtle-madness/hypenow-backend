@@ -52,18 +52,22 @@ class BrandHashtagRepositoryTest {
 
 	@Test
 	void 게시물_저장과_기존_코드_조회가_동작한다() {
-		repo.insertPost(brandId, "끌리메", "AAA", "poster1", "포스터", "https://pic",
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), "캡션", "REELS", "https://thumb",
-				10L, 2L, "RELEVANT", "LLM");
+		repo.insertPost(new BrandHashtagRepository.HashtagPostInsert(brandId, "끌리메", "AAA", "poster1",
+				"포스터", "https://pic", OffsetDateTime.parse("2026-08-01T00:00:00Z"), "캡션", "REELS",
+				"https://thumb", 10L, 2L, "RELEVANT", "LLM"));
 		// 같은 (brand, code) 재삽입은 무시(ON CONFLICT DO NOTHING)
-		repo.insertPost(brandId, "cclime", "AAA", "poster1", null, null,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), "다른캡션", null, null,
-				null, null, "IRRELEVANT", "LLM");
+		repo.insertPost(new BrandHashtagRepository.HashtagPostInsert(brandId, "cclime", "AAA", "poster1",
+				null, null, OffsetDateTime.parse("2026-08-01T00:00:00Z"), "다른캡션", null, null,
+				null, null, "IRRELEVANT", "LLM"));
 		Set<String> existing = repo.existingCodes(brandId, List.of("AAA", "BBB"));
 		assertThat(existing).containsExactly("AAA");
 		assertThat(db.queryForObject(
 				"SELECT verdict FROM brand_hashtag_post WHERE brand_id = ? AND short_code = 'AAA'",
 				String.class, brandId)).isEqualTo("RELEVANT");
+		// 재삽입 무시는 verdict뿐 아니라 원본 필드 전체가 살아남는다 — author_full_name으로 대표 확인
+		assertThat(db.queryForObject(
+				"SELECT author_full_name FROM brand_hashtag_post WHERE brand_id = ? AND short_code = 'AAA'",
+				String.class, brandId)).isEqualTo("포스터");
 	}
 
 	@Test
