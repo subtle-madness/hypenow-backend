@@ -14,9 +14,14 @@ import java.util.List;
  */
 public record PerformanceComparisonResponse(List<AccountComparison> accounts) {
 
-	/** 브랜드 계정 1개의 비교 축 — collectionStartedAt은 brand_account.registered_at(KST ISO). */
-	public record AccountComparison(String brandAccountId, String username, String collectionStartedAt,
-			List<Bucket> buckets) {
+	/**
+	 * 브랜드 계정 1개의 비교 축 — collectionStartedAt은 brand_account.registered_at(KST ISO).
+	 * accountType은 구독 속성이다(own/competitor, 08-12) — 이 응답은 둘 다 포함한다(나란히 비교가
+	 * 이 화면의 존재 이유라 accountType 필터가 없다, 스펙 §6).
+	 */
+	public record AccountComparison(String brandAccountId, String username,
+			@Schema(allowableValues = {"own", "competitor"}) String accountType,
+			String collectionStartedAt, List<Bucket> buckets) {
 	}
 
 	/**

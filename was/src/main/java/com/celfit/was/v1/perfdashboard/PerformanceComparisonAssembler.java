@@ -4,6 +4,7 @@ import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
+import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
@@ -64,7 +65,8 @@ public class PerformanceComparisonAssembler {
 						userId, link.brandId());
 				continue;
 			}
-			accounts.add(compare(account.get(),
+			// accountType은 계정이 아니라 링크(구독)의 속성이라 순회 중인 링크 행에서 온다(08-12).
+			accounts.add(compare(account.get(), BrandAccountType.orDefault(link.accountType()),
 					byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()), ranges));
 		}
 		return new PerformanceComparisonResponse(List.copyOf(accounts));
@@ -93,7 +95,7 @@ public class PerformanceComparisonAssembler {
 	 * 전 구간 true — 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과 무관하다(스펙 §covered).
 	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
 	 */
-	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account,
+	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
 			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges) {
 		boolean covered = account.lastSweptAt() != null;
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
@@ -101,7 +103,8 @@ public class PerformanceComparisonAssembler {
 			buckets.add(aggregate(range, covered, accountContents));
 		}
 		return new PerformanceComparisonResponse.AccountComparison(String.valueOf(account.id()),
-				account.username(), KstTimestamps.toKstIso(account.registeredAt()), List.copyOf(buckets));
+				account.username(), accountType, KstTimestamps.toKstIso(account.registeredAt()),
+				List.copyOf(buckets));
 	}
 
 	/**

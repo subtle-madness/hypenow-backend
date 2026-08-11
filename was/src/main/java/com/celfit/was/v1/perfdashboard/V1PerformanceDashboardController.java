@@ -1,6 +1,7 @@
 package com.celfit.was.v1.perfdashboard;
 
 import com.celfit.was.auth.AppUserDetails;
+import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandSponsorshipClassifier;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.KstTimestamps;
@@ -13,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Predicate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -61,7 +63,7 @@ public class V1PerformanceDashboardController {
 
 	/**
 	 * 통합 목록 — {@code data}는 전 필터 적용, {@code meta.statusCounts}는 <b>분류 필터</b>(출처·협찬·
-	 * 캠페인·brandAccountId)만 적용한 모수에서 센다(스펙 §7-1).
+	 * 캠페인·brandAccountId·accountType)만 적용한 모수에서 센다(스펙 §7-1, accountType은 08-12 추가).
 	 *
 	 * <p>statusCounts 모수에서 빠지는 필터는 둘이다:
 	 * <ul>
@@ -84,7 +86,8 @@ public class V1PerformanceDashboardController {
 			@RequestParam(required = false) String sponsorship,
 			@RequestParam(required = false) String campaignId,
 			@RequestParam(required = false) String status,
-			@RequestParam(required = false) String brandAccountId) {
+			@RequestParam(required = false) String brandAccountId,
+			@RequestParam(required = false) String accountType) {
 		String sourceFilter = normalizeFilter(source, "source", PerformanceContentAssembler.SOURCE_INDIVIDUAL,
 				PerformanceContentAssembler.SOURCE_DIRECT, PerformanceContentAssembler.SOURCE_TAGGED);
 		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
@@ -94,17 +97,22 @@ public class V1PerformanceDashboardController {
 		// matchesCampaign에서 한다.
 		String campaignFilter = normalizeFilter(campaignId);
 		String brandFilter = normalizeFilter(brandAccountId);
+		// 공용 normalizeFilter를 쓰지 않는다 — 이 파라미터만 미지정과 all이 다르다(아래 javadoc).
+		String accountTypeFilter = normalizeAccountType(accountType);
 		LocalDate from = parseDate(uploadedFrom, "uploadedFrom");
 		LocalDate to = parseDate(uploadedTo, "uploadedTo");
+
+		PerformanceContentAssembler.Assembled assembled = assembler.assemble(principal.getUserId());
+		Set<String> competitorIds = assembled.competitorBrandAccountIds();
 
 		// 분류 필터 — statusCounts 모수의 술어다(status·업로드 기간은 여기 없다, 위 javadoc).
 		Predicate<PerformanceContentResponse> classification = c ->
 				(sourceFilter == null || sourceFilter.equals(c.source()))
 						&& (sponsorshipFilter == null || sponsorshipFilter.equals(c.sponsorship()))
 						&& matchesCampaign(c, campaignFilter)
-						&& (brandFilter == null || brandFilter.equals(c.brandAccountId()));
+						&& (brandFilter == null || brandFilter.equals(c.brandAccountId()))
+						&& matchesAccountType(c, accountTypeFilter, competitorIds);
 
-		PerformanceContentAssembler.Assembled assembled = assembler.assemble(principal.getUserId());
 		// statusCounts 모수 — data는 여기서 status·기간을 더 걸어 갈라져 나온다(같은 모수 출신).
 		List<PerformanceContentResponse> counted = assembled.contents().stream().filter(classification).toList();
 		List<PerformanceContentResponse> data = counted.stream()
@@ -139,6 +147,9 @@ public class V1PerformanceDashboardController {
 	 * 모수는 목록과 같은 조립 전량에 분류 필터(source·sponsorship·campaignId)만 건 것 — 목록·비교
 	 * 막대의 숫자가 정의상 일치한다. individual은 계정 귀속이 불가능해 집계에서 빠진다
 	 * (source=individual이면 전 구간이 빈다 — 의도된 동작).
+	 *
+	 * <p>{@code accountType} 파라미터는 <b>없다</b>(08-12) — own·competitor를 나란히 놓는 것이 이
+	 * 화면의 존재 이유라 타입으로 축을 걸러낼 여지가 없다. 계정별 타입은 응답 필드로 내린다(스펙 §6).
 	 */
 	@GetMapping("/comparison")
 	public ApiResponse<PerformanceComparisonResponse> comparison(
@@ -205,6 +216,48 @@ public class V1PerformanceDashboardController {
 		}
 		String campaignId = content.item().campaignId();
 		return CAMPAIGN_NONE.equals(filter) ? campaignId == null : Objects.equals(campaignId, filter);
+	}
+
+	/**
+	 * accountType 필터(08-12) — {@code all}(=null)은 전량, {@code competitor}는 경쟁사 구독 소속만,
+	 * <b>미지정·own은 "경쟁사만 제외"</b>다.
+	 *
+	 * <p>미지정이 "own 브랜드만"이 아닌 이유: 이 응답에는 브랜드에 귀속되지 않는 레거시 개인 추적
+	 * 콘텐츠(brandAccountId null)가 섞여 있어, 문자 그대로 own만 남기면 경쟁사를 하나도 등록하지
+	 * 않은 유저의 성과 요약 숫자까지 줄어든다. 요청서의 의도(경쟁사가 내 성과를 오염시키지 않게)는
+	 * 경쟁사만 빼는 것으로 충족된다(스펙 §5).
+	 */
+	private static boolean matchesAccountType(PerformanceContentResponse content, String filter,
+			Set<String> competitorIds) {
+		boolean competitor = content.brandAccountId() != null
+				&& competitorIds.contains(content.brandAccountId());
+		if (BrandAccountType.COMPETITOR.equals(filter)) {
+			return competitor;
+		}
+		if (filter == null) {
+			return true;   // all — 미지정과 갈라지는 지점이다(normalizeAccountType 참고).
+		}
+		return !competitor;
+	}
+
+	/**
+	 * accountType 전용 정규화 — 다른 필터와 달리 미지정과 {@code all}이 다르다(미지정은 경쟁사 제외가
+	 * 기본, all은 전량). 그래서 공용 {@link #normalizeFilter(String, String, String...)}를 쓰지 않는다:
+	 * 그쪽에 태우면 미지정이 곧 전량이 되어 경쟁사 콘텐츠가 기본 성과 요약을 오염시킨다.
+	 *
+	 * @return null = 전량(all), {@code "own"} = 경쟁사 제외, {@code "competitor"} = 경쟁사만
+	 */
+	private static String normalizeAccountType(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return BrandAccountType.OWN;
+		}
+		if (FILTER_ALL.equals(raw)) {
+			return null;
+		}
+		if (!BrandAccountType.isValid(raw)) {
+			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
+		}
+		return raw;
 	}
 
 	/** 미지정·{@code all}은 필터 없음(null), 그 외 값은 허용 목록 밖이면 400. */

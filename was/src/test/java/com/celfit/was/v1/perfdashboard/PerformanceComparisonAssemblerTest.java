@@ -9,6 +9,7 @@ import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
+import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceComparisonAssembler.BucketRange;
 import java.time.LocalDate;
@@ -34,7 +35,11 @@ class PerformanceComparisonAssemblerTest {
 	}
 
 	private static BrandLinkRow link(long brandId, String username) {
-		return new BrandLinkRow(brandId, 7L, brandId, username, "own",
+		return link(brandId, username, BrandAccountType.OWN);
+	}
+
+	private static BrandLinkRow link(long brandId, String username, String accountType) {
+		return new BrandLinkRow(brandId, 7L, brandId, username, accountType,
 				OffsetDateTime.parse("2026-05-14T00:12:00Z"), null);
 	}
 
@@ -100,7 +105,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 업로드일이_구간_경계에_정확히_귀속된다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
 				content("A", "2", "2026-08-04", 100L, snapshot(10L, 1L, false, 1L)),   // 1w 하한
 				content("B", "2", "2026-08-03", 100L, snapshot(10L, 1L, false, 1L)),   // 1w_1m 상한
 				content("C", "2", "2025-08-10", 100L, snapshot(10L, 1L, false, 1L)),   // 6m_12m 하한
@@ -121,7 +126,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 합계는_non_null만_더하고_전부_null이면_null이다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
 				// views 87400+20, likes 2800+null, comments 320+8 — 피드(views null)는 결측 카운트로.
 				content("A", "2", "2026-08-09", 400000L, snapshot(87400L, 2800L, false, 320L)),
 				content("B", "2", "2026-08-08", 12000L, snapshot(20L, null, true, 8L)),
@@ -150,7 +155,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 스냅샷이_없는_콘텐츠는_지표_결측으로_센다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
 				content("A", "2", "2026-08-09", 100L)),   // 스냅샷 0개 — 관측 전무
 				RANGES);
 
@@ -165,7 +170,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 지표는_최신_스냅샷에서_읽는다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
 				// 스냅샷은 날짜 오름차순 계약 — 마지막(08-09)이 최신이다.
 				content("A", "2", "2026-08-09", 100L,
 						new TrackingItemResponse.SnapshotResponse("2026-08-08", 50L, 5L, false, 2L,
@@ -183,8 +188,8 @@ class PerformanceComparisonAssemblerTest {
 				OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 				null, null, null, "", "", null, null, null, "ACTIVE");
 
-		var ready = PerformanceComparisonAssembler.compare(readyAccount(), List.of(), RANGES);
-		var notReady = PerformanceComparisonAssembler.compare(collecting, List.of(), RANGES);
+		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(), RANGES);
+		var notReady = PerformanceComparisonAssembler.compare(collecting, BrandAccountType.OWN, List.of(), RANGES);
 
 		assertThat(ready.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
 		assertThat(notReady.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
@@ -217,6 +222,23 @@ class PerformanceComparisonAssemblerTest {
 		assertThat(response.accounts().get(1).buckets().get(0).views()).isEqualTo(20L);
 		// 0건 계정도 실린다 — 두 계정 모두 5구간 전부 존재.
 		assertThat(response.accounts()).allSatisfy(a -> assertThat(a.buckets()).hasSize(5));
+	}
+
+	@Test
+	void 계정별_accountType은_링크에서_실리고_경쟁사도_축에_남는다() {
+		// 비교 화면엔 accountType 필터가 없다(스펙 §6) — 경쟁사 계정도 그대로 축에 실린다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(
+				link(2L, "cclime.beauty"), link(3L, "laperi_kr", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(2L)).willReturn(Optional.of(readyAccount()));
+		given(brandReadRepository.findAccount(3L)).willReturn(Optional.of(
+				new BrandAccountRow(3L, "laperi_kr", null, null,
+						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
+						null, null, null, "", "", null, null, null, "ACTIVE")));
+
+		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
+
+		assertThat(response.accounts()).extracting("brandAccountId", "accountType")
+				.containsExactly(tuple("2", "own"), tuple("3", "competitor"));
 	}
 
 	@Test

@@ -334,6 +334,42 @@ class PerformanceContentAssemblerTest {
 	}
 
 	@Test
+	void 경쟁사_링크의_brandId가_집합으로_노출된다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.empty());
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.empty());
+
+		var assembled = assembler().assemble(USER_ID);
+
+		// monitoring 계정 행이 없어 tagged 조립은 건너뛰어도 구독 타입 판정은 링크만으로 성립한다.
+		assertThat(assembled.competitorBrandAccountIds()).containsExactly("99");
+	}
+
+	@Test
+	void 활성_브랜드가_없으면_경쟁사_집합도_비어_있다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenNoBrand();
+
+		assertThat(assembler().assemble(USER_ID).competitorBrandAccountIds()).isEmpty();
+	}
+
+	@Test
+	void monitoring_비활성이면_경쟁사_집합이_비어_있다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+
+		var disabled = new PerformanceContentAssembler(trackingItemAssembler, directPostRepository,
+				linkRepository, Optional.empty(), Optional.empty());
+
+		assertThat(disabled.assemble(USER_ID).competitorBrandAccountIds()).isEmpty();
+	}
+
+	@Test
 	void 결과는_업로드_최신순이고_업로드일_미상은_마지막이다() {
 		givenLegacy(
 				legacyItem("900", "tracking", "https://www.instagram.com/reel/AAA/", List.of(), "2026-08-01"),
