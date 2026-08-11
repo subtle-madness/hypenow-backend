@@ -54,8 +54,9 @@ monitoring:
     comment-pages: 3            # 게시물당 댓글 상한 3콜 45개(스펙 §2 — 정책 v1에서 30일 보충 없이 유지 확정)
     author-stale-days: 30       # 게시자 프로필 등장 시 stale 갱신 기준(스펙 §8)
     enrich-concurrency: 6       # 보강(게시자·댓글) 워커 풀 크기 — 08-07 운영 실측(동시 8 무저항)에서 마진 둔 값
-    window-days: 90             # 해시태그 발견 게시물 저장 윈도우(스펙 §4) — taken_at이 이보다 오래면 미저장
     hashtag:
+      window-days: 90            # 해시태그 발견 게시물 저장 윈도우(스펙 §4) — taken_at이 이보다 오래면 미저장.
+                                 # 브랜드 본체 스윕의 옛 window-days(08-09 티어 정책에서 제거)와 별개 키 — 재도입 아님
       max-pages: 4               # 해시태그 recent 열거 태그당 상한(조기 종료가 정상 경로에선 이보다 먼저 끊는다)
       judge-model: gemini-3.1-flash-lite   # analytics 전 축과 통일된 모델(2.5-flash 아님)
   gemini:
