@@ -55,4 +55,11 @@ public class ScheduleRunner {
 	void archive() {
 		log.info("스케줄 archive: {}", jobService.trigger(JobName.ARCHIVE, TriggerType.SCHEDULED));
 	}
+
+	/** 배치 전송(2026-08-11) 수거 — analytics.analyze-transport=batch일 때 전날 밤 제출분을 회수한다.
+	 * transport=online이면 content_batch_jobs에 pending 행이 없어 매 호출이 사실상 no-op이다. */
+	@Scheduled(cron = "${analytics.schedule.batch-collect-cron:-}")
+	void batchCollect() {
+		log.info("스케줄 batch-collect: {}", jobService.trigger(JobName.BATCH_COLLECT, TriggerType.SCHEDULED));
+	}
 }

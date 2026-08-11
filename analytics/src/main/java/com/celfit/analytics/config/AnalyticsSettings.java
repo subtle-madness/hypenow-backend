@@ -47,6 +47,10 @@ public class AnalyticsSettings {
 	 * 병렬화 여유가 있고, Gemini로 되돌려도 GeminiHttpApi.pace()가 synchronized라 안전하게
 	 * 감속된다. 429 빈도를 보며 재배포 없이 조정할 수 있게 app_setting으로 뺀다. */
 	public static final String KEY_ANALYZE_CONCURRENCY = "analytics.analyze-concurrency";
+	/** 콘텐츠 분석 전송 방식 — online(기본, 동기 즉시 호출) | batch(Vertex 배치 50% 할인, 익일 수거).
+	 * 2026-08-11: 콘텐츠 분석(ANALYZE·LATE_BACKFILL_ANALYZE)에만 적용, 계정 카피는 대상 아님.
+	 * 잡 실행 시점마다 매번 읽으므로 재기동 없이 전환된다. 롤백은 값을 online으로 되돌리는 UPDATE 한 줄. */
+	public static final String KEY_ANALYZE_TRANSPORT = "analytics.analyze-transport";
 
 	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
 	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
@@ -63,6 +67,7 @@ public class AnalyticsSettings {
 	static final String DEFAULT_VERTEX_LOCATION = "global";
 	static final int DEFAULT_RECENT_WINDOW = 12;
 	static final int DEFAULT_ANALYZE_CONCURRENCY = 8;
+	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
 
 	private final JdbcTemplate raw;
 
@@ -142,6 +147,16 @@ public class AnalyticsSettings {
 
 	public int analyzeConcurrency() {
 		return read(KEY_ANALYZE_CONCURRENCY).map(Integer::parseInt).orElse(DEFAULT_ANALYZE_CONCURRENCY);
+	}
+
+	/** 잡 실행 시점마다 매번 읽는다(캐시 없음) — 재기동 없이 online↔batch 전환. */
+	public String analyzeTransport() {
+		return read(KEY_ANALYZE_TRANSPORT).orElse(DEFAULT_ANALYZE_TRANSPORT);
+	}
+
+	/** true면 콘텐츠 분석(ANALYZE·LATE_BACKFILL_ANALYZE)이 Vertex 배치 제출 경로로 전환된다. */
+	public boolean batchTransportEnabled() {
+		return "batch".equals(analyzeTransport());
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */

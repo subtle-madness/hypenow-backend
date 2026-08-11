@@ -31,6 +31,7 @@ public class AnalyticsJobService {
 	private final MirrorRegistry registry;
 	private final ObjectProvider<CommentClassificationJob> classifyJob;
 	private final ObjectProvider<ContentAnalysisJob> analyzeJob;
+	private final ObjectProvider<com.celfit.analytics.analyze.ContentBatchCollectJob> batchCollectJob;
 	private final ObjectProvider<AccountAnalysisJob> accountAnalyzeJob;
 	private final ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob;
 	private final ObjectProvider<ImageArchiveJob> archiveJob;
@@ -42,6 +43,7 @@ public class AnalyticsJobService {
 			MirrorJob mirrorJob, MirrorRegistry registry,
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
+			ObjectProvider<com.celfit.analytics.analyze.ContentBatchCollectJob> batchCollectJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
@@ -53,6 +55,7 @@ public class AnalyticsJobService {
 		this.registry = registry;
 		this.classifyJob = classifyJob;
 		this.analyzeJob = analyzeJob;
+		this.batchCollectJob = batchCollectJob;
 		this.accountAnalyzeJob = accountAnalyzeJob;
 		this.synthesisRefreshJob = synthesisRefreshJob;
 		this.archiveJob = archiveJob;
@@ -128,6 +131,7 @@ public class AnalyticsJobService {
 			}
 			case ANALYZE -> analyzeJob.getObject().run();
 			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
+			case BATCH_COLLECT -> batchCollectJob.getObject().run();
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
 			case SYNTHESIS_REFRESH -> synthesisRefreshJob.getObject().run();
 			case ARCHIVE -> archiveJob.getObject().run();
