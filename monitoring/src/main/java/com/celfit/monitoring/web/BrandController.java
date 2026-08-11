@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 브랜드 태그 모니터링 등록/탈퇴 + 제외 문자열 관리 API(수집 파이프라인 진입점 — was 조회 API·FE 계약은 범위 밖).
  * 201 신규 / 200 replay / 204 탈퇴(이미 닫힘 포함, 멱등)·제외 문자열 교체 / 404 미등록·비ACTIVE·IG 계정 부재 /
- * 400 형식 위반 / 422 비공개 계정 — 예외 매핑은 ApiExceptionHandler 공용.
+ * 400 형식 위반 / 422 비공개 계정·제외 문자열 빈 목록 거부(비소급 오염 방지) — 예외 매핑은 ApiExceptionHandler 공용.
  */
 @RestController
 @RequestMapping("/api/brands")
@@ -74,7 +74,13 @@ public class BrandController {
 		return ResponseEntity.ok(new HashtagExclusionsBody(hashtags.findExclusionTerms(row.get().id())));
 	}
 
-	/** 전체 교체(PUT 계약) — 정규화 후 저장, 브랜드 미존재·비ACTIVE는 404. */
+	/**
+	 * 전체 교체(PUT 계약) — 정규화 후 저장, 브랜드 미존재·비ACTIVE는 404.
+	 * 정규화 결과가 빈 목록이면 422로 거부한다 — 판정은 비소급(이미 저장된 verdict 불변)이라
+	 * 빈 목록으로 전부 지우면 자사 게시물(스트림의 71~87%)이 RELEVANT로 저장된 뒤 term을
+	 * 되돌려도 복구 불가(EmptyExclusionTermsException 참조). 브랜드 조회를 먼저 해 미등록·
+	 * 비ACTIVE는 이 가드보다 우선해 여전히 404다.
+	 */
 	@PutMapping("/{username}/hashtag-exclusions")
 	public ResponseEntity<?> replaceExclusions(@PathVariable String username,
 			@RequestBody HashtagExclusionsBody body) {
@@ -82,7 +88,11 @@ public class BrandController {
 		if (row.isEmpty()) {
 			return brandNotFound();
 		}
-		hashtags.replaceExclusionTerms(row.get().id(), normalize(body.terms()));
+		List<String> normalized = normalize(body.terms());
+		if (normalized.isEmpty()) {
+			throw new EmptyExclusionTermsException("제외 문자열은 최소 1개 필요합니다.");
+		}
+		hashtags.replaceExclusionTerms(row.get().id(), normalized);
 		return ResponseEntity.noContent().build();
 	}
 

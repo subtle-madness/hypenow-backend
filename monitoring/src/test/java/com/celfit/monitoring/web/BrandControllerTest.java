@@ -206,15 +206,32 @@ class BrandControllerTest {
 		assertThat(hashtags.receivedTerms).containsExactly("cclime");
 	}
 
+	/**
+	 * 정규화 결과가 빈 목록이면 422로 거부한다(비소급 오염 방지 — 판정은 이미 저장된 verdict
+	 * 불변이라, 빈 목록으로 전부 지우면 자사 게시물이 RELEVANT로 저장된 뒤 되돌려도 복구 불가).
+	 */
 	@Test
-	void terms_null_바디는_빈_목록_교체다() throws Exception {
+	void terms_null_바디는_빈_목록_교체라_422다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
-				.andExpect(status().isNoContent());
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
 
-		assertThat(hashtags.receivedTerms).isEmpty();
+		assertThat(hashtags.receivedTerms).isNull();
+	}
+
+	@Test
+	void 빈_배열_교체도_422다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\":[\"  \",\"\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+
+		assertThat(hashtags.receivedTerms).isNull();
 	}
 
 	@Test

@@ -205,4 +205,19 @@ class MonitoringBrandCommandClientTest {
 					assertThat(e.httpStatus()).isEqualTo(404);
 				});
 	}
+
+	/** 빈 목록 교체는 monitoring이 422(code VALIDATION)로 거부한다(비소급 오염 방지, 계약 §8). */
+	@Test
+	void 제외_문자열_교체_빈_목록_422는_MonitoringApiException으로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
+				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"VALIDATION\", \"message\": \"제외 문자열은 최소 1개 필요합니다.\" }"));
+
+		assertThatThrownBy(() -> client.putHashtagExclusions("brand_official", java.util.List.of()))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("VALIDATION");
+					assertThat(e.httpStatus()).isEqualTo(422);
+				});
+	}
 }

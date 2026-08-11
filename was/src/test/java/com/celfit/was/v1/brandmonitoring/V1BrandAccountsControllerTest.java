@@ -615,6 +615,26 @@ class V1BrandAccountsControllerTest {
 		then(commandClient).should(never()).putHashtagExclusions(anyString(), any());
 	}
 
+	/**
+	 * 빈 목록 교체는 monitoring이 422(code VALIDATION)로 거부한다(비소급 오염 방지, 계약 §8) —
+	 * putHashtagExclusions는 registerBrand의 translate()를 거치지 않으므로 V1ExceptionAdvice
+	 * 공용 매핑(httpStatus 404·5xx 외 4xx는 전부 400 VALIDATION_FAILED)이 그대로 적용된다.
+	 */
+	@Test
+	void monitoring_422_빈_목록_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		willThrow(new MonitoringApiException("VALIDATION", "제외 문자열은 최소 1개 필요합니다.", 422))
+				.given(commandClient).putHashtagExclusions(anyString(), any());
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\": []}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
 	@Test
 	void monitoring_브랜드_비정합_404는_제외_문자열_조회에서_404로_매핑된다() throws Exception {
 		// was 링크·brand_account는 정합이지만 monitoring이 그 브랜드를 모르는 비정합 경로 —
