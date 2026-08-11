@@ -93,21 +93,31 @@ public class BrandRegistrationService {
 		String normalized = username.strip();
 		var existing = brands.findByUsername(normalized);
 		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
-			seedHashtags(existing.get().id(), normalized, brandName);
+			seedHashtagsSafely(existing.get().id(), normalized, brandName);
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
 		long id = brands.insertOrReactivate(normalized, profile);
 		BrandRow row = brands.findByUsername(normalized).orElseThrow();
-		seedHashtags(id, normalized, brandName);
+		seedHashtagsSafely(id, normalized, brandName);
 		backfill.execute(() -> runBackfillSafely(row));
 		return new Result(id, normalized, profile.followers(), false);
 	}
 
-	/** 태그 3종(브랜드명 미상 시 2종) + 기본 제외 문자열(계정명 루트) 시드 — 둘 다 멱등 삽입. */
-	private void seedHashtags(long brandId, String username, String brandName) {
-		hashtags.insertTags(brandId, BrandHashtagTags.derive(brandName, username));
-		hashtags.insertDefaultExclusion(brandId, BrandHashtagTags.root(username));
+	/**
+	 * 태그 3종(브랜드명 미상 시 2종) + 기본 제외 문자열(계정명 루트) 시드 — 둘 다 멱등 삽입.
+	 * insertOrReactivate(이미 커밋됨)와 backfill.execute 사이 지점이라 실패를 격리한다 — 여기서
+	 * 던지면 백필이 영구 미예약되는데, 재시도는 replay 분기를 타서 복구할 수 없다(신규 등록
+	 * 자체는 이미 끝난 상태). 시드 실패의 실피해는 "해시태그 스윕이 태그 없음으로 조용히
+	 * 스킵"뿐이고 다음 replay 재등록이 재시드하므로, 등록·백필을 막지 않는 warn 격리가 맞다.
+	 */
+	private void seedHashtagsSafely(long brandId, String username, String brandName) {
+		try {
+			hashtags.insertTags(brandId, BrandHashtagTags.derive(brandName, username));
+			hashtags.insertDefaultExclusion(brandId, BrandHashtagTags.root(username));
+		} catch (RuntimeException e) {
+			log.warn("브랜드 해시태그 시드 실패(격리) — {} 다음 재등록이 재시드: {}", username, e.toString());
+		}
 	}
 
 	/**

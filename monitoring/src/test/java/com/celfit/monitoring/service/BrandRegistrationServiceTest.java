@@ -84,10 +84,15 @@ class BrandRegistrationServiceTest {
 		final List<String> enriched = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
 		final Set<String> enrichFailing = new HashSet<>();
-		List<String> callOrder = new ArrayList<>();
+		private List<String> callOrder = new ArrayList<>();
 
 		StubCollect() {
 			super(null, null, null, null, null, null, null, 365, 2000, 3, 30);
+		}
+
+		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -113,6 +118,7 @@ class BrandRegistrationServiceTest {
 	private static final class StubHashtags extends BrandHashtagRepository {
 		final Map<Long, LinkedHashSet<String>> tags = new HashMap<>();
 		final Map<Long, String> exclusions = new HashMap<>();
+		boolean failing;
 
 		StubHashtags() {
 			super(null);
@@ -120,6 +126,9 @@ class BrandRegistrationServiceTest {
 
 		@Override
 		public void insertTags(long brandId, Collection<String> newTags) {
+			if (failing) {
+				throw new IllegalStateException("해시태그 시드 실패 주입");
+			}
 			tags.computeIfAbsent(brandId, k -> new LinkedHashSet<>()).addAll(newTags);
 		}
 
@@ -132,10 +141,15 @@ class BrandRegistrationServiceTest {
 	private static final class StubHashtagCollect extends BrandHashtagCollectService {
 		final List<String> swept = new ArrayList<>();
 		boolean failing;
-		List<String> callOrder = new ArrayList<>();
+		private List<String> callOrder = new ArrayList<>();
 
 		StubHashtagCollect() {
 			super(null, null, null, null, 0, 0);
+		}
+
+		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -247,8 +261,8 @@ class BrandRegistrationServiceTest {
 	@Test
 	void 백필은_enrich_후_해시태그_스윕을_돌린다() {
 		List<String> order = new ArrayList<>();
-		collect.callOrder = order;
-		hashtagCollect.callOrder = order;
+		collect.useSharedCallOrder(order);
+		hashtagCollect.useSharedCallOrder(order);
 
 		service().register("brandx");
 		enrichQueue.getFirst().run();
@@ -267,6 +281,18 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.touched).containsExactly(result.brandId());
 		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());   // core는 이미 성공
 		assertThat(collect.enriched).containsExactly("brandx");   // 보강은 정상 실행됨
+	}
+
+	@Test
+	void 해시태그_시드_실패는_등록과_백필_예약을_깨지_않는다() {
+		hashtags.failing = true;
+
+		var result = service().register("brandx");   // seedHashtagsSafely가 던져도 여기서 새면 안 된다
+
+		assertThat(result.replayed()).isFalse();                  // 등록 자체는 성공
+		assertThat(collect.coreSwept).containsExactly("brandx");   // backfill.execute가 정상 호출·실행됨
+		assertThat(brands.touched).containsExactly(result.brandId());
+		assertThat(hashtags.tags).doesNotContainKey(result.brandId());   // 시드 자체는 실패해 미기록
 	}
 
 	@Test

@@ -67,6 +67,7 @@ public class BrandSweepJob {
 		LocalDate today = LocalDate.now(KST);
 		List<BrandRow> active = brands.findActive();
 		int failures = 0;
+		int hashtagFailures = 0;
 		for (BrandRow b : active) {
 			try {
 				collect.sweep(b);
@@ -78,10 +79,12 @@ public class BrandSweepJob {
 			try {
 				hashtagCollect.sweep(b);
 			} catch (RuntimeException e) {
+				hashtagFailures++;
 				log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 			}
 		}
-		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건", active.size(), failures);
+		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, 해시태그 실패 {}건",
+				active.size(), failures, hashtagFailures);
 	}
 
 	/** 건 단위가 아니라 잡 전체를 격리한다 — 스윕 결과와 무관한 부수 작업이라 예외를 밖으로 내지 않는다. */
