@@ -1,5 +1,8 @@
 package com.celfit.was.v1.saved;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import com.celfit.was.v1.content.ContentCard;
 import com.celfit.was.v1.content.ContentCardRow;
 import java.time.OffsetDateTime;
@@ -10,6 +13,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * /v1 저장 2종(스펙 6.6~6.11) 리포지토리. app 쓰기·읽기와 analysis 미러 읽기를 <b>각각 별도 쿼리</b>로
@@ -20,9 +24,11 @@ import org.springframework.stereotype.Repository;
 public class V1SavedRepository {
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public V1SavedRepository(JdbcClient jdbcClient) {
+	public V1SavedRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	// --- app.saved_contents (서비스 데이터 쓰기·읽기) ---
@@ -77,12 +83,17 @@ public class V1SavedRepository {
 				.list();
 	}
 
-	/** 멱등 — 없는 행을 지워도 예외 없이 0건 삭제로 끝난다(스펙 6.8). */
+	/** 멱등 — 없는 행을 지워도 예외 없이 0건 삭제로 끝난다(스펙 6.8). 삭제 전 아카이브(트랙 NN). */
+	@Transactional
 	public void deleteContent(long userId, String shortCode) {
-		jdbcClient.sql("DELETE FROM app.saved_contents WHERE user_id = :userId AND short_code = :shortCode")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_CONTENTS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userId, "short_code", shortCode));
+		int deleted = jdbcClient
+				.sql("DELETE FROM app.saved_contents WHERE user_id = :userId AND short_code = :shortCode")
 				.param("userId", userId)
 				.param("shortCode", shortCode)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_CONTENTS, archived, deleted);
 	}
 
 	// --- app.saved_influencers (서비스 데이터 쓰기·읽기) ---
@@ -138,11 +149,16 @@ public class V1SavedRepository {
 	}
 
 	/** 멱등 — 없는 행을 지워도 0건 삭제(스펙 6.11). 구 saved.SavedRepository와 동일 SQL(별 bean이라 재구현). */
+	@Transactional
 	public void deleteInfluencer(long userId, String handle) {
-		jdbcClient.sql("DELETE FROM app.saved_influencers WHERE user_id = :userId AND handle = :handle")
+		int archived = archiveWriter.archiveByPk(ArchiveTables.SAVED_INFLUENCERS, ArchiveReason.SAVED_REMOVED,
+				Map.of("user_id", userId, "handle", handle));
+		int deleted = jdbcClient
+				.sql("DELETE FROM app.saved_influencers WHERE user_id = :userId AND handle = :handle")
 				.param("userId", userId)
 				.param("handle", handle)
 				.update();
+		archiveWriter.verifyMatched(ArchiveTables.SAVED_INFLUENCERS, archived, deleted);
 	}
 
 	/**
