@@ -14,6 +14,8 @@ import java.io.UncheckedIOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -367,6 +369,82 @@ class BrandHashtagCollectServiceTest {
 		HashtagPostInsert saved = ((InMemoryHashtagRepo) repo).insertedByCode("SELF1");
 		assertThat(saved.verdict()).isEqualTo("SELF");
 		assertThat(saved.verdictSource()).isEqualTo("RULE");
+	}
+
+	// ── 케이스 13(architect 리뷰 결함1): 태그 A가 저장한 코드를 태그 B가 만나도 B는 계속 전진한다 ──
+
+	@Test
+	void 태그_A가_저장한_코드를_태그_B가_만나도_조기_종료하지_않고_다음_페이지까지_전진한다() {
+		setTags("cclime", "끌리메");   // 순서 고정 — cclime이 먼저 SHARED1을 저장한다
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("SHARED1", RECENT, "posterA", null, "태그A 글"))));
+		// 태그 B의 1페이지에 태그 A가 방금 저장한 SHARED1이 섞여 있다 — existingCodes에는 잡히지만
+		// insertedThisRun에도 있으므로 조기 종료 트리거가 아니어야 한다(수정 1 핵심).
+		pagesByTag.put("끌리메", List.of(
+				sectionsBody("p2",
+						media("SHARED1", RECENT, "posterA", null, "태그A 글"),
+						media("B1", RECENT, "posterB1", null, "태그B 1페이지 새 글")),
+				sectionsBody(null, media("B2", RECENT, "posterB2", null, "태그B 2페이지 새 글"))));
+
+		service(4).sweep(brand);
+
+		// SHARED1은 한 번만 저장(재판정·중복 삽입 없음), B1·B2는 태그 B가 2페이지까지 전진해야 나온다.
+		assertThat(((InMemoryHashtagRepo) repo).inserted).extracting(HashtagPostInsert::shortCode)
+				.containsExactlyInAnyOrder("SHARED1", "B1", "B2");
+		assertThat(calls.stream().filter(c -> c.contains("name=%EB%81%8C%EB%A6%AC%EB%A9%94")).count())
+				.isEqualTo(2);   // 태그 B는 1페이지에서 끊기지 않고 2페이지까지 콜했다
+	}
+
+	// ── 케이스 14(nit 반영 확인): 저장 레코드 14필드 매핑 고정 ─────────────────
+
+	@Test
+	void 저장_레코드는_원본_필드_전체를_그대로_매핑한다() {
+		setTags("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null, """
+				{"media":{"code":"FULL1","taken_at":%d,"product_type":"clips",
+				 "caption":{"text":"필드 검증 캡션"},
+				 "user":{"username":"poster_full","pk":"111","full_name":"작가풀네임",
+				 "profile_pic_url":"https://pic.example/author.jpg"},
+				 "like_count":77,"comment_count":9,
+				 "image_versions2":{"candidates":[{"url":"https://pic.example/thumb.jpg"}]},
+				 "usertags":{"in":[]}}}""".formatted(RECENT))));
+		judge.nextVerdict = BrandMentionJudge.Verdict.RELEVANT;
+
+		service(4).sweep(brand);
+
+		HashtagPostInsert saved = ((InMemoryHashtagRepo) repo).insertedByCode("FULL1");
+		assertThat(saved.brandId()).isEqualTo(brand.id());
+		assertThat(saved.matchedTag()).isEqualTo("cclime");
+		assertThat(saved.shortCode()).isEqualTo("FULL1");
+		assertThat(saved.authorUsername()).isEqualTo("poster_full");
+		assertThat(saved.authorFullName()).isEqualTo("작가풀네임");
+		assertThat(saved.authorProfilePicUrl()).isEqualTo("https://pic.example/author.jpg");
+		assertThat(saved.takenAt()).isEqualTo(Instant.ofEpochSecond(RECENT).atOffset(ZoneOffset.UTC));
+		assertThat(saved.caption()).isEqualTo("필드 검증 캡션");
+		assertThat(saved.contentType()).isEqualTo("REELS");
+		assertThat(saved.thumbnailUrl()).isEqualTo("https://pic.example/thumb.jpg");
+		assertThat(saved.likes()).isEqualTo(77L);
+		assertThat(saved.comments()).isEqualTo(9L);
+		assertThat(saved.verdict()).isEqualTo("RELEVANT");
+		assertThat(saved.verdictSource()).isEqualTo("LLM");
+	}
+
+	// ── 케이스 15(결함2 검증): authorUsername 없는 media는 그 게시물만 스킵하고 스윕은 계속된다 ──
+
+	@Test
+	void 작성자_없는_게시물은_스킵되고_나머지_게시물은_정상_저장된다() {
+		setTags("cclime");
+		String noAuthor = """
+				{"media":{"code":"NOAUTH1","taken_at":%d,"media_type":1,
+				 "caption":{"text":"작성자 없음"},"like_count":5,"comment_count":1,
+				 "usertags":{"in":[]}}}""".formatted(RECENT);
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				noAuthor, media("OK1", RECENT, "posterOk", null, "정상 글"))));
+
+		service(4).sweep(brand);
+
+		assertThat(((InMemoryHashtagRepo) repo).inserted).extracting(HashtagPostInsert::shortCode)
+				.containsExactly("OK1");
 	}
 
 	// ── 헬퍼 ────────────────────────────────────────────────────────────────

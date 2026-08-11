@@ -11,8 +11,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -29,6 +33,17 @@ import org.slf4j.LoggerFactory;
  * 처리하고 다음 페이지는 요청하지 않는다 — 해시태그 recent 스트림은 IG 랭킹 혼합이라 taken_at이
  * 단조가 아니므로, 게시물 단위가 아니라 페이지 단위로 판단한다(브랜드 태그 트래킹의 taken_at 컷
  * 조기 종료와 다른 규칙 — 여기는 dedup 도달로 종료).
+ *
+ * <p><b>크로스 태그·크로스 페이지 종료 분리(architect 리뷰 반영)</b>: {@code existingCodes}는
+ * "이전 스윕이 저장한 분"과 "이번 스윕이 방금 저장한 분"을 구분하지 못한다 — 태그 A가 저장한
+ * 코드가 태그 B의 recent 스트림에도 실리면(브랜드 관련 게시물은 여러 태그를 동시에 다는 경우가
+ * 흔하다), 태그 B가 자기 페이지에서 그 코드를 existing으로 보고 첫 페이지에서 즉시 끊긴다 —
+ * 태그 B의 백필 깊이 약속(§3, maxPages까지 전진)이 태그 순서에 좌우되는 버그였다. 그래서
+ * {@link #sweep}이 스코프에 든 {@code insertedThisRun}에 이번 실행에서 저장한 코드를 누적하고,
+ * <b>재처리 스킵 판정(freshPosts 필터)은 existing 그대로</b> 쓰되(dedup 의미는 안 바뀐다 — 이미
+ * DB에 있는 코드는 어느 태그가 만났든 재판정하지 않는다), <b>페이지네이션 종료 트리거만
+ * {@code existing - insertedThisRun}이 비어있지 않을 때</b>로 좁힌다 — "이번 실행에서 내가(또는
+ * 다른 태그가) 방금 저장한 코드"는 종료 신호로 보지 않고, "이전부터 있던 코드"만 종료 신호로 본다.
  *
  * <p>plain class + {@code BrandHashtagConfig}에서 배선(BrandCollectService처럼 @Service를 쓰지
  * 않는 이유는 없지만, 태스크 계획이 설정 클래스 분리를 명시해 그대로 따른다).
@@ -56,8 +71,9 @@ public class BrandHashtagCollectService {
 
 	/**
 	 * 브랜드 1개분 해시태그 스윕 — 태그가 없으면 콜 0으로 즉시 반환한다(스펙 §3-1).
-	 * 제외 문자열·브랜드 소개(biography)는 태그 전체가 공유하는 판정 컨텍스트라 태그 루프
-	 * 진입 전 1회씩만 뽑는다(biography는 BrandRepository 조회 1회, HTTP 콜 아님).
+	 * 제외 문자열·브랜드 소개(biography)·멘션 정규식은 태그 전체가 공유하는 판정 컨텍스트라
+	 * 태그 루프 진입 전 1회씩만 준비한다(biography는 BrandRepository 조회 1회, HTTP 콜 아님 —
+	 * 멘션 Pattern.compile도 게시물마다가 아니라 여기서 1회만).
 	 */
 	public void sweep(BrandRow brand) {
 		List<String> tags = repo.findTags(brand.id());
@@ -67,21 +83,24 @@ public class BrandHashtagCollectService {
 		List<String> exclusions = repo.findExclusionTerms(brand.id());
 		String biography = brands.findBiography(brand.id());
 		Instant windowCutoff = Instant.now().minus(Duration.ofDays(windowDays));
+		Pattern mentionPattern = mentionPattern(brand.username());
+		Set<String> insertedThisRun = new HashSet<>();
 
 		int savedTotal = 0;
 		for (String tag : tags) {
-			savedTotal += sweepTag(brand, tag, tags, exclusions, biography, windowCutoff);
+			savedTotal += sweepTag(brand, tag, tags, exclusions, biography, windowCutoff,
+					mentionPattern, insertedThisRun);
 		}
 		log.info("브랜드 해시태그 스윕 완료 — {} 태그 {}개, 신규 저장 {}건",
 				brand.username(), tags.size(), savedTotal);
 	}
 
 	/**
-	 * 태그 1개분 recent 열거 — maxPages까지 순회하되, 페이지에 기존 게시물이 하나라도 있으면
-	 * 그 페이지의 신규만 처리하고 중단한다. 빈 페이지·커서 null도 자연 종료.
+	 * 태그 1개분 recent 열거 — maxPages까지 순회하되, 페이지에 "이전부터 있던" 게시물이 하나라도
+	 * 있으면 그 페이지의 신규만 처리하고 중단한다. 빈 페이지·커서 null도 자연 종료.
 	 */
 	private int sweepTag(BrandRow brand, String tag, List<String> allTags, List<String> exclusions,
-			String biography, Instant windowCutoff) {
+			String biography, Instant windowCutoff, Pattern mentionPattern, Set<String> insertedThisRun) {
 		int saved = 0;
 		String cursor = null;
 		for (int page = 0; page < maxPages; page++) {
@@ -91,11 +110,16 @@ public class BrandHashtagCollectService {
 			}
 			List<String> codes = result.posts().stream().map(hp -> hp.post().shortCode()).toList();
 			Set<String> existing = repo.existingCodes(brand.id(), codes);
-			List<HikerClient.HashtagPost> freshPosts = result.posts().stream()
-					.filter(hp -> !existing.contains(hp.post().shortCode())).toList();
-			saved += processNew(brand, tag, freshPosts, allTags, exclusions, biography, windowCutoff);
-			if (!existing.isEmpty()) {
-				// 조기 종료 — 페이지 내 신규는 이미 처리했다, 다음 페이지는 요청하지 않는다.
+			// 재처리 스킵 판정은 existing 그대로(dedup 의미 불변) — 동일 shortCode 중복은
+			// freshPosts 구성 시 별도로 접는다(judge 이중 호출·saved 이중 계상 방지).
+			List<HikerClient.HashtagPost> freshPosts = distinctByShortCode(result.posts().stream()
+					.filter(hp -> !existing.contains(hp.post().shortCode())).toList());
+			saved += processNew(brand, tag, freshPosts, allTags, exclusions, biography, windowCutoff,
+					mentionPattern, insertedThisRun);
+			// 조기 종료 트리거는 "이전부터 있던" 코드에만 반응한다 — 이번 실행에서 다른 태그가
+			// 방금 저장한 코드는 종료 신호가 아니다(크로스 태그 백필 깊이 보존).
+			boolean hasPriorExisting = existing.stream().anyMatch(c -> !insertedThisRun.contains(c));
+			if (hasPriorExisting) {
 				break;
 			}
 			cursor = result.nextPageId();
@@ -106,36 +130,52 @@ public class BrandHashtagCollectService {
 		return saved;
 	}
 
+	/** 페이지 내 동일 shortCode 중복 제거 — 응답 순서 유지, 첫 등장분만 남긴다. */
+	private static List<HikerClient.HashtagPost> distinctByShortCode(List<HikerClient.HashtagPost> posts) {
+		Map<String, HikerClient.HashtagPost> byCode = new LinkedHashMap<>();
+		for (HikerClient.HashtagPost hp : posts) {
+			byCode.putIfAbsent(hp.post().shortCode(), hp);
+		}
+		return new ArrayList<>(byCode.values());
+	}
+
 	/**
-	 * 신규 게시물 처리 순서 고정(스펙 §4): 윈도우 컷 → 자사(SELF/RULE) → 직접태그(DIRECT_TAGGED/
-	 * RULE) → 캡션 멘션(RELEVANT/MENTION) → LLM 판정. LLM 호출이 던지면 그 게시물은 미저장
-	 * 스킵한다(다음 스윕이 existingCodes에 없으니 자연 재시도).
+	 * 신규 게시물 처리 순서 고정(스펙 §4): shortCode/takenAt/authorUsername 결손 스킵 → 윈도우 컷 →
+	 * 자사(SELF/RULE) → 직접태그(DIRECT_TAGGED/RULE) → 캡션 멘션(RELEVANT/MENTION) → LLM 판정.
+	 * authorUsername 결손은 shortCode·takenAt과 같은 지점에서 걸러 LLM 콜도 나가지 않게 한다 —
+	 * author_username은 brand_hashtag_post의 NOT NULL 컬럼이라, 여기서 안 거르면 insertPost가
+	 * 제약 위반으로 던지고 브랜드 스윕 전체가 죽는다(한 게시물의 결손이 나머지를 물귀신처럼 끌고
+	 * 감 — 격리 원칙 위반). LLM 호출이 던지면 그 게시물은 미저장 스킵(다음 스윕이 existingCodes에
+	 * 없으니 자연 재시도).
 	 */
 	private int processNew(BrandRow brand, String tag, List<HikerClient.HashtagPost> posts,
-			List<String> allTags, List<String> exclusions, String biography, Instant windowCutoff) {
+			List<String> allTags, List<String> exclusions, String biography, Instant windowCutoff,
+			Pattern mentionPattern, Set<String> insertedThisRun) {
 		String brandUsernameLower = brand.username().toLowerCase(Locale.ROOT);
 		int saved = 0;
 		for (HikerClient.HashtagPost hp : posts) {
 			PostInfo post = hp.post();
 			String shortCode = post.shortCode();
 			Long takenAtEpoch = post.takenAt();
-			if (shortCode == null || takenAtEpoch == null) {
+			String authorUsername = post.username();
+			// HikerClient의 asString()은 code 키 부재 시 null이 아니라 ""를 반환한다 — isBlank()도 함께 본다.
+			if (shortCode == null || shortCode.isBlank() || takenAtEpoch == null
+					|| authorUsername == null || authorUsername.isBlank()) {
 				continue;
 			}
 			OffsetDateTime takenAt = Instant.ofEpochSecond(takenAtEpoch).atOffset(ZoneOffset.UTC);
 			if (takenAt.toInstant().isBefore(windowCutoff)) {
 				continue;
 			}
-			String authorUsername = post.username();
 			String verdict;
 			String source;
-			if (authorUsername != null && matchesExclusion(authorUsername, exclusions)) {
+			if (matchesExclusion(authorUsername, exclusions)) {
 				verdict = "SELF";
 				source = "RULE";
 			} else if (hp.taggedUsernames().contains(brandUsernameLower)) {
 				verdict = "DIRECT_TAGGED";
 				source = "RULE";
-			} else if (mentionsBrand(post.caption(), brand.username())) {
+			} else if (mentionsBrand(post.caption(), mentionPattern)) {
 				verdict = "RELEVANT";
 				source = "MENTION";
 			} else {
@@ -154,6 +194,7 @@ public class BrandHashtagCollectService {
 					post.ownerFullName(), post.ownerProfilePicUrl(), takenAt, post.caption(),
 					post.contentType(), post.thumbnailUrl(), post.likes(), post.comments(),
 					verdict, source));
+			insertedThisRun.add(shortCode);
 			saved++;
 		}
 		return saved;
@@ -166,14 +207,15 @@ public class BrandHashtagCollectService {
 	}
 
 	/**
-	 * 캡션 @멘션 전체 단어 일치 — "@brandusername" 뒤에 [\w.]가 이어지면 불일치로 본다
+	 * 캡션 @멘션 전체 단어 일치 패턴 — "@brandusername" 뒤에 [\w.]가 이어지면 불일치로 본다
 	 * (예: 브랜드 cclime_official 캡션의 @cclime_officialkr은 오인 금지). 대소문자 무시.
+	 * 스윕 1회당 1번만 컴파일한다(게시물마다 compile 금지 — sweep()에서 만들어 내려보낸다).
 	 */
-	private static boolean mentionsBrand(String caption, String brandUsername) {
-		if (caption == null || caption.isBlank()) {
-			return false;
-		}
-		Pattern mention = Pattern.compile("(?i)@" + Pattern.quote(brandUsername) + "(?![\\w.])");
-		return mention.matcher(caption).find();
+	private static Pattern mentionPattern(String brandUsername) {
+		return Pattern.compile("(?i)@" + Pattern.quote(brandUsername) + "(?![\\w.])");
+	}
+
+	private static boolean mentionsBrand(String caption, Pattern mentionPattern) {
+		return caption != null && !caption.isBlank() && mentionPattern.matcher(caption).find();
 	}
 }
