@@ -78,15 +78,14 @@ public class JobConfig {
 			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled,
 			ObjectProvider<JobProgressRegistry> progressRegistry,
 			ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
-			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader,
-			@Value("${analytics.batch-transport-dir:./batch-transport}") String batchDir) {
+			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
 		ProgressReporter backfillReporter = registry != null
 				? registry.reporter(JobName.LATE_BACKFILL_ANALYZE) : ProgressReporter.NOOP;
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
 				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter,
-				batchApiOrNull(settings, gemini), taxonomyLoader, java.nio.file.Path.of(batchDir));
+				batchApiOrNull(settings, gemini), taxonomyLoader);
 	}
 
 	/**
@@ -99,10 +98,9 @@ public class JobConfig {
 	public com.celfit.analytics.analyze.ContentBatchCollectJob contentBatchCollectJob(
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			AnalyticsSettings settings, ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
-			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader,
-			@Value("${analytics.batch-transport-dir:./batch-transport}") String batchDir) {
+			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader) {
 		return new com.celfit.analytics.analyze.ContentBatchCollectJob(analysisDataSource,
-				batchApiOrNull(settings, gemini), taxonomyLoader, settings, java.nio.file.Path.of(batchDir));
+				batchApiOrNull(settings, gemini), taxonomyLoader, settings);
 	}
 
 	/**

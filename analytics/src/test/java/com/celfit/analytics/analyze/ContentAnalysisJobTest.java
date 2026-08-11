@@ -15,14 +15,12 @@ import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.testsupport.TestDb;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -43,9 +41,6 @@ class ContentAnalysisJobTest {
 
 	@Container
 	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
-
-	@TempDir
-	Path batchWorkDir;
 
 	JdbcTemplate db;
 	DataSource ds;
@@ -118,7 +113,7 @@ class ContentAnalysisJobTest {
 	void rewireJobWithBatch(ContentInsightPort port, GeminiBatchApi batchApi, boolean thumbnailEnabled) {
 		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
 				thumbnailEnabled, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP,
-				batchApi, new BeautyTaxonomyLoader(ds), batchWorkDir);
+				batchApi, new BeautyTaxonomyLoader(ds));
 	}
 
 	void enableBatchTransport() {
@@ -551,6 +546,12 @@ class ContentAnalysisJobTest {
 		assertEquals(Boolean.TRUE, row.get("timely"));
 		assertEquals(2, row.get("submitted_count"));
 		assertEquals("pending", row.get("status"));
+		// 사이드카는 로컬 파일이 아니라 DB 컬럼에 저장된다(analytics 컨테이너 무볼륨 대응, 2026-08-11
+		// 리뷰 반영) — post_a·post_b 두 short_code 행이 JSONL 2줄로 실려 있어야 한다.
+		String sidecarJsonl = (String) row.get("sidecar_jsonl");
+		assertTrue(sidecarJsonl != null && !sidecarJsonl.isBlank());
+		assertTrue(sidecarJsonl.contains("\"post_a\""));
+		assertTrue(sidecarJsonl.contains("\"post_b\""));
 		// 수거 전이므로 content_analyses는 아직 비어 있다
 		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
 	}

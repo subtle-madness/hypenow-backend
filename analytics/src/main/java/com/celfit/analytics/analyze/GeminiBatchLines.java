@@ -85,7 +85,7 @@ final class GeminiBatchLines {
 		return line;
 	}
 
-	/** 사이드카 파일 읽기 — 없으면 예외(제출을 먼저 해야 함). */
+	/** 사이드카 파일 읽기(백필 CLI 전용) — 없으면 예외(제출을 먼저 해야 함). */
 	static Map<String, Map<String, String>> readSidecar(ObjectMapper om, Path sidecarPath) {
 		String contents;
 		try {
@@ -93,6 +93,15 @@ final class GeminiBatchLines {
 		} catch (java.io.IOException e) {
 			throw new IllegalStateException("사이드카 없음 — 제출을 먼저 실행: " + sidecarPath, e);
 		}
+		return parseSidecar(om, contents);
+	}
+
+	/**
+	 * 사이드카 JSONL 문자열 파싱 — 백필 CLI(파일)·상시 배치(content_batch_jobs.sidecar_jsonl 컬럼,
+	 * 2026-08-11)가 공유한다. 상시 배치는 analytics 컨테이너에 쓰기 가능한 볼륨이 없어 로컬 파일
+	 * 대신 DB 컬럼에 저장하므로, 파싱 로직만 문자열 단위로 분리해 둔다.
+	 */
+	static Map<String, Map<String, String>> parseSidecar(ObjectMapper om, String contents) {
 		Map<String, Map<String, String>> out = new LinkedHashMap<>();
 		for (String line : contents.split("\n")) {
 			if (line.isBlank()) {

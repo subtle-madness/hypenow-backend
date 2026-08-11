@@ -34,8 +34,10 @@ app_setting 키 `analytics.analyze-transport` — `online`(기본) | `batch`.
 
 ```
 id, batch_name, timely, submitted_count, status(pending|collected|failed),
-submitted_at, collected_at, note
+submitted_at, collected_at, note, sidecar_jsonl
 ```
+
+`sidecar_jsonl`은 제출 시 실은 기준선 스냅샷(JSONL, short_code별 1행)을 담는다 — §2-4 참조.
 
 ### 2-3. 제출 경로
 
@@ -83,9 +85,19 @@ JSONL 요청에 싣는다 — 후보 게이트가 댓글 분류 완료를 보장
 신규 `JobName.BATCH_COLLECT` + `AnalyticsJobService` 등록 + `ScheduleRunner.batchCollect()`
 (환경변수 `ANALYTICS_SCHEDULE_BATCH_COLLECT_CRON`, 미설정 시 비활성 — 기존 크론과 동일 패턴).
 
-사이드카(제출 시 실은 기준선 스냅샷)는 배치별 파일(`BatchSidecarStore`, 배치 이름을 안전한
-파일명으로 치환)로 저장한다 — 백필 러너의 고정 파일명과 달리 하루에도 timely·late_backfill
-두 배치가 동시에 pending일 수 있어서다.
+**사이드카 저장소: 파일이 아니라 `content_batch_jobs.sidecar_jsonl`(text 컬럼)**. 최초 설계는
+백필 러너와 동일하게 배치별 로컬 파일(`BatchSidecarStore`)이었으나, `deploy/compose.yaml`의
+analytics 서비스에는 쓰기 가능한 볼륨 마운트가 없다(secrets는 ro) — 제출(05:00)과 수거 사이에
+배포·컨테이너 교체가 끼면 사이드카 파일이 유실되고, `content_batch_jobs` 행은 영원히 pending으로
+남아 수거 크론(30분 간격)마다 에러 로그만 찍는 좀비가 된다(2026-08-11 리뷰 지적). 제출 시
+JSONL 문자열을 `sidecar_jsonl`에 그대로 INSERT하고, 수거 시 그 컬럼에서 파싱해 복원한다
+(`GeminiBatchLines.parseSidecar` — 백필 러너의 파일 기반 `readSidecar`와 파싱 로직만 공유).
+한 배치 ~450행 × 수백 바이트라 text 컬럼으로 충분하고, 수거 완료(collected/failed) 시
+`sidecar_jsonl = NULL`로 비워 테이블 비대를 막는다. `sidecar_jsonl`이 NULL/빈 값이거나 파싱
+불가면 그 배치는 즉시 status=failed·note 기록으로 접는다(재시도 없음 — 다음날 후보 diff가
+자연 재대상하므로 좀비 pending을 만들지 않는다).
+백필 러너(`GeminiBackfillRunner`, 단일 실행 안에서 submit→collect가 끝나는 일회성 CLI 도구)는
+기존 파일 방식(`backfill-sidecar.jsonl`)을 그대로 유지 — 배포 개입 시나리오가 없다.
 
 수거는 멱등이다: pending 행만 대상이라 이미 collected/failed로 전이된 배치는 재처리하지 않는다.
 

@@ -10,7 +10,6 @@ import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.llm.GeminiContentAnalyzer;
 import com.celfit.analytics.llm.Synthesis;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -72,7 +71,6 @@ public class ContentAnalysisJob {
 	// transport=batch여도 온라인으로 폴백한다(LlmConfig.geminiApi()의 무료 gemini 폴백과 동형 안전망).
 	private final GeminiBatchApi batchApi;
 	private final BeautyTaxonomyLoader taxonomyLoader;
-	private final Path batchWorkDir;
 	private final ContentBatchCollectJob collectJob;
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
@@ -80,19 +78,18 @@ public class ContentAnalysisJob {
 			boolean thumbnailEnabled, Predicate<String> thumbnailAlive,
 			ProgressReporter reporter, ProgressReporter backfillReporter) {
 		this(rawJdbcTemplate, analysisDataSource, insight, settings, thumbnailEnabled, thumbnailAlive,
-				reporter, backfillReporter, null, null, null);
+				reporter, backfillReporter, null, null);
 	}
 
 	/**
 	 * @param batchApi 배치 전송 제출·상태 확인용 — null이면 배치 미지원 프로바이더(온라인 폴백).
 	 * @param taxonomyLoader 배치 요청의 시스템 프롬프트 조립용(뷰티 분류표) — batchApi가 null이 아닐 때만 쓰인다.
-	 * @param batchWorkDir 배치별 사이드카(JSONL) 파일 저장 위치 — batchApi가 null이 아닐 때만 쓰인다.
 	 */
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
 			ContentInsightPort insight, AnalyticsSettings settings,
 			boolean thumbnailEnabled, Predicate<String> thumbnailAlive,
 			ProgressReporter reporter, ProgressReporter backfillReporter,
-			GeminiBatchApi batchApi, BeautyTaxonomyLoader taxonomyLoader, Path batchWorkDir) {
+			GeminiBatchApi batchApi, BeautyTaxonomyLoader taxonomyLoader) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.insight = insight;
@@ -103,9 +100,7 @@ public class ContentAnalysisJob {
 		this.backfillReporter = backfillReporter;
 		this.batchApi = batchApi;
 		this.taxonomyLoader = taxonomyLoader;
-		this.batchWorkDir = batchWorkDir;
-		this.collectJob = new ContentBatchCollectJob(analysisDataSource, batchApi, taxonomyLoader, settings,
-				batchWorkDir);
+		this.collectJob = new ContentBatchCollectJob(analysisDataSource, batchApi, taxonomyLoader, settings);
 	}
 
 	/** raw v_analysis_account_baseline·v_analysis_baseline 1회 로딩 결과 — run()·runLateBackfill() 공유. */
@@ -256,10 +251,14 @@ public class ContentAnalysisJob {
 		}
 		String fileName = batchApi.uploadFile(jsonl.toString().getBytes(StandardCharsets.UTF_8), "hypenow-analyze");
 		String batchName = batchApi.createBatch(model, fileName, "hypenow-analyze");
-		BatchSidecarStore.write(batchWorkDir, batchName, sidecar.toString());
+		// 사이드카는 로컬 파일이 아니라 DB 컬럼에 보관한다 — analytics 컨테이너에는 쓰기 가능한
+		// 볼륨이 없어(deploy/compose.yaml), 제출~수거 사이에 배포·컨테이너 교체가 끼면 로컬 파일은
+		// 유실되고 pending 행이 영원히 pending으로 남는 좀비가 된다(리뷰 지적, 08-11). 백필 CLI
+		// (GeminiBackfillRunner)는 단일 실행 안에서 submit→collect가 끝나는 일회성 도구라 파일
+		// 방식을 그대로 유지한다.
 		analysis.update("""
-				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status)
-				VALUES (?, ?, ?, 'pending')""", batchName, timely, targets.size());
+				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl)
+				VALUES (?, ?, ?, 'pending', ?)""", batchName, timely, targets.size(), sidecar.toString());
 		log.info("분석 배치 제출 완료 — batch={}, {}건, timely={}", batchName, targets.size(), timely);
 		return new JobResult(targets.size(), 0, false);
 	}
