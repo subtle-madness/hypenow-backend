@@ -1,6 +1,6 @@
 # 경쟁사 모니터링 계정 타입 설계 — accountType(own/competitor)
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현됨
 
 ## 배경
 
