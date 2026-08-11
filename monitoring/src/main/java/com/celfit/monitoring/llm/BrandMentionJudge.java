@@ -1,6 +1,9 @@
 package com.celfit.monitoring.llm;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -12,6 +15,8 @@ import tools.jackson.databind.node.ObjectNode;
  * api-key 미설정이면 호출 없이 UNCERTAIN(비노출)로 접는다 — fail-closed.
  */
 public class BrandMentionJudge {
+
+	private static final Logger log = LoggerFactory.getLogger(BrandMentionJudge.class);
 
 	public enum Verdict { RELEVANT, UNCERTAIN, IRRELEVANT }
 
@@ -26,6 +31,8 @@ public class BrandMentionJudge {
 	private final String apiKey;
 	private final String model;
 	private final ObjectMapper om = new ObjectMapper();
+	// 키 미설정 warn은 최초 1회만 — 게시물마다 호출되므로 이후는 debug로 접어 로그 스팸을 막는다
+	private final AtomicBoolean missingKeyWarned = new AtomicBoolean(false);
 
 	public BrandMentionJudge(GeminiHttp http, String apiKey, String model) {
 		this.http = http;
@@ -35,7 +42,13 @@ public class BrandMentionJudge {
 
 	public Verdict judge(String brandUsername, List<String> brandTags, String authorUsername, String caption) {
 		if (apiKey == null || apiKey.isBlank()) {
-			// fail-closed: 키 미설정 환경(로컬 등)에서 스윕을 죽이지 않고 비노출로 접는다
+			// fail-closed: 키 미설정 환경(로컬 등)에서 스윕을 죽이지 않고 비노출로 접는다 — 운영에서
+			// 조용히 전 판정이 UNCERTAIN으로 접히면 알아챌 방법이 없으므로 최초 1회는 warn으로 남긴다
+			if (missingKeyWarned.compareAndSet(false, true)) {
+				log.warn("Gemini api-key 미설정 — 해시태그 판정을 UNCERTAIN(비노출)으로 접는다");
+			} else {
+				log.debug("Gemini api-key 미설정 — 해시태그 판정을 UNCERTAIN(비노출)으로 접는다");
+			}
 			return Verdict.UNCERTAIN;
 		}
 		String userText = userText(brandUsername, brandTags, authorUsername, caption);
