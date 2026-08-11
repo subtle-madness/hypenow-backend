@@ -49,6 +49,17 @@ services:
     mem_limit: 1536m
     oom_score_adj: -800
     networks: [prod]
+    # 쿼리 성능 측정(스펙 2026-08-10) — pg_stat_statements는 preload 필수라 command로 주입.
+    # 확장 생성(CREATE EXTENSION)은 README §15 런북(수동 1회). 이 항목을 바꾸면 postgres가
+    # 재생성돼 짧은 순단이 발생한다 — was/analytics는 HikariCP가 자동 재접속.
+    command:
+      - postgres
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "log_min_duration_statement=500"
     environment:
       POSTGRES_DB: analysis
       POSTGRES_USER: ${DB_USER}
