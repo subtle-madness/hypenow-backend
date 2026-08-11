@@ -51,9 +51,12 @@ public class V1PerformanceDashboardController {
 	private static final String[] STATUS_VALUES = STATUSES.toArray(String[]::new);
 
 	private final PerformanceContentAssembler assembler;
+	private final PerformanceComparisonAssembler comparisonAssembler;
 
-	public V1PerformanceDashboardController(PerformanceContentAssembler assembler) {
+	public V1PerformanceDashboardController(PerformanceContentAssembler assembler,
+			PerformanceComparisonAssembler comparisonAssembler) {
 		this.assembler = assembler;
+		this.comparisonAssembler = comparisonAssembler;
 	}
 
 	/**
@@ -129,6 +132,32 @@ public class V1PerformanceDashboardController {
 				.findFirst()
 				.map(ApiResponse::ok)
 				.orElseThrow(() -> V1ApiException.notFound("게시물을 찾을 수 없습니다."));
+	}
+
+	/**
+	 * 성과 비교 집계(스펙 2026-08-10) — 브랜드 계정 × 5구간. 기간 파라미터는 없다(5구간 항상 전부).
+	 * 모수는 목록과 같은 조립 전량에 분류 필터(source·sponsorship·campaignId)만 건 것 — 목록·비교
+	 * 막대의 숫자가 정의상 일치한다. individual은 계정 귀속이 불가능해 집계에서 빠진다
+	 * (source=individual이면 전 구간이 빈다 — 의도된 동작).
+	 */
+	@GetMapping("/comparison")
+	public ApiResponse<PerformanceComparisonResponse> comparison(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestParam(required = false) String source,
+			@RequestParam(required = false) String sponsorship,
+			@RequestParam(required = false) String campaignId) {
+		String sourceFilter = normalizeFilter(source, "source", PerformanceContentAssembler.SOURCE_INDIVIDUAL,
+				PerformanceContentAssembler.SOURCE_DIRECT, PerformanceContentAssembler.SOURCE_TAGGED);
+		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
+				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = normalizeFilter(campaignId);
+
+		List<PerformanceContentResponse> filtered = assembler.assemble(principal.getUserId()).contents().stream()
+				.filter(c -> (sourceFilter == null || sourceFilter.equals(c.source()))
+						&& (sponsorshipFilter == null || sponsorshipFilter.equals(c.sponsorship()))
+						&& matchesCampaign(c, campaignFilter))
+				.toList();
+		return ApiResponse.ok(comparisonAssembler.assemble(principal.getUserId(), filtered));
 	}
 
 	// ---------- meta ----------
