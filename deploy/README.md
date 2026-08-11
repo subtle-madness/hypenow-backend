@@ -745,6 +745,11 @@ docker exec deploy-prometheus-1 wget -qO- 'http://loki:3100/loki/api/v1/label/co
 Grafana(§14-1 터널) → 폴더 HypeNow → "HypeNow API 성능" 대시보드에서 p95·처리량·상위 SQL 확인.
 로그는 Explore → Loki 데이터소스 → `{container="deploy-was-1"}`.
 
+> ⚠️ **배포 직후 수 분 구간의 지표는 신뢰하지 말 것.** was 롤링 배포(§5-1) 창에는 신·구 컨테이너가
+> 수 분간 공존하는데, prometheus 타깃은 `was:9081` 단일 DNS 이름이라 스크레이프마다 두 JVM 중
+> 아무 쪽이나 잡힌다 — 카운터가 신규 JVM의 0으로 되돌아가며 rate가 튀거나 꺼지고, p95는 웜업 중인
+> 새 JVM과 드레이닝 중인 구 JVM의 값이 뒤섞인다. 성능 비교·회귀 판정은 롤링이 끝난 뒤 구간으로.
+
 > 설정 파일(`prometheus.yml`·`loki-config.yaml`·`config.alloy`)은 CD가 매 배포마다 scp로
 > 동기화하고 `docker compose restart prometheus loki alloy`로 반영한다 — 설정만 바꾼 변경도
 > 배포 한 번이면 서버에 붙는다(수동 복사 불필요).
@@ -761,3 +766,7 @@ Grafana(§14-1 터널) → 폴더 HypeNow → "HypeNow API 성능" 대시보드�
   해당 로그는 postgres 컨테이너 stdout → Loki(`{container="deploy-postgres-1"}`)로 들어온다.
 - 디스크 상한: Prometheus 30일·1GB(`--storage.tsdb.retention.time/.size` — 먼저 닿는 쪽이
   적용)·Loki 보관 30일(compactor) — 둘 다 자동 삭제라 수동 정리 불필요.
+- Loki는 Prometheus와 달리 **용량 상한이 없고 기간(`retention_period`)만 있다** — 로그량이 늘면
+  디스크가 그만큼 자란다. `docker system df -v | grep loki-data`로 볼륨 실측 크기를 주기적으로
+  확인하고(디스크 알람 85% 전에), 증가율이 과하면 `deploy/loki/loki-config.yaml`의
+  `retention_period`를 하향(예: 30일 → 14일)하는 것이 다이얼이다.
