@@ -51,4 +51,16 @@ class BrandHashtagTagsTest {
 	void 중복_유도는_한_번만_남는다() {
 		assertThat(BrandHashtagTags.derive("olens", "olens")).containsExactly("olens");
 	}
+
+	@Test
+	void 대문자_섞인_계정명은_소문자_태그로_유도된다() {
+		assertThat(BrandHashtagTags.derive(null, "CClime_Official"))
+				.containsExactly("cclime", "cclime_official");
+	}
+
+	@Test
+	void 접미사_제거_후_브랜드명과_루트가_같아지면_중복이_제거된다() {
+		assertThat(BrandHashtagTags.derive("cclime", "cclime_official"))
+				.containsExactly("cclime", "cclime_official");
+	}
 }

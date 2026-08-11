@@ -17,6 +17,7 @@ public final class BrandHashtagTags {
 	/** IG 해시태그 허용 문자 — 글자(한글 포함)·숫자·언더스코어. 점(.)은 태그를 끊는다. */
 	private static final Pattern VALID_TAG = Pattern.compile("[\\p{L}\\p{N}_]+");
 	private static final List<String> SUFFIXES = List.of("official", "kr", "korea", "global");
+	private static final List<String> SEPARATORS = List.of("_", ".");
 	private static final int MIN_ROOT_LENGTH = 3;
 
 	private BrandHashtagTags() {
@@ -29,7 +30,7 @@ public final class BrandHashtagTags {
 		while (stripped) {
 			stripped = false;
 			for (String s : SUFFIXES) {
-				for (String sep : List.of("_", ".")) {
+				for (String sep : SEPARATORS) {
 					String suffix = sep + s;
 					if (u.endsWith(suffix) && u.length() - suffix.length() >= MIN_ROOT_LENGTH) {
 						u = u.substring(0, u.length() - suffix.length());
@@ -45,6 +46,9 @@ public final class BrandHashtagTags {
 	 * 태그 셋 3종(순서 보존·중복 제거). brandName null·공백이면 2종.
 	 * 각 후보는 IG 해시태그 실동작(첫 무효 문자에서 잘림 — 예: cclime.beauty → cclime)에 맞춰
 	 * 선행 유효 접두사만 취하고, 접두사가 없으면(무효 문자로 시작) 후보를 버린다.
+	 *
+	 * @param brandName null 허용(브랜드명 미상 시 null — 계정명 유도 2종만 반환).
+	 * @param username  필수. null이면 NPE(등록 데이터엔 항상 존재하는 필드라 호출측 방어 불요).
 	 */
 	public static LinkedHashSet<String> derive(String brandName, String username) {
 		List<String> candidates = new ArrayList<>();
