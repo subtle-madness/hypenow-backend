@@ -1,0 +1,30 @@
+// 도커 로그 수집(스펙 2026-08-10) — 호스트의 전 컨테이너 stdout/stderr를 Loki로 push.
+// 컨테이너 이름(선행 "/" 제거)을 container 라벨로 부여 — Grafana에서 {container="deploy-was-1"}식 조회.
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.write.local.receiver]
+  refresh_interval = "30s"
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
