@@ -1,0 +1,42 @@
+// 도커 로그 수집(스펙 2026-08-10) — prod 네트워크(deploy_prod) 컨테이너의 stdout/stderr만 Loki로 push.
+// 컨테이너 이름(선행 "/" 제거)을 container 라벨로 부여 — Grafana에서 {container="deploy-was-1"}식 조회.
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // prod 네트워크 소속만 수집 — 두 가지를 동시에 처리한다.
+  //  ① test 스택(test-was 등) 로그 유입 차단: 스펙상 계측 범위는 운영뿐인데, 도커 소켓을 통째로
+  //     열거하면 같은 호스트의 test 컨테이너까지 딸려와 Loki 보관량과 라벨을 오염시킨다.
+  //  ② 중복 타깃 해소: discovery.docker는 컨테이너×네트워크로 타깃을 만들어 멀티 네트워크
+  //     컨테이너(caddy = prod+test, was = prod+monitoring-net 등)가 2개로 잡힌다 — 같은 로그를
+  //     두 번 push하는 경로다. prod 하나로 한정해 컨테이너당 1타깃을 보장한다.
+  rule {
+    source_labels = ["__meta_docker_network_name"]
+    regex         = "deploy_prod"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.write.local.receiver]
+  refresh_interval = "30s"
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
