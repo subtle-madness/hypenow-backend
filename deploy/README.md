@@ -694,3 +694,57 @@ Contact point는 프로비저닝된 `discord-ops`를 그대로 지정하면 된�
 4. `ssh -L 3001:localhost:3000 ubuntu@<IP>` 후 `http://localhost:3001` 접속 → 관리자 로그인 →
    대시보드 "HypeNow 서비스 현황" 확인
 5. 14-4의 알림 규칙 로드 여부 확인, 필요 시 수동 보완
+
+## 15. 쿼리·API 성능 측정 스택 (08-10~)
+
+Prometheus(지표)·Loki(로그)·기존 Grafana(시각화) + postgres `pg_stat_statements`(SQL 통계).
+정의: `deploy/compose.yaml`(prometheus·loki·alloy 서비스) + `deploy/prometheus/`·`deploy/loki/`·
+`deploy/alloy/` 설정 파일 + Grafana 프로비저닝(데이터소스 `observability.yaml`, 대시보드
+"HypeNow API 성능"). 셋 다 호스트 포트 미노출 — 조회는 Grafana(§14 SSH 터널)로만.
+
+### 15-1. 최초 개통 (배포 1회 + 수동 2단계)
+
+compose 변경이 배포되면 postgres가 재생성된다(짧은 순단 — was/analytics는 HikariCP 자동 재접속,
+저트래픽 시간대 권장). 이후 서버에서:
+
+```bash
+# ① pg_stat_statements 확장 생성 (analysis DB, 1회 — preload는 compose가 이미 함)
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+
+# ② grafana_reader에 통계 조회 권한 (pg_stat_statements 뷰는 pg_monitor 필요 — §14-2 롤 전제)
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT pg_monitor TO grafana_reader"
+```
+
+### 15-2. 개통 확인
+
+```bash
+# 지표: prometheus가 was를 긁고 있는지 (up 1이면 정상)
+docker exec deploy-prometheus-1 wget -qO- 'http://localhost:9090/api/v1/query?query=up{job="was"}'
+
+# SQL 통계: 상위 느린 쿼리가 쌓이는지
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "SELECT calls, round(total_exec_time::numeric) AS total_ms, left(query,60) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 5"
+
+# 로그: loki에 컨테이너 라벨이 잡히는지 (alloy 이미지엔 wget이 없을 수 있어 같은 prod 네트워크의
+# prometheus 컨테이너에서 조회한다 — alloy 자체 상태는 `docker logs deploy-alloy-1`로 본다)
+docker exec deploy-prometheus-1 wget -qO- 'http://loki:3100/loki/api/v1/label/container/values'
+```
+
+Grafana(§14-1 터널) → 폴더 HypeNow → "HypeNow API 성능" 대시보드에서 p95·처리량·상위 SQL 확인.
+로그는 Explore → Loki 데이터소스 → `{container="deploy-was-1"}`.
+
+> 설정 파일(`prometheus.yml`·`loki-config.yaml`·`config.alloy`)은 CD가 매 배포마다 scp로
+> 동기화하고 `docker compose restart prometheus loki alloy`로 반영한다 — 설정만 바꾼 변경도
+> 배포 한 번이면 서버에 붙는다(수동 복사 불필요).
+
+### 15-3. 운영 다이얼
+
+- 부하가 예상(합산 RAM 330~400MB·CPU 1~2%)을 넘으면: `deploy/prometheus/prometheus.yml`의
+  `scrape_interval` 60s 상향이 1차 다이얼.
+- 통계 리셋(개선 전후 비교 시작점): `SELECT pg_stat_statements_reset()`.
+- 슬로우 쿼리 로그 임계는 500ms(`log_min_duration_statement=500`, compose의 postgres command) —
+  해당 로그는 postgres 컨테이너 stdout → Loki(`{container="deploy-postgres-1"}`)로 들어온다.
+- 디스크 상한: Prometheus 30일·1GB(`--storage.tsdb.retention.time/.size` — 먼저 닿는 쪽이
+  적용)·Loki 보관 30일(compactor) — 둘 다 자동 삭제라 수동 정리 불필요.
