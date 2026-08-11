@@ -1,0 +1,37 @@
+# 로그 저장(스펙 2026-08-10) — 단일 바이너리·파일시스템 모드. 보관 30일(compactor가 만료 삭제).
+# 배포로 컨테이너가 재생성돼도 로그가 loki-data 볼륨에 남는다(기존 json-file 유실 문제 해결).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+limits_config:
+  retention_period: 720h   # 30일
