@@ -76,7 +76,7 @@ class V1BrandAccountsControllerTest {
 	}
 
 	private static BrandLinkRow link(long userId, long brandId, String username) {
-		return new BrandLinkRow(brandId, userId, brandId, username,
+		return new BrandLinkRow(brandId, userId, brandId, username, BrandAccountType.OWN,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
@@ -135,7 +135,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionCompletedAt").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
 	}
 
 	@Test
@@ -180,7 +180,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("100"))
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
 	}
 
 	@Test
@@ -196,7 +196,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
 		then(commandClient).should(never()).registerBrand(anyString());
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
 	}
 
 	@Test
@@ -213,7 +213,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted())
 				.andExpect(jsonPath("$.data.id").value("100"));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official");
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
 	}
 
 	@Test
@@ -281,7 +281,7 @@ class V1BrandAccountsControllerTest {
 		// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 원하는 상태는 이미 성립했으므로 성공으로 접는다.
 		given(commandClient.registerBrand("lizda_official"))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
-		given(linkRepository.insertLink(7L, 100L, "lizda_official"))
+		given(linkRepository.insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN))
 				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_brand_uidx"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
 

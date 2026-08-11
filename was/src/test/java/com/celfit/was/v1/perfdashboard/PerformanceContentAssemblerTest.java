@@ -398,7 +398,7 @@ class PerformanceContentAssemblerTest {
 
 	private void givenBrandSweptAt(OffsetDateTime lastSweptAt, BrandPostResponse... taggedPosts) {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
-				BRAND_ID, "brand", LAST_COLLECTED, null)));
+				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));

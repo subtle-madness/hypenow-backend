@@ -17,7 +17,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class BrandLinkRepository {
 
-	private static final String SELECT_COLUMNS = "id, user_id, brand_id, username, created_at, deleted_at";
+	private static final String SELECT_COLUMNS =
+			"id, user_id, brand_id, username, account_type, created_at, deleted_at";
 
 	private final JdbcClient jdbcClient;
 
@@ -65,17 +66,33 @@ public class BrandLinkRepository {
 	}
 
 	/** 활성 연결 생성. RETURNING id. 같은 (유저, 브랜드) 활성 연결이 있으면 DuplicateKeyException. */
-	public long insertLink(long userId, long brandId, String username) {
+	public long insertLink(long userId, long brandId, String username, String accountType) {
 		return jdbcClient.sql("""
-				INSERT INTO app.brand_monitorings (user_id, brand_id, username)
-				VALUES (:userId, :brandId, :username)
+				INSERT INTO app.brand_monitorings (user_id, brand_id, username, account_type)
+				VALUES (:userId, :brandId, :username, :accountType)
 				RETURNING id
 				""")
 				.param("userId", userId)
 				.param("brandId", brandId)
 				.param("username", username)
+				.param("accountType", accountType)
 				.query(Long.class)
 				.single();
+	}
+
+	/**
+	 * 활성 연결의 타입 변경(08-12) — 재수집이 아니라 관계 속성만 바꾼다. 이미 그 타입이거나
+	 * 활성 연결이 없으면 false(호출부의 멱등·소유권 판정 지점).
+	 */
+	public boolean updateAccountType(long userId, long brandId, String accountType) {
+		return jdbcClient.sql("""
+				UPDATE app.brand_monitorings SET account_type = :accountType
+				WHERE user_id = :userId AND brand_id = :brandId AND deleted_at IS NULL
+				""")
+				.param("userId", userId)
+				.param("brandId", brandId)
+				.param("accountType", accountType)
+				.update() > 0;
 	}
 
 	/** 연결 1건 해제(soft-delete). 이미 해제됐거나 없으면 false — 호출부의 멱등 판정 지점. */

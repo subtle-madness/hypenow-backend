@@ -69,7 +69,8 @@ class BrandLinkTransaction {
 			throw limitReached();
 		}
 		try {
-			linkRepository.insertLink(userId, brandId, username);
+			// 타입은 아직 요청에서 오지 않는다 — 컬럼 관통만 한 단계라 own 고정이다(후속 태스크에서 실제 타입 전달).
+			linkRepository.insertLink(userId, brandId, username, BrandAccountType.OWN);
 		} catch (DuplicateKeyException e) {
 			// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 잠금 덕에 사실상 도달 불가지만,
 			// 도달해도 원하는 상태(연결됨)는 이미 성립했으므로 멱등 성공으로 접는다.

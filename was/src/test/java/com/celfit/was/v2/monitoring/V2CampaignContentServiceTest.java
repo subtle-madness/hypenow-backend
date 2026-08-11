@@ -455,7 +455,7 @@ class V2CampaignContentServiceTest {
 
 	private void givenTagged(BrandPostResponse... posts) {
 		given(linkRepository.findAllActiveByUser(USER_ID))
-				.willReturn(List.of(new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", null, null)));
+				.willReturn(List.of(new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", null, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", null, null, null, null, null,
 				null, null, null, null, null, null, null, null, "ACTIVE");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
