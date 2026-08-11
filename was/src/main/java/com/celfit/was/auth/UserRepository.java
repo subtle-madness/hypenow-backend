@@ -161,13 +161,18 @@ public class UserRepository {
 	}
 
 	/**
-	 * 탈퇴(스펙 6.13) — saved 2종은 users FK가 CASCADE가 아니라 자식부터 순서 삭제, 한 트랜잭션.
-	 * 세션 무효화·이미지 파일 정리는 DB 밖 자원이라 호출부가 커밋 후에 수행한다.
+	 * 탈퇴(스펙 6.13) — saved 2종·brand_direct_posts는 users FK가 CASCADE가 아니거나(saved 2종)
+	 * CASCADE 순서를 코드로 통제해야 해서(brand_direct_posts, 아래 참고) 자식부터 순서 삭제,
+	 * 한 트랜잭션. 세션 무효화·이미지 파일 정리는 DB 밖 자원이라 호출부가 커밋 후에 수행한다.
 	 *
 	 * <p>삭제 전 원본 행을 전부 아카이브한다(트랙 NN). CASCADE(V16)로 사라지는 자식과
 	 * registrations를 거치는 간접 CASCADE(entries)까지 ArchiveTables.ACCOUNT_DELETION_ORDER가
-	 * 전부 담고 있다 — 새 자식 테이블이 생기면 ArchiveCascadeReachabilityTest(Task 8에서 추가 예정,
-	 * 아직 없음)가 CI에서 막을 계획이다. 그 전까지는 이 목록에 테이블을 추가하는 리뷰가 유일한 방어선.
+	 * 전부 담고 있다 — 새 자식 테이블이 생기면 ArchiveCascadeReachabilityTest가 CI에서 막는다.
+	 *
+	 * <p>brand_direct_posts는 users CASCADE 대상이지만 monitoring_item_id FK가 CASCADE가 아니다
+	 * (V20260811090500 — ArchiveTables.BRAND_DIRECT_POSTS 참고). users delete가 monitoring_items도
+	 * 함께 CASCADE로 지우므로, brand_direct_posts를 먼저 명시 삭제해두지 않으면 그 시점에 남아있는
+	 * 매핑 행이 FK 위반을 낸다 — saved 2종과 같은 이유로 순서 삭제 목록에 있다.
 	 */
 	@Transactional
 	public void deleteAccount(long id) {
@@ -179,14 +184,16 @@ public class UserRepository {
 				"DELETE FROM app.saved_contents WHERE user_id = :id", id);
 		deleteAndVerify(ArchiveTables.SAVED_INFLUENCERS, archived,
 				"DELETE FROM app.saved_influencers WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.BRAND_DIRECT_POSTS, archived,
+				"DELETE FROM app.brand_direct_posts WHERE user_id = :id", id);
 		deleteAndVerify(ArchiveTables.USERS, archived,
 				"DELETE FROM app.users WHERE id = :id", id);
 	}
 
 	/**
-	 * CASCADE로 사라지는 자식 6종(campaigns·items·registrations·digests·email_opt_outs·
-	 * registration_entries)은 DB가 지우므로 삭제 건수를 관측할 수 없다 — 코드가 직접 DELETE하는
-	 * 3개만 이관 건수와 대조한다.
+	 * CASCADE로 사라지는 자식 8종(campaigns·items·registrations·digests·email_opt_outs·
+	 * registration_entries·notice_seen·brand_monitorings)은 DB가 지우므로 삭제 건수를 관측할 수
+	 * 없다 — 코드가 직접 DELETE하는 4개(saved 2종·brand_direct_posts·users)만 이관 건수와 대조한다.
 	 */
 	private void deleteAndVerify(ArchiveTable table, Map<ArchiveTable, Integer> archived, String sql, long id) {
 		Integer archivedCount = archived.get(table);

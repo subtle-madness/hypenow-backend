@@ -9,5 +9,7 @@ public enum ArchiveReason {
 	/** 캠페인 삭제 */
 	CAMPAIGN_DELETED,
 	/** 모니터링 등록 실패 롤백 */
-	REGISTRATION_ROLLBACK
+	REGISTRATION_ROLLBACK,
+	/** 어드민 업데이트 소식 삭제 */
+	NOTICE_DELETED
 }

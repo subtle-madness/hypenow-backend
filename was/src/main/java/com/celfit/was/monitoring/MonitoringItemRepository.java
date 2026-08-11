@@ -83,15 +83,41 @@ public class MonitoringItemRepository {
 	 * <p>호출부 3곳이 전부 등록 실패 롤백이라 사유를 REGISTRATION_ROLLBACK으로 못박았다. 다른 사유의
 	 * item 삭제 지점이 생기면 ArchiveReason에 값을 추가하고 메서드를 나눌 것 — 이 메서드를 재사용하면
 	 * 틀린 사유가 아카이브에 남는다.
+	 *
+	 * <p>app.brand_direct_posts.monitoring_item_id는 더 이상 CASCADE가 아니다(V20260811090500,
+	 * ArchiveTables.BRAND_DIRECT_POSTS 참고) — 그대로 두면 남은 매핑 행이 이 item 삭제를 FK 위반으로
+	 * 막는다. item보다 먼저 매핑 행을 찾아 아카이브·삭제한다.
 	 */
 	@Transactional
 	public void delete(long itemId) {
+		List<BrandDirectPostKey> directPostKeys = jdbcClient.sql("""
+						SELECT user_id, short_code FROM app.brand_direct_posts WHERE monitoring_item_id = :itemId
+						""")
+				.param("itemId", itemId)
+				.query(BrandDirectPostKey.class)
+				.list();
+		for (BrandDirectPostKey key : directPostKeys) {
+			int archivedPost = archiveWriter.archiveByPk(ArchiveTables.BRAND_DIRECT_POSTS,
+					ArchiveReason.REGISTRATION_ROLLBACK,
+					Map.of("user_id", key.userId(), "short_code", key.shortCode()));
+			int deletedPost = jdbcClient.sql(
+							"DELETE FROM app.brand_direct_posts WHERE user_id = :userId AND short_code = :shortCode")
+					.param("userId", key.userId())
+					.param("shortCode", key.shortCode())
+					.update();
+			archiveWriter.verifyMatched(ArchiveTables.BRAND_DIRECT_POSTS, archivedPost, deletedPost);
+		}
+
 		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_ITEMS, ArchiveReason.REGISTRATION_ROLLBACK,
 				Map.of("id", itemId));
 		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_items WHERE id = :itemId")
 				.param("itemId", itemId)
 				.update();
 		archiveWriter.verifyMatched(ArchiveTables.MONITORING_ITEMS, archived, deleted);
+	}
+
+	/** app.brand_direct_posts의 복합 PK — item 롤백 시 이 item을 참조하는 매핑을 찾기 위한 내부 전용 행. */
+	private record BrandDirectPostKey(long userId, String shortCode) {
 	}
 
 	public Optional<MonitoringItemRow> findByIdAndUser(long id, long userId) {

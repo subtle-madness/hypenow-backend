@@ -8,11 +8,12 @@ import java.util.List;
  *
  * <p>{@link #CATALOG}와 {@link #ACCOUNT_DELETION_ORDER}는 서로 다른 질문에 답한다 —
  * "어떤 삭제 경로로든 아카이브되는 테이블 전부"(CATALOG) vs "탈퇴가 이관하는 테이블과 순서"
- * (ACCOUNT_DELETION_ORDER). 지금은 두 목록의 원소가 우연히 같지만(9개 전부 탈퇴 캐스케이드에도
- * 걸린다), SAVED_REMOVED·CAMPAIGN_DELETED·REGISTRATION_ROLLBACK처럼 탈퇴와 무관한 개별 삭제
- * 경로 전용 테이블이 생기면 갈라진다 — 그런 테이블은 CATALOG엔 있지만 ACCOUNT_DELETION_ORDER엔
- * 없어야 맞다. 두 목록은 서로 파생시키지 않고 각각 독립적으로 나열한다(파생시키면 아래
- * ACCOUNT_DELETION_ORDER ⊆ CATALOG 검사가 항진명제가 돼 무의미해진다).
+ * (ACCOUNT_DELETION_ORDER). 두 목록은 서로 파생시키지 않고 각각 독립적으로 나열한다(파생시키면
+ * 아래 ACCOUNT_DELETION_ORDER ⊆ CATALOG 검사가 항진명제가 돼 무의미해진다).
+ *
+ * <p>{@code NOTICES}·{@code NOTICE_ITEMS}가 실제로 갈라지는 사례다 — users FK가 없어 탈퇴와
+ * 무관하고, 어드민 개별 삭제(NOTICE_DELETED)로만 아카이브된다: CATALOG엔 있지만
+ * ACCOUNT_DELETION_ORDER엔 없다.
  */
 public final class ArchiveTables {
 
@@ -63,6 +64,50 @@ public final class ArchiveTables {
 			"app.users", List.of("id"), "t.id",
 			USER_PII, "t.id = :userId");
 
+	/** 유저당 마지막 확인 시각 1행 — user_id가 PK 자체다. users CASCADE, 개별 삭제 경로는 없다. */
+	public static final ArchiveTable NOTICE_SEEN = new ArchiveTable(
+			"app.notice_seen", List.of("user_id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
+	 * 유저의 브랜드 연결. deleted_at UPDATE(soft-delete)는 행이 안 사라지므로 아카이브 대상이 아니다
+	 * — 여기서 다루는 건 users CASCADE로 행 자체가 지워지는 탈퇴 경로뿐(BrandLinkRepository의
+	 * softDeleteLink·softDeleteAllActiveByUser는 UPDATE라 archiveWriter를 타지 않는다).
+	 */
+	public static final ArchiveTable BRAND_MONITORINGS = new ArchiveTable(
+			"app.brand_monitorings", List.of("id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
+	 * 직접 등록 매핑. users CASCADE + monitoring_items CASCADE 이중 참조였으나, monitoring_items
+	 * 쪽은 더 이상 CASCADE가 아니다(V20260811090500 — item 삭제 시 이 행이 아카이브 없이 사라지는
+	 * 것을 막으려고 명시 FK로 바꿨다. ArchiveCascadeReachabilityTest가 monitoring_items의 CASCADE
+	 * 자식이 0개여야 한다고 강제한다). 그 결과 두 삭제 경로 모두 이 행을 먼저 지워야 한다 —
+	 * 그러지 않으면 부모(monitoring_items)를 지울 때 이 행이 남아 FK 위반이 난다:
+	 * <ul>
+	 *   <li>등록 롤백 — MonitoringItemRepository.delete가 item보다 먼저 이 행을 아카이브·삭제</li>
+	 *   <li>탈퇴 — users CASCADE(간접적으로 monitoring_items도 함께 지운다)에 앞서
+	 *       UserRepository.deleteAccount가 이 행을 saved_contents와 같은 방식으로 명시 삭제</li>
+	 * </ul>
+	 */
+	public static final ArchiveTable BRAND_DIRECT_POSTS = new ArchiveTable(
+			"app.brand_direct_posts", List.of("user_id", "short_code"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
+	 * 어드민 작성 제품 공지. users FK가 없어 탈퇴와 무관 — 어드민 개별 삭제(NoticeRepository.delete,
+	 * ArchiveReason.NOTICE_DELETED)로만 아카이브된다. userScopeWhere는 호출되지 않는다("false"로
+	 * 막아둔다 — 계정 삭제 경로 자체가 없다).
+	 */
+	public static final ArchiveTable NOTICES = new ArchiveTable(
+			"app.notices", List.of("id"), null,
+			List.of(), "false");
+
+	/** notices의 CASCADE 자식(position 순 항목). notices와 같은 이유로 계정 삭제와 무관하다. */
+	public static final ArchiveTable NOTICE_ITEMS = new ArchiveTable(
+			"app.notice_items", List.of("id"), null,
+			List.of(), "false");
+
 	/**
 	 * 아카이브 카탈로그 전체 — 어떤 삭제 경로(탈퇴 이관, 저장 해제, 캠페인 삭제, 등록 롤백 등)로든
 	 * 아카이브되는 테이블 전부. ArchiveInventoryTest의 "분류됨" 판정 기준이 이 목록이다 — 여기 없는
@@ -78,12 +123,18 @@ public final class ArchiveTables {
 			MONITORING_REGISTRATIONS,
 			MONITORING_DIGESTS,
 			MONITORING_REGISTRATION_ENTRIES,
-			USERS);
+			USERS,
+			NOTICE_SEEN,
+			BRAND_MONITORINGS,
+			BRAND_DIRECT_POSTS,
+			NOTICES,
+			NOTICE_ITEMS);
 
 	/**
-	 * 탈퇴 시 이관 대상과 순서 — 자식 8개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
+	 * 탈퇴 시 이관 대상과 순서 — 자식 11개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
 	 * 이관(INSERT)은 전부 삭제(DELETE)보다 먼저 일어나므로 순서 자체가 정확성에 영향을 주진
-	 * 않지만, 자식 → 부모 순으로 읽히게 둔다.
+	 * 않지만, 자식 → 부모 순으로 읽히게 둔다. NOTICES·NOTICE_ITEMS는 users FK가 없어 여기 없다
+	 * (클래스 주석 참고).
 	 */
 	public static final List<ArchiveTable> ACCOUNT_DELETION_ORDER = List.of(
 			SAVED_CONTENTS,
@@ -94,6 +145,9 @@ public final class ArchiveTables {
 			MONITORING_DIGESTS,
 			MONITORING_EMAIL_OPT_OUTS,
 			MONITORING_CAMPAIGNS,
+			NOTICE_SEEN,
+			BRAND_MONITORINGS,
+			BRAND_DIRECT_POSTS,
 			USERS);
 
 	private ArchiveTables() {
