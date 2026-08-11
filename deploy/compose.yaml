@@ -6,6 +6,16 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+# 메모리 격리 (08-04) — 전 서비스 mem_limit + oom_score_adj. 상한은 느슨한 오버커밋(평소치·
+# 힙 상한 × 1.5~2, 합계 ~15.7G > 물리 12G 의도) — 단일 컨테이너 폭주가 호스트 OOM으로 번져
+# 무고한 컨테이너(postgres 등)가 죽는 경로만 차단하고 평소 운영엔 무영향. oom_score_adj는
+# 동시 폭주로 그래도 호스트 OOM에 몰렸을 때의 희생 순서: test +800 → 배치(crawler·analytics)
+# +500 → 기본 0 → was -300(자동 재기동되는 가용성 문제) → postgres×2·caddy·ons-relay -800
+# (데이터·전면 다운·알람 실명 — 영향 비대칭). 커널 선정은 RSS 비율(≈RSS/전체×1000)+adj라
+# ±100으론 순서가 안 뒤집히고, -1000은 사살 불가(극단 상황 커널 패닉)라 금지. postgres류
+# 상한은 페이지 캐시가 cgroup에 동반 과금되는 특성상 OOM이 아니라 캐시 축소(쿼리 지연)로
+# 먼저 발현 — 미러 잡이 느려지면 postgres-raw 상한만 상향하면 된다.
+#
 # 네트워크 분리 (07-29) — 운영(prod)과 test 스테이징(test)을 브리지로 격리해 test→운영
 # 경로를 커널(iptables) 수준에서 차단한다. 커스텀 네트워크 선언 시 compose 기본 네트워크가
 # 사라지므로 모든 서비스에 networks: 명시 필수(누락 = 통신 고립). 의도된 공유 접점 둘만
@@ -30,13 +40,34 @@ networks:
   prod:
   test:
   monitoring-net:
+  # IPv6 이그레스 전용(08-11) — 인스타 지역 엣지 CDN(instagram.f*.fna.fbcdn.net)이 AAAA-only라
+  # IPv4 전용 컨테이너에선 이미지 아카이브가 Network is unreachable로 실패한다. 기존 prod에
+  # enable_ipv6를 켜면 네트워크 재생성 = 전 스택 다운이라, 별도 네트워크를 만들어 CDN 다운로드가
+  # 있는 서비스(analytics·monitoring)만 추가 소속시킨다. 서브넷 미지정 → 도커가 ULA /64 자동
+  # 할당 + NAT66(도커 27+ 기본). 전제: 호스트에 글로벌 IPv6 필요(OCI VNIC IPv6 + netplan dhcp6 —
+  # 08-11 활성화). test 스택은 이미지 아카이브가 no-op(PAR URL 빈 값)이라 대상 아님.
+  v6egress:
+    enable_ipv6: true
 
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 1536m
+    oom_score_adj: -800
     networks: [prod]
+    # 쿼리 성능 측정(스펙 2026-08-10) — pg_stat_statements는 preload 필수라 command로 주입.
+    # 확장 생성(CREATE EXTENSION)은 README §15 런북(수동 1회). 이 항목을 바꾸면 postgres가
+    # 재생성돼 짧은 순단이 발생한다 — was/analytics는 HikariCP가 자동 재접속.
+    command:
+      - postgres
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "log_min_duration_statement=500"
     environment:
       POSTGRES_DB: analysis
       POSTGRES_USER: ${DB_USER}
@@ -56,6 +87,8 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 2g   # raw 대용량(덤프 11GiB급) — 미러 잡 페이지 캐시 몫을 analysis보다 여유 있게
+    oom_score_adj: -800
     networks: [prod, test]   # test-analytics가 analytics_dev 계정으로 raw를 읽는다 — 의도된 공유 접점
     environment:
       POSTGRES_DB: crawler
@@ -78,7 +111,9 @@ services:
     image: ghcr.io/subtle-madness/hypenow-analytics:latest
     restart: unless-stopped
     logging: *logging
-    networks: [prod]
+    mem_limit: 1280m   # 힙 768m + 오프힙 여유
+    oom_score_adj: 500   # 지정 희생양 — 재기동 무해 배치, 새벽 폭주 주범이 먼저 죽게
+    networks: [prod, v6egress]   # v6egress: 이미지 아카이브의 AAAA-only CDN 도달용(상단 networks 주석)
     environment:
       APP_DATASOURCE_RAW_JDBC_URL: jdbc:postgresql://postgres-raw:5432/crawler
       APP_DATASOURCE_RAW_USERNAME: ${RAW_DB_USER}
@@ -97,6 +132,10 @@ services:
       # 늦크롤 백필 — timely와 예산 독립(2026-07-23 분리). 신규 계정 온보딩 백카탈로그가 주 대상
       ANALYTICS_SCHEDULE_LATE_BACKFILL_ANALYZE_CRON: "0 0 21 * * *"
       ANALYTICS_SCHEDULE_ACCOUNT_ANALYZE_CRON: "0 0 22 * * *"
+      # 배치 전송(2026-08-11, Vertex 배치 50% 할인) 수거 — KST 05:10~11:40 30분 간격.
+      # transport 자체(online|batch)는 app_setting analytics.analyze-transport 수동 UPDATE로 전환하므로
+      # 여기엔 없음 — online이면 content_batch_jobs에 pending 행이 없어 이 크론은 매번 no-op이다.
+      ANALYTICS_SCHEDULE_BATCH_COLLECT_CRON: "0 10,40 20-23,0-2 * * *"
       ANALYTICS_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       JAVA_OPTS: "-Xms256m -Xmx768m"
     volumes:
@@ -124,6 +163,8 @@ services:
     image: ghcr.io/subtle-madness/hypenow-crawler:latest
     restart: unless-stopped
     logging: *logging
+    mem_limit: 1536m   # 힙 1g + 오프힙 여유
+    oom_score_adj: 500   # 지정 희생양 — analytics와 동일 사유
     networks: [prod]
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-raw:5432/crawler
@@ -163,6 +204,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 512m   # maxmemory 256mb + RDB fork COW 여유
     networks: [prod]   # 커스텀 네트워크 체제 — 누락 시 was에서 도달 불가(조용한 캐시 미스 fail-open이라 증상도 안 보인다)
     command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
@@ -175,6 +217,8 @@ services:
     image: ghcr.io/subtle-madness/hypenow-was:latest
     restart: unless-stopped
     logging: *logging
+    mem_limit: 3g   # 힙 2g pre-touch 상시 점유 + 오프힙 여유 — 힙을 줄이면 이 상한도 같이 재조정
+    oom_score_adj: -300   # 완만한 보호 — postgres(-800)와 단차 유지(사망 = 자동 복구되는 가용성 문제)
     # prod는 postgres·redis·analytics 접속용, monitoring-net은 monitoring 명령 API 전용
     # (was가 그 유일한 클라이언트 — 상단 networks 주석).
     networks: [prod, monitoring-net]
@@ -218,7 +262,7 @@ services:
       analytics:
         condition: service_healthy
 
-  # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 스윕 KST 02:00(UTC 17:00).
+  # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 캠페인 스윕 KST 02:00 · 브랜드 태그 스윕 KST 03:00.
   # 호스트 포트 미노출 — 어드민 UI가 없고 유일한 클라이언트 was는 monitoring-net으로 붙는다
   # (호스트 8083은 test-analytics 터널이 이미 점유 중이라 충돌 회피이기도 함).
   # 수동 디버깅은 같은 네트워크에 임시 컨테이너를 붙여서 —
@@ -228,7 +272,9 @@ services:
     image: ghcr.io/subtle-madness/hypenow-monitoring:latest
     restart: unless-stopped
     logging: *logging
-    networks: [prod, monitoring-net]   # prod는 postgres 접속용
+    mem_limit: 768m   # 힙 384m + 오프힙 여유
+    # prod는 postgres 접속용, v6egress는 프로필·썸네일 아카이브의 AAAA-only CDN 도달용
+    networks: [prod, monitoring-net, v6egress]
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
@@ -238,6 +284,9 @@ services:
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
+      # 브랜드 태그 스윕 — KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차.
+      # 08-07 개통 때 서버 ~/deploy/compose.override.yaml로 먼저 주입했던 값을 레포로 정합(드리프트 해소).
+      MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 0 18 * * *"
       # 알람 발송(07-31 개통) — 5분 간격. 개통 절차는 README §13-5
       # 수신자는 .env의 ALARM_ALLOWED_RECIPIENTS 허용목록으로 제한한다(fail-OPEN이므로 비우면 전원 발송).
       MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"
@@ -267,6 +316,8 @@ services:
     image: python:3.12-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 128m
+    oom_score_adj: -800   # 알람 전달 경로 — 죽으면 "알람이 안 오는 것"과 "정상"을 구분 못 한다
     networks: [prod]
     environment:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
@@ -274,6 +325,58 @@ services:
     volumes:
       - ./ons-discord-relay.py:/relay.py:ro
     command: python /relay.py
+    # 9099 리슨 확인 — 이미지에 bash가 없어(python:alpine) /dev/tcp 관용구 대신 파이썬 소켓.
+    # 컨테이너 다운 감시(post-container-metrics.py)가 unhealthy를 다운(0)으로 집계한다(§9).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9099), 3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # API 지표 저장(스펙 2026-08-10) — was:9081 스크레이프, 보관 30일 + 디스크 1GB 상한(이중 봉인).
+  # 호스트 포트 미노출 — 조회는 Grafana 데이터소스로만. 관측 도구는 oom_score_adj +500(먼저 희생).
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 256m
+    oom_score_adj: 500
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=1GB"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  # 로그 저장(스펙 2026-08-10) — 파일시스템 모드·보관 30일. 배포 시 컨테이너 로그 유실 문제의 해결책.
+  loki:
+    image: grafana/loki:3.5.0
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 384m
+    oom_score_adj: 500
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+
+  # 로그 수집기 — 도커 소켓(ro)으로 전 컨테이너 로그를 긁어 Loki로 push. Loki 불능 시 재시도
+  # 버퍼링만 하고 서비스 컨테이너의 stdout 로깅(json-file)에는 영향 없음.
+  alloy:
+    image: grafana/alloy:v1.8.2
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 192m
+    oom_score_adj: 500
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   # 서비스 현황 대시보드(app 스키마 읽기 전용) — 호스트 포트 미노출, Caddy가 grafana:3000으로 프록시.
   # CPU 2코어 제약 고려: 익명접속·회원가입·원격 리포팅/업데이트체크류 전부 끔, mem_limit 512m로 상한.
@@ -323,6 +426,8 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     logging: *logging
+    mem_limit: 256m
+    oom_score_adj: -800   # 유일한 엣지 — 죽으면 운영+test 전면 다운
     networks: [prod, test]   # api(운영)·dev-api(test) 도메인을 한 caddy가 라우팅 — 의도된 공유 접점
     ports:
       - "80:80"
@@ -343,3 +448,5 @@ volumes:
   caddy-data:
   caddy-config:
   grafana-data:
+  prometheus-data:
+  loki-data:

@@ -43,10 +43,16 @@ public class AdminUserAssembler {
 
 		return rows.stream()
 				.map(row -> new AdminUserSummary(String.valueOf(row.id()), row.email(),
-						row.name() == null ? "" : row.name(), row.userType(), row.signupRoute(),
-						KstTimestamps.toKstIso(row.createdAt()), KstTimestamps.toKstIso(row.lastActiveAt()),
-						campaignCounts.getOrDefault(row.id(), 0L), monitoringCounts.getOrDefault(row.id(), 0L),
-						savedCounts.getOrDefault(row.id(), 0L), health.getOrDefault(row.id(), "ok")))
+						row.name() == null ? "" : row.name(), blankToEmpty(row.companyName()), row.userType(),
+						row.signupRoute(), KstTimestamps.toKstIso(row.createdAt()),
+						KstTimestamps.toKstIso(row.lastActiveAt()), campaignCounts.getOrDefault(row.id(), 0L),
+						monitoringCounts.getOrDefault(row.id(), 0L), savedCounts.getOrDefault(row.id(), 0L),
+						health.getOrDefault(row.id(), "ok")))
 				.toList();
+	}
+
+	/** companyName·jobTitle 계약 — null이면 ""(상세 AdminUsersController.blankToEmpty와 동일 규칙). */
+	private static String blankToEmpty(String value) {
+		return value == null ? "" : value;
 	}
 }

@@ -3,13 +3,16 @@
 -- raw_profile(SELF_GQL 내장 타임라인) payload 안에 있다 (스펙 §4).
 --
 -- 고정 fixture ID (bigserial 실 ID와 충돌하지 않는 높은 값):
---   crawl_run 99990000 / influencer 99990001~99990005 / content 99990101~99990108
+--   crawl_run 99990000 / influencer 99990001~99990005 / content 99990101~99990108 + 99990120(ra1)
+--   (99990109~99990116은 개별 테스트 파일이 자체 픽스처로 쓴다 — 시드에서 쓰면 PK 충돌)
 --
 -- 시나리오:
 --   dummy_a(99990001)  뷰티 인플루언서 — r1(99990101, 릴스: clips 스냅샷 3 + 타임라인 1 — 핀·최신 메타 검증),
 --                  r2(99990102, 타임라인 전용 릴스 — 787건 케이스), f1(99990103, 피드 — views NULL 규칙),
 --                  d1(99990104, DISCOVERY 잔재 — 모수 제외·좋아요 비공개 -1 케이스), rn(99990108, 업로드 1일 전 — 숙성 가드)
---   dummy_b(99990002)  뷰티 인플루언서 — r3(99990105, 캡션 결측·유료 협찬 true). 프로필 HIKER_MOBILE만(소스 분기 검증)
+--   dummy_b(99990002)  뷰티 인플루언서 — r3(99990105, 캡션 결측·유료 협찬 true),
+--                  ra1(99990120, APIFY_ACTOR 액터 수집분 — 좋아요 비공개 -1·paidPartnership).
+--                  프로필 HIKER_MOBILE만(소스 분기 검증)
 --   dummy_co(99990003) 뷰티 회사 — r4(99990106, 모수 제외 검증)
 --   dummy_x(99990004)  비뷰티 — r5(99990107, 모수 제외 검증)
 --   dummy_e(99990005)  EXCLUDED — 콘텐츠·프로필 없음
@@ -35,7 +38,8 @@ INSERT INTO content(id, short_code, content_type, owner_username, influencer_id,
  (99990105,'dummy_r3','REELS','dummy_b' ,99990002, timestamptz '2026-06-01 10:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
  (99990106,'dummy_r4','REELS','dummy_co',99990003, timestamptz '2026-06-01 10:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
  (99990107,'dummy_r5','REELS','dummy_x' ,99990004, timestamptz '2026-06-01 10:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
- (99990108,'dummy_rn','REELS','dummy_a' ,99990001, now() - interval '1 day','PENDING', now() - interval '1 day','ENUMERATION',0);
+ (99990108,'dummy_rn','REELS','dummy_a' ,99990001, now() - interval '1 day','PENDING', now() - interval '1 day','ENUMERATION',0),
+ (99990120,'dummy_ra1','REELS','dummy_b' ,99990002, timestamptz '2026-06-05 12:00:00+09','PENDING', timestamptz '2026-06-05 12:00:00+09','ENUMERATION',0);
 
 -- 프로필. dummy_a는 HIKER_MOBILE(구) + SELF_GQL(신, 내장 타임라인 포함) 2건 — 최신 선택·소스 분기 검증.
 -- dummy_b는 HIKER_MOBILE만 — user 래퍼 경로 검증. payload의 taken_at류는 뷰가 읽지 않는다(uploaded_at은 content 소유).
@@ -92,6 +96,11 @@ INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, capture
  (99990003,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_r4","product_type":"clips","taken_at":1780275600,"like_count":10,"comment_count":1,"play_count":500,"caption":{"text":"cap r4"}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09'),
  (99990004,99990000,'HIKER_V2_CLIPS','{"response":{"status":"ok","items":[{"media":{"code":"dummy_r5","product_type":"clips","taken_at":1780275600,"like_count":20,"comment_count":2,"play_count":600,"caption":{"text":"cap r5"}}}]}}'::jsonb, timestamptz '2026-06-07 12:00:00+09');
 
+-- 릴스 액터(APIFY_ACTOR) 페이지 — 임시 전환 기간 수집분. crawler ReelsJob ACTOR 경로의
+-- {"items":[...]} 래퍼 형태. ra1은 likesCount -1(비공개→NULL)·paidPartnership 검증용.
+INSERT INTO raw_media_page(influencer_id, crawl_run_id, source, payload, captured_at) VALUES
+ (99990002,99990000,'APIFY_ACTOR','{"items":[{"shortCode":"dummy_ra1","productType":"clips","timestamp":"2026-06-05T03:00:00.000Z","likesCount":-1,"commentsCount":30,"videoPlayCount":7000,"caption":"액터 캡션 ra1","displayUrl":"https://thumb/ra1.jpg","videoDuration":22.5,"paidPartnership":true}]}'::jsonb, timestamptz '2026-06-06 12:00:00+09');
+
 -- 댓글 3건 (99990101). V8부터 writer/text/written_at은 실컬럼, like_count만 payload에서 추출.
 INSERT INTO raw_comment(content_id, crawl_run_id, source, writer, text, written_at, payload, captured_at) VALUES
  (99990101,99990000,'LEGACY_ENVELOPE','dummy_fan1','pretty','2026-06-04T09:10:00Z','{"likesCount":7}'::jsonb,  timestamptz '2026-06-04 09:10:00+09'),
@@ -100,6 +109,6 @@ INSERT INTO raw_comment(content_id, crawl_run_id, source, writer, text, written_
 
 -- 실데이터 격리: 더미 외 raw 원형 제거 (ROLLBACK으로 복구). 실 content·influencer 행은 남지만
 -- 원형이 없으면 스냅샷·프로필 조인(INNER)에서 자연 탈락 → 상위 뷰는 더미만 본다.
-DELETE FROM raw_comment    WHERE content_id NOT BETWEEN 99990101 AND 99990108;
+DELETE FROM raw_comment    WHERE content_id NOT BETWEEN 99990101 AND 99990120;
 DELETE FROM raw_media_page WHERE influencer_id NOT BETWEEN 99990001 AND 99990005;
 DELETE FROM raw_profile    WHERE influencer_id NOT BETWEEN 99990001 AND 99990005;

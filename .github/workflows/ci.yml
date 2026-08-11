@@ -14,8 +14,14 @@
 # — 승격 PR·staging push에서 배포 전에 한 번 더 돈다. 그런데 push 런을 통째로 없앨 수는 없다:
 # `gradle/actions/setup-gradle`은 **기본 브랜치(develop) push에서만 캐시를 쓰고** PR·merge_group은
 # 읽기만 한다(머지 큐 임시 브랜치에서 쓴 캐시는 그 ref 스코프라 재사용 불가). 시딩이 끊기면
-# 모든 PR CI가 캐시 미스로 느려진다(실측 1m16s → 3m). 그래서 develop push에서는 test·sql-harness
-# 대신 컴파일까지만 도는 `cache-warm` 잡 하나만 남긴다.
+# 모든 PR CI가 캐시 미스로 느려진다(실측 1m16s → 3m).
+#
+# cache-warm의 시딩 범위는 `test`까지다(08-05 — 그 전엔 `testClasses`까지만). 컴파일만 시딩하면
+# 테스트 실행 결과가 빌드 캐시에 한 번도 안 들어가서, PR CI가 안 바뀐 모듈까지 4개 전부
+# 테스트를 실행했다(08-05 실측: `./gradlew test` 195~210s, 태스크 시간 합 12m48s로 4 vCPU 포화).
+# test까지 시딩하면 PR·merge_group에서 develop과 같은 입력의 모듈 test가 FROM-CACHE로 스킵돼
+# 바뀐 모듈만 실제로 돈다. 이 런은 결과를 아무도 기다리지 않으므로(머지는 이미 끝났고 배포도
+# 안 붙음) 50s→약 4분이 되어도 체감 손해가 없다.
 #
 # merge_group(07-30, 머지 큐 도입 선행 작업): 룰셋 `protect-release-branches`가 이 워크플로의
 # 세 잡(test·migration-guard·sql-harness)을 develop·main에 required status check로 건다.
@@ -43,14 +49,15 @@ concurrency:
 
 jobs:
   # develop push 전용 — 검증이 아니라 공유 Gradle 캐시를 채우는 자리다(파일 상단 주석).
-  # 테스트를 돌리지 않는 이유: 이 커밋은 merge_group에서 세 잡을 이미 통과했다.
-  # `testClasses`까지만 도는 이유: PR CI가 실제로 아끼는 건 의존성 다운로드와 컴파일 산출물이고,
-  # 테스트 실행 결과는 어차피 코드가 다르면 재사용되지 않는다.
+  # `test`까지 도는 이유: 테스트 실행 결과도 빌드 캐시 대상이라, 여기서 시딩해 두면 PR CI가
+  # 안 바뀐 모듈의 test를 FROM-CACHE로 스킵한다(08-05 — 상단 주석의 실측 근거 참조).
+  # 이 잡의 테스트는 검증이 아니다(이 커밋은 merge_group에서 이미 통과) — 여기서 실패하면
+  # 곧 플레이키라는 뜻이고, 해당 모듈 캐시만 시딩이 빠질 뿐 PR CI 정확성에는 영향 없다.
   cache-warm:
     name: Gradle 캐시 시딩 (develop push)
     if: github.event_name == 'push' && github.ref_name == 'develop'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -63,8 +70,8 @@ jobs:
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v6
 
-      - name: 컴파일 (캐시 채우기)
-        run: ./gradlew testClasses
+      - name: 전체 테스트 (캐시 채우기)
+        run: ./gradlew test
 
   test:
     name: Gradle 전체 테스트

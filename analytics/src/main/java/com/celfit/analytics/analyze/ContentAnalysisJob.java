@@ -1,10 +1,15 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.BeautyTaxonomy;
+import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
+import com.celfit.analytics.llm.GeminiBatchApi;
+import com.celfit.analytics.llm.GeminiContentAnalyzer;
 import com.celfit.analytics.llm.Synthesis;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -62,11 +67,29 @@ public class ContentAnalysisJob {
 	private final ProgressReporter reporter;
 	private final ProgressReporter backfillReporter; // runLateBackfill() 진행률 — run()의 reporter와 별도 JobName
 	private final ObjectMapper json = new ObjectMapper();
+	// 배치 전송(2026-08-11, Vertex 배치 50% 할인) — batchApi가 null이면 배치 미지원 프로바이더라
+	// transport=batch여도 온라인으로 폴백한다(LlmConfig.geminiApi()의 무료 gemini 폴백과 동형 안전망).
+	private final GeminiBatchApi batchApi;
+	private final BeautyTaxonomyLoader taxonomyLoader;
+	private final ContentBatchCollectJob collectJob;
 
 	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
 			ContentInsightPort insight, AnalyticsSettings settings,
 			boolean thumbnailEnabled, Predicate<String> thumbnailAlive,
 			ProgressReporter reporter, ProgressReporter backfillReporter) {
+		this(rawJdbcTemplate, analysisDataSource, insight, settings, thumbnailEnabled, thumbnailAlive,
+				reporter, backfillReporter, null, null);
+	}
+
+	/**
+	 * @param batchApi 배치 전송 제출·상태 확인용 — null이면 배치 미지원 프로바이더(온라인 폴백).
+	 * @param taxonomyLoader 배치 요청의 시스템 프롬프트 조립용(뷰티 분류표) — batchApi가 null이 아닐 때만 쓰인다.
+	 */
+	public ContentAnalysisJob(JdbcTemplate rawJdbcTemplate, DataSource analysisDataSource,
+			ContentInsightPort insight, AnalyticsSettings settings,
+			boolean thumbnailEnabled, Predicate<String> thumbnailAlive,
+			ProgressReporter reporter, ProgressReporter backfillReporter,
+			GeminiBatchApi batchApi, BeautyTaxonomyLoader taxonomyLoader) {
 		this.raw = rawJdbcTemplate;
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.insight = insight;
@@ -75,6 +98,9 @@ public class ContentAnalysisJob {
 		this.thumbnailAlive = thumbnailAlive;
 		this.reporter = reporter;
 		this.backfillReporter = backfillReporter;
+		this.batchApi = batchApi;
+		this.taxonomyLoader = taxonomyLoader;
+		this.collectJob = new ContentBatchCollectJob(analysisDataSource, batchApi, taxonomyLoader, settings);
 	}
 
 	/** raw v_analysis_account_baseline·v_analysis_baseline 1회 로딩 결과 — run()·runLateBackfill() 공유. */
@@ -102,6 +128,33 @@ public class ContentAnalysisJob {
 
 	private JobResult runQuery(boolean timely, ProgressReporter progress) {
 		Baselines baselines = loadBaselines();
+		List<String> targets = resolveTargets(timely);
+
+		if (settings.batchTransportEnabled()) {
+			if (thumbnailEnabled) {
+				// 배치 JSONL은 캡션 전용(백필과 동일 — 익일 수거 시점엔 서명 URL이 대부분 만료돼
+				// 애초에 첨부하지 않는다). vlm-enabled=true(썸네일 첨부 게이트 on)인데 배치로
+				// 내려가면 조용히 이미지 없이 분석돼 온라인과 산출물이 갈린다 — 잡을 죽이지 않고
+				// 온라인으로 폴백해 멀티모달 분석을 보존한다(2026-08-11 리뷰 반영).
+				log.warn("analytics.analyze-transport=batch인데 vlm-enabled=true — 배치는 캡션 전용이라"
+						+ " 온라인 경로로 폴백(썸네일 첨부 보존)");
+			} else if (batchApi != null) {
+				return submitBatch(timely, targets, baselines);
+			} else {
+				// provider가 배치 미지원(무료 gemini 폴백 등)이면 잡을 죽이지 않고 온라인으로 내려간다
+				// (LlmConfig.geminiApi()의 vertex→gemini 폴백과 같은 안전망 원칙).
+				log.warn("analytics.analyze-transport=batch인데 GeminiApi가 배치 미지원 — 온라인 경로로 폴백");
+			}
+		}
+		return runOnline(timely, targets, baselines, progress);
+	}
+
+	/**
+	 * 후보 뷰 조회 + 3종 제외 게이트(이미 분석됨·댓글 미분류·미러 미도달) — 온라인·배치 제출 양쪽이
+	 * 공유한다(2026-08-11). 자격(캘린더일 timely·성숙·윈도우)은 뷰 소관, 제외는 여기 Java diff 소관
+	 * (클래스 상단 주석 참조).
+	 */
+	private List<String> resolveTargets(boolean timely) {
 		List<String> candidates = new ArrayList<>();
 		raw.query(CANDIDATES_SQL, rs -> {
 			candidates.add(rs.getString(1));
@@ -133,6 +186,85 @@ public class ContentAnalysisJob {
 		if (mirrorMissing > 0) {
 			log.info("미러 부재 후보 {}건 스킵 — 다음 미러 후 자연 재대상", mirrorMissing);
 		}
+		return targets;
+	}
+
+	/**
+	 * 배치 전송 제출 — JSONL 라인 조립은 GeminiBackfillRunner와 공유하는 {@link GeminiBatchLines}
+	 * 재사용. 제출 전 pending 잔여를 먼저 수거해 중복 제출을 완화한다(전날 미수거분 회수 — 이미
+	 * 분석됨 diff·ON CONFLICT DO NOTHING이 이중 안전장치라 설령 겹쳐도 무해).
+	 */
+	private JobResult submitBatch(boolean timely, List<String> targets, Baselines baselines) {
+		JobResult swept = collectJob.run();
+		if (swept.processed() > 0 || swept.failed() > 0) {
+			log.info("배치 제출 전 pending 수거 — {}건 저장, {}건 실패", swept.processed(), swept.failed());
+		}
+		if (targets.isEmpty()) {
+			log.info("배치 제출 대상 없음 — 제출 생략 (timely={})", timely);
+			return new JobResult(0, 0, false);
+		}
+		BeautyTaxonomy taxonomy = taxonomyLoader.get();
+		String system = GeminiContentAnalyzer.instructions(taxonomy);
+		String model = settings.activeLlmModel();
+		StringBuilder jsonl = new StringBuilder();
+		StringBuilder sidecar = new StringBuilder();
+		for (String shortCode : targets) {
+			Map<String, Object> content = analysis.queryForMap("""
+					SELECT account_handle, caption, content_type, views, likes, comments, ad_marked
+					FROM contents WHERE short_code = ?""", shortCode);
+			Baseline b = baselines.withBaseline().get(shortCode);
+			if (b == null) {
+				Baseline accountAvg = baselines.accountBaseline().get((String) content.get("account_handle"));
+				b = accountAvg != null ? accountAvg : EMPTY_BASELINE;
+			}
+			// 댓글 분류 분포 — 온라인 경로(analyzeOne)와 동일 쿼리. 후보 게이트(resolveTargets의
+			// commentBlocked 제외)가 "댓글 없음 OR 분류 완료"를 이미 보장하므로 여기 도달한 대상은
+			// 빈 분포가 나올 수 없는 구조다(2026-08-11 리뷰 반영 — 이전엔 배치 JSONL이 분포를
+			// 항상 비워 보내 프롬프트의 aiCommentInsight 근거가 온라인과 갈렸다).
+			Map<String, Long> categoryCounts = new LinkedHashMap<>();
+			analysis.query("""
+					SELECT ai_category, count(*) AS cnt FROM comment_classifications
+					WHERE short_code = ? GROUP BY ai_category""",
+					rs -> {
+						categoryCounts.put(rs.getString(1), rs.getLong(2));
+					}, shortCode);
+			// 배치 요청 행 — GeminiBatchLines.requestLine/sidecarLine 둘 다 이 한 맵에서 필요한 키를 뽑는다
+			// (백필 러너의 raw 뷰 조인 행과 같은 키 이름 계약). 캡션 단독(백필과 동일 — 썸네일 서명 URL은
+			// 익일 수거 시점엔 대부분 만료라 애초에 첨부하지 않는다).
+			Map<String, Object> row = new LinkedHashMap<>(content);
+			row.put("recent_reels_avg_views", b.recentReelsAvgViews());
+			row.put("rank_in_recent_reels", b.rankInRecentReels());
+			row.put("recent_reels_count", b.recentReelsCount());
+			row.put("recent_contents_count", b.recentContentsCount());
+			row.put("recent12_avg_engagement_rate", b.recent12AvgEngagementRate());
+			row.put("recent12_avg_like_count", b.recent12AvgLikeCount());
+			row.put("recent12_avg_comment_count", b.recent12AvgCommentCount());
+			row.put("category_top_percentile", b.categoryTopPercentile());
+			row.put("category_avg_views", b.categoryAvgViews());
+			row.put("category_sample_size", b.categorySampleSize());
+			row.put("timely", timely);
+			jsonl.append(json.writeValueAsString(
+							GeminiBatchLines.requestLine(json, shortCode, row, categoryCounts, system)))
+					.append('\n');
+			sidecar.append(json.writeValueAsString(GeminiBatchLines.sidecarLine(json, shortCode, row)))
+					.append('\n');
+		}
+		String fileName = batchApi.uploadFile(jsonl.toString().getBytes(StandardCharsets.UTF_8), "hypenow-analyze");
+		String batchName = batchApi.createBatch(model, fileName, "hypenow-analyze");
+		// 사이드카는 로컬 파일이 아니라 DB 컬럼에 보관한다 — analytics 컨테이너에는 쓰기 가능한
+		// 볼륨이 없어(deploy/compose.yaml), 제출~수거 사이에 배포·컨테이너 교체가 끼면 로컬 파일은
+		// 유실되고 pending 행이 영원히 pending으로 남는 좀비가 된다(리뷰 지적, 08-11). 백필 CLI
+		// (GeminiBackfillRunner)는 단일 실행 안에서 submit→collect가 끝나는 일회성 도구라 파일
+		// 방식을 그대로 유지한다.
+		analysis.update("""
+				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl)
+				VALUES (?, ?, ?, 'pending', ?)""", batchName, timely, targets.size(), sidecar.toString());
+		log.info("분석 배치 제출 완료 — batch={}, {}건, timely={}", batchName, targets.size(), timely);
+		return new JobResult(targets.size(), 0, false);
+	}
+
+	private JobResult runOnline(boolean timely, List<String> targets, Baselines baselines,
+			ProgressReporter progress) {
 		String model = settings.activeLlmModel();
 		AtomicInteger processedCount = new AtomicInteger();
 		AtomicInteger failedCount = new AtomicInteger();

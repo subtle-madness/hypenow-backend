@@ -57,8 +57,8 @@ class RegistrationApiTest {
 
 		/** 단건 응답에서 user만 빠진 변형 — 소유 계정을 알 수 없어 등록도 스냅샷 적재도 불가한 셰이프. */
 		private static final String POST_WITHOUT_OWNER = """
-				{"num_results":1,"items":[{"code":"DbV7LgZsKG8","product_type":"clips",
-				"taken_at":1785254651,"like_count":1,"comment_count":1,"media_repost_count":1}]}""";
+				{"media_or_ad":{"code":"DbV7LgZsKG8","product_type":"clips",
+				"taken_at":1785254651,"like_count":1,"comment_count":1,"media_repost_count":1},"status":"ok"}""";
 
 		private static String fixture(String name) {
 			try (var in = RegistrationApiTest.class.getResourceAsStream("/hiker/" + name)) {
@@ -87,6 +87,11 @@ class RegistrationApiTest {
 				return fixture("medias.json");
 			}
 			if (path.startsWith("/v2/user/clips")) {
+				if (mediasNotFound) {
+					// 게시물 0건 계정은 릴스도 0건이라 clips도 같은 404를 준다 — clips가 살아 있으면
+					// 그 릴스들이 그리드 숨김 릴스로 열거에 합류해 "0건"이라는 전제가 깨진다(08-07).
+					throw new SubjectNotFoundException("404 Entries not found");
+				}
 				return fixture("clips.json");
 			}
 			if (path.startsWith("/v2/media/comments")) {
@@ -106,7 +111,7 @@ class RegistrationApiTest {
 				}
 				return fixture("comments.json");
 			}
-			return postWithoutOwner ? POST_WITHOUT_OWNER : fixture("media-by-code.json");
+			return postWithoutOwner ? POST_WITHOUT_OWNER : fixture("media-info-by-code.json");
 		}
 	}
 
@@ -223,13 +228,15 @@ class RegistrationApiTest {
 				.andExpect(jsonPath("$.status").value("WATCHING"))
 				.andExpect(jsonPath("$.firstSnapshot.profile.followers").isNumber());
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
-		// 원형은 콜 단위로 남는다 — 프로필 1콜 + 열거 2콜(clips 조회수 보강 + medias).
+		// 원형은 콜 단위로 남는다 — 프로필 1콜 + 열거 2콜(clips 조회수 보강 + medias)
+		// + FB 몫 재시도 1콜(등록 = 최초 수집인데 clips 픽스처가 fb 키 없는 IG 전용 세션 셰이프라
+		// 신규 릴스의 fb 미관측 → clips 1회 재조회, findings §2 결론 4).
 		// 파싱 결과(PostInfo.rawJson)를 저장하던 시절엔 clips 응답이 통째로 감사에서 빠졌다.
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM raw.fetch_payload WHERE kind='PROFILE' AND subject='someuser'""",
 				Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject("""
-				SELECT count(*) FROM raw.fetch_payload WHERE kind='POSTS'""", Long.class)).isEqualTo(2);
+				SELECT count(*) FROM raw.fetch_payload WHERE kind='POSTS'""", Long.class)).isEqualTo(3);
 		// 키워드 규칙은 was가 조회 표면에서 그대로 읽는 컬럼이다 — 요청 그대로 jsonb에 실려야 한다
 		assertThat(db.queryForObject("""
 				SELECT keyword_rule ->> 'any' FROM target WHERE registration_key='rk-1'""", String.class))

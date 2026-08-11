@@ -122,6 +122,18 @@ public class CampaignRepository {
 	}
 
 	/**
+	 * 어드민 전체 캠페인 목록(GET /v1/admin/campaigns, 프론트 변경요청서 4-2-6절, 08-02) — 유저
+	 * 스코프 없이 전체를 created_at 내림차순으로 반환한다(파라미터 없음, 페이지네이션 없음).
+	 */
+	public List<CampaignRow> findAllOrderByCreatedAtDesc() {
+		return jdbcClient.sql("""
+				SELECT %s FROM app.monitoring_campaigns ORDER BY created_at DESC
+				""".formatted(RETURNING_COLUMNS))
+				.query(CampaignRow.class)
+				.list();
+	}
+
+	/**
 	 * 어드민 조회 전용(설계 2026-08-01 §4) — 여러 유저에 걸친 캠페인 id 묶음의 이름 조회
 	 * (GET /v1/admin/monitoring/registrations의 campaignName Java 결합용). 유저 스코프 없음.
 	 */

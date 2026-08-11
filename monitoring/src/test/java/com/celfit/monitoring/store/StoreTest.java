@@ -113,20 +113,182 @@ class StoreTest {
 
 	@Test
 	void 스냅샷은_일_1회_upsert() {
-		var post = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, "{}", true);
+		var post = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 10L, 2L, 100L, null, null, null, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post);
-		var post2 = new PostInfo("SC1", "acct_a", null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, "{}", true);
+		var post2 = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L, 12L, 3L, 110L, null, null, null, null, null, null, null, "{}", true, false, false);
 		snapshots.upsertPost(LocalDate.of(2026, 7, 28), post2);
 		assertThat(db.queryForObject(
 				"SELECT likes FROM post_snapshot WHERE short_code='SC1'", Long.class)).isEqualTo(12);
 	}
 
+	/** 숨김 관측은 likes=null + likes_hidden=true로 저장 — 해제 관측이 오면 false로 덮인다. */
+	@Test
+	void 좋아요_숨김_플래그는_저장되고_해제되면_덮인다() {
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				null, 2L, 100L, null, null, null, null, null, null, null, "{}", true, true, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
+		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("likes", null).containsEntry("likes_hidden", true);
+
+		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				90L, 2L, 100L, null, null, null, null, null, null, null, "{}", true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
+		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("likes", 90L).containsEntry("likes_hidden", false);
+	}
+
+	/** 공유 숨김 관측(08-05)은 shares_hidden=true로 저장 — 해제 관측이 오면 false로 덮인다. */
+	@Test
+	void 공유_숨김_플래그는_저장되고_해제되면_덮인다() {
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, null, null, null, null, null, "{}", true, false, true);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", null).containsEntry("shares_hidden", true);
+
+		var visible = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, 7L, null, null, null, null, "{}", true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), visible);
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", 7L).containsEntry("shares_hidden", false);
+	}
+
+	// ── 0 캐리 판정(08-05) — 구조적 키 부재 게시물의 매일 헛 재시도 차단 ────────
+	// 양수 관측 이력이 전무하고 전일 행이 0으로 끝났으면(0 간주 산물) 오늘은 재시도 없이 0을
+	// 잇는다. 양수 이력이 있거나 전일이 null(전부 꽝 이월)이면 대상이 아니다 — 근거 없는 캐리 금지.
+
+	private void seedSnapshotRow(String code, String day, Long shares, Long reposts) {
+		db.update("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type, saves, shares, reposts)
+				VALUES ('acct_a', ?, ?::date, 'REELS', 1, ?, ?)""", code, day, shares, reposts);
+	}
+
+	@Test
+	void 리포스트_0_캐리는_양수_이력_없이_전일_0으로_끝난_게시물만_잡는다() {
+		seedSnapshotRow("CARRY", "2026-07-27", 3L, 0L);    // 전일 0 간주 산물 → 대상
+		seedSnapshotRow("POSITIVE", "2026-07-27", 3L, 5L); // 양수 실측 이력 → 제외
+		seedSnapshotRow("MISSED", "2026-07-27", 3L, null); // 전부 꽝 이월(null) → 제외
+		var today = LocalDate.of(2026, 7, 28);
+
+		assertThat(snapshots.codesWithRepostsZeroCarry(
+				java.util.List.of("CARRY", "POSITIVE", "MISSED", "NOROW"), today))
+				.containsExactly("CARRY");
+	}
+
+	@Test
+	void 리포스트_0_캐리는_과거_양수_이력이_있으면_전일이_0이어도_제외한다() {
+		seedSnapshotRow("ONCE", "2026-07-26", 3L, 7L);     // 과거 실측 7 — 키가 오는 게시물
+		seedSnapshotRow("ONCE", "2026-07-27", 3L, 0L);
+		assertThat(snapshots.codesWithRepostsZeroCarry(
+				java.util.List.of("ONCE"), LocalDate.of(2026, 7, 28))).isEmpty();
+	}
+
+	@Test
+	void 공유_0_캐리도_같은_규칙으로_판정한다() {
+		seedSnapshotRow("SCARRY", "2026-07-27", 0L, 1L);
+		seedSnapshotRow("SPOS", "2026-07-27", 9L, 1L);
+		assertThat(snapshots.codesWithSharesZeroCarry(
+				java.util.List.of("SCARRY", "SPOS"), LocalDate.of(2026, 7, 28)))
+				.containsExactly("SCARRY");
+	}
+
+	// ── 조회수 세션 일관성(08-03, findings §2 결론 4) ─────────────────────────
+	// PostInfo.views는 IG 몫, fbPlays는 FB 교차게시 몫(null=미관측/0=관측된 0).
+	// 저장되는 views는 화면 합산값 = IG 몫 + fb — fb가 이번 콜에 안 실렸으면(IG 전용 세션)
+	// 직전 관측 fb_plays를 캐리포워드한다(FB 몫은 실측상 거의 정적 — 며칠 단위 고정).
+
+	private static PostInfo reels(Long igViews, Long fbPlays) {
+		return new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, igViews, fbPlays, null, null, null, null, null, null, "{}", true, false, false);
+	}
+
+	@Test
+	void 릴스_views는_IG몫에_fb몫을_합산한_화면값으로_저장된다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(100L, 40L));
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-01'"))
+				.containsEntry("views", 140L).containsEntry("fb_plays", 40L);
+	}
+
+	@Test
+	void fb_미관측_콜은_직전_fb몫을_캐리포워드한다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(100L, 40L));
+		snapshots.upsertPost(LocalDate.of(2026, 8, 2), reels(110L, null));   // IG 전용 세션에 걸린 날
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-02'"))
+				.containsEntry("views", 150L).containsEntry("fb_plays", 40L);
+		// 다시 합산 세션에 걸리면 신규 관측이 캐리포워드를 덮는다
+		snapshots.upsertPost(LocalDate.of(2026, 8, 3), reels(120L, 45L));
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-03'"))
+				.containsEntry("views", 165L).containsEntry("fb_plays", 45L);
+	}
+
+	@Test
+	void fb_0_관측은_캐리포워드가_아니라_0으로_덮는다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(100L, 40L));
+		snapshots.upsertPost(LocalDate.of(2026, 8, 2), reels(110L, 0L));   // 관측된 0(교차게시 해제 등)
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-02'"))
+				.containsEntry("views", 110L).containsEntry("fb_plays", 0L);
+	}
+
+	/**
+	 * 역전파(08-03) — fb를 "처음" 관측하는 날, 그 이전의 미관측 행들은 IG 전용이라 시계열에
+	 * 유령 점프(+fb)가 생긴다(성과 추이 차트가 이를 "▲증가"로 오표시). FB 몫은 실측상 정적이므로
+	 * 첫 관측값을 이전 미관측 행에 소급 적용해 시계열을 합산 기준으로 정렬한다.
+	 */
+	@Test
+	void fb_첫_관측은_이전_미관측_행에_소급_적용된다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(100L, null));   // IG 전용 세션
+		snapshots.upsertPost(LocalDate.of(2026, 8, 2), reels(110L, null));
+		snapshots.upsertPost(LocalDate.of(2026, 8, 3), reels(120L, 40L));    // 첫 fb 관측
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-01'"))
+				.containsEntry("views", 140L).containsEntry("fb_plays", 40L);
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-02'"))
+				.containsEntry("views", 150L).containsEntry("fb_plays", 40L);
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-03'"))
+				.containsEntry("views", 160L).containsEntry("fb_plays", 40L);
+	}
+
+	/** 캐리포워드로 fb가 이미 실린 행은 역전파 대상이 아니다 — 이중 가산 금지. */
+	@Test
+	void 역전파는_fb가_이미_있는_행을_건드리지_않는다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(100L, 40L));    // 관측
+		snapshots.upsertPost(LocalDate.of(2026, 8, 2), reels(110L, null));   // 캐리포워드 40
+		snapshots.upsertPost(LocalDate.of(2026, 8, 3), reels(120L, 45L));    // 새 관측 45
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-01'"))
+				.containsEntry("views", 140L).containsEntry("fb_plays", 40L);   // 45로 덮이지 않는다
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-02'"))
+				.containsEntry("views", 150L).containsEntry("fb_plays", 40L);
+	}
+
+	/** views가 null인 행(피드·보강 실패)은 역전파로도 만들어내지 않는다. */
+	@Test
+	void 역전파는_views_null_행을_건드리지_않는다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(null, null));
+		snapshots.upsertPost(LocalDate.of(2026, 8, 2), reels(120L, 40L));
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-01'"))
+				.containsEntry("views", null).containsEntry("fb_plays", null);
+	}
+
+	@Test
+	void fb를_한번도_관측못하면_views는_IG몫_그대로다() {
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(100L, null));
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-01'"))
+				.containsEntry("views", 100L).containsEntry("fb_plays", null);
+	}
+
+	@Test
+	void 조회수_null이면_fb가_있어도_views는_null이다() {
+		// 피드·클립 보강 실패 — views 부재는 fb와 무관하게 그대로 null(비공개 오탐 방지 계약 유지)
+		snapshots.upsertPost(LocalDate.of(2026, 8, 1), reels(null, 40L));
+		assertThat(db.queryForMap("SELECT views, fb_plays FROM post_snapshot WHERE captured_on='2026-08-01'"))
+				.containsEntry("views", null).containsEntry("fb_plays", 40L);
+	}
+
 	@Test
 	void 프로필_스냅샷도_일_1회_upsert() {
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", "{}"));
+				new ProfileInfo("acct_a", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null, "{}"));
 		snapshots.upsertProfile("acct_a", LocalDate.of(2026, 7, 28),
-				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "이름", "https://img", "{}"));
+				new ProfileInfo("acct_a", "1", 120L, 11L, 6L, "이름", "https://img", null, null, null, "{}"));
 		assertThat(db.queryForObject("SELECT count(*) FROM profile_snapshot", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject(
 				"SELECT followers FROM profile_snapshot WHERE username='acct_a'", Long.class)).isEqualTo(120);

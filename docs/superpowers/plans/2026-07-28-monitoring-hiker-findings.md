@@ -79,6 +79,90 @@ v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
    → **스윕에서 계정당 `②`+`②'` 2콜을 쏘고 `code` 기준으로 릴스 재생수를 머지**한다(권장·채택).
    CLAUDE.md의 "피드 게시물은 조회수(views)가 항상 NULL"과 정확히 일치.
    `view_count`는 v2에서 항상 `null`(릴스 포함)이므로 후보에서 제외한다.
+4. **(08-02 정정) `play_count`는 세션 의존이라 조회수 정본이 아니다 — `ig_play_count`를 우선한다.**
+   07-29 실측 당시엔 `play_count == ig_play_count`(동일값)였지만, 운영 원형 적재
+   (`raw.fetch_payload` 49건 단건 + 클립 열거) 재실측 결과 Hiker가 콜마다 다른 IG 세션을 태우며,
+   FB 교차게시 데이터가 보이는 세션에서만 `fb_play_count` 키가 실리고 그때
+   `play_count = ig_play_count + fb_play_count`(합산)로 커진다. 그 결과 `play_count` 우선 파싱은
+   같은 릴스 조회수가 **221 → 305 → 222로 역행**하는 "랜덤 조회수"를 만든다(단건 `DX0U76Xy1D2`,
+   클립 열거 `DXx7gtszvSV` 32,264→31,944 등 다수). `ig_play_count`는 전 콜에서 존재했고 단조
+   증가 — **조회수는 `ig_play_count` 우선, `play_count`는 폴백**(HikerClient 2곳: 단건 `toPost`·
+   클립 머지 `fetchClipPlays`). 세션 종류는 Hiker 쪽 풀이라 우리가 고정할 수 없다.
+   **(08-03 확장) 화면(모바일 앱)에 보이는 조회수는 합산값이다** — 저장되는 `post_snapshot.views`는
+   화면 기준을 따르기로 결정(08-03): `views = IG 몫 + fb_plays`. FB 몫이 안 실린 콜(IG 전용 세션)은
+   **직전 관측 `fb_plays`를 캐리포워드**한다(FB 몫은 실측상 며칠 단위 정적 — `DXg4DAUE0NU` 720 고정
+   등 — 이라 오차 미미). 합산 세션 비율은 콜 단위 실측 단건 18.5%·클립 33.3%뿐이라 "실릴 때까지
+   재시도"는 기대 비용 3~5배 — 대신 **등록(진짜 최초 수집) 경로에서만, fb 미관측 릴스에 한해
+   1회 재조회**(CollectService `*ForRegistration`, 열거는 clips 콜만·단건은 단건 콜). 스윕은 재시도
+   없음(08-03 축소) — 교차게시 안 한 릴스는 fb 키가 영영 안 잡힐 수 있어(_milking 8콜 연속 미관측)
+   스윕 재시도는 헛 콜만 매일 반복하고, 역전파가 있어 관측이 늦어도 소급 정정된다.
+   판별 마커: 합산 세션 응답에만 `fb_*` 키 3종
+   (`fb_play_count`·`fb_like_count`·`fb_comment_count`)이 실리며, 교차게시 없는 릴스도 합산 세션은
+   `fb_play_count: 0`을 준다(키 부재 = 세션이 FB를 못 봄, 0 = 관측된 0 — 이 구분이 캐리포워드·재시도
+   판정 기준).
+   **(08-03 보강 2건)** ① **FB 몫은 `play - ig` 유도를 fb 키보다 우선한다** — fb 키 없이 합산
+   `play_count`만 주는 세션(`DUrj0iGEn6G`: play 570,331 vs ig 512,077, fb 키 부재)과 fb 키가 0인데
+   play > ig인 모순 세션(`DPQoGI1APa_`: diff 47,443, fb 키 0)이 실존. fb 키가 정상일 때는
+   play - ig == fb(실측 검산: 305-222=83 등)라 결과 동일. ② **첫 관측 역전파 + 원형 기반 백필** —
+   fb를 처음 관측하는 날 이전 행들이 IG 전용이면 시계열에 +fb 유령 점프가 생겨 성과 추이가
+   "▲증가"로 오표시된다(실사례: `DX0U76Xy1D2` 221→305 ▲84). 쓰기 시 첫 관측을 이전 미관측 행에
+   소급(UPDATE)하고, fb_plays 도입 이전 적재분은 raw.fetch_payload에서 (code, KST 날짜)별 ig/fb를
+   재추출해 일회성 마이그레이션으로 재계산했다(`V20260803064353` — 운영 드라이런 검증: 221→304
+   정렬, 유도 fb 릴스 diff 0).
+
+5. **(08-04 정정) 저장·리포스트도 세션 복권이다 — §2 표의 ✅는 "당첨 세션에서 ✅"로 읽어야 한다.**
+   07-29 실측 당시엔 당첨 세션에 걸려 `save_count`·`media_repost_count`가 상시 제공으로 보였지만,
+   운영 원형(raw.fetch_payload) 전수 재실측 결과 fb_* 키와 동일한 세션 게이트가 걸려 있다:
+   릴스 기준 존재율은 clips 열거 ~45%(156/348)·medias 열거 ~30%(43/145)·단건 15~23%(14~22/96),
+   **한 콜 안에서는 전부 실리거나 전부 빠진다**(151콜 전수: 당첨 44·꽝 107·혼재 0). `save_count`와
+   `media_repost_count`는 같이 실리고 같이 빠진다(596아이템 중 566 일치). `reshare_count`(공유)만
+   릴스에서 사실상 상시다(열거 100%·단건 87.5%). **피드는 복권조차 아니다**: `save_count`·
+   `reshare_count`는 전 세션·전 엔드포인트 키 부재(원형 181아이템 + 실물 게시물 라이브 8콜 = 0건 —
+   IG 앱에는 보이므로 앱 신버전 세션에만 내려주는 feature gate로 판단), `media_repost_count`만
+   ~43%(75/174) 복권. 신형 `/v2/media/info/by/code`도 동일(세션 편차는 엔드포인트 무관 — #337 실측).
+   대응: 미관측 추적 릴스는 clips 열거를 당첨까지 재콜(상한 6회, `monitoring.metrics-retry-max`) +
+   POST 전용 계정은 단건 응답 user.pk로 clips를 신설 태움 + clips 관측의 saves/shares/reposts를
+   파싱에 머지(종전엔 버렸음). 재콜 간격 10s는 Hiker 응답 캐시(연속 콜 동일 응답, 수 초 TTL 추정)
+   회피용. 피드는 재시도 제외(08-04 사용자 결정 — DECISIONS 참조).
+
+6. **(08-05 정정) 단건 콜의 공유수 "사실상 상시"도 성립하지 않는다 — 3키 전부 세션 복권이고,
+   "전부/전무"도 항상은 아니다.** 08-04 스윕 개편 후 운영 원형 재실측(최근 14h, kind=POST 200 응답
+   49콜): `reshare_count` 59%(29/49)·`save_count` 47%(23/49)·`media_repost_count` 29%(14/49) —
+   결론 5의 "reshare 단건 87.5%"·"1번 결정(단건은 좋아요·댓글·조회·공유 4지표 확정, 25/25)"은
+   표본이 당첨 세션에 치우친 것으로 판명됐다(꽝 세션 응답엔 `share_count_disabled` 불리언만 있고
+   값 키 자체가 없다). 또 08-05 새벽 스윕 로그에서 저장만 실리고 리포스트가 안 실리는 부분 세션이
+   6콜 연속 반복돼(`DbXA8-hSt-J` 등) "전부/전무(혼재 0)"도 세션에 따라 깨진다 — repost 키가 가장
+   희귀해 리포스트가 최약 지표로 남는다. **영향**: 열거 창(최근 12건×페이지) 밖 추적 릴스는 clips
+   재콜이 영영 못 잡는데 단건 콜마저 복권이라, 그날 단건이 꽝이면 3지표가 통째로 빈다(08-05 운영
+   실측: 추적 릴스 6건 — 5건 창 밖, 1건 6회 전패). **대응(08-05)**: 창 밖 판정 게시물(과 user.pk
+   부재 계정)은 clips 대신 **단건 콜을 같은 상한 안에서 당첨까지 재콜**하고 3지표를 non-null
+   머지한다(`CollectService.retrySinglesOnce`) — 08-04의 "단건 재시도 기각(존재율 15~23%)"은 창
+   안 게시물엔 여전히 유효(clips가 계정당 1콜로 우월)하나, 창 밖엔 단건이 유일 공급원이라 예외.
+   재시도 **진입·종료 조건도 3지표 공통으로 확장**(같은 날 반영) — 종전엔 저장·리포스트만 봐서
+   부분 세션이 공유만 빠뜨린 날 재시도가 발동하지 않았다(공유수 단독 누락).
+
+7. **(08-05 확정) `media_repost_count`는 값이 0이면 키 자체가 생략된다 — 부재≠복권, 부재=0.**
+   근거 셋: ① 운영 전 스냅샷에서 reposts=0 관측 **0건**(shares=0 82건·saves=0 61건과 대조,
+   reposts>0은 116건). ② 잔여 미충족 게시물들은 공유·저장 키를 매일 받으면서(6/6일·4/4일)
+   리포스트만 전 기간 + 당일 추가 6콜 = 10~12회 연속 부재 — 복권(평균 29%)이면 확률 ~0.
+   ③ 대조 실험: 같은 분(分)에 교차 호출 시 리포스트 111 게시물(`DaHSf2uB2Vj`)엔 키가 오고
+   0 추정 게시물(`DZuoEHLxlMp`)엔 절대 안 옴. **대응**: 재시도 소진 시점에 saves는 관측됐는데
+   (save·repost 키는 같이 실리는 짝 — 566/596) reposts만 없으면 0으로 기록
+   (`CollectService.assumeZeroRepostsIfOmitted`). 전부 꽝인 날은 근거가 없으므로 0을 쓰지 않는다.
+   **부수 재해석**: "부분 세션(저장만/리포스트만)"으로 보이던 응답 다수는 부분이 아니라
+   "repost=0이라 키가 생략된 정상 당첨 세션"이었다. 세션 고착 가설은 raw 해시 검증으로 기각
+   (재시도 6연속 콜 해시 전부 상이·키 실림 t/f 교대 — 10s 간격에도 세션은 회전한다).
+   **(08-05 오후 해소)** `reshare_count` 영구 부재 19건의 원인 규명: **게시자 숨김 11건 + 원인
+   미상 8건**. 숨김은 단건 응답 플래그로 관측된다 — `share_count_disabled`(공유 횟수 숨기기 토글,
+   1건) 또는 `like_and_view_counts_disabled`(좋아요 숨김이 공유 노출도 함께 끔 — IG 앱 문구
+   "좋아요 수 및 공유 횟수는 회원님만", 실측 lvcd=true 10건 전원 공유 영구 부재 vs 제공 31건
+   전원 false. `DbSkrodp-WA`가 산증인 — 추적 중 lvcd false→true 전환, 전환 전 1일만 공유 관측).
+   원인 미상 8건은 전부 초소형·노출 정지 릴스(조회 120~316, 좋아요 0~4). **대응**:
+   `PostInfo.sharesHidden`(scd ∨ lvcd) 신설 — 숨김이면 재시도 판정에서 공유 항 제외(헛 콜 방지)
+   ·소진 0 간주 제외(숨김은 비공개지 0이 아님), 숨김 아닌 공유 부재는 소진 시 0 표기(사용자
+   결정 — 리포스트와 동일 규칙, 단 공유는 reshare_count=0 관측이 존재하므로 "0=생략" 인코딩
+   근거는 없고 실용 판단). 잔여 미결: sharesHidden의 FE 표시(스냅샷 컬럼·계약 관통)는 미구현 —
+   숨김 게시물 공유는 현재 null 유지(FE '-').
 
 ---
 
@@ -126,7 +210,7 @@ v2 계열은 **IG 모바일 원본 필드를 거의 그대로** 통과시킨다.
 |---|---|---|---|
 | `contentType` | `media_type == 2 ? REELS : FEED` | `"clips".equals(product_type)` | 일반 비디오 피드 오분류 방지 |
 | `caption` | `caption_text` → `caption.text` | 동일(유지) | v2는 `caption.text`, 폴백 유지로 무해 |
-| `views` | `play_count`, `view_count` | **`play_count`, `ig_play_count`** | `view_count`는 v2에서 항상 null |
+| `views` | `play_count`, `view_count` | **`ig_play_count`, `play_count`** (08-02 순서 정정 — §2 결론 4) | `view_count`는 v2에서 항상 null. `play_count`는 세션 따라 FB 합산 여부가 바뀌어 역행함 |
 | `saves` | `save_count`, `saved_count` | **`save_count`** | `saved_count`는 존재하지 않음 |
 | `shares` | `share_count` | **`reshare_count`** | `share_count`는 존재하지 않음(`share_count_disabled` 불리언만 있음) |
 | `reposts` | `reshare_count`, `repost_count` | **`media_repost_count`** | `reshare_count`는 공유 지표로 이동, `repost_count`는 없음 |
@@ -242,3 +326,59 @@ Task 4를 픽스처 5종으로 TDD 구현한 결과 §2·§4·§5의 매핑이 *
 - ⚠️ **실제 `instagram.com/share/…` 토큰 실측은 잔여**(샘플 확보 불가 — 일반
   `/reel/` URL로만 셰이프 검증). 픽스처: `hiker/media-info-by-url.json`(미디어 버전
   배열 등 무거운 키 제거, 파서 필드 생존).
+
+## 11. 태그 열거 실측 추기 (2026-08-06) — 브랜드 태그 모니터링
+
+대상: `GET /v2/user/tag/medias?user_id=<pk>&page_id=<next_page_id>` (계정에 **태그된** 게시물
+열거). 브랜드 태그 모니터링 설계용 실측 — 총 12콜(rarebeauty 2p + anua_kr 1p + 실고객급
+5브랜드 각 1p + 프로필 4콜). 설계 본문: [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../specs/2026-08-06-brand-tag-monitoring-schedule-design.md).
+
+### 11-1. 응답 셰이프·페이지
+
+- 셰이프는 medias/clips와 동형: `{ response: { items: [...], num_results, more_available }, next_page_id }`.
+- **페이지당 21건** — 8콜 전부 정확히 21(계정·페이지 무관). v1 계열의 12건과 다르다.
+  IG 소관 값이므로 하드코딩 금지, next_page_id 추종으로 구현.
+- `/v1/user/tag/medias`는 스펙 문서 스스로 "Prefer /v2" — v1 축약 스키마 규칙(§1) 동일 적용.
+
+### 11-2. 지표 필드 — 프로필 열거와의 결정적 차이
+
+- **릴스(clips)의 `play_count`·`ig_play_count`가 열거에 상시 실린다** — 8콜·전 계정에서
+  클립 전건 확인. `/v2/user/medias`(프로필 그리드, §2 결론 3)와 달리 **태그 열거는 조회수
+  보강 콜(②' clips)이 필요 없다.**
+- 좋아요·댓글 상시. 저장·리포스트는 세션 복권 그대로(8콜 중 당첨 3콜 — rarebeauty p2·
+  hwahongm·lizda 페이지는 클립 save_count 실림, 나머지 꽝. §2-5 규칙과 일치).
+- 공유(`reshare_count`)는 릴스에서 아이템별 혼재(0 생략 vs 복권 미확정), **캐러셀(t=8)에도
+  꽤 실린다** — "피드류 공유 전 세션 부재"(§2-5)는 프로필 열거·단건 기준이며 태그 열거는
+  더 후한 셰이프. 피드 단일(t=1)·캐러셀의 play·save 부재는 기존 규칙 그대로.
+- 작성자 `user` 객체(29키): username·pk·full_name·profile_pic_url·is_private·is_verified·
+  account_type 등. **follower_count·media_count·biography 없음** — 게시자 팔로워 수가
+  필요하면 계정당 프로필 콜 별도.
+
+### 11-3. 정렬 — 태그된 시점 순 (taken_at 비단조)
+
+최신 페이지 중간에 1월·6월 게시물이 끼어든다(rarebeauty p1: 01-03·01-18 작성 게시물 혼입 —
+뒤늦게 태그를 단 경우). 감지 로직은 code 기준 dedupe + **페이지 전체가 기지일 때 중단**이어야
+하며, "본 적 있는 code 발견 즉시 중단"은 소급 태그를 놓친다. 날짜 컷(백필 90일)도 "페이지
+전체가 컷 이전일 때 중단"으로.
+
+### 11-4. 태그 유입 속도 실측 (1페이지 21건의 taken_at 범위로 추정)
+
+| 계정 | 팔로워 | 유입/일 | 1페이지 커버 기간 |
+|---|---|---|---|
+| rarebeauty | 864만 | ~450 | ~1시간 |
+| lizda_official | 4.5만 | ~21 | ~1일 (시딩 캠페인 진행 중 — 소형 계정 릴스 UGC) |
+| anua_kr | 16만 | ~15 | ~1.4일 |
+| hwahongm_official | 4.5천 | ~2.3 | ~9일 |
+| neuvv_official | 3.2천 | ~1.0 | ~22일 |
+| plentyplant.official | 2.8천 | ~0.5 | ~41일 |
+| cclime_official | 2.3만 | ~0.4 | ~50일 |
+
+실고객급 브랜드는 캠페인 비활성 시 0.4~2.3건/일 — **1페이지가 열흘~두 달치**를 커버.
+댓글 보유율(댓글≥1 게시물 비율)은 24%(lizda, 시딩 UGC)~67%(hwahongm), 대략 50~60%.
+
+### 11-5. 단건 조회 무가치 판정
+
+태그 모니터링 6지표 전부에서 단건(`/v2/media/*`)이 열거보다 잘 주는 지표가 없다 — 항시 3종
+(좋아요·댓글·릴스 조회수)은 동일, 복권 3종(저장·리포스트)은 단건 당첨률이 오히려 낮다
+(§2-5: 단건 15~23% vs 열거 30~45%). 단건의 유일한 용도는 열거 창 밖 게시물 추적인데 브랜드
+태그 모니터링은 윈도우=열거 깊이(105개)로 정합시켜 창 밖 추적 자체가 없다 → **단건 배제**.

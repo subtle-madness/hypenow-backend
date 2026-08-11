@@ -8,9 +8,23 @@ springBoot {
 	buildInfo()
 }
 
+// build.time은 매 빌드 바뀌는 값이라 test 태스크의 입력 해시를 오염시켜 빌드 캐시가
+// 영구 미스였다(08-05 실측: clean 후 재실행에서 test 재실행). 캐시 지문 계산에서만 무시 —
+// 런타임에 읽는 값(위 캐시 prefix 용도)은 그대로 구워진다.
+normalization {
+	runtimeClasspath {
+		properties('META-INF/build-info.properties') {
+			ignoreProperty 'build.time'
+		}
+	}
+}
+
 dependencies {
 	implementation project(':contract-analysis')
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	// API 성능 측정(스펙 2026-08-10) — /actuator/prometheus로 uri별 레이턴시 히스토그램 노출
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.springframework.boot:spring-boot-starter-security'

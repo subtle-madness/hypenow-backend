@@ -1,6 +1,6 @@
 -- base 뷰: raw 테이블·payload를 직접 만지는 유일한 SQL (ARCHITECTURE.md §4-4).
 -- 신 크롤러(V15)는 상세 수집 없이 열거만 한다 — 캡션·지표는 raw_media_page(HIKER_V2_CLIPS
--- 릴스 페이지)·raw_profile(SELF_GQL 내장 타임라인) payload 안. 추출 경로는 crawler
+-- 릴스 페이지, 임시 전환 기간은 APIFY_ACTOR)·raw_profile(SELF_GQL 내장 타임라인) payload 안. 추출 경로는 crawler
 -- MediaItemExtractor·ProfileExtractor와 정합 (스펙 2026-07-17 §4 — 계약은 crawler가 정의).
 -- raw_post_detail(LEGACY 전용)·HIKER_GQL_MEDIAS(유휴 경로)·reel_parse(로컬 실험)는 제외.
 CREATE SCHEMA IF NOT EXISTS analytics;
@@ -71,7 +71,7 @@ SELECT DISTINCT ON (influencer_id)
 FROM raw_profile
 ORDER BY influencer_id, captured_at DESC, id DESC;
 
--- 릴스 페이지 아이템 평탄화 (HIKER_V2_CLIPS). item_ordinal = 페이지 내 위치(원형 불변 → 안정)
+-- 릴스 페이지 아이템 평탄화 (HIKER_V2_CLIPS + APIFY_ACTOR). item_ordinal = 페이지 내 위치(원형 불변 → 안정)
 -- — 합성 스냅샷 id 재료. 실DB 전수에서 flat 접두사(1l/1f) 0건 확인 — 평문 키만 파싱.
 -- 좋아요 비공개는 -1 센티널로 온다 → NULL(미상)로 정규화 — hype·평균 오염을 base에서 차단.
 CREATE OR REPLACE VIEW analytics.v_base_reel_item AS
@@ -94,7 +94,30 @@ FROM (SELECT * FROM raw_media_page
         AND jsonb_typeof(payload#>'{response,items}') = 'array') p
 CROSS JOIN LATERAL jsonb_array_elements(p.payload#>'{response,items}')
   WITH ORDINALITY AS it(item, ord)
-CROSS JOIN LATERAL (SELECT it.item->'media' AS media) m;
+CROSS JOIN LATERAL (SELECT it.item->'media' AS media) m
+UNION ALL
+-- 릴스 액터(APIFY_ACTOR) 아이템 — 임시 전환 기간(2026-08, 오결제 Apify 크레딧 소진) 수집분.
+-- payload는 crawler ReelsJob ACTOR 경로가 {"items":[...]} 래퍼로 저장, 필드명은 08-06 실측.
+-- likesCount -1(비공개)→NULL 정규화는 Hiker 분기와 동일 이유.
+SELECT
+  p.id            AS page_id,
+  it.ord          AS item_ordinal,
+  p.influencer_id,
+  p.captured_at,
+  it.item->>'shortCode'                                   AS short_code,
+  NULLIF((it.item->>'likesCount')::bigint, -1)            AS likes,
+  (it.item->>'commentsCount')::bigint                     AS comments_count,
+  COALESCE((it.item->>'videoPlayCount')::bigint,
+           (it.item->>'videoViewCount')::bigint)          AS views,
+  it.item->>'caption'                                     AS caption,
+  it.item->>'displayUrl'                                  AS thumbnail_url,
+  (it.item->>'videoDuration')::numeric                    AS video_duration,
+  COALESCE((it.item->>'paidPartnership')::boolean, false) AS paid_partnership
+FROM (SELECT * FROM raw_media_page
+      WHERE source = 'APIFY_ACTOR'
+        AND jsonb_typeof(payload->'items') = 'array') p
+CROSS JOIN LATERAL jsonb_array_elements(p.payload->'items')
+  WITH ORDINALITY AS it(item, ord);
 
 -- SELF_GQL 내장 타임라인 노드 평탄화. 타임라인은 피드 전용이 아니다 — product_type='clips'
 -- 노드(릴스)가 다수라 릴스 스냅샷 폴백 소스로도 쓴다. video_view_count 0은 미공개 표기 → NULL.

@@ -76,7 +76,7 @@ public class MonitoringReadRepository {
 			return List.of();
 		}
 		return jdbc.sql("""
-				SELECT short_code, captured_on, content_type, likes, comments, views, saves, shares, reposts
+				SELECT short_code, captured_on, content_type, likes, likes_hidden, comments, views, saves, shares, shares_hidden, reposts
 				FROM post_snapshot
 				WHERE short_code IN (:shortCodes) AND captured_on <= :maxCapturedOn
 				ORDER BY short_code, captured_on
@@ -160,9 +160,9 @@ public class MonitoringReadRepository {
 			return List.of();
 		}
 		return jdbc.sql("""
-				SELECT short_code, captured_on, content_type, likes, comments, views, saves, shares, reposts
+				SELECT short_code, captured_on, content_type, likes, likes_hidden, comments, views, saves, shares, shares_hidden, reposts
 				FROM (
-				    SELECT short_code, captured_on, content_type, likes, comments, views, saves, shares, reposts,
+				    SELECT short_code, captured_on, content_type, likes, likes_hidden, comments, views, saves, shares, shares_hidden, reposts,
 				           row_number() OVER (PARTITION BY short_code ORDER BY captured_on DESC) AS rn
 				    FROM post_snapshot
 				    WHERE short_code IN (:shortCodes)
@@ -201,7 +201,7 @@ public class MonitoringReadRepository {
 	/** 추적 게시물 추이(계약 §3 예시의 tracked_short_code 서브쿼리 그대로). */
 	public List<PostSnapshotRow> postTimeseries(long targetId) {
 		return jdbc.sql("""
-				SELECT captured_on, content_type, likes, comments, views, saves, shares, reposts
+				SELECT captured_on, content_type, likes, likes_hidden, comments, views, saves, shares, shares_hidden, reposts
 				FROM post_snapshot
 				WHERE short_code = (SELECT tracked_short_code FROM target WHERE id = :targetId)
 				ORDER BY captured_on

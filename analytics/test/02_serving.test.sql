@@ -10,8 +10,8 @@ BEGIN
     'v_accounts에 모수 제외 대상 존재';
 
   -- v_contents: +3일 고정(성숙 최이른) + 최신 메타 + 피드 NULL
-  ASSERT (SELECT count(*) FROM analytics.v_contents WHERE account_handle LIKE 'dummy_%') = 5,
-    'v_contents dummy rows != 5';
+  ASSERT (SELECT count(*) FROM analytics.v_contents WHERE account_handle LIKE 'dummy_%') = 6,
+    'v_contents dummy rows != 6 (+ra1(액터))';
   ASSERT (SELECT views FROM analytics.v_contents WHERE short_code = 'dummy_r1') = 11000,
     'v_contents r1 views != 11000 (06-05 성숙 최이른 스냅샷 고정)';
   ASSERT (SELECT likes FROM analytics.v_contents WHERE short_code = 'dummy_r1') = 520,

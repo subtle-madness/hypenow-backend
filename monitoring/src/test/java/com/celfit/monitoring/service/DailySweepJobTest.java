@@ -78,6 +78,14 @@ class DailySweepJobTest {
 		int clipsCalls;
 		int postCalls;
 		int commentsCalls;
+		String lastClipsUserId;
+		private final java.util.ArrayDeque<String> scriptedClips = new java.util.ArrayDeque<>();
+
+		/** clips 응답을 콜 순서대로 스크립트한다 — 저장·리포스트 세션 복권(꽝→당첨) 재현용. */
+		FakeHiker clipsResponses(String... bodies) {
+			scriptedClips.addAll(List.of(bodies));
+			return this;
+		}
 
 		/** 정상 계정 등록 — userId는 계정마다 달라야 열거 응답이 계정별로 갈린다. */
 		FakeHiker account(String username, String userId, FakePost... posts) {
@@ -96,6 +104,42 @@ class DailySweepJobTest {
 			ownerByCode.put(code, owner);
 			return this;
 		}
+
+		/**
+		 * 열거(medias) 응답에만 싣는 추가 필드 — 세션이 저장·공유·리포스트 키를 실었다 뺐다 하는
+		 * 실제 응답 셰이프(findings §2 계열)를 응답 경로별로 다르게 재현한다. singleOnlyFields와 짝.
+		 */
+		FakeHiker enumOnlyFields(String code, String jsonFields) {
+			enumExtraByCode.put(code, jsonFields);
+			return this;
+		}
+
+		/** 단건(media/by/code) 응답에만 싣는 추가 필드 — enumOnlyFields의 반대쪽. */
+		FakeHiker singleOnlyFields(String code, String jsonFields) {
+			singleExtraByCode.put(code, jsonFields);
+			return this;
+		}
+
+		/**
+		 * 단건 응답 추가 필드를 콜 순서대로 스크립트한다 — 단건 콜 세션 복권(꽝→당첨) 재현용.
+		 * 빈 문자열은 꽝(추가 필드 없음), 소진되면 singleOnlyFields(고정분)로 돌아간다.
+		 */
+		FakeHiker singleFieldsResponses(String code, String... perCallFields) {
+			singleExtraQueueByCode.computeIfAbsent(code, k -> new java.util.ArrayDeque<>())
+					.addAll(List.of(perCallFields));
+			return this;
+		}
+
+		/** 단건 응답의 user.pk를 뺀다 — ownerUserId를 못 주는 구형 셰이프 재현용. */
+		FakeHiker withoutOwnerPk(String code) {
+			pkLessCodes.add(code);
+			return this;
+		}
+
+		private final Map<String, String> enumExtraByCode = new HashMap<>();
+		private final Map<String, String> singleExtraByCode = new HashMap<>();
+		private final Map<String, java.util.ArrayDeque<String>> singleExtraQueueByCode = new HashMap<>();
+		private final Set<String> pkLessCodes = new HashSet<>();
 
 		/** 계정 삭제·개명 — 프로필 조회가 404. */
 		FakeHiker missingAccount(String username) {
@@ -179,6 +223,11 @@ class DailySweepJobTest {
 			}
 			if (path.startsWith("/v2/user/clips")) {
 				clipsCalls++;
+				lastClipsUserId = param(path, "user_id");
+				// 저장·리포스트 재시도 시나리오용 스크립트 — 비어 있으면 기본(빈 목록)으로 돌아간다.
+				if (!scriptedClips.isEmpty()) {
+					return scriptedClips.poll();
+				}
 				return "{\"response\":{\"items\":[],\"paging_info\":{\"more_available\":false}}}";
 			}
 			if (path.startsWith("/v2/user/medias")) {
@@ -206,29 +255,39 @@ class DailySweepJobTest {
 					.formatted(userId, username, username, username);
 		}
 
-		private static String mediasJson(List<FakePost> posts) {
-			String items = posts.stream().map(FakeHiker::itemJson).collect(Collectors.joining(","));
+		private String mediasJson(List<FakePost> posts) {
+			String items = posts.stream()
+					.map(p -> itemJson(p, "unused", enumExtraByCode.get(p.code())))
+					.collect(Collectors.joining(","));
 			return "{\"response\":{\"items\":[" + items + "],\"more_available\":false}}";
 		}
 
-		private static String postJson(FakePost post, String owner) {
+		private String postJson(FakePost post, String owner) {
+			// 단건은 /v2/media/info/by/code의 media_or_ad 셰이프(#337) — 단건 전용 추가 필드(#330)는 유지.
+			var queue = singleExtraQueueByCode.get(post.code());
+			String extra = queue != null && !queue.isEmpty() ? queue.poll() : singleExtraByCode.get(post.code());
+			if (extra != null && extra.isBlank()) {
+				extra = null;   // 스크립트의 빈 문자열 = 꽝 세션(추가 필드 없음)
+			}
 			return """
-					{"num_results":1,"more_available":false,"items":[%s],"status":"ok"}"""
-					.formatted(itemJson(post, owner));
-		}
-
-		private static String itemJson(FakePost post) {
-			return itemJson(post, "unused");
+					{"media_or_ad":%s,"status":"ok"}"""
+					.formatted(itemJson(post, owner, extra));
 		}
 
 		/** 캡션에 따옴표·역슬래시를 쓰지 않는다는 전제 — 픽스처 문자열이라 이스케이프를 생략한다. */
-		private static String itemJson(FakePost post, String owner) {
+		private String itemJson(FakePost post, String owner, String extraFields) {
 			// taken_at이 null이면 키를 통째로 뺀다 — 실제 응답의 "게시 시각 미상" 셰이프와 같다.
 			String takenAt = post.takenAt() == null ? "" : "\"taken_at\":" + post.takenAt() + ",";
+			String extra = extraFields == null ? "" : extraFields + ",";
+			// user.pk는 소유 계정 IG pk(고정 424242) — 단건형 계정 clips 재시도의 user_id 공급원.
+			String user = pkLessCodes.contains(post.code())
+					? "{\"username\":\"%s\"}".formatted(owner)
+					: "{\"username\":\"%s\",\"pk\":424242}".formatted(owner);
 			return """
-					{"code":"%s","product_type":"clips",%s"caption":{"text":"%s"},
-					"like_count":10,"comment_count":2,"play_count":100,"user":{"username":"%s"}}"""
-					.formatted(post.code(), takenAt, post.caption(), owner);
+					{"code":"%s","product_type":"clips",%s%s"caption":{"text":"%s"},
+					"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
+					"fb_play_count":0,"user":%s}"""
+					.formatted(post.code(), takenAt, extra, post.caption(), user);
 		}
 
 		private static String param(String path, String name) {
@@ -289,7 +348,7 @@ class DailySweepJobTest {
 		snapshots = new SnapshotRepository(db);
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
@@ -409,8 +468,8 @@ class DailySweepJobTest {
 		assertThat(trackedOf(a)).isEqualTo("NEWER");
 		// 후보 적재는 중단됐다 — detected_candidate에 새 행이 생기면 승인 화면이 되살아난다.
 		assertThat(candidateCount()).isZero();
-		// 매칭 게시물은 방금 열거에서 스냅샷이 남았다 — 단건 보강 콜이 나가면 콜이 두 배가 된다.
-		assertThat(hiker.postCalls).isZero();
+		// 감지 당일도 추적 게시물 규칙과 동일 — 채택된 NEWER 1건만 단건 정본 수집(1번 결정, 08-04).
+		assertThat(hiker.postCalls).isEqualTo(1);
 	}
 
 	/**
@@ -482,8 +541,52 @@ class DailySweepJobTest {
 	}
 
 	// ④ 추적 게시물 보강
+
+	/**
+	 * 추적 게시물은 열거 안에 있어도 단건 1콜을 정본으로 다시 수집한다(1번 결정, 08-04) —
+	 * 열거 응답은 세션에 따라 공유·저장·리포스트 키를 실었다 뺐다 하지만(운영 채움율 11~58% 요동),
+	 * 단건 응답은 좋아요·댓글·조회·공유 4지표를 확정적으로 준다(08-04 실측 25/25).
+	 * 비용은 추적 게시물당 +1콜/일(현 운영 49건 기준 월 +$1.47).
+	 */
 	@Test
-	void 열거_밖으로_밀려난_추적_게시물만_단건_콜로_보강한다() {
+	void 열거_안의_추적_게시물도_단건_콜을_정본으로_지표를_보강한다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "협찬 게시물", AFTER))
+				.singleOnlyFields("AAA", "\"reshare_count\":5");
+		long fresh = tracking("someuser", "AAA", "rk-fresh");
+
+		job.run();
+
+		assertThat(hiker.postCalls).isEqualTo(1);
+		// 열거 스냅샷에는 없던 공유수가 단건 응답에서 채워져야 한다 — 같은 날 upsert 덮어쓰기.
+		assertThat(db.queryForObject(
+				"SELECT shares FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(5);
+		assertThat(statusOf(fresh)).isEqualTo(TargetStatus.TRACKING);
+	}
+
+	/**
+	 * 머지는 non-null 우선 — 단건 응답에 빠진 지표를 방금 열거 관측으로 보존한다. 세션 복불복은
+	 * 같은 시각에도 응답 경로별로 다르게 걸리므로(08-04 실측: 열거에만 저장수, 단건에만 공유수)
+	 * 두 응답이 상호보완돼야 하고, 단건이 열거 값을 null로 덮으면 방금 관측한 값을 유실한다.
+	 */
+	@Test
+	void 단건_응답에_빠진_지표는_같은_스윕의_열거_관측을_보존한다() {
+		hiker.account("someuser", "111", new FakePost("AAA", "협찬 게시물", AFTER))
+				.enumOnlyFields("AAA", "\"save_count\":7,\"media_repost_count\":2")
+				.singleOnlyFields("AAA", "\"reshare_count\":5");
+		tracking("someuser", "AAA", "rk-fresh");
+
+		job.run();
+
+		assertThat(db.queryForObject(
+				"SELECT saves FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(7);
+		assertThat(db.queryForObject(
+				"SELECT reposts FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(2);
+		assertThat(db.queryForObject(
+				"SELECT shares FROM post_snapshot WHERE short_code='AAA'", Long.class)).isEqualTo(5);
+	}
+
+	@Test
+	void 열거_밖으로_밀려난_추적_게시물도_단건_콜로_수집한다() {
 		hiker.account("someuser", "111", new FakePost("AAA", "최근 게시물", AFTER))
 				.standalonePost("OLD9", "someuser", "예전 협찬 게시물");
 		long stale = tracking("someuser", "OLD9", "rk-stale");
@@ -491,8 +594,8 @@ class DailySweepJobTest {
 
 		job.run();
 
-		// 열거에 이미 들어온 추적 게시물까지 단건으로 또 부르면 콜이 두 배가 된다.
-		assertThat(hiker.postCalls).isEqualTo(1);
+		// 추적 게시물은 열거 포함 여부와 무관하게 각자 단건 1콜(1번 결정, 08-04) — OLD9 + AAA.
+		assertThat(hiker.postCalls).isEqualTo(2);
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM post_snapshot WHERE short_code='OLD9'""", Long.class)).isEqualTo(1);
 		assertThat(db.queryForObject("""
@@ -524,6 +627,202 @@ class DailySweepJobTest {
 		assertThat(db.queryForObject(
 				"SELECT followers FROM profile_snapshot WHERE username='postowner'", Long.class))
 				.isEqualTo(1000L);   // FakeHiker.profileJson의 follower_count 고정값
+	}
+
+	// ④-1 저장·리포스트 세션 복권 재시도 배선(08-04) — 재시도 자체의 규칙(상한·당첨 중단·피드 제외)은
+	// CollectServiceTest가 검증하고, 여기서는 스윕이 어느 경로로 무엇을 넘기는지(배선)만 본다.
+	// 기본 job은 재시도 0(비활성)으로 조립되므로 이 시나리오들만 전용 job을 만든다.
+
+	/** 꽝 세션 clips 응답 — 재생수만 있고 저장·공유·리포스트 키가 없다. */
+	private static String clipsMiss(String code) {
+		return """
+				{"response":{"items":[{"media":{"code":"%s","product_type":"clips",
+				"ig_play_count":100}}],"paging_info":{"more_available":false}},"next_page_id":null}"""
+				.formatted(code);
+	}
+
+	/** 당첨 세션 clips 응답 — 저장 5·공유 9·리포스트 7. */
+	private static String clipsHit(String code) {
+		return """
+				{"response":{"items":[{"media":{"code":"%s","product_type":"clips","ig_play_count":100,
+				"save_count":5,"reshare_count":9,"media_repost_count":7}}],
+				"paging_info":{"more_available":false}},"next_page_id":null}"""
+				.formatted(code);
+	}
+
+	/** 저장·리포스트 재시도(상한 6회)를 켠 job — 기본 setUp 조립(비활성 0)과 같은 리포지토리를 공유한다. */
+	private DailySweepJob retryEnabledJob() {
+		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots,
+				1, 1, 1, 6, Duration.ZERO);
+		return new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO,
+				imageArchive, thumbnailArchive);
+	}
+
+	private Long snapshotMetric(String column, String shortCode) {
+		return db.queryForObject(
+				"SELECT " + column + " FROM post_snapshot WHERE short_code=? ORDER BY captured_on DESC LIMIT 1",
+				Long.class, shortCode);
+	}
+
+	@Test
+	void 단건형_계정도_저장리포스트_미관측이면_단건_응답의_pk로_clips_열거를_새로_태운다() {
+		// POST 등록만 있는 계정은 열거가 없어 저장·리포스트가 단건 복권(15~23%)에만 걸려 있었다 —
+		// 단건 응답 user.pk(424242)를 user_id 삼아 clips를 꽝→당첨까지 재콜한다(사용자 결정 08-04).
+		hiker.standalonePost("P555", "postonly_user", "캡션")
+				.clipsResponses(clipsMiss("P555"), clipsHit("P555"));
+		targets.insert(TargetType.POST, 7L, "postonly_user", "P555", null,
+				TargetStatus.TRACKING, "P555", "rk-mr1", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(2);                  // 꽝 1 + 당첨 1, 당첨 즉시 중단
+		assertThat(hiker.lastClipsUserId).isEqualTo("424242");      // 단건 응답 user.pk에서 유도
+		assertThat(snapshotMetric("saves", "P555")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "P555")).isEqualTo(7L);
+	}
+
+	@Test
+	void 계정형_추적_릴스도_미관측이면_프로필_user_id로_clips_재시도한다() {
+		// 열거 계정은 기본 clips 보강 콜(1번째 스크립트)이 꽝이어도 재시도(2번째)가 당첨을 잡는다.
+		hiker.account("acct_mr", "777", new FakePost("R777", "캡션", AFTER))
+				.clipsResponses(clipsMiss("R777"), clipsHit("R777"));
+		targets.insert(TargetType.ACCOUNT, 7L, "acct_mr", null, null,
+				TargetStatus.TRACKING, "R777", "rk-mr2", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(2);                  // 열거 기본 보강 1 + 재시도 1
+		assertThat(hiker.lastClipsUserId).isEqualTo("777");         // 열거 계정은 프로필 user_id를 쓴다
+		assertThat(snapshotMetric("saves", "R777")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "R777")).isEqualTo(7L);
+	}
+
+	@Test
+	void 단건형_계정_추적_릴스가_열거_창_밖이면_단건_재시도로_3지표를_채운다() {
+		// clips 응답에 추적 게시물이 없다(최근 릴스 창 밖) — 08-04엔 즉시 포기했지만, 단건 콜도
+		// 3키 전부 세션 복권임이 확인돼(08-05 실측) 단건 재시도로 전환한다. 정본 콜(꽝) 뒤
+		// 재시도 1콜이 당첨을 잡아 저장·공유·리포스트가 그날 스냅샷에 남아야 한다.
+		hiker.standalonePost("P557", "outwin_user", "캡션")
+				.clipsResponses(clipsMiss("OTHER"))
+				.singleFieldsResponses("P557", "",
+						"\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7");
+		targets.insert(TargetType.POST, 7L, "outwin_user", "P557", null,
+				TargetStatus.TRACKING, "P557", "rk-mr4", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(1);              // 창 밖 판정 1콜 — clips 재콜은 없다
+		assertThat(hiker.postCalls).isEqualTo(2);               // 정본 1 + 단건 재시도 당첨 1
+		assertThat(snapshotMetric("saves", "P557")).isEqualTo(5L);
+		assertThat(snapshotMetric("shares", "P557")).isEqualTo(9L);
+		assertThat(snapshotMetric("reposts", "P557")).isEqualTo(7L);
+	}
+
+	@Test
+	void 단건_응답에_user_pk가_없어도_단건_재시도는_돈다() {
+		// 구형 셰이프(ownerUserId 부재)는 clips를 태울 user_id가 없어 예전엔 보강을 통째로 건너뛰었다 —
+		// 단건 재시도는 short_code만 있으면 되므로 이제 clips 없이 단건 복권만 돈다.
+		hiker.standalonePost("P558", "nopk_user", "캡션")
+				.withoutOwnerPk("P558")
+				.singleFieldsResponses("P558", "",
+						"\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7");
+		targets.insert(TargetType.POST, 7L, "nopk_user", "P558", null,
+				TargetStatus.TRACKING, "P558", "rk-mr5", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();                  // user_id가 없으니 clips는 애초에 못 탄다
+		assertThat(hiker.postCalls).isEqualTo(2);               // 정본 1 + 단건 재시도 당첨 1
+		assertThat(snapshotMetric("saves", "P558")).isEqualTo(5L);
+		assertThat(snapshotMetric("reposts", "P558")).isEqualTo(7L);
+	}
+
+	@Test
+	void 재시도_소진_시_리포스트_키_부재는_0으로_스냅샷에_남는다() {
+		// 리포스트가 0인 게시물은 키 자체가 생략된다(08-05 대조 실험) — 저장·공유만 실리는 세션을
+		// 상한까지 만난 뒤에도 리포스트 키가 없으면 0으로 기록해야 스냅샷 공백이 남지 않는다.
+		String saveOnly = """
+				{"response":{"items":[{"media":{"code":"P560","product_type":"clips",
+				"ig_play_count":100,"save_count":5,"reshare_count":9}}],
+				"paging_info":{"more_available":false}},"next_page_id":null}""";
+		hiker.standalonePost("P560", "zerorepost_user", "캡션")
+				.clipsResponses(saveOnly, saveOnly, saveOnly, saveOnly, saveOnly, saveOnly);
+		targets.insert(TargetType.POST, 7L, "zerorepost_user", "P560", null,
+				TargetStatus.TRACKING, "P560", "rk-mr7", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(snapshotMetric("saves", "P560")).isEqualTo(5L);
+		assertThat(snapshotMetric("shares", "P560")).isEqualTo(9L);
+		assertThat(snapshotMetric("reposts", "P560")).isEqualTo(0L);
+	}
+
+	@Test
+	void 전일_0_간주_이력_게시물은_재시도_없이_0을_잇는다() {
+		// 리포스트 0 게시물은 키가 영영 안 온다 — 어제 0 간주로 끝났고 양수 이력이 없으면
+		// 오늘은 상한까지 헛 재시도를 돌지 않고 캐리 판정이 즉시 0을 기록해야 한다(08-05).
+		db.update("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type, saves, shares, reposts)
+				VALUES ('carry_user', 'P562', CURRENT_DATE - 1, 'REELS', 4, 9, 0)""");
+		hiker.standalonePost("P562", "carry_user", "캡션")
+				.singleOnlyFields("P562", "\"save_count\":4,\"reshare_count\":9");   // 오늘도 리포스트 키 부재
+		targets.insert(TargetType.POST, 7L, "carry_user", "P562", null,
+				TargetStatus.TRACKING, "P562", "rk-mr9", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();                  // 재시도 자체가 안 돈다
+		assertThat(snapshotMetric("reposts", "P562")).isEqualTo(0L);
+		assertThat(snapshotMetric("saves", "P562")).isEqualTo(4L);
+	}
+
+	@Test
+	void 공유_숨김_게시물은_공유만_미관측이어도_재시도를_돌지_않는다() {
+		// 게시자가 공유 횟수를 숨긴 게시물(share_count_disabled)의 공유는 영영 안 온다 —
+		// 재시도 대상에 넣으면 매일 상한까지 헛 콜을 태운다(08-05 실측 숨김 11건).
+		hiker.standalonePost("P561", "sharehide_user", "캡션")
+				.singleOnlyFields("P561",
+						"\"save_count\":4,\"media_repost_count\":7,\"share_count_disabled\":true");
+		targets.insert(TargetType.POST, 7L, "sharehide_user", "P561", null,
+				TargetStatus.TRACKING, "P561", "rk-mr8", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();                  // 저장·리포스트 완비 + 공유는 숨김 → 재시도 없음
+		assertThat(snapshotMetric("saves", "P561")).isEqualTo(4L);
+		assertThat(snapshotMetric("shares", "P561")).isNull();  // 숨김은 0이 아니라 비공개(null 유지)
+	}
+
+	@Test
+	void 공유수만_미관측인_추적_릴스도_재시도_대상이다() {
+		// 그날 단건 정본이 부분 세션(저장·리포스트만, 공유 키 부재)이어도 재시도가 돌아야 한다 —
+		// 진입 조건이 저장·리포스트만 보면 공유수 단독 누락이 그대로 남는다(08-05 옵션 ③).
+		hiker.standalonePost("P559", "sharemiss_user", "캡션")
+				.singleOnlyFields("P559", "\"save_count\":4,\"media_repost_count\":7")
+				.clipsResponses(clipsHit("P559"));
+		targets.insert(TargetType.POST, 7L, "sharemiss_user", "P559", null,
+				TargetStatus.TRACKING, "P559", "rk-mr6", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isEqualTo(1);              // 당첨 즉시 중단
+		assertThat(snapshotMetric("shares", "P559")).isEqualTo(9L);
+		assertThat(snapshotMetric("saves", "P559")).isEqualTo(4L);   // 단건 관측 유지(non-null 우선)
+	}
+
+	@Test
+	void 피드_추적_게시물은_저장리포스트_재시도_대상이_아니다() {
+		// 피드는 저장·공유 키가 전 세션 부재(08-04 실측 0/181) — 재시도를 태워도 헛 콜이다(사용자 결정).
+		hiker.standalonePost("P666", "feedonly_user", "캡션")
+				.singleOnlyFields("P666", "\"product_type\":\"feed\"");
+		targets.insert(TargetType.POST, 7L, "feedonly_user", "P666", null,
+				TargetStatus.TRACKING, "P666", "rk-mr3", FUTURE);
+
+		retryEnabledJob().run();
+
+		assertThat(hiker.clipsCalls).isZero();
 	}
 
 	// ⑤ 실패 격리
@@ -621,7 +920,7 @@ class DailySweepJobTest {
 		hiker.account("flip_user", "555", new FakePost("REV1", "Rare Beginnings 복귀", AFTER));
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
 				thumbnailArchive);
 
@@ -957,7 +1256,7 @@ class DailySweepJobTest {
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
-		var crashCollect = new CollectService(client, writer, new CommentRepository(db), 1, 1, 1);
+		var crashCollect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3,
 				Duration.ZERO, imageArchive, thumbnailArchive);
 
@@ -1027,7 +1326,7 @@ class DailySweepJobTest {
 		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshots);
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
-		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), 1, 1, 1);
+		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
 				thumbnailArchive);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
@@ -1213,7 +1512,7 @@ class DailySweepJobTest {
 
 		assertThat(hiker.profileCalls).isEqualTo(1);
 		assertThat(hiker.mediasCalls).isEqualTo(1);
-		assertThat(hiker.postCalls).isZero();   // MX1은 이미 열거에 포함돼 단건 보강이 필요 없다
+		assertThat(hiker.postCalls).isEqualTo(1);   // MX1은 열거에 포함돼도 단건 정본 수집(1번 결정, 08-04)
 		assertThat(db.queryForObject(
 				"SELECT count(*) FROM profile_snapshot WHERE username='mixeduser'", Long.class)).isEqualTo(1);
 	}

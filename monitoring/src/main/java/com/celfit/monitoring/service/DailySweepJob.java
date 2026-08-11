@@ -279,17 +279,24 @@ public class DailySweepJob {
 	private Set<Long> sweepAccount(String username, List<TargetRow> accountTargets) {
 		// POST 등록분만 있는 계정은 열거할 이유가 없다 — 프로필·열거 2~3콜이 통째로 낭비된다.
 		boolean needsEnumeration = needsEnumeration(accountTargets);
-		List<PostInfo> posts = needsEnumeration
-				? collect.collectAccount(username).posts()
-				: List.of();
+		CollectService.AccountCollectResult enumResult = needsEnumeration
+				? collect.collectAccount(username)
+				: null;
+		List<PostInfo> posts = enumResult != null ? enumResult.posts() : List.of();
 		if (!needsEnumeration) {
 			collectProfileOnlyOnce(username);
 		}
 		Set<String> enumerated = posts.stream().map(PostInfo::shortCode).collect(Collectors.toSet());
 		Set<Long> transientFailureIds = new LinkedHashSet<>();
+		// 저장·리포스트 미관측 추적 릴스 — 캠페인:게시물이 겹칠 수 있어 short_code로 중복 제거한다.
+		Map<String, PostInfo> metricsPending = new LinkedHashMap<>();
 		for (TargetRow t : accountTargets) {
 			try {
-				sweepTarget(t, posts, enumerated);
+				PostInfo trackedPost = sweepTarget(t, posts, enumerated);
+				// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
+				if (trackedPost != null && CollectService.needsMetricsRetry(trackedPost)) {
+					metricsPending.putIfAbsent(trackedPost.shortCode(), trackedPost);
+				}
 			} catch (SubjectNotFoundException e) {
 				// 추적 게시물만 삭제된 경우 — 계정은 멀쩡하니 이 캠페인 하나만 hidden 전이한다.
 				log.info("추적 게시물 부재 — 캠페인 {} hidden 전이: {}", t.id(), t.trackedShortCode());
@@ -307,7 +314,33 @@ public class DailySweepJob {
 				transientFailureIds.add(t.id());
 			}
 		}
+		retryMetricsSafely(username, enumResult, metricsPending);
 		return transientFailureIds;
+	}
+
+	/**
+	 * 저장·리포스트 세션 복권 재시도(08-04 결정) — 미관측 추적 릴스가 남았으면 clips 열거를 당첨까지
+	 * 재콜한다(규칙·상한은 {@link CollectService#retryReelsMetrics}). user_id는 열거 계정이면 방금
+	 * 프로필에서, POST 등록만 있는 계정이면 단건 응답의 user.pk(ownerUserId)에서 얻는다 —
+	 * 후자가 없어도(구형 셰이프) 건너뛰지 않는다: retryReelsMetrics가 null user_id를 받으면
+	 * clips 없이 단건 콜 복권으로만 보강한다(08-05, 창 밖 전환과 같은 경로).
+	 *
+	 * <p><b>반드시 best-effort여야 한다</b>: 스냅샷은 이미 단건 정본으로 저장을 마쳤다. 여기서 예외가
+	 * 새면 성공한 수집이 "일시 실패"로 오분류돼 재시도 라운드가 계정 전체를 다시 돈다.
+	 */
+	private void retryMetricsSafely(String username, CollectService.AccountCollectResult enumResult,
+			Map<String, PostInfo> metricsPending) {
+		if (metricsPending.isEmpty()) {
+			return;
+		}
+		String userId = enumResult != null
+				? enumResult.profile().userId()
+				: metricsPending.values().iterator().next().ownerUserId();
+		try {
+			collect.retryReelsMetrics(userId, List.copyOf(metricsPending.values()));
+		} catch (RuntimeException e) {
+			log.warn("저장·리포스트 재시도 실패(격리, best-effort) — 계정 {}: {}", username, e.toString());
+		}
 	}
 
 	/**
@@ -364,25 +397,43 @@ public class DailySweepJob {
 		}
 	}
 
-	private void sweepTarget(TargetRow t, List<PostInfo> posts, Set<String> enumerated) {
+	/** @return 이번 스윕에서 단건 정본으로 수집한 추적 게시물(저장·리포스트 재시도 판정용) — 없으면 null. */
+	private PostInfo sweepTarget(TargetRow t, List<PostInfo> posts, Set<String> enumerated) {
 		if (t.status() == TargetStatus.WATCHING && t.keywordRule() != null) {
 			PostInfo detected = firstDetection(t, posts);
 			if (detected != null) {
-				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2). 지표는 방금 열거에서 이미 적재됐으므로
-				// 추가 단건 콜을 쏘지 않는다 — 감지 대상 자체가 열거 결과라 항상 enumerated 안에 있다.
+				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2).
 				targets.markTracking(t.id(), detected.shortCode(), t.keywordRule().matchedTerms(detected.caption()));
 				alarms.collectionStartedScheduled(t.id(), t.userId(), t.username(), detected.shortCode());
 				log.info("첫 감지 자동 전환 — target {} → TRACKING {}", t.id(), detected.shortCode());
+				// 감지 당일도 추적 게시물 규칙(아래)과 동일하게 단건 정본 수집 — 열거 스냅샷만 남기면
+				// 캠페인 첫날부터 공유수가 세션 복불복에 걸린다(1번 결정, 08-04).
+				PostInfo collected = collect.collectTrackedPost(detected.shortCode(), detected);
 				targets.touchFetched(t.id());
-				return;
+				return collected;
 			}
 		}
 		String tracked = t.status() == TargetStatus.TRACKING ? t.trackedShortCode() : null;
-		// 열거 안에 있으면 이미 방금 스냅샷을 남겼다 — 단건을 또 부르면 콜이 두 배가 된다.
-		if (tracked != null && !enumerated.contains(tracked)) {
-			collect.collectPost(tracked);
+		PostInfo collected = null;
+		if (tracked != null) {
+			// 추적 게시물은 열거 포함 여부와 무관하게 단건 1콜이 정본이다(1번 결정, 08-04) — 열거 응답은
+			// 세션에 따라 공유·저장·리포스트 키가 빠지지만 단건은 좋아요·댓글·조회·공유를 확정적으로
+			// 준다. 열거에 있었으면 그 관측을 폴백으로 머지해 방금 적재한 값의 유실을 막는다.
+			collected = collect.collectTrackedPost(tracked, enumeratedPost(posts, tracked, enumerated));
 		}
 		targets.touchFetched(t.id());
+		return collected;
+	}
+
+	/** 열거 결과에서 추적 게시물 1건 — 열거 밖(또는 열거 안 탄 계정)이면 null, 머지 폴백 없이 단건만 쓴다. */
+	private static PostInfo enumeratedPost(List<PostInfo> posts, String shortCode, Set<String> enumerated) {
+		if (!enumerated.contains(shortCode)) {
+			return null;
+		}
+		return posts.stream()
+				.filter(p -> shortCode.equals(p.shortCode()))
+				.findFirst()
+				.orElse(null);
 	}
 
 	/**

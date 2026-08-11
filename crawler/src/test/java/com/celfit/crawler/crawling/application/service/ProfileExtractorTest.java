@@ -73,6 +73,20 @@ class ProfileExtractorTest {
     }
 
     @Test
+    void apify_actor는_최상위_id에서_userId를_추출한다() {
+        // apify~instagram-profile-scraper 출력 — 유저 ID 필드가 "userId"가 아니라 "id"다.
+        // "userId"는 LEGACY_ENVELOPE 키라 액터 경로에서 항상 null → 방문 전량 실패(2026-08-06).
+        Map<String, Object> payload = Map.of(
+                "id", "232192182",
+                "username", "actoruser",
+                "followersCount", 1234L);
+
+        assertThat(ProfileExtractor.userId(payload, RawSource.APIFY_ACTOR)).isEqualTo("232192182");
+        assertThat(ProfileExtractor.followers(payload, RawSource.APIFY_ACTOR)).isEqualTo(1234L);
+        assertThat(ProfileExtractor.username(payload, RawSource.APIFY_ACTOR)).isEqualTo("actoruser");
+    }
+
+    @Test
     void missing_fields_return_null() {
         Map<String, Object> emptyPayload = Map.of();
 

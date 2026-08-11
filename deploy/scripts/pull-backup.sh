@@ -6,7 +6,7 @@ HOST="${1:?사용법: pull-backup.sh <ssh-host>}"
 DEST="$HOME/backups/hypenow"
 mkdir -p "$DEST"
 for prefix in analysis crawler; do
-  LATEST="$(ssh "$HOST" "ls -1t ~/backups/$prefix-[0-9]*.sql.gz 2>/dev/null | head -1")"
+  LATEST="$(ssh "$HOST" "ls -1t ~/backups/$prefix-[0-9]*.sql.* 2>/dev/null | head -1")"
   if [ -z "$LATEST" ]; then echo "경고: $prefix 덤프 없음 — 건너뜀" >&2; continue; fi
   scp "$HOST:$LATEST" "$DEST/"
   echo "가져옴: $DEST/$(basename "$LATEST")"

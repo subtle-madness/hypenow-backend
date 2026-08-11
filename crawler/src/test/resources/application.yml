@@ -55,6 +55,7 @@ crawler:
     batch-limit: 500
   reels:
     batch-limit: 10
+    actor-results-limit: 6
   schedule:
     enabled: false
     discover-cron: "0 0 6 * * *"

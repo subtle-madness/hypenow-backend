@@ -7,8 +7,11 @@ import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -38,11 +41,19 @@ public class RegistrationService {
 	private final CollectService collect;
 	private final TargetRepository targets;
 	private final AlarmRecorder alarms;
+	private final Executor metricsBackfill;
 
-	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms) {
+	/**
+	 * metricsBackfill은 등록 직후 저장·리포스트 세션 복권 재시도(08-04)를 동기 응답 밖에서 돌리는
+	 * executor다 — 등록은 was 10초 read timeout 예산 안의 동기 경로라 재시도 루프(최대 6회×10s)를
+	 * 품을 수 없고, 그렇다고 안 돌리면 등록 당일 스냅샷이 다음날 새벽 스윕까지 빈다.
+	 */
+	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms,
+			@Qualifier("metricsBackfillExecutor") Executor metricsBackfill) {
 		this.collect = collect;
 		this.targets = targets;
 		this.alarms = alarms;
+		this.metricsBackfill = metricsBackfill;
 	}
 
 	public Result register(RegisterCommand cmd) {
@@ -69,7 +80,7 @@ public class RegistrationService {
 	}
 
 	private Result registerAccount(RegisterCommand cmd) {
-		var collected = collect.collectAccount(cmd.username());
+		var collected = collect.collectAccountForRegistration(cmd.username());
 		long id = targets.insert(TargetType.ACCOUNT, cmd.userId(), cmd.username(), null, cmd.keywordRule(),
 				TargetStatus.WATCHING, null, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
@@ -86,7 +97,7 @@ public class RegistrationService {
 	 * 이미 했다(셰이프 이상 → FETCH_FAILED 502). 여기서 다시 보면 upsert가 먼저 터져서 죽은 가드가 된다.
 	 */
 	private Result registerPost(RegisterCommand cmd) {
-		PostInfo post = collect.collectPost(cmd.shortCode());
+		PostInfo post = collect.collectPostForRegistration(cmd.shortCode());
 		// short_code는 Hiker 응답을 정본으로 쓴다 — 스냅샷도 응답값으로 적재되므로, 요청값을 그대로
 		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
 		// null이 아니라 isBlank로 본다 — HikerClient.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
@@ -110,9 +121,34 @@ public class RegistrationService {
 		// 실패해도 등록 자체는 계속 201로 성공하고, 그 알람 이벤트는 재시도 없이 유실된다(로그로만 관측).
 		// replay는 target 중복 방지(멱등)만 보장할 뿐 이 알람 유실을 복구하지 않는다.
 		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
+		scheduleMetricsBackfill(post);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
 		return new Result(id, TargetStatus.TRACKING.name(), snapshot, false);
+	}
+
+	/**
+	 * 등록 직후 저장·리포스트 백필(08-04) — 단건 응답이 꽝 세션(저장·리포스트 키 부재)이면 응답을
+	 * 보낸 뒤 백그라운드에서 clips 재시도(규칙·상한은 {@link CollectService#retryReelsMetrics})를 돌려
+	 * 등록 당일 스냅샷 공백을 없앤다. 동기 응답의 firstSnapshot은 여전히 null일 수 있다 —
+	 * FE 조회 표면은 스냅샷 테이블 SELECT라 백필 완료(최대 ~1분) 후 새로고침이면 채워진다.
+	 * best-effort: 실패해도 등록은 이미 성공했고, 다음날 새벽 스윕이 백스톱이다.
+	 * ACCOUNT 등록은 대상이 아니다 — 추적 게시물이 아직 없고(WATCHING) 감지는 스윕 안에서 일어난다.
+	 * ownerUserId가 없어도(구형 셰이프) 건너뛰지 않는다 — retryReelsMetrics가 null user_id면
+	 * clips 없이 단건 콜 복권으로만 보강한다(08-05).
+	 */
+	private void scheduleMetricsBackfill(PostInfo post) {
+		// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
+		if (!CollectService.needsMetricsRetry(post)) {
+			return;
+		}
+		metricsBackfill.execute(() -> {
+			try {
+				collect.retryReelsMetrics(post.ownerUserId(), List.of(post));
+			} catch (RuntimeException e) {
+				log.warn("등록 직후 저장·리포스트 백필 실패(격리) — {}: {}", post.shortCode(), e.toString());
+			}
+		});
 	}
 
 	private static void validate(RegisterCommand cmd) {

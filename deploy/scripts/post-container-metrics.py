@@ -12,7 +12,14 @@ import oci
 
 # compose 서비스 고정 목록 — 실행 중인 것만 열거하면 "사라진 컨테이너"가 메트릭 스트림에서
 # 빠져 알람이 못 잡는다. 목록에 있는데 컨테이너를 못 찾으면 0(다운)으로 게시된다.
-SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", "monitoring"]
+# redis·grafana·ons-relay는 08-05 추가(메모리 격리 후속 — mem_limit OOM 재기동 실패가 조용히
+# 묻히던 사각 해소). 특히 ons-relay는 디스코드 알람 전체의 단일 경로라 전용 알람
+# hypenow-ons-relay-down이 치명 토픽(이메일 백업)으로 따로 나간다 — README §9.
+# prometheus·loki·alloy는 08-10 추가(성능 측정 스택 — README §15). 관측 스택은 oom_score_adj 500이라
+# 메모리 압박에서 가장 먼저 죽도록 설계된 쪽인데, 알람 사각이면 죽은 줄 모른 채 지표·로그만 조용히
+# 비어 "측정하고 있다"는 착각이 남는다 — 가장 잘 죽는 컨테이너부터 감시 대상이어야 한다.
+SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", "monitoring",
+            "redis", "grafana", "ons-relay", "prometheus", "loki", "alloy"]
 # 운영 compose 프로젝트명(디렉토리 ~/deploy 기반). test-* 서비스는 같은 프로젝트지만
 # 서비스 라벨이 달라(test-was 등) 아래 필터에 걸리지 않는다.
 PROJECT = "deploy"

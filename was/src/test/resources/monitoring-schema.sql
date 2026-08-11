@@ -70,10 +70,12 @@ CREATE TABLE IF NOT EXISTS post_snapshot (
     captured_on  date NOT NULL,
     content_type text,                            -- REELS / FEED
     likes        bigint,
+    likes_hidden boolean NOT NULL DEFAULT false,  -- 좋아요 수 숨김 관측(V20260803125200) — likes null 구분 신호
     comments     bigint,
     views        bigint,                          -- 피드는 항상 NULL (계약 §3 null 규칙)
     saves        bigint,
     shares       bigint,
+    shares_hidden boolean NOT NULL DEFAULT false, -- 공유 횟수 숨김 관측(V20260805054500) — shares null 구분 신호
     reposts      bigint,
     PRIMARY KEY (short_code, captured_on)
 );

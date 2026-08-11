@@ -22,7 +22,7 @@ UNIQUE 충돌과 `ON DELETE CASCADE` 무력화도 따라온다. 대신 **삭제 
   (`table_name`, `row_pk` jsonb, `user_id`, `payload` jsonb, `archived_at`, `archived_reason`).
   원본 테이블별 미러 대신 `payload jsonb` 하나로 받는 이유는 원본 스키마가 바뀌어도
   아카이브 DDL이 따라갈 필요가 없기 때문(expand-contract 하에서 스키마가 자주 움직인다).
-  마이그레이션은 `V20260802090000__delete_archive.sql`(순수 CREATE, 파괴적 변경 없음).
+  마이그레이션은 `V20260811082031__delete_archive.sql`(순수 CREATE, 파괴적 변경 없음).
 - **이관 경로 4종**(`ArchiveWriter` 컴포넌트 하나가 전담, `INSERT … SELECT`로 DB 안에서 완결):
   - **탈퇴** — `UserRepository.deleteAccount`. 테이블 9개(저장 2종 + CASCADE 자식 5종 +
     간접 CASCADE `monitoring_registration_entries` + `users`). 자식을 먼저 이관 → `users`

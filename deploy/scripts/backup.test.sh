@@ -4,6 +4,7 @@
 # 사용법: bash deploy/scripts/backup.test.sh deploy/scripts/backup.sh
 # ⚠ GNU coreutils 전용(`head -n -N`, `xargs -r`) — macOS에서는 돌지 않는다. 리눅스나 서버의
 #   격리 샌드박스에서 실행할 것: scp 두 파일을 /tmp에 올린 뒤 `bash /tmp/backup.test.sh /tmp/backup.sh`.
+#   zstd 필요(08-04 gzip→zstd 전환) — 시드는 일부러 구세대 .sql.gz로 깔아 전환기 혼재 롤링을 함께 검증한다.
 #
 # 검증 목표: 오프사이트 **뒷정리**(기간 롤링·개수 트리밍·monitoring 업로드)가 실패해도
 # **crawler 로컬 보관 정리에 반드시 도달**해야 한다. backup.sh의 그 구간은 `if` 본문이라
@@ -55,7 +56,7 @@ EOF
   local out rc
   out="$(HOME="$SB" FAILMODE="$failmode" PATH="$SB/bin:$PATH" bash "$SCRIPT" 2>&1)"; rc=$?
   local n_local n_pre
-  n_local="$(find "$SB/backups" -name 'crawler-[0-9]*.sql.gz' | wc -l | tr -d ' ')"
+  n_local="$(find "$SB/backups" -name 'crawler-[0-9]*.sql.*' | wc -l | tr -d ' ')"
   n_pre="$(find "$SB/backups" -name 'crawler-pre-*' | wc -l | tr -d ' ')"
 
   local verdict=OK
@@ -71,8 +72,9 @@ EOF
 echo "=== backup.sh 회귀 테스트 ==="
 # 전부 성공: 오프사이트 OK → 로컬 crawler 1개만 남김
 run_case "① 정상 — 로컬 1개로 정리"                  none       1 0
-# 업로드 실패(캡 초과): offsite_ok=false → 로컬 3개로 버팀
-run_case "② 업로드 실패(캡) — 로컬 3개로 버팀"        upload     3 0
+# 업로드 실패(캡 초과): offsite_ok=false → 로컬 $LOCAL_CRAWLER_KEEP(=2)개로 버팀
+# (08-04 로컬 보존 3→2 반영 — 선-회전이 구 1개 + 신규 1개로 유지한다)
+run_case "② 업로드 실패(캡) — 로컬 2개로 버팀"        upload     2 0
 # ↓ 회귀 방지 핵심 3건: 뒷정리 실패에도 로컬 보관 정리에 도달해야 한다
 run_case "③ monitoring만 실패 — 로컬 정리 도달"       monitoring 1 0
 run_case "④ 개수 트리밍 실패 — 로컬 정리 도달"        trim       1 0

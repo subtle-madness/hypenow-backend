@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 단독 (어드민 프론트 `apps/admin` 계약 — 2026-07-31 변경요청서)
 - **의존**: —
-- **상태**: ✅ 완결 (08-01 #290 머지 → #292 test 배포·dev 검증 → #294 백머지 → #295 운영 승격, 운영 CD success. 운영 role 부여는 불필요였음 — 팀 계정 2개가 기존 ADMIN. 잔여는 프론트 B1~B3 회신 반영뿐)
+- **상태**: ✅ 완결 (본편 08-01: #290→#292→#295 운영. 후속 08-02: #298 머지 → #302 test 배포·검증 → #306 운영 승격, 운영 CD success — Flyway V20260802074604 적용·campaigns 401 게이트·health 확인. 승격 중 발견한 #287 마이그레이션 out-of-order는 #300 재채번으로 해소. 잔여는 프론트 B1~B3 회신 반영뿐)
 
 ## 내용
 
@@ -17,3 +17,16 @@
 - **P2**: `GET /v1/admin/audit-logs` 조회. 8절 통합 검색은 **미착수**(요청서 스스로 보류).
 - 프론트 회신: A1 host-only 쿠키 / A2 숫자 id / A3 last_active_at 신설 / A4~A9 및 잠정값
   B1(감지 전 contentType="reels")·B2(url pending 핸들 "")·B3(혼합 등록 "외 N건") — 설계 §0.
+
+## 08-02 후속 (프론트 변경요청서 4-2-6절 외)
+
+- **`GET /v1/admin/campaigns` 신설** — 파라미터 없이 전체 캠페인 createdAt 내림차순.
+  행 필드 `id, name, userId, userName, createdAt, status, registrationCount, seedingTarget` + meta.total.
+  - `status`(pending|active|ended|no_date)는 서버 판정(`AdminCampaignStatus` 순수 함수, KST 오늘 기준,
+    경계일=active) — 유저 표면 계약(6.25)의 "상태는 클라 파생"과 별개로 어드민 표면만 서버가 유도.
+  - `seedingTarget` ← `monitoring_campaigns.seeding_count`(프론트 어휘가 target일 뿐 같은 값, nullable).
+  - `registrationCount`는 취소 포함 전량(`countItems`·users 목록 `monitoringCount`와 동일 계약),
+    IN절 배치 집계로 N+1 없음. userName은 registrations와 동형의 `findByIds` Java 결합.
+- **`GET /v1/admin/users` 목록에 `companyName` 추가** — 상세엔 이미 있던 필드의 목록 노출(N+1 방지
+  요청). `AdminUserSummary`가 직접 들고 상세(`AdminUserDetail`)는 Summary에서 물려받도록 바꿔
+  두 표면이 구조적으로 어긋날 수 없게 함. 미설정은 상세와 동일하게 ''(NOT NULL DEFAULT '').

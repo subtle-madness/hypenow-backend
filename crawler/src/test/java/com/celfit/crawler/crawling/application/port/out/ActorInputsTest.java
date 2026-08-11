@@ -39,6 +39,13 @@ class ActorInputsTest {
     }
 
     @Test
+    void reels_입력은_username_배열과_결과_한도를_담는다() {
+        Map<String, Object> input = ActorInputs.reels("alice", 6);
+        assertThat(input).containsEntry("username", List.of("alice"))
+                .containsEntry("resultsLimit", 6);
+    }
+
+    @Test
     void chunk는_n개_단위로_쪼갠다() {
         assertThat(ActorInputs.chunk(List.of(1, 2, 3, 4, 5), 2))
                 .containsExactly(List.of(1, 2), List.of(3, 4), List.of(5));

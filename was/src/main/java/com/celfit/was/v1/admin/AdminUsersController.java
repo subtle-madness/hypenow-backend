@@ -62,8 +62,7 @@ public class AdminUsersController {
 		String signupCode = signupCodeRepository.findCodeByUsedBy(userId).orElse(null);
 		List<AdminUserEvent> events = eventAssembler.assemble(row, signupCode);
 
-		AdminUserDetail detail = AdminUserDetail.from(summary, blankToEmpty(row.companyName()),
-				blankToEmpty(row.jobTitle()), signupCode, events);
+		AdminUserDetail detail = AdminUserDetail.from(summary, blankToEmpty(row.jobTitle()), signupCode, events);
 		return ApiResponse.ok(detail);
 	}
 

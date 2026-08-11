@@ -39,6 +39,7 @@ class AnalyticsJobServiceTest {
 	private AnalyticsJobService service() {
 		return new AnalyticsJobService(lock, new SyncTaskExecutor(), mirrorJob, registry,
 				provider(mock(CommentClassificationJob.class)), provider(analyzeJob),
+				provider(mock(com.celfit.analytics.analyze.ContentBatchCollectJob.class)),
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(archiveJob),
@@ -132,7 +133,8 @@ class AnalyticsJobServiceTest {
 		};
 		AnalyticsJobService service = new AnalyticsJobService(lock, new SyncTaskExecutor(),
 				mirrorJob, registry, provider(mock(CommentClassificationJob.class)),
-				lazyProvider, provider(mock(AccountAnalysisJob.class)),
+				lazyProvider, provider(mock(com.celfit.analytics.analyze.ContentBatchCollectJob.class)),
+				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)),
 				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)), progress, history);

@@ -4,12 +4,15 @@ import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.analyze.ProgressReporter;
 import com.celfit.analytics.config.AnalyticsSettings;
 import java.net.URI;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,8 +52,25 @@ public class ImageArchiveJob {
 	}
 
 	public JobResult run() {
-		List<Target> targets = new ArrayList<>(profileTargets());
-		targets.addAll(thumbnailTargets());
+		List<Target> all = new ArrayList<>(profileTargets());
+		all.addAll(thumbnailTargets());
+		// CDN 서명 만료(oe) 판정 — 만료 URL은 재시도해도 영원히 403이라 시도 자체를 걸러낸다
+		// (재크롤로 URL이 갱신되면 oe가 미래가 돼 자동 복귀). 남은 대상은 만료 임박 순.
+		long nowEpoch = Instant.now().getEpochSecond();
+		Map<Target, Long> expiry = new HashMap<>();
+		List<Target> targets = new ArrayList<>();
+		int expiredSkipped = 0;
+		for (Target t : all) {
+			Long oe = expiryEpoch(t.url());
+			if (oe != null && oe <= nowEpoch) {
+				expiredSkipped++;
+			} else {
+				targets.add(t);
+				expiry.put(t, oe);
+			}
+		}
+		targets.sort(Comparator.comparing(expiry::get,
+				Comparator.nullsLast(Comparator.naturalOrder())));
 		int limit = settings.archiveBatchLimit();
 		boolean carriedOver = targets.size() > limit;
 		List<Target> batch = targets.subList(0, Math.min(limit, targets.size()));
@@ -78,7 +98,7 @@ public class ImageArchiveJob {
 			}
 			reporter.report(done, failed, batch.size());
 		}
-		log.info("이미지 아카이브 완료 — {}건 저장, {}건 실패{}", done, failed,
+		log.info("이미지 아카이브 완료 — {}건 저장, {}건 실패, 만료 제외 {}건{}", done, failed, expiredSkipped,
 				carriedOver ? ", 잔여 " + (targets.size() - batch.size()) + "건 이월" : "");
 		return new JobResult(done, failed, carriedOver);
 	}
@@ -122,6 +142,21 @@ public class ImageArchiveJob {
 			return true;
 		}
 	}
+
+	/** 인스타 CDN 서명 만료 시각(oe 파라미터, hex unix 초) — 없거나 파싱 불가면 null(만료 미상 → 시도 유지). */
+	static Long expiryEpoch(String url) {
+		var m = OE_PARAM.matcher(url);
+		if (!m.find()) {
+			return null;
+		}
+		try {
+			return Long.parseLong(m.group(1), 16);
+		} catch (NumberFormatException e) {
+			return null;
+		}
+	}
+
+	private static final Pattern OE_PARAM = Pattern.compile("[?&]oe=([0-9A-Fa-f]{1,15})(?:&|$)");
 
 	/** URL 경로의 마지막 세그먼트(인스타 미디어 ID 파일명) — 호스트·서명 쿼리는 크롤마다 바뀌므로 제외.
 	 *  어드민 커버리지 집계(PipelineStatsService)도 같은 규칙으로 대조해야 해서 public. */
