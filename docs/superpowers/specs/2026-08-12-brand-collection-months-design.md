@@ -1,6 +1,6 @@
 # 브랜드 계정 수집 범위 선택 설계 — collectionMonths(1/3/6/12)
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현됨 (2026-08-12, 브랜치 feature/brand-account-collection-months-a97816 — §5는 권장안 채택: 수집 창은 자산 레벨 max)
 
 ## 배경
 

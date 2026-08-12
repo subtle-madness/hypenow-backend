@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: [2026-08-12-brand-collection-months-design.md](../specs/2026-08-12-brand-collection-months-design.md)
+> 상태: ✅ 구현/실행/반영됨 (2026-08-12, 태스크 1~7 완료) · 스펙: [2026-08-12-brand-collection-months-design.md](../../specs/2026-08-12-brand-collection-months-design.md)
 
 **Goal:** 브랜드 계정 등록에 수집 범위(1/3/6/12개월)를 도입하고, 더 큰 값 재등록을 기간 확장(증분 수집)으로 처리하며, 계정 응답에 `collectionMonths`를 싣는다.
 

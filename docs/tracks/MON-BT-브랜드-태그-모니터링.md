@@ -59,6 +59,20 @@ tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365
 covered는 `backfill_completed_at`(최초 완주) 기준으로 정정**했다 — `last_swept_at`은 더 이상
 365일 전량을 보장하지 않는다.
 
+수집 범위 선택 + 기간 확장(2026-08-12 — DECISIONS 08-12 행,
+[spec 2026-08-12](../superpowers/specs/2026-08-12-brand-collection-months-design.md)): 등록에
+수집 창 선택(1/3/6/12개월)을 도입했다. 창은 유저 단위가 아니라 **공유 크롤 자산 단위**
+(`brand_account.collection_months`, 신설 — 기존 행은 DEFAULT 12로 사실과 일치)이고 **절대
+줄이지 않는다**(유저 간 max). 전역 `registration-window-days:365`가 이 컬럼으로 대체돼
+백필·스윕 열거 컷이 브랜드마다 달라진다. **더 큰 값 재등록 = 기간 확장**: `collection_months`
+상향 + `last_swept_on` 클리어 + 백필 재제출이 전부라, 확장 백필이 죽어도 다음 스윕이 새 창
+전체를 다시 여는 기존 백스톱을 그대로 상속한다(신규 복구 경로 0). 확장 중에도 기존 데이터는
+계속 서빙하고, was 유도 규칙에 분기 하나를 더했다 — `last_swept_on null && backfill_completed_at
+있음 → collecting`(최초 등록 중과 구분). FE 폴링 앵커로 `collection_started_at`(확장 시작 시
+now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스윕 크론은 서버 override
+드리프트값 **KST 02:00**이 실제 가동값이라 이를 정본으로 수용했다(레포 `deploy/compose.yaml`
+정렬 + was `nextScheduledAt` 표기 기본값 3 → 2 — 종전 표기 03:00은 실제와 1시간 어긋나 있었다).
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
