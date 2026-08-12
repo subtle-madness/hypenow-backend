@@ -4,7 +4,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 해시태그로만 브랜드를 언급한 게시물을 레이더에 추가한다 — 스펙 [2026-08-11-brand-hashtag-detection-design.md](../specs/2026-08-11-brand-hashtag-detection-design.md)의 구현.
+**Goal:** 해시태그로만 브랜드를 언급한 게시물을 레이더에 추가한다 — 스펙 [2026-08-11-brand-hashtag-detection-design.md](../specs/archive/2026-08-11-brand-hashtag-detection-design.md)의 구현.
 
 **Architecture:** monitoring 모듈에 해시태그 스윕 파이프라인(신규 3테이블 + `BrandHashtagCollectService` + Gemini 판정)을 기존 브랜드 스윕·등록 백필에 편승시키고, was는 등록 시 brandName 전달 + 피드 병합(`source: "hashtag"`) + 제외 문자열 프록시만 얹는다. 기존 유저태그 파이프라인·캠페인 테이블은 0줄 변경.
 

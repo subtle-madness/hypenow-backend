@@ -10,7 +10,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, Flyway(was `app` 스키마), JUnit 5 + Mockito + `@WebMvcTest` 슬라이스.
 
-**설계 문서:** [specs/2026-08-12-competitor-account-type-design.md](../../specs/2026-08-12-competitor-account-type-design.md)
+**설계 문서:** [specs/2026-08-12-competitor-account-type-design.md](../../specs/archive/2026-08-12-competitor-account-type-design.md)
 **FE 회신:** 문서로 남기지 않고 채팅으로 전달했다(08-12). 전달 내용의 근거는 설계 문서 §요청서와 다른 점에 있다.
 
 ## Global Constraints

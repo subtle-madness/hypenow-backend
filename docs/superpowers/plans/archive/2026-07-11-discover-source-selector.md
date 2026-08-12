@@ -1,6 +1,6 @@
 # 발굴 소스 셀렉터 (ACTOR/HIKER) Implementation Plan
 
-> 상태: ✅ 구현됨 — `DiscoverSourceSelector` 현재도 사용 중(변경 없음). 스펙: [specs/2026-07-11-discover-source-selector-design.md](../../specs/2026-07-11-discover-source-selector-design.md)
+> 상태: ✅ 구현됨 — `DiscoverSourceSelector` 현재도 사용 중(변경 없음). 스펙: [specs/2026-07-11-discover-source-selector-design.md](../../specs/archive/2026-07-11-discover-source-selector-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

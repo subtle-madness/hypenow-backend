@@ -10,7 +10,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcTemplate, Flyway, Testcontainers(PostgreSQL), Jackson 3(`tools.jackson.*`). 테스트는 기존 모듈 관용구(Mockito 없이 fake HikerHttp 람다 + 스텁 서브클래스 + TestDb Testcontainers).
 
-**정본 스펙:** [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../specs/2026-08-06-brand-tag-monitoring-schedule-design.md) · 실측 [findings §11](2026-07-28-monitoring-hiker-findings.md)
+**정본 스펙:** [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../specs/archive/2026-08-06-brand-tag-monitoring-schedule-design.md) · 실측 [findings §11](2026-07-28-monitoring-hiker-findings.md)
 
 ## Global Constraints
 
