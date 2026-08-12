@@ -972,7 +972,7 @@ git commit -m "feat(crawler): 비용 추정에 릴스 ACTOR 소스 표기 (Hiker
 - [ ] **Step 1: DECISIONS.md 표 맨 위(헤더 다음)에 행 추가**
 
 ```markdown
-| 2026-08-06 | **릴스 수집 임시 액터 전환 토글(`reels.source`)** — Hiker 크레딧 절약 + 오결제 Apify 크레딧 소진 목적. ReelsJob 소스 분기: ACTOR면 계정당 `apify~instagram-reel-scraper` 런 1회(`reels.actor-results-limit` 기본 6 — 최신만 얕게), 결과를 `{"items":[...]}` 래퍼로 `raw_media_page(APIFY_ACTOR)` 저장, `v_base_reel_item` UNION 분기로 지표 연속(하이프 스코어 단절 없음). 액터는 username 기반이라 pk 미보유 계정도 수집, 0건 응답은 Hiker 404와 동일하게 수확 완료 마킹. 기본값 HIKER(코드 폴백) — 토글만으로 양방향 즉시 복귀, HIKER 경로·기존 테스트 무변경 | [spec 2026-08-06](docs/superpowers/specs/2026-08-06-reels-actor-collection-design.md) · `ReelsJob.visitActor`·`ReelsSourceSetting`·`v_base_reel_item` |
+| 2026-08-06 | **릴스 수집 임시 액터 전환 토글(`reels.source`)** — Hiker 크레딧 절약 + 오결제 Apify 크레딧 소진 목적. ReelsJob 소스 분기: ACTOR면 계정당 `apify~instagram-reel-scraper` 런 1회(`reels.actor-results-limit` 기본 6 — 최신만 얕게), 결과를 `{"items":[...]}` 래퍼로 `raw_media_page(APIFY_ACTOR)` 저장, `v_base_reel_item` UNION 분기로 지표 연속(하이프 스코어 단절 없음). 액터는 username 기반이라 pk 미보유 계정도 수집, 0건 응답은 Hiker 404와 동일하게 수확 완료 마킹. 기본값 HIKER(코드 폴백) — 토글만으로 양방향 즉시 복귀, HIKER 경로·기존 테스트 무변경 | [spec 2026-08-06](../../specs/2026-08-06-reels-actor-collection-design.md) · `ReelsJob.visitActor`·`ReelsSourceSetting`·`v_base_reel_item` |
 ```
 
 - [ ] **Step 2: crawler 모듈 전체 테스트**

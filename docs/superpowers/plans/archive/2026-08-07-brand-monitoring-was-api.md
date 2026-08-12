@@ -12,7 +12,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient(was 조회)/JdbcTemplate(monitoring), Flyway, Testcontainers(PostgreSQL), Jackson 3(`tools.jackson.*`), record DTO.
 
-**정본 스펙:** [specs/2026-08-07-brand-monitoring-was-api-design.md](../specs/archive/2026-08-07-brand-monitoring-was-api-design.md) (§ 번호 인용은 이 문서 기준. "FE §"는 FE 명세 기준)
+**정본 스펙:** [specs/2026-08-07-brand-monitoring-was-api-design.md](../../specs/archive/2026-08-07-brand-monitoring-was-api-design.md) (§ 번호 인용은 이 문서 기준. "FE §"는 FE 명세 기준)
 
 ## Global Constraints
 
