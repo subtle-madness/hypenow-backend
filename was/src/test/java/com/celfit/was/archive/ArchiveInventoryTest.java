@@ -35,6 +35,7 @@ class ArchiveInventoryTest extends IntegrationTest {
 			Map.entry("gate_events", "삭제 경로 없음. FK도 없어 탈퇴에도 보존된다(V5 주석의 의도)"),
 			Map.entry("app_setting", "was 런타임 설정값"),
 			Map.entry("email_verifications", "만료성 인증 코드"),
+			Map.entry("password_resets", "만료성 재설정 코드·토큰(SHA-256 해시, TTL 10분 이내) — email_verifications와 동일 패턴, 자산 가치 없음"),
 			Map.entry("signup_codes", "삭제 경로 없음(used_by가 SET NULL로 끊길 뿐)"),
 			Map.entry("signup_events", "삭제 경로 없음. 단 email + detail->>'userId'를 보존해 "
 					+ "탈퇴 유저의 가명화 아카이브를 재식별할 수 있다(설계 §4-4)"),
