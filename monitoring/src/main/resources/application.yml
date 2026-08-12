@@ -82,4 +82,9 @@ monitoring:
     # 프로필 이미지 아카이브(설계 스펙 §3-1) — 미설정이면 잡이 로그만 남기고 no-op(기동 실패 아님).
     # 운영은 analytics와 같은 버킷·쓰기 PAR을 재사용(compose.yaml MONITORING_IMAGE_PAR_URL 참고).
     par-url: ${MONITORING_IMAGE_PAR_URL:}
+    # 이미지 스토어 선택(2026-08-12 GCS 이전): par=OCI PAR(기본), gcs=GCS
+    store: ${IMAGE_STORE:par}
+    gcs-bucket: ${IMAGE_GCS_BUCKET:}
+    # 전용 SA 키 파일 경로 — 미설정이면 ADC 폴백. analytics와 같은 키를 재사용한다
+    gcs-key: ${IMAGE_GCS_KEY:}
     archive-batch-limit: 1000   # 1회 스윕당 다운로드+업로드 상한 — 초과분은 다음 스윕으로 이월
