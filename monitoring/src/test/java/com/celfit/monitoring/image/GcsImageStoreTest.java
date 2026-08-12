@@ -51,6 +51,11 @@ class GcsImageStoreTest {
 	}
 
 	@Test
+	void 빈_버킷이면_키가_불량이어도_ctor는_성공한다() {
+		new GcsImageStore(" ", "/없는/경로/key.json"); // 예외 없으면 통과
+	}
+
+	@Test
 	void 없는_키_파일_경로는_IllegalStateException() {
 		assertThatThrownBy(() -> new GcsImageStore("b", "/없는/경로/key.json"))
 				.isInstanceOf(IllegalStateException.class)

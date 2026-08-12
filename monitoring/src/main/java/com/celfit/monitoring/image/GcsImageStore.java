@@ -18,7 +18,9 @@ public class GcsImageStore implements ImageStore {
 	private final Storage storage;
 
 	public GcsImageStore(String bucket, String keyFile) {
-		this(bucket, buildStorage(keyFile));
+		this.bucket = bucket;
+		// no-op 케이스(빈 버킷)에선 키 로드·클라이언트 생성 자체를 건너뛴다 — 기동 실패 방지
+		this.storage = (bucket == null || bucket.isBlank()) ? null : buildStorage(keyFile);
 	}
 
 	/** keyFile 미설정이면 ADC 폴백 — 로컬·테스트 편의. 운영은 IMAGE_GCS_KEY로 전용 SA를 명시한다(Vertex ADC와 분리). */
