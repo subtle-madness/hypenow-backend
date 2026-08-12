@@ -23,6 +23,7 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
+import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
@@ -185,6 +186,89 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data[0].shortcode").value("XYZ"));
 	}
 
+	// ---------- 해시태그 발견 게시물 합류(Task 11) ----------
+
+	@Test
+	void 해시태그_발견_게시물이_source_hashtag로_병합된다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].id").value("bh_HHH"))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				.andExpect(jsonPath("$.data[0].source").value("hashtag"))
+				.andExpect(jsonPath("$.data[0].caption").value("해시태그 캡션"))
+				.andExpect(jsonPath("$.data[0].authorUsername").value("hashtag_influencer"))
+				.andExpect(jsonPath("$.data[0].latestSnapshot").value(Matchers.nullValue()))
+				.andExpect(jsonPath("$.data[0].commentsTotal").value(3))
+				.andExpect(jsonPath("$.meta.counts.hashtag").value(1));
+	}
+
+	@Test
+	void 같은_shortcode의_기존_소스가_해시태그보다_우선한다() throws Exception {
+		givenTagged(taggedRow("HHH", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("HHH", "REELS", null)));
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].source").value("tagged"))
+				.andExpect(jsonPath("$.data[0].id").value("HHH"));
+	}
+
+	@Test
+	void source_필터_hashtag는_해시태그_발견만_남긴다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		givenHashtag(hashtagRow("HHH", "2026-08-05T01:00:00Z"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=hashtag").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].source").value("hashtag"))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				.andExpect(jsonPath("$.meta.total").value(1))
+				.andExpect(jsonPath("$.meta.counts.all").value(2));
+	}
+
+	@Test
+	void source_필터_tagged는_해시태그를_제외한다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		givenHashtag(hashtagRow("HHH", "2026-08-05T01:00:00Z"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=tagged").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].source").value("tagged"))
+				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"));
+	}
+
+	@Test
+	void 해시태그_게시물도_업로드일_정렬에_참여한다() throws Exception {
+		givenTagged(taggedRow("OLD", "2026-08-01T01:00:00Z"), taggedRow("NEW", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("OLD", "FEED", null), meta("NEW", "FEED", null)));
+		givenHashtag(hashtagRow("MID", "2026-08-03T01:00:00Z"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("NEW", "MID", "OLD")));
+	}
+
+	@Test
+	void 해시태그_협찬은_캡션_확정_키워드로만_판정한다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z", "오늘의 #협찬 후기"),
+				hashtagRow("III", "2026-08-05T01:00:00Z", "그냥 일상"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].sponsorship").value(Matchers.contains("sponsored")))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
+	}
+
 	@Test
 	void 업로드_기간_필터는_KST_날짜로_자른다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-01T01:00:00Z"));
@@ -328,6 +412,10 @@ class V1BrandPostsControllerTest {
 		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
 	}
 
+	private void givenHashtag(BrandHashtagPostRow... rows) {
+		given(brandReadRepository.findHashtagPosts(anyLong(), any(), anyInt())).willReturn(List.of(rows));
+	}
+
 	/** 직접 등록 1건 — 매핑 행 + 레거시 조립 결과를 함께 스텁한다. */
 	private void givenDirect(String shortCode, long itemId) {
 		given(directPostRepository.findByUser(7L))
@@ -359,6 +447,16 @@ class V1BrandPostsControllerTest {
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt),
 				OffsetDateTime.parse("2026-08-06T02:00:00Z"), 7L);
+	}
+
+	private static BrandHashtagPostRow hashtagRow(String code, String takenAt) {
+		return hashtagRow(code, takenAt, "해시태그 캡션");
+	}
+
+	private static BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
+		return new BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer", "해시태그 인플루언서",
+				"https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption, "REELS",
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"));
 	}
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {

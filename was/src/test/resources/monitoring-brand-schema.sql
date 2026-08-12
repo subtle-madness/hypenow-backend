@@ -78,6 +78,29 @@ CREATE TABLE IF NOT EXISTS brand_post_comment (
     PRIMARY KEY (short_code, id)
 );
 
+-- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql —
+-- was가 읽는 컬럼만 이 픽스처에도 맞춰 둔다(verdict_source는 was 미소비라 생략 없이 그대로 둔다,
+-- 마이그레이션의 CHECK 제약과 어긋나면 오류가 나야 픽스처 표류를 바로 잡을 수 있다).
+CREATE TABLE IF NOT EXISTS brand_hashtag_post (
+    brand_id               bigint      NOT NULL REFERENCES brand_account (id),
+    short_code             text        NOT NULL,
+    matched_tag            text        NOT NULL,
+    author_username        text        NOT NULL,
+    author_full_name       text,
+    author_profile_pic_url text,
+    taken_at               timestamptz NOT NULL,
+    caption                text        NOT NULL DEFAULT '',
+    content_type           text,
+    thumbnail_url          text,
+    likes                  bigint,
+    comments               bigint,
+    verdict                text        NOT NULL CHECK (verdict IN
+                               ('RELEVANT', 'UNCERTAIN', 'IRRELEVANT', 'SELF', 'DIRECT_TAGGED')),
+    verdict_source         text        NOT NULL CHECK (verdict_source IN ('RULE', 'MENTION', 'LLM')),
+    first_seen_at          timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (brand_id, short_code)
+);
+
 CREATE TABLE IF NOT EXISTS author_profile (
     ig_user_id      text        PRIMARY KEY,
     username        text        NOT NULL,

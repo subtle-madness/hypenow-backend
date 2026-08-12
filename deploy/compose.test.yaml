@@ -152,6 +152,10 @@ services:
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
+      # 해시태그 감지 LLM 판정(BrandMentionJudge) — 미주입이면 fail-closed(전 판정 UNCERTAIN=비노출)라
+      # 스테이징에서 LLM 경로가 한 번도 실행되지 않는다. 요청 셰이프·응답 파싱 첫 실증을 운영으로
+      # 미루지 않기 위해 배선(2026-08-11 최종 리뷰 I-4). 크론은 K 원칙대로 off라 콜 폭주 없음.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # 이미지 아카이브는 test 대상 아님(운영 버킷 오염 방지) — analytics와 동일하게 빈 값이면 잡이 no-op
       MONITORING_IMAGE_PAR_URL: ""
       # 감지 동작 검증용 — 운영(compose.yaml)에는 넣지 않는다. POST /api/sweeps는 등록 계정 수만큼

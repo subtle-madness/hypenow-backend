@@ -5,11 +5,13 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
 /**
- * BrandPost 응답(스펙 §6-1) — 브랜드 화면의 게시물 1건. tagged(브랜드 태그 테이블)와
- * direct(레거시 추적 아이템) 두 산지가 같은 셰이프로 내려간다({@link BrandPostAssembler}).
+ * BrandPost 응답(스펙 §6-1) — 브랜드 화면의 게시물 1건. tagged(브랜드 태그 테이블)·direct(레거시
+ * 추적 아이템)·hashtag(해시태그 발견 게시물, 스펙 2026-08-11 §5) 세 산지가 같은 셰이프로 내려간다
+ * ({@link BrandPostAssembler}).
  *
- * <p>{@code id}는 shortcode다(스펙 §6-2 — {@code canonicalPostId}와 같은 값). 숫자 id가 아닌 이유는
- * tagged 게시물엔 was가 발급한 식별자가 없기 때문이고, 그래서 상세 조회 경로도 shortcode를 받는다.
+ * <p>{@code id}는 tagged·direct는 shortcode 그대로, hashtag는 {@code "bh_"+shortcode}다(스펙 §6-2 —
+ * {@code canonicalPostId}는 세 산지 전부 순수 shortcode). 숫자 id가 아닌 이유는 tagged·hashtag
+ * 게시물엔 was가 발급한 식별자가 없기 때문이고, 그래서 상세 조회 경로도 shortcode 기반 id를 받는다.
  *
  * <p>스냅샷·댓글 셰이프는 레거시 {@link TrackingItemResponse}의 중첩 record를 그대로 재사용한다 —
  * FE가 이미 소비 중인 필드셋이라 브랜드 화면만 다른 모양을 갖게 하지 않는다(스펙 §6-1).
@@ -21,7 +23,7 @@ import java.util.List;
 public record BrandPostResponse(
 		String id,
 		String brandAccountId,
-		@Schema(allowableValues = {"tagged", "direct"}) String source,
+		@Schema(allowableValues = {"tagged", "direct", "hashtag"}) String source,
 		String postUrl,
 		String shortcode,
 		// 값은 "reels"/"feed" — 레거시 TrackedPost.contentType과 같은 어휘로 통일한다(direct 산지가

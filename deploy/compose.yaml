@@ -280,6 +280,8 @@ services:
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
       HIKER_API_KEY: ${HIKER_API_KEY}
+      # 브랜드 해시태그 감지 LLM 판정(BrandMentionJudge, 2026-08-11) — 키 미설정 시 fail-closed(전 판정 UNCERTAIN=비노출로 접힘, 최초 1회 warn)
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
