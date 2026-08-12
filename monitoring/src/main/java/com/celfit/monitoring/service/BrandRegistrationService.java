@@ -28,9 +28,9 @@ import org.springframework.stereotype.Service;
  *   <li><b>core</b>(backfill executor): 열거+적재 → 즉시 touchSwept — 등록 후 ~1~2분에 was가
  *       ready로 전환돼 게시물 목록이 뜬다(크롤링 정책 v1로 백필이 90일 → 365일이 되며 열거가
  *       ~6콜 → <b>~41콜</b>로 늘어난 값 — cclime 태그 847건 실측 기준. 정책 v1 이전 서술 "~30초"는
- *       폐기). backfill executor는 단일 스레드라 연속 등록은 계정당 그 속도로 줄을 선다. 그래도
- *       분리 효과는 그대로다(운영 실측: 구 단일 체인은 8분+ — 그중 ~85%가 목록 렌더에 필수
- *       아닌 보강 콜, 나머지가 앞 계정 대기).
+ *       폐기). backfill executor는 동시 2스레드(08-12) — 연속 등록 시 뒤 계정이 앞 계정 완주를
+ *       기다리는 줄이 절반이다. 그래도 분리 효과는 그대로다(운영 실측: 구 단일 체인은 8분+ —
+ *       그중 ~85%가 목록 렌더에 필수 아닌 보강 콜, 나머지가 앞 계정 대기).
  *       2026-08-12 스트리밍 개정: 적재는 페이지 단위 즉시, 서빙 창(30일) 커버 시 markServing으로
  *       ready가 완주보다 먼저 열린다 — tooq.official 실측 8분 24초 → 서빙 창 커버 ~1분 30초.</li>
  *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 연속 등록
@@ -39,9 +39,10 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
- * 두 executor 모두 단일 스레드(브랜드 단위 큐잉·순서 보장). Hiker 콜 병렬화는 enrich 내부
- * 워커 풀이 담당 — 전역 동시 콜 최대 8(= 워커 6 + 스윕 core 1 + 등록 core 1, 스윕과 등록이
- * 겹치는 최악의 경우. 실측 무저항 한계 8과 동치 — BrandBackfillConfig 참조).
+ * backfill은 동시 2스레드(브랜드 단위 태스크라 브랜드 안 순서는 유지), enrich는 단일 스레드.
+ * Hiker 콜 병렬화는 enrich 내부 워커 풀이 담당 — 전역 동시 콜 최대 9(= 워커 6 + 스윕 core 1 +
+ * 등록 core 2, 스윕과 등록이 겹치는 최악의 경우. 08-12 램프 실측 안전 구간 ~10 이내 —
+ * BrandBackfillConfig 참조).
  */
 @Service
 public class BrandRegistrationService {
