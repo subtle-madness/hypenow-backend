@@ -242,6 +242,16 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    gcloud iam service-accounts keys create gcs-image-archiver.json \
      --iam-account=image-archiver@<PROJECT_ID>.iam.gserviceaccount.com
    ```
+   **SA 키 생성이 `iam.disableServiceAccountKeyCreation`으로 거부되면**(2026-08-12 실측 —
+   조직 없는 개인 프로젝트는 이 정책을 해제할 방법 자체가 없다: `orgpolicy.policyAdmin` 롤이
+   무조직 프로젝트엔 부여 불가), SA 키 대신 **gcloud ADC 파일을 그대로 키 파일로 쓴다**:
+   ```bash
+   gcloud auth application-default login
+   gcloud auth application-default set-quota-project <PROJECT_ID>
+   # ~/.config/gcloud/application_default_credentials.json 이 곧 업로드할 키 파일
+   ```
+   코드(`GcsImageStore`)는 `GoogleCredentials.fromStream`이라 SA 키·authorized_user 둘 다
+   읽는다. 이 경우 위의 image-archiver SA·objectAdmin 바인딩은 불필요(계정 owner 권한 사용).
    **콘솔에서 유료 계정 업그레이드 + 예산 알람(월 $5)** — 90일 삭제 절벽 제거.
    **이름 충돌로 `hypenow-images-prod` 같은 대체명을 쓰면 `deploy/scripts/post-container-metrics.py`의
    `GCS_BUCKETS` 상수도 같이 고칠 것** — 하드코딩이라 안 고치면 404가 나고, GCS 수집 실패는 조용히
