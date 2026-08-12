@@ -1137,6 +1137,30 @@ develop → staging → main 승격으로 배포된 뒤:
 4. 비-JVM 회귀 — Explore에서 `{container="deploy-caddy-1"}`이 줄 단위로 보이는지
 5. Loki 볼륨 증가율 확인(`docker system df -v | grep loki-data`) — multiline 병합은 엔트리 수를
    줄이지 실제 바이트를 늘리지 않지만, 라벨 2개 추가로 스트림이 늘어난다
+6. **메모리 실측**(아래 §메모리 확인)
+
+- [ ] **Step 7: 메모리 확인 (배포 후 하루 뒤)**
+
+착수 전 실측 기준선(2026-08-12): `deploy-loki-1` 105.5MiB / 384MiB, `deploy-alloy-1` 92.9MiB / 192MiB.
+
+```bash
+ssh ubuntu@<host> 'docker stats --no-stream --format "{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}" | grep -E "loki|alloy"'
+```
+
+기대치와 판단 기준:
+
+- **Loki**: 스트림이 ~13개 → ~21개로 늘어(JVM 4서비스 × 실사용 레벨 ~3 + 비-JVM 9) 스트림당
+  head chunk(기본 `chunk_target_size` 1.5MB)만큼 여유가 줄어든다. **140MiB 안쪽이면 정상.**
+  로그 총량 자체는 늘지 않는다 — level로 스트림을 쪼개는 건 같은 바이트를 나눠 담는 것이고,
+  multiline 병합은 줄당 오버헤드가 사라져 오히려 엔트리 수를 줄인다.
+- **Alloy**: `stage.multiline` 버퍼의 이론상 최악이 `max_lines`(300) × JVM 컨테이너 4 × 줄당
+  ~500B ≈ 600KB다. **110MiB 안쪽이면 정상.** 상한이 192MiB로 셋 중 여유가 가장 얇으므로
+  이 항목을 생략하지 말 것.
+- 어느 쪽이든 상한의 **80%를 넘으면** 다이얼을 돌린다: Alloy는 `max_lines`를 300 → 100으로
+  낮추고(스택트레이스 100줄이면 실무상 충분), Loki는 `deploy/compose.yaml`의 `mem_limit`을
+  512m으로 올린다(호스트 여유 5GB 이상 확인 후). 두 컨테이너 모두 `oom_score_adj: 500`이라
+  메모리 압박 시 서비스 컨테이너보다 먼저 희생되며, `restart: unless-stopped`로 되살아나지만
+  재기동 창 동안의 로그는 유실된다.
 
 ---
 
