@@ -315,7 +315,7 @@ class CollectServiceTest {
 	/** 단건 정본 수집을 마친 추적 릴스 — 공유는 단건이 확정 제공, 저장·리포스트만 미관측. */
 	private static PostInfo trackedReel(String contentType) {
 		return new PostInfo("ReelA", "acct", null, null, "999", contentType, "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, null, 3L, null, null, null, null, "{}", true, false, false);
+				1_700_000_000L, 10L, 2L, 222L, null, null, 3L, null, null, null, null, true, false, false);
 	}
 
 	private static CollectService retryingCollect(HikerClient client, RecordingWriter writer, int retryMax) {
@@ -381,7 +381,7 @@ class CollectServiceTest {
 	/** 3지표 전부 미관측인 추적 릴스 — 창 밖 시나리오는 공유수도 단건 재시도가 채워야 한다. */
 	private static PostInfo trackedReelAllMissing() {
 		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, null, null, null, "{}", true, false, false);
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, null, null, null, true, false, false);
 	}
 
 	private static long countByPrefix(List<String> calls, String prefix) {
@@ -475,7 +475,7 @@ class CollectServiceTest {
 	/** 공유수만 미관측인 추적 릴스 — 그날 단건 정본이 부분 세션(저장·리포스트만)이었던 상황. */
 	private static PostInfo trackedReelSharesMissing() {
 		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, null, null, null, "{}", true, false, false);
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, null, null, null, true, false, false);
 	}
 
 	@Test
@@ -610,7 +610,7 @@ class CollectServiceTest {
 	/** 공유 숨김이 관측된 추적 릴스 — 3지표 미관측 상태. */
 	private static PostInfo trackedReelSharesHiddenAllMissing() {
 		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, null, null, null, "{}", true, false, true);
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, null, null, null, true, false, true);
 	}
 
 	@Test
@@ -655,7 +655,7 @@ class CollectServiceTest {
 		});
 		var writer = new RecordingWriter();
 		PostInfo savedAndRepostsFilled = new PostInfo("ReelA", "acct", null, null, "999", "REELS",
-				"캡션", null, 1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, null, null, null, "{}", true, false, true);
+				"캡션", null, 1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, null, null, null, true, false, true);
 
 		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(savedAndRepostsFilled));
 
@@ -704,7 +704,7 @@ class CollectServiceTest {
 		var writer = new RecordingWriter();
 		// 저장·공유는 관측됐고 리포스트만 남은 게시물 — 캐리 대상이면 콜 없이 끝나야 한다.
 		PostInfo repostsOnly = new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, 4L, 3L, null, null, null, null, "{}", true, false, false);
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, 3L, null, null, null, null, true, false, false);
 
 		carryingCollect(client, writer, Set.of("ReelA"), Set.of())
 				.retryReelsMetrics("999", List.of(repostsOnly));
@@ -724,7 +724,7 @@ class CollectServiceTest {
 		});
 		var writer = new RecordingWriter();
 		PostInfo sharesOnly = new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
-				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, null, null, null, "{}", true, false, false);
+				1_700_000_000L, 10L, 2L, 222L, null, 4L, null, 7L, null, null, null, true, false, false);
 
 		carryingCollect(client, writer, Set.of(), Set.of("ReelA"))
 				.retryReelsMetrics("999", List.of(sharesOnly));

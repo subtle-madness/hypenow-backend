@@ -74,4 +74,13 @@ public final class BrandHashtagTags {
 		Matcher m = VALID_TAG.matcher(s);
 		return m.lookingAt() ? m.group() : "";
 	}
+
+	/**
+	 * 유저 입력 태그 관리 API 전용(2026-08-12) — 전자동 유도(derive)는 무효 문자를 잘라내지만,
+	 * 유저가 직접 입력한 태그는 잘라내지 않고 전체 일치로 거부한다(조용한 절삭은 유저가 의도한
+	 * 태그와 실제 저장된 태그가 달라지는 사고를 유발한다).
+	 */
+	public static boolean isValidTag(String tag) {
+		return VALID_TAG.matcher(tag).matches();
+	}
 }

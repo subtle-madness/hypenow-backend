@@ -5,11 +5,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.monitoring.alarm.AlarmEventRepository;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetType;
+import com.celfit.monitoring.hiker.BrandCallContext;
+import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.hiker.TargetCallContext;
+import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
+import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.Duration;
@@ -77,6 +82,8 @@ class RegistrationServiceTest {
 	ArrayDeque<String> scriptedSingles;
 	String singleBody;
 	RegistrationService registration;
+	/** 콜 집계 스코프(비용 계상, 2026-08-12 범위 확장) — 등록 서비스·데코레이터가 공유한다. */
+	final TargetCallContext callContext = new TargetCallContext();
 
 	@BeforeEach
 	void setUp() {
@@ -86,7 +93,8 @@ class RegistrationServiceTest {
 		calls = new ArrayList<>();
 		scriptedClips = new ArrayDeque<>();
 		scriptedSingles = new ArrayDeque<>();
-		var client = new HikerClient(path -> {
+		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 등록 콜의 유저 귀속까지 검증.
+		var client = new HikerClient(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/media/comments")) {
 				return "{\"response\":{\"comments\":[],\"has_more_comments\":false},\"next_page_id\":null}";
@@ -96,7 +104,8 @@ class RegistrationServiceTest {
 			}
 			// 단건 스크립트(콜 순서대로 소진)가 있으면 우선 — 단건 세션 복권(꽝→당첨) 재현용.
 			return scriptedSingles.isEmpty() ? singleBody : scriptedSingles.poll();
-		});
+		}, new BrandCallContext(), new BrandCallCountRepository(db),
+				callContext, new TargetCallCountRepository(db)));
 		var targets = new TargetRepository(db);
 		var snapshots = new SnapshotRepository(db);
 		var alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
@@ -104,7 +113,7 @@ class RegistrationServiceTest {
 		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots,
 				1, 1, 1, 6, Duration.ZERO);
 		// 동기 executor — 백필이 register() 리턴 전에 끝나 결과를 바로 단언할 수 있다.
-		registration = new RegistrationService(collect, targets, alarms, Runnable::run);
+		registration = new RegistrationService(collect, targets, alarms, callContext, Runnable::run);
 	}
 
 	private RegistrationService.Result registerPost(String shortCode) {
@@ -133,6 +142,11 @@ class RegistrationServiceTest {
 		assertThat(clipsCalls()).isEqualTo(2);   // 꽝 1 + 당첨 1, 당첨 즉시 중단
 		assertThat(snapshotMetric("saves", "P900")).isEqualTo(5L);
 		assertThat(snapshotMetric("reposts", "P900")).isEqualTo(7L);
+		// 콜 집계(2026-08-12 비용 범위 확장) — 동기 첫 수집·댓글은 물론, executor로 넘어간 백필
+		// 재시도 콜(clips 2)까지 등록 유저(7) 몫으로 계상된다(runScoped 재전파 검증).
+		assertThat(db.queryForObject(
+				"SELECT coalesce(sum(calls),0) FROM target_call_count WHERE user_id=7", Long.class))
+				.isEqualTo((long) calls.size());
 	}
 
 	@Test

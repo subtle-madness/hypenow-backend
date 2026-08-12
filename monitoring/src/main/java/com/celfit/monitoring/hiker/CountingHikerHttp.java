@@ -1,14 +1,18 @@
 package com.celfit.monitoring.hiker;
 
 import com.celfit.monitoring.store.BrandCallCountRepository;
+import com.celfit.monitoring.store.TargetCallCountRepository;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 브랜드 콜 집계 데코레이터(2026-08-12 어드민 크롤링 비용 설계) — 브랜드 컨텍스트
- * ({@link BrandCallContext}) 안에서 성공한 콜만 brand_call_count에 +1한다.
+ * 콜 집계 데코레이터(2026-08-12 어드민 크롤링 비용 설계 + 같은 날 범위 확장) — 성공한 콜을
+ * 브랜드 컨텍스트({@link BrandCallContext}) 안이면 brand_call_count에 브랜드로 +1,
+ * 캠페인·콘텐츠 컨텍스트({@link TargetCallContext}) 안이면 target_call_count에 서빙 유저마다 +1한다.
+ * 두 컨텍스트는 파이프라인이 달라 같은 콜에 동시에 서지 않는다(브랜드 스윕 vs 타깃 스윕·등록).
  *
  * <p>전송 계층에서 세는 이유는 {@link RecordingHikerHttp}와 같다: 열거·댓글은 페이지마다 콜이
  * 나가는데 파싱 계층에서 세면 페이지 수가 감사에서 사라진다. 여기서 감싸면 "HTTP 교환 1번 = 1콜"이
@@ -26,13 +30,19 @@ public class CountingHikerHttp implements HikerHttp {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
 	private final HikerHttp delegate;
-	private final BrandCallContext context;
-	private final BrandCallCountRepository counts;
+	private final BrandCallContext brandContext;
+	private final BrandCallCountRepository brandCounts;
+	private final TargetCallContext targetContext;
+	private final TargetCallCountRepository targetCounts;
 
-	public CountingHikerHttp(HikerHttp delegate, BrandCallContext context, BrandCallCountRepository counts) {
+	public CountingHikerHttp(HikerHttp delegate, BrandCallContext brandContext,
+			BrandCallCountRepository brandCounts, TargetCallContext targetContext,
+			TargetCallCountRepository targetCounts) {
 		this.delegate = delegate;
-		this.context = context;
-		this.counts = counts;
+		this.brandContext = brandContext;
+		this.brandCounts = brandCounts;
+		this.targetContext = targetContext;
+		this.targetCounts = targetCounts;
 	}
 
 	@Override
@@ -43,14 +53,26 @@ public class CountingHikerHttp implements HikerHttp {
 	}
 
 	private void count() {
-		Long brandId = context.currentBrandId();
-		if (brandId == null) {
-			return;   // 브랜드 밖 콜(캠페인 모니터링 등) — 집계 대상 아님
+		LocalDate today = LocalDate.now(KST);
+		Long brandId = brandContext.currentBrandId();
+		if (brandId != null) {
+			try {
+				brandCounts.add(brandId, today, 1);
+			} catch (RuntimeException e) {
+				log.warn("브랜드 콜 집계 실패(무시 — 수집은 계속) — brand {}: {}", brandId, e.toString());
+			}
+			return;
 		}
-		try {
-			counts.add(brandId, LocalDate.now(KST), 1);
-		} catch (RuntimeException e) {
-			log.warn("브랜드 콜 집계 실패(무시 — 수집은 계속) — brand {}: {}", brandId, e.toString());
+		Set<Long> userIds = targetContext.currentUserIds();
+		if (userIds == null) {
+			return;   // 두 컨텍스트 모두 밖의 콜 — 집계 대상 아님
+		}
+		for (Long userId : userIds) {
+			try {
+				targetCounts.add(userId, today, 1);
+			} catch (RuntimeException e) {
+				log.warn("캠페인 콜 집계 실패(무시 — 수집은 계속) — user {}: {}", userId, e.toString());
+			}
 		}
 	}
 }

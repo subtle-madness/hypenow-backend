@@ -4,10 +4,12 @@ import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +43,7 @@ public class RegistrationService {
 	private final CollectService collect;
 	private final TargetRepository targets;
 	private final AlarmRecorder alarms;
+	private final TargetCallContext callContext;
 	private final Executor metricsBackfill;
 
 	/**
@@ -49,10 +52,11 @@ public class RegistrationService {
 	 * 품을 수 없고, 그렇다고 안 돌리면 등록 당일 스냅샷이 다음날 새벽 스윕까지 빈다.
 	 */
 	public RegistrationService(CollectService collect, TargetRepository targets, AlarmRecorder alarms,
-			@Qualifier("metricsBackfillExecutor") Executor metricsBackfill) {
+			TargetCallContext callContext, @Qualifier("metricsBackfillExecutor") Executor metricsBackfill) {
 		this.collect = collect;
 		this.targets = targets;
 		this.alarms = alarms;
+		this.callContext = callContext;
 		this.metricsBackfill = metricsBackfill;
 	}
 
@@ -64,7 +68,11 @@ public class RegistrationService {
 			return replay(existing.get());
 		}
 		try {
-			return cmd.type() == TargetType.POST ? registerPost(cmd) : registerAccount(cmd);
+			// 콜 집계 스코프(비용 계상) — 등록의 동기 첫 수집 콜은 등록 유저 몫이다. 브랜드 등록과 달리
+			// userId가 콜 이전에 확정돼 있어(validate 필수값) 사후 계상 없이 스코프 하나로 끝난다.
+			// 등록이 최종 실패해도(게시물 부재 등) 성공한 콜 자체는 Hiker 과금 대상이라 계상이 맞다.
+			return callContext.scoped(Set.of(cmd.userId()),
+					() -> cmd.type() == TargetType.POST ? registerPost(cmd) : registerAccount(cmd));
 		} catch (DuplicateKeyException e) {
 			// 같은 키로 동시에 두 요청이 들어온 경우 — 먼저 커밋한 행을 replay로 돌려준다.
 			return replay(targets.findByRegistrationKey(cmd.registrationKey()).orElseThrow(() -> e));
@@ -121,7 +129,7 @@ public class RegistrationService {
 		// 실패해도 등록 자체는 계속 201로 성공하고, 그 알람 이벤트는 재시도 없이 유실된다(로그로만 관측).
 		// replay는 target 중복 방지(멱등)만 보장할 뿐 이 알람 유실을 복구하지 않는다.
 		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
-		scheduleMetricsBackfill(post);
+		scheduleMetricsBackfill(cmd.userId(), post);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
 		return new Result(id, TargetStatus.TRACKING.name(), snapshot, false);
@@ -137,18 +145,20 @@ public class RegistrationService {
 	 * ownerUserId가 없어도(구형 셰이프) 건너뛰지 않는다 — retryReelsMetrics가 null user_id면
 	 * clips 없이 단건 콜 복권으로만 보강한다(08-05).
 	 */
-	private void scheduleMetricsBackfill(PostInfo post) {
+	private void scheduleMetricsBackfill(long userId, PostInfo post) {
 		// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
 		if (!CollectService.needsMetricsRetry(post)) {
 			return;
 		}
-		metricsBackfill.execute(() -> {
+		// 콜 집계 스코프를 태스크 본문에서 다시 연다 — ThreadLocal은 executor 스레드로 전파되지 않는다
+		// (TargetCallContext 주석 참조). 등록 스코프에 기대면 백필 콜이 조용히 미집계로 샌다.
+		metricsBackfill.execute(() -> callContext.runScoped(Set.of(userId), () -> {
 			try {
 				collect.retryReelsMetrics(post.ownerUserId(), List.of(post));
 			} catch (RuntimeException e) {
 				log.warn("등록 직후 저장·리포스트 백필 실패(격리) — {}: {}", post.shortCode(), e.toString());
 			}
-		});
+		}));
 	}
 
 	private static void validate(RegisterCommand cmd) {

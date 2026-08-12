@@ -70,11 +70,14 @@ class BrandControllerTest {
 		}
 	}
 
-	/** 제외 문자열 저장 스텁 — 조회 목록 주입 + 교체 호출 인자 캡처. */
+	/** 제외 문자열·태그 저장 스텁 — 조회 목록 주입 + 교체 호출 인자 캡처. */
 	private static final class StubHashtagRepository extends BrandHashtagRepository {
 		List<String> terms = List.of();
 		Long receivedBrandId;
 		List<String> receivedTerms;
+		List<String> tags = List.of();
+		Long receivedTagsBrandId;
+		List<String> receivedTags;
 
 		StubHashtagRepository() {
 			super(null);
@@ -89,6 +92,17 @@ class BrandControllerTest {
 		public void replaceExclusionTerms(long brandId, List<String> terms) {
 			receivedBrandId = brandId;
 			receivedTerms = terms;
+		}
+
+		@Override
+		public List<String> findTags(long brandId) {
+			return tags;
+		}
+
+		@Override
+		public void replaceTags(long brandId, List<String> tags) {
+			receivedTagsBrandId = brandId;
+			receivedTags = tags;
 		}
 	}
 
@@ -259,6 +273,120 @@ class BrandControllerTest {
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------
+
+	@Test
+	void 태그_조회는_현재_활성_태그_목록을_돌려준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		hashtags.tags = List.of("cclime", "끌리메");
+
+		mvc.perform(get("/api/brands/brandx/hashtag-tags"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.tags[0]").value("cclime"))
+				.andExpect(jsonPath("$.tags[1]").value("끌리메"));
+	}
+
+	@Test
+	void 태그_교체는_정규화_후_전체_교체한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		// # 제거 · 대소문자 통일 · 중복 제거(입력 순서 보존)
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"#CClime\",\" cclime \",\"NewTag\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.receivedTagsBrandId).isEqualTo(1L);
+		assertThat(hashtags.receivedTags).containsExactly("cclime", "newtag");
+	}
+
+	@Test
+	void 태그_재추가와_삭제_시나리오는_정규화된_전체_목록을_그대로_전달한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		hashtags.tags = List.of("cclime", "끌리메");
+
+		// "끌리메" 삭제하고 "새태그" 추가한 최종 목록을 PUT — 리포지토리가 tombstone 판정을 수행
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"cclime\",\"새태그\"]}"))
+				.andExpect(status().isNoContent());
+		assertThat(hashtags.receivedTags).containsExactly("cclime", "새태그");
+
+		// 이후 "끌리메"를 다시 추가(재활성) — 컨트롤러는 그대로 전달만, 재활성 자체는 리포지토리 책임
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"cclime\",\"새태그\",\"끌리메\"]}"))
+				.andExpect(status().isNoContent());
+		assertThat(hashtags.receivedTags).containsExactly("cclime", "새태그", "끌리메");
+	}
+
+	@Test
+	void 태그_빈_목록_교체는_422다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"  \",\"\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+
+		assertThat(hashtags.receivedTags).isNull();
+	}
+
+	@Test
+	void 태그_null_바디는_빈_목록_교체라_422다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+
+		assertThat(hashtags.receivedTags).isNull();
+	}
+
+	/** 유효 문자 위반은 절삭이 아니라 거부 — 공백(끌리 메)·점(tag.dot) 모두 VALID_TAG 전체 일치 실패. */
+	@Test
+	void 유효_문자_위반_태그는_절삭하지_않고_422로_거부한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"끌리 메\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"))
+				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("끌리 메")));
+		assertThat(hashtags.receivedTags).isNull();
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"tag.dot\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"))
+				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("tag.dot")));
+		assertThat(hashtags.receivedTags).isNull();
+	}
+
+	@Test
+	void 태그_미등록_브랜드는_404이고_에러_바디를_준다() throws Exception {
+		brands.row = null;
+
+		mvc.perform(get("/api/brands/ghost/hashtag-tags"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+		mvc.perform(put("/api/brands/ghost/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"a\"]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void 태그_탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null);
+
+		mvc.perform(get("/api/brands/brandx/hashtag-tags"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"a\"]}"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}

@@ -76,6 +76,12 @@ public class ApiExceptionHandler {
 		return body(HttpStatus.UNPROCESSABLE_CONTENT, "VALIDATION", e.getMessage());
 	}
 
+	/** 태그 셋 전체 교체가 빈 목록이거나 유효하지 않은 문자를 포함 — InvalidHashtagException 참조. */
+	@ExceptionHandler(InvalidHashtagException.class)
+	public ResponseEntity<ApiError> handleInvalidHashtag(InvalidHashtagException e) {
+		return body(HttpStatus.UNPROCESSABLE_CONTENT, "VALIDATION", e.getMessage());
+	}
+
 	/** 스윕 수동 트리거가 이미 실행 중인 스윕과 겹쳤다 — SweepGuard 획득 실패. */
 	@ExceptionHandler(SweepAlreadyRunningException.class)
 	public ResponseEntity<ApiError> handleSweepAlreadyRunning(SweepAlreadyRunningException e) {
