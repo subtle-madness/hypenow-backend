@@ -201,7 +201,7 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 	private void processShareEntry(RegistrationRow registration, RegistrationEntryRow entry) {
 		ShareResolveResult resolved;
 		try {
-			resolved = resolveWithRetry(entry.input());
+			resolved = resolveWithRetry(entry.input(), registration.userId());
 		} catch (MonitoringApiException e) {
 			registrationRepository.updateEntryResult(entry.registrationId(), entry.seq(), RegistrationResult.FAILED,
 					mapShareReasonCode(e.code()), e.getMessage(), null, null);
@@ -299,11 +299,11 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 		}
 	}
 
-	private ShareResolveResult resolveWithRetry(String url) {
+	private ShareResolveResult resolveWithRetry(String url, long userId) {
 		try {
-			return client.resolveShare(url);
+			return client.resolveShare(url, userId);
 		} catch (MonitoringUnavailableException first) {
-			return client.resolveShare(url);
+			return client.resolveShare(url, userId);
 		}
 	}
 

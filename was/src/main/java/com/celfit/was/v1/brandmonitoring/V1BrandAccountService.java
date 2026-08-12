@@ -173,6 +173,23 @@ public class V1BrandAccountService {
 	}
 
 	/**
+	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
+	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
+	 */
+	public List<String> getHashtagTags(long userId, long brandId) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		return commandClient.getHashtagTags(username);
+	}
+
+	/** 태그 셋 전체 교체 — tags null은 빈 목록으로 접어 monitoring에 위임(정규화·유효성 검증은 monitoring). */
+	public void putHashtagTags(long userId, long brandId, List<String> tags) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		commandClient.putHashtagTags(username, tags == null ? List.of() : tags);
+	}
+
+	/**
 	 * 삭제(§5-3) — 연결 soft-delete 후 그 브랜드의 마지막 사용자였으면 monitoring 탈퇴.
 	 * {@code users.instgram_account_name}은 건드리지 않는다(불변 — 같은 계정 재등록만 허용).
 	 */

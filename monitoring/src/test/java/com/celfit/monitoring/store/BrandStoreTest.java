@@ -61,7 +61,7 @@ class BrandStoreTest {
 	@Test
 	void 등록은_프로필_전필드를_적재한다() {
 		long id = brands.insertOrReactivate("brandx", new ProfileInfo("brandx", "111", 1000L, 10L, 5L,
-				"브랜드", "https://pic", "소개", true, "https://link", "{}"));
+				"브랜드", "https://pic", "소개", true, "https://link"));
 		assertThat(column(id, "full_name", String.class)).isEqualTo("브랜드");
 		assertThat(column(id, "profile_pic_url", String.class)).isEqualTo("https://pic");
 		assertThat(column(id, "is_verified", Boolean.class)).isTrue();
@@ -107,7 +107,7 @@ class BrandStoreTest {
 	void refreshProfile은_전필드를_갱신한다() {
 		long id = brands.insertOrReactivate("brand_z", profile("brand_z"));
 		brands.refreshProfile(id, new ProfileInfo("brand_z", "1", 10L, 5L, 3L,
-				"이름", "https://pic", "소개", true, "https://link", "{}"));
+				"이름", "https://pic", "소개", true, "https://link"));
 		assertThat(column(id, "full_name", String.class)).isEqualTo("이름");
 		assertThat(column(id, "profile_pic_url", String.class)).isEqualTo("https://pic");
 		assertThat(column(id, "is_verified", Boolean.class)).isTrue();
@@ -232,7 +232,7 @@ class BrandStoreTest {
 
 	@Test
 	void 브랜드_프로필_추이_적재() {
-		var profile = new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://p", "소개", null, null, "{}");
+		var profile = new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://p", "소개", null, null);
 		snapshots.upsertBrandProfile("brandx", LocalDate.of(2026, 8, 6), profile);
 		snapshots.upsertBrandProfile("brandx", LocalDate.of(2026, 8, 6), profile);   // 같은 날 재수집 덮어쓰기
 		assertThat(db.queryForObject(
@@ -394,7 +394,7 @@ class BrandStoreTest {
 
 	private static ProfileInfo profile(String username, String igUserId, Long followers, String biography) {
 		return new ProfileInfo(username, igUserId, followers, null, null, null, null, biography,
-				null, null, "{}");
+				null, null);
 	}
 
 	private static PostInfo post(String code, long takenAt) {
@@ -403,6 +403,6 @@ class BrandStoreTest {
 
 	private static PostInfo post(String code, long takenAt, Long views, Long fbPlays) {
 		return new PostInfo(code, "creator", null, null, "999", "REELS", "캡션", null,
-				takenAt, 10L, 2L, views, fbPlays, null, null, null, null, null, null, "{}", true, false, false);
+				takenAt, 10L, 2L, views, fbPlays, null, null, null, null, null, null, true, false, false);
 	}
 }

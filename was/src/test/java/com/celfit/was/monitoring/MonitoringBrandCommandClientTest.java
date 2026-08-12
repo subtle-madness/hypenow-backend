@@ -220,4 +220,85 @@ class MonitoringBrandCommandClientTest {
 					assertThat(e.httpStatus()).isEqualTo(422);
 				});
 	}
+
+	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------
+
+	@Test
+	void 태그_조회는_tags를_그대로_반환한다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andExpect(method(HttpMethod.GET))
+				.andRespond(withSuccess("""
+						{ "tags": ["리즈다", "lizda"] }
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.getHashtagTags("brand_official")).containsExactly("리즈다", "lizda");
+		server.verify();
+	}
+
+	/** tags가 null·본문이 비어도 예외 없이 빈 목록으로 접는다 — 응답 계약을 신뢰하지 않는 방어. */
+	@Test
+	void 태그_조회는_tags가_null이면_빈_목록이다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andRespond(withSuccess("""
+						{ "tags": null }
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.getHashtagTags("brand_official")).isEmpty();
+	}
+
+	@Test
+	void 태그_조회_404는_MonitoringApiException으로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-tags"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"BRAND_NOT_FOUND\", \"message\": \"브랜드를 찾을 수 없습니다.\" }"));
+
+		assertThatThrownBy(() -> client.getHashtagTags("gone_brand"))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("BRAND_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
+	}
+
+	@Test
+	void 태그_교체는_tags를_그대로_전달하고_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(jsonPath("$.tags[0]").value("리즈다"))
+				.andExpect(jsonPath("$.tags[1]").value("Lizda"))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.putHashtagTags("brand_official", java.util.List.of("리즈다", "Lizda")))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	@Test
+	void 태그_교체_404는_MonitoringApiException으로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-tags"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"BRAND_NOT_FOUND\", \"message\": \"브랜드를 찾을 수 없습니다.\" }"));
+
+		assertThatThrownBy(() -> client.putHashtagTags("gone_brand", java.util.List.of("리즈다")))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("BRAND_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
+	}
+
+	/** 빈 목록 교체·유효 문자 위반은 monitoring이 422(code VALIDATION)로 거부한다(계약 §8). */
+	@Test
+	void 태그_교체_빈_목록_422는_MonitoringApiException으로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"VALIDATION\", \"message\": \"태그는 최소 1개 필요합니다.\" }"));
+
+		assertThatThrownBy(() -> client.putHashtagTags("brand_official", java.util.List.of()))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("VALIDATION");
+					assertThat(e.httpStatus()).isEqualTo(422);
+				});
+	}
 }

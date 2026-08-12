@@ -22,7 +22,7 @@ public class ShareController {
 
 	@PostMapping("/resolve")
 	public ShareResolveResponse resolve(@RequestBody ShareResolveRequest request) {
-		var ref = resolver.resolve(request.url());
+		var ref = resolver.resolve(request.url(), request.userId());
 		return new ShareResolveResponse(ref.shortCode(), ref.username(), ref.contentType());
 	}
 }
