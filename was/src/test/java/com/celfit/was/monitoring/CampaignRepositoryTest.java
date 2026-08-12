@@ -112,9 +112,41 @@ class CampaignRepositoryTest extends IntegrationTest {
 
 		repository.delete(campaign.id());
 
+		// item은 삭제되지 않고 남는다 — campaign_id만 SET NULL로 풀린다(CampaignRepository.delete
+		// 주석의 전제). item은 살아있는데도 아카이브되면 그 자체가 결함(멀쩡한 행이 사라진 것처럼
+		// 아카이브에 잘못 기록됨)이라 이 테스트가 그 전제를 실제로 실행해서 검증한다.
 		MonitoringItemRow item = itemRepository.findByIdAndUser(itemId, userId).orElseThrow();
 		assertThat(item.campaignId()).isNull();
 		assertThat(repository.findByIdAndUser(campaign.id(), userId)).isEmpty();
+
+		List<String> archivedTables = jdbcClient.sql("""
+						SELECT table_name FROM archive.archived_rows WHERE user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.list();
+		assertThat(archivedTables).containsExactly("app.monitoring_campaigns");
+	}
+
+	@Test
+	void 캠페인을_삭제하면_아카이브에_남는다() {
+		CampaignRow campaign = repository.insert(userId, "여름 캠페인", null, null, null, null, null, null);
+
+		repository.delete(campaign.id());
+
+		String name = jdbcClient.sql("""
+						SELECT payload ->> 'name' FROM archive.archived_rows
+						 WHERE table_name = 'app.monitoring_campaigns' AND user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.single();
+
+		assertThat(name).isEqualTo("여름 캠페인");
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.monitoring_campaigns WHERE id = :id")
+				.param("id", campaign.id())
+				.query(Long.class)
+				.single()).isZero();
 	}
 
 	@Test

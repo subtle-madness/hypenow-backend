@@ -7,8 +7,9 @@
 - 구조나 태스크 상태가 바뀌는 작업을 했으면 **새 결정은 [DECISIONS.md](DECISIONS.md) 맨 위에**,
   **트랙 상태는 해당 `docs/tracks/<트랙문자>-<슬러그>.md`**(트랙 1개 = 파일 1개, §5 참조)에 갱신한다.
   ARCHITECTURE.md의 §5·§7은 둘 다 그 파일들로의 포인터 스텁이라 갱신 대상이 아니다.
-- 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변) /
-  `docs/superpowers/plans/`(구현 계획 — 실행 완료 시 `plans/archive/`로 이동).
+- 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변,
+  **완결 트랙의 스펙은 `specs/archive/`로 이동**) / `docs/superpowers/plans/`(구현 계획 — 실행 완료 시
+  `plans/archive/`로 이동).
   dated 문서는 첫머리 상태 헤더(`> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 · ⏸ 보류`)를 유지한다.
 
 ## 시스템 경계 (위반 금지)
@@ -59,6 +60,15 @@
   긴급 롤백·CD 불능 시에만, 반드시 사용자 확인 후 `--force`로. (07-20: develop 체크아웃 상태의
   수동 배포가 CD의 main 배포를 덮어 was/analytics 버전 불일치 → 랭킹 API 전면 500.
   `:latest`는 마지막 push가 이긴다.)
+- **핫픽스만 예외로 main 직행**(`hotfix/*`, 08-10~ — [설계](docs/superpowers/specs/2026-08-10-hotfix-direct-to-main-design.md)):
+  운영 장애 한정. main에서 분기해 **base=main으로 PR**을 열면 CI 3종이 그대로 돌고(main엔 머지 큐가
+  없어 대기 없음) 머지 즉시 운영 배포된다. 룰셋·CI 설정은 이미 이걸 허용하므로 손댈 게 없다.
+  **staging을 건너뛰므로 운영에서 처음 도는 코드다** — 범위를 최소로 하고 **스키마 마이그레이션은
+  동반하지 않는다**(expand-contract가 전제하는 릴리스 간격이 사라진다 — 필요하면 정규 경로로).
+  머지 후 `backmerge.yml`이 main→develop·main→staging 역머지 PR을 자동으로 열고 auto-merge를 건다
+  (시크릿 `BACKMERGE_TOKEN` 필요). **승격·역머지 PR은 반드시 merge commit으로** — squash·rebase는
+  원 커밋 SHA를 새로 만들어 역머지 판정(`git log --no-merges <target>..main`)을 깨고, 그러면 평범한
+  승격마다 역머지 PR이 열려 규약이 죽는다.
 - crawler는 DDD/헥사고날(`<context>/{domain, application/{service,port}, adapter/{in,out}}`), was·analytics는 평탄 패키지.
 - DTO는 record(+정적 `from()`). was 조회는 JdbcClient. Jackson 3(`tools.jackson.*`).
 - 분석 뷰는 `analytics/views/NN_*.sql` 번호순 적용, 테스트는 같은 번호 `analytics/test/NN_*.test.sql`.
@@ -84,7 +94,9 @@
 - **세션 위생**(여러 세션 동시 작업 전제): 작업이 끝나면 머지 준비가 안 됐더라도 **PR을 즉시 연다**(draft
   가능) — 열린 PR이 "이 영역은 점유 중"이라는 세션 간 유일한 신호다. 작업 종료 시 자기 worktree와
   머지된 브랜치를 정리한다 — 방치된 worktree가 쌓이면 어느 작업이 살아있는지 식별 불가능해진다
-  (07-30 기준 25개 방치 확인).
+  (07-30 기준 25개 방치 확인). 작업이 끝나 PR을 열 때는 그 작업의 plan 문서도 같은 PR에서
+  `plans/archive/`로 함께 옮긴다 — 완료 문서가 남아 있으면 이후 세션들이 계속 읽어 컨텍스트
+  비용이 쌓인다.
 
 ## 함정
 

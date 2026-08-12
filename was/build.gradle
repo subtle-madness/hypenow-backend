@@ -22,6 +22,9 @@ normalization {
 dependencies {
 	implementation project(':contract-analysis')
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	// API 성능 측정(스펙 2026-08-10) — /actuator/prometheus로 uri별 레이턴시 히스토그램 노출
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.springframework.boot:spring-boot-starter-security'

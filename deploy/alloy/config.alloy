@@ -1,0 +1,56 @@
+// 도커 로그 수집(스펙 2026-08-10) — 운영 스택 컨테이너의 stdout/stderr만 Loki로 push.
+// 라벨 2종: service(compose 서비스명, 배포로 안 바뀜 — 조회는 {service="was"}) +
+// container(컨테이너 실명, 롤링 배포마다 번호가 바뀜 — 특정 배포분을 콕 집을 때만).
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // test 스택 제외 — 스펙상 계측 범위는 운영뿐인데, 도커 소켓을 통째로 열거하면 같은 호스트의
+  // test 컨테이너까지 딸려와 Loki 보관량과 라벨을 오염시킨다. 두 스택이 compose 프로젝트를
+  // 공유해서(둘 다 "deploy") 프로젝트 라벨로는 못 가르고, 서비스명 접두어(test-)로 가른다.
+  //
+  // ⚠️ 여기서 네트워크 라벨(__meta_docker_network_name == "deploy_prod")을 쓰면 안 된다 —
+  // 08-12까지 그렇게 돼 있었고, 그 탓에 **was·monitoring 로그가 한 번도 수집되지 않았다**.
+  // discovery.docker는 컨테이너×네트워크로 타깃을 만들지 않고 **컨테이너당 1개**만 만들면서
+  // 네트워크를 하나 고르는데, 그게 알파벳순 첫 번째다. deploy_monitoring-net < deploy_prod라
+  // 이 둘만 조용히 탈락했다(실측 n=13, 반례 0: prod가 알파벳 첫 네트워크인 컨테이너는 전부
+  // 수집됐고 누락은 monitoring-net을 가진 was·monitoring 둘뿐).
+  // 같은 이유로 옛 주석이 걱정하던 "멀티 네트워크 컨테이너의 중복 타깃"은 애초에 없다.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "test-.*"
+    action        = "drop"
+  }
+
+  // compose 서비스명 = 배포로 변하지 않는 안정 라벨. 컨테이너 실명은 롤링 배포마다
+  // deploy-was-35 → -36으로 바뀌어 조회할 때마다 번호를 알아야 하고, 라벨 카디널리티도
+  // 배포 횟수만큼 늘어난다.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.write.local.receiver]
+  refresh_interval = "30s"
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

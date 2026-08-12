@@ -264,6 +264,40 @@ class V1BrandDirectPostServiceTest {
 	}
 
 	@Test
+	void 경쟁사_구독_브랜드에는_직접_등록할_수_없다() {
+		// 경쟁사 게시물은 캠페인에도 못 붙는데(v2 §3-3) 직접 등록만 열려 있으면, 등록으로 레거시
+		// 아이템을 만들어 캠페인 차단을 우회할 수 있다 — 등록 자체를 막는 게 정본이다.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(BrandAccountType.COMPETITOR)));
+
+		assertThatThrownBy(() -> service.register(7L, 100L, List.of(URL_ABC), 30, null))
+				.isInstanceOf(V1ApiException.class)
+				.hasMessage("경쟁사 계정의 게시물은 추적 등록할 수 없어요.")
+				.extracting(e -> ((V1ApiException) e).code())
+				.isEqualTo("COMPETITOR_ACCOUNT_NOT_ALLOWED");
+		// 소유 검증 단계에서 끊긴다 — 레거시 등록도 매핑도 만들지 않는다.
+		then(legacyRegistration).should(never()).register(anyLong(), any());
+		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
+	}
+
+	@Test
+	void 내_브랜드_구독의_직접_등록은_그대로_통과한다() {
+		// 차단은 competitor 한정이다 — own 구독(기존 연결 전량의 백필 값)의 흐름은 손대지 않는다.
+		ownedBrand();
+		tagged();
+		directMappings();
+		given(legacyRegistration.register(eq(7L), anyMap()))
+				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
+		given(registrationRepository.findById(55L))
+				.willReturn(Optional.of(registration(7L, entry(0, URL_DEF, "pending", null, null, 301L))));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_DEF), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		then(directPostRepository).should().upsert(7L, 100L, "DEF", 301L);
+	}
+
+	@Test
 	void 게시물이_비면_400이다() {
 		ownedBrand();
 
@@ -407,7 +441,11 @@ class V1BrandDirectPostServiceTest {
 	}
 
 	private static BrandLinkRow link() {
-		return new BrandLinkRow(1L, 7L, 100L, "lizda_official",
+		return link(BrandAccountType.OWN);
+	}
+
+	private static BrandLinkRow link(String accountType) {
+		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 

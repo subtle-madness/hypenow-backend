@@ -7,7 +7,7 @@
 ## 내용
 
 운영팀이 어드민에서 작성한 제품 업데이트 소식을 유저 대시보드 사이드바 패널에 서빙한다 —
-설계: [specs/2026-08-03-product-notices-design.md](../superpowers/specs/2026-08-03-product-notices-design.md) ·
+설계: [specs/2026-08-03-product-notices-design.md](../superpowers/specs/archive/2026-08-03-product-notices-design.md) ·
 구현 계획: [plans/archive/2026-08-03-product-notices-api.md](../superpowers/plans/archive/2026-08-03-product-notices-api.md)
 
 ## 엔드포인트
@@ -50,5 +50,5 @@ body null · publishedAt 형식 불량 · **items 배열의 null 원소**(리뷰
 
 ## 관련 문서
 
-- [specs/2026-08-03-product-notices-design.md](../superpowers/specs/2026-08-03-product-notices-design.md)
+- [specs/2026-08-03-product-notices-design.md](../superpowers/specs/archive/2026-08-03-product-notices-design.md)
 - [plans/archive/2026-08-03-product-notices-api.md](../superpowers/plans/archive/2026-08-03-product-notices-api.md)

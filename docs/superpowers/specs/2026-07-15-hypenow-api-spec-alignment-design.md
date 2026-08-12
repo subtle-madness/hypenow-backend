@@ -1,7 +1,7 @@
 # HypeNow API 스펙 정렬 설계 (프론트 계약 v1 채택)
 
 > 상태: 🟢 활성
-> 6.17 이메일 인증 [TBD]는 [2026-07-18-email-verification-design.md](2026-07-18-email-verification-design.md)로 해소(07-19 구현)
+> 6.17 이메일 인증 [TBD]는 [2026-07-18-email-verification-design.md](archive/2026-07-18-email-verification-design.md)로 해소(07-19 구현)
 > 작성: 2026-07-15 · 근거: 프론트 전달 API 스펙 v1(노션 "hypenow API 문서", 2026-07-15) + 백엔드 현황 대조
 
 ## 1. 배경과 결정

@@ -1,6 +1,11 @@
 package com.celfit.was.auth;
 
+import com.celfit.was.archive.ArchiveReason;
+import com.celfit.was.archive.ArchiveTable;
+import com.celfit.was.archive.ArchiveTables;
+import com.celfit.was.archive.ArchiveWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,9 +31,11 @@ public class UserRepository {
 			"phone_country_code", "phone_number", "company_name", "agreed_marketing");
 
 	private final JdbcClient jdbcClient;
+	private final ArchiveWriter archiveWriter;
 
-	public UserRepository(JdbcClient jdbcClient) {
+	public UserRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
 		this.jdbcClient = jdbcClient;
+		this.archiveWriter = archiveWriter;
 	}
 
 	/** 중복 이메일이면 DataIntegrityViolationException(구현체: DuplicateKeyException) — app.users.email UNIQUE 제약. */
@@ -154,14 +161,50 @@ public class UserRepository {
 	}
 
 	/**
-	 * 탈퇴(스펙 6.13) — saved 2종은 users FK가 CASCADE가 아니라 자식부터 순서 삭제, 한 트랜잭션.
-	 * 세션 무효화·이미지 파일 정리는 DB 밖 자원이라 호출부가 커밋 후에 수행한다.
+	 * 탈퇴(스펙 6.13) — saved 2종·brand_direct_posts는 users FK가 CASCADE가 아니거나(saved 2종)
+	 * CASCADE 순서를 코드로 통제해야 해서(brand_direct_posts, 아래 참고) 자식부터 순서 삭제,
+	 * 한 트랜잭션. 세션 무효화·이미지 파일 정리는 DB 밖 자원이라 호출부가 커밋 후에 수행한다.
+	 *
+	 * <p>삭제 전 원본 행을 전부 아카이브한다(트랙 NN). CASCADE(V16)로 사라지는 자식과
+	 * registrations를 거치는 간접 CASCADE(entries)까지 ArchiveTables.ACCOUNT_DELETION_ORDER가
+	 * 전부 담고 있다 — 새 자식 테이블이 생기면 ArchiveCascadeReachabilityTest가 CI에서 막는다.
+	 *
+	 * <p>brand_direct_posts는 users CASCADE 대상이지만 monitoring_item_id FK가 CASCADE가 아니다
+	 * (V20260811090500 — ArchiveTables.BRAND_DIRECT_POSTS 참고). users delete가 monitoring_items도
+	 * 함께 CASCADE로 지우므로, brand_direct_posts를 먼저 명시 삭제해두지 않으면 그 시점에 남아있는
+	 * 매핑 행이 FK 위반을 낸다 — saved 2종과 같은 이유로 순서 삭제 목록에 있다.
 	 */
 	@Transactional
 	public void deleteAccount(long id) {
-		jdbcClient.sql("DELETE FROM app.saved_contents WHERE user_id = :id").param("id", id).update();
-		jdbcClient.sql("DELETE FROM app.saved_influencers WHERE user_id = :id").param("id", id).update();
-		jdbcClient.sql("DELETE FROM app.users WHERE id = :id").param("id", id).update();
+		Map<ArchiveTable, Integer> archived = new HashMap<>();
+		for (ArchiveTable table : ArchiveTables.ACCOUNT_DELETION_ORDER) {
+			archived.put(table, archiveWriter.archiveUserScope(table, ArchiveReason.ACCOUNT_DELETION, id));
+		}
+		deleteAndVerify(ArchiveTables.SAVED_CONTENTS, archived,
+				"DELETE FROM app.saved_contents WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.SAVED_INFLUENCERS, archived,
+				"DELETE FROM app.saved_influencers WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.BRAND_DIRECT_POSTS, archived,
+				"DELETE FROM app.brand_direct_posts WHERE user_id = :id", id);
+		deleteAndVerify(ArchiveTables.USERS, archived,
+				"DELETE FROM app.users WHERE id = :id", id);
+	}
+
+	/**
+	 * CASCADE로 사라지는 자식 8종(campaigns·items·registrations·digests·email_opt_outs·
+	 * registration_entries·notice_seen·brand_monitorings)은 DB가 지우므로 삭제 건수를 관측할 수
+	 * 없다 — 코드가 직접 DELETE하는 4개(saved 2종·brand_direct_posts·users)만 이관 건수와 대조한다.
+	 */
+	private void deleteAndVerify(ArchiveTable table, Map<ArchiveTable, Integer> archived, String sql, long id) {
+		Integer archivedCount = archived.get(table);
+		if (archivedCount == null) {
+			// ACCOUNT_DELETION_ORDER에서 항목이 빠졌는데 deleteAndVerify 호출부에는 남아있는 경우 —
+			// int 언박싱 NPE로 원인 불명 스택트레이스를 던지는 대신 무엇이 어긋났는지 바로 말한다.
+			throw new IllegalStateException(
+					"이관 목록(ACCOUNT_DELETION_ORDER)에 없는 테이블: " + table.qualifiedName());
+		}
+		int deleted = jdbcClient.sql(sql).param("id", id).update();
+		archiveWriter.verifyMatched(table, archivedCount, deleted);
 	}
 
 	public Optional<AppUser> findByEmail(String email) {

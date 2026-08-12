@@ -1,6 +1,6 @@
 # Y — 성과 요약 통계 왜곡 가드
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: C2, Q
 - **상태**: ✅ 운영 배포 완료(main `5aa340cc`, CD 성공·뷰 적용·미러 완료). 운영 실측(계정 7,033): 창 90일 초과 2,426건(34.5%)·조회수 표본 ≤2 1,965건(27.9%)·top1 점유율 ≥75% 1,299건(18.5%)·`median_views` NULL 1,019건(14.5%). 재생성 대상 7,033건(`copy_version` 게이트 단독)은 즉시 트리거하지 않고 새벽 정기 배치 대기 — `AccountAnalysisJob` 스케줄 실측 완료(cron `0 0 22 * * *`=UTC 22:00=KST 07:00, 운영 컨테이너 env 확인, batch-limit 운영값 30000으로 상한 문제 없음) → 오늘 밤(07-31 새벽 KST 07:00) 전량 자동 처리 예정
 

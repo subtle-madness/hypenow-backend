@@ -71,6 +71,7 @@ class BrandCollectServiceTest {
 	private final Set<String> failingAuthorIds = new HashSet<>();
 	private boolean tagNotFound = false;
 	private boolean brandProfileFails = false;
+	private boolean commentPage2Fails = false;
 	private int tagCall = 0;
 
 	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null);
@@ -265,6 +266,15 @@ class BrandCollectServiceTest {
 						.formatted(id, id);
 			}
 			if (path.startsWith("/v2/media/comments")) {
+				if (commentPage2Fails) {
+					if (path.contains("page_id=")) {
+						throw new HikerFetchException("Hiker HTTP 500: 순간 과부하");
+					}
+					return """
+							{"response":{"comments":[{"pk":"nc1","text":"새 댓글","comment_like_count":1,
+							"created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}]},
+							"next_page_id":"cmt-cursor-2"}""";
+				}
 				return """
 						{"response":{"comments":[{"pk":"nc1","text":"새 댓글","comment_like_count":1,
 						"created_at_utc":1700000000,"user":{"username":"fan"},"preview_child_comments":[]}]},
@@ -641,6 +651,23 @@ class BrandCollectServiceTest {
 				.containsEntry("Grown", 7L)
 				.containsEntry("FreshD", 2L)
 				.containsEntry("SameCnt", 5L);
+	}
+
+	/**
+	 * 댓글 부분 보존(08-10) — 중간 페이지 실패 시 받은 페이지분은 upsert하되 워터마크는 올리지
+	 * 않는다. 워터마크가 그대로면 다음 스윕 게이트(comment_count > 저장값)가 다시 열리고,
+	 * 기지 댓글 페이지 중단이 재수집 비용을 막는다. (운영 실측 08-10: 브랜드 17 첫 백필에서
+	 * 중간 실패 24게시물이 받은 댓글까지 전량 폐기 — 이 테스트가 그 재발 방지다.)
+	 */
+	@Test
+	void 댓글_중간_페이지_실패는_받은_만큼_저장하고_워터마크는_유지한다() {
+		commentPage2Fails = true;
+		tagPages.add(page(null, reel("Partial", RECENT, 30, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(comments.upserted).containsExactly("Partial");        // 1페이지분은 저장
+		assertThat(tagged.collectedCounts.get("Partial")).isNull();      // 워터마크 유지 → 다음 스윕 재시도
 	}
 
 	// ── 보강 병렬화(동시 6 — 2026-08-07 스펙) ────────────────────────────────

@@ -1,6 +1,9 @@
 package com.celfit.was.v1.perfdashboard;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -17,8 +20,10 @@ import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformanceIte
 import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformancePostResponse;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -43,6 +48,9 @@ class V1PerformanceDashboardControllerTest {
 	@MockitoBean
 	PerformanceContentAssembler assembler;
 
+	@MockitoBean
+	PerformanceComparisonAssembler comparisonAssembler;
+
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
@@ -50,8 +58,13 @@ class V1PerformanceDashboardControllerTest {
 
 	/** 어셈블러 스텁 — 전량(필터 전)을 준다. 수집 시각은 KST 2026-08-08T03:00:00로 고정. */
 	private void givenAssembled(PerformanceContentResponse... contents) {
+		givenAssembled(Set.of(), contents);
+	}
+
+	/** 경쟁사 집합까지 주는 스텁(08-12) — accountType 필터의 판정 근거다. */
+	private void givenAssembled(Set<String> competitorBrandAccountIds, PerformanceContentResponse... contents) {
 		given(assembler.assemble(7L)).willReturn(new PerformanceContentAssembler.Assembled(
-				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z")));
+				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds));
 	}
 
 	// ---------- statusCounts ----------
@@ -65,7 +78,8 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.data[0].item.id").value("1"))
 				.andExpect(jsonPath("$.meta.total").value(1))
-				.andExpect(jsonPath("$.meta.limit").value(250))
+				// 250건 상한 철폐(08-10) — limit은 형태 호환용으로 남고 반환 건수와 같다.
+				.andExpect(jsonPath("$.meta.limit").value(1))
 				.andExpect(jsonPath("$.meta.lastCollectedAt").value("2026-08-08T03:00:00+09:00"))
 				// 기간 필터는 statusCounts에 적용되지 않는다(스펙 §7-1) — 2건 그대로.
 				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(2));
@@ -75,7 +89,7 @@ class V1PerformanceDashboardControllerTest {
 	void 상태_7종_키가_항상_전부_존재한다() throws Exception {
 		// 0건 + 수집 이력 없음(브랜드 연동 전 신규 유저) — 가장 빈 응답에서도 키셋이 온전해야 한다.
 		given(assembler.assemble(7L))
-				.willReturn(new PerformanceContentAssembler.Assembled(List.of(), null));
+				.willReturn(new PerformanceContentAssembler.Assembled(List.of(), null, Set.of()));
 
 		mockMvc.perform(get(CONTENTS).with(user(principal())))
 				.andExpect(status().isOk())
@@ -231,6 +245,109 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.meta.total").value(2));
 	}
 
+	// ---------- accountType(08-12) ----------
+
+	/**
+	 * accountType 판정용 3종 픽스처 — own 브랜드(10)·경쟁사(11)·브랜드 미귀속 개인 추적(null).
+	 * 경쟁사 집합은 {@code {"11"}}이라 콘텐츠 11번만 경쟁사 소속이다.
+	 */
+	private void givenOwnCompetitorIndividual() {
+		givenAssembled(Set.of("11"),
+				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "10"),
+				content("11", "SC11", "tracking", "2026-08-05", "tagged", "unknown", null, "11"),
+				content("3", "SC3", "tracking", "2026-08-04", "individual", "unknown", null, null));
+	}
+
+	@Test
+	void contents_기본은_경쟁사만_제외하고_개인추적은_포함한다() throws Exception {
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS).with(user(principal())))
+				.andExpect(status().isOk())
+				// 미지정 = 전량(3)도 아니고 "own 브랜드만"(1)도 아니다 — 경쟁사만 뺀 2건.
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "3")))
+				.andExpect(jsonPath("$.data[?(@.brandAccountId == '11')]").doesNotExist())
+				// 분류 필터라 statusCounts 모수에도 적용된다(스펙 §5).
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(2));
+	}
+
+	@Test
+	void contents_accountType_own은_미지정과_같다() throws Exception {
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?accountType=own").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "3")));
+	}
+
+	@Test
+	void contents_accountType_competitor는_경쟁사만_돌려준다() throws Exception {
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?accountType=competitor").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].brandAccountId").value("11"))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1));
+	}
+
+	@Test
+	void contents_accountType_all은_전부_돌려주고_statusCounts_모수도_같다() throws Exception {
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?accountType=all").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(3))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(3));
+	}
+
+	@Test
+	void contents_경쟁사_brandAccountId만_주면_그_브랜드_콘텐츠가_나온다() throws Exception {
+		// brandAccountId 명시 = accountType=all 함의(08-12 리뷰). 함의가 없으면 기본값(경쟁사 제외)과
+		// 서로를 상쇄해 오류도 힌트도 없이 빈 data + 전 상태 0이 돌아온다 — 브랜드 칩이 경쟁사까지
+		// 내려주는데 /comparison은 같은 계정 막대를 그리므로 두 표면이 어긋나는 자리다.
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?brandAccountId=11").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].brandAccountId").value("11"))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1));
+	}
+
+	@Test
+	void contents_brandAccountId에_accountType을_명시하면_명시값이_이긴다() throws Exception {
+		// 함의는 미지정일 때만이다 — own을 명시했으면 "경쟁사 브랜드라 빈 결과"가 문자 그대로의 의미다.
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?brandAccountId=11&accountType=own").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(0));
+	}
+
+	@Test
+	void contents_brandAccountId_all은_함의를_켜지_않는다() throws Exception {
+		// FE의 "전체" 탭이 brandAccountId=all로 넘어와도 브랜드를 집어 물은 게 아니다 — 기본값(경쟁사 제외) 유지.
+		givenOwnCompetitorIndividual();
+
+		mockMvc.perform(get(CONTENTS + "?brandAccountId=all").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "3")));
+	}
+
+	@Test
+	void contents_값_공간_밖_accountType은_400이다() throws Exception {
+		mockMvc.perform(get(CONTENTS + "?accountType=rival").with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(assembler).should(never()).assemble(anyLong());
+	}
+
 	// ---------- 검증 ----------
 
 	@Test
@@ -306,6 +423,85 @@ class V1PerformanceDashboardControllerTest {
 		mockMvc.perform(get(CONTENTS + "/SC2?status=tracking").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.item.id").value("2"));
+	}
+
+	// ---------- comparison ----------
+
+	private static final String COMPARISON = "/v1/performance-dashboard/comparison";
+
+	@Test
+	void comparison은_분류_필터를_걸어_비교_어셈블러에_넘긴다() throws Exception {
+		givenAssembled(
+				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
+				content("2", "SC2", "tracking", "2026-08-06", "tagged", "sponsored", null, "100"));
+		given(comparisonAssembler.assemble(eq(7L), anyList())).willReturn(
+				new PerformanceComparisonResponse(List.of(
+						new PerformanceComparisonResponse.AccountComparison("100", "cclime.beauty", "own",
+								"2026-05-14T09:12:00+09:00", List.of(
+										new PerformanceComparisonResponse.Bucket("1w", true, 1,
+												null, 5L, 2L, 1000L, 1, 0, 0))))));
+
+		mockMvc.perform(get(COMPARISON + "?source=tagged").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(1))
+				.andExpect(jsonPath("$.data.accounts[0].brandAccountId").value("100"))
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0].key").value("1w"))
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0].covered").value(true))
+				// null 합은 키를 유지한 명시적 null이다(계약 무결성 #1 — FE 규칙 ③).
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0]", Matchers.hasKey("views")))
+				.andExpect(jsonPath("$.data.accounts[0].buckets[0].views").value(Matchers.nullValue()));
+
+		// source=tagged 필터가 비교 모수에 적용됐는지 — individual 1건이 걸러져 tagged만 남아야 한다.
+		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
+		assertThat(captor.getValue()).hasSize(1);
+		assertThat(captor.getValue().get(0).source()).isEqualTo("tagged");
+	}
+
+	@Test
+	void comparison은_허용_값_밖_필터에_400이다() throws Exception {
+		mockMvc.perform(get(COMPARISON + "?source=banana").with(user(principal())))
+				.andExpect(status().isBadRequest());
+		then(comparisonAssembler).should(never()).assemble(anyLong(), anyList());
+	}
+
+	@Test
+	void comparison은_campaignId_none을_캠페인_없음으로_거른다() throws Exception {
+		givenAssembled(
+				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", "c-1", "100"),
+				content("2", "SC2", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
+		given(comparisonAssembler.assemble(eq(7L), anyList()))
+				.willReturn(new PerformanceComparisonResponse(List.of()));
+
+		mockMvc.perform(get(COMPARISON + "?campaignId=none").with(user(principal())))
+				.andExpect(status().isOk());
+
+		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
+		assertThat(captor.getValue()).hasSize(1);
+		assertThat(captor.getValue().get(0).item().campaignId()).isNull();
+	}
+
+	@Test
+	void comparison은_계정별_accountType을_내리고_경쟁사도_포함한다() throws Exception {
+		givenOwnCompetitorIndividual();
+		given(comparisonAssembler.assemble(eq(7L), anyList())).willReturn(
+				new PerformanceComparisonResponse(List.of(
+						new PerformanceComparisonResponse.AccountComparison("10", "cclime.beauty", "own",
+								"2026-05-14T09:12:00+09:00", List.of()),
+						new PerformanceComparisonResponse.AccountComparison("11", "laperi_kr", "competitor",
+								"2026-06-01T09:00:00+09:00", List.of()))));
+
+		mockMvc.perform(get(COMPARISON).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(2))
+				.andExpect(jsonPath("$.data.accounts[0].accountType").value("own"))
+				.andExpect(jsonPath("$.data.accounts[1].accountType").value("competitor"));
+
+		// 비교 화면엔 accountType 필터가 없다 — 경쟁사 콘텐츠도 모수에 그대로 들어간다(스펙 §6).
+		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
+		assertThat(captor.getValue()).hasSize(3);
 	}
 
 	// ---------- 픽스처 ----------

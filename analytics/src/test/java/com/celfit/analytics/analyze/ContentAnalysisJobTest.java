@@ -7,13 +7,17 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.celfit.analytics.config.AnalyticsSettings;
+import com.celfit.analytics.llm.BeautyTaxonomyLoader;
 import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentInsightPort;
 import com.celfit.analytics.llm.ContentToAnalyze;
+import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.llm.Synthesis;
 import com.celfit.analytics.testsupport.TestDb;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +25,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 콘텐츠 분석 배치 계약 케이스:
@@ -41,6 +47,39 @@ class ContentAnalysisJobTest {
 	ContentAnalysisJob job;
 	List<ContentToAnalyze> insightCalls;
 	List<String> thumbnailArgs; // 통합 콜에 전달된 thumbnailUrl (null = 캡션만)
+	ObjectMapper om = new ObjectMapper();
+
+	/** fake GeminiBatchApi — 배치 제출 경로 검증용. uploads/createdBatches에 호출 인자를 기록. */
+	List<byte[]> batchUploads;
+	List<String> batchCreated;
+
+	GeminiBatchApi fakeBatchApi() {
+		return new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				batchUploads.add(jsonl);
+				return "files/f1";
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				batchCreated.add(model + "|" + inputFileName);
+				return "batches/b1";
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				// content_batch_jobs가 비어있으면(테스트 시작 상태) 제출 전 스윕이 조회하지 않는다 —
+				// 그래도 방어적으로 실행 중 상태를 돌려줘 결과 다운로드까지 가지 않게 한다.
+				return "{\"metadata\":{\"state\":\"JOB_STATE_RUNNING\"}}";
+			}
+
+			@Override
+			public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
+				throw new IllegalStateException("제출 테스트에서는 호출되면 안 됨");
+			}
+		};
+	}
 
 	/** fake ContentInsightPort: 호출·썸네일 인자 기록 + 고정 응답(속성+종합 합본). */
 	ContentInsightPort fakeInsightPort() {
@@ -66,6 +105,21 @@ class ContentAnalysisJobTest {
 				thumbnailEnabled, thumbnailAlive, ProgressReporter.NOOP, ProgressReporter.NOOP);
 	}
 
+	/** 배치 전송 경로로 재배선 — batchApi=null이면 배치 미지원(온라인 폴백) 재현용. */
+	void rewireJobWithBatch(ContentInsightPort port, GeminiBatchApi batchApi) {
+		rewireJobWithBatch(port, batchApi, false);
+	}
+
+	void rewireJobWithBatch(ContentInsightPort port, GeminiBatchApi batchApi, boolean thumbnailEnabled) {
+		job = new ContentAnalysisJob(db, ds, port, new AnalyticsSettings(db),
+				thumbnailEnabled, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP,
+				batchApi, new BeautyTaxonomyLoader(ds));
+	}
+
+	void enableBatchTransport() {
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-transport', 'batch')");
+	}
+
 	/** insightCalls/thumbnailArgs 호출 순서를 단언하는 테스트 전용 — 병렬 처리(기본 concurrency=8)에서는
 	 * 완료 순서가 섞이므로 concurrency=1로 고정해 순차 처리를 강제한다. */
 	void pinSequentialConcurrency() {
@@ -81,6 +135,8 @@ class ContentAnalysisJobTest {
 		// 최소한 손실·손상 없이 안전하게 누적되게 한다 (2026-07-24 레이스 컨디션 수정).
 		insightCalls = java.util.Collections.synchronizedList(new ArrayList<>());
 		thumbnailArgs = java.util.Collections.synchronizedList(new ArrayList<>());
+		batchUploads = new ArrayList<>();
+		batchCreated = new ArrayList<>();
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
 		TestDb.resetAndMigrate(db, ds);
 
@@ -460,6 +516,132 @@ class ContentAnalysisJobTest {
 
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-concurrency', '3')");
 		assertEquals(3, settings.analyzeConcurrency());
+	}
+
+	@Test
+	void 전송_방식_기본은_online이고_app_setting으로_batch_전환된다() {
+		AnalyticsSettings settings = new AnalyticsSettings(db);
+		assertEquals("online", settings.analyzeTransport());
+
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-transport', 'batch')");
+		assertEquals("batch", settings.analyzeTransport());
+	}
+
+	@Test
+	void 전송_방식_batch면_온라인_호출_없이_배치로_제출되고_pending_행이_기록된다() {
+		enableBatchTransport();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+
+		JobResult result = job.run();
+
+		assertTrue(insightCalls.isEmpty()); // ContentInsightPort(온라인 콜)는 한 번도 안 탄다
+		assertEquals(1, batchUploads.size());
+		assertEquals(1, batchCreated.size());
+		assertEquals(2, result.processed()); // post_a·post_b 제출 — post_c는 댓글 미분류 게이트로 제외
+		assertEquals(0, result.failed());
+
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
+		Map<String, Object> row = db.queryForMap("SELECT * FROM content_batch_jobs");
+		assertEquals("batches/b1", row.get("batch_name"));
+		assertEquals(Boolean.TRUE, row.get("timely"));
+		assertEquals(2, row.get("submitted_count"));
+		assertEquals("pending", row.get("status"));
+		// 사이드카는 로컬 파일이 아니라 DB 컬럼에 저장된다(analytics 컨테이너 무볼륨 대응, 2026-08-11
+		// 리뷰 반영) — post_a·post_b 두 short_code 행이 JSONL 2줄로 실려 있어야 한다.
+		String sidecarJsonl = (String) row.get("sidecar_jsonl");
+		assertTrue(sidecarJsonl != null && !sidecarJsonl.isBlank());
+		assertTrue(sidecarJsonl.contains("\"post_a\""));
+		assertTrue(sidecarJsonl.contains("\"post_b\""));
+		// 수거 전이므로 content_analyses는 아직 비어 있다
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void 배치_제출도_3종_제외_게이트가_동일_적용된다() {
+		enableBatchTransport();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+
+		job.run();
+
+		String jsonl = new String(batchUploads.get(0), StandardCharsets.UTF_8);
+		List<String> keys = new ArrayList<>();
+		for (String line : jsonl.strip().split("\n")) {
+			keys.add(om.readTree(line).path("key").asString());
+		}
+		// post_c(댓글 있는데 미분류)는 온라인 경로와 동일하게 제외 — 수집 최신순은 post_b, post_a
+		assertEquals(List.of("post_b", "post_a"), keys);
+	}
+
+	@Test
+	void 배치_제출_JSONL은_댓글_분류_분포를_실제로_싣는다() {
+		// 온라인 경로(analyzeOne)와 동일하게 shortCode별 comment_classifications 집계를 실어야
+		// 프롬프트의 aiCommentInsight 근거가 온라인·배치 양쪽에서 갈리지 않는다(2026-08-11 리뷰 반영
+		// 전에는 GeminiBatchLines.requestLine 내부가 항상 Map.of()로 비워 보내고 있었다).
+		enableBatchTransport();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+
+		job.run();
+
+		String jsonl = new String(batchUploads.get(0), StandardCharsets.UTF_8);
+		String[] lines = jsonl.strip().split("\n");
+		// 수집 최신순: post_b(댓글 없음) → post_a(purchase 1건·positive 1건, setUp 픽스처)
+		String postALine = lines[1];
+		JsonNode postA = om.readTree(postALine);
+		assertEquals("post_a", postA.path("key").asString());
+		String userText = postA.path("request").path("contents").get(0).path("parts").get(0).path("text").asString();
+		assertTrue(userText.contains("purchase=1"));
+		assertTrue(userText.contains("positive=1"));
+		// 댓글이 없는 post_b는 빈 분포({})가 정상 — 게이트 통과 대상이라 조회 자체는 동일하게 수행된다
+		JsonNode postB = om.readTree(lines[0]);
+		assertEquals("post_b", postB.path("key").asString());
+		String postBText = postB.path("request").path("contents").get(0).path("parts").get(0).path("text").asString();
+		assertTrue(postBText.contains("댓글 분류 분포: {}"));
+	}
+
+	@Test
+	void late_backfill도_배치_전송이_적용되고_timely_false로_기록된다() {
+		db.update("UPDATE analytics.candidates_fixture SET timely = false WHERE short_code = 'post_a'");
+		enableBatchTransport();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+
+		JobResult result = job.runLateBackfill();
+
+		assertEquals(1, result.processed()); // post_a만(post_b는 여전히 timely=true라 이 진입점 대상이 아님)
+		Map<String, Object> row = db.queryForMap("SELECT * FROM content_batch_jobs");
+		assertEquals(Boolean.FALSE, row.get("timely"));
+	}
+
+	@Test
+	void 배치_전송_설정인데_GeminiApi가_배치_미지원이면_온라인으로_폴백한다() {
+		enableBatchTransport();
+		rewireJobWithBatch(fakeInsightPort(), null); // batchApi=null — 무료 gemini 폴백 상태 재현
+
+		int processed = job.run().processed();
+
+		assertEquals(2, processed);
+		assertEquals(2, insightCalls.size()); // 온라인 경로가 정상 동작
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void vlm_enabled인데_배치_전송이면_온라인으로_폴백해_썸네일이_보존된다() {
+		// 배치 JSONL은 캡션 전용(썸네일 미첨부)이라 vlm-enabled=true와 양립하지 않는다 — 배치로
+		// 내려가면 조용히 이미지 없이 분석돼 온라인과 산출물이 갈리므로, batchApi가 정상이어도
+		// 온라인으로 폴백해 멀티모달 분석을 보존해야 한다(2026-08-11 리뷰 반영).
+		enableBatchTransport();
+		pinSequentialConcurrency();
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi(), true);
+
+		int processed = job.run().processed();
+
+		assertEquals(2, processed);
+		assertEquals(2, insightCalls.size()); // 온라인 경로가 정상 동작
+		assertEquals(0, batchUploads.size()); // 배치 제출은 시도되지 않는다
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+		// 온라인 경로이므로 썸네일 게이트가 살아있어 생존 썸네일이 실제로 첨부된다(회귀 방지)
+		assertEquals(List.of("https://img/b.jpg", "https://img/a.jpg"), thumbnailArgs);
 	}
 
 	@Test

@@ -57,13 +57,11 @@ public class PostThumbnailArchiveJob {
 				""", (rs, i) -> new Candidate(rs.getString("short_code"), rs.getString("thumbnail_url"),
 				rs.getString("image_object_path"), rs.getString("image_source_name")));
 
-		boolean carriedOver = candidates.size() > batchLimit;
-		List<Candidate> batch = carriedOver ? candidates.subList(0, batchLimit) : candidates;
-
 		int archived = 0;
 		int skipped = 0;
 		int failed = 0;
-		for (Candidate c : batch) {
+		int deferred = 0;
+		for (Candidate c : candidates) {
 			String sourceName;
 			try {
 				sourceName = sourceName(c.thumbnailUrl());
@@ -77,7 +75,11 @@ public class PostThumbnailArchiveJob {
 				continue;
 			}
 			if (c.imageObjectPath() != null && sourceName.equals(c.imageSourceName())) {
-				skipped++;   // 파일명 미변경 — 재다운로드 불필요.
+				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
+				continue;
+			}
+			if (archived + failed >= batchLimit) {
+				deferred++;   // 다운로드 예산 소진 — 다음 스윕으로 이월.
 				continue;
 			}
 			try {
@@ -97,8 +99,7 @@ public class PostThumbnailArchiveJob {
 			}
 		}
 		log.info("게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건{}",
-				archived, skipped, failed,
-				carriedOver ? ", 잔여 " + (candidates.size() - batch.size()) + "건 이월" : "");
+				archived, skipped, failed, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
 	}
 
 	/**

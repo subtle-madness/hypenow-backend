@@ -1,6 +1,6 @@
 # 뷰티 판정 + 유사 계정 발굴 구현 계획
 
-> 상태: ✅ 구현됨 — 배치 상한 500(`crawler.beauty.batch-limit`) 안전장치 실제 반영. 스펙: [specs/2026-07-15-beauty-similar-discovery-design.md](../../specs/2026-07-15-beauty-similar-discovery-design.md)
+> 상태: ✅ 구현됨 — 배치 상한 500(`crawler.beauty.batch-limit`) 안전장치 실제 반영. 스펙: [specs/2026-07-15-beauty-similar-discovery-design.md](../../specs/archive/2026-07-15-beauty-similar-discovery-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

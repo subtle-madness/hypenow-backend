@@ -1,6 +1,6 @@
 # DirectCommentFetcher 구현 계획
 
-> 상태: ✅ 구현됨 · ⏸ 운영 비활성 — 댓글 수집 자체가 MVP 제외(07-14)로 `crawler.collect.comments-enabled=false`(재개 여부 미결). 스펙: [specs/2026-07-09-direct-comment-fetcher-design.md](../../specs/2026-07-09-direct-comment-fetcher-design.md)
+> 상태: ✅ 구현됨 · ⏸ 운영 비활성 — 댓글 수집 자체가 MVP 제외(07-14)로 `crawler.collect.comments-enabled=false`(재개 여부 미결). 스펙: [specs/2026-07-09-direct-comment-fetcher-design.md](../../specs/archive/2026-07-09-direct-comment-fetcher-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

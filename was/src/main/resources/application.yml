@@ -60,5 +60,16 @@ was:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:
     dir: ./data/profile-images          # 프로필 이미지 저장 디렉토리 — /profile-images/** 로 정적 서빙
+# API 성능 측정(스펙 2026-08-10) — 노출은 health·prometheus만. 운영은 application-prod.yml이
+# 관리 포트를 9081로 분리해 내부망 전용(Caddy 라우팅 없음), 로컬·테스트는 메인 포트에 그대로 노출.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # uri별 p95/p99를 Prometheus 쪽에서 histogram_quantile로 산출
 monitoring:
   enabled: false   # true면 monitoring.datasource.*(읽기 전용 계정) 필수, monitoring.api.base-url은 기본값 http://monitoring:8083(계약 §1) — 계약: docs/contracts/monitoring-was-contract.md

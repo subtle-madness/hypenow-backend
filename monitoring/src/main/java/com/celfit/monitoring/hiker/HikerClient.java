@@ -236,6 +236,33 @@ public class HikerClient {
 		return new TaggedPage(posts, cursor);
 	}
 
+	/** 해시태그 recent 스트림 게시물 + 사진 태그된 계정 목록(소문자 정규화). */
+	public record HashtagPost(PostInfo post, List<String> taggedUsernames) {}
+
+	public record HashtagPage(List<HashtagPost> posts, String nextPageId) {}
+
+	/**
+	 * 해시태그 recent 열거 1페이지(스펙 2026-08-11 §3) — 섹션 셰이프
+	 * {response:{sections:[{layout_content:{medias:[{media}]}}]}}를 우선 파싱하고,
+	 * 평탄 items 셰이프는 폴백. usertags는 직접태그 제외 판정 재료(추가 콜 없음).
+	 */
+	public HashtagPage fetchHashtagRecentPage(String tag, String pageId) {
+		String body;
+		try {
+			body = http.get("/v2/hashtag/medias/recent?name=" + enc(tag) + pageParam(pageId));
+		} catch (SubjectNotFoundException e) {
+			log.info("해시태그 열거 404 — tag {} page_id {}, 게시물 없음/커서 종료로 간주", tag, pageId);
+			return new HashtagPage(List.of(), null);
+		}
+		JsonNode root = root(body);
+		List<HashtagPost> posts = new ArrayList<>();
+		for (JsonNode item : hashtagItems(root)) {
+			posts.add(new HashtagPost(toPost(item, null, body, Map.of(), true), taggedUsernames(item)));
+		}
+		String cursor = moreAvailable(root) ? nextPageId(root) : null;
+		return new HashtagPage(posts, cursor);
+	}
+
 	public PostInfo fetchPost(String shortCode) {
 		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
 		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
@@ -256,11 +283,18 @@ public class HikerClient {
 	}
 
 	/**
+	 * 댓글 수집 결과 — complete=false면 중간 페이지 콜 실패로 뒤 페이지를 못 받은 부분 결과다.
+	 * 받은 페이지분은 그대로 저장 가능하지만, 브랜드 워터마크처럼 "이 게시물 댓글을 다 봤다"를
+	 * 전제하는 갱신은 하면 안 된다(다음 스윕이 재시도할 근거를 지운다).
+	 */
+	public record CommentsFetch(List<CommentInfo> comments, boolean complete) {}
+
+	/**
 	 * 추적 게시물 댓글 — /v2/media/comments?id=<media pk>(findings §10-1). media pk는 저장 없이
 	 * shortcode에서 산술 유도한다({@link ShortCodes}). 결손 필드(pk·text·좋아요·작성 시각·작성자) 댓글은
 	 * 저장 대상이 아니라 리스트에서 제외한다(계약 §3 post_comment).
 	 */
-	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages) {
+	public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
 		return fetchComments(shortCode, postUsername, pages, Set.of());
 	}
 
@@ -270,14 +304,27 @@ public class HikerClient {
 	 * (태그 스펙 §3). 정렬이 IG 랭킹 혼합이라 건 단위 중단은 신규를 놓칠 수 있어 페이지 단위로 본다.
 	 * 기지 댓글도 반환 목록에는 담는다(upsert가 body·like_count를 갱신).
 	 */
-	public List<CommentInfo> fetchComments(String shortCode, String postUsername, int pages,
+	public CommentsFetch fetchComments(String shortCode, String postUsername, int pages,
 			Set<String> knownCommentIds) {
 		int wanted = Math.max(1, pages);
 		long mediaId = ShortCodes.toMediaId(shortCode);
 		List<CommentInfo> out = new ArrayList<>();
 		String cursor = null;
 		for (int page = 0; page < wanted; page++) {
-			String body = http.get("/v2/media/comments?id=" + mediaId + pageParam(cursor));
+			String body;
+			try {
+				body = http.get("/v2/media/comments?id=" + mediaId + pageParam(cursor));
+			} catch (RuntimeException e) {
+				if (page == 0) {
+					throw e;   // 보존할 것이 없다 — 기존 실패 의미 유지(호출자 격리 catch가 처리)
+				}
+				// 중간 페이지 실패 — 받은 페이지분을 버리지 않는다(08-10 운영 실측: 첫 백필 병렬
+				// 부하에서 27건 수신 후 3페이지 실패로 전량 폐기 24게시물). 미완주 표시로 브랜드
+				// 워터마크 전진을 막아 다음 스윕이 재시도한다.
+				log.warn("댓글 {}페이지 실패 — 받은 {}건은 보존(미완주): media {} {}",
+						page + 1, out.size(), mediaId, e.toString());
+				return new CommentsFetch(out, false);
+			}
 			JsonNode root = root(body);
 			int before = out.size();
 			for (JsonNode c : root.path("response").path("comments")) {
@@ -305,7 +352,7 @@ public class HikerClient {
 				break;
 			}
 		}
-		return out;
+		return new CommentsFetch(out, true);
 	}
 
 	private static CommentInfo toComment(JsonNode c, String postUsername) {
@@ -410,6 +457,47 @@ public class HikerClient {
 			out.add(arr);
 		}
 		return out;
+	}
+
+	/**
+	 * 해시태그 recent 응답의 medias 노드 — sections→layout_content→medias→media 중첩을 걷는다.
+	 * 섹션에 medias가 하나도 없으면(미실측 셰이프 방어) 평탄 items 셰이프로 폴백한다.
+	 * {@link #items(JsonNode)}를 재사용하지 않는다 — 그쪽은 response 바로 아래 items/medias 배열
+	 * 1단만 언랩하고, 여기는 sections→layout_content를 두 겹 더 내려가야 media 노드에 닿는다.
+	 */
+	private static List<JsonNode> hashtagItems(JsonNode root) {
+		JsonNode res = root.has("response") ? root.path("response") : root;
+		List<JsonNode> out = new ArrayList<>();
+		for (JsonNode section : res.path("sections")) {
+			for (JsonNode media : section.path("layout_content").path("medias")) {
+				JsonNode m = media.path("media");
+				if (!m.isMissingNode() && !m.isNull()) {
+					out.add(m);
+				}
+			}
+		}
+		if (out.isEmpty()) {
+			for (JsonNode item : res.path("items")) {
+				out.add(item.has("media") ? item.path("media") : item);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * 사진 태그된(usertags) 계정 목록 — 소문자 정규화(직접태그 제외 판정 재료).
+	 * 같은 계정이 여러 태그 위치에 찍힐 수 있어(캐러셀 등) LinkedHashSet으로 중복을 접되
+	 * 응답 순서는 유지한다.
+	 */
+	private static List<String> taggedUsernames(JsonNode media) {
+		java.util.Set<String> out = new java.util.LinkedHashSet<>();
+		for (JsonNode in : media.path("usertags").path("in")) {
+			String username = in.path("user").path("username").asString(null);
+			if (username != null && !username.isBlank()) {
+				out.add(username.toLowerCase(java.util.Locale.ROOT));
+			}
+		}
+		return new ArrayList<>(out);
 	}
 
 	private static PostInfo toPost(JsonNode node, String usernameHint, String rawJson,

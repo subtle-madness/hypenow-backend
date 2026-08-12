@@ -5,6 +5,7 @@ import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandCallCountRepository;
+import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
@@ -54,33 +55,48 @@ public class BrandRegistrationService {
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
 	private final BrandCallCountRepository callCounts;
+	private final BrandHashtagRepository hashtags;
+	private final BrandHashtagCollectService hashtagCollect;
 	private final Executor backfill;
 	private final Executor enrich;
 
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
+			BrandHashtagRepository hashtags, BrandHashtagCollectService hashtagCollect,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
 			@Qualifier("brandEnrichExecutor") Executor enrich) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
 		this.callCounts = callCounts;
+		this.hashtags = hashtags;
+		this.hashtagCollect = hashtagCollect;
 		this.backfill = backfill;
 		this.enrich = enrich;
+	}
+
+	/** 기존 단일 인자 호출부용 위임 — brandName 미상(대행사 등록 등)은 계정명 유도 2종 태그만 시드한다. */
+	public Result register(String username) {
+		return register(username, null);
 	}
 
 	/**
 	 * 등록 — 활성 기존 행이면 replay(Hiker 콜 0 — was 재시도가 중복 등록을 만들지 않게 한다).
 	 * 프로필 콜이 계정 부재·비공개를 던지면 brand_account 행을 아예 만들지 않는다
 	 * (RegistrationService "수집이 먼저다" 관용구 — 예외는 ApiExceptionHandler가 매핑).
+	 *
+	 * <p>replay 경로에도 해시태그를 시드한다(스펙 §2) — 대행사가 브랜드명 없이 먼저 등록한 뒤
+	 * brand 유형 유저가 뒤늦게 같은 계정에 연결하면, 이번 호출의 brandName이 태그 셋에
+	 * 유니온된다(insertTags는 ON CONFLICT DO NOTHING이라 멱등).
 	 */
-	public Result register(String username) {
+	public Result register(String username, String brandName) {
 		if (username == null || username.isBlank()) {
 			throw new ValidationException("username은 필수다");
 		}
 		String normalized = username.strip();
 		var existing = brands.findByUsername(normalized);
 		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
+			seedHashtagsSafely(existing.get().id(), normalized, brandName);
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
@@ -89,8 +105,25 @@ public class BrandRegistrationService {
 		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
 		callCounts.add(id, LocalDate.now(KST), 1);
 		BrandRow row = brands.findByUsername(normalized).orElseThrow();
+		seedHashtagsSafely(id, normalized, brandName);
 		backfill.execute(() -> runBackfillSafely(row));
 		return new Result(id, normalized, profile.followers(), false);
+	}
+
+	/**
+	 * 태그 3종(브랜드명 미상 시 2종) + 기본 제외 문자열(계정명 루트) 시드 — 둘 다 멱등 삽입.
+	 * insertOrReactivate(이미 커밋됨)와 backfill.execute 사이 지점이라 실패를 격리한다 — 여기서
+	 * 던지면 백필이 영구 미예약되는데, 재시도는 replay 분기를 타서 복구할 수 없다(신규 등록
+	 * 자체는 이미 끝난 상태). 시드 실패의 실피해는 "해시태그 스윕이 태그 없음으로 조용히
+	 * 스킵"뿐이고 다음 replay 재등록이 재시드하므로, 등록·백필을 막지 않는 warn 격리가 맞다.
+	 */
+	private void seedHashtagsSafely(long brandId, String username, String brandName) {
+		try {
+			hashtags.insertTags(brandId, BrandHashtagTags.derive(brandName, username));
+			hashtags.insertDefaultExclusion(brandId, BrandHashtagTags.root(username));
+		} catch (RuntimeException e) {
+			log.warn("브랜드 해시태그 시드 실패(격리) — {} 다음 재등록이 재시드: {}", username, e.toString());
+		}
 	}
 
 	/**
@@ -102,7 +135,10 @@ public class BrandRegistrationService {
 		try {
 			List<PostInfo> posts = collect.sweepCore(row);
 			brands.touchSwept(row.id(), LocalDate.now(KST));
-			enrich.execute(() -> runEnrichSafely(row, posts));
+			enrich.execute(() -> {
+				runEnrichSafely(row, posts);
+				runHashtagBackfillSafely(row);
+			});
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
@@ -119,6 +155,18 @@ public class BrandRegistrationService {
 			collect.enrich(row, posts);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
+		}
+	}
+
+	/**
+	 * 등록 시 해시태그 첫 스윕 — 보강 뒤에 돌아 ready(~30초)에 영향 0. core는 이미 성공했으므로
+	 * 여기 실패는 backfill_error를 남기지 않는다(warn 로그만) — 다음 일일 스윕이 백스톱한다.
+	 */
+	private void runHashtagBackfillSafely(BrandRow row) {
+		try {
+			hashtagCollect.sweep(row);
+		} catch (RuntimeException e) {
+			log.warn("브랜드 등록 해시태그 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}
 	}
 

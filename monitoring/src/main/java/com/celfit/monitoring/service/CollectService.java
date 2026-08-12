@@ -1,6 +1,5 @@
 package com.celfit.monitoring.service;
 
-import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
@@ -423,7 +422,8 @@ public class CollectService {
 	}
 
 	private void collectComments(String shortCode, String postUsername, int pages) {
-		List<CommentInfo> fetched = hiker.fetchComments(shortCode, postUsername, pages);
-		comments.upsertForPost(shortCode, fetched);
+		// 중간 페이지 실패는 부분 결과로 돌아온다(HikerClient.CommentsFetch) — 캠페인 경로는
+		// 워터마크가 없어 받은 만큼 upsert하면 끝(누적 합집합이라 다음 스윕이 이어 붙인다).
+		comments.upsertForPost(shortCode, hiker.fetchComments(shortCode, postUsername, pages).comments());
 	}
 }

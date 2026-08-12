@@ -83,6 +83,23 @@ public class SecurityConfig {
 	}
 
 	/**
+	 * 액추에이터 체인(성능 측정 스펙 2026-08-10) — /actuator/**는 인증 없이 연다.
+	 * 운영은 관리 포트(9081)가 도커 내부망 전용이라 외부 노출이 없고(Caddy는 8081만 프록시),
+	 * 메인 포트(8081)의 /actuator/*는 관리 포트 분리 시 매핑 자체가 없어 404 — permitAll이어도
+	 * 내용이 새지 않는다. 세션·CSRF는 지표 스크레이프에 불필요해 전부 끈다.
+	 */
+	@Bean
+	@Order(-1)
+	public SecurityFilterChain actuatorFilterChain(HttpSecurity http) throws Exception {
+		http
+				.securityMatcher("/actuator/**")
+				.authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+				.csrf(AbstractHttpConfigurer::disable)
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+		return http.build();
+	}
+
+	/**
 	 * 가입 코드 API 체인(설계 2026-07-20, 07-23 확장) — 적재 POST에 더해 조회 GET(/admin/signups)·
 	 * 발송 표시 PATCH(/admin/signup-codes/{code})까지 정적 토큰(Bearer CODES_API_KEY)으로 잠근다.
 	 * 어드민 FE가 세션·Basic이 아니라 키 헤더 방식만 쓰기 때문(07-23 결정 — Basic 전제였던 07-22 설계를 대체).
