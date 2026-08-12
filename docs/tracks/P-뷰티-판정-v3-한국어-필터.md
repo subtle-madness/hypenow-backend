@@ -1,6 +1,6 @@
 # P — 뷰티 판정 v3 한국어 필터
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: —
 - **상태**: ⚠️ 코드 ✅·**후속 운영 미실행** (07-30 발견: `reset-influencer-judgments-v3.sql`이 운영에서 끝내 실행되지 않아 서빙 `INFLUENCER`의 92.7%가 4분류 시절 판정으로 남았다 — 트랙 CC에서 교정. 교훈: "머지 후 운영 작업"이 남은 트랙을 ✅로 닫으면 누락이 보이지 않는다)
 

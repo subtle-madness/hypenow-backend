@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 2026-08-10 작성 · 스펙: [2026-08-10-query-performance-observability-design.md](../specs/2026-08-10-query-performance-observability-design.md)
+> 상태: ✅ 구현/실행/반영됨 (2026-08-10, PR #393 머지 · 운영 배포) · 스펙: [2026-08-10-query-performance-observability-design.md](../../specs/2026-08-10-query-performance-observability-design.md)
 
 **Goal:** 운영 서버에 API 레이턴시(p95/p99)·느린 SQL·배포에도 살아남는 로그를 측정할 수 있는
 PLG(Prometheus + Loki + 기존 Grafana) + pg_stat_statements 스택을 구축한다.

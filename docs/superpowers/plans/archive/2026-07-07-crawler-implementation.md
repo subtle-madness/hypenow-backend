@@ -4495,7 +4495,7 @@ git add -A && git commit -m "feat: UI — 카테고리·규칙 관리, 수집 �
 카테고리 키워드로 인스타그램 콘텐츠(릴스/피드)를 발굴하고, 업로드 3일 후 게시물
 상세·댓글·작성자 프로필을 **Apify 응답 원형(raw)** 그대로 적재하는 수집 시스템.
 
-- 설계: [docs/superpowers/specs/2026-07-07-crawler-design.md](../../specs/2026-07-07-crawler-design.md)
+- 설계: [docs/superpowers/specs/2026-07-07-crawler-design.md](../../specs/archive/2026-07-07-crawler-design.md)
 - 파이프라인: **discover**(발굴) → **qualify**(프로필+규칙 판정) → **aggregate**(+3일 상세·댓글)
 
 ## 실행

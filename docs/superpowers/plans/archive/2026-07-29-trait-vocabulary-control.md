@@ -1,12 +1,12 @@
 # trait 어휘 통제 구현 계획 (유사도 v2 2단계)
 
-> 상태: 🟢 활성 · 실행 중(2026-07-29)
+> 상태: ✅ 구현/실행/반영됨 (2026-07-30 운영 매핑 잡 DRY→APPLY 실행 완료 · 트랙 T)
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** traits를 172개 고정 어휘로 통제 — 신규 산출은 프롬프트 주입+저장 sanitize, 기존 데이터는 LLM 배치 매핑(1:N 분해)으로 이행.
 
-**Architecture:** 스펙 [2026-07-29-trait-vocabulary-control-design.md](../specs/2026-07-29-trait-vocabulary-control-design.md).
+**Architecture:** 스펙 [2026-07-29-trait-vocabulary-control-design.md](../../specs/2026-07-29-trait-vocabulary-control-design.md).
 어휘는 analysis DB `trait_taxonomy`(V41 시드) 단일 원천 — `TraitTaxonomyLoader`(BeautyTaxonomyLoader 패턴) 스냅샷을
 프롬프트 주입과 저장 sanitize가 공유한다. 기존 데이터 이행은 어드민 원샷 잡 2모드(TRAIT_CANON_DRY/TRAIT_CANON_APPLY):
 매핑(LLM→`trait_canon_log`)은 두 모드 공통, `account_analyses.traits` UPDATE는 APPLY만.

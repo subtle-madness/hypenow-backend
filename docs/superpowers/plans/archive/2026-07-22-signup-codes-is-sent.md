@@ -1,12 +1,12 @@
 # 가입 코드 is_sent 칼럼 + 변경 API 구현 계획
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-22, PR #130 머지 · 운영 배포)
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `app.signup_codes`에 발송 여부(`is_sent`) 칼럼을 추가하고, 어드민 FE가 체크/해제하는 `PATCH /admin/signup-codes/{code}` API와 조회 반영·Swagger 노출을 구현한다.
 
-**Architecture:** 스펙 [2026-07-22-signup-codes-is-sent-design.md](../specs/2026-07-22-signup-codes-is-sent-design.md). Flyway 마이그레이션(V12) → `AdminSignupRepository`에 UPDATE 추가 → 사람용 `AdminSignupController`에 PATCH 추가(ADMIN Basic 체인 자동 적용 — `@Order(0)` 토큰 체인 매처는 정확히 `/admin/signup-codes`라 하위 경로는 안 잡음, SecurityConfig 무수정). springdoc `paths-to-match`에 `/admin/**` 추가.
+**Architecture:** 스펙 [2026-07-22-signup-codes-is-sent-design.md](../../specs/archive/2026-07-22-signup-codes-is-sent-design.md). Flyway 마이그레이션(V12) → `AdminSignupRepository`에 UPDATE 추가 → 사람용 `AdminSignupController`에 PATCH 추가(ADMIN Basic 체인 자동 적용 — `@Order(0)` 토큰 체인 매처는 정확히 `/admin/signup-codes`라 하위 경로는 안 잡음, SecurityConfig 무수정). springdoc `paths-to-match`에 `/admin/**` 추가.
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, Flyway, Testcontainers(MockMvc 통합 테스트), springdoc.
 

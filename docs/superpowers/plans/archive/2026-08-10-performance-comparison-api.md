@@ -10,7 +10,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JUnit 5 + Mockito(BDDMockito), `@WebMvcTest`(패키지 주의: `org.springframework.boot.webmvc.test.autoconfigure`).
 
-**Spec:** [docs/superpowers/specs/2026-08-10-performance-comparison-api-design.md](../specs/2026-08-10-performance-comparison-api-design.md)
+**Spec:** [docs/superpowers/specs/2026-08-10-performance-comparison-api-design.md](../../specs/2026-08-10-performance-comparison-api-design.md)
 
 ## Global Constraints
 

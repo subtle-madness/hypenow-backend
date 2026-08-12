@@ -11,7 +11,7 @@
 담당하고 **서빙(랭킹) 노출 정책은 미결**로 남겼다(ARCHITECTURE §7 2026-07-19 행).
 
 07-20 트랙 M(Vertex 전환 + 최근 12개 백필 재도입, 스펙
-[2026-07-20-vertex-migration-recent12-backfill-design.md](2026-07-20-vertex-migration-recent12-backfill-design.md))이
+[2026-07-20-vertex-migration-recent12-backfill-design.md](../2026-07-20-vertex-migration-recent12-backfill-design.md))이
 "백필 MVP 제외"를 번복해 계정별 최근 N개(=12) 윈도우 안이면 제때 크롤 실패분도 분석 대상에
 포함하도록 04 뷰·`ContentAnalysisJob` 자격을 확장했다. 초기 백필 ~1.4만 건이 유입 예정.
 

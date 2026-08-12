@@ -62,7 +62,7 @@ class BrandHashtagPostAssemblerTest {
 		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
 				"해시태그 인플루언서", "javascript:alert(1)", OffsetDateTime.parse("2026-08-06T01:00:00Z"),
 				"캡션", "REELS", "data:image/png;base64,AAAA", 20L, 3L,
-				OffsetDateTime.parse("2026-08-06T02:00:00Z"));
+				OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
 
 		var post = BrandHashtagPostAssembler.toResponse(row);
 
@@ -74,7 +74,7 @@ class BrandHashtagPostAssemblerTest {
 	void author_username이_없으면_프로필_URL도_null이다() {
 		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", null, null, null,
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS", null, null, null,
-				OffsetDateTime.parse("2026-08-06T02:00:00Z"));
+				OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
 
 		var post = BrandHashtagPostAssembler.toResponse(row);
 
@@ -82,6 +82,22 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(post.authorProfileUrl()).isNull();
 		assertThat(post.likes()).isNull();
 		assertThat(post.comments()).isNull();
+	}
+
+	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다.
+	 *  게시자 프로필은 아카이브 산지가 없어(보강 보류) 원본 그대로다. */
+	@Test
+	void 아카이브된_썸네일은_img_상대경로를_우선_서빙한다() {
+		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
+				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				"monitor-hashtag-post/HHH.jpg");
+
+		var post = BrandHashtagPostAssembler.toResponse(row);
+
+		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-hashtag-post/HHH.jpg");
+		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
 	}
 
 	// ---------- 픽스처 ----------
@@ -95,6 +111,7 @@ class BrandHashtagPostAssemblerTest {
 		return new BrandReadRepository.BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer",
 				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), caption, contentType,
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"));
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				null);
 	}
 }

@@ -1,8 +1,8 @@
 # MON-BT — 브랜드 태그 모니터링
 
-- **소속 트랙군**: 모니터링 트랙 — 2026-08-06 설계 확정: [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../superpowers/specs/2026-08-06-brand-tag-monitoring-schedule-design.md) (**주기·스키마는 같은 날 설계 재논의로 개정 — DECISIONS 08-06 개정 행이 정본**)
+- **소속 트랙군**: 모니터링 트랙 — 2026-08-06 설계 확정: [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../superpowers/specs/archive/2026-08-06-brand-tag-monitoring-schedule-design.md) (**주기·스키마는 같은 날 설계 재논의로 개정 — DECISIONS 08-06 개정 행이 정본**)
 - **의존**: MON
-- **상태**: ✅ (08-07 운영 개통 — 수집 파이프라인(PR #351) + was API 전체(PR #354, [spec 2026-08-07](../superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md)) 급행 승격 배포, 스윕 크론 KST 03:00 가동)
+- **상태**: ✅ (08-07 운영 개통 — 수집 파이프라인(PR #351) + was API 전체(PR #354, [spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)) 급행 승격 배포, 스윕 크론 KST 03:00 가동)
 
 ## 내용
 
@@ -12,9 +12,9 @@
 
 백필 단계식 ready(08-07 — DECISIONS 08-07 행): 등록 백필을 `sweepCore`(열거+적재, ~30초) / `enrich`(게시자+댓글, 수 분)로 분리 — core 직후 touchSwept(ready), 보강은 `brandEnrichExecutor`(신설) 별도 큐. 운영 실측(cclime_official 등록→ready 8.5분: 앞 계정 대기 5분 + 보강 콜 ~85%)이 근거. 보강 실패는 backfill_error 미기록(로그만) — 게시자 stale·댓글 워터마크로 다음 스윕 백스톱. 매일 스윕은 `sweep`(합본) 그대로.
 
-보강 병렬화(08-07 — DECISIONS 08-07 행, [spec 2026-08-07](../superpowers/specs/2026-08-07-brand-enrich-parallel-design.md)): `enrich` 내부 Hiker 콜(게시자 프로필·댓글)을 공유 워커 풀 `brandEnrichWorkerPool`(고정 6스레드, `monitoring.brand.enrich-concurrency`)로 제한 병렬화 — 보강 ~3분 → **~30초**, 등록→보강 완료 ~3.5분 → ~1분(ready는 종전대로 ~30초). 근거는 08-07 운영 실측(순차 ×6 = 11s vs 동시 4/8 각 웨이브 2s, 동시 8까지 레이턴시 열화·429 전무) — 종전 "동시 2 = 부하 완충" 전제 반증. 공유 빈이라 스윕·등록이 겹쳐도 전역 동시 콜 최대 8(워커 6 + core 2)로 실측 한계 이내. 게이트·워터마크·격리·backfill_error 규칙, 브랜드 단위 큐잉은 불변.
+보강 병렬화(08-07 — DECISIONS 08-07 행, [spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-enrich-parallel-design.md)): `enrich` 내부 Hiker 콜(게시자 프로필·댓글)을 공유 워커 풀 `brandEnrichWorkerPool`(고정 6스레드, `monitoring.brand.enrich-concurrency`)로 제한 병렬화 — 보강 ~3분 → **~30초**, 등록→보강 완료 ~3.5분 → ~1분(ready는 종전대로 ~30초). 근거는 08-07 운영 실측(순차 ×6 = 11s vs 동시 4/8 각 웨이브 2s, 동시 8까지 레이턴시 열화·429 전무) — 종전 "동시 2 = 부하 완충" 전제 반증. 공유 빈이라 스윕·등록이 겹쳐도 전역 동시 콜 최대 8(워커 6 + core 2)로 실측 한계 이내. 게이트·워터마크·격리·backfill_error 규칙, 브랜드 단위 큐잉은 불변.
 
-크롤링 정책 v1 — 나이 기반 티어(08-09 — DECISIONS 08-09 행, [spec 2026-08-09](../superpowers/specs/2026-08-09-brand-crawl-policy-v1-design.md)): 수집 주기를 "매일 전량(90일 & 105개)"에서 **게시물 나이 티어 주기**로 전환 — 14일 이하 매일 / 14~30일 3일 / 30~90일 7일 / 90~180일 30일 / **180일 초과 영구 제외**(발견 시 스냅샷 1회). 등록 백필은 90일 → **365일**, 개수 상한 105는 폐지(안전 밸브 `max-posts-per-sweep:2000`만 — 정상 경로에서 닿으면 안 되는 값. 설정 `window-days`·`window-posts` 제거, `registration-window-days:365` 신설). 판정은 저장 티어 상태 없이 `taken_at`·`last_crawled_at`·현재 시각만 보는 순수 함수 `BrandCrawlPolicy`(`last_crawled_at` null = 무조건 due → 마이그레이션 기존 행이 첫 스윕에서 자연 수렴, 스윕 하루 실패도 다음 스윕이 밀린 깊이 자동 커버). 실행은 게시물 단위가 아니라 **"오늘의 열거 깊이"**로 번역 — 컷 = min(now−14일, 가장 오래된 due의 `taken_at`)이라 due가 없어도 신규 태그용 14일 깊이는 매일 보장되고, 깊은 열거가 얕은 구간을 자동 포함(스킵 로직 불필요). 열거에서 만난 게시물은 due 여부 무관 전부 적재(콜 0 추가). 신규 발견은 ≤180일 추적 / 180~365일 스냅샷 1회 종료 / >365일 무시. **현행 유지 확정**(사용자 결정 — 정책 문서의 단건 상세 콜·30일 댓글 보충·첫 등록 부스트 크롤은 채택 안 함): 단건 상세 콜 금지, 복권 3종 기회 적재, 댓글 게시물당 45개(3콜) 상한. 스키마는 `brand_tagged_post.last_crawled_at` 1컬럼 추가(`V20260809120000__brand_tagged_post_last_crawled_at.sql`)가 전부. 게이팅·워터마크·격리·단계식 ready·보강 병렬화는 불변. **비용 재산정**(스펙 §8, 콜당 $0.0006 — 종전 "2,000계정 월 ~$550~600"을 대체): 계정당 등록 1회 **$0.2~0.6**(cclime_official급 847개/12개월 기준 ~300~900콜) + **월 유지 ~$0.05~0.07**(+댓글 게이트·게시자 stale 변동분 $0.02~0.05) — 자릿수가 다르다. 2,000계정 총액은 게시자 프로필 콜 수(N명)가 미실측이라 아직 재산정하지 않았다(배포 후 등록 1건 실측으로 스펙 §8 표와 함께 갱신 — 미결·후속 참조). 실질 리스크인 IG 요청량도 매일 전량 대비 준다. 커밋 d18afdf9(정책 함수)·8e5114ad(스키마·`trackedPosts`/`touchCrawled`)·3749db01(스윕 배선).
+크롤링 정책 v1 — 나이 기반 티어(08-09 — DECISIONS 08-09 행, [spec 2026-08-09](../superpowers/specs/archive/2026-08-09-brand-crawl-policy-v1-design.md)): 수집 주기를 "매일 전량(90일 & 105개)"에서 **게시물 나이 티어 주기**로 전환 — 14일 이하 매일 / 14~30일 3일 / 30~90일 7일 / 90~180일 30일 / **180일 초과 영구 제외**(발견 시 스냅샷 1회). 등록 백필은 90일 → **365일**, 개수 상한 105는 폐지(안전 밸브 `max-posts-per-sweep:2000`만 — 정상 경로에서 닿으면 안 되는 값. 설정 `window-days`·`window-posts` 제거, `registration-window-days:365` 신설). 판정은 저장 티어 상태 없이 `taken_at`·`last_crawled_at`·현재 시각만 보는 순수 함수 `BrandCrawlPolicy`(`last_crawled_at` null = 무조건 due → 마이그레이션 기존 행이 첫 스윕에서 자연 수렴, 스윕 하루 실패도 다음 스윕이 밀린 깊이 자동 커버). 실행은 게시물 단위가 아니라 **"오늘의 열거 깊이"**로 번역 — 컷 = min(now−14일, 가장 오래된 due의 `taken_at`)이라 due가 없어도 신규 태그용 14일 깊이는 매일 보장되고, 깊은 열거가 얕은 구간을 자동 포함(스킵 로직 불필요). 열거에서 만난 게시물은 due 여부 무관 전부 적재(콜 0 추가). 신규 발견은 ≤180일 추적 / 180~365일 스냅샷 1회 종료 / >365일 무시. **현행 유지 확정**(사용자 결정 — 정책 문서의 단건 상세 콜·30일 댓글 보충·첫 등록 부스트 크롤은 채택 안 함): 단건 상세 콜 금지, 복권 3종 기회 적재, 댓글 게시물당 45개(3콜) 상한. 스키마는 `brand_tagged_post.last_crawled_at` 1컬럼 추가(`V20260809120000__brand_tagged_post_last_crawled_at.sql`)가 전부. 게이팅·워터마크·격리·단계식 ready·보강 병렬화는 불변. **비용 재산정**(스펙 §8, 콜당 $0.0006 — 종전 "2,000계정 월 ~$550~600"을 대체): 계정당 등록 1회 **$0.2~0.6**(cclime_official급 847개/12개월 기준 ~300~900콜) + **월 유지 ~$0.05~0.07**(+댓글 게이트·게시자 stale 변동분 $0.02~0.05) — 자릿수가 다르다. 2,000계정 총액은 게시자 프로필 콜 수(N명)가 미실측이라 아직 재산정하지 않았다(배포 후 등록 1건 실측으로 스펙 §8 표와 함께 갱신 — 미결·후속 참조). 실질 리스크인 IG 요청량도 매일 전량 대비 준다. 커밋 d18afdf9(정책 함수)·8e5114ad(스키마·`trackedPosts`/`touchCrawled`)·3749db01(스윕 배선).
 
 해시태그 감지 확장(2026-08-11 — 구현 완료, 브랜치 `feat/brand-hashtag-detection`, PR 대기): 브랜드
 계정 태그(`@핸들`)뿐 아니라 브랜드명·계정명 및 정규화 변형 **해시태그**도 매일 열거해 자동 발견한다.
@@ -36,7 +36,7 @@ UI(계약 §8-4).
 
 ## 미결·후속
 
-- ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
+- ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
 - ~~`/v2/user/by/id` 응답 셰이프 라이브 미실측~~ → **실측 반영**(08-07): 파라미터명이 `user_id`가 아니라 `id`(422 실측 핫픽스 4ab01545). 응답 셰이프는 by/username 동형 확인.
 - ~~운영 크론 env 주입~~ → **가동 중**(08-07): KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차 확보. 서버 override 선주입분을 레포 `deploy/compose.yaml`로 정합(드리프트 해소).
 - ~~Task 11(캠페인 v2) 급행 머지로 리뷰 생략~~ → **08-07 사후 리뷰·픽스 완료**: Critical 0. Important 4 중 3(취소 아이템 재등록 경로·제거 전건 해제·레거시 위임 계약 통합 테스트)과 Minor 2(202 조건·trim)는 픽스 반영(DECISIONS 08-07 판정 행). **잔여 후속**:

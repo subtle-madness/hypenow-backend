@@ -1,6 +1,6 @@
 # 하입 스코어 v3 (감쇠를 매핑 뒤로) 구현 계획
 
-> 상태: 🟢 활성 · 실행 대기
+> 상태: ✅ 구현/실행/반영됨 (2026-07-30 운영 배포 · 후속 §9~§11 포함, 트랙 Z)
 > 스펙: `docs/superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md`
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행 완료 · 2026-08-04 · 스펙: [2026-08-04-super-signup-code-design.md](../../specs/2026-08-04-super-signup-code-design.md)
+> 상태: ✅ 실행 완료 · 2026-08-04 · 스펙: [2026-08-04-super-signup-code-design.md](../../specs/archive/2026-08-04-super-signup-code-design.md)
 
 **Goal:** `is_super` 플래그가 켜진 초대코드는 인원 제한 없이 여러 명이 가입할 수 있게 한다.
 

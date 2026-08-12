@@ -1,6 +1,6 @@
 # 상세 소스 셀렉터 (Detail Source Selector) Implementation Plan
 
-> 상태: 🗄 대체됨 — 미구현 상태에서 07-14 인플루언서 파이프라인 전환이 aggregate 단계 자체를 폐기하며 소멸(DetailSourceSelector·DetailFetcher 등 미작성). 스펙: [specs/2026-07-11-detail-source-selector-design.md](../../specs/2026-07-11-detail-source-selector-design.md)
+> 상태: 🗄 대체됨 — 미구현 상태에서 07-14 인플루언서 파이프라인 전환이 aggregate 단계 자체를 폐기하며 소멸(DetailSourceSelector·DetailFetcher 등 미작성). 스펙: [specs/2026-07-11-detail-source-selector-design.md](../../specs/archive/2026-07-11-detail-source-selector-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -4,7 +4,7 @@
 
 **Goal:** 가입 전 이메일 소유권 인증(6자리 코드·Resend 발송·서버 상태 방식)을 was에 구현해 스펙 6.17 [TBD]를 해소한다.
 
-**Architecture:** `app.email_verifications`(V7) 1테이블 + `/v1/auth/email-verification/{send,confirm}` 2엔드포인트 + signup에 403 `EMAIL_NOT_VERIFIED` 게이트 삽입. 발송은 `mail` 패키지의 `MailSender` 포트(Resend HTTPS API / 키 미설정 시 로깅 폴백). 스펙: [specs/2026-07-18-email-verification-design.md](../../specs/2026-07-18-email-verification-design.md).
+**Architecture:** `app.email_verifications`(V7) 1테이블 + `/v1/auth/email-verification/{send,confirm}` 2엔드포인트 + signup에 403 `EMAIL_NOT_VERIFIED` 게이트 삽입. 발송은 `mail` 패키지의 `MailSender` 포트(Resend HTTPS API / 키 미설정 시 로깅 폴백). 스펙: [specs/2026-07-18-email-verification-design.md](../../specs/archive/2026-07-18-email-verification-design.md).
 
 **Tech Stack:** Spring Boot 4.1(Java 21) · JdbcClient · Flyway(app 스키마, was 소유) · RestClient(Resend) · Testcontainers/MockMvc. 신규 외부 의존성 없음.
 
@@ -1058,19 +1058,19 @@ git commit -m "feat(was): 가입 전 이메일 인증 강제 — signup 403 EMAI
 - [x] **Step 1: ARCHITECTURE.md 갱신**
 
 - §3 `app` 스키마 테이블 나열부에 `email_verifications`(V7 — 이메일 인증 코드·verified 상태, 가입 시 소비) 추가.
-- §5 G 행의 "이메일 **소유권 인증**(스펙 6.17)은 [TBD] 미구현…" 문구를 "+ 이메일 소유권 인증(6.17 — V7 `email_verifications`·send/confirm·가입 전 강제, [specs/2026-07-18-email-verification-design.md](../../specs/2026-07-18-email-verification-design.md))"으로 교체.
+- §5 G 행의 "이메일 **소유권 인증**(스펙 6.17)은 [TBD] 미구현…" 문구를 "+ 이메일 소유권 인증(6.17 — V7 `email_verifications`·send/confirm·가입 전 강제, [specs/2026-07-18-email-verification-design.md](../../specs/archive/2026-07-18-email-verification-design.md))"으로 교체.
   (주의: PR #38이 이 행을 먼저 고쳤다 — 충돌 시 #38 머지 후 리베이스.)
 - §7 맨 위에 결정 기록 1행 추가:
 
 ```markdown
-| 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백), 서버 상태 방식(V7 email_verifications, verified 30분·가입 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(가입 코드 → 필드 → 이메일 인증 → 중복). 운영 개통은 Resend 도메인 인증 + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전까지 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](../../specs/2026-07-18-email-verification-design.md) |
+| 2026-07-19 | **이메일 소유권 인증 구현(6.17 [TBD] 해소)** — 가입 전 강제(스텝5), 6자리 코드(TTL 10분·오입력 5회), Resend HTTPS 발송(키 미설정 시 로깅 폴백), 서버 상태 방식(V7 email_verifications, verified 30분·가입 시 1회 소비). signup 검증 순서에 403 EMAIL_NOT_VERIFIED 삽입(가입 코드 → 필드 → 이메일 인증 → 중복). 운영 개통은 Resend 도메인 인증 + RESEND_API_KEY 등록 필요 — 프론트 배선(REST 전환) 전까지 운영 signup은 인증 선행 없이는 403 | [specs/2026-07-18-email-verification-design.md](../../specs/archive/2026-07-18-email-verification-design.md) |
 ```
 
 - [x] **Step 2: 스펙 상태 헤더 2건 갱신**
 
 - `2026-07-18-email-verification-design.md` 헤더: `> 상태: 🟢 활성` → `> 상태: 🟢 활성 · ✅ 구현됨(was) — 프론트 배선은 REST 전환(celfit-front PR #18 계속) 대기`
 - `2026-07-15-hypenow-api-spec-alignment-design.md` 헤더(`> 상태: 🟢 활성` 줄) 아래에 한 줄 추가:
-  `> 6.17 이메일 인증 [TBD]는 [2026-07-18-email-verification-design.md](../../specs/2026-07-18-email-verification-design.md)로 해소(07-19 구현)`
+  `> 6.17 이메일 인증 [TBD]는 [2026-07-18-email-verification-design.md](../../specs/archive/2026-07-18-email-verification-design.md)로 해소(07-19 구현)`
 
 - [x] **Step 3: 전체 테스트**
 
