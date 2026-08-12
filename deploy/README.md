@@ -214,18 +214,27 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
 마운트하고, 컨테이너 기본값 `IMAGE_GCS_KEY=/run/secrets/gcs-image-archiver.json`을 코드가 직접
 읽는다(analytics의 `GOOGLE_APPLICATION_CREDENTIALS`=Vertex ADC와 분리 — ADC는 JVM당 하나뿐이라
 덮으면 Vertex LLM이 전면 403). 서버 `.env`에 `IMAGE_GCS_KEY`를 쓸 필요는 없다.
-- **par 모드에서도 빈 파일이라도 반드시 선생성**한다 — 없으면 docker가 마운트 소스를 **root 소유
-  빈 디렉토리**로 만들어 버리고, 이후 실키를 놓을 때 그 디렉토리를 먼저 치워야 한다.
+- **par 모드에서도 빈 파일이라도 반드시 선생성**한다 — 절차는 아래 **0단계**.
 - 반대로 **`IMAGE_STORE=gcs`로 넘기기 전에는 실키가 반드시 먼저 있어야 한다** — 빈 placeholder는
   par 모드에선 무해하지만 gcs 모드에선 키 로드 실패로 **monitoring이 기동 실패(fail-fast)**한다.
 
+0. **(이 브랜치 운영 배포 전 필수)** compose가 `deploy/secrets/gcs-image-archiver.json` 파일 마운트를
+   기대하므로, 배포 전에 서버에 placeholder 파일을 만들어 둔다(없으면 docker가 root 소유 **디렉토리**를
+   만들어 이후 scp가 Permission denied로 실패):
+   ```bash
+   ssh ubuntu@155.248.187.106 'install -m 600 /dev/null ~/deploy/secrets/gcs-image-archiver.json'
+   ```
+   이미 디렉토리가 생겨버렸다면 `sudo rmdir ~/deploy/secrets/gcs-image-archiver.json` 후 위 명령.
+   par 모드에선 빈 파일이어도 무해하다.
 1. GCP 준비(로컬, 1회):
    ```bash
    gcloud config set project <PROJECT_ID>
    gcloud storage buckets create gs://hypenow-images --location=asia-northeast3 \
      --uniform-bucket-level-access   # 전역 이름 충돌 시 hypenow-images-prod
+   # 공개 읽기는 legacyObjectReader로 — objectViewer는 storage.objects.list까지 포함해
+   # 148k 오브젝트 키 전체가 익명 열거된다. legacyObjectReader는 개별 GET만(UBLA 호환).
    gcloud storage buckets add-iam-policy-binding gs://hypenow-images \
-     --member=allUsers --role=roles/storage.objectViewer
+     --member=allUsers --role=roles/storage.legacyObjectReader
    gcloud iam service-accounts create image-archiver
    gcloud storage buckets add-iam-policy-binding gs://hypenow-images \
      --member=serviceAccount:image-archiver@<PROJECT_ID>.iam.gserviceaccount.com \
@@ -242,18 +251,20 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
 2. 벌크 복사(서버에서, 서비스 무영향 — rclone remote는 oci=oracleobjectstorage(user
    principal), gcs=google cloud storage(SA 키) 타입으로 `rclone config`에서 1회 생성):
    ```bash
-   rclone copy oci:hypenow-images gcs:hypenow-images --transfers 16 -P
+   # -M(--metadata): Cache-Control 등 객체 메타데이터까지 복사(없으면 4단계에서 전량 보정 필요)
+   rclone copy oci:hypenow-images gcs:hypenow-images --transfers 16 -M -P
    ```
 3. 잡 정지: 진행 중 브랜드 스윕이 없는지 monitoring UI(8083)에서 확인 후
    `docker compose stop analytics monitoring`. (CDN 만료 여유 3~4일 — 수 시간 정지 무손실.)
 4. 델타 복사 + 검증:
    ```bash
-   rclone copy oci:hypenow-images gcs:hypenow-images -P
+   rclone copy oci:hypenow-images gcs:hypenow-images -M -P   # -M: 객체 메타데이터(Cache-Control) 동반 복사
    rclone check oci:hypenow-images gcs:hypenow-images --size-only
    ```
+   (2·4단계를 `-M`으로 복사했다면 보정 불필요 — 아래는 **검증만**, 비어 있을 때만 보정한다.)
    **Cache-Control 확인은 프리픽스 5종 전부** — `thumb/`·`profile/`(analytics `ImageArchiveJob`),
    `monitor-profile/`·`monitor-post/`·`monitor-author/`(monitoring 잡 3종). 원래 값은 2종이라
-   `gs://hypenow-images/**` 한 번에 밀면 값이 뭉개진다 — **프리픽스별 2회**로 나눠 실행할 것:
+   보정이 필요해지면 `gs://hypenow-images/**` 한 번에 밀지 말 것(값이 뭉개진다) — **프리픽스별 2회**로:
    ```bash
    # 샘플 확인(각 프리픽스에서 1건씩) — cacheControl 필드가 비어 있으면 아래 보정
    gcloud storage objects describe gs://hypenow-images/thumb/<아무거나>.jpg
@@ -274,9 +285,15 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    `pip install google-auth requests`(버킷 메트릭이 GCS API를 쓴다), 정규 CD 배포(또는
    `docker compose up -d`)로 재기동 — 잡 재개 겸용.
 7. 확인: 다음 아카이브 잡 후 GCS에 신규 오브젝트 적재 + 프론트에서 신규 썸네일 로드 +
-   **다음 정시(top of hour)에 `bucket_used_gb` 게시**. 버킷 크기 합산은 전체 목록 페이징이라
-   메트릭 게시가 5분 결→**정시 1회**로 바뀌었고, GCS 수집 실패는 컨테이너 메트릭을 지키려고
+   **다음 정시(top of hour)에 GCS `bucket_used_gb` 게시**. GCS는 크기 합산이 전체 목록 페이징이라
+   게시가 **정시 1회**다(OCI 병행 게시는 종전대로 5분 결, `provider=oci` 차원).
+   GCS 수집 실패는 컨테이너 메트릭을 지키려고
    조용히 스킵되며 cron stderr(`~/metrics-post.log`)에만 남는다 — **첫 정시 게시를 눈으로 확인**할 것.
+   **익명 목록 조회가 403인지 확인**(1단계 legacyObjectReader가 제대로 걸렸는지 — objectViewer였다면 200):
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}' 'https://storage.googleapis.com/storage/v1/b/hypenow-images/o?maxResults=1'
+   # → 403 기대
+   ```
    알람 임계 상향(쿼리 창도 `[1h]`로 — `[5m]`이면 정시 게시 특성상 대부분 무데이터):
    ```bash
    oci --profile HYPENOW monitoring alarm update \
@@ -285,9 +302,13 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    ```
 8. 롤백(5~6 사이 문제 시): front rewrite를 OCI로 원복 + `IMAGE_STORE=par`로 재배포 —
    해당 시점 두 버킷이 동일하므로 무손실.
+9. **컷오버 확정 후 정리**: `deploy/scripts/post-container-metrics.py`의 **OCI 병행 게시 블록
+   (`OCI_BUCKETS`/`OS_NAMESPACE` if 문)을 제거**한다 — 롤백 창(8단계)이 닫히기 전까지는 두 스트림을
+   같이 봐야 관측 공백이 없으므로, 제거는 반드시 마지막에.
 
-OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 이전 후 OCI 버킷 크기는 더 이상
-게시하지 않으므로 `bucket_used_gb`는 GCS 값 하나다 — 알람은 그대로 동작한다(§9).
+OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 컷오버 전까지는 OCI(5분 결,
+`provider=oci` 차원)와 GCS(정시 1회) 두 스트림이 병행 게시되고, 9단계 이후 `bucket_used_gb`는
+GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 그대로 동작한다(§9).
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 KST 04:10 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
@@ -354,17 +375,22 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
   **컨테이너 다운**(compose 서비스 10종 — 08-05 redis·grafana·ons-relay 추가로 운영 전 서비스 커버.
   `container_up[1m].max() < 1`이 차원 필터 없는 스트림별 평가라 SERVICES에 서비스를 추가하면
-  알람 정의 무수정으로 자동 커버된다), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도)
+  알람 정의 무수정으로 자동 커버된다), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도.
+  컷오버 시 50GB 상향 — §5-2 7단계)
 - 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
-  (버킷은 스크립트가 5분 결에만 조회 — OCI가 StoredBytes를 자동 게시하지 않아 직접 게시):
+  (버킷은 스크립트가 **OCI 5분 결 + GCS 정시 1회**로 조회 — OCI/GCS 둘 다 크기를 자동 게시하지
+  않아 직접 게시한다. GCS는 전체 목록 페이징이라 정시 1회. 컷오버 후 OCI 병행 게시는 제거 예정 —
+  §5-2 9단계):
   `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
 - 인증은 인스턴스 프린시펄 — 서버에 API 키를 두지 않는다. IAM 구성:
   dynamic group `hypenow-instances`(인스턴스 매칭) + policy `hypenow-custom-metrics`:
   `Allow dynamic-group hypenow-instances to use metrics in tenancy where target.metrics.namespace='hypenow_custom'`
   `Allow dynamic-group hypenow-instances to read buckets in tenancy where target.bucket.name='hypenow-images'`
-  venv: `python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci`
+  venv: `python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci google-auth requests`
+  (GCS 버킷 크기 조회만은 예외로 SA 키 파일 `~/deploy/secrets/gcs-image-archiver.json`을 읽는다 —
+  compose가 쓰는 것과 같은 파일. 2026-08-12 이미지 스토리지 이전 이후)
 - 컨테이너 추가·이름 변경 시 스크립트의 `SERVICES` 목록도 갱신할 것(목록 고정 방식 —
-  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `BUCKETS` 목록 갱신.
+  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `OCI_BUCKETS`/`GCS_BUCKETS` 목록 갱신.
 - **컨테이너 조회는 이름이 아니라 compose 라벨로 한다**(project=`deploy` + service=`<svc>`).
   `deploy-<svc>-1` 이름을 쓰면 안 되는 이유: 롤링 재기동(`rollout.sh`)이 `--scale <svc>=2`로
   **다음 빈 인덱스**에 신 컨테이너를 띄우고 구 1번을 지워, 첫 롤링 이후 `-1`은 영영 없다
