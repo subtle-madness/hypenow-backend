@@ -74,4 +74,6 @@ monitoring:
     # 이미지 스토어 선택(2026-08-12 GCS 이전): par=OCI PAR(기본), gcs=GCS
     store: ${IMAGE_STORE:par}
     gcs-bucket: ${IMAGE_GCS_BUCKET:}
+    # 전용 SA 키 파일 경로 — 미설정이면 ADC 폴백. analytics와 같은 키를 재사용한다
+    gcs-key: ${IMAGE_GCS_KEY:}
     archive-batch-limit: 1000   # 1회 스윕당 다운로드+업로드 상한 — 초과분은 다음 스윕으로 이월

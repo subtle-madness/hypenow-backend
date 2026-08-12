@@ -47,4 +47,11 @@ class GcsImageStoreTest {
 		assertThatThrownBy(() -> new GcsImageStore(" ", mock(Storage.class)))
 				.isInstanceOf(IllegalStateException.class);
 	}
+
+	@Test
+	void 없는_키_파일_경로는_IllegalStateException() {
+		assertThatThrownBy(() -> new GcsImageStore("b", "/없는/경로/key.json"))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessageContaining("키 파일");
+	}
 }

@@ -27,11 +27,12 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
+			@Value("${monitoring.image.gcs-key:}") String gcsKey,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
 		// gcs 모드에선 잡의 no-op 판단 인자(기존 parUrl 슬롯)에 버킷명을 넘긴다 — blank면 no-op
 		String storeTarget = "gcs".equalsIgnoreCase(storeMode) ? gcsBucket : parUrl;
 		ImageStore store = "gcs".equalsIgnoreCase(storeMode)
-				? new GcsImageStore(gcsBucket) : new ParImageStore(parUrl);
+				? new GcsImageStore(gcsBucket, gcsKey) : new ParImageStore(parUrl);
 		return new ProfileImageArchiveJob(db, store, ImageDownloader.http(), storeTarget, batchLimit);
 	}
 
@@ -40,11 +41,12 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
+			@Value("${monitoring.image.gcs-key:}") String gcsKey,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
 		// gcs 모드에선 잡의 no-op 판단 인자(기존 parUrl 슬롯)에 버킷명을 넘긴다 — blank면 no-op
 		String storeTarget = "gcs".equalsIgnoreCase(storeMode) ? gcsBucket : parUrl;
 		ImageStore store = "gcs".equalsIgnoreCase(storeMode)
-				? new GcsImageStore(gcsBucket) : new ParImageStore(parUrl);
+				? new GcsImageStore(gcsBucket, gcsKey) : new ParImageStore(parUrl);
 		return new PostThumbnailArchiveJob(db, store, ImageDownloader.http(), storeTarget, batchLimit);
 	}
 
@@ -54,11 +56,12 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
+			@Value("${monitoring.image.gcs-key:}") String gcsKey,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
 		// gcs 모드에선 잡의 no-op 판단 인자(기존 parUrl 슬롯)에 버킷명을 넘긴다 — blank면 no-op
 		String storeTarget = "gcs".equalsIgnoreCase(storeMode) ? gcsBucket : parUrl;
 		ImageStore store = "gcs".equalsIgnoreCase(storeMode)
-				? new GcsImageStore(gcsBucket) : new ParImageStore(parUrl);
+				? new GcsImageStore(gcsBucket, gcsKey) : new ParImageStore(parUrl);
 		return new AuthorProfileImageArchiveJob(db, store, ImageDownloader.http(), storeTarget, batchLimit);
 	}
 }

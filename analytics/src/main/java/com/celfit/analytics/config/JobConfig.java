@@ -124,6 +124,7 @@ public class JobConfig {
 			@Value("${analytics.image-par-url:}") String imageParUrl,
 			@Value("${analytics.image-store:par}") String imageStoreMode,
 			@Value("${analytics.image-gcs-bucket:}") String imageGcsBucket,
+			@Value("${analytics.image-gcs-key:}") String imageGcsKey,
 			ObjectProvider<JobProgressRegistry> progressRegistry) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null
@@ -131,7 +132,7 @@ public class JobConfig {
 		// @Lazy — PAR/버킷 미설정이면 첫 트리거 때 이 잡만 실패(로그 패널 노출), 서버 기동은 영향 없음
 		// IMAGE_STORE=gcs|par — OCI 복귀 보험(스펙 §실패 대응): par로 되돌리면 즉시 OCI 재개
 		ImageStore store = "gcs".equalsIgnoreCase(imageStoreMode)
-				? new GcsImageStore(imageGcsBucket)
+				? new GcsImageStore(imageGcsBucket, imageGcsKey)
 				: new ParImageStore(imageParUrl);
 		return new ImageArchiveJob(rawJdbcTemplate, analysisDataSource,
 				store, ImageDownloader.http(), settings, reporter);
