@@ -1,7 +1,9 @@
 package com.celfit.monitoring.config;
 
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
+import com.celfit.monitoring.image.GcsImageStore;
 import com.celfit.monitoring.image.ImageDownloader;
+import com.celfit.monitoring.image.ImageStore;
 import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
@@ -13,8 +15,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * 이미지 아카이브 잡 배선(설계 스펙 §3-1, 트랙 KK 확장) — {@code monitoring.image.par-url} 미설정이면
  * {@link ParImageStore}는 예외 없이 빈 URL을 든 채로 만들어지고(기동 실패 방지), 실제 no-op 판단은
- * 각 잡의 {@code run()}이 PAR URL 자체를 보고 내린다. 프로필 이미지·게시물 썸네일 두 잡은 같은 OCI
- * 버킷·같은 쓰기 PAR을 재사용한다(키 프리픽스로 소유권만 분리 — monitor-profile/ vs monitor-post/).
+ * 각 잡의 {@code run()}이 PAR URL 자체를 보고 내린다. gcs 모드에선 {@code monitoring.image.gcs-bucket}
+ * blank가 같은 역할을 한다. 프로필 이미지·게시물 썸네일 두 잡은 같은 OCI 버킷·같은 쓰기 PAR을
+ * 재사용한다(키 프리픽스로 소유권만 분리 — monitor-profile/ vs monitor-post/).
  */
 @Configuration
 public class ImageArchiveConfig {
@@ -22,23 +25,40 @@ public class ImageArchiveConfig {
 	@Bean
 	public ProfileImageArchiveJob profileImageArchiveJob(JdbcTemplate db,
 			@Value("${monitoring.image.par-url:}") String parUrl,
+			@Value("${monitoring.image.store:par}") String storeMode,
+			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
-		return new ProfileImageArchiveJob(db, new ParImageStore(parUrl), ImageDownloader.http(), parUrl, batchLimit);
+		// gcs 모드에선 잡의 no-op 판단 인자(기존 parUrl 슬롯)에 버킷명을 넘긴다 — blank면 no-op
+		String storeTarget = "gcs".equalsIgnoreCase(storeMode) ? gcsBucket : parUrl;
+		ImageStore store = "gcs".equalsIgnoreCase(storeMode)
+				? new GcsImageStore(gcsBucket) : new ParImageStore(parUrl);
+		return new ProfileImageArchiveJob(db, store, ImageDownloader.http(), storeTarget, batchLimit);
 	}
 
 	@Bean
 	public PostThumbnailArchiveJob postThumbnailArchiveJob(JdbcTemplate db,
 			@Value("${monitoring.image.par-url:}") String parUrl,
+			@Value("${monitoring.image.store:par}") String storeMode,
+			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
-		return new PostThumbnailArchiveJob(db, new ParImageStore(parUrl), ImageDownloader.http(), parUrl, batchLimit);
+		// gcs 모드에선 잡의 no-op 판단 인자(기존 parUrl 슬롯)에 버킷명을 넘긴다 — blank면 no-op
+		String storeTarget = "gcs".equalsIgnoreCase(storeMode) ? gcsBucket : parUrl;
+		ImageStore store = "gcs".equalsIgnoreCase(storeMode)
+				? new GcsImageStore(gcsBucket) : new ParImageStore(parUrl);
+		return new PostThumbnailArchiveJob(db, store, ImageDownloader.http(), storeTarget, batchLimit);
 	}
 
 	/** 브랜드 태그 파이프라인의 게시자 프로필 사진 — 같은 버킷·같은 PAR, 프리픽스만 monitor-author/로 분리. */
 	@Bean
 	public AuthorProfileImageArchiveJob authorProfileImageArchiveJob(JdbcTemplate db,
 			@Value("${monitoring.image.par-url:}") String parUrl,
+			@Value("${monitoring.image.store:par}") String storeMode,
+			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
-		return new AuthorProfileImageArchiveJob(db, new ParImageStore(parUrl), ImageDownloader.http(), parUrl,
-				batchLimit);
+		// gcs 모드에선 잡의 no-op 판단 인자(기존 parUrl 슬롯)에 버킷명을 넘긴다 — blank면 no-op
+		String storeTarget = "gcs".equalsIgnoreCase(storeMode) ? gcsBucket : parUrl;
+		ImageStore store = "gcs".equalsIgnoreCase(storeMode)
+				? new GcsImageStore(gcsBucket) : new ParImageStore(parUrl);
+		return new AuthorProfileImageArchiveJob(db, store, ImageDownloader.http(), storeTarget, batchLimit);
 	}
 }
