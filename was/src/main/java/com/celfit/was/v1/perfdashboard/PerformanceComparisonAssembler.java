@@ -67,7 +67,7 @@ public class PerformanceComparisonAssembler {
 			}
 			// accountType은 계정이 아니라 링크(구독)의 속성이라 순회 중인 링크 행에서 온다(08-12).
 			accounts.add(compare(account.get(), BrandAccountType.orDefault(link.accountType()),
-					byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()), ranges));
+					byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()), ranges, today));
 		}
 		return new PerformanceComparisonResponse(List.copyOf(accounts));
 	}
@@ -91,22 +91,35 @@ public class PerformanceComparisonAssembler {
 
 	/**
 	 * 계정 1개 집계 — accountContents는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
-	 * covered는 계정 단위다: <b>최초 백필 완주</b>(backfillCompletedAt 존재)면 전 구간 true —
-	 * 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과 무관하다(스펙 §covered).
-	 * lastSweptAt을 쓰지 않는 이유(08-12 스트리밍 백필 도입): last_swept_at은 서빙 창(30일)만
-	 * 커버해도 미리 찍히므로 365일 완주를 보장하지 않는다 — 완주 전(수 분)과 조기 서빙 후 백필
-	 * 실패 시(다음 스윕 완주까지) 1m_3m 이후 구간이 빈 채로 covered=true가 되어 오보가 된다.
+	 * covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12): 백필이 열거하는 범위가
+	 * collection_months 창뿐이라, 완주해도 창 밖 버킷은 수집한 적 자체가 없다 — 계정 단위 true는
+	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 3중 AND:
+	 * <ul>
+	 * <li><b>완주</b>(backfillCompletedAt 존재) — last_swept_at은 서빙 창(30일)만 커버해도 미리
+	 * 찍히므로 못 쓴다(08-12 스트리밍 백필).</li>
+	 * <li><b>확장 중 아님</b>(lastSweptOn 존재) — 기간 확장은 collection_months를 먼저 올리고
+	 * (backfill_completed_at 보존, last_swept_on NULL) 백필을 재제출하므로, 창 기준만 보면 새
+	 * 구간이 데이터 없이 true가 된다. 완주 이력+last_swept_on 빔 = 확장 중 → 전 구간 보수적 false
+	 * (계정 상태 유도의 collecting 판정과 같은 신호 — BrandAccountAssembler).</li>
+	 * <li><b>버킷이 창 안</b> — 먼 쪽 경계(from)가 창 하한(today.minusMonths(collectionMonths))
+	 * 이상. 부분 겹침은 false(보수적), 경계일은 포함 — 창 하한과 버킷 하한이 같은
+	 * minusMonths(말일 클램프) 연산이라 12개월 계정의 6m_12m이 정확히 경계에 얹힌다.</li>
+	 * </ul>
 	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
-			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges) {
-		boolean covered = account.backfillCompletedAt() != null;
+			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges, LocalDate today) {
+		boolean accountCovered = account.backfillCompletedAt() != null && account.lastSweptOn() != null;
+		LocalDate windowStart = today.minusMonths(account.collectionMonths());
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
 		for (BucketRange range : ranges) {
+			boolean covered = accountCovered && !range.from().isBefore(windowStart);
 			buckets.add(aggregate(range, covered, accountContents));
 		}
+		// collectionStartedAt은 브랜드 계정 API와 같은 앵커(collection_started_at, 확장 시 갱신) —
+		// registered_at을 쓰면 같은 이름의 필드가 API마다 다른 시각을 가리키게 된다.
 		return new PerformanceComparisonResponse.AccountComparison(String.valueOf(account.id()),
-				account.username(), accountType, KstTimestamps.toKstIso(account.registeredAt()),
+				account.username(), accountType, KstTimestamps.toKstIso(account.collectionStartedAt()),
 				List.copyOf(buckets));
 	}
 
