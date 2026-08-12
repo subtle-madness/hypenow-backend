@@ -4,13 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.AuthorInfo;
+import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CommentInfo;
+import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
+import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
@@ -56,6 +59,8 @@ class BrandCollectServiceTest {
 			"is_private":false}}""";
 
 	private final RecordingWriter writer = new RecordingWriter();
+	private final BrandCallContext callContext = new BrandCallContext();
+	private final RecordingCallCounts callCounts = new RecordingCallCounts();
 	private final StubSnapshots snapshots = new StubSnapshots();
 	private final StubComments comments = new StubComments();
 	private final InMemoryTagged tagged = new InMemoryTagged();
@@ -74,6 +79,20 @@ class BrandCollectServiceTest {
 			LocalDate.now().minusDays(1));
 
 	// ── 스텁 대역(CollectServiceTest NoopCommentRepository 관용구) ────────────
+
+	private static final class RecordingCallCounts extends BrandCallCountRepository {
+		// 병렬 enrich 워커가 동시에 add하므로 스레드 안전하게 누적한다.
+		final Map<Long, Long> byBrand = Collections.synchronizedMap(new HashMap<>());
+
+		RecordingCallCounts() {
+			super(null);
+		}
+
+		@Override
+		public void add(long brandId, LocalDate calledOn, long delta) {
+			byBrand.merge(brandId, delta, Long::sum);
+		}
+	}
 
 	private static final class RecordingWriter extends BrandSnapshotWriter {
 		final List<PostInfo> saved = new ArrayList<>();
@@ -221,7 +240,8 @@ class BrandCollectServiceTest {
 	// ── fake HikerHttp — 경로별 라우팅 ───────────────────────────────────────
 
 	private HikerClient client() {
-		return new HikerClient(path -> {
+		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 스코프 전파까지 함께 검증.
+		return new HikerClient(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) {
 				if (brandProfileFails) {
@@ -251,11 +271,11 @@ class BrandCollectServiceTest {
 						"next_page_id":null}""";
 			}
 			throw new IllegalStateException("예상 밖 콜: " + path);
-		});
+		}, callContext, callCounts));
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep) {
-		return new BrandCollectService(client(), writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
 				Runnable::run, 365, maxPostsPerSweep, 3, 30);
 	}
 
@@ -339,6 +359,30 @@ class BrandCollectServiceTest {
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("KnownA", "NewB");
 		assertThat(tagged.inserted).containsExactly("NewB");
+	}
+
+	// ── 콜 집계(어드민 크롤링 비용 — 2026-08-12 설계) ────────────────────────
+
+	@Test
+	void 스윕의_성공_콜_전부가_브랜드에_계상된다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);
+
+		// 프로필 1 + 태그 열거 1 + 게시자 1(워커 스레드) + 댓글 1(워커 스레드) — 성공 콜 수와 1:1.
+		// 워커 콜까지 잡히는 것이 곧 runScoped 재전파 검증이다(ThreadLocal은 풀을 못 넘는다).
+		assertThat(calls).hasSize(4);
+		assertThat(callCounts.byBrand).containsExactly(Map.entry(1L, 4L));
+	}
+
+	@Test
+	void 실패_콜은_계상되지_않는다() {
+		tagNotFound = true;
+
+		service(2000).sweep(brand);
+
+		// 프로필 1콜만 성공 — 태그 404는 예외로 빠져나가 집계되지 않는다(성공 콜만 과금 정합).
+		assertThat(callCounts.byBrand).containsExactly(Map.entry(1L, 1L));
 	}
 
 	@Test
@@ -633,7 +677,7 @@ class BrandCollectServiceTest {
 		});
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
-			BrandCollectService svc = new BrandCollectService(latched, writer, snapshots,
+			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
 					comments, tagged, authors, pool, 365, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {

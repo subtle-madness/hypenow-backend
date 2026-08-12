@@ -175,6 +175,25 @@ public class BrandReadRepository {
 				.list();
 	}
 
+	/**
+	 * 브랜드별 Hiker 콜 일별 집계(brand_call_count — 2026-08-12 어드민 크롤링 비용 설계) 전량 조회.
+	 * 기간 필터·유저 귀속(연결 기간 판정)은 was 코드가 한다 — 링크 기간은 app 스키마 소관이라
+	 * 크로스 DB 조인이 불가능하고, 행 수도 브랜드당 하루 1행이라 전량이 부담이 아니다.
+	 */
+	public List<BrandCallDailyRow> findDailyCallCounts(Collection<Long> brandIds) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT brand_id, called_on, calls
+				FROM brand_call_count
+				WHERE brand_id IN (:brandIds)
+				""")
+				.param("brandIds", brandIds)
+				.query(BrandCallDailyRow.class)
+				.list();
+	}
+
 	/** brand_account 1행(was 계약 소비 컬럼만) — 08-07 확장 필드 포함. */
 	public record BrandAccountRow(long id, String username, LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime registeredAt, OffsetDateTime backfillCompletedAt, String backfillError,
@@ -207,5 +226,9 @@ public class BrandReadRepository {
 	/** author_profile 1행(was 계약 소비 컬럼만). */
 	public record AuthorRow(String igUserId, String username, String fullName, Long followers,
 			String profilePicUrl, Boolean isVerified) {
+	}
+
+	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
+	public record BrandCallDailyRow(long brandId, LocalDate calledOn, long calls) {
 	}
 }

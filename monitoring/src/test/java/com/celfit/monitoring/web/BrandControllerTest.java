@@ -28,7 +28,7 @@ class BrandControllerTest {
 		RuntimeException toThrow;
 
 		StubService() {
-			super(null, null, null, Runnable::run, Runnable::run);
+			super(null, null, null, null, Runnable::run, Runnable::run);
 		}
 
 		@Override

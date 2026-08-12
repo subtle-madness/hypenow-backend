@@ -7,6 +7,7 @@ import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
@@ -83,7 +84,7 @@ class BrandRegistrationServiceTest {
 		final Set<String> enrichFailing = new HashSet<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, 365, 2000, 3, 30);
+			super(null, null, null, null, null, null, null, null, 365, 2000, 3, 30);
 		}
 
 		@Override
@@ -104,17 +105,32 @@ class BrandRegistrationServiceTest {
 		}
 	}
 
+	private static final class RecordingCallCounts extends BrandCallCountRepository {
+		final Map<Long, Long> byBrand = new HashMap<>();
+
+		RecordingCallCounts() {
+			super(null);
+		}
+
+		@Override
+		public void add(long brandId, LocalDate calledOn, long delta) {
+			byBrand.merge(brandId, delta, Long::sum);
+		}
+	}
+
 	private final List<String> hikerCalls = new ArrayList<>();
 	private final List<Runnable> enrichQueue = new ArrayList<>();
 	private final InMemoryBrands brands = new InMemoryBrands();
 	private final StubCollect collect = new StubCollect();
+	private final RecordingCallCounts callCounts = new RecordingCallCounts();
 
 	private BrandRegistrationService service() {
 		HikerClient hiker = new HikerClient(path -> {
 			hikerCalls.add(path);
 			return PROFILE_JSON;
 		});
-		return new BrandRegistrationService(hiker, brands, collect, Runnable::run, enrichQueue::add);
+		return new BrandRegistrationService(hiker, brands, collect, callCounts,
+				Runnable::run, enrichQueue::add);
 	}
 
 	@Test
@@ -127,6 +143,8 @@ class BrandRegistrationServiceTest {
 		assertThat(hikerCalls.getFirst()).startsWith("/v2/user/by/username");
 		assertThat(collect.coreSwept).containsExactly("brandx");   // 동기 executor — 백필 즉시 실행
 		assertThat(brands.touched).containsExactly(result.brandId());
+		// 등록 검증 프로필 1콜의 사후 계상(어드민 크롤링 비용) — 콜 시점엔 brand_id가 없어 등록 직후 +1.
+		assertThat(callCounts.byBrand).containsExactly(Map.entry(result.brandId(), 1L));
 	}
 
 	@Test
@@ -173,6 +191,7 @@ class BrandRegistrationServiceTest {
 		assertThat(replayed.replayed()).isTrue();
 		assertThat(replayed.brandId()).isEqualTo(first.brandId());
 		assertThat(hikerCalls).hasSize(callsAfterFirst);   // Hiker 콜 0 — 멱등 replay
+		assertThat(callCounts.byBrand).containsExactly(Map.entry(first.brandId(), 1L));   // 콜 집계도 그대로
 	}
 
 	@Test
