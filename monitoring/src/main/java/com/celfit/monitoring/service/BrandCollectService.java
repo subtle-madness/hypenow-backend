@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
@@ -49,6 +50,7 @@ public class BrandCollectService {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
 	private final HikerClient hiker;
+	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final BrandSnapshotRepository snapshots;
 	private final BrandCommentRepository comments;
@@ -61,7 +63,7 @@ public class BrandCollectService {
 	private final int commentPages;
 	private final int authorStaleDays;
 
-	public BrandCollectService(HikerClient hiker, BrandSnapshotWriter writer,
+	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
@@ -71,6 +73,7 @@ public class BrandCollectService {
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
 		this.hiker = hiker;
+		this.callContext = callContext;
 		this.writer = writer;
 		this.snapshots = snapshots;
 		this.comments = comments;
@@ -122,6 +125,12 @@ public class BrandCollectService {
 	 * 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3).
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
+		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
+		// 등록 백필(두-인자 직접 호출)도 같은 진입점이라 함께 계상된다.
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onServingCovered));
+	}
+
+	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
 		refreshBrandProfileSafely(brand);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
@@ -227,7 +236,8 @@ public class BrandCollectService {
 		if (posts.isEmpty()) {
 			return;
 		}
-		ensureAuthors(posts);
+		// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
+		ensureAuthors(brand.id(), posts);
 		collectCommentsGated(brand.id(), posts);
 		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료({}건 대상)", brand.username(), posts.size());
 	}
@@ -338,7 +348,7 @@ public class BrandCollectService {
 	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
 	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.
 	 */
-	private void ensureAuthors(Collection<PostInfo> posts) {
+	private void ensureAuthors(long brandId, Collection<PostInfo> posts) {
 		Set<String> ids = posts.stream().map(PostInfo::ownerUserId).filter(Objects::nonNull)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		if (ids.isEmpty()) {
@@ -348,18 +358,20 @@ public class BrandCollectService {
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
 		// 게시자별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
 		// 보강 시간의 본체였다). 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
+		// 태스크 본문은 runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커
+		// 스레드로 넘어가지 않기 때문(BrandCallContext 주석 참조).
 		List<CompletableFuture<Void>> tasks = new ArrayList<>();
 		for (String id : ids) {
 			if (fresh.contains(id)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> {
+			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
 					authors.upsert(hiker.fetchAuthorProfile(id));
 				} catch (RuntimeException e) {
 					log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", id, e.toString());
 				}
-			}, enrichWorker));
+			}), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}
@@ -384,7 +396,7 @@ public class BrandCollectService {
 			if (p.comments() <= stored.getOrDefault(p.shortCode(), 0L)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> {
+			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
 					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
@@ -398,7 +410,7 @@ public class BrandCollectService {
 				} catch (RuntimeException e) {
 					log.warn("태그 댓글 수집 실패(격리) — 게시물 {}: {}", p.shortCode(), e.toString());
 				}
-			}, enrichWorker));
+			}), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}
