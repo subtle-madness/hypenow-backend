@@ -64,9 +64,13 @@ FROM (
 
     UNION ALL
 
-    -- ③ 게시자 프로필 — 태그한 브랜드 중 최소 id 대표 귀속
+    -- ③ 게시자 프로필 — 태그한 브랜드 중 최소 id 대표 귀속.
+    -- subject는 두 형태가 공존한다: 08-07~08-12 적재분은 subjectOf의 파라미터 키 불일치(user_id vs
+    -- 실제 id)로 경로가 통째로 남았고(같은 PR에서 수정), 이후분은 순수 id다 — 둘 다 복원한다.
     SELECT (SELECT min(bt.brand_id) FROM brand_tagged_post bt
-             WHERE bt.author_ig_user_id = p.subject),
+             WHERE bt.author_ig_user_id = CASE
+                 WHEN p.subject ~ '^[0-9]+$' THEN p.subject
+                 ELSE substring(p.subject FROM '[?&]id=([0-9]+)') END),
            (p.fetched_at AT TIME ZONE 'Asia/Seoul')::date
     FROM raw.fetch_payload p
     WHERE p.kind = 'PROFILE_BY_ID'
