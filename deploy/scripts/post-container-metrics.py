@@ -3,7 +3,8 @@
 #   * * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py
 # 인증은 인스턴스 프린시펄(dynamic group hypenow-instances + policy hypenow-custom-metrics) —
 # 서버에 키를 두지 않는다. 알람은 OCI 콘솔/CLI에서 이 네임스페이스를 구독(hypenow-alerts 토픽).
-# 의존성: python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci
+# 의존성: python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci google-auth requests
+#   (google-auth·requests는 버킷 크기 게시가 GCS로 옮겨간 2026-08-12부터 필요)
 import datetime
 import shutil
 import subprocess
@@ -22,11 +23,6 @@ SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", 
 PROJECT = "deploy"
 NAMESPACE = "hypenow_custom"
 COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaat36ksxqom5nzid6jzx2tglneiyganxbjk7t5pgmlvgpc44eozllq"
-
-# 오브젝트 스토리지 — OCI가 StoredBytes를 자동 게시하지 않아(2026-07 실측 7일 무데이터)
-# 여기서 approximateSize를 직접 게시한다. 정책에 read buckets(해당 버킷 한정) 필요.
-BUCKETS = ["hypenow-images"]
-OS_NAMESPACE = "nr4nxrxoojw8"
 
 
 def container_ids(service: str) -> list[str]:
@@ -84,12 +80,29 @@ signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
 data = [metric("container_up", {"containerName": s}, container_up(s)) for s in SERVICES]
 data.append(metric("disk_used_percent", {"host": "hypenow-api"}, disk_used_percent()))
 
-# 버킷 용량은 5분 결에만 조회 — 성장 속도 대비 1분 해상도가 불필요하고 GetBucket API 호출 절약
-if now.minute % 5 == 0:
-	os_client = oci.object_storage.ObjectStorageClient({"region": signer.region}, signer=signer)
-	for bucket in BUCKETS:
-		size = os_client.get_bucket(OS_NAMESPACE, bucket, fields=["approximateSize"]).data.approximate_size or 0
-		data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(size / 2**30, 3)))
+# 버킷 용량(GCS, 2026-08-12 이전) — 크기 합산은 전체 목록 페이징이라 정시(hour)에만.
+# OCI 버킷은 이전 후 동결 스냅샷이라 더 게시하지 않는다(알람은 GCS 값으로 계속 동작).
+GCS_BUCKETS = ["hypenow-images"]
+GCS_KEY = "/home/ubuntu/deploy/secrets/gcs-image-archiver.json"
+if now.minute == 0:
+	from google.oauth2 import service_account
+	from google.auth.transport.requests import AuthorizedSession
+	creds = service_account.Credentials.from_service_account_file(
+		GCS_KEY, scopes=["https://www.googleapis.com/auth/devstorage.read_only"])
+	sess = AuthorizedSession(creds)
+	for bucket in GCS_BUCKETS:
+		total, page = 0, None
+		while True:
+			params = {"fields": "items(size),nextPageToken", "maxResults": 1000}
+			if page:
+				params["pageToken"] = page
+			body = sess.get(f"https://storage.googleapis.com/storage/v1/b/{bucket}/o",
+				params=params, timeout=30).json()
+			total += sum(int(o["size"]) for o in body.get("items", []))
+			page = body.get("nextPageToken")
+			if not page:
+				break
+		data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(total / 2**30, 3)))
 
 client = oci.monitoring.MonitoringClient(
 	{"region": signer.region}, signer=signer,
