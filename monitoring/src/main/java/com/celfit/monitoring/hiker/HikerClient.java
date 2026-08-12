@@ -47,7 +47,7 @@ public class HikerClient {
 	private record ClipPlays(Map<String, ClipCounts> plays, Map<String, ClipItem> items, boolean complete) {}
 
 	/** clips 열거의 media 노드 원형 — 그리드 숨김 릴스를 게시물로 승격할 때 파싱 재료가 된다. */
-	private record ClipItem(JsonNode media, String rawJson) {}
+	private record ClipItem(JsonNode media) {}
 
 	public ProfileInfo fetchProfile(String username) {
 		String body = http.get("/v2/user/by/username?username=" + enc(username));
@@ -65,8 +65,7 @@ public class HikerClient {
 				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null),
 				user.path("biography").asString(null),
 				// 인증뱃지·외부링크(was 계약 §3-2) — 추가 콜 없이 같은 응답에서.
-				nullableBoolean(user, "is_verified"), user.path("external_url").asString(null),
-				body);
+				nullableBoolean(user, "is_verified"), user.path("external_url").asString(null));
 	}
 
 	/**
@@ -124,7 +123,7 @@ public class HikerClient {
 			JsonNode root = root(body);
 			int before = byCode.size();
 			for (JsonNode item : items(root)) {
-				PostInfo post = toPost(item, username, body, clips.plays(), clips.complete());
+				PostInfo post = toPost(item, username, clips.plays(), clips.complete());
 				byCode.putIfAbsent(post.shortCode(), post);   // 페이지 경계 중복 방지
 			}
 			// 커서 전진 가드: 커서 파라미터명이 틀리면 API가 같은 1페이지를 계속 돌려주는데
@@ -146,7 +145,7 @@ public class HikerClient {
 		for (var entry : clips.items().entrySet()) {
 			if (!byCode.containsKey(entry.getKey())) {
 				byCode.put(entry.getKey(),
-						toPost(entry.getValue().media(), username, entry.getValue().rawJson(),
+						toPost(entry.getValue().media(), username,
 								clips.plays(), true));   // clips 응답은 재생수 인라인 — 조회수 신뢰 가능
 			}
 		}
@@ -179,7 +178,7 @@ public class HikerClient {
 					JsonNode m = item.path("media");
 					String code = m.path("code").asString(null);
 					if (code != null && !code.isBlank()) {
-						items.putIfAbsent(code, new ClipItem(m, body));
+						items.putIfAbsent(code, new ClipItem(m));
 					}
 					ClipCounts counts = playCounts(m);
 					// 재생수 없는 셰이프여도 저장·리포스트 관측(세션 복권 당첨분)은 버리지 않는다.
@@ -230,7 +229,7 @@ public class HikerClient {
 		JsonNode root = root(body);
 		List<PostInfo> posts = new ArrayList<>();
 		for (JsonNode item : items(root)) {
-			posts.add(toPost(item, null, body, Map.of(), true));
+			posts.add(toPost(item, null, Map.of(), true));
 		}
 		String cursor = moreAvailable(root) ? nextPageId(root) : null;
 		return new TaggedPage(posts, cursor);
@@ -257,7 +256,7 @@ public class HikerClient {
 		JsonNode root = root(body);
 		List<HashtagPost> posts = new ArrayList<>();
 		for (JsonNode item : hashtagItems(root)) {
-			posts.add(new HashtagPost(toPost(item, null, body, Map.of(), true), taggedUsernames(item)));
+			posts.add(new HashtagPost(toPost(item, null, Map.of(), true), taggedUsernames(item)));
 		}
 		String cursor = moreAvailable(root) ? nextPageId(root) : null;
 		return new HashtagPage(posts, cursor);
@@ -273,7 +272,7 @@ public class HikerClient {
 			throw new SubjectNotFoundException("게시물 응답에 media_or_ad 없음: " + shortCode);
 		}
 		// 단건 응답에는 play_count가 그대로 실린다 — clips 보강 경로를 타지 않으므로 조회수는 항상 신뢰 가능하다.
-		PostInfo post = toPost(media, null, body, Map.of(), true);
+		PostInfo post = toPost(media, null, Map.of(), true);
 		// 단건 응답에는 usernameHint가 없어 소유 계정을 user.username에서만 얻는다.
 		// 없으면 스냅샷 적재(post_snapshot.username NOT NULL)도 target 등록도 불가 → 셰이프 이상으로 본다.
 		if (post.username() == null) {
@@ -500,7 +499,7 @@ public class HikerClient {
 		return new ArrayList<>(out);
 	}
 
-	private static PostInfo toPost(JsonNode node, String usernameHint, String rawJson,
+	private static PostInfo toPost(JsonNode node, String usernameHint,
 			Map<String, ClipCounts> clipPlays, boolean viewsTrusted) {
 		JsonNode m = node.has("media") ? node.path("media") : node;   // clips 열거는 한 겹 더 감쌈
 		String code = m.path("code").asString();
@@ -550,7 +549,7 @@ public class HikerClient {
 				views, fbPlays,
 				saves, shares, reposts,
 				videoUrl, videoDuration, isPaidPartnership,
-				rawJson, viewsTrusted, likesHidden, sharesHidden);
+				viewsTrusted, likesHidden, sharesHidden);
 	}
 
 	/**

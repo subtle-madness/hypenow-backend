@@ -202,7 +202,7 @@ class BrandRegistrationServiceTest {
 	private static PostInfo post(String code) {
 		return new PostInfo(code, "author", null, null, "1", "REELS", null, null,
 				null, null, null, null, null, null, null, null, null, null, null,
-				"{}", false, false, false);
+				false, false, false);
 	}
 
 	private BrandRegistrationService service() {

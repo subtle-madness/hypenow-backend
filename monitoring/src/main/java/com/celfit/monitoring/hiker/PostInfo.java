@@ -6,8 +6,9 @@ package com.celfit.monitoring.hiker;
  * 릴스의 저장·리포스트는 세션 복권(콜 단위 전부/전무, 존재율 ~30-45% — findings §2 결론 5)이라
  * null이 "취득 불가"가 아니라 "이 콜이 꽝"일 수 있다 — 스윕이 clips 재시도로 보강한다(08-04).
  * takenAt은 taken_at(epoch seconds) — 핀 고정 게시물 때문에 배열 순서를 믿을 수 없어 재정렬 기준으로 쓴다.
- * rawJson은 이 게시물만이 아니라 **응답 body 전체**다(열거면 그 페이지의 12건 전부).
- * 그래서 감사용 원형 적재는 여기서 하지 않는다 — 전송 계층(RecordingHikerHttp)이 콜 단위로 남긴다.
+ * 응답 원문은 나르지 않는다 — 감사용 원형 적재는 전송 계층(RecordingHikerHttp)이 콜 단위로 남긴다.
+ * 과거에 원문(페이지 body 전체, TAGGED 평균 859KB)을 rawJson 필드로 실었다가 소비처 없이 힙만
+ * 잠식해 OOM을 냈다(08-12 운영 — 365일 백필 × 무제한 enrich 큐가 브랜드당 ~150MB를 상주시킴).
  *
  * <p>viewsTrusted는 "views가 null인 게 진짜 부재인가"를 하류에 알린다: 열거 경로의 조회수는
  * /v2/user/clips 보강으로만 채워지는데 그 보강은 실패해도 스윕을 계속한다(조용히 null).
@@ -50,15 +51,14 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 		String ownerUserId, String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long fbPlays, Long saves,
 		Long shares, Long reposts, String videoUrl, Double videoDuration, Boolean isPaidPartnership,
-		String rawJson, boolean viewsTrusted, boolean likesHidden,
-		boolean sharesHidden) {
+		boolean viewsTrusted, boolean likesHidden, boolean sharesHidden) {
 
 	/** 재시도 콜에서 얻은 FB 몫만 갈아끼운 사본 — 나머지 지표는 원 콜 값을 유지한다. */
 	public PostInfo withFbPlays(Long newFbPlays) {
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
 				caption, thumbnailUrl, takenAt, likes, comments, views, newFbPlays, saves, shares, reposts,
 				videoUrl, videoDuration, isPaidPartnership,
-				rawJson, viewsTrusted, likesHidden, sharesHidden);
+				viewsTrusted, likesHidden, sharesHidden);
 	}
 
 	/**
@@ -71,7 +71,7 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				caption, thumbnailUrl, takenAt, likes, comments, views, fbPlays,
 				coalesce(saves, newSaves), coalesce(shares, newShares), coalesce(reposts, newReposts),
 				videoUrl, videoDuration, isPaidPartnership,
-				rawJson, viewsTrusted, likesHidden, sharesHidden);
+				viewsTrusted, likesHidden, sharesHidden);
 	}
 
 	/**
@@ -105,7 +105,6 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				coalesce(videoUrl, fallback.videoUrl),
 				coalesce(videoDuration, fallback.videoDuration),
 				coalesce(isPaidPartnership, fallback.isPaidPartnership),
-				rawJson,
 				viewsFromFallback ? fallback.viewsTrusted : viewsTrusted,
 				likesHidden,
 				// 숨김 플래그는 어느 쪽 응답에서든 관측되면 참 — 값과 달리 켜짐이 정보다.

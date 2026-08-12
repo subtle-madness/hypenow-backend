@@ -279,7 +279,7 @@ services:
     image: ghcr.io/subtle-madness/hypenow-monitoring:latest
     restart: unless-stopped
     logging: *logging
-    mem_limit: 768m   # 힙 384m + 오프힙 여유
+    mem_limit: 768m   # 힙 512m + 오프힙 여유(08-12 힙 상향 후에도 256m 마진 — 스레드 적고 오프힙 소비 없음)
     # prod는 postgres 접속용, v6egress는 프로필·썸네일 아카이브의 AAAA-only CDN 도달용
     networks: [prod, monitoring-net, v6egress]
     environment:
@@ -310,7 +310,9 @@ services:
       MONITORING_ALARM_READER_PASSWORD: ${ALARM_READER_PASSWORD:-}
       # 수신자 허용목록 안전판(비어있으면 무제한 — 운영 기본). 07-30 test 스택 검증용으로 추가, 운영은 미사용 전제
       MONITORING_ALARM_ALLOWED_RECIPIENTS: ${ALARM_ALLOWED_RECIPIENTS:-}
-      JAVA_OPTS: "-Xms128m -Xmx384m"
+      # 힙 512m(08-12 OOM 후속): 백필 core 2병렬 대비 — 힙 예산은 동시 콜 9 × ~10MB + 상주분.
+      # ExitOnOOM: OOM 후 반쯤 죽은 채 버티지 않고 즉시 종료 → restart 정책으로 깨끗하게 복귀.
+      JAVA_OPTS: "-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError"
     volumes:
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
