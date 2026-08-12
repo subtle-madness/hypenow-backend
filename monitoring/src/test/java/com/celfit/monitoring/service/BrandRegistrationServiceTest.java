@@ -47,10 +47,11 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public long insertOrReactivate(String username, ProfileInfo profile) {
+		public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths) {
 			BrandRow existing = rows.get(username);
 			long id = existing != null ? existing.id() : nextId++;
-			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null));
+			int months = existing != null ? Math.max(existing.collectionMonths(), collectionMonths) : collectionMonths;
+			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null, months));
 			return id;
 		}
 
@@ -71,7 +72,7 @@ class BrandRegistrationServiceTest {
 				return false;
 			}
 			rows.put(username, new BrandRow(row.id(), row.username(), row.igUserId(),
-					BrandStatus.CLOSED, row.lastSweptOn()));
+					BrandStatus.CLOSED, row.lastSweptOn(), row.collectionMonths()));
 			return true;
 		}
 

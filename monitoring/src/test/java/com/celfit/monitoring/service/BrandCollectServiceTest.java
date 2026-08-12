@@ -76,10 +76,10 @@ class BrandCollectServiceTest {
 	private boolean commentPage2Fails = false;
 	private int tagCall = 0;
 
-	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null);
+	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null, 12);
 	// 완주 이력 있는 브랜드 — 티어 경로(백필 아님). 어제 완주로 두어 오늘 스윕 시나리오를 만든다.
 	private final BrandRow sweptBrand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE,
-			LocalDate.now().minusDays(1));
+			LocalDate.now().minusDays(1), 12);
 
 	// ── 스텁 대역(CollectServiceTest NoopCommentRepository 관용구) ────────────
 

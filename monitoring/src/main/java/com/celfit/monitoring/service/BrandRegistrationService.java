@@ -104,7 +104,7 @@ public class BrandRegistrationService {
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
-		long id = brands.insertOrReactivate(normalized, profile);
+		long id = brands.insertOrReactivate(normalized, profile, 12);
 		// 등록 검증 프로필 1콜의 사후 계상 — 콜 시점엔 brand_id가 없어 컨텍스트 스코프를 못 쓴다.
 		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
 		callCounts.add(id, LocalDate.now(KST), 1);

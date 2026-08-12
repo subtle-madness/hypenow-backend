@@ -143,7 +143,7 @@ class BrandSweepJobTest {
 	}
 
 	private static BrandRow brand(long id, String username) {
-		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null);
+		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null, 12);
 	}
 
 	/** 신규 썸네일 아카이브 두 잡은 대부분의 테스트에서 관심 밖 — 성공 스텁으로 채운다. */

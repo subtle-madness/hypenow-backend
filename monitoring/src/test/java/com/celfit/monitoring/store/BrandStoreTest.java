@@ -1,6 +1,7 @@
 package com.celfit.monitoring.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.AuthorInfo;
@@ -46,12 +47,12 @@ class BrandStoreTest {
 
 	@Test
 	void 브랜드_등록과_재가입_재활성() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		assertThat(brands.findActive()).hasSize(1);
 		assertThat(brands.close("brandx")).isTrue();
 		assertThat(brands.findActive()).isEmpty();
 		assertThat(brands.close("brandx")).isFalse();          // 이미 닫힘 — 멱등
-		long reId = brands.insertOrReactivate("brandx", profile("brandx", "111", 2000L, "소개2"));
+		long reId = brands.insertOrReactivate("brandx", profile("brandx", "111", 2000L, "소개2"), 12);
 		assertThat(reId).isEqualTo(id);                        // 같은 행 재활성(UNIQUE username)
 		BrandRow row = brands.findByUsername("brandx").orElseThrow();
 		assertThat(row.status()).isEqualTo(BrandStatus.ACTIVE);
@@ -61,7 +62,7 @@ class BrandStoreTest {
 	@Test
 	void 등록은_프로필_전필드를_적재한다() {
 		long id = brands.insertOrReactivate("brandx", new ProfileInfo("brandx", "111", 1000L, 10L, 5L,
-				"브랜드", "https://pic", "소개", true, "https://link", "{}"));
+				"브랜드", "https://pic", "소개", true, "https://link", "{}"), 12);
 		assertThat(column(id, "full_name", String.class)).isEqualTo("브랜드");
 		assertThat(column(id, "profile_pic_url", String.class)).isEqualTo("https://pic");
 		assertThat(column(id, "is_verified", Boolean.class)).isTrue();
@@ -72,7 +73,7 @@ class BrandStoreTest {
 
 	@Test
 	void 스윕_완주일과_프로필_갱신() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 6));
 		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn())
 				.isEqualTo(LocalDate.of(2026, 8, 6));
@@ -83,7 +84,7 @@ class BrandStoreTest {
 
 	@Test
 	void markServing은_last_swept_at만_당기고_완주_컬럼은_건드리지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 
 		brands.markServing(id);
 
@@ -94,7 +95,7 @@ class BrandStoreTest {
 
 	@Test
 	void markServing은_이미_서빙_중이면_시각을_덮지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 6));   // 완주 — last_swept_at 확정
 		Timestamp sweptAt = column(id, "last_swept_at", Timestamp.class);
 
@@ -105,7 +106,7 @@ class BrandStoreTest {
 
 	@Test
 	void refreshProfile은_전필드를_갱신한다() {
-		long id = brands.insertOrReactivate("brand_z", profile("brand_z"));
+		long id = brands.insertOrReactivate("brand_z", profile("brand_z"), 12);
 		brands.refreshProfile(id, new ProfileInfo("brand_z", "1", 10L, 5L, 3L,
 				"이름", "https://pic", "소개", true, "https://link", "{}"));
 		assertThat(column(id, "full_name", String.class)).isEqualTo("이름");
@@ -119,7 +120,7 @@ class BrandStoreTest {
 
 	@Test
 	void touchSwept는_완주시각과_오류클리어까지_기록한다() {
-		long id = brands.insertOrReactivate("brand_x", profile("brand_x"));
+		long id = brands.insertOrReactivate("brand_x", profile("brand_x"), 12);
 		brands.markBackfillError(id, "백필 실패: 타임아웃");
 		assertThat(column(id, "backfill_error", String.class)).isEqualTo("백필 실패: 타임아웃");
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
@@ -130,7 +131,7 @@ class BrandStoreTest {
 
 	@Test
 	void backfill_completed_at은_최초_완주시각을_보존한다() {
-		long id = brands.insertOrReactivate("brand_x", profile("brand_x"));
+		long id = brands.insertOrReactivate("brand_x", profile("brand_x"), 12);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
 		Timestamp first = column(id, "backfill_completed_at", Timestamp.class);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 8));
@@ -140,7 +141,7 @@ class BrandStoreTest {
 
 	@Test
 	void markBackfillError는_ready_이후엔_덮지_않는다() {
-		long id = brands.insertOrReactivate("brand_y", profile("brand_y"));
+		long id = brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
 		brands.markBackfillError(id, "늦게 온 실패");
 		assertThat(column(id, "backfill_error", String.class)).isNull();
@@ -149,21 +150,60 @@ class BrandStoreTest {
 	@Test
 	void 재가입은_백필_상태를_초기화한다() {
 		// 재등록 = 백필을 처음부터 다시 — "수집 준비 중"으로 되돌아야 was 폴링이 collecting을 본다.
-		long id = brands.insertOrReactivate("brand_y", profile("brand_y"));
+		long id = brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
 		brands.markBackfillError(id, "백필 실패");
 		brands.close("brand_y");
-		brands.insertOrReactivate("brand_y", profile("brand_y"));
+		brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
 		assertThat(column(id, "backfill_error", String.class)).isNull();
 
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
 		brands.close("brand_y");
-		brands.insertOrReactivate("brand_y", profile("brand_y"));
+		brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
 	}
 
 	@Test
+	void 수집_창은_요청값으로_저장되고_재가입에도_줄지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(3);
+		// 재가입 확대는 반영, 축소는 GREATEST가 막는다 — "수집된 사실이 정본"(스펙 결정 요약).
+		brands.close("brandx");
+		brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 6);
+		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(6);
+		brands.close("brandx");
+		brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 1);
+		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(6);
+	}
+
+	@Test
+	void 값_공간_밖_수집_창은_CHECK가_거절한다() {
+		assertThatThrownBy(() -> brands.insertOrReactivate("brandx",
+				profile("brandx", "111", 1000L, "소개"), 2))
+				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void expandWindow는_창_상향과_백필_재개_신호를_함께_기록한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		brands.touchSwept(id, LocalDate.now());   // 완주 상태를 만들어 둔다
+		java.time.OffsetDateTime before = db.queryForObject(
+				"SELECT collection_started_at FROM brand_account WHERE id = ?",
+				java.time.OffsetDateTime.class, id);
+
+		brands.expandWindow(id, 12);
+
+		BrandRow row = brands.findByUsername("brandx").orElseThrow();
+		assertThat(row.collectionMonths()).isEqualTo(12);
+		assertThat(row.lastSweptOn()).isNull();   // 백필 재개 신호 — 다음 스윕 백스톱 상속
+		assertThat(db.queryForObject("SELECT collection_started_at FROM brand_account WHERE id = ?",
+				java.time.OffsetDateTime.class, id)).isAfter(before);   // FE 폴링 앵커 갱신
+		assertThat(db.queryForObject("SELECT backfill_completed_at FROM brand_account WHERE id = ?",
+				java.time.OffsetDateTime.class, id)).isNotNull();   // 완주 이력은 보존(확장 중 collecting 판별 재료)
+	}
+
+	@Test
 	void 태그_게시물_링크와_댓글_게이트_상태() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null), 12);
 		taggedPosts.insert(id, post("CodeA", 1754000000L));
 		taggedPosts.insert(id, post("CodeA", 1754000000L));    // 재감지 — ON CONFLICT 무해
 		assertThat(taggedPosts.knownCodes(id)).containsExactly("CodeA");
@@ -320,7 +360,7 @@ class BrandStoreTest {
 
 	@Test
 	void 링크_last_crawled_at은_null로_시작하고_touchCrawled가_갱신한다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.insert(id, post("A", 1754000000L));
 		taggedPosts.insert(id, post("B", 1754000000L));
 		Instant floor = Instant.ofEpochSecond(1754000000L).minusSeconds(60);
@@ -341,7 +381,7 @@ class BrandStoreTest {
 	@Test
 	void trackedPosts는_minTakenAt_이전_링크를_거른다() {
 		// 추적 플로어(180일) 밖 링크는 티어 판정 입력에서 빠진다 — 영구 제외의 조회 측 절반
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.insert(id, post("Recent", 1754000000L));
 		taggedPosts.insert(id, post("Ancient", 1700000000L));
 
@@ -353,7 +393,7 @@ class BrandStoreTest {
 	void touchCrawledDepth는_컷_이후_링크_전부를_갱신한다() {
 		// 자연 종료한 열거가 커버한 깊이 전체 갱신 — 열거에 안 실린 링크(삭제·태그 제거·비공개)도
 		// 포함해야 due가 영구 true로 굳지 않는다. 컷 이전 링크는 건드리지 않는다.
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.insert(id, post("InCut", 1754000000L));
 		taggedPosts.insert(id, post("OnCut", 1753000000L));      // 경계 — 컷과 동일 시각(포함)
 		taggedPosts.insert(id, post("BeforeCut", 1752000000L));
@@ -373,7 +413,7 @@ class BrandStoreTest {
 
 	@Test
 	void touchCrawled는_빈_목록에_쿼리를_내지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.touchCrawled(id, List.of(), Instant.now());   // 예외 없이 no-op이면 통과
 	}
 

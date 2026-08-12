@@ -185,7 +185,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_조회는_현재_목록을_돌려준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 		hashtags.terms = List.of("cclime", "끌리메");
 
 		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
@@ -196,7 +196,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_교체는_정규화_후_전체_교체한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[\" CClime \",\"cclime\",\"\"]}"))
@@ -212,7 +212,7 @@ class BrandControllerTest {
 	 */
 	@Test
 	void terms_null_바디는_빈_목록_교체라_422다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
@@ -224,7 +224,7 @@ class BrandControllerTest {
 
 	@Test
 	void 빈_배열_교체도_422다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[\"  \",\"\"]}"))
@@ -252,7 +252,7 @@ class BrandControllerTest {
 
 	@Test
 	void 탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
 
 		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
 				.andExpect(status().isNotFound())

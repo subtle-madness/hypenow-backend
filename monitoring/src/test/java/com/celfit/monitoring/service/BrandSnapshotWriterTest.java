@@ -64,7 +64,7 @@ class BrandSnapshotWriterTest {
 	@Test
 	void saveBrandProfile은_최신값과_추이를_함께_적재한다() {
 		long id = brands.insertOrReactivate("brandx",
-				new ProfileInfo("brandx", "111", 1L, null, null, null, null, null, null, null, "{}"));
+				new ProfileInfo("brandx", "111", 1L, null, null, null, null, null, null, null, "{}"), 12);
 
 		writer.saveBrandProfile(id, "brandx", LocalDate.of(2026, 8, 7),
 				new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://cdn/pic.jpg",
