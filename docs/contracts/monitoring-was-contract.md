@@ -637,12 +637,52 @@ term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 �
 | `accountId`가 유효한 브랜드가 아님(브랜드 비정합) | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND`(브랜드 미등록·비ACTIVE) 둘 다 404로 수렴 |
 | monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 monitoring 연동 엔드포인트와 공통 매핑, `V1ExceptionAdvice`) |
 
+### 8-3-1. 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-tags` — 태그 셋 관리 (v2.9, 2026-08-12)
+
+**유저 결정: 자동 유도만 → 유저 입력 허용으로 전환.** 등록 시 자동 유도되는 태그 3종(#브랜드명·
+#계정명 루트·#전체계정명, §2)은 여전히 시드되지만, 이제 브랜드 소유자가 감지 대상 해시태그
+전체를 직접 추가·삭제할 수 있다. was가 monitoring 내부 API(`GET/PUT /api/brands/{username}/hashtag-tags`)를
+그대로 프록시한다 — 정규화(trim·선행 `#` 제거·소문자·중복 제거)와 유효 문자 검증은 monitoring이 한다.
+
+**⚠️ 비소급** — 태그 추가는 다음 새벽 스윕부터 감지가 시작된다(소급 백필은 최대 4페이지, 스펙
+§1 등록 백필과 같은 한도). 태그 삭제는 이후 발견분만 중단되고, 이미 저장된 발견 게시물은 그대로
+유지된다(verdict 불변 — 제외 문자열과 같은 원칙).
+
+**⚠️ 삭제는 tombstone** — monitoring `brand_hashtag`에 `deleted_at`이 채워진 채 행이 남는다.
+등록 replay가 부르는 자동 시드(`insertTags`, `ON CONFLICT DO NOTHING`)는 이 tombstone 행에
+막혀 유저가 지운 태그를 되살리지 못한다. 지운 태그를 다시 쓰려면 이 API로 재추가해야 한다
+(재추가는 tombstone 해제 UPSERT라 정상 동작).
+
+```json
+// GET 200
+{ "tags": ["cclime", "끌리메", "cclime_official"] }
+
+// PUT 요청 (전체 교체)
+{ "tags": ["cclime", "새태그"] }
+// PUT 204
+
+// PUT 400 — 정규화 결과가 빈 목록, 또는 무효 문자(IG 해시태그 불가 문자) 포함 태그
+{ "code": "VALIDATION_FAILED", ... }
+```
+
+| 상황 | HTTP | 비고 |
+|---|---|---|
+| 정상 | GET 200 / PUT 204 | |
+| PUT 정규화 결과 빈 목록 | 400 `VALIDATION_FAILED` | 감지가 조용히 꺼지는 것 방지 — 제외 문자열과 같은 하한 가드. monitoring 내부는 422(`InvalidHashtagException`)지만 was 공용 매핑이 400으로 내린다 |
+| PUT 무효 문자 포함 태그 | 400 `VALIDATION_FAILED` | 유저 입력이라 절삭하지 않고 통째로 거부(자동 유도와 다른 규칙) — 공백·`.` 등 IG 해시태그 불가 문자(`[\p{L}\p{N}_]+` 전체 일치 아니면 거부) |
+| 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership`) |
+| `accountId`가 유효한 브랜드가 아님 | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND` 둘 다 404로 수렴 |
+| monitoring 접속 불능 | 503 | `Retry-After: 5` 동반 |
+
 ### 8-4. FE 공유 필요
 
-프론트 공유가 아직 안 된 신규 UI 표면 2가지:
+프론트 공유가 아직 안 된 신규 UI 표면 3가지:
 
 - **해시태그 발견 게시물 "별도 탭"** — §8-1 전용 API(`GET .../hashtag-posts`)를 §6-1 게시물
   목록과 나란한 새 탭으로 노출. 스냅샷·댓글·팔로워가 없는 데이터라 tagged·direct 카드와 다른
   레이아웃이 필요하고(성과 지표 없음, `likes`/`comments`는 발견 시점 스냅 값), `matchedTag`로
   "#태그로 발견" 배지를 그릴 수 있다.
 - **제외 문자열 관리 UI** — §8-3 API로 자사 태그 오탐 문자열을 브랜드 소유자가 직접 추가·삭제.
+- **태그 셋 관리 UI** — §8-3-1 API로 감지 대상 해시태그를 브랜드 소유자가 직접 추가·삭제. 추가는
+  다음 새벽부터 감지 시작(비소급), 삭제는 tombstone(재추가하면 복구되지만 그 전까지 발견 중단)
+  이라는 두 비소급 규칙을 FE 문구에 반드시 반영할 것.
