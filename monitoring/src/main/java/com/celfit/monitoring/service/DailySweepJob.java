@@ -6,6 +6,7 @@ import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.store.ExpiredTarget;
@@ -17,10 +18,12 @@ import com.celfit.monitoring.store.TargetRow;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -58,13 +61,14 @@ public class DailySweepJob {
 	private final AlarmRecorder alarms;
 	private final SweepRunRepository sweepRuns;
 	private final SnapshotRepository snapshots;
+	private final TargetCallContext callContext;
 	private final int retryRounds;
 	private final Duration retryInterval;
 	private final ProfileImageArchiveJob imageArchive;
 	private final PostThumbnailArchiveJob thumbnailArchive;
 
 	public DailySweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
-			SweepRunRepository sweepRuns, SnapshotRepository snapshots,
+			SweepRunRepository sweepRuns, SnapshotRepository snapshots, TargetCallContext callContext,
 			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
 			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval,
 			ProfileImageArchiveJob imageArchive, PostThumbnailArchiveJob thumbnailArchive) {
@@ -73,6 +77,7 @@ public class DailySweepJob {
 		this.alarms = alarms;
 		this.sweepRuns = sweepRuns;
 		this.snapshots = snapshots;
+		this.callContext = callContext;
 		this.retryRounds = retryRounds;
 		this.retryInterval = retryInterval;
 		this.imageArchive = imageArchive;
@@ -252,14 +257,21 @@ public class DailySweepJob {
 	 */
 	private void sweepComments(List<TargetRow> active) {
 		Map<String, String> ownerByShortCode = new LinkedHashMap<>();
+		// 콜 집계 스코프 — 게시물 콜 1회가 그 게시물을 추적하는 캠페인 유저 전원을 서빙한다.
+		Map<String, Set<Long>> usersByShortCode = new LinkedHashMap<>();
 		for (TargetRow t : active) {
 			if (t.status() == TargetStatus.TRACKING && t.trackedShortCode() != null) {
 				ownerByShortCode.putIfAbsent(t.trackedShortCode(), t.username());
+				if (t.userId() != null) {
+					usersByShortCode.computeIfAbsent(t.trackedShortCode(), k -> new LinkedHashSet<>())
+							.add(t.userId());
+				}
 			}
 		}
 		for (var entry : ownerByShortCode.entrySet()) {
 			try {
-				collect.collectComments(entry.getKey(), entry.getValue());
+				callContext.runScoped(usersByShortCode.getOrDefault(entry.getKey(), Set.of()),
+						() -> collect.collectComments(entry.getKey(), entry.getValue()));
 			} catch (RuntimeException e) {
 				log.warn("댓글 수집 실패(격리) — 게시물 {}: {}", entry.getKey(), e.toString());
 			}
@@ -277,14 +289,17 @@ public class DailySweepJob {
 	 * 콜에도 적용돼야 하기 때문이다.
 	 */
 	private Set<Long> sweepAccount(String username, List<TargetRow> accountTargets) {
+		// 콜 집계 스코프(비용 계상) — 계정 공유 콜(열거·프로필·지표 재시도)은 이 계정에 캠페인을 건
+		// 유저 전원 몫, 타깃 단건 콜은 그 타깃 소유 유저 몫이다(아래 루프에서 좁혀 재스코프).
+		Set<Long> accountUsers = usersOf(accountTargets);
 		// POST 등록분만 있는 계정은 열거할 이유가 없다 — 프로필·열거 2~3콜이 통째로 낭비된다.
 		boolean needsEnumeration = needsEnumeration(accountTargets);
 		CollectService.AccountCollectResult enumResult = needsEnumeration
-				? collect.collectAccount(username)
+				? callContext.scoped(accountUsers, () -> collect.collectAccount(username))
 				: null;
 		List<PostInfo> posts = enumResult != null ? enumResult.posts() : List.of();
 		if (!needsEnumeration) {
-			collectProfileOnlyOnce(username);
+			callContext.runScoped(accountUsers, () -> collectProfileOnlyOnce(username));
 		}
 		Set<String> enumerated = posts.stream().map(PostInfo::shortCode).collect(Collectors.toSet());
 		Set<Long> transientFailureIds = new LinkedHashSet<>();
@@ -292,7 +307,8 @@ public class DailySweepJob {
 		Map<String, PostInfo> metricsPending = new LinkedHashMap<>();
 		for (TargetRow t : accountTargets) {
 			try {
-				PostInfo trackedPost = sweepTarget(t, posts, enumerated);
+				PostInfo trackedPost = callContext.scoped(usersOf(List.of(t)),
+						() -> sweepTarget(t, posts, enumerated));
 				// 판정은 CollectService와 단일 기준 공유 — 3지표 공통(옵션 ③), 공유 숨김 게시물 제외.
 				if (trackedPost != null && CollectService.needsMetricsRetry(trackedPost)) {
 					metricsPending.putIfAbsent(trackedPost.shortCode(), trackedPost);
@@ -314,8 +330,14 @@ public class DailySweepJob {
 				transientFailureIds.add(t.id());
 			}
 		}
-		retryMetricsSafely(username, enumResult, metricsPending);
+		callContext.runScoped(accountUsers, () -> retryMetricsSafely(username, enumResult, metricsPending));
 		return transientFailureIds;
+	}
+
+	/** 콜 집계 귀속 유저 집합 — user_id null(V3 이전 등록 행)은 귀속 불가라 제외한다. */
+	private static Set<Long> usersOf(Collection<TargetRow> targetRows) {
+		return targetRows.stream().map(TargetRow::userId).filter(Objects::nonNull)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
 	}
 
 	/**

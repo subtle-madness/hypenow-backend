@@ -32,10 +32,14 @@ public class MonitoringCommandClient {
 				.body(request).retrieve().body(RegisterResult.class));
 	}
 
-	/** 공유 단축 링크 해소(계약 §2-6) — 등록과 분리된 전처리 API. 등록 전 shortcode를 얻을 때 호출한다. */
-	public ShareResolveResult resolveShare(String url) {
+	/**
+	 * 공유 단축 링크 해소(계약 §2-6) — 등록과 분리된 전처리 API. 등록 전 shortcode를 얻을 때 호출한다.
+	 * userId는 크롤링 콜 집계 귀속용(2026-08-12 비용 범위 확장) — monitoring이 이 콜을 그 유저의
+	 * target_call_count에 계상한다. null이어도 해소는 동작한다(그 콜만 비용 미집계).
+	 */
+	public ShareResolveResult resolveShare(String url, Long userId) {
 		return exchange(() -> restClient.post().uri("/api/share/resolve")
-				.body(new ShareResolveRequest(url)).retrieve().body(ShareResolveResult.class));
+				.body(new ShareResolveRequest(url, userId)).retrieve().body(ShareResolveResult.class));
 	}
 
 	public ExtendResult extend(long targetId, OffsetDateTime expiresAt) {
@@ -129,7 +133,7 @@ public class MonitoringCommandClient {
 	record ErrorBody(String code, String message) {
 	}
 
-	record ShareResolveRequest(String url) {
+	record ShareResolveRequest(String url, Long userId) {
 	}
 
 	record BrandRegisterRequest(String username, String brandName) {

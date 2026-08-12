@@ -9,12 +9,15 @@ import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
+import com.celfit.monitoring.hiker.BrandCallContext;
+import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
 import com.celfit.monitoring.hiker.ShortCodes;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.image.ImageDownloader;
 import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
@@ -25,7 +28,9 @@ import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
+import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.SweepRunRepository;
+import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.net.URLDecoder;
@@ -335,6 +340,8 @@ class DailySweepJobTest {
 	ProfileImageArchiveJob imageArchive;
 	/** 위 imageArchive와 동형(트랙 KK 확장) — PAR URL 미설정 no-op. */
 	PostThumbnailArchiveJob thumbnailArchive;
+	/** 콜 집계 스코프(비용 계상, 2026-08-12 범위 확장) — job 조립 전체가 공유한다. */
+	final TargetCallContext callContext = new TargetCallContext();
 
 	@BeforeEach
 	void setUp() {
@@ -344,15 +351,19 @@ class DailySweepJobTest {
 		targets = new TargetRepository(db);
 		sweepRuns = new SweepRunRepository(db);
 		hiker = new FakeHiker();
-		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 스윕의 유저 귀속 스코프까지 검증.
+		var client = new HikerClient(new CountingHikerHttp(
+				new RecordingHikerHttp(hiker, new RawPayloadRepository(db)),
+				new BrandCallContext(), new BrandCallCountRepository(db),
+				callContext, new TargetCallCountRepository(db)));
 		snapshots = new SnapshotRepository(db);
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
 		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
-		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
-				thumbnailArchive);
+		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3, Duration.ZERO,
+				imageArchive, thumbnailArchive);
 	}
 
 	private List<String> alarmTypes() {
@@ -448,6 +459,25 @@ class DailySweepJobTest {
 		assertThat(db.queryForObject("SELECT count(*) FROM post_snapshot", Long.class)).isEqualTo(2);
 		assertThat(db.queryForObject("""
 				SELECT last_fetched_at IS NOT NULL FROM target WHERE id=?""", Boolean.class, a)).isTrue();
+	}
+
+	// ②-보강: 콜 집계(2026-08-12 어드민 크롤링 비용 범위 확장) — 스윕 콜의 유저 귀속.
+	@Test
+	void 스윕_콜은_계정_공유분은_전원에게_단건분은_소유_유저에게_계상된다() {
+		hiker.account("shared", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
+		watching("shared", any("Rare Beginnings"), "rk-a", FUTURE, 7L);
+		watching("shared", any("절대없는키워드zz"), "rk-b", FUTURE, 8L);
+
+		job.run();
+
+		// 실제 콜 5: 계정 공유(프로필+medias+clips) 3 + 유저 7 전용(감지 전환 단건 정본 1, 추적 댓글 1).
+		assertThat(hiker.profileCalls + hiker.mediasCalls + hiker.clipsCalls
+				+ hiker.postCalls + hiker.commentsCalls).isEqualTo(5);
+		// 집계는 "콜 × 서빙 유저" — 공유 3콜은 양쪽 모두, 단건 2콜은 유저 7에게만 계상된다.
+		assertThat(db.queryForObject(
+				"SELECT coalesce(sum(calls),0) FROM target_call_count WHERE user_id=7", Long.class)).isEqualTo(5);
+		assertThat(db.queryForObject(
+				"SELECT coalesce(sum(calls),0) FROM target_call_count WHERE user_id=8", Long.class)).isEqualTo(3);
 	}
 
 	/**
@@ -656,7 +686,7 @@ class DailySweepJobTest {
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots,
 				1, 1, 1, 6, Duration.ZERO);
-		return new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO,
+		return new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3, Duration.ZERO,
 				imageArchive, thumbnailArchive);
 	}
 
@@ -921,8 +951,8 @@ class DailySweepJobTest {
 		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
-		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
-				thumbnailArchive);
+		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3,
+				Duration.ZERO, imageArchive, thumbnailArchive);
 
 		revivedJob.run();
 
@@ -1257,8 +1287,8 @@ class DailySweepJobTest {
 		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
 		var crashCollect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
-		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots, 3,
-				Duration.ZERO, imageArchive, thumbnailArchive);
+		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots,
+				callContext, 3, Duration.ZERO, imageArchive, thumbnailArchive);
 
 		assertThatThrownBy(crashingJob::run).isInstanceOf(RuntimeException.class);
 
@@ -1327,8 +1357,8 @@ class DailySweepJobTest {
 		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
 		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
-		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots, 3, Duration.ZERO, imageArchive,
-				thumbnailArchive);
+		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots,
+				callContext, 3, Duration.ZERO, imageArchive, thumbnailArchive);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);
 
 		throwingJob.run();
