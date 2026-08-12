@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.domain.BrandStatus;
+import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.llm.BrandMentionJudge;
 import com.celfit.monitoring.store.BrandHashtagRepository;
@@ -151,7 +152,7 @@ class BrandHashtagCollectServiceTest {
 	}
 
 	private BrandHashtagCollectService service(int maxPages) {
-		return new BrandHashtagCollectService(client(), repo, judge, brands, WINDOW_DAYS, maxPages);
+		return new BrandHashtagCollectService(client(), new BrandCallContext(), repo, judge, brands, WINDOW_DAYS, maxPages);
 	}
 
 	private long tagCalls() {
