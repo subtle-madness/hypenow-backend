@@ -84,7 +84,7 @@ public class V1BrandPostsController {
 		BrandAccountRow account = findAccountOrThrow(brandId);
 
 		String sourceFilter = normalizeFilter(source, "source", BrandPostAssembler.SOURCE_TAGGED,
-				BrandPostAssembler.SOURCE_DIRECT);
+				BrandPostAssembler.SOURCE_DIRECT, BrandPostAssembler.SOURCE_HASHTAG);
 		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
 		String sortKey = normalizeSort(sort);
@@ -167,6 +167,8 @@ public class V1BrandPostsController {
 				BrandPostAssembler.SOURCE_TAGGED));
 		counts.put(BrandPostAssembler.SOURCE_DIRECT, count(all, BrandPostResponse::source,
 				BrandPostAssembler.SOURCE_DIRECT));
+		counts.put(BrandPostAssembler.SOURCE_HASHTAG, count(all, BrandPostResponse::source,
+				BrandPostAssembler.SOURCE_HASHTAG));
 		counts.put(BrandSponsorshipClassifier.SPONSORED, count(all, BrandPostResponse::sponsorship,
 				BrandSponsorshipClassifier.SPONSORED));
 		counts.put(BrandSponsorshipClassifier.ORGANIC, count(all, BrandPostResponse::sponsorship,

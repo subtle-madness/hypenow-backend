@@ -1,5 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import com.celfit.was.auth.UserProfile;
+import com.celfit.was.auth.UserRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
@@ -44,21 +46,26 @@ public class V1BrandAccountService {
 	private final MonitoringCommandClient commandClient;
 	private final BrandReadRepository brandReadRepository;
 	private final BrandAccountAssembler assembler;
+	private final UserRepository userRepository;
 
 	public V1BrandAccountService(BrandLinkRepository linkRepository, BrandLinkTransaction linkTransaction,
 			MonitoringCommandClient commandClient, BrandReadRepository brandReadRepository,
-			BrandAccountAssembler assembler) {
+			BrandAccountAssembler assembler, UserRepository userRepository) {
 		this.linkRepository = linkRepository;
 		this.linkTransaction = linkTransaction;
 		this.commandClient = commandClient;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
+		this.userRepository = userRepository;
 	}
 
 	/**
 	 * 연결(§5-1, 08-07 다계정 개정) — 형식 검증 → 사전 판정(멱등·한도) → monitoring 동기 등록(멱등
 	 * replay — 이미 수집 중·완료된 브랜드면 재수집 없이 기존 brandId) → was 연결 커밋 → 202 BrandAccount.
 	 * 같은 계정명이 이미 연결돼 있으면 monitoring 호출 없이 기존 계정 객체를 그대로 돌려준다(멱등).
+	 *
+	 * <p>brandName은 own 연결일 때만 전달한다(#406 경쟁사 계정 타입 게이트, {@link #brandNameOf} 참고) —
+	 * competitor 연결에 내 회사명을 넘기면 남의(경쟁사) 브랜드에 내 이름이 해시태그로 시드된다.
 	 */
 	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType) {
 		String username = BrandUsername.normalize(rawUsername);
@@ -73,7 +80,8 @@ public class V1BrandAccountService {
 			return get(userId, alreadyLinked.get());
 		}
 
-		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username));
+		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
+		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName));
 		try {
 			linkTransaction.link(userId, registered.brandId(), username, accountType);
 		} catch (RuntimeException e) {
@@ -145,6 +153,23 @@ public class V1BrandAccountService {
 		}
 		linkTransaction.changeType(userId, brandId, rawAccountType);
 		return get(userId, brandId);
+	}
+
+	/**
+	 * 해시태그 제외 문자열 조회(스펙 2026-08-11 §2) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
+	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
+	 */
+	public List<String> getHashtagExclusions(long userId, long brandId) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		return commandClient.getHashtagExclusions(username);
+	}
+
+	/** 해시태그 제외 문자열 전체 교체 — terms null은 빈 목록으로 접어 monitoring에 위임(정규화는 monitoring). */
+	public void putHashtagExclusions(long userId, long brandId, List<String> terms) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		commandClient.putHashtagExclusions(username, terms == null ? List.of() : terms);
 	}
 
 	/**
@@ -225,6 +250,22 @@ public class V1BrandAccountService {
 			// 보상 실패는 무해하다 — 같은 계정 재등록이 멱등 replay라 고아 행을 그대로 재사용한다.
 			log.warn("등록 롤백 보상 탈퇴 실패(무해 — 재등록이 같은 행을 replay) brandId={}", brandId, e);
 		}
+	}
+
+	/**
+	 * 스펙 2026-08-11 §2 — company_name은 brand 유형일 때만 브랜드명(타 유형은 대행사명 등).
+	 *
+	 * <p><b>경쟁사 연결에는 호출하지 않는다</b>(#406 경쟁사 계정 타입 게이트) — 여기서 나오는 값은
+	 * 항상 "이 유저 자신의" 회사명이라, 경쟁사(competitor) 연결에 그대로 넘기면 내 브랜드명이
+	 * 경쟁사 brand_account의 해시태그 셋에 시드된다. 그 브랜드를 공유하는 모든 사용자(다른 담당자
+	 * 포함)에게 오염이 퍼지고, 태그 삭제 API가 없어 SQL 외 복구가 불가능하다. own 연결에서만 호출할 것.
+	 */
+	private String brandNameOf(long userId) {
+		return userRepository.findProfileById(userId)
+				.filter(p -> "brand".equals(p.userType()))
+				.map(UserProfile::companyName)
+				.filter(name -> name != null && !name.isBlank())
+				.orElse(null);
 	}
 
 	private BrandLinkRow requireOwnership(long userId, long brandId) {

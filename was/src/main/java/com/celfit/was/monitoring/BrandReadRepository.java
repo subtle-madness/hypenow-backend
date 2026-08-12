@@ -175,6 +175,25 @@ public class BrandReadRepository {
 				.list();
 	}
 
+	/**
+	 * 브랜드 해시태그 발견 게시물(스펙 2026-08-11 §5) — RELEVANT(관련 판정)만, cutoff 이후 taken_at
+	 * 최신순 상한 limit건. tagged와 달리 상한을 SQL 단계에서 자른다 — 해시태그 발견분은 태그 게시물과
+	 * 달리 등록 시점 검증이 없어 폭주 가능성이 tagged보다 크다(스펙 §5, 서빙 상한은 호출부 정책).
+	 */
+	public List<BrandHashtagPostRow> findHashtagPosts(long brandId, OffsetDateTime cutoff, int limit) {
+		return jdbc.sql("""
+				SELECT short_code, matched_tag, author_username, author_full_name,
+				       author_profile_pic_url, taken_at, caption, content_type, thumbnail_url,
+				       likes, comments, first_seen_at
+				FROM brand_hashtag_post
+				WHERE brand_id = :brandId AND verdict = 'RELEVANT' AND taken_at >= :cutoff
+				ORDER BY taken_at DESC
+				LIMIT :limit
+				""")
+				.param("brandId", brandId).param("cutoff", cutoff).param("limit", limit)
+				.query(BrandHashtagPostRow.class).list();
+	}
+
 	/** brand_account 1행(was 계약 소비 컬럼만) — 08-07 확장 필드 포함. */
 	public record BrandAccountRow(long id, String username, LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime registeredAt, OffsetDateTime backfillCompletedAt, String backfillError,
@@ -207,5 +226,15 @@ public class BrandReadRepository {
 	/** author_profile 1행(was 계약 소비 컬럼만). */
 	public record AuthorRow(String igUserId, String username, String fullName, Long followers,
 			String profilePicUrl, Boolean isVerified) {
+	}
+
+	/**
+	 * brand_hashtag_post 1행(RELEVANT만) — 프로필 보강·스냅샷이 없어(스펙 §5 보류) author 필드는
+	 * 열거 관측값 그대로고 followers·isVerified는 아예 없다. likes·comments도 열거 시점 관측값이다.
+	 */
+	public record BrandHashtagPostRow(String shortCode, String matchedTag, String authorUsername,
+			String authorFullName, String authorProfilePicUrl, OffsetDateTime takenAt, String caption,
+			String contentType, String thumbnailUrl, Long likes, Long comments,
+			OffsetDateTime firstSeenAt) {
 	}
 }

@@ -89,6 +89,23 @@ class BrandSweepJobTest {
 		}
 	}
 
+	private static final class StubHashtagCollect extends BrandHashtagCollectService {
+		final List<String> swept = new ArrayList<>();
+		final Set<String> failing = new HashSet<>();
+
+		StubHashtagCollect() {
+			super(null, null, null, null, 0, 0);
+		}
+
+		@Override
+		public void sweep(BrandRow brand) {
+			if (failing.contains(brand.username())) {
+				throw new IllegalStateException("해시태그 스윕 실패 주입");
+			}
+			swept.add(brand.username());
+		}
+	}
+
 	private static BrandRow brand(long id, String username) {
 		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null);
 	}
@@ -99,7 +116,7 @@ class BrandSweepJobTest {
 		var collect = new StubCollect();
 		brands.active = List.of(brand(1, "first"), brand(2, "second"));
 
-		new BrandSweepJob(brands, collect, new StubArchive(), new StubBrandArchive()).run();
+		new BrandSweepJob(brands, collect, new StubHashtagCollect(), new StubArchive(), new StubBrandArchive()).run();
 
 		assertThat(collect.swept).containsExactly("first", "second");
 		assertThat(brands.touched).containsExactly(1L, 2L);
@@ -112,7 +129,7 @@ class BrandSweepJobTest {
 		collect.failing.add("boom");
 		brands.active = List.of(brand(1, "first"), brand(2, "boom"), brand(3, "third"));
 
-		new BrandSweepJob(brands, collect, new StubArchive(), new StubBrandArchive()).run();   // 예외가 새면 여기서 터진다
+		new BrandSweepJob(brands, collect, new StubHashtagCollect(), new StubArchive(), new StubBrandArchive()).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(collect.swept).containsExactly("first", "third");
 		assertThat(brands.touched).containsExactly(1L, 3L);   // boom은 "준비 중" 유지 — 내일 백스톱
@@ -124,7 +141,7 @@ class BrandSweepJobTest {
 		var archive = new StubArchive();
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), archive, new StubBrandArchive()).run();
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), archive, new StubBrandArchive()).run();
 
 		assertThat(archive.runs).isEqualTo(1);
 	}
@@ -136,7 +153,7 @@ class BrandSweepJobTest {
 		archive.failing = true;
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), archive, new StubBrandArchive()).run();   // 예외가 새면 여기서 터진다
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), archive, new StubBrandArchive()).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 	}
@@ -147,7 +164,7 @@ class BrandSweepJobTest {
 		var brandArchive = new StubBrandArchive();
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), new StubArchive(), brandArchive).run();
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), brandArchive).run();
 
 		assertThat(brandArchive.runs).isEqualTo(1);
 	}
@@ -159,7 +176,7 @@ class BrandSweepJobTest {
 		brandArchive.failing = true;
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), new StubArchive(), brandArchive).run();   // 예외가 새면 여기서 터진다
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), brandArchive).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 	}
@@ -172,9 +189,48 @@ class BrandSweepJobTest {
 		var brandArchive = new StubBrandArchive();
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), archive, brandArchive).run();
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), archive, brandArchive).run();
 
 		assertThat(brandArchive.runs).isEqualTo(1);   // 두 아카이브는 각자 격리 — 한쪽 실패가 다른 쪽을 막지 않는다
+	}
+
+	@Test
+	void 브랜드마다_해시태그_스윕을_이어_돌린다() {
+		var brands = new StubBrands();
+		var collect = new StubCollect();
+		var hashtagCollect = new StubHashtagCollect();
+		brands.active = List.of(brand(1, "first"), brand(2, "second"));
+
+		new BrandSweepJob(brands, collect, hashtagCollect, new StubArchive(), new StubBrandArchive()).run();
+
+		assertThat(hashtagCollect.swept).containsExactly("first", "second");
+	}
+
+	@Test
+	void 해시태그_스윕_실패는_touchSwept를_깨지_않는다() {
+		var brands = new StubBrands();
+		var collect = new StubCollect();
+		var hashtagCollect = new StubHashtagCollect();
+		hashtagCollect.failing.add("first");
+		brands.active = List.of(brand(1, "first"));
+
+		new BrandSweepJob(brands, collect, hashtagCollect, new StubArchive(), new StubBrandArchive()).run();   // 예외가 새면 여기서 터진다
+
+		assertThat(brands.touched).containsExactly(1L);
+	}
+
+	@Test
+	void 유저태그_스윕이_실패한_브랜드도_해시태그_스윕은_시도된다() {
+		var brands = new StubBrands();
+		var collect = new StubCollect();
+		collect.failing.add("boom");
+		var hashtagCollect = new StubHashtagCollect();
+		brands.active = List.of(brand(1, "boom"));
+
+		new BrandSweepJob(brands, collect, hashtagCollect, new StubArchive(), new StubBrandArchive()).run();
+
+		assertThat(hashtagCollect.swept).containsExactly("boom");
+		assertThat(brands.touched).isEmpty();   // 유저태그 스윕 실패라 여전히 미갱신 — 해시태그는 그와 무관하게 시도됨
 	}
 
 	@Test
@@ -188,7 +244,7 @@ class BrandSweepJobTest {
 		var archive = new StubArchive();
 		var brandArchive = new StubBrandArchive();
 
-		assertThatThrownBy(() -> new BrandSweepJob(brands, new StubCollect(), archive, brandArchive).run())
+		assertThatThrownBy(() -> new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), archive, brandArchive).run())
 				.isInstanceOf(IllegalStateException.class);
 
 		assertThat(archive.runs).isEqualTo(1);   // DailySweepJob과 동형 — finally에서 반드시 실행

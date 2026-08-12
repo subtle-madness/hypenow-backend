@@ -1,6 +1,7 @@
 package com.celfit.was.monitoring;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,10 +52,13 @@ public class MonitoringCommandClient {
 	 * 브랜드 태그 모니터링 등록(monitoring BrandController §2 — 동기 프로필 검증 + 비동기 백필 시작).
 	 * 201 신규 / 200 replay 모두 같은 바디라 was는 둘을 구분하지 않는다(멱등 재등록 안전).
 	 * 404(IG 계정 부재)·422(비공개 계정)는 에러 바디 code 그대로 MonitoringApiException으로 승격된다.
+	 *
+	 * <p>brandName은 해시태그 브랜드명 태그 감지의 재료(스펙 2026-08-11 §2) — 호출부가 브랜드 유형
+	 * 유저의 company_name만 채워 넣고, 그 외에는 null을 보낸다.
 	 */
-	public BrandRegisterResult registerBrand(String username) {
+	public BrandRegisterResult registerBrand(String username, String brandName) {
 		return exchange(() -> restClient.post().uri("/api/brands")
-				.body(new BrandRegisterRequest(username)).retrieve().body(BrandRegisterResult.class));
+				.body(new BrandRegisterRequest(username, brandName)).retrieve().body(BrandRegisterResult.class));
 	}
 
 	/**
@@ -72,6 +76,26 @@ public class MonitoringCommandClient {
 				.onStatus(status -> status.value() == 404,
 						(request, response) -> log.info("브랜드 탈퇴 — monitoring에 미등록(이미 정리됨): {}", username))
 				.toBodilessEntity());
+	}
+
+	/**
+	 * 브랜드 제외 문자열 조회(BrandController §3) — 자사 태그 오탐 방지용 문자열 전체.
+	 * 브랜드 미등록·비ACTIVE는 404 — deregisterBrand의 빈 바디 404(멱등 삼킴 전용 별개 계약)와 달리
+	 * 이 경로는 {code:"BRAND_NOT_FOUND", message} 에러 바디가 채워져 있어(08-11 정정 — 원래는 빈 바디라
+	 * MonitoringUnavailableException/503으로 오승격됐다) exchange()가 MonitoringApiException으로
+	 * 정확히 승격하고, 호출부(V1ExceptionAdvice 공용 매핑)가 그대로 404로 내려보낸다.
+	 */
+	public List<String> getHashtagExclusions(String username) {
+		HashtagExclusionsBody body = exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-exclusions", username)
+				.retrieve().body(HashtagExclusionsBody.class));
+		return body == null || body.terms() == null ? List.of() : body.terms();
+	}
+
+	/** 제외 문자열 전체 교체(PUT 계약) — terms는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장. */
+	public void putHashtagExclusions(String username, List<String> terms) {
+		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-exclusions", username)
+				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
 	}
 
 	private <T> T exchange(Supplier<T> call) {
@@ -108,10 +132,14 @@ public class MonitoringCommandClient {
 	record ShareResolveRequest(String url) {
 	}
 
-	record BrandRegisterRequest(String username) {
+	record BrandRegisterRequest(String username, String brandName) {
 	}
 
 	/** monitoring BrandController.BrandRegisterResponse와 동형 — followers는 등록 시점 관측값(null 가능). */
 	public record BrandRegisterResult(long brandId, String username, Long followers, String status) {
+	}
+
+	/** monitoring BrandController.HashtagExclusionsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
+	record HashtagExclusionsBody(List<String> terms) {
 	}
 }
