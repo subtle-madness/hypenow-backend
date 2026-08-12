@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # 컨테이너 상태·디스크 사용률을 OCI 커스텀 메트릭(hypenow_custom)으로 게시 — 서버 크론 1분 주기.
 #   * * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py
-# 인증은 인스턴스 프린시펄(dynamic group hypenow-instances + policy hypenow-custom-metrics) —
-# 서버에 키를 두지 않는다. 알람은 OCI 콘솔/CLI에서 이 네임스페이스를 구독(hypenow-alerts 토픽).
-# 의존성: python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci
+# OCI 인증은 인스턴스 프린시펄(dynamic group hypenow-instances + policy hypenow-custom-metrics) —
+# OCI API 키는 서버에 두지 않는다. 다만 GCS 버킷 크기 조회는 SA 키 파일(GCS_KEY, compose가 쓰는
+# 것과 같은 파일)을 읽는다 — 2026-08-12 이미지 스토리지 이전 이후.
+# 알람은 OCI 콘솔/CLI에서 이 네임스페이스를 구독(hypenow-alerts 토픽).
+# 의존성: python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci google-auth requests
+#   (google-auth·requests는 버킷 크기 게시가 GCS로 옮겨간 2026-08-12부터 필요)
 import datetime
 import shutil
 import subprocess
+import sys
 
 import oci
 
@@ -25,11 +29,6 @@ SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", 
 PROJECT = "deploy"
 NAMESPACE = "hypenow_custom"
 COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaat36ksxqom5nzid6jzx2tglneiyganxbjk7t5pgmlvgpc44eozllq"
-
-# 오브젝트 스토리지 — OCI가 StoredBytes를 자동 게시하지 않아(2026-07 실측 7일 무데이터)
-# 여기서 approximateSize를 직접 게시한다. 정책에 read buckets(해당 버킷 한정) 필요.
-BUCKETS = ["hypenow-images"]
-OS_NAMESPACE = "nr4nxrxoojw8"
 
 
 def container_ids(service: str) -> list[str]:
@@ -87,12 +86,52 @@ signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
 data = [metric("container_up", {"containerName": s}, container_up(s)) for s in SERVICES]
 data.append(metric("disk_used_percent", {"host": "hypenow-api"}, disk_used_percent()))
 
-# 버킷 용량은 5분 결에만 조회 — 성장 속도 대비 1분 해상도가 불필요하고 GetBucket API 호출 절약
+# OCI 버킷 병행 게시(컷오버 전 관측 공백 방지) — GCS 전환 완료 후 이 블록만 제거한다.
+# bucket_used_gb는 dimension으로 스트림이 갈려 알람 정의 수정 불요. 다만 두 스트림의
+# bucketName이 같은 "hypenow-images"라 같은 분(minute==0이면서 %5==0)에 둘 다 게시되면
+# 같은 dimension으로 datapoint가 2개 들어간다 — OCI 쪽에 provider="oci"를 더해 스트림을 가른다.
+OCI_BUCKETS = ["hypenow-images"]
+OS_NAMESPACE = "nr4nxrxoojw8"
 if now.minute % 5 == 0:
-	os_client = oci.object_storage.ObjectStorageClient({"region": signer.region}, signer=signer)
-	for bucket in BUCKETS:
-		size = os_client.get_bucket(OS_NAMESPACE, bucket, fields=["approximateSize"]).data.approximate_size or 0
-		data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(size / 2**30, 3)))
+	try:
+		os_client = oci.object_storage.ObjectStorageClient({"region": signer.region}, signer=signer)
+		for bucket in OCI_BUCKETS:
+			size = os_client.get_bucket(OS_NAMESPACE, bucket, fields=["approximateSize"]).data.approximate_size or 0
+			data.append(metric("bucket_used_gb", {"bucketName": bucket, "provider": "oci"}, round(size / 2**30, 3)))
+	except Exception as e:
+		print(f"OCI 버킷 크기 수집 실패: {e}", file=sys.stderr)
+
+# 버킷 용량(GCS, 2026-08-12 이전) — 크기 합산은 전체 목록 페이징이라 정시(hour)에만.
+GCS_BUCKETS = ["hypenow-images"]
+GCS_KEY = "/home/ubuntu/deploy/secrets/gcs-image-archiver.json"
+if now.minute == 0:
+	try:
+		from google.auth import load_credentials_from_file
+		from google.auth.transport.requests import AuthorizedSession
+		# 키 파일은 SA 키·gcloud ADC(authorized_user) 둘 다 허용 — devstorage.* 스코프는
+		# authorized_user 리프레시에서 invalid_scope가 난다(08-12 실측). cloud-platform은 양쪽 유효.
+		creds, _ = load_credentials_from_file(
+			GCS_KEY, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+		sess = AuthorizedSession(creds)
+		for bucket in GCS_BUCKETS:
+			total, page = 0, None
+			while True:
+				params = {"fields": "items(size),nextPageToken", "maxResults": 1000}
+				if page:
+					params["pageToken"] = page
+				# 상태 검사 필수 — requests는 403/404/5xx에 raise하지 않아서, 빠뜨리면
+				# 빈 items로 0GB(또는 부분합)가 진짜 값처럼 게시돼 알람이 조용히 죽는다.
+				r = sess.get(f"https://storage.googleapis.com/storage/v1/b/{bucket}/o",
+					params=params, timeout=30)
+				r.raise_for_status()
+				body = r.json()
+				total += sum(int(o["size"]) for o in body.get("items", []))
+				page = body.get("nextPageToken")
+				if not page:
+					break
+			data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(total / 2**30, 3)))
+	except Exception as e:  # GCS 실패는 버킷 메트릭 결손으로 한정 — 컨테이너 메트릭 게시는 계속
+		print(f"GCS 버킷 크기 수집 실패: {e}", file=sys.stderr)
 
 client = oci.monitoring.MonitoringClient(
 	{"region": signer.region}, signer=signer,

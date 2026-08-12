@@ -16,6 +16,11 @@ analytics:
   analyze-on-startup: false    # 콘텐츠 분석 배치 — 실 API 비용. 실행: --analytics.analyze-on-startup=true --spring.main.web-application-type=none
   account-analyze-on-startup: false  # 계정 카피 배치 — 실 API 비용. 실행: --analytics.account-analyze-on-startup=true --spring.main.web-application-type=none
   vlm-enabled: false           # F-2 스파이크 검증 전까지 VLM 스킵 (컬럼 NULL)
+  # 이미지 스토어 선택(2026-08-12 GCS 이전): par=OCI PAR(기본), gcs=GCS. 복귀는 par로 원복.
+  image-store: ${IMAGE_STORE:par}
+  image-gcs-bucket: ${IMAGE_GCS_BUCKET:}
+  # 전용 SA 키 파일 경로 — 미설정이면 ADC 폴백. 운영은 명시 필수(Vertex ADC를 덮지 않기 위해)
+  image-gcs-key: ${IMAGE_GCS_KEY:}
   schedule:
     enabled: false             # 스케줄 트리거 골격 — 켜려면 true + 잡별 *-cron 지정 (admin-enabled 필요)
     # mirror-cron: "0 0 6 * * *"   # 켜는 날 예시. 미지정 잡은 "-"(비활성)
