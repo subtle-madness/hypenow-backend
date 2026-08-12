@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -110,6 +111,28 @@ class V1ExceptionAdviceTest {
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.error.code").value("INTERNAL_ERROR"))
 				.andExpect(jsonPath("$.error.message").value("일시적인 오류가 발생했어요."));
+	}
+
+	// ── 클라 이탈(연결 끊김) 분기 ────────────────────────────────────────────
+	// 유저가 탭을 닫거나 FE가 요청을 abort하면 응답 쓰기가 깨지는데, 이건 서버 결함이 아니고
+	// 500 본문을 써봐야 받을 상대도 없다. 캐치올이 ERROR 로그 + 500 조립으로 처리하던 것을 끊는다.
+
+	@Test
+	void 클라_이탈은_500_본문을_쓰지_않는다() throws Exception {
+		// 연결이 이미 죽었으니 아무것도 쓰지 않는 것이 정답 — 상태는 건드리지 않은 기본값 그대로다
+		// (실제 운영에선 응답이 이미 200으로 커밋된 뒤라 바꿀 수도 없다).
+		mockMvc.perform(get("/v1/stub/client-abort").with(user("tester")))
+				.andExpect(status().isOk())
+				.andExpect(content().string(""));
+	}
+
+	@Test
+	void 상류_연결_끊김은_클라_이탈이_아니라_INTERNAL_ERROR_500이다() throws Exception {
+		// 메시지는 클라 이탈과 똑같은 "Connection reset by peer"지만 끊긴 건 monitoring 쪽 연결이라
+		// 우리 장애다. 여기가 500으로 남지 않으면 상류 장애가 통째로 조용해진다.
+		mockMvc.perform(get("/v1/stub/upstream-abort").with(user("tester")))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.error.code").value("INTERNAL_ERROR"));
 	}
 
 	// ── MonitoringApiException → 프론트 어휘 변환(스펙 1.3) ─────────────────────
