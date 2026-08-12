@@ -6,6 +6,31 @@
   "refresh": "5m",
   "timezone": "Asia/Seoul",
   "time": { "from": "now-6h", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "배포·재기동",
+        "datasource": { "type": "loki", "uid": "hypenow-loki" },
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "target": {
+          "refId": "Anno",
+          "queryType": "range",
+          "expr": "{service=~\"${svc:regex}\"} |= `Started ` |= ` seconds`"
+        }
+      }
+    ]
+  },
   "templating": {
     "list": [
       {
@@ -229,6 +254,154 @@
           "expr": "topk(15, sum by (logger) (count_over_time({service=~\"${svc:regex}\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
         }
       ]
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "3. 외부 의존 실패 (crawler·monitoring)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "HTTP 상태코드별 실패",
+      "description": "IG·Hiker 응답 코드를 로그 본문에서 추출한다(`HTTP 401`·`Hiker 404` 형태). 상단 $svc 변수와 무관하게 crawler·monitoring 고정이다.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{code}}",
+          "expr": "sum by (code) (count_over_time({service=~\"crawler|monitoring\", level=~\"WARN|ERROR\"} |~ `(?:HTTP|Hiker) [0-9]{3}` | regexp `(?:HTTP|Hiker) (?P<code>[0-9]{3})` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Hiker 402 (잔액 소진)",
+      "description": "1건이라도 뜨면 사람이 충전해야 한다. 08-10에 이 상태로 브랜드 스윕 4건이 collecting에 고착했다.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 25 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "sum(count_over_time({service=~\"crawler|monitoring\"} |~ `(?:HTTP|Hiker) 402` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "IG 401 (IP 차단)",
+      "description": "요청 폭주로 인한 차단 신호. 07-24에 similar 잡 대량 유입 → 401 전면 실패 전례가 있다.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 25 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "sum(count_over_time({service=~\"crawler|monitoring\"} |~ `(?:HTTP|Hiker) 401` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "크롤 실패 로거 Top 15 (WARN 포함)",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 29 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (logger) (count_over_time({service=~\"crawler|monitoring\", level=~\"WARN|ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "4. 드릴다운",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "type": "logs",
+      "title": "로그 탐색",
+      "description": "상단 $svc·$level·$search 변수를 그대로 따른다. 검색어는 정규식이며 대소문자를 무시한다.",
+      "gridPos": { "h": 14, "w": 18, "x": 0, "y": 34 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "{service=~\"${svc:regex}\", level=~\"${level:regex}\"} |~ `(?i)$search`"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "text",
+      "title": "읽는 법·한계",
+      "gridPos": { "h": 14, "w": 6, "x": 18, "y": 34 },
+      "options": {
+        "mode": "markdown",
+        "content": "### 읽는 순서\n\n1. **Row 1** — ERROR/WARN 총건수와 추이. 평소와 다르면 아래로.\n2. **Row 2** — 어느 로거·예외가 시끄러운지. 오른쪽 24시간 표와 비교해 '새로 생긴 놈'을 찾는다.\n3. **Row 3** — 크롤링이 외부에 막힌 건지. 402·401 칸이 빨갛면 사람이 개입해야 한다.\n4. **Row 4** — 위에서 찾은 로거·예외명을 검색어에 넣어 원문을 본다.\n\n세로 점선은 **배포·재기동 시점**이다.\n\n### 한계\n\n- 로그 보관 **30일**, **운영만** 수집(test 스테이징 로그는 없다).\n- **요청 단위 상관관계 불가** — traceId가 없어 에러가 어떤 엔드포인트·유저였는지 못 짚는다.\n- 2026-08-12 파이프라인 변경 **이전 로그는 잡히지 않는다**(`level` 라벨이 없다).\n- 로거·예외·HTTP 코드는 정규식 추출이라 기본 콘솔 패턴을 벗어난 로그는 누락될 수 있다.\n- **5xx 비율은 여기가 아니라** [HypeNow API 성능](/d/hypenow-api-performance) 대시보드에서 본다 — 로그 집계와 지표는 숫자가 구조적으로 다르다."
+      }
     }
   ]
 }
