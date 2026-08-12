@@ -10,7 +10,9 @@ import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,7 +30,9 @@ import org.springframework.stereotype.Service;
  *       ~6콜 → <b>~41콜</b>로 늘어난 값 — cclime 태그 847건 실측 기준. 정책 v1 이전 서술 "~30초"는
  *       폐기). backfill executor는 단일 스레드라 연속 등록은 계정당 그 속도로 줄을 선다. 그래도
  *       분리 효과는 그대로다(운영 실측: 구 단일 체인은 8분+ — 그중 ~85%가 목록 렌더에 필수
- *       아닌 보강 콜, 나머지가 앞 계정 대기).</li>
+ *       아닌 보강 콜, 나머지가 앞 계정 대기).
+ *       2026-08-12 스트리밍 개정: 적재는 페이지 단위 즉시, 서빙 창(30일) 커버 시 markServing으로
+ *       ready가 완주보다 먼저 열린다 — tooq.official 실측 8분 24초 → 서빙 창 커버 ~1분 30초.</li>
  *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 연속 등록
  *       때 뒤 계정 core가 앞 계정 보강을 기다리지 않는다. 실패는 로그만(ready 유지) — 다음
  *       스윕이 게시자 stale·댓글 워터마크로 백스톱한다.</li>
@@ -127,21 +131,34 @@ public class BrandRegistrationService {
 	}
 
 	/**
-	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(깊이·컷 규칙 동일 — 스펙 §4 정합). 성공 즉시
-	 * touchSwept(ready 전환) 후 보강을 전용 executor로 넘긴다. core 실패는 격리 — 보강도 예약하지
-	 * 않는다(게시물 없이 보강만 도는 낭비 방지, 다음 스윕이 전체를 백스톱).
+	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(스트리밍 — 페이지마다 즉시 적재). 서빙 창(30일)
+	 * 커버 콜백에서 markServing(FE ready만 당김 — last_swept_on은 완주 touchSwept 몫, 스펙 §1)과
+	 * 선행 보강(그때까지 적재분의 게시자·댓글)을 수행하고, 완주 후엔 잔여분만 보강한다. 선행분
+	 * 코드 집합으로 잔여를 걸러 이중 보강 콜을 막는다(게시자 fresh 캐시·댓글 워터마크가 있어
+	 * 겹쳐도 안전하지만 헛 게이트 조회를 줄인다). core 실패는 격리 — 이미 적재된 페이지는 서빙
+	 * 유지, 잔여 보강도 예약하지 않는다(다음 스윕이 전체를 백스톱).
 	 */
 	private void runBackfillSafely(BrandRow row) {
 		try {
-			List<PostInfo> posts = collect.sweepCore(row);
+			Set<String> earlyCodes = new HashSet<>();
+			List<PostInfo> posts = collect.sweepCore(row, early -> {
+				brands.markServing(row.id());
+				early.forEach(p -> earlyCodes.add(p.shortCode()));
+				if (!early.isEmpty()) {
+					enrich.execute(() -> runEnrichSafely(row, early));
+				}
+			});
 			brands.touchSwept(row.id(), LocalDate.now(KST));
+			List<PostInfo> remainder = posts.stream()
+					.filter(p -> !earlyCodes.contains(p.shortCode())).toList();
 			enrich.execute(() -> {
-				runEnrichSafely(row, posts);
+				runEnrichSafely(row, remainder);
 				runHashtagBackfillSafely(row);
 			});
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
+			// markServing 이후 실패면 ready가 이미 열려 있고(부분 데이터 서빙) 이 문구는 FE에서 무시된다.
 			brands.markBackfillError(row.id(), "초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
 		}
 	}
