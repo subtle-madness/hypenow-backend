@@ -109,6 +109,18 @@ public class BrandPostAssembler {
 	 * 통째로 중복된다. 브랜드 화면(§6-1)의 진입점은 여전히 {@code assembleForBrand}다.
 	 */
 	public List<BrandPostResponse> assembleTagged(BrandAccountRow account) {
+		return assembleTagged(account, true);
+	}
+
+	/**
+	 * 댓글 생략 가능 변형(08-12 성과 대시보드 고정 지연 대응) — {@code withComments=false}면
+	 * 댓글 배치 조회를 아예 돌리지 않는다. 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중
+	 * 237ms(57%)가 댓글 윈도우 쿼리 + 18,860행 매핑이었다 — 목록·비교 표면은 댓글을 렌더하지
+	 * 않으므로(FE 실측 확인) 이 비용은 매 요청 버려지고 있었다. 결과 게시물의
+	 * {@code recentComments}는 빈 목록, {@code commentsCollectedCount}는 0이 된다 —
+	 * 스냅샷 유래 지표({@code commentsTotal}·{@code commentsHidden})는 영향이 없다.
+	 */
+	public List<BrandPostResponse> assembleTagged(BrandAccountRow account, boolean withComments) {
 		List<BrandTaggedPostRow> posts =
 				brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff());
 		if (posts.isEmpty()) {
@@ -121,8 +133,8 @@ public class BrandPostAssembler {
 				.collect(Collectors.toMap(BrandPostMetaRow::shortCode, Function.identity(), (a, b) -> a));
 		Map<String, List<BrandSnapshotRow>> snapshotsByCode = brandReadRepository.findSnapshots(codes).stream()
 				.collect(Collectors.groupingBy(BrandSnapshotRow::shortCode));
-		Map<String, List<BrandCommentRow>> commentsByCode =
-				brandReadRepository.findComments(codes, COMMENT_LIMIT).stream()
+		Map<String, List<BrandCommentRow>> commentsByCode = !withComments ? Map.of()
+				: brandReadRepository.findComments(codes, COMMENT_LIMIT).stream()
 						.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
 		Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
 

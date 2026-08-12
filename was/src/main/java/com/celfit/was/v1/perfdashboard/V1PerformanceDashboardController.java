@@ -111,7 +111,9 @@ public class V1PerformanceDashboardController {
 		LocalDate from = parseDate(uploadedFrom, "uploadedFrom");
 		LocalDate to = parseDate(uploadedTo, "uploadedTo");
 
-		PerformanceContentAssembler.Assembled assembled = assembler.assemble(principal.getUserId());
+		// 슬림 조립(댓글 없음, 08-12) — 목록은 댓글을 렌더하지 않는데 댓글 조회·매핑이 조립 시간의
+		// 절반 이상이었다(운영 덤프 실측). 댓글은 단건 조회가 전체 조립으로 내려준다.
+		PerformanceContentAssembler.Assembled assembled = assembler.assembleSlim(principal.getUserId());
 		Set<String> competitorIds = assembled.competitorBrandAccountIds();
 
 		// 분류 필터 — statusCounts 모수의 술어다(status·업로드 기간은 여기 없다, 위 javadoc).
@@ -140,6 +142,9 @@ public class V1PerformanceDashboardController {
 	 * 경우다(각자 캠페인·기간이 다른 별개 등록이라 어셈블러가 접지 않는다, Task 9 판단). 그때는
 	 * <b>첫 매치</b>를 돌려준다: 어셈블러 정렬이 업로드 최신순·동률은 item id로 고정돼 있어 첫 매치가
 	 * 요청마다 흔들리지 않고, 목록의 첫 등장 순서와도 일치한다.
+	 *
+	 * <p>단건만 <b>전체 조립</b>(댓글 포함)이다 — 목록·비교는 슬림 조립(08-12)이라 {@code recentComments}가
+	 * 항상 빈 배열이고, 댓글이 필요한 소비자는 이 엔드포인트로 온다.
 	 */
 	@GetMapping("/contents/{contentId}")
 	public ApiResponse<PerformanceContentResponse> content(@AuthenticationPrincipal AppUserDetails principal,
@@ -172,7 +177,8 @@ public class V1PerformanceDashboardController {
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
 		String campaignFilter = normalizeFilter(campaignId);
 
-		List<PerformanceContentResponse> filtered = assembler.assemble(principal.getUserId()).contents().stream()
+		// 슬림 조립(댓글 없음, 08-12) — 비교 집계는 스냅샷·업로드일만 소비한다.
+		List<PerformanceContentResponse> filtered = assembler.assembleSlim(principal.getUserId()).contents().stream()
 				.filter(c -> (sourceFilter == null || sourceFilter.equals(c.source()))
 						&& (sponsorshipFilter == null || sponsorshipFilter.equals(c.sponsorship()))
 						&& matchesCampaign(c, campaignFilter))
