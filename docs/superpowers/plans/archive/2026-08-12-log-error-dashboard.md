@@ -1,5 +1,7 @@
 # 로그 기반 에러 추적 대시보드 구현 계획
 
+> 상태: ✅ 구현/실행/반영됨 (2026-08-12)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 운영 컨테이너 로그(Loki)를 읽어 "어젯밤 뭐가 터졌나"를 5분에 훑고 그 자리에서 원인까지 내려가는 Grafana 대시보드 `HypeNow 에러`를 만든다.
