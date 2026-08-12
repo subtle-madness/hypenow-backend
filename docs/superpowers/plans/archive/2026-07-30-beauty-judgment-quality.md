@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 구현 미착수
+> 상태: ✅ 구현/실행/반영됨 (2026-07-30, PR #216 머지 · 운영 V22 적용 확인)
 > 설계 스펙: `docs/superpowers/specs/2026-07-30-beauty-judgment-quality-design.md`
 
 **Goal:** 캡션 0건으로 판정된 계정을, 나중에 쌓인 실측 게시물 캡션으로 재판정해서 뷰티 오판(서빙 886개 중 약 85%)을 자동 교정한다.

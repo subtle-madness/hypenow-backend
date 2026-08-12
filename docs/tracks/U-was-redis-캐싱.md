@@ -6,4 +6,4 @@
 
 ## 내용
 
-조회 4경로 캐시(목록 1h·리포트 6h)+다음 페이지 프리페치, 세션 JDBC 유지 — [specs/2026-07-28-redis-caching-design.md](../superpowers/specs/2026-07-28-redis-caching-design.md) [plans/2026-07-28-redis-caching.md](../superpowers/plans/2026-07-28-redis-caching.md)
+조회 4경로 캐시(목록 1h·리포트 6h)+다음 페이지 프리페치, 세션 JDBC 유지 — [specs/2026-07-28-redis-caching-design.md](../superpowers/specs/2026-07-28-redis-caching-design.md) [plans/2026-07-28-redis-caching.md](../superpowers/plans/archive/2026-07-28-redis-caching.md)
