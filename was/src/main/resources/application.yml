@@ -62,6 +62,9 @@ springdoc:
 codes:
   api-key: ${CODES_API_KEY:}   # 어드민 코드 적재용 정적 토큰 — 빈 값이면 /admin/signup-codes 전면 거부(fail-closed)
 was:
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
+    from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:

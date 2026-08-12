@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class RateLimiter {
 
-	private record Window(long epochMinute, AtomicInteger count) {
+	private record Window(long windowStart, int windowMinutes, AtomicInteger count) {
 	}
 
 	private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
@@ -26,15 +26,26 @@ public class RateLimiter {
 
 	/** 허용되면 true. 분이 바뀌면 카운터 리셋(고정 윈도우). 기본 상한(was.rate-limit.per-minute). */
 	public boolean tryAcquire(String key) {
-		return tryAcquire(key, perMinute);
+		return tryAcquire(key, perMinute, 1);
 	}
 
-	/** 경로별 상한이 다른 경우(이메일 인증 발송 분당 1회 등) — 윈도우 구조는 공유, 상한만 오버라이드. */
+	/** 경로별 상한이 다른 경우(재설정 발송 분당 1회 등) — 윈도우 구조는 공유, 상한만 오버라이드. */
 	public boolean tryAcquire(String key, int limit) {
+		return tryAcquire(key, limit, 1);
+	}
+
+	/**
+	 * 시간 단위 상한(재설정 발송 시간당 5회 등) — windowMinutes 길이의 고정 윈도우.
+	 * 긴 윈도우는 키가 최대 windowMinutes분 잔존하므로 공격자 제어 키(이메일)는
+	 * 반드시 IP 상한과 함께 건다(맵 성장 상한).
+	 */
+	public boolean tryAcquire(String key, int limit, int windowMinutes) {
 		long minute = clock.instant().getEpochSecond() / 60;
 		sweepIfMinuteChanged(minute);
+		long windowStart = (minute / windowMinutes) * windowMinutes;
 		Window w = windows.compute(key, (k, old) ->
-				(old == null || old.epochMinute() != minute) ? new Window(minute, new AtomicInteger()) : old);
+				(old == null || old.windowStart() != windowStart || old.windowMinutes() != windowMinutes)
+						? new Window(windowStart, windowMinutes, new AtomicInteger()) : old);
 		return w.count().incrementAndGet() <= limit;
 	}
 
@@ -50,7 +61,8 @@ public class RateLimiter {
 	void sweepIfMinuteChanged(long minute) {
 		long last = lastSweepMinute.get();
 		if (minute > last && lastSweepMinute.compareAndSet(last, minute)) {
-			windows.entrySet().removeIf(e -> e.getValue().epochMinute() < minute);
+			windows.entrySet().removeIf(e ->
+					e.getValue().windowStart() + e.getValue().windowMinutes() <= minute);
 		}
 	}
 
