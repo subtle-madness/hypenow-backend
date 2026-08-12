@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Test;
 /**
  * 브랜드 태그 수집 본체(2026-08-06 스펙 + 2026-08-09 크롤링 정책 v1) — CollectServiceTest
  * 관용구(fake HikerHttp + 스텁 서브클래스, DB 없음)로 티어 기반 열거 깊이(14일 최소 / due
- * 확장 / 백필 365일)·편입 컷·안전 상한·last_crawled_at 갱신·브랜드 프로필 매일 갱신·부재=0·
+ * 확장 / 백필은 브랜드별 수집 창 collection_months)·편입 컷·안전 상한·last_crawled_at 갱신·브랜드 프로필 매일 갱신·부재=0·
  * 0 캐리·게시자 stale·댓글 게이트를 검증한다.
  */
 class BrandCollectServiceTest {
@@ -291,7 +291,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				Runnable::run, 365, 30, maxPostsPerSweep, 3, 30);
+				Runnable::run, 30, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -468,6 +468,21 @@ class BrandCollectServiceTest {
 		assertThat(tagCalls()).isEqualTo(2);
 		// 95일령 전부 편입(구 90일 윈도우 밖) — 2페이지까지 갔다는 증거이기도 하다.
 		assertThat(tagged.inserted).containsExactlyInAnyOrder("Old95a", "Old95b", "Old95c");
+	}
+
+	@Test
+	void 백필_컷은_브랜드의_collection_months를_따른다() {
+		// 3개월 창 브랜드 — 95일령(minusMonths(3)=89~92일보다 항상 과거)만 실린 1페이지는
+		// "페이지 전체가 컷 이전"으로 1콜 종료, 편입 컷 밖이라 적재도 0건.
+		// 12개월 창 대조군(백필은_365일_전체를_연다)은 같은 배치를 2콜 끝까지 연다.
+		BrandRow narrow = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null, 3);
+		tagPages.add(page("p2", reel("Old95a", OLD_95D, 0, 101, ""), reel("Old95b", OLD_95D, 0, 102, "")));
+		tagPages.add(page(null, reel("Old95c", OLD_95D, 0, 103, "")));
+
+		service(2000).sweep(narrow);
+
+		assertThat(tagCalls()).isEqualTo(1);
+		assertThat(tagged.inserted).isEmpty();
 	}
 
 	@Test
@@ -779,7 +794,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, pool, 365, 30, 2000, 3, 30);
+					comments, tagged, authors, pool, 30, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();

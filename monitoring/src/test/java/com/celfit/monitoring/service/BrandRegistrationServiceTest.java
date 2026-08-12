@@ -99,7 +99,7 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new ArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, 365, 30, 2000, 3, 30);
+			super(null, null, null, null, null, null, null, null, 30, 2000, 3, 30);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
