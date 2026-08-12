@@ -1,11 +1,11 @@
 # 크롤러 클라우드 합류 구현 계획 (크롤러 한정 최소 범위)
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현/실행/반영됨 (2026-07-19 운영 반영 · DECISIONS 07-19 항목)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** crawler를 서버의 6번째 컨테이너로 추가한다 — **기존 서버 상태(컨테이너 5개·볼륨·기존 .env 항목)는 일절 건드리지 않는다.**
 
-**Architecture:** 스펙 [2026-07-19-crawler-cloud-join-design.md](../specs/2026-07-19-crawler-cloud-join-design.md)의 §1-3(crawler 상주 합류)만 실행. 블록 볼륨·버킷·백업 개통·메모리 제한은 전부 보류(§보류). 다른 세션의 Claude 뷰티 판정 전환(`crawler.beauty.judge=claude-api`)에 대비해 `ANTHROPIC_AUTH_TOKEN` 전달을 포함한다.
+**Architecture:** 스펙 [2026-07-19-crawler-cloud-join-design.md](../../specs/2026-07-19-crawler-cloud-join-design.md)의 §1-3(crawler 상주 합류)만 실행. 블록 볼륨·버킷·백업 개통·메모리 제한은 전부 보류(§보류). 다른 세션의 Claude 뷰티 판정 전환(`crawler.beauty.judge=claude-api`)에 대비해 `ANTHROPIC_AUTH_TOKEN` 전달을 포함한다.
 
 **Tech Stack:** docker compose, buildx multi-arch, GHCR, 기존 `deploy.sh <host> crawler`(스크립트 수정 없음)
 

@@ -1,5 +1,7 @@
 # 릴스 액터 수집 (임시 토글) 구현 계획
 
+> 상태: ✅ 구현/실행/반영됨 (2026-08-06, PR #352 머지 · 운영 배포)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 릴스 수집을 런타임 토글(`reels.source`)로 Apify 액터(`apify~instagram-reel-scraper`)로 임시 전환하고, 액터 수집분이 analytics 지표까지 끊김 없이 흐르게 한다.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Java 21 / Spring Boot 4.1 / Mockito 단위 테스트 / PostgreSQL SQL 하니스(analytics)
 
-**Spec:** [docs/superpowers/specs/2026-08-06-reels-actor-collection-design.md](../specs/2026-08-06-reels-actor-collection-design.md)
+**Spec:** [docs/superpowers/specs/2026-08-06-reels-actor-collection-design.md](../../specs/2026-08-06-reels-actor-collection-design.md)
 
 ## Global Constraints
 

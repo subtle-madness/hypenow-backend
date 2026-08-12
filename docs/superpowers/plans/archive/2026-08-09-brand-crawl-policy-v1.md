@@ -1,10 +1,12 @@
 # 브랜드 크롤링 정책 v1(나이 기반 티어) 구현 계획
 
+> 상태: ✅ 구현/실행/반영됨 (2026-08-09, PR #370 머지 · PR #372로 운영 배포)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 브랜드 태그 수집을 "매일 전량(90일 & 105개)"에서 게시물 나이 기반 티어 주기 + 등록 시 12개월 백필로 전환한다.
 
-**Architecture:** 티어 판정은 신규 순수 함수 `BrandCrawlPolicy`(taken_at·last_crawled_at·now만, 저장 상태 없음)가 담당하고, 페이지 단위 태그 열거 특성에 맞춰 스윕마다 "오늘의 열거 깊이"로 번역한다(깊은 열거가 얕은 티어 자동 포함). 스키마 변경은 `brand_tagged_post.last_crawled_at` 컬럼 1개. 정본 스펙: [docs/superpowers/specs/2026-08-09-brand-crawl-policy-v1-design.md](../specs/2026-08-09-brand-crawl-policy-v1-design.md)
+**Architecture:** 티어 판정은 신규 순수 함수 `BrandCrawlPolicy`(taken_at·last_crawled_at·now만, 저장 상태 없음)가 담당하고, 페이지 단위 태그 열거 특성에 맞춰 스윕마다 "오늘의 열거 깊이"로 번역한다(깊은 열거가 얕은 티어 자동 포함). 스키마 변경은 `brand_tagged_post.last_crawled_at` 컬럼 1개. 정본 스펙: [docs/superpowers/specs/2026-08-09-brand-crawl-policy-v1-design.md](../../specs/2026-08-09-brand-crawl-policy-v1-design.md)
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JdbcTemplate · Flyway(monitoring 독립 버전 공간) · JUnit 5 + AssertJ · Testcontainers(PostgreSQL, 스토어 테스트만)
 

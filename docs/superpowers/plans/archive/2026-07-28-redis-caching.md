@@ -1,6 +1,6 @@
 # Redis 캐싱 도입 구현 계획
 
-> 상태: 🟢 활성 · 구현 완료(2026-07-29)·운영 배포 대기 · 스펙: [2026-07-28-redis-caching-design.md](../specs/2026-07-28-redis-caching-design.md)
+> 상태: ✅ 구현/실행/반영됨 (구현 2026-07-29, PR #163 머지 · 운영 배포·모니터링 편입 완료) · 스펙: [2026-07-28-redis-caching-design.md](../../specs/2026-07-28-redis-caching-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
