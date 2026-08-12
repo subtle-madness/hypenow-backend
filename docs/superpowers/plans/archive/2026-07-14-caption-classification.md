@@ -6,7 +6,7 @@
 
 **Goal:** 캡션 5종(광고 구분·카테고리·브랜드·제품·유통사) 산출을 기존 VLM 콜의 "캡션 주·썸네일 보조" 전환으로 구현하고, 분류 어휘를 analysis DB 테이블(V30)로 옮기며, 분석 대상에 게시 후 3일 숙성 가드를 추가한다.
 
-**Architecture:** 스펙 [2026-07-14-caption-classification-design.md](../../specs/2026-07-14-caption-classification-design.md). 별도 캡션 잡 없음 — `VisionPort`→`ContentAttributePort`로 전환(캡션 항상, 썸네일은 살아있을 때만 첨부), 병합은 모델 안에서. `BeautyTaxonomy`는 DB 스냅샷 인스턴스 + 로더로. content_analyses 컬럼 재사용 + `detected_products` 신설.
+**Architecture:** 스펙 [2026-07-14-caption-classification-design.md](../../specs/archive/2026-07-14-caption-classification-design.md). 별도 캡션 잡 없음 — `VisionPort`→`ContentAttributePort`로 전환(캡션 항상, 썸네일은 살아있을 때만 첨부), 병합은 모델 안에서. `BeautyTaxonomy`는 DB 스냅샷 인스턴스 + 로더로. content_analyses 컬럼 재사용 + `detected_products` 신설.
 
 **Tech Stack:** Java 21, Spring Boot 4.1, Flyway(analysis DB `db/migration/analysis`), Testcontainers 2.x(`org.testcontainers.postgresql`), Anthropic SDK structured output, Jackson 3.
 
@@ -1195,7 +1195,7 @@ docker exec crawler-postgres-1 psql -U crawler -d crawler -c \
 - [ ] **Step 2: §7 결정 기록 맨 위에 1줄 추가**
 
 ```markdown
-| 2026-07-14 | **캡션 분류 + B3 숙성 가드** — 캡션 5종(광고 구분·카테고리·브랜드·제품·유통사)을 별도 잡이 아닌 기존 속성 콜 전환(캡션 항상·썸네일 생존 시만 첨부, 병합은 모델 안에서)으로. 어휘는 analysis DB `beauty_taxonomy`·`beauty_distributors`(V30 시드)로 이동 — BeautyTaxonomy는 로더 스냅샷, 프롬프트·sanitize 동일 원천 유지, main_category CHECK는 sanitize로 이관. `detected_products jsonb`([{name,brand}]) 신설. 분석 대상에 게시 후 3일 숙성 가드(`analytics.analyze-maturity-days`) | [specs/2026-07-14-caption-classification-design.md](../../specs/2026-07-14-caption-classification-design.md) |
+| 2026-07-14 | **캡션 분류 + B3 숙성 가드** — 캡션 5종(광고 구분·카테고리·브랜드·제품·유통사)을 별도 잡이 아닌 기존 속성 콜 전환(캡션 항상·썸네일 생존 시만 첨부, 병합은 모델 안에서)으로. 어휘는 analysis DB `beauty_taxonomy`·`beauty_distributors`(V30 시드)로 이동 — BeautyTaxonomy는 로더 스냅샷, 프롬프트·sanitize 동일 원천 유지, main_category CHECK는 sanitize로 이관. `detected_products jsonb`([{name,brand}]) 신설. 분석 대상에 게시 후 3일 숙성 가드(`analytics.analyze-maturity-days`) | [specs/2026-07-14-caption-classification-design.md](../../specs/archive/2026-07-14-caption-classification-design.md) |
 ```
 
 - [ ] **Step 3: §8 미결에서 "B3 숙성 가드"·"캡션 분류 태스크" 두 행 제거**

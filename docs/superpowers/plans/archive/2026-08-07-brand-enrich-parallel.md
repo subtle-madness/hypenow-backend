@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행됨 (2026-08-07 — Task 1~3 완료·archive 이동. 스펙 [2026-08-07-brand-enrich-parallel-design.md](../../specs/2026-08-07-brand-enrich-parallel-design.md))
+> 상태: ✅ 실행됨 (2026-08-07 — Task 1~3 완료·archive 이동. 스펙 [2026-08-07-brand-enrich-parallel-design.md](../../specs/archive/2026-08-07-brand-enrich-parallel-design.md))
 
 **Goal:** 브랜드 보강(게시자 프로필+댓글) 순차 Hiker 콜을 공유 워커 풀(동시 6)로 병렬화해 보강 ~3분 → ~30초로 줄인다.
 

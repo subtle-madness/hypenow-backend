@@ -262,20 +262,23 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    rclone check oci:hypenow-images gcs:hypenow-images --size-only
    ```
    (2·4단계를 `-M`으로 복사했다면 보정 불필요 — 아래는 **검증만**, 비어 있을 때만 보정한다.)
-   **Cache-Control 확인은 프리픽스 5종 전부** — `thumb/`·`profile/`(analytics `ImageArchiveJob`),
-   `monitor-profile/`·`monitor-post/`·`monitor-author/`(monitoring 잡 3종). 원래 값은 2종이라
-   보정이 필요해지면 `gs://hypenow-images/**` 한 번에 밀지 말 것(값이 뭉개진다) — **프리픽스별 2회**로:
+   **Cache-Control 확인은 프리픽스 8종 전부** — `thumb/`·`profile/`(analytics `ImageArchiveJob`),
+   `monitor-profile/`·`monitor-post/`·`monitor-author/`·`monitor-brand/`·`monitor-brand-post/`·
+   `monitor-hashtag-post/`(monitoring 잡 6종). 원래 값은 2종이라 보정이 필요해지면
+   `gs://hypenow-images/**` 한 번에 밀지 말 것(값이 뭉개진다) — **값 그룹별 2회**로:
    ```bash
-   # 샘플 확인(각 프리픽스에서 1건씩) — cacheControl 필드가 비어 있으면 아래 보정
+   # 샘플 확인(대표 2건) — cacheControl 필드가 비어 있으면 아래 보정
    gcloud storage objects describe gs://hypenow-images/thumb/<아무거나>.jpg
    gcloud storage objects describe gs://hypenow-images/monitor-profile/<아무거나>.jpg
    # 보정 ①  thumb — 불변(1년)
    gcloud storage objects update "gs://hypenow-images/thumb/**" \
      --cache-control="public, max-age=31536000, immutable"
-   # 보정 ②  프로필 계열 4종 — 1일 (ImageArchiveJob.PROFILE_CACHE_CONTROL과 동일 값)
+   # 보정 ②  86400 그룹 7종 — 1일 (ImageArchiveJob.PROFILE_CACHE_CONTROL과 동일 값)
    gcloud storage objects update \
      "gs://hypenow-images/profile/**" "gs://hypenow-images/monitor-profile/**" \
      "gs://hypenow-images/monitor-post/**" "gs://hypenow-images/monitor-author/**" \
+     "gs://hypenow-images/monitor-brand/**" "gs://hypenow-images/monitor-brand-post/**" \
+     "gs://hypenow-images/monitor-hashtag-post/**" \
      --cache-control="public, max-age=86400"
    ```
 5. **celfit-front rewrite 전환**(사용자): `/img/:path*`의 대상 OCI PAR URL →
@@ -452,7 +455,7 @@ Caddy는 사이트 블록 단위로 로거를 붙이므로, `log` 지시어가 �
 staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflows/cd-test.yml`이 자동 배포한다
 (`workflow_run` 트리거 — CI가 실패하면 test 배포도 없다). develop 머지는 CI만 돌고 배포하지
 않는다 — **승격 흐름: develop→staging(test 배포)→main(운영 배포)**. 구조·결정 근거:
-[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/2026-07-26-dev-staging-environment-design.md) ·
+[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/archive/2026-07-26-dev-staging-environment-design.md) ·
 [specs/2026-07-29-staging-branch-test-stack-design.md](../docs/superpowers/specs/2026-07-29-staging-branch-test-stack-design.md)
 
 - 접속: `https://dev-api.hypenow.io` (도메인은 구명 유지 — DNS 무변경. was 로그인 월 —
@@ -731,12 +734,24 @@ ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
 - 로컬 3000이 아니라 **3001**인 이유: 로컬 3000은 Next.js 개발 서버가 쓴다. compose의
   `GF_SERVER_ROOT_URL`도 `http://localhost:3001`로 맞춰져 있다 — 다른 포트로 터널을 열면
   로그인 리다이렉트가 어긋나므로 둘을 함께 바꿀 것.
-- 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 패널 6개:
-  미완료 등록(Table, 30분 초과 빨강 강조) · 정산 안 된 entry(Table) · 등록 결과 분포(일별) ·
-  가입 추이(일별) · 가입 시도 결과(일별) · 세션 수(Stat, 500 초과 경고).
-  앞의 두 Table 패널은 상태 기반 잔여 목록이라 **전역 시간 필터를 의도적으로 적용하지 않는다**
-  (대시보드 상단 시간 범위를 바꿔도 두 패널은 그대로다 — SQL에 `$__timeFilter`를 안 넣었을 뿐이라
-  정상 동작).
+- 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 08-02 개편으로 Row 4개 +
+  패널 13개로 재구성(패널 개수는 Row 제외):
+  - **이상 징후**(최상단) — 처리 중 멈춘 등록(Stat, 0=초록/1+=빨강) · 결과 미확정 등록 항목(Stat,
+    동일 기준) · 세션 수(Stat, 500 초과 경고) · 위 두 Stat의 상세 Table 각 1개("└ ~ 상세").
+    Stat 패널은 `count(*)` 쿼리라 결과가 항상 1행이므로 **0건도 명시적으로 보인다** — 기존엔 0건일
+    때 Table이 "No data"만 떠서 정상/고장 구분이 안 됐던 문제를 해소한 게 이번 개편의 핵심.
+  - **유저 유입** — 가입 추이(일별) · 가입 시도 결과(일별) · 가입 코드 소진 현황(Stat, 발급/발송/사용
+    누적) · 도입 문의(일별, user_type별 — PII 컬럼 미조회).
+  - **모니터링 사용 현황** — 등록 결과 분포(일별) · 모니터링 추적 항목 현황(Table, mode별 활성/취소) ·
+    다이제스트 발송·읽음(일별).
+  - **콘텐츠 참여** — 저장 활동 추이(일별, 인플루언서 저장 + 콘텐츠 저장).
+  이상 징후 Row의 Stat 2종·상세 Table 2종과 유저 유입의 "가입 코드 소진 현황", 모니터링 사용
+  현황의 "모니터링 추적 항목 현황"은 상태 기반 스냅샷이라 **전역 시간 필터를 의도적으로 적용하지
+  않는다**(대시보드 상단 시간 범위를 바꿔도 그대로다 — SQL에 `$__timeFilter`를 안 넣었을 뿐이라
+  정상 동작). 나머지 시계열 패널은 전부 `$__timeFilter`를 쓴다.
+  - ⚠️ **가입 코드 소진 현황·모니터링 추적 항목 현황·도입 문의·다이제스트 발송·읽음·저장 활동 추이
+    5개 패널은 아래 14-2-1의 추가 GRANT를 실행하기 전까지 권한 오류로 빈다** — 08-02 개편 시점엔
+    아직 미적용.
 
 ### 14-2. `grafana_reader` 롤 생성 (1회, 사용자 수동 — Flyway 아님)
 
@@ -767,6 +782,32 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   `spring_session`은 `count(*)`만 필요해 `primary_id` 한 컬럼만 부여(컬럼 단위 GRANT에서
   `count(*)`가 동작하려면 최소 한 컬럼의 SELECT 권한이 있어야 한다).
 - 비밀번호는 `~/deploy/.env`의 `GRAFANA_READER_PASSWORD`와 일치시킬 것.
+
+#### 14-2-1. 추가 GRANT (08-02 대시보드 개편, **아직 미적용**)
+
+08-02 대시보드 개편으로 패널 5개가 새 테이블을 조회한다. 아래 GRANT는 **작성만 해두고 실행하지
+않았다** — 다음 서버 접속 시 관리자 계정으로 실행할 것. 컬럼 단위 최소권한 원칙 유지, PII 컬럼
+(`app.inquiries.name`·`email`·`organization`·`message`)은 절대 포함하지 않는다.
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT SELECT (is_sent, used_at) ON app.signup_codes TO grafana_reader" \
+  -c "GRANT SELECT (mode, canceled_at) ON app.monitoring_items TO grafana_reader" \
+  -c "GRANT SELECT (created_at) ON app.saved_influencers TO grafana_reader" \
+  -c "GRANT SELECT (created_at) ON app.saved_contents TO grafana_reader" \
+  -c "GRANT SELECT (created_at, user_type) ON app.inquiries TO grafana_reader" \
+  -c "GRANT SELECT (created_at, read_at) ON app.monitoring_digests TO grafana_reader"
+```
+
+- `app.signup_codes` — 가입 코드 소진 현황 Stat. `code`는 조회하지 않는다(값 자체는 필요 없고
+  발급·발송·사용 여부만 집계).
+- `app.monitoring_items` — 모니터링 추적 항목 현황 Table. mode(url/account)별 활성·취소 집계.
+- `app.saved_influencers`·`app.saved_contents` — 저장 활동 추이. `created_at`만 필요(집계만, 어떤
+  유저가 무엇을 저장했는지는 조회하지 않는다).
+- `app.inquiries` — 도입 문의(일별). `user_type`·`created_at`만 — PII 4컬럼(`name`·`email`·
+  `organization`·`message`)은 GRANT하지 않는다.
+- `app.monitoring_digests` — 다이제스트 발송·읽음(일별). `items`(jsonb, 다이제스트 본문)는
+  조회하지 않는다.
 
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
@@ -810,3 +851,79 @@ Contact point는 프로비저닝된 `discord-ops`를 그대로 지정하면 된�
 4. `ssh -L 3001:localhost:3000 ubuntu@<IP>` 후 `http://localhost:3001` 접속 → 관리자 로그인 →
    대시보드 "HypeNow 서비스 현황" 확인
 5. 14-4의 알림 규칙 로드 여부 확인, 필요 시 수동 보완
+
+## 15. 쿼리·API 성능 측정 스택 (08-10~)
+
+Prometheus(지표)·Loki(로그)·기존 Grafana(시각화) + postgres `pg_stat_statements`(SQL 통계).
+정의: `deploy/compose.yaml`(prometheus·loki·alloy 서비스) + `deploy/prometheus/`·`deploy/loki/`·
+`deploy/alloy/` 설정 파일 + Grafana 프로비저닝(데이터소스 `observability.yaml`, 대시보드
+"HypeNow API 성능"). 셋 다 호스트 포트 미노출 — 조회는 Grafana(§14 SSH 터널)로만.
+
+**범위**: `pg_stat_statements`는 analysis 클러스터(`deploy-postgres-1`)에만 붙는다 — raw DB
+(`deploy-postgres-raw-1`, crawler 적재 경로)의 SQL은 잡히지 않는다(필요해지면 그쪽 postgres에도
+같은 preload·확장을 따로 넣어야 한다).
+
+### 15-1. 최초 개통 (배포 1회 + 수동 2단계)
+
+compose 변경이 배포되면 postgres가 재생성된다(짧은 순단 — was/analytics는 HikariCP 자동 재접속,
+저트래픽 시간대 권장). 이후 서버에서:
+
+```bash
+# ① pg_stat_statements 확장 생성 (analysis DB, 1회 — preload는 compose가 이미 함)
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+
+# ② grafana_reader에 통계 조회 권한 (pg_stat_statements 뷰는 pg_monitor 필요 — §14-2 롤 전제)
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT pg_monitor TO grafana_reader"
+```
+
+### 15-2. 개통 확인
+
+```bash
+# 지표: prometheus가 was를 긁고 있는지 (up 1이면 정상)
+docker exec deploy-prometheus-1 wget -qO- 'http://localhost:9090/api/v1/query?query=up{job="was"}'
+
+# SQL 통계: 상위 느린 쿼리가 쌓이는지
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "SELECT calls, round(total_exec_time::numeric) AS total_ms, left(query,60) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 5"
+
+# 로그: loki에 컨테이너 라벨이 잡히는지 (alloy 이미지엔 wget이 없을 수 있어 같은 prod 네트워크의
+# prometheus 컨테이너에서 조회한다 — alloy 자체 상태는 `docker logs deploy-alloy-1`로 본다)
+docker exec deploy-prometheus-1 wget -qO- 'http://loki:3100/loki/api/v1/label/container/values'
+```
+
+세 번째 명령은 `deploy-was-1`·`deploy-postgres-1` 같은 **컨테이너 이름 목록이 나오면 정상**이다
+(alloy 기동 직후에는 첫 로그가 밀려 올라올 때까지 몇 분 비어 있을 수 있다).
+`wget`이 없다는 오류가 나면(이미지 구성에 따라 다름) 폴백: Grafana Explore에서 같은 쿼리를 실행하고
+(Prometheus 데이터소스에 `up{job="was"}`, Loki 데이터소스에 `{container="deploy-was-1"}`),
+컨테이너 자체 상태는 `docker logs deploy-prometheus-1`·`docker logs deploy-loki-1`로 본다.
+
+Grafana(§14-1 터널) → 폴더 HypeNow → "HypeNow API 성능" 대시보드에서 p95·처리량·상위 SQL 확인.
+로그는 Explore → Loki 데이터소스 → `{container="deploy-was-1"}`.
+
+> ⚠️ **배포 직후 수 분 구간의 지표는 신뢰하지 말 것.** was 롤링 배포(§5-1) 창에는 신·구 컨테이너가
+> 수 분간 공존하는데, prometheus 타깃은 `was:9081` 단일 DNS 이름이라 스크레이프마다 두 JVM 중
+> 아무 쪽이나 잡힌다 — 카운터가 신규 JVM의 0으로 되돌아가며 rate가 튀거나 꺼지고, p95는 웜업 중인
+> 새 JVM과 드레이닝 중인 구 JVM의 값이 뒤섞인다. 성능 비교·회귀 판정은 롤링이 끝난 뒤 구간으로.
+
+> 설정 파일(`prometheus.yml`·`loki-config.yaml`·`config.alloy`)은 CD가 매 배포마다 scp로
+> 동기화하고 `docker compose restart prometheus loki alloy`로 반영한다 — 설정만 바꾼 변경도
+> 배포 한 번이면 서버에 붙는다(수동 복사 불필요).
+
+### 15-3. 운영 다이얼
+
+- 부하가 예상(합산 RAM 330~400MB·CPU 1~2%)을 넘으면: `deploy/prometheus/prometheus.yml`의
+  `scrape_interval` 60s 상향이 1차 다이얼. **이때 `deploy/grafana/provisioning/datasources/
+  observability.yaml`의 `timeInterval`도 같은 값으로 바꾼다** — 둘이 어긋나면 `$__rate_interval`이
+  옛 간격 기준으로 계산돼 rate 패널이 조용히 듬성해진다(반영은 CD의 grafana 재기동).
+- 통계 리셋(개선 전후 비교 시작점):
+  `docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis -c "SELECT pg_stat_statements_reset()"`.
+- 슬로우 쿼리 로그 임계는 500ms(`log_min_duration_statement=500`, compose의 postgres command) —
+  해당 로그는 postgres 컨테이너 stdout → Loki(`{container="deploy-postgres-1"}`)로 들어온다.
+- 디스크 상한: Prometheus 30일·1GB(`--storage.tsdb.retention.time/.size` — 먼저 닿는 쪽이
+  적용)·Loki 보관 30일(compactor) — 둘 다 자동 삭제라 수동 정리 불필요.
+- Loki는 Prometheus와 달리 **용량 상한이 없고 기간(`retention_period`)만 있다** — 로그량이 늘면
+  디스크가 그만큼 자란다. `docker system df -v | grep loki-data`로 볼륨 실측 크기를 주기적으로
+  확인하고(디스크 알람 85% 전에), 증가율이 과하면 `deploy/loki/loki-config.yaml`의
+  `retention_period`를 하향(예: 30일 → 14일)하는 것이 다이얼이다.

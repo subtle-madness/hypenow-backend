@@ -6,6 +6,7 @@ import com.celfit.was.IntegrationTest;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
+import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
@@ -43,7 +44,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		jdbc = JdbcClient.create(dataSource);
 		jdbc.sql("""
 				TRUNCATE brand_tagged_post, brand_account, brand_post_meta, brand_post_snapshot,
-				         brand_post_comment, author_profile RESTART IDENTITY CASCADE
+				         brand_post_comment, author_profile, brand_hashtag_post RESTART IDENTITY CASCADE
 				""")
 				.update();
 		repository = new BrandReadRepository(jdbc);
@@ -311,5 +312,71 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(repository.findComments(List.of(), 8)).isEmpty();
 		assertThat(repository.findAuthors(List.of())).isEmpty();
 		assertThat(repository.findAuthorsByUsername(List.of())).isEmpty();
+	}
+
+	// ---------- 해시태그 발견 게시물(스펙 2026-08-11 §5) ----------
+
+	void seedHashtagPost(long brandId, String shortCode, String verdict, String takenAt) {
+		jdbc.sql("""
+				INSERT INTO brand_hashtag_post (brand_id, short_code, matched_tag, author_username,
+				                                author_full_name, author_profile_pic_url, taken_at, caption,
+				                                content_type, thumbnail_url, likes, comments, verdict,
+				                                verdict_source)
+				VALUES (:brandId, :shortCode, '#브랜드명', 'influencer_h', '인플루언서 H', 'http://cdn/h.jpg',
+				        :takenAt::timestamptz, '해시태그 캡션', 'REELS', 'http://cdn/h-thumb.jpg', 20, 3,
+				        :verdict, 'LLM')
+				""")
+				.param("brandId", brandId).param("shortCode", shortCode).param("takenAt", takenAt)
+				.param("verdict", verdict)
+				.update();
+	}
+
+	@Test
+	void 해시태그_발견_게시물은_RELEVANT만_컷_이후_최신순으로_읽힌다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "OLD", "RELEVANT", now.minusDays(400).toString());   // 컷 밖
+		seedHashtagPost(brandId, "IRR", "IRRELEVANT", now.minusDays(1).toString());   // 관련 없음 — 제외
+		seedHashtagPost(brandId, "UNC", "UNCERTAIN", now.minusDays(1).toString());    // 불확실 — 제외
+		seedHashtagPost(brandId, "MID", "RELEVANT", now.minusDays(10).toString());
+		seedHashtagPost(brandId, "NEW", "RELEVANT", now.minusDays(1).toString());
+
+		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(brandId, now.minusDays(365), 2000);
+
+		assertThat(rows).extracting(BrandHashtagPostRow::shortCode).containsExactly("NEW", "MID");
+		assertThat(rows.get(0).matchedTag()).isEqualTo("#브랜드명");
+		assertThat(rows.get(0).authorUsername()).isEqualTo("influencer_h");
+		assertThat(rows.get(0).authorFullName()).isEqualTo("인플루언서 H");
+		assertThat(rows.get(0).caption()).isEqualTo("해시태그 캡션");
+		assertThat(rows.get(0).contentType()).isEqualTo("REELS");
+		assertThat(rows.get(0).likes()).isEqualTo(20L);
+		assertThat(rows.get(0).comments()).isEqualTo(3L);
+		assertThat(rows.get(0).firstSeenAt()).isNotNull();
+	}
+
+	@Test
+	void 해시태그_발견_게시물_조회는_상한을_넘으면_최신_쪽만_남긴다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "A", "RELEVANT", now.minusDays(1).toString());
+		seedHashtagPost(brandId, "B", "RELEVANT", now.minusDays(2).toString());
+		seedHashtagPost(brandId, "C", "RELEVANT", now.minusDays(3).toString());
+
+		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(brandId, now.minusDays(365), 2);
+
+		assertThat(rows).extracting(BrandHashtagPostRow::shortCode).containsExactly("A", "B");
+	}
+
+	@Test
+	void 해시태그_발견_게시물_조회는_다른_브랜드_행을_섞지_않는다() {
+		long mine = seedBrand("brand_mine");
+		long other = seedBrand("brand_other");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(mine, "MINE1", "RELEVANT", now.minusDays(1).toString());
+		seedHashtagPost(other, "OTHER1", "RELEVANT", now.minusDays(1).toString());
+
+		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(mine, now.minusDays(365), 2000);
+
+		assertThat(rows).extracting(BrandHashtagPostRow::shortCode).containsExactly("MINE1");
 	}
 }

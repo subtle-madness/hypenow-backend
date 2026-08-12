@@ -70,6 +70,12 @@ public class ApiExceptionHandler {
 		return body(HttpStatus.CONFLICT, "INVALID_STATE", e.getMessage());
 	}
 
+	/** 제외 문자열 전체 교체가 빈 목록 — 비소급 오염 방지(EmptyExclusionTermsException 참조). */
+	@ExceptionHandler(EmptyExclusionTermsException.class)
+	public ResponseEntity<ApiError> handleEmptyExclusionTerms(EmptyExclusionTermsException e) {
+		return body(HttpStatus.UNPROCESSABLE_CONTENT, "VALIDATION", e.getMessage());
+	}
+
 	/** 스윕 수동 트리거가 이미 실행 중인 스윕과 겹쳤다 — SweepGuard 획득 실패. */
 	@ExceptionHandler(SweepAlreadyRunningException.class)
 	public ResponseEntity<ApiError> handleSweepAlreadyRunning(SweepAlreadyRunningException e) {

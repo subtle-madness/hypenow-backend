@@ -40,6 +40,14 @@ networks:
   prod:
   test:
   monitoring-net:
+  # IPv6 이그레스 전용(08-11) — 인스타 지역 엣지 CDN(instagram.f*.fna.fbcdn.net)이 AAAA-only라
+  # IPv4 전용 컨테이너에선 이미지 아카이브가 Network is unreachable로 실패한다. 기존 prod에
+  # enable_ipv6를 켜면 네트워크 재생성 = 전 스택 다운이라, 별도 네트워크를 만들어 CDN 다운로드가
+  # 있는 서비스(analytics·monitoring)만 추가 소속시킨다. 서브넷 미지정 → 도커가 ULA /64 자동
+  # 할당 + NAT66(도커 27+ 기본). 전제: 호스트에 글로벌 IPv6 필요(OCI VNIC IPv6 + netplan dhcp6 —
+  # 08-11 활성화). test 스택은 이미지 아카이브가 no-op(PAR URL 빈 값)이라 대상 아님.
+  v6egress:
+    enable_ipv6: true
 
 services:
   postgres:
@@ -49,6 +57,17 @@ services:
     mem_limit: 1536m
     oom_score_adj: -800
     networks: [prod]
+    # 쿼리 성능 측정(스펙 2026-08-10) — pg_stat_statements는 preload 필수라 command로 주입.
+    # 확장 생성(CREATE EXTENSION)은 README §15 런북(수동 1회). 이 항목을 바꾸면 postgres가
+    # 재생성돼 짧은 순단이 발생한다 — was/analytics는 HikariCP가 자동 재접속.
+    command:
+      - postgres
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "log_min_duration_statement=500"
     environment:
       POSTGRES_DB: analysis
       POSTGRES_USER: ${DB_USER}
@@ -94,7 +113,7 @@ services:
     logging: *logging
     mem_limit: 1280m   # 힙 768m + 오프힙 여유
     oom_score_adj: 500   # 지정 희생양 — 재기동 무해 배치, 새벽 폭주 주범이 먼저 죽게
-    networks: [prod]
+    networks: [prod, v6egress]   # v6egress: 이미지 아카이브의 AAAA-only CDN 도달용(상단 networks 주석)
     environment:
       APP_DATASOURCE_RAW_JDBC_URL: jdbc:postgresql://postgres-raw:5432/crawler
       APP_DATASOURCE_RAW_USERNAME: ${RAW_DB_USER}
@@ -113,6 +132,10 @@ services:
       # 늦크롤 백필 — timely와 예산 독립(2026-07-23 분리). 신규 계정 온보딩 백카탈로그가 주 대상
       ANALYTICS_SCHEDULE_LATE_BACKFILL_ANALYZE_CRON: "0 0 21 * * *"
       ANALYTICS_SCHEDULE_ACCOUNT_ANALYZE_CRON: "0 0 22 * * *"
+      # 배치 전송(2026-08-11, Vertex 배치 50% 할인) 수거 — KST 05:10~11:40 30분 간격.
+      # transport 자체(online|batch)는 app_setting analytics.analyze-transport 수동 UPDATE로 전환하므로
+      # 여기엔 없음 — online이면 content_batch_jobs에 pending 행이 없어 이 크론은 매번 no-op이다.
+      ANALYTICS_SCHEDULE_BATCH_COLLECT_CRON: "0 10,40 20-23,0-2 * * *"
       ANALYTICS_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 이미지 스토어 선택(2026-08-12 GCS 이전) — par가 기본, .env의 IMAGE_STORE=gcs 한 줄이 컷오버 스위치.
       # GCS 인증은 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽는다 — 위 GOOGLE_APPLICATION_CREDENTIALS는
@@ -257,12 +280,15 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 768m   # 힙 384m + 오프힙 여유
-    networks: [prod, monitoring-net]   # prod는 postgres 접속용
+    # prod는 postgres 접속용, v6egress는 프로필·썸네일 아카이브의 AAAA-only CDN 도달용
+    networks: [prod, monitoring-net, v6egress]
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
       HIKER_API_KEY: ${HIKER_API_KEY}
+      # 브랜드 해시태그 감지 LLM 판정(BrandMentionJudge, 2026-08-11) — 키 미설정 시 fail-closed(전 판정 UNCERTAIN=비노출로 접힘, 최초 1회 warn)
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 이미지 스토어 선택(2026-08-12 GCS 이전) — analytics와 같은 버킷·같은 전용 SA 키를 재사용
@@ -321,6 +347,51 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # API 지표 저장(스펙 2026-08-10) — was:9081 스크레이프, 보관 30일 + 디스크 1GB 상한(이중 봉인).
+  # 호스트 포트 미노출 — 조회는 Grafana 데이터소스로만. 관측 도구는 oom_score_adj +500(먼저 희생).
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 256m
+    oom_score_adj: 500
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=1GB"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  # 로그 저장(스펙 2026-08-10) — 파일시스템 모드·보관 30일. 배포 시 컨테이너 로그 유실 문제의 해결책.
+  loki:
+    image: grafana/loki:3.5.0
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 384m
+    oom_score_adj: 500
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+
+  # 로그 수집기 — 도커 소켓(ro)으로 전 컨테이너 로그를 긁어 Loki로 push. Loki 불능 시 재시도
+  # 버퍼링만 하고 서비스 컨테이너의 stdout 로깅(json-file)에는 영향 없음.
+  alloy:
+    image: grafana/alloy:v1.8.2
+    restart: unless-stopped
+    logging: *logging
+    networks: [prod]
+    mem_limit: 192m
+    oom_score_adj: 500
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   # 서비스 현황 대시보드(app 스키마 읽기 전용) — 호스트 포트 미노출, Caddy가 grafana:3000으로 프록시.
   # CPU 2코어 제약 고려: 익명접속·회원가입·원격 리포팅/업데이트체크류 전부 끔, mem_limit 512m로 상한.
@@ -392,3 +463,5 @@ volumes:
   caddy-data:
   caddy-config:
   grafana-data:
+  prometheus-data:
+  loki-data:

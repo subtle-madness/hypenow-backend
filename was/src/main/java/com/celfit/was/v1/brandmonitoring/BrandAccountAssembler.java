@@ -38,7 +38,7 @@ public class BrandAccountAssembler {
 		this.sweepHourKst = sweepHourKst;
 	}
 
-	public BrandAccountResponse toResponse(BrandAccountRow row) {
+	public BrandAccountResponse toResponse(BrandAccountRow row, String accountType) {
 		boolean ready = row.lastSweptAt() != null;
 		// ready면 backfill_error가 남아 있어도 무시한다(재가입 백필 실패 등) — 데이터가 있는데
 		// 에러 화면을 띄우는 오보를 막고, 미수집분은 다음 스윕이 백스톱한다.
@@ -51,6 +51,8 @@ public class BrandAccountAssembler {
 
 		return new BrandAccountResponse(
 				String.valueOf(row.id()),
+				// 타입은 brand_account가 아니라 호출자가 쥔 연결 행에서 온다 — 조립기는 계속 순수 변환이다.
+				accountType,
 				profile(row),
 				status,
 				KstTimestamps.toKstIso(row.registeredAt()),
@@ -69,7 +71,9 @@ public class BrandAccountAssembler {
 				PROFILE_URL_PREFIX + row.username() + "/",
 				row.username(),
 				row.fullName() == null ? "" : row.fullName(),
-				row.profilePicUrl(),
+				// 아카이브 사본(/img/ Vercel rewrite) 우선, 미아카이브는 원본 CDN URL 폴백 —
+				// 원본은 인스타 서명 URL이라 며칠~2주면 만료된다(BrandPostAssembler.resolveImageUrl 동형).
+				BrandPostAssembler.resolveImageUrl(row.imageObjectPath(), row.profilePicUrl()),
 				Boolean.TRUE.equals(row.isVerified()),
 				row.mediaCount(),
 				row.followers(),

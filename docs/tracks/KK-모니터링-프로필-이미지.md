@@ -1,8 +1,8 @@
 # KK — 모니터링 프로필 이미지 아카이브·업스트림 검증
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 트랙 S(monitoring was seam)·트랙 II(POST 등록 profile_meta 채움) 위에서 동작. 트랙 J(서빙 이미지 아카이브)와는 **OCI 버킷만 공유하고 코드·후보군은 완전히 분리**(키 프리픽스로 소유권 구분 — 아래 참고).
-- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 PR 대기)
+- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 머지 완료 · 브랜드 본인(brand_account) 동형 확장 머지 완료 · 브랜드 게시물 썸네일 아카이브 + was 서빙 계약 일괄 적용 PR #415 머지 완료 · 기존 4개 잡의 배치 창 잠식 결함 수정 PR 오픈(아래 §배치 상한))
 - **트랙 문자 배정 메모**: `docs/tracks/`에 FF·GG가 아직 파일로 없지만 다른 세션이 PR #235·#243으로 점유 중이고, A~JJ 중 KK가 다음 미사용 문자라 배정.
 
 ## 내용
@@ -163,6 +163,62 @@ upsert가 URL을 되살리는 `brand_post_meta.thumbnail_url`과 달리, **아�
 - **was 서빙은 이 확장 범위 밖**: 브랜드 모니터링 was API(MON-BT 잔여 작업 세션)가
   `author_profile`을 서빙하게 되면 `image_object_path` 우선 + 원본 폴백(`TrackingItemAssembler`
   동형)을 그쪽 계약에 얹는다.
+
+### 브랜드 본인 프로필 이미지 아카이브 (트랙 KK 확장, 2026-08-11 — brand_account)
+
+`brand_account.profile_pic_url`(08-07 was 계약 필드로 추가)도 인스타 서명 CDN URL이라 며칠~2주면
+만료된다 — 스윕이 매일 재조회해 저장값은 갱신되지만, 프론트가 이 URL을 직접 쓰면 등록 후 시간이
+지난 브랜드부터 이미지가 깨진다(CLOSED 브랜드는 재조회도 멎어 영구히 깨짐). 게시자(author_profile)
+확장과 완전히 같은 형태라 새 설계 없이 그대로 이식했다.
+
+- **스키마**: `brand_account`에 동일한 3컬럼 — `image_object_path`, `image_source_name`,
+  `image_archived_at`(`V20260811023454__brand_account_image_archive.sql`). 오염행 정정 UPDATE는
+  불필요 — author_profile과 같은 근거(08-06 신설 테이블).
+- **키 스킴**: `monitor-brand/<ig_user_id>.jpg` — ig_user_id 기준(author_profile과 동일 근거:
+  username은 개명 가능). PK는 bigserial `id`라 UPDATE는 id 기준, 오브젝트 키만 ig_user_id.
+- **잡·실행 시점**: `BrandProfileImageArchiveJob`(AuthorProfileImageArchiveJob과 동형 —
+  `ImageStore`/`ImageDownloader`/`ParImageStore` 재사용, 같은 PAR·배치 상한 설정 공유).
+  `BrandSweepJob.run()`의 finally에서 게시자 아카이브 직후 독립 실행 — 잡별 격리 래퍼
+  (`runArchiveSafely`)라 한쪽 실패가 다른 쪽·스윕 결과에 영향을 주지 않는다.
+- **was 서빙은 이 확장 범위 밖**: 브랜드 계정 API가 `image_object_path` 우선 + 원본 폴백을
+  계약에 얹는 것은 후속(author_profile과 같은 위치).
+
+### 브랜드 게시물 썸네일 아카이브 + was 서빙 계약 일괄 적용 (트랙 KK 확장, 2026-08-12)
+
+08-12 운영 실측으로 두 층의 미완이 확인됐다: ① `brand_post_meta`(5,796행)·`brand_hashtag_post`는
+아카이브 컬럼 자체가 없어 썸네일 서명이 만료되면 복구 수단이 없고, ② 아카이브 사본이 이미 쌓인
+`author_profile`(1,323건)·`brand_account`(17건)조차 was가 `image_object_path`를 SELECT하지 않아
+원본 서명 URL을 그대로 서빙했다(위 두 확장이 "was 서빙은 범위 밖·후속"으로 남겨둔 바로 그 자리).
+프론트는 원본 URL을 `/img?u=` 프록시로 감싸는데, 프록시는 사본을 만들지 않으므로 서명 만료(`oe=`)와
+함께 그대로 깨진다.
+
+- **스키마**: `V20260812021500__brand_post_image_archive.sql` — 두 테이블에 동일 3컬럼 additive.
+  오염행 정정 UPDATE 불필요(둘 다 08-06·08-11 신설 테이블).
+- **잡 2개 신설**: `BrandPostThumbnailArchiveJob`(`monitor-brand-post/<short_code>.jpg`) ·
+  `HashtagPostThumbnailArchiveJob`(`monitor-hashtag-post/<short_code>.jpg`). 해시태그 잡은
+  **verdict='RELEVANT'만** 후보다 — 서빙(was findHashtagPosts)이 RELEVANT만 노출하고 판정은 저장 후
+  불변(BrandHashtagCollectService — 기존 게시물 재판정 없음)이라 비노출분 아카이브는 스토리지 낭비.
+  `(brand_id, short_code)` PK라 같은 게시물이 브랜드별 행으로 중복될 수 있어 후보는
+  `DISTINCT ON (short_code)`(first_seen_at DESC — 최신 관측 URL), UPDATE는 short_code 기준 전 브랜드 행.
+  `BrandSweepJob` finally에서 기존 두 프로필 아카이브 직후 독립 실행(잡별 격리 동형).
+- **배치 상한(기존 잡과 의도적으로 다름)**: 기존 잡들은 후보 리스트를 상한에서 먼저 자르는데,
+  "이미 아카이브됨" 스킵 행이 상한 창을 잠식해 창 밖의 미아카이브 꼬리에 영영 도달하지 못할 수 있다
+  — 08-12 운영 실측: author_profile 미아카이브 2,675건이 상한 1,000/일에도 5일째 잔존(일별 아카이브
+  191/0/279/530/323건 — 상한 근처에도 못 감). 신규 두 잡은 전 후보를 순회하되 **다운로드 시도
+  (성공·실패)만 상한을 소모**한다(스킵 공짜) — 백로그(brand_post_meta 5,796 > 1,000)가 있어도 매 스윕
+  상한만큼 확실히 전진, 첫 완주까지 ~6일. **기존 4개 잡(profile_meta·post_meta·author_profile·
+  brand_account)의 동일 결함은 08-12 후속 PR에서 이 패턴으로 통일해 수정 완료** — 각 잡 테스트에
+  "배치_상한은_다운로드_시도만_소모하고_스킵은_소모하지_않는다" 계약 테스트를 추가해
+  (`BrandPostThumbnailArchiveJobTest` 동형) 창 잠식 결함의 재발을 막는다. 로그의 "잔여 N건 이월"
+  의미도 "창 밖 전체 행 수" → "예산 소진으로 미룬 다운로드 필요 행 수"로 바뀌어 백로그 관측이
+  정확해진다.
+- **was 서빙 계약(위 확장들의 "후속" 완결)**: `BrandReadRepository` 4개 쿼리(findAccount·findPostMeta·
+  findAuthors·findAuthorsByUsername·findHashtagPosts)에 `image_object_path` 추가, row record 4종에
+  `imageObjectPath` 필드 추가. `BrandPostAssembler.resolveImageUrl`(아카이브 우선 + sanitize 폴백,
+  `TrackingItemAssembler.resolveImageUrl` 동형)로 tagged 썸네일·게시자 프로필·hashtag 썸네일을,
+  `BrandAccountAssembler.profile`이 브랜드 프로필을 각각 전환. **해시태그 게시자 프로필 사진만 원본
+  그대로** — 프로필 보강 자체가 스펙 §5 보류라 아카이브할 산지(author_profile 행)가 없다. 이 값도
+  열거 시점 서명 URL이라 만료되면 깨진다 — 보강 도입 시 함께 해소될 알려진 잔여.
 
 ## 검증
 
