@@ -14,7 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 프로필 이미지 아카이브 잡 계약(설계 스펙 §3-1):
  * ① 신규 아카이브(object_path·source_name·archived_at 기록) ② source_name 미변경 시 재다운로드 스킵
  * ③ 쿼리스트링만 다르고 파일명이 같으면 스킵(핵심 회귀 방지 — 매일 전량 재다운로드 버그)
- * ④ 한 건 실패 격리(계속 진행) ⑤ PAR 미설정 시 no-op ⑥ http(s) 아닌/ null profile_image_url은 후보 제외.
+ * ④ 한 건 실패 격리(계속 진행) ⑤ PAR 미설정 시 no-op ⑥ http(s) 아닌/ null profile_image_url은 후보 제외
+ * ⑦ 배치 상한은 다운로드 시도만 소모(스킵 공짜 — 창 잠식 결함 재발 방지).
  */
 class ProfileImageArchiveJobTest {
 
@@ -156,5 +157,29 @@ class ProfileImageArchiveJobTest {
 
 		assertThat(downloads).containsExactly("https://cdn.example/ok_n.jpg");
 		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-profile/valid.jpg");
+	}
+
+	/**
+	 * 핵심 계약({@link BrandPostThumbnailArchiveJobTest}과 동형) — 상한은 다운로드 시도만 소모하고
+	 * 스킵은 공짜다. 후보 리스트를 상한에서 먼저 자르면 "이미 아카이브됨" 행이 창을 잠식해 뒤쪽
+	 * 미아카이브 꼬리에 도달하지 못한다(08-12 운영 실측 — author_profile 백로그 잔존).
+	 */
+	@Test
+	void 배치_상한은_다운로드_시도만_소모하고_스킵은_소모하지_않는다() {
+		// 이미 아카이브된 행 3건이 후보 앞쪽을 차지해도(상한 2보다 많음) —
+		seedProfileMeta("done1", "https://cdn.example/a_n.jpg", "monitor-profile/done1.jpg", "a_n.jpg");
+		seedProfileMeta("done2", "https://cdn.example/b_n.jpg", "monitor-profile/done2.jpg", "b_n.jpg");
+		seedProfileMeta("done3", "https://cdn.example/c_n.jpg", "monitor-profile/done3.jpg", "c_n.jpg");
+		seedProfileMeta("new1", "https://cdn.example/d_n.jpg", null, null);
+		seedProfileMeta("new2", "https://cdn.example/e_n.jpg", null, null);
+		seedProfileMeta("new3", "https://cdn.example/f_n.jpg", null, null);
+
+		job("https://par.example/o/", 2).run();
+
+		// — 미아카이브 행이 상한(2)만큼 반드시 아카이브된다. 셋째는 다음 스윕으로 이월.
+		assertThat(puts).hasSize(2);
+		Long archived = db.queryForObject(
+				"SELECT count(image_object_path) FROM profile_meta WHERE username LIKE 'new%'", Long.class);
+		assertThat(archived).isEqualTo(2);
 	}
 }
