@@ -89,4 +89,17 @@ public class PasswordResetRepository {
 				.query(ClaimedToken.class)
 				.optional();
 	}
+
+	/**
+	 * 일일 스윕({@link PasswordResetSweepScheduler}) — 코드·토큰이 모두 만료되고 유예 1일까지
+	 * 지난 행만 삭제한다. 유예는 만료 직후 재시도 유저의 attempts 카운터를 살려두는 여유이자
+	 * 디버깅 창(스케줄러 클래스 문서 참조).
+	 */
+	public int deleteExpired() {
+		return jdbcClient.sql("""
+				DELETE FROM app.password_resets
+				WHERE code_expires_at < now() - interval '1 day'
+				  AND (token_expires_at IS NULL OR token_expires_at < now() - interval '1 day')""")
+				.update();
+	}
 }
