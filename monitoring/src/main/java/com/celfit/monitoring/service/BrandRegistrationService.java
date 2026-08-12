@@ -4,6 +4,7 @@ import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -53,19 +54,21 @@ public class BrandRegistrationService {
 	private final HikerClient hiker;
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
+	private final BrandCallCountRepository callCounts;
 	private final BrandHashtagRepository hashtags;
 	private final BrandHashtagCollectService hashtagCollect;
 	private final Executor backfill;
 	private final Executor enrich;
 
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
-			BrandCollectService collect, BrandHashtagRepository hashtags,
-			BrandHashtagCollectService hashtagCollect,
+			BrandCollectService collect, BrandCallCountRepository callCounts,
+			BrandHashtagRepository hashtags, BrandHashtagCollectService hashtagCollect,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
 			@Qualifier("brandEnrichExecutor") Executor enrich) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
+		this.callCounts = callCounts;
 		this.hashtags = hashtags;
 		this.hashtagCollect = hashtagCollect;
 		this.backfill = backfill;
@@ -98,6 +101,9 @@ public class BrandRegistrationService {
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
 		long id = brands.insertOrReactivate(normalized, profile);
+		// 등록 검증 프로필 1콜의 사후 계상 — 콜 시점엔 brand_id가 없어 컨텍스트 스코프를 못 쓴다.
+		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
+		callCounts.add(id, LocalDate.now(KST), 1);
 		BrandRow row = brands.findByUsername(normalized).orElseThrow();
 		seedHashtagsSafely(id, normalized, brandName);
 		backfill.execute(() -> runBackfillSafely(row));

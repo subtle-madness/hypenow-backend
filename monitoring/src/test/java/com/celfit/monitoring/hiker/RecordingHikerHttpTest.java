@@ -53,7 +53,7 @@ class RecordingHikerHttpTest {
 		RecordingHikerHttp http = new RecordingHikerHttp(path -> "{\"status\":\"ok\"}", repo);
 
 		http.get("/v2/user/tag/medias?user_id=123");
-		http.get("/v2/user/by/id?user_id=456");
+		http.get("/v2/user/by/id?id=456");
 		http.get("/v2/user/medias?user_id=789");
 
 		assertThat(repo.saved).containsExactly(

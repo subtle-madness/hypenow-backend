@@ -130,3 +130,11 @@ CREATE TABLE IF NOT EXISTS author_profile (
     image_source_name text,
     image_archived_at timestamptz
 );
+
+-- 브랜드별 Hiker 콜 일별 집계(정본: monitoring V20260812100000__brand_call_count.sql).
+CREATE TABLE IF NOT EXISTS brand_call_count (
+    brand_id  bigint NOT NULL,
+    called_on date   NOT NULL,
+    calls     bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (brand_id, called_on)
+);
