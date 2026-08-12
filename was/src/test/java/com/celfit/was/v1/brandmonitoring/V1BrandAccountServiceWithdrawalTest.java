@@ -7,6 +7,7 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
+import com.celfit.was.auth.UserRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
@@ -37,10 +38,12 @@ class V1BrandAccountServiceWithdrawalTest {
 	MonitoringCommandClient commandClient;
 	@Mock
 	BrandReadRepository brandReadRepository;
+	@Mock
+	UserRepository userRepository;
 
 	private V1BrandAccountService service() {
 		return new V1BrandAccountService(linkRepository, new BrandLinkTransaction(linkRepository),
-				commandClient, brandReadRepository, new BrandAccountAssembler(3));
+				commandClient, brandReadRepository, new BrandAccountAssembler(3), userRepository);
 	}
 
 	private static BrandLinkRow link() {

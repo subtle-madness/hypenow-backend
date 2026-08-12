@@ -7,12 +7,15 @@ import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -81,9 +84,15 @@ class BrandRegistrationServiceTest {
 		final List<String> enriched = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
 		final Set<String> enrichFailing = new HashSet<>();
+		private List<String> callOrder = new ArrayList<>();
 
 		StubCollect() {
 			super(null, null, null, null, null, null, null, 365, 2000, 3, 30);
+		}
+
+		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -101,6 +110,55 @@ class BrandRegistrationServiceTest {
 				throw new IllegalStateException("보강 실패 주입");
 			}
 			enriched.add(brand.username());
+			callOrder.add("enrich");
+		}
+	}
+
+	/** insertTags는 ON CONFLICT DO NOTHING이라 재현은 LinkedHashSet 유니온으로 — 재등록 순서 검증용. */
+	private static final class StubHashtags extends BrandHashtagRepository {
+		final Map<Long, LinkedHashSet<String>> tags = new HashMap<>();
+		final Map<Long, String> exclusions = new HashMap<>();
+		boolean failing;
+
+		StubHashtags() {
+			super(null);
+		}
+
+		@Override
+		public void insertTags(long brandId, Collection<String> newTags) {
+			if (failing) {
+				throw new IllegalStateException("해시태그 시드 실패 주입");
+			}
+			tags.computeIfAbsent(brandId, k -> new LinkedHashSet<>()).addAll(newTags);
+		}
+
+		@Override
+		public void insertDefaultExclusion(long brandId, String term) {
+			exclusions.putIfAbsent(brandId, term);
+		}
+	}
+
+	private static final class StubHashtagCollect extends BrandHashtagCollectService {
+		final List<String> swept = new ArrayList<>();
+		boolean failing;
+		private List<String> callOrder = new ArrayList<>();
+
+		StubHashtagCollect() {
+			super(null, null, null, null, 0, 0);
+		}
+
+		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
+		}
+
+		@Override
+		public void sweep(BrandRow brand) {
+			if (failing) {
+				throw new IllegalStateException("해시태그 백필 실패 주입");
+			}
+			swept.add(brand.username());
+			callOrder.add("hashtag");
 		}
 	}
 
@@ -108,13 +166,16 @@ class BrandRegistrationServiceTest {
 	private final List<Runnable> enrichQueue = new ArrayList<>();
 	private final InMemoryBrands brands = new InMemoryBrands();
 	private final StubCollect collect = new StubCollect();
+	private final StubHashtags hashtags = new StubHashtags();
+	private final StubHashtagCollect hashtagCollect = new StubHashtagCollect();
 
 	private BrandRegistrationService service() {
 		HikerClient hiker = new HikerClient(path -> {
 			hikerCalls.add(path);
 			return PROFILE_JSON;
 		});
-		return new BrandRegistrationService(hiker, brands, collect, Runnable::run, enrichQueue::add);
+		return new BrandRegistrationService(hiker, brands, collect, hashtags, hashtagCollect,
+				Runnable::run, enrichQueue::add);
 	}
 
 	@Test
@@ -173,6 +234,65 @@ class BrandRegistrationServiceTest {
 		assertThat(replayed.replayed()).isTrue();
 		assertThat(replayed.brandId()).isEqualTo(first.brandId());
 		assertThat(hikerCalls).hasSize(callsAfterFirst);   // Hiker 콜 0 — 멱등 replay
+	}
+
+	@Test
+	void 등록은_태그_3종과_기본_제외_문자열을_시드한다() {
+		var result = service().register("cclime_official", "끌리메");
+
+		assertThat(hashtags.tags.get(result.brandId()))
+				.containsExactly("끌리메", "cclime", "cclime_official");
+		assertThat(hashtags.exclusions.get(result.brandId())).isEqualTo("cclime");
+	}
+
+	@Test
+	void 활성_replay_재등록도_태그를_유니온한다() {
+		var service = service();
+		var first = service.register("cclime_official", null);   // 대행사 선등록 — 브랜드명 미상
+		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime", "cclime_official");
+
+		var replayed = service.register("cclime_official", "끌리메");   // 뒤늦게 brand 유형 유저가 연결
+
+		assertThat(replayed.replayed()).isTrue();
+		assertThat(hashtags.tags.get(first.brandId()))
+				.containsExactly("cclime", "cclime_official", "끌리메");   // 유니온 — 기존 순서 보존 + 신규 추가
+	}
+
+	@Test
+	void 백필은_enrich_후_해시태그_스윕을_돌린다() {
+		List<String> order = new ArrayList<>();
+		collect.useSharedCallOrder(order);
+		hashtagCollect.useSharedCallOrder(order);
+
+		service().register("brandx");
+		enrichQueue.getFirst().run();
+
+		assertThat(order).containsExactly("enrich", "hashtag");
+		assertThat(hashtagCollect.swept).containsExactly("brandx");
+	}
+
+	@Test
+	void 해시태그_백필_실패는_등록_보강을_깨지_않는다() {
+		hashtagCollect.failing = true;
+
+		var result = service().register("brandx");
+		enrichQueue.forEach(Runnable::run);   // 해시태그 백필 실패는 태스크 안에서 삼켜진다 — 여기로 새면 실패
+
+		assertThat(brands.touched).containsExactly(result.brandId());
+		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());   // core는 이미 성공
+		assertThat(collect.enriched).containsExactly("brandx");   // 보강은 정상 실행됨
+	}
+
+	@Test
+	void 해시태그_시드_실패는_등록과_백필_예약을_깨지_않는다() {
+		hashtags.failing = true;
+
+		var result = service().register("brandx");   // seedHashtagsSafely가 던져도 여기서 새면 안 된다
+
+		assertThat(result.replayed()).isFalse();                  // 등록 자체는 성공
+		assertThat(collect.coreSwept).containsExactly("brandx");   // backfill.execute가 정상 호출·실행됨
+		assertThat(brands.touched).containsExactly(result.brandId());
+		assertThat(hashtags.tags).doesNotContainKey(result.brandId());   // 시드 자체는 실패해 미기록
 	}
 
 	@Test

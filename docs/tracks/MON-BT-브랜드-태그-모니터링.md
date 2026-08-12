@@ -16,6 +16,20 @@
 
 크롤링 정책 v1 — 나이 기반 티어(08-09 — DECISIONS 08-09 행, [spec 2026-08-09](../superpowers/specs/2026-08-09-brand-crawl-policy-v1-design.md)): 수집 주기를 "매일 전량(90일 & 105개)"에서 **게시물 나이 티어 주기**로 전환 — 14일 이하 매일 / 14~30일 3일 / 30~90일 7일 / 90~180일 30일 / **180일 초과 영구 제외**(발견 시 스냅샷 1회). 등록 백필은 90일 → **365일**, 개수 상한 105는 폐지(안전 밸브 `max-posts-per-sweep:2000`만 — 정상 경로에서 닿으면 안 되는 값. 설정 `window-days`·`window-posts` 제거, `registration-window-days:365` 신설). 판정은 저장 티어 상태 없이 `taken_at`·`last_crawled_at`·현재 시각만 보는 순수 함수 `BrandCrawlPolicy`(`last_crawled_at` null = 무조건 due → 마이그레이션 기존 행이 첫 스윕에서 자연 수렴, 스윕 하루 실패도 다음 스윕이 밀린 깊이 자동 커버). 실행은 게시물 단위가 아니라 **"오늘의 열거 깊이"**로 번역 — 컷 = min(now−14일, 가장 오래된 due의 `taken_at`)이라 due가 없어도 신규 태그용 14일 깊이는 매일 보장되고, 깊은 열거가 얕은 구간을 자동 포함(스킵 로직 불필요). 열거에서 만난 게시물은 due 여부 무관 전부 적재(콜 0 추가). 신규 발견은 ≤180일 추적 / 180~365일 스냅샷 1회 종료 / >365일 무시. **현행 유지 확정**(사용자 결정 — 정책 문서의 단건 상세 콜·30일 댓글 보충·첫 등록 부스트 크롤은 채택 안 함): 단건 상세 콜 금지, 복권 3종 기회 적재, 댓글 게시물당 45개(3콜) 상한. 스키마는 `brand_tagged_post.last_crawled_at` 1컬럼 추가(`V20260809120000__brand_tagged_post_last_crawled_at.sql`)가 전부. 게이팅·워터마크·격리·단계식 ready·보강 병렬화는 불변. **비용 재산정**(스펙 §8, 콜당 $0.0006 — 종전 "2,000계정 월 ~$550~600"을 대체): 계정당 등록 1회 **$0.2~0.6**(cclime_official급 847개/12개월 기준 ~300~900콜) + **월 유지 ~$0.05~0.07**(+댓글 게이트·게시자 stale 변동분 $0.02~0.05) — 자릿수가 다르다. 2,000계정 총액은 게시자 프로필 콜 수(N명)가 미실측이라 아직 재산정하지 않았다(배포 후 등록 1건 실측으로 스펙 §8 표와 함께 갱신 — 미결·후속 참조). 실질 리스크인 IG 요청량도 매일 전량 대비 준다. 커밋 d18afdf9(정책 함수)·8e5114ad(스키마·`trackedPosts`/`touchCrawled`)·3749db01(스윕 배선).
 
+해시태그 감지 확장(2026-08-11 — 구현 완료, 브랜치 `feat/brand-hashtag-detection`, PR 대기): 브랜드
+계정 태그(`@핸들`)뿐 아니라 브랜드명·계정명 및 정규화 변형 **해시태그**도 매일 열거해 자동 발견한다.
+요지 — monitoring에 신규 3테이블(`brand_hashtag`·`brand_hashtag_exclusion`·`brand_hashtag_post`,
+V20260811085943) + 매일 브랜드 스윕에 합류하는 해시태그 파이프라인(Hiker `/v2/hashtag/medias/recent`
+열거 → 자사 태그·직접 태그·단순 멘션 필터 → Gemini(`BrandMentionJudge`)로 브랜드 관련성 판정,
+이름 충돌 방어·키 미설정 fail-closed) + 등록 시 태그 시드·백필 편승 + 제외 문자열 관리 API. was는
+브랜드 게시물 피드에 `source: "hashtag"`로 병합(스냅샷·댓글·팔로워 없음, id는 `bh_`+shortcode,
+같은 shortcode는 tagged·direct 우선), `meta.counts.hashtag` 신설, 신규
+`GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions` 프록시 — 상세 계약은
+[monitoring-was-contract.md §8](../contracts/monitoring-was-contract.md#8-브랜드-태그-모니터링-확장--해시태그-감지-v28-2026-08-11).
+커밋 범위 `8d5958f1`~(설계 문서 동기화 포함, monitoring 신규 테이블·파이프라인·was 피드 병합·제외
+문자열 프록시 전부 포함). 배포 env(`GEMINI_API_KEY`)는 `deploy/compose.yaml` monitoring 서비스에
+이번에 추가. **잔여**: FE 공유 필요 — "해시태그 발견" 배지·제외 문자열 관리 UI(계약 §8-4).
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
