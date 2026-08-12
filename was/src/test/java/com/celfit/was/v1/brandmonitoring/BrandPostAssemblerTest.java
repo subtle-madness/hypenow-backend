@@ -168,7 +168,7 @@ class BrandPostAssemblerTest {
 	@Test
 	void 게시자_프로필이_있으면_프로필_값을_쓴다() {
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
-				12345L, "https://cdn/author.jpg", true);
+				12345L, "https://cdn/author.jpg", true, null);
 
 		var post = BrandPostAssembler.taggedPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
 				author, List.of(), List.of(), SWEPT_AT);
@@ -179,12 +179,42 @@ class BrandPostAssemblerTest {
 		assertThat(post.authorIsVerified()).isTrue();
 	}
 
+	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다. */
+	@Test
+	void 아카이브된_썸네일과_게시자_프로필은_img_상대경로를_우선_서빙한다() {
+		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
+				12345L, "https://cdn/author.jpg", true, "monitor-author/9001.jpg");
+		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "glowdeep_92", "REELS",
+				LocalDate.of(2026, 8, 6), "캡션", "https://cdn/thumb.jpg", null, null, null,
+				"monitor-brand-post/ABC.jpg");
+
+		var post = BrandPostAssembler.taggedPost(100L, taggedRow("ABC"), meta, author, List.of(), List.of(), SWEPT_AT);
+
+		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-brand-post/ABC.jpg");
+		assertThat(post.authorProfilePicUrl()).isEqualTo("/img/monitor-author/9001.jpg");
+	}
+
+	/** 해시태그 발견분도 동일 계약 — 썸네일만 아카이브 대상이고 게시자 프로필은 원본 그대로다(보강 보류). */
+	@Test
+	void 해시태그_게시물의_아카이브된_썸네일은_img_상대경로를_우선_서빙한다() {
+		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
+				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				"monitor-hashtag-post/HHH.jpg");
+
+		var post = BrandPostAssembler.hashtagPost(100L, row, SWEPT_AT);
+
+		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-hashtag-post/HHH.jpg");
+		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
+	}
+
 	@Test
 	void 무효_스킴_이미지_URL은_null로_강등한다() {
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
-				12345L, "javascript:alert(1)", true);
+				12345L, "javascript:alert(1)", true, null);
 		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "glowdeep_92", "REELS",
-				LocalDate.of(2026, 8, 6), "캡션", "data:image/png;base64,AAAA", null, null, null);
+				LocalDate.of(2026, 8, 6), "캡션", "data:image/png;base64,AAAA", null, null, null, null);
 
 		var post = BrandPostAssembler.taggedPost(100L, taggedRow("ABC"), meta, author, List.of(), List.of(), SWEPT_AT);
 
@@ -446,13 +476,14 @@ class BrandPostAssemblerTest {
 	private static BrandReadRepository.BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
 		return new BrandReadRepository.BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer",
 				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption,
-				"REELS", "https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"));
+				"REELS", "https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				null);
 	}
 
 	private static BrandReadRepository.BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
 		return new BrandReadRepository.BrandPostMetaRow(code, "glowdeep_92", contentType,
 				LocalDate.of(2026, 8, 6), "캡션 원문", "https://cdn/thumb.jpg",
-				"https://cdn/video.mp4", 15.5, paid);
+				"https://cdn/video.mp4", 15.5, paid, null);
 	}
 
 	private static BrandReadRepository.BrandSnapshotRow snapshotRow(String code, int day, Long views) {

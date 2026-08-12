@@ -71,7 +71,9 @@ public class BrandAccountAssembler {
 				PROFILE_URL_PREFIX + row.username() + "/",
 				row.username(),
 				row.fullName() == null ? "" : row.fullName(),
-				row.profilePicUrl(),
+				// 아카이브 사본(/img/ Vercel rewrite) 우선, 미아카이브는 원본 CDN URL 폴백 —
+				// 원본은 인스타 서명 URL이라 며칠~2주면 만료된다(BrandPostAssembler.resolveImageUrl 동형).
+				BrandPostAssembler.resolveImageUrl(row.imageObjectPath(), row.profilePicUrl()),
 				Boolean.TRUE.equals(row.isVerified()),
 				row.mediaCount(),
 				row.followers(),

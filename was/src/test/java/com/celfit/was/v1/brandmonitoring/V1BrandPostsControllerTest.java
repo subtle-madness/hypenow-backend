@@ -139,7 +139,7 @@ class V1BrandPostsControllerTest {
 				new BrandCommentRow("AAA", "c1", "glowdeep_92", "좋아요", 3L,
 						OffsetDateTime.parse("2026-08-06T05:00:00Z"), null)));
 		given(brandReadRepository.findAuthors(any())).willReturn(List.of(
-				new AuthorRow("9001", "glowdeep_92", "글로우딥", 12345L, "https://cdn/author.jpg", true)));
+				new AuthorRow("9001", "glowdeep_92", "글로우딥", 12345L, "https://cdn/author.jpg", true, null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
 				.andExpect(status().isOk())
@@ -441,7 +441,7 @@ class V1BrandPostsControllerTest {
 		return new BrandAccountRow(100L, "lizda_official", LocalDate.of(2026, 8, 8),
 				OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null, 30876L, 12L, 340L, null, "리즈다",
-				"https://cdn/pic.jpg", true, null, "ACTIVE");
+				"https://cdn/pic.jpg", true, null, "ACTIVE", null);
 	}
 
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {
@@ -456,12 +456,12 @@ class V1BrandPostsControllerTest {
 	private static BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
 		return new BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer", "해시태그 인플루언서",
 				"https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption, "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"));
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
 	}
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
 		return new BrandPostMetaRow(code, "glowdeep_92", contentType, LocalDate.of(2026, 8, 6),
-				"캡션 원문", "https://cdn/thumb.jpg", "https://cdn/video.mp4", 15.5, paid);
+				"캡션 원문", "https://cdn/thumb.jpg", "https://cdn/video.mp4", 15.5, paid, null);
 	}
 
 	private static BrandSnapshotRow snapshotRow(String code, int day, Long views) {

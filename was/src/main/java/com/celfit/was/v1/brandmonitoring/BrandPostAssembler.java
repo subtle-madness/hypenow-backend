@@ -210,13 +210,13 @@ public class BrandPostAssembler {
 				contentType,
 				KstTimestamps.toKstIso(post.takenAt()),
 				meta == null ? null : meta.caption(),
-				meta == null ? null : sanitizeImageUrl(meta.thumbnailUrl()),
+				meta == null ? null : resolveImageUrl(meta.imageObjectPath(), meta.thumbnailUrl()),
 				meta == null ? null : meta.videoUrl(),
 				meta == null ? null : meta.videoDuration(),
 				username == null ? null : PROFILE_URL_PREFIX + username + "/",
 				username,
 				author == null ? null : author.fullName(),
-				author == null ? null : sanitizeImageUrl(author.profilePicUrl()),
+				author == null ? null : resolveImageUrl(author.imageObjectPath(), author.profilePicUrl()),
 				author != null && Boolean.TRUE.equals(author.isVerified()),
 				author == null ? null : author.followers(),
 				BrandSponsorshipClassifier.classify(meta == null ? null : meta.isPaidPartnership(),
@@ -299,12 +299,13 @@ public class BrandPostAssembler {
 				contentType,
 				KstTimestamps.toKstIso(post.takenAt()),
 				post.caption(),
-				sanitizeImageUrl(post.thumbnailUrl()),
+				resolveImageUrl(post.imageObjectPath(), post.thumbnailUrl()),
 				null,
 				null,
 				post.authorUsername() == null ? null : PROFILE_URL_PREFIX + post.authorUsername() + "/",
 				post.authorUsername(),
 				post.authorFullName(),
+				// 게시자 프로필 사진은 아카이브가 없다(프로필 보강 자체가 스펙 §5 보류) — 원본 그대로.
 				sanitizeImageUrl(post.authorProfilePicUrl()),
 				// 열거엔 인증 배지 관측이 없다 — 거짓 배지를 띄우지 않기 위해 false 고정(direct와 같은 규칙).
 				false,
@@ -518,5 +519,19 @@ public class BrandPostAssembler {
 		}
 		String lower = url.toLowerCase(Locale.ROOT);
 		return lower.startsWith("http://") || lower.startsWith("https://") ? url : null;
+	}
+
+	/**
+	 * 이미지 URL 산지(레거시 {@code TrackingItemAssembler.resolveImageUrl} 동형) — image_object_path
+	 * (monitoring이 자체 아카이브한 OCI 오브젝트)가 있으면 그걸 우선 서빙하고, 없으면 원본 CDN URL로
+	 * 폴백한다(sanitizeImageUrl 가드는 폴백 경로에 그대로 유지). 원본은 인스타 서명 URL이라 며칠~2주면
+	 * 만료된다 — 아카이브 사본이 서빙 정본이다. {@code /img/}는 was 엔드포인트가 아니라 celfit-front의
+	 * Vercel rewrite({@code /img/:path*} 글롭)라서 프론트 변경이 필요 없다.
+	 */
+	static String resolveImageUrl(String imageObjectPath, String originalUrl) {
+		if (imageObjectPath != null) {
+			return "/img/" + imageObjectPath;
+		}
+		return sanitizeImageUrl(originalUrl);
 	}
 }

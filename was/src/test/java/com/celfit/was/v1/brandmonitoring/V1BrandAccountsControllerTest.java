@@ -111,27 +111,27 @@ class V1BrandAccountsControllerTest {
 	private static BrandAccountRow collectingRow(long brandId, String username) {
 		return new BrandAccountRow(brandId, username, null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
-				30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true, "https://lizda.co.kr", "ACTIVE");
+				30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true, "https://lizda.co.kr", "ACTIVE", null);
 	}
 
 	/** 백필 리셋·재가입·스윕 실패 — last_swept_on은 null이지만 지난 스윕 완주 사실이 있다. */
 	private static BrandAccountRow sweptFactRow(long brandId, String backfillError) {
 		return new BrandAccountRow(brandId, "lizda_official", null, OffsetDateTime.parse("2026-07-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, backfillError,
-				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE");
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null);
 	}
 
 	private static BrandAccountRow readyRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", LocalDate.of(2026, 8, 7),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
-				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE");
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null);
 	}
 
 	private static BrandAccountRow errorRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, "초기 수집에 실패했어요. 자동으로 재시도 중이에요.",
-				null, null, null, null, null, null, null, null, "ACTIVE");
+				null, null, null, null, null, null, null, null, "ACTIVE", null);
 	}
 
 	// ---------- 연결 ----------
@@ -156,6 +156,25 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 
 		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+	}
+
+	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 /img/ 상대경로를 우선 서빙한다. */
+	@Test
+	void 아카이브된_브랜드_프로필_이미지는_img_상대경로를_서빙한다() throws Exception {
+		given(commandClient.registerBrand("lizda_official", null))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(
+				new BrandAccountRow(100L, "lizda_official", null, null,
+						OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
+						30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true,
+						"https://lizda.co.kr", "ACTIVE", "monitor-brand/56161796372.jpg")));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.profile.profilePicUrl").value("/img/monitor-brand/56161796372.jpg"));
 	}
 
 	// ---------- brandName 전달(스펙 2026-08-11 §2) ----------
