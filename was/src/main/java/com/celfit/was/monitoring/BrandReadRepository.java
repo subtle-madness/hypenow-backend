@@ -41,7 +41,9 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT id, username, last_swept_on, last_swept_at, registered_at, backfill_completed_at,
 				       backfill_error, followers, following, media_count, biography, full_name,
-				       profile_pic_url, is_verified, external_url, status, image_object_path
+				       profile_pic_url, is_verified, external_url, status, image_object_path,
+				       collection_months,
+				       COALESCE(collection_started_at, registered_at) AS collection_started_at
 				FROM brand_account
 				WHERE id = :brandId
 				""")
@@ -219,12 +221,15 @@ public class BrandReadRepository {
 	 * brand_account 1행(was 계약 소비 컬럼만) — 08-07 확장 필드 포함. imageObjectPath는 monitoring
 	 * 자체 프로필 이미지 아카이브 결과(V20260811023454) — null이면 아직 아카이브 전이라 서빙 측이
 	 * 원본 CDN URL로 폴백한다.
+	 *
+	 * <p>collectionMonths는 자산 레벨 수집 창(공유 유저 간 max — 스펙 2026-08-12), collectionStartedAt은
+	 * 확장 시 갱신되는 폴링 앵커(기존 행은 registered_at 폴백).
 	 */
 	public record BrandAccountRow(long id, String username, LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime registeredAt, OffsetDateTime backfillCompletedAt, String backfillError,
 			Long followers, Long following, Long mediaCount, String biography, String fullName,
 			String profilePicUrl, Boolean isVerified, String externalUrl, String status,
-			String imageObjectPath) {
+			String imageObjectPath, int collectionMonths, OffsetDateTime collectionStartedAt) {
 	}
 
 	/** brand_tagged_post 1행 — 게시물 지표·메타는 여기 없다(게시물 전역 테이블에서 배치 조회). */

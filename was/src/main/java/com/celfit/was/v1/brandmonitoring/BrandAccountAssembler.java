@@ -10,16 +10,19 @@ import org.springframework.stereotype.Component;
 /**
  * brand_account 1행 → BrandAccountResponse 조립 + 상태 유도(스펙 §5-2). 순수 변환 — DB·외부 호출 없음.
  *
- * <p>상태 유도 규칙(정본은 monitoring 컬럼 2개뿐 — 별도 상태 컬럼이 없다):
+ * <p>상태 유도 규칙(정본은 monitoring 컬럼 몇 개뿐 — 별도 상태 컬럼이 없다):
  * <ul>
- *   <li>{@code last_swept_at} 있음(완주 또는 서빙 창 커버 = 서빙할 데이터 있음) → {@code ready}</li>
- *   <li>{@code last_swept_at} null + {@code backfill_error} 있음 → {@code error} + collectionError</li>
- *   <li>둘 다 null → {@code collecting}</li>
+ *   <li>{@code last_swept_on} 있음(이번 창 기준 완주) → {@code ready}</li>
+ *   <li>{@code last_swept_on} null + {@code backfill_completed_at} 있음 → {@code collecting}
+ *       (확장·재수집 진행 — 데이터는 계속 서빙된다)</li>
+ *   <li>둘 다 null + {@code last_swept_at} 있음 → {@code ready}(첫 등록 스트리밍 fast-ready·재가입)</li>
+ *   <li>전부 null + {@code backfill_error} 있음 → {@code error} + collectionError, 아니면 {@code collecting}</li>
  * </ul>
- * ready 기준이 {@code last_swept_on}(이번 정책·가입 기준 완주)이 아니라 {@code last_swept_at}
- * (완주 사실값)인 이유(08-10): 정책 리셋·스윕 실패·재가입으로 last_swept_on이 비어도 기존 수집분은
- * 게시물 API가 그대로 서빙하므로, FE가 로딩 화면으로 데이터를 가리는 것보다 보여주는 게 맞다.
- * collecting은 "정말 보여줄 게 없는 첫 수집"에만 해당한다.
+ * 마지막 두 분기의 ready 기준이 {@code last_swept_on}이 아니라 {@code last_swept_at}(완주 사실값)인
+ * 이유(08-10, <b>첫 등록·재가입 분기에 한정 유지</b>): 정책 리셋·스윕 실패·재가입으로 last_swept_on이
+ * 비어도 기존 수집분은 게시물 API가 그대로 서빙하므로, FE가 로딩 화면으로 데이터를 가리는 것보다
+ * 보여주는 게 맞다. 다만 완주 이력이 있는 계정의 last_swept_on 공백은 "창을 다시 여는 중"이므로
+ * 08-12 개정으로 collecting이 우선한다. collecting은 "보여줄 게 없는 첫 수집" 또는 "확장 진행 중"이다.
  * {@code brand_account.status}(ACTIVE/CLOSED)는 유도에 쓰지 않는다 — 값 공간이 가입/탈퇴라 "수집
  * 준비 중"을 표현하지 못한다. 등록 응답의 status("ACTIVE" 하드코딩)도 마찬가지로 신뢰하지 않는다.
  */
@@ -39,10 +42,22 @@ public class BrandAccountAssembler {
 	}
 
 	public BrandAccountResponse toResponse(BrandAccountRow row, String accountType) {
-		boolean ready = row.lastSweptAt() != null;
-		// ready면 backfill_error가 남아 있어도 무시한다(재가입 백필 실패 등) — 데이터가 있는데
-		// 에러 화면을 띄우는 오보를 막고, 미수집분은 다음 스윕이 백스톱한다.
-		String status = ready ? STATUS_READY : (row.backfillError() != null ? STATUS_ERROR : STATUS_COLLECTING);
+		String status;
+		if (row.lastSweptOn() != null) {
+			status = STATUS_READY;
+		} else if (row.backfillCompletedAt() != null) {
+			// 확장/재수집 진행(스펙 2026-08-12 §5) — 완주 이력이 있는데 last_swept_on이 비어 있다 =
+			// 창을 다시 여는 중. 데이터는 계속 서빙되고 FE는 "collecting + 게시물 있음 = 확장 배너"로
+			// 판정한다. 실패해도 error로 바꾸지 않는다 — 다음 스윕이 백스톱하고, 기존 데이터 위에
+			// "초기 수집 실패" 오보를 띄우지 않기 위해서다.
+			status = STATUS_COLLECTING;
+		} else if (row.lastSweptAt() != null) {
+			// 첫 등록 스트리밍 fast-ready(서빙 창 커버) / 재가입 직후 기존 데이터 보유(08-10 결정).
+			// backfill_error가 남아 있어도 무시한다 — 데이터가 있는데 에러 화면을 띄우는 오보 방지.
+			status = STATUS_READY;
+		} else {
+			status = row.backfillError() != null ? STATUS_ERROR : STATUS_COLLECTING;
+		}
 		BrandAccountResponse.CollectionError error = STATUS_ERROR.equals(status)
 				? new BrandAccountResponse.CollectionError(BACKFILL_FAILED, row.backfillError())
 				: null;
@@ -53,9 +68,11 @@ public class BrandAccountAssembler {
 				String.valueOf(row.id()),
 				// 타입은 brand_account가 아니라 호출자가 쥔 연결 행에서 온다 — 조립기는 계속 순수 변환이다.
 				accountType,
+				row.collectionMonths(),
 				profile(row),
 				status,
-				KstTimestamps.toKstIso(row.registeredAt()),
+				// 확장 시 monitoring이 collection_started_at을 갱신한다 — FE 폴링 30분 상한의 앵커(요청서 §4).
+				KstTimestamps.toKstIso(row.collectionStartedAt()),
 				KstTimestamps.toKstIso(row.backfillCompletedAt()),
 				sweptAt,
 				sweptAt,   // 감지/추적 구분은 08-06 개정으로 폐지 — 매일 전량 스윕 하나가 둘 다 채운다

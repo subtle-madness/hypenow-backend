@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS brand_account (
     -- 이미지 아카이브 3컬럼(V20260811023454) — was는 image_object_path만 읽는다.
     image_object_path     text,
     image_source_name     text,
-    image_archived_at     timestamptz
+    image_archived_at     timestamptz,
+    -- 수집 범위 선택(V20260812220000) — was는 둘 다 읽는다(collection_started_at은 registered_at 폴백).
+    collection_months     int         NOT NULL DEFAULT 12
+                              CHECK (collection_months IN (1, 3, 6, 12)),
+    collection_started_at timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS brand_tagged_post (

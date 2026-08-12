@@ -111,27 +111,40 @@ class V1BrandAccountsControllerTest {
 	private static BrandAccountRow collectingRow(long brandId, String username) {
 		return new BrandAccountRow(brandId, username, null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
-				30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true, "https://lizda.co.kr", "ACTIVE", null);
+				30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true, "https://lizda.co.kr", "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
 	/** 백필 리셋·재가입·스윕 실패 — last_swept_on은 null이지만 지난 스윕 완주 사실이 있다. */
 	private static BrandAccountRow sweptFactRow(long brandId, String backfillError) {
 		return new BrandAccountRow(brandId, "lizda_official", null, OffsetDateTime.parse("2026-07-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, backfillError,
-				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null);
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
 	private static BrandAccountRow readyRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", LocalDate.of(2026, 8, 7),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
-				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null);
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
 	private static BrandAccountRow errorRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, "초기 수집에 실패했어요. 자동으로 재시도 중이에요.",
-				null, null, null, null, null, null, null, null, "ACTIVE", null);
+				null, null, null, null, null, null, null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+	}
+
+	/** 확장 수집 진행 — 완주 이력(backfill_completed_at)이 있는데 last_swept_on이 비었다. 데이터는 서빙 중. */
+	private static BrandAccountRow expandingRow(long brandId) {
+		return new BrandAccountRow(brandId, "lizda_official", null,
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
+				6, OffsetDateTime.parse("2026-08-12T10:00:00Z"));
 	}
 
 	// ---------- 연결 ----------
@@ -167,7 +180,8 @@ class V1BrandAccountsControllerTest {
 				new BrandAccountRow(100L, "lizda_official", null, null,
 						OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
 						30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true,
-						"https://lizda.co.kr", "ACTIVE", "monitor-brand/56161796372.jpg")));
+						"https://lizda.co.kr", "ACTIVE", "monitor-brand/56161796372.jpg",
+						12, OffsetDateTime.parse("2026-08-07T00:00:00Z"))));
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
@@ -659,6 +673,31 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.profile", Matchers.hasKey("externalUrl")))
 				.andExpect(jsonPath("$.data.profile.externalUrl").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.profile.followerCount").value(30876));
+	}
+
+	@Test
+	void 확장_중에는_collecting으로_전이하되_기존_데이터는_그대로_서빙한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(expandingRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionStatus").value("collecting"))
+				.andExpect(jsonPath("$.data.collectionMonths").value(6))
+				// 확장 시작 시각(collection_started_at)이 앵커다 — registered_at이 아니다(FE 폴링 30분 상한).
+				.andExpect(jsonPath("$.data.collectionStartedAt").value("2026-08-12T19:00:00+09:00"))
+				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
+	}
+
+	@Test
+	void 응답은_자산의_collectionMonths를_그대로_싣는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
+				.andExpect(jsonPath("$.data.collectionMonths").value(12));
 	}
 
 	@Test

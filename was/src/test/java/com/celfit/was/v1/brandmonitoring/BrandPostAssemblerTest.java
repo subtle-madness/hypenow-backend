@@ -22,7 +22,7 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void 윈도우_컷은_KST_자정_기준_365일이다() {
-		// 크롤링 정책 v1(08-09) — 수집 편입 컷(monitoring registration-window-days 365)과 같은 깊이.
+		// 크롤링 정책 v1(08-09) — 수집 편입 컷(브랜드별 수집 창 collection_months 최대치)과 같은 깊이.
 		var expected = LocalDate.now(KstTimestamps.KST).minusDays(365)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 

@@ -107,6 +107,24 @@ class V1BrandPostsControllerTest {
 	}
 
 	@Test
+	void 확장_수집_중에도_게시물_목록은_정상_서빙된다() throws Exception {
+		// 확장 중 = last_swept_on null + 완주 이력 있음(스펙 2026-08-12 §5). FE는 collecting 중에도
+		// 기존 데이터 위에 진행 배너만 띄운다(요청서 §4 조건 ①) — 목록이 비면 그 UX가 무너진다.
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(
+				new BrandAccountRow(100L, "lizda_official", null,
+						OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+						OffsetDateTime.parse("2026-08-01T01:00:00Z"), null, 30876L, 12L, 340L, null, "리즈다",
+						"https://cdn/pic.jpg", true, null, "ACTIVE", null,
+						12, OffsetDateTime.parse("2026-08-12T10:00:00Z"))));
+		givenTagged(taggedRow("P001", "2026-08-01T00:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("P001", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1));
+	}
+
+	@Test
 	void 목록은_tagged와_direct를_합치고_counts는_필터_전_전량이다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
@@ -458,7 +476,8 @@ class V1BrandPostsControllerTest {
 		return new BrandAccountRow(100L, "lizda_official", LocalDate.of(2026, 8, 8),
 				OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null, 30876L, 12L, 340L, null, "리즈다",
-				"https://cdn/pic.jpg", true, null, "ACTIVE", null);
+				"https://cdn/pic.jpg", true, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {

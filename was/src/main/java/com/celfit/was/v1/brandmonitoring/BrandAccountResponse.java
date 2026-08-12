@@ -9,10 +9,13 @@ package com.celfit.was.v1.brandmonitoring;
  *
  * <p>{@code accountType}은 brand_account가 아니라 <b>구독</b>(app.brand_monitorings)의 속성이다 —
  * 같은 브랜드라도 유저마다 own/competitor가 다를 수 있다(08-12).
+ *
+ * <p>{@code collectionMonths}는 자산 값 그대로 — 3개월 유저도 자산이 12면 12를 본다(스펙 결정 요약).
  */
-public record BrandAccountResponse(String id, String accountType, Profile profile, String collectionStatus,
-		String collectionStartedAt, String collectionCompletedAt, String lastDetectedAt,
-		String lastTrackedAt, String nextScheduledAt, CollectionError collectionError, String createdAt) {
+public record BrandAccountResponse(String id, String accountType, int collectionMonths, Profile profile,
+		String collectionStatus, String collectionStartedAt, String collectionCompletedAt,
+		String lastDetectedAt, String lastTrackedAt, String nextScheduledAt,
+		CollectionError collectionError, String createdAt) {
 
 	/**
 	 * 프로필 관측값 — 매일 스윕이 갱신한다(등록 1회 고정 아님).
