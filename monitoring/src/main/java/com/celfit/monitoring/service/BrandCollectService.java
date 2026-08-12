@@ -14,7 +14,6 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +21,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +38,9 @@ import org.springframework.stereotype.Service;
  * <p>저장은 전면 브랜드 전용 스키마(08-06 결정) — 캠페인 테이블(post_snapshot 계열)을 한 줄도
  * 건드리지 않는다(볼륨 격리 + 겹침 게시물 덮어쓰기 차단). 트랜잭션은 여기 없다(CollectService와
  * 같은 이유), 쓰기는 {@link BrandSnapshotWriter}가 짧게 묶는다.
+ *
+ * <p>2026-08-12 스트리밍 개정: 적재는 페이지 단위로 즉시 일어나고, 등록 백필은 서빙 창(기본
+ * 30일) 커버 시점에 콜백으로 FE ready를 당긴다(스펙 docs/superpowers/specs/2026-08-12-…-design.md).
  */
 @Service
 public class BrandCollectService {
@@ -53,6 +56,7 @@ public class BrandCollectService {
 	private final AuthorProfileRepository authors;
 	private final Executor enrichWorker;
 	private final int registrationWindowDays;
+	private final int servingWindowDays;
 	private final int maxPostsPerSweep;
 	private final int commentPages;
 	private final int authorStaleDays;
@@ -62,6 +66,7 @@ public class BrandCollectService {
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.registration-window-days:365}") int registrationWindowDays,
+			@Value("${monitoring.brand.serving-window-days:30}") int servingWindowDays,
 			@Value("${monitoring.brand.max-posts-per-sweep:2000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
@@ -73,6 +78,7 @@ public class BrandCollectService {
 		this.authors = authors;
 		this.enrichWorker = enrichWorker;
 		this.registrationWindowDays = registrationWindowDays;
+		this.servingWindowDays = servingWindowDays;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
@@ -88,25 +94,32 @@ public class BrandCollectService {
 		enrich(brand, sweepCore(brand));
 	}
 
-	/**
-	 * core 단계 — ①브랜드 프로필 1콜(매일 갱신 + 추이 적재, best-effort) ②태그 열거를 오늘의
-	 * 깊이 컷({@link #enumerationCutoff})까지 next_page_id 추종 ③편입 컷(365일) 안 전 게시물
-	 * 스냅샷·메타 적재 + 신규 링크 + last_crawled_at 갱신. 여기까지가 브랜드 화면 목록 렌더에
-	 * 필요한 전부다 → ready(touchSwept)는 이 반환 직후 찍어도 된다.
-	 *
-	 * <p>열거 중단: ①페이지 전체가 깊이 컷 이전(소급 태그 혼입 때문에 "오래된 글 1건 발견 즉시
-	 * 중단" 금지 — 08-06 스펙 §5) ②커서 소진 ③커서 미전진 ④안전 상한(maxPostsPerSweep) 도달 —
-	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다).
-	 * ①②는 <b>자연 종료</b>(컷까지 다 훑었다)라 커버한 깊이 전체를 touch하고, ③④는 훑다 만
-	 * 중단이라 touch하지 않는다({@link TaggedPostRepository#touchCrawledDepth} 주석 참조).
-	 *
-	 * @return 편입 컷 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
-	 */
+	/** 단일 인자 경로(일일 스윕·기존 호출부) — 서빙 콜백 없이 동작은 동일하다. */
 	public List<PostInfo> sweepCore(BrandRow brand) {
+		return sweepCore(brand, posts -> {});
+	}
+
+	/**
+	 * core 단계(2026-08-12 스트리밍 개정) — 열거하면서 페이지(~21건)마다 즉시 적재한다. 구 일괄
+	 * processCore 대비 의미 불변이고 실행 시점만 당겨진다: 중간 실패 시 앞 페이지 적재분이
+	 * 보존되고(다음 스윕이 잔여를 백스톱), 등록 백필은 서빙 창 커버 시점에 FE ready를 당길 수 있다.
+	 *
+	 * <p>onServingCovered는 <b>정확히 1회</b> 호출된다(예외로 중단되는 경우 제외) — 페이지 전체가
+	 * 서빙 창(servingWindowDays)보다 오래된 순간(소급 태그 혼입 대비, 컷 판정과 같은 보수 규칙),
+	 * 그전에 열거가 끝나면(자연 종료·상한·미전진 포함) 종료 시점. 인자는 그때까지 적재된 편입분
+	 * 누적 리스트다. 열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다.
+	 */
+	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
 		refreshBrandProfileSafely(brand);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
-		Map<String, PostInfo> byCode = new LinkedHashMap<>();
+		Instant servingCutoff = now.minus(Duration.ofDays(servingWindowDays));
+		LocalDate today = LocalDate.now(KST);
+		Set<String> known = taggedPosts.knownCodes(brand.id());
+		Set<String> seen = new LinkedHashSet<>();      // 이번 실행 처리분 — 페이지 간 중복(커서 드리프트) 스킵
+		List<PostInfo> collected = new ArrayList<>();  // 편입분 누적 — 콜백·반환(보강 입력)
+		int freshTotal = 0;
+		boolean servingMarked = false;
 		String cursor = null;
 		boolean coveredCutoff = false;
 		while (true) {
@@ -114,12 +127,22 @@ public class BrandCollectService {
 			if (page.posts().isEmpty()) {
 				// 태그 0건(404 → 빈 페이지)·커서 종료는 자연 종료. 반대로 아직 커서가 살아 있는데
 				// 빈 페이지가 오는 건 일시 오류와 구분할 수 없어 커버로 치지 않는다(보수적 판정).
-				coveredCutoff = page.nextPageId() == null || byCode.isEmpty();
+				coveredCutoff = page.nextPageId() == null || seen.isEmpty();
 				break;
 			}
-			int before = byCode.size();
-			page.posts().forEach(p -> byCode.putIfAbsent(p.shortCode(), p));
-			// taken_at 미상 아이템은 "컷 이전" 판정에 넣지 않는다(보수적으로 열거 계속).
+			List<PostInfo> newItems = page.posts().stream()
+					.filter(p -> seen.add(p.shortCode()))   // 첫 관측 유지(구 putIfAbsent 의미)
+					.toList();
+			int knownBefore = known.size();
+			collected.addAll(processPage(brand, newItems, known, today, now));
+			freshTotal += known.size() - knownBefore;
+			// 서빙 경계 — 페이지 전체가 서빙 창 이전이면 최근 30일은 다 훑었다(taken_at 미상은
+			// 컷 판정과 같은 이유로 "이전" 판정에 넣지 않는다). 열거는 계속된다.
+			if (!servingMarked && page.posts().stream().allMatch(p -> p.takenAt() != null
+					&& Instant.ofEpochSecond(p.takenAt()).isBefore(servingCutoff))) {
+				servingMarked = true;
+				onServingCovered.accept(List.copyOf(collected));
+			}
 			boolean wholePageBeforeCutoff = page.posts().stream()
 					.allMatch(p -> p.takenAt() != null
 							&& Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff));
@@ -129,24 +152,29 @@ public class BrandCollectService {
 			}
 			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
 			// 자연 종료지 폭주가 아니라, 여기서 경고를 찍으면 오보가 된다.
-			if (byCode.size() >= maxPostsPerSweep) {
+			if (seen.size() >= maxPostsPerSweep) {
 				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
 						maxPostsPerSweep, brand.username());
 				break;
 			}
-			if (byCode.size() == before) {
+			if (newItems.isEmpty()) {
 				log.warn("태그 커서 미전진 의심 — 브랜드 {} 신규 code 0건, 열거 중단", brand.username());
 				break;
 			}
 			cursor = page.nextPageId();
 		}
-		List<PostInfo> collected = processCore(brand, List.copyOf(byCode.values()), now);
+		if (!servingMarked) {
+			// 서빙 창까지 못 갔거나(게시물이 얕음) 상한·미전진 중단 — 있는 만큼이라도 서빙을 연다.
+			onServingCovered.accept(List.copyOf(collected));
+		}
+		log.info("브랜드 태그 수집 — {} 열거 {}건, 편입 컷 안 {}건, 신규 {}건",
+				brand.username(), seen.size(), collected.size(), freshTotal);
 		if (coveredCutoff) {
 			// 열거에 더 안 실리는 링크(삭제·태그 제거·비공개 전환)까지 포함해 커버한 깊이 전체를
 			// touch — 안 하면 그 링크의 due가 영구 true로 굳어 매 스윕이 같은 깊이를 다시 연다.
 			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
 		}
-		return collected;
+		return List.copyOf(collected);
 	}
 
 	/**
@@ -200,8 +228,12 @@ public class BrandCollectService {
 		}
 	}
 
-	/** core 열거 결과 처리 — 편입 컷(365일) 필터 → 복권 지표 보정 → 스냅샷·메타 적재 → 신규 링크 → last_crawled_at 갱신. */
-	private List<PostInfo> processCore(BrandRow brand, List<PostInfo> posts, Instant now) {
+	/**
+	 * 페이지 1개분 처리(구 processCore의 페이지 단위판) — 편입 컷(365일) 필터 → 복권 지표 보정 →
+	 * 스냅샷 적재 → 신규 링크(known 갱신) → last_crawled_at 갱신. 전부 upsert/멱등이라 재실행 안전.
+	 */
+	private List<PostInfo> processPage(BrandRow brand, List<PostInfo> posts, Set<String> known,
+			LocalDate today, Instant now) {
 		Instant enrollCutoff = now.minus(Duration.ofDays(registrationWindowDays));
 		// taken_at 미상은 보수적으로 제외(잘못된 편입 방지) — 다음 열거에서 채워지면 잡힌다.
 		List<PostInfo> inWindow = posts.stream()
@@ -211,17 +243,12 @@ public class BrandCollectService {
 		if (inWindow.isEmpty()) {
 			return List.of();
 		}
-		Set<String> known = taggedPosts.knownCodes(brand.id());
-		Set<String> freshCodes = inWindow.stream().map(PostInfo::shortCode)
-				.filter(c -> !known.contains(c))
-				.collect(Collectors.toCollection(LinkedHashSet::new));
 		List<PostInfo> adjusted = adjustLotteryMetrics(inWindow);
-		LocalDate today = LocalDate.now(KST);
 		for (PostInfo p : adjusted) {
 			writer.savePost(today, p);
 		}
 		for (PostInfo p : adjusted) {
-			if (freshCodes.contains(p.shortCode())) {
+			if (known.add(p.shortCode())) {
 				taggedPosts.insert(brand.id(), p);
 			}
 		}
@@ -229,8 +256,6 @@ public class BrandCollectService {
 		// 무해하다(판정식이 영구 제외라 이들을 위한 콜은 발생하지 않는다 — 스펙 §4).
 		taggedPosts.touchCrawled(brand.id(),
 				adjusted.stream().map(PostInfo::shortCode).toList(), now);
-		log.info("브랜드 태그 수집 — {} 열거 {}건, 편입 컷 안 {}건, 신규 {}건",
-				brand.username(), posts.size(), inWindow.size(), freshCodes.size());
 		return adjusted;
 	}
 

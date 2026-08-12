@@ -1,6 +1,7 @@
 package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.AuthorInfo;
@@ -65,6 +66,7 @@ class BrandCollectServiceTest {
 	private final List<String> tagPages = new ArrayList<>();
 	private final Set<String> failingAuthorIds = new HashSet<>();
 	private boolean tagNotFound = false;
+	private boolean tagPage2Fails = false;
 	private boolean brandProfileFails = false;
 	private boolean commentPage2Fails = false;
 	private int tagCall = 0;
@@ -234,6 +236,9 @@ class BrandCollectServiceTest {
 				if (tagNotFound) {
 					throw new SubjectNotFoundException("Entries not found");
 				}
+				if (tagPage2Fails && tagCall >= 1) {
+					throw new HikerFetchException("열거 2페이지 500");
+				}
 				return tagPages.get(Math.min(tagCall++, tagPages.size() - 1));
 			}
 			if (path.startsWith("/v2/user/by/id")) {
@@ -266,7 +271,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), writer, snapshots, comments, tagged, authors,
-				Runnable::run, 365, maxPostsPerSweep, 3, 30);
+				Runnable::run, 365, 30, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -554,6 +559,75 @@ class BrandCollectServiceTest {
 		assertThat(writer.saved).hasSize(3);                 // 게시자 실패가 지표 적재에 번지지 않는다
 	}
 
+	// ── 스트리밍 적재 + 서빙 콜백(2026-08-12 스펙 §2) ────────────────────────
+
+	@Test
+	void 서빙_창_커버_시점에_콜백을_1회_호출하고_열거는_계속한다() {
+		// 백필 경로(365일 컷). 2페이지 전체가 60일령 > 서빙 창(30일) — 여기서 콜백이 떠야 한다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("Old60a", RETRO_IN_WINDOW, 0, 102, ""),
+				reel("Old60b", RETRO_IN_WINDOW, 0, 103, "")));
+		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 104, "")));
+		List<List<String>> callbacks = new ArrayList<>();
+
+		service(2000).sweepCore(brand,
+				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+
+		assertThat(callbacks).hasSize(1);
+		assertThat(callbacks.getFirst()).containsExactly("A", "Old60a", "Old60b");   // 경계 페이지까지 누적분
+		assertThat(tagCalls()).isEqualTo(3);   // 콜백 후에도 365일 컷까지 계속 — 조기 종료 아님
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old60a", "Old60b", "Old95");
+	}
+
+	@Test
+	void 서빙_창보다_게시물이_얕으면_열거_종료_시점에_콜백한다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));   // 전부 최근 — 경계 미도달
+		List<List<String>> callbacks = new ArrayList<>();
+
+		service(2000).sweepCore(brand,
+				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+
+		assertThat(callbacks).hasSize(1);
+		assertThat(callbacks.getFirst()).containsExactly("A");
+	}
+
+	@Test
+	void 안전_상한_중단도_종료_시점에_콜백한다() {
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+		List<Integer> sizes = new ArrayList<>();
+
+		service(3).sweepCore(brand, early -> sizes.add(early.size()));
+
+		assertThat(sizes).containsExactly(4);   // 상한 3 → 2페이지째 중단, 그때까지 적재분 4건
+	}
+
+	@Test
+	void 열거_중간_실패에도_앞_페이지_적재는_보존된다() {
+		// 스트리밍의 핵심 — 구 일괄 processCore였다면 전량 유실됐을 배치다.
+		tagPage2Fails = true;
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+
+		assertThatThrownBy(() -> service(2000).sweepCore(brand))
+				.isInstanceOf(HikerFetchException.class);
+
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
+		assertThat(tagged.inserted).containsExactly("A");
+	}
+
+	@Test
+	void 페이지_간_중복_코드는_한_번만_처리한다() {
+		// 커서 드리프트로 같은 게시물이 두 페이지에 실려도 적재·링크는 1회(구 putIfAbsent 의미 보존).
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A", "B");
+		assertThat(tagged.inserted).containsExactly("A", "B");
+	}
+
 	// ── core/enrichment 분리(등록 백필 단계식 ready — 2026-08-07) ────────────
 
 	@Test
@@ -661,7 +735,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, writer, snapshots,
-					comments, tagged, authors, pool, 365, 2000, 3, 30);
+					comments, tagged, authors, pool, 365, 30, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
