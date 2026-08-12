@@ -62,7 +62,7 @@ public class BrandCollectService {
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.registration-window-days:365}") int registrationWindowDays,
-			@Value("${monitoring.brand.max-posts-per-sweep:2000}") int maxPostsPerSweep,
+			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
 		this.hiker = hiker;
@@ -96,9 +96,13 @@ public class BrandCollectService {
 	 *
 	 * <p>열거 중단: ①페이지 전체가 깊이 컷 이전(소급 태그 혼입 때문에 "오래된 글 1건 발견 즉시
 	 * 중단" 금지 — 08-06 스펙 §5) ②커서 소진 ③커서 미전진 ④안전 상한(maxPostsPerSweep) 도달 —
-	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다).
+	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 —
+	 * 2,000은 tooq급 정상 고물량 브랜드가 백필·심층 티어 스윕에서 닿아 10,000으로 상향, 08-12 스펙).
 	 * ①②는 <b>자연 종료</b>(컷까지 다 훑었다)라 커버한 깊이 전체를 touch하고, ③④는 훑다 만
 	 * 중단이라 touch하지 않는다({@link TaggedPostRepository#touchCrawledDepth} 주석 참조).
+	 * ④가 백필에서 나면 커버 깊이 밖 구간은 이후 스윕이 열지 않아 영구 공백이 된다 — 그래서
+	 * error 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는
+	 * 그래도 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 스펙 §3).
 	 *
 	 * @return 편입 컷 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
 	 */
@@ -130,8 +134,13 @@ public class BrandCollectService {
 			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
 			// 자연 종료지 폭주가 아니라, 여기서 경고를 찍으면 오보가 된다.
 			if (byCode.size() >= maxPostsPerSweep) {
-				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
-						maxPostsPerSweep, brand.username());
+				// 도달 = 폭주 또는 상한 캘리브레이션 오류(08-12 스펙 §3) — 백필 경로면 커버 깊이
+				// 밖 구간이 조용히 영구 공백이 되므로, 운영이 보정(상한 상향 + last_swept_on 리셋)
+				// 판단을 내릴 수 있게 커버 깊이까지 error로 남긴다.
+				log.error("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단"
+								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
+						maxPostsPerSweep, brand.username(), byCode.size(), cutoff,
+						oldestTakenAt(byCode.values()));
 				break;
 			}
 			if (byCode.size() == before) {
@@ -147,6 +156,12 @@ public class BrandCollectService {
 			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
 		}
 		return collected;
+	}
+
+	/** 상한 도달 로그용 커버 깊이 — 열거분 중 최고령 taken_at(전부 미상이면 null). */
+	private static Instant oldestTakenAt(Collection<PostInfo> posts) {
+		return posts.stream().map(PostInfo::takenAt).filter(Objects::nonNull)
+				.map(Instant::ofEpochSecond).min(Instant::compareTo).orElse(null);
 	}
 
 	/**
