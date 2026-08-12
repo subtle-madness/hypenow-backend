@@ -177,7 +177,8 @@ services:
       # analysis DB에 실사용자 이메일이 있다 — 개통 시 반드시 검증 주소만 넣는다(README §13-5).
       MONITORING_ALARM_ALLOWED_RECIPIENTS: ${DEV_ALARM_ALLOWED_RECIPIENTS:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      JAVA_OPTS: "-Xms128m -Xmx256m"
+      # ExitOnOOM은 운영과 동일 관용구(08-12) — test는 데이터가 작아 힙 상향은 미적용.
+      JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError"
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).
     healthcheck:

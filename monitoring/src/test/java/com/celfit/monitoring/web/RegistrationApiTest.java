@@ -231,7 +231,7 @@ class RegistrationApiTest {
 		// 원형은 콜 단위로 남는다 — 프로필 1콜 + 열거 2콜(clips 조회수 보강 + medias)
 		// + FB 몫 재시도 1콜(등록 = 최초 수집인데 clips 픽스처가 fb 키 없는 IG 전용 세션 셰이프라
 		// 신규 릴스의 fb 미관측 → clips 1회 재조회, findings §2 결론 4).
-		// 파싱 결과(PostInfo.rawJson)를 저장하던 시절엔 clips 응답이 통째로 감사에서 빠졌다.
+		// 파싱 결과에 실린 body(구 PostInfo.rawJson — 08-12 제거)를 저장하던 시절엔 clips 응답이 통째로 감사에서 빠졌다.
 		assertThat(db.queryForObject("""
 				SELECT count(*) FROM raw.fetch_payload WHERE kind='PROFILE' AND subject='someuser'""",
 				Long.class)).isEqualTo(1);

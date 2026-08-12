@@ -10,8 +10,9 @@ import org.slf4j.LoggerFactory;
  * 원형 적재 데코레이터 — 성공 응답을 콜 단위로 raw.fetch_payload에 남긴다.
  *
  * <p>파싱 계층이 아니라 전송 계층에서 저장하는 이유: 열거 한 번은 clips·medias를 페이지마다 부르는데
- * 파싱 결과({@link PostInfo#rawJson()})에는 body 하나만 실려서, 호출자가 그걸 저장하면 clips 응답과
- * 2페이지 이후가 통째로 감사에서 사라진다. 여기서 감싸면 콜 수와 적재 행 수가 1:1로 맞는다.
+ * 파싱 결과에 body를 실으면(구 PostInfo.rawJson) 호출자가 저장해도 clips 응답과 2페이지 이후가
+ * 통째로 감사에서 사라진다. 여기서 감싸면 콜 수와 적재 행 수가 1:1로 맞는다. 그 구 필드는 소비처
+ * 없이 페이지 원문을 힙에 상주시켜 OOM을 냈고(08-12 운영) 제거됐다 — 원형은 여기가 유일하다.
  *
  * <p>스프링 빈이 아니다 — {@code HikerHttp} 타입 자기참조(자기가 자기 delegate가 되는 배선)를 피하려고
  * {@code HikerConfig}에서 delegate를 명시해 조립한다.
