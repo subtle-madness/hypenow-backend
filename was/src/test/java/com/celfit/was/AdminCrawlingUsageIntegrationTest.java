@@ -86,6 +86,7 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 			ScriptUtils.executeSqlScript(conn, new ClassPathResource("monitoring-brand-schema.sql"));
 		}
 		jdbcClient.sql("TRUNCATE brand_call_count").update();
+		jdbcClient.sql("TRUNCATE target_call_count").update();
 		jdbcClient.sql("DELETE FROM brand_tagged_post").update();
 		jdbcClient.sql("DELETE FROM brand_account").update();
 		jdbcClient.sql("DELETE FROM app.brand_monitorings").update();
@@ -163,6 +164,31 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.data.monthCalls").value(300))
 				.andExpect(jsonPath("$.data.todayCalls").value(12))
 				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.0006));
+	}
+
+	@Test
+	void 캠페인_콘텐츠_모니터링_콜도_합산된다() throws Exception {
+		// 브랜드 연결 없이 target_call_count(캠페인·콘텐츠 몫, 유저 키)만 있는 유저 — 2026-08-12 범위 확장.
+		insertTargetCalls(targetUserId, "2026-08-20", 4);
+		insertTargetCalls(targetUserId, "2026-08-11", 90);
+		insertTargetCalls(targetUserId, "2026-07-31", 6);
+		insertTargetCalls(targetUserId + 1, "2026-08-20", 999);   // 남의 몫 — 미합산
+
+		mockMvc.perform(get("/v1/admin/users/%d/crawling-usage".formatted(targetUserId)).cookie(adminSession))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalCalls").value(100))
+				.andExpect(jsonPath("$.data.monthCalls").value(94))
+				.andExpect(jsonPath("$.data.todayCalls").value(4));
+
+		// 브랜드 몫과 공존하면 단순 합.
+		long brand = insertBrand("brand_mix");
+		linkBrand(targetUserId, brand, "2026-01-10T00:00:00+09:00", null);
+		insertCalls(brand, "2026-08-20", 1);
+
+		mockMvc.perform(get("/v1/admin/users/%d/crawling-usage".formatted(targetUserId)).cookie(adminSession))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalCalls").value(101))
+				.andExpect(jsonPath("$.data.todayCalls").value(5));
 	}
 
 	// --- PUT 단가 ---
@@ -257,6 +283,17 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 				VALUES (:brandId, :calledOn::date, :calls)
 				""")
 				.param("brandId", brandId)
+				.param("calledOn", calledOn)
+				.param("calls", calls)
+				.update();
+	}
+
+	private void insertTargetCalls(long userId, String calledOn, long calls) {
+		jdbcClient.sql("""
+				INSERT INTO target_call_count (user_id, called_on, calls)
+				VALUES (:userId, :calledOn::date, :calls)
+				""")
+				.param("userId", userId)
 				.param("calledOn", calledOn)
 				.param("calls", calls)
 				.update();
