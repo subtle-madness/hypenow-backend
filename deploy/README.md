@@ -234,6 +234,9 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
      --iam-account=image-archiver@<PROJECT_ID>.iam.gserviceaccount.com
    ```
    **콘솔에서 유료 계정 업그레이드 + 예산 알람(월 $5)** — 90일 삭제 절벽 제거.
+   **이름 충돌로 `hypenow-images-prod` 같은 대체명을 쓰면 `deploy/scripts/post-container-metrics.py`의
+   `GCS_BUCKETS` 상수도 같이 고칠 것** — 하드코딩이라 안 고치면 404가 나고, GCS 수집 실패는 조용히
+   스킵되므로 `bucket_used_gb`가 영구 결손이 된다(7단계 확인이 곧 이 함정의 검출 지점).
    키를 서버로 (컷오버 이전에 **먼저** — 위 시크릿 파일 규칙):
    `scp gcs-image-archiver.json ubuntu@155.248.187.106:/home/ubuntu/deploy/secrets/`
 2. 벌크 복사(서버에서, 서비스 무영향 — rclone remote는 oci=oracleobjectstorage(user
@@ -248,9 +251,22 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    rclone copy oci:hypenow-images gcs:hypenow-images -P
    rclone check oci:hypenow-images gcs:hypenow-images --size-only
    ```
-   샘플 1건 Cache-Control 확인: `gcloud storage objects describe gs://hypenow-images/thumb/<아무거나>.jpg`
-   — cacheControl 누락이면 일괄 보정:
-   `gcloud storage objects update "gs://hypenow-images/thumb/**" --cache-control="public, max-age=31536000, immutable"`
+   **Cache-Control 확인은 프리픽스 5종 전부** — `thumb/`·`profile/`(analytics `ImageArchiveJob`),
+   `monitor-profile/`·`monitor-post/`·`monitor-author/`(monitoring 잡 3종). 원래 값은 2종이라
+   `gs://hypenow-images/**` 한 번에 밀면 값이 뭉개진다 — **프리픽스별 2회**로 나눠 실행할 것:
+   ```bash
+   # 샘플 확인(각 프리픽스에서 1건씩) — cacheControl 필드가 비어 있으면 아래 보정
+   gcloud storage objects describe gs://hypenow-images/thumb/<아무거나>.jpg
+   gcloud storage objects describe gs://hypenow-images/monitor-profile/<아무거나>.jpg
+   # 보정 ①  thumb — 불변(1년)
+   gcloud storage objects update "gs://hypenow-images/thumb/**" \
+     --cache-control="public, max-age=31536000, immutable"
+   # 보정 ②  프로필 계열 4종 — 1일 (ImageArchiveJob.PROFILE_CACHE_CONTROL과 동일 값)
+   gcloud storage objects update \
+     "gs://hypenow-images/profile/**" "gs://hypenow-images/monitor-profile/**" \
+     "gs://hypenow-images/monitor-post/**" "gs://hypenow-images/monitor-author/**" \
+     --cache-control="public, max-age=86400"
+   ```
 5. **celfit-front rewrite 전환**(사용자): `/img/:path*`의 대상 OCI PAR URL →
    `https://storage.googleapis.com/hypenow-images/:path*`. 배포 후 기존 이미지 로드 확인.
 6. 백엔드 전환: 서버 `.env`에 **두 줄만** — `IMAGE_STORE=gcs`·`IMAGE_GCS_BUCKET=hypenow-images`

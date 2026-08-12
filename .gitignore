@@ -11,6 +11,9 @@ backup/
 # Caddy 액세스 로그 바인드 마운트(deploy/README.md §9-1) — 클라이언트 IP가 담긴다
 deploy/logs/
 
+# SA 키 등 배포 시크릿 — 커밋 금지(deploy/README.md §5-2)
+deploy/secrets/
+
 # 모노레포
 mac-migration-kit/
 .superpowers/
