@@ -213,7 +213,7 @@ DISCOVERED 유입, 이후 qualify→beauty는 기존 파이프라인 동일 처�
 
 **트랙군**(그룹 배경·설계 문서 링크 — 그룹 내 개별 트랙은 `docs/tracks/`의 해당 파일 참조):
 
-- **상세 분석 작업 트랙**(A~EE, JJ) — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/2026-07-12-detail-analysis-design.md) ·
+- **상세 분석 작업 트랙**(A~EE, JJ) — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](docs/superpowers/specs/archive/2026-07-12-detail-analysis-design.md) ·
   데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](docs/superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **JJ** — v1 인플루언서 AI 리포트 구 카피 5필드 NULL 수렴(07-27 카피 개편 후속 결함, 07-30 신규 발견 — E와 같은 원인 계열, ⬜ 미착수. 트랙 문자 II→JJ 정정: `docs/tracks/II-POST-등록-프로필-메타.md`와 중복 회피) —
   [docs/tracks/JJ-v1-인플루언서-리포트-구카피-null-수렴.md](docs/tracks/JJ-v1-인플루언서-리포트-구카피-null-수렴.md)

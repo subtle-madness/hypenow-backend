@@ -15,7 +15,7 @@
 **Tech Stack:** Java 21 (`ExecutorService`/`Callable`/`Atomic*`), Spring Boot 4.1 analytics 모듈,
 JUnit 5 + Testcontainers.
 
-**참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-concurrency-design.md](../../specs/2026-07-23-content-analysis-concurrency-design.md)
+**참고 스펙:** [docs/superpowers/specs/2026-07-23-content-analysis-concurrency-design.md](../../specs/archive/2026-07-23-content-analysis-concurrency-design.md)
 
 > **실행 환경 참고:** 이 세션의 샌드박스에서 Testcontainers를 실제로 돌리려면
 > `export TESTCONTAINERS_RYUK_DISABLED=true DOCKER_HOST=unix:///Users/woomin/.colima/default/docker.sock`

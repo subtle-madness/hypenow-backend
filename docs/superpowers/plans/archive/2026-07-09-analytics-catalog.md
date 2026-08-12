@@ -9,7 +9,7 @@
 
 **Tech Stack:** PostgreSQL 17 (Docker 컨테이너 `crawler-postgres-1`), psql, bash. 애플리케이션 코드 변경 없음(Flyway 마이그레이션 아님 — 독립 분석 스크립트).
 
-**Spec:** [2026-07-09-analytics-catalog-design.md](../../specs/2026-07-09-analytics-catalog-design.md)
+**Spec:** [2026-07-09-analytics-catalog-design.md](../../specs/archive/2026-07-09-analytics-catalog-design.md)
 
 ---
 
@@ -844,7 +844,7 @@ Create `crawler/analytics/README.md`:
 crawler가 적재한 인스타 raw 데이터로 콘텐츠·크리에이터를 분석하는 읽기전용 SQL 뷰 모음.
 운영 스키마(`public`)는 건드리지 않고 `analytics` 스키마에만 뷰를 만든다.
 
-설계: [../docs/superpowers/specs/2026-07-09-analytics-catalog-design.md](../../specs/2026-07-09-analytics-catalog-design.md)
+설계: [../docs/superpowers/specs/2026-07-09-analytics-catalog-design.md](../../specs/archive/2026-07-09-analytics-catalog-design.md)
 
 ## 뷰 적용
 

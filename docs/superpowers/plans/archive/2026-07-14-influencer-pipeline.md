@@ -1,6 +1,6 @@
 # 인플루언서 중심 파이프라인 전환 구현 계획
 
-> 상태: ✅ 구현됨 — 단 CollectJob 세부(6개월 백필·피드/릴스 2스트림 커서 페이지네이션·taken_at 컷오프)는 07-15 collect 분리 설계가 재정의. 스펙: [specs/2026-07-14-influencer-pipeline-design.md](../../specs/2026-07-14-influencer-pipeline-design.md)
+> 상태: ✅ 구현됨 — 단 CollectJob 세부(6개월 백필·피드/릴스 2스트림 커서 페이지네이션·taken_at 컷오프)는 07-15 collect 분리 설계가 재정의. 스펙: [specs/2026-07-14-influencer-pipeline-design.md](../../specs/archive/2026-07-14-influencer-pipeline-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

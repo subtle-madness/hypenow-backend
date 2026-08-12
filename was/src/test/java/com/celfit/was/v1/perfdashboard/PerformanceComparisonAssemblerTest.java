@@ -80,7 +80,7 @@ class PerformanceComparisonAssemblerTest {
 		return new BrandAccountRow(2L, "cclime.beauty", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
 				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
-				4143L, 15L, 82L, "", "끌리메 뷰티", null, true, null, "ACTIVE");
+				4143L, 15L, 82L, "", "끌리메 뷰티", null, true, null, "ACTIVE", null);
 	}
 
 	private static TrackingItemResponse.SnapshotResponse snapshot(Long views, Long likes,
@@ -186,7 +186,7 @@ class PerformanceComparisonAssemblerTest {
 	void 스윕_완주_전_계정은_전_구간_covered_false다() {
 		BrandAccountRow collecting = new BrandAccountRow(3L, "laperi_kr", null, null,
 				OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
-				null, null, null, "", "", null, null, null, "ACTIVE");
+				null, null, null, "", "", null, null, null, "ACTIVE", null);
 
 		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(), RANGES);
 		var notReady = PerformanceComparisonAssembler.compare(collecting, BrandAccountType.OWN, List.of(), RANGES);
@@ -205,7 +205,7 @@ class PerformanceComparisonAssemblerTest {
 		given(brandReadRepository.findAccount(3L)).willReturn(Optional.of(
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
-						null, null, null, "", "", null, null, null, "ACTIVE")));
+						null, null, null, "", "", null, null, null, "ACTIVE", null)));
 
 		var response = assembler().assemble(7L, List.of(
 				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
@@ -233,7 +233,7 @@ class PerformanceComparisonAssemblerTest {
 		given(brandReadRepository.findAccount(3L)).willReturn(Optional.of(
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
-						null, null, null, "", "", null, null, null, "ACTIVE")));
+						null, null, null, "", "", null, null, null, "ACTIVE", null)));
 
 		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
 

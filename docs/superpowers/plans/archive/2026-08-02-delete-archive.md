@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, PostgreSQL 17, Flyway(수동 `@Configuration`), JUnit 5 + AssertJ + Testcontainers
 
-**설계 문서:** [2026-08-02-delete-archive-design.md](../specs/2026-08-02-delete-archive-design.md)
+**설계 문서:** [2026-08-02-delete-archive-design.md](../../specs/2026-08-02-delete-archive-design.md)
 
 ---
 
@@ -1440,7 +1440,7 @@ hard delete로 사라지던 행을 삭제 직전 `archive.archived_rows`로 원�
 - 아카이브 데이터 분석 표면
 
 ## 설계
-[docs/superpowers/specs/2026-08-02-delete-archive-design.md](../superpowers/specs/2026-08-02-delete-archive-design.md)
+[docs/superpowers/specs/2026-08-02-delete-archive-design.md](../../specs/2026-08-02-delete-archive-design.md)
 
 ## 진행
 - 2026-08-02 설계·계획 작성, 구현 착수

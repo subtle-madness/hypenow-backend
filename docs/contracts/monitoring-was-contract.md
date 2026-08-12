@@ -2,10 +2,10 @@
 
 > **living 문서** — monitoring 모듈이 was에 제공하는 계약의 정본. 구현과 함께 갱신한다.
 > 배경·설계 근거는 [specs/2026-07-28-monitoring-module-design.md](../superpowers/specs/2026-07-28-monitoring-module-design.md)(v1) +
-> [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
+> [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.8 (브랜드 해시태그 감지 확장 — 2026-08-11)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.8 (브랜드 해시태그 감지 확장 — 2026-08-11, 08-12 API 형태 정정)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8은 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
 > 계약과 무관한 신규 3테이블, §8)이라 위 "테이블 8 + 알람 대장 + 뷰 2" 집계에는 포함하지 않는다.
@@ -32,10 +32,15 @@
 > "비공개"와 "수집 실패"를 구분 표시. FEED는 공유 자체가 미지원(null 강제)이라 플래그도 false로
 > 접는다, `feature/reels-retry-logic-missing-content-39b848`)
 > → **v2.8**(2026-08-11, 브랜드 태그 모니터링에 해시태그 발견 게시물 추가 — 브랜드 계정 태그·
-> 계정명·정규화 변형 해시태그를 매일 열거해 Gemini로 브랜드 관련성 판정, 통과분을 브랜드 게시물
-> 목록에 `source: "hashtag"`로 합류. `BrandPostResponse.source` 값 공간에 `"hashtag"` 추가,
-> `meta.counts.hashtag` 신설, 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`
-> (자사 태그 오탐 방지 문자열 관리) — was 신규 API·상세는 §8, `feat/brand-hashtag-detection`).
+> 계정명·정규화 변형 해시태그를 매일 열거해 Gemini로 브랜드 관련성 판정, 통과분을 was가 조회.
+> 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`(자사 태그 오탐
+> 방지 문자열 관리) — was 신규 API·상세는 §8, `feat/brand-hashtag-detection`.
+> **08-12 정정(같은 버전 내)**: 발견 게시물은 처음엔 `BrandPostResponse.source: "hashtag"`로
+> 기존 §6-1 게시물 목록에 합류시켰으나, 스냅샷·댓글·팔로워 보강이 없는 별개 성격의 데이터를
+> 같은 필터·정렬·counts 계약에 끼워 맞추면 null 필드만 늘어난다는 FE 판단으로 **전용 API**
+> `GET /v1/brand-monitoring/accounts/{accountId}/hashtag-posts`(슬림 `BrandHashtagPostResponse`)로
+> 분리했다 — `BrandPostResponse.source`는 `"tagged"`/`"direct"` 2종으로 되돌아갔다,
+> `feat/brand-hashtag-separate-api`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -530,7 +535,7 @@ was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 �
 
 - (참고) 픽스처 target에 `user_id`·`matched_keywords`가 빠져 있음을 알림.
 
-## 8. 브랜드 태그 모니터링 확장 — 해시태그 감지 (v2.8, 2026-08-11)
+## 8. 브랜드 태그 모니터링 확장 — 해시태그 감지 (v2.8, 2026-08-11, 08-12 API 형태 정정)
 
 > ⚠️ 이 절은 §0~§7의 target/캠페인 계약과 **별도 서브시스템**을 다룬다. 브랜드 태그 모니터링
 > 자체(브랜드 계정 등록·`brand_account`/`brand_tagged_post`/`brand_post_snapshot` 등 7테이블)의
@@ -546,26 +551,60 @@ monitoring이 Gemini로 브랜드 관련성을 판정(`BrandMentionJudge`, 이�
 (`brand_hashtag`·`brand_hashtag_exclusion`·`brand_hashtag_post`)은 계약 표면이 아니다 —
 was는 아래 두 표면으로만 결과를 받는다.
 
-### 8-1. 게시물 목록 `source: "hashtag"` (`BrandPostResponse.source`)
+### 8-1. 신규 `GET /v1/brand-monitoring/accounts/{accountId}/hashtag-posts`
 
-`GET /v1/brand-monitoring/accounts/{accountId}/posts`가 반환하는 `BrandPostResponse.source`
-값 공간이 `"tagged"`/`"direct"` 2종에서 `"hashtag"` 포함 3종으로 확장된다. tagged·direct와
-같은 셰이프로 내려가지만 산지 특성상 다음이 다르다:
+**08-12 정정**: 최초 설계(08-11)는 발견 게시물을 §6-1 게시물 목록에 `source: "hashtag"`로
+합류시켰다. 이후 FE 결정으로 **별도 탭 전용 API로 분리**했다 — 스냅샷·댓글·팔로워 보강이 없는
+별개 성격의 데이터를 tagged·direct와 같은 필터·정렬·counts 계약에 끼워 맞추면 null 필드만
+늘어난다는 판단이었다. `BrandPostResponse.source`는 `"tagged"`/`"direct"` 2종으로 되돌아갔고,
+§6-1 목록·`meta.counts`엔 해시태그 관련 변경이 **없다**(구현: `BrandHashtagPostAssembler`,
+`V1BrandPostsController#hashtagPosts`).
 
-| 항목 | tagged·direct | hashtag |
-|---|---|---|
-| 스냅샷(`latestSnapshot`/`snapshots`) | 있음 | **항상 빈 배열** — 보강 파이프라인 미적용(보류) |
-| 댓글(`recentComments`/`commentsCollectedCount`) | 있음 | **항상 빈 배열/0** — `commentsTotal`만 열거 관측값(`comments`)을 그대로 싣는다(스냅샷 기반 tagged·direct의 `commentsTotal`과 산지가 다름) |
-| 팔로워(`authorFollowers`) | 보강으로 채워짐 | **항상 null** — 프로필 보강 없음 |
-| `id` | shortcode 그대로 | **`"bh_"+shortcode`**(합성 id — was가 발급한 숫자 id가 없다). `shortcode` 필드 자체는 순수 shortcode 유지 |
-| `sponsorship`/`isPaidPartnership` | tagged는 유료협찬 관측(`is_paid_partnership`) + 캡션 키워드 병행 | **캡션 키워드만**(`BrandSponsorshipClassifier.classify(null, caption)`) — 열거 응답에 유료협찬 플래그가 실리지만 **현재 미적재**(후속 확장 여지, `brand_hashtag_post`에 컬럼 없음). `isPaidPartnership`은 **항상 null** |
-| `campaignIds` | direct는 연결 가능 | **항상 빈 배열** — 해시태그 발견 게시물은 캠페인에 연결되지 않는다 |
-| 같은 shortcode 충돌 | — | **tagged·direct가 우선**(`BrandPostAssembler.mergeHashtag` — 기존 산지 유지, hashtag는 신규 shortcode만 추가). 협찬 승격도 없음(해시태그 관측엔 승격할 신호가 없음) |
+소유 검증은 §6-1 목록과 같은 관용구(`requireOwnership` → 403, `findAccountOrThrow` → 404).
+병합·필터·정렬·페이지네이션 없이 컷(브랜드 게시물 목록과 같은 365일 윈도우)·최신순·상한
+(2000건, 폭주 방어)만 적용해 전량을 내려준다.
 
-### 8-2. `meta.counts.hashtag`
+```json
+// GET 200
+{
+  "data": [
+    {
+      "shortcode": "ABC123",
+      "postUrl": "https://www.instagram.com/p/ABC123/",
+      "matchedTag": "#브랜드명",
+      "takenAt": "2026-08-11T14:30:00+09:00",
+      "caption": "오늘 브랜드명 제품 써봤어요 ...",
+      "contentType": "reels",
+      "thumbnailUrl": "https://cdn.../thumb.jpg",
+      "authorUsername": "some_influencer",
+      "authorFullName": "인플루언서",
+      "authorProfilePicUrl": "https://cdn.../author.jpg",
+      "authorProfileUrl": "https://www.instagram.com/some_influencer/",
+      "likes": 1200,
+      "comments": 34,
+      "sponsorship": "unknown",
+      "firstSeenAt": "2026-08-12T03:05:00+09:00"
+    }
+  ]
+}
+```
 
-같은 목록 응답의 `meta.counts`에 `hashtag` 키가 추가된다(`all`·`tagged`·`direct`·`hashtag`·
-`sponsored`·`organic`·`unknown` 7키 — 필터 적용 **전** 전량 기준, `V1BrandPostsController`).
+(`meta` 키는 이 API 응답에 없다 — `ApiResponse`가 null 필드를 직렬화에서 생략한다.)
+
+`BrandHashtagPostResponse` 필드 특성(실재하지 않는 값을 null로 채우는 대신 필드 자체를 안 낸다 —
+tagged·direct 셰이프와 무관한 독립 계약):
+
+| 필드 | 비고 |
+|---|---|
+| `postUrl` | 콘텐츠 타입과 무관하게 항상 `/p/{shortcode}/`(Instagram이 reels도 `/p/`를 `/reel/`로 리다이렉트) |
+| `matchedTag` | 이 게시물을 찾아낸 해시태그 원문 — FE가 "#태그로 발견" 배지에 사용 |
+| `likes`/`comments` | **발견 시점 관측값**(재수집 없음, 스냅샷처럼 갱신되지 않는다). null 가능 |
+| `sponsorship` | **캡션 키워드만**(`BrandSponsorshipClassifier.classify(null, caption)`) — 열거 응답에 유료협찬 플래그가 실리지만 **현재 미적재**(`brand_hashtag_post`에 컬럼 없음, 후속 확장 여지). `isPaidPartnership` 필드 자체가 없다 |
+| `authorFollowers`·스냅샷·댓글·`campaignIds`·`trackingStatus` 등 | **필드 자체가 없다** — 보강·병합 파이프라인 미적용(스펙 §5 보류) |
+| `firstSeenAt` | 감지(브랜드 스윕 해시태그 열거) 시각 |
+
+> (구 §8-2 `meta.counts.hashtag`는 08-12 정정으로 소거 — §8-1 전용 API로 흡수됐다. §8-3부터는
+> 번호를 그대로 유지한다: 이 문서를 참조하는 다른 위치의 앵커를 깨지 않기 위해서다.)
 
 ### 8-3. 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`
 
@@ -602,6 +641,8 @@ term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 �
 
 프론트 공유가 아직 안 된 신규 UI 표면 2가지:
 
-- **"해시태그 발견" 배지** — `source: "hashtag"` 게시물을 tagged·direct와 구분 표시(스냅샷·댓글·
-  팔로워가 없는 특성도 함께 고려한 빈 상태 UI 필요).
+- **해시태그 발견 게시물 "별도 탭"** — §8-1 전용 API(`GET .../hashtag-posts`)를 §6-1 게시물
+  목록과 나란한 새 탭으로 노출. 스냅샷·댓글·팔로워가 없는 데이터라 tagged·direct 카드와 다른
+  레이아웃이 필요하고(성과 지표 없음, `likes`/`comments`는 발견 시점 스냅 값), `matchedTag`로
+  "#태그로 발견" 배지를 그릴 수 있다.
 - **제외 문자열 관리 UI** — §8-3 API로 자사 태그 오탐 문자열을 브랜드 소유자가 직접 추가·삭제.

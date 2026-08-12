@@ -4,8 +4,8 @@
 통과한 인플루언서의 게시물(릴스/피드) 상세·댓글·프로필을 **Apify/HikerAPI 응답 원형(raw)**
 그대로 적재하는 수집 시스템. 카테고리 계층이 아니라 **인플루언서**가 중심 도메인이다.
 
-- 설계: [docs/superpowers/specs/2026-07-07-crawler-design.md](docs/superpowers/specs/2026-07-07-crawler-design.md),
-  [docs/superpowers/specs/2026-07-14-influencer-pipeline-design.md](docs/superpowers/specs/2026-07-14-influencer-pipeline-design.md)
+- 설계: [docs/superpowers/specs/archive/2026-07-07-crawler-design.md](../docs/superpowers/specs/archive/2026-07-07-crawler-design.md),
+  [docs/superpowers/specs/archive/2026-07-14-influencer-pipeline-design.md](../docs/superpowers/specs/archive/2026-07-14-influencer-pipeline-design.md)
 - 파이프라인: **discover**(검색 키워드로 인플루언서 발굴) → **qualify**(프로필 조회 + 팔로워
   범위 판정 → QUALIFIED/EXCLUDED) → **collect**(QUALIFIED 인플루언서의 게시물 열거 + 상세·댓글 수집)
 

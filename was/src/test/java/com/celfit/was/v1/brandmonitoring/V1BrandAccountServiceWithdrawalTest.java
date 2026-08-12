@@ -63,7 +63,7 @@ class V1BrandAccountServiceWithdrawalTest {
 		return new BrandAccountRow(brandId, username, LocalDate.of(2026, 8, 7),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
-				null, null, null, null, null, null, null, null, "ACTIVE");
+				null, null, null, null, null, null, null, null, "ACTIVE", null);
 	}
 
 	@Test

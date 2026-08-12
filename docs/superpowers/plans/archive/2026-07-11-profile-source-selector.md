@@ -1,6 +1,6 @@
 # 프로필 소스 셀렉터 + HikerAPI 보충 Implementation Plan
 
-> 상태: ✅ 구현됨 — 단 게시물 보충(`HikerMediasSupplement`·`profile.supplement.posts`)은 07-14 인플루언서 파이프라인 전환에서 폐기, suggested 보충만 잔존. 스펙: [specs/2026-07-11-profile-source-selector-design.md](../../specs/2026-07-11-profile-source-selector-design.md)
+> 상태: ✅ 구현됨 — 단 게시물 보충(`HikerMediasSupplement`·`profile.supplement.posts`)은 07-14 인플루언서 파이프라인 전환에서 폐기, suggested 보충만 잔존. 스펙: [specs/2026-07-11-profile-source-selector-design.md](../../specs/archive/2026-07-11-profile-source-selector-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

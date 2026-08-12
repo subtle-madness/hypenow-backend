@@ -14,7 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 게시자 프로필 이미지 아카이브 잡 계약({@link ProfileImageArchiveJob}과 동형 — 대상만 author_profile):
  * ① 신규 아카이브(object_path·source_name·archived_at 기록, 키는 ig_user_id 기준)
  * ② source_name 미변경 시 재다운로드 스킵 ③ 쿼리스트링만 다르고 파일명이 같으면 스킵
- * ④ 한 건 실패 격리(계속 진행) ⑤ PAR 미설정 시 no-op ⑥ http(s) 아닌/ null profile_pic_url은 후보 제외.
+ * ④ 한 건 실패 격리(계속 진행) ⑤ PAR 미설정 시 no-op ⑥ http(s) 아닌/ null profile_pic_url은 후보 제외
+ * ⑦ 배치 상한은 다운로드 시도만 소모(스킵 공짜 — 08-12 운영 백로그 잔존의 직접 원인이던 창 잠식 결함 방지).
  */
 class AuthorProfileImageArchiveJobTest {
 
@@ -158,5 +159,30 @@ class AuthorProfileImageArchiveJobTest {
 
 		assertThat(downloads).containsExactly("https://cdn.example/ok_n.jpg");
 		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-author/3.jpg");
+	}
+
+	/**
+	 * 핵심 계약({@link BrandPostThumbnailArchiveJobTest}과 동형) — 상한은 다운로드 시도만 소모하고
+	 * 스킵은 공짜다. 후보 리스트를 상한에서 먼저 자르면 "이미 아카이브됨" 행이 창을 잠식해 뒤쪽
+	 * 미아카이브 꼬리에 도달하지 못한다 — 08-12 운영 실측에서 author_profile 미아카이브 2,675건이
+	 * 상한 1,000/일에도 5일째 잔존한 직접 원인.
+	 */
+	@Test
+	void 배치_상한은_다운로드_시도만_소모하고_스킵은_소모하지_않는다() {
+		// 이미 아카이브된 행 3건이 후보 앞쪽을 차지해도(상한 2보다 많음) —
+		seedAuthor("101", "done1", "https://cdn.example/a_n.jpg", "monitor-author/101.jpg", "a_n.jpg");
+		seedAuthor("102", "done2", "https://cdn.example/b_n.jpg", "monitor-author/102.jpg", "b_n.jpg");
+		seedAuthor("103", "done3", "https://cdn.example/c_n.jpg", "monitor-author/103.jpg", "c_n.jpg");
+		seedAuthor("201", "new1", "https://cdn.example/d_n.jpg", null, null);
+		seedAuthor("202", "new2", "https://cdn.example/e_n.jpg", null, null);
+		seedAuthor("203", "new3", "https://cdn.example/f_n.jpg", null, null);
+
+		job("https://par.example/o/", 2).run();
+
+		// — 미아카이브 행이 상한(2)만큼 반드시 아카이브된다. 셋째는 다음 스윕으로 이월.
+		assertThat(puts).hasSize(2);
+		Long archived = db.queryForObject(
+				"SELECT count(image_object_path) FROM author_profile WHERE ig_user_id LIKE '2%'", Long.class);
+		assertThat(archived).isEqualTo(2);
 	}
 }

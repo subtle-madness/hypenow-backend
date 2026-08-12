@@ -1,5 +1,7 @@
 # 경쟁사 모니터링 계정 타입(accountType) 구현 계획
 
+> 상태: ✅ 구현/실행/반영됨 (2026-08-12, PR #406 머지 · PR #408로 운영 배포)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 브랜드 구독(`app.brand_monitorings`)에 `own`/`competitor` 타입을 저장하고, 등록·조회·상한·성과 대시보드·캠페인 연결까지 그 타입을 관통시킨다.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, Flyway(was `app` 스키마), JUnit 5 + Mockito + `@WebMvcTest` 슬라이스.
 
-**설계 문서:** [specs/2026-08-12-competitor-account-type-design.md](../specs/2026-08-12-competitor-account-type-design.md)
+**설계 문서:** [specs/2026-08-12-competitor-account-type-design.md](../../specs/archive/2026-08-12-competitor-account-type-design.md)
 **FE 회신:** 문서로 남기지 않고 채팅으로 전달했다(08-12). 전달 내용의 근거는 설계 문서 §요청서와 다른 점에 있다.
 
 ## Global Constraints
@@ -1078,7 +1080,7 @@ Expected: 둘 다 PASS.
 ```markdown
 # PP — 경쟁사 계정 타입(accountType)
 
-- **설계**: [specs/2026-08-12-competitor-account-type-design.md](../superpowers/specs/2026-08-12-competitor-account-type-design.md)
+- **설계**: [specs/2026-08-12-competitor-account-type-design.md](../../specs/archive/2026-08-12-competitor-account-type-design.md)
 - **FE 회신**: 채팅으로 전달(08-12) — 문서로 남기지 않았다
 - **의존**: 브랜드 모니터링 was 표면(08-07 다계정 개정)
 - **상태**: 🔵 구현 완료 — PR 리뷰 대기

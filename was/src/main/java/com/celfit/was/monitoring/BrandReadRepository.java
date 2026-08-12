@@ -41,7 +41,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT id, username, last_swept_on, last_swept_at, registered_at, backfill_completed_at,
 				       backfill_error, followers, following, media_count, biography, full_name,
-				       profile_pic_url, is_verified, external_url, status
+				       profile_pic_url, is_verified, external_url, status, image_object_path
 				FROM brand_account
 				WHERE id = :brandId
 				""")
@@ -76,7 +76,7 @@ public class BrandReadRepository {
 		}
 		return jdbc.sql("""
 				SELECT short_code, username, content_type, uploaded_at, caption, thumbnail_url,
-				       video_url, video_duration, is_paid_partnership
+				       video_url, video_duration, is_paid_partnership, image_object_path
 				FROM brand_post_meta
 				WHERE short_code IN (:shortCodes)
 				""")
@@ -141,7 +141,8 @@ public class BrandReadRepository {
 			return List.of();
 		}
 		return jdbc.sql("""
-				SELECT ig_user_id, username, full_name, followers, profile_pic_url, is_verified
+				SELECT ig_user_id, username, full_name, followers, profile_pic_url, is_verified,
+				       image_object_path
 				FROM author_profile
 				WHERE ig_user_id IN (:igUserIds)
 				""")
@@ -165,7 +166,8 @@ public class BrandReadRepository {
 		}
 		return jdbc.sql("""
 				SELECT DISTINCT ON (username)
-				       ig_user_id, username, full_name, followers, profile_pic_url, is_verified
+				       ig_user_id, username, full_name, followers, profile_pic_url, is_verified,
+				       image_object_path
 				FROM author_profile
 				WHERE username IN (:usernames)
 				ORDER BY username, fetched_at DESC, ig_user_id DESC
@@ -184,7 +186,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, matched_tag, author_username, author_full_name,
 				       author_profile_pic_url, taken_at, caption, content_type, thumbnail_url,
-				       likes, comments, first_seen_at
+				       likes, comments, first_seen_at, image_object_path
 				FROM brand_hashtag_post
 				WHERE brand_id = :brandId AND verdict = 'RELEVANT' AND taken_at >= :cutoff
 				ORDER BY taken_at DESC
@@ -194,11 +196,16 @@ public class BrandReadRepository {
 				.query(BrandHashtagPostRow.class).list();
 	}
 
-	/** brand_account 1행(was 계약 소비 컬럼만) — 08-07 확장 필드 포함. */
+	/**
+	 * brand_account 1행(was 계약 소비 컬럼만) — 08-07 확장 필드 포함. imageObjectPath는 monitoring
+	 * 자체 프로필 이미지 아카이브 결과(V20260811023454) — null이면 아직 아카이브 전이라 서빙 측이
+	 * 원본 CDN URL로 폴백한다.
+	 */
 	public record BrandAccountRow(long id, String username, LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime registeredAt, OffsetDateTime backfillCompletedAt, String backfillError,
 			Long followers, Long following, Long mediaCount, String biography, String fullName,
-			String profilePicUrl, Boolean isVerified, String externalUrl, String status) {
+			String profilePicUrl, Boolean isVerified, String externalUrl, String status,
+			String imageObjectPath) {
 	}
 
 	/** brand_tagged_post 1행 — 게시물 지표·메타는 여기 없다(게시물 전역 테이블에서 배치 조회). */
@@ -206,10 +213,13 @@ public class BrandReadRepository {
 			OffsetDateTime takenAt, OffsetDateTime firstSeenAt, long commentsCollectedCount) {
 	}
 
-	/** brand_post_meta 1행. isPaidPartnership null = 응답 키 부재(판정 unknown 근거). */
+	/**
+	 * brand_post_meta 1행. isPaidPartnership null = 응답 키 부재(판정 unknown 근거).
+	 * imageObjectPath는 monitoring 자체 썸네일 아카이브 결과 — null이면 원본 CDN URL 폴백.
+	 */
 	public record BrandPostMetaRow(String shortCode, String username, String contentType, LocalDate uploadedAt,
 			String caption, String thumbnailUrl, String videoUrl, Double videoDuration,
-			Boolean isPaidPartnership) {
+			Boolean isPaidPartnership, String imageObjectPath) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */
@@ -223,18 +233,22 @@ public class BrandReadRepository {
 			OffsetDateTime commentedAt, String ownerReplyText) {
 	}
 
-	/** author_profile 1행(was 계약 소비 컬럼만). */
+	/**
+	 * author_profile 1행(was 계약 소비 컬럼만). imageObjectPath는 monitoring 자체 프로필 이미지
+	 * 아카이브 결과(V20260807150500) — null이면 원본 CDN URL 폴백.
+	 */
 	public record AuthorRow(String igUserId, String username, String fullName, Long followers,
-			String profilePicUrl, Boolean isVerified) {
+			String profilePicUrl, Boolean isVerified, String imageObjectPath) {
 	}
 
 	/**
 	 * brand_hashtag_post 1행(RELEVANT만) — 프로필 보강·스냅샷이 없어(스펙 §5 보류) author 필드는
 	 * 열거 관측값 그대로고 followers·isVerified는 아예 없다. likes·comments도 열거 시점 관측값이다.
+	 * imageObjectPath는 monitoring 자체 썸네일 아카이브 결과 — null이면 원본 CDN URL 폴백.
 	 */
 	public record BrandHashtagPostRow(String shortCode, String matchedTag, String authorUsername,
 			String authorFullName, String authorProfilePicUrl, OffsetDateTime takenAt, String caption,
 			String contentType, String thumbnailUrl, Long likes, Long comments,
-			OffsetDateTime firstSeenAt) {
+			OffsetDateTime firstSeenAt, String imageObjectPath) {
 	}
 }

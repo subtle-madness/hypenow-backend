@@ -23,7 +23,11 @@ CREATE TABLE IF NOT EXISTS brand_account (
     media_count           bigint,
     backfill_error        text,
     backfill_completed_at timestamptz,
-    last_swept_at         timestamptz
+    last_swept_at         timestamptz,
+    -- 이미지 아카이브 3컬럼(V20260811023454) — was는 image_object_path만 읽는다.
+    image_object_path     text,
+    image_source_name     text,
+    image_archived_at     timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS brand_tagged_post (
@@ -64,7 +68,11 @@ CREATE TABLE IF NOT EXISTS brand_post_meta (
     first_seen_at       timestamptz NOT NULL DEFAULT now(),
     video_url           text,
     video_duration      double precision,
-    is_paid_partnership boolean
+    is_paid_partnership boolean,
+    -- 이미지 아카이브 3컬럼(V20260812021500) — was는 image_object_path만 읽는다.
+    image_object_path   text,
+    image_source_name   text,
+    image_archived_at   timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS brand_post_comment (
@@ -98,6 +106,10 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
                                ('RELEVANT', 'UNCERTAIN', 'IRRELEVANT', 'SELF', 'DIRECT_TAGGED')),
     verdict_source         text        NOT NULL CHECK (verdict_source IN ('RULE', 'MENTION', 'LLM')),
     first_seen_at          timestamptz NOT NULL DEFAULT now(),
+    -- 이미지 아카이브 3컬럼(V20260812021500) — was는 image_object_path만 읽는다.
+    image_object_path      text,
+    image_source_name      text,
+    image_archived_at      timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 
@@ -112,5 +124,9 @@ CREATE TABLE IF NOT EXISTS author_profile (
     profile_pic_url text,
     is_private      boolean,
     fetched_at      timestamptz NOT NULL,
-    is_verified     boolean
+    is_verified     boolean,
+    -- 이미지 아카이브 3컬럼(V20260807150500) — was는 image_object_path만 읽는다.
+    image_object_path text,
+    image_source_name text,
+    image_archived_at timestamptz
 );
