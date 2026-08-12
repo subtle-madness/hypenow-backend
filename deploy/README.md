@@ -199,6 +199,80 @@ deploy/scripts/deploy.sh --force ubuntu@<IP>      # 기본 was+analytics — cra
 - 매 배포마다 `:latest`와 함께 `:sha-<short>` 태그도 push된다 (GitHub → Packages에서 확인)
 - **롤백**: `ssh ubuntu@<IP> 'cd ~/deploy && docker pull ghcr.io/subtle-madness/hypenow-was:sha-<short> && docker tag ghcr.io/subtle-madness/hypenow-was:sha-<short> ghcr.io/subtle-madness/hypenow-was:latest && docker compose up -d was'` (다음 정상 배포가 latest를 다시 덮는다)
 
+### 5-2. 이미지 스토리지 OCI→GCS 컷오버 (2026-08-12 스펙)
+
+스펙: [2026-08-12-gcs-image-migration-design.md](../docs/superpowers/specs/2026-08-12-gcs-image-migration-design.md)
+
+순서 불변식: **서빙(rewrite)이 보는 버킷 ⊇ 쓰기 대상 버킷**. front 전환은 반드시
+"잡 정지 + 델타 복사 후, 백엔드 `IMAGE_STORE=gcs` 배포 전".
+
+**스테이징에는 GCS 배선이 없다**(`deploy/compose.test.yaml`은 PAR만) — **GCS 경로는 운영에서
+처음 돈다**. 그래서 front를 넘기기 전(5단계) 4단계의 복사·검증을 성의껏 할 것.
+
+**시크릿 파일**: `deploy/secrets/gcs-image-archiver.json` (SA 키 JSON, 커밋 금지).
+compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json:ro`로 **파일**
+마운트하고, 컨테이너 기본값 `IMAGE_GCS_KEY=/run/secrets/gcs-image-archiver.json`을 코드가 직접
+읽는다(analytics의 `GOOGLE_APPLICATION_CREDENTIALS`=Vertex ADC와 분리 — ADC는 JVM당 하나뿐이라
+덮으면 Vertex LLM이 전면 403). 서버 `.env`에 `IMAGE_GCS_KEY`를 쓸 필요는 없다.
+- **par 모드에서도 빈 파일이라도 반드시 선생성**한다 — 없으면 docker가 마운트 소스를 **root 소유
+  빈 디렉토리**로 만들어 버리고, 이후 실키를 놓을 때 그 디렉토리를 먼저 치워야 한다.
+- 반대로 **`IMAGE_STORE=gcs`로 넘기기 전에는 실키가 반드시 먼저 있어야 한다** — 빈 placeholder는
+  par 모드에선 무해하지만 gcs 모드에선 키 로드 실패로 **monitoring이 기동 실패(fail-fast)**한다.
+
+1. GCP 준비(로컬, 1회):
+   ```bash
+   gcloud config set project <PROJECT_ID>
+   gcloud storage buckets create gs://hypenow-images --location=asia-northeast3 \
+     --uniform-bucket-level-access   # 전역 이름 충돌 시 hypenow-images-prod
+   gcloud storage buckets add-iam-policy-binding gs://hypenow-images \
+     --member=allUsers --role=roles/storage.objectViewer
+   gcloud iam service-accounts create image-archiver
+   gcloud storage buckets add-iam-policy-binding gs://hypenow-images \
+     --member=serviceAccount:image-archiver@<PROJECT_ID>.iam.gserviceaccount.com \
+     --role=roles/storage.objectAdmin
+   gcloud iam service-accounts keys create gcs-image-archiver.json \
+     --iam-account=image-archiver@<PROJECT_ID>.iam.gserviceaccount.com
+   ```
+   **콘솔에서 유료 계정 업그레이드 + 예산 알람(월 $5)** — 90일 삭제 절벽 제거.
+   키를 서버로 (컷오버 이전에 **먼저** — 위 시크릿 파일 규칙):
+   `scp gcs-image-archiver.json ubuntu@155.248.187.106:/home/ubuntu/deploy/secrets/`
+2. 벌크 복사(서버에서, 서비스 무영향 — rclone remote는 oci=oracleobjectstorage(user
+   principal), gcs=google cloud storage(SA 키) 타입으로 `rclone config`에서 1회 생성):
+   ```bash
+   rclone copy oci:hypenow-images gcs:hypenow-images --transfers 16 -P
+   ```
+3. 잡 정지: 진행 중 브랜드 스윕이 없는지 monitoring UI(8083)에서 확인 후
+   `docker compose stop analytics monitoring`. (CDN 만료 여유 3~4일 — 수 시간 정지 무손실.)
+4. 델타 복사 + 검증:
+   ```bash
+   rclone copy oci:hypenow-images gcs:hypenow-images -P
+   rclone check oci:hypenow-images gcs:hypenow-images --size-only
+   ```
+   샘플 1건 Cache-Control 확인: `gcloud storage objects describe gs://hypenow-images/thumb/<아무거나>.jpg`
+   — cacheControl 누락이면 일괄 보정:
+   `gcloud storage objects update "gs://hypenow-images/thumb/**" --cache-control="public, max-age=31536000, immutable"`
+5. **celfit-front rewrite 전환**(사용자): `/img/:path*`의 대상 OCI PAR URL →
+   `https://storage.googleapis.com/hypenow-images/:path*`. 배포 후 기존 이미지 로드 확인.
+6. 백엔드 전환: 서버 `.env`에 **두 줄만** — `IMAGE_STORE=gcs`·`IMAGE_GCS_BUCKET=hypenow-images`
+   (`IMAGE_GCS_KEY`는 compose 기본값으로 충분). 서버 `.venv-oci-metrics`에
+   `pip install google-auth requests`(버킷 메트릭이 GCS API를 쓴다), 정규 CD 배포(또는
+   `docker compose up -d`)로 재기동 — 잡 재개 겸용.
+7. 확인: 다음 아카이브 잡 후 GCS에 신규 오브젝트 적재 + 프론트에서 신규 썸네일 로드 +
+   **다음 정시(top of hour)에 `bucket_used_gb` 게시**. 버킷 크기 합산은 전체 목록 페이징이라
+   메트릭 게시가 5분 결→**정시 1회**로 바뀌었고, GCS 수집 실패는 컨테이너 메트릭을 지키려고
+   조용히 스킵되며 cron stderr(`~/metrics-post.log`)에만 남는다 — **첫 정시 게시를 눈으로 확인**할 것.
+   알람 임계 상향(쿼리 창도 `[1h]`로 — `[5m]`이면 정시 게시 특성상 대부분 무데이터):
+   ```bash
+   oci --profile HYPENOW monitoring alarm update \
+     --alarm-id ocid1.alarm.oc1.ap-tokyo-1.amaaaaaa2qpilmqaat7adk6wfdeuxvzcqm7n65dnzqvybkybls36retft36q \
+     --query-text 'bucket_used_gb[1h].max() > 50'
+   ```
+8. 롤백(5~6 사이 문제 시): front rewrite를 OCI로 원복 + `IMAGE_STORE=par`로 재배포 —
+   해당 시점 두 버킷이 동일하므로 무손실.
+
+OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 이전 후 OCI 버킷 크기는 더 이상
+게시하지 않으므로 `bucket_used_gb`는 GCS 값 하나다 — 알람은 그대로 동작한다(§9).
+
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 KST 04:10 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지)
   - **analysis**: 서버 `~/backups/` 3일 롤링 + B2 `hypenow-backups/analysis/` 7일(기간) 롤링
