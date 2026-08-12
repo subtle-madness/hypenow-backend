@@ -269,7 +269,7 @@ services:
       analytics:
         condition: service_healthy
 
-  # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 캠페인 스윕 KST 02:00 · 브랜드 태그 스윕 KST 03:00.
+  # 시딩 캠페인 모니터링 — 사설 monitoring DB(postgres 인스턴스 내). 캠페인 스윕 KST 02:00 · 브랜드 태그 스윕 KST 02:00(08-12 정본).
   # 호스트 포트 미노출 — 어드민 UI가 없고 유일한 클라이언트 was는 monitoring-net으로 붙는다
   # (호스트 8083은 test-analytics 터널이 이미 점유 중이라 충돌 회피이기도 함).
   # 수동 디버깅은 같은 네트워크에 임시 컨테이너를 붙여서 —
@@ -297,9 +297,10 @@ services:
       IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
-      # 브랜드 태그 스윕 — KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차.
-      # 08-07 개통 때 서버 ~/deploy/compose.override.yaml로 먼저 주입했던 값을 레포로 정합(드리프트 해소).
-      MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 0 18 * * *"
+      # 브랜드 태그 스윕 — KST 02:00(UTC 17:00). 설계 원안은 03:00(캠페인 스윕과 시차)이었으나
+      # 서버 override가 02:00으로 운영돼 왔고 08-12에 02:00을 정본으로 수용(캠페인 스윕과 동시 실행).
+      # was.brand.sweep-hour-kst(nextScheduledAt 표기)와 반드시 함께 움직일 것.
+      MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       # 알람 발송(07-31 개통) — 5분 간격. 개통 절차는 README §13-5
       # 수신자는 .env의 ALARM_ALLOWED_RECIPIENTS 허용목록으로 제한한다(fail-OPEN이므로 비우면 전원 발송).
       MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"

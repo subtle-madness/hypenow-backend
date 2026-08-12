@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -34,7 +35,8 @@ import org.springframework.stereotype.Service;
  * 브랜드 태그 수집 본체(2026-08-06 스펙 + 2026-08-09 크롤링 정책 v1) — 태그 열거 단일 경로
  * (/v2/user/tag/medias)로 수집하되, 깊이는 게시물 나이 티어({@link BrandCrawlPolicy})가 정한다:
  * 매일 최소 14일 깊이(신규 감지 겸용) + due 게시물이 있으면 그 taken_at까지 확장, 등록 백필은
- * 365일 전체. 단건 게시물 콜은 전면 금지 유지(08-06 실측 — 열거 대비 추가 지표 없음).
+ * 브랜드별 수집 창(collection_months) 전체. 단건 게시물 콜은 전면 금지 유지(08-06 실측 — 열거
+ * 대비 추가 지표 없음).
  *
  * <p>저장은 전면 브랜드 전용 스키마(08-06 결정) — 캠페인 테이블(post_snapshot 계열)을 한 줄도
  * 건드리지 않는다(볼륨 격리 + 겹침 게시물 덮어쓰기 차단). 트랜잭션은 여기 없다(CollectService와
@@ -57,7 +59,6 @@ public class BrandCollectService {
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
 	private final Executor enrichWorker;
-	private final int registrationWindowDays;
 	private final int servingWindowDays;
 	private final int maxPostsPerSweep;
 	private final int commentPages;
@@ -67,7 +68,6 @@ public class BrandCollectService {
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
-			@Value("${monitoring.brand.registration-window-days:365}") int registrationWindowDays,
 			@Value("${monitoring.brand.serving-window-days:30}") int servingWindowDays,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
@@ -80,7 +80,6 @@ public class BrandCollectService {
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
 		this.enrichWorker = enrichWorker;
-		this.registrationWindowDays = registrationWindowDays;
 		this.servingWindowDays = servingWindowDays;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
@@ -113,7 +112,7 @@ public class BrandCollectService {
 	 * 누적 리스트다.
 	 *
 	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
-	 * ①페이지 전체가 깊이 컷(365일/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
+	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
 	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달. ①②는 컷까지 다 훑은
 	 * 자연 종료라 coveredCutoff=true → touchCrawledDepth로 그 깊이 전체를 touch하고,
 	 * ③④는 미커버라 touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다).
@@ -205,15 +204,23 @@ public class BrandCollectService {
 	}
 
 	/**
+	 * 브랜드별 수집 창 컷 — KST 캘린더 개월(요청서 "게시물 taken_at 기준 최근 N개월").
+	 * 열거 깊이(백필)와 편입 필터가 같은 컷을 쓴다 — 창 밖 소급 태그가 편입되지 않게.
+	 */
+	private static Instant collectionCutoff(BrandRow brand, Instant now) {
+		return ZonedDateTime.ofInstant(now, KST).minusMonths(brand.collectionMonths()).toInstant();
+	}
+
+	/**
 	 * 오늘의 열거 깊이 컷(정책 v1 스펙 §4) — 백필(last_swept_on null: 등록 직후·백필 실패
-	 * 백스톱·재가입)은 등록 윈도우(365일) 전체, 이후엔 min(14일 컷, 가장 오래된 due 게시물의
-	 * taken_at). due 판정은 {@link BrandCrawlPolicy} 순수 함수 — 깊은 열거가 얕은 티어를 자동
-	 * 포함하므로 정책의 중복 제거 규칙이 구조적으로 성립하고, 스윕이 하루 빠져도 다음 날 due
-	 * 계산이 밀린 깊이까지 자동 커버한다(자가 치유).
+	 * 백스톱·재가입)은 브랜드별 수집 창(collection_months) 전체, 이후엔 min(14일 컷, 가장 오래된
+	 * due 게시물의 taken_at). due 판정은 {@link BrandCrawlPolicy} 순수 함수 — 깊은 열거가 얕은
+	 * 티어를 자동 포함하므로 정책의 중복 제거 규칙이 구조적으로 성립하고, 스윕이 하루 빠져도 다음
+	 * 날 due 계산이 밀린 깊이까지 자동 커버한다(자가 치유).
 	 */
 	private Instant enumerationCutoff(BrandRow brand, Instant now) {
 		if (brand.lastSweptOn() == null) {
-			return now.minus(Duration.ofDays(registrationWindowDays));
+			return collectionCutoff(brand, now);
 		}
 		Instant cutoff = now.minus(BrandCrawlPolicy.DAILY_MAX_AGE);
 		for (TaggedPostRepository.TrackedPost t : taggedPosts.trackedPosts(brand.id(),
@@ -263,12 +270,13 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 페이지 1개분 처리(구 processCore의 페이지 단위판) — 편입 컷(365일) 필터 → 복권 지표 보정 →
-	 * 스냅샷 적재 → 신규 링크(known 갱신) → last_crawled_at 갱신. 전부 upsert/멱등이라 재실행 안전.
+	 * 페이지 1개분 처리(구 processCore의 페이지 단위판) — 편입 컷(브랜드별 수집 창) 필터 → 복권
+	 * 지표 보정 → 스냅샷 적재 → 신규 링크(known 갱신) → last_crawled_at 갱신. 전부 upsert/멱등이라
+	 * 재실행 안전.
 	 */
 	private List<PostInfo> processPage(BrandRow brand, List<PostInfo> posts, Set<String> known,
 			LocalDate today, Instant now) {
-		Instant enrollCutoff = now.minus(Duration.ofDays(registrationWindowDays));
+		Instant enrollCutoff = collectionCutoff(brand, now);
 		// taken_at 미상은 보수적으로 제외(잘못된 편입 방지) — 다음 열거에서 채워지면 잡힌다.
 		List<PostInfo> inWindow = posts.stream()
 				.filter(p -> p.takenAt() != null

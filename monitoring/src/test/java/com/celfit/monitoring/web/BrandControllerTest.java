@@ -36,14 +36,16 @@ class BrandControllerTest {
 		DeregisterOutcome outcome;
 		RuntimeException toThrow;
 		String receivedBrandName;
+		Integer receivedMonths;
 
 		StubService() {
 			super(null, null, null, null, null, null, Runnable::run, Runnable::run);
 		}
 
 		@Override
-		public Result register(String username, String brandName) {
+		public Result register(String username, String brandName, Integer collectionMonths) {
 			receivedBrandName = brandName;
+			receivedMonths = collectionMonths;
 			if (toThrow != null) {
 				throw toThrow;
 			}
@@ -198,6 +200,17 @@ class BrandControllerTest {
 	}
 
 	@Test
+	void 등록_요청의_collectionMonths를_서비스에_전달한다() throws Exception {
+		service.result = new BrandRegistrationService.Result(42L, "brandx", 100L, false);
+
+		mvc.perform(post("/api/brands").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"brandx\", \"collectionMonths\": 3}"))
+				.andExpect(status().isCreated());
+
+		assertThat(service.receivedMonths).isEqualTo(3);
+	}
+
+	@Test
 	void 활성_재등록_replay는_200이다() throws Exception {
 		service.result = new BrandRegistrationService.Result(1L, "brandx", null, true);
 
@@ -243,7 +256,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_조회는_현재_목록을_돌려준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 		hashtags.terms = List.of("cclime", "끌리메");
 
 		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
@@ -254,7 +267,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_교체는_정규화_후_전체_교체한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[\" CClime \",\"cclime\",\"\"]}"))
@@ -271,7 +284,7 @@ class BrandControllerTest {
 	 */
 	@Test
 	void terms_null_바디는_빈_목록_전체_교체로_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
@@ -282,7 +295,7 @@ class BrandControllerTest {
 
 	@Test
 	void 빈_배열_교체도_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[\"  \",\"\"]}"))
@@ -295,7 +308,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_추가는_정규화_후_전달한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(post("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[\" CClime \",\"cclime\"]}"))
@@ -307,7 +320,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_추가는_빈_입력도_무해하게_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(post("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
@@ -318,7 +331,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_단건_삭제는_정규화_후_전달하고_204다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(delete("/api/brands/brandx/hashtag-exclusions/CClime"))
 				.andExpect(status().isNoContent());
@@ -329,7 +342,7 @@ class BrandControllerTest {
 
 	@Test
 	void 제외_문자열_전체_삭제는_204다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(delete("/api/brands/brandx/hashtag-exclusions"))
 				.andExpect(status().isNoContent());
@@ -355,7 +368,7 @@ class BrandControllerTest {
 
 	@Test
 	void 탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
 
 		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
 				.andExpect(status().isNotFound())
@@ -370,7 +383,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_조회는_현재_활성_태그_목록을_돌려준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 		hashtags.tags = List.of("cclime", "끌리메");
 
 		mvc.perform(get("/api/brands/brandx/hashtag-tags"))
@@ -381,7 +394,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_교체는_정규화_후_전체_교체한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		// # 제거 · 대소문자 통일 · 중복 제거(입력 순서 보존)
 		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
@@ -394,7 +407,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_재추가와_삭제_시나리오는_정규화된_전체_목록을_그대로_전달한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 		hashtags.tags = List.of("cclime", "끌리메");
 
 		// "끌리메" 삭제하고 "새태그" 추가한 최종 목록을 PUT — 리포지토리가 tombstone 판정을 수행
@@ -416,7 +429,7 @@ class BrandControllerTest {
 	 */
 	@Test
 	void 태그_빈_목록_교체는_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\":[\"  \",\"\"]}"))
@@ -427,7 +440,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_null_바디는_빈_목록_교체로_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
@@ -440,7 +453,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_추가는_정규화_검증_후_전달한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(post("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\":[\"#CClime\",\" cclime \"]}"))
@@ -453,7 +466,7 @@ class BrandControllerTest {
 	/** POST는 PUT과 달리 빈 입력을 422로 거부한다 — "추가할 게 없다"는 요청 자체가 실수일 확률이 높다. */
 	@Test
 	void 태그_추가는_빈_입력이면_422다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(post("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
@@ -465,7 +478,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_추가는_무효_문자면_422다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(post("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\":[\"tag.dot\"]}"))
@@ -477,7 +490,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_단건_삭제는_정규화_후_전달하고_204다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		// URI 템플릿 변수로 넘겨 인코딩을 MockMvc/UriComponentsBuilder에 맡긴다 — 리터럴 "%23"을
 		// 그대로 문자열에 박으면 이중 인코딩되어 서버가 percent-literal을 그대로 받는다(왕복 실패).
@@ -491,7 +504,7 @@ class BrandControllerTest {
 	/** 한글 태그 경로 변수 — URL 인코딩 왕복이 정규화 이전에 이미 디코딩돼 들어와야 한다. */
 	@Test
 	void 태그_단건_삭제는_한글_태그도_정상_디코딩된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(delete("/api/brands/brandx/hashtag-tags/{tag}", "끌리메"))
 				.andExpect(status().isNoContent());
@@ -502,7 +515,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_전체_삭제는_204다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(delete("/api/brands/brandx/hashtag-tags"))
 				.andExpect(status().isNoContent());
@@ -513,7 +526,7 @@ class BrandControllerTest {
 	/** 유효 문자 위반은 절삭이 아니라 거부 — 공백(끌리 메)·점(tag.dot) 모두 VALID_TAG 전체 일치 실패. */
 	@Test
 	void 유효_문자_위반_태그는_절삭하지_않고_422로_거부한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\":[\"끌리 메\"]}"))
@@ -545,7 +558,7 @@ class BrandControllerTest {
 
 	@Test
 	void 태그_탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null);
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
 
 		mvc.perform(get("/api/brands/brandx/hashtag-tags"))
 				.andExpect(status().isNotFound())

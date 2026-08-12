@@ -48,8 +48,7 @@ monitoring:
   # 게시물 나이 티어 주기(BrandCrawlPolicy: 14일 매일 / 30일 3일 / 90일 7일 / 180일 30일 주기).
   brand:
     schedule:
-      sweep-cron: "-"   # "-"=비활성. 운영은 캠페인 스윕(KST 02:00)과 겹치지 않게 UTC 18:00(KST 03:00) env 주입
-    registration-window-days: 365   # 등록 백필·신규 편입 컷(정책 §2 — 최대 12개월). 스윕 깊이는 티어 due가 결정
+      sweep-cron: "-"   # "-"=비활성. 운영은 KST 02:00(UTC 17:00) env 주입 — 08-12 서버 드리프트를 정본으로 수용
     serving-window-days: 30         # 등록 백필 조기 서빙 창(2026-08-12 스트리밍 스펙 §2) — 이 깊이 커버 시 last_swept_at(FE ready)만 당긴다
     max-posts-per-sweep: 10000      # 개수 상한 폐지(정책 §4) — 폭주 방어 안전 밸브만(도달 시 error 로그).
                                     # 2,000은 tooq급 정상 고물량(11.8건/일 → 365일 창 ~4,300건)이 백필·
