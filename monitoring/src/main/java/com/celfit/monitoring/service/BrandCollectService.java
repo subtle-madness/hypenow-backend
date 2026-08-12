@@ -67,7 +67,7 @@ public class BrandCollectService {
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.registration-window-days:365}") int registrationWindowDays,
 			@Value("${monitoring.brand.serving-window-days:30}") int servingWindowDays,
-			@Value("${monitoring.brand.max-posts-per-sweep:2000}") int maxPostsPerSweep,
+			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
 		this.hiker = hiker;
@@ -114,6 +114,12 @@ public class BrandCollectService {
 	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달. ①②는 컷까지 다 훑은
 	 * 자연 종료라 coveredCutoff=true → touchCrawledDepth로 그 깊이 전체를 touch하고,
 	 * ③④는 미커버라 touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다).
+	 *
+	 * <p>상한은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 — 2,000은 tooq급 정상 고물량
+	 * 브랜드가 백필·심층 티어 스윕에서 닿아 10,000으로 상향, 08-12 상한 개정 스펙). ④가
+	 * 백필에서 나면 커버 깊이 밖 구간은 이후 스윕이 열지 않아 영구 공백이 된다 — 그래서 error
+	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는 그래도
+	 * 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3).
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
 		refreshBrandProfileSafely(brand);
@@ -160,8 +166,13 @@ public class BrandCollectService {
 			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
 			// 자연 종료지 폭주가 아니라, 여기서 경고를 찍으면 오보가 된다.
 			if (seen.size() >= maxPostsPerSweep) {
-				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
-						maxPostsPerSweep, brand.username());
+				// 도달 = 폭주 또는 상한 캘리브레이션 오류(08-12 스펙 §3) — 백필 경로면 커버 깊이
+				// 밖 구간이 조용히 영구 공백이 되므로, 운영이 보정(상한 상향 + last_swept_on 리셋)
+				// 판단을 내릴 수 있게 커버 깊이까지 error로 남긴다.
+				log.error("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단"
+								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
+						maxPostsPerSweep, brand.username(), seen.size(), cutoff,
+						oldestTakenAt(collected));
 				break;
 			}
 			if (newItems.isEmpty()) {
@@ -233,6 +244,12 @@ public class BrandCollectService {
 		} catch (RuntimeException e) {
 			log.warn("브랜드 프로필 갱신 실패(격리, best-effort) — {}: {}", brand.username(), e.toString());
 		}
+	}
+
+	/** 상한 도달 로그용 커버 깊이 — 적재분 중 최고령 taken_at(전부 미상이면 null). */
+	private static Instant oldestTakenAt(Collection<PostInfo> posts) {
+		return posts.stream().map(PostInfo::takenAt).filter(Objects::nonNull)
+				.map(Instant::ofEpochSecond).min(Instant::compareTo).orElse(null);
 	}
 
 	/**

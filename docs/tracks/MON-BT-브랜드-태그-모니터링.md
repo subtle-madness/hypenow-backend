@@ -34,6 +34,16 @@ V20260811085943) + 매일 브랜드 스윕에 합류하는 해시태그 파이�
 서비스에 이번에 추가. **잔여**: FE 공유 필요 — 해시태그 발견 게시물 별도 탭·제외 문자열 관리
 UI(계약 §8-4).
 
+안전 상한 개정(08-12 — DECISIONS 08-12 행, [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-sweep-cap-revision-design.md)):
+`max-posts-per-sweep` **2,000 → 10,000** + 도달 시 error 로그(열거 건수·목표 컷·커버 깊이).
+tooq.official(id=34, 11.8건/일 정상 고물량) 등록 백필이 상한 2,000에 걸려 365일 창의 172~365일
+구간이 조용히 영구 공백이 된 운영 실측 대응 — 상한 중단도 정상 반환이라 touchSwept가 찍혀
+이후 스윕이 그 구간을 영영 안 연다. 방치 시 09-11경부터 심층 티어 일제 due로 일일 스윕 상한
+루프(매달 ~열흘 × ~96콜/일)도 예정돼 있었다. 재개형 백필은 커서 체인 재열거 특성상 무진전이라
+기각, 상한 도달 시 touchSwept 유지(서빙 우선) 확정. **tooq 공백 보정은 배포 후
+`UPDATE brand_account SET last_swept_on=NULL WHERE id=34` → 야간 스윕 재백필(~205콜)** —
+was ready가 `last_swept_at` 기준(08-10)이라 FE 무영향. 실행 대기(운영 DB 쓰기 — 사용자 확인 필요).
+
 백필 페이지 스트리밍 적재 + 조기 서빙(2026-08-12 — [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-backfill-streaming-serving-design.md)):
 tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365일 열거 96콜 × p50 4.9초를
 전부 끝낸 뒤에야 일괄 적재·ready)라 그동안 FE가 이미 받아온 데이터까지 로딩 화면으로 가렸다.
@@ -59,3 +69,4 @@ covered는 `backfill_completed_at`(최초 완주) 기준으로 정정**했다 �
   - reasonCode 어휘 이원화 — v2 대문자(`NOT_FOUND`·`CAMPAIGN_CONTENT_ALREADY_EXISTS`) vs 레거시 entry 소문자(`not_found`·`duplicate`). FE와 한 번 정리 필요(스펙 §9 어휘 자체가 두 갈래).
   - tagged 윈도우 밖 게시물의 추가 실패 사유가 "게시물을 찾을 수 없습니다"로 뭉개짐 — 실해 낮음, FE 문의 오면 재론. 정책 v1로 등록 컷이 90일 → 365일이 되면서 해당 케이스 자체가 줄어든다.
 - 크롤링 정책 v1은 **배포 전**(08-09 기준 구현 + `:monitoring:test` 423개 통과까지) — 스펙 §8 비용 재산정 표의 게시자 프로필 콜 수(N명)는 운영 배포 후 등록 1건 실측으로 갱신할 것. **스케일 가정 2,000계정 총액도 그때 함께 재산정**(종전 $550~600은 매일 전량 전제라 폐기). 코드 변경 아님.
+- **tooq.official 172~365일 공백 일회성 보정 실행 대기**(08-12) — 상한 상향 배포 후 운영 monitoring DB에 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` 실행(사용자 확인 필요), 익일 KST 03:00 스윕이 재백필. 미루면 365일 창이 실행일 기준이라 하루씩 잘린다 — 조기 실행 권장.
