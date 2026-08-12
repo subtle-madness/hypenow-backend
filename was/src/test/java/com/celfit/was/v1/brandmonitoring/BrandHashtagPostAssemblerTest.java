@@ -1,9 +1,13 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import com.celfit.was.monitoring.BrandReadRepository;
 import java.time.OffsetDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -98,6 +102,69 @@ class BrandHashtagPostAssemblerTest {
 
 		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-hashtag-post/HHH.jpg");
 		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
+	}
+
+	// ---------- 자사 제외 문자열 즉시 반영(2026-08-12 태그 관리 확장 짝) ----------
+
+	/**
+	 * 제외 문자열이 활성이면 조회 시점에 즉시 걸린다 — monitoring 스윕(SELF 판정)을 기다리지 않는다.
+	 * matchesExclusion과 같은 대소문자 무시 contains 의미론(username에 term이 부분 포함되면 제외).
+	 */
+	@Test
+	void 저장된_게시물이_제외_문자열_추가로_즉시_숨는다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_influencer")));
+		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
+
+		var assembler = new BrandHashtagPostAssembler(repository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result).isEmpty();
+	}
+
+	/** 제외 문자열을 삭제(비활성화)하면 같은 게시물이 다시 보인다 — findActiveExclusionTerms가 빈 목록을 준다. */
+	@Test
+	void 제외_문자열_삭제로_다시_보인다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_influencer")));
+		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of());
+
+		var assembler = new BrandHashtagPostAssembler(repository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result).hasSize(1);
+		assertThat(result.get(0).shortcode()).isEqualTo("HHH");
+	}
+
+	@Test
+	void 제외_문자열은_대소문자_무시_부분_포함으로_매칭된다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "CClime_Official")));
+		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
+
+		var assembler = new BrandHashtagPostAssembler(repository);
+		assertThat(assembler.assembleForBrand(1L)).isEmpty();
+	}
+
+	@Test
+	void 무관한_게시자는_제외_문자열과_무관하게_남는다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "unrelated_influencer")));
+		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
+
+		var assembler = new BrandHashtagPostAssembler(repository);
+		assertThat(assembler.assembleForBrand(1L)).hasSize(1);
+	}
+
+	private static BrandReadRepository.BrandHashtagPostRow hashtagRowWithAuthor(String code, String authorUsername) {
+		return new BrandReadRepository.BrandHashtagPostRow(code, "#브랜드명", authorUsername,
+				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
 	}
 
 	// ---------- 픽스처 ----------

@@ -96,10 +96,34 @@ public class MonitoringCommandClient {
 		return body == null || body.terms() == null ? List.of() : body.terms();
 	}
 
-	/** 제외 문자열 전체 교체(PUT 계약) — terms는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장. */
+	/**
+	 * 제외 문자열 전체 교체(PUT 계약) — terms는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장.
+	 * 빈 목록도 허용(2026-08-12부터 — monitoring PUT 하한 가드 폐지, 단건·전체 삭제 API 참조).
+	 */
 	public void putHashtagExclusions(String username, List<String> terms) {
 		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-exclusions", username)
 				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
+	}
+
+	/** 제외 문자열 단건·다건 추가(POST 계약, 2026-08-12) — tombstone 재활성(monitoring이 정규화). */
+	public void addHashtagExclusions(String username, List<String> terms) {
+		exchange(() -> restClient.post().uri("/api/brands/{username}/hashtag-exclusions", username)
+				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
+	}
+
+	/**
+	 * 제외 문자열 단건 삭제(tombstone, DELETE {term} 계약, 2026-08-12) — 없어도 204(멱등).
+	 * term은 URI 템플릿 변수로 넘겨 RestClient가 인코딩한다(한글 등 특수문자 왕복 안전).
+	 */
+	public void deleteHashtagExclusion(String username, String term) {
+		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-exclusions/{term}", username, term)
+				.retrieve().toBodilessEntity());
+	}
+
+	/** 제외 문자열 전체 삭제(tombstone, DELETE 계약, 2026-08-12) — 자사 오탐 필터를 완전히 끈다. */
+	public void deleteAllHashtagExclusions(String username) {
+		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-exclusions", username)
+				.retrieve().toBodilessEntity());
 	}
 
 	/**
@@ -113,10 +137,37 @@ public class MonitoringCommandClient {
 		return body == null || body.tags() == null ? List.of() : body.tags();
 	}
 
-	/** 태그 셋 전체 교체(PUT 계약) — tags는 monitoring이 정규화(trim·#제거·소문자·중복 제거) 후 저장. */
+	/**
+	 * 태그 셋 전체 교체(PUT 계약) — tags는 monitoring이 정규화(trim·#제거·소문자·중복 제거) 후 저장.
+	 * 빈 목록도 허용(2026-08-12부터 — monitoring PUT 하한 가드 폐지, 단건·전체 삭제 API 참조).
+	 */
 	public void putHashtagTags(String username, List<String> tags) {
 		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-tags", username)
 				.body(new HashtagTagsBody(tags)).retrieve().toBodilessEntity());
+	}
+
+	/**
+	 * 태그 단건·다건 추가(POST 계약, 2026-08-12) — tombstone 재활성(monitoring이 정규화·유효 문자
+	 * 검증). 무효 문자 포함·빈 입력은 monitoring이 422로 거부 → MonitoringApiException으로 승격.
+	 */
+	public void addHashtagTags(String username, List<String> tags) {
+		exchange(() -> restClient.post().uri("/api/brands/{username}/hashtag-tags", username)
+				.body(new HashtagTagsBody(tags)).retrieve().toBodilessEntity());
+	}
+
+	/**
+	 * 태그 단건 삭제(tombstone, DELETE {tag} 계약, 2026-08-12) — 없어도 204(멱등).
+	 * tag는 URI 템플릿 변수로 넘겨 RestClient가 인코딩한다(한글 등 특수문자 왕복 안전).
+	 */
+	public void deleteHashtagTag(String username, String tag) {
+		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-tags/{tag}", username, tag)
+				.retrieve().toBodilessEntity());
+	}
+
+	/** 태그 전체 삭제(tombstone, DELETE 계약, 2026-08-12) — 브랜드 태그 감지를 완전히 끈다. */
+	public void deleteAllHashtagTags(String username) {
+		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-tags", username)
+				.retrieve().toBodilessEntity());
 	}
 
 	private <T> T exchange(Supplier<T> call) {
