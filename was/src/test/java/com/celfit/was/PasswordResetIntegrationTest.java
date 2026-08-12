@@ -25,14 +25,20 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 비밀번호 재설정 3단계(send→confirm→reset) 통합 테스트 — RecordingMailSender로 발송을
  * 가로채 코드를 캡처한다. 레이트리밋이 전역 싱글턴이라 테스트마다 고유 이메일을 쓰고,
- * IP 한도도 간섭하지 않도록 테스트 메서드마다 고유 remoteAddr을 부여한다.
+ * IP 한도도 간섭하지 않도록 테스트 메서드마다 고유 remoteAddr을 부여한다. signUp() 헬퍼는
+ * remoteAddr을 못 받아 모든 테스트가 MockMvc 기본 IP(127.0.0.1)를 공유하므로, 가입
+ * 자체의 rate-limit(signup: 기본 분당 10회)에 걸리지 않도록 완화한다(다른 통합 테스트의
+ * 확립된 관용구 — AdminNoticesIntegrationTest 등). password-reset 3종의 자체 한도
+ * (쿨다운 60초·시간당 5/20회)는 컨트롤러가 하드코딩한 limit이라 이 프로퍼티와 무관.
  */
 @AutoConfigureMockMvc
+@TestPropertySource(properties = "was.rate-limit.per-minute=100")
 class PasswordResetIntegrationTest extends IntegrationTest {
 
 	@TestConfiguration
@@ -76,6 +82,9 @@ class PasswordResetIntegrationTest extends IntegrationTest {
 
 	@Autowired
 	RecordingMailSender mail;
+
+	@Autowired
+	com.celfit.was.v1.account.PasswordResetRepository passwordResetRepository;
 
 	private static final AtomicInteger SEQUENCE = new AtomicInteger();
 
@@ -253,6 +262,18 @@ class PasswordResetIntegrationTest extends IntegrationTest {
 		String token = issueToken();
 		jdbcClient.sql("UPDATE app.password_resets SET token_expires_at = now() - interval '1 second' WHERE email = :email")
 				.param("email", email).update();
+
+		reset(token, "newPassw0rd").andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("INVALID_RESET_TOKEN"));
+	}
+
+	@Test
+	void 재발송은_이전_토큰을_무효화한다() throws Exception {
+		signUp();
+		String token = issueToken();
+
+		// 엔드포인트 재호출은 쿨다운 60초에 걸리므로 재발송의 DB 효과(upsert)를 리포지토리 직접 호출로 재현
+		passwordResetRepository.upsert(email, "새-코드-해시", java.time.Instant.now().plusSeconds(300));
 
 		reset(token, "newPassw0rd").andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("INVALID_RESET_TOKEN"));

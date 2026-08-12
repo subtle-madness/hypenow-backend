@@ -43,7 +43,7 @@ class PasswordResetRepositoryTest extends IntegrationTest {
 	void 재발송_upsert는_코드를_교체하고_attempts와_토큰을_리셋한다() {
 		repository.upsert(EMAIL, "code-hash-1", Instant.now().plusSeconds(300));
 		repository.incrementAttempts(EMAIL);
-		repository.consumeCodeAndIssueToken(EMAIL, "token-hash-1", Instant.now().plusSeconds(600));
+		repository.consumeCodeAndIssueToken(EMAIL, "code-hash-1", "token-hash-1", Instant.now().plusSeconds(600));
 
 		repository.upsert(EMAIL, "code-hash-2", Instant.now().plusSeconds(300));
 
@@ -55,23 +55,52 @@ class PasswordResetRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 코드_소모와_토큰_발급_후_토큰으로_행을_찾는다() {
+	void 코드_일치_소모는_성공하고_불일치는_거부된다() {
 		repository.upsert(EMAIL, "code-hash-1", Instant.now().plusSeconds(300));
 		Instant tokenExpiresAt = Instant.now().plusSeconds(600);
 
-		repository.consumeCodeAndIssueToken(EMAIL, "token-hash-1", tokenExpiresAt);
+		// 불일치 코드 해시로는 소모되지 않는다(영향 0행 → false, 행도 그대로)
+		assertThat(repository.consumeCodeAndIssueToken(EMAIL, "code-hash-틀림", "token-hash-1", tokenExpiresAt))
+				.isFalse();
+		assertThat(repository.find(EMAIL).orElseThrow().codeHash()).isEqualTo("code-hash-1");
 
-		var row = repository.findByTokenHash("token-hash-1").orElseThrow();
-		assertThat(row.email()).isEqualTo(EMAIL);
+		assertThat(repository.consumeCodeAndIssueToken(EMAIL, "code-hash-1", "token-hash-1", tokenExpiresAt))
+				.isTrue();
+		var row = repository.find(EMAIL).orElseThrow();
 		assertThat(row.codeHash()).isNull(); // 코드 소모 — 같은 코드 재confirm 불가
+		assertThat(row.tokenHash()).isEqualTo("token-hash-1");
 		assertThat(row.tokenExpiresAt().toInstant()).isCloseTo(tokenExpiresAt, within(1, ChronoUnit.SECONDS));
-		assertThat(repository.findByTokenHash("없는-해시")).isEmpty();
+
+		// 이미 소모된 코드로 재confirm 시도 — code_hash가 이미 NULL이라 WHERE 불일치, 다시 false
+		assertThat(repository.consumeCodeAndIssueToken(EMAIL, "code-hash-1", "token-hash-2", tokenExpiresAt))
+				.isFalse();
 	}
 
 	@Test
-	void delete는_행을_지운다() {
+	void claim은_토큰_행을_원자적으로_삭제하고_반환한다() {
 		repository.upsert(EMAIL, "code-hash-1", Instant.now().plusSeconds(300));
-		repository.delete(EMAIL);
+		Instant tokenExpiresAt = Instant.now().plusSeconds(600);
+		repository.consumeCodeAndIssueToken(EMAIL, "code-hash-1", "token-hash-1", tokenExpiresAt);
+
+		var claimed = repository.claimByTokenHash("token-hash-1").orElseThrow();
+		assertThat(claimed.email()).isEqualTo(EMAIL);
+		assertThat(claimed.tokenExpiresAt().toInstant()).isCloseTo(tokenExpiresAt, within(1, ChronoUnit.SECONDS));
+		// claim이 곧 삭제 — 행이 사라졌다
 		assertThat(repository.find(EMAIL)).isEmpty();
+	}
+
+	@Test
+	void 없는_토큰_해시_claim은_빈_값이다() {
+		assertThat(repository.claimByTokenHash("없는-해시")).isEmpty();
+	}
+
+	@Test
+	void 같은_토큰_이중_claim은_두_번째가_빈_값이다() {
+		repository.upsert(EMAIL, "code-hash-1", Instant.now().plusSeconds(300));
+		repository.consumeCodeAndIssueToken(EMAIL, "code-hash-1", "token-hash-1", Instant.now().plusSeconds(600));
+
+		assertThat(repository.claimByTokenHash("token-hash-1")).isPresent();
+		// 첫 claim이 행을 지웠으므로 두 번째는 동시 요청이든 재사용 시도든 항상 빈 값
+		assertThat(repository.claimByTokenHash("token-hash-1")).isEmpty();
 	}
 }

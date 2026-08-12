@@ -53,8 +53,10 @@ public class PasswordResetService {
 	}
 
 	/**
-	 * 판정 순서: 행 존재 → 코드 미소모·시도 한도·만료 → 해시 일치(불일치만 attempts 증가).
-	 * 성공 시 코드를 소모하고 토큰 원문을 반환한다 — 원문은 이 응답이 유일한 노출(DB는 해시만).
+	 * 판정 순서: 행 존재 → 코드 미소모·시도 한도·만료 → 해시 일치(불일치만 attempts 증가) →
+	 * 원자적 소모(조건부 UPDATE). 마지막 단계가 false면 동시 confirm 중 다른 요청이 먼저
+	 * 소모한 것 — 사유 비구분으로 같은 INVALID_VERIFICATION_CODE를 던진다.
+	 * 성공 시 토큰 원문을 반환한다 — 원문은 이 응답이 유일한 노출(DB는 해시만).
 	 */
 	public IssuedToken confirm(String email, String code) {
 		PasswordResetRepository.ResetChallenge row = repository.find(email)
@@ -63,32 +65,38 @@ public class PasswordResetService {
 				|| clock.instant().isAfter(row.codeExpiresAt().toInstant())) {
 			throw invalidCode();
 		}
-		if (code == null || !row.codeHash().equals(sha256(code.trim()))) {
+		String codeHash = code == null ? null : sha256(code.trim());
+		if (codeHash == null || !row.codeHash().equals(codeHash)) {
 			repository.incrementAttempts(email);
 			throw invalidCode();
 		}
 		byte[] bytes = new byte[32];
 		random.nextBytes(bytes);
 		String token = "prt_" + HexFormat.of().formatHex(bytes);
-		repository.consumeCodeAndIssueToken(email, sha256(token), clock.instant().plus(TOKEN_TTL));
+		boolean consumed = repository.consumeCodeAndIssueToken(email, codeHash, sha256(token),
+				clock.instant().plus(TOKEN_TTL));
+		if (!consumed) {
+			throw invalidCode();
+		}
 		return new IssuedToken(token, (int) TOKEN_TTL.toSeconds());
 	}
 
 	/**
-	 * 토큰 검증 → 즉시 소비(행 삭제) → 소유 이메일 반환. 소비를 비밀번호 변경보다 먼저 해
-	 * 어떤 실패 경로에서도 토큰이 두 번 쓰일 수 없다(중간 크래시는 유저가 처음부터 재진행).
+	 * 토큰 검증 → 즉시 원자적 소비(claim = DELETE..RETURNING) → 소유 이메일 반환. find 후 별도
+	 * delete로 나누면 동시 reset 두 개가 둘 다 read에 성공해 이중 소비가 가능하다(TOCTOU) —
+	 * claim은 한 방이라 동시 요청 중 하나만 행을 얻는다. 만료 판정은 claim(삭제) 이후에 해도
+	 * 안전하다 — 이미 삭제됐으니 별도 청소가 불요하고, 어차피 실패 응답은 동일(INVALID_RESET_TOKEN).
 	 */
 	public String consumeToken(String resetToken) {
 		if (resetToken == null || resetToken.isBlank()) {
 			throw invalidToken();
 		}
-		PasswordResetRepository.ResetChallenge row = repository.findByTokenHash(sha256(resetToken.trim()))
+		PasswordResetRepository.ClaimedToken claimed = repository.claimByTokenHash(sha256(resetToken.trim()))
 				.orElseThrow(PasswordResetService::invalidToken);
-		repository.delete(row.email());
-		if (row.tokenExpiresAt() == null || clock.instant().isAfter(row.tokenExpiresAt().toInstant())) {
+		if (claimed.tokenExpiresAt() == null || clock.instant().isAfter(claimed.tokenExpiresAt().toInstant())) {
 			throw invalidToken();
 		}
-		return row.email();
+		return claimed.email();
 	}
 
 	private static V1ApiException invalidCode() {
