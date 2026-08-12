@@ -117,4 +117,32 @@ class RateLimiterTest {
 		// 다른 키는 독립
 		assertThat(limiter.tryAcquire("send:x@y.z", 1)).isTrue();
 	}
+
+	@Test
+	void 윈도우_분_수를_넘기면_카운터가_리셋된다() {
+		SteppingClock clock = new SteppingClock();
+		RateLimiter limiter = new RateLimiter(clock, 10);
+
+		assertThat(limiter.tryAcquire("h", 1, 60)).isTrue();
+		assertThat(limiter.tryAcquire("h", 1, 60)).isFalse();
+
+		clock.advance(Duration.ofMinutes(59));
+		assertThat(limiter.tryAcquire("h", 1, 60)).isFalse(); // 같은 60분 윈도우
+
+		clock.advance(Duration.ofMinutes(1));
+		assertThat(limiter.tryAcquire("h", 1, 60)).isTrue(); // 다음 윈도우
+	}
+
+	@Test
+	void 시간_윈도우는_분_스윕에_청소되지_않는다() {
+		SteppingClock clock = new SteppingClock();
+		RateLimiter limiter = new RateLimiter(clock, 10);
+
+		assertThat(limiter.tryAcquire("h", 1, 60)).isTrue();
+		clock.advance(Duration.ofMinutes(1));
+		limiter.tryAcquire("m", 1); // 분이 바뀐 첫 호출 — 스윕 트리거
+
+		// 60분 윈도우가 분 스윕에 지워졌다면 카운터 리셋으로 true가 됐을 것
+		assertThat(limiter.tryAcquire("h", 1, 60)).isFalse();
+	}
 }
