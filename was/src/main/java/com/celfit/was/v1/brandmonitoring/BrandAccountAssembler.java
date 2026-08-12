@@ -37,7 +37,7 @@ public class BrandAccountAssembler {
 
 	private final int sweepHourKst;
 
-	public BrandAccountAssembler(@Value("${was.brand.sweep-hour-kst:3}") int sweepHourKst) {
+	public BrandAccountAssembler(@Value("${was.brand.sweep-hour-kst:2}") int sweepHourKst) {
 		this.sweepHourKst = sweepHourKst;
 	}
 
@@ -103,6 +103,9 @@ public class BrandAccountAssembler {
 	 * 다음 스윕 예정 시각 — KST 기준 매일 {@code hourKst}시 정각(monitoring 브랜드 스윕 크론과 동일 시각).
 	 * 오늘 그 시각이 이미 지났으면 내일. 크론은 monitoring env로 주입되므로 값이 어긋나면
 	 * {@code was.brand.sweep-hour-kst}로 맞춘다(표시 전용 — 실제 스케줄에 영향 없음).
+	 *
+	 * <p>08-12 정정: 운영 브랜드 스윕은 서버 크론 KST 02:00(캠페인 스윕과 동시 — 사용자 수용)이라
+	 * 기본값을 2로 맞춘다.
 	 */
 	static String nextScheduledAt(ZonedDateTime at, int hourKst) {
 		// 하루 경계는 반드시 KST에서 잘라야 한다 — 다른 존의 시각이 들어오면 날짜가 어긋난다.

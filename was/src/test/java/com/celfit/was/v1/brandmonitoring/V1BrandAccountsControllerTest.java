@@ -759,7 +759,8 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionCompletedAt").value("2026-08-01T10:00:00+09:00"))
 				.andExpect(jsonPath("$.data.lastDetectedAt").value("2026-08-07T09:00:00+09:00"))
 				.andExpect(jsonPath("$.data.lastTrackedAt").value("2026-08-07T09:00:00+09:00"))
-				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T03:00:00+09:00")))
+				// 08-12 정정: 운영 브랜드 스윕은 KST 02:00(서버 크론)이라 표기 기본값도 2다.
+				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T02:00:00+09:00")))
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()))
 				// 프로필 nullable 규칙 — fullName·biography는 "" 로, isVerified는 false로 접는다.
 				.andExpect(jsonPath("$.data.profile.fullName").value(""))
@@ -794,7 +795,10 @@ class V1BrandAccountsControllerTest {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
-				.andExpect(jsonPath("$.data.collectionMonths").value(12));
+				.andExpect(jsonPath("$.data.collectionMonths").value(12))
+				// 다음 스윕 표기는 운영 브랜드 스윕 시각(KST 02:00) 고정 — 날짜부는 실행일에 따라 변하므로
+				// 시각 접미사만 검증한다(08-12 정정: 기본값 sweep-hour-kst=2).
+				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T02:00:00+09:00")));
 	}
 
 	@Test
