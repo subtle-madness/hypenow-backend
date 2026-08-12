@@ -52,7 +52,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @WebMvcTest(controllers = V1BrandPostsController.class,
 		properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true"})
-@Import({BrandPostAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({BrandPostAssembler.class, BrandHashtagPostAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
 class V1BrandPostsControllerTest {
 
 	@Autowired
@@ -186,87 +186,31 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data[0].shortcode").value("XYZ"));
 	}
 
-	// ---------- 해시태그 발견 게시물 합류(Task 11) ----------
-
+	/**
+	 * 회귀 케이스(2026-08-12 별도 탭 결정) — 해시태그 발견분은 더 이상 §6-1 목록에 섞이지 않는다.
+	 * repository가 tagged·hashtag 둘 다 갖고 있어도 posts 응답은 tagged만 보이고, source 화이트리스트·
+	 * meta.counts에서도 hashtag 어휘가 완전히 빠져야 한다(예전엔 여기 있었다 — Task 11 되돌림).
+	 */
 	@Test
-	void 해시태그_발견_게시물이_source_hashtag로_병합된다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].id").value("bh_HHH"))
-				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
-				.andExpect(jsonPath("$.data[0].source").value("hashtag"))
-				.andExpect(jsonPath("$.data[0].caption").value("해시태그 캡션"))
-				.andExpect(jsonPath("$.data[0].authorUsername").value("hashtag_influencer"))
-				.andExpect(jsonPath("$.data[0].latestSnapshot").value(Matchers.nullValue()))
-				.andExpect(jsonPath("$.data[0].commentsTotal").value(3))
-				.andExpect(jsonPath("$.meta.counts.hashtag").value(1));
-	}
-
-	@Test
-	void 같은_shortcode의_기존_소스가_해시태그보다_우선한다() throws Exception {
-		givenTagged(taggedRow("HHH", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("HHH", "REELS", null)));
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].source").value("tagged"))
-				.andExpect(jsonPath("$.data[0].id").value("HHH"));
-	}
-
-	@Test
-	void source_필터_hashtag는_해시태그_발견만_남긴다() throws Exception {
+	void 게시물_목록_API는_해시태그_발견분을_더이상_병합하지_않는다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
 		givenHashtag(hashtagRow("HHH", "2026-08-05T01:00:00Z"));
 
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"))
+				.andExpect(jsonPath("$.meta.counts", Matchers.not(Matchers.hasKey("hashtag"))));
+
+		then(brandReadRepository).should(never()).findHashtagPosts(anyLong(), any(), anyInt());
+	}
+
+	@Test
+	void source_필터에_hashtag를_주면_400이다() throws Exception {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=hashtag").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].source").value("hashtag"))
-				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
-				.andExpect(jsonPath("$.meta.total").value(1))
-				.andExpect(jsonPath("$.meta.counts.all").value(2));
-	}
-
-	@Test
-	void source_필터_tagged는_해시태그를_제외한다() throws Exception {
-		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
-		givenHashtag(hashtagRow("HHH", "2026-08-05T01:00:00Z"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=tagged").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].source").value("tagged"))
-				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"));
-	}
-
-	@Test
-	void 해시태그_게시물도_업로드일_정렬에_참여한다() throws Exception {
-		givenTagged(taggedRow("OLD", "2026-08-01T01:00:00Z"), taggedRow("NEW", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
-				meta("OLD", "FEED", null), meta("NEW", "FEED", null)));
-		givenHashtag(hashtagRow("MID", "2026-08-03T01:00:00Z"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("NEW", "MID", "OLD")));
-	}
-
-	@Test
-	void 해시태그_협찬은_캡션_확정_키워드로만_판정한다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z", "오늘의 #협찬 후기"),
-				hashtagRow("III", "2026-08-05T01:00:00Z", "그냥 일상"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].sponsorship").value(Matchers.contains("sponsored")))
-				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 	}
 
 	@Test
@@ -326,6 +270,79 @@ class V1BrandPostsControllerTest {
 	@Test
 	void 인증이_없으면_401이다() throws Exception {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts"))
+				.andExpect(status().isUnauthorized());
+	}
+
+	// ---------- 해시태그 발견 게시물 전용 API(스펙 §8, 별도 탭 결정 2026-08-12) ----------
+
+	@Test
+	void 해시태그_발견_게시물_목록은_열거_필드를_그대로_내려준다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				.andExpect(jsonPath("$.data[0].postUrl").value("https://www.instagram.com/p/HHH/"))
+				.andExpect(jsonPath("$.data[0].matchedTag").value("#브랜드명"))
+				.andExpect(jsonPath("$.data[0].takenAt").value("2026-08-06T10:00:00+09:00"))
+				.andExpect(jsonPath("$.data[0].caption").value("해시태그 캡션"))
+				.andExpect(jsonPath("$.data[0].contentType").value("reels"))
+				.andExpect(jsonPath("$.data[0].thumbnailUrl").value("https://cdn/hashtag-thumb.jpg"))
+				.andExpect(jsonPath("$.data[0].authorUsername").value("hashtag_influencer"))
+				.andExpect(jsonPath("$.data[0].authorFullName").value("해시태그 인플루언서"))
+				.andExpect(jsonPath("$.data[0].authorProfilePicUrl").value("https://cdn/hashtag-author.jpg"))
+				.andExpect(jsonPath("$.data[0].authorProfileUrl")
+						.value("https://www.instagram.com/hashtag_influencer/"))
+				.andExpect(jsonPath("$.data[0].likes").value(20))
+				.andExpect(jsonPath("$.data[0].comments").value(3))
+				.andExpect(jsonPath("$.data[0].sponsorship").value("unknown"))
+				.andExpect(jsonPath("$.data[0].firstSeenAt").value("2026-08-06T11:00:00+09:00"));
+	}
+
+	@Test
+	void 해시태그_발견_게시물_협찬은_캡션_확정_키워드로만_판정한다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z", "오늘의 #협찬 후기"),
+				hashtagRow("III", "2026-08-05T01:00:00Z", "그냥 일상"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].sponsorship").value(Matchers.contains("sponsored")))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
+	}
+
+	@Test
+	void 해시태그_발견_게시물이_없으면_빈_배열이다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data").isArray())
+				.andExpect(jsonPath("$.data.length()").value(0));
+	}
+
+	@Test
+	void 남의_계정_해시태그_목록은_403이고_조회하지_않는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/999/hashtag-posts").with(user(principal())))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(brandReadRepository).should(never()).findHashtagPosts(anyLong(), any(), anyInt());
+	}
+
+	@Test
+	void 없는_브랜드_계정의_해시태그_목록은_404다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void 해시태그_목록_인증이_없으면_401이다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts"))
 				.andExpect(status().isUnauthorized());
 	}
 

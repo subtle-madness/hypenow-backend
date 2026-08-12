@@ -5,7 +5,6 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
-import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
@@ -56,7 +55,6 @@ public class BrandPostAssembler {
 
 	static final String SOURCE_TAGGED = "tagged";
 	static final String SOURCE_DIRECT = "direct";
-	static final String SOURCE_HASHTAG = "hashtag";
 
 	private static final Logger log = LoggerFactory.getLogger(BrandPostAssembler.class);
 
@@ -67,19 +65,12 @@ public class BrandPostAssembler {
 	static final int WINDOW_DAYS = 365;
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
 	private static final int COMMENT_LIMIT = 45;
-	/**
-	 * 해시태그 발견분 서빙 상한 — SQL 단계에서 자른다(tagged와 달리 등록 시점 검증이 없어 폭주
-	 * 가능성이 더 크다, 스펙 §5). 컨트롤러 목록 상한(POST_LIMIT)과 같은 값으로 맞춘다.
-	 */
-	static final int HASHTAG_POST_LIMIT = 2000;
-	/** 해시태그 발견 게시물 합성 id 접두 — direct·tagged의 shortcode-그대로 id와 겹치지 않게 한다. */
-	private static final String SYNTHETIC_HASHTAG_ID_PREFIX = "bh_";
 
 	private static final String CONTENT_TYPE_REELS = "REELS";
 	private static final String REELS = "reels";
 	private static final String FEED = "feed";
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
-	/** 목록에 실리는 tagged·hashtag는 전부 윈도우 안이라 항상 tracking이다(ended는 목록 밖 보존 — 스펙 §6-1). */
+	/** 목록에 실리는 tagged는 전부 윈도우 안이라 항상 tracking이다(ended는 목록 밖 보존 — 스펙 §6-1). */
 	private static final String TRACKING = "tracking";
 
 	private final BrandReadRepository brandReadRepository;
@@ -100,9 +91,7 @@ public class BrandPostAssembler {
 	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account) {
 		List<BrandPostResponse> tagged = assembleTagged(account);
 		List<BrandPostResponse> direct = assembleDirect(userId, account.id());
-		List<BrandPostResponse> merged = mergeByShortcode(direct, tagged);
-		List<BrandPostResponse> hashtag = assembleHashtag(account);
-		return mergeHashtag(merged, hashtag);
+		return mergeByShortcode(direct, tagged);
 	}
 
 	// ---------- tagged ----------
@@ -268,67 +257,6 @@ public class BrandPostAssembler {
 				row.likeCount(), KstTimestamps.toKstIso(row.commentedAt()), reply);
 	}
 
-	// ---------- hashtag ----------
-
-	/**
-	 * 해시태그 발견분 조립(스펙 2026-08-11 §5) — 보강·스냅샷이 없어(브랜드 태그 파이프라인과 별개
-	 * 신규 저장소) 배치 조회가 필요 없다. author·지표는 전부 열거 시점 관측값 그대로 싣는다.
-	 */
-	public List<BrandPostResponse> assembleHashtag(BrandAccountRow account) {
-		List<BrandHashtagPostRow> posts =
-				brandReadRepository.findHashtagPosts(account.id(), windowCutoff(), HASHTAG_POST_LIMIT);
-		return posts.stream().map(p -> hashtagPost(account.id(), p, account.lastSweptAt())).toList();
-	}
-
-	/**
-	 * 해시태그 발견 1건 조립 — tagged-only 조립 경로(합성 id {@code bh_}+shortcode)를 미러하되
-	 * 보강·스냅샷 부재를 반영한다: latestSnapshot·snapshots는 비우고, commentsTotal은 열거 관측
-	 * comments를 그대로 쓰며(스냅샷 기반 commentsTotal과 산지가 다르다), 협찬 판정은 유료협찬 관측이
-	 * 없어(열거에 그 필드가 없다) 캡션 키워드만으로 한다.
-	 */
-	static BrandPostResponse hashtagPost(long brandId, BrandHashtagPostRow post, OffsetDateTime lastSweptAt) {
-		String contentType = contentTypeOf(post.contentType());
-		String firstSeenAt = KstTimestamps.toKstIso(post.firstSeenAt());
-
-		return new BrandPostResponse(
-				SYNTHETIC_HASHTAG_ID_PREFIX + post.shortCode(),
-				String.valueOf(brandId),
-				SOURCE_HASHTAG,
-				postUrl(contentType, post.shortCode()),
-				post.shortCode(),
-				contentType,
-				KstTimestamps.toKstIso(post.takenAt()),
-				post.caption(),
-				resolveImageUrl(post.imageObjectPath(), post.thumbnailUrl()),
-				null,
-				null,
-				post.authorUsername() == null ? null : PROFILE_URL_PREFIX + post.authorUsername() + "/",
-				post.authorUsername(),
-				post.authorFullName(),
-				// 게시자 프로필 사진은 아카이브가 없다(프로필 보강 자체가 스펙 §5 보류) — 원본 그대로.
-				sanitizeImageUrl(post.authorProfilePicUrl()),
-				// 열거엔 인증 배지 관측이 없다 — 거짓 배지를 띄우지 않기 위해 false 고정(direct와 같은 규칙).
-				false,
-				// 프로필 보강이 없어(스펙 §5 보류) 팔로워는 항상 모른다.
-				null,
-				BrandSponsorshipClassifier.classify(null, post.caption()),
-				null,
-				TRACKING,
-				firstSeenAt,
-				// 윈도우 안 게시물만 실리므로 종료 시각이 존재할 수 없다(tagged와 같은 규칙).
-				null,
-				null,
-				List.of(),
-				post.comments(),
-				commentsHidden(List.of()),
-				0,
-				List.of(),
-				// 해시태그 발견 게시물은 캠페인에 연결되지 않는다(브랜드 계정 자체 파이프라인).
-				List.of(),
-				firstSeenAt,
-				KstTimestamps.toKstIso(lastSweptAt));
-	}
-
 	// ---------- direct ----------
 
 	private List<BrandPostResponse> assembleDirect(long userId, long brandId) {
@@ -430,26 +358,6 @@ public class BrandPostAssembler {
 		}
 		for (BrandPostResponse post : tagged) {
 			byCode.merge(post.shortcode(), post, (existing, taggedPost) -> promoteSponsorship(existing, taggedPost));
-		}
-		return byCode.values().stream()
-				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn,
-								Comparator.nullsLast(Comparator.reverseOrder()))
-						.thenComparing(BrandPostResponse::shortcode))
-				.toList();
-	}
-
-	/**
-	 * 해시태그 발견분 합류 — 기존(direct·tagged) 우선, 신규 shortcode만 추가 후 재정렬(스펙 §4-4).
-	 * direct·tagged 병합과 달리 협찬 승격이 없다 — 해시태그 관측엔 유료협찬 플래그 자체가 없어서
-	 * 겹치는 shortcode에 더할 신호가 없다(캡션 키워드는 이미 기존 산지가 같은 캡션으로 판정했다).
-	 */
-	static List<BrandPostResponse> mergeHashtag(List<BrandPostResponse> existing, List<BrandPostResponse> hashtag) {
-		Map<String, BrandPostResponse> byCode = new LinkedHashMap<>();
-		for (BrandPostResponse post : existing) {
-			byCode.put(post.shortcode(), post);
-		}
-		for (BrandPostResponse post : hashtag) {
-			byCode.putIfAbsent(post.shortcode(), post);
 		}
 		return byCode.values().stream()
 				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn,

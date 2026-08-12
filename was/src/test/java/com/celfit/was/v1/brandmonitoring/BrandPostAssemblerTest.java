@@ -194,21 +194,6 @@ class BrandPostAssemblerTest {
 		assertThat(post.authorProfilePicUrl()).isEqualTo("/img/monitor-author/9001.jpg");
 	}
 
-	/** 해시태그 발견분도 동일 계약 — 썸네일만 아카이브 대상이고 게시자 프로필은 원본 그대로다(보강 보류). */
-	@Test
-	void 해시태그_게시물의_아카이브된_썸네일은_img_상대경로를_우선_서빙한다() {
-		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
-				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
-				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-				"monitor-hashtag-post/HHH.jpg");
-
-		var post = BrandPostAssembler.hashtagPost(100L, row, SWEPT_AT);
-
-		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-hashtag-post/HHH.jpg");
-		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
-	}
-
 	@Test
 	void 무효_스킴_이미지_URL은_null로_강등한다() {
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
@@ -307,103 +292,7 @@ class BrandPostAssemblerTest {
 		assertThat(post.commentsHidden()).isFalse();
 	}
 
-	// ---------- 해시태그 조립 ----------
-
-	@Test
-	void 해시태그_발견_게시물은_bh_접두_합성_id와_source_hashtag다() {
-		var post = BrandPostAssembler.hashtagPost(100L, hashtagRow("HHH"), SWEPT_AT);
-
-		assertThat(post.id()).isEqualTo("bh_HHH");
-		assertThat(post.shortcode()).isEqualTo("HHH");
-		assertThat(post.source()).isEqualTo("hashtag");
-		assertThat(post.brandAccountId()).isEqualTo("100");
-		assertThat(post.postUrl()).isEqualTo("https://www.instagram.com/reel/HHH/");
-		assertThat(post.contentType()).isEqualTo("reels");
-	}
-
-	@Test
-	void 해시태그_발견_게시물은_캡션과_author를_열거_행에서_그대로_옮긴다() {
-		var post = BrandPostAssembler.hashtagPost(100L, hashtagRow("HHH"), SWEPT_AT);
-
-		assertThat(post.caption()).isEqualTo("해시태그 캡션");
-		assertThat(post.thumbnailUrl()).isEqualTo("https://cdn/hashtag-thumb.jpg");
-		assertThat(post.authorUsername()).isEqualTo("hashtag_influencer");
-		assertThat(post.authorFullName()).isEqualTo("해시태그 인플루언서");
-		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
-		assertThat(post.authorProfileUrl()).isEqualTo("https://www.instagram.com/hashtag_influencer/");
-		// 프로필 보강이 없어 팔로워·인증 배지는 항상 모른다(스펙 §5 보류).
-		assertThat(post.authorFollowers()).isNull();
-		assertThat(post.authorIsVerified()).isFalse();
-	}
-
-	@Test
-	void 해시태그_발견_게시물은_스냅샷_보강이_없어_latestSnapshot이_null이고_commentsTotal은_열거값이다() {
-		var post = BrandPostAssembler.hashtagPost(100L, hashtagRow("HHH"), SWEPT_AT);
-
-		assertThat(post.latestSnapshot()).isNull();
-		assertThat(post.snapshots()).isEmpty();
-		assertThat(post.commentsTotal()).isEqualTo(3L);
-		assertThat(post.commentsHidden()).isFalse();
-		assertThat(post.commentsCollectedCount()).isZero();
-		assertThat(post.recentComments()).isEmpty();
-		assertThat(post.campaignIds()).isEmpty();
-		assertThat(post.trackingStatus()).isEqualTo("tracking");
-		assertThat(post.trackingEndedAt()).isNull();
-	}
-
-	@Test
-	void 해시태그_협찬은_캡션_키워드로만_판정한다() {
-		var sponsored = BrandPostAssembler.hashtagPost(100L,
-				hashtagRow("HHH", "2026-08-06T01:00:00Z", "오늘의 #협찬 후기"), SWEPT_AT);
-		var organic = BrandPostAssembler.hashtagPost(100L,
-				hashtagRow("III", "2026-08-06T01:00:00Z", "그냥 일상 기록"), SWEPT_AT);
-
-		assertThat(sponsored.sponsorship()).isEqualTo("sponsored");
-		assertThat(sponsored.isPaidPartnership()).isNull();
-		assertThat(organic.sponsorship()).isEqualTo("unknown");
-	}
-
 	// ---------- 병합 ----------
-
-	@Test
-	void mergeHashtag는_새_shortcode만_합류시킨다() {
-		var tagged = BrandPostAssembler.taggedPost(100L, taggedRow("AAA"), meta("AAA", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT);
-		var hashtag = BrandPostAssembler.hashtagPost(100L, hashtagRow("HHH"), SWEPT_AT);
-
-		var merged = BrandPostAssembler.mergeHashtag(List.of(tagged), List.of(hashtag));
-
-		assertThat(merged).hasSize(2);
-		assertThat(merged).extracting(BrandPostResponse::shortcode).contains("AAA", "HHH");
-	}
-
-	@Test
-	void mergeHashtag는_같은_shortcode의_기존_소스를_우선한다() {
-		var tagged = BrandPostAssembler.taggedPost(100L, taggedRow("HHH"), meta("HHH", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT);
-		var hashtagDup = BrandPostAssembler.hashtagPost(100L, hashtagRow("HHH"), SWEPT_AT);
-
-		var merged = BrandPostAssembler.mergeHashtag(List.of(tagged), List.of(hashtagDup));
-
-		assertThat(merged).hasSize(1);
-		assertThat(merged.get(0).source()).isEqualTo("tagged");
-	}
-
-	@Test
-	void mergeHashtag_결과도_업로드_최신순으로_재정렬된다() {
-		var older = BrandPostAssembler.taggedPost(100L, taggedRow("OLD", "2026-08-01T10:00:00Z"),
-				meta("OLD", "FEED", null), null, List.of(), List.of(), SWEPT_AT);
-		var newer = BrandPostAssembler.taggedPost(100L, taggedRow("NEW", "2026-08-06T10:00:00Z"),
-				meta("NEW", "FEED", null), null, List.of(), List.of(), SWEPT_AT);
-		var middle = BrandPostAssembler.hashtagPost(100L,
-				hashtagRow("MID", "2026-08-03T10:00:00Z", "일상"), SWEPT_AT);
-
-		var merged = BrandPostAssembler.mergeHashtag(List.of(older, newer), List.of(middle));
-
-		assertThat(merged).extracting(BrandPostResponse::shortcode).containsExactly("NEW", "MID", "OLD");
-	}
-
-	// ---------- 병합(direct·tagged) ----------
 
 	@Test
 	void 같은_shortcode가_tagged와_direct_양쪽이면_direct_한_건이다() {
@@ -467,17 +356,6 @@ class BrandPostAssemblerTest {
 	private static BrandReadRepository.BrandTaggedPostRow taggedRow(String code, String takenAt) {
 		return new BrandReadRepository.BrandTaggedPostRow(code, "glowdeep_92", "9001",
 				OffsetDateTime.parse(takenAt), OffsetDateTime.parse("2026-08-06T02:00:00Z"), 7L);
-	}
-
-	private static BrandReadRepository.BrandHashtagPostRow hashtagRow(String code) {
-		return hashtagRow(code, "2026-08-06T01:00:00Z", "해시태그 캡션");
-	}
-
-	private static BrandReadRepository.BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
-		return new BrandReadRepository.BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer",
-				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption,
-				"REELS", "https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-				null);
 	}
 
 	private static BrandReadRepository.BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
