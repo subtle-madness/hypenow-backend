@@ -21,14 +21,18 @@
 요지 — monitoring에 신규 3테이블(`brand_hashtag`·`brand_hashtag_exclusion`·`brand_hashtag_post`,
 V20260811085943) + 매일 브랜드 스윕에 합류하는 해시태그 파이프라인(Hiker `/v2/hashtag/medias/recent`
 열거 → 자사 태그·직접 태그·단순 멘션 필터 → Gemini(`BrandMentionJudge`)로 브랜드 관련성 판정,
-이름 충돌 방어·키 미설정 fail-closed) + 등록 시 태그 시드·백필 편승 + 제외 문자열 관리 API. was는
-브랜드 게시물 피드에 `source: "hashtag"`로 병합(스냅샷·댓글·팔로워 없음, id는 `bh_`+shortcode,
-같은 shortcode는 tagged·direct 우선), `meta.counts.hashtag` 신설, 신규
-`GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions` 프록시 — 상세 계약은
-[monitoring-was-contract.md §8](../contracts/monitoring-was-contract.md#8-브랜드-태그-모니터링-확장--해시태그-감지-v28-2026-08-11).
-커밋 범위 `8d5958f1`~(설계 문서 동기화 포함, monitoring 신규 테이블·파이프라인·was 피드 병합·제외
-문자열 프록시 전부 포함). 배포 env(`GEMINI_API_KEY`)는 `deploy/compose.yaml` monitoring 서비스에
-이번에 추가. **잔여**: FE 공유 필요 — "해시태그 발견" 배지·제외 문자열 관리 UI(계약 §8-4).
+이름 충돌 방어·키 미설정 fail-closed) + 등록 시 태그 시드·백필 편승 + 제외 문자열 관리 API. was
+표면은 **08-12 정정**(브랜치 `feat/brand-hashtag-separate-api`) — 최초 설계(08-11)는 브랜드 게시물
+피드에 `source: "hashtag"`로 병합했으나, FE 결정으로 **전용 API**
+`GET /v1/brand-monitoring/accounts/{accountId}/hashtag-posts`(슬림 `BrandHashtagPostResponse`,
+`BrandHashtagPostAssembler`)로 분리 — §6-1 목록·`meta.counts`는 병합 이전 상태로 되돌아갔다.
+신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions` 프록시는 불변 —
+상세 계약은
+[monitoring-was-contract.md §8](../contracts/monitoring-was-contract.md#8-브랜드-태그-모니터링-확장--해시태그-감지-v28-2026-08-11-08-12-api-형태-정정).
+커밋 범위 `8d5958f1`~(설계 문서 동기화 포함, monitoring 신규 테이블·파이프라인 + was 피드 병합 시도
++ 08-12 전용 API 분리 전부 포함). 배포 env(`GEMINI_API_KEY`)는 `deploy/compose.yaml` monitoring
+서비스에 이번에 추가. **잔여**: FE 공유 필요 — 해시태그 발견 게시물 별도 탭·제외 문자열 관리
+UI(계약 §8-4).
 
 ## 미결·후속
 

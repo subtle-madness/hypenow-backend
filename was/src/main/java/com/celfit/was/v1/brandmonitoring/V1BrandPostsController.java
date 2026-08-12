@@ -30,12 +30,17 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 브랜드 게시물 표면(스펙 §6-1·§6-2·§6-4) — 목록·상세 + 직접 등록 접수·상태 조회. 인증 필수,
- * monitoring 비활성 환경에선 표면 자체가 없다(빈 미등록 → 404, 계정 컨트롤러와 같은 게이트).
+ * 브랜드 게시물 표면(스펙 §6-1·§6-2·§6-4) — 목록(tagged·direct)·상세 + 직접 등록 접수·상태 조회 +
+ * 해시태그 발견 게시물 전용 목록(§8, 별도 탭 결정 2026-08-12). 인증 필수, monitoring 비활성
+ * 환경에선 표면 자체가 없다(빈 미등록 → 404, 계정 컨트롤러와 같은 게이트).
  *
  * <p>필터·정렬은 전부 메모리다 — 대상이 브랜드 1계정의 90일 윈도우(~105건 + 직접 등록분)라
  * 페이지네이션 없이 전량을 조립한 뒤 자른다. {@code meta.counts}는 필터 적용 <b>전</b> 전량 기준이라
  * FE가 탭 뱃지를 그릴 때 자기 필터 때문에 숫자가 흔들리지 않는다.
+ *
+ * <p>해시태그 발견 게시물은 §6-1 목록에 <b>병합하지 않는다</b>(2026-08-12 결정 — 별도 탭) — 스냅샷·
+ * 댓글·팔로워 보강이 없는 별개 성격의 데이터라 같은 필터·정렬·counts 계약에 억지로 끼워 맞추면
+ * null 필드가 늘어난다. {@link #hashtagPosts} 참조.
  */
 @RestController
 @RequestMapping("/v1/brand-monitoring")
@@ -62,13 +67,16 @@ public class V1BrandPostsController {
 	private final BrandReadRepository brandReadRepository;
 	private final BrandPostAssembler assembler;
 	private final V1BrandDirectPostService directPostService;
+	private final BrandHashtagPostAssembler hashtagPostAssembler;
 
 	public V1BrandPostsController(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
-			BrandPostAssembler assembler, V1BrandDirectPostService directPostService) {
+			BrandPostAssembler assembler, V1BrandDirectPostService directPostService,
+			BrandHashtagPostAssembler hashtagPostAssembler) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
 		this.directPostService = directPostService;
+		this.hashtagPostAssembler = hashtagPostAssembler;
 	}
 
 	@GetMapping("/accounts/{accountId}/posts")
@@ -84,7 +92,7 @@ public class V1BrandPostsController {
 		BrandAccountRow account = findAccountOrThrow(brandId);
 
 		String sourceFilter = normalizeFilter(source, "source", BrandPostAssembler.SOURCE_TAGGED,
-				BrandPostAssembler.SOURCE_DIRECT, BrandPostAssembler.SOURCE_HASHTAG);
+				BrandPostAssembler.SOURCE_DIRECT);
 		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
 		String sortKey = normalizeSort(sort);
@@ -101,6 +109,20 @@ public class V1BrandPostsController {
 				.toList();
 
 		return ApiResponse.ok(filtered, meta(filtered.size(), all, account));
+	}
+
+	/**
+	 * 해시태그 발견 게시물 전용 표면(스펙 §8, 별도 탭 결정 2026-08-12) — {@link #list}(tagged·direct)와
+	 * 완전히 분리된 API다. 병합·필터·정렬·counts가 없다 — {@link BrandHashtagPostAssembler}가 최신순
+	 * 전량(상한은 그쪽 정책)을 그대로 내려준다. 소유 검증은 목록과 같은 관용구(403·404).
+	 */
+	@GetMapping("/accounts/{accountId}/hashtag-posts")
+	public ApiResponse<List<BrandHashtagPostResponse>> hashtagPosts(
+			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
+		long brandId = parseAccountId(accountId);
+		requireOwnership(principal.getUserId(), brandId);
+		findAccountOrThrow(brandId);
+		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(brandId));
 	}
 
 	/**
@@ -167,8 +189,6 @@ public class V1BrandPostsController {
 				BrandPostAssembler.SOURCE_TAGGED));
 		counts.put(BrandPostAssembler.SOURCE_DIRECT, count(all, BrandPostResponse::source,
 				BrandPostAssembler.SOURCE_DIRECT));
-		counts.put(BrandPostAssembler.SOURCE_HASHTAG, count(all, BrandPostResponse::source,
-				BrandPostAssembler.SOURCE_HASHTAG));
 		counts.put(BrandSponsorshipClassifier.SPONSORED, count(all, BrandPostResponse::sponsorship,
 				BrandSponsorshipClassifier.SPONSORED));
 		counts.put(BrandSponsorshipClassifier.ORGANIC, count(all, BrandPostResponse::sponsorship,
