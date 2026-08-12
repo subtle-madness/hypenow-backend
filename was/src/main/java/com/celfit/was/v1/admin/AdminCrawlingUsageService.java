@@ -38,7 +38,7 @@ public class AdminCrawlingUsageService {
 
 	static final String UNIT_PRICE_KEY = "crawling.unit-price-usd";
 	/** 시드(V20260812100500)와 같은 값 — 행 유실 등 이상 상황의 폴백일 뿐 정본은 app_setting. */
-	static final BigDecimal DEFAULT_UNIT_PRICE = new BigDecimal("0.001");
+	static final BigDecimal DEFAULT_UNIT_PRICE = new BigDecimal("0.0006");
 
 	private static final Logger log = LoggerFactory.getLogger(AdminCrawlingUsageService.class);
 

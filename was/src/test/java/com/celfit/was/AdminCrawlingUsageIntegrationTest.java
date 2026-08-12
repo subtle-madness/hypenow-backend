@@ -92,8 +92,8 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 		jdbcClient.sql("DELETE FROM app.users").update();
 		// PUT 테스트가 전역 단가를 바꾼다 — 매 테스트 시드값으로 복원.
 		jdbcClient.sql("""
-				INSERT INTO app.app_setting (key, value) VALUES ('crawling.unit-price-usd', '0.001')
-				ON CONFLICT (key) DO UPDATE SET value = '0.001'
+				INSERT INTO app.app_setting (key, value) VALUES ('crawling.unit-price-usd', '0.0006')
+				ON CONFLICT (key) DO UPDATE SET value = '0.0006'
 				""").update();
 
 		insertUser(ADMIN_EMAIL, "ADMIN");
@@ -129,7 +129,7 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.data.totalCalls").value(0))
 				.andExpect(jsonPath("$.data.monthCalls").value(0))
 				.andExpect(jsonPath("$.data.todayCalls").value(0))
-				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.001));
+				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.0006));
 	}
 
 	@Test
@@ -162,7 +162,7 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 				.andExpect(jsonPath("$.data.totalCalls").value(2641))
 				.andExpect(jsonPath("$.data.monthCalls").value(300))
 				.andExpect(jsonPath("$.data.todayCalls").value(12))
-				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.001));
+				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.0006));
 	}
 
 	// --- PUT 단가 ---
@@ -199,7 +199,7 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 
 		// 거부된 요청은 저장값을 건드리지 않는다.
 		mockMvc.perform(get("/v1/admin/users/%d/crawling-usage".formatted(targetUserId)).cookie(adminSession))
-				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.001));
+				.andExpect(jsonPath("$.data.unitPriceUsd").value(0.0006));
 	}
 
 	// --- 헬퍼 ---

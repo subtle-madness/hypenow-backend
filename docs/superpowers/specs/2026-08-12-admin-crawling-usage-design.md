@@ -32,8 +32,8 @@ body `{ "unitPriceUsd": 0.001 }` — 전역 단가(유저별 아님) 수정, 즉
 
 - 0 이상의 유한한 숫자만. 음수·누락·null → 400 `VALIDATION_FAILED`(서비스 판정),
   `"NaN"`·`"abc"` 등 숫자가 아닌 본문 → 400 `VALIDATION_FAILED`(본문 파싱 단계).
-- 저장은 `app.app_setting['crawling.unit-price-usd']` — 초기 시드 `0.001`
-  (V20260812100500, Hiker 계약 단가 기준 임시값 — 운영자가 PUT으로 즉시 조정).
+- 저장은 `app.app_setting['crawling.unit-price-usd']` — 초기 시드 `0.0006`
+  (V20260812100500, Hiker 계약 단가 실측치 — DECISIONS 08-06 비용 산정과 동일 값. 운영자가 PUT으로 즉시 조정 가능).
 - 감사 흔적은 애플리케이션 로그(`AdminCrawlingCostController` — Loki `{service="was"}`)로
   남긴다. `app.admin_audit_logs`는 act-as 전용(target_user_id NOT NULL)이라 쓰지 않는다.
 

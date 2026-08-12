@@ -41,7 +41,7 @@ class AdminCrawlingUsageServiceTest {
 	@BeforeEach
 	void setUp() {
 		given(settings.findValue(AdminCrawlingUsageService.UNIT_PRICE_KEY))
-				.willReturn(Optional.of("0.001"));
+				.willReturn(Optional.of("0.0006"));
 	}
 
 	private AdminCrawlingUsageService serviceAt(String utcInstant) {
@@ -71,7 +71,7 @@ class AdminCrawlingUsageServiceTest {
 
 		AdminCrawlingUsage usage = serviceAt("2026-08-12T03:00:00Z").usageFor(USER_ID);
 
-		assertThat(usage).isEqualTo(new AdminCrawlingUsage(0, 0, 0, new BigDecimal("0.001")));
+		assertThat(usage).isEqualTo(new AdminCrawlingUsage(0, 0, 0, new BigDecimal("0.0006")));
 		then(reads).shouldHaveNoInteractions();
 	}
 
@@ -81,7 +81,7 @@ class AdminCrawlingUsageServiceTest {
 		AdminCrawlingUsageService service = new AdminCrawlingUsageService(links, Optional.empty(),
 				settings, Clock.fixed(Instant.parse("2026-08-12T03:00:00Z"), ZoneOffset.UTC));
 
-		assertThat(service.usageFor(USER_ID)).isEqualTo(AdminCrawlingUsage.empty(new BigDecimal("0.001")));
+		assertThat(service.usageFor(USER_ID)).isEqualTo(AdminCrawlingUsage.empty(new BigDecimal("0.0006")));
 	}
 
 	@Test
