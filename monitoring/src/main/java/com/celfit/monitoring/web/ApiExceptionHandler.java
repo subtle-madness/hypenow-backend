@@ -70,13 +70,7 @@ public class ApiExceptionHandler {
 		return body(HttpStatus.CONFLICT, "INVALID_STATE", e.getMessage());
 	}
 
-	/** 제외 문자열 전체 교체가 빈 목록 — 비소급 오염 방지(EmptyExclusionTermsException 참조). */
-	@ExceptionHandler(EmptyExclusionTermsException.class)
-	public ResponseEntity<ApiError> handleEmptyExclusionTerms(EmptyExclusionTermsException e) {
-		return body(HttpStatus.UNPROCESSABLE_CONTENT, "VALIDATION", e.getMessage());
-	}
-
-	/** 태그 셋 전체 교체가 빈 목록이거나 유효하지 않은 문자를 포함 — InvalidHashtagException 참조. */
+	/** 태그 추가(POST)가 빈 입력이거나 유효하지 않은 문자를 포함 — InvalidHashtagException 참조. */
 	@ExceptionHandler(InvalidHashtagException.class)
 	public ResponseEntity<ApiError> handleInvalidHashtag(InvalidHashtagException e) {
 		return body(HttpStatus.UNPROCESSABLE_CONTENT, "VALIDATION", e.getMessage());

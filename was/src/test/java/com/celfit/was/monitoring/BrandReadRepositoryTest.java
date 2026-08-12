@@ -44,7 +44,8 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		jdbc = JdbcClient.create(dataSource);
 		jdbc.sql("""
 				TRUNCATE brand_tagged_post, brand_account, brand_post_meta, brand_post_snapshot,
-				         brand_post_comment, author_profile, brand_hashtag_post RESTART IDENTITY CASCADE
+				         brand_post_comment, author_profile, brand_hashtag_post, brand_hashtag_exclusion
+				         RESTART IDENTITY CASCADE
 				""")
 				.update();
 		repository = new BrandReadRepository(jdbc);
@@ -378,5 +379,39 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(mine, now.minusDays(365), 2000);
 
 		assertThat(rows).extracting(BrandHashtagPostRow::shortCode).containsExactly("MINE1");
+	}
+
+	// ---------- 자사 제외 문자열 활성 조회(2026-08-12 태그 관리 확장 짝) ----------
+
+	@Test
+	void 활성_제외_문자열만_읽고_삭제된_행은_제외한다() {
+		long brandId = seedBrand("brand_official");
+		jdbc.sql("""
+				INSERT INTO brand_hashtag_exclusion (brand_id, term, deleted_at)
+				VALUES (:brandId, 'cclime', NULL), (:brandId, 'deleted_term', now())
+				""")
+				.param("brandId", brandId).update();
+
+		List<String> terms = repository.findActiveExclusionTerms(brandId);
+
+		assertThat(terms).containsExactly("cclime");
+	}
+
+	@Test
+	void 제외_문자열_조회는_다른_브랜드_행을_섞지_않는다() {
+		long mine = seedBrand("brand_mine");
+		long other = seedBrand("brand_other");
+		jdbc.sql("""
+				INSERT INTO brand_hashtag_exclusion (brand_id, term) VALUES (:mine, 'mine_term'), (:other, 'other_term')
+				""")
+				.param("mine", mine).param("other", other).update();
+
+		assertThat(repository.findActiveExclusionTerms(mine)).containsExactly("mine_term");
+	}
+
+	@Test
+	void 제외_문자열이_없으면_빈_목록이다() {
+		long brandId = seedBrand("brand_official");
+		assertThat(repository.findActiveExclusionTerms(brandId)).isEmpty();
 	}
 }

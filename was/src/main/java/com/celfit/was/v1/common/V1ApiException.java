@@ -25,6 +25,11 @@ public class V1ApiException extends RuntimeException {
 		return new V1ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", message);
 	}
 
+	/** 코드 지정 404 — notFound()의 고정 코드(NOT_FOUND)와 달리 계약 코드를 직접 든다(예: USER_NOT_FOUND). */
+	public static V1ApiException notFound(String code, String message) {
+		return new V1ApiException(HttpStatus.NOT_FOUND, code, message);
+	}
+
 	public static V1ApiException validation(String message) {
 		return new V1ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", message);
 	}
