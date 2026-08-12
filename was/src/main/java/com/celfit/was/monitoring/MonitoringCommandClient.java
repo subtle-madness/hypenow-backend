@@ -55,10 +55,13 @@ public class MonitoringCommandClient {
 	 *
 	 * <p>brandName은 해시태그 브랜드명 태그 감지의 재료(스펙 2026-08-11 §2) — 호출부가 브랜드 유형
 	 * 유저의 company_name만 채워 넣고, 그 외에는 null을 보낸다.
+	 *
+	 * <p>collectionMonths는 수집 창(1|3|6|12) — 이미 활성인 브랜드에 더 큰 값이면 monitoring이 기간 확장으로 처리한다.
 	 */
-	public BrandRegisterResult registerBrand(String username, String brandName) {
+	public BrandRegisterResult registerBrand(String username, String brandName, int collectionMonths) {
 		return exchange(() -> restClient.post().uri("/api/brands")
-				.body(new BrandRegisterRequest(username, brandName)).retrieve().body(BrandRegisterResult.class));
+				.body(new BrandRegisterRequest(username, brandName, collectionMonths))
+				.retrieve().body(BrandRegisterResult.class));
 	}
 
 	/**
@@ -132,7 +135,7 @@ public class MonitoringCommandClient {
 	record ShareResolveRequest(String url) {
 	}
 
-	record BrandRegisterRequest(String username, String brandName) {
+	record BrandRegisterRequest(String username, String brandName, int collectionMonths) {
 	}
 
 	/** monitoring BrandController.BrandRegisterResponse와 동형 — followers는 등록 시점 관측값(null 가능). */

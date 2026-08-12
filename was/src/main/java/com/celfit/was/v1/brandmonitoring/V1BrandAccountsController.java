@@ -80,7 +80,9 @@ public class V1BrandAccountsController {
 			@RequestBody(required = false) BrandAccountRegisterRequest body) {
 		String username = body == null ? null : body.username();
 		String accountType = body == null ? null : body.accountType();
-		BrandAccountResponse response = service.register(principal.getUserId(), username, accountType);
+		Integer collectionMonths = body == null ? null : body.collectionMonths();
+		BrandAccountResponse response = service.register(principal.getUserId(), username, accountType,
+				collectionMonths);
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
 	}
 
@@ -125,8 +127,8 @@ public class V1BrandAccountsController {
 		}
 	}
 
-	/** 등록 요청 본문 — 계정명(정규화·검증은 BrandUsername)과 타입(생략 시 own). */
-	public record BrandAccountRegisterRequest(String username, String accountType) {
+	/** 등록 요청 본문 — 계정명·타입(생략 시 own)·수집 창(생략 시 12, 값 공간은 BrandCollectionMonths). */
+	public record BrandAccountRegisterRequest(String username, String accountType, Integer collectionMonths) {
 	}
 
 	/** 타입 변경 요청 본문 — own|competitor. */

@@ -43,13 +43,14 @@ class MonitoringBrandCommandClientTest {
 				.andExpect(method(HttpMethod.POST))
 				.andExpect(jsonPath("$.username").value("brand_official"))
 				.andExpect(jsonPath("$.brandName").value("브랜드코퍼레이션"))
+				.andExpect(jsonPath("$.collectionMonths").value(3))
 				.andRespond(withStatus(HttpStatus.CREATED)
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("""
 								{ "brandId": 42, "username": "brand_official", "followers": 12345, "status": "ACTIVE" }
 								"""));
 
-		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", "브랜드코퍼레이션");
+		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", "브랜드코퍼레이션", 3);
 
 		assertThat(result.brandId()).isEqualTo(42L);
 		assertThat(result.username()).isEqualTo("brand_official");
@@ -67,7 +68,7 @@ class MonitoringBrandCommandClientTest {
 						{ "brandId": 42, "username": "brand_official", "followers": null, "status": "ACTIVE" }
 						""", MediaType.APPLICATION_JSON));
 
-		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", null);
+		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", null, 12);
 
 		assertThat(result.brandId()).isEqualTo(42L);
 		assertThat(result.followers()).isNull();
@@ -80,7 +81,7 @@ class MonitoringBrandCommandClientTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("{ \"code\": \"PRIVATE_ACCOUNT\", \"message\": \"비공개 계정\" }"));
 
-		assertThatThrownBy(() -> client.registerBrand("private_brand", null))
+		assertThatThrownBy(() -> client.registerBrand("private_brand", null, 12))
 				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
 					assertThat(e.code()).isEqualTo("PRIVATE_ACCOUNT");
 					assertThat(e.httpStatus()).isEqualTo(422);
@@ -92,7 +93,7 @@ class MonitoringBrandCommandClientTest {
 		server.expect(requestTo(BASE + "/api/brands"))
 				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
 
-		assertThatThrownBy(() -> client.registerBrand("brand_official", null))
+		assertThatThrownBy(() -> client.registerBrand("brand_official", null, 12))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
 

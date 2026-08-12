@@ -66,8 +66,12 @@ public class V1BrandAccountService {
 	 *
 	 * <p>brandName은 own 연결일 때만 전달한다(#406 경쟁사 계정 타입 게이트, {@link #brandNameOf} 참고) —
 	 * competitor 연결에 내 회사명을 넘기면 남의(경쟁사) 브랜드에 내 이름이 해시태그로 시드된다.
+	 *
+	 * <p>collectionMonths(2026-08-12)는 자산 레벨 값이라 이미 연결된 브랜드 재요청도 <b>더 큰 값이면</b>
+	 * 기간 확장으로 monitoring을 다시 부른다(아래 게이트) — 같거나 작은 값은 현행 멱등 경로 그대로다.
 	 */
-	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType) {
+	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType,
+			Integer rawCollectionMonths) {
 		String username = BrandUsername.normalize(rawUsername);
 		BrandUsername.validate(username);
 		String accountType = BrandAccountType.orDefault(rawAccountType);
@@ -75,13 +79,25 @@ public class V1BrandAccountService {
 		if (!BrandAccountType.isValid(accountType)) {
 			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
 		}
+		int months = BrandCollectionMonths.orDefault(rawCollectionMonths);
+		if (!BrandCollectionMonths.isValid(months)) {
+			throw V1ApiException.validation("collectionMonths 값이 올바르지 않아요.");
+		}
 		Optional<Long> alreadyLinked = linkTransaction.precheck(userId, username, accountType);
 		if (alreadyLinked.isPresent()) {
-			return get(userId, alreadyLinked.get());
+			long brandId = alreadyLinked.get();
+			// 기간 확장(스펙 §3) — 자산 창보다 클 때만 monitoring 재호출. 사전 게이트일 뿐 정본 판정은
+			// monitoring replay가 한 번 더 한다(경합으로 게이트가 낡아도 결과는 같다). 같거나 작은 값은
+			// 현행 멱등 경로 그대로 monitoring 콜 0이다(축소 없음 — 수집된 사실이 정본).
+			if (months > findAccountOrThrow(brandId).collectionMonths()) {
+				String expandBrandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
+				translate(() -> commandClient.registerBrand(username, expandBrandName, months));
+			}
+			return get(userId, brandId);
 		}
 
 		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
-		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName));
+		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName, months));
 		try {
 			linkTransaction.link(userId, registered.brandId(), username, accountType);
 		} catch (RuntimeException e) {
