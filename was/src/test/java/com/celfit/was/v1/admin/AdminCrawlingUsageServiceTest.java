@@ -12,6 +12,8 @@ import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandCallDailyRow;
+import com.celfit.was.monitoring.MonitoringReadRepository;
+import com.celfit.was.monitoring.MonitoringReadRepository.UserCallDailyRow;
 import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.common.V1ApiException;
 import java.math.BigDecimal;
@@ -36,6 +38,7 @@ class AdminCrawlingUsageServiceTest {
 
 	private final BrandLinkRepository links = mock(BrandLinkRepository.class);
 	private final BrandReadRepository reads = mock(BrandReadRepository.class);
+	private final MonitoringReadRepository monitoringReads = mock(MonitoringReadRepository.class);
 	private final AppSettingRepository settings = mock(AppSettingRepository.class);
 
 	@BeforeEach
@@ -46,8 +49,8 @@ class AdminCrawlingUsageServiceTest {
 
 	private AdminCrawlingUsageService serviceAt(String utcInstant) {
 		// 서비스가 KST로 재조정(clock.withZone)하므로 픽스처의 시간대는 무관하다 — UTC로 준다.
-		return new AdminCrawlingUsageService(links, Optional.of(reads), settings,
-				Clock.fixed(Instant.parse(utcInstant), ZoneOffset.UTC));
+		return new AdminCrawlingUsageService(links, Optional.of(reads), Optional.of(monitoringReads),
+				settings, Clock.fixed(Instant.parse(utcInstant), ZoneOffset.UTC));
 	}
 
 	/** 활성 연결(해제 없음). accountType은 집계와 무관 — own 고정. */
@@ -79,9 +82,32 @@ class AdminCrawlingUsageServiceTest {
 	void monitoring_비활성이면_집계는_0으로_폴백한다() {
 		given(links.findAllByUser(USER_ID)).willReturn(List.of(activeLink(1, "2026-01-01T00:00:00+09:00")));
 		AdminCrawlingUsageService service = new AdminCrawlingUsageService(links, Optional.empty(),
-				settings, Clock.fixed(Instant.parse("2026-08-12T03:00:00Z"), ZoneOffset.UTC));
+				Optional.empty(), settings, Clock.fixed(Instant.parse("2026-08-12T03:00:00Z"), ZoneOffset.UTC));
 
 		assertThat(service.usageFor(USER_ID)).isEqualTo(AdminCrawlingUsage.empty(new BigDecimal("0.0006")));
+	}
+
+	@Test
+	void 캠페인_콘텐츠_콜은_브랜드_몫에_합산된다() {
+		// 브랜드 연결 없이 캠페인·콘텐츠 등록만 있는 유저(스크린샷 사례) — 타깃 몫만으로도 집계돼야 한다.
+		given(links.findAllByUser(USER_ID)).willReturn(List.of());
+		given(monitoringReads.findDailyCallCounts(USER_ID)).willReturn(List.of(
+				new UserCallDailyRow(LocalDate.parse("2026-08-11"), 90),
+				new UserCallDailyRow(LocalDate.parse("2026-08-12"), 4)));
+
+		AdminCrawlingUsage targetOnly = serviceAt("2026-08-12T03:00:00Z").usageFor(USER_ID);
+		assertThat(targetOnly.totalCalls()).isEqualTo(94);
+		assertThat(targetOnly.monthCalls()).isEqualTo(94);
+		assertThat(targetOnly.todayCalls()).isEqualTo(4);
+
+		// 브랜드 몫이 같이 있으면 단순 합 — 두 파이프라인의 KST 경계 규칙이 동일하다.
+		given(links.findAllByUser(USER_ID)).willReturn(List.of(activeLink(1, "2026-01-01T00:00:00+09:00")));
+		given(reads.findDailyCallCounts(anyCollection())).willReturn(List.of(row(1, "2026-07-31", 100)));
+
+		AdminCrawlingUsage merged = serviceAt("2026-08-12T03:00:00Z").usageFor(USER_ID);
+		assertThat(merged.totalCalls()).isEqualTo(194);
+		assertThat(merged.monthCalls()).isEqualTo(94);   // 07-31 브랜드 콜은 지난달 — 이번 달 제외
+		assertThat(merged.todayCalls()).isEqualTo(4);
 	}
 
 	@Test

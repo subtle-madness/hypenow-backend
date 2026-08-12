@@ -127,11 +127,13 @@ class MonitoringCommandClientTest {
 		server.expect(requestTo(BASE + "/api/share/resolve"))
 				.andExpect(method(HttpMethod.POST))
 				.andExpect(jsonPath("$.url").value("https://www.instagram.com/share/reel/AbCdEfG/"))
+				// 콜 집계 귀속용 userId(2026-08-12 비용 범위 확장) — 본문에 함께 실린다.
+				.andExpect(jsonPath("$.userId").value(7))
 				.andRespond(withSuccess("""
 						{ "shortCode": "DbV7LgZsKG8", "username": "rarebeauty", "contentType": "REELS" }
 						""", MediaType.APPLICATION_JSON));
 
-		ShareResolveResult result = client.resolveShare("https://www.instagram.com/share/reel/AbCdEfG/");
+		ShareResolveResult result = client.resolveShare("https://www.instagram.com/share/reel/AbCdEfG/", 7L);
 
 		assertThat(result.shortCode()).isEqualTo("DbV7LgZsKG8");
 		assertThat(result.username()).isEqualTo("rarebeauty");
@@ -146,7 +148,7 @@ class MonitoringCommandClientTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("{ \"code\": \"SHARE_LINK_UNRESOLVED\", \"message\": \"링크를 해소할 수 없음\" }"));
 
-		assertThatThrownBy(() -> client.resolveShare("https://www.instagram.com/share/reel/bad/"))
+		assertThatThrownBy(() -> client.resolveShare("https://www.instagram.com/share/reel/bad/", 7L))
 				.isInstanceOfSatisfying(MonitoringApiException.class,
 						e -> assertThat(e.code()).isEqualTo("SHARE_LINK_UNRESOLVED"));
 	}

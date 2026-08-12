@@ -1,0 +1,75 @@
+# config.alloy 검증 리그 — 운영의 컨테이너 이름·네트워크 이름을 흉내내 relabel 규칙을 그대로 태운다.
+#
+# ⚠️ 로컬 맥 전용. 서버(운영 도커)에서 실행 금지 — deploy-was-1 등 운영과 같은 이름 공간을 쓴다.
+#
+#   docker compose -p alloytest -f deploy/alloy/test/compose.test.yaml up -d
+#   docker compose -p alloytest -f deploy/alloy/test/compose.test.yaml down -v
+networks:
+  prod:
+    name: deploy_prod
+
+services:
+  # compose 서비스 키가 곧 테스트 입력이다 — config.alloy의 service 라벨은 compose 서비스명
+  # 라벨에서 오므로, 운영과 같은 이름(was·monitoring·caddy)이어야 JVM/비-JVM 분기가 걸린다.
+  was:
+    image: alpine:3.20
+    container_name: deploy-was-1
+    networks: [prod]
+    entrypoint: ["sh", "/fixtures/emit-was.sh"]
+    volumes:
+      - ./fixtures:/fixtures:ro
+
+  monitoring:
+    image: alpine:3.20
+    container_name: deploy-monitoring-1
+    networks: [prod]
+    entrypoint: ["sh", "/fixtures/emit-monitoring.sh"]
+    volumes:
+      - ./fixtures:/fixtures:ro
+
+  # 비-JVM 분기 회귀 확인용 — 이 컨테이너 로그는 multiline 파이프라인을 타면 안 된다.
+  caddy:
+    image: alpine:3.20
+    container_name: deploy-caddy-1
+    networks: [prod]
+    entrypoint: ["sh", "/fixtures/emit-caddy.sh"]
+    volumes:
+      - ./fixtures:/fixtures:ro
+
+  # 서비스 키는 loki로 둔다 — config.alloy의 loki.write url(http://loki:3100)이 이 이름으로 붙는다.
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: alloytest-loki
+    networks: [prod]
+    ports:
+      - "127.0.0.1:3100:3100"
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ../../loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+
+  alloy:
+    image: grafana/alloy:v1.8.2
+    container_name: alloytest-alloy
+    networks: [prod]
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    volumes:
+      - ../config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # 대시보드 JSON 확인용(Task 2·3). 운영과 달리 익명 Admin — 로컬 루프백 전용이라 인증 불필요.
+  # 프로비저닝은 Loki 데이터소스와 대시보드만 마운트한다(postgres 데이터소스·알림 규칙은
+  # DB가 없어 기동 로그에 에러를 남기므로 의도적으로 제외).
+  grafana:
+    image: grafana/grafana:13.1.1
+    container_name: alloytest-grafana
+    networks: [prod]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ../../grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../../grafana/provisioning/datasources/observability.yaml:/etc/grafana/provisioning/datasources/observability.yaml:ro

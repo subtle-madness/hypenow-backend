@@ -32,10 +32,14 @@ public class MonitoringCommandClient {
 				.body(request).retrieve().body(RegisterResult.class));
 	}
 
-	/** 공유 단축 링크 해소(계약 §2-6) — 등록과 분리된 전처리 API. 등록 전 shortcode를 얻을 때 호출한다. */
-	public ShareResolveResult resolveShare(String url) {
+	/**
+	 * 공유 단축 링크 해소(계약 §2-6) — 등록과 분리된 전처리 API. 등록 전 shortcode를 얻을 때 호출한다.
+	 * userId는 크롤링 콜 집계 귀속용(2026-08-12 비용 범위 확장) — monitoring이 이 콜을 그 유저의
+	 * target_call_count에 계상한다. null이어도 해소는 동작한다(그 콜만 비용 미집계).
+	 */
+	public ShareResolveResult resolveShare(String url, Long userId) {
 		return exchange(() -> restClient.post().uri("/api/share/resolve")
-				.body(new ShareResolveRequest(url)).retrieve().body(ShareResolveResult.class));
+				.body(new ShareResolveRequest(url, userId)).retrieve().body(ShareResolveResult.class));
 	}
 
 	public ExtendResult extend(long targetId, OffsetDateTime expiresAt) {
@@ -98,6 +102,23 @@ public class MonitoringCommandClient {
 				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
 	}
 
+	/**
+	 * 브랜드 태그 셋 조회(BrandController §태그 관리, 2026-08-12) — 활성 태그 전체.
+	 * 404(BRAND_NOT_FOUND)는 제외 문자열 조회와 동형으로 MonitoringApiException으로 승격된다.
+	 */
+	public List<String> getHashtagTags(String username) {
+		HashtagTagsBody body = exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-tags", username)
+				.retrieve().body(HashtagTagsBody.class));
+		return body == null || body.tags() == null ? List.of() : body.tags();
+	}
+
+	/** 태그 셋 전체 교체(PUT 계약) — tags는 monitoring이 정규화(trim·#제거·소문자·중복 제거) 후 저장. */
+	public void putHashtagTags(String username, List<String> tags) {
+		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-tags", username)
+				.body(new HashtagTagsBody(tags)).retrieve().toBodilessEntity());
+	}
+
 	private <T> T exchange(Supplier<T> call) {
 		try {
 			return call.get();
@@ -129,7 +150,7 @@ public class MonitoringCommandClient {
 	record ErrorBody(String code, String message) {
 	}
 
-	record ShareResolveRequest(String url) {
+	record ShareResolveRequest(String url, Long userId) {
 	}
 
 	record BrandRegisterRequest(String username, String brandName) {
@@ -141,5 +162,9 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.HashtagExclusionsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
 	record HashtagExclusionsBody(List<String> terms) {
+	}
+
+	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
+	record HashtagTagsBody(List<String> tags) {
 	}
 }

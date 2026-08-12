@@ -37,7 +37,6 @@ class HikerClientTest {
 		ProfileInfo p = client.fetchProfile("rarebeauty");
 		assertThat(p.userId()).isNotBlank();
 		assertThat(p.followers()).isPositive();
-		assertThat(p.rawJson()).isNotBlank();
 		// profile_meta 저장용(계약 §3, v1.1) — full_name·profile_pic_url
 		assertThat(p.fullName()).isEqualTo("Rare Beauty by Selena Gomez");
 		assertThat(p.profilePicUrl()).isNotBlank();

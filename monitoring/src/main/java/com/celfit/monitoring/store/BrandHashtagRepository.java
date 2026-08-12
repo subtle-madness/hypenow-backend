@@ -4,6 +4,7 @@ import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,14 +24,42 @@ public class BrandHashtagRepository {
 		this.db = db;
 	}
 
+	/** 활성 태그만(deleted_at IS NULL) — 스윕·시드 판정 재료. 유저가 지운 태그는 여기서 빠진다. */
 	public List<String> findTags(long brandId) {
-		return db.queryForList("SELECT tag FROM brand_hashtag WHERE brand_id = ? ORDER BY created_at, tag",
+		return db.queryForList(
+				"SELECT tag FROM brand_hashtag WHERE brand_id = ? AND deleted_at IS NULL ORDER BY created_at, tag",
 				String.class, brandId);
 	}
 
+	/**
+	 * 등록·replay 자동 시드 전용 — ON CONFLICT DO NOTHING이라 유저가 지운(tombstone, deleted_at
+	 * 채워짐) 태그는 되살아나지 않는다. 되살리려면 {@link #replaceTags}(재활성 UPSERT)를 쓸 것.
+	 */
 	public void insertTags(long brandId, Collection<String> tags) {
 		for (String tag : tags) {
 			db.update("INSERT INTO brand_hashtag (brand_id, tag) VALUES (?, ?) ON CONFLICT DO NOTHING",
+					brandId, tag);
+		}
+	}
+
+	/**
+	 * 태그 셋 전체 교체(유저 관리 API, 2026-08-12) — tombstone 의미론. 새 목록에 없는 기존 활성
+	 * 태그는 deleted_at을 채워 비활성화(행은 남아 자동 시드가 못 되살림), 새 목록의 태그는
+	 * UPSERT로 삽입하거나 tombstone을 해제(deleted_at = NULL)해 재활성한다.
+	 */
+	@Transactional
+	public void replaceTags(long brandId, List<String> tags) {
+		Set<String> newTags = new LinkedHashSet<>(tags);
+		for (String existing : findTags(brandId)) {
+			if (!newTags.contains(existing)) {
+				db.update("UPDATE brand_hashtag SET deleted_at = now() WHERE brand_id = ? AND tag = ?",
+						brandId, existing);
+			}
+		}
+		for (String tag : newTags) {
+			db.update("""
+					INSERT INTO brand_hashtag (brand_id, tag) VALUES (?, ?)
+					ON CONFLICT (brand_id, tag) DO UPDATE SET deleted_at = NULL""",
 					brandId, tag);
 		}
 	}
