@@ -116,6 +116,23 @@ public class V1BrandAccountsController {
 		return ResponseEntity.noContent().build();
 	}
 
+	/** 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12, monitoring BrandController 프록시) — 소유 브랜드만. */
+	@GetMapping("/{accountId}/hashtag-tags")
+	public ApiResponse<BrandHashtagTagsResponse> getHashtagTags(
+			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
+		List<String> tags = service.getHashtagTags(principal.getUserId(), parseAccountId(accountId));
+		return ApiResponse.ok(new BrandHashtagTagsResponse(tags));
+	}
+
+	/** 해시태그 태그 셋 전체 교체 — 204(monitoring PUT 계약과 동형). */
+	@PutMapping("/{accountId}/hashtag-tags")
+	public ResponseEntity<Void> putHashtagTags(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) HashtagTagsRequest body) {
+		List<String> tags = body == null ? null : body.tags();
+		service.putHashtagTags(principal.getUserId(), parseAccountId(accountId), tags);
+		return ResponseEntity.noContent().build();
+	}
+
 	/** accountId는 문자열 path 파라미터라 숫자가 아니면 존재할 수 없는 id → 404(V1CampaignController 관용구). */
 	private static long parseAccountId(String raw) {
 		try {
@@ -135,5 +152,9 @@ public class V1BrandAccountsController {
 
 	/** 제외 문자열 교체 요청 본문 — terms null은 서비스에서 빈 목록으로 접는다. */
 	public record HashtagExclusionsRequest(List<String> terms) {
+	}
+
+	/** 태그 셋 교체 요청 본문 — tags null은 서비스에서 빈 목록으로 접는다(monitoring이 422로 거부). */
+	public record HashtagTagsRequest(List<String> tags) {
 	}
 }

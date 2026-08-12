@@ -102,6 +102,23 @@ public class MonitoringCommandClient {
 				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
 	}
 
+	/**
+	 * 브랜드 태그 셋 조회(BrandController §태그 관리, 2026-08-12) — 활성 태그 전체.
+	 * 404(BRAND_NOT_FOUND)는 제외 문자열 조회와 동형으로 MonitoringApiException으로 승격된다.
+	 */
+	public List<String> getHashtagTags(String username) {
+		HashtagTagsBody body = exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-tags", username)
+				.retrieve().body(HashtagTagsBody.class));
+		return body == null || body.tags() == null ? List.of() : body.tags();
+	}
+
+	/** 태그 셋 전체 교체(PUT 계약) — tags는 monitoring이 정규화(trim·#제거·소문자·중복 제거) 후 저장. */
+	public void putHashtagTags(String username, List<String> tags) {
+		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-tags", username)
+				.body(new HashtagTagsBody(tags)).retrieve().toBodilessEntity());
+	}
+
 	private <T> T exchange(Supplier<T> call) {
 		try {
 			return call.get();
@@ -145,5 +162,9 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.HashtagExclusionsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
 	record HashtagExclusionsBody(List<String> terms) {
+	}
+
+	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
+	record HashtagTagsBody(List<String> tags) {
 	}
 }
