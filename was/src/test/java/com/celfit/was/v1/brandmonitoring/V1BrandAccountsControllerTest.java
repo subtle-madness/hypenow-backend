@@ -531,6 +531,29 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
+	void competitor_확장_재호출도_brandName_없이_전달한다() throws Exception {
+		// #406 경쟁사 계정 타입 게이트는 신규 등록뿐 아니라 확장 재호출에도 걸려야 한다 — brand 유형
+		// 유저(company_name 실재)의 competitor 확장에 회사명을 실으면 남의 브랜드 해시태그 셋이
+		// 오염되고, 그 브랜드를 공유하는 모든 사용자에게 퍼져 SQL 외 복구가 불가능하다.
+		given(userRepository.findProfileById(7L)).willReturn(Optional.of(profileOf("brand", "끌리메")));
+		given(linkRepository.findAllActiveByUser(7L))
+				.willReturn(List.of(link(7L, 100L, "lizda_official", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(expandingRowMonths(100L, 6)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.COMPETITOR)));
+		given(commandClient.registerBrand("lizda_official", null, 12))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\", \"accountType\": \"competitor\","
+								+ " \"collectionMonths\": 12}"))
+				.andExpect(status().isAccepted());
+
+		then(commandClient).should().registerBrand("lizda_official", null, 12);
+	}
+
+	@Test
 	void 이미_연결된_계정의_같거나_작은_창_재등록은_monitoring_호출이_없다() throws Exception {
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));   // 자산 12
