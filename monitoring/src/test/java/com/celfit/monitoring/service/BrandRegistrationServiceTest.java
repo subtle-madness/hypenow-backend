@@ -87,6 +87,10 @@ class BrandRegistrationServiceTest {
 		@Override
 		public void touchSwept(long brandId, LocalDate on) {
 			touched.add(brandId);
+			// 실 UPDATE와 동일하게 행에도 반영한다 — 확장 백필이 "재조회한 행"(lastSweptOn 비워짐)으로
+			// 도는지를 스텁 행이 stale인 채로는 구분할 수 없다.
+			rows.replaceAll((u, r) -> r.id() == brandId
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), on, r.collectionMonths()) : r);
 		}
 
 		@Override
@@ -97,6 +101,8 @@ class BrandRegistrationServiceTest {
 
 	private static final class StubCollect extends BrandCollectService {
 		final List<String> coreSwept = new ArrayList<>();
+		/** sweepCore가 실제로 받은 행 — 확장 백필이 stale 행이 아닌 재조회 행으로 도는지 판별용. */
+		final List<BrandRow> coreRows = new ArrayList<>();
 		final List<String> enriched = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
 		final Set<String> enrichFailing = new HashSet<>();
@@ -121,6 +127,7 @@ class BrandRegistrationServiceTest {
 				throw new IllegalStateException("백필 실패 주입");
 			}
 			coreSwept.add(brand.username());
+			coreRows.add(brand);
 			onServingCovered.accept(earlyBatch);   // 실코드의 "정확히 1회" 계약 재현
 			if (failAfterServing) {
 				throw new IllegalStateException("서빙 후 실패 주입");
@@ -325,8 +332,12 @@ class BrandRegistrationServiceTest {
 	@Test
 	void 더_큰_창_재등록은_확장이다_프로필_콜_없이_백필만_재예약() {
 		var first = service().register("brandx", null, 3);
+		// 첫 백필이 완주해 lastSweptOn이 찍힌 상태 = 확장 시점의 stale 행. 이걸 그대로 백필에 넘기면
+		// 옛 창(3개월)으로 돌아 확장이 조용히 무효가 된다 — 아래 coreRows 단언이 그 회귀를 잡는다.
+		assertThat(brands.rows.get("brandx").lastSweptOn()).isNotNull();
 		hikerCalls.clear();
 		collect.coreSwept.clear();
+		collect.coreRows.clear();
 
 		var result = service().register("brandx", null, 12);
 
@@ -335,6 +346,11 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.expanded).containsExactly(first.brandId());
 		assertThat(collect.coreSwept).containsExactly("brandx");     // 동기 executor — 백필 즉시 재실행
 		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
+		// 확장 백필이 받은 건 expandWindow 후 재조회한 행이어야 한다 — 창 12 + lastSweptOn 비워짐.
+		assertThat(collect.coreRows).singleElement().satisfies(row -> {
+			assertThat(row.collectionMonths()).isEqualTo(12);
+			assertThat(row.lastSweptOn()).isNull();
+		});
 	}
 
 	@Test
