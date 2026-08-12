@@ -303,7 +303,8 @@ class PerformanceContentAssemblerTest {
 	void lastCollectedAt은_레거시와_브랜드_스윕_중_늦은_쪽이다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
-		// 레거시 02:00 / 브랜드 스윕 03:00 — 늦은 쪽(브랜드)이 "마지막 수집"이다.
+		// 두 시각은 "늦은 쪽이 이긴다"만 보려는 임의 픽스처다(실제 스윕 크론 시각과 무관).
+		// 여기선 브랜드 쪽이 더 늦으므로 브랜드 시각이 "마지막 수집"이 된다.
 		givenBrandSweptAt(BRAND_SWEPT_AT, taggedPost("ABC", List.of()));
 
 		assertThat(assembler().assemble(USER_ID).lastCollectedAt()).isEqualTo(BRAND_SWEPT_AT);
