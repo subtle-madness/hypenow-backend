@@ -115,7 +115,10 @@ services:
       DB_URL: jdbc:postgresql://test-postgres:5432/analysis
       DB_USER: ${DEV_DB_USER:-}
       DB_PASSWORD: ${DEV_DB_PASSWORD:-}
-      # RESEND 미설정 = 로깅 폴백 — test 이메일 인증 코드는 docker logs deploy-test-was-1 에서 확인
+      # 메일: admin 계정만 실발송(08-12) — test DB에 실사용자 이메일이 있어 전원 실발송 금지.
+      # 일반 계정 인증코드는 종전대로 docker logs deploy-test-was-1 에서 확인.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      WAS_MAIL_ADMIN_ONLY: "true"
       CODES_API_KEY: ${DEV_CODES_API_KEY:-}
       REDIS_HOST: test-redis
       # 모니터링 v3 조회 개통 — 운영과 동일 관용구, 기본 off. test-monitoring이 쓰는 test-postgres의
