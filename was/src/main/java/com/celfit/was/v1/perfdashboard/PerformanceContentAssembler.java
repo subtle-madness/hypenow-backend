@@ -90,8 +90,23 @@ public class PerformanceContentAssembler {
 		this.brandPostAssembler = brandPostAssembler;
 	}
 
-	/** 필터 전 전량(업로드 최신순, 업로드일 미상은 마지막). Task 10 컨트롤러가 소비한다. */
+	/** 필터 전 전량(업로드 최신순, 업로드일 미상은 마지막) — 댓글 포함. 단건 조회(§7-1)가 소비한다. */
 	public Assembled assemble(long userId) {
+		return assemble(userId, true);
+	}
+
+	/**
+	 * 댓글 없는 전량 조립(08-12 고정 지연 대응) — 목록·비교 표면용. 두 표면은 댓글을 렌더하지 않는데
+	 * 운영 실측(08-12 덤프 하니스)에서 조립 시간의 절반 이상이 댓글 배치 조회 + 수만 행 매핑이었다.
+	 * 결과 콘텐츠의 {@code recentComments}는 빈 목록, {@code commentsCollectedCount}는 0이다 —
+	 * 스냅샷 유래 지표({@code commentsTotal}·{@code commentsHidden})와 나머지 필드는 전부 동일하다.
+	 * 댓글이 필요한 단건 조회는 {@link #assemble(long)}을 그대로 쓴다.
+	 */
+	public Assembled assembleSlim(long userId) {
+		return assemble(userId, false);
+	}
+
+	private Assembled assemble(long userId, boolean withComments) {
 		TrackingItemAssembler.AssembledList legacy = trackingItemAssembler.assembleList(userId);
 		DirectMapping direct = directMapping(userId);
 		// 활성 링크는 monitoring 게이트 <b>밖</b>에서 한 번 읽는다(08-12) — 구독 타입 판정에 필요하고,
@@ -100,7 +115,7 @@ public class PerformanceContentAssembler {
 		// direct 콘텐츠가 기본 범위에 조용히 섞인다(운영 기본값 MONITORING_ENABLED=false).
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		Set<String> competitorIds = competitorBrandAccountIds(links);
-		Tagged tagged = loadTagged(userId, links);
+		Tagged tagged = loadTagged(userId, links, withComments);
 
 		List<PerformanceContentResponse> contents = new ArrayList<>();
 		Set<String> consumedCodes = new LinkedHashSet<>();
@@ -111,7 +126,7 @@ public class PerformanceContentAssembler {
 				consumedCodes.add(shortcode);
 			}
 			contents.add(fromLegacy(item, shortcode, direct.brandAccountIdFor(item.id(), shortcode), overlap,
-					competitorIds));
+					competitorIds, withComments));
 		}
 		for (Map.Entry<String, BrandPostResponse> entry : tagged.byShortcode().entrySet()) {
 			if (!consumedCodes.contains(entry.getKey())) {
@@ -138,8 +153,9 @@ public class PerformanceContentAssembler {
 	 *                      ({@link #attributedBrandAccountId}).
 	 */
 	private static PerformanceContentResponse fromLegacy(TrackingItemResponse item, String shortcode,
-			String directBrandAccountId, BrandPostResponse overlap, Set<String> competitorIds) {
-		PerformancePostResponse post = legacyPost(item, shortcode, overlap);
+			String directBrandAccountId, BrandPostResponse overlap, Set<String> competitorIds,
+			boolean withComments) {
+		PerformancePostResponse post = legacyPost(item, shortcode, overlap, withComments);
 		return new PerformanceContentResponse(
 				new PerformanceItemResponse(item.id(), item.mode(), item.status(), item.handle(),
 						item.displayName(), item.profileImageUrl(), item.followers(), item.lastUploadedAt(),
@@ -182,7 +198,7 @@ public class PerformanceContentAssembler {
 	}
 
 	private static PerformancePostResponse legacyPost(TrackingItemResponse item, String shortcode,
-			BrandPostResponse overlap) {
+			BrandPostResponse overlap, boolean withComments) {
 		TrackingItemResponse.TrackedPostResponse post = item.post();
 		if (post == null) {
 			return null;
@@ -191,8 +207,9 @@ public class PerformanceContentAssembler {
 				overlap == null ? post.snapshots() : mergeSnapshots(post.snapshots(), overlap.snapshots());
 		// 댓글은 병합하지 않는다(두 산지의 id 공간·정렬이 달라 섞으면 순서가 무의미해진다) — 레거시가
 		// 한 건도 못 모은 경우에만 브랜드 수집분으로 메운다(빈 목록을 그대로 내보내는 것보다 낫다).
-		List<TrackingItemResponse.PostCommentResponse> comments =
-				!post.recentComments().isEmpty() || overlap == null ? post.recentComments() : overlap.recentComments();
+		// 슬림 조립(목록·비교)은 댓글을 아예 싣지 않는다 — 두 표면은 댓글을 렌더하지 않는다(08-12).
+		List<TrackingItemResponse.PostCommentResponse> comments = !withComments ? List.of()
+				: !post.recentComments().isEmpty() || overlap == null ? post.recentComments() : overlap.recentComments();
 
 		return new PerformancePostResponse(post.url(), shortcode, post.contentType(), post.uploadedAt(),
 				post.caption(), post.matchedKeywords(), post.thumbnailUrl(), post.hiddenAt(), snapshots,
@@ -313,7 +330,7 @@ public class PerformanceContentAssembler {
 	 * @param links 호출부가 이미 읽어 둔 활성 링크 — 여기서 다시 조회하지 않는다(monitoring이 켜져 있든
 	 *              꺼져 있든 링크 조회는 요청당 한 번이다).
 	 */
-	private Tagged loadTagged(long userId, List<BrandLinkRow> links) {
+	private Tagged loadTagged(long userId, List<BrandLinkRow> links, boolean withComments) {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty() || links.isEmpty()) {
 			return Tagged.EMPTY;   // monitoring 비활성이거나 연결 0건 — 레거시 계열만
 		}
@@ -328,7 +345,7 @@ public class PerformanceContentAssembler {
 						userId, link.brandId());
 				continue;
 			}
-			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
+			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get(), withComments)) {
 				byShortcode.putIfAbsent(post.shortcode(), post);
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());
