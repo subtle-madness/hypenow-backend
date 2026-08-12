@@ -35,6 +35,12 @@ spring:
       max-request-size: 3MB
 server:
   port: 8081
+  # 성과 대시보드 /contents는 유저에 따라 수십 MB JSON(전량 반환 설계)이고 FE는 브라우저에서
+  # api.hypenow.io를 직접 호출한다(CORS 구도 — 중간에 압축해 주는 프록시가 없다). Caddy에도
+  # encode가 없어 톰캣에서 압축하는 것이 유일한 지점이다(08-12 실측: 압축 전무 확인).
+  compression:
+    enabled: true
+    mime-types: application/json
   servlet:
     session:
       cookie:

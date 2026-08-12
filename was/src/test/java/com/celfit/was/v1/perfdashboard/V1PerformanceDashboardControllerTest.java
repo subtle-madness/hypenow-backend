@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -61,10 +62,16 @@ class V1PerformanceDashboardControllerTest {
 		givenAssembled(Set.of(), contents);
 	}
 
-	/** 경쟁사 집합까지 주는 스텁(08-12) — accountType 필터의 판정 근거다. */
+	/**
+	 * 경쟁사 집합까지 주는 스텁(08-12) — accountType 필터의 판정 근거다. 슬림·전체 양쪽을 같은 값으로
+	 * 스텁한다 — 여기 테스트들의 관심사는 필터·meta 규칙이지 조립 변형이 아니고, 어느 경로를 타는지는
+	 * 전용 테스트(목록은_슬림_조립을_쓴다 계열)가 고정한다. lenient인 이유: 각 테스트는 한쪽만 탄다.
+	 */
 	private void givenAssembled(Set<String> competitorBrandAccountIds, PerformanceContentResponse... contents) {
-		given(assembler.assemble(7L)).willReturn(new PerformanceContentAssembler.Assembled(
-				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds));
+		var assembled = new PerformanceContentAssembler.Assembled(
+				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds);
+		lenient().when(assembler.assemble(7L)).thenReturn(assembled);
+		lenient().when(assembler.assembleSlim(7L)).thenReturn(assembled);
 	}
 
 	// ---------- statusCounts ----------
@@ -88,7 +95,7 @@ class V1PerformanceDashboardControllerTest {
 	@Test
 	void 상태_7종_키가_항상_전부_존재한다() throws Exception {
 		// 0건 + 수집 이력 없음(브랜드 연동 전 신규 유저) — 가장 빈 응답에서도 키셋이 온전해야 한다.
-		given(assembler.assemble(7L))
+		given(assembler.assembleSlim(7L))
 				.willReturn(new PerformanceContentAssembler.Assembled(List.of(), null, Set.of()));
 
 		mockMvc.perform(get(CONTENTS).with(user(principal())))
@@ -346,6 +353,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
 		then(assembler).should(never()).assemble(anyLong());
+		then(assembler).should(never()).assembleSlim(anyLong());
 	}
 
 	// ---------- 검증 ----------
@@ -358,6 +366,7 @@ class V1PerformanceDashboardControllerTest {
 
 		// 검증은 전량 조립(두 DB·SQL ~11회)보다 먼저다.
 		then(assembler).should(never()).assemble(anyLong());
+		then(assembler).should(never()).assembleSlim(anyLong());
 	}
 
 	@Test
@@ -385,6 +394,31 @@ class V1PerformanceDashboardControllerTest {
 	void 인증이_없으면_401이다() throws Exception {
 		mockMvc.perform(get(CONTENTS))
 				.andExpect(status().isUnauthorized());
+	}
+
+	// ---------- 조립 변형 라우팅(08-12 슬림 계약) ----------
+
+	@Test
+	void 목록과_비교는_슬림_조립을_쓰고_전체_조립을_부르지_않는다() throws Exception {
+		givenAssembled(content("1", "tracking", "2026-08-06"));
+		given(comparisonAssembler.assemble(eq(7L), anyList()))
+				.willReturn(new PerformanceComparisonResponse(List.of()));
+
+		mockMvc.perform(get(CONTENTS).with(user(principal()))).andExpect(status().isOk());
+		mockMvc.perform(get(COMPARISON).with(user(principal()))).andExpect(status().isOk());
+
+		// 댓글 조회(전체 조립)가 목록·비교 경로에 되살아나면 고정 지연이 재발한다(08-12 실측 근거).
+		then(assembler).should(never()).assemble(anyLong());
+	}
+
+	@Test
+	void 단건은_전체_조립을_쓴다() throws Exception {
+		givenAssembled(content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
+
+		mockMvc.perform(get(CONTENTS + "/SC1").with(user(principal()))).andExpect(status().isOk());
+
+		// 단건은 댓글 포함 계약(§7-1) — 슬림으로 바뀌면 상세 패널의 댓글이 조용히 빈다.
+		then(assembler).should(never()).assembleSlim(anyLong());
 	}
 
 	// ---------- 단건 ----------

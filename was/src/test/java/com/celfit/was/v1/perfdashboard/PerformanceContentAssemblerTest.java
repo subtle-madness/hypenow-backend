@@ -2,6 +2,7 @@ package com.celfit.was.v1.perfdashboard;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -296,7 +297,7 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(assembled.contents()).hasSize(1);
 		assertThat(assembled.lastCollectedAt()).isEqualTo(LAST_COLLECTED);
-		then(brandPostAssembler).should(never()).assembleTagged(any());
+		then(brandPostAssembler).should(never()).assembleTagged(any(), anyBoolean());
 	}
 
 	@Test
@@ -364,7 +365,7 @@ class PerformanceContentAssemblerTest {
 				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -404,8 +405,8 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
-		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
-		given(brandPostAssembler.assembleTagged(mine)).willReturn(List.of(taggedPostOf("ABC", BRAND_ID)));
+		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(mine, true)).willReturn(List.of(taggedPostOf("ABC", BRAND_ID)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -428,8 +429,8 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleTagged(mine)).willReturn(List.of());
-		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(mine, true)).willReturn(List.of());
+		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -452,7 +453,7 @@ class PerformanceContentAssemblerTest {
 				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -482,6 +483,48 @@ class PerformanceContentAssemblerTest {
 		var contents = assembler().assemble(USER_ID).contents();
 
 		assertThat(contents).extracting(c -> c.item().id()).containsExactly("902", "900", "901");
+	}
+
+	// ---------- 슬림 조립(08-12 목록·비교 표면) ----------
+
+	@Test
+	void 슬림_조립은_브랜드_tagged를_댓글_없이_조립한다() {
+		givenLegacy();
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
+				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
+		BrandAccountRow account = brandAccount(BRAND_ID, "brand");
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
+		given(brandPostAssembler.assembleTagged(account, false)).willReturn(List.of(taggedPost("ABC", List.of())));
+
+		var contents = assembler().assembleSlim(USER_ID).contents();
+
+		// 댓글 배치 조회가 목록 경로에 되살아나면 고정 지연이 재발한다(08-12 실측: 조립 시간의 절반 이상).
+		then(brandPostAssembler).should(never()).assembleTagged(account, true);
+		assertThat(contents).hasSize(1);
+	}
+
+	@Test
+	void 슬림_조립은_레거시_댓글을_싣지_않고_스냅샷_유래_지표는_그대로다() {
+		var comments = List.of(new PostCommentResponse("c1", "au***", "좋아요", 3L, "2026-08-06T10:00:00+09:00", null));
+		var item = new TrackingItemResponse("900", "url", "tracking", "creator", "크리에이터", null, 500L,
+				null, null, null, "https://www.instagram.com/reel/ABC/", "2026-08-01", 30, null,
+				new TrackingItemResponse.TrackedPostResponse("https://www.instagram.com/reel/ABC/", "reels",
+						"2026-08-01", "캡션", List.of(), null, null,
+						List.of(snapshot("2026-08-06", 20L, 2L, 9L)), comments),
+				null);
+		givenLegacy(item);
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenNoBrand();
+
+		var post = assembler().assembleSlim(USER_ID).contents().get(0).item().post();
+
+		assertThat(post.recentComments()).isEmpty();
+		assertThat(post.commentsCollectedCount()).isEqualTo(0L);
+		// 스냅샷 유래 지표는 슬림과 무관하게 유지된다 — FE 목록 집계의 산지다.
+		assertThat(post.commentsTotal()).isEqualTo(9L);
+		assertThat(post.commentsHidden()).isFalse();
+		assertThat(post.snapshots()).hasSize(1);
 	}
 
 	// ---------- 레거시 게시물 변환 ----------
@@ -539,7 +582,7 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null);
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleTagged(account)).willReturn(List.of(taggedPosts));
+		given(brandPostAssembler.assembleTagged(account, true)).willReturn(List.of(taggedPosts));
 	}
 
 	private static BrandDirectPostRepository.Row directRow(String shortCode, long itemId) {
