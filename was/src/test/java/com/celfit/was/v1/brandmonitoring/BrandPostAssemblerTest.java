@@ -18,6 +18,34 @@ class BrandPostAssemblerTest {
 
 	private static final OffsetDateTime SWEPT_AT = OffsetDateTime.parse("2026-08-07T18:00:00Z");
 
+	// ---------- 댓글 생략 배선(08-12 성과 대시보드 고정 지연 대응) ----------
+
+	@Test
+	void withComments_false면_댓글_배치_조회를_돌리지_않는다() {
+		// 이 파일의 다른 테스트와 달리 배선 검증이라 mock을 쓴다 — 댓글 쿼리는 조립 시간의 절반
+		// 이상이라(08-12 운영 덤프 실측) 슬림 경로에서 되살아나면 고정 지연이 재발한다.
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any()))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator", null,
+						SWEPT_AT, SWEPT_AT, 0L)));
+
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
+		var posts = assembler.assembleTagged(account, false);
+
+		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+				.findComments(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.anyInt());
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.recentComments()).isEmpty();
+			assertThat(post.commentsCollectedCount()).isEqualTo(0);
+		});
+	}
+
 	// ---------- 윈도우 컷 ----------
 
 	@Test

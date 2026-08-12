@@ -59,6 +59,16 @@ tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365
 covered는 `backfill_completed_at`(최초 완주) 기준으로 정정**했다 — `last_swept_at`은 더 이상
 365일 전량을 보장하지 않는다.
 
+OOM 재발 방지 + 백필 core 2병렬(08-12 — DECISIONS 08-12 행):
+운영 monitoring(Xmx 384m)이 브랜드 5연속 등록(05:06~05:22 UTC) 백필 중 `Java heap space`로
+2건(lagom·mude) 실패(다음 스윕 백스톱으로 자동 복구). 원인은 소비처 0인 죽은 필드
+`PostInfo.rawJson`이 열거 페이지 원문 전체(TAGGED 평균 859KB)를 붙든 채 365일 백필분이
+무제한 enrich 큐에 브랜드당 ~150MB씩 상주한 것 — 필드 제거로 ~6MB로 축소. 동시성 램프
+실측(동시 20까지 무차단, 12부터 꼬리 상시화)을 근거로 백필 executor 1→2스레드
+(`monitoring.brand.backfill-concurrency:2`, 전역 동시 콜 최악 9), compose Xmx 384→512m +
+`-XX:+ExitOnOutOfMemoryError`. 힙 예산 공식은 "동시 in-flight 콜 × ~10MB" — 추가 병렬화는
+이 공식과 꼬리 레이턴시(request-timeout 15초 초과 시 과금 2배)로 판단한다.
+
 수집 범위 선택 + 기간 확장(2026-08-12 — DECISIONS 08-12 행,
 [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-collection-months-design.md)): 등록에
 수집 창 선택(1/3/6/12개월)을 도입했다. 창은 유저 단위가 아니라 **공유 크롤 자산 단위**

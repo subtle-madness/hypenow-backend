@@ -72,11 +72,24 @@ class BrandControllerTest {
 		}
 	}
 
-	/** 제외 문자열 저장 스텁 — 조회 목록 주입 + 교체 호출 인자 캡처. */
+	/** 제외 문자열·태그 저장 스텁 — 조회 목록 주입 + 교체·추가·삭제 호출 인자 캡처. */
 	private static final class StubHashtagRepository extends BrandHashtagRepository {
 		List<String> terms = List.of();
 		Long receivedBrandId;
 		List<String> receivedTerms;
+		Long addedTermsBrandId;
+		List<String> addedTerms;
+		Long deletedTermBrandId;
+		String deletedTerm;
+		Long deletedAllTermsBrandId;
+		List<String> tags = List.of();
+		Long receivedTagsBrandId;
+		List<String> receivedTags;
+		Long addedTagsBrandId;
+		List<String> addedTags;
+		Long deletedTagBrandId;
+		String deletedTag;
+		Long deletedAllTagsBrandId;
 
 		StubHashtagRepository() {
 			super(null);
@@ -91,6 +104,51 @@ class BrandControllerTest {
 		public void replaceExclusionTerms(long brandId, List<String> terms) {
 			receivedBrandId = brandId;
 			receivedTerms = terms;
+		}
+
+		@Override
+		public void addExclusionTerms(long brandId, java.util.Collection<String> terms) {
+			addedTermsBrandId = brandId;
+			addedTerms = List.copyOf(terms);
+		}
+
+		@Override
+		public void deleteExclusionTerm(long brandId, String term) {
+			deletedTermBrandId = brandId;
+			deletedTerm = term;
+		}
+
+		@Override
+		public void deleteAllExclusionTerms(long brandId) {
+			deletedAllTermsBrandId = brandId;
+		}
+
+		@Override
+		public List<String> findTags(long brandId) {
+			return tags;
+		}
+
+		@Override
+		public void replaceTags(long brandId, List<String> tags) {
+			receivedTagsBrandId = brandId;
+			receivedTags = tags;
+		}
+
+		@Override
+		public void addTags(long brandId, java.util.Collection<String> tags) {
+			addedTagsBrandId = brandId;
+			addedTags = List.copyOf(tags);
+		}
+
+		@Override
+		public void deleteTag(long brandId, String tag) {
+			deletedTagBrandId = brandId;
+			deletedTag = tag;
+		}
+
+		@Override
+		public void deleteAllTags(long brandId) {
+			deletedAllTagsBrandId = brandId;
 		}
 	}
 
@@ -220,31 +278,76 @@ class BrandControllerTest {
 	}
 
 	/**
-	 * 정규화 결과가 빈 목록이면 422로 거부한다(비소급 오염 방지 — 판정은 이미 저장된 verdict
-	 * 불변이라, 빈 목록으로 전부 지우면 자사 게시물이 RELEVANT로 저장된 뒤 되돌려도 복구 불가).
+	 * 2026-08-12 이후 PUT 빈 목록은 허용된다(단건·전체 삭제 API가 생겨 "전부 지우기"가 정당한
+	 * 상태 — 구 EmptyExclusionTermsException 하한 가드는 폐지됐다). 정규화 결과 빈 목록도 그대로
+	 * replaceExclusionTerms에 전달되고, tombstone 의미론에 따라 활성 문자열 전체가 비활성화된다.
 	 */
 	@Test
-	void terms_null_바디는_빈_목록_교체라_422다() throws Exception {
+	void terms_null_바디는_빈_목록_전체_교체로_허용된다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{}"))
-				.andExpect(status().isUnprocessableEntity())
-				.andExpect(jsonPath("$.code").value("VALIDATION"));
+				.andExpect(status().isNoContent());
 
-		assertThat(hashtags.receivedTerms).isNull();
+		assertThat(hashtags.receivedTerms).isEmpty();
 	}
 
 	@Test
-	void 빈_배열_교체도_422다() throws Exception {
+	void 빈_배열_교체도_허용된다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
 
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[\"  \",\"\"]}"))
-				.andExpect(status().isUnprocessableEntity())
-				.andExpect(jsonPath("$.code").value("VALIDATION"));
+				.andExpect(status().isNoContent());
 
-		assertThat(hashtags.receivedTerms).isNull();
+		assertThat(hashtags.receivedTerms).isEmpty();
+	}
+
+	// ---------- 제외 문자열 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
+
+	@Test
+	void 제외_문자열_추가는_정규화_후_전달한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\":[\" CClime \",\"cclime\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.addedTermsBrandId).isEqualTo(1L);
+		assertThat(hashtags.addedTerms).containsExactly("cclime");
+	}
+
+	@Test
+	void 제외_문자열_추가는_빈_입력도_무해하게_허용된다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.addedTerms).isEmpty();
+	}
+
+	@Test
+	void 제외_문자열_단건_삭제는_정규화_후_전달하고_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/hashtag-exclusions/CClime"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.deletedTermBrandId).isEqualTo(1L);
+		assertThat(hashtags.deletedTerm).isEqualTo("cclime");
+	}
+
+	@Test
+	void 제외_문자열_전체_삭제는_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/hashtag-exclusions"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.deletedAllTermsBrandId).isEqualTo(1L);
 	}
 
 	@Test
@@ -272,6 +375,196 @@ class BrandControllerTest {
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"terms\":[]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------
+
+	@Test
+	void 태그_조회는_현재_활성_태그_목록을_돌려준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		hashtags.tags = List.of("cclime", "끌리메");
+
+		mvc.perform(get("/api/brands/brandx/hashtag-tags"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.tags[0]").value("cclime"))
+				.andExpect(jsonPath("$.tags[1]").value("끌리메"));
+	}
+
+	@Test
+	void 태그_교체는_정규화_후_전체_교체한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		// # 제거 · 대소문자 통일 · 중복 제거(입력 순서 보존)
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"#CClime\",\" cclime \",\"NewTag\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.receivedTagsBrandId).isEqualTo(1L);
+		assertThat(hashtags.receivedTags).containsExactly("cclime", "newtag");
+	}
+
+	@Test
+	void 태그_재추가와_삭제_시나리오는_정규화된_전체_목록을_그대로_전달한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		hashtags.tags = List.of("cclime", "끌리메");
+
+		// "끌리메" 삭제하고 "새태그" 추가한 최종 목록을 PUT — 리포지토리가 tombstone 판정을 수행
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"cclime\",\"새태그\"]}"))
+				.andExpect(status().isNoContent());
+		assertThat(hashtags.receivedTags).containsExactly("cclime", "새태그");
+
+		// 이후 "끌리메"를 다시 추가(재활성) — 컨트롤러는 그대로 전달만, 재활성 자체는 리포지토리 책임
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"cclime\",\"새태그\",\"끌리메\"]}"))
+				.andExpect(status().isNoContent());
+		assertThat(hashtags.receivedTags).containsExactly("cclime", "새태그", "끌리메");
+	}
+
+	/**
+	 * 2026-08-12 이후 PUT 빈 목록은 허용된다(단건·전체 삭제 API가 생겨 "전부 지우기"가 정당한
+	 * 상태 — 구 하한 가드는 폐지됐다). 빈 목록 PUT은 브랜드 태그 감지 전체를 끄는 것과 같다.
+	 */
+	@Test
+	void 태그_빈_목록_교체는_허용된다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"  \",\"\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.receivedTags).isEmpty();
+	}
+
+	@Test
+	void 태그_null_바디는_빈_목록_교체로_허용된다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.receivedTags).isEmpty();
+	}
+
+	// ---------- 태그 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
+
+	@Test
+	void 태그_추가는_정규화_검증_후_전달한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"#CClime\",\" cclime \"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.addedTagsBrandId).isEqualTo(1L);
+		assertThat(hashtags.addedTags).containsExactly("cclime");
+	}
+
+	/** POST는 PUT과 달리 빈 입력을 422로 거부한다 — "추가할 게 없다"는 요청 자체가 실수일 확률이 높다. */
+	@Test
+	void 태그_추가는_빈_입력이면_422다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+
+		assertThat(hashtags.addedTags).isNull();
+	}
+
+	@Test
+	void 태그_추가는_무효_문자면_422다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"tag.dot\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+
+		assertThat(hashtags.addedTags).isNull();
+	}
+
+	@Test
+	void 태그_단건_삭제는_정규화_후_전달하고_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		// URI 템플릿 변수로 넘겨 인코딩을 MockMvc/UriComponentsBuilder에 맡긴다 — 리터럴 "%23"을
+		// 그대로 문자열에 박으면 이중 인코딩되어 서버가 percent-literal을 그대로 받는다(왕복 실패).
+		mvc.perform(delete("/api/brands/brandx/hashtag-tags/{tag}", "#CClime"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.deletedTagBrandId).isEqualTo(1L);
+		assertThat(hashtags.deletedTag).isEqualTo("cclime");
+	}
+
+	/** 한글 태그 경로 변수 — URL 인코딩 왕복이 정규화 이전에 이미 디코딩돼 들어와야 한다. */
+	@Test
+	void 태그_단건_삭제는_한글_태그도_정상_디코딩된다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/hashtag-tags/{tag}", "끌리메"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.deletedTagBrandId).isEqualTo(1L);
+		assertThat(hashtags.deletedTag).isEqualTo("끌리메");
+	}
+
+	@Test
+	void 태그_전체_삭제는_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/hashtag-tags"))
+				.andExpect(status().isNoContent());
+
+		assertThat(hashtags.deletedAllTagsBrandId).isEqualTo(1L);
+	}
+
+	/** 유효 문자 위반은 절삭이 아니라 거부 — 공백(끌리 메)·점(tag.dot) 모두 VALID_TAG 전체 일치 실패. */
+	@Test
+	void 유효_문자_위반_태그는_절삭하지_않고_422로_거부한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"끌리 메\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"))
+				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("끌리 메")));
+		assertThat(hashtags.receivedTags).isNull();
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"tag.dot\"]}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("VALIDATION"))
+				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("tag.dot")));
+		assertThat(hashtags.receivedTags).isNull();
+	}
+
+	@Test
+	void 태그_미등록_브랜드는_404이고_에러_바디를_준다() throws Exception {
+		brands.row = null;
+
+		mvc.perform(get("/api/brands/ghost/hashtag-tags"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+		mvc.perform(put("/api/brands/ghost/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"a\"]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void 태그_탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
+
+		mvc.perform(get("/api/brands/brandx/hashtag-tags"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"a\"]}"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}

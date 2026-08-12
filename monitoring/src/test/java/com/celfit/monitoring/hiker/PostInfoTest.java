@@ -21,7 +21,7 @@ class PostInfoTest {
 		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", "https://cdn/thumb.jpg",
 				1_700_000_000L, 10L, 2L, 222L, null, null, null, null,
 				videoUrl, videoDuration, paid,
-				"{}", true, false, false);
+				true, false, false);
 	}
 
 	@Test

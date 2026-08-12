@@ -64,11 +64,11 @@ class BrandSnapshotWriterTest {
 	@Test
 	void saveBrandProfile은_최신값과_추이를_함께_적재한다() {
 		long id = brands.insertOrReactivate("brandx",
-				new ProfileInfo("brandx", "111", 1L, null, null, null, null, null, null, null, "{}"), 12);
+				new ProfileInfo("brandx", "111", 1L, null, null, null, null, null, null, null), 12);
 
 		writer.saveBrandProfile(id, "brandx", LocalDate.of(2026, 8, 7),
 				new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://cdn/pic.jpg",
-						"소개", true, "https://brand.example", "{}"));
+						"소개", true, "https://brand.example"));
 
 		var row = db.queryForMap("SELECT * FROM brand_account WHERE id = " + id);
 		assertThat(row.get("followers")).isEqualTo(1000L);
@@ -88,6 +88,6 @@ class BrandSnapshotWriterTest {
 	private static PostInfo post() {
 		return new PostInfo("CodeA", "creator", null, null, "999", "REELS", "캡션",
 				"https://cdn/thumb.jpg", TAKEN_AT, 100L, 5L, 1000L, null, 20L, 3L, 1L,
-				"https://cdn/video.mp4", 12.5, true, "{}", true, false, false);
+				"https://cdn/video.mp4", 12.5, true, true, false, false);
 	}
 }

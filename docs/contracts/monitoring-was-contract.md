@@ -535,7 +535,7 @@ was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 �
 
 - (참고) 픽스처 target에 `user_id`·`matched_keywords`가 빠져 있음을 알림.
 
-## 8. 브랜드 태그 모니터링 확장 — 해시태그 감지 (v2.8, 2026-08-11, 08-12 API 형태 정정)
+## 8. 브랜드 태그 모니터링 확장 — 해시태그 감지 (v2.8, 2026-08-11, 08-12 API 형태 정정·표준 REST 확장)
 
 > ⚠️ 이 절은 §0~§7의 target/캠페인 계약과 **별도 서브시스템**을 다룬다. 브랜드 태그 모니터링
 > 자체(브랜드 계정 등록·`brand_account`/`brand_tagged_post`/`brand_post_snapshot` 등 7테이블)의
@@ -606,43 +606,116 @@ tagged·direct 셰이프와 무관한 독립 계약):
 > (구 §8-2 `meta.counts.hashtag`는 08-12 정정으로 소거 — §8-1 전용 API로 흡수됐다. §8-3부터는
 > 번호를 그대로 유지한다: 이 문서를 참조하는 다른 위치의 앵커를 깨지 않기 위해서다.)
 
-### 8-3. 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`
+### 8-3. `GET/PUT/POST/DELETE /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions` — 제외 문자열 관리
 
 자사 해시태그 오탐 방지용 제외 문자열(예: 브랜드명이 흔한 일반 단어와 겹쳐 무관한 게시물을
-잡을 때) 관리 API. was가 monitoring 내부 API(`GET/PUT /api/brands/{username}/hashtag-exclusions`)를
+잡을 때) 관리 API. was가 monitoring 내부 API(`/api/brands/{username}/hashtag-exclusions` 계열)를
 그대로 프록시한다 — 정규화(trim·소문자·중복 제거)는 monitoring이 한다.
 
-**⚠️ 편집은 이후 발견분에만 적용된다(비소급)** — 이미 판정·저장된 게시물의 verdict는 불변이다.
-term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 않고, term을 추가해도 이미 노출 중인
-게시물이 사라지지 않는다. FE 문구에 반드시 반영할 것. 같은 이유로 **빈 목록 교체는 거부**된다
-(전부 지우면 자사 게시물 — 스트림의 71~87% — 이 관련 판정으로 유입된 뒤 복구 불가).
+**08-12 유저 결정: 표준 REST 단건 조작 추가.** 기존 GET(조회)·PUT(전체 교체) 2종에 POST(단건·
+다건 추가)·`DELETE {term}`(단건 삭제)·DELETE(전체 삭제) 3종을 더해 5종 표준 REST 표면이 됐다.
+저장은 monitoring에서 tombstone(`deleted_at`) — 하드 삭제하면 등록 시 자동 시드(계정명 루트
+기본값)가 삭제된 문자열을 되살리기 때문이다. **PUT 빈 목록 하한 가드는 폐지됐다** — 단건·전체
+삭제 API가 생겨 "전부 지우기"가 더 이상 실수로만 일어나는 상태가 아니다(구 v2.8 422 가드 제거).
+
+**⚠️ 판정 자체는 여전히 비소급** — 이미 저장된 발견 게시물의 verdict는 불변이라, term을
+추가해도 이미 노출 중인 게시물이 사라지지 않는다(SELF로 새로 걸러지는 건 다음 스윕의 신규
+발견분부터). **다만 조회 시점 필터는 즉시 반영된다(08-12 신규)** — was가 `/hashtag-posts`
+조회 때마다 활성 제외 문자열을 다시 읽어 게시자 username에 포함되면 그 자리에서 걸러낸다
+(§8-1 참조). 그래서 term을 지우면 저장된 verdict와 무관하게 해당 게시물이 다시 뜨고, term을
+다시 추가하면 즉시 다시 숨는다 — "전체 삭제"로 자사 게시물이 쏟아지는 비가역 오염을 조회 필터가
+막아 주므로, 하한 가드 폐지가 안전하다.
 
 ```json
 // GET 200
 { "terms": ["일반단어1", "일반단어2"] }
 
-// PUT 요청 (전체 교체)
+// PUT 요청 (전체 교체, 빈 배열도 허용 — 전체 비활성화와 같다)
 { "terms": ["일반단어1"] }
 // PUT 204
 
-// PUT 400 — 정규화 결과가 빈 목록(terms 생략·null·빈 배열·전부 blank)
-{ "code": "VALIDATION_FAILED", ... }
+// POST 요청 (단건·다건 추가 — tombstone 재활성)
+{ "terms": ["새단어"] }
+// POST 204
+
+// DELETE /hashtag-exclusions/{term} — 단건 삭제(tombstone), 없어도 204(멱등)
+// DELETE /hashtag-exclusions — 전체 삭제(tombstone)
 ```
 
 | 상황 | HTTP | 비고 |
 |---|---|---|
-| 정상 | GET 200 / PUT 204 | |
-| PUT 정규화 결과 빈 목록 | 400 `VALIDATION_FAILED` | 비소급 오염 방지 하한 가드 — monitoring 내부는 422(`EmptyExclusionTermsException`)지만 was 공용 매핑(`V1ExceptionAdvice` — 404·5xx 외 4xx는 400 수렴)이 FE엔 400으로 내린다 |
+| 정상 | GET 200 / PUT·POST·DELETE 204 | PUT 빈 목록도 204(2026-08-12부터 허용) |
 | 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership` — 유저의 활성 브랜드 연결에 없으면) |
 | `accountId`가 유효한 브랜드가 아님(브랜드 비정합) | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND`(브랜드 미등록·비ACTIVE) 둘 다 404로 수렴 |
 | monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 monitoring 연동 엔드포인트와 공통 매핑, `V1ExceptionAdvice`) |
 
+### 8-3-1. `GET/PUT/POST/DELETE /v1/brand-monitoring/accounts/{accountId}/hashtag-tags` — 태그 셋 관리 (v2.9, 2026-08-12, 08-12 표준 REST 확장)
+
+**유저 결정: 자동 유도만 → 유저 입력 허용으로 전환.** 등록 시 자동 유도되는 태그 3종(#브랜드명·
+#계정명 루트·#전체계정명, §2)은 여전히 시드되지만, 이제 브랜드 소유자가 감지 대상 해시태그
+전체를 직접 추가·삭제할 수 있다. was가 monitoring 내부 API(`/api/brands/{username}/hashtag-tags`
+계열)를 그대로 프록시한다 — 정규화(trim·선행 `#` 제거·소문자·중복 제거)와 유효 문자 검증은
+monitoring이 한다.
+
+**08-12 유저 결정: 표준 REST 단건 조작 추가.** 기존 GET·PUT 2종에 POST(단건·다건 추가)·
+`DELETE {tag}`(단건 삭제)·DELETE(전체 삭제) 3종을 더해 5종 표준 REST 표면이 됐다.
+**PUT 빈 목록 하한 가드는 폐지됐다**(전체 삭제 API가 정식 경로가 됐으므로) — 빈 목록 PUT은
+브랜드 태그 감지를 전부 끄는 것과 같다. **POST는 PUT과 다르게 빈 입력을 여전히 422로 거부한다**
+— "추가할 태그가 없다"는 요청 자체가 실수일 확률이 높고, 전체를 비우는 명시적 의도는 DELETE
+전체가 담당하기 때문이다.
+
+**⚠️ 비소급** — 태그 추가는 다음 새벽 스윕부터 감지가 시작된다(소급 백필은 최대 4페이지, 스펙
+§1 등록 백필과 같은 한도 — `monitoring.brand.hashtag.max-pages` 기본값). 태그 삭제는 이후
+발견분만 중단되고, 이미 저장된 발견 게시물은 그대로 유지된다(verdict 불변).
+
+**⚠️ 삭제는 tombstone** — monitoring `brand_hashtag`에 `deleted_at`이 채워진 채 행이 남는다.
+등록 replay가 부르는 자동 시드(`insertTags`, `ON CONFLICT DO NOTHING`)는 이 tombstone 행에
+막혀 유저가 지운 태그를 되살리지 못한다. 지운 태그를 다시 쓰려면 PUT(전체 교체)이나 POST(추가)로
+재추가해야 한다(둘 다 tombstone 해제 UPSERT라 정상 동작).
+
+```json
+// GET 200
+{ "tags": ["cclime", "끌리메", "cclime_official"] }
+
+// PUT 요청 (전체 교체, 빈 배열도 허용 — 태그 감지 전체 중지와 같다)
+{ "tags": ["cclime", "새태그"] }
+// PUT 204
+
+// POST 요청 (단건·다건 추가 — tombstone 재활성)
+{ "tags": ["새태그"] }
+// POST 204
+
+// POST 400 — 정규화 결과가 빈 입력(PUT은 허용하지만 POST는 거부)
+{ "code": "VALIDATION_FAILED", ... }
+
+// PUT·POST 400 — 무효 문자(IG 해시태그 불가 문자) 포함 태그
+{ "code": "VALIDATION_FAILED", ... }
+
+// DELETE /hashtag-tags/{tag} — 단건 삭제(tombstone), 없어도 204(멱등)
+// DELETE /hashtag-tags — 전체 삭제(tombstone, 브랜드 태그 감지 완전 중지)
+```
+
+| 상황 | HTTP | 비고 |
+|---|---|---|
+| 정상 | GET 200 / PUT·POST·DELETE 204 | PUT 빈 목록도 204(2026-08-12부터 허용) |
+| POST 정규화 결과 빈 입력 | 400 `VALIDATION_FAILED` | "추가할 게 없다"는 요청 자체가 실수 — PUT과 다른 규칙. monitoring 내부는 422(`InvalidHashtagException`)지만 was 공용 매핑(`V1ExceptionAdvice` — 404·5xx 외 4xx는 400 수렴)이 400으로 내린다 |
+| PUT·POST 무효 문자 포함 태그 | 400 `VALIDATION_FAILED` | 유저 입력이라 절삭하지 않고 통째로 거부(자동 유도와 다른 규칙) — 공백·`.` 등 IG 해시태그 불가 문자(`[\p{L}\p{N}_]+` 전체 일치 아니면 거부) |
+| 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership`) |
+| `accountId`가 유효한 브랜드가 아님 | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND` 둘 다 404로 수렴 |
+| monitoring 접속 불능 | 503 | `Retry-After: 5` 동반 |
+
 ### 8-4. FE 공유 필요
 
-프론트 공유가 아직 안 된 신규 UI 표면 2가지:
+프론트 공유가 아직 안 된 신규 UI 표면 3가지:
 
 - **해시태그 발견 게시물 "별도 탭"** — §8-1 전용 API(`GET .../hashtag-posts`)를 §6-1 게시물
   목록과 나란한 새 탭으로 노출. 스냅샷·댓글·팔로워가 없는 데이터라 tagged·direct 카드와 다른
   레이아웃이 필요하고(성과 지표 없음, `likes`/`comments`는 발견 시점 스냅 값), `matchedTag`로
   "#태그로 발견" 배지를 그릴 수 있다.
-- **제외 문자열 관리 UI** — §8-3 API로 자사 태그 오탐 문자열을 브랜드 소유자가 직접 추가·삭제.
+- **제외 문자열 관리 UI** — §8-3 API로 자사 태그 오탐 문자열을 브랜드 소유자가 직접 추가·삭제
+  (조회·전체 교체·단건 추가·단건 삭제·전체 삭제 5종). 편집이 조회 필터에는 즉시 반영된다는 점을
+  강조할 것(저장된 verdict는 비소급이지만 조회는 즉시).
+- **태그 셋 관리 UI** — §8-3-1 API로 감지 대상 해시태그를 브랜드 소유자가 직접 추가·삭제
+  (조회·전체 교체·단건 추가·단건 삭제·전체 삭제 5종). 추가는 다음 새벽부터 감지 시작(비소급),
+  삭제는 tombstone(재추가하면 복구되지만 그 전까지 발견 중단)이라는 두 비소급 규칙을 FE 문구에
+  반드시 반영할 것. 전체 삭제 = 브랜드 해시태그 감지 전체 일시 중지.

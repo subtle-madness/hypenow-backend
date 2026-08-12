@@ -35,6 +35,12 @@ spring:
       max-request-size: 3MB
 server:
   port: 8081
+  # 성과 대시보드 /contents는 유저에 따라 수십 MB JSON(전량 반환 설계)이고 FE는 브라우저에서
+  # api.hypenow.io를 직접 호출한다(CORS 구도 — 중간에 압축해 주는 프록시가 없다). Caddy에도
+  # encode가 없어 톰캣에서 압축하는 것이 유일한 지점이다(08-12 실측: 압축 전무 확인).
+  compression:
+    enabled: true
+    mime-types: application/json
   servlet:
     session:
       cookie:
@@ -56,6 +62,9 @@ springdoc:
 codes:
   api-key: ${CODES_API_KEY:}   # 어드민 코드 적재용 정적 토큰 — 빈 값이면 /admin/signup-codes 전면 거부(fail-closed)
 was:
+  mail:
+    resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
+    from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:

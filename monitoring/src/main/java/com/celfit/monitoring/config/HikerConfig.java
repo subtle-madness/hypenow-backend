@@ -5,8 +5,10 @@ import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
+import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
+import com.celfit.monitoring.store.TargetCallCountRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -21,9 +23,10 @@ public class HikerConfig {
 
 	@Bean
 	public HikerClient hikerClient(HikerHttp transport, RawPayloadRepository rawPayloads,
-			BrandCallContext callContext, BrandCallCountRepository callCounts) {
+			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
+			TargetCallContext targetContext, TargetCallCountRepository targetCounts) {
 		// 집계가 바깥 — 원형 적재까지 끝난 "호출자가 성공으로 본 콜"과 집계가 1:1로 맞는다.
-		return new HikerClient(new CountingHikerHttp(
-				new RecordingHikerHttp(transport, rawPayloads), callContext, callCounts));
+		return new HikerClient(new CountingHikerHttp(new RecordingHikerHttp(transport, rawPayloads),
+				brandContext, brandCounts, targetContext, targetCounts));
 	}
 }

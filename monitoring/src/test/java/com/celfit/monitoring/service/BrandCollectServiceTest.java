@@ -13,8 +13,10 @@ import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
+import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
@@ -286,7 +288,7 @@ class BrandCollectServiceTest {
 						"next_page_id":null}""";
 			}
 			throw new IllegalStateException("예상 밖 콜: " + path);
-		}, callContext, callCounts));
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep) {

@@ -117,6 +117,18 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     PRIMARY KEY (brand_id, short_code)
 );
 
+-- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql +
+-- V20260812120216__brand_hashtag_exclusion_soft_delete.sql(deleted_at tombstone, 2026-08-12).
+-- was는 findActiveExclusionTerms(deleted_at IS NULL만)로 읽는다 — 해시태그 발견 게시물 조회
+-- 시점 즉시 필터 재료(BrandHashtagPostAssembler).
+CREATE TABLE IF NOT EXISTS brand_hashtag_exclusion (
+    brand_id   bigint      NOT NULL REFERENCES brand_account (id),
+    term       text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz,
+    PRIMARY KEY (brand_id, term)
+);
+
 CREATE TABLE IF NOT EXISTS author_profile (
     ig_user_id      text        PRIMARY KEY,
     username        text        NOT NULL,
@@ -141,4 +153,13 @@ CREATE TABLE IF NOT EXISTS brand_call_count (
     called_on date   NOT NULL,
     calls     bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (brand_id, called_on)
+);
+
+-- 캠페인·콘텐츠 모니터링 콜의 유저별 일별 집계(정본: monitoring V20260812160000__target_call_count.sql).
+-- 브랜드 픽스처는 아니지만 크롤링 비용 카드가 brand_call_count와 함께 읽는 표면이라 같이 둔다.
+CREATE TABLE IF NOT EXISTS target_call_count (
+    user_id   bigint NOT NULL,
+    called_on date   NOT NULL,
+    calls     bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, called_on)
 );

@@ -109,12 +109,82 @@ public class V1BrandAccountsController {
 		return ApiResponse.ok(new BrandHashtagExclusionsResponse(terms));
 	}
 
-	/** 해시태그 제외 문자열 전체 교체 — 204(monitoring PUT 계약과 동형). */
+	/** 해시태그 제외 문자열 전체 교체 — 204(monitoring PUT 계약과 동형). 빈 목록도 허용(2026-08-12부터). */
 	@PutMapping("/{accountId}/hashtag-exclusions")
 	public ResponseEntity<Void> putHashtagExclusions(@AuthenticationPrincipal AppUserDetails principal,
 			@PathVariable String accountId, @RequestBody(required = false) HashtagExclusionsRequest body) {
 		List<String> terms = body == null ? null : body.terms();
 		service.putHashtagExclusions(principal.getUserId(), parseAccountId(accountId), terms);
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 해시태그 제외 문자열 단건·다건 추가(POST 계약, 2026-08-12) — 204(monitoring POST와 동형). */
+	@PostMapping("/{accountId}/hashtag-exclusions")
+	public ResponseEntity<Void> addHashtagExclusions(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) HashtagExclusionsRequest body) {
+		List<String> terms = body == null ? null : body.terms();
+		service.addHashtagExclusions(principal.getUserId(), parseAccountId(accountId), terms);
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 해시태그 제외 문자열 단건 삭제(DELETE {term} 계약, 2026-08-12) — 204(없어도 멱등). */
+	@DeleteMapping("/{accountId}/hashtag-exclusions/{term}")
+	public ResponseEntity<Void> deleteHashtagExclusion(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @PathVariable String term) {
+		service.deleteHashtagExclusion(principal.getUserId(), parseAccountId(accountId), term);
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 해시태그 제외 문자열 전체 삭제(DELETE 계약, 2026-08-12) — 204. */
+	@DeleteMapping("/{accountId}/hashtag-exclusions")
+	public ResponseEntity<Void> deleteAllHashtagExclusions(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId) {
+		service.deleteAllHashtagExclusions(principal.getUserId(), parseAccountId(accountId));
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12, monitoring BrandController 프록시) — 소유 브랜드만. */
+	@GetMapping("/{accountId}/hashtag-tags")
+	public ApiResponse<BrandHashtagTagsResponse> getHashtagTags(
+			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
+		List<String> tags = service.getHashtagTags(principal.getUserId(), parseAccountId(accountId));
+		return ApiResponse.ok(new BrandHashtagTagsResponse(tags));
+	}
+
+	/** 해시태그 태그 셋 전체 교체 — 204(monitoring PUT 계약과 동형). 빈 목록도 허용(2026-08-12부터). */
+	@PutMapping("/{accountId}/hashtag-tags")
+	public ResponseEntity<Void> putHashtagTags(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) HashtagTagsRequest body) {
+		List<String> tags = body == null ? null : body.tags();
+		service.putHashtagTags(principal.getUserId(), parseAccountId(accountId), tags);
+		return ResponseEntity.noContent().build();
+	}
+
+	/**
+	 * 해시태그 태그 셋 단건·다건 추가(POST 계약, 2026-08-12) — 204(monitoring POST와 동형).
+	 * 빈 입력·무효 문자는 monitoring이 422로 거부 → 공용 매핑이 400 VALIDATION_FAILED로 내린다.
+	 */
+	@PostMapping("/{accountId}/hashtag-tags")
+	public ResponseEntity<Void> addHashtagTags(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) HashtagTagsRequest body) {
+		List<String> tags = body == null ? null : body.tags();
+		service.addHashtagTags(principal.getUserId(), parseAccountId(accountId), tags);
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 해시태그 태그 단건 삭제(DELETE {tag} 계약, 2026-08-12) — 204(없어도 멱등). */
+	@DeleteMapping("/{accountId}/hashtag-tags/{tag}")
+	public ResponseEntity<Void> deleteHashtagTag(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @PathVariable String tag) {
+		service.deleteHashtagTag(principal.getUserId(), parseAccountId(accountId), tag);
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 해시태그 태그 전체 삭제(DELETE 계약, 2026-08-12) — 204. 브랜드 태그 감지를 완전히 끈다. */
+	@DeleteMapping("/{accountId}/hashtag-tags")
+	public ResponseEntity<Void> deleteAllHashtagTags(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId) {
+		service.deleteAllHashtagTags(principal.getUserId(), parseAccountId(accountId));
 		return ResponseEntity.noContent().build();
 	}
 
@@ -137,5 +207,9 @@ public class V1BrandAccountsController {
 
 	/** 제외 문자열 교체 요청 본문 — terms null은 서비스에서 빈 목록으로 접는다. */
 	public record HashtagExclusionsRequest(List<String> terms) {
+	}
+
+	/** 태그 셋 교체 요청 본문 — tags null은 서비스에서 빈 목록으로 접는다(monitoring이 422로 거부). */
+	public record HashtagTagsRequest(List<String> tags) {
 	}
 }

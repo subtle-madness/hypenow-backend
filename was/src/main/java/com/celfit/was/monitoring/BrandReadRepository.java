@@ -199,6 +199,20 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 자사 제외 문자열(활성만, 2026-08-12 태그 관리 확장 짝) — was가 조회 시점에 직접 적용하는
+	 * 즉시 필터 재료. deleted_at IS NULL만 읽는다(monitoring BrandHashtagRepository.findExclusionTerms와
+	 * 같은 tombstone 규칙). 정렬은 무의미(contains 판정에만 쓰이므로).
+	 */
+	public List<String> findActiveExclusionTerms(long brandId) {
+		return jdbc.sql("""
+				SELECT term FROM brand_hashtag_exclusion WHERE brand_id = :brandId AND deleted_at IS NULL
+				""")
+				.param("brandId", brandId)
+				.query(String.class)
+				.list();
+	}
+
+	/**
 	 * 브랜드별 Hiker 콜 일별 집계(brand_call_count — 2026-08-12 어드민 크롤링 비용 설계) 전량 조회.
 	 * 기간 필터·유저 귀속(연결 기간 판정)은 was 코드가 한다 — 링크 기간은 app 스키마 소관이라
 	 * 크로스 DB 조인이 불가능하고, 행 수도 브랜드당 하루 1행이라 전량이 부담이 아니다.
