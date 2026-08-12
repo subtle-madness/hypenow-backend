@@ -8,6 +8,7 @@
 import datetime
 import shutil
 import subprocess
+import sys
 
 import oci
 
@@ -85,24 +86,31 @@ data.append(metric("disk_used_percent", {"host": "hypenow-api"}, disk_used_perce
 GCS_BUCKETS = ["hypenow-images"]
 GCS_KEY = "/home/ubuntu/deploy/secrets/gcs-image-archiver.json"
 if now.minute == 0:
-	from google.oauth2 import service_account
-	from google.auth.transport.requests import AuthorizedSession
-	creds = service_account.Credentials.from_service_account_file(
-		GCS_KEY, scopes=["https://www.googleapis.com/auth/devstorage.read_only"])
-	sess = AuthorizedSession(creds)
-	for bucket in GCS_BUCKETS:
-		total, page = 0, None
-		while True:
-			params = {"fields": "items(size),nextPageToken", "maxResults": 1000}
-			if page:
-				params["pageToken"] = page
-			body = sess.get(f"https://storage.googleapis.com/storage/v1/b/{bucket}/o",
-				params=params, timeout=30).json()
-			total += sum(int(o["size"]) for o in body.get("items", []))
-			page = body.get("nextPageToken")
-			if not page:
-				break
-		data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(total / 2**30, 3)))
+	try:
+		from google.oauth2 import service_account
+		from google.auth.transport.requests import AuthorizedSession
+		creds = service_account.Credentials.from_service_account_file(
+			GCS_KEY, scopes=["https://www.googleapis.com/auth/devstorage.read_only"])
+		sess = AuthorizedSession(creds)
+		for bucket in GCS_BUCKETS:
+			total, page = 0, None
+			while True:
+				params = {"fields": "items(size),nextPageToken", "maxResults": 1000}
+				if page:
+					params["pageToken"] = page
+				# 상태 검사 필수 — requests는 403/404/5xx에 raise하지 않아서, 빠뜨리면
+				# 빈 items로 0GB(또는 부분합)가 진짜 값처럼 게시돼 알람이 조용히 죽는다.
+				r = sess.get(f"https://storage.googleapis.com/storage/v1/b/{bucket}/o",
+					params=params, timeout=30)
+				r.raise_for_status()
+				body = r.json()
+				total += sum(int(o["size"]) for o in body.get("items", []))
+				page = body.get("nextPageToken")
+				if not page:
+					break
+			data.append(metric("bucket_used_gb", {"bucketName": bucket}, round(total / 2**30, 3)))
+	except Exception as e:  # GCS 실패는 버킷 메트릭 결손으로 한정 — 컨테이너 메트릭 게시는 계속
+		print(f"GCS 버킷 크기 수집 실패: {e}", file=sys.stderr)
 
 client = oci.monitoring.MonitoringClient(
 	{"region": signer.region}, signer=signer,
