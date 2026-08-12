@@ -82,6 +82,28 @@ class BrandStoreTest {
 	}
 
 	@Test
+	void markServing은_last_swept_at만_당기고_완주_컬럼은_건드리지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+
+		brands.markServing(id);
+
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isNotNull();   // was ready 신호만
+		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn()).isNull();
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
+	}
+
+	@Test
+	void markServing은_이미_서빙_중이면_시각을_덮지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"));
+		brands.touchSwept(id, LocalDate.of(2026, 8, 6));   // 완주 — last_swept_at 확정
+		Timestamp sweptAt = column(id, "last_swept_at", Timestamp.class);
+
+		brands.markServing(id);   // 가드(IS NULL) — no-op이어야 한다
+
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isEqualTo(sweptAt);
+	}
+
+	@Test
 	void refreshProfile은_전필드를_갱신한다() {
 		long id = brands.insertOrReactivate("brand_z", profile("brand_z"));
 		brands.refreshProfile(id, new ProfileInfo("brand_z", "1", 10L, 5L, 3L,
