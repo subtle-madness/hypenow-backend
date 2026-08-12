@@ -9,6 +9,7 @@ import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.monitoring.RegistrationResult;
+import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
 import com.celfit.was.v1.common.V1ApiException;
@@ -20,6 +21,7 @@ import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler;
 import com.celfit.was.v2.monitoring.V2CampaignContentsResponse.Result;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -39,7 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       v2가 버리던 응답 전량 재조립은 생략한다(아이템당 ~9쿼리 → 3쿼리. 상한 100건이 한
  *       트랜잭션에 몰리는 경로라 커넥션 점유 시간이 문제였다 — 트레이드오프는 링커 javadoc)</li>
  *   <li>추적 아이템이 없고 브랜드 태그 목록(tagged)에만 있는 콘텐츠 →
- *       {@link V1MonitoringRegistrationService#register}에 canonical URL을 위임해 아이템을 만든다</li>
+ *       {@link V1MonitoringRegistrationService#register}에 canonical URL을 위임해 아이템을 만든다.
+ *       단, 경쟁사 구독(accountType=competitor) 게시물은 이 경로에서 건별 실패로 거절한다(08-12)</li>
  * </ol>
  *
  * <p><b>캠페인 관계는 1:1을 유지한다</b>(설계 §8) — 이미 다른 캠페인에 묶인 콘텐츠는 여기서
@@ -61,9 +64,12 @@ public class V2CampaignContentService {
 	static final String REASON_CODE_ALREADY_EXISTS = "CAMPAIGN_CONTENT_ALREADY_EXISTS";
 	/** 어디에도 없는 콘텐츠 — 기존 404 어휘(NOT_FOUND)를 entry 사유로 재사용한다. */
 	static final String REASON_CODE_NOT_FOUND = "NOT_FOUND";
+	/** 경쟁사 구독 게시물의 캠페인 연결 차단(08-12 FE 요청 §3-3) — 건별 실패 사유다. */
+	static final String REASON_CODE_COMPETITOR_NOT_ALLOWED = "COMPETITOR_CONTENT_NOT_ALLOWED";
 
 	private static final String REASON_SAME_CAMPAIGN = "이미 이 캠페인에 추가된 콘텐츠입니다.";
 	private static final String REASON_NOT_FOUND = "게시물을 찾을 수 없습니다.";
+	private static final String REASON_COMPETITOR_NOT_ALLOWED = "경쟁사 계정의 게시물은 캠페인에 연결할 수 없어요.";
 	private static final String CAMPAIGN_NOT_FOUND = "캠페인을 찾을 수 없습니다.";
 
 	/** 레거시 등록(6.27)과 같은 한 번 상한·기간 규칙 — 위임을 건너뛰는 경로에서도 필요해 여기서 본다. */
@@ -132,7 +138,7 @@ public class V2CampaignContentService {
 		List<String> delegatedUrls = new ArrayList<>();
 		Set<String> seen = new LinkedHashSet<>();
 		// tagged 조회는 실제로 필요할 때 한 번만 한다(브랜드 연동이 없으면 아예 돌지 않는다).
-		Map<String, String> taggedUrls = null;
+		Map<String, TaggedPost> taggedUrls = null;
 
 		for (String contentId : ids) {
 			if (!seen.add(contentId)) {
@@ -147,14 +153,21 @@ public class V2CampaignContentService {
 			if (taggedUrls == null) {
 				taggedUrls = taggedPostUrls(userId);
 			}
-			String canonicalUrl = taggedUrls.get(contentId);
-			if (canonicalUrl == null) {
+			TaggedPost tagged = taggedUrls.get(contentId);
+			if (tagged == null) {
 				plans.add(Plan.settled(new Result(contentId, RegistrationResult.FAILED, null,
 						REASON_CODE_NOT_FOUND, REASON_NOT_FOUND)));
 				continue;
 			}
+			// 경쟁사 구독 게시물은 캠페인에 연결하지 않는다(§3-3) — 요청 전체를 400으로 떨구지 않고
+			// 건별 실패다. 이 API는 100건 배치의 부분 성공이 계약이라, 1건 때문에 나머지를 버리지 않는다.
+			if (BrandAccountType.COMPETITOR.equals(tagged.accountType())) {
+				plans.add(Plan.settled(new Result(contentId, RegistrationResult.FAILED, null,
+						REASON_CODE_COMPETITOR_NOT_ALLOWED, REASON_COMPETITOR_NOT_ALLOWED)));
+				continue;
+			}
 			plans.add(new Plan(contentId, delegatedUrls.size(), false, null));
-			delegatedUrls.add(canonicalUrl);
+			delegatedUrls.add(tagged.url());
 		}
 
 		// 위임할 게 없으면 등록 행 자체를 만들지 않는다(폴링할 대상이 없다) — 전부 동기 완결이라 200이다.
@@ -327,26 +340,54 @@ public class V2CampaignContentService {
 	// ---------- tagged ----------
 
 	/**
-	 * 내 브랜드 태그 목록의 shortcode → canonical URL(§6-1 어셈블러 결과의 postUrl — REELS는
-	 * {@code /reel/}, FEED는 {@code /p/}). monitoring 비활성·브랜드 연결 없음·계정 행 부재면 빈 맵이라
-	 * 그 콘텐츠는 그대로 failed(NOT_FOUND)가 된다.
+	 * 태그 목록 1건 — canonical URL과 그 게시물을 실어 온 구독의 타입(08-12).
+	 * URL은 §6-1 어셈블러 결과의 postUrl이다(REELS는 {@code /reel/}, FEED는 {@code /p/}).
 	 */
-	private Map<String, String> taggedPostUrls(long userId) {
+	private record TaggedPost(String url, String accountType) {
+	}
+
+	/**
+	 * 내 브랜드 태그 목록의 shortcode → (canonical URL, 구독 타입). monitoring 비활성이거나 브랜드
+	 * 연결이 없으면 빈 맵이라 그 콘텐츠는 그대로 failed(NOT_FOUND)가 된다. 계정 행({@code brand_account})이
+	 * 없는 브랜드는 <b>그 브랜드만</b> 건너뛴다(08-07 다계정 개정 — 맵이 비지 않는다).
+	 *
+	 * <p>경쟁사 구독도 <b>맵에 담는다</b>(08-12) — 빼버리면 경쟁사 게시물이 NOT_FOUND로 떨어져
+	 * "존재하는 게시물을 없다고" 말하게 된다. 담아 두고 판정 지점에서 전용 사유로 거절한다.
+	 */
+	private Map<String, TaggedPost> taggedPostUrls(long userId) {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty()) {
 			return Map.of();
 		}
 		// 다계정(08-07 개정) — 연결된 브랜드 전체의 태그 목록을 연결 순으로 병합한다(먼저 연결한 브랜드 우선).
-		Map<String, String> urls = new LinkedHashMap<>();
-		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+		Map<String, TaggedPost> urls = new LinkedHashMap<>();
+		for (BrandLinkRow link : ownFirst(linkRepository.findAllActiveByUser(userId))) {
 			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
 			if (account.isEmpty()) {
 				continue;
 			}
 			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get())) {
-				urls.putIfAbsent(post.shortcode(), post.postUrl());
+				urls.putIfAbsent(post.shortcode(), new TaggedPost(post.postUrl(), link.accountType()));
 			}
 		}
 		return urls;
+	}
+
+	/**
+	 * 같은 shortcode가 여러 브랜드에 태그된 경우의 귀속 순서(08-12) — <b>내 브랜드 귀속이 경쟁사
+	 * 귀속을 이긴다</b>. 성과 대시보드와 같은 규칙이다
+	 * ({@code PerformanceContentAssembler#ownFirst}).
+	 *
+	 * <p>여기서는 귀속이 표시가 아니라 <b>권한</b>이다: 내 게시물이 경쟁사에도 태그돼 있고 경쟁사
+	 * 연결이 더 오래됐다는 이유만으로 캠페인 연결이 막히면, 연결 순서가 "내 콘텐츠를 쓸 수 있는지"를
+	 * 정하게 된다. {@code putIfAbsent}의 동률을 own 쪽으로 푸는 게 이 정렬의 전부다.
+	 *
+	 * <p>타입 <b>안</b>에서는 기존 규칙(먼저 연결한 브랜드가 이긴다, 08-07 개정) 그대로다 —
+	 * {@link List#sort}는 안정 정렬이라 원본 순서가 유지된다.
+	 */
+	private static List<BrandLinkRow> ownFirst(List<BrandLinkRow> links) {
+		List<BrandLinkRow> ordered = new ArrayList<>(links);
+		ordered.sort(Comparator.comparing(link -> BrandAccountType.COMPETITOR.equals(link.accountType())));
+		return ordered;
 	}
 
 	// ---------- 레거시 위임 ----------

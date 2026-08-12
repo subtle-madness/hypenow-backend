@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 브랜드 계정 표면(스펙 §5) — 등록(202)·목록·단건 폴링·삭제(204). 인증 필수(SecurityConfig
+ * 브랜드 계정 표면(스펙 §5) — 등록(202)·목록·단건 폴링·타입 변경(200, 08-12)·삭제(204). 인증 필수(SecurityConfig
  * anyRequest().authenticated()). 레거시 /v1/monitoring/**와 완전히 분리된 신규 경로다.
  *
  * <p>monitoring 서브시스템이 꺼진 환경에서는 표면 자체가 없다(빈 미등록 → 404) —
@@ -36,14 +37,29 @@ public class V1BrandAccountsController {
 		this.service = service;
 	}
 
+	/**
+	 * 목록 + meta. {@code total}은 <b>반환 목록</b>의 크기지만 {@code counts}는 <b>연결 행</b>에서
+	 * 온다(08-12 리뷰) — 한도의 모수가 연결이라 brand_account 부재로 목록에서 빠진 건도 자리를
+	 * 차지한다. 둘이 어긋날 수 있는 건 의도된 것이다(각자 다른 질문에 답한다).
+	 *
+	 * <p>{@code meta}·{@code limits}·{@code counts}는 전부 {@link LinkedHashMap}이다 —
+	 * {@code Map.of}는 JVM 실행마다 순회 순서가 달라져 응답 키 순서가 흔들린다(08-12 리뷰).
+	 */
 	@GetMapping
 	public ApiResponse<List<BrandAccountResponse>> list(@AuthenticationPrincipal AppUserDetails principal) {
-		List<BrandAccountResponse> accounts = service.list(principal.getUserId());
+		V1BrandAccountService.Listing listing = service.list(principal.getUserId());
+		Map<String, Object> limits = new LinkedHashMap<>();
+		limits.put(BrandAccountType.OWN, BrandAccountType.ownLimit());
+		limits.put(BrandAccountType.COMPETITOR, BrandAccountType.competitorLimit());
+
 		Map<String, Object> meta = new LinkedHashMap<>();
-		meta.put("total", accounts.size());
-		// meta.limit은 실제 강제 한도와 같은 값이다(08-07 다계정 개정 — 강제 지점은 BrandLinkTransaction).
-		meta.put("limit", BrandLinkTransaction.ACCOUNT_LIMIT);
-		return ApiResponse.ok(accounts, meta);
+		meta.put("total", listing.accounts().size());
+		// limit은 호환용으로 남긴 합산 최대다(타입별로 갈려 단일 값이 의미를 잃었다) — 실제 게이트는
+		// limits·counts고, 강제 지점은 BrandLinkTransaction이다.
+		meta.put("limit", BrandAccountType.ownLimit() + BrandAccountType.competitorLimit());
+		meta.put("limits", limits);
+		meta.put("counts", listing.counts());
+		return ApiResponse.ok(listing.accounts(), meta);
 	}
 
 	@GetMapping("/{accountId}")
@@ -62,8 +78,17 @@ public class V1BrandAccountsController {
 			@AuthenticationPrincipal AppUserDetails principal,
 			@RequestBody(required = false) BrandAccountRegisterRequest body) {
 		String username = body == null ? null : body.username();
-		BrandAccountResponse response = service.register(principal.getUserId(), username);
+		String accountType = body == null ? null : body.accountType();
+		BrandAccountResponse response = service.register(principal.getUserId(), username, accountType);
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
+	}
+
+	/** 타입 변경(§2-3, 08-12) — 재수집 없이 구독 속성만 바꾼다. 200 + 갱신된 계정 객체. */
+	@PatchMapping("/{accountId}")
+	public ApiResponse<BrandAccountResponse> changeType(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String accountId, @RequestBody(required = false) BrandAccountTypeRequest body) {
+		String accountType = body == null ? null : body.accountType();
+		return ApiResponse.ok(service.changeType(principal.getUserId(), parseAccountId(accountId), accountType));
 	}
 
 	@DeleteMapping("/{accountId}")
@@ -82,7 +107,11 @@ public class V1BrandAccountsController {
 		}
 	}
 
-	/** 등록 요청 본문 — 계정명 한 개(정규화·검증은 BrandUsername). */
-	public record BrandAccountRegisterRequest(String username) {
+	/** 등록 요청 본문 — 계정명(정규화·검증은 BrandUsername)과 타입(생략 시 own). */
+	public record BrandAccountRegisterRequest(String username, String accountType) {
+	}
+
+	/** 타입 변경 요청 본문 — own|competitor. */
+	public record BrandAccountTypeRequest(String accountType) {
 	}
 }

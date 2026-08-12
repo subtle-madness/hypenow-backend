@@ -2,7 +2,6 @@ package com.celfit.was.v1.perfdashboard;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -320,9 +319,10 @@ class PerformanceContentAssemblerTest {
 	}
 
 	@Test
-	void monitoring_비활성이면_레거시만_조립한다() {
+	void monitoring_비활성이면_tagged_계열만_건너뛰고_링크는_읽는다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenNoBrand();
 
 		var disabled = new PerformanceContentAssembler(trackingItemAssembler, directPostRepository,
 				linkRepository, Optional.empty(), Optional.empty());
@@ -330,7 +330,144 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(contents).hasSize(1);
 		assertThat(contents.get(0).source()).isEqualTo("individual");
-		then(linkRepository).should(never()).findAllActiveByUser(anyLong());
+		// 링크는 읽는다(08-12) — 구독 타입 판정은 app DataSource만으로 성립하고, 안 읽으면
+		// 경쟁사 direct 콘텐츠가 기본 범위에 샌다. tagged 계열만 건너뛴다.
+		then(linkRepository).should().findAllActiveByUser(USER_ID);
+	}
+
+	@Test
+	void monitoring_비활성이어도_경쟁사_direct_콘텐츠가_기본_범위에서_걸러진다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		// 직접 등록 매핑은 monitoring 게이트 밖(app DataSource)이라 비활성 환경에서도 브랜드에 귀속된다.
+		given(directPostRepository.findByUser(USER_ID))
+				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, 99L, "ABC", 900L)));
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+
+		var disabled = new PerformanceContentAssembler(trackingItemAssembler, directPostRepository,
+				linkRepository, Optional.empty(), Optional.empty());
+		var assembled = disabled.assemble(USER_ID);
+
+		// 운영 기본값이 MONITORING_ENABLED=false다 — 컨트롤러 술어가 쓰는 두 값(콘텐츠의
+		// brandAccountId·경쟁사 집합)이 이 환경에서도 맞물려야 기본 범위에서 빠진다.
+		var content = assembled.contents().get(0);
+		assertThat(content.source()).isEqualTo("direct");
+		assertThat(content.brandAccountId()).isEqualTo("99");
+		assertThat(assembled.competitorBrandAccountIds()).contains(content.brandAccountId());
+	}
+
+	@Test
+	void 경쟁사_집합은_tagged_콘텐츠의_brandAccountId와_같은_값_공간이다() {
+		givenLegacy();
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		BrandAccountRow rival = brandAccount(99L, "rival");
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
+		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+
+		var assembled = assembler().assemble(USER_ID);
+
+		// 집합 원소와 콘텐츠 필드가 문자열로 같아야 컨트롤러의 contains 판정이 성립한다.
+		assertThat(assembled.contents()).singleElement()
+				.extracting(PerformanceContentResponse::brandAccountId).isEqualTo("99");
+		assertThat(assembled.competitorBrandAccountIds())
+				.containsExactly(assembled.contents().get(0).brandAccountId());
+	}
+
+	@Test
+	void 계정_행이_없는_경쟁사_링크도_집합에_남는다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.empty());
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.empty());
+
+		var assembled = assembler().assemble(USER_ID);
+
+		// monitoring 계정 행이 없어 tagged 조립은 건너뛰어도 구독 타입 판정은 링크만으로 성립한다.
+		assertThat(assembled.competitorBrandAccountIds()).containsExactly("99");
+	}
+
+	@Test
+	void 같은_게시물이_내_브랜드와_경쟁사에_동시_태그되면_내_브랜드로_귀속된다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		// 경쟁사 연결이 더 오래됐다(목록 앞) — 그래도 own 귀속이 이겨야 한다. 귀속이 이제 표시가
+		// 아니라 범위를 정하기 때문에, 연결 순서가 "내 게시물이 내 요약에 보이는지"를 정하면 안 된다.
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
+		BrandAccountRow rival = brandAccount(99L, "rival");
+		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
+		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(mine)).willReturn(List.of(taggedPostOf("ABC", BRAND_ID)));
+
+		var assembled = assembler().assemble(USER_ID);
+
+		var content = assembled.contents().get(0);
+		assertThat(content.brandAccountId()).isEqualTo(String.valueOf(BRAND_ID));
+		// 기본 범위 판정(컨트롤러 술어)에서 살아남는다.
+		assertThat(assembled.competitorBrandAccountIds()).doesNotContain(content.brandAccountId());
+	}
+
+	@Test
+	void 내_브랜드에_직접_등록한_게시물은_경쟁사_태그_관측에_귀속을_뺏기지_않는다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		// 내 브랜드로 직접 등록된 게시물인데, 태그는 경쟁사 계정에만 달렸다.
+		given(directPostRepository.findByUser(USER_ID))
+				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, BRAND_ID, "ABC", 900L)));
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
+		BrandAccountRow rival = brandAccount(99L, "rival");
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
+		given(brandPostAssembler.assembleTagged(mine)).willReturn(List.of());
+		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+
+		var assembled = assembler().assemble(USER_ID);
+
+		var content = assembled.contents().get(0);
+		assertThat(content.source()).isEqualTo("direct");
+		// 관측값(경쟁사) 우선 규칙의 유일한 예외 — own direct 귀속을 지킨다(스펙 §5 기본 범위).
+		assertThat(content.brandAccountId()).isEqualTo(String.valueOf(BRAND_ID));
+		// 기본 범위엔 남고 accountType=competitor에는 안 잡힌다(컨트롤러 술어와 같은 판정).
+		assertThat(assembled.competitorBrandAccountIds()).doesNotContain(content.brandAccountId());
+		// tagged 관측 자체는 버리지 않는다 — 스냅샷 병합·추가 산지 표기는 그대로다.
+		assertThat(content.additionalSources()).containsExactly("tagged");
+	}
+
+	@Test
+	void 경쟁사에_직접_등록한_게시물은_경쟁사_귀속_그대로다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID))
+				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, 99L, "ABC", 900L)));
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+		BrandAccountRow rival = brandAccount(99L, "rival");
+		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
+		given(brandPostAssembler.assembleTagged(rival)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+
+		var assembled = assembler().assemble(USER_ID);
+
+		// 양쪽이 같은 타입이면 예외가 발동하지 않는다 — 기존 "관측값 우선" 그대로.
+		assertThat(assembled.contents().get(0).brandAccountId()).isEqualTo("99");
+		assertThat(assembled.competitorBrandAccountIds()).containsExactly("99");
+	}
+
+	@Test
+	void 활성_브랜드가_없으면_경쟁사_집합도_비어_있다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
+		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
+		givenNoBrand();
+
+		assertThat(assembler().assemble(USER_ID).competitorBrandAccountIds()).isEmpty();
 	}
 
 	@Test
@@ -398,7 +535,7 @@ class PerformanceContentAssemblerTest {
 
 	private void givenBrandSweptAt(OffsetDateTime lastSweptAt, BrandPostResponse... taggedPosts) {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
-				BRAND_ID, "brand", LAST_COLLECTED, null)));
+				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
@@ -449,10 +586,26 @@ class PerformanceContentAssemblerTest {
 		return taggedPost(shortcode, snapshots, "브랜드 태그 캡션", true);
 	}
 
+	/** 특정 브랜드에 귀속된 tagged 관측 — 같은 게시물의 다계정 귀속 우선순위 검증용. */
+	private static BrandPostResponse taggedPostOf(String shortcode, long brandId) {
+		return taggedPost(shortcode, List.of(), "브랜드 태그 캡션", false, brandId);
+	}
+
+	/** monitoring brand_account 1행 — 스윕 완주 상태(lastSweptAt 존재). */
+	private static BrandAccountRow brandAccount(long id, String username) {
+		return new BrandAccountRow(id, username, LocalDate.of(2026, 8, 7), LAST_COLLECTED,
+				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active");
+	}
+
 	private static BrandPostResponse taggedPost(String shortcode, List<SnapshotResponse> snapshots,
 			String caption, boolean commentsHidden) {
+		return taggedPost(shortcode, snapshots, caption, commentsHidden, BRAND_ID);
+	}
+
+	private static BrandPostResponse taggedPost(String shortcode, List<SnapshotResponse> snapshots,
+			String caption, boolean commentsHidden, long brandId) {
 		SnapshotResponse latest = snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
-		return new BrandPostResponse(shortcode, String.valueOf(BRAND_ID), "tagged",
+		return new BrandPostResponse(shortcode, String.valueOf(brandId), "tagged",
 				"https://www.instagram.com/reel/" + shortcode + "/", shortcode, "reels",
 				"2026-08-06T09:00:00+09:00", caption, null, null, null,
 				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,

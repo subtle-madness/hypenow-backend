@@ -6,8 +6,11 @@ package com.celfit.was.v1.brandmonitoring;
  *
  * <p>{@code collectionStatus}는 저장된 컬럼이 아니라 유도값이다(스펙 §5-2):
  * {@code collecting}(백필 진행) · {@code ready}(1회 이상 전량 수집 완주) · {@code error}(초기 백필 실패).
+ *
+ * <p>{@code accountType}은 brand_account가 아니라 <b>구독</b>(app.brand_monitorings)의 속성이다 —
+ * 같은 브랜드라도 유저마다 own/competitor가 다를 수 있다(08-12).
  */
-public record BrandAccountResponse(String id, Profile profile, String collectionStatus,
+public record BrandAccountResponse(String id, String accountType, Profile profile, String collectionStatus,
 		String collectionStartedAt, String collectionCompletedAt, String lastDetectedAt,
 		String lastTrackedAt, String nextScheduledAt, CollectionError collectionError, String createdAt) {
 
