@@ -3,7 +3,9 @@ package com.celfit.monitoring.service;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.MediaRef;
 import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
+import com.celfit.monitoring.hiker.TargetCallContext;
 import java.net.URI;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
@@ -18,14 +20,23 @@ public class ShareResolveService {
 	private static final Pattern INSTAGRAM_HOST = Pattern.compile("(?i)^(www\\.)?instagram\\.com$");
 
 	private final HikerClient hiker;
+	private final TargetCallContext callContext;
 
-	public ShareResolveService(HikerClient hiker) {
+	public ShareResolveService(HikerClient hiker, TargetCallContext callContext) {
 		this.hiker = hiker;
+		this.callContext = callContext;
 	}
 
-	public MediaRef resolve(String url) {
+	/**
+	 * userId는 콜 집계 귀속용(2026-08-12 비용 범위 확장) — was가 등록 전처리로 부르는 경로라 요청
+	 * 유저를 안다. null이면(구 계약 본문·수동 호출) 해소는 그대로 하되 비용 미집계로 남는다.
+	 */
+	public MediaRef resolve(String url, Long userId) {
 		validate(url);
-		return hiker.resolveMediaByUrl(url);
+		if (userId == null) {
+			return hiker.resolveMediaByUrl(url);
+		}
+		return callContext.scoped(Set.of(userId), () -> hiker.resolveMediaByUrl(url));
 	}
 
 	/** http(s) instagram.com 계열이 아니면 Hiker를 부르지 않고 즉시 422로 선차단한다(콜 절약). */
