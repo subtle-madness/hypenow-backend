@@ -120,6 +120,9 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(row.backfillError()).isEqualTo("프로필 조회 실패: 429");
 		assertThat(row.lastSweptOn()).isNull();
 		assertThat(row.status()).isEqualTo("ACTIVE");   // DDL 기본값
+		assertThat(row.collectionMonths()).isEqualTo(12);   // DDL 기본값(스펙 2026-08-12)
+		// collection_started_at 미기입 행은 registered_at으로 접힌다(COALESCE) — 폴링 앵커가 비지 않는다.
+		assertThat(row.collectionStartedAt()).isEqualTo(row.registeredAt());
 	}
 
 	@Test

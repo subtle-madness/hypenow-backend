@@ -304,7 +304,8 @@ class PerformanceContentAssemblerTest {
 	void lastCollectedAt은_레거시와_브랜드_스윕_중_늦은_쪽이다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
-		// 레거시 02:00 / 브랜드 스윕 03:00 — 늦은 쪽(브랜드)이 "마지막 수집"이다.
+		// 두 시각은 "늦은 쪽이 이긴다"만 보려는 임의 픽스처다(실제 스윕 크론 시각과 무관).
+		// 여기선 브랜드 쪽이 더 늦으므로 브랜드 시각이 "마지막 수집"이 된다.
 		givenBrandSweptAt(BRAND_SWEPT_AT, taggedPost("ABC", List.of()));
 
 		assertThat(assembler().assemble(USER_ID).lastCollectedAt()).isEqualTo(BRAND_SWEPT_AT);
@@ -580,7 +581,8 @@ class PerformanceContentAssemblerTest {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
 				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
-				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null);
+				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, LAST_COLLECTED);
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
 		given(brandPostAssembler.assembleTagged(account, true)).willReturn(List.of(taggedPosts));
 	}
@@ -637,7 +639,8 @@ class PerformanceContentAssemblerTest {
 	/** monitoring brand_account 1행 — 스윕 완주 상태(lastSweptAt 존재). */
 	private static BrandAccountRow brandAccount(long id, String username) {
 		return new BrandAccountRow(id, username, LocalDate.of(2026, 8, 7), LAST_COLLECTED,
-				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null);
+				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, LAST_COLLECTED);
 	}
 
 	private static BrandPostResponse taggedPost(String shortcode, List<SnapshotResponse> snapshots,

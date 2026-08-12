@@ -26,11 +26,12 @@ import org.springframework.stereotype.Service;
  *
  * <ul>
  *   <li><b>core</b>(backfill executor): 열거+적재 → 즉시 touchSwept — 등록 후 ~1~2분에 was가
- *       ready로 전환돼 게시물 목록이 뜬다(크롤링 정책 v1로 백필이 90일 → 365일이 되며 열거가
- *       ~6콜 → <b>~41콜</b>로 늘어난 값 — cclime 태그 847건 실측 기준. 정책 v1 이전 서술 "~30초"는
- *       폐기). backfill executor는 동시 2스레드(08-12) — 연속 등록 시 뒤 계정이 앞 계정 완주를
- *       기다리는 줄이 절반이다. 그래도 분리 효과는 그대로다(운영 실측: 구 단일 체인은 8분+ —
- *       그중 ~85%가 목록 렌더에 필수 아닌 보강 콜, 나머지가 앞 계정 대기).
+ *       ready로 전환돼 게시물 목록이 뜬다(크롤링 정책 v1로 백필이 90일 → 브랜드별 수집 창
+ *       (collection_months, 기본 12개월)이 되며 열거가 ~6콜 → <b>~41콜</b>로 늘어난 값 — 12개월
+ *       창의 cclime 태그 847건 실측 기준. 수집 창이 짧으면 그만큼 준다. 정책 v1 이전 서술
+ *       "~30초"는 폐기). backfill executor는 동시 2스레드(08-12) — 연속 등록 시 뒤 계정이 앞
+ *       계정 완주를 기다리는 줄이 절반이다. 그래도 분리 효과는 그대로다(운영 실측: 구 단일
+ *       체인은 8분+ — 그중 ~85%가 목록 렌더에 필수 아닌 보강 콜, 나머지가 앞 계정 대기).
  *       2026-08-12 스트리밍 개정: 적재는 페이지 단위 즉시, 서빙 창(30일) 커버 시 markServing으로
  *       ready가 완주보다 먼저 열린다 — tooq.official 실측 8분 24초 → 서빙 창 커버 ~1분 30초.</li>
  *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 연속 등록
@@ -49,6 +50,9 @@ public class BrandRegistrationService {
 
 	private static final Logger log = LoggerFactory.getLogger(BrandRegistrationService.class);
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+	/** 수집 창 값 공간(collectionMonths 스펙 §2) — DB CHECK 제약과 같은 집합이다. */
+	private static final Set<Integer> ALLOWED_MONTHS = Set.of(1, 3, 6, 12);
+	private static final int DEFAULT_MONTHS = 12;
 
 	/** 등록 결과 — replayed는 HTTP 코드(201/200) 결정용(RegistrationService.Result 관용구). */
 	public record Result(long brandId, String username, Long followers, boolean replayed) {}
@@ -80,9 +84,17 @@ public class BrandRegistrationService {
 		this.enrich = enrich;
 	}
 
-	/** 기존 단일 인자 호출부용 위임 — brandName 미상(대행사 등록 등)은 계정명 유도 2종 태그만 시드한다. */
+	/**
+	 * 기존 단일 인자 호출부용 위임 — brandName 미상(대행사 등록 등)은 계정명 유도 2종 태그만
+	 * 시드하고, collectionMonths 미상은 기본 12개월로 접는다.
+	 */
 	public Result register(String username) {
-		return register(username, null);
+		return register(username, null, null);
+	}
+
+	/** 기존 2인자 호출부용 위임 — collectionMonths 미상은 기본 12개월. */
+	public Result register(String username, String brandName) {
+		return register(username, brandName, null);
 	}
 
 	/**
@@ -93,19 +105,28 @@ public class BrandRegistrationService {
 	 * <p>replay 경로에도 해시태그를 시드한다(스펙 §2) — 대행사가 브랜드명 없이 먼저 등록한 뒤
 	 * brand 유형 유저가 뒤늦게 같은 계정에 연결하면, 이번 호출의 brandName이 태그 셋에
 	 * 유니온된다(insertTags는 ON CONFLICT DO NOTHING이라 멱등).
+	 *
+	 * <p>replay 경로에서 요청 collectionMonths가 기존 창보다 크면 기간 확장(expandIfRequested)까지
+	 * 수행한다 — 재등록이 창 상향의 유일한 입구다(별도 API 없음).
 	 */
-	public Result register(String username, String brandName) {
+	public Result register(String username, String brandName, Integer collectionMonths) {
 		if (username == null || username.isBlank()) {
 			throw new ValidationException("username은 필수다");
+		}
+		int months = collectionMonths == null ? DEFAULT_MONTHS : collectionMonths;
+		// 검증은 저장 도달 전에 — 값 공간 밖이 내려가면 CHECK 위반이 500으로 샌다(was 400과 이중 방어).
+		if (!ALLOWED_MONTHS.contains(months)) {
+			throw new ValidationException("collectionMonths는 1|3|6|12만 허용한다");
 		}
 		String normalized = username.strip();
 		var existing = brands.findByUsername(normalized);
 		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
 			seedHashtagsSafely(existing.get().id(), normalized, brandName);
+			expandIfRequested(existing.get(), months);
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
-		long id = brands.insertOrReactivate(normalized, profile);
+		long id = brands.insertOrReactivate(normalized, profile, months);
 		// 등록 검증 프로필 1콜의 사후 계상 — 콜 시점엔 brand_id가 없어 컨텍스트 스코프를 못 쓴다.
 		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
 		callCounts.add(id, LocalDate.now(KST), 1);
@@ -113,6 +134,28 @@ public class BrandRegistrationService {
 		seedHashtagsSafely(id, normalized, brandName);
 		backfill.execute(() -> runBackfillSafely(row));
 		return new Result(id, normalized, profile.followers(), false);
+	}
+
+	/**
+	 * 기간 확장(collectionMonths 스펙 §3) — 자산 창보다 클 때만. 창 상향과 last_swept_on 클리어를
+	 * 한 UPDATE(expandWindow)로 끝내고 백필을 재제출한다. 재제출이 죽어도 last_swept_on null이라
+	 * 다음 새벽 스윕이 전체 창을 다시 연다(등록 백필과 같은 백스톱 규율). 열거는 최신부터 커서
+	 * 단방향이라 "새 컷까지 재열거"가 증분 수집의 실체다 — 기지 게시물은 insert 스킵(멱등 upsert).
+	 * 축소는 무시한다(수집된 사실이 정본 — 요청서 §4).
+	 *
+	 * <p>여기 in-memory 게이트는 불필요한 UPDATE를 줄이는 사전 컷일 뿐이고, 축소 차단의 정본은
+	 * expandWindow의 조건부 UPDATE다. 그 UPDATE가 false(0행)면 동시 요청이 더 큰 창으로 이미
+	 * 이겼다는 뜻이고 그쪽이 백필도 제출했으므로, 같은 창을 두 번 여는 재제출을 건너뛴다.
+	 */
+	private void expandIfRequested(BrandRow existing, int months) {
+		if (months <= existing.collectionMonths()) {
+			return;
+		}
+		if (!brands.expandWindow(existing.id(), months)) {
+			return;
+		}
+		BrandRow row = brands.findByUsername(existing.username()).orElseThrow();
+		backfill.execute(() -> runBackfillSafely(row));
 	}
 
 	/**

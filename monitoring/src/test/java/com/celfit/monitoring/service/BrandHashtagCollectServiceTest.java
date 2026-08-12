@@ -46,7 +46,7 @@ class BrandHashtagCollectServiceTest {
 	private final Map<String, Integer> pageIndexByTag = new HashMap<>();
 	private final List<String> calls = new ArrayList<>();
 
-	private final BrandRow brand = new BrandRow(1L, "cclime_official", "111", BrandStatus.ACTIVE, null);
+	private final BrandRow brand = new BrandRow(1L, "cclime_official", "111", BrandStatus.ACTIVE, null, 12);
 
 	// ── 스텁 대역 ───────────────────────────────────────────────────────────
 
