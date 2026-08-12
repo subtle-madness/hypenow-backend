@@ -233,4 +233,24 @@ public class MonitoringReadRepository {
 				.query(AlarmEventRow.class)
 				.list();
 	}
+
+	/**
+	 * 유저의 캠페인·콘텐츠 모니터링 콜 일별 집계 전량(2026-08-12 어드민 크롤링 비용 범위 확장) —
+	 * 귀속은 monitoring이 콜 시점에 끝냈으므로(target_call_count가 유저 키) 브랜드와 달리 기간
+	 * 계산이 없다. 행 수가 유저당 하루 1행이라 전량 조회가 싸다.
+	 */
+	public List<UserCallDailyRow> findDailyCallCounts(long userId) {
+		return jdbc.sql("""
+				SELECT called_on, calls
+				FROM target_call_count
+				WHERE user_id = :userId
+				""")
+				.param("userId", userId)
+				.query(UserCallDailyRow.class)
+				.list();
+	}
+
+	/** target_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
+	public record UserCallDailyRow(LocalDate calledOn, long calls) {
+	}
 }

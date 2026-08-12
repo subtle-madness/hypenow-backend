@@ -138,3 +138,12 @@ CREATE TABLE IF NOT EXISTS brand_call_count (
     calls     bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (brand_id, called_on)
 );
+
+-- 캠페인·콘텐츠 모니터링 콜의 유저별 일별 집계(정본: monitoring V20260812160000__target_call_count.sql).
+-- 브랜드 픽스처는 아니지만 크롤링 비용 카드가 brand_call_count와 함께 읽는 표면이라 같이 둔다.
+CREATE TABLE IF NOT EXISTS target_call_count (
+    user_id   bigint NOT NULL,
+    called_on date   NOT NULL,
+    calls     bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, called_on)
+);
