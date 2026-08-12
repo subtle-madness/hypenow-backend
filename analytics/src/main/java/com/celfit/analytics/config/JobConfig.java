@@ -7,8 +7,10 @@ import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
 import com.celfit.analytics.analyze.GeminiBackfillRunner;
 import com.celfit.analytics.analyze.ProgressReporter;
+import com.celfit.analytics.archive.GcsImageStore;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.archive.ImageDownloader;
+import com.celfit.analytics.archive.ImageStore;
 import com.celfit.analytics.archive.ParImageStore;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.llm.AccountSynthesisPort;
@@ -156,13 +158,20 @@ public class JobConfig {
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			AnalyticsSettings settings,
 			@Value("${analytics.image-par-url:}") String imageParUrl,
+			@Value("${analytics.image-store:par}") String imageStoreMode,
+			@Value("${analytics.image-gcs-bucket:}") String imageGcsBucket,
+			@Value("${analytics.image-gcs-key:}") String imageGcsKey,
 			ObjectProvider<JobProgressRegistry> progressRegistry) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null
 				? registry.reporter(JobName.ARCHIVE) : ProgressReporter.NOOP;
-		// @Lazy — PAR 미설정이면 첫 트리거 때 이 잡만 실패(로그 패널 노출), 서버 기동은 영향 없음
+		// @Lazy — PAR/버킷 미설정이면 첫 트리거 때 이 잡만 실패(로그 패널 노출), 서버 기동은 영향 없음
+		// IMAGE_STORE=gcs|par — OCI 복귀 보험(스펙 §실패 대응): par로 되돌리면 즉시 OCI 재개
+		ImageStore store = "gcs".equalsIgnoreCase(imageStoreMode)
+				? new GcsImageStore(imageGcsBucket, imageGcsKey)
+				: new ParImageStore(imageParUrl);
 		return new ImageArchiveJob(rawJdbcTemplate, analysisDataSource,
-				new ParImageStore(imageParUrl), ImageDownloader.http(), settings, reporter);
+				store, ImageDownloader.http(), settings, reporter);
 	}
 
 	/** trait 어휘 매핑 원샷(2026-07-29 스펙 §3-3) — 어드민 수동 트리거 전용, 스케줄 없음. */
