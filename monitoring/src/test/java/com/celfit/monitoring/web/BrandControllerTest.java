@@ -36,14 +36,16 @@ class BrandControllerTest {
 		DeregisterOutcome outcome;
 		RuntimeException toThrow;
 		String receivedBrandName;
+		Integer receivedMonths;
 
 		StubService() {
 			super(null, null, null, null, null, null, Runnable::run, Runnable::run);
 		}
 
 		@Override
-		public Result register(String username, String brandName) {
+		public Result register(String username, String brandName, Integer collectionMonths) {
 			receivedBrandName = brandName;
+			receivedMonths = collectionMonths;
 			if (toThrow != null) {
 				throw toThrow;
 			}
@@ -137,6 +139,17 @@ class BrandControllerTest {
 				.andExpect(status().isCreated());
 
 		assertThat(service.receivedBrandName).isNull();
+	}
+
+	@Test
+	void 등록_요청의_collectionMonths를_서비스에_전달한다() throws Exception {
+		service.result = new BrandRegistrationService.Result(42L, "brandx", 100L, false);
+
+		mvc.perform(post("/api/brands").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"brandx\", \"collectionMonths\": 3}"))
+				.andExpect(status().isCreated());
+
+		assertThat(service.receivedMonths).isEqualTo(3);
 	}
 
 	@Test

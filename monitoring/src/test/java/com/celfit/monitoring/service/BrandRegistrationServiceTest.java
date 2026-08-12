@@ -40,6 +40,7 @@ class BrandRegistrationServiceTest {
 		final List<Long> touched = new ArrayList<>();
 		final List<Long> served = new ArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
+		final List<Long> expanded = new ArrayList<>();
 		long nextId = 1;
 
 		InMemoryBrands() {
@@ -53,6 +54,13 @@ class BrandRegistrationServiceTest {
 			int months = existing != null ? Math.max(existing.collectionMonths(), collectionMonths) : collectionMonths;
 			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null, months));
 			return id;
+		}
+
+		@Override
+		public void expandWindow(long brandId, int months) {
+			expanded.add(brandId);
+			rows.replaceAll((u, r) -> r.id() == brandId
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months) : r);
 		}
 
 		@Override
@@ -312,6 +320,47 @@ class BrandRegistrationServiceTest {
 		assertThat(replayed.brandId()).isEqualTo(first.brandId());
 		assertThat(hikerCalls).hasSize(callsAfterFirst);   // Hiker 콜 0 — 멱등 replay
 		assertThat(callCounts.byBrand).containsExactly(Map.entry(first.brandId(), 1L));   // 콜 집계도 그대로
+	}
+
+	@Test
+	void 더_큰_창_재등록은_확장이다_프로필_콜_없이_백필만_재예약() {
+		var first = service().register("brandx", null, 3);
+		hikerCalls.clear();
+		collect.coreSwept.clear();
+
+		var result = service().register("brandx", null, 12);
+
+		assertThat(result.replayed()).isTrue();
+		assertThat(hikerCalls).isEmpty();                            // replay — Hiker 콜 0 유지
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");     // 동기 executor — 백필 즉시 재실행
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
+	}
+
+	@Test
+	void 같거나_작은_창_재등록은_순수_replay다() {
+		service().register("brandx", null, 6);
+		collect.coreSwept.clear();
+
+		service().register("brandx", null, 6);
+		service().register("brandx", null, 3);
+
+		assertThat(brands.expanded).isEmpty();
+		assertThat(collect.coreSwept).isEmpty();
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(6);   // 축소 무시
+	}
+
+	@Test
+	void 값_공간_밖_collectionMonths는_거절한다() {
+		assertThatThrownBy(() -> service().register("brandx", null, 2))
+				.isInstanceOf(ValidationException.class);
+		assertThat(hikerCalls).isEmpty();   // 검증은 Hiker 콜 도달 전
+	}
+
+	@Test
+	void collectionMonths_생략은_12다() {
+		service().register("brandx");
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
 	}
 
 	@Test
