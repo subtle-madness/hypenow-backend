@@ -65,6 +65,7 @@ was:
   mail:
     resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
     from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트
+    admin-only: ${WAS_MAIL_ADMIN_ONLY:false}  # true면 ADMIN role 수신자만 실발송(test 전용 — 실사용자 오발송 방지)
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:
