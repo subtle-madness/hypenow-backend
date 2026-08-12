@@ -202,6 +202,27 @@ class BrandStoreTest {
 	}
 
 	@Test
+	void expandWindow는_이미_더_큰_창이면_아무_흔적도_남기지_않는다() {
+		// 동시 확장 경합의 순차 재현 — 12 요청이 먼저 반영된 뒤, 같은 옛 값(3)을 읽고 호출자 게이트를
+		// 통과한 6 요청이 늦게 도착하는 상황. 축소는 물론 백필 재개 신호(last_swept_on)·폴링 앵커
+		// (collection_started_at) 리셋 같은 부수효과도 남기면 안 된다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		assertThat(brands.expandWindow(id, 12)).isTrue();
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));   // 확장 백필 완주 — 불변 확인용 상태
+		java.time.OffsetDateTime startedAt = db.queryForObject(
+				"SELECT collection_started_at FROM brand_account WHERE id = ?",
+				java.time.OffsetDateTime.class, id);
+
+		assertThat(brands.expandWindow(id, 6)).isFalse();   // 창이 실제로 커졌는가 = UPDATE rowcount
+
+		BrandRow row = brands.findByUsername("brandx").orElseThrow();
+		assertThat(row.collectionMonths()).isEqualTo(12);                      // GREATEST — 축소 차단
+		assertThat(row.lastSweptOn()).isEqualTo(LocalDate.of(2026, 8, 7));     // 백필 재개 신호 미발생
+		assertThat(db.queryForObject("SELECT collection_started_at FROM brand_account WHERE id = ?",
+				java.time.OffsetDateTime.class, id)).isEqualTo(startedAt);     // 폴링 앵커 불변
+	}
+
+	@Test
 	void 태그_게시물_링크와_댓글_게이트_상태() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null), 12);
 		taggedPosts.insert(id, post("CodeA", 1754000000L));

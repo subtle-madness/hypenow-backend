@@ -41,6 +41,8 @@ class BrandRegistrationServiceTest {
 		final List<Long> served = new ArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
 		final List<Long> expanded = new ArrayList<>();
+		/** 동시 확장 경합 주입 — 더 큰 창이 이미 반영돼 조건부 UPDATE가 0행을 맞는 상황(rowcount false). */
+		boolean loseExpandRace = false;
 		long nextId = 1;
 
 		InMemoryBrands() {
@@ -56,11 +58,17 @@ class BrandRegistrationServiceTest {
 			return id;
 		}
 
+		/** 실 SQL 의미와 등가 — GREATEST + "collection_months < months일 때만" 갱신하고 그 여부를 돌려준다. */
 		@Override
-		public void expandWindow(long brandId, int months) {
+		public boolean expandWindow(long brandId, int months) {
 			expanded.add(brandId);
+			BrandRow row = rows.values().stream().filter(r -> r.id() == brandId).findFirst().orElseThrow();
+			if (loseExpandRace || months <= row.collectionMonths()) {
+				return false;
+			}
 			rows.replaceAll((u, r) -> r.id() == brandId
 					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months) : r);
+			return true;
 		}
 
 		@Override
@@ -351,6 +359,22 @@ class BrandRegistrationServiceTest {
 			assertThat(row.collectionMonths()).isEqualTo(12);
 			assertThat(row.lastSweptOn()).isNull();
 		});
+	}
+
+	@Test
+	void 확장이_경합에서_지면_백필을_재제출하지_않는다() {
+		// 사전 게이트(in-memory)를 통과했지만 조건부 UPDATE가 0행 — 더 큰 창을 넣은 동시 요청이
+		// 이미 이겼다는 뜻이고, 그쪽이 백필도 이미 제출했다. 여기서 또 제출하면 중복 열거다.
+		var service = service();
+		service.register("brandx", null, 3);
+		collect.coreSwept.clear();
+		brands.loseExpandRace = true;
+
+		var result = service.register("brandx", null, 12);
+
+		assertThat(result.replayed()).isTrue();
+		assertThat(brands.expanded).containsExactly(result.brandId());   // 시도는 했다(사전 게이트 통과)
+		assertThat(collect.coreSwept).isEmpty();                         // 재제출 없음
 	}
 
 	@Test

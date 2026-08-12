@@ -56,13 +56,21 @@ public class BrandRepository {
 	 * last_swept_on NULL이 핵심이다: 확장 백필이 죽어도 다음 새벽 스윕이 백필 분기(전체 창 열거)로
 	 * 자동 복구한다(기존 백스톱 상속). backfill_completed_at은 보존한다 — was가 "완주 이력 있는데
 	 * last_swept_on이 빔 = 확장 중"으로 collecting을 유도하는 판별 재료다.
+	 *
+	 * <p>축소 금지("collection_months는 절대 줄지 않는다")의 판정은 호출자 게이트가 아니라 이
+	 * UPDATE 자체에 있다. 호출자의 check-then-act(읽은 창보다 크면 확장)는 동시 요청 둘이 같은 옛
+	 * 값을 읽으면 둘 다 통과하고, 그러면 마지막 쓰기가 이겨 12→6 축소가 난다. GREATEST가 그 인터리빙
+	 * 에서도 단조 증가를 보장하고, WHERE collection_months &lt; ?가 "이미 더 큰(같은) 창"이면 행을
+	 * 아예 건드리지 않아 부수효과(백필 재개 신호·폴링 앵커 리셋)도 남기지 않는다.
+	 *
+	 * @return 실제로 창이 커졌으면 true — rowcount가 곧 판정 결과다(false = 경합에서 더 큰 창이 이김).
 	 */
-	public void expandWindow(long brandId, int months) {
-		db.update("""
+	public boolean expandWindow(long brandId, int months) {
+		return db.update("""
 				UPDATE brand_account
-				SET collection_months = ?, last_swept_on = NULL,
+				SET collection_months = GREATEST(collection_months, ?), last_swept_on = NULL,
 				    collection_started_at = now(), backfill_error = NULL
-				WHERE id = ?""", months, brandId);
+				WHERE id = ? AND collection_months < ?""", months, brandId, months) > 0;
 	}
 
 	/**

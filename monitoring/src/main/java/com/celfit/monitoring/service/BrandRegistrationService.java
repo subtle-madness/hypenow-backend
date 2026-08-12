@@ -142,12 +142,18 @@ public class BrandRegistrationService {
 	 * 다음 새벽 스윕이 전체 창을 다시 연다(등록 백필과 같은 백스톱 규율). 열거는 최신부터 커서
 	 * 단방향이라 "새 컷까지 재열거"가 증분 수집의 실체다 — 기지 게시물은 insert 스킵(멱등 upsert).
 	 * 축소는 무시한다(수집된 사실이 정본 — 요청서 §4).
+	 *
+	 * <p>여기 in-memory 게이트는 불필요한 UPDATE를 줄이는 사전 컷일 뿐이고, 축소 차단의 정본은
+	 * expandWindow의 조건부 UPDATE다. 그 UPDATE가 false(0행)면 동시 요청이 더 큰 창으로 이미
+	 * 이겼다는 뜻이고 그쪽이 백필도 제출했으므로, 같은 창을 두 번 여는 재제출을 건너뛴다.
 	 */
 	private void expandIfRequested(BrandRow existing, int months) {
 		if (months <= existing.collectionMonths()) {
 			return;
 		}
-		brands.expandWindow(existing.id(), months);
+		if (!brands.expandWindow(existing.id(), months)) {
+			return;
+		}
 		BrandRow row = brands.findByUsername(existing.username()).orElseThrow();
 		backfill.execute(() -> runBackfillSafely(row));
 	}
