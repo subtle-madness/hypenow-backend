@@ -113,6 +113,18 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     PRIMARY KEY (brand_id, short_code)
 );
 
+-- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql +
+-- V20260812120216__brand_hashtag_exclusion_soft_delete.sql(deleted_at tombstone, 2026-08-12).
+-- was는 findActiveExclusionTerms(deleted_at IS NULL만)로 읽는다 — 해시태그 발견 게시물 조회
+-- 시점 즉시 필터 재료(BrandHashtagPostAssembler).
+CREATE TABLE IF NOT EXISTS brand_hashtag_exclusion (
+    brand_id   bigint      NOT NULL REFERENCES brand_account (id),
+    term       text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz,
+    PRIMARY KEY (brand_id, term)
+);
+
 CREATE TABLE IF NOT EXISTS author_profile (
     ig_user_id      text        PRIMARY KEY,
     username        text        NOT NULL,

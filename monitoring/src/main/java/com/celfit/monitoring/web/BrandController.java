@@ -23,10 +23,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 브랜드 태그 모니터링 등록/탈퇴 + 제외 문자열 관리 + 태그 셋 관리 API(수집 파이프라인 진입점 —
- * was 조회 API·FE 계약은 범위 밖). 201 신규 / 200 replay / 204 탈퇴(이미 닫힘 포함, 멱등)·제외
- * 문자열 교체·태그 셋 교체 / 404 미등록·비ACTIVE·IG 계정 부재 / 400 형식 위반 / 422 비공개 계정·
- * 제외 문자열 빈 목록·태그 무효 문자·태그 빈 목록 거부(비소급 오염 방지) — 예외 매핑은
- * ApiExceptionHandler 공용.
+ * was 조회 API·FE 계약은 범위 밖). 태그·제외 문자열 두 리소스 모두 GET(조회)·PUT(전체 교체)·
+ * POST(단건·다건 추가)·DELETE {item}(단건 삭제)·DELETE(전체 삭제) 표준 REST 5종을 제공한다
+ * (2026-08-12 확장 — 유저 결정: 태그·제외 문자열에 표준 REST 단건 조작 추가). 저장은 전부
+ * tombstone(deleted_at) — 하드 삭제하면 등록 replay의 자동 시드가 되살리기 때문.
+ * 201 신규 / 200 replay / 204 탈퇴(이미 닫힘 포함, 멱등)·교체·추가·삭제 / 404 미등록·비ACTIVE·
+ * IG 계정 부재 / 400 형식 위반 / 422 비공개 계정·태그 무효 문자·태그 추가 빈 입력 — 예외 매핑은
+ * ApiExceptionHandler 공용. <b>PUT 빈 목록은 이제 허용된다</b>(2026-08-12) — 단건 삭제·전체 삭제
+ * API가 생겨 "전체 비우기"가 더 이상 실수로만 일어나는 상태가 아니다(구 EmptyExclusionTermsException
+ * 하한 가드는 폐지).
  */
 @RestController
 @RequestMapping("/api/brands")
@@ -86,11 +91,9 @@ public class BrandController {
 	}
 
 	/**
-	 * 전체 교체(PUT 계약) — 정규화 후 저장, 브랜드 미존재·비ACTIVE는 404.
-	 * 정규화 결과가 빈 목록이면 422로 거부한다 — 판정은 비소급(이미 저장된 verdict 불변)이라
-	 * 빈 목록으로 전부 지우면 자사 게시물(스트림의 71~87%)이 RELEVANT로 저장된 뒤 term을
-	 * 되돌려도 복구 불가(EmptyExclusionTermsException 참조). 브랜드 조회를 먼저 해 미등록·
-	 * 비ACTIVE는 이 가드보다 우선해 여전히 404다.
+	 * 전체 교체(PUT 계약) — 정규화 후 저장(tombstone 의미론은 {@link BrandHashtagRepository#replaceExclusionTerms}
+	 * 참조), 브랜드 미존재·비ACTIVE는 404. 빈 목록도 허용한다(2026-08-12 — 전체 삭제 API가 생겨
+	 * "전부 지우기"가 정당한 상태이므로 구 하한 가드는 폐지, {@link #deleteAllExclusions} 참조).
 	 */
 	@PutMapping("/{username}/hashtag-exclusions")
 	public ResponseEntity<?> replaceExclusions(@PathVariable String username,
@@ -99,11 +102,44 @@ public class BrandController {
 		if (row.isEmpty()) {
 			return brandNotFound();
 		}
-		List<String> normalized = normalize(body.terms());
-		if (normalized.isEmpty()) {
-			throw new EmptyExclusionTermsException("제외 문자열은 최소 1개 필요합니다.");
+		hashtags.replaceExclusionTerms(row.get().id(), normalize(body.terms()));
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 단건·다건 추가(POST 계약) — 정규화 후 저장(tombstone 재활성). 빈 입력은 추가할 게 없다는 뜻이라 무해한 204. */
+	@PostMapping("/{username}/hashtag-exclusions")
+	public ResponseEntity<?> addExclusions(@PathVariable String username,
+			@RequestBody(required = false) HashtagExclusionsBody body) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
 		}
-		hashtags.replaceExclusionTerms(row.get().id(), normalized);
+		hashtags.addExclusionTerms(row.get().id(), normalize(body == null ? null : body.terms()));
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 단건 삭제(tombstone, DELETE {term} 계약) — 정규화 후 삭제, 없어도 멱등 204. */
+	@DeleteMapping("/{username}/hashtag-exclusions/{term}")
+	public ResponseEntity<?> deleteExclusion(@PathVariable String username, @PathVariable String term) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		String normalized = normalizeItem(term);
+		if (normalized != null) {
+			hashtags.deleteExclusionTerm(row.get().id(), normalized);
+		}
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 전체 삭제(tombstone, DELETE 계약) — 자사 오탐 필터를 브랜드 단위로 완전히 끈다. */
+	@DeleteMapping("/{username}/hashtag-exclusions")
+	public ResponseEntity<?> deleteAllExclusions(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		hashtags.deleteAllExclusionTerms(row.get().id());
 		return ResponseEntity.noContent().build();
 	}
 
@@ -124,7 +160,8 @@ public class BrandController {
 	 *
 	 * <p>유효 문자 검증은 유저 입력이므로 자동 유도(BrandHashtagTags.derive)처럼 절삭하지 않고
 	 * 통째로 거부한다 — 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시).
-	 * 정규화 결과가 빈 목록이어도 422(제외 문자열과 같은 근거 — 감지가 조용히 꺼지는 것 방지).
+	 * 빈 목록은 허용한다(2026-08-12 — 전체 삭제 API가 생겨 "전부 지우기"가 정당한 상태이므로 구
+	 * 하한 가드는 폐지, {@link #deleteAllHashtagTags} 참조. 브랜드 태그 감지가 전부 꺼지는 셈이다).
 	 */
 	@PutMapping("/{username}/hashtag-tags")
 	public ResponseEntity<?> replaceHashtagTags(@PathVariable String username,
@@ -134,15 +171,63 @@ public class BrandController {
 			return brandNotFound();
 		}
 		List<String> normalized = normalizeTags(body.tags());
+		rejectInvalidTags(normalized);
+		hashtags.replaceTags(row.get().id(), normalized);
+		return ResponseEntity.noContent().build();
+	}
+
+	/**
+	 * 단건·다건 추가(POST 계약) — 정규화·유효 문자 검증 후 저장(tombstone 재활성). PUT과 달리 빈
+	 * 입력은 422로 거부한다 — "추가할 태그가 없다"는 요청 자체가 무의미해 실수일 확률이 높다
+	 * (전체를 비우는 명시적 의도는 DELETE 전체가 담당).
+	 */
+	@PostMapping("/{username}/hashtag-tags")
+	public ResponseEntity<?> addHashtagTags(@PathVariable String username,
+			@RequestBody(required = false) HashtagTagsBody body) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		List<String> normalized = normalizeTags(body == null ? null : body.tags());
+		rejectInvalidTags(normalized);
+		if (normalized.isEmpty()) {
+			throw new InvalidHashtagException("추가할 태그가 없습니다.");
+		}
+		hashtags.addTags(row.get().id(), normalized);
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 단건 삭제(tombstone, DELETE {tag} 계약) — 정규화 후 삭제, 없어도 멱등 204. */
+	@DeleteMapping("/{username}/hashtag-tags/{tag}")
+	public ResponseEntity<?> deleteHashtagTag(@PathVariable String username, @PathVariable String tag) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		String normalized = normalizeTagItem(tag);
+		if (normalized != null) {
+			hashtags.deleteTag(row.get().id(), normalized);
+		}
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 전체 삭제(tombstone, DELETE 계약) — 브랜드 단위로 해시태그 감지를 일시 중지하는 것과 같다. */
+	@DeleteMapping("/{username}/hashtag-tags")
+	public ResponseEntity<?> deleteAllHashtagTags(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		hashtags.deleteAllTags(row.get().id());
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시) — PUT·POST 공용. */
+	private static void rejectInvalidTags(List<String> normalized) {
 		List<String> invalid = normalized.stream().filter(tag -> !BrandHashtagTags.isValidTag(tag)).toList();
 		if (!invalid.isEmpty()) {
 			throw new InvalidHashtagException("사용할 수 없는 문자가 포함된 태그입니다: " + String.join(", ", invalid));
 		}
-		if (normalized.isEmpty()) {
-			throw new InvalidHashtagException("태그는 최소 1개 필요합니다.");
-		}
-		hashtags.replaceTags(row.get().id(), normalized);
-		return ResponseEntity.noContent().build();
 	}
 
 	private Optional<BrandRow> activeBrand(String username) {
@@ -167,15 +252,21 @@ public class BrandController {
 		}
 		Set<String> normalized = new LinkedHashSet<>();
 		for (String term : terms) {
-			if (term == null) {
-				continue;
-			}
-			String cleaned = term.strip().toLowerCase();
-			if (!cleaned.isBlank()) {
+			String cleaned = normalizeItem(term);
+			if (cleaned != null) {
 				normalized.add(cleaned);
 			}
 		}
 		return List.copyOf(normalized);
+	}
+
+	/** 단건 정규화(trim → 소문자) — null·blank는 null(호출측이 "대상 없음"으로 처리). */
+	private static String normalizeItem(String term) {
+		if (term == null) {
+			return null;
+		}
+		String cleaned = term.strip().toLowerCase();
+		return cleaned.isBlank() ? null : cleaned;
 	}
 
 	/** trim → 선행 # 제거 → 소문자 → blank 제거 → 중복 제거(입력 순서 보존). tags가 null이면 빈 목록. */
@@ -185,18 +276,24 @@ public class BrandController {
 		}
 		Set<String> normalized = new LinkedHashSet<>();
 		for (String tag : tags) {
-			if (tag == null) {
-				continue;
-			}
-			String stripped = tag.strip();
-			if (stripped.startsWith("#")) {
-				stripped = stripped.substring(1);
-			}
-			String cleaned = stripped.strip().toLowerCase();
-			if (!cleaned.isBlank()) {
+			String cleaned = normalizeTagItem(tag);
+			if (cleaned != null) {
 				normalized.add(cleaned);
 			}
 		}
 		return List.copyOf(normalized);
+	}
+
+	/** 단건 정규화(trim → 선행 # 제거 → 소문자) — null·blank는 null(호출측이 "대상 없음"으로 처리). */
+	private static String normalizeTagItem(String tag) {
+		if (tag == null) {
+			return null;
+		}
+		String stripped = tag.strip();
+		if (stripped.startsWith("#")) {
+			stripped = stripped.substring(1);
+		}
+		String cleaned = stripped.strip().toLowerCase();
+		return cleaned.isBlank() ? null : cleaned;
 	}
 }
