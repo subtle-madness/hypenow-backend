@@ -75,7 +75,7 @@ class PerformanceComparisonAssemblerTest {
 	private static final List<BucketRange> RANGES =
 			PerformanceComparisonAssembler.bucketRanges(LocalDate.parse("2026-08-10"));
 
-	/** ready 계정(lastSweptAt 존재) — covered 전 구간 true의 기준 픽스처. */
+	/** 백필 완주 계정(backfillCompletedAt 존재) — covered 전 구간 true의 기준 픽스처. */
 	private static BrandAccountRow readyAccount() {
 		return new BrandAccountRow(2L, "cclime.beauty", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
@@ -183,16 +183,23 @@ class PerformanceComparisonAssemblerTest {
 	}
 
 	@Test
-	void 스윕_완주_전_계정은_전_구간_covered_false다() {
+	void 백필_완주_전_계정은_전_구간_covered_false다() {
 		BrandAccountRow collecting = new BrandAccountRow(3L, "laperi_kr", null, null,
 				OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 				null, null, null, "", "", null, null, null, "ACTIVE", null);
+		// 08-12 스트리밍 백필: 서빙 창(30일)만 커버해도 last_swept_at이 먼저 찍힌다 — 이 상태는
+		// 365일 전량이 아니라서 covered는 false여야 한다(판정 기준을 backfill_completed_at으로 옮긴 이유).
+		BrandAccountRow earlyServing = new BrandAccountRow(4L, "hypenow_kr", LocalDate.parse("2026-08-10"),
+				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-08-09T00:00:00Z"),
+				null, null, null, null, null, "", "", null, null, null, "ACTIVE", null);
 
 		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(), RANGES);
 		var notReady = PerformanceComparisonAssembler.compare(collecting, BrandAccountType.OWN, List.of(), RANGES);
+		var early = PerformanceComparisonAssembler.compare(earlyServing, BrandAccountType.OWN, List.of(), RANGES);
 
 		assertThat(ready.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
 		assertThat(notReady.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
+		assertThat(early.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
 	}
 
 	// ---------- 배선(계정 로딩·그룹핑) ----------

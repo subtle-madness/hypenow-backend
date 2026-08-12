@@ -25,10 +25,12 @@ public record PerformanceComparisonResponse(List<AccountComparison> accounts) {
 	}
 
 	/**
-	 * 구간 1개 집계. covered는 계정 단위 판정이다 — 한 번이라도 스윕을 완주(lastSweptAt 존재)했으면
-	 * 5구간 전부 true: 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과 무관하다(스펙 §covered
-	 * — 등록일 기준이 아니다). false는 "아직 첫 수집 전"이라는 뜻이고 집계값은 그대로 내린다
-	 * (direct 콘텐츠는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
+	 * 구간 1개 집계. covered는 계정 단위 판정이다 — <b>최초 백필을 완주</b>(backfillCompletedAt
+	 * 존재)했으면 5구간 전부 true: 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과
+	 * 무관하다(스펙 §covered — 등록일 기준이 아니다). 완주 기준인 이유(08-12): last_swept_at은
+	 * 서빙 창(30일)만 커버해도 미리 찍혀 365일 완주를 보장하지 않는다. false는 "아직 365일 전량
+	 * 수집 전"이라는 뜻이고 집계값은 그대로 내린다(direct 콘텐츠는 레거시 파이프라인이라 스윕
+	 * 전에도 존재할 수 있다).
 	 */
 	public record Bucket(
 			@Schema(allowableValues = {"1w", "1w_1m", "1m_3m", "3m_6m", "6m_12m"}) String key,

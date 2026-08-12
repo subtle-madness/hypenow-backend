@@ -91,13 +91,16 @@ public class PerformanceComparisonAssembler {
 
 	/**
 	 * 계정 1개 집계 — accountContents는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
-	 * covered는 계정 단위다: 한 번이라도 스윕 완주(lastSweptAt 존재 = collectionStatus ready)면
-	 * 전 구간 true — 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과 무관하다(스펙 §covered).
+	 * covered는 계정 단위다: <b>최초 백필 완주</b>(backfillCompletedAt 존재)면 전 구간 true —
+	 * 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과 무관하다(스펙 §covered).
+	 * lastSweptAt을 쓰지 않는 이유(08-12 스트리밍 백필 도입): last_swept_at은 서빙 창(30일)만
+	 * 커버해도 미리 찍히므로 365일 완주를 보장하지 않는다 — 완주 전(수 분)과 조기 서빙 후 백필
+	 * 실패 시(다음 스윕 완주까지) 1m_3m 이후 구간이 빈 채로 covered=true가 되어 오보가 된다.
 	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
 			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges) {
-		boolean covered = account.lastSweptAt() != null;
+		boolean covered = account.backfillCompletedAt() != null;
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
 		for (BucketRange range : ranges) {
 			buckets.add(aggregate(range, covered, accountContents));

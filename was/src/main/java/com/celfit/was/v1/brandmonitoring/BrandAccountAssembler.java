@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>상태 유도 규칙(정본은 monitoring 컬럼 2개뿐 — 별도 상태 컬럼이 없다):
  * <ul>
- *   <li>{@code last_swept_at} 있음(한 번이라도 스윕 완주 = 서빙할 데이터 있음) → {@code ready}</li>
+ *   <li>{@code last_swept_at} 있음(완주 또는 서빙 창 커버 = 서빙할 데이터 있음) → {@code ready}</li>
  *   <li>{@code last_swept_at} null + {@code backfill_error} 있음 → {@code error} + collectionError</li>
  *   <li>둘 다 null → {@code collecting}</li>
  * </ul>
