@@ -52,6 +52,7 @@ class V2CampaignContentServiceTest {
 	private static final long USER_ID = 7L;
 	private static final long CAMPAIGN_ID = 42L;
 	private static final long BRAND_ID = 900L;
+	private static final long RIVAL_BRAND_ID = 901L;
 
 	@Mock
 	CampaignRepository campaignRepository;
@@ -353,6 +354,86 @@ class V2CampaignContentServiceTest {
 		assertThat(results.get(2).result()).isEqualTo("failed");
 	}
 
+	// ---------- 추가: 경쟁사 구독 차단(08-12) ----------
+
+	@Test
+	void 경쟁사_태그_게시물은_건별_실패고_같은_요청의_정상_콘텐츠는_성공한다() {
+		// 100건 배치의 부분 성공이 이 API의 계약이다 — 경쟁사 1건 때문에 나머지 99건을 400으로
+		// 떨구지 않는다(요청 형태 문제만 400).
+		givenCampaign();
+		givenItems();
+		givenLinks(link(1L, BRAND_ID, "own"), link(2L, RIVAL_BRAND_ID, "competitor"));
+		givenTaggedPosts(BRAND_ID, taggedPost("OWNPOST1", "https://www.instagram.com/reel/OWNPOST1/", BRAND_ID));
+		givenTaggedPosts(RIVAL_BRAND_ID,
+				taggedPost("RIVALPOST1", "https://www.instagram.com/p/RIVALPOST1/", RIVAL_BRAND_ID));
+		given(registrationService.register(eq(USER_ID), anyMap())).willReturn(
+				new MonitoringRegistrationResponse("500", List.of(
+						TrackingItemResponse.pendingPost(11L, "https://www.instagram.com/reel/OWNPOST1/",
+								CAMPAIGN_ID, "여름 캠페인", LocalDate.parse("2026-08-07"), 30,
+								OffsetDateTime.parse("2026-08-07T00:00:00Z"))),
+						null));
+
+		List<V2CampaignContentsResponse.Result> results =
+				service.add(USER_ID, CAMPAIGN_ID, List.of("OWNPOST1", "RIVALPOST1"), 30).body().results();
+
+		assertThat(results.get(0).contentId()).isEqualTo("OWNPOST1");
+		assertThat(results.get(0).result()).isEqualTo("pending");
+		assertThat(results.get(1).contentId()).isEqualTo("RIVALPOST1");
+		assertThat(results.get(1).result()).isEqualTo("failed");
+		assertThat(results.get(1).reasonCode()).isEqualTo("COMPETITOR_CONTENT_NOT_ALLOWED");
+		assertThat(results.get(1).reason()).isEqualTo("경쟁사 계정의 게시물은 캠페인에 연결할 수 없어요.");
+		assertThat(results.get(1).monitoringItemId()).isNull();
+		// 경쟁사 게시물은 위임 목록에 실리지 않는다(아이템이 만들어지면 차단이 무의미하다).
+		then(registrationService).should().register(eq(USER_ID), bodyCaptor.capture());
+		assertThat(bodyCaptor.getValue())
+				.containsEntry("posts", List.of("https://www.instagram.com/reel/OWNPOST1/"));
+	}
+
+	@Test
+	void 경쟁사_게시물은_NOT_FOUND가_아니다() {
+		// 태그 맵에서 경쟁사를 빼버리면 NOT_FOUND로 떨어져 "보이는 게시물을 없다"고 말하게 된다 —
+		// 나중에 수집 누락을 의심하며 디버깅하는 사람을 속인다. 담아 두고 전용 사유로 거절한다.
+		givenCampaign();
+		givenItems();
+		givenLinks(link(2L, RIVAL_BRAND_ID, "competitor"));
+		givenTaggedPosts(RIVAL_BRAND_ID,
+				taggedPost("RIVALPOST1", "https://www.instagram.com/p/RIVALPOST1/", RIVAL_BRAND_ID));
+
+		V2CampaignContentService.Added added =
+				service.add(USER_ID, CAMPAIGN_ID, List.of("RIVALPOST1"), 30);
+
+		V2CampaignContentsResponse.Result result = added.body().results().get(0);
+		assertThat(result.result()).isEqualTo("failed");
+		assertThat(result.reasonCode()).isNotEqualTo("NOT_FOUND");
+		assertThat(result.reasonCode()).isEqualTo("COMPETITOR_CONTENT_NOT_ALLOWED");
+		assertThat(added.accepted()).isFalse();
+		then(registrationService).should(never()).register(anyLong(), anyMap());
+	}
+
+	@Test
+	void 내_브랜드와_경쟁사에_동시_태그된_게시물은_허용한다() {
+		// 귀속은 이제 표시가 아니라 권한이다 — 내 게시물이 경쟁사에도 태그돼 있고 경쟁사 연결이
+		// 더 오래됐다는 이유만으로 내 캠페인에 못 담기면, 연결 순서가 권한을 정하게 된다.
+		givenCampaign();
+		givenItems();
+		givenLinks(link(2L, RIVAL_BRAND_ID, "competitor"), link(1L, BRAND_ID, "own"));
+		givenTaggedPosts(RIVAL_BRAND_ID, taggedPost("ABC", "https://www.instagram.com/reel/ABC/", RIVAL_BRAND_ID));
+		givenTaggedPosts(BRAND_ID, taggedPost("ABC", "https://www.instagram.com/reel/ABC/", BRAND_ID));
+		given(registrationService.register(eq(USER_ID), anyMap())).willReturn(
+				new MonitoringRegistrationResponse("500", List.of(
+						TrackingItemResponse.pendingPost(11L, "https://www.instagram.com/reel/ABC/", CAMPAIGN_ID,
+								"여름 캠페인", LocalDate.parse("2026-08-07"), 30,
+								OffsetDateTime.parse("2026-08-07T00:00:00Z"))),
+						null));
+
+		V2CampaignContentsResponse.Result result =
+				service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30).body().results().get(0);
+
+		assertThat(result.result()).isEqualTo("pending");
+		assertThat(result.reasonCode()).isNull();
+		assertThat(result.monitoringItemId()).isEqualTo("11");
+	}
+
 	// ---------- 검증 ----------
 
 	@Test
@@ -454,12 +535,31 @@ class V2CampaignContentServiceTest {
 	}
 
 	private void givenTagged(BrandPostResponse... posts) {
-		given(linkRepository.findAllActiveByUser(USER_ID))
-				.willReturn(List.of(new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", null, null)));
-		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", null, null, null, null, null,
-				null, null, null, null, null, null, null, null, "ACTIVE");
-		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
+		givenLinks(link(1L, BRAND_ID, "own"));
+		givenTaggedPosts(BRAND_ID, posts);
+	}
+
+	/** 활성 브랜드 연결 목록 — 인자 순서가 곧 조회 순서다(귀속 우선순위 검증에 쓴다). */
+	private void givenLinks(BrandLinkRow... links) {
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(links));
+	}
+
+	/** 브랜드 1개의 태그 목록 — 계정 행 조회까지 함께 물린다. */
+	private void givenTaggedPosts(long brandId, BrandPostResponse... posts) {
+		BrandAccountRow account = account(brandId);
+		given(brandReadRepository.findAccount(brandId)).willReturn(Optional.of(account));
 		given(brandPostAssembler.assembleTagged(account)).willReturn(List.of(posts));
+	}
+
+	/** 브랜드 연결 1건 — 이 테스트가 보는 필드는 brandId·accountType뿐이다. */
+	private static BrandLinkRow link(long linkId, long brandId, String accountType) {
+		return new BrandLinkRow(linkId, USER_ID, brandId, "brand" + brandId, accountType, null, null);
+	}
+
+	/** record라 값이 같으면 동등하다 — 스텁 매칭에 같은 인스턴스를 들고 다닐 필요가 없다. */
+	private static BrandAccountRow account(long brandId) {
+		return new BrandAccountRow(brandId, "brand", null, null, null, null, null,
+				null, null, null, null, null, null, null, null, "ACTIVE");
 	}
 
 	/** 레거시 추적 아이템 — 이 테스트가 보는 필드는 id·status·campaign·post.url·sourceUrl뿐이다. */
@@ -473,7 +573,11 @@ class V2CampaignContentServiceTest {
 
 	/** tagged 게시물 — 이 테스트가 보는 필드는 shortcode·postUrl뿐이다. */
 	private static BrandPostResponse taggedPost(String shortcode, String postUrl) {
-		return new BrandPostResponse(shortcode, String.valueOf(BRAND_ID), "tagged", postUrl, shortcode,
+		return taggedPost(shortcode, postUrl, BRAND_ID);
+	}
+
+	private static BrandPostResponse taggedPost(String shortcode, String postUrl, long brandId) {
+		return new BrandPostResponse(shortcode, String.valueOf(brandId), "tagged", postUrl, shortcode,
 				"reels", "2026-08-05T00:00:00+09:00", null, null, null, null, null, null, null, null,
 				false, null, "unknown", null, "tracking", null, null, null, List.of(), null, false, 0,
 				List.of(), List.of(), null, null);

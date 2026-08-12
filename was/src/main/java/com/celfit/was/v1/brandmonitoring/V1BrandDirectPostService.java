@@ -377,9 +377,24 @@ public class V1BrandDirectPostService {
 
 	// ---------- 검증 ----------
 
+	/**
+	 * 연결 유무 + 구독 타입 검증. <b>경쟁사 구독 브랜드에는 직접 등록을 받지 않는다</b>(08-12) —
+	 * 연결은 있으니 404·"권한 없음"이 아니라 별도 코드로 거절한다.
+	 *
+	 * <p>이유: 경쟁사 게시물은 캠페인에 붙이지 못하는데(v2 §3-3 차단), 직접 등록만 열려 있으면
+	 * 그 경로로 레거시 추적 아이템이 생기고 캠페인 추가의 첫 분기(기존 아이템)를 그대로 통과해
+	 * 차단이 무력화된다. 게다가 성과 대시보드는 같은 매핑({@code brand_direct_posts.brand_id} ×
+	 * 링크의 accountType)을 근거로 그 콘텐츠를 경쟁사 콘텐츠로 보고 기본 범위에서 뺀다 —
+	 * 등록만 허용하면 두 표면이 같은 콘텐츠를 두고 서로 다른 말을 한다.
+	 *
+	 * <p>지금 바꿔도 깨질 흐름이 없다: 타입은 08-12 신설이고 기존 연결은 전량 {@code own}으로
+	 * 백필됐다(마이그레이션 기본값). 즉 아직 경쟁사 구독을 가진 유저 자체가 없다.
+	 */
 	private void requireOwnership(long userId, long brandId) {
-		if (linkRepository.findActiveByUserAndBrand(userId, brandId).isEmpty()) {
-			throw V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요.");
+		BrandLinkRow link = linkRepository.findActiveByUserAndBrand(userId, brandId)
+				.orElseThrow(() -> V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요."));
+		if (BrandAccountType.COMPETITOR.equals(link.accountType())) {
+			throw V1ApiException.forbidden("COMPETITOR_ACCOUNT_NOT_ALLOWED", "경쟁사 계정의 게시물은 추적 등록할 수 없어요.");
 		}
 	}
 
