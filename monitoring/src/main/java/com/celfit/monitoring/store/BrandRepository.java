@@ -95,6 +95,18 @@ public class BrandRepository {
 	}
 
 	/**
+	 * 조기 서빙 마크(스트리밍 백필 2026-08-12 스펙 §1) — 등록 백필이 서빙 창(최근 30일)을 커버한
+	 * 시점에 was ready 판정 컬럼(last_swept_at)만 당긴다. last_swept_on(다음 스윕 열거 깊이 판정)과
+	 * backfill_completed_at(FE "과거분 수집 중" 배지)은 완주 시점의 touchSwept가 찍는다 — 여기서
+	 * last_swept_on까지 찍으면 이후 열거 실패 시 다음 스윕이 14일 컷만 돌아 30~365일 구간이 영구
+	 * 공백이 된다. IS NULL 가드: 첫 백필에서만 유효(재가입·이미 서빙 중이면 no-op).
+	 */
+	public void markServing(long brandId) {
+		db.update("UPDATE brand_account SET last_swept_at = now() WHERE id = ? AND last_swept_at IS NULL",
+				brandId);
+	}
+
+	/**
 	 * 초기 백필 실패 기록 — was 폴링이 "수집 중"에서 빠져나올 신호(계약 §5-2).
 	 * last_swept_on이 이미 찬 브랜드(= 한 번이라도 완주한 ready 상태)는 덮지 않는다:
 	 * 그쪽은 이미 보여줄 데이터가 있어서 실패를 사용자 화면에 띄울 이유가 없다.

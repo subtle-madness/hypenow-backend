@@ -38,6 +38,7 @@ class BrandRegistrationServiceTest {
 	private static final class InMemoryBrands extends BrandRepository {
 		final Map<String, BrandRow> rows = new HashMap<>();
 		final List<Long> touched = new ArrayList<>();
+		final List<Long> served = new ArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
 		long nextId = 1;
 
@@ -78,6 +79,11 @@ class BrandRegistrationServiceTest {
 		public void touchSwept(long brandId, LocalDate on) {
 			touched.add(brandId);
 		}
+
+		@Override
+		public void markServing(long brandId) {
+			served.add(brandId);
+		}
 	}
 
 	private static final class StubCollect extends BrandCollectService {
@@ -85,10 +91,14 @@ class BrandRegistrationServiceTest {
 		final List<String> enriched = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
 		final Set<String> enrichFailing = new HashSet<>();
+		List<PostInfo> earlyBatch = List.of();   // 서빙 콜백에 넘길 누적분(기본: 없음)
+		List<PostInfo> fullResult = List.of();   // 완주 반환분
+		boolean failAfterServing = false;        // 콜백 후 실패 시나리오 주입
+		final List<List<String>> enrichedPosts = new ArrayList<>();
 		private List<String> callOrder = new ArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, 365, 2000, 3, 30);
+			super(null, null, null, null, null, null, null, null, 365, 30, 2000, 3, 30);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
@@ -97,12 +107,16 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public List<PostInfo> sweepCore(BrandRow brand) {
+		public List<PostInfo> sweepCore(BrandRow brand, java.util.function.Consumer<List<PostInfo>> onServingCovered) {
 			if (failing.contains(brand.username())) {
 				throw new IllegalStateException("백필 실패 주입");
 			}
 			coreSwept.add(brand.username());
-			return List.of();
+			onServingCovered.accept(earlyBatch);   // 실코드의 "정확히 1회" 계약 재현
+			if (failAfterServing) {
+				throw new IllegalStateException("서빙 후 실패 주입");
+			}
+			return fullResult;
 		}
 
 		@Override
@@ -111,6 +125,7 @@ class BrandRegistrationServiceTest {
 				throw new IllegalStateException("보강 실패 주입");
 			}
 			enriched.add(brand.username());
+			enrichedPosts.add(posts.stream().map(PostInfo::shortCode).toList());
 			callOrder.add("enrich");
 		}
 	}
@@ -184,6 +199,12 @@ class BrandRegistrationServiceTest {
 	private final StubHashtags hashtags = new StubHashtags();
 	private final StubHashtagCollect hashtagCollect = new StubHashtagCollect();
 
+	private static PostInfo post(String code) {
+		return new PostInfo(code, "author", null, null, "1", "REELS", null, null,
+				null, null, null, null, null, null, null, null, null, null, null,
+				"{}", false, false, false);
+	}
+
 	private BrandRegistrationService service() {
 		HikerClient hiker = new HikerClient(path -> {
 			hikerCalls.add(path);
@@ -218,6 +239,44 @@ class BrandRegistrationServiceTest {
 
 		enrichQueue.getFirst().run();
 		assertThat(collect.enriched).containsExactly("brandx");
+	}
+
+	@Test
+	void 서빙_콜백은_markServing과_선행_보강을_수행하고_잔여만_재보강한다() {
+		collect.earlyBatch = List.of(post("A"), post("B"));
+		collect.fullResult = List.of(post("A"), post("B"), post("C"));
+
+		var result = service().register("brandx");
+
+		assertThat(brands.served).containsExactly(result.brandId());     // 조기 ready
+		assertThat(brands.touched).containsExactly(result.brandId());    // 완주 touchSwept도 그대로
+		assertThat(enrichQueue).hasSize(2);                              // 선행 + 잔여
+		enrichQueue.forEach(Runnable::run);
+		assertThat(collect.enrichedPosts)
+				.containsExactly(List.of("A", "B"), List.of("C"));       // 잔여는 선행분 제외
+		assertThat(hashtagCollect.swept).containsExactly("brandx");      // 해시태그는 잔여 태스크 꼬리
+	}
+
+	@Test
+	void 선행분이_비면_선행_보강_태스크를_만들지_않는다() {
+		// earlyBatch 기본값 List.of() — 태그가 얕은 브랜드의 헛 태스크 방지.
+		var result = service().register("brandx");
+
+		assertThat(brands.served).containsExactly(result.brandId());   // 서빙 마크는 목록이 비어도 정당
+		assertThat(enrichQueue).hasSize(1);                            // 잔여(완주) 태스크만
+	}
+
+	@Test
+	void 서빙_후_core_실패도_touchSwept_없이_backfill_error를_남긴다() {
+		collect.failAfterServing = true;
+		collect.earlyBatch = List.of(post("A"));
+
+		var result = service().register("brandx");
+
+		assertThat(brands.served).containsExactly(result.brandId());   // 이미 연 서빙은 유지(부분 데이터)
+		assertThat(brands.touched).isEmpty();                          // 완주 아님 — 다음 스윕 백스톱
+		assertThat(brands.backfillErrors).containsKey(result.brandId());
+		assertThat(enrichQueue).hasSize(1);                            // 선행 보강만 제출됨(잔여 태스크 없음)
 	}
 
 	@Test

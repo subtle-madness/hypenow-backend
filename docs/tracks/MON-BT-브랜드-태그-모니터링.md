@@ -10,7 +10,7 @@
 
 구현(08-06): **전면 브랜드 전용 7테이블**(`brand_account`·`brand_tagged_post`(링크+댓글 게이트)·`brand_post_snapshot`·`brand_post_meta`·`brand_post_comment`·`brand_profile_snapshot`·`author_profile`) — 캠페인 테이블 불간섭(볼륨 격리 + 겹침 게시물 덮어쓰기 차단, DECISIONS 08-06 개정 행). fb 캐리포워드·역전파·0 캐리는 `BrandSnapshotRepository`에 동형 이식, 쓰기 경계는 `BrandSnapshotWriter`(알람 미경유). 진입점 `POST /api/brands`(동기 프로필 1콜 + 비동기 백필 `brandBackfillExecutor`, 멱등 replay)·`DELETE /api/brands/{username}`. 백필 상태는 `last_swept_on`(null=수집 준비 중)으로 판별. 스윕은 전용 크론(`monitoring.brand.schedule.sweep-cron`, 기본 비활성 — 운영 KST 03:00 권장) + 브랜드 단위 격리, 실패 시 다음날 백스톱. 윈도우 이탈 데이터는 영구 보존.
 
-백필 단계식 ready(08-07 — DECISIONS 08-07 행): 등록 백필을 `sweepCore`(열거+적재, ~30초) / `enrich`(게시자+댓글, 수 분)로 분리 — core 직후 touchSwept(ready), 보강은 `brandEnrichExecutor`(신설) 별도 큐. 운영 실측(cclime_official 등록→ready 8.5분: 앞 계정 대기 5분 + 보강 콜 ~85%)이 근거. 보강 실패는 backfill_error 미기록(로그만) — 게시자 stale·댓글 워터마크로 다음 스윕 백스톱. 매일 스윕은 `sweep`(합본) 그대로.
+백필 단계식 ready(08-07 — DECISIONS 08-07 행): 등록 백필을 `sweepCore`(열거+적재, ~30초) / `enrich`(게시자+댓글, 수 분)로 분리 — core 완료 직후 touchSwept(ready. **08-12 스트리밍 개정으로 ready 마킹이 core 완주 전 서빙 창 커버 시점으로 앞당겨졌다 — 아래 08-12 문단이 정본**), 보강은 `brandEnrichExecutor`(신설) 별도 큐. 운영 실측(cclime_official 등록→ready 8.5분: 앞 계정 대기 5분 + 보강 콜 ~85%)이 근거. 보강 실패는 backfill_error 미기록(로그만) — 게시자 stale·댓글 워터마크로 다음 스윕 백스톱. 매일 스윕은 `sweep`(합본) 그대로.
 
 보강 병렬화(08-07 — DECISIONS 08-07 행, [spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-enrich-parallel-design.md)): `enrich` 내부 Hiker 콜(게시자 프로필·댓글)을 공유 워커 풀 `brandEnrichWorkerPool`(고정 6스레드, `monitoring.brand.enrich-concurrency`)로 제한 병렬화 — 보강 ~3분 → **~30초**, 등록→보강 완료 ~3.5분 → ~1분(ready는 종전대로 ~30초). 근거는 08-07 운영 실측(순차 ×6 = 11s vs 동시 4/8 각 웨이브 2s, 동시 8까지 레이턴시 열화·429 전무) — 종전 "동시 2 = 부하 완충" 전제 반증. 공유 빈이라 스윕·등록이 겹쳐도 전역 동시 콜 최대 8(워커 6 + core 2)로 실측 한계 이내. 게이트·워터마크·격리·backfill_error 규칙, 브랜드 단위 큐잉은 불변.
 
@@ -43,6 +43,21 @@ tooq.official(id=34, 11.8건/일 정상 고물량) 등록 백필이 상한 2,000
 기각, 상한 도달 시 touchSwept 유지(서빙 우선) 확정. **tooq 공백 보정은 배포 후
 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` → 야간 스윕 재백필(~205콜)** —
 was ready가 `last_swept_at` 기준(08-10)이라 FE 무영향. 실행 대기(운영 DB 쓰기 — 사용자 확인 필요).
+
+백필 페이지 스트리밍 적재 + 조기 서빙(2026-08-12 — [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-backfill-streaming-serving-design.md)):
+tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365일 열거 96콜 × p50 4.9초를
+전부 끝낸 뒤에야 일괄 적재·ready)라 그동안 FE가 이미 받아온 데이터까지 로딩 화면으로 가렸다.
+`sweepCore`를 **페이지(~21건) 단위 즉시 적재**로 바꾸고(중복 콜 0 — 커서 체인은 그대로,
+`knownCodes` 1회 로드 + 이번 실행 처리분 누적으로 커서 드리프트 중복만 스킵), **서빙 창
+30일**(`monitoring.brand.serving-window-days`) 커버 시점에 신설 `markServing`으로
+**`last_swept_at`만** 조기 마킹해 ready를 연다(tooq 실측 ~17콜 ≒ 1분 30초). 게시자·댓글
+보강도 이 시점에 선행 시작. `last_swept_on`·`backfill_completed_at`은 **완주 시 touchSwept**로
+현행 유지 — 30일 시점에 `last_swept_on`을 찍으면 이후 백그라운드 열거가 죽었을 때 다음 스윕이
+14일 컷만 돌아 30~365일이 영구 공백이 된다(현행 유지 = 백필이 중간에 죽어도 다음 일일 스윕이
+전체를 백스톱하는 자가 치유). 신호 3개의 의미가 갈렸다는 점이 소비자 쪽 파급: was ready 판정
+(`BrandAccountAssembler`)은 `last_swept_at`(= 서빙할 데이터 있음) 그대로지만, **성과 대시보드
+covered는 `backfill_completed_at`(최초 완주) 기준으로 정정**했다 — `last_swept_at`은 더 이상
+365일 전량을 보장하지 않는다.
 
 ## 미결·후속
 
