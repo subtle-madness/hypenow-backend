@@ -206,19 +206,56 @@ class MonitoringBrandCommandClientTest {
 				});
 	}
 
-	/** 빈 목록 교체는 monitoring이 422(code VALIDATION)로 거부한다(비소급 오염 방지, 계약 §8). */
+	/**
+	 * 2026-08-12부터 PUT 빈 목록은 monitoring이 그대로 204로 받아준다(구 하한 가드 폐지) — 클라이언트는
+	 * 별도 검증 없이 그대로 전달만 한다는 것을 확인.
+	 */
 	@Test
-	void 제외_문자열_교체_빈_목록_422는_MonitoringApiException으로_승격된다() {
+	void 제외_문자열_교체_빈_목록도_204를_받는다() {
 		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
-				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
-						.contentType(MediaType.APPLICATION_JSON)
-						.body("{ \"code\": \"VALIDATION\", \"message\": \"제외 문자열은 최소 1개 필요합니다.\" }"));
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(jsonPath("$.terms").isEmpty())
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
 
-		assertThatThrownBy(() -> client.putHashtagExclusions("brand_official", java.util.List.of()))
-				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
-					assertThat(e.code()).isEqualTo("VALIDATION");
-					assertThat(e.httpStatus()).isEqualTo(422);
-				});
+		assertThatCode(() -> client.putHashtagExclusions("brand_official", java.util.List.of()))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	// ---------- 제외 문자열 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
+
+	@Test
+	void 제외_문자열_추가는_terms를_그대로_전달하고_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(jsonPath("$.terms[0]").value("리즈다"))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.addHashtagExclusions("brand_official", java.util.List.of("리즈다")))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	@Test
+	void 제외_문자열_단건_삭제는_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions/lizda"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.deleteHashtagExclusion("brand_official", "lizda"))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	@Test
+	void 제외_문자열_전체_삭제는_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-exclusions"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.deleteAllHashtagExclusions("brand_official"))
+				.doesNotThrowAnyException();
+		server.verify();
 	}
 
 	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------
@@ -287,18 +324,86 @@ class MonitoringBrandCommandClientTest {
 				});
 	}
 
-	/** 빈 목록 교체·유효 문자 위반은 monitoring이 422(code VALIDATION)로 거부한다(계약 §8). */
+	/**
+	 * 2026-08-12부터 PUT 빈 목록은 monitoring이 그대로 204로 받아준다(구 하한 가드 폐지) — 브랜드
+	 * 태그 감지 전체를 끄는 것과 같다.
+	 */
 	@Test
-	void 태그_교체_빈_목록_422는_MonitoringApiException으로_승격된다() {
+	void 태그_교체_빈_목록도_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(jsonPath("$.tags").isEmpty())
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.putHashtagTags("brand_official", java.util.List.of()))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	// ---------- 태그 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
+
+	@Test
+	void 태그_추가는_tags를_그대로_전달하고_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(jsonPath("$.tags[0]").value("리즈다"))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.addHashtagTags("brand_official", java.util.List.of("리즈다")))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	/** POST는 PUT과 달리 빈 입력을 monitoring이 422로 거부한다(계약 §8-3-1) — 클라이언트는 그대로 승격만. */
+	@Test
+	void 태그_추가_빈_목록_422는_MonitoringApiException으로_승격된다() {
 		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
 				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
 						.contentType(MediaType.APPLICATION_JSON)
-						.body("{ \"code\": \"VALIDATION\", \"message\": \"태그는 최소 1개 필요합니다.\" }"));
+						.body("{ \"code\": \"VALIDATION\", \"message\": \"추가할 태그가 없습니다.\" }"));
 
-		assertThatThrownBy(() -> client.putHashtagTags("brand_official", java.util.List.of()))
+		assertThatThrownBy(() -> client.addHashtagTags("brand_official", java.util.List.of()))
 				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
 					assertThat(e.code()).isEqualTo("VALIDATION");
 					assertThat(e.httpStatus()).isEqualTo(422);
 				});
+	}
+
+	@Test
+	void 태그_단건_삭제는_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags/lizda"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.deleteHashtagTag("brand_official", "lizda"))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	/**
+	 * 한글 태그 경로 변수 왕복 — RestClient uri 템플릿이 자동으로 percent-encoding하므로 서버가
+	 * 받는 실제 요청 경로는 UTF-8 percent-encoded 문자열이다. MockRestServiceServer의 requestTo는
+	 * 인코딩된 URI로 매칭해야 한다(디코딩된 한글 문자열로 매칭하면 요청이 안 잡힌다).
+	 */
+	@Test
+	void 태그_단건_삭제는_한글_태그도_인코딩되어_왕복한다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags/%EB%81%8C%EB%A6%AC%EB%A9%94"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.deleteHashtagTag("brand_official", "끌리메"))
+				.doesNotThrowAnyException();
+		server.verify();
+	}
+
+	@Test
+	void 태그_전체_삭제는_204를_받는다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.deleteAllHashtagTags("brand_official"))
+				.doesNotThrowAnyException();
+		server.verify();
 	}
 }

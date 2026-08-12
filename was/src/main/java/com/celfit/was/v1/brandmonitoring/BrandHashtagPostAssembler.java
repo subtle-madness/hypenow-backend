@@ -42,11 +42,33 @@ public class BrandHashtagPostAssembler {
 		this.brandReadRepository = brandReadRepository;
 	}
 
-	/** 브랜드 1계정의 해시태그 발견 게시물 전량(RELEVANT만) — 최신순, 병합·필터 없이 그대로. */
+	/**
+	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 자사 제외 문자열 필터만 적용(그
+	 * 외 병합·정렬 없음). 제외 문자열은 조회 시점에 즉시 반영된다(2026-08-12 — 편집이 다음 스윕을
+	 * 기다리지 않는다는 계약 §8-3-1의 짝: 삭제로 지운 문자열은 저장된 판정을 못 바꾸지만, 조회
+	 * 필터는 즉시 걸 수 있어 비가역 오염(전체 삭제로 자사 게시물이 쏟아지는 것)을 막는다).
+	 */
 	public List<BrandHashtagPostResponse> assembleForBrand(long brandId) {
 		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
 				BrandPostAssembler.windowCutoff(), HASHTAG_POST_LIMIT);
-		return rows.stream().map(BrandHashtagPostAssembler::toResponse).toList();
+		List<String> exclusions = brandReadRepository.findActiveExclusionTerms(brandId);
+		return rows.stream()
+				.filter(row -> !matchesExclusion(row.authorUsername(), exclusions))
+				.map(BrandHashtagPostAssembler::toResponse)
+				.toList();
+	}
+
+	/**
+	 * 게시자 username에 활성 제외 문자열이 포함되면 제외(대소문자 무시 contains) — monitoring
+	 * {@code BrandHashtagCollectService.matchesExclusion}과 동일 의미론(스윕의 SELF 판정 규칙을
+	 * was 조회 시점에도 그대로 재현). exclusions가 비어 있으면(제외 문자열 전체 삭제) 항상 false.
+	 */
+	private static boolean matchesExclusion(String authorUsername, List<String> exclusions) {
+		if (authorUsername == null || exclusions.isEmpty()) {
+			return false;
+		}
+		String lower = authorUsername.toLowerCase(Locale.ROOT);
+		return exclusions.stream().anyMatch(term -> lower.contains(term.toLowerCase(Locale.ROOT)));
 	}
 
 	/**

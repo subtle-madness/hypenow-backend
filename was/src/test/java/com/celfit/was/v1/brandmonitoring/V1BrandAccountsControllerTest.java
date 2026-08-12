@@ -918,24 +918,82 @@ class V1BrandAccountsControllerTest {
 		then(commandClient).should(never()).putHashtagExclusions(anyString(), any());
 	}
 
-	/**
-	 * 빈 목록 교체는 monitoring이 422(code VALIDATION)로 거부한다(비소급 오염 방지, 계약 §8) —
-	 * putHashtagExclusions는 registerBrand의 translate()를 거치지 않으므로 V1ExceptionAdvice
-	 * 공용 매핑(httpStatus 404·5xx 외 4xx는 전부 400 VALIDATION_FAILED)이 그대로 적용된다.
-	 */
+	// ---------- 제외 문자열 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
+
 	@Test
-	void monitoring_422_빈_목록_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
+	void 제외_문자열_추가는_monitoring으로_위임한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		willThrow(new MonitoringApiException("VALIDATION", "제외 문자열은 최소 1개 필요합니다.", 422))
-				.given(commandClient).putHashtagExclusions(anyString(), any());
 
-		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
 						.with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\": []}"))
-				.andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+						.content("{\"terms\": [\"리즈다\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().addHashtagExclusions("lizda_official", List.of("리즈다"));
+	}
+
+	@Test
+	void 미소유_브랜드의_제외_문자열_추가는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/999/hashtag-exclusions")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"terms\": [\"리즈다\"]}"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).addHashtagExclusions(anyString(), any());
+	}
+
+	@Test
+	void 제외_문자열_단건_삭제는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-exclusions/{term}", "리즈다")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().deleteHashtagExclusion("lizda_official", "리즈다");
+	}
+
+	@Test
+	void 미소유_브랜드의_제외_문자열_단건_삭제는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/hashtag-exclusions/{term}", "리즈다")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).deleteHashtagExclusion(anyString(), anyString());
+	}
+
+	@Test
+	void 제외_문자열_전체_삭제는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().deleteAllHashtagExclusions("lizda_official");
+	}
+
+	@Test
+	void 미소유_브랜드의_제외_문자열_전체_삭제는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/hashtag-exclusions")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).deleteAllHashtagExclusions(anyString());
 	}
 
 	@Test
@@ -1045,24 +1103,103 @@ class V1BrandAccountsControllerTest {
 		then(commandClient).should(never()).putHashtagTags(anyString(), any());
 	}
 
-	/**
-	 * 빈 목록·유효 문자 위반 교체는 monitoring이 422(code VALIDATION)로 거부한다(계약 §8) —
-	 * putHashtagTags는 registerBrand의 translate()를 거치지 않으므로 V1ExceptionAdvice
-	 * 공용 매핑(httpStatus 404·5xx 외 4xx는 전부 400 VALIDATION_FAILED)이 그대로 적용된다.
-	 */
+	// ---------- 태그 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
+
 	@Test
-	void monitoring_422_태그_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
+	void 태그_추가는_monitoring으로_위임한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		willThrow(new MonitoringApiException("VALIDATION", "태그는 최소 1개 필요합니다.", 422))
-				.given(commandClient).putHashtagTags(anyString(), any());
 
-		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-tags")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\": [\"리즈다\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().addHashtagTags("lizda_official", List.of("리즈다"));
+	}
+
+	@Test
+	void 미소유_브랜드의_태그_추가는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/999/hashtag-tags")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\": [\"리즈다\"]}"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
+	}
+
+	/**
+	 * POST 빈 목록·유효 문자 위반은 monitoring이 422(code VALIDATION)로 거부한다(계약 §8-3-1, PUT과
+	 * 다른 규칙 — PUT은 2026-08-12부터 빈 목록을 허용한다) — addHashtagTags는 registerBrand의
+	 * translate()를 거치지 않으므로 V1ExceptionAdvice 공용 매핑(httpStatus 404·5xx 외 4xx는 전부
+	 * 400 VALIDATION_FAILED)이 그대로 적용된다.
+	 */
+	@Test
+	void monitoring_422_태그_추가_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		willThrow(new MonitoringApiException("VALIDATION", "추가할 태그가 없습니다.", 422))
+				.given(commandClient).addHashtagTags(anyString(), any());
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\": []}"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+	}
+
+	@Test
+	void 태그_단건_삭제는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags/{tag}", "리즈다")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().deleteHashtagTag("lizda_official", "리즈다");
+	}
+
+	@Test
+	void 미소유_브랜드의_태그_단건_삭제는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/hashtag-tags/{tag}", "리즈다")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).deleteHashtagTag(anyString(), anyString());
+	}
+
+	@Test
+	void 태그_전체_삭제는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().deleteAllHashtagTags("lizda_official");
+	}
+
+	@Test
+	void 미소유_브랜드의_태그_전체_삭제는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/hashtag-tags")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).deleteAllHashtagTags(anyString());
 	}
 
 	@Test
