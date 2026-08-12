@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
@@ -46,6 +47,7 @@ public class BrandCollectService {
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
 	private final HikerClient hiker;
+	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final BrandSnapshotRepository snapshots;
 	private final BrandCommentRepository comments;
@@ -57,15 +59,16 @@ public class BrandCollectService {
 	private final int commentPages;
 	private final int authorStaleDays;
 
-	public BrandCollectService(HikerClient hiker, BrandSnapshotWriter writer,
+	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.registration-window-days:365}") int registrationWindowDays,
-			@Value("${monitoring.brand.max-posts-per-sweep:2000}") int maxPostsPerSweep,
+			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
 		this.hiker = hiker;
+		this.callContext = callContext;
 		this.writer = writer;
 		this.snapshots = snapshots;
 		this.comments = comments;
@@ -96,13 +99,22 @@ public class BrandCollectService {
 	 *
 	 * <p>열거 중단: ①페이지 전체가 깊이 컷 이전(소급 태그 혼입 때문에 "오래된 글 1건 발견 즉시
 	 * 중단" 금지 — 08-06 스펙 §5) ②커서 소진 ③커서 미전진 ④안전 상한(maxPostsPerSweep) 도달 —
-	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다).
+	 * 개수 상한은 폐지됐고(정책 v1 §4) 이 값은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 —
+	 * 2,000은 tooq급 정상 고물량 브랜드가 백필·심층 티어 스윕에서 닿아 10,000으로 상향, 08-12 스펙).
 	 * ①②는 <b>자연 종료</b>(컷까지 다 훑었다)라 커버한 깊이 전체를 touch하고, ③④는 훑다 만
 	 * 중단이라 touch하지 않는다({@link TaggedPostRepository#touchCrawledDepth} 주석 참조).
+	 * ④가 백필에서 나면 커버 깊이 밖 구간은 이후 스윕이 열지 않아 영구 공백이 된다 — 그래서
+	 * error 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는
+	 * 그래도 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 스펙 §3).
 	 *
 	 * @return 편입 컷 안 게시물(복권 지표 보정 후) — {@link #enrich}가 재열거 없이 그대로 소비한다.
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand) {
+		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand));
+	}
+
+	private List<PostInfo> doSweepCore(BrandRow brand) {
 		refreshBrandProfileSafely(brand);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
@@ -130,8 +142,13 @@ public class BrandCollectService {
 			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
 			// 자연 종료지 폭주가 아니라, 여기서 경고를 찍으면 오보가 된다.
 			if (byCode.size() >= maxPostsPerSweep) {
-				log.warn("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단",
-						maxPostsPerSweep, brand.username());
+				// 도달 = 폭주 또는 상한 캘리브레이션 오류(08-12 스펙 §3) — 백필 경로면 커버 깊이
+				// 밖 구간이 조용히 영구 공백이 되므로, 운영이 보정(상한 상향 + last_swept_on 리셋)
+				// 판단을 내릴 수 있게 커버 깊이까지 error로 남긴다.
+				log.error("태그 열거 안전 상한({}) 도달 — 브랜드 {} 정상 경로에서 닿으면 안 되는 값, 열거 중단"
+								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
+						maxPostsPerSweep, brand.username(), byCode.size(), cutoff,
+						oldestTakenAt(byCode.values()));
 				break;
 			}
 			if (byCode.size() == before) {
@@ -147,6 +164,12 @@ public class BrandCollectService {
 			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
 		}
 		return collected;
+	}
+
+	/** 상한 도달 로그용 커버 깊이 — 열거분 중 최고령 taken_at(전부 미상이면 null). */
+	private static Instant oldestTakenAt(Collection<PostInfo> posts) {
+		return posts.stream().map(PostInfo::takenAt).filter(Objects::nonNull)
+				.map(Instant::ofEpochSecond).min(Instant::compareTo).orElse(null);
 	}
 
 	/**
@@ -181,7 +204,8 @@ public class BrandCollectService {
 		if (posts.isEmpty()) {
 			return;
 		}
-		ensureAuthors(posts);
+		// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
+		ensureAuthors(brand.id(), posts);
 		collectCommentsGated(brand.id(), posts);
 		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료({}건 대상)", brand.username(), posts.size());
 	}
@@ -289,7 +313,7 @@ public class BrandCollectService {
 	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
 	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.
 	 */
-	private void ensureAuthors(Collection<PostInfo> posts) {
+	private void ensureAuthors(long brandId, Collection<PostInfo> posts) {
 		Set<String> ids = posts.stream().map(PostInfo::ownerUserId).filter(Objects::nonNull)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		if (ids.isEmpty()) {
@@ -299,18 +323,20 @@ public class BrandCollectService {
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
 		// 게시자별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
 		// 보강 시간의 본체였다). 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
+		// 태스크 본문은 runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커
+		// 스레드로 넘어가지 않기 때문(BrandCallContext 주석 참조).
 		List<CompletableFuture<Void>> tasks = new ArrayList<>();
 		for (String id : ids) {
 			if (fresh.contains(id)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> {
+			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
 					authors.upsert(hiker.fetchAuthorProfile(id));
 				} catch (RuntimeException e) {
 					log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", id, e.toString());
 				}
-			}, enrichWorker));
+			}), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}
@@ -335,7 +361,7 @@ public class BrandCollectService {
 			if (p.comments() <= stored.getOrDefault(p.shortCode(), 0L)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> {
+			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
 					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
@@ -349,7 +375,7 @@ public class BrandCollectService {
 				} catch (RuntimeException e) {
 					log.warn("태그 댓글 수집 실패(격리) — 게시물 {}: {}", p.shortCode(), e.toString());
 				}
-			}, enrichWorker));
+			}), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}

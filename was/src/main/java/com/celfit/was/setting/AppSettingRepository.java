@@ -20,4 +20,15 @@ public class AppSettingRepository {
 				.query(String.class)
 				.optional();
 	}
+
+	/** 값 교체(행이 없으면 생성) — 어드민 런타임 설정 변경용(예: crawling.unit-price-usd). */
+	public void upsert(String key, String value) {
+		jdbcClient.sql("""
+				INSERT INTO app.app_setting (key, value) VALUES (:key, :value)
+				ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+				""")
+				.param("key", key)
+				.param("value", value)
+				.update();
+	}
 }

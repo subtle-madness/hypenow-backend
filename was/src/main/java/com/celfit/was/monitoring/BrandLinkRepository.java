@@ -38,6 +38,21 @@ public class BrandLinkRepository {
 				.list();
 	}
 
+	/**
+	 * 유저의 연결 전체(해제분 포함) — 어드민 크롤링 사용량의 기간 귀속 입력(2026-08-12 설계).
+	 * 해제된 연결도 "연결돼 있던 기간의 콜"은 그 유저 몫이라 deleted_at 필터를 걸지 않는다.
+	 */
+	public List<BrandLinkRow> findAllByUser(long userId) {
+		return jdbcClient.sql("""
+				SELECT %s FROM app.brand_monitorings
+				WHERE user_id = :userId
+				ORDER BY created_at, id
+				""".formatted(SELECT_COLUMNS))
+				.param("userId", userId)
+				.query(BrandLinkRow.class)
+				.list();
+	}
+
 	/** 브랜드 스코프 API의 소유권 검증용 — empty면 남의 브랜드(403). */
 	public Optional<BrandLinkRow> findActiveByUserAndBrand(long userId, long brandId) {
 		return jdbcClient.sql("""

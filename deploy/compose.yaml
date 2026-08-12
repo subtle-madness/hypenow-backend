@@ -137,9 +137,16 @@ services:
       # 여기엔 없음 — online이면 content_batch_jobs에 pending 행이 없어 이 크론은 매번 no-op이다.
       ANALYTICS_SCHEDULE_BATCH_COLLECT_CRON: "0 10,40 20-23,0-2 * * *"
       ANALYTICS_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
+      # 이미지 스토어 선택(2026-08-12 GCS 이전) — par가 기본, .env의 IMAGE_STORE=gcs 한 줄이 컷오버 스위치.
+      # GCS 인증은 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽는다 — 위 GOOGLE_APPLICATION_CREDENTIALS는
+      # Vertex LLM 전용이라 건드리지 않는다(ADC는 JVM당 하나뿐이라 덮으면 Vertex가 전면 403).
+      IMAGE_STORE: ${IMAGE_STORE:-par}
+      IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
+      IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
       JAVA_OPTS: "-Xms256m -Xmx768m"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
+      - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
     ports:
       - "127.0.0.1:8082:8082"   # 루프백 전용 — 어드민은 SSH 터널로만
     # 8082 리슨 = Spring 기동 완료 = analysis DB Flyway 마이그레이션 적용 완료 신호.
@@ -284,6 +291,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
+      # 이미지 스토어 선택(2026-08-12 GCS 이전) — analytics와 같은 버킷·같은 전용 SA 키를 재사용
+      IMAGE_STORE: ${IMAGE_STORE:-par}
+      IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
+      IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       # 브랜드 태그 스윕 — KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차.
@@ -300,6 +311,8 @@ services:
       # 수신자 허용목록 안전판(비어있으면 무제한 — 운영 기본). 07-30 test 스택 검증용으로 추가, 운영은 미사용 전제
       MONITORING_ALARM_ALLOWED_RECIPIENTS: ${ALARM_ALLOWED_RECIPIENTS:-}
       JAVA_OPTS: "-Xms128m -Xmx384m"
+    volumes:
+      - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(analytics와 동일 관용구).
     healthcheck:

@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.llm.BrandMentionJudge;
@@ -53,15 +54,18 @@ public class BrandHashtagCollectService {
 	private static final Logger log = LoggerFactory.getLogger(BrandHashtagCollectService.class);
 
 	private final HikerClient hiker;
+	private final BrandCallContext callContext;
 	private final BrandHashtagRepository repo;
 	private final BrandMentionJudge judge;
 	private final BrandRepository brands;
 	private final int windowDays;
 	private final int maxPages;
 
-	public BrandHashtagCollectService(HikerClient hiker, BrandHashtagRepository repo,
-			BrandMentionJudge judge, BrandRepository brands, int windowDays, int maxPages) {
+	public BrandHashtagCollectService(HikerClient hiker, BrandCallContext callContext,
+			BrandHashtagRepository repo, BrandMentionJudge judge, BrandRepository brands,
+			int windowDays, int maxPages) {
 		this.hiker = hiker;
+		this.callContext = callContext;
 		this.repo = repo;
 		this.judge = judge;
 		this.brands = brands;
@@ -76,6 +80,11 @@ public class BrandHashtagCollectService {
 	 * 멘션 Pattern.compile도 게시물마다가 아니라 여기서 1회만).
 	 */
 	public void sweep(BrandRow brand) {
+		// 콜 집계 스코프(어드민 크롤링 비용) — 해시태그 recent 열거 콜도 이 브랜드 몫으로 계상된다.
+		callContext.runScoped(brand.id(), () -> doSweep(brand));
+	}
+
+	private void doSweep(BrandRow brand) {
 		List<String> tags = repo.findTags(brand.id());
 		if (tags.isEmpty()) {
 			return;

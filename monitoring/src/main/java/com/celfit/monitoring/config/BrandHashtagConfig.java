@@ -1,5 +1,6 @@
 package com.celfit.monitoring.config;
 
+import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.llm.BrandMentionJudge;
 import com.celfit.monitoring.llm.GeminiHttpTransport;
@@ -28,9 +29,10 @@ public class BrandHashtagConfig {
 
 	@Bean
 	public BrandHashtagCollectService brandHashtagCollectService(HikerClient hiker,
-			BrandHashtagRepository repo, BrandMentionJudge judge, BrandRepository brands,
+			BrandCallContext callContext, BrandHashtagRepository repo, BrandMentionJudge judge,
+			BrandRepository brands,
 			@Value("${monitoring.brand.hashtag.window-days:90}") int windowDays,
 			@Value("${monitoring.brand.hashtag.max-pages:4}") int maxPages) {
-		return new BrandHashtagCollectService(hiker, repo, judge, brands, windowDays, maxPages);
+		return new BrandHashtagCollectService(hiker, callContext, repo, judge, brands, windowDays, maxPages);
 	}
 }
