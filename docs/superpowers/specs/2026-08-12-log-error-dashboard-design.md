@@ -177,3 +177,25 @@ Spring Boot 기동 완료 로그(`Started ... in ...s`)를 Loki 어노테이션 
 | `deploy/grafana/provisioning/dashboards/json/hypenow-errors.json` | 신규 |
 | `deploy/README.md` | 관측 스택 절에 에러 대시보드 항목 추가 |
 | `DECISIONS.md` | 결정 1행 추가 |
+
+---
+
+## 부록 — 착수 전 실측 보정 (2026-08-12, 계획 수립 시)
+
+운영 서버 실측으로 확인해 본문 설계를 세 군데 보정한다(본문은 기록 보존을 위해 그대로 둔다).
+
+1. **`service` 라벨을 추가한다.** 운영 was 컨테이너는 `deploy-was-38`으로, 롤링 배포마다 복제본
+   번호가 오른다. 본문 §2가 쓴 `{container=~"deploy-($svc)-.*"}` 셀렉터는 매칭 자체는 되지만
+   `sum by (container)` 계열 집계에서 **배포할 때마다 시계열이 끊기고** 30일 보관 동안 죽은
+   스트림이 누적된다. Alloy relabel에서 `/deploy-(was|crawler|analytics|monitoring)-[0-9]+` →
+   `service=$1`로 안정 라벨을 만들고, 대시보드 전 쿼리는 `{service=~"$svc"}`를 쓴다.
+   라벨 값이 4개뿐이라 카디널리티 부담은 없다. `container` 라벨은 롤링 중 복제본 구분용으로 유지.
+2. **로그 포맷 확정.** 실측 라인:
+   `2026-08-12T05:11:01.374Z  INFO 1 --- [was] [nio-8081-exec-2] c.c.w.v.b.V1BrandAccountService          : 메시지`
+   → 로거 추출 정규식은 본문의 `(?P<logger>[\w.]+)\s+:\s`가 아니라 스레드 대괄호를 앵커로 삼는
+   `\] (?P<logger>[\w.]+)\s+: `를 쓴다(스레드명 `nio-8081-exec-2`의 하이픈 오매칭 방지).
+   예외 클래스는 `(?P<exc>[\w.]+(?:Exception|Error))` — 비캡처 그룹을 써야 Loki `regexp`가 받는다.
+3. **새로고침은 `5m`.** 본문 §2가 잡은 `1m`을 철회한다. `deploy/compose.yaml` grafana 서비스에
+   "대시보드 자동 새로고침은 패널 JSON에서 5분으로 고정 — 1분 미만 금지"가 2코어 보호 규율로
+   명시돼 있고, 패널 14개를 1분마다 Loki에 던지는 것은 그 취지에 어긋난다. 장애 추적 중에는
+   Grafana UI에서 일시적으로 올린다.
