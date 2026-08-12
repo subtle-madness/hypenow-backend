@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JPA/Hibernate(`@JdbcTypeCode(SqlTypes.JSON)`), JdbcTemplate 배치, Flyway(crawler = raw DB 소유), JUnit 5 + AssertJ + Mockito, Testcontainers 2.x(`org.testcontainers.postgresql.PostgreSQLContainer`), Gradle 멀티모듈.
 
-**설계 문서:** [docs/superpowers/specs/2026-07-30-caption-preservation-design.md](../specs/2026-07-30-caption-preservation-design.md)
+**설계 문서:** [docs/superpowers/specs/2026-07-30-caption-preservation-design.md](../../specs/2026-07-30-caption-preservation-design.md)
 
 > **재채번 이력(07-30):** 이 계획서 곳곳에 등장하는 `V23__content_caption.sql`·
 > `V24__drop_raw_post_detail.sql`은 실행 당시 번호다. develop이 이후 신규 Flyway 마이그레이션의
