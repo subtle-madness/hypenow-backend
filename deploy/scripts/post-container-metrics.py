@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # 컨테이너 상태·디스크 사용률을 OCI 커스텀 메트릭(hypenow_custom)으로 게시 — 서버 크론 1분 주기.
 #   * * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py
-# 인증은 인스턴스 프린시펄(dynamic group hypenow-instances + policy hypenow-custom-metrics) —
-# 서버에 키를 두지 않는다. 알람은 OCI 콘솔/CLI에서 이 네임스페이스를 구독(hypenow-alerts 토픽).
+# OCI 인증은 인스턴스 프린시펄(dynamic group hypenow-instances + policy hypenow-custom-metrics) —
+# OCI API 키는 서버에 두지 않는다. 다만 GCS 버킷 크기 조회는 SA 키 파일(GCS_KEY, compose가 쓰는
+# 것과 같은 파일)을 읽는다 — 2026-08-12 이미지 스토리지 이전 이후.
+# 알람은 OCI 콘솔/CLI에서 이 네임스페이스를 구독(hypenow-alerts 토픽).
 # 의존성: python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci google-auth requests
 #   (google-auth·requests는 버킷 크기 게시가 GCS로 옮겨간 2026-08-12부터 필요)
 import datetime
@@ -81,8 +83,22 @@ signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
 data = [metric("container_up", {"containerName": s}, container_up(s)) for s in SERVICES]
 data.append(metric("disk_used_percent", {"host": "hypenow-api"}, disk_used_percent()))
 
+# OCI 버킷 병행 게시(컷오버 전 관측 공백 방지) — GCS 전환 완료 후 이 블록만 제거한다.
+# bucket_used_gb는 dimension으로 스트림이 갈려 알람 정의 수정 불요. 다만 두 스트림의
+# bucketName이 같은 "hypenow-images"라 같은 분(minute==0이면서 %5==0)에 둘 다 게시되면
+# 같은 dimension으로 datapoint가 2개 들어간다 — OCI 쪽에 provider="oci"를 더해 스트림을 가른다.
+OCI_BUCKETS = ["hypenow-images"]
+OS_NAMESPACE = "nr4nxrxoojw8"
+if now.minute % 5 == 0:
+	try:
+		os_client = oci.object_storage.ObjectStorageClient({"region": signer.region}, signer=signer)
+		for bucket in OCI_BUCKETS:
+			size = os_client.get_bucket(OS_NAMESPACE, bucket, fields=["approximateSize"]).data.approximate_size or 0
+			data.append(metric("bucket_used_gb", {"bucketName": bucket, "provider": "oci"}, round(size / 2**30, 3)))
+	except Exception as e:
+		print(f"OCI 버킷 크기 수집 실패: {e}", file=sys.stderr)
+
 # 버킷 용량(GCS, 2026-08-12 이전) — 크기 합산은 전체 목록 페이징이라 정시(hour)에만.
-# OCI 버킷은 이전 후 동결 스냅샷이라 더 게시하지 않는다(알람은 GCS 값으로 계속 동작).
 GCS_BUCKETS = ["hypenow-images"]
 GCS_KEY = "/home/ubuntu/deploy/secrets/gcs-image-archiver.json"
 if now.minute == 0:
