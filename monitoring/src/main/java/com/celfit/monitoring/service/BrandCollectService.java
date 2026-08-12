@@ -107,7 +107,13 @@ public class BrandCollectService {
 	 * <p>onServingCovered는 <b>정확히 1회</b> 호출된다(예외로 중단되는 경우 제외) — 페이지 전체가
 	 * 서빙 창(servingWindowDays)보다 오래된 순간(소급 태그 혼입 대비, 컷 판정과 같은 보수 규칙),
 	 * 그전에 열거가 끝나면(자연 종료·상한·미전진 포함) 종료 시점. 인자는 그때까지 적재된 편입분
-	 * 누적 리스트다. 열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다.
+	 * 누적 리스트다.
+	 *
+	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
+	 * ①페이지 전체가 깊이 컷(365일/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
+	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달. ①②는 컷까지 다 훑은
+	 * 자연 종료라 coveredCutoff=true → touchCrawledDepth로 그 깊이 전체를 touch하고,
+	 * ③④는 미커버라 touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다).
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
 		refreshBrandProfileSafely(brand);
@@ -143,6 +149,7 @@ public class BrandCollectService {
 				servingMarked = true;
 				onServingCovered.accept(List.copyOf(collected));
 			}
+			// taken_at 미상 아이템은 "컷 이전" 판정에 넣지 않는다(보수적으로 열거 계속).
 			boolean wholePageBeforeCutoff = page.posts().stream()
 					.allMatch(p -> p.takenAt() != null
 							&& Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff));
