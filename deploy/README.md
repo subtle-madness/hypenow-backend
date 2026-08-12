@@ -336,7 +336,7 @@ Caddy는 사이트 블록 단위로 로거를 붙이므로, `log` 지시어가 �
 staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflows/cd-test.yml`이 자동 배포한다
 (`workflow_run` 트리거 — CI가 실패하면 test 배포도 없다). develop 머지는 CI만 돌고 배포하지
 않는다 — **승격 흐름: develop→staging(test 배포)→main(운영 배포)**. 구조·결정 근거:
-[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/2026-07-26-dev-staging-environment-design.md) ·
+[specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/archive/2026-07-26-dev-staging-environment-design.md) ·
 [specs/2026-07-29-staging-branch-test-stack-design.md](../docs/superpowers/specs/2026-07-29-staging-branch-test-stack-design.md)
 
 - 접속: `https://dev-api.hypenow.io` (도메인은 구명 유지 — DNS 무변경. was 로그인 월 —

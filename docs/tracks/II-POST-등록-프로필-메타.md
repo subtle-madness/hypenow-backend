@@ -1,6 +1,6 @@
 # II — POST 등록 프로필 메타 채움
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 없음(monitoring `profile_meta`(트랙 S) 위에서 파싱 경로만 확장)
 - **상태**: 🔨 (구현 완료 — PR 머지 대기)
 - **트랙 문자 배정 메모**: FF/GG/HH가 각각 PR #235/#243/#236으로 미머지 상태라 그 다음 미사용 문자 II를 배정.

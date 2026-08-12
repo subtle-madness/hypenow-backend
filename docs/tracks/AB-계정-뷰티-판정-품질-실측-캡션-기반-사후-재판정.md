@@ -1,6 +1,6 @@
 # AB — 계정 뷰티 판정 품질 — 실측 캡션 기반 사후 재판정
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: P
 - **상태**: ✅ PR #216 머지(2026-07-30)·운영 반영(PR #247 승격에서 crawler V22 적용 success 확인). 야간 `beauty` 크론에 rejudge=true 배선 완료 — 자동 자기교정이 스케줄로 돈다
 

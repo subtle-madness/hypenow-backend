@@ -3,7 +3,7 @@
 > 상태: ✅ 구현/실행/반영됨
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (인라인 실행).
-> 스펙: [specs/2026-07-17-login-wall-signup-code-design.md](../../specs/2026-07-17-login-wall-signup-code-design.md)
+> 스펙: [specs/2026-07-17-login-wall-signup-code-design.md](../../specs/archive/2026-07-17-login-wall-signup-code-design.md)
 
 **Goal:** 모든 조회 표면을 로그인 필수로 잠그고(화이트리스트 전환), 가입에 단일 공용 코드를 요구한다.
 

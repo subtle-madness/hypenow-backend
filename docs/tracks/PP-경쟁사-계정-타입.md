@@ -1,7 +1,7 @@
 # PP — 경쟁사 계정 타입(accountType)
 
 - **상태**: ✅ PR #406 머지(2026-08-12) → PR #408(staging→main) 운영 배포 완료
-- **설계 문서**: [specs/2026-08-12-competitor-account-type-design.md](../superpowers/specs/2026-08-12-competitor-account-type-design.md)
+- **설계 문서**: [specs/2026-08-12-competitor-account-type-design.md](../superpowers/specs/archive/2026-08-12-competitor-account-type-design.md)
 - **FE 회신**: 채팅으로 전달(08-12) — 문서로 남기지 않았다
 - **의존**: 브랜드 모니터링 was 표면(08-07 다계정 개정 — `app.brand_monitorings`)
 

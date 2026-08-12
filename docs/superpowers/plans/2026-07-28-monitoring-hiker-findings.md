@@ -331,7 +331,7 @@ Task 4를 픽스처 5종으로 TDD 구현한 결과 §2·§4·§5의 매핑이 *
 
 대상: `GET /v2/user/tag/medias?user_id=<pk>&page_id=<next_page_id>` (계정에 **태그된** 게시물
 열거). 브랜드 태그 모니터링 설계용 실측 — 총 12콜(rarebeauty 2p + anua_kr 1p + 실고객급
-5브랜드 각 1p + 프로필 4콜). 설계 본문: [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../specs/2026-08-06-brand-tag-monitoring-schedule-design.md).
+5브랜드 각 1p + 프로필 4콜). 설계 본문: [specs/2026-08-06-brand-tag-monitoring-schedule-design.md](../specs/archive/2026-08-06-brand-tag-monitoring-schedule-design.md).
 
 ### 11-1. 응답 셰이프·페이지
 

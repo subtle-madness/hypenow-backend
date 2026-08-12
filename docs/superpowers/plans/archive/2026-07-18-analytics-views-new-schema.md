@@ -6,7 +6,7 @@
 
 **Goal:** analytics/views의 분석 뷰 전체(00~20 + 04 신설)를 신 crawler 스키마(V15) 기준으로 재구축하고, SQL 하니스를 신 스키마 시드로 재작성한다.
 
-**Architecture:** 스펙 [2026-07-17-analytics-views-new-schema-design.md](../../specs/2026-07-17-analytics-views-new-schema-design.md)의 A안(플랫 뷰 체인) — base 층에 평탄화 뷰 2종(clips 아이템·SELF_GQL 타임라인)을 신설해 구 `v_base_detail`/`v_base_detail_history` 인터페이스를 재현하고, 상위 뷰(01~20)는 소스 교체만 한다. 서빙 모수는 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company), 미러 계약은 형태 유지.
+**Architecture:** 스펙 [2026-07-17-analytics-views-new-schema-design.md](../../specs/archive/2026-07-17-analytics-views-new-schema-design.md)의 A안(플랫 뷰 체인) — base 층에 평탄화 뷰 2종(clips 아이템·SELF_GQL 타임라인)을 신설해 구 `v_base_detail`/`v_base_detail_history` 인터페이스를 재현하고, 상위 뷰(01~20)는 소스 교체만 한다. 서빙 모수는 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company), 미러 계약은 형태 유지.
 
 **Tech Stack:** PostgreSQL 뷰 SQL(raw DB `analytics` 스키마), bash SQL 하니스(BEGIN/ROLLBACK), 미러는 기존 Java(MirrorJob) 무변경.
 

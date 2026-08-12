@@ -7,8 +7,9 @@
 - 구조나 태스크 상태가 바뀌는 작업을 했으면 **새 결정은 [DECISIONS.md](DECISIONS.md) 맨 위에**,
   **트랙 상태는 해당 `docs/tracks/<트랙문자>-<슬러그>.md`**(트랙 1개 = 파일 1개, §5 참조)에 갱신한다.
   ARCHITECTURE.md의 §5·§7은 둘 다 그 파일들로의 포인터 스텁이라 갱신 대상이 아니다.
-- 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변) /
-  `docs/superpowers/plans/`(구현 계획 — 실행 완료 시 `plans/archive/`로 이동).
+- 문서 체계: `ARCHITECTURE.md`(항상 최신) / `docs/superpowers/specs/`(설계 기록 — 영구 보존·내용 불변,
+  **완결 트랙의 스펙은 `specs/archive/`로 이동**) / `docs/superpowers/plans/`(구현 계획 — 실행 완료 시
+  `plans/archive/`로 이동).
   dated 문서는 첫머리 상태 헤더(`> 상태: 🟢 활성 · ✅ 구현/실행/반영됨 · 🗄 대체됨 · ⏸ 보류`)를 유지한다.
 
 ## 시스템 경계 (위반 금지)
