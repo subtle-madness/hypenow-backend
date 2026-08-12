@@ -119,7 +119,7 @@ services:
       # Vertex LLM 전용이라 건드리지 않는다(ADC는 JVM당 하나뿐이라 덮으면 Vertex가 전면 403).
       IMAGE_STORE: ${IMAGE_STORE:-par}
       IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
-      IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-}
+      IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
       JAVA_OPTS: "-Xms256m -Xmx768m"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
@@ -268,7 +268,7 @@ services:
       # 이미지 스토어 선택(2026-08-12 GCS 이전) — analytics와 같은 버킷·같은 전용 SA 키를 재사용
       IMAGE_STORE: ${IMAGE_STORE:-par}
       IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
-      IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-}
+      IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       # 브랜드 태그 스윕 — KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차.
