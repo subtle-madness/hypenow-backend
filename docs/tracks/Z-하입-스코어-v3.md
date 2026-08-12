@@ -1,6 +1,6 @@
 # Z — 하입 스코어 v3 (감쇠를 매핑 뒤로) + 계정 점수 척도 재교정
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: —
 - **상태**: 🔨 (07-30분 구현·PR·운영 뷰 적용·미러 전부 완료 — 잔여는 프론트 통지뿐. 07-31 후속(§11,
   계정 점수 고정 분모)은 구현 완료·PR 대기, 운영 미반영)

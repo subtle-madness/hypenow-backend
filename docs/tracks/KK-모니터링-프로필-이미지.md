@@ -1,6 +1,6 @@
 # KK — 모니터링 프로필 이미지 아카이브·업스트림 검증
 
-- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
+- **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 트랙 S(monitoring was seam)·트랙 II(POST 등록 profile_meta 채움) 위에서 동작. 트랙 J(서빙 이미지 아카이브)와는 **OCI 버킷만 공유하고 코드·후보군은 완전히 분리**(키 프리픽스로 소유권 구분 — 아래 참고).
 - **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 머지 완료 · 브랜드 본인(brand_account) 동형 확장 PR 대기)
 - **트랙 문자 배정 메모**: `docs/tracks/`에 FF·GG가 아직 파일로 없지만 다른 세션이 PR #235·#243으로 점유 중이고, A~JJ 중 KK가 다음 미사용 문자라 배정.
