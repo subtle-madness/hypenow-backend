@@ -22,9 +22,9 @@
 - **이 GET은 404를 내지 않는다** — 프론트가 404를 "엔드포인트 미배포"(카드 열화)로 해석하는
   예약 신호라서다. 크롤링 이력이 없는 유저, 존재하지 않는 유저, 숫자가 아닌 id 전부
   200 + 전부 0으로 응답한다(유저 존재 검증은 유저 상세 GET 담당).
-- **`totalCalls`는 집계 시작 시점(이 릴리스의 `brand_call_count` 배포) 이후 누적이다.**
-  과거 콜은 소급하지 않는다 — raw.fetch_payload에 콜 이력이 있으나 게시자·댓글 콜의 브랜드
-  귀속을 사후 복원할 수 없어 부정확한 백필 대신 0에서 시작한다.
+- **`totalCalls`는 과거 콜 소급 백필을 포함한다**(같은 날 사용자 결정 — 최초안 "집계 시작 이후
+  누적"을 대체). 콜 원형 `raw.fetch_payload`(성공 콜 1행 = 1콜)에서 브랜드 귀속을 복원해
+  배포 시 1회 소급한다(`V20260812153000` — 원형 적재 개시 07-30 이후분). 귀속은 근사다 — §2-1.
 
 ### PUT /v1/admin/crawling-cost/unit-price (ADMIN 전용)
 
@@ -51,14 +51,28 @@ was:        읽기 전용 SELECT(was_reader, V2 기본권한 자동 적용) + ap
   "HTTP 교환 1번 = 1콜"이 구조적으로 성립하고, 파싱 계층에선 페이지 수가 사라진다.
 - **성공 콜만 센다** — Hiker 과금이 성공 응답 기준이라 실패(재시도 소진·404)까지 세면 비용
   추정이 부풀어 오차 방향이 나쁘다. 재시도는 JdkHikerHttp 내부라 논리 콜 1로 접힌다.
-- **브랜드 귀속은 ThreadLocal 스코프**(`BrandCallContext`) — sweepCore/enrich가 스코프를 열고,
-  enrich의 워커 풀 팬아웃은 태스크 본문을 `runScoped`로 재전파한다(ThreadLocal은 풀을 못 넘는다).
+- **브랜드 귀속은 ThreadLocal 스코프**(`BrandCallContext`) — sweepCore/enrich·해시태그 스윕
+  (`BrandHashtagCollectService.sweep`)이 스코프를 열고, enrich의 워커 풀 팬아웃은 태스크 본문을
+  `runScoped`로 재전파한다(ThreadLocal은 풀을 못 넘는다).
   - 등록 검증 프로필 1콜은 콜 시점에 brand_id가 없어 **등록 성공 직후 +1 사후 계상**.
     등록 실패(계정 부재·비공개) 콜은 귀속 브랜드가 없어 미집계.
   - 캠페인(시딩) 모니터링 콜은 스코프 밖 — 집계 대상 아님(요청서 범위 = 브랜드 모니터링).
   - 게시자 프로필은 브랜드 간 전역 캐시지만 콜을 유발한 브랜드 몫으로 계상.
 - 쓰기는 콜당 +1 upsert(콜 간격 ~1.5초라 부하 무시 가능), 집계 실패는 삼킨다 — 비용 관측이
   수집을 죽이면 안 된다.
+
+### 2-1. 과거 콜 소급 백필 (V20260812153000)
+
+실시간 집계 개시 이전 콜은 원형 `raw.fetch_payload`에서 1회 복원한다(배포 시 Flyway).
+귀속 규칙과 한계(전부 근사 — 실측 로컬 검증: 원형 21,073행 중 13,435콜 귀속):
+
+| kind | 귀속 | 비고 |
+|---|---|---|
+| `TAGGED` | subject(브랜드 ig_user_id) → 정확 | |
+| `PROFILE` | subject(username)가 brand_account에 있는 것만 | 캠페인 감시 계정과 이름이 겹치면 캠페인 콜도 계상될 수 있음(수용) |
+| `PROFILE_BY_ID` | 그 게시자를 태그한 브랜드 중 최소 id 대표 | 전역 캐시라 유발 브랜드 사후 특정 불가 — 이중 계상은 없음 |
+| `COMMENTS` | subject(media pk) → 숏코드 산술 복원 → 태그 링크 최소 brand_id | 캠페인 전용 게시물은 자연 제외, 캠페인·브랜드 겹침은 브랜드로 계상(수용) |
+| 해시태그 열거(`OTHER`)·캠페인 kind | 소급 안 함 | 해시태그는 08-11 개통이라 잔량 미미 — 향후분은 스코프가 실시간 계상 |
 
 ## 3. 유저 귀속 — 연결 기간 기준
 
@@ -78,7 +92,7 @@ was:        읽기 전용 SELECT(was_reader, V2 기본권한 자동 적용) + ap
 
 | 모듈 | 파일 |
 |---|---|
-| monitoring | `V20260812100000__brand_call_count.sql` / `hiker/BrandCallContext` / `hiker/CountingHikerHttp` / `store/BrandCallCountRepository` / `config/HikerConfig`(체인 조립) / `BrandCollectService`·`BrandRegistrationService`(스코프 배선) |
+| monitoring | `V20260812100000__brand_call_count.sql`·`V20260812153000__brand_call_count_backfill.sql` / `hiker/BrandCallContext` / `hiker/CountingHikerHttp` / `store/BrandCallCountRepository` / `config/HikerConfig`(체인 조립) / `BrandCollectService`·`BrandRegistrationService`·`BrandHashtagCollectService`(스코프 배선) |
 | was | `v1/admin/AdminCrawlingCostController`·`AdminCrawlingUsageService`·`AdminCrawlingUsage` / `monitoring/BrandReadRepository.findDailyCallCounts`·`BrandLinkRepository.findAllByUser` / `setting/AppSettingRepository.upsert` / `V20260812100500__crawling_unit_price_setting.sql` |
 
 검증: `AdminCrawlingUsageServiceTest`(KST 자정·월초 경계 — 경계 전후 1초 고정 Clock 쌍, 기간 귀속),
