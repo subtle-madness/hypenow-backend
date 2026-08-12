@@ -14,6 +14,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.util.DisconnectedClientHelper;
 
 /**
  * v1·v2 패키지 전용 에러 → envelope 매핑(스펙 3.2). 구 /api 표면에는 영향 없다(basePackages 한정).
@@ -109,8 +110,32 @@ public class V1ExceptionAdvice {
 				.body(ApiResponse.fail("VALIDATION_FAILED", "요청 본문이 올바르지 않습니다."));
 	}
 
+	/**
+	 * 캐치올 5xx. 단, <b>클라이언트가 먼저 연결을 끊은 경우는 500이 아니다</b> — 유저가 탭을 닫거나
+	 * 새로고침하거나 FE가 요청을 abort하면(AbortController) 응답을 소켓에 쓰던 중 write가 깨지는데,
+	 * 이건 서버 결함이 아니고 애초에 500 본문을 받을 상대도 없다. 그대로 두면 정상 이탈마다
+	 * ERROR + 스택트레이스가 쌓여 진짜 장애를 덮는다(08-12 성과 대시보드 목록에서 실측 — 응답이 클수록
+	 * "쓰는 도중"에 걸릴 확률이 올라가 먼저 드러났을 뿐, 엔드포인트를 가리지 않는다).
+	 *
+	 * <p>판정은 직접 문자열 매칭 대신 스프링 {@link DisconnectedClientHelper}에 맡긴다 — 원인 체인을
+	 * 훑어 {@code ClientAbortException}·{@code EOFException} 등 타입과 최종 원인 메시지의
+	 * "connection reset by peer"·"broken pipe"를 함께 보고, 무엇보다 <b>{@code RestClientException}·
+	 * {@code DataAccessException}을 제외 목록으로 둔다</b>. 즉 monitoring·DB 같은 <b>상류</b> 연결이
+	 * 끊긴 건 메시지가 똑같아도 클라 이탈로 오인하지 않고 500으로 남는다 — 문자열만 봤다면 상류 장애가
+	 * 통째로 조용해졌을 자리다.
+	 *
+	 * <p>{@code null} 반환은 "응답에 아무것도 쓰지 않고 처리 완료"다({@code HttpEntityMethodProcessor}가
+	 * requestHandled만 세우고 빠진다). 죽은 연결에 envelope를 쓰려 들면 write가 또 깨져 같은 예외가
+	 * 한 번 더 올라올 뿐이다. 실제 운영에선 응답이 이미 200으로 커밋된 뒤라 상태코드도 바꿀 수 없다.
+	 */
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception e) {
+		if (DisconnectedClientHelper.isClientDisconnectedException(e)) {
+			// 스택트레이스는 남기지 않는다 — 정상 이탈이라 읽을 내용이 없다. 빈도를 봐야 하면
+			// 이 로거를 DEBUG로 내려 확인한다(스프링 자신도 같은 상황을 TRACE/DEBUG로만 남긴다).
+			log.debug("클라이언트가 응답 수신 전 연결을 끊음 — 무시: {}", e.getMessage());
+			return null;
+		}
 		log.error("v1 처리 실패", e);
 		return ResponseEntity.internalServerError()
 				.body(ApiResponse.fail("INTERNAL_ERROR", "일시적인 오류가 발생했어요."));

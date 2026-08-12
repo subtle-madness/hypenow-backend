@@ -5,9 +5,10 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.6 (좋아요 숨김 관측 플래그 — 2026-08-03)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.8 (브랜드 해시태그 감지 확장 — 2026-08-11)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
-> 에러 어휘 전부 구현과 일치.
+> 에러 어휘 전부 구현과 일치. **v2.8은 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
+> 계약과 무관한 신규 3테이블, §8)이라 위 "테이블 8 + 알람 대장 + 뷰 2" 집계에는 포함하지 않는다.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
 > post_comment·profile_meta·matched_keywords·share 해소, `feat/monitoring-v3-p2`) → **v2.0**(2026-07-30,
 > 알람 소유 이동·승인 폐지·`target.user_id`·알람 이벤트 대장, `feat/monitoring-alarm-module`) — **v1.1과 v2.0은
@@ -29,7 +30,12 @@
 > (`share_count_disabled`)를 켜거나 좋아요 숨김(`like_and_view_counts_disabled` — IG 앱 문구대로
 > 공유 노출도 함께 끈다)을 켜면 공유 키가 영구 부재해 shares가 null로 남는데, FE는 이 플래그로
 > "비공개"와 "수집 실패"를 구분 표시. FEED는 공유 자체가 미지원(null 강제)이라 플래그도 false로
-> 접는다, `feature/reels-retry-logic-missing-content-39b848`).
+> 접는다, `feature/reels-retry-logic-missing-content-39b848`)
+> → **v2.8**(2026-08-11, 브랜드 태그 모니터링에 해시태그 발견 게시물 추가 — 브랜드 계정 태그·
+> 계정명·정규화 변형 해시태그를 매일 열거해 Gemini로 브랜드 관련성 판정, 통과분을 브랜드 게시물
+> 목록에 `source: "hashtag"`로 합류. `BrandPostResponse.source` 값 공간에 `"hashtag"` 추가,
+> `meta.counts.hashtag` 신설, 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`
+> (자사 태그 오탐 방지 문자열 관리) — was 신규 API·상세는 §8, `feat/brand-hashtag-detection`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -523,3 +529,79 @@ was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 �
 | `target.matched_keywords` | 픽스처에 없음 — **픽스처 갱신 필요**(jsonb null). 픽스처의 `detected_candidate.matched_keywords`는 죽은 산지(참조 금지) |
 
 - (참고) 픽스처 target에 `user_id`·`matched_keywords`가 빠져 있음을 알림.
+
+## 8. 브랜드 태그 모니터링 확장 — 해시태그 감지 (v2.8, 2026-08-11)
+
+> ⚠️ 이 절은 §0~§7의 target/캠페인 계약과 **별도 서브시스템**을 다룬다. 브랜드 태그 모니터링
+> 자체(브랜드 계정 등록·`brand_account`/`brand_tagged_post`/`brand_post_snapshot` 등 7테이블)의
+> 정본은 [MON-BT 트랙](../tracks/MON-BT-브랜드-태그-모니터링.md)이고, was API는 `V1BrandAccountsController`/
+> `V1BrandPostsController`(`/v1/brand-monitoring/**`)다. 해시태그 감지는 그 위에 얹는 확장이라
+> 이 문서(monitoring↔was 계약)에 처음 등재한다 — 이전 브랜드 태그 모니터링 변경점은 이 문서에
+> 없었다(그 자체가 갭이며, 이 절은 해시태그 확장분만 다룬다).
+
+브랜드 계정 태그(`@브랜드핸들`)뿐 아니라 **브랜드명·계정명 및 정규화 변형 해시태그**(예:
+`#브랜드명`·`#brandname`)를 매일 열거해 브랜드 관련 게시물을 자동 발견한다. 열거 결과는
+monitoring이 Gemini로 브랜드 관련성을 판정(`BrandMentionJudge`, 이름 충돌 방어 — 동명이 브랜드가
+아닌 다른 맥락으로 쓰인 경우 배제)한 뒤 통과분만 저장한다. monitoring 내부 신규 테이블
+(`brand_hashtag`·`brand_hashtag_exclusion`·`brand_hashtag_post`)은 계약 표면이 아니다 —
+was는 아래 두 표면으로만 결과를 받는다.
+
+### 8-1. 게시물 목록 `source: "hashtag"` (`BrandPostResponse.source`)
+
+`GET /v1/brand-monitoring/accounts/{accountId}/posts`가 반환하는 `BrandPostResponse.source`
+값 공간이 `"tagged"`/`"direct"` 2종에서 `"hashtag"` 포함 3종으로 확장된다. tagged·direct와
+같은 셰이프로 내려가지만 산지 특성상 다음이 다르다:
+
+| 항목 | tagged·direct | hashtag |
+|---|---|---|
+| 스냅샷(`latestSnapshot`/`snapshots`) | 있음 | **항상 빈 배열** — 보강 파이프라인 미적용(보류) |
+| 댓글(`recentComments`/`commentsCollectedCount`) | 있음 | **항상 빈 배열/0** — `commentsTotal`만 열거 관측값(`comments`)을 그대로 싣는다(스냅샷 기반 tagged·direct의 `commentsTotal`과 산지가 다름) |
+| 팔로워(`authorFollowers`) | 보강으로 채워짐 | **항상 null** — 프로필 보강 없음 |
+| `id` | shortcode 그대로 | **`"bh_"+shortcode`**(합성 id — was가 발급한 숫자 id가 없다). `shortcode` 필드 자체는 순수 shortcode 유지 |
+| `sponsorship`/`isPaidPartnership` | tagged는 유료협찬 관측(`is_paid_partnership`) + 캡션 키워드 병행 | **캡션 키워드만**(`BrandSponsorshipClassifier.classify(null, caption)`) — 열거 응답에 유료협찬 플래그가 실리지만 **현재 미적재**(후속 확장 여지, `brand_hashtag_post`에 컬럼 없음). `isPaidPartnership`은 **항상 null** |
+| `campaignIds` | direct는 연결 가능 | **항상 빈 배열** — 해시태그 발견 게시물은 캠페인에 연결되지 않는다 |
+| 같은 shortcode 충돌 | — | **tagged·direct가 우선**(`BrandPostAssembler.mergeHashtag` — 기존 산지 유지, hashtag는 신규 shortcode만 추가). 협찬 승격도 없음(해시태그 관측엔 승격할 신호가 없음) |
+
+### 8-2. `meta.counts.hashtag`
+
+같은 목록 응답의 `meta.counts`에 `hashtag` 키가 추가된다(`all`·`tagged`·`direct`·`hashtag`·
+`sponsored`·`organic`·`unknown` 7키 — 필터 적용 **전** 전량 기준, `V1BrandPostsController`).
+
+### 8-3. 신규 `GET/PUT /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`
+
+자사 해시태그 오탐 방지용 제외 문자열(예: 브랜드명이 흔한 일반 단어와 겹쳐 무관한 게시물을
+잡을 때) 관리 API. was가 monitoring 내부 API(`GET/PUT /api/brands/{username}/hashtag-exclusions`)를
+그대로 프록시한다 — 정규화(trim·소문자·중복 제거)는 monitoring이 한다.
+
+**⚠️ 편집은 이후 발견분에만 적용된다(비소급)** — 이미 판정·저장된 게시물의 verdict는 불변이다.
+term을 지워도 과거에 SELF로 접힌 게시물이 피드에 나타나지 않고, term을 추가해도 이미 노출 중인
+게시물이 사라지지 않는다. FE 문구에 반드시 반영할 것. 같은 이유로 **빈 목록 교체는 거부**된다
+(전부 지우면 자사 게시물 — 스트림의 71~87% — 이 관련 판정으로 유입된 뒤 복구 불가).
+
+```json
+// GET 200
+{ "terms": ["일반단어1", "일반단어2"] }
+
+// PUT 요청 (전체 교체)
+{ "terms": ["일반단어1"] }
+// PUT 204
+
+// PUT 400 — 정규화 결과가 빈 목록(terms 생략·null·빈 배열·전부 blank)
+{ "code": "VALIDATION_FAILED", ... }
+```
+
+| 상황 | HTTP | 비고 |
+|---|---|---|
+| 정상 | GET 200 / PUT 204 | |
+| PUT 정규화 결과 빈 목록 | 400 `VALIDATION_FAILED` | 비소급 오염 방지 하한 가드 — monitoring 내부는 422(`EmptyExclusionTermsException`)지만 was 공용 매핑(`V1ExceptionAdvice` — 404·5xx 외 4xx는 400 수렴)이 FE엔 400으로 내린다 |
+| 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership` — 유저의 활성 브랜드 연결에 없으면) |
+| `accountId`가 유효한 브랜드가 아님(브랜드 비정합) | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND`(브랜드 미등록·비ACTIVE) 둘 다 404로 수렴 |
+| monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 monitoring 연동 엔드포인트와 공통 매핑, `V1ExceptionAdvice`) |
+
+### 8-4. FE 공유 필요
+
+프론트 공유가 아직 안 된 신규 UI 표면 2가지:
+
+- **"해시태그 발견" 배지** — `source: "hashtag"` 게시물을 tagged·direct와 구분 표시(스냅샷·댓글·
+  팔로워가 없는 특성도 함께 고려한 빈 상태 UI 필요).
+- **제외 문자열 관리 UI** — §8-3 API로 자사 태그 오탐 문자열을 브랜드 소유자가 직접 추가·삭제.

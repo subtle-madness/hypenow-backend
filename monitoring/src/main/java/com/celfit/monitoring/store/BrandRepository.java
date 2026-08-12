@@ -46,6 +46,18 @@ public class BrandRepository {
 				profile.following(), profile.mediaCount());
 	}
 
+	/**
+	 * 브랜드 소개 — 해시태그 판정기(BrandMentionJudge)의 이름 충돌 방어 컨텍스트(스펙 §4-6).
+	 * BrandRow는 조회 단면(콜 파라미터)이라 biography까지 넣으면 스윕 경로 전역에 파급되므로,
+	 * 스윕 진입 시 1회(콜 0, DB만)만 별도로 뽑는다. 행이 없으면 null(브랜드 조회 자체가 이미
+	 * 앞단에서 검증됐다는 전제라 이 경로에서 예외로 승격하지 않는다).
+	 */
+	public String findBiography(long brandId) {
+		return db.query("SELECT biography FROM brand_account WHERE id = ?",
+				(rs, i) -> rs.getString("biography"), brandId)
+				.stream().findFirst().orElse(null);
+	}
+
 	public Optional<BrandRow> findByUsername(String username) {
 		return db.query("""
 				SELECT id, username, ig_user_id, status, last_swept_on
