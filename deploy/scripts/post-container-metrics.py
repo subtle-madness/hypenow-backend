@@ -106,10 +106,12 @@ GCS_BUCKETS = ["hypenow-images"]
 GCS_KEY = "/home/ubuntu/deploy/secrets/gcs-image-archiver.json"
 if now.minute == 0:
 	try:
-		from google.oauth2 import service_account
+		from google.auth import load_credentials_from_file
 		from google.auth.transport.requests import AuthorizedSession
-		creds = service_account.Credentials.from_service_account_file(
-			GCS_KEY, scopes=["https://www.googleapis.com/auth/devstorage.read_only"])
+		# 키 파일은 SA 키·gcloud ADC(authorized_user) 둘 다 허용 — devstorage.* 스코프는
+		# authorized_user 리프레시에서 invalid_scope가 난다(08-12 실측). cloud-platform은 양쪽 유효.
+		creds, _ = load_credentials_from_file(
+			GCS_KEY, scopes=["https://www.googleapis.com/auth/cloud-platform"])
 		sess = AuthorizedSession(creds)
 		for bucket in GCS_BUCKETS:
 			total, page = 0, None
