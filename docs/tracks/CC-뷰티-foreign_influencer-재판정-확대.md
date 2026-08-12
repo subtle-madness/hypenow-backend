@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: P
-- **상태**: 🔨 (구현 완료 — PR·재판정 슬라이스 실행 대기)
+- **상태**: 🔨 PR #210 머지(2026-07-30) — 재판정 슬라이스 실행 대기(crawler 트랙: 실행 여부는 담당 팀원 확인 사항)
 
 ## 내용
 
