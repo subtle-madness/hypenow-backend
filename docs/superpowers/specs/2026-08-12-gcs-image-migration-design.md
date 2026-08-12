@@ -58,11 +58,14 @@ Storage(도쿄)에 있다. OCI 잔류가 비용상 최적임을 확인했으나(
 1. GCS 버킷·SA 생성 → 유료 업그레이드 → 예산 알람.
 2. rclone 벌크 복사 OCI→GCS(16.5GB, 1시간 내외) — 서비스 무영향.
 3. **아카이브 잡 일시 정지** — CDN 만료 여유가 3~4일이므로 몇 시간 정지는 무손실.
-4. rclone 델타 복사(2 이후 적재분).
-5. 백엔드 배포(`IMAGE_STORE=gcs`) + celfit-front rewrite를 GCS 공개 URL
-   (`https://storage.googleapis.com/<bucket>/:path*`)로 교체 — 같은 창에서.
-6. 잡 재개 → 신규 이미지가 GCS에 적재되는 것 확인.
-7. OCI 버킷은 손대지 않는다.
+4. rclone 델타 복사(2 이후 적재분) — 완료 시점에 두 버킷 내용 동일.
+5. **celfit-front rewrite를 먼저** GCS 공개 URL(`https://storage.googleapis.com/<bucket>/:path*`)로
+   교체(사용자 반영)하고 기존 이미지 로드를 검증한다. 순서 불변식: **서빙이 보는 버킷은 항상
+   쓰기 대상 버킷의 슈퍼셋** — 백엔드를 먼저 바꾸면 잡 재개 후 신규 썸네일이 404가 된다.
+6. 백엔드 배포(`IMAGE_STORE=gcs`).
+7. 잡 재개 → 신규 이미지가 GCS에 적재·서빙되는 것 확인.
+8. OCI 버킷은 손대지 않는다. (5~6 사이 문제 발견 시 rewrite만 OCI로 되돌리면 무손실 롤백 —
+   그 시점 두 버킷이 동일하기 때문.)
 
 ## 감시 이식
 
