@@ -1,0 +1,234 @@
+{
+  "title": "HypeNow 에러",
+  "uid": "hypenow-errors",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "5m",
+  "timezone": "Asia/Seoul",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "svc",
+        "label": "서비스",
+        "type": "custom",
+        "query": "was,crawler,analytics,monitoring",
+        "multi": true,
+        "includeAll": true,
+        "allValue": "was|crawler|analytics|monitoring",
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "options": []
+      },
+      {
+        "name": "level",
+        "label": "레벨",
+        "type": "custom",
+        "query": "ERROR,WARN",
+        "multi": true,
+        "includeAll": false,
+        "current": { "text": ["ERROR", "WARN"], "value": ["ERROR", "WARN"] },
+        "options": []
+      },
+      {
+        "name": "search",
+        "label": "검색어(정규식)",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "1. 지금 아픈가",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "ERROR 총건수",
+      "description": "선택한 시간 범위의 ERROR 로그 엔트리 수. 스택트레이스는 1건으로 묶여 세어진다.",
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "sum(count_over_time({service=~\"${svc:regex}\", level=\"ERROR\"}[$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "WARN 총건수",
+      "description": "crawler·monitoring은 외부 의존 실패를 대부분 WARN으로 남긴다 — ERROR만 보면 크롤링 사고를 놓친다.",
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "orange" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "sum(count_over_time({service=~\"${svc:regex}\", level=\"WARN\"}[$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "서비스별 ERROR",
+      "gridPos": { "h": 5, "w": 16, "x": 8, "y": 1 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "legendFormat": "{{service}}",
+          "expr": "sum by (service) (count_over_time({service=~\"${svc:regex}\", level=\"ERROR\"}[$__range]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "ERROR 추이",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{service}}",
+          "expr": "sum by (service) (count_over_time({service=~\"${svc:regex}\", level=\"ERROR\"}[$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "WARN 추이",
+      "description": "ERROR와 자릿수가 달라 한 축에 겹치면 ERROR가 안 보인다 — 의도적으로 패널을 나눴다.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{service}}",
+          "expr": "sum by (service) (count_over_time({service=~\"${svc:regex}\", level=\"WARN\"}[$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "2. 무엇이 터졌나",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "로거별 ERROR Top 15",
+      "description": "어느 클래스가 시끄러운지가 원인 추적의 첫 갈래다. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다.",
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 15 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (logger) (count_over_time({service=~\"${svc:regex}\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "예외 클래스별 Top 15",
+      "description": "multiline 병합 덕에 스택트레이스 본문에서 예외 클래스를 뽑을 수 있다. 레벨은 상단 $level 변수를 따른다. 끝의 \\b가 없으면 로거명 V1ExceptionAdvice의 접두(V1Exception)가 오매칭된다.",
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 15 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (exc) (count_over_time({service=~\"${svc:regex}\", level=~\"${level:regex}\"} |~ `(?:Exception|Error)` | regexp `(?P<exc>[\\w.]+(?:Exception|Error))\\b` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "직전 24시간 로거별 ERROR Top 15",
+      "description": "왼쪽 표와 눈으로 비교해 '새로 생긴 놈'을 잡는다. 이 패널만 시간 범위가 24시간으로 고정돼 있다.",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 15 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "timeFrom": "24h",
+      "hideTimeOverride": false,
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (logger) (count_over_time({service=~\"${svc:regex}\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
+        }
+      ]
+    }
+  ]
+}
