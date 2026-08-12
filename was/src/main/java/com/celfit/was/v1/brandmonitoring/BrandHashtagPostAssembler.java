@@ -63,9 +63,12 @@ public class BrandHashtagPostAssembler {
 				KstTimestamps.toKstIso(row.takenAt()),
 				row.caption(),
 				contentType,
-				sanitizeImageUrl(row.thumbnailUrl()),
+				// 아카이브 사본(/img/ Vercel rewrite) 우선, 미아카이브는 원본 CDN URL 폴백 —
+				// 원본은 인스타 서명 URL이라 며칠~2주면 만료된다(BrandPostAssembler.resolveImageUrl 동형).
+				BrandPostAssembler.resolveImageUrl(row.imageObjectPath(), row.thumbnailUrl()),
 				row.authorUsername(),
 				row.authorFullName(),
+				// 게시자 프로필 사진은 아카이브가 없다(프로필 보강 자체가 스펙 §5 보류) — 원본 그대로.
 				sanitizeImageUrl(row.authorProfilePicUrl()),
 				row.authorUsername() == null ? null : PROFILE_URL_PREFIX + row.authorUsername() + "/",
 				row.likes(),

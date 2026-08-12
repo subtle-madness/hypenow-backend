@@ -559,7 +559,7 @@ class V2CampaignContentServiceTest {
 	/** record라 값이 같으면 동등하다 — 스텁 매칭에 같은 인스턴스를 들고 다닐 필요가 없다. */
 	private static BrandAccountRow account(long brandId) {
 		return new BrandAccountRow(brandId, "brand", null, null, null, null, null,
-				null, null, null, null, null, null, null, null, "ACTIVE");
+				null, null, null, null, null, null, null, null, "ACTIVE", null);
 	}
 
 	/** 레거시 추적 아이템 — 이 테스트가 보는 필드는 id·status·campaign·post.url·sourceUrl뿐이다. */
