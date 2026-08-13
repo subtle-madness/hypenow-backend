@@ -121,7 +121,7 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new ArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, 30, 2000, 3, 30);
+			super(null, null, null, null, null, null, null, null, 2000, 3, 30);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
@@ -130,13 +130,14 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public List<PostInfo> sweepCore(BrandRow brand, java.util.function.Consumer<List<PostInfo>> onServingCovered) {
+		public List<PostInfo> sweepCore(BrandRow brand, java.util.function.Consumer<List<PostInfo>> onPageCollected) {
 			if (failing.contains(brand.username())) {
 				throw new IllegalStateException("백필 실패 주입");
 			}
 			coreSwept.add(brand.username());
 			coreRows.add(brand);
-			onServingCovered.accept(earlyBatch);   // 실코드의 "정확히 1회" 계약 재현
+			// 실코드의 페이지 배치 콜백 재현 — 1페이지짜리 열거(그 페이지분만 넘어온다).
+			onPageCollected.accept(earlyBatch);
 			if (failAfterServing) {
 				throw new IllegalStateException("서빙 후 실패 주입");
 			}

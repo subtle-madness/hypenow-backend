@@ -43,8 +43,9 @@ import org.springframework.stereotype.Service;
  * 건드리지 않는다(볼륨 격리 + 겹침 게시물 덮어쓰기 차단). 트랜잭션은 여기 없다(CollectService와
  * 같은 이유), 쓰기는 {@link BrandSnapshotWriter}가 짧게 묶는다.
  *
- * <p>2026-08-12 스트리밍 개정: 적재는 페이지 단위로 즉시 일어나고, 등록 백필은 서빙 창(기본
- * 30일) 커버 시점에 콜백으로 FE ready를 당긴다(스펙 docs/superpowers/specs/2026-08-12-…-design.md).
+ * <p>2026-08-12 스트리밍 개정 + 2026-08-13 완결 배치 서빙 개정: 적재는 페이지 단위로 즉시
+ * 일어나고, 콜백도 페이지마다 그 페이지분만 넘긴다 — 수신자(등록 백필)가 페이지 단위로 보강·정산해
+ * 완결된 것부터 목록에 올린다. 구 서빙 창(30일) 커버 기준은 폐기됐다.
  */
 @Service
 public class BrandCollectService {
@@ -60,7 +61,6 @@ public class BrandCollectService {
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
 	private final Executor enrichWorker;
-	private final int servingWindowDays;
 	private final int maxPostsPerSweep;
 	private final int commentPages;
 	private final int authorStaleDays;
@@ -69,7 +69,6 @@ public class BrandCollectService {
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
-			@Value("${monitoring.brand.serving-window-days:30}") int servingWindowDays,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
@@ -81,7 +80,6 @@ public class BrandCollectService {
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
 		this.enrichWorker = enrichWorker;
-		this.servingWindowDays = servingWindowDays;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
@@ -97,7 +95,7 @@ public class BrandCollectService {
 		enrich(brand, sweepCore(brand));
 	}
 
-	/** 단일 인자 경로(일일 스윕·기존 호출부) — 서빙 콜백 없이 동작은 동일하다. */
+	/** 단일 인자 경로(일일 스윕·기존 호출부) — 페이지 콜백 없이 동작은 동일하다. */
 	public List<PostInfo> sweepCore(BrandRow brand) {
 		return sweepCore(brand, posts -> {});
 	}
@@ -105,12 +103,14 @@ public class BrandCollectService {
 	/**
 	 * core 단계(2026-08-12 스트리밍 개정) — 열거하면서 페이지(~21건)마다 즉시 적재한다. 구 일괄
 	 * processCore 대비 의미 불변이고 실행 시점만 당겨진다: 중간 실패 시 앞 페이지 적재분이
-	 * 보존되고(다음 스윕이 잔여를 백스톱), 등록 백필은 서빙 창 커버 시점에 FE ready를 당길 수 있다.
+	 * 보존되고(다음 스윕이 잔여를 백스톱), 등록 백필은 페이지 단위로 보강·정산을 이어붙일 수 있다.
 	 *
-	 * <p>onServingCovered는 <b>정확히 1회</b> 호출된다(예외로 중단되는 경우 제외) — 페이지 전체가
-	 * 서빙 창(servingWindowDays)보다 오래된 순간(소급 태그 혼입 대비, 컷 판정과 같은 보수 규칙),
-	 * 그전에 열거가 끝나면(자연 종료·상한·미전진 포함) 종료 시점. 인자는 그때까지 적재된 편입분
-	 * 누적 리스트다.
+	 * <p>onPageCollected는 <b>페이지마다 1회</b> 호출되고(예외로 중단되면 그 페이지부터는 없다),
+	 * 인자는 <b>그 페이지의 편입분만</b>이다 — 누적 리스트가 아니다(2026-08-13 완결 배치 서빙
+	 * 스펙 §2). 편입 컷에 다 걸려 빈 리스트가 갈 수도 있다. 페이지가 한 장도 처리되지 않았으면
+	 * (태그 0건·즉시 커서 소진) 종료 시점에 빈 리스트로 <b>1회</b> 부른다 — 수신자가 ready를 열
+	 * 기회를 못 얻으면 그 브랜드가 collecting에 영구히 갇힌다. 구 계약("서빙 창 30일 커버 시
+	 * 정확히 1회 + 누적 리스트")은 폐기됐다.
 	 *
 	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
 	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
@@ -124,23 +124,22 @@ public class BrandCollectService {
 	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는 그래도
 	 * 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3).
 	 */
-	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
+	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
 		// 등록 백필(두-인자 직접 호출)도 같은 진입점이라 함께 계상된다.
-		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onServingCovered));
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected));
 	}
 
-	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
+	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		refreshBrandProfileSafely(brand);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
-		Instant servingCutoff = now.minus(Duration.ofDays(servingWindowDays));
 		LocalDate today = LocalDate.now(KST);
 		Set<String> known = taggedPosts.knownCodes(brand.id());
 		Set<String> seen = new LinkedHashSet<>();      // 이번 실행 처리분 — 페이지 간 중복(커서 드리프트) 스킵
 		List<PostInfo> collected = new ArrayList<>();  // 편입분 누적 — 콜백·반환(보강 입력)
 		int freshTotal = 0;
-		boolean servingMarked = false;
+		boolean anyPageDelivered = false;   // 콜백을 한 번이라도 불렀는지 — 종료 시 폴백 판정용
 		String cursor = null;
 		boolean coveredCutoff = false;
 		while (true) {
@@ -155,15 +154,14 @@ public class BrandCollectService {
 					.filter(p -> seen.add(p.shortCode()))   // 첫 관측 유지(구 putIfAbsent 의미)
 					.toList();
 			int knownBefore = known.size();
-			collected.addAll(processPage(brand, newItems, known, today, now));
+			List<PostInfo> pageCollected = processPage(brand, newItems, known, today, now);
+			collected.addAll(pageCollected);
 			freshTotal += known.size() - knownBefore;
-			// 서빙 경계 — 페이지 전체가 서빙 창 이전이면 최근 30일은 다 훑었다(taken_at 미상은
-			// 컷 판정과 같은 이유로 "이전" 판정에 넣지 않는다). 열거는 계속된다.
-			if (!servingMarked && page.posts().stream().allMatch(p -> p.takenAt() != null
-					&& Instant.ofEpochSecond(p.takenAt()).isBefore(servingCutoff))) {
-				servingMarked = true;
-				onServingCovered.accept(List.copyOf(collected));
-			}
+			// 페이지 배치 방출(2026-08-13 완결 배치 서빙 스펙 §2) — 이 페이지분을 즉시 콜백에 넘긴다.
+			// 수신자가 보강·정산을 끝내면 그때부터 was 목록에 뜬다. 누적이 아니라 페이지분만 넘기므로
+			// 수신자 쪽 중복 필터(구 earlyCodes)가 통째로 불필요해진다. 열거는 여기서 끊기지 않는다.
+			onPageCollected.accept(pageCollected);
+			anyPageDelivered = true;
 			// taken_at 미상 아이템은 "컷 이전" 판정에 넣지 않는다(보수적으로 열거 계속).
 			boolean wholePageBeforeCutoff = page.posts().stream()
 					.allMatch(p -> p.takenAt() != null
@@ -190,9 +188,12 @@ public class BrandCollectService {
 			}
 			cursor = page.nextPageId();
 		}
-		if (!servingMarked) {
-			// 서빙 창까지 못 갔거나(게시물이 얕음) 상한·미전진 중단 — 있는 만큼이라도 서빙을 연다.
-			onServingCovered.accept(List.copyOf(collected));
+		if (!anyPageDelivered) {
+			// 처리할 페이지가 한 장도 없었던 경우(태그 0건·즉시 커서 소진) — 수신자(등록 백필)가
+			// ready를 열 수 있게 빈 배치로 1회 부른다. 안 부르면 태그가 없는 브랜드가 collecting에
+			// 영구히 갇힌다. 판정은 "콜백을 불렀는가" 하나뿐이다 — 편입 컷에 다 걸려 빈 페이지분을
+			// 넘긴 경우도 이미 "부른" 것이라 여기서 또 부르지 않는다.
+			onPageCollected.accept(List.of());
 		}
 		log.info("브랜드 태그 수집 — {} 열거 {}건, 편입 컷 안 {}건, 신규 {}건",
 				brand.username(), seen.size(), collected.size(), freshTotal);

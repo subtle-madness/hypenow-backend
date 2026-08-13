@@ -308,7 +308,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				Runnable::run, 30, maxPostsPerSweep, 3, 30);
+				Runnable::run, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -666,48 +666,68 @@ class BrandCollectServiceTest {
 		assertThat(authors.upserted).isEmpty();
 	}
 
-	// ── 스트리밍 적재 + 서빙 콜백(2026-08-12 스펙 §2) ────────────────────────
+	// ── 스트리밍 적재 + 페이지 배치 콜백(2026-08-13 완결 배치 서빙 스펙 §2) ───
 
+	/**
+	 * 콜백은 페이지마다 1회, <b>그 페이지분만</b> 받는다(누적 아님) — 수신자가 그 페이지를 즉시
+	 * 보강·정산해 목록에 올릴 수 있게 하는 전제다. 구 계약은 "서빙 창(30일) 커버 시 1회 + 그때까지의
+	 * 누적 리스트"였다.
+	 */
 	@Test
-	void 서빙_창_커버_시점에_콜백을_1회_호출하고_열거는_계속한다() {
-		// 백필 경로(365일 컷). 2페이지 전체가 60일령 > 서빙 창(30일) — 여기서 콜백이 떠야 한다.
-		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
-		tagPages.add(page("p3", reel("Old60a", RETRO_IN_WINDOW, 0, 102, ""),
-				reel("Old60b", RETRO_IN_WINDOW, 0, 103, "")));
-		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 104, "")));
-		List<List<String>> callbacks = new ArrayList<>();
+	void 콜백은_페이지마다_그_페이지분만_받는다() {
+		// 백필 경로(365일 컷) 3페이지 — 구 계약이었다면 2페이지 경계(60일령 > 서빙 창 30일)에서
+		// 누적 3건으로 1회 부르고 끝났을 배치다.
+		tagPages.add(page("p2", reel("P1", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("P2a", RETRO_IN_WINDOW, 0, 102, ""),
+				reel("P2b", RETRO_IN_WINDOW, 0, 103, "")));
+		tagPages.add(page(null, reel("P3", OLD_95D, 0, 104, "")));
+		List<List<String>> batches = new ArrayList<>();
 
 		service(2000).sweepCore(brand,
-				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+				pageItems -> batches.add(pageItems.stream().map(PostInfo::shortCode).toList()));
 
-		assertThat(callbacks).hasSize(1);
-		assertThat(callbacks.getFirst()).containsExactly("A", "Old60a", "Old60b");   // 경계 페이지까지 누적분
-		assertThat(tagCalls()).isEqualTo(3);   // 콜백 후에도 365일 컷까지 계속 — 조기 종료 아님
-		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old60a", "Old60b", "Old95");
+		assertThat(batches).hasSize(3);
+		assertThat(batches.get(0)).containsExactly("P1");
+		assertThat(batches.get(1)).containsExactly("P2a", "P2b");   // 1페이지분이 섞이지 않는다
+		assertThat(batches.get(2)).containsExactly("P3");
+		assertThat(tagCalls()).isEqualTo(3);   // 콜백이 열거를 끊지 않는다 — 365일 컷까지 계속
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("P1", "P2a", "P2b", "P3");
+	}
+
+	/** 태그 0건 브랜드도 콜백을 1회 받는다 — 안 부르면 그 브랜드가 collecting에 영구히 갇힌다. */
+	@Test
+	void 태그가_0건이면_빈_페이지로_콜백을_1회_부른다() {
+		tagNotFound = true;   // 404 → 빈 페이지(HikerClient 변환) — 처리할 페이지가 없는 경로
+		List<Integer> sizes = new ArrayList<>();
+
+		service(2000).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
+
+		assertThat(sizes).containsExactly(0);
 	}
 
 	@Test
-	void 서빙_창보다_게시물이_얕으면_열거_종료_시점에_콜백한다() {
-		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));   // 전부 최근 — 경계 미도달
+	void 단일_페이지_열거는_그_페이지분으로_콜백한다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
 		List<List<String>> callbacks = new ArrayList<>();
 
 		service(2000).sweepCore(brand,
-				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+				pageItems -> callbacks.add(pageItems.stream().map(PostInfo::shortCode).toList()));
 
 		assertThat(callbacks).hasSize(1);
 		assertThat(callbacks.getFirst()).containsExactly("A");
 	}
 
 	@Test
-	void 안전_상한_중단도_종료_시점에_콜백한다() {
+	void 안전_상한_중단_전까지의_페이지는_전부_콜백된다() {
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
 		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
 		List<Integer> sizes = new ArrayList<>();
 
-		service(3).sweepCore(brand, early -> sizes.add(early.size()));
+		service(3).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
 
-		assertThat(sizes).containsExactly(4);   // 상한 3 → 2페이지째 중단, 그때까지 적재분 4건
+		// 상한 3 → 2페이지째 처리 후 중단. 두 페이지 모두 자기 페이지분(2건씩)으로 방출된다.
+		assertThat(sizes).containsExactly(2, 2);
 	}
 
 	@Test
@@ -889,7 +909,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, pool, 30, 2000, 3, 30);
+					comments, tagged, authors, pool, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
