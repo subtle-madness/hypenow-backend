@@ -232,6 +232,24 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 전 브랜드 날짜별 콜 합(설계 2026-08-13 §3-4) — 어드민 전역 크롤링 비용 API의 브랜드 몫.
+	 * 유저별 카드({@link #findDailyCallCounts})와 달리 연결 기간으로 자르지 않는다: 공유 브랜드는
+	 * 유저마다 계상되므로 유저별 값을 더하면 실제로 나간 돈보다 커진다. 전사 합계는 브랜드 축에서
+	 * 직접 합산해야 정확하다.
+	 *
+	 * <p>sum()은 numeric을 돌려주므로 ::bigint 캐스트가 필수다(record 컴포넌트가 long).
+	 */
+	public List<DailyCallSum> sumDailyCallCounts() {
+		return jdbc.sql("""
+				SELECT called_on, sum(calls)::bigint AS calls
+				FROM brand_call_count
+				GROUP BY called_on
+				""")
+				.query(DailyCallSum.class)
+				.list();
+	}
+
+	/**
 	 * brand_account 1행(was 계약 소비 컬럼만) — 08-07 확장 필드 포함. imageObjectPath는 monitoring
 	 * 자체 프로필 이미지 아카이브 결과(V20260811023454) — null이면 아직 아카이브 전이라 서빙 측이
 	 * 원본 CDN URL로 폴백한다.
