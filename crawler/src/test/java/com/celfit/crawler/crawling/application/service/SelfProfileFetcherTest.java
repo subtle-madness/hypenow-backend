@@ -21,7 +21,7 @@ class SelfProfileFetcherTest {
 
     // CrawlExecutor의 Supplier 오버로드만 흉내내는 최소 스텁 (spy 대신 서브클래스)
     static CrawlExecutor passthroughExecutor() {
-        return new CrawlExecutor(null, null, null, null) {
+        return new CrawlExecutor(null, null, null, null, null) {
             @Override public Execution execute(JobName job,
                                                TriggerType t, String keyword, String targetUsername, String actorId,
                                                Supplier<ApifyResult> work) {
