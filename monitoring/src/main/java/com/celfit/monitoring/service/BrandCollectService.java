@@ -86,16 +86,20 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 브랜드 1개분 전량 수집(매일 스윕 경로) — {@link #sweepCore}(열거+적재) 후
-	 * {@link #enrich}(게시자·댓글)까지 한 호출로 잇는다. 등록 백필은 이 메서드를 쓰지 않고
-	 * 두 단계를 각자 executor에서 따로 돈다(단계식 ready — 2026-08-07 결정): ready 판정
-	 * (last_swept_on)은 core만 요구하고, 보강 콜 수십 개(전체 콜의 ~85%)를 기다리지 않는다.
+	 * 브랜드 1개분 전량 수집(매일 스윕 경로) — 2026-08-13 개정: 열거 전량 후 일괄 보강이 아니라
+	 * <b>페이지마다 보강·정산</b>한다({@link #sweepCore}의 페이지 콜백에 {@link #enrich}를 건다).
+	 * 완결 서빙 규칙(정산된 게시물만 노출) 아래서 일괄 보강을 유지하면, 스윕이 도는 동안 새로
+	 * 적재된 게시물이 목록에서 사라지고(적재는 끝났는데 정산이 스윕 말미까지 안 온다) 중간 실패
+	 * 시 그 스윕에서 만난 게시물이 통째로 미정산 = 다음 스윕까지 미노출로 남는다.
+	 *
+	 * <p>등록 백필은 이 메서드를 쓰지 않고 두 단계를 각자 executor에서 따로 돈다 — 배치 단위는
+	 * 같지만(페이지) ready 판정 시점이 다르다(첫 페이지 배치의 보강 완료).
 	 */
 	public void sweep(BrandRow brand) {
-		enrich(brand, sweepCore(brand));
+		sweepCore(brand, page -> enrich(brand, page));
 	}
 
-	/** 단일 인자 경로(일일 스윕·기존 호출부) — 페이지 콜백 없이 동작은 동일하다. */
+	/** 단일 인자 경로 — 페이지 콜백 없이 동작은 동일하다(열거·적재만 하고 누적 결과를 돌려준다). */
 	public List<PostInfo> sweepCore(BrandRow brand) {
 		return sweepCore(brand, posts -> {});
 	}
@@ -372,7 +376,8 @@ public class BrandCollectService {
 		}
 		Set<String> fresh = authors.freshIgUserIds(ids,
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
-		// 게시자별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
+		// 게시자별 독립 콜이라 공유 워커 풀(monitoring.brand.enrich-concurrency — 08-13부터 10)로
+		// 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
 		// 보강 시간의 본체였다). 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
 		// 태스크 본문은 runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커
 		// 스레드로 넘어가지 않기 때문(BrandCallContext 주석 참조).
@@ -426,7 +431,7 @@ public class BrandCollectService {
 		}
 		Map<String, Long> stored = taggedPosts.commentsCollectedCounts(brandId,
 				candidates.stream().map(PostInfo::shortCode).toList());
-		// 게시물별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(ensureAuthors와 같은 근거). 게이트
+		// 게시물별 독립 콜이라 같은 공유 워커 풀로 병렬화한다(ensureAuthors와 같은 근거). 게이트
 		// 판정은 제출 전에, 워터마크 갱신은 태스크 안에서 — 의미 불변, 실행만 동시.
 		List<CompletableFuture<Void>> tasks = new ArrayList<>();
 		for (PostInfo p : candidates) {

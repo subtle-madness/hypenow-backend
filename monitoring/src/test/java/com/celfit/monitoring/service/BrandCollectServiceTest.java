@@ -744,6 +744,20 @@ class BrandCollectServiceTest {
 	}
 
 	@Test
+	void 스윕_중간_실패해도_앞_페이지는_정산된다() {
+		// 일일 스윕도 페이지 배치로 돈다(2026-08-13 완결 배치 서빙 스펙 §3) — 열거 전량 후 일괄
+		// 보강을 유지하면 중간 실패 시 그 스윕에서 만난 게시물이 통째로 미정산(= 목록 미노출)으로
+		// 남는다. 1페이지분은 이미 보강·정산이 끝나 있어야 한다.
+		tagPage2Fails = true;
+		tagPages.add(page("p2", reel("P1_A", RECENT, 0, 101, ""), reel("P1_B", RECENT, 0, 102, "")));
+
+		assertThatThrownBy(() -> service(2000).sweep(brand))
+				.isInstanceOf(HikerFetchException.class);
+
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("P1_A", "P1_B");
+	}
+
+	@Test
 	void 페이지_간_중복_코드는_한_번만_처리한다() {
 		// 커서 드리프트로 같은 게시물이 두 페이지에 실려도 적재·링크는 1회(구 putIfAbsent 의미 보존).
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
@@ -755,7 +769,7 @@ class BrandCollectServiceTest {
 		assertThat(tagged.inserted).containsExactly("A", "B");
 	}
 
-	// ── core/enrichment 분리(등록 백필 단계식 ready — 2026-08-07) ────────────
+	// ── core/enrichment 분리(등록 백필 2단계 — 08-13 개정: ready는 첫 페이지 배치의 정산) ──
 
 	@Test
 	void sweepCore는_게시자_댓글_콜_없이_적재까지만_한다() {
@@ -765,7 +779,7 @@ class BrandCollectServiceTest {
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
 		assertThat(tagged.inserted).containsExactly("A");
-		assertThat(authorCalls()).isZero();     // 보강 콜은 core 밖 — ready 게이트가 여기서 끊긴다
+		assertThat(authorCalls()).isZero();     // 보강 콜은 core 밖 — 정산(= 노출)은 enrich에서만 열린다
 		assertThat(commentCalls()).isZero();
 		assertThat(posts).extracting(PostInfo::shortCode).containsExactly("A");
 	}
@@ -874,7 +888,7 @@ class BrandCollectServiceTest {
 		assertThat(tagged.collectedCounts).doesNotContainKey("Partial");   // 워터마크 미전진
 	}
 
-	// ── 보강 병렬화(동시 6 — 2026-08-07 스펙) ────────────────────────────────
+	// ── 보강 병렬화(2026-08-07 스펙 — 워커 풀 크기는 설정, 08-13부터 기본 10) ────
 
 	@Test
 	void 보강_게시자_콜은_워커_풀_동시성으로_나가되_상한을_넘지_않는다() {
