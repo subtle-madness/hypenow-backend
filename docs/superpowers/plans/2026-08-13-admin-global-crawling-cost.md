@@ -275,18 +275,15 @@ class CrawlCallDailyMirrorTest {
 		job = new MirrorJob(db, ds);
 		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
 		db.update("DROP TABLE IF EXISTS crawl_call_daily");
-		db.update("DROP TABLE IF EXISTS crawl_run");
+		db.update("DROP TABLE IF EXISTS crawl_call_src");
 		db.update("CREATE SCHEMA analytics");
-		db.update("""
-				CREATE TABLE crawl_run (id bigint, job text, actor_id text, status text,
-				    request_count integer, started_at timestamptz)
-				""");
+		// 소스는 최소 픽스처다 — 실제 30_crawl_cost.sql을 여기 복사하지 않는다. 그 집계 규칙은
+		// SQL 하니스가 실 스키마로 검증하고, 여기서 볼 것은 date 컬럼의 JDBC 왕복뿐이다.
+		// 뷰 정의를 복제하면 원본이 바뀌어도 이 테스트는 스테일한 사본으로 계속 통과한다.
+		db.update("CREATE TABLE crawl_call_src (job text, called_on date, calls bigint)");
 		db.update("""
 				CREATE VIEW analytics.v_crawl_call_daily AS
-				SELECT job, (started_at AT TIME ZONE 'Asia/Seoul')::date AS called_on,
-				       sum(request_count)::bigint AS calls
-				FROM crawl_run WHERE request_count > 0
-				GROUP BY job, (started_at AT TIME ZONE 'Asia/Seoul')::date
+				SELECT job, called_on, calls FROM crawl_call_src
 				""");
 		db.update("""
 				CREATE TABLE crawl_call_daily (job text NOT NULL, called_on date NOT NULL,
@@ -295,12 +292,10 @@ class CrawlCallDailyMirrorTest {
 	}
 
 	@Test
-	void 뷰의_date_컬럼이_LocalDate로_왕복한다() {
-		// 14:59:59Z = KST 06-05 23:59:59, 15:00:01Z = KST 06-06 00:00:01 → 두 날로 갈린다.
+	void date_컬럼이_LocalDate로_왕복한다() {
 		db.update("""
-				INSERT INTO crawl_run VALUES
-				 (1,'COLLECT','profile-hiker-mobile','SUCCEEDED',3, timestamptz '2026-06-05 14:59:59+00'),
-				 (2,'COLLECT','profile-hiker-mobile','SUCCEEDED',7, timestamptz '2026-06-05 15:00:01+00')
+				INSERT INTO crawl_call_src VALUES
+				 ('COLLECT', date '2026-06-05', 3), ('COLLECT', date '2026-06-06', 7)
 				""");
 
 		int moved = job.mirror(new MirrorSpec<>("v_crawl_call_daily", "crawl_call_daily", CrawlCallDaily.class));
