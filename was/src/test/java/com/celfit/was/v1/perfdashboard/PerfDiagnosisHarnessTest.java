@@ -86,7 +86,9 @@ class PerfDiagnosisHarnessTest {
 				continue;
 			}
 			var posts = time("  assembleTagged(" + link.brandId() + ") [5쿼리+매핑]",
-					() -> brandPostAssembler.assembleTagged(account.get()));
+					// 진단 하니스는 조회 비용의 상한을 보려는 것이라 전량(ALL)으로 잰다.
+					() -> brandPostAssembler.assembleTagged(account.get(), true,
+							com.celfit.was.v1.brandmonitoring.BrandPostAssembler.TaggedScope.ALL));
 			System.out.println("    게시물 = " + posts.size() + "건");
 		}
 

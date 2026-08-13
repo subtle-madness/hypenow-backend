@@ -95,12 +95,12 @@ public class PerformanceComparisonAssembler {
 	 * collection_months 창뿐이라, 완주해도 창 밖 버킷은 수집한 적 자체가 없다 — 계정 단위 true는
 	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 3중 AND:
 	 * <ul>
-	 * <li><b>완주</b>(backfillCompletedAt 존재) — last_swept_at은 서빙 창(30일)만 커버해도 미리
-	 * 찍히므로 못 쓴다(08-12 스트리밍 백필).</li>
-	 * <li><b>확장 중 아님</b>(lastSweptOn 존재) — 기간 확장은 collection_months를 먼저 올리고
-	 * (backfill_completed_at 보존, last_swept_on NULL) 백필을 재제출하므로, 창 기준만 보면 새
-	 * 구간이 데이터 없이 true가 된다. 완주 이력+last_swept_on 빔 = 확장 중 → 전 구간 보수적 false
-	 * (계정 상태 유도의 collecting 판정과 같은 신호 — BrandAccountAssembler).</li>
+	 * <li><b>완주</b>(backfillCompletedAt 존재) — last_swept_at은 첫 페이지 배치만 정산돼도 미리
+	 * 찍히므로 못 쓴다(스트리밍 백필). 08-13 개정으로 기간 확장이 이 값을 NULL로 리셋하므로,
+	 * 확장 중 전 구간 보수적 false는 이 조건 하나로 성립한다(BrandRepository.expandWindow).</li>
+	 * <li><b>확장 중 아님</b>(lastSweptOn 존재) — 확장이 완주 시각을 리셋하기 전(08-12)에는 이쪽이
+	 * 확장 판별의 본체였다. 지금은 위 조건과 중복이지만, "이번 창 기준 완주"라는 독립 근거라
+	 * 남겨 둔다 — 창을 다시 여는 어떤 경로가 완주 시각을 남기더라도 보수적 false가 유지된다.</li>
 	 * <li><b>버킷이 창 안</b> — 먼 쪽 경계(from)가 창 하한(today.minusMonths(collectionMonths))
 	 * 이상. 부분 겹침은 false(보수적), 경계일은 포함 — 창 하한과 버킷 하한이 같은
 	 * minusMonths(말일 클램프) 연산이라 12개월 계정의 6m_12m이 정확히 경계에 얹힌다.</li>

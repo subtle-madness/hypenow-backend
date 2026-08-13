@@ -46,10 +46,20 @@
 # 금지(schema_history 체크섬 고정)이므로 정수·타임스탬프가 각 디렉토리 안에 영구 공존한다 —
 # 셀프테스트에 그 공존·충돌 케이스를 추가했다(check-migration-safety.test.sh).
 #
+# v4 (08-13): 신규 채번 질서 검사 — 08-12 monitoring 크래시루프 2연장(KST 채번이 미래 번호를
+# 선점 → 이후 UTC 정상 채번이 전부 Flyway out-of-order 거부) 재발 방지. base 목록에 없는
+# 신규 파일만 대상으로 ①번호가 자기 디렉토리 base 최대 이하면 차단(역전 — 심긴 지뢰가
+# 터지는 걸 막는다) ②14자리 타임스탬프가 현재 UTC+1h를 넘으면 차단(미래 채번 — 지뢰를
+# 심는 것 자체를 막는다. +1h는 분 올림 관행 허용 오차). 의도된 미래 번호(#455처럼 이미 DB에
+# 박힌 미래 번호 위로 올라가는 핫픽스)는 파일에 `-- allow-future-version: <사유>` 주석으로
+# 통과시킨다(allow-destructive와 같은 관용구). --versions-tree(push 경로)에서는 안 돈다 —
+# base 없이는 "신규"를 구분할 수 없고, PR·merge_group 경로가 이미 전수 커버한다.
+#
 # 사용법: check-migration-safety.sh <base-ref>                             # git diff 기반 (CI, PR 전용)
 #         check-migration-safety.sh --scan <파일…>                          # 파괴적 DDL만 파일 직접 검사 (셀프테스트용)
 #         check-migration-safety.sh --versions <base-목록파일> <head-목록파일>    # 버전 중복 base 대조 (셀프테스트용)
 #         check-migration-safety.sh --versions-tree [<루트경로>]              # 버전 중복 트리 단독 검사 (CI push 경로 + 셀프테스트용, git 비의존)
+#         check-migration-safety.sh --ordering <base-목록파일> <head-목록파일> [<콘텐츠루트>]  # 신규 채번 질서 검사 (셀프테스트용 — now는 MIGRATION_GUARD_NOW로 주입)
 set -euo pipefail
 
 # 파괴적 패턴 — 구버전이 참조 중인 객체를 없애거나 바꾸는 DDL만. 추가(ADD/CREATE)는 자유.
@@ -163,29 +173,30 @@ next_free_versions() {
 # base·HEAD의 파일명이 같으면(변경 없음/내용만 수정) 정상 처리한다.
 # git 의존 없이 순수 파일 목록만으로 동작 — CI 경로(git ls-tree)와 --versions 셀프테스트가
 # 이 함수 하나를 공유해 로직 중복이 없다. 반환 0=통과 1=위반.
+# 파일 목록(경로 1행 1개, 없거나 빈 파일 허용)을 "dir<TAB>정규화버전<TAB>파일명" tsv로 변환 —
+# check_versions·check_ordering이 공유한다(v4에서 추출).
+build_version_tsv() { # <목록파일> <출력tsv>
+  local list_file="$1" out_file="$2" line d b v
+  : > "$out_file"
+  [ -f "$list_file" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    b="$(version_basename "$line")"
+    v="$(normalize_version "$b")"
+    [ -n "$v" ] || continue
+    d="$(version_dirname "$line")"
+    printf '%s\t%s\t%s\n' "$d" "$v" "$b" >> "$out_file"
+  done < "$list_file"
+}
+
 check_versions() {
   local base_file="$1" head_file="$2" rc=0
   local work
   work="$(mktemp -d)"
   trap "rm -rf '$work'" RETURN
 
-  : > "$work/base.tsv"
-  : > "$work/head.tsv"
-
-  local list_file_out list_file out_file line d b v
-  for list_file_out in "$base_file:$work/base.tsv" "$head_file:$work/head.tsv"; do
-    list_file="${list_file_out%%:*}"
-    out_file="${list_file_out#*:}"
-    [ -f "$list_file" ] || continue
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      b="$(version_basename "$line")"
-      v="$(normalize_version "$b")"
-      [ -n "$v" ] || continue
-      d="$(version_dirname "$line")"
-      printf '%s\t%s\t%s\n' "$d" "$v" "$b" >> "$out_file"
-    done < "$list_file"
-  done
+  build_version_tsv "$base_file" "$work/base.tsv"
+  build_version_tsv "$head_file" "$work/head.tsv"
 
   # ① HEAD 트리 내부 중복 — 같은 (dir,version)에 서로 다른 파일명이 2개 이상
   local dup
@@ -249,6 +260,54 @@ check_versions() {
   return $rc
 }
 
+# v4: 신규 채번 질서 검사(파일 헤더 주석 참고). base 목록에 없는 (dir,파일명)만 "신규"로 보고
+# ①자기 디렉토리 base 최대 이하 번호 차단(역전 — Flyway out-of-order 거부 재현 방지)
+# ②14자리 타임스탬프의 미래 채번 차단(now+1h 초과 — KST 채번은 +9h라 반드시 걸린다.
+#   +1h 산술은 자릿수 덧셈(+10000)이라 23시대→익일 경계에서는 오차가 0으로 줄어드는
+#   보수적 방향의 부정확성만 있다). 승인 주석은 <콘텐츠루트>/<dir>/<파일명>에서 읽는다.
+# now는 MIGRATION_GUARD_NOW(UTC 14자리)로 주입 가능 — 셀프테스트 결정성용. 반환 0=통과 1=위반.
+check_ordering() { # <base-목록파일> <head-목록파일> <콘텐츠루트>
+  local base_file="$1" head_file="$2" root="$3" rc=0
+  local work
+  work="$(mktemp -d)"
+  trap "rm -rf '$work'" RETURN
+
+  build_version_tsv "$base_file" "$work/base.tsv"
+  build_version_tsv "$head_file" "$work/head.tsv"
+
+  local now limit
+  now="${MIGRATION_GUARD_NOW:-$(date -u +%Y%m%d%H%M%S)}"
+  limit=$((10#$now + 10000))
+
+  local d v b intpart dirmax
+  while IFS=$'\t' read -r d v b; do
+    [ -n "$d" ] || continue
+    # base에 같은 (dir,파일명)이 있으면 기존 파일 — 신규만 검사한다(기존 파일은 rename 금지
+    # 규약이라 번호를 고칠 수도 없고, 이미 히스토리에 적용돼 있어 검사 의미가 없다)
+    if awk -F'\t' -v d="$d" -v b="$b" '$1==d && $3==b{found=1} END{exit !found}' "$work/base.tsv"; then
+      continue
+    fi
+    intpart="${v%% *}"
+    # ① 역전 검사 — 정수부 기준(이 저장소는 점 버전을 쓰지 않는다, next_free_versions와 동일 전제)
+    dirmax="$(awk -F'\t' -v d="$d" 'BEGIN{max=0} $1==d{split($2,a," "); if (a[1]+0>max) max=a[1]+0} END{print max}' "$work/base.tsv")"
+    if [ "$((10#$intpart))" -le "$dirmax" ]; then
+      echo "::error::채번 역전($d): 신규 '$b'(버전 $intpart)이 base 최대($dirmax) 이하 — 머지되면 Flyway가 out-of-order로 기동을 거부합니다(08-12 monitoring 크래시루프 사고). 현재 UTC 타임스탬프(V<YYYYMMDDHHMMSS>__, date -u +%Y%m%d%H%M%S)로 rename 하세요."
+      rc=1
+      continue
+    fi
+    # ② 미래 채번 검사 — 14자리(타임스탬프 채번)만 대상. 정수 연번은 ①이 커버한다.
+    if [ "${#intpart}" -eq 14 ] && [ "$((10#$intpart))" -gt "$limit" ]; then
+      if [ -f "$root/$d/$b" ] && grep -qiE '^[[:space:]]*--[[:space:]]*allow-future-version:' "$root/$d/$b"; then
+        echo "SKIP(미래 채번) $d/$b — allow-future-version 승인 주석"
+      else
+        echo "::error file=$d/$b::미래 시각 채번($d): '$b'(버전 $intpart)이 현재 UTC+1h($limit)를 초과 — KST 채번 의심(채번 규약은 UTC, CLAUDE.md). 현재 UTC로 rename 하거나, 이미 DB에 적용된 미래 번호 위로 올라가는 의도적 채번이면 파일에 '-- allow-future-version: <사유>' 주석을 추가하세요."
+        rc=1
+      fi
+    fi
+  done < "$work/head.tsv"
+  return $rc
+}
+
 fail=0
 if [ "${1:-}" = "--scan" ]; then
   shift
@@ -258,6 +317,15 @@ elif [ "${1:-}" = "--versions" ]; then
   HEAD_FILE="${3:?사용법: check-migration-safety.sh --versions <base-목록파일> <head-목록파일>}"
   if check_versions "$BASE_FILE" "$HEAD_FILE"; then
     echo "OK   버전 중복 없음"
+  else
+    fail=1
+  fi
+elif [ "${1:-}" = "--ordering" ]; then
+  BASE_FILE="${2:?사용법: check-migration-safety.sh --ordering <base-목록파일> <head-목록파일> [<콘텐츠루트>]}"
+  HEAD_FILE="${3:?사용법: check-migration-safety.sh --ordering <base-목록파일> <head-목록파일> [<콘텐츠루트>]}"
+  ROOT="${4:-.}"
+  if check_ordering "$BASE_FILE" "$HEAD_FILE" "$ROOT"; then
+    echo "OK   채번 질서 위반 없음"
   else
     fail=1
   fi
@@ -300,6 +368,14 @@ else
   git ls-tree -r --name-only HEAD -- "${VERSION_DIRS[@]}" > "$VTMP/head.list" 2>/dev/null || true
   if check_versions "$VTMP/base.list" "$VTMP/head.list"; then
     echo "OK   버전 중복 없음 (기준: $BASE)"
+  else
+    fail=1
+  fi
+
+  # v4: 신규 채번 질서 검사 — 같은 스냅샷 재사용. 콘텐츠 루트는 체크아웃된 HEAD 트리(=CWD) —
+  # 신규 파일의 allow-future-version 승인 주석을 여기서 읽는다.
+  if check_ordering "$VTMP/base.list" "$VTMP/head.list" .; then
+    echo "OK   채번 질서 위반 없음 (기준: $BASE)"
   else
     fail=1
   fi

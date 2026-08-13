@@ -65,11 +65,23 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				.query(Long.class).single();
 	}
 
+	/** 보강 정산이 끝난 게시물(enriched_at 기입) — 목록에 노출되는 정상 상태. */
 	void seedTaggedPost(long brandId, String shortCode, String takenAt) {
 		jdbc.sql("""
 				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
-				                               taken_at, comments_collected_count)
-				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 7)
+				                               taken_at, comments_collected_count, enriched_at)
+				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 7, now())
+				""")
+				.param("brandId", brandId).param("shortCode", shortCode).param("takenAt", takenAt)
+				.update();
+	}
+
+	/** 보강 정산 전 게시물(enriched_at NULL) — 열거만 되고 게시자·댓글이 아직 안 붙은 상태. */
+	void seedUnenrichedTaggedPost(long brandId, String shortCode, String takenAt) {
+		jdbc.sql("""
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
+				                               taken_at, comments_collected_count, enriched_at)
+				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 0, NULL)
 				""")
 				.param("brandId", brandId).param("shortCode", shortCode).param("takenAt", takenAt)
 				.update();
@@ -155,6 +167,42 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(mine, now.minusDays(365));
 
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("MINE1");
+	}
+
+	/**
+	 * 표시 경로(정산분 조회)는 보강 정산 전 게시물을 내보내지 않는다(2026-08-13 완결 배치 서빙) —
+	 * 게시자·댓글이 붙기 전의 반쯤 빈 카드를 FE에 싣지 않기 위한 게이트다. 목록·상세·meta.counts가
+	 * 전부 이 메서드를 경유하므로 세 표면이 동시에 정산분만 본다.
+	 */
+	@Test
+	void 정산분_조회는_정산되지_않은_게시물을_제외한다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "DONE_A", now.minusDays(3).toString());
+		seedUnenrichedTaggedPost(brandId, "PENDING_B", now.minusDays(1).toString());   // 더 최신이지만 미정산
+
+		List<BrandTaggedPostRow> rows =
+				repository.findEnrichedTaggedPostsInWindow(brandId, now.minusDays(365));
+
+		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("DONE_A");
+	}
+
+	/**
+	 * 전량 경로는 미정산분도 준다 — 존재 판정(캠페인 연결)·중복 판정(직접 등록)·지표 집계(성과
+	 * 대시보드)는 "수집 중"을 "없음"으로 답하면 안 된다(2026-08-13 리뷰 결정). 정산 게이트는 표시
+	 * 계약이지 존재 계약이 아니다.
+	 */
+	@Test
+	void 전량_조회는_정산되지_않은_게시물도_포함한다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "DONE_A", now.minusDays(3).toString());
+		seedUnenrichedTaggedPost(brandId, "PENDING_B", now.minusDays(1).toString());
+
+		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(brandId, now.minusDays(365));
+
+		assertThat(rows).extracting(BrandTaggedPostRow::shortCode)
+				.containsExactly("PENDING_B", "DONE_A");   // 최신순 — 미정산분이 정렬에서도 빠지지 않는다
 	}
 
 	@Test

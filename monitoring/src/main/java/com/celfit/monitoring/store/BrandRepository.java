@@ -54,8 +54,14 @@ public class BrandRepository {
 	/**
 	 * 기간 확장(collectionMonths 스펙 §3) — 창 상향 + 백필 재개 신호를 한 UPDATE로.
 	 * last_swept_on NULL이 핵심이다: 확장 백필이 죽어도 다음 새벽 스윕이 백필 분기(전체 창 열거)로
-	 * 자동 복구한다(기존 백스톱 상속). backfill_completed_at은 보존한다 — was가 "완주 이력 있는데
-	 * last_swept_on이 빔 = 확장 중"으로 collecting을 유도하는 판별 재료다.
+	 * 자동 복구한다(기존 백스톱 상속).
+	 *
+	 * <p>2026-08-13 개정: backfill_completed_at도 리셋한다(08-12의 "보존한다" 결정을 뒤집는다).
+	 * FE 폴링 종료 조건이 이 값(응답 collectionCompletedAt)이 되면서, 보존하면 확장 시작 즉시
+	 * 폴링이 멎어 확장분이 화면에 반영되지 않는다. 그 대가로 was의 "확장 중 → collecting" 유도
+	 * 분기가 도달 불가가 되어 함께 제거했다 — 확장 중 상태는 ready이고, 진행 여부는 FE가
+	 * collectionCompletedAt == null로 판정한다(collectionStatus 값 공간을 collecting|ready|error
+	 * 3값으로 고정해달라는 FE 요청 계약). 확장 완주 시 touchSwept의 COALESCE가 다시 채운다.
 	 *
 	 * <p>축소 금지("collection_months는 절대 줄지 않는다")의 판정은 호출자 게이트가 아니라 이
 	 * UPDATE 자체에 있다. 호출자의 check-then-act(읽은 창보다 크면 확장)는 동시 요청 둘이 같은 옛
@@ -69,7 +75,8 @@ public class BrandRepository {
 		return db.update("""
 				UPDATE brand_account
 				SET collection_months = GREATEST(collection_months, ?), last_swept_on = NULL,
-				    collection_started_at = now(), backfill_error = NULL
+				    collection_started_at = now(), backfill_error = NULL,
+				    backfill_completed_at = NULL
 				WHERE id = ? AND collection_months < ?""", months, brandId, months) > 0;
 	}
 
@@ -122,9 +129,10 @@ public class BrandRepository {
 	}
 
 	/**
-	 * 조기 서빙 마크(스트리밍 백필 2026-08-12 스펙 §1) — 등록 백필이 서빙 창(최근 30일)을 커버한
-	 * 시점에 was ready 판정 컬럼(last_swept_at)만 당긴다. last_swept_on(다음 스윕 열거 깊이 판정)과
-	 * backfill_completed_at(FE "과거분 수집 중" 배지)은 완주 시점의 touchSwept가 찍는다 — 여기서
+	 * 조기 서빙 마크(2026-08-13 완결 배치 서빙 스펙 §1 — 구 "서빙 창(최근 30일) 커버" 기준 폐기) —
+	 * 등록 백필의 <b>첫 페이지 배치 보강이 끝난</b> 시점에 was ready 판정 컬럼(last_swept_at)만
+	 * 당긴다. last_swept_on(다음 스윕 열거 깊이 판정)과 backfill_completed_at(FE 폴링 종료 조건인
+	 * 응답 collectionCompletedAt)은 전 페이지 보강 완료 시점의 touchSwept가 찍는다 — 여기서
 	 * last_swept_on까지 찍으면 이후 열거 실패 시 다음 스윕이 14일 컷만 돌아 30~365일 구간이 영구
 	 * 공백이 된다. IS NULL 가드: 첫 백필에서만 유효(재가입·이미 서빙 중이면 no-op).
 	 */

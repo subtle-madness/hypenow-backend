@@ -53,9 +53,17 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 브랜드 윈도우 안 태그 게시물 — cutoff(365일 컷) 이후 taken_at만, 최신순 전량. 컷은 호출부가
-	 * 정한다(윈도우 정책은 상위 계층 계약). 개수 상한은 정책 v1(08-09)에서 폐지 — 모수는 수집 편입
-	 * 컷(365일)이 이미 제한하고, 상한을 두면 12개월치가 많은 브랜드의 오래된 게시물이 소리 없이 잘린다.
+	 * 브랜드 윈도우 안 태그 게시물 <b>전량</b>(보강 정산 전 포함) — cutoff(365일 컷) 이후 taken_at만,
+	 * 최신순. 컷은 호출부가 정한다(윈도우 정책은 상위 계층 계약). 개수 상한은 정책 v1(08-09)에서 폐지 —
+	 * 모수는 수집 편입 컷(365일)이 이미 제한하고, 상한을 두면 12개월치가 많은 브랜드의 오래된 게시물이
+	 * 소리 없이 잘린다.
+	 *
+	 * <p><b>이쪽을 쓰는 곳</b>: "있는데 없다고 답하면 안 되는" 판정 — 캠페인 콘텐츠 존재 판정
+	 * (없으면 NOT_FOUND로 떨어진다), 직접 등록 중복 판정(놓치면 direct로 이중 등록돼 카드 셰이프가
+	 * 고정된다), 성과 대시보드 지표 집계(미정산분도 스냅샷 지표는 이미 있어서 빼면 과소 계상). 정산
+	 * 여부는 <b>표시</b> 판정이지 존재 판정이 아니다(2026-08-13 완결 배치 서빙 리뷰 결정).
+	 *
+	 * @see #findEnrichedTaggedPostsInWindow 표시 표면(목록·상세·counts)은 이쪽이 아니라 그쪽이다
 	 */
 	public List<BrandTaggedPostRow> findTaggedPostsInWindow(long brandId, OffsetDateTime cutoff) {
 		return jdbc.sql("""
@@ -63,6 +71,32 @@ public class BrandReadRepository {
 				       comments_collected_count
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId AND taken_at >= :cutoff
+				ORDER BY taken_at DESC
+				""")
+				.param("brandId", brandId)
+				.param("cutoff", cutoff)
+				.query(BrandTaggedPostRow.class)
+				.list();
+	}
+
+	/**
+	 * 같은 윈도우의 <b>보강 정산분만</b>(enriched_at IS NOT NULL) — 게시자 프로필·댓글이 붙기 전의
+	 * 반쯤 빈 카드를 FE에 내보내지 않는다는 계약이다(2026-08-13 완결 배치 서빙 스펙 §5).
+	 *
+	 * <p><b>이쪽을 쓰는 곳</b>: 표시 표면만 — 게시물 목록·상세와 그 {@code meta.counts}
+	 * ({@code BrandPostAssembler}의 {@code ENRICHED_ONLY} 경로 하나로 모인다). 존재·중복·집계 판정에
+	 * 쓰면 수집 중인 실존 게시물을 "없다"고 답하게 된다({@link #findTaggedPostsInWindow} 참조).
+	 *
+	 * <p>정산은 "보강 <b>시도</b>가 끝났다"는 뜻이지 "필드가 다 찼다"가 아니다 — 게시자 조회가
+	 * 404·타임아웃으로 소진되면 그 필드가 빈 채로 정산된다(실측 404 2%·타임아웃 1%). FE의 빈 필드
+	 * 방어는 계속 필요하다.
+	 */
+	public List<BrandTaggedPostRow> findEnrichedTaggedPostsInWindow(long brandId, OffsetDateTime cutoff) {
+		return jdbc.sql("""
+				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
+				       comments_collected_count
+				FROM brand_tagged_post
+				WHERE brand_id = :brandId AND taken_at >= :cutoff AND enriched_at IS NOT NULL
 				ORDER BY taken_at DESC
 				""")
 				.param("brandId", brandId)

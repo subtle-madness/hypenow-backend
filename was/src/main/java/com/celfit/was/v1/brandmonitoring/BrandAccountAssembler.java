@@ -13,16 +13,19 @@ import org.springframework.stereotype.Component;
  * <p>상태 유도 규칙(정본은 monitoring 컬럼 몇 개뿐 — 별도 상태 컬럼이 없다):
  * <ul>
  *   <li>{@code last_swept_on} 있음(이번 창 기준 완주) → {@code ready}</li>
- *   <li>{@code last_swept_on} null + {@code backfill_completed_at} 있음 → {@code collecting}
- *       (확장·재수집 진행 — 데이터는 계속 서빙된다)</li>
- *   <li>둘 다 null + {@code last_swept_at} 있음 → {@code ready}(첫 등록 스트리밍 fast-ready·재가입)</li>
+ *   <li>{@code last_swept_at} 있음 → {@code ready}(첫 등록 배치 완결·재가입·기간 확장 중)</li>
  *   <li>전부 null + {@code backfill_error} 있음 → {@code error} + collectionError, 아니면 {@code collecting}</li>
  * </ul>
- * 마지막 두 분기의 ready 기준이 {@code last_swept_on}이 아니라 {@code last_swept_at}(완주 사실값)인
- * 이유(08-10, <b>첫 등록·재가입 분기에 한정 유지</b>): 정책 리셋·스윕 실패·재가입으로 last_swept_on이
- * 비어도 기존 수집분은 게시물 API가 그대로 서빙하므로, FE가 로딩 화면으로 데이터를 가리는 것보다
- * 보여주는 게 맞다. 다만 완주 이력이 있는 계정의 last_swept_on 공백은 "창을 다시 여는 중"이므로
- * 08-12 개정으로 collecting이 우선한다. collecting은 "보여줄 게 없는 첫 수집" 또는 "확장 진행 중"이다.
+ * 둘째 분기의 ready 기준이 {@code last_swept_on}이 아니라 {@code last_swept_at}(완주 사실값)인
+ * 이유(08-10): 정책 리셋·스윕 실패·재가입으로 last_swept_on이 비어도 기존 수집분은 게시물 API가
+ * 그대로 서빙하므로, FE가 로딩 화면으로 데이터를 가리는 것보다 보여주는 게 맞다.
+ * 남은 {@code collecting}은 "보여줄 게 없는 첫 수집" 하나뿐이다.
+ *
+ * <p>2026-08-13 개정: 08-12에 넣었던 "확장 중 → collecting" 분기를 제거했다. 확장
+ * ({@code BrandRepository.expandWindow})이 backfill_completed_at을 리셋하게 되면서 그 분기의
+ * 조건(완주 이력 있음 + last_swept_on 빔)이 도달 불가가 됐다. FE 계약상 collectionStatus는
+ * collecting|ready|error 3값 고정이고, 수집 진행 여부는 collectionCompletedAt == null로 판정한다 —
+ * 확장 중에도 데이터는 계속 서빙되므로 ready가 오히려 정확하다.
  * {@code brand_account.status}(ACTIVE/CLOSED)는 유도에 쓰지 않는다 — 값 공간이 가입/탈퇴라 "수집
  * 준비 중"을 표현하지 못한다. 등록 응답의 status("ACTIVE" 하드코딩)도 마찬가지로 신뢰하지 않는다.
  */
@@ -45,15 +48,10 @@ public class BrandAccountAssembler {
 		String status;
 		if (row.lastSweptOn() != null) {
 			status = STATUS_READY;
-		} else if (row.backfillCompletedAt() != null) {
-			// 확장/재수집 진행(스펙 2026-08-12 §5) — 완주 이력이 있는데 last_swept_on이 비어 있다 =
-			// 창을 다시 여는 중. 데이터는 계속 서빙되고 FE는 "collecting + 게시물 있음 = 확장 배너"로
-			// 판정한다. 실패해도 error로 바꾸지 않는다 — 다음 스윕이 백스톱하고, 기존 데이터 위에
-			// "초기 수집 실패" 오보를 띄우지 않기 위해서다.
-			status = STATUS_COLLECTING;
 		} else if (row.lastSweptAt() != null) {
-			// 첫 등록 스트리밍 fast-ready(서빙 창 커버) / 재가입 직후 기존 데이터 보유(08-10 결정).
-			// backfill_error가 남아 있어도 무시한다 — 데이터가 있는데 에러 화면을 띄우는 오보 방지.
+			// 첫 등록 배치 완결(fast-ready) / 재가입 직후 기존 데이터 보유(08-10 결정) / 기간 확장 중
+			// (08-13 — 확장이 완주 시각을 리셋하므로 이 분기로 온다). backfill_error가 남아 있어도
+			// 무시한다 — 데이터가 있는데 에러 화면을 띄우는 오보 방지.
 			status = STATUS_READY;
 		} else {
 			status = row.backfillError() != null ? STATUS_ERROR : STATUS_COLLECTING;
