@@ -23,6 +23,36 @@ def post_discord(content: str) -> None:
 	urllib.request.urlopen(req, timeout=10).read()
 
 
+def alarm_dimensions(body: dict) -> list[str]:
+	"""alarmMetaData[].dimensions[]의 키=값 쌍을 순서 유지·중복 제거로 수집.
+	형태가 예상과 달라도 조용히 건너뛴다 — 차원 표기는 부가 정보라 본문 발송을 막지 않는다."""
+	pairs = []
+	meta = body.get("alarmMetaData")
+	for entry in meta if isinstance(meta, list) else []:
+		dims = entry.get("dimensions") if isinstance(entry, dict) else None
+		for dim in dims if isinstance(dims, list) else []:
+			if not isinstance(dim, dict):
+				continue
+			for key, value in dim.items():
+				pair = f"{key}={value}"
+				if pair not in pairs:
+					pairs.append(pair)
+	return pairs
+
+
+def format_alarm(body: dict, raw: str) -> str:
+	if not isinstance(body, dict):  # JSON 최상위가 dict가 아니면(배열 등) 원문 폴백 — 발송 유실 방지
+		body = {}
+	title = body.get("title") or "OCI 알림"
+	text = body.get("body") or raw[:1500]
+	emoji = SEVERITY_EMOJI.get(str(body.get("severity", "")).upper(), "🔔")
+	state = str(body.get("type") or "")  # 예: OK_TO_FIRING / FIRING_TO_OK — 비문자열 방어
+	suffix = " (해소됨 ✅)" if "TO_OK" in state else ""
+	dims = alarm_dimensions(body)
+	dim_line = f"\n📍 {', '.join(dims)}" if dims else ""
+	return f"{emoji} **{title}**{suffix}\n{text}{dim_line}"
+
+
 class Handler(BaseHTTPRequestHandler):
 
 	def do_POST(self):
@@ -53,15 +83,11 @@ class Handler(BaseHTTPRequestHandler):
 				print(f"구독 확인 방문: {url.group(0)}", flush=True)
 				post_discord("✅ OCI 알람 구독이 연결되었습니다 (hypenow-alerts)")
 				return
-		title = body.get("title") or "OCI 알림"
-		text = body.get("body") or raw[:1500]
-		emoji = SEVERITY_EMOJI.get(str(body.get("severity", "")).upper(), "🔔")
-		state = body.get("type", "")  # 예: OK_TO_FIRING / FIRING_TO_OK
-		suffix = " (해소됨 ✅)" if "TO_OK" in state else ""
-		post_discord(f"{emoji} **{title}**{suffix}\n{text}")
+		post_discord(format_alarm(body, raw))
 
 	def log_message(self, *args):  # 기본 액세스 로그 소음 억제 — 수신 본문은 위에서 직접 로깅
 		pass
 
 
-HTTPServer(("0.0.0.0", 9099), Handler).serve_forever()
+if __name__ == "__main__":  # 테스트가 import할 수 있게 서버 기동은 스크립트 실행 시에만
+	HTTPServer(("0.0.0.0", 9099), Handler).serve_forever()
