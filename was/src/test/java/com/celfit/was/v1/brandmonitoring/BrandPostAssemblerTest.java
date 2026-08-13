@@ -36,7 +36,7 @@ class BrandPostAssemblerTest {
 						SWEPT_AT, SWEPT_AT, 0L)));
 
 		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
-		var posts = assembler.assembleTagged(account, false);
+		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
 
 		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
 				.findComments(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.anyInt());
@@ -44,6 +44,62 @@ class BrandPostAssemblerTest {
 			assertThat(post.recentComments()).isEmpty();
 			assertThat(post.commentsCollectedCount()).isEqualTo(0);
 		});
+	}
+
+	// ---------- 정산 게이트 분기(2026-08-13 완결 배치 서빙) ----------
+
+	/**
+	 * 표시 표면(ENRICHED_ONLY)만 정산분 조회로 가고, 판정·집계 표면(ALL)은 전량 조회로 간다 —
+	 * 두 소비자의 성격이 달라 조회 자체가 갈린다. 여기서 뒤바뀌면 캠페인 존재 판정이 수집 중인
+	 * 게시물을 NOT_FOUND로 떨구거나(ALL→ENRICHED_ONLY), 목록에 반쯤 빈 카드가 실린다(반대 방향).
+	 */
+	@Test
+	void scope가_조회_경로를_가른다() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
+
+		assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ENRICHED_ONLY);
+		org.mockito.Mockito.verify(repository)
+				.findEnrichedTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any());
+		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+				.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.anyLong(),
+						org.mockito.ArgumentMatchers.any());
+
+		org.mockito.Mockito.clearInvocations(repository);
+		assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+		org.mockito.Mockito.verify(repository)
+				.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any());
+		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+				.findEnrichedTaggedPostsInWindow(org.mockito.ArgumentMatchers.anyLong(),
+						org.mockito.ArgumentMatchers.any());
+	}
+
+	/** 브랜드 화면 진입점(목록·상세·counts)은 표시 표면이라 정산분 조회로만 간다. */
+	@Test
+	void 브랜드_화면_조립은_정산분만_읽는다() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
+
+		assembler.assembleForBrand(7L, account);
+
+		org.mockito.Mockito.verify(repository)
+				.findEnrichedTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any());
+		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+				.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.anyLong(),
+						org.mockito.ArgumentMatchers.any());
 	}
 
 	// ---------- 윈도우 컷 ----------

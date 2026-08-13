@@ -108,12 +108,13 @@ class V1BrandPostsControllerTest {
 
 	@Test
 	void 확장_수집_중에도_게시물_목록은_정상_서빙된다() throws Exception {
-		// 확장 중 = last_swept_on null + 완주 이력 있음(스펙 2026-08-12 §5). FE는 collecting 중에도
-		// 기존 데이터 위에 진행 배너만 띄운다(요청서 §4 조건 ①) — 목록이 비면 그 UX가 무너진다.
+		// 확장 중 = last_swept_on·완주 시각 둘 다 null + 스윕 완주 사실(last_swept_at)만 있음
+		// (08-13 개정 — expandWindow가 완주 시각도 리셋한다). FE는 확장 중에도 기존 데이터 위에
+		// 진행 배너만 띄운다(요청서 §4 조건 ①) — 목록이 비면 그 UX가 무너진다.
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(
 				new BrandAccountRow(100L, "lizda_official", null,
 						OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
-						OffsetDateTime.parse("2026-08-01T01:00:00Z"), null, 30876L, 12L, 340L, null, "리즈다",
+						null, null, 30876L, 12L, 340L, null, "리즈다",
 						"https://cdn/pic.jpg", true, null, "ACTIVE", null,
 						12, OffsetDateTime.parse("2026-08-12T10:00:00Z"))));
 		givenTagged(taggedRow("P001", "2026-08-01T00:00:00Z"));
@@ -282,7 +283,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findTaggedPostsInWindow(anyLong(), any());
+		then(brandReadRepository).should(never()).findEnrichedTaggedPostsInWindow(anyLong(), any());
 	}
 
 	@Test
@@ -443,8 +444,12 @@ class V1BrandPostsControllerTest {
 
 	// ---------- 스텁 ----------
 
+	/**
+	 * 목록·상세는 표시 표면이라 <b>정산분 조회</b>를 탄다(2026-08-13 완결 배치 서빙) — 여기가
+	 * findTaggedPostsInWindow(전량)로 되돌아가면 이 클래스 전체가 빈 목록으로 떨어져 바로 드러난다.
+	 */
 	private void givenTagged(BrandTaggedPostRow... rows) {
-		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
+		given(brandReadRepository.findEnrichedTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
 	}
 
 	private void givenHashtag(BrandHashtagPostRow... rows) {

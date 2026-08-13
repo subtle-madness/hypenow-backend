@@ -114,4 +114,25 @@ public class TaggedPostRepository {
 		db.update("UPDATE brand_tagged_post SET last_crawled_at = ? WHERE brand_id = ? AND short_code IN ("
 				+ placeholders + ")", args);
 	}
+
+	/**
+	 * 보강 정산 마킹(2026-08-13 스펙 §1) — 성공이든 재시도 소진이든 "더 기다릴 이유가 없어진"
+	 * 게시물에 찍는다. was 목록 게이트의 정본이다. 재마킹은 무해하다(같은 게시물을 다음 스윕이
+	 * 다시 보강하면 시각만 갱신 — 노출 여부는 안 바뀐다).
+	 */
+	public void markEnriched(long brandId, Collection<String> codes, Instant at) {
+		if (codes.isEmpty()) {
+			return;
+		}
+		String placeholders = String.join(",", Collections.nCopies(codes.size(), "?"));
+		Object[] args = new Object[codes.size() + 2];
+		args[0] = Timestamp.from(at);
+		args[1] = brandId;
+		int i = 2;
+		for (String code : codes) {
+			args[i++] = code;
+		}
+		db.update("UPDATE brand_tagged_post SET enriched_at = ? WHERE brand_id = ? AND short_code IN ("
+				+ placeholders + ")", args);
+	}
 }

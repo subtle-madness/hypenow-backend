@@ -83,6 +83,52 @@ now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스
 드리프트값 **KST 02:00**이 실제 가동값이라 이를 정본으로 수용했다(레포 `deploy/compose.yaml`
 정렬 + was `nextScheduledAt` 표기 기본값 3 → 2 — 종전 표기 03:00은 실제와 1시간 어긋나 있었다).
 
+완결 배치 서빙(2026-08-13 — **구현 완료**, 커밋 `2d0d9b60`~`43b8a6a7` ·
+[spec 2026-08-13](../superpowers/specs/2026-08-13-brand-initial-batch-serving-design.md)):
+FE 요청서(08-13)로 "완성된 게시물만 내려달라"는 계약 변경이 들어와, 서빙 판정을
+"열거 적재됨"에서 **게시물 단위 보강 정산**(`brand_tagged_post.enriched_at` 신설)으로 옮겼다.
+방출 단위는 열거 페이지(21건) 배치 — **첫 페이지 배치 완료가 곧 `markServing`**이라 08-12의
+서빙 창 30일 기준(`serving-window-days`)은 제거됐다. 운영 실측(08-13, 브랜드 5개·470여 콜)이
+근거: 첫 페이지 완결이 **~10초**로 현행 ready(1분 30초)보다 빨라 완결성과 속도가 상충하지
+않는다. 같은 측정에서 **`/v2/user/by/id`의 404가 결정적 부재가 아님을 실측 반증**했고
+(404율 2.0%, 재시도 1회로 2/2 복구 · 5초 초과 1.0%), 이는 완결 서빙에서 곧바로 영구 미노출
+구멍이 되므로 보강 단계의 `by/id`에만 404 재시도 1회를 건다(전송 계층 전면 승격은 기각 —
+`by/username`·단건의 404는 여전히 결정적). 정산은 "시도가 끝났다"이지 "필드가 다 찼다"가
+아니다 — 소진 후에는 빈 채로 방출하고 워터마크·stale이 다음 스윕에서 채운다. 완주 신호는
+**기존 `collectionCompletedAt` 재사용**(status에 `end` 값 추가는 FE가 `=== "ready"` 분기 9곳을
+근거로 거부 — 3값 계약 고정), 대신 `expandWindow`에 `backfill_completed_at = NULL`을 더해
+확장 중 폴링이 멎지 않게 한다. 그 결과 08-12에 추가했던 was 유도 분기(`last_swept_on null &&
+backfill_completed_at 있음 → collecting`)가 도달 불가가 되어 제거되고, **확장 중 상태는
+`collecting` → `ready`로 뒤집힌다**(진행 판정이 status에서 필드로 옮겨간 것이 근거). 동시성은
+enrich executor 1 → 2(설정화)가 필수 — core 2병렬인데 보강이 단일 스레드라 연속 등록 시
+둘째 브랜드 화면이 분 단위로 빈다. 워커 6 → 10은 그 반감 상쇄분(공유 풀이라 executor 2면
+브랜드당 실효 3). 전역 동시 콜 최악 9 → 13인데, 08-12 램프의 "12부터 꼬리 상시화"와 달리
+08-13 실측에서는 워커 6/8/10 어느 레벨에서도 5초 초과 콜이 늘지 않았다(꼬리는 동시성이 아니라
+특정 콜에 산발적으로 붙었다). 마이그레이션(`V20260813115041`)은 **기존 25,759행 백필 필수**
+(누락 시 게이트 도입 순간 전 브랜드 목록 공백), 배포 순서 monitoring → was(**롤백도 같은
+의존** — monitoring만 되돌리면 was가 없는 컬럼을 조회한다).
+
+**실행 중 설계에서 갈라진 셋**(스펙 §2·§3·§5에 정정 반영):
+① **등록 백필은 비동기 파이프라인**이고 **`touchSwept`은 전 페이지 정산 후**다 — 페이지를
+enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/페이지와 보강 ~5.4초/페이지가
+겹쳐 완주가 절반). `markServing`은 첫 제출분 보강 완료 지점이지만, `touchSwept`은 응답
+`collectionCompletedAt` = FE 폴링 종료 조건이라 **미정산 페이지가 남은 채 찍으면 FE가 미완성
+목록을 최종본으로 알고 폴링을 멈춘다**. 이 개정으로 열거 완주 ≠ 수집 완주가 됐다. core
+스레드가 `join()`에 묶이는 건 의도 — enrich executor가 전역 공유 풀이라 `thenRun`으로 풀어도
+대기가 큐로 옮겨갈 뿐이고, 이 블로킹이 **유일한 브랜드 간 백프레셔**다(없애면 08-12 OOM 형태의
+큐 적체). ② **스윕 페이지 콜백의 보강 실패를 격리**한다 — `sweepCore`가 콜백 예외를 잡지 않아
+1페이지 보강 실패가 열거 루프를 끊고 뒤 페이지가 **적재조차 안 됐다**. 미정산은 지연이지만
+미적재는 손실이다(`trackedPosts`에 없어 다음 스윕 깊이 컷 `min(14일, 가장 오래된 due)`을
+못 끌어내림 → 소급 태그된 14일 이상 게시물 영구 미수집). ③ **게이트는 표시 표면에만** —
+스펙이 "목록·상세·counts 세 표면이 조회 하나를 경유한다"고 단정했으나 실제 소비자는 **4곳**이고
+성격이 갈렸다: 표시(`BrandPostAssembler.assembleForBrand`)만 적용, **존재 판정**
+(`V2CampaignContentService` — 게이트하면 수집 중 실존 게시물을 `NOT_FOUND`로 답함)·**중복 판정**
+(`V1BrandDirectPostService` — 미정산분이 direct로 등록되면 `mergeByShortcode`의 direct 우선
+규칙 때문에 카드가 영구히 direct 셰이프로 고정)·**지표 집계**(`PerformanceContentAssembler` —
+미정산분도 스냅샷 지표가 있어 제외하면 과소 계상)는 해제. 리포지토리를 두 경로
+(`findTaggedPostsInWindow` 전량 / `findEnrichedTaggedPostsInWindow` 정산분)로 나누고
+`TaggedScope{ENRICHED_ONLY, ALL}`를 **기본값 없는 필수 인자**로 둬 호출부가 매번 의도를 밝힌다.
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
@@ -94,3 +140,6 @@ now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스
   - tagged 윈도우 밖 게시물의 추가 실패 사유가 "게시물을 찾을 수 없습니다"로 뭉개짐 — 실해 낮음, FE 문의 오면 재론. 정책 v1로 등록 컷이 90일 → 365일이 되면서 해당 케이스 자체가 줄어든다.
 - 크롤링 정책 v1은 **배포 전**(08-09 기준 구현 + `:monitoring:test` 423개 통과까지) — 스펙 §8 비용 재산정 표의 게시자 프로필 콜 수(N명)는 운영 배포 후 등록 1건 실측으로 갱신할 것. **스케일 가정 2,000계정 총액도 그때 함께 재산정**(종전 $550~600은 매일 전량 전제라 폐기). 코드 변경 아님.
 - **tooq.official 172~365일 공백 일회성 보정 실행 대기**(08-12) — 상한 상향 배포 후 운영 monitoring DB에 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` 실행(사용자 확인 필요), 익일 KST 03:00 스윕이 재백필. 미루면 365일 창이 실행일 기준이라 하루씩 잘린다 — 조기 실행 권장.
+- **완결 배치 서빙 — FE 배포 조율 필요**(08-13) — 이 변경 후 **기간 확장 중 `collectionStatus`가 `collecting` → `ready`**로 바뀐다. FE가 확장 배너 판정을 `collectionCompletedAt == null`로 옮기기 **전에** 운영 승격되면 배너가 조용히 사라진다(FE 회신 문서 §3-7로 통지). 프론트 반영 여부를 확인한 뒤 staging → main 승격할 것.
+- **완결 배치 서빙 — 배포 시점 확장 중이던 계정 보정 판단**(08-13) — 배포 순간 이미 기간 확장 중이던 계정은 `expandWindow`의 `backfill_completed_at` 리셋을 못 받고 옛 완주 시각을 들고 있어 FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). **일회성이고 데이터 유실 없음** — 보정 UPDATE 실행 여부는 배포 시 대상 건수를 보고 판단.
+- **완결 배치 서빙 — 운영 반영 직후 백필 확인**(08-13) — `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**이어야 한다. 0이 아니면 마이그레이션 백필(25,759행)이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.

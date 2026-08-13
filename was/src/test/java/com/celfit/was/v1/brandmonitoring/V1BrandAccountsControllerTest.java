@@ -139,11 +139,14 @@ class V1BrandAccountsControllerTest {
 				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
-	/** 확장 수집 진행 — 완주 이력(backfill_completed_at)이 있는데 last_swept_on이 비었다. 데이터는 서빙 중. */
+	/**
+	 * 확장 수집 진행 — last_swept_on과 완주 시각(backfill_completed_at)이 둘 다 비었고(08-13 개정:
+	 * expandWindow가 완주 시각도 리셋한다) 스윕 완주 사실(last_swept_at)만 남아 데이터는 서빙 중.
+	 */
 	private static BrandAccountRow expandingRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
-				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
+				null, null,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
 				6, OffsetDateTime.parse("2026-08-12T10:00:00Z"));
 	}
@@ -772,13 +775,18 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 확장_중에는_collecting으로_전이하되_기존_데이터는_그대로_서빙한다() throws Exception {
+	void 확장_중에는_ready로_기존_데이터를_서빙하고_완주_시각만_비운다() throws Exception {
+		// 08-13 개정(08-12의 "확장 중 collecting"을 뒤집는다): 확장이 완주 시각을 리셋하므로
+		// 진행 여부는 status가 아니라 collectionCompletedAt == null이 알린다(FE 폴링 종료 조건).
+		// status는 collecting|ready|error 3값 고정이고, 데이터가 계속 서빙되므로 ready가 정확하다.
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(expandingRow(100L)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.collectionStatus").value("collecting"))
+				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
+				.andExpect(jsonPath("$.data", Matchers.hasKey("collectionCompletedAt")))
+				.andExpect(jsonPath("$.data.collectionCompletedAt").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.collectionMonths").value(6))
 				// 확장 시작 시각(collection_started_at)이 앵커다 — registered_at이 아니다(FE 폴링 30분 상한).
 				.andExpect(jsonPath("$.data.collectionStartedAt").value("2026-08-12T19:00:00+09:00"))

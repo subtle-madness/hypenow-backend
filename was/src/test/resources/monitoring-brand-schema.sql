@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS brand_tagged_post (
     taken_at                 timestamptz NOT NULL,
     first_seen_at            timestamptz NOT NULL DEFAULT now(),
     comments_collected_count bigint      NOT NULL DEFAULT 0,
+    -- 보강 정산 완료 시각(V20260813115041) — nullable·기본값 없음(운영 DDL과 동일).
+    -- 기본값을 넣어 픽스처를 편하게 통과시키면 미러가 거짓말을 한다 — 값은 픽스처가 명시한다.
+    enriched_at              timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 
