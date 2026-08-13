@@ -627,23 +627,29 @@ Expected: FAIL — 컴파일 실패 또는 `markServing` 시점에 보강이 안
 ```java
 /**
  * 백필 core = 매일 스윕과 같은 열거·적재 코드(페이지 스트리밍). 2026-08-13 개정: 페이지마다
- * 그 페이지분을 <b>동기로</b> 보강·정산하고, <b>첫 배치가 끝나는 시점에 markServing</b>으로
- * FE ready를 연다(구 "서빙 창 30일 커버" 기준 대체). 보강이 콜백 안에서 동기로 도는 이유는
- * 정산이 끝나야 그 페이지가 목록에 뜨기 때문이다 — 큐에 넘기면 ready 시점과 노출 시점이
- * 어긋난다. last_swept_on·backfill_completed_at은 완주 시 touchSwept 몫 그대로다.
+ * 그 페이지분을 <b>enrich 큐에 제출</b>하고 열거는 계속 앞서 달린다(파이프라인 — 열거 ~5초/페이지와
+ * 보강 ~5.4초/페이지가 겹쳐 완주가 절반이 된다). <b>첫 제출분의 보강이 끝나는 지점에서
+ * markServing</b>으로 FE ready를 연다(구 "서빙 창 30일 커버" 기준 대체).
+ *
+ * <p>touchSwept는 <b>모든 페이지 보강이 끝난 뒤</b>에 찍는다 — 이 값이 곧 응답
+ * collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은 채로 찍으면
+ * FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다. 열거 완주 ≠ 수집 완주로 의미가 갈렸다.
  *
  * <p>core 실패는 격리 — 이미 정산된 페이지는 서빙을 유지하고, 다음 스윕이 잔여를 백스톱한다.
  */
 private void runBackfillSafely(BrandRow row) {
 	try {
-		boolean[] served = {false};
-		collect.sweepCore(row, page -> {
+		AtomicBoolean served = new AtomicBoolean();
+		List<CompletableFuture<Void>> pages = new ArrayList<>();
+		collect.sweepCore(row, page -> pages.add(CompletableFuture.runAsync(() -> {
 			runEnrichSafely(row, page);
-			if (!served[0]) {
-				served[0] = true;
+			// 첫 완료분이 ready를 연다. 페이지 순서가 아니라 완료 순서인 것은 무해하다 —
+			// 목록 정렬은 taken_at이고 markServing은 last_swept_at IS NULL 가드로 1회만 먹는다.
+			if (served.compareAndSet(false, true)) {
 				brands.markServing(row.id());
 			}
-		});
+		}, enrich)));
+		CompletableFuture.allOf(pages.toArray(CompletableFuture[]::new)).join();
 		brands.touchSwept(row.id(), LocalDate.now(KST));
 		enrich.execute(() -> runHashtagBackfillSafely(row));
 	} catch (RuntimeException e) {
@@ -655,9 +661,29 @@ private void runBackfillSafely(BrandRow row) {
 }
 ```
 
-`HashSet`·`PostInfo` import가 더는 안 쓰이면 제거한다(`Set`·`List`도 확인).
+import를 정리한다: `java.util.concurrent.CompletableFuture`·`java.util.concurrent.atomic.AtomicBoolean`·`java.util.ArrayList` 추가, 안 쓰이게 된 `java.util.HashSet`·`java.util.Set` 제거.
 
-> **주의:** 보강이 core 스레드에서 동기로 돈다. `brandEnrichExecutor`는 이제 해시태그 백필에만 쓰인다. 이는 의도된 변경이다 — 정산 완료 = 노출이므로 보강을 뒤로 미루면 ready의 의미가 깨진다. 대신 core 스레드가 보강만큼 오래 잡히므로 `backfill-concurrency`(2)가 그만큼 더 중요해진다.
+> **교착 없음 확인:** `join()`은 backfill core 스레드에서 걸리고 태스크는 enrich executor에서 돈다 — 서로 다른 풀이다. `collect.enrich` 안의 `join()`도 enrich executor 스레드에서 걸려 `brandEnrichWorkerPool`을 기다린다(역시 별도 풀). 세 층이 전부 다른 풀이어야 하며, 이 중 둘을 합치면 영구 자기 교착이다.
+
+> **큐 적체:** 열거가 앞서 달리므로 enrich 큐에 페이지가 쌓인다. 08-12 OOM과 같은 형태지만 `PostInfo.rawJson` 제거 이후 페이지당 수십 KB라(구 1.7MB) 상한 10,000건 브랜드에서도 ~20MB 수준이다. 페이지 리스트를 큐에 넣는 것 외에 다른 것을 붙들지 않도록 주의한다.
+
+- [ ] **Step 3-1: `touchSwept` 시점을 검증하는 테스트를 추가한다**
+
+```java
+/**
+ * 완주 시각(= 응답 collectionCompletedAt, FE 폴링 종료 조건)은 모든 페이지 보강이 끝난 뒤에
+ * 찍힌다 — 열거 완주 시점에 찍으면 FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다.
+ */
+@Test
+void 모든_페이지_보강이_끝난_뒤에_touchSwept한다() {
+	service.register("brandx");
+
+	assertThat(brands.enrichedCodesAtTouchSwept)
+			.containsExactlyInAnyOrder("P1_A", "P1_B", "P2_A", "P2_B");
+}
+```
+
+(`enrichedCodesAtTouchSwept`는 스텁 `BrandRepository.touchSwept`가 불릴 때 `InMemoryTagged.enriched`를 복사해 담는 필드다.)
 
 - [ ] **Step 4: 테스트가 통과하는 것을 확인한다**
 
@@ -747,6 +773,10 @@ Expected: PASS
  * 단일 스레드였을 때는 core가 2병렬인데 보강이 1이라, 연속 등록 시 둘째 브랜드의 보강이 첫
  * 브랜드 완주를 통째로 기다렸다. 완결 배치 서빙 이전에는 markServing이 열거만으로 ready를
  * 열어줘 이 줄이 안 보였지만, 이제는 둘째 브랜드의 화면이 그대로 빈다.
+ *
+ * <p>같은 개정으로 제출 단위가 "브랜드 1건 = 큰 태스크 1개"에서 "페이지 1건 = 작은 태스크
+ * 다수"로 바뀌었다. FIFO 큐에서 잔 태스크가 섞이므로 뒤 브랜드가 앞 브랜드 완주 전체를
+ * 기다리지 않고 사이사이 진행된다.
  *
  * <p>Hiker 동시 콜 예산은 늘지 않는다 — 콜은 전부 공유 워커 풀(brandEnrichWorkerPool)을
  * 통해 나가고, 이 executor는 그 풀을 두 브랜드가 나눠 쓰게 할 뿐이다.
