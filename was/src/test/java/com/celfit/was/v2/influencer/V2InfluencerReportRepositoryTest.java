@@ -43,9 +43,10 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void setUpTables() {
-		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V3·V10·V20·V30·V34·V35·V39·V40·V45 참조
+		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V3·V10·V20·V30·V34·V35·V39·V40·V20260813061932 참조
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
+		jdbcTemplate.execute("DROP MATERIALIZED VIEW IF EXISTS account_discovery_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_analyses");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS content_analyses");
@@ -183,16 +184,21 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				CROSS JOIN gmed g
 				WINDOW peer AS (PARTITION BY b.peer_category, b.follower_bucket)
 				""");
-		// V45 그대로 — 유사 인플루언서 후보 게이트가 이 뷰를 조인한다(findSimilarHandles).
+		// analytics V20260813061932 그대로 — 유사 인플루언서 후보 게이트가 이 물화 뷰를 조인한다
+		// (findSimilarHandles). 물화 뷰라 시드 헬퍼가 끝에서 refreshDiscoveryStats()를 호출한다.
 		jdbcTemplate.execute("""
-				CREATE VIEW account_beauty_ratio AS
+				CREATE MATERIALIZED VIEW account_discovery_stats AS
 				SELECT s.account_handle,
 				       count(*) FILTER (WHERE an.is_beauty IS NOT NULL) AS analyzed_count,
-				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count
+				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count,
+				       count(*) FILTER (WHERE an.ad_type = 'sponsored') AS sponsored_count
 				FROM account_content_series s
 				JOIN content_analyses an ON an.short_code = s.short_code
 				GROUP BY s.account_handle
 				""");
+		jdbcTemplate.execute("""
+				CREATE UNIQUE INDEX account_discovery_stats_handle_key
+				    ON account_discovery_stats (account_handle)""");
 
 		jdbcTemplate.update("""
 				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
@@ -301,6 +307,12 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				  ('sim_dup', now(), '["a","a","a","a"]'::jsonb),
 				  ('sim_far_tie', now(), '["a"]'::jsonb),
 				  ('sim_other_cat', now(), '["a","b","c"]'::jsonb)""");
+		refreshDiscoveryStats();
+	}
+
+	/** 시드 반영 — 물화 뷰는 원본 변경을 자동 반영하지 않는다(운영은 analytics 잡 종료 훅이 담당). */
+	private void refreshDiscoveryStats() {
+		jdbcTemplate.execute("REFRESH MATERIALIZED VIEW account_discovery_stats");
 	}
 
 	@AfterEach
@@ -310,7 +322,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// 클래스 실행 순서가 비결정적이라 간헐 실패로만 드러난다. peer가 category에 의존하므로 역순 드랍.
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
-		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
+		jdbcTemplate.execute("DROP MATERIALIZED VIEW IF EXISTS account_discovery_stats");
 	}
 
 	@Test
@@ -441,6 +453,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 						  detected_brands) VALUES (?, true, ?, 'organic', NULL)""", shortCode, category);
 			}
 		}
+		refreshDiscoveryStats();
 	}
 
 	@Test
@@ -649,5 +662,6 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 					  detected_brands) VALUES (?, ?, ?, 'organic', NULL)""",
 					shortCode, i < beautyCount, category);
 		}
+		refreshDiscoveryStats();
 	}
 }

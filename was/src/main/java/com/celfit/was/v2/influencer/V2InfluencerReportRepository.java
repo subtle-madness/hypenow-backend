@@ -76,6 +76,11 @@ public class V2InfluencerReportRepository {
 	 * DISTINCT — detected_brands 배열에 같은 브랜드가 중복 기재돼도 contentIds·cnt가 안 부풀도록
 	 * (traits Jaccard DISTINCT 교훈과 동일). others의 cnt도 count(DISTINCT s2.short_code)로 게시물
 	 * 단위 중복 제거(mine과 대칭). JSON 집계는 CopyRow.traitsJson과 같은 ::text 관용구.
+	 *
+	 * <p>others는 단일 패스(2026-08-13 설계): 이전에는 브랜드마다 상관 서브쿼리가 전체 협찬 게시물
+	 * × jsonb 전개를 재스캔해 브랜드 N개 = 풀스캔 N회, 평균 1.8s였다(pg_stat_statements 실측).
+	 * mine 브랜드 목록에 한정한 (브랜드×계정) 집계 1회 + row_number 상위 5로 같은 결과를 만든다 —
+	 * 정렬 규칙(cnt DESC, last_at DESC)·자기 제외(<> :h)·DISTINCT 의미는 그대로다.
 	 */
 	public List<BrandCollabRow> findBrandCollabs(String handle) {
 		return jdbcClient.sql("""
@@ -90,21 +95,32 @@ public class V2InfluencerReportRepository {
 				  SELECT name, count(*) AS cnt,
 				         jsonb_agg(short_code ORDER BY posted_at)::text AS content_ids_json
 				  FROM pairs GROUP BY name
+				),
+				other_counts AS (
+				  SELECT b2->>'name' AS name, s2.account_handle AS handle,
+				         count(DISTINCT s2.short_code) AS cnt,
+				         max(s2.posted_at) AS last_at
+				  FROM account_content_series s2
+				  JOIN content_analyses an2 ON an2.short_code = s2.short_code
+				                           AND an2.ad_type = 'sponsored'
+				  CROSS JOIN LATERAL jsonb_array_elements(
+				                     COALESCE(an2.detected_brands, '[]'::jsonb)) b2
+				  WHERE s2.account_handle <> :h AND b2->>'name' IN (SELECT name FROM mine)
+				  GROUP BY 1, 2
+				),
+				others AS (
+				  SELECT name, jsonb_agg(handle ORDER BY cnt DESC, last_at DESC) AS handles_json
+				  FROM (SELECT name, handle, cnt, last_at,
+				               row_number() OVER (PARTITION BY name
+				                                  ORDER BY cnt DESC, last_at DESC) AS rn
+				        FROM other_counts) ranked
+				  WHERE rn <= 5
+				  GROUP BY name
 				)
 				SELECT m.name, m.cnt, m.content_ids_json,
-				       COALESCE((SELECT jsonb_agg(o.handle ORDER BY o.cnt DESC, o.last_at DESC)
-				                 FROM (SELECT s2.account_handle AS handle,
-				                              count(DISTINCT s2.short_code) AS cnt,
-				                              max(s2.posted_at) AS last_at
-				                       FROM account_content_series s2
-				                       JOIN content_analyses an2 ON an2.short_code = s2.short_code
-				                                                AND an2.ad_type = 'sponsored'
-				                       CROSS JOIN LATERAL jsonb_array_elements(
-				                                          COALESCE(an2.detected_brands, '[]'::jsonb)) b2
-				                       WHERE b2->>'name' = m.name AND s2.account_handle <> :h
-				                       GROUP BY 1 ORDER BY cnt DESC, last_at DESC LIMIT 5) o),
-				                '[]'::jsonb)::text AS others_json
+				       COALESCE(o.handles_json, '[]'::jsonb)::text AS others_json
 				FROM mine m
+				LEFT JOIN others o ON o.name = m.name
 				ORDER BY m.cnt DESC, m.name
 				""").param("h", handle).query(BrandCollabRow.class).list();
 	}
@@ -173,12 +189,12 @@ public class V2InfluencerReportRepository {
 				  JOIN LATERAL (SELECT traits FROM account_analyses
 				                WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
 				  LEFT JOIN cand_mix cm ON cm.account_handle = c.handle
-				  LEFT JOIN account_beauty_ratio br ON br.account_handle = c.handle
+				  LEFT JOIN account_discovery_stats ds ON ds.account_handle = c.handle
 				  -- NULLIF(analyzed_count, 0) 필수 — OR 단축 평가 미보장 + 창 전체가 is_beauty NULL인
 				  -- 계정 가능성(V1InfluencerDiscoveryRepository와 동일 이유, division by zero 방지).
 				  WHERE c.handle <> :h
-				    AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
-				         OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)
+				    AND (COALESCE(ds.analyzed_count, 0) < :minAnalyzed
+				         OR 100.0 * ds.beauty_count / NULLIF(ds.analyzed_count, 0) >= :minBeautyRatio)
 				)
 				SELECT handle
 				FROM scored

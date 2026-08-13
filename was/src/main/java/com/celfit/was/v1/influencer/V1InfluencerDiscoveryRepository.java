@@ -28,17 +28,16 @@ public class V1InfluencerDiscoveryRepository {
 	// 20%는 기존 카테고리 게이트(build() 내 mainCategory 임계값)와 동일 기준을 그대로 재사용한다.
 	private static final double MIN_BEAUTY_RATIO_PERCENT = 20.0;
 
-	// cp(최신 태그라인)·sp(광고 수)·br(뷰티 비율)는 q·sponsored 필터·게이트가 참조하므로
-	// count 쿼리에도 함께 붙인다. findCardsByHandles(6.23 유사 카드 재사용)도 이 조인을
+	// cp(최신 태그라인)·ds(발굴 스냅샷 — 뷰티 게이트·협찬 수)는 q·sponsored 필터·게이트가
+	// 참조하므로 count 쿼리에도 함께 붙인다. findCardsByHandles(6.23 유사 카드 재사용)도 이 조인을
 	// 공유하지만, 그쪽 후보는 findSimilarHandles에서 이미 게이트를 통과한 핸들만 들어오므로
 	// 별도 WHERE 재적용은 하지 않는다.
 	//
-	// %s는 sp(협찬 게시물 수) 서브쿼리의 핸들 푸시다운 슬롯 — 두 경로가 조인을 공유하되 여기만
-	// 갈린다. 발굴 목록은 모수 전체를 필터링해야 하므로 빈 문자열(=기존 SQL과 바이트 동일),
-	// 핸들 지정 조회는 대상 핸들로 좁힌다. sp는 su.handle에 LEFT JOIN되고 su.handle = a.handle
-	// 이라 바깥이 핸들을 고정하는 경로에서는 나머지 계정의 집계 행이 애초에 조인되지 않는다 —
-	// 푸시다운은 결과 동일·스캔만 축소다(실데이터 6,584계정 전수 대조로 확인, 2026-07-30).
-	private static final String FROM_JOINS_TEMPLATE = """
+	// ds는 물화 뷰 account_discovery_stats(2026-08-13 설계) — 이전에는 sp(협찬 수 서브쿼리)와
+	// br(account_beauty_ratio 뷰)이 요청마다 series×content_analyses 전 계정 집계를 새로 계산해
+	// 목록+카운트 한 쌍에 풀 집계 4회, p95 1.7s(냉캐시 2.2s)였다. 스냅샷 갱신은 analytics 잡
+	// 종료 훅(DiscoveryStatsRefresher) 소관이라 was는 읽기만 한다.
+	private static final String FROM_JOINS = """
 
 			FROM account_summaries su
 			JOIN accounts a ON a.handle = su.handle
@@ -46,20 +45,7 @@ public class V1InfluencerDiscoveryRepository {
 			LEFT JOIN LATERAL (SELECT aa.tagline FROM account_analyses aa
 			                   WHERE aa.handle = su.handle
 			                   ORDER BY aa.analyzed_at DESC LIMIT 1) cp ON true
-			LEFT JOIN (SELECT s.account_handle, count(*) AS cnt
-			           FROM account_content_series s
-			           JOIN content_analyses an ON an.short_code = s.short_code
-			                                   AND an.ad_type = 'sponsored'%s
-			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle
-			LEFT JOIN account_beauty_ratio br ON br.account_handle = su.handle""";
-
-	/** 발굴 목록(전체 모수 필터링) 경로 — sp는 전 계정 집계 그대로. */
-	private static final String FROM_JOINS = FROM_JOINS_TEMPLATE.formatted("");
-
-	// 핸들 지정 조회 경로 — sp를 대상 핸들로 좁힌다. 좁히지 않으면 카드 10장을 위해 계정 6.6천 개의
-	// 협찬 수를 전부 집계했다(2026-07-30 실측: findCardsByHandles 158ms 중 121ms가 이 서브쿼리).
-	private static final String FROM_JOINS_BY_HANDLES =
-			FROM_JOINS_TEMPLATE.formatted("\n           WHERE s.account_handle IN (:handles)");
+			LEFT JOIN account_discovery_stats ds ON ds.account_handle = su.handle""";
 
 	private final JdbcClient jdbcClient;
 
@@ -76,7 +62,7 @@ public class V1InfluencerDiscoveryRepository {
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-						       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
+						       COALESCE(ds.sponsored_count, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
 						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
@@ -92,9 +78,8 @@ public class V1InfluencerDiscoveryRepository {
 
 	/**
 	 * 핸들 목록 카드 일괄 조회(6.23 유사 카드 재사용) — 필터·정렬 없음, 순서는 호출부가 복원.
-	 * FROM 절은 발굴 목록과 같은 템플릿이되 sp 서브쿼리만 :handles로 좁힌 변형을 쓴다
-	 * (FROM_JOINS_BY_HANDLES 주석 참조) — :handles가 sp 안팎에서 두 번 참조되지만 JdbcClient의
-	 * 명명 파라미터는 이름 기준이라 바인딩 1개로 양쪽에 들어간다.
+	 * FROM 절은 발굴 목록과 동일(ds 물화 뷰가 핸들 단위 행이라 별도 푸시다운 변형이 필요 없다 —
+	 * 2026-07-30의 sp 서브쿼리 푸시다운은 물화로 존재 이유가 사라졌다).
 	 */
 	public List<CardRow> findCardsByHandles(List<String> handles) {
 		if (handles.isEmpty()) {
@@ -107,8 +92,8 @@ public class V1InfluencerDiscoveryRepository {
 				       su.posts_count, su.follows_count, su.biography, cp.tagline,
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
-				""" + FROM_JOINS_BY_HANDLES + """
+				       COALESCE(ds.sponsored_count, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
+				""" + FROM_JOINS + """
 
 				WHERE a.handle IN (:handles)
 				""").param("handles", handles).query(CardRow.class).list();
@@ -125,12 +110,12 @@ public class V1InfluencerDiscoveryRepository {
 		// 그 이상이면 뷰티 비율이 minBeautyRatio 이상인 계정만 통과.
 		// NULLIF(analyzed_count, 0) 필수 — Postgres는 OR 단축 평가를 보장하지 않아 실행 계획에 따라
 		// 두 번째 항도 평가될 수 있다. 창 내 게시물이 전부 is_beauty NULL(캡션·썸네일 둘 다 없음)이면
-		// account_beauty_ratio에 행은 존재하되 analyzed_count=0이라 division by zero로 500이 난다.
+		// account_discovery_stats에 행은 존재하되 analyzed_count=0이라 division by zero로 500이 난다.
 		// NULLIF로 그 경우 두 번째 항을 NULL로 만들면 첫 항(TRUE)과 OR돼 TRUE — 표본 부족 보류와 동일 취급.
 		where.append("""
 
-				  AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
-				       OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)""");
+				  AND (COALESCE(ds.analyzed_count, 0) < :minAnalyzed
+				       OR 100.0 * ds.beauty_count / NULLIF(ds.analyzed_count, 0) >= :minBeautyRatio)""");
 		params.put("minAnalyzed", MIN_ANALYZED);
 		params.put("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
 		if (q.mainCategory() != null) {
@@ -188,10 +173,10 @@ public class V1InfluencerDiscoveryRepository {
 		}
 		if (q.sponsored() != null) {
 			switch (q.sponsored()) {
-				case "none" -> where.append(" AND COALESCE(sp.cnt, 0) = 0");
-				case "1-2" -> where.append(" AND COALESCE(sp.cnt, 0) BETWEEN 1 AND 2");
-				case "3-5" -> where.append(" AND COALESCE(sp.cnt, 0) BETWEEN 3 AND 5");
-				default -> where.append(" AND COALESCE(sp.cnt, 0) >= 6");
+				case "none" -> where.append(" AND COALESCE(ds.sponsored_count, 0) = 0");
+				case "1-2" -> where.append(" AND COALESCE(ds.sponsored_count, 0) BETWEEN 1 AND 2");
+				case "3-5" -> where.append(" AND COALESCE(ds.sponsored_count, 0) BETWEEN 3 AND 5");
+				default -> where.append(" AND COALESCE(ds.sponsored_count, 0) >= 6");
 			}
 		}
 		if (q.contactOpen()) {

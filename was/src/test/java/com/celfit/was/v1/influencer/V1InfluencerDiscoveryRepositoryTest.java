@@ -42,7 +42,8 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void setUpTables() {
-		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V10·V20·V30·V37·V45 참조
+		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V10·V20·V30·V37·V20260813061932 참조
+		jdbcTemplate.execute("DROP MATERIALIZED VIEW IF EXISTS account_discovery_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_content_series");
@@ -128,16 +129,21 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    object_path text NOT NULL,
 				    PRIMARY KEY (kind, key)
 				)""");
-		// analytics V45 그대로 — 뷰티 게시물 비율 게이트가 이 뷰를 조인한다.
+		// analytics V20260813061932 그대로 — 뷰티 게이트·협찬 수가 이 물화 뷰를 조인한다.
+		// 물화 뷰라 시드 반영에 refreshDiscoveryStats() 명시 호출이 필요하다(운영은 analytics 잡 훅).
 		jdbcTemplate.execute("""
-				CREATE VIEW account_beauty_ratio AS
+				CREATE MATERIALIZED VIEW account_discovery_stats AS
 				SELECT s.account_handle,
 				       count(*) FILTER (WHERE an.is_beauty IS NOT NULL) AS analyzed_count,
-				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count
+				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count,
+				       count(*) FILTER (WHERE an.ad_type = 'sponsored') AS sponsored_count
 				FROM account_content_series s
 				JOIN content_analyses an ON an.short_code = s.short_code
 				GROUP BY s.account_handle
 				""");
+		jdbcTemplate.execute("""
+				CREATE UNIQUE INDEX account_discovery_stats_handle_key
+				    ON account_discovery_stats (account_handle)""");
 
 		jdbcTemplate.update("""
 				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
@@ -217,6 +223,12 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				INSERT INTO image_assets (kind, key, object_path) VALUES
 				  ('profile', 'glow', 'p/glow.jpg'),
 				  ('thumbnail', 'g1', 't/g1.jpg')""");
+		refreshDiscoveryStats();
+	}
+
+	/** 시드 반영 — 물화 뷰는 원본 변경을 자동 반영하지 않는다(운영은 analytics 잡 종료 훅이 담당). */
+	private void refreshDiscoveryStats() {
+		jdbcTemplate.execute("REFRESH MATERIALIZED VIEW account_discovery_stats");
 	}
 
 	@AfterEach
@@ -224,7 +236,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		// 컨테이너는 JVM 전체 공유(IntegrationTest static 싱글턴) — 이 클래스가 만든 뷰가 남으면
 		// 다른 테스트 클래스의 DROP TABLE content_analyses(CASCADE 없음)가 의존성 오류로 깨진다
 		// (V2InfluencerReportRepositoryTest의 account_peer_stats·account_category_stats와 같은 이유).
-		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
+		jdbcTemplate.execute("DROP MATERIALIZED VIEW IF EXISTS account_discovery_stats");
 	}
 
 	@Test
@@ -276,8 +288,8 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				.containsExactly("glow");
 	}
 
-	// sp(협찬 수) 서브쿼리는 핸들 지정 경로에서 :handles로 좁혀 집계한다(전체 계정 집계 금지 —
-	// 2026-07-30 실측 158ms 중 121ms). 좁힌 뒤에도 계정별 값이 전체 집계와 같아야 한다.
+	// 협찬 수는 물화 뷰(account_discovery_stats) 컬럼이다 — 요청 집합을 좁혀도 계정별 값이
+	// 전체 기준과 같아야 한다(2026-07-30 푸시다운 시절부터 이어지는 동등성 계약).
 	@Test
 	void 핸들_지정_조회는_요청_부분집합에서도_협찬_수가_전체집계와_같다() {
 		// glow만 협찬 2건(g2·g4). 요청 집합을 좁혀도 glow는 2, 미보유 계정은 COALESCE로 0.
@@ -295,13 +307,13 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 핸들_지정_조회는_필터_없이_존재하는_핸들만_카드_필드째로_반환한다() {
-		// 발굴 목록과 같은 FROM(ip·cp·sp·br)을 공유하는지 — 보강 필드까지 그대로 채워져야 한다.
+		// 발굴 목록과 같은 FROM(ip·cp·ds)을 공유하는지 — 보강 필드까지 그대로 채워져야 한다.
 		List<CardRow> rows = repository.findCardsByHandles(List.of("glow", "__없는핸들__"));
 		assertThat(rows).extracting(CardRow::handle).containsExactly("glow");
 		CardRow glow = rows.get(0);
 		assertThat(glow.profileImageUrl()).isEqualTo("/img/p/glow.jpg"); // ip 조인
 		assertThat(glow.tagline()).isEqualTo("저자극 스킨케어 리뷰 톤"); // cp LATERAL(최신 1행)
-		assertThat(glow.sponsoredCount()).isEqualTo(2L); // sp 조인
+		assertThat(glow.sponsoredCount()).isEqualTo(2L); // ds(물화 뷰) 조인
 		assertThat(glow.avgHypeScorePrecise()).isEqualByComparingTo("71.6000");
 		// 뷰티 비율 게이트·정렬은 이 경로에 적용되지 않는다(호출부가 순서 복원)
 		assertThat(repository.findCardsByHandles(List.of("mute"))).hasSize(1);
@@ -471,6 +483,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		// 19%는 MIN_BEAUTY_RATIO_PERCENT(20) 미달로 제외, 20%는 경계 포함(>=)으로 통과.
 		seedBeautyRatioAccount("low", 100, 19);
 		seedBeautyRatioAccount("at", 100, 20);
+		refreshDiscoveryStats();
 
 		List<String> handles = repository.findCards(all()).stream().map(CardRow::handle).toList();
 		assertThat(handles).contains("few", "at");
@@ -490,6 +503,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				UPDATE content_analyses SET is_beauty = NULL
 				WHERE short_code IN (SELECT short_code FROM account_content_series
 				                     WHERE account_handle = 'unjudged')""");
+		refreshDiscoveryStats();
 
 		List<String> handles = repository.findCards(all()).stream().map(CardRow::handle).toList();
 		assertThat(handles).contains("unjudged");
