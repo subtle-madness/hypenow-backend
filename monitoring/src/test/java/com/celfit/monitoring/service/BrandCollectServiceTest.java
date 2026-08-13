@@ -293,7 +293,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				Runnable::run, 30, maxPostsPerSweep, 3, 30);
+				Runnable::run, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -620,11 +620,12 @@ class BrandCollectServiceTest {
 		assertThat(writer.saved).hasSize(3);                 // 게시자 실패가 지표 적재에 번지지 않는다
 	}
 
-	// ── 스트리밍 적재 + 서빙 콜백(2026-08-12 스펙 §2) ────────────────────────
+	// ── 스트리밍 적재 + 서빙 콜백(2026-08-12 스펙 §2, 트리거는 2026-08-13 스펙으로 개정) ──
 
 	@Test
-	void 서빙_창_커버_시점에_콜백을_1회_호출하고_열거는_계속한다() {
-		// 백필 경로(365일 컷). 2페이지 전체가 60일령 > 서빙 창(30일) — 여기서 콜백이 떠야 한다.
+	void 편입분이_생긴_첫_페이지_직후_콜백을_1회_호출하고_열거는_계속한다() {
+		// 백필 경로(365일 컷) — 콜백은 1페이지 직후 떠야 하고(구 규칙은 30일 창 커버까지 기다렸다),
+		// 그 뒤에도 열거는 컷까지 계속된다.
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
 		tagPages.add(page("p3", reel("Old60a", RETRO_IN_WINDOW, 0, 102, ""),
 				reel("Old60b", RETRO_IN_WINDOW, 0, 103, "")));
@@ -635,14 +636,17 @@ class BrandCollectServiceTest {
 				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
 
 		assertThat(callbacks).hasSize(1);
-		assertThat(callbacks.getFirst()).containsExactly("A", "Old60a", "Old60b");   // 경계 페이지까지 누적분
+		assertThat(callbacks.getFirst()).containsExactly("A");   // 1페이지 적재분만
 		assertThat(tagCalls()).isEqualTo(3);   // 콜백 후에도 365일 컷까지 계속 — 조기 종료 아님
 		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old60a", "Old60b", "Old95");
 	}
 
 	@Test
-	void 서빙_창보다_게시물이_얕으면_열거_종료_시점에_콜백한다() {
-		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));   // 전부 최근 — 경계 미도달
+	void 편입_0건인_첫_페이지에서는_열지_않고_다음_페이지에서_콜백한다() {
+		// taken_at 미상 페이지는 편입 0건이면서 컷 판정에도 안 걸려 열거가 계속된다 — 여기서
+		// 콜백을 쏘면 "ready인데 목록 0건"이 되므로 편입분이 생길 때까지 미룬다.
+		tagPages.add(page("p2", reel("NoDate", null, 0, 101, "")));
+		tagPages.add(page(null, reel("A", RECENT, 0, 102, "")));
 		List<List<String>> callbacks = new ArrayList<>();
 
 		service(2000).sweepCore(brand,
@@ -653,7 +657,20 @@ class BrandCollectServiceTest {
 	}
 
 	@Test
-	void 안전_상한_중단도_종료_시점에_콜백한다() {
+	void 끝까지_편입이_0건이면_종료_시점에_빈_콜백을_한다() {
+		// 보여줄 게 정말 없는 브랜드 — 그 사실도 1회 알려야 FE가 로딩에 갇히지 않는다.
+		tagPages.add(page(null, reel("Old400", OLD_400D, 0, 101, "")));
+		List<List<String>> callbacks = new ArrayList<>();
+
+		service(2000).sweepCore(brand,
+				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+
+		assertThat(callbacks).hasSize(1);
+		assertThat(callbacks.getFirst()).isEmpty();
+	}
+
+	@Test
+	void 안전_상한_중단_경로에서도_콜백은_첫_페이지_1회다() {
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
 		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
@@ -661,7 +678,7 @@ class BrandCollectServiceTest {
 
 		service(3).sweepCore(brand, early -> sizes.add(early.size()));
 
-		assertThat(sizes).containsExactly(4);   // 상한 3 → 2페이지째 중단, 그때까지 적재분 4건
+		assertThat(sizes).containsExactly(2);   // 상한 도달 여부와 무관 — 1페이지 적재분 2건
 	}
 
 	@Test
@@ -796,7 +813,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, pool, 30, 2000, 3, 30);
+					comments, tagged, authors, pool, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();

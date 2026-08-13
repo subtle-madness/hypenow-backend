@@ -50,7 +50,8 @@ tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365
 `sweepCore`를 **페이지(~21건) 단위 즉시 적재**로 바꾸고(중복 콜 0 — 커서 체인은 그대로,
 `knownCodes` 1회 로드 + 이번 실행 처리분 누적으로 커서 드리프트 중복만 스킵), **서빙 창
 30일**(`monitoring.brand.serving-window-days`) 커버 시점에 신설 `markServing`으로
-**`last_swept_at`만** 조기 마킹해 ready를 연다(tooq 실측 ~17콜 ≒ 1분 30초). 게시자·댓글
+**`last_swept_at`만** 조기 마킹해 ready를 연다(tooq 실측 ~17콜 ≒ 1분 30초 — **트리거는 08-13
+개정으로 "첫 편입 페이지"가 정본, 아래 08-13 문단 참조. 서빙 창 설정은 폐기됐다**). 게시자·댓글
 보강도 이 시점에 선행 시작. `last_swept_on`·`backfill_completed_at`은 **완주 시 touchSwept**로
 현행 유지 — 30일 시점에 `last_swept_on`을 찍으면 이후 백그라운드 열거가 죽었을 때 다음 스윕이
 14일 컷만 돌아 30~365일이 영구 공백이 된다(현행 유지 = 백필이 중간에 죽어도 다음 일일 스윕이
@@ -68,6 +69,20 @@ OOM 재발 방지 + 백필 core 2병렬(08-12 — DECISIONS 08-12 행):
 (`monitoring.brand.backfill-concurrency:2`, 전역 동시 콜 최악 9), compose Xmx 384→512m +
 `-XX:+ExitOnOutOfMemoryError`. 힙 예산 공식은 "동시 in-flight 콜 × ~10MB" — 추가 병렬화는
 이 공식과 꼬리 레이턴시(request-timeout 15초 초과 시 과금 2배)로 판단한다.
+
+첫 페이지 즉시 ready(2026-08-13 — DECISIONS 08-13 행,
+[spec 2026-08-13](../superpowers/specs/2026-08-13-brand-first-page-fast-ready-design.md)): 등록
+백필의 1차 ready 기준을 **서빙 창 30일 커버 → 편입분이 생긴 첫 페이지**로 개정했다(08-12
+스트리밍 설계의 그 항목만 대체 — 페이지 스트리밍 적재·신호 3분리는 불변). 30일 창은 물량에
+비례하는 대기라 태그가 많은 브랜드일수록 첫 화면이 늦어졌다(tooq급 ~17콜 ≒ 1분 30초).
+근거는 FE 실측으로 깨진 전제 둘 — ①첫 화면 기본 기간이 30일이 아니라 **12개월**이라 30일 창은
+첫 화면의 완전성을 보장한 적이 없다 ②**ready가 열리면 FE 폴링이 멈춘다**(`isCollectionPollable`).
+②는 창 크기와 무관한 FE 결함이라 [요청서](../contracts/brand-fast-ready-frontend-request.md)로
+분리했다(폴링 조건 확장·게시물 목록 폴링·"수집 중" 배너·collecting ETA 문구). 이제 등록 →
+ready = 프로필 1콜 + 열거 1콜 ≒ **7초**(물량 무관 상수). 편입 0건 페이지에서는 열지 않는다
+(소급 태그·창 밖 페이지가 맨 앞이면 "ready인데 목록 0건" 거짓 신호). `serving-window-days`
+설정 폐기. was 계약 무변경. **배포 순서 주의** — FE 미반영 상태로 백엔드만 나가면 ready 첫
+화면이 ~350건 → 21건으로 얇아진 채 폴링은 멈춘 상태라 일시적으로 지금보다 나쁘다.
 
 수집 범위 선택 + 기간 확장(2026-08-12 — DECISIONS 08-12 행,
 [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-collection-months-design.md)): 등록에

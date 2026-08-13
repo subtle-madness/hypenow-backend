@@ -42,8 +42,10 @@ import org.springframework.stereotype.Service;
  * 건드리지 않는다(볼륨 격리 + 겹침 게시물 덮어쓰기 차단). 트랜잭션은 여기 없다(CollectService와
  * 같은 이유), 쓰기는 {@link BrandSnapshotWriter}가 짧게 묶는다.
  *
- * <p>2026-08-12 스트리밍 개정: 적재는 페이지 단위로 즉시 일어나고, 등록 백필은 서빙 창(기본
- * 30일) 커버 시점에 콜백으로 FE ready를 당긴다(스펙 docs/superpowers/specs/2026-08-12-…-design.md).
+ * <p>2026-08-12 스트리밍 개정: 적재는 페이지 단위로 즉시 일어나고, 등록 백필은 콜백으로 FE
+ * ready를 당긴다. 그 시점은 2026-08-13 개정으로 <b>편입분이 생긴 첫 페이지</b>가 됐다(종전
+ * 서빙 창 30일 — 물량이 많은 브랜드일수록 첫 화면이 늦어지는 거꾸로 된 대기라 폐기.
+ * 스펙 docs/superpowers/specs/2026-08-13-brand-first-page-fast-ready-design.md).
  */
 @Service
 public class BrandCollectService {
@@ -59,7 +61,6 @@ public class BrandCollectService {
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
 	private final Executor enrichWorker;
-	private final int servingWindowDays;
 	private final int maxPostsPerSweep;
 	private final int commentPages;
 	private final int authorStaleDays;
@@ -68,7 +69,6 @@ public class BrandCollectService {
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
-			@Value("${monitoring.brand.serving-window-days:30}") int servingWindowDays,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
@@ -80,7 +80,6 @@ public class BrandCollectService {
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
 		this.enrichWorker = enrichWorker;
-		this.servingWindowDays = servingWindowDays;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
@@ -106,9 +105,9 @@ public class BrandCollectService {
 	 * processCore 대비 의미 불변이고 실행 시점만 당겨진다: 중간 실패 시 앞 페이지 적재분이
 	 * 보존되고(다음 스윕이 잔여를 백스톱), 등록 백필은 서빙 창 커버 시점에 FE ready를 당길 수 있다.
 	 *
-	 * <p>onServingCovered는 <b>정확히 1회</b> 호출된다(예외로 중단되는 경우 제외) — 페이지 전체가
-	 * 서빙 창(servingWindowDays)보다 오래된 순간(소급 태그 혼입 대비, 컷 판정과 같은 보수 규칙),
-	 * 그전에 열거가 끝나면(자연 종료·상한·미전진 포함) 종료 시점. 인자는 그때까지 적재된 편입분
+	 * <p>onServingCovered는 <b>정확히 1회</b> 호출된다(예외로 중단되는 경우 제외) — 편입분이 생긴
+	 * 첫 페이지 직후(2026-08-13 개정 — 종전 "서빙 창 30일 커버"는 물량에 비례하는 대기라 폐기),
+	 * 끝까지 편입이 0건이면(자연 종료·상한·미전진 포함) 종료 시점. 인자는 그때까지 적재된 편입분
 	 * 누적 리스트다.
 	 *
 	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
@@ -133,7 +132,6 @@ public class BrandCollectService {
 		refreshBrandProfileSafely(brand);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
-		Instant servingCutoff = now.minus(Duration.ofDays(servingWindowDays));
 		LocalDate today = LocalDate.now(KST);
 		Set<String> known = taggedPosts.knownCodes(brand.id());
 		Set<String> seen = new LinkedHashSet<>();      // 이번 실행 처리분 — 페이지 간 중복(커서 드리프트) 스킵
@@ -156,10 +154,10 @@ public class BrandCollectService {
 			int knownBefore = known.size();
 			collected.addAll(processPage(brand, newItems, known, today, now));
 			freshTotal += known.size() - knownBefore;
-			// 서빙 경계 — 페이지 전체가 서빙 창 이전이면 최근 30일은 다 훑었다(taken_at 미상은
-			// 컷 판정과 같은 이유로 "이전" 판정에 넣지 않는다). 열거는 계속된다.
-			if (!servingMarked && page.posts().stream().allMatch(p -> p.takenAt() != null
-					&& Instant.ofEpochSecond(p.takenAt()).isBefore(servingCutoff))) {
+			// 서빙 경계 — 편입분이 생긴 첫 페이지에서 연다(2026-08-13 개정). 열거는 계속된다.
+			// 편입 0건 페이지에서 열지 않는 이유: 소급 태그·창 밖 게시물이 맨 앞을 채우면
+			// "ready인데 목록 0건"이 되는데, 열거가 계속되는 중이라 그건 거짓 신호다.
+			if (!servingMarked && !collected.isEmpty()) {
 				servingMarked = true;
 				onServingCovered.accept(List.copyOf(collected));
 			}

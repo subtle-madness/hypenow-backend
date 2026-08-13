@@ -49,7 +49,8 @@ monitoring:
   brand:
     schedule:
       sweep-cron: "-"   # "-"=비활성. 운영은 KST 02:00(UTC 17:00) env 주입 — 08-12 서버 드리프트를 정본으로 수용
-    serving-window-days: 30         # 등록 백필 조기 서빙 창(2026-08-12 스트리밍 스펙 §2) — 이 깊이 커버 시 last_swept_at(FE ready)만 당긴다
+    # 등록 백필 조기 서빙은 설정값이 없다 — 편입분이 생긴 첫 페이지에서 last_swept_at(FE ready)만
+    # 당긴다(08-13 스펙. 종전 serving-window-days:30은 물량 비례 대기라 폐기).
     max-posts-per-sweep: 10000      # 개수 상한 폐지(정책 §4) — 폭주 방어 안전 밸브만(도달 시 error 로그).
                                     # 2,000은 tooq급 정상 고물량(11.8건/일 → 365일 창 ~4,300건)이 백필·
                                     # 심층 티어 스윕에서 닿아 08-12 상향 — 도달 시 커버 깊이 밖이 영구
