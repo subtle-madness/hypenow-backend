@@ -105,12 +105,15 @@ public class BrandCollectService {
 	 * 실패가 열거 루프를 통째로 끊어 <b>뒤 페이지가 그날 적재조차 되지 않는다</b>.
 	 *
 	 * <p>격리하는 이유는 교환비다: 열거분은 페이지당 Hiker 콜을 이미 지불하고 얻은 결과물이라
-	 * 보강 쪽 DB 실패로 그날 열거를 버리는 건 손해가 크다. 반대로 미정산으로 남은 게시물은
-	 * 손실이 아니라 지연이다 — 다음 스윕이 티어 주기에 따라 같은 게시물을 다시 만나 보강·정산한다
-	 * (게시자는 stale 판정, 댓글은 워터마크가 재시도 대상으로 남긴다). 적재를 건너뛴 페이지는
-	 * 그런 백스톱이 없다: 한 번도 적재된 적 없는 게시물은 trackedPosts에 없어 다음 스윕의 깊이
-	 * 컷(min(14일, 가장 오래된 due))을 끌어내리지 못하므로, 소급 태그된 14일 이상 게시물이
-	 * 영구 미수집으로 굳을 수 있다.
+	 * 보강 쪽 DB 실패로 그날 열거를 버리는 건 손해가 크다. 여기까지 예외가 올라오는 경우는
+	 * {@link #enrich}가 정산 마킹을 finally로 보장한 뒤라 <b>markEnriched 자신의 실패</b>로 좁혀지고,
+	 * 그때 미정산으로 남은 게시물은 14~180일 구간에 한해 지연이다 — 다음 스윕이 티어 주기에 따라
+	 * 같은 게시물을 다시 만나 보강·정산한다(게시자는 stale 판정, 댓글은 워터마크가 재시도 대상으로
+	 * 남긴다). 180일 초과 구간은 재열거 자체가 없어 지연이 아니라 영구 미노출이다 — 그래서 정산
+	 * 마킹을 이 격리 앞(enrich의 finally)에 두는 것이 본선이고, 여기는 최후 방어선일 뿐이다.
+	 * 적재를 건너뛴 페이지는 아예 백스톱이 없다: 한 번도 적재된 적 없는 게시물은 trackedPosts에
+	 * 없어 다음 스윕의 깊이 컷(min(14일, 가장 오래된 due))을 끌어내리지 못하므로, 소급 태그된
+	 * 14일 이상 게시물이 영구 미수집으로 굳을 수 있다.
 	 */
 	private void enrichSafely(BrandRow brand, List<PostInfo> page) {
 		try {
@@ -263,23 +266,41 @@ public class BrandCollectService {
 
 	/**
 	 * enrichment 단계 — core가 넘긴 편입 컷 안 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
-	 * 게이트. 실패해도 core가 적재한 목록·지표는 이미 서빙 가능하고, 미수집분은 다음 스윕이
-	 * 백스톱한다(게시자는 stale 판정, 댓글은 comments_collected_count 워터마크가 남아 있어
-	 * 자동 재시도된다).
+	 * 게이트. 미수집분은 다음 스윕이 백스톱한다(게시자는 stale 판정, 댓글은
+	 * comments_collected_count 워터마크가 남아 있어 자동 재시도된다).
+	 *
+	 * <p><b>정산 마킹은 보강 성패와 무관하게 무조건 찍는다</b>(finally) — 마킹을 놓치면 그 행은
+	 * enriched_at NULL로 남아 was 목록에 안 뜨는데, 180일 초과 게시물에는 재열거 백스톱이 없어
+	 * 그 미노출이 영구가 된다. 근거는 finally 블록 주석 참조.
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
 		if (posts.isEmpty()) {
 			return;
 		}
-		// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
-		ensureAuthors(brand.id(), posts);
-		collectCommentsGated(brand.id(), posts);
-		// 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) — 게시자·댓글이 실패해 비어 있어도 찍는다.
-		// 이 지점의 의미는 "더 기다릴 이유가 없다"이지 "다 찼다"가 아니다. 비운 채로 두면 실측
-		// 404 2%·타임아웃 1%의 게시물이 목록에서 영구히 사라진다. 미수집분은 게시자 stale 판정·
-		// 댓글 워터마크가 다음 스윕에서 채운다.
-		taggedPosts.markEnriched(brand.id(),
-				posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+		try {
+			// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
+			ensureAuthors(brand.id(), posts);
+			collectCommentsGated(brand.id(), posts);
+		} finally {
+			// 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) — 게시자·댓글이 실패해 비어 있어도 찍는다.
+			// 이 지점의 의미는 "더 기다릴 이유가 없다"이지 "다 찼다"가 아니다. 비운 채로 두면 실측
+			// 404 2%·타임아웃 1%의 게시물이 목록에서 영구히 사라진다. 미수집분은 게시자 stale 판정·
+			// 댓글 워터마크가 다음 스윕에서 채운다.
+			//
+			// finally인 이유(되돌리지 말 것): 위 두 단계는 건별 Hiker 콜을 각자 격리하지만
+			// 각 메서드 첫머리의 배치 DB 조회(freshIgUserIds·commentsCollectedCounts)는 무방비다 —
+			// 커넥션 blip 하나로 예외가 여기서 새면 그 페이지 행이 enriched_at NULL로 남는다.
+			// "실패했는데 왜 정산하지?"의 답은 백스톱의 유무다: 180일 이하 게시물은 티어 주기가
+			// 다시 만나 자가 치유하지만, 180일 초과 게시물에는 백스톱이 없다. 보강 실패는
+			// touchSwept을 막지 않고, 다음 스윕의 열거 깊이는 trackedPosts(now−180d)에서 나오며
+			// BrandCrawlPolicy.due는 180일 초과에 무조건 false다 — 다시 열거되지도 보강되지도
+			// 않는다. 그리고 was 게이트가 enriched_at IS NOT NULL이라 영원히 미노출이 된다
+			// (12개월 창 브랜드면 6~12개월 구간이 알람도 backfill_error도 없이 통째로 사라진다).
+			// 마킹은 "보강 시도가 끝났다"는 뜻이므로 배치 DB 조회 실패도 여기에 해당하고, 재시도
+			// 근거(게시자 stale·댓글 워터마크)는 그대로 남아 다음 기회에 채운다.
+			taggedPosts.markEnriched(brand.id(),
+					posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+		}
 		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료·정산({}건 대상)", brand.username(), posts.size());
 	}
 

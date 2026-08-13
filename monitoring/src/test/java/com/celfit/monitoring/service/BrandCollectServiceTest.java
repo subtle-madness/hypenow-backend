@@ -172,6 +172,8 @@ class BrandCollectServiceTest {
 		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
 		// 첫 정산 마킹만 실패시킨다 — 보강 단계의 DB 실패(페이지 1건 실패, 뒤 페이지는 정상) 대역.
 		boolean markEnrichedFailsOnce = false;
+		// 댓글 게이트 첫머리의 배치 조회 실패 대역(커넥션 blip) — 건별 격리가 닿지 않는 지점이다.
+		boolean commentsCountsFails = false;
 		int depthCalls = 0;
 
 		InMemoryTagged() {
@@ -191,6 +193,9 @@ class BrandCollectServiceTest {
 
 		@Override
 		public Map<String, Long> commentsCollectedCounts(long brandId, Collection<String> codes) {
+			if (commentsCountsFails) {
+				throw new IllegalStateException("댓글 워터마크 배치 조회 실패(DB 일시 오류)");
+			}
 			Map<String, Long> out = new HashMap<>();
 			for (String c : codes) {
 				out.put(c, collectedCounts.getOrDefault(c, 0L));
@@ -238,6 +243,9 @@ class BrandCollectServiceTest {
 
 	private static final class InMemoryAuthors extends AuthorProfileRepository {
 		Set<String> fresh = new HashSet<>();
+		// stale 판정 배치 조회 실패 대역(커넥션 blip) — 게시자별 격리(fetchAuthorWithRetry)보다
+		// 앞이라 여기서 던지면 예외가 enrich 밖으로 나간다.
+		boolean freshLookupFails = false;
 		// 병렬 upsert 대비 스레드 안전 리스트(직결 executor를 쓰는 기존 테스트는 영향 없음).
 		final List<String> upserted = Collections.synchronizedList(new ArrayList<>());
 
@@ -252,6 +260,9 @@ class BrandCollectServiceTest {
 
 		@Override
 		public Set<String> freshIgUserIds(Collection<String> igUserIds, Instant staleBefore) {
+			if (freshLookupFails) {
+				throw new IllegalStateException("게시자 stale 배치 조회 실패(DB 일시 오류)");
+			}
 			Set<String> out = new HashSet<>(fresh);
 			out.retainAll(new HashSet<>(igUserIds));
 			return out;
@@ -907,6 +918,42 @@ class BrandCollectServiceTest {
 
 		assertThat(tagged.enriched).containsExactly("Partial");
 		assertThat(tagged.collectedCounts).doesNotContainKey("Partial");   // 워터마크 미전진
+	}
+
+	/**
+	 * 보강 단계 <b>첫머리의 배치 DB 조회</b>가 던져도 정산한다 — 건별 Hiker 콜은 각자 격리되지만
+	 * freshIgUserIds·commentsCollectedCounts는 그 격리 밖이라, 커넥션 blip 하나로 예외가 enrich
+	 * 밖으로 새면 그 페이지 행이 enriched_at NULL로 굳는다. 180일 초과 게시물에는 재열거 백스톱이
+	 * 없어(BrandCrawlPolicy.due가 무조건 false) 그 미노출이 <b>영구</b>가 된다 — 그래서 마킹은
+	 * finally다. 예외 자체는 그대로 위로 전파돼 상위 격리(enrichSafely)가 로그로 남긴다.
+	 */
+	@Test
+	void 게시자_stale_배치_조회가_던져도_정산한다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, ""), reel("B", RECENT, 3, 102, "")));
+		BrandCollectService service = service(2000);
+		List<PostInfo> posts = service.sweepCore(brand);
+
+		assertThatThrownBy(() -> service.enrich(brand, posts))
+				.isInstanceOf(IllegalStateException.class);
+
+		// 실제로 그 경로를 탔다는 근거 — 게시자·댓글 콜은 한 건도 못 나갔다(첫 배치 조회에서 끊겼다).
+		assertThat(authorCalls()).isZero();
+		assertThat(commentCalls()).isZero();
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
+	}
+
+	/** 댓글 워터마크 배치 조회가 던져도 정산한다(게시자 단계는 정상 통과 — 두 번째 배치 조회 지점). */
+	@Test
+	void 댓글_워터마크_배치_조회가_던져도_정산한다() {
+		tagged.commentsCountsFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);   // 상위 격리가 삼키므로 여기서 터지지 않는다
+
+		assertThat(authors.upserted).containsExactly("101");   // 게시자 단계는 통과했다
+		assertThat(commentCalls()).isZero();                   // 댓글은 배치 조회에서 끊겼다
+		assertThat(tagged.enriched).containsExactly("A");
 	}
 
 	// ── 보강 병렬화(2026-08-07 스펙 — 워커 풀 크기는 설정, 08-13부터 기본 10) ────
