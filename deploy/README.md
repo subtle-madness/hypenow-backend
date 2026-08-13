@@ -420,8 +420,10 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   `deploy-<svc>-1` 이름을 쓰면 안 되는 이유: 롤링 재기동(`rollout.sh`)이 `--scale <svc>=2`로
   **다음 빈 인덱스**에 신 컨테이너를 띄우고 구 1번을 지워, 첫 롤링 이후 `-1`은 영영 없다
   (07-30 롤링 도입 직후 was가 상시 다운으로 오탐 → `hypenow-container-down`이 16시간 넘게
-  1시간 주기로 재알림. 실제 컨테이너는 `deploy-was-8` healthy였다). 알람 본문에 차원이 안 실리니
-  **어느 컨테이너인지는 메트릭으로 확인**할 것:
+  1시간 주기로 재알림. 실제 컨테이너는 `deploy-was-8` healthy였다). 어느 컨테이너인지는
+  **알람 본문의 `📍 containerName=<서비스>` 줄로 확인**(08-13~ 릴레이가
+  `alarmMetaData[].dimensions`를 표기 — 디스크 `host=`·버킷 `bucketName=`도 동일).
+  본문이 잘렸거나 과거 이력을 볼 때는 메트릭 직접 조회:
   ```bash
   oci monitoring metric-data summarize-metrics-data --compartment-id <tenancy> \
     --namespace hypenow_custom --query-text 'container_up[1m].min()' \
