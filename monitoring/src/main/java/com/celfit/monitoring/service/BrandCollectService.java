@@ -96,7 +96,29 @@ public class BrandCollectService {
 	 * 같지만(페이지) ready 판정 시점이 다르다(첫 페이지 배치의 보강 완료).
 	 */
 	public void sweep(BrandRow brand) {
-		sweepCore(brand, page -> enrich(brand, page));
+		sweepCore(brand, page -> enrichSafely(brand, page));
+	}
+
+	/**
+	 * 페이지 콜백의 보강 실패 격리 — 등록 경로(BrandRegistrationService.runEnrichSafely)와 같은
+	 * 규칙이다. {@link #sweepCore}는 콜백 예외를 잡지 않으므로 격리하지 않으면 한 페이지의 보강
+	 * 실패가 열거 루프를 통째로 끊어 <b>뒤 페이지가 그날 적재조차 되지 않는다</b>.
+	 *
+	 * <p>격리하는 이유는 교환비다: 열거분은 페이지당 Hiker 콜을 이미 지불하고 얻은 결과물이라
+	 * 보강 쪽 DB 실패로 그날 열거를 버리는 건 손해가 크다. 반대로 미정산으로 남은 게시물은
+	 * 손실이 아니라 지연이다 — 다음 스윕이 티어 주기에 따라 같은 게시물을 다시 만나 보강·정산한다
+	 * (게시자는 stale 판정, 댓글은 워터마크가 재시도 대상으로 남긴다). 적재를 건너뛴 페이지는
+	 * 그런 백스톱이 없다: 한 번도 적재된 적 없는 게시물은 trackedPosts에 없어 다음 스윕의 깊이
+	 * 컷(min(14일, 가장 오래된 due))을 끌어내리지 못하므로, 소급 태그된 14일 이상 게시물이
+	 * 영구 미수집으로 굳을 수 있다.
+	 */
+	private void enrichSafely(BrandRow brand, List<PostInfo> page) {
+		try {
+			enrich(brand, page);
+		} catch (RuntimeException e) {
+			log.warn("브랜드 스윕 보강 실패(격리, 열거 계속) — {} 다음 스윕이 백스톱: {}",
+					brand.username(), e.toString());
+		}
 	}
 
 	/** 단일 인자 경로 — 페이지 콜백 없이 동작은 동일하다(열거·적재만 하고 누적 결과를 돌려준다). */
@@ -377,8 +399,8 @@ public class BrandCollectService {
 		Set<String> fresh = authors.freshIgUserIds(ids,
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
 		// 게시자별 독립 콜이라 공유 워커 풀(monitoring.brand.enrich-concurrency — 08-13부터 10)로
-		// 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
-		// 보강 시간의 본체였다). 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
+		// 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가 보강 시간의 본체였다).
+		// 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
 		// 태스크 본문은 runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커
 		// 스레드로 넘어가지 않기 때문(BrandCallContext 주석 참조).
 		List<CompletableFuture<Void>> tasks = new ArrayList<>();

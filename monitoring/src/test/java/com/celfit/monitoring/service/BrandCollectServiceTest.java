@@ -170,6 +170,8 @@ class BrandCollectServiceTest {
 		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
 		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
 		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
+		// 첫 정산 마킹만 실패시킨다 — 보강 단계의 DB 실패(페이지 1건 실패, 뒤 페이지는 정상) 대역.
+		boolean markEnrichedFailsOnce = false;
 		int depthCalls = 0;
 
 		InMemoryTagged() {
@@ -215,6 +217,10 @@ class BrandCollectServiceTest {
 
 		@Override
 		public void markEnriched(long brandId, Collection<String> codes, Instant at) {
+			if (markEnrichedFailsOnce) {
+				markEnrichedFailsOnce = false;
+				throw new IllegalStateException("정산 마킹 실패(DB 일시 오류)");
+			}
 			enriched.addAll(codes);
 		}
 
@@ -755,6 +761,21 @@ class BrandCollectServiceTest {
 				.isInstanceOf(HikerFetchException.class);
 
 		assertThat(tagged.enriched).containsExactlyInAnyOrder("P1_A", "P1_B");
+	}
+
+	@Test
+	void 스윕은_보강이_실패해도_남은_페이지_열거를_계속한다() {
+		// 콜백(보강)이 던지면 열거 루프가 통째로 끊겨 뒤 페이지가 그날 적재조차 안 된다 — 등록
+		// 경로(runEnrichSafely)와 같은 격리 규칙을 스윕에도 건다. 열거는 페이지당 Hiker 콜을 이미
+		// 지불한 결과물이라 보강 실패로 버리면 교환비가 나쁘다.
+		tagged.markEnrichedFailsOnce = true;
+		tagPages.add(page("p2", reel("P1", RECENT, 0, 101, "")));
+		tagPages.add(page(null, reel("P2", RECENT, 0, 102, "")));
+
+		service(2000).sweep(brand);   // 보강 예외가 새면 여기서 터진다
+
+		assertThat(tagged.inserted).containsExactly("P1", "P2");   // 2페이지도 적재됐다
+		assertThat(tagged.enriched).containsExactly("P2");          // 1페이지분만 미정산 — 다음 스윕이 백스톱
 	}
 
 	@Test
