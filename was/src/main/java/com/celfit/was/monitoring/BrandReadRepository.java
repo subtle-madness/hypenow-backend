@@ -56,13 +56,21 @@ public class BrandReadRepository {
 	 * 브랜드 윈도우 안 태그 게시물 — cutoff(365일 컷) 이후 taken_at만, 최신순 전량. 컷은 호출부가
 	 * 정한다(윈도우 정책은 상위 계층 계약). 개수 상한은 정책 v1(08-09)에서 폐지 — 모수는 수집 편입
 	 * 컷(365일)이 이미 제한하고, 상한을 두면 12개월치가 많은 브랜드의 오래된 게시물이 소리 없이 잘린다.
+	 *
+	 * <p>2026-08-13부터 <b>보강 정산분만</b>(enriched_at IS NOT NULL) 돌려준다 — 게시자 프로필·댓글이
+	 * 붙기 전의 반쯤 빈 카드를 FE에 내보내지 않는다는 계약이다(완결 배치 서빙 스펙 §5). 목록·상세·
+	 * meta.counts가 전부 이 메서드 하나를 경유하므로 세 표면이 같은 모수를 본다.
+	 *
+	 * <p>단, 정산은 "보강 <b>시도</b>가 끝났다"는 뜻이지 "필드가 다 찼다"가 아니다 — 게시자 조회가
+	 * 404·타임아웃으로 소진되면 그 필드가 빈 채로 정산된다(실측 404 2%·타임아웃 1%). FE의 빈 필드
+	 * 방어는 계속 필요하다.
 	 */
 	public List<BrandTaggedPostRow> findTaggedPostsInWindow(long brandId, OffsetDateTime cutoff) {
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
 				       comments_collected_count
 				FROM brand_tagged_post
-				WHERE brand_id = :brandId AND taken_at >= :cutoff
+				WHERE brand_id = :brandId AND taken_at >= :cutoff AND enriched_at IS NOT NULL
 				ORDER BY taken_at DESC
 				""")
 				.param("brandId", brandId)
