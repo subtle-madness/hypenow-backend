@@ -87,8 +87,8 @@ public class AdminCrawlingCostSummaryService {
 			sums.put(key, new PeriodSums(today, monthStart));
 		}
 
-		MonitoringResult monitoring = readMonitoring(sums, today, monthStart);
-		LocalDate crawlerLatest = readCrawler(sums, today, monthStart);
+		SourceRead monitoring = readMonitoring(sums, today, monthStart);
+		SourceRead crawler = readCrawler(sums, today, monthStart);
 
 		List<Segment> breakdown = new ArrayList<>();
 		PeriodSums totals = new PeriodSums(today, monthStart);
@@ -107,16 +107,16 @@ public class AdminCrawlingCostSummaryService {
 						cost(unitPrice, totals.day())),
 				breakdown, unitPrice,
 				List.of(new SourceStatus("MONITORING", monitoring.available(), monitoring.latestCallOn()),
-						new SourceStatus("CRAWLER", true, crawlerLatest)));
+						new SourceStatus("CRAWLER", crawler.available(), crawler.latestCallOn())));
 	}
 
 	/**
 	 * 모니터링 두 파이프라인을 읽어 누적한다. monitoring.enabled=false(로컬 기본)거나 조회가
 	 * 터지면 열화로 접는다 — 부가 서브시스템의 불능이 어드민 비용 화면 전체를 죽이면 안 된다.
 	 */
-	private MonitoringResult readMonitoring(Map<String, PeriodSums> sums, LocalDate today, LocalDate monthStart) {
+	private SourceRead readMonitoring(Map<String, PeriodSums> sums, LocalDate today, LocalDate monthStart) {
 		if (brandReads.isEmpty() || monitoringReads.isEmpty()) {
-			return new MonitoringResult(false, null);
+			return new SourceRead(false, null);
 		}
 		try {
 			LocalDate latest = null;
@@ -128,28 +128,46 @@ public class AdminCrawlingCostSummaryService {
 				sums.get(CAMPAIGN_KEY).add(row.calledOn(), row.calls());
 				latest = later(latest, row.calledOn());
 			}
-			return new MonitoringResult(true, latest);
+			return new SourceRead(true, latest);
 		} catch (DataAccessException e) {
 			log.warn("모니터링 콜 집계 조회 실패 — 해당 구간을 열화 표시한다", e);
 			// 부분 누적분을 남기면 "0인지 일부인지" 알 수 없는 수가 나간다 — 0으로 되돌린다.
 			sums.put(BRAND_KEY, new PeriodSums(today, monthStart));
 			sums.put(CAMPAIGN_KEY, new PeriodSums(today, monthStart));
-			return new MonitoringResult(false, null);
+			return new SourceRead(false, null);
 		}
 	}
 
 	/**
 	 * 크롤러 미러를 읽어 잡별로 누적한다. 매핑에 없는 잡도 CRAWLER_&lt;JOB&gt; 구간을 새로 만들어
 	 * 노출한다 — 매핑 누락이 비용을 조용히 삼키면 안 된다.
+	 *
+	 * <p>모니터링과 <b>같은 열화 경로</b>를 탄다. crawl_call_daily의 마이그레이션은 was가 아니라
+	 * analytics 소관이라(V20260813105711), analytics가 그걸 적용하기 전에 was가 뜨거나 analytics를
+	 * 롤백하면 데이터소스는 멀쩡한데 "relation does not exist"가 난다 — 이 배포 스큐로 어드민
+	 * 비용 화면이 500이 되면 안 된다.
 	 */
-	private LocalDate readCrawler(Map<String, PeriodSums> sums, LocalDate today, LocalDate monthStart) {
-		LocalDate latest = null;
-		for (CrawlCallDaily row : crawlReads.findAll()) {
-			String key = CRAWLER_PREFIX + row.job();
-			sums.computeIfAbsent(key, k -> new PeriodSums(today, monthStart)).add(row.calledOn(), row.calls());
-			latest = later(latest, row.calledOn());
+	private SourceRead readCrawler(Map<String, PeriodSums> sums, LocalDate today, LocalDate monthStart) {
+		try {
+			LocalDate latest = null;
+			for (CrawlCallDaily row : crawlReads.findAll()) {
+				String key = CRAWLER_PREFIX + row.job();
+				sums.computeIfAbsent(key, k -> new PeriodSums(today, monthStart)).add(row.calledOn(), row.calls());
+				latest = later(latest, row.calledOn());
+			}
+			return new SourceRead(true, latest);
+		} catch (DataAccessException e) {
+			log.warn("크롤러 콜 집계 조회 실패 — 해당 구간을 열화 표시한다", e);
+			// 크롤러 구간만 0으로 되돌린다 — 모니터링은 별개 소스라 이미 읽은 값을 살린다.
+			// 골격에 없는 잡 키는 이 조회가 만든 것이므로 통째로 지운다(0인 유령 행을 남기지 않는다).
+			sums.keySet().removeIf(key -> key.startsWith(CRAWLER_PREFIX) && !BASE_KEYS.contains(key));
+			for (String key : BASE_KEYS) {
+				if (key.startsWith(CRAWLER_PREFIX)) {
+					sums.put(key, new PeriodSums(today, monthStart));
+				}
+			}
+			return new SourceRead(false, null);
 		}
-		return latest;
 	}
 
 	/** 매핑에 없는 잡의 표시명 — 접두어를 뗀 잡 코드명 그대로. */
@@ -180,7 +198,7 @@ public class AdminCrawlingCostSummaryService {
 		}
 	}
 
-	/** 모니터링 구간 읽기 결과 — available=false면 집계는 0이고 "모름"이라는 뜻이다. */
-	private record MonitoringResult(boolean available, LocalDate latestCallOn) {
+	/** 소스 1종의 읽기 결과 — available=false면 집계는 0이고 "0을 썼다"가 아니라 "모름"이라는 뜻이다. */
+	private record SourceRead(boolean available, LocalDate latestCallOn) {
 	}
 }

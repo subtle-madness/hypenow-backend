@@ -12,6 +12,7 @@ import com.celfit.was.monitoring.MonitoringReadRepository;
 import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.admin.AdminCrawlingCostSummary.Segment;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.jdbc.BadSqlGrammarException;
 
 /**
  * 전역 크롤링 비용 합산의 순수 로직 검증(설계 2026-08-13) — KST 경계(자정·월초), 세 소스 합산,
@@ -166,6 +168,57 @@ class AdminCrawlingCostSummaryServiceTest {
 			assertThat(s.available()).isFalse();
 		});
 		assertThat(summary.totals().totalCalls()).isZero();
+	}
+
+	@Test
+	void 모니터링_조회가_중간에_터지면_먼저_누적한_몫까지_되돌린다() {
+		// 브랜드 조회는 성공해 누적이 생긴 뒤 캠페인 조회가 터진다 — 부분 누적분이 남으면
+		// "0인지 일부인지" 알 수 없는 수가 나간다.
+		given(brandReads.sumDailyCallCounts()).willReturn(List.of(
+				new DailyCallSum(LocalDate.of(2026, 8, 13), 10)));
+		given(monitoringReads.sumDailyCallCounts())
+				.willThrow(new DataAccessResourceFailureException("monitoring DB 불통"));
+
+		AdminCrawlingCostSummary summary = serviceAt("2026-08-13T01:00:00Z").summary();
+
+		assertThat(segment(summary.breakdown(), "BRAND_MONITORING").totalCalls()).isZero();
+		assertThat(segment(summary.breakdown(), "CAMPAIGN_MONITORING").totalCalls()).isZero();
+		assertThat(summary.totals().totalCalls()).isZero();
+		assertThat(summary.sources()).anySatisfy(s -> {
+			assertThat(s.key()).isEqualTo("MONITORING");
+			assertThat(s.available()).isFalse();
+			assertThat(s.latestCallOn()).isNull();
+		});
+	}
+
+	@Test
+	void 크롤러_테이블이_없어도_열화로_접고_모니터링_몫은_살린다() {
+		// crawl_call_daily의 마이그레이션은 analytics 소관 — 미적용·롤백이면 데이터소스가
+		// 멀쩡해도 문법 오류가 난다. 이 배포 스큐로 화면 전체가 500이 되면 안 된다.
+		given(brandReads.sumDailyCallCounts()).willReturn(List.of(
+				new DailyCallSum(LocalDate.of(2026, 8, 13), 10)));
+		given(crawlReads.findAll()).willThrow(new BadSqlGrammarException("crawl_call_daily 조회",
+				"SELECT job, called_on, calls FROM crawl_call_daily",
+				new SQLException("relation \"crawl_call_daily\" does not exist")));
+
+		AdminCrawlingCostSummary summary = serviceAt("2026-08-13T01:00:00Z").summary();
+
+		assertThat(summary.sources()).anySatisfy(s -> {
+			assertThat(s.key()).isEqualTo("CRAWLER");
+			assertThat(s.available()).isFalse();
+			assertThat(s.latestCallOn()).isNull();
+		});
+		// 크롤러 구간은 전부 0이되 행은 유지된다.
+		assertThat(summary.breakdown()).filteredOn(s -> s.key().startsWith("CRAWLER_"))
+				.hasSize(5)
+				.allSatisfy(s -> assertThat(s.totalCalls()).isZero());
+		// 한 소스의 실패가 다른 소스를 죽이지 않는다 — 모니터링 몫은 그대로 살아 있다.
+		assertThat(segment(summary.breakdown(), "BRAND_MONITORING").totalCalls()).isEqualTo(10);
+		assertThat(summary.totals().totalCalls()).isEqualTo(10);
+		assertThat(summary.sources()).anySatisfy(s -> {
+			assertThat(s.key()).isEqualTo("MONITORING");
+			assertThat(s.available()).isTrue();
+		});
 	}
 
 	@Test
