@@ -34,6 +34,11 @@
 > 쓸 수 없는 근사**라는 뜻이다. 공급자별 분해가 실제로 필요해지면 확장 지점은 두 곳이 아니라
 > 세 곳이다 — `v_crawl_call_daily`가 **job 단위 집계라 공급자 축이 아예 없어**(§6) 집계 축부터
 > 손대야 한다.
+>
+> 단가 자체도 근사다: Hiker 요금은 물량 구간제라 공개 표기가 "From $0.0006/Request"이고
+> (hikerapi.com/pricing), crawler 설정의 `hiker.cost-per-request-usd: 0.001`은 하위 구간 값이다.
+> 이 API의 전역 단가 기본값 `0.0006`은 그 하한에 해당하므로, **실제 구간이 확인되기 전까지는
+> 하한 추정**으로 읽어야 한다.
 
 ## 2. API 계약
 
@@ -125,13 +130,22 @@ Apify 실행(`request_count IS NULL` — 결과 건당 과금)과 무료 소스(
 [#472](https://github.com/subtle-madness/hypenow-backend/pull/472)가 워커 풀 팬아웃 전파와
 "페처가 보고 안 했을 때만 실측치로 대체" 규칙으로 성공 경로를 메운다.
 
-**미해결 쟁점 — 4xx 과금.** 두 모듈의 `CountingHikerHttp` 모두 예외로 빠지는 응답을 세지 않고,
-주석은 그 근거를 "Hiker 과금은 성공 응답 기준"이라고 적고 있다. 그런데 HikerAPI 문서가
-**400·403·404도 과금하고 410·50x만 면제**한다고 밝히고 있다는 지적이 있다(#472 작업 중 발견,
-**이 문서 작성자가 직접 확인하지는 못했다** — hikerapi.com이 SPA라 본문을 못 읽었다). 사실이면
-집계 규칙이 실제 과금보다 좁아 **과소 보고가 한 겹 더 남는다.** 프로필 경로 한정으로는 영향이
-미미하지만(계정 소멸 404가 ~12,800건 중 5건, 0.04%) 발굴·유사계정처럼 4xx 비중이 큰 경로는 다를 수
-있다. **규모 측정이 선행돼야 하는 별도 작업**으로 분리돼 있다.
+**미해결 쟁점 — 4xx 과금분 미계수.** 두 모듈의 `CountingHikerHttp` 모두 **예외로 빠지는 응답을
+세지 않는다.** 그런데 HikerAPI의 과금 정책은 이렇다([hikerapi.com/faq](https://hikerapi.com/faq),
+"What requests do you charge for?" — 2026-08-13 확인):
+
+> "We charge for any successful response (such as 200, 400, 403, 404). Deprecated endpoints
+> respond with 410 Gone and are never charged. For 50x errors we do not charge."
+
+**핵심은 Hiker가 쓰는 "successful"이 HTTP 2xx가 아니라는 것이다** — 괄호가 400·403·404를 그
+예로 명시한다. 즉 "응답을 돌려받았다"는 뜻이다. 두 모듈의 주석에 적힌 "Hiker 과금은 성공 응답
+기준"은 **인용이 틀린 게 아니라 그 단어를 2xx로 읽은 해석이 좁은 것**이다(문서가 유도하는
+오독에 가깝다). 결과적으로 집계 규칙이 실제 과금보다 좁아 **과소 보고가 한 겹 더 남는다.**
+
+프로필 경로 한정으로는 영향이 미미하다(계정 소멸 404가 ~12,800건 중 5건, 0.04%). 다만 페이지
+반복 중 실패가 잦은 발굴(`HikerDiscoverFetcher`)과, **'chaining 불가' 404를 이미 soft-404로 1로
+세고 있는** 유사계정(`SimilarJob`)은 성격이 다르다 — 특히 후자는 4xx 계수를 켜면 **그 경로만
+이중 계상**이 될 수 있다. **규모 측정이 선행돼야 하는 별도 작업**으로 분리돼 있다(§8).
 
 ### 3-3. KST 달력일
 
@@ -268,10 +282,12 @@ was = analysis 읽기)을 그대로 탄다. was는 기본 데이터소스에서 
 
 - ~~**실패 실행의 유료 요청 기록**~~ → [#470](https://github.com/subtle-madness/hypenow-backend/pull/470)에서 해소(전송 계층 `CountingHikerHttp` + `PaidCallCounter`).
 - ~~**성공했는데 보고 안 하는 프로필 페처**~~ → [#472](https://github.com/subtle-madness/hypenow-backend/pull/472)에서 해소(워커 풀 sink 전파 + null일 때만 실측치 대체). #470 위에 스택.
-- **4xx 과금분 계상**(§3-2 미해결 쟁점) — HikerAPI가 400·403·404도 과금한다면 두 모듈의
+- **4xx 과금분 계상**(§3-2 미해결 쟁점) — HikerAPI가 400·403·404도 과금하므로 두 모듈의
   `CountingHikerHttp`가 그만큼 덜 센다. **먼저 규모를 측정할 것** — 프로필 경로는 0.04% 수준이라
   블라스트 반경(`ApifyException`에 status를 실어 crawler 전체 실패 경로 집계 규칙을 바꿔야 함) 대비
-  값이 작다. 발굴·유사계정 경로부터 재 보고 판단한다.
+  값이 작다. 발굴·유사계정 경로부터 재 보고 판단하되, **`SimilarJob`은 이미 soft-404를 1로 세고
+  있어 이중 계상 위험**이 있다. 고치는 사람이 FAQ 첫 문장("we only charge for successful
+  requests")만 보면 "이미 맞게 세고 있다"고 오판하기 쉬우니, **괄호의 400·403·404까지 읽을 것**.
 - **공급자별 단가 분해**(§1 갱신) — Hiker와 DataLikers가 한 단가로 뭉개져 있다. 필요해지면
   `v_crawl_call_daily`에 공급자 축을 추가하는 것부터 시작해야 한다(현재는 job 단위).
 - 일별 추이 그래프 — 미러 테이블이 이미 날짜 축을 갖고 있어 API만 열면 된다.
