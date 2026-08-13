@@ -211,7 +211,11 @@ public class JobConfig {
 							java.nio.file.Path.of(dir));
 			switch (mode) {
 				case "export" -> runner.export();
-				case "collect" -> runner.collect();
+				case "collect" -> {
+					runner.collect();
+					// collect만 content_analyses를 쓴다 — 발굴 스냅샷 갱신(잡 훅과 동일 규약)
+					new com.celfit.analytics.analyze.DiscoveryStatsRefresher(analysisDataSource).refresh();
+				}
 				default -> throw new IllegalArgumentException(
 						"analytics.claude-burst는 export|collect — 입력: " + mode);
 			}
@@ -244,6 +248,8 @@ public class JobConfig {
 				runner.submit();
 			} else {
 				runner.collect(collectBatch);
+				// collect만 content_analyses를 쓴다 — 발굴 스냅샷 갱신(잡 훅과 동일 규약)
+				new com.celfit.analytics.analyze.DiscoveryStatsRefresher(analysisDataSource).refresh();
 			}
 		};
 	}

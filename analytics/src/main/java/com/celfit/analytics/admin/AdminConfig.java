@@ -3,6 +3,7 @@ package com.celfit.analytics.admin;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
+import com.celfit.analytics.analyze.DiscoveryStatsRefresher;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.config.AnalyticsSettings;
@@ -57,10 +58,18 @@ public class AdminConfig {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
+			DiscoveryStatsRefresher discoveryStatsRefresher,
 			JobProgressRegistry jobProgressRegistry, RunHistory runHistory) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
 				classifyJob, analyzeJob, batchCollectJob, accountAnalyzeJob, synthesisRefreshJob, archiveJob,
-				traitCanonJob, jobProgressRegistry, runHistory);
+				traitCanonJob, discoveryStatsRefresher, jobProgressRegistry, runHistory);
+	}
+
+	/** 발굴 스냅샷 갱신기 — 잡 종료 훅(AnalyticsJobService)·원샷 러너(JobConfig) 공용. */
+	@Bean
+	public DiscoveryStatsRefresher discoveryStatsRefresher(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new DiscoveryStatsRefresher(analysisDataSource);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")

@@ -2,10 +2,13 @@ package com.celfit.analytics.admin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
+import com.celfit.analytics.analyze.DiscoveryStatsRefresher;
 import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
@@ -33,6 +36,7 @@ class AnalyticsJobServiceTest {
 	private final MirrorRegistry registry = new MirrorRegistry(List.of());
 	private final ContentAnalysisJob analyzeJob = mock(ContentAnalysisJob.class);
 	private final ImageArchiveJob archiveJob = mock(ImageArchiveJob.class);
+	private final DiscoveryStatsRefresher discoveryStatsRefresher = mock(DiscoveryStatsRefresher.class);
 	private final JobProgressRegistry progress = new JobProgressRegistry();
 	private final RunHistory history = new RunHistory(50);
 
@@ -44,7 +48,7 @@ class AnalyticsJobServiceTest {
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(archiveJob),
 				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
-				progress, history);
+				discoveryStatsRefresher, progress, history);
 	}
 
 	@Test
@@ -110,6 +114,34 @@ class AnalyticsJobServiceTest {
 	}
 
 	@Test
+	void 분석_잡이_성공하면_발굴_스냅샷을_갱신() {
+		when(analyzeJob.run()).thenReturn(new JobResult(3, 0, false));
+		service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
+		verify(discoveryStatsRefresher).refresh();
+	}
+
+	@Test
+	void 미러_잡이_성공해도_발굴_스냅샷을_갱신() {
+		// 창 멤버십(account_content_series)이 미러로만 변하므로 미러 종료도 갱신 지점이다
+		service().trigger(JobName.MIRROR, TriggerType.MANUAL);
+		verify(discoveryStatsRefresher).refresh();
+	}
+
+	@Test
+	void 무관한_잡은_발굴_스냅샷을_갱신하지_않음() {
+		when(archiveJob.run()).thenReturn(new JobResult(3, 1, false));
+		service().trigger(JobName.ARCHIVE, TriggerType.MANUAL);
+		verify(discoveryStatsRefresher, never()).refresh();
+	}
+
+	@Test
+	void 잡이_예외로_죽으면_발굴_스냅샷을_갱신하지_않음() {
+		when(analyzeJob.run()).thenThrow(new IllegalStateException("boom"));
+		service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
+		verify(discoveryStatsRefresher, never()).refresh();
+	}
+
+	@Test
 	void outcomeOf_이월이면_QUOTA_CARRYOVER() {
 		var outcome = AnalyticsJobService.outcomeOf(new JobResult(1, 0, true), null);
 		assertThat(outcome).isEqualTo(RunHistory.Outcome.QUOTA_CARRYOVER);
@@ -137,7 +169,8 @@ class AnalyticsJobServiceTest {
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)),
-				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)), progress, history);
+				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
+				discoveryStatsRefresher, progress, history);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);

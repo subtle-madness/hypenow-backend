@@ -3,6 +3,7 @@ package com.celfit.analytics.admin;
 import com.celfit.analytics.analyze.AccountAnalysisJob;
 import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
+import com.celfit.analytics.analyze.DiscoveryStatsRefresher;
 import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
@@ -10,6 +11,7 @@ import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
 import com.celfit.analytics.mirror.MirrorSpec;
 import java.time.Instant;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -25,6 +27,14 @@ public class AnalyticsJobService {
 
 	private static final Logger log = LoggerFactory.getLogger(AnalyticsJobService.class);
 
+	/**
+	 * 발굴 스냅샷(account_discovery_stats)의 입력을 바꾸는 잡 — 종료 시 REFRESH 대상
+	 * (설계 2026-08-13-discovery-stats-matview-design). 미러는 창 멤버십(account_content_series),
+	 * 나머지 셋은 content_analyses를 변경한다.
+	 */
+	private static final Set<JobName> DISCOVERY_STATS_JOBS = Set.of(
+			JobName.MIRROR, JobName.ANALYZE, JobName.LATE_BACKFILL_ANALYZE, JobName.BATCH_COLLECT);
+
 	private final JobLock lock;
 	private final TaskExecutor executor;
 	private final MirrorJob mirrorJob;
@@ -36,6 +46,7 @@ public class AnalyticsJobService {
 	private final ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob;
 	private final ObjectProvider<ImageArchiveJob> archiveJob;
 	private final ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob;
+	private final DiscoveryStatsRefresher discoveryStatsRefresher;
 	private final JobProgressRegistry progress;
 	private final RunHistory history;
 
@@ -48,6 +59,7 @@ public class AnalyticsJobService {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
+			DiscoveryStatsRefresher discoveryStatsRefresher,
 			JobProgressRegistry progress, RunHistory history) {
 		this.lock = lock;
 		this.executor = executor;
@@ -60,6 +72,7 @@ public class AnalyticsJobService {
 		this.synthesisRefreshJob = synthesisRefreshJob;
 		this.archiveJob = archiveJob;
 		this.traitCanonJob = traitCanonJob;
+		this.discoveryStatsRefresher = discoveryStatsRefresher;
 		this.progress = progress;
 		this.history = history;
 	}
@@ -74,6 +87,9 @@ public class AnalyticsJobService {
 			try {
 				log.info("{} 시작 (trigger={})", job, triggerType);
 				result = run(job);
+				if (DISCOVERY_STATS_JOBS.contains(job)) {
+					discoveryStatsRefresher.refresh();
+				}
 			} catch (Exception e) {
 				error = e;
 				log.error("{} 잡 실패", job, e);
