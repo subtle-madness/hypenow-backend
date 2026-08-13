@@ -14,7 +14,8 @@
 
 - **주석·로그·커밋 메시지는 한국어.** 커밋 prefix는 `feat(모듈):` / `docs:` / `test(모듈):`.
 - **신규 Flyway 마이그레이션은 UTC 타임스탬프 채번** — `V$(date -u +%Y%m%d%H%M%S)__<설명>.sql`. KST 채번 금지(08-12 운영 크래시루프). 기존 `V1`~`V49` 파일은 절대 rename 금지.
-- **테스트 실행 전 `DOCKER_HOST` 필수** — `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`. 미설정 시 Testcontainers 통합 테스트가 대량 실패하며, 테스트 결함으로 오진하기 쉽다.
+- **이 머신의 도커는 Docker Desktop이고 `DOCKER_HOST`는 설정하지 않는 것이 정답이다**(2026-08-13 실측: `colima not found`). CLAUDE.md의 colima 절과 `export DOCKER_HOST=unix://$HOME/.colima/...` 지침은 이 머신에 해당하지 않는다 — 그 값을 설정하면 존재하지 않는 소켓을 가리켜 Testcontainers가 통째로 죽는다. 환경 변수 없이 `./gradlew`를 그대로 실행한다.
+- **실데이터 postgres 컨테이너 이름은 `hypenow-crawler-postgres-1`이다**(CLAUDE.md 예시의 `crawler-postgres-1`이 아님 — compose 디렉토리명 기반이라 머신마다 다르다). SQL 하니스는 `PG_CONTAINER=hypenow-crawler-postgres-1`로 실행한다.
 - **테스트는 모듈 단위가 기본** — `./gradlew :was:test`, `./gradlew :analytics:test`. 전체 `./gradlew test`는 PR 직전에만.
 - **was는 raw DB에 접근하지 않는다.** 크롤러 데이터는 오직 미러된 `crawl_call_daily`로만 읽는다.
 - **`analytics` 뷰에서 raw 테이블을 직접 만지는 것은 `00_base.sql`의 base 뷰뿐이다**(ARCHITECTURE §4-4). 상위 뷰는 base 뷰를 consume한다.
@@ -61,7 +62,7 @@
 **사전 준비:** 실데이터 postgres 컨테이너가 떠 있어야 한다.
 
 ```bash
-docker start crawler-postgres-1
+docker start hypenow-crawler-postgres-1
 ```
 
 컨테이너 이름은 머신마다 다르다(`docker ps -a`로 확인 후 `PG_CONTAINER=<이름>`으로 오버라이드).
@@ -117,7 +118,7 @@ END $$;
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
 
 ```bash
-analytics/test/run.sh test/30_crawl_cost.test.sql
+PG_CONTAINER=hypenow-crawler-postgres-1 analytics/test/run.sh test/30_crawl_cost.test.sql
 ```
 
 기대: `ERROR: relation "analytics.v_crawl_call_daily" does not exist`
@@ -175,7 +176,7 @@ GROUP BY job, (started_at AT TIME ZONE 'Asia/Seoul')::date;
 - [ ] **Step 5: 테스트가 통과하는지 확인한다**
 
 ```bash
-analytics/test/run.sh test/30_crawl_cost.test.sql
+PG_CONTAINER=hypenow-crawler-postgres-1 analytics/test/run.sh test/30_crawl_cost.test.sql
 ```
 
 기대: `PASS: test/30_crawl_cost.test.sql` → `ALL GREEN`
@@ -183,7 +184,7 @@ analytics/test/run.sh test/30_crawl_cost.test.sql
 - [ ] **Step 6: 기존 하니스 전체가 깨지지 않았는지 확인한다**
 
 ```bash
-analytics/test/run.sh
+PG_CONTAINER=hypenow-crawler-postgres-1 analytics/test/run.sh
 ```
 
 기대: `ALL GREEN` (00_base.sql 수정이 기존 뷰에 영향 없음을 확인)
@@ -314,7 +315,7 @@ class CrawlCallDailyMirrorTest {
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :analytics:test --tests "com.celfit.analytics.mirror.CrawlCallDailyMirrorTest" --tests "com.celfit.analytics.mirror.FlywaySchemaTest"
+./gradlew :analytics:test --tests "com.celfit.analytics.mirror.CrawlCallDailyMirrorTest" --tests "com.celfit.analytics.mirror.FlywaySchemaTest"
 ```
 
 기대: 컴파일 실패 — `cannot find symbol: class CrawlCallDaily`
@@ -392,7 +393,7 @@ Javadoc 첫 줄도 갱신한다 — `서빙 뷰 3종(B1) + 인플루언서 상�
 - [ ] **Step 6: 테스트가 통과하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :analytics:test --tests "com.celfit.analytics.mirror.*"
+./gradlew :analytics:test --tests "com.celfit.analytics.mirror.*"
 ```
 
 기대: PASS (FlywaySchemaTest의 새 케이스 + CrawlCallDailyMirrorTest + 기존 MirrorJobTest)
@@ -489,7 +490,7 @@ class CrawlCallDailyRepositoryTest extends IntegrationTest {
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.crawlcost.CrawlCallDailyRepositoryTest"
+./gradlew :was:test --tests "com.celfit.was.crawlcost.CrawlCallDailyRepositoryTest"
 ```
 
 기대: 컴파일 실패 — `package com.celfit.was.crawlcost does not exist`
@@ -539,7 +540,7 @@ public class CrawlCallDailyRepository {
 - [ ] **Step 4: 테스트가 통과하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.crawlcost.CrawlCallDailyRepositoryTest"
+./gradlew :was:test --tests "com.celfit.was.crawlcost.CrawlCallDailyRepositoryTest"
 ```
 
 기대: PASS (2건)
@@ -665,7 +666,7 @@ class GlobalCallSumRepositoryTest extends IntegrationTest {
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.monitoring.GlobalCallSumRepositoryTest"
+./gradlew :was:test --tests "com.celfit.was.monitoring.GlobalCallSumRepositoryTest"
 ```
 
 기대: 컴파일 실패 — `cannot find symbol: class DailyCallSum`
@@ -740,7 +741,7 @@ public record DailyCallSum(LocalDate calledOn, long calls) {
 - [ ] **Step 6: 테스트가 통과하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.monitoring.GlobalCallSumRepositoryTest"
+./gradlew :was:test --tests "com.celfit.was.monitoring.GlobalCallSumRepositoryTest"
 ```
 
 기대: PASS (3건)
@@ -985,7 +986,7 @@ class AdminCrawlingCostSummaryServiceTest {
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.v1.admin.AdminCrawlingCostSummaryServiceTest"
+./gradlew :was:test --tests "com.celfit.was.v1.admin.AdminCrawlingCostSummaryServiceTest"
 ```
 
 기대: 컴파일 실패 — `cannot find symbol: class AdminCrawlingCostSummaryService`
@@ -1303,7 +1304,7 @@ public class AdminCrawlingCostSummaryService {
 - [ ] **Step 6: 테스트가 통과하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.v1.admin.AdminCrawlingCostSummaryServiceTest" --tests "com.celfit.was.v1.admin.AdminCrawlingUsageServiceTest"
+./gradlew :was:test --tests "com.celfit.was.v1.admin.AdminCrawlingCostSummaryServiceTest" --tests "com.celfit.was.v1.admin.AdminCrawlingUsageServiceTest"
 ```
 
 기대: 양쪽 PASS — 두 번째는 `PeriodSums` 추출이 기존 동작을 바꾸지 않았음을 확인하는 회귀 게이트다.
@@ -1546,7 +1547,7 @@ class AdminCrawlingCostSummaryIntegrationTest extends IntegrationTest {
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.AdminCrawlingCostSummaryIntegrationTest"
+./gradlew :was:test --tests "com.celfit.was.AdminCrawlingCostSummaryIntegrationTest"
 ```
 
 기대: 404 (엔드포인트 없음) 또는 컨텍스트 로딩 실패
@@ -1586,7 +1587,7 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:te
 - [ ] **Step 4: 테스트가 통과하는지 확인한다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test --tests "com.celfit.was.AdminCrawlingCostSummaryIntegrationTest" --tests "com.celfit.was.AdminCrawlingUsageIntegrationTest"
+./gradlew :was:test --tests "com.celfit.was.AdminCrawlingCostSummaryIntegrationTest" --tests "com.celfit.was.AdminCrawlingUsageIntegrationTest"
 ```
 
 기대: 양쪽 PASS — 두 번째는 컨트롤러 생성자 변경이 기존 2종을 깨지 않았음을 확인한다.
@@ -1594,7 +1595,7 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:te
 - [ ] **Step 5: was 모듈 전체 회귀를 돌린다**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew :was:test
+./gradlew :was:test
 ```
 
 기대: BUILD SUCCESSFUL. 대량 실패가 보이면 먼저 `DOCKER_HOST`부터 확인한다(테스트 결함으로 오진하기 쉬운 실패 양상).
@@ -1637,7 +1638,7 @@ PUT 한 번이 두 화면에 동시에 반영된다."
 - [ ] **Step 3: 전체 테스트를 돌린다 (PR 직전 1회)**
 
 ```bash
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock && ./gradlew test
+./gradlew test
 ```
 
 기대: BUILD SUCCESSFUL. 이 명령은 모듈 4개가 각자 Testcontainers Postgres를 띄우므로 로컬에선 느리다 — PR 직전에만 돌린다.
