@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행됨 (Task 1~3 — 서버 반영 Task 4는 수동 절차로 별도) · 2026-08-13 · [스펙](../../specs/2026-08-13-ons-relay-alarm-dimensions-design.md)
+> 상태: ✅ 실행됨 (Task 1~4 전체 — 서버 반영·재주입 검증 08-13 완료) · 2026-08-13 · [스펙](../../specs/archive/2026-08-13-ons-relay-alarm-dimensions-design.md)
 
 **Goal:** `hypenow-container-down` 등 OCI 알람이 디스코드에 올 때 어느 대상(컨테이너·호스트·버킷)인지 차원(`containerName=monitoring` 등)을 본문에 표기한다.
 
