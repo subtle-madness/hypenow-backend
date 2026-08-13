@@ -265,7 +265,14 @@ public class V1BrandDirectPostService {
 		return new Plan(url, shortCode, index, null);
 	}
 
-	/** 이미 내 브랜드 화면에 있는 게시물 집합 — 목록 API와 같은 모수(365일 윈도우 tagged + direct 매핑). */
+	/**
+	 * 이미 내 브랜드가 들고 있는 게시물 집합 — 365일 윈도우 tagged + direct 매핑.
+	 *
+	 * <p>tagged는 <b>보강 정산 전까지 포함해 전량</b>을 본다(표시 게이트를 쓰지 않는다 — 2026-08-13
+	 * 리뷰 결정). 미정산분을 중복으로 잡지 못하면 같은 게시물이 direct로 한 번 더 등록되고,
+	 * {@code mergeByShortcode}의 direct 우선 규칙 때문에 그 카드가 정산 이후에도 <b>영구히 direct
+	 * 셰이프</b>로 고정된다(영상 URL·길이 null, 인증 배지 false).
+	 */
 	private Set<String> brandShortCodes(long userId, long brandId) {
 		Set<String> codes = new LinkedHashSet<>(directPostRepository.shortCodesByUser(userId));
 		brandReadRepository

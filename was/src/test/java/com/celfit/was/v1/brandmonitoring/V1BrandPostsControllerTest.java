@@ -283,7 +283,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findTaggedPostsInWindow(anyLong(), any());
+		then(brandReadRepository).should(never()).findEnrichedTaggedPostsInWindow(anyLong(), any());
 	}
 
 	@Test
@@ -444,8 +444,12 @@ class V1BrandPostsControllerTest {
 
 	// ---------- 스텁 ----------
 
+	/**
+	 * 목록·상세는 표시 표면이라 <b>정산분 조회</b>를 탄다(2026-08-13 완결 배치 서빙) — 여기가
+	 * findTaggedPostsInWindow(전량)로 되돌아가면 이 클래스 전체가 빈 목록으로 떨어져 바로 드러난다.
+	 */
 	private void givenTagged(BrandTaggedPostRow... rows) {
-		given(brandReadRepository.findTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
+		given(brandReadRepository.findEnrichedTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
 	}
 
 	private void givenHashtag(BrandHashtagPostRow... rows) {

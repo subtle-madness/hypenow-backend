@@ -13,6 +13,7 @@ import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
+import com.celfit.was.v1.brandmonitoring.BrandPostAssembler.TaggedScope;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
@@ -297,7 +298,7 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(assembled.contents()).hasSize(1);
 		assertThat(assembled.lastCollectedAt()).isEqualTo(LAST_COLLECTED);
-		then(brandPostAssembler).should(never()).assembleTagged(any(), anyBoolean());
+		then(brandPostAssembler).should(never()).assembleTagged(any(), anyBoolean(), any());
 	}
 
 	@Test
@@ -366,7 +367,8 @@ class PerformanceContentAssemblerTest {
 				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(rival, true, TaggedScope.ALL))
+				.willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -406,8 +408,10 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
-		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
-		given(brandPostAssembler.assembleTagged(mine, true)).willReturn(List.of(taggedPostOf("ABC", BRAND_ID)));
+		given(brandPostAssembler.assembleTagged(rival, true, TaggedScope.ALL))
+				.willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(mine, true, TaggedScope.ALL))
+				.willReturn(List.of(taggedPostOf("ABC", BRAND_ID)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -430,8 +434,9 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleTagged(mine, true)).willReturn(List.of());
-		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(mine, true, TaggedScope.ALL)).willReturn(List.of());
+		given(brandPostAssembler.assembleTagged(rival, true, TaggedScope.ALL))
+				.willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -454,7 +459,8 @@ class PerformanceContentAssemblerTest {
 				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleTagged(rival, true)).willReturn(List.of(taggedPostOf("ABC", 99L)));
+		given(brandPostAssembler.assembleTagged(rival, true, TaggedScope.ALL))
+				.willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
 
@@ -496,12 +502,13 @@ class PerformanceContentAssemblerTest {
 				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
 		BrandAccountRow account = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleTagged(account, false)).willReturn(List.of(taggedPost("ABC", List.of())));
+		given(brandPostAssembler.assembleTagged(account, false, TaggedScope.ALL))
+				.willReturn(List.of(taggedPost("ABC", List.of())));
 
 		var contents = assembler().assembleSlim(USER_ID).contents();
 
 		// 댓글 배치 조회가 목록 경로에 되살아나면 고정 지연이 재발한다(08-12 실측: 조립 시간의 절반 이상).
-		then(brandPostAssembler).should(never()).assembleTagged(account, true);
+		then(brandPostAssembler).should(never()).assembleTagged(account, true, TaggedScope.ALL);
 		assertThat(contents).hasSize(1);
 	}
 
@@ -584,7 +591,7 @@ class PerformanceContentAssemblerTest {
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, LAST_COLLECTED);
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleTagged(account, true)).willReturn(List.of(taggedPosts));
+		given(brandPostAssembler.assembleTagged(account, true, TaggedScope.ALL)).willReturn(List.of(taggedPosts));
 	}
 
 	private static BrandDirectPostRepository.Row directRow(String shortCode, long itemId) {
