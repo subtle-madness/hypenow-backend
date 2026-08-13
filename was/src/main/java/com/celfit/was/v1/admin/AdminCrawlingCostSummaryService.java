@@ -39,9 +39,11 @@ import org.springframework.stereotype.Service;
  * available=false로 표시하고 그 구간 집계를 0으로 둔다 — 비용 관측이 어드민 화면을 통째로 죽이면
  * 안 된다. <b>다만 "어떤 경우에도 500이 없다"는 뜻은 아니다</b>: 단가 조회(app.app_setting)는
  * 구간 열화의 대상이 아니라 응답 조립의 전제라 try/catch 밖에 있고, 그래서 <b>기본 데이터소스
- * 자체가 불통이면 이 API도 500이 된다</b>(세션이 Redis에 있어 DB가 죽어도 인증된 요청은 여기까지
- * 도달한다). 08-12 유저별 카드도 같은 모양이며, 이 경계는 의도된 것이다 — DB 전면 불통은 어드민의
- * 다른 모든 표면과 함께 죽는 장애이지 이 화면만의 열화 사유가 아니다.
+ * 자체가 불통이면 이 API도 500이 된다</b>(실은 그 전에 죽는다 — 세션 저장소가 같은 데이터소스라
+ * (Spring Session JDBC, {@code app.spring_session}) 인증 단계에서 이미 실패한다. Redis는 조회
+ * 캐시 전용이지 세션 저장소가 아니다 — 2026-07-28 결정). 08-12 유저별 카드도 같은 모양이며,
+ * 이 경계는 의도된 것이다 — DB 전면 불통은 어드민의 다른 모든 표면과 함께 죽는 장애이지
+ * 이 화면만의 열화 사유가 아니다.
  */
 @Service
 public class AdminCrawlingCostSummaryService {
