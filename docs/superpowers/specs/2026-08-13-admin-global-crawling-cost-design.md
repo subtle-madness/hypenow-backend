@@ -157,15 +157,20 @@ was = analysis 읽기)을 그대로 탄다. was는 기본 데이터소스에서 
 | `monitoring.enabled=false`(로컬 기본) | `MONITORING.available=false`, 모니터링 2행 0 |
 | monitoring DB 조회 예외(DataAccessException) | 같음 + WARN 로그. 카드 전체를 장애로 만들지 않는다 |
 | `crawl_call_daily` 비어 있음(미러 이전) | `CRAWLER.available=true`, `latestCallOn=null`, 크롤러 5행 0 |
+| `crawl_call_daily` 조회 예외(DataAccessException) | `CRAWLER.available=false` + WARN 로그, 크롤러 구간 0. **부분 누적분은 되돌린다** — 매핑 밖 잡이 `computeIfAbsent`로 중간에 만든 키까지 제거한다 |
 | 미러가 멈춤(스테일) | `latestCallOn`이 과거 날짜로 굳는다 — FE가 "N일 전 기준"을 표시 |
 | `crawling.unit-price-usd` 값이 숫자 아님 | 기본값 `0.0006` 폴백 + WARN(기존 `currentUnitPrice()` 그대로) |
 
 `latestCallOn`은 각 소스가 가진 **최신 `called_on`** 이다. 미러 시각을 따로 적재하지 않고
 데이터에서 유도하므로 스키마에 메타 컬럼이 늘지 않는다.
 
-`CRAWLER.available`은 실질적으로 항상 `true`다 — 미러 테이블이 was의 기본 데이터소스에 있어
-여기가 죽으면 응답 자체가 성립하지 않는다. 그럼에도 필드를 두는 이유는 FE가 두 소스를 같은
-모양으로 렌더할 수 있게 하기 위해서고, 크롤러 몫의 실제 신호는 `latestCallOn`이다.
+**`CRAWLER.available`도 실제로 `false`가 될 수 있다**(2026-08-13 구현 중 교정 — 최초안은 "미러
+테이블이 was 기본 데이터소스에 있으니 항상 true"라고 적었는데, 이는 *데이터소스 다운*과 *테이블
+부재*를 뭉갠 것이었다). `crawl_call_daily`의 Flyway는 was가 아니라 **analytics 모듈 소관**이다
+(`db/migration/analysis`). analytics가 그 마이그레이션을 적용하기 전에 was가 뜨거나 analytics를
+롤백하면, 데이터소스는 멀쩡한데 `relation "crawl_call_daily" does not exist`가 난다 — 어드민의
+나머지는 정상인데 이 화면만 500으로 죽는다. **이 기능이 새로 들여온 크로스 모듈 배포 스큐가 정확히
+이 모양이라, 두 소스를 대칭으로 열화 처리한다.**
 
 ## 6. 구현 자리
 
