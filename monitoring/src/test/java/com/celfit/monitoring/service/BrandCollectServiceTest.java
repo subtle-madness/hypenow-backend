@@ -167,6 +167,9 @@ class BrandCollectServiceTest {
 		final Map<String, Long> collectedCounts = new HashMap<>();
 		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
 		final Map<String, Instant> touched = new HashMap<>();
+		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
+		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
+		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
 		int depthCalls = 0;
 
 		InMemoryTagged() {
@@ -208,6 +211,11 @@ class BrandCollectServiceTest {
 			for (String c : codes) {
 				touched.put(c, at);
 			}
+		}
+
+		@Override
+		public void markEnriched(long brandId, Collection<String> codes, Instant at) {
+			enriched.addAll(codes);
 		}
 
 		@Override
@@ -797,6 +805,53 @@ class BrandCollectServiceTest {
 
 		assertThat(comments.upserted).containsExactly("Partial");        // 1페이지분은 저장
 		assertThat(tagged.collectedCounts.get("Partial")).isNull();      // 워터마크 유지 → 다음 스윕 재시도
+	}
+
+	// ── 보강 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) ────────────────────
+
+	/**
+	 * 보강이 끝나면 그 게시물들을 정산 마킹한다 — was 목록 게이트(enriched_at IS NOT NULL)의
+	 * 입력이라, 안 찍히면 게시물이 목록에 안 뜬다.
+	 */
+	@Test
+	void 보강이_끝나면_정산_마킹한다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, ""), reel("B", RECENT, 3, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
+	}
+
+	/**
+	 * 게시자 수집이 전부 실패해도 정산한다 — enriched_at의 의미는 "보강 시도가 끝났다"이지
+	 * "게시자가 찼다"가 아니다. "게시자가 있을 때만 정산"으로 구현하면 실측 404 2%·타임아웃 1%의
+	 * 게시물이 목록에서 영구히 사라진다(미수집분은 stale 판정으로 다음 스윕이 백스톱).
+	 */
+	@Test
+	void 게시자_수집이_실패해도_정산한다() {
+		authorNotFoundTimes.put("101", 5);   // 지속 404 — 재시도까지 소진해도 실패
+		failingAuthorIds.add("102");         // 5xx·타임아웃 대역
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(authors.upserted).isEmpty();   // 게시자는 한 명도 못 채웠다
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
+	}
+
+	/**
+	 * 댓글이 미완주(중간 페이지 실패)여도 정산한다 — 단, 워터마크는 전진시키지 않아 다음 스윕이
+	 * 못 받은 페이지를 재시도한다(08-10 부분 보존 규칙 불변, 정산만 얹힌다).
+	 */
+	@Test
+	void 댓글_미완주여도_정산하되_워터마크는_전진하지_않는다() {
+		commentPage2Fails = true;
+		tagPages.add(page(null, reel("Partial", RECENT, 30, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(tagged.enriched).containsExactly("Partial");
+		assertThat(tagged.collectedCounts).doesNotContainKey("Partial");   // 워터마크 미전진
 	}
 
 	// ── 보강 병렬화(동시 6 — 2026-08-07 스펙) ────────────────────────────────

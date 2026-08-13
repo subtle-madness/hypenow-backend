@@ -247,7 +247,13 @@ public class BrandCollectService {
 		// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
 		ensureAuthors(brand.id(), posts);
 		collectCommentsGated(brand.id(), posts);
-		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료({}건 대상)", brand.username(), posts.size());
+		// 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) — 게시자·댓글이 실패해 비어 있어도 찍는다.
+		// 이 지점의 의미는 "더 기다릴 이유가 없다"이지 "다 찼다"가 아니다. 비운 채로 두면 실측
+		// 404 2%·타임아웃 1%의 게시물이 목록에서 영구히 사라진다. 미수집분은 게시자 stale 판정·
+		// 댓글 워터마크가 다음 스윕에서 채운다.
+		taggedPosts.markEnriched(brand.id(),
+				posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료·정산({}건 대상)", brand.username(), posts.size());
 	}
 
 	/**
