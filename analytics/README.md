@@ -10,9 +10,9 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   HIKER_V2_CLIPS jsonb, 피드 캡션·지표는 `raw_profile`(SELF_GQL) 내장 타임라인이 소스다
   (`raw_post_detail`은 구 파이프라인 유물이라 신 뷰에서 미사용). 서빙 모수는 뷰티
   인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company)로 필터.
-  - `00_base.sql` — base 뷰 8종(`v_base_influencer`·`v_base_profile`·`v_base_reel_item`·
+  - `00_base.sql` — base 뷰 9종(`v_base_influencer`·`v_base_profile`·`v_base_reel_item`·
     `v_base_timeline_item`·`v_base_content`·`v_base_content_snapshot`·`v_base_detail`·
-    `v_base_comment`). **raw 테이블·payload를 만지는 유일한 SQL.**
+    `v_base_comment`·`v_base_crawl_run`). **raw 테이블·payload를 만지는 유일한 SQL.**
   - `01_recent_window.sql` — 계정별 최근 N개 윈도우 (`v_recent_content`)
   - `02_serving.sql` — 서빙 형태 뷰 (`v_serving_content`·`v_accounts`·`v_contents`·
     `v_content_comments`·`v_content_metric_snapshots`) — 미러 대상과 1:1.
@@ -23,9 +23,13 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
     `v_account_content_series`). 카테고리 믹스는 07-21에 analysis DB 파생 뷰
     `account_category_stats`(V35)로 이관 — 소스인 캡션 분류가 analysis DB라 여기선 못 만든다.
   - `20_landing_stats.sql` — 랜딩 통계 뷰 (`v_landing_stats`)
+  - `30_crawl_cost.sql` — 크롤러 파이프라인 유료 요청 일별 집계 (`v_crawl_call_daily`) —
+    `crawl_run.request_count > 0`인 실행을 잡·KST 달력일로 접는다. was 어드민 전역 크롤링 비용
+    API가 미러를 읽는다([설계](../docs/superpowers/specs/2026-08-13-admin-global-crawling-cost-design.md)).
 - `mirror/` — 타입 기반 미러: 뷰 SELECT → 공유 record 매핑 → analysis DB 테이블
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
-  대상: accounts·contents·content_comments (등록: MirrorConfig).
+  대상: accounts·contents·content_comments·account_summaries·account_content_series·
+  landing_stats·crawl_call_daily (등록: MirrorConfig).
   `content_metric_snapshots`는 07-30 제외 — 소비자(was 레거시 `/api`)가 사라졌는데 약 70만 행으로
   미러 12분 30초 중 6~7분을 차지했다. 지표 이력은 raw의 `analytics.v_content_metric_snapshots`로 직접 조회.
 - `test/` — SQL 하니스. 더미 시드를 BEGIN/ROLLBACK으로 격리해 뷰 기대값을 고정.

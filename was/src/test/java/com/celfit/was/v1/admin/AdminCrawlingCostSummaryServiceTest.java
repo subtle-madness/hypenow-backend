@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 
 import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.was.crawlcost.CrawlCallDailyRepository;
+import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.DailyCallSum;
 import com.celfit.was.monitoring.MonitoringReadRepository;
@@ -45,10 +46,20 @@ class AdminCrawlingCostSummaryServiceTest {
 		given(crawlReads.findAll()).willReturn(List.of());
 	}
 
+	/**
+	 * 단가 리더는 유저별 카드의 것을 그대로 재사용하므로(복제 금지), 목이 아니라 실제
+	 * AdminCrawlingUsageService를 물려준다 — 단가 폴백 테스트가 실제 공유 경로를 검증한다.
+	 */
+	private AdminCrawlingUsageService usageService(Clock clock) {
+		return new AdminCrawlingUsageService(mock(BrandLinkRepository.class), Optional.of(brandReads),
+				Optional.of(monitoringReads), settings, clock);
+	}
+
 	/** 서비스가 KST로 재조정(clock.withZone)하므로 픽스처 시간대는 UTC로 준다. */
 	private AdminCrawlingCostSummaryService serviceAt(String utcInstant) {
+		Clock clock = Clock.fixed(Instant.parse(utcInstant), ZoneOffset.UTC);
 		return new AdminCrawlingCostSummaryService(Optional.of(brandReads), Optional.of(monitoringReads),
-				crawlReads, settings, Clock.fixed(Instant.parse(utcInstant), ZoneOffset.UTC));
+				crawlReads, usageService(clock), clock);
 	}
 
 	private static Segment segment(List<Segment> breakdown, String key) {
@@ -141,9 +152,9 @@ class AdminCrawlingCostSummaryServiceTest {
 	void 모니터링_비활성이면_열화_표시하고_크롤러_몫은_그대로_낸다() {
 		given(crawlReads.findAll()).willReturn(List.of(
 				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 3)));
+		Clock clock = Clock.fixed(Instant.parse("2026-08-13T01:00:00Z"), ZoneOffset.UTC);
 		AdminCrawlingCostSummaryService service = new AdminCrawlingCostSummaryService(
-				Optional.empty(), Optional.empty(), crawlReads, settings,
-				Clock.fixed(Instant.parse("2026-08-13T01:00:00Z"), ZoneOffset.UTC));
+				Optional.empty(), Optional.empty(), crawlReads, usageService(clock), clock);
 
 		AdminCrawlingCostSummary summary = service.summary();
 

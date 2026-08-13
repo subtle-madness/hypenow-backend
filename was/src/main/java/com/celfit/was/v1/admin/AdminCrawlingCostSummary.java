@@ -11,7 +11,14 @@ import java.util.List;
  * 크롤러 몫은 crawl_run이 구매한 요청 수 — 집계 지점이 다를 뿐 단위는 같다.
  *
  * <p><b>이 값은 유저별 카드(GET /v1/admin/users/{id}/crawling-usage)의 합과 일치하지 않는다</b> —
- * 공유 브랜드는 유저마다 계상되므로 유저별 합이 더 크다. 실제로 나간 돈은 이쪽이다.
+ * 공유 브랜드는 유저마다 계상되므로 유저별 합이 더 크다. <b>브랜드 축</b>에서는 이쪽이 실제로 나간
+ * 돈이다: brand_call_count를 브랜드 축에서 직접 합산하므로 유저 팬아웃이 곱해지지 않는다.
+ *
+ * <p><b>캠페인 몫(CAMPAIGN_MONITORING)에는 같은 보장이 없다</b> — target_call_count는 monitoring이
+ * 콜 시점에 유저 키로 적재하는데, 한 번의 HTTP 교환이 여러 유저의 캠페인을 서빙하면 <b>서빙 유저
+ * 수만큼 +1</b>된다(CountingHikerHttp). 그래서 이 구간을 전역 합산하면 팬아웃 배수만큼 곱해져
+ * <b>상한 쪽으로 치우칠 수 있다</b>. 08-12 실측에서는 콜당 유저 중복이 관측되지 않아 현재 오차가
+ * 0이지만, 그건 데이터의 우연이지 집계 구조의 보장이 아니다.
  */
 public record AdminCrawlingCostSummary(Totals totals, List<Segment> breakdown,
 		BigDecimal unitPriceUsd, List<SourceStatus> sources) {

@@ -5,7 +5,6 @@ import com.celfit.was.crawlcost.CrawlCallDailyRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.DailyCallSum;
 import com.celfit.was.monitoring.MonitoringReadRepository;
-import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.admin.AdminCrawlingCostSummary.Segment;
 import com.celfit.was.v1.admin.AdminCrawlingCostSummary.SourceStatus;
 import com.celfit.was.v1.admin.AdminCrawlingCostSummary.Totals;
@@ -36,8 +35,13 @@ import org.springframework.stereotype.Service;
  * 미러 주기(04:30 KST) 이후의 콜은 다음 미러까지 보이지 않는다 —
  * {@code sources[].latestCallOn}이 그 지연을 드러낸다.
  *
- * <p><b>404·500을 내지 않는다</b>: 못 읽은 구간은 available=false로 표시하고 집계를 0으로 둔다.
- * 비용 관측이 어드민 화면을 통째로 죽이면 안 된다.
+ * <p><b>404를 내지 않고, 못 읽은 "구간"은 500 대신 열화로 접는다</b>: 소스 1종의 조회가 터져도
+ * available=false로 표시하고 그 구간 집계를 0으로 둔다 — 비용 관측이 어드민 화면을 통째로 죽이면
+ * 안 된다. <b>다만 "어떤 경우에도 500이 없다"는 뜻은 아니다</b>: 단가 조회(app.app_setting)는
+ * 구간 열화의 대상이 아니라 응답 조립의 전제라 try/catch 밖에 있고, 그래서 <b>기본 데이터소스
+ * 자체가 불통이면 이 API도 500이 된다</b>(세션이 Redis에 있어 DB가 죽어도 인증된 요청은 여기까지
+ * 도달한다). 08-12 유저별 카드도 같은 모양이며, 이 경계는 의도된 것이다 — DB 전면 불통은 어드민의
+ * 다른 모든 표면과 함께 죽는 장애이지 이 화면만의 열화 사유가 아니다.
  */
 @Service
 public class AdminCrawlingCostSummaryService {
@@ -64,21 +68,23 @@ public class AdminCrawlingCostSummaryService {
 	private final Optional<BrandReadRepository> brandReads;
 	private final Optional<MonitoringReadRepository> monitoringReads;
 	private final CrawlCallDailyRepository crawlReads;
-	private final AppSettingRepository settings;
+	private final AdminCrawlingUsageService usageService;
 	private final Clock clock;
 
 	public AdminCrawlingCostSummaryService(Optional<BrandReadRepository> brandReads,
 			Optional<MonitoringReadRepository> monitoringReads, CrawlCallDailyRepository crawlReads,
-			AppSettingRepository settings, Clock clock) {
+			AdminCrawlingUsageService usageService, Clock clock) {
 		this.brandReads = brandReads;   // monitoring.enabled=false면 비어 있다 — 모니터링 구간은 열화
 		this.monitoringReads = monitoringReads;
 		this.crawlReads = crawlReads;
-		this.settings = settings;
+		// 단가는 유저별 카드의 리더를 그대로 재사용한다 — 키만 공유하고 읽기를 포크하면
+		// "두 화면의 단가가 갈라질 수 없다"는 보장이 폴백·반올림이 갈리는 순간 깨진다.
+		this.usageService = usageService;
 		this.clock = clock;
 	}
 
 	public AdminCrawlingCostSummary summary() {
-		BigDecimal unitPrice = currentUnitPrice();
+		BigDecimal unitPrice = usageService.currentUnitPrice();
 		LocalDate today = LocalDate.now(clock.withZone(KstTimestamps.KST));
 		LocalDate monthStart = today.withDayOfMonth(1);
 
@@ -182,20 +188,6 @@ public class AdminCrawlingCostSummaryService {
 	/** 반올림하지 않는다 — 서버가 반올림하면 구간 합과 총합이 어긋난다(설계 §2). */
 	private static BigDecimal cost(BigDecimal unitPrice, long calls) {
 		return unitPrice.multiply(BigDecimal.valueOf(calls));
-	}
-
-	/** 단가 정본은 유저별 카드와 같은 키 하나 — 두 화면의 단가가 갈라질 수 없다. */
-	private BigDecimal currentUnitPrice() {
-		Optional<String> stored = settings.findValue(AdminCrawlingUsageService.UNIT_PRICE_KEY);
-		if (stored.isEmpty()) {
-			return AdminCrawlingUsageService.DEFAULT_UNIT_PRICE;
-		}
-		try {
-			return new BigDecimal(stored.get());
-		} catch (NumberFormatException e) {
-			log.warn("crawling.unit-price-usd 값이 숫자가 아님({}) — 기본값 폴백", stored.get());
-			return AdminCrawlingUsageService.DEFAULT_UNIT_PRICE;
-		}
 	}
 
 	/** 소스 1종의 읽기 결과 — available=false면 집계는 0이고 "0을 썼다"가 아니라 "모름"이라는 뜻이다. */

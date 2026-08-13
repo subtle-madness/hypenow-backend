@@ -13,7 +13,9 @@
 -- 단위라 요청을 시각별로 쪼갤 수 없고, 크롤 잡은 01:00~03:55 KST의 짧은 실행들이라 무의미).
 --
 -- 컬럼 계약: CrawlCallDaily record(job, calledOn, calls) ↔ crawl_call_daily DDL과 이름·순서
--- 일치 필수(§4-3, MirrorJob이 실행 시 대조). sum()은 numeric이라 ::bigint 캐스트 필수.
+-- 일치 필수(§4-3, MirrorJob이 실행 시 대조). ::bigint 캐스트는 record의 long과 맺은 계약을
+-- 명시적으로 고정하는 것 — request_count가 integer(crawler V7)라 sum()은 이미 bigint를 돌려주므로
+-- 지금은 no-op이지만, 컬럼 타입이 바뀌어도(numeric 등) 미러 대조가 조용히 어긋나지 않게 한다.
 CREATE OR REPLACE VIEW analytics.v_crawl_call_daily AS
 SELECT
   job,
