@@ -4,6 +4,7 @@ import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -373,15 +374,36 @@ public class BrandCollectService {
 			if (fresh.contains(id)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
-				try {
-					authors.upsert(hiker.fetchAuthorProfile(id));
-				} catch (RuntimeException e) {
-					log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", id, e.toString());
-				}
-			}), enrichWorker));
+			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId,
+					() -> fetchAuthorWithRetry(id)), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
+	}
+
+	/**
+	 * 게시자 프로필 1건 — 404는 1회 재시도한다(08-13 실측: 실존 계정에서 2.0% 발생, 재시도
+	 * 복구율 2/2). 전송 계층은 404를 "결정적 부재"로 보고 즉시 전파하는데, /v2/user/by/id에
+	 * 한해 그 전제가 틀렸다. 다른 엔드포인트(by/username·게시물 단건)의 404는 여전히 결정적이라
+	 * 전송 계층을 건드리지 않고 여기서만 되쏜다.
+	 *
+	 * <p>타임아웃·5xx는 재시도하지 않는다 — 전송 계층이 이미 maxRetries를 태운 뒤이고, 실측상
+	 * 느린 콜은 3회 연속 16~21초로 전부 실패해 워커만 45초 묶었다.
+	 */
+	private void fetchAuthorWithRetry(String igUserId) {
+		try {
+			authors.upsert(hiker.fetchAuthorProfile(igUserId));
+			return;
+		} catch (SubjectNotFoundException e) {
+			log.info("게시자 404 — user_id {} 1회 재시도", igUserId);
+		} catch (RuntimeException e) {
+			log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", igUserId, e.toString());
+			return;
+		}
+		try {
+			authors.upsert(hiker.fetchAuthorProfile(igUserId));
+		} catch (RuntimeException e) {
+			log.warn("게시자 프로필 재시도 실패(격리) — user_id {}: {}", igUserId, e.toString());
+		}
 	}
 
 	/**

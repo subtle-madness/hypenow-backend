@@ -72,6 +72,8 @@ class BrandCollectServiceTest {
 	private final List<String> calls = new ArrayList<>();
 	private final List<String> tagPages = new ArrayList<>();
 	private final Set<String> failingAuthorIds = new HashSet<>();
+	// 게시자별 "앞으로 몇 번 더 404를 낼지" — 산발적 404(1회) / 지속 404를 같은 대역으로 표현한다.
+	private final Map<String, Integer> authorNotFoundTimes = new HashMap<>();
 	private boolean tagNotFound = false;
 	private boolean tagPage2Fails = false;
 	private boolean brandProfileFails = false;
@@ -268,6 +270,11 @@ class BrandCollectServiceTest {
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());
 				if (failingAuthorIds.contains(id)) {
 					throw new HikerFetchException("게시자 프로필 500");
+				}
+				int notFoundLeft = authorNotFoundTimes.getOrDefault(id, 0);
+				if (notFoundLeft > 0) {
+					authorNotFoundTimes.put(id, notFoundLeft - 1);
+					throw new SubjectNotFoundException("Hiker 404");
 				}
 				return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\",\"follower_count\":100,\"is_private\":false}}"
 						.formatted(id, id);
@@ -618,6 +625,37 @@ class BrandCollectServiceTest {
 		assertThat(authorCalls()).isEqualTo(2);              // 102·103만
 		assertThat(authors.upserted).containsExactly("103"); // 102 실패는 격리 — 103은 계속
 		assertThat(writer.saved).hasSize(3);                 // 게시자 실패가 지표 적재에 번지지 않는다
+	}
+
+	/**
+	 * 게시자 404는 결정적 부재가 아니다(08-13 실측 2.0%, 재시도 1회로 2/2 복구 — 실존 계정 확인)
+	 * — 1회 재시도해 성공하면 프로필을 저장한다. 재시도가 없으면 완결 서빙에서 그 게시물이
+	 * 영구 미노출이 된다.
+	 */
+	@Test
+	void 게시자_404는_1회_재시도한다() {
+		authorNotFoundTimes.put("101", 1);   // 첫 콜만 404, 두 번째는 정상 — 산발적 404의 재현
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(authorCalls()).isEqualTo(2);              // 최초 1 + 재시도 1
+		assertThat(authors.upserted).containsExactly("101"); // 재시도로 복구
+	}
+
+	/**
+	 * 재시도해도 실패하면 게시자 없이 넘어간다 — 무한 재시도로 화면을 막지 않는다.
+	 * 미수집분은 게시자 stale 판정으로 다음 스윕이 백스톱한다.
+	 */
+	@Test
+	void 게시자_404가_재시도_후에도_실패하면_건너뛴다() {
+		authorNotFoundTimes.put("101", 5);   // 계속 404 — 재시도 상한을 넘겨 부르지 않는지 본다
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(2000).sweep(brand);   // 예외가 새어나가면 여기서 터진다
+
+		assertThat(authorCalls()).isEqualTo(2);   // 최초 1 + 재시도 1, 그 이상은 안 한다
+		assertThat(authors.upserted).isEmpty();
 	}
 
 	// ── 스트리밍 적재 + 서빙 콜백(2026-08-12 스펙 §2) ────────────────────────
