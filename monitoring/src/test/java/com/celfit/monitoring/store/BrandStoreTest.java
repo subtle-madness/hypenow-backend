@@ -197,8 +197,26 @@ class BrandStoreTest {
 		assertThat(row.lastSweptOn()).isNull();   // 백필 재개 신호 — 다음 스윕 백스톱 상속
 		assertThat(db.queryForObject("SELECT collection_started_at FROM brand_account WHERE id = ?",
 				java.time.OffsetDateTime.class, id)).isAfter(before);   // FE 폴링 앵커 갱신
+		// 08-13 개정: 완주 이력도 리셋한다 — 보존하면 FE 폴링(collectionCompletedAt != null)이
+		// 확장 시작 즉시 멎는다. 확장 완주 시 touchSwept가 다시 채운다.
 		assertThat(db.queryForObject("SELECT backfill_completed_at FROM brand_account WHERE id = ?",
-				java.time.OffsetDateTime.class, id)).isNotNull();   // 완주 이력은 보존(확장 중 collecting 판별 재료)
+				java.time.OffsetDateTime.class, id)).isNull();
+	}
+
+	/**
+	 * 기간 확장은 완주 시각도 리셋한다(2026-08-13) — FE 폴링 종료 조건이
+	 * collectionCompletedAt != null이라, 보존하면 확장 시작 즉시 폴링이 멎어 확장분이 화면에
+	 * 반영되지 않는다.
+	 */
+	@Test
+	void 기간_확장이_완주_시각을_리셋한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		brands.touchSwept(id, LocalDate.now());
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+
+		assertThat(brands.expandWindow(id, 12)).isTrue();
+
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
 	}
 
 	@Test
