@@ -85,6 +85,10 @@
   마이그레이션이 깨진다. 대상은 독립 버전 공간 4개(각자 다음 자유 번호를 자유 채번) 전부 —
   crawler, analytics `db/migration/analysis`, was `db/migration/app`, monitoring. 번호 경합 검사
   (`check-migration-safety.sh`)는 자릿수 제한 없는 정규식이라 무수정으로 호환.
+  **반드시 UTC로**(`date -u +%Y%m%d%H%M%S`) — KST 채번은 미래 번호 선점으로 뒤따르는 정상
+  채번을 전부 Flyway out-of-order 거부에 빠뜨린다(08-12 운영 크래시루프 2회). 가드 v4가
+  PR에서 미래 채번(UTC+1h 초과)·역전(base 최대 이하)을 차단하며, 의도된 미래 번호는
+  `-- allow-future-version: <사유>` 주석으로 통과(deploy/README.md §5-1).
 - 배열 저장은 `text[]` 대신 `jsonb` (기존 `RawComment.payload` 매핑 관용구 재사용).
 - **스키마 변경은 expand-contract** (07-29 was 롤링 배포 도입~): 롤링 중 신구 코드가 같은 DB를
   공존해서 본다 — `DROP`·`RENAME`·타입 변경·`SET NOT NULL`은 참조 코드가 끊긴 **다음 릴리스**에서만.
