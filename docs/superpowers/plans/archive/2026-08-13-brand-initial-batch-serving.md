@@ -1,5 +1,12 @@
 # 브랜드 초기 수집 완결 배치 서빙 구현 계획
 
+> 상태: ✅ 실행됨(2026-08-13, 커밋 `2d0d9b60`~`43b8a6a7`) · 설계:
+> [2026-08-13-brand-initial-batch-serving-design.md](../../specs/2026-08-13-brand-initial-batch-serving-design.md)
+>
+> **실행 중 계획이 세 번 수정됐다** — 정본은 스펙의 `[정정]` 표시 절(§2·§3·§5)이다.
+> Task 6이 지시한 `sweepCore(brand, page -> enrich(...))`와 §5의 "조회 한 곳에 게이트"는
+> 그대로 따르면 안 된다(각각 열거 루프 중단·판정 표면 오답).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 브랜드 게시물 목록에 **보강 정산이 끝난 게시물만** 노출하고, 첫 열거 페이지(21건) 배치가 완결되는 시점에 FE ready를 연다.

@@ -1,6 +1,17 @@
 # 브랜드 초기 수집 — 완결 배치 서빙 설계
 
-> 상태: 🟢 활성 · 미구현(설계 합의만) · FE 회신본은 별도 전달(레포 미보관)
+> 상태: 🟢 활성 · ✅ 구현됨(2026-08-13) · 구현 계획:
+> [2026-08-13-brand-initial-batch-serving.md](../plans/archive/2026-08-13-brand-initial-batch-serving.md) ·
+> FE 회신본은 별도 전달(레포 미보관)
+
+> **실행으로 정정된 곳이 세 군데다.** 스펙은 설계 기록이라 원칙상 불변이지만, 아래 셋은 구현이
+> 사실로 반증한 부분이라 본문을 고치고 정정 사실을 함께 남긴다(고치지 않으면 다음 세션이
+> 틀린 전제를 다시 읽는다). 각 지점에 `[정정]`으로 표시했다.
+> 1. **§2 — `touchSwept` 시점**: "완주 시 현행 그대로"가 아니라 **전 페이지 보강 완료 후**다.
+>    등록 백필이 비동기 파이프라인으로 바뀌면서 열거 완주와 수집 완주가 갈렸다.
+> 2. **§3 — 스윕 페이지 콜백의 보강 실패를 격리**한다(`sweepCore`가 콜백 예외를 잡지 않는다).
+> 3. **§5 — 게이트는 표시 표면에만**. "세 표면이 조회 하나를 경유한다"는 서술이 사실이 아니었다
+>    (실제 소비자 4곳, 성격 3종).
 
 ## 배경 — 왜 바꾸나
 
@@ -60,8 +71,29 @@ ALTER TABLE brand_tagged_post ADD COLUMN enriched_at timestamptz;
   설정 `monitoring.brand.serving-window-days`와 그 판정 로직은 **제거**한다
 - 태그 게시물이 0건이거나 첫 페이지가 편입 컷에 전부 걸려 정산할 게 없으면, 현행 규칙을
   계승해 **루프 종료 시점에 `markServing`**을 부른다 — 그래야 태그가 없는 브랜드가 `collecting`에
-  영구히 갇히지 않는다
-- 완주 시 `touchSwept`(3컬럼)는 현행 그대로
+  영구히 갇히지 않는다(`sweepCore`가 페이지를 한 장도 처리하지 않았으면 종료 시점에 빈 리스트로
+  콜백을 1회 부른다)
+
+**[정정 — 등록 백필은 비동기 파이프라인이고 `touchSwept`은 전 페이지 정산 후다]**
+착수 전 사전 스캔에서 계획 내부 모순이 드러나 사용자 결정으로 고쳤다(커밋 `6dd1bb3d`).
+등록 백필(`BrandRegistrationService.runBackfillSafely`)은 페이지를 **enrich executor에 제출만
+하고 열거는 계속 앞서 달린다** — 열거 ~5초/페이지와 보강 ~5.4초/페이지가 겹쳐 완주가 대략
+절반이 된다. 그래서 두 시점이 갈린다.
+
+| 표식 | 시점 | 의미 |
+|---|---|---|
+| `markServing` | **첫 제출분의 보강이 끝난 지점**(페이지 순서 아닌 완료 순서 — `last_swept_at IS NULL` 가드로 1회만 먹는다) | FE ready |
+| `touchSwept` | **모든 페이지 보강이 끝난 뒤** | 응답 `collectionCompletedAt` = FE 폴링 종료 조건 |
+
+`touchSwept`을 열거 완주 지점(구 서술의 "완주 시 현행 그대로")에 두면 **아직 정산되지 않은
+페이지가 남은 채로 완주 시각이 찍혀** FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다.
+이 개정으로 **열거 완주 ≠ 수집 완주**가 됐다.
+
+`allOf(...).join()`이 백필 core 스레드를 보강 완주까지 점유하는 것은 **의도**다(리뷰에서 나온
+`thenRun` 체이닝 대안은 기각). enrich executor가 전역 공유 풀(2스레드)이라 체이닝해도 대기가
+core 스레드에서 큐로 옮겨갈 뿐 빨라지지 않고, 이 블로킹이 **유일한 브랜드 간 백프레셔**다 —
+없애면 등록 폭주 시 N개 브랜드가 앞다퉈 열거하며 무제한 큐에 페이지를 쏟아붓는다(08-12 OOM과
+같은 형태). 두 층은 반드시 **별도 풀**이어야 한다(합치면 영구 자기 교착).
 
 콜백 시그니처는 "그 시점까지 누적된 목록"이 아니라 **그 페이지분**을 넘긴다 — 현행은 누적
 리스트를 넘기고 수신자가 코드 집합으로 잔여를 걸러내는데, 페이지 배치에서는 그 필터가
@@ -74,6 +106,19 @@ ALTER TABLE brand_tagged_post ADD COLUMN enriched_at timestamptz;
 
 부작용: 스윕이 도는 동안 신규 게시물의 노출이 그 페이지 보강만큼 늦어진다(초 단위). 현행은
 적재 즉시 노출이었다 — FE 회신본 §3-5로 통지했다.
+
+**[정정 — 스윕 콜백의 보강 실패는 격리한다]**
+계획은 `sweepCore(brand, page -> enrich(brand, page))`를 지시했으나, `sweepCore`가 **콜백 예외를
+잡지 않아** 1페이지 보강 실패가 열거 루프를 통째로 끊고 2~N페이지가 **적재조차 안 되는** 문제를
+리뷰에서 확인했다. 사용자 결정으로 `enrichSafely`로 감싼다(등록 경로 `runEnrichSafely`와 같은
+관용구 — 등록/스윕을 비대칭으로 둘 근거가 없었다).
+
+격리하는 근거는 교환비다. 미정산으로 남은 게시물은 **손실이 아니라 지연**이다(다음 스윕이 게시자
+stale·댓글 워터마크로 같은 게시물을 다시 정산한다). 반면 **적재를 건너뛴 페이지에는 그 백스톱이
+없다** — 한 번도 적재된 적 없는 게시물은 `trackedPosts`에 없어 다음 스윕의 깊이 컷
+(`min(14일, 가장 오래된 due)`)을 끌어내리지 못하므로, 소급 태그된 14일 이상 게시물이 **영구
+미수집**으로 굳을 수 있다. 게다가 보강 실패로 `touchSwept`이 스킵되면 그 컷 계산 자체가 다음
+스윕으로 넘어간다.
 
 ### 4. 재시도·정산 규칙
 
@@ -91,12 +136,42 @@ ALTER TABLE brand_tagged_post ADD COLUMN enriched_at timestamptz;
 정산이 재수집 포기를 뜻하지 않는다는 점이 규칙의 안전판이다 — 워터마크·stale 판정이 그대로
 남아 다음 스윕이 빈 곳을 채운다.
 
-### 5. was 목록 게이트
+### 5. was 목록 게이트 — **표시 표면에만**
 
-`BrandReadRepository`의 태그 게시물 조회에 `AND enriched_at IS NOT NULL`을 더한다.
 직접 등록 게시물(`brand_direct_post` 경로)은 별도 파이프라인이라 게이트 대상이 아니다.
-
 `meta.counts`·`meta.total`은 게이트 적용 후 기준이다 — 수집 중에는 폴링마다 증가한다.
+
+**[정정 — 원 서술이 사실이 아니었다]**
+이 절은 원래 "`BrandReadRepository`의 태그 게시물 조회 한 곳에 `AND enriched_at IS NOT NULL`을
+더하면 목록·상세·`meta.counts` 세 표면이 전부 덮인다"고 썼는데, **실제 소비자는 4곳이고 성격이
+셋으로 갈린다**. 조회 한 곳에 게이트를 박았다면 표시가 아닌 세 판정까지 조용히 오답이 됐다.
+
+| 소비자 | 성격 | 게이트 |
+|---|---|---|
+| `BrandPostAssembler.assembleForBrand` | **표시**(목록·상세·counts) | **적용** |
+| `V2CampaignContentService` | 존재 판정 | 해제 |
+| `V1BrandDirectPostService` | 중복 판정 | 해제 |
+| `PerformanceContentAssembler` | 지표 집계 | 해제 |
+
+해제 근거는 각각 다르다.
+
+- **존재 판정** — 캠페인 아이템 추가는 맵에 없으면 `FAILED NOT_FOUND "게시물을 찾을 수 없습니다"`로
+  떨어진다. 게이트를 걸면 **수집 중인 실존 게시물을 "없다"고 답한다**
+- **중복 판정** — 미정산분이 걸러지면 같은 게시물이 direct로 등록되고, `mergeByShortcode`의
+  direct 우선 규칙 때문에 **이후 정산돼도 카드가 영구히 direct 셰이프로 고정**된다
+- **지표 집계** — 성과 대시보드는 미정산분도 스냅샷 유래 지표를 이미 갖고 있다. 제외하면 과소 계상
+
+그래서 리포지토리를 두 경로로 나누고, 조립기가 의도를 **명시**하게 했다.
+
+```java
+findTaggedPostsInWindow(brandId, cutoff)          // 전량 — 존재·중복·집계
+findEnrichedTaggedPostsInWindow(brandId, cutoff)  // enriched_at IS NOT NULL — 표시
+assembleTagged(account, withComments, TaggedScope scope)  // scope는 필수 인자
+```
+
+`TaggedScope{ENRICHED_ONLY, ALL}`에 **기본값을 두지 않는 것이 핵심**이다 — 정산 게이트는 표시
+계약이지 존재 계약이 아니라서, 기본값으로 조용히 상속되면 새 호출부가 판정 표면에 표시용
+게이트를 물려받는다.
 
 ### 6. 완주 신호 — 기존 필드 재사용
 
@@ -122,7 +197,7 @@ status는 `collecting|ready|error` 3값 계약으로 고정된다.
 | 설정 | 현행 | 변경 |
 |---|---|---|
 | `monitoring.brand.enrich-concurrency` | 6 | **10** |
-| `brandEnrichExecutor` | 단일 스레드(하드코딩) | **2**(설정화) |
+| `brandEnrichExecutor` | 단일 스레드(하드코딩) | **2**(설정화 — `monitoring.brand.enrich-executor-concurrency`) |
 | `monitoring.brand.backfill-concurrency` | 2 | 유지 |
 
 enrich executor 증설이 이번 전환의 필수 조건이다 — core는 2병렬인데 보강이 단일 스레드라,
@@ -140,7 +215,7 @@ enrich executor 증설이 이번 전환의 필수 조건이다 — core는 2병�
 
 ## 마이그레이션·배포 순서
 
-`V20260813113000__brand_tagged_post_enriched_at.sql` (monitoring, UTC 채번):
+`V20260813115041__brand_tagged_post_enriched_at.sql` (monitoring, UTC 채번 — 실제 채번값):
 
 ```sql
 ALTER TABLE brand_tagged_post ADD COLUMN enriched_at timestamptz;
@@ -152,6 +227,14 @@ UPDATE brand_tagged_post SET enriched_at = COALESCE(last_crawled_at, first_seen_
 
 배포 순서는 **monitoring(컬럼 + 백필) → was(게이트)**. 역순이면 was가 없는 컬럼을 조회해
 브랜드 목록이 전면 500이다. ADD COLUMN nullable이라 expand-contract 위반은 없다.
+**롤백도 같은 의존이라 monitoring만 되돌리면 안 된다** — was가 남아 있으면 없는 컬럼을 조회한다.
+
+운영 반영 직후 `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**인지
+확인한다. 0이 아니면 백필이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.
+
+**배포 시점에 이미 기간 확장 중이던 계정**은 `expandWindow`의 리셋을 못 받고 옛 완주 시각을
+그대로 들고 있어, FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). 일회성이고
+데이터 유실은 없다 — 보정 UPDATE 여부는 배포 시 판단한다.
 
 ## 실패 시나리오
 
