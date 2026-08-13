@@ -173,6 +173,18 @@ test 스택도 재기동 유지. was는 세션 JDBC 영속 + 캐시 외부 redis
     공존/충돌 케이스 4건을 추가해 회귀를 막았다(31케이스). 대상은 v3와 동일하게 독립 버전
     공간 4개(crawler, analytics `db/migration/analysis`, was `db/migration/app`, monitoring)
     전부 — 각 디렉토리 안에서 정수 연번과 타임스탬프가 영구 공존한다.
+  - **v4(08-13) — 신규 채번 질서 검사(미래 채번·역전 차단).** v3.2의 타임스탬프 채번은 "모두가
+    UTC를 쓴다"는 전제 위에서만 안전했다 — 08-12에 monitoring 마이그레이션이 KST(+9h)로
+    채번되며 미래 번호를 선점했고, 이후 UTC로 *정상* 채번된 파일들이 숫자상 더 작아 Flyway
+    out-of-order 거부 → 운영 monitoring 크래시루프가 같은 날 두 번 재발했다(#442·#444·#453
+    배포 실패, 핫픽스 #445·#455). 그래서 base 목록에 없는 **신규 파일**에 두 검사를 추가했다:
+    ①번호가 자기 디렉토리 base 최대 이하면 차단(역전 — 심긴 미래 번호에 뒤따르는 정상 채번이
+    운영에서 터지는 걸 PR에서 미리 잡는다) ②14자리 타임스탬프가 현재 UTC+1h를 넘으면
+    차단(미래 채번 — KST 채번은 +9h라 반드시 걸린다. +1h는 분 올림 관행 허용 오차). 이미 DB에
+    박힌 미래 번호 위로 올라가는 의도적 채번(핫픽스 #455 케이스)은 파일에
+    `-- allow-future-version: <사유>` 주석으로 통과시킨다(allow-destructive와 같은 관용구).
+    base 대조가 가능한 PR·merge_group 경로(`migration-guard` 잡)에서만 돈다 — push 경로
+    (`--versions-tree`)는 base 없이 "신규"를 구분할 수 없고, 머지 전 경로가 전수 커버한다.
 - **rename은 rename하지 않는다 — 컬럼 이행 레시피**(타입 변경도 동일):
   1. expand 릴리스: `ADD COLUMN` + **백필 UPDATE를 같은 마이그레이션에**(Flyway가 실행 보장) +
      코드를 새 컬럼으로 전환. 백필 통째 누락은 신 컬럼 전 행 NULL = 기능이 비어 보이므로
@@ -408,8 +420,10 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   `deploy-<svc>-1` 이름을 쓰면 안 되는 이유: 롤링 재기동(`rollout.sh`)이 `--scale <svc>=2`로
   **다음 빈 인덱스**에 신 컨테이너를 띄우고 구 1번을 지워, 첫 롤링 이후 `-1`은 영영 없다
   (07-30 롤링 도입 직후 was가 상시 다운으로 오탐 → `hypenow-container-down`이 16시간 넘게
-  1시간 주기로 재알림. 실제 컨테이너는 `deploy-was-8` healthy였다). 알람 본문에 차원이 안 실리니
-  **어느 컨테이너인지는 메트릭으로 확인**할 것:
+  1시간 주기로 재알림. 실제 컨테이너는 `deploy-was-8` healthy였다). 어느 컨테이너인지는
+  **알람 본문의 `📍 containerName=<서비스>` 줄로 확인**(08-13~ 릴레이가
+  `alarmMetaData[].dimensions`를 표기 — 디스크 `host=`·버킷 `bucketName=`도 동일).
+  본문이 잘렸거나 과거 이력을 볼 때는 메트릭 직접 조회:
   ```bash
   oci monitoring metric-data summarize-metrics-data --compartment-id <tenancy> \
     --namespace hypenow_custom --query-text 'container_up[1m].min()' \

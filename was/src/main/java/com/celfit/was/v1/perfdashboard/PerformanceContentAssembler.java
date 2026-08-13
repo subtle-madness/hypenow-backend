@@ -345,7 +345,10 @@ public class PerformanceContentAssembler {
 						userId, link.brandId());
 				continue;
 			}
-			for (BrandPostResponse post : brandPostAssembler.get().assembleTagged(account.get(), withComments)) {
+			// 지표 집계라 정산 전 게시물도 담는다(ALL) — 미정산분도 스냅샷(지표)은 이미 있다(열거에서
+			// 오고 monitoring processPage가 저장한다). 없는 건 댓글·게시자뿐이라 빼면 지표가 과소 계상된다.
+			for (BrandPostResponse post : brandPostAssembler.get()
+					.assembleTagged(account.get(), withComments, BrandPostAssembler.TaggedScope.ALL)) {
 				byShortcode.putIfAbsent(post.shortcode(), post);
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());

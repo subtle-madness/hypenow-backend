@@ -212,5 +212,73 @@ expect_tree 0 "디렉토리가 아예 없음(신규 루트)은 통과(크래시 
 expect_tree 0 "트리 단독 검사에서도 정수 V49 + 타임스탬프 V20260730153000 공존 통과" "$TREE"
 rm -f "$TREE/$DIR_A/V49__existing.sql" "$TREE/$DIR_A/V20260730153000__new_timestamp.sql"
 
+# --ordering 모드 — 신규 마이그레이션 채번 질서 검사(v4): ①미래 시각 채번 차단(KST 채번 사고
+# 08-12 1차 재현) ②base 최대 번호 이하의 신규 채번 차단(Flyway out-of-order 거부 — 08-12 2차
+# 재현). "신규"는 base 목록에 없는 (디렉토리,파일명)만 — 기존 파일은 검사 대상이 아니다.
+# now는 MIGRATION_GUARD_NOW(UTC 14자리)로 주입해 결정적으로 검사한다.
+expect_ordering() { # expect_ordering <기대코드> <설명> <base-목록> <head-목록> <콘텐츠루트> <now>
+  local want="$1" desc="$2" base="$3" head="$4" root="$5" now="$6" got=0
+  total=$((total+1))
+  MIGRATION_GUARD_NOW="$now" "$SCRIPT" --ordering "$base" "$head" "$root" >/dev/null 2>&1 || got=$?
+  if [ "$got" -eq "$want" ]; then
+    pass=$((pass+1)); echo "ok   $desc"
+  else
+    echo "FAIL $desc — 기대 $want, 실제 $got"
+  fi
+}
+
+DIR_M=monitoring/src/main/resources/db/migration
+ORD_ROOT="$TMP/ord-root"
+mkdir -p "$ORD_ROOT/$DIR_M" "$ORD_ROOT/$DIR_A"
+
+printf '%s/V20260812111153__ok.sql\n' "$DIR_M" > "$TMP/o-base-normal.txt"
+printf '%s/V20260812111153__ok.sql\n%s/V20260813020000__new.sql\n' "$DIR_M" "$DIR_M" > "$TMP/o-head-normal.txt"
+expect_ordering 0 "정상 채번(base 최대보다 크고 과거 시각)은 통과" \
+  "$TMP/o-base-normal.txt" "$TMP/o-head-normal.txt" "$ORD_ROOT" 20260813023000
+
+printf '%s/V20260812170000__hotfix.sql\n' "$DIR_M" > "$TMP/o-base-mono.txt"
+printf '%s/V20260812170000__hotfix.sql\n%s/V20260812120216__late.sql\n' "$DIR_M" "$DIR_M" > "$TMP/o-head-mono.txt"
+expect_ordering 1 "base 최대(170000)보다 작은 신규 채번(120216)은 차단 (08-12 2차 사고 재현)" \
+  "$TMP/o-base-mono.txt" "$TMP/o-head-mono.txt" "$ORD_ROOT" 20260812130000
+
+printf '%s/V49__existing.sql\n' "$DIR_M" > "$TMP/o-base-future.txt"
+printf '%s/V49__existing.sql\n%s/V20260812153000__kst.sql\n' "$DIR_M" "$DIR_M" > "$TMP/o-head-future.txt"
+expect_ordering 1 "미래 시각 채번(KST +9h)은 차단 (08-12 1차 사고 재현)" \
+  "$TMP/o-base-future.txt" "$TMP/o-head-future.txt" "$ORD_ROOT" 20260812063000
+
+cat > "$ORD_ROOT/$DIR_M/V20260812180000__escape.sql" <<'SQL'
+-- allow-future-version: 미래 번호(170000)가 이미 운영 DB에 적용됨 — 그 위로 올라가는 핫픽스
+ALTER TABLE brand ADD COLUMN note text;
+SQL
+printf '%s/V20260812170000__hotfix.sql\n' "$DIR_M" > "$TMP/o-base-escape.txt"
+printf '%s/V20260812170000__hotfix.sql\n%s/V20260812180000__escape.sql\n' "$DIR_M" "$DIR_M" > "$TMP/o-head-escape.txt"
+expect_ordering 0 "미래 채번도 allow-future-version 승인 주석이 있으면 통과 (#455 핫픽스 케이스)" \
+  "$TMP/o-base-escape.txt" "$TMP/o-head-escape.txt" "$ORD_ROOT" 20260812130000
+
+printf '%s/V20260812180000__mine.sql\n' "$DIR_M" > "$TMP/o-base-unchanged.txt"
+printf '%s/V20260812180000__mine.sql\n' "$DIR_M" > "$TMP/o-head-unchanged.txt"
+expect_ordering 0 "기존 파일은 번호가 미래여도 검사 대상 아님(신규만 검사)" \
+  "$TMP/o-base-unchanged.txt" "$TMP/o-head-unchanged.txt" "$ORD_ROOT" 20260812130000
+
+printf '%s/V49__existing.sql\n' "$DIR_M" > "$TMP/o-base-round.txt"
+printf '%s/V49__existing.sql\n%s/V20260813030000__rounded.sql\n' "$DIR_M" "$DIR_M" > "$TMP/o-head-round.txt"
+expect_ordering 0 "1시간 이내 앞선 채번(분 올림 관행)은 허용 오차로 통과" \
+  "$TMP/o-base-round.txt" "$TMP/o-head-round.txt" "$ORD_ROOT" 20260813023000
+
+printf '%s/V20260812111153__ts.sql\n' "$DIR_M" > "$TMP/o-base-int.txt"
+printf '%s/V20260812111153__ts.sql\n%s/V50__integer.sql\n' "$DIR_M" "$DIR_M" > "$TMP/o-head-int.txt"
+expect_ordering 1 "타임스탬프 체제 이후의 신규 정수 채번(V50)은 단조 증가 위반으로 차단" \
+  "$TMP/o-base-int.txt" "$TMP/o-head-int.txt" "$ORD_ROOT" 20260813023000
+
+: > "$TMP/o-base-empty.txt"
+printf '%s/V20260813020000__first.sql\n' "$DIR_M" > "$TMP/o-head-firstfile.txt"
+expect_ordering 0 "빈 base(신규 디렉토리)의 과거 시각 채번은 통과" \
+  "$TMP/o-base-empty.txt" "$TMP/o-head-firstfile.txt" "$ORD_ROOT" 20260813023000
+
+printf '%s/V20260813020000__m.sql\n%s/V43__a.sql\n' "$DIR_M" "$DIR_A" > "$TMP/o-base-crossdir.txt"
+printf '%s/V20260813020000__m.sql\n%s/V43__a.sql\n%s/V44__b.sql\n' "$DIR_M" "$DIR_A" "$DIR_A" > "$TMP/o-head-crossdir.txt"
+expect_ordering 0 "버전 공간은 디렉토리별 독립 — 옆 디렉토리의 타임스탬프 최대와 비교하지 않고 자기 디렉토리 최대(V43)만 기준(V44 통과)" \
+  "$TMP/o-base-crossdir.txt" "$TMP/o-head-crossdir.txt" "$ORD_ROOT" 20260813023000
+
 echo "셀프테스트: $pass/$total"
 [ "$pass" -eq "$total" ]

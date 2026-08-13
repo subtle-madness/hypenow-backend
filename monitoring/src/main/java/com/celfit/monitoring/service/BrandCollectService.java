@@ -4,6 +4,7 @@ import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -42,8 +43,9 @@ import org.springframework.stereotype.Service;
  * 건드리지 않는다(볼륨 격리 + 겹침 게시물 덮어쓰기 차단). 트랜잭션은 여기 없다(CollectService와
  * 같은 이유), 쓰기는 {@link BrandSnapshotWriter}가 짧게 묶는다.
  *
- * <p>2026-08-12 스트리밍 개정: 적재는 페이지 단위로 즉시 일어나고, 등록 백필은 서빙 창(기본
- * 30일) 커버 시점에 콜백으로 FE ready를 당긴다(스펙 docs/superpowers/specs/2026-08-12-…-design.md).
+ * <p>2026-08-12 스트리밍 개정 + 2026-08-13 완결 배치 서빙 개정: 적재는 페이지 단위로 즉시
+ * 일어나고, 콜백도 페이지마다 그 페이지분만 넘긴다 — 수신자(등록 백필)가 페이지 단위로 보강·정산해
+ * 완결된 것부터 목록에 올린다. 구 서빙 창(30일) 커버 기준은 폐기됐다.
  */
 @Service
 public class BrandCollectService {
@@ -59,7 +61,6 @@ public class BrandCollectService {
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
 	private final Executor enrichWorker;
-	private final int servingWindowDays;
 	private final int maxPostsPerSweep;
 	private final int commentPages;
 	private final int authorStaleDays;
@@ -68,7 +69,6 @@ public class BrandCollectService {
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
-			@Value("${monitoring.brand.serving-window-days:30}") int servingWindowDays,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
@@ -80,23 +80,51 @@ public class BrandCollectService {
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
 		this.enrichWorker = enrichWorker;
-		this.servingWindowDays = servingWindowDays;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
 	}
 
 	/**
-	 * 브랜드 1개분 전량 수집(매일 스윕 경로) — {@link #sweepCore}(열거+적재) 후
-	 * {@link #enrich}(게시자·댓글)까지 한 호출로 잇는다. 등록 백필은 이 메서드를 쓰지 않고
-	 * 두 단계를 각자 executor에서 따로 돈다(단계식 ready — 2026-08-07 결정): ready 판정
-	 * (last_swept_on)은 core만 요구하고, 보강 콜 수십 개(전체 콜의 ~85%)를 기다리지 않는다.
+	 * 브랜드 1개분 전량 수집(매일 스윕 경로) — 2026-08-13 개정: 열거 전량 후 일괄 보강이 아니라
+	 * <b>페이지마다 보강·정산</b>한다({@link #sweepCore}의 페이지 콜백에 {@link #enrich}를 건다).
+	 * 완결 서빙 규칙(정산된 게시물만 노출) 아래서 일괄 보강을 유지하면, 스윕이 도는 동안 새로
+	 * 적재된 게시물이 목록에서 사라지고(적재는 끝났는데 정산이 스윕 말미까지 안 온다) 중간 실패
+	 * 시 그 스윕에서 만난 게시물이 통째로 미정산 = 다음 스윕까지 미노출로 남는다.
+	 *
+	 * <p>등록 백필은 이 메서드를 쓰지 않고 두 단계를 각자 executor에서 따로 돈다 — 배치 단위는
+	 * 같지만(페이지) ready 판정 시점이 다르다(첫 페이지 배치의 보강 완료).
 	 */
 	public void sweep(BrandRow brand) {
-		enrich(brand, sweepCore(brand));
+		sweepCore(brand, page -> enrichSafely(brand, page));
 	}
 
-	/** 단일 인자 경로(일일 스윕·기존 호출부) — 서빙 콜백 없이 동작은 동일하다. */
+	/**
+	 * 페이지 콜백의 보강 실패 격리 — 등록 경로(BrandRegistrationService.runEnrichSafely)와 같은
+	 * 규칙이다. {@link #sweepCore}는 콜백 예외를 잡지 않으므로 격리하지 않으면 한 페이지의 보강
+	 * 실패가 열거 루프를 통째로 끊어 <b>뒤 페이지가 그날 적재조차 되지 않는다</b>.
+	 *
+	 * <p>격리하는 이유는 교환비다: 열거분은 페이지당 Hiker 콜을 이미 지불하고 얻은 결과물이라
+	 * 보강 쪽 DB 실패로 그날 열거를 버리는 건 손해가 크다. 여기까지 예외가 올라오는 경우는
+	 * {@link #enrich}가 정산 마킹을 finally로 보장한 뒤라 <b>markEnriched 자신의 실패</b>로 좁혀지고,
+	 * 그때 미정산으로 남은 게시물은 14~180일 구간에 한해 지연이다 — 다음 스윕이 티어 주기에 따라
+	 * 같은 게시물을 다시 만나 보강·정산한다(게시자는 stale 판정, 댓글은 워터마크가 재시도 대상으로
+	 * 남긴다). 180일 초과 구간은 재열거 자체가 없어 지연이 아니라 영구 미노출이다 — 그래서 정산
+	 * 마킹을 이 격리 앞(enrich의 finally)에 두는 것이 본선이고, 여기는 최후 방어선일 뿐이다.
+	 * 적재를 건너뛴 페이지는 아예 백스톱이 없다: 한 번도 적재된 적 없는 게시물은 trackedPosts에
+	 * 없어 다음 스윕의 깊이 컷(min(14일, 가장 오래된 due))을 끌어내리지 못하므로, 소급 태그된
+	 * 14일 이상 게시물이 영구 미수집으로 굳을 수 있다.
+	 */
+	private void enrichSafely(BrandRow brand, List<PostInfo> page) {
+		try {
+			enrich(brand, page);
+		} catch (RuntimeException e) {
+			log.warn("브랜드 스윕 보강 실패(격리, 열거 계속) — {} 다음 스윕이 백스톱: {}",
+					brand.username(), e.toString());
+		}
+	}
+
+	/** 단일 인자 경로 — 페이지 콜백 없이 동작은 동일하다(열거·적재만 하고 누적 결과를 돌려준다). */
 	public List<PostInfo> sweepCore(BrandRow brand) {
 		return sweepCore(brand, posts -> {});
 	}
@@ -104,12 +132,14 @@ public class BrandCollectService {
 	/**
 	 * core 단계(2026-08-12 스트리밍 개정) — 열거하면서 페이지(~21건)마다 즉시 적재한다. 구 일괄
 	 * processCore 대비 의미 불변이고 실행 시점만 당겨진다: 중간 실패 시 앞 페이지 적재분이
-	 * 보존되고(다음 스윕이 잔여를 백스톱), 등록 백필은 서빙 창 커버 시점에 FE ready를 당길 수 있다.
+	 * 보존되고(다음 스윕이 잔여를 백스톱), 등록 백필은 페이지 단위로 보강·정산을 이어붙일 수 있다.
 	 *
-	 * <p>onServingCovered는 <b>정확히 1회</b> 호출된다(예외로 중단되는 경우 제외) — 페이지 전체가
-	 * 서빙 창(servingWindowDays)보다 오래된 순간(소급 태그 혼입 대비, 컷 판정과 같은 보수 규칙),
-	 * 그전에 열거가 끝나면(자연 종료·상한·미전진 포함) 종료 시점. 인자는 그때까지 적재된 편입분
-	 * 누적 리스트다.
+	 * <p>onPageCollected는 <b>페이지마다 1회</b> 호출되고(예외로 중단되면 그 페이지부터는 없다),
+	 * 인자는 <b>그 페이지의 편입분만</b>이다 — 누적 리스트가 아니다(2026-08-13 완결 배치 서빙
+	 * 스펙 §2). 편입 컷에 다 걸려 빈 리스트가 갈 수도 있다. 페이지가 한 장도 처리되지 않았으면
+	 * (태그 0건·즉시 커서 소진) 종료 시점에 빈 리스트로 <b>1회</b> 부른다 — 수신자가 ready를 열
+	 * 기회를 못 얻으면 그 브랜드가 collecting에 영구히 갇힌다. 구 계약("서빙 창 30일 커버 시
+	 * 정확히 1회 + 누적 리스트")은 폐기됐다.
 	 *
 	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
 	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
@@ -123,23 +153,22 @@ public class BrandCollectService {
 	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는 그래도
 	 * 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3).
 	 */
-	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
+	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
 		// 등록 백필(두-인자 직접 호출)도 같은 진입점이라 함께 계상된다.
-		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onServingCovered));
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected));
 	}
 
-	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onServingCovered) {
+	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		refreshBrandProfileSafely(brand);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
-		Instant servingCutoff = now.minus(Duration.ofDays(servingWindowDays));
 		LocalDate today = LocalDate.now(KST);
 		Set<String> known = taggedPosts.knownCodes(brand.id());
 		Set<String> seen = new LinkedHashSet<>();      // 이번 실행 처리분 — 페이지 간 중복(커서 드리프트) 스킵
 		List<PostInfo> collected = new ArrayList<>();  // 편입분 누적 — 콜백·반환(보강 입력)
 		int freshTotal = 0;
-		boolean servingMarked = false;
+		boolean anyPageDelivered = false;   // 콜백을 한 번이라도 불렀는지 — 종료 시 폴백 판정용
 		String cursor = null;
 		boolean coveredCutoff = false;
 		while (true) {
@@ -154,15 +183,14 @@ public class BrandCollectService {
 					.filter(p -> seen.add(p.shortCode()))   // 첫 관측 유지(구 putIfAbsent 의미)
 					.toList();
 			int knownBefore = known.size();
-			collected.addAll(processPage(brand, newItems, known, today, now));
+			List<PostInfo> pageCollected = processPage(brand, newItems, known, today, now);
+			collected.addAll(pageCollected);
 			freshTotal += known.size() - knownBefore;
-			// 서빙 경계 — 페이지 전체가 서빙 창 이전이면 최근 30일은 다 훑었다(taken_at 미상은
-			// 컷 판정과 같은 이유로 "이전" 판정에 넣지 않는다). 열거는 계속된다.
-			if (!servingMarked && page.posts().stream().allMatch(p -> p.takenAt() != null
-					&& Instant.ofEpochSecond(p.takenAt()).isBefore(servingCutoff))) {
-				servingMarked = true;
-				onServingCovered.accept(List.copyOf(collected));
-			}
+			// 페이지 배치 방출(2026-08-13 완결 배치 서빙 스펙 §2) — 이 페이지분을 즉시 콜백에 넘긴다.
+			// 수신자가 보강·정산을 끝내면 그때부터 was 목록에 뜬다. 누적이 아니라 페이지분만 넘기므로
+			// 수신자 쪽 중복 필터(구 earlyCodes)가 통째로 불필요해진다. 열거는 여기서 끊기지 않는다.
+			onPageCollected.accept(pageCollected);
+			anyPageDelivered = true;
 			// taken_at 미상 아이템은 "컷 이전" 판정에 넣지 않는다(보수적으로 열거 계속).
 			boolean wholePageBeforeCutoff = page.posts().stream()
 					.allMatch(p -> p.takenAt() != null
@@ -189,9 +217,12 @@ public class BrandCollectService {
 			}
 			cursor = page.nextPageId();
 		}
-		if (!servingMarked) {
-			// 서빙 창까지 못 갔거나(게시물이 얕음) 상한·미전진 중단 — 있는 만큼이라도 서빙을 연다.
-			onServingCovered.accept(List.copyOf(collected));
+		if (!anyPageDelivered) {
+			// 처리할 페이지가 한 장도 없었던 경우(태그 0건·즉시 커서 소진) — 수신자(등록 백필)가
+			// ready를 열 수 있게 빈 배치로 1회 부른다. 안 부르면 태그가 없는 브랜드가 collecting에
+			// 영구히 갇힌다. 판정은 "콜백을 불렀는가" 하나뿐이다 — 편입 컷에 다 걸려 빈 페이지분을
+			// 넘긴 경우도 이미 "부른" 것이라 여기서 또 부르지 않는다.
+			onPageCollected.accept(List.of());
 		}
 		log.info("브랜드 태그 수집 — {} 열거 {}건, 편입 컷 안 {}건, 신규 {}건",
 				brand.username(), seen.size(), collected.size(), freshTotal);
@@ -235,18 +266,42 @@ public class BrandCollectService {
 
 	/**
 	 * enrichment 단계 — core가 넘긴 편입 컷 안 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
-	 * 게이트. 실패해도 core가 적재한 목록·지표는 이미 서빙 가능하고, 미수집분은 다음 스윕이
-	 * 백스톱한다(게시자는 stale 판정, 댓글은 comments_collected_count 워터마크가 남아 있어
-	 * 자동 재시도된다).
+	 * 게이트. 미수집분은 다음 스윕이 백스톱한다(게시자는 stale 판정, 댓글은
+	 * comments_collected_count 워터마크가 남아 있어 자동 재시도된다).
+	 *
+	 * <p><b>정산 마킹은 보강 성패와 무관하게 무조건 찍는다</b>(finally) — 마킹을 놓치면 그 행은
+	 * enriched_at NULL로 남아 was 목록에 안 뜨는데, 180일 초과 게시물에는 재열거 백스톱이 없어
+	 * 그 미노출이 영구가 된다. 근거는 finally 블록 주석 참조.
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
 		if (posts.isEmpty()) {
 			return;
 		}
-		// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
-		ensureAuthors(brand.id(), posts);
-		collectCommentsGated(brand.id(), posts);
-		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료({}건 대상)", brand.username(), posts.size());
+		try {
+			// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
+			ensureAuthors(brand.id(), posts);
+			collectCommentsGated(brand.id(), posts);
+		} finally {
+			// 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) — 게시자·댓글이 실패해 비어 있어도 찍는다.
+			// 이 지점의 의미는 "더 기다릴 이유가 없다"이지 "다 찼다"가 아니다. 비운 채로 두면 실측
+			// 404 2%·타임아웃 1%의 게시물이 목록에서 영구히 사라진다. 미수집분은 게시자 stale 판정·
+			// 댓글 워터마크가 다음 스윕에서 채운다.
+			//
+			// finally인 이유(되돌리지 말 것): 위 두 단계는 건별 Hiker 콜을 각자 격리하지만
+			// 각 메서드 첫머리의 배치 DB 조회(freshIgUserIds·commentsCollectedCounts)는 무방비다 —
+			// 커넥션 blip 하나로 예외가 여기서 새면 그 페이지 행이 enriched_at NULL로 남는다.
+			// "실패했는데 왜 정산하지?"의 답은 백스톱의 유무다: 180일 이하 게시물은 티어 주기가
+			// 다시 만나 자가 치유하지만, 180일 초과 게시물에는 백스톱이 없다. 보강 실패는
+			// touchSwept을 막지 않고, 다음 스윕의 열거 깊이는 trackedPosts(now−180d)에서 나오며
+			// BrandCrawlPolicy.due는 180일 초과에 무조건 false다 — 다시 열거되지도 보강되지도
+			// 않는다. 그리고 was 게이트가 enriched_at IS NOT NULL이라 영원히 미노출이 된다
+			// (12개월 창 브랜드면 6~12개월 구간이 알람도 backfill_error도 없이 통째로 사라진다).
+			// 마킹은 "보강 시도가 끝났다"는 뜻이므로 배치 DB 조회 실패도 여기에 해당하고, 재시도
+			// 근거(게시자 stale·댓글 워터마크)는 그대로 남아 다음 기회에 채운다.
+			taggedPosts.markEnriched(brand.id(),
+					posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+		}
+		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료·정산({}건 대상)", brand.username(), posts.size());
 	}
 
 	/**
@@ -364,8 +419,9 @@ public class BrandCollectService {
 		}
 		Set<String> fresh = authors.freshIgUserIds(ids,
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
-		// 게시자별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가
-		// 보강 시간의 본체였다). 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
+		// 게시자별 독립 콜이라 공유 워커 풀(monitoring.brand.enrich-concurrency — 08-13부터 10)로
+		// 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가 보강 시간의 본체였다).
+		// 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
 		// 태스크 본문은 runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커
 		// 스레드로 넘어가지 않기 때문(BrandCallContext 주석 참조).
 		List<CompletableFuture<Void>> tasks = new ArrayList<>();
@@ -373,15 +429,36 @@ public class BrandCollectService {
 			if (fresh.contains(id)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
-				try {
-					authors.upsert(hiker.fetchAuthorProfile(id));
-				} catch (RuntimeException e) {
-					log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", id, e.toString());
-				}
-			}), enrichWorker));
+			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId,
+					() -> fetchAuthorWithRetry(id)), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
+	}
+
+	/**
+	 * 게시자 프로필 1건 — 404는 1회 재시도한다(08-13 실측: 실존 계정에서 2.0% 발생, 재시도
+	 * 복구율 2/2). 전송 계층은 404를 "결정적 부재"로 보고 즉시 전파하는데, /v2/user/by/id에
+	 * 한해 그 전제가 틀렸다. 다른 엔드포인트(by/username·게시물 단건)의 404는 여전히 결정적이라
+	 * 전송 계층을 건드리지 않고 여기서만 되쏜다.
+	 *
+	 * <p>타임아웃·5xx는 재시도하지 않는다 — 전송 계층이 이미 maxRetries를 태운 뒤이고, 실측상
+	 * 느린 콜은 3회 연속 16~21초로 전부 실패해 워커만 45초 묶었다.
+	 */
+	private void fetchAuthorWithRetry(String igUserId) {
+		try {
+			authors.upsert(hiker.fetchAuthorProfile(igUserId));
+			return;
+		} catch (SubjectNotFoundException e) {
+			log.info("게시자 404 — user_id {} 1회 재시도", igUserId);
+		} catch (RuntimeException e) {
+			log.warn("게시자 프로필 수집 실패(격리) — user_id {}: {}", igUserId, e.toString());
+			return;
+		}
+		try {
+			authors.upsert(hiker.fetchAuthorProfile(igUserId));
+		} catch (RuntimeException e) {
+			log.warn("게시자 프로필 재시도 실패(격리) — user_id {}: {}", igUserId, e.toString());
+		}
 	}
 
 	/**
@@ -397,7 +474,7 @@ public class BrandCollectService {
 		}
 		Map<String, Long> stored = taggedPosts.commentsCollectedCounts(brandId,
 				candidates.stream().map(PostInfo::shortCode).toList());
-		// 게시물별 독립 콜이라 워커 풀(동시 6)로 병렬화한다(ensureAuthors와 같은 근거). 게이트
+		// 게시물별 독립 콜이라 같은 공유 워커 풀로 병렬화한다(ensureAuthors와 같은 근거). 게이트
 		// 판정은 제출 전에, 워터마크 갱신은 태스크 안에서 — 의미 불변, 실행만 동시.
 		List<CompletableFuture<Void>> tasks = new ArrayList<>();
 		for (PostInfo p : candidates) {
