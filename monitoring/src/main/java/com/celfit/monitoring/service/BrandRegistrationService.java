@@ -191,6 +191,10 @@ public class BrandRegistrationService {
 	 *
 	 * <p>페이지 태스크는 enrich executor에서 돌고 여기(backfill executor 스레드)에서 join으로
 	 * 기다린다 — 두 층이 <b>별도 풀</b>이어야 한다(합치면 영구 자기 교착 — BrandBackfillConfig 참조).
+	 * core 스레드가 join에 묶이는 건 <b>의도한 설계다</b>: thenRun 체이닝으로 풀어도 enrich가 전역
+	 * 단일 스레드라 대기가 core 스레드에서 큐로 옮겨갈 뿐 빨라지지 않고, 이 블로킹이 유일한
+	 * <b>브랜드 간 백프레셔</b>라 없애면 등록 폭주 시 N개 브랜드가 앞다퉈 열거하며 무제한 단일 스레드
+	 * 큐에 페이지 목록을 쏟아붓는다(08-12 OOM과 같은 형태).
 	 * 콜백이 페이지분만 주므로 페이지끼리 겹치지 않아 중복 필터(구 earlyCodes)가 필요 없다.
 	 *
 	 * <p>core 실패는 격리 — 이미 정산된 페이지는 서빙을 유지하고, 다음 스윕이 잔여를 백스톱한다.

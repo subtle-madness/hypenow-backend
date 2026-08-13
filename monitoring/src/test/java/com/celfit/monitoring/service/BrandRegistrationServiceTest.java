@@ -267,14 +267,27 @@ class BrandRegistrationServiceTest {
 
 	/** enrich executor에 제출된 태스크 — 개수만 본다(실행은 아래 풀이 실제로 한다). */
 	private final List<Runnable> enrichSubmissions = new CopyOnWriteArrayList<>();
+	/** 태스크 밖으로 샌 예외 — 격리 규칙(보강·해시태그 실패는 태스크 안에서 삼킨다) 위반 감시. */
+	private final List<Throwable> escaped = new CopyOnWriteArrayList<>();
 	private final ExecutorService enrichPool = Executors.newSingleThreadExecutor();
 	private final Executor enrich = task -> {
 		enrichSubmissions.add(task);
-		enrichPool.execute(task);
+		enrichPool.execute(() -> {
+			try {
+				task.run();
+			} catch (Throwable t) {
+				// 풀 워커에서 새는 예외는 기본 uncaught 핸들러로 조용히 사라지고 워커만 교체된다
+				// (= 테스트가 그냥 통과한다) — 여기서 붙잡아 tearDown에서 단언한다. execute로 제출되는
+				// 해시태그 꼬리는 CompletableFuture에 안 감겨서 이 그물 말고는 검증 수단이 없다.
+				escaped.add(t);
+			}
+		});
 	};
 
 	@AfterEach
 	void tearDown() {
+		awaitEnrich();   // 남은 태스크까지 돌린 뒤에 봐야 그물이 전 태스크를 덮는다
+		assertThat(escaped).isEmpty();
 		enrichPool.shutdownNow();
 	}
 
@@ -398,7 +411,8 @@ class BrandRegistrationServiceTest {
 
 	@Test
 	void 보강_실패는_ready를_되돌리지도_backfill_error를_남기지도_않는다() {
-		collect.enrichFailing.add("brandx");   // 보강 실패는 태스크 안에서 삼켜진다 — 밖으로 새면 실패
+		// 보강 실패는 태스크 안에서 삼켜진다 — 밖으로 새면 tearDown의 escaped 단언이 잡는다.
+		collect.enrichFailing.add("brandx");
 
 		var result = service().register("brandx");
 		awaitEnrich();
@@ -534,7 +548,9 @@ class BrandRegistrationServiceTest {
 
 	@Test
 	void 해시태그_백필_실패는_등록_보강을_깨지_않는다() {
-		hashtagCollect.failing = true;   // 해시태그 백필 실패는 태스크 안에서 삼켜진다 — 밖으로 새면 실패
+		// 해시태그 꼬리는 execute 제출이라 CompletableFuture 그물이 없다 — 실패가 태스크 안에서
+		// 삼켜지는지는 tearDown의 escaped 단언만이 검증한다(밖으로 새면 워커만 조용히 교체된다).
+		hashtagCollect.failing = true;
 
 		var result = service().register("brandx");
 		awaitEnrich();
