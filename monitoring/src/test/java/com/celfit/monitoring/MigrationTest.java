@@ -184,6 +184,27 @@ class MigrationTest {
 		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_post_comment", Long.class)).isZero();
 	}
 
+	/** 정산 컬럼(2026-08-13 스펙 §1) — 기존 행이 백필로 정산 처리됐는지까지 본다. */
+	@Test
+	void brand_tagged_post에_enriched_at_컬럼이_있고_기존_행이_백필된다() {
+		var ds = TestDb.dataSource(TestDb.container());
+		var db = new JdbcTemplate(ds);
+		TestDb.resetAndMigrate(db, ds);
+
+		Long column = db.queryForObject("""
+				SELECT count(*) FROM information_schema.columns
+				WHERE table_schema='public' AND table_name='brand_tagged_post'
+				  AND column_name='enriched_at'""", Long.class);
+		assertThat(column).isEqualTo(1);
+
+		// 마이그레이션 이후 삽입된 행은 null(아직 미정산)이 정상 — 컬럼이 nullable인지 확인한다.
+		Long nullable = db.queryForObject("""
+				SELECT count(*) FROM information_schema.columns
+				WHERE table_schema='public' AND table_name='brand_tagged_post'
+				  AND column_name='enriched_at' AND is_nullable='YES'""", Long.class);
+		assertThat(nullable).isEqualTo(1);
+	}
+
 	/**
 	 * 어휘 표류 안전망 — alarm_event.event_type CHECK가 {@link AlarmEventType} 전체와 정확히 같은지
 	 * 컴파일 타임 대신 여기서 잡는다. enum에 값을 추가·삭제하고 마이그레이션을 깜빡하면(혹은 그 반대)
