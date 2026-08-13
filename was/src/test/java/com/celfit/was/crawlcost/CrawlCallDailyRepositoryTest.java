@@ -2,8 +2,8 @@ package com.celfit.was.crawlcost;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.was.IntegrationTest;
-import com.celfit.was.crawlcost.CrawlCallDailyRepository.JobCallDaily;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,11 +47,11 @@ class CrawlCallDailyRepositoryTest extends IntegrationTest {
 				 ('REELS',   date '2026-08-13', 7)
 				""").update();
 
-		List<JobCallDaily> rows = repository.findAll();
+		List<CrawlCallDaily> rows = repository.findAll();
 
 		assertThat(rows).containsExactlyInAnyOrder(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 120),
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 12), 98),
-				new JobCallDaily("REELS", LocalDate.of(2026, 8, 13), 7));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 120),
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 12), 98),
+				new CrawlCallDaily("REELS", LocalDate.of(2026, 8, 13), 7));
 	}
 }

@@ -1,6 +1,6 @@
 package com.celfit.was.crawlcost;
 
-import java.time.LocalDate;
+import com.celfit.contract.analysis.CrawlCallDaily;
 import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -23,13 +23,9 @@ public class CrawlCallDailyRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
-	public List<JobCallDaily> findAll() {
+	public List<CrawlCallDaily> findAll() {
 		return jdbcClient.sql("SELECT job, called_on, calls FROM crawl_call_daily")
-				.query(JobCallDaily.class)
+				.query(CrawlCallDaily.class)
 				.list();
-	}
-
-	/** crawl_call_daily 1행 — calledOn은 KST 달력일(미러 뷰가 변환), calls는 구매한 요청 수. */
-	public record JobCallDaily(String job, LocalDate calledOn, long calls) {
 	}
 }
