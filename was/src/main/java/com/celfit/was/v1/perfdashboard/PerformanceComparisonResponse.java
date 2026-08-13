@@ -15,7 +15,8 @@ import java.util.List;
 public record PerformanceComparisonResponse(List<AccountComparison> accounts) {
 
 	/**
-	 * 브랜드 계정 1개의 비교 축 — collectionStartedAt은 brand_account.registered_at(KST ISO).
+	 * 브랜드 계정 1개의 비교 축 — collectionStartedAt은 brand_account.collection_started_at
+	 * (KST ISO, 기간 확장 시 갱신 — 브랜드 계정 API의 동명 필드와 같은 앵커. registered_at 아님).
 	 * accountType은 구독 속성이다(own/competitor, 08-12) — 이 응답은 둘 다 포함한다(나란히 비교가
 	 * 이 화면의 존재 이유라 accountType 필터가 없다, 스펙 §6).
 	 */
@@ -25,12 +26,13 @@ public record PerformanceComparisonResponse(List<AccountComparison> accounts) {
 	}
 
 	/**
-	 * 구간 1개 집계. covered는 계정 단위 판정이다 — <b>최초 백필을 완주</b>(backfillCompletedAt
-	 * 존재)했으면 5구간 전부 true: 백필이 등록 윈도우 365일 전체를 열거하므로 등록 시점과
-	 * 무관하다(스펙 §covered — 등록일 기준이 아니다). 완주 기준인 이유(08-12): last_swept_at은
-	 * 서빙 창(30일)만 커버해도 미리 찍혀 365일 완주를 보장하지 않는다. false는 "아직 365일 전량
-	 * 수집 전"이라는 뜻이고 집계값은 그대로 내린다(direct 콘텐츠는 레거시 파이프라인이라 스윕
-	 * 전에도 존재할 수 있다).
+	 * 구간 1개 집계. covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12):
+	 * 백필 완주(backfillCompletedAt 존재·확장 진행 중 아님) <b>그리고</b> 버킷 범위가
+	 * collection_months 수집 창 안(먼 쪽 경계가 창 하한 이상 — 부분 겹침은 보수적으로 false)일
+	 * 때만 true다. 예: 3개월 브랜드는 완주해도 1w·1w_1m·1m_3m만 true, 3m_6m·6m_12m은 false
+	 * ("수집 범위 밖"이지 "게시물 없음"이 아니다). false는 "이 구간은 아직/원래 수집되지 않았다"는
+	 * 뜻이고 집계값은 그대로 내린다(direct 콘텐츠는 레거시 파이프라인이라 창·스윕과 무관하게
+	 * 존재할 수 있다).
 	 */
 	public record Bucket(
 			@Schema(allowableValues = {"1w", "1w_1m", "1m_3m", "3m_6m", "6m_12m"}) String key,

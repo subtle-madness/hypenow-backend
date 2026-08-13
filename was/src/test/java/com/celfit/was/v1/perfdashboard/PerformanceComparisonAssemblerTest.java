@@ -15,6 +15,7 @@ import com.celfit.was.v1.perfdashboard.PerformanceComparisonAssembler.BucketRang
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -72,15 +73,25 @@ class PerformanceComparisonAssemblerTest {
 
 	// ---------- 계정 집계 ----------
 
-	private static final List<BucketRange> RANGES =
-			PerformanceComparisonAssembler.bucketRanges(LocalDate.parse("2026-08-10"));
+	private static final LocalDate TODAY = LocalDate.parse("2026-08-10");
+	private static final List<BucketRange> RANGES = PerformanceComparisonAssembler.bucketRanges(TODAY);
 
-	/** 백필 완주 계정(backfillCompletedAt 존재) — covered 전 구간 true의 기준 픽스처. */
-	private static BrandAccountRow readyAccount() {
+	/**
+	 * 백필 완주+스윕 안착 계정 — 창(months)만 바꿔 covered 매트릭스에 재사용한다.
+	 * collection_started_at은 registered_at(05-14)과 다른 값(06-01)으로 고정 — 확장 시 갱신되는
+	 * 앵커라 두 값이 갈라질 수 있음을 픽스처가 드러낸다.
+	 */
+	private static BrandAccountRow completedAccount(int months) {
 		return new BrandAccountRow(2L, "cclime.beauty", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
 				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
-				4143L, 15L, 82L, "", "끌리메 뷰티", null, true, null, "ACTIVE", null);
+				4143L, 15L, 82L, "", "끌리메 뷰티", null, true, null, "ACTIVE", null,
+				months, OffsetDateTime.parse("2026-06-01T00:00:00Z"));
+	}
+
+	/** 12개월(전 구간 covered) 기준 픽스처. */
+	private static BrandAccountRow readyAccount() {
+		return completedAccount(12);
 	}
 
 	private static TrackingItemResponse.SnapshotResponse snapshot(Long views, Long likes,
@@ -111,11 +122,12 @@ class PerformanceComparisonAssemblerTest {
 				content("C", "2", "2025-08-10", 100L, snapshot(10L, 1L, false, 1L)),   // 6m_12m 하한
 				content("D", "2", "2025-08-09", 100L, snapshot(10L, 1L, false, 1L)),   // 12개월 밖 — 제외
 				content("E", "2", null, 100L)),                                        // 업로드일 미상 — 제외
-				RANGES);
+				RANGES, TODAY);
 
 		assertThat(result.brandAccountId()).isEqualTo("2");
 		assertThat(result.username()).isEqualTo("cclime.beauty");
-		assertThat(result.collectionStartedAt()).isEqualTo("2026-05-14T09:12:00+09:00");
+		// 브랜드 계정 API와 같은 앵커(collection_started_at, 확장 시 갱신) — registered_at(05-14) 아님.
+		assertThat(result.collectionStartedAt()).isEqualTo("2026-06-01T09:00:00+09:00");
 		assertThat(result.buckets()).extracting("key", "contentCount").containsExactly(
 				tuple("1w", 1),
 				tuple("1w_1m", 1),
@@ -131,7 +143,7 @@ class PerformanceComparisonAssemblerTest {
 				content("A", "2", "2026-08-09", 400000L, snapshot(87400L, 2800L, false, 320L)),
 				content("B", "2", "2026-08-08", 12000L, snapshot(20L, null, true, 8L)),
 				content("C", "2", "2026-08-07", null, snapshot(null, 24L, false, null))),
-				RANGES);
+				RANGES, TODAY);
 
 		var oneWeek = result.buckets().get(0);
 		assertThat(oneWeek.contentCount()).isEqualTo(3);
@@ -157,7 +169,7 @@ class PerformanceComparisonAssemblerTest {
 	void 스냅샷이_없는_콘텐츠는_지표_결측으로_센다() {
 		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
 				content("A", "2", "2026-08-09", 100L)),   // 스냅샷 0개 — 관측 전무
-				RANGES);
+				RANGES, TODAY);
 
 		var oneWeek = result.buckets().get(0);
 		assertThat(oneWeek.contentCount()).isEqualTo(1);
@@ -176,7 +188,7 @@ class PerformanceComparisonAssemblerTest {
 						new TrackingItemResponse.SnapshotResponse("2026-08-08", 50L, 5L, false, 2L,
 								null, null, false, null),
 						snapshot(70L, 7L, false, 3L))),
-				RANGES);
+				RANGES, TODAY);
 
 		assertThat(result.buckets().get(0).views()).isEqualTo(70L);
 		assertThat(result.buckets().get(0).likes()).isEqualTo(7L);
@@ -186,20 +198,75 @@ class PerformanceComparisonAssemblerTest {
 	void 백필_완주_전_계정은_전_구간_covered_false다() {
 		BrandAccountRow collecting = new BrandAccountRow(3L, "laperi_kr", null, null,
 				OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
-				null, null, null, "", "", null, null, null, "ACTIVE", null);
+				null, null, null, "", "", null, null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
 		// 08-12 스트리밍 백필: 서빙 창(30일)만 커버해도 last_swept_at이 먼저 찍힌다 — 이 상태는
 		// 365일 전량이 아니라서 covered는 false여야 한다(판정 기준을 backfill_completed_at으로 옮긴 이유).
 		BrandAccountRow earlyServing = new BrandAccountRow(4L, "hypenow_kr", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-08-09T00:00:00Z"),
-				null, null, null, null, null, "", "", null, null, null, "ACTIVE", null);
+				null, null, null, null, null, "", "", null, null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
 
-		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(), RANGES);
-		var notReady = PerformanceComparisonAssembler.compare(collecting, BrandAccountType.OWN, List.of(), RANGES);
-		var early = PerformanceComparisonAssembler.compare(earlyServing, BrandAccountType.OWN, List.of(), RANGES);
+		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+		var notReady = PerformanceComparisonAssembler.compare(collecting, BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+		var early = PerformanceComparisonAssembler.compare(earlyServing, BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
 
 		assertThat(ready.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
 		assertThat(notReady.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
 		assertThat(early.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
+	}
+
+	@Test
+	void 버킷_covered는_collectionMonths_창_안에서만_true다() {
+		// 완주해도 창 밖 버킷은 수집한 적 자체가 없다 — covered=true·contentCount=0이면 FE가
+		// "그 기간 게시물 없음"으로 오독한다(#454 리뷰 ②). 버킷 먼 쪽 경계(from)가 창 안이어야 true.
+		Map<Integer, List<Boolean>> expected = Map.of(
+				1, List.of(true, true, false, false, false),
+				3, List.of(true, true, true, false, false),
+				6, List.of(true, true, true, true, false),
+				12, List.of(true, true, true, true, true));
+
+		expected.forEach((months, coveredByBucket) -> {
+			var result = PerformanceComparisonAssembler.compare(completedAccount(months),
+					BrandAccountType.OWN, List.of(), RANGES, TODAY);
+			assertThat(result.buckets())
+					.extracting(PerformanceComparisonResponse.Bucket::covered)
+					.as("months=%d", months)
+					.containsExactlyElementsOf(coveredByBucket);
+		});
+	}
+
+	@Test
+	void 월말_클램프에서도_창_하한과_버킷_하한이_정렬된다() {
+		// 3-31 기준 minusMonths 클램프 — 창 하한과 1m_3m 하한이 같은 연산(minusMonths(3))이라
+		// 정확히 일치해 경계 버킷이 창 밖으로 밀려나지 않는다.
+		LocalDate today = LocalDate.parse("2026-03-31");
+		var result = PerformanceComparisonAssembler.compare(completedAccount(3), BrandAccountType.OWN,
+				List.of(), PerformanceComparisonAssembler.bucketRanges(today), today);
+
+		assertThat(result.buckets()).extracting("key", "covered").containsExactly(
+				tuple("1w", true), tuple("1w_1m", true), tuple("1m_3m", true),
+				tuple("3m_6m", false), tuple("6m_12m", false));
+	}
+
+	@Test
+	void 확장_중_계정은_전_구간_covered_false다() {
+		// 기간 확장(스펙 §3)은 collection_months를 먼저 올리고(backfill_completed_at 보존,
+		// last_swept_on NULL) 백필을 재제출한다 — 창 기준 판정만 하면 새 구간이 데이터 없이
+		// covered=true가 되어 같은 오보가 재발한다. 완주 이력+last_swept_on 빔 = 확장 중 → 보수적 false.
+		BrandAccountRow expanding = new BrandAccountRow(5L, "brandy_kr", null,
+				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
+				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
+				null, null, null, "", "", null, null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-10T00:00:00Z"));
+
+		var result = PerformanceComparisonAssembler.compare(expanding, BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+
+		assertThat(result.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
 	}
 
 	// ---------- 배선(계정 로딩·그룹핑) ----------
@@ -212,7 +279,8 @@ class PerformanceComparisonAssemblerTest {
 		given(brandReadRepository.findAccount(3L)).willReturn(Optional.of(
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
-						null, null, null, "", "", null, null, null, "ACTIVE", null)));
+						null, null, null, "", "", null, null, null, "ACTIVE", null,
+						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
 
 		var response = assembler().assemble(7L, List.of(
 				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
@@ -240,7 +308,8 @@ class PerformanceComparisonAssemblerTest {
 		given(brandReadRepository.findAccount(3L)).willReturn(Optional.of(
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
-						null, null, null, "", "", null, null, null, "ACTIVE", null)));
+						null, null, null, "", "", null, null, null, "ACTIVE", null,
+						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
 
 		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
 

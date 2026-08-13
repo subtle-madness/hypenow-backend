@@ -40,6 +40,9 @@ class BrandRegistrationServiceTest {
 		final List<Long> touched = new ArrayList<>();
 		final List<Long> served = new ArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
+		final List<Long> expanded = new ArrayList<>();
+		/** 동시 확장 경합 주입 — 더 큰 창이 이미 반영돼 조건부 UPDATE가 0행을 맞는 상황(rowcount false). */
+		boolean loseExpandRace = false;
 		long nextId = 1;
 
 		InMemoryBrands() {
@@ -47,11 +50,25 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public long insertOrReactivate(String username, ProfileInfo profile) {
+		public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths) {
 			BrandRow existing = rows.get(username);
 			long id = existing != null ? existing.id() : nextId++;
-			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null));
+			int months = existing != null ? Math.max(existing.collectionMonths(), collectionMonths) : collectionMonths;
+			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null, months));
 			return id;
+		}
+
+		/** 실 SQL 의미와 등가 — GREATEST + "collection_months < months일 때만" 갱신하고 그 여부를 돌려준다. */
+		@Override
+		public boolean expandWindow(long brandId, int months) {
+			expanded.add(brandId);
+			BrandRow row = rows.values().stream().filter(r -> r.id() == brandId).findFirst().orElseThrow();
+			if (loseExpandRace || months <= row.collectionMonths()) {
+				return false;
+			}
+			rows.replaceAll((u, r) -> r.id() == brandId
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months) : r);
+			return true;
 		}
 
 		@Override
@@ -71,13 +88,17 @@ class BrandRegistrationServiceTest {
 				return false;
 			}
 			rows.put(username, new BrandRow(row.id(), row.username(), row.igUserId(),
-					BrandStatus.CLOSED, row.lastSweptOn()));
+					BrandStatus.CLOSED, row.lastSweptOn(), row.collectionMonths()));
 			return true;
 		}
 
 		@Override
 		public void touchSwept(long brandId, LocalDate on) {
 			touched.add(brandId);
+			// 실 UPDATE와 동일하게 행에도 반영한다 — 확장 백필이 "재조회한 행"(lastSweptOn 비워짐)으로
+			// 도는지를 스텁 행이 stale인 채로는 구분할 수 없다.
+			rows.replaceAll((u, r) -> r.id() == brandId
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), on, r.collectionMonths()) : r);
 		}
 
 		@Override
@@ -88,6 +109,8 @@ class BrandRegistrationServiceTest {
 
 	private static final class StubCollect extends BrandCollectService {
 		final List<String> coreSwept = new ArrayList<>();
+		/** sweepCore가 실제로 받은 행 — 확장 백필이 stale 행이 아닌 재조회 행으로 도는지 판별용. */
+		final List<BrandRow> coreRows = new ArrayList<>();
 		final List<String> enriched = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
 		final Set<String> enrichFailing = new HashSet<>();
@@ -98,7 +121,7 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new ArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, 365, 30, 2000, 3, 30);
+			super(null, null, null, null, null, null, null, null, 30, 2000, 3, 30);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
@@ -112,6 +135,7 @@ class BrandRegistrationServiceTest {
 				throw new IllegalStateException("백필 실패 주입");
 			}
 			coreSwept.add(brand.username());
+			coreRows.add(brand);
 			onServingCovered.accept(earlyBatch);   // 실코드의 "정확히 1회" 계약 재현
 			if (failAfterServing) {
 				throw new IllegalStateException("서빙 후 실패 주입");
@@ -311,6 +335,72 @@ class BrandRegistrationServiceTest {
 		assertThat(replayed.brandId()).isEqualTo(first.brandId());
 		assertThat(hikerCalls).hasSize(callsAfterFirst);   // Hiker 콜 0 — 멱등 replay
 		assertThat(callCounts.byBrand).containsExactly(Map.entry(first.brandId(), 1L));   // 콜 집계도 그대로
+	}
+
+	@Test
+	void 더_큰_창_재등록은_확장이다_프로필_콜_없이_백필만_재예약() {
+		var first = service().register("brandx", null, 3);
+		// 첫 백필이 완주해 lastSweptOn이 찍힌 상태 = 확장 시점의 stale 행. 이걸 그대로 백필에 넘기면
+		// 옛 창(3개월)으로 돌아 확장이 조용히 무효가 된다 — 아래 coreRows 단언이 그 회귀를 잡는다.
+		assertThat(brands.rows.get("brandx").lastSweptOn()).isNotNull();
+		hikerCalls.clear();
+		collect.coreSwept.clear();
+		collect.coreRows.clear();
+
+		var result = service().register("brandx", null, 12);
+
+		assertThat(result.replayed()).isTrue();
+		assertThat(hikerCalls).isEmpty();                            // replay — Hiker 콜 0 유지
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");     // 동기 executor — 백필 즉시 재실행
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
+		// 확장 백필이 받은 건 expandWindow 후 재조회한 행이어야 한다 — 창 12 + lastSweptOn 비워짐.
+		assertThat(collect.coreRows).singleElement().satisfies(row -> {
+			assertThat(row.collectionMonths()).isEqualTo(12);
+			assertThat(row.lastSweptOn()).isNull();
+		});
+	}
+
+	@Test
+	void 확장이_경합에서_지면_백필을_재제출하지_않는다() {
+		// 사전 게이트(in-memory)를 통과했지만 조건부 UPDATE가 0행 — 더 큰 창을 넣은 동시 요청이
+		// 이미 이겼다는 뜻이고, 그쪽이 백필도 이미 제출했다. 여기서 또 제출하면 중복 열거다.
+		var service = service();
+		service.register("brandx", null, 3);
+		collect.coreSwept.clear();
+		brands.loseExpandRace = true;
+
+		var result = service.register("brandx", null, 12);
+
+		assertThat(result.replayed()).isTrue();
+		assertThat(brands.expanded).containsExactly(result.brandId());   // 시도는 했다(사전 게이트 통과)
+		assertThat(collect.coreSwept).isEmpty();                         // 재제출 없음
+	}
+
+	@Test
+	void 같거나_작은_창_재등록은_순수_replay다() {
+		service().register("brandx", null, 6);
+		collect.coreSwept.clear();
+
+		service().register("brandx", null, 6);
+		service().register("brandx", null, 3);
+
+		assertThat(brands.expanded).isEmpty();
+		assertThat(collect.coreSwept).isEmpty();
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(6);   // 축소 무시
+	}
+
+	@Test
+	void 값_공간_밖_collectionMonths는_거절한다() {
+		assertThatThrownBy(() -> service().register("brandx", null, 2))
+				.isInstanceOf(ValidationException.class);
+		assertThat(hikerCalls).isEmpty();   // 검증은 Hiker 콜 도달 전
+	}
+
+	@Test
+	void collectionMonths_생략은_12다() {
+		service().register("brandx");
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
 	}
 
 	@Test

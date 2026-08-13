@@ -28,7 +28,8 @@ class BrandPostAssemblerTest {
 		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
 		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
-				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null);
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
 		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
 						org.mockito.ArgumentMatchers.any()))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator", null,
@@ -49,7 +50,7 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void 윈도우_컷은_KST_자정_기준_365일이다() {
-		// 크롤링 정책 v1(08-09) — 수집 편입 컷(monitoring registration-window-days 365)과 같은 깊이.
+		// 크롤링 정책 v1(08-09) — 수집 편입 컷(브랜드별 수집 창 collection_months 최대치)과 같은 깊이.
 		var expected = LocalDate.now(KstTimestamps.KST).minusDays(365)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 
