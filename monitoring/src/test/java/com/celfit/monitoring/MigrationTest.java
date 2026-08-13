@@ -184,9 +184,15 @@ class MigrationTest {
 		assertThat(wasReader.queryForObject("SELECT count(*) FROM brand_post_comment", Long.class)).isZero();
 	}
 
-	/** 정산 컬럼(2026-08-13 스펙 §1) — 기존 행이 백필로 정산 처리됐는지까지 본다. */
+	/**
+	 * 정산 컬럼(2026-08-13 스펙 §1) — expand 단계라 nullable이어야 한다. 마이그레이션 이후 삽입된
+	 * 행은 null(아직 미정산)이 정상이므로 NOT NULL이면 스윕 삽입 자체가 깨진다.
+	 * <p>기존 행 백필(COALESCE)은 이 테스트가 검증하지 <b>않는다</b> — 이 하니스는 빈 스키마에서
+	 * 전체 마이그레이션을 돌리므로 "마이그레이션 이전에 존재하던 행"을 만들 수 없다. 백필은 운영
+	 * 반영 후 {@code SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL}이 0인지로 확인한다.
+	 */
 	@Test
-	void brand_tagged_post에_enriched_at_컬럼이_있고_기존_행이_백필된다() {
+	void brand_tagged_post에_nullable_enriched_at_컬럼이_있다() {
 		var ds = TestDb.dataSource(TestDb.container());
 		var db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
