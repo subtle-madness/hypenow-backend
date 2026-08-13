@@ -898,6 +898,12 @@ docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
 # ② grafana_reader에 통계 조회 권한 (pg_stat_statements 뷰는 pg_monitor 필요 — §14-2 롤 전제)
 docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
   -c "GRANT pg_monitor TO grafana_reader"
+
+# ③ grafana_reader에 public 스키마 접근 권한 — 확장 뷰가 public에 생성되는데 grafana_reader는
+#    app 스키마 전용 롤이라 USAGE가 없다. 이게 없으면 pg_monitor가 있어도 뷰가 아예 안 보여
+#    ("relation does not exist") 대시보드 패널이 계속 죽는다(08-13 개통 때 실측).
+docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT USAGE ON SCHEMA public TO grafana_reader"
 ```
 
 ### 15-2. 개통 확인
