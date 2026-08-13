@@ -53,4 +53,12 @@ assert out.endswith("📍 containerName=was, containerName=redis, host=hypenow-a
 out = relay.format_alarm({}, "원문 그대로")
 assert out == "🔔 **OCI 알림**\n원문 그대로", out
 
+# JSON 최상위가 dict가 아니어도(배열 등) 예외 없이 원문 폴백으로 발송된다 — 유실 방지
+out = relay.format_alarm([1, 2], "원문 폴백")
+assert out == "🔔 **OCI 알림**\n원문 폴백", out
+
+# type이 문자열이 아니어도 예외 없이 처리된다(해소 접미사만 안 붙음)
+out = relay.format_alarm({"title": "t", "body": "b", "type": 123, "severity": "CRITICAL"}, "")
+assert out == "🚨 **t**\nb", out
+
 print("전체 통과")

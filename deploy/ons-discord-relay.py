@@ -41,10 +41,12 @@ def alarm_dimensions(body: dict) -> list[str]:
 
 
 def format_alarm(body: dict, raw: str) -> str:
+	if not isinstance(body, dict):  # JSON 최상위가 dict가 아니면(배열 등) 원문 폴백 — 발송 유실 방지
+		body = {}
 	title = body.get("title") or "OCI 알림"
 	text = body.get("body") or raw[:1500]
 	emoji = SEVERITY_EMOJI.get(str(body.get("severity", "")).upper(), "🔔")
-	state = body.get("type", "")  # 예: OK_TO_FIRING / FIRING_TO_OK
+	state = str(body.get("type") or "")  # 예: OK_TO_FIRING / FIRING_TO_OK — 비문자열 방어
 	suffix = " (해소됨 ✅)" if "TO_OK" in state else ""
 	dims = alarm_dimensions(body)
 	dim_line = f"\n📍 {', '.join(dims)}" if dims else ""
