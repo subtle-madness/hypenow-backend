@@ -438,6 +438,50 @@ class BrandStoreTest {
 		taggedPosts.touchCrawled(id, List.of(), Instant.now());   // 예외 없이 no-op이면 통과
 	}
 
+	// ── 보강 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) ─────────────────────
+
+	/**
+	 * markEnriched는 was 목록 게이트(enriched_at IS NOT NULL)의 정본이라 실제 DB에 대고 왕복
+	 * 검증한다 — 컬럼명 오타·인자 순서 뒤바뀜·스코핑 누락은 컴파일로는 안 잡히고, 통합 시점에
+	 * "브랜드 목록이 조용히 빈다"로만 드러난다. 삽입 직후 NULL(미정산) → 지정 코드만 마킹 →
+	 * 같은 브랜드의 다른 코드·다른 브랜드의 같은 코드는 NULL 유지 → 재마킹 무해(시각만 갱신).
+	 */
+	@Test
+	void markEnriched는_지정_브랜드의_지정_코드에만_정산_시각을_찍는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12);
+		taggedPosts.insert(id, post("A", 1754000000L));
+		taggedPosts.insert(id, post("B", 1754000000L));
+		taggedPosts.insert(other, post("A", 1754000000L));       // 다른 브랜드의 같은 코드
+
+		assertThat(enrichedAt(id, "A")).isNull();                // 삽입 직후는 미정산
+		assertThat(enrichedAt(id, "B")).isNull();
+
+		taggedPosts.markEnriched(id, List.of(), Instant.now());  // 빈 목록은 no-op(빈 IN절은 SQL 오류)
+		assertThat(enrichedAt(id, "A")).isNull();
+
+		Instant at = Instant.parse("2026-08-13T03:00:00Z");
+		taggedPosts.markEnriched(id, List.of("A"), at);
+
+		assertThat(enrichedAt(id, "A")).isEqualTo(at);
+		assertThat(enrichedAt(id, "B")).isNull();                // 같은 브랜드의 다른 코드 — 코드 스코핑
+		assertThat(enrichedAt(other, "A")).isNull();             // 다른 브랜드의 같은 코드 — 브랜드 스코핑
+
+		// 재마킹은 무해하다 — 시각만 갱신되고 노출 여부(NOT NULL)는 안 바뀐다.
+		Instant again = Instant.parse("2026-08-13T09:00:00Z");
+		taggedPosts.markEnriched(id, List.of("A"), again);
+		assertThat(enrichedAt(id, "A")).isEqualTo(again);
+		assertThat(enrichedAt(id, "B")).isNull();
+	}
+
+	/** enriched_at 직조회 — 저장소에 조회 API가 없다(읽는 쪽은 was의 SQL 게이트다). */
+	private Instant enrichedAt(long brandId, String code) {
+		Timestamp ts = db.queryForObject(
+				"SELECT enriched_at FROM brand_tagged_post WHERE brand_id=? AND short_code=?",
+				Timestamp.class, brandId, code);
+		return ts == null ? null : ts.toInstant();
+	}
+
 	private Long snapshotViews(String code, LocalDate on) {
 		return db.queryForObject(
 				"SELECT views FROM brand_post_snapshot WHERE short_code=? AND captured_on=?",
