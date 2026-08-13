@@ -1,7 +1,10 @@
 package com.celfit.crawler.common.config;
 
 import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
+import com.celfit.crawler.crawling.adapter.out.datalikers.CountingDataLikersHttp;
+import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersHttp;
 import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties;
+import com.celfit.crawler.crawling.adapter.out.datalikers.JdkDataLikersHttp;
 import com.celfit.crawler.crawling.adapter.out.hiker.CountingHikerHttp;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
@@ -42,6 +45,12 @@ public class CrawlerConfig {
     @Bean
     HikerHttp hikerHttp(HikerProperties props, PaidCallCounter paidCallCounter) {
         return new CountingHikerHttp(new JdkHikerHttp(props), paidCallCounter);
+    }
+
+    /** DataLikers 전송도 같은 이유로 감싼다 — 유료 전송이 둘이라 데코레이터도 둘이다. */
+    @Bean
+    DataLikersHttp dataLikersHttp(DataLikersProperties props, PaidCallCounter paidCallCounter) {
+        return new CountingDataLikersHttp(new JdkDataLikersHttp(props), paidCallCounter);
     }
 
     @Bean
