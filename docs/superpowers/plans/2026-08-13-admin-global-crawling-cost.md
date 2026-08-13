@@ -592,42 +592,37 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.TestPropertySource;
 
 /**
  * 모니터링 콜의 전역(전 브랜드·전 유저) 날짜별 합계 검증(설계 2026-08-13 §3-4).
  * 유저별 카드(AdminCrawlingUsageService)와 달리 연결 기간으로 자르지 않는다 — 공유 브랜드가
  * 유저마다 계상되는 이중 계상을 피하려면 브랜드 축에서 직접 합산해야 하기 때문이다.
+ *
+ * <p>셋업은 같은 패키지의 BrandReadRepositoryTest·MonitoringReadRepositoryTest와 같은 관용구다:
+ * 기본 DataSource에 monitoring 픽스처 스크립트를 적용하고 리포지토리를 직접 생성한다.
+ * monitoring.enabled=true + @DynamicPropertySource로 전용 컨텍스트를 띄우지 않는 이유가 있다 —
+ * 그러면 이 클래스만의 Spring 컨텍스트와 monitoring Hikari 풀이 공유 컨테이너에 하나씩 더 붙는데,
+ * 그 예산은 이미 "too many clients already"를 낸 전력이 있다(IntegrationTest 주석).
  */
-@TestPropertySource(properties = {"monitoring.enabled=true", "monitoring.digest.cron=-",
-		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-"})
 class GlobalCallSumRepositoryTest extends IntegrationTest {
 
-	@DynamicPropertySource
-	static void monitoringDatasource(DynamicPropertyRegistry registry) {
-		registry.add("monitoring.datasource.url", POSTGRES::getJdbcUrl);
-		registry.add("monitoring.datasource.username", POSTGRES::getUsername);
-		registry.add("monitoring.datasource.password", POSTGRES::getPassword);
-	}
-
-	@Autowired
-	BrandReadRepository brandReads;
-	@Autowired
-	MonitoringReadRepository monitoringReads;
-	@Autowired
-	JdbcClient jdbcClient;
 	@Autowired
 	DataSource dataSource;
+
+	JdbcClient jdbcClient;
+	BrandReadRepository brandReads;
+	MonitoringReadRepository monitoringReads;
 
 	@BeforeEach
 	void setUp() throws Exception {
 		try (Connection conn = dataSource.getConnection()) {
 			ScriptUtils.executeSqlScript(conn, new ClassPathResource("monitoring-brand-schema.sql"));
 		}
+		jdbcClient = JdbcClient.create(dataSource);
 		jdbcClient.sql("TRUNCATE brand_call_count").update();
 		jdbcClient.sql("TRUNCATE target_call_count").update();
+		brandReads = new BrandReadRepository(jdbcClient);
+		monitoringReads = new MonitoringReadRepository(jdbcClient);
 	}
 
 	@Test
