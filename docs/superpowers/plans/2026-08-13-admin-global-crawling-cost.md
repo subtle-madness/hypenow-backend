@@ -420,8 +420,7 @@ MirrorJob의 date 왕복 경로를 CrawlCallDailyMirrorTest로 실증한다 — 
 **Interfaces:**
 - Consumes: Task 2의 analysis DB 테이블 `crawl_call_daily`
 - Produces:
-  - `CrawlCallDailyRepository.findAll(): List<CrawlCallDailyRepository.JobCallDaily>`
-  - `record JobCallDaily(String job, LocalDate calledOn, long calls)` (리포지토리 중첩 record)
+  - `CrawlCallDailyRepository.findAll(): List<CrawlCallDaily>` — 행 타입은 Task 2가 만든 공유 contract record `com.celfit.contract.analysis.CrawlCallDaily`를 그대로 쓴다(리포지토리 중첩 record를 따로 두지 않는다). 미러 테이블 1행을 1:1로 읽는 조회라 `V1StatsRepository`가 `landing_stats`를 `LandingStats`로 읽는 것과 같은 모양이고, `FlywaySchemaTest`가 DDL을 그 record에 못박아 둔 덕에 컬럼명 변경이 was 컴파일까지 전파된다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
@@ -432,8 +431,8 @@ package com.celfit.was.crawlcost;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.was.IntegrationTest;
-import com.celfit.was.crawlcost.CrawlCallDailyRepository.JobCallDaily;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -477,12 +476,12 @@ class CrawlCallDailyRepositoryTest extends IntegrationTest {
 				 ('REELS',   date '2026-08-13', 7)
 				""").update();
 
-		List<JobCallDaily> rows = repository.findAll();
+		List<CrawlCallDaily> rows = repository.findAll();
 
 		assertThat(rows).containsExactlyInAnyOrder(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 120),
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 12), 98),
-				new JobCallDaily("REELS", LocalDate.of(2026, 8, 13), 7));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 120),
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 12), 98),
+				new CrawlCallDaily("REELS", LocalDate.of(2026, 8, 13), 7));
 	}
 }
 ```
@@ -502,7 +501,7 @@ class CrawlCallDailyRepositoryTest extends IntegrationTest {
 ```java
 package com.celfit.was.crawlcost;
 
-import java.time.LocalDate;
+import com.celfit.contract.analysis.CrawlCallDaily;
 import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -512,6 +511,10 @@ import org.springframework.stereotype.Repository;
  * analysis DB의 crawl_call_daily. was는 이 테이블로만 크롤러 비용을 본다(raw DB 접근 금지).
  *
  * <p>기본 데이터소스(analysis DB)라 스키마 접두어가 없다 — contents·account_summaries와 같은 자리.
+ *
+ * <p>행 타입은 미러 계약 record를 그대로 쓴다(V1StatsRepository가 landing_stats를 LandingStats로
+ * 읽는 것과 같은 모양) — 사본을 두면 컬럼명 변경이 DDL·contract·analytics 테스트까지만 전파되고
+ * was 경계에서 멈춘다.
  *
  * <p>전량 조회인 이유: 행 수가 (잡 × 날짜)로 접혀 있어 파이프라인 5종 × 운영 일수 규모다.
  * 세 구간(전체·이번 달·오늘) 중 "전체"가 결국 전 기간을 요구하므로 기간 필터가 무의미하다.
@@ -525,14 +528,10 @@ public class CrawlCallDailyRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
-	public List<JobCallDaily> findAll() {
+	public List<CrawlCallDaily> findAll() {
 		return jdbcClient.sql("SELECT job, called_on, calls FROM crawl_call_daily")
-				.query(JobCallDaily.class)
+				.query(CrawlCallDaily.class)
 				.list();
-	}
-
-	/** crawl_call_daily 1행 — calledOn은 KST 달력일(미러 뷰가 변환), calls는 구매한 요청 수. */
-	public record JobCallDaily(String job, LocalDate calledOn, long calls) {
 	}
 }
 ```
@@ -787,8 +786,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
+import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.was.crawlcost.CrawlCallDailyRepository;
-import com.celfit.was.crawlcost.CrawlCallDailyRepository.JobCallDaily;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.DailyCallSum;
 import com.celfit.was.monitoring.MonitoringReadRepository;
@@ -858,8 +857,8 @@ class AdminCrawlingCostSummaryServiceTest {
 		given(monitoringReads.sumDailyCallCounts()).willReturn(List.of(
 				new DailyCallSum(LocalDate.of(2026, 8, 13), 5)));
 		given(crawlReads.findAll()).willReturn(List.of(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 100),
-				new JobCallDaily("REELS", LocalDate.of(2026, 7, 20), 1000)));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 100),
+				new CrawlCallDaily("REELS", LocalDate.of(2026, 7, 20), 1000)));
 
 		AdminCrawlingCostSummary summary = serviceAt("2026-08-13T01:00:00Z").summary();
 
@@ -882,7 +881,7 @@ class AdminCrawlingCostSummaryServiceTest {
 	@Test
 	void KST_자정_경계가_오늘과_어제를_가른다() {
 		given(crawlReads.findAll()).willReturn(List.of(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 7)));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 7)));
 
 		// 2026-08-13 23:59:59 KST — 아직 08-13.
 		assertThat(segment(serviceAt("2026-08-13T14:59:59Z").summary().breakdown(), "CRAWLER_COLLECT")
@@ -895,7 +894,7 @@ class AdminCrawlingCostSummaryServiceTest {
 	@Test
 	void KST_월초_경계가_이번_달과_지난달을_가른다() {
 		given(crawlReads.findAll()).willReturn(List.of(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 1), 7)));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 1), 7)));
 
 		// 2026-08-31 23:59:59 KST — 8월분이라 month에 든다.
 		assertThat(segment(serviceAt("2026-08-31T14:59:59Z").summary().breakdown(), "CRAWLER_COLLECT")
@@ -908,7 +907,7 @@ class AdminCrawlingCostSummaryServiceTest {
 	@Test
 	void 매핑에_없는_잡도_코드명으로_노출된다() {
 		given(crawlReads.findAll()).willReturn(List.of(
-				new JobCallDaily("NEWJOB", LocalDate.of(2026, 8, 13), 42)));
+				new CrawlCallDaily("NEWJOB", LocalDate.of(2026, 8, 13), 42)));
 
 		AdminCrawlingCostSummary summary = serviceAt("2026-08-13T01:00:00Z").summary();
 
@@ -921,7 +920,7 @@ class AdminCrawlingCostSummaryServiceTest {
 	@Test
 	void 모니터링_비활성이면_열화_표시하고_크롤러_몫은_그대로_낸다() {
 		given(crawlReads.findAll()).willReturn(List.of(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 3)));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 13), 3)));
 		AdminCrawlingCostSummaryService service = new AdminCrawlingCostSummaryService(
 				Optional.empty(), Optional.empty(), crawlReads, settings,
 				Clock.fixed(Instant.parse("2026-08-13T01:00:00Z"), ZoneOffset.UTC));
@@ -957,7 +956,7 @@ class AdminCrawlingCostSummaryServiceTest {
 				new DailyCallSum(LocalDate.of(2026, 8, 11), 1),
 				new DailyCallSum(LocalDate.of(2026, 8, 13), 1)));
 		given(crawlReads.findAll()).willReturn(List.of(
-				new JobCallDaily("COLLECT", LocalDate.of(2026, 8, 10), 1)));
+				new CrawlCallDaily("COLLECT", LocalDate.of(2026, 8, 10), 1)));
 
 		AdminCrawlingCostSummary summary = serviceAt("2026-08-13T01:00:00Z").summary();
 
@@ -1115,8 +1114,8 @@ public record AdminCrawlingCostSummary(Totals totals, List<Segment> breakdown,
 ```java
 package com.celfit.was.v1.admin;
 
+import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.was.crawlcost.CrawlCallDailyRepository;
-import com.celfit.was.crawlcost.CrawlCallDailyRepository.JobCallDaily;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.DailyCallSum;
 import com.celfit.was.monitoring.MonitoringReadRepository;
@@ -1259,7 +1258,7 @@ public class AdminCrawlingCostSummaryService {
 	 */
 	private LocalDate readCrawler(Map<String, PeriodSums> sums, LocalDate today, LocalDate monthStart) {
 		LocalDate latest = null;
-		for (JobCallDaily row : crawlReads.findAll()) {
+		for (CrawlCallDaily row : crawlReads.findAll()) {
 			String key = CRAWLER_PREFIX + row.job();
 			sums.computeIfAbsent(key, k -> new PeriodSums(today, monthStart)).add(row.calledOn(), row.calls());
 			latest = later(latest, row.calledOn());
