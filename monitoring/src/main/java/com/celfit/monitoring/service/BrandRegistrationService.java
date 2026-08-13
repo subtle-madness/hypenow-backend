@@ -10,10 +10,12 @@ import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,22 +24,23 @@ import org.springframework.stereotype.Service;
 /**
  * 브랜드 등록/탈퇴(태그 스펙 §1·§5) — 가입 = 추적 자동 시작, 탈퇴(CLOSED)까지 지속.
  * 동기 구간은 프로필 1콜뿐(존재·공개 검증 + pk·팔로워·biography) — 백필은 was 동기 예산(10초)
- * 밖 전용 executor에서 2단계로 돈다(단계식 ready — 2026-08-07 결정):
+ * 밖 전용 executor에서 2단계로 돈다(2026-08-13 완결 배치 서빙 개정 — 구 "단계식 ready"의
+ * 서빙 창(30일) 커버 기준은 폐기):
  *
  * <ul>
- *   <li><b>core</b>(backfill executor): 열거+적재 → 즉시 touchSwept — 등록 후 ~1~2분에 was가
- *       ready로 전환돼 게시물 목록이 뜬다(크롤링 정책 v1로 백필이 90일 → 브랜드별 수집 창
- *       (collection_months, 기본 12개월)이 되며 열거가 ~6콜 → <b>~41콜</b>로 늘어난 값 — 12개월
- *       창의 cclime 태그 847건 실측 기준. 수집 창이 짧으면 그만큼 준다. 정책 v1 이전 서술
- *       "~30초"는 폐기). backfill executor는 동시 2스레드(08-12) — 연속 등록 시 뒤 계정이 앞
- *       계정 완주를 기다리는 줄이 절반이다. 그래도 분리 효과는 그대로다(운영 실측: 구 단일
- *       체인은 8분+ — 그중 ~85%가 목록 렌더에 필수 아닌 보강 콜, 나머지가 앞 계정 대기).
- *       2026-08-12 스트리밍 개정: 적재는 페이지 단위 즉시, 서빙 창(30일) 커버 시 markServing으로
- *       ready가 완주보다 먼저 열린다 — tooq.official 실측 8분 24초 → 서빙 창 커버 ~1분 30초.</li>
- *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 연속 등록
- *       때 뒤 계정 core가 앞 계정 보강을 기다리지 않는다. 실패는 로그만(ready 유지) — 다음
- *       스윕이 게시자 stale·댓글 워터마크로 백스톱한다.</li>
+ *   <li><b>core</b>(backfill executor): 열거+적재를 페이지 단위로 하면서 페이지마다 그 페이지분을
+ *       enrich 큐에 넘긴다(크롤링 정책 v1로 백필 깊이가 브랜드별 수집 창(collection_months, 기본
+ *       12개월)이라 열거가 ~41콜 — 12개월 창의 cclime 태그 847건 실측 기준. 수집 창이 짧으면 그만큼
+ *       준다). backfill executor는 동시 2스레드(08-12) — 연속 등록 시 뒤 계정이 앞 계정 완주를
+ *       기다리는 줄이 절반이다(운영 실측: 구 단일 체인은 8분+ — 그중 ~85%가 보강 콜).</li>
+ *   <li><b>enrichment</b>(enrich executor): 게시자 프로필+댓글 수십 콜 — 별도 큐라 열거가 앞서
+ *       달리고 보강이 뒤에서 겹쳐 돈다. 실패는 로그만(ready 유지) — 다음 스윕이 게시자 stale·
+ *       댓글 워터마크로 백스톱한다.</li>
  * </ul>
+ *
+ * <p>ready(markServing)는 <b>첫 페이지분 보강이 끝나는 지점</b>에서 열리고, 완주 표식
+ * (touchSwept = 응답 collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지 보강 뒤</b>에
+ * 찍힌다 — 목록에는 정산된 페이지만 오른다(스펙 §1·§2, {@link #runBackfillSafely} 참조).
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
  * backfill은 동시 2스레드(브랜드 단위 태스크라 브랜드 안 순서는 유지), enrich는 단일 스레드.
@@ -175,34 +178,42 @@ public class BrandRegistrationService {
 	}
 
 	/**
-	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(스트리밍 — 페이지마다 즉시 적재). 서빙 창(30일)
-	 * 커버 콜백에서 markServing(FE ready만 당김 — last_swept_on은 완주 touchSwept 몫, 스펙 §1)과
-	 * 선행 보강(그때까지 적재분의 게시자·댓글)을 수행하고, 완주 후엔 잔여분만 보강한다. 선행분
-	 * 코드 집합으로 잔여를 걸러 이중 보강 콜을 막는다(게시자 fresh 캐시·댓글 워터마크가 있어
-	 * 겹쳐도 안전하지만 헛 게이트 조회를 줄인다). core 실패는 격리 — 이미 적재된 페이지는 서빙
-	 * 유지, 잔여 보강도 예약하지 않는다(다음 스윕이 전체를 백스톱).
+	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(페이지 스트리밍). 2026-08-13 개정: 페이지마다
+	 * 그 페이지분을 <b>enrich 큐에 제출</b>하고 열거는 계속 앞서 달린다(파이프라인 — 열거 ~5초/페이지와
+	 * 보강 ~5.4초/페이지가 겹쳐 완주가 절반이 된다). <b>첫 제출분의 보강이 끝나는 지점에서
+	 * markServing</b>으로 FE ready를 연다(구 "서빙 창 30일 커버" 기준 대체) — 목록에 오르는 건
+	 * 정산된 페이지뿐이라 반쯤 채워진 카드가 뜨지 않는다.
+	 *
+	 * <p>touchSwept는 <b>모든 페이지 보강이 끝난 뒤</b>에 찍는다 — 이 값이 곧 응답
+	 * collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은 채로 찍으면
+	 * FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다. 열거 완주 ≠ 수집 완주로 의미가 갈렸다.
+	 * "열거가 끝났으니 여기서 찍자"로 되돌리면 그 회귀가 그대로 재현된다.
+	 *
+	 * <p>페이지 태스크는 enrich executor에서 돌고 여기(backfill executor 스레드)에서 join으로
+	 * 기다린다 — 두 층이 <b>별도 풀</b>이어야 한다(합치면 영구 자기 교착 — BrandBackfillConfig 참조).
+	 * 콜백이 페이지분만 주므로 페이지끼리 겹치지 않아 중복 필터(구 earlyCodes)가 필요 없다.
+	 *
+	 * <p>core 실패는 격리 — 이미 정산된 페이지는 서빙을 유지하고, 다음 스윕이 잔여를 백스톱한다.
 	 */
 	private void runBackfillSafely(BrandRow row) {
 		try {
-			Set<String> earlyCodes = new HashSet<>();
-			List<PostInfo> posts = collect.sweepCore(row, early -> {
-				brands.markServing(row.id());
-				early.forEach(p -> earlyCodes.add(p.shortCode()));
-				if (!early.isEmpty()) {
-					enrich.execute(() -> runEnrichSafely(row, early));
+			AtomicBoolean served = new AtomicBoolean();
+			List<CompletableFuture<Void>> pages = new ArrayList<>();
+			collect.sweepCore(row, page -> pages.add(CompletableFuture.runAsync(() -> {
+				runEnrichSafely(row, page);
+				// 첫 완료분이 ready를 연다. 페이지 순서가 아니라 완료 순서인 것은 무해하다 —
+				// 목록 정렬은 taken_at이고 markServing은 last_swept_at IS NULL 가드로 1회만 먹는다.
+				if (served.compareAndSet(false, true)) {
+					brands.markServing(row.id());
 				}
-			});
+			}, enrich)));
+			CompletableFuture.allOf(pages.toArray(CompletableFuture[]::new)).join();
 			brands.touchSwept(row.id(), LocalDate.now(KST));
-			List<PostInfo> remainder = posts.stream()
-					.filter(p -> !earlyCodes.contains(p.shortCode())).toList();
-			enrich.execute(() -> {
-				runEnrichSafely(row, remainder);
-				runHashtagBackfillSafely(row);
-			});
+			enrich.execute(() -> runHashtagBackfillSafely(row));
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
-			// markServing 이후 실패면 ready가 이미 열려 있고(부분 데이터 서빙) 이 문구는 FE에서 무시된다.
+			// markServing 이후 실패면 ready가 이미 열려 있고(정산된 페이지 서빙) 이 문구는 FE에서 무시된다.
 			brands.markBackfillError(row.id(), "초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
 		}
 	}
@@ -220,7 +231,7 @@ public class BrandRegistrationService {
 	}
 
 	/**
-	 * 등록 시 해시태그 첫 스윕 — 보강 뒤에 돌아 ready(~30초)에 영향 0. core는 이미 성공했으므로
+	 * 등록 시 해시태그 첫 스윕 — 전 페이지 보강 뒤 꼬리라 ready(첫 배치 완결)에 영향 0. core는 이미 성공했으므로
 	 * 여기 실패는 backfill_error를 남기지 않는다(warn 로그만) — 다음 일일 스윕이 백스톱한다.
 	 */
 	private void runHashtagBackfillSafely(BrandRow row) {

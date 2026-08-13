@@ -11,6 +11,7 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -21,12 +22,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * 브랜드 등록/탈퇴 — 동기 구간은 프로필 1콜뿐이고 백필은 executor로 넘어간다(테스트는 동기
- * executor(Runnable::run)로 즉시 실행시켜 검증). 백필 실패는 등록을 실패시키지 않는다
- * (last_tracked_on null 유지 → 다음 스윕 백스톱).
+ * 브랜드 등록/탈퇴 — 동기 구간은 프로필 1콜뿐이고 백필은 executor로 넘어간다. 백필 core는 동기
+ * executor(Runnable::run)로 즉시 실행시키고, enrich는 <b>실제 단일 스레드 풀</b>로 돌린다
+ * (2026-08-13 완결 배치 서빙 개정): core가 페이지 보강 태스크의 완료를 join()으로 기다리므로
+ * 지연 큐로 두면 테스트가 영구 블록된다 — 실 배선과 같은 "core ≠ enrich 별도 풀"을 그대로 쓴다.
+ * 백필 실패는 등록을 실패시키지 않는다(last_swept_on null 유지 → 다음 스윕 백스톱).
  */
 class BrandRegistrationServiceTest {
 
@@ -37,16 +47,23 @@ class BrandRegistrationServiceTest {
 
 	private static final class InMemoryBrands extends BrandRepository {
 		final Map<String, BrandRow> rows = new HashMap<>();
-		final List<Long> touched = new ArrayList<>();
-		final List<Long> served = new ArrayList<>();
+		final List<Long> touched = new CopyOnWriteArrayList<>();
+		final List<Long> served = new CopyOnWriteArrayList<>();
+		/** markServing 호출마다 그 시점의 보강 완료 코드 스냅샷 — "첫 배치 보강 뒤 ready"의 관측 지점. */
+		final List<List<String>> enrichedAtServingMark = new CopyOnWriteArrayList<>();
+		/** touchSwept 시점의 보강 완료 코드 스냅샷 — FE 폴링 종료 조건이 미완성 목록에서 걸리는지 본다. */
+		final List<List<String>> enrichedAtTouchSwept = new CopyOnWriteArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
 		final List<Long> expanded = new ArrayList<>();
 		/** 동시 확장 경합 주입 — 더 큰 창이 이미 반영돼 조건부 UPDATE가 0행을 맞는 상황(rowcount false). */
 		boolean loseExpandRace = false;
 		long nextId = 1;
 
-		InMemoryBrands() {
+		private final Supplier<List<String>> enrichedCodes;
+
+		InMemoryBrands(Supplier<List<String>> enrichedCodes) {
 			super(null);
+			this.enrichedCodes = enrichedCodes;
 		}
 
 		@Override
@@ -95,6 +112,7 @@ class BrandRegistrationServiceTest {
 		@Override
 		public void touchSwept(long brandId, LocalDate on) {
 			touched.add(brandId);
+			enrichedAtTouchSwept.add(enrichedCodes.get());
 			// 실 UPDATE와 동일하게 행에도 반영한다 — 확장 백필이 "재조회한 행"(lastSweptOn 비워짐)으로
 			// 도는지를 스텁 행이 stale인 채로는 구분할 수 없다.
 			rows.replaceAll((u, r) -> r.id() == brandId
@@ -104,6 +122,7 @@ class BrandRegistrationServiceTest {
 		@Override
 		public void markServing(long brandId) {
 			served.add(brandId);
+			enrichedAtServingMark.add(enrichedCodes.get());
 		}
 	}
 
@@ -111,14 +130,16 @@ class BrandRegistrationServiceTest {
 		final List<String> coreSwept = new ArrayList<>();
 		/** sweepCore가 실제로 받은 행 — 확장 백필이 stale 행이 아닌 재조회 행으로 도는지 판별용. */
 		final List<BrandRow> coreRows = new ArrayList<>();
-		final List<String> enriched = new ArrayList<>();
+		final List<String> enriched = new CopyOnWriteArrayList<>();
 		final Set<String> failing = new HashSet<>();
 		final Set<String> enrichFailing = new HashSet<>();
-		List<PostInfo> earlyBatch = List.of();   // 서빙 콜백에 넘길 누적분(기본: 없음)
-		List<PostInfo> fullResult = List.of();   // 완주 반환분
-		boolean failAfterServing = false;        // 콜백 후 실패 시나리오 주입
-		final List<List<String>> enrichedPosts = new ArrayList<>();
-		private List<String> callOrder = new ArrayList<>();
+		/** 열거가 넘길 페이지들 — 콜백은 페이지마다 그 페이지분만 받는다(누적 아님). 기본은 빈 1페이지. */
+		List<List<PostInfo>> pages = List.of(List.of());
+		boolean failAfterFirstPage = false;       // 첫 페이지 콜백 후 core 실패 주입
+		/** 보강 지연 — 페이지 태스크 완료를 안 기다리는 회귀(touchSwept 선행)를 결정적으로 드러낸다. */
+		Duration enrichDelay = Duration.ZERO;
+		final List<List<String>> enrichedPosts = new CopyOnWriteArrayList<>();
+		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubCollect() {
 			super(null, null, null, null, null, null, null, null, 2000, 3, 30);
@@ -129,6 +150,11 @@ class BrandRegistrationServiceTest {
 			this.callOrder = shared;
 		}
 
+		/** 지금까지 보강이 끝난 게시물 코드 전부 — markServing·touchSwept 시점 스냅샷용. */
+		List<String> enrichedCodes() {
+			return enrichedPosts.stream().flatMap(List::stream).toList();
+		}
+
 		@Override
 		public List<PostInfo> sweepCore(BrandRow brand, java.util.function.Consumer<List<PostInfo>> onPageCollected) {
 			if (failing.contains(brand.username())) {
@@ -136,12 +162,16 @@ class BrandRegistrationServiceTest {
 			}
 			coreSwept.add(brand.username());
 			coreRows.add(brand);
-			// 실코드의 페이지 배치 콜백 재현 — 1페이지짜리 열거(그 페이지분만 넘어온다).
-			onPageCollected.accept(earlyBatch);
-			if (failAfterServing) {
-				throw new IllegalStateException("서빙 후 실패 주입");
+			// 실코드의 페이지 콜백 재현(Task 4 계약) — 페이지마다 1회, 그 페이지분만 넘긴다.
+			List<PostInfo> all = new ArrayList<>();
+			for (List<PostInfo> page : pages) {
+				onPageCollected.accept(page);
+				all.addAll(page);
+				if (failAfterFirstPage) {
+					throw new IllegalStateException("첫 페이지 뒤 실패 주입");
+				}
 			}
-			return fullResult;
+			return all;   // 반환은 전체 누적분(실코드와 동일) — 새 배선은 이걸 쓰지 않는다.
 		}
 
 		@Override
@@ -149,9 +179,21 @@ class BrandRegistrationServiceTest {
 			if (enrichFailing.contains(brand.username())) {
 				throw new IllegalStateException("보강 실패 주입");
 			}
+			sleep(enrichDelay);
 			enriched.add(brand.username());
 			enrichedPosts.add(posts.stream().map(PostInfo::shortCode).toList());
 			callOrder.add("enrich");
+		}
+
+		private static void sleep(Duration delay) {
+			if (delay.isZero()) {
+				return;
+			}
+			try {
+				Thread.sleep(delay.toMillis());
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
 		}
 	}
 
@@ -180,9 +222,9 @@ class BrandRegistrationServiceTest {
 	}
 
 	private static final class StubHashtagCollect extends BrandHashtagCollectService {
-		final List<String> swept = new ArrayList<>();
+		final List<String> swept = new CopyOnWriteArrayList<>();
 		boolean failing;
-		private List<String> callOrder = new ArrayList<>();
+		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubHashtagCollect() {
 			super(null, null, null, null, null, 0, 0);
@@ -217,17 +259,46 @@ class BrandRegistrationServiceTest {
 	}
 
 	private final List<String> hikerCalls = new ArrayList<>();
-	private final List<Runnable> enrichQueue = new ArrayList<>();
-	private final InMemoryBrands brands = new InMemoryBrands();
 	private final StubCollect collect = new StubCollect();
+	private final InMemoryBrands brands = new InMemoryBrands(() -> collect.enrichedCodes());
 	private final RecordingCallCounts callCounts = new RecordingCallCounts();
 	private final StubHashtags hashtags = new StubHashtags();
 	private final StubHashtagCollect hashtagCollect = new StubHashtagCollect();
+
+	/** enrich executor에 제출된 태스크 — 개수만 본다(실행은 아래 풀이 실제로 한다). */
+	private final List<Runnable> enrichSubmissions = new CopyOnWriteArrayList<>();
+	private final ExecutorService enrichPool = Executors.newSingleThreadExecutor();
+	private final Executor enrich = task -> {
+		enrichSubmissions.add(task);
+		enrichPool.execute(task);
+	};
+
+	@AfterEach
+	void tearDown() {
+		enrichPool.shutdownNow();
+	}
+
+	/** enrich 큐가 빌 때까지 — 단일 스레드 FIFO라 마커 태스크 완료 = 앞서 제출된 태스크 전부 완료. */
+	private void awaitEnrich() {
+		try {
+			enrichPool.submit(() -> { }).get(5, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("enrich 큐 대기 중 인터럽트", e);
+		} catch (Exception e) {
+			throw new IllegalStateException("enrich 큐 대기 실패", e);
+		}
+	}
 
 	private static PostInfo post(String code) {
 		return new PostInfo(code, "author", null, null, "1", "REELS", null, null,
 				null, null, null, null, null, null, null, null, null, null, null,
 				false, false, false);
+	}
+
+	/** 2페이지 열거 — 페이지 단위 배선(첫 배치 ready·전 페이지 완주)을 관찰하는 기본 시나리오. */
+	private void twoPages() {
+		collect.pages = List.of(List.of(post("P1_A"), post("P1_B")), List.of(post("P2_A"), post("P2_B")));
 	}
 
 	private BrandRegistrationService service() {
@@ -236,7 +307,7 @@ class BrandRegistrationServiceTest {
 			return PROFILE_JSON;
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtags, hashtagCollect, Runnable::run, enrichQueue::add);
+				hashtags, hashtagCollect, Runnable::run, enrich);
 	}
 
 	@Test
@@ -253,64 +324,86 @@ class BrandRegistrationServiceTest {
 		assertThat(callCounts.byBrand).containsExactly(Map.entry(result.brandId(), 1L));
 	}
 
+	/**
+	 * 첫 페이지 배치의 보강이 끝나는 시점에 ready를 연다(2026-08-13 스펙 §2) — markServing은
+	 * 열거 완주도, 보강 전 빈 목록도 아니고 첫 배치 완결 뒤 딱 1회다.
+	 */
 	@Test
-	void core_완료_즉시_ready를_찍고_보강은_전용_큐로_넘긴다() {
+	void 첫_페이지_배치_보강_후에_markServing을_1회_부른다() {
+		twoPages();
+		collect.enrichDelay = Duration.ofMillis(50);
+
+		var result = service().register("brandx");
+		awaitEnrich();
+
+		assertThat(brands.served).containsExactly(result.brandId());   // 페이지가 여러 장이어도 1회
+		// markServing 시점에 첫 페이지분 보강이 이미 끝나 있어야 한다.
+		assertThat(brands.enrichedAtServingMark).containsExactly(List.of("P1_A", "P1_B"));
+	}
+
+	/**
+	 * 완주 시각(= 응답 collectionCompletedAt, FE 폴링 종료 조건)은 모든 페이지 보강이 끝난 뒤에
+	 * 찍힌다 — 열거 완주 시점에 찍으면 FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다.
+	 */
+	@Test
+	void 모든_페이지_보강이_끝난_뒤에_touchSwept한다() {
+		twoPages();
+		collect.enrichDelay = Duration.ofMillis(50);
+
 		var result = service().register("brandx");
 
-		// core만 끝난 시점 — 보강(게시자·댓글)이 실행되기 전인데 ready(touchSwept)는 이미 찍혀 있다.
 		assertThat(brands.touched).containsExactly(result.brandId());
-		assertThat(collect.enriched).isEmpty();
-		assertThat(enrichQueue).hasSize(1);
-
-		enrichQueue.getFirst().run();
-		assertThat(collect.enriched).containsExactly("brandx");
+		assertThat(brands.enrichedAtTouchSwept).singleElement().satisfies(codes ->
+				assertThat(codes).containsExactlyInAnyOrder("P1_A", "P1_B", "P2_A", "P2_B"));
 	}
 
 	@Test
-	void 서빙_콜백은_markServing과_선행_보강을_수행하고_잔여만_재보강한다() {
-		collect.earlyBatch = List.of(post("A"), post("B"));
-		collect.fullResult = List.of(post("A"), post("B"), post("C"));
+	void 페이지마다_그_페이지분만_보강한다() {
+		twoPages();
 
-		var result = service().register("brandx");
+		service().register("brandx");
+		awaitEnrich();
 
-		assertThat(brands.served).containsExactly(result.brandId());     // 조기 ready
-		assertThat(brands.touched).containsExactly(result.brandId());    // 완주 touchSwept도 그대로
-		assertThat(enrichQueue).hasSize(2);                              // 선행 + 잔여
-		enrichQueue.forEach(Runnable::run);
+		// 콜백이 페이지분만 주므로 페이지끼리 겹치지 않는다 — 중복 필터가 필요 없다.
 		assertThat(collect.enrichedPosts)
-				.containsExactly(List.of("A", "B"), List.of("C"));       // 잔여는 선행분 제외
-		assertThat(hashtagCollect.swept).containsExactly("brandx");      // 해시태그는 잔여 태스크 꼬리
+				.containsExactly(List.of("P1_A", "P1_B"), List.of("P2_A", "P2_B"));
+		assertThat(enrichSubmissions).hasSize(3);                    // 페이지 2 + 해시태그 꼬리 1
+		assertThat(hashtagCollect.swept).containsExactly("brandx");   // 해시태그는 완주 뒤 꼬리
 	}
 
 	@Test
-	void 선행분이_비면_선행_보강_태스크를_만들지_않는다() {
-		// earlyBatch 기본값 List.of() — 태그가 얕은 브랜드의 헛 태스크 방지.
+	void 태그가_없어도_markServing으로_ready를_연다() {
+		// pages 기본값 = 빈 1페이지(태그 0건 브랜드) — 여기서 ready를 못 열면 collecting에 영구히 갇힌다.
 		var result = service().register("brandx");
+		awaitEnrich();
 
-		assertThat(brands.served).containsExactly(result.brandId());   // 서빙 마크는 목록이 비어도 정당
-		assertThat(enrichQueue).hasSize(1);                            // 잔여(완주) 태스크만
+		assertThat(brands.served).containsExactly(result.brandId());
+		assertThat(brands.touched).containsExactly(result.brandId());
 	}
 
 	@Test
-	void 서빙_후_core_실패도_touchSwept_없이_backfill_error를_남긴다() {
-		collect.failAfterServing = true;
-		collect.earlyBatch = List.of(post("A"));
+	void 첫_페이지_뒤_core_실패도_touchSwept_없이_backfill_error를_남긴다() {
+		twoPages();
+		collect.failAfterFirstPage = true;
 
 		var result = service().register("brandx");
+		awaitEnrich();
 
-		assertThat(brands.served).containsExactly(result.brandId());   // 이미 연 서빙은 유지(부분 데이터)
-		assertThat(brands.touched).isEmpty();                          // 완주 아님 — 다음 스윕 백스톱
+		assertThat(brands.served).containsExactly(result.brandId());        // 정산된 첫 페이지는 서빙 유지
+		assertThat(brands.touched).isEmpty();                               // 완주 아님 — 다음 스윕 백스톱
 		assertThat(brands.backfillErrors).containsKey(result.brandId());
-		assertThat(enrichQueue).hasSize(1);                            // 선행 보강만 제출됨(잔여 태스크 없음)
+		assertThat(collect.enrichedPosts).containsExactly(List.of("P1_A", "P1_B"));   // 2페이지는 없다
+		assertThat(hashtagCollect.swept).isEmpty();                         // 완주 꼬리도 없다
 	}
 
 	@Test
 	void 보강_실패는_ready를_되돌리지도_backfill_error를_남기지도_않는다() {
-		collect.enrichFailing.add("brandx");
+		collect.enrichFailing.add("brandx");   // 보강 실패는 태스크 안에서 삼켜진다 — 밖으로 새면 실패
 
 		var result = service().register("brandx");
-		enrichQueue.forEach(Runnable::run);   // 보강 실패는 태스크 안에서 삼켜진다 — 여기로 새면 실패
+		awaitEnrich();
 
+		assertThat(brands.served).containsExactly(result.brandId());
 		assertThat(brands.touched).containsExactly(result.brandId());
 		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());
 	}
@@ -321,7 +414,7 @@ class BrandRegistrationServiceTest {
 
 		service().register("brandx");
 
-		assertThat(enrichQueue).isEmpty();   // 게시물 없이 보강만 도는 낭비 방지
+		assertThat(enrichSubmissions).isEmpty();   // 게시물 없이 보강만 도는 낭비 방지
 	}
 
 	@Test
@@ -428,12 +521,12 @@ class BrandRegistrationServiceTest {
 
 	@Test
 	void 백필은_enrich_후_해시태그_스윕을_돌린다() {
-		List<String> order = new ArrayList<>();
+		List<String> order = new CopyOnWriteArrayList<>();
 		collect.useSharedCallOrder(order);
 		hashtagCollect.useSharedCallOrder(order);
 
 		service().register("brandx");
-		enrichQueue.getFirst().run();
+		awaitEnrich();
 
 		assertThat(order).containsExactly("enrich", "hashtag");
 		assertThat(hashtagCollect.swept).containsExactly("brandx");
@@ -441,10 +534,10 @@ class BrandRegistrationServiceTest {
 
 	@Test
 	void 해시태그_백필_실패는_등록_보강을_깨지_않는다() {
-		hashtagCollect.failing = true;
+		hashtagCollect.failing = true;   // 해시태그 백필 실패는 태스크 안에서 삼켜진다 — 밖으로 새면 실패
 
 		var result = service().register("brandx");
-		enrichQueue.forEach(Runnable::run);   // 해시태그 백필 실패는 태스크 안에서 삼켜진다 — 여기로 새면 실패
+		awaitEnrich();
 
 		assertThat(brands.touched).containsExactly(result.brandId());
 		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());   // core는 이미 성공
@@ -470,7 +563,7 @@ class BrandRegistrationServiceTest {
 		var result = service().register("brandx");
 
 		assertThat(result.replayed()).isFalse();           // 등록 자체는 성공
-		assertThat(brands.touched).isEmpty();              // 백스톱 성립 — last_tracked_on 미갱신
+		assertThat(brands.touched).isEmpty();              // 백스톱 성립 — last_swept_on 미갱신
 	}
 
 	@Test
