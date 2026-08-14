@@ -6,6 +6,7 @@ import com.celfit.crawler.crawling.application.port.out.ApifyRunnerPort;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.domain.RawRunItem;
 import com.celfit.crawler.crawling.application.port.out.RawRunItemRepository;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -13,6 +14,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +26,8 @@ import org.springframework.stereotype.Component;
  * 단, 응답 payload가 타입 raw 테이블에 1:1 무가공 저장되는 잡({@link JobName#archivesRunItems()}
  * false — COLLECT·REELS)은 사본을 남기지 않는다. 원형 보존처가 타입 테이블로 옮겨간 것뿐이라
  * "과금된 응답은 반드시 어딘가 남는다"는 보장은 유지된다.
+ * 실행이 실패해도 그때까지 산 유료 요청 수는 request_count에 남긴다({@link PaidCallCounter}) —
+ * 실패는 장애 구간에 몰려서, 유실을 두면 비용을 되묻는 바로 그 시점에 집계가 가장 크게 틀린다.
  */
 @Component
 public class CrawlExecutor {
@@ -38,13 +42,15 @@ public class CrawlExecutor {
     private final ApifyRunnerPort runner;
     private final CrawlRunRepository runs;
     private final RawRunItemRepository rawRunItems;
+    private final PaidCallCounter paidCalls;
     private final Clock clock;
 
     public CrawlExecutor(ApifyRunnerPort runner, CrawlRunRepository runs,
-                         RawRunItemRepository rawRunItems, Clock clock) {
+                         RawRunItemRepository rawRunItems, PaidCallCounter paidCalls, Clock clock) {
         this.runner = runner;
         this.runs = runs;
         this.rawRunItems = rawRunItems;
+        this.paidCalls = paidCalls;
         this.clock = clock;
     }
 
@@ -56,8 +62,14 @@ public class CrawlExecutor {
     public Execution execute(JobName job, TriggerType trigger, String keyword,
                              String targetUsername, String actorId, Supplier<ApifyResult> work) {
         CrawlRun run = runs.save(new CrawlRun(job, trigger, keyword, targetUsername, actorId, clock.instant()));
+        // 이 실행이 산 유료 콜의 실측치 — CountingHikerHttp가 성공 응답마다 채운다(PaidCallCounter).
+        AtomicInteger paid = new AtomicInteger();
         try {
-            ApifyResult result = work.get();
+            ApifyResult result = paidCalls.scoped(paid, work);
+            // 성공 경로는 소스가 스스로 보고한 값을 그대로 쓴다 — 실측치로 갈아끼우지 않는다.
+            // 잡별 규칙(ReelsJob·SimilarJob이 soft-404를 '요청은 이미 샀다'며 1로 세는 것)을
+            // 이 변경이 조용히 뒤집지 않게 하기 위함. 실측치를 쓰는 곳은 값이 아예 없던
+            // 실패 경로뿐이라, 이 수정으로 성공 실행의 집계는 한 건도 달라지지 않는다.
             run.finishOk(result.runId(), result.requestCount(), result.items().size(), clock.instant());
             runs.save(run);
             if (job.archivesRunItems()) {
@@ -65,7 +77,10 @@ public class CrawlExecutor {
             }
             return new Execution(run.getId(), result.items(), result.notFound());
         } catch (ApifyException e) {
-            run.finishFailed(e.getMessage(), clock.instant());
+            // 실패해도 이미 과금된 요청은 남긴다 — ApifyResult를 못 받는 경로라 실측 카운터가
+            // 유일한 산지다. 0이면 null(산 게 없음) — 비용 뷰의 request_count > 0 모수와 정합.
+            int bought = paid.get();
+            run.finishFailed(e.getMessage(), bought > 0 ? bought : null, clock.instant());
             runs.save(run);
             throw e;
         }
