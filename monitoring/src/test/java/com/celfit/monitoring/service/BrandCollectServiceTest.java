@@ -32,6 +32,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -167,11 +169,14 @@ class BrandCollectServiceTest {
 		final Map<String, Long> collectedCounts = new HashMap<>();
 		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
 		final Map<String, Instant> touched = new HashMap<>();
-		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
-		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
+		// 정산 마킹은 워커 스레드에서도 나간다(게시물 단위 정산) — 스레드 안전 리스트.
 		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
-		// 첫 정산 마킹만 실패시킨다 — 보강 단계의 DB 실패(페이지 1건 실패, 뒤 페이지는 정상) 대역.
-		boolean markEnrichedFailsOnce = false;
+		/** markEnriched 호출 1번 = 원소 1개 — 정산이 게시물 단위인지(1건 배치) 페이지 배치인지 구분한다. */
+		final List<List<String>> enrichedBatches = Collections.synchronizedList(new ArrayList<>());
+		// 정산 마킹을 앞으로 N번 실패시킨다 — 보강 단계의 DB 실패 대역. 게시물 단위 정산에서는
+		// 게시물별 마킹 실패를 finally 잔여 백스톱이 곧바로 재시도하므로, "그 페이지 미정산" 시나리오는
+		// 게시물별·백스톱 둘 다 실패(2회)로 만든다.
+		int markEnrichedFailsTimes = 0;
 		// 댓글 게이트 첫머리의 배치 조회 실패 대역(커넥션 blip) — 건별 격리가 닿지 않는 지점이다.
 		boolean commentsCountsFails = false;
 		int depthCalls = 0;
@@ -222,11 +227,12 @@ class BrandCollectServiceTest {
 
 		@Override
 		public void markEnriched(long brandId, Collection<String> codes, Instant at) {
-			if (markEnrichedFailsOnce) {
-				markEnrichedFailsOnce = false;
+			if (markEnrichedFailsTimes > 0) {
+				markEnrichedFailsTimes--;
 				throw new IllegalStateException("정산 마킹 실패(DB 일시 오류)");
 			}
 			enriched.addAll(codes);
+			enrichedBatches.add(List.copyOf(codes));
 		}
 
 		@Override
@@ -779,7 +785,7 @@ class BrandCollectServiceTest {
 		// 콜백(보강)이 던지면 열거 루프가 통째로 끊겨 뒤 페이지가 그날 적재조차 안 된다 — 등록
 		// 경로(runEnrichSafely)와 같은 격리 규칙을 스윕에도 건다. 열거는 페이지당 Hiker 콜을 이미
 		// 지불한 결과물이라 보강 실패로 버리면 교환비가 나쁘다.
-		tagged.markEnrichedFailsOnce = true;
+		tagged.markEnrichedFailsTimes = 2;   // 게시물별 마킹 + finally 백스톱 둘 다 실패 — 페이지 미정산 유지
 		tagPages.add(page("p2", reel("P1", RECENT, 0, 101, "")));
 		tagPages.add(page(null, reel("P2", RECENT, 0, 102, "")));
 
@@ -954,6 +960,105 @@ class BrandCollectServiceTest {
 		assertThat(authors.upserted).containsExactly("101");   // 게시자 단계는 통과했다
 		assertThat(commentCalls()).isZero();                   // 댓글은 배치 조회에서 끊겼다
 		assertThat(tagged.enriched).containsExactly("A");
+	}
+
+	// ── 게시물 단위 정산(2026-08-14 스펙 §1) ─────────────────────────────────
+
+	/**
+	 * 정산은 게시물 1건 단위로 각자 찍힌다 — 페이지 일괄 마킹이면 폴링이 21건 단위로만 점프하고,
+	 * 느린 게시자 콜 하나가 페이지 전체의 노출을 붙든다(직결 executor라 마킹 순서는 게시물 순서다).
+	 */
+	@Test
+	void 정산은_게시물_단위로_각자_찍힌다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(tagged.enrichedBatches).containsExactly(List.of("A"), List.of("B"));
+	}
+
+	/** 정산 리스너는 게시물이 정산될 때마다 그 코드로 불린다 — 등록 경로의 ready 판정 입력이다. */
+	@Test
+	void 정산_리스너는_정산된_게시물마다_불린다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		BrandCollectService service = service(2000);
+		List<PostInfo> posts = service.sweepCore(brand);
+		List<String> settled = Collections.synchronizedList(new ArrayList<>());
+
+		service.enrich(brand, posts, settled::add);
+
+		assertThat(settled).containsExactly("A", "B");   // 직결 executor — 게시물 순서
+	}
+
+	/**
+	 * 배치 DB 조회 실패(finally 안전판 경로)에서는 리스너가 불리지 않는다 — 정산은 페이지 일괄로
+	 * 찍히지만(전량 백스톱) "게시물별 완결" 통지는 아니기 때문이다. ready 판정(등록 경로)은 이때
+	 * 첫 배치 완결 경로(페이지 태스크 완료)로만 열린다.
+	 */
+	@Test
+	void 배치_조회_실패의_안전판_정산은_리스너를_부르지_않는다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, ""), reel("B", RECENT, 3, 102, "")));
+		BrandCollectService service = service(2000);
+		List<PostInfo> posts = service.sweepCore(brand);
+		List<String> settled = Collections.synchronizedList(new ArrayList<>());
+
+		assertThatThrownBy(() -> service.enrich(brand, posts, settled::add))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(settled).isEmpty();                                          // 게시물별 완결 통지 없음
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");        // 정산 자체는 전량(finally)
+		assertThat(tagged.enrichedBatches).containsExactly(List.of("A", "B"));  // 일괄 1회
+	}
+
+	/**
+	 * 느린 게시자 콜이 다른 게시물의 정산을 막지 않는다 — 이 격리가 이번 전환의 목적이다
+	 * (배치 정산에서는 꼬리 콜 하나가 페이지 21건 전체의 노출을 붙들었다).
+	 */
+	@Test
+	void 느린_게시자가_다른_게시물의_정산을_막지_않는다() throws Exception {
+		tagPages.add(page(null, reel("SLOW", RECENT, 0, 101, ""), reel("FAST", RECENT, 0, 102, "")));
+		CountDownLatch slowAuthor = new CountDownLatch(1);
+		HikerClient latched = new HikerClient(path -> {
+			if (path.startsWith("/v2/user/by/username")) {
+				return BRAND_PROFILE_JSON;
+			}
+			if (path.startsWith("/v2/user/tag/medias")) {
+				return tagPages.get(0);
+			}
+			if (path.startsWith("/v2/user/by/id")) {
+				String id = path.substring(path.indexOf("?id=") + "?id=".length());
+				if (id.equals("101")) {
+					try {
+						slowAuthor.await(5, TimeUnit.SECONDS);
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+					}
+				}
+				return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\"}}".formatted(id, id);
+			}
+			throw new IllegalStateException("예상 밖 콜: " + path);
+		});
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
+					comments, tagged, authors, pool, 2000, 3, 30);
+			List<PostInfo> posts = svc.sweepCore(brand);
+			List<String> settled = Collections.synchronizedList(new ArrayList<>());
+			CompletableFuture<Void> run = CompletableFuture.runAsync(
+					() -> svc.enrich(brand, posts, settled::add));
+			// FAST는 SLOW의 게시자 콜이 잡혀 있는 동안 정산돼야 한다 — 배치 정산이면 여기서 타임아웃.
+			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+			while (!settled.contains("FAST") && System.nanoTime() < deadline) {
+				Thread.sleep(10);
+			}
+			assertThat(settled).containsExactly("FAST");   // SLOW는 아직 미정산
+			slowAuthor.countDown();
+			run.get(5, TimeUnit.SECONDS);
+			assertThat(settled).containsExactly("FAST", "SLOW");
+		} finally {
+			pool.shutdown();
+		}
 	}
 
 	// ── 보강 병렬화(2026-08-07 스펙 — 워커 풀 크기는 설정, 08-13부터 기본 10) ────

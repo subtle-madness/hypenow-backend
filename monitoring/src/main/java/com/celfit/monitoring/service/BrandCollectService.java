@@ -17,12 +17,14 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -46,6 +48,8 @@ import org.springframework.stereotype.Service;
  * <p>2026-08-12 스트리밍 개정 + 2026-08-13 완결 배치 서빙 개정: 적재는 페이지 단위로 즉시
  * 일어나고, 콜백도 페이지마다 그 페이지분만 넘긴다 — 수신자(등록 백필)가 페이지 단위로 보강·정산해
  * 완결된 것부터 목록에 올린다. 구 서빙 창(30일) 커버 기준은 폐기됐다.
+ * 2026-08-14 게시물 단위 정산 개정: 정산(방출) 단위가 페이지 배치에서 게시물 1건으로 좁혀졌다 —
+ * {@link #enrich(BrandRow, List, Consumer)} 참조.
  */
 @Service
 public class BrandCollectService {
@@ -264,44 +268,81 @@ public class BrandCollectService {
 		return cutoff;
 	}
 
-	/**
-	 * enrichment 단계 — core가 넘긴 편입 컷 안 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
-	 * 게이트. 미수집분은 다음 스윕이 백스톱한다(게시자는 stale 판정, 댓글은
-	 * comments_collected_count 워터마크가 남아 있어 자동 재시도된다).
-	 *
-	 * <p><b>정산 마킹은 보강 성패와 무관하게 무조건 찍는다</b>(finally) — 마킹을 놓치면 그 행은
-	 * enriched_at NULL로 남아 was 목록에 안 뜨는데, 180일 초과 게시물에는 재열거 백스톱이 없어
-	 * 그 미노출이 영구가 된다. 근거는 finally 블록 주석 참조.
-	 */
+	/** 무리스너 위임 — 일일 스윕 경로. 동작은 3인자판과 동일하다(게시물 단위 정산 포함). */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
+		enrich(brand, posts, code -> { });
+	}
+
+	/**
+	 * enrichment 단계(2026-08-14 게시물 단위 정산 개정) — core가 넘긴 편입 컷 안 게시물의 게시자
+	 * 프로필(미보유·30일 stale만) + 댓글 게이트. 구 2단계 배리어("게시자 전체 → 댓글 전체 →
+	 * 페이지 일괄 정산")를 게시물당 퓨처 합성으로 바꿨다: 게시물별로 자기 게시자·자기 댓글만
+	 * 기다려 <b>1건씩 즉시 정산</b>하고 onPostSettled로 통지한다(등록 경로의 ready 판정 입력) —
+	 * 느린 콜 하나가 페이지 전체의 노출을 붙들지 않는다. 게시자 퓨처는 게시자별 1개로 공유하므로
+	 * 총 Hiker 콜 수는 배리어 시절과 같다. 미수집분은 다음 스윕이 백스톱한다(게시자는 stale 판정,
+	 * 댓글은 comments_collected_count 워터마크가 남아 있어 자동 재시도된다).
+	 *
+	 * <p>메서드 전체 join은 유지한다 — 호출자(등록 백필 core·스윕)가 페이지 완주까지 블로킹되는
+	 * 것이 유일한 브랜드 간 백프레셔다(08-13 설계 — 없애면 08-12 OOM 형태 재현).
+	 *
+	 * <p><b>정산 마킹은 보강 성패와 무관하게 무조건 찍는다</b> — 게시물별 마킹이 본선이고, 바깥
+	 * finally는 그 마킹이 닿지 못한 잔여분의 일괄 백스톱이다. 근거는 finally 블록 주석 참조.
+	 */
+	public void enrich(BrandRow brand, List<PostInfo> posts, Consumer<String> onPostSettled) {
 		if (posts.isEmpty()) {
 			return;
 		}
+		Set<String> settled = ConcurrentHashMap.newKeySet();
 		try {
+			// 배치 DB 조회 2건(stale 판정·댓글 워터마크)은 태스크 제출 전의 무방비 지점이다 — 여기서
+			// 던지면 아래 finally가 페이지 전체를 일괄 정산한다(이미 제출된 게시자 태스크는 워커에서
+			// 마저 돌아 프로필만 채우고 끝난다 — 정산·통지와 무관해 무해).
 			// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
-			ensureAuthors(brand.id(), posts);
-			collectCommentsGated(brand.id(), posts);
+			Map<String, CompletableFuture<Void>> authorTasks = submitAuthorTasks(brand.id(), posts);
+			Map<String, CompletableFuture<Void>> commentTasks = submitCommentTasks(brand.id(), posts);
+			CompletableFuture<Void> done = CompletableFuture.completedFuture(null);
+			List<CompletableFuture<Void>> perPost = new ArrayList<>();
+			for (PostInfo p : posts) {
+				CompletableFuture<Void> author = p.ownerUserId() == null ? done
+						: authorTasks.getOrDefault(p.ownerUserId(), done);
+				CompletableFuture<Void> comment = commentTasks.getOrDefault(p.shortCode(), done);
+				// 게시자·댓글 태스크는 예외를 각자 삼키므로(격리 규칙) 이 합성은 정상 완료가 기본이고,
+				// 여기서 새는 예외는 settlePost(정산 마킹)의 DB 실패뿐 — join이 모아 finally로 넘긴다.
+				perPost.add(author.runAfterBoth(comment,
+						() -> settlePost(brand.id(), p.shortCode(), settled, onPostSettled)));
+			}
+			CompletableFuture.allOf(perPost.toArray(CompletableFuture[]::new)).join();
 		} finally {
-			// 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) — 게시자·댓글이 실패해 비어 있어도 찍는다.
-			// 이 지점의 의미는 "더 기다릴 이유가 없다"이지 "다 찼다"가 아니다. 비운 채로 두면 실측
-			// 404 2%·타임아웃 1%의 게시물이 목록에서 영구히 사라진다. 미수집분은 게시자 stale 판정·
-			// 댓글 워터마크가 다음 스윕에서 채운다.
-			//
-			// finally인 이유(되돌리지 말 것): 위 두 단계는 건별 Hiker 콜을 각자 격리하지만
-			// 각 메서드 첫머리의 배치 DB 조회(freshIgUserIds·commentsCollectedCounts)는 무방비다 —
-			// 커넥션 blip 하나로 예외가 여기서 새면 그 페이지 행이 enriched_at NULL로 남는다.
-			// "실패했는데 왜 정산하지?"의 답은 백스톱의 유무다: 180일 이하 게시물은 티어 주기가
-			// 다시 만나 자가 치유하지만, 180일 초과 게시물에는 백스톱이 없다. 보강 실패는
-			// touchSwept을 막지 않고, 다음 스윕의 열거 깊이는 trackedPosts(now−180d)에서 나오며
-			// BrandCrawlPolicy.due는 180일 초과에 무조건 false다 — 다시 열거되지도 보강되지도
-			// 않는다. 그리고 was 게이트가 enriched_at IS NOT NULL이라 영원히 미노출이 된다
-			// (12개월 창 브랜드면 6~12개월 구간이 알람도 backfill_error도 없이 통째로 사라진다).
-			// 마킹은 "보강 시도가 끝났다"는 뜻이므로 배치 DB 조회 실패도 여기에 해당하고, 재시도
-			// 근거(게시자 stale·댓글 워터마크)는 그대로 남아 다음 기회에 채운다.
-			taggedPosts.markEnriched(brand.id(),
-					posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+			// 잔여분 일괄 정산(2026-08-13 완결 배치 서빙 스펙 §1의 finally 근거 그대로) — 게시물별
+			// 마킹이 못 닿은 행(배치 DB 조회 실패·마킹 자신의 DB 실패)을 비운 채로 두면 그 게시물이
+			// 목록에서 사라지는데, 180일 초과 게시물에는 재열거 백스톱이 없어(다음 스윕의 열거 깊이는
+			// trackedPosts(now−180d)에서 나오고 BrandCrawlPolicy.due는 180일 초과에 무조건 false)
+			// 그 미노출이 <b>영구</b>가 된다(12개월 창 브랜드면 6~12개월 구간이 알람도 backfill_error도
+			// 없이 통째로 사라진다). 마킹의 의미는 "보강 시도가 끝났다"이므로 배치 조회 실패도 정산
+			// 대상이고, 재시도 근거(게시자 stale·댓글 워터마크)는 그대로 남아 다음 스윕이 채운다.
+			// 이중 마킹은 markEnriched의 COALESCE가 무해화한다(최초 정산 시각 보존).
+			List<String> remaining = posts.stream().map(PostInfo::shortCode)
+					.filter(c -> !settled.contains(c)).toList();
+			if (!remaining.isEmpty()) {
+				taggedPosts.markEnriched(brand.id(), remaining, Instant.now());
+			}
 		}
 		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료·정산({}건 대상)", brand.username(), posts.size());
+	}
+
+	/**
+	 * 게시물 1건 정산 — 마킹 성공 후에만 settled에 넣고 통지한다. 마킹이 던지면 settled에 안 남아
+	 * 바깥 finally의 잔여분 일괄 마킹이 백스톱한다. 리스너 실패는 격리한다 — ready 통지가 정산을
+	 * 되돌릴 이유가 없다(다음 게시물 정산이 재통지).
+	 */
+	private void settlePost(long brandId, String code, Set<String> settled, Consumer<String> onPostSettled) {
+		taggedPosts.markEnriched(brandId, List.of(code), Instant.now());
+		settled.add(code);
+		try {
+			onPostSettled.accept(code);
+		} catch (RuntimeException e) {
+			log.warn("게시물 정산 통지 실패(격리) — {}: {}", code, e.toString());
+		}
 	}
 
 	/**
@@ -406,33 +447,36 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 게시자 프로필 — 편입 컷 안 게시물 작성자 중 미보유·30일 경과(stale)만 /v2/user/by/id 1콜
-	 * (스펙 §2·§8: 신규 감지 시 1회 + 등장 시 stale 갱신, 월 일괄 배치 아님). 브랜드 간 전역
-	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
-	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.
+	 * 게시자 프로필 태스크 제출 — 편입 컷 안 게시물 작성자 중 미보유·30일 경과(stale)만
+	 * /v2/user/by/id 1콜(스펙 §2·§8: 신규 감지 시 1회 + 등장 시 stale 갱신, 월 일괄 배치 아님).
+	 * 브랜드 간 전역 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에
+	 * 1번이다. <b>게시자별 퓨처 1개를 공유</b>한다 — 같은 작성자의 게시물 여럿이 같은 퓨처를
+	 * 기다리므로 게시물 단위 정산으로 바꿔도 콜 수는 늘지 않는다. fresh(수집 불요) 게시자는 맵에
+	 * 없다 — 소비자는 getOrDefault(완료 퓨처)로 접는다.
+	 *
+	 * <p>게시자별 독립 콜이라 공유 워커 풀(monitoring.brand.enrich-concurrency — 08-13부터 10)로
+	 * 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가 보강 시간의 본체였다). 격리 규칙은 그대로:
+	 * 한 명의 실패는 로그만(fetchAuthorWithRetry가 삼킨다), 나머지는 계속. 태스크 본문은
+	 * runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커 스레드로 넘어가지
+	 * 않기 때문(BrandCallContext 주석 참조).
 	 */
-	private void ensureAuthors(long brandId, Collection<PostInfo> posts) {
+	private Map<String, CompletableFuture<Void>> submitAuthorTasks(long brandId, Collection<PostInfo> posts) {
 		Set<String> ids = posts.stream().map(PostInfo::ownerUserId).filter(Objects::nonNull)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		if (ids.isEmpty()) {
-			return;
+			return Map.of();
 		}
 		Set<String> fresh = authors.freshIgUserIds(ids,
 				Instant.now().minus(Duration.ofDays(authorStaleDays)));
-		// 게시자별 독립 콜이라 공유 워커 풀(monitoring.brand.enrich-concurrency — 08-13부터 10)로
-		// 병렬화한다(2026-08-07 스펙 — 콜당 ~1.5초 순차가 보강 시간의 본체였다).
-		// 격리 규칙은 그대로: 한 명의 실패는 로그만, 나머지는 계속.
-		// 태스크 본문은 runScoped로 다시 감싼다 — 콜 집계의 브랜드 컨텍스트(ThreadLocal)는 워커
-		// 스레드로 넘어가지 않기 때문(BrandCallContext 주석 참조).
-		List<CompletableFuture<Void>> tasks = new ArrayList<>();
+		Map<String, CompletableFuture<Void>> tasks = new LinkedHashMap<>();
 		for (String id : ids) {
 			if (fresh.contains(id)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId,
+			tasks.put(id, CompletableFuture.runAsync(() -> callContext.runScoped(brandId,
 					() -> fetchAuthorWithRetry(id)), enrichWorker));
 		}
-		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
+		return tasks;
 	}
 
 	/**
@@ -462,26 +506,26 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * 댓글 게이트(스펙 §2) — 열거 comment_count가 저장값(마지막 댓글 수집 시점의 값)보다 클 때만
-	 * /v2/media/comments 최대 commentPages콜(3콜 45개), 기지 댓글 페이지에서 중단. 신규 게시물은
-	 * 저장값 0이라 "댓글 1개 이상만 수집"이 자동 성립한다(댓글 숨김·0건 게시물은 콜 자체 없음).
-	 * 게시물 단위 격리.
+	 * 댓글 태스크 제출 — 댓글 게이트(스펙 §2)는 그대로다: 열거 comment_count가 저장값(마지막 댓글
+	 * 수집 시점의 값)보다 클 때만 /v2/media/comments 최대 commentPages콜(3콜 45개), 기지 댓글
+	 * 페이지에서 중단. 신규 게시물은 저장값 0이라 "댓글 1개 이상만 수집"이 자동 성립한다(댓글
+	 * 숨김·0건 게시물은 콜 자체 없음). 게이트에 안 걸린 게시물은 맵에 없다(= 댓글 대기 없이
+	 * 게시자만 끝나면 정산). 게시물 단위 격리(태스크 안 try/catch) — 한 게시물의 실패가 나머지에
+	 * 번지지 않는다. 같은 공유 워커 풀로 병렬화한다(submitAuthorTasks와 같은 근거).
 	 */
-	private void collectCommentsGated(long brandId, Collection<PostInfo> posts) {
+	private Map<String, CompletableFuture<Void>> submitCommentTasks(long brandId, Collection<PostInfo> posts) {
 		List<PostInfo> candidates = posts.stream().filter(p -> p.comments() != null).toList();
 		if (candidates.isEmpty()) {
-			return;
+			return Map.of();
 		}
 		Map<String, Long> stored = taggedPosts.commentsCollectedCounts(brandId,
 				candidates.stream().map(PostInfo::shortCode).toList());
-		// 게시물별 독립 콜이라 같은 공유 워커 풀로 병렬화한다(ensureAuthors와 같은 근거). 게이트
-		// 판정은 제출 전에, 워터마크 갱신은 태스크 안에서 — 의미 불변, 실행만 동시.
-		List<CompletableFuture<Void>> tasks = new ArrayList<>();
+		Map<String, CompletableFuture<Void>> tasks = new LinkedHashMap<>();
 		for (PostInfo p : candidates) {
 			if (p.comments() <= stored.getOrDefault(p.shortCode(), 0L)) {
 				continue;
 			}
-			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
+			tasks.put(p.shortCode(), CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
 					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
@@ -497,6 +541,6 @@ public class BrandCollectService {
 				}
 			}), enrichWorker));
 		}
-		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
+		return tasks;
 	}
 }
