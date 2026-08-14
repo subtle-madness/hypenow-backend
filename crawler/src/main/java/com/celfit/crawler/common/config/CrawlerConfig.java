@@ -2,11 +2,15 @@ package com.celfit.crawler.common.config;
 
 import com.celfit.crawler.crawling.adapter.out.apify.ApifyProperties;
 import com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersProperties;
+import com.celfit.crawler.crawling.adapter.out.hiker.CountingHikerHttp;
+import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerProperties;
+import com.celfit.crawler.crawling.adapter.out.hiker.JdkHikerHttp;
 import com.celfit.crawler.crawling.adapter.out.instagram.DirectCommentProperties;
 import com.celfit.crawler.crawling.adapter.out.instagram.ProxyProperties;
 
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.adapter.out.apify.Sleeper;
 import java.time.Clock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -29,6 +33,15 @@ public class CrawlerConfig {
     @Bean
     Clock clock() {
         return Clock.system(java.time.ZoneId.of("Asia/Seoul"));
+    }
+
+    /**
+     * HikerAPI 전송 = 실제 전송(JdkHikerHttp) + 과금 콜 집계 데코레이터. 데코레이터가 성공 응답마다
+     * PaidCallCounter에 +1해, 실행이 중간에 실패해도 그때까지 산 요청 수가 crawl_run에 남는다.
+     */
+    @Bean
+    HikerHttp hikerHttp(HikerProperties props, PaidCallCounter paidCallCounter) {
+        return new CountingHikerHttp(new JdkHikerHttp(props), paidCallCounter);
     }
 
     @Bean
