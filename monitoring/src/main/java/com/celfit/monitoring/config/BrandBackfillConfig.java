@@ -2,17 +2,19 @@ package com.celfit.monitoring.config;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 브랜드 등록 백필(태그 스펙 §5) 전용 executor 2개 — 등록 동기 응답(was 10초 read timeout 예산)
- * 밖에서 백필을 core/enrichment 2단계로 돌린다. 두 단계는 <b>페이지 배치</b>로 맞물린다
- * (2026-08-13 완결 배치 서빙 스펙): core가 페이지를 적재할 때마다 그 페이지분을 enrich 큐로
- * 넘기고, ready는 <b>첫 페이지 배치의 보강 완료</b> 시점에 열린다 — 정산(enriched_at)된 게시물만
- * 목록에 뜨므로 "열거만 끝나면 ready"였던 구 단계식 계약은 폐기됐다.
+ * 브랜드 등록 백필(태그 스펙 §5) 전용 executor 2개 + ready 타이머 — 등록 동기 응답(was 10초
+ * read timeout 예산) 밖에서 백필을 core/enrichment 2단계로 돌린다. 두 단계는 <b>페이지 배치</b>로
+ * 맞물린다(2026-08-13 완결 배치 서빙 스펙): core가 페이지를 적재할 때마다 그 페이지분을 enrich
+ * 큐로 넘긴다. ready는 <b>첫 배치 완결 또는 (serving-open-timeout 경과 후 정산 1건 이상) 중 빠른
+ * 쪽</b>에 열린다(2026-08-14 게시물 단위 정산 개정) — 정산(enriched_at)된 게시물만 목록에 뜨므로
+ * "열거만 끝나면 ready"였던 구 단계식 계약은 폐기됐다.
  *
  * <ul>
  *   <li><b>backfill</b>: core(365일 백필 열거 + 페이지 스트리밍 적재 — tooq급 2,000건 브랜드
@@ -85,6 +87,21 @@ public class BrandBackfillConfig {
 	 * 유계 큐 + AbortPolicy면 제출 루프에서 RejectedExecutionException이 동기로 터져 "한 건 실패는
 	 * 로그만" 격리 규칙이 깨진다.
 	 */
+	/**
+	 * ready 개방 타이머(2026-08-14 게시물 단위 정산 스펙 §2) — 등록 백필이 첫 배치 완결을 최대
+	 * serving-open-timeout(기본 10초)까지만 기다리게 하는 단발 타이머 전용. enrich executor에
+	 * 태우지 않는 이유: 포화 시 큐 대기가 10초 약속을 깨뜨린다. 태스크는 가드된 no-op 체크
+	 * 수준(마킹 UPDATE 1건 최대)이라 단일 스레드로 충분하다.
+	 */
+	@Bean(name = "brandServingTimer")
+	public ScheduledExecutorService brandServingTimer() {
+		return Executors.newSingleThreadScheduledExecutor(r -> {
+			Thread t = new Thread(r, "brand-serving-timer");
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
 	@Bean(name = "brandEnrichWorkerPool")
 	public Executor brandEnrichWorkerPool(
 			@Value("${monitoring.brand.enrich-concurrency:10}") int concurrency) {

@@ -139,6 +139,10 @@ class BrandRegistrationServiceTest {
 		/** 보강 지연 — 페이지 태스크 완료를 안 기다리는 회귀(touchSwept 선행)를 결정적으로 드러낸다. */
 		Duration enrichDelay = Duration.ZERO;
 		final List<List<String>> enrichedPosts = new CopyOnWriteArrayList<>();
+		/** 게시물 정산 직전 훅 — 테스트가 타이머 발화를 정산 사이에 끼워 넣는 지점(기본 no-op). */
+		Runnable beforeSettle = () -> { };
+		/** 지금까지 "정산 통지"가 나간 게시물 코드 — markServing·touchSwept 시점 스냅샷의 원천. */
+		final List<String> settledCodes = new CopyOnWriteArrayList<>();
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubCollect() {
@@ -150,9 +154,9 @@ class BrandRegistrationServiceTest {
 			this.callOrder = shared;
 		}
 
-		/** 지금까지 보강이 끝난 게시물 코드 전부 — markServing·touchSwept 시점 스냅샷용. */
+		/** 지금까지 보강(정산)이 끝난 게시물 코드 전부 — markServing·touchSwept 시점 스냅샷용. */
 		List<String> enrichedCodes() {
-			return enrichedPosts.stream().flatMap(List::stream).toList();
+			return List.copyOf(settledCodes);
 		}
 
 		@Override
@@ -175,13 +179,20 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public void enrich(BrandRow brand, List<PostInfo> posts) {
+		public void enrich(BrandRow brand, List<PostInfo> posts,
+				java.util.function.Consumer<String> onPostSettled) {
 			if (enrichFailing.contains(brand.username())) {
 				throw new IllegalStateException("보강 실패 주입");
 			}
 			sleep(enrichDelay);
 			enriched.add(brand.username());
 			enrichedPosts.add(posts.stream().map(PostInfo::shortCode).toList());
+			// 실코드의 게시물 단위 정산 재현(2026-08-14 스펙 §1) — 1건 정산할 때마다 리스너 통지.
+			for (PostInfo p : posts) {
+				beforeSettle.run();
+				settledCodes.add(p.shortCode());
+				onPostSettled.accept(p.shortCode());
+			}
 			callOrder.add("enrich");
 		}
 
@@ -284,11 +295,44 @@ class BrandRegistrationServiceTest {
 		});
 	};
 
+	/**
+	 * ready 타이머 대역 — schedule을 가로채 태스크만 붙잡는다(자동 실행 없음). 테스트가 fire()로
+	 * 발화 시점을 정산 사이에 결정적으로 끼워 넣는다. 반환 null은 안전하다 — 프로덕션 코드는 반환
+	 * ScheduledFuture를 쓰지 않는다(취소 불필요: 만료 태스크는 served CAS 가드의 no-op 체크뿐).
+	 */
+	private static final class CapturingTimer extends java.util.concurrent.ScheduledThreadPoolExecutor {
+		volatile Runnable task;
+		volatile long delayMs = -1;
+
+		CapturingTimer() {
+			super(1, r -> {
+				Thread t = new Thread(r, "test-serving-timer");
+				t.setDaemon(true);
+				return t;
+			});
+		}
+
+		@Override
+		public java.util.concurrent.ScheduledFuture<?> schedule(Runnable command, long delay,
+				TimeUnit unit) {
+			this.task = command;
+			this.delayMs = unit.toMillis(delay);
+			return null;
+		}
+
+		void fire() {
+			task.run();
+		}
+	}
+
+	private final CapturingTimer servingTimer = new CapturingTimer();
+
 	@AfterEach
 	void tearDown() {
 		awaitEnrich();   // 남은 태스크까지 돌린 뒤에 봐야 그물이 전 태스크를 덮는다
 		assertThat(escaped).isEmpty();
 		enrichPool.shutdownNow();
+		servingTimer.shutdownNow();
 	}
 
 	/** enrich 큐가 빌 때까지 — 단일 스레드 FIFO라 마커 태스크 완료 = 앞서 제출된 태스크 전부 완료. */
@@ -320,7 +364,7 @@ class BrandRegistrationServiceTest {
 			return PROFILE_JSON;
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtags, hashtagCollect, Runnable::run, enrich);
+				hashtags, hashtagCollect, Runnable::run, enrich, servingTimer, Duration.ofSeconds(10));
 	}
 
 	@Test
@@ -382,6 +426,57 @@ class BrandRegistrationServiceTest {
 				.containsExactly(List.of("P1_A", "P1_B"), List.of("P2_A", "P2_B"));
 		assertThat(enrichSubmissions).hasSize(3);                    // 페이지 2 + 해시태그 꼬리 1
 		assertThat(hashtagCollect.swept).containsExactly("brandx");   // 해시태그는 완주 뒤 꼬리
+	}
+
+	/**
+	 * 10초 타이머가 만료됐고 정산이 1건 이상이면 첫 배치 완결을 기다리지 않고 ready를 연다
+	 * (2026-08-14 스펙 §2) — 타이머가 정산 도착 전에 만료된 경우, 그 뒤 첫 정산이 여는 쪽.
+	 * 만료 시점 정산 0건에는 열지 않는다(빈 ready 금지 — 사용자 결정).
+	 */
+	@Test
+	void 타이머_만료_후_첫_정산이_ready를_연다() {
+		twoPages();
+		// 첫 게시물 정산 직전에 타이머 만료 — 그 시점 정산 0건이라 타이머 자신은 열지 못한다.
+		collect.beforeSettle = () -> {
+			if (servingTimer.task != null && brands.served.isEmpty() && collect.settledCodes.isEmpty()) {
+				servingTimer.fire();
+				assertThat(brands.served).isEmpty();   // 정산 0건 — 타이머만으로는 안 연다
+			}
+		};
+
+		var result = service().register("brandx");
+		awaitEnrich();
+
+		assertThat(brands.served).containsExactly(result.brandId());   // 1회뿐
+		// 첫 정산 1건(P1_A) 시점에 열렸다 — 첫 배치(P1_A+P1_B) 완결 시점이 아니다.
+		assertThat(brands.enrichedAtServingMark).containsExactly(List.of("P1_A"));
+	}
+
+	/** 타이머 만료 시점에 이미 정산이 있으면 만료 즉시 연다 — 만료가 정산 뒤에 온 경우. */
+	@Test
+	void 타이머_만료_시_정산이_있으면_즉시_ready를_연다() {
+		twoPages();
+		// 두 번째 게시물 정산 직전 = 첫 게시물(P1_A)만 정산된 상태에서 타이머 만료.
+		collect.beforeSettle = () -> {
+			if (servingTimer.task != null && collect.settledCodes.size() == 1 && brands.served.isEmpty()) {
+				servingTimer.fire();
+				assertThat(brands.served).hasSize(1);   // 만료 즉시 열렸다(다음 정산을 안 기다림)
+			}
+		};
+
+		var result = service().register("brandx");
+		awaitEnrich();
+
+		assertThat(brands.served).containsExactly(result.brandId());
+		assertThat(brands.enrichedAtServingMark).containsExactly(List.of("P1_A"));
+	}
+
+	/** 타이머는 등록 백필 시작 시점에 설정값(10s)으로 예약된다 — 설정 배관 검증. */
+	@Test
+	void 타이머는_백필_시작_시_10초로_예약된다() {
+		service().register("brandx");
+
+		assertThat(servingTimer.delayMs).isEqualTo(10_000L);
 	}
 
 	@Test

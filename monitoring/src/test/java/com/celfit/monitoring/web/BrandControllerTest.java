@@ -39,7 +39,8 @@ class BrandControllerTest {
 		Integer receivedMonths;
 
 		StubService() {
-			super(null, null, null, null, null, null, Runnable::run, Runnable::run);
+			super(null, null, null, null, null, null, Runnable::run, Runnable::run,
+					null, java.time.Duration.ofSeconds(10));
 		}
 
 		@Override

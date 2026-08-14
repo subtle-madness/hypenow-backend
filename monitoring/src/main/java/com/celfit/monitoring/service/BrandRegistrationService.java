@@ -8,6 +8,7 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -15,10 +16,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -38,9 +43,10 @@ import org.springframework.stereotype.Service;
  *       댓글 워터마크로 백스톱한다.</li>
  * </ul>
  *
- * <p>ready(markServing)는 <b>첫 페이지분 보강이 끝나는 지점</b>에서 열리고, 완주 표식
+ * <p>ready(markServing)는 <b>첫 페이지 배치 완결 또는 (serving-open-timeout 경과 후 정산 1건
+ * 이상) 중 빠른 쪽</b>이 연다(2026-08-14 게시물 단위 정산 스펙 §2). 완주 표식
  * (touchSwept = 응답 collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지 보강 뒤</b>에
- * 찍힌다 — 목록에는 정산된 페이지만 오른다(스펙 §1·§2, {@link #runBackfillSafely} 참조).
+ * 찍힌다 — 목록에는 정산된 게시물만 오른다(스펙 §1·§2, {@link #runBackfillSafely} 참조).
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
  * backfill은 동시 2스레드(브랜드 단위 태스크라 브랜드 안 순서는 유지), enrich는 전역 공유 풀
@@ -71,12 +77,16 @@ public class BrandRegistrationService {
 	private final BrandHashtagCollectService hashtagCollect;
 	private final Executor backfill;
 	private final Executor enrich;
+	private final ScheduledExecutorService servingTimer;
+	private final Duration servingOpenTimeout;
 
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
 			BrandHashtagRepository hashtags, BrandHashtagCollectService hashtagCollect,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
-			@Qualifier("brandEnrichExecutor") Executor enrich) {
+			@Qualifier("brandEnrichExecutor") Executor enrich,
+			@Qualifier("brandServingTimer") ScheduledExecutorService servingTimer,
+			@Value("${monitoring.brand.serving-open-timeout:10s}") Duration servingOpenTimeout) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
@@ -85,6 +95,8 @@ public class BrandRegistrationService {
 		this.hashtagCollect = hashtagCollect;
 		this.backfill = backfill;
 		this.enrich = enrich;
+		this.servingTimer = servingTimer;
+		this.servingOpenTimeout = servingOpenTimeout;
 	}
 
 	/**
@@ -180,9 +192,16 @@ public class BrandRegistrationService {
 	/**
 	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(페이지 스트리밍). 2026-08-13 개정: 페이지마다
 	 * 그 페이지분을 <b>enrich 큐에 제출</b>하고 열거는 계속 앞서 달린다(파이프라인 — 열거 ~5초/페이지와
-	 * 보강 ~5.4초/페이지가 겹쳐 완주가 절반이 된다). <b>첫 제출분의 보강이 끝나는 지점에서
-	 * markServing</b>으로 FE ready를 연다(구 "서빙 창 30일 커버" 기준 대체) — 목록에 오르는 건
-	 * 정산된 페이지뿐이라 반쯤 채워진 카드가 뜨지 않는다.
+	 * 보강 ~5.4초/페이지가 겹쳐 완주가 절반이 된다). 목록에 오르는 건 정산된 게시물뿐이라 반쯤
+	 * 채워진 카드가 뜨지 않는다.
+	 *
+	 * <p>ready(markServing)는 <b>둘 중 먼저 오는 쪽</b>이 연다(2026-08-14 게시물 단위 정산 스펙 §2):
+	 * ① 첫 페이지 배치 완결(10초 전에 다 끝나는 정상 경로 — 08-13 현행 유지), ② serving-open-timeout
+	 * (기본 10초) 만료 이후의 <b>정산 1건 이상</b> — 만료 시점에 이미 있으면 만료 즉시, 없으면 그 뒤
+	 * 첫 정산이 도착하는 순간. 빈 ready는 열지 않는다(사용자 결정 — Hiker가 느린 날 빈 화면 깜빡임
+	 * 방지). 태그 0건 브랜드는 예외로 루프 종료 시점의 빈 배치 콜백이 첫 배치 완결 경로로 연다
+	 * (정산할 것이 없다 — collecting 영구 갇힘 방지, 현행 유지). 타이머의 반환 퓨처는 취소하지
+	 * 않는다 — 만료 태스크는 served CAS 가드라 백필 완주 뒤에 발화해도 no-op이다.
 	 *
 	 * <p>touchSwept는 <b>모든 페이지 보강이 끝난 뒤</b>에 찍는다 — 이 값이 곧 응답
 	 * collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은 채로 찍으면
@@ -202,11 +221,28 @@ public class BrandRegistrationService {
 	private void runBackfillSafely(BrandRow row) {
 		try {
 			AtomicBoolean served = new AtomicBoolean();
+			AtomicBoolean timerFired = new AtomicBoolean();
+			AtomicBoolean anySettled = new AtomicBoolean();
+			// 타이머 경로의 개방 판정 — 만료 전엔 절대 안 열고(첫 배치 완결 경로가 전담), 만료 후엔
+			// 정산 1건 이상일 때만 연다. 정산 통지·타이머 발화 양쪽에서 불려 어느 쪽이 늦든 잡는다.
+			Runnable openIfTimedOut = () -> {
+				if (timerFired.get() && anySettled.get() && served.compareAndSet(false, true)) {
+					brands.markServing(row.id());
+				}
+			};
+			servingTimer.schedule(() -> {
+				timerFired.set(true);
+				openIfTimedOut.run();
+			}, servingOpenTimeout.toMillis(), TimeUnit.MILLISECONDS);
 			List<CompletableFuture<Void>> pages = new ArrayList<>();
 			collect.sweepCore(row, page -> pages.add(CompletableFuture.runAsync(() -> {
-				runEnrichSafely(row, page);
-				// 첫 완료분이 ready를 연다. 페이지 순서가 아니라 완료 순서인 것은 무해하다 —
-				// 목록 정렬은 taken_at이고 markServing은 last_swept_at IS NULL 가드로 1회만 먹는다.
+				runEnrichSafely(row, page, code -> {
+					anySettled.set(true);
+					openIfTimedOut.run();
+				});
+				// 첫 페이지 배치 완결 — 타이머와 무관하게 여는 정상 경로. 페이지 순서가 아니라 완료
+				// 순서인 것은 무해하다 — 목록 정렬은 taken_at이고 markServing은 last_swept_at IS NULL
+				// 가드로 1회만 먹는다(served CAS는 타이머 경로와의 프로세스 내 이중 방어).
 				if (served.compareAndSet(false, true)) {
 					brands.markServing(row.id());
 				}
@@ -226,9 +262,9 @@ public class BrandRegistrationService {
 	 * 보강 실패는 backfill_error를 남기지 않는다 — 목록·지표는 이미 서빙 중(ready)이라 "초기 수집
 	 * 실패" 문구가 오히려 오보고, 미수집분(게시자 stale·댓글 워터마크)은 다음 스윕이 자동 재시도한다.
 	 */
-	private void runEnrichSafely(BrandRow row, List<PostInfo> posts) {
+	private void runEnrichSafely(BrandRow row, List<PostInfo> posts, Consumer<String> onPostSettled) {
 		try {
-			collect.enrich(row, posts);
+			collect.enrich(row, posts, onPostSettled);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}
