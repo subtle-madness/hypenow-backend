@@ -1,6 +1,6 @@
 # 브랜드 게시물 단위 정산 + ready 10초 상한 구현 계획
 
-> 상태: 🟢 활성 · 스펙: [2026-08-14-brand-per-post-settlement-design.md](../specs/2026-08-14-brand-per-post-settlement-design.md)
+> 상태: ✅ 실행 완료(2026-08-14) · 스펙: [2026-08-14-brand-per-post-settlement-design.md](../../specs/2026-08-14-brand-per-post-settlement-design.md)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

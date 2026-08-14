@@ -1,6 +1,7 @@
 # 브랜드 초기 수집 — 게시물 단위 정산 + ready 10초 상한 설계
 
-> 상태: 🟢 활성 · 설계 승인(2026-08-14)
+> 상태: 🟢 활성 · ✅ 구현됨(2026-08-14) · 구현 계획:
+> [2026-08-14-brand-per-post-settlement.md](../plans/archive/2026-08-14-brand-per-post-settlement.md)
 
 ## 배경 — 왜 바꾸나
 

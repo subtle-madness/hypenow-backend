@@ -129,6 +129,18 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 (`findTaggedPostsInWindow` 전량 / `findEnrichedTaggedPostsInWindow` 정산분)로 나누고
 `TaggedScope{ENRICHED_ONLY, ALL}`를 **기본값 없는 필수 인자**로 둬 호출부가 매번 의도를 밝힌다.
 
+게시물 단위 정산 + ready 10초 상한(2026-08-14 — [spec 2026-08-14](../superpowers/specs/2026-08-14-brand-per-post-settlement-design.md)):
+완결 배치 서빙(08-13)의 방출 단위를 **페이지 배치(21건) → 게시물 1건**으로 좁혔다(08-13의
+"게시물 1건 단위 방출" 기각을 사용자 요청으로 뒤집음 — 운영 체감 첫 ready ~30초, 꼬리 콜
+하나가 배치 전체를 붙드는 구조적 약점 + 이후 폴링도 21건 단위로만 점프). `enrich`를 게시물당
+퓨처 합성(자기 게시자·자기 댓글만 대기 → 1건씩 즉시 `markEnriched` + 정산 리스너 통지)으로
+재구성 — 게시자 퓨처는 게시자별 공유라 콜 수 불변, 전체 join(백프레셔)·finally 잔여 일괄
+정산·"시도 종료 = 정산" 의미 유지, `markEnriched`는 COALESCE(최초 정산 시각 보존). ready는
+**"첫 배치 완결 ∨ (`serving-open-timeout` 10초 경과 ∧ 정산 ≥ 1건)"** — 전용 타이머
+`brandServingTimer`(enrich executor 포화와 격리), 빈 ready는 열지 않는다(사용자 결정). 일일
+스윕도 같은 enrich라 자동 적용, was 무변경(`enriched_at` 게이트가 이미 게시물 단위), 스키마
+변경 없음.
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
