@@ -117,8 +117,9 @@ public class TaggedPostRepository {
 
 	/**
 	 * 보강 정산 마킹(2026-08-13 스펙 §1) — 성공이든 재시도 소진이든 "더 기다릴 이유가 없어진"
-	 * 게시물에 찍는다. was 목록 게이트의 정본이다. 재마킹은 무해하다(같은 게시물을 다음 스윕이
-	 * 다시 보강하면 시각만 갱신 — 노출 여부는 안 바뀐다).
+	 * 게시물에 찍는다. was 목록 게이트의 정본이다. 이중 마킹은 최초 시각을 보존한다(COALESCE,
+	 * 2026-08-14 게시물 단위 정산 스펙 §3) — 게시물별 마킹·finally 안전판·매일 스윕 재보강이
+	 * 같은 행에 겹쳐도 시각이 뒤로 밀리지 않는다(노출 여부는 어차피 안 바뀐다).
 	 */
 	public void markEnriched(long brandId, Collection<String> codes, Instant at) {
 		if (codes.isEmpty()) {
@@ -132,7 +133,7 @@ public class TaggedPostRepository {
 		for (String code : codes) {
 			args[i++] = code;
 		}
-		db.update("UPDATE brand_tagged_post SET enriched_at = ? WHERE brand_id = ? AND short_code IN ("
-				+ placeholders + ")", args);
+		db.update("UPDATE brand_tagged_post SET enriched_at = COALESCE(enriched_at, ?)"
+				+ " WHERE brand_id = ? AND short_code IN (" + placeholders + ")", args);
 	}
 }

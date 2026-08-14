@@ -462,7 +462,7 @@ class BrandStoreTest {
 	 * markEnriched는 was 목록 게이트(enriched_at IS NOT NULL)의 정본이라 실제 DB에 대고 왕복
 	 * 검증한다 — 컬럼명 오타·인자 순서 뒤바뀜·스코핑 누락은 컴파일로는 안 잡히고, 통합 시점에
 	 * "브랜드 목록이 조용히 빈다"로만 드러난다. 삽입 직후 NULL(미정산) → 지정 코드만 마킹 →
-	 * 같은 브랜드의 다른 코드·다른 브랜드의 같은 코드는 NULL 유지 → 재마킹 무해(시각만 갱신).
+	 * 같은 브랜드의 다른 코드·다른 브랜드의 같은 코드는 NULL 유지 → 재마킹 무해(최초 시각 보존).
 	 */
 	@Test
 	void markEnriched는_지정_브랜드의_지정_코드에만_정산_시각을_찍는다() {
@@ -485,10 +485,11 @@ class BrandStoreTest {
 		assertThat(enrichedAt(id, "B")).isNull();                // 같은 브랜드의 다른 코드 — 코드 스코핑
 		assertThat(enrichedAt(other, "A")).isNull();             // 다른 브랜드의 같은 코드 — 브랜드 스코핑
 
-		// 재마킹은 무해하다 — 시각만 갱신되고 노출 여부(NOT NULL)는 안 바뀐다.
+		// 이중 마킹은 최초 정산 시각을 보존한다(2026-08-14 게시물 단위 정산 스펙 §3 — COALESCE).
+		// 게시물별 마킹·finally 안전판·매일 스윕 재보강이 같은 행을 다시 마킹해도 시각이 안 밀린다.
 		Instant again = Instant.parse("2026-08-13T09:00:00Z");
 		taggedPosts.markEnriched(id, List.of("A"), again);
-		assertThat(enrichedAt(id, "A")).isEqualTo(again);
+		assertThat(enrichedAt(id, "A")).isEqualTo(at);   // 두 번째 마킹이 덮지 않는다
 		assertThat(enrichedAt(id, "B")).isNull();
 	}
 
