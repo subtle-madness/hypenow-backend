@@ -60,7 +60,9 @@ public class BrandPostAssembler {
 
 	/**
 	 * 표시 윈도우 365일(크롤링 정책 v1 08-09 — 수집 편입 컷과 같은 깊이, 상한 없음). 직접 등록(§6-4)의
-	 * "이미 브랜드 목록에 있는 게시물" 판정도 같은 모수를 봐야 해서 패키지 공개다({@link V1BrandDirectPostService}).
+	 * "이미 브랜드가 들고 있는 게시물" 판정도 같은 <b>창</b>을 봐야 해서 패키지 공개다
+	 * ({@link V1BrandDirectPostService}). 창은 같지만 정산 게이트는 다르다 — 그쪽은 중복 판정이라
+	 * 미정산분까지 전량을 본다({@link TaggedScope} 참조).
 	 */
 	static final int WINDOW_DAYS = 365;
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
@@ -89,7 +91,8 @@ public class BrandPostAssembler {
 	 * 소유권 검증은 호출부 책임이다(여기 오는 account는 이미 내 브랜드여야 한다).
 	 */
 	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account) {
-		List<BrandPostResponse> tagged = assembleTagged(account);
+		// 표시 표면이라 정산분만 — 게시자·댓글이 붙기 전의 반쯤 빈 카드를 목록·상세·counts에 싣지 않는다.
+		List<BrandPostResponse> tagged = assembleTagged(account, true, TaggedScope.ENRICHED_ONLY);
 		List<BrandPostResponse> direct = assembleDirect(userId, account.id());
 		return mergeByShortcode(direct, tagged);
 	}
@@ -103,26 +106,38 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * tagged 계열만 조립(브랜드 스윕 산지 전량). 공개 이유: 성과 대시보드(Task 9)는 레거시 전량을
-	 * 이미 자기가 조립해 두고 tagged만 얹으면 되는데, {@link #assembleForBrand}를 부르면 그 안에서
-	 * {@link TrackingItemAssembler#assembleList}가 한 번 더 돌아 유저 전량 배치 조회 5~6개가
-	 * 통째로 중복된다. 브랜드 화면(§6-1)의 진입점은 여전히 {@code assembleForBrand}다.
+	 * 조립 모수 — 호출부가 "표시냐 판정이냐"를 매번 명시한다(2026-08-13 완결 배치 서빙 리뷰 결정).
+	 * 기본값을 두지 않는 이유: 정산 게이트는 표시 계약이지 존재 계약이 아니라서, 조용히 상속되면
+	 * 존재·집계 판정이 수집 중인 게시물을 "없다"고 답하게 된다.
 	 */
-	public List<BrandPostResponse> assembleTagged(BrandAccountRow account) {
-		return assembleTagged(account, true);
+	public enum TaggedScope {
+		/** 보강 정산분만(enriched_at IS NOT NULL) — 목록·상세·counts 같은 <b>표시</b> 표면 전용. */
+		ENRICHED_ONLY,
+		/** 정산 전 포함 전량 — 존재 판정·중복 판정·지표 집계처럼 누락이 오답이 되는 곳. */
+		ALL
 	}
 
 	/**
-	 * 댓글 생략 가능 변형(08-12 성과 대시보드 고정 지연 대응) — {@code withComments=false}면
-	 * 댓글 배치 조회를 아예 돌리지 않는다. 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중
-	 * 237ms(57%)가 댓글 윈도우 쿼리 + 18,860행 매핑이었다 — 목록·비교 표면은 댓글을 렌더하지
-	 * 않으므로(FE 실측 확인) 이 비용은 매 요청 버려지고 있었다. 결과 게시물의
-	 * {@code recentComments}는 빈 목록, {@code commentsCollectedCount}는 0이 된다 —
-	 * 스냅샷 유래 지표({@code commentsTotal}·{@code commentsHidden})는 영향이 없다.
+	 * tagged 계열만 조립(브랜드 스윕 산지). 공개 이유: 성과 대시보드(Task 9)는 레거시 전량을
+	 * 이미 자기가 조립해 두고 tagged만 얹으면 되는데, {@link #assembleForBrand}를 부르면 그 안에서
+	 * {@link TrackingItemAssembler#assembleList}가 한 번 더 돌아 유저 전량 배치 조회 5~6개가
+	 * 통째로 중복된다. 브랜드 화면(§6-1)의 진입점은 여전히 {@code assembleForBrand}다.
+	 *
+	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
+	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
+	 * 18,860행 매핑이었다 — 목록·비교 표면은 댓글을 렌더하지 않으므로(FE 실측 확인) 이 비용은 매
+	 * 요청 버려지고 있었다. 결과 게시물의 {@code recentComments}는 빈 목록,
+	 * {@code commentsCollectedCount}는 0이 된다 — 스냅샷 유래 지표({@code commentsTotal}·
+	 * {@code commentsHidden})는 영향이 없다.
+	 *
+	 * <p>{@code scope}는 편의 오버로드를 두지 않는다 — 호출부가 표시(ENRICHED_ONLY)와 판정(ALL)을
+	 * 매번 골라야 한다({@link TaggedScope} 주석 참조).
 	 */
-	public List<BrandPostResponse> assembleTagged(BrandAccountRow account, boolean withComments) {
-		List<BrandTaggedPostRow> posts =
-				brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff());
+	public List<BrandPostResponse> assembleTagged(BrandAccountRow account, boolean withComments,
+			TaggedScope scope) {
+		List<BrandTaggedPostRow> posts = scope == TaggedScope.ENRICHED_ONLY
+				? brandReadRepository.findEnrichedTaggedPostsInWindow(account.id(), windowCutoff())
+				: brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff());
 		if (posts.isEmpty()) {
 			return List.of();
 		}

@@ -72,6 +72,8 @@ class BrandCollectServiceTest {
 	private final List<String> calls = new ArrayList<>();
 	private final List<String> tagPages = new ArrayList<>();
 	private final Set<String> failingAuthorIds = new HashSet<>();
+	// 게시자별 "앞으로 몇 번 더 404를 낼지" — 산발적 404(1회) / 지속 404를 같은 대역으로 표현한다.
+	private final Map<String, Integer> authorNotFoundTimes = new HashMap<>();
 	private boolean tagNotFound = false;
 	private boolean tagPage2Fails = false;
 	private boolean brandProfileFails = false;
@@ -165,6 +167,13 @@ class BrandCollectServiceTest {
 		final Map<String, Long> collectedCounts = new HashMap<>();
 		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
 		final Map<String, Instant> touched = new HashMap<>();
+		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
+		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
+		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
+		// 첫 정산 마킹만 실패시킨다 — 보강 단계의 DB 실패(페이지 1건 실패, 뒤 페이지는 정상) 대역.
+		boolean markEnrichedFailsOnce = false;
+		// 댓글 게이트 첫머리의 배치 조회 실패 대역(커넥션 blip) — 건별 격리가 닿지 않는 지점이다.
+		boolean commentsCountsFails = false;
 		int depthCalls = 0;
 
 		InMemoryTagged() {
@@ -184,6 +193,9 @@ class BrandCollectServiceTest {
 
 		@Override
 		public Map<String, Long> commentsCollectedCounts(long brandId, Collection<String> codes) {
+			if (commentsCountsFails) {
+				throw new IllegalStateException("댓글 워터마크 배치 조회 실패(DB 일시 오류)");
+			}
 			Map<String, Long> out = new HashMap<>();
 			for (String c : codes) {
 				out.put(c, collectedCounts.getOrDefault(c, 0L));
@@ -209,6 +221,15 @@ class BrandCollectServiceTest {
 		}
 
 		@Override
+		public void markEnriched(long brandId, Collection<String> codes, Instant at) {
+			if (markEnrichedFailsOnce) {
+				markEnrichedFailsOnce = false;
+				throw new IllegalStateException("정산 마킹 실패(DB 일시 오류)");
+			}
+			enriched.addAll(codes);
+		}
+
+		@Override
 		public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
 			// 실 DB의 범위 UPDATE 대역 — 추적 링크 중 컷 이후(taken_at ≥ minTakenAt) 전부를 touch.
 			depthCalls++;
@@ -222,6 +243,9 @@ class BrandCollectServiceTest {
 
 	private static final class InMemoryAuthors extends AuthorProfileRepository {
 		Set<String> fresh = new HashSet<>();
+		// stale 판정 배치 조회 실패 대역(커넥션 blip) — 게시자별 격리(fetchAuthorWithRetry)보다
+		// 앞이라 여기서 던지면 예외가 enrich 밖으로 나간다.
+		boolean freshLookupFails = false;
 		// 병렬 upsert 대비 스레드 안전 리스트(직결 executor를 쓰는 기존 테스트는 영향 없음).
 		final List<String> upserted = Collections.synchronizedList(new ArrayList<>());
 
@@ -236,6 +260,9 @@ class BrandCollectServiceTest {
 
 		@Override
 		public Set<String> freshIgUserIds(Collection<String> igUserIds, Instant staleBefore) {
+			if (freshLookupFails) {
+				throw new IllegalStateException("게시자 stale 배치 조회 실패(DB 일시 오류)");
+			}
 			Set<String> out = new HashSet<>(fresh);
 			out.retainAll(new HashSet<>(igUserIds));
 			return out;
@@ -269,6 +296,11 @@ class BrandCollectServiceTest {
 				if (failingAuthorIds.contains(id)) {
 					throw new HikerFetchException("게시자 프로필 500");
 				}
+				int notFoundLeft = authorNotFoundTimes.getOrDefault(id, 0);
+				if (notFoundLeft > 0) {
+					authorNotFoundTimes.put(id, notFoundLeft - 1);
+					throw new SubjectNotFoundException("Hiker 404");
+				}
 				return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\",\"follower_count\":100,\"is_private\":false}}"
 						.formatted(id, id);
 			}
@@ -293,7 +325,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				Runnable::run, 30, maxPostsPerSweep, 3, 30);
+				Runnable::run, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -620,48 +652,99 @@ class BrandCollectServiceTest {
 		assertThat(writer.saved).hasSize(3);                 // 게시자 실패가 지표 적재에 번지지 않는다
 	}
 
-	// ── 스트리밍 적재 + 서빙 콜백(2026-08-12 스펙 §2) ────────────────────────
-
+	/**
+	 * 게시자 404는 결정적 부재가 아니다(08-13 실측 2.0%, 재시도 1회로 2/2 복구 — 실존 계정 확인)
+	 * — 1회 재시도해 성공하면 프로필을 저장한다. 재시도가 없으면 완결 서빙에서 그 게시물이
+	 * 영구 미노출이 된다.
+	 */
 	@Test
-	void 서빙_창_커버_시점에_콜백을_1회_호출하고_열거는_계속한다() {
-		// 백필 경로(365일 컷). 2페이지 전체가 60일령 > 서빙 창(30일) — 여기서 콜백이 떠야 한다.
-		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
-		tagPages.add(page("p3", reel("Old60a", RETRO_IN_WINDOW, 0, 102, ""),
-				reel("Old60b", RETRO_IN_WINDOW, 0, 103, "")));
-		tagPages.add(page(null, reel("Old95", OLD_95D, 0, 104, "")));
-		List<List<String>> callbacks = new ArrayList<>();
+	void 게시자_404는_1회_재시도한다() {
+		authorNotFoundTimes.put("101", 1);   // 첫 콜만 404, 두 번째는 정상 — 산발적 404의 재현
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(authorCalls()).isEqualTo(2);              // 최초 1 + 재시도 1
+		assertThat(authors.upserted).containsExactly("101"); // 재시도로 복구
+	}
+
+	/**
+	 * 재시도해도 실패하면 게시자 없이 넘어간다 — 무한 재시도로 화면을 막지 않는다.
+	 * 미수집분은 게시자 stale 판정으로 다음 스윕이 백스톱한다.
+	 */
+	@Test
+	void 게시자_404가_재시도_후에도_실패하면_건너뛴다() {
+		authorNotFoundTimes.put("101", 5);   // 계속 404 — 재시도 상한을 넘겨 부르지 않는지 본다
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(2000).sweep(brand);   // 예외가 새어나가면 여기서 터진다
+
+		assertThat(authorCalls()).isEqualTo(2);   // 최초 1 + 재시도 1, 그 이상은 안 한다
+		assertThat(authors.upserted).isEmpty();
+	}
+
+	// ── 스트리밍 적재 + 페이지 배치 콜백(2026-08-13 완결 배치 서빙 스펙 §2) ───
+
+	/**
+	 * 콜백은 페이지마다 1회, <b>그 페이지분만</b> 받는다(누적 아님) — 수신자가 그 페이지를 즉시
+	 * 보강·정산해 목록에 올릴 수 있게 하는 전제다. 구 계약은 "서빙 창(30일) 커버 시 1회 + 그때까지의
+	 * 누적 리스트"였다.
+	 */
+	@Test
+	void 콜백은_페이지마다_그_페이지분만_받는다() {
+		// 백필 경로(365일 컷) 3페이지 — 구 계약이었다면 2페이지 경계(60일령 > 서빙 창 30일)에서
+		// 누적 3건으로 1회 부르고 끝났을 배치다.
+		tagPages.add(page("p2", reel("P1", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("P2a", RETRO_IN_WINDOW, 0, 102, ""),
+				reel("P2b", RETRO_IN_WINDOW, 0, 103, "")));
+		tagPages.add(page(null, reel("P3", OLD_95D, 0, 104, "")));
+		List<List<String>> batches = new ArrayList<>();
 
 		service(2000).sweepCore(brand,
-				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+				pageItems -> batches.add(pageItems.stream().map(PostInfo::shortCode).toList()));
 
-		assertThat(callbacks).hasSize(1);
-		assertThat(callbacks.getFirst()).containsExactly("A", "Old60a", "Old60b");   // 경계 페이지까지 누적분
-		assertThat(tagCalls()).isEqualTo(3);   // 콜백 후에도 365일 컷까지 계속 — 조기 종료 아님
-		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "Old60a", "Old60b", "Old95");
+		assertThat(batches).hasSize(3);
+		assertThat(batches.get(0)).containsExactly("P1");
+		assertThat(batches.get(1)).containsExactly("P2a", "P2b");   // 1페이지분이 섞이지 않는다
+		assertThat(batches.get(2)).containsExactly("P3");
+		assertThat(tagCalls()).isEqualTo(3);   // 콜백이 열거를 끊지 않는다 — 365일 컷까지 계속
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("P1", "P2a", "P2b", "P3");
+	}
+
+	/** 태그 0건 브랜드도 콜백을 1회 받는다 — 안 부르면 그 브랜드가 collecting에 영구히 갇힌다. */
+	@Test
+	void 태그가_0건이면_빈_페이지로_콜백을_1회_부른다() {
+		tagNotFound = true;   // 404 → 빈 페이지(HikerClient 변환) — 처리할 페이지가 없는 경로
+		List<Integer> sizes = new ArrayList<>();
+
+		service(2000).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
+
+		assertThat(sizes).containsExactly(0);
 	}
 
 	@Test
-	void 서빙_창보다_게시물이_얕으면_열거_종료_시점에_콜백한다() {
-		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));   // 전부 최근 — 경계 미도달
+	void 단일_페이지_열거는_그_페이지분으로_콜백한다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
 		List<List<String>> callbacks = new ArrayList<>();
 
 		service(2000).sweepCore(brand,
-				early -> callbacks.add(early.stream().map(PostInfo::shortCode).toList()));
+				pageItems -> callbacks.add(pageItems.stream().map(PostInfo::shortCode).toList()));
 
 		assertThat(callbacks).hasSize(1);
 		assertThat(callbacks.getFirst()).containsExactly("A");
 	}
 
 	@Test
-	void 안전_상한_중단도_종료_시점에_콜백한다() {
+	void 안전_상한_중단_전까지의_페이지는_전부_콜백된다() {
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
 		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
 		List<Integer> sizes = new ArrayList<>();
 
-		service(3).sweepCore(brand, early -> sizes.add(early.size()));
+		service(3).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
 
-		assertThat(sizes).containsExactly(4);   // 상한 3 → 2페이지째 중단, 그때까지 적재분 4건
+		// 상한 3 → 2페이지째 처리 후 중단. 두 페이지 모두 자기 페이지분(2건씩)으로 방출된다.
+		assertThat(sizes).containsExactly(2, 2);
 	}
 
 	@Test
@@ -678,6 +761,35 @@ class BrandCollectServiceTest {
 	}
 
 	@Test
+	void 스윕_중간_실패해도_앞_페이지는_정산된다() {
+		// 일일 스윕도 페이지 배치로 돈다(2026-08-13 완결 배치 서빙 스펙 §3) — 열거 전량 후 일괄
+		// 보강을 유지하면 중간 실패 시 그 스윕에서 만난 게시물이 통째로 미정산(= 목록 미노출)으로
+		// 남는다. 1페이지분은 이미 보강·정산이 끝나 있어야 한다.
+		tagPage2Fails = true;
+		tagPages.add(page("p2", reel("P1_A", RECENT, 0, 101, ""), reel("P1_B", RECENT, 0, 102, "")));
+
+		assertThatThrownBy(() -> service(2000).sweep(brand))
+				.isInstanceOf(HikerFetchException.class);
+
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("P1_A", "P1_B");
+	}
+
+	@Test
+	void 스윕은_보강이_실패해도_남은_페이지_열거를_계속한다() {
+		// 콜백(보강)이 던지면 열거 루프가 통째로 끊겨 뒤 페이지가 그날 적재조차 안 된다 — 등록
+		// 경로(runEnrichSafely)와 같은 격리 규칙을 스윕에도 건다. 열거는 페이지당 Hiker 콜을 이미
+		// 지불한 결과물이라 보강 실패로 버리면 교환비가 나쁘다.
+		tagged.markEnrichedFailsOnce = true;
+		tagPages.add(page("p2", reel("P1", RECENT, 0, 101, "")));
+		tagPages.add(page(null, reel("P2", RECENT, 0, 102, "")));
+
+		service(2000).sweep(brand);   // 보강 예외가 새면 여기서 터진다
+
+		assertThat(tagged.inserted).containsExactly("P1", "P2");   // 2페이지도 적재됐다
+		assertThat(tagged.enriched).containsExactly("P2");          // 1페이지분만 미정산 — 다음 스윕이 백스톱
+	}
+
+	@Test
 	void 페이지_간_중복_코드는_한_번만_처리한다() {
 		// 커서 드리프트로 같은 게시물이 두 페이지에 실려도 적재·링크는 1회(구 putIfAbsent 의미 보존).
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
@@ -689,7 +801,7 @@ class BrandCollectServiceTest {
 		assertThat(tagged.inserted).containsExactly("A", "B");
 	}
 
-	// ── core/enrichment 분리(등록 백필 단계식 ready — 2026-08-07) ────────────
+	// ── core/enrichment 분리(등록 백필 2단계 — 08-13 개정: ready는 첫 페이지 배치의 정산) ──
 
 	@Test
 	void sweepCore는_게시자_댓글_콜_없이_적재까지만_한다() {
@@ -699,7 +811,7 @@ class BrandCollectServiceTest {
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("A");
 		assertThat(tagged.inserted).containsExactly("A");
-		assertThat(authorCalls()).isZero();     // 보강 콜은 core 밖 — ready 게이트가 여기서 끊긴다
+		assertThat(authorCalls()).isZero();     // 보강 콜은 core 밖 — 정산(= 노출)은 enrich에서만 열린다
 		assertThat(commentCalls()).isZero();
 		assertThat(posts).extracting(PostInfo::shortCode).containsExactly("A");
 	}
@@ -761,7 +873,90 @@ class BrandCollectServiceTest {
 		assertThat(tagged.collectedCounts.get("Partial")).isNull();      // 워터마크 유지 → 다음 스윕 재시도
 	}
 
-	// ── 보강 병렬화(동시 6 — 2026-08-07 스펙) ────────────────────────────────
+	// ── 보강 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) ────────────────────
+
+	/**
+	 * 보강이 끝나면 그 게시물들을 정산 마킹한다 — was 목록 게이트(enriched_at IS NOT NULL)의
+	 * 입력이라, 안 찍히면 게시물이 목록에 안 뜬다.
+	 */
+	@Test
+	void 보강이_끝나면_정산_마킹한다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, ""), reel("B", RECENT, 3, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
+	}
+
+	/**
+	 * 게시자 수집이 전부 실패해도 정산한다 — enriched_at의 의미는 "보강 시도가 끝났다"이지
+	 * "게시자가 찼다"가 아니다. "게시자가 있을 때만 정산"으로 구현하면 실측 404 2%·타임아웃 1%의
+	 * 게시물이 목록에서 영구히 사라진다(미수집분은 stale 판정으로 다음 스윕이 백스톱).
+	 */
+	@Test
+	void 게시자_수집이_실패해도_정산한다() {
+		authorNotFoundTimes.put("101", 5);   // 지속 404 — 재시도까지 소진해도 실패
+		failingAuthorIds.add("102");         // 5xx·타임아웃 대역
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(authors.upserted).isEmpty();   // 게시자는 한 명도 못 채웠다
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
+	}
+
+	/**
+	 * 댓글이 미완주(중간 페이지 실패)여도 정산한다 — 단, 워터마크는 전진시키지 않아 다음 스윕이
+	 * 못 받은 페이지를 재시도한다(08-10 부분 보존 규칙 불변, 정산만 얹힌다).
+	 */
+	@Test
+	void 댓글_미완주여도_정산하되_워터마크는_전진하지_않는다() {
+		commentPage2Fails = true;
+		tagPages.add(page(null, reel("Partial", RECENT, 30, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(tagged.enriched).containsExactly("Partial");
+		assertThat(tagged.collectedCounts).doesNotContainKey("Partial");   // 워터마크 미전진
+	}
+
+	/**
+	 * 보강 단계 <b>첫머리의 배치 DB 조회</b>가 던져도 정산한다 — 건별 Hiker 콜은 각자 격리되지만
+	 * freshIgUserIds·commentsCollectedCounts는 그 격리 밖이라, 커넥션 blip 하나로 예외가 enrich
+	 * 밖으로 새면 그 페이지 행이 enriched_at NULL로 굳는다. 180일 초과 게시물에는 재열거 백스톱이
+	 * 없어(BrandCrawlPolicy.due가 무조건 false) 그 미노출이 <b>영구</b>가 된다 — 그래서 마킹은
+	 * finally다. 예외 자체는 그대로 위로 전파돼 상위 격리(enrichSafely)가 로그로 남긴다.
+	 */
+	@Test
+	void 게시자_stale_배치_조회가_던져도_정산한다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, ""), reel("B", RECENT, 3, 102, "")));
+		BrandCollectService service = service(2000);
+		List<PostInfo> posts = service.sweepCore(brand);
+
+		assertThatThrownBy(() -> service.enrich(brand, posts))
+				.isInstanceOf(IllegalStateException.class);
+
+		// 실제로 그 경로를 탔다는 근거 — 게시자·댓글 콜은 한 건도 못 나갔다(첫 배치 조회에서 끊겼다).
+		assertThat(authorCalls()).isZero();
+		assertThat(commentCalls()).isZero();
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
+	}
+
+	/** 댓글 워터마크 배치 조회가 던져도 정산한다(게시자 단계는 정상 통과 — 두 번째 배치 조회 지점). */
+	@Test
+	void 댓글_워터마크_배치_조회가_던져도_정산한다() {
+		tagged.commentsCountsFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);   // 상위 격리가 삼키므로 여기서 터지지 않는다
+
+		assertThat(authors.upserted).containsExactly("101");   // 게시자 단계는 통과했다
+		assertThat(commentCalls()).isZero();                   // 댓글은 배치 조회에서 끊겼다
+		assertThat(tagged.enriched).containsExactly("A");
+	}
+
+	// ── 보강 병렬화(2026-08-07 스펙 — 워커 풀 크기는 설정, 08-13부터 기본 10) ────
 
 	@Test
 	void 보강_게시자_콜은_워커_풀_동시성으로_나가되_상한을_넘지_않는다() {
@@ -796,7 +991,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, pool, 30, 2000, 3, 30);
+					comments, tagged, authors, pool, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
