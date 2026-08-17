@@ -9,7 +9,11 @@ import java.time.OffsetDateTime;
  *
  * <p>{@code accountType}은 이 관계의 속성이다(own/competitor, 08-12) — 같은 브랜드라도 유저마다
  * 다를 수 있어 brand_account가 아니라 여기 있다. 값 공간은 {@code BrandAccountType}.
+ *
+ * <p>{@code collectionMonths}(2026-08-17)는 이 유저가 신청한 <b>표시 기간</b>이다(1|3|6|12) —
+ * 크롤 자산 {@code brand_account.collection_months}(유저 간 max)와 별개로, 서빙 창을 자르는 기준.
+ * 같은 브랜드라도 유저마다 다를 수 있어 accountType처럼 관계 속성으로 여기 있다.
  */
 public record BrandLinkRow(long id, long userId, long brandId, String username, String accountType,
-		OffsetDateTime createdAt, OffsetDateTime deletedAt) {
+		int collectionMonths, OffsetDateTime createdAt, OffsetDateTime deletedAt) {
 }

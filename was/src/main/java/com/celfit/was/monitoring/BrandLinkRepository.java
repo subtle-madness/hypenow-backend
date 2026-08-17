@@ -18,7 +18,7 @@ import org.springframework.stereotype.Repository;
 public class BrandLinkRepository {
 
 	private static final String SELECT_COLUMNS =
-			"id, user_id, brand_id, username, account_type, created_at, deleted_at";
+			"id, user_id, brand_id, username, account_type, collection_months, created_at, deleted_at";
 
 	private final JdbcClient jdbcClient;
 
@@ -81,16 +81,17 @@ public class BrandLinkRepository {
 	}
 
 	/** 활성 연결 생성. RETURNING id. 같은 (유저, 브랜드) 활성 연결이 있으면 DuplicateKeyException. */
-	public long insertLink(long userId, long brandId, String username, String accountType) {
+	public long insertLink(long userId, long brandId, String username, String accountType, int collectionMonths) {
 		return jdbcClient.sql("""
-				INSERT INTO app.brand_monitorings (user_id, brand_id, username, account_type)
-				VALUES (:userId, :brandId, :username, :accountType)
+				INSERT INTO app.brand_monitorings (user_id, brand_id, username, account_type, collection_months)
+				VALUES (:userId, :brandId, :username, :accountType, :collectionMonths)
 				RETURNING id
 				""")
 				.param("userId", userId)
 				.param("brandId", brandId)
 				.param("username", username)
 				.param("accountType", accountType)
+				.param("collectionMonths", collectionMonths)
 				.query(Long.class)
 				.single();
 	}
@@ -111,6 +112,22 @@ public class BrandLinkRepository {
 				.param("userId", userId)
 				.param("brandId", brandId)
 				.param("accountType", accountType)
+				.update() > 0;
+	}
+
+	/**
+	 * 활성 연결의 표시 기간 변경(2026-08-17) — 재등록 요청이 명시한 신청값으로 그대로 갱신한다
+	 * (축소 허용 — 링크는 유저 개인 표시 범위라 자산의 max 규칙과 다르다). 반환값 의미는
+	 * {@link #updateAccountType}과 같다: false는 활성 연결 없음 하나뿐이다.
+	 */
+	public boolean updateCollectionMonths(long userId, long brandId, int collectionMonths) {
+		return jdbcClient.sql("""
+				UPDATE app.brand_monitorings SET collection_months = :collectionMonths
+				WHERE user_id = :userId AND brand_id = :brandId AND deleted_at IS NULL
+				""")
+				.param("userId", userId)
+				.param("brandId", brandId)
+				.param("collectionMonths", collectionMonths)
 				.update() > 0;
 	}
 

@@ -9,6 +9,7 @@ import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
@@ -37,6 +38,10 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>필터·정렬은 전부 메모리다 — 대상이 브랜드 1계정의 90일 윈도우(~105건 + 직접 등록분)라
  * 페이지네이션 없이 전량을 조립한 뒤 자른다. {@code meta.counts}는 필터 적용 <b>전</b> 전량 기준이라
  * FE가 탭 뱃지를 그릴 때 자기 필터 때문에 숫자가 흔들리지 않는다.
+ *
+ * <p>단 그 "전량"은 유저의 링크 표시 창(2026-08-17 — {@code brand_monitorings.collection_months})으로
+ * 이미 잘린 뒤다: 자산은 유저 간 max로 수집하므로 12개월치가 있어도 3개월 신청 유저에겐 3개월만
+ * 보이고, counts도 그 창 기준이라 탭 뱃지가 실제 목록과 어긋나지 않는다. 상세도 같은 창이다.
  *
  * <p>해시태그 발견 게시물은 §6-1 목록에 <b>병합하지 않는다</b>(2026-08-12 결정 — 별도 탭) — 스냅샷·
  * 댓글·팔로워 보강이 없는 별개 성격의 데이터라 같은 필터·정렬·counts 계약에 억지로 끼워 맞추면
@@ -68,15 +73,17 @@ public class V1BrandPostsController {
 	private final BrandPostAssembler assembler;
 	private final V1BrandDirectPostService directPostService;
 	private final BrandHashtagPostAssembler hashtagPostAssembler;
+	private final Clock clock;
 
 	public V1BrandPostsController(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
 			BrandPostAssembler assembler, V1BrandDirectPostService directPostService,
-			BrandHashtagPostAssembler hashtagPostAssembler) {
+			BrandHashtagPostAssembler hashtagPostAssembler, Clock clock) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
 		this.directPostService = directPostService;
 		this.hashtagPostAssembler = hashtagPostAssembler;
+		this.clock = clock;
 	}
 
 	@GetMapping("/accounts/{accountId}/posts")
@@ -88,7 +95,7 @@ public class V1BrandPostsController {
 			@RequestParam(required = false) String uploadedFrom,
 			@RequestParam(required = false) String uploadedTo) {
 		long brandId = parseAccountId(accountId);
-		requireOwnership(principal.getUserId(), brandId);
+		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
 		BrandAccountRow account = findAccountOrThrow(brandId);
 
 		String sourceFilter = normalizeFilter(source, "source", BrandPostAssembler.SOURCE_TAGGED,
@@ -99,7 +106,13 @@ public class V1BrandPostsController {
 		LocalDate from = parseDate(uploadedFrom, "uploadedFrom");
 		LocalDate to = parseDate(uploadedTo, "uploadedTo");
 
-		List<BrandPostResponse> all = assembler.assembleForBrand(principal.getUserId(), account);
+		// 유저 표시 창(2026-08-17) — 자산(brand_account)은 유저 간 max로 수집하므로 12개월치가
+		// 있어도, 이 유저가 신청한 기간까지만 서빙한다. counts·필터·정렬 전부 자른 전량 기준.
+		// 컷은 스트림 밖에서 한 번만 구한다 — 건마다 시계를 읽으면 자정을 걸친 응답에서 창이 흔들린다.
+		LocalDate windowStart = linkWindowStart(today(), link.collectionMonths());
+		List<BrandPostResponse> all = assembler.assembleForBrand(principal.getUserId(), account).stream()
+				.filter(p -> withinLinkWindow(p, windowStart))
+				.toList();
 		List<BrandPostResponse> filtered = all.stream()
 				.filter(p -> sourceFilter == null || sourceFilter.equals(p.source()))
 				.filter(p -> sponsorshipFilter == null || sponsorshipFilter.equals(p.sponsorship()))
@@ -132,14 +145,20 @@ public class V1BrandPostsController {
 	@GetMapping("/posts/{postId}")
 	public ApiResponse<BrandPostResponse> get(@AuthenticationPrincipal AppUserDetails principal,
 			@PathVariable String postId) {
+		// 시계는 요청당 한 번만 읽는다 — 브랜드마다 다시 읽으면 자정을 걸친 응답에서 브랜드별로 컷이 다르다.
+		LocalDate today = today();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(principal.getUserId())) {
 			Optional<BrandAccountRow> account = brandReadRepository.findAccount(link.brandId());
 			if (account.isEmpty()) {
 				continue;
 			}
+			LocalDate windowStart = linkWindowStart(today, link.collectionMonths());
 			Optional<BrandPostResponse> found = assembler.assembleForBrand(principal.getUserId(), account.get())
 					.stream()
 					.filter(p -> p.id().equals(postId))
+					// 창 밖 게시물은 목록에 없다 — 상세만 열리는 불일치를 만들지 않는다(같은 404).
+					// id 매칭 뒤에 둬서 창 판정(업로드일 파싱)은 후보 1건에만 돈다.
+					.filter(p -> withinLinkWindow(p, windowStart))
 					.findFirst();
 			if (found.isPresent()) {
 				return ApiResponse.ok(found.get());
@@ -224,6 +243,26 @@ public class V1BrandPostsController {
 		return (from == null || !uploadedOn.isBefore(from)) && (to == null || !uploadedOn.isAfter(to));
 	}
 
+	/** 창 계산의 기준일 — KST 달력일(windowCutoff 관용구 동형: 인스턴트 빼기는 경계가 흔들린다). */
+	private LocalDate today() {
+		return LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+	}
+
+	/** 링크 표시 창의 하한. */
+	private static LocalDate linkWindowStart(LocalDate today, int collectionMonths) {
+		return today.minusMonths(collectionMonths);
+	}
+
+	/**
+	 * 링크 창 판정(2026-08-17) — direct는 유저가 URL을 명시 등록한 추적 대상이라 창과 무관하게
+	 * 통과한다(창은 태그 수집 범위의 개념). 나머지는 기간 필터와 같은 판정이라 그쪽에 위임한다
+	 * (업로드일 미상 제외 규칙의 정의가 {@link #withinUploadWindow} 한 곳에만 있게).
+	 */
+	private static boolean withinLinkWindow(BrandPostResponse post, LocalDate windowStart) {
+		return BrandPostAssembler.SOURCE_DIRECT.equals(post.source())
+				|| withinUploadWindow(post, windowStart, null);
+	}
+
 	/**
 	 * performance_desc = 최신 스냅샷 views 내림차순, null(미수집·피드) 마지막. 동률·null 구간은
 	 * 업로드 최신순으로 다시 정렬해 순서가 요청마다 흔들리지 않게 한다.
@@ -280,11 +319,9 @@ public class V1BrandPostsController {
 
 	// ---------- 공용 ----------
 
-	private void requireOwnership(long userId, long brandId) {
-		Optional<BrandLinkRow> link = linkRepository.findActiveByUserAndBrand(userId, brandId);
-		if (link.isEmpty()) {
-			throw V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요.");
-		}
+	private BrandLinkRow requireOwnership(long userId, long brandId) {
+		return linkRepository.findActiveByUserAndBrand(userId, brandId)
+				.orElseThrow(() -> V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요."));
 	}
 
 	private BrandAccountRow findAccountOrThrow(long brandId) {
