@@ -71,7 +71,9 @@
 ### Tier 0 — 메타 규칙 (LLM 무관)
 - `is_paid_partnership = true` → `DISCLOSED` (RULE). 플랫폼 공식 라벨이 최강 증거.
 - 캡션 공백: 사진/캐러셀 → `NOT_DISCLOSED` + `[NO_DISCLOSURE]` (RULE),
-  릴스/동영상 → `UNCERTAIN` (영상 내 표기가 정본 위치라 캡션 부재로 단정 불가).
+  릴스·동영상(videoUrl 보유 FEED 포함) → `UNCERTAIN` (영상 내 표기가 정본 위치라 캡션 부재로 단정
+  불가 — HikerClient는 contentType을 REELS/FEED 2값으로만 매핑하므로 일반 피드의 단일 동영상도
+  contentType=FEED로 온다, videoUrl 유무로 판별).
 
 ### Tier 1 — 고신뢰 사전 매칭 (결정적, 코드)
 지침 원문 예시 중 **오탐 여지가 없는 패턴만** 사전화: `#광고`, `#유료광고`, `#협찬`,
@@ -141,7 +143,7 @@ LLM 없이 단위 테스트된다. 최종 판정을 결정적 규칙으로 빼�
 | CLEAR 있으나 전부 묻힌 위치 | INSUFFICIENT | HIDDEN_PLACEMENT |
 | AMBIGUOUS만 존재 | INSUFFICIENT | AMBIGUOUS_EXPRESSION (+묻힘 병기) |
 | FOREIGN만 존재 | INSUFFICIENT | FOREIGN_LANGUAGE |
-| 문구 없음 | 사진: NOT_DISCLOSED / 릴스: UNCERTAIN | NO_DISCLOSURE (사진만) |
+| 문구 없음 | 사진: NOT_DISCLOSED / 릴스·동영상: UNCERTAIN | NO_DISCLOSURE (사진만) |
 | UNCERTAIN 문구뿐 | UNCERTAIN | — |
 
 - LLM 콜 실패·파싱 실패·스키마 위반은 verdict NULL 유지 → 다음 스윕에서 자동 재시도.

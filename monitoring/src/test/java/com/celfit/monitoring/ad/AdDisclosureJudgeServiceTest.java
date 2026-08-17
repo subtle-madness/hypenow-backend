@@ -22,6 +22,14 @@ class AdDisclosureJudgeServiceTest {
 				true, false, false);
 	}
 
+	/** contentType=FEED이지만 videoUrl을 가진 단일 동영상 게시물 — HikerClient는 REELS/FEED 2값만
+	 * 매핑하므로 일반 피드의 단일 동영상도 이 셰이프로 온다(코디네이터 리뷰 반영). */
+	private static PostInfo feedVideoPost(String shortCode, String caption) {
+		return new PostInfo(shortCode, "poster1", null, null, "uid1", "FEED", caption, null,
+				1700000000L, 1L, 1L, 1L, null, null, null, null, "https://video.example/x.mp4", null, null,
+				true, false, false);
+	}
+
 	@Test
 	void 유료협찬_라벨이면_LLM_호출_없이_DISCLOSED() {
 		FakeExtractor extractor = new FakeExtractor();
@@ -46,6 +54,31 @@ class AdDisclosureJudgeServiceTest {
 		assertThat(repo.written.get("F1").verdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(repo.written.get("R1").verdict()).isEqualTo("UNCERTAIN");
 		assertThat(extractor.calls).isEmpty();
+	}
+
+	@Test
+	void FEED_동영상_캡션_공백은_UNCERTAIN() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(feedVideoPost("V1", "")));
+
+		assertThat(repo.written.get("V1").verdict()).isEqualTo("UNCERTAIN");
+		assertThat(extractor.calls).isEmpty();
+	}
+
+	@Test
+	void FEED_동영상_문구_전무는_combine_경유_UNCERTAIN() {
+		FakeExtractor extractor = new FakeExtractor();
+		extractor.next = List.of();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(feedVideoPost("V2", "그냥 오늘의 일상입니다")));
+
+		assertThat(extractor.calls).containsExactly("그냥 오늘의 일상입니다");
+		assertThat(repo.written.get("V2").verdict()).isEqualTo("UNCERTAIN");
 	}
 
 	@Test

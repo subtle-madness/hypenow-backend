@@ -97,9 +97,12 @@ public class AdDisclosureJudgeService {
 			return new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
 		}
 		String caption = caption(p);
-		boolean isReels = "REELS".equalsIgnoreCase(p.contentType());
+		// 릴스뿐 아니라 일반 피드의 단일 동영상(HikerClient는 contentType을 REELS/FEED 2값으로만
+		// 매핑하므로 FEED+videoUrl 보유가 그 경우)도 영상 내 표기가 정본 위치라 캡션 부재로 단정할 수
+		// 없다 — 스펙 §5 Tier0.
+		boolean isVideo = "REELS".equalsIgnoreCase(p.contentType()) || p.videoUrl() != null;
 		if (caption.isBlank()) {
-			return isReels
+			return isVideo
 					? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), List.of(), List.of())
 					: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), List.of(), List.of());
 		}
@@ -114,7 +117,7 @@ public class AdDisclosureJudgeService {
 			}
 		}
 		List<AdDisclosureExtractor.Disclosure> llm = extractor.extract(caption);
-		return AdVerdictCombiner.combine(caption, isReels, tier1, llm);
+		return AdVerdictCombiner.combine(caption, isVideo, tier1, llm);
 	}
 
 	private static String caption(PostInfo p) {

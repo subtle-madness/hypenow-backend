@@ -13,8 +13,8 @@ import java.util.Optional;
  * <p>우선순위(조합표 순서 그대로): CLEAR+적절위치 → DISCLOSED. CLEAR뿐이나 전부 묻힘 →
  * INSUFFICIENT+HIDDEN_PLACEMENT. AMBIGUOUS만 → INSUFFICIENT+AMBIGUOUS_EXPRESSION(묻힘 병기).
  * FOREIGN만 → INSUFFICIENT+FOREIGN_LANGUAGE. UNCERTAIN뿐 → UNCERTAIN. 유효 문구 전무 →
- * 사진 NOT_DISCLOSED+NO_DISCLOSURE / 릴스 UNCERTAIN(Tier0과 같은 분기 — 문구가 전부 환각 폐기된
- * 경우도 여기로 떨어진다).
+ * 사진 NOT_DISCLOSED+NO_DISCLOSURE / 릴스·동영상(videoUrl 보유 FEED 포함) UNCERTAIN(Tier0과 같은
+ * 분기 — 문구가 전부 환각 폐기된 경우도 여기로 떨어진다).
  *
  * <p>카테고리는 내부적으로 {@link Category} enum으로 다룬다 — DB·was 응답의 {@code
  * AdVerdictResult.Evidence.category}만 계약대로 문자열이라 evidence 생성 시점에 {@link
@@ -36,7 +36,7 @@ public final class AdVerdictCombiner {
 	 * @param llmDisclosures Tier2 추출 결과 — 캡션에 실존하지 않는 phrase(환각)나 공백 phrase는
 	 *                       여기서 폐기돼 결과의 {@code discardedPhrases}로만 남는다.
 	 */
-	public static AdVerdictResult combine(String caption, boolean isReels, AdDisclosurePatterns.Match tier1Match,
+	public static AdVerdictResult combine(String caption, boolean isVideo, AdDisclosurePatterns.Match tier1Match,
 			List<AdDisclosureExtractor.Disclosure> llmDisclosures) {
 		List<Evaluated> candidates = new ArrayList<>();
 		List<String> discarded = new ArrayList<>();
@@ -57,7 +57,7 @@ public final class AdVerdictCombiner {
 			candidates.add(evaluate(caption, d.phrase(), idx, idx + d.phrase().length(),
 					d.category(), "LLM"));
 		}
-		return decide(dedupe(candidates), isReels, discarded);
+		return decide(dedupe(candidates), isVideo, discarded);
 	}
 
 	private static Evaluated evaluate(String caption, String phrase, int start, int end, Category category,
@@ -76,7 +76,7 @@ public final class AdVerdictCombiner {
 		return List.copyOf(byKey.values());
 	}
 
-	private static AdVerdictResult decide(List<Evaluated> candidates, boolean isReels, List<String> discardedSoFar) {
+	private static AdVerdictResult decide(List<Evaluated> candidates, boolean isVideo, List<String> discardedSoFar) {
 		List<AdVerdictResult.Evidence> evidence = candidates.stream()
 				.map(c -> new AdVerdictResult.Evidence(c.phrase(), c.category().name(), c.graphemeOffset()))
 				.toList();
@@ -117,7 +117,7 @@ public final class AdVerdictCombiner {
 		}
 
 		// 유효 문구 전무(전부 환각으로 폐기된 경우 포함) — Tier0과 같은 매체별 분기.
-		return isReels
+		return isVideo
 				? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), evidence, discardedPhrases)
 				: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), evidence, discardedPhrases);
 	}
