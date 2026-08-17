@@ -3,6 +3,7 @@ package com.celfit.monitoring.ad;
 import com.celfit.monitoring.llm.GeminiHttp;
 import java.util.ArrayList;
 import java.util.List;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -72,6 +73,7 @@ public class AdDisclosureExtractorGemini implements AdDisclosureExtractor {
 		gen.put("temperature", 0);
 		gen.put("responseMimeType", "application/json");
 		gen.set("responseSchema", responseSchema());
+		// BrandMentionJudge(단일 verdict, 256)의 2배 — 문구를 여러 건 그대로 인용해 담을 수 있어야 함
 		gen.put("maxOutputTokens", 512);
 		return om.writeValueAsString(root);
 	}
@@ -103,9 +105,17 @@ public class AdDisclosureExtractorGemini implements AdDisclosureExtractor {
 		if (text.isMissingNode()) {
 			throw new IllegalStateException("Gemini 응답에 본문 없음: " + abbreviate(responseBody));
 		}
-		JsonNode disclosures = om.readTree(text.asString()).path("disclosures");
+		String textValue = text.asString();
+		JsonNode innerRoot;
+		try {
+			innerRoot = om.readTree(textValue);
+		} catch (JacksonException e) {
+			// maxOutputTokens 초과로 JSON이 중간에 잘리는 경우가 대표 시나리오 — 원문 일부를 남겨 진단
+			throw new IllegalStateException("응답 본문 JSON 파싱 실패: " + abbreviate(textValue), e);
+		}
+		JsonNode disclosures = innerRoot.path("disclosures");
 		if (disclosures.isMissingNode() || !disclosures.isArray()) {
-			throw new IllegalStateException("Gemini 응답에 disclosures 없음: " + abbreviate(text.asString()));
+			throw new IllegalStateException("Gemini 응답에 disclosures 없음: " + abbreviate(textValue));
 		}
 		List<Disclosure> out = new ArrayList<>();
 		for (JsonNode node : disclosures) {
