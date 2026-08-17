@@ -853,7 +853,7 @@ public final class AdVerdictCombiner {
 - [ ] **Step 6: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdVerdictCombinerTest"`
-Expected: PASS (12개)
+Expected: PASS (11개)
 
 - [ ] **Step 7: 커밋**
 
