@@ -158,9 +158,8 @@ public class AccountAnalysisJob {
 		TraitTaxonomy vocab = traitLoader.get();
 		// JSONL은 통짜 String이 아니라 스트리밍 조립 — 2,700건 펄스 × 라인당 ~10KB에서
 		// StringBuilder.toString()+getBytes() 사본 2개가 힙 피크를 ~3배로 만든다(최종 리뷰 I-3).
-		// json.writeValue(Writer, Object)는 호출마다 대상을 auto-close하는 Jackson 기본 동작 때문에
-		// 라인 반복 호출에 못 쓴다(두 번째 라인부터 "Stream closed") — JsonGenerator를 직접 열어
-		// writeValue(JsonGenerator, Object)로 여러 값을 한 스트림에 이어 쓴다.
+		// 라인별 writeValueAsBytes — JsonGenerator 재사용은 루트 값 구분자(공백)가 끼어 JSONL이
+		// 깨진다(최종 리뷰 실측).
 		ByteArrayOutputStream jsonlBytes = new ByteArrayOutputStream();
 		// 사이드카는 account_batch_jobs.sidecar_jsonl(text 컬럼)에 그대로 들어가 어차피 String이
 		// 필요하므로 StringBuilder를 유지한다(스트리밍 이점 없음).
@@ -168,27 +167,25 @@ public class AccountAnalysisJob {
 		int skippedIncomplete = 0;
 		int submitted = 0;
 		int failed = 0;
-		try (tools.jackson.core.JsonGenerator gen = json.createGenerator(jsonlBytes)) {
-			for (String handle : targets) {
-				try {
-					Prepared p = prepare(handle);
-					if (p == null) {
-						skippedIncomplete++; // 온라인 경로의 SKIPPED_DATA_INCOMPLETE와 동일 — 제출에서 제외
-						continue;
-					}
-					String system = GeminiAccountSynthesizer.instructions(vocab, p.account().confidence());
-					json.writeValue(gen, AccountBatchLines.requestLine(json, handle, system,
-							GeminiAccountSynthesizer.userText(p.account())));
-					gen.writeRaw('\n');
-					sidecar.append(json.writeValueAsString(AccountBatchLines.sidecarLine(json, handle,
-							p.lastPostedAt(), p.analyzedCount(), p.adSituation()))).append('\n');
-					submitted++;
-				} catch (Exception e) {
-					// 계정 단위 격리 — 한 계정의 예외(예: 미러 TRUNCATE 경합으로 EmptyResultDataAccessException)가
-					// 그날 제출 전체를 무산시키지 않는다(최종 리뷰 M-1).
-					failed++;
-					log.error("계정 배치 조립 실패 {} — 다음 실행에서 재대상", handle, e);
+		for (String handle : targets) {
+			try {
+				Prepared p = prepare(handle);
+				if (p == null) {
+					skippedIncomplete++; // 온라인 경로의 SKIPPED_DATA_INCOMPLETE와 동일 — 제출에서 제외
+					continue;
 				}
+				String system = GeminiAccountSynthesizer.instructions(vocab, p.account().confidence());
+				jsonlBytes.writeBytes(json.writeValueAsBytes(AccountBatchLines.requestLine(
+						json, handle, system, GeminiAccountSynthesizer.userText(p.account()))));
+				jsonlBytes.write('\n');
+				sidecar.append(json.writeValueAsString(AccountBatchLines.sidecarLine(json, handle,
+						p.lastPostedAt(), p.analyzedCount(), p.adSituation()))).append('\n');
+				submitted++;
+			} catch (Exception e) {
+				// 계정 단위 격리 — 한 계정의 예외(예: 미러 TRUNCATE 경합으로 EmptyResultDataAccessException)가
+				// 그날 제출 전체를 무산시키지 않는다(최종 리뷰 M-1).
+				failed++;
+				log.error("계정 배치 조립 실패 {} — 다음 실행에서 재대상", handle, e);
 			}
 		}
 		if (skippedIncomplete > 0) {

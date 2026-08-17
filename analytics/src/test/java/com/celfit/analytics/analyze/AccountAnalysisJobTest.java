@@ -681,6 +681,36 @@ class AccountAnalysisJobTest {
 		assertEquals(0L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 	}
 
+	/**
+	 * 다중 라인 회귀(최종 리뷰) — JSONL 조립에 JsonGenerator를 재사용했더니 Jackson이 루트 값 사이에
+	 * rootValueSeparator(공백 1칸)를 자동 삽입해 두 번째 줄부터 선행 공백이 붙는 회귀가 있었다
+	 * (batch-limit=1 테스트로는 못 잡힘 — writeRaw('\n')가 루트 컨텍스트를 리셋하지 못한다는 게
+	 * 리뷰어 바이트 실측). 라인별 writeValueAsBytes로 수정된 뒤에도 이 회귀가 재발하지 않는지
+	 * 다중 라인(batch-limit=2)으로 검증한다 — 모든 줄이 예외 없이 '{'로 시작해야 한다.
+	 */
+	@Test
+	void 배치_제출_JSONL은_모든_라인이_중괄호로_시작한다() {
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-transport', 'batch')");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-batch-limit', '2')");
+		rewireJob(fakePort(), fakeBatchApi());
+
+		JobResult result = job.run();
+
+		assertEquals(2, result.processed());
+		assertEquals(1, batchUploads.size());
+		String jsonl = new String(batchUploads.get(0), StandardCharsets.UTF_8);
+		List<String> lines = new ArrayList<>();
+		for (String line : jsonl.split("\n")) {
+			if (!line.isBlank()) {
+				lines.add(line);
+			}
+		}
+		assertEquals(2, lines.size(), jsonl); // 빈 마지막 줄 제외 — 2계정 = 2줄
+		for (String line : lines) {
+			assertTrue(line.startsWith("{"), "라인이 '{'로 시작하지 않음(선행 공백 등 회귀 의심): " + line);
+		}
+	}
+
 	@Test
 	void 배치_전송이라도_batchApi가_없으면_온라인으로_폴백한다() {
 		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-transport', 'batch')");
