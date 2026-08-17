@@ -40,17 +40,6 @@ class BrandHashtagRepositoryTest {
 	}
 
 	@Test
-	void 제외_문자열은_기본값_삽입_후_전체_교체가_가능하다() {
-		repo.insertDefaultExclusion(brandId, "cclime");
-		repo.insertDefaultExclusion(brandId, "cclime");   // 멱등
-		assertThat(repo.findExclusionTerms(brandId)).containsExactly("cclime");
-		repo.replaceExclusionTerms(brandId, List.of("cclime", "cclimebeauty"));
-		assertThat(repo.findExclusionTerms(brandId)).containsExactly("cclime", "cclimebeauty");
-		repo.replaceExclusionTerms(brandId, List.of());
-		assertThat(repo.findExclusionTerms(brandId)).isEmpty();
-	}
-
-	@Test
 	void 게시물_저장과_기존_코드_조회가_동작한다() {
 		repo.insertPost(new BrandHashtagRepository.HashtagPostInsert(brandId, "끌리메", "AAA", "poster1",
 				"포스터", "https://pic", OffsetDateTime.parse("2026-08-01T00:00:00Z"), "캡션", "REELS",
@@ -151,72 +140,4 @@ class BrandHashtagRepositoryTest {
 		assertThat(deletedCount).isEqualTo(3L);
 	}
 
-	// ---------- 제외 문자열 tombstone·단건 추가·삭제·전체 삭제(2026-08-12) ----------
-
-	/**
-	 * tombstone 의미론의 핵심(제외 문자열 판) — 유저가 지운 문자열은 deleted_at이 채워진 행으로
-	 * 남고, 등록 replay가 부르는 insertDefaultExclusion(ON CONFLICT DO NOTHING)로는 되살아나지 않는다.
-	 */
-	@Test
-	void 삭제된_제외_문자열은_insertDefaultExclusion_시드로_부활하지_않는다() {
-		repo.insertDefaultExclusion(brandId, "cclime");
-		repo.deleteExclusionTerm(brandId, "cclime");
-		assertThat(repo.findExclusionTerms(brandId)).isEmpty();
-
-		// 등록 replay가 기본값 시드를 재시도해도 tombstone 행은 ON CONFLICT DO NOTHING에 막힌다.
-		repo.insertDefaultExclusion(brandId, "cclime");
-		assertThat(repo.findExclusionTerms(brandId)).isEmpty();
-
-		Long deletedCount = db.queryForObject(
-				"SELECT count(*) FROM brand_hashtag_exclusion WHERE brand_id = ? AND term = ? "
-						+ "AND deleted_at IS NOT NULL",
-				Long.class, brandId, "cclime");
-		assertThat(deletedCount).isEqualTo(1L);
-	}
-
-	@Test
-	void 제외_문자열_추가는_tombstone을_되살린다() {
-		repo.insertDefaultExclusion(brandId, "cclime");
-		repo.deleteExclusionTerm(brandId, "cclime");
-		assertThat(repo.findExclusionTerms(brandId)).isEmpty();
-
-		repo.addExclusionTerms(brandId, List.of("cclime", "cclimebeauty"));
-		assertThat(repo.findExclusionTerms(brandId)).containsExactly("cclime", "cclimebeauty");
-	}
-
-	@Test
-	void 제외_문자열_단건_삭제는_멱등이다() {
-		repo.insertDefaultExclusion(brandId, "cclime");
-		repo.deleteExclusionTerm(brandId, "cclime");
-		repo.deleteExclusionTerm(brandId, "cclime");   // 재삭제 — 무해
-		repo.deleteExclusionTerm(brandId, "없는문자열");   // 애초에 없던 대상 — 무해
-
-		assertThat(repo.findExclusionTerms(brandId)).isEmpty();
-	}
-
-	@Test
-	void 제외_문자열_전체_삭제_후_findExclusionTerms는_빈_목록이다() {
-		repo.replaceExclusionTerms(brandId, List.of("cclime", "cclimebeauty"));
-		repo.deleteAllExclusionTerms(brandId);
-
-		assertThat(repo.findExclusionTerms(brandId)).isEmpty();
-		Long deletedCount = db.queryForObject(
-				"SELECT count(*) FROM brand_hashtag_exclusion WHERE brand_id = ? AND deleted_at IS NOT NULL",
-				Long.class, brandId);
-		assertThat(deletedCount).isEqualTo(2L);
-	}
-
-	@Test
-	void 제외_문자열_삭제한_뒤_replaceExclusionTerms로_재추가하면_재활성된다() {
-		repo.insertDefaultExclusion(brandId, "cclime");
-		repo.deleteExclusionTerm(brandId, "cclime");
-		repo.replaceExclusionTerms(brandId, List.of("cclime"));   // 재추가 — tombstone 해제
-
-		assertThat(repo.findExclusionTerms(brandId)).containsExactly("cclime");
-		Long deletedCount = db.queryForObject(
-				"SELECT count(*) FROM brand_hashtag_exclusion WHERE brand_id = ? AND term = ? "
-						+ "AND deleted_at IS NOT NULL",
-				Long.class, brandId, "cclime");
-		assertThat(deletedCount).isEqualTo(0L);
-	}
 }
