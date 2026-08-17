@@ -2,6 +2,8 @@ package com.celfit.analytics.analyze;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.analytics.llm.AdSituation;
+import com.celfit.analytics.llm.GeminiAccountSynthesizer;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -24,24 +26,23 @@ class AccountBatchLinesTest {
 		JsonNode gen = line.path("request").path("generationConfig");
 		assertThat(gen.path("responseMimeType").asString()).isEqualTo("application/json");
 		assertThat(gen.path("maxOutputTokens").asInt())
-				.isEqualTo(com.celfit.analytics.llm.GeminiAccountSynthesizer.MAX_OUTPUT_TOKENS);
+				.isEqualTo(GeminiAccountSynthesizer.MAX_OUTPUT_TOKENS);
 	}
 
 	@Test
 	void 사이드카는_라운드트립되고_null_필드를_보존한다() {
 		OffsetDateTime posted = OffsetDateTime.parse("2026-08-16T07:00:00+09:00");
 		String jsonl = om.writeValueAsString(
-				AccountBatchLines.sidecarLine(om, "a_handle", posted, 34L,
-						com.celfit.analytics.llm.AdSituation.COMPARABLE.name())) + "\n"
+				AccountBatchLines.sidecarLine(om, "a_handle", posted, 34L, AdSituation.COMPARABLE)) + "\n"
 				+ om.writeValueAsString(
-				AccountBatchLines.sidecarLine(om, "b_handle", null, null,
-						com.celfit.analytics.llm.AdSituation.NO_ADS.name())) + "\n";
+				AccountBatchLines.sidecarLine(om, "b_handle", null, null, AdSituation.NO_ADS)) + "\n";
 		Map<String, Map<String, String>> parsed = AccountBatchLines.parseSidecar(om, jsonl);
 		assertThat(parsed.get("a_handle").get("last_posted_at")).isEqualTo(posted.toString());
 		assertThat(parsed.get("a_handle").get("analyzed_count")).isEqualTo("34");
 		assertThat(parsed.get("a_handle").get("ad_situation")).isEqualTo("COMPARABLE");
 		assertThat(parsed.get("b_handle").get("last_posted_at")).isNull();
 		assertThat(parsed.get("b_handle").get("analyzed_count")).isNull();
+		assertThat(parsed.get("b_handle").get("ad_situation")).isEqualTo("NO_ADS");
 	}
 
 	@Test

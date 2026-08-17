@@ -1,5 +1,6 @@
 package com.celfit.analytics.analyze;
 
+import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.GeminiAccountSynthesizer;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
@@ -42,9 +43,13 @@ final class AccountBatchLines {
 		return line;
 	}
 
-	/** 사이드카 라인 — 수거 시점에 AccountAnalysisWriter.insert 인자를 복원하기 위한 기록. */
+	/**
+	 * 사이드카 라인 — 수거 시점에 AccountAnalysisWriter.insert 인자를 복원하기 위한 기록.
+	 * adSituation은 타입으로 받는다(String이면 호출부가 실수로 label()을 넘겨도 컴파일이 통과하고
+	 * 수거 시점 valueOf에서야 터진다 — 리뷰 반영, 2026-08-17).
+	 */
 	static ObjectNode sidecarLine(ObjectMapper om, String handle, OffsetDateTime lastPostedAt,
-			Long analyzedCount, String adSituationName) {
+			Long analyzedCount, AdSituation adSituation) {
 		ObjectNode line = om.createObjectNode();
 		line.put("handle", handle);
 		if (lastPostedAt == null) {
@@ -57,7 +62,7 @@ final class AccountBatchLines {
 		} else {
 			line.put("analyzed_count", analyzedCount.toString());
 		}
-		line.put("ad_situation", adSituationName);
+		line.put("ad_situation", adSituation.name());
 		return line;
 	}
 
