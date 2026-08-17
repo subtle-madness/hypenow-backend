@@ -104,10 +104,11 @@ BEGIN
 END $$;
 
 -- 핵심 회귀: 표시 점수가 동점인 두 계정을 만들어 정렬이 raw 순서를 따르는지 확인한다.
--- dummy_alpha(피드 2건, likes 16400·17800 → 콘텐츠 점수 34·36 → raw 평균 35.0)
--- dummy_zeta (피드 2건, likes 17100·17800 → 콘텐츠 점수 35·36 → raw 평균 35.5)
--- 기본 계정 앵커(a90=31.2·a99=44.86) 구간에서 35.0과 35.5 둘 다 hype_account_score=85로 반올림 동점—
--- 실 DB 함수로 역산해 고정한 값(analytics.hype_score('feed', NULL, likes, 0, 999000, ~0)으로 확인).
+-- dummy_alpha(피드 2건, likes 16400·17800 → 콘텐츠 점수 38·40 → raw 평균 39.0)
+-- dummy_zeta (피드 2건, likes 17100·17800 → 콘텐츠 점수 39·40 → raw 평균 39.5)
+-- 2026-08-17 재적합 앵커(a90=30.5455·a99=45.6667) 구간에서 39.0과 39.5 둘 다 hype_account_score=90으로
+-- 반올림 동점 — 실 DB 함수로 역산해 고정한 값(analytics.hype_score('feed', NULL, likes, 0, 999000, ~0)으로 확인).
+-- (댓글 가중 무관 — comments=0이므로 이 픽스처는 콘텐츠 Q 앵커·계정 앵커 재적합에만 반응해 값이 이동했다.)
 -- handle 알파벳순은 dummy_alpha가 dummy_zeta보다 앞이라, 구코드(avg_hype_score DESC, handle ASC)라면
 -- dummy_alpha가 먼저 나왔을 것 — 이 테스트가 바로 그 재발을 잡는다(단조성 단언만으론 못 잡던 부분).
 INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at) VALUES
@@ -226,7 +227,7 @@ BEGIN
 END $$;
 
 -- 핵심 회귀: avg_hype_score(정수)가 동점인 dummy_alpha·dummy_zeta(위에서 이미 검증한 픽스처, 두
--- 계정 다 avg_hype_score=85)라도 avg_hype_score_precise(소수, 콘텐츠 출력 매핑 반영 창 평균)는
+-- 계정 다 avg_hype_score=90)라도 avg_hype_score_precise(소수, 콘텐츠 출력 매핑 반영 창 평균)는
 -- 갈려야 한다 — dummy_zeta의 게시물 좋아요(17100·17800)가 dummy_alpha(16400·17800)보다 앞쪽이
 -- 크거나 같아 창 평균이 항상 높으므로, 단조 매핑을 거쳐도 순서가 보존돼야 한다.
 DO $$
