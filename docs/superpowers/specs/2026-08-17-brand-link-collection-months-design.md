@@ -1,6 +1,6 @@
 # 브랜드 연결(유저)별 표시 기간 설계 — 링크 레벨 collection_months
 
-> 상태: 🟢 활성 (2026-08-17, 브랜치 feature/cclime-subscription-period-filter-92c391)
+> 상태: 🟢 활성 · ✅ 구현됨 (2026-08-17)
 
 ## 배경
 

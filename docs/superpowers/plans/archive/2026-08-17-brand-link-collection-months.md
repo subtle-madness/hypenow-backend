@@ -4,7 +4,7 @@
 
 **Goal:** 유저가 브랜드 등록 시 신청한 기간(1|3|6|12개월)을 `app.brand_monitorings.collection_months`에 저장하고, 게시물 목록·상세·계정 응답을 그 기간으로 잘라 서빙한다.
 
-**Architecture:** 크롤 자산(`monitoring brand_account.collection_months`, 유저 간 max)은 불변. 유저-브랜드 링크 테이블에 표시 창 컬럼을 신설하고, was 서빙 계층(컨트롤러)에서만 자른다. 스펙: [docs/superpowers/specs/2026-08-17-brand-link-collection-months-design.md](../specs/2026-08-17-brand-link-collection-months-design.md).
+**Architecture:** 크롤 자산(`monitoring brand_account.collection_months`, 유저 간 max)은 불변. 유저-브랜드 링크 테이블에 표시 창 컬럼을 신설하고, was 서빙 계층(컨트롤러)에서만 자른다. 스펙: [docs/superpowers/specs/2026-08-17-brand-link-collection-months-design.md](../../specs/2026-08-17-brand-link-collection-months-design.md).
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, Flyway(app 스키마), @WebMvcTest 슬라이스 + Testcontainers 통합 테스트.
 
