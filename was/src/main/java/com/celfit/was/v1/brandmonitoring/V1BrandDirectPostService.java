@@ -18,6 +18,7 @@ import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.MonitoringInput;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
+import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -32,6 +33,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -58,6 +61,8 @@ import org.springframework.transaction.annotation.Transactional;
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class V1BrandDirectPostService {
 
+	private static final Logger log = LoggerFactory.getLogger(V1BrandDirectPostService.class);
+
 	/** 레거시 monitoring_items.mode — url 모드로만 등록한다(계정 모드는 브랜드 표면의 관심사가 아니다). */
 	private static final String MODE_URL = "url";
 
@@ -66,6 +71,8 @@ public class V1BrandDirectPostService {
 	private static final int MAX_TRACKING_DAYS = 90;
 
 	private static final String BRAND_DUPLICATE_REASON = "이미 브랜드 목록에 있는 게시물입니다.";
+	private static final String TAGGED_NOT_CANCELABLE_CODE = "TAGGED_POST_NOT_CANCELABLE";
+	private static final String TAGGED_NOT_CANCELABLE_MESSAGE = "태그로 발견된 게시물은 취소할 수 없어요.";
 
 	/**
 	 * 종결 3종 — 이 상태의 행에는 매핑을 걸지 않는다. 레거시
@@ -83,11 +90,13 @@ public class V1BrandDirectPostService {
 	private final MonitoringReadRepository monitoringReadRepository;
 	private final V1MonitoringRegistrationService legacyRegistration;
 	private final RegistrationRepository registrationRepository;
+	private final V1MonitoringItemUpdateService itemUpdateService;
 
 	public V1BrandDirectPostService(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
 			BrandDirectPostRepository directPostRepository, MonitoringItemRepository itemRepository,
 			MonitoringReadRepository monitoringReadRepository,
-			V1MonitoringRegistrationService legacyRegistration, RegistrationRepository registrationRepository) {
+			V1MonitoringRegistrationService legacyRegistration, RegistrationRepository registrationRepository,
+			V1MonitoringItemUpdateService itemUpdateService) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.directPostRepository = directPostRepository;
@@ -95,6 +104,7 @@ public class V1BrandDirectPostService {
 		this.monitoringReadRepository = monitoringReadRepository;
 		this.legacyRegistration = legacyRegistration;
 		this.registrationRepository = registrationRepository;
+		this.itemUpdateService = itemUpdateService;
 	}
 
 	/**
@@ -238,6 +248,59 @@ public class V1BrandDirectPostService {
 		}
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		return links.size() == 1 ? links.get(0).brandId() : null;
+	}
+
+	// ---------- 취소(2026-08-17 FE 요청) ----------
+
+	/**
+	 * 성과 측정 취소 — postId(shortcode) 기준. 레거시 취소(monitoringItemId 기준)는
+	 * {@link BrandPostResponse#id()}(=shortcode)로 호출할 수 없어 브랜드 화면 전용 취소 표면을 새로
+	 * 둔다. 매핑 있음(direct)이면 레거시 아이템을 가능하면 함께 종결하고(이미 자연 종료라 거부되면
+	 * 생략) 매핑을 삭제한다 — 삭제로 목록에서 즉시 빠지고 같은 URL 재등록이 브랜드 중복 판정에
+	 * 걸리지 않는다(취소 후 재시작). 매핑 없음이면 tagged 풀(윈도우 제한 없음) 존재 여부로
+	 * 400(TAGGED_POST_NOT_CANCELABLE)과 404를 가른다.
+	 */
+	@Transactional
+	public void cancel(long userId, String postId) {
+		Optional<BrandDirectPostRepository.Row> mapping = directPostRepository.findByUserAndShortCode(userId, postId);
+		if (mapping.isPresent()) {
+			cancelLegacyIfPossible(userId, mapping.get().monitoringItemId());
+			directPostRepository.delete(userId, postId);
+			return;
+		}
+		if (existsInTaggedPool(userId, postId)) {
+			throw V1ApiException.badRequest(TAGGED_NOT_CANCELABLE_CODE, TAGGED_NOT_CANCELABLE_MESSAGE);
+		}
+		throw V1ApiException.notFound("대상을 찾을 수 없습니다.");
+	}
+
+	/**
+	 * 레거시 아이템 취소 시도 — 이미 자연 종료(ended 등)거나 행 자체가 없어(수동 정리 등) 거부되면
+	 * 조용히 넘긴다(매핑 삭제는 어느 쪽이든 이어진다, {@link #cancel} 참조). 진짜 원격 실패(monitoring
+	 * 불능 등)는 여기서 삼키지 않고 그대로 올려 취소 자체를 실패시킨다 — 그 경우 매핑을 지우면 레거시
+	 * 아이템은 계속 추적 중인데 브랜드 화면에서만 사라지는 불일치가 생긴다.
+	 */
+	private void cancelLegacyIfPossible(long userId, long itemId) {
+		try {
+			itemUpdateService.cancel(userId, itemId);
+		} catch (V1ApiException e) {
+			log.info("취소 대상 매핑의 레거시 아이템 취소 생략(이미 종결 상태이거나 대상 없음) "
+					+ "userId={}, itemId={}, 사유={}", userId, itemId, e.getMessage());
+		}
+	}
+
+	/**
+	 * 유저의 활성 브랜드 연결 전체에서 tagged 존재 여부를 본다(365일 표시 윈도우 제한 없음) —
+	 * 매핑 없는 shortcode가 tagged 태그 감지 산지에 있으면 애초에 취소 대상이 아니다(400).
+	 */
+	private boolean existsInTaggedPool(long userId, String shortCode) {
+		Set<String> target = Set.of(shortCode);
+		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+			if (!brandReadRepository.findExistingTaggedShortCodes(link.brandId(), target).isEmpty()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// ---------- 1차 판정 ----------

@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -430,6 +431,74 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(mine, now.minusDays(365), 2000);
 
 		assertThat(rows).extracting(BrandHashtagPostRow::shortCode).containsExactly("MINE1");
+	}
+
+	/** 작성자 프로필 사진 아카이브 결과(2026-08-17 신설)까지 읽는다 — null이면 미아카이브. */
+	@Test
+	void 해시태그_발견_게시물은_작성자_이미지_아카이브_경로도_읽는다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "ARCHIVED", "RELEVANT", now.minusDays(1).toString());
+		jdbc.sql("""
+				UPDATE brand_hashtag_post SET author_image_object_path = :path
+				WHERE brand_id = :brandId AND short_code = :shortCode
+				""")
+				.param("path", "monitor-hashtag-author/influencer_h.jpg")
+				.param("brandId", brandId).param("shortCode", "ARCHIVED")
+				.update();
+		seedHashtagPost(brandId, "UNARCHIVED", "RELEVANT", now.minusDays(2).toString());
+
+		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(brandId, now.minusDays(365), 2000);
+
+		BrandHashtagPostRow archived = rows.stream().filter(r -> r.shortCode().equals("ARCHIVED")).findFirst()
+				.orElseThrow();
+		BrandHashtagPostRow unarchived = rows.stream().filter(r -> r.shortCode().equals("UNARCHIVED")).findFirst()
+				.orElseThrow();
+		assertThat(archived.authorImageObjectPath()).isEqualTo("monitor-hashtag-author/influencer_h.jpg");
+		assertThat(unarchived.authorImageObjectPath()).isNull();
+	}
+
+	// ---------- 승격 상태 필드용 tagged 존재 판정(2026-08-17) ----------
+
+	@Test
+	void tagged_존재_판정은_후보_shortcode_중_실재하는_것만_돌려준다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "EXISTS", now.minusDays(1).toString());
+
+		Set<String> found = repository.findExistingTaggedShortCodes(brandId, List.of("EXISTS", "MISSING"));
+
+		assertThat(found).containsExactly("EXISTS");
+	}
+
+	/** 윈도우 제한이 없다는 계약 — 365일 컷보다 오래된 tagged 게시물도 존재로 잡혀야 한다. */
+	@Test
+	void tagged_존재_판정은_윈도우_제한이_없다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "OLD", now.minusDays(400).toString());
+
+		Set<String> found = repository.findExistingTaggedShortCodes(brandId, List.of("OLD"));
+
+		assertThat(found).containsExactly("OLD");
+	}
+
+	@Test
+	void tagged_존재_판정은_다른_브랜드_행을_섞지_않는다() {
+		long mine = seedBrand("brand_mine");
+		long other = seedBrand("brand_other");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(other, "OTHER1", now.minusDays(1).toString());
+
+		Set<String> found = repository.findExistingTaggedShortCodes(mine, List.of("OTHER1"));
+
+		assertThat(found).isEmpty();
+	}
+
+	@Test
+	void tagged_존재_판정은_빈_입력이면_빈_결과다() {
+		long brandId = seedBrand("brand_official");
+		assertThat(repository.findExistingTaggedShortCodes(brandId, List.of())).isEmpty();
 	}
 
 	// ---------- 자사 제외 문자열 활성 조회(2026-08-12 태그 관리 확장 짝) ----------

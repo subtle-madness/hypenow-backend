@@ -122,7 +122,7 @@ public class V1BrandPostsController {
 		long brandId = parseAccountId(accountId);
 		requireOwnership(principal.getUserId(), brandId);
 		findAccountOrThrow(brandId);
-		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(brandId));
+		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), brandId));
 	}
 
 	/**
@@ -171,6 +171,23 @@ public class V1BrandPostsController {
 	public ApiResponse<BrandDirectRegistrationResponse> directRegistration(
 			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String registrationId) {
 		return ApiResponse.ok(directPostService.get(principal.getUserId(), registrationId));
+	}
+
+	/**
+	 * 성과 측정 취소(신규, FE 요청 2026-08-17) — postId는 {@link BrandPostResponse#id()}(=shortcode).
+	 * 레거시 취소(POST /v1/monitoring/items/{itemId}/cancel)는 monitoringItemId 기준이라 shortcode만
+	 * 아는 브랜드 화면에서는 호출할 수 없었다 — 이 엔드포인트가 그 표면을 메운다.
+	 *
+	 * <p>취소 성공 시(204) 게시물 목록({@code GET .../posts})에서 해당 행이 즉시 제거된다(ended로
+	 * 남지 않는다) — 같은 URL을 다시 직접 등록하면 새 등록으로 처리된다(취소 후 재시작).
+	 * direct 매핑이 없고 tagged 풀에 있는 shortcode는 400(TAGGED_POST_NOT_CANCELABLE) — tagged 행은
+	 * 애초에 취소 대상이 아니다. 어느 쪽에도 없으면 404.
+	 */
+	@PostMapping("/posts/{postId}/cancel")
+	public ResponseEntity<Void> cancelPost(@AuthenticationPrincipal AppUserDetails principal,
+			@PathVariable String postId) {
+		directPostService.cancel(principal.getUserId(), postId);
+		return ResponseEntity.noContent().build();
 	}
 
 	/**

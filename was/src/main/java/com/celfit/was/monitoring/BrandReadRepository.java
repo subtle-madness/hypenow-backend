@@ -3,8 +3,10 @@ package com.celfit.was.monitoring;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
@@ -222,7 +224,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, matched_tag, author_username, author_full_name,
 				       author_profile_pic_url, taken_at, caption, content_type, thumbnail_url,
-				       likes, comments, first_seen_at, image_object_path
+				       likes, comments, first_seen_at, image_object_path, author_image_object_path
 				FROM brand_hashtag_post
 				WHERE brand_id = :brandId AND verdict = 'RELEVANT' AND taken_at >= :cutoff
 				ORDER BY taken_at DESC
@@ -230,6 +232,23 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId).param("cutoff", cutoff).param("limit", limit)
 				.query(BrandHashtagPostRow.class).list();
+	}
+
+	/**
+	 * 후보 shortcode 중 그 브랜드의 tagged 게시물로 실재하는 것들(2026-08-17 승격 상태 필드 §스펙) —
+	 * 윈도우(365일 컷) 제한이 없는 순수 존재 판정이다. 표시용 전량 조립({@link #findTaggedPostsInWindow}·
+	 * {@link #findPostMeta} 등)을 태우지 않는 이유: 해시태그 발견 목록 조립에 매 요청 무거운 태그
+	 * 게시물 전량 조립을 끼워 넣지 않기 위해서다(성능 — 존재 판정만 필요, 표시 필드는 불필요).
+	 */
+	public Set<String> findExistingTaggedShortCodes(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return Set.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return new LinkedHashSet<>(jdbc.sql("""
+				SELECT short_code FROM brand_tagged_post WHERE brand_id = :brandId AND short_code IN (:shortCodes)
+				""")
+				.param("brandId", brandId).param("shortCodes", shortCodes)
+				.query(String.class).list());
 	}
 
 	/**
@@ -335,11 +354,13 @@ public class BrandReadRepository {
 	 * brand_hashtag_post 1행(RELEVANT만) — 프로필 보강·스냅샷이 없어(스펙 §5 보류) author 필드는
 	 * 열거 관측값 그대로고 followers·isVerified는 아예 없다. likes·comments도 열거 시점 관측값이다.
 	 * imageObjectPath는 monitoring 자체 썸네일 아카이브 결과 — null이면 원본 CDN URL 폴백.
+	 * authorImageObjectPath는 작성자 프로필 사진 아카이브 결과(2026-08-17 신설,
+	 * V20260817142317__hashtag_post_author_image_archive.sql) — null이면 원본 CDN URL 폴백.
 	 */
 	public record BrandHashtagPostRow(String shortCode, String matchedTag, String authorUsername,
 			String authorFullName, String authorProfilePicUrl, OffsetDateTime takenAt, String caption,
 			String contentType, String thumbnailUrl, Long likes, Long comments,
-			OffsetDateTime firstSeenAt, String imageObjectPath) {
+			OffsetDateTime firstSeenAt, String imageObjectPath, String authorImageObjectPath) {
 	}
 
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */

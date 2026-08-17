@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     image_object_path      text,
     image_source_name      text,
     image_archived_at      timestamptz,
+    -- 작성자 프로필 사진 아카이브 3컬럼(V20260817142317) — was는 author_image_object_path만 읽는다.
+    author_image_object_path   text,
+    author_image_source_name   text,
+    author_image_archived_at   timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 
