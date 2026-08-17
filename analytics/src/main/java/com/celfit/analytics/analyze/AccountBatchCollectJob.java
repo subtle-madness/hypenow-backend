@@ -3,6 +3,7 @@ package com.celfit.analytics.analyze;
 import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.llm.TraitTaxonomyLoader;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +27,16 @@ public class AccountBatchCollectJob {
 
 	private static final Logger log = LoggerFactory.getLogger(AccountBatchCollectJob.class);
 
+	// 선수거(AccountAnalysisJob 내부 인스턴스)와 BATCH_COLLECT 크론(JobConfig 빈)이 서로 다른
+	// 인스턴스·다른 JobName 락으로 동시 진입 가능 — account_analyses는 유니크가 없어(이력 테이블)
+	// 같은 pending의 이중 처리가 중복 행이 되므로 클래스 단위 락으로 직렬화한다.
+	// 단일 인스턴스 전제(JobLock과 동일). (최종 리뷰 I-1)
+	private static final Object COLLECT_LOCK = new Object();
+
+	/** 제출 후 이 기간을 넘긴 pending은 회수를 포기하고 failed로 접는다 — getBatch가 예외를 던지거나
+	 *  state가 영구 비정상이어도 pending 좀비가 무한 누적하지 않게 하는 탈출구다. (최종 리뷰 I-2) */
+	private static final java.time.Duration MAX_PENDING_AGE = java.time.Duration.ofDays(3);
+
 	private final JdbcTemplate analysis;
 	private final GeminiBatchApi batchApi; // null이면 배치 미지원 프로바이더 — run()이 no-op
 	private final TraitTaxonomyLoader traitLoader;
@@ -46,30 +57,42 @@ public class AccountBatchCollectJob {
 		if (batchApi == null) {
 			return new JobResult(0, 0, false);
 		}
-		List<Map<String, Object>> pending = analysis.queryForList("""
-				SELECT id, batch_name, sidecar_jsonl FROM account_batch_jobs
-				WHERE status = 'pending' ORDER BY submitted_at""");
-		int collected = 0;
-		int failed = 0;
-		for (Map<String, Object> row : pending) {
-			long id = ((Number) row.get("id")).longValue();
-			String batchName = (String) row.get("batch_name");
-			String sidecarJsonl = (String) row.get("sidecar_jsonl");
-			try {
-				collected += collectOne(id, batchName, sidecarJsonl);
-			} catch (Exception e) {
-				failed++;
-				log.error("계정 배치 수거 실패 — batch_name={}", batchName, e);
+		// 클래스 단위 직렬화(COLLECT_LOCK) — 선수거 인스턴스와 BATCH_COLLECT 크론 인스턴스가
+		// 동시에 이 메서드에 들어와도 pending 순회·처리가 겹치지 않게 한다.
+		synchronized (COLLECT_LOCK) {
+			List<Map<String, Object>> pending = analysis.queryForList("""
+					SELECT id, batch_name, sidecar_jsonl, submitted_at FROM account_batch_jobs
+					WHERE status = 'pending' ORDER BY submitted_at""");
+			int collected = 0;
+			int failed = 0;
+			for (Map<String, Object> row : pending) {
+				long id = ((Number) row.get("id")).longValue();
+				String batchName = (String) row.get("batch_name");
+				String sidecarJsonl = (String) row.get("sidecar_jsonl");
+				OffsetDateTime submittedAt = ((java.sql.Timestamp) row.get("submitted_at"))
+						.toInstant().atOffset(java.time.ZoneOffset.UTC);
+				try {
+					collected += collectOne(id, batchName, sidecarJsonl, submittedAt);
+				} catch (Exception e) {
+					failed++;
+					log.error("계정 배치 수거 실패 — batch_name={}", batchName, e);
+				}
 			}
+			if (collected > 0 || failed > 0) {
+				log.info("계정 배치 수거 완료 — {}건 저장, {}건 실패", collected, failed);
+			}
+			return new JobResult(collected, failed, false);
 		}
-		if (collected > 0 || failed > 0) {
-			log.info("계정 배치 수거 완료 — {}건 저장, {}건 실패", collected, failed);
-		}
-		return new JobResult(collected, failed, false);
 	}
 
 	/** @return 이번 배치에서 저장한 행 수. 실행 중이거나 상태 판정 불가면 0(행은 pending 유지). */
-	private int collectOne(long id, String batchName, String sidecarJsonl) {
+	private int collectOne(long id, String batchName, String sidecarJsonl, OffsetDateTime submittedAt) {
+		if (submittedAt != null && submittedAt.isBefore(OffsetDateTime.now().minus(MAX_PENDING_AGE))) {
+			markFailed(id, "제출 후 3일 경과 — 회수 포기(재분석은 ELIGIBLE_WHERE 자연 재대상)");
+			log.warn("계정 배치 나이 초과 — batch_name={}, submitted_at={} (회수 포기, 재대상은 자연 발생)",
+					batchName, submittedAt);
+			return 0;
+		}
 		JsonNode batch = om.readTree(batchApi.getBatch(batchName));
 		String state = GeminiBatchLines.state(batch);
 		if (state == null || state.endsWith("_RUNNING") || state.endsWith("_PENDING")

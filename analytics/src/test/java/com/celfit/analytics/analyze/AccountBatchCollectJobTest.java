@@ -93,6 +93,31 @@ class AccountBatchCollectJobTest {
 		};
 	}
 
+	/** 나이 가드 테스트용 — getBatch/downloadResults 둘 다 호출되면 실패하는 fake(호출 자체가 안 됨을 증명). */
+	GeminiBatchApi throwingApi() {
+		return new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				throw new IllegalStateException("수거 테스트에서는 호출되면 안 됨");
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				throw new IllegalStateException("수거 테스트에서는 호출되면 안 됨");
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				throw new IllegalStateException("나이 초과 pending은 getBatch를 호출하면 안 됨 — batch_name=" + batchName);
+			}
+
+			@Override
+			public void downloadResults(String fileName, Consumer<String> onLine) {
+				throw new IllegalStateException("호출되면 안 됨");
+			}
+		};
+	}
+
 	GeminiBatchApi stateOnlyApi(String state) {
 		return new GeminiBatchApi() {
 			@Override
@@ -289,5 +314,29 @@ class AccountBatchCollectJobTest {
 		assertEquals(0L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
 		assertEquals("collected", db.queryForObject(
 				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/a6'", String.class));
+	}
+
+	/** 나이 가드(최종 리뷰 I-2) — getBatch가 예외를 던지거나 state가 영구 비정상이어도 pending이
+	 *  좀비로 무한 누적하지 않게, 제출 후 3일 초과분은 회수를 포기하고 failed로 접는다. getBatch가
+	 *  호출되지 않는 것까지 확인해 "회수 시도조차 안 한다"는 탈출구 취지를 증명한다. */
+	@Test
+	void 제출_3일_경과_pending은_failed로_접힌다() {
+		insertPendingBatchJob("batches/aged", 1,
+				sidecarLine("beauty_aged", OffsetDateTime.now(), 10L, AdSituation.COMPARABLE));
+		db.update("""
+				UPDATE account_batch_jobs SET submitted_at = now() - interval '4 days'
+				WHERE batch_name = 'batches/aged'""");
+
+		JobResult result = collectJob(throwingApi()).run();
+
+		// 다른 failed 전이 케이스(실패_상태_배치는_..., 사이드카_유실_...)와 동일 관용 — 상태 전이는
+		// getBatch 호출 없이 조용히 일어나므로 예외 경로가 아니라 JobResult.failed()에는 반영되지 않는다.
+		assertEquals(0, result.processed());
+		assertEquals(0, result.failed());
+		Map<String, Object> row = db.queryForMap(
+				"SELECT status, note, sidecar_jsonl FROM account_batch_jobs WHERE batch_name = 'batches/aged'");
+		assertEquals("failed", row.get("status"));
+		assertTrue(((String) row.get("note")).contains("3일"), (String) row.get("note"));
+		assertNull(row.get("sidecar_jsonl"));
 	}
 }

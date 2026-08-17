@@ -160,4 +160,20 @@ class AnalyticsJobServiceTest {
 		assertThat(run.processed()).isEqualTo(5);
 		assertThat(run.failed()).isEqualTo(1);
 	}
+
+	/** 부분 성공 보존(최종 리뷰 M-4) — 콘텐츠 수거가 예외를 던져도 계정 수거는 실행되고 결과가
+	 *  반영돼야 한다(한쪽 최상단 예외가 다른 쪽을 막지 않는 격리). */
+	@Test
+	void 콘텐츠_수거가_던져도_계정_수거는_실행된다() {
+		when(contentBatchCollectJob.run()).thenThrow(new IllegalStateException("db 순단"));
+		when(accountBatchCollectJob.run()).thenReturn(new JobResult(2, 0, false));
+		var result = service().trigger(JobName.BATCH_COLLECT, TriggerType.MANUAL);
+		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.BATCH_COLLECT);
+		// 콘텐츠는 예외 → processed 0·failed 1로 집계, 계정은 정상 2건 보존 → 합산 processed=2, failed=1
+		assertThat(run.processed()).isEqualTo(2);
+		assertThat(run.failed()).isEqualTo(1);
+		assertThat(run.outcome()).isEqualTo(RunHistory.Outcome.FAILED); // failed>0
+	}
 }

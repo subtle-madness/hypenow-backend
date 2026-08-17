@@ -136,9 +136,12 @@ public class AnalyticsJobService {
 			case ANALYZE -> analyzeJob.getObject().run();
 			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
 			// 수거는 종류 불문 한 트리거로 — 각 잡은 자기 pending이 없으면 no-op라 겹쳐 돌아도 무해.
+			// 두 수거 잡을 각각 safeCollect로 격리한다 — 콘텐츠 수거의 최상단 예외(DB 순단 등)가
+			// 계정 수거를 막지 않게 한다(최종 리뷰 M-4). 실패한 쪽은 log.error+failed 1 가산,
+			// 성공한 쪽 결과는 그대로 보존한다.
 			case BATCH_COLLECT -> {
-				JobResult content = batchCollectJob.getObject().run();
-				JobResult account = accountBatchCollectJob.getObject().run();
+				JobResult content = safeCollect("콘텐츠", () -> batchCollectJob.getObject().run());
+				JobResult account = safeCollect("계정", () -> accountBatchCollectJob.getObject().run());
 				yield new JobResult(content.processed() + account.processed(),
 						content.failed() + account.failed(), false);
 			}
@@ -149,5 +152,19 @@ public class AnalyticsJobService {
 			case TRAIT_CANON_DRY -> traitCanonJob.getObject().run(true);
 			case TRAIT_CANON_APPLY -> traitCanonJob.getObject().run(false);
 		};
+	}
+
+	/**
+	 * BATCH_COLLECT 안에서 콘텐츠·계정 수거 잡을 각각 격리 실행한다(최종 리뷰 M-4) — 한쪽이 던진
+	 * 예외(예: DB 순단으로 콘텐츠 수거의 pending 조회 자체가 실패)가 다른 쪽 수거를 막지 않게 한다.
+	 * 실패하면 처리 0·실패 1로 집계하고 다음 BATCH_COLLECT 사이클이 자연 재시도한다.
+	 */
+	private JobResult safeCollect(String label, java.util.function.Supplier<JobResult> action) {
+		try {
+			return action.get();
+		} catch (Exception e) {
+			log.error("{} 배치 수거 실패 — 다음 BATCH_COLLECT 사이클에서 재시도", label, e);
+			return new JobResult(0, 1, false);
+		}
 	}
 }

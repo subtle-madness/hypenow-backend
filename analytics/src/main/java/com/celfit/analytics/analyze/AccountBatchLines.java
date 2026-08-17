@@ -106,7 +106,8 @@ final class AccountBatchLines {
 
 	/**
 	 * 결과 한 줄 처리: 파싱 → isValid 가드 → account_analyses INSERT. 콘텐츠와 달리 DB 유니크가
-	 * 없으므로(이력 테이블) 멱등은 수거 잡의 pending→collected 단방향 전이에 의존한다.
+	 * 없으므로(이력 테이블) 멱등은 pending→collected 단방향 전이 + 수거 실행의 클래스 단위
+	 * 직렬화(COLLECT_LOCK)에 의존한다.
 	 *
 	 * @return true=저장 성공, false=실패(파싱 불가·사이드카 부재·빈 카피 — 다음 실행이 재대상 흡수)
 	 */

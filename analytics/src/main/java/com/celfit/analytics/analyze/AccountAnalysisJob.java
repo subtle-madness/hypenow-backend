@@ -11,7 +11,7 @@ import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.llm.LlmQuotaExhaustedException;
 import com.celfit.analytics.llm.TraitTaxonomy;
 import com.celfit.analytics.llm.TraitTaxonomyLoader;
-import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayOutputStream;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -156,22 +156,40 @@ public class AccountAnalysisJob {
 		}
 		String model = settings.activeLlmModel();
 		TraitTaxonomy vocab = traitLoader.get();
-		StringBuilder jsonl = new StringBuilder();
+		// JSONL은 통짜 String이 아니라 스트리밍 조립 — 2,700건 펄스 × 라인당 ~10KB에서
+		// StringBuilder.toString()+getBytes() 사본 2개가 힙 피크를 ~3배로 만든다(최종 리뷰 I-3).
+		// json.writeValue(Writer, Object)는 호출마다 대상을 auto-close하는 Jackson 기본 동작 때문에
+		// 라인 반복 호출에 못 쓴다(두 번째 라인부터 "Stream closed") — JsonGenerator를 직접 열어
+		// writeValue(JsonGenerator, Object)로 여러 값을 한 스트림에 이어 쓴다.
+		ByteArrayOutputStream jsonlBytes = new ByteArrayOutputStream();
+		// 사이드카는 account_batch_jobs.sidecar_jsonl(text 컬럼)에 그대로 들어가 어차피 String이
+		// 필요하므로 StringBuilder를 유지한다(스트리밍 이점 없음).
 		StringBuilder sidecar = new StringBuilder();
 		int skippedIncomplete = 0;
 		int submitted = 0;
-		for (String handle : targets) {
-			Prepared p = prepare(handle);
-			if (p == null) {
-				skippedIncomplete++; // 온라인 경로의 SKIPPED_DATA_INCOMPLETE와 동일 — 제출에서 제외
-				continue;
+		int failed = 0;
+		try (tools.jackson.core.JsonGenerator gen = json.createGenerator(jsonlBytes)) {
+			for (String handle : targets) {
+				try {
+					Prepared p = prepare(handle);
+					if (p == null) {
+						skippedIncomplete++; // 온라인 경로의 SKIPPED_DATA_INCOMPLETE와 동일 — 제출에서 제외
+						continue;
+					}
+					String system = GeminiAccountSynthesizer.instructions(vocab, p.account().confidence());
+					json.writeValue(gen, AccountBatchLines.requestLine(json, handle, system,
+							GeminiAccountSynthesizer.userText(p.account())));
+					gen.writeRaw('\n');
+					sidecar.append(json.writeValueAsString(AccountBatchLines.sidecarLine(json, handle,
+							p.lastPostedAt(), p.analyzedCount(), p.adSituation()))).append('\n');
+					submitted++;
+				} catch (Exception e) {
+					// 계정 단위 격리 — 한 계정의 예외(예: 미러 TRUNCATE 경합으로 EmptyResultDataAccessException)가
+					// 그날 제출 전체를 무산시키지 않는다(최종 리뷰 M-1).
+					failed++;
+					log.error("계정 배치 조립 실패 {} — 다음 실행에서 재대상", handle, e);
+				}
 			}
-			String system = GeminiAccountSynthesizer.instructions(vocab, p.account().confidence());
-			jsonl.append(json.writeValueAsString(AccountBatchLines.requestLine(json, handle, system,
-					GeminiAccountSynthesizer.userText(p.account())))).append('\n');
-			sidecar.append(json.writeValueAsString(AccountBatchLines.sidecarLine(json, handle,
-					p.lastPostedAt(), p.analyzedCount(), p.adSituation()))).append('\n');
-			submitted++;
 		}
 		if (skippedIncomplete > 0) {
 			// 온라인 경로 run()의 skippedIncomplete WARN(위 runOnline)과 같은 취지 — 장문 설명은
@@ -181,17 +199,19 @@ public class AccountAnalysisJob {
 		}
 		if (submitted == 0) {
 			log.info("계정 배치 제출 대상 전량 스킵 — 제출 생략");
-			return new JobResult(0, 0, false);
+			return new JobResult(0, failed, false);
 		}
-		String fileName = batchApi.uploadFile(
-				jsonl.toString().getBytes(StandardCharsets.UTF_8), "hypenow-account");
+		String fileName = batchApi.uploadFile(jsonlBytes.toByteArray(), "hypenow-account");
 		String batchName = batchApi.createBatch(model, fileName, "hypenow-account");
 		// 사이드카는 DB 컬럼 보관 — 컨테이너에 쓰기 볼륨이 없어 로컬 파일은 배포 교체 시 유실 좀비(08-11 리뷰)
 		analysis.update("""
 				INSERT INTO account_batch_jobs (batch_name, submitted_count, status, sidecar_jsonl)
 				VALUES (?, ?, 'pending', ?)""", batchName, submitted, sidecar.toString());
 		log.info("계정 배치 제출 완료 — batch={}, {}건", batchName, submitted);
-		return new JobResult(submitted, 0, false);
+		// 배치 경로는 온라인 루프(runOnline)와 달리 계정 단위 진행 보고가 없다 — 제출 완료 시점에
+		// 한 번 보고해 어드민 진행 바가 0/0으로 남지 않게 한다(최종 리뷰 M-2).
+		reporter.report(submitted, failed, targets.size());
+		return new JobResult(submitted, failed, false);
 	}
 
 	/** 제출·온라인 공용 준비물 — LLM 입력과, 저장 시점에 필요한 스냅샷(사이드카행). */
