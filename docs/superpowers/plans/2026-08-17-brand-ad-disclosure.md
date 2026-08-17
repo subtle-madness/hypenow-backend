@@ -116,8 +116,8 @@ class AdDisclosurePatternsTest {
 
 	@Test
 	void 여러_패턴_중_가장_이른_위치를_고른다() {
-		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch("협찬받아 작성했어요 #광고");
-		assertThat(m.phrase()).isEqualTo("협찬받");
+		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch("협찬받았어요 오늘의 룩 #광고");
+		assertThat(m.phrase()).isEqualTo("협찬받았");
 	}
 
 	@Test
@@ -144,6 +144,40 @@ class AdDisclosurePatternsTest {
 		assertThat(AdDisclosurePatterns.findFirstMatch("")).isNull();
 		assertThat(AdDisclosurePatterns.findFirstMatch(null)).isNull();
 	}
+
+	@Test
+	void 더_긴_해시태그의_접두_매칭을_토큰_경계로_차단한다() {
+		// "#광고아님"은 "#광고"의 접두이지만 뒤에 문자가 이어지므로 매칭되지 않는다.
+		// "내돈내산"도 부정 가드에 걸려 이중으로 null이다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("#광고아님 내돈내산")).isNull();
+	}
+
+	@Test
+	void 협찬받고_싶다는_모집_문맥은_사전에_없다() {
+		// "협찬받고"(희망·모집)는 과거형 확정 문구가 아니라 Tier1에서 제외 — LLM(Tier2)이 처리한다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("협찬받고 싶어요 연락주세요")).isNull();
+	}
+
+	@Test
+	void 부정_신호가_있으면_다른_고신뢰_패턴이_있어도_null() {
+		// "내돈내산이지만 #광고"처럼 부정 신호가 캡션 어디든 있으면 Tier1 확정을 포기한다(판단 보류).
+		assertThat(AdDisclosurePatterns.findFirstMatch("내돈내산이지만 #광고")).isNull();
+	}
+
+	@Test
+	void 부정_신호_없는_정상_해시태그는_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#광고 오늘 후기")).isNotNull();
+	}
+
+	@Test
+	void 협찬받았다는_과거형_확정_문구는_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("협찬받았어요")).isNotNull();
+	}
+
+	@Test
+	void 해시태그_뒤_구두점은_토큰_경계를_해치지_않는다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#광고, 오늘 후기")).isNotNull();
+	}
 }
 ```
 
@@ -166,30 +200,50 @@ import java.util.regex.Pattern;
  * 매칭되면 위치 규칙({@link AdPositionRule}) 통과 시 LLM 콜 없이 DISCLOSED를 확정한다
  * ({@link AdDisclosureJudgeService} 참조). "광고" 단독처럼 저정밀 패턴은 의도적으로 미등재
  * ("광고판이 예쁘네요" 오탐 — 스펙 §5).
+ * <b>부정 신호가 보이면 Tier1은 확정하지 않는다 — 문맥 판단은 LLM 몫이다.</b>
+ * ("#광고아님 내돈내산", "내돈내산이지만 #광고" 같은 캡션은 {@link #NEGATION}에 걸려 null을 반환하고
+ * LLM(Tier2)로 넘어간다 — Tier1은 false DISCLOSED를 내느니 판단을 보류한다.)
  */
 public final class AdDisclosurePatterns {
 
 	private AdDisclosurePatterns() {
 	}
 
+	// 해시태그 패턴은 더 긴 해시태그의 접두만 매칭되는 사고를 막기 위해 토큰 경계를 강제한다
+	// ((?![\p{L}\p{N}_]) — 다음 글자가 문자/숫자/밑줄이면 매칭 실패). 예: "#광고아님"은 "#광고"로
+	// 오탐하지 않는다.
 	private static final List<Pattern> HIGH_CONFIDENCE = List.of(
-			Pattern.compile("#유료광고"),
-			Pattern.compile("#광고"),
-			Pattern.compile("#협찬"),
+			Pattern.compile("#유료광고(?![\\p{L}\\p{N}_])"),
+			Pattern.compile("#광고(?![\\p{L}\\p{N}_])"),
+			Pattern.compile("#협찬(?![\\p{L}\\p{N}_])"),
 			Pattern.compile("광고입니다"),
 			Pattern.compile("유료\\s*광고"),
 			Pattern.compile("대가성\\s*광고"),
-			Pattern.compile("협찬받"),
+			// "협찬받고"(모집·희망) 오탐 방지 — 과거형 확정 문구만("협찬받았", "협찬받은").
+			// "협찬받아 작성" 류는 Tier1에서 빠지지만 LLM(Tier2)이 처리해 정확도 손실은 없다.
+			Pattern.compile("협찬\\s*받(았|은)"),
 			Pattern.compile("제공받아\\s*작성"),
 			Pattern.compile("소정의\\s*(수수료|원고료|광고료)"));
+
+	// 캡션 어디든 부정·자비 구매 신호가 하나라도 있으면 Tier1 확정을 포기하고 LLM(Tier2)으로 넘긴다.
+	// 이건 NOT_DISCLOSED 확정이 아니라 "판단 보류"다 — Tier1이 낼 수 있는 최악의 오류(false
+	// DISCLOSED)를 막기 위한 가드일 뿐, 부정 문구 자체가 미표기를 의미하지 않는다.
+	private static final Pattern NEGATION =
+			Pattern.compile("내돈내산|광고\\s*아니|협찬\\s*아니|광고아님|협찬아님");
 
 	/** 매칭 문구·문자 오프셋 — 오프셋은 그래핌이 아니라 char index(호출부가 위치 판정 시 변환). */
 	public record Match(String phrase, int start, int end) {
 	}
 
-	/** 캡션 전체에서 가장 이른 위치의 고신뢰 매칭 1건. 여러 패턴이 매칭돼도 등장 순서로만 고른다. */
+	/**
+	 * 캡션 전체에서 가장 이른 위치의 고신뢰 매칭 1건. 여러 패턴이 매칭돼도 등장 순서로만 고른다.
+	 * 부정 신호({@link #NEGATION})가 캡션 어디든 있으면 Tier1을 포기하고 null을 반환한다.
+	 */
 	public static Match findFirstMatch(String caption) {
 		if (caption == null || caption.isBlank()) {
+			return null;
+		}
+		if (NEGATION.matcher(caption).find()) {
 			return null;
 		}
 		Match best = null;
@@ -207,7 +261,7 @@ public final class AdDisclosurePatterns {
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdDisclosurePatternsTest"`
-Expected: PASS (6개)
+Expected: PASS (12개 — 부정 문맥 오탐 차단 수정(2026-08-17) 후 6개 추가)
 
 - [ ] **Step 5: 커밋**
 
