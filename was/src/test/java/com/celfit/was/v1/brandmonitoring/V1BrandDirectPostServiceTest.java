@@ -445,7 +445,7 @@ class V1BrandDirectPostServiceTest {
 	}
 
 	private static BrandLinkRow link(String accountType) {
-		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType,
+		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType, 12,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 

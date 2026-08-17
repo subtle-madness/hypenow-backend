@@ -95,7 +95,7 @@ class V1BrandAccountsControllerTest {
 	}
 
 	private static BrandLinkRow link(long userId, long brandId, String username, String accountType) {
-		return new BrandLinkRow(brandId, userId, brandId, username, accountType,
+		return new BrandLinkRow(brandId, userId, brandId, username, accountType, 12,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
@@ -181,7 +181,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionCompletedAt").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 /img/ 상대경로를 우선 서빙한다. */
@@ -313,7 +313,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("100"))
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	@Test
@@ -330,7 +330,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt());
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
 	@Test
@@ -348,7 +348,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted())
 				.andExpect(jsonPath("$.data.id").value("100"));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	@Test
@@ -392,7 +392,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		// 응답 필드는 mock 조회분을 되읽는 것이라 실제 저장 타입을 증명하지 못한다 — 저장 인자를 직접 고정한다.
-		then(linkRepository).should().insertLink(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR);
+		then(linkRepository).should().insertLink(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR, 12);
 
 		result.andExpect(jsonPath("$.data.accountType").value("competitor"));
 	}
@@ -483,7 +483,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt());
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
 	// ---------- 수집 범위(collectionMonths, 2026-08-12 FE 요청서) ----------
@@ -513,6 +513,8 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		then(commandClient).should().registerBrand("lizda_official", null, 3);
+		// 신청값은 자산(monitoring)뿐 아니라 연결 행에도 그대로 남는다(2026-08-17) — 유저별 표시 창의 정본.
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 3);
 	}
 
 	@Test
@@ -530,7 +532,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		then(commandClient).should().registerBrand("lizda_official", null, 12);
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
 	@Test
@@ -624,7 +626,7 @@ class V1BrandAccountsControllerTest {
 		// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 원하는 상태는 이미 성립했으므로 성공으로 접는다.
 		given(commandClient.registerBrand("lizda_official", null, 12))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
-		given(linkRepository.insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN))
+		given(linkRepository.insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12))
 				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_brand_uidx"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));

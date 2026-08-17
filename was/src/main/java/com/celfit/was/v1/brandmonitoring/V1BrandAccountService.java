@@ -99,7 +99,7 @@ public class V1BrandAccountService {
 		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
 		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName, months));
 		try {
-			linkTransaction.link(userId, registered.brandId(), username, accountType);
+			linkTransaction.link(userId, registered.brandId(), username, accountType, months);
 		} catch (RuntimeException e) {
 			compensate(registered.brandId(), username);
 			throw e;

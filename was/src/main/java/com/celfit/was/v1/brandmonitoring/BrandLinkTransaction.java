@@ -79,7 +79,7 @@ class BrandLinkTransaction {
 	 * 이미 연결된 브랜드면 타입만 맞추고 성공한다(멱등 — monitoring 등록은 replay라 부작용이 없다).
 	 */
 	@Transactional
-	void link(long userId, long brandId, String username, String accountType) {
+	void link(long userId, long brandId, String username, String accountType, int collectionMonths) {
 		linkRepository.lockUser(userId);
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		Optional<BrandLinkRow> existing = links.stream()
@@ -94,7 +94,7 @@ class BrandLinkTransaction {
 		}
 		requireRoom(links, accountType, null);
 		try {
-			linkRepository.insertLink(userId, brandId, username, accountType);
+			linkRepository.insertLink(userId, brandId, username, accountType, collectionMonths);
 		} catch (DuplicateKeyException e) {
 			// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 잠금 덕에 사실상 도달 불가지만,
 			// 도달해도 원하는 상태(연결됨)는 이미 성립했으므로 멱등 성공으로 접는다.
