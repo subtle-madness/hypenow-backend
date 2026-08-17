@@ -6,9 +6,9 @@ import tools.jackson.databind.ObjectMapper;
 /** 계정 카피 Gemini 어댑터 — 카피 5종 1콜(07-27 개편). 07-18 골드셋 검증 통과본에서 재작성 — 재검증은 Task 12. */
 public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 
-	static final int MAX_OUTPUT_TOKENS = 4096;
+	public static final int MAX_OUTPUT_TOKENS = 4096;
 
-	static final String RESPONSE_SCHEMA = """
+	public static final String RESPONSE_SCHEMA = """
 			{"type":"object","properties":{
 			  "tagline":{"type":"string"},"traits":{"type":"array","items":{"type":"string"}},
 			  "perfSummary":{"type":"string"},"contentSummary":{"type":"string"},
@@ -91,6 +91,11 @@ public final class GeminiAccountSynthesizer implements AccountSynthesisPort {
 	public AccountCopy synthesize(AccountToAnalyze account) {
 		String out = api.generateJson(model.get(), instructions(vocab.get(), account.confidence()),
 				userText(account), null, RESPONSE_SCHEMA, MAX_OUTPUT_TOKENS);
-		return om.readValue(out, AccountCopy.class);
+		return parse(om, out);
+	}
+
+	/** 응답 JSON → AccountCopy — 온라인(synthesize)·배치 수거(AccountBatchLines)가 공유하는 단일 파서. */
+	public static AccountCopy parse(ObjectMapper om, String json) {
+		return om.readValue(json, AccountCopy.class);
 	}
 }
