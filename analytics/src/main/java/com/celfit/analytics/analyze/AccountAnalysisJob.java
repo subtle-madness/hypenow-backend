@@ -4,8 +4,14 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.CopyRules;
+import com.celfit.analytics.llm.GeminiAccountSynthesizer;
+import com.celfit.analytics.llm.GeminiBatchApi;
+import com.celfit.analytics.llm.LlmQuotaExhaustedException;
+import com.celfit.analytics.llm.TraitTaxonomy;
 import com.celfit.analytics.llm.TraitTaxonomyLoader;
+import java.io.ByteArrayOutputStream;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -56,14 +62,22 @@ public class AccountAnalysisJob {
 	private final ProgressReporter reporter;
 	private final TraitTaxonomyLoader traitLoader;
 	private final ObjectMapper json = new ObjectMapper();
+	// 배치 전송(2026-08-17) — batchApi가 null이면 배치 미지원 프로바이더라 transport=batch여도
+	// 온라인으로 폴백한다(ContentAnalysisJob과 동형 안전망).
+	private final GeminiBatchApi batchApi;
+	private final AccountBatchCollectJob collectJob;
 
+	/** @param batchApi 배치 전송 제출용 — null이면 배치 미지원 프로바이더(온라인 폴백). */
 	public AccountAnalysisJob(DataSource analysisDataSource, AccountSynthesisPort port,
-			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader) {
+			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader,
+			GeminiBatchApi batchApi) {
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.port = port;
 		this.settings = settings;
 		this.reporter = reporter;
 		this.traitLoader = traitLoader;
+		this.batchApi = batchApi;
+		this.collectJob = new AccountBatchCollectJob(analysisDataSource, batchApi, traitLoader, settings);
 	}
 
 	/** analyzeOne의 처리 결과 — 데이터 미비 스킵은 실패가 아니라 별도 분기로 집계한다. */
@@ -79,7 +93,17 @@ public class AccountAnalysisJob {
 				ORDER BY s.handle
 				LIMIT ?""", String.class,
 				settings.accountAnalyzeCooldownDays(), CopyRules.VERSION, settings.accountAnalyzeBatchLimit());
-		String model = settings.activeLlmModel();
+
+		if (settings.accountBatchTransportEnabled()) {
+			if (batchApi != null) {
+				return submitBatch(targets);
+			}
+			log.warn("account-analyze-transport=batch이나 활성 프로바이더가 배치 미지원 — 온라인 경로로 폴백");
+		}
+		return runOnline(targets, settings.activeLlmModel());
+	}
+
+	private JobResult runOnline(List<String> targets, String model) {
 		int processed = 0;
 		int failed = 0;
 		int skippedIncomplete = 0;
@@ -92,7 +116,7 @@ public class AccountAnalysisJob {
 				} else {
 					skippedIncomplete++;
 				}
-			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
+			} catch (LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
 				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
 				carriedOver = true;
@@ -120,7 +144,80 @@ public class AccountAnalysisJob {
 		return new JobResult(processed, failed, carriedOver);
 	}
 
-	private Outcome analyzeOne(String handle, String model) {
+	/** 배치 전송 제출 — 제출 전 pending 잔여를 먼저 수거해 중복 제출을 완화한다(콘텐츠 동형). */
+	private JobResult submitBatch(List<String> targets) {
+		JobResult swept = collectJob.run();
+		if (swept.processed() > 0 || swept.failed() > 0) {
+			log.info("계정 배치 제출 전 pending 수거 — {}건 저장, {}건 실패", swept.processed(), swept.failed());
+		}
+		if (targets.isEmpty()) {
+			log.info("계정 배치 제출 대상 없음 — 제출 생략");
+			return new JobResult(0, 0, false);
+		}
+		String model = settings.activeLlmModel();
+		TraitTaxonomy vocab = traitLoader.get();
+		// JSONL은 통짜 String이 아니라 스트리밍 조립 — 2,700건 펄스 × 라인당 ~10KB에서
+		// StringBuilder.toString()+getBytes() 사본 2개가 힙 피크를 ~3배로 만든다(최종 리뷰 I-3).
+		// 라인별 writeValueAsBytes — JsonGenerator 재사용은 루트 값 구분자(공백)가 끼어 JSONL이
+		// 깨진다(최종 리뷰 실측).
+		ByteArrayOutputStream jsonlBytes = new ByteArrayOutputStream();
+		// 사이드카는 account_batch_jobs.sidecar_jsonl(text 컬럼)에 그대로 들어가 어차피 String이
+		// 필요하므로 StringBuilder를 유지한다(스트리밍 이점 없음).
+		StringBuilder sidecar = new StringBuilder();
+		int skippedIncomplete = 0;
+		int submitted = 0;
+		int failed = 0;
+		for (String handle : targets) {
+			try {
+				Prepared p = prepare(handle);
+				if (p == null) {
+					skippedIncomplete++; // 온라인 경로의 SKIPPED_DATA_INCOMPLETE와 동일 — 제출에서 제외
+					continue;
+				}
+				String system = GeminiAccountSynthesizer.instructions(vocab, p.account().confidence());
+				jsonlBytes.writeBytes(json.writeValueAsBytes(AccountBatchLines.requestLine(
+						json, handle, system, GeminiAccountSynthesizer.userText(p.account()))));
+				jsonlBytes.write('\n');
+				sidecar.append(json.writeValueAsString(AccountBatchLines.sidecarLine(json, handle,
+						p.lastPostedAt(), p.analyzedCount(), p.adSituation()))).append('\n');
+				submitted++;
+			} catch (Exception e) {
+				// 계정 단위 격리 — 한 계정의 예외(예: 미러 TRUNCATE 경합으로 EmptyResultDataAccessException)가
+				// 그날 제출 전체를 무산시키지 않는다(최종 리뷰 M-1).
+				failed++;
+				log.error("계정 배치 조립 실패 {} — 다음 실행에서 재대상", handle, e);
+			}
+		}
+		if (skippedIncomplete > 0) {
+			// 온라인 경로 run()의 skippedIncomplete WARN(위 runOnline)과 같은 취지 — 장문 설명은
+			// 거기 원본 참조. 배치 제출에서는 사이드카·전송 준비 맥락만 짧게 남긴다.
+			log.warn("계정 {}건 스킵 — 데이터 미비로 배치 제출에서 제외(뷰 미적용/미러 실패 의심)",
+					skippedIncomplete);
+		}
+		if (submitted == 0) {
+			log.info("계정 배치 제출 대상 전량 스킵 — 제출 생략");
+			return new JobResult(0, failed, false);
+		}
+		String fileName = batchApi.uploadFile(jsonlBytes.toByteArray(), "hypenow-account");
+		String batchName = batchApi.createBatch(model, fileName, "hypenow-account");
+		// 사이드카는 DB 컬럼 보관 — 컨테이너에 쓰기 볼륨이 없어 로컬 파일은 배포 교체 시 유실 좀비(08-11 리뷰)
+		analysis.update("""
+				INSERT INTO account_batch_jobs (batch_name, submitted_count, status, sidecar_jsonl)
+				VALUES (?, ?, 'pending', ?)""", batchName, submitted, sidecar.toString());
+		log.info("계정 배치 제출 완료 — batch={}, {}건", batchName, submitted);
+		// 배치 경로는 온라인 루프(runOnline)와 달리 계정 단위 진행 보고가 없다 — 제출 완료 시점에
+		// 한 번 보고해 어드민 진행 바가 0/0으로 남지 않게 한다(최종 리뷰 M-2).
+		reporter.report(submitted, failed, targets.size());
+		return new JobResult(submitted, failed, false);
+	}
+
+	/** 제출·온라인 공용 준비물 — LLM 입력과, 저장 시점에 필요한 스냅샷(사이드카행). */
+	record Prepared(AccountToAnalyze account, OffsetDateTime lastPostedAt, Long analyzedCount,
+			AdSituation adSituation) {
+	}
+
+	/** @return null이면 데이터 미비 스킵(SKIPPED_DATA_INCOMPLETE — 배포 과도기 가드 주석 참조) */
+	private Prepared prepare(String handle) {
 		Map<String, Object> summary = analysis.queryForMap(
 				"SELECT * FROM account_summaries WHERE handle = ?", handle);
 		// last_posted_at(timestamptz)만 타입 지정 조회가 필요 — queryForMap은 Timestamp를 돌려줘 record 타입과 어긋남.
@@ -134,7 +231,7 @@ public class AccountAnalysisJob {
 		List<Map<String, Object>> posts = AccountAdCanon.loadPosts(analysis, handle);
 		// 광고 판정·수치는 캡션 분류(ad_type) 정본 — 미러의 ad_marked 집계는 릴스 전용이라 쓰지 않는다.
 		AccountAdCanon.AdMetrics ad = AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
-		com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
+		AdSituation adSituation = ad.situation();
 
 		// 판정(원본 9컬럼 포함)·프롬프트 사본(always-strip 7컬럼 + 조건부 제거, median 2개는 판정
 		// 근거로 노출) 양쪽을 한 번에 만드는 공용 헬퍼 — ClaudeBurstRunner와 공유한다(한쪽만
@@ -148,20 +245,28 @@ public class AccountAnalysisJob {
 		// 문구가 그대로 서빙되고, 이 계정은 ELIGIBLE_WHERE의 "분석 이력 없음" 조건으로 다음
 		// 실행에서도 계속 후보로 잡힌다(run()의 집계 로그 참조 — 의도된 동작).
 		if (sc.confidence().dataIncomplete()) {
-			return Outcome.SKIPPED_DATA_INCOMPLETE;
+			return null;
 		}
 
 		List<Map<String, Object>> promptPosts = AccountAdCanon.withPostConfidence(posts, sc.confidence());
-		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
-				sc.promptSummary(), categories, promptPosts, adSituation, sc.confidence()));
+		AccountToAnalyze account = new AccountToAnalyze(handle,
+				sc.promptSummary(), categories, promptPosts, adSituation, sc.confidence());
+		return new Prepared(account, lastPostedAt, analyzedCount, adSituation);
+	}
 
+	private Outcome analyzeOne(String handle, String model) {
+		Prepared p = prepare(handle);
+		if (p == null) {
+			return Outcome.SKIPPED_DATA_INCOMPLETE;
+		}
+		AccountCopy copy = port.synthesize(p.account());
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지).
 		// 절단·INSERT는 AccountAnalysisWriter 단일 원천(ClaudeBurstRunner와 공유 — 07-17 재발 방지).
 		if (!AccountAnalysisWriter.isValid(copy)) {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
 		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy, adSituation, traitLoader.get().names());
+				p.lastPostedAt(), p.analyzedCount(), copy, p.adSituation(), traitLoader.get().names());
 		return Outcome.PROCESSED;
 	}
 }

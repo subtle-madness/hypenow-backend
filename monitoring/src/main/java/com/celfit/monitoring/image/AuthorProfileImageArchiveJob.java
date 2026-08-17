@@ -1,6 +1,7 @@
 package com.celfit.monitoring.image;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,11 +60,19 @@ public class AuthorProfileImageArchiveJob {
 				""", (rs, i) -> new Candidate(rs.getString("ig_user_id"), rs.getString("profile_pic_url"),
 				rs.getString("image_object_path"), rs.getString("image_source_name")));
 
+		// 만료 URL은 시도해도 영원히 403 — 걸러내고 남은 예산은 만료 임박 순으로(근거는 CdnExpiry 주석).
+		// author_profile은 30일 stale + 재등장 시에만 재조회돼 만료 잔존분 비중이 특히 크고(08-17 실측
+		// 시도 대상의 55%), 다시 등장하지 않는 게시자는 URL이 영영 갱신되지 않아 그 몫의 "만료 제외"는
+		// 영구 유실분이다(클래스 주석 참고).
+		long nowEpoch = Instant.now().getEpochSecond();
+
 		int archived = 0;
 		int skipped = 0;
 		int failed = 0;
+		int expired = 0;
 		int deferred = 0;
-		for (Candidate c : candidates) {
+		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::profilePicUrl)) {
+			Candidate c = r.item();
 			String sourceName;
 			try {
 				sourceName = sourceName(c.profilePicUrl());
@@ -78,6 +87,10 @@ public class AuthorProfileImageArchiveJob {
 			}
 			if (c.imageObjectPath() != null && sourceName.equals(c.imageSourceName())) {
 				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
+				continue;
+			}
+			if (r.expired(nowEpoch)) {
+				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
 				continue;
 			}
 			if (archived + failed >= batchLimit) {
@@ -100,8 +113,8 @@ public class AuthorProfileImageArchiveJob {
 				log.warn("게시자 프로필 이미지 아카이브 실패 — igUserId={}", c.igUserId(), e);
 			}
 		}
-		log.info("게시자 프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건{}",
-				archived, skipped, failed, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("게시자 프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건{}",
+				archived, skipped, failed, expired, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
 	}
 
 	/**

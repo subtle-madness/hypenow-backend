@@ -1,6 +1,7 @@
 package com.celfit.analytics.admin;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
+import com.celfit.analytics.analyze.AccountBatchCollectJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
 import com.celfit.analytics.archive.ImageArchiveJob;
@@ -53,14 +54,15 @@ public class AdminConfig {
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
 			ObjectProvider<com.celfit.analytics.analyze.ContentBatchCollectJob> batchCollectJob,
+			ObjectProvider<AccountBatchCollectJob> accountBatchCollectJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
 			JobProgressRegistry jobProgressRegistry, RunHistory runHistory) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
-				classifyJob, analyzeJob, batchCollectJob, accountAnalyzeJob, synthesisRefreshJob, archiveJob,
-				traitCanonJob, jobProgressRegistry, runHistory);
+				classifyJob, analyzeJob, batchCollectJob, accountBatchCollectJob, accountAnalyzeJob,
+				synthesisRefreshJob, archiveJob, traitCanonJob, jobProgressRegistry, runHistory);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")
