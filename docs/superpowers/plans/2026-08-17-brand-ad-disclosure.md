@@ -394,8 +394,52 @@ class AdPositionRuleTest {
 		// 이모지·결합 문자 등 서로게이트 페어 — 여기서는 최소한 일반 한글 문자열에서 char==grapheme임을 확인
 		assertThat(AdPositionRule.graphemeOffset("가나다#광고", 3)).isEqualTo(3);
 	}
+
+	@Test
+	void 보임_상한_경계값_125그래핌은_등호_포함_VISIBLE() {
+		// 순수 한글 filler라 grapheme == char index — 오프셋 계산을 단순하게 유지.
+		// 문구("광고입니다", 5그래핌) 끝이 정확히 125그래핌이 되도록 filler 120그래핌.
+		String filler = "가".repeat(120);
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		int end = start + "광고입니다".length();
+		assertThat(AdPositionRule.graphemeOffset(caption, end)).isEqualTo(125);
+		assertThat(AdPositionRule.evaluate(caption, start, end)).isEqualTo(AdPositionRule.Band.VISIBLE);
+	}
+
+	@Test
+	void 접힘_하한_경계값_220그래핌은_strict초과가_아니라_GRAY() {
+		// startGrapheme > 220이 strict 조건이므로 정확히 220은 HIDDEN이 아니라 GRAY.
+		String filler = "가".repeat(220);
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.graphemeOffset(caption, start)).isEqualTo(220);
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
+				.isEqualTo(AdPositionRule.Band.GRAY);
+	}
+
+	@Test
+	void 접힘_하한_221그래핌은_HIDDEN() {
+		String filler = "가".repeat(221);
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.graphemeOffset(caption, start)).isEqualTo(221);
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
+				.isEqualTo(AdPositionRule.Band.HIDDEN);
+	}
+
+	@Test
+	void 문구가_정확히_2번째_줄에서_시작하고_보임_상한_이내면_VISIBLE() {
+		// "1번째 줄\n" 다음이 2번째 줄 시작 — startLine == VISIBLE_LINE_MAX(2) 경계 확인.
+		String caption = "1번째 줄\n광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
+				.isEqualTo(AdPositionRule.Band.VISIBLE);
+	}
 }
 ```
+
+(품질 리뷰 반영 — 08-17 후속 커밋 `6cd8da1d`: 경계값 정밀 테스트 4건 추가, 7개 → 11개.)
 
 - [ ] **Step 2: 테스트 실행 — 실패 확인**
 
@@ -419,13 +463,17 @@ import java.util.regex.Pattern;
  *
  * <p>경계값(VISIBLE_UPPER_BOUND·HIDDEN_LOWER_BOUND)은 초기값이다 — IG 피드 캡션의 실측 "더보기"
  * 절단 지점(~125자)을 참고했을 뿐, 골드셋 단계(스펙 §10-2)에서 실기기 실측으로 캘리브레이션한다.
+ *
+ * <p>캘리브레이션 대상은 그래핌 경계 상수 2개(VISIBLE_UPPER_BOUND·HIDDEN_LOWER_BOUND)뿐이다 — 줄 수
+ * 상수(VISIBLE_LINE_MAX·HIDDEN_LINE_MIN)는 실기기 렌더링 근사가 아니라 지침 해석("첫 2줄까지는 보임"
+ * 류)이라 고정값으로 두고 private로 감춘다.
  */
 public final class AdPositionRule {
 
 	private AdPositionRule() {
 	}
 
-	/** 문구 전체가 이 그래핌 수 이내 + 첫 2줄 이내면 확실히 보임(VISIBLE). 캘리브레이션 전 초기값. */
+	/** 캡션 시작부터 문구 끝까지의 그래핌 오프셋이 이 값 이내면 확실히 보임(VISIBLE). 캘리브레이션 전 초기값. */
 	public static final int VISIBLE_UPPER_BOUND_GRAPHEMES = 125;
 	/** 시작 오프셋이 이 그래핌 수를 넘거나 3번째 줄 이후면 확실히 접힘(HIDDEN). 캘리브레이션 전 초기값. */
 	public static final int HIDDEN_LOWER_BOUND_GRAPHEMES = 220;
@@ -444,6 +492,9 @@ public final class AdPositionRule {
 		int startGrapheme = graphemeOffset(caption, start);
 		int endGrapheme = graphemeOffset(caption, end);
 		int startLine = lineOf(caption, start);
+		// VISIBLE은 end 그래핌 기준(문구가 개행을 가로질러 접힘권으로 넘어가며 끝나는 경우도 위반으로
+		// 밀지 않는다), HIDDEN은 start 기준(문구 시작만 확실히 접혔으면 접힘으로 본다) — 이 비대칭은
+		// "불확실성은 위반 아님 쪽" 설계 원칙의 의도된 결과다.
 		boolean visible = endGrapheme <= VISIBLE_UPPER_BOUND_GRAPHEMES && startLine <= VISIBLE_LINE_MAX;
 		if (visible) {
 			return Band.VISIBLE;
@@ -487,7 +538,7 @@ public final class AdPositionRule {
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdPositionRuleTest"`
-Expected: PASS (7개)
+Expected: PASS (11개 — 최초 7개 + 품질 리뷰 반영 경계값 정밀 테스트 4개)
 
 - [ ] **Step 5: 커밋**
 
@@ -496,6 +547,16 @@ git add monitoring/src/main/java/com/celfit/monitoring/ad/AdPositionRule.java \
         monitoring/src/test/java/com/celfit/monitoring/ad/AdPositionRuleTest.java
 git commit -m "feat(monitoring): 광고 표기 위치 3구간 판정(그래핌 오프셋 + 첫 해시태그 예외)"
 ```
+
+이후 품질 리뷰 지적 반영 커밋(08-17):
+
+```bash
+git add monitoring/src/main/java/com/celfit/monitoring/ad/AdPositionRule.java \
+        monitoring/src/test/java/com/celfit/monitoring/ad/AdPositionRuleTest.java
+git commit -m "test(monitoring): AdPositionRule 경계값 정밀 테스트 + 설계 의도 주석"
+```
+
+SHA: `30187281`(최초 구현) → `6cd8da1d`(경계값 정밀 테스트 + 주석 보강).
 
 ---
 
