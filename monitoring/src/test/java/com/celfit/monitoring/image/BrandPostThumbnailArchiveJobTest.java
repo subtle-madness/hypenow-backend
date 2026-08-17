@@ -2,6 +2,7 @@ package com.celfit.monitoring.image;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.monitoring.testsupport.CdnUrls;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -15,7 +16,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 브랜드 게시물 썸네일 아카이브 잡 계약({@link PostThumbnailArchiveJobTest}과 동형):
  * ① 신규 아카이브 ② source_name 미변경 시 스킵 ③ 쿼리스트링만 다르면 스킵 ④ 한 건 실패 격리
  * ⑤ PAR 미설정 no-op ⑥ 무효 thumbnail_url 후보 제외
- * + ⑦ 배치 상한은 다운로드 시도만 소모한다(스킵 공짜 — 기존 잡의 창 잠식 결함을 반복하지 않는 핵심 계약).
+ * + ⑦ 배치 상한은 다운로드 시도만 소모한다(스킵 공짜 — 기존 잡의 창 잠식 결함을 반복하지 않는 핵심 계약)
+ * + ⑧ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않으며, 상한이 걸리면 만료 임박 순으로 쓴다
+ *   (08-17 운영 실측 — 상한의 72%를 죽은 URL에 태우던 결함). 만료가 무관한 픽스처의 oe는
+ *   먼 미래(7FFFFFFF)로 둔다.
  */
 class BrandPostThumbnailArchiveJobTest {
 
@@ -69,7 +73,7 @@ class BrandPostThumbnailArchiveJobTest {
 
 	@Test
 	void 신규_아카이브는_object_path_source_name_archived_at을_기록한다() {
-		seed("SC1", "https://cdn.example/v/t51/463_111_n.jpg?oe=abc", null, null);
+		seed("SC1", "https://cdn.example/v/t51/463_111_n.jpg?oe=7FFFFFFF", null, null);
 
 		job().run();
 
@@ -170,5 +174,50 @@ class BrandPostThumbnailArchiveJobTest {
 		Long archived = db.queryForObject(
 				"SELECT count(image_object_path) FROM brand_post_meta WHERE short_code LIKE 'NEW%'", Long.class);
 		assertThat(archived).isEqualTo(2);
+	}
+
+	/**
+	 * 08-17 운영 실측 회귀 방지 — 상한 1,000건 중 723건이 이미 만료된 URL(HTTP 403)에 소모되고
+	 * 아카이브는 277건만 전진했다(잔여 16,529건). 만료 URL은 재시도해도 영원히 403이라 시도 자체를
+	 * 걸러야 예산이 미아카이브 꼬리에 도달한다.
+	 */
+	@Test
+	void 만료된_URL은_다운로드_시도조차_하지_않는다() {
+		seed("DEAD", CdnUrls.expiringIn("dead_n.jpg", -3600), null, null);
+		seed("LIVE", CdnUrls.expiringIn("live_n.jpg", 86400), null, null);
+		seed("UNKNOWN", CdnUrls.noOe("unknown_n.jpg"), null, null);   // oe 없음 → 만료 미상, 시도 유지
+
+		job().run();
+
+		assertThat(downloads).noneMatch(u -> u.contains("dead_n.jpg"));
+		assertThat(puts).extracting(m -> m.get("path"))
+				.containsExactlyInAnyOrder("monitor-brand-post/LIVE.jpg", "monitor-brand-post/UNKNOWN.jpg");
+	}
+
+	/** 만료 URL은 예산을 소모하지 않는다 — 소모하면 뒤쪽 정상 후보가 이월돼 백로그가 안 줄어든다. */
+	@Test
+	void 만료된_URL은_배치_상한을_소모하지_않는다() {
+		seed("DEAD1", CdnUrls.expiringIn("dead1_n.jpg", -3600), null, null);
+		seed("DEAD2", CdnUrls.expiringIn("dead2_n.jpg", -3600), null, null);
+		seed("LIVE1", CdnUrls.expiringIn("live1_n.jpg", 86400), null, null);
+		seed("LIVE2", CdnUrls.expiringIn("live2_n.jpg", 86400), null, null);
+
+		job("https://par.example/o/", 2).run();
+
+		// 상한 2가 만료분에 잠식되지 않고 살아있는 2건에 온전히 쓰인다
+		assertThat(puts).extracting(m -> m.get("path"))
+				.containsExactlyInAnyOrder("monitor-brand-post/LIVE1.jpg", "monitor-brand-post/LIVE2.jpg");
+	}
+
+	/** 상한이 걸리면 먼저 죽을 URL부터 — 임박분을 이월하면 다음 스윕엔 이미 만료돼 영구 유실된다. */
+	@Test
+	void 상한이_걸리면_만료_임박_순으로_예산을_쓴다() {
+		seed("FAR", CdnUrls.expiringIn("far_n.jpg", 86400 * 3), null, null);
+		seed("SOON", CdnUrls.expiringIn("soon_n.jpg", 3600), null, null);
+		seed("UNKNOWN", CdnUrls.noOe("unknown_n.jpg"), null, null);
+
+		job("https://par.example/o/", 1).run();
+
+		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-brand-post/SOON.jpg");
 	}
 }

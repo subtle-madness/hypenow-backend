@@ -1,6 +1,7 @@
 package com.celfit.monitoring.image;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,11 +61,15 @@ public class BrandProfileImageArchiveJob {
 				rs.getString("profile_pic_url"), rs.getString("image_object_path"),
 				rs.getString("image_source_name")));
 
+		// 만료 URL은 시도해도 영원히 403 — 걸러내고 남은 예산은 만료 임박 순으로(근거는 CdnExpiry 주석).
+		long nowEpoch = Instant.now().getEpochSecond();
+
 		int archived = 0;
 		int skipped = 0;
 		int failed = 0;
+		int expired = 0;
 		int deferred = 0;
-		for (Candidate c : candidates) {
+		for (Candidate c : CdnExpiry.soonestExpiryFirst(candidates, Candidate::profilePicUrl)) {
 			String sourceName;
 			try {
 				sourceName = sourceName(c.profilePicUrl());
@@ -79,6 +84,10 @@ public class BrandProfileImageArchiveJob {
 			}
 			if (c.imageObjectPath() != null && sourceName.equals(c.imageSourceName())) {
 				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
+				continue;
+			}
+			if (CdnExpiry.isExpired(c.profilePicUrl(), nowEpoch)) {
+				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
 				continue;
 			}
 			if (archived + failed >= batchLimit) {
@@ -101,8 +110,8 @@ public class BrandProfileImageArchiveJob {
 				log.warn("브랜드 프로필 이미지 아카이브 실패 — igUserId={}", c.igUserId(), e);
 			}
 		}
-		log.info("브랜드 프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건{}",
-				archived, skipped, failed, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("브랜드 프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건{}",
+				archived, skipped, failed, expired, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
 	}
 
 	/**

@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 상세 분석 작업 트랙 — 구조 설계: [specs/2026-07-12-detail-analysis-design.md](../superpowers/specs/archive/2026-07-12-detail-analysis-design.md) · 데이터 층(A·B1·F·B2·B3) 설계: [specs/2026-07-12-analytics-data-layer-design.md](../superpowers/specs/2026-07-12-analytics-data-layer-design.md)
 - **의존**: 트랙 S(monitoring was seam)·트랙 II(POST 등록 profile_meta 채움) 위에서 동작. 트랙 J(서빙 이미지 아카이브)와는 **OCI 버킷만 공유하고 코드·후보군은 완전히 분리**(키 프리픽스로 소유권 구분 — 아래 참고).
-- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 머지 완료 · 브랜드 본인(brand_account) 동형 확장 머지 완료 · 브랜드 게시물 썸네일 아카이브 + was 서빙 계약 일괄 적용 PR #415 머지 완료 · 기존 4개 잡의 배치 창 잠식 결함 수정 PR #421 머지·운영 배포 완료(08-12, 아래 §배치 상한))
+- **상태**: 🔨 (결함 ② PR #277 머지 완료 · 결함 ① PR #278 머지 완료 · 게시물 썸네일 동형 확장 머지 완료 · 게시자(author_profile) 동형 확장 머지 완료 · 브랜드 본인(brand_account) 동형 확장 머지 완료 · 브랜드 게시물 썸네일 아카이브 + was 서빙 계약 일괄 적용 PR #415 머지 완료 · 기존 4개 잡의 배치 창 잠식 결함 수정 PR #421 머지·운영 배포 완료(08-12, 아래 §배치 상한) · 6개 잡 전체에 CDN 만료(`oe`) 필터·만료 임박순 정렬 이식(08-17, 아래 §CDN 만료 필터 — PR 대기))
 - **트랙 문자 배정 메모**: `docs/tracks/`에 FF·GG가 아직 파일로 없지만 다른 세션이 PR #235·#243으로 점유 중이고, A~JJ 중 KK가 다음 미사용 문자라 배정.
 
 ## 내용
@@ -212,6 +212,24 @@ upsert가 URL을 되살리는 `brand_post_meta.thumbnail_url`과 달리, **아�
   (`BrandPostThumbnailArchiveJobTest` 동형) 창 잠식 결함의 재발을 막는다. 로그의 "잔여 N건 이월"
   의미도 "창 밖 전체 행 수" → "예산 소진으로 미룬 다운로드 필요 행 수"로 바뀌어 백로그 관측이
   정확해진다.
+- **CDN 만료 필터(08-17 — 배치 상한 결함의 두 번째 계열)**: 위 08-12 수정으로 "스킵이 상한을 잠식하는"
+  문제는 없어졌지만, **이미 만료된 URL이 상한을 소모하는** 문제가 남아 있었다. 인스타 CDN 서명은
+  `oe=`(hex unix 초) 기준 ~4일이면 죽고 만료 URL은 재시도해도 영원히 403인데, 6개 잡 모두 후보를 DB
+  임의 순서로 순회하며 만료 여부를 보지 않고 다운로드를 시도했다. 08-16 운영 실측:
+  `BrandPostThumbnailArchiveJob`이 상한 1,000건 중 **723건을 403에 태우고** 아카이브 277건만 전진
+  (잔여 16,529건 이월). 실패분은 `image_object_path`가 null로 남아 매 스윕 다시 후보가 되므로 백로그가
+  구조적으로 줄지 않는다. 08-17 운영 DB 실측 규모: 시도 대상 중 만료분이 `brand_post_meta`
+  11,121/17,263(64%) · `author_profile` 3,657/6,652(55%, 30일 stale 때만 재조회돼 잔존분 비중이 크다)
+  · 나머지 4종은 캠페인 실사용 유입 전이라 0~1건.
+  **해결**: analytics `ImageArchiveJob`이 07-14부터 쓰던 관용구를 `com.celfit.monitoring.image.CdnExpiry`
+  (~40줄)로 복제해 6개 잡 전부에 적용 — ① 만료분은 시도 없이 제외하고 **상한을 소모하지 않는다**
+  ② 남은 후보는 **만료 임박 순**으로 예산을 쓴다(임박분을 이월하면 다음 스윕엔 이미 죽어 영구 유실)
+  ③ 로그를 `실패`와 분리해 `만료 제외 N건`으로 따로 센다. 만료는 실패가 아니라 제외다 — 재조회가
+  URL을 갱신하면 만료가 미래가 돼 자동 복귀하고, 안 나누면 매 스윕 수백 건 WARN이 정상처럼 보여
+  진짜 실패가 묻힌다. **만료 미상(`oe` 없음·파싱 불가)은 만료로 취급하지 않고 정렬에서만 뒤로
+  보낸다** — 오탐은 살아있는 URL을 영구히 버리는 반면 미탐은 그 건이 한 번 실패할 뿐인 비대칭.
+  모듈 간 import 금지(§4-4)라 analytics 코드 직접 재사용은 기각 — `ImageDownloader`·`ImageStore`
+  복제와 같은 근거다.
 - **was 서빙 계약(위 확장들의 "후속" 완결)**: `BrandReadRepository` 4개 쿼리(findAccount·findPostMeta·
   findAuthors·findAuthorsByUsername·findHashtagPosts)에 `image_object_path` 추가, row record 4종에
   `imageObjectPath` 필드 추가. `BrandPostAssembler.resolveImageUrl`(아카이브 우선 + sanitize 폴백,

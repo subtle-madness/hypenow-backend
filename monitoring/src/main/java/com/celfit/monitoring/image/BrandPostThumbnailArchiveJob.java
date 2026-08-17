@@ -1,6 +1,7 @@
 package com.celfit.monitoring.image;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,11 +58,17 @@ public class BrandPostThumbnailArchiveJob {
 				""", (rs, i) -> new Candidate(rs.getString("short_code"), rs.getString("thumbnail_url"),
 				rs.getString("image_object_path"), rs.getString("image_source_name")));
 
+		// 만료 URL은 재시도해도 영원히 403이라 시도 자체를 걸러내고, 남은 예산은 만료 임박 순으로 쓴다
+		// (실측 근거는 CdnExpiry 클래스 주석 — 이 잡이 그 실측 대상이다). 재조회가 URL을 갱신하면
+		// 만료가 미래가 돼 자동으로 후보에 복귀한다.
+		long nowEpoch = Instant.now().getEpochSecond();
+
 		int archived = 0;
 		int skipped = 0;
 		int failed = 0;
+		int expired = 0;
 		int deferred = 0;
-		for (Candidate c : candidates) {
+		for (Candidate c : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
 			String sourceName;
 			try {
 				sourceName = sourceName(c.thumbnailUrl());
@@ -75,6 +82,10 @@ public class BrandPostThumbnailArchiveJob {
 			}
 			if (c.imageObjectPath() != null && sourceName.equals(c.imageSourceName())) {
 				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
+				continue;
+			}
+			if (CdnExpiry.isExpired(c.thumbnailUrl(), nowEpoch)) {
+				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
 				continue;
 			}
 			if (archived + failed >= batchLimit) {
@@ -97,8 +108,8 @@ public class BrandPostThumbnailArchiveJob {
 				log.warn("브랜드 게시물 썸네일 아카이브 실패 — shortCode={}", c.shortCode(), e);
 			}
 		}
-		log.info("브랜드 게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건{}",
-				archived, skipped, failed, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("브랜드 게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건{}",
+				archived, skipped, failed, expired, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
 	}
 
 	/**
