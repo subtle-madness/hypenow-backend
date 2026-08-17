@@ -25,6 +25,10 @@
 --   3) 10_account_detail.sql: hype_account_score() 4개 + hype_account_score_precise() 4개 교체
 --   4) 뷰 재적용 → 미러 잡 → 스팟체크 (deploy/README.md·런북)
 
+-- 주입 건수 진단 — 추출 쿼리 실패/0건과 정상 주입을 첫 출력에서 구분한다.
+-- (_ranking_codes는 이 파일보다 먼저 refit.sh가 만들어 주입해 둔다.)
+SELECT '주입된 랭킹 경로 short_code' AS section, count(*) AS n FROM _ranking_codes;
+
 -- 상수
 CREATE TEMP TABLE _cfg AS
 SELECT
@@ -81,23 +85,26 @@ JOIN _qa a USING (content_type)
 CROSS JOIN _cfg g;
 
 -- ② 콘텐츠 출력 앵커 (랭킹 경로 모수, 정수 점수 분포 — v_contents.hype_score와 동일하게 round)
-SELECT '② 출력 앵커(랭킹 경로)' AS section, count(*) AS n,
-       round(percentile_cont(0.05) WITHIN GROUP (ORDER BY round(sc.raw))::numeric, 4) AS anchor_p05,
-       round(percentile_cont(0.50) WITHIN GROUP (ORDER BY round(sc.raw))::numeric, 4) AS anchor_p50,
-       round(percentile_cont(0.90) WITHIN GROUP (ORDER BY round(sc.raw))::numeric, 4) AS anchor_p90,
-       round(percentile_cont(0.99) WITHIN GROUP (ORDER BY round(sc.raw))::numeric, 4) AS anchor_p99,
+-- _oa를 먼저 만들어(뒤 단계 ④가 조인으로 쓸 값) 리포트 SELECT는 거기서 읽기만 한다 — 동일 percentile_cont를
+-- 두 번 계산하던 중복 제거.
+CREATE TEMP TABLE _oa AS
+SELECT count(*) AS n,
+       percentile_cont(0.05) WITHIN GROUP (ORDER BY round(sc.raw)) AS o05,
+       percentile_cont(0.50) WITHIN GROUP (ORDER BY round(sc.raw)) AS o50,
+       percentile_cont(0.90) WITHIN GROUP (ORDER BY round(sc.raw)) AS o90,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY round(sc.raw)) AS o99,
        max(round(sc.raw)) AS anchor_max
 FROM _scored sc JOIN _ranking_codes rc USING (short_code);
 
--- 출력 앵커를 뒤 단계(계정 소수)가 조인으로 쓰도록 고정
-CREATE TEMP TABLE _oa AS
-SELECT percentile_cont(0.05) WITHIN GROUP (ORDER BY round(sc.raw)) AS o05,
-       percentile_cont(0.50) WITHIN GROUP (ORDER BY round(sc.raw)) AS o50,
-       percentile_cont(0.90) WITHIN GROUP (ORDER BY round(sc.raw)) AS o90,
-       percentile_cont(0.99) WITHIN GROUP (ORDER BY round(sc.raw)) AS o99
-FROM _scored sc JOIN _ranking_codes rc USING (short_code);
+SELECT '② 출력 앵커(랭킹 경로)' AS section, n,
+       round(o05::numeric,4) AS anchor_p05, round(o50::numeric,4) AS anchor_p50,
+       round(o90::numeric,4) AS anchor_p90, round(o99::numeric,4) AS anchor_p99,
+       anchor_max
+FROM _oa;
 
--- 계정 창 콘텐츠의 raw (v_account_recent 밑판 — NULL 규칙 행은 NULL 점수로 보존해 집계 규칙 유지)
+-- 계정 창 콘텐츠의 raw (v_account_recent 밑판 — 함수 NULL 규칙(likes·comments·릴스 views 결측)
+-- 행은 NULL 점수로 보존; _qa에 타입이 아예 없는 극단 케이스는 INNER JOIN으로 행이 빠지지만
+-- avg/sum의 NULL 무시와 결과 동일)
 CREATE TEMP TABLE _acct_scored AS
 SELECT w.owner_username,
   CASE
