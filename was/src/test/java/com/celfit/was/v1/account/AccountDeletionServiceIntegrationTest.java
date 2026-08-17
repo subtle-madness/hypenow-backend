@@ -116,4 +116,31 @@ class AccountDeletionServiceIntegrationTest extends IntegrationTest {
 
 		assertThat(userRepository.findById(userId)).isEmpty();
 	}
+
+	/**
+	 * 조직·엔터프라이즈 entitlement(2026-08-17) 발견 결함 회귀 — app.organization_members.user_id FK에
+	 * ON DELETE CASCADE가 없으면 조직 멤버가 탈퇴할 때 users DELETE가 FK 위반으로 실패한다
+	 * (V20260817030344__organizations.sql에서 수정). 탈퇴는 정상 완료되고 멤버십 행도 함께 사라져야 한다.
+	 */
+	@Test
+	void 조직_멤버인_유저의_탈퇴는_성공하고_멤버십_행도_함께_사라진다() {
+		long orgId = jdbcClient.sql("""
+				INSERT INTO app.organizations (name, plan) VALUES ('탈퇴 테스트 조직', 'ENTERPRISE') RETURNING id
+				""")
+				.query(Long.class)
+				.single();
+		jdbcClient.sql("INSERT INTO app.organization_members (org_id, user_id) VALUES (:orgId, :userId)")
+				.param("orgId", orgId)
+				.param("userId", userId)
+				.update();
+
+		serviceWith(Optional.empty()).deleteAccount(userId);
+
+		assertThat(userRepository.findById(userId)).isEmpty();
+		Long remaining = jdbcClient.sql("SELECT count(*) FROM app.organization_members WHERE user_id = :userId")
+				.param("userId", userId)
+				.query(Long.class)
+				.single();
+		assertThat(remaining).isZero();
+	}
 }

@@ -10,7 +10,7 @@ CREATE TABLE app.organizations (
 
 CREATE TABLE app.organization_members (
     org_id     bigint NOT NULL REFERENCES app.organizations(id),
-    user_id    bigint NOT NULL UNIQUE REFERENCES app.users(id),
+    user_id    bigint NOT NULL UNIQUE REFERENCES app.users(id) ON DELETE CASCADE,
     org_role   text NOT NULL DEFAULT 'MEMBER' CHECK (org_role IN ('MEMBER', 'ORG_ADMIN')),
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, user_id)
