@@ -22,7 +22,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * ① 신규 썸네일·프로필 업로드+기록 ② 기록된 썸네일은 다운로드 자체 생략(12개 윈도우 중복 무해)
  * ③ 프로필은 파일명 동일하면 생략·바뀌면 같은 키 덮어쓰기 ④ 배치 상한 초과분 이월(carriedOver)
  * ⑤ 한 건 실패 격리(계속 진행) ⑥ Cache-Control 종류별 차등
- * ⑦ oe(CDN 서명 만료) 지난 URL은 시도 없이 제외 ⑧ 만료 임박 순 처리.
+ * ⑦ oe(CDN 서명 만료) 지난 URL은 시도 없이 제외 ⑧ 만료 임박 순 처리
+ * ⑨ 영구 무효 URL(비http 스킴·IG 플레이스홀더)은 시도 없이 제외하고 실패로 세지 않는다.
  */
 @Testcontainers
 class ImageArchiveJobTest {
@@ -219,6 +220,31 @@ class ImageArchiveJobTest {
 		assertThat(result.processed()).isEqualTo(1);
 		assertThat(result.carriedOver()).isTrue();
 		assertThat(downloads).containsExactly(oeUrl("soon_n.jpg", now + 3600));
+	}
+
+	/**
+	 * 08-16 운영 실측 — 영구 불능 URL 15건이 매일 재시도되며 매 실행을 FAILED로 만들었다(어드민
+	 * 카드 "실패" 뱃지): 리터럴 {@code exception://}(Hiker 업스트림 센티널 — 트랙 KK 결함②와 같은
+	 * 부류) 5건 + {@code rsrc.php/null.jpg}(삭제·비공개 미디어의 IG 플레이스홀더, 영구 HTTP 400)
+	 * 10건. 재시도해도 영원히 실패라 시도 전에 제외한다 — 만료 제외(⑦)와 같은 "제외"지 실패가
+	 * 아니다. 재크롤이 정상 URL을 주면 자연 복귀한다(후보 선정이 매 실행 원본 뷰 기준이라).
+	 */
+	@Test
+	void 영구_무효_URL은_시도_없이_제외되고_실패로_세지_않는다() {
+		seedAccount("sentinel", "exception://");                                    // 무효 스킴
+		seedContent("gone1", "https://static.cdninstagram.com/rsrc.php/null.jpg");  // 플레이스홀더
+		seedContent("gone2", "http://static.cdninstagram.com/rsrc.php/null.jpg");   // http 변형(실측 혼재)
+		seedContent("good", "https://cdn.example/ok_n.jpg");
+
+		JobResult result = job(1000).run();
+
+		assertThat(result.processed()).isEqualTo(1);
+		assertThat(result.failed()).isZero();       // 무효 제외는 실패가 아니다 — 뱃지 정상화의 핵심
+		assertThat(result.carriedOver()).isFalse(); // 이월도 아니다
+		assertThat(downloads).containsExactly("https://cdn.example/ok_n.jpg");
+		Integer rows = db.queryForObject(
+				"SELECT count(*) FROM image_assets WHERE key IN ('sentinel','gone1','gone2')", Integer.class);
+		assertThat(rows).isZero();
 	}
 
 	@Test
