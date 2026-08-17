@@ -51,7 +51,8 @@ class BrandLinkTransaction {
 	 *
 	 * <p>계정명 비교는 링크의 등록 시점 사본 기준이라 monitoring 쪽 개명은 못 보지만, 그 경우
 	 * monitoring 등록이 같은 brandId로 replay돼 {@link #link}의 brandId 재확인이 멱등으로 접는다 —
-	 * 결과는 같다.
+	 * 결과는 같다. 요청이 명시한 표시 기간(collectionMonths)도 그 분기가 링크에 반영하므로
+	 * 개명 경로에서 유실되지 않는다.
 	 */
 	@Transactional
 	Optional<Long> precheck(long userId, String username, String accountType) {
@@ -76,10 +77,15 @@ class BrandLinkTransaction {
 
 	/**
 	 * 저장(§5-1 4단계) — 유저 잠금 → 멱등·한도 재확인 → 활성 연결 생성.
-	 * 이미 연결된 브랜드면 타입만 맞추고 성공한다(멱등 — monitoring 등록은 replay라 부작용이 없다).
+	 * 이미 연결된 브랜드면 타입·명시된 표시 기간을 맞추고 성공한다(멱등 — monitoring 등록은 replay라
+	 * 부작용이 없다).
+	 *
+	 * @param rawCollectionMonths 요청이 <b>명시한</b> 표시 기간(null = 생략). 생략은 기존 링크 기간을
+	 *     건드리지 않는다 — {@code orDefault}로 접힌 12를 쓰면 필드 없는 구 클라이언트의 재-POST가
+	 *     3개월 신청을 12로 되돌린다(서비스 멱등 경로와 같은 규칙).
 	 */
 	@Transactional
-	void link(long userId, long brandId, String username, String accountType, int collectionMonths) {
+	void link(long userId, long brandId, String username, String accountType, Integer rawCollectionMonths) {
 		linkRepository.lockUser(userId);
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		Optional<BrandLinkRow> existing = links.stream()
@@ -90,11 +96,18 @@ class BrandLinkTransaction {
 				requireRoom(links, accountType, brandId);
 				linkRepository.updateAccountType(userId, brandId, accountType);
 			}
+			// 개명 경로(precheck는 username 사본 비교라 미스 → 신규 경로 → 같은 brandId replay)로도
+			// 여기에 온다 — 그때 명시값을 흘리면 신청 기간이 조용히 유실된다.
+			if (rawCollectionMonths != null) {
+				linkRepository.updateCollectionMonths(userId, brandId,
+						BrandCollectionMonths.orDefault(rawCollectionMonths));
+			}
 			return;
 		}
 		requireRoom(links, accountType, null);
 		try {
-			linkRepository.insertLink(userId, brandId, username, accountType, collectionMonths);
+			linkRepository.insertLink(userId, brandId, username, accountType,
+					BrandCollectionMonths.orDefault(rawCollectionMonths));
 		} catch (DuplicateKeyException e) {
 			// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 잠금 덕에 사실상 도달 불가지만,
 			// 도달해도 원하는 상태(연결됨)는 이미 성립했으므로 멱등 성공으로 접는다.

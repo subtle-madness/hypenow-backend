@@ -583,6 +583,29 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
+	void 개명된_브랜드_재등록도_명시한_collectionMonths를_링크에_반영한다() throws Exception {
+		// precheck는 링크의 username 사본으로 비교하므로 IG 개명 후 새 이름은 멱등 경로에 걸리지 않는다.
+		// 그러면 monitoring 등록이 같은 brandId로 replay돼 link()의 기존 연결 분기로 접히는데,
+		// 그 분기가 months를 무시하면 유저가 명시한 3개월이 조용히 사라진다(링크는 12로 남는다).
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L, "old_name")));
+		given(commandClient.registerBrand("new_name", null, 3))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "new_name", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "old_name", BrandAccountType.OWN, 3)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"new_name\", \"collectionMonths\": 3}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.collectionMonths").value(3));
+
+		then(linkRepository).should().updateCollectionMonths(7L, 100L, 3);
+		// 이미 있는 연결이라 새 행을 만들지는 않는다(멱등).
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
+	}
+
+	@Test
 	void 재등록이_collectionMonths를_생략하면_링크_기간은_불변이다() throws Exception {
 		// 구 클라이언트의 필드 없는 재-POST가 3개월 링크를 12로 되돌리면 안 된다.
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));

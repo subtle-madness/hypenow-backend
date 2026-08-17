@@ -107,7 +107,9 @@ public class V1BrandAccountService {
 		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
 		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName, months));
 		try {
-			linkTransaction.link(userId, registered.brandId(), username, accountType, months);
+			// 링크에는 명시값(raw)을 넘긴다 — 개명 재등록이 기존 연결로 접힐 때 생략(null)과 명시를
+			// 구분해야 한다(멱등 경로와 같은 규칙). 자산(monitoring)에는 위에서 orDefault한 months.
+			linkTransaction.link(userId, registered.brandId(), username, accountType, rawCollectionMonths);
 		} catch (RuntimeException e) {
 			compensate(registered.brandId(), username);
 			throw e;
