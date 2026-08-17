@@ -25,12 +25,16 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.entitlement.EntitlementService;
+import com.celfit.was.entitlement.Entitlements;
+import com.celfit.was.entitlement.Plan;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -73,6 +77,9 @@ class V1MeControllerTest {
 
 	@MockitoBean
 	AccountDeletionService accountDeletionService;
+
+	@MockitoBean
+	EntitlementService entitlementService;
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", PASSWORD_HASH, "USER",
@@ -117,6 +124,19 @@ class V1MeControllerTest {
 				.andExpect(jsonPath("$.data.profileImageUrl").value(nullValue()))
 				.andExpect(jsonPath("$.data.createdAt").value("2026-06-01T00:00:00Z"))
 				.andExpect(jsonPath("$.data.role").value("user"));
+	}
+
+	// --- GET /v1/me/entitlements (설계 2026-08-17) ---
+
+	@Test
+	void 엔타이틀먼트는_서비스_판정을_그대로_envelope로_내린다() throws Exception {
+		given(entitlementService.entitlementsFor(7L)).willReturn(new Entitlements(Plan.FREE, Set.of(), Map.of()));
+
+		mockMvc.perform(get("/v1/me/entitlements").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.data.plan").value("free"))
+				.andExpect(jsonPath("$.data.features.length()").value(0));
 	}
 
 	// 어드민 백엔드 API 설계 2026-08-01 §1 — role은 DB ADMIN/USER를 소문자로 매핑한다.

@@ -4,6 +4,7 @@ import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.entitlement.EntitlementService;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.V1ApiException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -49,16 +50,19 @@ public class V1MeController {
 	private final SessionService sessionService;
 	private final ProfileImageStore profileImageStore;
 	private final AccountDeletionService accountDeletionService;
+	private final EntitlementService entitlementService;
 
 	public V1MeController(UserRepository userRepository, PasswordEncoder passwordEncoder,
 			SignupValidator signupValidator, SessionService sessionService,
-			ProfileImageStore profileImageStore, AccountDeletionService accountDeletionService) {
+			ProfileImageStore profileImageStore, AccountDeletionService accountDeletionService,
+			EntitlementService entitlementService) {
 		this.userRepository = userRepository;
 		this.passwordEncoder = passwordEncoder;
 		this.signupValidator = signupValidator;
 		this.sessionService = sessionService;
 		this.profileImageStore = profileImageStore;
 		this.accountDeletionService = accountDeletionService;
+		this.entitlementService = entitlementService;
 	}
 
 	record PasswordChangeRequest(String currentPassword, String newPassword) {
@@ -73,6 +77,12 @@ public class V1MeController {
 	@GetMapping("/v1/me")
 	public ApiResponse<MeResponse> me(@AuthenticationPrincipal AppUserDetails principal) {
 		return ApiResponse.ok(MeResponse.from(requireProfile(principal.getUserId())));
+	}
+
+	/** 조직·엔터프라이즈 entitlement 판정(설계 2026-08-17) — 매 요청 DB 기준 재계산, 무소속이면 plan:"free". */
+	@GetMapping("/v1/me/entitlements")
+	public ApiResponse<MeEntitlementsResponse> entitlements(@AuthenticationPrincipal AppUserDetails principal) {
+		return ApiResponse.ok(MeEntitlementsResponse.from(entitlementService.entitlementsFor(principal.getUserId())));
 	}
 
 	/**
