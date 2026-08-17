@@ -13,9 +13,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 컨테이너 이름은 compose 디렉토리명 기반이라 머신마다 다르다 — PG_CONTAINER로 오버라이드
+# 컨테이너 이름은 compose 디렉토리명 기반이라 머신마다 다르다 — PG_CONTAINER로 오버라이드.
+# 운영은 raw DB와 analysis DB가 컨테이너·롤이 분리돼 있다(deploy-postgres-raw-1 /
+# deploy-postgres-1·celfit) — ANALYSIS_PG_* 로 따로 오버라이드한다. 로컬은 기본값(단일 컨테이너)으로 동작.
+#   운영 예: PG_CONTAINER=deploy-postgres-raw-1 ANALYSIS_PG_CONTAINER=deploy-postgres-1 \
+#           ANALYSIS_PG_USER=celfit ./hype-anchor-refit.sh
 PG="${PG_CONTAINER:-crawler-postgres-1}"
-AQ=(docker exec "$PG" psql -U crawler -d analysis -Atc)
+APG="${ANALYSIS_PG_CONTAINER:-$PG}"
+AUSER="${ANALYSIS_PG_USER:-crawler}"
+ADB="${ANALYSIS_PG_DB:-analysis}"
+AQ=(docker exec "$APG" psql -U "$AUSER" -d "$ADB" -Atc)
 
 CODES_CSV="$(mktemp)"
 trap 'rm -f "$CODES_CSV"' EXIT
