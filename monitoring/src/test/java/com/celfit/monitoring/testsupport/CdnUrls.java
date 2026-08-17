@@ -23,4 +23,14 @@ public final class CdnUrls {
 	public static String noOe(String fileName) {
 		return "https://cdn.example/v/t51/" + fileName + "?stp=dst-jpg&_nc_sid=8b3546";
 	}
+
+	/**
+	 * 만료가 무관한 픽스처용 oe 쿼리 조각(실행 시점 +10년) — 픽스처 URL의 호스트·경로를 직접 쓰고
+	 * 싶을 때 {@code "...jpg?" + farFutureOe()}로 붙인다. 절대값 리터럴을 금지하는 이유:
+	 * {@code oe=abc}는 hex 2748(1970년)로 파싱돼 만료 필터에 걸렸고(도입 커밋에서 실제 파손),
+	 * {@code 7FFFFFFF} 같은 먼-미래 리터럴도 2038-01-19에 같은 방식으로 일제히 깨진다.
+	 */
+	public static String farFutureOe() {
+		return "oe=" + Long.toHexString(Instant.now().getEpochSecond() + 315_360_000L).toUpperCase();
+	}
 }

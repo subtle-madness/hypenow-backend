@@ -62,6 +62,11 @@ public class HashtagPostThumbnailArchiveJob {
 				rs.getString("image_object_path"), rs.getString("image_source_name")));
 
 		// 만료 URL은 시도해도 영원히 403 — 걸러내고 남은 예산은 만료 임박 순으로(근거는 CdnExpiry 주석).
+		// 주의: brand_hashtag_post는 insert-only(insertPost가 ON CONFLICT DO NOTHING, 재목격분은
+		// existingCodes에서 걸러져 INSERT에 도달조차 안 함)라 thumbnail_url이 재조회로 갱신되지 않는다 —
+		// 이 잡에서 "만료 제외"는 일시 상태가 아니라 사실상 영구 유실이다(첫 ~4일 창을 놓친 게시물).
+		// 재목격 시 URL만 갱신하는 별도 경로는 저장 계약("DB에 있는 코드는 재판정하지 않는다")과 얽혀
+		// 후속 트랙으로 분리(KK §CDN 만료 필터).
 		long nowEpoch = Instant.now().getEpochSecond();
 
 		int archived = 0;
@@ -69,7 +74,8 @@ public class HashtagPostThumbnailArchiveJob {
 		int failed = 0;
 		int expired = 0;
 		int deferred = 0;
-		for (Candidate c : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
+		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
+			Candidate c = r.item();
 			String sourceName;
 			try {
 				sourceName = sourceName(c.thumbnailUrl());
@@ -83,7 +89,7 @@ public class HashtagPostThumbnailArchiveJob {
 				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
 				continue;
 			}
-			if (CdnExpiry.isExpired(c.thumbnailUrl(), nowEpoch)) {
+			if (r.expired(nowEpoch)) {
 				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
 				continue;
 			}

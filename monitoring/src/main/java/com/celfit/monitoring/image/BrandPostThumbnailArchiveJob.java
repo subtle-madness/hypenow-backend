@@ -60,7 +60,9 @@ public class BrandPostThumbnailArchiveJob {
 
 		// 만료 URL은 재시도해도 영원히 403이라 시도 자체를 걸러내고, 남은 예산은 만료 임박 순으로 쓴다
 		// (실측 근거는 CdnExpiry 클래스 주석 — 이 잡이 그 실측 대상이다). 재조회가 URL을 갱신하면
-		// 만료가 미래가 돼 자동으로 후보에 복귀한다.
+		// 만료가 미래가 돼 자동으로 후보에 복귀한다 — 단 재열거 대상일 때만: TRACKED_MAX_AGE(180일)
+		// 초과분은 재열거가 없어 복귀하지 않고, tier3/4(재크롤 7·30일 주기 vs 서명 수명 ~4일)는
+		// 살아있는 창이 간헐적이다. 즉 "만료 제외" 수치의 일부는 영구 유실분이다(BrandCrawlPolicy 참조).
 		long nowEpoch = Instant.now().getEpochSecond();
 
 		int archived = 0;
@@ -68,7 +70,8 @@ public class BrandPostThumbnailArchiveJob {
 		int failed = 0;
 		int expired = 0;
 		int deferred = 0;
-		for (Candidate c : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
+		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
+			Candidate c = r.item();
 			String sourceName;
 			try {
 				sourceName = sourceName(c.thumbnailUrl());
@@ -84,7 +87,7 @@ public class BrandPostThumbnailArchiveJob {
 				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
 				continue;
 			}
-			if (CdnExpiry.isExpired(c.thumbnailUrl(), nowEpoch)) {
+			if (r.expired(nowEpoch)) {
 				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
 				continue;
 			}

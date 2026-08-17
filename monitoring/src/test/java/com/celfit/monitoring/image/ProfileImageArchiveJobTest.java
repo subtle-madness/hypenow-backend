@@ -18,7 +18,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * ④ 한 건 실패 격리(계속 진행) ⑤ PAR 미설정 시 no-op ⑥ http(s) 아닌/ null profile_image_url은 후보 제외
  * ⑦ 배치 상한은 다운로드 시도만 소모(스킵 공짜 — 창 잠식 결함 재발 방지)
  * ⑧ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않는다 — 그래서 만료가 무관한 픽스처의 oe는
- *   먼 미래(7FFFFFFF)로 둔다.
+ *   CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다 — 절대값 리터럴은 2038년에 일제 파손.
  */
 class ProfileImageArchiveJobTest {
 
@@ -71,7 +71,7 @@ class ProfileImageArchiveJobTest {
 
 	@Test
 	void 신규_아카이브는_object_path_source_name_archived_at을_기록한다() {
-		seedProfileMeta("glowdeep", "https://cdn.example/v/t51/463_111_n.jpg?oe=7FFFFFFF", null, null);
+		seedProfileMeta("glowdeep", "https://cdn.example/v/t51/463_111_n.jpg?" + CdnUrls.farFutureOe(), null, null);
 
 		job().run();
 
@@ -87,7 +87,7 @@ class ProfileImageArchiveJobTest {
 
 	@Test
 	void source_name이_바뀌지_않으면_재다운로드를_스킵한다() {
-		seedProfileMeta("glowdeep", "https://cdn.example/v/463_111_n.jpg?oe=7FFFFFFF",
+		seedProfileMeta("glowdeep", "https://cdn.example/v/463_111_n.jpg?" + CdnUrls.farFutureOe(),
 				"monitor-profile/glowdeep.jpg", "463_111_n.jpg");
 
 		job().run();
@@ -99,11 +99,11 @@ class ProfileImageArchiveJobTest {
 	/** 핵심 회귀 방지 — 인스타 CDN은 oe=(서명) 쿼리파라미터가 매 조회마다 바뀐다. 파일명만 비교해야 한다. */
 	@Test
 	void 쿼리스트링만_다르고_파일명이_같으면_스킵한다() {
-		seedProfileMeta("glowdeep", "https://cdn-a.example/v/999_222_n.jpg?oe=old&sig=1",
+		seedProfileMeta("glowdeep", "https://cdn-a.example/v/999_222_n.jpg?" + CdnUrls.farFutureOe() + "&sig=1",
 				"monitor-profile/glowdeep.jpg", "999_222_n.jpg");
 		// 호스트·쿼리만 바뀐 같은 파일명
 		db.update("UPDATE profile_meta SET profile_image_url = ? WHERE username = 'glowdeep'",
-				"https://cdn-b.example/v/999_222_n.jpg?oe=new&sig=99");
+				"https://cdn-b.example/v/999_222_n.jpg?" + CdnUrls.farFutureOe() + "&sig=99");
 
 		job().run();
 
@@ -113,10 +113,10 @@ class ProfileImageArchiveJobTest {
 
 	@Test
 	void 파일명이_바뀌면_같은_키로_재업로드하고_source_name을_갱신한다() {
-		seedProfileMeta("glowdeep", "https://cdn.example/v/999_222_n.jpg?oe=old",
+		seedProfileMeta("glowdeep", "https://cdn.example/v/999_222_n.jpg?" + CdnUrls.farFutureOe(),
 				"monitor-profile/glowdeep.jpg", "999_222_n.jpg");
 		db.update("UPDATE profile_meta SET profile_image_url = ? WHERE username = 'glowdeep'",
-				"https://cdn.example/v/1000_333_n.jpg?oe=new");
+				"https://cdn.example/v/1000_333_n.jpg?" + CdnUrls.farFutureOe());
 
 		job().run();
 
@@ -211,5 +211,17 @@ class ProfileImageArchiveJobTest {
 
 		assertThat(puts).extracting(m -> m.get("path"))
 				.containsExactlyInAnyOrder("monitor-profile/live1.jpg", "monitor-profile/live2.jpg");
+	}
+
+	/** 상한이 걸리면 먼저 죽을 URL부터 — 임박분을 이월하면 다음 스윕엔 이미 만료돼 영구 유실된다. */
+	@Test
+	void 상한이_걸리면_만료_임박_순으로_예산을_쓴다() {
+		seedProfileMeta("far", CdnUrls.expiringIn("far_n.jpg", 86400 * 3), null, null);
+		seedProfileMeta("soon", CdnUrls.expiringIn("soon_n.jpg", 3600), null, null);
+		seedProfileMeta("unknown", CdnUrls.noOe("unknown_n.jpg"), null, null);
+
+		job("https://par.example/o/", 1).run();
+
+		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-profile/soon.jpg");
 	}
 }

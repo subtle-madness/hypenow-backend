@@ -19,7 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * + ⑦ 배치 상한은 다운로드 시도만 소모한다(스킵 공짜 — 기존 잡의 창 잠식 결함을 반복하지 않는 핵심 계약)
  * + ⑧ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않으며, 상한이 걸리면 만료 임박 순으로 쓴다
  *   (08-17 운영 실측 — 상한의 72%를 죽은 URL에 태우던 결함). 만료가 무관한 픽스처의 oe는
- *   먼 미래(7FFFFFFF)로 둔다.
+ *   CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다 — 절대값 리터럴은 2038년에 일제 파손.
  */
 class BrandPostThumbnailArchiveJobTest {
 
@@ -73,7 +73,7 @@ class BrandPostThumbnailArchiveJobTest {
 
 	@Test
 	void 신규_아카이브는_object_path_source_name_archived_at을_기록한다() {
-		seed("SC1", "https://cdn.example/v/t51/463_111_n.jpg?oe=7FFFFFFF", null, null);
+		seed("SC1", "https://cdn.example/v/t51/463_111_n.jpg?" + CdnUrls.farFutureOe(), null, null);
 
 		job().run();
 
@@ -90,10 +90,10 @@ class BrandPostThumbnailArchiveJobTest {
 	/** 핵심 회귀 방지 — 인스타 CDN은 oe=(서명) 쿼리파라미터가 매 조회마다 바뀐다. 파일명만 비교해야 한다. */
 	@Test
 	void 쿼리스트링만_다르고_파일명이_같으면_스킵한다() {
-		seed("SC1", "https://cdn-a.example/v/999_222_n.jpg?oe=old&sig=1",
+		seed("SC1", "https://cdn-a.example/v/999_222_n.jpg?" + CdnUrls.farFutureOe() + "&sig=1",
 				"monitor-brand-post/SC1.jpg", "999_222_n.jpg");
 		db.update("UPDATE brand_post_meta SET thumbnail_url = ? WHERE short_code = 'SC1'",
-				"https://cdn-b.example/v/999_222_n.jpg?oe=new&sig=99");
+				"https://cdn-b.example/v/999_222_n.jpg?" + CdnUrls.farFutureOe() + "&sig=99");
 
 		job().run();
 
@@ -103,10 +103,10 @@ class BrandPostThumbnailArchiveJobTest {
 
 	@Test
 	void 파일명이_바뀌면_같은_키로_재업로드하고_source_name을_갱신한다() {
-		seed("SC1", "https://cdn.example/v/999_222_n.jpg?oe=old",
+		seed("SC1", "https://cdn.example/v/999_222_n.jpg?" + CdnUrls.farFutureOe(),
 				"monitor-brand-post/SC1.jpg", "999_222_n.jpg");
 		db.update("UPDATE brand_post_meta SET thumbnail_url = ? WHERE short_code = 'SC1'",
-				"https://cdn.example/v/1000_333_n.jpg?oe=new");
+				"https://cdn.example/v/1000_333_n.jpg?" + CdnUrls.farFutureOe());
 
 		job().run();
 

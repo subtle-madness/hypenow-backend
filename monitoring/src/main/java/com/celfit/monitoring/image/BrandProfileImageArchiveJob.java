@@ -69,7 +69,8 @@ public class BrandProfileImageArchiveJob {
 		int failed = 0;
 		int expired = 0;
 		int deferred = 0;
-		for (Candidate c : CdnExpiry.soonestExpiryFirst(candidates, Candidate::profilePicUrl)) {
+		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::profilePicUrl)) {
+			Candidate c = r.item();
 			String sourceName;
 			try {
 				sourceName = sourceName(c.profilePicUrl());
@@ -86,7 +87,7 @@ public class BrandProfileImageArchiveJob {
 				skipped++;   // 파일명 미변경 — 재다운로드 불필요(상한 미소모).
 				continue;
 			}
-			if (CdnExpiry.isExpired(c.profilePicUrl(), nowEpoch)) {
+			if (r.expired(nowEpoch)) {
 				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
 				continue;
 			}

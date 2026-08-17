@@ -18,7 +18,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * ② (brand_id, short_code) PK라 같은 게시물이 브랜드별 행으로 중복될 수 있다 — 다운로드는 1회,
  *   UPDATE는 short_code 기준 전 브랜드 행.
  * ③ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않는다 — 그래서 만료가 무관한 픽스처의 oe는
- *   먼 미래(7FFFFFF*)로 둔다.
+ *   CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다.
  */
 class HashtagPostThumbnailArchiveJobTest {
 
@@ -104,8 +104,8 @@ class HashtagPostThumbnailArchiveJobTest {
 	void 브랜드별_중복_행은_한_번만_다운로드하고_전_행에_경로를_채운다() {
 		long brandA = seedBrand("brand_a");
 		long brandB = seedBrand("brand_b");
-		seedPost(brandA, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?oe=7FFFFFFA", null, null);
-		seedPost(brandB, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?oe=7FFFFFFB", null, null);
+		seedPost(brandA, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?" + CdnUrls.farFutureOe() + "&cb=a", null, null);
+		seedPost(brandB, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?" + CdnUrls.farFutureOe() + "&cb=b", null, null);
 
 		job().run();
 
@@ -118,7 +118,7 @@ class HashtagPostThumbnailArchiveJobTest {
 	@Test
 	void 쿼리스트링만_다르고_파일명이_같으면_스킵한다() {
 		long brand = seedBrand("brand_a");
-		seedPost(brand, "SC1", "RELEVANT", "https://cdn-b.example/v/999_n.jpg?oe=new",
+		seedPost(brand, "SC1", "RELEVANT", "https://cdn-b.example/v/999_n.jpg?" + CdnUrls.farFutureOe(),
 				"monitor-hashtag-post/SC1.jpg", "999_n.jpg");
 
 		job().run();
@@ -195,5 +195,18 @@ class HashtagPostThumbnailArchiveJobTest {
 
 		assertThat(puts).extracting(m -> m.get("path"))
 				.containsExactlyInAnyOrder("monitor-hashtag-post/LIVE1.jpg", "monitor-hashtag-post/LIVE2.jpg");
+	}
+
+	/** 상한이 걸리면 먼저 죽을 URL부터 — 임박분을 이월하면 다음 스윕엔 이미 만료돼 영구 유실된다. */
+	@Test
+	void 상한이_걸리면_만료_임박_순으로_예산을_쓴다() {
+		long brand = seedBrand("brand_a");
+		seedPost(brand, "FAR", "RELEVANT", CdnUrls.expiringIn("far_n.jpg", 86400 * 3), null, null);
+		seedPost(brand, "SOON", "RELEVANT", CdnUrls.expiringIn("soon_n.jpg", 3600), null, null);
+		seedPost(brand, "UNKNOWN", "RELEVANT", CdnUrls.noOe("unknown_n.jpg"), null, null);
+
+		job("https://par.example/o/", 1).run();
+
+		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-hashtag-post/SOON.jpg");
 	}
 }
