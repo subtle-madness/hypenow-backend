@@ -7,6 +7,9 @@
 # short_code만 뽑아 주입하고, 점수는 crawler DB에서 신 가중·신 Q 앵커 기준으로 재계산한다
 # (v2, 2026-08-17). pending.sh와 같은 방식으로 CSV로 뽑아 crawler 세션의 임시 테이블
 # _ranking_codes로 주입한 뒤 hype-anchor-refit.sql을 돌린다.
+# 추출은 먼저 임시 파일로 받는다(파이프에 바로 물리지 않음) — AQ가 실패하면 set -e가 이 지점에서
+# 즉시 죽어 원인이 분명하고, 성공 시엔 건수를 stderr로 먼저 보여준다(파이프 안에 넣으면 AQ 실패가
+# psql 쪽 set -e 범위 밖이라 원인 불명한 채로 죽거나 빈 주입으로 조용히 넘어갈 수 있었다).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -14,13 +17,18 @@ cd "$(dirname "$0")"
 PG="${PG_CONTAINER:-crawler-postgres-1}"
 AQ=(docker exec "$PG" psql -U crawler -d analysis -Atc)
 
+CODES_CSV="$(mktemp)"
+trap 'rm -f "$CODES_CSV"' EXIT
+"${AQ[@]}" "COPY (SELECT c.short_code FROM contents c
+                  JOIN content_analyses an ON an.short_code = c.short_code
+                  WHERE an.is_beauty = true
+                    AND (an.metric_timeliness = 'timely' OR an.metric_timeliness IS NULL)) TO STDOUT WITH (FORMAT csv)" > "$CODES_CSV"
+echo "랭킹 경로 short_code 추출: $(wc -l < "$CODES_CSV" | tr -d ' ')건" >&2
+
 {
   echo "CREATE TEMP TABLE _ranking_codes(short_code text);"
   echo "COPY _ranking_codes FROM STDIN WITH (FORMAT csv);"
-  "${AQ[@]}" "COPY (SELECT c.short_code FROM contents c
-                    JOIN content_analyses an ON an.short_code = c.short_code
-                    WHERE an.is_beauty = true
-                      AND (an.metric_timeliness = 'timely' OR an.metric_timeliness IS NULL)) TO STDOUT WITH (FORMAT csv)"
+  cat "$CODES_CSV"
   printf '%s\n' '\.'
   cat hype-anchor-refit.sql
 } | docker exec -i "$PG" psql -U crawler -d crawler -v ON_ERROR_STOP=1
