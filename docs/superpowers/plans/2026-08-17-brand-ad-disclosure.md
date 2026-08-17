@@ -257,7 +257,9 @@ class AdPositionRuleTest {
 
 	@Test
 	void 보임_상한_안쪽은_VISIBLE() {
-		String caption = "짧은 캡션입니다 #광고";
+		// #광고가 유일한 해시태그면 첫 해시태그 예외(FIRST_HASHTAG)로 빠지므로, 앞에 다른 해시태그를
+		// 둬 일반 위치 규칙(보임 상한 이내)을 실제로 태운다.
+		String caption = "짧은 캡션입니다 #데일리 #광고";
 		int start = caption.indexOf("#광고");
 		assertThat(AdPositionRule.evaluate(caption, start, start + "#광고".length()))
 				.isEqualTo(AdPositionRule.Band.VISIBLE);
@@ -265,28 +267,33 @@ class AdPositionRuleTest {
 
 	@Test
 	void 접힘_하한_초과는_HIDDEN() {
+		// 해시태그가 아닌 본문 문구("광고입니다", Tier1 사전 항목)를 쓴다 — "#광고"면 캡션의 유일한
+		// 해시태그라 첫 해시태그 예외로 빠져 이 테스트가 검증하려는 일반 위치 규칙의 HIDDEN 분기를
+		// 태우지 못한다.
 		String filler = "가".repeat(250);   // 그래핌 250 > HIDDEN_LOWER_BOUND(220)
-		String caption = filler + "#광고";
-		int start = caption.indexOf("#광고");
-		assertThat(AdPositionRule.evaluate(caption, start, start + "#광고".length()))
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
 				.isEqualTo(AdPositionRule.Band.HIDDEN);
 	}
 
 	@Test
 	void 세번째_줄_이후는_HIDDEN() {
-		String caption = "1번째 줄\n2번째 줄\n3번째 줄 #광고";
-		int start = caption.indexOf("#광고");
-		assertThat(AdPositionRule.evaluate(caption, start, start + "#광고".length()))
+		// 마찬가지로 비해시태그 문구 — "#광고"면 유일한 해시태그라 첫 해시태그 예외에 걸린다.
+		String caption = "1번째 줄\n2번째 줄\n3번째 줄 광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
 				.isEqualTo(AdPositionRule.Band.HIDDEN);
 	}
 
 	@Test
 	void 경계_사이_회색지대는_게시자에게_유리하게_GRAY() {
-		// 보임 상한(125) 초과 & 접힘 하한(220) 이하 — 확실한 위반 아님(지침 원문 "눌러야만"만 부적절)
+		// 보임 상한(125) 초과 & 접힘 하한(220) 이하 — 확실한 위반 아님(지침 원문 "눌러야만"만 부적절).
+		// 비해시태그 문구를 쓴다 — "#광고"였다면 유일한 해시태그라 첫 해시태그 예외로 빠진다.
 		String filler = "가".repeat(160);
-		String caption = filler + "#광고";
-		int start = caption.indexOf("#광고");
-		assertThat(AdPositionRule.evaluate(caption, start, start + "#광고".length()))
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
 				.isEqualTo(AdPositionRule.Band.GRAY);
 	}
 
@@ -473,10 +480,12 @@ class AdVerdictCombinerTest {
 
 	@Test
 	void CLEAR_있으나_전부_묻힌_위치면_INSUFFICIENT_HIDDEN_PLACEMENT() {
+		// 비해시태그 문구를 쓴다 — "#광고"였다면 캡션의 유일한 해시태그라 첫 해시태그 예외로 빠져
+		// DISCLOSED가 나온다(이 테스트가 검증하려는 HIDDEN 분기를 태우지 못한다).
 		String filler = "가".repeat(250);
-		String caption = filler + "#광고";
+		String caption = filler + "광고입니다";
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
-				List.of(new Disclosure("#광고", Category.CLEAR)));
+				List.of(new Disclosure("광고입니다", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("INSUFFICIENT");
 		assertThat(result.violations()).containsExactly("HIDDEN_PLACEMENT");
 	}
@@ -542,12 +551,15 @@ class AdVerdictCombinerTest {
 
 	@Test
 	void Tier1_매칭이_묻힌_위치여도_evidence로_넘어온다() {
+		// "광고입니다"는 AdDisclosurePatterns의 Tier1 사전 항목(해시태그 아님) — "#광고"를 쓰면
+		// 캡션의 유일한 해시태그라 첫 해시태그 예외로 빠져 HIDDEN을 검증할 수 없다.
 		String filler = "가".repeat(250);
-		String caption = filler + "#광고";
-		var tier1 = new AdDisclosurePatterns.Match("#광고", filler.length(), filler.length() + "#광고".length());
+		String caption = filler + "광고입니다";
+		var tier1 = new AdDisclosurePatterns.Match("광고입니다", filler.length(),
+				filler.length() + "광고입니다".length());
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, tier1, List.of());
 		assertThat(result.verdict()).isEqualTo("INSUFFICIENT");
-		assertThat(result.evidence()).extracting(AdVerdictResult.Evidence::phrase).containsExactly("#광고");
+		assertThat(result.evidence()).extracting(AdVerdictResult.Evidence::phrase).containsExactly("광고입니다");
 	}
 
 	@Test
@@ -800,10 +812,13 @@ class AdDisclosureGuidelineExamplesTest {
 
 	@Test
 	void 부적절_예_본문_중간_구분없이_삽입은_HIDDEN() {
+		// 비해시태그 문구("광고입니다", Tier1 사전 항목) — "#광고"였다면 캡션의 유일한 해시태그라
+		// 첫 해시태그 예외(지침 다.(2)③)로 빠져 DISCLOSED가 나온다. 이 테스트는 "본문 중간 삽입"
+		// 부적절 예시(지침 다.(2)①)를 검증하는 것이라 해시태그 예외 경로를 밟으면 안 된다.
 		String filler = "가".repeat(250);
-		String caption = filler + "#광고";
+		String caption = filler + "광고입니다";
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
-				List.of(new Disclosure("#광고", Category.CLEAR)));
+				List.of(new Disclosure("광고입니다", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("INSUFFICIENT");
 		assertThat(result.violations()).containsExactly("HIDDEN_PLACEMENT");
 	}
@@ -2998,3 +3013,33 @@ Run: `git log --oneline develop..HEAD` — 이 계획의 커밋 19개(Task 1~18,
   `seededUsernames`를 파라미터로 명시적으로 넘기도록 시그니처를 확정했다(인스턴스 필드 참조로
   잘못 쓰면 컴파일 에러로 즉시 드러나므로 안전하지만, 계획 단계에서 시그니처를 미리 고정해
   구현자가 헷갈리지 않게 했다).
+
+**4. 스펙 모순 재검토(코디네이터 리뷰 반영, 2차 수정)** — `AdPositionRule`(및 스펙 §5)은
+"첫 번째 해시태그는 오프셋 무관 인정"(FIRST_HASHTAG)이 위치 3구간(VISIBLE/GRAY/HIDDEN)보다
+우선 평가된다. 초안의 여러 테스트가 `#광고`를 캡션의 **유일한(=필연적으로 첫 번째) 해시태그**로
+써놓고 HIDDEN·GRAY를 기대해, 구현대로면 FIRST_HASHTAG로 빠져 실패하는 테스트였다. 전수
+스캔(Task 2~10 전체, 캡션에 "#" 등장하는 모든 테스트를 훑음) 결과와 조치:
+
+- **깨지는 테스트(수정 완료, 7건)** — `#광고`를 비해시태그 Tier1 문구 `"광고입니다"`(사전에 실존,
+  Task 2 참조)로 교체하거나(Task 3의 `접힘_하한_초과는_HIDDEN`·`세번째_줄_이후는_HIDDEN`·
+  `경계_사이_회색지대는_...GRAY`, Task 4의 `CLEAR_있으나_전부_묻힌_위치면_...`·
+  `Tier1_매칭이_묻힌_위치여도_evidence로_넘어온다`, Task 5의
+  `부적절_예_본문_중간_구분없이_삽입은_HIDDEN`), 앞에 다른 해시태그를 추가해 `#광고`를 두 번째로
+  밀어냈다(Task 3의 `보임_상한_안쪽은_VISIBLE` — `"#데일리 #광고"`).
+- **FIRST_HASHTAG를 정확히 검증하는 테스트(무변경, 정상)** — Task 3의
+  `첫_해시태그는_오프셋_무관_인정`(캡션 맨 앞 `#광고 ` + 긴 꼬리, FIRST_HASHTAG 기대)는 반대
+  방향(1번 지시)으로도 확인 — 실제로 유일·최선두 해시태그라 조건을 만족한다.
+- **`#광고`가 첫 해시태그지만 검증 결과가 우연히 안 깨지는 테스트(무변경, 근거 남김)** — Tier4의
+  `CLEAR_문구가_적절_위치면_DISCLOSED`·`여러_카테고리가_섞이면_CLEAR_적절_위치가_우선한다`,
+  Task 5의 `적절_예_광고`·`적절_예_협찬`, Task 8의 `Tier1_매칭_적절_위치면_LLM_생략하고_DISCLOSED`·
+  `캡션이_바뀌면_재판정한다`는 전부 "DISCLOSED"만 단언한다 — FIRST_HASHTAG·VISIBLE·GRAY는
+  전부 `accepted()`(코드 조합기 기준)에 속해 결과가 같으므로 깨지지 않는다. 다만 이 테스트들이
+  실제로 검증하는 것은 "일반 위치 규칙의 VISIBLE 분기"가 아니라 "첫 해시태그 예외 분기"라는
+  점을 여기 기록해 둔다(고치지 않은 이유는 assertion이 이미 정확해서다 — 별도 조치 불필요).
+- **의도대로 첫 해시태그가 아님을 확인한 테스트(무변경)** — Task 5의
+  `부적절_예_여러_해시태그_사이에_묻힘`은 `#a #b … #t`(120개) 뒤에 `#광고`를 둬 첫 해시태그가
+  아님을 이미 보장한다(첫 토큰은 `#a`) — 검증 결과 문제없음.
+- **위치 로직을 안 타는 테스트(무변경)** — Task 8의 `BrandCollectServiceTest` 신규 3종은
+  `AdDisclosureJudgeService`를 `FakeAdJudge`로 완전히 대체해 실제 Tier0~3 로직이 호출되지
+  않으므로 이 축의 영향을 받지 않는다. Task 2(`AdDisclosurePatternsTest`)·Task 6(LLM 추출기
+  테스트)도 위치 판정을 호출하지 않아 무관하다.
