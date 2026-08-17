@@ -8,7 +8,8 @@ DECLARE
   base bigint; raised bigint;
 BEGIN
   -- 1) 단조성: raw가 크면 매핑 점수도 크거나 같다 (순위 불변 — 이번 변경의 핵심 계약).
-  --    기본 앵커(p05=1.0833·p50=12.8333·p90=31.2000·p99=44.86) 5개 구간을 고루 지나는 표본.
+  --    기본 앵커(p05=1.1667·p50=12.0833·p90=30.5455·p99=45.6667, 2026-08-17 재적합) 5개 구간을
+  --    고루 지나는 표본.
   s1  := analytics.hype_account_score(0.5);   -- < a05
   s2  := analytics.hype_account_score(5);     -- a05~a50
   s3  := analytics.hype_account_score(20);    -- a50~a90
@@ -178,25 +179,27 @@ DECLARE
   a05 numeric; a50 numeric; a90 numeric; a99 numeric;
   base numeric;
 BEGIN
-  -- 1) 단조성: 기본 앵커(p05=1.2417·p50=19.4383·p90=52.2401·p99=74.0179, 2026-07-31 재적합) 5개
-  --    구간을 고루 지나는 표본 — 샘플 값(1·10·40·65·90) 자체는 구 앵커에서도 신 앵커에서도 같은
-  --    구간에 떨어져 그대로 재사용한다.
+  -- 1) 단조성: 기본 앵커(p05=1.3665·p50=26.6730·p90=66.6060·p99=85.2125, 2026-08-17 재적합 — 댓글
+  --    가중 1.5 기준 운영 코퍼스 실측, 모수 n=4,583) 5개 구간을 고루 지나는 표본 — 샘플 값
+  --    (1·10·40·65·90)은 단조성만 확인하므로 구간 이동과 무관하게 그대로 재사용한다(s4=65는 신
+  --    앵커에서 a50~a90 구간으로 이동했지만 단조 순서 자체는 어느 구간이든 성립).
   s1  := analytics.hype_account_score_precise(1);    -- < a05
   s2  := analytics.hype_account_score_precise(10);   -- a05~a50
   s3  := analytics.hype_account_score_precise(40);   -- a50~a90
-  s4  := analytics.hype_account_score_precise(65);   -- a90~a99
+  s4  := analytics.hype_account_score_precise(65);   -- a50~a90
   top := analytics.hype_account_score_precise(90);   -- > a99 (초과구간)
   IF NOT (s1 <= s2 AND s2 <= s3 AND s3 <= s4 AND s4 <= top) THEN
     RAISE EXCEPTION '단조성 위반: %, %, %, %, %', s1, s2, s3, s4, top;
   END IF;
 
   -- 2) 앵커점 매핑: 기본 앵커 4점이 각각 10·45·80·97로 정확히 잡힌다.
-  --    앵커값은 2026-07-31 재적합(고정 분모 도입, 스펙 2026-07-31-account-score-fixed-denominator-design.md) —
-  --    구값(1.4856/23.6566/56.3961/77.0479)에서 갱신됨.
-  a05 := analytics.hype_account_score_precise(1.2417);
-  a50 := analytics.hype_account_score_precise(19.4383);
-  a90 := analytics.hype_account_score_precise(52.2401);
-  a99 := analytics.hype_account_score_precise(74.0179);
+  --    앵커값은 2026-08-17 재적합(댓글 가중 1.5 기준 운영 코퍼스 실측, 스펙
+  --    docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md) —
+  --    구값(1.2417/19.4383/52.2401/74.0179)에서 갱신됨.
+  a05 := analytics.hype_account_score_precise(1.3665);
+  a50 := analytics.hype_account_score_precise(26.6730);
+  a90 := analytics.hype_account_score_precise(66.6060);
+  a99 := analytics.hype_account_score_precise(85.2125);
   ASSERT a05 = 10, format('p05 앵커점 불일치: %s (기대 10)', a05);
   ASSERT a50 = 45, format('p50 앵커점 불일치: %s (기대 45)', a50);
   ASSERT a90 = 80, format('p90 앵커점 불일치: %s (기대 80)', a90);

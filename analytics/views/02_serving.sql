@@ -18,6 +18,7 @@
 --   앵커는 **감쇠 전 Q** 기준·**전체 서빙 코퍼스**로 적합(v3~. v2.1까지는 qf 기준·분석 후보 집합이었다 —
 --   구 키(hype-anchor-{reels,feed}-*)에 옛 스펙 값을 넣어도 기준량이 달라 조용히 망가지므로 무시된다).
 --   재산출은 analytics/check/hype-anchor-refit.sh(재현 절차를 저장소에 둔 이유는 스펙 §5-2).
+--   2026-08-17 재적합(댓글 가중 1.5 기준 — 릴스 n=84,654·피드 n=38,751, 하니스 v2).
 -- 튜닝 상수는 함수가 app_setting에서 직접 읽는다(STABLE) — 호출부는 6-인자로 단순, 재배포 없이 튜닝.
 --   키: hype-fresh-halflife-days(14)·hype-reels-e0(0.01: v2.1부터 팔로워당 참여 기준, 릴스 참여율 중앙값≈0.0094)·hype-feed-f0(0.03)·hype-reach-weight(1)·hype-engage-weight(1)
 --       ·hype-comment-weight(1.5: 2026-08-17 댓글 가중 하향 — 품앗이 댓글 패턴 과대평가 해소, 스펙 2026-08-17-hype-comment-weight-design.md)
@@ -43,17 +44,17 @@ LANGUAGE sql STABLE AS $$
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-comment-weight'),1.5)               AS wc,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1373)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0447) END  AS a05,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1194)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0366) END  AS a05,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p50'),1.3798)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p50'),0.6135) END  AS a50,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p50'),1.2286)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p50'),0.5298) END  AS a50,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p90'),4.5716)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p90'),1.6320) END  AS a90,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p90'),4.0185)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p90'),1.4412) END  AS a90,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p99'),10.3883)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p99'),3.0144) END  AS a99
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p99'),9.9521)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p99'),2.7848) END  AS a99
   ),
   c AS (
     SELECT s.*,
@@ -96,14 +97,15 @@ $$;
 -- 1등이 76점에 그쳐 0~100 척도의 상단(77~100)이 전혀 쓰이지 않았다. 앵커는 그 실측값 그대로다.
 -- app_setting 키: analytics.hype-anchor-out-{p05,p50,p90,p99}(타입 무관 단일 세트, 미설정/0이면
 -- 아래 COALESCE 기본값 — 단일 소스는 함수 기본값, 콘텐츠 Q 앵커·계정 앵커와 동일 원칙).
+-- 2026-08-17 재적합(댓글 가중 1.5, 하니스 v2 — 미러 점수가 아닌 신 가중 재계산 분포 기준, n=10,561·max=76).
 CREATE OR REPLACE FUNCTION analytics.hype_score_output(raw numeric) RETURNS numeric
 LANGUAGE sql STABLE AS $$
   WITH s AS (
     SELECT
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p05'),0),5)    AS a05,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p50'),0),23)   AS a50,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p90'),0),44)   AS a90,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p99'),0),60.8) AS a99
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p05'),0),3)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p50'),0),14) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p90'),0),32) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p99'),0),57) AS a99
   )
   SELECT CASE
     WHEN raw IS NULL THEN NULL
