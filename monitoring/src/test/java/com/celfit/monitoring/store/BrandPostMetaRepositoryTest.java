@@ -61,4 +61,13 @@ class BrandPostMetaRepositoryTest {
 		Map<String, BrandPostMetaRepository.AdJudgmentState> state = repo.findAdJudgmentState(List.of("ZZZ"));
 		assertThat(state).doesNotContainKey("ZZZ");
 	}
+
+	@Test
+	void 미존재_short_code에_판정_기록은_무해하다() {
+		// 0-row UPDATE — 예외 없이 통과(경고 로그만 남기고 호출부 분기 없음, 다음 스윕이 자연 복구)
+		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
+		repo.updateAdVerdict("ZZZ", result, "hash999", Instant.parse("2026-08-17T00:00:00Z"));
+
+		assertThat(repo.findAdJudgmentState(List.of("ZZZ"))).doesNotContainKey("ZZZ");
+	}
 }

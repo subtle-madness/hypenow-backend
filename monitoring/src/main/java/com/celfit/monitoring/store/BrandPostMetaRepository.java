@@ -100,16 +100,22 @@ public class BrandPostMetaRepository {
 	}
 
 	/**
-	 * 판정 결과 기록 — violations·evidence는 애플리케이션에서 jsonb로 직렬화한다(AlarmEventRepository
-	 * {@code ?::jsonb} 관용구). captionHash는 호출부가 계산한 판정 시점 caption의 MD5(스펙 §4).
+	 * 판정 결과 기록 — violations·evidence는 이 메서드 안에서 jsonb로 직렬화한다({@code ?::jsonb}
+	 * 캐스팅 문법 재사용). captionHash는 호출부가 계산한 판정 시점 caption의 MD5(스펙 §4).
+	 *
+	 * <p>대상 short_code가 이미 사라진 경우(0-row) 예외를 던지지 않는다 — 다음 스윕이 자연 재판정하므로
+	 * 호출부 분기는 불필요하지만, LLM 비용을 들인 판정 결과가 소리 없이 유실되는 경로라 경고 로그는 남긴다.
 	 */
 	public void updateAdVerdict(String shortCode, AdVerdictResult result, String captionHash, Instant judgedAt) {
-		db.update("""
+		int updated = db.update("""
 				UPDATE brand_post_meta
 				SET ad_verdict = ?, ad_verdict_source = ?, ad_violations = ?::jsonb, ad_evidence = ?::jsonb,
 				    ad_judged_at = ?, judged_caption_hash = ?
 				WHERE short_code = ?""",
 				result.verdict(), result.source(), om.writeValueAsString(result.violations()),
 				om.writeValueAsString(result.evidence()), Timestamp.from(judgedAt), captionHash, shortCode);
+		if (updated == 0) {
+			log.warn("광고 판정 기록 대상 없음 — short_code={} (메타 미존재, 판정 결과 유실)", shortCode);
+		}
 	}
 }
