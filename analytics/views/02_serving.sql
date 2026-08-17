@@ -9,8 +9,8 @@
 -- 목록 피드 편향의 구조적 원인이었다. 앵커 재적합만으로는 적합 모수를 벗어나면 다시(반대 방향으로)
 -- 어긋난다 — 근본 해법은 앵커 기준량 자체를 연령 무관 Q로 바꾸는 것.
 --   연속 축(무제한): reach = ln(1 + views/(followers+1000))
---                    engage(릴스) = ln(1 + ((likes+comments×3)/(followers+1000)) / e0)  -- v2.1(2026-07-20): 조회수→팔로워 정규화(저조회수 뭉침 해소). 조회수는 도달 축에만.
---                    engage(피드) = ln(1 + ((likes+comments×3)/(followers+1000)) / f0)   -- 피드는 views 없음
+--                    engage(릴스) = ln(1 + ((likes+comments×wc)/(followers+1000)) / e0)  -- v2.1(2026-07-20): 조회수→팔로워 정규화(저조회수 뭉침 해소). 조회수는 도달 축에만.
+--                    engage(피드) = ln(1 + ((likes+comments×wc)/(followers+1000)) / f0)   -- 피드는 views 없음
 --   합성 Q: 릴스 = wr·reach + we·engage ,  피드 = engage(피드)   -- Q는 연령과 무관(v3~)
 --   점수 = clamp(Q를 타입별 4점 앵커로 구간 선형 매핑(p05→10·p50→45·p90→80·p99→97), 0, 100)
 --          × 0.5^(경과일/halflife)   -- elapsed_days는 호출부가 계산해 넘김, 음수 클램프는 함수 안(GREATEST 0)
@@ -20,6 +20,7 @@
 --   재산출은 analytics/check/hype-anchor-refit.sh(재현 절차를 저장소에 둔 이유는 스펙 §5-2).
 -- 튜닝 상수는 함수가 app_setting에서 직접 읽는다(STABLE) — 호출부는 6-인자로 단순, 재배포 없이 튜닝.
 --   키: hype-fresh-halflife-days(14)·hype-reels-e0(0.01: v2.1부터 팔로워당 참여 기준, 릴스 참여율 중앙값≈0.0094)·hype-feed-f0(0.03)·hype-reach-weight(1)·hype-engage-weight(1)
+--       ·hype-comment-weight(1.5: 2026-08-17 댓글 가중 하향 — 품앗이 댓글 패턴 과대평가 해소, 스펙 2026-08-17-hype-comment-weight-design.md)
 --       ·hype-anchor-q-{reels,feed}-{p05,p50,p90,p99}. 미설정/0이면 함수 내 COALESCE 기본값(단일 소스).
 -- NULL 규칙: likes·comments 중 NULL → NULL, 릴스인데 views NULL → NULL (피드 조회수 항상 NULL은 정상 — CLAUDE.md 함정).
 --
@@ -40,6 +41,7 @@ LANGUAGE sql STABLE AS $$
       COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-feed-f0'),0),0.03)           AS f0,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reach-weight'),1)                   AS wr,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-comment-weight'),0),1.5)      AS wc,
       CASE WHEN content_type='reels'
         THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1373)
         ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0447) END  AS a05,
@@ -57,8 +59,8 @@ LANGUAGE sql STABLE AS $$
     SELECT s.*,
       (CASE WHEN content_type='reels'
         THEN s.wr * ln(1 + views::numeric/(COALESCE(followers,0)+1000))
-           + s.we * ln(1 + ((likes + comments*3)::numeric/(COALESCE(followers,0)+1000))/s.e0)
-        ELSE ln(1 + ((likes + comments*3)::numeric/(COALESCE(followers,0)+1000))/s.f0)
+           + s.we * ln(1 + ((likes + comments*s.wc)::numeric/(COALESCE(followers,0)+1000))/s.e0)
+        ELSE ln(1 + ((likes + comments*s.wc)::numeric/(COALESCE(followers,0)+1000))/s.f0)
       END) AS q
     FROM s
   )

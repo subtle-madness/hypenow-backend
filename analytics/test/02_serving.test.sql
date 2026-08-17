@@ -122,6 +122,31 @@ BEGIN
   ASSERT v_new > v_old, format('뷰 반감기 100(%s) > 7(%s)', v_new, v_old);
 END $$;
 
+-- comment-weight (2026-08-17, 댓글 가중 하향 스펙): 댓글 가중이 키로 설정화되고 기본 1.5인지.
+-- 동등성으로 검증한다 — 가중 w의 정의상 hype_score_raw(t, v, likes, com, f, e)는
+-- hype_score_raw(t, v, likes + w×com, 0, f, e)와 정확히 같아야 한다(참여 항 분자만 다름).
+DO $$
+DECLARE
+  a numeric; b numeric;
+BEGIN
+  -- 기본 가중 1.5 — 피드 분기 (comments 40은 1.5배가 정수 60이 되도록 짝수 선택)
+  a := analytics.hype_score_raw('feed', NULL, 100, 40, 5000, 0);
+  b := analytics.hype_score_raw('feed', NULL, 160, 0, 5000, 0);
+  ASSERT a = b, format('기본 댓글 가중 1.5(피드): %s != %s', a, b);
+
+  -- 기본 가중 1.5 — 릴스 분기
+  a := analytics.hype_score_raw('reels', 50000, 100, 40, 5000, 0);
+  b := analytics.hype_score_raw('reels', 50000, 160, 0, 5000, 0);
+  ASSERT a = b, format('기본 댓글 가중 1.5(릴스): %s != %s', a, b);
+
+  -- 오버라이드 3 = 현행(×3) 산식 재현 — 스펙 §3 롤백 경로
+  INSERT INTO app_setting(key, value) VALUES ('analytics.hype-comment-weight', '3');
+  a := analytics.hype_score_raw('feed', NULL, 100, 40, 5000, 0);
+  b := analytics.hype_score_raw('feed', NULL, 220, 0, 5000, 0);
+  ASSERT a = b, format('댓글 가중 오버라이드 3(롤백 경로): %s != %s', a, b);
+  DELETE FROM app_setting WHERE key = 'analytics.hype-comment-weight';
+END $$;
+
 -- v_contents 일관성 회귀(2026-07-30, 스펙 §10): hype_score(구, 값·의미 불변)와 hype_score_precise
 -- (신)가 반드시 "같은 base 행"에서 파생돼야 한다 — dummy_r1의 실제 지표를 그대로 함수에 다시
 -- 넣어(now()는 트랜잭션 내에서 안정값이라 뷰가 쓴 것과 동일) 두 컬럼을 독립 재계산·대조한다.
