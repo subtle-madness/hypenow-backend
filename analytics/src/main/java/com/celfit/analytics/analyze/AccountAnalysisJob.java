@@ -6,8 +6,12 @@ import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
 import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.CopyRules;
+import com.celfit.analytics.llm.GeminiAccountSynthesizer;
+import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.llm.LlmQuotaExhaustedException;
+import com.celfit.analytics.llm.TraitTaxonomy;
 import com.celfit.analytics.llm.TraitTaxonomyLoader;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -58,14 +62,22 @@ public class AccountAnalysisJob {
 	private final ProgressReporter reporter;
 	private final TraitTaxonomyLoader traitLoader;
 	private final ObjectMapper json = new ObjectMapper();
+	// 배치 전송(2026-08-17) — batchApi가 null이면 배치 미지원 프로바이더라 transport=batch여도
+	// 온라인으로 폴백한다(ContentAnalysisJob과 동형 안전망).
+	private final GeminiBatchApi batchApi;
+	private final AccountBatchCollectJob collectJob;
 
+	/** @param batchApi 배치 전송 제출용 — null이면 배치 미지원 프로바이더(온라인 폴백). */
 	public AccountAnalysisJob(DataSource analysisDataSource, AccountSynthesisPort port,
-			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader) {
+			AnalyticsSettings settings, ProgressReporter reporter, TraitTaxonomyLoader traitLoader,
+			GeminiBatchApi batchApi) {
 		this.analysis = new JdbcTemplate(analysisDataSource);
 		this.port = port;
 		this.settings = settings;
 		this.reporter = reporter;
 		this.traitLoader = traitLoader;
+		this.batchApi = batchApi;
+		this.collectJob = new AccountBatchCollectJob(analysisDataSource, batchApi, traitLoader, settings);
 	}
 
 	/** analyzeOne의 처리 결과 — 데이터 미비 스킵은 실패가 아니라 별도 분기로 집계한다. */
@@ -81,7 +93,17 @@ public class AccountAnalysisJob {
 				ORDER BY s.handle
 				LIMIT ?""", String.class,
 				settings.accountAnalyzeCooldownDays(), CopyRules.VERSION, settings.accountAnalyzeBatchLimit());
-		String model = settings.activeLlmModel();
+
+		if (settings.accountBatchTransportEnabled()) {
+			if (batchApi != null) {
+				return submitBatch(targets);
+			}
+			log.warn("account-analyze-transport=batch이나 활성 프로바이더가 배치 미지원 — 온라인 경로로 폴백");
+		}
+		return runOnline(targets, settings.activeLlmModel());
+	}
+
+	private JobResult runOnline(List<String> targets, String model) {
 		int processed = 0;
 		int failed = 0;
 		int skippedIncomplete = 0;
@@ -120,6 +142,56 @@ public class AccountAnalysisJob {
 		}
 		log.info("account copy complete ({} accounts, {} failed, {} skipped)", processed, failed, skippedIncomplete);
 		return new JobResult(processed, failed, carriedOver);
+	}
+
+	/** 배치 전송 제출 — 제출 전 pending 잔여를 먼저 수거해 중복 제출을 완화한다(콘텐츠 동형). */
+	private JobResult submitBatch(List<String> targets) {
+		JobResult swept = collectJob.run();
+		if (swept.processed() > 0 || swept.failed() > 0) {
+			log.info("계정 배치 제출 전 pending 수거 — {}건 저장, {}건 실패", swept.processed(), swept.failed());
+		}
+		if (targets.isEmpty()) {
+			log.info("계정 배치 제출 대상 없음 — 제출 생략");
+			return new JobResult(0, 0, false);
+		}
+		String model = settings.activeLlmModel();
+		TraitTaxonomy vocab = traitLoader.get();
+		StringBuilder jsonl = new StringBuilder();
+		StringBuilder sidecar = new StringBuilder();
+		int skippedIncomplete = 0;
+		int submitted = 0;
+		for (String handle : targets) {
+			Prepared p = prepare(handle);
+			if (p == null) {
+				skippedIncomplete++; // 온라인 경로의 SKIPPED_DATA_INCOMPLETE와 동일 — 제출에서 제외
+				continue;
+			}
+			String system = GeminiAccountSynthesizer.instructions(vocab, p.account().confidence());
+			jsonl.append(json.writeValueAsString(AccountBatchLines.requestLine(json, handle, system,
+					GeminiAccountSynthesizer.userText(p.account())))).append('\n');
+			sidecar.append(json.writeValueAsString(AccountBatchLines.sidecarLine(json, handle,
+					p.lastPostedAt(), p.analyzedCount(), p.adSituation()))).append('\n');
+			submitted++;
+		}
+		if (skippedIncomplete > 0) {
+			// 온라인 경로 run()의 skippedIncomplete WARN(위 runOnline)과 같은 취지 — 장문 설명은
+			// 거기 원본 참조. 배치 제출에서는 사이드카·전송 준비 맥락만 짧게 남긴다.
+			log.warn("계정 {}건 스킵 — 데이터 미비로 배치 제출에서 제외(뷰 미적용/미러 실패 의심)",
+					skippedIncomplete);
+		}
+		if (submitted == 0) {
+			log.info("계정 배치 제출 대상 전량 스킵 — 제출 생략");
+			return new JobResult(0, 0, false);
+		}
+		String fileName = batchApi.uploadFile(
+				jsonl.toString().getBytes(StandardCharsets.UTF_8), "hypenow-account");
+		String batchName = batchApi.createBatch(model, fileName, "hypenow-account");
+		// 사이드카는 DB 컬럼 보관 — 컨테이너에 쓰기 볼륨이 없어 로컬 파일은 배포 교체 시 유실 좀비(08-11 리뷰)
+		analysis.update("""
+				INSERT INTO account_batch_jobs (batch_name, submitted_count, status, sidecar_jsonl)
+				VALUES (?, ?, 'pending', ?)""", batchName, submitted, sidecar.toString());
+		log.info("계정 배치 제출 완료 — batch={}, {}건", batchName, submitted);
+		return new JobResult(submitted, 0, false);
 	}
 
 	/** 제출·온라인 공용 준비물 — LLM 입력과, 저장 시점에 필요한 스냅샷(사이드카행). */

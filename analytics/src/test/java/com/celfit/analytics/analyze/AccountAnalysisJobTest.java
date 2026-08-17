@@ -11,10 +11,14 @@ import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
 import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.CopyRules;
+import com.celfit.analytics.llm.GeminiBatchApi;
 import com.celfit.analytics.testsupport.TestDb;
+import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +26,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 계정 카피 배치 계약 (스펙 §2·§4):
@@ -40,6 +45,11 @@ class AccountAnalysisJobTest {
 	DataSource ds;
 	AccountAnalysisJob job;
 	List<AccountToAnalyze> calls;
+	ObjectMapper om = new ObjectMapper();
+
+	/** fake 배치 제출 API — 업로드 바이트·생성 인자를 기록. 콘텐츠(ContentAnalysisJobTest.fakeBatchApi) 동형. */
+	List<byte[]> batchUploads;
+	List<String> batchCreated;
 
 	/** fake 포트: 호출 기록 + 고정 응답(traits는 V41 어휘 값 — 어휘 밖은 sanitize가 드롭한다).
 	 *  adSummary는 항상 채워 반환 — 조건부 NULL 처리는 잡(AdSituation)이 맡는다. */
@@ -52,8 +62,69 @@ class AccountAnalysisJobTest {
 	}
 
 	void rewireJob(AccountSynthesisPort port) {
+		rewireJob(port, null);
+	}
+
+	void rewireJob(AccountSynthesisPort port, GeminiBatchApi batchApi) {
 		job = new AccountAnalysisJob(ds, port, new AnalyticsSettings(db), ProgressReporter.NOOP,
-				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds));
+				new com.celfit.analytics.llm.TraitTaxonomyLoader(ds), batchApi);
+	}
+
+	/** 제출만 검증하는 테스트용 — 배치 상태 조회는 항상 실행 중, 다운로드는 호출되면 실패. */
+	GeminiBatchApi fakeBatchApi() {
+		return new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				batchUploads.add(jsonl);
+				return "files/fake";
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				batchCreated.add(model + "|" + inputFileName);
+				return "batches/fake";
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				return "{\"metadata\":{\"state\":\"JOB_STATE_RUNNING\"}}";
+			}
+
+			@Override
+			public void downloadResults(String fileName, Consumer<String> onLine) {
+				throw new IllegalStateException("제출 테스트에서는 호출되면 안 됨");
+			}
+		};
+	}
+
+	/** 제출 전 pending 수거 테스트용 — getBatch/downloadResults는 SUCCEEDED 고정 응답을 돌려주고,
+	 *  이어지는 submitBatch의 uploadFile/createBatch도 함께 지원한다. */
+	GeminiBatchApi sweepingBatchApi(String resultFile, String resultJsonl) {
+		return new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				batchUploads.add(jsonl);
+				return "files/fake";
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				batchCreated.add(model + "|" + inputFileName);
+				return "batches/fake";
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				return """
+						{"name":"%s","metadata":{"state":"JOB_STATE_SUCCEEDED",
+						 "output":{"responsesFile":"%s"}}}""".formatted(batchName, resultFile);
+			}
+
+			@Override
+			public void downloadResults(String fileName, Consumer<String> onLine) {
+				resultJsonl.lines().filter(l -> !l.isBlank()).forEach(onLine);
+			}
+		};
 	}
 
 	@BeforeEach
@@ -61,6 +132,8 @@ class AccountAnalysisJobTest {
 		ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		calls = new ArrayList<>();
+		batchUploads = new ArrayList<>();
+		batchCreated = new ArrayList<>();
 		TestDb.resetAndMigrate(db, ds);
 		db.update("CREATE TABLE app_setting (key text PRIMARY KEY, value text NOT NULL)");
 
@@ -570,5 +643,88 @@ class AccountAnalysisJobTest {
 				"피드 전용 계정이 데이터 미비로 오판돼 스킵됨: " + calls);
 		assertEquals(1L, db.queryForObject(
 				"SELECT count(*) FROM account_analyses WHERE handle = 'acct_feed_only'", Long.class));
+	}
+
+	/**
+	 * 배치 전송(2026-08-17) — 계정 카피도 콘텐츠와 동형으로 온라인 대신 Vertex 배치 제출로 전환된다.
+	 * batch-limit=1로 대상을 acct_ad 하나로 좁혀(ORDER BY handle ASC) 단언을 단순화한다.
+	 */
+	@Test
+	void 배치_전송이면_제출만_하고_온라인_포트를_호출하지_않는다() {
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-transport', 'batch')");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-batch-limit', '1')");
+		rewireJob(fakePort(), fakeBatchApi());
+
+		JobResult result = job.run();
+
+		assertTrue(calls.isEmpty()); // 온라인 포트(AccountSynthesisPort)는 한 번도 안 탄다
+		assertEquals(1, batchUploads.size());
+		assertEquals(1, batchCreated.size());
+		assertEquals(1, result.processed());
+		assertEquals(0, result.failed());
+
+		String jsonl = new String(batchUploads.get(0), StandardCharsets.UTF_8);
+		assertTrue(jsonl.contains("\"key\":\"acct_ad\""), jsonl);
+		assertTrue(jsonl.contains("계정: @acct_ad"), jsonl);
+
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM account_batch_jobs", Long.class));
+		Map<String, Object> row = db.queryForMap("SELECT * FROM account_batch_jobs");
+		assertEquals("pending", row.get("status"));
+		assertEquals(1, row.get("submitted_count"));
+		String sidecarJsonl = (String) row.get("sidecar_jsonl");
+		assertTrue(sidecarJsonl != null && !sidecarJsonl.isBlank());
+		assertTrue(sidecarJsonl.contains("last_posted_at"));
+		assertTrue(sidecarJsonl.contains("analyzed_count"));
+		assertTrue(sidecarJsonl.contains("ad_situation"));
+
+		// 수거 전이므로 account_analyses는 아직 비어 있다(저장은 수거 시점)
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+	}
+
+	@Test
+	void 배치_전송이라도_batchApi가_없으면_온라인으로_폴백한다() {
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-transport', 'batch')");
+		rewireJob(fakePort(), null); // batchApi=null — 무료 gemini 폴백 상태 재현
+
+		int processed = job.run().processed();
+
+		assertEquals(5, processed);
+		assertFalse(calls.isEmpty());
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM account_batch_jobs", Long.class));
+		assertEquals(5L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+	}
+
+	/**
+	 * 제출 전 pending 잔여 수거(콘텐츠 submitBatch 동형) — 전날 미수거분을 이번 제출 전에 먼저
+	 * 흡수해 account_batch_jobs가 pending으로 무한히 쌓이는 것을 완화한다.
+	 */
+	@Test
+	void 배치_제출_전에_pending_잔여를_먼저_수거한다() {
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-transport', 'batch')");
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.account-analyze-batch-limit', '1')");
+		String sidecarJsonl = om.writeValueAsString(AccountBatchLines.sidecarLine(om, "prior_handle",
+				OffsetDateTime.parse("2026-07-01T09:00:00+09:00"), 10L, AdSituation.COMPARABLE));
+		db.update("""
+				INSERT INTO account_batch_jobs (batch_name, submitted_count, status, sidecar_jsonl)
+				VALUES ('batches/old', 1, 'pending', ?)""", sidecarJsonl);
+		String copyJson = """
+				{"tagline":"태그","traits":["성분 분석"],"perfSummary":"성과 요약",
+				 "contentSummary":"콘텐츠 요약","adSummary":"광고 요약"}""";
+		String resultJsonl = """
+				{"key":"prior_handle","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(copyJson));
+		rewireJob(fakePort(), sweepingBatchApi("files/old", resultJsonl));
+
+		job.run();
+
+		// 기존 pending 행은 수거되어 collected로 전이 + 저장됨
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/old'", String.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'prior_handle'", Long.class));
+		// 새 제출 행이 추가되어 총 2행(수거 대상 1 + 새 제출 1)
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM account_batch_jobs", Long.class));
+		assertEquals("pending", db.queryForObject(
+				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/fake'", String.class));
 	}
 }
