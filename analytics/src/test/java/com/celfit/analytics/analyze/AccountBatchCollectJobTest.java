@@ -194,4 +194,100 @@ class AccountBatchCollectJobTest {
 		assertEquals("failed", db.queryForObject(
 				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/a4'", String.class));
 	}
+
+	/** 콘텐츠의 "여러_pending_배치_중_사이드카_유실분만_failed로_접히고_나머지는_정상_수거된다" 미러 —
+	 *  한 실행 안에 정상 배치와 사이드카 유실 배치가 섞여도 run() 루프의 행 단위 try-catch가 각자
+	 *  격리 처리한다(리뷰 지적 — 이 격리를 깨는 회귀를 잡기 위한 테스트). */
+	@Test
+	void 여러_pending_배치_중_사이드카_유실분만_failed로_접히고_나머지는_정상_수거된다() {
+		insertPendingBatchJob("batches/ok", 1,
+				sidecarLine("beauty_ok", OffsetDateTime.parse("2026-07-01T09:00:00+09:00"), 20L, AdSituation.COMPARABLE));
+		insertPendingBatchJob("batches/lost", 1); // sidecar_jsonl=NULL
+		String copyJson = """
+				{"tagline":"태그","traits":["성분 분석"],"perfSummary":"성과 요약",
+				 "contentSummary":"콘텐츠 요약","adSummary":"광고 요약"}""";
+		String okResult = """
+				{"key":"beauty_ok","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(copyJson));
+		String lostResult = """
+				{"key":"beauty_lost","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(copyJson));
+		GeminiBatchApi api = new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				throw new IllegalStateException("수거 테스트에서는 호출되면 안 됨");
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				throw new IllegalStateException("수거 테스트에서는 호출되면 안 됨");
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				String resultFile = "batches/ok".equals(batchName) ? "files/ok" : "files/lost";
+				return """
+						{"name":"%s","metadata":{"state":"JOB_STATE_SUCCEEDED",
+						 "output":{"responsesFile":"%s"}}}""".formatted(batchName, resultFile);
+			}
+
+			@Override
+			public void downloadResults(String fileName, Consumer<String> onLine) {
+				String body = "files/ok".equals(fileName) ? okResult : lostResult;
+				body.lines().filter(l -> !l.isBlank()).forEach(onLine);
+			}
+		};
+
+		JobResult result = collectJob(api).run();
+
+		assertEquals(1, result.processed()); // batches/ok만 저장
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM account_analyses WHERE handle = 'beauty_ok'", Long.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/ok'", String.class));
+		assertEquals("failed", db.queryForObject(
+				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/lost'", String.class));
+	}
+
+	/** 콘텐츠의 "배치_미지원_GeminiApi면_run은_no_op이다" 미러 — batchApi=null이면 pending 조회조차
+	 *  하지 않고 조용히 no-op이어야 한다(배치 미지원 프로바이더 방어). */
+	@Test
+	void 배치_미지원_GeminiApi면_run은_no_op이다() {
+		insertPendingBatchJob("batches/a5", 1,
+				sidecarLine("beauty_noop", OffsetDateTime.now(), 10L, AdSituation.COMPARABLE));
+
+		JobResult result = collectJob(null).run();
+
+		assertEquals(0, result.processed());
+		assertEquals(0, result.failed());
+		assertEquals("pending", db.queryForObject(
+				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/a5'", String.class));
+	}
+
+	/** AccountBatchLines.processResultLine 안 AdSituation.valueOf가 어휘에 없는 문자열(사이드카
+	 *  오염·구버전 스냅샷 등)을 만나면 IllegalArgumentException을 던진다 — 이게 포괄 catch(Exception)에
+	 *  잡혀 해당 라인만 격리(false 처리)되고 배치 전체는 정상 collected로 전이돼야 한다(리뷰 지적 —
+	 *  이 방어를 깨는 회귀를 잡기 위한 테스트). */
+	@Test
+	void ad_situation_불량값_라인은_저장을_생략하고_배치는_collected로_전이된다() {
+		String badSidecar = """
+				{"handle":"beauty_bogus","last_posted_at":"2026-07-01T09:00:00+09:00",\
+				"analyzed_count":"10","ad_situation":"BOGUS"}
+				""";
+		insertPendingBatchJob("batches/a6", 1, badSidecar);
+		String copyJson = """
+				{"tagline":"태그","traits":["성분 분석"],"perfSummary":"성과 요약",
+				 "contentSummary":"콘텐츠 요약","adSummary":"광고 요약"}""";
+		String resultJsonl = """
+				{"key":"beauty_bogus","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(copyJson));
+
+		JobResult result = collectJob(succeededApi("files/r1", resultJsonl)).run();
+
+		assertEquals(0, result.processed()); // 불량 라인은 저장 실패 처리
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM account_analyses", Long.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM account_batch_jobs WHERE batch_name = 'batches/a6'", String.class));
+	}
 }
