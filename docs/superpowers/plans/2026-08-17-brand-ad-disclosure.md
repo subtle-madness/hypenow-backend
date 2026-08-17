@@ -577,9 +577,19 @@ package com.celfit.monitoring.ad;
 
 import java.util.List;
 
-/** Tier0~3 최종 판정 — verdict 4종(DISCLOSED/NOT_DISCLOSED/INSUFFICIENT/UNCERTAIN) ·
- * source(RULE/LLM) · violations 코드 배열 · evidence 근거 문구(스펙 §4 컬럼과 1:1). */
-public record AdVerdictResult(String verdict, String source, List<String> violations, List<Evidence> evidence) {
+/**
+ * Tier0~3 최종 판정 — verdict 4종(DISCLOSED/NOT_DISCLOSED/INSUFFICIENT/UNCERTAIN) ·
+ * source(RULE/LLM) · violations 코드 배열 · evidence 근거 문구(스펙 §4 컬럼과 1:1).
+ *
+ * @param discardedPhrases 판정 계산에 반영되지 못하고 버려진 phrase 원문 — (1) LLM이 인용했지만
+ *                          캡션에 실존하지 않거나(환각 차단) 공백인 phrase, (2) {@link
+ *                          AdDisclosureExtractor.Category}가 향후 확장돼 조합표(decide())가 아직
+ *                          처리하지 못하는 카테고리로 분류된 phrase를 모두 포함한다. <b>DB·API
+ *                          계약에는 포함하지 않는다</b> — 호출자(판정 오케스트레이터)가 로그만
+ *                          남기기 위한 부가정보다(코디네이터 리뷰 반영, c40ead8b 후속).
+ */
+public record AdVerdictResult(String verdict, String source, List<String> violations, List<Evidence> evidence,
+		List<String> discardedPhrases) {
 
 	public record Evidence(String phrase, String category, int offset) {
 	}
@@ -628,7 +638,18 @@ class AdVerdictCombinerTest {
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
 				List.of(new Disclosure("#광고", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("DISCLOSED");
+		assertThat(result.source()).isEqualTo("LLM");
 		assertThat(result.violations()).isEmpty();
+	}
+
+	@Test
+	void Tier1_경로_CLEAR가_적절_위치면_DISCLOSED_RULE() {
+		String caption = "오늘 룩 소개 #광고";
+		int idx = caption.indexOf("#광고");
+		var tier1 = new AdDisclosurePatterns.Match("#광고", idx, idx + "#광고".length());
+		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, tier1, List.of());
+		assertThat(result.verdict()).isEqualTo("DISCLOSED");
+		assertThat(result.source()).isEqualTo("RULE");
 	}
 
 	@Test
@@ -671,6 +692,27 @@ class AdVerdictCombinerTest {
 	}
 
 	@Test
+	void 대소문자가_다른_phrase는_환각_차단으로_폐기된다() {
+		// 캡션엔 "Sponsor"(대문자 S)뿐인데 LLM이 소문자 "sponsor"를 인용 — exact substring 대조
+		// 원칙대로 대소문자 불일치도 캡션에 "실존하지 않음"으로 취급해 폐기한다.
+		String caption = "today's look Sponsor";
+		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
+				List.of(new Disclosure("sponsor", Category.FOREIGN)));
+		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(result.evidence()).isEmpty();
+		assertThat(result.discardedPhrases()).containsExactly("sponsor");
+	}
+
+	@Test
+	void 빈_phrase는_즉시_폐기된다() {
+		AdVerdictResult result = AdVerdictCombiner.combine("오늘의 데일리룩", false, null,
+				List.of(new Disclosure("   ", Category.CLEAR)));
+		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(result.evidence()).isEmpty();
+		assertThat(result.discardedPhrases()).containsExactly("   ");
+	}
+
+	@Test
 	void UNCERTAIN_문구뿐이면_UNCERTAIN_위반_없음() {
 		String caption = "협업 관련 문의는 DM으로";
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
@@ -683,6 +725,7 @@ class AdVerdictCombinerTest {
 	void 문구_없음_사진은_NOT_DISCLOSED() {
 		AdVerdictResult result = AdVerdictCombiner.combine("오늘의 데일리룩", false, null, List.of());
 		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(result.source()).isEqualTo("RULE");
 		assertThat(result.violations()).containsExactly("NO_DISCLOSURE");
 	}
 
@@ -700,6 +743,7 @@ class AdVerdictCombinerTest {
 				List.of(new Disclosure("#광고", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(result.evidence()).isEmpty();
+		assertThat(result.discardedPhrases()).containsExactly("#광고");
 	}
 
 	@Test
@@ -725,6 +769,9 @@ class AdVerdictCombinerTest {
 }
 ```
 
+(코디네이터 리뷰 반영, c40ead8b 후속: source() 단언 3곳 추가, Tier1/RULE 경로 DISCLOSED 테스트,
+대소문자 불일치·공백 phrase 폐기 테스트, 환각 차단 테스트에 discardedPhrases 단언 추가 — 총 11→14개.)
+
 - [ ] **Step 4: 테스트 실행 — 실패 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdVerdictCombinerTest"`
@@ -735,6 +782,7 @@ Expected: FAIL — `AdVerdictCombiner` 없음
 ```java
 package com.celfit.monitoring.ad;
 
+import com.celfit.monitoring.ad.AdDisclosureExtractor.Category;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -749,13 +797,17 @@ import java.util.Optional;
  * FOREIGN만 → INSUFFICIENT+FOREIGN_LANGUAGE. UNCERTAIN뿐 → UNCERTAIN. 유효 문구 전무 →
  * 사진 NOT_DISCLOSED+NO_DISCLOSURE / 릴스 UNCERTAIN(Tier0과 같은 분기 — 문구가 전부 환각 폐기된
  * 경우도 여기로 떨어진다).
+ *
+ * <p>카테고리는 내부적으로 {@link Category} enum으로 다룬다 — DB·was 응답의 {@code
+ * AdVerdictResult.Evidence.category}만 계약대로 문자열이라 evidence 생성 시점에 {@link
+ * Category#name()}으로 변환한다(코디네이터 리뷰 반영, c40ead8b 후속).
  */
 public final class AdVerdictCombiner {
 
 	private AdVerdictCombiner() {
 	}
 
-	private record Evaluated(String phrase, String category, AdPositionRule.Band band, int graphemeOffset,
+	private record Evaluated(String phrase, Category category, AdPositionRule.Band band, int graphemeOffset,
 			String source) {
 	}
 
@@ -763,27 +815,34 @@ public final class AdVerdictCombiner {
 	 * @param tier1Match Tier1이 찾았지만(위치 부적절 등으로) 확정 못 하고 넘어온 매칭 — null 허용.
 	 *                   Tier3는 이 매칭도 CLEAR/RULE 후보로 재평가한다(위치가 그새 바뀌지 않으므로
 	 *                   보통 같은 band가 나오지만, 판정 로직을 한곳(AdPositionRule)에만 둔다).
-	 * @param llmDisclosures Tier2 추출 결과 — 캡션에 실존하지 않는 phrase는 여기서 폐기된다(환각 차단).
+	 * @param llmDisclosures Tier2 추출 결과 — 캡션에 실존하지 않는 phrase(환각)나 공백 phrase는
+	 *                       여기서 폐기돼 결과의 {@code discardedPhrases}로만 남는다.
 	 */
 	public static AdVerdictResult combine(String caption, boolean isReels, AdDisclosurePatterns.Match tier1Match,
 			List<AdDisclosureExtractor.Disclosure> llmDisclosures) {
 		List<Evaluated> candidates = new ArrayList<>();
+		List<String> discarded = new ArrayList<>();
 		if (tier1Match != null) {
 			candidates.add(evaluate(caption, tier1Match.phrase(), tier1Match.start(), tier1Match.end(),
-					"CLEAR", "RULE"));
+					Category.CLEAR, "RULE"));
 		}
 		for (AdDisclosureExtractor.Disclosure d : llmDisclosures) {
+			if (d.phrase() == null || d.phrase().isBlank()) {
+				discarded.add(d.phrase() == null ? "" : d.phrase());   // 공백 phrase 가드
+				continue;
+			}
 			int idx = caption.indexOf(d.phrase());
 			if (idx < 0) {
-				continue;   // 환각 차단(스펙 §5 Tier3) — 캡션에 실존하지 않는 문구는 판정에서 배제
+				discarded.add(d.phrase());   // 환각 차단(스펙 §5 Tier3) — 캡션에 실존하지 않는 문구는 판정에서 배제
+				continue;
 			}
 			candidates.add(evaluate(caption, d.phrase(), idx, idx + d.phrase().length(),
-					d.category().name(), "LLM"));
+					d.category(), "LLM"));
 		}
-		return decide(dedupe(candidates), isReels);
+		return decide(dedupe(candidates), isReels, discarded);
 	}
 
-	private static Evaluated evaluate(String caption, String phrase, int start, int end, String category,
+	private static Evaluated evaluate(String caption, String phrase, int start, int end, Category category,
 			String source) {
 		AdPositionRule.Band band = AdPositionRule.evaluate(caption, start, end);
 		int offset = AdPositionRule.graphemeOffset(caption, start);
@@ -799,44 +858,70 @@ public final class AdVerdictCombiner {
 		return List.copyOf(byKey.values());
 	}
 
-	private static AdVerdictResult decide(List<Evaluated> candidates, boolean isReels) {
+	private static AdVerdictResult decide(List<Evaluated> candidates, boolean isReels, List<String> discardedSoFar) {
 		List<AdVerdictResult.Evidence> evidence = candidates.stream()
-				.map(c -> new AdVerdictResult.Evidence(c.phrase(), c.category(), c.graphemeOffset()))
+				.map(c -> new AdVerdictResult.Evidence(c.phrase(), c.category().name(), c.graphemeOffset()))
 				.toList();
 
-		List<Evaluated> clear = byCategory(candidates, "CLEAR");
+		List<Evaluated> clear = byCategory(candidates, Category.CLEAR);
+		List<Evaluated> ambiguous = byCategory(candidates, Category.AMBIGUOUS);
+		List<Evaluated> foreign = byCategory(candidates, Category.FOREIGN);
+		List<Evaluated> uncertain = byCategory(candidates, Category.UNCERTAIN);
+		List<String> discardedPhrases = withUnclassified(discardedSoFar, candidates, clear, ambiguous, foreign,
+				uncertain);
+
 		Optional<Evaluated> clearAccepted = clear.stream().filter(AdVerdictCombiner::accepted).findFirst();
 		if (clearAccepted.isPresent()) {
-			return new AdVerdictResult("DISCLOSED", clearAccepted.get().source(), List.of(), evidence);
+			return new AdVerdictResult("DISCLOSED", clearAccepted.get().source(), List.of(), evidence,
+					discardedPhrases);
 		}
 		if (!clear.isEmpty()) {
-			return new AdVerdictResult("INSUFFICIENT", clear.get(0).source(), List.of("HIDDEN_PLACEMENT"), evidence);
+			return new AdVerdictResult("INSUFFICIENT", clear.get(0).source(), List.of("HIDDEN_PLACEMENT"), evidence,
+					discardedPhrases);
 		}
 
-		List<Evaluated> ambiguous = byCategory(candidates, "AMBIGUOUS");
 		if (!ambiguous.isEmpty()) {
 			List<String> violations = new ArrayList<>();
 			violations.add("AMBIGUOUS_EXPRESSION");
 			if (ambiguous.stream().anyMatch(c -> c.band() == AdPositionRule.Band.HIDDEN)) {
 				violations.add("HIDDEN_PLACEMENT");
 			}
-			return new AdVerdictResult("INSUFFICIENT", "LLM", violations, evidence);
+			return new AdVerdictResult("INSUFFICIENT", "LLM", violations, evidence, discardedPhrases);
 		}
 
-		List<Evaluated> foreign = byCategory(candidates, "FOREIGN");
 		if (!foreign.isEmpty()) {
-			return new AdVerdictResult("INSUFFICIENT", "LLM", List.of("FOREIGN_LANGUAGE"), evidence);
+			return new AdVerdictResult("INSUFFICIENT", "LLM", List.of("FOREIGN_LANGUAGE"), evidence,
+					discardedPhrases);
 		}
 
-		boolean anyUncertain = candidates.stream().anyMatch(c -> "UNCERTAIN".equals(c.category()));
-		if (anyUncertain) {
-			return new AdVerdictResult("UNCERTAIN", "LLM", List.of(), evidence);
+		if (!uncertain.isEmpty()) {
+			return new AdVerdictResult("UNCERTAIN", "LLM", List.of(), evidence, discardedPhrases);
 		}
 
 		// 유효 문구 전무(전부 환각으로 폐기된 경우 포함) — Tier0과 같은 매체별 분기.
 		return isReels
-				? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), evidence)
-				: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), evidence);
+				? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), evidence, discardedPhrases)
+				: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), evidence, discardedPhrases);
+	}
+
+	/**
+	 * 조합표가 다루는 4개 카테고리(CLEAR/AMBIGUOUS/FOREIGN/UNCERTAIN) 어디에도 속하지 않는 후보를
+	 * discardedPhrases에 병합한다. {@link Category}는 오늘 이 4개뿐이라 항상 비어 있지만, 향후 enum이
+	 * 확장되면 조용히 verdict에서 누락되는 대신 여기로 걸려 호출자가 로그할 수 있다.
+	 */
+	private static List<String> withUnclassified(List<String> discardedSoFar, List<Evaluated> candidates,
+			List<Evaluated> clear, List<Evaluated> ambiguous, List<Evaluated> foreign, List<Evaluated> uncertain) {
+		List<String> unclassified = candidates.stream()
+				.filter(c -> !clear.contains(c) && !ambiguous.contains(c) && !foreign.contains(c)
+						&& !uncertain.contains(c))
+				.map(Evaluated::phrase)
+				.toList();
+		if (unclassified.isEmpty()) {
+			return List.copyOf(discardedSoFar);
+		}
+		List<String> merged = new ArrayList<>(discardedSoFar);
+		merged.addAll(unclassified);
+		return List.copyOf(merged);
 	}
 
 	private static boolean accepted(Evaluated c) {
@@ -844,8 +929,8 @@ public final class AdVerdictCombiner {
 				|| c.band() == AdPositionRule.Band.FIRST_HASHTAG;
 	}
 
-	private static List<Evaluated> byCategory(List<Evaluated> in, String category) {
-		return in.stream().filter(c -> category.equals(c.category())).toList();
+	private static List<Evaluated> byCategory(List<Evaluated> in, Category category) {
+		return in.stream().filter(c -> c.category() == category).toList();
 	}
 }
 ```
@@ -853,7 +938,7 @@ public final class AdVerdictCombiner {
 - [ ] **Step 6: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdVerdictCombinerTest"`
-Expected: PASS (11개)
+Expected: PASS (14개)
 
 - [ ] **Step 7: 커밋**
 
@@ -1297,7 +1382,7 @@ class BrandPostMetaRepositoryTest {
 	@Test
 	void 판정_결과를_기록하면_조회에_반영된다() {
 		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(),
-				List.of(new AdVerdictResult.Evidence("#광고", "CLEAR", 3)));
+				List.of(new AdVerdictResult.Evidence("#광고", "CLEAR", 3)), List.of());
 		repo.updateAdVerdict("AAA", result, "hash123", Instant.parse("2026-08-17T00:00:00Z"));
 
 		Map<String, BrandPostMetaRepository.AdJudgmentState> state = repo.findAdJudgmentState(List.of("AAA"));
@@ -1675,6 +1760,12 @@ public class AdDisclosureJudgeService {
 	private void judgeSafely(PostInfo p) {
 		try {
 			AdVerdictResult result = judgeOne(p);
+			if (!result.discardedPhrases().isEmpty()) {
+				// 환각 차단·미분류 카테고리로 버려진 phrase — DB에는 안 남으므로 여기서만 로그(코디네이터
+				// 리뷰 반영, c40ead8b 후속: 스펙 §5 "폐기·로그" 요구를 만족).
+				log.warn("광고 표기 판정 — 문구 {}건 폐기됨 {}: {}", result.discardedPhrases().size(), p.shortCode(),
+						result.discardedPhrases());
+			}
 			metaRepo.updateAdVerdict(p.shortCode(), result, md5(caption(p)), Instant.now());
 		} catch (RuntimeException e) {
 			// verdict NULL 유지 — 다음 스윕(캡션 해시 재비교)이 자동 재시도한다(스펙 §5).
@@ -1685,14 +1776,14 @@ public class AdDisclosureJudgeService {
 	/** Tier0→3 순서 실행 — package-private으로 열어 오케스트레이션만 별도 테스트할 수 있게 한다. */
 	AdVerdictResult judgeOne(PostInfo p) {
 		if (Boolean.TRUE.equals(p.isPaidPartnership())) {
-			return new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of());
+			return new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
 		}
 		String caption = caption(p);
 		boolean isReels = "REELS".equalsIgnoreCase(p.contentType());
 		if (caption.isBlank()) {
 			return isReels
-					? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), List.of())
-					: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), List.of());
+					? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), List.of(), List.of())
+					: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), List.of(), List.of());
 		}
 		AdDisclosurePatterns.Match tier1 = AdDisclosurePatterns.findFirstMatch(caption);
 		if (tier1 != null) {
@@ -1701,7 +1792,7 @@ public class AdDisclosureJudgeService {
 					|| band == AdPositionRule.Band.FIRST_HASHTAG) {
 				int offset = AdPositionRule.graphemeOffset(caption, tier1.start());
 				return new AdVerdictResult("DISCLOSED", "RULE", List.of(),
-						List.of(new AdVerdictResult.Evidence(tier1.phrase(), "CLEAR", offset)));
+						List.of(new AdVerdictResult.Evidence(tier1.phrase(), "CLEAR", offset)), List.of());
 			}
 		}
 		List<AdDisclosureExtractor.Disclosure> llm = extractor.extract(caption);

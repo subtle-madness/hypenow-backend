@@ -15,7 +15,18 @@ class AdVerdictCombinerTest {
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
 				List.of(new Disclosure("#광고", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("DISCLOSED");
+		assertThat(result.source()).isEqualTo("LLM");
 		assertThat(result.violations()).isEmpty();
+	}
+
+	@Test
+	void Tier1_경로_CLEAR가_적절_위치면_DISCLOSED_RULE() {
+		String caption = "오늘 룩 소개 #광고";
+		int idx = caption.indexOf("#광고");
+		var tier1 = new AdDisclosurePatterns.Match("#광고", idx, idx + "#광고".length());
+		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, tier1, List.of());
+		assertThat(result.verdict()).isEqualTo("DISCLOSED");
+		assertThat(result.source()).isEqualTo("RULE");
 	}
 
 	@Test
@@ -58,6 +69,27 @@ class AdVerdictCombinerTest {
 	}
 
 	@Test
+	void 대소문자가_다른_phrase는_환각_차단으로_폐기된다() {
+		// 캡션엔 "Sponsor"(대문자 S)뿐인데 LLM이 소문자 "sponsor"를 인용 — exact substring 대조
+		// 원칙대로 대소문자 불일치도 캡션에 "실존하지 않음"으로 취급해 폐기한다.
+		String caption = "today's look Sponsor";
+		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
+				List.of(new Disclosure("sponsor", Category.FOREIGN)));
+		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(result.evidence()).isEmpty();
+		assertThat(result.discardedPhrases()).containsExactly("sponsor");
+	}
+
+	@Test
+	void 빈_phrase는_즉시_폐기된다() {
+		AdVerdictResult result = AdVerdictCombiner.combine("오늘의 데일리룩", false, null,
+				List.of(new Disclosure("   ", Category.CLEAR)));
+		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(result.evidence()).isEmpty();
+		assertThat(result.discardedPhrases()).containsExactly("   ");
+	}
+
+	@Test
 	void UNCERTAIN_문구뿐이면_UNCERTAIN_위반_없음() {
 		String caption = "협업 관련 문의는 DM으로";
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
@@ -70,6 +102,7 @@ class AdVerdictCombinerTest {
 	void 문구_없음_사진은_NOT_DISCLOSED() {
 		AdVerdictResult result = AdVerdictCombiner.combine("오늘의 데일리룩", false, null, List.of());
 		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(result.source()).isEqualTo("RULE");
 		assertThat(result.violations()).containsExactly("NO_DISCLOSURE");
 	}
 
@@ -87,6 +120,7 @@ class AdVerdictCombinerTest {
 				List.of(new Disclosure("#광고", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(result.evidence()).isEmpty();
+		assertThat(result.discardedPhrases()).containsExactly("#광고");
 	}
 
 	@Test
