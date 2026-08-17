@@ -74,6 +74,17 @@ class AdDisclosureGuidelineExamplesTest {
 	}
 
 	@Test
+	void 부적절_예_이해하기_어려운_줄임말() {
+		// 스펙 §2(라인 28-29)가 "이해하기 어려운 줄임말"을 부적절 예로 명시하지만, 계획 Task 6의 LLM
+		// 프롬프트(AMBIGUOUS 분류 예시 목록)에도 구체 줄임말 표현은 없다(grep 확인, "줄임말" 2건 —
+		// 둘 다 일반 서술뿐). 프롬프트에 구체 예시가 없어 "유광"(유료광고의 줄임말)을 직접 골라 쓴다.
+		AdVerdictResult result = AdVerdictCombiner.combine("유광 표기합니다", false, null,
+				List.of(new Disclosure("유광", Category.AMBIGUOUS)));
+		assertThat(result.verdict()).isEqualTo("INSUFFICIENT");
+		assertThat(result.violations()).contains("AMBIGUOUS_EXPRESSION");
+	}
+
+	@Test
 	void 부적절_예_외국어_단독_AD_PR_Sponsor_spon_sp_Collabo_앰버서더_땡스투() {
 		for (String phrase : List.of("AD", "PR", "Sponsor", "spon", "sp", "Collabo", "앰버서더", "땡스 투")) {
 			AdVerdictResult result = AdVerdictCombiner.combine("오늘의 룩 " + phrase, false, null,
