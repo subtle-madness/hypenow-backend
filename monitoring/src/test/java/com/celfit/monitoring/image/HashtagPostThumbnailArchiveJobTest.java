@@ -2,6 +2,7 @@ package com.celfit.monitoring.image;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.monitoring.testsupport.CdnUrls;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -16,6 +17,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * ① RELEVANT만 후보다(비노출 판정은 아카이브하지 않는다 — 판정은 저장 후 불변)
  * ② (brand_id, short_code) PK라 같은 게시물이 브랜드별 행으로 중복될 수 있다 — 다운로드는 1회,
  *   UPDATE는 short_code 기준 전 브랜드 행.
+ * ③ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않는다 — 그래서 만료가 무관한 픽스처의 oe는
+ *   CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다.
  */
 class HashtagPostThumbnailArchiveJobTest {
 
@@ -101,8 +104,8 @@ class HashtagPostThumbnailArchiveJobTest {
 	void 브랜드별_중복_행은_한_번만_다운로드하고_전_행에_경로를_채운다() {
 		long brandA = seedBrand("brand_a");
 		long brandB = seedBrand("brand_b");
-		seedPost(brandA, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?oe=a", null, null);
-		seedPost(brandB, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?oe=b", null, null);
+		seedPost(brandA, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?" + CdnUrls.farFutureOe() + "&cb=a", null, null);
+		seedPost(brandB, "SC1", "RELEVANT", "https://cdn.example/one_n.jpg?" + CdnUrls.farFutureOe() + "&cb=b", null, null);
 
 		job().run();
 
@@ -115,7 +118,7 @@ class HashtagPostThumbnailArchiveJobTest {
 	@Test
 	void 쿼리스트링만_다르고_파일명이_같으면_스킵한다() {
 		long brand = seedBrand("brand_a");
-		seedPost(brand, "SC1", "RELEVANT", "https://cdn-b.example/v/999_n.jpg?oe=new",
+		seedPost(brand, "SC1", "RELEVANT", "https://cdn-b.example/v/999_n.jpg?" + CdnUrls.farFutureOe(),
 				"monitor-hashtag-post/SC1.jpg", "999_n.jpg");
 
 		job().run();
@@ -163,5 +166,47 @@ class HashtagPostThumbnailArchiveJobTest {
 		Long archived = db.queryForObject(
 				"SELECT count(image_object_path) FROM brand_hashtag_post WHERE short_code LIKE 'NEW%'", Long.class);
 		assertThat(archived).isEqualTo(1);
+	}
+
+	/** 만료 URL은 재시도해도 영원히 403 — 시도 자체를 걸러야 예산이 미아카이브 꼬리에 도달한다. */
+	@Test
+	void 만료된_URL은_다운로드_시도조차_하지_않는다() {
+		long brand = seedBrand("brand_a");
+		seedPost(brand, "DEAD", "RELEVANT", CdnUrls.expiringIn("dead_n.jpg", -3600), null, null);
+		seedPost(brand, "LIVE", "RELEVANT", CdnUrls.expiringIn("live_n.jpg", 86400), null, null);
+		seedPost(brand, "UNKNOWN", "RELEVANT", CdnUrls.noOe("unknown_n.jpg"), null, null);
+
+		job().run();
+
+		assertThat(downloads).noneMatch(u -> u.contains("dead_n.jpg"));
+		assertThat(puts).extracting(m -> m.get("path"))
+				.containsExactlyInAnyOrder("monitor-hashtag-post/LIVE.jpg", "monitor-hashtag-post/UNKNOWN.jpg");
+	}
+
+	@Test
+	void 만료된_URL은_배치_상한을_소모하지_않는다() {
+		long brand = seedBrand("brand_a");
+		seedPost(brand, "DEAD1", "RELEVANT", CdnUrls.expiringIn("dead1_n.jpg", -3600), null, null);
+		seedPost(brand, "DEAD2", "RELEVANT", CdnUrls.expiringIn("dead2_n.jpg", -3600), null, null);
+		seedPost(brand, "LIVE1", "RELEVANT", CdnUrls.expiringIn("live1_n.jpg", 86400), null, null);
+		seedPost(brand, "LIVE2", "RELEVANT", CdnUrls.expiringIn("live2_n.jpg", 86400), null, null);
+
+		job("https://par.example/o/", 2).run();
+
+		assertThat(puts).extracting(m -> m.get("path"))
+				.containsExactlyInAnyOrder("monitor-hashtag-post/LIVE1.jpg", "monitor-hashtag-post/LIVE2.jpg");
+	}
+
+	/** 상한이 걸리면 먼저 죽을 URL부터 — 임박분을 이월하면 다음 스윕엔 이미 만료돼 영구 유실된다. */
+	@Test
+	void 상한이_걸리면_만료_임박_순으로_예산을_쓴다() {
+		long brand = seedBrand("brand_a");
+		seedPost(brand, "FAR", "RELEVANT", CdnUrls.expiringIn("far_n.jpg", 86400 * 3), null, null);
+		seedPost(brand, "SOON", "RELEVANT", CdnUrls.expiringIn("soon_n.jpg", 3600), null, null);
+		seedPost(brand, "UNKNOWN", "RELEVANT", CdnUrls.noOe("unknown_n.jpg"), null, null);
+
+		job("https://par.example/o/", 1).run();
+
+		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-hashtag-post/SOON.jpg");
 	}
 }
