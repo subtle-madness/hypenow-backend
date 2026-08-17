@@ -55,7 +55,7 @@ class AdDisclosureGuidelineExamplesTest {
 			AdVerdictResult result = AdVerdictCombiner.combine(phrase + " 잘 썼어요", false, null,
 					List.of(new Disclosure(phrase, Category.AMBIGUOUS)));
 			assertThat(result.verdict()).as(phrase).isEqualTo("INSUFFICIENT");
-			assertThat(result.violations()).as(phrase).contains("AMBIGUOUS_EXPRESSION");
+			assertThat(result.violations()).as(phrase).containsExactly("AMBIGUOUS_EXPRESSION");
 		}
 	}
 
@@ -81,7 +81,7 @@ class AdDisclosureGuidelineExamplesTest {
 		AdVerdictResult result = AdVerdictCombiner.combine("유광 표기합니다", false, null,
 				List.of(new Disclosure("유광", Category.AMBIGUOUS)));
 		assertThat(result.verdict()).isEqualTo("INSUFFICIENT");
-		assertThat(result.violations()).contains("AMBIGUOUS_EXPRESSION");
+		assertThat(result.violations()).containsExactly("AMBIGUOUS_EXPRESSION");
 	}
 
 	@Test
@@ -96,11 +96,18 @@ class AdDisclosureGuidelineExamplesTest {
 
 	@Test
 	void 부적절_예_본문_중간_구분없이_삽입은_HIDDEN() {
-		// 비해시태그 문구("광고입니다", Tier1 사전 항목) — "#광고"였다면 캡션의 유일한 해시태그라
-		// 첫 해시태그 예외(지침 다.(2)③)로 빠져 DISCLOSED가 나온다. 이 테스트는 "본문 중간 삽입"
-		// 부적절 예시(지침 다.(2)①)를 검증하는 것이라 해시태그 예외 경로를 밟으면 안 된다.
-		String filler = "가".repeat(250);
-		String caption = filler + "광고입니다";
+		// "본문 중간에 본문과 구분 없이 작성"은 지침 나.(1)의 <표시문구가 쉽게 찾을 수 없는 위치 예시>다
+		// (다.(2)①은 사진 내 게재 조문 — 캡션으로 판정 불가한 별개 스코프이므로 이 테스트와 무관).
+		// AdVerdictCombinerTest의 "CLEAR_있으나_전부_묻힌_위치면_INSUFFICIENT" 케이스와 토큰 단위로
+		// 겹치지 않도록, "가"를 250번 반복하는 filler 대신 실제 일상 캡션처럼 읽히는 문장 5개를 이어
+		// 붙여 접힘 하한(220그래핌)을 넘긴다 — "광고입니다"가 앞뒤로 평범한 본문 문장 사이 한가운데
+		// 구분 없이 끼어 있는 형태(지침이 말하는 부적절 위치 그 자체)를 재현한다.
+		String caption = "오늘은 정말 오랜만에 여유로운 하루를 보냈어요. "
+				+ "아침에는 가볍게 동네를 한 바퀴 산책하고 따뜻한 커피 한 잔의 여유를 즐겼습니다. "
+				+ "점심에는 오랜만에 만난 친구들과 함께 맛있는 파스타와 샐러드를 먹었어요. "
+				+ "오후에는 집으로 돌아와 그동안 밀려있던 책을 천천히 읽으며 조용한 시간을 보냈답니다. "
+				+ "저녁에는 가족들과 둘러앉아 정성스럽게 차린 저녁 식사를 하며 하루를 마무리했어요. "
+				+ "그리고 오늘 소개하는 이 제품은 광고입니다 다들 한번 써보세요.";
 		AdVerdictResult result = AdVerdictCombiner.combine(caption, false, null,
 				List.of(new Disclosure("광고입니다", Category.CLEAR)));
 		assertThat(result.verdict()).isEqualTo("INSUFFICIENT");
