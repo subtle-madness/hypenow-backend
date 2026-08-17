@@ -51,6 +51,11 @@ public class AnalyticsSettings {
 	 * 2026-08-11: 콘텐츠 분석(ANALYZE·LATE_BACKFILL_ANALYZE)에만 적용, 계정 카피는 대상 아님.
 	 * 잡 실행 시점마다 매번 읽으므로 재기동 없이 전환된다. 롤백은 값을 online으로 되돌리는 UPDATE 한 줄. */
 	public static final String KEY_ANALYZE_TRANSPORT = "analytics.analyze-transport";
+	/**
+	 * 계정 카피 전송 방식 — online(기본)|batch. 콘텐츠 토글(analytics.analyze-transport)과 독립
+	 * (08-11 콘텐츠 전환 때 계정 카피는 의도적으로 제외 — 2026-08-17 후속 전환).
+	 */
+	public static final String KEY_ACCOUNT_ANALYZE_TRANSPORT = "analytics.account-analyze-transport";
 
 	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
 	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
@@ -68,6 +73,7 @@ public class AnalyticsSettings {
 	static final int DEFAULT_RECENT_WINDOW = 12;
 	static final int DEFAULT_ANALYZE_CONCURRENCY = 8;
 	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
+	static final String DEFAULT_ACCOUNT_ANALYZE_TRANSPORT = "online";
 
 	private final JdbcTemplate raw;
 
@@ -154,9 +160,20 @@ public class AnalyticsSettings {
 		return read(KEY_ANALYZE_TRANSPORT).orElse(DEFAULT_ANALYZE_TRANSPORT);
 	}
 
-	/** true면 콘텐츠 분석(ANALYZE·LATE_BACKFILL_ANALYZE)이 Vertex 배치 제출 경로로 전환된다. */
+	/** true면 콘텐츠 분석(ANALYZE·LATE_BACKFILL_ANALYZE)이 Vertex 배치 제출 경로로 전환된다.
+	 * 계정 카피는 accountBatchTransportEnabled() 별도 토글(2026-08-17). */
 	public boolean batchTransportEnabled() {
 		return "batch".equals(analyzeTransport());
+	}
+
+	/** 잡 실행 시점마다 매번 읽는다(캐시 없음) — 재기동 없이 online↔batch 전환. */
+	public String accountAnalyzeTransport() {
+		return read(KEY_ACCOUNT_ANALYZE_TRANSPORT).orElse(DEFAULT_ACCOUNT_ANALYZE_TRANSPORT);
+	}
+
+	/** true면 계정 카피(ACCOUNT_ANALYZE)가 Vertex 배치 제출 경로로 전환된다. */
+	public boolean accountBatchTransportEnabled() {
+		return "batch".equals(accountAnalyzeTransport());
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */
