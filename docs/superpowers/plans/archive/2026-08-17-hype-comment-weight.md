@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙 [2026-08-17-hype-comment-weight-design.md](../specs/2026-08-17-hype-comment-weight-design.md) 승인됨
+> 상태: ✅ 실행 완료(2026-08-17) · 스펙 [2026-08-17-hype-comment-weight-design.md](../../specs/2026-08-17-hype-comment-weight-design.md) 승인됨
 
 **Goal:** 하입 스코어 참여 항의 댓글 가중을 ×3에서 ×1.5로 낮추고 app_setting 키로 설정화하며, 4종 앵커를 신 가중 기준으로 재적합한다.
 
