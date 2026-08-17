@@ -274,27 +274,34 @@ public class BrandCollectService {
 	 * 각자 격리된 독립 단계가 되고, 프론트 폴링으로 나중에 채워진다(프로그레시브 서빙).
 	 *
 	 * <p>정산 마킹은 여전히 <b>게시자 보강의 성패와 무관하게 무조건</b> 찍는다(finally — 근거는
-	 * 아래 finally 블록 주석, 기존 규칙 그대로). 댓글·광고 판정은 정산 이후 단계라 그 실패가
-	 * enriched_at에 영향을 주면 안 되므로 각자 여기서 try/catch로 격리한다(기존에는 이 격리가
-	 * markEnriched를 감싸는 finally 하나로 우연히 됐지만, 순서가 바뀌면서 명시적으로 필요해졌다).
+	 * 아래 finally 블록 주석, 기존 규칙 그대로). 댓글·광고 판정도 <b>게시자 보강의 성패(배치 DB
+	 * 조회가 던지는 하드 실패 포함)와 무관하게</b> 돈다 — 그래서 바깥쪽에 finally를 하나 더 감아
+	 * 이중 try/finally로 만든다(2026-08-18 버그 수정: 안쪽 finally만 있으면 ensureAuthors가 던진
+	 * 예외가 markEnriched 직후 곧장 메서드 밖으로 전파돼 댓글·판정 호출 자체가 도달 불가였다).
+	 * 각 단계의 실패가 서로에게 번지면 안 되므로 collectCommentsGatedSafely·judgeAdDisclosuresSafely
+	 * 내부에서 각자 try/catch로 한 번 더 격리한다.
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
 		if (posts.isEmpty()) {
 			return;
 		}
 		try {
-			ensureAuthors(brand.id(), posts);
+			try {
+				ensureAuthors(brand.id(), posts);
+			} finally {
+				// 정산 마킹(2026-08-17 노출 게이트 개정 — 스펙 §8) — 게시자 보강 성패와 무관하게 찍는다.
+				// was 게이트(enriched_at IS NOT NULL)의 의미가 "게시자 보강 완료 = 노출 가능"으로
+				// 좁혀졌다. finally인 이유는 기존과 동일(180일 초과 게시물엔 재열거 백스톱이 없다).
+				taggedPosts.markEnriched(brand.id(),
+						posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+			}
 		} finally {
-			// 정산 마킹(2026-08-17 노출 게이트 개정 — 스펙 §8) — 게시자 보강 성패와 무관하게 찍는다.
-			// was 게이트(enriched_at IS NOT NULL)의 의미가 "게시자 보강 완료 = 노출 가능"으로 좁혀졌다.
-			// finally인 이유는 기존과 동일(180일 초과 게시물엔 재열거 백스톱이 없다 — 아래 참조).
-			taggedPosts.markEnriched(brand.id(),
-					posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+			// 댓글·광고 판정은 노출 게이트 밖 — ensureAuthors의 하드 실패(위 예외가 여기까지 전파되는
+			// 중이어도) 포함해 항상 시도한다(2026-08-18 수정). 각자 실패해도 위 정산에는 영향 없다.
+			collectCommentsGatedSafely(brand.id(), posts);
+			judgeAdDisclosuresSafely(posts);
 		}
 		log.info("브랜드 태그 보강 — {} 게시자 수집·정산 완료({}건 대상)", brand.username(), posts.size());
-		// 댓글·광고 판정은 노출 게이트 밖 — 각자 실패해도 위 정산에 영향 없다(프로그레시브 서빙).
-		collectCommentsGatedSafely(brand.id(), posts);
-		judgeAdDisclosuresSafely(posts);
 	}
 
 	/**
@@ -313,7 +320,9 @@ public class BrandCollectService {
 	 * 광고 표기 판정 격리 래퍼(스펙 §7) — 판정 실패가 수집·보강에 영향 없어야 한다. 실제 격리는
 	 * {@link AdDisclosureJudgeService#judgePosts}가 게시물 단위로 이미 하지만, 후보 선정 배치
 	 * 조회(findAdJudgmentState) 실패 같은 상위 레벨 예외까지 방어하려면 이 래퍼가 한 번 더 필요하다
-	 * (collectCommentsGatedSafely와 같은 이유).
+	 * (collectCommentsGatedSafely와 같은 이유). "다음 스윕 재시도"는 180일 이하 게시물에 한한
+	 * 이야기다 — 180일 초과 게시물은 재열거 자체가 없어(BrandCrawlPolicy.due 무조건 false) verdict
+	 * NULL이 영구 잔존할 수 있다.
 	 */
 	private void judgeAdDisclosuresSafely(List<PostInfo> posts) {
 		try {

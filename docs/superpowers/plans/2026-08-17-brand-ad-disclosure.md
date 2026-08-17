@@ -2065,10 +2065,18 @@ git commit -m "feat(monitoring): 광고 표기 판정 배선 — 전용 LLM 풀 
 	}
 ```
 
-이 파일의 기존 `post(...)` 헬퍼·`failingAuthorIds`·`commentsCountsFails` 필드는 이미 존재한다
-(라인 76 근방) — 새로 만들지 말고 재사용할 것. `service(int)` 헬퍼(라인 326)도 그대로 두고
-`serviceWithAdJudge`를 별도로 추가한다(생성자 시그니처가 바뀌므로 기존 `service()` 호출부 전부를
-같이 고쳐야 한다 — Step 3에서 처리).
+이 파일의 기존 `failingAuthorIds`·`commentsCountsFails`(`tagged.commentsCountsFails`로 접근) 필드는
+이미 존재한다(라인 76 근방) — 새로 만들지 말고 재사용할 것. `service(int)` 헬퍼(라인 326)도 그대로
+두고 `serviceWithAdJudge`를 별도로 추가한다(생성자 시그니처가 바뀌므로 기존 `service()` 호출부
+전부를 같이 고쳐야 한다 — Step 3에서 처리).
+
+> **실행 시 정정(2026-08-18, 스펙 리뷰)**: 위 "기존 `post(...)` 헬퍼" 서술은 오기다 — 이 파일에는
+> `post(String, Long, String)` 형태의 헬퍼가 실제로 없었다(`reel(...)`은 JSON 페이지 문자열을
+> 만들 뿐 `PostInfo`를 직접 생성하지 않는다). 실행 시 `BrandRegistrationServiceTest.post(String)`
+> 패턴을 본떠 신설했다. 신설 헬퍼는 댓글 게이트 경로를 실제로 태우려면 comment count 인자가
+> 필요해 `post(String shortCode, Long takenAt, String ownerUserId, long commentCount)`로 확정했다
+> (댓글 count가 없으면 `collectCommentsGated`의 `p.comments() != null` 필터에서 조기 반환돼
+> `commentsCountsFails` 배선이 죽은 코드가 된다 — 08-18 프로브로 확인).
 
 - [ ] **Step 2: 테스트 실행 — 실패 확인**
 

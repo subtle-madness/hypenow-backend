@@ -923,10 +923,14 @@ class BrandCollectServiceTest {
 
 	/**
 	 * 보강 단계 <b>첫머리의 배치 DB 조회</b>가 던져도 정산한다 — 건별 Hiker 콜은 각자 격리되지만
-	 * freshIgUserIds·commentsCollectedCounts는 그 격리 밖이라, 커넥션 blip 하나로 예외가 enrich
-	 * 밖으로 새면 그 페이지 행이 enriched_at NULL로 굳는다. 180일 초과 게시물에는 재열거 백스톱이
-	 * 없어(BrandCrawlPolicy.due가 무조건 false) 그 미노출이 <b>영구</b>가 된다 — 그래서 마킹은
-	 * finally다. 예외 자체는 그대로 위로 전파돼 상위 격리(enrichSafely)가 로그로 남긴다.
+	 * freshIgUserIds는 그 격리 밖이라, 커넥션 blip 하나로 예외가 ensureAuthors 밖으로 새면 그
+	 * 페이지 행이 enriched_at NULL로 굳는다. 180일 초과 게시물에는 재열거 백스톱이 없어
+	 * (BrandCrawlPolicy.due가 무조건 false) 그 미노출이 <b>영구</b>가 된다 — 그래서 마킹은 finally다.
+	 * 예외 자체는 그대로 위로 전파돼 상위 격리(enrichSafely)가 로그로 남긴다.
+	 *
+	 * <p>2026-08-18 수정: 댓글 수집·광고 판정은 이 하드 실패와 무관하게 여전히 돈다(이중
+	 * try/finally — {@link BrandCollectService#enrich} javadoc 참조). 그래서 게시자 콜만 0건이고
+	 * 댓글 콜은 정상적으로 나간다 — 예전엔(안쪽 finally 하나뿐) 댓글도 도달 불가라 0건이었다.
 	 */
 	@Test
 	void 게시자_stale_배치_조회가_던져도_정산한다() {
@@ -938,9 +942,11 @@ class BrandCollectServiceTest {
 		assertThatThrownBy(() -> service.enrich(brand, posts))
 				.isInstanceOf(IllegalStateException.class);
 
-		// 실제로 그 경로를 탔다는 근거 — 게시자·댓글 콜은 한 건도 못 나갔다(첫 배치 조회에서 끊겼다).
+		// 실제로 그 경로를 탔다는 근거 — 게시자 콜은 한 건도 못 나갔다(첫 배치 조회에서 끊겼다).
 		assertThat(authorCalls()).isZero();
-		assertThat(commentCalls()).isZero();
+		// 댓글은 게시자 하드 실패와 무관하게 돈다(08-18 수정) — 두 건 다 신규(저장값 0)라 게이트가 열린다.
+		assertThat(commentCalls()).isEqualTo(2);
+		assertThat(comments.upserted).containsExactlyInAnyOrder("A", "B");
 		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
 	}
 
@@ -1009,7 +1015,9 @@ class BrandCollectServiceTest {
 		tagged.commentsCountsFails = true;   // 댓글 게이트 배치 조회가 던져도
 		FakeAdJudge adJudge = new FakeAdJudge();
 		BrandCollectService svc = serviceWithAdJudge(adJudge);
-		PostInfo post = post("AAA", RECENT, null);
+		// commentCount(3L) > 저장값(0, 기본) — 게이트가 열려야 배치 조회(commentsCountsFails)가
+		// 실제로 호출된다(comments=null이면 p.comments() != null 필터에서 조기 반환돼 죽은 코드가 됨).
+		PostInfo post = post("AAA", RECENT, null, 3L);
 
 		svc.enrich(brand, List.of(post));
 
@@ -1022,19 +1030,25 @@ class BrandCollectServiceTest {
 		FakeAdJudge adJudge = new FakeAdJudge();
 		adJudge.fail = true;
 		BrandCollectService svc = serviceWithAdJudge(adJudge);
-		PostInfo post = post("AAA", RECENT, null);
+		PostInfo post = post("AAA", RECENT, null, 0L);
 
 		svc.enrich(brand, List.of(post));
 
 		assertThat(tagged.enriched).contains("AAA");   // 판정 실패가 정산을 막지 않는다
 	}
 
+	/**
+	 * 게시자 개별 콜(5xx·타임아웃)이 실패해도 ensureAuthors 자체는 예외 없이 격리를 마친다(기존
+	 * 경로) — 정산·광고 판정 모두 정상 진행. 이름에 "소프트"를 명시한다: ensureAuthors 첫머리의
+	 * 배치 DB 조회가 통째로 던지는 <b>하드</b> 실패는 별도 경로라 이 테스트가 커버하지 못한다
+	 * (08-18 스펙 리뷰 — 하드 경로는 아래 회귀 방어 테스트가 담당).
+	 */
 	@Test
-	void 게시자_보강_자체가_실패해도_정산은_찍히고_광고_판정도_돈다() {
+	void 게시자_개별_보강_소프트_실패는_격리되고_정산과_광고_판정은_돈다() {
 		failingAuthorIds.add("111");   // ensureAuthors가 예외 없이 격리되는 기존 경로 유지 확인용 대역
 		FakeAdJudge adJudge = new FakeAdJudge();
 		BrandCollectService svc = serviceWithAdJudge(adJudge);
-		PostInfo post = post("AAA", RECENT, "111");
+		PostInfo post = post("AAA", RECENT, "111", 0L);
 
 		svc.enrich(brand, List.of(post));
 
@@ -1042,14 +1056,41 @@ class BrandCollectServiceTest {
 		assertThat(adJudge.judged).contains("AAA");
 	}
 
+	/**
+	 * 1번 버그 수정(2026-08-18)의 회귀 방어 — ensureAuthors 첫머리의 배치 DB 조회(freshIgUserIds)가
+	 * 통째로 던지는 <b>하드</b> 실패 경로. 예외 전파는 기존 규칙대로 유지하되(호출자 상위 격리가
+	 * 로그로 남긴다), 그 전파 도중에도 정산·댓글 수집·광고 판정이 전부 돈다는 것을 검증한다 — 이중
+	 * try/finally 구조가 없으면 안쪽 finally(markEnriched) 직후 예외가 곧장 메서드 밖으로 새서
+	 * 댓글·판정 호출 자체가 도달 불가였다(08-18 프로브로 확인).
+	 */
+	@Test
+	void 게시자_보강_하드_실패에도_댓글_수집과_광고_판정은_돈다() {
+		authors.freshLookupFails = true;   // ensureAuthors 첫머리 배치 조회가 통째로 던진다
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, "111", 3L);
+
+		assertThatThrownBy(() -> svc.enrich(brand, List.of(post)))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(tagged.enriched).contains("AAA");      // 정산은 하드 실패에도 찍힌다(기존 규칙)
+		assertThat(comments.upserted).contains("AAA");    // 댓글 수집도 하드 실패와 무관하게 돈다
+		assertThat(adJudge.judged).contains("AAA");        // 광고 판정도 하드 실패와 무관하게 돈다
+	}
+
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
 				adJudge, Runnable::run, 10000, 3, 30);
 	}
 
-	private static PostInfo post(String shortCode, Long takenAt, String ownerUserId) {
+	/**
+	 * comments(commentCount)를 명시적으로 받는다 — null이면 {@code collectCommentsGated}의
+	 * {@code p.comments() != null} 필터에서 조기 반환돼 댓글 게이트 경로(배치 조회·실패 주입 포함)가
+	 * 아예 실행되지 않는다(08-18 스펙 리뷰 프로브로 확인 — 죽은 코드였다).
+	 */
+	private static PostInfo post(String shortCode, Long takenAt, String ownerUserId, long commentCount) {
 		return new PostInfo(shortCode, "author", null, null, ownerUserId, "REELS", null, null,
-				takenAt, null, null, null, null, null, null, null, null, null, null,
+				takenAt, null, commentCount, null, null, null, null, null, null, null, null,
 				false, false, false);
 	}
 

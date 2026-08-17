@@ -28,6 +28,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>LLM 콜은 전용 소형 풀(worker, 동시 3~4 — 스펙 §7)로 나간다. 게시물 단위 격리: 한 건의 LLM
  * 실패·파싱 실패가 나머지 게시물 판정에 번지지 않고, verdict는 NULL로 남아 다음 스윕이 재시도한다.
+ * 단, 이 "다음 스윕 재시도"는 180일 이하 게시물(추적 창) 한정이다 — 180일 초과 게시물은 크롤
+ * 정책상 재열거 자체가 없어({@code BrandCrawlPolicy.due}가 무조건 false) verdict NULL이 영구
+ * 잔존할 수 있다.
  */
 public class AdDisclosureJudgeService {
 
@@ -86,7 +89,8 @@ public class AdDisclosureJudgeService {
 			}
 			metaRepo.updateAdVerdict(p.shortCode(), result, md5(caption(p)), Instant.now());
 		} catch (RuntimeException e) {
-			// verdict NULL 유지 — 다음 스윕(캡션 해시 재비교)이 자동 재시도한다(스펙 §5).
+			// verdict NULL 유지 — 다음 스윕(캡션 해시 재비교)이 자동 재시도한다(스펙 §5). 단, 180일
+			// 초과 게시물은 재열거가 없어 이 재시도 자체가 안 걸린다(클래스 javadoc 참조).
 			log.warn("광고 표기 판정 실패(격리, 다음 스윕 재시도) — {}: {}", p.shortCode(), e.toString());
 		}
 	}
