@@ -67,11 +67,10 @@ public class V1BrandAccountService {
 	 * <p>brandName은 own 연결일 때만 전달한다(#406 경쟁사 계정 타입 게이트, {@link #brandNameOf} 참고) —
 	 * competitor 연결에 내 회사명을 넘기면 남의(경쟁사) 브랜드에 내 이름이 해시태그로 시드된다.
 	 *
-	 * <p>collectionMonths(2026-08-12)는 자산 레벨 값이라 이미 연결된 브랜드 재요청도 <b>더 큰 값이면</b>
-	 * 기간 확장으로 monitoring을 다시 부른다(아래 게이트) — 같거나 작은 값은 현행 멱등 경로 그대로다.
-	 *
-	 * <p>collectionMonths는 두 곳에 반영된다(2026-08-17): 자산 확장 게이트(유저 간 max — 위 규칙)와
-	 * 링크의 표시 창(명시한 값 그대로 설정 — 축소도 반영, 생략하면 불변).
+	 * <p>collectionMonths는 두 곳에 반영된다(2026-08-17 개정 — {@link BrandCollectionMonths}):
+	 * <b>자산</b>(크롤 창)은 유저 간 max라 이미 연결된 브랜드 재요청도 <b>더 큰 값일 때만</b> 기간
+	 * 확장으로 monitoring을 다시 부르고(2026-08-12 게이트, 축소 없음 — 수집된 사실이 정본),
+	 * <b>링크</b>(유저 표시 창)는 명시한 값을 그대로 설정한다 — 축소도 반영되고 생략(null)은 불변이다.
 	 */
 	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType,
 			Integer rawCollectionMonths) {

@@ -109,7 +109,7 @@ public class V1BrandPostsController {
 		// 유저 표시 창(2026-08-17) — 자산(brand_account)은 유저 간 max로 수집하므로 12개월치가
 		// 있어도, 이 유저가 신청한 기간까지만 서빙한다. counts·필터·정렬 전부 자른 전량 기준.
 		// 컷은 스트림 밖에서 한 번만 구한다 — 건마다 시계를 읽으면 자정을 걸친 응답에서 창이 흔들린다.
-		LocalDate windowStart = linkWindowStart(link.collectionMonths());
+		LocalDate windowStart = linkWindowStart(today(), link.collectionMonths());
 		List<BrandPostResponse> all = assembler.assembleForBrand(principal.getUserId(), account).stream()
 				.filter(p -> withinLinkWindow(p, windowStart))
 				.toList();
@@ -145,17 +145,20 @@ public class V1BrandPostsController {
 	@GetMapping("/posts/{postId}")
 	public ApiResponse<BrandPostResponse> get(@AuthenticationPrincipal AppUserDetails principal,
 			@PathVariable String postId) {
+		// 시계는 요청당 한 번만 읽는다 — 브랜드마다 다시 읽으면 자정을 걸친 응답에서 브랜드별로 컷이 다르다.
+		LocalDate today = today();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(principal.getUserId())) {
 			Optional<BrandAccountRow> account = brandReadRepository.findAccount(link.brandId());
 			if (account.isEmpty()) {
 				continue;
 			}
-			LocalDate windowStart = linkWindowStart(link.collectionMonths());
+			LocalDate windowStart = linkWindowStart(today, link.collectionMonths());
 			Optional<BrandPostResponse> found = assembler.assembleForBrand(principal.getUserId(), account.get())
 					.stream()
-					// 창 밖 게시물은 목록에 없다 — 상세만 열리는 불일치를 만들지 않는다(같은 404).
-					.filter(p -> withinLinkWindow(p, windowStart))
 					.filter(p -> p.id().equals(postId))
+					// 창 밖 게시물은 목록에 없다 — 상세만 열리는 불일치를 만들지 않는다(같은 404).
+					// id 매칭 뒤에 둬서 창 판정(업로드일 파싱)은 후보 1건에만 돈다.
+					.filter(p -> withinLinkWindow(p, windowStart))
 					.findFirst();
 			if (found.isPresent()) {
 				return ApiResponse.ok(found.get());
@@ -240,22 +243,24 @@ public class V1BrandPostsController {
 		return (from == null || !uploadedOn.isBefore(from)) && (to == null || !uploadedOn.isAfter(to));
 	}
 
-	/** 링크 표시 창의 하한 — KST 달력일 기준(windowCutoff 관용구 동형: 인스턴트 빼기는 경계가 흔들린다). */
-	private LocalDate linkWindowStart(int collectionMonths) {
-		return LocalDate.ofInstant(clock.instant(), KstTimestamps.KST).minusMonths(collectionMonths);
+	/** 창 계산의 기준일 — KST 달력일(windowCutoff 관용구 동형: 인스턴트 빼기는 경계가 흔들린다). */
+	private LocalDate today() {
+		return LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+	}
+
+	/** 링크 표시 창의 하한. */
+	private static LocalDate linkWindowStart(LocalDate today, int collectionMonths) {
+		return today.minusMonths(collectionMonths);
 	}
 
 	/**
 	 * 링크 창 판정(2026-08-17) — direct는 유저가 URL을 명시 등록한 추적 대상이라 창과 무관하게
-	 * 통과한다(창은 태그 수집 범위의 개념). tagged의 업로드일 미상은 제외 — withinUploadWindow의
-	 * "판정 불가 제외" 규칙과 같고, 수집 구조상 tagged는 업로드일이 거의 항상 있다.
+	 * 통과한다(창은 태그 수집 범위의 개념). 나머지는 기간 필터와 같은 판정이라 그쪽에 위임한다
+	 * (업로드일 미상 제외 규칙의 정의가 {@link #withinUploadWindow} 한 곳에만 있게).
 	 */
 	private static boolean withinLinkWindow(BrandPostResponse post, LocalDate windowStart) {
-		if (BrandPostAssembler.SOURCE_DIRECT.equals(post.source())) {
-			return true;
-		}
-		LocalDate uploadedOn = BrandPostAssembler.uploadedOn(post);
-		return uploadedOn != null && !uploadedOn.isBefore(windowStart);
+		return BrandPostAssembler.SOURCE_DIRECT.equals(post.source())
+				|| withinUploadWindow(post, windowStart, null);
 	}
 
 	/**
