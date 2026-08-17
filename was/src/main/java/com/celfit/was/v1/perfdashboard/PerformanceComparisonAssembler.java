@@ -106,6 +106,12 @@ public class PerformanceComparisonAssembler {
 	 * minusMonths(말일 클램프) 연산이라 12개월 계정의 6m_12m이 정확히 경계에 얹힌다.</li>
 	 * </ul>
 	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
+	 *
+	 * <p>covered의 기준은 <b>자산 창(brand_account.collection_months = 실제로 수집한 사실)</b>이고,
+	 * 계정 응답의 {@code collectionMonths}(2026-08-17부터 링크 값 = 그 유저가 신청한 표시 창)와는
+	 * 다를 수 있다. 3개월 링크 유저가 12개월 자산 브랜드에서 6m_12m을 covered=true로 보는 것은
+	 * "그 구간이 수집돼 있다"는 뜻이지 "내 구독 창 안"이라는 뜻이 아니다(대시보드는 아직 링크 창을
+	 * 적용하지 않는다 — 의도적 범위 밖).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
 			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges, LocalDate today) {

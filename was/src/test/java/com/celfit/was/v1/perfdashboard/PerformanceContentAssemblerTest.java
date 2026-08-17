@@ -345,7 +345,7 @@ class PerformanceContentAssemblerTest {
 		given(directPostRepository.findByUser(USER_ID))
 				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, 99L, "ABC", 900L)));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
 
 		var disabled = new PerformanceContentAssembler(trackingItemAssembler, directPostRepository,
 				linkRepository, Optional.empty(), Optional.empty());
@@ -364,7 +364,7 @@ class PerformanceContentAssemblerTest {
 		givenLegacy();
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandPostAssembler.assembleTagged(rival, true, TaggedScope.ALL))
@@ -384,8 +384,8 @@ class PerformanceContentAssemblerTest {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null),
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.empty());
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.empty());
 
@@ -402,8 +402,8 @@ class PerformanceContentAssemblerTest {
 		// 경쟁사 연결이 더 오래됐다(목록 앞) — 그래도 own 귀속이 이겨야 한다. 귀속이 이제 표시가
 		// 아니라 범위를 정하기 때문에, 연결 순서가 "내 게시물이 내 요약에 보이는지"를 정하면 안 된다.
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null),
-				new BrandLinkRow(2L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
+				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
@@ -428,8 +428,8 @@ class PerformanceContentAssemblerTest {
 		given(directPostRepository.findByUser(USER_ID))
 				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, BRAND_ID, "ABC", 900L)));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", LAST_COLLECTED, null),
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
@@ -456,7 +456,7 @@ class PerformanceContentAssemblerTest {
 		given(directPostRepository.findByUser(USER_ID))
 				.willReturn(List.of(new BrandDirectPostRepository.Row(USER_ID, 99L, "ABC", 900L)));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", LAST_COLLECTED, null)));
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandPostAssembler.assembleTagged(rival, true, TaggedScope.ALL))
@@ -499,7 +499,7 @@ class PerformanceContentAssemblerTest {
 		givenLegacy();
 		given(directPostRepository.findByUser(USER_ID)).willReturn(List.of());
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
-				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
+				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
 		BrandAccountRow account = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
 		given(brandPostAssembler.assembleTagged(account, false, TaggedScope.ALL))
@@ -586,7 +586,7 @@ class PerformanceContentAssemblerTest {
 
 	private void givenBrandSweptAt(OffsetDateTime lastSweptAt, BrandPostResponse... taggedPosts) {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
-				BRAND_ID, "brand", "own", LAST_COLLECTED, null)));
+				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, LAST_COLLECTED);

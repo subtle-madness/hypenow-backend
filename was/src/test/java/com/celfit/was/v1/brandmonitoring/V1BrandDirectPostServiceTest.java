@@ -29,8 +29,11 @@ import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
 import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,11 +41,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -76,11 +79,20 @@ class V1BrandDirectPostServiceTest {
 	@Mock
 	V1MonitoringItemUpdateService itemUpdateService;
 
-	@InjectMocks
 	V1BrandDirectPostService service;
 
 	@Captor
 	ArgumentCaptor<Map<String, Object>> bodyCaptor;
+
+	@BeforeEach
+	void setUp() {
+		// 중복 게이트의 창 컷 기준 시각 고정 — 고정하지 않으면 2026-08-xx 고정 날짜 픽스처가
+		// 시간이 지나며 창 밖으로 밀려 테스트가 시한부가 된다(V1BrandPostsControllerTest와 같은 근거).
+		// KST 2026-08-08 21:00.
+		service = new V1BrandDirectPostService(linkRepository, brandReadRepository, directPostRepository,
+				itemRepository, monitoringReadRepository, legacyRegistration, registrationRepository,
+				itemUpdateService, Clock.fixed(Instant.parse("2026-08-08T12:00:00Z"), ZoneOffset.UTC));
+	}
 
 	// ---------- 위임 제외(브랜드 목록 중복) ----------
 
@@ -111,6 +123,39 @@ class V1BrandDirectPostServiceTest {
 		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
 		then(legacyRegistration).should(never()).register(anyLong(), any());
 		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
+	}
+
+	@Test
+	void 링크_창_밖_태그_게시물의_직접_등록은_중복이_아니라_위임된다() {
+		// 3개월 링크 유저에겐 5개월 전 tagged가 목록·상세 어디에도 없다(2026-08-17 표시 창).
+		// 여기서 duplicate로 막으면 brand_direct_posts 매핑이 영영 생기지 않아 그 게시물은
+		// 어떤 표면으로도 도달할 수 없다(데드엔드) — 자산 창이 아니라 유저 가시 창으로 판정해야 한다.
+		ownedBrand(3);
+		taggedTakenAt("ABC", OffsetDateTime.parse("2026-03-08T00:00:00Z"));
+		directMappings();
+		given(legacyRegistration.register(eq(7L), anyMap()))
+				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
+		given(registrationRepository.findById(55L))
+				.willReturn(Optional.of(registration(7L, entry(0, URL_ABC, "pending", null, null, 301L))));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		then(directPostRepository).should().upsert(7L, 100L, "ABC", 301L);
+	}
+
+	@Test
+	void 링크_창_안_태그_게시물은_여전히_중복이다() {
+		// 창을 좁힌 대가로 창 안 중복 판정까지 느슨해지면 안 된다 — 같은 게시물이 direct로 한 번 더
+		// 등록되면 병합의 direct 우선 규칙 때문에 카드가 영구히 direct 셰이프로 고정된다(08-13 결정).
+		ownedBrand(3);
+		taggedTakenAt("ABC", OffsetDateTime.parse("2026-07-08T00:00:00Z"));
+		directMappings();
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
+		then(legacyRegistration).should(never()).register(anyLong(), any());
 	}
 
 	// ---------- 신규 위임 ----------
@@ -511,12 +556,22 @@ class V1BrandDirectPostServiceTest {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
 	}
 
+	/** 표시 창(링크 collection_months)이 다른 연결 — 중복 게이트의 창 판정 검증용. */
+	private void ownedBrand(int collectionMonths) {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(BrandAccountType.OWN, collectionMonths)));
+	}
+
 	private static BrandLinkRow link() {
 		return link(BrandAccountType.OWN);
 	}
 
 	private static BrandLinkRow link(String accountType) {
-		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType,
+		return link(accountType, 12);
+	}
+
+	private static BrandLinkRow link(String accountType, int collectionMonths) {
+		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType, collectionMonths,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
@@ -533,6 +588,18 @@ class V1BrandDirectPostServiceTest {
 								OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 								OffsetDateTime.parse("2026-08-01T00:00:00Z"), 0L))
 						.toList());
+	}
+
+	/**
+	 * 실 리포지토리와 같은 창 의미로 답한다 — 컷오프보다 오래된 게시물은 조회 결과에 아예 없다.
+	 * 컷오프를 넉넉히 잡으면(자산 창) 창 밖 게시물까지 보게 되므로, 판정 차이가 결과로 드러난다.
+	 */
+	private void taggedTakenAt(String shortCode, OffsetDateTime takenAt) {
+		given(brandReadRepository.findTaggedPostsInWindow(eq(100L), any())).willAnswer(invocation -> {
+			OffsetDateTime cutoff = invocation.getArgument(1);
+			return takenAt.isBefore(cutoff) ? List.of()
+					: List.of(new BrandTaggedPostRow(shortCode, "creator", "1", takenAt, takenAt, 0L));
+		});
 	}
 
 	private void directMappings(String... shortCodes) {

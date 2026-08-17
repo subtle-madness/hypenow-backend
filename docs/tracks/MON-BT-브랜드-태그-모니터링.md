@@ -82,6 +82,23 @@ OOM 재발 방지 + 백필 core 2병렬(08-12 — DECISIONS 08-12 행):
 now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스윕 크론은 서버 override
 드리프트값 **KST 02:00**이 실제 가동값이라 이를 정본으로 수용했다(레포 `deploy/compose.yaml`
 정렬 + was `nextScheduledAt` 표기 기본값 3 → 2 — 종전 표기 03:00은 실제와 1시간 어긋나 있었다).
+**08-17 개정으로 "자산 레벨 하나"는 부분 뒤집혔다 — 아래 링크 레벨 항목 참조.**
+
+링크 레벨 표시 창(2026-08-17 — DECISIONS 08-17 행,
+[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-link-collection-months-design.md)):
+08-12의 "자산 레벨 값 하나로 관리"가 공유 브랜드에서 무너졌다 — 3개월을 신청한 유저가
+12개월치 전량을 받는다(cclime 실사례). 신청값이 어디에도 영속화되지 않아 유저별로 자를
+근거 자체가 없었다. **크롤 자산은 그대로 두고**(`brand_account.collection_months` = 유저 간
+max, 축소 없음 — 수집한 사실이 정본) 유저-브랜드 링크에 신청값을 저장해
+(`app.brand_monitorings.collection_months` 신설, 기존 행은 DEFAULT 12로 백필) **서빙 계층에서만
+자른다**. 응답 `collectionMonths`는 이제 자산이 아니라 **링크 값(= 그 유저가 신청한 기간)**이고,
+게시물 목록·`meta.counts`·상세가 전부 링크 창으로 서빙된다(counts는 이미 잘린 목록에서 파생돼
+자동으로 같은 창, 상세도 같은 필터라 "목록엔 없는데 상세만 열리는" 불일치가 없다 — 같은 404).
+**direct 게시물은 예외**(유저가 URL을 명시 등록한 추적 대상이라 창과 무관하게 항상 포함).
+쓰기 규칙도 자산과 다르다 — 링크는 **축소를 허용**하고(명시한 값 그대로), 필드를 생략한
+재-POST는 링크 기간을 바꾸지 않는다(구 클라이언트가 3개월 신청을 12로 되돌리지 않게 raw
+값으로 판정). 직접 등록의 중복 게이트도 같은 창을 쓴다 — 자산 창으로 판정하면 링크 창 밖
+tagged가 목록·상세 어디에도 없는데 등록만 DUPLICATE로 막혀 영구 도달 불능(데드엔드)이 된다.
 
 완결 배치 서빙(2026-08-13 — **구현 완료**, 커밋 `2d0d9b60`~`43b8a6a7` ·
 [spec 2026-08-13](../superpowers/specs/2026-08-13-brand-initial-batch-serving-design.md)):
@@ -142,6 +159,9 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 - **tooq.official 172~365일 공백 일회성 보정 실행 대기**(08-12) — 상한 상향 배포 후 운영 monitoring DB에 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` 실행(사용자 확인 필요), 익일 KST 03:00 스윕이 재백필. 미루면 365일 창이 실행일 기준이라 하루씩 잘린다 — 조기 실행 권장.
 - **완결 배치 서빙 — FE 배포 조율 필요**(08-13) — 이 변경 후 **기간 확장 중 `collectionStatus`가 `collecting` → `ready`**로 바뀐다. FE가 확장 배너 판정을 `collectionCompletedAt == null`로 옮기기 **전에** 운영 승격되면 배너가 조용히 사라진다(FE 회신 문서 §3-7로 통지). 프론트 반영 여부를 확인한 뒤 staging → main 승격할 것.
 - **완결 배치 서빙 — 배포 시점 확장 중이던 계정 보정 판단**(08-13) — 배포 순간 이미 기간 확장 중이던 계정은 `expandWindow`의 `backfill_completed_at` 리셋을 못 받고 옛 완주 시각을 들고 있어 FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). **일회성이고 데이터 유실 없음** — 보정 UPDATE 실행 여부는 배포 시 대상 건수를 보고 판단.
+- **링크 레벨 표시 창 — 배포 후 운영 수동 보정 1회**(08-17) — 신청값이 지금까지 어디에도 저장된 적이 없어 마이그레이션이 복원할 수 없다(기존 링크는 전부 12). 대상은 cclime 3개월 유저 + **단독 구독(활성 링크가 정확히 1개) 브랜드 전체** — 단독 구독은 자산값 = 그 유저의 신청값이라 자산에서 복원할 수 있다(다중 구독은 max라 복원 불가 → 그대로 12 유지, 개별 확인). app DB와 monitoring DB가 분리라 2단계(monitoring에서 `collection_months < 12 AND status = 'ACTIVE'` 브랜드 확인 → app에서 단독 링크만 UPDATE). 절차 SQL은 PR #480 본문.
+- **링크 레벨 표시 창 — 링크 창 미적용 표면**(08-17) — 성과 대시보드(`PerformanceComparisonAssembler`의 `covered`·집계 모수)와 `hashtag-posts` 목록은 아직 자산 창 전량을 본다. 3개월 유저에게 게시물 counts와 대시보드 모수가 달라 보인다(의도적 범위 밖 — FE 문의·혼선 발생 시 재론).
+- **링크 레벨 표시 창 — 창 필터 SQL 푸시다운**(08-17) — 지금은 자산 창 전량을 조립한 뒤 메모리에서 자른다. 3개월 유저가 12개월 브랜드를 볼 때 버려지는 조립 비용이 크면 리포지토리 조회 컷을 링크 창으로 내리는 최적화가 후속.
 - **완결 배치 서빙 — 운영 반영 직후 백필 확인**(08-13) — `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**이어야 한다. 0이 아니면 마이그레이션 백필(25,759행)이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.
 - **해시태그 FE 요청 일괄(08-17) — 구현 완료, 잔여 4건**(태그 등록 즉시 스윕·제외 규칙 폐기·direct 취소 API·brandPostId·작성자 프로필 아카이브 — DECISIONS 08-17 행, 계약 v2.9):
   - `brand_hashtag_exclusion` 테이블 DROP — contract 단계라 **다음 릴리스**에서(`-- allow-destructive` 주석 필요). 참조 코드는 이번에 전부 제거됨.

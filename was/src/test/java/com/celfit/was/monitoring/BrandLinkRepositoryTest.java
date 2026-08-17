@@ -46,26 +46,26 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 활성_연결은_유저_브랜드당_하나고_다른_브랜드는_추가_연결된다() {
-		repository.insertLink(userId, brandA, "lizda_official", "own");
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
 		// 다계정(08-07 개정) — 다른 브랜드 연결은 정상 경로다.
-		repository.insertLink(userId, brandB, "other_brand", "own");
+		repository.insertLink(userId, brandB, "other_brand", "own", 12);
 		assertThat(repository.findAllActiveByUser(userId)).hasSize(2);
 
 		// 같은 (유저, 브랜드) 활성 중복만 유니크 위반
-		assertThatThrownBy(() -> repository.insertLink(userId, brandA, "lizda_official", "own"))
+		assertThatThrownBy(() -> repository.insertLink(userId, brandA, "lizda_official", "own", 12))
 				.isInstanceOf(DuplicateKeyException.class);
 
 		// soft-delete 후 재삽입 가능(재연결 경로)
 		assertThat(repository.softDeleteLink(userId, brandA)).isTrue();
-		repository.insertLink(userId, brandA, "lizda_official", "own");
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
 		assertThat(repository.countActiveByBrand(brandA)).isEqualTo(1);
 	}
 
 	@Test
 	void account_type은_저장한_값으로_읽히고_updateAccountType으로_바뀐다() {
 		// 타입은 유저-브랜드 관계의 속성이다(08-12) — 저장·조회·변경이 컬럼까지 실제로 관통하는지 확인.
-		repository.insertLink(userId, brandA, "lizda_official", "own");
-		repository.insertLink(userId, brandB, "other_brand", "competitor");
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
+		repository.insertLink(userId, brandB, "other_brand", "competitor", 12);
 
 		assertThat(repository.findActiveByUserAndBrand(userId, brandA).orElseThrow().accountType())
 				.isEqualTo("own");
@@ -85,7 +85,7 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 	void updateAccountType은_이미_같은_타입이어도_true다() {
 		// 반환값의 의미를 못박는다 — "값이 달라졌나"가 아니라 "대상 행이 있었나"다.
 		// Postgres는 같은 값으로 덮어써도 갱신 행으로 세므로, 호출부는 이걸 변경 여부로 읽으면 안 된다.
-		repository.insertLink(userId, brandA, "lizda_official", "competitor");
+		repository.insertLink(userId, brandA, "lizda_official", "competitor", 12);
 
 		assertThat(repository.updateAccountType(userId, brandA, "competitor")).isTrue();
 		assertThat(repository.findActiveByUserAndBrand(userId, brandA).orElseThrow().accountType())
@@ -104,14 +104,33 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 				.isEqualTo("own");
 
 		// CHECK 제약이 애플리케이션 검증의 최후 보루다.
-		assertThatThrownBy(() -> repository.insertLink(userId, brandB, "other_brand", "rival"))
+		assertThatThrownBy(() -> repository.insertLink(userId, brandB, "other_brand", "rival", 12))
 				.isInstanceOf(DataIntegrityViolationException.class);
 	}
 
 	@Test
+	void 연결은_신청한_collection_months를_저장한다() {
+		repository.insertLink(userId, brandA, "lizda_official", "own", 3);
+
+		assertThat(repository.findActiveByUserAndBrand(userId, brandA).orElseThrow().collectionMonths())
+				.isEqualTo(3);
+	}
+
+	@Test
+	void updateCollectionMonths는_활성_연결만_갱신하고_없으면_false다() {
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
+
+		assertThat(repository.updateCollectionMonths(userId, brandA, 3)).isTrue();
+		assertThat(repository.findActiveByUserAndBrand(userId, brandA).orElseThrow().collectionMonths())
+				.isEqualTo(3);
+		// 활성 연결이 없는 브랜드는 false — 소유권 판정 신호(updateAccountType 동형).
+		assertThat(repository.updateCollectionMonths(userId, brandB, 3)).isFalse();
+	}
+
+	@Test
 	void findAllActiveByUser는_soft_delete된_연결을_보지_않고_생성_순으로_돌려준다() {
-		long first = repository.insertLink(userId, brandA, "lizda_official", "own");
-		long second = repository.insertLink(userId, brandB, "other_brand", "own");
+		long first = repository.insertLink(userId, brandA, "lizda_official", "own", 12);
+		long second = repository.insertLink(userId, brandB, "other_brand", "own", 12);
 
 		assertThat(repository.findAllActiveByUser(userId)).extracting(BrandLinkRow::id)
 				.containsExactly(first, second);
@@ -132,7 +151,7 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 
 	@Test
 	void findActiveByUserAndBrand는_소유하지_않은_브랜드에_비어있다() {
-		repository.insertLink(userId, brandA, "lizda_official", "own");
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
 
 		assertThat(repository.findActiveByUserAndBrand(userId, brandA)).isPresent();
 		assertThat(repository.findActiveByUserAndBrand(userId, brandB)).isEmpty();
@@ -143,8 +162,8 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 
 	@Test
 	void softDeleteAllActiveByUser는_유저의_활성_연결_전부를_해제한다() {
-		repository.insertLink(userId, brandA, "lizda_official", "own");
-		repository.insertLink(userId, brandB, "other_brand", "own");
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
+		repository.insertLink(userId, brandB, "other_brand", "own", 12);
 
 		assertThat(repository.softDeleteAllActiveByUser(userId)).isEqualTo(2);
 
@@ -157,8 +176,8 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 		long other = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "brand-link-" + UUID.randomUUID() + "@test.io")
 				.query(Long.class).single();
-		repository.insertLink(userId, brandA, "lizda_official", "own");
-		repository.insertLink(other, brandA, "lizda_official", "own");
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
+		repository.insertLink(other, brandA, "lizda_official", "own", 12);
 		assertThat(repository.countActiveByBrand(brandA)).isEqualTo(2);
 
 		repository.softDeleteLink(other, brandA);

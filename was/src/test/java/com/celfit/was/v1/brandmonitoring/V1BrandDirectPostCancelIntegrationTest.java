@@ -21,6 +21,7 @@ import com.celfit.was.v1.monitoring.V1CampaignService;
 import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import java.sql.Connection;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -94,7 +95,8 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 				campaignRepository, campaignService, Optional.of(readRepository), Optional.of(commandClient),
 				assembler, registrationRepository);
 		service = new V1BrandDirectPostService(linkRepository, brandReadRepository, directPostRepository,
-				itemRepository, readRepository, legacyRegistration, registrationRepository, itemUpdateService);
+				itemRepository, readRepository, legacyRegistration, registrationRepository, itemUpdateService,
+				Clock.systemDefaultZone());
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "brand-direct-cancel-" + UUID.randomUUID() + "@test.io")
@@ -104,7 +106,7 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 				VALUES ('lizda_official', '17841400000000000', 'ACTIVE')
 				RETURNING id
 				""").query(Long.class).single();
-		linkRepository.insertLink(userId, brandId, "lizda_official", BrandAccountType.OWN);
+		linkRepository.insertLink(userId, brandId, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	/** 등록 직후 collecting(target 미확정) 상태의 아이템을 TRACKING 상태로 끌어올린다(취소 가능 상태). */
