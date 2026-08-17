@@ -1,11 +1,16 @@
 package com.celfit.analytics.analyze;
 
+import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.GeminiAccountSynthesizer;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -16,6 +21,8 @@ import tools.jackson.databind.node.ObjectNode;
  * 기준선 대신 저장 시점 복원용 3필드(last_posted_at·analyzed_count·ad_situation)만 싣는다.
  */
 final class AccountBatchLines {
+
+	private static final Logger log = LoggerFactory.getLogger(AccountBatchLines.class);
 
 	/** 사이드카 키 — AccountAnalysisWriter.insert가 LLM 응답 외에 요구하는 제출 시점 스냅샷. */
 	static final List<String> SIDECAR_KEYS = List.of("last_posted_at", "analyzed_count", "ad_situation");
@@ -95,5 +102,54 @@ final class AccountBatchLines {
 			}
 		}
 		return "";
+	}
+
+	/**
+	 * 결과 한 줄 처리: 파싱 → isValid 가드 → account_analyses INSERT. 콘텐츠와 달리 DB 유니크가
+	 * 없으므로(이력 테이블) 멱등은 수거 잡의 pending→collected 단방향 전이에 의존한다.
+	 *
+	 * @return true=저장 성공, false=실패(파싱 불가·사이드카 부재·빈 카피 — 다음 실행이 재대상 흡수)
+	 */
+	static boolean processResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
+			Map<String, Map<String, String>> sidecar, String model, Set<String> vocabulary) {
+		try {
+			JsonNode node = om.readTree(line);
+			String vertexStatus = node.path("status").asString("");
+			if (!vertexStatus.isEmpty()) {
+				log.warn("배치 실패 라인 (status={}): {}", vertexStatus, GeminiBatchLines.abbreviate(line));
+				return false;
+			}
+			String handle = node.path("key").asString("");
+			if (handle.isEmpty()) {
+				handle = handleFromEcho(node);
+			}
+			JsonNode text = node.path("response").path("candidates").path(0)
+					.path("content").path("parts").path(0).path("text");
+			if (handle.isEmpty() || text.isMissingNode()) {
+				log.warn("결과 라인 해석 불가/오류 응답: {}", GeminiBatchLines.abbreviate(line));
+				return false;
+			}
+			AccountCopy copy = GeminiAccountSynthesizer.parse(om, text.asString());
+			if (!AccountAnalysisWriter.isValid(copy)) {
+				log.warn("빈 카피 — 저장 생략: {}", handle);
+				return false;
+			}
+			Map<String, String> side = sidecar.get(handle);
+			if (side == null) {
+				log.warn("사이드카에 없는 key: {}", handle);
+				return false;
+			}
+			OffsetDateTime lastPostedAt = side.get("last_posted_at") == null
+					? null : OffsetDateTime.parse(side.get("last_posted_at"));
+			Long analyzedCount = side.get("analyzed_count") == null
+					? null : Long.valueOf(side.get("analyzed_count"));
+			AdSituation adSituation = AdSituation.valueOf(side.get("ad_situation"));
+			AccountAnalysisWriter.insert(analysis, om, handle, OffsetDateTime.now(), model,
+					lastPostedAt, analyzedCount, copy, adSituation, vocabulary);
+			return true;
+		} catch (Exception e) {
+			log.warn("결과 라인 저장 실패: {}", GeminiBatchLines.abbreviate(line), e);
+			return false;
+		}
 	}
 }
