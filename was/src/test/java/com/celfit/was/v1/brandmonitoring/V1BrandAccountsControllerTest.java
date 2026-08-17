@@ -95,7 +95,11 @@ class V1BrandAccountsControllerTest {
 	}
 
 	private static BrandLinkRow link(long userId, long brandId, String username, String accountType) {
-		return new BrandLinkRow(brandId, userId, brandId, username, accountType, 12,
+		return link(userId, brandId, username, accountType, 12);
+	}
+
+	private static BrandLinkRow link(long userId, long brandId, String username, String accountType, int months) {
+		return new BrandLinkRow(brandId, userId, brandId, username, accountType, months,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
@@ -532,6 +536,8 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		then(commandClient).should().registerBrand("lizda_official", null, 12);
+		// 확장은 자산과 링크 둘 다에 반영된다(2026-08-17) — 새 연결은 아니므로 insertLink는 없다.
+		then(linkRepository).should().updateCollectionMonths(7L, 100L, 12);
 		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
@@ -559,18 +565,37 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 이미_연결된_계정의_같거나_작은_창_재등록은_monitoring_호출이_없다() throws Exception {
+	void 재등록이_명시한_collectionMonths는_링크에_그대로_반영된다_축소_허용() throws Exception {
+		// 이미 연결됨(자산 12) + 3개월 재-POST → 자산은 불변(monitoring 콜 0), 링크만 3으로 갱신.
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));   // 자산 12
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 3)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"username\": \"lizda_official\", \"collectionMonths\": 3}"))
 				.andExpect(status().isAccepted())
-				.andExpect(jsonPath("$.data.collectionMonths").value(12));   // 축소 없음 — 자산 값 유지
+				.andExpect(jsonPath("$.data.collectionMonths").value(3));   // 링크 값 — 자산(12) 아님
 
+		then(linkRepository).should().updateCollectionMonths(7L, 100L, 3);
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt());
+	}
+
+	@Test
+	void 재등록이_collectionMonths를_생략하면_링크_기간은_불변이다() throws Exception {
+		// 구 클라이언트의 필드 없는 재-POST가 3개월 링크를 12로 되돌리면 안 된다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 3)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted());
+
+		then(linkRepository).should(never()).updateCollectionMonths(anyLong(), anyLong(), anyInt());
 	}
 
 	@Test
@@ -781,7 +806,9 @@ class V1BrandAccountsControllerTest {
 		// 08-13 개정(08-12의 "확장 중 collecting"을 뒤집는다): 확장이 완주 시각을 리셋하므로
 		// 진행 여부는 status가 아니라 collectionCompletedAt == null이 알린다(FE 폴링 종료 조건).
 		// status는 collecting|ready|error 3값 고정이고, 데이터가 계속 서빙되므로 ready가 정확하다.
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		// collectionMonths는 링크 값이 정본이라(2026-08-17) 자산 6과 같은 값을 링크에도 세팅해 둔다.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 6)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(expandingRow(100L)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
@@ -798,14 +825,16 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 응답은_자산의_collectionMonths를_그대로_싣는다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+	void 응답의_collectionMonths는_자산이_아니라_링크_값이다() throws Exception {
+		// 자산은 12(다른 유저의 max)지만 이 유저 신청은 3 — 응답은 유저 신청값.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 3)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
-				.andExpect(jsonPath("$.data.collectionMonths").value(12))
+				.andExpect(jsonPath("$.data.collectionMonths").value(3))
 				// 다음 스윕 표기는 운영 브랜드 스윕 시각(KST 02:00) 고정 — 날짜부는 실행일에 따라 변하므로
 				// 시각 접미사만 검증한다(08-12 정정: 기본값 sweep-hour-kst=2).
 				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T02:00:00+09:00")));

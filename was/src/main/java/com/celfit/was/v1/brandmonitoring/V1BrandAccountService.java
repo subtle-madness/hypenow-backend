@@ -69,6 +69,9 @@ public class V1BrandAccountService {
 	 *
 	 * <p>collectionMonths(2026-08-12)는 자산 레벨 값이라 이미 연결된 브랜드 재요청도 <b>더 큰 값이면</b>
 	 * 기간 확장으로 monitoring을 다시 부른다(아래 게이트) — 같거나 작은 값은 현행 멱등 경로 그대로다.
+	 *
+	 * <p>collectionMonths는 두 곳에 반영된다(2026-08-17): 자산 확장 게이트(유저 간 max — 위 규칙)와
+	 * 링크의 표시 창(명시한 값 그대로 설정 — 축소도 반영, 생략하면 불변).
 	 */
 	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType,
 			Integer rawCollectionMonths) {
@@ -92,6 +95,11 @@ public class V1BrandAccountService {
 			if (months > findAccountOrThrow(brandId).collectionMonths()) {
 				String expandBrandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
 				translate(() -> commandClient.registerBrand(username, expandBrandName, months));
+			}
+			// 링크(유저 표시 창, 2026-08-17)는 명시한 값으로 그대로 — 축소 허용. 생략(null)은 불변이다:
+			// orDefault로 접힌 12를 쓰면 필드 없는 구 클라이언트 재-POST가 신청 기간을 12로 되돌린다.
+			if (rawCollectionMonths != null) {
+				linkRepository.updateCollectionMonths(userId, brandId, months);
 			}
 			return get(userId, brandId);
 		}
@@ -128,7 +136,7 @@ public class V1BrandAccountService {
 						userId, link.brandId());
 				continue;
 			}
-			accounts.add(assembler.toResponse(row.get(), link.accountType()));
+			accounts.add(assembler.toResponse(row.get(), link.accountType(), link.collectionMonths()));
 		}
 		long own = links.stream().filter(link -> BrandAccountType.OWN.equals(link.accountType())).count();
 		Map<String, Long> counts = new LinkedHashMap<>();
@@ -149,7 +157,7 @@ public class V1BrandAccountService {
 	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다. */
 	public BrandAccountResponse get(long userId, long brandId) {
 		BrandLinkRow link = requireOwnership(userId, brandId);
-		return assembler.toResponse(findAccountOrThrow(brandId), link.accountType());
+		return assembler.toResponse(findAccountOrThrow(brandId), link.accountType(), link.collectionMonths());
 	}
 
 	/**
