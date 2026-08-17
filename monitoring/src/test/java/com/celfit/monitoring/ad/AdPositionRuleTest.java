@@ -72,4 +72,46 @@ class AdPositionRuleTest {
 		// 이모지·결합 문자 등 서로게이트 페어 — 여기서는 최소한 일반 한글 문자열에서 char==grapheme임을 확인
 		assertThat(AdPositionRule.graphemeOffset("가나다#광고", 3)).isEqualTo(3);
 	}
+
+	@Test
+	void 보임_상한_경계값_125그래핌은_등호_포함_VISIBLE() {
+		// 순수 한글 filler라 grapheme == char index — 오프셋 계산을 단순하게 유지.
+		// 문구("광고입니다", 5그래핌) 끝이 정확히 125그래핌이 되도록 filler 120그래핌.
+		String filler = "가".repeat(120);
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		int end = start + "광고입니다".length();
+		assertThat(AdPositionRule.graphemeOffset(caption, end)).isEqualTo(125);
+		assertThat(AdPositionRule.evaluate(caption, start, end)).isEqualTo(AdPositionRule.Band.VISIBLE);
+	}
+
+	@Test
+	void 접힘_하한_경계값_220그래핌은_strict초과가_아니라_GRAY() {
+		// startGrapheme > 220이 strict 조건이므로 정확히 220은 HIDDEN이 아니라 GRAY.
+		String filler = "가".repeat(220);
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.graphemeOffset(caption, start)).isEqualTo(220);
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
+				.isEqualTo(AdPositionRule.Band.GRAY);
+	}
+
+	@Test
+	void 접힘_하한_221그래핌은_HIDDEN() {
+		String filler = "가".repeat(221);
+		String caption = filler + "광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.graphemeOffset(caption, start)).isEqualTo(221);
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
+				.isEqualTo(AdPositionRule.Band.HIDDEN);
+	}
+
+	@Test
+	void 문구가_정확히_2번째_줄에서_시작하고_보임_상한_이내면_VISIBLE() {
+		// "1번째 줄\n" 다음이 2번째 줄 시작 — startLine == VISIBLE_LINE_MAX(2) 경계 확인.
+		String caption = "1번째 줄\n광고입니다";
+		int start = caption.indexOf("광고입니다");
+		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
+				.isEqualTo(AdPositionRule.Band.VISIBLE);
+	}
 }
