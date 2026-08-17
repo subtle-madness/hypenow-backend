@@ -1,6 +1,7 @@
 package com.celfit.analytics.admin;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
+import com.celfit.analytics.analyze.AccountBatchCollectJob;
 import com.celfit.analytics.analyze.ContentSynthesisRefreshJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.JobResult;
@@ -32,6 +33,7 @@ public class AnalyticsJobService {
 	private final ObjectProvider<CommentClassificationJob> classifyJob;
 	private final ObjectProvider<ContentAnalysisJob> analyzeJob;
 	private final ObjectProvider<com.celfit.analytics.analyze.ContentBatchCollectJob> batchCollectJob;
+	private final ObjectProvider<AccountBatchCollectJob> accountBatchCollectJob;
 	private final ObjectProvider<AccountAnalysisJob> accountAnalyzeJob;
 	private final ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob;
 	private final ObjectProvider<ImageArchiveJob> archiveJob;
@@ -44,6 +46,7 @@ public class AnalyticsJobService {
 			ObjectProvider<CommentClassificationJob> classifyJob,
 			ObjectProvider<ContentAnalysisJob> analyzeJob,
 			ObjectProvider<com.celfit.analytics.analyze.ContentBatchCollectJob> batchCollectJob,
+			ObjectProvider<AccountBatchCollectJob> accountBatchCollectJob,
 			ObjectProvider<AccountAnalysisJob> accountAnalyzeJob,
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
@@ -56,6 +59,7 @@ public class AnalyticsJobService {
 		this.classifyJob = classifyJob;
 		this.analyzeJob = analyzeJob;
 		this.batchCollectJob = batchCollectJob;
+		this.accountBatchCollectJob = accountBatchCollectJob;
 		this.accountAnalyzeJob = accountAnalyzeJob;
 		this.synthesisRefreshJob = synthesisRefreshJob;
 		this.archiveJob = archiveJob;
@@ -131,7 +135,13 @@ public class AnalyticsJobService {
 			}
 			case ANALYZE -> analyzeJob.getObject().run();
 			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
-			case BATCH_COLLECT -> batchCollectJob.getObject().run();
+			// 수거는 종류 불문 한 트리거로 — 각 잡은 자기 pending이 없으면 no-op라 겹쳐 돌아도 무해.
+			case BATCH_COLLECT -> {
+				JobResult content = batchCollectJob.getObject().run();
+				JobResult account = accountBatchCollectJob.getObject().run();
+				yield new JobResult(content.processed() + account.processed(),
+						content.failed() + account.failed(), false);
+			}
 			case ACCOUNT_ANALYZE -> accountAnalyzeJob.getObject().run();
 			case SYNTHESIS_REFRESH -> synthesisRefreshJob.getObject().run();
 			case ARCHIVE -> archiveJob.getObject().run();

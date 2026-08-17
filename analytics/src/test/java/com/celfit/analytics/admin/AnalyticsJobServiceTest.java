@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.celfit.analytics.analyze.AccountAnalysisJob;
+import com.celfit.analytics.analyze.AccountBatchCollectJob;
 import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.archive.ImageArchiveJob;
@@ -33,13 +34,17 @@ class AnalyticsJobServiceTest {
 	private final MirrorRegistry registry = new MirrorRegistry(List.of());
 	private final ContentAnalysisJob analyzeJob = mock(ContentAnalysisJob.class);
 	private final ImageArchiveJob archiveJob = mock(ImageArchiveJob.class);
+	private final com.celfit.analytics.analyze.ContentBatchCollectJob contentBatchCollectJob =
+			mock(com.celfit.analytics.analyze.ContentBatchCollectJob.class);
+	private final AccountBatchCollectJob accountBatchCollectJob = mock(AccountBatchCollectJob.class);
 	private final JobProgressRegistry progress = new JobProgressRegistry();
 	private final RunHistory history = new RunHistory(50);
 
 	private AnalyticsJobService service() {
 		return new AnalyticsJobService(lock, new SyncTaskExecutor(), mirrorJob, registry,
 				provider(mock(CommentClassificationJob.class)), provider(analyzeJob),
-				provider(mock(com.celfit.analytics.analyze.ContentBatchCollectJob.class)),
+				provider(contentBatchCollectJob),
+				provider(accountBatchCollectJob),
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(archiveJob),
@@ -134,6 +139,7 @@ class AnalyticsJobServiceTest {
 		AnalyticsJobService service = new AnalyticsJobService(lock, new SyncTaskExecutor(),
 				mirrorJob, registry, provider(mock(CommentClassificationJob.class)),
 				lazyProvider, provider(mock(com.celfit.analytics.analyze.ContentBatchCollectJob.class)),
+				provider(mock(AccountBatchCollectJob.class)),
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)),
@@ -141,5 +147,17 @@ class AnalyticsJobServiceTest {
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);
+	}
+
+	@Test
+	void batch_collect_트리거하면_콘텐츠와_계정_수거_결과를_합산() {
+		when(contentBatchCollectJob.run()).thenReturn(new JobResult(3, 1, false));
+		when(accountBatchCollectJob.run()).thenReturn(new JobResult(2, 0, false));
+		var result = service().trigger(JobName.BATCH_COLLECT, TriggerType.MANUAL);
+		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.BATCH_COLLECT);
+		assertThat(run.processed()).isEqualTo(5);
+		assertThat(run.failed()).isEqualTo(1);
 	}
 }
