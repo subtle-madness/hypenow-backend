@@ -5,6 +5,7 @@ import com.celfit.contract.analysis.AccountContentPoint;
 import com.celfit.contract.analysis.AccountSummary;
 import com.celfit.contract.analysis.Content;
 import com.celfit.contract.analysis.ContentComment;
+import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.contract.analysis.LandingStats;
 import java.util.List;
 import javax.sql.DataSource;
@@ -23,7 +24,8 @@ public class MirrorConfig {
 	}
 
 	/**
-	 * 미러 대상 등록부 — 서빙 뷰 3종(B1) + 인플루언서 상세 2종(C1) + 랜딩 통계 1종(P3).
+	 * 미러 대상 등록부 — 서빙 뷰 3종(B1) + 인플루언서 상세 2종(C1) + 랜딩 통계 1종(P3)
+	 * + 크롤링 비용 1종(2026-08-13).
 	 * 컬럼 계약은 각 record의 Javadoc과 V1·V10·V32 DDL 참조.
 	 *
 	 * <p>account_category_stats는 미러 대상이 아니다(07-21 V35) — 소스인 캡션 분류가 analysis DB에
@@ -43,6 +45,7 @@ public class MirrorConfig {
 				new MirrorSpec<>("v_content_comments", "content_comments", ContentComment.class),
 				new MirrorSpec<>("v_account_summaries", "account_summaries", AccountSummary.class),
 				new MirrorSpec<>("v_account_content_series", "account_content_series", AccountContentPoint.class),
-				new MirrorSpec<>("v_landing_stats", "landing_stats", LandingStats.class)));
+				new MirrorSpec<>("v_landing_stats", "landing_stats", LandingStats.class),
+				new MirrorSpec<>("v_crawl_call_daily", "crawl_call_daily", CrawlCallDaily.class)));
 	}
 }

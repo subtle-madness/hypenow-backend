@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
+import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
@@ -39,7 +40,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
     SelfWithHikerFallbackProfileFetcher fetcher(InstagramWebClient web, HikerHttp http) {
         var self = new SelfProfileFetcher(web, passthrough(), om, Duration.ZERO);
-        var hiker = new HikerMobileProfileFetcher(http, passthrough(), om);
+        var hiker = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
         return new SelfWithHikerFallbackProfileFetcher(self, hiker, passthrough());
     }
 

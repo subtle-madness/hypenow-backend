@@ -20,9 +20,8 @@ import org.springframework.stereotype.Component;
  * (CountingHikerHttp + BrandCallContext, 2026-08-12 설계 §2) — 정의를 맞춰 둔다.
  *
  * <p><b>전파는 명시적이다</b>: ThreadLocal은 스레드 경계를 넘지 못한다. 워커 풀로 팬아웃하는
- * 수집기(HikerMobileProfileFetcher 등)의 콜은 이 카운터에 잡히지 않으므로, 그런 경로가
- * 실패 경로의 카운트를 필요로 하게 되면 태스크 제출 쪽이 sink를 직접 넘겨야 한다. 현재는
- * 팬아웃 수집기가 계정 단위 예외를 전부 삼켜 실행 자체가 실패로 끝나지 않아 문제가 없다.
+ * 수집기(HikerMobileProfileFetcher 등)는 제출하는 태스크를 {@link #propagate(Runnable)}로
+ * 감싸야 그 콜이 실행 몫으로 잡힌다. sink가 {@link AtomicInteger}라 워커들이 동시에 +1해도 안전하다.
  */
 @Component
 public class PaidCallCounter {
@@ -46,6 +45,24 @@ public class PaidCallCounter {
                 current.set(prev);
             }
         }
+    }
+
+    /**
+     * 워커 풀로 넘길 태스크를 현재 스코프에 묶는다 — <b>제출하는 스레드에서</b> 호출해야 한다
+     * (그 시점에 sink가 ThreadLocal에 걸려 있다). 워커 스레드는 이 스코프를 다시 열어 실행하므로
+     * 팬아웃한 콜도 제출자의 실행 몫으로 잡힌다.
+     *
+     * <p>스코프 밖에서 부르면 태스크를 그대로 돌려준다 — 감쌀 대상이 없다.
+     */
+    public Runnable propagate(Runnable task) {
+        AtomicInteger sink = current.get();
+        if (sink == null) {
+            return task;
+        }
+        return () -> scoped(sink, () -> {
+            task.run();
+            return null;
+        });
     }
 
     /** 과금된 콜 1건. 스코프 밖 호출(어드민 단발 조회 등)은 집계 대상이 아니라 no-op. */

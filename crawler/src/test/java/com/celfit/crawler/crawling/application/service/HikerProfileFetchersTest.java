@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
+import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
@@ -35,7 +36,7 @@ class HikerProfileFetchersTest {
             String u = path.substring(path.lastIndexOf('=') + 1);
             return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"1\"}}";
         };
-        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+        var f = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
 
         var ex = f.fetch(JobName.QUALIFY, List.of("a", "b", "c", "d"), TriggerType.MANUAL);
 
@@ -46,7 +47,7 @@ class HikerProfileFetchersTest {
         HikerHttp http = path -> {
             throw new NotFoundException("Hiker HTTP 404: {\"detail\":\"Entries not found\"}");
         };
-        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+        var f = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
 
         var ex = f.fetch(JobName.QUALIFY, List.of("gone"), TriggerType.MANUAL);
 
@@ -60,7 +61,7 @@ class HikerProfileFetchersTest {
             return """
                 {"user":{"username":"tem.duck","pk":"74756186520","follower_count":256559}}""";
         };
-        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+        var f = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
         assertThat(f.source()).isEqualTo(ProfileSource.HIKER_MOBILE);
         assertThat(f.rawSource()).isEqualTo(RawSource.HIKER_MOBILE);
         var ex = f.fetch(JobName.QUALIFY, List.of("tem.duck"), TriggerType.MANUAL);
@@ -80,7 +81,7 @@ class HikerProfileFetchersTest {
             return """
                 {"user":{"username":"tem.duck","pk":"74756186520","follower_count":256559}}""";
         };
-        var f = new HikerMobileProfileFetcher(http, passthrough(), om);
+        var f = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
         var ex = f.fetch(JobName.QUALIFY, List.of("bad.user", "tem.duck"), TriggerType.MANUAL);
         assertThat(calls.get()).isEqualTo(2);  // 첫 계정 실패해도 두번째 계정 호출까지 진행
         assertThat(ex.items()).hasSize(1);
