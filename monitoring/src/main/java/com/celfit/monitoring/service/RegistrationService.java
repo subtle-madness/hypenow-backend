@@ -121,6 +121,15 @@ public class RegistrationService {
 		} catch (RuntimeException e) {
 			log.warn("댓글 수집 실패(격리) — 게시물 {}: {}", shortCode, e.toString());
 		}
+		// 게시자 팔로워도 등록 직후 채운다 — 스윕에만 맡기면 다음 새벽까지 최대 24시간 비어
+		// 브랜드 직접 등록 카드의 팔로워·팔로워 규모 필터가 그동안 빠진다(08-18, 댓글과 같은 처치).
+		// 평생 1회 규칙은 유지된다: 이미 profile_snapshot이 있는 계정이면 콜 없이 건너뛰고,
+		// 여기서 실패하면 행이 안 생겨 다음 스윕(collectProfileOnlyOnce)이 기존 그대로 백스톱이다.
+		try {
+			collect.collectProfileForRegistration(post.username());
+		} catch (RuntimeException e) {
+			log.warn("게시자 프로필 수집 실패(격리) — 계정 {}: {}", post.username(), e.toString());
+		}
 		long id = targets.insert(TargetType.POST, cmd.userId(), post.username(), shortCode, null,
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);

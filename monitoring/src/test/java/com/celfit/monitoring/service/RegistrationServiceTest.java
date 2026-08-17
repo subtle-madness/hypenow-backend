@@ -76,11 +76,18 @@ class RegistrationServiceTest {
 	/** 창 밖 단건 재시도 당첨 세션의 추가 필드 — 저장 5·공유 9·리포스트 7. */
 	private static final String SINGLE_HIT = "\"save_count\":5,\"reshare_count\":9,\"media_repost_count\":7";
 
+	/** 게시자 프로필 응답(/v2/user/by/username) — follower_count 777 고정. */
+	private static final String PROFILE_BODY = """
+			{"user":{"pk":424242,"username":"owner1","is_private":false,
+			"full_name":"Owner One","profile_pic_url":"https://img/owner1.jpg",
+			"follower_count":777,"following_count":10,"media_count":42},"status":"ok"}""";
+
 	JdbcTemplate db;
 	List<String> calls;
 	ArrayDeque<String> scriptedClips;
 	ArrayDeque<String> scriptedSingles;
 	String singleBody;
+	String profileBody;
 	RegistrationService registration;
 	/** 콜 집계 스코프(비용 계상, 2026-08-12 범위 확장) — 등록 서비스·데코레이터가 공유한다. */
 	final TargetCallContext callContext = new TargetCallContext();
@@ -93,11 +100,15 @@ class RegistrationServiceTest {
 		calls = new ArrayList<>();
 		scriptedClips = new ArrayDeque<>();
 		scriptedSingles = new ArrayDeque<>();
+		profileBody = PROFILE_BODY;
 		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 등록 콜의 유저 귀속까지 검증.
 		var client = new HikerClient(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/media/comments")) {
 				return "{\"response\":{\"comments\":[],\"has_more_comments\":false},\"next_page_id\":null}";
+			}
+			if (path.startsWith("/v2/user/by/username")) {
+				return profileBody;
 			}
 			if (path.startsWith("/v2/user/clips")) {
 				return scriptedClips.isEmpty() ? clipsMiss("none") : scriptedClips.poll();
@@ -203,6 +214,53 @@ class RegistrationServiceTest {
 		assertThat(clipsCalls()).isEqualTo(1);          // 당첨 즉시 중단
 		assertThat(snapshotMetric("shares", "P905")).isEqualTo(9L);
 		assertThat(snapshotMetric("saves", "P905")).isEqualTo(4L);   // 단건 관측 유지(non-null 우선)
+	}
+
+	private long profileCalls() {
+		return calls.stream().filter(p -> p.startsWith("/v2/user/by/username")).count();
+	}
+
+	@Test
+	void 등록_직후_게시자_프로필_1콜로_팔로워가_채워진다() {
+		singleBody = single("P910", SINGLE_HIT);
+
+		var result = registerPost("P910");
+
+		assertThat(result.status()).isEqualTo("TRACKING");
+		assertThat(profileCalls()).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT followers FROM profile_snapshot WHERE username='owner1'", Long.class))
+				.isEqualTo(777L);
+	}
+
+	@Test
+	void 프로필_스냅샷이_이미_있으면_등록_시_프로필_콜이_나가지_않는다() {
+		// 스윕의 평생 1회 규칙과 같은 기준 — 어떤 경로로든 이미 채워진 계정에는 콜을 쓰지 않는다.
+		db.update("INSERT INTO profile_snapshot (username, captured_on, followers) VALUES ('owner1', CURRENT_DATE, 555)");
+		singleBody = single("P911", SINGLE_HIT);
+
+		registerPost("P911");
+
+		assertThat(profileCalls()).isZero();
+		assertThat(db.queryForObject(
+				"SELECT followers FROM profile_snapshot WHERE username='owner1'", Long.class))
+				.isEqualTo(555L);
+	}
+
+	@Test
+	void 프로필_수집_실패해도_등록은_성공한다() {
+		// user 노드 없는 응답 → HikerFetchException — best-effort라 등록은 그대로 201이어야 한다.
+		profileBody = "{\"status\":\"fail\"}";
+		singleBody = single("P912", SINGLE_HIT);
+
+		var result = registerPost("P912");
+
+		assertThat(result.status()).isEqualTo("TRACKING");
+		assertThat(profileCalls()).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM profile_snapshot WHERE username='owner1'", Long.class)).isZero();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM target WHERE short_code='P912'", Long.class)).isEqualTo(1L);
 	}
 
 	@Test

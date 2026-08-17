@@ -147,6 +147,18 @@ public class CollectService {
 		return profile;
 	}
 
+	/**
+	 * 프로필 1회 수집(등록 전용) — {@code profile_snapshot} 행이 없는 계정만 1콜로 채운다.
+	 * 스윕의 평생 1회 규칙({@code DailySweepJob.collectProfileOnlyOnce})과 같은 기준이라, 이미
+	 * 채워진 계정(ACCOUNT 캠페인 공존·재등록 등)에는 콜을 쓰지 않는다. 등록 시점에 실패하면
+	 * 행이 안 생기므로 다음 새벽 스윕의 같은 판정이 그대로 백스톱이 된다.
+	 */
+	public void collectProfileForRegistration(String username) {
+		if (!snapshots.hasProfileSnapshot(username)) {
+			collectProfileOnly(username);
+		}
+	}
+
 	/** 게시물 1회 수집(스윕용) — 스냅샷 upsert. FB 몫 재시도 없음. */
 	public PostInfo collectPost(String shortCode) {
 		PostInfo post = hiker.fetchPost(shortCode);

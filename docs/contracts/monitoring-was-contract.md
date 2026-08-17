@@ -327,11 +327,13 @@ post_snapshot(username, short_code, captured_on date, content_type REELS|FEED,
   `last_uploaded_at`은 이 경로로 채울 수 없어 POST 전용 계정에서는 계속 null로 남는다** —
   단건 응답은 게시물 1건의 게시일만 알 뿐 계정 열거 전체의 최댓값(계정 갈래의 정의)을 알 수 없다.
 - **`followers`는 07-31(트랙 II 후속)부터 POST 전용 계정에서도 채워지되, "최초 1회만" 수집되고
-  이후 갱신되지 않는다** — `DailySweepJob`이 `profile_snapshot` 행이 아직 없는 계정에 한해
-  프로필을 1콜(열거 없음) 조회해 채운다. was가 서빙하는 `followers`는 시계열이 아니라 최신 1행
-  단일값이라 매일 갱신할 실익이 없어 의도적으로 최초 수집 시점 값에 고정한다(계정당 평생 약
-  1콜). 이 조회는 best-effort라 실패해도 캠페인 생존 판정에 영향이 없고, 실패한 계정은 다음
-  스윕에서 (여전히 행이 없으므로) 다시 시도된다.
+  이후 갱신되지 않는다** — 08-18부터는 그 1회를 **등록 직후에 먼저 시도**한다
+  (`RegistrationService.registerPost` → `CollectService.collectProfileForRegistration`,
+  `profile_snapshot` 행이 없는 계정만 1콜). 등록 시점 수집이 실패하면 행이 안 생기므로
+  `DailySweepJob`의 기존 판정(행 없는 계정만 프로필 1콜)이 그대로 백스톱으로 다시 시도한다.
+  was가 서빙하는 `followers`는 시계열이 아니라 최신 1행 단일값이라 매일 갱신할 실익이 없어
+  의도적으로 최초 수집 시점 값에 고정한다(계정당 평생 약 1콜). 이 조회는 best-effort라
+  실패해도 등록·캠페인 생존 판정에 영향이 없다.
   was는 세 필드(`display_name`·`profile_image_url`·`followers`) 모두, 그리고 `last_uploaded_at`도
   여전히 null 가능성을 전제해야 한다(프론트 계약상 nullable 유지).
 

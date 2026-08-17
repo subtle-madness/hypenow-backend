@@ -68,6 +68,21 @@ was가 서빙하는 `followers`는 `MonitoringReadRepository.findLatestProfileSn
 그대로 노출된다. 실패해도 best-effort라 캠페인 생존 판정에는 영향이 없다(수집이 안 됐을 뿐,
 캠페인은 계속 살아있는 것으로 취급).
 
+## 후속 결정(08-18) — 최초 1회를 등록 직후로 앞당김
+
+07-31 결정은 수집 시점을 스윕에만 뒀는데, 브랜드 태그 모니터링 직접 등록(§6-4)이 이 레거시
+등록 경로를 재사용하면서 "등록 직후 ~ 다음 새벽 스윕 사이 최대 24시간 팔로워 공백"이 카드
+표시·팔로워 규모 필터에서 눈에 보이는 결함이 됐다(08-17 관측 — 07-31 당시엔 팔로워를 1급으로
+노출하는 표면이 없었다). 댓글이 07-31에 받은 처치(등록 즉시 best-effort 수집, 스윕 백스톱)를
+팔로워에도 동형 적용:
+
+- `CollectService.collectProfileForRegistration(username)` 신설 — `hasProfileSnapshot` 가드 후
+  `collectProfileOnly` 호출(평생 1회 규칙 유지: ACCOUNT 캠페인 공존·재등록 계정엔 콜 없음).
+- `RegistrationService.registerPost`가 댓글 수집 직후 best-effort로 호출(실패는 log.warn만,
+  등록은 성공 유지). **스윕의 `collectProfileOnlyOnce`는 무변경** — 등록 시점 실패 시 행이
+  없으므로 기존 판정 그대로 다음 스윕이 백스톱(재시도 로직 신설 없음, 사용자 지시).
+- 테스트: `RegistrationServiceTest` 3건(등록 직후 1콜 채움·기보유 계정 무콜·실패해도 등록 성공).
+
 **되돌리는 법**: 이 후속 결정만 되돌리려면 신설 메서드 3개(`CollectService.collectProfileOnly`·
 `SnapshotWriter.saveProfileOnly`·`SnapshotRepository.hasProfileSnapshot`)와
 `DailySweepJob.sweepAccount`의 조건부 호출 블록(`collectProfileOnlyOnce`)만 지우면 된다 —
