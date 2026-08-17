@@ -120,10 +120,13 @@ class AccountDeletionServiceIntegrationTest extends IntegrationTest {
 	/**
 	 * 조직·엔터프라이즈 entitlement(2026-08-17) 발견 결함 회귀 — app.organization_members.user_id FK에
 	 * ON DELETE CASCADE가 없으면 조직 멤버가 탈퇴할 때 users DELETE가 FK 위반으로 실패한다
-	 * (V20260817030344__organizations.sql에서 수정). 탈퇴는 정상 완료되고 멤버십 행도 함께 사라져야 한다.
+	 * (V20260817030344__organizations.sql에서 수정). 탈퇴는 정상 완료되고 멤버십 행도 함께 사라져야
+	 * 한다. CASCADE로 사라지는 행이라 archive.archived_rows 이관까지 확인해야 아카이브 가드
+	 * (ArchiveCascadeReachabilityTest)가 요구하는 "CASCADE 삭제 전 반드시 이관" 계약을 검증한 게 된다
+	 * (ArchiveTables.ORGANIZATION_MEMBERS·ACCOUNT_DELETION_ORDER 배선).
 	 */
 	@Test
-	void 조직_멤버인_유저의_탈퇴는_성공하고_멤버십_행도_함께_사라진다() {
+	void 조직_멤버인_유저의_탈퇴는_성공하고_멤버십_행은_CASCADE로_사라지되_아카이브에는_남는다() {
 		long orgId = jdbcClient.sql("""
 				INSERT INTO app.organizations (name, plan) VALUES ('탈퇴 테스트 조직', 'ENTERPRISE') RETURNING id
 				""")
@@ -142,5 +145,15 @@ class AccountDeletionServiceIntegrationTest extends IntegrationTest {
 				.query(Long.class)
 				.single();
 		assertThat(remaining).isZero();
+
+		Long archivedCount = jdbcClient.sql("""
+				SELECT count(*) FROM archive.archived_rows
+				WHERE table_name = 'app.organization_members' AND user_id = :userId
+				  AND archived_reason = 'ACCOUNT_DELETION'
+				""")
+				.param("userId", userId)
+				.query(Long.class)
+				.single();
+		assertThat(archivedCount).isEqualTo(1L);
 	}
 }

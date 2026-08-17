@@ -39,7 +39,12 @@ class ArchiveInventoryTest extends IntegrationTest {
 			Map.entry("signup_events", "삭제 경로 없음. 단 email + detail->>'userId'를 보존해 "
 					+ "탈퇴 유저의 가명화 아카이브를 재식별할 수 있다(설계 §4-4)"),
 			Map.entry("inquiries", "삭제 경로 없음"),
-			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"));
+			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"),
+			Map.entry("organizations", "조직/계약 마스터 데이터(설계 2026-08-17) — 유저 개인 데이터가 아니라 "
+					+ "탈퇴와 무관, 삭제 경로 자체가 없다"),
+			Map.entry("organization_feature_overrides", "조직 단위 기능 오버라이드 설정값(설계 2026-08-17) — "
+					+ "유저 개인 데이터가 아니라 탈퇴와 무관, 삭제 경로 없음(조직 삭제 시에만 CASCADE로 사라지는데 "
+					+ "조직 삭제 API 자체가 아직 없다)"));
 
 	@Autowired
 	JdbcClient jdbcClient;

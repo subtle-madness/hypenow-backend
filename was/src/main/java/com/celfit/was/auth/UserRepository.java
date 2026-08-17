@@ -191,9 +191,10 @@ public class UserRepository {
 	}
 
 	/**
-	 * CASCADE로 사라지는 자식 8종(campaigns·items·registrations·digests·email_opt_outs·
-	 * registration_entries·notice_seen·brand_monitorings)은 DB가 지우므로 삭제 건수를 관측할 수
-	 * 없다 — 코드가 직접 DELETE하는 4개(saved 2종·brand_direct_posts·users)만 이관 건수와 대조한다.
+	 * CASCADE로 사라지는 자식 9종(campaigns·items·registrations·digests·email_opt_outs·
+	 * registration_entries·notice_seen·brand_monitorings·organization_members)은 DB가 지우므로
+	 * 삭제 건수를 관측할 수 없다 — 코드가 직접 DELETE하는 4개(saved 2종·brand_direct_posts·users)만
+	 * 이관 건수와 대조한다.
 	 */
 	private void deleteAndVerify(ArchiveTable table, Map<ArchiveTable, Integer> archived, String sql, long id) {
 		Integer archivedCount = archived.get(table);

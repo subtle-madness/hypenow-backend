@@ -95,6 +95,16 @@ public final class ArchiveTables {
 			List.of(), "t.user_id = :userId");
 
 	/**
+	 * 조직 멤버십(설계 2026-08-17 조직·엔터프라이즈 entitlement) — users FK가 ON DELETE CASCADE라
+	 * 탈퇴 시 명시 삭제 없이 users DELETE에 딸려 사라진다(MONITORING_CAMPAIGNS 등과 같은 방식,
+	 * saved 2종·brand_direct_posts처럼 순서 삭제 목록에 넣을 필요는 없다). 이관만 ACCOUNT_DELETION_ORDER
+	 * 루프가 삭제 전에 미리 해둔다.
+	 */
+	public static final ArchiveTable ORGANIZATION_MEMBERS = new ArchiveTable(
+			"app.organization_members", List.of("org_id", "user_id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
 	 * 어드민 작성 제품 공지. users FK가 없어 탈퇴와 무관 — 어드민 개별 삭제(NoticeRepository.delete,
 	 * ArchiveReason.NOTICE_DELETED)로만 아카이브된다. userScopeWhere는 호출되지 않는다("false"로
 	 * 막아둔다 — 계정 삭제 경로 자체가 없다).
@@ -127,6 +137,7 @@ public final class ArchiveTables {
 			NOTICE_SEEN,
 			BRAND_MONITORINGS,
 			BRAND_DIRECT_POSTS,
+			ORGANIZATION_MEMBERS,
 			NOTICES,
 			NOTICE_ITEMS);
 
@@ -148,6 +159,7 @@ public final class ArchiveTables {
 			NOTICE_SEEN,
 			BRAND_MONITORINGS,
 			BRAND_DIRECT_POSTS,
+			ORGANIZATION_MEMBERS,
 			USERS);
 
 	private ArchiveTables() {
