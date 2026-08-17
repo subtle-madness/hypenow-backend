@@ -145,6 +145,13 @@ BEGIN
   b := analytics.hype_score_raw('feed', NULL, 220, 0, 5000, 0);
   ASSERT a = b, format('댓글 가중 오버라이드 3(롤백 경로): %s != %s', a, b);
   DELETE FROM app_setting WHERE key = 'analytics.hype-comment-weight';
+
+  -- 오버라이드 0 = 댓글 완전 배제 — wc는 가중치 계열이라 0이 유효 운영값(NULLIF 방어 없음).
+  INSERT INTO app_setting(key, value) VALUES ('analytics.hype-comment-weight', '0');
+  a := analytics.hype_score_raw('feed', NULL, 100, 40, 5000, 0);
+  b := analytics.hype_score_raw('feed', NULL, 100, 0, 5000, 0);
+  ASSERT a = b, format('댓글 가중 오버라이드 0(댓글 항 배제): %s != %s', a, b);
+  DELETE FROM app_setting WHERE key = 'analytics.hype-comment-weight';
 END $$;
 
 -- v_contents 일관성 회귀(2026-07-30, 스펙 §10): hype_score(구, 값·의미 불변)와 hype_score_precise

@@ -46,8 +46,9 @@ likes + comments×3   →   likes + comments×w
 w = app_setting 'analytics.hype-comment-weight' (COALESCE 기본 1.5)
 ```
 
-- 키 관용구는 기존 하입 튜닝 키(e0·f0·wr·we)와 동일: **미설정/0이면 함수 내 COALESCE
-  기본값, Flyway 시드 없음, 단일 소스는 함수 기본값.** `NULLIF(...,0)` 방어 포함.
+- 키 관용구는 가중치 계열(wr·we)과 동일한 순수 COALESCE 관용구 — 0은 "댓글 배제"라는
+  유효 운영값이므로 NULLIF 방어를 두지 않는다(e0·f0의 NULLIF는 0 나눗셈 방어라 성격이
+  다름). **미설정이면 함수 내 COALESCE 기본값, Flyway 시드 없음, 단일 소스는 함수 기본값.**
 - 운영에서 키에 `3`을 넣으면 현행 동작으로 즉시 롤백된다(뷰 재적용·재배포 불필요).
   단, 앵커 기본값은 w=1.5 기준으로 교체되므로 w=3 롤백은 "순위 응급 복원"용이지
   척도까지 완전 복원하려면 뷰 원복이 필요하다 — 롤백 시 이 한계를 인지할 것.

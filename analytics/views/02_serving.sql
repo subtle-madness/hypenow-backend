@@ -41,7 +41,7 @@ LANGUAGE sql STABLE AS $$
       COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-feed-f0'),0),0.03)           AS f0,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reach-weight'),1)                   AS wr,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-comment-weight'),0),1.5)      AS wc,
+      COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-comment-weight'),1.5)               AS wc,
       CASE WHEN content_type='reels'
         THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1373)
         ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0447) END  AS a05,
