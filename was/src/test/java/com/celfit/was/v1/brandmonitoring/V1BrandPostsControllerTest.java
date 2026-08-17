@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -511,6 +512,44 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
+	// ---------- 취소(2026-08-17 FE 요청) ----------
+
+	@Test
+	void 취소는_서비스에_위임하고_204를_돌려준다() throws Exception {
+		mockMvc.perform(post("/v1/brand-monitoring/posts/DEF/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(directPostService).should().cancel(7L, "DEF");
+	}
+
+	@Test
+	void tagged_행_취소는_400_TAGGED_POST_NOT_CANCELABLE로_전달된다() throws Exception {
+		willThrow(V1ApiException.badRequest("TAGGED_POST_NOT_CANCELABLE", "태그로 발견된 게시물은 취소할 수 없어요."))
+				.given(directPostService).cancel(7L, "AAA");
+
+		mockMvc.perform(post("/v1/brand-monitoring/posts/AAA/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("TAGGED_POST_NOT_CANCELABLE"));
+	}
+
+	@Test
+	void 대상_없는_취소는_404다() throws Exception {
+		willThrow(V1ApiException.notFound("대상을 찾을 수 없습니다.")).given(directPostService).cancel(7L, "ZZZ");
+
+		mockMvc.perform(post("/v1/brand-monitoring/posts/ZZZ/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void 취소_인증이_없으면_401이다() throws Exception {
+		// CSRF 없는 POST는 인증 필터보다 먼저 걸려 403이다 — 인증 부재를 순수하게 보려면 csrf()는 붙이고
+		// 인증만 뺀다(다른 v1 POST 401 테스트와 같은 관용구, 예: V1BrandAccountsControllerTest에는
+		// 해당 케이스가 없어 여기서 새로 정한다).
+		mockMvc.perform(post("/v1/brand-monitoring/posts/DEF/cancel").with(csrf()))
+				.andExpect(status().isUnauthorized());
+	}
+
 	// ---------- 스텁 ----------
 
 	/**
@@ -575,7 +614,7 @@ class V1BrandPostsControllerTest {
 	private static BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
 		return new BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer", "해시태그 인플루언서",
 				"https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption, "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
 	}
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {

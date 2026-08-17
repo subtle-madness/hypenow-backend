@@ -75,9 +75,9 @@ public class BrandHashtagCollectService {
 
 	/**
 	 * 브랜드 1개분 해시태그 스윕 — 태그가 없으면 콜 0으로 즉시 반환한다(스펙 §3-1).
-	 * 제외 문자열·브랜드 소개(biography)·멘션 정규식은 태그 전체가 공유하는 판정 컨텍스트라
-	 * 태그 루프 진입 전 1회씩만 준비한다(biography는 BrandRepository 조회 1회, HTTP 콜 아님 —
-	 * 멘션 Pattern.compile도 게시물마다가 아니라 여기서 1회만).
+	 * 브랜드 소개(biography)·멘션 정규식은 태그 전체가 공유하는 판정 컨텍스트라 태그 루프 진입 전
+	 * 1회씩만 준비한다(biography는 BrandRepository 조회 1회, HTTP 콜 아님 — 멘션 Pattern.compile도
+	 * 게시물마다가 아니라 여기서 1회만).
 	 */
 	public void sweep(BrandRow brand) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 해시태그 recent 열거 콜도 이 브랜드 몫으로 계상된다.
@@ -89,7 +89,6 @@ public class BrandHashtagCollectService {
 		if (tags.isEmpty()) {
 			return;
 		}
-		List<String> exclusions = repo.findExclusionTerms(brand.id());
 		String biography = brands.findBiography(brand.id());
 		Instant windowCutoff = Instant.now().minus(Duration.ofDays(windowDays));
 		Pattern mentionPattern = mentionPattern(brand.username());
@@ -97,8 +96,7 @@ public class BrandHashtagCollectService {
 
 		int savedTotal = 0;
 		for (String tag : tags) {
-			savedTotal += sweepTag(brand, tag, tags, exclusions, biography, windowCutoff,
-					mentionPattern, insertedThisRun);
+			savedTotal += sweepTag(brand, tag, tags, biography, windowCutoff, mentionPattern, insertedThisRun);
 		}
 		log.info("브랜드 해시태그 스윕 완료 — {} 태그 {}개, 신규 저장 {}건",
 				brand.username(), tags.size(), savedTotal);
@@ -108,8 +106,8 @@ public class BrandHashtagCollectService {
 	 * 태그 1개분 recent 열거 — maxPages까지 순회하되, 페이지에 "이전부터 있던" 게시물이 하나라도
 	 * 있으면 그 페이지의 신규만 처리하고 중단한다. 빈 페이지·커서 null도 자연 종료.
 	 */
-	private int sweepTag(BrandRow brand, String tag, List<String> allTags, List<String> exclusions,
-			String biography, Instant windowCutoff, Pattern mentionPattern, Set<String> insertedThisRun) {
+	private int sweepTag(BrandRow brand, String tag, List<String> allTags, String biography,
+			Instant windowCutoff, Pattern mentionPattern, Set<String> insertedThisRun) {
 		int saved = 0;
 		String cursor = null;
 		for (int page = 0; page < maxPages; page++) {
@@ -123,7 +121,7 @@ public class BrandHashtagCollectService {
 			// freshPosts 구성 시 별도로 접는다(judge 이중 호출·saved 이중 계상 방지).
 			List<HikerClient.HashtagPost> freshPosts = distinctByShortCode(result.posts().stream()
 					.filter(hp -> !existing.contains(hp.post().shortCode())).toList());
-			saved += processNew(brand, tag, freshPosts, allTags, exclusions, biography, windowCutoff,
+			saved += processNew(brand, tag, freshPosts, allTags, biography, windowCutoff,
 					mentionPattern, insertedThisRun);
 			// 조기 종료 트리거는 "이전부터 있던" 코드에만 반응한다 — 이번 실행에서 다른 태그가
 			// 방금 저장한 코드는 종료 신호가 아니다(크로스 태그 백필 깊이 보존).
@@ -156,9 +154,15 @@ public class BrandHashtagCollectService {
 	 * 제약 위반으로 던지고 브랜드 스윕 전체가 죽는다(한 게시물의 결손이 나머지를 물귀신처럼 끌고
 	 * 감 — 격리 원칙 위반). LLM 호출이 던지면 그 게시물은 미저장 스킵(다음 스윕이 existingCodes에
 	 * 없으니 자연 재시도).
+	 *
+	 * <p>SELF 판정(2026-08-17 — 제외 문자열 기능 폐기): 예전엔 유저가 관리하는 제외 문자열 목록에
+	 * 게시자 username이 <b>포함</b>되면(substring) SELF였지만, 그 목록 자체가 폐지되며 판정 재료를
+	 * 잃었다. 브랜드 본인 게시물을 발견 풀에 계속 들여보낼 수는 없으므로, 게시자 username이 브랜드
+	 * 계정명과 <b>정확히 일치</b>(대소문자 무시)하는 경우만 SELF로 남긴다 — "브랜드명을 포함한
+	 * 스태프 부계정" 같은 근사 매치는 더 이상 SELF가 아니라 일반 판정 경로(직접태그·멘션·LLM)를 탄다.
 	 */
 	private int processNew(BrandRow brand, String tag, List<HikerClient.HashtagPost> posts,
-			List<String> allTags, List<String> exclusions, String biography, Instant windowCutoff,
+			List<String> allTags, String biography, Instant windowCutoff,
 			Pattern mentionPattern, Set<String> insertedThisRun) {
 		String brandUsernameLower = brand.username().toLowerCase(Locale.ROOT);
 		int saved = 0;
@@ -178,7 +182,7 @@ public class BrandHashtagCollectService {
 			}
 			String verdict;
 			String source;
-			if (matchesExclusion(authorUsername, exclusions)) {
+			if (authorUsername.equalsIgnoreCase(brand.username())) {
 				verdict = "SELF";
 				source = "RULE";
 			} else if (hp.taggedUsernames().contains(brandUsernameLower)) {
@@ -207,12 +211,6 @@ public class BrandHashtagCollectService {
 			saved++;
 		}
 		return saved;
-	}
-
-	/** 게시자 username에 제외 문자열이 포함되면 자사 계열(SELF) — 대소문자 무시. */
-	private static boolean matchesExclusion(String authorUsername, List<String> exclusions) {
-		String lower = authorUsername.toLowerCase(Locale.ROOT);
-		return exclusions.stream().anyMatch(term -> lower.contains(term.toLowerCase(Locale.ROOT)));
 	}
 
 	/**

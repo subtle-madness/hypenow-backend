@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
@@ -26,6 +27,7 @@ import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
+import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import java.time.Clock;
 import java.time.Instant;
@@ -74,6 +76,8 @@ class V1BrandDirectPostServiceTest {
 	V1MonitoringRegistrationService legacyRegistration;
 	@Mock
 	RegistrationRepository registrationRepository;
+	@Mock
+	V1MonitoringItemUpdateService itemUpdateService;
 
 	V1BrandDirectPostService service;
 
@@ -87,7 +91,7 @@ class V1BrandDirectPostServiceTest {
 		// KST 2026-08-08 21:00.
 		service = new V1BrandDirectPostService(linkRepository, brandReadRepository, directPostRepository,
 				itemRepository, monitoringReadRepository, legacyRegistration, registrationRepository,
-				Clock.fixed(Instant.parse("2026-08-08T12:00:00Z"), ZoneOffset.UTC));
+				itemUpdateService, Clock.fixed(Instant.parse("2026-08-08T12:00:00Z"), ZoneOffset.UTC));
 	}
 
 	// ---------- 위임 제외(브랜드 목록 중복) ----------
@@ -477,6 +481,73 @@ class V1BrandDirectPostServiceTest {
 	@Test
 	void 숫자가_아닌_registrationId는_404다() {
 		assertThatThrownBy(() -> service.get(7L, "abc")).isInstanceOf(V1ApiException.class);
+	}
+
+	// ---------- 취소(2026-08-17 FE 요청) ----------
+
+	@Test
+	void 매핑이_있고_레거시가_취소_가능한_상태면_레거시_취소_후_매핑을_삭제한다() {
+		given(directPostRepository.findByUserAndShortCode(7L, "DEF"))
+				.willReturn(Optional.of(new BrandDirectPostRepository.Row(7L, 100L, "DEF", 301L)));
+
+		service.cancel(7L, "DEF");
+
+		then(itemUpdateService).should().cancel(7L, 301L);
+		then(directPostRepository).should().delete(7L, "DEF");
+	}
+
+	@Test
+	void 레거시가_이미_종결이라_취소를_거부해도_매핑은_삭제된다() {
+		// 레거시가 "현재 상태에서는 취소할 수 없어요"(ended 등)를 던져도 취소 자체는 성공으로 접는다 —
+		// 매핑 삭제가 계약의 핵심(재등록 가능해짐)이지 레거시 상태 전이가 아니다.
+		given(directPostRepository.findByUserAndShortCode(7L, "DEF"))
+				.willReturn(Optional.of(new BrandDirectPostRepository.Row(7L, 100L, "DEF", 301L)));
+		willThrow(V1ApiException.validation("현재 상태(종료)에서는 취소할 수 없어요."))
+				.given(itemUpdateService).cancel(7L, 301L);
+
+		service.cancel(7L, "DEF");
+
+		then(directPostRepository).should().delete(7L, "DEF");
+	}
+
+	@Test
+	void 매핑이_없고_tagged_풀에_있으면_400_TAGGED_POST_NOT_CANCELABLE다() {
+		given(directPostRepository.findByUserAndShortCode(7L, "ABC")).willReturn(Optional.empty());
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		given(brandReadRepository.findExistingTaggedShortCodes(100L, Set.of("ABC"))).willReturn(Set.of("ABC"));
+
+		assertThatThrownBy(() -> service.cancel(7L, "ABC"))
+				.isInstanceOfSatisfying(V1ApiException.class,
+						e -> assertThat(e.code()).isEqualTo("TAGGED_POST_NOT_CANCELABLE"));
+		then(itemUpdateService).should(never()).cancel(anyLong(), anyLong());
+		then(directPostRepository).should(never()).delete(anyLong(), anyString());
+	}
+
+	@Test
+	void 매핑도_tagged도_없으면_404다() {
+		given(directPostRepository.findByUserAndShortCode(7L, "ZZZ")).willReturn(Optional.empty());
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		given(brandReadRepository.findExistingTaggedShortCodes(100L, Set.of("ZZZ"))).willReturn(Set.of());
+
+		assertThatThrownBy(() -> service.cancel(7L, "ZZZ")).isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void 취소_후_재등록은_매핑이_사라져_브랜드_중복_판정에_걸리지_않는다() {
+		// 취소로 매핑이 삭제된 뒤(directPostRepository.shortCodesByUser가 빈 목록을 반환) 같은 URL을
+		// 다시 등록하면 brandShortCodes()에 잡히지 않아 레거시로 위임된다(취소 후 재시작 성립).
+		ownedBrand();
+		tagged();
+		directMappings();   // 취소 후 상태 — 빈 목록
+		given(legacyRegistration.register(eq(7L), anyMap()))
+				.willReturn(new MonitoringRegistrationResponse("56", List.of(), null));
+		given(registrationRepository.findById(56L))
+				.willReturn(Optional.of(registration(7L, entry(0, URL_DEF, "pending", null, null, 302L))));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_DEF), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		then(directPostRepository).should().upsert(7L, 100L, "DEF", 302L);
 	}
 
 	// ---------- fixtures ----------

@@ -2,6 +2,7 @@ package com.celfit.was.monitoring;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -64,5 +65,32 @@ public class BrandDirectPostRepository {
 				.param("userId", userId)
 				.query(String.class)
 				.list());
+	}
+
+	/** 취소 대상 매핑 단건 조회(2026-08-17 취소 API) — PK(user_id, short_code)로 직접 찾는다. */
+	public Optional<Row> findByUserAndShortCode(long userId, String shortCode) {
+		return jdbcClient.sql("""
+				SELECT user_id, brand_id, short_code, monitoring_item_id
+				FROM app.brand_direct_posts
+				WHERE user_id = :userId AND short_code = :shortCode
+				""")
+				.param("userId", userId)
+				.param("shortCode", shortCode)
+				.query(Row.class)
+				.optional();
+	}
+
+	/**
+	 * 매핑 삭제(hard delete, 취소 API 계약) — 삭제로 GET .../posts 목록에서 즉시 빠지고, 같은
+	 * shortcode 재등록이 브랜드 중복 판정({@code brandShortCodes})에 걸리지 않게 된다(취소 후
+	 * 재시작 성립). tombstone이 아닌 이유: 재등록이 곧 새 매핑이라 삭제 이력을 남길 필요가 없다.
+	 */
+	public void delete(long userId, String shortCode) {
+		jdbcClient.sql("""
+				DELETE FROM app.brand_direct_posts WHERE user_id = :userId AND short_code = :shortCode
+				""")
+				.param("userId", userId)
+				.param("shortCode", shortCode)
+				.update();
 	}
 }
