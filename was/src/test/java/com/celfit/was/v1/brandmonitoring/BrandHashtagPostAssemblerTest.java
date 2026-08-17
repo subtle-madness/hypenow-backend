@@ -147,7 +147,6 @@ class BrandHashtagPostAssemblerTest {
 		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(brandReadRepository.findActiveExclusionTerms(1L)).willReturn(List.of());
 		given(directPostRepository.findByUser(7L))
 				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 1L, "HHH", 900L)));
 		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
@@ -165,7 +164,6 @@ class BrandHashtagPostAssemblerTest {
 		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(brandReadRepository.findActiveExclusionTerms(1L)).willReturn(List.of());
 		// 같은 유저지만 다른 브랜드(999) 소속 매핑 — 이 브랜드(1)의 발견분에는 승격되면 안 된다.
 		given(directPostRepository.findByUser(7L))
 				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 999L, "HHH", 900L)));
@@ -183,7 +181,6 @@ class BrandHashtagPostAssemblerTest {
 		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(brandReadRepository.findActiveExclusionTerms(1L)).willReturn(List.of());
 		given(directPostRepository.findByUser(7L)).willReturn(List.of());   // 매핑 삭제(취소) 후 상태
 		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
 
@@ -203,7 +200,6 @@ class BrandHashtagPostAssemblerTest {
 		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(brandReadRepository.findActiveExclusionTerms(1L)).willReturn(List.of());
 		given(directPostRepository.findByUser(7L)).willReturn(List.of());
 		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of("HHH"));
 
@@ -213,64 +209,21 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(result.get(0).brandPostId()).isEqualTo("HHH");
 	}
 
-	// ---------- 자사 제외 문자열 즉시 반영(2026-08-12 태그 관리 확장 짝) ----------
-
-	/**
-	 * 제외 문자열이 활성이면 조회 시점에 즉시 걸린다 — monitoring 스윕(SELF 판정)을 기다리지 않는다.
-	 * matchesExclusion과 같은 대소문자 무시 contains 의미론(username에 term이 부분 포함되면 제외).
-	 */
+	/** 제외 문자열 기능 폐기(2026-08-17)로 게시자 username과 무관하게 조회된 발견분이 전부 남는다. */
 	@Test
-	void 저장된_게시물이_제외_문자열_추가로_즉시_숨는다() {
+	void 제외_문자열_기능_폐기로_계정명_포함_작성자도_남는다() {
 		var repository = mock(BrandReadRepository.class);
 		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(repository.findHashtagPosts(eq(1L), any(), anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_influencer")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
-
-		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
-
-		assertThat(result).isEmpty();
-	}
-
-	/** 제외 문자열을 삭제(비활성화)하면 같은 게시물이 다시 보인다 — findActiveExclusionTerms가 빈 목록을 준다. */
-	@Test
-	void 제외_문자열_삭제로_다시_보인다() {
-		var repository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
-		given(repository.findHashtagPosts(eq(1L), any(), anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_influencer")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of());
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_official_staff")));
+		given(directPostRepository.findByUser(7L)).willReturn(List.of());
+		given(repository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
 
 		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository);
 		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
 
 		assertThat(result).hasSize(1);
 		assertThat(result.get(0).shortcode()).isEqualTo("HHH");
-	}
-
-	@Test
-	void 제외_문자열은_대소문자_무시_부분_포함으로_매칭된다() {
-		var repository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
-		given(repository.findHashtagPosts(eq(1L), any(), anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "CClime_Official")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
-
-		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository);
-		assertThat(assembler.assembleForBrand(7L, 1L)).isEmpty();
-	}
-
-	@Test
-	void 무관한_게시자는_제외_문자열과_무관하게_남는다() {
-		var repository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
-		given(repository.findHashtagPosts(eq(1L), any(), anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "unrelated_influencer")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
-
-		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository);
-		assertThat(assembler.assembleForBrand(7L, 1L)).hasSize(1);
 	}
 
 	private static BrandReadRepository.BrandHashtagPostRow hashtagRowWithAuthor(String code, String authorUsername) {

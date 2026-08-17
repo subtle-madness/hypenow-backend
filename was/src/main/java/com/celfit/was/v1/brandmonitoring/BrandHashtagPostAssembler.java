@@ -6,7 +6,6 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.v1.common.KstTimestamps;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -51,27 +50,25 @@ public class BrandHashtagPostAssembler {
 	}
 
 	/**
-	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 자사 제외 문자열 필터만 적용(그
-	 * 외 병합·정렬 없음). 제외 문자열은 조회 시점에 즉시 반영된다(2026-08-12 — 편집이 다음 스윕을
-	 * 기다리지 않는다는 계약 §8-3-1의 짝: 삭제로 지운 문자열은 저장된 판정을 못 바꾸지만, 조회
-	 * 필터는 즉시 걸 수 있어 비가역 오염(전체 삭제로 자사 게시물이 쏟아지는 것)을 막는다).
+	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 병합·필터·정렬 없이 전량이다.
+	 * 제외 문자열 기능은 전면 폐기됐다(2026-08-17 협의 확정 — "감지는 감지 해시태그만으로 수행하고
+	 * 제외는 적용하지 않는다") — monitoring 관리 API 5종·was 프록시 API 4종이 모두 제거됐고
+	 * 조회 시점 필터도 함께 없앤다. 남겨두면 과거 시드(브랜드 계정명 루트 등)가 유저가 조회·삭제할
+	 * 수 없는 "유령 필터"로 영구 동작해 계정명을 포함한 정상 작성자(예: 스태프 부계정)의 발견
+	 * 게시물이 이유 없이 숨는다. verdict(SELF 등) 기반 필터링은 수집 시점 판정이라 이 변경과 별개다.
 	 *
-	 * <p>{@code brandPostId}(2026-08-17 승격 상태 필드)는 필터를 통과한 shortcode 묶음만 배치로
-	 * 판정한다(존재 여부만 필요한 경량 조회 2종 — 무거운 전량 조립을 끼워 넣지 않는다). direct는
-	 * 이 유저·이 브랜드의 매핑, tagged는 윈도우 제한 없는 존재 판정이다.
+	 * <p>{@code brandPostId}(2026-08-17 승격 상태 필드)는 조회된 shortcode 묶음만 배치로 판정한다
+	 * (존재 여부만 필요한 경량 조회 2종 — 무거운 전량 조립을 끼워 넣지 않는다). direct는 이
+	 * 유저·이 브랜드의 매핑, tagged는 윈도우 제한 없는 존재 판정이다.
 	 */
 	public List<BrandHashtagPostResponse> assembleForBrand(long userId, long brandId) {
 		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
 				BrandPostAssembler.windowCutoff(), HASHTAG_POST_LIMIT);
-		List<String> exclusions = brandReadRepository.findActiveExclusionTerms(brandId);
-		List<BrandHashtagPostRow> filtered = rows.stream()
-				.filter(row -> !matchesExclusion(row.authorUsername(), exclusions))
-				.toList();
-		if (filtered.isEmpty()) {
+		if (rows.isEmpty()) {
 			return List.of();
 		}
 
-		Set<String> shortCodes = filtered.stream().map(BrandHashtagPostRow::shortCode)
+		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		Set<String> directCodes = directPostRepository.findByUser(userId).stream()
 				.filter(row -> row.brandId() == brandId)
@@ -79,7 +76,7 @@ public class BrandHashtagPostAssembler {
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		Set<String> taggedCodes = brandReadRepository.findExistingTaggedShortCodes(brandId, shortCodes);
 
-		return filtered.stream()
+		return rows.stream()
 				.map(row -> toResponse(row, brandPostIdOf(row.shortCode(), directCodes, taggedCodes)))
 				.toList();
 	}
@@ -87,19 +84,6 @@ public class BrandHashtagPostAssembler {
 	/** direct 매핑이 살아 있거나 tagged로 존재하면 shortcode를, 둘 다 아니면 null을 돌려준다. */
 	private static String brandPostIdOf(String shortCode, Set<String> directCodes, Set<String> taggedCodes) {
 		return directCodes.contains(shortCode) || taggedCodes.contains(shortCode) ? shortCode : null;
-	}
-
-	/**
-	 * 게시자 username에 활성 제외 문자열이 포함되면 제외(대소문자 무시 contains) — monitoring
-	 * {@code BrandHashtagCollectService.matchesExclusion}과 동일 의미론(스윕의 SELF 판정 규칙을
-	 * was 조회 시점에도 그대로 재현). exclusions가 비어 있으면(제외 문자열 전체 삭제) 항상 false.
-	 */
-	private static boolean matchesExclusion(String authorUsername, List<String> exclusions) {
-		if (authorUsername == null || exclusions.isEmpty()) {
-			return false;
-		}
-		String lower = authorUsername.toLowerCase(Locale.ROOT);
-		return exclusions.stream().anyMatch(term -> lower.contains(term.toLowerCase(Locale.ROOT)));
 	}
 
 	/** {@code brandPostId} 없는 호출부(단위 테스트 등)를 위한 편의 오버로드 — null로 접는다. */
