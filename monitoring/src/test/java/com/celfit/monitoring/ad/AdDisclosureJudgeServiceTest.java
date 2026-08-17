@@ -7,10 +7,17 @@ import com.celfit.monitoring.ad.AdDisclosureExtractor.Disclosure;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.BrandPostMetaRepository;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class AdDisclosureJudgeServiceTest {
@@ -153,6 +160,49 @@ class AdDisclosureJudgeServiceTest {
 		assertThat(repo.written).isEmpty();
 	}
 
+	/**
+	 * Task 8 리뷰 후속 — 기존 테스트는 전부 {@code Runnable::run}(동기)만 주입해 병렬 경로가 한 번도
+	 * 실제 스레드로 실행되지 않았다. 소형 실제 스레드풀(2스레드)로 게시물 8건(그중 1건은 추출기가
+	 * 예외를 던짐)을 판정해, 실패 1건만 verdict 미기록으로 격리되고 나머지 7건은 정상 기록되는지
+	 * 확인한다. 관측한 스레드 이름이 2개 이상이어야 실제로 병렬 실행됐다고 볼 수 있다.
+	 */
+	@Test
+	void 실제_스레드풀에서_병렬_판정하고_실패1건만_격리된다() throws InterruptedException {
+		AtomicInteger seq = new AtomicInteger();
+		ExecutorService pool = Executors.newFixedThreadPool(2, r -> {
+			Thread t = new Thread(r, "ad-disclosure-test-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+		try {
+			ThreadTrackingExtractor extractor = new ThreadTrackingExtractor("FAIL_TRIGGER");
+			FakeRepo repo = new FakeRepo();
+			AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, pool);
+
+			List<PostInfo> posts = new ArrayList<>();
+			for (int i = 1; i <= 8; i++) {
+				String caption = (i == 5) ? "체험단 후기 FAIL_TRIGGER" : "체험단 후기 " + i;
+				posts.add(post("P" + i, caption, "FEED", null));
+			}
+
+			service.judgePosts(posts);
+
+			assertThat(repo.written).hasSize(7);
+			assertThat(repo.written).doesNotContainKey("P5");
+			for (int i = 1; i <= 8; i++) {
+				if (i != 5) {
+					assertThat(repo.written.get("P" + i).verdict()).isEqualTo("INSUFFICIENT");
+				}
+			}
+			assertThat(extractor.calls).hasSize(8);
+			assertThat(extractor.threadNames).as("실제 스레드풀이 여러 스레드로 작업을 나눠 실행했어야 한다")
+					.hasSizeGreaterThan(1);
+		} finally {
+			pool.shutdown();
+			assertThat(pool.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+		}
+	}
+
 	private static String md5(String s) {
 		try {
 			var digest = MessageDigest.getInstance("MD5").digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -178,6 +228,34 @@ class AdDisclosureJudgeServiceTest {
 				throw new IllegalStateException("LLM 호출 실패(테스트)");
 			}
 			return next;
+		}
+	}
+
+	/** 실제 스레드풀 테스트 전용 — caption에 {@code failMarker}가 포함되면 예외를 던지고, 그 외엔
+	 * 항상 같은 Disclosure를 돌려준다. 호출이 실행된 스레드 이름을 모아 실제 병렬 실행을 검증한다. */
+	private static final class ThreadTrackingExtractor implements AdDisclosureExtractor {
+		final List<String> calls = new java.util.concurrent.CopyOnWriteArrayList<>();
+		final Set<String> threadNames = new CopyOnWriteArraySet<>();
+		private final String failMarker;
+
+		ThreadTrackingExtractor(String failMarker) {
+			this.failMarker = failMarker;
+		}
+
+		@Override
+		public List<Disclosure> extract(String caption) {
+			calls.add(caption);
+			threadNames.add(Thread.currentThread().getName());
+			try {
+				Thread.sleep(10); // 여러 태스크가 겹치도록 — 풀의 스레드 2개가 모두 쓰이게 유도
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new IllegalStateException(e);
+			}
+			if (caption.contains(failMarker)) {
+				throw new IllegalStateException("LLM 호출 실패(테스트)");
+			}
+			return List.of(new Disclosure("체험단", Category.AMBIGUOUS));
 		}
 	}
 
