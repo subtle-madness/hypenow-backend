@@ -1174,6 +1174,24 @@ class AdDisclosureExtractorGeminiTest {
 	}
 
 	@Test
+	void 본문_json에_disclosures_필드가_없으면_예외() {
+		var extractor = new AdDisclosureExtractorGemini(
+				(p, b) -> """
+						{"candidates":[{"content":{"parts":[{"text":"{\\"foo\\":1}"}]}}]}""",
+				"key", "m");
+		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
+	void disclosures가_배열이_아니면_예외() {
+		var extractor = new AdDisclosureExtractorGemini(
+				(p, b) -> """
+						{"candidates":[{"content":{"parts":[{"text":"{\\"disclosures\\":\\"oops\\"}"}]}}]}""",
+				"key", "m");
+		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
 	void 예상_밖_category_문자열은_예외() {
 		var extractor = new AdDisclosureExtractorGemini(
 				(p, b) -> geminiBody("[{\"phrase\":\"x\",\"category\":\"MAYBE\"}]"), "key", "m");
@@ -1323,7 +1341,7 @@ public class AdDisclosureExtractorGemini implements AdDisclosureExtractor {
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdDisclosureExtractorGeminiTest"`
-Expected: PASS (7개)
+Expected: PASS (9개)
 
 - [ ] **Step 5: 커밋**
 
