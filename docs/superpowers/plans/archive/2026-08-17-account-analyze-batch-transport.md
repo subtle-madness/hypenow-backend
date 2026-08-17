@@ -1,6 +1,6 @@
 # 계정 카피(ACCOUNT_ANALYZE) Vertex 배치 전송 전환 구현 계획
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현됨
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) 구문으로 추적한다.
 
@@ -991,8 +991,9 @@ git push -u origin feat/account-analyze-batch-transport
 1. **승격**: develop → staging(dev-api 배포·검증) → main(운영 배포). 마이그레이션 2개는 expand 단계라 롤링 안전. 승격·역머지 PR은 merge commit으로.
 2. **staging 검증(선택)**: test 환경에서 `UPDATE app_setting SET value='batch' WHERE key='analytics.account-analyze-transport'` 후 어드민 `/ui`에서 ACCOUNT_ANALYZE 수동 트리거 → `account_batch_jobs`에 pending 생성 → BATCH_COLLECT 트리거로 수거 완주 확인.
 3. **운영 전환**: 운영 raw DB에서 같은 UPDATE 한 줄(런타임 토글 — 재기동 불필요, 잡 실행 시점마다 읽음).
-4. **첫 펄스 실증**: 다음 대량 펄스는 **~08-24(직전 펄스 08-16 + 8일) KST 07:00** 예상. 당일 `account_batch_jobs`의 submitted_count·collected 전이와 GCP 콘솔(Vertex Model Garden Monitoring)에서 온라인 토큰이 안 튀는 것을 확인. 콘텐츠 배치 전환(08-11)도 첫 완주 실증이 미확인 과제였던 전력이 있다 — 이번엔 확인을 빼먹지 말 것.
+4. **첫 펄스 실증**: 다음 대량 펄스는 **~08-24(직전 펄스 08-16 + 8일) KST 07:00** 예상. 당일 `account_batch_jobs`의 submitted_count·collected 전이와 GCP 콘솔(Vertex Model Garden Monitoring)에서 온라인 토큰이 안 튀는 것을 확인. 콘텐츠 배치 전환(08-11)도 첫 완주 실증이 미확인 과제였던 전력이 있다 — 이번엔 확인을 빼먹지 말 것. 펄스 제출 시 analytics 힙 사용량도 관측(2,700건 JSONL 조립 — 스트리밍화 반영됐지만 첫 실측 필요).
 5. **롤백**: `UPDATE app_setting SET value='online' WHERE key='analytics.account-analyze-transport'` 한 줄. pending 잔여는 BATCH_COLLECT가 계속 수거하므로 유실 없음.
+6. **`analytics.llm-provider` 런타임 전환 시 analytics 재기동 필요** — batchApi는 빈 생성 시점에 provider로 고정된다(콘텐츠와 동일 구조).
 
 ## Self-Review 결과 (계획 작성 시 수행)
 
