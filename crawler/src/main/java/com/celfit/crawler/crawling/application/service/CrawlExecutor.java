@@ -66,11 +66,12 @@ public class CrawlExecutor {
         AtomicInteger paid = new AtomicInteger();
         try {
             ApifyResult result = paidCalls.scoped(paid, work);
-            // 성공 경로는 소스가 스스로 보고한 값을 그대로 쓴다 — 실측치로 갈아끼우지 않는다.
-            // 잡별 규칙(ReelsJob·SimilarJob이 soft-404를 '요청은 이미 샀다'며 1로 세는 것)을
-            // 이 변경이 조용히 뒤집지 않게 하기 위함. 실측치를 쓰는 곳은 값이 아예 없던
-            // 실패 경로뿐이라, 이 수정으로 성공 실행의 집계는 한 건도 달라지지 않는다.
-            run.finishOk(result.runId(), result.requestCount(), result.items().size(), clock.instant());
+            // 소스가 스스로 보고한 값이 이긴다 — 잡별 규칙(ReelsJob·SimilarJob이 soft-404를
+            // '요청은 이미 샀다'며 1로 세는 것)을 실측치가 조용히 뒤집지 않게 하기 위함.
+            // 보고가 없으면(null) 실측치로 채운다: 유료 프로필 페처 4종이 여기 해당한다.
+            // 무료 소스(SELF·자체크롤)와 Apify는 유료 전송을 안 지나 실측이 0이라 null로 남는다.
+            run.finishOk(result.runId(), boughtOrReported(result.requestCount(), paid),
+                    result.items().size(), clock.instant());
             runs.save(run);
             if (job.archivesRunItems()) {
                 archive(run.getId(), result.items());
@@ -78,12 +79,24 @@ public class CrawlExecutor {
             return new Execution(run.getId(), result.items(), result.notFound());
         } catch (ApifyException e) {
             // 실패해도 이미 과금된 요청은 남긴다 — ApifyResult를 못 받는 경로라 실측 카운터가
-            // 유일한 산지다. 0이면 null(산 게 없음) — 비용 뷰의 request_count > 0 모수와 정합.
-            int bought = paid.get();
-            run.finishFailed(e.getMessage(), bought > 0 ? bought : null, clock.instant());
+            // 유일한 산지다.
+            run.finishFailed(e.getMessage(), boughtOrReported(null, paid), clock.instant());
             runs.save(run);
             throw e;
         }
+    }
+
+    /**
+     * 소스가 보고한 값이 있으면 그 값, 없으면 실측치. 실측이 0이면 null이다 — "과금 없음"은
+     * Apify 실행·무료 소스가 이미 null로 쓰고, 비용 뷰의 모수도 {@code request_count > 0}이라
+     * 0과 null이 어차피 같이 빠진다. 표기를 하나로 맞춰 둔다.
+     */
+    private static Integer boughtOrReported(Integer reported, AtomicInteger paid) {
+        if (reported != null) {
+            return reported;
+        }
+        int bought = paid.get();
+        return bought > 0 ? bought : null;
     }
 
     private void archive(Long runId, List<Map<String, Object>> items) {

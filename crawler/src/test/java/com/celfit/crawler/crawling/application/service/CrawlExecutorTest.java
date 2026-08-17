@@ -201,6 +201,91 @@ class CrawlExecutorTest extends IntegrationTest {
     }
 
     @Test
+    void 성공해도_소스가_요청_수를_안_보고하면_실측치가_기록된다() {
+        // 유료 프로필 페처 4종이 여기 해당한다 — 2026-08-13 이전엔 이 경로가 통째로 null이라
+        // profile-hiker-mobile 1,252실행/13,084계정이 request_count 0으로 집계됐다.
+        var execution = executor.execute(JobName.QUALIFY, TriggerType.MANUAL, null, null,
+                "profile-hiker-mobile",
+                () -> {
+                    paidCalls.countOne();
+                    paidCalls.countOne();
+                    paidCalls.countOne();
+                    return new ApifyResult(null, List.of());   // 요청 수 미보고(null)
+                });
+
+        assertThat(runs.findById(execution.runId()).orElseThrow().getRequestCount()).isEqualTo(3);
+    }
+
+    @Test
+    void 유료_콜이_없는_무료_소스는_성공해도_null이다() {
+        // SELF(instagram web_profile_info)·자체크롤·Apify — 유료 전송을 안 지나 실측이 0이다.
+        var execution = executor.execute(JobName.QUALIFY, TriggerType.MANUAL, null, null,
+                "profile-self", () -> new ApifyResult(null, List.of()));
+
+        assertThat(runs.findById(execution.runId()).orElseThrow().getRequestCount()).isNull();
+    }
+
+    @Test
+    void 워커_풀로_팬아웃한_프로필_콜도_실행_몫으로_잡힌다() {
+        // 실제 배선 관통(CountingHikerHttp → PaidCallCounter → 워커 풀 → CrawlExecutor).
+        // HikerMobileProfileFetcher는 FETCH_CONCURRENCY 고정 풀로 병렬 호출하는데, ThreadLocal은
+        // 스레드 경계를 못 넘으므로 propagate() 없이는 이 콜들이 전부 집계에서 빠진다.
+        HikerHttp raw = path -> {
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"1\"}}";
+        };
+        var fetcher = new HikerMobileProfileFetcher(new CountingHikerHttp(raw, paidCalls), executor,
+                paidCalls, new tools.jackson.databind.ObjectMapper());
+
+        var execution = fetcher.fetch(JobName.QUALIFY,
+                List.of("a", "b", "c", "d", "e", "f", "g"), TriggerType.MANUAL);
+
+        assertThat(execution.items()).hasSize(7);
+        // 계정당 by/username 1콜 — JobCostEstimator의 "계정당 1요청" 추정과 일치한다
+        assertThat(runs.findById(execution.runId()).orElseThrow().getRequestCount()).isEqualTo(7);
+    }
+
+    @Test
+    void DataLikers_프로필_콜도_전송_계층에서_잡힌다() {
+        // DataLikers는 HikerHttp를 안 지나므로 CountingHikerHttp가 커버하지 못한다 — 전용 데코레이터.
+        var raw = new com.celfit.crawler.crawling.adapter.out.datalikers.DataLikersHttp() {
+            @Override public String get(String path) {
+                String u = path.substring(path.lastIndexOf('=') + 1);
+                return "{\"username\":\"" + u + "\",\"pk\":\"1\"}";
+            }
+        };
+        var fetcher = new DataLikersProfileFetcher(
+                new com.celfit.crawler.crawling.adapter.out.datalikers.CountingDataLikersHttp(raw, paidCalls),
+                executor, new tools.jackson.databind.ObjectMapper());
+
+        var execution = fetcher.fetch(JobName.QUALIFY, List.of("a", "b", "c"), TriggerType.MANUAL);
+
+        assertThat(runs.findById(execution.runId()).orElseThrow().getRequestCount()).isEqualTo(3);
+    }
+
+    @Test
+    void SELF_폴백_컴포지트는_유료인_Hiker_몫만_센다() {
+        // SELF(instagram web_profile_info)는 무료 — 400 폴백으로 나가는 Hiker 콜만 과금 대상이다.
+        var om = new tools.jackson.databind.ObjectMapper();
+        var web = SelfWithHikerFallbackProfileFetcherTest.webWith400For(java.util.Set.of("bugged1", "bugged2"));
+        HikerHttp raw = path -> {
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"2\"}}";
+        };
+        var counting = new CountingHikerHttp(raw, paidCalls);
+        var fetcher = new SelfWithHikerFallbackProfileFetcher(
+                new SelfProfileFetcher(web, executor, om, java.time.Duration.ZERO),
+                new HikerMobileProfileFetcher(counting, executor, paidCalls, om), executor);
+
+        var execution = fetcher.fetch(JobName.QUALIFY,
+                List.of("ok1", "ok2", "ok3", "bugged1", "bugged2"), TriggerType.MANUAL);
+
+        assertThat(execution.items()).hasSize(5);
+        // 5계정 중 무료 SELF 3건은 빠지고 폴백 2건만 — 컴포지트는 crawl_run을 1건만 만든다
+        assertThat(runs.findById(execution.runId()).orElseThrow().getRequestCount()).isEqualTo(2);
+    }
+
+    @Test
     void 실행_스코프_밖의_콜은_다음_실행에_새지_않는다() {
         paidCalls.countOne();   // 스코프 밖 — 아무데도 안 쌓인다
 

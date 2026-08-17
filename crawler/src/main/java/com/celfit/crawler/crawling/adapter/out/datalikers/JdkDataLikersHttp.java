@@ -9,10 +9,11 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
-/** DataLikers REST 전송 — x-access-key 헤더 인증, api.datalikers.com 기본 호스트. */
-@Component
+/**
+ * DataLikers REST 전송 — x-access-key 헤더 인증, api.datalikers.com 기본 호스트.
+ * 빈 등록은 {@code CrawlerConfig}가 한다({@link CountingDataLikersHttp}로 감싸 명시 조립).
+ */
 public class JdkDataLikersHttp implements DataLikersHttp {
 
     private static final Logger log = LoggerFactory.getLogger(JdkDataLikersHttp.class);
