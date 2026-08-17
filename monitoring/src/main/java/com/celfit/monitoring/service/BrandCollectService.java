@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
@@ -60,6 +61,7 @@ public class BrandCollectService {
 	private final BrandCommentRepository comments;
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
+	private final AdDisclosureJudgeService adJudge;
 	private final Executor enrichWorker;
 	private final int maxPostsPerSweep;
 	private final int commentPages;
@@ -68,6 +70,7 @@ public class BrandCollectService {
 	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
+			AdDisclosureJudgeService adJudge,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
@@ -79,6 +82,7 @@ public class BrandCollectService {
 		this.comments = comments;
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
+		this.adJudge = adJudge;
 		this.enrichWorker = enrichWorker;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
@@ -265,43 +269,58 @@ public class BrandCollectService {
 	}
 
 	/**
-	 * enrichment 단계 — core가 넘긴 편입 컷 안 게시물의 게시자 프로필(미보유·30일 stale만) + 댓글
-	 * 게이트. 미수집분은 다음 스윕이 백스톱한다(게시자는 stale 판정, 댓글은
-	 * comments_collected_count 워터마크가 남아 있어 자동 재시도된다).
+	 * enrichment 단계(2026-08-17 노출 게이트 개정 — 스펙 §8) — 정산 마킹(markEnriched)을 게시자
+	 * 프로필 보강 완료 <b>직후</b>로 당긴다. 댓글 수집·광고 표기 판정은 노출 게이트 밖으로 빠져
+	 * 각자 격리된 독립 단계가 되고, 프론트 폴링으로 나중에 채워진다(프로그레시브 서빙).
 	 *
-	 * <p><b>정산 마킹은 보강 성패와 무관하게 무조건 찍는다</b>(finally) — 마킹을 놓치면 그 행은
-	 * enriched_at NULL로 남아 was 목록에 안 뜨는데, 180일 초과 게시물에는 재열거 백스톱이 없어
-	 * 그 미노출이 영구가 된다. 근거는 finally 블록 주석 참조.
+	 * <p>정산 마킹은 여전히 <b>게시자 보강의 성패와 무관하게 무조건</b> 찍는다(finally — 근거는
+	 * 아래 finally 블록 주석, 기존 규칙 그대로). 댓글·광고 판정은 정산 이후 단계라 그 실패가
+	 * enriched_at에 영향을 주면 안 되므로 각자 여기서 try/catch로 격리한다(기존에는 이 격리가
+	 * markEnriched를 감싸는 finally 하나로 우연히 됐지만, 순서가 바뀌면서 명시적으로 필요해졌다).
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
 		if (posts.isEmpty()) {
 			return;
 		}
 		try {
-			// 게시자 프로필은 브랜드 간 전역 캐시지만, 콜 집계는 "그 콜을 유발한 브랜드" 몫으로 계상한다.
 			ensureAuthors(brand.id(), posts);
-			collectCommentsGated(brand.id(), posts);
 		} finally {
-			// 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) — 게시자·댓글이 실패해 비어 있어도 찍는다.
-			// 이 지점의 의미는 "더 기다릴 이유가 없다"이지 "다 찼다"가 아니다. 비운 채로 두면 실측
-			// 404 2%·타임아웃 1%의 게시물이 목록에서 영구히 사라진다. 미수집분은 게시자 stale 판정·
-			// 댓글 워터마크가 다음 스윕에서 채운다.
-			//
-			// finally인 이유(되돌리지 말 것): 위 두 단계는 건별 Hiker 콜을 각자 격리하지만
-			// 각 메서드 첫머리의 배치 DB 조회(freshIgUserIds·commentsCollectedCounts)는 무방비다 —
-			// 커넥션 blip 하나로 예외가 여기서 새면 그 페이지 행이 enriched_at NULL로 남는다.
-			// "실패했는데 왜 정산하지?"의 답은 백스톱의 유무다: 180일 이하 게시물은 티어 주기가
-			// 다시 만나 자가 치유하지만, 180일 초과 게시물에는 백스톱이 없다. 보강 실패는
-			// touchSwept을 막지 않고, 다음 스윕의 열거 깊이는 trackedPosts(now−180d)에서 나오며
-			// BrandCrawlPolicy.due는 180일 초과에 무조건 false다 — 다시 열거되지도 보강되지도
-			// 않는다. 그리고 was 게이트가 enriched_at IS NOT NULL이라 영원히 미노출이 된다
-			// (12개월 창 브랜드면 6~12개월 구간이 알람도 backfill_error도 없이 통째로 사라진다).
-			// 마킹은 "보강 시도가 끝났다"는 뜻이므로 배치 DB 조회 실패도 여기에 해당하고, 재시도
-			// 근거(게시자 stale·댓글 워터마크)는 그대로 남아 다음 기회에 채운다.
+			// 정산 마킹(2026-08-17 노출 게이트 개정 — 스펙 §8) — 게시자 보강 성패와 무관하게 찍는다.
+			// was 게이트(enriched_at IS NOT NULL)의 의미가 "게시자 보강 완료 = 노출 가능"으로 좁혀졌다.
+			// finally인 이유는 기존과 동일(180일 초과 게시물엔 재열거 백스톱이 없다 — 아래 참조).
 			taggedPosts.markEnriched(brand.id(),
 					posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
 		}
-		log.info("브랜드 태그 보강 — {} 게시자·댓글 수집 완료·정산({}건 대상)", brand.username(), posts.size());
+		log.info("브랜드 태그 보강 — {} 게시자 수집·정산 완료({}건 대상)", brand.username(), posts.size());
+		// 댓글·광고 판정은 노출 게이트 밖 — 각자 실패해도 위 정산에 영향 없다(프로그레시브 서빙).
+		collectCommentsGatedSafely(brand.id(), posts);
+		judgeAdDisclosuresSafely(posts);
+	}
+
+	/**
+	 * 댓글 게이트 격리 래퍼 — 노출 게이트 개정(스펙 §8) 전에는 이 실패가 markEnriched를 감싸는
+	 * finally 덕에 우연히 격리됐지만, 이제 markEnriched가 먼저 찍히므로 명시적 격리가 필요하다.
+	 */
+	private void collectCommentsGatedSafely(long brandId, List<PostInfo> posts) {
+		try {
+			collectCommentsGated(brandId, posts);
+		} catch (RuntimeException e) {
+			log.warn("댓글 게이트 실패(격리, 다음 스윕이 워터마크로 재시도) — {}: {}", brandId, e.toString());
+		}
+	}
+
+	/**
+	 * 광고 표기 판정 격리 래퍼(스펙 §7) — 판정 실패가 수집·보강에 영향 없어야 한다. 실제 격리는
+	 * {@link AdDisclosureJudgeService#judgePosts}가 게시물 단위로 이미 하지만, 후보 선정 배치
+	 * 조회(findAdJudgmentState) 실패 같은 상위 레벨 예외까지 방어하려면 이 래퍼가 한 번 더 필요하다
+	 * (collectCommentsGatedSafely와 같은 이유).
+	 */
+	private void judgeAdDisclosuresSafely(List<PostInfo> posts) {
+		try {
+			adJudge.judgePosts(posts);
+		} catch (RuntimeException e) {
+			log.warn("광고 표기 판정 배치 실패(격리, 다음 스윕 재시도): {}", e.toString());
+		}
 	}
 
 	/**

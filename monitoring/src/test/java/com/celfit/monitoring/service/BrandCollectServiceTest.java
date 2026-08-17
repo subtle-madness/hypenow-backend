@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
@@ -325,7 +326,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				Runnable::run, maxPostsPerSweep, 3, 30);
+				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, 3, 30);
 	}
 
 	private long tagCalls() {
@@ -991,7 +992,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, pool, 2000, 3, 30);
+					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 3, 30);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -999,5 +1000,74 @@ class BrandCollectServiceTest {
 		assertThat(maxInFlight.get()).isEqualTo(3);   // 풀 크기까지 도달, 초과 없음
 		assertThat(authors.upserted)
 				.containsExactlyInAnyOrder("201", "202", "203", "204", "205", "206");
+	}
+
+	// ---------- 광고 표기 판정 배선(2026-08-17 스펙 §7·§8) ----------
+
+	@Test
+	void 게시자_보강_직후_정산되고_댓글_실패는_광고_판정을_막지_않는다() {
+		tagged.commentsCountsFails = true;   // 댓글 게이트 배치 조회가 던져도
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, null);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(tagged.enriched).contains("AAA");     // 정산은 됐고
+		assertThat(adJudge.judged).contains("AAA");       // 광고 판정도 여전히 돈다(댓글과 독립)
+	}
+
+	@Test
+	void 광고_판정_실패는_격리되고_정산에_영향_없다() {
+		FakeAdJudge adJudge = new FakeAdJudge();
+		adJudge.fail = true;
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, null);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(tagged.enriched).contains("AAA");   // 판정 실패가 정산을 막지 않는다
+	}
+
+	@Test
+	void 게시자_보강_자체가_실패해도_정산은_찍히고_광고_판정도_돈다() {
+		failingAuthorIds.add("111");   // ensureAuthors가 예외 없이 격리되는 기존 경로 유지 확인용 대역
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, "111");
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(tagged.enriched).contains("AAA");
+		assertThat(adJudge.judged).contains("AAA");
+	}
+
+	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {
+		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
+				adJudge, Runnable::run, 10000, 3, 30);
+	}
+
+	private static PostInfo post(String shortCode, Long takenAt, String ownerUserId) {
+		return new PostInfo(shortCode, "author", null, null, ownerUserId, "REELS", null, null,
+				takenAt, null, null, null, null, null, null, null, null, null, null,
+				false, false, false);
+	}
+
+	/** AdDisclosureJudgeService 대역 — 실제 판정 로직 없이 호출 여부·실패 격리만 검증한다. */
+	private static final class FakeAdJudge extends com.celfit.monitoring.ad.AdDisclosureJudgeService {
+		final List<String> judged = Collections.synchronizedList(new ArrayList<>());
+		boolean fail;
+
+		FakeAdJudge() {
+			super(null, null, Runnable::run);
+		}
+
+		@Override
+		public void judgePosts(List<PostInfo> posts) {
+			if (fail) {
+				throw new IllegalStateException("광고 판정 실패(테스트)");
+			}
+			posts.forEach(p -> judged.add(p.shortCode()));
+		}
 	}
 }
