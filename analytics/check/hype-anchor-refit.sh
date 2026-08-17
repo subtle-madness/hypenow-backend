@@ -3,10 +3,10 @@
 # 사용법: ./check/hype-anchor-refit.sh   (실데이터 postgres 컨테이너 필요 — 이름이 다르면 PG_CONTAINER로 지정)
 # 대상은 crawler DB(분석 뷰가 사는 곳) — coverage.sh(analysis DB)와 대상이 다르다.
 #
-# 콘텐츠 출력 앵커 섹션(2026-07-30, hype-anchor-refit.sql 참조)만 크로스 DB다 — 랭킹 경로 모수
-# (is_beauty ∧ metric_timeliness)는 content_analyses(analysis DB)에만 있다. pending.sh와 같은
-# 방식으로 analysis DB에서 CSV로 뽑아 crawler 세션의 임시 테이블 _ranking_hype_scores로 주입한
-# 뒤 hype-anchor-refit.sql을 돌린다.
+# analysis DB에서는 랭킹 경로(is_beauty ∧ metric_timeliness — content_analyses에만 있는 필터) 소속
+# short_code만 뽑아 주입하고, 점수는 crawler DB에서 신 가중·신 Q 앵커 기준으로 재계산한다
+# (v2, 2026-08-17). pending.sh와 같은 방식으로 CSV로 뽑아 crawler 세션의 임시 테이블
+# _ranking_codes로 주입한 뒤 hype-anchor-refit.sql을 돌린다.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -15,9 +15,9 @@ PG="${PG_CONTAINER:-crawler-postgres-1}"
 AQ=(docker exec "$PG" psql -U crawler -d analysis -Atc)
 
 {
-  echo "CREATE TEMP TABLE _ranking_hype_scores(hype_score bigint);"
-  echo "COPY _ranking_hype_scores FROM STDIN WITH (FORMAT csv);"
-  "${AQ[@]}" "COPY (SELECT c.hype_score FROM contents c
+  echo "CREATE TEMP TABLE _ranking_codes(short_code text);"
+  echo "COPY _ranking_codes FROM STDIN WITH (FORMAT csv);"
+  "${AQ[@]}" "COPY (SELECT c.short_code FROM contents c
                     JOIN content_analyses an ON an.short_code = c.short_code
                     WHERE an.is_beauty = true
                       AND (an.metric_timeliness = 'timely' OR an.metric_timeliness IS NULL)) TO STDOUT WITH (FORMAT csv)"
