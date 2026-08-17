@@ -4,7 +4,9 @@ import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.llm.AccountCopy;
 import com.celfit.analytics.llm.AccountSynthesisPort;
 import com.celfit.analytics.llm.AccountToAnalyze;
+import com.celfit.analytics.llm.AdSituation;
 import com.celfit.analytics.llm.CopyRules;
+import com.celfit.analytics.llm.LlmQuotaExhaustedException;
 import com.celfit.analytics.llm.TraitTaxonomyLoader;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -92,7 +94,7 @@ public class AccountAnalysisJob {
 				} else {
 					skippedIncomplete++;
 				}
-			} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
+			} catch (LlmQuotaExhaustedException e) {
 				// 일 한도 소진 — 에러가 아닌 이월: 남은 대상은 다음 실행에서 자연 재대상 (07-18 확정)
 				log.warn("LLM 일 한도 소진 — 배치 중단, 잔여 {}건 이월", targets.size() - processed - failed);
 				carriedOver = true;
@@ -120,7 +122,13 @@ public class AccountAnalysisJob {
 		return new JobResult(processed, failed, carriedOver);
 	}
 
-	private Outcome analyzeOne(String handle, String model) {
+	/** 제출·온라인 공용 준비물 — LLM 입력과, 저장 시점에 필요한 스냅샷(사이드카행). */
+	record Prepared(AccountToAnalyze account, OffsetDateTime lastPostedAt, Long analyzedCount,
+			AdSituation adSituation) {
+	}
+
+	/** @return null이면 데이터 미비 스킵(SKIPPED_DATA_INCOMPLETE — 배포 과도기 가드 주석 참조) */
+	private Prepared prepare(String handle) {
 		Map<String, Object> summary = analysis.queryForMap(
 				"SELECT * FROM account_summaries WHERE handle = ?", handle);
 		// last_posted_at(timestamptz)만 타입 지정 조회가 필요 — queryForMap은 Timestamp를 돌려줘 record 타입과 어긋남.
@@ -134,7 +142,7 @@ public class AccountAnalysisJob {
 		List<Map<String, Object>> posts = AccountAdCanon.loadPosts(analysis, handle);
 		// 광고 판정·수치는 캡션 분류(ad_type) 정본 — 미러의 ad_marked 집계는 릴스 전용이라 쓰지 않는다.
 		AccountAdCanon.AdMetrics ad = AccountAdCanon.load(analysis, handle, (String) summary.get("metric"));
-		com.celfit.analytics.llm.AdSituation adSituation = ad.situation();
+		AdSituation adSituation = ad.situation();
 
 		// 판정(원본 9컬럼 포함)·프롬프트 사본(always-strip 7컬럼 + 조건부 제거, median 2개는 판정
 		// 근거로 노출) 양쪽을 한 번에 만드는 공용 헬퍼 — ClaudeBurstRunner와 공유한다(한쪽만
@@ -148,20 +156,28 @@ public class AccountAnalysisJob {
 		// 문구가 그대로 서빙되고, 이 계정은 ELIGIBLE_WHERE의 "분석 이력 없음" 조건으로 다음
 		// 실행에서도 계속 후보로 잡힌다(run()의 집계 로그 참조 — 의도된 동작).
 		if (sc.confidence().dataIncomplete()) {
-			return Outcome.SKIPPED_DATA_INCOMPLETE;
+			return null;
 		}
 
 		List<Map<String, Object>> promptPosts = AccountAdCanon.withPostConfidence(posts, sc.confidence());
-		AccountCopy copy = port.synthesize(new AccountToAnalyze(handle,
-				sc.promptSummary(), categories, promptPosts, adSituation, sc.confidence()));
+		AccountToAnalyze account = new AccountToAnalyze(handle,
+				sc.promptSummary(), categories, promptPosts, adSituation, sc.confidence());
+		return new Prepared(account, lastPostedAt, analyzedCount, adSituation);
+	}
 
+	private Outcome analyzeOne(String handle, String model) {
+		Prepared p = prepare(handle);
+		if (p == null) {
+			return Outcome.SKIPPED_DATA_INCOMPLETE;
+		}
+		AccountCopy copy = port.synthesize(p.account());
 		// 이력 INSERT 전 가드 — 빈 카피가 "최신 행"으로 서빙되는 것을 차단 (B3의 빈 종합 가드와 동일 취지).
 		// 절단·INSERT는 AccountAnalysisWriter 단일 원천(ClaudeBurstRunner와 공유 — 07-17 재발 방지).
 		if (!AccountAnalysisWriter.isValid(copy)) {
 			throw new IllegalStateException("계정 카피가 비어 있음: " + handle);
 		}
 		AccountAnalysisWriter.insert(analysis, json, handle, OffsetDateTime.now(), model,
-				lastPostedAt, analyzedCount, copy, adSituation, traitLoader.get().names());
+				p.lastPostedAt(), p.analyzedCount(), copy, p.adSituation(), traitLoader.get().names());
 		return Outcome.PROCESSED;
 	}
 }
