@@ -78,4 +78,16 @@ class AdDisclosurePatternsTest {
 	void 해시태그_뒤_구두점은_토큰_경계를_해치지_않는다() {
 		assertThat(AdDisclosurePatterns.findFirstMatch("#광고, 오늘 후기")).isNotNull();
 	}
+
+	@Test
+	void 광고_아님_띄어쓰기_변형도_부정_가드에_걸린다() {
+		// "아니"(2음절)만 잡던 기존 정규식은 "아님"(아+님)을 못 잡아 "#광고 아님"이 그대로
+		// DISCLOSED로 오탐했다 — (광고|협찬)\s*(아니|아님)로 교체해 두 변형·띄어쓰기를 모두 커버.
+		assertThat(AdDisclosurePatterns.findFirstMatch("#광고 아님 사비로 구매했습니다")).isNull();
+	}
+
+	@Test
+	void 협찬_아님_띄어쓰기_변형도_부정_가드에_걸린다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#협찬 아님 그냥 샀어요")).isNull();
+	}
 }

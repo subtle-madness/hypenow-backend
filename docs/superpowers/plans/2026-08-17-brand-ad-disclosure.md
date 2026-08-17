@@ -178,6 +178,18 @@ class AdDisclosurePatternsTest {
 	void 해시태그_뒤_구두점은_토큰_경계를_해치지_않는다() {
 		assertThat(AdDisclosurePatterns.findFirstMatch("#광고, 오늘 후기")).isNotNull();
 	}
+
+	@Test
+	void 광고_아님_띄어쓰기_변형도_부정_가드에_걸린다() {
+		// "아니"(2음절)만 잡던 기존 정규식은 "아님"(아+님)을 못 잡아 "#광고 아님"이 그대로
+		// DISCLOSED로 오탐했다 — (광고|협찬)\s*(아니|아님)로 교체해 두 변형·띄어쓰기를 모두 커버.
+		assertThat(AdDisclosurePatterns.findFirstMatch("#광고 아님 사비로 구매했습니다")).isNull();
+	}
+
+	@Test
+	void 협찬_아님_띄어쓰기_변형도_부정_가드에_걸린다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#협찬 아님 그냥 샀어요")).isNull();
+	}
 }
 ```
 
@@ -229,7 +241,7 @@ public final class AdDisclosurePatterns {
 	// 이건 NOT_DISCLOSED 확정이 아니라 "판단 보류"다 — Tier1이 낼 수 있는 최악의 오류(false
 	// DISCLOSED)를 막기 위한 가드일 뿐, 부정 문구 자체가 미표기를 의미하지 않는다.
 	private static final Pattern NEGATION =
-			Pattern.compile("내돈내산|광고\\s*아니|협찬\\s*아니|광고아님|협찬아님");
+			Pattern.compile("내돈내산|(광고|협찬)\\s*(아니|아님)");
 
 	/** 매칭 문구·문자 오프셋 — 오프셋은 그래핌이 아니라 char index(호출부가 위치 판정 시 변환). */
 	public record Match(String phrase, int start, int end) {
@@ -261,7 +273,8 @@ public final class AdDisclosurePatterns {
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdDisclosurePatternsTest"`
-Expected: PASS (12개 — 부정 문맥 오탐 차단 수정(2026-08-17) 후 6개 추가)
+Expected: PASS (14개 — 부정 문맥 오탐 차단 수정(2026-08-17) 후 6개 추가, "아님" 띄어쓰기
+변형 보강 후 2개 추가)
 
 - [ ] **Step 5: 커밋**
 
