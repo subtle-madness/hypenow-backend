@@ -75,7 +75,7 @@ public class AdminCrawlingUsageService {
 		PeriodSums sums = new PeriodSums(today, monthStart);
 		sumBrandCalls(userId, sums);
 		sumTargetCalls(userId, sums);
-		return new AdminCrawlingUsage(sums.total, sums.month, sums.day, unitPrice);
+		return new AdminCrawlingUsage(sums.total(), sums.month(), sums.day(), unitPrice);
 	}
 
 	/** 브랜드 태그 모니터링 몫 — 연결 기간(클래스 문서 참조)으로 잘라 합산한다. */
@@ -108,30 +108,6 @@ public class AdminCrawlingUsageService {
 		}
 		for (UserCallDailyRow row : monitoringReads.get().findDailyCallCounts(userId)) {
 			sums.add(row.calledOn(), row.calls());
-		}
-	}
-
-	/** 세 구간(전체·이번 달·오늘) 누적기 — 미래 날짜 행(이론상)은 month·day에서 제외된다. */
-	private static final class PeriodSums {
-		private final LocalDate today;
-		private final LocalDate monthStart;
-		private long total;
-		private long month;
-		private long day;
-
-		private PeriodSums(LocalDate today, LocalDate monthStart) {
-			this.today = today;
-			this.monthStart = monthStart;
-		}
-
-		private void add(LocalDate calledOn, long calls) {
-			total += calls;
-			if (!calledOn.isBefore(monthStart) && !calledOn.isAfter(today)) {
-				month += calls;
-			}
-			if (calledOn.equals(today)) {
-				day += calls;
-			}
 		}
 	}
 
