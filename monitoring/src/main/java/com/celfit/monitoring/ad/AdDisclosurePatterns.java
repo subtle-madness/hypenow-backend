@@ -38,7 +38,7 @@ public final class AdDisclosurePatterns {
 	// 이건 NOT_DISCLOSED 확정이 아니라 "판단 보류"다 — Tier1이 낼 수 있는 최악의 오류(false
 	// DISCLOSED)를 막기 위한 가드일 뿐, 부정 문구 자체가 미표기를 의미하지 않는다.
 	private static final Pattern NEGATION =
-			Pattern.compile("내돈내산|(광고|협찬)\\s*(아니|아님)");
+			Pattern.compile("내돈내산|(광고|협찬)\\s*(이|가|은|는)?\\s*(아니|아님)");
 
 	/** 매칭 문구·문자 오프셋 — 오프셋은 그래핌이 아니라 char index(호출부가 위치 판정 시 변환). */
 	public record Match(String phrase, int start, int end) {

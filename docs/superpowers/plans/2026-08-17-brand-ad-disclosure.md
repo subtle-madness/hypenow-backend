@@ -190,6 +190,31 @@ class AdDisclosurePatternsTest {
 	void 협찬_아님_띄어쓰기_변형도_부정_가드에_걸린다() {
 		assertThat(AdDisclosurePatterns.findFirstMatch("#협찬 아님 그냥 샀어요")).isNull();
 	}
+
+	@Test
+	void 협찬_조사_결합_부정문은_부정_가드에_걸린다() {
+		// "협찬이 아니라"처럼 명사와 "아니/아님" 사이에 조사(이/가/은/는)가 끼어드는 경우 —
+		// (광고|협찬)\s*(아니|아님)만으로는 못 잡던 구멍(조사 결합 부정문). #광고가 뒤에 있어도
+		// 부정 가드가 먼저 걸려 Tier1 확정을 포기한다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("이건 협찬이 아니라 그냥 산거예요 #광고")).isNull();
+	}
+
+	@Test
+	void 광고_조사_결합_부정문은_부정_가드에_걸린다() {
+		// "광고가 아니에요"도 동일하게 조사 결합 부정문 구멍이었다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("광고가 아니에요 내맘대로 후기")).isNull();
+	}
+
+	@Test
+	void 이모지_뒤_오프셋은_char_index_기준이다() {
+		// Javadoc 캐비어트("오프셋은 그래핌이 아니라 char index")의 회귀 방지 —
+		// 서로게이트 페어인 이모지가 앞에 있어도 start/end는 String.indexOf와 같은 UTF-16 char index다.
+		String caption = "오늘의 룩 😀😀 #광고 후기";
+		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch(caption);
+		assertThat(m).isNotNull();
+		assertThat(m.start()).isEqualTo(caption.indexOf("#광고"));
+		assertThat(caption.substring(m.start(), m.end())).isEqualTo("#광고");
+	}
 }
 ```
 
@@ -241,7 +266,7 @@ public final class AdDisclosurePatterns {
 	// 이건 NOT_DISCLOSED 확정이 아니라 "판단 보류"다 — Tier1이 낼 수 있는 최악의 오류(false
 	// DISCLOSED)를 막기 위한 가드일 뿐, 부정 문구 자체가 미표기를 의미하지 않는다.
 	private static final Pattern NEGATION =
-			Pattern.compile("내돈내산|(광고|협찬)\\s*(아니|아님)");
+			Pattern.compile("내돈내산|(광고|협찬)\\s*(이|가|은|는)?\\s*(아니|아님)");
 
 	/** 매칭 문구·문자 오프셋 — 오프셋은 그래핌이 아니라 char index(호출부가 위치 판정 시 변환). */
 	public record Match(String phrase, int start, int end) {
@@ -273,8 +298,8 @@ public final class AdDisclosurePatterns {
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `./gradlew :monitoring:test --tests "com.celfit.monitoring.ad.AdDisclosurePatternsTest"`
-Expected: PASS (14개 — 부정 문맥 오탐 차단 수정(2026-08-17) 후 6개 추가, "아님" 띄어쓰기
-변형 보강 후 2개 추가)
+Expected: PASS (17개 — 부정 문맥 오탐 차단 수정(2026-08-17) 후 6개 추가, "아님" 띄어쓰기
+변형 보강 후 2개 추가, 조사 결합 부정문·이모지 오프셋 회귀 테스트 보강 후 3개 추가)
 
 - [ ] **Step 5: 커밋**
 
