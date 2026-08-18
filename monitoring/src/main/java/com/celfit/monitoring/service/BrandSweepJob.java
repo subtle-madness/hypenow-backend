@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.ad.AdDisclosureBackfillStartupRunner;
 import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
@@ -41,7 +42,6 @@ public class BrandSweepJob {
 	private final HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive;
 	private final HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive;
 	private final AdDisclosureJudgeService adJudge;
-	private final int adDisclosureBackfillPerNight;
 	private final boolean adDisclosureEnabled;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
@@ -49,7 +49,6 @@ public class BrandSweepJob {
 			BrandProfileImageArchiveJob brandImageArchive, BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
 			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive,
 			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive, AdDisclosureJudgeService adJudge,
-			@Value("${monitoring.brand.ad-disclosure.backfill-per-night:1000}") int adDisclosureBackfillPerNight,
 			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
 		this.brands = brands;
 		this.collect = collect;
@@ -60,7 +59,6 @@ public class BrandSweepJob {
 		this.hashtagPostThumbnailArchive = hashtagPostThumbnailArchive;
 		this.hashtagPostAuthorImageArchive = hashtagPostAuthorImageArchive;
 		this.adJudge = adJudge;
-		this.adDisclosureBackfillPerNight = adDisclosureBackfillPerNight;
 		this.adDisclosureEnabled = adDisclosureEnabled;
 	}
 
@@ -72,9 +70,11 @@ public class BrandSweepJob {
 	 * DailySweepJob}과 동형) — 별도 크론이 아니라 스윕이 갓 재조회한 신선한 URL을 바로 잡기 위함이다.
 	 * 아카이브 실패는 잡별 격리 래퍼가 전부 삼켜 스윕 결과에도, 서로에게도 영향을 주지 않는다.
 	 *
-	 * <p>광고 판정 백필({@link #backfillAdDisclosuresSafely}, 스펙 §7 개정)도 같은 finally에서
-	 * 브랜드 루프 종료 직후 돈다 — 아카이브 잡들과 같은 이유로, 스윕 본체 성패와 무관하게 매일
-	 * 시도돼야 한다.
+	 * <p>광고 판정 백필({@link #backfillAdDisclosuresSafely}, 2026-08-18 상한 제거 개정)도 같은
+	 * finally에서 브랜드 루프 종료 직후 돈다 — 아카이브 잡들과 같은 이유로, 스윕 본체 성패와
+	 * 무관하게 매일 시도돼야 한다. 배포 직후 재고는 기동 즉시 실행되는 {@link
+	 * AdDisclosureBackfillStartupRunner}가 이미 흡수하므로, 이 훅은 그 사이 발생한 실패 잔량을
+	 * 매일 재시도하는 안전망 역할이다.
 	 */
 	public void run() {
 		try {
@@ -119,22 +119,23 @@ public class BrandSweepJob {
 	}
 
 	/**
-	 * 광고 판정 백필(2026-08-18, 스펙 §7 개정) — 사용자 확정 원칙 "판정은 처음에 전량, 이후는
-	 * 캡션 변경분만"을 180일 스윕 재열거 창 바깥까지 완성한다. 브랜드 스코프 없이 전역
-	 * {@code ad_verdict IS NULL} 잔량에서 매일 밤 최대
-	 * {@code monitoring.brand.ad-disclosure.backfill-per-night}건만 처리 — 상한 0이면 비활성.
-	 * 킬 스위치({@code monitoring.brand.ad-disclosure.enabled})가 꺼져 있으면 스윕 경로의 판정과
-	 * 함께 이 백필도 스킵한다(같은 롤백 손잡이로 양쪽을 끈다). 실패는 격리해 스윕 결과에 영향을
-	 * 주지 않는다(아카이브 잡들과 같은 격리 패턴).
+	 * 광고 판정 백필 안전망(2026-08-18 상한 제거 개정) — 사용자 확정 원칙 "판정은 처음에 전량,
+	 * 이후는 캡션 변경분만"의 최초 1회 전량 판정은 기동 즉시 실행되는 {@link
+	 * AdDisclosureBackfillStartupRunner}가 맡는다. 이 훅은 그 사이(또는 배포 없이 지나간 하루
+	 * 동안) 발생한 <b>실패 잔량 재시도 안전망</b>이다 — 브랜드 스코프 없이 전역
+	 * {@code ad_verdict IS NULL} 잔량을 상한 없이 매일 밤 전부 처리한다. 킬
+	 * 스위치({@code monitoring.brand.ad-disclosure.enabled})가 꺼져 있으면 스윕 경로의 판정과
+	 * 함께 이 백필도 스킵한다(같은 롤백 손잡이로 양쪽을 끈다). {@link
+	 * AdDisclosureJudgeService}의 동시 실행 가드 덕에 기동 백필과 겹쳐도 안전하다(나중 호출은
+	 * 스킵). 실패는 격리해 스윕 결과에 영향을 주지 않는다(아카이브 잡들과 같은 격리 패턴).
 	 */
 	private void backfillAdDisclosuresSafely() {
-		if (!adDisclosureEnabled || adDisclosureBackfillPerNight <= 0) {
-			log.debug("광고 판정 백필 비활성 — enabled={}, backfillPerNight={}", adDisclosureEnabled,
-					adDisclosureBackfillPerNight);
+		if (!adDisclosureEnabled) {
+			log.debug("광고 판정 백필 비활성 — enabled=false");
 			return;
 		}
 		try {
-			AdDisclosureJudgeService.BackfillOutcome outcome = adJudge.backfillUnjudged(adDisclosureBackfillPerNight);
+			AdDisclosureJudgeService.BackfillOutcome outcome = adJudge.backfillUnjudged();
 			log.info("광고 판정 백필 — 잔여 {}건 중 {}건 처리", outcome.remaining(), outcome.processed());
 		} catch (RuntimeException e) {
 			log.warn("광고 판정 백필 실패(격리, 스윕 결과에는 영향 없음): {}", e.toString());

@@ -179,12 +179,12 @@ LLM 없이 단위 테스트된다. 최종 판정을 결정적 규칙으로 빼�
   정책상 재열거 자체가 없어(`BrandCrawlPolicy.due` 무조건 false) verdict NULL이 영구 잔존할 수
   있었다(2026-08-18 스펙 리뷰 정정 — 아래 백필 단계가 이 공백을 흡수한다).
 
-### 7-1. 미판정 잔여 백필 (2026-08-18 개정)
+### 7-1. 미판정 잔여 백필 (2026-08-18 개정, 08-18 상한 제거·기동 즉시 실행 재개정)
 
 사용자 확정 원칙: **광고 판정은 처음에 전량 돌고, 이후에는 캡션 변경분만 돈다.** `judgePosts`
 (스윕 경유 후보 선정)만으로는 이 원칙이 180일 추적 창 안에서만 성립한다 — 창 밖(배포 시점
 재고·수집 기간만큼 쌓인 오래된 게시물)은 정기 스윕이 다시 만나지 않아 최초 1회 판정 기회 자체가
-없다. `AdDisclosureJudgeService.backfillUnjudged(limit)`가 이 공백을 메운다:
+없다. `AdDisclosureJudgeService.backfillUnjudged()`가 이 공백을 메운다:
 
 - 대상 선정은 브랜드 스코프 없이 전역 `brand_post_meta WHERE ad_verdict IS NULL`
   (`BrandPostMetaRepository.findUnjudged`) — 부분 인덱스(`idx_brand_post_meta_unjudged`)가
@@ -193,15 +193,34 @@ LLM 없이 단위 테스트된다. 최종 판정을 결정적 규칙으로 빼�
   caption·content_type·video_url·is_paid_partnership만으로 판정한다. Tier0~3 규칙은
   `judgeCore`로 추출해 `judgePosts` 경로(`PostInfo` 입력)와 완전히 공유 — 입력 소스만 다를
   뿐 같은 캡션이면 항상 같은 verdict를 낸다.
-- `BrandSweepJob`이 브랜드 루프 종료 직후(아카이브 잡들과 같은 finally) 이 단계를 1회 호출한다.
-  상한은 `monitoring.brand.ad-disclosure.backfill-per-night`(기본 1000, 0이면 비활성) — 판정
-  킬 스위치(`enabled`)가 꺼져 있으면 이 단계도 함께 스킵한다. 실패는 격리해 스윕 결과에 영향을
-  주지 않는다.
-- 스윕 경유 판정(당일 due 게시물)과 겹칠 수 있다 — 스윕이 이미 판정에 성공한 게시물은
+- **상한이 없다**(08-18 재개정 — 종전 `monitoring.brand.ad-disclosure.backfill-per-night`
+  설정·야간 상한 개념을 삭제). `backfillUnjudged()`는 잔량이 0이 될 때까지 500건씩
+  `findUnjudged`를 반복 조회하며 전량 처리한다(배치 크기는 구현 디테일이지 상한이 아니다).
+  LLM 전용 풀(동시 4)이 자연 속도 제한이다. 배치마다 "잔여 N건" info 로그를 남긴다. 한 배치가
+  통째로 재시도해도 갱신되지 않으면(영구 실패) 그 배치는 이번 호출에서 더 이상 재조회하지
+  않고 종료한다 — 재시도는 다음 호출의 몫이라, 전량 실패 배치가 같은 호출 안에서 무한
+  루프하는 것을 막는다.
+- **기동 즉시 실행**(08-18 신설) — 앱 기동 완료(`ApplicationReadyEvent`) 시
+  `AdDisclosureBackfillStartupRunner`가 별도 데몬 스레드에서 `backfillUnjudged()`를 즉시
+  시작한다(부팅 블로킹 없음). 배포 직후 재고가 다음 야간 스윕까지 기다리지 않고 바로
+  판정되는 것이 목적이다. 판정 킬 스위치(`monitoring.brand.ad-disclosure.enabled`)가
+  꺼져 있으면 스레드조차 띄우지 않고 스킵한다. 실패는 이 스레드 안에서 격리해 앱 기동·운영에
+  영향을 주지 않는다.
+- **야간 스윕 말미 훅은 유지하되 의미가 바뀐다** — 종전에는 이 훅이 "1회 전량 백필"의 유일한
+  실행 지점이었지만, 이제 최초 전량 판정은 기동 러너가 맡으므로 스윕 말미 훅은 **실패 잔량
+  재시도 안전망**이다. `BrandSweepJob`이 브랜드 루프 종료 직후(아카이브 잡들과 같은
+  finally) `backfillUnjudged()`를 1회 호출한다 — 이 역시 상한 없이 잔량 전부를 처리한다.
+  판정 킬 스위치(`enabled`)가 꺼져 있으면 이 단계도 함께 스킵한다. 실패는 격리해 스윕 결과에
+  영향을 주지 않는다.
+- **동시 실행 방어** — 기동 백필과 스윕 말미 백필이 겹칠 수 있다(예: 기동 직후 첫 야간
+  스윕이 아직 끝나지 않은 백필과 부딪히는 경우). `AdDisclosureJudgeService` 내부의
+  `AtomicBoolean` 가드가 이중 실행을 막는다 — 이미 실행 중이면 나중 호출은 즉시
+  `(remaining=0, processed=0)`을 반환하고 info 로그만 남긴 채 스킵한다.
+- 스윕 경유 판정(당일 due 게시물)과도 겹칠 수 있다 — 스윕이 이미 판정에 성공한 게시물은
   `ad_verdict`가 채워져 있어 다음 `findUnjudged` 조회에 잡히지 않는다. 스윕에서 **실패**해
-  verdict가 NULL로 남은 게시물만 같은 밤 백필에서 재시도 대상이 될 수 있는데, 이는 판정
-  로직이 멱등(같은 캡션 → 같은 verdict)이라 무해한 재시도다 — LLM 비용이 이중으로 나가는
-  경우는 있지만(실패 후 같은 밤 재시도), 검증 결과가 갈리지는 않는다.
+  verdict가 NULL로 남은 게시물만 재시도 대상이 될 수 있는데, 이는 판정 로직이 멱등(같은
+  캡션 → 같은 verdict)이라 무해한 재시도다 — LLM 비용이 이중으로 나가는 경우는 있지만,
+  검증 결과가 갈리지는 않는다.
 
 ## 8. 노출 게이트 변경 (프로그레시브 서빙)
 
