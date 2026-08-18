@@ -4,6 +4,7 @@ datasources:
     uid: hypenow-analysis-pg
     type: postgres
     access: proxy
+    editable: false
     url: postgres:5432
     database: analysis
     user: dev
@@ -14,6 +15,7 @@ datasources:
     uid: hypenow-monitoring-pg
     type: postgres
     access: proxy
+    editable: false
     url: postgres:5432
     database: monitoring
     user: dev
@@ -23,10 +25,12 @@ datasources:
     uid: hypenow-prometheus
     type: prometheus
     access: proxy
+    editable: false
     url: http://prometheus:9090
     jsonData: { timeInterval: 30s }
   - name: Loki (스텁 — 로컬 미기동)
     uid: hypenow-loki
     type: loki
     access: proxy
+    editable: false
     url: http://loki:3100

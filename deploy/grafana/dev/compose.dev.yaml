@@ -37,7 +37,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:v2.53.0
+    image: prom/prometheus:v3.4.0        # 운영과 동일 버전 고정(deploy/compose.yaml)
     volumes:
       - ./prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
 
@@ -49,3 +49,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
+      # 컨테이너별 시계열에 필요(운영 Task 9와 동일 마운트) — 없으면 cAdvisor가 read-write 레이어를
+      # 못 찾아 container_* 메트릭이 통째로 비었다. macOS 한계는 README "운영과 다른 점" 참조.
+      - /var/lib/docker:/var/lib/docker:ro
