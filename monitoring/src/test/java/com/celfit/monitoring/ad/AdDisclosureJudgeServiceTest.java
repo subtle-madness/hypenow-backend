@@ -327,6 +327,96 @@ class AdDisclosureJudgeServiceTest {
 	}
 
 	/**
+	 * 백필 방어선 — 연속 실패 서킷브레이커(2026-08-18, 429 폭주 실측 계기). 한 배치(전부 6건) 안에서
+	 * 3번째 실패로 임계(3)에 도달하면, 그 배치의 나머지 항목(F4~F6)은 LLM을 아예 호출하지 않고
+	 * 스킵한다(추가 429 소모 방지) — 실 DB는 {@code ORDER BY short_code}라 실패한 항목은 다음
+	 * findUnjudged 재조회에서도 같은 자리를 차지해(다음 배치가 진행 안 됨) 검증은 단일 배치로 충분하다.
+	 */
+	@Test
+	void 백필_LLM_연속_실패가_임계에_도달하면_그_배치_안에서_LLM_호출을_중단한다() {
+		FakeExtractor extractor = new FakeExtractor();
+		extractor.fail = true;
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "체험단 후기 1", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F2", "체험단 후기 2", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F3", "체험단 후기 3", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F4", "체험단 후기 4", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F5", "체험단 후기 5", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F6", "체험단 후기 6", "FEED", null, null));
+		// batchSize=6(전부 한 배치), llmFailureAbortThreshold=3, backfillMaxPerRun=0(무제한 — breaker만 검증)
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 6, 3, 0);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
+
+		assertThat(repo.written).isEmpty();   // 전부 실패라 아무것도 기록되지 않음
+		assertThat(extractor.calls).hasSize(3);   // 3번째 실패로 서킷이 열려 나머지 3건은 LLM 호출 자체가 스킵됨
+		assertThat(outcome.processed()).isEqualTo(6);   // 배치 전체가 "시도" 집계에는 포함(스킵도 포함)
+		assertThat(repo.findUnjudgedCalls).isEqualTo(1);   // 다음 배치 재조회 자체가 없음(같은 호출 안에서 즉시 중단)
+	}
+
+	@Test
+	void 백필_성공하면_연속_실패_카운터가_리셋된다() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "체험단 후기 1", "FEED", null, null),   // 실패
+				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),                // 규칙 성공(리셋)
+				new BrandPostMetaRepository.UnjudgedPost("F3", "체험단 후기 3", "FEED", null, null),   // 실패
+				new BrandPostMetaRepository.UnjudgedPost("F4", "체험단 후기 4", "FEED", null, null));  // 실패해도 임계(3) 미달
+		extractor.failCaptions = Set.of("체험단 후기 1", "체험단 후기 3", "체험단 후기 4");
+		// batchSize=4(한 배치로 전부) — 순서대로 F1(실패,1) F2(성공,리셋) F3(실패,1) F4(실패,2) → 임계 3 도달 안 함
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 4, 3, 0);
+
+		service.backfillUnjudged();
+
+		assertThat(repo.written).containsOnlyKeys("F2");   // 성공은 F2뿐
+		assertThat(extractor.calls).containsExactly("체험단 후기 1", "체험단 후기 3", "체험단 후기 4");
+	}
+
+	/**
+	 * 백필 방어선 — 1회 실행 상한 복원(2026-08-18, 429 폭주 실측 계기). 상한(3)에 도달하면
+	 * 잔량이 남아 있어도(F4·F5) 정상 종료하고, 다음 호출이 이어서 처리한다는 계약이므로 여기서는
+	 * "이번 호출은 상한만큼만 쓴다"만 검증한다.
+	 */
+	@Test
+	void 백필_1회_실행_상한에_도달하면_잔여를_다음_주기로_넘긴다() {
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F4", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F5", "", "FEED", null, null));
+		// batchSize=2, llmFailureAbortThreshold=기본치(breaker 무관), backfillMaxPerRun=3
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run,
+				2, 10, 3);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
+
+		assertThat(outcome.remaining()).isEqualTo(5);   // 시작 시점 전체 잔량
+		assertThat(outcome.processed()).isEqualTo(3);   // 상한만큼만 처리
+		assertThat(repo.written).hasSize(3);
+		assertThat(repo.written).containsOnlyKeys("F1", "F2", "F3");   // F4·F5는 남겨둠
+	}
+
+	@Test
+	void 백필_상한이_0이면_기존과_같이_무제한이다() {
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run,
+				2, 10, 0);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
+
+		assertThat(outcome.processed()).isEqualTo(3);
+		assertThat(repo.written).hasSize(3);
+	}
+
+	/**
 	 * 동시 실행 방어(2026-08-18) — 기동 백필과 스윕 말미 백필이 겹칠 수 있어 AtomicBoolean 가드를
 	 * 둔다. 첫 호출이 countUnjudged() 안에서 대기하는 동안 두 번째 호출은 즉시 (0,0)을 반환하고
 	 * findUnjudged를 전혀 호출하지 않아야 한다.
@@ -387,11 +477,14 @@ class AdDisclosureJudgeServiceTest {
 		final List<String> calls = new java.util.concurrent.CopyOnWriteArrayList<>();
 		List<Disclosure> next = List.of();
 		boolean fail;
+		/** 지정된 캡션만 실패시킨다(비어있으면 이 필터는 무시하고 fail 필드를 그대로 따른다) — 서킷브레이커
+		 * 리셋 테스트처럼 "특정 호출만 실패, 나머지는 성공"을 표현하기 위함. */
+		Set<String> failCaptions = Set.of();
 
 		@Override
 		public List<Disclosure> extract(String caption) {
 			calls.add(caption);
-			if (fail) {
+			if (fail || failCaptions.contains(caption)) {
 				throw new IllegalStateException("LLM 호출 실패(테스트)");
 			}
 			return next;

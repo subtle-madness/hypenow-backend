@@ -102,7 +102,7 @@ class BrandHashtagCollectServiceTest {
 		boolean fail;
 
 		FakeJudge() {
-			super((path, body) -> "{}", "unused-key", "unused-model");
+			super((path, body) -> "{}", true, "unused-model");
 		}
 
 		@Override

@@ -26,7 +26,7 @@ class AdDisclosureExtractorGeminiTest {
 	@Test
 	void 문구와_카테고리를_파싱한다() {
 		var extractor = new AdDisclosureExtractorGemini(
-				(path, body) -> geminiBody("[{\"phrase\":\"#광고\",\"category\":\"CLEAR\"}]"), "key", "model-x");
+				(path, body) -> geminiBody("[{\"phrase\":\"#광고\",\"category\":\"CLEAR\"}]"), true, "model-x");
 		List<AdDisclosureExtractor.Disclosure> result = extractor.extract("오늘의 룩 #광고");
 		assertThat(result).containsExactly(new AdDisclosureExtractor.Disclosure("#광고", Category.CLEAR));
 	}
@@ -35,13 +35,13 @@ class AdDisclosureExtractorGeminiTest {
 	void 여러_문구를_파싱한다() {
 		var extractor = new AdDisclosureExtractorGemini((path, body) -> geminiBody(
 				"[{\"phrase\":\"체험단\",\"category\":\"AMBIGUOUS\"},{\"phrase\":\"Sponsor\",\"category\":\"FOREIGN\"}]"),
-				"key", "m");
+				true, "m");
 		assertThat(extractor.extract("c")).hasSize(2);
 	}
 
 	@Test
 	void 빈_배열은_빈_리스트() {
-		var extractor = new AdDisclosureExtractorGemini((path, body) -> geminiBody("[]"), "key", "m");
+		var extractor = new AdDisclosureExtractorGemini((path, body) -> geminiBody("[]"), true, "m");
 		assertThat(extractor.extract("광고 표기 없음")).isEmpty();
 	}
 
@@ -51,7 +51,7 @@ class AdDisclosureExtractorGeminiTest {
 		var extractor = new AdDisclosureExtractorGemini((path, body) -> {
 			sent.set(path + "\n" + body);
 			return geminiBody("[]");
-		}, "key", "model-x");
+		}, true, "model-x");
 		extractor.extract("오늘의 룩 #광고");
 		assertThat(sent.get()).contains("model-x:generateContent").contains("오늘의 룩 #광고")
 				.contains("responseSchema");
@@ -62,13 +62,13 @@ class AdDisclosureExtractorGeminiTest {
 		// BrandMentionJudge와 달리 fail-closed(UNCERTAIN)로 접지 않는다 — verdict NULL 유지가 계약(스펙 §5)
 		var extractor = new AdDisclosureExtractorGemini((p, b) -> {
 			throw new AssertionError("키 없이는 호출하면 안 된다");
-		}, "", "m");
+		}, false, "m");
 		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
 	}
 
 	@Test
 	void candidates_본문이_없으면_예외() {
-		var extractor = new AdDisclosureExtractorGemini((p, b) -> "{}", "key", "m");
+		var extractor = new AdDisclosureExtractorGemini((p, b) -> "{}", true, "m");
 		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
 	}
 
@@ -77,7 +77,7 @@ class AdDisclosureExtractorGeminiTest {
 		var extractor = new AdDisclosureExtractorGemini(
 				(p, b) -> """
 						{"candidates":[{"content":{"parts":[{"text":"{\\"foo\\":1}"}]}}]}""",
-				"key", "m");
+				true, "m");
 		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
 	}
 
@@ -86,7 +86,7 @@ class AdDisclosureExtractorGeminiTest {
 		var extractor = new AdDisclosureExtractorGemini(
 				(p, b) -> """
 						{"candidates":[{"content":{"parts":[{"text":"{\\"disclosures\\":\\"oops\\"}"}]}}]}""",
-				"key", "m");
+				true, "m");
 		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
 	}
 
@@ -94,7 +94,7 @@ class AdDisclosureExtractorGeminiTest {
 	void 본문_json이_중간에_잘리면_예외() {
 		// maxOutputTokens 초과로 응답이 잘리는 실제 시나리오 — text 필드 값 자체가 불완전한 JSON
 		var extractor = new AdDisclosureExtractorGemini(
-				(p, b) -> geminiBodyWithRawText("{\"disclosures\":[{\"phrase\":\"#광"), "key", "m");
+				(p, b) -> geminiBodyWithRawText("{\"disclosures\":[{\"phrase\":\"#광"), true, "m");
 		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class)
 				.hasMessageContaining("#광");
 	}
@@ -102,7 +102,7 @@ class AdDisclosureExtractorGeminiTest {
 	@Test
 	void 예상_밖_category_문자열은_예외() {
 		var extractor = new AdDisclosureExtractorGemini(
-				(p, b) -> geminiBody("[{\"phrase\":\"x\",\"category\":\"MAYBE\"}]"), "key", "m");
+				(p, b) -> geminiBody("[{\"phrase\":\"x\",\"category\":\"MAYBE\"}]"), true, "m");
 		assertThatThrownBy(() -> extractor.extract("c")).isInstanceOf(IllegalStateException.class);
 	}
 }
