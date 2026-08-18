@@ -261,6 +261,22 @@ public class MonitoringItemRepository {
 	}
 
 	/**
+	 * 캠페인 연결된 계정 추적(mode=account) 핸들 — seededAuthor 산출 재료(2026-08-18 캠페인 도출
+	 * 개정, was BrandPostAssembler 소비). input_value는 등록 시 이미 소문자 정규화 저장
+	 * ({@code MonitoringInput.parseAccount}) — 방어적 재정규화는 소비부(BrandPostAssembler) 몫.
+	 * canceled_at IS NULL만 본다 — 취소된 추적은 더 이상 "이 브랜드가 시딩 중"이라는 신호가 아니다.
+	 */
+	public List<String> findCampaignLinkedAccountHandles(long userId) {
+		return jdbcClient.sql("""
+				SELECT input_value FROM app.monitoring_items
+				WHERE user_id = :userId AND mode = 'account' AND campaign_id IS NOT NULL AND canceled_at IS NULL
+				""")
+				.param("userId", userId)
+				.query(String.class)
+				.list();
+	}
+
+	/**
 	 * 어드민 캠페인 목록(GET /v1/admin/campaigns, 08-02)의 registrationCount — 캠페인 id 묶음 IN절
 	 * 집계(N+1 금지). CampaignRepository.countItems와 동일하게 canceled_at 조건 없이 전량 누적
 	 * (배정된 추적 행 총수 — 취소된 등록도 "한때 배정됐던" 기록으로 센다).

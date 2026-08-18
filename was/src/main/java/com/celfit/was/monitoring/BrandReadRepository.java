@@ -356,16 +356,4 @@ public class BrandReadRepository {
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
 	public record BrandCallDailyRow(long brandId, LocalDate calledOn, long calls) {
 	}
-
-	/**
-	 * 시딩(협업) 계정 username 전체(소문자 정규화, monitoring BrandController가 저장 시 이미
-	 * 소문자로 정규화하지만 방어적으로 한 번 더) — was 조인 계산 재료(스펙 §6, §9 seededAuthor).
-	 * 방어적 소문자화는 소비부(BrandPostAssembler)가 반환값·비교 대상 양쪽에 적용한다.
-	 */
-	public List<String> findSeededUsernames(long brandId) {
-		return jdbc.sql("SELECT username FROM brand_seeded_account WHERE brand_id = :brandId")
-				.param("brandId", brandId)
-				.query(String.class)
-				.list();
-	}
 }

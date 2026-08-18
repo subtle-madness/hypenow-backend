@@ -368,7 +368,7 @@ public class V2CampaignContentService {
 			// 존재 판정이라 정산 전 게시물도 담는다(ALL) — 표시 게이트(정산분만)를 여기 쓰면 수집
 			// 중인 실존 게시물이 NOT_FOUND로 떨어진다. 바로 위 문단이 경쟁사에서 겪은 그 실패 양상이다.
 			for (BrandPostResponse post : brandPostAssembler.get()
-					.assembleTagged(account.get(), true, BrandPostAssembler.TaggedScope.ALL)) {
+					.assembleTagged(userId, account.get(), true, BrandPostAssembler.TaggedScope.ALL)) {
 				urls.putIfAbsent(post.shortcode(), new TaggedPost(post.postUrl(), link.accountType()));
 			}
 		}

@@ -221,41 +221,6 @@ public class V1BrandAccountService {
 		commandClient.deleteAllHashtagTags(username);
 	}
 
-	/** 시딩 계정 조회(스펙 §6) — 소유권은 단건 폴링과 동일(남의 brandId는 403). */
-	public List<String> getSeededAccounts(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		return commandClient.getSeededAccounts(username);
-	}
-
-	/** 시딩 계정 전체 교체 — usernames null은 빈 목록으로 접어 monitoring에 위임. */
-	public void putSeededAccounts(long userId, long brandId, List<String> usernames) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.putSeededAccounts(username, usernames == null ? List.of() : usernames);
-	}
-
-	/** 시딩 계정 단건·다건 추가. */
-	public void addSeededAccounts(long userId, long brandId, List<String> usernames) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.addSeededAccounts(username, usernames == null ? List.of() : usernames);
-	}
-
-	/** 시딩 계정 단건 삭제. */
-	public void deleteSeededAccount(long userId, long brandId, String seededUsername) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteSeededAccount(username, seededUsername);
-	}
-
-	/** 시딩 계정 전체 삭제. */
-	public void deleteAllSeededAccounts(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteAllSeededAccounts(username);
-	}
-
 	/**
 	 * 삭제(§5-3) — 연결 soft-delete 후 그 브랜드의 마지막 사용자였으면 monitoring 탈퇴.
 	 * {@code users.instgram_account_name}은 건드리지 않는다(불변 — 같은 계정 재등록만 허용).

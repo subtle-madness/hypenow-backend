@@ -28,6 +28,7 @@ class BrandPostAssemblerTest {
 		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
 		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
 		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
@@ -36,8 +37,8 @@ class BrandPostAssemblerTest {
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator", null,
 						SWEPT_AT, SWEPT_AT, 0L)));
 
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
-		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, false);
+		var posts = assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
 
 		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
 				.findComments(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.anyInt());
@@ -59,12 +60,13 @@ class BrandPostAssemblerTest {
 		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
 		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
 		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, false);
 
-		assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ENRICHED_ONLY);
+		assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ENRICHED_ONLY);
 		org.mockito.Mockito.verify(repository)
 				.findEnrichedTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
 						org.mockito.ArgumentMatchers.any());
@@ -73,7 +75,7 @@ class BrandPostAssemblerTest {
 						org.mockito.ArgumentMatchers.any());
 
 		org.mockito.Mockito.clearInvocations(repository);
-		assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+		assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
 		org.mockito.Mockito.verify(repository)
 				.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
 						org.mockito.ArgumentMatchers.any());
@@ -88,10 +90,11 @@ class BrandPostAssemblerTest {
 		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
 		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
 		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, false);
 
 		assembler.assembleForBrand(7L, account);
 
@@ -462,6 +465,7 @@ class BrandPostAssemblerTest {
 		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
 		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
 		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
@@ -473,10 +477,11 @@ class BrandPostAssemblerTest {
 				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
 						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
 						"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]")));
-		org.mockito.Mockito.when(repository.findSeededUsernames(42L)).thenReturn(List.of("creator1"));
+		org.mockito.Mockito.when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of("creator1"));
+		org.mockito.Mockito.when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
 
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, true);
-		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, true);
+		var posts = assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
@@ -484,6 +489,93 @@ class BrandPostAssemblerTest {
 					.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
 			assertThat(post.seededAuthor()).isTrue();
 		});
+	}
+
+	// ---------- 시딩 판정(캠페인 도출, 2026-08-18 재설계 — 신설 시딩 계정 관리 표면 철회) ----------
+
+	/** 캠페인 연결 계정 추적(mode=account)의 핸들이 시딩 집합에 들어가면 그 작성자의 게시물은 seededAuthor=true다. */
+	@Test
+	void 캠페인_연결_계정_추적의_작성자는_seededAuthor_true다() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any()))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "seed_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L)));
+		org.mockito.Mockito.when(repository.findPostMeta(org.mockito.ArgumentMatchers.anyCollection()))
+				.thenReturn(List.of());
+		org.mockito.Mockito.when(itemRepository.findCampaignLinkedAccountHandles(7L))
+				.thenReturn(List.of("seed_creator"));
+		org.mockito.Mockito.when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
+
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, true);
+		var posts = assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
+	}
+
+	/**
+	 * 캠페인 연결 직접 등록 게시물의 게시자(brand_post_meta.username, monitoring DB)가 시딩 집합에
+	 * 들어가면, 그 작성자의 <b>다른</b> 게시물에도 seededAuthor=true가 붙는다 — 시딩 여부는 특정
+	 * 게시물이 아니라 작성자 단위 신호다.
+	 */
+	@Test
+	void 캠페인_연결_직접등록_게시물_작성자는_다른_게시물에도_seededAuthor_true다() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any()))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "direct_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L)));
+		// 태그 자체 메타 조회(codes={"ABC"})와 시딩 산출용 조회(codes=["XYZ"])가 같은 메서드를 서로
+		// 다른 인자로 호출한다 — exact 매처로 구분해 둘을 뒤섞지 않는다.
+		org.mockito.Mockito.when(repository.findPostMeta(org.mockito.ArgumentMatchers.eq(Set.of("ABC"))))
+				.thenReturn(List.of());
+		org.mockito.Mockito.when(repository.findPostMeta(org.mockito.ArgumentMatchers.eq(List.of("XYZ"))))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("XYZ", "direct_creator", "FEED",
+						LocalDate.of(2026, 8, 7), null, null, null, null, null, null, null, null, null)));
+		org.mockito.Mockito.when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of());
+		org.mockito.Mockito.when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of("XYZ"));
+
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, true);
+		var posts = assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
+	}
+
+	/** 캠페인 연결이 전혀 없는 작성자는 seededAuthor=false다(캠페인 없는 계정 추적 케이스). */
+	@Test
+	void 캠페인_연결이_없으면_seededAuthor_false다() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any()))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "no_campaign_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L)));
+		org.mockito.Mockito.when(repository.findPostMeta(org.mockito.ArgumentMatchers.anyCollection()))
+				.thenReturn(List.of());
+		org.mockito.Mockito.when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of());
+		org.mockito.Mockito.when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
+
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, true);
+		var posts = assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isFalse());
 	}
 
 	/**
@@ -511,6 +603,7 @@ class BrandPostAssemblerTest {
 		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
 		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
 		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var itemRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.MonitoringItemRepository.class);
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
@@ -523,9 +616,10 @@ class BrandPostAssemblerTest {
 						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
 						"DISCLOSED", "[]", "[]")));
 
-		// 토글 off — findSeededUsernames를 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지)
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
-		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+		// 토글 off — 시딩 산출 조회(findCampaignLinkedAccountHandles·findCampaignLinkedShortCodes)를
+		// 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지).
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, itemRepository, false);
+		var posts = assembler.assembleTagged(7L, account, false, BrandPostAssembler.TaggedScope.ALL);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.adDisclosure()).isNull();
@@ -533,8 +627,10 @@ class BrandPostAssemblerTest {
 			assertThat(post.adEvidence()).isEmpty();
 			assertThat(post.seededAuthor()).isFalse();
 		});
-		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
-				.findSeededUsernames(org.mockito.ArgumentMatchers.anyLong());
+		org.mockito.Mockito.verify(itemRepository, org.mockito.Mockito.never())
+				.findCampaignLinkedAccountHandles(org.mockito.ArgumentMatchers.anyLong());
+		org.mockito.Mockito.verify(directRepository, org.mockito.Mockito.never())
+				.findCampaignLinkedShortCodes(org.mockito.ArgumentMatchers.anyLong());
 	}
 
 	// ---------- 픽스처 ----------
