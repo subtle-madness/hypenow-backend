@@ -5,8 +5,7 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.10 (브랜드 해시태그 감지 확장 — 2026-08-11, 08-12 API 형태 정정, 08-17~18 제외 문자열
-> 폐기·취소 API 신설·brandPostId·작성자 프로필 아카이브)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.11 (브랜드 태그 모니터링 확장 — 광고 표기 판정·시딩 계정, 2026-08-18)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
 > 계약과 무관한 신규 3테이블, §8)이라 위 "테이블 8 + 알람 대장 + 뷰 2" 집계에는 포함하지 않는다.
@@ -58,6 +57,11 @@
 > `brandPostId` 추가(FE 클라이언트 조인 대체용) ⑤ 발견 게시물 작성자 프로필 사진도 OCI
 > 아카이브 우선 서빙(`monitor-hashtag-author/<author_username>.jpg`, 썸네일과 동형),
 > `feat/brand-hashtag-fe-requests`).
+> → **v2.11**(2026-08-18, 캡션 기반 광고 표기 판정 + 시딩 계정 — `BrandPostResponse`에 신규
+> 4필드(`adDisclosure`/`adViolations`/`adEvidence`/`seededAuthor`) 추가, 노출은 was 토글
+> `monitoring.brand.ad-disclosure.expose`(기본 `false`)로 게이팅. 신규
+> `GET/PUT/POST/DELETE /v1/brand-monitoring/accounts/{accountId}/seeded-accounts[/{seededUsername}]`
+> (시딩 계정 CRUD, was 프록시) — was 신규 API·상세는 §9, `feat/brand-ad-disclosure`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -788,3 +792,79 @@ best-effort 보너스이지 보장이 아니다). 태그 삭제는 이후 발견
   유지할 것. 태그 삭제는 tombstone(재추가하면 복구되지만 그 전까지 발견 중단)이라는 비소급
   규칙도 FE 문구에 반영할 것. 전체 삭제 = 브랜드 해시태그 감지 전체 일시 중지. 자동 유도
   시드는 이제 계정명 1종뿐이라는 점도 참고(§8-3-1).
+
+## 9. 브랜드 태그 모니터링 확장 — 광고 표기 판정·시딩 계정 (v2.11, 2026-08-18)
+
+> ⚠️ §8과 마찬가지로 target/캠페인 계약과 무관한 브랜드 태그 모니터링 서브시스템 확장이다.
+> 판정 파이프라인 자체(Tier0~3, `AdDisclosureJudgeService` 등)의 정본은
+> [MON-BT 트랙](../tracks/MON-BT-브랜드-태그-모니터링.md)이고, 이 절은 was가 조회하는 표면만 다룬다.
+
+브랜드 태그 게시물 캡션이 광고 표기 규정(공정위예규 제499호 Ⅴ.6)을 지켰는지 게시물 단위로
+자동 판정한다(구현: monitoring `AdDisclosureJudgeService`). was는 `BrandPostResponse`(§6-1
+목록·상세가 공유하는 셰이프, `tagged` 산지 한정)에 판정 결과 4필드를 노출한다.
+
+### 9-1. `BrandPostResponse` 신규 필드 4종
+
+| 필드 | 타입 | 비고 |
+|---|---|---|
+| `adDisclosure` | `string \| null` | `DISCLOSED`/`NOT_DISCLOSED`/`INSUFFICIENT`/`UNCERTAIN` 중 하나. **null이면 "판정중"**(아직 판정이 안 붙었거나, 판정이 진행 중인 게시물) |
+| `adViolations` | `string[]` | 위반 사유 코드 목록(예: `NO_DISCLOSURE`). 판정 전이거나 위반이 없으면 빈 배열 |
+| `adEvidence` | `AdEvidence[]` | 판정 근거 문구 목록. 각 원소는 `{phrase, category, offset}`(offset은 캡션 내 grapheme 오프셋) |
+| `seededAuthor` | `boolean` | 이 게시물 작성자가 그 브랜드의 시딩(협업) 계정으로 등록돼 있는지 — **광고 표기 판정과는 별개 신호다.** was 조회 시점에 `brand_seeded_account`를 별도 조인해 계산하며, 판정 자체(`adDisclosure`)의 입력이 아니다. `seededAuthor=true && adDisclosure="NOT_DISCLOSED"` 조합에서 "위반 확정" 배지를 그리는 것은 FE의 조합 로직이지 서버가 내려주는 값이 아니다 — 시딩 계정 게시물도 다른 게시물과 동일하게 캡션 판정을 거친다(트랙 문서의 2026-08-18 오기 정정 참조) |
+
+- **`direct` 산지는 이 4필드의 원천(`brand_post_meta`)이 없다** — `adDisclosure=null`,
+  `adViolations`/`adEvidence`는 빈 배열, `seededAuthor=false` 고정. 같은 shortcode의 `tagged`
+  관측이 있으면 병합 시 `tagged` 값으로 승격된다(`BrandPostAssembler.promoteAdFields`).
+- **노출은 토글로 제어되며 기본값은 off다.** was `monitoring.brand.ad-disclosure.expose`
+  (기본 `false`) — 꺼져 있으면 tagged 게시물도 4필드가 전부 중립값(`null`/빈 배열/`false`)으로
+  강제된다(`BrandPostAssembler.taggedPost`). 판정 자체는 토글과 무관하게 monitoring에서 계속
+  쌓인다 — 토글은 **표시**만 막는다. (별개로 monitoring 쪽에는 판정 파이프라인 자체를 끄는
+  독립 킬 스위치 `monitoring.brand.ad-disclosure.enabled`(기본 `true`)가 있다 — was 노출
+  토글과는 다른 축이라 혼동하지 말 것: `enabled=false`면 판정이 쌓이지 않고, `expose=false`면
+  판정은 쌓이지만 안 보인다.)
+
+```json
+// GET .../accounts/{accountId}/posts 200 (tagged 게시물, expose=true, 판정 완료)
+{
+  "data": [
+    {
+      "id": "ABC123",
+      "source": "tagged",
+      "adDisclosure": "NOT_DISCLOSED",
+      "adViolations": ["NO_DISCLOSURE"],
+      "adEvidence": [],
+      "seededAuthor": false
+    }
+  ]
+}
+// expose=false(기본)면 같은 행이 adDisclosure=null, adViolations=[], adEvidence=[], seededAuthor=false로 내려간다.
+```
+
+### 9-2. 시딩 계정 관리 API — `.../accounts/{accountId}/seeded-accounts[/{seededUsername}]`
+
+브랜드 소유자가 자사와 협업 관계가 이미 알려진(예: 공식 앰버서더) 인플루언서 계정 목록을 직접
+등록·조회·해제한다. was는 monitoring 내부 API(`/api/brands/{username}/seeded-accounts` 계열,
+`BrandController`)를 `MonitoringCommandClient`를 통해 그대로 프록시한다 — 판정 로직을 갖지
+않는다(시스템 경계 원칙). §8-3-1 hashtag-tags와 같은 표준 REST 5종 계약이다.
+
+| was 엔드포인트 | monitoring 내부 API | 비고 |
+|---|---|---|
+| `GET /v1/brand-monitoring/accounts/{accountId}/seeded-accounts` | `GET /api/brands/{username}/seeded-accounts` | `{"usernames": [...]}` |
+| `PUT /v1/brand-monitoring/accounts/{accountId}/seeded-accounts` | `PUT /api/brands/{username}/seeded-accounts` | 전체 교체 — 목록에 없는 기존 계정은 **하드 삭제**된다(태그 tombstone과 다른 규칙). 빈 배열 허용(전체 해제와 동일) |
+| `POST /v1/brand-monitoring/accounts/{accountId}/seeded-accounts` | `POST /api/brands/{username}/seeded-accounts` | 단건·다건 추가. 빈 입력은 무해한 no-op(태그 POST와 달리 422로 거부하지 않는다) |
+| `DELETE /v1/brand-monitoring/accounts/{accountId}/seeded-accounts/{seededUsername}` | `DELETE /api/brands/{username}/seeded-accounts/{seededUsername}` | 단건 삭제, 없어도 204(멱등) |
+| `DELETE /v1/brand-monitoring/accounts/{accountId}/seeded-accounts` | `DELETE /api/brands/{username}/seeded-accounts` | 전체 삭제 |
+
+**username 정규화**(monitoring `BrandController.normalizeUsername`, §5 hashtag-tags 정규화와
+같은 관용구): trim → 선행 `@` 제거(1개만) → 소문자화. **소문자화는 `Locale.ROOT` 고정이다**
+(2026-08-18 수정 — 이전엔 JVM 기본 로케일을 썼다). was 쪽 소비 조인(`BrandPostAssembler`의
+`seededUsernames` 대조)도 `Locale.ROOT`로 소문자화하므로, 로케일을 고정하지 않으면 기본
+로케일이 다른 환경(예: 터키어 로케일의 "I"/"ı" 대소문자 규칙)에서 두 정규화 결과가 어긋나
+시딩 조인이 조용히 깨질 수 있었다 — 지금은 양쪽 다 `Locale.ROOT`로 고정돼 있다.
+
+| 상황 | HTTP | 비고 |
+|---|---|---|
+| 정상 | GET 200 / PUT·POST·DELETE 204 | |
+| 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership`) — hashtag-tags와 동형 |
+| `accountId`가 유효한 브랜드가 아님 | 404 | was 측 `findAccountOrThrow` 또는 monitoring `BRAND_NOT_FOUND` 둘 다 404로 수렴 |
+| monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 프록시 API와 동형) |

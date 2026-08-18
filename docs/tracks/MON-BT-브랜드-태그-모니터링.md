@@ -155,8 +155,12 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 `AdVerdictCombiner`, 전부 LLM 없이 단위 테스트)하는 구조 — LLM에 verdict 자체를 맡기지 않는다.
 전용 소형 LLM 풀(`monitoring.brand.ad-disclosure`, 동시 3~4)로 기존 Hiker 보강 워커와 분리해
 판정 지연이 보강 처리량을 잠식하지 않게 했다. **시딩 계정**(`brand_seeded_account`, 신설
-`BrandSeededAccountRepository`)에 해당하는 계정의 게시물은 판정 없이 시딩 표기로 확정 노출된다
-— 광고임이 이미 알려진 계정이라 캡션 판정 자체가 불필요.
+`BrandSeededAccountRepository`)의 게시물도 다른 게시물과 동일하게 캡션 판정을 거친다(2026-08-18
+오기 정정 — 최초 기재는 "판정 없이 시딩 표기로 확정 노출"이라 코드·스펙과 정반대였다). 시딩
+여부(`seededAuthor`)는 판정과 무관하게 was 조회 시점에 별도 조인(시딩 목록 대조)으로 계산되는
+boolean 필드다. "시딩 계정 + `NOT_DISCLOSED`" 조합일 때 위반이 확정됐다는 배지를 보여주는 것은
+FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DISCLOSED`)이 필수 전제 조건으로
+들어간다.
 
 - **노출 게이트 의미 변경**: `enriched_at`(= was 노출 게이트, `enriched_at IS NOT NULL`)의 뜻이
   "게시자 보강 완료"로 좁혀졌다(08-17 개정, §5 완결 배치 서빙 문단과 별개 축). 댓글 수집·광고
@@ -171,7 +175,36 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 - **시딩 계정 등록 API 추가**: monitoring `GET/PUT/POST/DELETE .../seeded-accounts`(시딩 계정
   CRUD) + was `V1BrandAccountsController` 프록시(`MonitoringCommandClient` 경유)로 브랜드
   고객이 자사 시딩 계정 목록을 직접 등록·조회·해제한다. was는 monitoring 응답을 그대로
-  중계하고 판정 로직을 갖지 않는다(시스템 경계 원칙 준수).
+  중계하고 판정 로직을 갖지 않는다(시스템 경계 원칙 준수). 상세 계약은
+  [monitoring-was-contract.md §9](../contracts/monitoring-was-contract.md#9-브랜드-태그-모니터링-확장--광고-표기-판정-v211-2026-08-18).
+- **판정 킬 스위치 추가**(2026-08-18 코드리뷰 반영): `monitoring.brand.ad-disclosure.enabled`
+  (기본 `true`) — `false`면 `judgeAdDisclosuresSafely` 진입점에서 `adJudge` 호출 자체를
+  스킵한다. was 노출 토글(`expose`)과 **독립**이라, 노출은 그대로 두고 판정 파이프라인만
+  끌 수 있는 좁은 롤백 수단이다(`GEMINI_API_KEY` 제거는 해시태그 판정까지 함께 죽이므로 이
+  토글을 대신 쓰지 말 것).
+- **배포 순서: monitoring → was.** was `BrandPostAssembler`가 새 컬럼(`brand_post_meta`의
+  ad_verdict 등, `brand_seeded_account`)을 항상 SELECT하므로, was를 먼저 배포하면(또는
+  monitoring이 healthy가 아닌 채로 was를 배포하면) 브랜드 목록 조회가 500 에러가 난다.
+  monitoring이 healthy임을 확인한 뒤 was를 배포할 것.
+
+## 잔여 작업
+
+- **[staging 승격 전]**
+  - 연속 실패 서킷브레이커 + 스윕당 판정 상한 — LLM 쿼터 소진 등으로 판정이 연속 실패할 때
+    스윕 전체가 판정 대기로 늘어지는 것을 막는다.
+  - 캡션·videoUrl 저장값 폴백 — 일시적 결손(보강 미완주 등) 시 캡션 부재를 그대로
+    `NOT_DISCLOSED`로 오판정하지 않도록 방어.
+  - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
+- **[expose 토글 켜기 전]**
+  - 180~365일치 one-shot 백필 경로 — 정기 스윕 재열거가 없는 구간(180일 초과)의 기존 게시물도
+    최초 1회 판정을 채운다.
+  - verdict 분포·NULL 잔량을 확인하는 정본 스크립트(`monitoring/check/` 디렉토리에 추가) —
+    "분석 잔여 몇 건" 류 질문에 즉석 쿼리로 오답하지 않도록 정본화(다른 정본 스크립트
+    `analytics/check/pending.sh`와 같은 취지).
+  - 골드셋 200건으로 오탐률(특히 `NOT_DISCLOSED` 오탐) 측정.
+- **[후속]**
+  - 판정 로직과 join(시딩 계정 조인 등)을 분리하는 리팩터.
+  - 시딩 계정 username 문자셋 검증(현재는 trim·`@` 제거·소문자화만, IG 유효 문자 검증은 없음).
 
 ## 미결·후속
 
