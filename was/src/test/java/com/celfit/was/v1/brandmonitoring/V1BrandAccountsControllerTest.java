@@ -1249,4 +1249,175 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
 				.andExpect(header().string("Retry-After", "5"));
 	}
+
+	// ---------- 시딩 계정 관리(유저 입력, 2026-08-17 스펙 §6) ----------
+
+	@Test
+	void 시딩_계정_조회는_소유_브랜드만_허용한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(commandClient.getSeededAccounts("lizda_official")).willReturn(List.of("influencer1", "influencer2"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/seeded-accounts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.usernames.length()").value(2))
+				.andExpect(jsonPath("$.data.usernames[0]").value("influencer1"))
+				.andExpect(jsonPath("$.data.usernames[1]").value("influencer2"));
+
+		then(commandClient).should().getSeededAccounts("lizda_official");
+	}
+
+	@Test
+	void 미소유_브랜드의_시딩_계정_조회는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/999/seeded-accounts").with(user(principal())))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).getSeededAccounts(anyString());
+	}
+
+	@Test
+	void 시딩_계정_교체는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/seeded-accounts")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\": [\"influencer1\", \"Influencer2\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().putSeededAccounts("lizda_official", List.of("influencer1", "Influencer2"));
+	}
+
+	@Test
+	void usernames_null_교체는_빈_목록으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/seeded-accounts")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().putSeededAccounts("lizda_official", List.of());
+	}
+
+	@Test
+	void 미소유_브랜드의_시딩_계정_교체는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/999/seeded-accounts")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\": [\"influencer1\"]}"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).putSeededAccounts(anyString(), any());
+	}
+
+	@Test
+	void 시딩_계정_추가는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/seeded-accounts")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\": [\"influencer1\"]}"))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().addSeededAccounts("lizda_official", List.of("influencer1"));
+	}
+
+	@Test
+	void 미소유_브랜드의_시딩_계정_추가는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/999/seeded-accounts")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\": [\"influencer1\"]}"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).addSeededAccounts(anyString(), any());
+	}
+
+	@Test
+	void 시딩_계정_단건_삭제는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/seeded-accounts/{seededUsername}", "influencer1")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().deleteSeededAccount("lizda_official", "influencer1");
+	}
+
+	@Test
+	void 미소유_브랜드의_시딩_계정_단건_삭제는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/seeded-accounts/{seededUsername}", "influencer1")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).deleteSeededAccount(anyString(), anyString());
+	}
+
+	@Test
+	void 시딩_계정_전체_삭제는_monitoring으로_위임한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/seeded-accounts")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(commandClient).should().deleteAllSeededAccounts("lizda_official");
+	}
+
+	@Test
+	void 미소유_브랜드의_시딩_계정_전체_삭제는_거부된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/seeded-accounts")
+						.with(user(principal())).with(csrf()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(commandClient).should(never()).deleteAllSeededAccounts(anyString());
+	}
+
+	@Test
+	void monitoring_브랜드_비정합_404는_시딩_계정_조회에서_404로_매핑된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(commandClient.getSeededAccounts("lizda_official"))
+				.willThrow(new MonitoringApiException("BRAND_NOT_FOUND", "브랜드를 찾을 수 없습니다.", 404));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/seeded-accounts").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void monitoring_접속_불능은_시딩_계정_조회에서_503이다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(commandClient.getSeededAccounts("lizda_official"))
+				.willThrow(new MonitoringUnavailableException("monitoring 접속 실패: read timeout", null));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/seeded-accounts").with(user(principal())))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+				.andExpect(header().string("Retry-After", "5"));
+	}
 }
