@@ -23,9 +23,21 @@ public class MonitoringCommandClient {
 	private static final Logger log = LoggerFactory.getLogger(MonitoringCommandClient.class);
 
 	private final RestClient restClient;
+	private final RestClient directPostRestClient;
 
 	public MonitoringCommandClient(RestClient restClient) {
+		this(restClient, restClient);
+	}
+
+	/**
+	 * direct 등록 전용 타임아웃 분리(2026-08-18 스테이징 실측, §T7) — {@code directPostRestClient}는
+	 * registerDirectPost 호출에만 쓰인다(readTimeout 30s 기본, {@code MonitoringConfig} 참조). 다른
+	 * 명령은 전부 기존 {@code restClient}(readTimeout 10s)를 그대로 쓴다 — 단일 인자 생성자는
+	 * 두 클라이언트가 같은 것으로 대체돼(테스트·레거시 호출부 호환) 기존 타임아웃 동작을 그대로 보존한다.
+	 */
+	public MonitoringCommandClient(RestClient restClient, RestClient directPostRestClient) {
 		this.restClient = restClient;
+		this.directPostRestClient = directPostRestClient;
 	}
 
 	public RegisterResult register(RegisterRequest request) {
@@ -142,10 +154,15 @@ public class MonitoringCommandClient {
 	 *
 	 * <p>registeredAt·importLegacyHistory는 이관 잡(mode=import) 전용이다 — was 실행기의 일반 유저
 	 * 등록 경로는 둘 다 비운다(등록 시각은 monitoring이 now()로 채우고, 레거시 이력 복사도 생략).
+	 *
+	 * <p><b>전용 타임아웃(결함 2, 2026-08-18 스테이징 실측)</b>: monitoring 동기 처리 최대 ~7초 +
+	 * 콜드스타트 여유(2026-08-18 스테이징 실측 — 10s 타임아웃으로 응답 유실 1회 관찰). 공용
+	 * {@code restClient}(readTimeout 10s)는 여유가 3초뿐이라 이 호출만 {@code directPostRestClient}
+	 * (readTimeout 기본 30s, {@code monitoring.command.direct-post-timeout})로 분리했다.
 	 */
 	public DirectPostResult registerDirectPost(long brandId, String shortCode, OffsetDateTime registeredAt,
 			boolean importLegacyHistory) {
-		return exchange(() -> restClient.post().uri("/api/brands/{brandId}/direct-posts", brandId)
+		return exchange(() -> directPostRestClient.post().uri("/api/brands/{brandId}/direct-posts", brandId)
 				.body(new DirectPostRegisterRequest(shortCode, registeredAt, importLegacyHistory))
 				.retrieve().body(DirectPostResult.class));
 	}

@@ -697,6 +697,12 @@ tagged·direct 셰이프와 무관한 독립 계약):
   TAGGED_POST_NOT_CANCELABLE`("태그로 발견된 게시물은 취소할 수 없어요."). tagged 존재 판정은
   365일 표시 윈도우 제한이 없다(§8-1 `brandPostId` 판정과 같은 조회).
 - **매핑도 없고 tagged 풀에도 없으면 404**("대상을 찾을 수 없습니다.").
+- **등록 폴링 응답에 미치는 영향(2026-08-18 취소-복구 경합 수정)**: 등록 명령의 응답 유실로
+  같은 (brandId, shortCode) 등록 entry가 아직 `pending`으로 남아 있었다면, 이 취소가 그 entry도
+  `success`로 함께 정산한다(등록 자체는 실제로 완료됐었다는 사실을 반영) — 다음 `GET
+  /v1/brand-monitoring/direct-registrations/{registrationId}` 폴링 응답부터 그 entry의
+  `result`가 `pending`이 아니라 `success`로 보인다. stale 복구가 취소된 게시물을 재등록하는
+  경합을 막기 위한 부수 효과다.
 - **§8-1 `hashtag-posts`(발견 목록)에 미치는 영향(2026-08-18 정정)**: 그 shortcode가 tagged
   풀에도 있으면(사진 태그+해시태그 동시 게시물) direct 표식 해제로 tagged 겹침 제외 규칙이
   적용돼 다음 조회부터 발견 목록에서도 빠진다. tagged 풀에 없는 순수 direct 승격분이면 발견

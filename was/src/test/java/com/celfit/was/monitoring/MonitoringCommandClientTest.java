@@ -234,4 +234,34 @@ class MonitoringCommandClientTest {
 
 		server.verify();
 	}
+
+	/**
+	 * 결함 2 회귀(2026-08-18 스테이징 실측) — direct 등록 전용 타임아웃 분리 검증. 두 RestClient를
+	 * 각각 다른 MockRestServiceServer에 바인딩해, registerDirectPost가 실제로 directPostRestClient로만
+	 * 나가고 일반 restClient(다른 명령이 쓰는 쪽)에는 아무 요청도 안 감을 확인한다 — 전용 클라이언트
+	 * 분리로 readTimeout을 30초로 넉넉히 잡을 수 있는 배선이 실제로 살아있는지의 증거.
+	 */
+	@Test
+	void direct_등록은_전용_RestClient로만_나가고_일반_명령_클라이언트는_건드리지_않는다() {
+		RestClient.Builder generalBuilder = RestClient.builder().baseUrl(BASE);
+		MockRestServiceServer generalServer = MockRestServiceServer.bindTo(generalBuilder).build();
+		RestClient.Builder directPostBuilder = RestClient.builder().baseUrl(BASE);
+		MockRestServiceServer directPostServer = MockRestServiceServer.bindTo(directPostBuilder).build();
+		MonitoringCommandClient separated =
+				new MonitoringCommandClient(generalBuilder.build(), directPostBuilder.build());
+
+		directPostServer.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andExpect(method(HttpMethod.POST))
+				.andRespond(withStatus(HttpStatus.CREATED).contentType(MediaType.APPLICATION_JSON)
+						.body("""
+								{ "shortCode": "ABC123", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+								  "contentType": "REELS" }
+								"""));
+
+		MonitoringCommandClient.DirectPostResult result = separated.registerDirectPost(100L, "ABC123", null, false);
+
+		assertThat(result.shortCode()).isEqualTo("ABC123");
+		directPostServer.verify();
+		generalServer.verify();   // 기대 0건 — 일반 restClient로는 아무 요청도 안 갔다
+	}
 }
