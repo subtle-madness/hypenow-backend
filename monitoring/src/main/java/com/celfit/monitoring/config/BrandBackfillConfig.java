@@ -28,15 +28,16 @@ import org.springframework.context.annotation.Configuration;
  * <p>캠페인 등록의 metricsBackfillExecutor와 분리하는 이유: 브랜드 백필 1건은 수십 초~분 단위
  * 콜 체인이라 공유하면 캠페인 등록 백필(최대 ~1분)이 그 뒤에 줄을 선다. Hiker 콜 병렬화는
  * enrich 내부의 brandEnrichWorkerPool(동시 10)이 담당한다. 전역 동시 콜은 스윕과 등록 백필이
- * 겹치는 최악의 경우 워커 10 + 스윕 core 1 + 등록 core 2 = <b>최대 13</b>이다(08-13 워커 상향
- * 전에는 9). 08-12 운영 서버 동시성 램프 실측(레벨당 30콜)에서는 동시 20까지 429·5xx 0건으로
- * 하드 리밋이 없는 대신 동시 12부터 15~22초 꼬리가 상시화돼 안전 구간을 ~10으로 잡았지만,
- * <b>08-13 재실측에서 그 상한 근거가 서지 않았다</b>: 정상 브랜드로 워커 6/8/10 세 레벨을 돌려
- * 5초 초과 콜이 세 레벨 모두 0건이었다(레벨 간 증가 없음). 관측되는 꼬리는 동시성에 비례하지
- * 않고 특정 콜에 산발적으로 붙는다 → 13은 실측이 지지하는 구간이다. 힙 예산은 동시 in-flight
- * 콜당 ~10MB(TAGGED body 1.7MB + 파싱 트리)로 계산한다 — rawJson 제거(08-12) 전제. 종료로
- * 끊겨도 last_swept_on null(core) 또는 게시자 stale·댓글 워터마크(enrichment)로 다음 스윕이
- * 백스톱한다(미정산분은 다음 스윕의 페이지 배치가 정산까지 다시 태운다).
+ * 겹치는 최악의 경우 워커 10 + 스윕 core 1 + 등록 core 2 + 해시태그 스윕 1 = <b>최대 14</b>이다
+ * (08-18 해시태그 스윕 전용 executor 분리 반영 — 태그당 최대 4페이지 열거뿐이라 +1로 최소화했다.
+ * 08-13 워커 상향 전에는 9였다). 08-12 운영 서버 동시성 램프 실측(레벨당 30콜)에서는 동시 20까지
+ * 429·5xx 0건으로 하드 리밋이 없는 대신 동시 12부터 15~22초 꼬리가 상시화돼 안전 구간을 ~10으로
+ * 잡았지만, <b>08-13 재실측에서 그 상한 근거가 서지 않았다</b>: 정상 브랜드로 워커 6/8/10 세
+ * 레벨을 돌려 5초 초과 콜이 세 레벨 모두 0건이었다(레벨 간 증가 없음). 관측되는 꼬리는 동시성에
+ * 비례하지 않고 특정 콜에 산발적으로 붙는다 → 14는 실측이 지지하는 구간이다. 힙 예산은 동시
+ * in-flight 콜당 ~10MB(TAGGED body 1.7MB + 파싱 트리)로 계산한다 — rawJson 제거(08-12) 전제.
+ * 종료로 끊겨도 last_swept_on null(core) 또는 게시자 stale·댓글 워터마크(enrichment)로 다음
+ * 스윕이 백스톱한다(미정산분은 다음 스윕의 페이지 배치가 정산까지 다시 태운다).
  */
 @Configuration
 public class BrandBackfillConfig {
@@ -72,6 +73,29 @@ public class BrandBackfillConfig {
 		AtomicInteger seq = new AtomicInteger();
 		return Executors.newFixedThreadPool(concurrency, r -> {
 			Thread t = new Thread(r, "brand-enrich-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
+	 * 해시태그 스윕 전용 큐 — 2026-08-18 신설(운영 사고 후속: 신규 계정 8개 연속 등록 → 스윕의 LLM
+	 * 브랜드 관련성 판정(BrandMentionJudge, Gemini)이 쿼터 429로 콜당 ~6초 재시도 백오프를 태웠는데, 그때까지 스윕이
+	 * brandEnrichExecutor(2스레드)를 등록 백필의 보강과 같이 썼다 — 429 warn 788줄이 전부
+	 * brand-enrich-1/2 스레드였다. 429가 아니어도 LLM 판정은 콜당 수 초짜리 느린 외부 호출이라,
+	 * 빠른 Hiker 콜 다수인 보강과 섞이면 스윕 1건이 보강 워커를 분 단위로 점유하는 구조적 결함이라
+	 * 큐 자체를 분리했다.
+	 *
+	 * <p>동시 1스레드(기본, {@code monitoring.brand.hashtag-sweep-concurrency}) — 스윕은 ready
+	 * 폴링과 무관한 꼬리 작업이고 야간 크론이 백스톱하므로 직렬로도 충분하다. 전역 Hiker 동시 콜
+	 * 예산 증가도 최소화하려는 의도(+1, 클래스 javadoc 참조).
+	 */
+	@Bean(name = "brandHashtagSweepExecutor")
+	public Executor brandHashtagSweepExecutor(
+			@Value("${monitoring.brand.hashtag-sweep-concurrency:1}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-hashtag-sweep-" + seq.incrementAndGet());
 			t.setDaemon(true);
 			return t;
 		});
