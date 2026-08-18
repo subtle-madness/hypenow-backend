@@ -537,6 +537,23 @@ class BrandControllerTest {
 		assertThat(seededAccounts.replaced).containsExactly("influencer1", "influencer2");
 	}
 
+	/** "@handle" 형태 입력이 시딩 조인을 깨는 공백이 있어 2026-08-18 추가(스펙 §6). */
+	@Test
+	void 시딩_계정_전체_교체는_선행_골뱅이를_제거하고_저장한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(put("/api/brands/brandx/seeded-accounts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\":[\"@Influencer1\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(seededAccounts.replaced).containsExactly("influencer1");
+
+		seededAccounts.usernames = seededAccounts.replaced;
+		mvc.perform(get("/api/brands/brandx/seeded-accounts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.usernames[0]").value("influencer1"));
+	}
+
 	@Test
 	void 시딩_계정_추가는_정규화_후_전달한다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);

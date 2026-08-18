@@ -64,8 +64,9 @@ public class BrandController {
 
 	/**
 	 * 시딩(협업) 계정 목록(유저 관리 API, 스펙 §6) — GET 응답·PUT 요청 바디 공용, 태그·해시태그와 같은
-	 * 계약 모양. usernames는 정규화(trim·소문자·blank 제거·중복 제거) 후 저장한다 — 태그와 달리
-	 * 선행 {@code #} 제거는 하지 않는다(인스타그램 username 규칙에 무관한 문자라 절삭 대상이 아니다).
+	 * 계약 모양. usernames는 정규화(trim·선행 {@code @} 제거·소문자·blank 제거·중복 제거) 후 저장한다
+	 * — 태그의 선행 {@code #} 제거와 같은 이유로, 유저가 "@handle" 형태로 입력해도 시딩 조인이
+	 * 깨지지 않도록 한다(2026-08-18).
 	 */
 	public record SeededAccountsBody(List<String> usernames) {}
 
@@ -266,12 +267,20 @@ public class BrandController {
 		return List.copyOf(normalized);
 	}
 
-	/** 단건 정규화(trim → 소문자) — null·blank는 null(호출측이 "대상 없음"으로 처리). */
+	/**
+	 * 단건 정규화(trim → 선행 {@code @} 제거 → 소문자) — null·blank는 null(호출측이 "대상 없음"으로
+	 * 처리). {@code @handle} 형태 입력이 조인을 깨는 공백이 있어 2026-08-18 추가(스펙 §6) — 태그의
+	 * {@code #} 제거와 마찬가지로 1개만 제거한다("@@handle" 같은 변칙은 앞의 하나만 벗겨낸다).
+	 */
 	private static String normalizeUsername(String username) {
 		if (username == null) {
 			return null;
 		}
-		String cleaned = username.strip().toLowerCase();
+		String stripped = username.strip();
+		if (stripped.startsWith("@")) {
+			stripped = stripped.substring(1);
+		}
+		String cleaned = stripped.strip().toLowerCase();
 		return cleaned.isBlank() ? null : cleaned;
 	}
 
