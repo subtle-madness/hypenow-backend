@@ -146,6 +146,33 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 (`findTaggedPostsInWindow` 전량 / `findEnrichedTaggedPostsInWindow` 정산분)로 나누고
 `TaggedScope{ENRICHED_ONLY, ALL}`를 **기본값 없는 필수 인자**로 둬 호출부가 매번 의도를 밝힌다.
 
+캡션 기반 광고 표기 판정(2026-08-18 — 구현 완료, 브랜치 `feat/brand-ad-disclosure`,
+[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-ad-disclosure-design.md) ·
+[plan 2026-08-17](../superpowers/plans/2026-08-17-brand-ad-disclosure.md)): 브랜드 태그 게시물
+캡션이 공정위예규 제499호 Ⅴ.6 광고 표기 규정을 지켰는지 게시물 단위로 자동 판정한다. 규칙
+선처리(Tier0 메타·Tier1 고신뢰 사전) → LLM은 문구 추출만(Tier2, `AdDisclosureExtractorGemini`,
+판단 아님) → 코드가 환각 차단·위치 판정·최종 verdict를 결정(Tier3, `AdPositionRule`·
+`AdVerdictCombiner`, 전부 LLM 없이 단위 테스트)하는 구조 — LLM에 verdict 자체를 맡기지 않는다.
+전용 소형 LLM 풀(`monitoring.brand.ad-disclosure`, 동시 3~4)로 기존 Hiker 보강 워커와 분리해
+판정 지연이 보강 처리량을 잠식하지 않게 했다. **시딩 계정**(`brand_seeded_account`, 신설
+`BrandSeededAccountRepository`)에 해당하는 계정의 게시물은 판정 없이 시딩 표기로 확정 노출된다
+— 광고임이 이미 알려진 계정이라 캡션 판정 자체가 불필요.
+
+- **노출 게이트 의미 변경**: `enriched_at`(= was 노출 게이트, `enriched_at IS NOT NULL`)의 뜻이
+  "게시자 보강 완료"로 좁혀졌다(08-17 개정, §5 완결 배치 서빙 문단과 별개 축). 댓글 수집·광고
+  표기 판정은 이 게이트 **밖**으로 빠져 각자 격리된 독립 단계가 되고, 프론트 폴링으로 나중에
+  채워지는 **프로그레시브 서빙**이다 — 판정 실패·지연이 게시물 노출 자체를 막지 않는다.
+- **파이프라인 개통 상태**: 판정 로직 자체는 배포 즉시 브랜드 enrich 체인에 인라인으로 돌기
+  시작한다(기존 게시물도 다음 스윕들에서 자연 재판정). 하지만 **was 노출은 별개 토글**
+  (`monitoring.brand.ad-disclosure.expose`, `was/src/main/resources/application.yml`, 기본
+  `false`)로 막혀 있다 — 판정은 쌓이지만 FE에는 아직 안 보인다. 기존 게시물 전량 판정 +
+  verdict 분포 드라이런 검토를 마친 뒤 `true`로 전환하는 것이 노출 개통이며, 이 전환은 이번
+  구현 범위 밖이다(스펙 §10-3).
+- **시딩 계정 등록 API 추가**: monitoring `GET/PUT/POST/DELETE .../seeded-accounts`(시딩 계정
+  CRUD) + was `V1BrandAccountsController` 프록시(`MonitoringCommandClient` 경유)로 브랜드
+  고객이 자사 시딩 계정 목록을 직접 등록·조회·해제한다. was는 monitoring 응답을 그대로
+  중계하고 판정 로직을 갖지 않는다(시스템 경계 원칙 준수).
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
