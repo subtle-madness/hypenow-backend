@@ -486,6 +486,26 @@ class BrandPostAssemblerTest {
 		});
 	}
 
+	/**
+	 * 손상된 jsonb 텍스트(파싱 실패)가 목록 조회 전체를 500으로 죽이지 않는지 확인(품질 리뷰, 08-18) —
+	 * 손상된 필드(adViolations)만 빈 목록으로 격리되고, 같은 게시물의 다른 필드(adDisclosure·
+	 * 정상 adEvidence)는 그대로 응답에 실린다.
+	 */
+	@Test
+	void 손상된_jsonb는_해당_필드만_빈_목록으로_격리하고_응답은_정상이다() {
+		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
+				LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
+				"DISCLOSED", "{broken", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
+
+		var post = BrandPostAssembler.taggedPost(100L, taggedRow("ABC"), meta, null, List.of(), List.of(),
+				SWEPT_AT, true, Set.of());
+
+		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
+		assertThat(post.adViolations()).isEmpty();
+		assertThat(post.adEvidence()).singleElement()
+				.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
+	}
+
 	@Test
 	void 노출_토글이_꺼지면_광고_필드는_전부_비노출() {
 		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);

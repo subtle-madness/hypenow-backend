@@ -30,6 +30,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -243,8 +244,12 @@ public class BrandPostAssembler {
 		String firstSeenAt = KstTimestamps.toKstIso(post.firstSeenAt());
 		boolean exposeAd = exposeAdDisclosure && meta != null;
 		String adDisclosure = exposeAd ? meta.adVerdict() : null;
-		List<String> adViolations = exposeAd ? parseViolations(meta.adViolationsJson()) : List.of();
-		List<BrandPostResponse.AdEvidence> adEvidence = exposeAd ? parseEvidence(meta.adEvidenceJson()) : List.of();
+		List<String> adViolations = exposeAd ? parseViolations(post.shortCode(), meta.adViolationsJson()) : List.of();
+		List<BrandPostResponse.AdEvidence> adEvidence =
+				exposeAd ? parseEvidence(post.shortCode(), meta.adEvidenceJson()) : List.of();
+		// meta != null 가드가 없는 비대칭은 의도된 설계다 — 시딩 계정 등록 여부는 게시물 메타
+		// (brand_post_meta)와 무관한 정보(brand_seeded_account 조인)라, 메타가 없어도(예: 아직
+		// 보강 전) 계정이 시딩 등록돼 있으면 seededAuthor는 true여야 한다.
 		boolean seededAuthor = exposeAdDisclosure && username != null
 				&& seededUsernames.contains(username.toLowerCase(Locale.ROOT));
 
@@ -289,27 +294,51 @@ public class BrandPostAssembler {
 				seededAuthor);
 	}
 
-	/** ad_violations jsonb 텍스트 → 코드 배열. null·빈 배열은 빈 목록. */
-	private static List<String> parseViolations(String json) {
+	/**
+	 * ad_violations jsonb 텍스트 → 코드 배열. null·빈 배열은 빈 목록. 손상된 JSON(파싱 실패)은 목록
+	 * 조회 전체를 500으로 죽이지 않도록 이 필드만 중립값(빈 목록)으로 격리하고 경고 로그를 남긴다
+	 * (품질 리뷰 반영, 08-18 — 판정 파이프라인 버그가 브랜드 화면 전체 장애로 번지면 안 된다).
+	 */
+	private static List<String> parseViolations(String shortCode, String json) {
 		if (json == null || json.isBlank()) {
 			return List.of();
 		}
-		JsonNode node = OM.readTree(json);
-		List<String> out = new ArrayList<>();
-		node.forEach(n -> out.add(n.asString()));
-		return out;
+		try {
+			JsonNode node = OM.readTree(json);
+			List<String> out = new ArrayList<>();
+			node.forEach(n -> out.add(n.asString()));
+			return out;
+		} catch (JacksonException e) {
+			log.warn("ad_violations jsonb 파싱 실패 — 빈 목록으로 격리 shortCode={}, json={}", shortCode,
+					truncate(json), e);
+			return List.of();
+		}
 	}
 
-	/** ad_evidence jsonb 텍스트 → 근거 문구 배열. null·빈 배열은 빈 목록. */
-	private static List<BrandPostResponse.AdEvidence> parseEvidence(String json) {
+	/**
+	 * ad_evidence jsonb 텍스트 → 근거 문구 배열. null·빈 배열은 빈 목록. parseViolations와 같은 이유로
+	 * 손상된 JSON은 이 필드만 중립값으로 격리한다.
+	 */
+	private static List<BrandPostResponse.AdEvidence> parseEvidence(String shortCode, String json) {
 		if (json == null || json.isBlank()) {
 			return List.of();
 		}
-		JsonNode node = OM.readTree(json);
-		List<BrandPostResponse.AdEvidence> out = new ArrayList<>();
-		node.forEach(n -> out.add(new BrandPostResponse.AdEvidence(
-				n.path("phrase").asString(), n.path("category").asString(), n.path("offset").asInt())));
-		return out;
+		try {
+			JsonNode node = OM.readTree(json);
+			List<BrandPostResponse.AdEvidence> out = new ArrayList<>();
+			node.forEach(n -> out.add(new BrandPostResponse.AdEvidence(
+					n.path("phrase").asString(), n.path("category").asString(), n.path("offset").asInt())));
+			return out;
+		} catch (JacksonException e) {
+			log.warn("ad_evidence jsonb 파싱 실패 — 빈 목록으로 격리 shortCode={}, json={}", shortCode,
+					truncate(json), e);
+			return List.of();
+		}
+	}
+
+	/** 경고 로그에 원문 전체를 싣지 않도록 축약(캡션 유래 데이터가 섞여 있을 수 있어 방어적으로 자른다). */
+	private static String truncate(String text) {
+		return text.length() <= 200 ? text : text.substring(0, 200) + "...(생략)";
 	}
 
 	/**
