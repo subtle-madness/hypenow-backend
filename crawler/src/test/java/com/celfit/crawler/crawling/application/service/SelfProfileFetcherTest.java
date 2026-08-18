@@ -277,6 +277,22 @@ class SelfProfileFetcherTest {
         assertThat(badRequest).containsExactly("bugged");
     }
 
+    // IG가 일부 계정에 200 + 빈 응답(user 없음)을 주는 케이스 — 컴포지트가 Hiker 폴백을
+    // 판단할 수 있게 emptyOut으로 수집한다(400·404와 구분).
+    @Test void 상태코드_200_빈_응답은_emptyOut에_수집되고_스킵된다() {
+        var f = new SelfProfileFetcher(webReturning(200, "{\"data\":{\"user\":null},\"status\":\"ok\"}"),
+                passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        List<String> badRequest = new java.util.ArrayList<>();
+        List<String> empty = new java.util.ArrayList<>();
+        ApifyResult r = f.collect(List.of("ghosted"), badRequest, empty);
+
+        assertThat(r.items()).isEmpty();
+        assertThat(r.notFound()).isEmpty();      // 404(계정 소멸)와 구분된다
+        assertThat(badRequest).isEmpty();        // 400(버그 계정)과 구분된다
+        assertThat(empty).containsExactly("ghosted");
+    }
+
     // 400은 블록(429·401·403) 신호가 아니다 — 연속으로 나와도 회로를 트립시키지 않고 전 계정을 조회한다.
     @Test void 연속_400은_회로를_트립시키지_않는다() {
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
