@@ -56,7 +56,7 @@ class PerfDiagnosisHarnessTest {
 		TrackingItemAssembler trackingItemAssembler = new TrackingItemAssembler(itemRepository,
 				campaignRepository, Optional.of(readRepository), new ObjectMapper());
 		BrandPostAssembler brandPostAssembler = new BrandPostAssembler(brandReadRepository,
-				directPostRepository, trackingItemAssembler);
+				directPostRepository, trackingItemAssembler, false);
 		PerformanceContentAssembler assembler = new PerformanceContentAssembler(trackingItemAssembler,
 				directPostRepository, linkRepository, Optional.of(brandReadRepository),
 				Optional.of(brandPostAssembler));

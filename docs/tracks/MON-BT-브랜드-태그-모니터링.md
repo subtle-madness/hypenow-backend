@@ -146,6 +146,73 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 (`findTaggedPostsInWindow` 전량 / `findEnrichedTaggedPostsInWindow` 정산분)로 나누고
 `TaggedScope{ENRICHED_ONLY, ALL}`를 **기본값 없는 필수 인자**로 둬 호출부가 매번 의도를 밝힌다.
 
+캡션 기반 광고 표기 판정(2026-08-18 — 구현 완료, 브랜치 `feat/brand-ad-disclosure`,
+[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-ad-disclosure-design.md) ·
+[plan 2026-08-17](../superpowers/plans/archive/2026-08-17-brand-ad-disclosure.md)): 브랜드 태그 게시물
+캡션이 공정위예규 제499호 Ⅴ.6 광고 표기 규정을 지켰는지 게시물 단위로 자동 판정한다. 규칙
+선처리(Tier0 메타·Tier1 고신뢰 사전) → LLM은 문구 추출만(Tier2, `AdDisclosureExtractorGemini`,
+판단 아님) → 코드가 환각 차단·위치 판정·최종 verdict를 결정(Tier3, `AdPositionRule`·
+`AdVerdictCombiner`, 전부 LLM 없이 단위 테스트)하는 구조 — LLM에 verdict 자체를 맡기지 않는다.
+전용 소형 LLM 풀(`monitoring.brand.ad-disclosure`, 동시 3~4)로 기존 Hiker 보강 워커와 분리해
+판정 지연이 보강 처리량을 잠식하지 않게 했다. **시딩 계정**(`brand_seeded_account`, 신설
+`BrandSeededAccountRepository`)의 게시물도 다른 게시물과 동일하게 캡션 판정을 거친다(2026-08-18
+오기 정정 — 최초 기재는 "판정 없이 시딩 표기로 확정 노출"이라 코드·스펙과 정반대였다). 시딩
+여부(`seededAuthor`)는 판정과 무관하게 was 조회 시점에 별도 조인(시딩 목록 대조)으로 계산되는
+boolean 필드다. "시딩 계정 + `NOT_DISCLOSED`" 조합일 때 위반이 확정됐다는 배지를 보여주는 것은
+FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DISCLOSED`)이 필수 전제 조건으로
+들어간다.
+
+- **노출 게이트 의미 변경**: `enriched_at`(= was 노출 게이트, `enriched_at IS NOT NULL`)의 뜻이
+  "게시자 보강 완료"로 좁혀졌다(08-17 개정, §5 완결 배치 서빙 문단과 별개 축). 댓글 수집·광고
+  표기 판정은 이 게이트 **밖**으로 빠져 각자 격리된 독립 단계가 되고, 프론트 폴링으로 나중에
+  채워지는 **프로그레시브 서빙**이다 — 판정 실패·지연이 게시물 노출 자체를 막지 않는다.
+- **파이프라인 개통 상태**: 판정 로직 자체는 배포 즉시 브랜드 enrich 체인에 인라인으로 돌기
+  시작한다(기존 게시물도 다음 스윕들에서 자연 재판정). 하지만 **was 노출은 별개 토글**
+  (`monitoring.brand.ad-disclosure.expose`, `was/src/main/resources/application.yml`, 기본
+  `false`)로 막혀 있다 — 판정은 쌓이지만 FE에는 아직 안 보인다. 기존 게시물 전량 판정 +
+  verdict 분포 드라이런 검토를 마친 뒤 `true`로 전환하는 것이 노출 개통이며, 이 전환은 이번
+  구현 범위 밖이다(스펙 §10-3).
+- **시딩 계정 등록 API 추가**: monitoring `GET/PUT/POST/DELETE .../seeded-accounts`(시딩 계정
+  CRUD) + was `V1BrandAccountsController` 프록시(`MonitoringCommandClient` 경유)로 브랜드
+  고객이 자사 시딩 계정 목록을 직접 등록·조회·해제한다. was는 monitoring 응답을 그대로
+  중계하고 판정 로직을 갖지 않는다(시스템 경계 원칙 준수). 상세 계약은
+  [monitoring-was-contract.md §9](../contracts/monitoring-was-contract.md#9-브랜드-태그-모니터링-확장--광고-표기-판정-v211-2026-08-18).
+- **판정 킬 스위치 추가**(2026-08-18 코드리뷰 반영): `monitoring.brand.ad-disclosure.enabled`
+  (기본 `true`) — `false`면 `judgeAdDisclosuresSafely` 진입점에서 `adJudge` 호출 자체를
+  스킵한다. was 노출 토글(`expose`)과 **독립**이라, 노출은 그대로 두고 판정 파이프라인만
+  끌 수 있는 좁은 롤백 수단이다(`GEMINI_API_KEY` 제거는 해시태그 판정까지 함께 죽이므로 이
+  토글을 대신 쓰지 말 것).
+- **배포 순서: monitoring → was.** was `BrandPostAssembler`가 새 컬럼(`brand_post_meta`의
+  ad_verdict 등, `brand_seeded_account`)을 항상 SELECT하므로, was를 먼저 배포하면(또는
+  monitoring이 healthy가 아닌 채로 was를 배포하면) 브랜드 목록 조회가 500 에러가 난다.
+  monitoring이 healthy임을 확인한 뒤 was를 배포할 것.
+
+## 잔여 작업
+
+- **[staging 승격 전]**
+  - 연속 실패 서킷브레이커 + 스윕당 판정 상한 — LLM 쿼터 소진 등으로 판정이 연속 실패할 때
+    스윕 전체가 판정 대기로 늘어지는 것을 막는다.
+  - 캡션·videoUrl 저장값 폴백 — 일시적 결손(보강 미완주 등) 시 캡션 부재를 그대로
+    `NOT_DISCLOSED`로 오판정하지 않도록 방어.
+  - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
+- **[expose 토글 켜기 전]**
+  - ~~180~365일치 one-shot 백필 경로~~ → **구현 완료(2026-08-18, 스펙 §7-1)**: 정기 스윕
+    재열거가 없는 구간(180일 초과)의 기존 게시물도 `BrandSweepJob`의 매일 밤 백필 단계
+    (`AdDisclosureJudgeService.backfillUnjudged`, 상한
+    `monitoring.brand.ad-disclosure.backfill-per-night` 기본 1000)가 잔량이 0에 수렴할 때까지
+    자동으로 채운다 — one-shot이 아니라 상시 수렴 메커니즘으로 대체(one-shot 스크립트 불필요).
+  - verdict 분포·NULL 잔량을 확인하는 정본 스크립트(`monitoring/check/` 디렉토리에 추가) —
+    "분석 잔여 몇 건" 류 질문에 즉석 쿼리로 오답하지 않도록 정본화(다른 정본 스크립트
+    `analytics/check/pending.sh`와 같은 취지).
+  - 골드셋 200건으로 오탐률(특히 `NOT_DISCLOSED` 오탐) 측정.
+- **[후속]**
+  - 판정 로직과 join(시딩 계정 조인 등)을 분리하는 리팩터.
+  - 시딩 계정 username 문자셋 검증(현재는 trim·`@` 제거·소문자화만, IG 유효 문자 검증은 없음).
+  - 백필 굶음 방어(08-18 리뷰): `findUnjudged`는 실패 카운트·백오프가 없어 **영구 실패 건수가
+    야간 상한(기본 1000)에 근접하면** limit 윈도우가 실패 재시도로만 채워져 나머지 백로그가
+    굶는다. 소수 실패는 자기 치유되므로 현재 규모에선 저위험 — 며칠 연속 잔여(remaining)가
+    줄지 않으면 이 시나리오를 의심하고 실패 격리(N회 실패 시 skip)를 추가할 것.
+
 ## 미결·후속
 
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).

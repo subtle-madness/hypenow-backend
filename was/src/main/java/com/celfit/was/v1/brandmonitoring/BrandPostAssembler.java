@@ -27,8 +27,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * BrandPost 조립(스펙 §6-1) — 두 산지를 한 셰이프로 합친다.
@@ -78,12 +82,17 @@ public class BrandPostAssembler {
 	private final BrandReadRepository brandReadRepository;
 	private final BrandDirectPostRepository directPostRepository;
 	private final TrackingItemAssembler trackingItemAssembler;
+	/** 광고 표기 판정 노출 게이트(스펙 §10-2 드라이런 후 개통) — 기본 false, was 문서화(Task 18)에서 개통 절차 안내. */
+	private final boolean exposeAdDisclosure;
+	private static final ObjectMapper OM = new ObjectMapper();
 
 	public BrandPostAssembler(BrandReadRepository brandReadRepository,
-			BrandDirectPostRepository directPostRepository, TrackingItemAssembler trackingItemAssembler) {
+			BrandDirectPostRepository directPostRepository, TrackingItemAssembler trackingItemAssembler,
+			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
 		this.brandReadRepository = brandReadRepository;
 		this.directPostRepository = directPostRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
+		this.exposeAdDisclosure = exposeAdDisclosure;
 	}
 
 	/**
@@ -152,11 +161,17 @@ public class BrandPostAssembler {
 				: brandReadRepository.findComments(codes, COMMENT_LIMIT).stream()
 						.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
 		Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
+		// 토글이 꺼져 있으면 조회 자체를 생략한다(드라이런 중 불필요한 조회 방지).
+		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of()
+				: brandReadRepository.findSeededUsernames(account.id()).stream()
+						.map(u -> u.toLowerCase(Locale.ROOT))
+						.collect(Collectors.toCollection(LinkedHashSet::new));
 
 		return posts.stream()
 				.map(p -> taggedPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
 						snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
-						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt()))
+						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
+						exposeAdDisclosure, seededUsernames))
 				.toList();
 	}
 
@@ -209,6 +224,17 @@ public class BrandPostAssembler {
 	static BrandPostResponse taggedPost(long brandId, BrandTaggedPostRow post, BrandPostMetaRow meta,
 			AuthorRow author, List<BrandSnapshotRow> snapshotRows, List<BrandCommentRow> commentRows,
 			OffsetDateTime lastSweptAt) {
+		return taggedPost(brandId, post, meta, author, snapshotRows, commentRows, lastSweptAt, false, Set.of());
+	}
+
+	/**
+	 * @param exposeAdDisclosure false면 광고 표기 판정 4필드를 전부 비노출값(null/빈 목록/false)으로
+	 *                           강제한다(스펙 §10-2 드라이런 후 개통 — 노출 게이트).
+	 * @param seededUsernames    소문자 정규화된 시딩 계정 username 집합(비교도 소문자화 — 시딩 조인 방어).
+	 */
+	static BrandPostResponse taggedPost(long brandId, BrandTaggedPostRow post, BrandPostMetaRow meta,
+			AuthorRow author, List<BrandSnapshotRow> snapshotRows, List<BrandCommentRow> commentRows,
+			OffsetDateTime lastSweptAt, boolean exposeAdDisclosure, Set<String> seededUsernames) {
 		String contentType = contentTypeOf(meta == null ? null : meta.contentType());
 		List<TrackingItemResponse.SnapshotResponse> snapshots =
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
@@ -216,6 +242,16 @@ public class BrandPostAssembler {
 				.map(BrandPostAssembler::commentOf).filter(Objects::nonNull).toList();
 		String username = author != null ? author.username() : post.authorUsername();
 		String firstSeenAt = KstTimestamps.toKstIso(post.firstSeenAt());
+		boolean exposeAd = exposeAdDisclosure && meta != null;
+		String adDisclosure = exposeAd ? meta.adVerdict() : null;
+		List<String> adViolations = exposeAd ? parseViolations(post.shortCode(), meta.adViolationsJson()) : List.of();
+		List<BrandPostResponse.AdEvidence> adEvidence =
+				exposeAd ? parseEvidence(post.shortCode(), meta.adEvidenceJson()) : List.of();
+		// meta != null 가드가 없는 비대칭은 의도된 설계다 — 시딩 계정 등록 여부는 게시물 메타
+		// (brand_post_meta)와 무관한 정보(brand_seeded_account 조인)라, 메타가 없어도(예: 아직
+		// 보강 전) 계정이 시딩 등록돼 있으면 seededAuthor는 true여야 한다.
+		boolean seededAuthor = exposeAdDisclosure && username != null
+				&& seededUsernames.contains(username.toLowerCase(Locale.ROOT));
 
 		return new BrandPostResponse(
 				post.shortCode(),
@@ -251,7 +287,58 @@ public class BrandPostAssembler {
 				// 브랜드 태그 게시물은 캠페인에 연결되지 않는다(캠페인 연결은 레거시 아이템의 속성).
 				List.of(),
 				firstSeenAt,
-				KstTimestamps.toKstIso(lastSweptAt));
+				KstTimestamps.toKstIso(lastSweptAt),
+				adDisclosure,
+				adViolations,
+				adEvidence,
+				seededAuthor);
+	}
+
+	/**
+	 * ad_violations jsonb 텍스트 → 코드 배열. null·빈 배열은 빈 목록. 손상된 JSON(파싱 실패)은 목록
+	 * 조회 전체를 500으로 죽이지 않도록 이 필드만 중립값(빈 목록)으로 격리하고 경고 로그를 남긴다
+	 * (품질 리뷰 반영, 08-18 — 판정 파이프라인 버그가 브랜드 화면 전체 장애로 번지면 안 된다).
+	 */
+	private static List<String> parseViolations(String shortCode, String json) {
+		if (json == null || json.isBlank()) {
+			return List.of();
+		}
+		try {
+			JsonNode node = OM.readTree(json);
+			List<String> out = new ArrayList<>();
+			node.forEach(n -> out.add(n.asString()));
+			return out;
+		} catch (JacksonException e) {
+			log.warn("ad_violations jsonb 파싱 실패 — 빈 목록으로 격리 shortCode={}, json={}", shortCode,
+					truncate(json), e);
+			return List.of();
+		}
+	}
+
+	/**
+	 * ad_evidence jsonb 텍스트 → 근거 문구 배열. null·빈 배열은 빈 목록. parseViolations와 같은 이유로
+	 * 손상된 JSON은 이 필드만 중립값으로 격리한다.
+	 */
+	private static List<BrandPostResponse.AdEvidence> parseEvidence(String shortCode, String json) {
+		if (json == null || json.isBlank()) {
+			return List.of();
+		}
+		try {
+			JsonNode node = OM.readTree(json);
+			List<BrandPostResponse.AdEvidence> out = new ArrayList<>();
+			node.forEach(n -> out.add(new BrandPostResponse.AdEvidence(
+					n.path("phrase").asString(), n.path("category").asString(), n.path("offset").asInt())));
+			return out;
+		} catch (JacksonException e) {
+			log.warn("ad_evidence jsonb 파싱 실패 — 빈 목록으로 격리 shortCode={}, json={}", shortCode,
+					truncate(json), e);
+			return List.of();
+		}
+	}
+
+	/** 경고 로그에 원문 전체를 싣지 않도록 축약(캡션 유래 데이터가 섞여 있을 수 있어 방어적으로 자른다). */
+	private static String truncate(String text) {
+		return text.length() <= 200 ? text : text.substring(0, 200) + "...(생략)";
 	}
 
 	/**
@@ -368,14 +455,18 @@ public class BrandPostAssembler {
 				comments,
 				item.campaignId() == null ? List.of() : List.of(item.campaignId()),
 				item.registeredAt(),
-				KstTimestamps.toKstIso(legacyLastCollectedAt));
+				KstTimestamps.toKstIso(legacyLastCollectedAt),
+				// direct 산지는 광고 판정 정보가 없다(tagged 전용 — brand_post_meta 유래).
+				null, List.of(), List.of(), false);
 	}
 
 	// ---------- 병합 ----------
 
 	/**
 	 * shortcode 병합 — direct 우선(명시 등록 보존)이되, 겹치는 tagged에 유료협찬 관측이 있으면
-	 * 협찬 판정만 그 값으로 승격한다. 결과는 업로드 최신순(takenAt 미상은 마지막, 동률은 shortcode).
+	 * 협찬 판정만 그 값으로 승격하고, 광고 표기 판정 4필드(adDisclosure 등)는 항상 tagged 값으로
+	 * 승격한다(direct에는 이 필드들의 산지가 애초에 없다 — 코디네이터 스펙 리뷰 반영, 배지 은닉 방지).
+	 * 결과는 업로드 최신순(takenAt 미상은 마지막, 동률은 shortcode).
 	 */
 	static List<BrandPostResponse> mergeByShortcode(List<BrandPostResponse> direct,
 			List<BrandPostResponse> tagged) {
@@ -384,7 +475,8 @@ public class BrandPostAssembler {
 			byCode.put(post.shortcode(), post);
 		}
 		for (BrandPostResponse post : tagged) {
-			byCode.merge(post.shortcode(), post, (existing, taggedPost) -> promoteSponsorship(existing, taggedPost));
+			byCode.merge(post.shortcode(), post,
+					(existing, taggedPost) -> promoteAdFields(promoteSponsorship(existing, taggedPost), taggedPost));
 		}
 		return byCode.values().stream()
 				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn,
@@ -402,6 +494,16 @@ public class BrandPostAssembler {
 		return direct.withSponsorship(
 				BrandSponsorshipClassifier.classify(tagged.isPaidPartnership(), caption),
 				tagged.isPaidPartnership());
+	}
+
+	/**
+	 * direct 본체에 tagged의 광고 표기 판정 4필드를 얹는다 — direct 산지엔 이 필드들의 원천
+	 * (brand_post_meta)이 없으므로 tagged 값이 항상 정본이다. 노출 토글이 꺼져 있으면 tagged 쪽도
+	 * 이미 중립값(null/빈 목록/false)이라 승격해도 무해 — 별도 분기가 필요 없다.
+	 */
+	private static BrandPostResponse promoteAdFields(BrandPostResponse direct, BrandPostResponse tagged) {
+		return direct.withAdFields(tagged.adDisclosure(), tagged.adViolations(), tagged.adEvidence(),
+				tagged.seededAuthor());
 	}
 
 	/**

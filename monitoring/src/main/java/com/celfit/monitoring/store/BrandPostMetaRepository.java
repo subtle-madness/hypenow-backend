@@ -1,11 +1,20 @@
 package com.celfit.monitoring.store;
 
+import com.celfit.monitoring.ad.AdVerdictResult;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * brand_post_meta 접점 — 게시물 전역 최신 1행 upsert({@link PostMetaRepository} 동형,
@@ -17,6 +26,7 @@ public class BrandPostMetaRepository {
 	private static final Logger log = LoggerFactory.getLogger(BrandPostMetaRepository.class);
 
 	private final JdbcTemplate db;
+	private final ObjectMapper om = new ObjectMapper();
 
 	public BrandPostMetaRepository(JdbcTemplate db) {
 		this.db = db;
@@ -69,5 +79,75 @@ public class BrandPostMetaRepository {
 		String excerpt = thumbnailUrl.length() > 100 ? thumbnailUrl.substring(0, 100) : thumbnailUrl;
 		log.warn("무효 스킴 thumbnail_url 폐기: shortCode={}, value={}", shortCode, excerpt);
 		return null;
+	}
+
+	/** 광고 표기 판정 상태 — ad_verdict NULL 또는 judged_caption_hash 불일치가 재판정 대상(스펙 §7). */
+	public record AdJudgmentState(String adVerdict, String judgedCaptionHash) {
+	}
+
+	public Map<String, AdJudgmentState> findAdJudgmentState(Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return Map.of();
+		}
+		String placeholders = String.join(",", Collections.nCopies(shortCodes.size(), "?"));
+		Map<String, AdJudgmentState> out = new HashMap<>();
+		db.query("SELECT short_code, ad_verdict, judged_caption_hash FROM brand_post_meta WHERE short_code IN ("
+						+ placeholders + ")",
+				rs -> {
+					out.put(rs.getString("short_code"),
+							new AdJudgmentState(rs.getString("ad_verdict"), rs.getString("judged_caption_hash")));
+				}, shortCodes.toArray());
+		return out;
+	}
+
+	/**
+	 * 미판정 잔여 백필(스펙 §7 개정, 2026-08-18) 대상 — 판정에 필요한 컬럼만 담는다. 브랜드
+	 * 스코프가 없다: 스윕 재열거 창(180일)을 벗어나 정기 스윕이 다시 만나지 못하는 게시물도
+	 * 캡션은 이미 이 테이블에 있으므로 Hiker 재조회 없이 판정 가능하다({@link
+	 * com.celfit.monitoring.ad.AdDisclosureJudgeService#backfillUnjudged}).
+	 */
+	public record UnjudgedPost(String shortCode, String caption, String contentType, String videoUrl,
+			Boolean isPaidPartnership) {
+	}
+
+	/** {@code idx_brand_post_meta_unjudged} 부분 인덱스가 이 WHERE 절을 커버한다 — 잔량이 줄수록 공짜에 수렴. */
+	public List<UnjudgedPost> findUnjudged(int limit) {
+		return db.query("""
+				SELECT short_code, caption, content_type, video_url, is_paid_partnership
+				FROM brand_post_meta
+				WHERE ad_verdict IS NULL
+				ORDER BY short_code
+				LIMIT ?""",
+				(rs, rowNum) -> new UnjudgedPost(rs.getString("short_code"), rs.getString("caption"),
+						rs.getString("content_type"), rs.getString("video_url"),
+						(Boolean) rs.getObject("is_paid_partnership")),
+				limit);
+	}
+
+	/** 백필 완료 로그("잔여 N건 중 M건 처리")의 N — 이번 배치 상한(limit)과 무관한 전체 잔량. */
+	public int countUnjudged() {
+		Integer count = db.queryForObject("SELECT count(*) FROM brand_post_meta WHERE ad_verdict IS NULL",
+				Integer.class);
+		return count == null ? 0 : count;
+	}
+
+	/**
+	 * 판정 결과 기록 — violations·evidence는 이 메서드 안에서 jsonb로 직렬화한다({@code ?::jsonb}
+	 * 캐스팅 문법 재사용). captionHash는 호출부가 계산한 판정 시점 caption의 MD5(스펙 §4).
+	 *
+	 * <p>대상 short_code가 이미 사라진 경우(0-row) 예외를 던지지 않는다 — 다음 스윕이 자연 재판정하므로
+	 * 호출부 분기는 불필요하지만, LLM 비용을 들인 판정 결과가 소리 없이 유실되는 경로라 경고 로그는 남긴다.
+	 */
+	public void updateAdVerdict(String shortCode, AdVerdictResult result, String captionHash, Instant judgedAt) {
+		int updated = db.update("""
+				UPDATE brand_post_meta
+				SET ad_verdict = ?, ad_verdict_source = ?, ad_violations = ?::jsonb, ad_evidence = ?::jsonb,
+				    ad_judged_at = ?, judged_caption_hash = ?
+				WHERE short_code = ?""",
+				result.verdict(), result.source(), om.writeValueAsString(result.violations()),
+				om.writeValueAsString(result.evidence()), Timestamp.from(judgedAt), captionHash, shortCode);
+		if (updated == 0) {
+			log.warn("광고 판정 기록 대상 없음 — short_code={} (메타 미존재, 판정 결과 유실)", shortCode);
+		}
 	}
 }
