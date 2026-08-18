@@ -146,48 +146,6 @@ public class V1BrandAccountsController {
 		return ResponseEntity.noContent().build();
 	}
 
-	/** 시딩 계정 조회(스펙 §6, monitoring BrandController 프록시) — 소유 브랜드만. */
-	@GetMapping("/{accountId}/seeded-accounts")
-	public ApiResponse<SeededAccountsResponse> getSeededAccounts(
-			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
-		List<String> usernames = service.getSeededAccounts(principal.getUserId(), parseAccountId(accountId));
-		return ApiResponse.ok(new SeededAccountsResponse(usernames));
-	}
-
-	/** 시딩 계정 전체 교체 — 204(monitoring PUT 계약과 동형). */
-	@PutMapping("/{accountId}/seeded-accounts")
-	public ResponseEntity<Void> putSeededAccounts(@AuthenticationPrincipal AppUserDetails principal,
-			@PathVariable String accountId, @RequestBody(required = false) SeededAccountsRequest body) {
-		List<String> usernames = body == null ? null : body.usernames();
-		service.putSeededAccounts(principal.getUserId(), parseAccountId(accountId), usernames);
-		return ResponseEntity.noContent().build();
-	}
-
-	/** 시딩 계정 단건·다건 추가(POST 계약) — 204(monitoring POST와 동형, 빈 입력도 no-op으로 허용). */
-	@PostMapping("/{accountId}/seeded-accounts")
-	public ResponseEntity<Void> addSeededAccounts(@AuthenticationPrincipal AppUserDetails principal,
-			@PathVariable String accountId, @RequestBody(required = false) SeededAccountsRequest body) {
-		List<String> usernames = body == null ? null : body.usernames();
-		service.addSeededAccounts(principal.getUserId(), parseAccountId(accountId), usernames);
-		return ResponseEntity.noContent().build();
-	}
-
-	/** 시딩 계정 단건 삭제(DELETE {seededUsername} 계약) — 204(없어도 멱등). */
-	@DeleteMapping("/{accountId}/seeded-accounts/{seededUsername}")
-	public ResponseEntity<Void> deleteSeededAccount(@AuthenticationPrincipal AppUserDetails principal,
-			@PathVariable String accountId, @PathVariable String seededUsername) {
-		service.deleteSeededAccount(principal.getUserId(), parseAccountId(accountId), seededUsername);
-		return ResponseEntity.noContent().build();
-	}
-
-	/** 시딩 계정 전체 삭제(DELETE 계약) — 204. */
-	@DeleteMapping("/{accountId}/seeded-accounts")
-	public ResponseEntity<Void> deleteAllSeededAccounts(@AuthenticationPrincipal AppUserDetails principal,
-			@PathVariable String accountId) {
-		service.deleteAllSeededAccounts(principal.getUserId(), parseAccountId(accountId));
-		return ResponseEntity.noContent().build();
-	}
-
 	/** accountId는 문자열 path 파라미터라 숫자가 아니면 존재할 수 없는 id → 404(V1CampaignController 관용구). */
 	private static long parseAccountId(String raw) {
 		try {
@@ -207,9 +165,5 @@ public class V1BrandAccountsController {
 
 	/** 태그 셋 교체 요청 본문 — tags null은 서비스에서 빈 목록으로 접는다(monitoring이 422로 거부). */
 	public record HashtagTagsRequest(List<String> tags) {
-	}
-
-	/** 시딩 계정 교체 요청 본문 — usernames null은 서비스에서 빈 목록으로 접는다. */
-	public record SeededAccountsRequest(List<String> usernames) {
 	}
 }

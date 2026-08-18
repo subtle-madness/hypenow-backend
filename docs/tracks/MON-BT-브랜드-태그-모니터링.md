@@ -235,20 +235,37 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
   `false`)로 막혀 있다 — 판정은 쌓이지만 FE에는 아직 안 보인다. 기존 게시물 전량 판정 +
   verdict 분포 드라이런 검토를 마친 뒤 `true`로 전환하는 것이 노출 개통이며, 이 전환은 이번
   구현 범위 밖이다(스펙 §10-3).
-- **시딩 계정 등록 API 추가**: monitoring `GET/PUT/POST/DELETE .../seeded-accounts`(시딩 계정
-  CRUD) + was `V1BrandAccountsController` 프록시(`MonitoringCommandClient` 경유)로 브랜드
-  고객이 자사 시딩 계정 목록을 직접 등록·조회·해제한다. was는 monitoring 응답을 그대로
-  중계하고 판정 로직을 갖지 않는다(시스템 경계 원칙 준수). 상세 계약은
-  [monitoring-was-contract.md §9](../contracts/monitoring-was-contract.md#9-브랜드-태그-모니터링-확장--광고-표기-판정-v211-2026-08-18).
+- **시딩 계정 등록 API — 신설 후 08-18 당일 전면 철회, `seededAuthor`는 캠페인 데이터 도출로
+  교체**(사용자 확정, `fix/seeded-from-campaign`): monitoring `GET/PUT/POST/DELETE
+  .../seeded-accounts`(시딩 계정 CRUD) + was `V1BrandAccountsController` 프록시로 브랜드가
+  협업 계정 목록을 별도 등록하는 표면을 08-18 오전에 신설했으나, 잘못된 신설이었다는 판단으로
+  같은 날 걷어냈다 — `seededAuthor`는 신규 등록이 아니라 **이미 존재하는 캠페인 관리 데이터**
+  에서 나와야 한다는 원칙. 걷어낸 것: monitoring `BrandSeededAccountRepository` + API 5종,
+  was `V1BrandAccountsController`/`V1BrandAccountService`의 시딩 엔드포인트·메서드 5종,
+  `MonitoringCommandClient` 시딩 프록시 5종, `BrandReadRepository.findSeededUsernames`.
+  **새 산출 기준**(user 스코프 — 캠페인은 브랜드가 아니라 유저 단위): (1) `app.monitoring_items`의
+  `mode='account' AND campaign_id IS NOT NULL AND canceled_at IS NULL` 행의 핸들(신규
+  `MonitoringItemRepository.findCampaignLinkedAccountHandles`), (2) `app.brand_direct_posts`
+  중 연결된 아이템이 캠페인 배정·미취소인 short_code들의 게시자(신규 `BrandDirectPostRepository.
+  findCampaignLinkedShortCodes` + monitoring `brand_post_meta.username` 조회) — 둘 다 was
+  `BrandPostAssembler.resolveSeededUsernames(userId)`가 조합한다(app·monitoring이 물리적으로
+  다른 DB라 SQL 조인 불가, 시스템 경계 원칙). `assembleTagged`가 브랜드 스코프
+  (`account.id()`)에서 유저 스코프(`userId`)로 바뀌어 `PerformanceContentAssembler`·
+  `V2CampaignContentService` 호출부도 함께 갱신됐다. **`brand_seeded_account` 테이블·
+  마이그레이션은 이미 develop 머지·스테이징 적용 상태라 DROP하지 않고 미사용 상태로 남는다**
+  (expand-contract상 DROP은 다음 contract 단계). 상세 계약은
+  [monitoring-was-contract.md §9](../contracts/monitoring-was-contract.md#9-브랜드-태그-모니터링-확장--광고-표기-판정seededauthor-v212-2026-08-18)
+  (v2.12).
 - **판정 킬 스위치 추가**(2026-08-18 코드리뷰 반영): `monitoring.brand.ad-disclosure.enabled`
   (기본 `true`) — `false`면 `judgeAdDisclosuresSafely` 진입점에서 `adJudge` 호출 자체를
   스킵한다. was 노출 토글(`expose`)과 **독립**이라, 노출은 그대로 두고 판정 파이프라인만
   끌 수 있는 좁은 롤백 수단이다(`GEMINI_API_KEY` 제거는 해시태그 판정까지 함께 죽이므로 이
   토글을 대신 쓰지 말 것).
 - **배포 순서: monitoring → was.** was `BrandPostAssembler`가 새 컬럼(`brand_post_meta`의
-  ad_verdict 등, `brand_seeded_account`)을 항상 SELECT하므로, was를 먼저 배포하면(또는
-  monitoring이 healthy가 아닌 채로 was를 배포하면) 브랜드 목록 조회가 500 에러가 난다.
-  monitoring이 healthy임을 확인한 뒤 was를 배포할 것.
+  ad_verdict 등)을 항상 SELECT하므로, was를 먼저 배포하면(또는 monitoring이 healthy가 아닌
+  채로 was를 배포하면) 브랜드 목록 조회가 500 에러가 난다. monitoring이 healthy임을 확인한
+  뒤 was를 배포할 것. (08-18 시딩 계정 관리 표면 철회로 `brand_seeded_account`는 이 목록에서
+  빠졌다 — was가 더 이상 그 테이블을 조회하지 않는다.)
 
 ## 잔여 작업
 
@@ -273,8 +290,15 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
     `analytics/check/pending.sh`와 같은 취지).
   - 골드셋 200건으로 오탐률(특히 `NOT_DISCLOSED` 오탐) 측정.
 - **[후속]**
-  - 판정 로직과 join(시딩 계정 조인 등)을 분리하는 리팩터.
-  - 시딩 계정 username 문자셋 검증(현재는 trim·`@` 제거·소문자화만, IG 유효 문자 검증은 없음).
+  - ~~판정 로직과 join(시딩 계정 조인 등)을 분리하는 리팩터~~ → **08-18 시딩 계정 관리 표면
+    철회로 전제 소멸**: `seededAuthor`는 이제 별도 등록 목록이 아니라 캠페인 데이터에서 도출되고,
+    그 조합(`BrandPostAssembler.resolveSeededUsernames`)은 처음부터 판정 로직(`AdDisclosureJudgeService`)과
+    분리된 was 코드다 — 분리할 join이 남아 있지 않다.
+  - ~~시딩 계정 username 문자셋 검증~~ → **08-18 시딩 계정 관리 표면 철회로 전제 소멸**: 유저가
+    직접 입력하던 등록 표면 자체가 없어져 검증 대상도 함께 사라졌다.
+  - `brand_seeded_account` 테이블·마이그레이션 DROP(contract 단계) — 08-18부로 was·monitoring
+    양쪽 다 이 테이블을 참조하지 않는다(미사용 확정). expand-contract상 다음 릴리스에서
+    `-- allow-destructive` 주석과 함께 제거 가능.
   - ~~백필 굶음 방어~~ → **08-18 상한 제거로 시나리오 자체가 소멸**: 상한(야간 1000건)이 없어져
     "영구 실패가 limit 윈도우를 잠식해 나머지 백로그가 굶는다"는 전제가 사라졌다. 남는 것은
     영구 실패 건의 무한 재시도(매 호출마다 1회씩 재시도 후 배치 종료 — 서비스 코드 §7-1
