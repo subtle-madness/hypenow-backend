@@ -3006,6 +3006,8 @@ git commit -m "feat(was): 브랜드 게시물 응답에 광고 표기 판정·�
 git commit -m "fix(was): direct·tagged 병합 시 광고 판정 필드 승격 — 배지 은닉 방지"
 ```
 
+SHA: `64061185`.
+
 ---
 
 ### Task 16: was — MonitoringCommandClient 시딩 계정 CRUD 프록시
