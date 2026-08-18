@@ -71,6 +71,8 @@ monitoring:
     ad-disclosure:
       judge-model: gemini-3.1-flash-lite   # Tier2 문구 추출 모델(스펙 §5) — analytics 전 축과 통일
       concurrency: 4    # Tier2 LLM 전용 풀(enrichWorker와 분리 — 스펙 §7). LLM 지연이 보강 처리량을 잠식하지 않게 함
+      enabled: true     # 판정 킬 스위치 — LLM 쿼터 장애 시 스윕 지연 방지용 독립 롤백 수단. GEMINI_API_KEY 제거는
+                        # 해시태그 판정까지 죽이므로 쓰지 말 것
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: https://generativelanguage.googleapis.com

@@ -66,6 +66,7 @@ public class BrandCollectService {
 	private final int maxPostsPerSweep;
 	private final int commentPages;
 	private final int authorStaleDays;
+	private final boolean adDisclosureEnabled;
 
 	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
@@ -74,7 +75,8 @@ public class BrandCollectService {
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
-			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays) {
+			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays,
+			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
 		this.hiker = hiker;
 		this.callContext = callContext;
 		this.writer = writer;
@@ -87,6 +89,7 @@ public class BrandCollectService {
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
+		this.adDisclosureEnabled = adDisclosureEnabled;
 	}
 
 	/**
@@ -323,8 +326,17 @@ public class BrandCollectService {
 	 * (collectCommentsGatedSafely와 같은 이유). "다음 스윕 재시도"는 180일 이하 게시물에 한한
 	 * 이야기다 — 180일 초과 게시물은 재열거 자체가 없어(BrandCrawlPolicy.due 무조건 false) verdict
 	 * NULL이 영구 잔존할 수 있다.
+	 *
+	 * <p>킬 스위치({@code monitoring.brand.ad-disclosure.enabled}, 기본 true, 2026-08-18) — LLM
+	 * 쿼터 장애 등으로 판정이 스윕 자체를 지연시킬 때 was 노출 토글(expose)과 독립적으로 판정만
+	 * 끄는 롤백 수단. 진입점 맨 앞에서 가드해 adJudge 호출 자체가 나가지 않게 한다(no-op 리턴 —
+	 * verdict는 그대로 NULL/기존값 유지, 다음에 켜지면 캡션 해시 비교로 자연 재판정).
 	 */
 	private void judgeAdDisclosuresSafely(List<PostInfo> posts) {
+		if (!adDisclosureEnabled) {
+			log.debug("광고 표기 판정 킬 스위치 비활성 — 판정 스킵 ({}건)", posts.size());
+			return;
+		}
 		try {
 			adJudge.judgePosts(posts);
 		} catch (RuntimeException e) {

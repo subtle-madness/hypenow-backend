@@ -9,6 +9,7 @@ import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSeededAccountRepository;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
@@ -271,6 +272,10 @@ public class BrandController {
 	 * 단건 정규화(trim → 선행 {@code @} 제거 → 소문자) — null·blank는 null(호출측이 "대상 없음"으로
 	 * 처리). {@code @handle} 형태 입력이 조인을 깨는 공백이 있어 2026-08-18 추가(스펙 §6) — 태그의
 	 * {@code #} 제거와 마찬가지로 1개만 제거한다("@@handle" 같은 변칙은 앞의 하나만 벗겨낸다).
+	 * 로케일은 {@link Locale#ROOT} 고정(2026-08-18) — 소비 측인 was의 시딩 조인 정규화
+	 * ({@code BrandPostAssembler}·{@code toLowerCase(Locale.ROOT)})와 로케일을 일치시켜, 터키어
+	 * 로케일 등 기본 로케일이 다른 환경에서 "I" → "ı" 같은 대소문자 변환 불일치로 조인이 깨지는
+	 * 것을 막는다.
 	 */
 	private static String normalizeUsername(String username) {
 		if (username == null) {
@@ -280,7 +285,7 @@ public class BrandController {
 		if (stripped.startsWith("@")) {
 			stripped = stripped.substring(1);
 		}
-		String cleaned = stripped.strip().toLowerCase();
+		String cleaned = stripped.strip().toLowerCase(Locale.ROOT);
 		return cleaned.isBlank() ? null : cleaned;
 	}
 

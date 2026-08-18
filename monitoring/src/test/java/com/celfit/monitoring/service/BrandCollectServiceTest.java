@@ -326,7 +326,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, 3, 30);
+				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, 3, 30, true);
 	}
 
 	private long tagCalls() {
@@ -998,7 +998,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 3, 30);
+					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -1078,9 +1078,30 @@ class BrandCollectServiceTest {
 		assertThat(adJudge.judged).contains("AAA");        // 광고 판정도 하드 실패와 무관하게 돈다
 	}
 
+	/**
+	 * 킬 스위치(2026-08-18) — enabled=false면 judgeAdDisclosuresSafely 진입점에서 곧바로 리턴해
+	 * adJudge.judgePosts 자체가 호출되지 않는다. was 노출 토글(expose)과 독립적인 롤백 수단이라
+	 * 정산·댓글 수집은 평소대로 돈다는 것도 함께 확인한다.
+	 */
+	@Test
+	void 킬_스위치가_꺼지면_광고_판정_호출_자체가_나가지_않는다() {
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge, false);
+		PostInfo post = post("AAA", RECENT, null, 0L);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(adJudge.judged).isEmpty();          // adJudge 호출 자체가 없다
+		assertThat(tagged.enriched).contains("AAA");    // 정산은 킬 스위치와 무관하게 그대로 돈다
+	}
+
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {
+		return serviceWithAdJudge(adJudge, true);
+	}
+
+	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				adJudge, Runnable::run, 10000, 3, 30);
+				adJudge, Runnable::run, 10000, 3, 30, adDisclosureEnabled);
 	}
 
 	/**
