@@ -283,9 +283,36 @@ public class BrandCollectService {
 	 * 예외가 markEnriched 직후 곧장 메서드 밖으로 전파돼 댓글·판정 호출 자체가 도달 불가였다).
 	 * 각 단계의 실패가 서로에게 번지면 안 되므로 collectCommentsGatedSafely·judgeAdDisclosuresSafely
 	 * 내부에서 각자 try/catch로 한 번 더 격리한다.
+	 *
+	 * @see #enrich(BrandRow, List, Runnable) onVisible 훅(계정 게이트 단축) 버전
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
+		enrich(brand, posts, null);
+	}
+
+	/**
+	 * onVisible 훅 버전(2026-08-18 계정 게이트 단축) — 등록 백필의 <b>첫 페이지</b>가 계정 단위
+	 * ready(markServing)를 게시물 게이트(markEnriched)와 <b>같은 지점</b>에서 열 수 있게 하는 확장
+	 * 진입점이다({@link BrandRegistrationService#runBackfillSafely} 참조). 댓글 수집·광고 표기
+	 * 판정은 개정 전과 마찬가지로 이 지점 <b>밖</b>이라, 계정 게이트를 열기 전에 그 두 단계(수 초~
+	 * 수십 초, 워커 병렬화에도 브랜드당 순차 join)를 기다리지 않는다 — 이게 이 훅의 존재 이유다.
+	 * 종전 배선(등록 백필이 {@link #enrich(BrandRow, List)} 전체 반환을 기다린 뒤 markServing)은
+	 * 댓글·판정까지 다 끝나야 계정이 뜨는 회귀였다.
+	 *
+	 * <p>onVisible은 <b>markEnriched 마킹과 같은 finally 안, 그 직후</b>에 부른다 — ensureAuthors가
+	 * 하드 실패해도(배치 DB 조회 예외) markEnriched처럼 무조건 호출된다. null이면 조용히 무시한다
+	 * (야간 스윕 {@link #enrichSafely}가 쓰는 2-인자 {@link #enrich(BrandRow, List)}는 이 인자 없이
+	 * 위임하므로 스윕 경로는 무변 — 계정 게이트 자체가 스윕에 없다).
+	 *
+	 * <p>posts가 비어 있으면 ensureAuthors조차 돌지 않지만 onVisible은 그래도 부른다(구 markServing
+	 * 무조건 호출과 동치) — 등록 첫 페이지가 편입 컷·태그 0건으로 빈 배치일 수 있고, 여기서 안
+	 * 부르면 그 브랜드가 collecting에 영구히 갇힌다({@link #sweepCore} 콜백 계약 참조).
+	 */
+	public void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
 		if (posts.isEmpty()) {
+			if (onVisible != null) {
+				onVisible.run();
+			}
 			return;
 		}
 		try {
@@ -297,6 +324,11 @@ public class BrandCollectService {
 				// 좁혀졌다. finally인 이유는 기존과 동일(180일 초과 게시물엔 재열거 백스톱이 없다).
 				taggedPosts.markEnriched(brand.id(),
 						posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+				// 계정 게이트 훅(2026-08-18) — markEnriched와 같은 보장(finally, 하드 실패 무관)으로
+				// 댓글·판정 시작 전에 1회 호출한다.
+				if (onVisible != null) {
+					onVisible.run();
+				}
 			}
 		} finally {
 			// 댓글·광고 판정은 노출 게이트 밖 — ensureAuthors의 하드 실패(위 예외가 여기까지 전파되는

@@ -9,6 +9,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
+import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.AuthorMask;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
@@ -83,18 +84,20 @@ public class BrandPostAssembler {
 	private final BrandDirectPostRepository directPostRepository;
 	/** 과도기 폴백 전용 — TODO(contract) C 단계에서 제거. */
 	private final TrackingItemAssembler trackingItemAssembler;
+	private final MonitoringItemRepository monitoringItemRepository;
 	/** 광고 표기 판정 노출 게이트(스펙 §10-2 드라이런 후 개통) — 기본 false, was 문서화(Task 18)에서 개통 절차 안내. */
 	private final boolean exposeAdDisclosure;
 	private static final ObjectMapper OM = new ObjectMapper();
 
 	public BrandPostAssembler(BrandReadRepository brandReadRepository,
 			BrandPostCampaignRepository postCampaignRepository, BrandDirectPostRepository directPostRepository,
-			TrackingItemAssembler trackingItemAssembler,
+			TrackingItemAssembler trackingItemAssembler, MonitoringItemRepository monitoringItemRepository,
 			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
 		this.brandReadRepository = brandReadRepository;
 		this.postCampaignRepository = postCampaignRepository;
 		this.directPostRepository = directPostRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
+		this.monitoringItemRepository = monitoringItemRepository;
 		this.exposeAdDisclosure = exposeAdDisclosure;
 	}
 
@@ -104,7 +107,7 @@ public class BrandPostAssembler {
 	 */
 	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account) {
 		// 표시 표면이라 정산분만 — 게시자·댓글이 붙기 전의 반쯤 빈 카드를 목록·상세·counts에 싣지 않는다.
-		List<BrandPostResponse> brandPool = assembleBrandPosts(account, true, BrandPostScope.ENRICHED_ONLY);
+		List<BrandPostResponse> brandPool = assembleBrandPosts(userId, account, true, BrandPostScope.ENRICHED_ONLY);
 		List<BrandPostResponse> legacyPending = assembleLegacyPending(userId, account.id());
 		return mergeWithLegacyPending(brandPool, legacyPending);
 	}
@@ -144,8 +147,11 @@ public class BrandPostAssembler {
 	 *
 	 * <p>{@code scope}는 편의 오버로드를 두지 않는다 — 호출부가 표시(ENRICHED_ONLY)와 판정(ALL)을
 	 * 매번 골라야 한다({@link BrandPostScope} 주석 참조).
+	 *
+	 * @param userId 시딩(캠페인 연결) 판정 스코프(2026-08-18 캠페인 도출 개정) — 캠페인은 브랜드가
+	 *               아니라 유저 단위 개념이라 {@code account}가 아니라 이 값으로 조회한다.
 	 */
-	public List<BrandPostResponse> assembleBrandPosts(BrandAccountRow account, boolean withComments,
+	public List<BrandPostResponse> assembleBrandPosts(long userId, BrandAccountRow account, boolean withComments,
 			BrandPostScope scope) {
 		List<BrandTaggedPostRow> posts = brandReadRepository.findBrandPostsInWindow(account.id(), windowCutoff(),
 				scope == BrandPostScope.ENRICHED_ONLY);
@@ -165,10 +171,7 @@ public class BrandPostAssembler {
 		Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
 		Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), codes);
 		// 토글이 꺼져 있으면 조회 자체를 생략한다(드라이런 중 불필요한 조회 방지).
-		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of()
-				: brandReadRepository.findSeededUsernames(account.id()).stream()
-						.map(u -> u.toLowerCase(Locale.ROOT))
-						.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
 
 		return posts.stream()
 				.map(p -> brandPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
@@ -185,6 +188,46 @@ public class BrandPostAssembler {
 			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
 		}
 		return byCode;
+	}
+
+	/**
+	 * 시딩(캠페인 연결) 계정 username 집합(2026-08-18 캠페인 도출 개정, 2026-08-18 direct 통합 이후
+	 * 재조정 — 신설 시딩 계정 관리 표면 대신 기존 캠페인 관리 데이터에서 산출한다) — 유저 스코프
+	 * 합집합(캠페인은 브랜드가 아니라 유저 단위다):
+	 *
+	 * <ol>
+	 *   <li>캠페인 연결 계정 추적(mode=account, canceled 제외)의 핸들 — {@code input_value}는
+	 *       등록 시 이미 소문자 정규화 저장이라({@code MonitoringInput.parseAccount}) 방어적으로만
+	 *       재정규화한다.</li>
+	 *   <li>{@code app.brand_post_campaigns} 유저 스코프 링크의 게시자(설계 §결정 3 — direct 통합 후
+	 *       캠페인 연결 정본, tagged·direct 공통) — shortcode는
+	 *       {@link BrandPostCampaignRepository#findShortCodesByUser}로 얻고, 게시자 username은
+	 *       monitoring DB {@code brand_post_meta}에서 별도 조회한다(app·monitoring이 물리적으로
+	 *       다른 DB라 SQL 조인 불가 — 조합은 여기 was 코드에서).</li>
+	 *   <li>이관 전(migrated_at IS NULL) 레거시 direct 등록의 캠페인 연결(canceled 제외) — shortcode는
+	 *       app 스키마 내부 조인({@link BrandDirectPostRepository#findCampaignLinkedShortCodes})으로
+	 *       얻는다. 과도기 전용: 이관 전 매핑은 아직 brand_post_meta에 없어 대부분 조회가 빈 값을
+	 *       반환하지만(그 게시물 자체가 브랜드 풀 밖 — 과도기 폴백 카드는 seededAuthor를 애초에 항상
+	 *       false로 응답한다, {@link #legacyPendingPost}), 태그 발견으로 이미 브랜드 풀에 들어온
+	 *       겹침 게시물이면 이 작성자의 다른 브랜드 풀 게시물에 seededAuthor를 붙일 수 있다. 이관(M2)이
+	 *       진행되면 이 소스는 2번 소스로 자연 흡수돼 비어간다.</li>
+	 * </ol>
+	 */
+	private Set<String> resolveSeededUsernames(long userId) {
+		Set<String> usernames = new LinkedHashSet<>();
+		for (String handle : monitoringItemRepository.findCampaignLinkedAccountHandles(userId)) {
+			usernames.add(handle.toLowerCase(Locale.ROOT));
+		}
+		Set<String> campaignLinkedShortCodes = new LinkedHashSet<>(postCampaignRepository.findShortCodesByUser(userId));
+		campaignLinkedShortCodes.addAll(directPostRepository.findCampaignLinkedShortCodes(userId));
+		if (!campaignLinkedShortCodes.isEmpty()) {
+			for (BrandPostMetaRow meta : brandReadRepository.findPostMeta(campaignLinkedShortCodes)) {
+				if (meta.username() != null) {
+					usernames.add(meta.username().toLowerCase(Locale.ROOT));
+				}
+			}
+		}
+		return usernames;
 	}
 
 	/**
@@ -267,9 +310,10 @@ public class BrandPostAssembler {
 		List<String> adViolations = exposeAd ? parseViolations(post.shortCode(), meta.adViolationsJson()) : List.of();
 		List<BrandPostResponse.AdEvidence> adEvidence =
 				exposeAd ? parseEvidence(post.shortCode(), meta.adEvidenceJson()) : List.of();
-		// meta != null 가드가 없는 비대칭은 의도된 설계다 — 시딩 계정 등록 여부는 게시물 메타
-		// (brand_post_meta)와 무관한 정보(brand_seeded_account 조인)라, 메타가 없어도(예: 아직
-		// 보강 전) 계정이 시딩 등록돼 있으면 seededAuthor는 true여야 한다.
+		// meta != null 가드가 없는 비대칭은 의도된 설계다 — 시딩(캠페인 연결) 여부는 이 게시물의
+		// 메타(brand_post_meta)와 무관하게 유저 스코프로 미리 산출된 집합(resolveSeededUsernames,
+		// 2026-08-18 캠페인 도출 개정)이라, 메타가 없어도(예: 아직 보강 전) 작성자가 그 집합에
+		// 있으면 seededAuthor는 true여야 한다.
 		boolean seededAuthor = exposeAdDisclosure && username != null
 				&& seededUsernames.contains(username.toLowerCase(Locale.ROOT));
 

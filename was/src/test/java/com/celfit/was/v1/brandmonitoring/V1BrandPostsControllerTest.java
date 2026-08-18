@@ -30,6 +30,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
+import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
@@ -79,6 +80,8 @@ class V1BrandPostsControllerTest {
 	/** 과도기 폴백 전용(T10). */
 	@MockitoBean
 	TrackingItemAssembler trackingItemAssembler;
+	@MockitoBean
+	MonitoringItemRepository monitoringItemRepository;
 	/** 직접 등록(§6-4)의 판정 로직은 V1BrandDirectPostServiceTest가 본다 — 여기는 표면 계약만. */
 	@MockitoBean
 	V1BrandDirectPostService directPostService;

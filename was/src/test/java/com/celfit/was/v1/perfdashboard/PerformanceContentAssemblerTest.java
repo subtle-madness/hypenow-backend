@@ -3,6 +3,7 @@ package com.celfit.was.v1.perfdashboard;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -303,7 +304,7 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(assembled.contents()).hasSize(1);
 		assertThat(assembled.lastCollectedAt()).isEqualTo(LAST_COLLECTED);
-		then(brandPostAssembler).should(never()).assembleBrandPosts(any(), anyBoolean(), any());
+		then(brandPostAssembler).should(never()).assembleBrandPosts(anyLong(), any(), anyBoolean(), any());
 	}
 
 	@Test
@@ -346,7 +347,7 @@ class PerformanceContentAssemblerTest {
 				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleBrandPosts(rival, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, rival, true, BrandPostScope.ALL))
 				.willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
@@ -385,9 +386,9 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
-		given(brandPostAssembler.assembleBrandPosts(rival, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, rival, true, BrandPostScope.ALL))
 				.willReturn(List.of(taggedPostOf("ABC", 99L)));
-		given(brandPostAssembler.assembleBrandPosts(mine, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, mine, true, BrandPostScope.ALL))
 				.willReturn(List.of(taggedPostOf("ABC", BRAND_ID)));
 
 		var assembled = assembler().assemble(USER_ID);
@@ -414,9 +415,9 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
-		given(brandPostAssembler.assembleBrandPosts(mine, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, mine, true, BrandPostScope.ALL))
 				.willReturn(List.of(directPostOf("ABC", BRAND_ID)));
-		given(brandPostAssembler.assembleBrandPosts(rival, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, rival, true, BrandPostScope.ALL))
 				.willReturn(List.of(taggedPostOf("ABC", 99L)));
 
 		var assembled = assembler().assemble(USER_ID);
@@ -457,13 +458,13 @@ class PerformanceContentAssemblerTest {
 				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
 		BrandAccountRow account = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleBrandPosts(account, false, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, false, BrandPostScope.ALL))
 				.willReturn(List.of(taggedPost("ABC", List.of())));
 
 		var contents = assembler().assembleSlim(USER_ID).contents();
 
 		// 댓글 배치 조회가 목록 경로에 되살아나면 고정 지연이 재발한다(08-12 실측: 조립 시간의 절반 이상).
-		then(brandPostAssembler).should(never()).assembleBrandPosts(account, true, BrandPostScope.ALL);
+		then(brandPostAssembler).should(never()).assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL);
 		assertThat(contents).hasSize(1);
 	}
 
@@ -544,7 +545,8 @@ class PerformanceContentAssemblerTest {
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, LAST_COLLECTED);
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleBrandPosts(account, true, BrandPostScope.ALL)).willReturn(List.of(brandPosts));
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL))
+				.willReturn(List.of(brandPosts));
 	}
 
 	private static SnapshotResponse snapshot(String date, Long views, Long likes, Long comments) {
