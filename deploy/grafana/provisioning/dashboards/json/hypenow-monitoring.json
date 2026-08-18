@@ -5,12 +5,18 @@
   "editable": false,
   "refresh": "5m",
   "timezone": "Asia/Seoul",
-  "time": { "from": "now-7d", "to": "now" },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
   "annotations": {
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -19,14 +25,21 @@
       }
     ]
   },
-  "templating": { "list": [] },
+  "templating": {
+    "list": []
+  },
   "panels": [
     {
       "id": 100,
       "type": "row",
       "title": "건강 — 돌고 있나, 막힌 데는 없나",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "panels": []
     },
     {
@@ -34,20 +47,49 @@
       "type": "stat",
       "title": "마지막 스윕",
       "description": "마지막 성공 스윕(sweep_run.ok)으로부터 경과 시간 — 홈 타일5와 같은 쿼리다. 스윕은 매일 새벽 1회라 26시간을 넘으면 어젯밤 스윕이 안 돈 것이다. 값이 아예 없으면(성공 이력 0건) '데이터 없음'을 빨강으로 띄운다 — 무값은 초록이 아니다.",
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "noValue": "데이터 없음",
           "mappings": [
-            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
           ],
           "unit": "h",
           "decimals": 0,
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 26 }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
           }
         },
         "overrides": []
@@ -56,12 +98,21 @@
         "graphMode": "none",
         "colorMode": "background",
         "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -74,20 +125,49 @@
       "type": "stat",
       "title": "fetch 실패 타깃",
       "description": "추적 중(TRACKING)인데 수집이 계속 실패하는 타깃 수(target.fetch_failing). 1건이라도 있으면 그 유저의 캠페인 지표가 멈춘 것이다 — 사람이 원인을 봐야 한다. 감시 중(WATCHING)은 아직 수집 대상이 아니라 제외한다.",
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "noValue": "데이터 없음",
           "mappings": [
-            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
           ],
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
@@ -96,12 +176,21 @@
         "graphMode": "none",
         "colorMode": "background",
         "textMode": "value_and_name",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -114,24 +203,47 @@
       "type": "table",
       "title": "발송 실패 알림",
       "description": "이메일 발송이 FAILED로 끝난 알림 이벤트 최근 20건. **평시 0행이 정상**이다 — 행이 보이면 SMTP나 수신자 설정을 봐야 한다. email_attempts는 재시도 횟수로, 같은 이벤트가 여러 번 실패했음을 뜻한다. 전역 시간 필터를 타지 않는다(지금 남아 있는 실패 전부).",
-      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "noValue": "발송 실패 없음 (정상)",
-          "custom": { "align": "auto", "cellOptions": { "type": "auto" } }
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
         },
         "overrides": []
       },
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
-        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -144,8 +256,16 @@
       "type": "timeseries",
       "title": "스윕 이력 30일",
       "description": "일 1회 도는 스윕의 소요 시간(완료 - 시작, 분). 대시보드 시간창과 무관하게 **최근 30일 고정**이다(패널 헤더의 30d 배지). 소요가 계단식으로 늘면 대상 증가나 외부 API 지연을 의심한다. 아직 끝나지 않은(completed_at NULL) 스윕은 점이 찍히지 않는다.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "timeFrom": "30d",
       "fieldConfig": {
         "defaults": {
@@ -163,13 +283,24 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "time_series",
           "rawQuery": true,
           "editorMode": "code",
@@ -182,8 +313,16 @@
       "type": "timeseries",
       "title": "감지 전환 추이 30일",
       "description": "감시(WATCHING) 상태이던 계정 타깃이 게시물 감지로 추적(TRACKING)으로 넘어간 일별 건수(target.tracked_since 기준). **정보성 패널이지 신호등이 아니다 — 0이 정상일 수 있다**(그날 등록 타깃이 아무 것도 안 올렸으면 0이다). 대시보드 시간창과 무관하게 최근 30일 고정.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "timeFrom": "30d",
       "fieldConfig": {
         "defaults": {
@@ -200,13 +339,24 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "time_series",
           "rawQuery": true,
           "editorMode": "code",
@@ -219,7 +369,12 @@
       "type": "row",
       "title": "비용 — Hiker 콜은 어디로 나가나",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
       "panels": []
     },
     {
@@ -227,8 +382,16 @@
       "type": "timeseries",
       "title": "일별 Hiker 콜 30일",
       "description": "Hiker API 호출 건수를 브랜드 스윕(brand_call_count)과 캠페인 타깃(target_call_count)으로 나눠 본 일별 추이. **called_on은 KST 달력일이 정본**이라 30일 창도 `(now() AT TIME ZONE 'Asia/Seoul')::date - 30` 기준이다(컨테이너 postgres는 UTC라 current_date를 쓰면 KST 00~09시에 하루가 어긋난다). 대시보드 시간창과 무관하게 최근 30일 고정. 브랜드 쪽이 물량의 대부분이며, 갑자기 두 배가 되면 스윕 대상 급증이나 재수집 루프를 의심한다.",
-      "gridPos": { "h": 9, "w": 14, "x": 0, "y": 15 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 15
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "timeFrom": "30d",
       "fieldConfig": {
         "defaults": {
@@ -239,20 +402,36 @@
             "lineWidth": 1,
             "fillOpacity": 70,
             "barAlignment": 0,
-            "stacking": { "mode": "normal", "group": "A" },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
             "spanNulls": false
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "time_series",
           "rawQuery": true,
           "editorMode": "code",
@@ -260,7 +439,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "time_series",
           "rawQuery": true,
           "editorMode": "code",
@@ -273,20 +455,48 @@
       "type": "table",
       "title": "브랜드별 상위 콜 7일",
       "description": "최근 7일(KST 달력일) Hiker 콜을 많이 먹은 브랜드 상위 15. 계정명은 monitoring DB의 brand_account에서 붙인다(app 스키마와는 DB가 달라 조인하지 않는다 — 시스템 경계). 한 브랜드가 유독 튀면 백필이 안 끝났거나 재수집 루프에 빠진 것이다.",
-      "gridPos": { "h": 9, "w": 10, "x": 14, "y": 15 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 15
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "noValue": "데이터 없음",
-          "custom": { "align": "auto", "cellOptions": { "type": "auto" } }
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "콜" },
+            "matcher": {
+              "id": "byName",
+              "options": "콜"
+            },
             "properties": [
-              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
-              { "id": "unit", "value": "short" },
-              { "id": "decimals", "value": 0 }
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
             ]
           }
         ]
@@ -294,12 +504,22 @@
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
-        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -312,7 +532,12 @@
       "type": "row",
       "title": "사용량 — 얼마나 쓰이고 있나",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
       "panels": []
     },
     {
@@ -320,15 +545,34 @@
       "type": "stat",
       "title": "브랜드 모니터링",
       "description": "브랜드·경쟁사 모니터링 등록 현황(app.brand_monitorings). 활성 = 해지되지 않은 등록, 이번주 신규 = 최근 7일 생성. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다.",
-      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 25 },
-      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 25
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "fixed", "fixedColor": "text" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -337,12 +581,21 @@
         "colorMode": "none",
         "textMode": "value_and_name",
         "justifyMode": "center",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -355,15 +608,34 @@
       "type": "stat",
       "title": "추적 타깃",
       "description": "캠페인 타깃 현황(monitoring.target). 추적중(TRACKING) = 게시물이 감지돼 지표를 모으는 중, 감시중(WATCHING) = 등록됐지만 아직 게시물이 안 올라온 상태. 규모 지표라 색 임계를 달지 않는다.",
-      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 25 },
-      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 25
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "fixed", "fixedColor": "text" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -372,12 +644,21 @@
         "colorMode": "none",
         "textMode": "value_and_name",
         "justifyMode": "center",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -390,15 +671,34 @@
       "type": "stat",
       "title": "캠페인",
       "description": "생성된 캠페인 총 수(app.monitoring_campaigns). 종료 개념이 없어 누적값이다. 규모 지표라 색 임계를 달지 않는다.",
-      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 25 },
-      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 25
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "fixed", "fixedColor": "text" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
           "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -407,12 +707,21 @@
         "colorMode": "none",
         "textMode": "value",
         "justifyMode": "center",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
@@ -425,40 +734,53 @@
       "type": "table",
       "title": "최근 등록 브랜드 모니터링",
       "description": "가장 최근 등록된 브랜드 모니터링 15건. 전역 시간 필터를 타지 않는다(항상 최신 15건). 해지가 연달아 찍히면 이탈 신호로 본다.",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 30 },
-      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
       "fieldConfig": {
         "defaults": {
           "noValue": "데이터 없음",
-          "custom": { "align": "auto", "cellOptions": { "type": "auto" } }
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
         },
         "overrides": []
       },
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
-        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
           "format": "table",
           "rawQuery": true,
           "editorMode": "code",
           "rawSql": "SELECT created_at AS \"등록 시각\",\n       username AS \"계정\",\n       CASE WHEN deleted_at IS NULL THEN '활성' ELSE '해지' END AS \"상태\"\nFROM app.brand_monitorings\nORDER BY created_at DESC\nLIMIT 15"
         }
       ]
-    },
-    {
-      "id": 12,
-      "type": "text",
-      "title": "읽는 법·한계",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 30 },
-      "options": {
-        "mode": "markdown",
-        "content": "### 읽는 순서\n\n1. **건강** — 스윕이 돌았나, 막힌 타깃·발송 실패가 있나. 여기가 빨갛지 않으면 아래는 참고 지표다.\n2. **비용** — Hiker 콜이 평소 물량인가. 브랜드 쪽이 대부분이고, 두 배로 튀면 재수집 루프나 대상 급증이다.\n3. **사용량** — 서비스가 얼마나 쓰이는지. 신호등이 아니라 규모 지표라 색이 없다.\n\n### 규약\n\n- **`called_on`은 KST 달력일이 정본**이다. 컨테이너 postgres는 UTC로 돌기 때문에 비교는 전부 `(now() AT TIME ZONE 'Asia/Seoul')::date` 기준 — `current_date`를 쓰면 KST 00~09시에 하루가 어긋난다.\n- 30일 시계열 3종은 **대시보드 시간창을 따르지 않는다**(패널 헤더 `30d` 배지). 비용·이력은 고정 창으로 보는 게 맞아서 의도적으로 그렇게 뒀다.\n- 건강 절 stat은 **무값을 초록으로 속이지 않는다** — 값이 없으면 '데이터 없음'을 빨강으로 띄운다. 사용량 stat은 신호등이 아니라 중립색이다.\n\n### 한계\n\n- **발송 실패 알림 0행이 정상**이다. 비어 있다고 쿼리가 깨진 게 아니다.\n- **감지 전환 추이의 0도 정상일 수 있다** — 그날 감시 중이던 타깃이 아무 것도 안 올렸으면 0이다.\n- **사용량 절에 일별 시계열이 없는 건 의도**다. 하루 0~2건짜리 밀도라 시계열로 그리면 빈 판이 된다.\n- 브랜드 모니터링·캠페인은 **analysis DB(`app` 스키마)**, 스윕·타깃·콜은 **monitoring DB**다. 두 DB는 SQL로 조인하지 않는다(시스템 경계) — 브랜드 계정명은 monitoring 쪽 `brand_account`에서만 붙인다.\n- 캠페인 수는 종료 개념이 없어 **누적값**이다. '지금 돌고 있는 캠페인'이 아니다.\n- 알림 발송 지표는 **모니터링 알림(alarm_event)** 전용이다. 다이제스트 메일은 [서비스 개요](/d/hypenow-service-overview)에서 본다."
-      }
     }
   ]
 }

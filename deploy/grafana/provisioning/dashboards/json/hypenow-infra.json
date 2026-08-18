@@ -2,17 +2,26 @@
   "title": "HypeNow 인프라",
   "uid": "hypenow-infra",
   "description": "호스트·컨테이너·JVM 횡단축. 위 절은 서버 한 대(OCI)의 여유, 아래 절은 그 위에 얹힌 컨테이너와 was JVM의 여유를 본다. 홈 신호등 '여유가 있나' 4타일의 착지점이다.",
-  "tags": ["hypenow", "infra"],
+  "tags": [
+    "hypenow",
+    "infra"
+  ],
   "schemaVersion": 39,
   "editable": false,
   "refresh": "5m",
   "timezone": "Asia/Seoul",
-  "time": { "from": "now-6h", "to": "now" },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "annotations": {
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -21,14 +30,21 @@
       }
     ]
   },
-  "templating": { "list": [] },
+  "templating": {
+    "list": []
+  },
   "panels": [
     {
       "id": 100,
       "type": "row",
       "title": "호스트 — 서버 한 대에 여유가 있나",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "panels": []
     },
     {
@@ -36,15 +52,25 @@
       "type": "timeseries",
       "title": "CPU 사용률",
       "description": "전 코어 평균 CPU 사용률(idle의 여집합, 5분 rate). **02:00 KST 스윕 스파이크는 정상**이다 — 그때만 솟는 건 문제가 아니고, 평평하게 높은 게 문제다. 홈 타일10은 같은 식을 15분 창으로 눌러 본 값이라 여기 5분 그래프보다 뾰족함이 덜하다.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
           "decimals": 1,
           "min": 0,
           "max": 100,
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -56,13 +82,24 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "CPU 사용률",
@@ -75,40 +112,71 @@
       "type": "timeseries",
       "title": "메모리 가용량",
       "description": "`MemAvailable` — **사용률이 아니라 가용량으로 본다**. 이 서버는 오버커밋 설계라 '사용 중' 비율은 캐시까지 물고 늘 높게 나와 신호가 못 된다. 정직한 신호는 '지금 새 프로세스에 내줄 수 있는 양'이고, **1GiB 미만이면 위험**(빨간 점선). 임계 아래로 내려가면 mem_limit이 작은 관측 스택(node-exporter·cAdvisor, oom_score_adj 500)부터 죽는다.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
           "decimals": 2,
           "min": 0,
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
             "fillOpacity": 12,
             "showPoints": "never",
             "spanNulls": false,
-            "thresholdsStyle": { "mode": "line" }
+            "thresholdsStyle": {
+              "mode": "line"
+            }
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1073741824 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1073741824
+              }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["min"] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "가용",
@@ -121,8 +189,16 @@
       "type": "timeseries",
       "title": "디스크 사용률 (루트 /)",
       "description": "루트 파티션 사용률(tmpfs 계열 제외). 계단식으로 오르면 로그·도커 이미지 누적을 의심한다 — 컨테이너 로그는 배포 때 유실되지만 이미지 레이어와 백업 산출물은 남는다. **로컬 하니스에서는 항상 무데이터가 정상**이다(macOS Docker Desktop은 node-exporter가 호스트 파일시스템에 닿지 못한다 — dev/README.md '운영과 다른 점'). 이 패널의 실검증은 운영에서 한다.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -130,7 +206,9 @@
           "min": 0,
           "max": 100,
           "noValue": "데이터 없음 (로컬 하니스에서는 정상 — 운영에서 검증)",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -142,13 +220,24 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{mountpoint}}",
@@ -161,14 +250,24 @@
       "type": "timeseries",
       "title": "네트워크 처리량",
       "description": "물리 인터페이스별 수신·송신 바이트(5분 rate). 루프백(`lo`)과 도커 가상 인터페이스(`veth*`)는 제외 — 컨테이너 간 트래픽까지 세면 바깥으로 나가는 실물량이 묻힌다. 02:00 스윕 시간대의 수신 급증은 정상(외부 API 응답 수신)이다.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "Bps",
           "decimals": 1,
           "min": 0,
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -180,13 +279,24 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": [] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "수신 {{device}}",
@@ -194,7 +304,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "송신 {{device}}",
@@ -207,7 +320,12 @@
       "type": "row",
       "title": "컨테이너·JVM — 어느 놈이 먹고 있나",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
       "panels": []
     },
     {
@@ -215,8 +333,16 @@
       "type": "timeseries",
       "title": "컨테이너 메모리 (mem_limit 대비 %)",
       "description": "컨테이너별 working set을 **자기 `mem_limit` 대비 비율**로 본다 — 절대 바이트로 보면 한도가 제각각(node-exporter 64m ~ was 수백 m)이라 누가 위험한지 비교가 안 된다. 100%에 붙으면 그 컨테이너가 OOM으로 죽는다. **`mem_limit`이 없는 컨테이너는 나타나지 않는다**(분모가 0이라 +Inf, 쿼리에서 걸러 낸다) — 안 보이는 게 '괜찮다'는 뜻이 아니라 '한도를 안 걸어 뒀다'는 뜻이다. **로컬 하니스에서는 항상 무데이터가 정상**(Docker Desktop cAdvisor가 `name` 라벨 붙은 시계열을 못 만든다 — dev/README.md).",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -224,7 +350,9 @@
           "min": 0,
           "max": 100,
           "noValue": "데이터 없음 (로컬 하니스에서는 정상 — 운영에서 검증)",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -236,13 +364,26 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{name}}",
@@ -255,15 +396,25 @@
       "type": "timeseries",
       "title": "컨테이너 CPU (코어)",
       "description": "컨테이너별 CPU 사용량(5분 rate). 단위는 **코어**다 — 1.0이면 코어 하나를 통째로 쓰는 중이고, 서버가 2코어라 전부 합쳐 2.0이 천장이다. 02:00 KST 스윕 때 crawler 쪽이 솟는 건 정상. **로컬 하니스에서는 항상 무데이터가 정상**(위 패널과 같은 원인).",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 2,
           "min": 0,
           "noValue": "데이터 없음 (로컬 하니스에서는 정상 — 운영에서 검증)",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -276,13 +427,26 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{name}}",
@@ -295,15 +459,25 @@
       "type": "timeseries",
       "title": "was 힙 (영역별)",
       "description": "was JVM 힙 사용량을 메모리 풀(`id`)별로 나눠 본다. **볼 곳은 Old Gen**이다 — Eden은 톱니 모양으로 오르내리는 게 정상이고, Old Gen이 GC 후에도 안 내려가고 계단식으로 올라가면 누수를 의심한다(홈 타일12가 Old Gen 사용률 85%를 본다). **JVM 지표는 was 것뿐**이다 — crawler·analytics·monitoring에는 액추에이터가 없다(설계 §8 비범위). 로컬에서는 was를 띄웠을 때만 그려진다.",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 26 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
           "decimals": 1,
           "min": 0,
           "noValue": "데이터 없음 (was 미기동 시 정상)",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -315,13 +489,26 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{id}}",
@@ -334,15 +521,25 @@
       "type": "timeseries",
       "title": "GC pause",
       "description": "초당 GC 정지 시간(s/s) — 0.05면 1초 중 50ms를 GC가 세상을 멈추고 있다는 뜻이다. 힙 곡선(왼쪽)과 같이 읽는다: Old Gen이 차오르면서 이 값이 같이 오르면 GC가 못 비우고 있는 것. **임계값은 아직 정하지 않았다**(설계 §6 — 배치 후 1주 실측으로 보정). 지금은 추세만 본다.",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 26 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 26
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 3,
           "min": 0,
           "noValue": "데이터 없음 (was 미기동 시 정상)",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -355,13 +552,26 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{action}} / {{cause}}",
@@ -374,15 +584,25 @@
       "type": "timeseries",
       "title": "HikariCP 커넥션",
       "description": "was의 DB 커넥션 풀. **active는 규모, pending이 신호**다 — pending이 0을 벗어나면 커넥션이 말라 요청이 줄을 서고 있다는 뜻이고, 그대로 두면 API 응답시간이 늘어난다(홈 타일13이 pending을 본다). active가 풀 최대치에 붙어 있는데 pending이 0이면 아직 여유가 없을 뿐 막힌 건 아니다.",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 26 },
-      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 26
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 0,
           "min": 0,
           "noValue": "데이터 없음 (was 미기동 시 정상)",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -394,13 +614,26 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "active {{pool}}",
@@ -408,23 +641,16 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
           "editorMode": "code",
           "range": true,
           "legendFormat": "pending {{pool}}",
           "expr": "hikaricp_connections_pending"
         }
       ]
-    },
-    {
-      "id": 10,
-      "type": "text",
-      "title": "읽는 법·한계",
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 34 },
-      "options": {
-        "mode": "markdown",
-        "content": "### 읽는 순서\n\n1. **호스트** — 서버 한 대(OCI)에 여유가 있나. CPU·메모리·디스크·네트워크.\n2. **컨테이너·JVM** — 여유가 없다면 어느 놈이 먹고 있나. 컨테이너별로 좁힌 뒤 was면 JVM 3패널로 더 좁힌다.\n\n기본 시간창은 **6시간**이다(다른 대시보드보다 짧다) — 인프라는 '지금 무슨 일이 벌어지는가'를 보는 판이라 창이 넓으면 스파이크가 뭉개진다. 어젯밤 스윕을 보려면 창을 24h로 넓힌다.\n\n### 규약\n\n- **02:00 KST 스윕 스파이크는 정상이다.** 매일 그 시간에 CPU·네트워크·crawler 컨테이너가 함께 솟는다. 문제는 뾰족한 게 아니라 **평평하게 높은 것**이다 — 홈 타일10이 15분 창으로 눌러 보는 이유다.\n- **호스트 메모리는 사용률이 아니라 가용량(`MemAvailable`)으로 본다.** 이 서버는 오버커밋 설계라 '사용 중' 비율은 캐시까지 물고 늘 높게 나와 신호가 못 된다. 정직한 신호는 '새 프로세스에 내줄 수 있는 양'이고 **1GiB 미만이 위험선**(패널의 빨간 점선). 임계 방향이 다른 패널과 반대다 — 아래로 내려가는 게 나쁜 것.\n- **컨테이너 메모리는 절대량이 아니라 `mem_limit` 대비 %다.** 한도가 제각각이라 바이트로는 누가 위험한지 비교가 안 된다. 100%에 붙으면 그 컨테이너가 OOM으로 죽고, 관측 스택(node-exporter·cAdvisor)은 `oom_score_adj: 500`이라 압박 시 먼저 죽는 쪽으로 설계돼 있다.\n- **임계선은 메모리 가용량 1GiB 하나뿐이다.** GC pause 등 나머지 기준은 배치 후 1주 실측으로 보정한다(설계 §6) — 지금 넣는 숫자는 어차피 틀린다.\n\n### 한계\n\n- **로컬 하니스에서 디스크·컨테이너 4개 패널은 무데이터가 정상이다.** macOS Docker Desktop은 컨테이너가 리눅스 VM 안에서 돌아 node-exporter가 호스트 파일시스템에, cAdvisor가 이미지 레이어 메타데이터에 닿지 못한다(`deploy/grafana/dev/README.md` '운영과 다른 점'). 구현 누락이 아니며 **이 패널들의 검증은 운영에서 한다**.\n- **`mem_limit`을 안 건 컨테이너는 메모리 패널에 아예 안 나온다**(분모 0 → +Inf를 걸러 낸다). 안 보이는 건 '안전'이 아니라 '한도 미설정'이다.\n- **JVM 지표는 was 것뿐이다.** crawler·analytics·monitoring에는 액추에이터·마이크로미터가 없다(설계 §8 비범위) — 그 모듈들의 메모리는 위 컨테이너 절로만 본다.\n- **컨테이너가 죽은 사건은 이 판에 없다.** 다운은 OCI 커스텀 메트릭 알람이 디스코드로 푸시한다 — **푸시는 '죽었다', 그라파나는 '죽어간다'** 분업이다.\n- 응답시간·5xx는 [API 성능](/d/hypenow-api-performance), 예외 로그는 [에러](/d/hypenow-errors)에서 본다. 이 판은 자원만 본다."
-      }
     }
   ]
 }

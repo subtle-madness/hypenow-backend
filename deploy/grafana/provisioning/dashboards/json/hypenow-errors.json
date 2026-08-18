@@ -5,12 +5,18 @@
   "editable": false,
   "refresh": "5m",
   "timezone": "Asia/Seoul",
-  "time": { "from": "now-6h", "to": "now" },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "annotations": {
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -19,7 +25,10 @@
       },
       {
         "name": "배포·재기동",
-        "datasource": { "type": "loki", "uid": "hypenow-loki" },
+        "datasource": {
+          "type": "loki",
+          "uid": "hypenow-loki"
+        },
         "enable": true,
         "hide": false,
         "iconColor": "purple",
@@ -41,7 +50,14 @@
         "multi": true,
         "includeAll": true,
         "allValue": "was|crawler|analytics|monitoring",
-        "current": { "text": ["All"], "value": ["$__all"] },
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "options": []
       },
       {
@@ -51,7 +67,16 @@
         "query": "ERROR,WARN",
         "multi": true,
         "includeAll": false,
-        "current": { "text": ["ERROR", "WARN"], "value": ["ERROR", "WARN"] },
+        "current": {
+          "text": [
+            "ERROR",
+            "WARN"
+          ],
+          "value": [
+            "ERROR",
+            "WARN"
+          ]
+        },
         "options": []
       },
       {
@@ -59,7 +84,10 @@
         "label": "검색어(정규식)",
         "type": "textbox",
         "query": "",
-        "current": { "text": "", "value": "" },
+        "current": {
+          "text": "",
+          "value": ""
+        },
         "options": []
       }
     ]
@@ -70,7 +98,12 @@
       "type": "row",
       "title": "1. 지금 아픈가",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "panels": []
     },
     {
@@ -78,15 +111,34 @@
       "type": "stat",
       "title": "ERROR 총건수",
       "description": "선택한 시간 범위의 ERROR 로그 엔트리 수. 스택트레이스는 1건으로 묶여 세어진다.",
-      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
@@ -94,7 +146,13 @@
       "options": {
         "graphMode": "area",
         "colorMode": "value",
-        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -109,19 +167,36 @@
       "type": "stat",
       "title": "WARN 총건수",
       "description": "crawler·monitoring은 외부 의존 실패를 대부분 WARN으로 남긴다 — ERROR만 보면 크롤링 사고를 놓친다.",
-      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": { "mode": "fixed", "fixedColor": "orange" }
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
         },
         "overrides": []
       },
       "options": {
         "graphMode": "area",
         "colorMode": "value",
-        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -135,16 +210,35 @@
       "id": 4,
       "type": "bargauge",
       "title": "서비스별 ERROR",
-      "gridPos": { "h": 5, "w": 16, "x": 8, "y": 1 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 5,
+        "w": 16,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
         "overrides": []
       },
       "options": {
         "displayMode": "gradient",
         "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -159,10 +253,23 @@
       "id": 5,
       "type": "timeseries",
       "title": "ERROR 추이",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -179,10 +286,23 @@
       "type": "timeseries",
       "title": "WARN 추이",
       "description": "ERROR와 자릿수가 달라 한 축에 겹치면 ERROR가 안 보인다 — 의도적으로 패널을 나눴다.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -199,7 +319,12 @@
       "type": "row",
       "title": "2. 무엇이 터졌나",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
       "panels": []
     },
     {
@@ -207,10 +332,30 @@
       "type": "table",
       "title": "로거별 ERROR Top 15",
       "description": "어느 클래스가 시끄러운지가 원인 추적의 첫 갈래다. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다.",
-      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 15 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 15
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
       "targets": [
         {
           "refId": "A",
@@ -224,10 +369,30 @@
       "type": "table",
       "title": "예외 클래스별 Top 15",
       "description": "multiline 병합 덕에 스택트레이스 본문에서 예외 클래스를 뽑을 수 있다. 레벨은 상단 $level 변수를 따른다. 끝의 \\b가 없으면 로거명 V1ExceptionAdvice의 접두(V1Exception)가 오매칭된다.",
-      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 15 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 15
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
       "targets": [
         {
           "refId": "A",
@@ -241,12 +406,32 @@
       "type": "table",
       "title": "직전 24시간 로거별 ERROR Top 15",
       "description": "왼쪽 표와 눈으로 비교해 '새로 생긴 놈'을 잡는다. 이 패널만 시간 범위가 24시간으로 고정돼 있다.",
-      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 15 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "timeFrom": "24h",
       "hideTimeOverride": false,
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
       "targets": [
         {
           "refId": "A",
@@ -260,7 +445,12 @@
       "type": "row",
       "title": "3. 외부 의존 실패 (crawler·monitoring)",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
       "panels": []
     },
     {
@@ -268,10 +458,23 @@
       "type": "timeseries",
       "title": "HTTP 상태코드별 실패",
       "description": "IG·Hiker 응답 코드를 로그 본문에서 추출한다(`HTTP 401`·`Hiker 404` 형태). 상단 $svc 변수와 무관하게 crawler·monitoring 고정이다.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } },
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -288,15 +491,34 @@
       "type": "stat",
       "title": "Hiker 402 (잔액 소진)",
       "description": "1건이라도 뜨면 사람이 충전해야 한다. 08-10에 이 상태로 브랜드 스윕 4건이 collecting에 고착했다.",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 25 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 25
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
@@ -304,7 +526,13 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -319,15 +547,34 @@
       "type": "stat",
       "title": "IG 401 (IP 차단)",
       "description": "요청 폭주로 인한 차단 신호. 07-24에 similar 잡 대량 유입 → 401 전면 실패 전례가 있다.",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 25 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 25
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
@@ -335,7 +582,13 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -349,10 +602,30 @@
       "id": 15,
       "type": "table",
       "title": "크롤 실패 로거 Top 15 (WARN 포함)",
-      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 29 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
       "targets": [
         {
           "refId": "A",
@@ -366,7 +639,12 @@
       "type": "row",
       "title": "4. 드릴다운",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
       "panels": []
     },
     {
@@ -374,8 +652,16 @@
       "type": "logs",
       "title": "로그 탐색",
       "description": "상단 $svc·$level·$search 변수를 그대로 따른다. 검색어는 정규식이며 대소문자를 무시한다.",
-      "gridPos": { "h": 14, "w": 18, "x": 0, "y": 34 },
-      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "gridPos": {
+        "h": 14,
+        "w": 18,
+        "x": 0,
+        "y": 34
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
       "options": {
         "showTime": true,
         "showLabels": false,
@@ -392,16 +678,6 @@
           "expr": "{service=~\"${svc:regex}\", level=~\"${level:regex}\"} |~ `(?i)$search`"
         }
       ]
-    },
-    {
-      "id": 18,
-      "type": "text",
-      "title": "읽는 법·한계",
-      "gridPos": { "h": 14, "w": 6, "x": 18, "y": 34 },
-      "options": {
-        "mode": "markdown",
-        "content": "### 읽는 순서\n\n1. **Row 1** — ERROR/WARN 총건수와 추이. 평소와 다르면 아래로.\n2. **Row 2** — 어느 로거·예외가 시끄러운지. 오른쪽 24시간 표와 비교해 '새로 생긴 놈'을 찾는다.\n3. **Row 3** — 크롤링이 외부에 막힌 건지. 402·401 칸이 빨갛면 사람이 개입해야 한다.\n4. **Row 4** — 위에서 찾은 로거·예외명을 검색어에 넣어 원문을 본다.\n\n세로 점선은 **배포·재기동 시점**이다.\n\n### 한계\n\n- 로그 보관 **30일**, **운영만** 수집(test 스테이징 로그는 없다).\n- **요청 단위 상관관계 불가** — traceId가 없어 에러가 어떤 엔드포인트·유저였는지 못 짚는다.\n- 2026-08-12 파이프라인 변경 **이전 로그는 잡히지 않는다**(`level` 라벨이 없다).\n- 로거·예외·HTTP 코드는 정규식 추출이라 기본 콘솔 패턴을 벗어난 로그는 누락될 수 있다.\n- **5xx 비율은 여기가 아니라** [HypeNow API 성능](/d/hypenow-api-performance) 대시보드에서 본다 — 로그 집계와 지표는 숫자가 구조적으로 다르다."
-      }
     }
   ]
 }
