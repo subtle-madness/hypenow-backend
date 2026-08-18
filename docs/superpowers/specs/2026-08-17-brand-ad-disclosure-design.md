@@ -177,7 +177,31 @@ LLM 없이 단위 테스트된다. 최종 판정을 결정적 규칙으로 빼�
 - 판정 실패는 수집·보강에 영향 없음(격리 유지). verdict NULL은 다음 스윕이 캡션 해시 재비교로
   자동 재시도하지만, 이는 **180일 이하(추적 창) 게시물 한정**이다 — 180일 초과 게시물은 크롤
   정책상 재열거 자체가 없어(`BrandCrawlPolicy.due` 무조건 false) verdict NULL이 영구 잔존할 수
-  있다(2026-08-18 스펙 리뷰 정정).
+  있었다(2026-08-18 스펙 리뷰 정정 — 아래 백필 단계가 이 공백을 흡수한다).
+
+### 7-1. 미판정 잔여 백필 (2026-08-18 개정)
+
+사용자 확정 원칙: **광고 판정은 처음에 전량 돌고, 이후에는 캡션 변경분만 돈다.** `judgePosts`
+(스윕 경유 후보 선정)만으로는 이 원칙이 180일 추적 창 안에서만 성립한다 — 창 밖(배포 시점
+재고·수집 기간만큼 쌓인 오래된 게시물)은 정기 스윕이 다시 만나지 않아 최초 1회 판정 기회 자체가
+없다. `AdDisclosureJudgeService.backfillUnjudged(limit)`가 이 공백을 메운다:
+
+- 대상 선정은 브랜드 스코프 없이 전역 `brand_post_meta WHERE ad_verdict IS NULL`
+  (`BrandPostMetaRepository.findUnjudged`) — 부분 인덱스(`idx_brand_post_meta_unjudged`)가
+  이 조회를 커버해, 잔량이 줄수록(판정이 수렴할수록) 조회 비용도 0에 수렴한다.
+- 캡션은 이미 `brand_post_meta`에 저장돼 있으므로 **Hiker 재조회 없이** 저장된
+  caption·content_type·video_url·is_paid_partnership만으로 판정한다. Tier0~3 규칙은
+  `judgeCore`로 추출해 `judgePosts` 경로(`PostInfo` 입력)와 완전히 공유 — 입력 소스만 다를
+  뿐 같은 캡션이면 항상 같은 verdict를 낸다.
+- `BrandSweepJob`이 브랜드 루프 종료 직후(아카이브 잡들과 같은 finally) 이 단계를 1회 호출한다.
+  상한은 `monitoring.brand.ad-disclosure.backfill-per-night`(기본 1000, 0이면 비활성) — 판정
+  킬 스위치(`enabled`)가 꺼져 있으면 이 단계도 함께 스킵한다. 실패는 격리해 스윕 결과에 영향을
+  주지 않는다.
+- 스윕 경유 판정(당일 due 게시물)과 겹칠 수 있다 — 스윕이 이미 판정에 성공한 게시물은
+  `ad_verdict`가 채워져 있어 다음 `findUnjudged` 조회에 잡히지 않는다. 스윕에서 **실패**해
+  verdict가 NULL로 남은 게시물만 같은 밤 백필에서 재시도 대상이 될 수 있는데, 이는 판정
+  로직이 멱등(같은 캡션 → 같은 verdict)이라 무해한 재시도다 — LLM 비용이 이중으로 나가는
+  경우는 있지만(실패 후 같은 밤 재시도), 검증 결과가 갈리지는 않는다.
 
 ## 8. 노출 게이트 변경 (프로그레시브 서빙)
 

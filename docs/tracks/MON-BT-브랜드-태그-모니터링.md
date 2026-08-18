@@ -196,8 +196,11 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
     `NOT_DISCLOSED`로 오판정하지 않도록 방어.
   - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
 - **[expose 토글 켜기 전]**
-  - 180~365일치 one-shot 백필 경로 — 정기 스윕 재열거가 없는 구간(180일 초과)의 기존 게시물도
-    최초 1회 판정을 채운다.
+  - ~~180~365일치 one-shot 백필 경로~~ → **구현 완료(2026-08-18, 스펙 §7-1)**: 정기 스윕
+    재열거가 없는 구간(180일 초과)의 기존 게시물도 `BrandSweepJob`의 매일 밤 백필 단계
+    (`AdDisclosureJudgeService.backfillUnjudged`, 상한
+    `monitoring.brand.ad-disclosure.backfill-per-night` 기본 1000)가 잔량이 0에 수렴할 때까지
+    자동으로 채운다 — one-shot이 아니라 상시 수렴 메커니즘으로 대체(one-shot 스크립트 불필요).
   - verdict 분포·NULL 잔량을 확인하는 정본 스크립트(`monitoring/check/` 디렉토리에 추가) —
     "분석 잔여 몇 건" 류 질문에 즉석 쿼리로 오답하지 않도록 정본화(다른 정본 스크립트
     `analytics/check/pending.sh`와 같은 취지).
