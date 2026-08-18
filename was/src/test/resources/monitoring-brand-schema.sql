@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS brand_tagged_post (
     -- 보강 정산 완료 시각(V20260813115041) — nullable·기본값 없음(운영 DDL과 동일).
     -- 기본값을 넣어 픽스처를 편하게 통과시키면 미러가 거짓말을 한다 — 값은 픽스처가 명시한다.
     enriched_at              timestamptz,
+    -- direct 통합 소스 분리 컬럼(V20260818040742) — was는 둘 다 읽는다(BrandReadRepository.findBrandPoolStatus).
+    -- 기존 tagged 행은 전부 tag_detected_at이 채워져 있다는 운영 DDL 전제를 픽스처도 DEFAULT로 재현한다.
+    tag_detected_at          timestamptz DEFAULT now(),
+    direct_registered_at     timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 

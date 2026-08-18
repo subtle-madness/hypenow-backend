@@ -8,9 +8,12 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 /**
- * 직접 등록 매핑 저장 계층(2026-08-07 스펙 §3-1) — app.brand_direct_posts. 레거시 추적 아이템에
- * "이 게시물은 브랜드 화면 소속" 표식만 붙이는 얇은 테이블이라, 게시물 본체·스냅샷은 전부
- * 레거시 경로(app.monitoring_items·monitoring 서버)가 정본이다.
+ * 직접 등록 매핑 저장 계층(2026-08-07 스펙 §3-1, 2026-08-18 direct 통합 §1-1로 성격 변경) —
+ * app.brand_direct_posts. 통합 이전에는 레거시 추적 아이템에 "이 게시물은 브랜드 화면 소속" 표식만
+ * 붙이는 얇은 테이블이었으나, 통합 후에는 <b>유저 귀속 원장</b>으로 성격이 바뀐다 — 서빙 정본은
+ * monitoring 브랜드 풀(brand_tagged_post)이고, 이 테이블은 "누가 등록했는가"만 보존한다(탈퇴
+ * 아카이브 대상 유지, 향후 "등록자 표시" 여지). {@code migrated_at}이 채워진 행(신규 등록 전부)은
+ * 서빙 조인에서 빠진다 — 레거시 조립 대상은 {@code migrated_at IS NULL}인 이관 전 매핑뿐이다(T10).
  *
  * <p>PK가 (user_id, short_code)라 같은 게시물을 두 번 등록해도 매핑은 하나 — 재요청은
  * ON CONFLICT DO NOTHING으로 흡수한다(멱등 replay).
@@ -18,8 +21,13 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class BrandDirectPostRepository {
 
-	/** app.brand_direct_posts 1행. monitoringItemId는 매핑이 가리키는 레거시 추적 행. */
-	public record Row(long userId, long brandId, String shortCode, long monitoringItemId) {
+	/**
+	 * app.brand_direct_posts 1행. monitoringItemId는 레거시 매핑이 가리키는 추적 행 —
+	 * {@code migrated_at IS NULL}인 이관 전 행에만 값이 있다. 2026-08-18부터 컬럼이 nullable이라
+	 * (신규 direct 통합 등록은 레거시 아이템을 만들지 않는다) Long으로 넓혔다 — 기존 primitive long은
+	 * NULL 매핑을 읽을 때 매핑 자체가 실패한다.
+	 */
+	public record Row(long userId, long brandId, String shortCode, Long monitoringItemId) {
 	}
 
 	private final JdbcClient jdbcClient;
@@ -52,6 +60,23 @@ public class BrandDirectPostRepository {
 				.param("brandId", brandId)
 				.param("shortCode", shortCode)
 				.param("itemId", itemId)
+				.update();
+	}
+
+	/**
+	 * direct 통합 등록(2026-08-18 §T8) — 원장 행만 남긴다. {@code monitoring_item_id}는 NULL(레거시
+	 * 아이템 없음), {@code migrated_at}은 now()로 즉시 찍는다("이 매핑의 정본은 monitoring 통합
+	 * 풀이다" — 레거시 조립 대상이 아님, 설계 §4-1). 이미 있으면 무시(멱등 — stale 복구 재시도 안전).
+	 */
+	public void upsertDirect(long userId, long brandId, String shortCode) {
+		jdbcClient.sql("""
+				INSERT INTO app.brand_direct_posts (user_id, brand_id, short_code, monitoring_item_id, migrated_at)
+				VALUES (:userId, :brandId, :shortCode, NULL, now())
+				ON CONFLICT (user_id, short_code) DO NOTHING
+				""")
+				.param("userId", userId)
+				.param("brandId", brandId)
+				.param("shortCode", shortCode)
 				.update();
 	}
 

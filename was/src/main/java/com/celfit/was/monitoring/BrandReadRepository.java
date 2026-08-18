@@ -235,6 +235,29 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 브랜드 풀 상태(2026-08-18 direct 통합 §2-3·§2-5·§T9) — 중복 판정(direct 등록)·발견 목록 판정
+	 * (hashtag-posts)·취소 판정 공용 배치 조회. {@code tag_detected_at}·{@code direct_registered_at}
+	 * 원시값 대신 boolean으로 파생해 호출부의 null 분기를 없앤다. 윈도우(365일 컷) 제한이 없는 순수
+	 * 존재 판정이다 — {@link #findExistingTaggedShortCodes}와 같은 위상.
+	 */
+	public List<BrandPoolStatusRow> findBrandPoolStatus(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT short_code,
+				       tag_detected_at IS NOT NULL      AS tag_detected,
+				       direct_registered_at IS NOT NULL AS direct_registered,
+				       taken_at
+				  FROM brand_tagged_post
+				 WHERE brand_id = :brandId AND short_code IN (:shortCodes)
+				""")
+				.param("brandId", brandId).param("shortCodes", shortCodes)
+				.query(BrandPoolStatusRow.class)
+				.list();
+	}
+
+	/**
 	 * 후보 shortcode 중 그 브랜드의 tagged 게시물로 실재하는 것들(2026-08-17 승격 상태 필드 §스펙) —
 	 * 윈도우(365일 컷) 제한이 없는 순수 존재 판정이다. 표시용 전량 조립({@link #findTaggedPostsInWindow}·
 	 * {@link #findPostMeta} 등)을 태우지 않는 이유: 해시태그 발견 목록 조립에 매 요청 무거운 태그
@@ -351,5 +374,13 @@ public class BrandReadRepository {
 
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
 	public record BrandCallDailyRow(long brandId, LocalDate calledOn, long calls) {
+	}
+
+	/**
+	 * 브랜드 풀 상태 1행({@link #findBrandPoolStatus}) — taken_at은 direct-only 신규 행에도 항상 값이
+	 * 있다(brand_tagged_post.taken_at NOT NULL, direct 등록도 단건 콜의 게시일로 채운다).
+	 */
+	public record BrandPoolStatusRow(String shortCode, boolean tagDetected, boolean directRegistered,
+			OffsetDateTime takenAt) {
 	}
 }
