@@ -58,6 +58,12 @@
 > `brandPostId` 추가(FE 클라이언트 조인 대체용) ⑤ 발견 게시물 작성자 프로필 사진도 OCI
 > 아카이브 우선 서빙(`monitor-hashtag-author/<author_username>.jpg`, 썸네일과 동형),
 > `feat/brand-hashtag-fe-requests`).
+> **08-18 정정(같은 버전 내)**: §8-1 발견 목록(`GET .../hashtag-posts`)에서 **tagged 겹침 행을
+> 제외**하도록 정정 — 이 화면은 "태그 안 된 게시물"인데 이미 tagged로 측정 중인 게시물이 뜨는
+> 건 화면 정의와 모순이라는 사용자 결정(사진 태그(캡션에 안 보임)+해시태그 동시 게시물이 실제로
+> 이 겹침을 만든다). **direct 매핑이 살아 있는 행은 tagged 여부와 무관하게 유지**한다(승격분
+> dim 잔존 계약 — direct가 우선). 결과적으로 `brandPostId`는 **direct 승격분에만** 채워진다 —
+> tagged로 채워지는 경로는 소멸했다(`feat/hashtag-hide-tagged-overlap`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -624,7 +630,7 @@ tagged·direct 셰이프와 무관한 독립 계약):
 | `authorFollowers`·스냅샷·댓글·`campaignIds`·`trackingStatus` 등 | **필드 자체가 없다** — 보강·병합 파이프라인 미적용(스펙 §5 보류) |
 | `authorProfilePicUrl` | **(v2.10)** 작성자 프로필 사진도 아카이브 사본 우선 서빙 — 아카이브본이 있으면 `/img/monitor-hashtag-author/<author_username>.jpg`(Vercel rewrite, `profile_meta`·`post_meta`와 동형), 없으면 원본 CDN URL 폴백. 2026-08-17 이전엔 항상 원본 CDN URL이라 인스타 서명 만료(며칠~2주)로 아바타가 깨지는 한계가 있었는데, 이번 아카이브 잡 신설로 해소됐다(`HashtagPostAuthorImageArchiveJob`) |
 | `firstSeenAt` | 감지(브랜드 스윕 해시태그 열거) 시각 |
-| `brandPostId` | **(v2.10)** 이 shortcode가 그 계정의 성과 측정 풀(이 유저·이 브랜드의 direct 매핑이 살아 있거나, 그 브랜드의 tagged 게시물로 존재 — tagged는 365일 표시 윈도우 제한 없이 판정)에 있으면 `BrandPostResponse.id`(=shortcode)와 같은 값, 아니면 null. FE의 클라이언트 조인(구 12개월 창 한정) 대체용. **tagged로 채워진 경우 취소 API(§8-2)는 400(`TAGGED_POST_NOT_CANCELABLE`)을 반환한다** — tagged 행은 애초에 취소 대상이 아니다 |
+| `brandPostId` | **(v2.10, 2026-08-18 정정)** tagged로 측정 중인 게시물은 발견 목록에서 제외된다(발견 목록은 "태그 안 된 게시물"이므로) — 그래서 이 필드는 **direct 승격분에만** 채워진다: 이 유저·이 브랜드의 direct 매핑이 살아 있으면 `BrandPostResponse.id`(=shortcode)와 같은 값, 아니면 null. tagged로 채워지는 경로는 소멸했다(행 자체가 목록에 없다). FE의 클라이언트 조인(구 12개월 창 한정) 대체용 |
 
 > (구 §8-2 `meta.counts.hashtag`는 08-12 정정으로 소거 — §8-1 전용 API로 흡수됐다. §8-3부터는
 > 번호를 그대로 유지한다: 이 문서를 참조하는 다른 위치의 앵커를 깨지 않기 위해서다. 비어 있던
@@ -646,8 +652,10 @@ tagged·direct 셰이프와 무관한 독립 계약):
   TAGGED_POST_NOT_CANCELABLE`("태그로 발견된 게시물은 취소할 수 없어요."). tagged 존재 판정은
   365일 표시 윈도우 제한이 없다(§8-1 `brandPostId` 판정과 같은 조회).
 - **매핑도 없고 tagged 풀에도 없으면 404**("대상을 찾을 수 없습니다.").
-- **§8-1 `hashtag-posts`(발견 목록)에는 영향이 없다** — 발견 행은 취소와 무관하게 계속 노출된다.
-  다만 그 shortcode의 `brandPostId`는 direct 매핑이 사라졌으니 다음 조회부터 `null`로
+- **§8-1 `hashtag-posts`(발견 목록)에 미치는 영향(2026-08-18 정정)**: 그 shortcode가 tagged
+  풀에도 있으면(사진 태그+해시태그 동시 게시물) direct 매핑 소거로 tagged 겹침 제외 규칙이
+  적용돼 다음 조회부터 발견 목록에서도 빠진다. tagged 풀에 없는 순수 direct 승격분이면 발견
+  행은 그대로 노출되되 `brandPostId`는 direct 매핑이 사라졌으니 다음 조회부터 `null`로
   돌아간다(승격 상태만 원복, 발견 사실 자체는 유지).
 
 | 상황 | HTTP | 비고 |
@@ -779,8 +787,9 @@ best-effort 보너스이지 보장이 아니다). 태그 삭제는 이후 발견
 - **해시태그 발견 게시물 "별도 탭"** — §8-1 전용 API(`GET .../hashtag-posts`)를 §6-1 게시물
   목록과 나란한 새 탭으로 노출. 스냅샷·댓글·팔로워가 없는 데이터라 tagged·direct 카드와 다른
   레이아웃이 필요하고(성과 지표 없음, `likes`/`comments`는 발견 시점 스냅 값), `matchedTag`로
-  "#태그로 발견" 배지를 그릴 수 있다. **v2.10**: `brandPostId`가 채워진 카드는 이미 성과
-  측정 중(§8-2 취소 가능 direct 또는 취소 불가 tagged)이라는 표시를 얹을 수 있다.
+  "#태그로 발견" 배지를 그릴 수 있다. **v2.10(2026-08-18 정정)**: tagged로 측정 중인 게시물은
+  이 목록 자체에서 빠지므로, `brandPostId`가 채워진 카드는 항상 취소 가능한 direct 승격분이다
+  ("성과 측정 중 · 취소 가능" 표시만 있으면 된다 — 취소 불가 tagged 케이스는 소멸했다).
 - **태그 셋 관리 UI** — §8-3-1 API로 감지 대상 해시태그를 브랜드 소유자가 직접 추가·삭제
   (조회·전체 교체·단건 추가·단건 삭제·전체 삭제 5종). **v2.10부터 PUT/POST 성공 시 서버가
   즉시 스윕을 트리거**하므로 "등록 직후 최근 90일 게시물이 곧 뜬다"고 안내할 수 있다 — 다만
