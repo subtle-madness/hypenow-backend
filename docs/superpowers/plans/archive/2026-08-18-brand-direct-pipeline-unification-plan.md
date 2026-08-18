@@ -1,8 +1,8 @@
 # 브랜드 direct 게시물 파이프라인 통합 — 구현 계획 (2026-08-18)
 
-> 상태: 🟢 활성
+> 상태: ✅ 구현됨(E1·E2) · M 이관·C contract 잔여 — 잔여는 MON-BT 트랙 문서가 정본
 
-설계 정본: [2026-08-18-brand-direct-pipeline-unification-design.md](../specs/2026-08-18-brand-direct-pipeline-unification-design.md)
+설계 정본: [2026-08-18-brand-direct-pipeline-unification-design.md](../../specs/2026-08-18-brand-direct-pipeline-unification-design.md)
 (이하 "설계 §N"으로 인용). 이 계획은 **결정을 다시 하지 않는다** — 설계에서 갈린 지점을
 그대로 실행한다.
 

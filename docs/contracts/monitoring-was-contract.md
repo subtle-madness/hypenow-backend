@@ -5,11 +5,13 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.10 (브랜드 해시태그 감지 확장 — 2026-08-11, 08-12 API 형태 정정, 08-17~18 제외 문자열
-> 폐기·취소 API 신설·brandPostId·작성자 프로필 아카이브)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.11 (브랜드 direct 게시물 파이프라인 통합 — 2026-08-18, 브랜드 해시태그 감지 확장 —
+> 2026-08-11, 08-12 API 형태 정정, 08-17~18 제외 문자열 폐기·취소 API 신설·brandPostId·작성자
+> 프로필 아카이브)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
-> 계약과 무관한 신규 3테이블, §8)이라 위 "테이블 8 + 알람 대장 + 뷰 2" 집계에는 포함하지 않는다.
+> 계약과 무관한 신규 3테이블, §8. **v2.11로 direct 게시물도 이 서브시스템에 합류** — 레거시
+> `target`/`post_snapshot` 위임을 끊었다)이라 위 "테이블 8 + 알람 대장 + 뷰 2" 집계에는 포함하지 않는다.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
 > post_comment·profile_meta·matched_keywords·share 해소, `feat/monitoring-v3-p2`) → **v2.0**(2026-07-30,
 > 알람 소유 이동·승인 폐지·`target.user_id`·알람 이벤트 대장, `feat/monitoring-alarm-module`) — **v1.1과 v2.0은
@@ -64,6 +66,22 @@
 > 이 겹침을 만든다). **direct 매핑이 살아 있는 행은 tagged 여부와 무관하게 유지**한다(승격분
 > dim 잔존 계약 — direct가 우선). 결과적으로 `brandPostId`는 **direct 승격분에만** 채워진다 —
 > tagged로 채워지는 경로는 소멸했다(`feat/hashtag-hide-tagged-overlap`).
+> → **v2.11**(2026-08-18, 브랜드 direct 게시물 파이프라인 통합 — direct 등록을 레거시 추적
+> 파이프라인(`app.monitoring_items`→monitoring `target`/`post_snapshot`)에서 이 서브시스템
+> (`brand_tagged_post`)으로 합류시켰다. `brand_tagged_post`에 시각 컬럼 2개(`tag_detected_at`·
+> `direct_registered_at`) 추가 — `source`는 `direct_registered_at IS NOT NULL` 파생값. monitoring
+> 신규 내부 명령 2종 `POST`/`DELETE /api/brands/{brandId}/direct-posts`(§8-5) — was
+> `BrandDirectRegistrationExecutor`·이관 잡이 호출, FE 노출 없음. **§8-2 취소 의미 정정**:
+> "매핑 hard delete"가 아니라 "direct 표식 해제"다 — 겹침 게시물(tagged 존재)은 취소해도 tagged로
+> 잔존하고, 순수 direct 게시물만 행이 사라진다. `brand_post_snapshot`/`brand_post_meta`/
+> `brand_post_comment` 등 게시물 전역 자산은 항상 보존(재등록 시 이력 되살아남). **FE 통지 4건**:
+> `trackingDays` 무시(검증 1~90은 유지) · `BrandPostResponse.trackingStatus` 항상 `"tracking"` ·
+> `BrandDirectRegistrationResponse.Entry.monitoringItemId` 항상 null · 성과 대시보드 direct
+> 콘텐츠의 `item.id`가 숫자에서 `bt_<shortcode>`로 변경. 이관(M)은 운영 미실행 — was는
+> `app.brand_direct_posts.migrated_at IS NULL` 행에 과도기 레거시 조립 폴백을 계속 얹는다(다음
+> 릴리스 contract 단계에서 제거). 설계
+> [2026-08-18](../superpowers/specs/2026-08-18-brand-direct-pipeline-unification-design.md),
+> `feat/brand-direct-pipeline-unification`.)
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -636,31 +654,52 @@ tagged·direct 셰이프와 무관한 독립 계약):
 > 번호를 그대로 유지한다: 이 문서를 참조하는 다른 위치의 앵커를 깨지 않기 위해서다. 비어 있던
 > 8-2 번호는 아래에서 신규 취소 API가 다시 쓴다.)
 
-### 8-2. `POST /v1/brand-monitoring/posts/{postId}/cancel` — 성과 측정 취소 (v2.10, 2026-08-17 FE 요청)
+### 8-2. `POST /v1/brand-monitoring/posts/{postId}/cancel` — 성과 측정 취소 (v2.10, 2026-08-17 FE 요청 · v2.11 정정)
 
 레거시 취소(`POST /v1/monitoring/items/{itemId}/cancel`)는 `monitoringItemId` 기준이라 shortcode만
 아는 브랜드 화면에서는 호출할 수 없었다 — 이 엔드포인트가 그 표면을 메운다. `postId`는
 `BrandPostResponse.id()`(=shortcode), 인증 유저 기준(구현: `V1BrandDirectPostService#cancel`).
 
-- **대상은 direct(직접 등록) 행뿐이다.** `app.brand_direct_posts` 매핑이 있으면: 연결된 레거시
-  `TrackingItem`을 가능한 상태에서만 함께 종결(이미 자연 종료 상태면 조용히 생략)하고, 매핑은
-  **hard delete**한다. 성공 시 **204 No Content**.
-- **취소 후 `GET .../accounts/{accountId}/posts`에서 그 행이 즉시 사라진다** — ended로 남지
-  않는다. 매핑을 지웠기 때문에 **같은 URL을 다시 직접 등록하면 duplicate가 아니라 새 등록으로
-  처리된다**(취소 후 재시작이 성립).
+> **⚠️ v2.11 정정(2026-08-18, 브랜드 direct 파이프라인 통합)**: 아래 취소 의미가 바뀌었다.
+> **"매핑 hard delete"가 아니라 "direct 표식 해제"다.** direct 등록이 이제 `brand_tagged_post`의
+> `direct_registered_at` 컬럼이라, tagged 겹침 여부에 따라 취소 결과가 갈린다(이전엔 셰이프가
+> 둘로 나뉘어 있어 취소가 항상 행 자체를 지웠다). HTTP 상태·에러 코드 계약은 **불변**이다 —
+> 바뀐 것은 내부 동작뿐이다.
+
+- **대상은 direct(직접 등록) 행뿐이다.** was가 monitoring `DELETE /api/brands/{brandId}/
+  direct-posts/{shortCode}`(§8-5)를 호출해 **direct 표식만 해제**한다:
+  - **겹침 게시물**(같은 shortcode가 tagged 풀에도 있음, `tag_detected_at IS NOT NULL`) —
+    `direct_registered_at`만 `NULL`로 되돌린다. 행은 **tagged로 잔존**하고 `GET .../posts`
+    목록에서 사라지지 않는다.
+  - **순수 direct 게시물**(`tag_detected_at IS NULL`) — 행을 `DELETE`한다. 목록에서 즉시
+    사라진다.
+  - 두 경우 모두 `brand_post_snapshot`·`brand_post_meta`·`brand_post_comment`(게시물 전역
+    자산)는 **지우지 않는다** — 재등록 시 이력이 그대로 되살아난다.
+  - was는 이어서 `app.brand_direct_posts` 유저 원장 행과 `app.brand_post_campaigns` 해당 행을
+    지운다(연결된 레거시 `TrackingItem` 종결은 **더 이상 하지 않는다** — 레거시 아이템 자체가
+    신규 등록 경로에서 생성되지 않는다, §6 FE 통지 3).
+  - **원격(monitoring) 실패는 삼키지 않고 전파**한다 — 원장만 지우면 monitoring은 계속
+    수집하는데 화면에서만 사라지는 불일치가 생긴다. 성공 시 **204 No Content**.
+- **취소 후 `GET .../accounts/{accountId}/posts`에서 그 행이 즉시 사라지거나(순수 direct)
+  tagged 셰이프로 잔존한다(겹침)** — 어느 쪽도 "ended"로 남지 않는다(트래킹 상태 개념 자체가
+  없다, `trackingStatus`는 항상 `"tracking"`). direct 표식이 사라졌으므로 **같은 URL을 다시
+  직접 등록하면 duplicate가 아니라 새 등록으로 처리된다**(취소 후 재시작이 성립) — 단 겹침
+  건이 여전히 표시 창 안(taken_at이 최근)이면 tagged로 이미 보이고 있으므로 §2-3 중복 판정에
+  걸려 duplicate로 남는다(정상 — 이미 목록에 보이는 게시물이다).
 - **tagged 행(direct 매핑 없이 tagged 풀에 존재)은 취소 대상이 아니다** — `400
   TAGGED_POST_NOT_CANCELABLE`("태그로 발견된 게시물은 취소할 수 없어요."). tagged 존재 판정은
   365일 표시 윈도우 제한이 없다(§8-1 `brandPostId` 판정과 같은 조회).
 - **매핑도 없고 tagged 풀에도 없으면 404**("대상을 찾을 수 없습니다.").
 - **§8-1 `hashtag-posts`(발견 목록)에 미치는 영향(2026-08-18 정정)**: 그 shortcode가 tagged
-  풀에도 있으면(사진 태그+해시태그 동시 게시물) direct 매핑 소거로 tagged 겹침 제외 규칙이
+  풀에도 있으면(사진 태그+해시태그 동시 게시물) direct 표식 해제로 tagged 겹침 제외 규칙이
   적용돼 다음 조회부터 발견 목록에서도 빠진다. tagged 풀에 없는 순수 direct 승격분이면 발견
-  행은 그대로 노출되되 `brandPostId`는 direct 매핑이 사라졌으니 다음 조회부터 `null`로
+  행은 그대로 노출되되 `brandPostId`는 direct 표식이 사라졌으니 다음 조회부터 `null`로
   돌아간다(승격 상태만 원복, 발견 사실 자체는 유지).
 
 | 상황 | HTTP | 비고 |
 |---|---|---|
-| 성공 | 204 | direct 매핑 삭제(+ 가능하면 레거시 아이템 종결) |
+| 성공 — 순수 direct | 204 | `brand_tagged_post` 행 DELETE + 유저 원장·캠페인 링크 삭제 |
+| 성공 — 겹침(tagged 존재) | 204 | `direct_registered_at = NULL`(tagged로 잔존) + 유저 원장·캠페인 링크 삭제 |
 | tagged 행(취소 불가 대상) | 400 `TAGGED_POST_NOT_CANCELABLE` | tagged 행은 애초에 성과 측정 "등록" 개념이 없다 |
 | 매핑도 tagged도 아님 | 404 | "대상을 찾을 수 없습니다." |
 
@@ -797,3 +836,63 @@ best-effort 보너스이지 보장이 아니다). 태그 삭제는 이후 발견
   유지할 것. 태그 삭제는 tombstone(재추가하면 복구되지만 그 전까지 발견 중단)이라는 비소급
   규칙도 FE 문구에 반영할 것. 전체 삭제 = 브랜드 해시태그 감지 전체 일시 중지. 자동 유도
   시드는 이제 계정명 1종뿐이라는 점도 참고(§8-3-1).
+
+### 8-5. `POST`/`DELETE /api/brands/{brandId}/direct-posts` — monitoring 내부 명령 2종 (v2.11, 2026-08-18)
+
+> 이 절은 **FE 계약이 아니다.** was의 `BrandDirectRegistrationExecutor`(direct 등록 실행기)와
+> 이관(M) 잡이 호출하는 monitoring 내부 명령이다 — §2의 `target` 명령 API와 같은 성격이지만,
+> 브랜드 서브시스템 소속이라 이 절에 둔다. [설계
+> §2-2·§4-2](../superpowers/specs/2026-08-18-brand-direct-pipeline-unification-design.md)가 정본.
+
+경로 변수가 `{username}`이 아니라 `{brandId}`인 이유: was는 `app.brand_monitorings.brand_id`를
+들고 있고 username은 브랜드 계정명 변경 시 흔들린다(§8-1·§8-3-1의 `{username}` 경로와 의도적으로
+다르다).
+
+**`POST /api/brands/{brandId}/direct-posts`** — 게시물 1건을 동기로 수집해 direct 등록한다.
+단건 Hiker 콜 + 게시자·댓글 보강까지 **최대 5콜(≈7초)**. `PostInfo`는 태그 열거 응답과 같은
+레코드라(`HikerClient.toPost` 공용), `videoUrl`·`videoDuration`·`isPaidPartnership`·`views` 등
+tagged와 동일한 필드가 direct에도 그대로 실린다 — §1의 tagged/direct 비대칭이 이 지점에서
+해소된다.
+
+```json
+// 요청
+{ "shortCode": "ABC123", "registeredAt": "2026-08-01T00:00:00+09:00", "importLegacyHistory": false }
+// registeredAt은 이관(M) 전용 파라미터 — 생략하면 now(). importLegacyHistory=true면 수집 전에
+// 레거시 post_snapshot/post_meta/post_comment를 브랜드 테이블로 복사한다(이관 잡 전용, 설계 §4-2)
+
+// 201 — 신규 수집 성공 / 200 — 이미 direct_registered_at이 채워진 행(멱등, 같은 바디)
+{
+  "shortCode": "ABC123",
+  "authorUsername": "some_influencer",
+  "takenAt": "2026-08-01T09:12:00+09:00",
+  "contentType": "reels"
+}
+```
+
+| 상황 | HTTP | code |
+|---|---|---|
+| 신규 수집 성공 | 201 | — |
+| 이미 등록됨(멱등) | 200 | — |
+| 게시물 부재·삭제 | 404 | `POST_NOT_FOUND` |
+| 비공개 계정 | 422 | `PRIVATE_ACCOUNT` |
+| 게시일 미상 등 셰이프 이상 | 422 | `POST_UNSUPPORTED` |
+| 브랜드 미존재·비활성 | 404 | `BRAND_NOT_FOUND` |
+
+**`DELETE /api/brands/{brandId}/direct-posts/{shortCode}`** — direct 표식만 해제한다(§8-2
+취소의 실제 구현). 행이 없어도 **204**(멱등).
+
+```
+행 없음                                → 204
+tag_detected_at IS NOT NULL(겹침)      → direct_registered_at = NULL   → 204, tagged로 잔존
+tag_detected_at IS NULL(순수 direct)   → 행 DELETE                    → 204, 목록에서 즉시 제거
+```
+
+`brand_post_snapshot`·`brand_post_meta`·`brand_post_comment`는 **지우지 않는다**(게시물 전역
+자산, "윈도우 이탈 후에도 영구 보존" 규칙과 동일). 재등록 시 이력이 그대로 되살아난다.
+
+**⚠️ 에러 바디는 반드시 `{code, message}`를 채운다.** 비우면 was `MonitoringCommandClient.exchange`가
+코드 없는 응답으로 오인해 `MonitoringUnavailableException`(503)으로 잘못 승격한다(§2 공통 에러
+관용구와 같은 함정, 08-11 실측).
+
+처리는 동기다 — 컨트롤러·클라이언트 타임아웃 설정이 최대 처리 시간(≈7초)보다 짧지 않은지 확인할
+것.
