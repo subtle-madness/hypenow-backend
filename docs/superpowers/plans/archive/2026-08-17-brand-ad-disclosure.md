@@ -1,6 +1,6 @@
 # 캡션 기반 광고 표기 판정 구현 계획
 
-> 상태: 🟢 활성 · 계획 확정, 실행 전
+> 상태: ✅ 실행 완료 (2026-08-18) · 태스크 19개 전부 구현·리뷰 반영, 전 모듈 테스트 그린
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
