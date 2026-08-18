@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
+import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
@@ -49,12 +50,14 @@ class BrandPostAssemblerTest {
 		var campaignRepository = mock(BrandPostCampaignRepository.class);
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
 		var account = accountRow();
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC")));
 
-		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
-		var posts = assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
 
 		verify(repository, never()).findComments(anyCollection(), anyInt());
 		assertThat(posts).singleElement().satisfies(post -> {
@@ -76,14 +79,16 @@ class BrandPostAssemblerTest {
 		var campaignRepository = mock(BrandPostCampaignRepository.class);
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
 		var account = accountRow();
-		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
 
-		assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY);
+		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY);
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
 
 		clearInvocations(repository);
-		assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
+		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(false));
 	}
 
@@ -94,8 +99,10 @@ class BrandPostAssemblerTest {
 		var campaignRepository = mock(BrandPostCampaignRepository.class);
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
 		var account = accountRow();
-		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
 
 		assembler.assembleForBrand(7L, account);
 
@@ -463,6 +470,7 @@ class BrandPostAssemblerTest {
 		var campaignRepository = mock(BrandPostCampaignRepository.class);
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
@@ -471,10 +479,13 @@ class BrandPostAssemblerTest {
 				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
 						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
 						"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]")));
-		when(repository.findSeededUsernames(42L)).thenReturn(List.of("creator1"));
+		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of("creator1"));
+		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of());
+		when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
 
-		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, true);
-		var posts = assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, true);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
@@ -482,6 +493,122 @@ class BrandPostAssemblerTest {
 					.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
 			assertThat(post.seededAuthor()).isTrue();
 		});
+	}
+
+	// ---------- 시딩 판정(캠페인 도출, 2026-08-18 재설계 — 신설 시딩 계정 관리 표면 철회) ----------
+
+	/** 캠페인 연결 계정 추적(mode=account)의 핸들이 시딩 집합에 들어가면 그 작성자의 게시물은 seededAuthor=true다. */
+	@Test
+	void 캠페인_연결_계정_추적의_작성자는_seededAuthor_true다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "seed_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null)));
+		when(repository.findPostMeta(anyCollection())).thenReturn(List.of());
+		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of("seed_creator"));
+		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of());
+		when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, true);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
+	}
+
+	/**
+	 * 캠페인 연결 게시물(신규 등록·이관 완료분은 app.brand_post_campaigns, 이관 전 레거시 direct
+	 * 등록은 monitoring_items 경유)의 게시자(brand_post_meta.username, monitoring DB)가 시딩 집합에
+	 * 들어가면, 그 작성자의 <b>다른</b> 게시물에도 seededAuthor=true가 붙는다 — 시딩 여부는 특정
+	 * 게시물이 아니라 작성자 단위 신호다. 이 테스트는 신규 산지({@link BrandPostCampaignRepository#
+	 * findShortCodesByUser})를 검증한다.
+	 */
+	@Test
+	void 캠페인_연결_게시물_작성자는_다른_게시물에도_seededAuthor_true다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "direct_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null)));
+		// 태그 자체 메타 조회(codes={"ABC"})와 시딩 산출용 조회(codes={"XYZ"})가 같은 메서드를 서로
+		// 다른 인자로 호출한다 — exact 매처로 구분해 둘을 뒤섞지 않는다.
+		when(repository.findPostMeta(eq(Set.of("ABC")))).thenReturn(List.of());
+		when(repository.findPostMeta(eq(Set.of("XYZ"))))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("XYZ", "direct_creator", "FEED",
+						LocalDate.of(2026, 8, 7), null, null, null, null, null, null, null, null, null)));
+		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of());
+		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of("XYZ"));
+		when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, true);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
+	}
+
+	/**
+	 * 이관 전(migrated_at IS NULL) 레거시 direct 등록의 캠페인 연결(monitoring_items 경유)도 같은
+	 * 방식으로 seededAuthor를 붙인다 — 과도기 소스({@link BrandDirectPostRepository#
+	 * findCampaignLinkedShortCodes})가 신규 소스와 합집합으로 동작함을 검증한다.
+	 */
+	@Test
+	void 이관_전_레거시_direct_캠페인_연결_작성자도_seededAuthor_true다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "legacy_direct_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null)));
+		when(repository.findPostMeta(eq(Set.of("ABC")))).thenReturn(List.of());
+		when(repository.findPostMeta(eq(Set.of("XYZ"))))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("XYZ", "legacy_direct_creator", "FEED",
+						LocalDate.of(2026, 8, 7), null, null, null, null, null, null, null, null, null)));
+		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of());
+		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of());
+		when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of("XYZ"));
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, true);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
+	}
+
+	/** 캠페인 연결이 전혀 없는 작성자는 seededAuthor=false다(캠페인 없는 계정 추적 케이스). */
+	@Test
+	void 캠페인_연결이_없으면_seededAuthor_false다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "no_campaign_creator", null,
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null)));
+		when(repository.findPostMeta(anyCollection())).thenReturn(List.of());
+		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of());
+		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of());
+		when(directRepository.findCampaignLinkedShortCodes(7L)).thenReturn(List.of());
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, true);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isFalse());
 	}
 
 	/**
@@ -510,6 +637,7 @@ class BrandPostAssemblerTest {
 		var campaignRepository = mock(BrandPostCampaignRepository.class);
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
@@ -519,9 +647,11 @@ class BrandPostAssemblerTest {
 						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
 						"DISCLOSED", "[]", "[]")));
 
-		// 토글 off — findSeededUsernames를 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지)
-		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
-		var posts = assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
+		// 토글 off — 시딩 산출 조회(findCampaignLinkedAccountHandles·findShortCodesByUser·
+		// findCampaignLinkedShortCodes)를 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지).
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.adDisclosure()).isNull();
@@ -529,16 +659,19 @@ class BrandPostAssemblerTest {
 			assertThat(post.adEvidence()).isEmpty();
 			assertThat(post.seededAuthor()).isFalse();
 		});
-		verify(repository, never()).findSeededUsernames(anyLong());
+		verify(itemRepository, never()).findCampaignLinkedAccountHandles(anyLong());
+		verify(campaignRepository, never()).findShortCodesByUser(anyLong());
+		verify(directRepository, never()).findCampaignLinkedShortCodes(anyLong());
 	}
 
 	// ---------- 픽스처 ----------
 
 	private static BrandPostAssembler newAssembler(BrandReadRepository repository,
 			BrandPostCampaignRepository campaignRepository, BrandDirectPostRepository directRepository,
-			TrackingItemAssembler trackingAssembler, boolean exposeAdDisclosure) {
+			TrackingItemAssembler trackingAssembler, MonitoringItemRepository itemRepository,
+			boolean exposeAdDisclosure) {
 		return new BrandPostAssembler(repository, campaignRepository, directRepository, trackingAssembler,
-				exposeAdDisclosure);
+				itemRepository, exposeAdDisclosure);
 	}
 
 	/** brandPost() 호출 축약 — 이 파일 대다수 테스트는 brandId=100, lastSweptAt=SWEPT_AT, 노출 off. */

@@ -131,6 +131,8 @@ class BrandSweepJobTest {
 	private static final class StubBrands extends BrandRepository {
 		List<BrandRow> active = List.of();
 		final List<Long> touched = new ArrayList<>();
+		/** 계정 게이트 호출 관측(2026-08-18) — 야간 스윕은 markServing을 부르지 않는다는 회귀 방지. */
+		final List<Long> served = new ArrayList<>();
 
 		StubBrands() {
 			super(null);
@@ -144,6 +146,11 @@ class BrandSweepJobTest {
 		@Override
 		public void touchSwept(long brandId, LocalDate on) {
 			touched.add(brandId);
+		}
+
+		@Override
+		public void markServing(long brandId) {
+			served.add(brandId);
 		}
 	}
 
@@ -304,6 +311,23 @@ class BrandSweepJobTest {
 		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), archive, brandArchive).run();
 
 		assertThat(brandArchive.runs).isEqualTo(1);   // 두 아카이브는 각자 격리 — 한쪽 실패가 다른 쪽을 막지 않는다
+	}
+
+	/**
+	 * 등록 백필의 계정 게이트(markServing, 2026-08-18 첫 페이지 게시자 보강 직후로 단축)는 등록
+	 * 경로 전용이다 — 야간 스윕은 {@link BrandCollectService#sweep}(2-인자 enrich, onVisible 없음)
+	 * 만 쓰므로 markServing 자체를 부를 일이 없다. 배선이 잘못 얽혀 스윕이 계정 게이트를 건드리면
+	 * 여기서 잡힌다.
+	 */
+	@Test
+	void 야간_스윕_경로는_markServing을_호출하지_않는다() {
+		var brands = new StubBrands();
+		brands.active = List.of(brand(1, "first"), brand(2, "second"));
+
+		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), new StubBrandArchive())
+				.run();
+
+		assertThat(brands.served).isEmpty();
 	}
 
 	@Test

@@ -122,7 +122,7 @@ public class PerformanceContentAssembler {
 		// BrandLinkRepository는 app DataSource라 monitoring 비활성 환경에서도 살아 있다.
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		Set<String> competitorIds = competitorBrandAccountIds(links);
-		BrandPool brandPool = loadBrandPool(links, withComments);
+		BrandPool brandPool = loadBrandPool(userId, links, withComments);
 		Map<Long, CampaignRow> campaignsById = campaignRepository.findByUser(userId).stream()
 				.collect(Collectors.toMap(CampaignRow::id, Function.identity()));
 
@@ -312,8 +312,10 @@ public class PerformanceContentAssembler {
 	 *
 	 * @param links 호출부가 이미 읽어 둔 활성 링크 — 여기서 다시 조회하지 않는다(monitoring이 켜져 있든
 	 *              꺼져 있든 링크 조회는 요청당 한 번이다).
+	 * @param userId 시딩(캠페인 연결) 판정 스코프(2026-08-18 캠페인 도출 개정) — {@link
+	 *               BrandPostAssembler#assembleBrandPosts} 호출에 그대로 넘긴다.
 	 */
-	private BrandPool loadBrandPool(List<BrandLinkRow> links, boolean withComments) {
+	private BrandPool loadBrandPool(long userId, List<BrandLinkRow> links, boolean withComments) {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty() || links.isEmpty()) {
 			return BrandPool.EMPTY;   // monitoring 비활성이거나 연결 0건 — 레거시 계열만
 		}
@@ -330,7 +332,7 @@ public class PerformanceContentAssembler {
 			// 지표 집계라 정산 전 게시물도 담는다(ALL) — 미정산분도 스냅샷(지표)은 이미 있다(열거에서
 			// 오고 monitoring processPage가 저장한다). 없는 건 댓글·게시자뿐이라 빼면 지표가 과소 계상된다.
 			for (BrandPostResponse post : brandPostAssembler.get()
-					.assembleBrandPosts(account.get(), withComments, BrandPostAssembler.BrandPostScope.ALL)) {
+					.assembleBrandPosts(userId, account.get(), withComments, BrandPostAssembler.BrandPostScope.ALL)) {
 				byShortcode.putIfAbsent(post.shortcode(), post);
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());

@@ -8,3 +8,13 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["was:9081"]
+
+  # 호스트·컨테이너 지표(대시보드 개편 스펙 2026-08-18) — node-exporter는 CPU·메모리·디스크,
+  # cAdvisor는 컨테이너별 사용량. 둘 다 기본 경로(/metrics)라 metrics_path 불요.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
