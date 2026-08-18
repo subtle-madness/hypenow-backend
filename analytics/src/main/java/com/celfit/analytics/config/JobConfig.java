@@ -130,11 +130,27 @@ public class JobConfig {
 			@Qualifier("analysisDataSource") DataSource analysisDataSource,
 			AccountSynthesisPort port, AnalyticsSettings settings,
 			ObjectProvider<JobProgressRegistry> progressRegistry,
-			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader) {
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader,
+			ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null
 				? registry.reporter(JobName.ACCOUNT_ANALYZE) : ProgressReporter.NOOP;
-		return new AccountAnalysisJob(analysisDataSource, port, settings, reporter, traitLoader);
+		return new AccountAnalysisJob(analysisDataSource, port, settings, reporter, traitLoader,
+				batchApiOrNull(settings, gemini));
+	}
+
+	/**
+	 * 계정 카피 배치 수거 잡(2026-08-17) — 제출 전 스윕과 별개로 BATCH_COLLECT가 독립 트리거한다.
+	 */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.account-analyze-on-startup:false} or ${analytics.admin-enabled:false}")
+	public com.celfit.analytics.analyze.AccountBatchCollectJob accountBatchCollectJob(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			AnalyticsSettings settings, ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
+			com.celfit.analytics.llm.TraitTaxonomyLoader traitLoader) {
+		return new com.celfit.analytics.analyze.AccountBatchCollectJob(analysisDataSource,
+				batchApiOrNull(settings, gemini), traitLoader, settings);
 	}
 
 	/** 해석 문구 갱신 — 기준선 정의·문구 의미가 바뀌었을 때 낡은 행만 부분 갱신(사실 추출 보존). */

@@ -6,6 +6,7 @@ import com.celfit.crawler.crawling.application.port.out.ApifyRunnerPort;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.domain.JobName;
+import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.domain.RawRunItem;
 import com.celfit.crawler.crawling.application.port.out.RawRunItemRepository;
 import com.celfit.crawler.crawling.domain.TriggerType;
@@ -13,6 +14,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +26,8 @@ import org.springframework.stereotype.Component;
  * 단, 응답 payload가 타입 raw 테이블에 1:1 무가공 저장되는 잡({@link JobName#archivesRunItems()}
  * false — COLLECT·REELS)은 사본을 남기지 않는다. 원형 보존처가 타입 테이블로 옮겨간 것뿐이라
  * "과금된 응답은 반드시 어딘가 남는다"는 보장은 유지된다.
+ * 실행이 실패해도 그때까지 산 유료 요청 수는 request_count에 남긴다({@link PaidCallCounter}) —
+ * 실패는 장애 구간에 몰려서, 유실을 두면 비용을 되묻는 바로 그 시점에 집계가 가장 크게 틀린다.
  */
 @Component
 public class CrawlExecutor {
@@ -38,13 +42,15 @@ public class CrawlExecutor {
     private final ApifyRunnerPort runner;
     private final CrawlRunRepository runs;
     private final RawRunItemRepository rawRunItems;
+    private final PaidCallCounter paidCalls;
     private final Clock clock;
 
     public CrawlExecutor(ApifyRunnerPort runner, CrawlRunRepository runs,
-                         RawRunItemRepository rawRunItems, Clock clock) {
+                         RawRunItemRepository rawRunItems, PaidCallCounter paidCalls, Clock clock) {
         this.runner = runner;
         this.runs = runs;
         this.rawRunItems = rawRunItems;
+        this.paidCalls = paidCalls;
         this.clock = clock;
     }
 
@@ -56,19 +62,41 @@ public class CrawlExecutor {
     public Execution execute(JobName job, TriggerType trigger, String keyword,
                              String targetUsername, String actorId, Supplier<ApifyResult> work) {
         CrawlRun run = runs.save(new CrawlRun(job, trigger, keyword, targetUsername, actorId, clock.instant()));
+        // 이 실행이 산 유료 콜의 실측치 — CountingHikerHttp가 성공 응답마다 채운다(PaidCallCounter).
+        AtomicInteger paid = new AtomicInteger();
         try {
-            ApifyResult result = work.get();
-            run.finishOk(result.runId(), result.requestCount(), result.items().size(), clock.instant());
+            ApifyResult result = paidCalls.scoped(paid, work);
+            // 소스가 스스로 보고한 값이 이긴다 — 잡별 규칙(ReelsJob·SimilarJob이 soft-404를
+            // '요청은 이미 샀다'며 1로 세는 것)을 실측치가 조용히 뒤집지 않게 하기 위함.
+            // 보고가 없으면(null) 실측치로 채운다: 유료 프로필 페처 4종이 여기 해당한다.
+            // 무료 소스(SELF·자체크롤)와 Apify는 유료 전송을 안 지나 실측이 0이라 null로 남는다.
+            run.finishOk(result.runId(), boughtOrReported(result.requestCount(), paid),
+                    result.items().size(), clock.instant());
             runs.save(run);
             if (job.archivesRunItems()) {
                 archive(run.getId(), result.items());
             }
             return new Execution(run.getId(), result.items(), result.notFound());
         } catch (ApifyException e) {
-            run.finishFailed(e.getMessage(), clock.instant());
+            // 실패해도 이미 과금된 요청은 남긴다 — ApifyResult를 못 받는 경로라 실측 카운터가
+            // 유일한 산지다.
+            run.finishFailed(e.getMessage(), boughtOrReported(null, paid), clock.instant());
             runs.save(run);
             throw e;
         }
+    }
+
+    /**
+     * 소스가 보고한 값이 있으면 그 값, 없으면 실측치. 실측이 0이면 null이다 — "과금 없음"은
+     * Apify 실행·무료 소스가 이미 null로 쓰고, 비용 뷰의 모수도 {@code request_count > 0}이라
+     * 0과 null이 어차피 같이 빠진다. 표기를 하나로 맞춰 둔다.
+     */
+    private static Integer boughtOrReported(Integer reported, AtomicInteger paid) {
+        if (reported != null) {
+            return reported;
+        }
+        int bought = paid.get();
+        return bought > 0 ? bought : null;
     }
 
     private void archive(Long runId, List<Map<String, Object>> items) {

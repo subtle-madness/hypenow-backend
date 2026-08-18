@@ -3,8 +3,10 @@ package com.celfit.was.monitoring;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
@@ -222,7 +224,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, matched_tag, author_username, author_full_name,
 				       author_profile_pic_url, taken_at, caption, content_type, thumbnail_url,
-				       likes, comments, first_seen_at, image_object_path
+				       likes, comments, first_seen_at, image_object_path, author_image_object_path
 				FROM brand_hashtag_post
 				WHERE brand_id = :brandId AND verdict = 'RELEVANT' AND taken_at >= :cutoff
 				ORDER BY taken_at DESC
@@ -233,17 +235,20 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 자사 제외 문자열(활성만, 2026-08-12 태그 관리 확장 짝) — was가 조회 시점에 직접 적용하는
-	 * 즉시 필터 재료. deleted_at IS NULL만 읽는다(monitoring BrandHashtagRepository.findExclusionTerms와
-	 * 같은 tombstone 규칙). 정렬은 무의미(contains 판정에만 쓰이므로).
+	 * 후보 shortcode 중 그 브랜드의 tagged 게시물로 실재하는 것들(2026-08-17 승격 상태 필드 §스펙) —
+	 * 윈도우(365일 컷) 제한이 없는 순수 존재 판정이다. 표시용 전량 조립({@link #findTaggedPostsInWindow}·
+	 * {@link #findPostMeta} 등)을 태우지 않는 이유: 해시태그 발견 목록 조립에 매 요청 무거운 태그
+	 * 게시물 전량 조립을 끼워 넣지 않기 위해서다(성능 — 존재 판정만 필요, 표시 필드는 불필요).
 	 */
-	public List<String> findActiveExclusionTerms(long brandId) {
-		return jdbc.sql("""
-				SELECT term FROM brand_hashtag_exclusion WHERE brand_id = :brandId AND deleted_at IS NULL
+	public Set<String> findExistingTaggedShortCodes(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return Set.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return new LinkedHashSet<>(jdbc.sql("""
+				SELECT short_code FROM brand_tagged_post WHERE brand_id = :brandId AND short_code IN (:shortCodes)
 				""")
-				.param("brandId", brandId)
-				.query(String.class)
-				.list();
+				.param("brandId", brandId).param("shortCodes", shortCodes)
+				.query(String.class).list());
 	}
 
 	/**
@@ -262,6 +267,24 @@ public class BrandReadRepository {
 				""")
 				.param("brandIds", brandIds)
 				.query(BrandCallDailyRow.class)
+				.list();
+	}
+
+	/**
+	 * 전 브랜드 날짜별 콜 합(설계 2026-08-13 §3-4) — 어드민 전역 크롤링 비용 API의 브랜드 몫.
+	 * 유저별 카드({@link #findDailyCallCounts})와 달리 연결 기간으로 자르지 않는다: 공유 브랜드는
+	 * 유저마다 계상되므로 유저별 값을 더하면 실제로 나간 돈보다 커진다. 전사 합계는 브랜드 축에서
+	 * 직접 합산해야 정확하다.
+	 *
+	 * <p>sum()은 numeric을 돌려주므로 ::bigint 캐스트가 필수다(record 컴포넌트가 long).
+	 */
+	public List<DailyCallSum> sumDailyCallCounts() {
+		return jdbc.sql("""
+				SELECT called_on, sum(calls)::bigint AS calls
+				FROM brand_call_count
+				GROUP BY called_on
+				""")
+				.query(DailyCallSum.class)
 				.list();
 	}
 
@@ -317,11 +340,13 @@ public class BrandReadRepository {
 	 * brand_hashtag_post 1행(RELEVANT만) — 프로필 보강·스냅샷이 없어(스펙 §5 보류) author 필드는
 	 * 열거 관측값 그대로고 followers·isVerified는 아예 없다. likes·comments도 열거 시점 관측값이다.
 	 * imageObjectPath는 monitoring 자체 썸네일 아카이브 결과 — null이면 원본 CDN URL 폴백.
+	 * authorImageObjectPath는 작성자 프로필 사진 아카이브 결과(2026-08-17 신설,
+	 * V20260817142317__hashtag_post_author_image_archive.sql) — null이면 원본 CDN URL 폴백.
 	 */
 	public record BrandHashtagPostRow(String shortCode, String matchedTag, String authorUsername,
 			String authorFullName, String authorProfilePicUrl, OffsetDateTime takenAt, String caption,
 			String contentType, String thumbnailUrl, Long likes, Long comments,
-			OffsetDateTime firstSeenAt, String imageObjectPath) {
+			OffsetDateTime firstSeenAt, String imageObjectPath, String authorImageObjectPath) {
 	}
 
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */

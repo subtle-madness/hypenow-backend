@@ -1,10 +1,13 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.v1.common.KstTimestamps;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -19,7 +22,8 @@ import org.springframework.stereotype.Component;
  * 그대로 재사용한다 — 같은 브랜드 화면 시간창 기준을 유지하기 위해서다.
  *
  * <p>조립 규칙({@link #toResponse})은 순수 정적 함수라 DB 없이 단위 테스트한다. 인스턴스 메서드는
- * 배치 조회 배선만 담당한다(사실 배치랄 것도 없다 — 보강이 없어 단일 SQL 왕복으로 끝난다).
+ * 배치 조회 배선만 담당한다 — 발견 게시물 자체는 보강이 없어 단일 SQL 왕복이지만, brandPostId
+ * 판정(2026-08-17)에 존재 여부만 보는 경량 조회 2종이 더해졌다.
  */
 @Component
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
@@ -37,45 +41,61 @@ public class BrandHashtagPostAssembler {
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
 
 	private final BrandReadRepository brandReadRepository;
+	private final BrandDirectPostRepository directPostRepository;
 
-	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository) {
+	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository,
+			BrandDirectPostRepository directPostRepository) {
 		this.brandReadRepository = brandReadRepository;
+		this.directPostRepository = directPostRepository;
 	}
 
 	/**
-	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 자사 제외 문자열 필터만 적용(그
-	 * 외 병합·정렬 없음). 제외 문자열은 조회 시점에 즉시 반영된다(2026-08-12 — 편집이 다음 스윕을
-	 * 기다리지 않는다는 계약 §8-3-1의 짝: 삭제로 지운 문자열은 저장된 판정을 못 바꾸지만, 조회
-	 * 필터는 즉시 걸 수 있어 비가역 오염(전체 삭제로 자사 게시물이 쏟아지는 것)을 막는다).
+	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 병합·필터·정렬 없이 전량이다.
+	 * 제외 문자열 기능은 전면 폐기됐다(2026-08-17 협의 확정 — "감지는 감지 해시태그만으로 수행하고
+	 * 제외는 적용하지 않는다") — monitoring 관리 API 5종·was 프록시 API 4종이 모두 제거됐고
+	 * 조회 시점 필터도 함께 없앤다. 남겨두면 과거 시드(브랜드 계정명 루트 등)가 유저가 조회·삭제할
+	 * 수 없는 "유령 필터"로 영구 동작해 계정명을 포함한 정상 작성자(예: 스태프 부계정)의 발견
+	 * 게시물이 이유 없이 숨는다. verdict(SELF 등) 기반 필터링은 수집 시점 판정이라 이 변경과 별개다.
+	 *
+	 * <p>{@code brandPostId}(2026-08-17 승격 상태 필드)는 조회된 shortcode 묶음만 배치로 판정한다
+	 * (존재 여부만 필요한 경량 조회 2종 — 무거운 전량 조립을 끼워 넣지 않는다). direct는 이
+	 * 유저·이 브랜드의 매핑, tagged는 윈도우 제한 없는 존재 판정이다.
 	 */
-	public List<BrandHashtagPostResponse> assembleForBrand(long brandId) {
+	public List<BrandHashtagPostResponse> assembleForBrand(long userId, long brandId) {
 		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
 				BrandPostAssembler.windowCutoff(), HASHTAG_POST_LIMIT);
-		List<String> exclusions = brandReadRepository.findActiveExclusionTerms(brandId);
+		if (rows.isEmpty()) {
+			return List.of();
+		}
+
+		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> directCodes = directPostRepository.findByUser(userId).stream()
+				.filter(row -> row.brandId() == brandId)
+				.map(BrandDirectPostRepository.Row::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> taggedCodes = brandReadRepository.findExistingTaggedShortCodes(brandId, shortCodes);
+
 		return rows.stream()
-				.filter(row -> !matchesExclusion(row.authorUsername(), exclusions))
-				.map(BrandHashtagPostAssembler::toResponse)
+				.map(row -> toResponse(row, brandPostIdOf(row.shortCode(), directCodes, taggedCodes)))
 				.toList();
 	}
 
-	/**
-	 * 게시자 username에 활성 제외 문자열이 포함되면 제외(대소문자 무시 contains) — monitoring
-	 * {@code BrandHashtagCollectService.matchesExclusion}과 동일 의미론(스윕의 SELF 판정 규칙을
-	 * was 조회 시점에도 그대로 재현). exclusions가 비어 있으면(제외 문자열 전체 삭제) 항상 false.
-	 */
-	private static boolean matchesExclusion(String authorUsername, List<String> exclusions) {
-		if (authorUsername == null || exclusions.isEmpty()) {
-			return false;
-		}
-		String lower = authorUsername.toLowerCase(Locale.ROOT);
-		return exclusions.stream().anyMatch(term -> lower.contains(term.toLowerCase(Locale.ROOT)));
+	/** direct 매핑이 살아 있거나 tagged로 존재하면 shortcode를, 둘 다 아니면 null을 돌려준다. */
+	private static String brandPostIdOf(String shortCode, Set<String> directCodes, Set<String> taggedCodes) {
+		return directCodes.contains(shortCode) || taggedCodes.contains(shortCode) ? shortCode : null;
+	}
+
+	/** {@code brandPostId} 없는 호출부(단위 테스트 등)를 위한 편의 오버로드 — null로 접는다. */
+	static BrandHashtagPostResponse toResponse(BrandHashtagPostRow row) {
+		return toResponse(row, null);
 	}
 
 	/**
 	 * 해시태그 발견 1건 조립 — 열거 시점 관측값을 그대로 옮긴다(보강 없음, 스펙 §5 보류).
 	 * 협찬 판정은 유료협찬 관측 자체가 없어(열거 응답에 그 필드가 없다) 캡션 키워드만으로 한다.
 	 */
-	static BrandHashtagPostResponse toResponse(BrandHashtagPostRow row) {
+	static BrandHashtagPostResponse toResponse(BrandHashtagPostRow row, String brandPostId) {
 		String contentType = contentTypeOf(row.contentType());
 		return new BrandHashtagPostResponse(
 				row.shortCode(),
@@ -90,25 +110,17 @@ public class BrandHashtagPostAssembler {
 				BrandPostAssembler.resolveImageUrl(row.imageObjectPath(), row.thumbnailUrl()),
 				row.authorUsername(),
 				row.authorFullName(),
-				// 게시자 프로필 사진은 아카이브가 없다(프로필 보강 자체가 스펙 §5 보류) — 원본 그대로.
-				sanitizeImageUrl(row.authorProfilePicUrl()),
+				// 게시자 프로필 사진도 이제 아카이브 사본 우선 서빙(2026-08-17 작성자 이미지 아카이브 잡 신설).
+				BrandPostAssembler.resolveImageUrl(row.authorImageObjectPath(), row.authorProfilePicUrl()),
 				row.authorUsername() == null ? null : PROFILE_URL_PREFIX + row.authorUsername() + "/",
 				row.likes(),
 				row.comments(),
 				BrandSponsorshipClassifier.classify(null, row.caption()),
-				KstTimestamps.toKstIso(row.firstSeenAt()));
+				KstTimestamps.toKstIso(row.firstSeenAt()),
+				brandPostId);
 	}
 
 	private static String contentTypeOf(String raw) {
 		return CONTENT_TYPE_REELS.equalsIgnoreCase(raw) ? REELS : FEED;
-	}
-
-	/** 저장 측이 걸러도 이미 박힌 값이 있을 수 있어 서빙에서 한 번 더 방어한다(BrandPostAssembler 동형). */
-	private static String sanitizeImageUrl(String url) {
-		if (url == null) {
-			return null;
-		}
-		String lower = url.toLowerCase(Locale.ROOT);
-		return lower.startsWith("http://") || lower.startsWith("https://") ? url : null;
 	}
 }

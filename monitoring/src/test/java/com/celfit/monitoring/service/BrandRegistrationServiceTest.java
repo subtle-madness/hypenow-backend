@@ -200,7 +200,6 @@ class BrandRegistrationServiceTest {
 	/** insertTags는 ON CONFLICT DO NOTHING이라 재현은 LinkedHashSet 유니온으로 — 재등록 순서 검증용. */
 	private static final class StubHashtags extends BrandHashtagRepository {
 		final Map<Long, LinkedHashSet<String>> tags = new HashMap<>();
-		final Map<Long, String> exclusions = new HashMap<>();
 		boolean failing;
 
 		StubHashtags() {
@@ -213,11 +212,6 @@ class BrandRegistrationServiceTest {
 				throw new IllegalStateException("해시태그 시드 실패 주입");
 			}
 			tags.computeIfAbsent(brandId, k -> new LinkedHashSet<>()).addAll(newTags);
-		}
-
-		@Override
-		public void insertDefaultExclusion(long brandId, String term) {
-			exclusions.putIfAbsent(brandId, term);
 		}
 	}
 
@@ -511,26 +505,68 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
 	}
 
+	/**
+	 * 2026-08-17 축소 — 제외 문자열 폐기와 함께 자동 시드가 3종에서 계정명 태그 1종으로 줄었다.
+	 * brandName을 전달해도(하위 호환) 더 이상 시드에 반영되지 않는다.
+	 */
 	@Test
-	void 등록은_태그_3종과_기본_제외_문자열을_시드한다() {
+	void 등록은_계정명_태그_1종만_시드한다() {
 		var result = service().register("cclime_official", "끌리메");
 
-		assertThat(hashtags.tags.get(result.brandId()))
-				.containsExactly("끌리메", "cclime", "cclime_official");
-		assertThat(hashtags.exclusions.get(result.brandId())).isEqualTo("cclime");
+		assertThat(hashtags.tags.get(result.brandId())).containsExactly("cclime_official");
 	}
 
 	@Test
-	void 활성_replay_재등록도_태그를_유니온한다() {
+	void 활성_replay_재등록도_태그_시드를_재시도한다_멱등() {
 		var service = service();
-		var first = service.register("cclime_official", null);   // 대행사 선등록 — 브랜드명 미상
-		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime", "cclime_official");
+		var first = service.register("cclime_official");
+		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime_official");
 
-		var replayed = service.register("cclime_official", "끌리메");   // 뒤늦게 brand 유형 유저가 연결
+		var replayed = service.register("cclime_official");   // replay — insertTags는 ON CONFLICT DO NOTHING
 
 		assertThat(replayed.replayed()).isTrue();
-		assertThat(hashtags.tags.get(first.brandId()))
-				.containsExactly("cclime", "cclime_official", "끌리메");   // 유니온 — 기존 순서 보존 + 신규 추가
+		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime_official");
+	}
+
+	/**
+	 * replay는 백필이 돌지 않아(hiker 콜 0) 예전엔 재등록 시점의 즉시 조회가 없었다 — 2026-08-17부터
+	 * 태그 시드 직후 해시태그 스윕도 트리거한다.
+	 */
+	@Test
+	void 활성_replay_재등록도_즉시_해시태그_스윕을_트리거한다() {
+		var service = service();
+		service.register("brandx");     // 최초 등록 — 백필 꼬리가 이미 한 번 스윕
+		awaitEnrich();
+		hashtagCollect.swept.clear();
+
+		service.register("brandx");     // replay
+		awaitEnrich();
+
+		assertThat(hashtagCollect.swept).containsExactly("brandx");
+	}
+
+	@Test
+	void 태그가_있으면_즉시_스윕을_트리거한다() {
+		var result = service().register("brandx");
+		awaitEnrich();
+		hashtagCollect.swept.clear();
+
+		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of("cclime"));
+		awaitEnrich();
+
+		assertThat(hashtagCollect.swept).containsExactly("brandx");
+	}
+
+	@Test
+	void 태그가_비어있으면_스윕을_트리거하지_않는다() {
+		service().register("brandx");
+		awaitEnrich();
+		hashtagCollect.swept.clear();
+
+		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of());
+		awaitEnrich();
+
+		assertThat(hashtagCollect.swept).isEmpty();
 	}
 
 	@Test

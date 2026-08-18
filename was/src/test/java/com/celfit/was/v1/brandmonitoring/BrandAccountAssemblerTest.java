@@ -37,7 +37,7 @@ class BrandAccountAssemblerTest {
 	@Test
 	void 확장_중_계정은_ready다() {
 		var response = assembler.toResponse(
-				row(null, OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null), "own");
+				row(null, OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null), "own", 12);
 
 		assertThat(response.collectionStatus()).isEqualTo("ready");
 		assertThat(response.collectionCompletedAt()).isNull();
@@ -46,7 +46,7 @@ class BrandAccountAssemblerTest {
 	/** 재가입·첫 등록 직후(전부 null) 백필 실패는 여전히 error다 — 보여줄 데이터가 없는 상태. */
 	@Test
 	void 보여줄_데이터가_없는_백필_실패는_error다() {
-		var response = assembler.toResponse(row(null, null, null, "초기 수집에 실패했어요."), "own");
+		var response = assembler.toResponse(row(null, null, null, "초기 수집에 실패했어요."), "own", 12);
 
 		assertThat(response.collectionStatus()).isEqualTo("error");
 		assertThat(response.collectionError().code()).isEqualTo("BACKFILL_FAILED");
@@ -55,7 +55,7 @@ class BrandAccountAssemblerTest {
 	/** 첫 수집 진행 중(전부 null + 오류 없음)만 collecting이다 — 남은 유일한 collecting 분기. */
 	@Test
 	void 첫_수집_진행_중만_collecting이다() {
-		assertThat(assembler.toResponse(row(null, null, null, null), "own").collectionStatus())
+		assertThat(assembler.toResponse(row(null, null, null, null), "own", 12).collectionStatus())
 				.isEqualTo("collecting");
 	}
 
@@ -64,7 +64,7 @@ class BrandAccountAssemblerTest {
 	void 완주한_계정은_ready이고_완주_시각을_싣는다() {
 		var response = assembler.toResponse(row(LocalDate.of(2026, 8, 7),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"),
-				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null), "own");
+				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null), "own", 12);
 
 		assertThat(response.collectionStatus()).isEqualTo("ready");
 		assertThat(response.collectionCompletedAt()).isEqualTo("2026-08-01T10:00:00+09:00");

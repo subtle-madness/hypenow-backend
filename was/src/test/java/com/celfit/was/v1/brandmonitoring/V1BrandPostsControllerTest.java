@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -31,6 +32,8 @@ import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -69,6 +72,8 @@ class V1BrandPostsControllerTest {
 	/** 직접 등록(§6-4)의 판정 로직은 V1BrandDirectPostServiceTest가 본다 — 여기는 표면 계약만. */
 	@MockitoBean
 	V1BrandDirectPostService directPostService;
+	@MockitoBean
+	Clock clock;
 
 	private static final String POST_URL = "https://www.instagram.com/reel/DEF/";
 
@@ -79,6 +84,9 @@ class V1BrandPostsControllerTest {
 
 	@BeforeEach
 	void ownedBrand() {
+		// 링크 창 컷의 기준 시각 고정 — 고정하지 않으면 2026-08-xx 고정 날짜 데이터가 시간이 지나며
+		// 창 밖으로 밀려 테스트 전체가 시한부가 된다. KST 2026-08-08 21:00.
+		given(clock.instant()).willReturn(Instant.parse("2026-08-08T12:00:00Z"));
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(account()));
@@ -292,6 +300,68 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isUnauthorized());
 	}
 
+	// ---------- 링크 표시 창(2026-08-17 스펙) ----------
+
+	@Test
+	void 링크_창_밖_tagged는_목록과_counts에서_빠진다() throws Exception {
+		// 자산은 12개월치를 들고 있어도(BBB: 4개월 전) 3개월 신청 유저에겐 창 안(AAA)만 보인다.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(linkWithMonths(3)));
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-04-01T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "FEED", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"))
+				// counts도 자른 전량 기준 — 탭 뱃지가 유저 창과 일치해야 한다.
+				.andExpect(jsonPath("$.meta.counts.all").value(1))
+				.andExpect(jsonPath("$.meta.counts.tagged").value(1));
+	}
+
+	@Test
+	void 링크_창_경계일은_포함이다() throws Exception {
+		// 컷 = 2026-08-08(KST 고정) − 3개월 = 2026-05-08. 그 날짜 업로드(KST 10시)는 포함.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(linkWithMonths(3)));
+		givenTagged(taggedRow("EDG", "2026-05-08T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("EDG", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1));
+	}
+
+	@Test
+	void direct는_링크_창_밖이어도_포함이다() throws Exception {
+		// 직접 등록은 유저가 URL을 명시한 추적 대상 — 창은 태그 수집 범위의 개념이라 적용하지 않는다.
+		// direct 업로드일(2026-02-01)은 1개월 창(컷 2026-07-08) 한참 밖 — 예외 규칙이 실제로 판정을
+		// 우회하는지 검증한다(창 안 날짜면 예외 없이도 통과해 테스트가 아무것도 못 잡는다).
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(linkWithMonths(1)));
+		givenTagged(taggedRow("AAA", "2026-04-01T01:00:00Z"));   // 창 밖 tagged — 제외 대조군
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		givenDirect("XYZ", 42L, "2026-02-01");
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].source").value("direct"));
+	}
+
+	@Test
+	void 링크_창_밖_게시물_상세는_404다() throws Exception {
+		// 목록에 없는 게시물이 상세로는 열리는 불일치 방지 — 상세도 같은 창이다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(linkWithMonths(3)));
+		givenTagged(taggedRow("OLD", "2026-04-01T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("OLD", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/posts/OLD").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
 	// ---------- 해시태그 발견 게시물 전용 API(스펙 §8, 별도 탭 결정 2026-08-12) ----------
 
 	@Test
@@ -442,6 +512,44 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
+	// ---------- 취소(2026-08-17 FE 요청) ----------
+
+	@Test
+	void 취소는_서비스에_위임하고_204를_돌려준다() throws Exception {
+		mockMvc.perform(post("/v1/brand-monitoring/posts/DEF/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isNoContent());
+
+		then(directPostService).should().cancel(7L, "DEF");
+	}
+
+	@Test
+	void tagged_행_취소는_400_TAGGED_POST_NOT_CANCELABLE로_전달된다() throws Exception {
+		willThrow(V1ApiException.badRequest("TAGGED_POST_NOT_CANCELABLE", "태그로 발견된 게시물은 취소할 수 없어요."))
+				.given(directPostService).cancel(7L, "AAA");
+
+		mockMvc.perform(post("/v1/brand-monitoring/posts/AAA/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("TAGGED_POST_NOT_CANCELABLE"));
+	}
+
+	@Test
+	void 대상_없는_취소는_404다() throws Exception {
+		willThrow(V1ApiException.notFound("대상을 찾을 수 없습니다.")).given(directPostService).cancel(7L, "ZZZ");
+
+		mockMvc.perform(post("/v1/brand-monitoring/posts/ZZZ/cancel").with(user(principal())).with(csrf()))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	@Test
+	void 취소_인증이_없으면_401이다() throws Exception {
+		// CSRF 없는 POST는 인증 필터보다 먼저 걸려 403이다 — 인증 부재를 순수하게 보려면 csrf()는 붙이고
+		// 인증만 뺀다(다른 v1 POST 401 테스트와 같은 관용구, 예: V1BrandAccountsControllerTest에는
+		// 해당 케이스가 없어 여기서 새로 정한다).
+		mockMvc.perform(post("/v1/brand-monitoring/posts/DEF/cancel").with(csrf()))
+				.andExpect(status().isUnauthorized());
+	}
+
 	// ---------- 스텁 ----------
 
 	/**
@@ -458,22 +566,31 @@ class V1BrandPostsControllerTest {
 
 	/** 직접 등록 1건 — 매핑 행 + 레거시 조립 결과를 함께 스텁한다. */
 	private void givenDirect(String shortCode, long itemId) {
+		givenDirect(shortCode, itemId, "2026-08-06");
+	}
+
+	private void givenDirect(String shortCode, long itemId, String uploadedDate) {
 		given(directPostRepository.findByUser(7L))
 				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 100L, shortCode, itemId)));
-		var snapshot = new TrackingItemResponse.SnapshotResponse("2026-08-06", 300L, 20L, false, 9L,
+		var snapshot = new TrackingItemResponse.SnapshotResponse(uploadedDate, 300L, 20L, false, 9L,
 				4L, 2L, false, 1L);
 		var post = new TrackingItemResponse.TrackedPostResponse("https://www.instagram.com/reel/" + shortCode + "/",
-				"reels", "2026-08-06", "일상 기록", List.of(), "https://cdn/legacy-thumb.jpg", null,
+				"reels", uploadedDate, "일상 기록", List.of(), "https://cdn/legacy-thumb.jpg", null,
 				List.of(snapshot), List.of());
 		var item = TrackingItemResponse.full(itemId, "url", "tracking", "glowdeep_92", "글로우딥",
-				"https://cdn/author.jpg", 12345L, "2026-08-06", null, null,
+				"https://cdn/author.jpg", 12345L, uploadedDate, null, null,
 				"https://www.instagram.com/reel/" + shortCode + "/", LocalDate.of(2026, 8, 1), 30, null, post, null);
 		given(trackingItemAssembler.assembleList(7L)).willReturn(new TrackingItemAssembler.AssembledList(
 				List.of(item), OffsetDateTime.parse("2026-08-07T17:00:00Z"), LocalDate.of(2026, 8, 8)));
 	}
 
 	private static BrandLinkRow link() {
-		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN,
+		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, 12,
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
+	}
+
+	private static BrandLinkRow linkWithMonths(int months) {
+		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, months,
 				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
 	}
 
@@ -497,7 +614,7 @@ class V1BrandPostsControllerTest {
 	private static BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
 		return new BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer", "해시태그 인플루언서",
 				"https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption, "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
 	}
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {

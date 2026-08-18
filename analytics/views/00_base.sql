@@ -281,3 +281,16 @@ SELECT
   (payload->>'likesCount')::bigint AS like_count,
   written_at
 FROM raw_comment;
+
+-- crawl_run 노출 — 크롤러 파이프라인의 유료 요청 수(비용 집계 재료). payload 파싱 없음.
+-- request_count는 비Apify 소스가 실제로 구매한 요청 수다(V7): Apify 실행은 NULL(결과 건당 과금이라
+-- 콜 기반 산출 불가), 무료 소스(profile-self)는 0. 상위 뷰(30)가 이 둘을 제외한다.
+CREATE OR REPLACE VIEW analytics.v_base_crawl_run AS
+SELECT
+  id AS crawl_run_id,
+  job,
+  actor_id,
+  status,
+  request_count,
+  started_at
+FROM crawl_run;

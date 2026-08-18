@@ -555,7 +555,7 @@ class V2CampaignContentServiceTest {
 
 	/** 브랜드 연결 1건 — 이 테스트가 보는 필드는 brandId·accountType뿐이다. */
 	private static BrandLinkRow link(long linkId, long brandId, String accountType) {
-		return new BrandLinkRow(linkId, USER_ID, brandId, "brand" + brandId, accountType, null, null);
+		return new BrandLinkRow(linkId, USER_ID, brandId, "brand" + brandId, accountType, 12, null, null);
 	}
 
 	/** record라 값이 같으면 동등하다 — 스텁 매칭에 같은 인스턴스를 들고 다닐 필요가 없다. */

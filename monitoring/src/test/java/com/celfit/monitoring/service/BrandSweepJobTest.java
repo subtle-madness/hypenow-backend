@@ -8,6 +8,7 @@ import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
+import com.celfit.monitoring.image.HashtagPostAuthorImageArchiveJob;
 import com.celfit.monitoring.image.HashtagPostThumbnailArchiveJob;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -89,6 +90,23 @@ class BrandSweepJobTest {
 		}
 	}
 
+	private static final class StubHashtagAuthorArchive extends HashtagPostAuthorImageArchiveJob {
+		int runs;
+		boolean failing;
+
+		StubHashtagAuthorArchive() {
+			super(null, null, null, "https://par.example/o/", 1000);
+		}
+
+		@Override
+		public void run() {
+			runs++;
+			if (failing) {
+				throw new IllegalStateException("아카이브 실패 주입");
+			}
+		}
+	}
+
 	private static final class StubBrands extends BrandRepository {
 		List<BrandRow> active = List.of();
 		final List<Long> touched = new ArrayList<>();
@@ -146,12 +164,12 @@ class BrandSweepJobTest {
 		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null, 12);
 	}
 
-	/** 신규 썸네일 아카이브 두 잡은 대부분의 테스트에서 관심 밖 — 성공 스텁으로 채운다. */
+	/** 신규 썸네일·작성자 이미지 아카이브 잡들은 대부분의 테스트에서 관심 밖 — 성공 스텁으로 채운다. */
 	private static BrandSweepJob sweepJob(BrandRepository brands, BrandCollectService collect,
 			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob archive,
 			BrandProfileImageArchiveJob brandArchive) {
 		return new BrandSweepJob(brands, collect, hashtagCollect, archive, brandArchive,
-				new StubPostThumbArchive(), new StubHashtagThumbArchive());
+				new StubPostThumbArchive(), new StubHashtagThumbArchive(), new StubHashtagAuthorArchive());
 	}
 
 	@Test
@@ -289,15 +307,17 @@ class BrandSweepJobTest {
 		var brandArchive = new StubBrandArchive();
 		var postThumbArchive = new StubPostThumbArchive();
 		var hashtagThumbArchive = new StubHashtagThumbArchive();
+		var hashtagAuthorArchive = new StubHashtagAuthorArchive();
 
 		assertThatThrownBy(() -> new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(),
-				archive, brandArchive, postThumbArchive, hashtagThumbArchive).run())
+				archive, brandArchive, postThumbArchive, hashtagThumbArchive, hashtagAuthorArchive).run())
 				.isInstanceOf(IllegalStateException.class);
 
 		assertThat(archive.runs).isEqualTo(1);   // DailySweepJob과 동형 — finally에서 반드시 실행
 		assertThat(brandArchive.runs).isEqualTo(1);
 		assertThat(postThumbArchive.runs).isEqualTo(1);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);
+		assertThat(hashtagAuthorArchive.runs).isEqualTo(1);
 	}
 
 	@Test
@@ -308,7 +328,8 @@ class BrandSweepJobTest {
 		brands.active = List.of(brand(1, "first"));
 
 		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
-				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive).run();
+				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive,
+				new StubHashtagAuthorArchive()).run();
 
 		assertThat(postThumbArchive.runs).isEqualTo(1);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);
@@ -323,9 +344,37 @@ class BrandSweepJobTest {
 		brands.active = List.of(brand(1, "first"));
 
 		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
-				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive).run();   // 예외가 새면 여기서 터진다
+				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive,
+				new StubHashtagAuthorArchive()).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);   // 잡별 격리 — 한쪽 실패가 다른 쪽을 막지 않는다
+	}
+
+	@Test
+	void 스윕_완료_후_해시태그_작성자_이미지_아카이브가_실행된다() {
+		var brands = new StubBrands();
+		var hashtagAuthorArchive = new StubHashtagAuthorArchive();
+		brands.active = List.of(brand(1, "first"));
+
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
+				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
+				hashtagAuthorArchive).run();
+
+		assertThat(hashtagAuthorArchive.runs).isEqualTo(1);
+	}
+
+	@Test
+	void 해시태그_작성자_이미지_아카이브_실패는_격리되어_스윕_결과에_영향을_주지_않는다() {
+		var brands = new StubBrands();
+		var hashtagAuthorArchive = new StubHashtagAuthorArchive();
+		hashtagAuthorArchive.failing = true;
+		brands.active = List.of(brand(1, "first"));
+
+		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
+				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
+				hashtagAuthorArchive).run();   // 예외가 새면 여기서 터진다
+
+		assertThat(brands.touched).containsExactly(1L);
 	}
 }
