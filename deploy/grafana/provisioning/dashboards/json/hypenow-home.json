@@ -41,6 +41,11 @@
       "links": [{ "title": "API 성능 대시보드로", "url": "/d/hypenow-api-performance" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "API 성능 대시보드로", "url": "/d/hypenow-api-performance" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "percentunit",
           "decimals": 2,
           "color": { "mode": "thresholds" },
@@ -79,6 +84,11 @@
       "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -115,6 +125,11 @@
       "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -151,6 +166,11 @@
       "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -195,6 +215,11 @@
       "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "h",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -232,6 +257,8 @@
       "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -241,7 +268,8 @@
               "options": {
                 "0": { "text": "0 — 스윕 불발?", "color": "red", "index": 0 }
               }
-            }
+            },
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 1 } } }
           ],
           "thresholds": {
             "mode": "absolute",
@@ -277,6 +305,11 @@
       "links": [{ "title": "탐색 대시보드로", "url": "/d/hypenow-discovery" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "탐색 대시보드로", "url": "/d/hypenow-discovery" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "h",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -314,6 +347,11 @@
       "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -351,6 +389,11 @@
       "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
@@ -396,6 +439,11 @@
       "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "percent",
           "decimals": 0,
           "min": 0,
@@ -436,6 +484,11 @@
       "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "bytes",
           "decimals": 1,
           "color": { "mode": "thresholds" },
@@ -474,6 +527,11 @@
       "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "percent",
           "decimals": 0,
           "min": 0,
@@ -514,6 +572,11 @@
       "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
       "fieldConfig": {
         "defaults": {
+          "noValue": "데이터 없음",
+          "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
