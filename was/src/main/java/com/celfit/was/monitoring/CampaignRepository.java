@@ -102,15 +102,51 @@ public class CampaignRepository {
 				.single();
 	}
 
-	/** 삭제 전 아카이브(트랙 NN). items는 campaign_id가 SET NULL로 풀릴 뿐이라 대상 아님. */
+	/**
+	 * 삭제 전 아카이브(트랙 NN). items는 campaign_id가 SET NULL로 풀릴 뿐이라 대상 아님.
+	 *
+	 * <p>brand_post_campaigns(2026-08-18 direct 통합 §결정 3·§T13)는 campaign_id FK에 CASCADE가
+	 * 없다 — {@code ArchiveCascadeReachabilityTest}가 monitoring_campaigns의 CASCADE 자식이 0개일
+	 * 것을 강제하기 때문이다(이 메서드가 캠페인 1행만 아카이브·삭제한다는 전제 보호). 그래서 이
+	 * 캠페인에 걸린 브랜드 풀 게시물 링크를 <b>캠페인 행 삭제보다 먼저</b> 명시적으로 아카이브·
+	 * 삭제한다 — 순서를 어기면 남은 링크 행이 FK 위반을 낸다(brand_direct_posts가
+	 * monitoring_items에 대해 쓰는 패턴, MonitoringItemRepository.delete와 동형).
+	 */
 	@Transactional
 	public void delete(long id) {
+		List<BrandPostCampaignKey> links = jdbcClient.sql("""
+						SELECT brand_id, short_code, campaign_id FROM app.brand_post_campaigns
+						 WHERE campaign_id = :campaignId
+						""")
+				.param("campaignId", id)
+				.query(BrandPostCampaignKey.class)
+				.list();
+		for (BrandPostCampaignKey link : links) {
+			int archivedLink = archiveWriter.archiveByPk(ArchiveTables.BRAND_POST_CAMPAIGNS,
+					ArchiveReason.CAMPAIGN_DELETED,
+					Map.of("brand_id", link.brandId(), "short_code", link.shortCode(), "campaign_id",
+							link.campaignId()));
+			int deletedLink = jdbcClient.sql("""
+							DELETE FROM app.brand_post_campaigns
+							 WHERE brand_id = :brandId AND short_code = :shortCode AND campaign_id = :campaignId
+							""")
+					.param("brandId", link.brandId())
+					.param("shortCode", link.shortCode())
+					.param("campaignId", link.campaignId())
+					.update();
+			archiveWriter.verifyMatched(ArchiveTables.BRAND_POST_CAMPAIGNS, archivedLink, deletedLink);
+		}
+
 		int archived = archiveWriter.archiveByPk(ArchiveTables.MONITORING_CAMPAIGNS, ArchiveReason.CAMPAIGN_DELETED,
 				Map.of("id", id));
 		int deleted = jdbcClient.sql("DELETE FROM app.monitoring_campaigns WHERE id = :id")
 				.param("id", id)
 				.update();
 		archiveWriter.verifyMatched(ArchiveTables.MONITORING_CAMPAIGNS, archived, deleted);
+	}
+
+	/** app.brand_post_campaigns의 복합 PK — 캠페인 삭제 시 이 캠페인을 참조하는 링크를 찾기 위한 내부 전용 행. */
+	private record BrandPostCampaignKey(long brandId, String shortCode, long campaignId) {
 	}
 
 	/** 캠페인 삭제 확인 모달·검증용 — 배정된 추적 아이템 수. */

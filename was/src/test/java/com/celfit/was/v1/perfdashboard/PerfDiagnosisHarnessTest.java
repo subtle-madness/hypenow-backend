@@ -4,6 +4,7 @@ import com.celfit.was.archive.ArchiveWriter;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
+import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.CampaignRepository;
@@ -52,13 +53,14 @@ class PerfDiagnosisHarnessTest {
 		MonitoringReadRepository readRepository = new MonitoringReadRepository(mon);
 		BrandReadRepository brandReadRepository = new BrandReadRepository(mon);
 		BrandDirectPostRepository directPostRepository = new BrandDirectPostRepository(app);
+		BrandPostCampaignRepository postCampaignRepository = new BrandPostCampaignRepository(app);
 		BrandLinkRepository linkRepository = new BrandLinkRepository(app);
 		TrackingItemAssembler trackingItemAssembler = new TrackingItemAssembler(itemRepository,
 				campaignRepository, Optional.of(readRepository), new ObjectMapper());
 		BrandPostAssembler brandPostAssembler = new BrandPostAssembler(brandReadRepository,
-				directPostRepository, trackingItemAssembler, itemRepository, false);
+				postCampaignRepository, directPostRepository, trackingItemAssembler, itemRepository, false);
 		PerformanceContentAssembler assembler = new PerformanceContentAssembler(trackingItemAssembler,
-				directPostRepository, linkRepository, Optional.of(brandReadRepository),
+				linkRepository, campaignRepository, Optional.of(brandReadRepository),
 				Optional.of(brandPostAssembler));
 
 		// 워밍업 1회(JIT·풀 초기화) 후 본측정 — 운영은 항상 워밍업된 상태이므로 본측정이 비교 대상.
@@ -85,29 +87,29 @@ class PerfDiagnosisHarnessTest {
 			if (account.isEmpty()) {
 				continue;
 			}
-			var posts = time("  assembleTagged(" + link.brandId() + ") [5쿼리+매핑]",
+			var posts = time("  assembleBrandPosts(" + link.brandId() + ") [5쿼리+매핑]",
 					// 진단 하니스는 조회 비용의 상한을 보려는 것이라 전량(ALL)으로 잰다.
-					() -> brandPostAssembler.assembleTagged(USER_ID, account.get(), true,
-							com.celfit.was.v1.brandmonitoring.BrandPostAssembler.TaggedScope.ALL));
+					() -> brandPostAssembler.assembleBrandPosts(USER_ID, account.get(), true,
+							com.celfit.was.v1.brandmonitoring.BrandPostAssembler.BrandPostScope.ALL));
 			System.out.println("    게시물 = " + posts.size() + "건");
 		}
 
-		System.out.println("===== assembleTagged 내부 쿼리별(최대 브랜드 1개로 분해) =====");
+		System.out.println("===== assembleBrandPosts 내부 쿼리별(최대 브랜드 1개로 분해) =====");
 		// BrandPostAssembler.windowCutoff()와 같은 식(패키지 밖이라 재계산) — KST 오늘−365일 자정.
 		var cutoff = java.time.LocalDate.now(com.celfit.was.v1.common.KstTimestamps.KST).minusDays(365)
 				.atStartOfDay(com.celfit.was.v1.common.KstTimestamps.KST).toOffsetDateTime();
 		BrandLinkRow biggest = links.get(0);
 		long biggestCount = -1;
 		for (BrandLinkRow link : links) {
-			long count = brandReadRepository.findTaggedPostsInWindow(link.brandId(), cutoff).size();
+			long count = brandReadRepository.findBrandPostsInWindow(link.brandId(), cutoff, false).size();
 			if (count > biggestCount) {
 				biggestCount = count;
 				biggest = link;
 			}
 		}
 		long brandId = biggest.brandId();
-		var posts = time("  findTaggedPostsInWindow(" + brandId + ")",
-				() -> brandReadRepository.findTaggedPostsInWindow(brandId, cutoff));
+		var posts = time("  findBrandPostsInWindow(" + brandId + ")",
+				() -> brandReadRepository.findBrandPostsInWindow(brandId, cutoff, false));
 		Set<String> codes = posts.stream().map(BrandReadRepository.BrandTaggedPostRow::shortCode)
 				.collect(Collectors.toSet());
 		System.out.println("    게시물 = " + codes.size() + "건");

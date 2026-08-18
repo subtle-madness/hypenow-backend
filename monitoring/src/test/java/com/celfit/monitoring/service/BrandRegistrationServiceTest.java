@@ -174,10 +174,24 @@ class BrandRegistrationServiceTest {
 			return all;   // 반환은 전체 누적분(실코드와 동일) — 새 배선은 이걸 쓰지 않는다.
 		}
 
+		/**
+		 * 3-인자(onVisible 훅) 버전만 오버라이드한다 — 2-인자 {@code enrich(brand, posts)}는 실
+		 * {@code BrandCollectService}의 위임(onVisible=null)을 그대로 쓰므로, 가상 디스패치로 결국
+		 * 이 메서드로 온다. onVisible은 <b>보강 지연(댓글·판정 대역) 전에</b> 부른다 — 실 코드에서
+		 * markEnriched 직후·comments/adJudge 시작 전에 발화하는 지점을 재현한다(2026-08-18 계정
+		 * 게이트 단축). enrichedPosts/enriched 적재는 지연 뒤라 "그 페이지가 아직 완주 전"인 채로
+		 * onVisible이 뜨는 것을 markServing 시점 스냅샷(enrichedAtServingMark)이 관측한다.
+		 */
 		@Override
-		public void enrich(BrandRow brand, List<PostInfo> posts) {
+		public void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
 			if (enrichFailing.contains(brand.username())) {
+				if (onVisible != null) {
+					onVisible.run();   // markEnriched와 같은 finally 보장 재현 — 하드 실패에도 발화
+				}
 				throw new IllegalStateException("보강 실패 주입");
+			}
+			if (onVisible != null) {
+				onVisible.run();
 			}
 			sleep(enrichDelay);
 			enriched.add(brand.username());
@@ -332,20 +346,22 @@ class BrandRegistrationServiceTest {
 	}
 
 	/**
-	 * 첫 페이지 배치의 보강이 끝나는 시점에 ready를 연다(2026-08-13 스펙 §2) — markServing은
-	 * 열거 완주도, 보강 전 빈 목록도 아니고 첫 배치 완결 뒤 딱 1회다.
+	 * 첫 페이지의 <b>게시자 보강 직후</b>(댓글 수집·광고 판정 전)에 ready를 연다(2026-08-18 계정
+	 * 게이트 단축 — 구 "첫 페이지 전체 보강 완료" 기준 대체). markServing은 열거 완주도, 보강 전
+	 * 빈 목록도 아니고, 첫 페이지의 onVisible 훅에서 딱 1회다.
 	 */
 	@Test
-	void 첫_페이지_배치_보강_후에_markServing을_1회_부른다() {
+	void 첫_페이지_게시자_보강_직후에_markServing을_1회_부른다() {
 		twoPages();
-		collect.enrichDelay = Duration.ofMillis(50);
+		collect.enrichDelay = Duration.ofMillis(50);   // 댓글·판정 대역 — 이보다 먼저 markServing이 떠야 한다
 
 		var result = service().register("brandx");
 		awaitEnrich();
 
 		assertThat(brands.served).containsExactly(result.brandId());   // 페이지가 여러 장이어도 1회
-		// markServing 시점에 첫 페이지분 보강이 이미 끝나 있어야 한다.
-		assertThat(brands.enrichedAtServingMark).containsExactly(List.of("P1_A", "P1_B"));
+		// markServing 시점엔 아직 어느 페이지도 "완주"(댓글·판정 대역 포함) 전이어야 한다 —
+		// 완주분이 비어 있다는 것 자체가 "댓글·판정을 기다리지 않았다"는 증거다.
+		assertThat(brands.enrichedAtServingMark).containsExactly(List.of());
 	}
 
 	/**

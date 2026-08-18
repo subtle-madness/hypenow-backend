@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.function.Supplier;
@@ -129,6 +130,35 @@ public class MonitoringCommandClient {
 				.retrieve().toBodilessEntity());
 	}
 
+	/**
+	 * direct 게시물 등록(2026-08-18 direct 통합 §2-2·§4-2, monitoring BrandController §direct 명령) —
+	 * 단건 콜로 즉시 수집·보강하는 동기 경로다(최대 5콜 ≈ 7초). 201(신규 수집)·200(이미 풀에 있음,
+	 * 멱등)은 같은 바디라 was는 둘을 구분하지 않고 둘 다 성공으로 접는다.
+	 *
+	 * <p>404({@code POST_NOT_FOUND})·422({@code PRIVATE_ACCOUNT}·{@code POST_UNSUPPORTED})·
+	 * 404({@code BRAND_NOT_FOUND})는 에러 바디 code 그대로 {@link MonitoringApiException}으로
+	 * 승격된다(계약 어긋나면 {@link MonitoringUnavailableException}(503)으로 잘못 승격 — 클래스 주석
+	 * 관용구 재사용).
+	 *
+	 * <p>registeredAt·importLegacyHistory는 이관 잡(mode=import) 전용이다 — was 실행기의 일반 유저
+	 * 등록 경로는 둘 다 비운다(등록 시각은 monitoring이 now()로 채우고, 레거시 이력 복사도 생략).
+	 */
+	public DirectPostResult registerDirectPost(long brandId, String shortCode, OffsetDateTime registeredAt,
+			boolean importLegacyHistory) {
+		return exchange(() -> restClient.post().uri("/api/brands/{brandId}/direct-posts", brandId)
+				.body(new DirectPostRegisterRequest(shortCode, registeredAt, importLegacyHistory))
+				.retrieve().body(DirectPostResult.class));
+	}
+
+	/**
+	 * direct 게시물 취소(2026-08-18 direct 통합 §2-4) — 매핑 삭제가 아니라 direct 표식 해제.
+	 * 행이 없어도 204(멱등) — was의 재시도·이중 취소가 안전해야 한다.
+	 */
+	public void deleteDirectPost(long brandId, String shortCode) {
+		exchange(() -> restClient.delete().uri("/api/brands/{brandId}/direct-posts/{shortCode}", brandId, shortCode)
+				.retrieve().toBodilessEntity());
+	}
+
 	private <T> T exchange(Supplier<T> call) {
 		try {
 			return call.get();
@@ -172,5 +202,13 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
 	record HashtagTagsBody(List<String> tags) {
+	}
+
+	/** monitoring BrandController.DirectPostRegisterRequest와 동형. */
+	record DirectPostRegisterRequest(String shortCode, OffsetDateTime registeredAt, Boolean importLegacyHistory) {
+	}
+
+	/** monitoring BrandController.DirectPostResponse와 동형(201·200 공용 셰이프). */
+	public record DirectPostResult(String shortCode, String authorUsername, Instant takenAt, String contentType) {
 	}
 }

@@ -2,59 +2,56 @@ package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.mock;
 
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
+import com.celfit.was.monitoring.BrandPostCampaignRepository;
+import com.celfit.was.monitoring.BrandPostRegistrationRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.CampaignRepository;
-import com.celfit.was.monitoring.CancelResult;
 import com.celfit.was.monitoring.MonitoringCommandClient;
-import com.celfit.was.monitoring.MonitoringItemRepository;
-import com.celfit.was.monitoring.MonitoringItemRow;
-import com.celfit.was.monitoring.MonitoringReadRepository;
-import com.celfit.was.monitoring.RegistrationRepository;
-import com.celfit.was.v1.monitoring.RegistrationExecutor;
-import com.celfit.was.v1.monitoring.TrackingItemAssembler;
-import com.celfit.was.v1.monitoring.V1CampaignService;
-import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
-import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
 import java.sql.Connection;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
-import tools.jackson.databind.ObjectMapper;
 
 /**
- * 취소(2026-08-17 FE 요청)의 "등록→취소→재등록" 왕복 통합 검증 — 실 DB 위에서 서비스 조합 전체를
- * 태운다(mock 리포지토리로는 canceled_at 필터링이 실제로 재등록을 풀어 주는지 증명할 수 없다).
- * V1MonitoringRegistrationDuplicateExclusionTest와 같은 관용구 — monitoring-schema.sql(target)·
- * monitoring-brand-schema.sql(brand_account)을 같은 컨테이너의 public 스키마에 적용하고 서비스를
- * 직접 조립해 실 target 조회·실 canceled_at 필터를 태운다.
+ * 취소(설계 §2-4)의 "등록→취소→재등록" 왕복 통합 검증 — 실 DB(app 스키마) 위에서 서비스·실행기
+ * 조합 전체를 태운다(mock 리포지토리로는 브랜드 풀 재조회가 실제로 재등록을 풀어 주는지 증명할 수
+ * 없다). monitoring 호출({@link MonitoringCommandClient})만 mock이다 — was는 그 결과로
+ * brand_tagged_post를 직접 쓰지 않으므로(정본은 monitoring), mock의 부수효과로 monitoring이 했을
+ * DB 반영(direct_registered_at)을 재현한다.
+ *
+ * <p>실행기 풀은 {@link SyncTaskExecutor}로 고정한다 — {@code afterCommit} 콜백이 호출 스레드에서
+ * 동기로 돌아, register() 호출이 끝난 시점에는 이미 entry가 정산돼 있다(등록 응답 자체는 실행 전
+ * pending 스냅샷이라 {@link V1BrandDirectPostService#get}으로 재조회해 확인한다).
  */
 class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 
 	private static final String POST_URL = "https://www.instagram.com/reel/DEF/";
 
 	@Autowired
-	MonitoringItemRepository itemRepository;
-	@Autowired
-	RegistrationRepository registrationRepository;
-	@Autowired
-	CampaignRepository campaignRepository;
-	@Autowired
 	BrandLinkRepository linkRepository;
 	@Autowired
 	BrandDirectPostRepository directPostRepository;
+	@Autowired
+	BrandPostRegistrationRepository registrationRepository;
+	@Autowired
+	BrandPostCampaignRepository postCampaignRepository;
+	@Autowired
+	CampaignRepository campaignRepository;
 	@Autowired
 	DataSource dataSource;
 	@Autowired
@@ -69,12 +66,9 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 	@BeforeEach
 	void setUp() throws Exception {
 		try (Connection conn = dataSource.getConnection()) {
-			ScriptUtils.executeSqlScript(conn, new ClassPathResource("monitoring-schema.sql"));
 			ScriptUtils.executeSqlScript(conn, new ClassPathResource("monitoring-brand-schema.sql"));
 		}
 		monitoringJdbc = JdbcClient.create(dataSource);
-		monitoringJdbc.sql("TRUNCATE target, detected_candidate, profile_snapshot, post_snapshot RESTART IDENTITY")
-				.update();
 		monitoringJdbc.sql("""
 				TRUNCATE brand_tagged_post, brand_account, brand_post_meta, brand_post_snapshot,
 				         brand_post_comment, author_profile, brand_hashtag_post, brand_hashtag_exclusion
@@ -83,19 +77,12 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 				.update();
 
 		BrandReadRepository brandReadRepository = new BrandReadRepository(monitoringJdbc);
-		MonitoringReadRepository readRepository = new MonitoringReadRepository(monitoringJdbc);
-		V1CampaignService campaignService = new V1CampaignService(campaignRepository);
-		TrackingItemAssembler assembler = new TrackingItemAssembler(itemRepository, campaignRepository,
-				Optional.of(readRepository), new ObjectMapper());
-		V1MonitoringRegistrationService legacyRegistration = new V1MonitoringRegistrationService(itemRepository,
-				registrationRepository, campaignRepository, campaignService, mock(RegistrationExecutor.class),
-				new ObjectMapper(), Optional.of(readRepository));
 		commandClient = mock(MonitoringCommandClient.class);
-		V1MonitoringItemUpdateService itemUpdateService = new V1MonitoringItemUpdateService(itemRepository,
-				campaignRepository, campaignService, Optional.of(readRepository), Optional.of(commandClient),
-				assembler, registrationRepository);
+		BrandDirectRegistrationExecutor executor = new BrandDirectRegistrationExecutor(commandClient,
+				registrationRepository, directPostRepository, postCampaignRepository, brandReadRepository,
+				new SyncTaskExecutor());
 		service = new V1BrandDirectPostService(linkRepository, brandReadRepository, directPostRepository,
-				itemRepository, readRepository, legacyRegistration, registrationRepository, itemUpdateService,
+				registrationRepository, campaignRepository, postCampaignRepository, commandClient, executor,
 				Clock.systemDefaultZone());
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
@@ -109,48 +96,53 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 		linkRepository.insertLink(userId, brandId, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
-	/** 등록 직후 collecting(target 미확정) 상태의 아이템을 TRACKING 상태로 끌어올린다(취소 가능 상태). */
-	private void confirmTracking(long itemId, String shortCode) {
-		long targetId = monitoringJdbc.sql("""
-				INSERT INTO target (type, username, short_code, status, tracked_short_code, registration_key,
-				                    expires_at)
-				VALUES ('POST', :shortCode, :shortCode, 'TRACKING', :shortCode, gen_random_uuid()::text,
-				        now() + interval '30 days')
-				RETURNING id
-				""")
-				.param("shortCode", shortCode)
-				.query(Long.class).single();
-		itemRepository.confirmTarget(itemId, targetId);
-		given(commandClient.cancel(targetId)).willReturn(new CancelResult(targetId, "CANCELED"));
+	/**
+	 * commandClient.registerDirectPost의 성공 응답 + 부수효과(monitoring이 real HTTP로 했을
+	 * brand_tagged_post upsert)를 함께 흉내낸다 — mock이라 실제 monitoring 서버가 그 행을 만들지 않는다.
+	 */
+	private void stubSuccessfulRegister(String shortCode) {
+		willAnswer(invocation -> {
+			monitoringJdbc.sql("""
+					INSERT INTO brand_tagged_post (brand_id, short_code, author_username, taken_at,
+					                                tag_detected_at, direct_registered_at)
+					VALUES (:brandId, :shortCode, 'creator', now(), NULL, now())
+					ON CONFLICT (brand_id, short_code) DO UPDATE SET direct_registered_at = EXCLUDED.direct_registered_at
+					""")
+					.param("brandId", brandId).param("shortCode", shortCode).update();
+			return new MonitoringCommandClient.DirectPostResult(shortCode, "creator",
+					Instant.parse("2026-08-01T00:00:00Z"), "REELS");
+		}).given(commandClient).registerDirectPost(brandId, shortCode, null, false);
+	}
+
+	/** commandClient.deleteDirectPost의 부수효과 — monitoring이 했을 direct_registered_at 해제(순수 direct라 행 삭제)를 흉내낸다. */
+	private void stubSuccessfulCancel(String shortCode) {
+		willAnswer(invocation -> {
+			monitoringJdbc.sql("DELETE FROM brand_tagged_post WHERE brand_id = :brandId AND short_code = :shortCode")
+					.param("brandId", brandId).param("shortCode", shortCode).update();
+			return null;
+		}).given(commandClient).deleteDirectPost(brandId, shortCode);
 	}
 
 	@Test
-	void 등록_취소_재등록_왕복은_새_추적_행을_만든다() {
+	void 등록_취소_재등록_왕복은_새_direct_등록으로_성립한다() {
+		stubSuccessfulRegister("DEF");
+
 		BrandDirectRegistrationResponse registered = service.register(userId, brandId, List.of(POST_URL), 30, null);
-		assertThat(registered.entries().get(0).result()).isEqualTo("pending");
-		long firstItemId = Long.parseLong(registered.entries().get(0).monitoringItemId());
-		confirmTracking(firstItemId, "DEF");
-
-		// 취소 전: 매핑이 살아 있고 레거시 아이템은 취소되지 않았다.
+		BrandDirectRegistrationResponse settled = service.get(userId, registered.registrationId());
+		assertThat(settled.entries().get(0).result()).isEqualTo("success");
 		assertThat(directPostRepository.findByUserAndShortCode(userId, "DEF")).isPresent();
-		MonitoringItemRow before = itemRepository.findByIdAndUser(firstItemId, userId).orElseThrow();
-		assertThat(before.canceledAt()).isNull();
 
+		stubSuccessfulCancel("DEF");
 		service.cancel(userId, "DEF");
 
-		// 취소 후: 레거시 아이템이 종결되고 매핑은 삭제된다.
-		MonitoringItemRow after = itemRepository.findByIdAndUser(firstItemId, userId).orElseThrow();
-		assertThat(after.canceledAt()).isNotNull();
 		assertThat(directPostRepository.findByUserAndShortCode(userId, "DEF")).isEmpty();
 
-		// 재등록: canceled_at IS NOT NULL이라 레거시 duplicate 판정에서 제외되고, 새 pending 행이 생긴다.
+		// 재등록: brand_tagged_post 행이 취소로 지워졌으니 브랜드 풀 중복 판정에 걸리지 않는다.
 		BrandDirectRegistrationResponse reregistered = service.register(userId, brandId, List.of(POST_URL), 30, null);
+		BrandDirectRegistrationResponse resettled = service.get(userId, reregistered.registrationId());
 
-		assertThat(reregistered.entries().get(0).result()).isEqualTo("pending");
-		long secondItemId = Long.parseLong(reregistered.entries().get(0).monitoringItemId());
-		assertThat(secondItemId).isNotEqualTo(firstItemId);
-		assertThat(directPostRepository.findByUserAndShortCode(userId, "DEF"))
-				.hasValueSatisfying(row -> assertThat(row.monitoringItemId()).isEqualTo(secondItemId));
+		assertThat(resettled.entries().get(0).result()).isEqualTo("success");
+		assertThat(directPostRepository.findByUserAndShortCode(userId, "DEF")).isPresent();
 	}
 
 	@Test
@@ -163,10 +155,10 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 				""")
 				.param("brandId", brandId).update();
 
-		BrandDirectRegistrationResponse registered = service.register(userId, brandId, List.of(POST_URL), 30, null);
-		long itemId = Long.parseLong(registered.entries().get(0).monitoringItemId());
-		confirmTracking(itemId, "DEF");
+		stubSuccessfulRegister("DEF");
+		service.register(userId, brandId, List.of(POST_URL), 30, null);
 
+		stubSuccessfulCancel("DEF");
 		service.cancel(userId, "DEF");
 
 		Long remaining = monitoringJdbc.sql("SELECT count(*) FROM brand_hashtag_post WHERE brand_id = :brandId")

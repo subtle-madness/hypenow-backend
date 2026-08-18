@@ -456,6 +456,167 @@ class BrandStoreTest {
 		taggedPosts.touchCrawled(id, List.of(), Instant.now());   // 예외 없이 no-op이면 통과
 	}
 
+	// ── direct 게시물 파이프라인 통합(2026-08-18 설계 §3-1·§5-3) ─────────────
+
+	@Test
+	void 마이그레이션_후_기존_tagged_행은_tag_detected_at이_채워진다() {
+		// V20260818040742의 백필(UPDATE ... SET tag_detected_at = first_seen_at)이 실제로 도는지
+		// — insert()가 이제 tag_detected_at을 명시적으로 채우므로, 신규 삽입행으로 이를 검증한다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("A", 1754000000L));
+		assertThat(db.queryForObject(
+				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='A'",
+				Timestamp.class, id)).isNotNull();
+	}
+
+	@Test
+	void upsertDirect_신규_삽입은_tag_detected_at이_비고_direct_registered_at이_채워진다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
+
+		taggedPosts.upsertDirect(id, post("D1", 1754000000L), registeredAt);
+
+		assertThat(db.queryForObject(
+				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='D1'",
+				Timestamp.class, id)).isNull();
+		assertThat(db.queryForObject(
+				"SELECT direct_registered_at FROM brand_tagged_post WHERE brand_id=? AND short_code='D1'",
+				Timestamp.class, id).toInstant()).isEqualTo(registeredAt);
+	}
+
+	@Test
+	void upsertDirect를_기존_tagged_행에_적용하면_tag_detected_at은_보존되고_direct_registered_at만_채워진다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		Timestamp before = db.queryForObject(
+				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Timestamp.class, id);
+		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
+
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), registeredAt);
+
+		assertThat(db.queryForObject(
+				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Timestamp.class, id)).isEqualTo(before);
+		assertThat(db.queryForObject(
+				"SELECT direct_registered_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Timestamp.class, id).toInstant()).isEqualTo(registeredAt);
+	}
+
+	@Test
+	void insert_열거를_기존_direct_only_행에_적용하면_direct_registered_at은_보존되고_tag_detected_at이_채워진다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
+		taggedPosts.upsertDirect(id, post("D2", 1754000000L), registeredAt);
+
+		taggedPosts.insert(id, post("D2", 1754000000L));   // 열거가 뒤늦게 같은 게시물을 만남
+
+		assertThat(db.queryForObject(
+				"SELECT direct_registered_at FROM brand_tagged_post WHERE brand_id=? AND short_code='D2'",
+				Timestamp.class, id).toInstant()).isEqualTo(registeredAt);
+		assertThat(db.queryForObject(
+				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='D2'",
+				Timestamp.class, id)).isNotNull();
+	}
+
+	@Test
+	void trackedPosts는_direct_only_행을_반환하지_않는다() {
+		// R5 — 가드(AND tag_detected_at IS NOT NULL)를 지운 채로 먼저 실패를 확인했다(수동 검증,
+		// 아래 주석 참조). 가드가 있는 현재 코드에서는 direct-only 행이 빠져야 한다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Tagged", 1754000000L));
+		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+
+		assertThat(taggedPosts.trackedPosts(id, Instant.ofEpochSecond(1700000000L)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Tagged");
+	}
+
+	@Test
+	void touchCrawledDepth는_direct_only_행의_last_crawled_at을_건드리지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Tagged", 1754000000L));
+		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+		Instant at = Instant.parse("2026-08-18T09:00:00Z");
+
+		taggedPosts.touchCrawledDepth(id, Instant.ofEpochSecond(1700000000L), at);
+
+		assertThat(db.queryForObject(
+				"SELECT last_crawled_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Tagged'",
+				Timestamp.class, id)).isEqualTo(Timestamp.from(at));
+		assertThat(db.queryForObject(
+				"SELECT last_crawled_at FROM brand_tagged_post WHERE brand_id=? AND short_code='DirectOnly'",
+				Timestamp.class, id)).isNull();
+	}
+
+	@Test
+	void directDuePosts는_direct_only_행만_반환한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Tagged", 1754000000L));
+		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());   // 겹침 — 빠져야 한다
+
+		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1700000000L)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("DirectOnly");
+	}
+
+	@Test
+	void clearDirect는_direct_표식만_해제하고_tagged_행은_남는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
+
+		taggedPosts.clearDirect(id, "Overlap");
+
+		assertThat(db.queryForObject(
+				"SELECT direct_registered_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Timestamp.class, id)).isNull();
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Long.class, id)).isEqualTo(1L);
+	}
+
+	@Test
+	void clearDirect는_행이_없어도_무해하다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.clearDirect(id, "없는코드");   // 예외 없이 no-op이면 통과
+	}
+
+	@Test
+	void deleteIfDirectOnly는_순수_direct_행만_지운다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
+		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+
+		assertThat(taggedPosts.deleteIfDirectOnly(id, "Overlap")).isFalse();     // 겹침 — 안 지워짐
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Long.class, id)).isEqualTo(1L);
+
+		assertThat(taggedPosts.deleteIfDirectOnly(id, "DirectOnly")).isTrue();   // 순수 direct — 지워짐
+		assertThat(db.queryForObject(
+				"SELECT count(*) FROM brand_tagged_post WHERE brand_id=? AND short_code='DirectOnly'",
+				Long.class, id)).isEqualTo(0L);
+
+		assertThat(taggedPosts.deleteIfDirectOnly(id, "없는코드")).isFalse();     // 행 없음 — 멱등
+	}
+
+	@Test
+	void findDirectSnapshot은_direct_등록된_행만_반환한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("TaggedOnly", 1754000000L));
+		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
+		taggedPosts.upsertDirect(id, post("Direct1", 1754000000L), registeredAt);
+
+		assertThat(taggedPosts.findDirectSnapshot(id, "TaggedOnly")).isEmpty();
+		assertThat(taggedPosts.findDirectSnapshot(id, "Direct1")).isPresent()
+				.get().satisfies(s -> {
+					assertThat(s.shortCode()).isEqualTo("Direct1");
+					assertThat(s.authorUsername()).isEqualTo("creator");
+				});
+	}
+
 	// ── 보강 정산 마킹(2026-08-13 완결 배치 서빙 스펙 §1) ─────────────────────
 
 	/**
