@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -75,6 +76,64 @@ public class BrandDirectPostRepository {
 				ON CONFLICT (user_id, short_code) DO NOTHING
 				""")
 				.param("userId", userId)
+				.param("brandId", brandId)
+				.param("shortCode", shortCode)
+				.update();
+	}
+
+	/**
+	 * 이관 전 매핑만(migrated_at IS NULL, 2026-08-18 direct 통합 §T10·§4-1) — {@code BrandPostAssembler}의
+	 * 과도기 폴백({@code assembleLegacyPending}) 전용. 이관 잡(M2)이 진행되는 만큼 자연히 비어가고,
+	 * contract 단계에서 이 메서드와 호출부를 함께 제거한다.
+	 */
+	public List<Row> findPendingByUser(long userId) {
+		return jdbcClient.sql("""
+				SELECT user_id, brand_id, short_code, monitoring_item_id
+				FROM app.brand_direct_posts
+				WHERE user_id = :userId AND migrated_at IS NULL
+				ORDER BY short_code ASC
+				""")
+				.param("userId", userId)
+				.query(Row.class)
+				.list();
+	}
+
+	/**
+	 * 이관 잡(M2) 전용 1행 — {@code createdAt}은 monitoring 등록 호출의 {@code registeredAt}(원 등록
+	 * 시점)으로 쓴다. {@code campaignId}는 원 매핑이 가리키는 레거시 아이템의 캠페인 연결(있으면)이다
+	 * — 이관 성공 시 {@code app.brand_post_campaigns}로 옮겨진다. monitoring_item_id가 NULL(신규
+	 * 통합 등록)인 행은 애초에 migrated_at이 즉시 찍혀 이 조회 대상이 아니므로 항상 값이 있다.
+	 */
+	public record PendingMigrationRow(long userId, long brandId, String shortCode, OffsetDateTime createdAt,
+			Long campaignId) {
+	}
+
+	/**
+	 * 이관 잡(M2) 전용 — {@code migrated_at IS NULL}인 행 전체를 유저 스코프 없이 조회한다.
+	 * 브랜드별 shortcode dedupe는 호출부(잡)가 한다(같은 게시물을 여러 유저가 등록했을 수 있다).
+	 * {@code monitoring_items}와 LEFT JOIN해 캠페인 연결을 한 왕복에 같이 가져온다(N+1 회피).
+	 */
+	public List<PendingMigrationRow> findAllPending() {
+		return jdbcClient.sql("""
+				SELECT p.user_id, p.brand_id, p.short_code, p.created_at, i.campaign_id
+				FROM app.brand_direct_posts p
+				LEFT JOIN app.monitoring_items i ON i.id = p.monitoring_item_id
+				WHERE p.migrated_at IS NULL
+				ORDER BY p.brand_id, p.short_code, p.user_id
+				""")
+				.query(PendingMigrationRow.class)
+				.list();
+	}
+
+	/**
+	 * 이관 잡(M2) 전용 — 성공·404·422 정산 시 {@code migrated_at}을 now()로 찍는다(무한 재시도 방지).
+	 * 같은 게시물을 여러 유저가 등록했으면 그 전부가 한 번에 정산된다(브랜드별 shortcode dedupe와 짝).
+	 */
+	public void markMigrated(long brandId, String shortCode) {
+		jdbcClient.sql("""
+				UPDATE app.brand_direct_posts SET migrated_at = now()
+				WHERE brand_id = :brandId AND short_code = :shortCode AND migrated_at IS NULL
+				""")
 				.param("brandId", brandId)
 				.param("shortCode", shortCode)
 				.update();

@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
@@ -31,22 +32,18 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * BrandPost 조립(스펙 §6-1) — 두 산지를 한 셰이프로 합친다.
+ * BrandPost 조립(2026-08-18 direct 통합 §3-3) — 브랜드 풀(monitoring {@code brand_tagged_post})
+ * 한 산지에서 {@link BrandPostResponse}를 조립한다. tagged·direct는 더 이상 별도 조립 함수·병합
+ * 단계를 갖지 않는다 — 두 값 모두 같은 행({@code tag_detected_at}·{@code direct_registered_at})의
+ * 파생값이라 조립이 한 벌로 줄었다(설계 §결정 1, §1의 "겹침 게시물 direct 셰이프 고정" 해악이
+ * 구조적으로 소멸).
  *
- * <ul>
- *   <li><b>tagged</b>: 브랜드 전용 테이블(brand_tagged_post 외 4종)을 shortcode 묶음으로 배치 조회.
- *       윈도우는 KST 오늘−90일 이후 최신순 105건 — 상한·컷은 여기(상위 계층)가 정한다.</li>
- *   <li><b>direct</b>: app.brand_direct_posts 매핑 → 레거시 {@link TrackingItemAssembler} 결과 재사용.
- *       직접 등록분의 상태·스냅샷·댓글 정본은 끝까지 레거시 경로다(브랜드 스윕은 이 게시물을 모른다).</li>
- * </ul>
+ * <p><b>과도기 폴백</b>(설계 §4-1, C 단계에서 제거): {@code app.brand_direct_posts.migrated_at IS
+ * NULL}인 매핑(이관 잡이 아직 못 옮긴 구 direct 등록)만 레거시 파이프라인({@link TrackingItemAssembler})
+ * 조립을 빌려 결과에 얹는다({@link #assembleLegacyPending}). 이관 잡(M2)이 진행되는 만큼 자연히
+ * 비어가는 임시 경로이고, 그 안에서만 레거시 조립 의존을 유지한다.
  *
- * <p>병합은 shortcode 키, direct 우선(명시 등록 보존)이되 tagged의 {@code is_paid_partnership}
- * 관측이 있으면 협찬 판정만 그 값으로 승격한다 — 브랜드 스윕만 볼 수 있는 신호라 버리면 정보 손실이다.
- *
- * <p>필터·정렬은 여기서 하지 않는다(컨트롤러 몫) — 이 클래스는 "전량"을 업로드 최신순으로 돌려주고,
- * Task 9(성과 대시보드)도 같은 전량을 소비한다.
- *
- * <p>조립 규칙(taggedPost·directPost·snapshotOf·mergeByShortcode)은 전부 정적 순수 함수라
+ * <p>조립 규칙({@link #brandPost}·{@link #snapshotOf}·{@link #commentOf})은 전부 정적 순수 함수라
  * DB 없이 단위 테스트한다. 인스턴스 메서드는 배치 조회 배선만 담당한다.
  */
 @Component
@@ -62,7 +59,8 @@ public class BrandPostAssembler {
 	 * 표시 윈도우 365일(크롤링 정책 v1 08-09 — 수집 편입 컷과 같은 깊이, 상한 없음). 직접 등록(§6-4)의
 	 * "이미 브랜드가 들고 있는 게시물" 판정도 같은 <b>창</b>을 봐야 해서 패키지 공개다
 	 * ({@link V1BrandDirectPostService}). 창은 같지만 정산 게이트는 다르다 — 그쪽은 중복 판정이라
-	 * 미정산분까지 전량을 본다({@link TaggedScope} 참조).
+	 * 미정산분까지 전량을 본다({@link BrandPostScope} 참조). direct 등록 행은 이 창의 예외다 — 등록
+	 * 시점이 아무리 오래돼도 표시된다({@code BrandReadRepository.findBrandPostsInWindow}).
 	 */
 	static final int WINDOW_DAYS = 365;
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
@@ -72,16 +70,21 @@ public class BrandPostAssembler {
 	private static final String REELS = "reels";
 	private static final String FEED = "feed";
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
-	/** 목록에 실리는 tagged는 전부 윈도우 안이라 항상 tracking이다(ended는 목록 밖 보존 — 스펙 §6-1). */
+	/** 브랜드 풀 게시물은 전부 나이 티어 정책으로 계속 수집되는 활성 상태라 항상 tracking이다(설계 §3-3). */
 	private static final String TRACKING = "tracking";
 
 	private final BrandReadRepository brandReadRepository;
+	private final BrandPostCampaignRepository postCampaignRepository;
+	/** 과도기 폴백({@link #assembleLegacyPending}) 전용 — TODO(contract) C 단계에서 제거. */
 	private final BrandDirectPostRepository directPostRepository;
+	/** 과도기 폴백 전용 — TODO(contract) C 단계에서 제거. */
 	private final TrackingItemAssembler trackingItemAssembler;
 
 	public BrandPostAssembler(BrandReadRepository brandReadRepository,
-			BrandDirectPostRepository directPostRepository, TrackingItemAssembler trackingItemAssembler) {
+			BrandPostCampaignRepository postCampaignRepository, BrandDirectPostRepository directPostRepository,
+			TrackingItemAssembler trackingItemAssembler) {
 		this.brandReadRepository = brandReadRepository;
+		this.postCampaignRepository = postCampaignRepository;
 		this.directPostRepository = directPostRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
 	}
@@ -92,12 +95,12 @@ public class BrandPostAssembler {
 	 */
 	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account) {
 		// 표시 표면이라 정산분만 — 게시자·댓글이 붙기 전의 반쯤 빈 카드를 목록·상세·counts에 싣지 않는다.
-		List<BrandPostResponse> tagged = assembleTagged(account, true, TaggedScope.ENRICHED_ONLY);
-		List<BrandPostResponse> direct = assembleDirect(userId, account.id());
-		return mergeByShortcode(direct, tagged);
+		List<BrandPostResponse> brandPool = assembleBrandPosts(account, true, BrandPostScope.ENRICHED_ONLY);
+		List<BrandPostResponse> legacyPending = assembleLegacyPending(userId, account.id());
+		return mergeWithLegacyPending(brandPool, legacyPending);
 	}
 
-	// ---------- tagged ----------
+	// ---------- 브랜드 풀 ----------
 
 	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
 	static OffsetDateTime windowCutoff() {
@@ -110,7 +113,7 @@ public class BrandPostAssembler {
 	 * 기본값을 두지 않는 이유: 정산 게이트는 표시 계약이지 존재 계약이 아니라서, 조용히 상속되면
 	 * 존재·집계 판정이 수집 중인 게시물을 "없다"고 답하게 된다.
 	 */
-	public enum TaggedScope {
+	public enum BrandPostScope {
 		/** 보강 정산분만(enriched_at IS NOT NULL) — 목록·상세·counts 같은 <b>표시</b> 표면 전용. */
 		ENRICHED_ONLY,
 		/** 정산 전 포함 전량 — 존재 판정·중복 판정·지표 집계처럼 누락이 오답이 되는 곳. */
@@ -118,10 +121,10 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * tagged 계열만 조립(브랜드 스윕 산지). 공개 이유: 성과 대시보드(Task 9)는 레거시 전량을
-	 * 이미 자기가 조립해 두고 tagged만 얹으면 되는데, {@link #assembleForBrand}를 부르면 그 안에서
-	 * {@link TrackingItemAssembler#assembleList}가 한 번 더 돌아 유저 전량 배치 조회 5~6개가
-	 * 통째로 중복된다. 브랜드 화면(§6-1)의 진입점은 여전히 {@code assembleForBrand}다.
+	 * 브랜드 풀(tagged ∪ direct) 조립 — {@code brand_tagged_post} 한 산지에서 통째로 읽는다(설계
+	 * §결정 1). 공개 이유: 성과 대시보드는 레거시 전량을 이미 자기가 조립해 두고 브랜드 풀만 얹으면
+	 * 되는데, {@link #assembleForBrand}를 부르면 그 안에서 과도기 폴백까지 한 번 더 돌아 유저 전량
+	 * 배치 조회가 통째로 중복된다. 브랜드 화면의 진입점은 여전히 {@code assembleForBrand}다.
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
@@ -131,13 +134,12 @@ public class BrandPostAssembler {
 	 * {@code commentsHidden})는 영향이 없다.
 	 *
 	 * <p>{@code scope}는 편의 오버로드를 두지 않는다 — 호출부가 표시(ENRICHED_ONLY)와 판정(ALL)을
-	 * 매번 골라야 한다({@link TaggedScope} 주석 참조).
+	 * 매번 골라야 한다({@link BrandPostScope} 주석 참조).
 	 */
-	public List<BrandPostResponse> assembleTagged(BrandAccountRow account, boolean withComments,
-			TaggedScope scope) {
-		List<BrandTaggedPostRow> posts = scope == TaggedScope.ENRICHED_ONLY
-				? brandReadRepository.findEnrichedTaggedPostsInWindow(account.id(), windowCutoff())
-				: brandReadRepository.findTaggedPostsInWindow(account.id(), windowCutoff());
+	public List<BrandPostResponse> assembleBrandPosts(BrandAccountRow account, boolean withComments,
+			BrandPostScope scope) {
+		List<BrandTaggedPostRow> posts = brandReadRepository.findBrandPostsInWindow(account.id(), windowCutoff(),
+				scope == BrandPostScope.ENRICHED_ONLY);
 		if (posts.isEmpty()) {
 			return List.of();
 		}
@@ -152,12 +154,23 @@ public class BrandPostAssembler {
 				: brandReadRepository.findComments(codes, COMMENT_LIMIT).stream()
 						.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
 		Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
+		Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), codes);
 
 		return posts.stream()
-				.map(p -> taggedPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
+				.map(p -> brandPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
 						snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
-						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt()))
+						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
+						campaignIdsByCode.getOrDefault(p.shortCode(), List.of())))
 				.toList();
+	}
+
+	/** campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다. */
+	private Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
+		Map<String, List<String>> byCode = new LinkedHashMap<>();
+		for (BrandPostCampaignRepository.Link link : postCampaignRepository.findByBrandAndShortCodes(brandId, codes)) {
+			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
+		}
+		return byCode;
 	}
 
 	/**
@@ -199,28 +212,42 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * tagged 1건 조립 — 지표·표시값의 산지가 전부 다르다: 게시물 메타는 brand_post_meta,
-	 * 게시자는 author_profile(부재 시 열거 관측값 폴백), 갱신 시각은 계정의 마지막 스윕이다.
+	 * 브랜드 풀 1건 조립(설계 §3-3 필드 규칙표) — 지표·표시값의 산지가 전부 다르다: 게시물 메타는
+	 * brand_post_meta, 게시자는 author_profile(부재 시 열거 관측값 폴백), 갱신 시각은
+	 * {@code GREATEST(계정 마지막 스윕, 행의 마지막 크롤)}이다.
+	 *
+	 * <ul>
+	 *   <li>{@code source}는 {@code direct_registered_at IS NOT NULL ? "direct" : "tagged"} 파생값이다.</li>
+	 *   <li>{@code trackingStartedAt}은 {@code COALESCE(direct_registered_at, first_seen_at)} —
+	 *       direct 등록은 등록 순간부터, tagged는 처음 발견된 순간부터 추적 시작으로 본다.</li>
+	 *   <li>{@code createdAt}은 항상 {@code first_seen_at}이다 — "이 브랜드가 이 게시물을 처음 본 시각"은
+	 *       등록 경로와 무관하게 보존된다(direct 승격이 발견 이력을 덮지 않는다).</li>
+	 *   <li>{@code updatedAt}은 행 단위 {@code last_crawled_at}과 계정의 마지막 스윕 중 늦은 값이다 —
+	 *       direct 등록 직후 카드가 "어젯밤 스윕"으로 보이지 않게 한다.</li>
+	 * </ul>
 	 *
 	 * <p>{@code commentsCollectedCount}는 조회된 댓글 행 수다 — {@code brand_tagged_post.
 	 * comments_collected_count} 컬럼을 쓰지 않는다. 그 컬럼은 "마지막 수집 시점의 열거 comment_count"
 	 * 즉 재수집 게이트의 워터마크라(monitoring BrandCollectService), 저장된 댓글 수와 다른 값이다.
 	 */
-	static BrandPostResponse taggedPost(long brandId, BrandTaggedPostRow post, BrandPostMetaRow meta,
+	static BrandPostResponse brandPost(long brandId, BrandTaggedPostRow post, BrandPostMetaRow meta,
 			AuthorRow author, List<BrandSnapshotRow> snapshotRows, List<BrandCommentRow> commentRows,
-			OffsetDateTime lastSweptAt) {
+			OffsetDateTime lastSweptAt, List<String> campaignIds) {
 		String contentType = contentTypeOf(meta == null ? null : meta.contentType());
 		List<TrackingItemResponse.SnapshotResponse> snapshots =
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
 		List<TrackingItemResponse.PostCommentResponse> comments = commentRows.stream()
 				.map(BrandPostAssembler::commentOf).filter(Objects::nonNull).toList();
 		String username = author != null ? author.username() : post.authorUsername();
-		String firstSeenAt = KstTimestamps.toKstIso(post.firstSeenAt());
+		String source = post.directRegisteredAt() != null ? SOURCE_DIRECT : SOURCE_TAGGED;
+		OffsetDateTime trackingStarted = post.directRegisteredAt() != null ? post.directRegisteredAt()
+				: post.firstSeenAt();
+		OffsetDateTime updated = latestOf(lastSweptAt, post.lastCrawledAt());
 
 		return new BrandPostResponse(
 				post.shortCode(),
 				String.valueOf(brandId),
-				SOURCE_TAGGED,
+				source,
 				postUrl(contentType, post.shortCode()),
 				post.shortCode(),
 				contentType,
@@ -239,8 +266,8 @@ public class BrandPostAssembler {
 						meta == null ? null : meta.caption()),
 				meta == null ? null : meta.isPaidPartnership(),
 				TRACKING,
-				firstSeenAt,
-				// 윈도우 안 게시물만 실리므로 종료 시각이 존재할 수 없다(윈도우를 벗어나면 목록에서 빠진다).
+				KstTimestamps.toKstIso(trackingStarted),
+				// 종료 개념이 없다 — 취소가 유일한 종료 경로고, 취소되면 이 행 자체가 목록에서 빠진다.
 				null,
 				latestOf(snapshots),
 				snapshots,
@@ -248,10 +275,9 @@ public class BrandPostAssembler {
 				commentsHidden(snapshots),
 				comments.size(),
 				comments,
-				// 브랜드 태그 게시물은 캠페인에 연결되지 않는다(캠페인 연결은 레거시 아이템의 속성).
-				List.of(),
-				firstSeenAt,
-				KstTimestamps.toKstIso(lastSweptAt));
+				campaignIds,
+				KstTimestamps.toKstIso(post.firstSeenAt()),
+				KstTimestamps.toKstIso(updated));
 	}
 
 	/**
@@ -284,10 +310,17 @@ public class BrandPostAssembler {
 				row.likeCount(), KstTimestamps.toKstIso(row.commentedAt()), reply);
 	}
 
-	// ---------- direct ----------
+	// ---------- 과도기 폴백(설계 §4-1) ----------
 
-	private List<BrandPostResponse> assembleDirect(long userId, long brandId) {
-		List<BrandDirectPostRepository.Row> rows = directPostRepository.findByUser(userId).stream()
+	/**
+	 * TODO(contract): 이관 잡(M2)이 완주하면 이 메서드와 {@link BrandDirectPostRepository#findPendingByUser}·
+	 * {@link TrackingItemAssembler} 의존을 함께 제거한다(설계 §4-1, C1).
+	 *
+	 * <p>{@code migrated_at IS NULL}인 매핑(구 direct 등록 — 이관 잡이 아직 못 옮긴 것)만 레거시
+	 * 파이프라인으로 조립해 반환한다. 롤링 배포 창·이관 진행 중에도 카드가 사라지지 않게 하는 장치다.
+	 */
+	private List<BrandPostResponse> assembleLegacyPending(long userId, long brandId) {
+		List<BrandDirectPostRepository.Row> rows = directPostRepository.findPendingByUser(userId).stream()
 				.filter(r -> r.brandId() == brandId)
 				.toList();
 		if (rows.isEmpty()) {
@@ -299,31 +332,31 @@ public class BrandPostAssembler {
 		Map<String, TrackingItemResponse> itemsById = assembled.items().stream()
 				.collect(Collectors.toMap(TrackingItemResponse::id, Function.identity(), (a, b) -> a));
 
-		List<BrandPostResponse> direct = new ArrayList<>(rows.size());
+		List<BrandPostResponse> legacy = new ArrayList<>(rows.size());
 		for (BrandDirectPostRepository.Row row : rows) {
 			TrackingItemResponse item = itemsById.get(String.valueOf(row.monitoringItemId()));
 			if (item == null) {
 				// 매핑이 가리키는 레거시 행이 사라진 경우(수동 정리 등) — 목록을 죽이지 않고 건너뛴다.
-				log.warn("직접 등록 매핑의 레거시 아이템 부재 — 건너뜀 userId={}, shortCode={}, itemId={}",
+				log.warn("이관 전 직접 등록 매핑의 레거시 아이템 부재 — 건너뜀 userId={}, shortCode={}, itemId={}",
 						userId, row.shortCode(), row.monitoringItemId());
 				continue;
 			}
-			direct.add(directPost(brandId, row.shortCode(), item, assembled.lastCollectedAt()));
+			legacy.add(legacyPendingPost(brandId, row.shortCode(), item, assembled.lastCollectedAt()));
 		}
-		return direct;
+		return legacy;
 	}
 
 	/**
-	 * direct 1건 변환 — 레거시 TrackingItem을 BrandPost 셰이프로 옮긴다. 스냅샷·댓글은 이미 레거시
-	 * 어셈블러가 계약대로 만든 값이라 그대로 통과시킨다(셰이프 동형).
+	 * 과도기 폴백 전용 변환 — 레거시 TrackingItem을 BrandPost 셰이프로 옮긴다. TODO(contract) —
+	 * {@link #assembleLegacyPending}과 함께 C 단계에서 제거한다.
 	 *
 	 * <p>shortcode는 반드시 매핑 행 값이다 — 레거시 응답엔 shortcode 필드가 없고(post.url만 있다)
 	 * URL 파싱은 등록 원문 형태에 좌우된다.
 	 *
-	 * @param legacyLastCollectedAt 레거시 마지막 성공 스윕 시각 — direct 게시물의 갱신 시각은 브랜드
-	 *                              스윕이 아니라 이쪽이다(브랜드 스윕은 이 게시물을 수집하지 않는다).
+	 * @param legacyLastCollectedAt 레거시 마지막 성공 스윕 시각 — 이관 전 매핑의 갱신 시각은 브랜드
+	 *                              스윕이 아니라 이쪽이다(브랜드 스윕은 이 게시물을 모른다).
 	 */
-	static BrandPostResponse directPost(long brandId, String shortCode, TrackingItemResponse item,
+	static BrandPostResponse legacyPendingPost(long brandId, String shortCode, TrackingItemResponse item,
 			OffsetDateTime legacyLastCollectedAt) {
 		TrackingItemResponse.TrackedPostResponse post = item.post();
 		List<TrackingItemResponse.SnapshotResponse> snapshots = post == null ? List.of() : post.snapshots();
@@ -342,7 +375,7 @@ public class BrandPostAssembler {
 				post == null ? null : post.uploadedAt(),
 				caption,
 				post == null ? null : post.thumbnailUrl(),
-				// 레거시 수집엔 영상 원본 URL·길이가 없다(브랜드 전용 필드).
+				// 레거시 수집엔 영상 원본 URL·길이가 없다(브랜드 전용 필드) — 이관 잡이 통합 풀로 옮기면 채워진다.
 				null,
 				null,
 				username == null ? null : PROFILE_URL_PREFIX + username + "/",
@@ -352,8 +385,7 @@ public class BrandPostAssembler {
 				// 레거시 프로필엔 인증 배지 관측이 없다 — 거짓 배지를 띄우지 않기 위해 false 고정.
 				false,
 				item.followers(),
-				// 레거시엔 is_paid_partnership 관측이 없어 캡션 키워드만으로 판정한다(같은 shortcode의
-				// tagged 관측이 있으면 mergeByShortcode가 승격시킨다).
+				// 레거시엔 is_paid_partnership 관측이 없어 캡션 키워드만으로 판정한다.
 				BrandSponsorshipClassifier.classify(null, caption),
 				null,
 				item.status(),
@@ -371,42 +403,29 @@ public class BrandPostAssembler {
 				KstTimestamps.toKstIso(legacyLastCollectedAt));
 	}
 
-	// ---------- 병합 ----------
-
 	/**
-	 * shortcode 병합 — direct 우선(명시 등록 보존)이되, 겹치는 tagged에 유료협찬 관측이 있으면
-	 * 협찬 판정만 그 값으로 승격한다. 결과는 업로드 최신순(takenAt 미상은 마지막, 동률은 shortcode).
+	 * 브랜드 풀과 과도기 폴백을 shortcode로 합친다 — <b>브랜드 풀이 우선</b>이다(정본 산지). 이론상
+	 * 이관 전 매핑과 브랜드 풀이 같은 shortcode를 가질 일은 없다(이관되면 폴백 조회 대상에서
+	 * 빠진다) — 그래도 안전망으로 겹치면 브랜드 풀 값을 살린다.
 	 */
-	static List<BrandPostResponse> mergeByShortcode(List<BrandPostResponse> direct,
-			List<BrandPostResponse> tagged) {
+	private static List<BrandPostResponse> mergeWithLegacyPending(List<BrandPostResponse> brandPool,
+			List<BrandPostResponse> legacyPending) {
 		Map<String, BrandPostResponse> byCode = new LinkedHashMap<>();
-		for (BrandPostResponse post : direct) {
+		for (BrandPostResponse post : brandPool) {
 			byCode.put(post.shortcode(), post);
 		}
-		for (BrandPostResponse post : tagged) {
-			byCode.merge(post.shortcode(), post, (existing, taggedPost) -> promoteSponsorship(existing, taggedPost));
+		for (BrandPostResponse post : legacyPending) {
+			byCode.putIfAbsent(post.shortcode(), post);
 		}
 		return byCode.values().stream()
-				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn,
-								Comparator.nullsLast(Comparator.reverseOrder()))
+				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
 						.thenComparing(BrandPostResponse::shortcode))
 				.toList();
 	}
 
-	/** direct 본체는 그대로 두고 tagged의 유료협찬 관측만 얹는다(관측이 없으면 무변경). */
-	private static BrandPostResponse promoteSponsorship(BrandPostResponse direct, BrandPostResponse tagged) {
-		if (tagged.isPaidPartnership() == null) {
-			return direct;
-		}
-		String caption = direct.caption() != null ? direct.caption() : tagged.caption();
-		return direct.withSponsorship(
-				BrandSponsorshipClassifier.classify(tagged.isPaidPartnership(), caption),
-				tagged.isPaidPartnership());
-	}
-
 	/**
-	 * 업로드 날짜(KST) — takenAt은 산지에 따라 타임스탬프(tagged)와 날짜(direct, 레거시 uploaded_at이
-	 * date 컬럼)가 섞여 들어와서 앞 10자만 본다. 정렬·업로드 기간 필터의 공용 키다.
+	 * 업로드 날짜(KST) — takenAt은 산지에 따라 타임스탬프(브랜드 풀)와 날짜(과도기 폴백, 레거시
+	 * uploaded_at이 date 컬럼)가 섞여 들어와서 앞 10자만 본다. 정렬·업로드 기간 필터의 공용 키다.
 	 */
 	static LocalDate uploadedOn(BrandPostResponse post) {
 		String takenAt = post.takenAt();
@@ -434,6 +453,17 @@ public class BrandPostAssembler {
 			List<TrackingItemResponse.SnapshotResponse> snapshots) {
 		// 스냅샷은 captured_on 오름차순으로 온다(BrandReadRepository.findSnapshots 계약) — 마지막이 최신.
 		return snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
+	}
+
+	/** null-safe 최댓값(GREATEST) — 계정 마지막 스윕과 행 마지막 크롤 중 늦은 값(설계 §3-3 updatedAt). */
+	private static OffsetDateTime latestOf(OffsetDateTime a, OffsetDateTime b) {
+		if (a == null) {
+			return b;
+		}
+		if (b == null) {
+			return a;
+		}
+		return a.isAfter(b) ? a : b;
 	}
 
 	private static Long commentsTotal(List<TrackingItemResponse.SnapshotResponse> snapshots) {

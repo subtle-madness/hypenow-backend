@@ -1,5 +1,7 @@
 package com.celfit.was.monitoring;
 
+import java.util.Collection;
+import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -48,5 +50,28 @@ public class BrandPostCampaignRepository {
 				.param("brandId", brandId)
 				.param("shortCode", shortCode)
 				.update();
+	}
+
+	/**
+	 * 브랜드 풀 게시물 묶음의 캠페인 배치 조회(2026-08-18 direct 통합 §T10) — {@code BrandPostAssembler}가
+	 * {@code campaignIds}를 채우는 데 쓴다. shortcode당 다건일 수 있다(N:M) — 호출부가 shortcode로 그룹핑.
+	 */
+	public List<Link> findByBrandAndShortCodes(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbcClient.sql("""
+				SELECT short_code, campaign_id FROM app.brand_post_campaigns
+				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
+				ORDER BY short_code, campaign_id
+				""")
+				.param("brandId", brandId)
+				.param("shortCodes", shortCodes)
+				.query(Link.class)
+				.list();
+	}
+
+	/** {@link #findByBrandAndShortCodes} 1행 — shortcode 1건에 캠페인 1건. */
+	public record Link(String shortCode, long campaignId) {
 	}
 }
