@@ -1,0 +1,32 @@
+apiVersion: 1
+datasources:
+  - name: HypeNow analysis (dev)
+    uid: hypenow-analysis-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: analysis
+    user: dev
+    isDefault: true
+    jsonData: { database: analysis, sslmode: disable, postgresVersion: 1700 }
+    secureJsonData: { password: dev }
+  - name: HypeNow monitoring (dev)
+    uid: hypenow-monitoring-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: monitoring
+    user: dev
+    jsonData: { database: monitoring, sslmode: disable, postgresVersion: 1700 }
+    secureJsonData: { password: dev }
+  - name: Prometheus (dev)
+    uid: hypenow-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData: { timeInterval: 30s }
+  - name: Loki (스텁 — 로컬 미기동)
+    uid: hypenow-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
