@@ -9,13 +9,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.monitoring.domain.BrandStatus;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
 import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandLegacyHistoryCopier;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSeededAccountRepository;
+import com.celfit.monitoring.store.TaggedPostRepository;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,6 +84,81 @@ class BrandControllerTest {
 		@Override
 		public Optional<BrandRow> findByUsername(String username) {
 			return Optional.ofNullable(row);
+		}
+
+		@Override
+		public Optional<BrandRow> findById(long brandId) {
+			return row != null && row.id() == brandId ? Optional.of(row) : Optional.empty();
+		}
+	}
+
+	/** direct 등록 조회·취소 스텁 — findDirectSnapshot·deleteIfDirectOnly·clearDirect 호출 인자 캡처. */
+	private static final class StubTaggedPosts extends TaggedPostRepository {
+		Optional<DirectSnapshot> snapshot = Optional.empty();
+		boolean deleteIfDirectOnlyResult;
+		Long deleteIfDirectOnlyBrandId;
+		String deleteIfDirectOnlyShortCode;
+		Long clearDirectBrandId;
+		String clearDirectShortCode;
+
+		StubTaggedPosts() {
+			super(null);
+		}
+
+		@Override
+		public Optional<DirectSnapshot> findDirectSnapshot(long brandId, String shortCode) {
+			return snapshot;
+		}
+
+		@Override
+		public boolean deleteIfDirectOnly(long brandId, String shortCode) {
+			deleteIfDirectOnlyBrandId = brandId;
+			deleteIfDirectOnlyShortCode = shortCode;
+			return deleteIfDirectOnlyResult;
+		}
+
+		@Override
+		public void clearDirect(long brandId, String shortCode) {
+			clearDirectBrandId = brandId;
+			clearDirectShortCode = shortCode;
+		}
+	}
+
+	/** direct 단건 수집 스텁 — 반환값·예외를 주입하고 전달 인자를 캡처한다. */
+	private static final class StubDirectCollect extends BrandDirectCollectService {
+		PostInfo result;
+		RuntimeException toThrow;
+		BrandRow receivedBrand;
+		String receivedShortCode;
+		Instant receivedRegisteredAt;
+
+		StubDirectCollect() {
+			super(null, null, null, null, null);
+		}
+
+		@Override
+		public PostInfo collectAndEnrich(BrandRow brand, String shortCode, Instant registeredAt) {
+			receivedBrand = brand;
+			receivedShortCode = shortCode;
+			receivedRegisteredAt = registeredAt;
+			if (toThrow != null) {
+				throw toThrow;
+			}
+			return result;
+		}
+	}
+
+	/** 레거시 이력 복사 스텁 — 호출 여부·인자만 캡처(실제 SQL은 BrandLegacyHistoryCopierTest가 검증). */
+	private static final class StubLegacyHistoryCopier extends BrandLegacyHistoryCopier {
+		String copiedShortCode;
+
+		StubLegacyHistoryCopier() {
+			super(null);
+		}
+
+		@Override
+		public void copy(String shortCode) {
+			copiedShortCode = shortCode;
 		}
 	}
 
@@ -172,14 +253,23 @@ class BrandControllerTest {
 	private final StubService service = new StubService();
 	private final StubBrandRepository brands = new StubBrandRepository();
 	private final StubHashtagRepository hashtags = new StubHashtagRepository();
+	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
+	private final StubDirectCollect directCollect = new StubDirectCollect();
+	private final StubLegacyHistoryCopier legacyHistoryCopier = new StubLegacyHistoryCopier();
 	private final StubSeededAccountRepository seededAccounts = new StubSeededAccountRepository();
 	private MockMvc mvc;
 
 	@BeforeEach
 	void setUp() {
-		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags, seededAccounts))
+		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags, taggedPosts,
+						directCollect, legacyHistoryCopier, seededAccounts))
 				.setControllerAdvice(new ApiExceptionHandler())
 				.build();
+	}
+
+	private static PostInfo samplePost(String shortCode, long takenAt) {
+		return new PostInfo(shortCode, "author1", null, null, "101", "REELS", "캡션", null,
+				takenAt, 10L, 2L, 500L, null, null, null, null, null, null, null, true, false, false);
 	}
 
 	@Test
@@ -270,6 +360,143 @@ class BrandControllerTest {
 	void 미등록_탈퇴는_404다() throws Exception {
 		service.outcome = BrandRegistrationService.DeregisterOutcome.NOT_FOUND;
 		mvc.perform(delete("/api/brands/ghost")).andExpect(status().isNotFound());
+	}
+
+	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §2-2·§2-4·§4-2) ----------
+
+	@Test
+	void direct_등록_신규_수집은_201이다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.result = samplePost("ABC123", 1754000000L);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.shortCode").value("ABC123"))
+				.andExpect(jsonPath("$.authorUsername").value("author1"))
+				.andExpect(jsonPath("$.contentType").value("REELS"));
+		assertThat(directCollect.receivedShortCode).isEqualTo("ABC123");
+		assertThat(directCollect.receivedBrand.id()).isEqualTo(1L);
+	}
+
+	@Test
+	void direct_등록_이미_등록된_행은_200_멱등이고_단건_콜을_다시_내지_않는다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		taggedPosts.snapshot = Optional.of(new TaggedPostRepository.DirectSnapshot("ABC123", "author1",
+				Instant.ofEpochSecond(1754000000L), "REELS"));
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.shortCode").value("ABC123"));
+		assertThat(directCollect.receivedShortCode).isNull();   // 재수집 콜이 안 나갔다
+	}
+
+	@Test
+	void direct_등록_게시물_부재는_404_POST_NOT_FOUND다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.toThrow = new SubjectNotFoundException("게시물 없음");
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"Ghost\"}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("POST_NOT_FOUND"));
+	}
+
+	@Test
+	void direct_등록_게시일_미상은_422_POST_UNSUPPORTED다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.toThrow = new PostShapeUnsupportedException("게시일 미상");
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"NoDate\"}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("POST_UNSUPPORTED"));
+	}
+
+	@Test
+	void direct_등록_브랜드_미존재는_404_BRAND_NOT_FOUND다() throws Exception {
+		brands.row = null;
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void direct_등록_비ACTIVE_브랜드는_404_BRAND_NOT_FOUND다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void direct_등록_shortCode_누락은_400이다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON).content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+	}
+
+	@Test
+	void direct_등록_importLegacyHistory가_true면_수집_전에_레거시_이력을_복사한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.result = samplePost("ABC123", 1754000000L);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\",\"importLegacyHistory\":true,"
+								+ "\"registeredAt\":\"2026-08-01T00:00:00Z\"}"))
+				.andExpect(status().isCreated());
+
+		assertThat(legacyHistoryCopier.copiedShortCode).isEqualTo("ABC123");
+		assertThat(directCollect.receivedRegisteredAt).isEqualTo(Instant.parse("2026-08-01T00:00:00Z"));
+	}
+
+	@Test
+	void direct_등록_importLegacyHistory가_없으면_레거시_복사를_건너뛴다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.result = samplePost("ABC123", 1754000000L);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isCreated());
+
+		assertThat(legacyHistoryCopier.copiedShortCode).isNull();
+	}
+
+	@Test
+	void direct_취소_행이_없어도_204_멱등이다() throws Exception {
+		taggedPosts.deleteIfDirectOnlyResult = false;   // 행 자체가 없음 — delete·clear 둘 다 no-op
+
+		mvc.perform(delete("/api/brands/1/direct-posts/{shortCode}", "ABC123")).andExpect(status().isNoContent());
+
+		assertThat(taggedPosts.deleteIfDirectOnlyBrandId).isEqualTo(1L);
+		assertThat(taggedPosts.clearDirectBrandId).isEqualTo(1L);   // 무해한 no-op UPDATE
+	}
+
+	@Test
+	void direct_취소_겹침_행은_direct_표식만_해제하고_204다() throws Exception {
+		taggedPosts.deleteIfDirectOnlyResult = false;   // tag_detected_at 있음 — delete 조건 불충족
+
+		mvc.perform(delete("/api/brands/1/direct-posts/{shortCode}", "ABC123")).andExpect(status().isNoContent());
+
+		assertThat(taggedPosts.clearDirectBrandId).isEqualTo(1L);
+		assertThat(taggedPosts.clearDirectShortCode).isEqualTo("ABC123");
+	}
+
+	@Test
+	void direct_취소_순수_direct_행은_삭제되고_204이며_clearDirect는_불리지_않는다() throws Exception {
+		taggedPosts.deleteIfDirectOnlyResult = true;   // tag_detected_at 없음 — delete 성공
+
+		mvc.perform(delete("/api/brands/1/direct-posts/{shortCode}", "ABC123")).andExpect(status().isNoContent());
+
+		assertThat(taggedPosts.deleteIfDirectOnlyShortCode).isEqualTo("ABC123");
+		assertThat(taggedPosts.clearDirectBrandId).isNull();   // 이미 지워졌으니 clearDirect는 호출 안 됨
 	}
 
 	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------

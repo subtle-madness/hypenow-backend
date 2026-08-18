@@ -73,6 +73,17 @@ individual(브랜드 미귀속 개인 추적) 포함 ④ `meta.limit` 값 변경
    결함이 아니라 두 화면이 같은 콘텐츠를 두고 다른 말을 하는 정합 결함이고, 제대로 고치려면
    지연 매핑·기존 매핑·캠페인 첫 갈래 세 지점의 타입 판정을 함께 손대야 해서 이번 범위를
    넘는다. 반대로 **도달은 흔하므로 후속의 우선순위는 낮지 않다**.
+
+   **08-18 정정 — 절반 해소**: 브랜드 direct 게시물 파이프라인 통합
+   ([spec](../superpowers/specs/2026-08-18-brand-direct-pipeline-unification-design.md),
+   MON-BT 트랙)에서 `V1BrandDirectPostService`를 전용 등록 테이블(`app.brand_post_registrations`,
+   `brand_id` 컬럼 보유) 기반으로 재작성하며 **`resolveLazyMappingBrand` 자체를 삭제**했다 —
+   타입 검사 없는 폴백(형제 매핑이 없으면 활성 링크가 하나일 때 `links.get(0).brandId()`로
+   폴백)이라는 산지가 코드에서 사라져, 폴링만으로 새 경쟁사 매핑이 생기는 경로는 **소멸**했다.
+   다만 이는 이 문제의 절반뿐이다 — **캠페인 첫 갈래(`V2CampaignContentService.add()`가 이미
+   아이템이 있으면 캠페인만 연결)의 타입 판정 부재는 이번 범위 밖**이라 그대로 남는다. own →
+   competitor 전환 후에도 기존 direct 등록 매핑이 잔존하고, 그 매핑이 이미 아이템을 갖고
+   있으면 여전히 타입 검사 없이 캠페인에 붙을 수 있다.
 2. **`ownFirst` 구현이 둘로 갈려 있다.** "own 귀속이 competitor 귀속을 이긴다"는 규칙이
    지금 세 지점(`PerformanceContentAssembler`의 tagged 병합 순서와 direct 대 tagged 동률
    해소, `V2CampaignContentService`의 캠페인 조회)에 적용되는데, `ownFirst` 구현체는 두

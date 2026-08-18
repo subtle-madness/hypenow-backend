@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
@@ -20,6 +21,7 @@ import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
+import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
@@ -31,7 +33,6 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
-import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -51,7 +52,12 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * /v1/brand-monitoring 게시물 표면 계약(스펙 §6-1·§6-2) — counts 정합, 필터·정렬, 소유권 403,
  * 미소유 게시물 404를 고정한다. 어셈블러는 실 빈으로 붙이고 DB 접점(BrandReadRepository·
- * BrandDirectPostRepository)과 레거시 조립기만 mock한다 — 조립·병합·필터 전 구간이 실제로 돈다.
+ * BrandPostCampaignRepository)만 mock한다 — 조립·병합·필터 전 구간이 실제로 돈다.
+ *
+ * <p>2026-08-18 direct 통합(T10) 이후 tagged·direct는 같은 {@code findBrandPostsInWindow} 조회의
+ * 파생값이다 — {@code directPostRepository}·{@code trackingItemAssembler}는 과도기 폴백
+ * (이관 전 매핑, {@code migrated_at IS NULL})에만 쓰이고 이 표면 계약 테스트는 기본적으로 건드리지
+ * 않는다(Mockito 기본값이 빈 목록이라 폴백은 자연히 no-op).
  */
 @WebMvcTest(controllers = V1BrandPostsController.class,
 		properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true"})
@@ -66,7 +72,11 @@ class V1BrandPostsControllerTest {
 	@MockitoBean
 	BrandReadRepository brandReadRepository;
 	@MockitoBean
+	BrandPostCampaignRepository postCampaignRepository;
+	/** 과도기 폴백 전용(T10) — 이 표면 계약 테스트는 건드리지 않는다(기본값이 빈 목록). */
+	@MockitoBean
 	BrandDirectPostRepository directPostRepository;
+	/** 과도기 폴백 전용(T10). */
 	@MockitoBean
 	TrackingItemAssembler trackingItemAssembler;
 	/** 직접 등록(§6-4)의 판정 로직은 V1BrandDirectPostServiceTest가 본다 — 여기는 표면 계약만. */
@@ -135,10 +145,10 @@ class V1BrandPostsControllerTest {
 
 	@Test
 	void 목록은_tagged와_direct를_합치고_counts는_필터_전_전량이다() throws Exception {
-		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				directRow("XYZ", "2026-08-06T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
-				meta("AAA", "REELS", true), meta("BBB", "FEED", false)));
-		givenDirect("XYZ", 42L);
+				meta("AAA", "REELS", true), meta("BBB", "FEED", false), meta("XYZ", "REELS", null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
 				.andExpect(status().isOk())
@@ -202,9 +212,9 @@ class V1BrandPostsControllerTest {
 
 	@Test
 	void source_필터는_direct만_남긴다() throws Exception {
-		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
-		givenDirect("XYZ", 42L);
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), directRow("XYZ", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("XYZ", "REELS", null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=direct").with(user(principal())))
 				.andExpect(status().isOk())
@@ -291,7 +301,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findEnrichedTaggedPostsInWindow(anyLong(), any());
+		then(brandReadRepository).should(never()).findBrandPostsInWindow(anyLong(), any(), anyBoolean());
 	}
 
 	@Test
@@ -340,9 +350,10 @@ class V1BrandPostsControllerTest {
 		// 우회하는지 검증한다(창 안 날짜면 예외 없이도 통과해 테스트가 아무것도 못 잡는다).
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
 				.willReturn(Optional.of(linkWithMonths(1)));
-		givenTagged(taggedRow("AAA", "2026-04-01T01:00:00Z"));   // 창 밖 tagged — 제외 대조군
-		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
-		givenDirect("XYZ", 42L, "2026-02-01");
+		givenTagged(taggedRow("AAA", "2026-04-01T01:00:00Z"),   // 창 밖 tagged — 제외 대조군
+				directRow("XYZ", "2026-02-01T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("XYZ", "REELS", null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
 				.andExpect(status().isOk())
@@ -554,34 +565,15 @@ class V1BrandPostsControllerTest {
 
 	/**
 	 * 목록·상세는 표시 표면이라 <b>정산분 조회</b>를 탄다(2026-08-13 완결 배치 서빙) — 여기가
-	 * findTaggedPostsInWindow(전량)로 되돌아가면 이 클래스 전체가 빈 목록으로 떨어져 바로 드러난다.
+	 * findBrandPostsInWindow(전량)로 되돌아가면 이 클래스 전체가 빈 목록으로 떨어져 바로 드러난다.
 	 */
 	private void givenTagged(BrandTaggedPostRow... rows) {
-		given(brandReadRepository.findEnrichedTaggedPostsInWindow(anyLong(), any())).willReturn(List.of(rows));
+		given(brandReadRepository.findBrandPostsInWindow(anyLong(), any(), org.mockito.ArgumentMatchers.eq(true)))
+				.willReturn(List.of(rows));
 	}
 
 	private void givenHashtag(BrandHashtagPostRow... rows) {
 		given(brandReadRepository.findHashtagPosts(anyLong(), any(), anyInt())).willReturn(List.of(rows));
-	}
-
-	/** 직접 등록 1건 — 매핑 행 + 레거시 조립 결과를 함께 스텁한다. */
-	private void givenDirect(String shortCode, long itemId) {
-		givenDirect(shortCode, itemId, "2026-08-06");
-	}
-
-	private void givenDirect(String shortCode, long itemId, String uploadedDate) {
-		given(directPostRepository.findByUser(7L))
-				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 100L, shortCode, itemId)));
-		var snapshot = new TrackingItemResponse.SnapshotResponse(uploadedDate, 300L, 20L, false, 9L,
-				4L, 2L, false, 1L);
-		var post = new TrackingItemResponse.TrackedPostResponse("https://www.instagram.com/reel/" + shortCode + "/",
-				"reels", uploadedDate, "일상 기록", List.of(), "https://cdn/legacy-thumb.jpg", null,
-				List.of(snapshot), List.of());
-		var item = TrackingItemResponse.full(itemId, "url", "tracking", "glowdeep_92", "글로우딥",
-				"https://cdn/author.jpg", 12345L, uploadedDate, null, null,
-				"https://www.instagram.com/reel/" + shortCode + "/", LocalDate.of(2026, 8, 1), 30, null, post, null);
-		given(trackingItemAssembler.assembleList(7L)).willReturn(new TrackingItemAssembler.AssembledList(
-				List.of(item), OffsetDateTime.parse("2026-08-07T17:00:00Z"), LocalDate.of(2026, 8, 8)));
 	}
 
 	private static BrandLinkRow link() {
@@ -603,8 +595,17 @@ class V1BrandPostsControllerTest {
 	}
 
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {
-		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt),
-				OffsetDateTime.parse("2026-08-06T02:00:00Z"), 7L);
+		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
+		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
+				firstSeenAt, firstSeenAt, null);
+	}
+
+	/** direct 등록 행 — direct_registered_at만 채워지고 tag_detected_at은 null(direct-only, source=direct). */
+	private static BrandTaggedPostRow directRow(String code, String takenAt) {
+		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
+		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
+		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 0L,
+				registeredAt, null, registeredAt);
 	}
 
 	private static BrandHashtagPostRow hashtagRow(String code, String takenAt) {
