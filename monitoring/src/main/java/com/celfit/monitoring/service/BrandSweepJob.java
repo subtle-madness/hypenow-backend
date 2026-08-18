@@ -20,6 +20,10 @@ import org.springframework.stereotype.Service;
  * 격리하고 재시도 라운드는 두지 않는다 — 실패 브랜드는 last_swept_on이 갱신되지 않은 채
  * 다음날 스윕이 자연 백스톱한다(08-06 운영 결정: 현행 유지).
  *
+ * <p>2026-08-18 direct 통합(§3-2) — 브랜드마다 유저태그 열거(1단계) 다음에 direct 게시물
+ * 단건 수집({@link BrandDirectCollectService#sweepDirect}, 2단계)이, 그 다음에 해시태그 발견
+ * 스윕(3단계)이 각자 격리된 채로 돈다.
+ *
  * <p>계정 삭제·비공개 전환(SubjectNotFound·PrivateAccount)도 상태 전이 없이 격리만 한다 —
  * 브랜드 추적은 탈퇴(CLOSED)까지가 정본이라(스펙 §8) 캠페인의 hidden 전이를 승계하지 않는다.
  * 태그 열거 404(태그 0건)는 HikerClient.fetchTaggedPage가 이미 빈 페이지로 삼킨다.
@@ -32,6 +36,7 @@ public class BrandSweepJob {
 
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
+	private final BrandDirectCollectService directCollect;
 	private final BrandHashtagCollectService hashtagCollect;
 	private final AuthorProfileImageArchiveJob authorImageArchive;
 	private final BrandProfileImageArchiveJob brandImageArchive;
@@ -40,12 +45,14 @@ public class BrandSweepJob {
 	private final HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
-			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob authorImageArchive,
-			BrandProfileImageArchiveJob brandImageArchive, BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
+			BrandDirectCollectService directCollect, BrandHashtagCollectService hashtagCollect,
+			AuthorProfileImageArchiveJob authorImageArchive, BrandProfileImageArchiveJob brandImageArchive,
+			BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
 			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive,
 			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive) {
 		this.brands = brands;
 		this.collect = collect;
+		this.directCollect = directCollect;
 		this.hashtagCollect = hashtagCollect;
 		this.authorImageArchive = authorImageArchive;
 		this.brandImageArchive = brandImageArchive;
@@ -75,14 +82,18 @@ public class BrandSweepJob {
 	}
 
 	/**
-	 * 유저태그 스윕과 해시태그 스윕은 브랜드마다 각자 try/catch로 격리한다 — 한쪽 실패가
-	 * touchSwept·failures 카운트에 영향을 주지 않고, 유저태그 스윕이 실패한 브랜드도 해시태그
-	 * 스윕은 그대로 시도된다(서로 독립된 수집 경로 — 스펙 §8).
+	 * 유저태그 스윕·direct 2단계·해시태그 스윕은 브랜드마다 각자 try/catch로 격리한다(2026-08-18
+	 * direct 통합 §3-2) — 한쪽 실패가 touchSwept·failures 카운트에 영향을 주지 않고, 어느 한 단계가
+	 * 실패한 브랜드도 나머지 단계는 그대로 시도된다(서로 독립된 수집 경로 — 스펙 §8).
+	 *
+	 * <p><b>touchSwept는 1단계(유저태그) 성공에만 찍는다</b> — direct 2단계 실패가 계정을 "수집
+	 * 준비 중"으로 되돌리면 안 된다(direct 실패는 그 게시물만의 문제이지 계정 전체의 문제가 아니다).
 	 */
 	private void runSweep() {
 		LocalDate today = LocalDate.now(KST);
 		List<BrandRow> active = brands.findActive();
 		int failures = 0;
+		int directFailures = 0;
 		int hashtagFailures = 0;
 		for (BrandRow b : active) {
 			try {
@@ -93,14 +104,20 @@ public class BrandSweepJob {
 				log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 			}
 			try {
+				directCollect.sweepDirect(b);
+			} catch (RuntimeException e) {
+				directFailures++;
+				log.warn("브랜드 direct 스윕 실패(격리) — {}: {}", b.username(), e.toString());
+			}
+			try {
 				hashtagCollect.sweep(b);
 			} catch (RuntimeException e) {
 				hashtagFailures++;
 				log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 			}
 		}
-		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, 해시태그 실패 {}건",
-				active.size(), failures, hashtagFailures);
+		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, direct 실패 {}건, 해시태그 실패 {}건",
+				active.size(), failures, directFailures, hashtagFailures);
 	}
 
 	/** 건 단위가 아니라 잡 전체를 격리한다 — 스윕 결과와 무관한 부수 작업이라 예외를 밖으로 내지 않는다. */
