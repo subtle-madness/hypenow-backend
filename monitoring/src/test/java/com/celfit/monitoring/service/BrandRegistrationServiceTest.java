@@ -275,6 +275,8 @@ class BrandRegistrationServiceTest {
 
 	/** enrich executor에 제출된 태스크 — 개수만 본다(실행은 아래 풀이 실제로 한다). */
 	private final List<Runnable> enrichSubmissions = new CopyOnWriteArrayList<>();
+	/** hashtagSweep executor에 제출된 태스크 — 08-18 분리 후 enrich와 별개 큐임을 증명하는 용도. */
+	private final List<Runnable> hashtagSweepSubmissions = new CopyOnWriteArrayList<>();
 	/** 태스크 밖으로 샌 예외 — 격리 규칙(보강·해시태그 실패는 태스크 안에서 삼킨다) 위반 감시. */
 	private final List<Throwable> escaped = new CopyOnWriteArrayList<>();
 	private final ExecutorService enrichPool = Executors.newSingleThreadExecutor();
@@ -291,12 +293,26 @@ class BrandRegistrationServiceTest {
 			}
 		});
 	};
+	/** hashtagSweep executor 스텁 — enrich와 별개 풀이라 서로 다른 큐로 제출됐는지를 구분해서 잡는다. */
+	private final ExecutorService hashtagSweepPool = Executors.newSingleThreadExecutor();
+	private final Executor hashtagSweep = task -> {
+		hashtagSweepSubmissions.add(task);
+		hashtagSweepPool.execute(() -> {
+			try {
+				task.run();
+			} catch (Throwable t) {
+				escaped.add(t);
+			}
+		});
+	};
 
 	@AfterEach
 	void tearDown() {
-		awaitEnrich();   // 남은 태스크까지 돌린 뒤에 봐야 그물이 전 태스크를 덮는다
+		awaitEnrich();          // 남은 태스크까지 돌린 뒤에 봐야 그물이 전 태스크를 덮는다
+		awaitHashtagSweep();
 		assertThat(escaped).isEmpty();
 		enrichPool.shutdownNow();
+		hashtagSweepPool.shutdownNow();
 	}
 
 	/** enrich 큐가 빌 때까지 — 단일 스레드 FIFO라 마커 태스크 완료 = 앞서 제출된 태스크 전부 완료. */
@@ -308,6 +324,18 @@ class BrandRegistrationServiceTest {
 			throw new IllegalStateException("enrich 큐 대기 중 인터럽트", e);
 		} catch (Exception e) {
 			throw new IllegalStateException("enrich 큐 대기 실패", e);
+		}
+	}
+
+	/** hashtagSweep 큐가 빌 때까지 — awaitEnrich와 같은 마커 패턴. */
+	private void awaitHashtagSweep() {
+		try {
+			hashtagSweepPool.submit(() -> { }).get(5, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("hashtagSweep 큐 대기 중 인터럽트", e);
+		} catch (Exception e) {
+			throw new IllegalStateException("hashtagSweep 큐 대기 실패", e);
 		}
 	}
 
@@ -328,7 +356,7 @@ class BrandRegistrationServiceTest {
 			return PROFILE_JSON;
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtags, hashtagCollect, Runnable::run, enrich);
+				hashtags, hashtagCollect, Runnable::run, enrich, hashtagSweep);
 	}
 
 	@Test
@@ -386,12 +414,14 @@ class BrandRegistrationServiceTest {
 
 		service().register("brandx");
 		awaitEnrich();
+		awaitHashtagSweep();
 
 		// 콜백이 페이지분만 주므로 페이지끼리 겹치지 않는다 — 중복 필터가 필요 없다.
 		assertThat(collect.enrichedPosts)
 				.containsExactly(List.of("P1_A", "P1_B"), List.of("P2_A", "P2_B"));
-		assertThat(enrichSubmissions).hasSize(3);                    // 페이지 2 + 해시태그 꼬리 1
-		assertThat(hashtagCollect.swept).containsExactly("brandx");   // 해시태그는 완주 뒤 꼬리
+		assertThat(enrichSubmissions).hasSize(2);                      // 페이지 2건 — 08-18부터 해시태그 꼬리는 별도 큐
+		assertThat(hashtagSweepSubmissions).hasSize(1);                // 해시태그 꼬리 1은 hashtagSweep 큐로
+		assertThat(hashtagCollect.swept).containsExactly("brandx");    // 해시태그는 완주 뒤 꼬리
 	}
 
 	@Test
@@ -553,10 +583,11 @@ class BrandRegistrationServiceTest {
 		var service = service();
 		service.register("brandx");     // 최초 등록 — 백필 꼬리가 이미 한 번 스윕
 		awaitEnrich();
+		awaitHashtagSweep();
 		hashtagCollect.swept.clear();
 
 		service.register("brandx");     // replay
-		awaitEnrich();
+		awaitHashtagSweep();
 
 		assertThat(hashtagCollect.swept).containsExactly("brandx");
 	}
@@ -565,10 +596,11 @@ class BrandRegistrationServiceTest {
 	void 태그가_있으면_즉시_스윕을_트리거한다() {
 		var result = service().register("brandx");
 		awaitEnrich();
+		awaitHashtagSweep();
 		hashtagCollect.swept.clear();
 
 		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of("cclime"));
-		awaitEnrich();
+		awaitHashtagSweep();
 
 		assertThat(hashtagCollect.swept).containsExactly("brandx");
 	}
@@ -577,10 +609,11 @@ class BrandRegistrationServiceTest {
 	void 태그가_비어있으면_스윕을_트리거하지_않는다() {
 		service().register("brandx");
 		awaitEnrich();
+		awaitHashtagSweep();
 		hashtagCollect.swept.clear();
 
 		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of());
-		awaitEnrich();
+		awaitHashtagSweep();
 
 		assertThat(hashtagCollect.swept).isEmpty();
 	}
@@ -593,6 +626,7 @@ class BrandRegistrationServiceTest {
 
 		service().register("brandx");
 		awaitEnrich();
+		awaitHashtagSweep();
 
 		assertThat(order).containsExactly("enrich", "hashtag");
 		assertThat(hashtagCollect.swept).containsExactly("brandx");
