@@ -367,7 +367,12 @@ public class BrandCollectService {
 	// ③ 전부 꽝 세션(saves도 부재)은 근거가 없으므로 null(미관측) 유지.
 	//    fb 캐리포워드·역전파는 BrandSnapshotRepository.upsertPost가 처리한다 — 여기서 안 건드린다.
 
-	private List<PostInfo> adjustLotteryMetrics(List<PostInfo> posts) {
+	/**
+	 * package-private로 승격(2026-08-18 direct 통합 §2-2) — {@link BrandDirectCollectService}가
+	 * direct 단건 수집에 재사용한다. 복권 3종(저장·공유·리포스트) 부재=0·0 캐리 규칙은 여기 한 벌만
+	 * 존재해야 한다 — 두 벌이 되면 반드시 갈라진다(direct 경로가 별도 사본을 두지 않는 이유).
+	 */
+	List<PostInfo> adjustLotteryMetrics(List<PostInfo> posts) {
 		List<PostInfo> step1 = posts.stream().map(p -> {
 			if (!"REELS".equals(p.contentType()) || p.saves() == null) {
 				return p;
