@@ -1,0 +1,489 @@
+{
+  "title": "HypeNow 브랜드 모니터링",
+  "uid": "hypenow-brand",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "5m",
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "tags": [
+    "hypenow",
+    "brand"
+  ],
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "건강 — 오늘 밤 스윕이 돌았나",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "브랜드 스윕 신선도",
+      "description": "활성 브랜드의 마지막 스윕 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 스윕 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "h",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "오늘 스윕 성공",
+      "description": "오늘(KST) 스윕이 성공한 브랜드 수 / 활성 브랜드 수. 실패 브랜드는 last_swept_on이 갱신되지 않아 차이로 드러난다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT count(*) FILTER (WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date) AS \"성공\", count(*) FILTER (WHERE closed_at IS NULL) AS \"활성 전체\" FROM brand_account"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "오늘 스윕 소요",
+      "description": "오늘 스윕의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "신규 등록 브랜드",
+      "description": "brand_account 신규 등록(KST 기준).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT count(*) FILTER (WHERE (registered_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS \"오늘\", count(*) FILTER (WHERE registered_at > now() - interval '7 days') AS \"이번주\" FROM brand_account"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "오늘 브랜드별 처리 간격",
+      "description": "브랜드 스윕은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "오늘 스윕 기록 없음",
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT username AS \"브랜드\", last_swept_at AS \"성공 시각\", round(EXTRACT(EPOCH FROM (last_swept_at - lag(last_swept_at) OVER (ORDER BY last_swept_at)))::numeric,1) AS \"간격(초)\" FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY last_swept_at"
+        }
+      ]
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "사용량 — 얼마나 쓰이고 있나",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "브랜드 모니터링",
+      "description": "브랜드·경쟁사 모니터링 등록 현황(app.brand_monitorings). 활성 = 해지되지 않은 등록, 이번주 신규 = 최근 7일 생성. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) FILTER (WHERE deleted_at IS NULL) AS \"활성\",\n       count(*) FILTER (WHERE created_at > now() - interval '7 days') AS \"이번주 신규\"\nFROM app.brand_monitorings"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "최근 등록 브랜드 모니터링",
+      "description": "가장 최근 등록된 브랜드 모니터링 15건. 전역 시간 필터를 타지 않는다(항상 최신 15건). 해지가 연달아 찍히면 이탈 신호로 본다.",
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 8,
+        "y": 16
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT created_at AS \"등록 시각\",\n       username AS \"계정\",\n       CASE WHEN deleted_at IS NULL THEN '활성' ELSE '해지' END AS \"상태\"\nFROM app.brand_monitorings\nORDER BY created_at DESC\nLIMIT 15"
+        }
+      ]
+    }
+  ]
+}

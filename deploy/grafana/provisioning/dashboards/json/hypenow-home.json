@@ -243,8 +243,8 @@
       },
       "links": [
         {
-          "title": "모니터링 대시보드로",
-          "url": "/d/hypenow-monitoring"
+          "title": "Hiker 대시보드로",
+          "url": "/d/hypenow-hiker"
         }
       ],
       "fieldConfig": {
@@ -252,8 +252,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "모니터링 대시보드로",
-              "url": "/d/hypenow-monitoring"
+              "title": "Hiker 대시보드로",
+              "url": "/d/hypenow-hiker"
             }
           ],
           "mappings": [
@@ -332,8 +332,8 @@
       },
       "links": [
         {
-          "title": "모니터링 대시보드로",
-          "url": "/d/hypenow-monitoring"
+          "title": "Hiker 대시보드로",
+          "url": "/d/hypenow-hiker"
         }
       ],
       "fieldConfig": {
@@ -341,8 +341,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "모니터링 대시보드로",
-              "url": "/d/hypenow-monitoring"
+              "title": "Hiker 대시보드로",
+              "url": "/d/hypenow-hiker"
             }
           ],
           "mappings": [
@@ -420,7 +420,7 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "스윕 신선도",
+      "title": "경쟁사 스윕 신선도",
       "description": "마지막 성공 스윕(sweep_run.ok)으로부터 경과 시간. 스윕은 매일 새벽 1회라 26시간을 넘으면 어젯밤 스윕이 안 돈 것이다. 클릭 → 모니터링.",
       "gridPos": {
         "h": 5,
@@ -434,8 +434,8 @@
       },
       "links": [
         {
-          "title": "모니터링 대시보드로",
-          "url": "/d/hypenow-monitoring"
+          "title": "경쟁사 모니터링으로",
+          "url": "/d/hypenow-competitor"
         }
       ],
       "fieldConfig": {
@@ -443,8 +443,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "모니터링 대시보드로",
-              "url": "/d/hypenow-monitoring"
+              "title": "경쟁사 모니터링으로",
+              "url": "/d/hypenow-competitor"
             }
           ],
           "mappings": [
@@ -524,8 +524,8 @@
       },
       "links": [
         {
-          "title": "모니터링 대시보드로",
-          "url": "/d/hypenow-monitoring"
+          "title": "Hiker 대시보드로",
+          "url": "/d/hypenow-hiker"
         }
       ],
       "fieldConfig": {
@@ -533,8 +533,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "모니터링 대시보드로",
-              "url": "/d/hypenow-monitoring"
+              "title": "Hiker 대시보드로",
+              "url": "/d/hypenow-hiker"
             }
           ],
           "unit": "short",
@@ -714,8 +714,8 @@
       },
       "links": [
         {
-          "title": "모니터링 대시보드로",
-          "url": "/d/hypenow-monitoring"
+          "title": "경쟁사 모니터링으로",
+          "url": "/d/hypenow-competitor"
         }
       ],
       "fieldConfig": {
@@ -723,8 +723,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "모니터링 대시보드로",
-              "url": "/d/hypenow-monitoring"
+              "title": "경쟁사 모니터링으로",
+              "url": "/d/hypenow-competitor"
             }
           ],
           "mappings": [
@@ -804,8 +804,8 @@
       },
       "links": [
         {
-          "title": "모니터링 대시보드로",
-          "url": "/d/hypenow-monitoring"
+          "title": "경쟁사 모니터링으로",
+          "url": "/d/hypenow-competitor"
         }
       ],
       "fieldConfig": {
@@ -813,8 +813,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "모니터링 대시보드로",
-              "url": "/d/hypenow-monitoring"
+              "title": "경쟁사 모니터링으로",
+              "url": "/d/hypenow-competitor"
             }
           ],
           "mappings": [

@@ -314,6 +314,14 @@ FROM generate_series(1, 28255) g;
 
 -- detected_candidate는 의도적으로 비워 둔다 — 실측 0건(설계 §3: 첫 감지는 후보 단계 없이
 -- target.matched_keywords만 남기고 바로 자동 추적 전환).
+
+-- 브랜드 스윕 시각 분포(Task 8 보강): 순차 처리 근사 — 오늘 02:00 KST부터 브랜드당 ~17초 간격.
+-- 균일 시각이면 '오늘 스윕 소요'·'브랜드별 처리 간격' 패널이 0으로 뭉개진다.
+UPDATE brand_account
+SET last_swept_at = ((now() AT TIME ZONE 'Asia/Seoul')::date::timestamp AT TIME ZONE 'Asia/Seoul')
+                    + interval '2 hours' + (id * interval '17 seconds') + (random() * interval '12 seconds')
+WHERE closed_at IS NULL;
+
 -- ============================================================================
 -- END monitoring
 -- ============================================================================
