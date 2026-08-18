@@ -25,6 +25,9 @@ public class ProfileMetaRepository {
 	/**
 	 * lastUploadedAt이 null이면(열거 0건·taken_at 전부 미상) 기존 값을 덮지 않는다 — 게시물 열거가
 	 * 없었을 뿐인데 "최근 게시일 없음"으로 보이면 안 되므로 COALESCE(EXCLUDED, 기존값) 패턴을 쓴다.
+	 * display_name도 같은 보존 시맨틱이다(08-18): 프로필 응답의 full_name은 세션 편차로 빠질 수
+	 * 있는데, 등록 경로는 단건 응답(owner full_name)이 먼저 채우고 프로필 콜이 뒤에 오므로
+	 * 무조건 덮어쓰면 방금 채운 표시 이름이 null로 지워진다.
 	 */
 	public void upsert(String username, String displayName, String profileImageUrl, LocalDate lastUploadedAt) {
 		String normalizedImageUrl = normalizeImageUrl(username, profileImageUrl);
@@ -32,7 +35,7 @@ public class ProfileMetaRepository {
 				INSERT INTO profile_meta (username, display_name, profile_image_url, last_uploaded_at, updated_at)
 				VALUES (?, ?, ?, ?, now())
 				ON CONFLICT (username) DO UPDATE SET
-				  display_name = EXCLUDED.display_name,
+				  display_name = COALESCE(EXCLUDED.display_name, profile_meta.display_name),
 				  -- 업스트림이 일시적으로 무효 스킴을 주면 정규화 결과가 null이 되는데, 그대로 덮으면
 				  -- 기존 유효 이미지가 날아간다 — POST 모드(upsertOwnerFromPost)와 보존 시맨틱을 통일.
 				  profile_image_url = COALESCE(EXCLUDED.profile_image_url, profile_meta.profile_image_url),

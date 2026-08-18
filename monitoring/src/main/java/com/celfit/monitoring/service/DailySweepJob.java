@@ -11,7 +11,6 @@ import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
 import com.celfit.monitoring.store.ExpiredTarget;
 import com.celfit.monitoring.store.FailingTarget;
-import com.celfit.monitoring.store.SnapshotRepository;
 import com.celfit.monitoring.store.SweepRunRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
@@ -60,7 +59,6 @@ public class DailySweepJob {
 	private final CollectService collect;
 	private final AlarmRecorder alarms;
 	private final SweepRunRepository sweepRuns;
-	private final SnapshotRepository snapshots;
 	private final TargetCallContext callContext;
 	private final int retryRounds;
 	private final Duration retryInterval;
@@ -68,7 +66,7 @@ public class DailySweepJob {
 	private final PostThumbnailArchiveJob thumbnailArchive;
 
 	public DailySweepJob(TargetRepository targets, CollectService collect, AlarmRecorder alarms,
-			SweepRunRepository sweepRuns, SnapshotRepository snapshots, TargetCallContext callContext,
+			SweepRunRepository sweepRuns, TargetCallContext callContext,
 			@Value("${monitoring.sweep.retry-rounds:3}") int retryRounds,
 			@Value("${monitoring.sweep.retry-interval:10m}") Duration retryInterval,
 			ProfileImageArchiveJob imageArchive, PostThumbnailArchiveJob thumbnailArchive) {
@@ -76,7 +74,6 @@ public class DailySweepJob {
 		this.collect = collect;
 		this.alarms = alarms;
 		this.sweepRuns = sweepRuns;
-		this.snapshots = snapshots;
 		this.callContext = callContext;
 		this.retryRounds = retryRounds;
 		this.retryInterval = retryInterval;
@@ -299,7 +296,9 @@ public class DailySweepJob {
 				: null;
 		List<PostInfo> posts = enumResult != null ? enumResult.posts() : List.of();
 		if (!needsEnumeration) {
-			callContext.runScoped(accountUsers, () -> collectProfileOnlyOnce(username));
+			// 팔로워 1회 수집(트랙 II 후속) — 판정·swallow는 CollectService.collectProfileOnce 단일
+			// 구현(등록 경로와 공용). best-effort라 예외가 새어 캠페인이 hidden 전이될 일이 없다.
+			callContext.runScoped(accountUsers, () -> collect.collectProfileOnce(username));
 		}
 		Set<String> enumerated = posts.stream().map(PostInfo::shortCode).collect(Collectors.toSet());
 		Set<Long> transientFailureIds = new LinkedHashSet<>();
@@ -362,31 +361,6 @@ public class DailySweepJob {
 			collect.retryReelsMetrics(userId, List.copyOf(metricsPending.values()));
 		} catch (RuntimeException e) {
 			log.warn("저장·리포스트 재시도 실패(격리, best-effort) — 계정 {}: {}", username, e.toString());
-		}
-	}
-
-	/**
-	 * 팔로워 1회 수집(사용자 결정, 트랙 II 후속) — POST 등록분만 있는 계정에 profile_snapshot 행이
-	 * 아직 없을 때만 프로필을 1콜 조회해 채운다. 이미 채워졌으면(재공개 포함, 한 번이라도 성공한
-	 * 적이 있으면) 다시 부르지 않는다 — 매일 갱신이 목적이 아니라 was가 서빙하는 followers가
-	 * 최신 1행 단일값(시계열 아님)이라 최초 수집 이후 갱신 실익이 없기 때문이다.
-	 *
-	 * <p><b>반드시 best-effort여야 한다.</b> 팔로워 수는 부가 표시 정보다. 여기서 예외가 새면
-	 * {@link #sweepRound}의 catch가 그 계정의 캠페인을 통째로 hidden 전이시킨다({@link #closeAll}) —
-	 * 추적 게시물은 멀쩡한데 프로필 조회 실패만으로 캠페인이 죽는 새 고장 경로가 생긴다. POST
-	 * 등록분의 생존 판정은 지금까지처럼 단건 게시물 수집 성공 여부 하나로만 유지해야 하므로,
-	 * {@link com.celfit.monitoring.hiker.PrivateAccountException}·
-	 * {@link com.celfit.monitoring.hiker.SubjectNotFoundException}을 포함한 모든 예외를 여기서 삼킨다
-	 * (기존 판정 경로를 바꾸지 않는다는 뜻 — 이 계정이 실제로 없어졌는지 비공개인지는 단건 게시물
-	 * 콜이 이미 스윕 나머지 갈래에서 판정한다).
-	 */
-	private void collectProfileOnlyOnce(String username) {
-		try {
-			if (!snapshots.hasProfileSnapshot(username)) {
-				collect.collectProfileOnly(username);
-			}
-		} catch (RuntimeException e) {
-			log.warn("팔로워 1회 수집 실패(격리, best-effort) — 계정 {}: {}", username, e.toString());
 		}
 	}
 

@@ -69,7 +69,7 @@ class SweepControllerTest {
 				SweepRunRepository sweepRuns) {
 			// PAR URL 미설정 = no-op(설계 스펙 §3-1) — 이 컨트롤러 테스트는 이미지 아카이브를 검증하지
 			// 않으므로 실제 HTTP를 태우지 않는 no-op 잡을 그대로 물린다(트랙 KK 확장 — 썸네일 잡도 동형).
-			super(targets, collect, alarms, sweepRuns, null, null, 0, Duration.ZERO,
+			super(targets, collect, alarms, sweepRuns, null, 0, Duration.ZERO,
 					new ProfileImageArchiveJob(null, new ParImageStore(""), ImageDownloader.http(), "", 1000),
 					new PostThumbnailArchiveJob(null, new ParImageStore(""), ImageDownloader.http(), "", 1000));
 			reset();

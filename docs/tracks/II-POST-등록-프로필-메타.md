@@ -68,31 +68,45 @@ was가 서빙하는 `followers`는 `MonitoringReadRepository.findLatestProfileSn
 그대로 노출된다. 실패해도 best-effort라 캠페인 생존 판정에는 영향이 없다(수집이 안 됐을 뿐,
 캠페인은 계속 살아있는 것으로 취급).
 
-## 후속 결정(08-18) — 최초 1회를 등록 직후로 앞당김
+**되돌리는 법(07-31 결정 한정)**: 신설 메서드 3개(`CollectService.collectProfileOnly`·
+`SnapshotWriter.saveProfileOnly`·`SnapshotRepository.hasFollowersObserved`)와
+`DailySweepJob.sweepAccount`의 조건부 호출 블록만 지우면 된다 — 최초 구현(display_name·
+profile_image_url 제로 콜 파싱)과는 독립된 별도 커밋이라 분리 롤백이 가능하다.
+**단, 08-18 이후에는 등록 경로도 같은 메서드에 의존한다** — 아래 08-18 절의
+`CollectService.collectProfileOnce`와 `RegistrationService.scheduleProfileCollect`를 먼저
+걷어내야 컴파일이 깨지지 않는다.
+
+## 후속 결정(08-18) — 최초 1회를 등록 직후(비동기)로 앞당김
 
 07-31 결정은 수집 시점을 스윕에만 뒀는데, 브랜드 태그 모니터링 직접 등록(§6-4)이 이 레거시
 등록 경로를 재사용하면서 "등록 직후 ~ 다음 새벽 스윕 사이 최대 24시간 팔로워 공백"이 카드
 표시·팔로워 규모 필터에서 눈에 보이는 결함이 됐다(08-17 관측 — 07-31 당시엔 팔로워를 1급으로
-노출하는 표면이 없었다). 댓글이 07-31에 받은 처치(등록 즉시 best-effort 수집, 스윕 백스톱)를
-팔로워에도 동형 적용:
+노출하는 표면이 없었다). 코드리뷰(8앵글) 반영 포함 최종 형태:
 
-- `CollectService.collectProfileForRegistration(username)` 신설 — `hasProfileSnapshot` 가드 후
-  `collectProfileOnly` 호출(평생 1회 규칙 유지: ACCOUNT 캠페인 공존·재등록 계정엔 콜 없음).
-- `RegistrationService.registerPost`가 댓글 수집 직후 best-effort로 호출(실패는 log.warn만,
-  등록은 성공 유지). **스윕의 `collectProfileOnlyOnce`는 무변경** — 등록 시점 실패 시 행이
-  없으므로 기존 판정 그대로 다음 스윕이 백스톱(재시도 로직 신설 없음, 사용자 지시).
-- 테스트: `RegistrationServiceTest` 3건(등록 직후 1콜 채움·기보유 계정 무콜·실패해도 등록 성공).
-
-**되돌리는 법**: 이 후속 결정만 되돌리려면 신설 메서드 3개(`CollectService.collectProfileOnly`·
-`SnapshotWriter.saveProfileOnly`·`SnapshotRepository.hasProfileSnapshot`)와
-`DailySweepJob.sweepAccount`의 조건부 호출 블록(`collectProfileOnlyOnce`)만 지우면 된다 —
-최초 구현(display_name·profile_image_url 제로 콜 파싱)과는 독립된 별도 커밋이라 분리 롤백이 가능하다.
+- **비동기 배치**: `RegistrationService.scheduleProfileCollect`가 `targets.insert` **이후**
+  기존 `metricsBackfill` executor로 프로필 1콜을 태운다(`scheduleMetricsBackfill`보다 먼저
+  넣어 재시도 루프 뒤에 줄서지 않게). 동기 배치는 기각 — was 10초 read timeout 예산 안에서
+  Hiker 1콜 최악 51s(15s×3회+백오프)라, 프로필 지연이 "등록 타임아웃 → 멱등 replay 빗나감
+  → 전량 재수집(전부 과금)"으로 번지는 경로였다.
+- **가드 단일화**: `CollectService.collectProfileOnce`가 평생 1회 판정 + swallow의 단일
+  구현 — 등록·스윕(`DailySweepJob.sweepAccount`) 공용. 스윕의 자체 가드
+  (`collectProfileOnlyOnce`)와 `SnapshotRepository` 의존은 제거됐다(행동 동일).
+- **가드 기준 강화**: `hasProfileSnapshot`(행 존재) → `hasFollowersObserved`
+  (`followers IS NOT NULL`) — follower_count 없는 응답이 남긴 null 행이 계정을 영구
+  "완료"로 고착시키지 않는다. 빈 username은 콜 없이 반환(과금되는 쓰레기 콜 방지).
+- **display_name 보존**: `ProfileMetaRepository.upsert`의 display_name도 COALESCE로 전환 —
+  등록 경로는 단건 응답(owner full_name)이 먼저 채우고 프로필 콜이 뒤라, 프로필 응답의
+  full_name 결손이 방금 채운 표시 이름을 지우는 역전이 있었다.
+- 실패 시 백스톱은 다음 새벽 스윕의 같은 가드(재시도 로직 신설 없음, 사용자 지시).
 
 ## 검증
 
-`./gradlew :monitoring:test` 전체 통과(210건, 실패 0) — 최초 구현(195건)에 이번 후속 결정의
-신규 테스트 5건(`DailySweepJobTest` — 미보유 계정 1회 수집·기보유 계정 재호출 안 함·프로필 조회
-실패 3종 best-effort·ACCOUNT 혼재 계정 중복 호출 안 함)이 더해졌다.
+07-31: `./gradlew :monitoring:test` 210건 통과 — 신규 5건(`DailySweepJobTest` — 미보유 계정
+1회 수집·기보유 계정 재호출 안 함·프로필 조회 실패 3종 best-effort·ACCOUNT 혼재 계정 중복
+호출 안 함).
+08-18: `./gradlew :monitoring:test` **608건 전체 통과** — 신규 6건(`RegistrationServiceTest` —
+등록 직후 1콜 채움·기보유 계정 무콜·실패해도 등록 성공·followers null 행 재수집·프로필
+full_name 결손 시 표시 이름 보존·빈 username 무콜).
 
 ## 관련 문서
 

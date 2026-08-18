@@ -121,15 +121,6 @@ public class RegistrationService {
 		} catch (RuntimeException e) {
 			log.warn("댓글 수집 실패(격리) — 게시물 {}: {}", shortCode, e.toString());
 		}
-		// 게시자 팔로워도 등록 직후 채운다 — 스윕에만 맡기면 다음 새벽까지 최대 24시간 비어
-		// 브랜드 직접 등록 카드의 팔로워·팔로워 규모 필터가 그동안 빠진다(08-18, 댓글과 같은 처치).
-		// 평생 1회 규칙은 유지된다: 이미 profile_snapshot이 있는 계정이면 콜 없이 건너뛰고,
-		// 여기서 실패하면 행이 안 생겨 다음 스윕(collectProfileOnlyOnce)이 기존 그대로 백스톱이다.
-		try {
-			collect.collectProfileForRegistration(post.username());
-		} catch (RuntimeException e) {
-			log.warn("게시자 프로필 수집 실패(격리) — 계정 {}: {}", post.username(), e.toString());
-		}
 		long id = targets.insert(TargetType.POST, cmd.userId(), post.username(), shortCode, null,
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
@@ -138,10 +129,26 @@ public class RegistrationService {
 		// 실패해도 등록 자체는 계속 201로 성공하고, 그 알람 이벤트는 재시도 없이 유실된다(로그로만 관측).
 		// replay는 target 중복 방지(멱등)만 보장할 뿐 이 알람 유실을 복구하지 않는다.
 		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
+		scheduleProfileCollect(cmd.userId(), post.username());
 		scheduleMetricsBackfill(cmd.userId(), post);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));
 		return new Result(id, TargetStatus.TRACKING.name(), snapshot, false);
+	}
+
+	/**
+	 * 게시자 팔로워 등록 직후 수집(08-18) — 스윕에만 맡기면 다음 새벽까지 최대 24시간 비어
+	 * 브랜드 직접 등록 카드의 팔로워·팔로워 규모 필터가 그동안 빠진다. followers는 등록 응답에
+	 * 실리지 않는 부가 표시 정보라(조회 표면이 profile_snapshot SELECT) 동기 예산(was 10초
+	 * read timeout) 안에서 부를 이유가 없고, targets.insert <b>이후</b>에만 태워야 프로필 지연이
+	 * "등록 타임아웃 → 멱등 replay 빗나감 → 전량 재수집(전부 과금)"으로 번지지 않는다.
+	 * scheduleMetricsBackfill보다 먼저 넣어 재시도 루프(최대 6회×10s) 뒤에 줄서지 않게 한다.
+	 * 평생 1회 판정·swallow·스윕 백스톱은 {@link CollectService#collectProfileOnce} 단일 구현.
+	 */
+	private void scheduleProfileCollect(long userId, String username) {
+		// 콜 집계 스코프를 태스크 본문에서 다시 연다 — ThreadLocal은 executor 스레드로 전파되지 않는다.
+		metricsBackfill.execute(() -> callContext.runScoped(Set.of(userId),
+				() -> collect.collectProfileOnce(username)));
 	}
 
 	/**

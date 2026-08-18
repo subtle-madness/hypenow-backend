@@ -137,25 +137,41 @@ public class CollectService {
 	}
 
 	/**
-	 * 프로필 전용 1콜 수집(팔로워 1회 수집, 트랙 II 후속) — {@link #collectAccount}(프로필+열거)와
-	 * 달리 열거(+클립 보강)를 하지 않는다. POST 등록분만 있는 계정에 profile_snapshot 행이 아직
-	 * 없을 때 DailySweepJob이 계정당 평생 1회만 호출한다.
+	 * 프로필 전용 1콜 수집(무가드 내부 경로) — {@link #collectAccount}(프로필+열거)와 달리
+	 * 열거(+클립 보강)를 하지 않는다. 평생 1회 판정·swallow는 {@link #collectProfileOnce}가
+	 * 담당하므로 외부 호출은 그쪽으로.
 	 */
-	public ProfileInfo collectProfileOnly(String username) {
+	private ProfileInfo collectProfileOnly(String username) {
 		ProfileInfo profile = hiker.fetchProfile(username);
 		writer.saveProfileOnly(username, LocalDate.now(KST), profile);
 		return profile;
 	}
 
 	/**
-	 * 프로필 1회 수집(등록 전용) — {@code profile_snapshot} 행이 없는 계정만 1콜로 채운다.
-	 * 스윕의 평생 1회 규칙({@code DailySweepJob.collectProfileOnlyOnce})과 같은 기준이라, 이미
-	 * 채워진 계정(ACCOUNT 캠페인 공존·재등록 등)에는 콜을 쓰지 않는다. 등록 시점에 실패하면
-	 * 행이 안 생기므로 다음 새벽 스윕의 같은 판정이 그대로 백스톱이 된다.
+	 * 팔로워 1회 수집의 단일 진입점(트랙 II 후속, 08-18 통합) — 팔로워 미관측 계정만 프로필을
+	 * 1콜로 채운다. POST 등록 직후(RegistrationService, 백필 executor)와 새벽 스윕
+	 * (DailySweepJob.sweepAccount)이 같은 메서드를 쓴다: 가드·swallow가 두 벌로 갈리면 "이
+	 * 계정은 이미 수집됐다" 판정이 경로마다 어긋나 유료 콜이 새거나 갱신이 반쪽이 된다.
+	 *
+	 * <p><b>반드시 best-effort여야 한다</b> — 스윕 경로에서 예외가 새면 sweepRound의 catch가
+	 * 그 계정의 캠페인을 통째로 hidden 전이시킨다(추적 게시물은 멀쩡한데 프로필 조회 실패만으로
+	 * 캠페인이 죽는 새 고장 경로). POST 등록분의 생존 판정은 단건 게시물 수집 성공 여부 하나로만
+	 * 유지하므로 PrivateAccountException·SubjectNotFoundException 포함 전부 여기서 삼킨다.
+	 * 실패하면 팔로워 행이 안 남아 다음 스윕의 같은 가드가 그대로 재시도한다(백스톱).
+	 *
+	 * <p>빈 username은 콜 없이 반환한다 — 단건 응답의 owner username은 키 부재만 null이고
+	 * 빈 값은 ""로 오는데(toPost), fetchProfile("")은 과금되는 쓰레기 콜이다.
 	 */
-	public void collectProfileForRegistration(String username) {
-		if (!snapshots.hasProfileSnapshot(username)) {
-			collectProfileOnly(username);
+	public void collectProfileOnce(String username) {
+		if (username == null || username.isBlank()) {
+			return;
+		}
+		try {
+			if (!snapshots.hasFollowersObserved(username)) {
+				collectProfileOnly(username);
+			}
+		} catch (RuntimeException e) {
+			log.warn("팔로워 1회 수집 실패(격리, best-effort) — 계정 {}: {}", username, e.toString());
 		}
 	}
 

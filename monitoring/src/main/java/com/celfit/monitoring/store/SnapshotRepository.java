@@ -134,13 +134,16 @@ public class SnapshotRepository {
 	}
 
 	/**
-	 * 팔로워 1회 수집(트랙 II 후속) — 해당 계정에 profile_snapshot 행이 하나라도 있는지 판정.
-	 * POST 등록분만 있는 계정은 계정 갈래를 영구히 안 타 이 행이 계속 없다 — DailySweepJob이
-	 * 이 메서드로 "아직 안 채워졌으면 1회만" 여부를 판단한다.
+	 * 팔로워 1회 수집(트랙 II 후속)의 단일 가드 — 해당 계정의 팔로워가 이미 관측됐는지 판정한다.
+	 * 행 존재가 아니라 {@code followers IS NOT NULL}을 본다(08-18): follower_count 없는 프로필
+	 * 응답이 남긴 null 행이 계정을 영구 "완료"로 고착시키면 안 되기 때문. POST 등록분만 있는
+	 * 계정은 계정 갈래를 영구히 안 타 이 값이 계속 없다 — 유일 호출자는
+	 * {@code CollectService.collectProfileOnce}(등록·스윕 공용)다.
 	 */
-	public boolean hasProfileSnapshot(String username) {
+	public boolean hasFollowersObserved(String username) {
 		Boolean exists = db.queryForObject(
-				"SELECT EXISTS(SELECT 1 FROM profile_snapshot WHERE username = ?)", Boolean.class, username);
+				"SELECT EXISTS(SELECT 1 FROM profile_snapshot WHERE username = ? AND followers IS NOT NULL)",
+				Boolean.class, username);
 		return Boolean.TRUE.equals(exists);
 	}
 

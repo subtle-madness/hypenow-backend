@@ -248,6 +248,59 @@ class RegistrationServiceTest {
 	}
 
 	@Test
+	void 팔로워가_null인_행만_있으면_등록_시_프로필_콜이_다시_나간다() {
+		// 행 존재가 아니라 "팔로워를 안다"가 가드 기준이다 — follower_count 없는 응답이 남긴
+		// null 행이 계정을 영구 '완료'로 고착시키면 24시간 공백보다 나쁜 영구 null이 된다.
+		db.update("INSERT INTO profile_snapshot (username, captured_on, followers) VALUES ('owner1', CURRENT_DATE, NULL)");
+		singleBody = single("P913", SINGLE_HIT);
+
+		registerPost("P913");
+
+		assertThat(profileCalls()).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT followers FROM profile_snapshot WHERE username='owner1'", Long.class))
+				.isEqualTo(777L);
+	}
+
+	@Test
+	void 프로필_응답에_full_name이_없어도_단건_응답이_채운_표시_이름을_지우지_않는다() {
+		// 등록 순서는 게시물(→ display_name 기록) 뒤 프로필이라, 프로필 응답의 full_name 결손이
+		// 무조건 덮어쓰기를 타면 방금 채운 표시 이름이 null로 지워진다(세션 편차는 정상 케이스).
+		singleBody = """
+				{"media_or_ad":{"code":"P914","product_type":"clips","taken_at":1700000000,
+				"save_count":5,"reshare_count":9,"media_repost_count":7,
+				"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
+				"caption":{"text":"c"},"user":{"username":"owner1","pk":424242,
+				"full_name":"포스트 소유자","profile_pic_url":"https://img/o.jpg"}},"status":"ok"}""";
+		profileBody = """
+				{"user":{"pk":424242,"username":"owner1","is_private":false,
+				"follower_count":777,"following_count":10,"media_count":42},"status":"ok"}""";
+
+		registerPost("P914");
+
+		assertThat(profileCalls()).isEqualTo(1);
+		assertThat(db.queryForObject(
+				"SELECT display_name FROM profile_meta WHERE username='owner1'", String.class))
+				.isEqualTo("포스트 소유자");
+	}
+
+	@Test
+	void 게시자_username이_빈_문자열이면_프로필_콜을_보내지_않는다() {
+		// toPost의 username은 키 부재만 null이고 빈 값은 ""로 온다(shortCode isBlank 방어와 같은 결) —
+		// fetchProfile("")은 과금되는 쓰레기 콜이라 아예 보내지 않는다.
+		singleBody = """
+				{"media_or_ad":{"code":"P915","product_type":"clips","taken_at":1700000000,
+				"save_count":5,"reshare_count":9,"media_repost_count":7,
+				"like_count":10,"comment_count":2,"play_count":100,"ig_play_count":100,
+				"caption":{"text":"c"},"user":{"username":"","pk":424242}},"status":"ok"}""";
+
+		var result = registerPost("P915");
+
+		assertThat(result.status()).isEqualTo("TRACKING");
+		assertThat(profileCalls()).isZero();
+	}
+
+	@Test
 	void 프로필_수집_실패해도_등록은_성공한다() {
 		// user 노드 없는 응답 → HikerFetchException — best-effort라 등록은 그대로 201이어야 한다.
 		profileBody = "{\"status\":\"fail\"}";
