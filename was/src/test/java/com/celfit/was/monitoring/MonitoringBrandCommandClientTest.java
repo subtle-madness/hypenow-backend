@@ -286,4 +286,5 @@ class MonitoringBrandCommandClientTest {
 				.doesNotThrowAnyException();
 		server.verify();
 	}
+
 }

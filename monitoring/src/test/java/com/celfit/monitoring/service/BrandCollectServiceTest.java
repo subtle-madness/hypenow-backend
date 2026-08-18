@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
@@ -145,9 +146,16 @@ class BrandCollectServiceTest {
 
 	private static final class StubComments extends BrandCommentRepository {
 		final List<String> upserted = new ArrayList<>();
+		/** onVisible 훅과의 호출 순서 검증용(2026-08-18 계정 게이트 단축) — 기본은 격리된 리스트. */
+		private List<String> callOrder = new ArrayList<>();
 
 		StubComments() {
 			super(null);
+		}
+
+		/** 다른 스텁·테스트 로컬 훅과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -158,6 +166,7 @@ class BrandCollectServiceTest {
 		@Override
 		public void upsertForPost(String shortCode, List<CommentInfo> fetched) {
 			upserted.add(shortCode);
+			callOrder.add("comments:" + shortCode);
 		}
 	}
 
@@ -325,7 +334,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				Runnable::run, maxPostsPerSweep, 3, 30);
+				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, 3, 30, true);
 	}
 
 	private long tagCalls() {
@@ -922,10 +931,14 @@ class BrandCollectServiceTest {
 
 	/**
 	 * 보강 단계 <b>첫머리의 배치 DB 조회</b>가 던져도 정산한다 — 건별 Hiker 콜은 각자 격리되지만
-	 * freshIgUserIds·commentsCollectedCounts는 그 격리 밖이라, 커넥션 blip 하나로 예외가 enrich
-	 * 밖으로 새면 그 페이지 행이 enriched_at NULL로 굳는다. 180일 초과 게시물에는 재열거 백스톱이
-	 * 없어(BrandCrawlPolicy.due가 무조건 false) 그 미노출이 <b>영구</b>가 된다 — 그래서 마킹은
-	 * finally다. 예외 자체는 그대로 위로 전파돼 상위 격리(enrichSafely)가 로그로 남긴다.
+	 * freshIgUserIds는 그 격리 밖이라, 커넥션 blip 하나로 예외가 ensureAuthors 밖으로 새면 그
+	 * 페이지 행이 enriched_at NULL로 굳는다. 180일 초과 게시물에는 재열거 백스톱이 없어
+	 * (BrandCrawlPolicy.due가 무조건 false) 그 미노출이 <b>영구</b>가 된다 — 그래서 마킹은 finally다.
+	 * 예외 자체는 그대로 위로 전파돼 상위 격리(enrichSafely)가 로그로 남긴다.
+	 *
+	 * <p>2026-08-18 수정: 댓글 수집·광고 판정은 이 하드 실패와 무관하게 여전히 돈다(이중
+	 * try/finally — {@link BrandCollectService#enrich} javadoc 참조). 그래서 게시자 콜만 0건이고
+	 * 댓글 콜은 정상적으로 나간다 — 예전엔(안쪽 finally 하나뿐) 댓글도 도달 불가라 0건이었다.
 	 */
 	@Test
 	void 게시자_stale_배치_조회가_던져도_정산한다() {
@@ -937,9 +950,11 @@ class BrandCollectServiceTest {
 		assertThatThrownBy(() -> service.enrich(brand, posts))
 				.isInstanceOf(IllegalStateException.class);
 
-		// 실제로 그 경로를 탔다는 근거 — 게시자·댓글 콜은 한 건도 못 나갔다(첫 배치 조회에서 끊겼다).
+		// 실제로 그 경로를 탔다는 근거 — 게시자 콜은 한 건도 못 나갔다(첫 배치 조회에서 끊겼다).
 		assertThat(authorCalls()).isZero();
-		assertThat(commentCalls()).isZero();
+		// 댓글은 게시자 하드 실패와 무관하게 돈다(08-18 수정) — 두 건 다 신규(저장값 0)라 게이트가 열린다.
+		assertThat(commentCalls()).isEqualTo(2);
+		assertThat(comments.upserted).containsExactlyInAnyOrder("A", "B");
 		assertThat(tagged.enriched).containsExactlyInAnyOrder("A", "B");
 	}
 
@@ -991,7 +1006,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, pool, 2000, 3, 30);
+					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -999,5 +1014,194 @@ class BrandCollectServiceTest {
 		assertThat(maxInFlight.get()).isEqualTo(3);   // 풀 크기까지 도달, 초과 없음
 		assertThat(authors.upserted)
 				.containsExactlyInAnyOrder("201", "202", "203", "204", "205", "206");
+	}
+
+	// ---------- 광고 표기 판정 배선(2026-08-17 스펙 §7·§8) ----------
+
+	@Test
+	void 게시자_보강_직후_정산되고_댓글_실패는_광고_판정을_막지_않는다() {
+		tagged.commentsCountsFails = true;   // 댓글 게이트 배치 조회가 던져도
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		// commentCount(3L) > 저장값(0, 기본) — 게이트가 열려야 배치 조회(commentsCountsFails)가
+		// 실제로 호출된다(comments=null이면 p.comments() != null 필터에서 조기 반환돼 죽은 코드가 됨).
+		PostInfo post = post("AAA", RECENT, null, 3L);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(tagged.enriched).contains("AAA");     // 정산은 됐고
+		assertThat(adJudge.judged).contains("AAA");       // 광고 판정도 여전히 돈다(댓글과 독립)
+	}
+
+	@Test
+	void 광고_판정_실패는_격리되고_정산에_영향_없다() {
+		FakeAdJudge adJudge = new FakeAdJudge();
+		adJudge.fail = true;
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, null, 0L);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(tagged.enriched).contains("AAA");   // 판정 실패가 정산을 막지 않는다
+	}
+
+	/**
+	 * 게시자 개별 콜(5xx·타임아웃)이 실패해도 ensureAuthors 자체는 예외 없이 격리를 마친다(기존
+	 * 경로) — 정산·광고 판정 모두 정상 진행. 이름에 "소프트"를 명시한다: ensureAuthors 첫머리의
+	 * 배치 DB 조회가 통째로 던지는 <b>하드</b> 실패는 별도 경로라 이 테스트가 커버하지 못한다
+	 * (08-18 스펙 리뷰 — 하드 경로는 아래 회귀 방어 테스트가 담당).
+	 */
+	@Test
+	void 게시자_개별_보강_소프트_실패는_격리되고_정산과_광고_판정은_돈다() {
+		failingAuthorIds.add("111");   // ensureAuthors가 예외 없이 격리되는 기존 경로 유지 확인용 대역
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, "111", 0L);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(tagged.enriched).contains("AAA");
+		assertThat(adJudge.judged).contains("AAA");
+	}
+
+	/**
+	 * 1번 버그 수정(2026-08-18)의 회귀 방어 — ensureAuthors 첫머리의 배치 DB 조회(freshIgUserIds)가
+	 * 통째로 던지는 <b>하드</b> 실패 경로. 예외 전파는 기존 규칙대로 유지하되(호출자 상위 격리가
+	 * 로그로 남긴다), 그 전파 도중에도 정산·댓글 수집·광고 판정이 전부 돈다는 것을 검증한다 — 이중
+	 * try/finally 구조가 없으면 안쪽 finally(markEnriched) 직후 예외가 곧장 메서드 밖으로 새서
+	 * 댓글·판정 호출 자체가 도달 불가였다(08-18 프로브로 확인).
+	 */
+	@Test
+	void 게시자_보강_하드_실패에도_댓글_수집과_광고_판정은_돈다() {
+		authors.freshLookupFails = true;   // ensureAuthors 첫머리 배치 조회가 통째로 던진다
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, "111", 3L);
+
+		assertThatThrownBy(() -> svc.enrich(brand, List.of(post)))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(tagged.enriched).contains("AAA");      // 정산은 하드 실패에도 찍힌다(기존 규칙)
+		assertThat(comments.upserted).contains("AAA");    // 댓글 수집도 하드 실패와 무관하게 돈다
+		assertThat(adJudge.judged).contains("AAA");        // 광고 판정도 하드 실패와 무관하게 돈다
+	}
+
+	/**
+	 * 킬 스위치(2026-08-18) — enabled=false면 judgeAdDisclosuresSafely 진입점에서 곧바로 리턴해
+	 * adJudge.judgePosts 자체가 호출되지 않는다. was 노출 토글(expose)과 독립적인 롤백 수단이라
+	 * 정산·댓글 수집은 평소대로 돈다는 것도 함께 확인한다.
+	 */
+	@Test
+	void 킬_스위치가_꺼지면_광고_판정_호출_자체가_나가지_않는다() {
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge, false);
+		PostInfo post = post("AAA", RECENT, null, 0L);
+
+		svc.enrich(brand, List.of(post));
+
+		assertThat(adJudge.judged).isEmpty();          // adJudge 호출 자체가 없다
+		assertThat(tagged.enriched).contains("AAA");    // 정산은 킬 스위치와 무관하게 그대로 돈다
+	}
+
+	// ---------- 계정 게이트 훅(onVisible, 2026-08-18 markServing 단축 — 스펙 §8 후속) ----------
+
+	/**
+	 * 등록 백필의 계정 게이트(BrandRegistrationService.markServing)가 게시물 게이트(markEnriched)와
+	 * 같은 지점에서 열려야 한다는 요구의 핵심 근거 — onVisible은 댓글 수집 리포지토리 호출보다
+	 * 먼저 발화한다. 종전 배선(enrich 전체 반환 후 markServing)이면 이 순서가 뒤집혀 댓글·판정까지
+	 * 기다려야 계정이 ready였다(이번 개정의 버그 리포트 원인).
+	 */
+	@Test
+	void onVisible은_댓글_수집_리포지토리_호출_전에_발생한다() {
+		List<String> order = new ArrayList<>();
+		comments.useSharedCallOrder(order);
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));   // commentCount 3 > 저장값 0 — 게이트 오픈
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+
+		svc.enrich(brand, posts, () -> order.add("onVisible"));
+
+		assertThat(order).containsExactly("onVisible", "comments:A");
+	}
+
+	/**
+	 * ensureAuthors 첫머리의 배치 DB 조회가 통째로 던지는 하드 실패에도 onVisible은 markEnriched와
+	 * 같은 finally 보장을 받는다 — 첫 페이지 게시자 보강 실패가 계정 ready를 영구히 막으면 안 된다.
+	 */
+	@Test
+	void onVisible은_게시자_보강_하드_실패에도_발생한다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+		List<String> visible = new ArrayList<>();
+
+		assertThatThrownBy(() -> svc.enrich(brand, posts, () -> visible.add("visible")))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(visible).containsExactly("visible");   // 하드 실패에도 훅은 정상 발화
+		assertThat(tagged.enriched).contains("A");          // 정산도 기존 규칙대로 찍힌다(무변경)
+	}
+
+	/** 태그 0건(빈 배치)도 onVisible을 1회 받는다 — 못 받으면 그 브랜드가 collecting에 영구히 갇힌다. */
+	@Test
+	void onVisible은_빈_배치에도_발생한다() {
+		BrandCollectService svc = service(2000);
+		List<String> visible = new ArrayList<>();
+
+		svc.enrich(brand, List.of(), () -> visible.add("visible"));
+
+		assertThat(visible).containsExactly("visible");
+	}
+
+	/** 2-인자 오버로드(야간 스윕이 쓰는 경로)는 onVisible 없이도 기존과 동일하게 동작한다 — 회귀 방지. */
+	@Test
+	void onVisible_없는_2인자_enrich는_기존_동작_그대로다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+
+		svc.enrich(brand, posts);   // onVisible 없음 — NPE 없이 그대로
+
+		assertThat(tagged.enriched).contains("A");
+		assertThat(comments.upserted).contains("A");
+	}
+
+	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {
+		return serviceWithAdJudge(adJudge, true);
+	}
+
+	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
+		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
+				adJudge, Runnable::run, 10000, 3, 30, adDisclosureEnabled);
+	}
+
+	/**
+	 * comments(commentCount)를 명시적으로 받는다 — null이면 {@code collectCommentsGated}의
+	 * {@code p.comments() != null} 필터에서 조기 반환돼 댓글 게이트 경로(배치 조회·실패 주입 포함)가
+	 * 아예 실행되지 않는다(08-18 스펙 리뷰 프로브로 확인 — 죽은 코드였다).
+	 */
+	private static PostInfo post(String shortCode, Long takenAt, String ownerUserId, long commentCount) {
+		return new PostInfo(shortCode, "author", null, null, ownerUserId, "REELS", null, null,
+				takenAt, null, commentCount, null, null, null, null, null, null, null, null,
+				false, false, false);
+	}
+
+	/** AdDisclosureJudgeService 대역 — 실제 판정 로직 없이 호출 여부·실패 격리만 검증한다. */
+	private static final class FakeAdJudge extends com.celfit.monitoring.ad.AdDisclosureJudgeService {
+		final List<String> judged = Collections.synchronizedList(new ArrayList<>());
+		boolean fail;
+
+		FakeAdJudge() {
+			super(null, null, Runnable::run);
+		}
+
+		@Override
+		public void judgePosts(List<PostInfo> posts) {
+			if (fail) {
+				throw new IllegalStateException("광고 판정 실패(테스트)");
+			}
+			posts.forEach(p -> judged.add(p.shortCode()));
+		}
 	}
 }

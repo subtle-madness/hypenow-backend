@@ -1,10 +1,11 @@
 package com.celfit.was.v1.perfdashboard;
 
-import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
+import com.celfit.was.monitoring.CampaignRepository;
+import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
@@ -25,34 +26,37 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * 성과 대시보드 통합 조립(스펙 §7-1) — 콘텐츠 3계열을 shortcode 하나로 합친다.
+ * 성과 대시보드 통합 조립(스펙 §7-1, 2026-08-18 direct 통합 §결정 3로 2계열 재편) — 콘텐츠를
+ * shortcode 하나로 합친다.
  *
  * <ul>
- *   <li><b>individual</b>: 레거시 추적 아이템 중 브랜드 매핑이 없는 것(개인 캠페인 등록분).</li>
- *   <li><b>direct</b>: 레거시 아이템 중 {@code app.brand_direct_posts} 매핑이 있는 것.</li>
- *   <li><b>tagged</b>: 브랜드 스윕이 발견한 태그 게시물({@link BrandPostAssembler}).</li>
+ *   <li><b>individual</b>: 레거시 추적 아이템 중 브랜드 풀에 없는 것(개인 캠페인 등록분 + 이관 잡이
+ *       아직 못 옮긴 direct 등록분 — 후자는 이관되면 자연히 브랜드 풀 겹침으로 옮겨간다).</li>
+ *   <li><b>브랜드 풀(tagged ∪ direct)</b>: {@link BrandPostAssembler}가 한 산지({@code brand_tagged_post})
+ *       에서 조립한다. {@code source}는 그 응답의 {@link BrandPostResponse#source()}를 그대로 쓴다
+ *       (direct/tagged 구분은 산지 컬럼의 파생값일 뿐 조립 경로가 다르지 않다).</li>
  * </ul>
  *
- * <p>대표 산지는 하나다 — 우선순위 <b>individual &gt; direct &gt; tagged</b>(설계 결정 7).
- * 레거시 아이템이 있으면 그 아이템이 본체가 되고(상태·기간·캠페인 전부 레거시 정본), 겹치는 tagged
- * 관측은 {@code additionalSources}로 남기면서 <b>스냅샷만</b> 지표별로 병합한다. 레거시 없이 tagged만
+ * <p>3계열(individual·direct·tagged)이 2계열로 준 것이 통합의 핵심이다 — direct·tagged가 이제
+ * 같은 행이라 예전처럼 "direct 아이템이 본체, tagged는 부가 관측"으로 나눌 필요가 없다. 대표 산지는
+ * 여전히 하나다: 레거시 아이템이 있으면(individual) 그 아이템이 본체이고, 겹치는 브랜드 풀 관측은
+ * {@code additionalSources}로 남기면서 <b>스냅샷만</b> 지표별로 병합한다. 레거시 없이 브랜드 풀에만
  * 있는 게시물은 레거시 행이 없으므로 아이템을 합성한다({@code "bt_"+shortcode}).
  *
  * <p>필터·정렬·statusCounts는 여기서 하지 않는다(컨트롤러 몫) — 이 클래스는 필터 전 "전량"을
  * 업로드 최신순으로 돌려준다.
  *
  * <p>monitoring 서브시스템이 꺼진 환경에선 브랜드 계열 빈이 아예 없다 — 그래서 브랜드 의존은
- * {@link Optional}이고, 그 경우 tagged 계열을 건너뛴다(대시보드 표면은 살아 있어야 한다).
- * 다만 <b>레거시만 조립하는 것은 아니다</b>: 직접 등록 매핑(app.brand_direct_posts)과 브랜드 연결
- * (app.brand_monitorings)은 app DataSource라 그 환경에서도 살아 있어, direct 콘텐츠의 브랜드 귀속과
- * 구독 타입(own/competitor) 판정은 그대로 성립한다(08-12).
+ * {@link Optional}이고, 그 경우 브랜드 풀 계열을 건너뛴다(대시보드 표면은 살아 있어야 한다).
  */
 @Component
 public class PerformanceContentAssembler {
@@ -62,9 +66,15 @@ public class PerformanceContentAssembler {
 	public static final String SOURCE_DIRECT = "direct";
 	public static final String SOURCE_TAGGED = "tagged";
 
-	/** tagged-only 합성 아이템의 id 접두 — 레거시 숫자 id와 절대 충돌하지 않게 한다(설계 결정 7). */
+	/** 브랜드 풀 전용 합성 아이템의 id 접두 — 레거시 숫자 id와 절대 충돌하지 않게 한다(설계 결정 7).
+	 * 2026-08-18 direct 통합 이후 tagged-only뿐 아니라 direct-only(레거시 아이템이 없는 direct 등록)
+	 * 콘텐츠에도 이 접두가 붙는다 — "브랜드 풀 콘텐츠 전반"의 합성 id다(FE 통지 §6-4). */
 	private static final String SYNTHETIC_ID_PREFIX = "bt_";
-	/** 합성 아이템의 추적 기간 — 브랜드 표시 윈도우(90일)와 같은 값(스펙 §7-1). */
+	/** 합성 아이템의 표시용 추적 기간(레거시 trackingDays 필드 셰이프를 채우기 위한 값일 뿐 실제 나이
+	 * 티어 정책에 쓰이지 않는다) — 값은 08-09 이전부터 90으로 고정돼 있었고, 실제 표시 윈도우는
+	 * 365일이다({@link BrandPostAssembler#WINDOW_DAYS}). 2026-08-18 direct 통합에서 주석 불일치를
+	 * 발견했으나 값은 바꾸지 않는다(FE 통지 추가 항목을 만들지 않기 위해 — 표시용 필드일 뿐 서버
+	 * 판정을 좌우하지 않는다). */
 	private static final int TAGGED_TRACKING_DAYS = 90;
 	private static final String MODE_URL = "url";
 	private static final String STATUS_TRACKING = "tracking";
@@ -75,17 +85,17 @@ public class PerformanceContentAssembler {
 	private static final Logger log = LoggerFactory.getLogger(PerformanceContentAssembler.class);
 
 	private final TrackingItemAssembler trackingItemAssembler;
-	private final BrandDirectPostRepository directPostRepository;
 	private final BrandLinkRepository linkRepository;
+	private final CampaignRepository campaignRepository;
 	private final Optional<BrandReadRepository> brandReadRepository;
 	private final Optional<BrandPostAssembler> brandPostAssembler;
 
 	public PerformanceContentAssembler(TrackingItemAssembler trackingItemAssembler,
-			BrandDirectPostRepository directPostRepository, BrandLinkRepository linkRepository,
+			BrandLinkRepository linkRepository, CampaignRepository campaignRepository,
 			Optional<BrandReadRepository> brandReadRepository, Optional<BrandPostAssembler> brandPostAssembler) {
 		this.trackingItemAssembler = trackingItemAssembler;
-		this.directPostRepository = directPostRepository;
 		this.linkRepository = linkRepository;
+		this.campaignRepository = campaignRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.brandPostAssembler = brandPostAssembler;
 	}
@@ -108,93 +118,75 @@ public class PerformanceContentAssembler {
 
 	private Assembled assemble(long userId, boolean withComments) {
 		TrackingItemAssembler.AssembledList legacy = trackingItemAssembler.assembleList(userId);
-		DirectMapping direct = directMapping(userId);
 		// 활성 링크는 monitoring 게이트 <b>밖</b>에서 한 번 읽는다(08-12) — 구독 타입 판정에 필요하고,
-		// BrandLinkRepository는 app DataSource라 monitoring 비활성 환경에서도 살아 있다. 직접 등록
-		// 매핑(app.brand_direct_posts)도 같은 이유로 게이트 밖이라, 링크를 안 읽으면 경쟁사 브랜드의
-		// direct 콘텐츠가 기본 범위에 조용히 섞인다(운영 기본값 MONITORING_ENABLED=false).
+		// BrandLinkRepository는 app DataSource라 monitoring 비활성 환경에서도 살아 있다.
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		Set<String> competitorIds = competitorBrandAccountIds(links);
-		Tagged tagged = loadTagged(userId, links, withComments);
+		BrandPool brandPool = loadBrandPool(userId, links, withComments);
+		Map<Long, CampaignRow> campaignsById = campaignRepository.findByUser(userId).stream()
+				.collect(Collectors.toMap(CampaignRow::id, Function.identity()));
 
 		List<PerformanceContentResponse> contents = new ArrayList<>();
 		Set<String> consumedCodes = new LinkedHashSet<>();
 		for (TrackingItemResponse item : legacy.items()) {
 			String shortcode = shortcodeOf(item.post() == null ? null : item.post().url());
-			BrandPostResponse overlap = shortcode == null ? null : tagged.byShortcode().get(shortcode);
+			BrandPostResponse overlap = shortcode == null ? null : brandPool.byShortcode().get(shortcode);
 			if (overlap != null) {
 				consumedCodes.add(shortcode);
 			}
-			contents.add(fromLegacy(item, shortcode, direct.brandAccountIdFor(item.id(), shortcode), overlap,
-					competitorIds, withComments));
+			contents.add(fromLegacy(item, shortcode, overlap, withComments));
 		}
-		for (Map.Entry<String, BrandPostResponse> entry : tagged.byShortcode().entrySet()) {
+		for (Map.Entry<String, BrandPostResponse> entry : brandPool.byShortcode().entrySet()) {
 			if (!consumedCodes.contains(entry.getKey())) {
-				contents.add(fromTagged(entry.getValue()));
+				contents.add(fromBrandPost(entry.getValue(), campaignsById));
 			}
 		}
 
 		contents.sort(Comparator
 				.comparing(PerformanceContentAssembler::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
 				.thenComparing(c -> c.item().id()));
-		return new Assembled(List.copyOf(contents), lastCollectedAt(legacy.lastCollectedAt(), tagged.lastSweptAt()),
-				competitorIds);
+		return new Assembled(List.copyOf(contents),
+				lastCollectedAt(legacy.lastCollectedAt(), brandPool.lastSweptAt()), competitorIds);
 	}
 
 	// ---------- 레거시 계열 ----------
 
 	/**
 	 * 레거시 아이템 1건 → 대시보드 콘텐츠. 아이템 본체(상태·기간·캠페인·핸들)는 전부 레거시가 정본이고,
-	 * 겹치는 tagged가 있으면 스냅샷 병합·협찬 승격·additionalSources만 얹는다(스펙 §7-1).
+	 * 겹치는 브랜드 풀 관측이 있으면 스냅샷 병합·협찬 승격·additionalSources·귀속만 얹는다(스펙 §7-1).
 	 *
-	 * @param directBrandAccountId 직접 등록 매핑의 브랜드 id 문자열(매핑이 없으면 null) — 이 값의
-	 *                             존재 자체가 direct 판정이다.
-	 * @param competitorIds 경쟁사 구독의 brandId 집합 — 귀속 동률을 own 쪽으로 푸는 데만 쓴다
-	 *                      ({@link #attributedBrandAccountId}).
+	 * <p>2026-08-18 direct 통합 이후 direct 판정은 더 이상 별도 매핑 조회가 아니다 — 겹치는
+	 * {@code overlap}의 {@link BrandPostResponse#source()}를 그대로 쓴다(tagged/direct 구분은 그
+	 * 응답의 파생값). 레거시 아이템이 브랜드 풀 어디에도 없으면 individual이다. <b>과도기 한정</b>:
+	 * 이관 잡(M2)이 아직 못 옮긴 direct 등록분은 브랜드 풀에 없어(그 매핑은 {@code
+	 * BrandPostAssembler.assembleLegacyPending} 폴백에서만 조립된다) 이 표면에서 individual로 보인다
+	 * — 이관되면 자연히 direct로 옮겨간다(설계 §결정 3).
 	 */
 	private static PerformanceContentResponse fromLegacy(TrackingItemResponse item, String shortcode,
-			String directBrandAccountId, BrandPostResponse overlap, Set<String> competitorIds,
-			boolean withComments) {
+			BrandPostResponse overlap, boolean withComments) {
 		PerformancePostResponse post = legacyPost(item, shortcode, overlap, withComments);
 		return new PerformanceContentResponse(
 				new PerformanceItemResponse(item.id(), item.mode(), item.status(), item.handle(),
 						item.displayName(), item.profileImageUrl(), item.followers(), item.lastUploadedAt(),
 						item.campaignId(), item.campaignName(), item.sourceUrl(), item.registeredAt(),
 						item.trackingDays(), item.keywords(), post, item.nextCheckAt()),
-				directBrandAccountId != null ? SOURCE_DIRECT : SOURCE_INDIVIDUAL,
+				overlap == null ? SOURCE_INDIVIDUAL : overlap.source(),
 				sponsorshipOf(item, overlap),
 				// 게시물이 아직 없는 아이템(collecting·detecting·not_uploaded)은 shortcode 자체가 없다 —
 				// 그 콘텐츠는 item.id로만 식별된다(스펙 §7-1).
 				shortcode,
-				overlap == null ? List.of() : List.of(SOURCE_TAGGED),
-				attributedBrandAccountId(directBrandAccountId, overlap, competitorIds));
+				overlap == null ? List.of() : List.of(overlap.source()),
+				attributedBrandAccountId(overlap));
 	}
 
 	/**
-	 * 브랜드 귀속 결정 — 브랜드 소속은 tagged 관측만의 속성이 아니다. direct는 매핑 자체가 "이 게시물은
-	 * 이 브랜드 소속"이라는 선언이라 tagged 관측이 아직 없어도 채운다(brandAccountId 필터가 자기 브랜드의
-	 * direct를 떨구면 안 된다). 둘 다 있으면 <b>관측값(tagged)을 우선</b>한다 — 브랜드 스윕이 더 늦게
-	 * 수집한 원천이라 스냅샷 최신도가 높다.
-	 *
-	 * <p><b>단 하나의 예외</b>(08-12): direct가 내 브랜드(own 구독)를 가리키는데 겹치는 tagged 관측이
-	 * 경쟁사 브랜드면 <b>direct(own) 귀속을 지킨다</b>. 내가 내 브랜드로 직접 등록한 게시물이 "경쟁사
-	 * 계정에도 태그돼 있었다"는 이유만으로 내 성과 요약·statusCounts에서 사라지면 안 된다
-	 * (스펙 §5의 기본 범위는 "own 브랜드 콘텐츠 + individual"이다).
-	 *
-	 * <p>{@link #ownFirst}가 tagged끼리의 동률을 own 쪽으로 푸는 것과 같은 규칙을 한 층 위(direct 대
-	 * tagged)에 적용한 것이다. 이유도 같다 — 귀속이 이제 <b>표시</b>가 아니라 <b>범위</b>를 정하기
-	 * 때문이다. 양쪽이 같은 타입인 경우는 손대지 않는다(관측값 우선의 근거가 그대로 유효하다).
+	 * 브랜드 귀속 결정(2026-08-18 direct 통합 후 단순화) — direct와 tagged가 이제 한 행이므로 귀속이
+	 * 곧 그 행의 {@code brand_id}다. 겹치는 브랜드 풀 관측이 없으면(individual) 귀속도 없다.
+	 * {@link #ownFirst}가 정하는 "여러 브랜드에 걸친 겹침일 때 own이 이긴다" 규칙은 브랜드 풀 조립
+	 * 단계({@link #loadBrandPool})에서 이미 반영돼 있다 — 여기서 다시 판단할 대상이 없다.
 	 */
-	private static String attributedBrandAccountId(String directBrandAccountId, BrandPostResponse overlap,
-			Set<String> competitorIds) {
-		if (overlap == null) {
-			return directBrandAccountId;
-		}
-		if (directBrandAccountId != null && !competitorIds.contains(directBrandAccountId)
-				&& competitorIds.contains(overlap.brandAccountId())) {
-			return directBrandAccountId;
-		}
-		return overlap.brandAccountId();
+	private static String attributedBrandAccountId(BrandPostResponse overlap) {
+		return overlap == null ? null : overlap.brandAccountId();
 	}
 
 	private static PerformancePostResponse legacyPost(TrackingItemResponse item, String shortcode,
@@ -228,53 +220,44 @@ public class PerformanceContentAssembler {
 		return BrandSponsorshipClassifier.classify(overlap == null ? null : overlap.isPaidPartnership(), caption);
 	}
 
-	// ---------- tagged 계열 ----------
+	// ---------- 브랜드 풀 계열 ----------
 
 	/**
-	 * tagged-only 콘텐츠 — 레거시 행이 없어 아이템을 합성한다(설계 결정 7). id 접두 {@code bt_}는
-	 * 레거시 숫자 id와의 충돌을 막고, {@code canonicalPostId}는 순수 shortcode 그대로다.
-	 * 등록일은 브랜드가 이 게시물을 처음 본 날(first_seen), 추적 기간은 표시 윈도우와 같은 90일이다.
+	 * 브랜드 풀 전용(tagged-only·direct-only 공통) 콘텐츠 — 레거시 행이 없어 아이템을 합성한다
+	 * (설계 결정 7). id 접두 {@code bt_}는 레거시 숫자 id와의 충돌을 막고, {@code canonicalPostId}는
+	 * 순수 shortcode 그대로다. {@code source}는 {@link BrandPostResponse#source()}를 그대로 쓴다
+	 * (2026-08-18 direct 통합 이후 tagged든 direct든 조립 경로가 하나다).
+	 *
+	 * <p>등록일은 브랜드가 이 게시물을 처음 본 날(first_seen), 추적 기간은 표시용 상수(90) —
+	 * {@link #TAGGED_TRACKING_DAYS} 참고.
+	 *
+	 * <p>{@code campaignId}·{@code campaignName}은 {@code post.campaignIds()}의 head로 채운다
+	 * (비면 둘 다 null). 여러 캠페인이 붙어 있어도 첫 번째만 쓴다 — 응답 필드가 단수라서다(다중 부착
+	 * UI는 후속, 설계 §결정 3).
 	 */
-	private static PerformanceContentResponse fromTagged(BrandPostResponse post) {
+	private static PerformanceContentResponse fromBrandPost(BrandPostResponse post,
+			Map<Long, CampaignRow> campaignsById) {
 		String handle = post.authorUsername() == null ? "" : post.authorUsername().toLowerCase(Locale.ROOT);
 		String displayName = post.authorFullName() == null || post.authorFullName().isBlank()
 				? handle : post.authorFullName();
 
 		PerformancePostResponse dashboardPost = new PerformancePostResponse(post.postUrl(), post.shortcode(),
 				post.contentType(), post.takenAt(), post.caption(),
-				// 브랜드 태그 게시물은 키워드 감지 경로가 아니다(브랜드 계정 태그가 곧 편입 사유).
+				// 브랜드 풀 게시물은 키워드 감지 경로가 아니다(브랜드 계정 태그·직접 등록이 곧 편입 사유).
 				List.of(), post.thumbnailUrl(), null, post.snapshots(), post.commentsTotal(),
 				post.commentsHidden(), post.commentsCollectedCount(), post.recentComments());
+		String campaignId = post.campaignIds().isEmpty() ? null : post.campaignIds().get(0);
+		String campaignName = campaignId == null ? null
+				: Optional.ofNullable(campaignsById.get(Long.valueOf(campaignId))).map(CampaignRow::name)
+						.orElse(null);
 
 		return new PerformanceContentResponse(
 				new PerformanceItemResponse(SYNTHETIC_ID_PREFIX + post.shortcode(), MODE_URL, STATUS_TRACKING,
 						handle, displayName, post.authorProfilePicUrl(), post.authorFollowers(),
 						// 게시자의 마지막 업로드 시각은 브랜드 파이프라인이 관측하지 않는다(프로필 스윕 대상이 아님).
-						null, null, null, post.postUrl(), dateOf(post.trackingStartedAt()), TAGGED_TRACKING_DAYS,
-						null, dashboardPost, null),
-				SOURCE_TAGGED, post.sponsorship(), post.shortcode(), List.of(), post.brandAccountId());
-	}
-
-	/**
-	 * 직접 등록 매핑 — shortcode와 레거시 아이템 id <b>양쪽</b>으로 판정한다.
-	 *
-	 * <p>shortcode만 보면 아직 게시물이 확정되지 않은 직접 등록분(collecting — post가 null이라
-	 * shortcode를 만들 수 없다)이 첫 수집 전까지 individual로 표시된다. 매핑 행에 이미
-	 * {@code monitoring_item_id}가 있으므로 id로도 같은 판정이 가능하고, 두 키는 같은 매핑을
-	 * 가리키므로 합집합을 써도 individual → direct 방향으로만 바뀐다(오탐 없음).
-	 *
-	 * <p>매핑의 {@code brand_id}까지 관통시킨다 — direct 콘텐츠의 {@code brandAccountId}는 tagged
-	 * 관측 없이도 확정되는 값이기 때문이다(FE PerformanceContent 계약).
-	 */
-	private DirectMapping directMapping(long userId) {
-		Map<String, String> byShortCode = new LinkedHashMap<>();
-		Map<String, String> byItemId = new LinkedHashMap<>();
-		for (BrandDirectPostRepository.Row row : directPostRepository.findByUser(userId)) {
-			String brandAccountId = String.valueOf(row.brandId());
-			byShortCode.putIfAbsent(row.shortCode(), brandAccountId);
-			byItemId.putIfAbsent(String.valueOf(row.monitoringItemId()), brandAccountId);
-		}
-		return new DirectMapping(byShortCode, byItemId);
+						null, campaignId, campaignName, post.postUrl(), dateOf(post.trackingStartedAt()),
+						TAGGED_TRACKING_DAYS, null, dashboardPost, null),
+				post.source(), post.sponsorship(), post.shortcode(), List.of(), post.brandAccountId());
 	}
 
 	/**
@@ -322,17 +305,19 @@ public class PerformanceContentAssembler {
 	}
 
 	/**
-	 * 활성 브랜드 연결이 있을 때만 브랜드 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지 않는다.
-	 * 다계정(08-07 개정)은 연결 순서대로 병합하되 own 묶음이 먼저다({@link #ownFirst}) — 같은 shortcode가
-	 * 여러 브랜드에 태그돼 있으면 내 브랜드가, 같은 타입 안에서는 먼저 연결한 브랜드가 이긴다
-	 * (putIfAbsent). lastSweptAt은 브랜드들 중 가장 늦은 값이라 순회 순서와 무관하다.
+	 * 활성 브랜드 연결이 있을 때만 브랜드 풀 계열을 조립한다 — 없으면 monitoring DB를 아예 건드리지
+	 * 않는다. 다계정(08-07 개정)은 연결 순서대로 병합하되 own 묶음이 먼저다({@link #ownFirst}) —
+	 * 같은 shortcode가 여러 브랜드에 태그돼 있으면 내 브랜드가, 같은 타입 안에서는 먼저 연결한
+	 * 브랜드가 이긴다(putIfAbsent). lastSweptAt은 브랜드들 중 가장 늦은 값이라 순회 순서와 무관하다.
 	 *
 	 * @param links 호출부가 이미 읽어 둔 활성 링크 — 여기서 다시 조회하지 않는다(monitoring이 켜져 있든
 	 *              꺼져 있든 링크 조회는 요청당 한 번이다).
+	 * @param userId 시딩(캠페인 연결) 판정 스코프(2026-08-18 캠페인 도출 개정) — {@link
+	 *               BrandPostAssembler#assembleBrandPosts} 호출에 그대로 넘긴다.
 	 */
-	private Tagged loadTagged(long userId, List<BrandLinkRow> links, boolean withComments) {
+	private BrandPool loadBrandPool(long userId, List<BrandLinkRow> links, boolean withComments) {
 		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty() || links.isEmpty()) {
-			return Tagged.EMPTY;   // monitoring 비활성이거나 연결 0건 — 레거시 계열만
+			return BrandPool.EMPTY;   // monitoring 비활성이거나 연결 0건 — 레거시 계열만
 		}
 
 		Map<String, BrandPostResponse> byShortcode = new LinkedHashMap<>();
@@ -341,19 +326,18 @@ public class PerformanceContentAssembler {
 			Optional<BrandAccountRow> account = brandReadRepository.get().findAccount(link.brandId());
 			if (account.isEmpty()) {
 				// 연결은 살아 있는데 monitoring 쪽 계정 행이 없는 상태 — 대시보드를 죽이지 않고 그 브랜드만 뺀다.
-				log.warn("브랜드 연결의 monitoring 계정 행 부재 — tagged 생략 userId={}, brandId={}",
-						userId, link.brandId());
+				log.warn("브랜드 연결의 monitoring 계정 행 부재 — 브랜드 풀 생략 brandId={}", link.brandId());
 				continue;
 			}
 			// 지표 집계라 정산 전 게시물도 담는다(ALL) — 미정산분도 스냅샷(지표)은 이미 있다(열거에서
 			// 오고 monitoring processPage가 저장한다). 없는 건 댓글·게시자뿐이라 빼면 지표가 과소 계상된다.
 			for (BrandPostResponse post : brandPostAssembler.get()
-					.assembleTagged(account.get(), withComments, BrandPostAssembler.TaggedScope.ALL)) {
+					.assembleBrandPosts(userId, account.get(), withComments, BrandPostAssembler.BrandPostScope.ALL)) {
 				byShortcode.putIfAbsent(post.shortcode(), post);
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());
 		}
-		return new Tagged(byShortcode, lastSweptAt);
+		return new BrandPool(byShortcode, lastSweptAt);
 	}
 
 	// ---------- 스냅샷 병합 ----------
@@ -535,19 +519,9 @@ public class PerformanceContentAssembler {
 			Set<String> competitorBrandAccountIds) {
 	}
 
-	/** 직접 등록 매핑 색인 — 같은 매핑을 shortcode·아이템 id 두 키로 조회한다(값은 브랜드 id 문자열). */
-	private record DirectMapping(Map<String, String> byShortCode, Map<String, String> byItemId) {
+	/** 브랜드 풀 조회 결과 — shortcode 키 브랜드 풀(tagged ∪ direct) 전량 + 브랜드 스윕 시각. */
+	private record BrandPool(Map<String, BrandPostResponse> byShortcode, OffsetDateTime lastSweptAt) {
 
-		/** 매핑된 브랜드 id 문자열, 직접 등록분이 아니면 null. */
-		String brandAccountIdFor(String itemId, String shortcode) {
-			String byId = byItemId.get(itemId);
-			return byId != null || shortcode == null ? byId : byShortCode.get(shortcode);
-		}
-	}
-
-	/** 브랜드 계열 조회 결과 — shortcode 키 tagged 전량 + 브랜드 스윕 시각. */
-	private record Tagged(Map<String, BrandPostResponse> byShortcode, OffsetDateTime lastSweptAt) {
-
-		static final Tagged EMPTY = new Tagged(Map.of(), null);
+		static final BrandPool EMPTY = new BrandPool(Map.of(), null);
 	}
 }

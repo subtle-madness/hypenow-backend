@@ -1249,4 +1249,5 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
 				.andExpect(header().string("Retry-After", "5"));
 	}
+
 }

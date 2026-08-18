@@ -1,0 +1,139 @@
+package com.celfit.monitoring.service;
+
+import com.celfit.monitoring.hiker.BrandCallContext;
+import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
+import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.TaggedPostRepository;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+/**
+ * 브랜드 direct(직접 등록) 게시물 단건 수집(2026-08-18 브랜드 direct 게시물 파이프라인 통합
+ * 설계 §2-2·§3-2) — 태그 열거가 절대 도달할 수 없는 게시물(계정에 태그되지 않은 direct 등록분)을
+ * 단건 콜로 수집·보강한다.
+ *
+ * <p><b>"단건 게시물 콜 전면 금지"(08-06·08-09) 결정과 충돌하지 않는다.</b> 그 결정은 <i>태그
+ * 열거로 이미 얻은 게시물에 단건 콜을 덧붙이는 것</i>(정책 문서의 "게시물당 단건 상세 콜 1회"
+ * 제안)을 기각한 것이고, 근거는 "열거 대비 추가 지표가 없다"였다. direct 게시물은 애초에 열거에
+ * 실리지 않으므로(계정에 태그되지 않았다) 그 근거가 성립하지 않는다 — 단건 콜이 유일한 공급원이다.
+ * 레거시 url 등록 모드는 지금도 같은 콜({@code CollectService.collectPost}/{@code collectTrackedPost}
+ * → {@code /v2/media/info/by/code})을 쓰고 있다 — 통합은 그 콜의 소유자를 브랜드 파이프라인으로
+ * 옮기는 것이지 새 콜을 도입하는 것이 아니다.
+ */
+@Service
+public class BrandDirectCollectService {
+
+	private static final Logger log = LoggerFactory.getLogger(BrandDirectCollectService.class);
+	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+	/** 야간 스윕 2단계 보강 배치 크기 — sweep 1단계의 페이지 배치(~21건)와 같은 규모감. */
+	private static final int SWEEP_BATCH_SIZE = 20;
+
+	private final HikerClient hiker;
+	private final BrandCallContext callContext;
+	private final BrandSnapshotWriter writer;
+	private final TaggedPostRepository taggedPosts;
+	private final BrandCollectService collect;
+
+	public BrandDirectCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
+			TaggedPostRepository taggedPosts, BrandCollectService collect) {
+		this.hiker = hiker;
+		this.callContext = callContext;
+		this.writer = writer;
+		this.taggedPosts = taggedPosts;
+		this.collect = collect;
+	}
+
+	/**
+	 * 게시물 1건 등록·이관 경로 — 동기 완결(단건 1콜 + enrich). 예외는 호출자(컨트롤러)가 매핑한다:
+	 * {@link SubjectNotFoundException}(게시물 부재·삭제), {@code PrivateAccountException}(비공개
+	 * 계정), {@link PostShapeUnsupportedException}(게시일 미상 등 셰이프 이상)은 그대로 전파한다.
+	 */
+	public PostInfo collectAndEnrich(BrandRow brand, String shortCode, Instant registeredAt) {
+		return callContext.scoped(brand.id(), () -> doCollectAndEnrich(brand, shortCode, registeredAt));
+	}
+
+	private PostInfo doCollectAndEnrich(BrandRow brand, String shortCode, Instant registeredAt) {
+		PostInfo post = hiker.fetchPost(shortCode);   // SubjectNotFound·PrivateAccount는 그대로 전파
+		if (post.takenAt() == null) {
+			// brand_tagged_post.taken_at은 NOT NULL이라 저장 불가 — 호출자가 422로 정산하게 던진다.
+			throw new PostShapeUnsupportedException("게시일 미상: " + shortCode);
+		}
+		PostInfo adjusted = collect.adjustLotteryMetrics(List.of(post)).get(0);
+		writer.savePost(LocalDate.now(KST), adjusted);
+		taggedPosts.upsertDirect(brand.id(), adjusted, registeredAt);
+		taggedPosts.touchCrawled(brand.id(), List.of(shortCode), Instant.now());
+		collect.enrich(brand, List.of(adjusted));   // 게시자 + 댓글 + markEnriched(finally)
+		return adjusted;
+	}
+
+	/**
+	 * 야간 스윕 2단계(설계 §3-2) — {@code directDuePosts} 중 {@link BrandCrawlPolicy#due}인 것만
+	 * 게시물 단위 격리로 단건 수집한다. N건(20) 배치마다 {@link BrandCollectService#enrich}를 불러
+	 * markEnriched가 finally로 보장되게 한다(08-13 완결 배치 서빙 규율 — direct-only 행은 태그 열거
+	 * 백스톱 자체가 없어 1단계보다 더 엄격히 지켜야 한다).
+	 *
+	 * <p>게시자 프로필·댓글 병렬화는 {@code enrich} 안의 공유 워커 풀이 이미 한다 — 여기서 추가
+	 * 병렬화하지 않는다(전역 동시 콜 상한 계산이 깨진다).
+	 */
+	public void sweepDirect(BrandRow brand) {
+		callContext.scoped(brand.id(), () -> {
+			doSweepDirect(brand);
+			return null;
+		});
+	}
+
+	private void doSweepDirect(BrandRow brand) {
+		Instant now = Instant.now();
+		List<TaggedPostRepository.TrackedPost> due = taggedPosts
+				.directDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE)).stream()
+				.filter(t -> BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now))
+				.toList();
+		List<PostInfo> batch = new ArrayList<>();
+		for (TaggedPostRepository.TrackedPost t : due) {
+			collectOne(brand, t.shortCode(), now).ifPresent(batch::add);
+			if (batch.size() >= SWEEP_BATCH_SIZE) {
+				collect.enrich(brand, List.copyOf(batch));
+				batch.clear();
+			}
+		}
+		if (!batch.isEmpty()) {
+			collect.enrich(brand, batch);
+		}
+	}
+
+	/**
+	 * 게시물 1건 격리 수집 — 삭제·비공개 전환({@link SubjectNotFoundException})에도 행을 지우지
+	 * 않는다: 브랜드 파이프라인은 상태 전이를 하지 않는다(스펙 §8·BrandSweepJob 주석 승계). 카드는
+	 * 마지막 스냅샷으로 남는다. 그 외 실패(타임아웃·5xx·셰이프 이상)도 이 게시물만 건너뛰고 나머지는
+	 * 계속 — 한 건의 실패가 배치 전체를 죽이면 안 된다.
+	 */
+	private Optional<PostInfo> collectOne(BrandRow brand, String shortCode, Instant now) {
+		try {
+			PostInfo post = hiker.fetchPost(shortCode);
+			if (post.takenAt() == null) {
+				log.warn("direct 단건 수집 — 게시일 미상, 건너뜀: {}", shortCode);
+				return Optional.empty();
+			}
+			PostInfo adjusted = collect.adjustLotteryMetrics(List.of(post)).get(0);
+			writer.savePost(LocalDate.now(KST), adjusted);
+			taggedPosts.touchCrawled(brand.id(), List.of(shortCode), now);
+			return Optional.of(adjusted);
+		} catch (SubjectNotFoundException e) {
+			log.info("direct 게시물 부재/비공개 전환(격리, 상태 전이 없음) — {}: {}", shortCode, e.toString());
+		} catch (RuntimeException e) {
+			log.warn("direct 단건 수집 실패(격리) — {}: {}", shortCode, e.toString());
+		}
+		return Optional.empty();
+	}
+}

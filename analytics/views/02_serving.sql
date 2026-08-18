@@ -9,8 +9,8 @@
 -- 목록 피드 편향의 구조적 원인이었다. 앵커 재적합만으로는 적합 모수를 벗어나면 다시(반대 방향으로)
 -- 어긋난다 — 근본 해법은 앵커 기준량 자체를 연령 무관 Q로 바꾸는 것.
 --   연속 축(무제한): reach = ln(1 + views/(followers+1000))
---                    engage(릴스) = ln(1 + ((likes+comments×3)/(followers+1000)) / e0)  -- v2.1(2026-07-20): 조회수→팔로워 정규화(저조회수 뭉침 해소). 조회수는 도달 축에만.
---                    engage(피드) = ln(1 + ((likes+comments×3)/(followers+1000)) / f0)   -- 피드는 views 없음
+--                    engage(릴스) = ln(1 + ((likes+comments×wc)/(followers+1000)) / e0)  -- v2.1(2026-07-20): 조회수→팔로워 정규화(저조회수 뭉침 해소). 조회수는 도달 축에만.
+--                    engage(피드) = ln(1 + ((likes+comments×wc)/(followers+1000)) / f0)   -- 피드는 views 없음
 --   합성 Q: 릴스 = wr·reach + we·engage ,  피드 = engage(피드)   -- Q는 연령과 무관(v3~)
 --   점수 = clamp(Q를 타입별 4점 앵커로 구간 선형 매핑(p05→10·p50→45·p90→80·p99→97), 0, 100)
 --          × 0.5^(경과일/halflife)   -- elapsed_days는 호출부가 계산해 넘김, 음수 클램프는 함수 안(GREATEST 0)
@@ -18,8 +18,10 @@
 --   앵커는 **감쇠 전 Q** 기준·**전체 서빙 코퍼스**로 적합(v3~. v2.1까지는 qf 기준·분석 후보 집합이었다 —
 --   구 키(hype-anchor-{reels,feed}-*)에 옛 스펙 값을 넣어도 기준량이 달라 조용히 망가지므로 무시된다).
 --   재산출은 analytics/check/hype-anchor-refit.sh(재현 절차를 저장소에 둔 이유는 스펙 §5-2).
+--   2026-08-17 재적합(댓글 가중 1.5 기준 — 릴스 n=84,654·피드 n=38,751, 하니스 v2).
 -- 튜닝 상수는 함수가 app_setting에서 직접 읽는다(STABLE) — 호출부는 6-인자로 단순, 재배포 없이 튜닝.
 --   키: hype-fresh-halflife-days(14)·hype-reels-e0(0.01: v2.1부터 팔로워당 참여 기준, 릴스 참여율 중앙값≈0.0094)·hype-feed-f0(0.03)·hype-reach-weight(1)·hype-engage-weight(1)
+--       ·hype-comment-weight(1.5: 2026-08-17 댓글 가중 하향 — 품앗이 댓글 패턴 과대평가 해소, 스펙 2026-08-17-hype-comment-weight-design.md)
 --       ·hype-anchor-q-{reels,feed}-{p05,p50,p90,p99}. 미설정/0이면 함수 내 COALESCE 기본값(단일 소스).
 -- NULL 규칙: likes·comments 중 NULL → NULL, 릴스인데 views NULL → NULL (피드 조회수 항상 NULL은 정상 — CLAUDE.md 함정).
 --
@@ -40,25 +42,26 @@ LANGUAGE sql STABLE AS $$
       COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-feed-f0'),0),0.03)           AS f0,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-reach-weight'),1)                   AS wr,
       COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-engage-weight'),1)                  AS we,
+      COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-comment-weight'),1.5)               AS wc,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1373)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0447) END  AS a05,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p05'),0.1194)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p05'),0.0366) END  AS a05,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p50'),1.3798)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p50'),0.6135) END  AS a50,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p50'),1.2286)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p50'),0.5298) END  AS a50,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p90'),4.5716)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p90'),1.6320) END  AS a90,
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p90'),4.0185)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p90'),1.4412) END  AS a90,
       CASE WHEN content_type='reels'
-        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p99'),10.3883)
-        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p99'),3.0144) END  AS a99
+        THEN COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-reels-p99'),9.9521)
+        ELSE COALESCE((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-q-feed-p99'),2.7848) END  AS a99
   ),
   c AS (
     SELECT s.*,
       (CASE WHEN content_type='reels'
         THEN s.wr * ln(1 + views::numeric/(COALESCE(followers,0)+1000))
-           + s.we * ln(1 + ((likes + comments*3)::numeric/(COALESCE(followers,0)+1000))/s.e0)
-        ELSE ln(1 + ((likes + comments*3)::numeric/(COALESCE(followers,0)+1000))/s.f0)
+           + s.we * ln(1 + ((likes + comments*s.wc)::numeric/(COALESCE(followers,0)+1000))/s.e0)
+        ELSE ln(1 + ((likes + comments*s.wc)::numeric/(COALESCE(followers,0)+1000))/s.f0)
       END) AS q
     FROM s
   )
@@ -91,17 +94,19 @@ $$;
 -- Q 기준 타입별 앵커가 이미 끝냈으므로, 출력 매핑에서 또 타입을 나누면 어렵게 확보한 타입 중립이
 -- 도로 깨진다. 왜 필요한가: 랭킹 경로(is_beauty ∧ (metric_timeliness='timely' OR NULL)) 실측
 -- (2026-07-30, n=5,321·재확인 n=5,683)에서 hype_score 분포가 p05=5·p50=23·p90=44·p99=60.8·max=76 —
--- 1등이 76점에 그쳐 0~100 척도의 상단(77~100)이 전혀 쓰이지 않았다. 앵커는 그 실측값 그대로다.
+-- 1등이 76점에 그쳐 0~100 척도의 상단(77~100)이 전혀 쓰이지 않았다. 당시 앵커는 그 실측값
+-- 그대로였다(현행 값은 아래 08-17 재적합분 — 이 문단은 도입 배경 이력).
 -- app_setting 키: analytics.hype-anchor-out-{p05,p50,p90,p99}(타입 무관 단일 세트, 미설정/0이면
 -- 아래 COALESCE 기본값 — 단일 소스는 함수 기본값, 콘텐츠 Q 앵커·계정 앵커와 동일 원칙).
+-- 2026-08-17 재적합(댓글 가중 1.5, 하니스 v2 — 미러 점수가 아닌 신 가중 재계산 분포 기준, n=10,561·max=76).
 CREATE OR REPLACE FUNCTION analytics.hype_score_output(raw numeric) RETURNS numeric
 LANGUAGE sql STABLE AS $$
   WITH s AS (
     SELECT
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p05'),0),5)    AS a05,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p50'),0),23)   AS a50,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p90'),0),44)   AS a90,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p99'),0),60.8) AS a99
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p05'),0),3)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p50'),0),14) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p90'),0),32) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-out-p99'),0),57) AS a99
   )
   SELECT CASE
     WHEN raw IS NULL THEN NULL
