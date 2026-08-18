@@ -36,7 +36,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "건강 — 오늘 밤 스윕이 돌았나",
+      "title": "건강",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -359,7 +359,7 @@
     {
       "id": 101,
       "type": "row",
-      "title": "사용량 — 얼마나 쓰이고 있나",
+      "title": "사용량",
       "collapsed": false,
       "gridPos": {
         "h": 1,

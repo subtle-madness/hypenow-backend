@@ -86,7 +86,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "호스트 — 서버 한 대에 여유가 있나",
+      "title": "호스트",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -367,7 +367,7 @@
     {
       "id": 200,
       "type": "row",
-      "title": "컨테이너·JVM — 어느 놈이 먹고 있나",
+      "title": "컨테이너·JVM",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -704,7 +704,7 @@
     {
       "id": 201,
       "type": "row",
-      "title": "로그 — 전 서비스 에러",
+      "title": "로그",
       "collapsed": false,
       "gridPos": {
         "h": 1,

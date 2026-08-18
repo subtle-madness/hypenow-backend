@@ -36,7 +36,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "건강 — 돌고 있나, 막힌 데는 없나",
+      "title": "건강",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -701,7 +701,7 @@
     {
       "id": 101,
       "type": "row",
-      "title": "사용량 — 얼마나 쓰이고 있나",
+      "title": "사용량",
       "collapsed": false,
       "gridPos": {
         "h": 1,

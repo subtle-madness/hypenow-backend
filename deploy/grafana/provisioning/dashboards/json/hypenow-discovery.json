@@ -37,7 +37,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "건강 — 랭킹이 오늘 것인가",
+      "title": "건강",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -207,7 +207,7 @@
     {
       "id": 200,
       "type": "row",
-      "title": "사용량 — 얼마나 쓰이고 있나",
+      "title": "사용량",
       "collapsed": false,
       "gridPos": {
         "h": 1,

@@ -37,7 +37,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "비용 — 콜은 어디로 나가나",
+      "title": "비용",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -200,7 +200,7 @@
     {
       "id": 101,
       "type": "row",
-      "title": "외부 의존 실패 — Hiker·IG",
+      "title": "외부 의존 실패",
       "collapsed": false,
       "gridPos": {
         "h": 1,
