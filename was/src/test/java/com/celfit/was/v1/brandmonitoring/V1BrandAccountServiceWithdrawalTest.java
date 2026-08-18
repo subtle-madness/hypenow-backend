@@ -51,7 +51,7 @@ class V1BrandAccountServiceWithdrawalTest {
 	}
 
 	private static BrandLinkRow link(long brandId, String username) {
-		return new BrandLinkRow(brandId, 7L, brandId, username, BrandAccountType.OWN,
+		return new BrandLinkRow(brandId, 7L, brandId, username, BrandAccountType.OWN, 12,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 

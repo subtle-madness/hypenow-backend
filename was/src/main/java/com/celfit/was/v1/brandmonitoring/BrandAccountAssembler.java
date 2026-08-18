@@ -44,7 +44,7 @@ public class BrandAccountAssembler {
 		this.sweepHourKst = sweepHourKst;
 	}
 
-	public BrandAccountResponse toResponse(BrandAccountRow row, String accountType) {
+	public BrandAccountResponse toResponse(BrandAccountRow row, String accountType, int collectionMonths) {
 		String status;
 		if (row.lastSweptOn() != null) {
 			status = STATUS_READY;
@@ -66,7 +66,9 @@ public class BrandAccountAssembler {
 				String.valueOf(row.id()),
 				// 타입은 brand_account가 아니라 호출자가 쥔 연결 행에서 온다 — 조립기는 계속 순수 변환이다.
 				accountType,
-				row.collectionMonths(),
+				// 표시 기간은 자산이 아니라 호출자가 쥔 연결 행에서 온다(2026-08-17) — 자산 값(유저 간
+				// max)을 실으면 3개월 신청 유저의 FE 안내·잠금이 12개월로 표시된다.
+				collectionMonths,
 				profile(row),
 				status,
 				// 확장 시 monitoring이 collection_started_at을 갱신한다 — FE 폴링 30분 상한의 앵커(요청서 §4).

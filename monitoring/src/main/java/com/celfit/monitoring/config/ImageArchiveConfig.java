@@ -4,6 +4,7 @@ import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
 import com.celfit.monitoring.image.GcsImageStore;
+import com.celfit.monitoring.image.HashtagPostAuthorImageArchiveJob;
 import com.celfit.monitoring.image.HashtagPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ImageDownloader;
 import com.celfit.monitoring.image.ImageStore;
@@ -21,7 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 각 잡의 {@code run()}이 PAR URL 자체를 보고 내린다. gcs 모드에선 {@code monitoring.image.gcs-bucket}
  * blank가 같은 역할을 한다. 모든 잡은 같은 버킷·같은 스토어 설정을 재사용한다(키 프리픽스로 소유권만
  * 분리 — monitor-profile/ · monitor-post/ · monitor-author/ · monitor-brand/ · monitor-brand-post/ ·
- * monitor-hashtag-post/).
+ * monitor-hashtag-post/ · monitor-hashtag-author/).
  */
 @Configuration
 public class ImageArchiveConfig {
@@ -104,6 +105,18 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.gcs-key:}") String gcsKey,
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
 		return new HashtagPostThumbnailArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+	}
+
+	/** 해시태그 발견 게시물 작성자 프로필 사진(RELEVANT만) — 같은 버킷, 프리픽스만 monitor-hashtag-author/로 분리. */
+	@Bean
+	public HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchiveJob(JdbcTemplate db,
+			@Value("${monitoring.image.par-url:}") String parUrl,
+			@Value("${monitoring.image.store:par}") String storeMode,
+			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
+			@Value("${monitoring.image.gcs-key:}") String gcsKey,
+			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+		return new HashtagPostAuthorImageArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
 				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
 	}
 }

@@ -86,52 +86,8 @@ public class MonitoringCommandClient {
 	}
 
 	/**
-	 * 브랜드 제외 문자열 조회(BrandController §3) — 자사 태그 오탐 방지용 문자열 전체.
-	 * 브랜드 미등록·비ACTIVE는 404 — deregisterBrand의 빈 바디 404(멱등 삼킴 전용 별개 계약)와 달리
-	 * 이 경로는 {code:"BRAND_NOT_FOUND", message} 에러 바디가 채워져 있어(08-11 정정 — 원래는 빈 바디라
-	 * MonitoringUnavailableException/503으로 오승격됐다) exchange()가 MonitoringApiException으로
-	 * 정확히 승격하고, 호출부(V1ExceptionAdvice 공용 매핑)가 그대로 404로 내려보낸다.
-	 */
-	public List<String> getHashtagExclusions(String username) {
-		HashtagExclusionsBody body = exchange(() -> restClient.get()
-				.uri("/api/brands/{username}/hashtag-exclusions", username)
-				.retrieve().body(HashtagExclusionsBody.class));
-		return body == null || body.terms() == null ? List.of() : body.terms();
-	}
-
-	/**
-	 * 제외 문자열 전체 교체(PUT 계약) — terms는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장.
-	 * 빈 목록도 허용(2026-08-12부터 — monitoring PUT 하한 가드 폐지, 단건·전체 삭제 API 참조).
-	 */
-	public void putHashtagExclusions(String username, List<String> terms) {
-		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-exclusions", username)
-				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
-	}
-
-	/** 제외 문자열 단건·다건 추가(POST 계약, 2026-08-12) — tombstone 재활성(monitoring이 정규화). */
-	public void addHashtagExclusions(String username, List<String> terms) {
-		exchange(() -> restClient.post().uri("/api/brands/{username}/hashtag-exclusions", username)
-				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
-	}
-
-	/**
-	 * 제외 문자열 단건 삭제(tombstone, DELETE {term} 계약, 2026-08-12) — 없어도 204(멱등).
-	 * term은 URI 템플릿 변수로 넘겨 RestClient가 인코딩한다(한글 등 특수문자 왕복 안전).
-	 */
-	public void deleteHashtagExclusion(String username, String term) {
-		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-exclusions/{term}", username, term)
-				.retrieve().toBodilessEntity());
-	}
-
-	/** 제외 문자열 전체 삭제(tombstone, DELETE 계약, 2026-08-12) — 자사 오탐 필터를 완전히 끈다. */
-	public void deleteAllHashtagExclusions(String username) {
-		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-exclusions", username)
-				.retrieve().toBodilessEntity());
-	}
-
-	/**
 	 * 브랜드 태그 셋 조회(BrandController §태그 관리, 2026-08-12) — 활성 태그 전체.
-	 * 404(BRAND_NOT_FOUND)는 제외 문자열 조회와 동형으로 MonitoringApiException으로 승격된다.
+	 * 404(BRAND_NOT_FOUND)는 다른 브랜드 조회 경로와 동형으로 MonitoringApiException으로 승격된다.
 	 */
 	public List<String> getHashtagTags(String username) {
 		HashtagTagsBody body = exchange(() -> restClient.get()
@@ -212,10 +168,6 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.BrandRegisterResponse와 동형 — followers는 등록 시점 관측값(null 가능). */
 	public record BrandRegisterResult(long brandId, String username, Long followers, String status) {
-	}
-
-	/** monitoring BrandController.HashtagExclusionsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
-	record HashtagExclusionsBody(List<String> terms) {
 	}
 
 	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */

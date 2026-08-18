@@ -67,8 +67,10 @@ public class V1BrandAccountService {
 	 * <p>brandName은 own 연결일 때만 전달한다(#406 경쟁사 계정 타입 게이트, {@link #brandNameOf} 참고) —
 	 * competitor 연결에 내 회사명을 넘기면 남의(경쟁사) 브랜드에 내 이름이 해시태그로 시드된다.
 	 *
-	 * <p>collectionMonths(2026-08-12)는 자산 레벨 값이라 이미 연결된 브랜드 재요청도 <b>더 큰 값이면</b>
-	 * 기간 확장으로 monitoring을 다시 부른다(아래 게이트) — 같거나 작은 값은 현행 멱등 경로 그대로다.
+	 * <p>collectionMonths는 두 곳에 반영된다(2026-08-17 개정 — {@link BrandCollectionMonths}):
+	 * <b>자산</b>(크롤 창)은 유저 간 max라 이미 연결된 브랜드 재요청도 <b>더 큰 값일 때만</b> 기간
+	 * 확장으로 monitoring을 다시 부르고(2026-08-12 게이트, 축소 없음 — 수집된 사실이 정본),
+	 * <b>링크</b>(유저 표시 창)는 명시한 값을 그대로 설정한다 — 축소도 반영되고 생략(null)은 불변이다.
 	 */
 	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType,
 			Integer rawCollectionMonths) {
@@ -93,13 +95,20 @@ public class V1BrandAccountService {
 				String expandBrandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
 				translate(() -> commandClient.registerBrand(username, expandBrandName, months));
 			}
+			// 링크(유저 표시 창, 2026-08-17)는 명시한 값으로 그대로 — 축소 허용. 생략(null)은 불변이다:
+			// orDefault로 접힌 12를 쓰면 필드 없는 구 클라이언트 재-POST가 신청 기간을 12로 되돌린다.
+			if (rawCollectionMonths != null) {
+				linkRepository.updateCollectionMonths(userId, brandId, months);
+			}
 			return get(userId, brandId);
 		}
 
 		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
 		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName, months));
 		try {
-			linkTransaction.link(userId, registered.brandId(), username, accountType);
+			// 링크에는 명시값(raw)을 넘긴다 — 개명 재등록이 기존 연결로 접힐 때 생략(null)과 명시를
+			// 구분해야 한다(멱등 경로와 같은 규칙). 자산(monitoring)에는 위에서 orDefault한 months.
+			linkTransaction.link(userId, registered.brandId(), username, accountType, rawCollectionMonths);
 		} catch (RuntimeException e) {
 			compensate(registered.brandId(), username);
 			throw e;
@@ -128,7 +137,7 @@ public class V1BrandAccountService {
 						userId, link.brandId());
 				continue;
 			}
-			accounts.add(assembler.toResponse(row.get(), link.accountType()));
+			accounts.add(assembler.toResponse(row.get(), link.accountType(), link.collectionMonths()));
 		}
 		long own = links.stream().filter(link -> BrandAccountType.OWN.equals(link.accountType())).count();
 		Map<String, Long> counts = new LinkedHashMap<>();
@@ -149,7 +158,7 @@ public class V1BrandAccountService {
 	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다. */
 	public BrandAccountResponse get(long userId, long brandId) {
 		BrandLinkRow link = requireOwnership(userId, brandId);
-		return assembler.toResponse(findAccountOrThrow(brandId), link.accountType());
+		return assembler.toResponse(findAccountOrThrow(brandId), link.accountType(), link.collectionMonths());
 	}
 
 	/**
@@ -169,44 +178,6 @@ public class V1BrandAccountService {
 		}
 		linkTransaction.changeType(userId, brandId, rawAccountType);
 		return get(userId, brandId);
-	}
-
-	/**
-	 * 해시태그 제외 문자열 조회(스펙 2026-08-11 §2) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
-	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
-	 */
-	public List<String> getHashtagExclusions(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		return commandClient.getHashtagExclusions(username);
-	}
-
-	/** 해시태그 제외 문자열 전체 교체 — terms null은 빈 목록으로 접어 monitoring에 위임(정규화는 monitoring). */
-	public void putHashtagExclusions(long userId, long brandId, List<String> terms) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.putHashtagExclusions(username, terms == null ? List.of() : terms);
-	}
-
-	/** 해시태그 제외 문자열 단건·다건 추가(2026-08-12) — terms null은 빈 목록(무해한 no-op)으로 위임. */
-	public void addHashtagExclusions(long userId, long brandId, List<String> terms) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.addHashtagExclusions(username, terms == null ? List.of() : terms);
-	}
-
-	/** 해시태그 제외 문자열 단건 삭제(2026-08-12) — 소유권 검증 후 monitoring에 위임(정규화는 monitoring). */
-	public void deleteHashtagExclusion(long userId, long brandId, String term) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteHashtagExclusion(username, term);
-	}
-
-	/** 해시태그 제외 문자열 전체 삭제(2026-08-12) — 소유권 검증 후 monitoring에 위임. */
-	public void deleteAllHashtagExclusions(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteAllHashtagExclusions(username);
 	}
 
 	/**

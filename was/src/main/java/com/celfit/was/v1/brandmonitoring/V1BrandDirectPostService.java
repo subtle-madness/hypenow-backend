@@ -18,7 +18,9 @@ import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.MonitoringInput;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
+import com.celfit.was.v1.monitoring.V1MonitoringItemUpdateService;
 import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -32,6 +34,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,7 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>게시물 수집·추적 자체는 <b>레거시 등록 파이프라인이 정본</b>이다({@link V1MonitoringRegistrationService}).
  * 이 서비스가 하는 일은 앞뒤로 브랜드 문맥을 붙이는 것뿐이다:
  * <ol>
- *   <li>앞: 이미 내 브랜드 목록(tagged 윈도우 ∪ direct 매핑)에 있는 게시물은 위임에서 빼고 duplicate</li>
+ *   <li>앞: 이미 내 브랜드 목록(유저 가시 창의 tagged ∪ direct 매핑)에 있는 게시물은 위임에서 빼고 duplicate</li>
  *   <li>뒤: 레거시가 만든(혹은 이미 갖고 있던) 추적 행에 {@code app.brand_direct_posts} 매핑을 건다</li>
  * </ol>
  * 레거시 서비스·테이블·응답은 한 줄도 바꾸지 않는다 — 호출과 조회만 한다.
@@ -58,6 +62,8 @@ import org.springframework.transaction.annotation.Transactional;
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class V1BrandDirectPostService {
 
+	private static final Logger log = LoggerFactory.getLogger(V1BrandDirectPostService.class);
+
 	/** 레거시 monitoring_items.mode — url 모드로만 등록한다(계정 모드는 브랜드 표면의 관심사가 아니다). */
 	private static final String MODE_URL = "url";
 
@@ -66,6 +72,8 @@ public class V1BrandDirectPostService {
 	private static final int MAX_TRACKING_DAYS = 90;
 
 	private static final String BRAND_DUPLICATE_REASON = "이미 브랜드 목록에 있는 게시물입니다.";
+	private static final String TAGGED_NOT_CANCELABLE_CODE = "TAGGED_POST_NOT_CANCELABLE";
+	private static final String TAGGED_NOT_CANCELABLE_MESSAGE = "태그로 발견된 게시물은 취소할 수 없어요.";
 
 	/**
 	 * 종결 3종 — 이 상태의 행에는 매핑을 걸지 않는다. 레거시
@@ -83,11 +91,15 @@ public class V1BrandDirectPostService {
 	private final MonitoringReadRepository monitoringReadRepository;
 	private final V1MonitoringRegistrationService legacyRegistration;
 	private final RegistrationRepository registrationRepository;
+	private final V1MonitoringItemUpdateService itemUpdateService;
+	/** 중복 게이트의 창 컷 기준 시각 — 주입해야 테스트가 시한부가 되지 않는다(V1BrandPostsController와 같은 이유). */
+	private final Clock clock;
 
 	public V1BrandDirectPostService(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
 			BrandDirectPostRepository directPostRepository, MonitoringItemRepository itemRepository,
 			MonitoringReadRepository monitoringReadRepository,
-			V1MonitoringRegistrationService legacyRegistration, RegistrationRepository registrationRepository) {
+			V1MonitoringRegistrationService legacyRegistration, RegistrationRepository registrationRepository,
+			V1MonitoringItemUpdateService itemUpdateService, Clock clock) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.directPostRepository = directPostRepository;
@@ -95,6 +107,8 @@ public class V1BrandDirectPostService {
 		this.monitoringReadRepository = monitoringReadRepository;
 		this.legacyRegistration = legacyRegistration;
 		this.registrationRepository = registrationRepository;
+		this.itemUpdateService = itemUpdateService;
+		this.clock = clock;
 	}
 
 	/**
@@ -106,11 +120,11 @@ public class V1BrandDirectPostService {
 	@Transactional
 	public BrandDirectRegistrationResponse register(long userId, long brandId, List<String> postUrls,
 			Integer trackingDays, String campaignId) {
-		requireOwnership(userId, brandId);
+		BrandLinkRow link = requireOwnership(userId, brandId);
 		List<String> urls = validatePostUrls(postUrls);
 		int days = validateTrackingDays(trackingDays);
 
-		Set<String> alreadyInBrand = brandShortCodes(userId, brandId);
+		Set<String> alreadyInBrand = brandShortCodes(userId, brandId, link.collectionMonths());
 
 		// 1차 판정 — 입력 순서대로 (즉시 확정) 또는 (위임 대기)로 가른다.
 		List<Plan> plans = new ArrayList<>(urls.size());
@@ -240,6 +254,59 @@ public class V1BrandDirectPostService {
 		return links.size() == 1 ? links.get(0).brandId() : null;
 	}
 
+	// ---------- 취소(2026-08-17 FE 요청) ----------
+
+	/**
+	 * 성과 측정 취소 — postId(shortcode) 기준. 레거시 취소(monitoringItemId 기준)는
+	 * {@link BrandPostResponse#id()}(=shortcode)로 호출할 수 없어 브랜드 화면 전용 취소 표면을 새로
+	 * 둔다. 매핑 있음(direct)이면 레거시 아이템을 가능하면 함께 종결하고(이미 자연 종료라 거부되면
+	 * 생략) 매핑을 삭제한다 — 삭제로 목록에서 즉시 빠지고 같은 URL 재등록이 브랜드 중복 판정에
+	 * 걸리지 않는다(취소 후 재시작). 매핑 없음이면 tagged 풀(윈도우 제한 없음) 존재 여부로
+	 * 400(TAGGED_POST_NOT_CANCELABLE)과 404를 가른다.
+	 */
+	@Transactional
+	public void cancel(long userId, String postId) {
+		Optional<BrandDirectPostRepository.Row> mapping = directPostRepository.findByUserAndShortCode(userId, postId);
+		if (mapping.isPresent()) {
+			cancelLegacyIfPossible(userId, mapping.get().monitoringItemId());
+			directPostRepository.delete(userId, postId);
+			return;
+		}
+		if (existsInTaggedPool(userId, postId)) {
+			throw V1ApiException.badRequest(TAGGED_NOT_CANCELABLE_CODE, TAGGED_NOT_CANCELABLE_MESSAGE);
+		}
+		throw V1ApiException.notFound("대상을 찾을 수 없습니다.");
+	}
+
+	/**
+	 * 레거시 아이템 취소 시도 — 이미 자연 종료(ended 등)거나 행 자체가 없어(수동 정리 등) 거부되면
+	 * 조용히 넘긴다(매핑 삭제는 어느 쪽이든 이어진다, {@link #cancel} 참조). 진짜 원격 실패(monitoring
+	 * 불능 등)는 여기서 삼키지 않고 그대로 올려 취소 자체를 실패시킨다 — 그 경우 매핑을 지우면 레거시
+	 * 아이템은 계속 추적 중인데 브랜드 화면에서만 사라지는 불일치가 생긴다.
+	 */
+	private void cancelLegacyIfPossible(long userId, long itemId) {
+		try {
+			itemUpdateService.cancel(userId, itemId);
+		} catch (V1ApiException e) {
+			log.info("취소 대상 매핑의 레거시 아이템 취소 생략(이미 종결 상태이거나 대상 없음) "
+					+ "userId={}, itemId={}, 사유={}", userId, itemId, e.getMessage());
+		}
+	}
+
+	/**
+	 * 유저의 활성 브랜드 연결 전체에서 tagged 존재 여부를 본다(365일 표시 윈도우 제한 없음) —
+	 * 매핑 없는 shortcode가 tagged 태그 감지 산지에 있으면 애초에 취소 대상이 아니다(400).
+	 */
+	private boolean existsInTaggedPool(long userId, String shortCode) {
+		Set<String> target = Set.of(shortCode);
+		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+			if (!brandReadRepository.findExistingTaggedShortCodes(link.brandId(), target).isEmpty()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// ---------- 1차 판정 ----------
 
 	/**
@@ -266,17 +333,30 @@ public class V1BrandDirectPostService {
 	}
 
 	/**
-	 * 이미 내 브랜드가 들고 있는 게시물 집합 — 365일 윈도우 tagged + direct 매핑.
+	 * 이미 내 브랜드가 들고 있는 게시물 집합 — <b>유저 가시 창(링크 표시 창 ∩ 365일 자산 창)</b>의
+	 * tagged + direct 매핑.
 	 *
-	 * <p>tagged는 <b>보강 정산 전까지 포함해 전량</b>을 본다(표시 게이트를 쓰지 않는다 — 2026-08-13
-	 * 리뷰 결정). 미정산분을 중복으로 잡지 못하면 같은 게시물이 direct로 한 번 더 등록되고,
-	 * {@code mergeByShortcode}의 direct 우선 규칙 때문에 그 카드가 정산 이후에도 <b>영구히 direct
-	 * 셰이프</b>로 고정된다(영상 URL·길이 null, 인증 배지 false).
+	 * <p>창을 자산 창이 아니라 유저 가시 창으로 잡는 이유(2026-08-17): 링크 창 밖 tagged는 목록에도
+	 * 상세에도 없는데(같은 404) 중복으로 거절하면 {@code brand_direct_posts} 매핑이 영영 생기지 않아
+	 * 그 게시물은 어떤 표면으로도 도달할 수 없다(데드엔드). 그렇게 등록된 창 밖 tagged는 병합의
+	 * direct 우선 규칙 때문에 카드가 direct 셰이프가 되지만, <b>아예 안 보이는 것보다 낫다</b>는
+	 * 판단이다(의도된 대가).
+	 *
+	 * <p>tagged는 그 창 안에서 <b>보강 정산 전까지 포함해 전량</b>을 본다(표시 게이트를 쓰지 않는다 —
+	 * 2026-08-13 리뷰 결정은 그대로 유지된다). 미정산분을 중복으로 잡지 못하면 같은 게시물이 direct로
+	 * 한 번 더 등록되고, {@code mergeByShortcode}의 direct 우선 규칙 때문에 그 카드가 정산 이후에도
+	 * <b>영구히 direct 셰이프</b>로 고정된다(영상 URL·길이 null, 인증 배지 false).
 	 */
-	private Set<String> brandShortCodes(long userId, long brandId) {
+	private Set<String> brandShortCodes(long userId, long brandId, int collectionMonths) {
 		Set<String> codes = new LinkedHashSet<>(directPostRepository.shortCodesByUser(userId));
+		// 두 창의 교집합 = 더 늦은 하한. 링크 창이 12여도 자산 창(365일) 밖은 애초에 서빙되지 않는다.
+		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+		LocalDate windowStart = today.minusMonths(collectionMonths);
+		LocalDate assetStart = today.minusDays(BrandPostAssembler.WINDOW_DAYS);
+		OffsetDateTime cutoff = (windowStart.isAfter(assetStart) ? windowStart : assetStart)
+				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 		brandReadRepository
-				.findTaggedPostsInWindow(brandId, BrandPostAssembler.windowCutoff())
+				.findTaggedPostsInWindow(brandId, cutoff)
 				.stream()
 				.map(BrandTaggedPostRow::shortCode)
 				.forEach(codes::add);
@@ -397,12 +477,14 @@ public class V1BrandDirectPostService {
 	 * <p>지금 바꿔도 깨질 흐름이 없다: 타입은 08-12 신설이고 기존 연결은 전량 {@code own}으로
 	 * 백필됐다(마이그레이션 기본값). 즉 아직 경쟁사 구독을 가진 유저 자체가 없다.
 	 */
-	private void requireOwnership(long userId, long brandId) {
+	private BrandLinkRow requireOwnership(long userId, long brandId) {
 		BrandLinkRow link = linkRepository.findActiveByUserAndBrand(userId, brandId)
 				.orElseThrow(() -> V1ApiException.forbidden("FORBIDDEN", "브랜드 계정을 찾을 수 없거나 접근 권한이 없어요."));
 		if (BrandAccountType.COMPETITOR.equals(link.accountType())) {
 			throw V1ApiException.forbidden("COMPETITOR_ACCOUNT_NOT_ALLOWED", "경쟁사 계정의 게시물은 추적 등록할 수 없어요.");
 		}
+		// 링크 행은 중복 게이트의 표시 창 판정에도 쓰인다(brandShortCodes) — 다시 조회하지 않는다.
+		return link;
 	}
 
 	private static List<String> validatePostUrls(List<String> postUrls) {

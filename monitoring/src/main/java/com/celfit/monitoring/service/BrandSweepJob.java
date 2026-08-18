@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
+import com.celfit.monitoring.image.HashtagPostAuthorImageArchiveJob;
 import com.celfit.monitoring.image.HashtagPostThumbnailArchiveJob;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -36,11 +37,13 @@ public class BrandSweepJob {
 	private final BrandProfileImageArchiveJob brandImageArchive;
 	private final BrandPostThumbnailArchiveJob brandPostThumbnailArchive;
 	private final HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive;
+	private final HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
 			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob authorImageArchive,
 			BrandProfileImageArchiveJob brandImageArchive, BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
-			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive) {
+			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive,
+			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive) {
 		this.brands = brands;
 		this.collect = collect;
 		this.hashtagCollect = hashtagCollect;
@@ -48,12 +51,14 @@ public class BrandSweepJob {
 		this.brandImageArchive = brandImageArchive;
 		this.brandPostThumbnailArchive = brandPostThumbnailArchive;
 		this.hashtagPostThumbnailArchive = hashtagPostThumbnailArchive;
+		this.hashtagPostAuthorImageArchive = hashtagPostAuthorImageArchive;
 	}
 
 	/**
 	 * 이미지 아카이브 잡들(게시자 {@link AuthorProfileImageArchiveJob}·브랜드 본인 {@link
 	 * BrandProfileImageArchiveJob}·게시물 썸네일 {@link BrandPostThumbnailArchiveJob}·해시태그 썸네일
-	 * {@link HashtagPostThumbnailArchiveJob})은 finally 안에서 마지막 단계로 돈다(캠페인 {@code
+	 * {@link HashtagPostThumbnailArchiveJob}·해시태그 작성자 프로필 {@link
+	 * HashtagPostAuthorImageArchiveJob})은 finally 안에서 마지막 단계로 돈다(캠페인 {@code
 	 * DailySweepJob}과 동형) — 별도 크론이 아니라 스윕이 갓 재조회한 신선한 URL을 바로 잡기 위함이다.
 	 * 아카이브 실패는 잡별 격리 래퍼가 전부 삼켜 스윕 결과에도, 서로에게도 영향을 주지 않는다.
 	 */
@@ -65,6 +70,7 @@ public class BrandSweepJob {
 			runArchiveSafely("브랜드 프로필 이미지", brandImageArchive::run);
 			runArchiveSafely("브랜드 게시물 썸네일", brandPostThumbnailArchive::run);
 			runArchiveSafely("해시태그 게시물 썸네일", hashtagPostThumbnailArchive::run);
+			runArchiveSafely("해시태그 작성자 프로필 이미지", hashtagPostAuthorImageArchive::run);
 		}
 	}
 
