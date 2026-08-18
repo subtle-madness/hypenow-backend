@@ -1,0 +1,546 @@
+{
+  "title": "HypeNow 홈 — 지금 정상인가",
+  "uid": "hypenow-home",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "5m",
+  "timezone": "Asia/Seoul",
+  "tags": ["home"],
+  "time": { "from": "now-24h", "to": "now" },
+  "description": "타일 하나 = 예/아니오 질문 하나. 전부 초록이면 읽을 게 없다. 빨간 타일을 클릭하면 담당 대시보드로 간다.",
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "지금 아픈가",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "API 5xx",
+      "description": "최근 1시간 5xx 비율(UNKNOWN·root·actuator 제외). 1% 이상이면 유저가 실제로 에러를 본다. 클릭 → API 성능.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "links": [{ "title": "API 성능 대시보드로", "url": "/d/hypenow-api-performance" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.01 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "5xx율",
+          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}[1h])) / sum(rate(http_server_requests_seconds_count{uri!~\"UNKNOWN|root|/actuator.*\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "ERROR 급증",
+      "description": "최근 1시간 전 서비스 ERROR 로그 건수. 임계 30은 느슨한 초기값이며 배치 후 1주 실측으로 보정한다(설계 §6). 클릭 → 에러.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 30 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "hypenow-loki" },
+          "queryType": "instant",
+          "legendFormat": "1h ERROR",
+          "expr": "sum(count_over_time({service=~\".+\", level=\"ERROR\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Hiker 402",
+      "description": "최근 24시간 Hiker 402(잔액 소진). 1건이라도 뜨면 사람이 충전해야 한다 — 08-10에 이 상태로 브랜드 스윕 4건이 collecting에 고착했다. 클릭 → 에러.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "hypenow-loki" },
+          "queryType": "instant",
+          "legendFormat": "24h 402",
+          "expr": "sum(count_over_time({service=~\"crawler|monitoring\"} |~ `(?:HTTP|Hiker) 402` [24h]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "IG 401",
+      "description": "최근 24시간 401(IP 차단 신호). 07-24에 similar 잡 대량 유입 → 401 전면 실패 전례. 임계 50은 느슨한 초기값이며 실측 보정 대상(설계 §6). 클릭 → 에러.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "loki", "uid": "hypenow-loki" },
+      "links": [{ "title": "에러 대시보드로", "url": "/d/hypenow-errors" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 50 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "hypenow-loki" },
+          "queryType": "instant",
+          "legendFormat": "24h 401",
+          "expr": "sum(count_over_time({service=~\"crawler|monitoring\"} |~ `(?:HTTP|Hiker) 401` [24h]))"
+        }
+      ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "돌고 있나",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "스윕 신선도",
+      "description": "마지막 성공 스윕(sweep_run.ok)으로부터 경과 시간. 스윕은 매일 새벽 1회라 26시간을 넘으면 어젯밤 스윕이 안 돈 것이다. 클릭 → 모니터링.",
+      "gridPos": { "h": 5, "w": 5, "x": 0, "y": 7 },
+      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 26 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(started_at)))/3600 AS value FROM sweep_run WHERE ok"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "오늘 Hiker 콜",
+      "description": "오늘(KST 달력일) 브랜드+타깃 Hiker 콜 합계. 0이면 스윕 불발, 3,300 이상이면 과금 폭주(7일 평균 ~1,650의 2배)다. called_on은 KST가 정본이라 current_date가 아니라 (now() AT TIME ZONE 'Asia/Seoul')::date로 비교한다. 클릭 → 모니터링.",
+      "gridPos": { "h": 5, "w": 5, "x": 5, "y": 7 },
+      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "0 — 스윕 불발?", "color": "red", "index": 0 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 3300 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT coalesce((SELECT sum(calls) FROM brand_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date), 0) + coalesce((SELECT sum(calls) FROM target_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date), 0) AS value"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "미러 신선도",
+      "description": "landing_stats.updated_at 기준 미러 경과 시간(대용 지표 — analysis DB에 미러 실행 이력이 없다, 설계 §3). 26시간 초과면 랭킹이 어제 것이다. 클릭 → 탐색.",
+      "gridPos": { "h": 5, "w": 5, "x": 10, "y": 7 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "links": [{ "title": "탐색 대시보드로", "url": "/d/hypenow-discovery" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 26 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 AS value FROM landing_stats"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "멈춘 등록",
+      "description": "30분 넘게 완료되지 않은 모니터링 등록 건수(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 걸린 것이다. 클릭 → 모니터링.",
+      "gridPos": { "h": 5, "w": 5, "x": 15, "y": 7 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registrations WHERE completed_at IS NULL AND requested_at < now() - interval '30 minutes'"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "알림 발송 실패",
+      "description": "최근 24시간 email_status='FAILED' 알림 건수. 1건이라도 있으면 유저에게 메일이 안 나가고 있다. 클릭 → 모니터링.",
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 7 },
+      "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+      "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-monitoring-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM alarm_event WHERE email_status = 'FAILED' AND occurred_at > now() - interval '24 hours'"
+        }
+      ]
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "여유가 있나",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "호스트 CPU",
+      "description": "15분 평균 CPU 사용률. 02:00 스윕 스파이크는 정상이라 15분 창으로 눌렀다 — 85% 이상이면 상시 포화다. 클릭 → 인프라.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 85 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "15m 평균",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[15m])))"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "호스트 메모리",
+      "description": "MemAvailable 가용량. 오버커밋 설계라 사용률이 아니라 가용량으로 본다 — 1GiB 미만이면 빨강(임계 방향이 반대다). 클릭 → 인프라.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1073741824 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "가용",
+          "expr": "node_memory_MemAvailable_bytes"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "was JVM",
+      "description": "was 힙 old gen 사용률. 85% 지속이면 GC가 못 비우고 있다는 뜻. 클릭 → 인프라.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 85 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "old gen",
+          "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\",id=~\".*Old.*\"}) / sum(jvm_memory_max_bytes{area=\"heap\",id=~\".*Old.*\"})"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "DB 커넥션 풀",
+      "description": "HikariCP 커넥션 대기 스레드 수. 0이 아니면 커넥션이 말라 요청이 줄을 서고 있다. 클릭 → 인프라.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+      "links": [{ "title": "인프라 대시보드로", "url": "/d/hypenow-infra" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "hypenow-prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "pending",
+          "expr": "max(hikaricp_connections_pending)"
+        }
+      ]
+    }
+  ]
+}
