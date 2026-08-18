@@ -54,8 +54,19 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
 
     /** 컴포지트(SELF_HIKER_FALLBACK)의 400 폴백 경로에서도 직접 호출된다 — 패키지 가시성. */
     ApifyResult collect(List<String> usernames) {
+        return collect(usernames, new ArrayList<>());
+    }
+
+    /**
+     * 컴포지트의 빈 응답 폴백 경로용 — 응답은 왔지만 계정이 없는(user null) username을
+     * emptyOut에 수집한다. 요청 실패(ApifyException — 5xx·타임아웃 등)는 수집하지 않는다:
+     * "빈 응답 확인"과 "요청 실패"를 구분해야 인프라 오류가 계정 소멸 판정(수명 정책)으로
+     * 번지지 않는다.
+     */
+    ApifyResult collect(List<String> usernames, List<String> emptyOut) {
         List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
         List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<String> empty = java.util.Collections.synchronizedList(emptyOut);
         // close()가 제출된 작업 완료까지 대기(Java 21) — 청크 반환 시점에 결과가 전부 모여 있다
         try (var pool = java.util.concurrent.Executors.newFixedThreadPool(FETCH_CONCURRENCY)) {
             for (String u : usernames) {
@@ -65,7 +76,12 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
                     try {
                         String enc = URLEncoder.encode(u, StandardCharsets.UTF_8);
                         Map<String, Object> p = readRoot(http.get("/v2/user/by/username?username=" + enc));
-                        if (ProfileExtractor.username(p, RawSource.HIKER_MOBILE) != null) out.add(p);
+                        if (ProfileExtractor.username(p, RawSource.HIKER_MOBILE) != null) {
+                            out.add(p);
+                        } else {
+                            empty.add(u);
+                            log.info("by/username 빈 응답(계정 없음): {}", u);
+                        }
                     } catch (NotFoundException e) {
                         // 계정 소멸(삭제·개명) — 재시도 무의미, 호출자가 소프트 딜리트한다
                         notFound.add(u);

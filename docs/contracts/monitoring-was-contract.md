@@ -862,6 +862,16 @@ best-effort 보너스이지 보장이 아니다). 태그 삭제는 이후 발견
   규칙도 FE 문구에 반영할 것. 전체 삭제 = 브랜드 해시태그 감지 전체 일시 중지. 자동 유도
   시드는 이제 계정명 1종뿐이라는 점도 참고(§8-3-1).
 
+**deprecated 필드 2종 — 제거 예정 (v2.12 direct 통합 귀결, 2026-08-18)**: 직접 등록
+표면(`POST .../direct-posts` 요청·등록 폴링 응답)의 두 레거시 필드는 통합 후 의미를 잃어
+하위 호환으로만 유지 중이다. **FE가 참조 제거를 확인해주는 대로 다음 계약 버전에서 필드
+자체를 삭제한다**(레거시 정리 트랙 담당).
+
+- 요청 `trackingDays` — 수집에 사용되지 않는다(검증 1~90만 유지). direct도 tagged와 같은
+  나이 티어 정책을 따르므로 기간 개념이 없다.
+- 폴링 응답 `Entry.monitoringItemId` — 항상 null. 원용도(레거시 취소 `POST
+  /v1/monitoring/items/{itemId}/cancel`의 핸들)는 §8-2 shortcode 기준 취소로 완전 대체됐다.
+
 ### 8-5. `POST`/`DELETE /api/brands/{brandId}/direct-posts` — monitoring 내부 명령 2종 (v2.12, 2026-08-18)
 
 > 이 절은 **FE 계약이 아니다.** was의 `BrandDirectRegistrationExecutor`(direct 등록 실행기)와
