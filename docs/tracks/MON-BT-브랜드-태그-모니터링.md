@@ -236,8 +236,11 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 ## 잔여 작업
 
 - **[staging 승격 전]**
-  - 연속 실패 서킷브레이커 + 스윕당 판정 상한 — LLM 쿼터 소진 등으로 판정이 연속 실패할 때
-    스윕 전체가 판정 대기로 늘어지는 것을 막는다.
+  - ~~연속 실패 서킷브레이커 + 스윕당 판정 상한~~ → **구현 완료(2026-08-18)** — #490(백필 기동
+    즉시·상한 제거) 이후 스테이징에서 무료 키 쿼터 공유로 429 폭주(15분간 분당 83~146건) 실측이
+    계기. `AdDisclosureJudgeService`에 `llm-failure-abort-threshold`(기본 10)·
+    `backfill-max-per-run`(기본 1000) 추가, 동반해 monitoring Gemini 호출을 Vertex로 전환
+    (`common-llm` 모듈 신설 — DECISIONS.md 08-18 항목 참조).
   - 캡션·videoUrl 저장값 폴백 — 일시적 결손(보강 미완주 등) 시 캡션 부재를 그대로
     `NOT_DISCLOSED`로 오판정하지 않도록 방어.
   - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
