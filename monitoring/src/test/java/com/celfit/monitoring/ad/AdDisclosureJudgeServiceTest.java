@@ -203,6 +203,111 @@ class AdDisclosureJudgeServiceTest {
 		}
 	}
 
+	/**
+	 * 미판정 잔여 백필(스펙 §7 개정) — 저장된 메타(brand_post_meta)만으로 Hiker 없이 판정한다.
+	 * judgeCore는 PostInfo 경로와 공유하므로 여기서는 진입점 배선(findUnjudged→judgeOne(meta)→
+	 * updateAdVerdict)과 Tier0 분기 재검증에 집중한다.
+	 */
+	@Test
+	void 백필_저장된_메타_유료협찬_라벨이면_LLM_호출_없이_DISCLOSED() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "무설명 캡션", "FEED", null, true));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.backfillUnjudged(10);
+
+		assertThat(extractor.calls).isEmpty();
+		assertThat(repo.written.get("AAA").verdict()).isEqualTo("DISCLOSED");
+		assertThat(repo.written.get("AAA").source()).isEqualTo("RULE");
+	}
+
+	@Test
+	void 백필_저장된_메타_캡션_공백_사진은_NOT_DISCLOSED_릴스는_UNCERTAIN() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("R1", "", "REELS", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.backfillUnjudged(10);
+
+		assertThat(repo.written.get("F1").verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(repo.written.get("R1").verdict()).isEqualTo("UNCERTAIN");
+		assertThat(extractor.calls).isEmpty();
+	}
+
+	@Test
+	void 백필_저장된_메타_FEED_동영상_캡션_공백은_UNCERTAIN() {
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("V1", "", "FEED",
+				"https://video.example/x.mp4", null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
+
+		service.backfillUnjudged(10);
+
+		assertThat(repo.written.get("V1").verdict()).isEqualTo("UNCERTAIN");
+	}
+
+	@Test
+	void 백필_limit이_0이하면_findUnjudged를_호출하지_않는다() {
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "캡션", "FEED", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged(0);
+
+		assertThat(outcome.processed()).isZero();
+		assertThat(outcome.remaining()).isZero();
+		assertThat(repo.findUnjudgedCalls).isZero();
+		assertThat(repo.written).isEmpty();
+	}
+
+	@Test
+	void 백필_미판정_잔여가_없으면_findUnjudged를_생략한다() {
+		FakeRepo repo = new FakeRepo();   // unjudged 기본값 빈 목록 → countUnjudged() 0
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged(10);
+
+		assertThat(outcome.remaining()).isZero();
+		assertThat(outcome.processed()).isZero();
+		assertThat(repo.countUnjudgedCalls).isEqualTo(1);
+		assertThat(repo.findUnjudgedCalls).isZero();
+	}
+
+	@Test
+	void 백필_remaining은_countUnjudged_processed는_findUnjudged_건수() {
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged(2);
+
+		assertThat(outcome.remaining()).isEqualTo(3);   // 상한과 무관한 전체 잔량
+		assertThat(outcome.processed()).isEqualTo(2);   // limit에 잘린 처리 건수
+	}
+
+	@Test
+	void 백필_LLM_실패_1건만_격리되고_나머지는_기록된다() {
+		FakeExtractor extractor = new FakeExtractor();
+		extractor.fail = true;
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(
+				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),   // 공백 캡션 — LLM 미호출
+				new BrandPostMetaRepository.UnjudgedPost("AAA", "체험단 후기", "FEED", null, null));   // LLM 호출 → 실패
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.backfillUnjudged(10);
+
+		assertThat(repo.written.get("F1").verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(repo.written).doesNotContainKey("AAA");
+	}
+
 	private static String md5(String s) {
 		try {
 			var digest = MessageDigest.getInstance("MD5").digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -262,6 +367,9 @@ class AdDisclosureJudgeServiceTest {
 	private static final class FakeRepo extends BrandPostMetaRepository {
 		final Map<String, BrandPostMetaRepository.AdJudgmentState> state = new HashMap<>();
 		final Map<String, AdVerdictResult> written = new ConcurrentHashMap<>();
+		List<BrandPostMetaRepository.UnjudgedPost> unjudged = List.of();
+		int findUnjudgedCalls;
+		int countUnjudgedCalls;
 
 		FakeRepo() {
 			super(null);
@@ -283,6 +391,18 @@ class AdDisclosureJudgeServiceTest {
 		public void updateAdVerdict(String shortCode, AdVerdictResult result, String captionHash,
 				java.time.Instant judgedAt) {
 			written.put(shortCode, result);
+		}
+
+		@Override
+		public List<BrandPostMetaRepository.UnjudgedPost> findUnjudged(int limit) {
+			findUnjudgedCalls++;
+			return unjudged.size() > limit ? unjudged.subList(0, limit) : unjudged;
+		}
+
+		@Override
+		public int countUnjudged() {
+			countUnjudgedCalls++;
+			return unjudged.size();
 		}
 	}
 }

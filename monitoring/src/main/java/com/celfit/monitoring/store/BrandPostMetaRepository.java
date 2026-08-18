@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -97,6 +98,37 @@ public class BrandPostMetaRepository {
 							new AdJudgmentState(rs.getString("ad_verdict"), rs.getString("judged_caption_hash")));
 				}, shortCodes.toArray());
 		return out;
+	}
+
+	/**
+	 * 미판정 잔여 백필(스펙 §7 개정, 2026-08-18) 대상 — 판정에 필요한 컬럼만 담는다. 브랜드
+	 * 스코프가 없다: 스윕 재열거 창(180일)을 벗어나 정기 스윕이 다시 만나지 못하는 게시물도
+	 * 캡션은 이미 이 테이블에 있으므로 Hiker 재조회 없이 판정 가능하다({@link
+	 * com.celfit.monitoring.ad.AdDisclosureJudgeService#backfillUnjudged}).
+	 */
+	public record UnjudgedPost(String shortCode, String caption, String contentType, String videoUrl,
+			Boolean isPaidPartnership) {
+	}
+
+	/** {@code idx_brand_post_meta_unjudged} 부분 인덱스가 이 WHERE 절을 커버한다 — 잔량이 줄수록 공짜에 수렴. */
+	public List<UnjudgedPost> findUnjudged(int limit) {
+		return db.query("""
+				SELECT short_code, caption, content_type, video_url, is_paid_partnership
+				FROM brand_post_meta
+				WHERE ad_verdict IS NULL
+				ORDER BY short_code
+				LIMIT ?""",
+				(rs, rowNum) -> new UnjudgedPost(rs.getString("short_code"), rs.getString("caption"),
+						rs.getString("content_type"), rs.getString("video_url"),
+						(Boolean) rs.getObject("is_paid_partnership")),
+				limit);
+	}
+
+	/** 백필 완료 로그("잔여 N건 중 M건 처리")의 N — 이번 배치 상한(limit)과 무관한 전체 잔량. */
+	public int countUnjudged() {
+		Integer count = db.queryForObject("SELECT count(*) FROM brand_post_meta WHERE ad_verdict IS NULL",
+				Integer.class);
+		return count == null ? 0 : count;
 	}
 
 	/**

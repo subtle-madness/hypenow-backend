@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
@@ -12,6 +13,7 @@ import java.time.ZoneId;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -38,12 +40,17 @@ public class BrandSweepJob {
 	private final BrandPostThumbnailArchiveJob brandPostThumbnailArchive;
 	private final HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive;
 	private final HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive;
+	private final AdDisclosureJudgeService adJudge;
+	private final int adDisclosureBackfillPerNight;
+	private final boolean adDisclosureEnabled;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
 			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob authorImageArchive,
 			BrandProfileImageArchiveJob brandImageArchive, BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
 			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive,
-			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive) {
+			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive, AdDisclosureJudgeService adJudge,
+			@Value("${monitoring.brand.ad-disclosure.backfill-per-night:1000}") int adDisclosureBackfillPerNight,
+			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
 		this.brands = brands;
 		this.collect = collect;
 		this.hashtagCollect = hashtagCollect;
@@ -52,6 +59,9 @@ public class BrandSweepJob {
 		this.brandPostThumbnailArchive = brandPostThumbnailArchive;
 		this.hashtagPostThumbnailArchive = hashtagPostThumbnailArchive;
 		this.hashtagPostAuthorImageArchive = hashtagPostAuthorImageArchive;
+		this.adJudge = adJudge;
+		this.adDisclosureBackfillPerNight = adDisclosureBackfillPerNight;
+		this.adDisclosureEnabled = adDisclosureEnabled;
 	}
 
 	/**
@@ -61,11 +71,16 @@ public class BrandSweepJob {
 	 * HashtagPostAuthorImageArchiveJob})은 finally 안에서 마지막 단계로 돈다(캠페인 {@code
 	 * DailySweepJob}과 동형) — 별도 크론이 아니라 스윕이 갓 재조회한 신선한 URL을 바로 잡기 위함이다.
 	 * 아카이브 실패는 잡별 격리 래퍼가 전부 삼켜 스윕 결과에도, 서로에게도 영향을 주지 않는다.
+	 *
+	 * <p>광고 판정 백필({@link #backfillAdDisclosuresSafely}, 스펙 §7 개정)도 같은 finally에서
+	 * 브랜드 루프 종료 직후 돈다 — 아카이브 잡들과 같은 이유로, 스윕 본체 성패와 무관하게 매일
+	 * 시도돼야 한다.
 	 */
 	public void run() {
 		try {
 			runSweep();
 		} finally {
+			backfillAdDisclosuresSafely();
 			runArchiveSafely("게시자 프로필 이미지", authorImageArchive::run);
 			runArchiveSafely("브랜드 프로필 이미지", brandImageArchive::run);
 			runArchiveSafely("브랜드 게시물 썸네일", brandPostThumbnailArchive::run);
@@ -101,6 +116,29 @@ public class BrandSweepJob {
 		}
 		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, 해시태그 실패 {}건",
 				active.size(), failures, hashtagFailures);
+	}
+
+	/**
+	 * 광고 판정 백필(2026-08-18, 스펙 §7 개정) — 사용자 확정 원칙 "판정은 처음에 전량, 이후는
+	 * 캡션 변경분만"을 180일 스윕 재열거 창 바깥까지 완성한다. 브랜드 스코프 없이 전역
+	 * {@code ad_verdict IS NULL} 잔량에서 매일 밤 최대
+	 * {@code monitoring.brand.ad-disclosure.backfill-per-night}건만 처리 — 상한 0이면 비활성.
+	 * 킬 스위치({@code monitoring.brand.ad-disclosure.enabled})가 꺼져 있으면 스윕 경로의 판정과
+	 * 함께 이 백필도 스킵한다(같은 롤백 손잡이로 양쪽을 끈다). 실패는 격리해 스윕 결과에 영향을
+	 * 주지 않는다(아카이브 잡들과 같은 격리 패턴).
+	 */
+	private void backfillAdDisclosuresSafely() {
+		if (!adDisclosureEnabled || adDisclosureBackfillPerNight <= 0) {
+			log.debug("광고 판정 백필 비활성 — enabled={}, backfillPerNight={}", adDisclosureEnabled,
+					adDisclosureBackfillPerNight);
+			return;
+		}
+		try {
+			AdDisclosureJudgeService.BackfillOutcome outcome = adJudge.backfillUnjudged(adDisclosureBackfillPerNight);
+			log.info("광고 판정 백필 — 잔여 {}건 중 {}건 처리", outcome.remaining(), outcome.processed());
+		} catch (RuntimeException e) {
+			log.warn("광고 판정 백필 실패(격리, 스윕 결과에는 영향 없음): {}", e.toString());
+		}
 	}
 
 	/** 건 단위가 아니라 잡 전체를 격리한다 — 스윕 결과와 무관한 부수 작업이라 예외를 밖으로 내지 않는다. */

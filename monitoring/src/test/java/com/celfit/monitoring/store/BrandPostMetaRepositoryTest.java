@@ -70,4 +70,38 @@ class BrandPostMetaRepositoryTest {
 
 		assertThat(repo.findAdJudgmentState(List.of("ZZZ"))).doesNotContainKey("ZZZ");
 	}
+
+	@Test
+	void findUnjudged는_ad_verdict가_NULL인_행만_반환한다() {
+		repo.upsert("BBB", "poster1", "REELS", LocalDate.of(2026, 8, 2), "다른 캡션", null,
+				"https://video.example/b.mp4", 12.5, true);
+		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
+		repo.updateAdVerdict("BBB", result, "hashBBB", Instant.parse("2026-08-17T00:00:00Z"));
+
+		List<BrandPostMetaRepository.UnjudgedPost> unjudged = repo.findUnjudged(10);
+
+		assertThat(unjudged).extracting(BrandPostMetaRepository.UnjudgedPost::shortCode).containsExactly("AAA");
+		BrandPostMetaRepository.UnjudgedPost aaa = unjudged.get(0);
+		assertThat(aaa.caption()).isEqualTo("캡션");
+		assertThat(aaa.contentType()).isEqualTo("FEED");
+		assertThat(aaa.videoUrl()).isNull();
+		assertThat(aaa.isPaidPartnership()).isNull();
+	}
+
+	@Test
+	void findUnjudged는_limit을_넘지_않는다() {
+		repo.upsert("BBB", "poster1", "FEED", LocalDate.of(2026, 8, 2), "캡션2", null, null, null, null);
+		repo.upsert("CCC", "poster1", "FEED", LocalDate.of(2026, 8, 3), "캡션3", null, null, null, null);
+
+		assertThat(repo.findUnjudged(2)).hasSize(2);
+	}
+
+	@Test
+	void countUnjudged는_ad_verdict_NULL_전체_건수() {
+		repo.upsert("BBB", "poster1", "FEED", LocalDate.of(2026, 8, 2), "캡션2", null, null, null, null);
+		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
+		repo.updateAdVerdict("BBB", result, "hashBBB", Instant.parse("2026-08-17T00:00:00Z"));
+
+		assertThat(repo.countUnjudged()).isEqualTo(1);   // AAA만 미판정
+	}
 }
