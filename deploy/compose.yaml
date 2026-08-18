@@ -287,8 +287,16 @@ services:
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
       HIKER_API_KEY: ${HIKER_API_KEY}
-      # 브랜드 해시태그 감지 LLM 판정(BrandMentionJudge, 2026-08-11) — 키 미설정 시 fail-closed(전 판정 UNCERTAIN=비노출로 접힘, 최초 1회 warn)
+      # 브랜드 해시태그 감지·광고 표기 LLM 판정(BrandMentionJudge·AdDisclosureExtractorGemini) —
+      # 2026-08-18 Vertex 전환: SA 키(GOOGLE_APPLICATION_CREDENTIALS)가 있으면 Vertex, 없으면
+      # 이 GEMINI_API_KEY로 AI Studio 폴백(fail-closed 전 판정 UNCERTAIN=비노출, 최초 1회 warn).
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Vertex SA 키 — analytics와 같은 키 파일 재사용(전용 SA 아님, 08-18 승인). GCS 이미지 인증은
+      # 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽으므로 이 값과 충돌하지 않는다(analytics
+      # compose 주석과 동일 사유 — ADC는 JVM당 하나뿐이라 GcsImageStore가 여길 덮으면 Vertex가 403).
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 이미지 스토어 선택(2026-08-12 GCS 이전) — analytics와 같은 버킷·같은 전용 SA 키를 재사용
@@ -317,6 +325,7 @@ services:
       JAVA_OPTS: "-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError"
     volumes:
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(analytics와 동일 관용구).
     healthcheck:
