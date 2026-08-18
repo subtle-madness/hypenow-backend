@@ -136,7 +136,7 @@
       },
       "datasource": {
         "type": "postgres",
-        "uid": "hypenow-analysis-pg"
+        "uid": "hypenow-monitoring-pg"
       },
       "fieldConfig": {
         "defaults": {
@@ -198,7 +198,7 @@
       },
       "datasource": {
         "type": "postgres",
-        "uid": "hypenow-analysis-pg"
+        "uid": "hypenow-monitoring-pg"
       },
       "fieldConfig": {
         "defaults": {
@@ -260,7 +260,7 @@
       },
       "datasource": {
         "type": "postgres",
-        "uid": "hypenow-analysis-pg"
+        "uid": "hypenow-monitoring-pg"
       },
       "fieldConfig": {
         "defaults": {
@@ -322,7 +322,7 @@
       },
       "datasource": {
         "type": "postgres",
-        "uid": "hypenow-analysis-pg"
+        "uid": "hypenow-monitoring-pg"
       },
       "fieldConfig": {
         "defaults": {
