@@ -44,7 +44,7 @@ public class AdDisclosureConfig {
 	public AdDisclosureJudgeService adDisclosureJudgeService(BrandPostMetaRepository metaRepo,
 			AdDisclosureExtractorGemini extractor, @Qualifier("adDisclosureWorkerPool") Executor worker,
 			@Value("${monitoring.brand.ad-disclosure.llm-failure-abort-threshold:10}") int llmFailureAbortThreshold,
-			@Value("${monitoring.brand.ad-disclosure.backfill-max-per-run:1000}") int backfillMaxPerRun) {
+			@Value("${monitoring.brand.ad-disclosure.backfill-max-per-run:0}") int backfillMaxPerRun) {
 		return new AdDisclosureJudgeService(metaRepo, extractor, worker, llmFailureAbortThreshold,
 				backfillMaxPerRun);
 	}

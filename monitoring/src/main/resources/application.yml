@@ -78,9 +78,10 @@ monitoring:
       # 연속 실패 서킷브레이커: LLM 연속 실패가 이 값에 도달하면 진행 중 배치 나머지는 LLM 호출을
       # 건너뛰고, 배치 종료 후 런 자체를 중단한다(잔여는 다음 주기가 재시도).
       llm-failure-abort-threshold: 10
-      # 1회 백필 호출 처리 상한(상한 재도입) — 0 이하면 무제한(08-18 이전 계약). 대량 잔량이 있어도
-      # 한 번의 기동 러너가 워커 풀을 장시간 독점하지 않게 한다.
-      backfill-max-per-run: 1000
+      # 1회 백필 호출 처리 상한 — 0 이하면 무제한. 기본 무제한(08-18 사용자 결정 원복 — 429의 원인은
+      # 상한이 아니라 무료 키 쿼터였고, Vertex 전환 + 위 서킷브레이커로 무제한이 안전하다).
+      # 운영에서 일시적으로 누르고 싶을 때만 env로 양수를 준다.
+      backfill-max-per-run: 0
   # LLM 전송(2026-08-18 Vertex 전환) — GOOGLE_APPLICATION_CREDENTIALS(SA 키)와 vertex-project가
   # 모두 설정돼 있으면 Vertex, 아니면 gemini.api-key(AI Studio)로 그레이스풀 폴백한다
   # (LlmTransportConfig.useVertex — analytics LlmConfig.useVertex 패턴 준용).
