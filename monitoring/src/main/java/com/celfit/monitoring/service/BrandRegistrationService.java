@@ -46,8 +46,10 @@ import org.springframework.stereotype.Service;
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
  * backfill은 동시 2스레드(브랜드 단위 태스크라 브랜드 안 순서는 유지), enrich는 전역 공유 풀
  * 2스레드({@code monitoring.brand.enrich-executor-concurrency}, 08-13 — 백필 core 2병렬과 짝).
- * Hiker 콜 병렬화는 enrich 내부 워커 풀이 담당 — 전역 동시 콜 최대 13(= 워커 10 + 스윕 core 1 +
- * 등록 core 2, 스윕과 등록이 겹치는 최악의 경우. 08-13 워커 상향 반영 — BrandBackfillConfig 참조).
+ * 해시태그 스윕(태그 등록 직후·replay 재등록 트리거)은 08-18부터 별도 hashtagSweep executor(기본
+ * 1스레드)에서 돈다 — LLM 판정의 느린 외부 콜이 이 enrich 풀을 점유해 뒤 계정 백필을 지연시킨
+ * 운영 사고 후속. Hiker 콜 병렬화는 enrich 내부 워커 풀이 담당 — 전역 동시 콜 최대 14(= 워커 10 +
+ * 스윕 core 1 + 등록 core 2 + 해시태그 스윕 1, 전부 겹치는 최악의 경우. BrandBackfillConfig 참조).
  */
 @Service
 public class BrandRegistrationService {
@@ -72,12 +74,14 @@ public class BrandRegistrationService {
 	private final BrandHashtagCollectService hashtagCollect;
 	private final Executor backfill;
 	private final Executor enrich;
+	private final Executor hashtagSweep;
 
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
 			BrandHashtagRepository hashtags, BrandHashtagCollectService hashtagCollect,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
-			@Qualifier("brandEnrichExecutor") Executor enrich) {
+			@Qualifier("brandEnrichExecutor") Executor enrich,
+			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
@@ -86,6 +90,7 @@ public class BrandRegistrationService {
 		this.hashtagCollect = hashtagCollect;
 		this.backfill = backfill;
 		this.enrich = enrich;
+		this.hashtagSweep = hashtagSweep;
 	}
 
 	/**
@@ -264,9 +269,14 @@ public class BrandRegistrationService {
 	 * 않는다 — hashtagCollect.sweep 자체도 태그 0건이면 콜 0으로 즉시 반환하지만, 여기서 먼저
 	 * 걸러 불필요한 executor 제출 자체를 줄인다.
 	 *
-	 * <p>등록 백필·replay 재등록과 같은 enrich executor에서 비동기로 돈다(동기 응답 지연 금지) —
-	 * 실패는 격리(다음 야간 스윕이 백스톱). sweep은 ON CONFLICT DO NOTHING 기반이라 야간 스윕과
-	 * 동시 실행돼도 데이터는 안전하다.
+	 * <p>등록 백필·replay 재등록과 같은 트리거 경로에서 전용 hashtagSweep executor로 비동기 제출한다
+	 * (동기 응답 지연 금지) — 실패는 격리(다음 야간 스윕이 백스톱). sweep은 ON CONFLICT DO NOTHING
+	 * 기반이라 야간 스윕과 동시 실행돼도 데이터는 안전하다.
+	 *
+	 * <p>2026-08-18까지는 enrich executor에 얹었으나, LLM 광고 표기 판정(콜당 수 초 + 429 백오프)이
+	 * 빠른 Hiker 콜 위주인 보강 워커(2스레드)를 분 단위로 점유해 뒤 계정 백필을 지연시킨 운영 사고
+	 * 후속으로 전용 executor로 분리했다({@link com.celfit.monitoring.config.BrandBackfillConfig}
+	 * 참조).
 	 */
 	public void triggerHashtagSweepIfNonEmpty(BrandRow row, List<String> tags) {
 		if (!tags.isEmpty()) {
@@ -275,7 +285,7 @@ public class BrandRegistrationService {
 	}
 
 	private void triggerHashtagSweep(BrandRow row) {
-		enrich.execute(() -> runHashtagSweepSafely(row));
+		hashtagSweep.execute(() -> runHashtagSweepSafely(row));
 	}
 
 	/**
