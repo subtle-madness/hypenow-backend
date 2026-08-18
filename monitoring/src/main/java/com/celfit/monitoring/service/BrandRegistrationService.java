@@ -273,7 +273,7 @@ public class BrandRegistrationService {
 	 * (동기 응답 지연 금지) — 실패는 격리(다음 야간 스윕이 백스톱). sweep은 ON CONFLICT DO NOTHING
 	 * 기반이라 야간 스윕과 동시 실행돼도 데이터는 안전하다.
 	 *
-	 * <p>2026-08-18까지는 enrich executor에 얹었으나, LLM 광고 표기 판정(콜당 수 초 + 429 백오프)이
+	 * <p>2026-08-18까지는 enrich executor에 얹었으나, LLM 브랜드 관련성 판정(콜당 수 초 + 429 백오프)이
 	 * 빠른 Hiker 콜 위주인 보강 워커(2스레드)를 분 단위로 점유해 뒤 계정 백필을 지연시킨 운영 사고
 	 * 후속으로 전용 executor로 분리했다({@link com.celfit.monitoring.config.BrandBackfillConfig}
 	 * 참조).
