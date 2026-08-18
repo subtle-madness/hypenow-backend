@@ -79,12 +79,12 @@ public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
             log.info("빈 응답 연속 임계값 도달 {}건 — Hiker 폴백: {}", emptyFallback.size(), emptyFallback);
         }
         ApifyResult fallback = hiker.collect(fallbackTargets);
-        settleEmptyStreaks(emptyFallback, fallback);
+        List<String> confirmedEmpty = settleEmptyStreaks(emptyFallback, fallback);
         List<Map<String, Object>> items = new ArrayList<>(base.items());
         items.addAll(fallback.items());
         List<String> notFound = new ArrayList<>(base.notFound());
         notFound.addAll(fallback.notFound());
-        return new ApifyResult(null, items, notFound);
+        return new ApifyResult(null, null, items, notFound, confirmedEmpty);
     }
 
     /** SELF가 계정을 확보했거나 404(소멸)로 종결한 계정의 빈 응답 카운터 제거. */
@@ -100,22 +100,26 @@ public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
     /**
      * 빈 응답 폴백의 후처리 — 성공 계정은 카운터를 유지해 다음 빈 응답부터 즉시 폴백하고
      * (Hiker 수집 가능 확인), 실패(폴백도 빈 응답)·404 계정은 카운터를 제거해 기존 재시도
-     * 경로로 복귀시킨다(소멸 추정 계정의 반복 과금 방지).
+     * 경로로 복귀시킨다(소멸 추정 계정의 반복 과금 방지). 반환값은 폴백도 빈 응답이던
+     * 계정(양쪽 확인) — 호출자의 수명 정책(30일 경과 시 404 동일 취급) 판정 재료.
      */
-    private void settleEmptyStreaks(List<String> emptyFallback, ApifyResult fallback) {
-        if (emptyFallback.isEmpty()) return;
+    private List<String> settleEmptyStreaks(List<String> emptyFallback, ApifyResult fallback) {
+        if (emptyFallback.isEmpty()) return List.of();
         Set<String> recovered = new HashSet<>();
         for (Map<String, Object> item : fallback.items()) {
             String u = ProfileExtractor.username(item, RawSource.HIKER_MOBILE);
             if (u != null) recovered.add(u);
         }
+        List<String> confirmedEmpty = new ArrayList<>();
         for (String u : emptyFallback) {
             if (recovered.contains(u)) continue;
             emptyStreaks.remove(u);
             if (!fallback.notFound().contains(u)) {
+                confirmedEmpty.add(u);
                 log.info("빈 응답 폴백도 계정 확보 실패 — 카운터 리셋, 기존 재시도 경로로 복귀: {}", u);
             }
         }
+        return confirmedEmpty;
     }
 
     @Override

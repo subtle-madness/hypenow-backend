@@ -26,7 +26,7 @@ class SelfProfileFetcherTest {
                                                TriggerType t, String keyword, String targetUsername, String actorId,
                                                Supplier<ApifyResult> work) {
                 ApifyResult r = work.get();
-                return new Execution(1L, r.items(), r.notFound());
+                return new Execution(1L, r.items(), r.notFound(), r.confirmedEmpty());
             }
         };
     }

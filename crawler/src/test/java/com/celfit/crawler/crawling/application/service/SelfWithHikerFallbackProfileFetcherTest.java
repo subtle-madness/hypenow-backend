@@ -171,6 +171,31 @@ class SelfWithHikerFallbackProfileFetcherTest {
         assertThat(ex.items()).isEmpty();
     }
 
+    @Test void 폴백도_빈_응답이면_확인된_빈_계정으로_보고된다() {
+        // 호출자(CollectJob)가 30일 수명 정책을 판정할 수 있는 유일한 신호 — 양쪽 소스 모두
+        // 계정이 없음을 이번 방문에서 확인했다는 뜻이다
+        HikerHttp http = path -> "{\"user\":null}";
+        var f = fetcher(webWithEmptyFor(Set.of("dormant")), http);
+
+        CrawlExecutor.Execution ex = null;
+        for (int round = 1; round <= THRESHOLD; round++) {
+            ex = f.fetch(JobName.QUALIFY, List.of("dormant"), TriggerType.MANUAL);
+        }
+
+        assertThat(ex.confirmedEmpty()).containsExactly("dormant");
+        assertThat(ex.items()).isEmpty();
+        assertThat(ex.notFound()).isEmpty();
+    }
+
+    @Test void 임계값_미만의_빈_응답은_확인된_빈_계정으로_보고되지_않는다() {
+        // Hiker 미확인 상태 — 소멸 판정 재료로 쓰면 안 된다
+        var f = fetcher(webWithEmptyFor(Set.of("hidden")), path -> "{\"user\":null}");
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
+
+        assertThat(ex.confirmedEmpty()).isEmpty();
+    }
+
     @Test void 폴백도_빈_응답이면_카운터를_리셋하고_기존_재시도_경로로_복귀한다() {
         // 진짜 소멸 계정 — 유료 콜이 임계값 주기당 1회로 묶여야 한다(매일 반복 과금 방지)
         AtomicInteger hikerCalls = new AtomicInteger();
