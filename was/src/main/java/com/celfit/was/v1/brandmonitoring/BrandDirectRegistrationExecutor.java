@@ -85,7 +85,16 @@ public class BrandDirectRegistrationExecutor {
 		}
 	}
 
-	/** 크래시 복구 — pending entry가 5분 넘게 방치된 등록을 다시 처리한다. monitoring 명령은 멱등이라 재시도 안전. */
+	/**
+	 * 크래시 복구 — pending entry가 5분 넘게 방치된 등록을 다시 처리한다. monitoring 명령은 멱등이라
+	 * 재시도 안전.
+	 *
+	 * <p><b>취소-복구 경합(2026-08-18 스테이징 실측)</b>: 등록 응답 유실로 pending에 머문 entry를
+	 * 사용자가 그새 취소하면, 이 복구가 그 entry를 재시도해 이미 취소된 게시물을 재등록해 버리는
+	 * 경합이 있었다 — {@code V1BrandDirectPostService#cancel}이 취소 시점에 같은 (brandId, shortCode)
+	 * pending entry를 success로 정산하도록 고쳐 구조적으로 해소했다({@code settlePendingAsSuccessForCancel}
+	 * 참조): 정산된 entry는 result가 pending이 아니게 되어 아래 조회 자체에 잡히지 않는다.
+	 */
 	public void recoverStalePending() {
 		for (long registrationId : registrationRepository.findRegistrationIdsWithPendingOlderThan(STALE_AGE)) {
 			try {

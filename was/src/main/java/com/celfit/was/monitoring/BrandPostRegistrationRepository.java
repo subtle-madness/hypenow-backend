@@ -163,6 +163,31 @@ public class BrandPostRegistrationRepository {
 		return registrationIds.stream().distinct().toList();
 	}
 
+	/**
+	 * 취소 시 pending entry 정산(§2-4 취소, 2026-08-18 스테이징 실측 경합 수정) — 응답 유실로
+	 * pending에 머문 entry는 실제로는 등록이 완료된 상태다. 취소 시점에 success로 정산해 stale
+	 * 복구가 취소된 게시물을 재등록하는 경합을 막는다(2026-08-18 스테이징 실측). short_code가
+	 * null인 pending(파싱·share 미해소)은 대상이 아니다 — 아직 무엇을 취소할지조차 확정되지
+	 * 않았으므로 이 취소와 무관하다.
+	 *
+	 * @return 영향받은 registration_id 목록(중복 제거) — 호출부가 각각 markCompletedIfAllSettled를 돈다
+	 */
+	public List<Long> settlePendingAsSuccessForCancel(long brandId, String shortCode) {
+		List<Long> registrationIds = jdbcClient.sql("""
+				UPDATE app.brand_post_registration_entries e
+				SET result = 'success', reason_code = NULL, reason = NULL, settled_at = now()
+				FROM app.brand_post_registrations r
+				WHERE e.registration_id = r.id AND e.result = 'pending' AND e.short_code = :shortCode
+				  AND r.brand_id = :brandId
+				RETURNING e.registration_id
+				""")
+				.param("brandId", brandId)
+				.param("shortCode", shortCode)
+				.query(Long.class)
+				.list();
+		return registrationIds.stream().distinct().toList();
+	}
+
 	/** insert() RETURNING 전용 — id·requested_at만 있으면 응답 직렬화에 충분하다(entries는 빈 채로 시작). */
 	public record InsertedRegistration(long id, OffsetDateTime requestedAt) {
 	}
