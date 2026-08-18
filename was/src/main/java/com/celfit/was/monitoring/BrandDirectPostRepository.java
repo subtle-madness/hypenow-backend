@@ -65,6 +65,26 @@ public class BrandDirectPostRepository {
 	}
 
 	/**
+	 * 캠페인 연결된 직접 등록 게시물 shortcode(seededAuthor 캠페인 도출 재료, 2026-08-18) — 매핑이
+	 * 가리키는 레거시 아이템이 캠페인에 배정돼 있고 취소되지 않은 것만. {@code monitoring_item_id}가
+	 * NULL인 행(direct 통합 이후 신규 등록 — §T8)은 이 조회 대상이 아니다: 캠페인 연결은
+	 * {@code app.brand_post_campaigns}로 옮겨졌으므로(설계 §결정 3) 그쪽은 seededAuthor 산출에서
+	 * {@code BrandPostCampaignRepository}가 별도로 커버한다. brand_direct_posts·monitoring_items
+	 * 둘 다 app 스키마라 크로스 DB 조인이 아니다(was 코드 내 단일 물리 DB 조인).
+	 */
+	public List<String> findCampaignLinkedShortCodes(long userId) {
+		return jdbcClient.sql("""
+				SELECT d.short_code
+				FROM app.brand_direct_posts d
+				JOIN app.monitoring_items m ON m.id = d.monitoring_item_id
+				WHERE d.user_id = :userId AND m.campaign_id IS NOT NULL AND m.canceled_at IS NULL
+				""")
+				.param("userId", userId)
+				.query(String.class)
+				.list();
+	}
+
+	/**
 	 * direct 통합 등록(2026-08-18 §T8) — 원장 행만 남긴다. {@code monitoring_item_id}는 NULL(레거시
 	 * 아이템 없음), {@code migrated_at}은 now()로 즉시 찍는다("이 매핑의 정본은 monitoring 통합
 	 * 풀이다" — 레거시 조립 대상이 아님, 설계 §4-1). 이미 있으면 무시(멱등 — stale 복구 재시도 안전).

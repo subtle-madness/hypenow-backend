@@ -1,6 +1,15 @@
 # 캡션 기반 광고 표기 판정 (브랜드 직접 태그 게시물) 설계
 
 > 상태: 🟢 활성 · 2026-08-17 설계 확정 → 2026-08-18 구현 완료(배포·노출 개통 전 — 잔여는 트랙 문서 참조)
+> **2026-08-18 사용자 정정(§6)**: 최초 설계는 브랜드가 시딩 인플루언서 계정을 별도 등록하는
+> 신규 관리 표면(monitoring `brand_seeded_account` + `.../seeded-accounts` API 5종 + was
+> 프록시 5종)을 전제했으나, 구현 당일 이 표면이 잘못된 신설이라는 판단으로 전면 철회됐다.
+> `seededAuthor` 판정은 신규 등록 목록이 아니라 **이미 존재하는 캠페인 관리 데이터**
+> (`app.monitoring_items`·`app.brand_direct_posts`)에서 was가 조회 시점에 직접 도출한다 —
+> §6은 이 교체를 반영해 재기술했다. `brand_seeded_account` 테이블·마이그레이션 자체는
+> expand-contract상 이번엔 DROP하지 않고 미사용 상태로 남아 있다. 상세는
+> [monitoring-was-contract.md §9](../../contracts/monitoring-was-contract.md)(v2.12)와
+> [트랙 MON-BT](../../tracks/MON-BT-브랜드-태그-모니터링.md) 참조.
 
 ## 1. 목적
 
@@ -149,22 +158,56 @@ LLM 없이 단위 테스트된다. 최종 판정을 결정적 규칙으로 빼�
 - LLM 콜 실패·파싱 실패·스키마 위반은 verdict NULL 유지 → 다음 스윕에서 자동 재시도.
   판정값을 오염시키지 않는다.
 
-## 6. 시딩 계정 등록 — 뒷광고의 확정 판정
+## 6. 시딩 계정 판정 — 캠페인 데이터 도출 (2026-08-18 사용자 정정 — 신규 등록 표면 철회)
 
-브랜드는 자기가 누구에게 시딩했는지 아는 유일한 주체다. 브랜드가 시딩 인플루언서
-계정(username) 목록을 등록하면:
+> 이 절의 최초 버전은 "브랜드가 시딩 인플루언서 계정(username) 목록을 별도로 등록한다"는
+> 신규 관리 표면을 전제했다(monitoring `brand_seeded_account` 테이블 + `.../seeded-accounts`
+> CRUD API 5종 + was 프록시 5종). 구현 당일 그 전제가 잘못됐다는 판단이 내려졌다 —
+> **브랜드는 이미 캠페인 관리 화면에서 "누구를 추적 중인지"를 알고 있는데, 같은 정보를
+> 다시 입력하게 하는 신규 표면은 중복 작업이자 잘못된 설계였다.** 이하는 이 정정을 반영한
+> 재기술이다.
+
+브랜드가 누구에게 시딩했는지는 **이미 캠페인 관리 데이터에 존재한다** — 캠페인에 배정된
+계정 추적, 캠페인에 배정된 직접 등록 게시물이 그 신호다. was는 이 데이터를 조회 시점에
+조합해 시딩 계정 집합을 구한다:
 
 - **시딩 계정의 게시물 + `NOT_DISCLOSED` = 위반 확정** (추론 없음).
 - 비시딩 계정의 게시물은 표기 상태를 정보로만 표시(오가닉 가능성).
 
-설계 원칙: 시딩 여부는 **판정 결과에 저장하지 않는다** — 조회 시 조인으로 계산한다.
-목록을 나중에 등록·수정해도 재판정이 필요 없다.
+설계 원칙(유지): 시딩 여부는 **판정 결과에 저장하지 않는다** — 조회 시 조인(계산)으로
+낸다. 캠페인 배정을 나중에 바꿔도 재판정이 필요 없다.
 
-등록 API는 기존 브랜드 계정 등록과 같은 monitoring 동기 명령 패턴을 따른다
-(구체 경로·인증은 구현 계획에서 기존 패턴 확인 후 확정).
+**산출 기준**(user 스코프 — 캠페인은 브랜드가 아니라 유저 단위 개념이다) — 게시물
+작성자 username(소문자)이 다음 합집합에 속하면 시딩 계정:
 
-시딩 계정 username 정규화 규칙: trim·선행 `@` 제거·소문자·중복 제거(2026-08-18 스펙 리뷰
-정정 — "@handle" 형태 입력을 그대로 저장하면 시딩 조인이 깨지는 공백이 있었다).
+1. **캠페인 연결 계정 추적**: `app.monitoring_items`에서 `user_id=?` AND `mode='account'`
+   AND `campaign_id IS NOT NULL` AND `canceled_at IS NULL`인 행의 `input_value`(등록 시 이미
+   소문자 정규화 저장).
+2. **캠페인 연결 게시물의 작성자**: `app.brand_direct_posts`(`user_id=?`) 중
+   `monitoring_item_id`가 가리키는 `app.monitoring_items.campaign_id IS NOT NULL`(canceled
+   제외)인 short_code들의 게시자 username — 게시자는 monitoring DB `brand_post_meta.username`
+   에서 조회한다. **app 스키마와 monitoring DB는 물리적으로 다른 DB라 SQL 조인 불가** —
+   was 코드에서 두 단계로 조합한다(시스템 경계 원칙: 조합은 was 코드에서).
+
+구현: `MonitoringItemRepository.findCampaignLinkedAccountHandles`(1) +
+`BrandDirectPostRepository.findCampaignLinkedShortCodes`(2, app 스키마 내부 조인) +
+`BrandReadRepository.findPostMeta`(2의 게시자 조회, 기존 메서드 재사용) →
+`BrandPostAssembler.resolveSeededUsernames(userId)`가 합집합을 낸다. 노출 토글이 꺼져
+있으면(`monitoring.brand.ad-disclosure.expose=false`) 이 조회 자체가 생략된다(기존 드라이런
+방어 그대로 유지).
+
+**철회된 것**: monitoring `BrandSeededAccountRepository` + `GET/PUT/POST/DELETE
+.../seeded-accounts[/{seededUsername}]` API 5종, was `V1BrandAccountsController`/
+`V1BrandAccountService`의 프록시 5종, `MonitoringCommandClient`의 시딩 CRUD 5종,
+`BrandReadRepository.findSeededUsernames`. `brand_seeded_account` 테이블·마이그레이션은
+이미 develop 머지·스테이징 적용 상태라 expand-contract상 이번엔 DROP하지 않고 미사용
+상태로 남긴다(추후 contract 단계에서 DROP).
+
+(참고 — 철회 전 신규 등록 표면에 적용됐던 정규화 규칙: trim·선행 `@` 제거·소문자·중복
+제거. 캠페인 도출 경로에서는 `input_value`가 등록 시 이미 소문자 정규화 저장되고,
+`brand_post_meta.username`은 monitoring이 관측한 원문이라 was 소비부에서 방어적으로
+`Locale.ROOT` 소문자화만 한 번 더 한다 — 별도 등록 입력이 없으니 `@` 제거 등 입력
+정규화는 더 이상 필요 없다.)
 
 ## 7. 실행 위치·동시성
 
@@ -236,7 +279,8 @@ was 게이트 SQL(`enriched_at IS NOT NULL`)은 무수정 — 의미만 "게시�
 - `adDisclosure`: 판정값 4종 또는 null(판정 중)
 - `adViolations`: 위반 코드 배열
 - `adEvidence`: 근거 문구 배열
-- `seededAuthor`: boolean — 시딩 계정 등록 여부(조인 계산)
+- `seededAuthor`: boolean — 캠페인 데이터 도출 시딩 여부(조회 시 계산, §6 참조 — 2026-08-18
+  정정으로 별도 등록 목록이 아니라 캠페인 관리 데이터 조인이 산출 기준)
 
 "미표기 위반 확정" 배지 조합(`seededAuthor && adDisclosure == NOT_DISCLOSED`)은
 프론트가 구성한다. 프론트 문구는 "캡션·라벨 기준"임을 한정하고, 비시딩 계정에는

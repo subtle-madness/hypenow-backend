@@ -58,7 +58,7 @@ class PerfDiagnosisHarnessTest {
 		TrackingItemAssembler trackingItemAssembler = new TrackingItemAssembler(itemRepository,
 				campaignRepository, Optional.of(readRepository), new ObjectMapper());
 		BrandPostAssembler brandPostAssembler = new BrandPostAssembler(brandReadRepository,
-				postCampaignRepository, directPostRepository, trackingItemAssembler, false);
+				postCampaignRepository, directPostRepository, trackingItemAssembler, itemRepository, false);
 		PerformanceContentAssembler assembler = new PerformanceContentAssembler(trackingItemAssembler,
 				linkRepository, campaignRepository, Optional.of(brandReadRepository),
 				Optional.of(brandPostAssembler));
@@ -89,7 +89,7 @@ class PerfDiagnosisHarnessTest {
 			}
 			var posts = time("  assembleBrandPosts(" + link.brandId() + ") [5쿼리+매핑]",
 					// 진단 하니스는 조회 비용의 상한을 보려는 것이라 전량(ALL)으로 잰다.
-					() -> brandPostAssembler.assembleBrandPosts(account.get(), true,
+					() -> brandPostAssembler.assembleBrandPosts(USER_ID, account.get(), true,
 							com.celfit.was.v1.brandmonitoring.BrandPostAssembler.BrandPostScope.ALL));
 			System.out.println("    게시물 = " + posts.size() + "건");
 		}

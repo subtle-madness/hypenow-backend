@@ -146,9 +146,16 @@ class BrandCollectServiceTest {
 
 	private static final class StubComments extends BrandCommentRepository {
 		final List<String> upserted = new ArrayList<>();
+		/** onVisible 훅과의 호출 순서 검증용(2026-08-18 계정 게이트 단축) — 기본은 격리된 리스트. */
+		private List<String> callOrder = new ArrayList<>();
 
 		StubComments() {
 			super(null);
+		}
+
+		/** 다른 스텁·테스트 로컬 훅과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -159,6 +166,7 @@ class BrandCollectServiceTest {
 		@Override
 		public void upsertForPost(String shortCode, List<CommentInfo> fetched) {
 			upserted.add(shortCode);
+			callOrder.add("comments:" + shortCode);
 		}
 	}
 
@@ -1093,6 +1101,70 @@ class BrandCollectServiceTest {
 
 		assertThat(adJudge.judged).isEmpty();          // adJudge 호출 자체가 없다
 		assertThat(tagged.enriched).contains("AAA");    // 정산은 킬 스위치와 무관하게 그대로 돈다
+	}
+
+	// ---------- 계정 게이트 훅(onVisible, 2026-08-18 markServing 단축 — 스펙 §8 후속) ----------
+
+	/**
+	 * 등록 백필의 계정 게이트(BrandRegistrationService.markServing)가 게시물 게이트(markEnriched)와
+	 * 같은 지점에서 열려야 한다는 요구의 핵심 근거 — onVisible은 댓글 수집 리포지토리 호출보다
+	 * 먼저 발화한다. 종전 배선(enrich 전체 반환 후 markServing)이면 이 순서가 뒤집혀 댓글·판정까지
+	 * 기다려야 계정이 ready였다(이번 개정의 버그 리포트 원인).
+	 */
+	@Test
+	void onVisible은_댓글_수집_리포지토리_호출_전에_발생한다() {
+		List<String> order = new ArrayList<>();
+		comments.useSharedCallOrder(order);
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));   // commentCount 3 > 저장값 0 — 게이트 오픈
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+
+		svc.enrich(brand, posts, () -> order.add("onVisible"));
+
+		assertThat(order).containsExactly("onVisible", "comments:A");
+	}
+
+	/**
+	 * ensureAuthors 첫머리의 배치 DB 조회가 통째로 던지는 하드 실패에도 onVisible은 markEnriched와
+	 * 같은 finally 보장을 받는다 — 첫 페이지 게시자 보강 실패가 계정 ready를 영구히 막으면 안 된다.
+	 */
+	@Test
+	void onVisible은_게시자_보강_하드_실패에도_발생한다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+		List<String> visible = new ArrayList<>();
+
+		assertThatThrownBy(() -> svc.enrich(brand, posts, () -> visible.add("visible")))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(visible).containsExactly("visible");   // 하드 실패에도 훅은 정상 발화
+		assertThat(tagged.enriched).contains("A");          // 정산도 기존 규칙대로 찍힌다(무변경)
+	}
+
+	/** 태그 0건(빈 배치)도 onVisible을 1회 받는다 — 못 받으면 그 브랜드가 collecting에 영구히 갇힌다. */
+	@Test
+	void onVisible은_빈_배치에도_발생한다() {
+		BrandCollectService svc = service(2000);
+		List<String> visible = new ArrayList<>();
+
+		svc.enrich(brand, List.of(), () -> visible.add("visible"));
+
+		assertThat(visible).containsExactly("visible");
+	}
+
+	/** 2-인자 오버로드(야간 스윕이 쓰는 경로)는 onVisible 없이도 기존과 동일하게 동작한다 — 회귀 방지. */
+	@Test
+	void onVisible_없는_2인자_enrich는_기존_동작_그대로다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+
+		svc.enrich(brand, posts);   // onVisible 없음 — NPE 없이 그대로
+
+		assertThat(tagged.enriched).contains("A");
+		assertThat(comments.upserted).contains("A");
 	}
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {

@@ -24,6 +24,10 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 	CampaignRepository campaignRepository;
 	@Autowired
 	JdbcClient jdbcClient;
+
+	private CampaignRow 캠페인() {
+		return campaignRepository.insert(userId, "캠페인-" + UUID.randomUUID(), null, null, null, null, null, null);
+	}
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	long userId;
@@ -230,5 +234,45 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 
 	private static org.assertj.core.data.TemporalUnitWithinOffset within3Seconds() {
 		return new org.assertj.core.data.TemporalUnitWithinOffset(3, java.time.temporal.ChronoUnit.SECONDS);
+	}
+
+	// ---------- findCampaignLinkedAccountHandles(seededAuthor 캠페인 도출, 2026-08-18) ----------
+
+	@Test
+	void findCampaignLinkedAccountHandles_캠페인_연결된_계정_추적만_반환한다() {
+		CampaignRow campaign = 캠페인();
+		repository.insertPending(userId, "account", UUID.randomUUID(), campaign.id(), "seeded_creator", null,
+				null, 30, LocalDate.of(2026, 8, 1));
+
+		List<String> handles = repository.findCampaignLinkedAccountHandles(userId);
+
+		assertThat(handles).containsExactly("seeded_creator");
+	}
+
+	@Test
+	void findCampaignLinkedAccountHandles_캠페인_없는_계정_추적은_제외() {
+		repository.insertPending(userId, "account", UUID.randomUUID(), null, "no_campaign_creator", null,
+				null, 30, LocalDate.of(2026, 8, 1));
+
+		assertThat(repository.findCampaignLinkedAccountHandles(userId)).isEmpty();
+	}
+
+	@Test
+	void findCampaignLinkedAccountHandles_취소된_추적은_제외() {
+		CampaignRow campaign = 캠페인();
+		long itemId = repository.insertPending(userId, "account", UUID.randomUUID(), campaign.id(),
+				"canceled_creator", null, null, 30, LocalDate.of(2026, 8, 1));
+		repository.markCanceled(itemId, "detecting", OffsetDateTime.now());
+
+		assertThat(repository.findCampaignLinkedAccountHandles(userId)).isEmpty();
+	}
+
+	@Test
+	void findCampaignLinkedAccountHandles_url_모드는_제외() {
+		CampaignRow campaign = 캠페인();
+		repository.insertPending(userId, "url", UUID.randomUUID(), campaign.id(), "abc123",
+				"https://instagram.com/p/abc123", null, 30, LocalDate.of(2026, 8, 1));
+
+		assertThat(repository.findCampaignLinkedAccountHandles(userId)).isEmpty();
 	}
 }
