@@ -365,6 +365,201 @@
       ]
     },
     {
+      "id": 301,
+      "type": "stat",
+      "title": "처리 중 멈춘 등록",
+      "description": "30분 넘게 완료되지 않은 모니터링 등록 요청 건수 — 홈 타일8과 같은 쿼리다(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 어딘가에서 걸린 것이니 오른쪽 상세 표를 본다. 전역 시간 필터를 타지 않는다(요청 시점과 무관하게 지금 막혀 있는 건을 전부 센다). 값이 아예 없으면 '데이터 없음'을 빨강으로 띄운다 — 무값은 초록이 아니다.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registrations WHERE completed_at IS NULL AND requested_at < now() - interval '30 minutes'"
+        }
+      ]
+    },
+    {
+      "id": 302,
+      "type": "table",
+      "title": "└ 처리 중 멈춘 등록 상세",
+      "description": "왼쪽 stat이 0보다 클 때 확인하는 상세 목록 — 어떤 유저의 요청이 언제부터 멈춰 있는지. 전역 시간 필터 미적용. **stat과 조건이 다르다**: 이 표는 완료되지 않은 등록을 전부 보여 주고(30분 미만의 정상 진행 건 포함), 그중 경과 30분(1,800초)을 넘겨 **빨갛게 칠해진 행이 stat이 센 건**이다. 그래서 stat이 0인데 표에 초록 행이 있을 수 있다 — 정상이다.",
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "멈춘 등록 없음 (정상)",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "elapsed_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "경과시간"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1800
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "requested_at"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "요청 시각"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "user_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "유저 ID"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT r.id, r.user_id, r.requested_at,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registrations r\nWHERE r.completed_at IS NULL\nORDER BY r.requested_at"
+        }
+      ]
+    },
+    {
       "id": 200,
       "type": "row",
       "title": "비용 — Hiker 콜은 어디로 나가나",
@@ -373,7 +568,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 22
       },
       "panels": []
     },
@@ -386,7 +581,7 @@
         "h": 9,
         "w": 14,
         "x": 0,
-        "y": 15
+        "y": 23
       },
       "datasource": {
         "type": "postgres",
@@ -459,7 +654,7 @@
         "h": 9,
         "w": 10,
         "x": 14,
-        "y": 15
+        "y": 23
       },
       "datasource": {
         "type": "postgres",
@@ -536,7 +731,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "panels": []
     },
@@ -549,7 +744,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 25
+        "y": 33
       },
       "datasource": {
         "type": "postgres",
@@ -612,7 +807,7 @@
         "h": 5,
         "w": 8,
         "x": 8,
-        "y": 25
+        "y": 33
       },
       "datasource": {
         "type": "postgres",
@@ -675,7 +870,7 @@
         "h": 5,
         "w": 8,
         "x": 16,
-        "y": 25
+        "y": 33
       },
       "datasource": {
         "type": "postgres",
@@ -738,7 +933,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 38
       },
       "datasource": {
         "type": "postgres",
