@@ -341,14 +341,14 @@
       "id": 8,
       "type": "stat",
       "title": "멈춘 등록",
-      "description": "30분 넘게 완료되지 않은 모니터링 등록 건수(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 걸린 것이다. 클릭 → 모니터링.",
+      "description": "30분 넘게 완료되지 않은 모니터링 등록 건수(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 걸린 것이다. 클릭 → 계정 유입.",
       "gridPos": { "h": 5, "w": 5, "x": 15, "y": 7 },
       "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
-      "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+      "links": [{ "title": "계정 유입 대시보드로", "url": "/d/hypenow-acquisition" }],
       "fieldConfig": {
         "defaults": {
           "noValue": "데이터 없음",
-          "links": [{ "title": "모니터링 대시보드로", "url": "/d/hypenow-monitoring" }],
+          "links": [{ "title": "계정 유입 대시보드로", "url": "/d/hypenow-acquisition" }],
           "mappings": [
             { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
           ],

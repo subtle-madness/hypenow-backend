@@ -1,0 +1,285 @@
+{
+  "title": "HypeNow 계정 유입",
+  "uid": "hypenow-acquisition",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "5m",
+  "timezone": "Asia/Seoul",
+  "tags": ["hypenow", "acquisition"],
+  "description": "가입·문의·모니터링 등록 처리 기능축. 위 절은 등록이 막혀 있는지, 아래 절은 얼마나 들어오는지를 본다.",
+  "time": { "from": "now-7d", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "건강 — 등록이 막혀 있나",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "처리 중 멈춘 등록",
+      "description": "30분 넘게 완료되지 않은 모니터링 등록 요청 건수 — 홈 타일8과 같은 쿼리다(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 어딘가에서 걸린 것이니 오른쪽 상세 표를 본다. 전역 시간 필터를 타지 않는다(요청 시점과 무관하게 지금 막혀 있는 건을 전부 센다). 값이 아예 없으면 '데이터 없음'을 빨강으로 띄운다 — 무값은 초록이 아니다.",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            { "type": "special", "options": { "match": "null+nan", "result": { "text": "데이터 없음", "color": "red", "index": 0 } } }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registrations WHERE completed_at IS NULL AND requested_at < now() - interval '30 minutes'"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "└ 처리 중 멈춘 등록 상세",
+      "description": "왼쪽 stat이 0보다 클 때 확인하는 상세 목록 — 어떤 유저의 요청이 언제부터 멈춰 있는지. 전역 시간 필터 미적용. **stat과 조건이 다르다**: 이 표는 완료되지 않은 등록을 전부 보여 주고(30분 미만의 정상 진행 건 포함), 그중 경과 30분(1,800초)을 넘겨 **빨갛게 칠해진 행이 stat이 센 건**이다. 그래서 stat이 0인데 표에 초록 행이 있을 수 있다 — 정상이다.",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 1 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "멈춘 등록 없음 (정상)",
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "elapsed_seconds" },
+            "properties": [
+              { "id": "displayName", "value": "경과시간" },
+              { "id": "unit", "value": "s" },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "red", "value": 1800 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "requested_at" },
+            "properties": [{ "id": "displayName", "value": "요청 시각" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "user_id" },
+            "properties": [{ "id": "displayName", "value": "유저 ID" }]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT r.id, r.user_id, r.requested_at,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registrations r\nWHERE r.completed_at IS NULL\nORDER BY r.requested_at"
+        }
+      ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "사용량 — 얼마나 들어오고 있나",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "가입",
+      "description": "가입 완료 유저 수(app.users). 누적 = 전체 기간, 이번주 = 최근 7일 생성. 탈퇴 개념이 없어 누적은 단조 증가한다. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다. 가입 **시도**(실패 포함)는 app.signup_events에 있지만 이 대시보드는 완료 기준만 본다.",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"누적\",\n       count(*) FILTER (WHERE created_at > now() - interval '7 days') AS \"이번주\"\nFROM app.users"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "가입 코드 소진",
+      "description": "클로즈베타 가입 코드의 발급·발송·사용 누적 건수(전체 기간, 시간 필터 미적용). 클로즈베타의 **유일한 유입 관문**이라 가장 먼저 볼 규모 지표다 — 발급 대비 발송이 낮으면 코드가 아직 안 뿌려진 것이고, 발송 대비 사용이 낮으면 받은 사람이 가입까지 오지 않는 것이다. 규모 지표라 색 임계를 달지 않는다.",
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"발급\",\n       count(*) FILTER (WHERE is_sent) AS \"발송\",\n       count(*) FILTER (WHERE used_at IS NOT NULL) AS \"사용\"\nFROM app.signup_codes"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "도입 문의",
+      "description": "랜딩 '도입 문의' 폼 접수 건수(app.inquiries). 누적 = 전체 기간, 이번주 = 최근 7일. **PII는 조회하지 않는다** — 이름·이메일·소속·문의내용은 건드리지 않고 건수만 센다. 실측상 몇 주씩 0인 게 정상이라(마지막 접수 2026-07-29) 이번주 0은 이상 징후가 아니다. 규모 지표라 색 임계를 달지 않는다.",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"누적\",\n       count(*) FILTER (WHERE created_at > now() - interval '7 days') AS \"이번주\"\nFROM app.inquiries"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "최근 가입",
+      "description": "가장 최근 가입한 유저 10건. 전역 시간 필터를 타지 않는다(항상 최신 10건). **이메일은 앞 3글자만 남기고 마스킹**한다 — 대시보드는 '언제 몇 명이 들어왔나'를 보는 자리지 유저 식별 정보를 펼치는 자리가 아니다. 같은 시각에 여러 건이 몰리면 코드 배포 직후이거나 자동 가입 시도를 의심한다.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "hypenow-analysis-pg" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT created_at AS \"가입 시각\",\n       left(email, 3) || '***' AS \"이메일\"\nFROM app.users\nORDER BY created_at DESC\nLIMIT 10"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "text",
+      "title": "읽는 법·한계",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 15 },
+      "options": {
+        "mode": "markdown",
+        "content": "### 읽는 순서\n\n1. **건강** — 모니터링 등록 처리가 막혀 있나. 여기가 빨갛지 않으면 아래는 참고 지표다.\n2. **사용량** — 가입·코드·문의가 얼마나 들어오는지. 신호등이 아니라 규모 지표라 색이 없다.\n\n홈 신호등의 **타일 8(멈춘 등록)** 이 이 대시보드로 착지한다.\n\n### 규약\n\n- **30분 기준은 기존 알림과 같다.** stat은 `completed_at IS NULL AND requested_at < now() - interval '30 minutes'`, 홈 타일 8과 글자까지 같은 조건이다.\n- 건강 절 stat은 **무값을 초록으로 속이지 않는다** — 값이 없으면 '데이터 없음'을 빨강으로 띄운다. 사용량 stat은 중립색이다.\n- **PII 최소 노출**: 최근 가입 표의 이메일은 앞 3글자만, 문의는 건수만 센다(이름·이메일·소속·내용은 조회하지 않는다).\n- 이 대시보드는 **analysis DB의 `app` 스키마만** 본다. monitoring DB에는 접근하지 않는다(시스템 경계).\n\n### 한계\n\n- **stat과 상세 표의 조건이 다르다.** 표는 완료되지 않은 등록을 전부 보여 주고, 그중 경과 30분(1,800초)을 넘겨 **빨간 행**이 stat이 센 건이다. stat 0 + 표에 초록 행 = 지금 정상 처리 중이라는 뜻이다.\n- **일별 시계열이 없는 건 의도**다. 가입이 하루 0~2명, 문의가 몇 주에 한 건 밀도라 시계열로 그리면 빈 판이 된다(스펙 §2 — 기존 '가입 추이'·'문의 추이' 패널은 이전하지 않고 폐기).\n- **가입 실패는 여기서 안 보인다.** 이 대시보드는 `app.users`(완료된 가입)만 센다. 실패 사유별 분포가 필요하면 `app.signup_events`로 별도 패널을 만들어야 한다.\n- **문의 이번주 0은 이상 징후가 아니다** — 실측상 몇 주씩 비어 있는 게 정상이다.\n- **가입 코드는 누적값**이다. '지금 남아 있는 미사용 코드'는 발급 − 사용으로 직접 빼서 읽어야 한다.\n- 이 장이 세는 단위는 등록 **요청**(`monitoring_registrations`)이다. 요청 안의 개별 항목(계정/URL) 단위 결과 분포는 이 장에 없다."
+      }
+    }
+  ]
+}
