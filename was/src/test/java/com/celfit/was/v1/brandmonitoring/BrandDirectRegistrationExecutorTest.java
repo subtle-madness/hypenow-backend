@@ -9,12 +9,15 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandPostRegistrationEntryRow;
 import com.celfit.was.monitoring.BrandPostRegistrationRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
+import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import java.sql.Connection;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -50,6 +53,10 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 	@Autowired
 	BrandPostCampaignRepository postCampaignRepository;
 	@Autowired
+	BrandLinkRepository linkRepository;
+	@Autowired
+	CampaignRepository campaignRepository;
+	@Autowired
 	DataSource dataSource;
 	@Autowired
 	JdbcClient jdbcClient;
@@ -57,6 +64,7 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 	JdbcClient monitoringJdbc;
 	BrandReadRepository brandReadRepository;
 	MockRestServiceServer server;
+	MonitoringCommandClient commandClient;
 	BrandDirectRegistrationExecutor executor;
 	long userId;
 	long brandId;
@@ -77,9 +85,9 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 
 		RestClient.Builder builder = RestClient.builder().baseUrl(BASE);
 		server = MockRestServiceServer.bindTo(builder).build();
-		MonitoringCommandClient client = new MonitoringCommandClient(builder.build());
+		commandClient = new MonitoringCommandClient(builder.build());
 		TaskExecutor immediate = Runnable::run;
-		executor = new BrandDirectRegistrationExecutor(client, registrationRepository, directPostRepository,
+		executor = new BrandDirectRegistrationExecutor(commandClient, registrationRepository, directPostRepository,
 				postCampaignRepository, brandReadRepository, immediate);
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
@@ -310,5 +318,66 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 		assertThat(entry.result()).isEqualTo("failed");
 		assertThat(entry.reasonCode()).isEqualTo("internal_error");
 		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
+	}
+
+	// ---------- 취소-복구 경합 회귀(2026-08-18 스테이징 실측) ----------
+
+	/**
+	 * 결함 1 회귀 — 등록 응답 유실로 pending에 머문 entry가 있는 상태에서 게시물을 취소하면, 그
+	 * entry가 success로 정산돼 5분 뒤 stale 복구가 재등록 콜을 보내지 않아야 한다.
+	 *
+	 * <p>시나리오 재현: monitoring은 이미 등록을 완료했다(brand_tagged_post.direct_registered_at
+	 * 채워짐)는데 was entry는 응답 유실로 pending 잔존 → 사용자가 취소(cancel) → 취소는 monitoring의
+	 * direct 표식도 지운다(테스트에선 MockRestServiceServer가 실제로 DB를 건드리지 않으므로, 취소
+	 * 처리 후의 monitoring 실측 상태를 수동으로 반영해 재현한다) → 5분 stale 경과 후 복구 크론 실행.
+	 * 수정 전에는 이 entry가 여전히 pending이라 복구가 재등록 POST를 보내는데, 그 요청은 테스트가
+	 * 기대하지 않은 것이라 MockRestServiceServer가 AssertionError를 던져 테스트가 실패한다(깨뜨려
+	 * 확인). 수정 후에는 entry가 이미 success로 정산돼 복구 대상 자체에서 빠져 재등록 콜이 없다.
+	 */
+	@Test
+	void 취소하면_pending_entry가_success로_정산되고_복구가_재등록하지_않는다() {
+		monitoringJdbc.sql("""
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, taken_at,
+				                                tag_detected_at, direct_registered_at)
+				VALUES (:brandId, 'RACE2', 'creator', now(), NULL, now())
+				""")
+				.param("brandId", brandId).update();
+
+		long registrationId = registrationRepository.insert(userId, brandId, null).id();
+		registrationRepository.insertEntry(registrationId, 0, "https://www.instagram.com/reel/RACE2/", "RACE2",
+				"pending", null, null);
+		linkRepository.insertLink(userId, brandId, "lizda_official", "own", 12);
+
+		server.expect(requestTo(BASE + "/api/brands/" + brandId + "/direct-posts/RACE2"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		V1BrandDirectPostService service = new V1BrandDirectPostService(linkRepository, brandReadRepository,
+				directPostRepository, registrationRepository, campaignRepository, postCampaignRepository,
+				commandClient, executor, Clock.systemUTC());
+		service.cancel(userId, "RACE2");
+
+		BrandPostRegistrationEntryRow settledEntry = onlyEntry(registrationId);
+		assertThat(settledEntry.result()).isEqualTo("success");
+		assertThat(settledEntry.settledAt()).isNotNull();
+		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
+
+		// 취소가 monitoring 실서버에 반영했을 direct 표식 해제를 테스트 DB에도 반영 — 취소 후
+		// 복구가 재검사하면 더 이상 duplicate로 막아주지 않는 상태를 정확히 재현한다.
+		monitoringJdbc.sql("""
+				UPDATE brand_tagged_post SET direct_registered_at = NULL
+				WHERE brand_id = :brandId AND short_code = 'RACE2'
+				""")
+				.param("brandId", brandId).update();
+		jdbcClient.sql(
+				"UPDATE app.brand_post_registrations SET requested_at = now() - interval '10 minutes' WHERE id = :id")
+				.param("id", registrationId)
+				.update();
+
+		executor.recoverStalePending();
+
+		// 취소 시점 정산 덕에 registrationId가 애초에 복구 대상(findRegistrationIdsWithPendingOlderThan)에
+		// 안 잡힌다 — /direct-posts로 어떤 재등록 콜도 안 갔다(기대는 DELETE 1건뿐).
+		server.verify();
 	}
 }

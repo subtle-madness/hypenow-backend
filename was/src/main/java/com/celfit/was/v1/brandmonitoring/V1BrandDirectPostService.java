@@ -231,6 +231,9 @@ public class V1BrandDirectPostService {
 	 * 계속 그 게시물을 수집하는데 화면에서만 사라지는 불일치가 생긴다(레거시 {@code cancelLegacyIfPossible}
 	 * 판단의 승계) — {@link MonitoringCommandClient#deleteDirectPost}가 던지면 그대로 전파해 취소
 	 * 자체를 실패시킨다.
+	 *
+	 * <p>원격·원장 정리에 더해 {@link #settlePendingEntriesForCancel}로 같은 (brandId, shortCode)의
+	 * pending 등록 entry도 함께 정산한다 — 취소-복구 경합 수정(2026-08-18 스테이징 실측) 참조.
 	 */
 	@Transactional
 	public void cancel(long userId, String postId) {
@@ -246,9 +249,28 @@ public class V1BrandDirectPostService {
 			commandClient.deleteDirectPost(link.brandId(), postId);
 			directPostRepository.delete(userId, postId);
 			postCampaignRepository.deleteByBrandAndShortCode(link.brandId(), postId);
+			settlePendingEntriesForCancel(link.brandId(), postId);
 			return;
 		}
 		throw V1ApiException.notFound("대상을 찾을 수 없습니다.");
+	}
+
+	/**
+	 * 취소-복구 경합 수정(2026-08-18 스테이징 실측) — 등록 명령의 HTTP 응답이 유실되면 monitoring은
+	 * 실제로 등록을 완료했는데 was entry는 pending으로 남는다. 그 상태에서 사용자가 게시물을
+	 * 취소하면(이 메서드), 방금 지운 (brandId, shortCode)와 같은 pending entry가 여전히 남아 있다가
+	 * 5분 뒤 {@link BrandDirectRegistrationExecutor#recoverStalePending()}가 그 entry를 다시 집어
+	 * 취소된 게시물을 재등록해 버리는 경합이 스테이징에서 실제로 재현됐다. 취소 시점에 그 entry를
+	 * success로 정산해(등록 자체는 실제로 완료됐었다는 사실을 그대로 반영 — 그 뒤 취소는 별개
+	 * 수명주기다) 복구 재시도 대상에서 구조적으로 제거한다. 이 정산이 없어도
+	 * {@code isAlreadyDirectRegistered} 재검사가 살아있는 동안은 재등록을 duplicate로 막아주지만,
+	 * 취소가 브랜드 풀에서 direct 표식을 지운 뒤이므로 그 재검사도 더 이상 막아주지 못한다 — 그래서
+	 * 취소 시점 정산이 반드시 필요하다.
+	 */
+	private void settlePendingEntriesForCancel(long brandId, String shortCode) {
+		for (Long registrationId : registrationRepository.settlePendingAsSuccessForCancel(brandId, shortCode)) {
+			registrationRepository.markCompletedIfAllSettled(registrationId);
+		}
 	}
 
 	// ---------- 검증·권한 ----------
