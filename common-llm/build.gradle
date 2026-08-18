@@ -1,0 +1,26 @@
+// 공통 LLM 전송 계층(ARCHITECTURE.md §4, 2026-08-18 신설): Vertex AI HTTP 호출·토큰 발급·
+// 재시도/백오프만 담는다. 프롬프트·판정 로직·도메인 스키마는 이 모듈에 반입하지 않는다
+// (그건 analytics·monitoring 등 소비 모듈 소관 — package-info.java §스코프 규칙 참조).
+// Spring 의존 절대 금지 — 빈 배선은 각 소비 모듈 몫. contract-analysis와 같은 java-library 관용구.
+//
+// 의존성은 최소로: google-auth-library-oauth2-http는 SA JWT 서명·토큰 교환(보안 민감이라 자체
+// RS256 구현 대신 채택 — analytics VertexTokenProvider와 동일 판단, 08-18 이식). slf4j-api는
+// 재시도·429 로그. 둘 다 공개 API 시그니처에 노출되지 않아(GoogleCredentials·Logger 모두 내부
+// 전용) implementation으로 충분 — 소비 모듈 컴파일 클래스패스를 오염시키지 않는다.
+plugins {
+	id 'java-library'
+}
+
+dependencies {
+	implementation 'org.slf4j:slf4j-api:2.0.18'
+	implementation 'com.google.auth:google-auth-library-oauth2-http:1.49.0'
+
+	testImplementation platform('org.junit:junit-bom:6.0.3')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testImplementation 'org.assertj:assertj-core:3.27.7'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

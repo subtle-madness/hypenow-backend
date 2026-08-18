@@ -159,6 +159,12 @@ services:
       # 스테이징에서 LLM 경로가 한 번도 실행되지 않는다. 요청 셰이프·응답 파싱 첫 실증을 운영으로
       # 미루지 않기 위해 배선(2026-08-11 최종 리뷰 I-4). 크론은 K 원칙대로 off라 콜 폭주 없음.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Vertex SA 키(2026-08-18 전환) — test-analytics와 같은 파일·같은 경로 재사용. 프로젝트는
+      # 운영과 같은 hypenow-llm-prod를 기본값으로 둔다(test 전용 GCP 프로젝트가 없다는 전제 —
+      # analytics도 test/운영이 같은 SA 파일을 쓴다, PR 보고 참조).
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 이미지 아카이브는 test 대상 아님(운영 버킷 오염 방지) — analytics와 동일하게 빈 값이면 잡이 no-op
       MONITORING_IMAGE_PAR_URL: ""
       # 감지 동작 검증용 — 운영(compose.yaml)에는 넣지 않는다. POST /api/sweeps는 등록 계정 수만큼
@@ -182,6 +188,8 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # ExitOnOOM은 운영과 동일 관용구(08-12) — test는 데이터가 작아 힙 상향은 미적용.
       JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError"
+    volumes:
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).
     healthcheck:

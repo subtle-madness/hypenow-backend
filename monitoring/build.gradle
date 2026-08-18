@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+	implementation project(':common-llm')
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.flywaydb:flyway-core'
