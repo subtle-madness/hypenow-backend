@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,12 +44,22 @@ import org.slf4j.LoggerFactory;
  * 판정한다. Tier0~3 규칙은 {@link #judgeCore}로 추출해 PostInfo 경로와 완전히 공유한다 —
  * 입력 소스(Hiker 응답 vs 저장된 메타)만 다를 뿐 판정 결과는 같은 캡션이면 항상 같다.
  *
- * <p>{@link #backfillUnjudged}는 <b>상한이 없다</b> — 잔량이 0이 될 때까지 {@link #batchSize}건씩
- * {@code findUnjudged}를 반복 조회해 전량 처리한다(LLM 전용 풀의 동시성 상한이 자연 속도
- * 제한). 배치 하나 안에서 재시도해도 갱신되지 않는 항목(영구 실패)을 만나면 그 항목은 이번
- * 호출에서 더는 재시도하지 않고 종료한다 — 재시도는 다음 호출(기동 러너 또는 다음 스윕)의
+ * <p>{@link #backfillUnjudged}는 배치({@link #batchSize}건씩 {@code findUnjudged} 반복 조회)
+ * 단위로 돈다. 배치 하나 안에서 재시도해도 갱신되지 않는 항목(영구 실패)을 만나면 그 항목은
+ * 이번 호출에서 더는 재시도하지 않고 종료한다 — 재시도는 다음 호출(기동 러너 또는 다음 스윕)의
  * 몫이라, 전량 실패 배치가 같은 호출 안에서 무한히 재조회되는 것을 막는다. {@link
  * #backfillRunning}은 기동 백필과 스윕 말미 백필이 겹칠 때 동시 실행을 막는 가드다.
+ *
+ * <p><b>백필 방어선</b>(2026-08-18 429 폭주 실측 계기 — #490 백필 기동 즉시·상한 제거 후 스테이징
+ * 무료 키 쿼터 공유로 15분간 분당 83~146건 429). 두 가지 안전 밸브를 둔다:
+ * <ul>
+ *   <li>{@link #llmFailureAbortThreshold} — LLM 호출 연속 실패가 이 값에 도달하면 진행 중 배치
+ *   완료 후 런 자체를 중단한다({@link #circuitOpen}). verdict는 NULL로 남아 다음 주기가 재시도한다.
+ *   임계 도달 이후 서킷이 열린 동안 제출되는 항목은 LLM을 아예 호출하지 않고 스킵한다(추가 소모 방지).
+ *   <li>{@link #backfillMaxPerRun} — 1회 호출에서 처리(시도)하는 총 건수 상한. 0 이하면 무제한
+ *   (2026-08-18 이전 계약과 동일). 도달하면 정상 종료하고 잔여 건수를 로그로 남긴다 — 대량 잔량이
+ *   있어도 다음 주기가 이어서 처리하므로 한 번의 기동 러너가 워커 풀을 장시간 독점하지 않는다.
+ * </ul>
  */
 public class AdDisclosureJudgeService {
 
@@ -56,25 +67,50 @@ public class AdDisclosureJudgeService {
 
 	/** 백필 1회 조회 배치 크기 — 상한이 아니라 구현 디테일(진행 로그 단위)이다. */
 	private static final int DEFAULT_BACKFILL_BATCH_SIZE = 500;
+	/** LLM 연속 실패 서킷브레이커 임계 — 08-18 429 폭주 방어선. */
+	private static final int DEFAULT_LLM_FAILURE_ABORT_THRESHOLD = 10;
+	/** 1회 백필 호출 처리 상한 — 0 이하면 무제한. 08-18 429 폭주 방어선(상한 재도입). */
+	private static final int DEFAULT_BACKFILL_MAX_PER_RUN = 1000;
 
 	private final BrandPostMetaRepository metaRepo;
 	private final AdDisclosureExtractor extractor;
 	private final Executor worker;
 	private final int batchSize;
+	private final int llmFailureAbortThreshold;
+	private final int backfillMaxPerRun;
 	private final AtomicBoolean backfillRunning = new AtomicBoolean(false);
+	private final AtomicInteger consecutiveLlmFailures = new AtomicInteger(0);
+	private final AtomicBoolean circuitOpen = new AtomicBoolean(false);
 
 	public AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor,
 			Executor worker) {
-		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE);
+		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE, DEFAULT_LLM_FAILURE_ABORT_THRESHOLD,
+				DEFAULT_BACKFILL_MAX_PER_RUN);
+	}
+
+	/** Spring 배선용 — 서킷브레이커 임계·백필 1회 상한을 app 설정에서 주입(08-18 429 실측 방어선). */
+	public AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor,
+			Executor worker, int llmFailureAbortThreshold, int backfillMaxPerRun) {
+		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE, llmFailureAbortThreshold,
+				backfillMaxPerRun);
 	}
 
 	/** 배치 크기를 주입하는 테스트 전용 생성자 — 다중 배치 루프를 큰 픽스처 없이 검증하기 위함. */
 	AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor, Executor worker,
 			int batchSize) {
+		this(metaRepo, extractor, worker, batchSize, DEFAULT_LLM_FAILURE_ABORT_THRESHOLD,
+				DEFAULT_BACKFILL_MAX_PER_RUN);
+	}
+
+	/** 방어선 파라미터까지 전부 주입하는 테스트 전용 생성자. */
+	AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor, Executor worker,
+			int batchSize, int llmFailureAbortThreshold, int backfillMaxPerRun) {
 		this.metaRepo = metaRepo;
 		this.extractor = extractor;
 		this.worker = worker;
 		this.batchSize = batchSize;
+		this.llmFailureAbortThreshold = llmFailureAbortThreshold;
+		this.backfillMaxPerRun = backfillMaxPerRun;
 	}
 
 	public void judgePosts(List<PostInfo> posts) {
@@ -147,9 +183,16 @@ public class AdDisclosureJudgeService {
 			if (initialRemaining == 0) {
 				return new BackfillOutcome(0, 0);
 			}
+			consecutiveLlmFailures.set(0);
+			circuitOpen.set(false);
 			Set<String> attempted = new HashSet<>();
 			int processed = 0;
 			while (true) {
+				if (backfillMaxPerRun > 0 && processed >= backfillMaxPerRun) {
+					int remaining = metaRepo.countUnjudged();
+					log.info("광고 판정 백필 — 1회 실행 상한({}건) 도달, 잔여 {}건은 다음 주기", backfillMaxPerRun, remaining);
+					break;
+				}
 				List<BrandPostMetaRepository.UnjudgedPost> batch = metaRepo.findUnjudged(batchSize);
 				List<BrandPostMetaRepository.UnjudgedPost> fresh =
 						batch.stream().filter(m -> attempted.add(m.shortCode())).toList();
@@ -157,6 +200,9 @@ public class AdDisclosureJudgeService {
 					// 배치 전부가 이번 호출에서 이미 한 번 시도했는데도 여전히 NULL(영구 실패) —
 					// 같은 배치가 무한히 재조회되는 것을 막고, 재시도는 다음 호출로 넘긴다.
 					break;
+				}
+				if (backfillMaxPerRun > 0 && processed + fresh.size() > backfillMaxPerRun) {
+					fresh = fresh.subList(0, backfillMaxPerRun - processed);
 				}
 				List<CompletableFuture<Void>> tasks = new ArrayList<>();
 				for (BrandPostMetaRepository.UnjudgedPost meta : fresh) {
@@ -167,6 +213,10 @@ public class AdDisclosureJudgeService {
 				int remaining = metaRepo.countUnjudged();
 				log.info("광고 판정 백필 진행 — 잔여 {}건", remaining);
 				if (remaining == 0) {
+					break;
+				}
+				if (circuitOpen.get()) {
+					log.warn("쿼터/전송 연속 실패 — 백필 중단, 잔여 {}건 다음 주기 재시도", remaining);
 					break;
 				}
 			}
@@ -181,8 +231,14 @@ public class AdDisclosureJudgeService {
 	}
 
 	private void judgeMetaSafely(BrandPostMetaRepository.UnjudgedPost meta) {
+		if (circuitOpen.get()) {
+			// 서킷 열림 — LLM(포함 규칙 판정 전체)을 더 호출하지 않는다. verdict NULL 유지, 다음
+			// 백필 호출이 attempted 집합과 무관하게(다음 호출은 별개 attempted) 다시 시도한다.
+			return;
+		}
 		try {
 			AdVerdictResult result = judgeOne(meta);
+			consecutiveLlmFailures.set(0);
 			if (!result.discardedPhrases().isEmpty()) {
 				log.warn("광고 표기 판정(백필) — 문구 {}건 폐기됨 {}: {}", result.discardedPhrases().size(),
 						meta.shortCode(), result.discardedPhrases());
@@ -192,6 +248,10 @@ public class AdDisclosureJudgeService {
 			// verdict NULL 유지 — 이번 호출에서는 attempted 집합에 걸려 재시도하지 않고, 다음 백필
 			// 호출(기동 러너 또는 스윕 말미 안전망)이 같은 short_code를 다시 findUnjudged로 만나 재시도한다.
 			log.warn("광고 표기 판정(백필) 실패(격리, 다음 백필 재시도) — {}: {}", meta.shortCode(), e.toString());
+			int failures = consecutiveLlmFailures.incrementAndGet();
+			if (failures >= llmFailureAbortThreshold) {
+				circuitOpen.set(true);
+			}
 		}
 	}
 

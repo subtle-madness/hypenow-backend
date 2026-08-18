@@ -45,20 +45,24 @@ public class AdDisclosureExtractorGemini implements AdDisclosureExtractor {
 			""";
 
 	private final GeminiHttp http;
-	private final String apiKey;
+	private final boolean enabled;
 	private final String model;
 	private final ObjectMapper om = new ObjectMapper();
 
-	public AdDisclosureExtractorGemini(GeminiHttp http, String apiKey, String model) {
+	/**
+	 * enabled — 2026-08-18 Vertex 전환 후 "apiKey 문자열"에서 "enabled 플래그"로 바뀌었다. 실제
+	 * 인증은 주입된 {@link GeminiHttp} 구현(AI Studio 키 또는 Vertex SA 토큰)이 전담한다.
+	 */
+	public AdDisclosureExtractorGemini(GeminiHttp http, boolean enabled, String model) {
 		this.http = http;
-		this.apiKey = apiKey;
+		this.enabled = enabled;
 		this.model = model;
 	}
 
 	@Override
 	public List<Disclosure> extract(String caption) {
-		if (apiKey == null || apiKey.isBlank()) {
-			throw new IllegalStateException("Gemini api-key 미설정 — 광고 표기 판정 불가(verdict NULL 유지)");
+		if (!enabled) {
+			throw new IllegalStateException("Gemini 미설정(키/자격증명 없음) — 광고 표기 판정 불가(verdict NULL 유지)");
 		}
 		String responseBody = http.post("/v1beta/models/" + model + ":generateContent", requestBody(caption));
 		return parse(responseBody);
