@@ -664,6 +664,7 @@ class PerformanceContentAssemblerTest {
 				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,
 				"unknown", null, "tracking", "2026-08-06T09:30:00+09:00", null, latest, snapshots,
 				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), List.of(),
-				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00");
+				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
+				null, List.of(), List.of(), false);
 	}
 }

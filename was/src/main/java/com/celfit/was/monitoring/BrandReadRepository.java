@@ -114,7 +114,8 @@ public class BrandReadRepository {
 		}
 		return jdbc.sql("""
 				SELECT short_code, username, content_type, uploaded_at, caption, thumbnail_url,
-				       video_url, video_duration, is_paid_partnership, image_object_path
+				       video_url, video_duration, is_paid_partnership, image_object_path,
+				       ad_verdict, ad_violations::text AS ad_violations_json, ad_evidence::text AS ad_evidence_json
 				FROM brand_post_meta
 				WHERE short_code IN (:shortCodes)
 				""")
@@ -311,10 +312,13 @@ public class BrandReadRepository {
 	/**
 	 * brand_post_meta 1행. isPaidPartnership null = 응답 키 부재(판정 unknown 근거).
 	 * imageObjectPath는 monitoring 자체 썸네일 아카이브 결과 — null이면 원본 CDN URL 폴백.
+	 * adVerdict null = 미판정(광고 표기 판정 스펙 §4). adViolationsJson·adEvidenceJson은
+	 * jsonb를 텍스트로 읽은 원문 — 파싱은 {@link BrandPostAssembler}가 한다(null 가능).
 	 */
 	public record BrandPostMetaRow(String shortCode, String username, String contentType, LocalDate uploadedAt,
 			String caption, String thumbnailUrl, String videoUrl, Double videoDuration,
-			Boolean isPaidPartnership, String imageObjectPath) {
+			Boolean isPaidPartnership, String imageObjectPath, String adVerdict, String adViolationsJson,
+			String adEvidenceJson) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */
@@ -351,5 +355,17 @@ public class BrandReadRepository {
 
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
 	public record BrandCallDailyRow(long brandId, LocalDate calledOn, long calls) {
+	}
+
+	/**
+	 * 시딩(협업) 계정 username 전체(소문자 정규화, monitoring BrandController가 저장 시 이미
+	 * 소문자로 정규화하지만 방어적으로 한 번 더) — was 조인 계산 재료(스펙 §6, §9 seededAuthor).
+	 * 방어적 소문자화는 소비부(BrandPostAssembler)가 반환값·비교 대상 양쪽에 적용한다.
+	 */
+	public List<String> findSeededUsernames(long brandId) {
+		return jdbc.sql("SELECT username FROM brand_seeded_account WHERE brand_id = :brandId")
+				.param("brandId", brandId)
+				.query(String.class)
+				.list();
 	}
 }

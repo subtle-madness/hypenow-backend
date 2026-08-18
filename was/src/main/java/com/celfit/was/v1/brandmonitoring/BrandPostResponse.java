@@ -51,17 +51,27 @@ public record BrandPostResponse(
 		List<TrackingItemResponse.PostCommentResponse> recentComments,
 		List<String> campaignIds,
 		String createdAt,
-		String updatedAt) {
+		String updatedAt,
+		// ---- 광고 표기 판정(2026-08-17 스펙 §9) ----
+		@Schema(allowableValues = {"DISCLOSED", "NOT_DISCLOSED", "INSUFFICIENT", "UNCERTAIN"}) String adDisclosure,
+		List<String> adViolations,
+		List<AdEvidence> adEvidence,
+		boolean seededAuthor) {
+
+	/** 판정 근거 문구 1건 — monitoring ad_evidence jsonb 원소와 1:1(스펙 §4). */
+	public record AdEvidence(String phrase, String category, int offset) {}
 
 	/**
 	 * 협찬 판정만 교체한 사본 — shortcode 병합에서 direct 본체를 유지한 채 tagged의
 	 * {@code is_paid_partnership} 관측만 승격시키는 데 쓴다(정보 손실 방지, 스펙 §6-1).
+	 * 광고 표기 필드는 tagged 전용 정보라 direct에는 애초에 값이 없으므로 이 사본에서도 유지한다.
 	 */
 	public BrandPostResponse withSponsorship(String sponsorship, Boolean isPaidPartnership) {
 		return new BrandPostResponse(id, brandAccountId, source, postUrl, shortcode, contentType, takenAt,
 				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
-				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt);
+				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
+				adDisclosure, adViolations, adEvidence, seededAuthor);
 	}
 }

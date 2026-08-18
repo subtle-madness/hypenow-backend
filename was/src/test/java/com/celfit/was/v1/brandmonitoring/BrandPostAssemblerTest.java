@@ -35,7 +35,7 @@ class BrandPostAssemblerTest {
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator", null,
 						SWEPT_AT, SWEPT_AT, 0L)));
 
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
 		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
 
 		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
@@ -61,7 +61,7 @@ class BrandPostAssemblerTest {
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
 
 		assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ENRICHED_ONLY);
 		org.mockito.Mockito.verify(repository)
@@ -90,7 +90,7 @@ class BrandPostAssemblerTest {
 		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, SWEPT_AT);
-		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler);
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
 
 		assembler.assembleForBrand(7L, account);
 
@@ -270,7 +270,7 @@ class BrandPostAssemblerTest {
 				12345L, "https://cdn/author.jpg", true, "monitor-author/9001.jpg");
 		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "glowdeep_92", "REELS",
 				LocalDate.of(2026, 8, 6), "캡션", "https://cdn/thumb.jpg", null, null, null,
-				"monitor-brand-post/ABC.jpg");
+				"monitor-brand-post/ABC.jpg", null, null, null);
 
 		var post = BrandPostAssembler.taggedPost(100L, taggedRow("ABC"), meta, author, List.of(), List.of(), SWEPT_AT);
 
@@ -283,7 +283,8 @@ class BrandPostAssemblerTest {
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
 				12345L, "javascript:alert(1)", true, null);
 		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "glowdeep_92", "REELS",
-				LocalDate.of(2026, 8, 6), "캡션", "data:image/png;base64,AAAA", null, null, null, null);
+				LocalDate.of(2026, 8, 6), "캡션", "data:image/png;base64,AAAA", null, null, null, null,
+				null, null, null);
 
 		var post = BrandPostAssembler.taggedPost(100L, taggedRow("ABC"), meta, author, List.of(), List.of(), SWEPT_AT);
 
@@ -431,6 +432,68 @@ class BrandPostAssemblerTest {
 		assertThat(merged).extracting(BrandPostResponse::shortcode).containsExactly("NEW", "OLD", "PEND");
 	}
 
+	// ---------- 광고 표기 판정 배선(2026-08-17 스펙 §9) ----------
+
+	@Test
+	void 광고_판정_필드가_응답에_실린다() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any()))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
+						SWEPT_AT, SWEPT_AT, 0L)));
+		org.mockito.Mockito.when(repository.findPostMeta(org.mockito.ArgumentMatchers.anyCollection()))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
+						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
+						"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]")));
+		org.mockito.Mockito.when(repository.findSeededUsernames(42L)).thenReturn(List.of("creator1"));
+
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, true);
+		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
+			assertThat(post.adEvidence()).singleElement()
+					.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
+			assertThat(post.seededAuthor()).isTrue();
+		});
+	}
+
+	@Test
+	void 노출_토글이_꺼지면_광고_필드는_전부_비노출() {
+		var repository = org.mockito.Mockito.mock(BrandReadRepository.class);
+		var directRepository = org.mockito.Mockito.mock(com.celfit.was.monitoring.BrandDirectPostRepository.class);
+		var trackingAssembler = org.mockito.Mockito.mock(com.celfit.was.v1.monitoring.TrackingItemAssembler.class);
+		var account = new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
+				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
+				12, SWEPT_AT);
+		org.mockito.Mockito.when(repository.findTaggedPostsInWindow(org.mockito.ArgumentMatchers.eq(42L),
+						org.mockito.ArgumentMatchers.any()))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
+						SWEPT_AT, SWEPT_AT, 0L)));
+		org.mockito.Mockito.when(repository.findPostMeta(org.mockito.ArgumentMatchers.anyCollection()))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
+						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
+						"DISCLOSED", "[]", "[]")));
+
+		// 토글 off — findSeededUsernames를 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지)
+		var assembler = new BrandPostAssembler(repository, directRepository, trackingAssembler, false);
+		var posts = assembler.assembleTagged(account, false, BrandPostAssembler.TaggedScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.adDisclosure()).isNull();
+			assertThat(post.adViolations()).isEmpty();
+			assertThat(post.adEvidence()).isEmpty();
+			assertThat(post.seededAuthor()).isFalse();
+		});
+		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+				.findSeededUsernames(org.mockito.ArgumentMatchers.anyLong());
+	}
+
 	// ---------- 픽스처 ----------
 
 	private static BrandReadRepository.BrandTaggedPostRow taggedRow(String code) {
@@ -445,7 +508,7 @@ class BrandPostAssemblerTest {
 	private static BrandReadRepository.BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
 		return new BrandReadRepository.BrandPostMetaRow(code, "glowdeep_92", contentType,
 				LocalDate.of(2026, 8, 6), "캡션 원문", "https://cdn/thumb.jpg",
-				"https://cdn/video.mp4", 15.5, paid, null);
+				"https://cdn/video.mp4", 15.5, paid, null, null, null, null);
 	}
 
 	private static BrandReadRepository.BrandSnapshotRow snapshotRow(String code, int day, Long views) {
