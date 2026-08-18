@@ -79,22 +79,28 @@ public class SelfProfileFetcher implements ProfileFetcher {
         return collect(usernames, new ArrayList<>());
     }
 
-    /**
-     * 컴포지트(SELF_HIKER_FALLBACK)용 — HTTP 400이 난 계정을 badRequestOut에 수집한다.
-     * 400 수집 외 동작은 단독 SELF와 동일(400 계정은 items·notFound에 안 들어가고 스킵).
-     */
     ApifyResult collect(List<String> usernames, List<String> badRequestOut) {
+        return collect(usernames, badRequestOut, new ArrayList<>());
+    }
+
+    /**
+     * 컴포지트(SELF_HIKER_FALLBACK)용 — HTTP 400이 난 계정을 badRequestOut에, 200이지만
+     * 응답에 계정이 없는(user null) 계정을 emptyOut에 수집한다. 수집 외 동작은 단독 SELF와
+     * 동일(두 부류 모두 items·notFound에 안 들어가고 스킵).
+     */
+    ApifyResult collect(List<String> usernames, List<String> badRequestOut, List<String> emptyOut) {
         List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
         List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
         // 워커들이 동시에 add하므로 동기화 래핑 — 호출자는 일반 리스트를 넘겨도 된다
         List<String> badRequest = java.util.Collections.synchronizedList(badRequestOut);
+        List<String> empty = java.util.Collections.synchronizedList(emptyOut);
         int total = usernames.size();
         var done = new java.util.concurrent.atomic.AtomicInteger();
         var rateLimitStreak = new java.util.concurrent.atomic.AtomicInteger();
         var tripped = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 1명(collect 방문 경로)은 풀 없이 즉시 처리 — 방문마다 스레드풀을 만들 이유가 없다
         if (total == 1) {
-            fetchOne(usernames.get(0), total, done, rateLimitStreak, tripped, out, notFound, badRequest);
+            fetchOne(usernames.get(0), total, done, rateLimitStreak, tripped, out, notFound, badRequest, empty);
             return new ApifyResult(null, out, notFound);
         }
         // close()가 제출된 작업 완료까지 대기(Java 21) — 반환 시점에 결과가 전부 모여 있다
@@ -104,7 +110,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
                 pool.submit(() -> {
                     for (int idx = offset; idx < total; idx += FETCH_CONCURRENCY) {
                         if (tripped.get()) return;   // 회로 트립 — 남은 계정은 다음 실행 재시도
-                        fetchOne(usernames.get(idx), total, done, rateLimitStreak, tripped, out, notFound, badRequest);
+                        fetchOne(usernames.get(idx), total, done, rateLimitStreak, tripped, out, notFound, badRequest, empty);
                         sleep();
                     }
                 });
@@ -118,7 +124,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
                           java.util.concurrent.atomic.AtomicInteger rateLimitStreak,
                           java.util.concurrent.atomic.AtomicBoolean tripped,
                           List<Map<String, Object>> out, List<String> notFound,
-                          List<String> badRequest) {
+                          List<String> badRequest, List<String> empty) {
         int i = done.incrementAndGet();
         try {
             for (int attempt = 1; attempt <= BLOCK_MAX_ATTEMPTS; attempt++) {
@@ -130,7 +136,10 @@ public class SelfProfileFetcher implements ProfileFetcher {
                         out.add(p);
                         log.info("프로필 ({}/{}) {} — 확보", i, total, u);
                     } else {
-                        log.info("프로필 ({}/{}) {} — 스킵(응답에 계정 없음)", i, total, u);
+                        // IG가 일부 계정을 익명 API에서 숨기는 케이스(200 + user null) —
+                        // 컴포지트가 폴백을 판단할 수 있게 수집만 하고 스킵한다
+                        empty.add(u);
+                        log.info("프로필 ({}/{}) {} — 스킵(응답에 계정 없음), 폴백 후보 수집", i, total, u);
                     }
                     return;
                 }
