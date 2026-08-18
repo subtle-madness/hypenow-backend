@@ -6,6 +6,7 @@ import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.BrandSeededAccountRepository;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -61,15 +62,24 @@ public class BrandController {
 	 */
 	public record HashtagTagsBody(List<String> tags) {}
 
+	/**
+	 * 시딩(협업) 계정 목록(유저 관리 API, 스펙 §6) — GET 응답·PUT 요청 바디 공용, 태그·해시태그와 같은
+	 * 계약 모양. usernames는 정규화(trim·소문자·blank 제거·중복 제거) 후 저장한다 — 태그와 달리
+	 * 선행 {@code #} 제거는 하지 않는다(인스타그램 username 규칙에 무관한 문자라 절삭 대상이 아니다).
+	 */
+	public record SeededAccountsBody(List<String> usernames) {}
+
 	private final BrandRegistrationService service;
 	private final BrandRepository brands;
 	private final BrandHashtagRepository hashtags;
+	private final BrandSeededAccountRepository seededAccounts;
 
 	public BrandController(BrandRegistrationService service, BrandRepository brands,
-			BrandHashtagRepository hashtags) {
+			BrandHashtagRepository hashtags, BrandSeededAccountRepository seededAccounts) {
 		this.service = service;
 		this.brands = brands;
 		this.hashtags = hashtags;
+		this.seededAccounts = seededAccounts;
 	}
 
 	@PostMapping
@@ -174,6 +184,95 @@ public class BrandController {
 		}
 		hashtags.deleteAllTags(row.get().id());
 		return ResponseEntity.noContent().build();
+	}
+
+	// ---------- 시딩(협업) 계정 관리(유저 입력, 스펙 §6, 2026-08-18) ----------
+
+	/** 시딩 계정 조회 — 브랜드 미존재·비ACTIVE는 404. */
+	@GetMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> seededAccounts(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		return ResponseEntity.ok(new SeededAccountsBody(seededAccounts.findUsernames(row.get().id())));
+	}
+
+	/** 전체 교체 — 목록에 없는 기존 계정은 하드 삭제된다({@link BrandSeededAccountRepository#replace}). */
+	@PutMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> replaceSeededAccounts(@PathVariable String username,
+			@RequestBody SeededAccountsBody body) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		seededAccounts.replace(row.get().id(), normalizeUsernames(body.usernames()));
+		return ResponseEntity.noContent().build();
+	}
+
+	/**
+	 * 단건·다건 추가(POST 계약) — 정규화 후 저장. 태그 POST와 달리 빈 입력을 422로 거부하지 않는다
+	 * (repository.add()가 빈 컬렉션에 no-op이라 컨트롤러가 별도로 막을 이유가 없다).
+	 */
+	@PostMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> addSeededAccounts(@PathVariable String username,
+			@RequestBody(required = false) SeededAccountsBody body) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		seededAccounts.add(row.get().id(), normalizeUsernames(body == null ? null : body.usernames()));
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 단건 삭제(DELETE {username} 계약) — 정규화 후 삭제, 없어도 멱등 204. */
+	@DeleteMapping("/{username}/seeded-accounts/{seededUsername}")
+	public ResponseEntity<?> deleteSeededAccount(@PathVariable String username,
+			@PathVariable String seededUsername) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		String normalized = normalizeUsername(seededUsername);
+		if (normalized != null) {
+			seededAccounts.delete(row.get().id(), normalized);
+		}
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 전체 삭제(DELETE 계약) — 브랜드의 시딩 계정 등록을 전부 비운다. */
+	@DeleteMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> deleteAllSeededAccounts(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		seededAccounts.deleteAll(row.get().id());
+		return ResponseEntity.noContent().build();
+	}
+
+	/** trim → 소문자 → blank 제거 → 중복 제거(입력 순서 보존). usernames가 null이면 빈 목록. */
+	private static List<String> normalizeUsernames(List<String> usernames) {
+		if (usernames == null) {
+			return List.of();
+		}
+		Set<String> normalized = new LinkedHashSet<>();
+		for (String username : usernames) {
+			String cleaned = normalizeUsername(username);
+			if (cleaned != null) {
+				normalized.add(cleaned);
+			}
+		}
+		return List.copyOf(normalized);
+	}
+
+	/** 단건 정규화(trim → 소문자) — null·blank는 null(호출측이 "대상 없음"으로 처리). */
+	private static String normalizeUsername(String username) {
+		if (username == null) {
+			return null;
+		}
+		String cleaned = username.strip().toLowerCase();
+		return cleaned.isBlank() ? null : cleaned;
 	}
 
 	/** 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시) — PUT·POST 공용. */

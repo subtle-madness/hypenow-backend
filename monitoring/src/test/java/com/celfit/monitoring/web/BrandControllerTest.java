@@ -15,6 +15,7 @@ import com.celfit.monitoring.service.ValidationException;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.BrandSeededAccountRepository;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -124,14 +125,59 @@ class BrandControllerTest {
 		}
 	}
 
+	/** 시딩 계정 저장 스텁 — 조회 목록 주입 + 교체·추가·삭제 호출 인자 캡처. */
+	private static final class StubSeededAccountRepository extends BrandSeededAccountRepository {
+		List<String> usernames = List.of();
+		Long replacedBrandId;
+		List<String> replaced;
+		Long addedBrandId;
+		List<String> added;
+		Long deletedBrandId;
+		String deleted;
+		Long deletedAllBrandId;
+
+		StubSeededAccountRepository() {
+			super(null);
+		}
+
+		@Override
+		public List<String> findUsernames(long brandId) {
+			return usernames;
+		}
+
+		@Override
+		public void replace(long brandId, List<String> usernames) {
+			replacedBrandId = brandId;
+			replaced = usernames;
+		}
+
+		@Override
+		public void add(long brandId, java.util.Collection<String> usernames) {
+			addedBrandId = brandId;
+			added = List.copyOf(usernames);
+		}
+
+		@Override
+		public void delete(long brandId, String username) {
+			deletedBrandId = brandId;
+			deleted = username;
+		}
+
+		@Override
+		public void deleteAll(long brandId) {
+			deletedAllBrandId = brandId;
+		}
+	}
+
 	private final StubService service = new StubService();
 	private final StubBrandRepository brands = new StubBrandRepository();
 	private final StubHashtagRepository hashtags = new StubHashtagRepository();
+	private final StubSeededAccountRepository seededAccounts = new StubSeededAccountRepository();
 	private MockMvc mvc;
 
 	@BeforeEach
 	void setUp() {
-		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags))
+		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags, seededAccounts))
 				.setControllerAdvice(new ApiExceptionHandler())
 				.build();
 	}
@@ -462,6 +508,100 @@ class BrandControllerTest {
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\":[\"a\"]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	// ---------- 시딩 계정(스펙 §6, 2026-08-18) ----------
+
+	@Test
+	void 시딩_계정_조회는_현재_등록된_계정_목록을_돌려준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		seededAccounts.usernames = List.of("influencer1");
+
+		mvc.perform(get("/api/brands/brandx/seeded-accounts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.usernames[0]").value("influencer1"));
+	}
+
+	@Test
+	void 시딩_계정_전체_교체는_정규화_후_전달한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		// trim · 대소문자 통일 · 중복 제거(입력 순서 보존) — 태그와 달리 선행 # 제거는 없다
+		mvc.perform(put("/api/brands/brandx/seeded-accounts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\":[\"influencer1\",\" Influencer2 \",\"influencer1\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(seededAccounts.replacedBrandId).isEqualTo(1L);
+		assertThat(seededAccounts.replaced).containsExactly("influencer1", "influencer2");
+	}
+
+	@Test
+	void 시딩_계정_추가는_정규화_후_전달한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/seeded-accounts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\":[\" Influencer3 \"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(seededAccounts.addedBrandId).isEqualTo(1L);
+		assertThat(seededAccounts.added).containsExactly("influencer3");
+	}
+
+	/** 태그 POST와 달리 빈 입력을 422로 거부하지 않는다 — repository.add()가 빈 컬렉션에 no-op이라
+	 * 컨트롤러가 별도로 막을 이유가 없다(계획 §Task 12 Step 3 원안 그대로). */
+	@Test
+	void 시딩_계정_추가는_빈_입력이면_빈_컬렉션으로_전달되고_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/brandx/seeded-accounts").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(seededAccounts.addedBrandId).isEqualTo(1L);
+		assertThat(seededAccounts.added).isEmpty();
+	}
+
+	@Test
+	void 시딩_계정_단건_삭제는_정규화_후_전달하고_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/seeded-accounts/{username}", "Influencer1"))
+				.andExpect(status().isNoContent());
+
+		assertThat(seededAccounts.deletedBrandId).isEqualTo(1L);
+		assertThat(seededAccounts.deleted).isEqualTo("influencer1");
+	}
+
+	@Test
+	void 시딩_계정_전체_삭제는_204다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/seeded-accounts"))
+				.andExpect(status().isNoContent());
+
+		assertThat(seededAccounts.deletedAllBrandId).isEqualTo(1L);
+	}
+
+	@Test
+	void 시딩_계정_미등록_브랜드는_404이고_에러_바디를_준다() throws Exception {
+		brands.row = null;
+
+		mvc.perform(get("/api/brands/ghost/seeded-accounts"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+		mvc.perform(put("/api/brands/ghost/seeded-accounts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"usernames\":[\"a\"]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void 시딩_계정_탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
+
+		mvc.perform(get("/api/brands/brandx/seeded-accounts"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
