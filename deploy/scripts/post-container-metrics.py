@@ -22,8 +22,11 @@ import oci
 # prometheus·loki·alloy는 08-10 추가(성능 측정 스택 — README §15). 관측 스택은 oom_score_adj 500이라
 # 메모리 압박에서 가장 먼저 죽도록 설계된 쪽인데, 알람 사각이면 죽은 줄 모른 채 지표·로그만 조용히
 # 비어 "측정하고 있다"는 착각이 남는다 — 가장 잘 죽는 컨테이너부터 감시 대상이어야 한다.
+# node-exporter·cadvisor는 08-18 추가(대시보드 개편) — 같은 관측 스택(oom_score_adj 500)이라
+# 사라지면 0 게시 → OCI 알람으로 잡는다.
 SERVICES = ["postgres", "postgres-raw", "analytics", "crawler", "was", "caddy", "monitoring",
-            "redis", "grafana", "ons-relay", "prometheus", "loki", "alloy"]
+            "redis", "grafana", "ons-relay", "prometheus", "loki", "alloy",
+            "node-exporter", "cadvisor"]
 # 운영 compose 프로젝트명(디렉토리 ~/deploy 기반). test-* 서비스는 같은 프로젝트지만
 # 서비스 라벨이 달라(test-was 등) 아래 필터에 걸리지 않는다.
 PROJECT = "deploy"

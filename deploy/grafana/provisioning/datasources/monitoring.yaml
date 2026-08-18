@@ -1,0 +1,21 @@
+# monitoring DB 읽기 전용(대시보드 개편 스펙 2026-08-18) — 롤은 grafana_reader 재사용
+# (Postgres 롤은 클러스터 전역 — README §14-2 런북이 monitoring DB GRANT를 추가).
+apiVersion: 1
+datasources:
+  - name: HypeNow monitoring (읽기 전용)
+    uid: hypenow-monitoring-pg
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: monitoring
+    user: grafana_reader
+    editable: false
+    jsonData:
+      database: monitoring   # 최상위만으로는 패널이 안 돈다 — postgres.yaml의 08-02 실측 주석 참조
+      sslmode: disable
+      postgresVersion: 1700
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $__env{GRAFANA_READER_PASSWORD}
