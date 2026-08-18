@@ -424,7 +424,7 @@
       "description": "마지막 성공 스윕(sweep_run.ok)으로부터 경과 시간. 스윕은 매일 새벽 1회라 26시간을 넘으면 어젯밤 스윕이 안 돈 것이다. 클릭 → 모니터링.",
       "gridPos": {
         "h": 5,
-        "w": 5,
+        "w": 6,
         "x": 0,
         "y": 7
       },
@@ -484,7 +484,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -515,7 +515,7 @@
       "gridPos": {
         "h": 5,
         "w": 5,
-        "x": 5,
+        "x": 6,
         "y": 7
       },
       "datasource": {
@@ -537,7 +537,7 @@
               "url": "/d/hypenow-hiker"
             }
           ],
-          "unit": "short",
+          "unit": "locale",
           "decimals": 0,
           "color": {
             "mode": "thresholds"
@@ -584,7 +584,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -614,8 +614,8 @@
       "description": "landing_stats.updated_at 기준 미러 경과 시간(대용 지표 — analysis DB에 미러 실행 이력이 없다, 설계 §3). 26시간 초과면 랭킹이 어제 것이다. 클릭 → 탐색.",
       "gridPos": {
         "h": 5,
-        "w": 5,
-        "x": 10,
+        "w": 4,
+        "x": 11,
         "y": 7
       },
       "datasource": {
@@ -674,7 +674,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -704,7 +704,7 @@
       "description": "30분 넘게 완료되지 않은 모니터링 등록 건수(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 걸린 것이다. 클릭 → 모니터링.",
       "gridPos": {
         "h": 5,
-        "w": 5,
+        "w": 4,
         "x": 15,
         "y": 7
       },
@@ -764,7 +764,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -794,8 +794,8 @@
       "description": "최근 24시간 email_status='FAILED' 알림 건수. 1건이라도 있으면 유저에게 메일이 안 나가고 있다. 클릭 → 모니터링.",
       "gridPos": {
         "h": 5,
-        "w": 4,
-        "x": 20,
+        "w": 5,
+        "x": 19,
         "y": 7
       },
       "datasource": {
@@ -854,7 +854,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"

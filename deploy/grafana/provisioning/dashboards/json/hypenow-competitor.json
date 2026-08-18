@@ -101,7 +101,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -179,7 +179,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -423,7 +423,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
