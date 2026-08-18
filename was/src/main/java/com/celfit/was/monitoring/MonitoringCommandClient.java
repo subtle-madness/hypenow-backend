@@ -137,7 +137,7 @@ public class MonitoringCommandClient {
 		return body == null || body.usernames() == null ? List.of() : body.usernames();
 	}
 
-	/** 시딩 계정 전체 교체 — usernames는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장. */
+	/** 시딩 계정 전체 교체 — usernames는 monitoring이 정규화(trim·선행 @ 제거·소문자·중복 제거) 후 저장. */
 	public void putSeededAccounts(String username, List<String> usernames) {
 		exchange(() -> restClient.put().uri("/api/brands/{username}/seeded-accounts", username)
 				.body(new SeededAccountsBody(usernames)).retrieve().toBodilessEntity());
