@@ -7,18 +7,18 @@ DECLARE
   a05 numeric; a50 numeric; a90 numeric; a99 numeric;
 BEGIN
   -- 1) 단조성: raw가 크면 출력도 크거나 같다(순위 불변 — 출력 매핑은 척도만 펴 바르지 순서는 안 바꾼다).
-  lo  := analytics.hype_score_output(2);    -- < a05(5)
-  mid := analytics.hype_score_output(23);   -- = a50
-  hi  := analytics.hype_score_output(70);   -- > a99(60.8), 초과구간
+  lo  := analytics.hype_score_output(2);    -- < a05(3)
+  mid := analytics.hype_score_output(23);   -- a50(14)~a90(32) 구간
+  hi  := analytics.hype_score_output(70);   -- > a99(57), 초과구간
   IF NOT (lo <= mid AND mid <= hi) THEN
     RAISE EXCEPTION '단조성 위반: %, %, %', lo, mid, hi;
   END IF;
 
-  -- 2) 앵커점 매핑: 기본 앵커(p05=5·p50=23·p90=44·p99=60.8)가 각각 10·45·80·97로 정확히 잡힌다.
-  a05 := analytics.hype_score_output(5);
-  a50 := analytics.hype_score_output(23);
-  a90 := analytics.hype_score_output(44);
-  a99 := analytics.hype_score_output(60.8);
+  -- 2) 앵커점 매핑: 기본 앵커(2026-08-17 재적합: p05=3·p50=14·p90=32·p99=57)가 각각 10·45·80·97로 정확히 잡힌다.
+  a05 := analytics.hype_score_output(3);
+  a50 := analytics.hype_score_output(14);
+  a90 := analytics.hype_score_output(32);
+  a99 := analytics.hype_score_output(57);
   ASSERT a05 = 10, format('p05 앵커점 불일치: %s (기대 10)', a05);
   ASSERT a50 = 45, format('p50 앵커점 불일치: %s (기대 45)', a50);
   ASSERT a90 = 80, format('p90 앵커점 불일치: %s (기대 80)', a90);

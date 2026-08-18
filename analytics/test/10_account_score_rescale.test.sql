@@ -8,7 +8,8 @@ DECLARE
   base bigint; raised bigint;
 BEGIN
   -- 1) 단조성: raw가 크면 매핑 점수도 크거나 같다 (순위 불변 — 이번 변경의 핵심 계약).
-  --    기본 앵커(p05=1.0833·p50=12.8333·p90=31.2000·p99=44.86) 5개 구간을 고루 지나는 표본.
+  --    기본 앵커(p05=1.1667·p50=12.0833·p90=30.5455·p99=45.6667, 2026-08-17 재적합) 5개 구간을
+  --    고루 지나는 표본.
   s1  := analytics.hype_account_score(0.5);   -- < a05
   s2  := analytics.hype_account_score(5);     -- a05~a50
   s3  := analytics.hype_account_score(20);    -- a50~a90
@@ -103,10 +104,11 @@ BEGIN
 END $$;
 
 -- 핵심 회귀: 표시 점수가 동점인 두 계정을 만들어 정렬이 raw 순서를 따르는지 확인한다.
--- dummy_alpha(피드 2건, likes 16400·17800 → 콘텐츠 점수 34·36 → raw 평균 35.0)
--- dummy_zeta (피드 2건, likes 17100·17800 → 콘텐츠 점수 35·36 → raw 평균 35.5)
--- 기본 계정 앵커(a90=31.2·a99=44.86) 구간에서 35.0과 35.5 둘 다 hype_account_score=85로 반올림 동점—
--- 실 DB 함수로 역산해 고정한 값(analytics.hype_score('feed', NULL, likes, 0, 999000, ~0)으로 확인).
+-- dummy_alpha(피드 2건, likes 16400·17800 → 콘텐츠 점수 38·40 → raw 평균 39.0)
+-- dummy_zeta (피드 2건, likes 17100·17800 → 콘텐츠 점수 39·40 → raw 평균 39.5)
+-- 2026-08-17 재적합 앵커(a90=30.5455·a99=45.6667) 구간에서 39.0과 39.5 둘 다 hype_account_score=90으로
+-- 반올림 동점 — 실 DB 함수로 역산해 고정한 값(analytics.hype_score('feed', NULL, likes, 0, 999000, ~0)으로 확인).
+-- (댓글 가중 무관 — comments=0이므로 이 픽스처는 콘텐츠 Q 앵커·계정 앵커 재적합에만 반응해 값이 이동했다.)
 -- handle 알파벳순은 dummy_alpha가 dummy_zeta보다 앞이라, 구코드(avg_hype_score DESC, handle ASC)라면
 -- dummy_alpha가 먼저 나왔을 것 — 이 테스트가 바로 그 재발을 잡는다(단조성 단언만으론 못 잡던 부분).
 INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, beauty_judged_at) VALUES
@@ -178,25 +180,27 @@ DECLARE
   a05 numeric; a50 numeric; a90 numeric; a99 numeric;
   base numeric;
 BEGIN
-  -- 1) 단조성: 기본 앵커(p05=1.2417·p50=19.4383·p90=52.2401·p99=74.0179, 2026-07-31 재적합) 5개
-  --    구간을 고루 지나는 표본 — 샘플 값(1·10·40·65·90) 자체는 구 앵커에서도 신 앵커에서도 같은
-  --    구간에 떨어져 그대로 재사용한다.
+  -- 1) 단조성: 기본 앵커(p05=1.3665·p50=26.6730·p90=66.6060·p99=85.2125, 2026-08-17 재적합 — 댓글
+  --    가중 1.5 기준 운영 코퍼스 실측, 모수 n=4,583) 5개 구간을 고루 지나는 표본 — 샘플 값
+  --    (1·10·40·65·90)은 단조성만 확인하므로 구간 이동과 무관하게 그대로 재사용한다(s4=65는 신
+  --    앵커에서 a50~a90 구간으로 이동했지만 단조 순서 자체는 어느 구간이든 성립).
   s1  := analytics.hype_account_score_precise(1);    -- < a05
   s2  := analytics.hype_account_score_precise(10);   -- a05~a50
   s3  := analytics.hype_account_score_precise(40);   -- a50~a90
-  s4  := analytics.hype_account_score_precise(65);   -- a90~a99
+  s4  := analytics.hype_account_score_precise(65);   -- a50~a90
   top := analytics.hype_account_score_precise(90);   -- > a99 (초과구간)
   IF NOT (s1 <= s2 AND s2 <= s3 AND s3 <= s4 AND s4 <= top) THEN
     RAISE EXCEPTION '단조성 위반: %, %, %, %, %', s1, s2, s3, s4, top;
   END IF;
 
   -- 2) 앵커점 매핑: 기본 앵커 4점이 각각 10·45·80·97로 정확히 잡힌다.
-  --    앵커값은 2026-07-31 재적합(고정 분모 도입, 스펙 2026-07-31-account-score-fixed-denominator-design.md) —
-  --    구값(1.4856/23.6566/56.3961/77.0479)에서 갱신됨.
-  a05 := analytics.hype_account_score_precise(1.2417);
-  a50 := analytics.hype_account_score_precise(19.4383);
-  a90 := analytics.hype_account_score_precise(52.2401);
-  a99 := analytics.hype_account_score_precise(74.0179);
+  --    앵커값은 2026-08-17 재적합(댓글 가중 1.5 기준 운영 코퍼스 실측, 스펙
+  --    docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md) —
+  --    구값(1.2417/19.4383/52.2401/74.0179)에서 갱신됨.
+  a05 := analytics.hype_account_score_precise(1.3665);
+  a50 := analytics.hype_account_score_precise(26.6730);
+  a90 := analytics.hype_account_score_precise(66.6060);
+  a99 := analytics.hype_account_score_precise(85.2125);
   ASSERT a05 = 10, format('p05 앵커점 불일치: %s (기대 10)', a05);
   ASSERT a50 = 45, format('p50 앵커점 불일치: %s (기대 45)', a50);
   ASSERT a90 = 80, format('p90 앵커점 불일치: %s (기대 80)', a90);
@@ -223,7 +227,7 @@ BEGIN
 END $$;
 
 -- 핵심 회귀: avg_hype_score(정수)가 동점인 dummy_alpha·dummy_zeta(위에서 이미 검증한 픽스처, 두
--- 계정 다 avg_hype_score=85)라도 avg_hype_score_precise(소수, 콘텐츠 출력 매핑 반영 창 평균)는
+-- 계정 다 avg_hype_score=90)라도 avg_hype_score_precise(소수, 콘텐츠 출력 매핑 반영 창 평균)는
 -- 갈려야 한다 — dummy_zeta의 게시물 좋아요(17100·17800)가 dummy_alpha(16400·17800)보다 앞쪽이
 -- 크거나 같아 창 평균이 항상 높으므로, 단조 매핑을 거쳐도 순서가 보존돼야 한다.
 DO $$

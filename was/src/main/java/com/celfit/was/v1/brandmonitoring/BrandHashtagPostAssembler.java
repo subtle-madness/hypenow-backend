@@ -50,16 +50,25 @@ public class BrandHashtagPostAssembler {
 	}
 
 	/**
-	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 병합·필터·정렬 없이 전량이다.
-	 * 제외 문자열 기능은 전면 폐기됐다(2026-08-17 협의 확정 — "감지는 감지 해시태그만으로 수행하고
-	 * 제외는 적용하지 않는다") — monitoring 관리 API 5종·was 프록시 API 4종이 모두 제거됐고
-	 * 조회 시점 필터도 함께 없앤다. 남겨두면 과거 시드(브랜드 계정명 루트 등)가 유저가 조회·삭제할
-	 * 수 없는 "유령 필터"로 영구 동작해 계정명을 포함한 정상 작성자(예: 스태프 부계정)의 발견
-	 * 게시물이 이유 없이 숨는다. verdict(SELF 등) 기반 필터링은 수집 시점 판정이라 이 변경과 별개다.
+	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 병합·필터·정렬 없이 전량이되,
+	 * <b>tagged 겹침 행은 제외</b>한다(2026-08-18 정정). 이 화면은 "태그 안 된 게시물"인데 이미
+	 * tagged로 측정 중인 shortcode가 뜨는 건 화면 정의와 모순이다 — 사진 태그(캡션에 안 보임)와
+	 * 해시태그를 동시에 단 게시물이 실제로 이 겹침을 만든다(캡션 멘션 자체는 수집 시점
+	 * DIRECT_TAGGED 판정으로 이미 걸러진다). 단, <b>direct 매핑이 살아 있는 행은 tagged 여부와
+	 * 무관하게 유지</b>한다(승격분 dim 잔존 계약 — direct가 우선).
 	 *
-	 * <p>{@code brandPostId}(2026-08-17 승격 상태 필드)는 조회된 shortcode 묶음만 배치로 판정한다
-	 * (존재 여부만 필요한 경량 조회 2종 — 무거운 전량 조립을 끼워 넣지 않는다). direct는 이
-	 * 유저·이 브랜드의 매핑, tagged는 윈도우 제한 없는 존재 판정이다.
+	 * <p>제외 문자열 기능은 전면 폐기됐다(2026-08-17 협의 확정 — "감지는 감지 해시태그만으로
+	 * 수행하고 제외는 적용하지 않는다") — monitoring 관리 API 5종·was 프록시 API 4종이 모두
+	 * 제거됐고 조회 시점 필터도 함께 없앤다. 남겨두면 과거 시드(브랜드 계정명 루트 등)가 유저가
+	 * 조회·삭제할 수 없는 "유령 필터"로 영구 동작해 계정명을 포함한 정상 작성자(예: 스태프
+	 * 부계정)의 발견 게시물이 이유 없이 숨는다. verdict(SELF 등) 기반 필터링은 수집 시점 판정이라
+	 * 이 변경과 별개다.
+	 *
+	 * <p>{@code brandPostId}(2026-08-17 승격 상태 필드)는 위 제외 규칙 때문에 <b>이제 direct
+	 * 매핑에만</b> 채워진다(2026-08-18 정정) — tagged 겹침 행은 이미 목록에서 빠지므로 tagged로만
+	 * 채워지는 경로가 사라졌다. 조회된 shortcode 묶음만 배치로 판정한다(존재 여부만 필요한 경량
+	 * 조회 2종 — 무거운 전량 조립을 끼워 넣지 않는다). direct는 이 유저·이 브랜드의 매핑, tagged는
+	 * 윈도우 제한 없는 존재 판정(제외 여부 판단용)이다.
 	 */
 	public List<BrandHashtagPostResponse> assembleForBrand(long userId, long brandId) {
 		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
@@ -77,13 +86,14 @@ public class BrandHashtagPostAssembler {
 		Set<String> taggedCodes = brandReadRepository.findExistingTaggedShortCodes(brandId, shortCodes);
 
 		return rows.stream()
-				.map(row -> toResponse(row, brandPostIdOf(row.shortCode(), directCodes, taggedCodes)))
+				.filter(row -> directCodes.contains(row.shortCode()) || !taggedCodes.contains(row.shortCode()))
+				.map(row -> toResponse(row, brandPostIdOf(row.shortCode(), directCodes)))
 				.toList();
 	}
 
-	/** direct 매핑이 살아 있거나 tagged로 존재하면 shortcode를, 둘 다 아니면 null을 돌려준다. */
-	private static String brandPostIdOf(String shortCode, Set<String> directCodes, Set<String> taggedCodes) {
-		return directCodes.contains(shortCode) || taggedCodes.contains(shortCode) ? shortCode : null;
+	/** direct 매핑이 살아 있으면 shortcode를, 아니면 null을 돌려준다(tagged 겹침 행은 이미 제외됐다). */
+	private static String brandPostIdOf(String shortCode, Set<String> directCodes) {
+		return directCodes.contains(shortCode) ? shortCode : null;
 	}
 
 	/** {@code brandPostId} 없는 호출부(단위 테스트 등)를 위한 편의 오버로드 — null로 접는다. */

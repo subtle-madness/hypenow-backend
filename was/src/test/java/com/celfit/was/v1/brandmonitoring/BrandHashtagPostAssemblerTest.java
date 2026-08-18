@@ -191,11 +191,13 @@ class BrandHashtagPostAssemblerTest {
 	}
 
 	/**
-	 * tagged 존재 판정은 표시 윈도우(365일) 제한이 없다 — 기존 클라이언트 조인(업로드 12개월 창 한정)의
-	 * 사각지대(그보다 오래된 게시물의 승격)를 없앤다는 계약을 고정한다.
+	 * 2026-08-18 정정: 이 화면은 "태그 안 된 게시물"이라 이미 tagged로 측정 중인 shortcode는
+	 * 발견 목록 자체에서 빠진다(윈도우 제한 없는 tagged 존재 판정 — 기존 클라이언트 조인(업로드
+	 * 12개월 창 한정)의 사각지대를 없앤다는 계약은 "제외 여부 판정"으로 형태만 바뀌어 유지된다).
+	 * direct 매핑이 없으므로 brandPostId를 채우는 경로가 아니라 행 자체가 사라지는 경로다.
 	 */
 	@Test
-	void tagged로_존재하면_윈도우와_무관하게_brandPostId가_채워진다() {
+	void tagged로만_존재하면_발견_목록에서_제외된다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
 		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
@@ -206,7 +208,45 @@ class BrandHashtagPostAssemblerTest {
 		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
 		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
 
+		assertThat(result).isEmpty();
+	}
+
+	/**
+	 * direct 매핑이 살아 있으면 같은 shortcode가 tagged 풀에도 있어도(사진 태그+해시태그 동시
+	 * 게시물) 목록에서 빠지지 않는다 — direct가 우선이라는 승격분 dim 잔존 계약(2026-08-18).
+	 */
+	@Test
+	void direct_매핑이_있으면_tagged_겹침이어도_목록에_남고_brandPostId가_채워진다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(directPostRepository.findByUser(7L))
+				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 1L, "HHH", 900L)));
+		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of("HHH"));
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+
+		assertThat(result).hasSize(1);
 		assertThat(result.get(0).brandPostId()).isEqualTo("HHH");
+	}
+
+	/** direct도 tagged도 아닌 순수 발견 행은 그대로 남고 brandPostId는 null이다. */
+	@Test
+	void 순수_발견_행은_목록에_남고_brandPostId는_null이다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(directPostRepository.findByUser(7L)).willReturn(List.of());
+		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+
+		assertThat(result).hasSize(1);
+		assertThat(result.get(0).brandPostId()).isNull();
 	}
 
 	/** 제외 문자열 기능 폐기(2026-08-17)로 게시자 username과 무관하게 조회된 발견분이 전부 남는다. */
