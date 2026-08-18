@@ -2965,7 +2965,7 @@ import tools.jackson.databind.ObjectMapper;
    위임하는 오버로드로 남겨 기존 테스트를 무변경으로 유지했다(토글 off와 동작 동일).
 2. **was 테스트 픽스처 동기화**: `was/src/test/resources/monitoring-brand-schema.sql`(Flyway가
    아닌 수동 픽스처)에 판정 6컬럼 + `brand_seeded_account` 테이블이 없어 `BrandReadRepositoryTest`가
-   회귀했다 — monitoring 마이그레이션(`V20260817103546__ad_disclosure_verdict.sql`)과 동형으로
+   회귀했다 — monitoring 마이그레이션(`V20260817160000__ad_disclosure_verdict.sql`)과 동형으로
    추가했다.
 3. **계획에 없던 컴파일 파손 2곳**: `PerformanceContentAssemblerTest`·`V2CampaignContentServiceTest`가
    `BrandPostResponse` 생성자를 위치 인자로 직접 호출하고 있어 신규 4필드 누락으로 컴파일이
