@@ -32,23 +32,86 @@ docker compose -f compose.dev.yaml ps             # 컨테이너 5개 Up
 docker exec grafana-dev-prometheus-1 wget -qO- http://localhost:9090/api/v1/targets
 ```
 
-## 2. 시드(목 데이터)
+## 2. 스키마 + 시드(목 데이터)
 
-DB는 빈 상태로 뜬다. 패널을 그리려면 목 데이터를 넣어야 한다.
+DB는 **빈 상태**로 뜬다(테이블조차 없다). 스키마 적용 → 시드 두 단계를 거쳐야 패널이 그려진다.
+아래는 전부 **레포 루트에서** 실행한다.
 
-```bash
-psql "postgresql://dev:dev@localhost:55432/analysis"    # 분석 뷰용
-psql "postgresql://dev:dev@localhost:55432/monitoring"  # 모니터링 지표용
-```
-
-`dev`는 슈퍼유저이고 두 DB 모두 소유자라 스키마·테이블을 자유롭게 만들 수 있다.
-(시드 스크립트 자체는 후속 태스크에서 이 디렉토리에 추가된다.)
-
-## 3. 정리
+### 2-1. 스키마 적용
 
 ```bash
-docker compose -f compose.dev.yaml down -v   # -v 로 postgres 볼륨까지 삭제 → 다음 기동은 깨끗한 DB
+bash deploy/grafana/dev/apply-migrations.sh
 ```
+
+레포 Flyway SQL(analytics `analysis` · was `app` · monitoring)을 버전 숫자순으로 적용한다.
+운영에서 Flyway 밖에 있는 전제(롤 `was_reader`·`alarm_reader`, `app` 스키마, `search_path=app`)도
+스크립트가 대신 만든다. **멱등이 아니다** — 이미 적용된 DB에 다시 돌리면 `already exists`로
+깨진다. 다시 적용하려면 §3의 `down -v` 리셋부터 한다.
+
+### 2-2. 시드 적용
+
+`seed.sql`은 2026-08-18 운영 실측 밀도를 복제한 **정상(초록) 시드**다. analysis·monitoring 두 DB를
+한 파일에 담고 `-- BEGIN <db>` / `-- END <db>` 주석으로 구간을 나눠 뒀다(psql 세션은 DB 하나만
+보므로 구간을 잘라 두 번 실행한다).
+
+```bash
+C="docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -q -U dev"
+sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed.sql | $C -d analysis
+sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed.sql | $C -d monitoring
+```
+
+`^-- ` 앵커를 빼면 안 된다 — 앵커 없는 패턴은 파일 상단 안내 주석 줄(그 안에 두 마커 문자열이
+다 들어 있다)을 구간 시작으로 잡아 analysis 구간까지 monitoring DB로 흘려보낸다.
+
+**`seed.sql`은 재적용 가능하다**(각 구간 첫머리에서 시드 대상 테이블을 `TRUNCATE ... RESTART
+IDENTITY CASCADE` 한다). 난수도 `setseed`로 고정이라 재적용 때 같은 분포가 나온다.
+
+밀도(실측 대비):
+
+| | 값 |
+|---|---|
+| analysis | users 53 · brand_monitorings 130 · campaigns 12 · monitoring_items 76 · registrations 20 · digests 20 · accounts 200 · contents 2,400 |
+| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
+
+### 2-3. 빨간불 상태 확인
+
+`seed-red.sql`은 초록 시드 위에 덧입혀 홈 신호등의 **DB 판정 타일 5개**(스윕 신선도·오늘 Hiker
+콜·미러 신선도·멈춘 등록·알림 발송 실패)를 전부 빨강으로 뒤집는다. 나머지 8개 타일은
+Prometheus/Loki/node-exporter 소관이라 여기서 못 만든다.
+
+```bash
+sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed-red.sql | $C -d analysis
+sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | $C -d monitoring
+```
+
+복원은 **`seed.sql` 재적용**이면 된다(`down -v`까지 갈 필요 없다).
+
+### 2-4. 직접 조회
+
+```bash
+psql "postgresql://dev:dev@localhost:55432/analysis"    # 분석·app 스키마
+psql "postgresql://dev:dev@localhost:55432/monitoring"  # 모니터링 지표
+```
+
+`dev`는 슈퍼유저이고 두 DB 모두 소유자다. **그래서 운영의 `grafana_reader` 컬럼 화이트리스트
+GRANT 누락은 이 하니스로 못 잡는다** — 패널을 추가하면 GRANT 런북(설계 §5)도 따로 챙겨야 한다.
+
+`called_on` 같은 date 컬럼은 **KST 달력일이 정본**이다(운영 규약). 컨테이너 postgres는 UTC로
+도니 패널 쿼리도 `current_date`가 아니라 `(now() AT TIME ZONE 'Asia/Seoul')::date`를 써야
+UTC 15~24시(=KST 00~09시)에 오진하지 않는다.
+
+## 3. 리셋 / 정리
+
+레포 루트에서(§2와 같은 기준):
+
+```bash
+docker compose -f deploy/grafana/dev/compose.dev.yaml down -v   # -v 로 postgres 볼륨까지 삭제
+docker compose -f deploy/grafana/dev/compose.dev.yaml up -d && sleep 20
+bash deploy/grafana/dev/apply-migrations.sh                     # §2-1
+# 이어서 §2-2 시드 재적용
+```
+
+데이터만 되돌리면 되는 경우(빨간불 시드 실험 후 등)는 리셋 없이 §2-2 재적용으로 충분하다.
 
 ## 운영과 다른 점
 

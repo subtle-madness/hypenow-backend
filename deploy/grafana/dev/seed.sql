@@ -19,6 +19,22 @@
 --        sweep_run 7일 7/7 성공 · Hiker 콜 30일 49,756(브랜드) + 3,536(타깃) · alarm_event 97
 --
 -- 빨간불 상태가 필요하면 이 시드 위에 seed-red.sql을 덧입힌다(복원은 리셋 후 이 파일 재적용).
+--
+-- 시간대 규약: `called_on`·`last_swept_on` 등 date 컬럼은 **KST 달력일이 정본**이다
+-- (V20260812100000·V20260812160000 주석 — was의 월초·자정 경계와 같은 시간대). 컨테이너
+-- postgres는 UTC로 돌기 때문에 `current_date`가 아니라 `(now() AT TIME ZONE 'Asia/Seoul')::date`를
+-- 쓴다. 패널 쿼리도 같은 식이어야 UTC 15~24시(=KST 00~09시)에 초록이 빨강으로 오진되지 않는다.
+--
+-- 시드하지 않은 것(패널을 만들 때 "데이터가 왜 없지"로 헤매지 않도록 명시):
+--   · app.signup_events    — 가입 이벤트 로그. 계정 유입 대시보드는 app.users.created_at을 쓴다
+--   · app.spring_session / spring_session_attributes — 세션 저장소. 대시보드 표면이 아니다
+--   · app.gate_events / admin_audit_logs / notices / password_resets / brand_direct_posts /
+--     monitoring_email_opt_outs / notice_items / notice_seen / app_setting — 패널 근거 없음
+--   · monitoring.post_meta / post_snapshot / post_comment / profile_meta / profile_snapshot /
+--     author_profile / brand_post_* / brand_profile_snapshot — 성과 패널이 설계 §4에서 기각됨
+--   · monitoring.detected_candidate — 실측 0건이 정상(설계 §3), 의도적 공백
+--   · analysis public.* 분석 산출물(account_analyses·content_analyses·image_assets 등) — 이번
+--     개편 패널이 읽지 않는다(탐색 대시보드는 accounts·contents·landing_stats만 본다)
 
 -- ============================================================================
 -- BEGIN analysis  (psql -d analysis)
@@ -175,16 +191,24 @@ TRUNCATE sweep_run RESTART IDENTITY;
 TRUNCATE alarm_event RESTART IDENTITY;
 TRUNCATE brand_call_count, target_call_count;
 
--- 브랜드 계정 130(app.brand_monitorings.brand_id와 1:1). 스윕은 10시간 전 완료 = 초록
+-- 브랜드 계정 130(app.brand_monitorings.brand_id와 1:1). 스윕은 10시간 전 완료 = 초록.
+-- CLOSED 4건(127~130)은 closed_at을 채우고 스윕 흔적을 종결 이전으로 되돌린다 — 종결된 계정이
+-- "10시간 전에 스윕됨"으로 남아 있으면 스윕 이력 패널이 거짓말을 한다.
+-- last_swept_on도 KST 달력일(called_on과 같은 시간대 규약).
 INSERT INTO brand_account (id, username, ig_user_id, followers, following, media_count, full_name,
-                           biography, status, registered_at, last_swept_on, last_swept_at,
+                           biography, status, registered_at, closed_at, last_swept_on, last_swept_at,
                            collection_months, collection_started_at, backfill_completed_at, is_verified)
 SELECT g, 'brand' || g, '17841400' || lpad(g::text, 6, '0'),
        (random() * 500000)::bigint, (random() * 2000)::bigint, (random() * 3000)::bigint,
        '목브랜드' || g, '하니스 목 브랜드 계정 ' || g,
        CASE WHEN g > 126 THEN 'CLOSED' ELSE 'ACTIVE' END,
-       now() - (random() * 120 || ' days')::interval,
-       current_date, now() - interval '10 hours',
+       CASE WHEN g > 126 THEN now() - interval '150 days'                -- 종결 계정은 등록이 확실히 앞서게
+            ELSE now() - (random() * 120 || ' days')::interval END,
+       CASE WHEN g > 126 THEN now() - ((g - 122) || ' days')::interval END,
+       CASE WHEN g > 126 THEN ((now() - ((g - 122) || ' days')::interval) AT TIME ZONE 'Asia/Seoul')::date
+            ELSE (now() AT TIME ZONE 'Asia/Seoul')::date END,
+       CASE WHEN g > 126 THEN now() - ((g - 122) || ' days')::interval - interval '3 hours'
+            ELSE now() - interval '10 hours' END,
        (ARRAY[1, 3, 6, 12])[1 + (g % 4)],
        now() - (random() * 120 || ' days')::interval,
        now() - (random() * 100 || ' days')::interval,
@@ -198,7 +222,9 @@ SELECT b, '태그' || b || '_' || s, now() - (random() * 100 || ' days')::interv
 FROM generate_series(1, 130) b, generate_series(1, 3) s;
 
 -- 타깃 73 — TRACKING 44 / WATCHING 26 / EXPIRED 3 (status 어휘는 V1__core_tables.sql 주석이 정본)
--- fetch_failing 2건은 모니터링 대시보드 "fetch 실패 타깃" 패널용(홈 신호등 대상 아님 — 초록 유지)
+-- fetch_failing 2건은 모니터링 대시보드 "fetch 실패 타깃" 패널용(홈 신호등 대상 아님 — 초록 유지).
+-- EXPIRED 3건은 last_fetched_at을 closed_at 직전으로 — 종결된 타깃이 "10시간 전에 조회됨"으로
+-- 남으면 추적 활성도 패널이 종결분까지 살아 있는 것으로 센다.
 INSERT INTO target (id, type, username, short_code, status, registration_key, registered_at, expires_at,
                     user_id, tracked_short_code, tracked_since, last_fetched_at, closed_at,
                     fetch_failing, fail_reason, matched_keywords)
@@ -213,7 +239,8 @@ SELECT g,
        (g % 10) + 1,
        CASE WHEN g <= 44 THEN 'TSC' || g END,
        CASE WHEN g <= 44 THEN now() - (random() * 30 || ' days')::interval END,
-       now() - interval '10 hours',
+       CASE WHEN g > 70 THEN now() - interval '2 days' - interval '30 minutes'
+            ELSE now() - interval '10 hours' END,
        CASE WHEN g > 70 THEN now() - interval '2 days' END,
        g IN (12, 37),
        CASE WHEN g IN (12, 37) THEN 'HIKER_404' END,
@@ -227,14 +254,18 @@ SELECT s, s + interval '40 minutes', true
 FROM (SELECT now() - interval '10 hours' - (d || ' days')::interval AS s
       FROM generate_series(0, 29) d) t;
 
+-- called_on은 **KST 달력일이 정본**이다(V20260812100000·V20260812160000 주석 — was의 월초·자정
+-- 경계 계산과 같은 시간대). 컨테이너 postgres는 UTC로 도니 `current_date`를 그대로 쓰면 UTC
+-- 15~24시(=KST 익일 00~09시) 구간에서 "KST 오늘 행"이 없는 상태가 되고, 타일 6(오늘 Hiker 콜)이
+-- 초록 시드인데 빨강으로 오진된다. 따라서 KST 달력일로 채운다 — 패널 쿼리도 같은 식이어야 한다.
 -- Hiker 콜 30일: 브랜드 130 × 일 10~15콜 ≈ 48,750(실측 49,756)
 INSERT INTO brand_call_count (brand_id, called_on, calls)
-SELECT b, current_date - d, 10 + (random() * 5)::int
+SELECT b, (now() AT TIME ZONE 'Asia/Seoul')::date - d, 10 + (random() * 5)::int
 FROM generate_series(1, 130) b, generate_series(0, 29) d;
 
 -- 타깃 콜 30일: 유저 10 × 일 9~15콜 ≈ 3,600(실측 3,536)
 INSERT INTO target_call_count (user_id, called_on, calls)
-SELECT u, current_date - d, 9 + (random() * 6)::int
+SELECT u, (now() AT TIME ZONE 'Asia/Seoul')::date - d, 9 + (random() * 6)::int
 FROM generate_series(1, 10) u, generate_series(0, 29) d;
 
 -- 알림 대장 97건, 전부 발송 성공 = 초록.

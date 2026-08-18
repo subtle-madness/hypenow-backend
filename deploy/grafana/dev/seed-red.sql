@@ -41,9 +41,11 @@ SELECT max(id), 1, 'acct_stuck', 'account', 'pending' FROM app.monitoring_regist
 -- 타일 5(스윕 신선도, 임계 26h) 빨강 — 최근 3일치 스윕 삭제 → 마지막 성공이 3일 10시간 전
 DELETE FROM sweep_run WHERE started_at > now() - interval '3 days';
 
--- 타일 6(오늘 Hiker 콜 0건 = 스윕 불발) 빨강
-DELETE FROM brand_call_count  WHERE called_on = current_date;
-DELETE FROM target_call_count WHERE called_on = current_date;
+-- 타일 6(오늘 Hiker 콜 0건 = 스윕 불발) 빨강.
+-- called_on은 KST 달력일이 정본이다(V20260812100000 주석) — 컨테이너 postgres가 UTC라
+-- `current_date`로 지우면 UTC 15~24시(=KST 익일)에 엉뚱한 날을 지운다. seed.sql과 같은 식을 쓴다.
+DELETE FROM brand_call_count  WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date;
+DELETE FROM target_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date;
 
 -- 타일 9(알림 발송 실패 24h > 0) 빨강 — 가장 최근 3건을 FAILED로.
 -- seed.sql이 앞 4건을 now-1~4h로 고정해 두므로 최근 3건은 항상 24h 창 안에 있다.
