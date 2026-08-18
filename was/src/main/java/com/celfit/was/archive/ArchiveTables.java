@@ -109,6 +109,30 @@ public final class ArchiveTables {
 			List.of(), "false");
 
 	/**
+	 * 브랜드 direct 등록 요청 헤더(2026-08-18 direct 통합 §T6·§T13) — users CASCADE(직접 FK). 자식
+	 * {@link #BRAND_POST_REGISTRATION_ENTRIES}와 함께 MONITORING_REGISTRATIONS·
+	 * MONITORING_REGISTRATION_ENTRIES 짝과 같은 위상이다.
+	 */
+	public static final ArchiveTable BRAND_POST_REGISTRATIONS = new ArchiveTable(
+			"app.brand_post_registrations", List.of("id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/** user_id 컬럼이 없다 — registration을 거쳐야 유저에 닿는다(간접 CASCADE, MONITORING_REGISTRATION_ENTRIES 동형). */
+	public static final ArchiveTable BRAND_POST_REGISTRATION_ENTRIES = new ArchiveTable(
+			"app.brand_post_registration_entries", List.of("registration_id", "seq"), null,
+			List.of(),
+			"t.registration_id IN (SELECT id FROM app.brand_post_registrations WHERE user_id = :userId)");
+
+	/**
+	 * 브랜드 풀 게시물↔캠페인 N:M 링크(2026-08-18 direct 통합 §결정 3·§T13) — users CASCADE(직접 FK).
+	 * {@code campaign_id} FK는 CASCADE가 아니다 — 캠페인 삭제 경로(CampaignRepository.delete)가 이
+	 * 테이블을 명시적으로 먼저 아카이브·삭제해야 한다(순서를 어기면 FK 위반).
+	 */
+	public static final ArchiveTable BRAND_POST_CAMPAIGNS = new ArchiveTable(
+			"app.brand_post_campaigns", List.of("brand_id", "short_code", "campaign_id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
 	 * 아카이브 카탈로그 전체 — 어떤 삭제 경로(탈퇴 이관, 저장 해제, 캠페인 삭제, 등록 롤백 등)로든
 	 * 아카이브되는 테이블 전부. ArchiveInventoryTest의 "분류됨" 판정 기준이 이 목록이다 — 여기 없는
 	 * app 테이블은 EXCLUDED에 사유와 함께 있어야 한다. ACCOUNT_DELETION_ORDER와 달리 순서·CASCADE
@@ -128,10 +152,13 @@ public final class ArchiveTables {
 			BRAND_MONITORINGS,
 			BRAND_DIRECT_POSTS,
 			NOTICES,
-			NOTICE_ITEMS);
+			NOTICE_ITEMS,
+			BRAND_POST_REGISTRATIONS,
+			BRAND_POST_REGISTRATION_ENTRIES,
+			BRAND_POST_CAMPAIGNS);
 
 	/**
-	 * 탈퇴 시 이관 대상과 순서 — 자식 11개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
+	 * 탈퇴 시 이관 대상과 순서 — 자식 14개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
 	 * 이관(INSERT)은 전부 삭제(DELETE)보다 먼저 일어나므로 순서 자체가 정확성에 영향을 주진
 	 * 않지만, 자식 → 부모 순으로 읽히게 둔다. NOTICES·NOTICE_ITEMS는 users FK가 없어 여기 없다
 	 * (클래스 주석 참고).
@@ -148,6 +175,9 @@ public final class ArchiveTables {
 			NOTICE_SEEN,
 			BRAND_MONITORINGS,
 			BRAND_DIRECT_POSTS,
+			BRAND_POST_REGISTRATION_ENTRIES,
+			BRAND_POST_REGISTRATIONS,
+			BRAND_POST_CAMPAIGNS,
 			USERS);
 
 	private ArchiveTables() {
