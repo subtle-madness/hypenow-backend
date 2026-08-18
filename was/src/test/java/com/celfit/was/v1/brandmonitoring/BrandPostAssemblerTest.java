@@ -8,6 +8,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -415,6 +416,28 @@ class BrandPostAssemblerTest {
 
 		assertThat(merged.get(0).sponsorship()).isEqualTo("sponsored");
 		assertThat(merged.get(0).isPaidPartnership()).isNull();
+	}
+
+	/**
+	 * 시딩+직접등록 중복 게시물 배지 은닉 방지(코디네이터 스펙 리뷰, 08-18) — direct 본체가 이기는
+	 * 병합 규칙 때문에 tagged가 들고 있는 광고 판정 4필드가 조용히 버려지던 결함의 회귀 테스트.
+	 */
+	@Test
+	void 병합은_tagged의_광고_판정_필드를_direct로_승격한다() {
+		var adMeta = new BrandReadRepository.BrandPostMetaRow("XYZ", "glowdeep_92", "FEED",
+				LocalDate.of(2026, 8, 6), "오늘 소개 #광고", null, null, null, null, null,
+				"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
+		var tagged = BrandPostAssembler.taggedPost(100L, taggedRow("XYZ"), adMeta, null, List.of(), List.of(),
+				SWEPT_AT, true, Set.of("glowdeep_92"));
+		var direct = BrandPostAssembler.directPost(100L, "XYZ", trackingItem("tracking", null), null);
+
+		var merged = BrandPostAssembler.mergeByShortcode(List.of(direct), List.of(tagged));
+
+		assertThat(merged.get(0).source()).isEqualTo("direct");
+		assertThat(merged.get(0).adDisclosure()).isEqualTo("DISCLOSED");
+		assertThat(merged.get(0).adEvidence()).singleElement()
+				.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
+		assertThat(merged.get(0).seededAuthor()).isTrue();
 	}
 
 	@Test

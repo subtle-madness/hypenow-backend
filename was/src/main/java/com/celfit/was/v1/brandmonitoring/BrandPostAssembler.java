@@ -435,7 +435,9 @@ public class BrandPostAssembler {
 
 	/**
 	 * shortcode 병합 — direct 우선(명시 등록 보존)이되, 겹치는 tagged에 유료협찬 관측이 있으면
-	 * 협찬 판정만 그 값으로 승격한다. 결과는 업로드 최신순(takenAt 미상은 마지막, 동률은 shortcode).
+	 * 협찬 판정만 그 값으로 승격하고, 광고 표기 판정 4필드(adDisclosure 등)는 항상 tagged 값으로
+	 * 승격한다(direct에는 이 필드들의 산지가 애초에 없다 — 코디네이터 스펙 리뷰 반영, 배지 은닉 방지).
+	 * 결과는 업로드 최신순(takenAt 미상은 마지막, 동률은 shortcode).
 	 */
 	static List<BrandPostResponse> mergeByShortcode(List<BrandPostResponse> direct,
 			List<BrandPostResponse> tagged) {
@@ -444,7 +446,8 @@ public class BrandPostAssembler {
 			byCode.put(post.shortcode(), post);
 		}
 		for (BrandPostResponse post : tagged) {
-			byCode.merge(post.shortcode(), post, (existing, taggedPost) -> promoteSponsorship(existing, taggedPost));
+			byCode.merge(post.shortcode(), post,
+					(existing, taggedPost) -> promoteAdFields(promoteSponsorship(existing, taggedPost), taggedPost));
 		}
 		return byCode.values().stream()
 				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn,
@@ -462,6 +465,16 @@ public class BrandPostAssembler {
 		return direct.withSponsorship(
 				BrandSponsorshipClassifier.classify(tagged.isPaidPartnership(), caption),
 				tagged.isPaidPartnership());
+	}
+
+	/**
+	 * direct 본체에 tagged의 광고 표기 판정 4필드를 얹는다 — direct 산지엔 이 필드들의 원천
+	 * (brand_post_meta)이 없으므로 tagged 값이 항상 정본이다. 노출 토글이 꺼져 있으면 tagged 쪽도
+	 * 이미 중립값(null/빈 목록/false)이라 승격해도 무해 — 별도 분기가 필요 없다.
+	 */
+	private static BrandPostResponse promoteAdFields(BrandPostResponse direct, BrandPostResponse tagged) {
+		return direct.withAdFields(tagged.adDisclosure(), tagged.adViolations(), tagged.adEvidence(),
+				tagged.seededAuthor());
 	}
 
 	/**

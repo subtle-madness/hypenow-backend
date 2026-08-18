@@ -2584,7 +2584,7 @@ git commit -m "feat(monitoring): 시딩 계정 등록 API(GET/PUT/POST/DELETE)"
 **Files:**
 - Modify: `was/src/main/java/com/celfit/was/monitoring/BrandReadRepository.java`
 
-- [ ] **Step 1: BrandPostMetaRow에 필드 추가 + SQL 확장**
+- [x] **Step 1: BrandPostMetaRow에 필드 추가 + SQL 확장**
 
 `findPostMeta` 메서드의 SELECT에 컬럼 3개 추가(jsonb는 `::text` 캐스트로 문자열째 읽는다 —
 AlarmEventRepository 관용구):
@@ -2607,6 +2607,11 @@ AlarmEventRepository 관용구):
 	}
 ```
 
+**구현 시 적응(08-18)**: `AS ad_violations`/`AS ad_evidence` 별칭 그대로는 `SimplePropertyRowMapper`가
+레코드 필드명(`adViolationsJson`/`adEvidenceJson`)에 대응하는 `ad_violations_json`/`ad_evidence_json`
+컬럼을 찾다가 `BadSqlGrammarException`을 낸다 — 별칭을 `AS ad_violations_json`/`AS ad_evidence_json`으로
+수정했다(BrandReadRepositoryTest 회귀로 발견, SHA `a7853a5d`).
+
 `BrandPostMetaRow` record에 필드 추가:
 
 ```java
@@ -2623,7 +2628,7 @@ AlarmEventRepository 관용구):
 	}
 ```
 
-- [ ] **Step 2: 시딩 계정 조회 메서드 추가**
+- [x] **Step 2: 시딩 계정 조회 메서드 추가**
 
 클래스 끝(마지막 `}` 전)에:
 
@@ -2640,12 +2645,12 @@ AlarmEventRepository 관용구):
 	}
 ```
 
-- [ ] **Step 3: 컴파일 확인 (was 모듈은 findPostMeta·BrandPostMetaRow 사용처가 BrandPostAssembler
+- [x] **Step 3: 컴파일 확인 (was 모듈은 findPostMeta·BrandPostMetaRow 사용처가 BrandPostAssembler
 하나뿐이라 이 시점엔 컴파일 에러가 난다 — Task 15에서 해소)**
 
 Run: `./gradlew :was:compileJava` (실패 예상 — BrandPostAssembler가 옛 레코드 생성자를 쓰고 있어서. Task 15 완료 후 재확인)
 
-- [ ] **Step 4: 커밋 (Task 15와 함께 묶어도 무방 — 컴파일이 깨진 채로 커밋하지 않도록 Task 15까지 마친 뒤 커밋)**
+- [x] **Step 4: 커밋 (Task 15와 함께 묶어도 무방 — 컴파일이 깨진 채로 커밋하지 않도록 Task 15까지 마친 뒤 커밋)**
 
 이 태스크는 커밋하지 않고 Task 15에서 함께 커밋한다(중간 상태가 컴파일 불가라 별도 커밋은
 `./gradlew :was:test` CI를 항상 깨뜨린다 — 프로젝트 관례상 허용되지 않는다).
@@ -2657,7 +2662,7 @@ Run: `./gradlew :was:compileJava` (실패 예상 — BrandPostAssembler가 옛 �
 **Files:**
 - Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandPostResponse.java`
 
-- [ ] **Step 1: record에 필드 4종 추가 + withSponsorship 시그니처 갱신**
+- [x] **Step 1: record에 필드 4종 추가 + withSponsorship 시그니처 갱신**
 
 ```java
 package com.celfit.was.v1.brandmonitoring;
@@ -2723,9 +2728,15 @@ public record BrandPostResponse(
 }
 ```
 
-- [ ] **Step 2: 컴파일은 아직 실패 — Task 15에서 생성 호출부(taggedPost·directPost)를 고친 뒤 확인**
+- [x] **Step 2: 컴파일은 아직 실패 — Task 15에서 생성 호출부(taggedPost·directPost)를 고친 뒤 확인**
 
 이 태스크도 Task 15와 함께 커밋한다(Task 13과 같은 이유).
+
+**구현 시 적응(08-18, 코디네이터 스펙 리뷰)**: `withSponsorship`만으로는 direct·tagged shortcode
+병합에서 광고 표기 4필드가 승격되지 않고 항상 direct의 중립값(null/[]/[]/false)으로 깔려 배지가
+숨는 결함이 발견됐다 — `withAdFields(String, List<String>, List<AdEvidence>, boolean)`를
+`withSponsorship`과 같은 관용구로 별도 추가해 `BrandPostAssembler.mergeByShortcode`가 sponsorship과
+독립적으로 4필드를 승격하게 했다(상세는 Task 15 적응 노트, SHA는 커밋 로그 참고).
 
 ---
 
@@ -2735,7 +2746,7 @@ public record BrandPostResponse(
 - Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandPostAssembler.java`
 - Test: `was/src/test/java/com/celfit/was/v1/brandmonitoring/BrandPostAssemblerTest.java`
 
-- [ ] **Step 1: 실패하는 테스트 작성 (Mockito 기반, 기존 파일 관용구 그대로)**
+- [x] **Step 1: 실패하는 테스트 작성 (Mockito 기반, 기존 파일 관용구 그대로)**
 
 `BrandPostAssemblerTest.java`에 추가:
 
@@ -2802,12 +2813,12 @@ public record BrandPostResponse(
 	}
 ```
 
-- [ ] **Step 2: 테스트 실행 — 실패 확인**
+- [x] **Step 2: 테스트 실행 — 실패 확인**
 
 Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.BrandPostAssemblerTest"`
 Expected: FAIL — 컴파일 오류(생성자 4번째 인자 없음, 필드 없음)
 
-- [ ] **Step 3: BrandPostAssembler 수정**
+- [x] **Step 3: BrandPostAssembler 수정**
 
 import 추가:
 ```java
@@ -2946,17 +2957,38 @@ import tools.jackson.databind.ObjectMapper;
 				.toList();
 ```
 
-- [ ] **Step 4: 테스트 통과 확인**
+**구현 시 적응(08-18)**:
+
+1. **`taggedPost()` 하위 호환 오버로드**: 계획은 `taggedPost()` 시그니처를 그대로 9-arg로
+   바꾸라고 했지만, 실제 파일(#482 병합 후)엔 이 정적 메서드를 직접 호출하는 기존 테스트가
+   20여 곳 있어 전부 깨졌다. 전부 고치는 대신 기존 7-arg 시그니처를 `false, Set.of()`로
+   위임하는 오버로드로 남겨 기존 테스트를 무변경으로 유지했다(토글 off와 동작 동일).
+2. **was 테스트 픽스처 동기화**: `was/src/test/resources/monitoring-brand-schema.sql`(Flyway가
+   아닌 수동 픽스처)에 판정 6컬럼 + `brand_seeded_account` 테이블이 없어 `BrandReadRepositoryTest`가
+   회귀했다 — monitoring 마이그레이션(`V20260817103546__ad_disclosure_verdict.sql`)과 동형으로
+   추가했다.
+3. **계획에 없던 컴파일 파손 2곳**: `PerformanceContentAssemblerTest`·`V2CampaignContentServiceTest`가
+   `BrandPostResponse` 생성자를 위치 인자로 직접 호출하고 있어 신규 4필드 누락으로 컴파일이
+   깨졌다 — `null, List.of(), List.of(), false`를 추가했다.
+4. **병합 경로 결함(코디네이터 스펙 리뷰, 08-18 후속 커밋)**: `mergeByShortcode`가 direct 우선
+   병합에서 sponsorship만 승격하고 광고 표기 4필드는 승격하지 않아, 시딩+직접등록 중복
+   게시물의 배지가 조용히 숨는 결함이 있었다. `BrandPostResponse.withAdFields(...)`를
+   `withSponsorship`과 같은 관용구로 추가하고 `promoteAdFields(...)`로 tagged 값을 항상
+   승격하도록 고쳤다(direct엔 이 필드들의 산지가 없으므로 tagged가 항상 정본 — 토글 off면
+   tagged 쪽도 이미 중립값이라 무해). 회귀 테스트
+   `병합은_tagged의_광고_판정_필드를_direct로_승격한다` 추가.
+
+- [x] **Step 4: 테스트 통과 확인**
 
 Run: `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.BrandPostAssemblerTest"`
-Expected: PASS 전체(기존 + 신규 2개)
+Expected: PASS 전체(기존 + 신규 2개, 08-18 병합 경로 수정 후 신규 3개 — 29개)
 
-- [ ] **Step 5: was 모듈 컴파일 확인 (Task 13·14의 잔여 컴파일 오류 해소 확인)**
+- [x] **Step 5: was 모듈 컴파일 확인 (Task 13·14의 잔여 컴파일 오류 해소 확인)**
 
 Run: `./gradlew :was:compileJava :was:compileTestJava`
 Expected: BUILD SUCCESSFUL
 
-- [ ] **Step 6: 커밋 (Task 13·14·15 통합 커밋)**
+- [x] **Step 6: 커밋 (Task 13·14·15 통합 커밋)**
 
 ```bash
 git add was/src/main/java/com/celfit/was/monitoring/BrandReadRepository.java \
@@ -2964,6 +2996,14 @@ git add was/src/main/java/com/celfit/was/monitoring/BrandReadRepository.java \
         was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandPostAssembler.java \
         was/src/test/java/com/celfit/was/v1/brandmonitoring/BrandPostAssemblerTest.java
 git commit -m "feat(was): 브랜드 게시물 응답에 광고 표기 판정·시딩 계정 필드 배선"
+```
+
+실제 커밋(부수 파일 포함, 위 적응 1~3): SHA `a7853a5d`.
+
+이후 코디네이터 스펙 리뷰(병합 경로 결함, 적응 4) 반영 후속 커밋:
+
+```bash
+git commit -m "fix(was): direct·tagged 병합 시 광고 판정 필드 승격 — 배지 은닉 방지"
 ```
 
 ---

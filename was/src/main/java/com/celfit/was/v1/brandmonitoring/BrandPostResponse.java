@@ -64,9 +64,27 @@ public record BrandPostResponse(
 	/**
 	 * 협찬 판정만 교체한 사본 — shortcode 병합에서 direct 본체를 유지한 채 tagged의
 	 * {@code is_paid_partnership} 관측만 승격시키는 데 쓴다(정보 손실 방지, 스펙 §6-1).
-	 * 광고 표기 필드는 tagged 전용 정보라 direct에는 애초에 값이 없으므로 이 사본에서도 유지한다.
+	 * 광고 표기 필드는 이 메서드로는 건드리지 않는다(승격은 {@link #withAdFields}가 별도로 맡는다) —
+	 * direct에는 이 필드들의 산지가 애초에 없으므로 겹치는 tagged가 있으면 반드시 승격해야 한다.
 	 */
 	public BrandPostResponse withSponsorship(String sponsorship, Boolean isPaidPartnership) {
+		return new BrandPostResponse(id, brandAccountId, source, postUrl, shortcode, contentType, takenAt,
+				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
+				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
+				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
+				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
+				adDisclosure, adViolations, adEvidence, seededAuthor);
+	}
+
+	/**
+	 * 광고 표기 판정 4필드만 교체한 사본 — shortcode 병합에서 direct 본체를 유지한 채 tagged의
+	 * 판정값만 승격시키는 데 쓴다({@link #withSponsorship}과 같은 관용구, 정보 손실 방지 —
+	 * 코디네이터 스펙 리뷰 반영). direct 산지엔 이 필드들의 원천(brand_post_meta)이 없으므로
+	 * tagged 값이 항상 정본이다 — 토글 off로 tagged 쪽이 이미 중립값(null/빈 목록/false)이면
+	 * 승격해도 무해하다(별도 분기 불필요).
+	 */
+	public BrandPostResponse withAdFields(String adDisclosure, List<String> adViolations,
+			List<AdEvidence> adEvidence, boolean seededAuthor) {
 		return new BrandPostResponse(id, brandAccountId, source, postUrl, shortcode, contentType, takenAt,
 				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
