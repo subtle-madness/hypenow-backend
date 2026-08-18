@@ -32,8 +32,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class CrawlExecutor {
 
-    /** notFound — 404로 판명된 대상 username(계정 소멸). 호출자가 소프트 딜리트한다. */
-    public record Execution(Long runId, List<Map<String, Object>> items, List<String> notFound) {
+    /**
+     * notFound — 404로 판명된 대상 username(계정 소멸). 호출자가 소프트 딜리트한다.
+     * confirmedEmpty — 자체·Hiker 폴백 양쪽 모두 빈 응답으로 확인된 username(ApifyResult 참조).
+     */
+    public record Execution(Long runId, List<Map<String, Object>> items, List<String> notFound,
+                            List<String> confirmedEmpty) {
+        public Execution(Long runId, List<Map<String, Object>> items, List<String> notFound) {
+            this(runId, items, notFound, List.of());
+        }
         public Execution(Long runId, List<Map<String, Object>> items) {
             this(runId, items, List.of());
         }
@@ -76,7 +83,7 @@ public class CrawlExecutor {
             if (job.archivesRunItems()) {
                 archive(run.getId(), result.items());
             }
-            return new Execution(run.getId(), result.items(), result.notFound());
+            return new Execution(run.getId(), result.items(), result.notFound(), result.confirmedEmpty());
         } catch (ApifyException e) {
             // 실패해도 이미 과금된 요청은 남긴다 — ApifyResult를 못 받는 경로라 실측 카운터가
             // 유일한 산지다.
