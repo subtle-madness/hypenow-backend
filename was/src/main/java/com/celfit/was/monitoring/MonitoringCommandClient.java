@@ -129,6 +129,39 @@ public class MonitoringCommandClient {
 				.retrieve().toBodilessEntity());
 	}
 
+	/** 시딩 계정 조회(monitoring BrandController §6 프록시) — 브랜드가 등록한 협업 인플루언서 목록. */
+	public List<String> getSeededAccounts(String username) {
+		SeededAccountsBody body = exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/seeded-accounts", username)
+				.retrieve().body(SeededAccountsBody.class));
+		return body == null || body.usernames() == null ? List.of() : body.usernames();
+	}
+
+	/** 시딩 계정 전체 교체 — usernames는 monitoring이 정규화(trim·선행 @ 제거·소문자·중복 제거) 후 저장. */
+	public void putSeededAccounts(String username, List<String> usernames) {
+		exchange(() -> restClient.put().uri("/api/brands/{username}/seeded-accounts", username)
+				.body(new SeededAccountsBody(usernames)).retrieve().toBodilessEntity());
+	}
+
+	/** 시딩 계정 단건·다건 추가 — 무해한 no-op(빈 목록 허용). */
+	public void addSeededAccounts(String username, List<String> usernames) {
+		exchange(() -> restClient.post().uri("/api/brands/{username}/seeded-accounts", username)
+				.body(new SeededAccountsBody(usernames)).retrieve().toBodilessEntity());
+	}
+
+	/** 시딩 계정 단건 삭제 — 없어도 204(멱등). */
+	public void deleteSeededAccount(String username, String seededUsername) {
+		exchange(() -> restClient.delete()
+				.uri("/api/brands/{username}/seeded-accounts/{seededUsername}", username, seededUsername)
+				.retrieve().toBodilessEntity());
+	}
+
+	/** 시딩 계정 전체 삭제. */
+	public void deleteAllSeededAccounts(String username) {
+		exchange(() -> restClient.delete().uri("/api/brands/{username}/seeded-accounts", username)
+				.retrieve().toBodilessEntity());
+	}
+
 	private <T> T exchange(Supplier<T> call) {
 		try {
 			return call.get();
@@ -172,5 +205,9 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
 	record HashtagTagsBody(List<String> tags) {
+	}
+
+	/** monitoring BrandController.SeededAccountsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
+	record SeededAccountsBody(List<String> usernames) {
 	}
 }
