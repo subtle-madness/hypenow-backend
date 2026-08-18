@@ -560,6 +560,335 @@
       ]
     },
     {
+      "id": 308,
+      "type": "stat",
+      "title": "결과 미확정 등록 항목",
+      "description": "등록 항목(계정/URL) 중 성공·중복·취소 어느 결과로도 안 끝난 건수. 정상 상태는 0 — 1건이라도 있으면 처리 실패나 대기 상태로 방치된 항목이 있다는 뜻. 전역 시간 필터 미적용(상태 기반 잔여 목록이라 발생 시점과 무관하게 전부 센다).",
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registration_entries WHERE result NOT IN ('success', 'duplicate', 'canceled')"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 309,
+      "type": "table",
+      "title": "└ 결과 미확정 등록 항목 상세",
+      "description": "위 Stat이 0보다 클 때 확인하는 상세 목록 — 어떤 입력값이 어떤 사유로 미확정 상태인지. 전역 시간 필터 미적용.",
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT e.input, e.kind, e.result, e.reason_code,\n       EXTRACT(EPOCH FROM (now() - r.requested_at))::bigint AS elapsed_seconds\nFROM app.monitoring_registration_entries e\nJOIN app.monitoring_registrations r ON r.id = e.registration_id\nWHERE e.result NOT IN ('success', 'duplicate', 'canceled')\nORDER BY r.requested_at"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "elapsed_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "경과시간"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1800
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 303,
+      "type": "row",
+      "title": "외부 의존 실패 — Hiker·IG",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": []
+    },
+    {
+      "id": 304,
+      "type": "stat",
+      "title": "Hiker 402 (잔액 소진)",
+      "description": "1건이라도 뜨면 사람이 충전해야 한다. 08-10에 이 상태로 브랜드 스윕 4건이 collecting에 고착했다.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "sum(count_over_time({service=~\"crawler|monitoring\"} |~ `(?:HTTP|Hiker) 402` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 305,
+      "type": "stat",
+      "title": "IG 401 (IP 차단)",
+      "description": "요청 폭주로 인한 차단 신호. 07-24에 similar 잡 대량 유입 → 401 전면 실패 전례가 있다.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 31
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "sum(count_over_time({service=~\"crawler|monitoring\"} |~ `(?:HTTP|Hiker) 401` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 306,
+      "type": "timeseries",
+      "title": "HTTP 상태코드별 실패",
+      "description": "IG·Hiker 응답 코드를 로그 본문에서 추출한다(`HTTP 401`·`Hiker 404` 형태). 상단 $svc 변수와 무관하게 crawler·monitoring 고정이다.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{code}}",
+          "expr": "sum by (code) (count_over_time({service=~\"crawler|monitoring\", level=~\"WARN|ERROR\"} |~ `(?:HTTP|Hiker) [0-9]{3}` | regexp `(?:HTTP|Hiker) (?P<code>[0-9]{3})` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 307,
+      "type": "table",
+      "title": "크롤 실패 로거 Top 15 (WARN 포함)",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (logger) (count_over_time({service=~\"crawler|monitoring\", level=~\"WARN|ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
+        }
+      ]
+    },
+    {
       "id": 200,
       "type": "row",
       "title": "비용 — Hiker 콜은 어디로 나가나",
@@ -568,7 +897,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 40
       },
       "panels": []
     },
@@ -581,7 +910,7 @@
         "h": 9,
         "w": 14,
         "x": 0,
-        "y": 23
+        "y": 41
       },
       "datasource": {
         "type": "postgres",
@@ -654,7 +983,7 @@
         "h": 9,
         "w": 10,
         "x": 14,
-        "y": 23
+        "y": 41
       },
       "datasource": {
         "type": "postgres",
@@ -731,7 +1060,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 50
       },
       "panels": []
     },
@@ -744,7 +1073,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 33
+        "y": 51
       },
       "datasource": {
         "type": "postgres",
@@ -807,7 +1136,7 @@
         "h": 5,
         "w": 8,
         "x": 8,
-        "y": 33
+        "y": 51
       },
       "datasource": {
         "type": "postgres",
@@ -870,7 +1199,7 @@
         "h": 5,
         "w": 8,
         "x": 16,
-        "y": 33
+        "y": 51
       },
       "datasource": {
         "type": "postgres",
@@ -933,7 +1262,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 38
+        "y": 56
       },
       "datasource": {
         "type": "postgres",

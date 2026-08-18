@@ -63,8 +63,8 @@
       },
       "links": [
         {
-          "title": "에러 대시보드로",
-          "url": "/d/hypenow-errors"
+          "title": "인프라 대시보드로",
+          "url": "/d/hypenow-infra"
         }
       ],
       "fieldConfig": {
@@ -72,8 +72,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "에러 대시보드로",
-              "url": "/d/hypenow-errors"
+              "title": "인프라 대시보드로",
+              "url": "/d/hypenow-infra"
             }
           ],
           "mappings": [
@@ -154,8 +154,8 @@
       },
       "links": [
         {
-          "title": "에러 대시보드로",
-          "url": "/d/hypenow-errors"
+          "title": "인프라 대시보드로",
+          "url": "/d/hypenow-infra"
         }
       ],
       "fieldConfig": {
@@ -163,8 +163,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "에러 대시보드로",
-              "url": "/d/hypenow-errors"
+              "title": "인프라 대시보드로",
+              "url": "/d/hypenow-infra"
             }
           ],
           "mappings": [
@@ -243,8 +243,8 @@
       },
       "links": [
         {
-          "title": "에러 대시보드로",
-          "url": "/d/hypenow-errors"
+          "title": "모니터링 대시보드로",
+          "url": "/d/hypenow-monitoring"
         }
       ],
       "fieldConfig": {
@@ -252,8 +252,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "에러 대시보드로",
-              "url": "/d/hypenow-errors"
+              "title": "모니터링 대시보드로",
+              "url": "/d/hypenow-monitoring"
             }
           ],
           "mappings": [
@@ -332,8 +332,8 @@
       },
       "links": [
         {
-          "title": "에러 대시보드로",
-          "url": "/d/hypenow-errors"
+          "title": "모니터링 대시보드로",
+          "url": "/d/hypenow-monitoring"
         }
       ],
       "fieldConfig": {
@@ -341,8 +341,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "에러 대시보드로",
-              "url": "/d/hypenow-errors"
+              "title": "모니터링 대시보드로",
+              "url": "/d/hypenow-monitoring"
             }
           ],
           "mappings": [
