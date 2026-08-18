@@ -1,17 +1,28 @@
 package com.celfit.monitoring.web;
 
 import com.celfit.monitoring.domain.BrandStatus;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
+import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandHashtagTags;
 import com.celfit.monitoring.service.BrandRegistrationService;
+import com.celfit.monitoring.service.ValidationException;
 import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandLegacyHistoryCopier;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSeededAccountRepository;
+import com.celfit.monitoring.store.TaggedPostRepository;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -64,6 +75,17 @@ public class BrandController {
 	public record HashtagTagsBody(List<String> tags) {}
 
 	/**
+	 * direct 등록 요청(2026-08-18 direct 통합 §2-2·§4-2). registeredAt·importLegacyHistory는 이관
+	 * 잡(mode=import) 전용 — 일반 유저 등록(was 실행기)은 둘 다 비운다(등록 시각은 now(), 레거시
+	 * 이력 없음).
+	 */
+	public record DirectPostRegisterRequest(String shortCode, OffsetDateTime registeredAt,
+			Boolean importLegacyHistory) {}
+
+	/** direct 등록 API 응답(201 신규·200 멱등 공용 셰이프). */
+	public record DirectPostResponse(String shortCode, String authorUsername, Instant takenAt, String contentType) {}
+
+	/**
 	 * 시딩(협업) 계정 목록(유저 관리 API, 스펙 §6) — GET 응답·PUT 요청 바디 공용, 태그·해시태그와 같은
 	 * 계약 모양. usernames는 정규화(trim·선행 {@code @} 제거·소문자·blank 제거·중복 제거) 후 저장한다
 	 * — 태그의 선행 {@code #} 제거와 같은 이유로, 유저가 "@handle" 형태로 입력해도 시딩 조인이
@@ -71,16 +93,26 @@ public class BrandController {
 	 */
 	public record SeededAccountsBody(List<String> usernames) {}
 
+	private static final Logger log = LoggerFactory.getLogger(BrandController.class);
+
 	private final BrandRegistrationService service;
 	private final BrandRepository brands;
 	private final BrandHashtagRepository hashtags;
+	private final TaggedPostRepository taggedPosts;
+	private final BrandDirectCollectService directCollect;
+	private final BrandLegacyHistoryCopier legacyHistoryCopier;
 	private final BrandSeededAccountRepository seededAccounts;
 
 	public BrandController(BrandRegistrationService service, BrandRepository brands,
-			BrandHashtagRepository hashtags, BrandSeededAccountRepository seededAccounts) {
+			BrandHashtagRepository hashtags, TaggedPostRepository taggedPosts,
+			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier,
+			BrandSeededAccountRepository seededAccounts) {
 		this.service = service;
 		this.brands = brands;
 		this.hashtags = hashtags;
+		this.taggedPosts = taggedPosts;
+		this.directCollect = directCollect;
+		this.legacyHistoryCopier = legacyHistoryCopier;
 		this.seededAccounts = seededAccounts;
 	}
 
@@ -100,6 +132,100 @@ public class BrandController {
 			case CLOSED, ALREADY_CLOSED -> ResponseEntity.noContent().build();
 			case NOT_FOUND -> ResponseEntity.notFound().build();
 		};
+	}
+
+	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §2-2·§2-4·§4-2, was 실행기 진입점) ----------
+
+	/**
+	 * direct 게시물 등록 — 단건 콜로 즉시 수집·보강하는 동기 경로(설계 §2-2). 경로 변수를
+	 * {@code {username}}이 아니라 {@code {brandId}}로 두는 이유: was는 {@code
+	 * app.brand_monitorings.brand_id}를 들고 있고 username은 브랜드 계정명 변경 시 흔들린다 — 기존
+	 * 해시태그 API가 {@code {username}}을 쓰는 것과 의도적으로 다르다.
+	 *
+	 * <p>이미 {@code direct_registered_at}이 있는 행이면(멱등 재요청) 단건 콜을 다시 내지 않고 저장된
+	 * 값으로 200을 돌려준다 — was 실행기의 stale 복구 재시도가 매번 새 콜을 유발하면 안 된다.
+	 * {@code importLegacyHistory=true}면 신규 수집 전에 레거시 이력을 먼저 복사한다(설계 §4-3,
+	 * 이관 잡 전용 — {@link BrandLegacyHistoryCopier} 참조). 처리는 동기다(최대 5콜 ≈ 7초).
+	 *
+	 * <p>에러 바디는 계약 §2 어휘({@code {code, message}})를 반드시 채운다 — 비우면 was
+	 * {@code MonitoringCommandClient.exchange}가 코드 없는 응답으로 오인해
+	 * {@code MonitoringUnavailableException}(503)으로 잘못 승격한다(08-11 실측, 클래스 주석 참조
+	 * 관용구 재사용).
+	 */
+	@PostMapping("/{brandId}/direct-posts")
+	public ResponseEntity<?> registerDirectPost(@PathVariable long brandId,
+			@RequestBody(required = false) DirectPostRegisterRequest req) {
+		Optional<BrandRow> row = activeBrandById(brandId);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		String shortCode = req == null ? null : req.shortCode();
+		if (shortCode == null || shortCode.isBlank()) {
+			throw new ValidationException("shortCode는 필수입니다.");
+		}
+		BrandRow brand = row.get();
+
+		Optional<TaggedPostRepository.DirectSnapshot> existing = taggedPosts.findDirectSnapshot(brand.id(), shortCode);
+		if (existing.isPresent()) {
+			return ResponseEntity.ok(toResponse(existing.get()));
+		}
+
+		if (Boolean.TRUE.equals(req.importLegacyHistory())) {
+			legacyHistoryCopier.copy(shortCode);
+		}
+		Instant registeredAt = req.registeredAt() != null ? req.registeredAt().toInstant() : Instant.now();
+		try {
+			PostInfo post = directCollect.collectAndEnrich(brand, shortCode, registeredAt);
+			return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(post));
+		} catch (SubjectNotFoundException e) {
+			// 전역 SubjectNotFoundException 핸들러는 SUBJECT_NOT_FOUND를 쓴다 — 여기는 계획 계약대로
+			// POST_NOT_FOUND로 더 구체화해야 해서 로컬에서 먼저 잡는다.
+			log.info("direct 게시물 부재: {}", e.getMessage());
+			return postNotFound();
+		} catch (PostShapeUnsupportedException e) {
+			log.info("direct 게시물 셰이프 이상: {}", e.getMessage());
+			return postUnsupported();
+		}
+		// PrivateAccountException은 잡지 않는다 — 전역 핸들러가 이미 422 PRIVATE_ACCOUNT를 내려
+		// 계획 계약과 그대로 일치한다.
+	}
+
+	/**
+	 * direct 게시물 취소 — 매핑 삭제가 아니라 direct 표식 해제(설계 §2-4). 3분기 전부 204(멱등):
+	 * 행 없음(둘 다 no-op) / 겹침(tag_detected_at 있음 → direct 표식만 해제, tagged로 잔존) /
+	 * 순수 direct(tag_detected_at 없음 → 행 삭제, 목록에서 즉시 제거). {@code brand_post_snapshot}·
+	 * {@code brand_post_meta}·{@code brand_post_comment}는 게시물 전역 자산이라 지우지 않는다
+	 * ("윈도우 이탈 후에도 영구 보존" 규칙 — 재등록 시 이력이 그대로 되살아난다).
+	 */
+	@DeleteMapping("/{brandId}/direct-posts/{shortCode}")
+	public ResponseEntity<Void> deleteDirectPost(@PathVariable long brandId, @PathVariable String shortCode) {
+		if (!taggedPosts.deleteIfDirectOnly(brandId, shortCode)) {
+			taggedPosts.clearDirect(brandId, shortCode);
+		}
+		return ResponseEntity.noContent().build();
+	}
+
+	private static DirectPostResponse toResponse(PostInfo post) {
+		return new DirectPostResponse(post.shortCode(), post.username(),
+				post.takenAt() == null ? null : Instant.ofEpochSecond(post.takenAt()), post.contentType());
+	}
+
+	private static DirectPostResponse toResponse(TaggedPostRepository.DirectSnapshot snapshot) {
+		return new DirectPostResponse(snapshot.shortCode(), snapshot.authorUsername(), snapshot.takenAt(),
+				snapshot.contentType());
+	}
+
+	private Optional<BrandRow> activeBrandById(long brandId) {
+		return brands.findById(brandId).filter(row -> row.status() == BrandStatus.ACTIVE);
+	}
+
+	private static ResponseEntity<ApiError> postNotFound() {
+		return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ApiError("POST_NOT_FOUND", "게시물을 찾을 수 없습니다."));
+	}
+
+	private static ResponseEntity<ApiError> postUnsupported() {
+		return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT)
+				.body(new ApiError("POST_UNSUPPORTED", "이 게시물은 등록할 수 없습니다."));
 	}
 
 	/** 활성 태그 조회(유저 관리 API) — 브랜드 미존재·비ACTIVE는 404. */

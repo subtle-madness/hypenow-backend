@@ -14,8 +14,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -215,7 +217,7 @@ class AdDisclosureJudgeServiceTest {
 		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "무설명 캡션", "FEED", null, true));
 		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
 
-		service.backfillUnjudged(10);
+		service.backfillUnjudged();
 
 		assertThat(extractor.calls).isEmpty();
 		assertThat(repo.written.get("AAA").verdict()).isEqualTo("DISCLOSED");
@@ -231,7 +233,7 @@ class AdDisclosureJudgeServiceTest {
 				new BrandPostMetaRepository.UnjudgedPost("R1", "", "REELS", null, null));
 		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
 
-		service.backfillUnjudged(10);
+		service.backfillUnjudged();
 
 		assertThat(repo.written.get("F1").verdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(repo.written.get("R1").verdict()).isEqualTo("UNCERTAIN");
@@ -245,23 +247,9 @@ class AdDisclosureJudgeServiceTest {
 				"https://video.example/x.mp4", null));
 		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
 
-		service.backfillUnjudged(10);
+		service.backfillUnjudged();
 
 		assertThat(repo.written.get("V1").verdict()).isEqualTo("UNCERTAIN");
-	}
-
-	@Test
-	void 백필_limit이_0이하면_findUnjudged를_호출하지_않는다() {
-		FakeRepo repo = new FakeRepo();
-		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "캡션", "FEED", null, null));
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
-
-		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged(0);
-
-		assertThat(outcome.processed()).isZero();
-		assertThat(outcome.remaining()).isZero();
-		assertThat(repo.findUnjudgedCalls).isZero();
-		assertThat(repo.written).isEmpty();
 	}
 
 	@Test
@@ -269,7 +257,7 @@ class AdDisclosureJudgeServiceTest {
 		FakeRepo repo = new FakeRepo();   // unjudged 기본값 빈 목록 → countUnjudged() 0
 		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
 
-		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged(10);
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
 
 		assertThat(outcome.remaining()).isZero();
 		assertThat(outcome.processed()).isZero();
@@ -277,19 +265,49 @@ class AdDisclosureJudgeServiceTest {
 		assertThat(repo.findUnjudgedCalls).isZero();
 	}
 
+	/**
+	 * 상한 제거(2026-08-18) 계약 — limit 파라미터가 없다. 잔량이 배치 크기(테스트에서는 2로
+	 * 주입)보다 많아도 findUnjudged를 반복 호출해 전량 처리한다. FakeRepo.findUnjudged는 이미
+	 * written된 short_code를 제외하므로, 매 배치가 성공하면 다음 배치가 자연히 새 항목을 만난다
+	 * (실 DB의 {@code ad_verdict IS NULL} 재조회 동형).
+	 */
 	@Test
-	void 백필_remaining은_countUnjudged_processed는_findUnjudged_건수() {
+	void 백필_상한_없이_배치를_반복해_전량_처리한다() {
 		FakeRepo repo = new FakeRepo();
 		repo.unjudged = List.of(
 				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
 				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null));
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
+				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F4", "", "FEED", null, null),
+				new BrandPostMetaRepository.UnjudgedPost("F5", "", "FEED", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run, 2);
 
-		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged(2);
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
 
-		assertThat(outcome.remaining()).isEqualTo(3);   // 상한과 무관한 전체 잔량
-		assertThat(outcome.processed()).isEqualTo(2);   // limit에 잘린 처리 건수
+		assertThat(outcome.remaining()).isEqualTo(5);    // 시작 시점 전체 잔량
+		assertThat(outcome.processed()).isEqualTo(5);    // 상한 없이 전량 처리
+		assertThat(repo.findUnjudgedCalls).isEqualTo(3); // 2+2+1건씩 3배치
+		assertThat(repo.written).hasSize(5);
+	}
+
+	/**
+	 * 영구 실패 방어(2026-08-18) — 한 배치가 통째로 계속 실패해도(verdict NULL 유지) 같은
+	 * short_code를 이번 호출 안에서 무한히 재조회하지 않는다. attempted 집합에 걸려 fresh가
+	 * 비면 루프를 종료한다.
+	 */
+	@Test
+	void 백필_영구_실패_배치는_이번_호출에서_무한_재조회되지_않는다() {
+		FakeExtractor extractor = new FakeExtractor();
+		extractor.fail = true;
+		FakeRepo repo = new FakeRepo();
+		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "체험단 후기", "FEED", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 500);
+
+		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
+
+		assertThat(repo.written).doesNotContainKey("AAA");
+		assertThat(outcome.processed()).isEqualTo(1);   // 시도는 했다(성공은 아님)
+		assertThat(repo.findUnjudgedCalls).isEqualTo(2); // 1회차(시도) + 2회차(전부 재조회, fresh 없음 → 종료)
 	}
 
 	@Test
@@ -302,10 +320,54 @@ class AdDisclosureJudgeServiceTest {
 				new BrandPostMetaRepository.UnjudgedPost("AAA", "체험단 후기", "FEED", null, null));   // LLM 호출 → 실패
 		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
 
-		service.backfillUnjudged(10);
+		service.backfillUnjudged();
 
 		assertThat(repo.written.get("F1").verdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(repo.written).doesNotContainKey("AAA");
+	}
+
+	/**
+	 * 동시 실행 방어(2026-08-18) — 기동 백필과 스윕 말미 백필이 겹칠 수 있어 AtomicBoolean 가드를
+	 * 둔다. 첫 호출이 countUnjudged() 안에서 대기하는 동안 두 번째 호출은 즉시 (0,0)을 반환하고
+	 * findUnjudged를 전혀 호출하지 않아야 한다.
+	 */
+	@Test
+	void 백필_이미_실행_중이면_두번째_호출은_즉시_스킵된다() throws Exception {
+		CountDownLatch firstEnteredCount = new CountDownLatch(1);
+		CountDownLatch releaseFirst = new CountDownLatch(1);
+		FakeRepo repo = new FakeRepo() {
+			@Override
+			public int countUnjudged() {
+				firstEnteredCount.countDown();
+				try {
+					releaseFirst.await(5, TimeUnit.SECONDS);
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+				return super.countUnjudged();
+			}
+		};
+		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "", "FEED", null, null));
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run);
+
+		ExecutorService pool = Executors.newSingleThreadExecutor();
+		try {
+			Future<AdDisclosureJudgeService.BackfillOutcome> firstCall = pool.submit(service::backfillUnjudged);
+			assertThat(firstEnteredCount.await(5, TimeUnit.SECONDS)).as("첫 호출이 countUnjudged에 진입해야 한다").isTrue();
+
+			AdDisclosureJudgeService.BackfillOutcome second = service.backfillUnjudged();
+			assertThat(second.processed()).isZero();
+			assertThat(second.remaining()).isZero();
+			assertThat(repo.findUnjudgedCalls).isZero();   // 가드에 걸려 findUnjudged 자체가 안 나간다
+
+			releaseFirst.countDown();
+			AdDisclosureJudgeService.BackfillOutcome first = firstCall.get(5, TimeUnit.SECONDS);
+			assertThat(first.processed()).isEqualTo(1);
+			assertThat(repo.written).containsKey("AAA");
+		} finally {
+			pool.shutdown();
+			assertThat(pool.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+		}
 	}
 
 	private static String md5(String s) {
@@ -364,7 +426,8 @@ class AdDisclosureJudgeServiceTest {
 		}
 	}
 
-	private static final class FakeRepo extends BrandPostMetaRepository {
+	/** 동시 실행 방어 테스트가 익명 서브클래스로 countUnjudged()를 가로채야 해서 final이 아니다. */
+	private static class FakeRepo extends BrandPostMetaRepository {
 		final Map<String, BrandPostMetaRepository.AdJudgmentState> state = new HashMap<>();
 		final Map<String, AdVerdictResult> written = new ConcurrentHashMap<>();
 		List<BrandPostMetaRepository.UnjudgedPost> unjudged = List.of();
@@ -393,16 +456,22 @@ class AdDisclosureJudgeServiceTest {
 			written.put(shortCode, result);
 		}
 
+		/** 실 DB 동형화 — {@code written}(판정 기록됨)에 이미 있는 short_code는 더 이상 미판정이
+		 * 아니므로 후보에서 빠진다. 이걸 반영해야 다중 배치 루프가 실 {@code ad_verdict IS NULL}
+		 * 재조회처럼 자연히 수렴한다(성공한 항목이 다음 조회에서 빠지고, 그만큼 뒤에 있던 새
+		 * 항목이 LIMIT 윈도우에 들어온다). */
 		@Override
 		public List<BrandPostMetaRepository.UnjudgedPost> findUnjudged(int limit) {
 			findUnjudgedCalls++;
-			return unjudged.size() > limit ? unjudged.subList(0, limit) : unjudged;
+			List<BrandPostMetaRepository.UnjudgedPost> remaining =
+					unjudged.stream().filter(m -> !written.containsKey(m.shortCode())).toList();
+			return remaining.size() > limit ? remaining.subList(0, limit) : remaining;
 		}
 
 		@Override
 		public int countUnjudged() {
 			countUnjudgedCalls++;
-			return unjudged.size();
+			return (int) unjudged.stream().filter(m -> !written.containsKey(m.shortCode())).count();
 		}
 	}
 }

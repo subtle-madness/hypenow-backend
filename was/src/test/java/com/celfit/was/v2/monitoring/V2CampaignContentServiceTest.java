@@ -20,7 +20,7 @@ import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringItemRow;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
-import com.celfit.was.v1.brandmonitoring.BrandPostAssembler.TaggedScope;
+import com.celfit.was.v1.brandmonitoring.BrandPostAssembler.BrandPostScope;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.ItemStatus;
@@ -337,7 +337,7 @@ class V2CampaignContentServiceTest {
 				service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30).body().results().get(0);
 
 		assertThat(result.result()).isEqualTo("failed");
-		then(brandPostAssembler).should(never()).assembleTagged(any(), anyBoolean(), any());
+		then(brandPostAssembler).should(never()).assembleBrandPosts(any(), anyBoolean(), any());
 	}
 
 	@Test
@@ -550,7 +550,7 @@ class V2CampaignContentServiceTest {
 	private void givenTaggedPosts(long brandId, BrandPostResponse... posts) {
 		BrandAccountRow account = account(brandId);
 		given(brandReadRepository.findAccount(brandId)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleTagged(account, true, TaggedScope.ALL)).willReturn(List.of(posts));
+		given(brandPostAssembler.assembleBrandPosts(account, true, BrandPostScope.ALL)).willReturn(List.of(posts));
 	}
 
 	/** 브랜드 연결 1건 — 이 테스트가 보는 필드는 brandId·accountType뿐이다. */

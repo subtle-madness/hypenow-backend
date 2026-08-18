@@ -146,6 +146,52 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 (`findTaggedPostsInWindow` 전량 / `findEnrichedTaggedPostsInWindow` 정산분)로 나누고
 `TaggedScope{ENRICHED_ONLY, ALL}`를 **기본값 없는 필수 인자**로 둬 호출부가 매번 의도를 밝힌다.
 
+브랜드 direct 게시물 파이프라인 통합(2026-08-18 — **구현 완료(E1 monitoring·E2 was), 이관(M)
+미실행**, [spec 2026-08-18](../superpowers/specs/2026-08-18-brand-direct-pipeline-unification-design.md) ·
+[plan(아카이브)](../superpowers/plans/archive/2026-08-18-brand-direct-pipeline-unification-plan.md)):
+브랜드 직접 등록(direct) 게시물을 레거시 추적 파이프라인(`app.monitoring_items` → monitoring
+`target`/`post_snapshot`)에서 떼어내 이 트랙의 브랜드 수집 파이프라인(`brand_tagged_post`/
+`brand_post_*`)으로 합류시켰다. `brand_tagged_post`에 `source` 단일 enum 대신 시각 컬럼 2개
+(`tag_detected_at`·`direct_registered_at`, `V20260818040742__brand_tagged_post_direct_source.sql`)를
+추가하고 `source`는 `direct_registered_at IS NOT NULL` 파생값으로 둔다 — 태그 발견과 직접 등록이
+한 게시물에서 겹칠 수 있고 PK가 `(brand_id, short_code)` 하나뿐이라 단일 값으로 접으면 취소 시
+태그 발견 사실을 잃기 때문이다. 열거 깊이 판정(`trackedPosts`·`touchCrawledDepth`)에는
+`tag_detected_at IS NOT NULL` 가드를 추가해 direct-only 행이 열거 깊이를 오염시키지 않게 했고,
+신규 `BrandDirectCollectService`가 단건 콜로 direct 게시물을 등록·야간 스윕 2단계(`sweepDirect`)로
+수집한다("단건 게시물 콜 전면 금지"(08-06·08-09) 결정과 무충돌 — 그 결정은 열거로 이미 얻은
+게시물에 콜을 덧붙이는 제안을 기각한 것이고, direct 게시물은 애초에 열거에 실리지 않는다).
+monitoring에 명령 API 2종(`POST`/`DELETE /api/brands/{brandId}/direct-posts`) 신설.
+
+was는 레거시 `monitoring_registrations` 위임·`resolveLazyMappingBrand`(PP 트랙 후속 #1 참조)·seq
+인덱스 매칭을 걷어내고 전용 등록 테이블(`app.brand_post_registrations`+`entries`,
+`V20260818043332__brand_post_unification.sql`)과 전용 실행기(`BrandDirectRegistrationExecutor`,
+5분 stale 복구 + 24시간 정산)로 재작성했다. `BrandPostAssembler`가 `brandPost()` 한 벌로 조립을
+통합(`directPost`/`mergeByShortcode`/`promoteSponsorship` 삭제) — 겹침 게시물이 direct 셰이프로
+영구 고정되던 비대칭, 창 밖 tagged 데드엔드 우회의 "의도된 대가"(둘 다 아래 미결·후속에서 취소선
+처리)가 소멸했다. 캠페인 연결은 `app.brand_post_campaigns` N:M으로 옮겨 tagged에도 열었다(부착·
+해제 API는 별도 트랙). 배포 순서는 **monitoring → was 고정**(08-13과 같은 의존 — 역순이면 was가
+없는 컬럼을 조회해 브랜드 목록 전면 500). `:monitoring:test` 660개·`:was:test` 1387개 green.
+
+**이관(M)은 운영 미실행** — `app.brand_direct_posts.migrated_at`이 NULL인 행은 과도기 폴백
+(`assembleLegacyPending`)이 레거시 셰이프로 계속 조립해 얹으므로 배포 직후 화면은 현행과 동일하게
+보인다. 이관 잡(재수집 방식 — 링크 복제가 아니라 레거시 이력 복사 후 재수집으로 채움)은 구현
+완료·운영 미실행 — 실행 주체는 배포 후 별도 세션(M1 규모 확인 → 승인 → M2 실행 → M3 콜 증분 2주
+실측).
+
+**FE 통지 4건**: `trackingDays` 무시(검증 1~90은 유지) / `BrandPostResponse.trackingStatus` 항상
+`"tracking"` / `Entry.monitoringItemId` 항상 null(취소는 계약 v2.12 §8-2 그대로 4xx/204 어휘 유지)
+/ 성과 대시보드 direct 콘텐츠의 `item.id`가 숫자에서 `bt_<shortcode>`로 변경. 부수: 같은 브랜드
+타 유저 등록분이 목록에 보임(direct도 tagged와 같은 브랜드 스코프 공유로 승격), 180일 초과
+게시물 직접 등록은 스냅샷 1행만 남는다.
+
+**신규 미결(R1~R9, 설계 §7)**: R1 이관 대상 규모 미상(배포 전 확인 SQL 필요) · R2 다중 유저
+브랜드에서 취소 권한 완화(A 등록을 C가 취소 가능, 영향 브랜드 수 확인 필요) · R3 콜 증분이
+예상(0 이하)과 다를 가능성(2주 실측 필요) · R4 180일 초과 등록 UX 후퇴(FE 협의 필요) · R5 열거
+깊이 가드 누락 시 조용한 요청량 누수(테스트로만 방어) · R6 `cancel`의 무아카이브 hard delete
+(기존 결함, 이번에도 미해결) · R7 stale pending 정산(24시간 초과 → failed, 레거시 동형 이식
+완료) · R8 성과 대시보드 `statusCounts` 분포 변화(direct가 항상 tracking) · R9 레거시 이력 복사
+컬럼 동형성(구현 시 실제 DDL 대조 완료, 잡 SQL 주석에 기록). 실행 주체는 아래 미결·후속 참조.
+
 캡션 기반 광고 표기 판정(2026-08-18 — 구현 완료, 브랜치 `feat/brand-ad-disclosure`,
 [spec 2026-08-17](../superpowers/specs/2026-08-17-brand-ad-disclosure-design.md) ·
 [plan 2026-08-17](../superpowers/plans/archive/2026-08-17-brand-ad-disclosure.md)): 브랜드 태그 게시물
@@ -196,11 +242,15 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
     `NOT_DISCLOSED`로 오판정하지 않도록 방어.
   - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
 - **[expose 토글 켜기 전]**
-  - ~~180~365일치 one-shot 백필 경로~~ → **구현 완료(2026-08-18, 스펙 §7-1)**: 정기 스윕
-    재열거가 없는 구간(180일 초과)의 기존 게시물도 `BrandSweepJob`의 매일 밤 백필 단계
-    (`AdDisclosureJudgeService.backfillUnjudged`, 상한
-    `monitoring.brand.ad-disclosure.backfill-per-night` 기본 1000)가 잔량이 0에 수렴할 때까지
-    자동으로 채운다 — one-shot이 아니라 상시 수렴 메커니즘으로 대체(one-shot 스크립트 불필요).
+  - ~~180~365일치 one-shot 백필 경로~~ → **구현 완료(2026-08-18, 스펙 §7-1) → 08-18 재개정
+    (상한 제거·기동 즉시 실행)**: 정기 스윕 재열거가 없는 구간(180일 초과)의 기존 게시물은
+    앱 기동 완료 시 `AdDisclosureBackfillStartupRunner`가 별도 데몬 스레드에서
+    `AdDisclosureJudgeService.backfillUnjudged()`를 즉시 시작해 전량 처리한다(상한
+    없음 — 종전 `monitoring.brand.ad-disclosure.backfill-per-night` 설정 삭제, LLM 전용 풀
+    동시 4가 자연 속도 제한). 배포 직후 재고가 다음 야간 스윕을 기다리지 않고 바로 판정된다.
+    `BrandSweepJob`의 매일 밤 백필 훅은 유지되지만 역할이 "실패 잔량 재시도 안전망"으로
+    바뀌었다(같은 함수를 상한 없이 재호출) — 기동 백필과 겹치면 `AdDisclosureJudgeService`
+    내부 `AtomicBoolean` 가드가 이중 실행을 막는다.
   - verdict 분포·NULL 잔량을 확인하는 정본 스크립트(`monitoring/check/` 디렉토리에 추가) —
     "분석 잔여 몇 건" 류 질문에 즉석 쿼리로 오답하지 않도록 정본화(다른 정본 스크립트
     `analytics/check/pending.sh`와 같은 취지).
@@ -208,13 +258,32 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 - **[후속]**
   - 판정 로직과 join(시딩 계정 조인 등)을 분리하는 리팩터.
   - 시딩 계정 username 문자셋 검증(현재는 trim·`@` 제거·소문자화만, IG 유효 문자 검증은 없음).
-  - 백필 굶음 방어(08-18 리뷰): `findUnjudged`는 실패 카운트·백오프가 없어 **영구 실패 건수가
-    야간 상한(기본 1000)에 근접하면** limit 윈도우가 실패 재시도로만 채워져 나머지 백로그가
-    굶는다. 소수 실패는 자기 치유되므로 현재 규모에선 저위험 — 며칠 연속 잔여(remaining)가
-    줄지 않으면 이 시나리오를 의심하고 실패 격리(N회 실패 시 skip)를 추가할 것.
+  - ~~백필 굶음 방어~~ → **08-18 상한 제거로 시나리오 자체가 소멸**: 상한(야간 1000건)이 없어져
+    "영구 실패가 limit 윈도우를 잠식해 나머지 백로그가 굶는다"는 전제가 사라졌다. 남는 것은
+    영구 실패 건의 무한 재시도(매 호출마다 1회씩 재시도 후 배치 종료 — 서비스 코드 §7-1
+    "영구 실패 배치는 무한 재조회하지 않는다" 참조)뿐이고, 이는 LLM 비용이 소량 낭비되는
+    수준이라 무해하다.
 
 ## 미결·후속
 
+- ~~창 밖 tagged 등록이 DUPLICATE로 막혀 데드엔드가 되는 문제, "의도된 대가"로 수용~~(08-17
+  링크 레벨 표시 창) → **08-18 direct 파이프라인 통합으로 대가 없이 해소**: 창 밖 tagged를
+  직접 등록하면 `direct_registered_at`이 채워지고 direct 행은 표시 창 예외라 그 자리에서 바로
+  보인다.
+- ~~겹침 게시물(사진 태그+직접 등록)이 `mergeByShortcode`의 "direct 우선" 규칙으로 카드가 영구
+  direct 셰이프에 고정되는 문제~~(08-13 완결 배치 서빙 미정산 방어 근거) → **08-18 direct
+  파이프라인 통합으로 해소**: 조립 셰이프가 `brandPost()` 한 벌이 되며 "고정"이라는 개념 자체가
+  소멸.
+- **direct 파이프라인 통합 — 이관(M) 실행 대기**(08-18) — M1(운영 규모 확인 SQL, 설계 §7 R1) →
+  승인 → M2(이관 잡 실행) → M3(콜 증분 2주 실측)는 **배포 후 별도 세션**이 수행한다. 배포
+  직후에는 과도기 폴백이 레거시 셰이프를 그대로 얹으므로 이관 전까지 화면은 현행과 동일하다.
+- **direct 파이프라인 통합 — 신규 미결 R1~R9**(08-18, 설계 §7) — 위 본문 단락 참조. 특히
+  R2(다중 유저 브랜드 취소 권한 완화)는 배포 전 영향 브랜드 수 확인이 필요하고, R6(`cancel`
+  무아카이브 hard delete)은 기존 결함이 이번에도 미해결로 남는다.
+- **direct 파이프라인 통합 — contract(C) 단계는 다음 릴리스**(08-18) — 레거시 폴백 조립
+  (`assembleLegacyPending`) 제거, `app.brand_direct_posts.monitoring_item_id`·`migrated_at`
+  DROP, `brand_tagged_post.tag_detected_at` DEFAULT 제거. 참조 코드가 끊긴 뒤에만 가능(expand-
+  contract).
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
 - ~~`/v2/user/by/id` 응답 셰이프 라이브 미실측~~ → **실측 반영**(08-07): 파라미터명이 `user_id`가 아니라 `id`(422 실측 핫픽스 4ab01545). 응답 셰이프는 by/username 동형 확인.
 - ~~운영 크론 env 주입~~ → **가동 중**(08-07): KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차 확보. 서버 override 선주입분을 레포 `deploy/compose.yaml`로 정합(드리프트 해소).

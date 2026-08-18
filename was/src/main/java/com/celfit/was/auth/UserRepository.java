@@ -173,6 +173,11 @@ public class UserRepository {
 	 * (V20260811090500 — ArchiveTables.BRAND_DIRECT_POSTS 참고). users delete가 monitoring_items도
 	 * 함께 CASCADE로 지우므로, brand_direct_posts를 먼저 명시 삭제해두지 않으면 그 시점에 남아있는
 	 * 매핑 행이 FK 위반을 낸다 — saved 2종과 같은 이유로 순서 삭제 목록에 있다.
+	 *
+	 * <p>brand_post_registrations·brand_post_registration_entries·brand_post_campaigns(2026-08-18
+	 * direct 통합 §T13)는 셋 다 users CASCADE의 순정 자식이라(직접 또는 registrations를 거친 간접)
+	 * monitoring_campaigns류와 같은 위상이다 — ACCOUNT_DELETION_ORDER 루프가 이관만 하고, 실제
+	 * 삭제는 아래 USERS 행 삭제의 CASCADE가 담당한다(명시 DELETE 불필요).
 	 */
 	@Transactional
 	public void deleteAccount(long id) {

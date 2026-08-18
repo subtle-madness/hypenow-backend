@@ -152,4 +152,86 @@ class MonitoringCommandClientTest {
 				.isInstanceOfSatisfying(MonitoringApiException.class,
 						e -> assertThat(e.code()).isEqualTo("SHARE_LINK_UNRESOLVED"));
 	}
+
+	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §T7) ----------
+
+	@Test
+	void direct_등록_201_신규_수집_응답_파싱() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(jsonPath("$.shortCode").value("ABC123"))
+				.andExpect(jsonPath("$.registeredAt").doesNotExist())
+				.andExpect(jsonPath("$.importLegacyHistory").value(false))
+				.andRespond(withStatus(HttpStatus.CREATED).contentType(MediaType.APPLICATION_JSON)
+						.body("""
+								{ "shortCode": "ABC123", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+								  "contentType": "REELS" }
+								"""));
+
+		MonitoringCommandClient.DirectPostResult result = client.registerDirectPost(100L, "ABC123", null, false);
+
+		assertThat(result.shortCode()).isEqualTo("ABC123");
+		assertThat(result.authorUsername()).isEqualTo("creator");
+		assertThat(result.contentType()).isEqualTo("REELS");
+		server.verify();
+	}
+
+	@Test
+	void direct_등록_200_멱등_응답도_같은_셰이프로_파싱된다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withSuccess("""
+						{ "shortCode": "ABC123", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+						  "contentType": "REELS" }
+						""", MediaType.APPLICATION_JSON));
+
+		MonitoringCommandClient.DirectPostResult result = client.registerDirectPost(100L, "ABC123", null, false);
+
+		assertThat(result.shortCode()).isEqualTo("ABC123");
+	}
+
+	@Test
+	void direct_등록_404_POST_NOT_FOUND가_그대로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"POST_NOT_FOUND\", \"message\": \"게시물을 찾을 수 없습니다.\" }"));
+
+		assertThatThrownBy(() -> client.registerDirectPost(100L, "ABC123", null, false))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("POST_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
+	}
+
+	@Test
+	void direct_등록_422_에러_코드가_그대로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"PRIVATE_ACCOUNT\", \"message\": \"비공개 계정입니다.\" }"));
+
+		assertThatThrownBy(() -> client.registerDirectPost(100L, "ABC123", null, false))
+				.isInstanceOfSatisfying(MonitoringApiException.class,
+						e -> assertThat(e.code()).isEqualTo("PRIVATE_ACCOUNT"));
+	}
+
+	@Test
+	void direct_등록_바디_없는_5xx는_Unavailable() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+
+		assertThatThrownBy(() -> client.registerDirectPost(100L, "ABC123", null, false))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
+	@Test
+	void direct_취소_204는_바디_없이_성공한다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts/ABC123"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		client.deleteDirectPost(100L, "ABC123");
+
+		server.verify();
+	}
 }

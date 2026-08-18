@@ -72,9 +72,8 @@ monitoring:
       judge-model: gemini-3.1-flash-lite   # Tier2 문구 추출 모델(스펙 §5) — analytics 전 축과 통일
       concurrency: 4    # Tier2 LLM 전용 풀(enrichWorker와 분리 — 스펙 §7). LLM 지연이 보강 처리량을 잠식하지 않게 함
       enabled: true     # 판정 킬 스위치 — LLM 쿼터 장애 시 스윕 지연 방지용 독립 롤백 수단. GEMINI_API_KEY 제거는
-                        # 해시태그 판정까지 죽이므로 쓰지 말 것
-      backfill-per-night: 1000   # 미판정 잔여 백필(스펙 §7 개정, 08-18) 야간 상한 — 스윕 재열거 창(180일)
-                                 # 밖의 게시물도 이 경로로 판정에 흡수된다. 0=비활성(위 enabled와 별개 손잡이)
+                        # 해시태그 판정까지 죽이므로 쓰지 말 것. 기동 즉시 백필·야간 안전망 백필 둘 다 이 스위치로 끈다.
+                        # 백필은 08-18 상한 제거 개정으로 상한 설정이 없다 — 잔량 0까지 전량 처리(LLM 풀 동시 4가 자연 속도 제한)
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: https://generativelanguage.googleapis.com

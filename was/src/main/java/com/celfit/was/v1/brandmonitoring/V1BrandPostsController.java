@@ -135,7 +135,7 @@ public class V1BrandPostsController {
 		long brandId = parseAccountId(accountId);
 		requireOwnership(principal.getUserId(), brandId);
 		findAccountOrThrow(brandId);
-		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), brandId));
+		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(brandId));
 	}
 
 	/**

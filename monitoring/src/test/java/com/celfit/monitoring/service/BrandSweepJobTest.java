@@ -108,10 +108,9 @@ class BrandSweepJobTest {
 		}
 	}
 
-	/** 백필 스텁 — 호출 횟수·마지막 limit·주입한 실패를 관측한다. */
+	/** 백필 스텁(2026-08-18 상한 제거 개정) — 호출 횟수·주입한 실패를 관측한다. */
 	private static final class StubAdJudge extends AdDisclosureJudgeService {
 		int backfillCalls;
-		int lastLimit = -1;
 		BackfillOutcome next = new BackfillOutcome(0, 0);
 		RuntimeException failing;
 
@@ -120,9 +119,8 @@ class BrandSweepJobTest {
 		}
 
 		@Override
-		public BackfillOutcome backfillUnjudged(int limit) {
+		public BackfillOutcome backfillUnjudged() {
 			backfillCalls++;
-			lastLimit = limit;
 			if (failing != null) {
 				throw failing;
 			}
@@ -166,6 +164,23 @@ class BrandSweepJobTest {
 		}
 	}
 
+	private static final class StubDirectCollect extends BrandDirectCollectService {
+		final List<String> swept = new ArrayList<>();
+		final Set<String> failing = new HashSet<>();
+
+		StubDirectCollect() {
+			super(null, null, null, null, null);
+		}
+
+		@Override
+		public void sweepDirect(BrandRow brand) {
+			if (failing.contains(brand.username())) {
+				throw new IllegalStateException("direct 스윕 실패 주입");
+			}
+			swept.add(brand.username());
+		}
+	}
+
 	private static final class StubHashtagCollect extends BrandHashtagCollectService {
 		final List<String> swept = new ArrayList<>();
 		final Set<String> failing = new HashSet<>();
@@ -187,21 +202,24 @@ class BrandSweepJobTest {
 		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null, 12);
 	}
 
-	/** 신규 썸네일·작성자 이미지 아카이브 잡들은 대부분의 테스트에서 관심 밖 — 성공 스텁으로 채운다.
-	 * 광고 판정 백필도 마찬가지로 기본값(상한 1000, 킬 스위치 on)의 성공 스텁으로 채운다. */
+	/**
+	 * 신규 썸네일·작성자 이미지 아카이브 잡·direct 수집은 대부분의 테스트에서 관심 밖 —
+	 * 성공 스텁으로 채운다(direct 스윕 자체를 검증하는 테스트는 직접 생성자를 쓴다). 광고 판정
+	 * 백필도 마찬가지로 기본값(킬 스위치 on)의 성공 스텁으로 채운다.
+	 */
 	private static BrandSweepJob sweepJob(BrandRepository brands, BrandCollectService collect,
 			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob archive,
 			BrandProfileImageArchiveJob brandArchive) {
-		return sweepJob(brands, collect, hashtagCollect, archive, brandArchive, new StubAdJudge(), 1000, true);
+		return sweepJob(brands, collect, hashtagCollect, archive, brandArchive, new StubAdJudge(), true);
 	}
 
 	private static BrandSweepJob sweepJob(BrandRepository brands, BrandCollectService collect,
 			BrandHashtagCollectService hashtagCollect, AuthorProfileImageArchiveJob archive,
-			BrandProfileImageArchiveJob brandArchive, AdDisclosureJudgeService adJudge, int backfillPerNight,
+			BrandProfileImageArchiveJob brandArchive, AdDisclosureJudgeService adJudge,
 			boolean adDisclosureEnabled) {
-		return new BrandSweepJob(brands, collect, hashtagCollect, archive, brandArchive,
+		return new BrandSweepJob(brands, collect, new StubDirectCollect(), hashtagCollect, archive, brandArchive,
 				new StubPostThumbArchive(), new StubHashtagThumbArchive(), new StubHashtagAuthorArchive(),
-				adJudge, backfillPerNight, adDisclosureEnabled);
+				adJudge, adDisclosureEnabled);
 	}
 
 	@Test
@@ -300,6 +318,41 @@ class BrandSweepJobTest {
 		assertThat(hashtagCollect.swept).containsExactly("first", "second");
 	}
 
+	// ── direct 게시물 2단계(2026-08-18 direct 통합 §3-2) ──────────────────────
+
+	@Test
+	void direct_단계가_던져도_해시태그_단계가_실행되고_touchSwept가_유지된다() {
+		var brands = new StubBrands();
+		var collect = new StubCollect();
+		var directCollect = new StubDirectCollect();
+		directCollect.failing.add("first");
+		var hashtagCollect = new StubHashtagCollect();
+		brands.active = List.of(brand(1, "first"));
+
+		new BrandSweepJob(brands, collect, directCollect, hashtagCollect, new StubArchive(),
+				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();   // 예외가 새면 여기서 터진다
+
+		assertThat(hashtagCollect.swept).containsExactly("first");   // direct 실패와 무관하게 시도됨
+		assertThat(brands.touched).containsExactly(1L);              // 1단계(유저태그) 성공은 유지
+	}
+
+	@Test
+	void 유저태그_단계가_던져도_direct_단계는_실행된다() {
+		var brands = new StubBrands();
+		var collect = new StubCollect();
+		collect.failing.add("boom");
+		var directCollect = new StubDirectCollect();
+		brands.active = List.of(brand(1, "boom"));
+
+		new BrandSweepJob(brands, collect, directCollect, new StubHashtagCollect(), new StubArchive(),
+				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();
+
+		assertThat(directCollect.swept).containsExactly("boom");
+		assertThat(brands.touched).isEmpty();   // 유저태그 스윕 실패라 여전히 미갱신
+	}
+
 	@Test
 	void 해시태그_스윕_실패는_touchSwept를_깨지_않는다() {
 		var brands = new StubBrands();
@@ -342,9 +395,9 @@ class BrandSweepJobTest {
 		var hashtagAuthorArchive = new StubHashtagAuthorArchive();
 		var adJudge = new StubAdJudge();
 
-		assertThatThrownBy(() -> new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(),
-				archive, brandArchive, postThumbArchive, hashtagThumbArchive, hashtagAuthorArchive, adJudge,
-				1000, true).run())
+		assertThatThrownBy(() -> new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(),
+				new StubHashtagCollect(), archive, brandArchive, postThumbArchive, hashtagThumbArchive,
+				hashtagAuthorArchive, adJudge, true).run())
 				.isInstanceOf(IllegalStateException.class);
 
 		assertThat(archive.runs).isEqualTo(1);   // DailySweepJob과 동형 — finally에서 반드시 실행
@@ -362,9 +415,9 @@ class BrandSweepJobTest {
 		var hashtagThumbArchive = new StubHashtagThumbArchive();
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
+		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive,
-				new StubHashtagAuthorArchive(), new StubAdJudge(), 1000, true).run();
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();
 
 		assertThat(postThumbArchive.runs).isEqualTo(1);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);
@@ -378,9 +431,9 @@ class BrandSweepJobTest {
 		var hashtagThumbArchive = new StubHashtagThumbArchive();
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
+		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive,
-				new StubHashtagAuthorArchive(), new StubAdJudge(), 1000, true).run();   // 예외가 새면 여기서 터진다
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);   // 잡별 격리 — 한쪽 실패가 다른 쪽을 막지 않는다
@@ -392,9 +445,9 @@ class BrandSweepJobTest {
 		var hashtagAuthorArchive = new StubHashtagAuthorArchive();
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
+		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
-				hashtagAuthorArchive, new StubAdJudge(), 1000, true).run();
+				hashtagAuthorArchive, new StubAdJudge(), true).run();
 
 		assertThat(hashtagAuthorArchive.runs).isEqualTo(1);
 	}
@@ -406,36 +459,25 @@ class BrandSweepJobTest {
 		hashtagAuthorArchive.failing = true;
 		brands.active = List.of(brand(1, "first"));
 
-		new BrandSweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(),
+		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
-				hashtagAuthorArchive, new StubAdJudge(), 1000, true).run();   // 예외가 새면 여기서 터진다
+				hashtagAuthorArchive, new StubAdJudge(), true).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 	}
 
+	/** 상한 제거(2026-08-18) — 킬 스위치가 켜져 있으면 매 스윕마다 무조건 1회 호출한다(더는 상한
+	 * 인자가 없다). */
 	@Test
-	void 백필_상한만큼_findUnjudged를_호출한다() {
+	void 판정_킬_스위치가_켜져있으면_매_스윕마다_백필을_호출한다() {
 		var brands = new StubBrands();
 		var adJudge = new StubAdJudge();
 		brands.active = List.of(brand(1, "first"));
 
 		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), new StubBrandArchive(),
-				adJudge, 500, true).run();
+				adJudge, true).run();
 
 		assertThat(adJudge.backfillCalls).isEqualTo(1);
-		assertThat(adJudge.lastLimit).isEqualTo(500);
-	}
-
-	@Test
-	void 백필_상한이_0이면_비활성() {
-		var brands = new StubBrands();
-		var adJudge = new StubAdJudge();
-		brands.active = List.of(brand(1, "first"));
-
-		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), new StubBrandArchive(),
-				adJudge, 0, true).run();
-
-		assertThat(adJudge.backfillCalls).isZero();
 	}
 
 	@Test
@@ -445,7 +487,7 @@ class BrandSweepJobTest {
 		brands.active = List.of(brand(1, "first"));
 
 		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), new StubBrandArchive(),
-				adJudge, 1000, false).run();
+				adJudge, false).run();
 
 		assertThat(adJudge.backfillCalls).isZero();
 	}
@@ -458,7 +500,7 @@ class BrandSweepJobTest {
 		brands.active = List.of(brand(1, "first"));
 
 		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), new StubBrandArchive(),
-				adJudge, 1000, true).run();   // 예외가 새면 여기서 터진다
+				adJudge, true).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 	}

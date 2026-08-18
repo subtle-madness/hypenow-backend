@@ -7,16 +7,15 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
-import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * 해시태그 발견 게시물 조립 규칙 단위 고정(스펙 §8, 별도 탭 결정 2026-08-12) — 리포지토리 없이
- * row record를 손으로 만들어 순수 변환만 검증한다. 배선(소유권·404)은 컨트롤러 슬라이스 테스트가 덮는다.
+ * 해시태그 발견 게시물 조립 규칙 단위 고정(스펙 §8, 별도 탭 결정 2026-08-12; 2026-08-18 direct
+ * 통합 §T11로 판정 산지 재배선) — 리포지토리 없이 row record를 손으로 만들어 순수 변환만 검증한다.
+ * 배선(소유권·404)은 컨트롤러 슬라이스 테스트가 덮는다.
  */
 class BrandHashtagPostAssemblerTest {
 
@@ -139,94 +138,87 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
 	}
 
-	// ---------- 승격 상태 필드(brandPostId, 2026-08-17 신설) ----------
+	// ---------- 승격 상태 필드(brandPostId, 2026-08-17 신설 · 2026-08-18 direct 통합 재배선) ----------
 
 	@Test
-	void direct_매핑이_살아있으면_brandPostId가_채워진다() {
+	void direct_등록이면_brandPostId가_채워진다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(directPostRepository.findByUser(7L))
-				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 1L, "HHH", 900L)));
-		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", false, true)));
 
-		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result).hasSize(1);
 		assertThat(result.get(0).brandPostId()).isEqualTo("HHH");
 	}
 
+	/**
+	 * 2026-08-18 direct 통합 이후 브랜드 풀 상태는 브랜드 스코프다 — 다른 브랜드의 direct 등록이라는
+	 * 개념 자체가 없다(조회 자체가 이 brandId로 스코프된다). 이 브랜드 풀에 없는 shortcode(조회 결과에
+	 * 없음)는 poolStatus 맵에 없으므로 brandPostId가 null이다.
+	 */
 	@Test
-	void 다른_브랜드의_direct_매핑은_brandPostId를_채우지_않는다() {
+	void 브랜드_풀에_없는_shortcode는_brandPostId가_null이다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		// 같은 유저지만 다른 브랜드(999) 소속 매핑 — 이 브랜드(1)의 발견분에는 승격되면 안 된다.
-		given(directPostRepository.findByUser(7L))
-				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 999L, "HHH", 900L)));
-		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
 
-		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result.get(0).brandPostId()).isNull();
 	}
 
 	@Test
-	void 취소로_direct_매핑이_사라지면_brandPostId는_다시_null이다() {
+	void 취소로_direct_등록이_풀리면_brandPostId는_다시_null이다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(directPostRepository.findByUser(7L)).willReturn(List.of());   // 매핑 삭제(취소) 후 상태
-		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", false, false)));   // 취소 후 — 행은 남되 direct 해제
 
-		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result.get(0).brandPostId()).isNull();
 	}
 
 	/**
 	 * 2026-08-18 정정: 이 화면은 "태그 안 된 게시물"이라 이미 tagged로 측정 중인 shortcode는
-	 * 발견 목록 자체에서 빠진다(윈도우 제한 없는 tagged 존재 판정 — 기존 클라이언트 조인(업로드
-	 * 12개월 창 한정)의 사각지대를 없앤다는 계약은 "제외 여부 판정"으로 형태만 바뀌어 유지된다).
-	 * direct 매핑이 없으므로 brandPostId를 채우는 경로가 아니라 행 자체가 사라지는 경로다.
+	 * 발견 목록 자체에서 빠진다(제외 조건: tag_detected AND NOT direct_registered).
 	 */
 	@Test
 	void tagged로만_존재하면_발견_목록에서_제외된다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(directPostRepository.findByUser(7L)).willReturn(List.of());
-		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of("HHH"));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", true, false)));
 
-		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result).isEmpty();
 	}
 
 	/**
-	 * direct 매핑이 살아 있으면 같은 shortcode가 tagged 풀에도 있어도(사진 태그+해시태그 동시
-	 * 게시물) 목록에서 빠지지 않는다 — direct가 우선이라는 승격분 dim 잔존 계약(2026-08-18).
+	 * direct 등록이 살아 있으면 같은 shortcode가 tagged로도 겹쳐도(사진 태그+해시태그 동시 게시물)
+	 * 목록에서 빠지지 않는다 — direct가 우선이라는 승격분 dim 잔존 계약(2026-08-18).
 	 */
 	@Test
-	void direct_매핑이_있으면_tagged_겹침이어도_목록에_남고_brandPostId가_채워진다() {
+	void direct_등록이_있으면_tagged_겹침이어도_목록에_남고_brandPostId가_채워진다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(directPostRepository.findByUser(7L))
-				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 1L, "HHH", 900L)));
-		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of("HHH"));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", true, true)));
 
-		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result).hasSize(1);
 		assertThat(result.get(0).brandPostId()).isEqualTo("HHH");
@@ -236,14 +228,13 @@ class BrandHashtagPostAssemblerTest {
 	@Test
 	void 순수_발견_행은_목록에_남고_brandPostId는_null이다() {
 		var brandReadRepository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
-		given(directPostRepository.findByUser(7L)).willReturn(List.of());
-		given(brandReadRepository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", false, false)));
 
-		var assembler = new BrandHashtagPostAssembler(brandReadRepository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result).hasSize(1);
 		assertThat(result.get(0).brandPostId()).isNull();
@@ -253,17 +244,21 @@ class BrandHashtagPostAssemblerTest {
 	@Test
 	void 제외_문자열_기능_폐기로_계정명_포함_작성자도_남는다() {
 		var repository = mock(BrandReadRepository.class);
-		var directPostRepository = mock(BrandDirectPostRepository.class);
 		given(repository.findHashtagPosts(eq(1L), any(), anyInt()))
 				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_official_staff")));
-		given(directPostRepository.findByUser(7L)).willReturn(List.of());
-		given(repository.findExistingTaggedShortCodes(eq(1L), any())).willReturn(Set.of());
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
 
-		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository);
-		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(7L, 1L);
+		var assembler = new BrandHashtagPostAssembler(repository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result).hasSize(1);
 		assertThat(result.get(0).shortcode()).isEqualTo("HHH");
+	}
+
+	private static BrandReadRepository.BrandPoolStatusRow poolStatus(String shortCode, boolean tagDetected,
+			boolean directRegistered) {
+		return new BrandReadRepository.BrandPoolStatusRow(shortCode, tagDetected, directRegistered,
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
 	private static BrandReadRepository.BrandHashtagPostRow hashtagRowWithAuthor(String code, String authorUsername) {
