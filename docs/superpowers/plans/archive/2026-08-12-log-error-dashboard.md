@@ -10,7 +10,7 @@
 
 **Tech Stack:** Grafana Alloy v1.8.2 (`loki.process`/`discovery.relabel`), Loki 3.5.0 (LogQL), Grafana 13.1.1 (파일 기반 프로비저닝, JSON 대시보드)
 
-**설계 스펙:** [docs/superpowers/specs/2026-08-12-log-error-dashboard-design.md](../specs/2026-08-12-log-error-dashboard-design.md) — 본문 + 말미 "부록: 착수 전 실측 보정"까지 읽을 것. 부록이 본문 §2를 세 군데 덮어쓴다.
+**설계 스펙:** [docs/superpowers/specs/2026-08-12-log-error-dashboard-design.md](../../specs/2026-08-12-log-error-dashboard-design.md) — 본문 + 말미 "부록: 착수 전 실측 보정"까지 읽을 것. 부록이 본문 §2를 세 군데 덮어쓴다.
 
 ## Global Constraints
 
@@ -1046,7 +1046,7 @@ Grafana(§14-1 터널) → 폴더 HypeNow → **"HypeNow 에러"**. 별도 개�
 
 `config.alloy`를 고칠 때는 `deploy/alloy/test/`의 리그로 먼저 확인한다 — 운영과 같은 컨테이너
 이름·네트워크 이름을 흉내내 relabel과 multiline 병합이 실제로 걸리는지 본다. 사용법은
-[deploy/alloy/test/README.md](alloy/test/README.md). **서버에서 실행 금지**(운영과 같은 이름 공간).
+[deploy/alloy/test/README.md](../../../../deploy/alloy/test/README.md). **서버에서 실행 금지**(운영과 같은 이름 공간).
 ```
 
 - [ ] **Step 2: `DECISIONS.md` 표 맨 위에 행 추가**
@@ -1054,7 +1054,7 @@ Grafana(§14-1 터널) → 폴더 HypeNow → **"HypeNow 에러"**. 별도 개�
 `| 날짜 | 결정 | 근거/상세 |`와 `|---|---|---|` 다음 줄에 삽입한다(기존 `2026-08-11` 행 위).
 
 ```
-| 2026-08-12 | **로그 기반 에러 추적 대시보드 — Alloy multiline 병합 + `service`/`level` 라벨 + 단일 대시보드 Row 4단** — PLG 스택은 08-10에 올라갔지만 로그를 쓰는 대시보드가 0개였다. 용도를 "아침 훑기 + 장애 시 원인 추적" 둘로 한정하고, 두 동작이 같은 시간축에서 위→아래로 좁혀가는 하나의 흐름이라 화면을 나누지 않고 단일 대시보드(`hypenow-errors`) Row 4단(요약 → 유형 → 외부의존 → 드릴다운)으로 구성했다. 파이프라인은 **타깃을 JVM 4종/그 외 두 갈래로 분기** — multiline stage가 "firstline에 안 맞는 줄은 직전 엔트리에 이어붙인다"로 동작해서, 한 파이프라인에 태우면 caddy(JSON)·postgres 로그가 전부 하나의 거대 엔트리로 뭉친다. 라벨은 `level`(값 5개)과 `service`(값 4개)만 추가하고 로거명·예외 클래스는 쿼리 시점 `regexp` 추출로 남겼다(라벨화 시 스트림 폭발). `service`는 롤링 배포마다 번호가 오르는 was 컨테이너명(`deploy-was-38`)에서 번호를 떼어낸 안정 라벨 — `container`로 그룹핑하면 배포마다 시계열이 끊긴다. **설계를 바꾼 실측 두 건**: ① crawler·monitoring은 외부 의존 실패를 대부분 `log.warn`으로 남겨(monitoring 전체 `log.error` 2건) ERROR 전용 보드로는 크롤링 사고를 놓친다 → ERROR·WARN 두 축 병치, ② 로그가 평문 한국어 자유 문장이라 메시지 텍스트 그룹핑은 카디널리티가 터진다 → 축약 로거명·예외 클래스를 그룹핑 키로. 범위 밖(후속): 로그 기반 알람 규칙(실제 분포를 본 뒤 임계값 결정), logback 구조화 로깅·MDC traceId. 검증은 `deploy/alloy/test/` 리그(운영 컨테이너명·네트워크명을 흉내낸 로컬 스택)로 병합·라벨·비-JVM 회귀를 실측 | 스펙 [docs/superpowers/specs/2026-08-12-log-error-dashboard-design.md](docs/superpowers/specs/2026-08-12-log-error-dashboard-design.md) · [deploy/README.md §16](deploy/README.md) · `deploy/alloy/config.alloy`·`deploy/alloy/test/`·`deploy/grafana/provisioning/dashboards/json/hypenow-errors.json` |
+| 2026-08-12 | **로그 기반 에러 추적 대시보드 — Alloy multiline 병합 + `service`/`level` 라벨 + 단일 대시보드 Row 4단** — PLG 스택은 08-10에 올라갔지만 로그를 쓰는 대시보드가 0개였다. 용도를 "아침 훑기 + 장애 시 원인 추적" 둘로 한정하고, 두 동작이 같은 시간축에서 위→아래로 좁혀가는 하나의 흐름이라 화면을 나누지 않고 단일 대시보드(`hypenow-errors`) Row 4단(요약 → 유형 → 외부의존 → 드릴다운)으로 구성했다. 파이프라인은 **타깃을 JVM 4종/그 외 두 갈래로 분기** — multiline stage가 "firstline에 안 맞는 줄은 직전 엔트리에 이어붙인다"로 동작해서, 한 파이프라인에 태우면 caddy(JSON)·postgres 로그가 전부 하나의 거대 엔트리로 뭉친다. 라벨은 `level`(값 5개)과 `service`(값 4개)만 추가하고 로거명·예외 클래스는 쿼리 시점 `regexp` 추출로 남겼다(라벨화 시 스트림 폭발). `service`는 롤링 배포마다 번호가 오르는 was 컨테이너명(`deploy-was-38`)에서 번호를 떼어낸 안정 라벨 — `container`로 그룹핑하면 배포마다 시계열이 끊긴다. **설계를 바꾼 실측 두 건**: ① crawler·monitoring은 외부 의존 실패를 대부분 `log.warn`으로 남겨(monitoring 전체 `log.error` 2건) ERROR 전용 보드로는 크롤링 사고를 놓친다 → ERROR·WARN 두 축 병치, ② 로그가 평문 한국어 자유 문장이라 메시지 텍스트 그룹핑은 카디널리티가 터진다 → 축약 로거명·예외 클래스를 그룹핑 키로. 범위 밖(후속): 로그 기반 알람 규칙(실제 분포를 본 뒤 임계값 결정), logback 구조화 로깅·MDC traceId. 검증은 `deploy/alloy/test/` 리그(운영 컨테이너명·네트워크명을 흉내낸 로컬 스택)로 병합·라벨·비-JVM 회귀를 실측 | 스펙 [docs/superpowers/specs/2026-08-12-log-error-dashboard-design.md](../../specs/2026-08-12-log-error-dashboard-design.md) · [deploy/README.md §16](../../../../deploy/README.md) · `deploy/alloy/config.alloy`·`deploy/alloy/test/`·`deploy/grafana/provisioning/dashboards/json/hypenow-errors.json` |
 ```
 
 - [ ] **Step 3: 리그 정리 후 최종 확인**

@@ -19,14 +19,16 @@
 -- app_setting 키: analytics.hype-anchor-acct-{p05,p50,p90,p99}(미설정/0이면 COALESCE 기본값 —
 -- 단일 소스는 함수 기본값, hype_score와 동일 관용구).
 -- raw IS NULL(창 전체 점수 불가 — 기존 동작)은 NULL 유지. raw=0은 10×0/a05=0으로 자연 0점.
+-- 2026-08-17 재적합(댓글 가중 1.5 기준 운영 코퍼스 실측, 스펙
+-- docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md, 모수 n=4,431).
 CREATE OR REPLACE FUNCTION analytics.hype_account_score(raw numeric) RETURNS bigint
 LANGUAGE sql STABLE AS $$
   WITH s AS (
     SELECT
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p05'),0),1.0833)  AS a05,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p50'),0),12.8333) AS a50,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p90'),0),31.2000) AS a90,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p99'),0),44.8600) AS a99
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p05'),0),1.1667)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p50'),0),12.0833) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p90'),0),30.5455) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-p99'),0),45.6667) AS a99
   )
   SELECT CASE
     WHEN raw IS NULL THEN NULL
@@ -64,14 +66,16 @@ $$;
 -- (1.4856/23.6566/56.3961/77.0479 → 1.2417/19.4383/52.2401/74.0179). 새 분포는 옛 분포보다
 -- 살짝 낮게 이동한다 — 점수산출 콘텐츠가 창을 못 채운 계정들이 분모 고정으로 감점되면서 raw
 -- 모집단 자체의 분위수가 내려간 것(계정 표본 하한 없음 결함 해소가 목적이므로 의도된 이동).
+-- 2026-08-17 재적합(댓글 가중 1.5 기준 운영 코퍼스 실측, 스펙
+-- docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md, 모수 n=4,583).
 CREATE OR REPLACE FUNCTION analytics.hype_account_score_precise(raw numeric) RETURNS numeric
 LANGUAGE sql STABLE AS $$
   WITH s AS (
     SELECT
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p05'),0),1.2417)  AS a05,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p50'),0),19.4383) AS a50,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p90'),0),52.2401) AS a90,
-      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p99'),0),74.0179) AS a99
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p05'),0),1.3665)  AS a05,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p50'),0),26.6730) AS a50,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p90'),0),66.6060) AS a90,
+      COALESCE(NULLIF((SELECT value::numeric FROM app_setting WHERE key='analytics.hype-anchor-acct-precise-p99'),0),85.2125) AS a99
   )
   SELECT CASE
     WHEN raw IS NULL THEN NULL

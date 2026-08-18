@@ -10,6 +10,7 @@ import com.celfit.contract.analysis.AccountSummary;
 import com.celfit.contract.analysis.Content;
 import com.celfit.contract.analysis.ContentComment;
 import com.celfit.contract.analysis.ContentMetricSnapshot;
+import com.celfit.contract.analysis.CrawlCallDaily;
 import com.celfit.contract.analysis.LandingStats;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
@@ -87,6 +88,11 @@ class FlywaySchemaTest {
 	@Test
 	void landing_stats_테이블_컬럼이_record와_일치한다() {
 		assertColumnsMatch("landing_stats", LandingStats.class);
+	}
+
+	@Test
+	void crawl_call_daily_테이블_컬럼이_record와_일치한다() {
+		assertColumnsMatch("crawl_call_daily", CrawlCallDaily.class);
 	}
 
 	private void assertColumnsMatch(String table, Class<? extends Record> recordType) {

@@ -38,8 +38,9 @@ import org.springframework.stereotype.Service;
  *       댓글 워터마크로 백스톱한다.</li>
  * </ul>
  *
- * <p>ready(markServing)는 <b>첫 페이지분 보강이 끝나는 지점</b>에서 열리고, 완주 표식
- * (touchSwept = 응답 collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지 보강 뒤</b>에
+ * <p>ready(markServing)는 <b>첫 페이지의 게시자 보강이 끝나는 지점</b>에서 열리고(2026-08-18
+ * 계정 게이트 단축 — 댓글 수집·광고 표기 판정은 기다리지 않는다), 완주 표식(touchSwept = 응답
+ * collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지 보강(댓글·판정 포함) 뒤</b>에
  * 찍힌다 — 목록에는 정산된 페이지만 오른다(스펙 §1·§2, {@link #runBackfillSafely} 참조).
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
@@ -88,8 +89,9 @@ public class BrandRegistrationService {
 	}
 
 	/**
-	 * 기존 단일 인자 호출부용 위임 — brandName 미상(대행사 등록 등)은 계정명 유도 2종 태그만
-	 * 시드하고, collectionMonths 미상은 기본 12개월로 접는다.
+	 * 기존 단일 인자 호출부용 위임 — brandName은 더 이상 시드에 쓰이지 않으므로(계정명 태그
+	 * 1종만 유도, {@link #seedHashtagsSafely} 참조) 결과는 register(username, brandName)과
+	 * 같다. collectionMonths 미상은 기본 12개월로 접는다.
 	 */
 	public Result register(String username) {
 		return register(username, null, null);
@@ -105,9 +107,11 @@ public class BrandRegistrationService {
 	 * 프로필 콜이 계정 부재·비공개를 던지면 brand_account 행을 아예 만들지 않는다
 	 * (RegistrationService "수집이 먼저다" 관용구 — 예외는 ApiExceptionHandler가 매핑).
 	 *
-	 * <p>replay 경로에도 해시태그를 시드한다(스펙 §2) — 대행사가 브랜드명 없이 먼저 등록한 뒤
-	 * brand 유형 유저가 뒤늦게 같은 계정에 연결하면, 이번 호출의 brandName이 태그 셋에
-	 * 유니온된다(insertTags는 ON CONFLICT DO NOTHING이라 멱등).
+	 * <p>replay 경로에도 해시태그를 시드한다(스펙 §2, insertTags는 ON CONFLICT DO NOTHING이라
+	 * 멱등) — 그리고 2026-08-17부터는 시드 직후 즉시 스윕도 트리거한다. replay는 신규 등록과
+	 * 달리 백필이 돌지 않아(hiker 콜 0이 replay의 존재 이유) 예전엔 재등록 시점의 즉시 조회가
+	 * 없었다 — "해시태그를 등록한 당시에 조회해서 당일 게시물을 즉시 추가한다"는 합의된 동작을
+	 * replay 경로에도 채운다({@link #triggerHashtagSweep} 참조).
 	 *
 	 * <p>replay 경로에서 요청 collectionMonths가 기존 창보다 크면 기간 확장(expandIfRequested)까지
 	 * 수행한다 — 재등록이 창 상향의 유일한 입구다(별도 API 없음).
@@ -125,6 +129,7 @@ public class BrandRegistrationService {
 		var existing = brands.findByUsername(normalized);
 		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
 			seedHashtagsSafely(existing.get().id(), normalized, brandName);
+			triggerHashtagSweep(existing.get());
 			expandIfRequested(existing.get(), months);
 			return new Result(existing.get().id(), normalized, null, true);
 		}
@@ -162,16 +167,19 @@ public class BrandRegistrationService {
 	}
 
 	/**
-	 * 태그 3종(브랜드명 미상 시 2종) + 기본 제외 문자열(계정명 루트) 시드 — 둘 다 멱등 삽입.
-	 * insertOrReactivate(이미 커밋됨)와 backfill.execute 사이 지점이라 실패를 격리한다 — 여기서
+	 * 계정명 태그 1종 시드(2026-08-17 축소 — 제외 문자열 폐기와 함께 자동 시드가 3종에서 1종으로
+	 * 줄었다) — 멱등 삽입. brandName은 하위 호환을 위해 계속 받지만 더 이상 시드에 쓰지 않는다
+	 * (과거엔 브랜드명 태그·제외 문자열 기본값 재료였으나 둘 다 폐지돼 파라미터만 남았다 — 시그니처를
+	 * 지우면 register(username, brandName[, months]) 기존 호출부가 전부 깨진다).
+	 *
+	 * <p>insertOrReactivate(이미 커밋됨)와 backfill.execute 사이 지점이라 실패를 격리한다 — 여기서
 	 * 던지면 백필이 영구 미예약되는데, 재시도는 replay 분기를 타서 복구할 수 없다(신규 등록
 	 * 자체는 이미 끝난 상태). 시드 실패의 실피해는 "해시태그 스윕이 태그 없음으로 조용히
 	 * 스킵"뿐이고 다음 replay 재등록이 재시드하므로, 등록·백필을 막지 않는 warn 격리가 맞다.
 	 */
 	private void seedHashtagsSafely(long brandId, String username, String brandName) {
 		try {
-			hashtags.insertTags(brandId, BrandHashtagTags.derive(brandName, username));
-			hashtags.insertDefaultExclusion(brandId, BrandHashtagTags.root(username));
+			hashtags.insertTags(brandId, BrandHashtagTags.derive(username));
 		} catch (RuntimeException e) {
 			log.warn("브랜드 해시태그 시드 실패(격리) — {} 다음 재등록이 재시드: {}", username, e.toString());
 		}
@@ -180,9 +188,17 @@ public class BrandRegistrationService {
 	/**
 	 * 백필 core = 매일 스윕과 같은 열거·적재 코드(페이지 스트리밍). 2026-08-13 개정: 페이지마다
 	 * 그 페이지분을 <b>enrich 큐에 제출</b>하고 열거는 계속 앞서 달린다(파이프라인 — 열거 ~5초/페이지와
-	 * 보강 ~5.4초/페이지가 겹쳐 완주가 절반이 된다). <b>첫 제출분의 보강이 끝나는 지점에서
-	 * markServing</b>으로 FE ready를 연다(구 "서빙 창 30일 커버" 기준 대체) — 목록에 오르는 건
-	 * 정산된 페이지뿐이라 반쯤 채워진 카드가 뜨지 않는다.
+	 * 보강 ~5.4초/페이지가 겹쳐 완주가 절반이 된다). <b>첫 페이지의 게시자 보강이 끝나는 지점에서
+	 * markServing</b>으로 FE ready를 연다(2026-08-18 계정 게이트 단축 — 구 "서빙 창 30일 커버" 기준
+	 * 대체 이후, "첫 페이지 전체 보강(댓글·광고 판정 포함) 완료" 기준도 대체) — was 게시물 게이트
+	 * (markEnriched)와 같은 시점이라 목록에는 정산된 페이지만 오르되, 댓글·판정(브랜드당 순차 join
+	 * 특성상 수 초~수십 초)까지는 더 기다리지 않는다({@link BrandCollectService#enrich(BrandRow,
+	 * List, Runnable)} 참조).
+	 *
+	 * <p>onVisible 훅은 <b>첫 페이지에만</b> 단다 — sweepCore 콜백은 이 브랜드 백필 태스크 안에서
+	 * 단일 스레드로 순차 호출되므로({@code pages}가 비어 있는지로 "첫 페이지"를 판별해도 경합이
+	 * 없다), 뒤 페이지는 훅 없이(null) 돈다. served CAS는 방어적 1회 보장(재가입 등으로 이 메서드가
+	 * 다시 불려도 안전) — DB 쪽 IS NULL 가드(markServing)와 같은 이중 방어.
 	 *
 	 * <p>touchSwept는 <b>모든 페이지 보강이 끝난 뒤</b>에 찍는다 — 이 값이 곧 응답
 	 * collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은 채로 찍으면
@@ -203,17 +219,21 @@ public class BrandRegistrationService {
 		try {
 			AtomicBoolean served = new AtomicBoolean();
 			List<CompletableFuture<Void>> pages = new ArrayList<>();
-			collect.sweepCore(row, page -> pages.add(CompletableFuture.runAsync(() -> {
-				runEnrichSafely(row, page);
-				// 첫 완료분이 ready를 연다. 페이지 순서가 아니라 완료 순서인 것은 무해하다 —
-				// 목록 정렬은 taken_at이고 markServing은 last_swept_at IS NULL 가드로 1회만 먹는다.
-				if (served.compareAndSet(false, true)) {
-					brands.markServing(row.id());
-				}
-			}, enrich)));
+			collect.sweepCore(row, page -> {
+				// 이 콜백 자체는 sweepCore 안에서 순차 호출된다 — pages.isEmpty()는 "아직 아무
+				// 페이지도 제출 안 한 시점"을 경합 없이 가리킨다(= 이번이 첫 페이지).
+				Runnable onVisible = pages.isEmpty()
+						? () -> {
+							if (served.compareAndSet(false, true)) {
+								brands.markServing(row.id());
+							}
+						}
+						: null;
+				pages.add(CompletableFuture.runAsync(() -> runEnrichSafely(row, page, onVisible), enrich));
+			});
 			CompletableFuture.allOf(pages.toArray(CompletableFuture[]::new)).join();
 			brands.touchSwept(row.id(), LocalDate.now(KST));
-			enrich.execute(() -> runHashtagBackfillSafely(row));
+			triggerHashtagSweep(row);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
@@ -225,24 +245,49 @@ public class BrandRegistrationService {
 	/**
 	 * 보강 실패는 backfill_error를 남기지 않는다 — 목록·지표는 이미 서빙 중(ready)이라 "초기 수집
 	 * 실패" 문구가 오히려 오보고, 미수집분(게시자 stale·댓글 워터마크)은 다음 스윕이 자동 재시도한다.
+	 *
+	 * <p>onVisible은 그대로 {@link BrandCollectService#enrich(BrandRow, List, Runnable)}에 위임한다
+	 * — markEnriched와 같은 finally 보장이라 여기서 별도로 재시도·대체 호출할 필요가 없다(ensureAuthors
+	 * 하드 실패 경로 포함).
 	 */
-	private void runEnrichSafely(BrandRow row, List<PostInfo> posts) {
+	private void runEnrichSafely(BrandRow row, List<PostInfo> posts, Runnable onVisible) {
 		try {
-			collect.enrich(row, posts);
+			collect.enrich(row, posts, onVisible);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}
 	}
 
 	/**
-	 * 등록 시 해시태그 첫 스윕 — 전 페이지 보강 뒤 꼬리라 ready(첫 배치 완결)에 영향 0. core는 이미 성공했으므로
-	 * 여기 실패는 backfill_error를 남기지 않는다(warn 로그만) — 다음 일일 스윕이 백스톱한다.
+	 * 태그 등록(PUT/POST hashtag-tags 성공) 직후 즉시 스윕 트리거(2026-08-17 FE 협의 — "해시태그를
+	 * 등록한 당시에 조회해서 당일 게시물을 즉시 추가한다"). tags가 비어 있으면 아무 것도 하지
+	 * 않는다 — hashtagCollect.sweep 자체도 태그 0건이면 콜 0으로 즉시 반환하지만, 여기서 먼저
+	 * 걸러 불필요한 executor 제출 자체를 줄인다.
+	 *
+	 * <p>등록 백필·replay 재등록과 같은 enrich executor에서 비동기로 돈다(동기 응답 지연 금지) —
+	 * 실패는 격리(다음 야간 스윕이 백스톱). sweep은 ON CONFLICT DO NOTHING 기반이라 야간 스윕과
+	 * 동시 실행돼도 데이터는 안전하다.
 	 */
-	private void runHashtagBackfillSafely(BrandRow row) {
+	public void triggerHashtagSweepIfNonEmpty(BrandRow row, List<String> tags) {
+		if (!tags.isEmpty()) {
+			triggerHashtagSweep(row);
+		}
+	}
+
+	private void triggerHashtagSweep(BrandRow row) {
+		enrich.execute(() -> runHashtagSweepSafely(row));
+	}
+
+	/**
+	 * 해시태그 스윕 1회 — 등록 백필 꼬리(전 페이지 보강 뒤, ready에 영향 0)·replay 재등록·태그
+	 * PUT/POST 즉시 트리거 3곳이 공유한다. core(또는 시드)는 이미 성공했으므로 여기 실패는
+	 * backfill_error를 남기지 않는다(warn 로그만) — 다음 일일 스윕이 백스톱한다.
+	 */
+	private void runHashtagSweepSafely(BrandRow row) {
 		try {
 			hashtagCollect.sweep(row);
 		} catch (RuntimeException e) {
-			log.warn("브랜드 등록 해시태그 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
+			log.warn("브랜드 해시태그 스윕 실패(격리) — {} 다음 야간 스윕이 백스톱: {}", row.username(), e.toString());
 		}
 	}
 

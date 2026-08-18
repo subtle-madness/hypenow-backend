@@ -4,51 +4,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
+import com.celfit.was.monitoring.BrandPostCampaignRepository;
+import com.celfit.was.monitoring.BrandPostRegistrationRepository;
+import com.celfit.was.monitoring.BrandPostRegistrationRow;
 import com.celfit.was.monitoring.BrandReadRepository;
-import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
-import com.celfit.was.monitoring.MonitoringItemRepository;
-import com.celfit.was.monitoring.MonitoringItemRow;
-import com.celfit.was.monitoring.MonitoringReadRepository;
-import com.celfit.was.monitoring.RegistrationEntryRow;
-import com.celfit.was.monitoring.RegistrationRepository;
-import com.celfit.was.monitoring.RegistrationRow;
-import com.celfit.was.monitoring.TargetRow;
-import com.celfit.was.v1.common.KstTimestamps;
+import com.celfit.was.monitoring.BrandReadRepository.BrandPoolStatusRow;
+import com.celfit.was.monitoring.CampaignRepository;
+import com.celfit.was.monitoring.CampaignRow;
+import com.celfit.was.monitoring.MonitoringApiException;
+import com.celfit.was.monitoring.MonitoringCommandClient;
+import com.celfit.was.monitoring.MonitoringUnavailableException;
 import com.celfit.was.v1.common.V1ApiException;
-import com.celfit.was.v1.monitoring.MonitoringRegistrationResponse;
-import com.celfit.was.v1.monitoring.V1MonitoringRegistrationService;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
+import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 직접 등록(스펙 §6-4) 단위 검증 — 브랜드 목록에 이미 있는 게시물은 레거시를 건드리지 않고,
- * 신규는 레거시 등록 파이프라인에 위임한 뒤 그 결과로 direct 매핑을 만든다는 계약을 고정한다.
- * 레거시(V1MonitoringRegistrationService·RegistrationRepository)는 mock이다 — 이 태스크는
- * 레거시를 한 줄도 바꾸지 않고 호출만 하기 때문에 위임 셰이프(입력 순서 = entry seq)가 검증 대상이다.
+ * 직접 등록(2026-08-18 direct 통합 §T9) 단위 검증 — 브랜드 풀(brand_tagged_post) 기준 중복 판정,
+ * 전용 등록 저장소·실행기 위임, 취소 3분기를 고정한다. 레거시 위임(V1MonitoringRegistrationService 등)은
+ * 완전히 사라졌으므로 이 서비스가 직접 entry를 만들고 실행기를 트리거하는지가 검증 대상이다.
  */
 @ExtendWith(MockitoExtension.class)
 class V1BrandDirectPostServiceTest {
@@ -64,192 +58,177 @@ class V1BrandDirectPostServiceTest {
 	@Mock
 	BrandDirectPostRepository directPostRepository;
 	@Mock
-	MonitoringItemRepository itemRepository;
+	BrandPostRegistrationRepository registrationRepository;
 	@Mock
-	MonitoringReadRepository monitoringReadRepository;
+	CampaignRepository campaignRepository;
 	@Mock
-	V1MonitoringRegistrationService legacyRegistration;
+	BrandPostCampaignRepository postCampaignRepository;
 	@Mock
-	RegistrationRepository registrationRepository;
+	MonitoringCommandClient commandClient;
+	@Mock
+	BrandDirectRegistrationExecutor executor;
 
-	@InjectMocks
 	V1BrandDirectPostService service;
 
-	@Captor
-	ArgumentCaptor<Map<String, Object>> bodyCaptor;
+	@BeforeEach
+	void setUp() {
+		// 중복 게이트의 창 컷 기준 시각 고정 — KST 2026-08-08 21:00.
+		service = new V1BrandDirectPostService(linkRepository, brandReadRepository, directPostRepository,
+				registrationRepository, campaignRepository, postCampaignRepository, commandClient, executor,
+				Clock.fixed(Instant.parse("2026-08-08T12:00:00Z"), ZoneOffset.UTC));
+	}
 
-	// ---------- 위임 제외(브랜드 목록 중복) ----------
+	// ---------- 중복 판정 ----------
 
 	@Test
-	void 이미_태그_게시물로_있으면_레거시_위임_없이_duplicate다() {
+	void 이미_direct_등록된_게시물은_duplicate다() {
 		ownedBrand();
-		tagged("ABC");
-		directMappings();
+		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
 
-		assertThat(response.registrationId()).isNull();
-		assertThat(response.entries()).hasSize(1);
 		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
 		assertThat(response.entries().get(0).brandPostId()).isEqualTo("ABC");
 		assertThat(response.entries().get(0).reasonCode()).isEqualTo("duplicate");
-		then(legacyRegistration).should(never()).register(anyLong(), any());
+		assertThat(response.entries().get(0).monitoringItemId()).isNull();
+		then(registrationRepository).should().insertEntry(55L, 0, URL_ABC, "ABC", "duplicate", "duplicate",
+				"이미 브랜드 목록에 있는 게시물입니다.");
 	}
 
 	@Test
-	void 이미_직접_등록된_게시물도_duplicate다() {
+	void 링크_창_안의_tagged_게시물도_duplicate다() {
 		ownedBrand();
-		tagged();
-		directMappings("ABC");
+		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
 
 		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
-		then(legacyRegistration).should(never()).register(anyLong(), any());
-		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
+	}
+
+	@Test
+	void 링크_창_밖_tagged_게시물의_직접_등록은_중복이_아니라_위임된다() {
+		// 3개월 링크 유저에겐 5개월 전 tagged가 목록·상세 어디에도 없다(2026-08-17 표시 창) — direct로
+		// 등록하면 direct_registered_at이 채워지고 direct 행은 창 예외라 그 자리에서 보이기 시작한다
+		// (08-17 데드엔드 우회가 대가 없이 해소된다).
+		ownedBrand(3);
+		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-03-08T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		then(executor).should().submit(55L);
+	}
+
+	@Test
+	void 링크_창_안_5개월_이내_tagged_게시물은_여전히_중복이다() {
+		ownedBrand(3);
+		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-07-08T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
+	}
+
+	@Test
+	void 다른_브랜드에_등록된_shortcode를_이_브랜드에_등록하면_duplicate가_아니다() {
+		// 판정이 brandId 스코프 쿼리라 다른 브랜드 행은 애초에 후보에 없다(크로스 브랜드 누수 제거).
+		ownedBrand();
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of());
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
 	}
 
 	// ---------- 신규 위임 ----------
 
 	@Test
-	void 신규_URL은_레거시_등록에_위임하고_매핑을_만든다() {
+	void 신규_URL은_pending으로_등록되고_실행기가_트리거된다() {
 		ownedBrand();
-		tagged();
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		given(registrationRepository.findById(55L))
-				.willReturn(Optional.of(registration(7L, entry(0, URL_DEF, "pending", null, null, 301L))));
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of());
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_DEF), 30, null);
 
-		then(directPostRepository).should().upsert(7L, 100L, "DEF", 301L);
+		then(registrationRepository).should().insertEntry(55L, 0, URL_DEF, "DEF", "pending", null, null);
+		then(executor).should().submit(55L);
 		assertThat(response.registrationId()).isEqualTo("55");
 		assertThat(response.entries()).hasSize(1);
 		assertThat(response.entries().get(0).result()).isEqualTo("pending");
 		assertThat(response.entries().get(0).brandPostId()).isEqualTo("DEF");
-		assertThat(response.entries().get(0).monitoringItemId()).isEqualTo("301");
+		assertThat(response.entries().get(0).monitoringItemId()).isNull();
 	}
 
 	@Test
-	void 위임_본문은_레거시_계약대로_posts_trackingDays_campaignId다() {
+	void share_단축_링크는_shortCode_미상으로_pending_등록된다() {
 		ownedBrand();
-		tagged();
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		given(registrationRepository.findById(55L))
-				.willReturn(Optional.of(registration(7L, entry(0, URL_DEF, "pending", null, null, 301L))));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+		String shareUrl = "https://www.instagram.com/share/reel/xyz123";
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(shareUrl), 30, null);
+
+		then(registrationRepository).should().insertEntry(55L, 0, shareUrl, null, "pending", null, null);
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		assertThat(response.entries().get(0).brandPostId()).isNull();
+	}
+
+	@Test
+	void campaignId가_있으면_등록에_실려_저장된다() {
+		ownedBrand();
+		given(campaignRepository.findByIdAndUser(9L, 7L))
+				.willReturn(Optional.of(new CampaignRow(9L, 7L, "캠페인", null, null, null, null, null, null, null)));
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of());
+		given(registrationRepository.insert(7L, 100L, 9L)).willReturn(inserted(55L));
 
 		service.register(7L, 100L, List.of(URL_DEF), 30, "9");
 
-		then(legacyRegistration).should().register(eq(7L), bodyCaptor.capture());
-		Map<String, Object> body = bodyCaptor.getValue();
-		assertThat(body.get("posts")).isEqualTo(List.of(URL_DEF));
-		assertThat(body.get("trackingDays")).isEqualTo(30);
-		assertThat(body.get("campaignId")).isEqualTo("9");
-		// accounts는 아예 넣지 않는다 — entry seq가 posts 입력 순서와 1:1이어야 매칭이 성립한다.
-		assertThat(body).doesNotContainKey("accounts");
+		then(registrationRepository).should().insert(7L, 100L, 9L);
 	}
 
 	@Test
-	void 이미_레거시_추적_중이면_매핑만_추가하고_success다() {
+	void 존재하지_않는_캠페인이면_404다() {
 		ownedBrand();
-		tagged();
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		// 레거시는 이미 추적 중인 입력을 duplicate로 확정하고 item_id를 남기지 않는다 —
-		// 매핑에 필요한 아이템 id는 우리가 다시 조회해야 한다.
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_GHI, "duplicate", "duplicate", "이미 모니터링 중인 대상이에요.", null))));
-		given(itemRepository.findActiveByInput(7L, "url", "GHI")).willReturn(List.of(item(900L)));
+		given(campaignRepository.findByIdAndUser(9L, 7L)).willReturn(Optional.empty());
 
-		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_GHI), 30, null);
-
-		then(directPostRepository).should().upsert(7L, 100L, "GHI", 900L);
-		assertThat(response.entries().get(0).result()).isEqualTo("success");
-		assertThat(response.entries().get(0).monitoringItemId()).isEqualTo("900");
-		assertThat(response.entries().get(0).reasonCode()).isNull();
-	}
-
-	@Test
-	void 종결된_최신_행은_건너뛰고_진행_중인_행에_매핑한다() {
-		ownedBrand();
-		tagged();
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_GHI, "duplicate", "duplicate", "이미 모니터링 중인 대상이에요.", null))));
-		// 901이 더 최신이지만 target이 EXPIRED(=ended, 종결 3종)라 매핑 대상이 아니다.
-		given(itemRepository.findActiveByInput(7L, "url", "GHI"))
-				.willReturn(List.of(item(900L), item(901L, 5L)));
-		// 서비스는 LinkedHashSet으로 넘긴다 — Set 동치라 Set.of로 매칭된다.
-		given(monitoringReadRepository.findTargets(Set.of(5L))).willReturn(List.of(expiredTarget(5L)));
-
-		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_GHI), 30, null);
-
-		then(directPostRepository).should().upsert(7L, 100L, "GHI", 900L);
-		assertThat(response.entries().get(0).monitoringItemId()).isEqualTo("900");
-	}
-
-	@Test
-	void 레거시_아이템을_못_찾은_duplicate는_매핑_없이_duplicate로_남는다() {
-		ownedBrand();
-		tagged();
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_GHI, "duplicate", "duplicate", "이미 모니터링 중인 대상이에요.", null))));
-		given(itemRepository.findActiveByInput(7L, "url", "GHI")).willReturn(List.of());
-
-		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_GHI), 30, null);
-
-		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
-		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
-		assertThat(response.entries().get(0).monitoringItemId()).isNull();
+		assertThatThrownBy(() -> service.register(7L, 100L, List.of(URL_DEF), 30, "9"))
+				.isInstanceOf(V1ApiException.class);
+		then(registrationRepository).should(never()).insert(anyLong(), anyLong(), any());
 	}
 
 	// ---------- 부분 성공·순서 ----------
 
 	@Test
-	void 잘못된_링크는_레거시_reasonCode로_failed고_위임되지_않는다() {
+	void 잘못된_링크는_즉시_failed고_위임되지_않는다() {
 		ownedBrand();
-		tagged();
-		directMappings();
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of());
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of("도와줘"), 30, null);
 
 		assertThat(response.entries().get(0).result()).isEqualTo("failed");
 		assertThat(response.entries().get(0).reasonCode()).isEqualTo("invalid_format");
 		assertThat(response.entries().get(0).brandPostId()).isNull();
-		then(legacyRegistration).should(never()).register(anyLong(), any());
 	}
 
 	@Test
-	void 부분_성공은_입력_순서를_보존하고_위임분만_seq로_매칭한다() {
+	void 부분_성공은_입력_순서를_보존한다() {
 		ownedBrand();
-		tagged("ABC");
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		// 위임 목록은 [DEF, GHI] — seq 0·1이 그대로 대응한다.
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_DEF, "pending", null, null, 301L),
-				entry(1, URL_GHI, "failed", "not_found", "게시물을 찾을 수 없어요.", null))));
+		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response =
-				service.register(7L, 100L, List.of("도와줘", URL_ABC, URL_DEF, URL_GHI), 30, null);
+				service.register(7L, 100L, List.of("도와줘", URL_ABC, URL_DEF), 30, null);
 
 		assertThat(response.entries()).extracting(BrandDirectRegistrationResponse.Entry::input)
-				.containsExactly("도와줘", URL_ABC, URL_DEF, URL_GHI);
+				.containsExactly("도와줘", URL_ABC, URL_DEF);
 		assertThat(response.entries()).extracting(BrandDirectRegistrationResponse.Entry::result)
-				.containsExactly("failed", "duplicate", "pending", "failed");
-		then(legacyRegistration).should().register(eq(7L), bodyCaptor.capture());
-		assertThat(bodyCaptor.getValue().get("posts")).isEqualTo(List.of(URL_DEF, URL_GHI));
-		then(directPostRepository).should().upsert(7L, 100L, "DEF", 301L);
+				.containsExactly("failed", "duplicate", "pending");
+		then(registrationRepository).should().insertEntry(55L, 2, URL_DEF, "DEF", "pending", null, null);
 	}
 
 	// ---------- 검증·권한 ----------
@@ -265,8 +244,6 @@ class V1BrandDirectPostServiceTest {
 
 	@Test
 	void 경쟁사_구독_브랜드에는_직접_등록할_수_없다() {
-		// 경쟁사 게시물은 캠페인에도 못 붙는데(v2 §3-3) 직접 등록만 열려 있으면, 등록으로 레거시
-		// 아이템을 만들어 캠페인 차단을 우회할 수 있다 — 등록 자체를 막는 게 정본이다.
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
 				.willReturn(Optional.of(link(BrandAccountType.COMPETITOR)));
 
@@ -275,26 +252,7 @@ class V1BrandDirectPostServiceTest {
 				.hasMessage("경쟁사 계정의 게시물은 추적 등록할 수 없어요.")
 				.extracting(e -> ((V1ApiException) e).code())
 				.isEqualTo("COMPETITOR_ACCOUNT_NOT_ALLOWED");
-		// 소유 검증 단계에서 끊긴다 — 레거시 등록도 매핑도 만들지 않는다.
-		then(legacyRegistration).should(never()).register(anyLong(), any());
-		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
-	}
-
-	@Test
-	void 내_브랜드_구독의_직접_등록은_그대로_통과한다() {
-		// 차단은 competitor 한정이다 — own 구독(기존 연결 전량의 백필 값)의 흐름은 손대지 않는다.
-		ownedBrand();
-		tagged();
-		directMappings();
-		given(legacyRegistration.register(eq(7L), anyMap()))
-				.willReturn(new MonitoringRegistrationResponse("55", List.of(), null));
-		given(registrationRepository.findById(55L))
-				.willReturn(Optional.of(registration(7L, entry(0, URL_DEF, "pending", null, null, 301L))));
-
-		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_DEF), 30, null);
-
-		assertThat(response.entries().get(0).result()).isEqualTo("pending");
-		then(directPostRepository).should().upsert(7L, 100L, "DEF", 301L);
+		then(registrationRepository).should(never()).insert(anyLong(), anyLong(), any());
 	}
 
 	@Test
@@ -316,9 +274,9 @@ class V1BrandDirectPostServiceTest {
 	// ---------- 상태 조회 ----------
 
 	@Test
-	void 등록_상태_조회는_레거시_entry를_같은_셰이프로_재조립한다() {
+	void 등록_상태_조회는_저장소_entry를_그대로_옮긴다() {
 		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_DEF, "success", null, null, 301L),
+				entry(0, URL_DEF, "success", null, null, "DEF"),
 				entry(1, "도와줘", "failed", "invalid_format", "링크 형식이 올바르지 않아요.", null))));
 
 		BrandDirectRegistrationResponse response = service.get(7L, "55");
@@ -326,105 +284,15 @@ class V1BrandDirectPostServiceTest {
 		assertThat(response.registrationId()).isEqualTo("55");
 		assertThat(response.entries()).hasSize(2);
 		assertThat(response.entries().get(0).brandPostId()).isEqualTo("DEF");
-		assertThat(response.entries().get(0).monitoringItemId()).isEqualTo("301");
+		assertThat(response.entries().get(0).monitoringItemId()).isNull();
 		assertThat(response.entries().get(1).brandPostId()).isNull();
 		assertThat(response.entries().get(1).reasonCode()).isEqualTo("invalid_format");
 	}
 
 	@Test
-	void 접수에서_승격된_entry는_GET에서도_success다() {
-		// 레거시 entry는 영원히 duplicate·item_id null이다 — 브랜드 소속 정본은 매핑 테이블이라
-		// 매핑이 있으면 접수와 같은 승격을 GET에서도 다시 적용해야 폴링이 화면을 되돌리지 않는다.
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_GHI, "duplicate", "duplicate", "이미 모니터링 중인 대상이에요.", null))));
-		given(directPostRepository.findByUser(7L))
-				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 100L, "GHI", 900L)));
-
-		BrandDirectRegistrationResponse response = service.get(7L, "55");
-
-		assertThat(response.entries().get(0).result()).isEqualTo("success");
-		assertThat(response.entries().get(0).monitoringItemId()).isEqualTo("900");
-		assertThat(response.entries().get(0).brandPostId()).isEqualTo("GHI");
-		assertThat(response.entries().get(0).reasonCode()).isNull();
-	}
-
-	@Test
-	void 매핑이_없는_duplicate는_GET에서도_duplicate다() {
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_GHI, "duplicate", "duplicate", "이미 모니터링 중인 대상이에요.", null))));
-
-		BrandDirectRegistrationResponse response = service.get(7L, "55");
-
-		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
-		assertThat(response.entries().get(0).monitoringItemId()).isNull();
-	}
-
-	@Test
-	void share_해소분은_GET에서_지연_매핑을_만들고_brandPostId를_채운다() {
-		// 레거시 실행기(processShareEntry)가 해소 후 resolved_url·item_id를 채우고 success로 정산한 상태.
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(shareEntryRegistration()));
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
-
-		BrandDirectRegistrationResponse response = service.get(7L, "55");
-
-		then(directPostRepository).should().upsert(7L, 100L, "SHR", 700L);
-		assertThat(response.entries().get(0).result()).isEqualTo("success");
-		assertThat(response.entries().get(0).brandPostId()).isEqualTo("SHR");
-		assertThat(response.entries().get(0).monitoringItemId()).isEqualTo("700");
-	}
-
-	@Test
-	void 활성_브랜드_연결이_없으면_지연_매핑은_건너뛰고_결과는_유지한다() {
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(shareEntryRegistration()));
-		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of());
-
-		BrandDirectRegistrationResponse response = service.get(7L, "55");
-
-		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
-		assertThat(response.entries().get(0).result()).isEqualTo("success");
-		assertThat(response.entries().get(0).brandPostId()).isEqualTo("SHR");
-	}
-
-	@Test
-	void 이미_매핑된_share_해소분은_다시_매핑하지_않는다() {
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(shareEntryRegistration()));
-		given(directPostRepository.findByUser(7L))
-				.willReturn(List.of(new BrandDirectPostRepository.Row(7L, 100L, "SHR", 700L)));
-
-		BrandDirectRegistrationResponse response = service.get(7L, "55");
-
-		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
-		then(linkRepository).should(never()).findAllActiveByUser(anyLong());
-		assertThat(response.entries().get(0).brandPostId()).isEqualTo("SHR");
-	}
-
-	@Test
-	void resolvedUrl이_없는_entry는_지연_매핑_대상이_아니다() {
-		// 범위를 넓히면 레거시(비브랜드) 등록 id를 이 엔드포인트에 넣는 것만으로 캠페인 게시물이
-		// 브랜드 화면으로 끌려 들어온다 — share 해소분으로만 한정한다.
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_DEF, "success", null, null, 301L))));
-
-		service.get(7L, "55");
-
-		then(directPostRepository).should(never()).upsert(anyLong(), anyLong(), anyString(), anyLong());
-	}
-
-	@Test
-	void 취소된_entry는_계약_4종에_맞춰_failed로_접는다() {
-		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(7L,
-				entry(0, URL_DEF, "canceled", "canceled", "등록을 취소했어요.", 301L))));
-
-		BrandDirectRegistrationResponse response = service.get(7L, "55");
-
-		assertThat(response.entries().get(0).result()).isEqualTo("failed");
-		assertThat(response.entries().get(0).reasonCode()).isEqualTo("canceled");
-	}
-
-	@Test
 	void 남의_등록_상태는_존재를_흘리지_않고_404다() {
 		given(registrationRepository.findById(55L)).willReturn(Optional.of(registration(8L,
-				entry(0, URL_DEF, "pending", null, null, 301L))));
+				entry(0, URL_DEF, "pending", null, null, null))));
 
 		assertThatThrownBy(() -> service.get(7L, "55")).isInstanceOf(V1ApiException.class);
 	}
@@ -434,10 +302,63 @@ class V1BrandDirectPostServiceTest {
 		assertThatThrownBy(() -> service.get(7L, "abc")).isInstanceOf(V1ApiException.class);
 	}
 
+	// ---------- 취소(설계 §2-4) ----------
+
+	@Test
+	void 매핑이_있고_direct_registered면_원격_취소_후_원장을_지운다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+
+		service.cancel(7L, "DEF");
+
+		then(commandClient).should().deleteDirectPost(100L, "DEF");
+		then(directPostRepository).should().delete(7L, "DEF");
+		then(postCampaignRepository).should().deleteByBrandAndShortCode(100L, "DEF");
+	}
+
+	@Test
+	void 원격_취소_실패는_삼키지_않고_전파된다() {
+		// 원장만 지우면 monitoring은 계속 수집하는데 화면에서만 사라지는 불일치가 생긴다 —
+		// 레거시 cancelLegacyIfPossible의 판단과 반대로, 여기서는 삼키지 않는 게 계약이다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		willThrow(new MonitoringUnavailableException("접속 실패", null))
+				.given(commandClient).deleteDirectPost(100L, "DEF");
+
+		assertThatThrownBy(() -> service.cancel(7L, "DEF")).isInstanceOf(MonitoringUnavailableException.class);
+		then(directPostRepository).should(never()).delete(anyLong(), anyString());
+	}
+
+	@Test
+	void 매핑이_없고_tagged_풀에_있으면_400_TAGGED_POST_NOT_CANCELABLE다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+
+		assertThatThrownBy(() -> service.cancel(7L, "ABC"))
+				.isInstanceOfSatisfying(V1ApiException.class,
+						e -> assertThat(e.code()).isEqualTo("TAGGED_POST_NOT_CANCELABLE"));
+		then(commandClient).should(never()).deleteDirectPost(anyLong(), anyString());
+		then(directPostRepository).should(never()).delete(anyLong(), anyString());
+	}
+
+	@Test
+	void 매핑도_tagged도_없으면_404다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		given(brandReadRepository.findBrandPoolStatus(100L, Set.of("ZZZ"))).willReturn(List.of());
+
+		assertThatThrownBy(() -> service.cancel(7L, "ZZZ")).isInstanceOf(V1ApiException.class);
+	}
+
 	// ---------- fixtures ----------
 
 	private void ownedBrand() {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
+	}
+
+	/** 표시 창(링크 collection_months)이 다른 연결 — 중복 게이트의 창 판정 검증용. */
+	private void ownedBrand(int collectionMonths) {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(BrandAccountType.OWN, collectionMonths)));
 	}
 
 	private static BrandLinkRow link() {
@@ -445,54 +366,33 @@ class V1BrandDirectPostServiceTest {
 	}
 
 	private static BrandLinkRow link(String accountType) {
-		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType,
+		return link(accountType, 12);
+	}
+
+	private static BrandLinkRow link(String accountType, int collectionMonths) {
+		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType, collectionMonths,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
-	/** share 단축 링크 1건이 레거시 실행기에서 해소·성공 정산된 상태의 등록 행. */
-	private static RegistrationRow shareEntryRegistration() {
-		return registration(7L, new RegistrationEntryRow(55L, 0, "https://www.instagram.com/share/xyz123",
-				"post", "success", null, null, "https://www.instagram.com/reel/SHR/", 700L));
+	private void poolStatus(String shortCode, boolean directRegistered, boolean tagDetected, OffsetDateTime takenAt) {
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any()))
+				.willReturn(List.of(new BrandPoolStatusRow(shortCode, tagDetected, directRegistered, takenAt)));
 	}
 
-	private void tagged(String... shortCodes) {
-		given(brandReadRepository.findTaggedPostsInWindow(eq(100L), any()))
-				.willReturn(Arrays.stream(shortCodes)
-						.map(code -> new BrandTaggedPostRow(code, "creator", "1",
-								OffsetDateTime.parse("2026-08-01T00:00:00Z"),
-								OffsetDateTime.parse("2026-08-01T00:00:00Z"), 0L))
-						.toList());
+	private static BrandPostRegistrationRepository.InsertedRegistration inserted(long id) {
+		return new BrandPostRegistrationRepository.InsertedRegistration(id,
+				OffsetDateTime.parse("2026-08-07T01:00:00Z"));
 	}
 
-	private void directMappings(String... shortCodes) {
-		given(directPostRepository.shortCodesByUser(7L)).willReturn(new LinkedHashSet<>(List.of(shortCodes)));
+	private static BrandPostRegistrationRow registration(long userId,
+			com.celfit.was.monitoring.BrandPostRegistrationEntryRow... entries) {
+		return new BrandPostRegistrationRow(55L, userId, 100L, null, OffsetDateTime.parse("2026-08-07T01:00:00Z"),
+				null, List.of(entries));
 	}
 
-	private static RegistrationRow registration(long userId, RegistrationEntryRow... entries) {
-		return new RegistrationRow(55L, userId, OffsetDateTime.parse("2026-08-07T01:00:00Z"), null,
-				30, null, null, List.of(entries));
-	}
-
-	private static RegistrationEntryRow entry(int seq, String input, String result, String reasonCode,
-			String reason, Long itemId) {
-		return new RegistrationEntryRow(55L, seq, input, "post", result, reasonCode, reason, null, itemId);
-	}
-
-	/** target 미확정 + 기간이 남은 행 → collecting(진행 중). 등록일은 오늘 기준이라 시간이 지나도 안 상한다. */
-	private static MonitoringItemRow item(long id) {
-		return item(id, null);
-	}
-
-	private static MonitoringItemRow item(long id, Long targetId) {
-		return new MonitoringItemRow(id, 7L, "url", UUID.randomUUID(), targetId, null, "GHI",
-				"https://www.instagram.com/p/GHI/", null, 30, LocalDate.now(KstTimestamps.KST), null, null,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"));
-	}
-
-	/** EXPIRED + tracked_short_code 있음 → ended(종결 3종). */
-	private static TargetRow expiredTarget(long id) {
-		return new TargetRow(id, "POST", null, "GHI", null, "EXPIRED", "GHI",
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null, null, 7L, null, false, null);
+	private static com.celfit.was.monitoring.BrandPostRegistrationEntryRow entry(int seq, String input,
+			String result, String reasonCode, String reason, String shortCode) {
+		return new com.celfit.was.monitoring.BrandPostRegistrationEntryRow(55L, seq, input, shortCode, result,
+				reasonCode, reason, null);
 	}
 }

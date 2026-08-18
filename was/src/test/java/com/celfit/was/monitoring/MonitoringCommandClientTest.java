@@ -152,4 +152,116 @@ class MonitoringCommandClientTest {
 				.isInstanceOfSatisfying(MonitoringApiException.class,
 						e -> assertThat(e.code()).isEqualTo("SHARE_LINK_UNRESOLVED"));
 	}
+
+	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §T7) ----------
+
+	@Test
+	void direct_등록_201_신규_수집_응답_파싱() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(jsonPath("$.shortCode").value("ABC123"))
+				.andExpect(jsonPath("$.registeredAt").doesNotExist())
+				.andExpect(jsonPath("$.importLegacyHistory").value(false))
+				.andRespond(withStatus(HttpStatus.CREATED).contentType(MediaType.APPLICATION_JSON)
+						.body("""
+								{ "shortCode": "ABC123", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+								  "contentType": "REELS" }
+								"""));
+
+		MonitoringCommandClient.DirectPostResult result = client.registerDirectPost(100L, "ABC123", null, false);
+
+		assertThat(result.shortCode()).isEqualTo("ABC123");
+		assertThat(result.authorUsername()).isEqualTo("creator");
+		assertThat(result.contentType()).isEqualTo("REELS");
+		server.verify();
+	}
+
+	@Test
+	void direct_등록_200_멱등_응답도_같은_셰이프로_파싱된다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withSuccess("""
+						{ "shortCode": "ABC123", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+						  "contentType": "REELS" }
+						""", MediaType.APPLICATION_JSON));
+
+		MonitoringCommandClient.DirectPostResult result = client.registerDirectPost(100L, "ABC123", null, false);
+
+		assertThat(result.shortCode()).isEqualTo("ABC123");
+	}
+
+	@Test
+	void direct_등록_404_POST_NOT_FOUND가_그대로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"POST_NOT_FOUND\", \"message\": \"게시물을 찾을 수 없습니다.\" }"));
+
+		assertThatThrownBy(() -> client.registerDirectPost(100L, "ABC123", null, false))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("POST_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
+	}
+
+	@Test
+	void direct_등록_422_에러_코드가_그대로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"PRIVATE_ACCOUNT\", \"message\": \"비공개 계정입니다.\" }"));
+
+		assertThatThrownBy(() -> client.registerDirectPost(100L, "ABC123", null, false))
+				.isInstanceOfSatisfying(MonitoringApiException.class,
+						e -> assertThat(e.code()).isEqualTo("PRIVATE_ACCOUNT"));
+	}
+
+	@Test
+	void direct_등록_바디_없는_5xx는_Unavailable() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+
+		assertThatThrownBy(() -> client.registerDirectPost(100L, "ABC123", null, false))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
+	@Test
+	void direct_취소_204는_바디_없이_성공한다() {
+		server.expect(requestTo(BASE + "/api/brands/100/direct-posts/ABC123"))
+				.andExpect(method(HttpMethod.DELETE))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		client.deleteDirectPost(100L, "ABC123");
+
+		server.verify();
+	}
+
+	/**
+	 * 결함 2 회귀(2026-08-18 스테이징 실측) — direct 등록 전용 타임아웃 분리 검증. 두 RestClient를
+	 * 각각 다른 MockRestServiceServer에 바인딩해, registerDirectPost가 실제로 directPostRestClient로만
+	 * 나가고 일반 restClient(다른 명령이 쓰는 쪽)에는 아무 요청도 안 감을 확인한다 — 전용 클라이언트
+	 * 분리로 readTimeout을 30초로 넉넉히 잡을 수 있는 배선이 실제로 살아있는지의 증거.
+	 */
+	@Test
+	void direct_등록은_전용_RestClient로만_나가고_일반_명령_클라이언트는_건드리지_않는다() {
+		RestClient.Builder generalBuilder = RestClient.builder().baseUrl(BASE);
+		MockRestServiceServer generalServer = MockRestServiceServer.bindTo(generalBuilder).build();
+		RestClient.Builder directPostBuilder = RestClient.builder().baseUrl(BASE);
+		MockRestServiceServer directPostServer = MockRestServiceServer.bindTo(directPostBuilder).build();
+		MonitoringCommandClient separated =
+				new MonitoringCommandClient(generalBuilder.build(), directPostBuilder.build());
+
+		directPostServer.expect(requestTo(BASE + "/api/brands/100/direct-posts"))
+				.andExpect(method(HttpMethod.POST))
+				.andRespond(withStatus(HttpStatus.CREATED).contentType(MediaType.APPLICATION_JSON)
+						.body("""
+								{ "shortCode": "ABC123", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+								  "contentType": "REELS" }
+								"""));
+
+		MonitoringCommandClient.DirectPostResult result = separated.registerDirectPost(100L, "ABC123", null, false);
+
+		assertThat(result.shortCode()).isEqualTo("ABC123");
+		directPostServer.verify();
+		generalServer.verify();   // 기대 0건 — 일반 restClient로는 아무 요청도 안 갔다
+	}
 }

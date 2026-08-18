@@ -149,6 +149,53 @@ class CampaignRepositoryTest extends IntegrationTest {
 				.single()).isZero();
 	}
 
+	/**
+	 * 2026-08-18 direct 통합 §T13 — brand_post_campaigns는 campaign_id FK에 CASCADE가 없어 캠페인
+	 * 삭제 전에 명시적으로 먼저 아카이브·삭제해야 한다(안 그러면 FK 위반). 이 테스트는 그 순서가
+	 * 실제로 지켜지는지 + 두 테이블 모두 아카이브에 남는지를 함께 고정한다.
+	 */
+	@Test
+	void delete는_brand_post_campaigns_링크를_먼저_아카이브하고_지운다() {
+		CampaignRow campaign = repository.insert(userId, "브랜드연동캠페인", null, null, null, null, null, null);
+		jdbcClient.sql("""
+						INSERT INTO app.brand_post_campaigns (brand_id, short_code, campaign_id, user_id)
+						VALUES (:brandId, :shortCode, :campaignId, :userId)
+						""")
+				.param("brandId", 1L).param("shortCode", "ABC").param("campaignId", campaign.id())
+				.param("userId", userId)
+				.update();
+
+		repository.delete(campaign.id());
+
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.brand_post_campaigns WHERE campaign_id = :id")
+				.param("id", campaign.id()).query(Long.class).single()).isZero();
+		assertThat(jdbcClient.sql("SELECT count(*) FROM app.monitoring_campaigns WHERE id = :id")
+				.param("id", campaign.id()).query(Long.class).single()).isZero();
+		List<String> archivedTables = jdbcClient.sql("""
+						SELECT table_name FROM archive.archived_rows WHERE user_id = :id ORDER BY table_name
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.list();
+		assertThat(archivedTables).containsExactlyInAnyOrder("app.monitoring_campaigns", "app.brand_post_campaigns");
+	}
+
+	/** 링크가 없는 캠페인 삭제는 브랜드 풀 아카이브 없이 캠페인 1건만 남는다(회귀 방지 — 링크 순회가 no-op이어야 함). */
+	@Test
+	void 링크_없는_캠페인_삭제는_brand_post_campaigns를_건드리지_않는다() {
+		CampaignRow campaign = repository.insert(userId, "링크없는캠페인", null, null, null, null, null, null);
+
+		repository.delete(campaign.id());
+
+		List<String> archivedTables = jdbcClient.sql("""
+						SELECT table_name FROM archive.archived_rows WHERE user_id = :id
+						""")
+				.param("id", userId)
+				.query(String.class)
+				.list();
+		assertThat(archivedTables).containsExactly("app.monitoring_campaigns");
+	}
+
 	@Test
 	void countItems() {
 		CampaignRow campaign = repository.insert(userId, "카운트캠페인", null, null, null, null, null, null);

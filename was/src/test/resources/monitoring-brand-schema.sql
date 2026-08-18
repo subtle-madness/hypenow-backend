@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS brand_tagged_post (
     -- 보강 정산 완료 시각(V20260813115041) — nullable·기본값 없음(운영 DDL과 동일).
     -- 기본값을 넣어 픽스처를 편하게 통과시키면 미러가 거짓말을 한다 — 값은 픽스처가 명시한다.
     enriched_at              timestamptz,
+    -- 나이 티어 정책의 게시물별 마지막 수집 시각(V20260809120000) — was는 updatedAt(GREATEST) 산정에 읽는다.
+    last_crawled_at          timestamptz,
+    -- direct 통합 소스 분리 컬럼(V20260818040742) — was는 둘 다 읽는다(BrandReadRepository.findBrandPoolStatus).
+    -- 기존 tagged 행은 전부 tag_detected_at이 채워져 있다는 운영 DDL 전제를 픽스처도 DEFAULT로 재현한다.
+    tag_detected_at          timestamptz DEFAULT now(),
+    direct_registered_at     timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 
@@ -79,7 +85,23 @@ CREATE TABLE IF NOT EXISTS brand_post_meta (
     -- 이미지 아카이브 3컬럼(V20260812021500) — was는 image_object_path만 읽는다.
     image_object_path   text,
     image_source_name   text,
-    image_archived_at   timestamptz
+    image_archived_at   timestamptz,
+    -- 광고 표기 판정 6컬럼(V20260817160000) — was는 ad_verdict·ad_violations·ad_evidence 3개만 읽는다.
+    ad_verdict           text CHECK (ad_verdict IN
+                              ('DISCLOSED', 'NOT_DISCLOSED', 'INSUFFICIENT', 'UNCERTAIN')),
+    ad_verdict_source    text CHECK (ad_verdict_source IN ('RULE', 'LLM')),
+    ad_violations        jsonb,
+    ad_evidence          jsonb,
+    ad_judged_at         timestamptz,
+    judged_caption_hash  text
+);
+
+-- 시딩(협업) 계정 등록(V20260817160000) — was는 username만 브랜드 스코프로 읽는다.
+CREATE TABLE IF NOT EXISTS brand_seeded_account (
+    brand_id   bigint      NOT NULL REFERENCES brand_account (id),
+    username   text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (brand_id, username)
 );
 
 CREATE TABLE IF NOT EXISTS brand_post_comment (
@@ -117,13 +139,18 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     image_object_path      text,
     image_source_name      text,
     image_archived_at      timestamptz,
+    -- 작성자 프로필 사진 아카이브 3컬럼(V20260817142317) — was는 author_image_object_path만 읽는다.
+    author_image_object_path   text,
+    author_image_source_name   text,
+    author_image_archived_at   timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 
 -- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql +
 -- V20260812120216__brand_hashtag_exclusion_soft_delete.sql(deleted_at tombstone, 2026-08-12).
--- was는 findActiveExclusionTerms(deleted_at IS NULL만)로 읽는다 — 해시태그 발견 게시물 조회
--- 시점 즉시 필터 재료(BrandHashtagPostAssembler).
+-- 제외 문자열 기능은 2026-08-17 전면 폐기됐다(monitoring 관리 API 5종·was 프록시 API 4종·was
+-- 조회 시점 필터 전부 제거) — 테이블 자체는 expand-contract 원칙상 아직 DROP하지 않았을 뿐,
+-- was는 더 이상 이 테이블을 읽지 않는다.
 CREATE TABLE IF NOT EXISTS brand_hashtag_exclusion (
     brand_id   bigint      NOT NULL REFERENCES brand_account (id),
     term       text        NOT NULL,

@@ -10,9 +10,11 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
-@Component
+/**
+ * 스프링 빈이 아니다 — {@code CrawlerConfig}가 {@link CountingHikerHttp}로 감싸 조립한다
+ * (둘 다 {@code HikerHttp}라 컴포넌트 스캔에 맡기면 주입이 모호해진다).
+ */
 public class JdkHikerHttp implements HikerHttp {
 
     private static final Logger log = LoggerFactory.getLogger(JdkHikerHttp.class);

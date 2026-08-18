@@ -12,8 +12,11 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 해시태그 감지 저장(스펙 2026-08-11) — 태그·제외 문자열·판정 게시물 3테이블.
- * 게시물은 필터 도달 전량(SELF·DIRECT_TAGGED 포함) 저장 — 조기 종료·dedup·재판정 재료.
+ * 해시태그 감지 저장(스펙 2026-08-11) — 태그·판정 게시물 저장(2026-08-17: 제외 문자열 기능이
+ * 폐기되며 관리 메서드도 함께 걷어냈다 — {@code brand_hashtag_exclusion} 테이블 자체는
+ * expand-contract 원칙상 이번 릴리스에서 DROP하지 않고 남아 있지만, 여기서는 더 이상 읽지도
+ * 쓰지도 않는다). 게시물은 필터 도달 전량(SELF·DIRECT_TAGGED 포함) 저장 — 조기 종료·dedup·
+ * 재판정 재료.
  */
 @Repository
 public class BrandHashtagRepository {
@@ -85,69 +88,6 @@ public class BrandHashtagRepository {
 				INSERT INTO brand_hashtag (brand_id, tag) VALUES (?, ?)
 				ON CONFLICT (brand_id, tag) DO UPDATE SET deleted_at = NULL""",
 				brandId, tag);
-	}
-
-	/** 활성 제외 문자열만(deleted_at IS NULL) — SELF 판정 재료. 유저가 지운 문자열은 여기서 빠진다. */
-	public List<String> findExclusionTerms(long brandId) {
-		return db.queryForList(
-				"SELECT term FROM brand_hashtag_exclusion WHERE brand_id = ? AND deleted_at IS NULL "
-						+ "ORDER BY created_at, term",
-				String.class, brandId);
-	}
-
-	/**
-	 * 등록·replay 자동 시드 전용(계정명 루트 기본값) — ON CONFLICT DO NOTHING이라 유저가 지운
-	 * (tombstone) 문자열은 되살아나지 않는다. 되살리려면 {@link #replaceExclusionTerms}나
-	 * {@link #addExclusionTerms}(재활성 UPSERT)를 쓸 것.
-	 */
-	public void insertDefaultExclusion(long brandId, String term) {
-		db.update("INSERT INTO brand_hashtag_exclusion (brand_id, term) VALUES (?, ?) ON CONFLICT DO NOTHING",
-				brandId, term);
-	}
-
-	/**
-	 * 전체 교체(PUT 계약) — tombstone 의미론(replaceTags와 동형). 새 목록에 없는 기존 활성 문자열은
-	 * deleted_at을 채워 비활성화, 새 목록의 문자열은 UPSERT로 삽입하거나 tombstone을 해제해 재활성한다.
-	 * 빈 목록도 허용(전체 비활성화 — 단건 API 도입 후 정당한 상태, PUT 자체의 하한 가드는 폐지됨).
-	 */
-	@Transactional
-	public void replaceExclusionTerms(long brandId, List<String> terms) {
-		Set<String> newTerms = new LinkedHashSet<>(terms);
-		for (String existing : findExclusionTerms(brandId)) {
-			if (!newTerms.contains(existing)) {
-				db.update("UPDATE brand_hashtag_exclusion SET deleted_at = now() WHERE brand_id = ? AND term = ?",
-						brandId, existing);
-			}
-		}
-		for (String term : newTerms) {
-			upsertExclusionTerm(brandId, term);
-		}
-	}
-
-	/** 단건·다건 명시적 추가(POST 계약) — tombstone 재활성 UPSERT(replaceExclusionTerms와 동일 의미론). */
-	public void addExclusionTerms(long brandId, Collection<String> terms) {
-		for (String term : terms) {
-			upsertExclusionTerm(brandId, term);
-		}
-	}
-
-	/** 단건 삭제(tombstone, DELETE {term} 계약) — 없어도 무해. */
-	public void deleteExclusionTerm(long brandId, String term) {
-		db.update("UPDATE brand_hashtag_exclusion SET deleted_at = now() "
-				+ "WHERE brand_id = ? AND term = ? AND deleted_at IS NULL", brandId, term);
-	}
-
-	/** 활성 전체 삭제(tombstone, DELETE 전체 계약). */
-	public void deleteAllExclusionTerms(long brandId) {
-		db.update("UPDATE brand_hashtag_exclusion SET deleted_at = now() "
-				+ "WHERE brand_id = ? AND deleted_at IS NULL", brandId);
-	}
-
-	private void upsertExclusionTerm(long brandId, String term) {
-		db.update("""
-				INSERT INTO brand_hashtag_exclusion (brand_id, term) VALUES (?, ?)
-				ON CONFLICT (brand_id, term) DO UPDATE SET deleted_at = NULL""",
-				brandId, term);
 	}
 
 	/** 페이지 단위 기존 코드 조회 — 조기 종료·스킵 판정 재료. 빈 입력은 선처리(IN ()은 SQL 오류). */

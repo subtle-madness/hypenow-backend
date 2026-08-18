@@ -73,9 +73,15 @@ public class CrawlRun {
         this.finishedAt = at;
     }
 
-    public void finishFailed(String error, Instant at) {
+    /**
+     * requestCount는 실패 전까지 성공 응답을 받아 이미 과금된 요청 수 — 산 게 없으면 null이다.
+     * 0이 아니라 null인 이유는 표기 통일: "과금 없음"은 Apify 실행·무료 소스가 이미 null로 쓴다
+     * (비용 뷰의 모수는 {@code request_count > 0}이라 둘 다 어차피 빠진다).
+     */
+    public void finishFailed(String error, Integer requestCount, Instant at) {
         this.status = RunStatus.FAILED;
         this.errorMessage = error;
+        this.requestCount = requestCount;
         this.finishedAt = at;
     }
 }

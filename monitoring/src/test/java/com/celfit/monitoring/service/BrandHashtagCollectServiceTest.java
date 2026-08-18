@@ -52,7 +52,6 @@ class BrandHashtagCollectServiceTest {
 
 	private static final class InMemoryHashtagRepo extends BrandHashtagRepository {
 		final Map<Long, List<String>> tags = new HashMap<>();
-		final Map<Long, List<String>> exclusions = new HashMap<>();
 		final Set<String> stored = new LinkedHashSet<>();
 		final List<HashtagPostInsert> inserted = new ArrayList<>();
 
@@ -63,11 +62,6 @@ class BrandHashtagCollectServiceTest {
 		@Override
 		public List<String> findTags(long brandId) {
 			return tags.getOrDefault(brandId, List.of());
-		}
-
-		@Override
-		public List<String> findExclusionTerms(long brandId) {
-			return exclusions.getOrDefault(brandId, List.of());
 		}
 
 		@Override
@@ -108,7 +102,7 @@ class BrandHashtagCollectServiceTest {
 		boolean fail;
 
 		FakeJudge() {
-			super((path, body) -> "{}", "unused-key", "unused-model");
+			super((path, body) -> "{}", true, "unused-model");
 		}
 
 		@Override
@@ -181,14 +175,15 @@ class BrandHashtagCollectServiceTest {
 				.formatted(code, takenAt, caption, username, usertags);
 	}
 
-	// ── 케이스 1: 자사 게시자 → SELF/RULE, 판정기 미호출 ───────────────────────
+	// ── 케이스 1: 자사 게시자(계정명 정확 일치) → SELF/RULE, 판정기 미호출 ──────
+	// (2026-08-17 — 제외 문자열 기능 폐기로 판정 재료가 "게시자 username == 브랜드 계정명"
+	//  정확 일치(대소문자 무시)로 좁혀졌다. 근사 매치는 케이스 1b가 확인한다.)
 
 	@Test
 	void 자사_게시자는_SELF_RULE로_저장되고_판정기는_호출되지_않는다() {
 		setTags("cclime");
-		((InMemoryHashtagRepo) repo).exclusions.put(brand.id(), List.of("cclime_official"));
 		pagesByTag.put("cclime", List.of(sectionsBody(null,
-				media("AAA", RECENT, "cclime_official_staff", null, "그냥 캡션"))));
+				media("AAA", RECENT, brand.username(), null, "그냥 캡션"))));
 
 		service(4).sweep(brand);
 
@@ -196,6 +191,19 @@ class BrandHashtagCollectServiceTest {
 		assertThat(saved.verdict()).isEqualTo("SELF");
 		assertThat(saved.verdictSource()).isEqualTo("RULE");
 		assertThat(judge.captionsSeen).isEmpty();
+	}
+
+	@Test
+	void 계정명을_포함할_뿐_정확히_일치하지_않는_게시자는_SELF가_아니다() {
+		setTags("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("STAFF1", RECENT, "cclime_official_staff", null, "무관 캡션"))));
+		judge.nextVerdict = BrandMentionJudge.Verdict.IRRELEVANT;
+
+		service(4).sweep(brand);
+
+		HashtagPostInsert saved = ((InMemoryHashtagRepo) repo).insertedByCode("STAFF1");
+		assertThat(saved.verdict()).isNotEqualTo("SELF");
 	}
 
 	// ── 케이스 2: 등록 계정 유저태그 → DIRECT_TAGGED/RULE, 판정기 미호출 ────────
@@ -356,14 +364,13 @@ class BrandHashtagCollectServiceTest {
 		assertThat(calls).contains("/v2/hashtag/medias/recent?name=%EB%81%8C%EB%A6%AC%EB%A9%94");
 	}
 
-	// ── 케이스 12: 대소문자 섞인 제외 문자열 매칭 ───────────────────────────────
+	// ── 케이스 12: SELF 판정은 계정명 대소문자를 무시하고 정확 일치한다 ────────
 
 	@Test
-	void 제외_문자열은_대소문자를_무시하고_매칭한다() {
+	void SELF_판정은_계정명_대소문자를_무시한다() {
 		setTags("cclime");
-		((InMemoryHashtagRepo) repo).exclusions.put(brand.id(), List.of("cclime"));
 		pagesByTag.put("cclime", List.of(sectionsBody(null,
-				media("SELF1", RECENT, "CClime_Daegu", null, "무관 캡션"))));
+				media("SELF1", RECENT, "CClime_Official", null, "무관 캡션"))));   // brand.username()="cclime_official"
 
 		service(4).sweep(brand);
 

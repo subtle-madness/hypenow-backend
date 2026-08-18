@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +45,8 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		jdbc = JdbcClient.create(dataSource);
 		jdbc.sql("""
 				TRUNCATE brand_tagged_post, brand_account, brand_post_meta, brand_post_snapshot,
-				         brand_post_comment, author_profile, brand_hashtag_post, brand_hashtag_exclusion
+				         brand_post_comment, author_profile, brand_hashtag_post, brand_hashtag_exclusion,
+				         brand_seeded_account
 				         RESTART IDENTITY CASCADE
 				""")
 				.update();
@@ -65,12 +67,12 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				.query(Long.class).single();
 	}
 
-	/** 보강 정산이 끝난 게시물(enriched_at 기입) — 목록에 노출되는 정상 상태. */
+	/** 보강 정산이 끝난 게시물(enriched_at 기입) — 목록에 노출되는 정상 상태. tag_detected_at도 채운다(태그 산지). */
 	void seedTaggedPost(long brandId, String shortCode, String takenAt) {
 		jdbc.sql("""
 				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
-				                               taken_at, comments_collected_count, enriched_at)
-				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 7, now())
+				                               taken_at, comments_collected_count, enriched_at, tag_detected_at)
+				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 7, now(), now())
 				""")
 				.param("brandId", brandId).param("shortCode", shortCode).param("takenAt", takenAt)
 				.update();
@@ -80,10 +82,27 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	void seedUnenrichedTaggedPost(long brandId, String shortCode, String takenAt) {
 		jdbc.sql("""
 				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
-				                               taken_at, comments_collected_count, enriched_at)
-				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 0, NULL)
+				                               taken_at, comments_collected_count, enriched_at, tag_detected_at)
+				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 0, NULL, now())
 				""")
 				.param("brandId", brandId).param("shortCode", shortCode).param("takenAt", takenAt)
+				.update();
+	}
+
+	/**
+	 * direct 등록만 된 게시물(2026-08-18 direct 통합) — tag_detected_at 명시 NULL(컬럼 자체의
+	 * DEFAULT now()를 무력화, 열 목록 생략만으로는 DEFAULT가 채워진다), direct_registered_at 채움.
+	 */
+	void seedDirectPost(long brandId, String shortCode, String takenAt, String registeredAt) {
+		jdbc.sql("""
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
+				                               taken_at, comments_collected_count, enriched_at,
+				                               tag_detected_at, direct_registered_at)
+				VALUES (:brandId, :shortCode, 'influencer_a', 'IG_A', :takenAt::timestamptz, 0, now(),
+				        NULL, :registeredAt::timestamptz)
+				""")
+				.param("brandId", brandId).param("shortCode", shortCode).param("takenAt", takenAt)
+				.param("registeredAt", registeredAt)
 				.update();
 	}
 
@@ -145,7 +164,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		seedTaggedPost(brandId, "MID", now.minusDays(100).toString());   // 구 90일 컷이면 잘렸을 행
 		seedTaggedPost(brandId, "NEW", now.minusDays(1).toString());
 
-		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(brandId, now.minusDays(365));
+		List<BrandTaggedPostRow> rows = repository.findBrandPostsInWindow(brandId, now.minusDays(365), false);
 
 		assertThat(rows).hasSize(2);
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("NEW", "MID");
@@ -154,6 +173,8 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(rows.get(0).authorIgUserId()).isEqualTo("IG_A");
 		assertThat(rows.get(0).commentsCollectedCount()).isEqualTo(7L);
 		assertThat(rows.get(0).firstSeenAt()).isNotNull();
+		assertThat(rows.get(0).tagDetectedAt()).isNotNull();
+		assertThat(rows.get(0).directRegisteredAt()).isNull();
 	}
 
 	@Test
@@ -164,7 +185,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		seedTaggedPost(mine, "MINE1", now.minusDays(2).toString());
 		seedTaggedPost(other, "OTHER1", now.minusDays(1).toString());
 
-		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(mine, now.minusDays(365));
+		List<BrandTaggedPostRow> rows = repository.findBrandPostsInWindow(mine, now.minusDays(365), false);
 
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("MINE1");
 	}
@@ -182,7 +203,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		seedUnenrichedTaggedPost(brandId, "PENDING_B", now.minusDays(1).toString());   // 더 최신이지만 미정산
 
 		List<BrandTaggedPostRow> rows =
-				repository.findEnrichedTaggedPostsInWindow(brandId, now.minusDays(365));
+				repository.findBrandPostsInWindow(brandId, now.minusDays(365), true);
 
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("DONE_A");
 	}
@@ -199,10 +220,28 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		seedTaggedPost(brandId, "DONE_A", now.minusDays(3).toString());
 		seedUnenrichedTaggedPost(brandId, "PENDING_B", now.minusDays(1).toString());
 
-		List<BrandTaggedPostRow> rows = repository.findTaggedPostsInWindow(brandId, now.minusDays(365));
+		List<BrandTaggedPostRow> rows = repository.findBrandPostsInWindow(brandId, now.minusDays(365), false);
 
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode)
 				.containsExactly("PENDING_B", "DONE_A");   // 최신순 — 미정산분이 정렬에서도 빠지지 않는다
+	}
+
+	/**
+	 * direct 등록 행은 창(365일 컷) 예외다(2026-08-18 direct 통합 §3-3) — 등록 시점이 아무리 오래돼도
+	 * 표시된다. tagged-only 창 밖 행은 여전히 제외된다(대조군).
+	 */
+	@Test
+	void direct_등록_행은_창_밖이어도_포함된다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "OLD_TAGGED", now.minusDays(400).toString());   // 창 밖 tagged — 제외 대조군
+		seedDirectPost(brandId, "OLD_DIRECT", now.minusDays(400).toString(), now.minusDays(1).toString());
+
+		List<BrandTaggedPostRow> rows = repository.findBrandPostsInWindow(brandId, now.minusDays(365), false);
+
+		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("OLD_DIRECT");
+		assertThat(rows.get(0).directRegisteredAt()).isNotNull();
+		assertThat(rows.get(0).tagDetectedAt()).isNull();
 	}
 
 	@Test
@@ -432,37 +471,71 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(rows).extracting(BrandHashtagPostRow::shortCode).containsExactly("MINE1");
 	}
 
-	// ---------- 자사 제외 문자열 활성 조회(2026-08-12 태그 관리 확장 짝) ----------
+	/** 작성자 프로필 사진 아카이브 결과(2026-08-17 신설)까지 읽는다 — null이면 미아카이브. */
+	@Test
+	void 해시태그_발견_게시물은_작성자_이미지_아카이브_경로도_읽는다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "ARCHIVED", "RELEVANT", now.minusDays(1).toString());
+		jdbc.sql("""
+				UPDATE brand_hashtag_post SET author_image_object_path = :path
+				WHERE brand_id = :brandId AND short_code = :shortCode
+				""")
+				.param("path", "monitor-hashtag-author/influencer_h.jpg")
+				.param("brandId", brandId).param("shortCode", "ARCHIVED")
+				.update();
+		seedHashtagPost(brandId, "UNARCHIVED", "RELEVANT", now.minusDays(2).toString());
+
+		List<BrandHashtagPostRow> rows = repository.findHashtagPosts(brandId, now.minusDays(365), 2000);
+
+		BrandHashtagPostRow archived = rows.stream().filter(r -> r.shortCode().equals("ARCHIVED")).findFirst()
+				.orElseThrow();
+		BrandHashtagPostRow unarchived = rows.stream().filter(r -> r.shortCode().equals("UNARCHIVED")).findFirst()
+				.orElseThrow();
+		assertThat(archived.authorImageObjectPath()).isEqualTo("monitor-hashtag-author/influencer_h.jpg");
+		assertThat(unarchived.authorImageObjectPath()).isNull();
+	}
+
+	// ---------- 승격 상태 필드용 tagged 존재 판정(2026-08-17) ----------
 
 	@Test
-	void 활성_제외_문자열만_읽고_삭제된_행은_제외한다() {
+	void tagged_존재_판정은_후보_shortcode_중_실재하는_것만_돌려준다() {
 		long brandId = seedBrand("brand_official");
-		jdbc.sql("""
-				INSERT INTO brand_hashtag_exclusion (brand_id, term, deleted_at)
-				VALUES (:brandId, 'cclime', NULL), (:brandId, 'deleted_term', now())
-				""")
-				.param("brandId", brandId).update();
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "EXISTS", now.minusDays(1).toString());
 
-		List<String> terms = repository.findActiveExclusionTerms(brandId);
+		Set<String> found = repository.findExistingTaggedShortCodes(brandId, List.of("EXISTS", "MISSING"));
 
-		assertThat(terms).containsExactly("cclime");
+		assertThat(found).containsExactly("EXISTS");
+	}
+
+	/** 윈도우 제한이 없다는 계약 — 365일 컷보다 오래된 tagged 게시물도 존재로 잡혀야 한다. */
+	@Test
+	void tagged_존재_판정은_윈도우_제한이_없다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "OLD", now.minusDays(400).toString());
+
+		Set<String> found = repository.findExistingTaggedShortCodes(brandId, List.of("OLD"));
+
+		assertThat(found).containsExactly("OLD");
 	}
 
 	@Test
-	void 제외_문자열_조회는_다른_브랜드_행을_섞지_않는다() {
+	void tagged_존재_판정은_다른_브랜드_행을_섞지_않는다() {
 		long mine = seedBrand("brand_mine");
 		long other = seedBrand("brand_other");
-		jdbc.sql("""
-				INSERT INTO brand_hashtag_exclusion (brand_id, term) VALUES (:mine, 'mine_term'), (:other, 'other_term')
-				""")
-				.param("mine", mine).param("other", other).update();
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(other, "OTHER1", now.minusDays(1).toString());
 
-		assertThat(repository.findActiveExclusionTerms(mine)).containsExactly("mine_term");
+		Set<String> found = repository.findExistingTaggedShortCodes(mine, List.of("OTHER1"));
+
+		assertThat(found).isEmpty();
 	}
 
 	@Test
-	void 제외_문자열이_없으면_빈_목록이다() {
+	void tagged_존재_판정은_빈_입력이면_빈_결과다() {
 		long brandId = seedBrand("brand_official");
-		assertThat(repository.findActiveExclusionTerms(brandId)).isEmpty();
+		assertThat(repository.findExistingTaggedShortCodes(brandId, List.of())).isEmpty();
 	}
 }

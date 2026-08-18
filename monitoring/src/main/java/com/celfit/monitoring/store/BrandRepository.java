@@ -99,6 +99,19 @@ public class BrandRepository {
 				BrandRepository::toRow, username).stream().findFirst();
 	}
 
+	/**
+	 * id 조회(2026-08-18 direct 통합 §T4) — direct 게시물 명령 API(POST/DELETE
+	 * {@code /api/brands/{brandId}/direct-posts})가 쓴다. was가 들고 있는 건 username이 아니라
+	 * {@code app.brand_monitorings.brand_id}라서(username은 계정명 변경으로 흔들린다) 기존 등록·
+	 * 태그 관리 API의 {@code {username}} 경로 변수와 의도적으로 다르다.
+	 */
+	public Optional<BrandRow> findById(long brandId) {
+		return db.query("""
+				SELECT id, username, ig_user_id, status, last_swept_on, collection_months
+				FROM brand_account WHERE id = ?""",
+				BrandRepository::toRow, brandId).stream().findFirst();
+	}
+
 	public List<BrandRow> findActive() {
 		return db.query("""
 				SELECT id, username, ig_user_id, status, last_swept_on, collection_months

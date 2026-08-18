@@ -32,4 +32,4 @@
 - **envelope·에러 코드**는 `docs/contracts/monitoring-frontend-api-spec.md` §1 공통 규약 준수. nullable(특히 `items[].link`)은 키 생략 없이 명시적 null.
 - **seen은 소식별 읽음이 아니다** — 타임스탬프 1개 저장만, 뱃지 계산은 프론트(요청서 4-6).
 
-구현 계획: [docs/superpowers/plans/archive/2026-08-03-product-notices-api.md](../plans/archive/2026-08-03-product-notices-api.md)
+구현 계획: [docs/superpowers/plans/archive/2026-08-03-product-notices-api.md](../../plans/archive/2026-08-03-product-notices-api.md)

@@ -9,12 +9,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.monitoring.domain.BrandStatus;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
 import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandLegacyHistoryCopier;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.TaggedPostRepository;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +43,8 @@ class BrandControllerTest {
 		RuntimeException toThrow;
 		String receivedBrandName;
 		Integer receivedMonths;
+		Long triggeredSweepBrandId;
+		List<String> triggeredSweepTags;
 
 		StubService() {
 			super(null, null, null, null, null, null, Runnable::run, Runnable::run);
@@ -56,6 +64,12 @@ class BrandControllerTest {
 		public DeregisterOutcome deregister(String username) {
 			return outcome;
 		}
+
+		@Override
+		public void triggerHashtagSweepIfNonEmpty(BrandRow row, List<String> tags) {
+			triggeredSweepBrandId = row.id();
+			triggeredSweepTags = tags;
+		}
 	}
 
 	/** 브랜드 해석 스텁 — row가 null이면 미등록, status로 ACTIVE/CLOSED를 가른다. */
@@ -70,18 +84,85 @@ class BrandControllerTest {
 		public Optional<BrandRow> findByUsername(String username) {
 			return Optional.ofNullable(row);
 		}
+
+		@Override
+		public Optional<BrandRow> findById(long brandId) {
+			return row != null && row.id() == brandId ? Optional.of(row) : Optional.empty();
+		}
 	}
 
-	/** 제외 문자열·태그 저장 스텁 — 조회 목록 주입 + 교체·추가·삭제 호출 인자 캡처. */
+	/** direct 등록 조회·취소 스텁 — findDirectSnapshot·deleteIfDirectOnly·clearDirect 호출 인자 캡처. */
+	private static final class StubTaggedPosts extends TaggedPostRepository {
+		Optional<DirectSnapshot> snapshot = Optional.empty();
+		boolean deleteIfDirectOnlyResult;
+		Long deleteIfDirectOnlyBrandId;
+		String deleteIfDirectOnlyShortCode;
+		Long clearDirectBrandId;
+		String clearDirectShortCode;
+
+		StubTaggedPosts() {
+			super(null);
+		}
+
+		@Override
+		public Optional<DirectSnapshot> findDirectSnapshot(long brandId, String shortCode) {
+			return snapshot;
+		}
+
+		@Override
+		public boolean deleteIfDirectOnly(long brandId, String shortCode) {
+			deleteIfDirectOnlyBrandId = brandId;
+			deleteIfDirectOnlyShortCode = shortCode;
+			return deleteIfDirectOnlyResult;
+		}
+
+		@Override
+		public void clearDirect(long brandId, String shortCode) {
+			clearDirectBrandId = brandId;
+			clearDirectShortCode = shortCode;
+		}
+	}
+
+	/** direct 단건 수집 스텁 — 반환값·예외를 주입하고 전달 인자를 캡처한다. */
+	private static final class StubDirectCollect extends BrandDirectCollectService {
+		PostInfo result;
+		RuntimeException toThrow;
+		BrandRow receivedBrand;
+		String receivedShortCode;
+		Instant receivedRegisteredAt;
+
+		StubDirectCollect() {
+			super(null, null, null, null, null);
+		}
+
+		@Override
+		public PostInfo collectAndEnrich(BrandRow brand, String shortCode, Instant registeredAt) {
+			receivedBrand = brand;
+			receivedShortCode = shortCode;
+			receivedRegisteredAt = registeredAt;
+			if (toThrow != null) {
+				throw toThrow;
+			}
+			return result;
+		}
+	}
+
+	/** 레거시 이력 복사 스텁 — 호출 여부·인자만 캡처(실제 SQL은 BrandLegacyHistoryCopierTest가 검증). */
+	private static final class StubLegacyHistoryCopier extends BrandLegacyHistoryCopier {
+		String copiedShortCode;
+
+		StubLegacyHistoryCopier() {
+			super(null);
+		}
+
+		@Override
+		public void copy(String shortCode) {
+			copiedShortCode = shortCode;
+		}
+	}
+
+	/** 태그 저장 스텁 — 조회 목록 주입 + 교체·추가·삭제 호출 인자 캡처. */
 	private static final class StubHashtagRepository extends BrandHashtagRepository {
-		List<String> terms = List.of();
-		Long receivedBrandId;
-		List<String> receivedTerms;
-		Long addedTermsBrandId;
-		List<String> addedTerms;
-		Long deletedTermBrandId;
-		String deletedTerm;
-		Long deletedAllTermsBrandId;
 		List<String> tags = List.of();
 		Long receivedTagsBrandId;
 		List<String> receivedTags;
@@ -93,34 +174,6 @@ class BrandControllerTest {
 
 		StubHashtagRepository() {
 			super(null);
-		}
-
-		@Override
-		public List<String> findExclusionTerms(long brandId) {
-			return terms;
-		}
-
-		@Override
-		public void replaceExclusionTerms(long brandId, List<String> terms) {
-			receivedBrandId = brandId;
-			receivedTerms = terms;
-		}
-
-		@Override
-		public void addExclusionTerms(long brandId, java.util.Collection<String> terms) {
-			addedTermsBrandId = brandId;
-			addedTerms = List.copyOf(terms);
-		}
-
-		@Override
-		public void deleteExclusionTerm(long brandId, String term) {
-			deletedTermBrandId = brandId;
-			deletedTerm = term;
-		}
-
-		@Override
-		public void deleteAllExclusionTerms(long brandId) {
-			deletedAllTermsBrandId = brandId;
 		}
 
 		@Override
@@ -155,13 +208,22 @@ class BrandControllerTest {
 	private final StubService service = new StubService();
 	private final StubBrandRepository brands = new StubBrandRepository();
 	private final StubHashtagRepository hashtags = new StubHashtagRepository();
+	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
+	private final StubDirectCollect directCollect = new StubDirectCollect();
+	private final StubLegacyHistoryCopier legacyHistoryCopier = new StubLegacyHistoryCopier();
 	private MockMvc mvc;
 
 	@BeforeEach
 	void setUp() {
-		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags))
+		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags, taggedPosts,
+						directCollect, legacyHistoryCopier))
 				.setControllerAdvice(new ApiExceptionHandler())
 				.build();
+	}
+
+	private static PostInfo samplePost(String shortCode, long takenAt) {
+		return new PostInfo(shortCode, "author1", null, null, "101", "REELS", "캡션", null,
+				takenAt, 10L, 2L, 500L, null, null, null, null, null, null, null, true, false, false);
 	}
 
 	@Test
@@ -254,129 +316,141 @@ class BrandControllerTest {
 		mvc.perform(delete("/api/brands/ghost")).andExpect(status().isNotFound());
 	}
 
-	@Test
-	void 제외_문자열_조회는_현재_목록을_돌려준다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
-		hashtags.terms = List.of("cclime", "끌리메");
+	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §2-2·§2-4·§4-2) ----------
 
-		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
+	@Test
+	void direct_등록_신규_수집은_201이다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.result = samplePost("ABC123", 1754000000L);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.shortCode").value("ABC123"))
+				.andExpect(jsonPath("$.authorUsername").value("author1"))
+				.andExpect(jsonPath("$.contentType").value("REELS"));
+		assertThat(directCollect.receivedShortCode).isEqualTo("ABC123");
+		assertThat(directCollect.receivedBrand.id()).isEqualTo(1L);
+	}
+
+	@Test
+	void direct_등록_이미_등록된_행은_200_멱등이고_단건_콜을_다시_내지_않는다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		taggedPosts.snapshot = Optional.of(new TaggedPostRepository.DirectSnapshot("ABC123", "author1",
+				Instant.ofEpochSecond(1754000000L), "REELS"));
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.terms[0]").value("cclime"))
-				.andExpect(jsonPath("$.terms[1]").value("끌리메"));
+				.andExpect(jsonPath("$.shortCode").value("ABC123"));
+		assertThat(directCollect.receivedShortCode).isNull();   // 재수집 콜이 안 나갔다
 	}
 
 	@Test
-	void 제외_문자열_교체는_정규화_후_전체_교체한다() throws Exception {
+	void direct_등록_게시물_부재는_404_POST_NOT_FOUND다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.toThrow = new SubjectNotFoundException("게시물 없음");
 
-		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[\" CClime \",\"cclime\",\"\"]}"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.receivedBrandId).isEqualTo(1L);
-		assertThat(hashtags.receivedTerms).containsExactly("cclime");
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"Ghost\"}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("POST_NOT_FOUND"));
 	}
 
-	/**
-	 * 2026-08-12 이후 PUT 빈 목록은 허용된다(단건·전체 삭제 API가 생겨 "전부 지우기"가 정당한
-	 * 상태 — 구 EmptyExclusionTermsException 하한 가드는 폐지됐다). 정규화 결과 빈 목록도 그대로
-	 * replaceExclusionTerms에 전달되고, tombstone 의미론에 따라 활성 문자열 전체가 비활성화된다.
-	 */
 	@Test
-	void terms_null_바디는_빈_목록_전체_교체로_허용된다() throws Exception {
+	void direct_등록_게시일_미상은_422_POST_UNSUPPORTED다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.toThrow = new PostShapeUnsupportedException("게시일 미상");
 
-		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{}"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.receivedTerms).isEmpty();
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"NoDate\"}"))
+				.andExpect(status().isUnprocessableEntity())
+				.andExpect(jsonPath("$.code").value("POST_UNSUPPORTED"));
 	}
 
 	@Test
-	void 빈_배열_교체도_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
-
-		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[\"  \",\"\"]}"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.receivedTerms).isEmpty();
-	}
-
-	// ---------- 제외 문자열 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
-
-	@Test
-	void 제외_문자열_추가는_정규화_후_전달한다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
-
-		mvc.perform(post("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[\" CClime \",\"cclime\"]}"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.addedTermsBrandId).isEqualTo(1L);
-		assertThat(hashtags.addedTerms).containsExactly("cclime");
-	}
-
-	@Test
-	void 제외_문자열_추가는_빈_입력도_무해하게_허용된다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
-
-		mvc.perform(post("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{}"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.addedTerms).isEmpty();
-	}
-
-	@Test
-	void 제외_문자열_단건_삭제는_정규화_후_전달하고_204다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
-
-		mvc.perform(delete("/api/brands/brandx/hashtag-exclusions/CClime"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.deletedTermBrandId).isEqualTo(1L);
-		assertThat(hashtags.deletedTerm).isEqualTo("cclime");
-	}
-
-	@Test
-	void 제외_문자열_전체_삭제는_204다() throws Exception {
-		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
-
-		mvc.perform(delete("/api/brands/brandx/hashtag-exclusions"))
-				.andExpect(status().isNoContent());
-
-		assertThat(hashtags.deletedAllTermsBrandId).isEqualTo(1L);
-	}
-
-	@Test
-	void 미등록_브랜드는_404이고_에러_바디를_준다() throws Exception {
-		// was MonitoringCommandClient.exchange()가 code 있는 바디만 MonitoringApiException으로
-		// 승격한다(빈 바디는 MonitoringUnavailableException/503으로 오승격 — 08-11 실측) — 그래서
-		// deregister의 빈 바디 404와 달리 여기는 계약 §2 어휘를 채운 바디가 필수다.
+	void direct_등록_브랜드_미존재는_404_BRAND_NOT_FOUND다() throws Exception {
 		brands.row = null;
 
-		mvc.perform(get("/api/brands/ghost/hashtag-exclusions"))
-				.andExpect(status().isNotFound())
-				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
-		mvc.perform(put("/api/brands/ghost/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[]}"))
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
 
 	@Test
-	void 탈퇴한_브랜드도_404이고_에러_바디를_준다() throws Exception {
+	void direct_등록_비ACTIVE_브랜드는_404_BRAND_NOT_FOUND다() throws Exception {
 		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.CLOSED, null, 12);
 
-		mvc.perform(get("/api/brands/brandx/hashtag-exclusions"))
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
-		mvc.perform(put("/api/brands/brandx/hashtag-exclusions").contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\":[]}"))
-				.andExpect(status().isNotFound())
-				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void direct_등록_shortCode_누락은_400이다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON).content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("VALIDATION"));
+	}
+
+	@Test
+	void direct_등록_importLegacyHistory가_true면_수집_전에_레거시_이력을_복사한다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.result = samplePost("ABC123", 1754000000L);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\",\"importLegacyHistory\":true,"
+								+ "\"registeredAt\":\"2026-08-01T00:00:00Z\"}"))
+				.andExpect(status().isCreated());
+
+		assertThat(legacyHistoryCopier.copiedShortCode).isEqualTo("ABC123");
+		assertThat(directCollect.receivedRegisteredAt).isEqualTo(Instant.parse("2026-08-01T00:00:00Z"));
+	}
+
+	@Test
+	void direct_등록_importLegacyHistory가_없으면_레거시_복사를_건너뛴다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+		directCollect.result = samplePost("ABC123", 1754000000L);
+
+		mvc.perform(post("/api/brands/1/direct-posts").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"shortCode\":\"ABC123\"}"))
+				.andExpect(status().isCreated());
+
+		assertThat(legacyHistoryCopier.copiedShortCode).isNull();
+	}
+
+	@Test
+	void direct_취소_행이_없어도_204_멱등이다() throws Exception {
+		taggedPosts.deleteIfDirectOnlyResult = false;   // 행 자체가 없음 — delete·clear 둘 다 no-op
+
+		mvc.perform(delete("/api/brands/1/direct-posts/{shortCode}", "ABC123")).andExpect(status().isNoContent());
+
+		assertThat(taggedPosts.deleteIfDirectOnlyBrandId).isEqualTo(1L);
+		assertThat(taggedPosts.clearDirectBrandId).isEqualTo(1L);   // 무해한 no-op UPDATE
+	}
+
+	@Test
+	void direct_취소_겹침_행은_direct_표식만_해제하고_204다() throws Exception {
+		taggedPosts.deleteIfDirectOnlyResult = false;   // tag_detected_at 있음 — delete 조건 불충족
+
+		mvc.perform(delete("/api/brands/1/direct-posts/{shortCode}", "ABC123")).andExpect(status().isNoContent());
+
+		assertThat(taggedPosts.clearDirectBrandId).isEqualTo(1L);
+		assertThat(taggedPosts.clearDirectShortCode).isEqualTo("ABC123");
+	}
+
+	@Test
+	void direct_취소_순수_direct_행은_삭제되고_204이며_clearDirect는_불리지_않는다() throws Exception {
+		taggedPosts.deleteIfDirectOnlyResult = true;   // tag_detected_at 없음 — delete 성공
+
+		mvc.perform(delete("/api/brands/1/direct-posts/{shortCode}", "ABC123")).andExpect(status().isNoContent());
+
+		assertThat(taggedPosts.deleteIfDirectOnlyShortCode).isEqualTo("ABC123");
+		assertThat(taggedPosts.clearDirectBrandId).isNull();   // 이미 지워졌으니 clearDirect는 호출 안 됨
 	}
 
 	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------
@@ -449,6 +523,34 @@ class BrandControllerTest {
 		assertThat(hashtags.receivedTags).isEmpty();
 	}
 
+	// ---------- 태그 등록 시 즉시 스윕 트리거(2026-08-17) ----------
+
+	@Test
+	void 태그_교체가_비어있지_않으면_즉시_스윕을_트리거한다() throws Exception {
+		brands.row = new BrandRow(7L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\":[\"cclime\"]}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(service.triggeredSweepBrandId).isEqualTo(7L);
+		assertThat(service.triggeredSweepTags).containsExactly("cclime");
+	}
+
+	@Test
+	void 태그_교체_결과가_빈_목록이어도_트리거_메서드는_호출된다_빈_목록_판단은_서비스_책임() throws Exception {
+		// 컨트롤러는 정규화된 태그 그대로 서비스에 넘기고, "비어있으면 스킵"은 서비스 쪽 책임이다
+		// (BrandRegistrationServiceTest에서 검증) — 여기서는 컨트롤러가 정확한 인자를 넘기는지만 본다.
+		brands.row = new BrandRow(7L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isNoContent());
+
+		assertThat(service.triggeredSweepBrandId).isEqualTo(7L);
+		assertThat(service.triggeredSweepTags).isEmpty();
+	}
+
 	// ---------- 태그 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
 
 	@Test
@@ -461,6 +563,28 @@ class BrandControllerTest {
 
 		assertThat(hashtags.addedTagsBrandId).isEqualTo(1L);
 		assertThat(hashtags.addedTags).containsExactly("cclime");
+		assertThat(service.triggeredSweepBrandId).isEqualTo(1L);
+		assertThat(service.triggeredSweepTags).containsExactly("cclime");
+	}
+
+	@Test
+	void 태그_단건_삭제는_스윕을_트리거하지_않는다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/hashtag-tags/{tag}", "cclime"))
+				.andExpect(status().isNoContent());
+
+		assertThat(service.triggeredSweepBrandId).isNull();
+	}
+
+	@Test
+	void 태그_전체_삭제는_스윕을_트리거하지_않는다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12);
+
+		mvc.perform(delete("/api/brands/brandx/hashtag-tags"))
+				.andExpect(status().isNoContent());
+
+		assertThat(service.triggeredSweepBrandId).isNull();
 	}
 
 	/** POST는 PUT과 달리 빈 입력을 422로 거부한다 — "추가할 게 없다"는 요청 자체가 실수일 확률이 높다. */
@@ -568,4 +692,5 @@ class BrandControllerTest {
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
+
 }

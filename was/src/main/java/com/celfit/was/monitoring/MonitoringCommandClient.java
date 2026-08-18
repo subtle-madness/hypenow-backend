@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.function.Supplier;
@@ -22,9 +23,21 @@ public class MonitoringCommandClient {
 	private static final Logger log = LoggerFactory.getLogger(MonitoringCommandClient.class);
 
 	private final RestClient restClient;
+	private final RestClient directPostRestClient;
 
 	public MonitoringCommandClient(RestClient restClient) {
+		this(restClient, restClient);
+	}
+
+	/**
+	 * direct 등록 전용 타임아웃 분리(2026-08-18 스테이징 실측, §T7) — {@code directPostRestClient}는
+	 * registerDirectPost 호출에만 쓰인다(readTimeout 30s 기본, {@code MonitoringConfig} 참조). 다른
+	 * 명령은 전부 기존 {@code restClient}(readTimeout 10s)를 그대로 쓴다 — 단일 인자 생성자는
+	 * 두 클라이언트가 같은 것으로 대체돼(테스트·레거시 호출부 호환) 기존 타임아웃 동작을 그대로 보존한다.
+	 */
+	public MonitoringCommandClient(RestClient restClient, RestClient directPostRestClient) {
 		this.restClient = restClient;
+		this.directPostRestClient = directPostRestClient;
 	}
 
 	public RegisterResult register(RegisterRequest request) {
@@ -86,52 +99,8 @@ public class MonitoringCommandClient {
 	}
 
 	/**
-	 * 브랜드 제외 문자열 조회(BrandController §3) — 자사 태그 오탐 방지용 문자열 전체.
-	 * 브랜드 미등록·비ACTIVE는 404 — deregisterBrand의 빈 바디 404(멱등 삼킴 전용 별개 계약)와 달리
-	 * 이 경로는 {code:"BRAND_NOT_FOUND", message} 에러 바디가 채워져 있어(08-11 정정 — 원래는 빈 바디라
-	 * MonitoringUnavailableException/503으로 오승격됐다) exchange()가 MonitoringApiException으로
-	 * 정확히 승격하고, 호출부(V1ExceptionAdvice 공용 매핑)가 그대로 404로 내려보낸다.
-	 */
-	public List<String> getHashtagExclusions(String username) {
-		HashtagExclusionsBody body = exchange(() -> restClient.get()
-				.uri("/api/brands/{username}/hashtag-exclusions", username)
-				.retrieve().body(HashtagExclusionsBody.class));
-		return body == null || body.terms() == null ? List.of() : body.terms();
-	}
-
-	/**
-	 * 제외 문자열 전체 교체(PUT 계약) — terms는 monitoring이 정규화(trim·소문자·중복 제거) 후 저장.
-	 * 빈 목록도 허용(2026-08-12부터 — monitoring PUT 하한 가드 폐지, 단건·전체 삭제 API 참조).
-	 */
-	public void putHashtagExclusions(String username, List<String> terms) {
-		exchange(() -> restClient.put().uri("/api/brands/{username}/hashtag-exclusions", username)
-				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
-	}
-
-	/** 제외 문자열 단건·다건 추가(POST 계약, 2026-08-12) — tombstone 재활성(monitoring이 정규화). */
-	public void addHashtagExclusions(String username, List<String> terms) {
-		exchange(() -> restClient.post().uri("/api/brands/{username}/hashtag-exclusions", username)
-				.body(new HashtagExclusionsBody(terms)).retrieve().toBodilessEntity());
-	}
-
-	/**
-	 * 제외 문자열 단건 삭제(tombstone, DELETE {term} 계약, 2026-08-12) — 없어도 204(멱등).
-	 * term은 URI 템플릿 변수로 넘겨 RestClient가 인코딩한다(한글 등 특수문자 왕복 안전).
-	 */
-	public void deleteHashtagExclusion(String username, String term) {
-		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-exclusions/{term}", username, term)
-				.retrieve().toBodilessEntity());
-	}
-
-	/** 제외 문자열 전체 삭제(tombstone, DELETE 계약, 2026-08-12) — 자사 오탐 필터를 완전히 끈다. */
-	public void deleteAllHashtagExclusions(String username) {
-		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-exclusions", username)
-				.retrieve().toBodilessEntity());
-	}
-
-	/**
 	 * 브랜드 태그 셋 조회(BrandController §태그 관리, 2026-08-12) — 활성 태그 전체.
-	 * 404(BRAND_NOT_FOUND)는 제외 문자열 조회와 동형으로 MonitoringApiException으로 승격된다.
+	 * 404(BRAND_NOT_FOUND)는 다른 브랜드 조회 경로와 동형으로 MonitoringApiException으로 승격된다.
 	 */
 	public List<String> getHashtagTags(String username) {
 		HashtagTagsBody body = exchange(() -> restClient.get()
@@ -170,6 +139,40 @@ public class MonitoringCommandClient {
 	/** 태그 전체 삭제(tombstone, DELETE 계약, 2026-08-12) — 브랜드 태그 감지를 완전히 끈다. */
 	public void deleteAllHashtagTags(String username) {
 		exchange(() -> restClient.delete().uri("/api/brands/{username}/hashtag-tags", username)
+				.retrieve().toBodilessEntity());
+	}
+
+	/**
+	 * direct 게시물 등록(2026-08-18 direct 통합 §2-2·§4-2, monitoring BrandController §direct 명령) —
+	 * 단건 콜로 즉시 수집·보강하는 동기 경로다(최대 5콜 ≈ 7초). 201(신규 수집)·200(이미 풀에 있음,
+	 * 멱등)은 같은 바디라 was는 둘을 구분하지 않고 둘 다 성공으로 접는다.
+	 *
+	 * <p>404({@code POST_NOT_FOUND})·422({@code PRIVATE_ACCOUNT}·{@code POST_UNSUPPORTED})·
+	 * 404({@code BRAND_NOT_FOUND})는 에러 바디 code 그대로 {@link MonitoringApiException}으로
+	 * 승격된다(계약 어긋나면 {@link MonitoringUnavailableException}(503)으로 잘못 승격 — 클래스 주석
+	 * 관용구 재사용).
+	 *
+	 * <p>registeredAt·importLegacyHistory는 이관 잡(mode=import) 전용이다 — was 실행기의 일반 유저
+	 * 등록 경로는 둘 다 비운다(등록 시각은 monitoring이 now()로 채우고, 레거시 이력 복사도 생략).
+	 *
+	 * <p><b>전용 타임아웃(결함 2, 2026-08-18 스테이징 실측)</b>: monitoring 동기 처리 최대 ~7초 +
+	 * 콜드스타트 여유(2026-08-18 스테이징 실측 — 10s 타임아웃으로 응답 유실 1회 관찰). 공용
+	 * {@code restClient}(readTimeout 10s)는 여유가 3초뿐이라 이 호출만 {@code directPostRestClient}
+	 * (readTimeout 기본 30s, {@code monitoring.command.direct-post-timeout})로 분리했다.
+	 */
+	public DirectPostResult registerDirectPost(long brandId, String shortCode, OffsetDateTime registeredAt,
+			boolean importLegacyHistory) {
+		return exchange(() -> directPostRestClient.post().uri("/api/brands/{brandId}/direct-posts", brandId)
+				.body(new DirectPostRegisterRequest(shortCode, registeredAt, importLegacyHistory))
+				.retrieve().body(DirectPostResult.class));
+	}
+
+	/**
+	 * direct 게시물 취소(2026-08-18 direct 통합 §2-4) — 매핑 삭제가 아니라 direct 표식 해제.
+	 * 행이 없어도 204(멱등) — was의 재시도·이중 취소가 안전해야 한다.
+	 */
+	public void deleteDirectPost(long brandId, String shortCode) {
+		exchange(() -> restClient.delete().uri("/api/brands/{brandId}/direct-posts/{shortCode}", brandId, shortCode)
 				.retrieve().toBodilessEntity());
 	}
 
@@ -214,11 +217,15 @@ public class MonitoringCommandClient {
 	public record BrandRegisterResult(long brandId, String username, Long followers, String status) {
 	}
 
-	/** monitoring BrandController.HashtagExclusionsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
-	record HashtagExclusionsBody(List<String> terms) {
-	}
-
 	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
 	record HashtagTagsBody(List<String> tags) {
+	}
+
+	/** monitoring BrandController.DirectPostRegisterRequest와 동형. */
+	record DirectPostRegisterRequest(String shortCode, OffsetDateTime registeredAt, Boolean importLegacyHistory) {
+	}
+
+	/** monitoring BrandController.DirectPostResponse와 동형(201·200 공용 셰이프). */
+	public record DirectPostResult(String shortCode, String authorUsername, Instant takenAt, String contentType) {
 	}
 }

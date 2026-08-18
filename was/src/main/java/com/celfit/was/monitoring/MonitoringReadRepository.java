@@ -250,6 +250,23 @@ public class MonitoringReadRepository {
 				.list();
 	}
 
+	/**
+	 * 전 유저 날짜별 콜 합(설계 2026-08-13 §3-4) — 어드민 전역 크롤링 비용 API의 캠페인·콘텐츠 몫.
+	 * 한 콜이 여러 유저의 캠페인을 서빙하면 target_call_count에 유저마다 +1로 기록돼 있어, 이
+	 * 합계 역시 그만큼 상한 쪽으로 치우친다(브랜드 공유와 같은 관점 — 계약 문서에 명시).
+	 *
+	 * <p>sum()은 numeric을 돌려주므로 ::bigint 캐스트가 필수다(record 컴포넌트가 long).
+	 */
+	public List<DailyCallSum> sumDailyCallCounts() {
+		return jdbc.sql("""
+				SELECT called_on, sum(calls)::bigint AS calls
+				FROM target_call_count
+				GROUP BY called_on
+				""")
+				.query(DailyCallSum.class)
+				.list();
+	}
+
 	/** target_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
 	public record UserCallDailyRow(LocalDate calledOn, long calls) {
 	}

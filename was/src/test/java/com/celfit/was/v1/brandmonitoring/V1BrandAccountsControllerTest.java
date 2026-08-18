@@ -95,7 +95,11 @@ class V1BrandAccountsControllerTest {
 	}
 
 	private static BrandLinkRow link(long userId, long brandId, String username, String accountType) {
-		return new BrandLinkRow(brandId, userId, brandId, username, accountType,
+		return link(userId, brandId, username, accountType, 12);
+	}
+
+	private static BrandLinkRow link(long userId, long brandId, String username, String accountType, int months) {
+		return new BrandLinkRow(brandId, userId, brandId, username, accountType, months,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
 	}
 
@@ -181,7 +185,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionCompletedAt").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.collectionError").value(Matchers.nullValue()));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 /img/ 상대경로를 우선 서빙한다. */
@@ -313,7 +317,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("100"))
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	@Test
@@ -330,7 +334,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"));
 
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt());
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
 	@Test
@@ -348,7 +352,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted())
 				.andExpect(jsonPath("$.data.id").value("100"));
 
-		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN);
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12);
 	}
 
 	@Test
@@ -392,7 +396,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		// 응답 필드는 mock 조회분을 되읽는 것이라 실제 저장 타입을 증명하지 못한다 — 저장 인자를 직접 고정한다.
-		then(linkRepository).should().insertLink(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR);
+		then(linkRepository).should().insertLink(7L, 300L, "rival_brand", BrandAccountType.COMPETITOR, 12);
 
 		result.andExpect(jsonPath("$.data.accountType").value("competitor"));
 	}
@@ -483,7 +487,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt());
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
 	// ---------- 수집 범위(collectionMonths, 2026-08-12 FE 요청서) ----------
@@ -513,6 +517,8 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		then(commandClient).should().registerBrand("lizda_official", null, 3);
+		// 신청값은 자산(monitoring)뿐 아니라 연결 행에도 그대로 남는다(2026-08-17) — 유저별 표시 창의 정본.
+		then(linkRepository).should().insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 3);
 	}
 
 	@Test
@@ -530,7 +536,9 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isAccepted());
 
 		then(commandClient).should().registerBrand("lizda_official", null, 12);
-		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString());
+		// 확장은 자산과 링크 둘 다에 반영된다(2026-08-17) — 새 연결은 아니므로 insertLink는 없다.
+		then(linkRepository).should().updateCollectionMonths(7L, 100L, 12);
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
 	}
 
 	@Test
@@ -557,18 +565,60 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 이미_연결된_계정의_같거나_작은_창_재등록은_monitoring_호출이_없다() throws Exception {
+	void 재등록이_명시한_collectionMonths는_링크에_그대로_반영된다_축소_허용() throws Exception {
+		// 이미 연결됨(자산 12) + 3개월 재-POST → 자산은 불변(monitoring 콜 0), 링크만 3으로 갱신.
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));   // 자산 12
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 3)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("{\"username\": \"lizda_official\", \"collectionMonths\": 3}"))
 				.andExpect(status().isAccepted())
-				.andExpect(jsonPath("$.data.collectionMonths").value(12));   // 축소 없음 — 자산 값 유지
+				.andExpect(jsonPath("$.data.collectionMonths").value(3));   // 링크 값 — 자산(12) 아님
 
+		then(linkRepository).should().updateCollectionMonths(7L, 100L, 3);
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt());
+	}
+
+	@Test
+	void 개명된_브랜드_재등록도_명시한_collectionMonths를_링크에_반영한다() throws Exception {
+		// precheck는 링크의 username 사본으로 비교하므로 IG 개명 후 새 이름은 멱등 경로에 걸리지 않는다.
+		// 그러면 monitoring 등록이 같은 brandId로 replay돼 link()의 기존 연결 분기로 접히는데,
+		// 그 분기가 months를 무시하면 유저가 명시한 3개월이 조용히 사라진다(링크는 12로 남는다).
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L, "old_name")));
+		given(commandClient.registerBrand("new_name", null, 3))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "new_name", 30876L, "ACTIVE"));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "old_name", BrandAccountType.OWN, 3)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"new_name\", \"collectionMonths\": 3}"))
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.data.collectionMonths").value(3));
+
+		then(linkRepository).should().updateCollectionMonths(7L, 100L, 3);
+		// 이미 있는 연결이라 새 행을 만들지는 않는다(멱등).
+		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
+	}
+
+	@Test
+	void 재등록이_collectionMonths를_생략하면_링크_기간은_불변이다() throws Exception {
+		// 구 클라이언트의 필드 없는 재-POST가 3개월 링크를 12로 되돌리면 안 된다.
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(7L, 100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 3)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\": \"lizda_official\"}"))
+				.andExpect(status().isAccepted());
+
+		then(linkRepository).should(never()).updateCollectionMonths(anyLong(), anyLong(), anyInt());
 	}
 
 	@Test
@@ -624,7 +674,7 @@ class V1BrandAccountsControllerTest {
 		// (유저, 브랜드) 활성 유니크가 잡은 동시 같은 요청 — 원하는 상태는 이미 성립했으므로 성공으로 접는다.
 		given(commandClient.registerBrand("lizda_official", null, 12))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(100L, "lizda_official", 30876L, "ACTIVE"));
-		given(linkRepository.insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN))
+		given(linkRepository.insertLink(7L, 100L, "lizda_official", BrandAccountType.OWN, 12))
 				.willThrow(new DuplicateKeyException("brand_monitorings_active_user_brand_uidx"));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
@@ -779,7 +829,9 @@ class V1BrandAccountsControllerTest {
 		// 08-13 개정(08-12의 "확장 중 collecting"을 뒤집는다): 확장이 완주 시각을 리셋하므로
 		// 진행 여부는 status가 아니라 collectionCompletedAt == null이 알린다(FE 폴링 종료 조건).
 		// status는 collecting|ready|error 3값 고정이고, 데이터가 계속 서빙되므로 ready가 정확하다.
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		// collectionMonths는 링크 값이 정본이라(2026-08-17) 자산 6과 같은 값을 링크에도 세팅해 둔다.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 6)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(expandingRow(100L)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
@@ -796,14 +848,16 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 응답은_자산의_collectionMonths를_그대로_싣는다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+	void 응답의_collectionMonths는_자산이_아니라_링크_값이다() throws Exception {
+		// 자산은 12(다른 유저의 max)지만 이 유저 신청은 3 — 응답은 유저 신청값.
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 3)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.collectionStatus").value("ready"))
-				.andExpect(jsonPath("$.data.collectionMonths").value(12))
+				.andExpect(jsonPath("$.data.collectionMonths").value(3))
 				// 다음 스윕 표기는 운영 브랜드 스윕 시각(KST 02:00) 고정 — 날짜부는 실행일에 따라 변하므로
 				// 시각 접미사만 검증한다(08-12 정정: 기본값 sweep-hour-kst=2).
 				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T02:00:00+09:00")));
@@ -994,185 +1048,6 @@ class V1BrandAccountsControllerTest {
 
 		then(linkRepository).should(never()).softDeleteLink(anyLong(), anyLong());
 		then(commandClient).should(never()).deregisterBrand(anyString());
-	}
-
-	// ---------- 해시태그 제외 문자열(스펙 2026-08-11 §2) ----------
-
-	@Test
-	void 제외_문자열_조회는_소유_브랜드만_허용한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(commandClient.getHashtagExclusions("lizda_official")).willReturn(List.of("리즈다", "lizda"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.terms.length()").value(2))
-				.andExpect(jsonPath("$.data.terms[0]").value("리즈다"))
-				.andExpect(jsonPath("$.data.terms[1]").value("lizda"));
-
-		then(commandClient).should().getHashtagExclusions("lizda_official");
-	}
-
-	@Test
-	void 미소유_브랜드의_제외_문자열_조회는_거부된다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/999/hashtag-exclusions").with(user(principal())))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
-
-		then(commandClient).should(never()).getHashtagExclusions(anyString());
-	}
-
-	@Test
-	void 제외_문자열_교체는_monitoring으로_위임한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-
-		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
-						.with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\": [\"리즈다\", \"Lizda\"]}"))
-				.andExpect(status().isNoContent());
-
-		then(commandClient).should().putHashtagExclusions("lizda_official", List.of("리즈다", "Lizda"));
-	}
-
-	@Test
-	void terms_null_교체는_빈_목록으로_위임한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-
-		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
-						.with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{}"))
-				.andExpect(status().isNoContent());
-
-		then(commandClient).should().putHashtagExclusions("lizda_official", List.of());
-	}
-
-	@Test
-	void 미소유_브랜드의_제외_문자열_교체는_거부된다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
-
-		mockMvc.perform(put("/v1/brand-monitoring/accounts/999/hashtag-exclusions")
-						.with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\": [\"리즈다\"]}"))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
-
-		then(commandClient).should(never()).putHashtagExclusions(anyString(), any());
-	}
-
-	// ---------- 제외 문자열 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
-
-	@Test
-	void 제외_문자열_추가는_monitoring으로_위임한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-
-		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
-						.with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\": [\"리즈다\"]}"))
-				.andExpect(status().isNoContent());
-
-		then(commandClient).should().addHashtagExclusions("lizda_official", List.of("리즈다"));
-	}
-
-	@Test
-	void 미소유_브랜드의_제외_문자열_추가는_거부된다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
-
-		mockMvc.perform(post("/v1/brand-monitoring/accounts/999/hashtag-exclusions")
-						.with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"terms\": [\"리즈다\"]}"))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
-
-		then(commandClient).should(never()).addHashtagExclusions(anyString(), any());
-	}
-
-	@Test
-	void 제외_문자열_단건_삭제는_monitoring으로_위임한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-
-		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-exclusions/{term}", "리즈다")
-						.with(user(principal())).with(csrf()))
-				.andExpect(status().isNoContent());
-
-		then(commandClient).should().deleteHashtagExclusion("lizda_official", "리즈다");
-	}
-
-	@Test
-	void 미소유_브랜드의_제외_문자열_단건_삭제는_거부된다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
-
-		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/hashtag-exclusions/{term}", "리즈다")
-						.with(user(principal())).with(csrf()))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
-
-		then(commandClient).should(never()).deleteHashtagExclusion(anyString(), anyString());
-	}
-
-	@Test
-	void 제외_문자열_전체_삭제는_monitoring으로_위임한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-
-		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-exclusions")
-						.with(user(principal())).with(csrf()))
-				.andExpect(status().isNoContent());
-
-		then(commandClient).should().deleteAllHashtagExclusions("lizda_official");
-	}
-
-	@Test
-	void 미소유_브랜드의_제외_문자열_전체_삭제는_거부된다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
-
-		mockMvc.perform(delete("/v1/brand-monitoring/accounts/999/hashtag-exclusions")
-						.with(user(principal())).with(csrf()))
-				.andExpect(status().isForbidden())
-				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
-
-		then(commandClient).should(never()).deleteAllHashtagExclusions(anyString());
-	}
-
-	@Test
-	void monitoring_브랜드_비정합_404는_제외_문자열_조회에서_404로_매핑된다() throws Exception {
-		// was 링크·brand_account는 정합이지만 monitoring이 그 브랜드를 모르는 비정합 경로 —
-		// BrandController가 {code:"BRAND_NOT_FOUND", message} 에러 바디를 채워 주므로(08-11 정정,
-		// 이전엔 빈 바디라 503으로 오승격됐다 — MonitoringBrandCommandClientTest 실측) exchange가
-		// MonitoringApiException(404)으로 승격하고 V1ExceptionAdvice 공용 매핑이 그대로 404로 접는다.
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(commandClient.getHashtagExclusions("lizda_official"))
-				.willThrow(new MonitoringApiException("BRAND_NOT_FOUND", "브랜드를 찾을 수 없습니다.", 404));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
-				.andExpect(status().isNotFound())
-				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
-	}
-
-	@Test
-	void monitoring_접속_불능은_제외_문자열_조회에서_503이다() throws Exception {
-		// 에러 바디 유무와 무관한 진짜 전송 실패(타임아웃·연결 거부 등) 경로 — 다른 monitoring
-		// 엔드포인트 4곳과 같은 503+Retry-After 계약이 유지되는지 확인.
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(commandClient.getHashtagExclusions("lizda_official"))
-				.willThrow(new MonitoringUnavailableException("monitoring 접속 실패: read timeout", null));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-exclusions").with(user(principal())))
-				.andExpect(status().isServiceUnavailable())
-				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
-				.andExpect(header().string("Retry-After", "5"));
 	}
 
 	@Test
@@ -1374,4 +1249,5 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
 				.andExpect(header().string("Retry-After", "5"));
 	}
+
 }

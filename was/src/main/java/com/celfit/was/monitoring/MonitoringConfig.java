@@ -33,10 +33,13 @@ public class MonitoringConfig {
 	private final HikariDataSource monitoringDataSource;
 	private final JdbcClient monitoringJdbc;
 	private final RestClient monitoringRestClient;
+	private final RestClient directPostRestClient;
 	private final ThreadPoolTaskExecutor registrationTaskExecutor;
+	private final ThreadPoolTaskExecutor brandDirectRegistrationTaskExecutor;
 
 	public MonitoringConfig(
 			@Value("${monitoring.api.base-url:http://monitoring:8083}") String baseUrl,
+			@Value("${monitoring.command.direct-post-timeout:PT30S}") Duration directPostTimeout,
 			@Value("${monitoring.datasource.url}") String dbUrl,
 			@Value("${monitoring.datasource.username}") String dbUsername,
 			@Value("${monitoring.datasource.password}") String dbPassword) {
@@ -46,6 +49,18 @@ public class MonitoringConfig {
 		requestFactory.setReadTimeout(Duration.ofSeconds(10));
 		this.monitoringRestClient = RestClient.builder()
 				.requestFactory(requestFactory)
+				.baseUrl(baseUrl)
+				.build();
+
+		// direct 등록 전용 타임아웃(2026-08-18 스테이징 실측) — monitoring 동기 처리 최대 ~7초(Hiker
+		// 최대 5콜) + 콜드스타트 여유. 공용 10초 타임아웃으로는 여유가 3초뿐이라, monitoring은 2초 내
+		// 완료했는데 was가 응답을 버리는 콜드스타트 추정 타임아웃이 스테이징에서 1회 실측됐다. 다른
+		// 명령(레거시 등록·취소 등)의 기존 10초 타임아웃은 그대로 두고, direct 등록 호출에만 전용
+		// RestClient(같은 HttpClient·baseUrl, readTimeout만 다름)를 분리해 30초로 넉넉히 잡는다.
+		JdkClientHttpRequestFactory directPostRequestFactory = new JdkClientHttpRequestFactory(http);
+		directPostRequestFactory.setReadTimeout(directPostTimeout);
+		this.directPostRestClient = RestClient.builder()
+				.requestFactory(directPostRequestFactory)
 				.baseUrl(baseUrl)
 				.build();
 
@@ -79,7 +94,22 @@ public class MonitoringConfig {
 		pool.initialize();
 		this.registrationTaskExecutor = pool;
 
-		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3 / 등록 실행기 풀 2)", baseUrl);
+		// 브랜드 direct 등록 실행기 전용 풀(2026-08-18 direct 통합 §T8) — 레거시 등록 풀과 분리한다.
+		// entry 1건 처리가 monitoring 단건 콜(최대 5콜 ≈ 7초)이라 레거시 등록(평균 수백ms)보다 훨씬
+		// 느리다 — 같은 풀을 쓰면 direct 등록 스파이크가 레거시 등록 처리를 굶길 수 있다.
+		ThreadPoolTaskExecutor brandPool = new ThreadPoolTaskExecutor();
+		brandPool.setCorePoolSize(2);
+		brandPool.setMaxPoolSize(2);
+		brandPool.setQueueCapacity(100);
+		brandPool.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+		brandPool.setWaitForTasksToCompleteOnShutdown(true);
+		brandPool.setAwaitTerminationSeconds(15);
+		brandPool.setThreadNamePrefix("brand-direct-registration-");
+		brandPool.initialize();
+		this.brandDirectRegistrationTaskExecutor = brandPool;
+
+		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3 / 등록 실행기 풀 2 / "
+				+ "브랜드 direct 등록 실행기 풀 2)", baseUrl);
 	}
 
 	/** 내부 접근자 — 빈이 아니다. 도메인 빈 조립과 테스트에서만 쓴다. */
@@ -93,7 +123,7 @@ public class MonitoringConfig {
 
 	@Bean
 	MonitoringCommandClient monitoringCommandClient() {
-		return new MonitoringCommandClient(monitoringRestClient);
+		return new MonitoringCommandClient(monitoringRestClient, directPostRestClient);
 	}
 
 	@Bean
@@ -117,9 +147,19 @@ public class MonitoringConfig {
 		return registrationTaskExecutor;
 	}
 
+	/**
+	 * 브랜드 direct 등록 실행기 전용 풀(2026-08-18 direct 통합 §T8) — 소비자는
+	 * {@code BrandDirectRegistrationExecutor}(v1.brandmonitoring, monitoring.enabled 조건부 동일 게이트)뿐이다.
+	 */
+	@Bean(name = "brandDirectRegistrationTaskExecutor")
+	TaskExecutor brandDirectRegistrationTaskExecutor() {
+		return brandDirectRegistrationTaskExecutor;
+	}
+
 	@PreDestroy
 	void close() {
 		registrationTaskExecutor.shutdown();
+		brandDirectRegistrationTaskExecutor.shutdown();
 		monitoringDataSource.close();
 	}
 }

@@ -1,15 +1,26 @@
 package com.celfit.monitoring.web;
 
 import com.celfit.monitoring.domain.BrandStatus;
+import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
+import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandHashtagTags;
 import com.celfit.monitoring.service.BrandRegistrationService;
+import com.celfit.monitoring.service.ValidationException;
 import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandLegacyHistoryCopier;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.TaggedPostRepository;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,31 +33,36 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 브랜드 태그 모니터링 등록/탈퇴 + 제외 문자열 관리 + 태그 셋 관리 API(수집 파이프라인 진입점 —
- * was 조회 API·FE 계약은 범위 밖). 태그·제외 문자열 두 리소스 모두 GET(조회)·PUT(전체 교체)·
- * POST(단건·다건 추가)·DELETE {item}(단건 삭제)·DELETE(전체 삭제) 표준 REST 5종을 제공한다
- * (2026-08-12 확장 — 유저 결정: 태그·제외 문자열에 표준 REST 단건 조작 추가). 저장은 전부
- * tombstone(deleted_at) — 하드 삭제하면 등록 replay의 자동 시드가 되살리기 때문.
+ * 브랜드 태그 모니터링 등록/탈퇴 + 태그 셋 관리 API(수집 파이프라인 진입점 — was 조회 API·FE 계약은
+ * 범위 밖). 태그는 GET(조회)·PUT(전체 교체)·POST(단건·다건 추가)·DELETE {item}(단건 삭제)·
+ * DELETE(전체 삭제) 표준 REST 5종을 제공한다(2026-08-12 확장 — 유저 결정: 표준 REST 단건 조작
+ * 추가). 저장은 전부 tombstone(deleted_at) — 하드 삭제하면 등록 replay의 자동 시드가 되살리기 때문.
+ * <b>제외 문자열 관리 API는 2026-08-17 FE 협의로 폐기됐다</b>(프론트는 이미 UI·호출 제거) — 이
+ * 컨트롤러에서 5종 엔드포인트를 걷어냈다({@code brand_hashtag_exclusion} 테이블 자체는
+ * expand-contract 원칙상 DROP하지 않고 남아 있다).
  * 201 신규 / 200 replay / 204 탈퇴(이미 닫힘 포함, 멱등)·교체·추가·삭제 / 404 미등록·비ACTIVE·
  * IG 계정 부재 / 400 형식 위반 / 422 비공개 계정·태그 무효 문자·태그 추가 빈 입력 — 예외 매핑은
  * ApiExceptionHandler 공용. <b>PUT 빈 목록은 이제 허용된다</b>(2026-08-12) — 단건 삭제·전체 삭제
- * API가 생겨 "전체 비우기"가 더 이상 실수로만 일어나는 상태가 아니다(구 EmptyExclusionTermsException
- * 하한 가드는 폐지).
+ * API가 생겨 "전체 비우기"가 더 이상 실수로만 일어나는 상태가 아니다(구 하한 가드는 폐지).
+ *
+ * <p>태그 PUT(전체 교체)·POST(추가)가 저장 결과 태그 셋을 비우지 않으면, 그 브랜드의 해시태그
+ * 스윕을 비동기로 1회 트리거한다(2026-08-17 — "해시태그를 등록한 당시에 조회해서 당일 게시물을
+ * 즉시 추가한다"는 합의된 동작, {@link BrandRegistrationService#triggerHashtagSweepIfNonEmpty}
+ * 참조). DELETE 계열은 트리거하지 않는다 — 태그를 줄이는 조작에서 즉시 조회할 이유가 없다.
  */
 @RestController
 @RequestMapping("/api/brands")
 public class BrandController {
 
 	/**
-	 * brandName·collectionMonths는 하위 호환용 nullable — 기존 요청 바디(필드 없음)는 null로 들어와
-	 * 계정명 유도 2종 태그만 시드되고, 수집 창은 기본 12개월로 접힌다.
+	 * brandName·collectionMonths는 하위 호환용 nullable — 기존 요청 바디(필드 없음)는 null로 들어와도
+	 * 문제없다. brandName은 2026-08-17부터 태그 시드에 쓰이지 않는다(계정명 태그 1종만 유도,
+	 * {@link BrandRegistrationService} 참조) — 값을 보내도 무해하게 무시될 뿐이다. collectionMonths
+	 * 미상은 수집 창이 기본 12개월로 접힌다.
 	 */
 	public record BrandRegisterRequest(String username, String brandName, Integer collectionMonths) {}
 
 	public record BrandRegisterResponse(long brandId, String username, Long followers, String status) {}
-
-	/** 자사 제외 문자열 — GET 응답·PUT 요청 바디 공용. terms는 정규화(trim·소문자·blank 제거·중복 제거) 후 저장. */
-	public record HashtagExclusionsBody(List<String> terms) {}
 
 	/**
 	 * 태그 셋(유저 관리 API, 2026-08-12) — GET 응답·PUT 요청 바디 공용. tags는 정규화(trim·선행 #
@@ -56,15 +72,35 @@ public class BrandController {
 	 */
 	public record HashtagTagsBody(List<String> tags) {}
 
+	/**
+	 * direct 등록 요청(2026-08-18 direct 통합 §2-2·§4-2). registeredAt·importLegacyHistory는 이관
+	 * 잡(mode=import) 전용 — 일반 유저 등록(was 실행기)은 둘 다 비운다(등록 시각은 now(), 레거시
+	 * 이력 없음).
+	 */
+	public record DirectPostRegisterRequest(String shortCode, OffsetDateTime registeredAt,
+			Boolean importLegacyHistory) {}
+
+	/** direct 등록 API 응답(201 신규·200 멱등 공용 셰이프). */
+	public record DirectPostResponse(String shortCode, String authorUsername, Instant takenAt, String contentType) {}
+
+	private static final Logger log = LoggerFactory.getLogger(BrandController.class);
+
 	private final BrandRegistrationService service;
 	private final BrandRepository brands;
 	private final BrandHashtagRepository hashtags;
+	private final TaggedPostRepository taggedPosts;
+	private final BrandDirectCollectService directCollect;
+	private final BrandLegacyHistoryCopier legacyHistoryCopier;
 
 	public BrandController(BrandRegistrationService service, BrandRepository brands,
-			BrandHashtagRepository hashtags) {
+			BrandHashtagRepository hashtags, TaggedPostRepository taggedPosts,
+			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier) {
 		this.service = service;
 		this.brands = brands;
 		this.hashtags = hashtags;
+		this.taggedPosts = taggedPosts;
+		this.directCollect = directCollect;
+		this.legacyHistoryCopier = legacyHistoryCopier;
 	}
 
 	@PostMapping
@@ -85,69 +121,101 @@ public class BrandController {
 		};
 	}
 
-	@GetMapping("/{username}/hashtag-exclusions")
-	public ResponseEntity<?> exclusions(@PathVariable String username) {
-		Optional<BrandRow> row = activeBrand(username);
+	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §2-2·§2-4·§4-2, was 실행기 진입점) ----------
+
+	/**
+	 * direct 게시물 등록 — 단건 콜로 즉시 수집·보강하는 동기 경로(설계 §2-2). 경로 변수를
+	 * {@code {username}}이 아니라 {@code {brandId}}로 두는 이유: was는 {@code
+	 * app.brand_monitorings.brand_id}를 들고 있고 username은 브랜드 계정명 변경 시 흔들린다 — 기존
+	 * 해시태그 API가 {@code {username}}을 쓰는 것과 의도적으로 다르다.
+	 *
+	 * <p>이미 {@code direct_registered_at}이 있는 행이면(멱등 재요청) 단건 콜을 다시 내지 않고 저장된
+	 * 값으로 200을 돌려준다 — was 실행기의 stale 복구 재시도가 매번 새 콜을 유발하면 안 된다.
+	 * {@code importLegacyHistory=true}면 신규 수집 전에 레거시 이력을 먼저 복사한다(설계 §4-3,
+	 * 이관 잡 전용 — {@link BrandLegacyHistoryCopier} 참조). 처리는 동기다(최대 5콜 ≈ 7초).
+	 *
+	 * <p>에러 바디는 계약 §2 어휘({@code {code, message}})를 반드시 채운다 — 비우면 was
+	 * {@code MonitoringCommandClient.exchange}가 코드 없는 응답으로 오인해
+	 * {@code MonitoringUnavailableException}(503)으로 잘못 승격한다(08-11 실측, 클래스 주석 참조
+	 * 관용구 재사용).
+	 */
+	@PostMapping("/{brandId}/direct-posts")
+	public ResponseEntity<?> registerDirectPost(@PathVariable long brandId,
+			@RequestBody(required = false) DirectPostRegisterRequest req) {
+		Optional<BrandRow> row = activeBrandById(brandId);
 		if (row.isEmpty()) {
 			return brandNotFound();
 		}
-		return ResponseEntity.ok(new HashtagExclusionsBody(hashtags.findExclusionTerms(row.get().id())));
+		String shortCode = req == null ? null : req.shortCode();
+		if (shortCode == null || shortCode.isBlank()) {
+			throw new ValidationException("shortCode는 필수입니다.");
+		}
+		BrandRow brand = row.get();
+
+		Optional<TaggedPostRepository.DirectSnapshot> existing = taggedPosts.findDirectSnapshot(brand.id(), shortCode);
+		if (existing.isPresent()) {
+			return ResponseEntity.ok(toResponse(existing.get()));
+		}
+
+		if (Boolean.TRUE.equals(req.importLegacyHistory())) {
+			legacyHistoryCopier.copy(shortCode);
+		}
+		Instant registeredAt = req.registeredAt() != null ? req.registeredAt().toInstant() : Instant.now();
+		try {
+			PostInfo post = directCollect.collectAndEnrich(brand, shortCode, registeredAt);
+			return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(post));
+		} catch (SubjectNotFoundException e) {
+			// 전역 SubjectNotFoundException 핸들러는 SUBJECT_NOT_FOUND를 쓴다 — 여기는 계획 계약대로
+			// POST_NOT_FOUND로 더 구체화해야 해서 로컬에서 먼저 잡는다.
+			log.info("direct 게시물 부재: {}", e.getMessage());
+			return postNotFound();
+		} catch (PostShapeUnsupportedException e) {
+			log.info("direct 게시물 셰이프 이상: {}", e.getMessage());
+			return postUnsupported();
+		}
+		// PrivateAccountException은 잡지 않는다 — 전역 핸들러가 이미 422 PRIVATE_ACCOUNT를 내려
+		// 계획 계약과 그대로 일치한다.
 	}
 
 	/**
-	 * 전체 교체(PUT 계약) — 정규화 후 저장(tombstone 의미론은 {@link BrandHashtagRepository#replaceExclusionTerms}
-	 * 참조), 브랜드 미존재·비ACTIVE는 404. 빈 목록도 허용한다(2026-08-12 — 전체 삭제 API가 생겨
-	 * "전부 지우기"가 정당한 상태이므로 구 하한 가드는 폐지, {@link #deleteAllExclusions} 참조).
+	 * direct 게시물 취소 — 매핑 삭제가 아니라 direct 표식 해제(설계 §2-4). 3분기 전부 204(멱등):
+	 * 행 없음(둘 다 no-op) / 겹침(tag_detected_at 있음 → direct 표식만 해제, tagged로 잔존) /
+	 * 순수 direct(tag_detected_at 없음 → 행 삭제, 목록에서 즉시 제거). {@code brand_post_snapshot}·
+	 * {@code brand_post_meta}·{@code brand_post_comment}는 게시물 전역 자산이라 지우지 않는다
+	 * ("윈도우 이탈 후에도 영구 보존" 규칙 — 재등록 시 이력이 그대로 되살아난다).
 	 */
-	@PutMapping("/{username}/hashtag-exclusions")
-	public ResponseEntity<?> replaceExclusions(@PathVariable String username,
-			@RequestBody HashtagExclusionsBody body) {
-		Optional<BrandRow> row = activeBrand(username);
-		if (row.isEmpty()) {
-			return brandNotFound();
-		}
-		hashtags.replaceExclusionTerms(row.get().id(), normalize(body.terms()));
-		return ResponseEntity.noContent().build();
-	}
-
-	/** 단건·다건 추가(POST 계약) — 정규화 후 저장(tombstone 재활성). 빈 입력은 추가할 게 없다는 뜻이라 무해한 204. */
-	@PostMapping("/{username}/hashtag-exclusions")
-	public ResponseEntity<?> addExclusions(@PathVariable String username,
-			@RequestBody(required = false) HashtagExclusionsBody body) {
-		Optional<BrandRow> row = activeBrand(username);
-		if (row.isEmpty()) {
-			return brandNotFound();
-		}
-		hashtags.addExclusionTerms(row.get().id(), normalize(body == null ? null : body.terms()));
-		return ResponseEntity.noContent().build();
-	}
-
-	/** 단건 삭제(tombstone, DELETE {term} 계약) — 정규화 후 삭제, 없어도 멱등 204. */
-	@DeleteMapping("/{username}/hashtag-exclusions/{term}")
-	public ResponseEntity<?> deleteExclusion(@PathVariable String username, @PathVariable String term) {
-		Optional<BrandRow> row = activeBrand(username);
-		if (row.isEmpty()) {
-			return brandNotFound();
-		}
-		String normalized = normalizeItem(term);
-		if (normalized != null) {
-			hashtags.deleteExclusionTerm(row.get().id(), normalized);
+	@DeleteMapping("/{brandId}/direct-posts/{shortCode}")
+	public ResponseEntity<Void> deleteDirectPost(@PathVariable long brandId, @PathVariable String shortCode) {
+		if (!taggedPosts.deleteIfDirectOnly(brandId, shortCode)) {
+			taggedPosts.clearDirect(brandId, shortCode);
 		}
 		return ResponseEntity.noContent().build();
 	}
 
-	/** 전체 삭제(tombstone, DELETE 계약) — 자사 오탐 필터를 브랜드 단위로 완전히 끈다. */
-	@DeleteMapping("/{username}/hashtag-exclusions")
-	public ResponseEntity<?> deleteAllExclusions(@PathVariable String username) {
-		Optional<BrandRow> row = activeBrand(username);
-		if (row.isEmpty()) {
-			return brandNotFound();
-		}
-		hashtags.deleteAllExclusionTerms(row.get().id());
-		return ResponseEntity.noContent().build();
+	private static DirectPostResponse toResponse(PostInfo post) {
+		return new DirectPostResponse(post.shortCode(), post.username(),
+				post.takenAt() == null ? null : Instant.ofEpochSecond(post.takenAt()), post.contentType());
 	}
 
-	/** 활성 태그 조회(유저 관리 API) — 브랜드 미존재·비ACTIVE는 제외 문자열과 동형으로 404. */
+	private static DirectPostResponse toResponse(TaggedPostRepository.DirectSnapshot snapshot) {
+		return new DirectPostResponse(snapshot.shortCode(), snapshot.authorUsername(), snapshot.takenAt(),
+				snapshot.contentType());
+	}
+
+	private Optional<BrandRow> activeBrandById(long brandId) {
+		return brands.findById(brandId).filter(row -> row.status() == BrandStatus.ACTIVE);
+	}
+
+	private static ResponseEntity<ApiError> postNotFound() {
+		return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ApiError("POST_NOT_FOUND", "게시물을 찾을 수 없습니다."));
+	}
+
+	private static ResponseEntity<ApiError> postUnsupported() {
+		return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT)
+				.body(new ApiError("POST_UNSUPPORTED", "이 게시물은 등록할 수 없습니다."));
+	}
+
+	/** 활성 태그 조회(유저 관리 API) — 브랜드 미존재·비ACTIVE는 404. */
 	@GetMapping("/{username}/hashtag-tags")
 	public ResponseEntity<?> hashtagTags(@PathVariable String username) {
 		Optional<BrandRow> row = activeBrand(username);
@@ -160,12 +228,16 @@ public class BrandController {
 	/**
 	 * 태그 셋 전체 교체(유저 관리 API, 2026-08-12) — 정규화 후 저장(tombstone 의미론은
 	 * {@link BrandHashtagRepository#replaceTags} 참조). 브랜드 미존재·비ACTIVE는 404가 이 가드보다
-	 * 우선한다(제외 문자열과 같은 순서).
+	 * 우선한다.
 	 *
 	 * <p>유효 문자 검증은 유저 입력이므로 자동 유도(BrandHashtagTags.derive)처럼 절삭하지 않고
 	 * 통째로 거부한다 — 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시).
 	 * 빈 목록은 허용한다(2026-08-12 — 전체 삭제 API가 생겨 "전부 지우기"가 정당한 상태이므로 구
 	 * 하한 가드는 폐지, {@link #deleteAllHashtagTags} 참조. 브랜드 태그 감지가 전부 꺼지는 셈이다).
+	 *
+	 * <p>저장 결과(=정규화된 요청 태그 셋)가 비어 있지 않으면 즉시 스윕을 트리거한다(2026-08-17,
+	 * 클래스 주석 참조) — replaceTags는 요청 태그 셋을 그대로 활성 집합으로 만들므로 별도 재조회
+	 * 없이 normalized로 판단할 수 있다.
 	 */
 	@PutMapping("/{username}/hashtag-tags")
 	public ResponseEntity<?> replaceHashtagTags(@PathVariable String username,
@@ -177,13 +249,15 @@ public class BrandController {
 		List<String> normalized = normalizeTags(body.tags());
 		rejectInvalidTags(normalized);
 		hashtags.replaceTags(row.get().id(), normalized);
+		service.triggerHashtagSweepIfNonEmpty(row.get(), normalized);
 		return ResponseEntity.noContent().build();
 	}
 
 	/**
 	 * 단건·다건 추가(POST 계약) — 정규화·유효 문자 검증 후 저장(tombstone 재활성). PUT과 달리 빈
 	 * 입력은 422로 거부한다 — "추가할 태그가 없다"는 요청 자체가 무의미해 실수일 확률이 높다
-	 * (전체를 비우는 명시적 의도는 DELETE 전체가 담당).
+	 * (전체를 비우는 명시적 의도는 DELETE 전체가 담당). 여기 도달하면 normalized는 항상 비어있지
+	 * 않으므로(위 422 가드) 즉시 스윕이 매번 트리거된다(2026-08-17, 클래스 주석 참조).
 	 */
 	@PostMapping("/{username}/hashtag-tags")
 	public ResponseEntity<?> addHashtagTags(@PathVariable String username,
@@ -198,6 +272,7 @@ public class BrandController {
 			throw new InvalidHashtagException("추가할 태그가 없습니다.");
 		}
 		hashtags.addTags(row.get().id(), normalized);
+		service.triggerHashtagSweepIfNonEmpty(row.get(), normalized);
 		return ResponseEntity.noContent().build();
 	}
 
@@ -239,7 +314,7 @@ public class BrandController {
 	}
 
 	/**
-	 * 제외 문자열 GET/PUT 전용 404 — 계약 §2 어휘 {@code {code, message}}를 채운 바디다.
+	 * 태그 GET/PUT 등 전용 404 — 계약 §2 어휘 {@code {code, message}}를 채운 바디다.
 	 * deregister의 빈 바디 404(멱등 삼킴을 위한 별개 계약, was가 onStatus로 흡수)와는 의도적으로 다르다 —
 	 * 여기는 was가 그대로 흘려도 되는 조회·설정 API라 에러 바디가 없으면 exchange()가 코드 없는 응답으로
 	 * 오인해 MonitoringUnavailableException(503)으로 잘못 승격한다(08-11 실측).
@@ -247,30 +322,6 @@ public class BrandController {
 	private static ResponseEntity<ApiError> brandNotFound() {
 		return ResponseEntity.status(HttpStatus.NOT_FOUND)
 				.body(new ApiError("BRAND_NOT_FOUND", "브랜드를 찾을 수 없습니다."));
-	}
-
-	/** trim → 소문자 → blank 제거 → 중복 제거(입력 순서 보존). terms가 null이면 빈 목록. */
-	private static List<String> normalize(List<String> terms) {
-		if (terms == null) {
-			return List.of();
-		}
-		Set<String> normalized = new LinkedHashSet<>();
-		for (String term : terms) {
-			String cleaned = normalizeItem(term);
-			if (cleaned != null) {
-				normalized.add(cleaned);
-			}
-		}
-		return List.copyOf(normalized);
-	}
-
-	/** 단건 정규화(trim → 소문자) — null·blank는 null(호출측이 "대상 없음"으로 처리). */
-	private static String normalizeItem(String term) {
-		if (term == null) {
-			return null;
-		}
-		String cleaned = term.strip().toLowerCase();
-		return cleaned.isBlank() ? null : cleaned;
 	}
 
 	/** trim → 선행 # 제거 → 소문자 → blank 제거 → 중복 제거(입력 순서 보존). tags가 null이면 빈 목록. */

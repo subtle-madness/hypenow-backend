@@ -82,6 +82,23 @@ OOM 재발 방지 + 백필 core 2병렬(08-12 — DECISIONS 08-12 행):
 now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스윕 크론은 서버 override
 드리프트값 **KST 02:00**이 실제 가동값이라 이를 정본으로 수용했다(레포 `deploy/compose.yaml`
 정렬 + was `nextScheduledAt` 표기 기본값 3 → 2 — 종전 표기 03:00은 실제와 1시간 어긋나 있었다).
+**08-17 개정으로 "자산 레벨 하나"는 부분 뒤집혔다 — 아래 링크 레벨 항목 참조.**
+
+링크 레벨 표시 창(2026-08-17 — DECISIONS 08-17 행,
+[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-link-collection-months-design.md)):
+08-12의 "자산 레벨 값 하나로 관리"가 공유 브랜드에서 무너졌다 — 3개월을 신청한 유저가
+12개월치 전량을 받는다(cclime 실사례). 신청값이 어디에도 영속화되지 않아 유저별로 자를
+근거 자체가 없었다. **크롤 자산은 그대로 두고**(`brand_account.collection_months` = 유저 간
+max, 축소 없음 — 수집한 사실이 정본) 유저-브랜드 링크에 신청값을 저장해
+(`app.brand_monitorings.collection_months` 신설, 기존 행은 DEFAULT 12로 백필) **서빙 계층에서만
+자른다**. 응답 `collectionMonths`는 이제 자산이 아니라 **링크 값(= 그 유저가 신청한 기간)**이고,
+게시물 목록·`meta.counts`·상세가 전부 링크 창으로 서빙된다(counts는 이미 잘린 목록에서 파생돼
+자동으로 같은 창, 상세도 같은 필터라 "목록엔 없는데 상세만 열리는" 불일치가 없다 — 같은 404).
+**direct 게시물은 예외**(유저가 URL을 명시 등록한 추적 대상이라 창과 무관하게 항상 포함).
+쓰기 규칙도 자산과 다르다 — 링크는 **축소를 허용**하고(명시한 값 그대로), 필드를 생략한
+재-POST는 링크 기간을 바꾸지 않는다(구 클라이언트가 3개월 신청을 12로 되돌리지 않게 raw
+값으로 판정). 직접 등록의 중복 게이트도 같은 창을 쓴다 — 자산 창으로 판정하면 링크 창 밖
+tagged가 목록·상세 어디에도 없는데 등록만 DUPLICATE로 막혀 영구 도달 불능(데드엔드)이 된다.
 
 완결 배치 서빙(2026-08-13 — **구현 완료**, 커밋 `2d0d9b60`~`43b8a6a7` ·
 [spec 2026-08-13](../superpowers/specs/2026-08-13-brand-initial-batch-serving-design.md)):
@@ -129,8 +146,188 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 (`findTaggedPostsInWindow` 전량 / `findEnrichedTaggedPostsInWindow` 정산분)로 나누고
 `TaggedScope{ENRICHED_ONLY, ALL}`를 **기본값 없는 필수 인자**로 둬 호출부가 매번 의도를 밝힌다.
 
+브랜드 direct 게시물 파이프라인 통합(2026-08-18 — **구현 완료(E1 monitoring·E2 was), 이관(M)
+미실행**, [spec 2026-08-18](../superpowers/specs/2026-08-18-brand-direct-pipeline-unification-design.md) ·
+[plan(아카이브)](../superpowers/plans/archive/2026-08-18-brand-direct-pipeline-unification-plan.md)):
+브랜드 직접 등록(direct) 게시물을 레거시 추적 파이프라인(`app.monitoring_items` → monitoring
+`target`/`post_snapshot`)에서 떼어내 이 트랙의 브랜드 수집 파이프라인(`brand_tagged_post`/
+`brand_post_*`)으로 합류시켰다. `brand_tagged_post`에 `source` 단일 enum 대신 시각 컬럼 2개
+(`tag_detected_at`·`direct_registered_at`, `V20260818040742__brand_tagged_post_direct_source.sql`)를
+추가하고 `source`는 `direct_registered_at IS NOT NULL` 파생값으로 둔다 — 태그 발견과 직접 등록이
+한 게시물에서 겹칠 수 있고 PK가 `(brand_id, short_code)` 하나뿐이라 단일 값으로 접으면 취소 시
+태그 발견 사실을 잃기 때문이다. 열거 깊이 판정(`trackedPosts`·`touchCrawledDepth`)에는
+`tag_detected_at IS NOT NULL` 가드를 추가해 direct-only 행이 열거 깊이를 오염시키지 않게 했고,
+신규 `BrandDirectCollectService`가 단건 콜로 direct 게시물을 등록·야간 스윕 2단계(`sweepDirect`)로
+수집한다("단건 게시물 콜 전면 금지"(08-06·08-09) 결정과 무충돌 — 그 결정은 열거로 이미 얻은
+게시물에 콜을 덧붙이는 제안을 기각한 것이고, direct 게시물은 애초에 열거에 실리지 않는다).
+monitoring에 명령 API 2종(`POST`/`DELETE /api/brands/{brandId}/direct-posts`) 신설.
+
+was는 레거시 `monitoring_registrations` 위임·`resolveLazyMappingBrand`(PP 트랙 후속 #1 참조)·seq
+인덱스 매칭을 걷어내고 전용 등록 테이블(`app.brand_post_registrations`+`entries`,
+`V20260818043332__brand_post_unification.sql`)과 전용 실행기(`BrandDirectRegistrationExecutor`,
+5분 stale 복구 + 24시간 정산)로 재작성했다. `BrandPostAssembler`가 `brandPost()` 한 벌로 조립을
+통합(`directPost`/`mergeByShortcode`/`promoteSponsorship` 삭제) — 겹침 게시물이 direct 셰이프로
+영구 고정되던 비대칭, 창 밖 tagged 데드엔드 우회의 "의도된 대가"(둘 다 아래 미결·후속에서 취소선
+처리)가 소멸했다. 캠페인 연결은 `app.brand_post_campaigns` N:M으로 옮겨 tagged에도 열었다(부착·
+해제 API는 별도 트랙). 배포 순서는 **monitoring → was 고정**(08-13과 같은 의존 — 역순이면 was가
+없는 컬럼을 조회해 브랜드 목록 전면 500). `:monitoring:test` 660개·`:was:test` 1387개 green.
+
+**이관(M)은 운영 미실행** — `app.brand_direct_posts.migrated_at`이 NULL인 행은 과도기 폴백
+(`assembleLegacyPending`)이 레거시 셰이프로 계속 조립해 얹으므로 배포 직후 화면은 현행과 동일하게
+보인다. 이관 잡(재수집 방식 — 링크 복제가 아니라 레거시 이력 복사 후 재수집으로 채움)은 구현
+완료·운영 미실행 — 실행 주체는 배포 후 별도 세션(M1 규모 확인 → 승인 → M2 실행 → M3 콜 증분 2주
+실측).
+
+**FE 통지 4건**: `trackingDays` 무시(검증 1~90은 유지) / `BrandPostResponse.trackingStatus` 항상
+`"tracking"` / `Entry.monitoringItemId` 항상 null(취소는 계약 v2.12 §8-2 그대로 4xx/204 어휘 유지)
+/ 성과 대시보드 direct 콘텐츠의 `item.id`가 숫자에서 `bt_<shortcode>`로 변경. 부수: 같은 브랜드
+타 유저 등록분이 목록에 보임(direct도 tagged와 같은 브랜드 스코프 공유로 승격), 180일 초과
+게시물 직접 등록은 스냅샷 1행만 남는다.
+
+**신규 미결(R1~R9, 설계 §7)**: R1 이관 대상 규모 미상(배포 전 확인 SQL 필요) · R2 다중 유저
+브랜드에서 취소 권한 완화(A 등록을 C가 취소 가능, 영향 브랜드 수 확인 필요) · R3 콜 증분이
+예상(0 이하)과 다를 가능성(2주 실측 필요) · R4 180일 초과 등록 UX 후퇴(FE 협의 필요) · R5 열거
+깊이 가드 누락 시 조용한 요청량 누수(테스트로만 방어) · R6 `cancel`의 무아카이브 hard delete
+(기존 결함, 이번에도 미해결) · R7 stale pending 정산(24시간 초과 → failed, 레거시 동형 이식
+완료) · R8 성과 대시보드 `statusCounts` 분포 변화(direct가 항상 tracking) · R9 레거시 이력 복사
+컬럼 동형성(구현 시 실제 DDL 대조 완료, 잡 SQL 주석에 기록). 실행 주체는 아래 미결·후속 참조.
+
+계정 게이트 단축(2026-08-18 — **구현 완료**, 브랜치 `fix/brand-serving-first-page`): 완결 배치
+서빙(위 08-13 문단)이 **게시물 게이트**(`enriched_at`)는 이미 "게시자 보강 완료" 시점으로
+좁혔지만(08-17 개정, 아래 "노출 게이트 의미 변경" 참조), **계정 게이트**(`BrandRegistrationService.
+markServing`)는 여전히 옛 배선대로 첫 페이지의 `enrich()` 호출 전체(게시자 보강 + 댓글 수집 +
+광고 표기 판정)가 반환돼야 열렸다 — 두 게이트가 08-17 개정 이후로 어긋나 있었다. 등록 직후
+계정 자체가 was에 뜨는 시점이 게시물이 뜨는 시점보다 늦어, "등록 → 첫 화면 노출"이 게시자
+콜(Hiker 1콜, p50 4.9초/페이지) 하나가 아니라 댓글·판정까지 더한 시간만큼 늦어지는 회귀였다
+(광고 표기 판정 트랙 추가로 그 지연이 눈에 띄게 커졌다). `BrandCollectService.enrich`에
+onVisible 훅(nullable `Runnable`)을 추가해 markEnriched와 **같은 finally 지점**(ensureAuthors
+하드 실패에도 발화)에서 호출하고, `BrandRegistrationService.runBackfillSafely`는 이 훅을
+**첫 페이지에만** 걸어(sweepCore 콜백이 단일 스레드 순차라 "제출된 페이지 수 0" 판정에
+경합이 없다) `served.compareAndSet` 가드로 `markServing`을 그 지점에서 연다. 야간 스윕
+(`BrandCollectService.sweep`)은 onVisible 없는 2-인자 `enrich` 위임을 그대로 쓰므로 무변 —
+계정 게이트 자체가 스윕 경로엔 없다. `touchSwept`(FE 폴링 종료 조건)는 무수정 — 여전히 모든
+페이지의 댓글·판정까지 끝난 뒤에만 찍힌다. 사용자 확정 트레이드오프: 등록 직후 첫 화면에는
+첫 페이지분(~21건)만 보이고 나머지는 스트리밍으로 채워진다.
+
+캡션 기반 광고 표기 판정(2026-08-18 — 구현 완료, 브랜치 `feat/brand-ad-disclosure`,
+[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-ad-disclosure-design.md) ·
+[plan 2026-08-17](../superpowers/plans/archive/2026-08-17-brand-ad-disclosure.md)): 브랜드 태그 게시물
+캡션이 공정위예규 제499호 Ⅴ.6 광고 표기 규정을 지켰는지 게시물 단위로 자동 판정한다. 규칙
+선처리(Tier0 메타·Tier1 고신뢰 사전) → LLM은 문구 추출만(Tier2, `AdDisclosureExtractorGemini`,
+판단 아님) → 코드가 환각 차단·위치 판정·최종 verdict를 결정(Tier3, `AdPositionRule`·
+`AdVerdictCombiner`, 전부 LLM 없이 단위 테스트)하는 구조 — LLM에 verdict 자체를 맡기지 않는다.
+전용 소형 LLM 풀(`monitoring.brand.ad-disclosure`, 동시 3~4)로 기존 Hiker 보강 워커와 분리해
+판정 지연이 보강 처리량을 잠식하지 않게 했다. **시딩 계정**(`brand_seeded_account`, 신설
+`BrandSeededAccountRepository`)의 게시물도 다른 게시물과 동일하게 캡션 판정을 거친다(2026-08-18
+오기 정정 — 최초 기재는 "판정 없이 시딩 표기로 확정 노출"이라 코드·스펙과 정반대였다). 시딩
+여부(`seededAuthor`)는 판정과 무관하게 was 조회 시점에 별도 조인(시딩 목록 대조)으로 계산되는
+boolean 필드다. "시딩 계정 + `NOT_DISCLOSED`" 조합일 때 위반이 확정됐다는 배지를 보여주는 것은
+FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DISCLOSED`)이 필수 전제 조건으로
+들어간다.
+
+- **노출 게이트 의미 변경**: `enriched_at`(= was 노출 게이트, `enriched_at IS NOT NULL`)의 뜻이
+  "게시자 보강 완료"로 좁혀졌다(08-17 개정, §5 완결 배치 서빙 문단과 별개 축). 댓글 수집·광고
+  표기 판정은 이 게이트 **밖**으로 빠져 각자 격리된 독립 단계가 되고, 프론트 폴링으로 나중에
+  채워지는 **프로그레시브 서빙**이다 — 판정 실패·지연이 게시물 노출 자체를 막지 않는다.
+- **파이프라인 개통 상태**: 판정 로직 자체는 배포 즉시 브랜드 enrich 체인에 인라인으로 돌기
+  시작한다(기존 게시물도 다음 스윕들에서 자연 재판정). 하지만 **was 노출은 별개 토글**
+  (`monitoring.brand.ad-disclosure.expose`, `was/src/main/resources/application.yml`, 기본
+  `false`)로 막혀 있다 — 판정은 쌓이지만 FE에는 아직 안 보인다. 기존 게시물 전량 판정 +
+  verdict 분포 드라이런 검토를 마친 뒤 `true`로 전환하는 것이 노출 개통이며, 이 전환은 이번
+  구현 범위 밖이다(스펙 §10-3).
+- **시딩 계정 등록 API — 신설 후 08-18 당일 전면 철회, `seededAuthor`는 캠페인 데이터 도출로
+  교체**(사용자 확정, `fix/seeded-from-campaign`): monitoring `GET/PUT/POST/DELETE
+  .../seeded-accounts`(시딩 계정 CRUD) + was `V1BrandAccountsController` 프록시로 브랜드가
+  협업 계정 목록을 별도 등록하는 표면을 08-18 오전에 신설했으나, 잘못된 신설이었다는 판단으로
+  같은 날 걷어냈다 — `seededAuthor`는 신규 등록이 아니라 **이미 존재하는 캠페인 관리 데이터**
+  에서 나와야 한다는 원칙. 걷어낸 것: monitoring `BrandSeededAccountRepository` + API 5종,
+  was `V1BrandAccountsController`/`V1BrandAccountService`의 시딩 엔드포인트·메서드 5종,
+  `MonitoringCommandClient` 시딩 프록시 5종, `BrandReadRepository.findSeededUsernames`.
+  **새 산출 기준**(user 스코프 — 캠페인은 브랜드가 아니라 유저 단위): (1) `app.monitoring_items`의
+  `mode='account' AND campaign_id IS NOT NULL AND canceled_at IS NULL` 행의 핸들(신규
+  `MonitoringItemRepository.findCampaignLinkedAccountHandles`), (2) `app.brand_direct_posts`
+  중 연결된 아이템이 캠페인 배정·미취소인 short_code들의 게시자(신규 `BrandDirectPostRepository.
+  findCampaignLinkedShortCodes` + monitoring `brand_post_meta.username` 조회) — 둘 다 was
+  `BrandPostAssembler.resolveSeededUsernames(userId)`가 조합한다(app·monitoring이 물리적으로
+  다른 DB라 SQL 조인 불가, 시스템 경계 원칙). `assembleTagged`가 브랜드 스코프
+  (`account.id()`)에서 유저 스코프(`userId`)로 바뀌어 `PerformanceContentAssembler`·
+  `V2CampaignContentService` 호출부도 함께 갱신됐다. **`brand_seeded_account` 테이블·
+  마이그레이션은 이미 develop 머지·스테이징 적용 상태라 DROP하지 않고 미사용 상태로 남는다**
+  (expand-contract상 DROP은 다음 contract 단계). 상세 계약은
+  [monitoring-was-contract.md §9](../contracts/monitoring-was-contract.md#9-브랜드-태그-모니터링-확장--광고-표기-판정seededauthor-v212-2026-08-18)
+  (v2.12).
+- **판정 킬 스위치 추가**(2026-08-18 코드리뷰 반영): `monitoring.brand.ad-disclosure.enabled`
+  (기본 `true`) — `false`면 `judgeAdDisclosuresSafely` 진입점에서 `adJudge` 호출 자체를
+  스킵한다. was 노출 토글(`expose`)과 **독립**이라, 노출은 그대로 두고 판정 파이프라인만
+  끌 수 있는 좁은 롤백 수단이다(`GEMINI_API_KEY` 제거는 해시태그 판정까지 함께 죽이므로 이
+  토글을 대신 쓰지 말 것).
+- **배포 순서: monitoring → was.** was `BrandPostAssembler`가 새 컬럼(`brand_post_meta`의
+  ad_verdict 등)을 항상 SELECT하므로, was를 먼저 배포하면(또는 monitoring이 healthy가 아닌
+  채로 was를 배포하면) 브랜드 목록 조회가 500 에러가 난다. monitoring이 healthy임을 확인한
+  뒤 was를 배포할 것. (08-18 시딩 계정 관리 표면 철회로 `brand_seeded_account`는 이 목록에서
+  빠졌다 — was가 더 이상 그 테이블을 조회하지 않는다.)
+
+## 잔여 작업
+
+- **[staging 승격 전]**
+  - ~~연속 실패 서킷브레이커 + 스윕당 판정 상한~~ → **구현 완료(2026-08-18)** — #490(백필 기동
+    즉시·상한 제거) 이후 스테이징에서 무료 키 쿼터 공유로 429 폭주(15분간 분당 83~146건) 실측이
+    계기. `AdDisclosureJudgeService`에 `llm-failure-abort-threshold`(기본 10)·
+    `backfill-max-per-run`(기본 1000) 추가, 동반해 monitoring Gemini 호출을 Vertex로 전환
+    (`common-llm` 모듈 신설 — DECISIONS.md 08-18 항목 참조).
+  - 캡션·videoUrl 저장값 폴백 — 일시적 결손(보강 미완주 등) 시 캡션 부재를 그대로
+    `NOT_DISCLOSED`로 오판정하지 않도록 방어.
+  - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
+- **[expose 토글 켜기 전]**
+  - ~~180~365일치 one-shot 백필 경로~~ → **구현 완료(2026-08-18, 스펙 §7-1) → 08-18 재개정
+    (상한 제거·기동 즉시 실행)**: 정기 스윕 재열거가 없는 구간(180일 초과)의 기존 게시물은
+    앱 기동 완료 시 `AdDisclosureBackfillStartupRunner`가 별도 데몬 스레드에서
+    `AdDisclosureJudgeService.backfillUnjudged()`를 즉시 시작해 전량 처리한다(상한
+    없음 — 종전 `monitoring.brand.ad-disclosure.backfill-per-night` 설정 삭제, LLM 전용 풀
+    동시 4가 자연 속도 제한). 배포 직후 재고가 다음 야간 스윕을 기다리지 않고 바로 판정된다.
+    `BrandSweepJob`의 매일 밤 백필 훅은 유지되지만 역할이 "실패 잔량 재시도 안전망"으로
+    바뀌었다(같은 함수를 상한 없이 재호출) — 기동 백필과 겹치면 `AdDisclosureJudgeService`
+    내부 `AtomicBoolean` 가드가 이중 실행을 막는다.
+  - verdict 분포·NULL 잔량을 확인하는 정본 스크립트(`monitoring/check/` 디렉토리에 추가) —
+    "분석 잔여 몇 건" 류 질문에 즉석 쿼리로 오답하지 않도록 정본화(다른 정본 스크립트
+    `analytics/check/pending.sh`와 같은 취지).
+  - 골드셋 200건으로 오탐률(특히 `NOT_DISCLOSED` 오탐) 측정.
+- **[후속]**
+  - ~~판정 로직과 join(시딩 계정 조인 등)을 분리하는 리팩터~~ → **08-18 시딩 계정 관리 표면
+    철회로 전제 소멸**: `seededAuthor`는 이제 별도 등록 목록이 아니라 캠페인 데이터에서 도출되고,
+    그 조합(`BrandPostAssembler.resolveSeededUsernames`)은 처음부터 판정 로직(`AdDisclosureJudgeService`)과
+    분리된 was 코드다 — 분리할 join이 남아 있지 않다.
+  - ~~시딩 계정 username 문자셋 검증~~ → **08-18 시딩 계정 관리 표면 철회로 전제 소멸**: 유저가
+    직접 입력하던 등록 표면 자체가 없어져 검증 대상도 함께 사라졌다.
+  - `brand_seeded_account` 테이블·마이그레이션 DROP(contract 단계) — 08-18부로 was·monitoring
+    양쪽 다 이 테이블을 참조하지 않는다(미사용 확정). expand-contract상 다음 릴리스에서
+    `-- allow-destructive` 주석과 함께 제거 가능.
+  - ~~백필 굶음 방어~~ → **08-18 상한 제거로 시나리오 자체가 소멸**: 상한(야간 1000건)이 없어져
+    "영구 실패가 limit 윈도우를 잠식해 나머지 백로그가 굶는다"는 전제가 사라졌다. 남는 것은
+    영구 실패 건의 무한 재시도(매 호출마다 1회씩 재시도 후 배치 종료 — 서비스 코드 §7-1
+    "영구 실패 배치는 무한 재조회하지 않는다" 참조)뿐이고, 이는 LLM 비용이 소량 낭비되는
+    수준이라 무해하다.
+
 ## 미결·후속
 
+- ~~창 밖 tagged 등록이 DUPLICATE로 막혀 데드엔드가 되는 문제, "의도된 대가"로 수용~~(08-17
+  링크 레벨 표시 창) → **08-18 direct 파이프라인 통합으로 대가 없이 해소**: 창 밖 tagged를
+  직접 등록하면 `direct_registered_at`이 채워지고 direct 행은 표시 창 예외라 그 자리에서 바로
+  보인다.
+- ~~겹침 게시물(사진 태그+직접 등록)이 `mergeByShortcode`의 "direct 우선" 규칙으로 카드가 영구
+  direct 셰이프에 고정되는 문제~~(08-13 완결 배치 서빙 미정산 방어 근거) → **08-18 direct
+  파이프라인 통합으로 해소**: 조립 셰이프가 `brandPost()` 한 벌이 되며 "고정"이라는 개념 자체가
+  소멸.
+- **direct 파이프라인 통합 — 이관(M) 실행 대기**(08-18) — M1(운영 규모 확인 SQL, 설계 §7 R1) →
+  승인 → M2(이관 잡 실행) → M3(콜 증분 2주 실측)는 **배포 후 별도 세션**이 수행한다. 배포
+  직후에는 과도기 폴백이 레거시 셰이프를 그대로 얹으므로 이관 전까지 화면은 현행과 동일하다.
+- **direct 파이프라인 통합 — 신규 미결 R1~R9**(08-18, 설계 §7) — 위 본문 단락 참조. 특히
+  R2(다중 유저 브랜드 취소 권한 완화)는 배포 전 영향 브랜드 수 확인이 필요하고, R6(`cancel`
+  무아카이브 hard delete)은 기존 결함이 이번에도 미해결로 남는다.
+- **direct 파이프라인 통합 — contract(C) 단계는 다음 릴리스**(08-18) — 레거시 폴백 조립
+  (`assembleLegacyPending`) 제거, `app.brand_direct_posts.monitoring_item_id`·`migrated_at`
+  DROP, `brand_tagged_post.tag_detected_at` DEFAULT 제거. 참조 코드가 끊긴 뒤에만 가능(expand-
+  contract).
 - ~~was 조회 API·FE 계약~~ → **구현 완료**(08-07, PR #354 — DECISIONS 08-07 행·[spec 2026-08-07](../superpowers/specs/archive/2026-08-07-brand-monitoring-was-api-design.md)). FE 명세 대비 의도적 편차 5개는 FE 공유 필요(스펙 §2).
 - ~~`/v2/user/by/id` 응답 셰이프 라이브 미실측~~ → **실측 반영**(08-07): 파라미터명이 `user_id`가 아니라 `id`(422 실측 핫픽스 4ab01545). 응답 셰이프는 by/username 동형 확인.
 - ~~운영 크론 env 주입~~ → **가동 중**(08-07): KST 03:00(UTC 18:00), 캠페인 스윕(KST 02:00)과 시차 확보. 서버 override 선주입분을 레포 `deploy/compose.yaml`로 정합(드리프트 해소).
@@ -142,4 +339,13 @@ enrich executor에 제출하고 열거는 계속 앞서 달린다(열거 ~5초/�
 - **tooq.official 172~365일 공백 일회성 보정 실행 대기**(08-12) — 상한 상향 배포 후 운영 monitoring DB에 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` 실행(사용자 확인 필요), 익일 KST 03:00 스윕이 재백필. 미루면 365일 창이 실행일 기준이라 하루씩 잘린다 — 조기 실행 권장.
 - **완결 배치 서빙 — FE 배포 조율 필요**(08-13) — 이 변경 후 **기간 확장 중 `collectionStatus`가 `collecting` → `ready`**로 바뀐다. FE가 확장 배너 판정을 `collectionCompletedAt == null`로 옮기기 **전에** 운영 승격되면 배너가 조용히 사라진다(FE 회신 문서 §3-7로 통지). 프론트 반영 여부를 확인한 뒤 staging → main 승격할 것.
 - **완결 배치 서빙 — 배포 시점 확장 중이던 계정 보정 판단**(08-13) — 배포 순간 이미 기간 확장 중이던 계정은 `expandWindow`의 `backfill_completed_at` 리셋을 못 받고 옛 완주 시각을 들고 있어 FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). **일회성이고 데이터 유실 없음** — 보정 UPDATE 실행 여부는 배포 시 대상 건수를 보고 판단.
+- **링크 레벨 표시 창 — 배포 후 운영 수동 보정 1회**(08-17) — 신청값이 지금까지 어디에도 저장된 적이 없어 마이그레이션이 복원할 수 없다(기존 링크는 전부 12). 대상은 cclime 3개월 유저 + **단독 구독(활성 링크가 정확히 1개) 브랜드 전체** — 단독 구독은 자산값 = 그 유저의 신청값이라 자산에서 복원할 수 있다(다중 구독은 max라 복원 불가 → 그대로 12 유지, 개별 확인). app DB와 monitoring DB가 분리라 2단계(monitoring에서 `collection_months < 12 AND status = 'ACTIVE'` 브랜드 확인 → app에서 단독 링크만 UPDATE). 절차 SQL은 PR #480 본문.
+- **링크 레벨 표시 창 — 링크 창 미적용 표면**(08-17) — 성과 대시보드(`PerformanceComparisonAssembler`의 `covered`·집계 모수)와 `hashtag-posts` 목록은 아직 자산 창 전량을 본다. 3개월 유저에게 게시물 counts와 대시보드 모수가 달라 보인다(의도적 범위 밖 — FE 문의·혼선 발생 시 재론).
+- **링크 레벨 표시 창 — 창 필터 SQL 푸시다운**(08-17) — 지금은 자산 창 전량을 조립한 뒤 메모리에서 자른다. 3개월 유저가 12개월 브랜드를 볼 때 버려지는 조립 비용이 크면 리포지토리 조회 컷을 링크 창으로 내리는 최적화가 후속.
 - **완결 배치 서빙 — 운영 반영 직후 백필 확인**(08-13) — `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**이어야 한다. 0이 아니면 마이그레이션 백필(25,759행)이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.
+- **해시태그 FE 요청 일괄(08-17) — 구현 완료, 잔여 4건**(태그 등록 즉시 스윕·제외 규칙 폐기·direct 취소 API·brandPostId·작성자 프로필 아카이브 — DECISIONS 08-17 행, 계약 v2.9):
+  - `brand_hashtag_exclusion` 테이블 DROP — contract 단계라 **다음 릴리스**에서(`-- allow-destructive` 주석 필요). 참조 코드는 이번에 전부 제거됨.
+  - 기존 브랜드에 이미 시드된 3종 태그(브랜드명·계정명 루트)는 그대로 남는다 — 축소는 신규 시드부터. 정리는 유저 태그 관리 API로 가능하므로 일괄 삭제는 하지 않기로(유저가 의도적으로 쓰는 태그일 수 있음).
+  - 기존 저장 verdict 중 제외 문자열 substring 매칭으로 SELF 처리된 행은 불변(판정은 저장 후 불변 원칙) — 신규 수집분부터 정확 일치 기준.
+  - 경쟁사(competitor) 계정: 해시태그 감지는 돌지만 direct 등록이 403이라 발견 카드 "성과 측정 시작"은 own 전용 — **FE 회신 필요**(경쟁사 화면 승격 버튼 노출 정책).
+  - **08-18 정정**: `brandPostId`가 tagged로 채워지는 경로를 제거 — 발견 목록("태그 안 된 게시물")에서 tagged 겹침 행(사진 태그+해시태그 동시 게시물) 자체를 제외한다, direct 매핑이 있는 행은 tagged 여부와 무관하게 유지(direct 우선). 계약 v2.10 내 정정, `feat/hashtag-hide-tagged-overlap`.

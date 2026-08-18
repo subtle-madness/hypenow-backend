@@ -142,7 +142,7 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, 2000, 3, 30);
+			super(null, null, null, null, null, null, null, null, null, 2000, 3, 30, true);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
@@ -174,10 +174,24 @@ class BrandRegistrationServiceTest {
 			return all;   // 반환은 전체 누적분(실코드와 동일) — 새 배선은 이걸 쓰지 않는다.
 		}
 
+		/**
+		 * 3-인자(onVisible 훅) 버전만 오버라이드한다 — 2-인자 {@code enrich(brand, posts)}는 실
+		 * {@code BrandCollectService}의 위임(onVisible=null)을 그대로 쓰므로, 가상 디스패치로 결국
+		 * 이 메서드로 온다. onVisible은 <b>보강 지연(댓글·판정 대역) 전에</b> 부른다 — 실 코드에서
+		 * markEnriched 직후·comments/adJudge 시작 전에 발화하는 지점을 재현한다(2026-08-18 계정
+		 * 게이트 단축). enrichedPosts/enriched 적재는 지연 뒤라 "그 페이지가 아직 완주 전"인 채로
+		 * onVisible이 뜨는 것을 markServing 시점 스냅샷(enrichedAtServingMark)이 관측한다.
+		 */
 		@Override
-		public void enrich(BrandRow brand, List<PostInfo> posts) {
+		public void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
 			if (enrichFailing.contains(brand.username())) {
+				if (onVisible != null) {
+					onVisible.run();   // markEnriched와 같은 finally 보장 재현 — 하드 실패에도 발화
+				}
 				throw new IllegalStateException("보강 실패 주입");
+			}
+			if (onVisible != null) {
+				onVisible.run();
 			}
 			sleep(enrichDelay);
 			enriched.add(brand.username());
@@ -200,7 +214,6 @@ class BrandRegistrationServiceTest {
 	/** insertTags는 ON CONFLICT DO NOTHING이라 재현은 LinkedHashSet 유니온으로 — 재등록 순서 검증용. */
 	private static final class StubHashtags extends BrandHashtagRepository {
 		final Map<Long, LinkedHashSet<String>> tags = new HashMap<>();
-		final Map<Long, String> exclusions = new HashMap<>();
 		boolean failing;
 
 		StubHashtags() {
@@ -213,11 +226,6 @@ class BrandRegistrationServiceTest {
 				throw new IllegalStateException("해시태그 시드 실패 주입");
 			}
 			tags.computeIfAbsent(brandId, k -> new LinkedHashSet<>()).addAll(newTags);
-		}
-
-		@Override
-		public void insertDefaultExclusion(long brandId, String term) {
-			exclusions.putIfAbsent(brandId, term);
 		}
 	}
 
@@ -338,20 +346,22 @@ class BrandRegistrationServiceTest {
 	}
 
 	/**
-	 * 첫 페이지 배치의 보강이 끝나는 시점에 ready를 연다(2026-08-13 스펙 §2) — markServing은
-	 * 열거 완주도, 보강 전 빈 목록도 아니고 첫 배치 완결 뒤 딱 1회다.
+	 * 첫 페이지의 <b>게시자 보강 직후</b>(댓글 수집·광고 판정 전)에 ready를 연다(2026-08-18 계정
+	 * 게이트 단축 — 구 "첫 페이지 전체 보강 완료" 기준 대체). markServing은 열거 완주도, 보강 전
+	 * 빈 목록도 아니고, 첫 페이지의 onVisible 훅에서 딱 1회다.
 	 */
 	@Test
-	void 첫_페이지_배치_보강_후에_markServing을_1회_부른다() {
+	void 첫_페이지_게시자_보강_직후에_markServing을_1회_부른다() {
 		twoPages();
-		collect.enrichDelay = Duration.ofMillis(50);
+		collect.enrichDelay = Duration.ofMillis(50);   // 댓글·판정 대역 — 이보다 먼저 markServing이 떠야 한다
 
 		var result = service().register("brandx");
 		awaitEnrich();
 
 		assertThat(brands.served).containsExactly(result.brandId());   // 페이지가 여러 장이어도 1회
-		// markServing 시점에 첫 페이지분 보강이 이미 끝나 있어야 한다.
-		assertThat(brands.enrichedAtServingMark).containsExactly(List.of("P1_A", "P1_B"));
+		// markServing 시점엔 아직 어느 페이지도 "완주"(댓글·판정 대역 포함) 전이어야 한다 —
+		// 완주분이 비어 있다는 것 자체가 "댓글·판정을 기다리지 않았다"는 증거다.
+		assertThat(brands.enrichedAtServingMark).containsExactly(List.of());
 	}
 
 	/**
@@ -511,26 +521,68 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
 	}
 
+	/**
+	 * 2026-08-17 축소 — 제외 문자열 폐기와 함께 자동 시드가 3종에서 계정명 태그 1종으로 줄었다.
+	 * brandName을 전달해도(하위 호환) 더 이상 시드에 반영되지 않는다.
+	 */
 	@Test
-	void 등록은_태그_3종과_기본_제외_문자열을_시드한다() {
+	void 등록은_계정명_태그_1종만_시드한다() {
 		var result = service().register("cclime_official", "끌리메");
 
-		assertThat(hashtags.tags.get(result.brandId()))
-				.containsExactly("끌리메", "cclime", "cclime_official");
-		assertThat(hashtags.exclusions.get(result.brandId())).isEqualTo("cclime");
+		assertThat(hashtags.tags.get(result.brandId())).containsExactly("cclime_official");
 	}
 
 	@Test
-	void 활성_replay_재등록도_태그를_유니온한다() {
+	void 활성_replay_재등록도_태그_시드를_재시도한다_멱등() {
 		var service = service();
-		var first = service.register("cclime_official", null);   // 대행사 선등록 — 브랜드명 미상
-		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime", "cclime_official");
+		var first = service.register("cclime_official");
+		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime_official");
 
-		var replayed = service.register("cclime_official", "끌리메");   // 뒤늦게 brand 유형 유저가 연결
+		var replayed = service.register("cclime_official");   // replay — insertTags는 ON CONFLICT DO NOTHING
 
 		assertThat(replayed.replayed()).isTrue();
-		assertThat(hashtags.tags.get(first.brandId()))
-				.containsExactly("cclime", "cclime_official", "끌리메");   // 유니온 — 기존 순서 보존 + 신규 추가
+		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime_official");
+	}
+
+	/**
+	 * replay는 백필이 돌지 않아(hiker 콜 0) 예전엔 재등록 시점의 즉시 조회가 없었다 — 2026-08-17부터
+	 * 태그 시드 직후 해시태그 스윕도 트리거한다.
+	 */
+	@Test
+	void 활성_replay_재등록도_즉시_해시태그_스윕을_트리거한다() {
+		var service = service();
+		service.register("brandx");     // 최초 등록 — 백필 꼬리가 이미 한 번 스윕
+		awaitEnrich();
+		hashtagCollect.swept.clear();
+
+		service.register("brandx");     // replay
+		awaitEnrich();
+
+		assertThat(hashtagCollect.swept).containsExactly("brandx");
+	}
+
+	@Test
+	void 태그가_있으면_즉시_스윕을_트리거한다() {
+		var result = service().register("brandx");
+		awaitEnrich();
+		hashtagCollect.swept.clear();
+
+		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of("cclime"));
+		awaitEnrich();
+
+		assertThat(hashtagCollect.swept).containsExactly("brandx");
+	}
+
+	@Test
+	void 태그가_비어있으면_스윕을_트리거하지_않는다() {
+		service().register("brandx");
+		awaitEnrich();
+		hashtagCollect.swept.clear();
+
+		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of());
+		awaitEnrich();
+
+		assertThat(hashtagCollect.swept).isEmpty();
 	}
 
 	@Test

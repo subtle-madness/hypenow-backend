@@ -4,6 +4,7 @@ import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.NotFoundException;
 import com.celfit.crawler.crawling.application.port.out.ApifyResult;
+import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.application.port.out.ProfileFetcher;
 import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
@@ -35,11 +36,14 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
 
     private final HikerHttp http;
     private final CrawlExecutor executor;
+    private final PaidCallCounter paid;
     private final ObjectMapper om;
 
-    public HikerMobileProfileFetcher(HikerHttp http, CrawlExecutor executor, ObjectMapper om) {
+    public HikerMobileProfileFetcher(HikerHttp http, CrawlExecutor executor,
+                                     PaidCallCounter paid, ObjectMapper om) {
         this.http = http;
         this.executor = executor;
+        this.paid = paid;
         this.om = om;
     }
 
@@ -55,7 +59,9 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
         // close()가 제출된 작업 완료까지 대기(Java 21) — 청크 반환 시점에 결과가 전부 모여 있다
         try (var pool = java.util.concurrent.Executors.newFixedThreadPool(FETCH_CONCURRENCY)) {
             for (String u : usernames) {
-                pool.submit(() -> {
+                // 제출 스레드에서 과금 스코프를 붙잡아 워커로 넘긴다 — ThreadLocal이라 감싸지
+                // 않으면 이 풀에서 나가는 콜이 통째로 집계에서 빠진다(2026-08-13 이전의 버그).
+                pool.submit(paid.propagate(() -> {
                     try {
                         String enc = URLEncoder.encode(u, StandardCharsets.UTF_8);
                         Map<String, Object> p = readRoot(http.get("/v2/user/by/username?username=" + enc));
@@ -67,7 +73,7 @@ public class HikerMobileProfileFetcher implements ProfileFetcher {
                     } catch (ApifyException e) {
                         log.warn("by/username 실패, 계정 스킵: {} ({})", u, e.getMessage());
                     }
-                });
+                }));
             }
         }
         return new ApifyResult(null, new ArrayList<>(out), new ArrayList<>(notFound));

@@ -1,6 +1,8 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
@@ -11,8 +13,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * 해시태그 발견 게시물 조립 규칙 단위 고정(스펙 §8, 별도 탭 결정 2026-08-12) — 리포지토리 없이
- * row record를 손으로 만들어 순수 변환만 검증한다. 배선(소유권·404)은 컨트롤러 슬라이스 테스트가 덮는다.
+ * 해시태그 발견 게시물 조립 규칙 단위 고정(스펙 §8, 별도 탭 결정 2026-08-12; 2026-08-18 direct
+ * 통합 §T11로 판정 산지 재배선) — 리포지토리 없이 row record를 손으로 만들어 순수 변환만 검증한다.
+ * 배선(소유권·404)은 컨트롤러 슬라이스 테스트가 덮는다.
  */
 class BrandHashtagPostAssemblerTest {
 
@@ -50,6 +53,7 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(post.comments()).isEqualTo(3L);
 		assertThat(post.takenAt()).isEqualTo("2026-08-06T10:00:00+09:00");
 		assertThat(post.firstSeenAt()).isEqualTo("2026-08-06T11:00:00+09:00");
+		assertThat(post.brandPostId()).isNull();
 	}
 
 	@Test
@@ -66,7 +70,7 @@ class BrandHashtagPostAssemblerTest {
 		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
 				"해시태그 인플루언서", "javascript:alert(1)", OffsetDateTime.parse("2026-08-06T01:00:00Z"),
 				"캡션", "REELS", "data:image/png;base64,AAAA", 20L, 3L,
-				OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
 
 		var post = BrandHashtagPostAssembler.toResponse(row);
 
@@ -78,7 +82,7 @@ class BrandHashtagPostAssemblerTest {
 	void author_username이_없으면_프로필_URL도_null이다() {
 		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", null, null, null,
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS", null, null, null,
-				OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
 
 		var post = BrandHashtagPostAssembler.toResponse(row);
 
@@ -88,48 +92,161 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(post.comments()).isNull();
 	}
 
-	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다.
-	 *  게시자 프로필은 아카이브 산지가 없어(보강 보류) 원본 그대로다. */
+	/** image_object_path(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다. */
 	@Test
 	void 아카이브된_썸네일은_img_상대경로를_우선_서빙한다() {
 		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
 				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
 				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-				"monitor-hashtag-post/HHH.jpg");
+				"monitor-hashtag-post/HHH.jpg", null);
 
 		var post = BrandHashtagPostAssembler.toResponse(row);
 
 		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-hashtag-post/HHH.jpg");
+		// 작성자 프로필 사진은 미아카이브(authorImageObjectPath null)라 원본 CDN URL 폴백.
 		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
 	}
 
-	// ---------- 자사 제외 문자열 즉시 반영(2026-08-12 태그 관리 확장 짝) ----------
+	// ---------- 작성자 프로필 사진 아카이브(2026-08-17 신설) ----------
+
+	/** authorImageObjectPath(monitoring 자체 아카이브 결과)가 있으면 원본 CDN URL보다 그걸 우선 서빙한다. */
+	@Test
+	void 아카이브된_작성자_프로필_사진은_img_상대경로를_우선_서빙한다() {
+		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
+				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				null, "monitor-hashtag-author/hashtag_influencer.jpg");
+
+		var post = BrandHashtagPostAssembler.toResponse(row);
+
+		assertThat(post.authorProfilePicUrl()).isEqualTo("/img/monitor-hashtag-author/hashtag_influencer.jpg");
+	}
+
+	/** 미아카이브(authorImageObjectPath null)면 아카이브 전 신규 발견분도 깨지지 않게 원본 CDN URL로 폴백한다. */
+	@Test
+	void 미아카이브_작성자_프로필_사진은_원본_CDN_URL로_폴백한다() {
+		var row = new BrandReadRepository.BrandHashtagPostRow("HHH", "#브랜드명", "hashtag_influencer",
+				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				null, null);
+
+		var post = BrandHashtagPostAssembler.toResponse(row);
+
+		assertThat(post.authorProfilePicUrl()).isEqualTo("https://cdn/hashtag-author.jpg");
+	}
+
+	// ---------- 승격 상태 필드(brandPostId, 2026-08-17 신설 · 2026-08-18 direct 통합 재배선) ----------
+
+	@Test
+	void direct_등록이면_brandPostId가_채워진다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", false, true)));
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result).hasSize(1);
+		assertThat(result.get(0).brandPostId()).isEqualTo("HHH");
+	}
 
 	/**
-	 * 제외 문자열이 활성이면 조회 시점에 즉시 걸린다 — monitoring 스윕(SELF 판정)을 기다리지 않는다.
-	 * matchesExclusion과 같은 대소문자 무시 contains 의미론(username에 term이 부분 포함되면 제외).
+	 * 2026-08-18 direct 통합 이후 브랜드 풀 상태는 브랜드 스코프다 — 다른 브랜드의 direct 등록이라는
+	 * 개념 자체가 없다(조회 자체가 이 brandId로 스코프된다). 이 브랜드 풀에 없는 shortcode(조회 결과에
+	 * 없음)는 poolStatus 맵에 없으므로 brandPostId가 null이다.
 	 */
 	@Test
-	void 저장된_게시물이_제외_문자열_추가로_즉시_숨는다() {
-		var repository = mock(BrandReadRepository.class);
-		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_influencer")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
+	void 브랜드_풀에_없는_shortcode는_brandPostId가_null이다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
 
-		var assembler = new BrandHashtagPostAssembler(repository);
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result.get(0).brandPostId()).isNull();
+	}
+
+	@Test
+	void 취소로_direct_등록이_풀리면_brandPostId는_다시_null이다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", false, false)));   // 취소 후 — 행은 남되 direct 해제
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result.get(0).brandPostId()).isNull();
+	}
+
+	/**
+	 * 2026-08-18 정정: 이 화면은 "태그 안 된 게시물"이라 이미 tagged로 측정 중인 shortcode는
+	 * 발견 목록 자체에서 빠진다(제외 조건: tag_detected AND NOT direct_registered).
+	 */
+	@Test
+	void tagged로만_존재하면_발견_목록에서_제외된다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", true, false)));
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
 		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
 
 		assertThat(result).isEmpty();
 	}
 
-	/** 제외 문자열을 삭제(비활성화)하면 같은 게시물이 다시 보인다 — findActiveExclusionTerms가 빈 목록을 준다. */
+	/**
+	 * direct 등록이 살아 있으면 같은 shortcode가 tagged로도 겹쳐도(사진 태그+해시태그 동시 게시물)
+	 * 목록에서 빠지지 않는다 — direct가 우선이라는 승격분 dim 잔존 계약(2026-08-18).
+	 */
 	@Test
-	void 제외_문자열_삭제로_다시_보인다() {
+	void direct_등록이_있으면_tagged_겹침이어도_목록에_남고_brandPostId가_채워진다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", true, true)));
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result).hasSize(1);
+		assertThat(result.get(0).brandPostId()).isEqualTo("HHH");
+	}
+
+	/** direct도 tagged도 아닌 순수 발견 행은 그대로 남고 brandPostId는 null이다. */
+	@Test
+	void 순수_발견_행은_목록에_남고_brandPostId는_null이다() {
+		var brandReadRepository = mock(BrandReadRepository.class);
+		given(brandReadRepository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "hashtag_influencer")));
+		given(brandReadRepository.findBrandPoolStatus(eq(1L), any()))
+				.willReturn(List.of(poolStatus("HHH", false, false)));
+
+		var assembler = new BrandHashtagPostAssembler(brandReadRepository);
+		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
+
+		assertThat(result).hasSize(1);
+		assertThat(result.get(0).brandPostId()).isNull();
+	}
+
+	/** 제외 문자열 기능 폐기(2026-08-17)로 게시자 username과 무관하게 조회된 발견분이 전부 남는다. */
+	@Test
+	void 제외_문자열_기능_폐기로_계정명_포함_작성자도_남는다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_influencer")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of());
+		given(repository.findHashtagPosts(eq(1L), any(), anyInt()))
+				.willReturn(List.of(hashtagRowWithAuthor("HHH", "cclime_official_staff")));
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
 
 		var assembler = new BrandHashtagPostAssembler(repository);
 		List<BrandHashtagPostResponse> result = assembler.assembleForBrand(1L);
@@ -138,33 +255,17 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(result.get(0).shortcode()).isEqualTo("HHH");
 	}
 
-	@Test
-	void 제외_문자열은_대소문자_무시_부분_포함으로_매칭된다() {
-		var repository = mock(BrandReadRepository.class);
-		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "CClime_Official")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
-
-		var assembler = new BrandHashtagPostAssembler(repository);
-		assertThat(assembler.assembleForBrand(1L)).isEmpty();
-	}
-
-	@Test
-	void 무관한_게시자는_제외_문자열과_무관하게_남는다() {
-		var repository = mock(BrandReadRepository.class);
-		given(repository.findHashtagPosts(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
-				.willReturn(List.of(hashtagRowWithAuthor("HHH", "unrelated_influencer")));
-		given(repository.findActiveExclusionTerms(1L)).willReturn(List.of("cclime"));
-
-		var assembler = new BrandHashtagPostAssembler(repository);
-		assertThat(assembler.assembleForBrand(1L)).hasSize(1);
+	private static BrandReadRepository.BrandPoolStatusRow poolStatus(String shortCode, boolean tagDetected,
+			boolean directRegistered) {
+		return new BrandReadRepository.BrandPoolStatusRow(shortCode, tagDetected, directRegistered,
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 	}
 
 	private static BrandReadRepository.BrandHashtagPostRow hashtagRowWithAuthor(String code, String authorUsername) {
 		return new BrandReadRepository.BrandHashtagPostRow(code, "#브랜드명", authorUsername,
 				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), "캡션", "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null);
+				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
 	}
 
 	// ---------- 픽스처 ----------
@@ -179,6 +280,6 @@ class BrandHashtagPostAssemblerTest {
 				"해시태그 인플루언서", "https://cdn/hashtag-author.jpg",
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), caption, contentType,
 				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-				null);
+				null, null);
 	}
 }
