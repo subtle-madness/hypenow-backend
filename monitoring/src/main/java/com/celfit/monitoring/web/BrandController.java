@@ -12,11 +12,13 @@ import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandLegacyHistoryCopier;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.BrandSeededAccountRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -83,6 +85,14 @@ public class BrandController {
 	/** direct 등록 API 응답(201 신규·200 멱등 공용 셰이프). */
 	public record DirectPostResponse(String shortCode, String authorUsername, Instant takenAt, String contentType) {}
 
+	/**
+	 * 시딩(협업) 계정 목록(유저 관리 API, 스펙 §6) — GET 응답·PUT 요청 바디 공용, 태그·해시태그와 같은
+	 * 계약 모양. usernames는 정규화(trim·선행 {@code @} 제거·소문자·blank 제거·중복 제거) 후 저장한다
+	 * — 태그의 선행 {@code #} 제거와 같은 이유로, 유저가 "@handle" 형태로 입력해도 시딩 조인이
+	 * 깨지지 않도록 한다(2026-08-18).
+	 */
+	public record SeededAccountsBody(List<String> usernames) {}
+
 	private static final Logger log = LoggerFactory.getLogger(BrandController.class);
 
 	private final BrandRegistrationService service;
@@ -91,16 +101,19 @@ public class BrandController {
 	private final TaggedPostRepository taggedPosts;
 	private final BrandDirectCollectService directCollect;
 	private final BrandLegacyHistoryCopier legacyHistoryCopier;
+	private final BrandSeededAccountRepository seededAccounts;
 
 	public BrandController(BrandRegistrationService service, BrandRepository brands,
 			BrandHashtagRepository hashtags, TaggedPostRepository taggedPosts,
-			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier) {
+			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier,
+			BrandSeededAccountRepository seededAccounts) {
 		this.service = service;
 		this.brands = brands;
 		this.hashtags = hashtags;
 		this.taggedPosts = taggedPosts;
 		this.directCollect = directCollect;
 		this.legacyHistoryCopier = legacyHistoryCopier;
+		this.seededAccounts = seededAccounts;
 	}
 
 	@PostMapping
@@ -299,6 +312,107 @@ public class BrandController {
 		}
 		hashtags.deleteAllTags(row.get().id());
 		return ResponseEntity.noContent().build();
+	}
+
+	// ---------- 시딩(협업) 계정 관리(유저 입력, 스펙 §6, 2026-08-18) ----------
+
+	/** 시딩 계정 조회 — 브랜드 미존재·비ACTIVE는 404. */
+	@GetMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> seededAccounts(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		return ResponseEntity.ok(new SeededAccountsBody(seededAccounts.findUsernames(row.get().id())));
+	}
+
+	/** 전체 교체 — 목록에 없는 기존 계정은 하드 삭제된다({@link BrandSeededAccountRepository#replace}). */
+	@PutMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> replaceSeededAccounts(@PathVariable String username,
+			@RequestBody SeededAccountsBody body) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		seededAccounts.replace(row.get().id(), normalizeUsernames(body.usernames()));
+		return ResponseEntity.noContent().build();
+	}
+
+	/**
+	 * 단건·다건 추가(POST 계약) — 정규화 후 저장. 태그 POST와 달리 빈 입력을 422로 거부하지 않는다
+	 * (repository.add()가 빈 컬렉션에 no-op이라 컨트롤러가 별도로 막을 이유가 없다).
+	 */
+	@PostMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> addSeededAccounts(@PathVariable String username,
+			@RequestBody(required = false) SeededAccountsBody body) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		seededAccounts.add(row.get().id(), normalizeUsernames(body == null ? null : body.usernames()));
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 단건 삭제(DELETE {username} 계약) — 정규화 후 삭제, 없어도 멱등 204. */
+	@DeleteMapping("/{username}/seeded-accounts/{seededUsername}")
+	public ResponseEntity<?> deleteSeededAccount(@PathVariable String username,
+			@PathVariable String seededUsername) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		String normalized = normalizeUsername(seededUsername);
+		if (normalized != null) {
+			seededAccounts.delete(row.get().id(), normalized);
+		}
+		return ResponseEntity.noContent().build();
+	}
+
+	/** 전체 삭제(DELETE 계약) — 브랜드의 시딩 계정 등록을 전부 비운다. */
+	@DeleteMapping("/{username}/seeded-accounts")
+	public ResponseEntity<?> deleteAllSeededAccounts(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		seededAccounts.deleteAll(row.get().id());
+		return ResponseEntity.noContent().build();
+	}
+
+	/** trim → 소문자 → blank 제거 → 중복 제거(입력 순서 보존). usernames가 null이면 빈 목록. */
+	private static List<String> normalizeUsernames(List<String> usernames) {
+		if (usernames == null) {
+			return List.of();
+		}
+		Set<String> normalized = new LinkedHashSet<>();
+		for (String username : usernames) {
+			String cleaned = normalizeUsername(username);
+			if (cleaned != null) {
+				normalized.add(cleaned);
+			}
+		}
+		return List.copyOf(normalized);
+	}
+
+	/**
+	 * 단건 정규화(trim → 선행 {@code @} 제거 → 소문자) — null·blank는 null(호출측이 "대상 없음"으로
+	 * 처리). {@code @handle} 형태 입력이 조인을 깨는 공백이 있어 2026-08-18 추가(스펙 §6) — 태그의
+	 * {@code #} 제거와 마찬가지로 1개만 제거한다("@@handle" 같은 변칙은 앞의 하나만 벗겨낸다).
+	 * 로케일은 {@link Locale#ROOT} 고정(2026-08-18) — 소비 측인 was의 시딩 조인 정규화
+	 * ({@code BrandPostAssembler}·{@code toLowerCase(Locale.ROOT)})와 로케일을 일치시켜, 터키어
+	 * 로케일 등 기본 로케일이 다른 환경에서 "I" → "ı" 같은 대소문자 변환 불일치로 조인이 깨지는
+	 * 것을 막는다.
+	 */
+	private static String normalizeUsername(String username) {
+		if (username == null) {
+			return null;
+		}
+		String stripped = username.strip();
+		if (stripped.startsWith("@")) {
+			stripped = stripped.substring(1);
+		}
+		String cleaned = stripped.strip().toLowerCase(Locale.ROOT);
+		return cleaned.isBlank() ? null : cleaned;
 	}
 
 	/** 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시) — PUT·POST 공용. */

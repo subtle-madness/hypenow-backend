@@ -620,7 +620,8 @@ class V1BrandPostsControllerTest {
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
 		return new BrandPostMetaRow(code, "glowdeep_92", contentType, LocalDate.of(2026, 8, 6),
-				"캡션 원문", "https://cdn/thumb.jpg", "https://cdn/video.mp4", 15.5, paid, null);
+				"캡션 원문", "https://cdn/thumb.jpg", "https://cdn/video.mp4", 15.5, paid, null,
+				null, null, null);
 	}
 
 	private static BrandSnapshotRow snapshotRow(String code, int day, Long views) {

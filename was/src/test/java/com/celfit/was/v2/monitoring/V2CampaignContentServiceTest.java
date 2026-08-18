@@ -583,6 +583,7 @@ class V2CampaignContentServiceTest {
 		return new BrandPostResponse(shortcode, String.valueOf(brandId), "tagged", postUrl, shortcode,
 				"reels", "2026-08-05T00:00:00+09:00", null, null, null, null, null, null, null, null,
 				false, null, "unknown", null, "tracking", null, null, null, List.of(), null, false, 0,
-				List.of(), List.of(), null, null);
+				List.of(), List.of(), null, null,
+				null, List.of(), List.of(), false);
 	}
 }

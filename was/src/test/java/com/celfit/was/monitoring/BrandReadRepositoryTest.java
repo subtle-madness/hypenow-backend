@@ -45,7 +45,8 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		jdbc = JdbcClient.create(dataSource);
 		jdbc.sql("""
 				TRUNCATE brand_tagged_post, brand_account, brand_post_meta, brand_post_snapshot,
-				         brand_post_comment, author_profile, brand_hashtag_post, brand_hashtag_exclusion
+				         brand_post_comment, author_profile, brand_hashtag_post, brand_hashtag_exclusion,
+				         brand_seeded_account
 				         RESTART IDENTITY CASCADE
 				""")
 				.update();

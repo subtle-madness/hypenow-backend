@@ -2,11 +2,16 @@ package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
@@ -17,11 +22,18 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * BrandPost 조립 규칙 단위 고정(2026-08-18 direct 통합 §3-3) — 리포지토리 없이 row record를 손으로
- * 만들어 순수 변환만 검증한다. 배선(배치 조회·과도기 폴백)은 컨트롤러 슬라이스 테스트가 덮는다.
+ * BrandPost 조립 규칙 단위 고정(2026-08-18 direct 통합 §3-3 + 광고 표기 판정 §9) — 리포지토리 없이
+ * row record를 손으로 만들어 순수 변환만 검증한다. 배선(배치 조회·과도기 폴백)은 컨트롤러 슬라이스
+ * 테스트가 덮는다.
+ *
+ * <p>tagged·direct는 더 이상 별도 조립 함수·병합 단계를 갖지 않는다 — 둘 다 {@code brand_tagged_post}
+ * 같은 행의 파생값이라({@link BrandPostAssembler} 클래스 주석) 광고 표기 판정 4필드도 source와 무관하게
+ * 그 행의 meta에서 직접 채워진다. 구 모델의 "tagged 값을 direct로 승격" 병합 로직은 소멸했다 — 아래
+ * {@code 겹침_행도_광고_판정_필드가_채워진다} 테스트가 그 회귀를 새 모델로 고정한다.
  */
 class BrandPostAssemblerTest {
 
@@ -41,11 +53,10 @@ class BrandPostAssemblerTest {
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC")));
 
-		var assembler = new BrandPostAssembler(repository, campaignRepository, directRepository, trackingAssembler);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
 		var posts = assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
 
-		verify(repository, never()).findComments(org.mockito.ArgumentMatchers.anyCollection(),
-				org.mockito.ArgumentMatchers.anyInt());
+		verify(repository, never()).findComments(anyCollection(), anyInt());
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.recentComments()).isEmpty();
 			assertThat(post.commentsCollectedCount()).isEqualTo(0);
@@ -66,12 +77,12 @@ class BrandPostAssemblerTest {
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
 		var account = accountRow();
-		var assembler = new BrandPostAssembler(repository, campaignRepository, directRepository, trackingAssembler);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
 
 		assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY);
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
 
-		org.mockito.Mockito.clearInvocations(repository);
+		clearInvocations(repository);
 		assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(false));
 	}
@@ -84,7 +95,7 @@ class BrandPostAssemblerTest {
 		var directRepository = mock(BrandDirectPostRepository.class);
 		var trackingAssembler = mock(TrackingItemAssembler.class);
 		var account = accountRow();
-		var assembler = new BrandPostAssembler(repository, campaignRepository, directRepository, trackingAssembler);
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
 
 		assembler.assembleForBrand(7L, account);
 
@@ -155,9 +166,8 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void 스냅샷은_오름차순이고_latestSnapshot은_마지막_원소다() {
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(snapshotRow("ABC", 5, 100L), snapshotRow("ABC", 6, 180L)), List.of(), SWEPT_AT,
-				List.of());
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null),
+				null, List.of(snapshotRow("ABC", 5, 100L), snapshotRow("ABC", 6, 180L)), List.of(), List.of());
 
 		assertThat(post.snapshots()).extracting(TrackingItemResponse.SnapshotResponse::date)
 				.containsExactly("2026-08-05", "2026-08-06");
@@ -169,10 +179,8 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void REELS면_reel_URL_FEED면_p_URL이다() {
-		var reels = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
-		var feed = BrandPostAssembler.brandPost(100L, taggedRow("DEF"), meta("DEF", "FEED", null),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
+		var reels = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null, List.of(), List.of(), List.of());
+		var feed = brandPost(taggedRow("DEF"), meta("DEF", "FEED", null), null, List.of(), List.of(), List.of());
 
 		assertThat(reels.postUrl()).isEqualTo("https://www.instagram.com/reel/ABC/");
 		assertThat(reels.contentType()).isEqualTo("reels");
@@ -182,8 +190,7 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void tagged의_기본_필드는_열거행과_계정_스윕_시각에서_온다() {
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", true),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", true), null, List.of(), List.of(), List.of());
 
 		assertThat(post.id()).isEqualTo("ABC");
 		assertThat(post.shortcode()).isEqualTo("ABC");
@@ -201,27 +208,24 @@ class BrandPostAssemblerTest {
 	/** source 파생 규칙 3종(설계 §3-3) — direct_registered_at 유무만으로 갈린다. */
 	@Test
 	void source는_direct_registered_at_유무로_파생된다() {
-		var taggedOnly = BrandPostAssembler.brandPost(100L, row("ABC", null, "2026-08-06T02:00:00Z", null),
-				null, null, List.of(), List.of(), SWEPT_AT, List.of());
-		var directOnly = BrandPostAssembler.brandPost(100L,
-				row("DEF", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
-				null, null, List.of(), List.of(), SWEPT_AT, List.of());
-		var overlap = BrandPostAssembler.brandPost(100L,
-				row("GHI", "2026-08-06T02:00:00Z", "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
-				null, null, List.of(), List.of(), SWEPT_AT, List.of());
+		var taggedOnly = brandPost(row("ABC", null, "2026-08-06T02:00:00Z", null),
+				null, null, List.of(), List.of(), List.of());
+		var directOnly = brandPost(row("DEF", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
+				null, null, List.of(), List.of(), List.of());
+		var overlap = brandPost(row("GHI", "2026-08-06T02:00:00Z", "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
+				null, null, List.of(), List.of(), List.of());
 
 		assertThat(taggedOnly.source()).isEqualTo("tagged");
 		assertThat(directOnly.source()).isEqualTo("direct");
-		// 겹침(tagged+direct 둘 다 값이 있음) → direct가 이긴다(현행 mergeByShortcode 규칙 승계).
+		// 겹침(tag_detected_at·direct_registered_at 둘 다 값이 있음) → direct가 이긴다(파생 규칙).
 		assertThat(overlap.source()).isEqualTo("direct");
 	}
 
 	/** trackingStartedAt = COALESCE(direct_registered_at, first_seen_at) — direct는 등록 시점부터. */
 	@Test
 	void direct_행의_trackingStartedAt은_등록_시점이다() {
-		var post = BrandPostAssembler.brandPost(100L,
-				row("DEF", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
-				meta("DEF", "REELS", null), null, List.of(), List.of(), SWEPT_AT, List.of());
+		var post = brandPost(row("DEF", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
+				meta("DEF", "REELS", null), null, List.of(), List.of(), List.of());
 
 		assertThat(post.trackingStartedAt()).isEqualTo("2026-08-07T11:00:00+09:00");
 		// createdAt은 등록 경로와 무관하게 항상 first_seen_at이다 — direct 등록이 발견 이력을 덮지 않는다.
@@ -242,14 +246,14 @@ class BrandPostAssemblerTest {
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 						7L, rowCrawledLater, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), accountSwept, List.of());
+				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of());
 		var accountWins = BrandPostAssembler.brandPost(100L,
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 						7L, rowCrawledEarlier, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), accountSwept, List.of());
+				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of());
 		var rowNull = BrandPostAssembler.brandPost(100L,
-				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of());
+				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of());
 
 		assertThat(rowWins.updatedAt()).isEqualTo(KstTimestamps.toKstIso(rowCrawledLater));
 		assertThat(accountWins.updatedAt()).isEqualTo(KstTimestamps.toKstIso(accountSwept));
@@ -258,20 +262,17 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void campaignIds가_채워진다() {
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT, List.of("55", "56"));
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null, List.of(), List.of(),
+				List.of("55", "56"));
 
 		assertThat(post.campaignIds()).containsExactly("55", "56");
 	}
 
 	@Test
 	void 협찬은_유료협찬_플래그와_캡션으로_판정한다() {
-		var paid = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", true),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
-		var organic = BrandPostAssembler.brandPost(100L, taggedRow("DEF"), meta("DEF", "REELS", false),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
-		var unknown = BrandPostAssembler.brandPost(100L, taggedRow("GHI"), meta("GHI", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
+		var paid = brandPost(taggedRow("ABC"), meta("ABC", "REELS", true), null, List.of(), List.of(), List.of());
+		var organic = brandPost(taggedRow("DEF"), meta("DEF", "REELS", false), null, List.of(), List.of(), List.of());
+		var unknown = brandPost(taggedRow("GHI"), meta("GHI", "REELS", null), null, List.of(), List.of(), List.of());
 
 		assertThat(paid.sponsorship()).isEqualTo("sponsored");
 		assertThat(paid.isPaidPartnership()).isTrue();
@@ -282,8 +283,7 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void 메타가_없으면_피드로_접고_표시필드는_null이다() {
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), null, null, List.of(), List.of(), SWEPT_AT,
-				List.of());
+		var post = brandPost(taggedRow("ABC"), null, null, List.of(), List.of(), List.of());
 
 		assertThat(post.contentType()).isEqualTo("feed");
 		assertThat(post.postUrl()).isEqualTo("https://www.instagram.com/p/ABC/");
@@ -295,8 +295,7 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void 게시자_프로필_부재면_author_필드는_열거_관측값으로_폴백한다() {
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null, List.of(), List.of(), List.of());
 
 		assertThat(post.authorUsername()).isEqualTo("glowdeep_92");
 		assertThat(post.authorProfileUrl()).isEqualTo("https://www.instagram.com/glowdeep_92/");
@@ -311,8 +310,7 @@ class BrandPostAssemblerTest {
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
 				12345L, "https://cdn/author.jpg", true, null);
 
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				author, List.of(), List.of(), SWEPT_AT, List.of());
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), author, List.of(), List.of(), List.of());
 
 		assertThat(post.authorFullName()).isEqualTo("글로우딥");
 		assertThat(post.authorFollowers()).isEqualTo(12345L);
@@ -327,10 +325,9 @@ class BrandPostAssemblerTest {
 				12345L, "https://cdn/author.jpg", true, "monitor-author/9001.jpg");
 		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "glowdeep_92", "REELS",
 				LocalDate.of(2026, 8, 6), "캡션", "https://cdn/thumb.jpg", null, null, null,
-				"monitor-brand-post/ABC.jpg");
+				"monitor-brand-post/ABC.jpg", null, null, null);
 
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta, author, List.of(), List.of(), SWEPT_AT,
-				List.of());
+		var post = brandPost(taggedRow("ABC"), meta, author, List.of(), List.of(), List.of());
 
 		assertThat(post.thumbnailUrl()).isEqualTo("/img/monitor-brand-post/ABC.jpg");
 		assertThat(post.authorProfilePicUrl()).isEqualTo("/img/monitor-author/9001.jpg");
@@ -341,10 +338,10 @@ class BrandPostAssemblerTest {
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
 				12345L, "javascript:alert(1)", true, null);
 		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "glowdeep_92", "REELS",
-				LocalDate.of(2026, 8, 6), "캡션", "data:image/png;base64,AAAA", null, null, null, null);
+				LocalDate.of(2026, 8, 6), "캡션", "data:image/png;base64,AAAA", null, null, null, null,
+				null, null, null);
 
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta, author, List.of(), List.of(), SWEPT_AT,
-				List.of());
+		var post = brandPost(taggedRow("ABC"), meta, author, List.of(), List.of(), List.of());
 
 		assertThat(post.authorProfilePicUrl()).isNull();
 		assertThat(post.thumbnailUrl()).isNull();
@@ -359,8 +356,8 @@ class BrandPostAssemblerTest {
 		var broken = new BrandReadRepository.BrandCommentRow("ABC", "c2", null, "본문", 0L,
 				OffsetDateTime.parse("2026-08-06T05:00:00Z"), null);
 
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(), List.of(ok, broken), SWEPT_AT, List.of());
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null, List.of(), List.of(ok, broken),
+				List.of());
 
 		assertThat(post.recentComments()).hasSize(1);
 		assertThat(post.recentComments().get(0).author()).isEqualTo("gl***92");
@@ -370,14 +367,14 @@ class BrandPostAssemblerTest {
 
 	@Test
 	void commentsTotal은_최신_스냅샷_댓글수고_null이면_숨김이다() {
-		var hidden = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null), null,
+		var hidden = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null,
 				List.of(new BrandReadRepository.BrandSnapshotRow("ABC", LocalDate.of(2026, 8, 6), "REELS",
 						10L, false, null, 100L, 1L, 2L, false, 3L)),
-				List.of(), SWEPT_AT, List.of());
-		var shown = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(snapshotRow("ABC", 6, 100L)), List.of(), SWEPT_AT, List.of());
-		var noSnapshot = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta("ABC", "REELS", null),
-				null, List.of(), List.of(), SWEPT_AT, List.of());
+				List.of(), List.of());
+		var shown = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null,
+				List.of(snapshotRow("ABC", 6, 100L)), List.of(), List.of());
+		var noSnapshot = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null, List.of(), List.of(),
+				List.of());
 
 		assertThat(hidden.commentsTotal()).isNull();
 		assertThat(hidden.commentsHidden()).isTrue();
@@ -399,13 +396,12 @@ class BrandPostAssemblerTest {
 	void direct_행도_tagged와_동일한_필드셋이_채워진다_비대칭_해소_회귀방지() {
 		var meta = new BrandReadRepository.BrandPostMetaRow("XYZ", "glowdeep_92", "REELS",
 				LocalDate.of(2026, 8, 6), "오늘의 #협찬 후기", "https://cdn/thumb.jpg", "https://cdn/video.mp4",
-				15.5, true, null);
+				15.5, true, null, null, null, null);
 		var author = new BrandReadRepository.AuthorRow("9001", "glowdeep_92", "글로우딥",
 				12345L, "https://cdn/author.jpg", true, null);
 		var directRow = row("XYZ", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z");
 
-		var post = BrandPostAssembler.brandPost(100L, directRow, meta, author, List.of(), List.of(), SWEPT_AT,
-				List.of());
+		var post = brandPost(directRow, meta, author, List.of(), List.of(), List.of());
 
 		assertThat(post.source()).isEqualTo("direct");
 		assertThat(post.videoUrl()).isEqualTo("https://cdn/video.mp4");
@@ -415,28 +411,144 @@ class BrandPostAssemblerTest {
 		assertThat(post.sponsorship()).isEqualTo("sponsored");
 	}
 
+	/**
+	 * 겹침 행(tag_detected_at·direct_registered_at 둘 다 값이 있어 source="direct"로 파생됨)도 광고
+	 * 표기 판정 4필드가 채워진다 — 구 모델은 tagged·direct가 별도 행이라 "tagged 값을 direct로 승격"하는
+	 * 병합 단계가 없으면 배지가 조용히 사라졌지만(코디네이터 스펙 리뷰가 지적한 결함), 새 모델은
+	 * brand_tagged_post가 shortcode당 행 하나뿐이라 meta도 하나뿐이다 — source가 무엇이든 같은 meta를
+	 * 읽으므로 승격 자체가 필요 없다.
+	 */
+	@Test
+	void 겹침_행도_광고_판정_필드가_채워진다() {
+		var overlapRow = row("XYZ", "2026-08-06T02:00:00Z", "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z");
+		var adMeta = new BrandReadRepository.BrandPostMetaRow("XYZ", "glowdeep_92", "FEED",
+				LocalDate.of(2026, 8, 6), "오늘 소개 #광고", null, null, null, null, null,
+				"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
+
+		var post = BrandPostAssembler.brandPost(100L, overlapRow, adMeta, null, List.of(), List.of(), SWEPT_AT,
+				List.of(), true, Set.of("glowdeep_92"));
+
+		assertThat(post.source()).isEqualTo("direct");
+		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
+		assertThat(post.adEvidence()).singleElement()
+				.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
+		assertThat(post.seededAuthor()).isTrue();
+	}
+
 	// ---------- 정렬 ----------
 
 	@Test
 	void uploadedOn은_takenAt_앞_10자를_KST_날짜로_파싱한다() {
-		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC", "2026-08-06T01:00:00Z"),
-				null, null, List.of(), List.of(), SWEPT_AT, List.of());
+		var post = brandPost(taggedRow("ABC", "2026-08-06T01:00:00Z"), null, null, List.of(), List.of(), List.of());
 
 		assertThat(BrandPostAssembler.uploadedOn(post)).isEqualTo(LocalDate.of(2026, 8, 6));
 	}
 
 	@Test
 	void takenAt_미상은_uploadedOn이_null이다() {
-		var post = BrandPostAssembler.brandPost(100L,
+		var post = brandPost(
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001", null,
 						OffsetDateTime.parse("2026-08-06T02:00:00Z"), 0L, null,
 						OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), SWEPT_AT, List.of());
+				null, null, List.of(), List.of(), List.of());
 
 		assertThat(BrandPostAssembler.uploadedOn(post)).isNull();
 	}
 
+	// ---------- 광고 표기 판정 배선(2026-08-17 스펙 §9) ----------
+
+	@Test
+	void 광고_판정_필드가_응답에_실린다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var account = accountRow();
+		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null)));
+		when(repository.findPostMeta(anyCollection()))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
+						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
+						"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]")));
+		when(repository.findSeededUsernames(42L)).thenReturn(List.of("creator1"));
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, true);
+		var posts = assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
+			assertThat(post.adEvidence()).singleElement()
+					.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
+			assertThat(post.seededAuthor()).isTrue();
+		});
+	}
+
+	/**
+	 * 손상된 jsonb 텍스트(파싱 실패)가 목록 조회 전체를 500으로 죽이지 않는지 확인(품질 리뷰, 08-18) —
+	 * 손상된 필드(adViolations)만 빈 목록으로 격리되고, 같은 게시물의 다른 필드(adDisclosure·
+	 * 정상 adEvidence)는 그대로 응답에 실린다.
+	 */
+	@Test
+	void 손상된_jsonb는_해당_필드만_빈_목록으로_격리하고_응답은_정상이다() {
+		var meta = new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
+				LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
+				"DISCLOSED", "{broken", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
+
+		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta, null, List.of(), List.of(), SWEPT_AT,
+				List.of(), true, Set.of());
+
+		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
+		assertThat(post.adViolations()).isEmpty();
+		assertThat(post.adEvidence()).singleElement()
+				.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
+	}
+
+	@Test
+	void 노출_토글이_꺼지면_광고_필드는_전부_비노출() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var account = accountRow();
+		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null)));
+		when(repository.findPostMeta(anyCollection()))
+				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
+						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
+						"DISCLOSED", "[]", "[]")));
+
+		// 토글 off — findSeededUsernames를 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지)
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler, false);
+		var posts = assembler.assembleBrandPosts(account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.adDisclosure()).isNull();
+			assertThat(post.adViolations()).isEmpty();
+			assertThat(post.adEvidence()).isEmpty();
+			assertThat(post.seededAuthor()).isFalse();
+		});
+		verify(repository, never()).findSeededUsernames(anyLong());
+	}
+
 	// ---------- 픽스처 ----------
+
+	private static BrandPostAssembler newAssembler(BrandReadRepository repository,
+			BrandPostCampaignRepository campaignRepository, BrandDirectPostRepository directRepository,
+			TrackingItemAssembler trackingAssembler, boolean exposeAdDisclosure) {
+		return new BrandPostAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				exposeAdDisclosure);
+	}
+
+	/** brandPost() 호출 축약 — 이 파일 대다수 테스트는 brandId=100, lastSweptAt=SWEPT_AT, 노출 off. */
+	private static BrandPostResponse brandPost(BrandReadRepository.BrandTaggedPostRow post,
+			BrandReadRepository.BrandPostMetaRow meta, BrandReadRepository.AuthorRow author,
+			List<BrandReadRepository.BrandSnapshotRow> snapshotRows,
+			List<BrandReadRepository.BrandCommentRow> commentRows, List<String> campaignIds) {
+		return BrandPostAssembler.brandPost(100L, post, meta, author, snapshotRows, commentRows, SWEPT_AT,
+				campaignIds, false, Set.of());
+	}
 
 	private static BrandReadRepository.BrandAccountRow accountRow() {
 		return new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
@@ -464,7 +576,7 @@ class BrandPostAssemblerTest {
 	private static BrandReadRepository.BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
 		return new BrandReadRepository.BrandPostMetaRow(code, "glowdeep_92", contentType,
 				LocalDate.of(2026, 8, 6), "캡션 원문", "https://cdn/thumb.jpg",
-				"https://cdn/video.mp4", 15.5, paid, null);
+				"https://cdn/video.mp4", 15.5, paid, null, null, null, null);
 	}
 
 	private static BrandReadRepository.BrandSnapshotRow snapshotRow(String code, int day, Long views) {

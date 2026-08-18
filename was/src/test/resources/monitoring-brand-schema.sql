@@ -85,7 +85,23 @@ CREATE TABLE IF NOT EXISTS brand_post_meta (
     -- 이미지 아카이브 3컬럼(V20260812021500) — was는 image_object_path만 읽는다.
     image_object_path   text,
     image_source_name   text,
-    image_archived_at   timestamptz
+    image_archived_at   timestamptz,
+    -- 광고 표기 판정 6컬럼(V20260817160000) — was는 ad_verdict·ad_violations·ad_evidence 3개만 읽는다.
+    ad_verdict           text CHECK (ad_verdict IN
+                              ('DISCLOSED', 'NOT_DISCLOSED', 'INSUFFICIENT', 'UNCERTAIN')),
+    ad_verdict_source    text CHECK (ad_verdict_source IN ('RULE', 'LLM')),
+    ad_violations        jsonb,
+    ad_evidence          jsonb,
+    ad_judged_at         timestamptz,
+    judged_caption_hash  text
+);
+
+-- 시딩(협업) 계정 등록(V20260817160000) — was는 username만 브랜드 스코프로 읽는다.
+CREATE TABLE IF NOT EXISTS brand_seeded_account (
+    brand_id   bigint      NOT NULL REFERENCES brand_account (id),
+    username   text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (brand_id, username)
 );
 
 CREATE TABLE IF NOT EXISTS brand_post_comment (
