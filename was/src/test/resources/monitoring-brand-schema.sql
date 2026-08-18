@@ -117,13 +117,18 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     image_object_path      text,
     image_source_name      text,
     image_archived_at      timestamptz,
+    -- 작성자 프로필 사진 아카이브 3컬럼(V20260817142317) — was는 author_image_object_path만 읽는다.
+    author_image_object_path   text,
+    author_image_source_name   text,
+    author_image_archived_at   timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 
 -- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql +
 -- V20260812120216__brand_hashtag_exclusion_soft_delete.sql(deleted_at tombstone, 2026-08-12).
--- was는 findActiveExclusionTerms(deleted_at IS NULL만)로 읽는다 — 해시태그 발견 게시물 조회
--- 시점 즉시 필터 재료(BrandHashtagPostAssembler).
+-- 제외 문자열 기능은 2026-08-17 전면 폐기됐다(monitoring 관리 API 5종·was 프록시 API 4종·was
+-- 조회 시점 필터 전부 제거) — 테이블 자체는 expand-contract 원칙상 아직 DROP하지 않았을 뿐,
+-- was는 더 이상 이 테이블을 읽지 않는다.
 CREATE TABLE IF NOT EXISTS brand_hashtag_exclusion (
     brand_id   bigint      NOT NULL REFERENCES brand_account (id),
     term       text        NOT NULL,

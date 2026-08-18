@@ -5,9 +5,10 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.8 (브랜드 해시태그 감지 확장 — 2026-08-11, 08-12 API 형태 정정)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.10 (브랜드 해시태그 감지 확장 — 2026-08-11, 08-12 API 형태 정정, 08-17~18 제외 문자열
+> 폐기·취소 API 신설·brandPostId·작성자 프로필 아카이브)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
-> 에러 어휘 전부 구현과 일치. **v2.8은 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
+> 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
 > 계약과 무관한 신규 3테이블, §8)이라 위 "테이블 8 + 알람 대장 + 뷰 2" 집계에는 포함하지 않는다.
 > 이력: v1.0 (2026-07-29, 승인·기각 명령 2종 + was 09:00 이메일 크론) → **v1.1**(2026-07-30, P2 표면 —
 > post_comment·profile_meta·matched_keywords·share 해소, `feat/monitoring-v3-p2`) → **v2.0**(2026-07-30,
@@ -40,7 +41,23 @@
 > 같은 필터·정렬·counts 계약에 끼워 맞추면 null 필드만 늘어난다는 FE 판단으로 **전용 API**
 > `GET /v1/brand-monitoring/accounts/{accountId}/hashtag-posts`(슬림 `BrandHashtagPostResponse`)로
 > 분리했다 — `BrandPostResponse.source`는 `"tagged"`/`"direct"` 2종으로 되돌아갔다,
-> `feat/brand-hashtag-separate-api`).
+> `feat/brand-hashtag-separate-api`)
+> → *(v2.9는 이 이력에 없다 — §8-3-1 표준 REST 확장(2026-08-12, hashtag-tags PUT/POST/DELETE
+> 5종)이 그 번호를 이미 썼는데 이 상단 이력만 갱신이 누락됐던 기존 갭이다. 지금 정정하지 않고
+> 다음 번호부터 잇는다.)*
+> → **v2.10**(2026-08-17~18, FE 협의 3건 반영 — ① 제외 문자열(hashtag-exclusions) 기능 전면
+> 폐기: monitoring 관리 API 5종·was 프록시 API 4종·조회 시점 즉시 필터를 전부 제거, SELF(브랜드
+> 본인 게시물) 판정은 제외 문자열 substring 매칭 대신 게시자 username과 브랜드 username의 정확
+> 일치(대소문자 무시)로 대체, 자동 유도 태그도 (브랜드명·계정명 루트·전체계정명) 3종에서 계정명
+> 1종으로 축소 ② 해시태그 태그 등록(`PUT`/`POST .../hashtag-tags`) 성공 시(결과 태그 셋 비어있지
+> 않으면) 서버가 비동기로 해시태그 스윕 1회를 즉시 트리거 — 등록 당시 최근 90일 창의 게시물이
+> 다음 새벽 스윕을 기다리지 않고 곧바로 발견 목록에 반영된다(브랜드 replay 재등록도 동일, DELETE는
+> 트리거 없음, 실패는 다음 야간 스윕이 백스톱) ③ 신규 `POST
+> /v1/brand-monitoring/posts/{postId}/cancel`(성과 측정 취소 — direct 매핑 전용, tagged는
+> 400 `TAGGED_POST_NOT_CANCELABLE`) ④ `BrandHashtagPostResponse`에 측정 풀 승격 상태 필드
+> `brandPostId` 추가(FE 클라이언트 조인 대체용) ⑤ 발견 게시물 작성자 프로필 사진도 OCI
+> 아카이브 우선 서빙(`monitor-hashtag-author/<author_username>.jpg`, 썸네일과 동형),
+> `feat/brand-hashtag-fe-requests`).
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -544,12 +561,15 @@ was 테스트 픽스처(`was/src/test/resources/monitoring-schema.sql`) 기준 �
 > 이 문서(monitoring↔was 계약)에 처음 등재한다 — 이전 브랜드 태그 모니터링 변경점은 이 문서에
 > 없었다(그 자체가 갭이며, 이 절은 해시태그 확장분만 다룬다).
 
-브랜드 계정 태그(`@브랜드핸들`)뿐 아니라 **브랜드명·계정명 및 정규화 변형 해시태그**(예:
-`#브랜드명`·`#brandname`)를 매일 열거해 브랜드 관련 게시물을 자동 발견한다. 열거 결과는
-monitoring이 Gemini로 브랜드 관련성을 판정(`BrandMentionJudge`, 이름 충돌 방어 — 동명이 브랜드가
-아닌 다른 맥락으로 쓰인 경우 배제)한 뒤 통과분만 저장한다. monitoring 내부 신규 테이블
-(`brand_hashtag`·`brand_hashtag_exclusion`·`brand_hashtag_post`)은 계약 표면이 아니다 —
-was는 아래 두 표면으로만 결과를 받는다.
+브랜드 계정 태그(`@브랜드핸들`)뿐 아니라 **계정명 기반 해시태그**(자동 유도 1종 —
+2026-08-17부터 축소, 이전엔 브랜드명·계정명 루트·전체계정명 3종, §8-3-1)와 브랜드 소유자가
+직접 추가한 해시태그를 매일 열거해 브랜드 관련 게시물을 자동 발견한다. 열거 결과는 monitoring이
+Gemini로 브랜드 관련성을 판정(`BrandMentionJudge`, 이름 충돌 방어 — 동명이 브랜드가 아닌 다른
+맥락으로 쓰인 경우 배제)한 뒤 통과분만 저장한다. **SELF(브랜드 본인 게시물) 판정은 2026-08-17부터
+게시자 username과 브랜드 username의 정확 일치(대소문자 무시)** — 예전의 제외 문자열 substring
+매칭은 §8-3 폐기와 함께 사라졌다. monitoring 내부 신규 테이블(`brand_hashtag`·`brand_hashtag_post`)은
+계약 표면이 아니다(`brand_hashtag_exclusion`은 기능 폐기로 더 이상 읽히지 않지만 expand-contract
+원칙상 DROP은 안 됐다 — §8-3 참고) — was는 아래 표면으로만 결과를 받는다.
 
 ### 8-1. 신규 `GET /v1/brand-monitoring/accounts/{accountId}/hashtag-posts`
 
@@ -583,7 +603,8 @@ was는 아래 두 표면으로만 결과를 받는다.
       "likes": 1200,
       "comments": 34,
       "sponsorship": "unknown",
-      "firstSeenAt": "2026-08-12T03:05:00+09:00"
+      "firstSeenAt": "2026-08-12T03:05:00+09:00",
+      "brandPostId": null
     }
   ]
 }
@@ -601,61 +622,98 @@ tagged·direct 셰이프와 무관한 독립 계약):
 | `likes`/`comments` | **발견 시점 관측값**(재수집 없음, 스냅샷처럼 갱신되지 않는다). null 가능 |
 | `sponsorship` | **캡션 키워드만**(`BrandSponsorshipClassifier.classify(null, caption)`) — 열거 응답에 유료협찬 플래그가 실리지만 **현재 미적재**(`brand_hashtag_post`에 컬럼 없음, 후속 확장 여지). `isPaidPartnership` 필드 자체가 없다 |
 | `authorFollowers`·스냅샷·댓글·`campaignIds`·`trackingStatus` 등 | **필드 자체가 없다** — 보강·병합 파이프라인 미적용(스펙 §5 보류) |
+| `authorProfilePicUrl` | **(v2.10)** 작성자 프로필 사진도 아카이브 사본 우선 서빙 — 아카이브본이 있으면 `/img/monitor-hashtag-author/<author_username>.jpg`(Vercel rewrite, `profile_meta`·`post_meta`와 동형), 없으면 원본 CDN URL 폴백. 2026-08-17 이전엔 항상 원본 CDN URL이라 인스타 서명 만료(며칠~2주)로 아바타가 깨지는 한계가 있었는데, 이번 아카이브 잡 신설로 해소됐다(`HashtagPostAuthorImageArchiveJob`) |
 | `firstSeenAt` | 감지(브랜드 스윕 해시태그 열거) 시각 |
+| `brandPostId` | **(v2.10)** 이 shortcode가 그 계정의 성과 측정 풀(이 유저·이 브랜드의 direct 매핑이 살아 있거나, 그 브랜드의 tagged 게시물로 존재 — tagged는 365일 표시 윈도우 제한 없이 판정)에 있으면 `BrandPostResponse.id`(=shortcode)와 같은 값, 아니면 null. FE의 클라이언트 조인(구 12개월 창 한정) 대체용. **tagged로 채워진 경우 취소 API(§8-2)는 400(`TAGGED_POST_NOT_CANCELABLE`)을 반환한다** — tagged 행은 애초에 취소 대상이 아니다 |
 
 > (구 §8-2 `meta.counts.hashtag`는 08-12 정정으로 소거 — §8-1 전용 API로 흡수됐다. §8-3부터는
-> 번호를 그대로 유지한다: 이 문서를 참조하는 다른 위치의 앵커를 깨지 않기 위해서다.)
+> 번호를 그대로 유지한다: 이 문서를 참조하는 다른 위치의 앵커를 깨지 않기 위해서다. 비어 있던
+> 8-2 번호는 아래에서 신규 취소 API가 다시 쓴다.)
 
-### 8-3. `GET/PUT/POST/DELETE /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions` — 제외 문자열 관리
+### 8-2. `POST /v1/brand-monitoring/posts/{postId}/cancel` — 성과 측정 취소 (v2.10, 2026-08-17 FE 요청)
 
-자사 해시태그 오탐 방지용 제외 문자열(예: 브랜드명이 흔한 일반 단어와 겹쳐 무관한 게시물을
-잡을 때) 관리 API. was가 monitoring 내부 API(`/api/brands/{username}/hashtag-exclusions` 계열)를
-그대로 프록시한다 — 정규화(trim·소문자·중복 제거)는 monitoring이 한다.
+레거시 취소(`POST /v1/monitoring/items/{itemId}/cancel`)는 `monitoringItemId` 기준이라 shortcode만
+아는 브랜드 화면에서는 호출할 수 없었다 — 이 엔드포인트가 그 표면을 메운다. `postId`는
+`BrandPostResponse.id()`(=shortcode), 인증 유저 기준(구현: `V1BrandDirectPostService#cancel`).
 
-**08-12 유저 결정: 표준 REST 단건 조작 추가.** 기존 GET(조회)·PUT(전체 교체) 2종에 POST(단건·
-다건 추가)·`DELETE {term}`(단건 삭제)·DELETE(전체 삭제) 3종을 더해 5종 표준 REST 표면이 됐다.
-저장은 monitoring에서 tombstone(`deleted_at`) — 하드 삭제하면 등록 시 자동 시드(계정명 루트
-기본값)가 삭제된 문자열을 되살리기 때문이다. **PUT 빈 목록 하한 가드는 폐지됐다** — 단건·전체
-삭제 API가 생겨 "전부 지우기"가 더 이상 실수로만 일어나는 상태가 아니다(구 v2.8 422 가드 제거).
-
-**⚠️ 판정 자체는 여전히 비소급** — 이미 저장된 발견 게시물의 verdict는 불변이라, term을
-추가해도 이미 노출 중인 게시물이 사라지지 않는다(SELF로 새로 걸러지는 건 다음 스윕의 신규
-발견분부터). **다만 조회 시점 필터는 즉시 반영된다(08-12 신규)** — was가 `/hashtag-posts`
-조회 때마다 활성 제외 문자열을 다시 읽어 게시자 username에 포함되면 그 자리에서 걸러낸다
-(§8-1 참조). 그래서 term을 지우면 저장된 verdict와 무관하게 해당 게시물이 다시 뜨고, term을
-다시 추가하면 즉시 다시 숨는다 — "전체 삭제"로 자사 게시물이 쏟아지는 비가역 오염을 조회 필터가
-막아 주므로, 하한 가드 폐지가 안전하다.
-
-```json
-// GET 200
-{ "terms": ["일반단어1", "일반단어2"] }
-
-// PUT 요청 (전체 교체, 빈 배열도 허용 — 전체 비활성화와 같다)
-{ "terms": ["일반단어1"] }
-// PUT 204
-
-// POST 요청 (단건·다건 추가 — tombstone 재활성)
-{ "terms": ["새단어"] }
-// POST 204
-
-// DELETE /hashtag-exclusions/{term} — 단건 삭제(tombstone), 없어도 204(멱등)
-// DELETE /hashtag-exclusions — 전체 삭제(tombstone)
-```
+- **대상은 direct(직접 등록) 행뿐이다.** `app.brand_direct_posts` 매핑이 있으면: 연결된 레거시
+  `TrackingItem`을 가능한 상태에서만 함께 종결(이미 자연 종료 상태면 조용히 생략)하고, 매핑은
+  **hard delete**한다. 성공 시 **204 No Content**.
+- **취소 후 `GET .../accounts/{accountId}/posts`에서 그 행이 즉시 사라진다** — ended로 남지
+  않는다. 매핑을 지웠기 때문에 **같은 URL을 다시 직접 등록하면 duplicate가 아니라 새 등록으로
+  처리된다**(취소 후 재시작이 성립).
+- **tagged 행(direct 매핑 없이 tagged 풀에 존재)은 취소 대상이 아니다** — `400
+  TAGGED_POST_NOT_CANCELABLE`("태그로 발견된 게시물은 취소할 수 없어요."). tagged 존재 판정은
+  365일 표시 윈도우 제한이 없다(§8-1 `brandPostId` 판정과 같은 조회).
+- **매핑도 없고 tagged 풀에도 없으면 404**("대상을 찾을 수 없습니다.").
+- **§8-1 `hashtag-posts`(발견 목록)에는 영향이 없다** — 발견 행은 취소와 무관하게 계속 노출된다.
+  다만 그 shortcode의 `brandPostId`는 direct 매핑이 사라졌으니 다음 조회부터 `null`로
+  돌아간다(승격 상태만 원복, 발견 사실 자체는 유지).
 
 | 상황 | HTTP | 비고 |
 |---|---|---|
-| 정상 | GET 200 / PUT·POST·DELETE 204 | PUT 빈 목록도 204(2026-08-12부터 허용) |
-| 소유하지 않은 `accountId` | 403 | was 측 소유권 검증(`requireOwnership` — 유저의 활성 브랜드 연결에 없으면) |
-| `accountId`가 유효한 브랜드가 아님(브랜드 비정합) | 404 | was 측 `findAccountOrThrow` 또는 monitoring의 `BRAND_NOT_FOUND`(브랜드 미등록·비ACTIVE) 둘 다 404로 수렴 |
-| monitoring 접속 불능 | 503 | `Retry-After: 5` 동반(다른 monitoring 연동 엔드포인트와 공통 매핑, `V1ExceptionAdvice`) |
+| 성공 | 204 | direct 매핑 삭제(+ 가능하면 레거시 아이템 종결) |
+| tagged 행(취소 불가 대상) | 400 `TAGGED_POST_NOT_CANCELABLE` | tagged 행은 애초에 성과 측정 "등록" 개념이 없다 |
+| 매핑도 tagged도 아님 | 404 | "대상을 찾을 수 없습니다." |
+
+### 8-3. ~~`GET/PUT/POST/DELETE /v1/brand-monitoring/accounts/{accountId}/hashtag-exclusions`~~ — 제외 문자열 관리 · **폐기됨 (v2.10, 2026-08-17)**
+
+> ⚠️ **이 절 전체가 폐기됐다.** 아래는 이력 참고용으로만 남긴다 — was·monitoring 양쪽 모두
+> 이 표면을 더 이상 제공하지 않는다.
+
+**폐기 근거(2026-08-17 FE 협의 확정)**: "감지는 감지 해시태그만으로 수행하고 제외는 적용하지
+않는다." 제거 범위:
+
+- monitoring 관리 API 5종(`GET`/`PUT`/`POST`/단건 `DELETE`/전체 `DELETE`
+  `/api/brands/{username}/hashtag-exclusions` 계열) 삭제(`be39cbd7`).
+- was 프록시 API 5종(위 표면과 1:1 대응, `V1BrandAccountsController`) 삭제(`3ec5f1f1`).
+- was 조회 시점 즉시 필터(바로 아래 "08-12 신규" 조항으로 도입됐던 것)도 함께 제거(`b97960b9`)
+  — 남겨두면 `brand_hashtag_exclusion`에 이미 시드된 과거 데이터(브랜드마다 자동 시드된 계정명
+  루트)가 유저가 조회·삭제할 수 없는 "유령 필터"로 영구 동작해, 계정명을 포함한 정상 작성자
+  (예: 스태프 부계정)의 발견 게시물이 이유 없이 계속 숨는 부작용이 있었다.
+- **SELF(브랜드 본인 게시물) 판정은 제외 문자열 substring 매칭에서 게시자 username과 브랜드
+  username의 정확 일치(대소문자 무시)로 대체됐다** — "브랜드명을 포함한 근사 매치"는 더 이상
+  SELF로 걸러지지 않고, 정확히 같은 계정만 걸러진다(`BrandHashtagCollectService`).
+- 자동 시드(등록 시 계정명 루트를 제외 문자열 기본값으로 넣던 것)도 기능 자체가 사라지며 소멸했다.
+- `brand_hashtag_exclusion` **테이블 자체는 DROP하지 않았다**(expand-contract 원칙 — 참조가
+  끊긴 다음 릴리스에서만 destructive 마이그레이션). was·monitoring 둘 다 더 이상 이 테이블을
+  읽지 않을 뿐이다.
+
+<details>
+<summary>폐기 전 계약(이력, 08-12~08-17)</summary>
+
+자사 해시태그 오탐 방지용 제외 문자열(예: 브랜드명이 흔한 일반 단어와 겹쳐 무관한 게시물을
+잡을 때) 관리 API였다. was가 monitoring 내부 API(`/api/brands/{username}/hashtag-exclusions`
+계열)를 그대로 프록시했다 — 정규화(trim·소문자·중복 제거)는 monitoring이 했다.
+
+08-12 유저 결정으로 기존 GET(조회)·PUT(전체 교체) 2종에 POST(단건·다건 추가)·`DELETE {term}`
+(단건 삭제)·DELETE(전체 삭제) 3종을 더해 5종 표준 REST 표면이 됐었다. 저장은 monitoring에서
+tombstone(`deleted_at`)이었다. 판정 자체는 비소급이지만(이미 저장된 발견 게시물의 verdict는
+불변) 조회 시점 필터는 즉시 반영됐다(08-12 신규 — was가 `/hashtag-posts` 조회 때마다 활성
+제외 문자열을 다시 읽어 게시자 username에 포함되면 그 자리에서 걸러내는 방식).
+
+```json
+// (폐기 전) GET 200
+{ "terms": ["일반단어1", "일반단어2"] }
+// (폐기 전) PUT 요청 (전체 교체)
+{ "terms": ["일반단어1"] }
+// (폐기 전) POST 요청 (단건·다건 추가)
+{ "terms": ["새단어"] }
+// (폐기 전) DELETE /hashtag-exclusions/{term} — 단건 삭제, DELETE /hashtag-exclusions — 전체 삭제
+```
+
+</details>
 
 ### 8-3-1. `GET/PUT/POST/DELETE /v1/brand-monitoring/accounts/{accountId}/hashtag-tags` — 태그 셋 관리 (v2.9, 2026-08-12, 08-12 표준 REST 확장)
 
-**유저 결정: 자동 유도만 → 유저 입력 허용으로 전환.** 등록 시 자동 유도되는 태그 3종(#브랜드명·
-#계정명 루트·#전체계정명, §2)은 여전히 시드되지만, 이제 브랜드 소유자가 감지 대상 해시태그
-전체를 직접 추가·삭제할 수 있다. was가 monitoring 내부 API(`/api/brands/{username}/hashtag-tags`
-계열)를 그대로 프록시한다 — 정규화(trim·선행 `#` 제거·소문자·중복 제거)와 유효 문자 검증은
-monitoring이 한다.
+**유저 결정: 자동 유도만 → 유저 입력 허용으로 전환.** 등록 시 자동 유도되는 태그는 **계정명
+1종뿐**이다(**v2.10, 2026-08-17부터 축소** — 이전엔 브랜드명·계정명 루트·전체계정명 3종이었으나,
+"루트"가 원래 제외 문자열 기본값이자 태그 후보 하나의 재료였을 뿐이라 §8-3 제외 문자열 폐기와
+함께 개념 자체가 쓸모를 잃었다. `register` API의 `brandName` 파라미터는 하위 호환으로 계속
+받지만 더 이상 시드에 쓰이지 않는다, `BrandHashtagTags.derive`). 자동 시드와 별개로, 브랜드
+소유자가 감지 대상 해시태그 전체를 직접 추가·삭제할 수 있다. was가 monitoring 내부 API
+(`/api/brands/{username}/hashtag-tags` 계열)를 그대로 프록시한다 — 정규화(trim·선행 `#` 제거·
+소문자·중복 제거)와 유효 문자 검증은 monitoring이 한다.
 
 **08-12 유저 결정: 표준 REST 단건 조작 추가.** 기존 GET·PUT 2종에 POST(단건·다건 추가)·
 `DELETE {tag}`(단건 삭제)·DELETE(전체 삭제) 3종을 더해 5종 표준 REST 표면이 됐다.
@@ -664,9 +722,18 @@ monitoring이 한다.
 — "추가할 태그가 없다"는 요청 자체가 실수일 확률이 높고, 전체를 비우는 명시적 의도는 DELETE
 전체가 담당하기 때문이다.
 
-**⚠️ 비소급** — 태그 추가는 다음 새벽 스윕부터 감지가 시작된다(소급 백필은 최대 4페이지, 스펙
-§1 등록 백필과 같은 한도 — `monitoring.brand.hashtag.max-pages` 기본값). 태그 삭제는 이후
-발견분만 중단되고, 이미 저장된 발견 게시물은 그대로 유지된다(verdict 불변).
+**⚠️ 비소급이 원칙이지만, PUT/POST 성공은 즉시 스윕 1회를 트리거한다(v2.10, 2026-08-17).**
+결과 태그 셋이 비어있지 않으면 서버가 `enrich` 실행기에서 비동기로 해시태그 스윕 1회를
+곧바로 돌린다(`BrandRegistrationService#triggerHashtagSweepIfNonEmpty`) — "해시태그를 등록한
+당시에 조회해서 당일 게시물을 즉시 추가한다"는 FE 합의 동작이다. 스윕 자체의 열거 창은
+**최근 90일**(`monitoring.brand.hashtag.window-days`)이라, 트리거가 성공하면 그 창 안의
+게시물이 다음 새벽 스윕을 기다리지 않고 곧바로 발견 목록(§8-1)에 반영된다. 브랜드 replay
+재등록(기존 ACTIVE 브랜드 재등록) 경로에도 같은 트리거가 붙는다 — replay는 원래 백필이 없어
+예전엔 재등록 시점의 즉시 조회가 없었다. **`DELETE`는 트리거하지 않는다.** 트리거는
+비동기·격리(warn 로그)라 실패해도 요청 자체는 그대로 성공(204)하며, 실패 시 **다음 새벽
+정기 스윕이 백스톱**한다 — 그래서 "비소급"은 여전히 계약상 하한선으로 남는다(즉시 반영은
+best-effort 보너스이지 보장이 아니다). 태그 삭제는 이후 발견분만 중단되고, 이미 저장된
+발견 게시물은 그대로 유지된다(verdict 불변).
 
 **⚠️ 삭제는 tombstone** — monitoring `brand_hashtag`에 `deleted_at`이 채워진 채 행이 남는다.
 등록 replay가 부르는 자동 시드(`insertTags`, `ON CONFLICT DO NOTHING`)는 이 tombstone 행에
@@ -706,16 +773,18 @@ monitoring이 한다.
 
 ### 8-4. FE 공유 필요
 
-프론트 공유가 아직 안 된 신규 UI 표면 3가지:
+프론트 공유가 아직 안 된 신규 UI 표면 2가지(원래 3가지였으나 **제외 문자열 관리 UI는 §8-3
+기능 폐기로 대상에서 빠졌다** — 2026-08-17):
 
 - **해시태그 발견 게시물 "별도 탭"** — §8-1 전용 API(`GET .../hashtag-posts`)를 §6-1 게시물
   목록과 나란한 새 탭으로 노출. 스냅샷·댓글·팔로워가 없는 데이터라 tagged·direct 카드와 다른
   레이아웃이 필요하고(성과 지표 없음, `likes`/`comments`는 발견 시점 스냅 값), `matchedTag`로
-  "#태그로 발견" 배지를 그릴 수 있다.
-- **제외 문자열 관리 UI** — §8-3 API로 자사 태그 오탐 문자열을 브랜드 소유자가 직접 추가·삭제
-  (조회·전체 교체·단건 추가·단건 삭제·전체 삭제 5종). 편집이 조회 필터에는 즉시 반영된다는 점을
-  강조할 것(저장된 verdict는 비소급이지만 조회는 즉시).
+  "#태그로 발견" 배지를 그릴 수 있다. **v2.10**: `brandPostId`가 채워진 카드는 이미 성과
+  측정 중(§8-2 취소 가능 direct 또는 취소 불가 tagged)이라는 표시를 얹을 수 있다.
 - **태그 셋 관리 UI** — §8-3-1 API로 감지 대상 해시태그를 브랜드 소유자가 직접 추가·삭제
-  (조회·전체 교체·단건 추가·단건 삭제·전체 삭제 5종). 추가는 다음 새벽부터 감지 시작(비소급),
-  삭제는 tombstone(재추가하면 복구되지만 그 전까지 발견 중단)이라는 두 비소급 규칙을 FE 문구에
-  반드시 반영할 것. 전체 삭제 = 브랜드 해시태그 감지 전체 일시 중지.
+  (조회·전체 교체·단건 추가·단건 삭제·전체 삭제 5종). **v2.10부터 PUT/POST 성공 시 서버가
+  즉시 스윕을 트리거**하므로 "등록 직후 최근 90일 게시물이 곧 뜬다"고 안내할 수 있다 — 다만
+  이건 best-effort라(실패하면 다음 새벽 스윕이 백스톱) "즉시 반영을 보장하지 않는다"는 문구는
+  유지할 것. 태그 삭제는 tombstone(재추가하면 복구되지만 그 전까지 발견 중단)이라는 비소급
+  규칙도 FE 문구에 반영할 것. 전체 삭제 = 브랜드 해시태그 감지 전체 일시 중지. 자동 유도
+  시드는 이제 계정명 1종뿐이라는 점도 참고(§8-3-1).

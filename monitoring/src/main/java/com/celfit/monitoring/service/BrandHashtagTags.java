@@ -1,70 +1,37 @@
 package com.celfit.monitoring.service;
 
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 해시태그 감지 태그 셋 유도(스펙 2026-08-11 §2) — 등록 데이터에서 전자동 3종:
- * #브랜드명(company_name, brand 유형만 — 판별은 was 소관, 여기엔 null로 옴) ·
- * #계정명 루트(상용 접미사 제거) · #전체 계정명. 유저 입력·시드 분석 없음.
+ * 해시태그 감지 태그 셋 유도(2026-08-17 축소 — FE 협의로 제외 문자열 기능 폐기와 함께 자동 시드가
+ * 3종에서 1종으로 줄었다). 과거엔 브랜드명(company_name)·계정명 루트(상용 접미사 제거)·전체
+ * 계정명 3종을 유도했지만, "루트"는 원래 제외 문자열 기본값이자 태그 후보 하나의 재료였을 뿐이라
+ * 제외 문자열이 사라지며 개념 자체가 쓸모를 잃었다 — 남은 유도는 계정명 그대로 하나뿐이다.
  */
 public final class BrandHashtagTags {
 
 	/** IG 해시태그 허용 문자 — 글자(한글 포함)·숫자·언더스코어. 점(.)은 태그를 끊는다. */
 	private static final Pattern VALID_TAG = Pattern.compile("[\\p{L}\\p{N}_]+");
-	private static final List<String> SUFFIXES = List.of("official", "kr", "korea", "global");
-	private static final List<String> SEPARATORS = List.of("_", ".");
-	private static final int MIN_ROOT_LENGTH = 3;
 
 	private BrandHashtagTags() {
 	}
 
-	/** 계정명 루트 — cclime_official → cclime. 접미사는 반복 제거하되 3자 미만이 되면 중단. */
-	public static String root(String username) {
-		String u = username.toLowerCase(Locale.ROOT).strip();
-		boolean stripped = true;
-		while (stripped) {
-			stripped = false;
-			for (String s : SUFFIXES) {
-				for (String sep : SEPARATORS) {
-					String suffix = sep + s;
-					if (u.endsWith(suffix) && u.length() - suffix.length() >= MIN_ROOT_LENGTH) {
-						u = u.substring(0, u.length() - suffix.length());
-						stripped = true;
-					}
-				}
-			}
-		}
-		return u;
-	}
-
 	/**
-	 * 태그 셋 3종(순서 보존·중복 제거). brandName null·공백이면 2종.
-	 * 각 후보는 IG 해시태그 실동작(첫 무효 문자에서 잘림 — 예: cclime.beauty → cclime)에 맞춰
-	 * 선행 유효 접두사만 취하고, 접두사가 없으면(무효 문자로 시작) 후보를 버린다.
+	 * 계정명 해시태그 1종(원소 0~1개) 유도 — username을 소문자·strip한 뒤 IG 해시태그 실동작(첫
+	 * 무효 문자에서 잘림 — 예: cclime.beauty → cclime)에 맞춰 선행 유효 접두사만 취한다. 접두사가
+	 * 없으면(무효 문자로 시작) 빈 집합을 반환한다.
 	 *
-	 * @param brandName null 허용(브랜드명 미상 시 null — 계정명 유도 2종만 반환).
-	 * @param username  필수. null이면 NPE(등록 데이터엔 항상 존재하는 필드라 호출측 방어 불요).
+	 * @param username 필수. null이면 NPE(등록 데이터엔 항상 존재하는 필드라 호출측 방어 불요).
 	 */
-	public static LinkedHashSet<String> derive(String brandName, String username) {
-		List<String> candidates = new ArrayList<>();
-		if (brandName != null && !brandName.isBlank()) {
-			candidates.add(brandName.strip().replaceAll("[\\s#]+", ""));
-		}
+	public static LinkedHashSet<String> derive(String username) {
 		String u = username.toLowerCase(Locale.ROOT).strip();
-		candidates.add(root(u));
-		candidates.add(u);
-
 		LinkedHashSet<String> tags = new LinkedHashSet<>();
-		for (String candidate : candidates) {
-			String prefix = leadingValidPrefix(candidate);
-			if (!prefix.isBlank()) {
-				tags.add(prefix);
-			}
+		String prefix = leadingValidPrefix(u);
+		if (!prefix.isBlank()) {
+			tags.add(prefix);
 		}
 		return tags;
 	}

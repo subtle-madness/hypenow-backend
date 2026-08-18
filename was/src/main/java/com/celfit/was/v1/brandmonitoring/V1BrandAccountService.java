@@ -181,44 +181,6 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 해시태그 제외 문자열 조회(스펙 2026-08-11 §2) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
-	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
-	 */
-	public List<String> getHashtagExclusions(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		return commandClient.getHashtagExclusions(username);
-	}
-
-	/** 해시태그 제외 문자열 전체 교체 — terms null은 빈 목록으로 접어 monitoring에 위임(정규화는 monitoring). */
-	public void putHashtagExclusions(long userId, long brandId, List<String> terms) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.putHashtagExclusions(username, terms == null ? List.of() : terms);
-	}
-
-	/** 해시태그 제외 문자열 단건·다건 추가(2026-08-12) — terms null은 빈 목록(무해한 no-op)으로 위임. */
-	public void addHashtagExclusions(long userId, long brandId, List<String> terms) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.addHashtagExclusions(username, terms == null ? List.of() : terms);
-	}
-
-	/** 해시태그 제외 문자열 단건 삭제(2026-08-12) — 소유권 검증 후 monitoring에 위임(정규화는 monitoring). */
-	public void deleteHashtagExclusion(long userId, long brandId, String term) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteHashtagExclusion(username, term);
-	}
-
-	/** 해시태그 제외 문자열 전체 삭제(2026-08-12) — 소유권 검증 후 monitoring에 위임. */
-	public void deleteAllHashtagExclusions(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteAllHashtagExclusions(username);
-	}
-
-	/**
 	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
 	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
 	 */

@@ -15,6 +15,14 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * 않는다). {@code matchedTag}는 이 게시물을 찾아낸 해시태그 원문이라 FE가 "#태그로 발견" 배지를
  * 그릴 수 있다. {@code postUrl}은 콘텐츠 타입과 무관하게 항상 {@code /p/} 경로다 — Instagram이
  * reels도 {@code /p/}를 {@code /reel/}로 리다이렉트하므로 조회수 열거 없이도 안전하다.
+ *
+ * <p>{@code brandPostId}(2026-08-17 신설, 승격 상태 필드)는 이 shortcode가 그 계정의 성과 측정
+ * 풀에 <b>현재</b> 존재하면 {@link BrandPostResponse#id()}와 같은 값(=shortcode)을, 아니면 null을
+ * 싣는다 — direct 매핑({@code app.brand_direct_posts})이 살아 있거나 그 브랜드의 tagged 게시물로
+ * 존재하면 채워진다. tagged 존재 판정은 표시 윈도우(365일) 제한이 없다 — 기존 클라이언트 조인
+ * (업로드 12개월 창 한정)의 사각지대를 없앤다. tagged로 채워진 행도 이 필드가 채워지며, 이 경우
+ * 취소 API({@code POST .../posts/{postId}/cancel})는 400(TAGGED_POST_NOT_CANCELABLE)을 반환한다 —
+ * tagged 행은 애초에 취소 대상이 아니다. direct 매핑이 취소되면(매핑 삭제) 다음 조회부터 다시 null이다.
  */
 public record BrandHashtagPostResponse(
 		String shortcode,
@@ -31,5 +39,6 @@ public record BrandHashtagPostResponse(
 		Long likes,
 		Long comments,
 		@Schema(allowableValues = {"sponsored", "organic", "unknown"}) String sponsorship,
-		String firstSeenAt) {
+		String firstSeenAt,
+		String brandPostId) {
 }
