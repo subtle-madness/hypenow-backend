@@ -7,10 +7,8 @@ import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.ProfileSource;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +27,10 @@ import org.springframework.stereotype.Component;
  * 재시도 경로로 복귀한다(소멸 계정의 유료 콜을 임계값 주기당 1회로 제한). 폴백이
  * 성공하면 카운터를 유지해 다음 빈 응답부터는 즉시 폴백한다(Hiker 수집 가능 확인됨).
  * 카운터는 인메모리라 재기동 시 초기화된다 — 임계값만큼의 방문 실패 후 폴백이 재개된다.
+ *
+ * <p>빈 응답 트랙은 <b>COLLECT 잡 전용</b>이다 — qualify는 대상 재선정(followers null)에
+ * 종결 장치가 없어 빈 응답 유료 폴백을 열면 숨겨진 DISCOVERED 계정이 무한 재과금되고,
+ * 30일 수명 정책(confirmedEmpty 소비)도 CollectJob에만 있다. 400 폴백은 두 잡 공통.
  */
 @Component
 public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
@@ -53,22 +55,24 @@ public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
 
     @Override
     public CrawlExecutor.Execution fetch(JobName job, List<String> usernames, TriggerType trigger) {
-        return executor.execute(job, trigger, null, null, LABEL, () -> collect(usernames));
+        return executor.execute(job, trigger, null, null, LABEL, () -> collect(job, usernames));
     }
 
-    private ApifyResult collect(List<String> usernames) {
+    private ApifyResult collect(JobName job, List<String> usernames) {
         List<String> badRequest = new ArrayList<>();
         List<String> empty = new ArrayList<>();
         ApifyResult base = self.collect(usernames, badRequest, empty);
-        resetStreaksForResolved(base);
         List<String> emptyFallback = new ArrayList<>();
-        for (String u : empty) {
-            int streak = emptyStreaks.merge(u, 1, Integer::sum);
-            if (streak >= EMPTY_STREAK_FALLBACK_THRESHOLD) {
-                emptyFallback.add(u);
-            } else {
-                log.info("빈 응답 연속 {}회 — 임계값({}) 미만, 폴백 유보: {}",
-                        streak, EMPTY_STREAK_FALLBACK_THRESHOLD, u);
+        if (job == JobName.COLLECT) {   // 빈 응답 트랙은 COLLECT 전용 — 클래스 주석 참조
+            resetStreaksForResolved(base);
+            for (String u : empty) {
+                int streak = emptyStreaks.merge(u, 1, Integer::sum);
+                if (streak >= EMPTY_STREAK_FALLBACK_THRESHOLD) {
+                    emptyFallback.add(u);
+                } else {
+                    log.info("빈 응답 연속 {}회 — 임계값({}) 미만, 폴백 유보: {}",
+                            streak, EMPTY_STREAK_FALLBACK_THRESHOLD, u);
+                }
             }
         }
         if (badRequest.isEmpty() && emptyFallback.isEmpty()) return base;
@@ -78,8 +82,9 @@ public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
         if (!emptyFallback.isEmpty()) {
             log.info("빈 응답 연속 임계값 도달 {}건 — Hiker 폴백: {}", emptyFallback.size(), emptyFallback);
         }
-        ApifyResult fallback = hiker.collect(fallbackTargets);
-        List<String> confirmedEmpty = settleEmptyStreaks(emptyFallback, fallback);
+        List<String> hikerEmpty = new ArrayList<>();
+        ApifyResult fallback = hiker.collect(fallbackTargets, hikerEmpty);
+        List<String> confirmedEmpty = settleEmptyStreaks(emptyFallback, fallback, hikerEmpty);
         List<Map<String, Object>> items = new ArrayList<>(base.items());
         items.addAll(fallback.items());
         List<String> notFound = new ArrayList<>(base.notFound());
@@ -98,25 +103,23 @@ public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
     }
 
     /**
-     * 빈 응답 폴백의 후처리 — 성공 계정은 카운터를 유지해 다음 빈 응답부터 즉시 폴백하고
-     * (Hiker 수집 가능 확인), 실패(폴백도 빈 응답)·404 계정은 카운터를 제거해 기존 재시도
-     * 경로로 복귀시킨다(소멸 추정 계정의 반복 과금 방지). 반환값은 폴백도 빈 응답이던
-     * 계정(양쪽 확인) — 호출자의 수명 정책(30일 경과 시 404 동일 취급) 판정 재료.
+     * 빈 응답 폴백의 후처리 — Hiker가 <b>응답으로 확인한</b> 빈 응답(hikerEmpty)만 카운터를
+     * 제거하고 confirmedEmpty로 보고한다(호출자의 30일 수명 정책 재료). 404는 카운터만
+     * 제거(소프트 삭제 경로로 종결). 그 외 — 회수 성공은 카운터 유지(다음 빈 응답부터 즉시
+     * 폴백), 요청 실패(5xx·타임아웃: 어느 리스트에도 없음)도 카운터 유지로 다음 방문에서
+     * 폴백을 재시도한다 — 인프라 오류를 계정 소멸 확인으로 오판하지 않는다.
      */
-    private List<String> settleEmptyStreaks(List<String> emptyFallback, ApifyResult fallback) {
+    private List<String> settleEmptyStreaks(List<String> emptyFallback, ApifyResult fallback,
+                                            List<String> hikerEmpty) {
         if (emptyFallback.isEmpty()) return List.of();
-        Set<String> recovered = new HashSet<>();
-        for (Map<String, Object> item : fallback.items()) {
-            String u = ProfileExtractor.username(item, RawSource.HIKER_MOBILE);
-            if (u != null) recovered.add(u);
-        }
         List<String> confirmedEmpty = new ArrayList<>();
         for (String u : emptyFallback) {
-            if (recovered.contains(u)) continue;
-            emptyStreaks.remove(u);
-            if (!fallback.notFound().contains(u)) {
+            if (hikerEmpty.contains(u)) {
+                emptyStreaks.remove(u);
                 confirmedEmpty.add(u);
-                log.info("빈 응답 폴백도 계정 확보 실패 — 카운터 리셋, 기존 재시도 경로로 복귀: {}", u);
+                log.info("빈 응답 폴백도 빈 응답 확인 — 카운터 리셋, 기존 재시도 경로로 복귀: {}", u);
+            } else if (fallback.notFound().contains(u)) {
+                emptyStreaks.remove(u);
             }
         }
         return confirmedEmpty;

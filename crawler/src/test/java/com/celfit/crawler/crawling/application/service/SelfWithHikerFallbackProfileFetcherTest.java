@@ -117,10 +117,51 @@ class SelfWithHikerFallbackProfileFetcherTest {
         };
         var f = fetcher(webWithEmptyFor(Set.of("hidden")), http);
 
-        var ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.COLLECT, List.of("hidden"), TriggerType.MANUAL);
 
         assertThat(hikerCalls.get()).isZero();
         assertThat(ex.items()).isEmpty();     // 방문 실패 → 다음 실행 재시도
+        assertThat(ex.notFound()).isEmpty();
+    }
+
+    @Test void 빈_응답_폴백은_COLLECT_잡에서만_작동한다() {
+        // qualify는 대상 재선정에 종결 장치(30일 정책)가 없다 — 빈 응답 유료 폴백을 열면
+        // 숨겨진 DISCOVERED 계정이 무한 재과금된다. 400 폴백은 두 잡 모두 기존대로.
+        AtomicInteger hikerCalls = new AtomicInteger();
+        HikerHttp http = path -> {
+            hikerCalls.incrementAndGet();
+            return "{\"user\":{\"username\":\"hidden\",\"pk\":\"2\"}}";
+        };
+        var f = fetcher(webWithEmptyFor(Set.of("hidden")), http);
+
+        CrawlExecutor.Execution ex = null;
+        for (int round = 1; round <= THRESHOLD + 1; round++) {
+            ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
+        }
+
+        assertThat(hikerCalls.get()).isZero();   // 임계값을 넘겨도 qualify에선 폴백 없음
+        assertThat(ex.items()).isEmpty();
+        assertThat(ex.confirmedEmpty()).isEmpty();
+    }
+
+    @Test void 폴백_요청_실패는_확인된_빈_계정으로_보고되지_않고_다음_방문에_폴백을_재시도한다() {
+        // Hiker 5xx·타임아웃은 "계정 없음 확인"이 아니다 — 인프라 오류로 소프트 삭제가
+        // 트리거되면 안 되고, 카운터를 유지해 다음 방문에서 폴백을 다시 시도한다
+        AtomicInteger hikerCalls = new AtomicInteger();
+        HikerHttp http = path -> {
+            hikerCalls.incrementAndGet();
+            throw new com.celfit.crawler.crawling.application.port.out.ApifyException("Hiker HTTP 503");
+        };
+        var f = fetcher(webWithEmptyFor(Set.of("unlucky")), http);
+
+        CrawlExecutor.Execution ex = null;
+        for (int round = 1; round <= THRESHOLD + 1; round++) {
+            ex = f.fetch(JobName.COLLECT, List.of("unlucky"), TriggerType.MANUAL);
+        }
+
+        assertThat(hikerCalls.get()).isEqualTo(2);       // 임계값 회차 + 재시도 회차
+        assertThat(ex.confirmedEmpty()).isEmpty();       // 요청 실패 ≠ 빈 응답 확인
+        assertThat(ex.items()).isEmpty();
         assertThat(ex.notFound()).isEmpty();
     }
 
@@ -135,7 +176,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
         CrawlExecutor.Execution ex = null;
         for (int round = 1; round <= THRESHOLD; round++) {
-            ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
+            ex = f.fetch(JobName.COLLECT, List.of("hidden"), TriggerType.MANUAL);
         }
 
         assertThat(hikerCalls.get()).isEqualTo(1);   // 임계값 도달 회차에만 호출
@@ -160,12 +201,12 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
         // 임계값 직전까지 빈 응답 → SELF 성공 1회(리셋) → 다시 빈 응답 1회: 연속이 아니므로 폴백 없음
         for (int round = 1; round < THRESHOLD; round++) {
-            f.fetch(JobName.QUALIFY, List.of("wobbly"), TriggerType.MANUAL);
+            f.fetch(JobName.COLLECT, List.of("wobbly"), TriggerType.MANUAL);
         }
         empty.clear();
-        f.fetch(JobName.QUALIFY, List.of("wobbly"), TriggerType.MANUAL);
+        f.fetch(JobName.COLLECT, List.of("wobbly"), TriggerType.MANUAL);
         empty.add("wobbly");
-        var ex = f.fetch(JobName.QUALIFY, List.of("wobbly"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.COLLECT, List.of("wobbly"), TriggerType.MANUAL);
 
         assertThat(hikerCalls.get()).isZero();
         assertThat(ex.items()).isEmpty();
@@ -179,7 +220,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
         CrawlExecutor.Execution ex = null;
         for (int round = 1; round <= THRESHOLD; round++) {
-            ex = f.fetch(JobName.QUALIFY, List.of("dormant"), TriggerType.MANUAL);
+            ex = f.fetch(JobName.COLLECT, List.of("dormant"), TriggerType.MANUAL);
         }
 
         assertThat(ex.confirmedEmpty()).containsExactly("dormant");
@@ -191,7 +232,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
         // Hiker 미확인 상태 — 소멸 판정 재료로 쓰면 안 된다
         var f = fetcher(webWithEmptyFor(Set.of("hidden")), path -> "{\"user\":null}");
 
-        var ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
+        var ex = f.fetch(JobName.COLLECT, List.of("hidden"), TriggerType.MANUAL);
 
         assertThat(ex.confirmedEmpty()).isEmpty();
     }
@@ -205,7 +246,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
         CrawlExecutor.Execution ex = null;
         // 임계값 도달 → 폴백(빈 응답) → 리셋 — 직후 (임계값-1)회는 다시 폴백하지 않는다
         for (int round = 1; round <= THRESHOLD + THRESHOLD - 1; round++) {
-            ex = f.fetch(JobName.QUALIFY, List.of("dormant"), TriggerType.MANUAL);
+            ex = f.fetch(JobName.COLLECT, List.of("dormant"), TriggerType.MANUAL);
         }
 
         assertThat(hikerCalls.get()).isEqualTo(1);
@@ -224,7 +265,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
         CrawlExecutor.Execution ex = null;
         for (int round = 1; round <= THRESHOLD + 1; round++) {
-            ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
+            ex = f.fetch(JobName.COLLECT, List.of("hidden"), TriggerType.MANUAL);
         }
 
         assertThat(hikerCalls.get()).isEqualTo(2);   // 임계값 회차 + 그 다음 회차
@@ -238,7 +279,7 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
         CrawlExecutor.Execution ex = null;
         for (int round = 1; round <= THRESHOLD; round++) {
-            ex = f.fetch(JobName.QUALIFY, List.of("gone"), TriggerType.MANUAL);
+            ex = f.fetch(JobName.COLLECT, List.of("gone"), TriggerType.MANUAL);
         }
 
         assertThat(ex.items()).isEmpty();
