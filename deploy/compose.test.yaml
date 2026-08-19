@@ -124,6 +124,8 @@ services:
       # 모니터링 v3 조회 개통 — 운영과 동일 관용구, 기본 off. test-monitoring이 쓰는 test-postgres의
       # monitoring DB를 was_reader 읽기 전용 계정으로(계정 이름은 운영과 동일, 비밀번호만 DEV_* 구명)
       MONITORING_ENABLED: "${DEV_MONITORING_ENABLED:-false}"
+      # 광고 표기 판정 FE 노출 개통(08-19) — 운영과 동일 개통, false로 내리면 즉시 중립값(킬 스위치)
+      AD_DISCLOSURE_EXPOSE: "${DEV_AD_DISCLOSURE_EXPOSE:-true}"
       # 명령 API도 test 스택으로 — 기본값(http://monitoring:8083)은 운영 이름이라 test에선 DNS 해석 실패(fail-closed)
       MONITORING_API_BASE_URL: http://test-monitoring:8083
       MONITORING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
