@@ -730,6 +730,18 @@ class BrandCollectServiceTest {
 	}
 
 	@Test
+	void 컷_종료인데_편입이_0건이면_capped를_내리지_않는다() {
+		// 병리 케이스 — taken_at 미상뿐이라 편입 0건인 채로 상한(2)에 닿았다. (true, NULL)은
+		// "컷인데 깊이 미상"이라는 FE 자기모순 쌍이고 §7-4 클램프도 값을 못 얻으므로 (false, NULL)로 접는다.
+		tagPages.add(page("p2", reel("A", null, 0, 101, ""), reel("B", null, 0, 102, "")));
+		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));
+
+		service(10000, 2).sweep(brand);
+
+		assertThat(brands.coverageWrites).containsExactly("1:full");
+	}
+
+	@Test
 	void 백필이_완주하면_커버리지를_전체_커버로_기록한다() {
 		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
 

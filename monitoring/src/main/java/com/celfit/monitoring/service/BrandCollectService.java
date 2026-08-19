@@ -286,8 +286,12 @@ public class BrandCollectService {
 			// (false, NULL)로 기록돼 실제 도달 깊이보다 낙관적이다 — 기본 구성에선 상한 컷(⑤)이
 			// 밸브보다 안쪽이라 ④는 도달 불가하고, 최초 백필에서 기록되는 이 값은 컬럼 DEFAULT
 			// (false, NULL)와 같아 아무것도 덧쓰지 않으므로 수용한다.
-			brands.updateCoverage(brand.id(), cappedThisRun,
-					cappedThisRun ? oldestTakenAt(collected) : null);
+			// depth가 null인 컷 종료(⑤인데 편입 0건 — 전부 창 밖이거나 taken_at 미상)는 capped도
+			// 내리지 않는다: (true, NULL)은 "컷인데 깊이 미상"이라는 FE 자기모순 쌍이고, §7-4 클램프도
+			// 클램프 값을 못 얻어 무의미하다. 병리 케이스라 (false, NULL)로 접는 편이 안전하다.
+			Instant depth = oldestTakenAt(collected);
+			boolean capped = cappedThisRun && depth != null;
+			brands.updateCoverage(brand.id(), capped, capped ? depth : null);
 		}
 		return List.copyOf(collected);
 	}
