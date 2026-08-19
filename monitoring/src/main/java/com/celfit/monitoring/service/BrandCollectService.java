@@ -219,8 +219,9 @@ public class BrandCollectService {
 			// due의 last_crawled_at이 실크롤 없이 갱신돼 ①매 스윕이 그 깊이를 다시 여는 낭비 루프가
 			// 차단되고 ②그 게시물들은 마지막 수집 시점 지표로 동결된 채 계속 서빙된다(was 목록
 			// 상한 2,000과 정합). 판정이 커서 소진 뒤인 이유는 밸브와 동일 — 마지막 페이지에서 정확히
-			// 상한에 닿는 건 자연 종료다.
-			if (seen.size() >= collectionPostLimit) {
+			// 상한에 닿는 건 자연 종료다. 0 이하면 무제한이다(backfill-max-per-run 관용 일치) —
+			// 0을 "1페이지 후 목표 컷 전체 동결"로 읽으면 브랜드가 티어 주기 동안 조용히 얼어붙는다.
+			if (collectionPostLimit > 0 && seen.size() >= collectionPostLimit) {
 				log.info("브랜드 태그 수집 개수 상한({}) 도달 — {} 의도된 자연 종료"
 								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
 						collectionPostLimit, brand.username(), seen.size(), cutoff,
