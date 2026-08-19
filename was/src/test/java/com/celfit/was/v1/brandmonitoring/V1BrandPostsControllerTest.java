@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
@@ -19,6 +20,7 @@ import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
@@ -40,6 +42,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +80,12 @@ class V1BrandPostsControllerTest {
 	/** 과도기 폴백 전용(T10) — 이 표면 계약 테스트는 건드리지 않는다(기본값이 빈 목록). */
 	@MockitoBean
 	BrandDirectPostRepository directPostRepository;
+	/**
+	 * 해시태그 발견 목록 내 태그 필터(08-19) 전용 — 이 표면 계약 테스트는 건드리지 않는다(기본값이
+	 * 빈 Set이라 findByUserAndBrand가 항상 empty → 필터 자체가 스킵되고 기존 동작 그대로 통과한다).
+	 */
+	@MockitoBean
+	BrandHashtagTagRepository hashtagTagRepository;
 	/** 과도기 폴백 전용(T10). */
 	@MockitoBean
 	TrackingItemAssembler trackingItemAssembler;
@@ -150,6 +159,7 @@ class V1BrandPostsControllerTest {
 	void 목록은_tagged와_direct를_합치고_counts는_필터_전_전량이다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
 				directRow("XYZ", "2026-08-06T01:00:00Z"));
+		givenOwnedByPrincipal("XYZ");   // XYZ는 principal(7L)이 직접 등록한 게시물 — 노출 대상.
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
 				meta("AAA", "REELS", true), meta("BBB", "FEED", false), meta("XYZ", "REELS", null)));
 
@@ -167,6 +177,59 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.meta.counts.organic").value(1))
 				.andExpect(jsonPath("$.meta.counts.unknown").value(1))
 				.andExpect(jsonPath("$.meta.lastCollectedAt").value("2026-08-08T03:00:00+09:00"));
+	}
+
+	// ---------- 등록자 전용 노출(요구사항, 08-19) ----------
+
+	/**
+	 * direct-only(해시태그 미감지) 게시물은 등록한 유저에게만 보인다 — 같은 브랜드를 보는 다른 유저
+	 * 화면에 노출되던 버그의 회귀 방지. 원장(app.brand_direct_posts) 조회 기본값(빈 집합)이 곧
+	 * "principal은 이 게시물의 등록자가 아니다"를 뜻한다(givenOwnedByPrincipal 호출 없음).
+	 */
+	@Test
+	void 다른_유저가_등록한_direct_전용_게시물은_보이지_않는다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), directRow("XYZ", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"))
+				.andExpect(jsonPath("$.meta.total").value(1))
+				.andExpect(jsonPath("$.meta.counts.all").value(1))
+				.andExpect(jsonPath("$.meta.counts.direct").value(0));
+	}
+
+	/** direct-only 게시물은 등록한 본인에게는 정상적으로 보이고 source도 "direct"다. */
+	@Test
+	void 등록자에게는_직접_등록한_게시물이_보인다() throws Exception {
+		givenTagged(directRow("XYZ", "2026-08-06T01:00:00Z"));
+		givenOwnedByPrincipal("XYZ");
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("XYZ", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("XYZ"))
+				.andExpect(jsonPath("$.data[0].source").value("direct"));
+	}
+
+	/**
+	 * 해시태그로 감지된 게시물(tag_detected_at IS NOT NULL)은 같은 게시물을 다른 유저가 직접
+	 * 등록했더라도(겹침 행) 항상 모두에게 보인다 — 노출 필터는 direct-only에만 적용된다. 다만 source
+	 * 표시는 조회자 관점으로 갈린다(등록자가 아니므로 "tagged").
+	 */
+	@Test
+	void 해시태그로_감지된_게시물은_다른_유저의_direct_등록과_겹쳐도_보인다() throws Exception {
+		givenTagged(overlapRow("GHI", "2026-08-06T01:00:00Z"));
+		// givenOwnedByPrincipal 호출 없음 — principal은 이 게시물의 등록자가 아니다.
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("GHI", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("GHI"))
+				.andExpect(jsonPath("$.data[0].source").value("tagged"));
 	}
 
 	@Test
@@ -216,6 +279,7 @@ class V1BrandPostsControllerTest {
 	@Test
 	void source_필터는_direct만_남긴다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), directRow("XYZ", "2026-08-06T01:00:00Z"));
+		givenOwnedByPrincipal("XYZ");   // XYZ는 principal(7L)이 직접 등록한 게시물 — 노출 대상.
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
 				meta("AAA", "REELS", null), meta("XYZ", "REELS", null)));
 
@@ -355,6 +419,7 @@ class V1BrandPostsControllerTest {
 				.willReturn(Optional.of(linkWithMonths(1)));
 		givenTagged(taggedRow("AAA", "2026-04-01T01:00:00Z"),   // 창 밖 tagged — 제외 대조군
 				directRow("XYZ", "2026-02-01T01:00:00Z"));
+		givenOwnedByPrincipal("XYZ");   // XYZ는 principal(7L)이 직접 등록한 게시물 — 노출 대상.
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
 				meta("AAA", "REELS", null), meta("XYZ", "REELS", null)));
 
@@ -414,6 +479,39 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
 	}
 
+	/**
+	 * 등록자 스코프 배지(요구사항, 08-19) — 남이 direct 등록(수집)한 발견 게시물은 내 목록에서
+	 * brandPostId가 null(미수집)이어야 한다. 해시태그 감지 데이터(행 자체)는 여전히 보인다.
+	 */
+	@Test
+	void 남이_수집한_발견_게시물은_내게_미수집으로_보인다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
+						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
+		// directPostRepository.shortCodesByUser(7L) 미스텁 — Mockito 기본값 empty(내가 등록 안 함).
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				.andExpect(jsonPath("$.data[0].brandPostId").value(org.hamcrest.Matchers.nullValue()));
+	}
+
+	/** 내가 직접 등록(수집)한 발견 게시물은 brandPostId가 채워진다. */
+	@Test
+	void 내가_수집한_발견_게시물은_brandPostId가_채워진다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
+						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("HHH"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].brandPostId").value("HHH"));
+	}
+
 	@Test
 	void 해시태그_발견_게시물이_없으면_빈_배열이다() throws Exception {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
@@ -469,6 +567,18 @@ class V1BrandPostsControllerTest {
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/posts/ZZZ").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	/** 상세도 목록과 같은 조립을 타므로 등록자 전용 노출 규칙이 그대로 적용된다 — 남의 direct 전용 게시물은 404. */
+	@Test
+	void 다른_유저가_등록한_direct_전용_게시물_상세는_404다() throws Exception {
+		givenTagged(directRow("XYZ", "2026-08-06T01:00:00Z"));
+		// givenOwnedByPrincipal 호출 없음 — principal은 이 게시물의 등록자가 아니다.
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("XYZ", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/posts/XYZ").with(user(principal())))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
@@ -579,6 +689,14 @@ class V1BrandPostsControllerTest {
 		given(brandReadRepository.findHashtagPosts(anyLong(), any(), anyInt())).willReturn(List.of(rows));
 	}
 
+	/**
+	 * 등록자 전용 노출 요구사항(08-19) — direct-only 게시물은 등록자(app.brand_direct_posts 원장)만
+	 * 볼 수 있다. 이 파일의 principal은 항상 userId=7L이라 그 관점으로 원장을 스텁한다.
+	 */
+	private void givenOwnedByPrincipal(String... shortCodes) {
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of(shortCodes));
+	}
+
 	private static BrandLinkRow link() {
 		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, 12,
 				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
@@ -609,6 +727,14 @@ class V1BrandPostsControllerTest {
 		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 0L,
 				registeredAt, null, registeredAt);
+	}
+
+	/** 겹침 행 — tag_detected_at·direct_registered_at 둘 다 채워짐(해시태그 감지 + 누군가의 direct 등록). */
+	private static BrandTaggedPostRow overlapRow(String code, String takenAt) {
+		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
+		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
+		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
+				registeredAt, firstSeenAt, registeredAt);
 	}
 
 	private static BrandHashtagPostRow hashtagRow(String code, String takenAt) {

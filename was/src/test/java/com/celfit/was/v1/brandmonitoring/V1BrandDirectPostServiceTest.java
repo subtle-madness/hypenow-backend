@@ -78,12 +78,13 @@ class V1BrandDirectPostServiceTest {
 				Clock.fixed(Instant.parse("2026-08-08T12:00:00Z"), ZoneOffset.UTC));
 	}
 
-	// ---------- 중복 판정 ----------
+	// ---------- 중복 판정(공동 등록 허용, 08-19 개정) ----------
 
 	@Test
-	void 이미_direct_등록된_게시물은_duplicate다() {
+	void 내가_이미_direct_등록한_게시물은_duplicate다() {
 		ownedBrand();
 		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("ABC"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
@@ -96,10 +97,28 @@ class V1BrandDirectPostServiceTest {
 				"이미 브랜드 목록에 있는 게시물입니다.");
 	}
 
+	/**
+	 * 공동 등록 허용(요구사항, 08-19) — direct_registered_at은 브랜드 단위 컬럼이라 "누군가" 등록했다는
+	 * 뜻뿐이다. 다른 유저가 이미 등록한 shortcode를 이 유저가 등록하려 하면(내 원장엔 없음) duplicate가
+	 * 아니라 신규 등록으로 위임돼야 한다 — B에게도 등록이 성공해야 한다는 요구사항.
+	 */
+	@Test
+	void 다른_유저가_이미_등록한_게시물은_duplicate가_아니라_위임된다() {
+		ownedBrand();
+		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		// shortCodesByUser(7L) 미스텁 — Mockito 기본값 empty(내가 등록한 적 없음, 남이 등록함).
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		then(executor).should().submit(55L);
+	}
+
 	@Test
 	void 링크_창_안의_tagged_게시물도_duplicate다() {
 		ownedBrand();
-		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		poolStatus("ABC", false, true, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
@@ -113,7 +132,7 @@ class V1BrandDirectPostServiceTest {
 		// 등록하면 direct_registered_at이 채워지고 direct 행은 창 예외라 그 자리에서 보이기 시작한다
 		// (08-17 데드엔드 우회가 대가 없이 해소된다).
 		ownedBrand(3);
-		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-03-08T00:00:00Z"));
+		poolStatus("ABC", false, true, OffsetDateTime.parse("2026-03-08T00:00:00Z"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
@@ -125,12 +144,27 @@ class V1BrandDirectPostServiceTest {
 	@Test
 	void 링크_창_안_5개월_이내_tagged_게시물은_여전히_중복이다() {
 		ownedBrand(3);
-		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-07-08T00:00:00Z"));
+		poolStatus("ABC", false, true, OffsetDateTime.parse("2026-07-08T00:00:00Z"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
 
 		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
+	}
+
+	/**
+	 * tag_detected가 아닌(=이 유저에게는 목록에도 안 보이는) 남의 direct-only 등록분은 날짜가
+	 * 창 안이어도 duplicate가 아니다(요구사항, 08-19) — tagDetected 가드가 없던 구버전 버그 회귀 방지.
+	 */
+	@Test
+	void tag_감지_없는_남의_direct_등록분은_창_안_날짜여도_duplicate가_아니다() {
+		ownedBrand();
+		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
 	}
 
 	@Test
@@ -219,6 +253,7 @@ class V1BrandDirectPostServiceTest {
 	void 부분_성공은_입력_순서를_보존한다() {
 		ownedBrand();
 		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("ABC"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response =
@@ -302,18 +337,21 @@ class V1BrandDirectPostServiceTest {
 		assertThatThrownBy(() -> service.get(7L, "abc")).isInstanceOf(V1ApiException.class);
 	}
 
-	// ---------- 취소(설계 §2-4) ----------
+	// ---------- 취소(설계 §2-4, 등록자 한정 취소 08-19 개정) ----------
 
 	@Test
 	void 매핑이_있고_direct_registered면_원격_취소_후_원장을_지운다() {
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		ownRegistration(7L, "DEF", 100L);
+		// hasOtherRegistrant 미스텁 — Mockito 기본값 false(다른 등록자 없음) = 마지막 등록자 경로.
 
 		service.cancel(7L, "DEF");
 
 		then(commandClient).should().deleteDirectPost(100L, "DEF");
 		then(directPostRepository).should().delete(7L, "DEF");
-		then(postCampaignRepository).should().deleteByBrandAndShortCode(100L, "DEF");
+		then(postCampaignRepository).should().deleteByBrandAndShortCodeAndUser(100L, "DEF", 7L);
+		then(registrationRepository).should().settlePendingAsSuccessForCancel(100L, "DEF", 7L);
 	}
 
 	@Test
@@ -322,6 +360,7 @@ class V1BrandDirectPostServiceTest {
 		// 레거시 cancelLegacyIfPossible의 판단과 반대로, 여기서는 삼키지 않는 게 계약이다.
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		ownRegistration(7L, "DEF", 100L);
 		willThrow(new MonitoringUnavailableException("접속 실패", null))
 				.given(commandClient).deleteDirectPost(100L, "DEF");
 
@@ -347,6 +386,90 @@ class V1BrandDirectPostServiceTest {
 		given(brandReadRepository.findBrandPoolStatus(100L, Set.of("ZZZ"))).willReturn(List.of());
 
 		assertThatThrownBy(() -> service.cancel(7L, "ZZZ")).isInstanceOf(V1ApiException.class);
+	}
+
+	/**
+	 * 등록자 전용 취소(요구사항, 08-19) — direct-only 게시물을 내가 등록하지 않았으면(원장에 내 행이
+	 * 없으면) 존재를 흘리지 않고 404다. 등록자 전용 노출 필터로 이 유저 화면에는 애초에 보이지도
+	 * 않는 게시물이라 등록 상태 폴링 get()의 "남의 등록은 404" 관용구와 맞춘다.
+	 */
+	@Test
+	void 등록자가_아니면_direct_전용_게시물_취소는_404다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("XYZ", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		// findByUserAndShortCode 미스텁 — Mockito 기본값 empty(내 원장에 없음) = 등록자 아님.
+
+		assertThatThrownBy(() -> service.cancel(7L, "XYZ"))
+				.isInstanceOfSatisfying(V1ApiException.class, e -> assertThat(e.code()).isEqualTo("NOT_FOUND"));
+		then(commandClient).should(never()).deleteDirectPost(anyLong(), anyString());
+		then(directPostRepository).should(never()).delete(anyLong(), anyString());
+	}
+
+	/**
+	 * 등록자 전용 취소(요구사항, 08-19) — 해시태그로도 감지된 겹침 게시물을 내가 등록하지 않았으면
+	 * 이 유저 시점엔 "태그 게시물"로 보이므로(BrandPostAssembler.resolveSource와 같은 관점) tagged
+	 * 취소 시도와 같은 400 TAGGED_POST_NOT_CANCELABLE이다 — 겹침 여부를 노출하지 않는다.
+	 */
+	@Test
+	void 등록자가_아니면_겹침_게시물_취소도_400_TAGGED_POST_NOT_CANCELABLE다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("GHI", true, true, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+
+		assertThatThrownBy(() -> service.cancel(7L, "GHI"))
+				.isInstanceOfSatisfying(V1ApiException.class,
+						e -> assertThat(e.code()).isEqualTo("TAGGED_POST_NOT_CANCELABLE"));
+		then(directPostRepository).should(never()).delete(anyLong(), anyString());
+	}
+
+	/**
+	 * 공동 등록 방어(요구사항, 08-19) — 동시 등록 레이스로 다른 유저가 독립적으로 같은
+	 * (brand, shortcode)를 등록했을 수 있다(BrandDirectPostRepository#hasOtherRegistrant 참조). 그
+	 * 상태에서 내가 취소해도 브랜드 풀의 direct 표식(monitoring 호출)은 건드리지 않는다 — 내 취소가
+	 * 다른 등록자의 화면에서 게시물을 지우면 안 된다. 내 원장·내 캠페인 링크는 그래도 정리한다.
+	 */
+	@Test
+	void 다른_등록자가_남아있으면_원격_해제_없이_내_원장만_지운다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		ownRegistration(7L, "DEF", 100L);
+		given(directPostRepository.hasOtherRegistrant(100L, "DEF", 7L)).willReturn(true);
+
+		service.cancel(7L, "DEF");
+
+		then(commandClient).should(never()).deleteDirectPost(anyLong(), anyString());
+		then(directPostRepository).should().delete(7L, "DEF");
+		then(postCampaignRepository).should().deleteByBrandAndShortCodeAndUser(100L, "DEF", 7L);
+	}
+
+	/**
+	 * 취소-복구 경합 겹침(요구사항, 08-19) — 등록 명령의 HTTP 응답이 유실돼 monitoring은 실제로
+	 * 등록을 완료했는데 {@code app.brand_direct_posts} 원장은 아직 없고 entry가 pending으로 남은
+	 * 창에서도, 그 등록을 넣은 본인은 취소할 수 있어야 한다(원장 부재만으로 남의 등록으로 오판하면
+	 * 안 된다).
+	 */
+	@Test
+	void 원장이_없어도_내_pending_등록이면_취소할_수_있다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		// findByUserAndShortCode 미스텁 — 원장 아직 없음(HTTP 응답 유실 창).
+		given(registrationRepository.hasPendingEntry(100L, "DEF", 7L)).willReturn(true);
+
+		service.cancel(7L, "DEF");
+
+		then(commandClient).should().deleteDirectPost(100L, "DEF");
+		then(directPostRepository).should().delete(7L, "DEF");
+	}
+
+	/** 원장에 다른 브랜드(brandId 불일치) 행만 있으면 이 브랜드에서는 등록자가 아니다 — 404. */
+	@Test
+	void 다른_브랜드에_등록한_같은_shortcode는_이_브랜드_취소_권한이_아니다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
+		poolStatus("DEF", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		ownRegistration(7L, "DEF", 999L);   // 다른 브랜드(999L)에 등록한 행
+
+		assertThatThrownBy(() -> service.cancel(7L, "DEF"))
+				.isInstanceOfSatisfying(V1ApiException.class, e -> assertThat(e.code()).isEqualTo("NOT_FOUND"));
+		then(directPostRepository).should(never()).delete(anyLong(), anyString());
 	}
 
 	// ---------- fixtures ----------
@@ -377,6 +500,12 @@ class V1BrandDirectPostServiceTest {
 	private void poolStatus(String shortCode, boolean directRegistered, boolean tagDetected, OffsetDateTime takenAt) {
 		given(brandReadRepository.findBrandPoolStatus(eq(100L), any()))
 				.willReturn(List.of(new BrandPoolStatusRow(shortCode, tagDetected, directRegistered, takenAt)));
+	}
+
+	/** 취소 등록자 검증용 — app.brand_direct_posts에 (userId, shortCode) 원장 행이 있는 상태를 스텁. */
+	private void ownRegistration(long userId, String shortCode, long brandId) {
+		given(directPostRepository.findByUserAndShortCode(userId, shortCode))
+				.willReturn(Optional.of(new BrandDirectPostRepository.Row(userId, brandId, shortCode, null)));
 	}
 
 	private static BrandPostRegistrationRepository.InsertedRegistration inserted(long id) {

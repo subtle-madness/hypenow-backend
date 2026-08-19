@@ -1,9 +1,13 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPoolStatusRow;
+import com.celfit.was.monitoring.BrandReadRepository.MatchedTagRow;
 import com.celfit.was.v1.common.KstTimestamps;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -43,9 +47,14 @@ public class BrandHashtagPostAssembler {
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
 
 	private final BrandReadRepository brandReadRepository;
+	private final BrandDirectPostRepository directPostRepository;
+	private final BrandHashtagTagRepository hashtagTagRepository;
 
-	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository) {
+	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository,
+			BrandDirectPostRepository directPostRepository, BrandHashtagTagRepository hashtagTagRepository) {
 		this.brandReadRepository = brandReadRepository;
+		this.directPostRepository = directPostRepository;
+		this.hashtagTagRepository = hashtagTagRepository;
 	}
 
 	/**
@@ -68,12 +77,36 @@ public class BrandHashtagPostAssembler {
 	 * 행은 이미 목록에서 빠지므로 tagged로만 채워지는 경로가 없다. <b>2026-08-18 direct 통합 이후
 	 * 판정 산지가 바뀌었다</b>: {@code app.brand_direct_posts}(유저 스코프 매핑) + tagged 존재 판정
 	 * 2회 조회 대신, monitoring 브랜드 풀 상태({@code BrandReadRepository.findBrandPoolStatus})
-	 * 1회 조회로 both를 판정한다(제외: {@code tag_detected AND NOT direct_registered}; brandPostId:
-	 * {@code direct_registered ? shortCode : null}) — 브랜드 풀이 direct 등록을 유저 스코프가 아니라
-	 * 브랜드 스코프로 승격했으므로(설계 §1-1) 판정도 자연히 브랜드 스코프가 된다. 그래서 이 메서드는
-	 * 더 이상 userId를 받지 않는다 — 같은 브랜드에 연결된 누구에게나 같은 발견 목록이 보인다.
+	 * 1회 조회로 both를 판정한다(제외: {@code tag_detected AND NOT direct_registered}).
+	 *
+	 * <p><b>brandPostId는 조회자 스코프다(요구사항, 08-19 개정 — 구 §1-1 "브랜드 스코프 판정" 중
+	 * 상호작용 부분 폐기)</b>: {@code direct_registered_at}은 브랜드 단위 컬럼이라 "누군가 수집했다"만
+	 * 알 뿐 "누가 했는지"는 모른다 — 그래서 등록자 원장({@code app.brand_direct_posts},
+	 * {@link BrandDirectPostRepository#shortCodesByUser})을 한 번 더 조회해 <b>이 유저가 등록한</b>
+	 * shortcode에만 배지를 채운다. 남이 수집한 게시물은 이 유저에게 "미수집"으로 보이고(공동 수집
+	 * 허용 — {@code V1BrandDirectPostService#register}가 사용자 스코프 중복 판정으로 실제 등록도
+	 * 받아준다), 이 유저가 수집하면 이 유저에게만 배지가 켜진다.
+	 *
+	 * <p><b>발견 목록 행 자체(해시태그 감지 데이터)는 여전히 브랜드 공유</b>다 — {@code
+	 * brand_hashtag_post}는 해시태그 스윕(캡션 매칭) 전용 테이블이라 direct 등록 경로가 그 테이블에
+	 * 행을 쓰는 일이 없다(제외·배지 판정 둘 다 {@code brand_tagged_post} 크로스 조회일 뿐, 그 행이
+	 * 목록에 실리느냐는 오직 해시태그 매칭 여부로만 결정된다). 그래서 이 메서드는 userId를 받지만
+	 * 필터(제외 조건)는 여전히 브랜드 스코프이고, badge 파생에만 쓰인다.
+	 *
+	 * <p><b>내 태그 매칭 필터(요구사항, 08-19 확장)</b> — 조회자가 관리하는 활성 태그
+	 * ({@code app.brand_hashtag_tags})와 게시물의 매칭 태그 전체({@code
+	 * brand_hashtag_post_matched_tags}, {@link BrandReadRepository#findMatchedTags})의 교집합이 있을
+	 * 때만 노출한다. 매칭 기록이 아예 없는 행(마이그레이션 백필 이전 데이터 등)은 <b>fail-open</b>
+	 * (전원 노출) — 새 테이블의 완결성이 기존 데이터의 표시 여부를 볼모로 잡으면 안 된다.
+	 *
+	 * <p><b>시딩 전 정합성</b>: 조회자 본인의 태그 원장이 이 브랜드에 대해 <b>비어 있으면 필터 자체를
+	 * 건너뛴다</b>(전원 노출) — 이 기능 출시 직후처럼 이 유저가 태그 관리 API를 아직 한 번도 건드리지
+	 * 않은 상태(원장 미시딩)에서 "내 태그가 0개니까 교집합도 0개"로 몰아 전부 숨기면, 기존에 보이던
+	 * 발견 목록이 이 기능 출시와 동시에 전부 사라지는 회귀가 된다. 원장이 비어 있다는 신호는 "아직
+	 * 개인화하지 않았다"로 해석해 브랜드 전체를 보여주는 쪽을 기본값으로 삼는다 — 다른 유저가 이미
+	 * 태그를 관리하기 시작했는지 여부와 무관하게, 오직 <b>이 조회자 본인</b>의 원장만 본다.
 	 */
-	public List<BrandHashtagPostResponse> assembleForBrand(long brandId) {
+	public List<BrandHashtagPostResponse> assembleForBrand(long userId, long brandId) {
 		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
 				BrandPostAssembler.windowCutoff(), HASHTAG_POST_LIMIT);
 		if (rows.isEmpty()) {
@@ -84,21 +117,58 @@ public class BrandHashtagPostAssembler {
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, BrandPoolStatusRow> poolStatus = brandReadRepository.findBrandPoolStatus(brandId, shortCodes)
 				.stream().collect(Collectors.toMap(BrandPoolStatusRow::shortCode, Function.identity(), (a, b) -> a));
+		// direct 등록 행이 하나도 없으면 원장 조회를 생략한다(불필요한 조회 방지 — BrandPostAssembler와
+		// 같은 관용구).
+		boolean hasAnyDirectRegistered = poolStatus.values().stream().anyMatch(BrandPoolStatusRow::directRegistered);
+		Set<String> ownedShortCodes = hasAnyDirectRegistered ? directPostRepository.shortCodesByUser(userId)
+				: Set.of();
 
-		return rows.stream()
+		List<BrandHashtagPostRow> visible = rows.stream()
 				.filter(row -> !isTaggedOnly(poolStatus.get(row.shortCode())))
-				.map(row -> toResponse(row, brandPostIdOf(poolStatus.get(row.shortCode()), row.shortCode())))
+				.toList();
+		visible = filterByMyTags(userId, brandId, visible);
+
+		return visible.stream()
+				.map(row -> toResponse(row,
+						brandPostIdOf(poolStatus.get(row.shortCode()), row.shortCode(), ownedShortCodes)))
 				.toList();
 	}
 
-	/** 제외 조건 — tag_detected AND NOT direct_registered(2026-08-18 direct 통합 §2-5). */
+	/**
+	 * 내 태그 매칭 필터(요구사항, 08-19) — 클래스 javadoc의 "내 태그 매칭 필터"·"시딩 전 정합성"
+	 * 참조. 내 태그 원장이 비어 있으면 필터를 건너뛴다(원장 조회 자체는 이미 했으므로 재조회 없음).
+	 */
+	private List<BrandHashtagPostRow> filterByMyTags(long userId, long brandId, List<BrandHashtagPostRow> rows) {
+		if (rows.isEmpty()) {
+			return rows;
+		}
+		Set<String> myTags = hashtagTagRepository.findByUserAndBrand(userId, brandId);
+		if (myTags.isEmpty()) {
+			return rows;   // 시딩 전(또는 전체 삭제 후) — 필터 없이 전원 노출.
+		}
+		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Map<String, Set<String>> matchedTagsByCode = brandReadRepository.findMatchedTags(brandId, shortCodes).stream()
+				.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
+						Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
+		return rows.stream()
+				.filter(row -> matchesMyTags(matchedTagsByCode.get(row.shortCode()), myTags))
+				.toList();
+	}
+
+	/** 매칭 기록이 없으면(레거시·미백필) fail-open, 있으면 내 태그와 교집합이 있어야 통과. */
+	private static boolean matchesMyTags(Set<String> postTags, Set<String> myTags) {
+		return postTags == null || postTags.isEmpty() || !Collections.disjoint(postTags, myTags);
+	}
+
+	/** 제외 조건 — tag_detected AND NOT direct_registered(2026-08-18 direct 통합 §2-5, 브랜드 공유 유지). */
 	private static boolean isTaggedOnly(BrandPoolStatusRow status) {
 		return status != null && status.tagDetected() && !status.directRegistered();
 	}
 
-	/** direct 등록이면 shortcode를, 아니면 null을 돌려준다(tagged-only 행은 이미 제외됐다). */
-	private static String brandPostIdOf(BrandPoolStatusRow status, String shortCode) {
-		return status != null && status.directRegistered() ? shortCode : null;
+	/** 이 유저가 direct 등록했으면 shortcode를, 아니면 null(tagged-only 행은 이미 제외됐다). */
+	private static String brandPostIdOf(BrandPoolStatusRow status, String shortCode, Set<String> ownedShortCodes) {
+		return status != null && status.directRegistered() && ownedShortCodes.contains(shortCode) ? shortCode : null;
 	}
 
 	/** {@code brandPostId} 없는 호출부(단위 테스트 등)를 위한 편의 오버로드 — null로 접는다. */
