@@ -15,6 +15,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -171,19 +172,27 @@ public class BrandRegistrationService {
 	 * expandWindow의 조건부 UPDATE다. 그 UPDATE가 false(0행)면 동시 요청이 더 큰 창으로 이미
 	 * 이겼다는 뜻이고 그쪽이 백필도 제출했으므로, 같은 창을 두 번 여는 재제출을 건너뛴다.
 	 *
-	 * <p>2026-08-19 수집 상한 v2(§7-2): 이미 상한 도달인 브랜드는 확장 스킵 — 아래 참조.
+	 * <p>2026-08-19 수집 상한 v2(§7-2): 재백필의 컷이 기존 창 안에 떨어지는 브랜드는 확장 스킵 —
+	 * 아래 참조.
 	 */
 	private void expandIfRequested(BrandRow existing, int months) {
 		if (months <= existing.collectionMonths()) {
 			return;
 		}
-		// 확장 스킵(스펙 §7-2) — 이미 상한 도달이면 재백필이 기지 게시물만 세다 컷될 것이 확정이라
-		// 열거를 시작하지 않는다(~96콜 절약). 창·커버리지 마킹만 하고 수집 상태는 불변 — UI가
-		// capped·covered_until로 "확장 신청·상한 도달"을 표시한다.
-		if (collectionPostLimit > 0 && taggedPosts.countByBrand(existing.id()) >= collectionPostLimit) {
-			Instant fallback = ZonedDateTime.now(KST).minusMonths(existing.collectionMonths()).toInstant();
-			brands.raiseWindowCapped(existing.id(), months, fallback);
-			return;
+		// 확장 스킵(스펙 §7-2) — 재백필의 컷이 "기존 창 안"에 떨어질 때만 스킵한다: 그러면 확장
+		// 구간(기존 창 밖)에는 한 건도 도달하지 못하므로 열거 전량이 낭비다(~96콜 절약). 창·커버리지
+		// 마킹만 하고 수집 상태는 불변 — UI가 capped·covered_until로 "확장 신청·상한 도달"을 표시한다.
+		//
+		// 판정 입력은 limit번째 최신 태그 행의 taken_at = 재백필 컷의 정확한 예측치다(생애 누적 행
+		// 수가 아니다 — nthNewestTagTakenAt javadoc의 오표기 사례 참조). 이 값이 그대로
+		// covered_until 폴백이기도 하다: 근사가 아닌 실제 도달 깊이라 §7-4 컷 클램프도 정확해진다.
+		if (collectionPostLimit > 0) {
+			Instant existingCutoff = ZonedDateTime.now(KST).minusMonths(existing.collectionMonths()).toInstant();
+			Optional<Instant> predictedCut = taggedPosts.nthNewestTagTakenAt(existing.id(), collectionPostLimit);
+			if (predictedCut.isPresent() && predictedCut.get().isAfter(existingCutoff)) {
+				brands.raiseWindowCapped(existing.id(), months, predictedCut.get());
+				return;
+			}
 		}
 		if (!brands.expandWindow(existing.id(), months)) {
 			return;

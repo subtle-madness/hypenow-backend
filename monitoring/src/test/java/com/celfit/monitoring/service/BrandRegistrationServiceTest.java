@@ -15,6 +15,8 @@ import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -41,6 +43,9 @@ import org.junit.jupiter.api.Test;
  * 백필 실패는 등록을 실패시키지 않는다(last_swept_on null 유지 → 다음 스윕 백스톱).
  */
 class BrandRegistrationServiceTest {
+
+	/** 확장 스킵 판정의 창 컷 계산이 KST 캘린더 개월이라 테스트도 같은 존을 쓴다. */
+	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
 	private static final String PROFILE_JSON = """
 			{"user":{"pk":111,"username":"brandx","full_name":"브랜드","profile_pic_url":"https://p",
@@ -285,17 +290,21 @@ class BrandRegistrationServiceTest {
 		}
 	}
 
-	/** 확장 스킵 판정 입력(스펙 §7-2) — 저장 행 수만 스텁한다. */
+	/** 확장 스킵 판정 입력(스펙 §7-2) — limit번째 최신 태그 행의 taken_at만 스텁한다. */
 	private static final class StubTaggedPosts extends TaggedPostRepository {
-		long count;
+		/** null = 태그 행이 상한 미만(컷 안 걸림). */
+		Instant nthNewest;
+		/** 마지막 호출의 n — 상한이 그대로 넘어갔는지 본다. */
+		Integer askedN;
 
 		StubTaggedPosts() {
 			super(null);
 		}
 
 		@Override
-		public long countByBrand(long brandId) {
-			return count;
+		public Optional<Instant> nthNewestTagTakenAt(long brandId, int n) {
+			askedN = n;
+			return Optional.ofNullable(nthNewest);
 		}
 	}
 
@@ -547,44 +556,78 @@ class BrandRegistrationServiceTest {
 	}
 
 	/**
-	 * 확장 스킵(스펙 §7-2) — 이미 상한 도달이면 재백필이 기지 게시물만 세다 컷될 것이 확정이라
-	 * 열거를 시작하지 않는다. 창·커버리지 마킹만 하고 수집 상태(lastSweptOn)는 불변이다.
+	 * 확장 스킵(스펙 §7-2) — 재백필의 컷(limit번째 최신 태그 행)이 기존 창 <b>안</b>에 떨어지면
+	 * 확장 구간에는 한 건도 도달하지 못하므로 열거를 시작하지 않는다. 창·커버리지 마킹만 하고
+	 * 수집 상태(lastSweptOn)는 불변이다.
 	 */
 	@Test
-	void 이미_상한_도달인_브랜드의_확장은_백필_없이_창만_올린다() {
+	void 컷이_기존_창_안에_떨어지면_확장은_백필_없이_창만_올린다() {
 		var first = service().register("brandx", null, 3);
 		collect.coreSwept.clear();
-		taggedPosts.count = collectionPostLimit;   // 상한 도달 — 확장 구간에 넣을 여유가 0
+		// limit번째 최신 행이 1개월 전 = 기존 창(3개월) 안 → 재백필해도 3~12개월 구간엔 못 간다.
+		Instant predictedCut = ZonedDateTime.now(KST).minusMonths(1).toInstant();
+		taggedPosts.nthNewest = predictedCut;
 
 		var result = service().register("brandx", null, 12);
 
 		assertThat(result.replayed()).isTrue();
 		assertThat(collect.coreSwept).isEmpty();       // 백필 미제출(~96콜 절약)
 		assertThat(brands.expanded).isEmpty();         // 수집 상태를 리셋하는 expandWindow는 안 탄다
+		assertThat(taggedPosts.askedN).isEqualTo(collectionPostLimit);   // n = 상한
 		assertThat(brands.cappedRaises).singleElement().satisfies(raise -> {
 			assertThat(raise.brandId()).isEqualTo(first.brandId());
 			assertThat(raise.months()).isEqualTo(12);
-			// 폴백 = now − 기존 창(3개월) — 기존 백필이 컷 없이 완주해 covered_until이 NULL인
-			// 브랜드에서 실수집 깊이의 근사로 쓰인다.
-			Instant expected = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
-					.minusMonths(3).toInstant();
-			assertThat(raise.coveredUntilFallback())
-					.isBetween(expected.minusSeconds(60), expected.plusSeconds(60));
+			// 폴백 = 예측 컷 그 자체(근사 아닌 실제 도달 깊이) — §7-4 클램프 입력이기도 하다.
+			assertThat(raise.coveredUntilFallback()).isEqualTo(predictedCut);
 		});
 		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
 	}
 
 	@Test
-	void 상한_미달_브랜드의_확장은_기존_경로다() {
+	void 태그_행이_상한_미만이면_확장은_기존_경로다() {
 		var first = service().register("brandx", null, 3);
 		collect.coreSwept.clear();
-		taggedPosts.count = collectionPostLimit - 1;   // 1건 여유 — 확장 구간을 열 이유가 있다
+		taggedPosts.nthNewest = null;   // limit번째 행 없음 = 컷이 안 걸린다
 
 		service().register("brandx", null, 12);
 
 		assertThat(brands.cappedRaises).isEmpty();
 		assertThat(brands.expanded).containsExactly(first.brandId());
 		assertThat(collect.coreSwept).containsExactly("brandx");   // 기존 재백필 경로 그대로
+	}
+
+	/**
+	 * 구 판정(생애 누적 행 수)의 오표기 회귀 가드 — 누적은 상한을 넘었어도 limit번째 행이 기존
+	 * 창 <b>밖</b>이면 재백필은 컷 전에 창 컷에 먼저 닿는다(= 확장 구간에 실제로 도달한다).
+	 * 여기서 스킵하면 도달 가능했던 구간이 capped 오표기 + §7-4 클램프로 영구 동결된다.
+	 */
+	@Test
+	void 컷이_기존_창_밖이면_누적이_상한을_넘어도_확장한다() {
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		// 창 밖 과거 행이 많은 브랜드(누적 2,400 / 창 안 900) — limit번째가 8개월 전이다.
+		taggedPosts.nthNewest = ZonedDateTime.now(KST).minusMonths(8).toInstant();
+
+		service().register("brandx", null, 12);
+
+		assertThat(brands.cappedRaises).isEmpty();
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");
+	}
+
+	@Test
+	void 상한이_0_이하면_확장_스킵이_비활성이다() {
+		collectionPostLimit = 0;   // 무제한 — 컷 자체가 없으니 스킵 판정도 없다
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		taggedPosts.nthNewest = ZonedDateTime.now(KST).minusMonths(1).toInstant();
+
+		service().register("brandx", null, 12);
+
+		assertThat(taggedPosts.askedN).isNull();       // 조회조차 안 한다
+		assertThat(brands.cappedRaises).isEmpty();
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");
 	}
 
 	@Test

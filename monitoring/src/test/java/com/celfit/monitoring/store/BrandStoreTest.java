@@ -303,21 +303,38 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void countByBrand는_태그_행만_브랜드별로_센다() {
+	void nthNewestTagTakenAt은_n번째_최신_태그_행의_taken_at을_준다() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12);
-		assertThat(taggedPosts.countByBrand(id)).isZero();
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 1)).isEmpty();   // 행 0개 — 컷 안 걸림
 
-		taggedPosts.insert(id, post("A", 1754000000L));
-		taggedPosts.insert(id, post("B", 1754000000L));
-		taggedPosts.upsertDirect(id, post("B", 1754000000L), Instant.now());   // 겹침 — 태그 행이라 센다
-		// 순수 direct 행은 상한 밖(§7-3)이라 모수에서 빠진다 — 세면 태그 1,900+direct 150 브랜드가
-		// 확장 스킵으로 부당하게 걸려 재백필 기회를 잃는다.
-		taggedPosts.upsertDirect(id, post("D", 1754000000L), Instant.now());
-		taggedPosts.insert(other, post("A", 1754000000L));                     // 다른 브랜드는 제외
+		taggedPosts.insert(id, post("New", 1754000300L));
+		taggedPosts.insert(id, post("Mid", 1754000200L));
+		taggedPosts.insert(id, post("Old", 1754000100L));
+		taggedPosts.upsertDirect(id, post("Mid", 1754000200L), Instant.now());   // 겹침 — 태그 행이라 센다
+		taggedPosts.insert(other, post("Other", 1754000000L));                   // 다른 브랜드는 제외
 
-		assertThat(taggedPosts.countByBrand(id)).isEqualTo(2L);
-		assertThat(taggedPosts.countByBrand(other)).isEqualTo(1L);
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 1))
+				.contains(Instant.ofEpochSecond(1754000300L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 2))
+				.contains(Instant.ofEpochSecond(1754000200L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 3))
+				.contains(Instant.ofEpochSecond(1754000100L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 4)).isEmpty();   // 행이 n개 미만
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 0)).isEmpty();   // 무제한(상한 0 이하)
+	}
+
+	@Test
+	void nthNewestTagTakenAt은_순수_direct_행을_모수에서_뺀다() {
+		// 상한은 태그 열거를 지배하고 direct 등록 게시물은 상한 밖이다(§7-3) — 순수 direct 행을
+		// 세면 태그 미달 브랜드가 확장 스킵으로 부당하게 걸려 재백필 기회를 잃는다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.insert(id, post("Tagged", 1754000300L));
+		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000200L), Instant.now());
+
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 1))
+				.contains(Instant.ofEpochSecond(1754000300L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 2)).isEmpty();
 	}
 
 	@Test
@@ -655,7 +672,9 @@ class BrandStoreTest {
 
 	@Test
 	void directDuePosts는_minTakenAt_이전_direct_행을_거른다() {
-		// 브랜드 창(collection_months)은 그대로 따른다 — 상한만 면제다(§7-3 첫 줄).
+		// minTakenAt 인자로 나이 컷이 걸린다 — 상한만 면제다(§7-3 첫 줄). 다만 런타임 호출자가
+		// 넘기는 값은 브랜드 창이 아니라 180일(BrandCrawlPolicy.TRACKED_MAX_AGE) 고정이다
+		// (trackedPosts와 같은 추적 범위 컷) — 여기 12개월 창은 시드 편의일 뿐 판정에 안 쓰인다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.upsertDirect(id, post("Recent", 1754000000L), Instant.now());
 		taggedPosts.upsertDirect(id, post("Ancient", 1700000000L), Instant.now());

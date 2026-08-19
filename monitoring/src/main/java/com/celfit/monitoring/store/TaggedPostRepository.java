@@ -34,19 +34,32 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * 브랜드의 <b>태그 열거 산지</b> 행 수 — 확장 스킵 판정 입력(스펙 §7-2). 상한
-	 * (collection-post-limit) 이상이면 재백필이 기지 게시물만 세다 컷되므로 확장은 창·커버리지
-	 * 마킹만 하고 백필을 제출하지 않는다.
+	 * n번째 최신 <b>태그 열거 산지</b> 행의 taken_at — 확장 스킵 판정 입력(스펙 §7-2 개정).
+	 * n = 수집 개수 상한이면 이 값이 곧 <b>"지금 재백필하면 컷이 어디서 걸리나"의 정확한 예측치</b>다
+	 * (열거는 최신부터 단방향이라 limit번째 게시물에서 끊긴다). 행이 n개 미만이면 empty —
+	 * 컷이 걸리지 않는다는 뜻이다.
+	 *
+	 * <p><b>행 수(count)로 판정하면 안 된다</b>(구 countByBrand의 결함): 생애 누적 행 수는 창 밖
+	 * 과거분까지 세므로, 10건/일·3개월 창·8개월 운영 브랜드(누적 2,400 / 창 안 900)를 재백필이
+	 * 컷되지 않을 것인데도 capped로 오표기한다. 그 마킹은 §7-4 컷 클램프까지 걸어 도달 가능했던
+	 * 90~180일 구간을 동결시키고 was에 거짓 커버리지를 내려보낸다.
 	 *
 	 * <p><b>tag_detected_at IS NOT NULL 가드 필수</b>: 상한은 태그 열거를 지배하고 direct 등록
 	 * 게시물은 상한 밖이다(스펙 §7-3). 순수 direct 행까지 세면 태그 1,900 + direct 150 같은
 	 * 브랜드가 상한 미달인데도 확장 스킵으로 걸려, 확장 구간에서 받을 수 있었던 잔여분
 	 * (limit - 태그행수)을 영영 못 받는다.
 	 */
-	public long countByBrand(long brandId) {
-		return db.queryForObject(
-				"SELECT count(*) FROM brand_tagged_post WHERE brand_id = ? AND tag_detected_at IS NOT NULL",
-				Long.class, brandId);
+	public Optional<Instant> nthNewestTagTakenAt(long brandId, int n) {
+		if (n <= 0) {
+			return Optional.empty();
+		}
+		return db.query("""
+				SELECT taken_at FROM brand_tagged_post
+				WHERE brand_id = ? AND tag_detected_at IS NOT NULL
+				ORDER BY taken_at DESC
+				OFFSET ? LIMIT 1""",
+				(rs, i) -> rs.getTimestamp("taken_at").toInstant(), brandId, n - 1)
+				.stream().findFirst();
 	}
 
 	/**
