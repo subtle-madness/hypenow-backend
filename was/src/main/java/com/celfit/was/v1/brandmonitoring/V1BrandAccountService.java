@@ -78,6 +78,13 @@ public class V1BrandAccountService {
 	 * <b>자산</b>(크롤 창)은 유저 간 max라 이미 연결된 브랜드 재요청도 <b>더 큰 값일 때만</b> 기간
 	 * 확장으로 monitoring을 다시 부르고(2026-08-12 게이트, 축소 없음 — 수집된 사실이 정본),
 	 * <b>링크</b>(유저 표시 창)는 명시한 값을 그대로 설정한다 — 축소도 반영되고 생략(null)은 불변이다.
+	 *
+	 * <p>재등록으로 타입이 바뀐 경우(precheck의 {@link BrandLinkTransaction.PrecheckResult#typeChanged}
+	 * — 2026-08-19 경쟁사 판정 제거 설계 리뷰 결함 수정) own-link를 재계산해서 민다. 이 멱등 경로는
+	 * 기간 확장이 없으면 monitoring 콜이 0이라(아래 if 블록 도달 불가) 타입 변경 자체로는 own-link가
+	 * 갱신될 계기가 없다 — competitor→own 재등록이 이 신호 없이는 has_own_link=false로 영구 방치돼
+	 * 기본값 안전 방향(과판정)이 깨진다. 타입 동일 단순 멱등 재-POST는 이 신호가 없어 push하지
+	 * 않는다 — 기존 "monitoring 콜 0" 계약 그대로다.
 	 */
 	public BrandAccountResponse register(long userId, String rawUsername, String rawAccountType,
 			Integer rawCollectionMonths) {
@@ -92,9 +99,13 @@ public class V1BrandAccountService {
 		if (!BrandCollectionMonths.isValid(months)) {
 			throw V1ApiException.validation("collectionMonths 값이 올바르지 않아요.");
 		}
-		Optional<Long> alreadyLinked = linkTransaction.precheck(userId, username, accountType);
+		Optional<BrandLinkTransaction.PrecheckResult> alreadyLinked =
+				linkTransaction.precheck(userId, username, accountType);
 		if (alreadyLinked.isPresent()) {
-			long brandId = alreadyLinked.get();
+			long brandId = alreadyLinked.get().brandId();
+			if (alreadyLinked.get().typeChanged()) {
+				pushOwnLinkSafely(brandId);
+			}
 			// 기간 확장(스펙 §3) — 자산 창보다 클 때만 monitoring 재호출. 사전 게이트일 뿐 정본 판정은
 			// monitoring replay가 한 번 더 한다(경합으로 게이트가 낡아도 결과는 같다). 같거나 작은 값은
 			// 현행 멱등 경로 그대로 monitoring 콜 0이다(축소 없음 — 수집된 사실이 정본).

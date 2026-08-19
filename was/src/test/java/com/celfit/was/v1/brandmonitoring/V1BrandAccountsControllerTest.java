@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -338,6 +339,9 @@ class V1BrandAccountsControllerTest {
 
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt(), any());
 		then(linkRepository).should(never()).insertLink(anyLong(), anyLong(), anyString(), anyString(), anyInt());
+		// 타입 동일 단순 멱등 재-POST는 own-link push도 나가지 않는다(2026-08-19 리뷰 결함 수정 —
+		// "monitoring 콜 0" 계약은 push까지 포함한다).
+		then(commandClient).should(never()).pushOwnLink(anyString(), anyBoolean());
 	}
 
 	@Test
@@ -444,6 +448,51 @@ class V1BrandAccountsControllerTest {
 		// 슬라이스에서 잠금 자체의 효과는 관측할 수 없으므로 호출 사실을 고정한다.
 		then(linkRepository).should().lockUser(7L);
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt(), any());
+	}
+
+	/**
+	 * own-link push(2026-08-19 리뷰 결함 수정) — precheck의 타입 변경 분기는 monitoring 등록 콜이
+	 * 없어(위 테스트) own-link를 갱신할 다른 계기가 없다. competitor→own 재등록으로 타입이 바뀌면
+	 * 원장에서 재계산한 값을 명시적으로 push해야 한다 — 안 그러면 경쟁사 전용이었던 브랜드가 own
+	 * 연결을 얻고도 monitoring의 has_own_link가 계속 false로 남아 광고 판정이 영구히 스킵된다.
+	 */
+	@Test
+	void 재등록으로_competitor에서_own으로_타입이_바뀌면_own_link를_재계산해서_민다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L))
+				.willReturn(List.of(link(7L, 100L, "lizda_official", BrandAccountType.COMPETITOR)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN)));
+		// 방금 own으로 옮긴 이 연결이 이 브랜드의 유일한 own 연결이다.
+		given(linkRepository.existsActiveOwnLink(100L)).willReturn(true);
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"lizda_official\",\"accountType\":\"own\"}"))
+				.andExpect(status().isAccepted());
+
+		then(linkRepository).should().updateAccountType(7L, 100L, BrandAccountType.OWN);
+		then(commandClient).should().pushOwnLink("lizda_official", true);
+		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt(), any());
+	}
+
+	/** 반대 방향(own→competitor)도 같은 경로를 타므로 함께 고정한다 — 드리프트 방향은 덜 위험하지만 일관성. */
+	@Test
+	void 재등록으로_own에서_competitor로_타입이_바뀌어도_own_link를_재계산해서_민다() throws Exception {
+		given(linkRepository.findAllActiveByUser(7L))
+				.willReturn(List.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.COMPETITOR)));
+		// 이 유저가 이 브랜드의 마지막 own 연결이었다 — 옮기고 나면 own 연결이 하나도 안 남는다.
+		given(linkRepository.existsActiveOwnLink(100L)).willReturn(false);
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"username\":\"lizda_official\",\"accountType\":\"competitor\"}"))
+				.andExpect(status().isAccepted());
+
+		then(commandClient).should().pushOwnLink("lizda_official", false);
 	}
 
 	@Test
