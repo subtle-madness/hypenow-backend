@@ -115,4 +115,32 @@ class AdDisclosurePatternsTest {
 		assertThat(m.start()).isEqualTo(caption.indexOf("#광고"));
 		assertThat(caption.substring(m.start(), m.end())).isEqualTo("#광고");
 	}
+
+	@Test
+	void 제품제공_해시태그는_매칭된다() {
+		// 08-19 운영 실측: LLM이 "#제품제공"을 AMBIGUOUS로 오분류해 표기 미흡 오탐 727건 —
+		// 지침 Ⅴ.6 명확 표기이므로 Tier1로 승격(핫픽스).
+		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch("#제품제공 @brand 후기입니다");
+		assertThat(m).isNotNull();
+		assertThat(m.phrase()).isEqualTo("#제품제공");
+	}
+
+	@Test
+	void 제품제공_해시태그도_토큰_경계로_접두_매칭을_차단한다() {
+		// "#제품제공이벤트"(팔로워 증정 공지)는 "#제품제공"으로 오탐하지 않는다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("#제품제공이벤트 참여하세요")).isNull();
+	}
+
+	@Test
+	void 제품을_제공받았다는_수령형_문구는_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("제품을 제공받아 작성한 후기입니다")).isNotNull();
+		assertThat(AdDisclosurePatterns.findFirstMatch("제품 제공받았어요")).isNotNull();
+		assertThat(AdDisclosurePatterns.findFirstMatch("제품제공받고 쓰는 후기")).isNotNull();
+	}
+
+	@Test
+	void 텍스트_단독_제품제공은_사전에_없다() {
+		// "제품제공 이벤트"(증정 공지)류 오탐 여지 — 수령형(받아/받았/받은/받고)이 아니면 LLM(Tier2) 몫.
+		assertThat(AdDisclosurePatterns.findFirstMatch("팔로워 대상 제품제공 이벤트를 엽니다")).isNull();
+	}
 }
