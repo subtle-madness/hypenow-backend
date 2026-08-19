@@ -733,10 +733,11 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.zst` 3일 + B2 `hypenow-backups/monitoring/` 7일 롤링(§6).
 
-## 14. Grafana 대시보드 (07-31~, 08-18 6탭 + 브랜드 폴더 3장 개편)
+## 14. Grafana 대시보드 (07-31~, 08-18 6탭 개편 → 브랜드 폴더 분리)
 
-운영 상태를 보는 Grafana 스택. 08-18 개편으로 "데이터소스 축 3장"에서 **목적 축 6탭 + 브랜드
-폴더 3장**으로 재편됐다(설계: `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`,
+운영 상태를 보는 Grafana 스택. 08-18 개편으로 "데이터소스 축 3장"에서 **목적 축 6탭**으로
+재편한 뒤, 같은 날 브랜드 탭을 별도 폴더로 떼어내 지금은 **HypeNow 5탭 + 브랜드 모니터링 폴더
+3장**(총 8장) 체제다(설계: `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`,
 폴더 분리: `docs/superpowers/specs/2026-08-18-grafana-brand-folder-design.md`).
 **레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다**(cd.yml의 프로비저닝
 동기화가 `scp -r` 추가 전용) — 잔존 파일은 수동으로 정리해야 한다(§14-2-2 ④).
@@ -842,12 +843,12 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 - `app.monitoring_digests` — 다이제스트 발송·읽음(일별). `items`(jsonb, 다이제스트 본문)는
   조회하지 않는다.
 
-#### 14-2-2. 6탭 개편 GRANT 런북 (08-18 개편, ⚠️ **staging 승격 전 서버 실행 필수 — 아직 미적용**)
+#### 14-2-2. 6탭 개편 + 브랜드 폴더 GRANT 런북 (08-18, ⚠️ **staging 승격 전 서버 실행 필수 — 아직 미적용**)
 
 08-18 6탭 개편으로 패널이 **monitoring DB**(신설 데이터소스 `hypenow-monitoring-pg`)와
 **analysis DB의 public 스키마**(분석 미러 `landing_stats`·`accounts`·`contents`)를 새로 조회한다.
-아래를 실행하기 전까지 운영에서 **브랜드·경쟁사·Hiker 탭 전체와 홈·탐색의 DB 타일이 권한 오류로
-빈다**. 컬럼 목록은 최종 대시보드 JSON의 rawSql에서 기계 추출로 검산했다(2026-08-18) — 패널이
+아래를 실행하기 전까지 운영에서 **브랜드 폴더 3장·경쟁사·Hiker 탭 전체와 홈·탐색의 DB 타일이
+권한 오류로 빈다**. 컬럼 목록은 최종 대시보드 JSON의 rawSql에서 기계 추출로 검산했다(2026-08-18) — 패널이
 안 쓰는 컬럼은 부여하지 않는다(§14-2 최소권한 원칙). GRANT는 멱등이라 재실행 무해.
 08-18 브랜드 폴더 분리로 브랜드 3장이 `brand_tagged_post`·`brand_hashtag_post`·`brand_post_meta`와
 `brand_account.collection_months`를 추가 조회한다(스펙: `2026-08-18-grafana-brand-folder-design.md`) —
@@ -862,6 +863,8 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 ```bash
 # ② monitoring DB — 접속권 + 대시보드가 읽는 9테이블(컬럼 단위).
 #    객체 소유자는 monitoring 롤이지만 슈퍼유저(<DB_USER>)가 GRANT 가능. raw 스키마는 GRANT 없음(fail-closed).
+#    brand_account.id는 브랜드 폴더 3장이 아니라 Hiker 탭 "브랜드별 상위 콜 7일"이 쓴다
+#    (LEFT JOIN brand_account a ON a.id = c.brand_id) — json-brand/만 추출하면 미사용으로 보이니 주의.
 docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
   -c "GRANT CONNECT ON DATABASE monitoring TO grafana_reader" \
   -c "GRANT USAGE ON SCHEMA public TO grafana_reader" \
@@ -907,9 +910,13 @@ ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/hypenow-bra
   신설 데이터소스(monitoring.yaml)·신규 스크레이프 잡(node-exporter·cAdvisor)은 배포가 알아서
   반영한다. 배포 **후에** GRANT를 실행한 경우엔 대시보드 새로고침이면 충분하고, 그래도 안 붙으면
   `cd ~/deploy && docker compose restart grafana prometheus`.
+- **마이그레이션 전제**: ②·③의 컬럼 GRANT는 그 테이블·컬럼의 마이그레이션이 운영 DB에 반영된
+  뒤에만 성공한다(특히 monitoring `V20260817160000` 광고 판정 — `brand_post_meta.ad_verdict` 등).
+  미반영이면 **그 줄만** 실패하므로(psql은 `-c` 단위 실행) 배포 후 해당 줄만 재실행하면 된다.
 - 개통 확인: 터널 접속(§14-1) 후 홈 13타일에 "데이터 없음"/권한 오류가 없는지, 경쟁사·Hiker
-  탭과 **브랜드 모니터링 폴더 3장**의 패널이 그려지는지 확인(폴더는 2개, 대시보드는 총 8장). Loki 타일(ERROR 급증·402·401)은 매칭 0건이 숫자 0으로
-  떠야 정상(`or vector(0)` — 빈 벡터면 빨강 "데이터 없음"이 뜨게 fail-loud로 짜여 있다).
+  탭과 **브랜드 모니터링 폴더 3장**의 패널이 그려지는지 확인(폴더 2개, 대시보드 총 8장).
+  Loki 타일(ERROR 급증·402·401)은 매칭 0건이 숫자 0으로 떠야 정상(`or vector(0)` — 빈 벡터면
+  빨강 "데이터 없음"이 뜨게 fail-loud로 짜여 있다).
 
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
