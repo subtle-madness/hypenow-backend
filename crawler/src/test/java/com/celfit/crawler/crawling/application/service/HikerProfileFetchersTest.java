@@ -88,6 +88,24 @@ class HikerProfileFetchersTest {
         assertThat(ProfileExtractor.username(ex.items().get(0), RawSource.HIKER_MOBILE)).isEqualTo("tem.duck");
     }
 
+    // "Hiker가 빈 응답을 확인했다"와 "Hiker 요청 자체가 실패했다"의 구분 — 컴포지트의
+    // confirmedEmpty(수명 정책 재료)는 전자에만 반응해야 한다. 후자를 섞으면 인프라 오류로
+    // 살아있는 계정이 소프트 삭제된다.
+    @Test void mobile_빈_응답만_emptyOut에_수집되고_요청_실패는_수집되지_않는다() {
+        HikerHttp http = path -> {
+            if (path.contains("username=hidden")) return "{\"user\":null}";
+            throw new ApifyException("Hiker HTTP 503");
+        };
+        var f = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
+
+        List<String> empty = new java.util.ArrayList<>();
+        var r = f.collect(List.of("hidden", "flaky"), empty);
+
+        assertThat(r.items()).isEmpty();
+        assertThat(r.notFound()).isEmpty();
+        assertThat(empty).containsExactly("hidden");   // 응답한 빈 응답만 — 503 계정은 미수집
+    }
+
     @Test void webgql_500이면_해당_계정_스킵() {
         HikerHttp http = path -> {
             if (path.contains("/v2/user/by/username")) {

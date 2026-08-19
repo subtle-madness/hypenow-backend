@@ -124,6 +124,8 @@ services:
       # 모니터링 v3 조회 개통 — 운영과 동일 관용구, 기본 off. test-monitoring이 쓰는 test-postgres의
       # monitoring DB를 was_reader 읽기 전용 계정으로(계정 이름은 운영과 동일, 비밀번호만 DEV_* 구명)
       MONITORING_ENABLED: "${DEV_MONITORING_ENABLED:-false}"
+      # 광고 표기 판정 FE 노출 개통(08-19) — 운영과 동일 개통, false로 내리면 즉시 중립값(킬 스위치)
+      AD_DISCLOSURE_EXPOSE: "${DEV_AD_DISCLOSURE_EXPOSE:-true}"
       # 명령 API도 test 스택으로 — 기본값(http://monitoring:8083)은 운영 이름이라 test에선 DNS 해석 실패(fail-closed)
       MONITORING_API_BASE_URL: http://test-monitoring:8083
       MONITORING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
@@ -159,6 +161,12 @@ services:
       # 스테이징에서 LLM 경로가 한 번도 실행되지 않는다. 요청 셰이프·응답 파싱 첫 실증을 운영으로
       # 미루지 않기 위해 배선(2026-08-11 최종 리뷰 I-4). 크론은 K 원칙대로 off라 콜 폭주 없음.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Vertex SA 키(2026-08-18 전환) — test-analytics와 같은 파일·같은 경로 재사용. 프로젝트는
+      # 운영과 같은 hypenow-llm-prod를 기본값으로 둔다(test 전용 GCP 프로젝트가 없다는 전제 —
+      # analytics도 test/운영이 같은 SA 파일을 쓴다, PR 보고 참조).
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 이미지 아카이브는 test 대상 아님(운영 버킷 오염 방지) — analytics와 동일하게 빈 값이면 잡이 no-op
       MONITORING_IMAGE_PAR_URL: ""
       # 감지 동작 검증용 — 운영(compose.yaml)에는 넣지 않는다. POST /api/sweeps는 등록 계정 수만큼
@@ -182,6 +190,8 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # ExitOnOOM은 운영과 동일 관용구(08-12) — test는 데이터가 작아 힙 상향은 미적용.
       JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError"
+    volumes:
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).
     healthcheck:

@@ -12,7 +12,11 @@ import tools.jackson.databind.node.ObjectNode;
 /**
  * 해시태그 발견 게시물의 브랜드 관련성 판정(스펙 2026-08-11 §4-6) — 핵심 역할은 이름 충돌 방어
  * (동명 타업종, 예: 도자기 "끌리메"). 캡션 기준 RELEVANT/UNCERTAIN/IRRELEVANT.
- * api-key 미설정이면 호출 없이 UNCERTAIN(비노출)로 접는다 — fail-closed.
+ * LLM 미설정(키/자격증명 없음)이면 호출 없이 UNCERTAIN(비노출)로 접는다 — fail-closed.
+ *
+ * <p>2026-08-18 Vertex 전환 후 생성자 2번째 인자는 원래의 "apiKey 문자열"에서 "enabled 플래그"로
+ * 바뀌었다 — 실제 인증(AI Studio 키 또는 Vertex SA 토큰)은 주입된 {@link GeminiHttp} 구현이
+ * 전담하므로, 이 클래스는 "호출 가능한 상태인지"만 알면 된다({@link com.celfit.monitoring.config.LlmTransportConfig}).
  */
 public class BrandMentionJudge {
 
@@ -31,28 +35,28 @@ public class BrandMentionJudge {
 			""";
 
 	private final GeminiHttp http;
-	private final String apiKey;
+	private final boolean enabled;
 	private final String model;
 	private final ObjectMapper om = new ObjectMapper();
 	// 키 미설정 warn은 최초 1회만 — 게시물마다 호출되므로 이후는 debug로 접어 로그 스팸을 막는다
 	private final AtomicBoolean missingKeyWarned = new AtomicBoolean(false);
 
-	public BrandMentionJudge(GeminiHttp http, String apiKey, String model) {
+	public BrandMentionJudge(GeminiHttp http, boolean enabled, String model) {
 		this.http = http;
-		this.apiKey = apiKey;
+		this.enabled = enabled;
 		this.model = model;
 	}
 
 	/** brandBiography는 이름 충돌 방어의 실질 근거(스펙 §4-6 "업종" 컨텍스트) — null 허용. */
 	public Verdict judge(String brandUsername, String brandBiography, List<String> brandTags,
 			String authorUsername, String caption) {
-		if (apiKey == null || apiKey.isBlank()) {
-			// fail-closed: 키 미설정 환경(로컬 등)에서 스윕을 죽이지 않고 비노출로 접는다 — 운영에서
+		if (!enabled) {
+			// fail-closed: LLM 미설정 환경(로컬 등)에서 스윕을 죽이지 않고 비노출로 접는다 — 운영에서
 			// 조용히 전 판정이 UNCERTAIN으로 접히면 알아챌 방법이 없으므로 최초 1회는 warn으로 남긴다
 			if (missingKeyWarned.compareAndSet(false, true)) {
-				log.warn("Gemini api-key 미설정 — 해시태그 판정을 UNCERTAIN(비노출)으로 접는다");
+				log.warn("Gemini 미설정(키/자격증명 없음) — 해시태그 판정을 UNCERTAIN(비노출)으로 접는다");
 			} else {
-				log.debug("Gemini api-key 미설정 — 해시태그 판정을 UNCERTAIN(비노출)으로 접는다");
+				log.debug("Gemini 미설정(키/자격증명 없음) — 해시태그 판정을 UNCERTAIN(비노출)으로 접는다");
 			}
 			return Verdict.UNCERTAIN;
 		}

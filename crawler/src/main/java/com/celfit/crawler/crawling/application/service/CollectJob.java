@@ -56,6 +56,13 @@ public class CollectJob {
      */
     static final int VISIT_CONCURRENCY = 4;
 
+    /**
+     * 확인된 빈 응답(자체·Hiker 폴백 모두 계정 없음)이 마지막 성공 프로필 수집으로부터
+     * 이 기간을 넘기면 404(계정 소멸)와 동일하게 소프트 딜리트한다 — 비활성화·탈퇴 유예
+     * 계정의 무한 재시도·재과금 차단. 기간 내 복귀(재활성화)는 SELF 성공이 자연 회복시킨다.
+     */
+    static final java.time.Duration EMPTY_PROFILE_DELETE_AFTER = java.time.Duration.ofDays(30);
+
     public record Summary(int visited, int postsUpserted, int postsCollected, int failedVisits) {}
 
     private final CollectProperties collectProps;
@@ -280,6 +287,16 @@ public class CollectJob {
             }
             inf.setIgUserId(userId);   // REELS 잡의 pk 재료 — 백필
             return item;
+        }
+        if (ex.confirmedEmpty().contains(inf.getUsername())) {
+            Instant lastProfiled = inf.getLastProfiledAt();
+            if (lastProfiled != null
+                    && lastProfiled.isBefore(clock.instant().minus(EMPTY_PROFILE_DELETE_AFTER))) {
+                // 양쪽 소스 모두 계정 없음이 30일 넘게 지속 — 비활성화·탈퇴 유예로 보고 404와
+                // 동일하게 종결한다(무한 재시도·재과금 차단). run 루프가 소프트 딜리트.
+                throw new NotFoundException("프로필 빈 응답 " + EMPTY_PROFILE_DELETE_AFTER.toDays()
+                        + "일 경과 — 404 동일 취급: " + inf.getUsername());
+            }
         }
         throw new ApifyException("프로필 응답에 계정 없음(401 차단 등) — 방문 재시도: " + inf.getUsername());
     }

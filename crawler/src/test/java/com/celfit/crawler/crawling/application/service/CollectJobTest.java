@@ -229,6 +229,57 @@ class CollectJobTest {
         assertThat(gone.getLastCollectedAt()).isNull();  // 방문 완료로도 치지 않는다
     }
 
+    // ── 확인된 빈 응답(자체·Hiker 폴백 모두 계정 없음) 30일 수명 정책 ──
+
+    @Test
+    void 확인된_빈_응답이_30일_넘게_지속되면_404와_동일하게_소프트_딜리트된다() {
+        wireCommon();
+        Influencer dormant = influencer(1L, "dormant", null, null);
+        dormant.setLastProfiledAt(NOW.minus(CollectJob.EMPTY_PROFILE_DELETE_AFTER).minus(Duration.ofDays(1)));
+        when(influencers.findCollectTargets(any(), any(PageRequest.class))).thenReturn(List.of(dormant));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("dormant")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("dormant")));
+
+        var s = job().run(TriggerType.MANUAL);
+
+        assertThat(dormant.getStatus()).isEqualTo(InfluencerStatus.DELETED);
+        verify(influencers).save(dormant);
+        assertThat(s.failedVisits()).isZero();   // 재시도 무의미 — 404와 동일 취급
+    }
+
+    @Test
+    void 확인된_빈_응답이라도_30일_이내면_방문_실패로_재시도를_유지한다() {
+        wireCommon();
+        Influencer recent = influencer(1L, "recent_empty", null, null);
+        recent.setLastProfiledAt(NOW.minus(CollectJob.EMPTY_PROFILE_DELETE_AFTER).plus(Duration.ofDays(1)));
+        when(influencers.findCollectTargets(any(), any(PageRequest.class))).thenReturn(List.of(recent));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("recent_empty")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("recent_empty")));
+
+        var s = job().run(TriggerType.MANUAL);
+
+        assertThat(recent.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);
+        assertThat(s.failedVisits()).isEqualTo(1);
+    }
+
+    @Test
+    void 성공_프로필_이력이_없는_계정은_확인된_빈_응답이어도_삭제하지_않는다() {
+        // lastProfiledAt이 null이면 "30일 경과"를 판정할 기준점이 없다 — 재시도 유지
+        wireCommon();
+        Influencer fresh = influencer(1L, "fresh_empty", null, null);
+        when(influencers.findCollectTargets(any(), any(PageRequest.class))).thenReturn(List.of(fresh));
+        when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("fresh_empty")), eq(TriggerType.MANUAL)))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("fresh_empty")));
+
+        var s = job().run(TriggerType.MANUAL);
+
+        assertThat(fresh.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);
+        assertThat(s.failedVisits()).isEqualTo(1);
+    }
+
     static Influencer influencer(Long id, String username, Instant firstCollectedAt, Instant lastCollectedAt) {
         Influencer inf = new Influencer(username);
         inf.setId(id);
