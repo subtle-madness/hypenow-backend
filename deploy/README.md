@@ -843,7 +843,12 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 - `app.monitoring_digests` — 다이제스트 발송·읽음(일별). `items`(jsonb, 다이제스트 본문)는
   조회하지 않는다.
 
-#### 14-2-2. 6탭 개편 + 브랜드 폴더 GRANT 런북 (08-18, ⚠️ **staging 승격 전 서버 실행 필수 — 아직 미적용**)
+#### 14-2-2. 6탭 개편 + 브랜드 폴더 GRANT 런북 (08-18, ⚠️ **main 배포 전 서버 실행 필수 — 아직 미적용**)
+
+> **실질 기한은 staging 승격이 아니라 main 배포 직전이다.** 그라파나 프로비저닝은 운영 CD로만
+> 서버에 닿는다 — `compose.test.yaml`에 grafana 서비스가 없고 cd-test.yml은 `provisioning/`을
+> scp하지 않는다. 즉 **staging에서는 이 PR의 대시보드 변화를 확인할 수 없다**(대시보드 육안
+> 검증의 정본은 로컬 하니스 `deploy/grafana/dev/`). GRANT 자체는 운영 DB 대상이라 미리 해도 무해.
 
 08-18 6탭 개편으로 패널이 **monitoring DB**(신설 데이터소스 `hypenow-monitoring-pg`)와
 **analysis DB의 public 스키마**(분석 미러 `landing_stats`·`accounts`·`contents`)를 새로 조회한다.
@@ -894,14 +899,24 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 ```
 
 ```bash
-# ④ 구 위치 잔존 파일 제거(1회) — CD scp는 추가 전용이라 레포에서 옮긴 파일이 서버에 남는다.
-#    지우지 않으면 json/(HypeNow 폴더)과 json-brand/(브랜드 모니터링 폴더)가 같은 uid를 이중 프로비저닝한다.
-ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/hypenow-brand.json'
+# ④ 서버 잔존 파일 제거(1회) — CD scp는 추가 전용이라 레포에서 지우거나 옮긴 파일이 서버에 남는다.
+#    대상 4개 = 이번 이관분 1개(hypenow-brand) + 08-18 6탭 개편이 삭제한 구 3장(좀비).
+ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-brand,hypenow-service-overview,hypenow-errors,hypenow-api-performance}.json'
 ```
+
+- **이관분**(`hypenow-brand`): 안 지우면 `json/`(HypeNow 폴더)과 `json-brand/`(브랜드 모니터링
+  폴더)가 같은 `uid`를 이중 프로비저닝해 폴더가 오락가락한다.
+- **좀비 3장**(`hypenow-service-overview`·`hypenow-errors`·`hypenow-api-performance`): 08-18 6탭
+  개편(PR #498, main 배포 완료)이 레포에서 삭제했지만 서버엔 그대로 남아 있다. 안 지우면 총
+  **11장**이 뜨고(기대값은 8장), 특히 "서비스 현황"은 §14-2-1이 실행 금지로 강등되면서 그 패널들의
+  GRANT가 없어 **권한 오류 패널을 노출**한다.
+- **타이밍**: ④는 **main 배포 전**에 실행한다(배포 후면 그 사이 같은 uid를 두 폴더가 이중
+  프로비저닝한다). rm 직후부터 배포 전까지 운영에서 `[브랜드]` 대시보드가 잠시 안 보이는 것은
+  정상이다 — 프로비저너가 60초 안에 삭제를 반영하고, 배포가 `json-brand/`로 되살린다.
 
 **일반 규칙**: 레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다
 (cd.yml의 `scp -r deploy/grafana/provisioning/.`는 덮어쓰기·추가만 한다) — **잔존 파일은 위처럼
-수동 정리**한다. 같은 `uid`를 두 프로바이더가 동시에 프로비저닝하면 폴더가 오락가락한다.
+수동 정리**한다. 이번처럼 삭제 시점에 정리하지 않으면 좀비가 릴리스마다 쌓인다.
 
 - 경쟁사 탭의 등록 패널(`monitoring_registrations`·`monitoring_registration_entries`)은 §14-2
   기본 GRANT(운영 기적용)를 그대로 재사용한다 — 추가 없음.

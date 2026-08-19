@@ -1,7 +1,10 @@
 # 그라파나 "브랜드 모니터링" 폴더 분리 설계 — 폴더 + 대시보드 3장
 
 > 상태: ✅ 구현/반영됨(2026-08-19, PR #501 — 대시보드 3장·시드·문서 전부 반영. 단
-> **§14-2-2 GRANT 런북은 서버 미적용**이라 운영 개통은 그 실행 이후) · 2026-08-18 · 선행: [2026-08-18-grafana-dashboard-redesign-design.md](2026-08-18-grafana-dashboard-redesign-design.md)(6탭 개편, ✅ 반영됨) · PR #501(GRANT 런북·표시 다듬기) 후속
+> **§14-2-2 GRANT 런북은 서버 미적용**이라 운영 개통은 그 실행 이후) ·
+> 구현 편차: §3-2 "enrich 잔여"는 24h+ 미처리만 카운트한다
+> (`AND first_seen_at < now() - interval '24 hours'` — 자연 처리 대기분 제외, 리뷰 확정) ·
+> 2026-08-18 · 선행: [2026-08-18-grafana-dashboard-redesign-design.md](2026-08-18-grafana-dashboard-redesign-design.md)(6탭 개편, ✅ 반영됨) · PR #501(GRANT 런북·표시 다듬기) 후속
 
 ## 1. 동기
 
