@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
@@ -469,6 +470,39 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].sponsorship").value(Matchers.contains("sponsored")))
 				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
+	}
+
+	/**
+	 * 등록자 스코프 배지(요구사항, 08-19) — 남이 direct 등록(수집)한 발견 게시물은 내 목록에서
+	 * brandPostId가 null(미수집)이어야 한다. 해시태그 감지 데이터(행 자체)는 여전히 보인다.
+	 */
+	@Test
+	void 남이_수집한_발견_게시물은_내게_미수집으로_보인다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
+						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
+		// directPostRepository.shortCodesByUser(7L) 미스텁 — Mockito 기본값 empty(내가 등록 안 함).
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				.andExpect(jsonPath("$.data[0].brandPostId").value(org.hamcrest.Matchers.nullValue()));
+	}
+
+	/** 내가 직접 등록(수집)한 발견 게시물은 brandPostId가 채워진다. */
+	@Test
+	void 내가_수집한_발견_게시물은_brandPostId가_채워진다() throws Exception {
+		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
+						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("HHH"));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].brandPostId").value("HHH"));
 	}
 
 	@Test

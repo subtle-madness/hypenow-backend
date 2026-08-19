@@ -175,9 +175,10 @@ public class UserRepository {
 	 * 매핑 행이 FK 위반을 낸다 — saved 2종과 같은 이유로 순서 삭제 목록에 있다.
 	 *
 	 * <p>brand_post_registrations·brand_post_registration_entries·brand_post_campaigns(2026-08-18
-	 * direct 통합 §T13)는 셋 다 users CASCADE의 순정 자식이라(직접 또는 registrations를 거친 간접)
-	 * monitoring_campaigns류와 같은 위상이다 — ACCOUNT_DELETION_ORDER 루프가 이관만 하고, 실제
-	 * 삭제는 아래 USERS 행 삭제의 CASCADE가 담당한다(명시 DELETE 불필요).
+	 * direct 통합 §T13)·brand_hashtag_tags(2026-08-19 해시태그 태그 사용자 스코프 개정)는 전부
+	 * users CASCADE의 순정 자식이라(직접 또는 registrations를 거친 간접) monitoring_campaigns류와
+	 * 같은 위상이다 — ACCOUNT_DELETION_ORDER 루프가 이관만 하고, 실제 삭제는 아래 USERS 행 삭제의
+	 * CASCADE가 담당한다(명시 DELETE 불필요).
 	 */
 	@Transactional
 	public void deleteAccount(long id) {

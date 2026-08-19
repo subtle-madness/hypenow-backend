@@ -95,8 +95,7 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 		BrandReadRepository brandReadRepository = new BrandReadRepository(monitoringJdbc);
 		commandClient = mock(MonitoringCommandClient.class);
 		BrandDirectRegistrationExecutor executor = new BrandDirectRegistrationExecutor(commandClient,
-				registrationRepository, directPostRepository, postCampaignRepository, brandReadRepository,
-				new SyncTaskExecutor());
+				registrationRepository, directPostRepository, postCampaignRepository, new SyncTaskExecutor());
 		service = new V1BrandDirectPostService(linkRepository, brandReadRepository, directPostRepository,
 				registrationRepository, campaignRepository, postCampaignRepository, commandClient, executor,
 				Clock.systemDefaultZone());
@@ -159,6 +158,36 @@ class V1BrandDirectPostCancelIntegrationTest extends IntegrationTest {
 
 		assertThat(resettled.entries().get(0).result()).isEqualTo("success");
 		assertThat(directPostRepository.findByUserAndShortCode(userId, "DEF")).isPresent();
+	}
+
+	/**
+	 * 공동 등록 허용(요구사항, 08-19) — A가 이미 성공적으로 등록한 shortcode를 B가 register() API로
+	 * (동시 레이스가 아니라 순차적으로) 등록해도 duplicate가 아니라 성공해야 한다. brand_tagged_post의
+	 * direct_registered_at은 A의 등록으로 이미 채워져 있지만, B의 accept-time 중복 판정
+	 * (V1BrandDirectPostService#isDuplicate)은 B 본인의 원장(app.brand_direct_posts)만 보므로 duplicate로
+	 * 막지 않고 실행기에 위임한다 — monitoring의 registerDirectPost도 멱등이라 재수집 없이 B의 원장에도
+	 * 성공적으로 행이 생긴다.
+	 */
+	@Test
+	void 다른_유저가_등록한_게시물도_공동_등록으로_성공한다() {
+		stubSuccessfulRegister("DEF");
+		BrandDirectRegistrationResponse registeredByA = service.register(userId, brandId, List.of(POST_URL), 30, null);
+		assertThat(service.get(userId, registeredByA.registrationId()).entries().get(0).result())
+				.isEqualTo("success");
+
+		long otherUserId = jdbcClient
+				.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "brand-direct-cancel-coreg-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		linkRepository.insertLink(otherUserId, brandId, "lizda_official", BrandAccountType.OWN, 12);
+
+		BrandDirectRegistrationResponse registeredByB =
+				service.register(otherUserId, brandId, List.of(POST_URL), 30, null);
+		BrandDirectRegistrationResponse settledForB = service.get(otherUserId, registeredByB.registrationId());
+
+		assertThat(settledForB.entries().get(0).result()).isEqualTo("success");
+		assertThat(directPostRepository.findByUserAndShortCode(userId, "DEF")).isPresent();
+		assertThat(directPostRepository.findByUserAndShortCode(otherUserId, "DEF")).isPresent();
 	}
 
 	@Test

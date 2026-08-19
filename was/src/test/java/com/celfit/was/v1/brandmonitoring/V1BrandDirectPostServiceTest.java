@@ -78,12 +78,13 @@ class V1BrandDirectPostServiceTest {
 				Clock.fixed(Instant.parse("2026-08-08T12:00:00Z"), ZoneOffset.UTC));
 	}
 
-	// ---------- 중복 판정 ----------
+	// ---------- 중복 판정(공동 등록 허용, 08-19 개정) ----------
 
 	@Test
-	void 이미_direct_등록된_게시물은_duplicate다() {
+	void 내가_이미_direct_등록한_게시물은_duplicate다() {
 		ownedBrand();
 		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("ABC"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
@@ -96,10 +97,28 @@ class V1BrandDirectPostServiceTest {
 				"이미 브랜드 목록에 있는 게시물입니다.");
 	}
 
+	/**
+	 * 공동 등록 허용(요구사항, 08-19) — direct_registered_at은 브랜드 단위 컬럼이라 "누군가" 등록했다는
+	 * 뜻뿐이다. 다른 유저가 이미 등록한 shortcode를 이 유저가 등록하려 하면(내 원장엔 없음) duplicate가
+	 * 아니라 신규 등록으로 위임돼야 한다 — B에게도 등록이 성공해야 한다는 요구사항.
+	 */
+	@Test
+	void 다른_유저가_이미_등록한_게시물은_duplicate가_아니라_위임된다() {
+		ownedBrand();
+		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		// shortCodesByUser(7L) 미스텁 — Mockito 기본값 empty(내가 등록한 적 없음, 남이 등록함).
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
+		then(executor).should().submit(55L);
+	}
+
 	@Test
 	void 링크_창_안의_tagged_게시물도_duplicate다() {
 		ownedBrand();
-		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		poolStatus("ABC", false, true, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
@@ -113,7 +132,7 @@ class V1BrandDirectPostServiceTest {
 		// 등록하면 direct_registered_at이 채워지고 direct 행은 창 예외라 그 자리에서 보이기 시작한다
 		// (08-17 데드엔드 우회가 대가 없이 해소된다).
 		ownedBrand(3);
-		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-03-08T00:00:00Z"));
+		poolStatus("ABC", false, true, OffsetDateTime.parse("2026-03-08T00:00:00Z"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
@@ -125,12 +144,27 @@ class V1BrandDirectPostServiceTest {
 	@Test
 	void 링크_창_안_5개월_이내_tagged_게시물은_여전히_중복이다() {
 		ownedBrand(3);
-		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-07-08T00:00:00Z"));
+		poolStatus("ABC", false, true, OffsetDateTime.parse("2026-07-08T00:00:00Z"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
 
 		assertThat(response.entries().get(0).result()).isEqualTo("duplicate");
+	}
+
+	/**
+	 * tag_detected가 아닌(=이 유저에게는 목록에도 안 보이는) 남의 direct-only 등록분은 날짜가
+	 * 창 안이어도 duplicate가 아니다(요구사항, 08-19) — tagDetected 가드가 없던 구버전 버그 회귀 방지.
+	 */
+	@Test
+	void tag_감지_없는_남의_direct_등록분은_창_안_날짜여도_duplicate가_아니다() {
+		ownedBrand();
+		poolStatus("ABC", false, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
+
+		BrandDirectRegistrationResponse response = service.register(7L, 100L, List.of(URL_ABC), 30, null);
+
+		assertThat(response.entries().get(0).result()).isEqualTo("pending");
 	}
 
 	@Test
@@ -219,6 +253,7 @@ class V1BrandDirectPostServiceTest {
 	void 부분_성공은_입력_순서를_보존한다() {
 		ownedBrand();
 		poolStatus("ABC", true, false, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("ABC"));
 		given(registrationRepository.insert(7L, 100L, null)).willReturn(inserted(55L));
 
 		BrandDirectRegistrationResponse response =

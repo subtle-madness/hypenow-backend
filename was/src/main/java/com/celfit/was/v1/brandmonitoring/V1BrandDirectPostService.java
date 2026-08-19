@@ -100,6 +100,11 @@ public class V1BrandDirectPostService {
 
 		Map<String, BrandPoolStatusRow> pool = poolStatus(brandId, urls);
 		OffsetDateTime cutoff = duplicateCutoff(link.collectionMonths());
+		// 공동 등록 허용(요구사항, 08-19) — "이미 direct 등록됨"의 진짜 뜻은 "이 유저가 이미 등록함"
+		// 이다. direct_registered_at은 브랜드 단위 컬럼이라 누가 등록했는지 모르므로, 원장
+		// (app.brand_direct_posts)을 별도로 조회해 이 유저 본인 등록분만 가려낸다. pool이 비어 있으면
+		// (모두 신규 shortcode·share 링크) 조회 자체를 생략한다.
+		Set<String> ownedShortCodes = pool.isEmpty() ? Set.of() : directPostRepository.shortCodesByUser(userId);
 
 		BrandPostRegistrationRepository.InsertedRegistration inserted =
 				registrationRepository.insert(userId, brandId, campaignIdLong);
@@ -107,7 +112,7 @@ public class V1BrandDirectPostService {
 
 		List<BrandDirectRegistrationResponse.Entry> entries = new ArrayList<>(urls.size());
 		for (int seq = 0; seq < urls.size(); seq++) {
-			entries.add(planEntry(registrationId, seq, urls.get(seq), pool, cutoff));
+			entries.add(planEntry(registrationId, seq, urls.get(seq), pool, cutoff, ownedShortCodes));
 		}
 		// 전건이 접수 시점에 확정됐으면(위임할 pending이 없으면) 완료 처리도 여기서 바로 끝낸다 —
 		// 실행기가 나중에 같은 판정을 다시 해도 no-op이지만, 폴링이 completed_at을 즉시 봐야 한다.
@@ -123,7 +128,7 @@ public class V1BrandDirectPostService {
 	 * Post·share 단축 링크는 pending으로 남겨 실행기가 처리하게 한다.
 	 */
 	private BrandDirectRegistrationResponse.Entry planEntry(long registrationId, int seq, String url,
-			Map<String, BrandPoolStatusRow> pool, OffsetDateTime cutoff) {
+			Map<String, BrandPoolStatusRow> pool, OffsetDateTime cutoff, Set<String> ownedShortCodes) {
 		MonitoringInput parsed = MonitoringInput.parsePost(url);
 		if (parsed instanceof MonitoringInput.Invalid invalid) {
 			registrationRepository.insertEntry(registrationId, seq, url, null, RegistrationResult.FAILED,
@@ -133,7 +138,7 @@ public class V1BrandDirectPostService {
 		String shortCode = parsed instanceof MonitoringInput.Post post ? post.shortCode() : null;
 		if (shortCode != null) {
 			BrandPoolStatusRow row = pool.get(shortCode);
-			if (row != null && isDuplicate(row, cutoff)) {
+			if (row != null && isDuplicate(row, cutoff, ownedShortCodes.contains(shortCode))) {
 				registrationRepository.insertEntry(registrationId, seq, url, shortCode, RegistrationResult.DUPLICATE,
 						RegistrationResult.REASON_DUPLICATE, BRAND_DUPLICATE_REASON);
 				return entry(url, RegistrationResult.DUPLICATE, RegistrationResult.REASON_DUPLICATE,
@@ -147,8 +152,9 @@ public class V1BrandDirectPostService {
 	}
 
 	/**
-	 * 브랜드 풀 중복 판정(설계 §2-3) — duplicate ⟺ 행이 있고 (이미 direct 등록됐거나, 표시 창 안의
-	 * tagged다). 현행(레거시) 대비 달라지는 점 3가지:
+	 * 브랜드 풀 중복 판정(설계 §2-3, 공동 등록 허용 08-19 개정) — duplicate ⟺ (이 유저가 이미 direct
+	 * 등록했거나) (tag_detected(=브랜드 공유로 보이는 tagged)고 표시 창 안이다). 현행(레거시) 대비
+	 * 달라지는 점:
 	 * <ol>
 	 *   <li>유저의 다른 브랜드 direct 매핑을 모수에 넣지 않는다(크로스 브랜드 누수 제거) — 판정 자체가
 	 *       {@code brandId} 스코프 쿼리({@link BrandReadRepository#findBrandPoolStatus})라 다른
@@ -159,10 +165,19 @@ public class V1BrandDirectPostService {
 	 *   <li>미정산 tagged를 중복으로 잡을 필요가 없어졌다 — 셰이프가 하나(brand_tagged_post 한 행)라
 	 *       중복 등록해도 같은 행에 direct_registered_at만 붙을 뿐, 레거시처럼 카드가 direct 셰이프로
 	 *       영구 고정되는 위험이 없다.</li>
+	 *   <li><b>"이미 direct 등록됨"은 이 유저 기준이다</b>(공동 등록 허용, 08-19) — {@code
+	 *       direct_registered_at}은 브랜드 단위 컬럼이라 "누가" 등록했는지 모른다. 그래서 브랜드
+	 *       공유 신호({@code row.directRegistered()})가 아니라 원장 조회로 얻은 {@code
+	 *       ownedByThisUser}를 쓴다: A가 등록한 걸 B가 등록하려 하면(등록되긴 했지만 내가 아님)
+	 *       tag_detected가 아닌 한 duplicate가 아니라 신규 등록으로 위임된다 — B에게도 성공해야
+	 *       한다는 요구사항. 두 번째 항(창 판정)도 {@code row.tagDetected()} 가드가 새로 붙었다 —
+	 *       안 붙이면 "tag_detected는 없고 direct_registered만 있는(=남이 등록한) 최근 게시물"이
+	 *       날짜만으로 duplicate 처리돼 버린다(이 유저에게는 보이지도 않는 게시물인데 등록만 막히는
+	 *       모순 — 이전 버그).</li>
 	 * </ol>
 	 */
-	private static boolean isDuplicate(BrandPoolStatusRow row, OffsetDateTime cutoff) {
-		return row.directRegistered() || !row.takenAt().isBefore(cutoff);
+	private static boolean isDuplicate(BrandPoolStatusRow row, OffsetDateTime cutoff, boolean ownedByThisUser) {
+		return ownedByThisUser || (row.tagDetected() && !row.takenAt().isBefore(cutoff));
 	}
 
 	/** 링크 표시 창 ∩ 365일 자산 창의 하한(BrandPostAssembler.brandShortCodes와 동일 관용구). */

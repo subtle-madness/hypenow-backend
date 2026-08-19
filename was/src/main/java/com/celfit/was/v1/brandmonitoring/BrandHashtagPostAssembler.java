@@ -1,5 +1,6 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import com.celfit.was.monitoring.BrandDirectPostRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPoolStatusRow;
@@ -43,9 +44,12 @@ public class BrandHashtagPostAssembler {
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
 
 	private final BrandReadRepository brandReadRepository;
+	private final BrandDirectPostRepository directPostRepository;
 
-	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository) {
+	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository,
+			BrandDirectPostRepository directPostRepository) {
 		this.brandReadRepository = brandReadRepository;
+		this.directPostRepository = directPostRepository;
 	}
 
 	/**
@@ -68,12 +72,23 @@ public class BrandHashtagPostAssembler {
 	 * 행은 이미 목록에서 빠지므로 tagged로만 채워지는 경로가 없다. <b>2026-08-18 direct 통합 이후
 	 * 판정 산지가 바뀌었다</b>: {@code app.brand_direct_posts}(유저 스코프 매핑) + tagged 존재 판정
 	 * 2회 조회 대신, monitoring 브랜드 풀 상태({@code BrandReadRepository.findBrandPoolStatus})
-	 * 1회 조회로 both를 판정한다(제외: {@code tag_detected AND NOT direct_registered}; brandPostId:
-	 * {@code direct_registered ? shortCode : null}) — 브랜드 풀이 direct 등록을 유저 스코프가 아니라
-	 * 브랜드 스코프로 승격했으므로(설계 §1-1) 판정도 자연히 브랜드 스코프가 된다. 그래서 이 메서드는
-	 * 더 이상 userId를 받지 않는다 — 같은 브랜드에 연결된 누구에게나 같은 발견 목록이 보인다.
+	 * 1회 조회로 both를 판정한다(제외: {@code tag_detected AND NOT direct_registered}).
+	 *
+	 * <p><b>brandPostId는 조회자 스코프다(요구사항, 08-19 개정 — 구 §1-1 "브랜드 스코프 판정" 중
+	 * 상호작용 부분 폐기)</b>: {@code direct_registered_at}은 브랜드 단위 컬럼이라 "누군가 수집했다"만
+	 * 알 뿐 "누가 했는지"는 모른다 — 그래서 등록자 원장({@code app.brand_direct_posts},
+	 * {@link BrandDirectPostRepository#shortCodesByUser})을 한 번 더 조회해 <b>이 유저가 등록한</b>
+	 * shortcode에만 배지를 채운다. 남이 수집한 게시물은 이 유저에게 "미수집"으로 보이고(공동 수집
+	 * 허용 — {@code V1BrandDirectPostService#register}가 사용자 스코프 중복 판정으로 실제 등록도
+	 * 받아준다), 이 유저가 수집하면 이 유저에게만 배지가 켜진다.
+	 *
+	 * <p><b>발견 목록 행 자체(해시태그 감지 데이터)는 여전히 브랜드 공유</b>다 — {@code
+	 * brand_hashtag_post}는 해시태그 스윕(캡션 매칭) 전용 테이블이라 direct 등록 경로가 그 테이블에
+	 * 행을 쓰는 일이 없다(제외·배지 판정 둘 다 {@code brand_tagged_post} 크로스 조회일 뿐, 그 행이
+	 * 목록에 실리느냐는 오직 해시태그 매칭 여부로만 결정된다). 그래서 이 메서드는 userId를 받지만
+	 * 필터(제외 조건)는 여전히 브랜드 스코프이고, badge 파생에만 쓰인다.
 	 */
-	public List<BrandHashtagPostResponse> assembleForBrand(long brandId) {
+	public List<BrandHashtagPostResponse> assembleForBrand(long userId, long brandId) {
 		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
 				BrandPostAssembler.windowCutoff(), HASHTAG_POST_LIMIT);
 		if (rows.isEmpty()) {
@@ -84,21 +99,27 @@ public class BrandHashtagPostAssembler {
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, BrandPoolStatusRow> poolStatus = brandReadRepository.findBrandPoolStatus(brandId, shortCodes)
 				.stream().collect(Collectors.toMap(BrandPoolStatusRow::shortCode, Function.identity(), (a, b) -> a));
+		// direct 등록 행이 하나도 없으면 원장 조회를 생략한다(불필요한 조회 방지 — BrandPostAssembler와
+		// 같은 관용구).
+		boolean hasAnyDirectRegistered = poolStatus.values().stream().anyMatch(BrandPoolStatusRow::directRegistered);
+		Set<String> ownedShortCodes = hasAnyDirectRegistered ? directPostRepository.shortCodesByUser(userId)
+				: Set.of();
 
 		return rows.stream()
 				.filter(row -> !isTaggedOnly(poolStatus.get(row.shortCode())))
-				.map(row -> toResponse(row, brandPostIdOf(poolStatus.get(row.shortCode()), row.shortCode())))
+				.map(row -> toResponse(row,
+						brandPostIdOf(poolStatus.get(row.shortCode()), row.shortCode(), ownedShortCodes)))
 				.toList();
 	}
 
-	/** 제외 조건 — tag_detected AND NOT direct_registered(2026-08-18 direct 통합 §2-5). */
+	/** 제외 조건 — tag_detected AND NOT direct_registered(2026-08-18 direct 통합 §2-5, 브랜드 공유 유지). */
 	private static boolean isTaggedOnly(BrandPoolStatusRow status) {
 		return status != null && status.tagDetected() && !status.directRegistered();
 	}
 
-	/** direct 등록이면 shortcode를, 아니면 null을 돌려준다(tagged-only 행은 이미 제외됐다). */
-	private static String brandPostIdOf(BrandPoolStatusRow status, String shortCode) {
-		return status != null && status.directRegistered() ? shortCode : null;
+	/** 이 유저가 direct 등록했으면 shortcode를, 아니면 null(tagged-only 행은 이미 제외됐다). */
+	private static String brandPostIdOf(BrandPoolStatusRow status, String shortCode, Set<String> ownedShortCodes) {
+		return status != null && status.directRegistered() && ownedShortCodes.contains(shortCode) ? shortCode : null;
 	}
 
 	/** {@code brandPostId} 없는 호출부(단위 테스트 등)를 위한 편의 오버로드 — null로 접는다. */
