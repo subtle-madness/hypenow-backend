@@ -89,6 +89,8 @@ public class BrandRepository {
 	 * covered_until은 기존값 우선(COALESCE) — 기존 백필이 컷 없이 완주했던(=NULL) 브랜드는
 	 * 폴백(기존 창 컷)이 실수집 깊이의 근사다.
 	 *
+	 * @param coveredUntilFallback covered_until 폴백(기존 창 컷) — <b>NULL 금지</b>: 바인딩이
+	 *     {@code Timestamp.from}이라 null이면 NPE다. 호출자가 "now − 기존 창"을 항상 계산해 넘긴다.
 	 * @return 실제로 창이 커졌으면 true — {@link #expandWindow}와 같은 rowcount 판정
 	 *     (false = 이미 같거나 더 큰 창이라 아무 흔적도 남기지 않음).
 	 */

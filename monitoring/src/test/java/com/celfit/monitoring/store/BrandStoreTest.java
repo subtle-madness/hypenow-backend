@@ -303,17 +303,20 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void countByBrand는_브랜드별로_스코핑된다() {
+	void countByBrand는_태그_행만_브랜드별로_센다() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12);
 		assertThat(taggedPosts.countByBrand(id)).isZero();
 
 		taggedPosts.insert(id, post("A", 1754000000L));
 		taggedPosts.insert(id, post("B", 1754000000L));
-		taggedPosts.upsertDirect(id, post("D", 1754000000L), Instant.now());   // direct 행도 모수
+		taggedPosts.upsertDirect(id, post("B", 1754000000L), Instant.now());   // 겹침 — 태그 행이라 센다
+		// 순수 direct 행은 상한 밖(§7-3)이라 모수에서 빠진다 — 세면 태그 1,900+direct 150 브랜드가
+		// 확장 스킵으로 부당하게 걸려 재백필 기회를 잃는다.
+		taggedPosts.upsertDirect(id, post("D", 1754000000L), Instant.now());
 		taggedPosts.insert(other, post("A", 1754000000L));                     // 다른 브랜드는 제외
 
-		assertThat(taggedPosts.countByBrand(id)).isEqualTo(3L);
+		assertThat(taggedPosts.countByBrand(id)).isEqualTo(2L);
 		assertThat(taggedPosts.countByBrand(other)).isEqualTo(1L);
 	}
 

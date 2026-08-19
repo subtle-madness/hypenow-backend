@@ -34,11 +34,18 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * 브랜드 저장 행 수 — 확장 스킵 판정 입력(스펙 §7-2). 상한(collection-post-limit) 이상이면
-	 * 재백필이 기지 게시물만 세다 컷되므로 확장은 창·커버리지 마킹만 하고 백필을 제출하지 않는다.
+	 * 브랜드의 <b>태그 열거 산지</b> 행 수 — 확장 스킵 판정 입력(스펙 §7-2). 상한
+	 * (collection-post-limit) 이상이면 재백필이 기지 게시물만 세다 컷되므로 확장은 창·커버리지
+	 * 마킹만 하고 백필을 제출하지 않는다.
+	 *
+	 * <p><b>tag_detected_at IS NOT NULL 가드 필수</b>: 상한은 태그 열거를 지배하고 direct 등록
+	 * 게시물은 상한 밖이다(스펙 §7-3). 순수 direct 행까지 세면 태그 1,900 + direct 150 같은
+	 * 브랜드가 상한 미달인데도 확장 스킵으로 걸려, 확장 구간에서 받을 수 있었던 잔여분
+	 * (limit - 태그행수)을 영영 못 받는다.
 	 */
 	public long countByBrand(long brandId) {
-		return db.queryForObject("SELECT count(*) FROM brand_tagged_post WHERE brand_id = ?",
+		return db.queryForObject(
+				"SELECT count(*) FROM brand_tagged_post WHERE brand_id = ? AND tag_detected_at IS NOT NULL",
 				Long.class, brandId);
 	}
 

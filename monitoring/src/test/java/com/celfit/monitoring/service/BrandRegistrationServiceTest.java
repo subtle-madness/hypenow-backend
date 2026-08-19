@@ -11,7 +11,9 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -55,6 +57,10 @@ class BrandRegistrationServiceTest {
 		final List<List<String>> enrichedAtTouchSwept = new CopyOnWriteArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
 		final List<Long> expanded = new ArrayList<>();
+		/** raiseWindowCapped 호출 기록(스펙 §7-2) — 창·폴백 인자까지 본다. */
+		record CappedRaise(long brandId, int months, Instant coveredUntilFallback) {}
+
+		final List<CappedRaise> cappedRaises = new ArrayList<>();
 		/** 동시 확장 경합 주입 — 더 큰 창이 이미 반영돼 조건부 UPDATE가 0행을 맞는 상황(rowcount false). */
 		boolean loseExpandRace = false;
 		long nextId = 1;
@@ -85,6 +91,19 @@ class BrandRegistrationServiceTest {
 			}
 			rows.replaceAll((u, r) -> r.id() == brandId
 					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months) : r);
+			return true;
+		}
+
+		/** 실 SQL 의미와 등가 — 창만 GREATEST로 올리고 수집 상태(lastSweptOn)는 건드리지 않는다. */
+		@Override
+		public boolean raiseWindowCapped(long brandId, int months, Instant coveredUntilFallback) {
+			cappedRaises.add(new CappedRaise(brandId, months, coveredUntilFallback));
+			BrandRow row = rows.values().stream().filter(r -> r.id() == brandId).findFirst().orElseThrow();
+			if (months <= row.collectionMonths()) {
+				return false;
+			}
+			rows.replaceAll((u, r) -> r.id() == brandId
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), r.lastSweptOn(), months) : r);
 			return true;
 		}
 
@@ -266,12 +285,29 @@ class BrandRegistrationServiceTest {
 		}
 	}
 
+	/** 확장 스킵 판정 입력(스펙 §7-2) — 저장 행 수만 스텁한다. */
+	private static final class StubTaggedPosts extends TaggedPostRepository {
+		long count;
+
+		StubTaggedPosts() {
+			super(null);
+		}
+
+		@Override
+		public long countByBrand(long brandId) {
+			return count;
+		}
+	}
+
 	private final List<String> hikerCalls = new ArrayList<>();
 	private final StubCollect collect = new StubCollect();
 	private final InMemoryBrands brands = new InMemoryBrands(() -> collect.enrichedCodes());
 	private final RecordingCallCounts callCounts = new RecordingCallCounts();
 	private final StubHashtags hashtags = new StubHashtags();
 	private final StubHashtagCollect hashtagCollect = new StubHashtagCollect();
+	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
+	/** 실 기본값(application.yml)과 같은 상한 — 개별 테스트가 필요하면 바꾼다. */
+	private int collectionPostLimit = 2000;
 
 	/** enrich executor에 제출된 태스크 — 개수만 본다(실행은 아래 풀이 실제로 한다). */
 	private final List<Runnable> enrichSubmissions = new CopyOnWriteArrayList<>();
@@ -356,7 +392,8 @@ class BrandRegistrationServiceTest {
 			return PROFILE_JSON;
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtags, hashtagCollect, Runnable::run, enrich, hashtagSweep);
+				hashtags, hashtagCollect, taggedPosts, collectionPostLimit,
+				Runnable::run, enrich, hashtagSweep);
 	}
 
 	@Test
@@ -507,6 +544,47 @@ class BrandRegistrationServiceTest {
 			assertThat(row.collectionMonths()).isEqualTo(12);
 			assertThat(row.lastSweptOn()).isNull();
 		});
+	}
+
+	/**
+	 * 확장 스킵(스펙 §7-2) — 이미 상한 도달이면 재백필이 기지 게시물만 세다 컷될 것이 확정이라
+	 * 열거를 시작하지 않는다. 창·커버리지 마킹만 하고 수집 상태(lastSweptOn)는 불변이다.
+	 */
+	@Test
+	void 이미_상한_도달인_브랜드의_확장은_백필_없이_창만_올린다() {
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		taggedPosts.count = collectionPostLimit;   // 상한 도달 — 확장 구간에 넣을 여유가 0
+
+		var result = service().register("brandx", null, 12);
+
+		assertThat(result.replayed()).isTrue();
+		assertThat(collect.coreSwept).isEmpty();       // 백필 미제출(~96콜 절약)
+		assertThat(brands.expanded).isEmpty();         // 수집 상태를 리셋하는 expandWindow는 안 탄다
+		assertThat(brands.cappedRaises).singleElement().satisfies(raise -> {
+			assertThat(raise.brandId()).isEqualTo(first.brandId());
+			assertThat(raise.months()).isEqualTo(12);
+			// 폴백 = now − 기존 창(3개월) — 기존 백필이 컷 없이 완주해 covered_until이 NULL인
+			// 브랜드에서 실수집 깊이의 근사로 쓰인다.
+			Instant expected = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
+					.minusMonths(3).toInstant();
+			assertThat(raise.coveredUntilFallback())
+					.isBetween(expected.minusSeconds(60), expected.plusSeconds(60));
+		});
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
+	}
+
+	@Test
+	void 상한_미달_브랜드의_확장은_기존_경로다() {
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		taggedPosts.count = collectionPostLimit - 1;   // 1건 여유 — 확장 구간을 열 이유가 있다
+
+		service().register("brandx", null, 12);
+
+		assertThat(brands.cappedRaises).isEmpty();
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");   // 기존 재백필 경로 그대로
 	}
 
 	@Test
