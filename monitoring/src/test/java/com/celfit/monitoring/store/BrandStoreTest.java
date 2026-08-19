@@ -600,22 +600,29 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void trackedPosts는_direct_only_행을_반환하지_않는다() {
+	void trackedPosts는_direct_행을_전부_제외한다() {
 		// R5 — 가드(AND tag_detected_at IS NOT NULL)를 지운 채로 먼저 실패를 확인했다(수동 검증,
-		// 아래 주석 참조). 가드가 있는 현재 코드에서는 direct-only 행이 빠져야 한다.
+		// 아래 주석 참조). direct-only 행은 열거가 만날 수 없어서, 겹침 행은 상한 밖(2026-08-19
+		// 수집 상한 v2 §7-3)이라서 — 둘 다 열거 깊이 결정 입력에서 빠진다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
 		assertThat(taggedPosts.trackedPosts(id, Instant.ofEpochSecond(1700000000L)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Tagged");
 	}
 
 	@Test
-	void touchCrawledDepth는_direct_only_행의_last_crawled_at을_건드리지_않는다() {
+	void touchCrawledDepth는_direct_행의_last_crawled_at을_건드리지_않는다() {
+		// 겹침 행까지 제외하는 것이 §7-3의 핵심이다 — 커버 간주 touch가 겹침 행을 찍으면 컷 밖
+		// direct 게시물이 2단계에서도 due가 아니게 돼 "상한 밖" 규정이 무력화된다(동결 그대로).
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 		Instant at = Instant.parse("2026-08-18T09:00:00Z");
 
 		taggedPosts.touchCrawledDepth(id, Instant.ofEpochSecond(1700000000L), at);
@@ -626,18 +633,35 @@ class BrandStoreTest {
 		assertThat(db.queryForObject(
 				"SELECT last_crawled_at FROM brand_tagged_post WHERE brand_id=? AND short_code='DirectOnly'",
 				Timestamp.class, id)).isNull();
+		assertThat(db.queryForObject(
+				"SELECT last_crawled_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Timestamp.class, id)).isNull();
 	}
 
 	@Test
-	void directDuePosts는_direct_only_행만_반환한다() {
+	void directDuePosts는_겹침_행도_포함한다() {
+		// §7-3 — 모든 direct 행이 2단계 모수다. 중복 콜 방지는 필터가 아니라 구조로 유지된다:
+		// 1단계 열거가 실제로 만난 겹침 행은 touchCrawled로 갱신돼 due 판정에서 빠진다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
-		taggedPosts.insert(id, post("Tagged", 1754000000L));
+		taggedPosts.insert(id, post("Tagged", 1754000000L));                          // 순수 태그 — 제외
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
-		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());   // 겹침 — 빠져야 한다
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
 		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1700000000L)))
-				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("DirectOnly");
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactlyInAnyOrder("DirectOnly", "Overlap");
+	}
+
+	@Test
+	void directDuePosts는_minTakenAt_이전_direct_행을_거른다() {
+		// 브랜드 창(collection_months)은 그대로 따른다 — 상한만 면제다(§7-3 첫 줄).
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		taggedPosts.upsertDirect(id, post("Recent", 1754000000L), Instant.now());
+		taggedPosts.upsertDirect(id, post("Ancient", 1700000000L), Instant.now());
+
+		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1750000000L)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Recent");
 	}
 
 	@Test

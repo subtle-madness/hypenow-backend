@@ -200,6 +200,10 @@ class BrandCollectServiceTest {
 		final List<String> inserted = new ArrayList<>();
 		final Map<String, Long> collectedCounts = new HashMap<>();
 		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
+		// direct 등록(direct_registered_at IS NOT NULL) 표식 — TrackedPost 레코드에는 direct 여부가
+		// 없다(저장소가 두 SQL의 WHERE로만 가른다). 서비스가 보는 필터 의미를 그대로 미러하려면
+		// 대역 쪽에 표식이 필요해 여기 둔다: trackedPosts·touchCrawledDepth 둘 다 이 집합을 배제한다.
+		final Set<String> directCodes = new HashSet<>();
 		final Map<String, Instant> touched = new HashMap<>();
 		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
 		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
@@ -244,7 +248,11 @@ class BrandCollectServiceTest {
 
 		@Override
 		public List<TaggedPostRepository.TrackedPost> trackedPosts(long brandId, Instant minTakenAt) {
-			return tracked.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
+			// 실 SQL의 AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL 대역.
+			return tracked.stream()
+					.filter(t -> !t.takenAt().isBefore(minTakenAt))
+					.filter(t -> !directCodes.contains(t.shortCode()))
+					.toList();
 		}
 
 		@Override
@@ -266,9 +274,10 @@ class BrandCollectServiceTest {
 		@Override
 		public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
 			// 실 DB의 범위 UPDATE 대역 — 추적 링크 중 컷 이후(taken_at ≥ minTakenAt) 전부를 touch.
+			// direct 행은 제외한다(수집 상한 v2 §7-3) — 커버 간주 touch의 동결 면제.
 			depthCalls++;
 			for (TaggedPostRepository.TrackedPost t : tracked) {
-				if (!t.takenAt().isBefore(minTakenAt)) {
+				if (!t.takenAt().isBefore(minTakenAt) && !directCodes.contains(t.shortCode())) {
 					touched.put(t.shortCode(), at);
 				}
 			}
@@ -640,6 +649,27 @@ class BrandCollectServiceTest {
 		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C", "D");
 		assertThat(tagged.depthCalls).isEqualTo(1);            // 안전 밸브(depthCalls=0)와의 결정적 차이
 		assertThat(tagged.touched).containsKey("DeepDue60d");  // 목표 컷(60일 due)까지 통째로 동결
+	}
+
+	@Test
+	void 수집_상한_도달의_깊이_커버가_direct_행은_동결하지_않는다() {
+		// §7-3 — direct 등록 게시물은 상한 밖이다. 컷 종료의 "목표 컷 전체 touch"가 direct 행까지
+		// 찍으면 그 행은 2단계에서도 due가 아니게 돼(last_crawled_at이 실크롤 없이 전진) 사용자가
+		// 직접 등록한 게시물이 영원히 마지막 지표로 얼어붙는다. 태그 행만 동결 대상이다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DeepDue60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DeepDirect60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.directCodes.add("DeepDirect60d");
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(10000, 3).sweep(sweptBrand);   // 수집 상한 3 — 2페이지째 도달, 커버 처리
+
+		assertThat(tagged.depthCalls).isEqualTo(1);
+		assertThat(tagged.touched).containsKey("DeepDue60d");             // 태그 행은 동결
+		assertThat(tagged.touched).doesNotContainKey("DeepDirect60d");    // direct 행은 상한 밖
 	}
 
 	@Test
