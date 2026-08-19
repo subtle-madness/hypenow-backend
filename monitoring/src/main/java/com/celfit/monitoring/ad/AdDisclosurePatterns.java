@@ -29,6 +29,9 @@ public final class AdDisclosurePatterns {
 			// "표기 미흡" 오탐 727건이 나가 사전에 등재(핫픽스). 텍스트 단독 "제품제공"은
 			// "제품제공 이벤트"(팔로워 증정 공지) 오탐 여지가 있어 해시태그형·수령형만 넣는다.
 			Pattern.compile("#제품제공(?![\\p{L}\\p{N}_])"),
+			// #제품제공과 동일 구조의 변형 — 08-19 오탐 전수 점검에서 Gemini 프롬프트 CLEAR 예시에만
+			// 있고 사전엔 빠진 비대칭이 확인돼 정합 맞춤(현 운영 데이터 0건, 예방 등재).
+			Pattern.compile("#상품제공(?![\\p{L}\\p{N}_])"),
 			Pattern.compile("제품을?\\s*제공\\s*받(아|았|은|고)"),
 			Pattern.compile("광고입니다"),
 			Pattern.compile("유료\\s*광고"),
