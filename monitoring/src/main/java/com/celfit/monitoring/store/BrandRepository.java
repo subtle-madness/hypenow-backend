@@ -4,6 +4,8 @@ import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -78,6 +80,52 @@ public class BrandRepository {
 				    collection_started_at = now(), backfill_error = NULL,
 				    backfill_completed_at = NULL
 				WHERE id = ? AND collection_months < ?""", months, brandId, months) > 0;
+	}
+
+	/**
+	 * 확장 스킵 경로(스펙 §7-2) — 이미 상한 도달인 브랜드의 창 상향: 수집 상태(last_swept_on·
+	 * backfill_completed_at)는 건드리지 않고 창·커버리지 마킹만 한다. 재백필이 기지 게시물만 세다
+	 * 컷될 것이 확정이라 백필을 제출하지 않으므로, {@link #expandWindow}의 재개 신호를 타면 안 된다.
+	 * covered_until은 기존값 우선(COALESCE) — 기존 백필이 컷 없이 완주했던(=NULL) 브랜드는
+	 * 폴백(기존 창 컷)이 실수집 깊이의 근사다.
+	 *
+	 * @return 실제로 창이 커졌으면 true — {@link #expandWindow}와 같은 rowcount 판정
+	 *     (false = 이미 같거나 더 큰 창이라 아무 흔적도 남기지 않음).
+	 */
+	public boolean raiseWindowCapped(long brandId, int months, Instant coveredUntilFallback) {
+		return db.update("""
+				UPDATE brand_account
+				SET collection_months = GREATEST(collection_months, ?), collection_capped = true,
+				    covered_until = COALESCE(covered_until, ?)
+				WHERE id = ? AND collection_months < ?""",
+				months, Timestamp.from(coveredUntilFallback), brandId, months) > 0;
+	}
+
+	/** 창 커버리지 단면(스펙 §7-1) — 일일 스윕의 컷 클램프 입력 + was 노출 원천. */
+	public record Coverage(boolean capped, Instant coveredUntil) {}
+
+	/**
+	 * 커버리지 조회(스펙 §7-1) — 행이 없으면 미컷 단면을 돌려준다(컬럼 DEFAULT와 같은 값):
+	 * 이 값의 소비처는 "컷이면 열거 깊이를 클램프"라 미지 브랜드는 클램프하지 않는 쪽이 안전하다.
+	 */
+	public Coverage coverage(long brandId) {
+		return db.query("SELECT collection_capped, covered_until FROM brand_account WHERE id = ?",
+				(rs, i) -> {
+					Timestamp until = rs.getTimestamp("covered_until");
+					return new Coverage(rs.getBoolean("collection_capped"),
+							until == null ? null : until.toInstant());
+				}, brandId)
+				.stream().findFirst().orElse(new Coverage(false, null));
+	}
+
+	/**
+	 * 백필 종료 시 커버리지 기록(스펙 §7-1) — 컷 도달이면 true + 실수집 깊이(열거가 실제 도달한
+	 * 최고령 편입 taken_at), 완주면 false + NULL(= 요청 창 전체 커버). 백필 실행에서만 부른다 —
+	 * 일일 스윕은 창 커버리지를 건드리지 않는다(범위의 이야기지 신선도의 이야기가 아니다).
+	 */
+	public void updateCoverage(long brandId, boolean capped, Instant coveredUntil) {
+		db.update("UPDATE brand_account SET collection_capped = ?, covered_until = ? WHERE id = ?",
+				capped, coveredUntil == null ? null : Timestamp.from(coveredUntil), brandId);
 	}
 
 	/**

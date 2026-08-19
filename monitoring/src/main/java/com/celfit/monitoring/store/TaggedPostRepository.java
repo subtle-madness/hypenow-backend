@@ -34,6 +34,15 @@ public class TaggedPostRepository {
 	}
 
 	/**
+	 * 브랜드 저장 행 수 — 확장 스킵 판정 입력(스펙 §7-2). 상한(collection-post-limit) 이상이면
+	 * 재백필이 기지 게시물만 세다 컷되므로 확장은 창·커버리지 마킹만 하고 백필을 제출하지 않는다.
+	 */
+	public long countByBrand(long brandId) {
+		return db.queryForObject("SELECT count(*) FROM brand_tagged_post WHERE brand_id = ?",
+				Long.class, brandId);
+	}
+
+	/**
 	 * 신규 감지 게시물 링크 — 재감지(ON CONFLICT)는 지표·메타를 건드리지 않는다. taken_at null은
 	 * 호출자가 거른다.
 	 *

@@ -240,6 +240,83 @@ class BrandStoreTest {
 				java.time.OffsetDateTime.class, id)).isEqualTo(startedAt);     // 폴링 앵커 불변
 	}
 
+	// ── 창 커버리지 영속화(수집 상한 v2 — 2026-08-19 스펙 §7-1·§7-2) ──────────
+
+	@Test
+	void 커버리지는_미컷으로_시작하고_updateCoverage가_왕복한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(false, null));
+
+		Instant depth = Instant.parse("2026-05-01T00:00:00Z");
+		brands.updateCoverage(id, true, depth);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(true, depth));
+
+		// 재백필 완주는 컷 기록을 되돌린다 — 완주 = 요청 창 전체 커버(capped=false + NULL).
+		brands.updateCoverage(id, false, null);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(false, null));
+	}
+
+	@Test
+	void 미존재_브랜드의_커버리지는_미컷_단면이다() {
+		// 소비처가 "컷이면 열거 깊이 클램프"라 미지 브랜드는 클램프하지 않는 쪽이 안전하다.
+		assertThat(brands.coverage(999_999L)).isEqualTo(new BrandRepository.Coverage(false, null));
+	}
+
+	@Test
+	void raiseWindowCapped는_창과_커버리지만_올리고_수집_상태는_건드리지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));   // 완주 상태 — 불변이어야 한다
+		Instant fallback = Instant.parse("2026-05-19T00:00:00Z");
+
+		assertThat(brands.raiseWindowCapped(id, 12, fallback)).isTrue();
+
+		BrandRow row = brands.findByUsername("brandx").orElseThrow();
+		assertThat(row.collectionMonths()).isEqualTo(12);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(true, fallback));
+		// 백필을 제출하지 않는 경로라 재개 신호·폴링 종료 조건은 그대로여야 한다.
+		assertThat(row.lastSweptOn()).isEqualTo(LocalDate.of(2026, 8, 7));
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	@Test
+	void raiseWindowCapped는_기존_covered_until을_덮지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		Instant actualDepth = Instant.parse("2026-06-01T00:00:00Z");
+		brands.updateCoverage(id, true, actualDepth);   // 직전 백필이 기록한 실수집 깊이
+
+		assertThat(brands.raiseWindowCapped(id, 12, Instant.parse("2026-05-19T00:00:00Z"))).isTrue();
+
+		// COALESCE — 폴백(기존 창 컷)은 실측값이 없을 때만 쓰는 근사다.
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(true, actualDepth));
+	}
+
+	@Test
+	void raiseWindowCapped는_이미_더_큰_창이면_아무_흔적도_남기지_않는다() {
+		// expandWindow와 같은 rowcount 판정 — 경합에서 진 요청이 커버리지만 컷으로 뒤집으면 안 된다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+
+		assertThat(brands.raiseWindowCapped(id, 6, Instant.parse("2026-05-19T00:00:00Z"))).isFalse();
+
+		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(12);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(false, null));
+	}
+
+	@Test
+	void countByBrand는_브랜드별로_스코핑된다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12);
+		assertThat(taggedPosts.countByBrand(id)).isZero();
+
+		taggedPosts.insert(id, post("A", 1754000000L));
+		taggedPosts.insert(id, post("B", 1754000000L));
+		taggedPosts.upsertDirect(id, post("D", 1754000000L), Instant.now());   // direct 행도 모수
+		taggedPosts.insert(other, post("A", 1754000000L));                     // 다른 브랜드는 제외
+
+		assertThat(taggedPosts.countByBrand(id)).isEqualTo(3L);
+		assertThat(taggedPosts.countByBrand(other)).isEqualTo(1L);
+	}
+
 	@Test
 	void 태그_게시물_링크와_댓글_게이트_상태() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null), 12);
