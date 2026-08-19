@@ -137,6 +137,10 @@ v1 배포 전 코드리뷰에서 확인된 정합 구멍 2건(창 확장 no-op·
   않는다(창 커버리지는 백필 속성 — 신선도가 아니라 범위의 이야기).
 - 기록 지점: `doSweepCore` 종료부, 백필 실행(`last_swept_on` null)일 때만. `BrandRepository`
   주입 추가.
+- **모순쌍 가드**: 컷 종료인데 실수집 깊이가 null인 병리 케이스(⑤로 끊겼는데 편입 0건 — 전부
+  창 밖이거나 `taken_at` 미상)는 `capped`도 내리지 않고 `(false, NULL)`로 접는다.
+  `(true, NULL)`은 FE에 "상한 도달인데 어디까지인지 모름"이라는 자기모순 쌍이고, 7-4 클램프도
+  클램프 값을 못 얻어 무의미하다.
 - was 브랜드 계정 API가 두 값을 노출 → FE가 "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)"을
   그린다. was_reader는 테이블 단위 SELECT 그랜트라 신규 컬럼 자동 포함.
 - 한계(수용): `covered_until`은 백필 시점 고정값이다. 이후 유입량 변화로 실제 도달 가능 깊이가
@@ -144,14 +148,27 @@ v1 배포 전 코드리뷰에서 확인된 정합 구멍 2건(창 확장 no-op·
 
 ### 7-2. 창 확장 스킵 (확장 no-op 해소)
 
-- `expandIfRequested`에서 확장 **전에** 그 브랜드의 `brand_tagged_post` 행 수를 센다.
-  `count >= collection-post-limit`이면: 재백필이 기지 게시물만 세다 컷될 것이 확정이므로
-  **백필을 제출하지 않고** `collection_months`만 상향 + `capped=true` +
-  `covered_until = COALESCE(기존값, now() - 기존 창)`으로 마킹하고 즉시 반환한다.
+- `expandIfRequested`에서 확장 **전에** **재백필의 컷 위치를 예측**한다:
+  `nthNewestTagTakenAt(brandId, collection-post-limit)` = `brand_tagged_post`의 태그 열거 산지 행
+  (`tag_detected_at IS NOT NULL`, direct-only 제외 — 7-3)을 `taken_at DESC`로 정렬했을 때
+  **limit번째 행의 `taken_at`**. 열거는 최신부터 단방향이라 재백필은 정확히 이 지점에서 컷된다.
+  행이 limit개 미만이면 empty = 컷이 안 걸린다.
+- 예측 컷이 **존재하고 `now(KST) - 기존 창`보다 이후**(= 컷이 기존 창 **안**에 떨어진다)이면:
+  확장 구간(기존 창 밖)에는 한 건도 도달하지 못하므로 **백필을 제출하지 않고**
+  `collection_months`만 상향 + `capped=true` +
+  `covered_until = COALESCE(기존값, 예측 컷 taken_at)`으로 마킹하고 즉시 반환한다.
   `last_swept_on`·`backfill_completed_at`은 리셋하지 않는다(수집 상태 불변 — 구 expandWindow의
   리셋 경로를 타지 않는다). UI는 7-1 값으로 "확장 신청됐지만 상한 도달"을 표시한다.
-- `count < limit`이면 기존 경로 그대로(expandWindow 리셋 + 재백필) — 열거가 기지 구간을 지나
-  확장 구간에서 잔여분(limit - count)을 자연 편입한다. 이때도 종료부가 7-1을 기록한다.
+  COALESCE의 폴백이 **예측 컷 그 자체**인 것이 핵심이다 — 직전 백필이 컷 없이 완주해
+  `covered_until`이 NULL인 브랜드에도 근사가 아닌 실제 도달 깊이가 들어가고, 7-4 클램프도
+  그 값으로 정확히 걸린다.
+- 그 외(예측 컷 empty이거나 기존 창 **밖**)는 기존 경로 그대로(expandWindow 리셋 + 재백필) —
+  열거가 기지 구간을 지나 확장 구간에서 잔여분을 자연 편입한다. 이때도 종료부가 7-1을 기록한다.
+- **행 수(count)로 판정하면 안 된다**(초기 구현의 결함, 최종 리뷰에서 교체): 생애 누적 행 수는
+  창 밖 과거분까지 세므로 10건/일·3개월 창·8개월 운영 브랜드(누적 2,400 / 창 안 900)를 재백필이
+  컷되지 않을 것인데도 capped로 오표기한다. 그 마킹이 7-4 클램프까지 걸어 도달 가능했던
+  90~180일 구간을 영구 동결시키고 was에 거짓 커버리지를 내려보낸다. 같은 이유로 구 폴백
+  (`now - 기존 창`)도 틀렸다 — "커버 하한"을 "도달 상한"으로 재사용하는 타입 오류다.
 
 ### 7-3. direct 등록 게시물의 상한 면제 (겹침 동결 해소)
 

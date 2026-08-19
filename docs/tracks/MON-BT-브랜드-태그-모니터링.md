@@ -304,11 +304,18 @@ v1이 남긴 정합 구멍 3개(창 확장 no-op·direct 겹침 동결·티어 �
   2필드로 노출(`BrandReadRepository`). 알려진 오차(수용): 커서 미전진·안전 밸브로 끊긴 실행은
   `capped=false`라 완주와 같은 `(false, NULL)`로 기록돼 낙관적이다 — 기본 구성에서 밸브는
   도달 불가하고, 그 값이 컬럼 DEFAULT와 같아 아무것도 덧쓰지 않는다.
-- **확장 스킵**(§7-2) — 이미 상한 도달(`저장 행 수 >= collection-post-limit`)인 브랜드의 창
-  상향은 **백필을 제출하지 않고** `collection_months` 상향 + capped 마킹만 한다
-  (`raiseWindowCapped`, `covered_until`은 `COALESCE(기존값, now − 기존 창)`). 재백필이 기지
-  게시물만 세다 컷될 것이 확정이라 콜 전량이 낭비였다. `last_swept_on`·`backfill_completed_at`은
-  리셋하지 않는다(수집 상태 불변 — 구 `expandWindow` 리셋 경로를 타지 않는다).
+- **확장 스킵**(§7-2) — **재백필의 컷이 기존 창 안에 떨어지는** 브랜드의 창 상향은 **백필을
+  제출하지 않고** `collection_months` 상향 + capped 마킹만 한다(`raiseWindowCapped`). 확장
+  구간(기존 창 밖)에 한 건도 도달하지 못할 것이 확정이라 콜 전량이 낭비였다.
+  `last_swept_on`·`backfill_completed_at`은 리셋하지 않는다(수집 상태 불변 — 구 `expandWindow`
+  리셋 경로를 타지 않는다).
+  판정 입력은 **limit번째 최신 태그 행의 `taken_at`**(`nthNewestTagTakenAt` — 열거가 최신부터
+  단방향이라 재백필은 정확히 거기서 컷된다)이고, 그 값이 그대로 `covered_until` 폴백이다
+  (`COALESCE(기존값, 예측 컷)`). **최종 리뷰 픽스**: 초기 구현은 생애 누적 행 수(`countByBrand`)를
+  세서, 창 밖 과거 행이 많은 브랜드(10건/일·3개월 창·8개월 운영 = 누적 2,400 / 창 안 900)를
+  재백필이 컷되지 않을 것인데도 capped로 오표기했다 — 그 마킹이 §7-4 클램프까지 걸어 도달
+  가능했던 90~180일 구간을 영구 동결시켰다. 구 폴백(`now − 기존 창`)도 "커버 하한"을 "도달
+  상한"으로 재사용하는 타입 오류였다.
 - **direct 등록 게시물 상한 면제**(§7-3) — 사용자 결정: direct 게시물은 브랜드 창은 따르되
   2,000 상한 밖이다. `touchCrawledDepth`·`trackedPosts`에 `AND direct_registered_at IS NULL`,
   `directDuePosts`는 `tag_detected_at IS NULL` 필터를 제거해 겹침 행까지 2단계 모수에 포함.
@@ -321,12 +328,38 @@ v1이 남긴 정합 구멍 3개(창 확장 no-op·direct 겹침 동결·티어 �
   행의 due가 티어 주기마다 재장전돼 구조적으로 도달 불가능한 깊이를 여는 주기당 ~70콜 무익 딥
   스윕이 영구 반복됐다. 동결이 touch 반복이 아니라 **범위 제외**로 구현돼 단순해졌다.
 
+- **배포 순서: monitoring → was, 롤백은 역순.** was `BrandReadRepository`가
+  `collection_capped`·`covered_until`을 **무조건 SELECT**하므로, was를 먼저 배포하면(또는
+  monitoring이 healthy가 아닌 채로 was를 배포하면) 브랜드 계정 조회가 500 에러가 난다.
+  monitoring이 healthy임을 확인한 뒤 was를 배포할 것(08-18 광고 판정 문단과 같은 규율).
+- **FE 공유 필요** — `collectionCapped`·`coveredUntil` 2필드 신설은 계약 v2.14(§10)로 기술했다.
+  FE는 "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)" 표기와 `coveredUntil` null 분기를 반영해야
+  하며, 미반영이어도 기존 화면은 그대로 동작한다(추가 필드라 하위 호환).
+
 위 v1 문단의 알려진 여파 ①(성과 대시보드 covered 오표시)은 **아직 남아 있다** — 다만 이제
 `covered_until`이 "실제로 어디까지 훑었나"의 정답 소스로 존재하므로 후속 정정이 추정 없이
 가능해졌다(아래 미결·후속). ②(뱃지≠목록)는 상한과 무관한 정상 상태라 v2에서도 그대로다.
 
 ## 잔여 작업
 
+- **[수집 상한 v2 배포 후] 기존 capped 브랜드 커버리지 운영 보정 1회** — `collection_capped`·
+  `covered_until`은 **배포 후 백필이 도는 브랜드에만** 채워진다. 이미 상한에 걸린 채 운영 중인
+  브랜드(marynmay_global 등)는 `(false, NULL)`로 남아 was가 "요청 창 전체 커버"라는 거짓
+  커버리지를 내려보낸다. `last_swept_on` 리셋으로 재백필을 태우면 브랜드당 ~96콜이 드니,
+  **저장 행에서 직접 세팅**하는 편이 싸고 정확하다 — 값은 확장 스킵 판정과 같은 쿼리
+  (`nthNewestTagTakenAt`, §7-2)로 얻는다:
+  ```sql
+  -- limit(2000)번째 최신 태그 행의 taken_at = 정직한 도달 깊이
+  UPDATE brand_account b SET collection_capped = true, covered_until = (
+      SELECT taken_at FROM brand_tagged_post
+      WHERE brand_id = b.id AND tag_detected_at IS NOT NULL
+      ORDER BY taken_at DESC OFFSET 1999 LIMIT 1)
+  WHERE b.id = <brand_id>;
+  ```
+  **`min(taken_at)`을 쓰면 안 된다** — 상한 도입 이전에 초과 수집된 분(marynmay_global이 그
+  경우)이 섞여 있으면 실제 도달 깊이보다 깊게 잡히고, 그 값이 §7-4 클램프로 들어가 일일 열거가
+  영영 닿지 못할 깊이를 매일 연다. 대상 선별은 위 서브쿼리가 NULL이 아닌(= 태그 행이 2,000개
+  이상인) 활성 브랜드다.
 - **[staging 승격 전]**
   - ~~연속 실패 서킷브레이커 + 스윕당 판정 상한~~ → **구현 완료(2026-08-18)** — #490(백필 기동
     즉시·상한 제거) 이후 스테이징에서 무료 키 쿼터 공유로 429 폭주(15분간 분당 83~146건) 실측이
