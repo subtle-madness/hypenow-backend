@@ -120,3 +120,58 @@ marynmay_global(brand_account id=120, 08-19 08:56 UTC 등록):
 - 상한 미만 브랜드는 기존 동작 불변(자연 컷 도달 경로 회귀 없음).
 - 기존 안전 밸브 테스트(`안전_상한_도달_시_열거를_중단한다` 등) 유지 — 두 상한이 독립임을
   테스트가 증명해야 한다(안전 밸브는 커버 미처리, 이 컷은 커버 처리).
+
+## 7. v2 개정(2026-08-19 후속 리뷰 반영) — 확장 스킵·커버리지 영속화·direct 면제·컷 클램프
+
+v1 배포 전 코드리뷰에서 확인된 정합 구멍 2건(창 확장 no-op·direct 겹침 동결)과 효율 결함
+1건(티어 재장전 무익 딥 스윕)의 해소. 사용자 결정: "12개월 신청·2,000건 수집" 자체는 정상이며
+**UI에 고지할 사실**이다 — 따라서 서버는 그 사실을 영속화해 내려줘야 한다.
+
+### 7-1. 커버리지 영속화 (UI 고지의 데이터 원천)
+
+- `brand_account`에 컬럼 2개 추가(additive 마이그레이션, UTC 채번):
+  `collection_capped boolean NOT NULL DEFAULT false` / `covered_until timestamptz NULL`.
+- 의미: **백필(등록·확장) 시점의 창 커버리지 판정**. 컷 도달 = `capped=true` +
+  `covered_until = 실수집 깊이(열거가 실제 도달한 최고령 편입 taken_at)`. 완주 =
+  `capped=false` + `covered_until=NULL`(= 요청 창 전체 커버). 일일 스윕은 이 값을 건드리지
+  않는다(창 커버리지는 백필 속성 — 신선도가 아니라 범위의 이야기).
+- 기록 지점: `doSweepCore` 종료부, 백필 실행(`last_swept_on` null)일 때만. `BrandRepository`
+  주입 추가.
+- was 브랜드 계정 API가 두 값을 노출 → FE가 "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)"을
+  그린다. was_reader는 테이블 단위 SELECT 그랜트라 신규 컬럼 자동 포함.
+- 한계(수용): `covered_until`은 백필 시점 고정값이다. 이후 유입량 변화로 실제 도달 가능 깊이가
+  달라져도 갱신하지 않는다 — 갱신 경로는 수동 재백필(`last_swept_on` 리셋)뿐.
+
+### 7-2. 창 확장 스킵 (확장 no-op 해소)
+
+- `expandIfRequested`에서 확장 **전에** 그 브랜드의 `brand_tagged_post` 행 수를 센다.
+  `count >= collection-post-limit`이면: 재백필이 기지 게시물만 세다 컷될 것이 확정이므로
+  **백필을 제출하지 않고** `collection_months`만 상향 + `capped=true` +
+  `covered_until = COALESCE(기존값, now() - 기존 창)`으로 마킹하고 즉시 반환한다.
+  `last_swept_on`·`backfill_completed_at`은 리셋하지 않는다(수집 상태 불변 — 구 expandWindow의
+  리셋 경로를 타지 않는다). UI는 7-1 값으로 "확장 신청됐지만 상한 도달"을 표시한다.
+- `count < limit`이면 기존 경로 그대로(expandWindow 리셋 + 재백필) — 열거가 기지 구간을 지나
+  확장 구간에서 잔여분(limit - count)을 자연 편입한다. 이때도 종료부가 7-1을 기록한다.
+
+### 7-3. direct 등록 게시물의 상한 면제 (겹침 동결 해소)
+
+사용자 결정: direct 게시물은 브랜드 창(collection_months)은 따르되 **2,000 상한 밖**이다.
+
+- `touchCrawledDepth`에 `AND direct_registered_at IS NULL` 추가 — direct 행의
+  `last_crawled_at`은 실수집(`touchCrawled`)으로만 갱신된다(커버 간주 touch의 동결 면제).
+- `directDuePosts`의 `tag_detected_at IS NULL` 필터 **제거** — 모든 direct 행이 2단계 모수.
+  중복 콜 방지는 구조적으로 유지된다: 1단계 열거가 실제로 만난 겹침 행은 `touchCrawled`로
+  갱신돼 due가 아니므로 2단계가 건너뛴다. 컷 밖이라 못 만난 겹침 행만 due로 남아 단건 수집된다.
+- `trackedPosts`(열거 깊이 결정 입력)에 `AND direct_registered_at IS NULL` 추가 — 컷 밖 direct
+  행의 due가 1단계 열거 깊이를 끌어내리지 못하게(direct-only 가드와 같은 원리의 확장). 추가
+  비용은 "컷 밖 direct 게시물 수 × 티어 주기당 1콜"로 유한.
+
+### 7-4. 목표 컷 클램프 (티어 재장전 무익 딥 스윕 제거)
+
+- `capped=true` 브랜드의 `enumerationCutoff` 결과를 `covered_until`로 클램프한다(더 깊게 열지
+  않음). 근거: 컷 밖 태그 행의 due가 티어 주기마다 재장전돼 열거를 상한까지 벌리지만, 열거는
+  구조적으로 그 행에 도달할 수 없어 주기당 ~70콜의 무익 딥 스윕이 영구 반복된다(리뷰 실측 추산).
+  클램프하면 깊은 due는 목표 컷 밖이 되어 touch도 재열거도 발생하지 않는다 — "동결"이 touch
+  반복이 아니라 **범위 제외**로 구현이 단순해진다.
+- 백필 실행(`last_swept_on` null)은 클램프하지 않는다 — 재백필(수동 리셋)이 커버리지를 다시
+  넓힐 수 있는 유일한 경로여야 하므로.
