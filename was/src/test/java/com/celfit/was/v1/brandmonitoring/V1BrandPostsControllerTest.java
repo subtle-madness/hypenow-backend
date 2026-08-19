@@ -146,7 +146,7 @@ class V1BrandPostsControllerTest {
 						OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 						null, null, 30876L, 12L, 340L, null, "리즈다",
 						"https://cdn/pic.jpg", true, null, "ACTIVE", null,
-						12, OffsetDateTime.parse("2026-08-12T10:00:00Z"))));
+						12, OffsetDateTime.parse("2026-08-12T10:00:00Z"), false, null)));
 		givenTagged(taggedRow("P001", "2026-08-01T00:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("P001", "REELS", null)));
 
@@ -712,7 +712,7 @@ class V1BrandPostsControllerTest {
 				OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null, 30876L, 12L, 340L, null, "리즈다",
 				"https://cdn/pic.jpg", true, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {

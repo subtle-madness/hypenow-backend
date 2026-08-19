@@ -17,11 +17,18 @@ package com.celfit.was.v1.brandmonitoring;
  *
  * <p>{@code collectionMonths}는 연결(유저) 레벨 신청값이다(2026-08-17) — 자산 값(유저 간 max)이
  * 아니라 이 유저가 등록 시 고른 표시 기간. 게시물 목록·counts도 같은 창으로 잘려 내려간다.
+ *
+ * <p>{@code collectionCapped}·{@code coveredUntil}은 실제 커버리지다(수집 상한 v2 §7-1):
+ * {@code collectionCapped} = 백필이 수집 개수 상한(2,000)에서 끊겼는지,
+ * {@code coveredUntil} = 실수집 깊이(이 시각 이후 구간이 수집 범위) — null이면 요청 창 전체 커버.
+ * FE 표기: "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)". 자산(브랜드) 속성이라 같은 브랜드를 보는
+ * 유저 전원이 같은 값을 받는다 — 신청 창({@code collectionMonths})만 유저별로 다르다.
  */
 public record BrandAccountResponse(String id, String accountType, int collectionMonths, Profile profile,
 		String collectionStatus, String collectionStartedAt, String collectionCompletedAt,
 		String lastDetectedAt, String lastTrackedAt, String nextScheduledAt,
-		CollectionError collectionError, String createdAt) {
+		CollectionError collectionError, String createdAt,
+		boolean collectionCapped, String coveredUntil) {
 
 	/**
 	 * 프로필 관측값 — 매일 스윕이 갱신한다(등록 1회 고정 아님).

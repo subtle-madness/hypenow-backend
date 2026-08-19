@@ -809,7 +809,7 @@ class BrandPostAssemblerTest {
 	private static BrandReadRepository.BrandAccountRow accountRow() {
 		return new BrandReadRepository.BrandAccountRow(42L, "brand", LocalDate.of(2026, 8, 7),
 				SWEPT_AT, SWEPT_AT, SWEPT_AT, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
-				12, SWEPT_AT);
+				12, SWEPT_AT, false, null);
 	}
 
 	private static BrandReadRepository.BrandTaggedPostRow taggedRow(String code) {
