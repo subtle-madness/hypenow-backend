@@ -496,6 +496,47 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(unarchived.authorImageObjectPath()).isNull();
 	}
 
+	// ---------- 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) ----------
+
+	@Test
+	void findMatchedTags는_shortcode당_매칭된_태그_전부를_돌려준다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "MULTI", "RELEVANT", now.minusDays(1).toString());
+		jdbc.sql("""
+				INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag)
+				VALUES (:brandId, 'MULTI', 'cclime'), (:brandId, 'MULTI', '끌리메')
+				""")
+				.param("brandId", brandId).update();
+
+		List<BrandReadRepository.MatchedTagRow> rows = repository.findMatchedTags(brandId, List.of("MULTI"));
+
+		assertThat(rows).extracting(BrandReadRepository.MatchedTagRow::tag)
+				.containsExactlyInAnyOrder("cclime", "끌리메");
+	}
+
+	@Test
+	void findMatchedTags는_다른_브랜드_행을_섞지_않는다() {
+		long mine = seedBrand("brand_mine");
+		long other = seedBrand("brand_other");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(mine, "SAME", "RELEVANT", now.minusDays(1).toString());
+		seedHashtagPost(other, "SAME", "RELEVANT", now.minusDays(1).toString());
+		jdbc.sql("INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag) VALUES (:brandId, 'SAME', 'other')")
+				.param("brandId", other).update();
+
+		List<BrandReadRepository.MatchedTagRow> rows = repository.findMatchedTags(mine, List.of("SAME"));
+
+		assertThat(rows).isEmpty();
+	}
+
+	@Test
+	void findMatchedTags는_빈_shortcode_목록에_빈_결과를_돌려준다() {
+		long brandId = seedBrand("brand_official");
+
+		assertThat(repository.findMatchedTags(brandId, List.of())).isEmpty();
+	}
+
 	// ---------- 승격 상태 필드용 tagged 존재 판정(2026-08-17) ----------
 
 	@Test

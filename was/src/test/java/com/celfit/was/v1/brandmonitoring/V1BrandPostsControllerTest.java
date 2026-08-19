@@ -20,6 +20,7 @@ import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
@@ -79,6 +80,12 @@ class V1BrandPostsControllerTest {
 	/** 과도기 폴백 전용(T10) — 이 표면 계약 테스트는 건드리지 않는다(기본값이 빈 목록). */
 	@MockitoBean
 	BrandDirectPostRepository directPostRepository;
+	/**
+	 * 해시태그 발견 목록 내 태그 필터(08-19) 전용 — 이 표면 계약 테스트는 건드리지 않는다(기본값이
+	 * 빈 Set이라 findByUserAndBrand가 항상 empty → 필터 자체가 스킵되고 기존 동작 그대로 통과한다).
+	 */
+	@MockitoBean
+	BrandHashtagTagRepository hashtagTagRepository;
 	/** 과도기 폴백 전용(T10). */
 	@MockitoBean
 	TrackingItemAssembler trackingItemAssembler;
