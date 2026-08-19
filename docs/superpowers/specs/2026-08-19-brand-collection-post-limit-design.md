@@ -49,6 +49,10 @@ marynmay_global(brand_account id=120, 08-19 08:56 UTC 등록):
   안전 밸브 판정보다 **앞**에 둔다(안쪽 컷이 먼저).
 - 카운트가 `seen`(기지 게시물 포함 열거량) 기준인 이유: 열거 콜 수 = 비용과 정비례하는 값이
   이것이고, 편입분(`collected`)만 세면 기지 게시물 페이지를 무한정 걷는다.
+- **`collection-post-limit`이 0 이하면 상한을 끈다(무제한)** — 레포 관용(`backfill-max-per-run`,
+  DECISIONS 2026-08-18)과 일치시킨 가드다. 가드가 없으면 0이 "1페이지 후 컷 + 커버 처리"로
+  동작해 목표 컷 전체에 `last_crawled_at`이 찍히고, 운영자가 "제한 없음"을 의도해 넣은 0이
+  브랜드 전체를 티어 주기 동안 조용히 동결시킨다.
 
 ### 3-2. 커버 처리 — 이 설계의 핵심
 
@@ -68,8 +72,15 @@ marynmay_global(brand_account id=120, 08-19 08:56 UTC 등록):
 
 - 컷 밖 기존 수집분(예: marynmay_global의 8,000건)은 그대로 서빙된다. was 목록이 정렬 기준
   상위 2,000건만 내려주므로 FE 체감 변화 없음.
-- 탭 뱃지 counts는 전체 행 기준이라 기존 초과 수집 브랜드는 뱃지(1만)≠목록(2,000) 불일치가
-  남는다 — 상한 도입 후 신규 브랜드는 자연 수렴하므로 별도 보정하지 않는다(알려진 한계).
+- 탭 뱃지 counts는 전체 행 기준이라 뱃지(1만)≠목록(2,000) 불일치가 남는다 — 별도 보정하지
+  않는다(알려진 한계). **이 상한은 "한 실행의 열거량"을 자르는 것이지 저장 행 수를 자르는 게
+  아니다** — 신규 브랜드도 수렴하지 않는다. 매일 신규 태그가 편입되므로 marynmay급(37건/일)은
+  평범한 일일 수집만으로 ~54일이면 저장 2,000행을 넘고, 그 뒤로도 계속 는다. 즉 뱃지≠목록
+  불일치는 과거 초과 수집의 잔재가 아니라 **고물량 브랜드의 정상 상태**다.
+- **was 성과 대시보드 covered 오표시**(알려진 여파): `PerformanceComparisonAssembler`의
+  `covered`는 `backfill_completed_at` + `collection_months`로만 판정한다 — 상한 컷으로 실제로는
+  열거하지 않은 더 깊은 기간까지 "수집 완료"로 보고 그 구간을 "수집했는데 0건"으로 표시한다.
+  **후속 과제**: covered 판정에 실수집 깊이(그 브랜드의 최고령 `taken_at`)를 반영해야 한다.
 
 ### 3-4. 백필 경로
 
@@ -81,10 +92,15 @@ marynmay_global(brand_account id=120, 08-19 08:56 UTC 등록):
 
 ## 4. 변경 내역
 
-- `monitoring.brand.collection-post-limit` 신설, 기본 **2,000** (`@Value` + application.yml).
+- `monitoring.brand.collection-post-limit` 신설, 기본 **2,000**, **0 이하 = 무제한**
+  (`@Value` + application.yml).
 - `BrandCollectService.doSweepCore` 열거 루프에 §3-1 컷 추가, §3-2 커버 처리.
-- 안전 밸브(`max-posts-per-sweep` 10,000·ERROR·커버 미처리)는 **그대로** — 바깥 밸브 역할
-  유지(예: Hiker 응답 이상으로 무한 신규 code). 두 상한의 역할 구분을 코드 주석에 명시한다.
+- 안전 밸브(`max-posts-per-sweep` 10,000·ERROR·커버 미처리)는 코드상 **그대로** 두지만,
+  **기본 설정(2000 < 10000)에서는 안쪽 컷이 항상 먼저 걸려 밸브 분기가 도달 불가(vestigial)**
+  다 — "바깥 밸브 역할 유지"는 기본 구성에서는 성립하지 않는다. 기본 구성에서 컷을 알리는
+  유일한 신호는 **INFO 로그**이고(Loki `{service="monitoring"}`에서 조회), 밸브가 다시 의미를
+  갖는 건 `collection-post-limit`을 10,000 초과로 올리거나 0(무제한)으로 끈 구성뿐이다.
+  두 상한의 역할 구분은 코드 주석·`sweepCore` javadoc에 명시한다.
 - 티어 정책(`BrandCrawlPolicy`)·저장 스키마·was API·편입 컷(collection_months 창) 무변경.
   DB 마이그레이션 없음.
 

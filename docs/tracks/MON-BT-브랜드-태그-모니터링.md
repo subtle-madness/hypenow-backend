@@ -267,6 +267,29 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
   뒤 was를 배포할 것. (08-18 시딩 계정 관리 표면 철회로 `brand_seeded_account`는 이 목록에서
   빠졌다 — was가 더 이상 그 테이블을 조회하지 않는다.)
 
+수집 개수 상한(2026-08-19 — **구현 완료**,
+[spec 2026-08-19](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) ·
+[plan(아카이브)](../superpowers/plans/archive/2026-08-19-brand-collection-post-limit.md)):
+전역 설정 `monitoring.brand.collection-post-limit`(기본 **2,000**, **0 이하면 무제한** —
+`backfill-max-per-run` 관용 일치) 신설. 한 실행의 열거량이 상한에 닿으면 INFO 로그와 함께
+**의도된 자연 종료**로 끊고, `coveredCutoff=true`로 `touchCrawledDepth`를 **목표 컷 전체**에
+찍는다 — 컷 밖(더 깊은) 게시물은 실크롤 없이 `last_crawled_at`이 갱신돼 ①매 스윕이 같은
+깊이를 다시 여는 due 낭비 루프가 끊기고 ②마지막 수집 시점 지표로 **동결된 채 계속 서빙**된다
+(was 목록 상한 `POST_LIMIT` 2,000과 정합). 계기는 marynmay_global 등록 백필 운영 실측 —
+10,017건 열거·Hiker 15,298콜(~$10.6)인데 FE에 나가는 건 정렬 앞쪽 2,000건이었다(백필 비용
+~$2.5 수준으로 축소). 08-12 안전 밸브(`max-posts-per-sweep` 10,000·ERROR·커버 미처리)는 코드에
+그대로 있으나 **기본 설정(2000 < 10000)에서는 안쪽 컷이 먼저 걸려 도달 불가**다 — 컷을 알리는
+유일한 신호는 INFO 로그(Loki `{service="monitoring"}`)이고, 밸브는 상한을 10,000 초과로 올리거나
+0(무제한)으로 끈 구성에서만 되살아난다(그래서 밸브 보정 절차 "상한 상향 + `last_swept_on` 리셋
+재백필"은 이제 `collection-post-limit`도 함께 올려야 성립한다). 티어 정책·저장 스키마·was API·
+편입 컷 무변경, DB 마이그레이션 없음. **알려진 여파 2건**: ① was 성과 대시보드
+`PerformanceComparisonAssembler.covered`가 `backfill_completed_at` + `collection_months` 기준이라
+상한 컷 밖 기간을 "수집했는데 0건"으로 오표시한다 — covered 판정에 실수집 깊이(최고령
+`taken_at`)를 반영하는 것이 **후속 과제**(아래 미결·후속). ② 탭 뱃지(전체 행)≠목록(2,000)
+불일치는 상한과 무관하게 **고물량 브랜드의 정상 상태**다 — 상한은 열거량을 자르지 저장 행 수를
+자르지 않아, 37건/일 브랜드는 평범한 일일 수집만으로 ~54일이면 2,000행을 넘는다(신규 브랜드도
+수렴하지 않는다).
+
 ## 잔여 작업
 
 - **[staging 승격 전]**
@@ -343,6 +366,11 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 - **완결 배치 서빙 — 배포 시점 확장 중이던 계정 보정 판단**(08-13) — 배포 순간 이미 기간 확장 중이던 계정은 `expandWindow`의 `backfill_completed_at` 리셋을 못 받고 옛 완주 시각을 들고 있어 FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). **일회성이고 데이터 유실 없음** — 보정 UPDATE 실행 여부는 배포 시 대상 건수를 보고 판단.
 - **링크 레벨 표시 창 — 배포 후 운영 수동 보정 1회**(08-17) — 신청값이 지금까지 어디에도 저장된 적이 없어 마이그레이션이 복원할 수 없다(기존 링크는 전부 12). 대상은 cclime 3개월 유저 + **단독 구독(활성 링크가 정확히 1개) 브랜드 전체** — 단독 구독은 자산값 = 그 유저의 신청값이라 자산에서 복원할 수 있다(다중 구독은 max라 복원 불가 → 그대로 12 유지, 개별 확인). app DB와 monitoring DB가 분리라 2단계(monitoring에서 `collection_months < 12 AND status = 'ACTIVE'` 브랜드 확인 → app에서 단독 링크만 UPDATE). 절차 SQL은 PR #480 본문.
 - **링크 레벨 표시 창 — 링크 창 미적용 표면**(08-17) — 성과 대시보드(`PerformanceComparisonAssembler`의 `covered`·집계 모수)와 `hashtag-posts` 목록은 아직 자산 창 전량을 본다. 3개월 유저에게 게시물 counts와 대시보드 모수가 달라 보인다(의도적 범위 밖 — FE 문의·혼선 발생 시 재론).
+- **수집 개수 상한 — 성과 대시보드 covered 판정 정정**(08-19, 후속 과제) —
+  `PerformanceComparisonAssembler.covered`가 `backfill_completed_at` + `collection_months`만 보므로
+  `collection-post-limit` 컷으로 실제로는 열거하지 않은 더 깊은 기간까지 "수집 완료 → 0건"으로
+  표시된다. 판정에 실수집 깊이(그 브랜드의 최고령 `taken_at`)를 반영해야 한다
+  ([spec 2026-08-19 §3-3](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md)).
 - **링크 레벨 표시 창 — 창 필터 SQL 푸시다운**(08-17) — 지금은 자산 창 전량을 조립한 뒤 메모리에서 자른다. 3개월 유저가 12개월 브랜드를 볼 때 버려지는 조립 비용이 크면 리포지토리 조회 컷을 링크 창으로 내리는 최적화가 후속.
 - **완결 배치 서빙 — 운영 반영 직후 백필 확인**(08-13) — `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**이어야 한다. 0이 아니면 마이그레이션 백필(25,759행)이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.
 - **해시태그 FE 요청 일괄(08-17) — 구현 완료, 잔여 4건**(태그 등록 즉시 스윕·제외 규칙 폐기·direct 취소 API·brandPostId·작성자 프로필 아카이브 — DECISIONS 08-17 행, 계약 v2.9):
