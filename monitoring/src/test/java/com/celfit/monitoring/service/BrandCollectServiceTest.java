@@ -333,8 +333,12 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep) {
+		return service(maxPostsPerSweep, 10000);   // 수집 상한 불활성 — 기존 테스트 의미 보존
+	}
+
+	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, 3, 30, true);
+				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
 	private long tagCalls() {
@@ -592,6 +596,54 @@ class BrandCollectServiceTest {
 		assertThat(tagged.depthCalls).isZero();
 		assertThat(tagged.touched).containsKeys("A", "B", "C", "D");   // 만난 게시물은 그대로 touch
 		assertThat(tagged.touched).doesNotContainKey("Gone5d");
+	}
+
+	@Test
+	void 수집_상한_도달은_자연_종료로_목표_깊이_전체를_커버한다() {
+		// 수집 개수 상한(2026-08-19 스펙 §3) — 안전 밸브와 달리 의도된 종료라 커버 처리한다.
+		// 열거에서 못 만난 컷 밖 깊은 due 링크까지 touch해야 한다 — 안 하면 due가 영구 잔존해
+		// 매 스윕이 같은 깊이를 다시 여는 낭비 루프가 된다(§3-2: 루프 차단 = 지표 동결).
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DeepDue60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(10000, 3).sweep(sweptBrand);   // 수집 상한 3 — 2페이지째 4건 도달, 3페이지는 안 부른다
+
+		assertThat(tagCalls()).isEqualTo(2);
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C", "D");
+		assertThat(tagged.depthCalls).isEqualTo(1);            // 안전 밸브(depthCalls=0)와의 결정적 차이
+		assertThat(tagged.touched).containsKey("DeepDue60d");  // 목표 컷(60일 due)까지 통째로 동결
+	}
+
+	@Test
+	void 수집_상한_도달도_백필_페이지_콜백은_전부_방출한다() {
+		// 등록 백필도 같은 진입점(스펙 §3-4) — 상한 종료가 완결 배치 서빙 계약(페이지마다 1회
+		// 콜백)을 깨지 않아야 markServing·backfill_completed_at 경로가 무변경으로 성립한다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+		List<Integer> sizes = new ArrayList<>();
+
+		service(10000, 3).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
+
+		assertThat(sizes).containsExactly(2, 2);       // 중단 전 두 페이지 모두 자기 페이지분으로 방출
+		assertThat(tagged.depthCalls).isEqualTo(1);    // 백필 목표 컷(수집 창 전체)도 커버 처리
+	}
+
+	@Test
+	void 마지막_페이지에서_정확히_상한_도달은_자연_종료다() {
+		// 상한 판정이 커서 소진 판정 뒤에 있어(기존 안전 밸브와 같은 규칙 — 스펙 §3-1) 마지막
+		// 페이지에서 정확히 상한에 닿으면 상한 경로가 아니라 커서 소진 자연 종료로 끝난다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));
+
+		service(10000, 3).sweep(brand);   // 상한 3 = 총 열거 3건 — 정확히 상한에서 커서 소진
+
+		assertThat(tagCalls()).isEqualTo(2);
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C");
+		assertThat(tagged.depthCalls).isEqualTo(1);
 	}
 
 	// ── 브랜드 프로필 매일 갱신 ──────────────────────────────────────────────
@@ -1006,7 +1058,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 3, 30, true);
+					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -1173,7 +1225,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				adJudge, Runnable::run, 10000, 3, 30, adDisclosureEnabled);
+				adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 
 	/**

@@ -215,7 +215,7 @@ class BrandDirectCollectServiceTest {
 		// 꺼져 있으면 judgeAdDisclosuresSafely가 adJudge를 아예 호출하지 않으므로(BrandCollectService
 		// 클래스 주석) null을 넘겨도 안전하다.
 		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
-				tagged, authors, null, Runnable::run, 2000, 3, 30, false);
+				tagged, authors, null, Runnable::run, 2000, 10000, 3, 30, false);
 		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect);
 	}
 

@@ -47,6 +47,9 @@ import org.springframework.stereotype.Service;
  * <p>2026-08-12 스트리밍 개정 + 2026-08-13 완결 배치 서빙 개정: 적재는 페이지 단위로 즉시
  * 일어나고, 콜백도 페이지마다 그 페이지분만 넘긴다 — 수신자(등록 백필)가 페이지 단위로 보강·정산해
  * 완결된 것부터 목록에 올린다. 구 서빙 창(30일) 커버 기준은 폐기됐다.
+ *
+ * <p>2026-08-19 수집 개수 상한: 열거는 브랜드당 최신 collection-post-limit(기본 2,000)건에서 의도된
+ * 자연 종료 — 목표 컷 전체 touch로 컷 밖 지표 동결.
  */
 @Service
 public class BrandCollectService {
@@ -64,6 +67,7 @@ public class BrandCollectService {
 	private final AdDisclosureJudgeService adJudge;
 	private final Executor enrichWorker;
 	private final int maxPostsPerSweep;
+	private final int collectionPostLimit;
 	private final int commentPages;
 	private final int authorStaleDays;
 	private final boolean adDisclosureEnabled;
@@ -74,6 +78,7 @@ public class BrandCollectService {
 			AdDisclosureJudgeService adJudge,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
+			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays,
 			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
@@ -87,6 +92,7 @@ public class BrandCollectService {
 		this.adJudge = adJudge;
 		this.enrichWorker = enrichWorker;
 		this.maxPostsPerSweep = maxPostsPerSweep;
+		this.collectionPostLimit = collectionPostLimit;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
 		this.adDisclosureEnabled = adDisclosureEnabled;
@@ -203,6 +209,22 @@ public class BrandCollectService {
 					.allMatch(p -> p.takenAt() != null
 							&& Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff));
 			if (wholePageBeforeCutoff || page.nextPageId() == null) {
+				coveredCutoff = true;
+				break;
+			}
+			// 수집 개수 상한(2026-08-19 스펙) — 비용 목적의 "의도된 자연 종료"다. 안전 밸브(아래
+			// maxPostsPerSweep)와 역할이 다르다: 밸브는 닿으면 안 되는 폭주 방어(ERROR·커버 미처리 —
+			// 다음 스윕이 같은 깊이를 다시 연다)이고, 이 컷은 정상 경로(INFO·커버 처리)다.
+			// coveredCutoff=true로 목표 컷 "전체"를 touch하는 것이 핵심이다(스펙 §3-2): 컷 밖(더 깊은)
+			// due의 last_crawled_at이 실크롤 없이 갱신돼 ①매 스윕이 그 깊이를 다시 여는 낭비 루프가
+			// 차단되고 ②그 게시물들은 마지막 수집 시점 지표로 동결된 채 계속 서빙된다(was 목록
+			// 상한 2,000과 정합). 판정이 커서 소진 뒤인 이유는 밸브와 동일 — 마지막 페이지에서 정확히
+			// 상한에 닿는 건 자연 종료다.
+			if (seen.size() >= collectionPostLimit) {
+				log.info("브랜드 태그 수집 개수 상한({}) 도달 — {} 의도된 자연 종료"
+								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
+						collectionPostLimit, brand.username(), seen.size(), cutoff,
+						oldestTakenAt(collected));
 				coveredCutoff = true;
 				break;
 			}
