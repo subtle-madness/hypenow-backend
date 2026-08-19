@@ -15,7 +15,7 @@
 -- 실측 근거(설계 §9, 2026-08-18 운영 조회):
 --   app: users 53 · campaigns 12 · monitoring_items 76 · registrations 20 · digests 20 ·
 --        brand_monitorings 130 · saved_influencers 9 · saved_contents 4 · inquiries 6(마지막 07-29)
---   monitoring: brand_tagged_post 28,255 · brand_hashtag_post 2,543 · target 73 ·
+--   monitoring: brand_tagged_post 28,255 · brand_hashtag_post 2,543 · brand_post_meta 8,000 · target 73 ·
 --        sweep_run 7일 7/7 성공 · Hiker 콜 30일 49,756(브랜드) + 3,536(타깃) · alarm_event 97
 --
 -- 빨간불 상태가 필요하면 이 시드 위에 seed-red.sql을 덧입힌다(복원은 리셋 후 이 파일 재적용).

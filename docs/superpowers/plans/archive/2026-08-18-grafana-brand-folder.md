@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: [2026-08-18-grafana-brand-folder-design.md](../specs/2026-08-18-grafana-brand-folder-design.md)
+> 상태: ✅ 실행됨(2026-08-19, 태스크 5/5 완료 — PR #501) · 스펙: [2026-08-18-grafana-brand-folder-design.md](../specs/2026-08-18-grafana-brand-folder-design.md)
 
 **Goal:** Grafana 폴더 "브랜드 모니터링"을 신설하고 그 아래 대시보드 3장([브랜드] 운영 건강 이관 + 수집 현황·광고 표기 신설)을 둔다.
 
@@ -119,17 +119,14 @@ SELECT 'TP' || g, 'author' || (g % 2000),
 FROM generate_series(1, 8000) g;
 
 -- enrich 분포 조정(수집 현황 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
--- 잔여 스탯이 상시 수천으로 뜬다 — 실제 양상(최근 유입분만 처리 대기)으로 좁힌다.
--- 하루 넘게 미처리(잔여 판정 대상)는 12건만 남긴다.
+-- 잔여 스탯이 상시 수천으로 뜬다 — 하루 넘게 미처리는 전부 메워 초록 시드의 잔여를 0으로.
+-- 24h 이내 유입분의 NULL(자연 처리 대기)은 그대로 둔다 — '오늘' 타일들과 마찬가지로
+-- 하니스 시드는 24시간 내 재적용 전제(시간이 지나면 이 대기분이 창을 넘어 잔여로 늙는다).
 UPDATE brand_tagged_post SET enriched_at = first_seen_at + interval '2 hours'
  WHERE enriched_at IS NULL AND first_seen_at < now() - interval '24 hours';
-UPDATE brand_tagged_post SET enriched_at = NULL
- WHERE short_code IN (SELECT short_code FROM brand_tagged_post
-                       WHERE first_seen_at < now() - interval '24 hours'
-                       ORDER BY short_code LIMIT 12);
 
--- 수집 기간 설정 편차(전 행 기본 12라 분포 stat이 단색이 된다)
-UPDATE brand_account SET collection_months = (ARRAY[1, 3, 6, 12])[1 + (id % 4)];
+-- (collection_months는 기존 brand_account INSERT가 이미 (ARRAY[1,3,6,12])[1+(g%4)]로
+--  편차를 넣고 있어 별도 조정 불필요 — 리뷰 확인)
 ```
 
 주의: `TRUNCATE brand_post_meta`는 이 INSERT 직전에 필요하다 — 구간 첫머리
@@ -139,9 +136,14 @@ UPDATE brand_account SET collection_months = (ARRAY[1, 3, 6, 12])[1 + (id % 4)];
 
 ```sql
 -- [브랜드] 수집 현황 빨강 — 오늘 신규 태그 게시물 0(스윕 불발 양상) + 백필 미완 브랜드 4
+-- + enrich 잔여 600(빨강 임계 500 초과)
 DELETE FROM brand_tagged_post
  WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date;
 UPDATE brand_account SET last_swept_on = NULL WHERE id IN (1, 2, 3, 4);
+UPDATE brand_tagged_post SET enriched_at = NULL
+ WHERE short_code IN (SELECT short_code FROM brand_tagged_post
+                       WHERE first_seen_at < now() - interval '24 hours'
+                       ORDER BY short_code LIMIT 600);
 
 -- [브랜드] 광고 표기 빨강 — 오늘 판정 0건(판정 잡 정지 양상)
 UPDATE brand_post_meta SET ad_judged_at = ad_judged_at - interval '2 days'
@@ -155,8 +157,8 @@ sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed.sq
 docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -U dev -d monitoring -c "SELECT count(*) FILTER (WHERE judged_caption_hash IS NOT NULL) AS judged, count(*) FILTER (WHERE judged_caption_hash IS NULL) AS pending, count(*) FILTER (WHERE (ad_judged_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS today FROM brand_post_meta" -c "SELECT count(*) AS enrich_backlog FROM brand_tagged_post WHERE enriched_at IS NULL AND first_seen_at < now() - interval '24 hours'" -c "SELECT collection_months, count(*) FROM brand_account GROUP BY 1 ORDER BY 1"
 ```
 
-기대: judged = 4,800 · pending = 3,200 · today = 72(1..120 중 g%5<3인 것만 판정) ·
-enrich_backlog = 12 · collection_months 4분포(각 32~33).
+기대: judged = 4,800 · pending = 3,200 · today ≥ 72(고정분 72 + 랜덤 분기가 오늘로 떨어진 덤 —
+실행 시각에 비례) · enrich_backlog = 0 · collection_months 4분포(각 32~33).
 
 - [ ] **Step 4: 커밋**
 
@@ -223,7 +225,7 @@ SELECT count(*) FILTER (WHERE collection_months = 1)  AS "1개월",
 FROM brand_account WHERE closed_at IS NULL
 ```
 
-- [ ] **Step 2: 하니스 육안 검증** — 60초 대기(또는 grafana restart) 후 `http://localhost:3300/d/hypenow-brand-collection`: 8패널 전부 그려지고(No data 없음), 타일 1 오늘 신규 > 0 초록, 타일 2 = 12, 타일 3 = 0 초록, 추이 2장이 30일 막대·KST 경계로 렌더.
+- [ ] **Step 2: 하니스 육안 검증** — 60초 대기(또는 grafana restart) 후 `http://localhost:3300/d/hypenow-brand-collection`: 7패널 전부 그려지고(No data 없음), 타일 1 오늘 신규 > 0 초록, 타일 2 = 0 초록, 타일 3 = 0 초록, 추이 2장이 30일 막대·KST 경계로 렌더.
 
 - [ ] **Step 3: 커밋**
 
@@ -301,7 +303,7 @@ ORDER BY ad_judged_at DESC LIMIT 15
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -q -U dev -d monitoring
 ```
 
-확인: 광고 표기 "오늘 판정 건수" 0 → "판정 잡 확인" 빨강 · 수집 현황 "오늘 신규 태그 게시물" 0 → "스윕 확인" 빨강 · "백필 미완 브랜드" 4 노랑. 복원:
+확인: 광고 표기 "오늘 판정 건수" 0 → "판정 잡 확인" 빨강 · 수집 현황 "오늘 신규 태그 게시물" 0 → "스윕 확인" 빨강 · "백필 미완 브랜드" 4 노랑 · "enrich 잔여" 600 빨강. 복원:
 
 ```bash
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed.sql | docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -q -U dev -d monitoring

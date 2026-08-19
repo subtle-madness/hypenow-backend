@@ -733,10 +733,13 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.zst` 3일 + B2 `hypenow-backups/monitoring/` 7일 롤링(§6).
 
-## 14. Grafana 대시보드 (07-31~, 08-18 6탭 개편)
+## 14. Grafana 대시보드 (07-31~, 08-18 6탭 + 브랜드 폴더 3장 개편)
 
-운영 상태를 보는 Grafana 스택. 08-18 개편으로 "데이터소스 축 3장"에서 **목적 축 6탭**으로
-재편됐다(설계: `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`).
+운영 상태를 보는 Grafana 스택. 08-18 개편으로 "데이터소스 축 3장"에서 **목적 축 6탭 + 브랜드
+폴더 3장**으로 재편됐다(설계: `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`,
+폴더 분리: `docs/superpowers/specs/2026-08-18-grafana-brand-folder-design.md`).
+**레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다**(cd.yml의 프로비저닝
+동기화가 `scp -r` 추가 전용) — 잔존 파일은 수동으로 정리해야 한다(§14-2-2 ④).
 **Caddy 라우트가 없다** — 호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler
 어드민(§10)과 같은 **SSH 터널 방식**으로만 접근한다. 정의는 `deploy/compose.yaml`(grafana 서비스) +
 `deploy/grafana/provisioning/`(데이터소스·대시보드 JSON·알림 규칙, 전부 파일 기반 자동 프로비저닝).
@@ -760,20 +763,23 @@ ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
 - 로컬 3000이 아니라 **3001**인 이유: 로컬 3000은 Next.js 개발 서버가 쓴다. compose의
   `GF_SERVER_ROOT_URL`도 `http://localhost:3001`로 맞춰져 있다 — 다른 포트로 터널을 열면
   로그인 리다이렉트가 어긋나므로 둘을 함께 바꿀 것.
-- 폴더 HypeNow, **6탭**(08-18 개편 — 구 "서비스 현황"·"에러"·"API 성능" 3장은 삭제·흡수됨):
+- 폴더 **HypeNow 5탭**(08-18 개편 — 구 "서비스 현황"·"에러"·"API 성능" 3장은 삭제·흡수됨):
   - **홈**(`hypenow-home`) — 신호등 13타일. 행 순서가 곧 읽는 순서: 지금 아픈가(API 5xx·ERROR
     급증·Hiker 402·IG 401) → 돌고 있나(스윕·콜·미러·등록·알림) → 여유가 있나(호스트·JVM·커넥션 풀).
     각 타일 클릭 시 해당 상세 탭으로 이동.
-  - **브랜드 모니터링**(`hypenow-brand`) — 브랜드 스윕 신선도·오늘 성공/소요·처리 간격.
-    브랜드 스윕은 런 단위 기록이 없어(`brand_account.last_swept_at/on`뿐) 소요·간격은 당일 유도 근사.
   - **경쟁사 모니터링**(`hypenow-competitor`) — `sweep_run` 축(캠페인 스윕)·타깃·알림 발송
     실패 + 등록 처리(멈춘 등록·결과 미확정).
   - **탐색**(`hypenow-discovery`) — 미러 신선도·랭킹 산출 규모·저장 활동.
   - **Hiker**(`hypenow-hiker`) — 비용(일별·브랜드별 콜)과 외부 의존 실패(402·401·상태코드).
     Hiker는 4xx도 과금이라 비용 축과 실패 축이 보완 관계다.
   - **인프라**(`hypenow-infra`) — 호스트·컨테이너·JVM 지표 + 전 서비스 에러 로그(§16의 조회축 흡수).
-  - 건강 stat은 fail-loud(`noValue`·null 매핑 빨강 + 임계), 사용량 stat은 중립(색 없음) —
-    수정 시 이 규약 유지. 상태 스냅샷 패널은 전역 시간 필터를 의도적으로 안 탄다.
+- **브랜드 모니터링**(별도 폴더, 08-18 분리 — 3장): `[브랜드] 운영 건강`(`hypenow-brand`,
+  스윕 신선도·오늘 성공/소요·처리 간격 — 브랜드 스윕은 런 단위 기록이 없어
+  (`brand_account.last_swept_at/on`뿐) 소요·간격은 당일 유도 근사) ·
+  `[브랜드] 수집 현황`(`hypenow-brand-collection`, 태그 게시물·해시태그 감지·enrich·백필) ·
+  `[브랜드] 광고 표기`(`hypenow-brand-ad`, 판정 분포·경로·추이·미표기 목록)
+- 건강 stat은 fail-loud(`noValue`·null 매핑 빨강 + 임계), 사용량 stat은 중립(색 없음) —
+  수정 시 이 규약 유지. 상태 스냅샷 패널은 전역 시간 필터를 의도적으로 안 탄다.
 
 ### 14-2. `grafana_reader` 롤 생성 (1회, 사용자 수동 — Flyway 아님)
 
@@ -843,6 +849,9 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 아래를 실행하기 전까지 운영에서 **브랜드·경쟁사·Hiker 탭 전체와 홈·탐색의 DB 타일이 권한 오류로
 빈다**. 컬럼 목록은 최종 대시보드 JSON의 rawSql에서 기계 추출로 검산했다(2026-08-18) — 패널이
 안 쓰는 컬럼은 부여하지 않는다(§14-2 최소권한 원칙). GRANT는 멱등이라 재실행 무해.
+08-18 브랜드 폴더 분리로 브랜드 3장이 `brand_tagged_post`·`brand_hashtag_post`·`brand_post_meta`와
+`brand_account.collection_months`를 추가 조회한다(스펙: `2026-08-18-grafana-brand-folder-design.md`) —
+아래 ② 블록에 이미 반영돼 있다.
 
 ```bash
 # ① 롤 전역 설정 — 대시보드 쿼리가 운영 쿼리를 밀어내지 않게 문장 타임아웃(클러스터 전역, 두 DB 공통)
@@ -851,7 +860,7 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
 ```
 
 ```bash
-# ② monitoring DB — 접속권 + 대시보드가 읽는 6테이블(컬럼 단위).
+# ② monitoring DB — 접속권 + 대시보드가 읽는 9테이블(컬럼 단위).
 #    객체 소유자는 monitoring 롤이지만 슈퍼유저(<DB_USER>)가 GRANT 가능. raw 스키마는 GRANT 없음(fail-closed).
 docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
   -c "GRANT CONNECT ON DATABASE monitoring TO grafana_reader" \
@@ -859,9 +868,12 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
   -c "GRANT SELECT (started_at, completed_at, ok) ON sweep_run TO grafana_reader" \
   -c "GRANT SELECT (type, status, tracked_since, fetch_failing) ON target TO grafana_reader" \
   -c "GRANT SELECT (event_type, occurred_at, email_status, email_attempts) ON alarm_event TO grafana_reader" \
-  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, collection_months) ON brand_account TO grafana_reader" \
   -c "GRANT SELECT (brand_id, called_on, calls) ON brand_call_count TO grafana_reader" \
-  -c "GRANT SELECT (called_on, calls) ON target_call_count TO grafana_reader"
+  -c "GRANT SELECT (called_on, calls) ON target_call_count TO grafana_reader" \
+  -c "GRANT SELECT (first_seen_at, enriched_at) ON brand_tagged_post TO grafana_reader" \
+  -c "GRANT SELECT (verdict, first_seen_at) ON brand_hashtag_post TO grafana_reader" \
+  -c "GRANT SELECT (short_code, username, ad_verdict, ad_verdict_source, ad_violations, ad_judged_at, judged_caption_hash) ON brand_post_meta TO grafana_reader"
 ```
 
 ```bash
@@ -878,6 +890,16 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   -c "GRANT SELECT (created_at) ON app.saved_contents TO grafana_reader"
 ```
 
+```bash
+# ④ 구 위치 잔존 파일 제거(1회) — CD scp는 추가 전용이라 레포에서 옮긴 파일이 서버에 남는다.
+#    지우지 않으면 json/(HypeNow 폴더)과 json-brand/(브랜드 모니터링 폴더)가 같은 uid를 이중 프로비저닝한다.
+ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/hypenow-brand.json'
+```
+
+**일반 규칙**: 레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다
+(cd.yml의 `scp -r deploy/grafana/provisioning/.`는 덮어쓰기·추가만 한다) — **잔존 파일은 위처럼
+수동 정리**한다. 같은 `uid`를 두 프로바이더가 동시에 프로비저닝하면 폴더가 오락가락한다.
+
 - 경쟁사 탭의 등록 패널(`monitoring_registrations`·`monitoring_registration_entries`)은 §14-2
   기본 GRANT(운영 기적용)를 그대로 재사용한다 — 추가 없음.
 - **반영 절차**: 이 GRANT를 **main 배포 전에** 실행해 두면 별도 재기동이 필요 없다 — cd.yml이
@@ -885,8 +907,8 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   신설 데이터소스(monitoring.yaml)·신규 스크레이프 잡(node-exporter·cAdvisor)은 배포가 알아서
   반영한다. 배포 **후에** GRANT를 실행한 경우엔 대시보드 새로고침이면 충분하고, 그래도 안 붙으면
   `cd ~/deploy && docker compose restart grafana prometheus`.
-- 개통 확인: 터널 접속(§14-1) 후 홈 13타일에 "데이터 없음"/권한 오류가 없는지, 브랜드·경쟁사·
-  Hiker 탭 패널이 그려지는지 확인. Loki 타일(ERROR 급증·402·401)은 매칭 0건이 숫자 0으로
+- 개통 확인: 터널 접속(§14-1) 후 홈 13타일에 "데이터 없음"/권한 오류가 없는지, 경쟁사·Hiker
+  탭과 **브랜드 모니터링 폴더 3장**의 패널이 그려지는지 확인(폴더는 2개, 대시보드는 총 8장). Loki 타일(ERROR 급증·402·401)은 매칭 0건이 숫자 0으로
   떠야 정상(`or vector(0)` — 빈 벡터면 빨강 "데이터 없음"이 뜨게 fail-loud로 짜여 있다).
 
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
