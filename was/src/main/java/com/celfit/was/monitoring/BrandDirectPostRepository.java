@@ -185,6 +185,31 @@ public class BrandDirectPostRepository {
 	}
 
 	/**
+	 * 등록자 한정 취소 시맨틱(요구사항, 08-19) — 이 (brand, shortcode)에 excludingUserId 말고 다른
+	 * 등록자가 남아 있는지. 정상 경로에서는 등록 접수 시점 판정(브랜드 풀 중복 체크)이 같은 shortcode의
+	 * 두 번째 등록을 duplicate로 막지만, 접수 시점 검사와 실행기 처리 시점 재검사({@code
+	 * BrandDirectRegistrationExecutor#isAlreadyDirectRegistered}) 사이는 원자적이지 않아 동시 등록
+	 * 요청이 그 창을 통과하면 서로 다른 유저가 독립적으로 같은 (brand, shortcode)를 등록하는 상태가
+	 * 실제로 가능하다 — PK가 (user_id, short_code)라 DB가 이를 막지 않는다. 취소가 브랜드 풀의 direct
+	 * 표식을 해제하기 전에 반드시 이 조회로 다른 등록자 존재를 확인해야 한다: 있으면 표식을 건드리지
+	 * 않아야 한 유저의 취소가 다른 유저의 화면에서 게시물을 지우는 사고를 막는다.
+	 */
+	public boolean hasOtherRegistrant(long brandId, String shortCode, long excludingUserId) {
+		Boolean exists = jdbcClient.sql("""
+				SELECT EXISTS (
+				    SELECT 1 FROM app.brand_direct_posts
+				    WHERE brand_id = :brandId AND short_code = :shortCode AND user_id <> :userId
+				)
+				""")
+				.param("brandId", brandId)
+				.param("shortCode", shortCode)
+				.param("userId", excludingUserId)
+				.query(Boolean.class)
+				.single();
+		return Boolean.TRUE.equals(exists);
+	}
+
+	/**
 	 * 매핑 삭제(hard delete, 취소 API 계약) — 삭제로 GET .../posts 목록에서 즉시 빠지고, 같은
 	 * shortcode 재등록이 브랜드 중복 판정({@code brandShortCodes})에 걸리지 않게 된다(취소 후
 	 * 재시작 성립). tombstone이 아닌 이유: 재등록이 곧 새 매핑이라 삭제 이력을 남길 필요가 없다.

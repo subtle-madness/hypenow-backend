@@ -88,7 +88,7 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 		commandClient = new MonitoringCommandClient(builder.build());
 		TaskExecutor immediate = Runnable::run;
 		executor = new BrandDirectRegistrationExecutor(commandClient, registrationRepository, directPostRepository,
-				postCampaignRepository, brandReadRepository, immediate);
+				postCampaignRepository, immediate);
 
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "brand-direct-exec-" + UUID.randomUUID() + "@test.io")
@@ -233,15 +233,15 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 		server.verify();
 	}
 
+	/**
+	 * 접수와 처리 사이의 경합(동시 등록 등) — 등록자 원장 재검사가 이를 잡아야 한다(공동 등록 허용,
+	 * 08-19 개정). brand_tagged_post의 direct_registered_at이 아니라 <b>이 유저의</b>
+	 * app.brand_direct_posts 행 존재로 판정한다 — 브랜드 단위 재검사였다면 다른 유저의 등록도
+	 * duplicate로 오판해 공동 등록이 막혔을 것이다.
+	 */
 	@Test
-	void 처리_직전에_이미_direct_등록됐으면_duplicate로_정산되고_monitoring을_다시_부르지_않는다() {
-		// 접수와 처리 사이의 경합(동시 등록 등) — 브랜드 풀 재검사가 이를 잡아야 한다.
-		monitoringJdbc.sql("""
-				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, taken_at,
-				                                tag_detected_at, direct_registered_at)
-				VALUES (:brandId, 'RACE1', 'creator', now(), NULL, now())
-				""")
-				.param("brandId", brandId).update();
+	void 처리_직전에_이_유저가_이미_등록했으면_duplicate로_정산되고_monitoring을_다시_부르지_않는다() {
+		directPostRepository.upsertDirect(userId, brandId, "RACE1");
 		long registrationId = registrationRepository.insert(userId, brandId, null).id();
 		registrationRepository.insertEntry(registrationId, 0, "https://www.instagram.com/reel/RACE1/", "RACE1",
 				"pending", null, null);
@@ -252,6 +252,40 @@ class BrandDirectRegistrationExecutorTest extends IntegrationTest {
 		assertThat(entry.result()).isEqualTo("duplicate");
 		assertThat(entry.reasonCode()).isEqualTo("duplicate");
 		server.verify();   // /api/brands/{id}/direct-posts로 어떤 요청도 안 갔다(기대 0건)
+	}
+
+	/**
+	 * 공동 등록 허용(요구사항, 08-19) — A가 이미 direct 등록한(brand_tagged_post.direct_registered_at
+	 * 있음) shortcode를 B가 등록하면, 등록자 원장 재검사는 B 본인 기준이라(다른 유저의 등록은
+	 * duplicate가 아니다) monitoring 호출까지 정상 진행돼 B의 원장에도 행이 생긴다. monitoring의
+	 * registerDirectPost는 이미 direct_registered_at이 있는 행에 멱등 200을 돌려주므로(재수집 없음)
+	 * 여기서도 같은 응답 셰이프로 스텁한다.
+	 */
+	@Test
+	void 다른_유저가_이미_등록한_shortcode도_공동_등록으로_성공한다() {
+		long otherUserId = jdbcClient
+				.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "brand-direct-exec-other-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		directPostRepository.upsertDirect(otherUserId, brandId, "COREG1");   // A(otherUserId)가 이미 등록
+
+		long registrationId = registrationRepository.insert(userId, brandId, null).id();
+		registrationRepository.insertEntry(registrationId, 0, "https://www.instagram.com/reel/COREG1/", "COREG1",
+				"pending", null, null);
+
+		server.expect(requestTo(BASE + "/api/brands/" + brandId + "/direct-posts"))
+				.andRespond(withSuccess("""
+						{ "shortCode": "COREG1", "authorUsername": "creator", "takenAt": "2026-08-01T00:00:00Z",
+						  "contentType": "REELS" }
+						""", MediaType.APPLICATION_JSON));
+
+		executor.submit(registrationId);
+
+		BrandPostRegistrationEntryRow entry = onlyEntry(registrationId);
+		assertThat(entry.result()).isEqualTo("success");
+		assertThat(directPostRepository.findByUserAndShortCode(userId, "COREG1")).isPresent();
+		assertThat(directPostRepository.findByUserAndShortCode(otherUserId, "COREG1")).isPresent();
+		server.verify();
 	}
 
 	@Test

@@ -66,6 +66,101 @@ class BrandPostAssemblerTest {
 		});
 	}
 
+	// ---------- 노출 필터(등록자 전용, 08-19) ----------
+
+	/**
+	 * direct-only(tag_detected_at IS NULL) 게시물은 등록자(app.brand_direct_posts 원장) 유저에게만
+	 * 보인다 — 같은 브랜드를 보는 다른 유저 화면에 노출되던 버그의 회귀 방지(요구사항 §2).
+	 */
+	@Test
+	void 다른_유저가_등록한_direct_전용_게시물은_결과에서_빠진다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.willReturn(List.of(taggedRow("ABC"), row("XYZ", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z")));
+		// 원장에 이 유저(7L)의 등록 기록이 없다 — 다른 유저가 등록한 게시물이라는 뜻.
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of());
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).extracting(BrandPostResponse::shortcode).containsExactly("ABC");
+	}
+
+	/** 등록자 본인에게는 direct-only 게시물이 그대로 보이고 source도 "direct"다. */
+	@Test
+	void 등록자_본인에게는_direct_전용_게시물이_보인다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.willReturn(List.of(row("XYZ", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z")));
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of("XYZ"));
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.shortcode()).isEqualTo("XYZ");
+			assertThat(post.source()).isEqualTo("direct");
+		});
+	}
+
+	/**
+	 * 해시태그로 감지된 게시물(tag_detected_at IS NOT NULL)은 direct 등록 여부·등록자와 무관하게
+	 * 항상 전원에게 보인다 — 노출 필터는 direct-only에만 적용된다(요구사항 §2).
+	 */
+	@Test
+	void 해시태그로_감지된_게시물은_등록_여부와_무관하게_전원에게_보인다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.willReturn(List.of(taggedRow("ABC"),
+						// 겹침 행 — 해시태그 감지 + 다른 유저의 direct 등록.
+						row("GHI", "2026-08-06T02:00:00Z", "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z")));
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of());
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		assertThat(posts).extracting(BrandPostResponse::shortcode).containsExactlyInAnyOrder("ABC", "GHI");
+		assertThat(posts).filteredOn(p -> p.shortcode().equals("GHI")).singleElement()
+				.satisfies(post -> assertThat(post.source()).isEqualTo("tagged"));
+	}
+
+	/** direct 등록 행이 하나도 없으면 원장(shortCodesByUser) 조회 자체를 생략한다(불필요한 조회 방지). */
+	@Test
+	void direct_등록_행이_없으면_원장_조회를_생략한다() {
+		var repository = mock(BrandReadRepository.class);
+		var campaignRepository = mock(BrandPostCampaignRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		var itemRepository = mock(MonitoringItemRepository.class);
+		var account = accountRow();
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.willReturn(List.of(taggedRow("ABC")));
+
+		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
+				itemRepository, false);
+		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL);
+
+		verify(directRepository, never()).shortCodesByUser(anyLong());
+	}
+
 	// ---------- 정산 게이트 분기(2026-08-13 완결 배치 서빙) ----------
 
 	/**
@@ -212,20 +307,33 @@ class BrandPostAssemblerTest {
 		assertThat(post.campaignIds()).isEmpty();
 	}
 
-	/** source 파생 규칙 3종(설계 §3-3) — direct_registered_at 유무만으로 갈린다. */
+	/** source 파생 규칙(설계 §3-3) — tagged-only·direct-only는 direct_registered_at 유무만으로 갈린다. */
 	@Test
 	void source는_direct_registered_at_유무로_파생된다() {
 		var taggedOnly = brandPost(row("ABC", null, "2026-08-06T02:00:00Z", null),
 				null, null, List.of(), List.of(), List.of());
 		var directOnly = brandPost(row("DEF", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
 				null, null, List.of(), List.of(), List.of());
-		var overlap = brandPost(row("GHI", "2026-08-06T02:00:00Z", "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z"),
-				null, null, List.of(), List.of(), List.of());
 
 		assertThat(taggedOnly.source()).isEqualTo("tagged");
 		assertThat(directOnly.source()).isEqualTo("direct");
-		// 겹침(tag_detected_at·direct_registered_at 둘 다 값이 있음) → direct가 이긴다(파생 규칙).
-		assertThat(overlap.source()).isEqualTo("direct");
+	}
+
+	/**
+	 * 겹침 행(tag_detected_at·direct_registered_at 둘 다 값이 있음)의 source는 등록자 전용 노출
+	 * 요구사항(08-19)에 따라 조회자 관점으로 갈린다 — 등록자에겐 "direct", 그 외 유저에겐 "tagged".
+	 * 겹침 행은 tag_detected_at이 있어 노출 필터를 무조건 통과하므로(전원 노출), 여기서 갈리는 건
+	 * source 표시뿐이다.
+	 */
+	@Test
+	void 겹침_행의_source는_등록자_관점으로_갈린다() {
+		var overlapRow = row("GHI", "2026-08-06T02:00:00Z", "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z");
+
+		var forRegistrant = brandPost(overlapRow, null, null, List.of(), List.of(), List.of(), true);
+		var forOtherUser = brandPost(overlapRow, null, null, List.of(), List.of(), List.of(), false);
+
+		assertThat(forRegistrant.source()).isEqualTo("direct");
+		assertThat(forOtherUser.source()).isEqualTo("tagged");
 	}
 
 	/** trackingStartedAt = COALESCE(direct_registered_at, first_seen_at) — direct는 등록 시점부터. */
@@ -253,14 +361,14 @@ class BrandPostAssemblerTest {
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 						7L, rowCrawledLater, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of());
+				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false);
 		var accountWins = BrandPostAssembler.brandPost(100L,
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 						7L, rowCrawledEarlier, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of());
+				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false);
 		var rowNull = BrandPostAssembler.brandPost(100L,
-				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of());
+				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false);
 
 		assertThat(rowWins.updatedAt()).isEqualTo(KstTimestamps.toKstIso(rowCrawledLater));
 		assertThat(accountWins.updatedAt()).isEqualTo(KstTimestamps.toKstIso(accountSwept));
@@ -432,8 +540,11 @@ class BrandPostAssemblerTest {
 				LocalDate.of(2026, 8, 6), "오늘 소개 #광고", null, null, null, null, null,
 				"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
 
+		// 등록자 관점(registeredByUser=true)으로 조회 — source="direct" 자체는 별도 테스트
+		// (겹침_행의_source는_등록자_관점으로_갈린다)가 고정한다. 여기는 광고 판정 필드가 source와
+		// 무관하게 채워짐을 검증한다.
 		var post = BrandPostAssembler.brandPost(100L, overlapRow, adMeta, null, List.of(), List.of(), SWEPT_AT,
-				List.of(), true, Set.of("glowdeep_92"));
+				List.of(), true, Set.of("glowdeep_92"), true);
 
 		assertThat(post.source()).isEqualTo("direct");
 		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
@@ -623,7 +734,7 @@ class BrandPostAssemblerTest {
 				"DISCLOSED", "{broken", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
 
 		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta, null, List.of(), List.of(), SWEPT_AT,
-				List.of(), true, Set.of());
+				List.of(), true, Set.of(), false);
 
 		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
 		assertThat(post.adViolations()).isEmpty();
@@ -674,13 +785,25 @@ class BrandPostAssemblerTest {
 				itemRepository, exposeAdDisclosure);
 	}
 
-	/** brandPost() 호출 축약 — 이 파일 대다수 테스트는 brandId=100, lastSweptAt=SWEPT_AT, 노출 off. */
+	/**
+	 * brandPost() 호출 축약 — 이 파일 대다수 테스트는 brandId=100, lastSweptAt=SWEPT_AT, 노출 off,
+	 * registeredByUser=false(대다수 테스트는 direct_registered_at이 null이라 무관하다).
+	 */
 	private static BrandPostResponse brandPost(BrandReadRepository.BrandTaggedPostRow post,
 			BrandReadRepository.BrandPostMetaRow meta, BrandReadRepository.AuthorRow author,
 			List<BrandReadRepository.BrandSnapshotRow> snapshotRows,
 			List<BrandReadRepository.BrandCommentRow> commentRows, List<String> campaignIds) {
+		return brandPost(post, meta, author, snapshotRows, commentRows, campaignIds, false);
+	}
+
+	/** registeredByUser를 명시하는 축약 — 겹침 행의 source 파생(등록자 관점)을 검증하는 테스트 전용. */
+	private static BrandPostResponse brandPost(BrandReadRepository.BrandTaggedPostRow post,
+			BrandReadRepository.BrandPostMetaRow meta, BrandReadRepository.AuthorRow author,
+			List<BrandReadRepository.BrandSnapshotRow> snapshotRows,
+			List<BrandReadRepository.BrandCommentRow> commentRows, List<String> campaignIds,
+			boolean registeredByUser) {
 		return BrandPostAssembler.brandPost(100L, post, meta, author, snapshotRows, commentRows, SWEPT_AT,
-				campaignIds, false, Set.of());
+				campaignIds, false, Set.of(), registeredByUser);
 	}
 
 	private static BrandReadRepository.BrandAccountRow accountRow() {

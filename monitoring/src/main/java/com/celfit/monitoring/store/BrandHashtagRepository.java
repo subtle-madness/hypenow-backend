@@ -126,4 +126,26 @@ public class BrandHashtagRepository {
 				post.caption() != null ? post.caption() : "", post.contentType(), post.thumbnailUrl(),
 				post.likes(), post.comments(), post.verdict(), post.verdictSource());
 	}
+
+	/**
+	 * 매칭 태그 전체 기록(2026-08-19, was 사용자 스코프 필터 지원) — 이 (brand, shortcode)가 이 태그의
+	 * recent 열거 스트림에도 나타났다는 사실을 추가한다. FK가 brand_hashtag_post(brand_id,
+	 * short_code)를 향하므로 그 행이 먼저 있어야 한다 — 호출부는 신규 저장 직후(processNew) 또는
+	 * 이미 저장된 행을 다른 태그가 다시 만났을 때(sweepTag의 existing 분기)만 부른다. 멱등
+	 * (ON CONFLICT DO NOTHING) — 같은 (brand, shortcode, tag)를 여러 스윕이 반복 기록해도 안전하다.
+	 */
+	public void recordTagMatch(long brandId, String shortCode, String tag) {
+		db.update("""
+				INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag)
+				VALUES (?, ?, ?)
+				ON CONFLICT DO NOTHING""",
+				brandId, shortCode, tag);
+	}
+
+	/** {@link #recordTagMatch} 배치판 — sweepTag의 "이미 존재하는" 코드 묶음 전용. */
+	public void recordTagMatches(long brandId, Collection<String> shortCodes, String tag) {
+		for (String shortCode : shortCodes) {
+			recordTagMatch(brandId, shortCode, tag);
+		}
+	}
 }

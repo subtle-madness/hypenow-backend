@@ -140,4 +140,51 @@ class BrandHashtagRepositoryTest {
 		assertThat(deletedCount).isEqualTo(3L);
 	}
 
+	// ---------- 매칭 태그 전체 기록(2026-08-19, was 사용자 스코프 필터 지원) ----------
+
+	private void 게시물_저장(String shortCode) {
+		repo.insertPost(new BrandHashtagRepository.HashtagPostInsert(brandId, "cclime", shortCode, "poster1",
+				"포스터", "https://pic", OffsetDateTime.parse("2026-08-01T00:00:00Z"), "캡션", "REELS",
+				"https://thumb", 10L, 2L, "RELEVANT", "LLM"));
+	}
+
+	@Test
+	void recordTagMatch은_여러_태그를_같은_게시물에_누적한다() {
+		게시물_저장("AAA");
+
+		repo.recordTagMatch(brandId, "AAA", "cclime");
+		repo.recordTagMatch(brandId, "AAA", "끌리메");
+
+		List<String> tags = db.queryForList(
+				"SELECT tag FROM brand_hashtag_post_matched_tags WHERE brand_id = ? AND short_code = ? ORDER BY tag",
+				String.class, brandId, "AAA");
+		assertThat(tags).containsExactly("cclime", "끌리메");
+	}
+
+	@Test
+	void recordTagMatch은_같은_조합_재기록에_멱등이다() {
+		게시물_저장("AAA");
+
+		repo.recordTagMatch(brandId, "AAA", "cclime");
+		repo.recordTagMatch(brandId, "AAA", "cclime");
+
+		Long count = db.queryForObject(
+				"SELECT count(*) FROM brand_hashtag_post_matched_tags WHERE brand_id = ? AND short_code = ?",
+				Long.class, brandId, "AAA");
+		assertThat(count).isEqualTo(1L);
+	}
+
+	@Test
+	void recordTagMatches는_배치로_기록한다() {
+		게시물_저장("AAA");
+		게시물_저장("BBB");
+
+		repo.recordTagMatches(brandId, List.of("AAA", "BBB"), "끌리메");
+
+		List<String> codes = db.queryForList(
+				"SELECT short_code FROM brand_hashtag_post_matched_tags WHERE brand_id = ? AND tag = ? ORDER BY short_code",
+				String.class, brandId, "끌리메");
+		assertThat(codes).containsExactly("AAA", "BBB");
+	}
+
 }
