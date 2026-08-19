@@ -8,6 +8,7 @@ import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -64,6 +65,7 @@ public class BrandCollectService {
 	private final BrandCommentRepository comments;
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
+	private final BrandRepository brands;
 	private final AdDisclosureJudgeService adJudge;
 	private final Executor enrichWorker;
 	private final int maxPostsPerSweep;
@@ -75,7 +77,7 @@ public class BrandCollectService {
 	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
-			AdDisclosureJudgeService adJudge,
+			BrandRepository brands, AdDisclosureJudgeService adJudge,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
@@ -89,6 +91,7 @@ public class BrandCollectService {
 		this.comments = comments;
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
+		this.brands = brands;
 		this.adJudge = adJudge;
 		this.enrichWorker = enrichWorker;
 		this.maxPostsPerSweep = maxPostsPerSweep;
@@ -162,6 +165,9 @@ public class BrandCollectService {
 	 * touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다). 단 ⑤의 touch 깊이는 ①②와 달리
 	 * <b>실제 커버 깊이가 아니라 목표 컷 전체</b>다 — 컷 밖 게시물의 지표를 마지막 수집 시점으로
 	 * 동결한 채 계속 서빙하고 due 재열거 루프를 끊는 <b>의도된 동결</b>이다(08-19 스펙 §3-2).
+	 * 백필이 ⑤로 끝나면 그 실수집 깊이가 창 커버리지(collection_capped·covered_until)로 기록되고,
+	 * 이후 일일 스윕의 열거 컷이 거기서 클램프된다(스펙 §7-4) — 컷 밖 due의 touch 반복이 아니라
+	 * <b>동결 = 범위 제외</b>로 수렴해, 재장전된 due가 있어도 도달 불가 구간에 콜을 쓰지 않는다.
 	 * ④와 ⑤는 신호 등급도 갈린다: ④는 ERROR(이상 신호·미커버), ⑤는 INFO(정상 경로·커버).
 	 *
 	 * <p>④의 상한은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 — 2,000은 tooq급 정상 고물량
@@ -192,6 +198,7 @@ public class BrandCollectService {
 		boolean anyPageDelivered = false;   // 콜백을 한 번이라도 불렀는지 — 종료 시 폴백 판정용
 		String cursor = null;
 		boolean coveredCutoff = false;
+		boolean cappedThisRun = false;   // 수집 개수 상한으로 끊겼는가 — 백필 커버리지 기록 입력(스펙 §7-1)
 		while (true) {
 			HikerClient.TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
@@ -235,6 +242,7 @@ public class BrandCollectService {
 						collectionPostLimit, brand.username(), seen.size(), cutoff,
 						oldestTakenAt(collected));
 				coveredCutoff = true;
+				cappedThisRun = true;
 				break;
 			}
 			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
@@ -269,6 +277,14 @@ public class BrandCollectService {
 			// touch — 안 하면 그 링크의 due가 영구 true로 굳어 매 스윕이 같은 깊이를 다시 연다.
 			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
 		}
+		if (brand.lastSweptOn() == null) {
+			// 백필 커버리지 기록(스펙 §7-1) — 일일 스윕은 기록하지 않는다(창 커버리지는 백필 속성:
+			// "요청 창 중 어디까지 실제로 훑었나"의 이야기지 신선도의 이야기가 아니다). 컷으로 끝났으면
+			// 실수집 깊이(편입분 최고령 taken_at)를, 완주했으면 NULL(= 요청 창 전체 커버)을 남긴다.
+			// 종료 경로 전체에 공통이다 — 어느 중단 분기로 끝났든 그 실행의 도달 깊이가 곧 커버리지다.
+			brands.updateCoverage(brand.id(), cappedThisRun,
+					cappedThisRun ? oldestTakenAt(collected) : null);
+		}
 		return List.copyOf(collected);
 	}
 
@@ -298,6 +314,12 @@ public class BrandCollectService {
 					&& BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now)) {
 				cutoff = t.takenAt();
 			}
+		}
+		// 컷 클램프(스펙 §7-4) — capped 브랜드는 covered_until보다 깊게 열지 않는다: 컷 밖 행의
+		// due 재장전이 열거를 상한까지 벌려도 구조적으로 도달 불가라 전부 무익 콜이었다.
+		BrandRepository.Coverage cov = brands.coverage(brand.id());
+		if (cov.capped() && cov.coveredUntil() != null && cov.coveredUntil().isAfter(cutoff)) {
+			cutoff = cov.coveredUntil();
 		}
 		return cutoff;
 	}

@@ -19,6 +19,7 @@ import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -69,6 +70,7 @@ class BrandCollectServiceTest {
 	private final StubComments comments = new StubComments();
 	private final InMemoryTagged tagged = new InMemoryTagged();
 	private final InMemoryAuthors authors = new InMemoryAuthors();
+	private final RecordingBrands brands = new RecordingBrands();
 
 	private final List<String> calls = new ArrayList<>();
 	private final List<String> tagPages = new ArrayList<>();
@@ -99,6 +101,29 @@ class BrandCollectServiceTest {
 		@Override
 		public void add(long brandId, LocalDate calledOn, long delta) {
 			byBrand.merge(brandId, delta, Long::sum);
+		}
+	}
+
+	/**
+	 * 창 커버리지 대역(2026-08-19 수집 상한 v2 스펙 §7-1·§7-4) — 읽기(일일 스윕의 컷 클램프 입력)와
+	 * 쓰기(백필 종료부의 기록)를 한 스텁에서 관찰한다. 기본값은 미컷 단면이라 기존 테스트는 무영향.
+	 */
+	private static final class RecordingBrands extends BrandRepository {
+		BrandRepository.Coverage coverage = new BrandRepository.Coverage(false, null);
+		final List<String> coverageWrites = new ArrayList<>();
+
+		RecordingBrands() {
+			super(null);
+		}
+
+		@Override
+		public BrandRepository.Coverage coverage(long brandId) {
+			return coverage;
+		}
+
+		@Override
+		public void updateCoverage(long brandId, boolean capped, Instant coveredUntil) {
+			coverageWrites.add(capped ? brandId + ":capped:" + coveredUntil : brandId + ":full");
 		}
 	}
 
@@ -338,7 +363,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
+				brands, new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
 	private long tagCalls() {
@@ -657,6 +682,46 @@ class BrandCollectServiceTest {
 
 		assertThat(tagCalls()).isEqualTo(2);   // 상한이 꺼져 있어 커서 소진까지 완주
 		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C");
+	}
+
+	// ── 창 커버리지 기록·컷 클램프(2026-08-19 수집 상한 v2 — 스펙 §7-1·§7-4) ──
+
+	@Test
+	void 백필이_컷으로_끝나면_커버리지를_capped로_기록한다() {
+		// 3페이지·상한 3 — 2페이지째 컷. 백필(last_swept_on null) 실행이므로 종료부가 기록해야 한다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", OLD_20D, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(10000, 3).sweep(brand);
+
+		assertThat(brands.coverageWrites).containsExactly("1:capped:" + Instant.ofEpochSecond(OLD_20D));
+		// 실수집 깊이 = 편입분 최고령 taken_at(OLD_20D) — 목표 컷(365일)이 아니다.
+	}
+
+	@Test
+	void 백필이_완주하면_커버리지를_전체_커버로_기록한다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(10000, 2000).sweep(brand);
+
+		assertThat(brands.coverageWrites).containsExactly("1:full");
+	}
+
+	@Test
+	void capped_브랜드의_일일_열거는_covered_until보다_깊게_열지_않는다() {
+		// 60일령 due 링크가 컷을 60일로 벌리려 하지만, 커버리지가 20일이면 클램프돼 20일 컷.
+		brands.coverage = new BrandRepository.Coverage(true, Instant.ofEpochSecond(OLD_20D));
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Due60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("Old25d", NOW - 25L * 86400, 0, 102, "")));   // 20일 컷 이전 — 중단
+		tagPages.add(page(null, reel("Deep", RETRO_IN_WINDOW, 0, 103, "")));
+
+		service(10000, 2000).sweep(sweptBrand);
+
+		assertThat(tagCalls()).isEqualTo(2);   // 클램프 없었으면 60일 컷이라 3콜
+		assertThat(brands.coverageWrites).isEmpty();   // 일일 스윕은 창 커버리지를 건드리지 않는다
 	}
 
 	// ── 브랜드 프로필 매일 갱신 ──────────────────────────────────────────────
@@ -1071,7 +1136,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
+					comments, tagged, authors, brands, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -1238,7 +1303,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
+				brands, adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 
 	/**
