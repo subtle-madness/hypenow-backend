@@ -40,15 +40,20 @@ public class BrandPostCampaignRepository {
 	}
 
 	/**
-	 * 게시물의 모든 캠페인 링크 삭제(취소 API 전용, §2-4) — 브랜드 풀에서 direct 표식이 빠지면
-	 * 그 게시물의 캠페인 소속도 함께 정리한다(원장 삭제와 짝, 취소 후 재등록 시 새로 붙는다).
+	 * 이 유저가 이 게시물에 건 캠페인 링크만 삭제(취소 API 전용, §2-4, 등록자 한정 취소 08-19 개정) —
+	 * 원장 삭제와 짝, 취소 후 재등록 시 새로 붙는다. user_id로 좁히는 이유: 동시 등록 레이스로 같은
+	 * (brand, shortcode)에 다른 유저의 캠페인 링크가 공존할 수 있다({@link #upsert} — user_id는 PK가
+	 * 아니라 (brand_id, short_code, campaign_id)당 여러 유저 행이 있을 수 있다) — 브랜드+shortcode
+	 * 전체 삭제였던 구버전은 내 취소가 남의 캠페인 링크까지 지우는 사고였다.
 	 */
-	public void deleteByBrandAndShortCode(long brandId, String shortCode) {
+	public void deleteByBrandAndShortCodeAndUser(long brandId, String shortCode, long userId) {
 		jdbcClient.sql("""
-				DELETE FROM app.brand_post_campaigns WHERE brand_id = :brandId AND short_code = :shortCode
+				DELETE FROM app.brand_post_campaigns
+				WHERE brand_id = :brandId AND short_code = :shortCode AND user_id = :userId
 				""")
 				.param("brandId", brandId)
 				.param("shortCode", shortCode)
+				.param("userId", userId)
 				.update();
 	}
 

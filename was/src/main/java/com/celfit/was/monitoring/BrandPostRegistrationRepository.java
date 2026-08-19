@@ -170,22 +170,54 @@ public class BrandPostRegistrationRepository {
 	 * null인 pending(파싱·share 미해소)은 대상이 아니다 — 아직 무엇을 취소할지조차 확정되지
 	 * 않았으므로 이 취소와 무관하다.
 	 *
+	 * <p>userId로 좁히는 이유(등록자 한정 취소, 08-19 개정): 동시 등록 레이스로 다른 유저의 같은
+	 * (brand, shortcode) 등록이 pending으로 남아 있을 수 있다 — 그 상태에서 내가 취소하면, 브랜드
+	 * 스코프였던 구버전은 남의 아직 진행 중인 등록 entry까지 "성공"으로 조작해버렸다. 이제는 취소하는
+	 * 유저 본인의 registration만 정산 대상이다.
+	 *
 	 * @return 영향받은 registration_id 목록(중복 제거) — 호출부가 각각 markCompletedIfAllSettled를 돈다
 	 */
-	public List<Long> settlePendingAsSuccessForCancel(long brandId, String shortCode) {
+	public List<Long> settlePendingAsSuccessForCancel(long brandId, String shortCode, long userId) {
 		List<Long> registrationIds = jdbcClient.sql("""
 				UPDATE app.brand_post_registration_entries e
 				SET result = 'success', reason_code = NULL, reason = NULL, settled_at = now()
 				FROM app.brand_post_registrations r
 				WHERE e.registration_id = r.id AND e.result = 'pending' AND e.short_code = :shortCode
-				  AND r.brand_id = :brandId
+				  AND r.brand_id = :brandId AND r.user_id = :userId
 				RETURNING e.registration_id
 				""")
 				.param("brandId", brandId)
 				.param("shortCode", shortCode)
+				.param("userId", userId)
 				.query(Long.class)
 				.list();
 		return registrationIds.stream().distinct().toList();
+	}
+
+	/**
+	 * 등록자 한정 취소(요구사항, 08-19)의 보조 판정 — 취소-복구 경합(2026-08-18 스테이징 실측)과
+	 * 겹치는 지점: 등록 명령의 HTTP 응답이 유실되면 monitoring은 실제로 등록을 완료했는데
+	 * {@code app.brand_direct_posts} 원장은 아직 안 쓰였고(executor의 upsertDirect는 응답을 받아야
+	 * 돈다) entry는 pending으로 남는다. 이 창에서 사용자가 취소를 시도하면 원장 존재만으로는 등록자
+	 * 판정이 안 되므로, "이 유저가 이 (brand, shortcode)에 pending 등록을 넣어 뒀는가"도 등록자
+	 * 증거로 인정한다({@link com.celfit.was.v1.brandmonitoring.V1BrandDirectPostService#
+	 * ensureOwnRegistration} 참조).
+	 */
+	public boolean hasPendingEntry(long brandId, String shortCode, long userId) {
+		Boolean exists = jdbcClient.sql("""
+				SELECT EXISTS (
+				    SELECT 1 FROM app.brand_post_registration_entries e
+				    JOIN app.brand_post_registrations r ON r.id = e.registration_id
+				    WHERE r.brand_id = :brandId AND r.user_id = :userId AND e.short_code = :shortCode
+				      AND e.result = 'pending'
+				)
+				""")
+				.param("brandId", brandId)
+				.param("shortCode", shortCode)
+				.param("userId", userId)
+				.query(Boolean.class)
+				.single();
+		return Boolean.TRUE.equals(exists);
 	}
 
 	/** insert() RETURNING 전용 — id·requested_at만 있으면 응답 직렬화에 충분하다(entries는 빈 채로 시작). */

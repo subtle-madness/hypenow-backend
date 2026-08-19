@@ -112,6 +112,28 @@ class BrandDirectPostRepositoryTest extends IntegrationTest {
 		assertThat(repository.shortCodesByUser(userId)).contains("newdirect");
 	}
 
+	/**
+	 * 공동 등록 방어(취소 등록자 한정 시맨틱, 08-19)의 원장 조회 경로 고정 — 두 유저가 독립적으로 같은
+	 * (brand, shortcode)를 등록한 상태(동시 등록 레이스 재현)에서 서로를 "다른 등록자"로 본다. 한
+	 * 유저의 등록을 지우면 남은 유저 관점에서는 더 이상 다른 등록자가 없다.
+	 */
+	@Test
+	void hasOtherRegistrant는_다른_유저의_등록만_본다() {
+		repository.upsertDirect(userId, 999, "shared");
+		long otherUserId = jdbcClient
+				.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "other-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		repository.upsertDirect(otherUserId, 999, "shared");
+
+		assertThat(repository.hasOtherRegistrant(999, "shared", userId)).isTrue();
+		assertThat(repository.hasOtherRegistrant(999, "shared", otherUserId)).isTrue();
+
+		repository.delete(userId, "shared");
+
+		assertThat(repository.hasOtherRegistrant(999, "shared", otherUserId)).isFalse();
+	}
+
 	@Test
 	void shortCodesByUser는_다른_유저_매핑은_제외한다() {
 		repository.upsertDirect(userId, 999, "mine");
