@@ -222,6 +222,25 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 해시태그 발견 게시물의 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) —
+	 * {@code brand_hashtag_post_matched_tags}(모니터링 스윕이 게시물당 매칭된 활성 태그 전부를
+	 * 기록하는 M:N 테이블, {@code matched_tag} 단일 컬럼과 별개). 조회자 본인의 태그 원장
+	 * ({@code app.brand_hashtag_tags})과의 교집합 판정은 was 코드({@code BrandHashtagPostAssembler})가
+	 * 한다 — 여기서는 monitoring DB만 읽는다(시스템 경계, app 스키마와 SQL 조인 금지).
+	 */
+	public List<MatchedTagRow> findMatchedTags(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT short_code, tag FROM brand_hashtag_post_matched_tags
+				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
+				""")
+				.param("brandId", brandId).param("shortCodes", shortCodes)
+				.query(MatchedTagRow.class).list();
+	}
+
+	/**
 	 * 브랜드 풀 상태(2026-08-18 direct 통합 §2-3·§2-5·§T9) — 중복 판정(direct 등록)·발견 목록 판정
 	 * (hashtag-posts)·취소 판정 공용 배치 조회. {@code tag_detected_at}·{@code direct_registered_at}
 	 * 원시값 대신 boolean으로 파생해 호출부의 null 분기를 없앤다. 윈도우(365일 컷) 제한이 없는 순수
@@ -369,6 +388,10 @@ public class BrandReadRepository {
 			String authorFullName, String authorProfilePicUrl, OffsetDateTime takenAt, String caption,
 			String contentType, String thumbnailUrl, Long likes, Long comments,
 			OffsetDateTime firstSeenAt, String imageObjectPath, String authorImageObjectPath) {
+	}
+
+	/** brand_hashtag_post_matched_tags 1행({@link #findMatchedTags}) — shortcode 1건에 매칭 태그 1건. */
+	public record MatchedTagRow(String shortCode, String tag) {
 	}
 
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */

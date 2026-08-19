@@ -5,7 +5,6 @@ import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandPostRegistrationEntryRow;
 import com.celfit.was.monitoring.BrandPostRegistrationRepository;
 import com.celfit.was.monitoring.BrandPostRegistrationRow;
-import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringUnavailableException;
@@ -14,7 +13,6 @@ import com.celfit.was.monitoring.ShareResolveResult;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,9 +33,12 @@ import org.springframework.stereotype.Component;
  * <ol>
  *   <li>shortCode 확정 — Post 입력은 접수 시점에 이미 entry.short_code에 있다. share 단축 링크
  *       (short_code NULL)만 여기서 {@code POST /api/share/resolve}로 해소한다.</li>
- *   <li>브랜드 풀 중복 재검사 — 접수와 처리 사이의 경합(동시 등록 등)으로 그새 direct_registered_at이
- *       채워졌으면 duplicate로 확정한다. 접수 시점의 표시 창 판정(§T9 register)은 이미 끝났으므로
- *       여기서는 "그새 direct로 등록됐는가"만 다시 본다 — 창 판정을 통째로 재계산하지 않는다.</li>
+ *   <li>등록자 원장 재검사(공동 등록 허용, 08-19 개정) — 접수와 처리 사이의 경합(동시 등록 등)으로
+ *       그새 <b>이 유저</b>가 같은 shortcode를 이미 등록했으면(app.brand_direct_posts) duplicate로
+ *       확정한다. 브랜드 단위 direct_registered_at 재검사가 아니다 — 그건 "누군가" 등록했다는
+ *       뜻일 뿐이라 다른 유저의 동시 등록을 duplicate로 오판하면 공동 등록이 성립하지 않는다.
+ *       접수 시점의 표시 창 판정(§T9 register)은 이미 끝났으므로 여기서는 "그새 내가 등록했는가"만
+ *       다시 본다 — 창 판정을 통째로 재계산하지 않는다.</li>
  *   <li>{@code POST /api/brands/{brandId}/direct-posts} 호출 — 성공(201·200)이면 success, 확정 실패
  *       ({@link MonitoringApiException})면 failed, 전송 실패({@link MonitoringUnavailableException})면
  *       pending 유지(stale 복구가 재시도).</li>
@@ -60,18 +61,16 @@ public class BrandDirectRegistrationExecutor {
 	private final BrandPostRegistrationRepository registrationRepository;
 	private final BrandDirectPostRepository directPostRepository;
 	private final BrandPostCampaignRepository campaignRepository;
-	private final BrandReadRepository brandReadRepository;
 	private final TaskExecutor executorPool;
 
 	public BrandDirectRegistrationExecutor(MonitoringCommandClient client,
 			BrandPostRegistrationRepository registrationRepository, BrandDirectPostRepository directPostRepository,
-			BrandPostCampaignRepository campaignRepository, BrandReadRepository brandReadRepository,
+			BrandPostCampaignRepository campaignRepository,
 			@Qualifier("brandDirectRegistrationTaskExecutor") TaskExecutor executorPool) {
 		this.client = client;
 		this.registrationRepository = registrationRepository;
 		this.directPostRepository = directPostRepository;
 		this.campaignRepository = campaignRepository;
-		this.brandReadRepository = brandReadRepository;
 		this.executorPool = executorPool;
 	}
 
@@ -156,7 +155,7 @@ public class BrandDirectRegistrationExecutor {
 				return;   // failed로 정산됐거나(확정 실패) pending 유지(전송 실패) — 둘 다 더 할 일 없음
 			}
 		}
-		if (isAlreadyDirectRegistered(registration.brandId(), shortCode)) {
+		if (isAlreadyDirectRegisteredByUser(registration.brandId(), shortCode, registration.userId())) {
 			settle(registration.id(), entry.seq(), shortCode, RegistrationResult.DUPLICATE,
 					RegistrationResult.REASON_DUPLICATE, DUPLICATE_MESSAGE);
 			return;
@@ -180,10 +179,15 @@ public class BrandDirectRegistrationExecutor {
 		return resolved.shortCode();
 	}
 
-	private boolean isAlreadyDirectRegistered(long brandId, String shortCode) {
-		List<BrandReadRepository.BrandPoolStatusRow> rows =
-				brandReadRepository.findBrandPoolStatus(brandId, Set.of(shortCode));
-		return !rows.isEmpty() && rows.get(0).directRegistered();
+	/**
+	 * 등록자 본인 재검사(공동 등록 허용, 08-19) — app.brand_direct_posts 원장 기준. 브랜드 단위
+	 * direct_registered_at이 아니라 "이 유저"가 이미 등록했는지만 본다 — 다른 유저의 동시 등록은
+	 * duplicate가 아니라 각자 독립적으로 성공해야 한다.
+	 */
+	private boolean isAlreadyDirectRegisteredByUser(long brandId, String shortCode, long userId) {
+		return directPostRepository.findByUserAndShortCode(userId, shortCode)
+				.filter(row -> row.brandId() == brandId)
+				.isPresent();
 	}
 
 	private void registerPost(BrandPostRegistrationRow registration, BrandPostRegistrationEntryRow entry,

@@ -123,6 +123,13 @@ public class BrandHashtagCollectService {
 					.filter(hp -> !existing.contains(hp.post().shortCode())).toList());
 			saved += processNew(brand, tag, freshPosts, allTags, biography, windowCutoff,
 					mentionPattern, insertedThisRun);
+			// 매칭 태그 전체 기록(2026-08-19) — 이 페이지에서 "이미 저장돼 있던"(다른 태그가 먼저
+			// 저장했거나 이전 스윕이 저장한) 코드도 이 태그의 열거 스트림에 나타났다는 사실은 남긴다.
+			// brand_hashtag_post 행이 이미 있다는 게 곧 existing의 정의라 FK가 항상 만족된다 — 신규
+			// 저장분의 매칭 태그는 processNew 내부에서 insertPost 직후에 기록한다(존재 보장 순서 동일).
+			if (!existing.isEmpty()) {
+				repo.recordTagMatches(brand.id(), existing, tag);
+			}
 			// 조기 종료 트리거는 "이전부터 있던" 코드에만 반응한다 — 이번 실행에서 다른 태그가
 			// 방금 저장한 코드는 종료 신호가 아니다(크로스 태그 백필 깊이 보존).
 			boolean hasPriorExisting = existing.stream().anyMatch(c -> !insertedThisRun.contains(c));
@@ -207,6 +214,9 @@ public class BrandHashtagCollectService {
 					post.ownerFullName(), post.ownerProfilePicUrl(), takenAt, post.caption(),
 					post.contentType(), post.thumbnailUrl(), post.likes(), post.comments(),
 					verdict, source));
+			// 매칭 태그 기록(2026-08-19) — insertPost 직후라 FK(brand_hashtag_post) 대상 행이 방금
+			// 생겼다. 이 최초 저장 태그도 matched_tag(단일, 디버그용)와 별개로 전체 집합에 넣는다.
+			repo.recordTagMatch(brand.id(), shortCode, tag);
 			insertedThisRun.add(shortCode);
 			saved++;
 		}
