@@ -54,6 +54,8 @@ class BrandHashtagCollectServiceTest {
 		final Map<Long, List<String>> tags = new HashMap<>();
 		final Set<String> stored = new LinkedHashSet<>();
 		final List<HashtagPostInsert> inserted = new ArrayList<>();
+		/** key: "brandId:shortCode" → 그 게시물이 매칭된 태그 전체(순서 보존, 중복 없음). */
+		final Map<String, LinkedHashSet<String>> matchedTags = new HashMap<>();
 
 		InMemoryHashtagRepo() {
 			super(null);
@@ -76,8 +78,24 @@ class BrandHashtagCollectServiceTest {
 			stored.add(post.brandId() + ":" + post.shortCode());
 		}
 
+		@Override
+		public void recordTagMatch(long brandId, String shortCode, String tag) {
+			matchedTags.computeIfAbsent(brandId + ":" + shortCode, k -> new LinkedHashSet<>()).add(tag);
+		}
+
+		@Override
+		public void recordTagMatches(long brandId, java.util.Collection<String> shortCodes, String tag) {
+			for (String shortCode : shortCodes) {
+				recordTagMatch(brandId, shortCode, tag);
+			}
+		}
+
 		HashtagPostInsert insertedByCode(String code) {
 			return inserted.stream().filter(p -> p.shortCode().equals(code)).findFirst().orElseThrow();
+		}
+
+		Set<String> matchedTagsOf(long brandId, String shortCode) {
+			return matchedTags.getOrDefault(brandId + ":" + shortCode, new LinkedHashSet<>());
 		}
 	}
 
@@ -401,6 +419,41 @@ class BrandHashtagCollectServiceTest {
 				.containsExactlyInAnyOrder("SHARED1", "B1", "B2");
 		assertThat(calls.stream().filter(c -> c.contains("name=%EB%81%8C%EB%A6%AC%EB%A9%94")).count())
 				.isEqualTo(2);   // 태그 B는 1페이지에서 끊기지 않고 2페이지까지 콜했다
+	}
+
+	// ── 케이스 16(2026-08-19 매칭 태그 전체 기록): 여러 태그가 매칭되면 전체 집합이 남는다 ──
+
+	/**
+	 * 케이스 13과 같은 픽스처(SHARED1이 cclime에 먼저 저장되고 끌리메가 나중에 같은 게시물을
+	 * 다시 만남) — insertPost는 한 번만(기존 계약 불변) 일어나지만, 매칭 태그 집합에는 두 태그
+	 * 모두 남아야 한다(was 사용자 스코프 필터의 재료). matched_tag(단일, 디버그용)는 최초 저장
+	 * 태그만 유지하고(HashtagPostInsert.matchedTag), 전체 집합은 별도로 누적된다.
+	 */
+	@Test
+	void 여러_태그에_매칭된_게시물은_매칭_태그_전체가_기록된다() {
+		setTags("cclime", "끌리메");
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("SHARED1", RECENT, "posterA", null, "태그A 글"))));
+		pagesByTag.put("끌리메", List.of(sectionsBody(null,
+				media("SHARED1", RECENT, "posterA", null, "태그A 글"))));
+
+		service(4).sweep(brand);
+
+		InMemoryHashtagRepo memRepo = (InMemoryHashtagRepo) repo;
+		assertThat(memRepo.insertedByCode("SHARED1").matchedTag()).isEqualTo("cclime");   // 최초 저장 태그(디버그용) 불변
+		assertThat(memRepo.matchedTagsOf(brand.id(), "SHARED1")).containsExactlyInAnyOrder("cclime", "끌리메");
+	}
+
+	/** 한 태그의 신규 저장 게시물도 그 태그가 매칭 집합에 즉시 기록된다(단일 태그 케이스). */
+	@Test
+	void 신규_저장_게시물도_저장한_태그가_매칭_집합에_기록된다() {
+		setTags("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("AAA", RECENT, "poster1", null, "글"))));
+
+		service(4).sweep(brand);
+
+		assertThat(((InMemoryHashtagRepo) repo).matchedTagsOf(brand.id(), "AAA")).containsExactly("cclime");
 	}
 
 	// ── 케이스 14(nit 반영 확인): 저장 레코드 14필드 매핑 고정 ─────────────────
