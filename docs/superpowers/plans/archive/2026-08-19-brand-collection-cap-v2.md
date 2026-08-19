@@ -1,5 +1,7 @@
 # 브랜드 수집 상한 v2(확장 스킵·커버리지 영속화·direct 면제·컷 클램프) 구현 계획
 
+> 상태: ✅ 실행 완료 (2026-08-20)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 수집 상한 v1의 정합 구멍(창 확장 no-op·direct 겹침 동결·티어 재장전 무익 딥 스윕)을 해소하고, "요청 창을 다 모았는지 / 상한에서 끊겼는지"를 영속화해 was API로 노출한다.

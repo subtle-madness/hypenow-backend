@@ -207,7 +207,7 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * 자연 종료된 열거가 커버한 깊이 전체를 갱신 — 열거에서 사라진 링크가 깊이 컷을 영구 고정하는
+	 * 커버 처리로 끝난 열거가 커버한 깊이 전체를 갱신 — 열거에서 사라진 링크가 깊이 컷을 영구 고정하는
 	 * 것을 막는다. last_crawled_at의 의미는 "이 게시물을 봤다"가 아니라 <b>"이 깊이까지 커버했다"</b>다:
 	 * 삭제·태그 제거·비공개 전환으로 열거에 더 안 실리는 링크는 {@link #touchCrawled}로는 영영
 	 * 갱신되지 않아 due가 영구 true로 굳고, 매 스윕이 그 taken_at까지 깊이를 여는 요청량 누수가 된다.
@@ -224,8 +224,8 @@ public class TaggedPostRepository {
 	 * <p><b>direct_registered_at IS NULL 가드도 필수</b>(2026-08-19 수집 상한 v2 §7-3): 위 동결은
 	 * 태그 열거 산지 게시물에만 적용되는 비용 정책이고, direct 등록 게시물은 상한 밖이다. 겹침 행
 	 * (태그·direct 둘 다)까지 touch하면 컷 밖 direct 게시물의 due가 실크롤 없이 꺼져 {@link
-	 * #directDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히 얼어붙는
-	 * 다. direct 행의 last_crawled_at은 실수집({@link #touchCrawled})으로만 전진한다.
+	 * #directDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히
+	 * 얼어붙는다. direct 행의 last_crawled_at은 실수집({@link #touchCrawled})으로만 전진한다.
 	 */
 	public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
 		db.update("""

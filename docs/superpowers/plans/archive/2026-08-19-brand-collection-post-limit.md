@@ -1,5 +1,7 @@
 # 브랜드 태그 수집 개수 상한(collection-post-limit) 구현 계획
 
+> 상태: ✅ 실행 완료 (2026-08-19)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 브랜드 태그 열거에 전역 수집 개수 상한(기본 2,000)을 추가해, 상한 도달 시 의도된 자연 종료(INFO) + 목표 컷 전체 touch(컷 밖 지표 동결)로 백필·심층 스윕 비용을 좁힌다.

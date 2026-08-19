@@ -282,6 +282,10 @@ public class BrandCollectService {
 			// "요청 창 중 어디까지 실제로 훑었나"의 이야기지 신선도의 이야기가 아니다). 컷으로 끝났으면
 			// 실수집 깊이(편입분 최고령 taken_at)를, 완주했으면 NULL(= 요청 창 전체 커버)을 남긴다.
 			// 종료 경로 전체에 공통이다 — 어느 중단 분기로 끝났든 그 실행의 도달 깊이가 곧 커버리지다.
+			// 단 ③(커서 미전진)·④(안전 밸브)로 끊긴 실행만은 cappedThisRun이 false라 완주와 같은
+			// (false, NULL)로 기록돼 실제 도달 깊이보다 낙관적이다 — 기본 구성에선 상한 컷(⑤)이
+			// 밸브보다 안쪽이라 ④는 도달 불가하고, 최초 백필에서 기록되는 이 값은 컬럼 DEFAULT
+			// (false, NULL)와 같아 아무것도 덧쓰지 않으므로 수용한다.
 			brands.updateCoverage(brand.id(), cappedThisRun,
 					cappedThisRun ? oldestTakenAt(collected) : null);
 		}

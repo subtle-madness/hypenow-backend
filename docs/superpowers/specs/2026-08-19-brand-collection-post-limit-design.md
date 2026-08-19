@@ -162,6 +162,12 @@ v1 배포 전 코드리뷰에서 확인된 정합 구멍 2건(창 확장 no-op·
 - `directDuePosts`의 `tag_detected_at IS NULL` 필터 **제거** — 모든 direct 행이 2단계 모수.
   중복 콜 방지는 구조적으로 유지된다: 1단계 열거가 실제로 만난 겹침 행은 `touchCrawled`로
   갱신돼 due가 아니므로 2단계가 건너뛴다. 컷 밖이라 못 만난 겹침 행만 due로 남아 단건 수집된다.
+  **예외 — 0~14일 겹침 행**: 매일 티어는 `BrandCrawlPolicy.due`가 `last_crawled_at`을 아예
+  보지 않고 무조건 true를 반환하므로(나이 ≤ `DAILY_MAX_AGE`), 1단계가 방금 touch한 행도 2단계
+  모수에 그대로 남아 **스윕당 1콜이 중복**된다. 유한·무해로 판정하고 수용한다: 게시물당 최대
+  14일 × 1콜/일이고(15일째부터는 `sinceCrawl` 판정이 살아나 중복이 사라진다), 대상은
+  direct 등록된 겹침 행뿐이라 모수 자체가 작다. 제거하려면 2단계 모수에서 "이번 스윕 1단계가
+  만난 code"를 빼야 하는데, 그 상태를 단계 간에 넘기는 비용이 절감분보다 크다.
 - `trackedPosts`(열거 깊이 결정 입력)에 `AND direct_registered_at IS NULL` 추가 — 컷 밖 direct
   행의 due가 1단계 열거 깊이를 끌어내리지 못하게(direct-only 가드와 같은 원리의 확장). 추가
   비용은 "컷 밖 direct 게시물 수 × 티어 주기당 1콜"로 유한.

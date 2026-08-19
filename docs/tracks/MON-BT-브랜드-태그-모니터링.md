@@ -290,6 +290,41 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 자르지 않아, 37건/일 브랜드는 평범한 일일 수집만으로 ~54일이면 2,000행을 넘는다(신규 브랜드도
 수렴하지 않는다).
 
+수집 상한 v2 — 커버리지 영속화·확장 스킵·direct 면제·컷 클램프(2026-08-20 — **구현 완료**,
+[spec 2026-08-19 §7](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) ·
+[plan(아카이브)](../superpowers/plans/archive/2026-08-19-brand-collection-cap-v2.md)):
+v1이 남긴 정합 구멍 3개(창 확장 no-op·direct 겹침 동결·티어 재장전 무익 딥 스윕)와
+"이 브랜드가 요청 창을 다 모은 건가"를 답할 수 없던 문제를 한 브랜치에서 닫았다.
+
+- **커버리지 영속화**(§7-1) — `brand_account`에 `collection_capped`·`covered_until` 추가
+  (`V20260819125244__brand_account_coverage.sql`, additive). 백필 종료부(`last_swept_on` null인
+  실행)만 기록한다 — 창 커버리지는 "범위"의 이야기지 "신선도"의 이야기가 아니라서 일일 스윕은
+  건드리지 않는다. 컷으로 끝났으면 `true` + 실수집 깊이(편입분 최고령 `taken_at`), 완주면
+  `false` + NULL(요청 창 전체 커버). was `/brands` 응답에 **`collectionCapped`·`coveredUntil`**
+  2필드로 노출(`BrandReadRepository`). 알려진 오차(수용): 커서 미전진·안전 밸브로 끊긴 실행은
+  `capped=false`라 완주와 같은 `(false, NULL)`로 기록돼 낙관적이다 — 기본 구성에서 밸브는
+  도달 불가하고, 그 값이 컬럼 DEFAULT와 같아 아무것도 덧쓰지 않는다.
+- **확장 스킵**(§7-2) — 이미 상한 도달(`저장 행 수 >= collection-post-limit`)인 브랜드의 창
+  상향은 **백필을 제출하지 않고** `collection_months` 상향 + capped 마킹만 한다
+  (`raiseWindowCapped`, `covered_until`은 `COALESCE(기존값, now − 기존 창)`). 재백필이 기지
+  게시물만 세다 컷될 것이 확정이라 콜 전량이 낭비였다. `last_swept_on`·`backfill_completed_at`은
+  리셋하지 않는다(수집 상태 불변 — 구 `expandWindow` 리셋 경로를 타지 않는다).
+- **direct 등록 게시물 상한 면제**(§7-3) — 사용자 결정: direct 게시물은 브랜드 창은 따르되
+  2,000 상한 밖이다. `touchCrawledDepth`·`trackedPosts`에 `AND direct_registered_at IS NULL`,
+  `directDuePosts`는 `tag_detected_at IS NULL` 필터를 제거해 겹침 행까지 2단계 모수에 포함.
+  → **v1의 "컷 밖 direct 겹침 게시물이 실크롤 없이 조용히 동결"이 이걸로 해소됐다.** 알려진
+  예외(수용): 0~14일 겹침 행은 매일 티어의 due가 `last_crawled_at`을 아예 보지 않아 1단계가
+  방금 touch한 행도 2단계 모수에 남는다 — **스윕당 1콜 중복**(게시물당 최대 14일, 15일째부터
+  `sinceCrawl` 판정이 살아나 사라진다). 유한·무해로 판정하고 단계 간 상태 전달 비용을 피했다.
+- **capped 컷 클램프**(§7-4) — capped 브랜드의 일일 `enumerationCutoff`를 `covered_until`로
+  클램프(백필 실행은 제외 — 재백필이 커버리지를 다시 넓힐 유일한 경로여야 하므로). 컷 밖 태그
+  행의 due가 티어 주기마다 재장전돼 구조적으로 도달 불가능한 깊이를 여는 주기당 ~70콜 무익 딥
+  스윕이 영구 반복됐다. 동결이 touch 반복이 아니라 **범위 제외**로 구현돼 단순해졌다.
+
+위 v1 문단의 알려진 여파 ①(성과 대시보드 covered 오표시)은 **아직 남아 있다** — 다만 이제
+`covered_until`이 "실제로 어디까지 훑었나"의 정답 소스로 존재하므로 후속 정정이 추정 없이
+가능해졌다(아래 미결·후속). ②(뱃지≠목록)는 상한과 무관한 정상 상태라 v2에서도 그대로다.
+
 ## 잔여 작업
 
 - **[staging 승격 전]**
@@ -366,11 +401,14 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 - **완결 배치 서빙 — 배포 시점 확장 중이던 계정 보정 판단**(08-13) — 배포 순간 이미 기간 확장 중이던 계정은 `expandWindow`의 `backfill_completed_at` 리셋을 못 받고 옛 완주 시각을 들고 있어 FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). **일회성이고 데이터 유실 없음** — 보정 UPDATE 실행 여부는 배포 시 대상 건수를 보고 판단.
 - **링크 레벨 표시 창 — 배포 후 운영 수동 보정 1회**(08-17) — 신청값이 지금까지 어디에도 저장된 적이 없어 마이그레이션이 복원할 수 없다(기존 링크는 전부 12). 대상은 cclime 3개월 유저 + **단독 구독(활성 링크가 정확히 1개) 브랜드 전체** — 단독 구독은 자산값 = 그 유저의 신청값이라 자산에서 복원할 수 있다(다중 구독은 max라 복원 불가 → 그대로 12 유지, 개별 확인). app DB와 monitoring DB가 분리라 2단계(monitoring에서 `collection_months < 12 AND status = 'ACTIVE'` 브랜드 확인 → app에서 단독 링크만 UPDATE). 절차 SQL은 PR #480 본문.
 - **링크 레벨 표시 창 — 링크 창 미적용 표면**(08-17) — 성과 대시보드(`PerformanceComparisonAssembler`의 `covered`·집계 모수)와 `hashtag-posts` 목록은 아직 자산 창 전량을 본다. 3개월 유저에게 게시물 counts와 대시보드 모수가 달라 보인다(의도적 범위 밖 — FE 문의·혼선 발생 시 재론).
-- **수집 개수 상한 — 성과 대시보드 covered 판정 정정**(08-19, 후속 과제) —
+- **수집 개수 상한 — 성과 대시보드 covered 판정 정정**(08-19 제기, **별도 세션 진행 중**) —
   `PerformanceComparisonAssembler.covered`가 `backfill_completed_at` + `collection_months`만 보므로
   `collection-post-limit` 컷으로 실제로는 열거하지 않은 더 깊은 기간까지 "수집 완료 → 0건"으로
-  표시된다. 판정에 실수집 깊이(그 브랜드의 최고령 `taken_at`)를 반영해야 한다
+  표시된다
   ([spec 2026-08-19 §3-3](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md)).
+  **v2로 입력이 준비됐다**: `brand_account.covered_until`이 "실제로 어디까지 훑었나"의 정답
+  소스로 신설됐고 was `/brands`가 `collectionCapped`·`coveredUntil`로 이미 읽고 있으므로, 판정을
+  최고령 `taken_at` 추정이 아니라 이 컬럼으로 내리면 된다(`capped=false`면 종전 판정 유지).
 - **링크 레벨 표시 창 — 창 필터 SQL 푸시다운**(08-17) — 지금은 자산 창 전량을 조립한 뒤 메모리에서 자른다. 3개월 유저가 12개월 브랜드를 볼 때 버려지는 조립 비용이 크면 리포지토리 조회 컷을 링크 창으로 내리는 최적화가 후속.
 - **완결 배치 서빙 — 운영 반영 직후 백필 확인**(08-13) — `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**이어야 한다. 0이 아니면 마이그레이션 백필(25,759행)이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.
 - **해시태그 FE 요청 일괄(08-17) — 구현 완료, 잔여 4건**(태그 등록 즉시 스윕·제외 규칙 폐기·direct 취소 API·brandPostId·작성자 프로필 아카이브 — DECISIONS 08-17 행, 계약 v2.9):
