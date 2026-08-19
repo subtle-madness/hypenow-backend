@@ -336,7 +336,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "판정 추이 30일",
-      "description": "일별 판정 건수를 verdict별로 쌓아 본다(KST 달력일 경계). 대시보드 시간창과 무관하게 최근 30일 고정. 시리즈명은 DB 값 그대로다(DISCLOSED=표기, NOT_DISCLOSED=미표기, INSUFFICIENT=판단 불충분, UNCERTAIN=불확실). 특정 날짜만 비어 있으면 그날 판정 잡이 실패한 것이고, 백필 중에는 과거 게시물 판정이 실행한 날짜에 몰려 찍힌다.",
+      "description": "일별 판정 건수를 verdict별로 쌓아 본다(KST 달력일 경계). 대시보드 시간창과 무관하게 최근 30일 고정. 쿼리가 돌려주는 시리즈명은 DB 원값(DISCLOSED·NOT_DISCLOSED·INSUFFICIENT·UNCERTAIN)이고, 「verdict 분포」 타일과 같은 한글 라벨로 읽히도록 필드 override로 표시명만 바꿨다. 특정 날짜만 비어 있으면 그날 판정 잡이 실패한 것이고, 백필 중에는 과거 게시물 판정이 실행한 날짜에 몰려 찍힌다.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -364,7 +364,56 @@
             "spanNulls": false
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "DISCLOSED"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "표기"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "NOT_DISCLOSED"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "미표기"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "INSUFFICIENT"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "판단 불충분"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UNCERTAIN"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "불확실"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
