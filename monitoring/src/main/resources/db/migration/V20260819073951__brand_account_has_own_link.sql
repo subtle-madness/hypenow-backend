@@ -7,5 +7,5 @@
 --
 -- 기본값 true = "판정한다"가 안전 방향(동기화 실패 시 과판정으로 드리프트 — own 브랜드 미판정보다
 -- 낫다). 기존 데이터 백필(활성 own 연결이 없는 브랜드를 false로 되돌리는 것)은 배포 후 수동 SQL
--- 런북으로 처리한다(docs/superpowers/plans/2026-08-19-ad-disclosure-competitor-skip.md §5).
+-- 런북으로 처리한다(docs/superpowers/plans/archive/2026-08-19-ad-disclosure-competitor-skip.md §5).
 ALTER TABLE brand_account ADD COLUMN has_own_link boolean NOT NULL DEFAULT true;
