@@ -100,7 +100,7 @@ public class V1BrandAccountService {
 			// 현행 멱등 경로 그대로 monitoring 콜 0이다(축소 없음 — 수집된 사실이 정본).
 			if (months > findAccountOrThrow(brandId).collectionMonths()) {
 				String expandBrandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
-				translate(() -> commandClient.registerBrand(username, expandBrandName, months));
+				translate(() -> commandClient.registerBrand(username, expandBrandName, months, accountType));
 			}
 			// 링크(유저 표시 창, 2026-08-17)는 명시한 값으로 그대로 — 축소 허용. 생략(null)은 불변이다:
 			// orDefault로 접힌 12를 쓰면 필드 없는 구 클라이언트 재-POST가 신청 기간을 12로 되돌린다.
@@ -111,7 +111,8 @@ public class V1BrandAccountService {
 		}
 
 		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
-		BrandRegisterResult registered = translate(() -> commandClient.registerBrand(username, brandName, months));
+		BrandRegisterResult registered =
+				translate(() -> commandClient.registerBrand(username, brandName, months, accountType));
 		try {
 			// 링크에는 명시값(raw)을 넘긴다 — 개명 재등록이 기존 연결로 접힐 때 생략(null)과 명시를
 			// 구분해야 한다(멱등 경로와 같은 규칙). 자산(monitoring)에는 위에서 orDefault한 months.
@@ -184,6 +185,7 @@ public class V1BrandAccountService {
 			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
 		}
 		linkTransaction.changeType(userId, brandId, rawAccountType);
+		pushOwnLinkSafely(brandId);
 		return get(userId, brandId);
 	}
 
@@ -356,6 +358,10 @@ public class V1BrandAccountService {
 		if (!unlinked.lastLink()) {
 			log.info("{} — 브랜드 연결만 해제(다른 활성 사용자가 남아 monitoring 유지) brandId={}",
 					reason, unlinked.brandId());
+			// 부분 해지(2026-08-19 경쟁사 판정 제거 설계 §3) — 해제된 연결이 own이었으면 브랜드의
+			// own 연결 존재 여부가 바뀌었을 수 있다(마지막 own 연결이 방금 빠졌을 수도). 브랜드는
+			// 남아 있으므로(monitoring 탈퇴 없음) 재계산해서 민다.
+			pushOwnLinkSafely(unlinked.brandId());
 			return;
 		}
 		String username = deregisterUsername(unlinked);
@@ -366,6 +372,31 @@ public class V1BrandAccountService {
 		} catch (RuntimeException e) {
 			log.warn("{} — monitoring 브랜드 탈퇴 실패(연결 해제는 유지, 고아 브랜드 수집 지속) brandId={}, username={}",
 					reason, unlinked.brandId(), username, e);
+		}
+	}
+
+	/**
+	 * own-link 재계산·push(2026-08-19 경쟁사 판정 제거 설계 §3) — was 원장(app.brand_monitorings
+	 * 활성 연결)에서 이 브랜드에 own 연결이 하나라도 남았는지 다시 읽어 monitoring에 절대값으로
+	 * 민다. {@link #changeType}(양방향)·부분 해지({@link #deregisterIfLast}의 !lastLink 분기)가
+	 * 호출한다 — 등록(register)은 요청 필드({@code accountType})로 이미 커버되므로 별도 push가
+	 * 없다(설계 §2).
+	 *
+	 * <p>{@code deregisterBrand}와 같은 best-effort 컨벤션 — 실패해도 연결 변이는 이미 커밋됐으므로
+	 * 예외를 올리지 않는다(warn 로그만). 드리프트(monitoring이 낡은 값을 들고 있는 상태)는 배포 후
+	 * 수동 SQL 런북으로 복구한다(설계 §5) — 별도 재동기화 엔드포인트는 두지 않는다.
+	 */
+	private void pushOwnLinkSafely(long brandId) {
+		Optional<String> username = brandReadRepository.findAccount(brandId).map(BrandAccountRow::username);
+		if (username.isEmpty()) {
+			log.warn("own-link push 스킵 — monitoring brand_account 부재 brandId={}", brandId);
+			return;
+		}
+		try {
+			boolean hasOwnLink = linkRepository.existsActiveOwnLink(brandId);
+			commandClient.pushOwnLink(username.get(), hasOwnLink);
+		} catch (RuntimeException e) {
+			log.warn("own-link push 실패(격리, 드리프트는 수동 SQL 런북으로 복구) brandId={}", brandId, e);
 		}
 	}
 

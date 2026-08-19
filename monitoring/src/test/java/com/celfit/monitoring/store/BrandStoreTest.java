@@ -47,12 +47,12 @@ class BrandStoreTest {
 
 	@Test
 	void 브랜드_등록과_재가입_재활성() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		assertThat(brands.findActive()).hasSize(1);
 		assertThat(brands.close("brandx")).isTrue();
 		assertThat(brands.findActive()).isEmpty();
 		assertThat(brands.close("brandx")).isFalse();          // 이미 닫힘 — 멱등
-		long reId = brands.insertOrReactivate("brandx", profile("brandx", "111", 2000L, "소개2"), 12);
+		long reId = brands.insertOrReactivate("brandx", profile("brandx", "111", 2000L, "소개2"), 12, true);
 		assertThat(reId).isEqualTo(id);                        // 같은 행 재활성(UNIQUE username)
 		BrandRow row = brands.findByUsername("brandx").orElseThrow();
 		assertThat(row.status()).isEqualTo(BrandStatus.ACTIVE);
@@ -62,7 +62,7 @@ class BrandStoreTest {
 	@Test
 	void 등록은_프로필_전필드를_적재한다() {
 		long id = brands.insertOrReactivate("brandx", new ProfileInfo("brandx", "111", 1000L, 10L, 5L,
-				"브랜드", "https://pic", "소개", true, "https://link"), 12);
+				"브랜드", "https://pic", "소개", true, "https://link"), 12, true);
 		assertThat(column(id, "full_name", String.class)).isEqualTo("브랜드");
 		assertThat(column(id, "profile_pic_url", String.class)).isEqualTo("https://pic");
 		assertThat(column(id, "is_verified", Boolean.class)).isTrue();
@@ -73,7 +73,7 @@ class BrandStoreTest {
 
 	@Test
 	void 스윕_완주일과_프로필_갱신() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 6));
 		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn())
 				.isEqualTo(LocalDate.of(2026, 8, 6));
@@ -84,7 +84,7 @@ class BrandStoreTest {
 
 	@Test
 	void markServing은_last_swept_at만_당기고_완주_컬럼은_건드리지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 
 		brands.markServing(id);
 
@@ -95,7 +95,7 @@ class BrandStoreTest {
 
 	@Test
 	void markServing은_이미_서빙_중이면_시각을_덮지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 6));   // 완주 — last_swept_at 확정
 		Timestamp sweptAt = column(id, "last_swept_at", Timestamp.class);
 
@@ -106,7 +106,7 @@ class BrandStoreTest {
 
 	@Test
 	void refreshProfile은_전필드를_갱신한다() {
-		long id = brands.insertOrReactivate("brand_z", profile("brand_z"), 12);
+		long id = brands.insertOrReactivate("brand_z", profile("brand_z"), 12, true);
 		brands.refreshProfile(id, new ProfileInfo("brand_z", "1", 10L, 5L, 3L,
 				"이름", "https://pic", "소개", true, "https://link"));
 		assertThat(column(id, "full_name", String.class)).isEqualTo("이름");
@@ -120,7 +120,7 @@ class BrandStoreTest {
 
 	@Test
 	void touchSwept는_완주시각과_오류클리어까지_기록한다() {
-		long id = brands.insertOrReactivate("brand_x", profile("brand_x"), 12);
+		long id = brands.insertOrReactivate("brand_x", profile("brand_x"), 12, true);
 		brands.markBackfillError(id, "백필 실패: 타임아웃");
 		assertThat(column(id, "backfill_error", String.class)).isEqualTo("백필 실패: 타임아웃");
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
@@ -131,7 +131,7 @@ class BrandStoreTest {
 
 	@Test
 	void backfill_completed_at은_최초_완주시각을_보존한다() {
-		long id = brands.insertOrReactivate("brand_x", profile("brand_x"), 12);
+		long id = brands.insertOrReactivate("brand_x", profile("brand_x"), 12, true);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
 		Timestamp first = column(id, "backfill_completed_at", Timestamp.class);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 8));
@@ -141,7 +141,7 @@ class BrandStoreTest {
 
 	@Test
 	void markBackfillError는_ready_이후엔_덮지_않는다() {
-		long id = brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
+		long id = brands.insertOrReactivate("brand_y", profile("brand_y"), 12, true);
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
 		brands.markBackfillError(id, "늦게 온 실패");
 		assertThat(column(id, "backfill_error", String.class)).isNull();
@@ -150,41 +150,41 @@ class BrandStoreTest {
 	@Test
 	void 재가입은_백필_상태를_초기화한다() {
 		// 재등록 = 백필을 처음부터 다시 — "수집 준비 중"으로 되돌아야 was 폴링이 collecting을 본다.
-		long id = brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
+		long id = brands.insertOrReactivate("brand_y", profile("brand_y"), 12, true);
 		brands.markBackfillError(id, "백필 실패");
 		brands.close("brand_y");
-		brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
+		brands.insertOrReactivate("brand_y", profile("brand_y"), 12, true);
 		assertThat(column(id, "backfill_error", String.class)).isNull();
 
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));
 		brands.close("brand_y");
-		brands.insertOrReactivate("brand_y", profile("brand_y"), 12);
+		brands.insertOrReactivate("brand_y", profile("brand_y"), 12, true);
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
 	}
 
 	@Test
 	void 수집_창은_요청값으로_저장되고_재가입에도_줄지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
 		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(3);
 		// 재가입 확대는 반영, 축소는 GREATEST가 막는다 — "수집된 사실이 정본"(스펙 결정 요약).
 		brands.close("brandx");
-		brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 6);
+		brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 6, true);
 		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(6);
 		brands.close("brandx");
-		brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 1);
+		brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 1, true);
 		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(6);
 	}
 
 	@Test
 	void 값_공간_밖_수집_창은_CHECK가_거절한다() {
 		assertThatThrownBy(() -> brands.insertOrReactivate("brandx",
-				profile("brandx", "111", 1000L, "소개"), 2))
+				profile("brandx", "111", 1000L, "소개"), 2, true))
 				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
 	}
 
 	@Test
 	void expandWindow는_창_상향과_백필_재개_신호를_함께_기록한다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
 		brands.touchSwept(id, LocalDate.now());   // 완주 상태를 만들어 둔다
 		java.time.OffsetDateTime before = db.queryForObject(
 				"SELECT collection_started_at FROM brand_account WHERE id = ?",
@@ -210,7 +210,7 @@ class BrandStoreTest {
 	 */
 	@Test
 	void 기간_확장이_완주_시각을_리셋한다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
 		brands.touchSwept(id, LocalDate.now());
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
 
@@ -224,7 +224,7 @@ class BrandStoreTest {
 		// 동시 확장 경합의 순차 재현 — 12 요청이 먼저 반영된 뒤, 같은 옛 값(3)을 읽고 호출자 게이트를
 		// 통과한 6 요청이 늦게 도착하는 상황. 축소는 물론 백필 재개 신호(last_swept_on)·폴링 앵커
 		// (collection_started_at) 리셋 같은 부수효과도 남기면 안 된다.
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
 		assertThat(brands.expandWindow(id, 12)).isTrue();
 		brands.touchSwept(id, LocalDate.of(2026, 8, 7));   // 확장 백필 완주 — 불변 확인용 상태
 		java.time.OffsetDateTime startedAt = db.queryForObject(
@@ -242,7 +242,7 @@ class BrandStoreTest {
 
 	@Test
 	void 태그_게시물_링크와_댓글_게이트_상태() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null), 12, true);
 		taggedPosts.insert(id, post("CodeA", 1754000000L));
 		taggedPosts.insert(id, post("CodeA", 1754000000L));    // 재감지 — ON CONFLICT 무해
 		assertThat(taggedPosts.knownCodes(id)).containsExactly("CodeA");
@@ -399,7 +399,7 @@ class BrandStoreTest {
 
 	@Test
 	void 링크_last_crawled_at은_null로_시작하고_touchCrawled가_갱신한다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("A", 1754000000L));
 		taggedPosts.insert(id, post("B", 1754000000L));
 		Instant floor = Instant.ofEpochSecond(1754000000L).minusSeconds(60);
@@ -420,7 +420,7 @@ class BrandStoreTest {
 	@Test
 	void trackedPosts는_minTakenAt_이전_링크를_거른다() {
 		// 추적 플로어(180일) 밖 링크는 티어 판정 입력에서 빠진다 — 영구 제외의 조회 측 절반
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Recent", 1754000000L));
 		taggedPosts.insert(id, post("Ancient", 1700000000L));
 
@@ -432,7 +432,7 @@ class BrandStoreTest {
 	void touchCrawledDepth는_컷_이후_링크_전부를_갱신한다() {
 		// 자연 종료한 열거가 커버한 깊이 전체 갱신 — 열거에 안 실린 링크(삭제·태그 제거·비공개)도
 		// 포함해야 due가 영구 true로 굳지 않는다. 컷 이전 링크는 건드리지 않는다.
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("InCut", 1754000000L));
 		taggedPosts.insert(id, post("OnCut", 1753000000L));      // 경계 — 컷과 동일 시각(포함)
 		taggedPosts.insert(id, post("BeforeCut", 1752000000L));
@@ -452,7 +452,7 @@ class BrandStoreTest {
 
 	@Test
 	void touchCrawled는_빈_목록에_쿼리를_내지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.touchCrawled(id, List.of(), Instant.now());   // 예외 없이 no-op이면 통과
 	}
 
@@ -462,7 +462,7 @@ class BrandStoreTest {
 	void 마이그레이션_후_기존_tagged_행은_tag_detected_at이_채워진다() {
 		// V20260818040742의 백필(UPDATE ... SET tag_detected_at = first_seen_at)이 실제로 도는지
 		// — insert()가 이제 tag_detected_at을 명시적으로 채우므로, 신규 삽입행으로 이를 검증한다.
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("A", 1754000000L));
 		assertThat(db.queryForObject(
 				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='A'",
@@ -471,7 +471,7 @@ class BrandStoreTest {
 
 	@Test
 	void upsertDirect_신규_삽입은_tag_detected_at이_비고_direct_registered_at이_채워진다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
 
 		taggedPosts.upsertDirect(id, post("D1", 1754000000L), registeredAt);
@@ -486,7 +486,7 @@ class BrandStoreTest {
 
 	@Test
 	void upsertDirect를_기존_tagged_행에_적용하면_tag_detected_at은_보존되고_direct_registered_at만_채워진다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
 		Timestamp before = db.queryForObject(
 				"SELECT tag_detected_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
@@ -505,7 +505,7 @@ class BrandStoreTest {
 
 	@Test
 	void insert_열거를_기존_direct_only_행에_적용하면_direct_registered_at은_보존되고_tag_detected_at이_채워진다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
 		taggedPosts.upsertDirect(id, post("D2", 1754000000L), registeredAt);
 
@@ -523,7 +523,7 @@ class BrandStoreTest {
 	void trackedPosts는_direct_only_행을_반환하지_않는다() {
 		// R5 — 가드(AND tag_detected_at IS NOT NULL)를 지운 채로 먼저 실패를 확인했다(수동 검증,
 		// 아래 주석 참조). 가드가 있는 현재 코드에서는 direct-only 행이 빠져야 한다.
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
 
@@ -533,7 +533,7 @@ class BrandStoreTest {
 
 	@Test
 	void touchCrawledDepth는_direct_only_행의_last_crawled_at을_건드리지_않는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
 		Instant at = Instant.parse("2026-08-18T09:00:00Z");
@@ -550,7 +550,7 @@ class BrandStoreTest {
 
 	@Test
 	void directDuePosts는_direct_only_행만_반환한다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
@@ -562,7 +562,7 @@ class BrandStoreTest {
 
 	@Test
 	void clearDirect는_direct_표식만_해제하고_tagged_행은_남는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
 		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
@@ -578,13 +578,13 @@ class BrandStoreTest {
 
 	@Test
 	void clearDirect는_행이_없어도_무해하다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.clearDirect(id, "없는코드");   // 예외 없이 no-op이면 통과
 	}
 
 	@Test
 	void deleteIfDirectOnly는_순수_direct_행만_지운다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
 		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
@@ -604,7 +604,7 @@ class BrandStoreTest {
 
 	@Test
 	void findDirectSnapshot은_direct_등록된_행만_반환한다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("TaggedOnly", 1754000000L));
 		Instant registeredAt = Instant.parse("2026-08-18T03:00:00Z");
 		taggedPosts.upsertDirect(id, post("Direct1", 1754000000L), registeredAt);
@@ -627,8 +627,8 @@ class BrandStoreTest {
 	 */
 	@Test
 	void markEnriched는_지정_브랜드의_지정_코드에만_정산_시각을_찍는다() {
-		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12);
-		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12);
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("A", 1754000000L));
 		taggedPosts.insert(id, post("B", 1754000000L));
 		taggedPosts.insert(other, post("A", 1754000000L));       // 다른 브랜드의 같은 코드

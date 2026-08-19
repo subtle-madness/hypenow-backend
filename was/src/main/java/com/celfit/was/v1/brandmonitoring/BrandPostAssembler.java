@@ -104,10 +104,16 @@ public class BrandPostAssembler {
 	/**
 	 * 브랜드 1계정의 게시물 전량(필터 전) — 업로드 최신순, takenAt 미상은 마지막.
 	 * 소유권 검증은 호출부 책임이다(여기 오는 account는 이미 내 브랜드여야 한다).
+	 *
+	 * @param viewerAccountType 조회 유저의 이 브랜드 연결 accountType(2026-08-19 경쟁사 판정 제거
+	 *                          설계 §4) — competitor면 광고 표기 4필드를 노출하지 않는다({@link
+	 *                          #brandPost} 참조). 과도기 폴백(direct 산지)은 애초에 그 필드들의
+	 *                          산지가 없어(항상 null) 영향 없다.
 	 */
-	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account) {
+	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account, String viewerAccountType) {
 		// 표시 표면이라 정산분만 — 게시자·댓글이 붙기 전의 반쯤 빈 카드를 목록·상세·counts에 싣지 않는다.
-		List<BrandPostResponse> brandPool = assembleBrandPosts(userId, account, true, BrandPostScope.ENRICHED_ONLY);
+		List<BrandPostResponse> brandPool = assembleBrandPosts(userId, account, true, BrandPostScope.ENRICHED_ONLY,
+				viewerAccountType);
 		List<BrandPostResponse> legacyPending = assembleLegacyPending(userId, account.id());
 		return mergeWithLegacyPending(brandPool, legacyPending);
 	}
@@ -150,9 +156,12 @@ public class BrandPostAssembler {
 	 *
 	 * @param userId 시딩(캠페인 연결) 판정 스코프(2026-08-18 캠페인 도출 개정) — 캠페인은 브랜드가
 	 *               아니라 유저 단위 개념이라 {@code account}가 아니라 이 값으로 조회한다.
+	 * @param viewerAccountType 조회 유저의 이 브랜드 연결 accountType(2026-08-19 경쟁사 판정 제거
+	 *                          설계 §4, {@link #assembleForBrand} 참조) — {@link #brandPost}에
+	 *                          그대로 넘긴다.
 	 */
 	public List<BrandPostResponse> assembleBrandPosts(long userId, BrandAccountRow account, boolean withComments,
-			BrandPostScope scope) {
+			BrandPostScope scope, String viewerAccountType) {
 		List<BrandTaggedPostRow> allPosts = brandReadRepository.findBrandPostsInWindow(account.id(), windowCutoff(),
 				scope == BrandPostScope.ENRICHED_ONLY);
 		if (allPosts.isEmpty()) {
@@ -189,7 +198,7 @@ public class BrandPostAssembler {
 						snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
 						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
 						campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure, seededUsernames,
-						ownedShortCodes.contains(p.shortCode())))
+						ownedShortCodes.contains(p.shortCode()), viewerAccountType))
 				.toList();
 	}
 
@@ -320,7 +329,7 @@ public class BrandPostAssembler {
 	static BrandPostResponse brandPost(long brandId, BrandTaggedPostRow post, BrandPostMetaRow meta,
 			AuthorRow author, List<BrandSnapshotRow> snapshotRows, List<BrandCommentRow> commentRows,
 			OffsetDateTime lastSweptAt, List<String> campaignIds, boolean exposeAdDisclosure,
-			Set<String> seededUsernames, boolean registeredByUser) {
+			Set<String> seededUsernames, boolean registeredByUser, String viewerAccountType) {
 		String contentType = contentTypeOf(meta == null ? null : meta.contentType());
 		List<TrackingItemResponse.SnapshotResponse> snapshots =
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
@@ -335,7 +344,12 @@ public class BrandPostAssembler {
 		// 1행 공용이다(설계 §결정 1, brand_tagged_post 단일 산지 통합) — tagged·direct 모두 같은 meta에서
 		// 읽는다. 겹침 게시물이 direct 셰이프로 고정되던 구 모델의 "tagged 값 승격" 병합 단계는 이제
 		// 필요 없다 — 애초에 행이 하나뿐이라 승격할 별도 값이 없다.
-		boolean exposeAd = exposeAdDisclosure && meta != null;
+		// 경쟁사 조회자 제외(2026-08-19 경쟁사 판정 제거 설계 §4) — 브랜드 자체의 판정 존재 여부와
+		// 무관하게, 이 게시물을 보는 유저의 연결이 competitor면 무조건 노출하지 않는다(같은 브랜드를
+		// own으로 보는 다른 유저에게는 그대로 노출된다 — 노출은 연결 단위 판정이라 seededAuthor 등
+		// 다른 필드처럼 브랜드 단위로 고정하지 않는다).
+		boolean exposeAd = exposeAdDisclosure && meta != null
+				&& !BrandAccountType.COMPETITOR.equals(viewerAccountType);
 		String adDisclosure = exposeAd ? meta.adVerdict() : null;
 		List<String> adViolations = exposeAd ? parseViolations(post.shortCode(), meta.adViolationsJson()) : List.of();
 		List<BrandPostResponse.AdEvidence> adEvidence =

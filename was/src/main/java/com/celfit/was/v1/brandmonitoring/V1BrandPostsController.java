@@ -110,7 +110,8 @@ public class V1BrandPostsController {
 		// 있어도, 이 유저가 신청한 기간까지만 서빙한다. counts·필터·정렬 전부 자른 전량 기준.
 		// 컷은 스트림 밖에서 한 번만 구한다 — 건마다 시계를 읽으면 자정을 걸친 응답에서 창이 흔들린다.
 		LocalDate windowStart = linkWindowStart(today(), link.collectionMonths());
-		List<BrandPostResponse> all = assembler.assembleForBrand(principal.getUserId(), account).stream()
+		List<BrandPostResponse> all = assembler
+				.assembleForBrand(principal.getUserId(), account, link.accountType()).stream()
 				.filter(p -> withinLinkWindow(p, windowStart))
 				.toList();
 		List<BrandPostResponse> filtered = all.stream()
@@ -153,7 +154,8 @@ public class V1BrandPostsController {
 				continue;
 			}
 			LocalDate windowStart = linkWindowStart(today, link.collectionMonths());
-			Optional<BrandPostResponse> found = assembler.assembleForBrand(principal.getUserId(), account.get())
+			Optional<BrandPostResponse> found = assembler
+					.assembleForBrand(principal.getUserId(), account.get(), link.accountType())
 					.stream()
 					.filter(p -> p.id().equals(postId))
 					// 창 밖 게시물은 목록에 없다 — 상세만 열리는 불일치를 만들지 않는다(같은 404).

@@ -67,12 +67,20 @@ class BrandRegistrationServiceTest {
 		}
 
 		@Override
-		public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths) {
+		public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths,
+				boolean ownRequest) {
 			BrandRow existing = rows.get(username);
 			long id = existing != null ? existing.id() : nextId++;
 			int months = existing != null ? Math.max(existing.collectionMonths(), collectionMonths) : collectionMonths;
-			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null, months));
+			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null, months,
+					ownRequest));
 			return id;
+		}
+
+		@Override
+		public void setHasOwnLink(String username, boolean hasOwnLink) {
+			rows.computeIfPresent(username, (u, r) -> new BrandRow(r.id(), r.username(), r.igUserId(), r.status(),
+					r.lastSweptOn(), r.collectionMonths(), hasOwnLink));
 		}
 
 		/** 실 SQL 의미와 등가 — GREATEST + "collection_months < months일 때만" 갱신하고 그 여부를 돌려준다. */
@@ -84,7 +92,8 @@ class BrandRegistrationServiceTest {
 				return false;
 			}
 			rows.replaceAll((u, r) -> r.id() == brandId
-					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months) : r);
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months, r.hasOwnLink())
+					: r);
 			return true;
 		}
 
@@ -105,7 +114,7 @@ class BrandRegistrationServiceTest {
 				return false;
 			}
 			rows.put(username, new BrandRow(row.id(), row.username(), row.igUserId(),
-					BrandStatus.CLOSED, row.lastSweptOn(), row.collectionMonths()));
+					BrandStatus.CLOSED, row.lastSweptOn(), row.collectionMonths(), row.hasOwnLink()));
 			return true;
 		}
 
@@ -116,7 +125,9 @@ class BrandRegistrationServiceTest {
 			// 실 UPDATE와 동일하게 행에도 반영한다 — 확장 백필이 "재조회한 행"(lastSweptOn 비워짐)으로
 			// 도는지를 스텁 행이 stale인 채로는 구분할 수 없다.
 			rows.replaceAll((u, r) -> r.id() == brandId
-					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), on, r.collectionMonths()) : r);
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), on, r.collectionMonths(),
+							r.hasOwnLink())
+					: r);
 		}
 
 		@Override
@@ -469,6 +480,62 @@ class BrandRegistrationServiceTest {
 		service().register("brandx");
 
 		assertThat(enrichSubmissions).isEmpty();   // 게시물 없이 보강만 도는 낭비 방지
+	}
+
+	// ---------- has_own_link 초기화·승격(2026-08-19 경쟁사 판정 제거 설계 §2) ----------
+
+	@Test
+	void 신규_등록_own은_has_own_link_true다() {
+		var result = service().register("brandx", null, null, "own");
+
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isTrue();
+		assertThat(result.replayed()).isFalse();
+	}
+
+	@Test
+	void 신규_등록_competitor는_has_own_link_false다() {
+		service().register("brandx", null, null, "competitor");
+
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isFalse();
+	}
+
+	@Test
+	void accountType_생략은_own과_동치다() {
+		service().register("brandx");   // accountType 미상 — null
+
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isTrue();
+	}
+
+	@Test
+	void competitor로_등록된_브랜드를_own으로_재등록하면_승격된다() {
+		var service = service();
+		service.register("brandx", null, null, "competitor");
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isFalse();
+
+		service.register("brandx", null, null, "own");
+
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isTrue();
+	}
+
+	@Test
+	void competitor로_등록된_브랜드를_competitor로_재등록해도_변경없다() {
+		var service = service();
+		service.register("brandx", null, null, "competitor");
+
+		service.register("brandx", null, null, "competitor");
+
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isFalse();
+	}
+
+	/** own으로 이미 승격된 브랜드는 competitor 재등록에도 절대 내려가지 않는다(승격만, 강등 없음). */
+	@Test
+	void own인_브랜드를_competitor로_재등록해도_내려가지_않는다() {
+		var service = service();
+		service.register("brandx", null, null, "own");
+
+		service.register("brandx", null, null, "competitor");
+
+		assertThat(brands.rows.get("brandx").hasOwnLink()).isTrue();
 	}
 
 	@Test

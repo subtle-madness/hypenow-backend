@@ -55,14 +55,20 @@ import org.springframework.web.bind.annotation.RestController;
 public class BrandController {
 
 	/**
-	 * brandName·collectionMonths는 하위 호환용 nullable — 기존 요청 바디(필드 없음)는 null로 들어와도
-	 * 문제없다. brandName은 2026-08-17부터 태그 시드에 쓰이지 않는다(계정명 태그 1종만 유도,
-	 * {@link BrandRegistrationService} 참조) — 값을 보내도 무해하게 무시될 뿐이다. collectionMonths
-	 * 미상은 수집 창이 기본 12개월로 접힌다.
+	 * brandName·collectionMonths·accountType은 하위 호환용 nullable — 기존 요청 바디(필드 없음)는
+	 * null로 들어와도 문제없다. brandName은 2026-08-17부터 태그 시드에 쓰이지 않는다(계정명 태그
+	 * 1종만 유도, {@link BrandRegistrationService} 참조) — 값을 보내도 무해하게 무시될 뿐이다.
+	 * collectionMonths 미상은 수집 창이 기본 12개월로 접힌다. accountType(2026-08-19 경쟁사 판정
+	 * 제거 설계 §2)은 {@code "competitor"}가 아니면 전부 own 취급 — has_own_link 초기화·승격에만
+	 * 쓰인다({@link BrandRegistrationService#register(String, String, Integer, String)} 참조).
 	 */
-	public record BrandRegisterRequest(String username, String brandName, Integer collectionMonths) {}
+	public record BrandRegisterRequest(String username, String brandName, Integer collectionMonths,
+			String accountType) {}
 
 	public record BrandRegisterResponse(long brandId, String username, Long followers, String status) {}
+
+	/** own-link 절대값 설정 요청(PUT own-link, 2026-08-19 경쟁사 판정 제거 설계 §2) — 멱등. */
+	public record OwnLinkRequest(boolean hasOwnLink) {}
 
 	/**
 	 * 태그 셋(유저 관리 API, 2026-08-12) — GET 응답·PUT 요청 바디 공용. tags는 정규화(trim·선행 #
@@ -106,7 +112,7 @@ public class BrandController {
 	@PostMapping
 	public ResponseEntity<BrandRegisterResponse> register(@RequestBody BrandRegisterRequest req) {
 		BrandRegistrationService.Result result = service.register(req.username(), req.brandName(),
-				req.collectionMonths());
+				req.collectionMonths(), req.accountType());
 		return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED)
 				.body(new BrandRegisterResponse(result.brandId(), result.username(),
 						result.followers(), "ACTIVE"));
@@ -119,6 +125,19 @@ public class BrandController {
 			case CLOSED, ALREADY_CLOSED -> ResponseEntity.noContent().build();
 			case NOT_FOUND -> ResponseEntity.notFound().build();
 		};
+	}
+
+	/**
+	 * own-link 플래그 절대값 설정(2026-08-19 경쟁사 판정 제거 설계 §2) — was가 연결 변이(changeType
+	 * 양방향·부분 해지) 커밋 후 원장(app.brand_monitorings 활성 연결)에서 재계산한 값을 그대로 민다.
+	 * 멱등(같은 값 재전송 무해) — 브랜드 미존재는 204로 삼킨다(was best-effort push 컨벤션과
+	 * 짝 — {@link BrandRepository#setHasOwnLink}가 0-row UPDATE를 조용히 받아들이는 것과 동형이라
+	 * 여기서도 존재 여부를 굳이 확인하지 않는다).
+	 */
+	@PutMapping("/{username}/own-link")
+	public ResponseEntity<Void> setOwnLink(@PathVariable String username, @RequestBody OwnLinkRequest req) {
+		brands.setHasOwnLink(username, req.hasOwnLink());
+		return ResponseEntity.noContent().build();
 	}
 
 	// ---------- direct 게시물 명령(2026-08-18 direct 통합 §2-2·§2-4·§4-2, was 실행기 진입점) ----------

@@ -55,7 +55,7 @@ class BrandDirectCollectServiceTest {
 	private final Map<String, String> postResponses = new HashMap<>();
 	private final Set<String> notFoundCodes = new HashSet<>();
 
-	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, LocalDate.now(), 12);
+	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, LocalDate.now(), 12, true);
 
 	// ── 스텁 대역(BrandCollectServiceTest 관용구 재사용) ──────────────────────
 

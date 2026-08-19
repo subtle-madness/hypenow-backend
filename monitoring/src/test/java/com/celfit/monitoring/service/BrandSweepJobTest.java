@@ -206,7 +206,7 @@ class BrandSweepJobTest {
 	}
 
 	private static BrandRow brand(long id, String username) {
-		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null, 12);
+		return new BrandRow(id, username, String.valueOf(id), BrandStatus.ACTIVE, null, 12, true);
 	}
 
 	/**

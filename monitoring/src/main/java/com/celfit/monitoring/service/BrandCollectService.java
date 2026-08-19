@@ -334,7 +334,7 @@ public class BrandCollectService {
 			// 댓글·광고 판정은 노출 게이트 밖 — ensureAuthors의 하드 실패(위 예외가 여기까지 전파되는
 			// 중이어도) 포함해 항상 시도한다(2026-08-18 수정). 각자 실패해도 위 정산에는 영향 없다.
 			collectCommentsGatedSafely(brand.id(), posts);
-			judgeAdDisclosuresSafely(posts);
+			judgeAdDisclosuresSafely(brand, posts);
 		}
 		log.info("브랜드 태그 보강 — {} 게시자 수집·정산 완료({}건 대상)", brand.username(), posts.size());
 	}
@@ -363,10 +363,20 @@ public class BrandCollectService {
 	 * 쿼터 장애 등으로 판정이 스윕 자체를 지연시킬 때 was 노출 토글(expose)과 독립적으로 판정만
 	 * 끄는 롤백 수단. 진입점 맨 앞에서 가드해 adJudge 호출 자체가 나가지 않게 한다(no-op 리턴 —
 	 * verdict는 그대로 NULL/기존값 유지, 다음에 켜지면 캡션 해시 비교로 자연 재판정).
+	 *
+	 * <p>경쟁사 스킵(2026-08-19 경쟁사 판정 제거 설계 §3) — 브랜드에 활성 own 연결이 하나도 없으면
+	 * ({@code brand.hasOwnLink() == false}) 판정 자체를 돌지 않는다(킬 스위치와 같은 층위, LLM 콜
+	 * 절약). own 연결이 생기면 was가 플래그를 승격하고, 다음 스윕·백필에서 캡션 해시 불일치로 자연
+	 * 재판정된다(리셋 불필요).
 	 */
-	private void judgeAdDisclosuresSafely(List<PostInfo> posts) {
+	private void judgeAdDisclosuresSafely(BrandRow brand, List<PostInfo> posts) {
 		if (!adDisclosureEnabled) {
 			log.debug("광고 표기 판정 킬 스위치 비활성 — 판정 스킵 ({}건)", posts.size());
+			return;
+		}
+		if (!brand.hasOwnLink()) {
+			log.debug("경쟁사 전용 브랜드(활성 own 연결 없음) — 광고 표기 판정 스킵 {} ({}건)",
+					brand.username(), posts.size());
 			return;
 		}
 		try {

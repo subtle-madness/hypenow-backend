@@ -93,18 +93,27 @@ public class BrandRegistrationService {
 		this.hashtagSweep = hashtagSweep;
 	}
 
+	/** competitor 계정 타입 리터럴(was BrandAccountType.COMPETITOR와 동형) — 이 값 외엔 전부 own 취급. */
+	private static final String ACCOUNT_TYPE_COMPETITOR = "competitor";
+
 	/**
 	 * 기존 단일 인자 호출부용 위임 — brandName은 더 이상 시드에 쓰이지 않으므로(계정명 태그
 	 * 1종만 유도, {@link #seedHashtagsSafely} 참조) 결과는 register(username, brandName)과
-	 * 같다. collectionMonths 미상은 기본 12개월로 접는다.
+	 * 같다. collectionMonths 미상은 기본 12개월로 접는다. accountType 미상은 own(2026-08-19
+	 * 경쟁사 판정 제거 설계 — {@link #register(String, String, Integer, String)} 참조).
 	 */
 	public Result register(String username) {
-		return register(username, null, null);
+		return register(username, null, null, null);
 	}
 
-	/** 기존 2인자 호출부용 위임 — collectionMonths 미상은 기본 12개월. */
+	/** 기존 2인자 호출부용 위임 — collectionMonths·accountType 미상. */
 	public Result register(String username, String brandName) {
-		return register(username, brandName, null);
+		return register(username, brandName, null, null);
+	}
+
+	/** 기존 3인자 호출부용 위임(테스트·레거시) — accountType 미상(own). */
+	public Result register(String username, String brandName, Integer collectionMonths) {
+		return register(username, brandName, collectionMonths, null);
 	}
 
 	/**
@@ -120,8 +129,13 @@ public class BrandRegistrationService {
 	 *
 	 * <p>replay 경로에서 요청 collectionMonths가 기존 창보다 크면 기간 확장(expandIfRequested)까지
 	 * 수행한다 — 재등록이 창 상향의 유일한 입구다(별도 API 없음).
+	 *
+	 * <p>accountType(nullable, 기본 own — 2026-08-19 경쟁사 판정 제거 설계 §2)은 has_own_link 초기화·
+	 * 승격에만 쓰인다: 신규 삽입이면 {@code accountType != 'competitor'} 그대로 심고, 기존 행
+	 * replay·재활성이면 own일 때만 승격한다(경쟁사 재등록이 다른 유저의 own 연결을 false로 내리면
+	 * 안 된다 — {@link com.celfit.monitoring.store.BrandRepository#insertOrReactivate} 참조).
 	 */
-	public Result register(String username, String brandName, Integer collectionMonths) {
+	public Result register(String username, String brandName, Integer collectionMonths, String accountType) {
 		if (username == null || username.isBlank()) {
 			throw new ValidationException("username은 필수다");
 		}
@@ -130,16 +144,20 @@ public class BrandRegistrationService {
 		if (!ALLOWED_MONTHS.contains(months)) {
 			throw new ValidationException("collectionMonths는 1|3|6|12만 허용한다");
 		}
+		boolean ownRequest = !ACCOUNT_TYPE_COMPETITOR.equals(accountType);
 		String normalized = username.strip();
 		var existing = brands.findByUsername(normalized);
 		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
 			seedHashtagsSafely(existing.get().id(), normalized, brandName);
 			triggerHashtagSweep(existing.get());
 			expandIfRequested(existing.get(), months);
+			if (ownRequest && !existing.get().hasOwnLink()) {
+				brands.setHasOwnLink(normalized, true);
+			}
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
-		long id = brands.insertOrReactivate(normalized, profile, months);
+		long id = brands.insertOrReactivate(normalized, profile, months, ownRequest);
 		// 등록 검증 프로필 1콜의 사후 계상 — 콜 시점엔 brand_id가 없어 컨텍스트 스코프를 못 쓴다.
 		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
 		callCounts.add(id, LocalDate.now(KST), 1);
