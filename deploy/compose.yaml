@@ -242,6 +242,8 @@ services:
       # 모니터링 v3 조회 개통(was 계약 §1) — 기본 off. 개통은 .env의 MONITORING_ENABLED=true +
       # WAS_READER_PASSWORD 설정(README §13-6). false면 MonitoringConfig 자체가 안 뜬다(부가 서브시스템 무영향).
       MONITORING_ENABLED: "${MONITORING_ENABLED:-false}"
+      # 광고 표기 판정 FE 노출 개통(08-19, 계약 §9) — false로 내리면 즉시 중립값 강제(킬 스위치)
+      AD_DISCLOSURE_EXPOSE: "${AD_DISCLOSURE_EXPOSE:-true}"
       # monitoring 사설 DB(postgres 인스턴스 내 monitoring DB)를 읽기 전용 계정으로 — 객체 GRANT는
       # monitoring Flyway(V2)가 소유자로서 부여, was_reader에는 접속 권한만(db/init/02 참조)
       MONITORING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring

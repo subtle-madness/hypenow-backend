@@ -85,8 +85,10 @@ monitoring:
   enabled: false   # true면 monitoring.datasource.*(읽기 전용 계정) 필수, monitoring.api.base-url은 기본값 http://monitoring:8083(계약 §1) — 계약: docs/contracts/monitoring-was-contract.md
   brand:
     ad-disclosure:
-      expose: false   # 광고 표기 판정 was 노출 토글(스펙 §10-3) — 드라이런(기존 게시물 전량 판정 +
-                       # verdict 분포 검토) 완료 전까지 false. true 전환이 곧 FE 노출 개통이다.
+      expose: ${AD_DISCLOSURE_EXPOSE:false}   # 광고 표기 판정 was 노출 토글(스펙 §10-3) — true 전환이
+                       # 곧 FE 노출 개통이다. 08-19 운영·test는 compose env로 true(사용자 결정 —
+                       # FE가 표기 점검 UI를 선배포해 개통이 곧 장애 해소였음. 골드셋 오탐률 측정은
+                       # 개통 후 후속으로 유지). 기본값은 false 유지 — 끄면 즉시 중립값 강제(킬 스위치).
                        # 이 키는 was 전용(노출 토글)이다 — monitoring 모듈 application.yml의
                        # 같은 이름 하위 경로(monitoring.brand.ad-disclosure.judge-model·concurrency,
                        # Tier2 LLM 풀 설정)와는 모듈도 뜻도 다른 별개 키다. grep 시 혼동 주의.
