@@ -309,6 +309,10 @@ public class TrackingItemAssembler {
 
 	/** 저장 키는 or지만 계약·모니터링 어휘는 any다(MonitoringRegistrationExecutor.readKeywordRule와 동일 변환). */
 	private KeywordRule readKeywordRule(String keywordsJson) {
+		// keywords가 NULL(또는 blank)인 레거시 개인 추적 아이템 방어 — 빈 규칙으로 취급.
+		if (keywordsJson == null || keywordsJson.isBlank()) {
+			return new KeywordRule(List.of(), List.of(), List.of());
+		}
 		Map<?, ?> map = objectMapper.readValue(keywordsJson, Map.class);
 		return new KeywordRule(castList(map.get("and")), castList(map.get("or")), castList(map.get("exclude")));
 	}
