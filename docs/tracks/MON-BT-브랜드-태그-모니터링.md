@@ -354,7 +354,10 @@ v1이 남긴 정합 구멍 3개(창 확장 no-op·direct 겹침 동결·티어 �
       SELECT taken_at FROM brand_tagged_post
       WHERE brand_id = b.id AND tag_detected_at IS NOT NULL
       ORDER BY taken_at DESC OFFSET 1999 LIMIT 1)
-  WHERE b.id = <brand_id>;
+  WHERE b.id = <brand_id>
+    AND (SELECT taken_at FROM brand_tagged_post
+         WHERE brand_id = b.id AND tag_detected_at IS NOT NULL
+         ORDER BY taken_at DESC OFFSET 1999 LIMIT 1) IS NOT NULL;  -- 2,000행 미만이면 no-op(모순쌍 방지)
   ```
   **`min(taken_at)`을 쓰면 안 된다** — 상한 도입 이전에 초과 수집된 분(marynmay_global이 그
   경우)이 섞여 있으면 실제 도달 깊이보다 깊게 잡히고, 그 값이 §7-4 클램프로 들어가 일일 열거가
