@@ -99,4 +99,27 @@ class BrandDirectPostRepositoryTest extends IntegrationTest {
 
 		assertThat(rows).extracting(BrandDirectPostRepository.Row::shortCode).containsExactly("plain");
 	}
+
+	/**
+	 * 등록자 전용 노출 필터(BrandPostAssembler, 08-19)의 원장 조회 경로 고정 — direct 통합 이후 신규
+	 * 등록({@link BrandDirectRegistrationExecutor}가 부르는 {@code upsertDirect})도 shortCodesByUser에
+	 * 잡혀야 한다(migrated_at IS NULL인 레거시 upsert만 잡히는 회귀 방지).
+	 */
+	@Test
+	void shortCodesByUser는_upsertDirect로_등록한_매핑도_포함한다() {
+		repository.upsertDirect(userId, 999, "newdirect");
+
+		assertThat(repository.shortCodesByUser(userId)).contains("newdirect");
+	}
+
+	@Test
+	void shortCodesByUser는_다른_유저_매핑은_제외한다() {
+		repository.upsertDirect(userId, 999, "mine");
+		long otherUserId = jdbcClient
+				.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "other-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+
+		assertThat(repository.shortCodesByUser(otherUserId)).isEmpty();
+	}
 }
