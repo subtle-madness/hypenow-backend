@@ -154,17 +154,25 @@ public class BrandCollectService {
 	 * 기회를 못 얻으면 그 브랜드가 collecting에 영구히 갇힌다. 구 계약("서빙 창 30일 커버 시
 	 * 정확히 1회 + 누적 리스트")은 폐기됐다.
 	 *
-	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
+	 * <p>열거 중단은 <b>5종</b>이다(2026-08-19 수집 개수 상한 신설로 4종에서 늘었다) —
 	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
-	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달. ①②는 컷까지 다 훑은
-	 * 자연 종료라 coveredCutoff=true → touchCrawledDepth로 그 깊이 전체를 touch하고,
-	 * ③④는 미커버라 touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다).
+	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달 ⑤수집 개수 상한
+	 * (collectionPostLimit, <b>0 이하면 무제한</b> — backfill-max-per-run 관용 일치) 도달.
+	 * ①②⑤는 coveredCutoff=true → touchCrawledDepth로 깊이를 touch하고, ③④는 미커버라
+	 * touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다). 단 ⑤의 touch 깊이는 ①②와 달리
+	 * <b>실제 커버 깊이가 아니라 목표 컷 전체</b>다 — 컷 밖 게시물의 지표를 마지막 수집 시점으로
+	 * 동결한 채 계속 서빙하고 due 재열거 루프를 끊는 <b>의도된 동결</b>이다(08-19 스펙 §3-2).
+	 * ④와 ⑤는 신호 등급도 갈린다: ④는 ERROR(이상 신호·미커버), ⑤는 INFO(정상 경로·커버).
 	 *
-	 * <p>상한은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 — 2,000은 tooq급 정상 고물량
+	 * <p>④의 상한은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 — 2,000은 tooq급 정상 고물량
 	 * 브랜드가 백필·심층 티어 스윕에서 닿아 10,000으로 상향, 08-12 상한 개정 스펙). ④가
 	 * 백필에서 나면 커버 깊이 밖 구간은 이후 스윕이 열지 않아 영구 공백이 된다 — 그래서 error
-	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는 그래도
-	 * 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3).
+	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. 08-19 이후로는
+	 * <b>collection-post-limit도 함께 올려야</b> 재백필이 깊이를 연다 — 안 올리면 리셋 재백필이
+	 * ⑤에서 다시 끊겨 같은 공백이 남는다. touchSwept는 그래도 유지한다(있는 만큼 즉시 서빙 —
+	 * 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3). 다만 <b>기본 설정(2000 &lt; 10000)에서는
+	 * ⑤가 항상 먼저 걸려 ④ 분기 자체가 도달 불가</b>다 — 이 밸브는 collection-post-limit을
+	 * 10,000 초과로 올리거나 0(무제한)으로 끈 구성에서만 다시 의미를 갖는다.
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
