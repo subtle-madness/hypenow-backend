@@ -116,7 +116,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 업로드일이_구간_경계에_정확히_귀속된다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, null, List.of(
 				content("A", "2", "2026-08-04", 100L, snapshot(10L, 1L, false, 1L)),   // 1w 하한
 				content("B", "2", "2026-08-03", 100L, snapshot(10L, 1L, false, 1L)),   // 1w_1m 상한
 				content("C", "2", "2025-08-10", 100L, snapshot(10L, 1L, false, 1L)),   // 6m_12m 하한
@@ -138,7 +138,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 합계는_non_null만_더하고_전부_null이면_null이다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, null, List.of(
 				// views 87400+20, likes 2800+null, comments 320+8 — 피드(views null)는 결측 카운트로.
 				content("A", "2", "2026-08-09", 400000L, snapshot(87400L, 2800L, false, 320L)),
 				content("B", "2", "2026-08-08", 12000L, snapshot(20L, null, true, 8L)),
@@ -167,7 +167,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 스냅샷이_없는_콘텐츠는_지표_결측으로_센다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, null, List.of(
 				content("A", "2", "2026-08-09", 100L)),   // 스냅샷 0개 — 관측 전무
 				RANGES, TODAY);
 
@@ -182,7 +182,7 @@ class PerformanceComparisonAssemblerTest {
 
 	@Test
 	void 지표는_최신_스냅샷에서_읽는다() {
-		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
+		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, null, List.of(
 				// 스냅샷은 날짜 오름차순 계약 — 마지막(08-09)이 최신이다.
 				content("A", "2", "2026-08-09", 100L,
 						new TrackingItemResponse.SnapshotResponse("2026-08-08", 50L, 5L, false, 2L,
@@ -208,11 +208,11 @@ class PerformanceComparisonAssemblerTest {
 				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
 
 		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN,
-				List.of(), RANGES, TODAY);
+				null, List.of(), RANGES, TODAY);
 		var notReady = PerformanceComparisonAssembler.compare(collecting, BrandAccountType.OWN,
-				List.of(), RANGES, TODAY);
+				null, List.of(), RANGES, TODAY);
 		var early = PerformanceComparisonAssembler.compare(earlyServing, BrandAccountType.OWN,
-				List.of(), RANGES, TODAY);
+				null, List.of(), RANGES, TODAY);
 
 		assertThat(ready.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
 		assertThat(notReady.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
@@ -231,7 +231,7 @@ class PerformanceComparisonAssemblerTest {
 
 		expected.forEach((months, coveredByBucket) -> {
 			var result = PerformanceComparisonAssembler.compare(completedAccount(months),
-					BrandAccountType.OWN, List.of(), RANGES, TODAY);
+					BrandAccountType.OWN, null, List.of(), RANGES, TODAY);
 			assertThat(result.buckets())
 					.extracting(PerformanceComparisonResponse.Bucket::covered)
 					.as("months=%d", months)
@@ -245,7 +245,7 @@ class PerformanceComparisonAssemblerTest {
 		// 정확히 일치해 경계 버킷이 창 밖으로 밀려나지 않는다.
 		LocalDate today = LocalDate.parse("2026-03-31");
 		var result = PerformanceComparisonAssembler.compare(completedAccount(3), BrandAccountType.OWN,
-				List.of(), PerformanceComparisonAssembler.bucketRanges(today), today);
+				null, List.of(), PerformanceComparisonAssembler.bucketRanges(today), today);
 
 		assertThat(result.buckets()).extracting("key", "covered").containsExactly(
 				tuple("1w", true), tuple("1w_1m", true), tuple("1m_3m", true),
@@ -264,12 +264,64 @@ class PerformanceComparisonAssemblerTest {
 				12, OffsetDateTime.parse("2026-08-10T00:00:00Z"));
 
 		var result = PerformanceComparisonAssembler.compare(expanding, BrandAccountType.OWN,
-				List.of(), RANGES, TODAY);
+				null, List.of(), RANGES, TODAY);
 
 		assertThat(result.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
 	}
 
+	@Test
+	void 실수집_깊이보다_깊은_버킷은_covered_false다() {
+		// 수집 개수 상한(collection-post-limit, 스펙 2026-08-19 §3-3)은 백필·스윕 열거를 최신
+		// 게시물 컷에서 끊는다 — 창(collection_months) 판정만으로는 열거한 적 없는 깊은 구간이
+		// "수집 완료·0건"으로 오표시된다. 버킷 먼 쪽 경계(from)가 실수집 깊이(최고령 tagged
+		// taken_at의 KST 달력일)보다 깊으면 false.
+		var result = PerformanceComparisonAssembler.compare(completedAccount(12), BrandAccountType.OWN,
+				LocalDate.parse("2026-04-01"), List.of(), RANGES, TODAY);
+
+		assertThat(result.buckets()).extracting("key", "covered").containsExactly(
+				tuple("1w", true), tuple("1w_1m", true), tuple("1m_3m", true),
+				tuple("3m_6m", false), tuple("6m_12m", false));
+	}
+
+	@Test
+	void 실수집_깊이_경계일_버킷은_covered_true다() {
+		// 경계일 포함은 창 하한 판정과 같은 규칙 — 최고령 게시물이 놓인 날 자체는 열거가 닿은 날이다.
+		var atBoundary = PerformanceComparisonAssembler.compare(completedAccount(12), BrandAccountType.OWN,
+				LocalDate.parse("2025-08-10"), List.of(), RANGES, TODAY);
+		var oneDeeper = PerformanceComparisonAssembler.compare(completedAccount(12), BrandAccountType.OWN,
+				LocalDate.parse("2025-08-11"), List.of(), RANGES, TODAY);
+
+		// 6m_12m(from 2025-08-10): 깊이가 정확히 from이면 true, 하루라도 얕으면 false.
+		assertThat(atBoundary.buckets().get(4).covered()).isTrue();
+		assertThat(oneDeeper.buckets().get(4).covered()).isFalse();
+	}
+
+	@Test
+	void 실수집_깊이_미상이면_창_판정_그대로다() {
+		// tagged 게시물 0건(깊이 null)은 상한 컷일 수 없다(컷은 상한 건수 열거를 전제) — 완주했다면
+		// 창 안 전 구간이 진짜 "수집했는데 0건"이므로 창 판정을 그대로 둔다.
+		var result = PerformanceComparisonAssembler.compare(completedAccount(12), BrandAccountType.OWN,
+				null, List.of(), RANGES, TODAY);
+
+		assertThat(result.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
+	}
+
 	// ---------- 배선(계정 로딩·그룹핑) ----------
+
+	@Test
+	void 실수집_깊이는_monitoring에서_읽어_KST_달력일로_판정한다() {
+		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link(2L, "cclime.beauty")));
+		given(brandReadRepository.findAccount(2L)).willReturn(Optional.of(readyAccount()));
+		// 2026-02-10T20:00Z = KST 02-11 — UTC 날짜(02-10)로 자르면 3m_6m(from 02-10)이 true로 뒤집힌다.
+		given(brandReadRepository.findOldestEnumeratedTakenAt(2L))
+				.willReturn(Optional.of(OffsetDateTime.parse("2026-02-10T20:00:00Z")));
+
+		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
+
+		assertThat(response.accounts().get(0).buckets()).extracting("key", "covered").containsExactly(
+				tuple("1w", true), tuple("1w_1m", true), tuple("1m_3m", true),
+				tuple("3m_6m", false), tuple("6m_12m", false));
+	}
 
 	@Test
 	void 연결_순서대로_계정이_실리고_individual은_어느_계정에도_안_붙는다() {
@@ -281,6 +333,8 @@ class PerformanceComparisonAssemblerTest {
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 						null, null, null, "", "", null, null, null, "ACTIVE", null,
 						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
+		given(brandReadRepository.findOldestEnumeratedTakenAt(2L)).willReturn(Optional.empty());
+		given(brandReadRepository.findOldestEnumeratedTakenAt(3L)).willReturn(Optional.empty());
 
 		var response = assembler().assemble(7L, List.of(
 				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
@@ -310,6 +364,8 @@ class PerformanceComparisonAssemblerTest {
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 						null, null, null, "", "", null, null, null, "ACTIVE", null,
 						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
+		given(brandReadRepository.findOldestEnumeratedTakenAt(2L)).willReturn(Optional.empty());
+		given(brandReadRepository.findOldestEnumeratedTakenAt(3L)).willReturn(Optional.empty());
 
 		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
 
@@ -323,6 +379,7 @@ class PerformanceComparisonAssemblerTest {
 				link(2L, "cclime.beauty"), link(9L, "ghost")));
 		given(brandReadRepository.findAccount(2L)).willReturn(Optional.of(readyAccount()));
 		given(brandReadRepository.findAccount(9L)).willReturn(Optional.empty());
+		given(brandReadRepository.findOldestEnumeratedTakenAt(2L)).willReturn(Optional.empty());
 
 		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
 

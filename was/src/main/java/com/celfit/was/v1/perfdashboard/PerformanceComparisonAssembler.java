@@ -66,8 +66,12 @@ public class PerformanceComparisonAssembler {
 				continue;
 			}
 			// accountType은 계정이 아니라 링크(구독)의 속성이라 순회 중인 링크 행에서 온다(08-12).
+			// 실수집 깊이는 KST 달력일로 잘라 넘긴다 — 버킷 경계가 KST 달력일이다.
+			LocalDate oldestCollectedOn = KstTimestamps.toKstDate(
+					brandReadRepository.get().findOldestEnumeratedTakenAt(link.brandId()).orElse(null));
 			accounts.add(compare(account.get(), BrandAccountType.orDefault(link.accountType()),
-					byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()), ranges, today));
+					oldestCollectedOn, byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()),
+					ranges, today));
 		}
 		return new PerformanceComparisonResponse(List.copyOf(accounts));
 	}
@@ -93,7 +97,7 @@ public class PerformanceComparisonAssembler {
 	 * 계정 1개 집계 — accountContents는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
 	 * covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12): 백필이 열거하는 범위가
 	 * collection_months 창뿐이라, 완주해도 창 밖 버킷은 수집한 적 자체가 없다 — 계정 단위 true는
-	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 3중 AND:
+	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 4중 AND:
 	 * <ul>
 	 * <li><b>완주</b>(backfillCompletedAt 존재) — last_swept_at은 첫 페이지 배치만 정산돼도 미리
 	 * 찍히므로 못 쓴다(스트리밍 백필). 08-13 개정으로 기간 확장이 이 값을 NULL로 리셋하므로,
@@ -104,6 +108,15 @@ public class PerformanceComparisonAssembler {
 	 * <li><b>버킷이 창 안</b> — 먼 쪽 경계(from)가 창 하한(today.minusMonths(collectionMonths))
 	 * 이상. 부분 겹침은 false(보수적), 경계일은 포함 — 창 하한과 버킷 하한이 같은
 	 * minusMonths(말일 클램프) 연산이라 12개월 계정의 6m_12m이 정확히 경계에 얹힌다.</li>
+	 * <li><b>버킷이 실수집 깊이 안</b>(2026-08-19) — 먼 쪽 경계(from)가 oldestCollectedOn(열거
+	 * 편입분의 최고령 taken_at, KST 달력일 — {@link BrandReadRepository#findOldestEnumeratedTakenAt})
+	 * 이상. monitoring의 수집 개수 상한(collection-post-limit, 스펙 2026-08-19 §3-3)이 백필·스윕
+	 * 열거를 최신 게시물 컷에서 끊으므로, 창 판정만으로는 열거한 적 없는 깊은 구간이 "수집
+	 * 완료·0건"으로 오표시된다. 부분 겹침 false·경계일 포함은 창 판정과 같은 규칙. null(열거분
+	 * 0건)이면 이 조건은 통과 — 컷은 상한 건수 열거를 전제하므로 0건 완주는 진짜 "수집했는데
+	 * 0건"이다. 알려진 트레이드오프: 데이터가 최고령 게시물보다 깊은 구간은 자연 완주(그 구간에
+	 * 원래 게시물이 없음)여도 false로 내린다 — was는 컷 발생 여부를 알 수 없어(monitoring이 컷
+	 * 마커를 영속화하지 않음) "0건이면 정말 0건" 보증이 안 되는 구간을 보수적으로 접는다.</li>
 	 * </ul>
 	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
 	 *
@@ -114,12 +127,14 @@ public class PerformanceComparisonAssembler {
 	 * 적용하지 않는다 — 의도적 범위 밖).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
-			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges, LocalDate today) {
+			LocalDate oldestCollectedOn, List<PerformanceContentResponse> accountContents,
+			List<BucketRange> ranges, LocalDate today) {
 		boolean accountCovered = account.backfillCompletedAt() != null && account.lastSweptOn() != null;
 		LocalDate windowStart = today.minusMonths(account.collectionMonths());
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
 		for (BucketRange range : ranges) {
-			boolean covered = accountCovered && !range.from().isBefore(windowStart);
+			boolean covered = accountCovered && !range.from().isBefore(windowStart)
+					&& (oldestCollectedOn == null || !range.from().isBefore(oldestCollectedOn));
 			buckets.add(aggregate(range, covered, accountContents));
 		}
 		// collectionStartedAt은 브랜드 계정 API와 같은 앵커(collection_started_at, 확장 시 갱신) —

@@ -244,6 +244,32 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(rows.get(0).tagDetectedAt()).isNull();
 	}
 
+	/**
+	 * 실수집 깊이(성과 대시보드 covered 판정용) — 열거(tagged)분의 최고령 taken_at. direct-only 행은
+	 * 창 예외라 아무리 오래된 게시물도 등록될 수 있어, 포함하면 열거 깊이를 과대평가한다 — 제외.
+	 */
+	@Test
+	void 최고령_열거_taken_at은_direct_only_행을_제외한_최솟값이다() {
+		long brandId = seedBrand("brand_official");
+		seedTaggedPost(brandId, "NEWER", "2026-08-01T00:00:00Z");
+		seedTaggedPost(brandId, "OLDEST_TAGGED", "2026-03-01T00:00:00Z");
+		seedDirectPost(brandId, "ANCIENT_DIRECT", "2024-01-01T00:00:00Z", "2026-08-01T00:00:00Z");
+
+		Optional<OffsetDateTime> oldest = repository.findOldestEnumeratedTakenAt(brandId);
+
+		assertThat(oldest).isPresent();
+		assertThat(oldest.get().toInstant())
+				.isEqualTo(OffsetDateTime.parse("2026-03-01T00:00:00Z").toInstant());
+	}
+
+	@Test
+	void 열거_게시물이_없으면_최고령_taken_at은_빈_값이다() {
+		long taggedless = seedBrand("brand_directonly");
+		seedDirectPost(taggedless, "ONLY_DIRECT", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z");
+
+		assertThat(repository.findOldestEnumeratedTakenAt(taggedless)).isEmpty();
+	}
+
 	@Test
 	void 게시물_메타는_영상_협찬_필드까지_읽는다() {
 		jdbc.sql("""

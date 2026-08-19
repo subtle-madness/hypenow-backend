@@ -93,6 +93,25 @@ public class BrandReadRepository {
 				.list();
 	}
 
+	/**
+	 * 실수집 깊이 — 열거(tagged)로 편입된 게시물의 최고령 taken_at(성과 대시보드 covered 판정,
+	 * 2026-08-19). 수집 개수 상한(collection-post-limit)이 백필·스윕 열거를 최신 게시물 컷에서 끊으므로
+	 * "이 시각보다 깊은 기간은 열거가 닿았다고 보장할 수 없다"의 경계값이다. direct-only 행
+	 * (tag_detected_at IS NULL)은 창 예외라 아무리 오래된 게시물도 등록될 수 있어 포함하면 열거
+	 * 깊이를 과대평가한다 — 제외. tagged 게시물이 하나도 없으면 empty(컷 자체가 불가능한 상태).
+	 */
+	public Optional<OffsetDateTime> findOldestEnumeratedTakenAt(long brandId) {
+		return jdbc.sql("""
+				SELECT taken_at FROM brand_tagged_post
+				WHERE brand_id = :brandId AND tag_detected_at IS NOT NULL
+				ORDER BY taken_at
+				LIMIT 1
+				""")
+				.param("brandId", brandId)
+				.query(OffsetDateTime.class)
+				.optional();
+	}
+
 	/** 태그 게시물 표시 메타(게시물 전역 최신 1행) — caption·thumbnailUrl·영상/유료협찬 필드의 산지. */
 	public List<BrandPostMetaRow> findPostMeta(Collection<String> shortCodes) {
 		if (shortCodes.isEmpty()) {

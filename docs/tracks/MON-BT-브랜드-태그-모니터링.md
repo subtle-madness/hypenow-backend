@@ -267,6 +267,21 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
   뒤 was를 배포할 것. (08-18 시딩 계정 관리 표면 철회로 `brand_seeded_account`는 이 목록에서
   빠졌다 — was가 더 이상 그 테이블을 조회하지 않는다.)
 
+성과 대시보드 covered 판정에 실수집 깊이 반영(2026-08-19 — **구현 완료**, was 단독 변경):
+수집 개수 상한(`collection-post-limit` 2,000, 병행 작업 — 스펙
+`docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md` §3-3의 "알려진 여파 ①")
+이 백필·스윕 열거를 최신 게시물 컷에서 끊으면, `PerformanceComparisonAssembler.covered`의 기존
+3중 AND(완주 + 확장 중 아님 + 버킷이 collection_months 창 안)로는 실제로 열거하지 않은 깊은
+버킷(예: marynmay_global의 3m_6m·6m_12m)이 "수집 완료·0건"으로 오표시된다. 판정을 **4중 AND**로
+확장: 버킷 먼 쪽 경계(from)가 **실수집 깊이**(그 브랜드 열거 편입분의 최고령 `taken_at`, KST
+달력일 — 신규 `BrandReadRepository.findOldestEnumeratedTakenAt`, monitoring DB 읽기 전용) 이상일
+때만 true. direct-only 행(`tag_detected_at IS NULL`)은 창 예외라 깊이 산정에서 제외(포함하면
+과대평가), 열거분 0건(깊이 null)은 컷일 수 없어 창 판정 그대로(0건 완주 = 진짜 "수집했는데
+0건"). 알려진 트레이드오프: was는 컷 발생 여부를 알 수 없어(monitoring이 컷 마커를 영속화하지
+않음) 자연 완주 브랜드도 최고령 게시물보다 깊은 빈 구간은 covered=false로 접힌다 — "covered=true
+·0건이면 정말 0건" 보증을 지키는 보수적 선택. 상한 미머지 상태에서도 유효한 수정이다(marynmay는
+이미 12개월 창 대비 ~9개월 깊이만 수집돼 있어 같은 오표시가 현존).
+
 ## 잔여 작업
 
 - **[staging 승격 전]**
