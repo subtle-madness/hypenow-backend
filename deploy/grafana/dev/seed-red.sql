@@ -59,9 +59,14 @@ UPDATE target
  WHERE id IN (SELECT id FROM target WHERE status = 'TRACKING' ORDER BY id LIMIT 6);
 
 -- [브랜드] 수집 현황 빨강 — 오늘 신규 태그 게시물 0(스윕 불발 양상) + 백필 미완 브랜드 4
+--                          + enrich 잔여 600(빨강 임계 500 초과)
 DELETE FROM brand_tagged_post
  WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date;
 UPDATE brand_account SET last_swept_on = NULL WHERE id IN (1, 2, 3, 4);
+UPDATE brand_tagged_post SET enriched_at = NULL
+ WHERE short_code IN (SELECT short_code FROM brand_tagged_post
+                       WHERE first_seen_at < now() - interval '24 hours'
+                       ORDER BY short_code LIMIT 600);
 
 -- [브랜드] 광고 표기 빨강 — 오늘 판정 0건(판정 잡 정지 양상)
 UPDATE brand_post_meta SET ad_judged_at = ad_judged_at - interval '2 days'

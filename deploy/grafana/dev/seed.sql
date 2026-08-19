@@ -190,6 +190,7 @@ TRUNCATE target RESTART IDENTITY CASCADE;          -- detected_candidate 동반
 TRUNCATE sweep_run RESTART IDENTITY;
 TRUNCATE alarm_event RESTART IDENTITY;
 TRUNCATE brand_call_count, target_call_count;
+TRUNCATE brand_post_meta;                          -- 게시물 전역 테이블 — brand_account CASCADE가 못 지움
 
 -- 브랜드 계정 130(app.brand_monitorings.brand_id와 1:1). 스윕은 10시간 전 완료 = 초록.
 -- CLOSED 4건(127~130)은 closed_at을 채우고 스윕 흔적을 종결 이전으로 되돌린다 — 종결된 계정이
@@ -316,10 +317,10 @@ FROM generate_series(1, 28255) g;
 -- target.matched_keywords만 남기고 바로 자동 추적 전환).
 
 -- 광고 표기 판정 시드(brand_post_meta 8,000 — 실측 밀도 없음: 08-17 신설·백필 진행 중 가정).
--- 판정 60%(g%5<3): verdict는 DISCLOSED 위주 4값, source RULE 70%/LLM 30%,
+-- 판정 60%(g%5<3): verdict는 DISCLOSED 위주 4값,
+-- source RULE 83%/LLM 17%(판정행의 g%10이 {0,1,2,5,6,7}만 나옴),
 -- ad_judged_at은 최근 30일 + 오늘 확정분(g<=120은 오늘 새벽 — '오늘 판정' stat이 0이 안 되게).
 -- 미판정 40%: judged_caption_hash NULL(잔여 스톡 — '미판정 잔여' stat).
-TRUNCATE brand_post_meta;
 INSERT INTO brand_post_meta (short_code, username, content_type, uploaded_at, caption,
                              thumbnail_url, first_seen_at,
                              ad_verdict, ad_verdict_source, ad_violations, ad_evidence,
@@ -346,17 +347,11 @@ SELECT 'TP' || g, 'author' || (g % 2000),
 FROM generate_series(1, 8000) g;
 
 -- enrich 분포 조정(수집 현황 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
--- 잔여 스탯이 상시 수천으로 뜬다 — 실제 양상(최근 유입분만 처리 대기)으로 좁힌다.
--- 하루 넘게 미처리(잔여 판정 대상)는 12건만 남긴다.
+-- 잔여 스탯이 상시 수천으로 뜬다 — 하루 넘게 미처리는 전부 메워 초록 시드의 잔여를 0으로.
+-- 24h 이내 유입분의 NULL(자연 처리 대기)은 그대로 둔다 — '오늘' 타일들과 마찬가지로
+-- 하니스 시드는 24시간 내 재적용 전제(시간이 지나면 이 대기분이 창을 넘어 잔여로 늙는다).
 UPDATE brand_tagged_post SET enriched_at = first_seen_at + interval '2 hours'
  WHERE enriched_at IS NULL AND first_seen_at < now() - interval '24 hours';
-UPDATE brand_tagged_post SET enriched_at = NULL
- WHERE short_code IN (SELECT short_code FROM brand_tagged_post
-                       WHERE first_seen_at < now() - interval '24 hours'
-                       ORDER BY short_code LIMIT 12);
-
--- 수집 기간 설정 편차(전 행 기본 12라 분포 stat이 단색이 된다)
-UPDATE brand_account SET collection_months = (ARRAY[1, 3, 6, 12])[1 + (id % 4)];
 
 -- 브랜드 스윕 시각 분포(Task 8 보강): 순차 처리 근사 — 오늘 02:00 KST부터 브랜드당 ~17초 간격.
 -- 균일 시각이면 '오늘 스윕 소요'·'브랜드별 처리 간격' 패널이 0으로 뭉개진다.
