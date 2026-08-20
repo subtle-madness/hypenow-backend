@@ -7,6 +7,7 @@
 import json
 import os
 import re
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -14,6 +15,28 @@ WEBHOOK = os.environ["DISCORD_WEBHOOK_URL"]
 TOKEN = os.environ["ONS_RELAY_TOKEN"]
 
 SEVERITY_EMOJI = {"CRITICAL": "🚨", "ERROR": "🚨", "WARNING": "⚠️", "INFO": "ℹ️"}
+
+# ONS는 at-least-once 전달이라 같은 알람이 재전달될 수 있다(2026-08-19 실측: FIRING_TO_OK 뒤에
+# 동일 dedupeKey·timestamp의 OK_TO_FIRING이 재도착 → 디스코드에 유령 알람). (dedupeKey, type)
+# 기준 TTL 내 재수신은 게시를 생략한다. 릴레이는 단일 프로세스라 메모리 dict로 충분.
+DEDUPE_TTL_SECONDS = 30 * 60
+_recent_deliveries: dict[tuple[str, str], float] = {}
+
+
+def is_duplicate(body, now: float | None = None) -> bool:
+	"""TTL 내 동일 (dedupeKey, type) 재수신 여부. dedupeKey가 없으면 판정 불가 — 게시 우선."""
+	if not isinstance(body, dict) or not body.get("dedupeKey"):
+		return False
+	if now is None:
+		now = time.monotonic()
+	for key, seen_at in list(_recent_deliveries.items()):
+		if now - seen_at > DEDUPE_TTL_SECONDS:
+			del _recent_deliveries[key]
+	ident = (str(body["dedupeKey"]), str(body.get("type") or ""))
+	if ident in _recent_deliveries:
+		return True
+	_recent_deliveries[ident] = now
+	return False
 
 
 def post_discord(content: str) -> None:
@@ -83,6 +106,9 @@ class Handler(BaseHTTPRequestHandler):
 				print(f"구독 확인 방문: {url.group(0)}", flush=True)
 				post_discord("✅ OCI 알람 구독이 연결되었습니다 (hypenow-alerts)")
 				return
+		if is_duplicate(body):
+			print(f"중복 수신 생략: dedupeKey={body.get('dedupeKey')} type={body.get('type')}", flush=True)
+			return
 		post_discord(format_alarm(body, raw))
 
 	def log_message(self, *args):  # 기본 액세스 로그 소음 억제 — 수신 본문은 위에서 직접 로깅

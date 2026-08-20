@@ -26,13 +26,23 @@ public record PerformanceComparisonResponse(List<AccountComparison> accounts) {
 	}
 
 	/**
-	 * 구간 1개 집계. covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12):
-	 * 백필 완주(backfillCompletedAt 존재·확장 진행 중 아님) <b>그리고</b> 버킷 범위가
-	 * collection_months 수집 창 안(먼 쪽 경계가 창 하한 이상 — 부분 겹침은 보수적으로 false)일
-	 * 때만 true다. 예: 3개월 브랜드는 완주해도 1w·1w_1m·1m_3m만 true, 3m_6m·6m_12m은 false
-	 * ("수집 범위 밖"이지 "게시물 없음"이 아니다). false는 "이 구간은 아직/원래 수집되지 않았다"는
-	 * 뜻이고 집계값은 그대로 내린다(direct 콘텐츠는 레거시 파이프라인이라 창·스윕과 무관하게
-	 * 존재할 수 있다).
+	 * 구간 1개 집계. covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12,
+	 * 실수집 깊이 반영 2026-08-19): 백필 완주(backfillCompletedAt 존재·확장 진행 중 아님)
+	 * <b>그리고</b> 버킷 범위가 실제 수집 범위 안 — 먼 쪽 경계가 collection_months 창 하한
+	 * <b>과 실수집 깊이(brand_account.covered_until, 수집 개수 상한 컷 시 monitoring이 영속화 —
+	 * 수집 상한 v2 §7-1)</b> 중 얕은 쪽 이상(부분 겹침은 보수적으로 false)일 때만 true다.
+	 *
+	 * <p>따라서 covered=false의 의미는 두 가지다: ① 수집 창 밖(예: 3개월 브랜드의 3m_6m·6m_12m —
+	 * 플랜 속성), ② 창 안이지만 상한 컷으로 수집이 거기까지 닿지 않음(고물량 브랜드의 깊은 구간 —
+	 * 데이터 속성). FE가 구분해 표기하려면 계정 API의 {@code collectionCapped}·{@code coveredUntil}
+	 * (계약 §10-1)을 함께 본다. 컷 없이 완주한 브랜드(coveredUntil null)는 종전과 동일하게 창
+	 * 판정뿐이다 — 창 안 0건 버킷의 covered=true는 "수집했는데 게시물 없음" 그대로다.
+	 *
+	 * <p>false는 "이 구간 전체의 수집을 보장하지 못한다"는 뜻이다. 집계 모수는 실수집
+	 * 범위로 클램프된다(2026-08-20 결정 — 컷 밖 tagged 기수집분은 성과 집계에서 제외,
+	 * {@code BrandPostAssembler#assembleBrandPosts}의 capToCoverage) — 그래도 direct 콘텐츠
+	 * (상한 면제)와 컷 경계 버킷의 커버된 쪽 게시물은 실리므로 covered=false ∧
+	 * contentCount&gt;0은 여전히 정상 조합이다.
 	 */
 	public record Bucket(
 			@Schema(allowableValues = {"1w", "1w_1m", "1m_3m", "3m_6m", "6m_12m"}) String key,
