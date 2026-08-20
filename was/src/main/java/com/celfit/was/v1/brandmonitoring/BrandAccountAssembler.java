@@ -80,7 +80,11 @@ public class BrandAccountAssembler {
 				error,
 				// createdAt = 등록 시각. was 링크 생성 시각과 초 단위로 같고(등록 트랜잭션 직전 monitoring
 				// 호출), 재가입 때 registered_at이 갱신돼 "지금 보고 있는 가입"을 가리킨다.
-				KstTimestamps.toKstIso(row.registeredAt()));
+				KstTimestamps.toKstIso(row.registeredAt()),
+				// 커버리지(수집 상한 v2 §7-1) — 백필이 상한(2,000건)에서 끊겼는지와 그 실수집 깊이.
+				// 그대로 통과시킨다: 유도 대상이 아니라 monitoring이 백필 시점에 확정한 사실값이다.
+				row.collectionCapped(),
+				KstTimestamps.toKstIso(row.coveredUntil()));
 	}
 
 	private static BrandAccountResponse.Profile profile(BrandAccountRow row) {

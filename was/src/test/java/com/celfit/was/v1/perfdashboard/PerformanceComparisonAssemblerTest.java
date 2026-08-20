@@ -86,7 +86,7 @@ class PerformanceComparisonAssemblerTest {
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
 				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
 				4143L, 15L, 82L, "", "끌리메 뷰티", null, true, null, "ACTIVE", null,
-				months, OffsetDateTime.parse("2026-06-01T00:00:00Z"));
+				months, OffsetDateTime.parse("2026-06-01T00:00:00Z"), false, null);
 	}
 
 	/** 12개월(전 구간 covered) 기준 픽스처. */
@@ -199,13 +199,13 @@ class PerformanceComparisonAssemblerTest {
 		BrandAccountRow collecting = new BrandAccountRow(3L, "laperi_kr", null, null,
 				OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 				null, null, null, "", "", null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null);
 		// 08-12 스트리밍 백필: 서빙 창(30일)만 커버해도 last_swept_at이 먼저 찍힌다 — 이 상태는
 		// 365일 전량이 아니라서 covered는 false여야 한다(판정 기준을 backfill_completed_at으로 옮긴 이유).
 		BrandAccountRow earlyServing = new BrandAccountRow(4L, "hypenow_kr", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-08-09T00:00:00Z"),
 				null, null, null, null, null, "", "", null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null);
 
 		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN,
 				List.of(), RANGES, TODAY);
@@ -261,7 +261,7 @@ class PerformanceComparisonAssemblerTest {
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
 				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
 				null, null, null, "", "", null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-10T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-10T00:00:00Z"), false, null);
 
 		var result = PerformanceComparisonAssembler.compare(expanding, BrandAccountType.OWN,
 				List.of(), RANGES, TODAY);
@@ -280,7 +280,7 @@ class PerformanceComparisonAssemblerTest {
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 						null, null, null, "", "", null, null, null, "ACTIVE", null,
-						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
+						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null)));
 
 		var response = assembler().assemble(7L, List.of(
 				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
@@ -309,7 +309,7 @@ class PerformanceComparisonAssemblerTest {
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 						null, null, null, "", "", null, null, null, "ACTIVE", null,
-						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
+						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null)));
 
 		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
 

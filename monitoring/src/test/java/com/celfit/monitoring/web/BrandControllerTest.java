@@ -47,7 +47,8 @@ class BrandControllerTest {
 		List<String> triggeredSweepTags;
 
 		StubService() {
-			super(null, null, null, null, null, null, Runnable::run, Runnable::run, Runnable::run);
+			super(null, null, null, null, null, null, null, 2000,
+					Runnable::run, Runnable::run, Runnable::run);
 		}
 
 		@Override

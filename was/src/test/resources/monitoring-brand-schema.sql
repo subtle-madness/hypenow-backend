@@ -31,7 +31,11 @@ CREATE TABLE IF NOT EXISTS brand_account (
     -- 수집 범위 선택(V20260812220000) — was는 둘 다 읽는다(collection_started_at은 registered_at 폴백).
     collection_months     int         NOT NULL DEFAULT 12
                               CHECK (collection_months IN (1, 3, 6, 12)),
-    collection_started_at timestamptz
+    collection_started_at timestamptz,
+    -- 백필 시점 창 커버리지(V20260819125244, 수집 상한 v2 §7-1) — was는 둘 다 읽어 API로 노출한다.
+    -- capped=true면 covered_until이 실수집 깊이, NULL이면 요청 창 전체 커버(운영 DDL과 동일 기본값).
+    collection_capped     boolean     NOT NULL DEFAULT false,
+    covered_until         timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS brand_tagged_post (

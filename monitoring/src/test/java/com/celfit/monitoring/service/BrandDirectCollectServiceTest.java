@@ -16,6 +16,7 @@ import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -58,6 +59,23 @@ class BrandDirectCollectServiceTest {
 	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, LocalDate.now(), 12);
 
 	// ── 스텁 대역(BrandCollectServiceTest 관용구 재사용) ──────────────────────
+
+	/** 창 커버리지 무해 스텁 — direct 경로는 열거를 타지 않아 이 메서드들에 닿지 않는다(닿으면 no-op). */
+	private static final class InertBrands extends BrandRepository {
+		InertBrands() {
+			super(null);
+		}
+
+		@Override
+		public BrandRepository.Coverage coverage(long brandId) {
+			return new BrandRepository.Coverage(false, null);
+		}
+
+		@Override
+		public void updateCoverage(long brandId, boolean capped, Instant coveredUntil) {
+			// no-op
+		}
+	}
 
 	private static final class RecordingCallCounts extends BrandCallCountRepository {
 		final Map<Long, Long> byBrand = java.util.Collections.synchronizedMap(new HashMap<>());
@@ -214,8 +232,10 @@ class BrandDirectCollectServiceTest {
 		// adDisclosureEnabled=false — 이 테스트는 direct 단건 수집 경로만 검증한다. 킬 스위치가
 		// 꺼져 있으면 judgeAdDisclosuresSafely가 adJudge를 아예 호출하지 않으므로(BrandCollectService
 		// 클래스 주석) null을 넘겨도 안전하다.
+		// brands는 무해 스텁 — direct 경로는 열거(doSweepCore·enumerationCutoff)를 타지 않아
+		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
-				tagged, authors, null, Runnable::run, 2000, 3, 30, false);
+				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
 		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect);
 	}
 

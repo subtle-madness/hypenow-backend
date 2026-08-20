@@ -543,7 +543,7 @@ class PerformanceContentAssemblerTest {
 				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
-				12, LAST_COLLECTED);
+				12, LAST_COLLECTED, false, null);
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
 		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL))
 				.willReturn(List.of(brandPosts));
@@ -611,7 +611,7 @@ class PerformanceContentAssemblerTest {
 	private static BrandAccountRow brandAccount(long id, String username) {
 		return new BrandAccountRow(id, username, LocalDate.of(2026, 8, 7), LAST_COLLECTED,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
-				12, LAST_COLLECTED);
+				12, LAST_COLLECTED, false, null);
 	}
 
 	private static BrandPostResponse brandPost(String shortcode, String source, List<SnapshotResponse> snapshots,
