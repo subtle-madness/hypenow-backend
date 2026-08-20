@@ -146,6 +146,18 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     PRIMARY KEY (brand_id, short_code)
 );
 
+-- 정본은 monitoring/src/main/resources/db/migration/V20260819054457__brand_hashtag_post_matched_tags.sql
+-- (2026-08-19, was 사용자 스코프 필터 지원) — 게시물당 매칭된 태그 전체(matched_tag는 최초 저장
+-- 태그 1개뿐, 이 테이블은 그 후 다른 태그가 같은 게시물을 다시 만나도 누적 기록한다).
+CREATE TABLE IF NOT EXISTS brand_hashtag_post_matched_tags (
+    brand_id   bigint      NOT NULL,
+    short_code text        NOT NULL,
+    tag        text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (brand_id, short_code, tag),
+    FOREIGN KEY (brand_id, short_code) REFERENCES brand_hashtag_post (brand_id, short_code) ON DELETE CASCADE
+);
+
 -- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql +
 -- V20260812120216__brand_hashtag_exclusion_soft_delete.sql(deleted_at tombstone, 2026-08-12).
 -- 제외 문자열 기능은 2026-08-17 전면 폐기됐다(monitoring 관리 API 5종·was 프록시 API 4종·was
