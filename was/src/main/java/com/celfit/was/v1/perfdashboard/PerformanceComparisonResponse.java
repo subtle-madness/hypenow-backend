@@ -38,9 +38,11 @@ public record PerformanceComparisonResponse(List<AccountComparison> accounts) {
 	 * (계약 §10-1)을 함께 본다. 컷 없이 완주한 브랜드(coveredUntil null)는 종전과 동일하게 창
 	 * 판정뿐이다 — 창 안 0건 버킷의 covered=true는 "수집했는데 게시물 없음" 그대로다.
 	 *
-	 * <p>false는 "이 구간 전체의 수집을 보장하지 못한다"는 뜻이고 집계값은 그대로 내린다(direct
-	 * 콘텐츠는 창·스윕과 무관하게 존재할 수 있고, 컷 경계에 걸친 부분 커버 버킷은 커버된 쪽
-	 * 게시물이 실린다) — covered=false ∧ contentCount&gt;0은 정상 조합이다.
+	 * <p>false는 "이 구간 전체의 수집을 보장하지 못한다"는 뜻이다. 집계 모수는 실수집
+	 * 범위로 클램프된다(2026-08-20 결정 — 컷 밖 tagged 기수집분은 성과 집계에서 제외,
+	 * {@code BrandPostAssembler#assembleBrandPosts}의 capToCoverage) — 그래도 direct 콘텐츠
+	 * (상한 면제)와 컷 경계 버킷의 커버된 쪽 게시물은 실리므로 covered=false ∧
+	 * contentCount&gt;0은 여전히 정상 조합이다.
 	 */
 	public record Bucket(
 			@Schema(allowableValues = {"1w", "1w_1m", "1m_3m", "3m_6m", "6m_12m"}) String key,

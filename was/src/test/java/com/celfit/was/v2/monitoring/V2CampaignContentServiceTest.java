@@ -337,7 +337,7 @@ class V2CampaignContentServiceTest {
 				service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30).body().results().get(0);
 
 		assertThat(result.result()).isEqualTo("failed");
-		then(brandPostAssembler).should(never()).assembleBrandPosts(anyLong(), any(), anyBoolean(), any());
+		then(brandPostAssembler).should(never()).assembleBrandPosts(anyLong(), any(), anyBoolean(), any(), anyBoolean());
 	}
 
 	@Test
@@ -550,7 +550,7 @@ class V2CampaignContentServiceTest {
 	private void givenTaggedPosts(long brandId, BrandPostResponse... posts) {
 		BrandAccountRow account = account(brandId);
 		given(brandReadRepository.findAccount(brandId)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL, false))
 				.willReturn(List.of(posts));
 	}
 
