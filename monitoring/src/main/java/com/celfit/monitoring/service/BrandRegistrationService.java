@@ -8,10 +8,14 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.TaggedPostRepository;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -19,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -72,6 +77,9 @@ public class BrandRegistrationService {
 	private final BrandCallCountRepository callCounts;
 	private final BrandHashtagRepository hashtags;
 	private final BrandHashtagCollectService hashtagCollect;
+	private final TaggedPostRepository taggedPosts;
+	/** 수집 개수 상한 — BrandCollectService와 같은 키. 0 이하는 무제한(= 확장 스킵 비활성). */
+	private final int collectionPostLimit;
 	private final Executor backfill;
 	private final Executor enrich;
 	private final Executor hashtagSweep;
@@ -79,6 +87,8 @@ public class BrandRegistrationService {
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
 			BrandHashtagRepository hashtags, BrandHashtagCollectService hashtagCollect,
+			TaggedPostRepository taggedPosts,
+			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
 			@Qualifier("brandEnrichExecutor") Executor enrich,
 			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep) {
@@ -88,6 +98,8 @@ public class BrandRegistrationService {
 		this.callCounts = callCounts;
 		this.hashtags = hashtags;
 		this.hashtagCollect = hashtagCollect;
+		this.taggedPosts = taggedPosts;
+		this.collectionPostLimit = collectionPostLimit;
 		this.backfill = backfill;
 		this.enrich = enrich;
 		this.hashtagSweep = hashtagSweep;
@@ -177,10 +189,28 @@ public class BrandRegistrationService {
 	 * <p>여기 in-memory 게이트는 불필요한 UPDATE를 줄이는 사전 컷일 뿐이고, 축소 차단의 정본은
 	 * expandWindow의 조건부 UPDATE다. 그 UPDATE가 false(0행)면 동시 요청이 더 큰 창으로 이미
 	 * 이겼다는 뜻이고 그쪽이 백필도 제출했으므로, 같은 창을 두 번 여는 재제출을 건너뛴다.
+	 *
+	 * <p>2026-08-19 수집 상한 v2(§7-2): 재백필의 컷이 기존 창 안에 떨어지는 브랜드는 확장 스킵 —
+	 * 아래 참조.
 	 */
 	private void expandIfRequested(BrandRow existing, int months) {
 		if (months <= existing.collectionMonths()) {
 			return;
+		}
+		// 확장 스킵(스펙 §7-2) — 재백필의 컷이 "기존 창 안"에 떨어질 때만 스킵한다: 그러면 확장
+		// 구간(기존 창 밖)에는 한 건도 도달하지 못하므로 열거 전량이 낭비다(~96콜 절약). 창·커버리지
+		// 마킹만 하고 수집 상태는 불변 — UI가 capped·covered_until로 "확장 신청·상한 도달"을 표시한다.
+		//
+		// 판정 입력은 limit번째 최신 태그 행의 taken_at = 재백필 컷의 정확한 예측치다(생애 누적 행
+		// 수가 아니다 — nthNewestTagTakenAt javadoc의 오표기 사례 참조). 이 값이 그대로
+		// covered_until 폴백이기도 하다: 근사가 아닌 실제 도달 깊이라 §7-4 컷 클램프도 정확해진다.
+		if (collectionPostLimit > 0) {
+			Instant existingCutoff = ZonedDateTime.now(KST).minusMonths(existing.collectionMonths()).toInstant();
+			Optional<Instant> predictedCut = taggedPosts.nthNewestTagTakenAt(existing.id(), collectionPostLimit);
+			if (predictedCut.isPresent() && predictedCut.get().isAfter(existingCutoff)) {
+				brands.raiseWindowCapped(existing.id(), months, predictedCut.get());
+				return;
+			}
 		}
 		if (!brands.expandWindow(existing.id(), months)) {
 			return;

@@ -112,8 +112,9 @@ public class BrandPostAssembler {
 	 */
 	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account, String viewerAccountType) {
 		// 표시 표면이라 정산분만 — 게시자·댓글이 붙기 전의 반쯤 빈 카드를 목록·상세·counts에 싣지 않는다.
+		// 목록 표면은 커버리지 클램프를 걸지 않는다 — 컷 밖 기수집분도 계속 서빙한다(수집 상한 v1 §3-3).
 		List<BrandPostResponse> brandPool = assembleBrandPosts(userId, account, true, BrandPostScope.ENRICHED_ONLY,
-				viewerAccountType);
+				false, viewerAccountType);
 		List<BrandPostResponse> legacyPending = assembleLegacyPending(userId, account.id());
 		return mergeWithLegacyPending(brandPool, legacyPending);
 	}
@@ -156,14 +157,31 @@ public class BrandPostAssembler {
 	 *
 	 * @param userId 시딩(캠페인 연결) 판정 스코프(2026-08-18 캠페인 도출 개정) — 캠페인은 브랜드가
 	 *               아니라 유저 단위 개념이라 {@code account}가 아니라 이 값으로 조회한다.
+	 * @param capToCoverage true면 실수집 범위 클램프(수집 상한 v2 §7-1) — coveredUntil(KST 달력일·
+	 *               경계일 포함)보다 깊은 tagged 행을 거른다(direct 등록 행은 상한 밖이라 면제, §7-3).
+	 *               성과 대시보드 집계 전용이다. false는 전량 — 목록 표면(컷 밖 기수집분도 계속
+	 *               서빙, v1 §3-3)과 존재·중복 판정 소비자("있는데 없다고 답하면 안 됨")가 쓴다.
+	 *               scope처럼 편의 오버로드를 두지 않는다 — 호출부가 매번 의도를 밝힌다.
 	 * @param viewerAccountType 조회 유저의 이 브랜드 연결 accountType(2026-08-19 경쟁사 판정 제거
 	 *                          설계 §4, {@link #assembleForBrand} 참조) — {@link #brandPost}에
 	 *                          그대로 넘긴다.
 	 */
 	public List<BrandPostResponse> assembleBrandPosts(long userId, BrandAccountRow account, boolean withComments,
-			BrandPostScope scope, String viewerAccountType) {
+			BrandPostScope scope, boolean capToCoverage, String viewerAccountType) {
 		List<BrandTaggedPostRow> allPosts = brandReadRepository.findBrandPostsInWindow(account.id(), windowCutoff(),
 				scope == BrandPostScope.ENRICHED_ONLY);
+		// 커버리지 클램프(수집 상한 v2 §7-1, 2026-08-20 사용자 결정 — 성과 대시보드는 실수집 범위만
+		// 집계한다). 기준은 coveredUntil의 KST 달력일·경계일 포함 — covered 버킷 판정과 같은 규칙이라
+		// covered=true 버킷의 게시물이 집계에서 빠지는 불일치가 없다. direct 등록 행은 상한 밖(§7-3 —
+		// 컷 밖이어도 계속 실수집되는 살아있는 추적 대상)이라 면제. 행 단계에서 걸러 컷 밖 수천 행의
+		// 메타·스냅샷·댓글 배치 조회 비용도 함께 던다.
+		LocalDate coveredOn = capToCoverage ? KstTimestamps.toKstDate(account.coveredUntil()) : null;
+		if (coveredOn != null) {
+			allPosts = allPosts.stream()
+					.filter(p -> p.directRegisteredAt() != null
+							|| !KstTimestamps.toKstDate(p.takenAt()).isBefore(coveredOn))
+					.toList();
+		}
 		if (allPosts.isEmpty()) {
 			return List.of();
 		}

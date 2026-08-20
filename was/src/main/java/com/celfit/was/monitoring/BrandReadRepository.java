@@ -44,7 +44,7 @@ public class BrandReadRepository {
 				SELECT id, username, last_swept_on, last_swept_at, registered_at, backfill_completed_at,
 				       backfill_error, followers, following, media_count, biography, full_name,
 				       profile_pic_url, is_verified, external_url, status, image_object_path,
-				       collection_months,
+				       collection_months, collection_capped, covered_until,
 				       COALESCE(collection_started_at, registered_at) AS collection_started_at
 				FROM brand_account
 				WHERE id = :brandId
@@ -324,12 +324,18 @@ public class BrandReadRepository {
 	 *
 	 * <p>collectionMonths는 자산 레벨 수집 창(공유 유저 간 max — 스펙 2026-08-12), collectionStartedAt은
 	 * 확장 시 갱신되는 폴링 앵커(기존 행은 registered_at 폴백).
+	 *
+	 * <p>collectionCapped·coveredUntil은 백필 시점의 창 커버리지(수집 상한 v2 §7-1,
+	 * V20260819125244) — capped=true면 백필이 수집 개수 상한(2,000)에서 끊겼고 coveredUntil이 그
+	 * 실수집 깊이(이 시각 이후 구간만 수집됨)다. coveredUntil null = 요청 창 전체 커버.
+	 * 일일 스윕은 이 값을 갱신하지 않는다(창 커버리지는 백필 속성).
 	 */
 	public record BrandAccountRow(long id, String username, LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime registeredAt, OffsetDateTime backfillCompletedAt, String backfillError,
 			Long followers, Long following, Long mediaCount, String biography, String fullName,
 			String profilePicUrl, Boolean isVerified, String externalUrl, String status,
-			String imageObjectPath, int collectionMonths, OffsetDateTime collectionStartedAt) {
+			String imageObjectPath, int collectionMonths, OffsetDateTime collectionStartedAt,
+			boolean collectionCapped, OffsetDateTime coveredUntil) {
 	}
 
 	/**

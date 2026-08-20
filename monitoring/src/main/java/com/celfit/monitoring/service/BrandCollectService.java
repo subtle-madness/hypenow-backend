@@ -8,6 +8,7 @@ import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -47,6 +48,9 @@ import org.springframework.stereotype.Service;
  * <p>2026-08-12 스트리밍 개정 + 2026-08-13 완결 배치 서빙 개정: 적재는 페이지 단위로 즉시
  * 일어나고, 콜백도 페이지마다 그 페이지분만 넘긴다 — 수신자(등록 백필)가 페이지 단위로 보강·정산해
  * 완결된 것부터 목록에 올린다. 구 서빙 창(30일) 커버 기준은 폐기됐다.
+ *
+ * <p>2026-08-19 수집 개수 상한: 열거는 브랜드당 최신 collection-post-limit(기본 2,000)건에서 의도된
+ * 자연 종료 — 목표 컷 전체 touch로 컷 밖 지표 동결.
  */
 @Service
 public class BrandCollectService {
@@ -61,9 +65,11 @@ public class BrandCollectService {
 	private final BrandCommentRepository comments;
 	private final TaggedPostRepository taggedPosts;
 	private final AuthorProfileRepository authors;
+	private final BrandRepository brands;
 	private final AdDisclosureJudgeService adJudge;
 	private final Executor enrichWorker;
 	private final int maxPostsPerSweep;
+	private final int collectionPostLimit;
 	private final int commentPages;
 	private final int authorStaleDays;
 	private final boolean adDisclosureEnabled;
@@ -71,9 +77,10 @@ public class BrandCollectService {
 	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
-			AdDisclosureJudgeService adJudge,
+			BrandRepository brands, AdDisclosureJudgeService adJudge,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
+			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays,
 			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
@@ -84,9 +91,11 @@ public class BrandCollectService {
 		this.comments = comments;
 		this.taggedPosts = taggedPosts;
 		this.authors = authors;
+		this.brands = brands;
 		this.adJudge = adJudge;
 		this.enrichWorker = enrichWorker;
 		this.maxPostsPerSweep = maxPostsPerSweep;
+		this.collectionPostLimit = collectionPostLimit;
 		this.commentPages = commentPages;
 		this.authorStaleDays = authorStaleDays;
 		this.adDisclosureEnabled = adDisclosureEnabled;
@@ -148,17 +157,28 @@ public class BrandCollectService {
 	 * 기회를 못 얻으면 그 브랜드가 collecting에 영구히 갇힌다. 구 계약("서빙 창 30일 커버 시
 	 * 정확히 1회 + 누적 리스트")은 폐기됐다.
 	 *
-	 * <p>열거 중단 4종·coveredCutoff·touchCrawledDepth 의미는 기존과 동일하다 — 중단 조건은
+	 * <p>열거 중단은 <b>5종</b>이다(2026-08-19 수집 개수 상한 신설로 4종에서 늘었다) —
 	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
-	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달. ①②는 컷까지 다 훑은
-	 * 자연 종료라 coveredCutoff=true → touchCrawledDepth로 그 깊이 전체를 touch하고,
-	 * ③④는 미커버라 touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다).
+	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달 ⑤수집 개수 상한
+	 * (collectionPostLimit, <b>0 이하면 무제한</b> — backfill-max-per-run 관용 일치) 도달.
+	 * ①②⑤는 coveredCutoff=true → touchCrawledDepth로 깊이를 touch하고, ③④는 미커버라
+	 * touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다). 단 ⑤의 touch 깊이는 ①②와 달리
+	 * <b>실제 커버 깊이가 아니라 목표 컷 전체</b>다 — 컷 밖 게시물의 지표를 마지막 수집 시점으로
+	 * 동결한 채 계속 서빙하고 due 재열거 루프를 끊는 <b>의도된 동결</b>이다(08-19 스펙 §3-2).
+	 * 백필이 ⑤로 끝나면 그 실수집 깊이가 창 커버리지(collection_capped·covered_until)로 기록되고,
+	 * 이후 일일 스윕의 열거 컷이 거기서 클램프된다(스펙 §7-4) — 컷 밖 due의 touch 반복이 아니라
+	 * <b>동결 = 범위 제외</b>로 수렴해, 재장전된 due가 있어도 도달 불가 구간에 콜을 쓰지 않는다.
+	 * ④와 ⑤는 신호 등급도 갈린다: ④는 ERROR(이상 신호·미커버), ⑤는 INFO(정상 경로·커버).
 	 *
-	 * <p>상한은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 — 2,000은 tooq급 정상 고물량
+	 * <p>④의 상한은 폭주 방어 밸브다(정상 경로에서 닿으면 안 된다 — 2,000은 tooq급 정상 고물량
 	 * 브랜드가 백필·심층 티어 스윕에서 닿아 10,000으로 상향, 08-12 상한 개정 스펙). ④가
 	 * 백필에서 나면 커버 깊이 밖 구간은 이후 스윕이 열지 않아 영구 공백이 된다 — 그래서 error
-	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. touchSwept는 그래도
-	 * 유지한다(있는 만큼 즉시 서빙 — 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3).
+	 * 신호이며, 보정은 운영 절차(상한 상향 + last_swept_on 리셋 재백필)다. 08-19 이후로는
+	 * <b>collection-post-limit도 함께 올려야</b> 재백필이 깊이를 연다 — 안 올리면 리셋 재백필이
+	 * ⑤에서 다시 끊겨 같은 공백이 남는다. touchSwept는 그래도 유지한다(있는 만큼 즉시 서빙 —
+	 * 리셋 재열거 루프 방지, 08-12 상한 개정 스펙 §3). 다만 <b>기본 설정(2000 &lt; 10000)에서는
+	 * ⑤가 항상 먼저 걸려 ④ 분기 자체가 도달 불가</b>다 — 이 밸브는 collection-post-limit을
+	 * 10,000 초과로 올리거나 0(무제한)으로 끈 구성에서만 다시 의미를 갖는다.
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
@@ -178,6 +198,7 @@ public class BrandCollectService {
 		boolean anyPageDelivered = false;   // 콜백을 한 번이라도 불렀는지 — 종료 시 폴백 판정용
 		String cursor = null;
 		boolean coveredCutoff = false;
+		boolean cappedThisRun = false;   // 수집 개수 상한으로 끊겼는가 — 백필 커버리지 기록 입력(스펙 §7-1)
 		while (true) {
 			HikerClient.TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
@@ -204,6 +225,24 @@ public class BrandCollectService {
 							&& Instant.ofEpochSecond(p.takenAt()).isBefore(cutoff));
 			if (wholePageBeforeCutoff || page.nextPageId() == null) {
 				coveredCutoff = true;
+				break;
+			}
+			// 수집 개수 상한(2026-08-19 스펙) — 비용 목적의 "의도된 자연 종료"다. 안전 밸브(아래
+			// maxPostsPerSweep)와 역할이 다르다: 밸브는 닿으면 안 되는 폭주 방어(ERROR·커버 미처리 —
+			// 다음 스윕이 같은 깊이를 다시 연다)이고, 이 컷은 정상 경로(INFO·커버 처리)다.
+			// coveredCutoff=true로 목표 컷 "전체"를 touch하는 것이 핵심이다(스펙 §3-2): 컷 밖(더 깊은)
+			// due의 last_crawled_at이 실크롤 없이 갱신돼 ①매 스윕이 그 깊이를 다시 여는 낭비 루프가
+			// 차단되고 ②그 게시물들은 마지막 수집 시점 지표로 동결된 채 계속 서빙된다(was 목록
+			// 상한 2,000과 정합). 판정이 커서 소진 뒤인 이유는 밸브와 동일 — 마지막 페이지에서 정확히
+			// 상한에 닿는 건 자연 종료다. 0 이하면 무제한이다(backfill-max-per-run 관용 일치) —
+			// 0을 "1페이지 후 목표 컷 전체 동결"로 읽으면 브랜드가 티어 주기 동안 조용히 얼어붙는다.
+			if (collectionPostLimit > 0 && seen.size() >= collectionPostLimit) {
+				log.info("브랜드 태그 수집 개수 상한({}) 도달 — {} 의도된 자연 종료"
+								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
+						collectionPostLimit, brand.username(), seen.size(), cutoff,
+						oldestTakenAt(collected));
+				coveredCutoff = true;
+				cappedThisRun = true;
 				break;
 			}
 			// 상한 판정은 커서 소진 판정 뒤에 둔다 — 마지막 페이지에서 정확히 상한에 닿는 건
@@ -238,6 +277,22 @@ public class BrandCollectService {
 			// touch — 안 하면 그 링크의 due가 영구 true로 굳어 매 스윕이 같은 깊이를 다시 연다.
 			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
 		}
+		if (brand.lastSweptOn() == null) {
+			// 백필 커버리지 기록(스펙 §7-1) — 일일 스윕은 기록하지 않는다(창 커버리지는 백필 속성:
+			// "요청 창 중 어디까지 실제로 훑었나"의 이야기지 신선도의 이야기가 아니다). 컷으로 끝났으면
+			// 실수집 깊이(편입분 최고령 taken_at)를, 완주했으면 NULL(= 요청 창 전체 커버)을 남긴다.
+			// 종료 경로 전체에 공통이다 — 어느 중단 분기로 끝났든 그 실행의 도달 깊이가 곧 커버리지다.
+			// 단 ③(커서 미전진)·④(안전 밸브)로 끊긴 실행만은 cappedThisRun이 false라 완주와 같은
+			// (false, NULL)로 기록돼 실제 도달 깊이보다 낙관적이다 — 기본 구성에선 상한 컷(⑤)이
+			// 밸브보다 안쪽이라 ④는 도달 불가하고, 최초 백필에서 기록되는 이 값은 컬럼 DEFAULT
+			// (false, NULL)와 같아 아무것도 덧쓰지 않으므로 수용한다.
+			// depth가 null인 컷 종료(⑤인데 편입 0건 — 전부 창 밖이거나 taken_at 미상)는 capped도
+			// 내리지 않는다: (true, NULL)은 "컷인데 깊이 미상"이라는 FE 자기모순 쌍이고, §7-4 클램프도
+			// 클램프 값을 못 얻어 무의미하다. 병리 케이스라 (false, NULL)로 접는 편이 안전하다.
+			Instant depth = oldestTakenAt(collected);
+			boolean capped = cappedThisRun && depth != null;
+			brands.updateCoverage(brand.id(), capped, capped ? depth : null);
+		}
 		return List.copyOf(collected);
 	}
 
@@ -267,6 +322,12 @@ public class BrandCollectService {
 					&& BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now)) {
 				cutoff = t.takenAt();
 			}
+		}
+		// 컷 클램프(스펙 §7-4) — capped 브랜드는 covered_until보다 깊게 열지 않는다: 컷 밖 행의
+		// due 재장전이 열거를 상한까지 벌려도 구조적으로 도달 불가라 전부 무익 콜이었다.
+		BrandRepository.Coverage cov = brands.coverage(brand.id());
+		if (cov.capped() && cov.coveredUntil() != null && cov.coveredUntil().isAfter(cutoff)) {
+			cutoff = cov.coveredUntil();
 		}
 		return cutoff;
 	}

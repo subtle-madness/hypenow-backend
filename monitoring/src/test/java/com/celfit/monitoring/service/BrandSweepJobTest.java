@@ -159,7 +159,7 @@ class BrandSweepJobTest {
 		final Set<String> failing = new HashSet<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, null, 2000, 3, 30, true);
+			super(null, null, null, null, null, null, null, null, null, null, 2000, 10000, 3, 30, true);
 		}
 
 		@Override

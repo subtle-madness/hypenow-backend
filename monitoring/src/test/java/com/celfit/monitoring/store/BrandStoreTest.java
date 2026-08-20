@@ -240,6 +240,103 @@ class BrandStoreTest {
 				java.time.OffsetDateTime.class, id)).isEqualTo(startedAt);     // 폴링 앵커 불변
 	}
 
+	// ── 창 커버리지 영속화(수집 상한 v2 — 2026-08-19 스펙 §7-1·§7-2) ──────────
+
+	@Test
+	void 커버리지는_미컷으로_시작하고_updateCoverage가_왕복한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(false, null));
+
+		Instant depth = Instant.parse("2026-05-01T00:00:00Z");
+		brands.updateCoverage(id, true, depth);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(true, depth));
+
+		// 재백필 완주는 컷 기록을 되돌린다 — 완주 = 요청 창 전체 커버(capped=false + NULL).
+		brands.updateCoverage(id, false, null);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(false, null));
+	}
+
+	@Test
+	void 미존재_브랜드의_커버리지는_미컷_단면이다() {
+		// 소비처가 "컷이면 열거 깊이 클램프"라 미지 브랜드는 클램프하지 않는 쪽이 안전하다.
+		assertThat(brands.coverage(999_999L)).isEqualTo(new BrandRepository.Coverage(false, null));
+	}
+
+	@Test
+	void raiseWindowCapped는_창과_커버리지만_올리고_수집_상태는_건드리지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
+		brands.touchSwept(id, LocalDate.of(2026, 8, 7));   // 완주 상태 — 불변이어야 한다
+		Instant fallback = Instant.parse("2026-05-19T00:00:00Z");
+
+		assertThat(brands.raiseWindowCapped(id, 12, fallback)).isTrue();
+
+		BrandRow row = brands.findByUsername("brandx").orElseThrow();
+		assertThat(row.collectionMonths()).isEqualTo(12);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(true, fallback));
+		// 백필을 제출하지 않는 경로라 재개 신호·폴링 종료 조건은 그대로여야 한다.
+		assertThat(row.lastSweptOn()).isEqualTo(LocalDate.of(2026, 8, 7));
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	@Test
+	void raiseWindowCapped는_기존_covered_until을_덮지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
+		Instant actualDepth = Instant.parse("2026-06-01T00:00:00Z");
+		brands.updateCoverage(id, true, actualDepth);   // 직전 백필이 기록한 실수집 깊이
+
+		assertThat(brands.raiseWindowCapped(id, 12, Instant.parse("2026-05-19T00:00:00Z"))).isTrue();
+
+		// COALESCE — 폴백(기존 창 컷)은 실측값이 없을 때만 쓰는 근사다.
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(true, actualDepth));
+	}
+
+	@Test
+	void raiseWindowCapped는_이미_더_큰_창이면_아무_흔적도_남기지_않는다() {
+		// expandWindow와 같은 rowcount 판정 — 경합에서 진 요청이 커버리지만 컷으로 뒤집으면 안 된다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+
+		assertThat(brands.raiseWindowCapped(id, 6, Instant.parse("2026-05-19T00:00:00Z"))).isFalse();
+
+		assertThat(brands.findByUsername("brandx").orElseThrow().collectionMonths()).isEqualTo(12);
+		assertThat(brands.coverage(id)).isEqualTo(new BrandRepository.Coverage(false, null));
+	}
+
+	@Test
+	void nthNewestTagTakenAt은_n번째_최신_태그_행의_taken_at을_준다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		long other = brands.insertOrReactivate("brandy", profile("brandy", "222", 2000L, "소개"), 12, true);
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 1)).isEmpty();   // 행 0개 — 컷 안 걸림
+
+		taggedPosts.insert(id, post("New", 1754000300L));
+		taggedPosts.insert(id, post("Mid", 1754000200L));
+		taggedPosts.insert(id, post("Old", 1754000100L));
+		taggedPosts.upsertDirect(id, post("Mid", 1754000200L), Instant.now());   // 겹침 — 태그 행이라 센다
+		taggedPosts.insert(other, post("Other", 1754000000L));                   // 다른 브랜드는 제외
+
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 1))
+				.contains(Instant.ofEpochSecond(1754000300L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 2))
+				.contains(Instant.ofEpochSecond(1754000200L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 3))
+				.contains(Instant.ofEpochSecond(1754000100L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 4)).isEmpty();   // 행이 n개 미만
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 0)).isEmpty();   // 무제한(상한 0 이하)
+	}
+
+	@Test
+	void nthNewestTagTakenAt은_순수_direct_행을_모수에서_뺀다() {
+		// 상한은 태그 열거를 지배하고 direct 등록 게시물은 상한 밖이다(§7-3) — 순수 direct 행을
+		// 세면 태그 미달 브랜드가 확장 스킵으로 부당하게 걸려 재백필 기회를 잃는다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		taggedPosts.insert(id, post("Tagged", 1754000300L));
+		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000200L), Instant.now());
+
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 1))
+				.contains(Instant.ofEpochSecond(1754000300L));
+		assertThat(taggedPosts.nthNewestTagTakenAt(id, 2)).isEmpty();
+	}
+
 	@Test
 	void 태그_게시물_링크와_댓글_게이트_상태() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", null, null), 12, true);
@@ -520,22 +617,29 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void trackedPosts는_direct_only_행을_반환하지_않는다() {
+	void trackedPosts는_direct_행을_전부_제외한다() {
 		// R5 — 가드(AND tag_detected_at IS NOT NULL)를 지운 채로 먼저 실패를 확인했다(수동 검증,
-		// 아래 주석 참조). 가드가 있는 현재 코드에서는 direct-only 행이 빠져야 한다.
+		// 아래 주석 참조). direct-only 행은 열거가 만날 수 없어서, 겹침 행은 상한 밖(2026-08-19
+		// 수집 상한 v2 §7-3)이라서 — 둘 다 열거 깊이 결정 입력에서 빠진다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
 		assertThat(taggedPosts.trackedPosts(id, Instant.ofEpochSecond(1700000000L)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Tagged");
 	}
 
 	@Test
-	void touchCrawledDepth는_direct_only_행의_last_crawled_at을_건드리지_않는다() {
+	void touchCrawledDepth는_direct_행의_last_crawled_at을_건드리지_않는다() {
+		// 겹침 행까지 제외하는 것이 §7-3의 핵심이다 — 커버 간주 touch가 겹침 행을 찍으면 컷 밖
+		// direct 게시물이 2단계에서도 due가 아니게 돼 "상한 밖" 규정이 무력화된다(동결 그대로).
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
 		taggedPosts.insert(id, post("Tagged", 1754000000L));
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
+		taggedPosts.insert(id, post("Overlap", 1754000000L));
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 		Instant at = Instant.parse("2026-08-18T09:00:00Z");
 
 		taggedPosts.touchCrawledDepth(id, Instant.ofEpochSecond(1700000000L), at);
@@ -546,18 +650,37 @@ class BrandStoreTest {
 		assertThat(db.queryForObject(
 				"SELECT last_crawled_at FROM brand_tagged_post WHERE brand_id=? AND short_code='DirectOnly'",
 				Timestamp.class, id)).isNull();
+		assertThat(db.queryForObject(
+				"SELECT last_crawled_at FROM brand_tagged_post WHERE brand_id=? AND short_code='Overlap'",
+				Timestamp.class, id)).isNull();
 	}
 
 	@Test
-	void directDuePosts는_direct_only_행만_반환한다() {
+	void directDuePosts는_겹침_행도_포함한다() {
+		// §7-3 — 모든 direct 행이 2단계 모수다. 중복 콜 방지는 필터가 아니라 구조로 유지된다:
+		// 1단계 열거가 실제로 만난 겹침 행은 touchCrawled로 갱신돼 due 판정에서 빠진다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
-		taggedPosts.insert(id, post("Tagged", 1754000000L));
+		taggedPosts.insert(id, post("Tagged", 1754000000L));                          // 순수 태그 — 제외
 		taggedPosts.upsertDirect(id, post("DirectOnly", 1754000000L), Instant.now());
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
-		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());   // 겹침 — 빠져야 한다
+		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
 		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1700000000L)))
-				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("DirectOnly");
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactlyInAnyOrder("DirectOnly", "Overlap");
+	}
+
+	@Test
+	void directDuePosts는_minTakenAt_이전_direct_행을_거른다() {
+		// minTakenAt 인자로 나이 컷이 걸린다 — 상한만 면제다(§7-3 첫 줄). 다만 런타임 호출자가
+		// 넘기는 값은 브랜드 창이 아니라 180일(BrandCrawlPolicy.TRACKED_MAX_AGE) 고정이다
+		// (trackedPosts와 같은 추적 범위 컷) — 여기 12개월 창은 시드 편의일 뿐 판정에 안 쓰인다.
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		taggedPosts.upsertDirect(id, post("Recent", 1754000000L), Instant.now());
+		taggedPosts.upsertDirect(id, post("Ancient", 1700000000L), Instant.now());
+
+		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1750000000L)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Recent");
 	}
 
 	@Test

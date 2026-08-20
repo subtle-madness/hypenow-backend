@@ -19,6 +19,7 @@ import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -69,6 +70,7 @@ class BrandCollectServiceTest {
 	private final StubComments comments = new StubComments();
 	private final InMemoryTagged tagged = new InMemoryTagged();
 	private final InMemoryAuthors authors = new InMemoryAuthors();
+	private final RecordingBrands brands = new RecordingBrands();
 
 	private final List<String> calls = new ArrayList<>();
 	private final List<String> tagPages = new ArrayList<>();
@@ -99,6 +101,29 @@ class BrandCollectServiceTest {
 		@Override
 		public void add(long brandId, LocalDate calledOn, long delta) {
 			byBrand.merge(brandId, delta, Long::sum);
+		}
+	}
+
+	/**
+	 * 창 커버리지 대역(2026-08-19 수집 상한 v2 스펙 §7-1·§7-4) — 읽기(일일 스윕의 컷 클램프 입력)와
+	 * 쓰기(백필 종료부의 기록)를 한 스텁에서 관찰한다. 기본값은 미컷 단면이라 기존 테스트는 무영향.
+	 */
+	private static final class RecordingBrands extends BrandRepository {
+		BrandRepository.Coverage coverage = new BrandRepository.Coverage(false, null);
+		final List<String> coverageWrites = new ArrayList<>();
+
+		RecordingBrands() {
+			super(null);
+		}
+
+		@Override
+		public BrandRepository.Coverage coverage(long brandId) {
+			return coverage;
+		}
+
+		@Override
+		public void updateCoverage(long brandId, boolean capped, Instant coveredUntil) {
+			coverageWrites.add(capped ? brandId + ":capped:" + coveredUntil : brandId + ":full");
 		}
 	}
 
@@ -175,6 +200,10 @@ class BrandCollectServiceTest {
 		final List<String> inserted = new ArrayList<>();
 		final Map<String, Long> collectedCounts = new HashMap<>();
 		final List<TaggedPostRepository.TrackedPost> tracked = new ArrayList<>();
+		// direct 등록(direct_registered_at IS NOT NULL) 표식 — TrackedPost 레코드에는 direct 여부가
+		// 없다(저장소가 두 SQL의 WHERE로만 가른다). 서비스가 보는 필터 의미를 그대로 미러하려면
+		// 대역 쪽에 표식이 필요해 여기 둔다: trackedPosts·touchCrawledDepth 둘 다 이 집합을 배제한다.
+		final Set<String> directCodes = new HashSet<>();
 		final Map<String, Instant> touched = new HashMap<>();
 		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
 		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
@@ -219,7 +248,11 @@ class BrandCollectServiceTest {
 
 		@Override
 		public List<TaggedPostRepository.TrackedPost> trackedPosts(long brandId, Instant minTakenAt) {
-			return tracked.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
+			// 실 SQL의 AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL 대역.
+			return tracked.stream()
+					.filter(t -> !t.takenAt().isBefore(minTakenAt))
+					.filter(t -> !directCodes.contains(t.shortCode()))
+					.toList();
 		}
 
 		@Override
@@ -241,9 +274,10 @@ class BrandCollectServiceTest {
 		@Override
 		public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
 			// 실 DB의 범위 UPDATE 대역 — 추적 링크 중 컷 이후(taken_at ≥ minTakenAt) 전부를 touch.
+			// direct 행은 제외한다(수집 상한 v2 §7-3) — 커버 간주 touch의 동결 면제.
 			depthCalls++;
 			for (TaggedPostRepository.TrackedPost t : tracked) {
-				if (!t.takenAt().isBefore(minTakenAt)) {
+				if (!t.takenAt().isBefore(minTakenAt) && !directCodes.contains(t.shortCode())) {
 					touched.put(t.shortCode(), at);
 				}
 			}
@@ -333,8 +367,12 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep) {
+		return service(maxPostsPerSweep, 10000);   // 수집 상한 불활성 — 기존 테스트 의미 보존
+	}
+
+	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				new FakeAdJudge(), Runnable::run, maxPostsPerSweep, 3, 30, true);
+				brands, new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
 	private long tagCalls() {
@@ -592,6 +630,140 @@ class BrandCollectServiceTest {
 		assertThat(tagged.depthCalls).isZero();
 		assertThat(tagged.touched).containsKeys("A", "B", "C", "D");   // 만난 게시물은 그대로 touch
 		assertThat(tagged.touched).doesNotContainKey("Gone5d");
+	}
+
+	@Test
+	void 수집_상한_도달은_자연_종료로_목표_깊이_전체를_커버한다() {
+		// 수집 개수 상한(2026-08-19 스펙 §3) — 안전 밸브와 달리 의도된 종료라 커버 처리한다.
+		// 열거에서 못 만난 컷 밖 깊은 due 링크까지 touch해야 한다 — 안 하면 due가 영구 잔존해
+		// 매 스윕이 같은 깊이를 다시 여는 낭비 루프가 된다(§3-2: 루프 차단 = 지표 동결).
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DeepDue60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(10000, 3).sweep(sweptBrand);   // 수집 상한 3 — 2페이지째 4건 도달, 3페이지는 안 부른다
+
+		assertThat(tagCalls()).isEqualTo(2);
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C", "D");
+		assertThat(tagged.depthCalls).isEqualTo(1);            // 안전 밸브(depthCalls=0)와의 결정적 차이
+		assertThat(tagged.touched).containsKey("DeepDue60d");  // 목표 컷(60일 due)까지 통째로 동결
+	}
+
+	@Test
+	void 수집_상한_도달의_깊이_커버가_direct_행은_동결하지_않는다() {
+		// §7-3 — direct 등록 게시물은 상한 밖이다. 컷 종료의 "목표 컷 전체 touch"가 direct 행까지
+		// 찍으면 그 행은 2단계에서도 due가 아니게 돼(last_crawled_at이 실크롤 없이 전진) 사용자가
+		// 직접 등록한 게시물이 영원히 마지막 지표로 얼어붙는다. 태그 행만 동결 대상이다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DeepDue60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DeepDirect60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.directCodes.add("DeepDirect60d");
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(10000, 3).sweep(sweptBrand);   // 수집 상한 3 — 2페이지째 도달, 커버 처리
+
+		assertThat(tagged.depthCalls).isEqualTo(1);
+		assertThat(tagged.touched).containsKey("DeepDue60d");             // 태그 행은 동결
+		assertThat(tagged.touched).doesNotContainKey("DeepDirect60d");    // direct 행은 상한 밖
+	}
+
+	@Test
+	void 수집_상한_도달도_백필_페이지_콜백은_전부_방출한다() {
+		// 등록 백필도 같은 진입점(스펙 §3-4) — 상한 종료가 완결 배치 서빙 계약(페이지마다 1회
+		// 콜백)을 깨지 않아야 markServing·backfill_completed_at 경로가 무변경으로 성립한다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+		List<Integer> sizes = new ArrayList<>();
+
+		service(10000, 3).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
+
+		assertThat(sizes).containsExactly(2, 2);       // 중단 전 두 페이지 모두 자기 페이지분으로 방출
+		assertThat(tagged.depthCalls).isEqualTo(1);    // 백필 목표 컷(수집 창 전체)도 커버 처리
+	}
+
+	@Test
+	void 마지막_페이지에서_정확히_상한_도달은_자연_종료다() {
+		// 상한 판정이 커서 소진 판정 뒤에 있어(기존 안전 밸브와 같은 규칙 — 스펙 §3-1) 마지막
+		// 페이지에서 정확히 상한에 닿으면 상한 경로가 아니라 커서 소진 자연 종료로 끝난다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));
+
+		service(10000, 3).sweep(brand);   // 상한 3 = 총 열거 3건 — 정확히 상한에서 커서 소진
+
+		assertThat(tagCalls()).isEqualTo(2);
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C");
+		assertThat(tagged.depthCalls).isEqualTo(1);
+	}
+
+	@Test
+	void 수집_상한_0은_무제한이다() {
+		// 0 이하 = 무제한(backfill-max-per-run 관용 일치) — 0이 "1페이지 후 전체 동결"로 오독되면
+		// 브랜드 전체가 티어 주기 동안 조용히 얼어붙는 풋건이라 가드한다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));
+
+		service(10000, 0).sweep(brand);
+
+		assertThat(tagCalls()).isEqualTo(2);   // 상한이 꺼져 있어 커서 소진까지 완주
+		assertThat(tagged.inserted).containsExactlyInAnyOrder("A", "B", "C");
+	}
+
+	// ── 창 커버리지 기록·컷 클램프(2026-08-19 수집 상한 v2 — 스펙 §7-1·§7-4) ──
+
+	@Test
+	void 백필이_컷으로_끝나면_커버리지를_capped로_기록한다() {
+		// 3페이지·상한 3 — 2페이지째 컷. 백필(last_swept_on null) 실행이므로 종료부가 기록해야 한다.
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", OLD_20D, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(10000, 3).sweep(brand);
+
+		assertThat(brands.coverageWrites).containsExactly("1:capped:" + Instant.ofEpochSecond(OLD_20D));
+		// 실수집 깊이 = 편입분 최고령 taken_at(OLD_20D) — 목표 컷(365일)이 아니다.
+	}
+
+	@Test
+	void 컷_종료인데_편입이_0건이면_capped를_내리지_않는다() {
+		// 병리 케이스 — taken_at 미상뿐이라 편입 0건인 채로 상한(2)에 닿았다. (true, NULL)은
+		// "컷인데 깊이 미상"이라는 FE 자기모순 쌍이고 §7-4 클램프도 값을 못 얻으므로 (false, NULL)로 접는다.
+		tagPages.add(page("p2", reel("A", null, 0, 101, ""), reel("B", null, 0, 102, "")));
+		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));
+
+		service(10000, 2).sweep(brand);
+
+		assertThat(brands.coverageWrites).containsExactly("1:full");
+	}
+
+	@Test
+	void 백필이_완주하면_커버리지를_전체_커버로_기록한다() {
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(10000, 2000).sweep(brand);
+
+		assertThat(brands.coverageWrites).containsExactly("1:full");
+	}
+
+	@Test
+	void capped_브랜드의_일일_열거는_covered_until보다_깊게_열지_않는다() {
+		// 60일령 due 링크가 컷을 60일로 벌리려 하지만, 커버리지가 20일이면 클램프돼 20일 컷.
+		brands.coverage = new BrandRepository.Coverage(true, Instant.ofEpochSecond(OLD_20D));
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Due60d",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, "")));
+		tagPages.add(page("p3", reel("Old25d", NOW - 25L * 86400, 0, 102, "")));   // 20일 컷 이전 — 중단
+		tagPages.add(page(null, reel("Deep", RETRO_IN_WINDOW, 0, 103, "")));
+
+		service(10000, 2000).sweep(sweptBrand);
+
+		assertThat(tagCalls()).isEqualTo(2);   // 클램프 없었으면 60일 컷이라 3콜
+		assertThat(brands.coverageWrites).isEmpty();   // 일일 스윕은 창 커버리지를 건드리지 않는다
 	}
 
 	// ── 브랜드 프로필 매일 갱신 ──────────────────────────────────────────────
@@ -1006,7 +1178,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
-					comments, tagged, authors, new FakeAdJudge(), pool, 2000, 3, 30, true);
+					comments, tagged, authors, brands, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -1204,7 +1376,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
 		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
-				adJudge, Runnable::run, 10000, 3, 30, adDisclosureEnabled);
+				brands, adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 
 	/**
