@@ -139,6 +139,16 @@ class V1BrandAccountsControllerTest {
 				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
+	/** 상한(2,000건) 도달로 끊긴 백필 — 커버리지 2컬럼만 readyRow와 다르다(수집 상한 v2 §7-1). */
+	private static BrandAccountRow cappedRow(long brandId) {
+		return new BrandAccountRow(brandId, "lizda_official", LocalDate.of(2026, 8, 7),
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+				true, OffsetDateTime.parse("2026-05-02T03:00:00Z"));
+	}
+
 	private static BrandAccountRow errorRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, "초기 수집에 실패했어요. 자동으로 재시도 중이에요.",
@@ -864,6 +874,36 @@ class V1BrandAccountsControllerTest {
 				// 다음 스윕 표기는 운영 브랜드 스윕 시각(KST 02:00) 고정 — 날짜부는 실행일에 따라 변하므로
 				// 시각 접미사만 검증한다(08-12 정정: 기본값 sweep-hour-kst=2).
 				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T02:00:00+09:00")));
+	}
+
+	/**
+	 * 수집 커버리지 노출(수집 상한 v2 §7-1) — 상한(2,000건)에서 끊긴 백필은 collectionCapped=true와
+	 * 실수집 깊이(coveredUntil)를 싣는다. FE가 "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)"을 그린다.
+	 */
+	@Test
+	void 상한_도달_계정은_커버리지_2필드를_노출한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 12)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(cappedRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionMonths").value(12))
+				.andExpect(jsonPath("$.data.collectionCapped").value(true))
+				.andExpect(jsonPath("$.data.coveredUntil").value("2026-05-02T12:00:00+09:00"));
+	}
+
+	/** 컷 없이 완주한 계정은 capped=false + coveredUntil 키를 null로 남긴다(계약 무결성 #1). */
+	@Test
+	void 완주_계정은_커버리지가_false와_null이다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionCapped").value(false))
+				.andExpect(jsonPath("$.data", Matchers.hasKey("coveredUntil")))
+				.andExpect(jsonPath("$.data.coveredUntil").value(Matchers.nullValue()));
 	}
 
 	@Test

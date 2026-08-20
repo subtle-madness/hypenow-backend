@@ -34,6 +34,35 @@ public class TaggedPostRepository {
 	}
 
 	/**
+	 * n번째 최신 <b>태그 열거 산지</b> 행의 taken_at — 확장 스킵 판정 입력(스펙 §7-2 개정).
+	 * n = 수집 개수 상한이면 이 값이 곧 <b>"지금 재백필하면 컷이 어디서 걸리나"의 정확한 예측치</b>다
+	 * (열거는 최신부터 단방향이라 limit번째 게시물에서 끊긴다). 행이 n개 미만이면 empty —
+	 * 컷이 걸리지 않는다는 뜻이다.
+	 *
+	 * <p><b>행 수(count)로 판정하면 안 된다</b>(구 countByBrand의 결함): 생애 누적 행 수는 창 밖
+	 * 과거분까지 세므로, 10건/일·3개월 창·8개월 운영 브랜드(누적 2,400 / 창 안 900)를 재백필이
+	 * 컷되지 않을 것인데도 capped로 오표기한다. 그 마킹은 §7-4 컷 클램프까지 걸어 도달 가능했던
+	 * 90~180일 구간을 동결시키고 was에 거짓 커버리지를 내려보낸다.
+	 *
+	 * <p><b>tag_detected_at IS NOT NULL 가드 필수</b>: 상한은 태그 열거를 지배하고 direct 등록
+	 * 게시물은 상한 밖이다(스펙 §7-3). 순수 direct 행까지 세면 태그 1,900 + direct 150 같은
+	 * 브랜드가 상한 미달인데도 확장 스킵으로 걸려, 확장 구간에서 받을 수 있었던 잔여분
+	 * (limit - 태그행수)을 영영 못 받는다.
+	 */
+	public Optional<Instant> nthNewestTagTakenAt(long brandId, int n) {
+		if (n <= 0) {
+			return Optional.empty();
+		}
+		return db.query("""
+				SELECT taken_at FROM brand_tagged_post
+				WHERE brand_id = ? AND tag_detected_at IS NOT NULL
+				ORDER BY taken_at DESC
+				OFFSET ? LIMIT 1""",
+				(rs, i) -> rs.getTimestamp("taken_at").toInstant(), brandId, n - 1)
+				.stream().findFirst();
+	}
+
+	/**
 	 * 신규 감지 게시물 링크 — 재감지(ON CONFLICT)는 지표·메타를 건드리지 않는다. taken_at null은
 	 * 호출자가 거른다.
 	 *
@@ -137,17 +166,25 @@ public class TaggedPostRepository {
 	public record TrackedPost(String shortCode, Instant takenAt, Instant lastCrawledAt) {}
 
 	/**
-	 * 추적 범위(taken_at ≥ minTakenAt) 링크 전부 — 스윕의 열거 깊이 결정 입력(스펙 §4).
+	 * 추적 범위(taken_at ≥ minTakenAt)의 <b>순수 태그 행</b> — 스윕의 열거 깊이 결정 입력(스펙 §4).
 	 *
 	 * <p><b>tag_detected_at IS NOT NULL 가드 필수</b>(2026-08-18 direct 통합 §5-3): direct-only
 	 * 행(태그 열거가 한 번도 만난 적 없는 행)은 이 목록에 절대 나타나면 안 된다 — 나타나면 due로
 	 * 잡혀 열거 깊이를 그 taken_at까지 끌어내리는데, 열거는 애초에 그 게시물을 만날 수 없으니
 	 * {@code touchCrawled}가 영영 안 걸려 매일 최대 180일 깊이를 여는 요청량 누수가 영구화된다.
+	 *
+	 * <p><b>direct_registered_at IS NULL 가드도 필수</b>(2026-08-19 수집 상한 v2 §7-3 — 같은 원리의
+	 * 확장): direct 등록 게시물은 상한 밖이라 {@link #touchCrawledDepth}의 커버 간주 touch를 받지
+	 * 않는다. 그래서 컷 밖 겹침 행(태그·direct 둘 다인 행)의 due는 1단계 열거가 도달하지 못하는
+	 * 한 잔존하는데, 그걸 여기 남겨 두면 매 스윕이 도달 불가 깊이까지 열거를 벌린다. 이 행들의
+	 * 갱신은 열거 깊이가 아니라 {@link #directDuePosts} 2단계 단건 콜이 책임진다 — 추가 비용은
+	 * "컷 밖 direct 게시물 수 × 티어 주기당 1콜"로 유한하다.
 	 */
 	public List<TrackedPost> trackedPosts(long brandId, Instant minTakenAt) {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
-				WHERE brand_id = ? AND taken_at >= ? AND tag_detected_at IS NOT NULL""",
+				WHERE brand_id = ? AND taken_at >= ?
+				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
@@ -157,15 +194,23 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * direct 2단계 스윕의 모수(2026-08-18 direct 통합 §5-3) — direct 등록됐지만 태그 열거가 한 번도
-	 * 만난 적 없는(tag_detected_at NULL) 행만. 겹침 행(둘 다 있음)은 1단계 태그 열거가 이미 커버하므로
-	 * 여기서 빠진다(중복 콜 없음). due 판정 자체는 호출자가 {@link BrandCrawlPolicy#due}로 한다.
+	 * direct 2단계 스윕의 모수 — <b>브랜드 창 안의 direct 등록 행 전부</b>다(2026-08-19 수집 상한 v2
+	 * §7-3). 겹침 행(태그·direct 둘 다)도 포함한다: direct 게시물은 2,000 상한 밖이라, 1단계 열거가
+	 * 상한에 걸려 도달하지 못한 겹침 행은 여기서 단건 콜로 살려야 사용자가 직접 등록한 게시물이
+	 * 동결되지 않는다. 구 필터({@code tag_detected_at IS NULL})는 그 구제 경로를 막았다.
+	 *
+	 * <p><b>중복 콜 방지는 필터가 아니라 구조로 유지된다</b>: 1단계 열거가 실제로 만난 겹침 행은
+	 * {@link #touchCrawled}로 last_crawled_at이 갱신돼 호출자의 {@link BrandCrawlPolicy#due}
+	 * 판정에서 빠진다. 즉 컷 안이라 방금 수집된 겹침 행은 2단계가 건너뛰고, 컷 밖이라 못 만난
+	 * 겹침 행만 단건 수집된다. (예외는 0~14일 티어 — {@code due}가 last_crawled_at과 무관하게 항상
+	 * true라 그 나이대 겹침 행은 스윕당 1콜이 겹친다. direct 등록은 수동 소수라 유한한 비용이다.)
+	 * 커버 간주 touch({@link #touchCrawledDepth})는 direct 행을 건드리지 않으므로 이 due는 실수집
+	 * 없이 사라지지 않는다.
 	 */
 	public List<TrackedPost> directDuePosts(long brandId, Instant minTakenAt) {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
-				WHERE brand_id = ? AND direct_registered_at IS NOT NULL
-				  AND tag_detected_at IS NULL AND taken_at >= ?""",
+				WHERE brand_id = ? AND direct_registered_at IS NOT NULL AND taken_at >= ?""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
@@ -175,21 +220,31 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * 자연 종료된 열거가 커버한 깊이 전체를 갱신 — 열거에서 사라진 링크가 깊이 컷을 영구 고정하는
+	 * 커버 처리로 끝난 열거가 커버한 깊이 전체를 갱신 — 열거에서 사라진 링크가 깊이 컷을 영구 고정하는
 	 * 것을 막는다. last_crawled_at의 의미는 "이 게시물을 봤다"가 아니라 <b>"이 깊이까지 커버했다"</b>다:
 	 * 삭제·태그 제거·비공개 전환으로 열거에 더 안 실리는 링크는 {@link #touchCrawled}로는 영영
 	 * 갱신되지 않아 due가 영구 true로 굳고, 매 스윕이 그 taken_at까지 깊이를 여는 요청량 누수가 된다.
-	 * 호출은 열거가 자연 종료(페이지 전체가 컷 이전·커서 소진)했을 때만 — 안전 상한·커서 미전진으로
+	 * 호출은 <b>커버 처리로 끝난 종료</b>에서만 — 자연 종료(페이지 전체가 컷 이전·커서 소진)와
+	 * <b>수집 개수 상한 컷</b>(2026-08-19 스펙 §3-2 ⑤)이 여기 해당한다. 상한 컷의 깊이는 실제 커버
+	 * 깊이가 아니라 목표 컷 전체이고, 컷 밖 게시물의 지표를 마지막 수집 시점으로 굳히는 <b>의도된
+	 * 동결</b>이다(due 재열거 루프 차단이 목적 — 그 대가가 동결이다). 반면 안전 밸브·커서 미전진으로
 	 * 끊긴 스윕은 깊이를 커버하지 못했으므로 갱신하지 않는다(다음 스윕의 자가 치유 유지).
 	 *
 	 * <p><b>tag_detected_at IS NOT NULL 가드 필수</b>(2026-08-18 direct 통합 §5-3): 이 가드가 없으면
 	 * direct-only 행이 "수집된 적 없는데 크롤됨"으로 마킹돼(태그 열거가 커버 깊이 전체를 이 행까지
 	 * touch해 버려서) 2단계 단건 수집(due 판정)이 영영 안 돈다.
+	 *
+	 * <p><b>direct_registered_at IS NULL 가드도 필수</b>(2026-08-19 수집 상한 v2 §7-3): 위 동결은
+	 * 태그 열거 산지 게시물에만 적용되는 비용 정책이고, direct 등록 게시물은 상한 밖이다. 겹침 행
+	 * (태그·direct 둘 다)까지 touch하면 컷 밖 direct 게시물의 due가 실크롤 없이 꺼져 {@link
+	 * #directDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히
+	 * 얼어붙는다. direct 행의 last_crawled_at은 실수집({@link #touchCrawled})으로만 전진한다.
 	 */
 	public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
 		db.update("""
 				UPDATE brand_tagged_post SET last_crawled_at = ?
-				WHERE brand_id = ? AND taken_at >= ? AND tag_detected_at IS NOT NULL""",
+				WHERE brand_id = ? AND taken_at >= ?
+				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL""",
 				Timestamp.from(at), brandId, Timestamp.from(minTakenAt));
 	}
 

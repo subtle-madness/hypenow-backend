@@ -37,6 +37,33 @@ class BrandAccountAssemblerTest {
 	}
 
 	/**
+	 * 상한 도달 계정은 커버리지 2필드가 그대로 실린다(수집 상한 v2 §7-1) — FE의
+	 * "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)" 표기 원천. 시각은 다른 필드와 같이 KST ISO다.
+	 */
+	@Test
+	void 상한_도달_계정은_커버리지를_싣는다() {
+		var response = assembler.toResponse(
+				row(LocalDate.of(2026, 8, 7), OffsetDateTime.parse("2026-08-07T00:00:00Z"),
+						OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
+						true, OffsetDateTime.parse("2026-05-02T03:00:00Z")),
+				"own", 12);
+
+		assertThat(response.collectionCapped()).isTrue();
+		assertThat(response.coveredUntil()).isEqualTo("2026-05-02T12:00:00+09:00");
+	}
+
+	/** 완주(컷 없음) 계정은 capped=false · coveredUntil=null — 요청 창 전체가 커버됐다는 뜻. */
+	@Test
+	void 컷_없이_완주한_계정은_커버리지가_비어_있다() {
+		var response = assembler.toResponse(row(LocalDate.of(2026, 8, 7),
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"),
+				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null), "own", 12);
+
+		assertThat(response.collectionCapped()).isFalse();
+		assertThat(response.coveredUntil()).isNull();
+	}
+
+	/**
 	 * 확장 중(last_swept_on null · backfill_completed_at null · last_swept_at 있음)은 ready다
 	 * (2026-08-13) — 08-12의 "확장 중 collecting" 분기는 완주 시각 리셋으로 도달 불가가 됐다.
 	 * 진행 여부 판정은 FE가 collectionCompletedAt == null로 한다.
