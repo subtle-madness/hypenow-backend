@@ -24,6 +24,7 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
@@ -73,6 +74,8 @@ class V1BrandAccountsControllerTest {
 	BrandReadRepository brandReadRepository;
 	@MockitoBean
 	UserRepository userRepository;
+	@MockitoBean
+	BrandHashtagTagRepository hashtagTagRepository;
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
@@ -117,7 +120,7 @@ class V1BrandAccountsControllerTest {
 		return new BrandAccountRow(brandId, username, null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
 				30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true, "https://lizda.co.kr", "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
 	/** 백필 리셋·재가입·스윕 실패 — last_swept_on은 null이지만 지난 스윕 완주 사실이 있다. */
@@ -125,7 +128,7 @@ class V1BrandAccountsControllerTest {
 		return new BrandAccountRow(brandId, "lizda_official", null, OffsetDateTime.parse("2026-07-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, backfillError,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
 	private static BrandAccountRow readyRow(long brandId) {
@@ -133,14 +136,24 @@ class V1BrandAccountsControllerTest {
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
+	}
+
+	/** 상한(2,000건) 도달로 끊긴 백필 — 커버리지 2컬럼만 readyRow와 다르다(수집 상한 v2 §7-1). */
+	private static BrandAccountRow cappedRow(long brandId) {
+		return new BrandAccountRow(brandId, "lizda_official", LocalDate.of(2026, 8, 7),
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
+				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+				true, OffsetDateTime.parse("2026-05-02T03:00:00Z"));
 	}
 
 	private static BrandAccountRow errorRow(long brandId) {
 		return new BrandAccountRow(brandId, "lizda_official", null, null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, "초기 수집에 실패했어요. 자동으로 재시도 중이에요.",
 				null, null, null, null, null, null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
 	/**
@@ -152,7 +165,7 @@ class V1BrandAccountsControllerTest {
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				null, null,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
-				6, OffsetDateTime.parse("2026-08-12T10:00:00Z"));
+				6, OffsetDateTime.parse("2026-08-12T10:00:00Z"), false, null);
 	}
 
 	/** 확장 게이트 검증용 — 자산 창(collection_months)만 파라미터로 바꾼 완주 상태 행. */
@@ -161,7 +174,7 @@ class V1BrandAccountsControllerTest {
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
-				months, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				months, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
 	// ---------- 연결 ----------
@@ -198,7 +211,7 @@ class V1BrandAccountsControllerTest {
 						OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null,
 						30876L, 12L, 340L, "브랜드 소개", "리즈다", "https://cdn/pic.jpg", true,
 						"https://lizda.co.kr", "ACTIVE", "monitor-brand/56161796372.jpg",
-						12, OffsetDateTime.parse("2026-08-07T00:00:00Z"))));
+						12, OffsetDateTime.parse("2026-08-07T00:00:00Z"), false, null)));
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts").with(user(principal())).with(csrf())
@@ -863,6 +876,36 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.nextScheduledAt").value(Matchers.endsWith("T02:00:00+09:00")));
 	}
 
+	/**
+	 * 수집 커버리지 노출(수집 상한 v2 §7-1) — 상한(2,000건)에서 끊긴 백필은 collectionCapped=true와
+	 * 실수집 깊이(coveredUntil)를 싣는다. FE가 "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)"을 그린다.
+	 */
+	@Test
+	void 상한_도달_계정은_커버리지_2필드를_노출한다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L))
+				.willReturn(Optional.of(link(7L, 100L, "lizda_official", BrandAccountType.OWN, 12)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(cappedRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionMonths").value(12))
+				.andExpect(jsonPath("$.data.collectionCapped").value(true))
+				.andExpect(jsonPath("$.data.coveredUntil").value("2026-05-02T12:00:00+09:00"));
+	}
+
+	/** 컷 없이 완주한 계정은 capped=false + coveredUntil 키를 null로 남긴다(계약 무결성 #1). */
+	@Test
+	void 완주_계정은_커버리지가_false와_null이다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.collectionCapped").value(false))
+				.andExpect(jsonPath("$.data", Matchers.hasKey("coveredUntil")))
+				.andExpect(jsonPath("$.data.coveredUntil").value(Matchers.nullValue()));
+	}
+
 	@Test
 	void 백필_오류는_error와_collectionError를_반환한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
@@ -1056,13 +1099,16 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isUnauthorized());
 	}
 
-	// ---------- 태그 셋 관리(유저 입력, 2026-08-12) ----------
+	// ---------- 태그 셋 관리(유저 입력, 2026-08-12 · 08-19 사용자 스코프 개정) ----------
+	// 표면 계약(소유권 403·200/204 셰이프)만 여기서 검증한다 — 합집합 계산·최초 시딩 같은 판정
+	// 로직은 V1BrandAccountServiceHashtagTagsTest가 담당한다(V1BrandDirectPostServiceTest와 같은 분리).
 
 	@Test
-	void 태그_조회는_소유_브랜드만_허용한다() throws Exception {
+	void 태그_조회는_원장에서_읽고_monitoring을_호출하지_않는다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(commandClient.getHashtagTags("lizda_official")).willReturn(List.of("리즈다", "lizda"));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L))
+				.willReturn(new java.util.LinkedHashSet<>(List.of("리즈다", "lizda")));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-tags").with(user(principal())))
 				.andExpect(status().isOk())
@@ -1070,7 +1116,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.tags[0]").value("리즈다"))
 				.andExpect(jsonPath("$.data.tags[1]").value("lizda"));
 
-		then(commandClient).should().getHashtagTags("lizda_official");
+		then(commandClient).should(never()).getHashtagTags(anyString());
 	}
 
 	@Test
@@ -1081,13 +1127,14 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(commandClient).should(never()).getHashtagTags(anyString());
+		then(hashtagTagRepository).should(never()).findByUserAndBrand(anyLong(), anyLong());
 	}
 
 	@Test
-	void 태그_교체는_monitoring으로_위임한다() throws Exception {
+	void 태그_교체는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
@@ -1095,21 +1142,7 @@ class V1BrandAccountsControllerTest {
 						.content("{\"tags\": [\"리즈다\", \"Lizda\"]}"))
 				.andExpect(status().isNoContent());
 
-		then(commandClient).should().putHashtagTags("lizda_official", List.of("리즈다", "Lizda"));
-	}
-
-	@Test
-	void tags_null_교체는_빈_목록으로_위임한다() throws Exception {
-		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
-		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-
-		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
-						.with(user(principal())).with(csrf())
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("{}"))
-				.andExpect(status().isNoContent());
-
-		then(commandClient).should().putHashtagTags("lizda_official", List.of());
+		then(hashtagTagRepository).should().replaceTags(7L, 100L, List.of("리즈다", "lizda"));
 	}
 
 	@Test
@@ -1129,9 +1162,10 @@ class V1BrandAccountsControllerTest {
 	// ---------- 태그 단건 추가·삭제(2026-08-12, 표준 REST 확장) ----------
 
 	@Test
-	void 태그_추가는_monitoring으로_위임한다() throws Exception {
+	void 태그_추가는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
@@ -1140,6 +1174,7 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isNoContent());
 
 		then(commandClient).should().addHashtagTags("lizda_official", List.of("리즈다"));
+		then(hashtagTagRepository).should().addTags(7L, 100L, List.of("리즈다"));
 	}
 
 	@Test
@@ -1160,10 +1195,28 @@ class V1BrandAccountsControllerTest {
 	 * POST 빈 목록·유효 문자 위반은 monitoring이 422(code VALIDATION)로 거부한다(계약 §8-3-1, PUT과
 	 * 다른 규칙 — PUT은 2026-08-12부터 빈 목록을 허용한다) — addHashtagTags는 registerBrand의
 	 * translate()를 거치지 않으므로 V1ExceptionAdvice 공용 매핑(httpStatus 404·5xx 외 4xx는 전부
-	 * 400 VALIDATION_FAILED)이 그대로 적용된다.
+	 * 400 VALIDATION_FAILED)이 그대로 적용된다. 원장(내 태그)은 monitoring 실패 시 건드리지 않는다.
 	 */
 	@Test
 	void monitoring_422_태그_추가_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
+		willThrow(new MonitoringApiException("VALIDATION", "사용할 수 없는 문자가 포함된 태그입니다.", 422))
+				.given(commandClient).addHashtagTags(anyString(), any());
+
+		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-tags")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\": [\"!!!\"]}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+	}
+
+	@Test
+	void 태그_추가에_빈_목록을_주면_시딩_없이_monitoring_422로_거부된다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		willThrow(new MonitoringApiException("VALIDATION", "추가할 태그가 없습니다.", 422))
@@ -1175,18 +1228,21 @@ class V1BrandAccountsControllerTest {
 						.content("{\"tags\": []}"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		then(hashtagTagRepository).should(never()).existsForBrand(anyLong());
 	}
 
 	@Test
-	void 태그_단건_삭제는_monitoring으로_위임한다() throws Exception {
+	void 태그_단건_삭제는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags/{tag}", "리즈다")
 						.with(user(principal())).with(csrf()))
 				.andExpect(status().isNoContent());
 
-		then(commandClient).should().deleteHashtagTag("lizda_official", "리즈다");
+		then(hashtagTagRepository).should().deleteTag(7L, 100L, "리즈다");
 	}
 
 	@Test
@@ -1202,15 +1258,18 @@ class V1BrandAccountsControllerTest {
 	}
 
 	@Test
-	void 태그_전체_삭제는_monitoring으로_위임한다() throws Exception {
+	void 태그_전체_삭제는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf()))
 				.andExpect(status().isNoContent());
 
-		then(commandClient).should().deleteAllHashtagTags("lizda_official");
+		then(hashtagTagRepository).should().deleteAllTags(7L, 100L);
+		// 브랜드 전체 삭제(구 monitoring API)는 더 이상 쓰지 않는다 — 다른 유저 태그를 지우면 안 된다.
+		then(commandClient).should(never()).deleteAllHashtagTags(anyString());
 	}
 
 	@Test
@@ -1222,29 +1281,37 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(commandClient).should(never()).deleteAllHashtagTags(anyString());
+		then(hashtagTagRepository).should(never()).deleteAllTags(anyLong(), anyLong());
 	}
 
 	@Test
-	void monitoring_브랜드_비정합_404는_태그_조회에서_404로_매핑된다() throws Exception {
+	void monitoring_브랜드_비정합_404는_태그_교체에서_404로_매핑된다() throws Exception {
+		// 태그 조회(GET)는 이제 monitoring을 안 부르니 이 404 시나리오는 시딩(ensureSeeded)이 도는
+		// 쓰기 경로(PUT)로만 재현된다 — existsForBrand=false라 ensureSeeded가 getHashtagTags를 부른다.
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(commandClient.getHashtagTags("lizda_official"))
 				.willThrow(new MonitoringApiException("BRAND_NOT_FOUND", "브랜드를 찾을 수 없습니다.", 404));
 
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-tags").with(user(principal())))
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\": [\"리즈다\"]}"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
 	@Test
-	void monitoring_접속_불능은_태그_조회에서_503이다() throws Exception {
+	void monitoring_접속_불능은_태그_교체에서_503이다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(commandClient.getHashtagTags("lizda_official"))
 				.willThrow(new MonitoringUnavailableException("monitoring 접속 실패: read timeout", null));
 
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-tags").with(user(principal())))
+		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
+						.with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"tags\": [\"리즈다\"]}"))
 				.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
 				.andExpect(header().string("Retry-After", "5"));

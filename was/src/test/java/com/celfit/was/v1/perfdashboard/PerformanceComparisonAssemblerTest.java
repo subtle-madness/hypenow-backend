@@ -82,11 +82,17 @@ class PerformanceComparisonAssemblerTest {
 	 * 앵커라 두 값이 갈라질 수 있음을 픽스처가 드러낸다.
 	 */
 	private static BrandAccountRow completedAccount(int months) {
+		return completedAccount(months, false, null);
+	}
+
+	/** 커버리지 2컬럼(수집 상한 v2 §7-1)까지 연 변형 — capped=true면 coveredUntil이 실수집 깊이. */
+	private static BrandAccountRow completedAccount(int months, boolean capped, String coveredUntil) {
 		return new BrandAccountRow(2L, "cclime.beauty", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
 				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
 				4143L, 15L, 82L, "", "끌리메 뷰티", null, true, null, "ACTIVE", null,
-				months, OffsetDateTime.parse("2026-06-01T00:00:00Z"));
+				months, OffsetDateTime.parse("2026-06-01T00:00:00Z"),
+				capped, coveredUntil == null ? null : OffsetDateTime.parse(coveredUntil));
 	}
 
 	/** 12개월(전 구간 covered) 기준 픽스처. */
@@ -199,13 +205,13 @@ class PerformanceComparisonAssemblerTest {
 		BrandAccountRow collecting = new BrandAccountRow(3L, "laperi_kr", null, null,
 				OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 				null, null, null, "", "", null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null);
 		// 08-12 스트리밍 백필: 서빙 창(30일)만 커버해도 last_swept_at이 먼저 찍힌다 — 이 상태는
 		// 365일 전량이 아니라서 covered는 false여야 한다(판정 기준을 backfill_completed_at으로 옮긴 이유).
 		BrandAccountRow earlyServing = new BrandAccountRow(4L, "hypenow_kr", LocalDate.parse("2026-08-10"),
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-08-09T00:00:00Z"),
 				null, null, null, null, null, "", "", null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null);
 
 		var ready = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN,
 				List.of(), RANGES, TODAY);
@@ -261,12 +267,81 @@ class PerformanceComparisonAssemblerTest {
 				OffsetDateTime.parse("2026-08-09T18:00:00Z"), OffsetDateTime.parse("2026-05-14T00:12:00Z"),
 				OffsetDateTime.parse("2026-05-14T01:00:00Z"), null,
 				null, null, null, "", "", null, null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-10T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-10T00:00:00Z"), false, null);
 
 		var result = PerformanceComparisonAssembler.compare(expanding, BrandAccountType.OWN,
 				List.of(), RANGES, TODAY);
 
 		assertThat(result.buckets()).allSatisfy(b -> assertThat(b.covered()).isFalse());
+	}
+
+	@Test
+	void 상한_컷_계정은_coveredUntil보다_깊은_버킷이_covered_false다() {
+		// 수집 개수 상한(스펙 2026-08-19 §7-1)에 걸린 백필은 monitoring이 실수집 깊이를
+		// brand_account.covered_until로 영속화한다 — 창(collection_months) 판정만으로는 열거한 적
+		// 없는 깊은 구간이 "수집 완료·0건"으로 오표시된다. 버킷 먼 쪽 경계(from)가 coveredUntil
+		// (KST 달력일)보다 깊으면 false.
+		var result = PerformanceComparisonAssembler.compare(
+				completedAccount(12, true, "2026-04-01T00:00:00+09:00"), BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+
+		assertThat(result.buckets()).extracting("key", "covered").containsExactly(
+				tuple("1w", true), tuple("1w_1m", true), tuple("1m_3m", true),
+				tuple("3m_6m", false), tuple("6m_12m", false));
+	}
+
+	@Test
+	void coveredUntil은_KST_달력일로_판정한다() {
+		// 2026-02-10T20:00Z = KST 02-11 — UTC 날짜(02-10)로 자르면 3m_6m(from 02-10)이 true로 뒤집힌다.
+		var result = PerformanceComparisonAssembler.compare(
+				completedAccount(12, true, "2026-02-10T20:00:00Z"), BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+
+		assertThat(result.buckets()).extracting("key", "covered").containsExactly(
+				tuple("1w", true), tuple("1w_1m", true), tuple("1m_3m", true),
+				tuple("3m_6m", false), tuple("6m_12m", false));
+	}
+
+	@Test
+	void coveredUntil_경계일_버킷은_covered_true다() {
+		// 경계일 포함은 창 하한 판정과 같은 규칙 — coveredUntil이 놓인 날 자체는 열거가 닿은 날이다.
+		var atBoundary = PerformanceComparisonAssembler.compare(
+				completedAccount(12, true, "2025-08-10T00:00:00+09:00"), BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+		var oneDeeper = PerformanceComparisonAssembler.compare(
+				completedAccount(12, true, "2025-08-11T00:00:00+09:00"), BrandAccountType.OWN,
+				List.of(), RANGES, TODAY);
+
+		// 6m_12m(from 2025-08-10): coveredUntil이 정확히 from이면 true, 하루라도 얕으면 false.
+		assertThat(atBoundary.buckets().get(4).covered()).isTrue();
+		assertThat(oneDeeper.buckets().get(4).covered()).isFalse();
+	}
+
+	@Test
+	void 컷_밖_부분_커버_버킷은_집계값을_실은_채_covered_false다() {
+		// coveredUntil(04-01)이 3m_6m(02-10~05-09) 중간에 놓이면 그 버킷은 부분 커버 — covered는
+		// 보수적 false지만 커버된 쪽(04-01 이후)의 게시물 집계는 그대로 실린다(계약: false여도
+		// 집계값은 내린다). FE가 이 조합(covered=false ∧ contentCount>0)을 받는 것이 정상임을 고정.
+		var result = PerformanceComparisonAssembler.compare(
+				completedAccount(12, true, "2026-04-01T00:00:00+09:00"), BrandAccountType.OWN,
+				List.of(content("A", "2", "2026-05-01", 100L, snapshot(10L, 1L, false, 1L))),
+				RANGES, TODAY);
+
+		var partial = result.buckets().get(3);   // 3m_6m
+		assertThat(partial.key()).isEqualTo("3m_6m");
+		assertThat(partial.covered()).isFalse();
+		assertThat(partial.contentCount()).isEqualTo(1);
+	}
+
+	@Test
+	void 모순쌍_capped인데_coveredUntil이_없으면_창_판정_그대로다() {
+		// 계약(§10-1): capped=true && coveredUntil=null 조합은 서버(monitoring)가 내려보내지 않는다
+		// (모순쌍 가드) — 방어적으로 받으면 컷 문구 없이 신청 창만 표기하는 것이 규칙이라, 판정도
+		// 깊이 컷 없이 창 판정 그대로 둔다.
+		var result = PerformanceComparisonAssembler.compare(completedAccount(12, true, null),
+				BrandAccountType.OWN, List.of(), RANGES, TODAY);
+
+		assertThat(result.buckets()).allSatisfy(b -> assertThat(b.covered()).isTrue());
 	}
 
 	// ---------- 배선(계정 로딩·그룹핑) ----------
@@ -280,7 +355,7 @@ class PerformanceComparisonAssemblerTest {
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 						null, null, null, "", "", null, null, null, "ACTIVE", null,
-						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
+						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null)));
 
 		var response = assembler().assemble(7L, List.of(
 				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
@@ -309,7 +384,7 @@ class PerformanceComparisonAssemblerTest {
 				new BrandAccountRow(3L, "laperi_kr", null, null,
 						OffsetDateTime.parse("2026-08-09T00:00:00Z"), null, null,
 						null, null, null, "", "", null, null, null, "ACTIVE", null,
-						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"))));
+						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null)));
 
 		var response = assembler().assemble(7L, List.of(), LocalDate.parse("2026-08-10"));
 

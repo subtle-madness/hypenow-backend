@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring;
 
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
@@ -12,9 +13,12 @@ import com.celfit.was.monitoring.MonitoringCommandClient.BrandRegisterResult;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,16 +51,19 @@ public class V1BrandAccountService {
 	private final BrandReadRepository brandReadRepository;
 	private final BrandAccountAssembler assembler;
 	private final UserRepository userRepository;
+	private final BrandHashtagTagRepository hashtagTagRepository;
 
 	public V1BrandAccountService(BrandLinkRepository linkRepository, BrandLinkTransaction linkTransaction,
 			MonitoringCommandClient commandClient, BrandReadRepository brandReadRepository,
-			BrandAccountAssembler assembler, UserRepository userRepository) {
+			BrandAccountAssembler assembler, UserRepository userRepository,
+			BrandHashtagTagRepository hashtagTagRepository) {
 		this.linkRepository = linkRepository;
 		this.linkTransaction = linkTransaction;
 		this.commandClient = commandClient;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
 		this.userRepository = userRepository;
+		this.hashtagTagRepository = hashtagTagRepository;
 	}
 
 	/**
@@ -181,44 +188,140 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12) — 소유권은 단건 폴링과 동일(남의 brandId는 403).
-	 * username은 브랜드 행의 정본값을 쓴다(연결 시점 사본이 아니라 — deregisterUsername과 같은 근거).
+	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12 — <b>08-19 사용자 스코프 개정</b>) — 소유권은
+	 * 단건 폴링과 동일(남의 brandId는 403). <b>더 이상 monitoring을 호출하지 않는다</b> — 정본이
+	 * {@code app.brand_hashtag_tags}(이 유저가 이 브랜드에 등록한 태그)로 옮겨졌다: 남이 추가·삭제한
+	 * 태그가 내 목록에 나타나거나 사라지면 안 된다(요구사항 — 상호작용 상태는 사용자 스코프).
+	 * 감지 데이터(스윕) 자체는 여전히 연결 유저 전체 태그의 합집합으로 공유 돈다 — 그 동기화는
+	 * 쓰기 경로({@link #putHashtagTags} 등)가 담당한다.
 	 */
 	public List<String> getHashtagTags(long userId, long brandId) {
 		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		return commandClient.getHashtagTags(username);
-	}
-
-	/** 태그 셋 전체 교체 — tags null은 빈 목록으로 접어 monitoring에 위임(정규화·유효성 검증은 monitoring). */
-	public void putHashtagTags(long userId, long brandId, List<String> tags) {
-		requireOwnership(userId, brandId);
-		String username = findAccountOrThrow(brandId).username();
-		commandClient.putHashtagTags(username, tags == null ? List.of() : tags);
+		findAccountOrThrow(brandId);
+		return List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
 	}
 
 	/**
-	 * 태그 셋 단건·다건 추가(2026-08-12) — tags null은 빈 목록으로 위임(monitoring이 422로 거부 —
-	 * POST는 "추가할 게 없다"를 실수로 간주, PUT과 다른 규칙).
+	 * 태그 셋 전체 교체(08-19 사용자 스코프 개정) — <b>이 유저의 태그만</b> 교체한다. monitoring에는
+	 * "이 유저의 새 태그 + 다른 유저들의 기존 태그"의 합집합을 PUT한다({@link #ensureSeeded}로 최초
+	 * 시딩을 보장한 뒤 계산) — 그냥 내 새 태그만 PUT하면 monitoring의 브랜드 단위 태그 목록(PUT은
+	 * 전체 교체 계약이다)이 다른 유저의 태그까지 통째로 사라지는 사고가 난다. monitoring 호출이
+	 * 먼저다(검증·정규화는 monitoring 담당) — 실패하면 예외가 전파돼 원장은 건드리지 않는다.
+	 */
+	public void putHashtagTags(long userId, long brandId, List<String> tags) {
+		requireOwnership(userId, brandId);
+		String username = findAccountOrThrow(brandId).username();
+		List<String> normalized = normalizeTags(tags);
+		ensureSeeded(userId, brandId, username);
+
+		Set<String> union = new LinkedHashSet<>(hashtagTagRepository.unionByBrand(brandId));
+		union.removeAll(hashtagTagRepository.findByUserAndBrand(userId, brandId));
+		union.addAll(normalized);
+		commandClient.putHashtagTags(username, List.copyOf(union));
+
+		hashtagTagRepository.replaceTags(userId, brandId, normalized);
+	}
+
+	/**
+	 * 태그 셋 단건·다건 추가(2026-08-12, 08-19 사용자 스코프 개정) — tags null·빈 목록은 monitoring이
+	 * 422로 거부한다(POST는 "추가할 게 없다"를 실수로 간주, PUT과 다른 규칙 — 이 경우 원장·시딩 둘 다
+	 * 건드리지 않는다). 추가는 합집합에 원소를 더하는 것뿐이라 PUT과 달리 전체 재계산이 필요 없다.
 	 */
 	public void addHashtagTags(long userId, long brandId, List<String> tags) {
 		requireOwnership(userId, brandId);
 		String username = findAccountOrThrow(brandId).username();
-		commandClient.addHashtagTags(username, tags == null ? List.of() : tags);
+		List<String> normalized = normalizeTags(tags);
+		if (!normalized.isEmpty()) {
+			ensureSeeded(userId, brandId, username);
+		}
+		commandClient.addHashtagTags(username, normalized);
+		hashtagTagRepository.addTags(userId, brandId, normalized);
 	}
 
-	/** 태그 단건 삭제(2026-08-12) — 소유권 검증 후 monitoring에 위임(정규화는 monitoring). */
+	/**
+	 * 태그 단건 삭제(2026-08-12, 08-19 사용자 스코프 개정) — 내 원장에서는 항상 지운다. monitoring
+	 * 스윕 대상에서 실제로 빼는 건 <b>이 태그를 가진 다른 유저가 아무도 없을 때만</b>이다
+	 * ({@link BrandHashtagTagRepository#hasOtherUserWithTag} — {@code BrandDirectPostRepository.
+	 * hasOtherRegistrant}와 같은 패턴) — 안 그러면 내 삭제가 다른 유저의 스윕 대상에서 태그를 뺀다.
+	 */
 	public void deleteHashtagTag(long userId, long brandId, String tag) {
 		requireOwnership(userId, brandId);
 		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteHashtagTag(username, tag);
+		String normalized = normalizeTag(tag);
+		if (normalized == null) {
+			return;   // monitoring normalizeTagItem과 같은 관용구 — 정규화 후 빈 문자열은 대상 없음.
+		}
+		ensureSeeded(userId, brandId, username);
+		hashtagTagRepository.deleteTag(userId, brandId, normalized);
+		if (!hashtagTagRepository.hasOtherUserWithTag(brandId, normalized, userId)) {
+			commandClient.deleteHashtagTag(username, normalized);
+		}
 	}
 
-	/** 태그 전체 삭제(2026-08-12) — 소유권 검증 후 monitoring에 위임. 브랜드 태그 감지를 완전히 끈다. */
+	/**
+	 * 태그 전체 삭제(2026-08-12, 08-19 사용자 스코프 개정) — <b>이 유저의 태그만</b> 지운다("브랜드
+	 * 태그 감지를 완전히 끈다"는 구 계약 폐기 — 다른 유저가 연결돼 있으면 그들의 스윕은 계속돼야
+	 * 한다). monitoring의 브랜드 전체 삭제 API는 더 이상 쓰지 않는다(호출하면 다른 유저 태그까지
+	 * 지워진다) — 내가 지운 태그 중 다른 소유자가 남지 않은 것만 단건 삭제로 반영한다.
+	 */
 	public void deleteAllHashtagTags(long userId, long brandId) {
 		requireOwnership(userId, brandId);
 		String username = findAccountOrThrow(brandId).username();
-		commandClient.deleteAllHashtagTags(username);
+		ensureSeeded(userId, brandId, username);
+
+		Set<String> myTags = hashtagTagRepository.findByUserAndBrand(userId, brandId);
+		hashtagTagRepository.deleteAllTags(userId, brandId);
+		for (String tag : myTags) {
+			if (!hashtagTagRepository.hasOtherUserWithTag(brandId, tag, userId)) {
+				commandClient.deleteHashtagTag(username, tag);
+			}
+		}
+	}
+
+	/**
+	 * 최초 시딩(08-19) — 이 브랜드에 원장 행이 하나도 없으면(=이 기능 출시 이후 아직 아무도 태그
+	 * 관리 API를 안 건드림) monitoring의 현재 태그 전체를 이 유저에게 귀속시킨다. 이 기능 출시
+	 * 이전부터 있던 브랜드 단위 태그(자동 유도 계정명 태그 포함)는 원래 아무에게도 귀속돼 있지
+	 * 않으므로, 최초로 태그 관리를 조작하는 유저가 물려받는다 — 그래야 이후 PUT·삭제의 합집합·
+	 * "다른 소유자 없음" 판정이 기존 태그를 놓치지 않는다(별도 백필 마이그레이션 잡 불필요 —
+	 * 오프라인 배치 대신 최초 쓰기 시점에 자연히 수렴).
+	 */
+	private void ensureSeeded(long userId, long brandId, String username) {
+		if (hashtagTagRepository.existsForBrand(brandId)) {
+			return;
+		}
+		List<String> current = commandClient.getHashtagTags(username);
+		if (!current.isEmpty()) {
+			hashtagTagRepository.addTags(userId, brandId, normalizeTags(current));
+		}
+	}
+
+	/** 다건 정규화(trim → 선행 # 제거 → 소문자 → 중복 제거) — monitoring normalizeTags와 같은 규칙. */
+	private static List<String> normalizeTags(List<String> tags) {
+		if (tags == null) {
+			return List.of();
+		}
+		LinkedHashSet<String> normalized = new LinkedHashSet<>();
+		for (String tag : tags) {
+			String cleaned = normalizeTag(tag);
+			if (cleaned != null) {
+				normalized.add(cleaned);
+			}
+		}
+		return List.copyOf(normalized);
+	}
+
+	/** 단건 정규화 — null·blank는 null(호출측이 "대상 없음"으로 처리, monitoring normalizeTagItem 동형). */
+	private static String normalizeTag(String tag) {
+		if (tag == null) {
+			return null;
+		}
+		String stripped = tag.strip();
+		if (stripped.startsWith("#")) {
+			stripped = stripped.substring(1);
+		}
+		String cleaned = stripped.strip().toLowerCase(Locale.ROOT);
+		return cleaned.isBlank() ? null : cleaned;
 	}
 
 	/**

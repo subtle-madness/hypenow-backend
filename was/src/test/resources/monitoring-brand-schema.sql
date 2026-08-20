@@ -31,7 +31,11 @@ CREATE TABLE IF NOT EXISTS brand_account (
     -- 수집 범위 선택(V20260812220000) — was는 둘 다 읽는다(collection_started_at은 registered_at 폴백).
     collection_months     int         NOT NULL DEFAULT 12
                               CHECK (collection_months IN (1, 3, 6, 12)),
-    collection_started_at timestamptz
+    collection_started_at timestamptz,
+    -- 백필 시점 창 커버리지(V20260819125244, 수집 상한 v2 §7-1) — was는 둘 다 읽어 API로 노출한다.
+    -- capped=true면 covered_until이 실수집 깊이, NULL이면 요청 창 전체 커버(운영 DDL과 동일 기본값).
+    collection_capped     boolean     NOT NULL DEFAULT false,
+    covered_until         timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS brand_tagged_post (
@@ -144,6 +148,18 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post (
     author_image_source_name   text,
     author_image_archived_at   timestamptz,
     PRIMARY KEY (brand_id, short_code)
+);
+
+-- 정본은 monitoring/src/main/resources/db/migration/V20260819054457__brand_hashtag_post_matched_tags.sql
+-- (2026-08-19, was 사용자 스코프 필터 지원) — 게시물당 매칭된 태그 전체(matched_tag는 최초 저장
+-- 태그 1개뿐, 이 테이블은 그 후 다른 태그가 같은 게시물을 다시 만나도 누적 기록한다).
+CREATE TABLE IF NOT EXISTS brand_hashtag_post_matched_tags (
+    brand_id   bigint      NOT NULL,
+    short_code text        NOT NULL,
+    tag        text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (brand_id, short_code, tag),
+    FOREIGN KEY (brand_id, short_code) REFERENCES brand_hashtag_post (brand_id, short_code) ON DELETE CASCADE
 );
 
 -- 정본은 monitoring/src/main/resources/db/migration/V20260811085943__brand_hashtag_detection.sql +

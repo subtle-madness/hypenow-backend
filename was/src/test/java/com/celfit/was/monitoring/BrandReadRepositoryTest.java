@@ -11,6 +11,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import java.sql.Connection;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -130,6 +131,25 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(row.registeredAt()).isNotNull();
 		assertThat(row.backfillCompletedAt()).isNotNull();
 		assertThat(row.backfillError()).isNull();
+		// 커버리지 2컬럼(수집 상한 v2 §7-1) — 시드가 명시하지 않은 행은 DDL 기본값(완주 = 창 전체 커버).
+		assertThat(row.collectionCapped()).isFalse();
+		assertThat(row.coveredUntil()).isNull();
+	}
+
+	/** 상한 도달로 끊긴 백필은 capped=true + covered_until(실수집 깊이)이 그대로 읽힌다(§7-1). */
+	@Test
+	void 상한_도달_계정은_커버리지_컬럼이_읽힌다() {
+		long brandId = jdbc.sql("""
+				INSERT INTO brand_account (username, ig_user_id, collection_capped, covered_until)
+				VALUES ('brand_capped', 'IG_CAPPED', true, '2026-05-02T12:00:00+09:00')
+				RETURNING id
+				""").query(Long.class).single();
+
+		BrandAccountRow row = repository.findAccount(brandId).orElseThrow();
+
+		assertThat(row.collectionCapped()).isTrue();
+		// 드라이버가 돌려주는 오프셋(UTC/세션 존)에 흔들리지 않게 순간(Instant)으로 비교한다.
+		assertThat(row.coveredUntil().toInstant()).isEqualTo(Instant.parse("2026-05-02T03:00:00Z"));
 	}
 
 	@Test
@@ -494,6 +514,47 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				.orElseThrow();
 		assertThat(archived.authorImageObjectPath()).isEqualTo("monitor-hashtag-author/influencer_h.jpg");
 		assertThat(unarchived.authorImageObjectPath()).isNull();
+	}
+
+	// ---------- 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) ----------
+
+	@Test
+	void findMatchedTags는_shortcode당_매칭된_태그_전부를_돌려준다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "MULTI", "RELEVANT", now.minusDays(1).toString());
+		jdbc.sql("""
+				INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag)
+				VALUES (:brandId, 'MULTI', 'cclime'), (:brandId, 'MULTI', '끌리메')
+				""")
+				.param("brandId", brandId).update();
+
+		List<BrandReadRepository.MatchedTagRow> rows = repository.findMatchedTags(brandId, List.of("MULTI"));
+
+		assertThat(rows).extracting(BrandReadRepository.MatchedTagRow::tag)
+				.containsExactlyInAnyOrder("cclime", "끌리메");
+	}
+
+	@Test
+	void findMatchedTags는_다른_브랜드_행을_섞지_않는다() {
+		long mine = seedBrand("brand_mine");
+		long other = seedBrand("brand_other");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(mine, "SAME", "RELEVANT", now.minusDays(1).toString());
+		seedHashtagPost(other, "SAME", "RELEVANT", now.minusDays(1).toString());
+		jdbc.sql("INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag) VALUES (:brandId, 'SAME', 'other')")
+				.param("brandId", other).update();
+
+		List<BrandReadRepository.MatchedTagRow> rows = repository.findMatchedTags(mine, List.of("SAME"));
+
+		assertThat(rows).isEmpty();
+	}
+
+	@Test
+	void findMatchedTags는_빈_shortcode_목록에_빈_결과를_돌려준다() {
+		long brandId = seedBrand("brand_official");
+
+		assertThat(repository.findMatchedTags(brandId, List.of())).isEmpty();
 	}
 
 	// ---------- 승격 상태 필드용 tagged 존재 판정(2026-08-17) ----------

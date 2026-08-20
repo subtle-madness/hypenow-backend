@@ -93,7 +93,7 @@ public class PerformanceComparisonAssembler {
 	 * 계정 1개 집계 — accountContents는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
 	 * covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12): 백필이 열거하는 범위가
 	 * collection_months 창뿐이라, 완주해도 창 밖 버킷은 수집한 적 자체가 없다 — 계정 단위 true는
-	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 3중 AND:
+	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 4중 AND:
 	 * <ul>
 	 * <li><b>완주</b>(backfillCompletedAt 존재) — last_swept_at은 첫 페이지 배치만 정산돼도 미리
 	 * 찍히므로 못 쓴다(스트리밍 백필). 08-13 개정으로 기간 확장이 이 값을 NULL로 리셋하므로,
@@ -104,22 +104,39 @@ public class PerformanceComparisonAssembler {
 	 * <li><b>버킷이 창 안</b> — 먼 쪽 경계(from)가 창 하한(today.minusMonths(collectionMonths))
 	 * 이상. 부분 겹침은 false(보수적), 경계일은 포함 — 창 하한과 버킷 하한이 같은
 	 * minusMonths(말일 클램프) 연산이라 12개월 계정의 6m_12m이 정확히 경계에 얹힌다.</li>
+	 * <li><b>버킷이 실수집 깊이 안</b>(2026-08-19, 수집 상한 v2 §7-1) — 먼 쪽 경계(from)가
+	 * {@code brand_account.covered_until}(monitoring이 백필 종료 시 영속화하는 실수집 깊이,
+	 * KST 달력일로 절단) 이상. 수집 개수 상한(collection-post-limit)이 백필 열거를 최신 게시물
+	 * 컷에서 끊으면 창 판정만으로는 열거한 적 없는 깊은 구간이 "수집 완료·0건"으로 오표시된다.
+	 * coveredUntil null = 요청 창 전체 커버(완주)라 창 판정 그대로 — 자연 완주한 희소 브랜드의
+	 * 빈 깊은 구간은 계속 true다(추측 프록시가 아니라 monitoring의 확정값이라 가능한 구분).
+	 * 부분 겹침 false·경계일 포함은 창 판정과 같은 규칙이고, 두 하한은 max 하나(coverageStart)로
+	 * 합쳐 비교를 한 곳에 둔다. 모순쌍(capped=true·coveredUntil=null)은 서버가 내려보내지 않지만
+	 * (모순쌍 가드) 방어적으로 받으면 창 판정 그대로다(계약 §10-1의 방어 규칙과 동일).</li>
 	 * </ul>
-	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
+	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있고,
+	 * 부분 커버 버킷은 커버된 쪽 게시물이 실려 covered=false ∧ contentCount&gt;0이 정상 조합이다).
 	 *
-	 * <p>covered의 기준은 <b>자산 창(brand_account.collection_months = 실제로 수집한 사실)</b>이고,
-	 * 계정 응답의 {@code collectionMonths}(2026-08-17부터 링크 값 = 그 유저가 신청한 표시 창)와는
-	 * 다를 수 있다. 3개월 링크 유저가 12개월 자산 브랜드에서 6m_12m을 covered=true로 보는 것은
-	 * "그 구간이 수집돼 있다"는 뜻이지 "내 구독 창 안"이라는 뜻이 아니다(대시보드는 아직 링크 창을
-	 * 적용하지 않는다 — 의도적 범위 밖).
+	 * <p>covered의 기준은 <b>자산 창(brand_account.collection_months)과 자산 커버리지(covered_until)
+	 * = 실제로 수집한 사실</b>이고, 계정 응답의 {@code collectionMonths}(2026-08-17부터 링크 값 =
+	 * 그 유저가 신청한 표시 창)와는 다를 수 있다. 3개월 링크 유저가 12개월 자산 브랜드(컷 없음)에서
+	 * 6m_12m을 covered=true로 보는 것은 "그 구간이 수집돼 있다"는 뜻이지 "내 구독 창 안"이라는
+	 * 뜻이 아니다(대시보드는 아직 링크 창을 적용하지 않는다 — 의도적 범위 밖).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
 			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges, LocalDate today) {
 		boolean accountCovered = account.backfillCompletedAt() != null && account.lastSweptOn() != null;
 		LocalDate windowStart = today.minusMonths(account.collectionMonths());
+		// 커버 하한은 창 하한과 실수집 깊이(coveredUntil, KST 달력일) 중 얕은 쪽 — 두 하한은 같은
+		// "부분 겹침 false·경계일 포함" 규칙이라 max 하나로 합쳐 비교를 한 곳에 둔다. coveredUntil
+		// null은 요청 창 전체 커버(완주)라 창 하한 그대로다(모순쌍 capped·null 방어도 같은 분기 —
+		// 계약 §10-1은 그 조합을 컷 문구 없이 다루라고 명시).
+		LocalDate coveredOn = KstTimestamps.toKstDate(account.coveredUntil());
+		LocalDate coverageStart = coveredOn == null || coveredOn.isBefore(windowStart)
+				? windowStart : coveredOn;
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
 		for (BucketRange range : ranges) {
-			boolean covered = accountCovered && !range.from().isBefore(windowStart);
+			boolean covered = accountCovered && !range.from().isBefore(coverageStart);
 			buckets.add(aggregate(range, covered, accountContents));
 		}
 		// collectionStartedAt은 브랜드 계정 API와 같은 앵커(collection_started_at, 확장 시 갱신) —

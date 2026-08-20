@@ -100,6 +100,11 @@ public class V1BrandDirectPostService {
 
 		Map<String, BrandPoolStatusRow> pool = poolStatus(brandId, urls);
 		OffsetDateTime cutoff = duplicateCutoff(link.collectionMonths());
+		// 공동 등록 허용(요구사항, 08-19) — "이미 direct 등록됨"의 진짜 뜻은 "이 유저가 이미 등록함"
+		// 이다. direct_registered_at은 브랜드 단위 컬럼이라 누가 등록했는지 모르므로, 원장
+		// (app.brand_direct_posts)을 별도로 조회해 이 유저 본인 등록분만 가려낸다. pool이 비어 있으면
+		// (모두 신규 shortcode·share 링크) 조회 자체를 생략한다.
+		Set<String> ownedShortCodes = pool.isEmpty() ? Set.of() : directPostRepository.shortCodesByUser(userId);
 
 		BrandPostRegistrationRepository.InsertedRegistration inserted =
 				registrationRepository.insert(userId, brandId, campaignIdLong);
@@ -107,7 +112,7 @@ public class V1BrandDirectPostService {
 
 		List<BrandDirectRegistrationResponse.Entry> entries = new ArrayList<>(urls.size());
 		for (int seq = 0; seq < urls.size(); seq++) {
-			entries.add(planEntry(registrationId, seq, urls.get(seq), pool, cutoff));
+			entries.add(planEntry(registrationId, seq, urls.get(seq), pool, cutoff, ownedShortCodes));
 		}
 		// 전건이 접수 시점에 확정됐으면(위임할 pending이 없으면) 완료 처리도 여기서 바로 끝낸다 —
 		// 실행기가 나중에 같은 판정을 다시 해도 no-op이지만, 폴링이 completed_at을 즉시 봐야 한다.
@@ -123,7 +128,7 @@ public class V1BrandDirectPostService {
 	 * Post·share 단축 링크는 pending으로 남겨 실행기가 처리하게 한다.
 	 */
 	private BrandDirectRegistrationResponse.Entry planEntry(long registrationId, int seq, String url,
-			Map<String, BrandPoolStatusRow> pool, OffsetDateTime cutoff) {
+			Map<String, BrandPoolStatusRow> pool, OffsetDateTime cutoff, Set<String> ownedShortCodes) {
 		MonitoringInput parsed = MonitoringInput.parsePost(url);
 		if (parsed instanceof MonitoringInput.Invalid invalid) {
 			registrationRepository.insertEntry(registrationId, seq, url, null, RegistrationResult.FAILED,
@@ -133,7 +138,7 @@ public class V1BrandDirectPostService {
 		String shortCode = parsed instanceof MonitoringInput.Post post ? post.shortCode() : null;
 		if (shortCode != null) {
 			BrandPoolStatusRow row = pool.get(shortCode);
-			if (row != null && isDuplicate(row, cutoff)) {
+			if (row != null && isDuplicate(row, cutoff, ownedShortCodes.contains(shortCode))) {
 				registrationRepository.insertEntry(registrationId, seq, url, shortCode, RegistrationResult.DUPLICATE,
 						RegistrationResult.REASON_DUPLICATE, BRAND_DUPLICATE_REASON);
 				return entry(url, RegistrationResult.DUPLICATE, RegistrationResult.REASON_DUPLICATE,
@@ -147,8 +152,9 @@ public class V1BrandDirectPostService {
 	}
 
 	/**
-	 * 브랜드 풀 중복 판정(설계 §2-3) — duplicate ⟺ 행이 있고 (이미 direct 등록됐거나, 표시 창 안의
-	 * tagged다). 현행(레거시) 대비 달라지는 점 3가지:
+	 * 브랜드 풀 중복 판정(설계 §2-3, 공동 등록 허용 08-19 개정) — duplicate ⟺ (이 유저가 이미 direct
+	 * 등록했거나) (tag_detected(=브랜드 공유로 보이는 tagged)고 표시 창 안이다). 현행(레거시) 대비
+	 * 달라지는 점:
 	 * <ol>
 	 *   <li>유저의 다른 브랜드 direct 매핑을 모수에 넣지 않는다(크로스 브랜드 누수 제거) — 판정 자체가
 	 *       {@code brandId} 스코프 쿼리({@link BrandReadRepository#findBrandPoolStatus})라 다른
@@ -159,10 +165,19 @@ public class V1BrandDirectPostService {
 	 *   <li>미정산 tagged를 중복으로 잡을 필요가 없어졌다 — 셰이프가 하나(brand_tagged_post 한 행)라
 	 *       중복 등록해도 같은 행에 direct_registered_at만 붙을 뿐, 레거시처럼 카드가 direct 셰이프로
 	 *       영구 고정되는 위험이 없다.</li>
+	 *   <li><b>"이미 direct 등록됨"은 이 유저 기준이다</b>(공동 등록 허용, 08-19) — {@code
+	 *       direct_registered_at}은 브랜드 단위 컬럼이라 "누가" 등록했는지 모른다. 그래서 브랜드
+	 *       공유 신호({@code row.directRegistered()})가 아니라 원장 조회로 얻은 {@code
+	 *       ownedByThisUser}를 쓴다: A가 등록한 걸 B가 등록하려 하면(등록되긴 했지만 내가 아님)
+	 *       tag_detected가 아닌 한 duplicate가 아니라 신규 등록으로 위임된다 — B에게도 성공해야
+	 *       한다는 요구사항. 두 번째 항(창 판정)도 {@code row.tagDetected()} 가드가 새로 붙었다 —
+	 *       안 붙이면 "tag_detected는 없고 direct_registered만 있는(=남이 등록한) 최근 게시물"이
+	 *       날짜만으로 duplicate 처리돼 버린다(이 유저에게는 보이지도 않는 게시물인데 등록만 막히는
+	 *       모순 — 이전 버그).</li>
 	 * </ol>
 	 */
-	private static boolean isDuplicate(BrandPoolStatusRow row, OffsetDateTime cutoff) {
-		return row.directRegistered() || !row.takenAt().isBefore(cutoff);
+	private static boolean isDuplicate(BrandPoolStatusRow row, OffsetDateTime cutoff, boolean ownedByThisUser) {
+		return ownedByThisUser || (row.tagDetected() && !row.takenAt().isBefore(cutoff));
 	}
 
 	/** 링크 표시 창 ∩ 365일 자산 창의 하한(BrandPostAssembler.brandShortCodes와 동일 관용구). */
@@ -224,15 +239,31 @@ public class V1BrandDirectPostService {
 
 	/**
 	 * 성과 측정 취소 — postId(shortcode) 기준, 매핑 삭제가 아니라 브랜드 풀의 direct 표식 해제다.
-	 * 유저의 활성 브랜드 연결 전체를 순서대로 뒤져 그 풀에서 postId 행을 찾는다(같은 브랜드에 연결된
-	 * 다른 유저가 등록한 게시물도 취소할 수 있다 — 설계 결정 1-1, 브랜드 풀은 공유 자원이다).
+	 * 유저의 활성 브랜드 연결 전체를 순서대로 뒤져 그 풀에서 postId 행을 찾는다.
+	 *
+	 * <p><b>등록자 한정(요구사항, 08-19 개정 — 구 설계 결정 1-1 "브랜드 풀은 공유 자원" 폐기)</b>:
+	 * 해시태그로 감지된 게시물이 브랜드 연결 유저 전원에게 보이는 것(읽기)은 여전히 공유지만, 취소
+	 * (쓰기)는 등록자 본인만 할 수 있다 — {@link #ensureOwnRegistration}이 (userId, postId, brandId)로
+	 * {@code app.brand_direct_posts} 원장을 직접 확인한다. 남의 등록분은 405가 아니라 이 표면의 기존
+	 * 어휘를 그대로 쓴다: 해시태그로도 감지된 겹침 행이면 이 유저 시점엔 "태그 게시물"이라 tagged 취소
+	 * 시도와 같은 400 TAGGED_POST_NOT_CANCELABLE, direct-only면(등록자 전용 노출 필터로 이 유저
+	 * 화면에는 애초에 보이지도 않는 게시물이라) 존재를 흘리지 않고 404다.
+	 *
+	 * <p><b>공동 등록 방어</b>: 등록 접수 시점의 브랜드 풀 중복 검사와 실행기 처리 시점 재검사
+	 * ({@code BrandDirectRegistrationExecutor#isAlreadyDirectRegistered}) 사이는 원자적이지 않아,
+	 * 동시 등록 요청이 그 창을 통과하면 서로 다른 유저가 독립적으로 같은 (brand, shortcode)를 등록하는
+	 * 상태가 실제로 가능하다({@link BrandDirectPostRepository#hasOtherRegistrant} 참조 — PK가
+	 * (user_id, short_code)라 DB가 이를 막지 않는다). 그래서 브랜드 풀의 direct 표식(monitoring 호출)은
+	 * <b>나 말고 등록자가 아무도 안 남았을 때만</b> 해제한다 — 안 그러면 A의 취소가 B의 화면에서
+	 * 게시물을 지운다. 내 원장 행·내 캠페인 링크·내 pending entry는 다른 등록자 존재 여부와 무관하게
+	 * 항상 정리한다(내 소유 데이터라 남의 상태와 무관).
 	 *
 	 * <p><b>원격 실패를 삼키지 않는 이유</b>: 원장만 지우고 monitoring 호출이 실패하면, monitoring은
 	 * 계속 그 게시물을 수집하는데 화면에서만 사라지는 불일치가 생긴다(레거시 {@code cancelLegacyIfPossible}
 	 * 판단의 승계) — {@link MonitoringCommandClient#deleteDirectPost}가 던지면 그대로 전파해 취소
 	 * 자체를 실패시킨다.
 	 *
-	 * <p>원격·원장 정리에 더해 {@link #settlePendingEntriesForCancel}로 같은 (brandId, shortCode)의
+	 * <p>원격·원장 정리에 더해 {@link #settlePendingEntriesForCancel}로 내 (brandId, shortCode)
 	 * pending 등록 entry도 함께 정산한다 — 취소-복구 경합 수정(2026-08-18 스테이징 실측) 참조.
 	 */
 	@Transactional
@@ -246,12 +277,46 @@ public class V1BrandDirectPostService {
 			if (!row.directRegistered()) {
 				throw V1ApiException.badRequest(TAGGED_NOT_CANCELABLE_CODE, TAGGED_NOT_CANCELABLE_MESSAGE);
 			}
-			commandClient.deleteDirectPost(link.brandId(), postId);
+			ensureOwnRegistration(userId, link.brandId(), postId, row.tagDetected());
+
+			// 나 말고 등록자가 남아 있으면(공동 등록 방어) 브랜드 풀 표식은 건드리지 않는다.
+			boolean lastRegistrant = !directPostRepository.hasOtherRegistrant(link.brandId(), postId, userId);
+			if (lastRegistrant) {
+				commandClient.deleteDirectPost(link.brandId(), postId);
+			}
 			directPostRepository.delete(userId, postId);
-			postCampaignRepository.deleteByBrandAndShortCode(link.brandId(), postId);
-			settlePendingEntriesForCancel(link.brandId(), postId);
+			postCampaignRepository.deleteByBrandAndShortCodeAndUser(link.brandId(), postId, userId);
+			settlePendingEntriesForCancel(link.brandId(), postId, userId);
 			return;
 		}
+		throw V1ApiException.notFound("대상을 찾을 수 없습니다.");
+	}
+
+	/**
+	 * 등록자 본인 검증(요구사항, 08-19) — {@code app.brand_direct_posts}에 (userId, postId) 행이 있고
+	 * 그 행의 brandId가 지금 보고 있는 링크와 일치해야 통과한다(브랜드마다 다른 shortcode를 등록했을
+	 * 수 있어 shortcode만으로는 불충분 — PK가 (user_id, short_code)라 유저당 브랜드 무관 1행뿐이다).
+	 *
+	 * <p>원장 행이 아직 없어도 통과하는 예외 하나(취소-복구 경합과 겹침, 2026-08-18 스테이징 실측):
+	 * 등록 명령의 HTTP 응답이 유실돼 monitoring은 실제로 등록을 완료했는데 원장은 못 쓰인 채 entry가
+	 * pending으로 남은 창이 있다 — {@link BrandPostRegistrationRepository#hasPendingEntry}로 이 유저의
+	 * pending 등록도 등록자 증거로 인정한다. 그렇지 않으면 이 창에서 취소를 시도한 등록자 본인이 남의
+	 * 등록으로 오판돼 404를 받는다({@link #settlePendingEntriesForCancel}가 뒤이어 그 entry를 정산한다).
+	 */
+	private void ensureOwnRegistration(long userId, long brandId, String postId, boolean tagDetected) {
+		boolean ownsInThisBrand = directPostRepository.findByUserAndShortCode(userId, postId)
+				.filter(row -> row.brandId() == brandId)
+				.isPresent()
+				|| registrationRepository.hasPendingEntry(brandId, postId, userId);
+		if (ownsInThisBrand) {
+			return;
+		}
+		if (tagDetected) {
+			// 해시태그로도 감지된 겹침 행 — 이 유저 시점엔 "태그 게시물"로 보이므로 같은 400.
+			throw V1ApiException.badRequest(TAGGED_NOT_CANCELABLE_CODE, TAGGED_NOT_CANCELABLE_MESSAGE);
+		}
+		// direct-only이고 내 등록이 아니다 — 등록자 전용 노출 필터로 목록에도 안 보이는 게시물이라
+		// 존재를 흘리지 않고 404(등록 상태 폴링 get()과 같은 관용구).
 		throw V1ApiException.notFound("대상을 찾을 수 없습니다.");
 	}
 
@@ -265,10 +330,12 @@ public class V1BrandDirectPostService {
 	 * 수명주기다) 복구 재시도 대상에서 구조적으로 제거한다. 이 정산이 없어도
 	 * {@code isAlreadyDirectRegistered} 재검사가 살아있는 동안은 재등록을 duplicate로 막아주지만,
 	 * 취소가 브랜드 풀에서 direct 표식을 지운 뒤이므로 그 재검사도 더 이상 막아주지 못한다 — 그래서
-	 * 취소 시점 정산이 반드시 필요하다.
+	 * 취소 시점 정산이 반드시 필요하다. userId로 좁히는 이유는 {@link BrandPostRegistrationRepository#
+	 * settlePendingAsSuccessForCancel} 참조(공동 등록 시 남의 pending entry를 건드리지 않는다).
 	 */
-	private void settlePendingEntriesForCancel(long brandId, String shortCode) {
-		for (Long registrationId : registrationRepository.settlePendingAsSuccessForCancel(brandId, shortCode)) {
+	private void settlePendingEntriesForCancel(long brandId, String shortCode, long userId) {
+		for (Long registrationId : registrationRepository.settlePendingAsSuccessForCancel(brandId, shortCode,
+				userId)) {
 			registrationRepository.markCompletedIfAllSettled(registrationId);
 		}
 	}

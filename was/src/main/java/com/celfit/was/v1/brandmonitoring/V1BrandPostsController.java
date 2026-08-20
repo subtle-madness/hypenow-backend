@@ -53,10 +53,10 @@ import org.springframework.web.bind.annotation.RestController;
 public class V1BrandPostsController {
 
 	/**
-	 * 목록 상한(FE 명세 meta.limit) — 수집 안전 밸브(monitoring {@code max-posts-per-sweep:2000})와
-	 * 같은 값으로, 정상 경로에선 도달하지 않는 폭주 방어다. 구 200은 90일·105건 시절의 값이라
-	 * 정책 v1(365일 윈도우·저장소 상한 폐지) 이후 12개월치가 많은 브랜드(실측 463건)를 실제로
-	 * 잘랐다 — 잘린 것은 정렬 뒤쪽, 즉 새로 백필된 소급분이었다.
+	 * 목록 상한(FE 명세 meta.limit) — 수집 개수 상한(monitoring {@code collection-post-limit:2000},
+	 * 2026-08-19 스펙)과 같은 값으로, 수집하는 만큼 보여줄 수 있는 양이다. 구 200은 90일·105건
+	 * 시절의 값이라 정책 v1(365일 윈도우·저장소 상한 폐지) 이후 12개월치가 많은 브랜드(실측
+	 * 463건)를 실제로 잘랐다 — 잘린 것은 정렬 뒤쪽, 즉 새로 백필된 소급분이었다.
 	 */
 	private static final int POST_LIMIT = 2000;
 
@@ -135,7 +135,7 @@ public class V1BrandPostsController {
 		long brandId = parseAccountId(accountId);
 		requireOwnership(principal.getUserId(), brandId);
 		findAccountOrThrow(brandId);
-		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(brandId));
+		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), brandId));
 	}
 
 	/**

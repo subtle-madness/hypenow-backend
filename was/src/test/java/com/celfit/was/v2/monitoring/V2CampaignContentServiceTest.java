@@ -337,7 +337,7 @@ class V2CampaignContentServiceTest {
 				service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30).body().results().get(0);
 
 		assertThat(result.result()).isEqualTo("failed");
-		then(brandPostAssembler).should(never()).assembleBrandPosts(anyLong(), any(), anyBoolean(), any());
+		then(brandPostAssembler).should(never()).assembleBrandPosts(anyLong(), any(), anyBoolean(), any(), anyBoolean());
 	}
 
 	@Test
@@ -550,7 +550,7 @@ class V2CampaignContentServiceTest {
 	private void givenTaggedPosts(long brandId, BrandPostResponse... posts) {
 		BrandAccountRow account = account(brandId);
 		given(brandReadRepository.findAccount(brandId)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL))
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL, false))
 				.willReturn(List.of(posts));
 	}
 
@@ -563,7 +563,7 @@ class V2CampaignContentServiceTest {
 	private static BrandAccountRow account(long brandId) {
 		return new BrandAccountRow(brandId, "brand", null, null, null, null, null,
 				null, null, null, null, null, null, null, null, "ACTIVE", null,
-				12, null);
+				12, null, false, null);
 	}
 
 	/** 레거시 추적 아이템 — 이 테스트가 보는 필드는 id·status·campaign·post.url·sourceUrl뿐이다. */
