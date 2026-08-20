@@ -66,12 +66,8 @@ public class PerformanceComparisonAssembler {
 				continue;
 			}
 			// accountType은 계정이 아니라 링크(구독)의 속성이라 순회 중인 링크 행에서 온다(08-12).
-			// 실수집 깊이는 KST 달력일로 잘라 넘긴다 — 버킷 경계가 KST 달력일이다.
-			LocalDate oldestCollectedOn = KstTimestamps.toKstDate(
-					brandReadRepository.get().findOldestEnumeratedTakenAt(link.brandId()).orElse(null));
 			accounts.add(compare(account.get(), BrandAccountType.orDefault(link.accountType()),
-					oldestCollectedOn, byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()),
-					ranges, today));
+					byBrand.getOrDefault(String.valueOf(link.brandId()), List.of()), ranges, today));
 		}
 		return new PerformanceComparisonResponse(List.copyOf(accounts));
 	}
@@ -108,33 +104,39 @@ public class PerformanceComparisonAssembler {
 	 * <li><b>버킷이 창 안</b> — 먼 쪽 경계(from)가 창 하한(today.minusMonths(collectionMonths))
 	 * 이상. 부분 겹침은 false(보수적), 경계일은 포함 — 창 하한과 버킷 하한이 같은
 	 * minusMonths(말일 클램프) 연산이라 12개월 계정의 6m_12m이 정확히 경계에 얹힌다.</li>
-	 * <li><b>버킷이 실수집 깊이 안</b>(2026-08-19) — 먼 쪽 경계(from)가 oldestCollectedOn(열거
-	 * 편입분의 최고령 taken_at, KST 달력일 — {@link BrandReadRepository#findOldestEnumeratedTakenAt})
-	 * 이상. monitoring의 수집 개수 상한(collection-post-limit, 스펙 2026-08-19 §3-3)이 백필·스윕
-	 * 열거를 최신 게시물 컷에서 끊으므로, 창 판정만으로는 열거한 적 없는 깊은 구간이 "수집
-	 * 완료·0건"으로 오표시된다. 부분 겹침 false·경계일 포함은 창 판정과 같은 규칙. null(열거분
-	 * 0건)이면 이 조건은 통과 — 컷은 상한 건수 열거를 전제하므로 0건 완주는 진짜 "수집했는데
-	 * 0건"이다. 알려진 트레이드오프: 데이터가 최고령 게시물보다 깊은 구간은 자연 완주(그 구간에
-	 * 원래 게시물이 없음)여도 false로 내린다 — was는 컷 발생 여부를 알 수 없어(monitoring이 컷
-	 * 마커를 영속화하지 않음) "0건이면 정말 0건" 보증이 안 되는 구간을 보수적으로 접는다.</li>
+	 * <li><b>버킷이 실수집 깊이 안</b>(2026-08-19, 수집 상한 v2 §7-1) — 먼 쪽 경계(from)가
+	 * {@code brand_account.covered_until}(monitoring이 백필 종료 시 영속화하는 실수집 깊이,
+	 * KST 달력일로 절단) 이상. 수집 개수 상한(collection-post-limit)이 백필 열거를 최신 게시물
+	 * 컷에서 끊으면 창 판정만으로는 열거한 적 없는 깊은 구간이 "수집 완료·0건"으로 오표시된다.
+	 * coveredUntil null = 요청 창 전체 커버(완주)라 창 판정 그대로 — 자연 완주한 희소 브랜드의
+	 * 빈 깊은 구간은 계속 true다(추측 프록시가 아니라 monitoring의 확정값이라 가능한 구분).
+	 * 부분 겹침 false·경계일 포함은 창 판정과 같은 규칙이고, 두 하한은 max 하나(coverageStart)로
+	 * 합쳐 비교를 한 곳에 둔다. 모순쌍(capped=true·coveredUntil=null)은 서버가 내려보내지 않지만
+	 * (모순쌍 가드) 방어적으로 받으면 창 판정 그대로다(계약 §10-1의 방어 규칙과 동일).</li>
 	 * </ul>
-	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있다).
+	 * false여도 집계값은 그대로 내린다(direct는 레거시 파이프라인이라 스윕 전에도 존재할 수 있고,
+	 * 부분 커버 버킷은 커버된 쪽 게시물이 실려 covered=false ∧ contentCount&gt;0이 정상 조합이다).
 	 *
-	 * <p>covered의 기준은 <b>자산 창(brand_account.collection_months = 실제로 수집한 사실)</b>이고,
-	 * 계정 응답의 {@code collectionMonths}(2026-08-17부터 링크 값 = 그 유저가 신청한 표시 창)와는
-	 * 다를 수 있다. 3개월 링크 유저가 12개월 자산 브랜드에서 6m_12m을 covered=true로 보는 것은
-	 * "그 구간이 수집돼 있다"는 뜻이지 "내 구독 창 안"이라는 뜻이 아니다(대시보드는 아직 링크 창을
-	 * 적용하지 않는다 — 의도적 범위 밖).
+	 * <p>covered의 기준은 <b>자산 창(brand_account.collection_months)과 자산 커버리지(covered_until)
+	 * = 실제로 수집한 사실</b>이고, 계정 응답의 {@code collectionMonths}(2026-08-17부터 링크 값 =
+	 * 그 유저가 신청한 표시 창)와는 다를 수 있다. 3개월 링크 유저가 12개월 자산 브랜드(컷 없음)에서
+	 * 6m_12m을 covered=true로 보는 것은 "그 구간이 수집돼 있다"는 뜻이지 "내 구독 창 안"이라는
+	 * 뜻이 아니다(대시보드는 아직 링크 창을 적용하지 않는다 — 의도적 범위 밖).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
-			LocalDate oldestCollectedOn, List<PerformanceContentResponse> accountContents,
-			List<BucketRange> ranges, LocalDate today) {
+			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges, LocalDate today) {
 		boolean accountCovered = account.backfillCompletedAt() != null && account.lastSweptOn() != null;
 		LocalDate windowStart = today.minusMonths(account.collectionMonths());
+		// 커버 하한은 창 하한과 실수집 깊이(coveredUntil, KST 달력일) 중 얕은 쪽 — 두 하한은 같은
+		// "부분 겹침 false·경계일 포함" 규칙이라 max 하나로 합쳐 비교를 한 곳에 둔다. coveredUntil
+		// null은 요청 창 전체 커버(완주)라 창 하한 그대로다(모순쌍 capped·null 방어도 같은 분기 —
+		// 계약 §10-1은 그 조합을 컷 문구 없이 다루라고 명시).
+		LocalDate coveredOn = KstTimestamps.toKstDate(account.coveredUntil());
+		LocalDate coverageStart = coveredOn == null || coveredOn.isBefore(windowStart)
+				? windowStart : coveredOn;
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
 		for (BucketRange range : ranges) {
-			boolean covered = accountCovered && !range.from().isBefore(windowStart)
-					&& (oldestCollectedOn == null || !range.from().isBefore(oldestCollectedOn));
+			boolean covered = accountCovered && !range.from().isBefore(coverageStart);
 			buckets.add(aggregate(range, covered, accountContents));
 		}
 		// collectionStartedAt은 브랜드 계정 API와 같은 앵커(collection_started_at, 확장 시 갱신) —

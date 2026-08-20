@@ -11,6 +11,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import java.sql.Connection;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -130,6 +131,25 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(row.registeredAt()).isNotNull();
 		assertThat(row.backfillCompletedAt()).isNotNull();
 		assertThat(row.backfillError()).isNull();
+		// 커버리지 2컬럼(수집 상한 v2 §7-1) — 시드가 명시하지 않은 행은 DDL 기본값(완주 = 창 전체 커버).
+		assertThat(row.collectionCapped()).isFalse();
+		assertThat(row.coveredUntil()).isNull();
+	}
+
+	/** 상한 도달로 끊긴 백필은 capped=true + covered_until(실수집 깊이)이 그대로 읽힌다(§7-1). */
+	@Test
+	void 상한_도달_계정은_커버리지_컬럼이_읽힌다() {
+		long brandId = jdbc.sql("""
+				INSERT INTO brand_account (username, ig_user_id, collection_capped, covered_until)
+				VALUES ('brand_capped', 'IG_CAPPED', true, '2026-05-02T12:00:00+09:00')
+				RETURNING id
+				""").query(Long.class).single();
+
+		BrandAccountRow row = repository.findAccount(brandId).orElseThrow();
+
+		assertThat(row.collectionCapped()).isTrue();
+		// 드라이버가 돌려주는 오프셋(UTC/세션 존)에 흔들리지 않게 순간(Instant)으로 비교한다.
+		assertThat(row.coveredUntil().toInstant()).isEqualTo(Instant.parse("2026-05-02T03:00:00Z"));
 	}
 
 	@Test
@@ -242,32 +262,6 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("OLD_DIRECT");
 		assertThat(rows.get(0).directRegisteredAt()).isNotNull();
 		assertThat(rows.get(0).tagDetectedAt()).isNull();
-	}
-
-	/**
-	 * 실수집 깊이(성과 대시보드 covered 판정용) — 열거(tagged)분의 최고령 taken_at. direct-only 행은
-	 * 창 예외라 아무리 오래된 게시물도 등록될 수 있어, 포함하면 열거 깊이를 과대평가한다 — 제외.
-	 */
-	@Test
-	void 최고령_열거_taken_at은_direct_only_행을_제외한_최솟값이다() {
-		long brandId = seedBrand("brand_official");
-		seedTaggedPost(brandId, "NEWER", "2026-08-01T00:00:00Z");
-		seedTaggedPost(brandId, "OLDEST_TAGGED", "2026-03-01T00:00:00Z");
-		seedDirectPost(brandId, "ANCIENT_DIRECT", "2024-01-01T00:00:00Z", "2026-08-01T00:00:00Z");
-
-		Optional<OffsetDateTime> oldest = repository.findOldestEnumeratedTakenAt(brandId);
-
-		assertThat(oldest).isPresent();
-		assertThat(oldest.get().toInstant())
-				.isEqualTo(OffsetDateTime.parse("2026-03-01T00:00:00Z").toInstant());
-	}
-
-	@Test
-	void 열거_게시물이_없으면_최고령_taken_at은_빈_값이다() {
-		long taggedless = seedBrand("brand_directonly");
-		seedDirectPost(taggedless, "ONLY_DIRECT", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z");
-
-		assertThat(repository.findOldestEnumeratedTakenAt(taggedless)).isEmpty();
 	}
 
 	@Test

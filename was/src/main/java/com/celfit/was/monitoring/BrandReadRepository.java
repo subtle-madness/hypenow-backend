@@ -44,7 +44,7 @@ public class BrandReadRepository {
 				SELECT id, username, last_swept_on, last_swept_at, registered_at, backfill_completed_at,
 				       backfill_error, followers, following, media_count, biography, full_name,
 				       profile_pic_url, is_verified, external_url, status, image_object_path,
-				       collection_months,
+				       collection_months, collection_capped, covered_until,
 				       COALESCE(collection_started_at, registered_at) AS collection_started_at
 				FROM brand_account
 				WHERE id = :brandId
@@ -91,25 +91,6 @@ public class BrandReadRepository {
 				.param("cutoff", cutoff)
 				.query(BrandTaggedPostRow.class)
 				.list();
-	}
-
-	/**
-	 * 실수집 깊이 — 열거(tagged)로 편입된 게시물의 최고령 taken_at(성과 대시보드 covered 판정,
-	 * 2026-08-19). 수집 개수 상한(collection-post-limit)이 백필·스윕 열거를 최신 게시물 컷에서 끊으므로
-	 * "이 시각보다 깊은 기간은 열거가 닿았다고 보장할 수 없다"의 경계값이다. direct-only 행
-	 * (tag_detected_at IS NULL)은 창 예외라 아무리 오래된 게시물도 등록될 수 있어 포함하면 열거
-	 * 깊이를 과대평가한다 — 제외. tagged 게시물이 하나도 없으면 empty(컷 자체가 불가능한 상태).
-	 */
-	public Optional<OffsetDateTime> findOldestEnumeratedTakenAt(long brandId) {
-		return jdbc.sql("""
-				SELECT taken_at FROM brand_tagged_post
-				WHERE brand_id = :brandId AND tag_detected_at IS NOT NULL
-				ORDER BY taken_at
-				LIMIT 1
-				""")
-				.param("brandId", brandId)
-				.query(OffsetDateTime.class)
-				.optional();
 	}
 
 	/** 태그 게시물 표시 메타(게시물 전역 최신 1행) — caption·thumbnailUrl·영상/유료협찬 필드의 산지. */
@@ -343,12 +324,18 @@ public class BrandReadRepository {
 	 *
 	 * <p>collectionMonths는 자산 레벨 수집 창(공유 유저 간 max — 스펙 2026-08-12), collectionStartedAt은
 	 * 확장 시 갱신되는 폴링 앵커(기존 행은 registered_at 폴백).
+	 *
+	 * <p>collectionCapped·coveredUntil은 백필 시점의 창 커버리지(수집 상한 v2 §7-1,
+	 * V20260819125244) — capped=true면 백필이 수집 개수 상한(2,000)에서 끊겼고 coveredUntil이 그
+	 * 실수집 깊이(이 시각 이후 구간만 수집됨)다. coveredUntil null = 요청 창 전체 커버.
+	 * 일일 스윕은 이 값을 갱신하지 않는다(창 커버리지는 백필 속성).
 	 */
 	public record BrandAccountRow(long id, String username, LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime registeredAt, OffsetDateTime backfillCompletedAt, String backfillError,
 			Long followers, Long following, Long mediaCount, String biography, String fullName,
 			String profilePicUrl, Boolean isVerified, String externalUrl, String status,
-			String imageObjectPath, int collectionMonths, OffsetDateTime collectionStartedAt) {
+			String imageObjectPath, int collectionMonths, OffsetDateTime collectionStartedAt,
+			boolean collectionCapped, OffsetDateTime coveredUntil) {
 	}
 
 	/**

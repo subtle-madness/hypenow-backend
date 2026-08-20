@@ -23,10 +23,17 @@ class BrandAccountAssemblerTest {
 	/** 상태 유도에 쓰이는 네 컬럼만 파라미터로 열어 둔 brand_account 행 — 나머지는 유도와 무관하다. */
 	private static BrandAccountRow row(LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
 			OffsetDateTime backfillCompletedAt, String backfillError) {
+		return row(lastSweptOn, lastSweptAt, backfillCompletedAt, backfillError, false, null);
+	}
+
+	/** 커버리지 2컬럼(수집 상한 v2 §7-1)까지 연 변형 — 상태 유도와는 독립이다. */
+	private static BrandAccountRow row(LocalDate lastSweptOn, OffsetDateTime lastSweptAt,
+			OffsetDateTime backfillCompletedAt, String backfillError, boolean capped,
+			OffsetDateTime coveredUntil) {
 		return new BrandAccountRow(100L, "lizda_official", lastSweptOn, lastSweptAt,
 				OffsetDateTime.parse("2026-08-01T00:00:00Z"), backfillCompletedAt, backfillError,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-12T10:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-12T10:00:00Z"), capped, coveredUntil);
 	}
 
 	/**

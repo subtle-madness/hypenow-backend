@@ -267,20 +267,23 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
   뒤 was를 배포할 것. (08-18 시딩 계정 관리 표면 철회로 `brand_seeded_account`는 이 목록에서
   빠졌다 — was가 더 이상 그 테이블을 조회하지 않는다.)
 
-성과 대시보드 covered 판정에 실수집 깊이 반영(2026-08-19 — **구현 완료**, was 단독 변경):
-수집 개수 상한(`collection-post-limit` 2,000, 병행 작업 — 스펙
-`docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md` §3-3의 "알려진 여파 ①")
-이 백필·스윕 열거를 최신 게시물 컷에서 끊으면, `PerformanceComparisonAssembler.covered`의 기존
-3중 AND(완주 + 확장 중 아님 + 버킷이 collection_months 창 안)로는 실제로 열거하지 않은 깊은
-버킷(예: marynmay_global의 3m_6m·6m_12m)이 "수집 완료·0건"으로 오표시된다. 판정을 **4중 AND**로
-확장: 버킷 먼 쪽 경계(from)가 **실수집 깊이**(그 브랜드 열거 편입분의 최고령 `taken_at`, KST
-달력일 — 신규 `BrandReadRepository.findOldestEnumeratedTakenAt`, monitoring DB 읽기 전용) 이상일
-때만 true. direct-only 행(`tag_detected_at IS NULL`)은 창 예외라 깊이 산정에서 제외(포함하면
-과대평가), 열거분 0건(깊이 null)은 컷일 수 없어 창 판정 그대로(0건 완주 = 진짜 "수집했는데
-0건"). 알려진 트레이드오프: was는 컷 발생 여부를 알 수 없어(monitoring이 컷 마커를 영속화하지
-않음) 자연 완주 브랜드도 최고령 게시물보다 깊은 빈 구간은 covered=false로 접힌다 — "covered=true
-·0건이면 정말 0건" 보증을 지키는 보수적 선택. 상한 미머지 상태에서도 유효한 수정이다(marynmay는
-이미 12개월 창 대비 ~9개월 깊이만 수집돼 있어 같은 오표시가 현존).
+성과 대시보드 covered 판정에 실수집 깊이 반영(2026-08-19 초안 → **08-20 covered_until 기반
+재설계, 구현 완료** — was 단독 변경, PR #523): 수집 개수 상한(`collection-post-limit` 2,000,
+병행 작업 — 스펙 `docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md`
+§3-3의 "알려진 여파 ①")이 백필 열거를 최신 게시물 컷에서 끊으면,
+`PerformanceComparisonAssembler.covered`의 기존 3중 AND(완주 + 확장 중 아님 + 버킷이
+collection_months 창 안)로는 실제로 열거하지 않은 깊은 버킷(예: marynmay_global의
+3m_6m·6m_12m)이 "수집 완료·0건"으로 오표시된다. 판정을 **4중 AND**로 확장: 버킷 먼 쪽
+경계(from)가 **`brand_account.covered_until`**(수집 상한 v2 §7-1이 백필 종료 시 영속화하는
+실수집 깊이, `V20260819125244` — was는 `findAccount`가 읽는 행에 컬럼 2개 추가, 추가 쿼리 없음)
+의 KST 달력일 이상일 때만 true. `coveredUntil` null = 요청 창 전체 커버(완주)라 창 판정
+그대로 — 자연 완주한 희소 브랜드의 빈 깊은 구간은 계속 true다. covered=false의 의미가 "수집
+창 밖" ∨ "컷으로 미도달" 둘이 됐고, 부분 커버 버킷은 covered=false ∧ contentCount>0이 정상
+조합(FE 구분 표기는 계정 API `collectionCapped`·`coveredUntil`, 계약 §10-1). **최초 구현(최고령
+tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완주 희소 브랜드를 대거
+오표시(최고령 게시물보다 깊은 전 버킷 false, 1w 포함)하고 정작 재백필 컷 브랜드에선
+무력(행 미삭제라 역대 최심 min)했다. **머지 순서 의존: 수집 상한 v2 브랜치(컬럼 마이그레이션
+포함) 머지 후에만 머지·배포 가능(monitoring → was 순서, 계약 v2.14와 동일 제약).**
 
 ## 잔여 작업
 
