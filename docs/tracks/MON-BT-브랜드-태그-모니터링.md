@@ -336,9 +336,30 @@ v1이 남긴 정합 구멍 3개(창 확장 no-op·direct 겹침 동결·티어 �
   FE는 "N개월 신청 · YYYY-MM-DD까지 수집(상한 도달)" 표기와 `coveredUntil` null 분기를 반영해야
   하며, 미반영이어도 기존 화면은 그대로 동작한다(추가 필드라 하위 호환).
 
-위 v1 문단의 알려진 여파 ①(성과 대시보드 covered 오표시)은 **아직 남아 있다** — 다만 이제
-`covered_until`이 "실제로 어디까지 훑었나"의 정답 소스로 존재하므로 후속 정정이 추정 없이
-가능해졌다(아래 미결·후속). ②(뱃지≠목록)는 상한과 무관한 정상 상태라 v2에서도 그대로다.
+위 v1 문단의 알려진 여파 ①(성과 대시보드 covered 오표시)은 `covered_until`을 정답 소스로 쓰는
+**PR #523에서 정정됐다**(아래 covered 문단). ②(뱃지≠목록)는 상한과 무관한 정상 상태라 v2에서도 그대로다.
+
+성과 대시보드 covered 판정에 실수집 깊이 반영(2026-08-19 초안 → **08-20 covered_until 기반
+재설계, 구현 완료** — was 단독 변경, PR #523): 수집 개수 상한(`collection-post-limit` 2,000,
+병행 작업 — 스펙 `docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md`
+§3-3의 "알려진 여파 ①")이 백필 열거를 최신 게시물 컷에서 끊으면,
+`PerformanceComparisonAssembler.covered`의 기존 3중 AND(완주 + 확장 중 아님 + 버킷이
+collection_months 창 안)로는 실제로 열거하지 않은 깊은 버킷(예: marynmay_global의
+3m_6m·6m_12m)이 "수집 완료·0건"으로 오표시된다. 판정을 **4중 AND**로 확장: 버킷 먼 쪽
+경계(from)가 **`brand_account.covered_until`**(수집 상한 v2 §7-1이 백필 종료 시 영속화하는
+실수집 깊이, `V20260819125244` — was는 `findAccount`가 읽는 행에 컬럼 2개 추가, 추가 쿼리 없음)
+의 KST 달력일 이상일 때만 true. `coveredUntil` null = 요청 창 전체 커버(완주)라 창 판정
+그대로 — 자연 완주한 희소 브랜드의 빈 깊은 구간은 계속 true다. covered=false의 의미가 "수집
+창 밖" ∨ "컷으로 미도달" 둘이 됐고, 부분 커버 버킷은 covered=false ∧ contentCount>0이 정상
+조합(FE 구분 표기는 계정 API `collectionCapped`·`coveredUntil`, 계약 §10-1). **최초 구현(최고령
+tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완주 희소 브랜드를 대거
+오표시(최고령 게시물보다 깊은 전 버킷 false, 1w 포함)하고 정작 재백필 컷 브랜드에선
+무력(행 미삭제라 역대 최심 min)했다. **머지 순서 의존: 수집 상한 v2 브랜치(컬럼 마이그레이션
+포함) 머지 후에만 머지·배포 가능(monitoring → was 순서, 계약 v2.14와 동일 제약).**
+같은 PR에서 **집계 제한도 추가(08-20 사용자 결정)**: capped 브랜드의 컷 밖 tagged 기수집분은
+성과 대시보드 집계(요약·비교 버킷)에서 제외한다 — `assembleBrandPosts`의 `capToCoverage`
+파라미터(성과만 true, 목록·존재/중복 판정은 false), direct 등록 행 면제(§7-3)·경계일
+포함(covered 판정과 동일 규칙). DECISIONS.md 2026-08-20 두 항목 참조.
 
 ## 잔여 작업
 
@@ -437,14 +458,10 @@ v1이 남긴 정합 구멍 3개(창 확장 no-op·direct 겹침 동결·티어 �
 - **완결 배치 서빙 — 배포 시점 확장 중이던 계정 보정 판단**(08-13) — 배포 순간 이미 기간 확장 중이던 계정은 `expandWindow`의 `backfill_completed_at` 리셋을 못 받고 옛 완주 시각을 들고 있어 FE 폴링이 즉시 종료된다(다음 새벽 스윕까지 화면 갱신 지연). **일회성이고 데이터 유실 없음** — 보정 UPDATE 실행 여부는 배포 시 대상 건수를 보고 판단.
 - **링크 레벨 표시 창 — 배포 후 운영 수동 보정 1회**(08-17) — 신청값이 지금까지 어디에도 저장된 적이 없어 마이그레이션이 복원할 수 없다(기존 링크는 전부 12). 대상은 cclime 3개월 유저 + **단독 구독(활성 링크가 정확히 1개) 브랜드 전체** — 단독 구독은 자산값 = 그 유저의 신청값이라 자산에서 복원할 수 있다(다중 구독은 max라 복원 불가 → 그대로 12 유지, 개별 확인). app DB와 monitoring DB가 분리라 2단계(monitoring에서 `collection_months < 12 AND status = 'ACTIVE'` 브랜드 확인 → app에서 단독 링크만 UPDATE). 절차 SQL은 PR #480 본문.
 - **링크 레벨 표시 창 — 링크 창 미적용 표면**(08-17) — 성과 대시보드(`PerformanceComparisonAssembler`의 `covered`·집계 모수)와 `hashtag-posts` 목록은 아직 자산 창 전량을 본다. 3개월 유저에게 게시물 counts와 대시보드 모수가 달라 보인다(의도적 범위 밖 — FE 문의·혼선 발생 시 재론).
-- **수집 개수 상한 — 성과 대시보드 covered 판정 정정**(08-19 제기, **별도 세션 진행 중**) —
-  `PerformanceComparisonAssembler.covered`가 `backfill_completed_at` + `collection_months`만 보므로
-  `collection-post-limit` 컷으로 실제로는 열거하지 않은 더 깊은 기간까지 "수집 완료 → 0건"으로
-  표시된다
-  ([spec 2026-08-19 §3-3](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md)).
-  **v2로 입력이 준비됐다**: `brand_account.covered_until`이 "실제로 어디까지 훑었나"의 정답
-  소스로 신설됐고 was `/brands`가 `collectionCapped`·`coveredUntil`로 이미 읽고 있으므로, 판정을
-  최고령 `taken_at` 추정이 아니라 이 컬럼으로 내리면 된다(`capped=false`면 종전 판정 유지).
+- ~~수집 개수 상한 — 성과 대시보드 covered 판정 정정~~(08-19 제기) → **PR #523에서 구현 완료
+  (08-20)** — `covered_until` 기반 4중 AND 판정 + 집계 모수의 실수집 범위 클램프까지(본문
+  covered 문단·DECISIONS.md 08-20 두 항목 참조). 잔여는 배포 후 레거시 브랜드 운영 보정
+  (`covered_until` 채움, 위 v2 문단 레시피)과 FE 빗금 문구 분기뿐이다.
 - **링크 레벨 표시 창 — 창 필터 SQL 푸시다운**(08-17) — 지금은 자산 창 전량을 조립한 뒤 메모리에서 자른다. 3개월 유저가 12개월 브랜드를 볼 때 버려지는 조립 비용이 크면 리포지토리 조회 컷을 링크 창으로 내리는 최적화가 후속.
 - **완결 배치 서빙 — 운영 반영 직후 백필 확인**(08-13) — `SELECT count(*) FROM brand_tagged_post WHERE enriched_at IS NULL`이 **0**이어야 한다. 0이 아니면 마이그레이션 백필(25,759행)이 안 돈 것이고, 그만큼의 게시물이 목록에서 사라진 상태다.
 - **해시태그 FE 요청 일괄(08-17) — 구현 완료, 잔여 4건**(태그 등록 즉시 스윕·제외 규칙 폐기·direct 취소 API·brandPostId·작성자 프로필 아카이브 — DECISIONS 08-17 행, 계약 v2.9):
