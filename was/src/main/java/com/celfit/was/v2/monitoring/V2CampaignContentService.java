@@ -370,7 +370,7 @@ public class V2CampaignContentService {
 			for (BrandPostResponse post : brandPostAssembler.get()
 					// 존재 판정 소비자 — 커버리지 클램프 금지("있는데 없다고 답하면 안 되는" 판정, §3-3).
 					.assembleBrandPosts(userId, account.get(), true, BrandPostAssembler.BrandPostScope.ALL,
-							false)) {
+							false, link.accountType())) {
 				urls.putIfAbsent(post.shortcode(), new TaggedPost(post.postUrl(), link.accountType()));
 			}
 		}

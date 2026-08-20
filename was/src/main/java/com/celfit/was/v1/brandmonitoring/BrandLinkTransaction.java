@@ -53,26 +53,38 @@ class BrandLinkTransaction {
 	 * monitoring 등록이 같은 brandId로 replay돼 {@link #link}의 brandId 재확인이 멱등으로 접는다 —
 	 * 결과는 같다. 요청이 명시한 표시 기간(collectionMonths)도 그 분기가 링크에 반영하므로
 	 * 개명 경로에서 유실되지 않는다.
+	 *
+	 * <p>{@link PrecheckResult#typeChanged}(2026-08-19 경쟁사 판정 제거 설계 리뷰 결함 수정) — 이
+	 * 분기가 타입을 실제로 바꿨는지를 호출부(V1BrandAccountService)에 알린다. 이 재등록 경로는
+	 * 기간 확장이 없으면 monitoring 콜이 아예 0이라({@link #link}도 실행되지 않는다), own-link
+	 * push를 여기서 신호하지 않으면 competitor→own 재등록이 monitoring의 has_own_link를 영원히
+	 * false로 방치한다(기본값 안전 방향인 과판정 원칙이 깨지는 유일한 경로). 단순 멱등 재-POST
+	 * (타입 동일)는 이 신호가 false라 호출부가 push를 생략 — 기존 "monitoring 콜 0" 계약은 그대로다.
 	 */
 	@Transactional
-	Optional<Long> precheck(long userId, String username, String accountType) {
+	Optional<PrecheckResult> precheck(long userId, String username, String accountType) {
 		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
 		Optional<BrandLinkRow> same = links.stream()
 				.filter(link -> link.username().equals(username))
 				.findFirst();
 		if (same.isPresent()) {
 			long brandId = same.get().brandId();
-			if (!accountType.equals(same.get().accountType())) {
+			boolean typeChanged = !accountType.equals(same.get().accountType());
+			if (typeChanged) {
 				linkRepository.lockUser(userId);
 				// 잠금 전에 읽은 목록은 경합 상대의 커밋을 못 봤을 수 있다 — 한도 판정은 반드시 재조회분으로.
 				List<BrandLinkRow> locked = linkRepository.findAllActiveByUser(userId);
 				requireRoom(locked, accountType, brandId);
 				linkRepository.updateAccountType(userId, brandId, accountType);
 			}
-			return Optional.of(brandId);
+			return Optional.of(new PrecheckResult(brandId, typeChanged));
 		}
 		requireRoom(links, accountType, null);
 		return Optional.empty();
+	}
+
+	/** precheck 결과 — typeChanged=true면 호출부가 own-link push를 신호해야 한다(위 javadoc 참조). */
+	record PrecheckResult(long brandId, boolean typeChanged) {
 	}
 
 	/**

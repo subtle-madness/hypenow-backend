@@ -1,0 +1,11 @@
+-- 경쟁사 브랜드 광고 표기 판정 제거(2026-08-19 설계) — expand 단계.
+--
+-- has_own_link = "이 브랜드에 활성 own 연결이 하나 이상 있다"는 was 원장(app.brand_monitorings)의
+-- 파생 플래그다. account_type(own/competitor)은 유저-브랜드 연결 속성이라 브랜드 풀 공유 특성상
+-- brand_account 자체에는 저장할 수 없다 — was가 연결 변이 때마다 원장을 재계산해 명령으로 push한다
+-- (MonitoringCommandClient — 등록은 POST /api/brands 요청 필드, 이후 변경은 PUT own-link).
+--
+-- 기본값 true = "판정한다"가 안전 방향(동기화 실패 시 과판정으로 드리프트 — own 브랜드 미판정보다
+-- 낫다). 기존 데이터 백필(활성 own 연결이 없는 브랜드를 false로 되돌리는 것)은 배포 후 수동 SQL
+-- 런북으로 처리한다(docs/superpowers/plans/archive/2026-08-19-ad-disclosure-competitor-skip.md §5).
+ALTER TABLE brand_account ADD COLUMN has_own_link boolean NOT NULL DEFAULT true;
