@@ -49,8 +49,8 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "브랜드 스윕 신선도",
-      "description": "활성 브랜드의 마지막 스윕 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 스윕 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "title": "일일 수집 신선도",
+      "description": "활성 브랜드의 마지막 일일 수집 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -126,8 +126,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "오늘 스윕 성공",
-      "description": "오늘(KST) 스윕이 성공한 브랜드 수 / 활성 브랜드 수. 실패 브랜드는 last_swept_on이 갱신되지 않아 차이로 드러난다.",
+      "title": "오늘 수집 성공",
+      "description": "오늘(KST) 일일 수집이 성공한 브랜드 수 / 활성 브랜드 수. 실패 브랜드는 last_swept_on이 갱신되지 않아 차이로 드러난다.",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -188,8 +188,8 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "오늘 스윕 소요",
-      "description": "오늘 스윕의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
+      "title": "오늘 수집 소요",
+      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -312,8 +312,8 @@
     {
       "id": 5,
       "type": "table",
-      "title": "오늘 브랜드별 처리 간격",
-      "description": "브랜드 스윕은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것.",
+      "title": "오늘 브랜드별 처리 현황",
+      "description": "브랜드 일일 수집은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것. 간격과 함께 브랜드별 수집량도 본다 — 오늘 Hiker 콜(과금 규모), 오늘 신규 게시물(그날 실제 유입), 누적 게시물(자산 규모). 콜만 많고 신규가 0이면 변화 없는 브랜드를 재확인만 한 것이라 정상일 수 있지만, 전 브랜드가 그러면 수집이 헛돌고 있는 것.",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -326,7 +326,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "noValue": "오늘 스윕 기록 없음",
+          "noValue": "오늘 일일 수집 기록 없음",
           "custom": {}
         },
         "overrides": [
@@ -334,6 +334,18 @@
             "matcher": {
               "id": "byName",
               "options": "간격(초)"
+            },
+            "properties": [
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "오늘 콜"
             },
             "properties": [
               {
@@ -365,7 +377,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT username AS \"브랜드\", last_swept_at AS \"성공 시각\", round(EXTRACT(EPOCH FROM (last_swept_at - lag(last_swept_at) OVER (ORDER BY last_swept_at)))::numeric,1) AS \"간격(초)\" FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY last_swept_at"
+          "rawSql": "SELECT b.username AS \"브랜드\", b.last_swept_at AS \"성공 시각\", round(EXTRACT(EPOCH FROM (b.last_swept_at - lag(b.last_swept_at) OVER (ORDER BY b.last_swept_at)))::numeric,1) AS \"간격(초)\", c.calls AS \"오늘 콜\", coalesce(t.today_posts, 0) AS \"오늘 신규 게시물\", coalesce(t.total_posts, 0) AS \"누적 게시물\" FROM brand_account b LEFT JOIN brand_call_count c ON c.brand_id = b.id AND c.called_on = (now() AT TIME ZONE 'Asia/Seoul')::date LEFT JOIN (SELECT brand_id, count(*) FILTER (WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS today_posts, count(*) AS total_posts FROM brand_tagged_post GROUP BY brand_id) t ON t.brand_id = b.id WHERE b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY b.last_swept_at"
         }
       ]
     },
@@ -594,7 +606,7 @@
       "id": 115,
       "type": "timeseries",
       "title": "힙 사용률",
-      "description": "monitoring JVM 힙 사용률(used/max %) — 파이프라인(스윕·백필·등록 수신) 느림의 런타임 원인축. 모듈 간 비교·영역별 상세는 인프라 대시보드에서. 로컬에서는 monitoring을 관리 포트로 띄웠을 때만 그려진다(dev README).",
+      "description": "monitoring JVM 힙 사용률(used/max %) — 파이프라인(일일 수집·백필·등록 수신) 느림의 런타임 원인축. 모듈 간 비교·영역별 상세는 인프라 대시보드에서. 로컬에서는 monitoring을 관리 포트로 띄웠을 때만 그려진다(dev README).",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -719,7 +731,7 @@
       "id": 117,
       "type": "timeseries",
       "title": "HikariCP 커넥션",
-      "description": "monitoring의 DB 커넥션 풀 — pending이 0을 벗어나면 커넥션이 말라 스윕·등록 처리가 줄을 서는 것. active가 최대치에 붙기만 한 건 여유가 없을 뿐 막힌 게 아니다.",
+      "description": "monitoring의 DB 커넥션 풀 — pending이 0을 벗어나면 커넥션이 말라 일일 수집·등록 처리가 줄을 서는 것. active가 최대치에 붙기만 한 건 여유가 없을 뿐 막힌 게 아니다.",
       "gridPos": {
         "h": 8,
         "w": 8,
