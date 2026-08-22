@@ -199,22 +199,26 @@ TRUNCATE brand_post_meta;                          -- 게시물 전역 테이블
 INSERT INTO brand_account (id, username, ig_user_id, followers, following, media_count, full_name,
                            biography, status, registered_at, closed_at, last_swept_on, last_swept_at,
                            collection_months, collection_started_at, backfill_completed_at, is_verified)
+-- registered_at을 서브쿼리에서 먼저 뽑는다 — collection_started_at(등록 직후)·backfill_completed_at
+-- (등록 + 5~180분)이 등록 시각에서 파생돼야 하기 때문. 독립 난수로 뽑으면 완료가 등록보다 앞서는
+-- 행이 절반쯤 생겨 운영 건강 '백필 소요' 패널이 음수를 그린다(2026-08-22 실측).
 SELECT g, 'brand' || g, '17841400' || lpad(g::text, 6, '0'),
        (random() * 500000)::bigint, (random() * 2000)::bigint, (random() * 3000)::bigint,
        '목브랜드' || g, '하니스 목 브랜드 계정 ' || g,
        CASE WHEN g > 126 THEN 'CLOSED' ELSE 'ACTIVE' END,
-       CASE WHEN g > 126 THEN now() - interval '150 days'                -- 종결 계정은 등록이 확실히 앞서게
-            ELSE now() - (random() * 120 || ' days')::interval END,
+       reg,
        CASE WHEN g > 126 THEN now() - ((g - 122) || ' days')::interval END,
        CASE WHEN g > 126 THEN ((now() - ((g - 122) || ' days')::interval) AT TIME ZONE 'Asia/Seoul')::date
             ELSE (now() AT TIME ZONE 'Asia/Seoul')::date END,
        CASE WHEN g > 126 THEN now() - ((g - 122) || ' days')::interval - interval '3 hours'
             ELSE now() - interval '10 hours' END,
        (ARRAY[1, 3, 6, 12])[1 + (g % 4)],
-       now() - (random() * 120 || ' days')::interval,
-       now() - (random() * 100 || ' days')::interval,
+       reg + (random() * 60 || ' seconds')::interval,
+       reg + ((5 + random() * 175) || ' minutes')::interval,
        g % 9 = 0
-FROM generate_series(1, 130) g;
+FROM (SELECT g, CASE WHEN g > 126 THEN now() - interval '150 days'     -- 종결 계정은 등록이 확실히 앞서게
+                     ELSE now() - (random() * 120 || ' days')::interval END AS reg
+      FROM generate_series(1, 130) g) s;
 SELECT setval('brand_account_id_seq', 130);
 
 -- 브랜드별 해시태그 3개(수집 규칙)
