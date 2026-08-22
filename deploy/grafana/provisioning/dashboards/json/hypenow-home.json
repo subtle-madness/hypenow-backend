@@ -1163,7 +1163,7 @@
           "instant": true,
           "range": false,
           "legendFormat": "old gen",
-          "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\",id=~\".*Old.*\"}) / sum(jvm_memory_max_bytes{area=\"heap\",id=~\".*Old.*\"})"
+          "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\",id=~\".*Old.*\",job=\"was\"}) / sum(jvm_memory_max_bytes{area=\"heap\",id=~\".*Old.*\",job=\"was\"})"
         }
       ]
     },
