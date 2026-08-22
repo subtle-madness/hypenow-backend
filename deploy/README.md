@@ -733,12 +733,18 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.zst` 3일 + B2 `hypenow-backups/monitoring/` 7일 롤링(§6).
 
-## 14. Grafana 서비스 현황 대시보드 (07-31~)
+## 14. Grafana 대시보드 (07-31~, 08-18 6탭 개편 → 브랜드 폴더 분리)
 
-`app` 스키마(서비스 데이터)의 유저 행동·실패를 보는 운영 대시보드. **Caddy 라우트가 없다** —
-호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler 어드민(§10)과 같은
-**SSH 터널 방식**으로만 접근한다. 정의는 `deploy/compose.yaml`(grafana 서비스) +
+운영 상태를 보는 Grafana 스택. 08-18 개편으로 "데이터소스 축 3장"에서 **목적 축 6탭**으로
+재편한 뒤, 같은 날 브랜드 탭을 별도 폴더로 떼어내 지금은 **HypeNow 5탭 + 브랜드 모니터링 폴더
+3장**(총 8장) 체제다(설계: `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`,
+폴더 분리: `docs/superpowers/specs/2026-08-18-grafana-brand-folder-design.md`).
+**레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다**(cd.yml의 프로비저닝
+동기화가 `scp -r` 추가 전용) — 잔존 파일은 수동으로 정리해야 한다(§14-2-2 ④).
+**Caddy 라우트가 없다** — 호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler
+어드민(§10)과 같은 **SSH 터널 방식**으로만 접근한다. 정의는 `deploy/compose.yaml`(grafana 서비스) +
 `deploy/grafana/provisioning/`(데이터소스·대시보드 JSON·알림 규칙, 전부 파일 기반 자동 프로비저닝).
+대시보드 JSON을 고치기 전에 로컬 하니스(`deploy/grafana/dev/README.md`)로 그려 볼 것.
 
 > **왜 공개 도메인이 아닌가**(07-31 결정): 이 대시보드의 핵심 가치인 "미완료 등록 30분 초과"
 > 알림은 Grafana가 디스코드로 **직접** 발송하므로 터널이 닫혀 있어도 동작한다. 즉 도메인을
@@ -758,24 +764,23 @@ ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
 - 로컬 3000이 아니라 **3001**인 이유: 로컬 3000은 Next.js 개발 서버가 쓴다. compose의
   `GF_SERVER_ROOT_URL`도 `http://localhost:3001`로 맞춰져 있다 — 다른 포트로 터널을 열면
   로그인 리다이렉트가 어긋나므로 둘을 함께 바꿀 것.
-- 대시보드 "HypeNow 서비스 현황"(폴더 HypeNow) — 자동 새로고침 기본 5분. 08-02 개편으로 Row 4개 +
-  패널 13개로 재구성(패널 개수는 Row 제외):
-  - **이상 징후**(최상단) — 처리 중 멈춘 등록(Stat, 0=초록/1+=빨강) · 결과 미확정 등록 항목(Stat,
-    동일 기준) · 세션 수(Stat, 500 초과 경고) · 위 두 Stat의 상세 Table 각 1개("└ ~ 상세").
-    Stat 패널은 `count(*)` 쿼리라 결과가 항상 1행이므로 **0건도 명시적으로 보인다** — 기존엔 0건일
-    때 Table이 "No data"만 떠서 정상/고장 구분이 안 됐던 문제를 해소한 게 이번 개편의 핵심.
-  - **유저 유입** — 가입 추이(일별) · 가입 시도 결과(일별) · 가입 코드 소진 현황(Stat, 발급/발송/사용
-    누적) · 도입 문의(일별, user_type별 — PII 컬럼 미조회).
-  - **모니터링 사용 현황** — 등록 결과 분포(일별) · 모니터링 추적 항목 현황(Table, mode별 활성/취소) ·
-    다이제스트 발송·읽음(일별).
-  - **콘텐츠 참여** — 저장 활동 추이(일별, 인플루언서 저장 + 콘텐츠 저장).
-  이상 징후 Row의 Stat 2종·상세 Table 2종과 유저 유입의 "가입 코드 소진 현황", 모니터링 사용
-  현황의 "모니터링 추적 항목 현황"은 상태 기반 스냅샷이라 **전역 시간 필터를 의도적으로 적용하지
-  않는다**(대시보드 상단 시간 범위를 바꿔도 그대로다 — SQL에 `$__timeFilter`를 안 넣었을 뿐이라
-  정상 동작). 나머지 시계열 패널은 전부 `$__timeFilter`를 쓴다.
-  - ⚠️ **가입 코드 소진 현황·모니터링 추적 항목 현황·도입 문의·다이제스트 발송·읽음·저장 활동 추이
-    5개 패널은 아래 14-2-1의 추가 GRANT를 실행하기 전까지 권한 오류로 빈다** — 08-02 개편 시점엔
-    아직 미적용.
+- 폴더 **HypeNow 5탭**(08-18 개편 — 구 "서비스 현황"·"에러"·"API 성능" 3장은 삭제·흡수됨):
+  - **홈**(`hypenow-home`) — 신호등 13타일. 행 순서가 곧 읽는 순서: 지금 아픈가(API 5xx·ERROR
+    급증·Hiker 402·IG 401) → 돌고 있나(스윕·콜·미러·등록·알림) → 여유가 있나(호스트·JVM·커넥션 풀).
+    각 타일 클릭 시 해당 상세 탭으로 이동.
+  - **경쟁사 모니터링**(`hypenow-competitor`) — `sweep_run` 축(캠페인 스윕)·타깃·알림 발송
+    실패 + 등록 처리(멈춘 등록·결과 미확정).
+  - **탐색**(`hypenow-discovery`) — 미러 신선도·랭킹 산출 규모·저장 활동.
+  - **Hiker**(`hypenow-hiker`) — 비용(일별·브랜드별 콜)과 외부 의존 실패(402·401·상태코드).
+    Hiker는 4xx도 과금이라 비용 축과 실패 축이 보완 관계다.
+  - **인프라**(`hypenow-infra`) — 호스트·컨테이너·JVM 지표 + 전 서비스 에러 로그(§16의 조회축 흡수).
+- **브랜드 모니터링**(별도 폴더, 08-18 분리 — 3장): `[브랜드] 운영 건강`(`hypenow-brand`,
+  스윕 신선도·오늘 성공/소요·처리 간격 — 브랜드 스윕은 런 단위 기록이 없어
+  (`brand_account.last_swept_at/on`뿐) 소요·간격은 당일 유도 근사) ·
+  `[브랜드] 수집 현황`(`hypenow-brand-collection`, 태그 게시물·해시태그 감지·enrich·백필) ·
+  `[브랜드] 광고 표기`(`hypenow-brand-ad`, 판정 분포·경로·추이·미표기 목록)
+- 건강 stat은 fail-loud(`noValue`·null 매핑 빨강 + 임계), 사용량 stat은 중립(색 없음) —
+  수정 시 이 규약 유지. 상태 스냅샷 패널은 전역 시간 필터를 의도적으로 안 탄다.
 
 ### 14-2. `grafana_reader` 롤 생성 (1회, 사용자 수동 — Flyway 아님)
 
@@ -807,7 +812,12 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   `count(*)`가 동작하려면 최소 한 컬럼의 SELECT 권한이 있어야 한다).
 - 비밀번호는 `~/deploy/.env`의 `GRAFANA_READER_PASSWORD`와 일치시킬 것.
 
-#### 14-2-1. 추가 GRANT (08-02 대시보드 개편, **아직 미적용**)
+#### 14-2-1. 추가 GRANT (08-02 대시보드 개편 — 🗄 **08-18 개편으로 대체됨, 실행하지 말 것**)
+
+> 이 절의 대상 패널(가입 코드·도입 문의·모니터링 항목·다이제스트·저장 활동)은 08-18 6탭
+> 개편에서 삭제됐다. 살아남은 필요분(`saved_influencers`·`saved_contents`)은 아래 **14-2-2**에
+> 포함돼 있으므로 이 절은 실행하지 않는다(이미 실행했어도 무해 — 방치된 GRANT일 뿐).
+> 가입 코드 잔여 타일이 나중에 부활하면 그때 `signup_codes` 부분만 되살린다.
 
 08-02 대시보드 개편으로 패널 5개가 새 테이블을 조회한다. 아래 GRANT는 **작성만 해두고 실행하지
 않았다** — 다음 서버 접속 시 관리자 계정으로 실행할 것. 컬럼 단위 최소권한 원칙 유지, PII 컬럼
@@ -832,6 +842,96 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   `organization`·`message`)은 GRANT하지 않는다.
 - `app.monitoring_digests` — 다이제스트 발송·읽음(일별). `items`(jsonb, 다이제스트 본문)는
   조회하지 않는다.
+
+#### 14-2-2. 6탭 개편 + 브랜드 폴더 GRANT 런북 (08-18, ⚠️ **main 배포 전 서버 실행 필수 — 아직 미적용**)
+
+> **실질 기한은 staging 승격이 아니라 main 배포 직전이다.** 그라파나 프로비저닝은 운영 CD로만
+> 서버에 닿는다 — `compose.test.yaml`에 grafana 서비스가 없고 cd-test.yml은 `provisioning/`을
+> scp하지 않는다. 즉 **staging에서는 이 PR의 대시보드 변화를 확인할 수 없다**(대시보드 육안
+> 검증의 정본은 로컬 하니스 `deploy/grafana/dev/`). GRANT 자체는 운영 DB 대상이라 미리 해도 무해.
+
+08-18 6탭 개편으로 패널이 **monitoring DB**(신설 데이터소스 `hypenow-monitoring-pg`)와
+**analysis DB의 public 스키마**(분석 미러 `landing_stats`·`accounts`·`contents`)를 새로 조회한다.
+아래를 실행하기 전까지 운영에서 **브랜드 폴더 3장·경쟁사·Hiker 탭 전체와 홈·탐색의 DB 타일이
+권한 오류로 빈다**. 컬럼 목록은 최종 대시보드 JSON의 rawSql에서 기계 추출로 검산했다(2026-08-18) — 패널이
+안 쓰는 컬럼은 부여하지 않는다(§14-2 최소권한 원칙). GRANT는 멱등이라 재실행 무해.
+08-18 브랜드 폴더 분리로 브랜드 3장이 `brand_tagged_post`·`brand_hashtag_post`·`brand_post_meta`와
+`brand_account.collection_months`를 추가 조회한다(스펙: `2026-08-18-grafana-brand-folder-design.md`) —
+아래 ② 블록에 이미 반영돼 있다.
+
+```bash
+# ① 롤 전역 설정 — 대시보드 쿼리가 운영 쿼리를 밀어내지 않게 문장 타임아웃(클러스터 전역, 두 DB 공통)
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "ALTER ROLE grafana_reader SET statement_timeout = '5s'"
+```
+
+```bash
+# ② monitoring DB — 접속권 + 대시보드가 읽는 9테이블(컬럼 단위).
+#    객체 소유자는 monitoring 롤이지만 슈퍼유저(<DB_USER>)가 GRANT 가능. raw 스키마는 GRANT 없음(fail-closed).
+#    brand_account.id는 브랜드 폴더 3장이 아니라 Hiker 탭 "브랜드별 상위 콜 7일"이 쓴다
+#    (LEFT JOIN brand_account a ON a.id = c.brand_id) — json-brand/만 추출하면 미사용으로 보이니 주의.
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+  -c "GRANT CONNECT ON DATABASE monitoring TO grafana_reader" \
+  -c "GRANT USAGE ON SCHEMA public TO grafana_reader" \
+  -c "GRANT SELECT (started_at, completed_at, ok) ON sweep_run TO grafana_reader" \
+  -c "GRANT SELECT (type, status, tracked_since, fetch_failing) ON target TO grafana_reader" \
+  -c "GRANT SELECT (event_type, occurred_at, email_status, email_attempts) ON alarm_event TO grafana_reader" \
+  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, collection_months) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (brand_id, called_on, calls) ON brand_call_count TO grafana_reader" \
+  -c "GRANT SELECT (called_on, calls) ON target_call_count TO grafana_reader" \
+  -c "GRANT SELECT (first_seen_at, enriched_at) ON brand_tagged_post TO grafana_reader" \
+  -c "GRANT SELECT (verdict, first_seen_at) ON brand_hashtag_post TO grafana_reader" \
+  -c "GRANT SELECT (short_code, username, ad_verdict, ad_verdict_source, ad_violations, ad_judged_at, judged_caption_hash) ON brand_post_meta TO grafana_reader"
+```
+
+```bash
+# ③ analysis DB — 분석 미러(public) + app 스키마 신규 조회분.
+#    accounts·contents·monitoring_campaigns는 count(*)뿐이라 PK 한 컬럼만(§14-2 spring_session과 같은 관용구).
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT USAGE ON SCHEMA public TO grafana_reader" \
+  -c "GRANT SELECT (updated_at) ON public.landing_stats TO grafana_reader" \
+  -c "GRANT SELECT (handle) ON public.accounts TO grafana_reader" \
+  -c "GRANT SELECT (short_code) ON public.contents TO grafana_reader" \
+  -c "GRANT SELECT (username, created_at, deleted_at) ON app.brand_monitorings TO grafana_reader" \
+  -c "GRANT SELECT (id) ON app.monitoring_campaigns TO grafana_reader" \
+  -c "GRANT SELECT (created_at, handle, status) ON app.saved_influencers TO grafana_reader" \
+  -c "GRANT SELECT (created_at) ON app.saved_contents TO grafana_reader"
+```
+
+```bash
+# ④ 서버 잔존 파일 제거(1회) — CD scp는 추가 전용이라 레포에서 지우거나 옮긴 파일이 서버에 남는다.
+#    대상 4개 = 이번 이관분 1개(hypenow-brand) + 08-18 6탭 개편이 삭제한 구 3장(좀비).
+ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-brand,hypenow-service-overview,hypenow-errors,hypenow-api-performance}.json'
+```
+
+- **이관분**(`hypenow-brand`): 안 지우면 `json/`(HypeNow 폴더)과 `json-brand/`(브랜드 모니터링
+  폴더)가 같은 `uid`를 이중 프로비저닝해 폴더가 오락가락한다.
+- **좀비 3장**(`hypenow-service-overview`·`hypenow-errors`·`hypenow-api-performance`): 08-18 6탭
+  개편(PR #498, main 배포 완료)이 레포에서 삭제했지만 서버엔 그대로 남아 있다. 안 지우면 총
+  **11장**이 뜨고(기대값은 8장), 특히 "서비스 현황"은 §14-2-1이 실행 금지로 강등되면서 그 패널들의
+  GRANT가 없어 **권한 오류 패널을 노출**한다.
+- **타이밍**: ④는 **main 배포 전**에 실행한다(배포 후면 그 사이 같은 uid를 두 폴더가 이중
+  프로비저닝한다). rm 직후부터 배포 전까지 운영에서 `[브랜드]` 대시보드가 잠시 안 보이는 것은
+  정상이다 — 프로비저너가 60초 안에 삭제를 반영하고, 배포가 `json-brand/`로 되살린다.
+
+**일반 규칙**: 레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다
+(cd.yml의 `scp -r deploy/grafana/provisioning/.`는 덮어쓰기·추가만 한다) — **잔존 파일은 위처럼
+수동 정리**한다. 이번처럼 삭제 시점에 정리하지 않으면 좀비가 릴리스마다 쌓인다.
+
+- 경쟁사 탭의 등록 패널(`monitoring_registrations`·`monitoring_registration_entries`)은 §14-2
+  기본 GRANT(운영 기적용)를 그대로 재사용한다 — 추가 없음.
+- **반영 절차**: 이 GRANT를 **main 배포 전에** 실행해 두면 별도 재기동이 필요 없다 — cd.yml이
+  매 배포마다 `docker compose restart grafana`·`restart prometheus loki alloy`를 실행하므로
+  신설 데이터소스(monitoring.yaml)·신규 스크레이프 잡(node-exporter·cAdvisor)은 배포가 알아서
+  반영한다. 배포 **후에** GRANT를 실행한 경우엔 대시보드 새로고침이면 충분하고, 그래도 안 붙으면
+  `cd ~/deploy && docker compose restart grafana prometheus`.
+- **마이그레이션 전제**: ②·③의 컬럼 GRANT는 그 테이블·컬럼의 마이그레이션이 운영 DB에 반영된
+  뒤에만 성공한다(특히 monitoring `V20260817160000` 광고 판정 — `brand_post_meta.ad_verdict` 등).
+  미반영이면 **그 줄만** 실패하므로(psql은 `-c` 단위 실행) 배포 후 해당 줄만 재실행하면 된다.
+- 개통 확인: 터널 접속(§14-1) 후 홈 13타일에 "데이터 없음"/권한 오류가 없는지, 경쟁사·Hiker
+  탭과 **브랜드 모니터링 폴더 3장**의 패널이 그려지는지 확인(폴더 2개, 대시보드 총 8장).
+  Loki 타일(ERROR 급증·402·401)은 매칭 0건이 숫자 0으로 떠야 정상(`or vector(0)` — 빈 벡터면
+  빨강 "데이터 없음"이 뜨게 fail-loud로 짜여 있다).
 
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
@@ -867,21 +967,23 @@ Contact point는 프로비저닝된 `discord-ops`를 그대로 지정하면 된�
 
 ### 14-5. 최초 기동 절차
 
-1. 위 14-2 롤 생성 (서버, 최초 1회) — **배포보다 먼저**. 없으면 컨테이너는 뜨지만 모든 패널이
-   권한 오류로 빈다.
+1. 위 14-2 롤 생성 + **14-2-2 GRANT 런북** (서버, 최초 1회) — **배포보다 먼저**. 없으면
+   컨테이너는 뜨지만 패널이 권한 오류로 빈다.
 2. `~/deploy/.env`에 14-3 표의 3개 변수 등록 (`GRAFANA_READER_PASSWORD`는 14-2 값과 일치)
 3. develop→staging→main 승격으로 배포 (또는 긴급 경로 §5) — CD가 `docker compose pull && up -d`로
    grafana 컨테이너를 기동. **Caddy는 무관하다**(라우트 없음 — 재기동도 인증서 발급도 없다)
 4. `ssh -L 3001:localhost:3000 ubuntu@<IP>` 후 `http://localhost:3001` 접속 → 관리자 로그인 →
-   대시보드 "HypeNow 서비스 현황" 확인
+   홈 대시보드 13타일 확인(14-2-2 개통 확인 절 참조)
 5. 14-4의 알림 규칙 로드 여부 확인, 필요 시 수동 보완
 
 ## 15. 쿼리·API 성능 측정 스택 (08-10~)
 
 Prometheus(지표)·Loki(로그)·기존 Grafana(시각화) + postgres `pg_stat_statements`(SQL 통계).
 정의: `deploy/compose.yaml`(prometheus·loki·alloy 서비스) + `deploy/prometheus/`·`deploy/loki/`·
-`deploy/alloy/` 설정 파일 + Grafana 프로비저닝(데이터소스 `observability.yaml`, 대시보드
-"HypeNow API 성능"). 셋 다 호스트 포트 미노출 — 조회는 Grafana(§14 SSH 터널)로만.
+`deploy/alloy/` 설정 파일 + Grafana 프로비저닝(데이터소스 `observability.yaml`). 셋 다 호스트
+포트 미노출 — 조회는 Grafana(§14 SSH 터널)로만. 전용 대시보드 "HypeNow API 성능"은 08-18
+개편에서 폐기됐다(p95/p99·상위 SQL 패널은 사용자 결정으로 폐기) — 지표는 홈·인프라 탭이 쓰고,
+SQL 통계는 필요할 때 Grafana Explore에서 직접 조회한다.
 
 **범위**: `pg_stat_statements`는 analysis 클러스터(`deploy-postgres-1`)에만 붙는다 — raw DB
 (`deploy-postgres-raw-1`, crawler 적재 경로)의 SQL은 잡히지 않는다(필요해지면 그쪽 postgres에도
@@ -923,8 +1025,8 @@ docker exec deploy-prometheus-1 wget -qO- 'http://loki:3100/loki/api/v1/label/co
 (Prometheus 데이터소스에 `up{job="was"}`, Loki 데이터소스에 `{container="deploy-was-1"}`),
 컨테이너 자체 상태는 `docker logs deploy-prometheus-1`·`docker logs deploy-loki-1`로 본다.
 
-Grafana(§14-1 터널) → 폴더 HypeNow → "HypeNow API 성능" 대시보드에서 p95·처리량·상위 SQL 확인.
-로그는 Explore → Loki 데이터소스 → `{container="deploy-was-1"}`.
+Grafana(§14-1 터널) → 홈 탭의 API 5xx·인프라 탭의 JVM·커넥션 풀 패널이 그려지는지 확인.
+로그는 Explore → Loki 데이터소스 → `{service="was"}`.
 
 > ⚠️ **배포 직후 수 분 구간의 지표는 신뢰하지 말 것.** was 롤링 배포(§5-1) 창에는 신·구 컨테이너가
 > 수 분간 공존하는데, prometheus 타깃은 `was:9081` 단일 DNS 이름이라 스크레이프마다 두 JVM 중
@@ -952,25 +1054,25 @@ Grafana(§14-1 터널) → 폴더 HypeNow → "HypeNow API 성능" 대시보드�
   확인하고(디스크 알람 85% 전에), 증가율이 과하면 `deploy/loki/loki-config.yaml`의
   `retention_period`를 하향(예: 30일 → 14일)하는 것이 다이얼이다.
 
-## 16. 에러 추적 대시보드 (08-12~)
+## 16. 에러 추적 (08-12~, 08-18 개편으로 인프라·Hiker 탭에 흡수)
 
-로그(Loki)만으로 "어젯밤 뭐가 터졌나"를 훑고 그 자리에서 원인까지 내려가는 대시보드다.
-Grafana(§14-1 터널) → 폴더 HypeNow → **"HypeNow 에러"**. 별도 개통 절차 없음 — 배포 1회면 붙는다
-(`config.alloy`·대시보드 JSON 모두 CD가 scp + `docker compose restart alloy`/grafana로 반영, §15 말미 참조).
+로그(Loki)만으로 "어젯밤 뭐가 터졌나"를 훑고 그 자리에서 원인까지 내려가는 조회축이다.
+전용 대시보드 "HypeNow 에러"는 08-18 개편에서 해체됐다 — **전 서비스 에러**(총건수·추이·로거별·
+예외별·로그 탐색 + svc/level/search 변수)는 **인프라 탭** 로그 절로, **외부 의존 실패**(Hiker
+402·IG 401·상태코드별·크롤 실패 로거)는 **Hiker 탭**으로 이동(WARN 총건수·직전 24h 비교 패널은
+사용자 결정으로 폐기). 별도 개통 절차 없음 — 배포 1회면 붙는다(`config.alloy`·대시보드 JSON 모두
+CD가 scp + `docker compose restart alloy`/grafana로 반영, §15 말미 참조).
 
 ### 16-1. 읽는 순서
 
-1. **Row 1(지금 아픈가)** — ERROR/WARN 총건수와 서비스별 추이. **WARN을 반드시 같이 본다**:
-   crawler·monitoring은 외부 의존 실패(Hiker 4xx·IG 차단·스윕 실패)를 대부분 `log.warn`으로
-   남겨서, ERROR만 보면 크롤링 사고가 화면에 안 잡힌다.
-2. **Row 2(무엇이 터졌나)** — 로거별·예외 클래스별 Top 15. 오른쪽 "직전 24시간" 표와 눈으로
-   비교해 새로 등장한 항목을 찾는다.
-3. **Row 3(외부 의존 실패)** — **Hiker 402(잔액 소진)·IG 401(IP 차단) 칸이 빨간색이면 사람이
-   개입해야 한다.** 402는 충전, 401은 요청량 조절 없이는 저절로 낫지 않는다.
-4. **Row 4(드릴다운)** — 위에서 찾은 로거·예외명을 상단 "검색어"에 넣어 원문을 본다(정규식,
-   대소문자 무시).
-
-전 패널에 겹치는 세로 점선은 **배포·재기동 시점**이다(Spring Boot `Started ... seconds` 로그).
+1. **홈 탭 첫 행** — ERROR 급증·Hiker 402·IG 401 타일이 입구. 타일 클릭으로 상세 탭 이동.
+2. **인프라 탭 로그 절(무엇이 터졌나)** — 로거별·예외 클래스별 Top 15에서 낯선 항목을 찾고,
+   찾은 로거·예외명을 "검색어" 변수에 넣어 원문을 본다(정규식, 대소문자 무시).
+3. **Hiker 탭(외부 의존 실패)** — **Hiker 402(잔액 소진)·IG 401(IP 차단) 칸이 빨간색이면 사람이
+   개입해야 한다.** 402는 충전, 401은 요청량 조절 없이는 저절로 낫지 않는다. **WARN을 반드시
+   같이 본다**: crawler·monitoring은 외부 의존 실패(Hiker 4xx·IG 차단·스윕 실패)를 대부분
+   `log.warn`으로 남겨서, ERROR만 보면 크롤링 사고가 화면에 안 잡힌다(크롤 실패 로거 Top 15가
+   WARN 포함인 이유).
 
 ### 16-2. 로그 파이프라인이 하는 일 (`deploy/alloy/config.alloy`)
 

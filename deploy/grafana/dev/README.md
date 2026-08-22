@@ -8,7 +8,8 @@
 - 컨테이너명 prefix `grafana-dev` (compose `name:`)
 
 대시보드 provider는 운영 파일(`../provisioning/dashboards`)을 그대로 읽기 전용 마운트한다 —
-`../provisioning/dashboards/json/*.json`을 고치면 **60초 안에** 로컬 그라파나에 반영된다
+`../provisioning/dashboards/json/*.json`(HypeNow 폴더)·`../provisioning/dashboards/json-brand/*.json`
+(브랜드 모니터링 폴더) 어느 쪽을 고쳐도 **60초 안에** 로컬 그라파나에 반영된다
 (`updateIntervalSeconds: 60`). 즉 이 하니스에서 보는 대시보드는 레포에 커밋될 그 파일이다.
 
 ## 1. 기동
@@ -43,6 +44,10 @@ DB는 **빈 상태**로 뜬다(테이블조차 없다). 스키마 적용 → 시
 bash deploy/grafana/dev/apply-migrations.sh
 ```
 
+**기존 볼륨을 재사용하는 하니스는 08-17 이후 마이그레이션이 빠져 있으면 시드가
+`column "ad_verdict" does not exist`로 깨진다**(V20260817160000 광고 판정 · V20260818024048 백필
+인덱스) — §3의 `down -v` 리셋 후 이 스크립트를 다시 돌리거나, 두 파일만 수동 적용할 것.
+
 레포 Flyway SQL(analytics `analysis` · was `app` · monitoring)을 버전 숫자순으로 적용한다.
 운영에서 Flyway 밖에 있는 전제(롤 `was_reader`·`alarm_reader`, `app` 스키마, `search_path=app`)도
 스크립트가 대신 만든다. **멱등이 아니다** — 이미 적용된 DB에 다시 돌리면 `already exists`로
@@ -71,7 +76,7 @@ IDENTITY CASCADE` 한다). 난수도 `setseed`로 고정이라 재적용 때 같
 | | 값 |
 |---|---|
 | analysis | users 53 · brand_monitorings 130 · campaigns 12 · monitoring_items 76 · registrations 20 · digests 20 · accounts 200 · contents 2,400 |
-| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
+| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · brand_post_meta 8,000(판정 60%) · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
 
 ### 2-3. 빨간불 상태 확인
 
@@ -83,6 +88,10 @@ Prometheus/Loki/node-exporter 소관이라 여기서 못 만든다.
 sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed-red.sql | $C -d analysis
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | $C -d monitoring
 ```
+
+브랜드 폴더 2장의 빨간불도 같이 뒤집는다 — **[브랜드] 수집 현황**: 오늘 신규 태그 게시물 0 ·
+백필 미완 브랜드 4 · enrich 잔여 600(빨강 임계 500 초과), **[브랜드] 광고 표기**: 오늘 판정 0건
+(판정 잡 정지 양상).
 
 복원은 **`seed.sql` 재적용**이면 된다(`down -v`까지 갈 필요 없다).
 

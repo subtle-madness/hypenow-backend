@@ -15,7 +15,7 @@
 -- 실측 근거(설계 §9, 2026-08-18 운영 조회):
 --   app: users 53 · campaigns 12 · monitoring_items 76 · registrations 20 · digests 20 ·
 --        brand_monitorings 130 · saved_influencers 9 · saved_contents 4 · inquiries 6(마지막 07-29)
---   monitoring: brand_tagged_post 28,255 · brand_hashtag_post 2,543 · target 73 ·
+--   monitoring: brand_tagged_post 28,255 · brand_hashtag_post 2,543 · brand_post_meta 8,000 · target 73 ·
 --        sweep_run 7일 7/7 성공 · Hiker 콜 30일 49,756(브랜드) + 3,536(타깃) · alarm_event 97
 --
 -- 빨간불 상태가 필요하면 이 시드 위에 seed-red.sql을 덧입힌다(복원은 리셋 후 이 파일 재적용).
@@ -190,6 +190,7 @@ TRUNCATE target RESTART IDENTITY CASCADE;          -- detected_candidate 동반
 TRUNCATE sweep_run RESTART IDENTITY;
 TRUNCATE alarm_event RESTART IDENTITY;
 TRUNCATE brand_call_count, target_call_count;
+TRUNCATE brand_post_meta;                          -- 게시물 전역 테이블 — brand_account CASCADE가 못 지움
 
 -- 브랜드 계정 130(app.brand_monitorings.brand_id와 1:1). 스윕은 10시간 전 완료 = 초록.
 -- CLOSED 4건(127~130)은 closed_at을 채우고 스윕 흔적을 종결 이전으로 되돌린다 — 종결된 계정이
@@ -314,6 +315,43 @@ FROM generate_series(1, 28255) g;
 
 -- detected_candidate는 의도적으로 비워 둔다 — 실측 0건(설계 §3: 첫 감지는 후보 단계 없이
 -- target.matched_keywords만 남기고 바로 자동 추적 전환).
+
+-- 광고 표기 판정 시드(brand_post_meta 8,000 — 실측 밀도 없음: 08-17 신설·백필 진행 중 가정).
+-- 판정 60%(g%5<3): verdict는 DISCLOSED 위주 4값,
+-- source RULE 83%/LLM 17%(판정행의 g%10이 {0,1,2,5,6,7}만 나옴),
+-- ad_judged_at은 최근 30일 + 오늘 확정분(g<=120은 오늘 새벽 — '오늘 판정' stat이 0이 안 되게).
+-- 미판정 40%: judged_caption_hash NULL(잔여 스톡 — '미판정 잔여' stat).
+INSERT INTO brand_post_meta (short_code, username, content_type, uploaded_at, caption,
+                             thumbnail_url, first_seen_at,
+                             ad_verdict, ad_verdict_source, ad_violations, ad_evidence,
+                             ad_judged_at, judged_caption_hash)
+SELECT 'TP' || g, 'author' || (g % 2000),
+       CASE WHEN g % 4 = 0 THEN 'FEED' ELSE 'REELS' END,
+       (now() - (random() * 180 || ' days')::interval)::date,
+       '목 캡션 ' || g,
+       'https://mock.test/m/' || g || '.jpg',
+       now() - (random() * 40 || ' days')::interval,
+       CASE WHEN g % 5 >= 3 THEN NULL
+            WHEN g % 20 = 0 THEN 'UNCERTAIN'
+            WHEN g % 10 = 1 THEN 'INSUFFICIENT'
+            WHEN g % 7  = 0 THEN 'NOT_DISCLOSED'
+            ELSE 'DISCLOSED' END,
+       CASE WHEN g % 5 >= 3 THEN NULL WHEN g % 10 < 7 THEN 'RULE' ELSE 'LLM' END,
+       CASE WHEN g % 5 < 3 AND g % 7 = 0 THEN '["HIDDEN_PLACEMENT"]'::jsonb END,
+       NULL,
+       CASE WHEN g % 5 >= 3 THEN NULL
+            WHEN g <= 120 THEN ((now() AT TIME ZONE 'Asia/Seoul')::date::timestamp AT TIME ZONE 'Asia/Seoul')
+                               + interval '3 hours' + (g || ' seconds')::interval
+            ELSE now() - (random() * 30 || ' days')::interval END,
+       CASE WHEN g % 5 < 3 THEN md5('목 캡션 ' || g) END
+FROM generate_series(1, 8000) g;
+
+-- enrich 분포 조정(수집 현황 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
+-- 잔여 스탯이 상시 수천으로 뜬다 — 하루 넘게 미처리는 전부 메워 초록 시드의 잔여를 0으로.
+-- 24h 이내 유입분의 NULL(자연 처리 대기)은 그대로 둔다 — '오늘' 타일들과 마찬가지로
+-- 하니스 시드는 24시간 내 재적용 전제(시간이 지나면 이 대기분이 창을 넘어 잔여로 늙는다).
+UPDATE brand_tagged_post SET enriched_at = first_seen_at + interval '2 hours'
+ WHERE enriched_at IS NULL AND first_seen_at < now() - interval '24 hours';
 
 -- 브랜드 스윕 시각 분포(Task 8 보강): 순차 처리 근사 — 오늘 02:00 KST부터 브랜드당 ~17초 간격.
 -- 균일 시각이면 '오늘 스윕 소요'·'브랜드별 처리 간격' 패널이 0으로 뭉개진다.

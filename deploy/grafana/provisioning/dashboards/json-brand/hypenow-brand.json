@@ -1,5 +1,5 @@
 {
-  "title": "HypeNow 브랜드 모니터링",
+  "title": "[브랜드] 운영 건강",
   "uid": "hypenow-brand",
   "schemaVersion": 39,
   "editable": false,
@@ -101,7 +101,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -224,7 +224,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "none",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "justifyMode": "center",
         "reduceOptions": {
           "calcs": [
@@ -329,7 +329,20 @@
           "noValue": "오늘 스윕 기록 없음",
           "custom": {}
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "간격(초)"
+            },
+            "properties": [
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
