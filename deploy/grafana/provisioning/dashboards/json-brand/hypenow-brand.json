@@ -553,7 +553,7 @@
       "id": 112,
       "type": "timeseries",
       "title": "수신 처리 p95 (monitoring)",
-      "description": "monitoring이 받은 API 요청의 p95 응답시간(uri별) — **등록(POST /api/brands)이 관심 대상**이다. was 등록 API가 느릴 때 이 패널과 was 쪽 p95를 나란히 보면 \"was 구간인지 monitoring 구간인지\"가 뺄셈으로 갈린다. 등록 즉시 수집은 Hiker 콜을 동기로 포함하므로 몇 초 걸리는 게 정상이고, was→monitoring 10초 타임아웃 예산이 상한이다. 요청이 없으면 빈 것이 정상.",
+      "description": "monitoring이 받은 API 요청의 p95 응답시간(uri별). 수신 엔드포인트는 등록(POST /api/brands)·해지(DELETE)·직접 게시물 등록(direct-posts)·해시태그 규칙 관리(hashtag-tags)·공유 resolve·경쟁사 타깃 등록(/api/targets) 등이며, **트래픽이 있는 엔드포인트만 선으로 나타난다**(로컬에서 일부만 보이는 건 그래서다). **등록(POST /api/brands)이 핵심 관심 대상** — 등록 즉시 수집(Hiker 콜 동기 포함)이 이 요청 안에서 돌므로 이 선이 곧 '초기 요청에 얼마나 빠르게 응답했나'의 분포다. 몇 초 걸리는 게 정상이고 was→monitoring 10초 타임아웃 예산이 상한. was 등록 API가 느릴 때 이 패널과 was 쪽 p95를 나란히 보면 어느 구간이 느린지 뺄셈으로 갈린다.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -614,8 +614,8 @@
     {
       "id": 113,
       "type": "table",
-      "title": "최근 등록 15건 — 백필 소요",
-      "description": "최근 등록 브랜드의 등록→백필 완료 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 수집 현황 '백필 미완 브랜드'와 monitoring 로그로. 시간 필터를 타지 않는 상태 스냅샷.",
+      "title": "최근 등록 15건 — 총 소요",
+      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 수집 현황 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -635,7 +635,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "백필 소요(분)"
+              "options": "총 소요(분)"
             },
             "properties": [
               {
@@ -678,7 +678,7 @@
             "uid": "hypenow-monitoring-pg"
           },
           "format": "table",
-          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))/60)::numeric, 0) AS \"백필 소요(분)\", CASE WHEN backfill_completed_at IS NOT NULL THEN '완료' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
+          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))/60)::numeric, 0) AS \"총 소요(분)\", CASE WHEN backfill_completed_at IS NOT NULL THEN '완료' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
         }
       ]
     },
