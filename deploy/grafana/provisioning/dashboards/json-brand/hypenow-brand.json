@@ -53,7 +53,7 @@
       "description": "활성 브랜드의 마지막 일일 수집 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
       "gridPos": {
         "h": 5,
-        "w": 6,
+        "w": 8,
         "x": 0,
         "y": 1
       },
@@ -130,8 +130,8 @@
       "description": "오늘(KST) 일일 수집이 성공한 브랜드 수 / 활성 브랜드 수. 실패 브랜드는 last_swept_on이 갱신되지 않아 차이로 드러난다.",
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 6,
+        "w": 8,
+        "x": 8,
         "y": 1
       },
       "datasource": {
@@ -192,8 +192,8 @@
       "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 1
       },
       "datasource": {
@@ -254,9 +254,9 @@
       "description": "brand_account 신규 등록(KST 기준).",
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 18,
-        "y": 1
+        "w": 8,
+        "x": 0,
+        "y": 6
       },
       "datasource": {
         "type": "postgres",
@@ -310,6 +310,145 @@
       ]
     },
     {
+      "id": 118,
+      "type": "stat",
+      "title": "오늘 갱신 대상",
+      "description": "오늘 갱신이 필요한(했던) 태그 게시물 수 = 오늘 갱신 완료 + 미처리 잔여. 게시물 나이 티어 정책(BrandCrawlPolicy)이 기준이다 — 게시 14일 이내는 매일, 30일 이내는 3일마다, 90일 이내는 7일마다, 180일 이내는 30일마다 갱신하고, 180일이 지나면 추적에서 빠진다. 규모 파악용 중립 지표(빨강 판정은 오른쪽 '갱신 미처리'가 한다).",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "noValue": "데이터 없음",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM brand_tagged_post t JOIN brand_account b ON b.id = t.brand_id AND b.closed_at IS NULL WHERE t.taken_at >= now() - interval '180 days' AND ((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date OR ((t.last_crawled_at IS NULL OR (t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date) AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')))"
+        }
+      ]
+    },
+    {
+      "id": 119,
+      "type": "stat",
+      "title": "갱신 미처리",
+      "description": "갱신 기한(due)이 지났는데 오늘 아직 안 돈 태그 게시물 수 — 일일 수집(KST 02:00) 완료 후 0이 정상이고, 0이 아니면 일일 수집이 실패했거나 중간에 끊긴 것이다. **KST 00~02시(그날 수집이 돌기 전)에는 그날 대상이 전부 잔여로 보이는 게 정상**이니 새벽 빨강은 시각부터 확인할 것. 티어 기준은 왼쪽 '오늘 갱신 대상' 설명 참조.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "noValue": "데이터 없음",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM brand_tagged_post t JOIN brand_account b ON b.id = t.brand_id AND b.closed_at IS NULL WHERE t.taken_at >= now() - interval '180 days' AND ((t.last_crawled_at IS NULL OR (t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date) AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days'))"
+        }
+      ]
+    },
+    {
       "id": 5,
       "type": "table",
       "title": "오늘 브랜드별 처리 현황",
@@ -318,7 +457,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 11
       },
       "datasource": {
         "type": "postgres",
@@ -389,7 +528,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 20
       },
       "collapsed": false,
       "panels": []
@@ -403,7 +542,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 16
+        "y": 21
       },
       "datasource": {
         "type": "postgres",
@@ -465,7 +604,7 @@
         "h": 8,
         "w": 18,
         "x": 6,
-        "y": 16
+        "y": 21
       },
       "datasource": {
         "type": "prometheus",
@@ -527,7 +666,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 29
       },
       "datasource": {
         "type": "postgres",
@@ -597,7 +736,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 38
       },
       "collapsed": false,
       "panels": []
@@ -611,7 +750,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 34
+        "y": 39
       },
       "datasource": {
         "type": "prometheus",
@@ -674,7 +813,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 34
+        "y": 39
       },
       "datasource": {
         "type": "prometheus",
@@ -736,7 +875,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 34
+        "y": 39
       },
       "datasource": {
         "type": "prometheus",
@@ -809,7 +948,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 47
       },
       "panels": []
     },
@@ -822,7 +961,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 43
+        "y": 48
       },
       "datasource": {
         "type": "postgres",
@@ -885,7 +1024,7 @@
         "h": 9,
         "w": 16,
         "x": 8,
-        "y": 43
+        "y": 48
       },
       "datasource": {
         "type": "postgres",
