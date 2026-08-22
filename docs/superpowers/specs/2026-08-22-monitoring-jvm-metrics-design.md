@@ -65,10 +65,10 @@ working set의 limit 근접)를 보려면 수집부터 뚫어야 한다.
 ## 검증
 
 - `./gradlew :monitoring:test` (모듈 단위 — CLAUDE.md 규약).
-- 로컬 하니스: grafana-dev 스택 기동 + `./gradlew :monitoring:bootRun --args='
-  --management.server.port=9083 --spring.datasource.url=jdbc:postgresql://localhost:55432/monitoring
-  --spring.datasource.username=dev --spring.datasource.password=dev --spring.flyway.enabled=false'`
-  (하니스 DB엔 flyway_schema_history가 없으므로 Flyway를 끈다 — apply-migrations.sh 주석 참조).
+- 로컬 하니스: grafana-dev 스택 기동 + monitoring bootRun을 관리 포트 9083으로. DB는 시드된
+  `monitoring`이 아니라 **빈 스크래치 DB**(`monitoring_boot`)에 붙인다 — monitoring Flyway는
+  커스텀 빈이라 `spring.flyway.*`로 끌 수 없고, 시드 DB엔 flyway_schema_history가 없어 그대로
+  붙이면 기동이 깨진다. 정확한 명령은 dev README "운영과 다른 점" 절.
   안전 확인됨: 스윕·알람 크론 기본 전부 `"-"` 비활성 + API 키 빈값이라 외부 호출 없음.
 - 프로메테우스 타깃 up 확인 → 인프라 대시보드 패널 5종 + 홈 타일이 실데이터로 렌더되는지 육안.
 

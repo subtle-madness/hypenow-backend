@@ -325,6 +325,9 @@ services:
       # (08-13 보강 워커 6→10 상향 반영: 워커 10 + 스윕 core 1 + 등록 core 2가 최악값).
       # ExitOnOOM: OOM 후 반쯤 죽은 채 버티지 않고 즉시 종료 → restart 정책으로 깨끗하게 복귀.
       JAVA_OPTS: "-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError"
+      # 액추에이터 관리 포트 분리(스펙 2026-08-22) — prod 네트워크 내부(prometheus 스크레이프) 전용.
+      # was의 9081(application-prod.yml)과 같은 의도인데 monitoring은 prod 프로필 없이 env 주입이 관용구.
+      MANAGEMENT_SERVER_PORT: "9083"
     volumes:
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro

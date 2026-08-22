@@ -8,3 +8,7 @@ scrape_configs:
   - job_name: was
     metrics_path: /actuator/prometheus
     static_configs: [{ targets: ["host.docker.internal:9081"] }]
+  # monitoring도 같은 패턴 — :monitoring:bootRun을 관리 포트 9083으로 띄울 때만 유효(README 참조)
+  - job_name: monitoring
+    metrics_path: /actuator/prometheus
+    static_configs: [{ targets: ["host.docker.internal:9083"] }]

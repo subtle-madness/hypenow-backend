@@ -154,3 +154,15 @@ bash deploy/grafana/dev/apply-migrations.sh                     # §2-1
   ```bash
   ./gradlew :was:bootRun --args='--management.server.port=9081'
   ```
+
+- **`monitoring` 잡도 같은 구조로 기본 down이다**(스펙 2026-08-22). JVM 패널을 만질 때만 로컬
+  monitoring을 관리 포트 9083으로 띄워 붙인다. 로컬 기동은 안전하다 — 스윕·알람 크론이 기본
+  전부 `"-"` 비활성이고 API 키도 빈값이라 외부 호출이 없다. **DB는 시드된 `monitoring`이 아니라
+  빈 스크래치 DB를 쓴다** — monitoring의 Flyway는 커스텀 빈(FlywayConfig)이라 `spring.flyway.*`
+  속성을 읽지 않아 끌 수 없고, 시드 DB엔 flyway_schema_history가 없어 그대로 붙이면 기동이
+  깨진다(JVM 패널 검증에 DB 내용은 무관하므로 스크래치면 충분하다).
+
+  ```bash
+  docker exec grafana-dev-postgres-1 psql -qtA -U dev -d analysis -c 'CREATE DATABASE monitoring_boot OWNER dev'  # 최초 1회
+  ./gradlew :monitoring:bootRun --args='--management.server.port=9083 --spring.datasource.url=jdbc:postgresql://localhost:55432/monitoring_boot --spring.datasource.username=dev --spring.datasource.password=dev'
+  ```
