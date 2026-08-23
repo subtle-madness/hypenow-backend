@@ -430,7 +430,7 @@
       "id": 125,
       "type": "table",
       "title": "미처리 브랜드별",
-      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상. '오늘 스윕'은 brand_account.last_swept_on이 KST 오늘인지(BrandSweepJob은 1단계 유저태그 스윕이 예외 없이 끝난 브랜드에만 찍는다). **미완료 = 브랜드 스윕이 예외로 실패했거나 아직 안 돈 것**(수집 중인 KST 02~03시엔 순서가 안 온 브랜드가 잠깐 이렇게 보인다 — '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다). **성공인데 미처리가 남으면 열거가 미커버로 끝난 것**(③커서 미전진·④안전 상한 — last_crawled_at 깊이 touch가 생략돼 due가 남는다) — Loki `{service=\"monitoring\"}`에서 해당 로그를 찾는다. due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).",
+      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상이고, 행이 뜨면 전부 살펴볼 대상이다. **안 돌음** = 오늘 이 브랜드 차례가 끝까지 돌지 않음(brand_account.last_swept_on ≠ 오늘) — 예외로 실패했거나(Hiker 402·타임아웃 등, 로그 WARN '브랜드 일일 수집 실패') 새벽 2~3시 수집 중이라 아직 순서 전. '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다. **돌았으나 미달** = 브랜드 차례는 끝까지 돌았는데(last_swept_on = 오늘) 피드 훑기가 기한 게시물 깊이까지 못 내려가 갱신 도장(last_crawled_at)이 안 찍힘 — 원인은 커서 미전진(WARN '태그 커서 미전진 의심')·안전 상한(ERROR '태그 열거 안전 상한 도달'). 이때도 last_swept_on은 일부러 찍는다: 비워 두면 프론트가 '준비 중'으로 숨기고 다음 날 12개월 전체 재백필(Hiker 콜 폭증)이 돌기 때문. 기존 데이터는 그대로 서빙되고 다음 날 스윕이 같은 깊이를 다시 열어 수습된다 — **이틀 연속이면 이상**. 정책 여유 12h(08-23~) 배포 전에는 스윕 슬롯이 기한보다 몇 분 일찍 지나간 경계 레이스도 '돌았으나 미달'로 잡힌다(배포 후 소멸). due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).",
       "gridPos": {
         "h": 7,
         "w": 24,
@@ -530,9 +530,13 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "오늘 스윕"
+              "options": "상태"
             },
             "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
@@ -545,21 +549,17 @@
                   {
                     "type": "value",
                     "options": {
-                      "성공": {
-                        "color": "green",
+                      "안 돌음": {
+                        "color": "red",
                         "index": 0
                       },
-                      "미완료": {
-                        "color": "red",
+                      "돌았으나 미달": {
+                        "color": "orange",
                         "index": 1
                       }
                     }
                   }
                 ]
-              },
-              {
-                "id": "custom.width",
-                "value": 110
               }
             ]
           },
@@ -602,7 +602,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH posts AS (SELECT t.brand_id, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending AS \"미처리\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '성공' ELSE '미완료' END AS \"오늘 스윕\", b.last_swept_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 스윕 실패·미실행 (로그 WARN)' ELSE '스윕 성공인데 열거 미커버 (로그: 커서 미전진·안전 상한)' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending > 0 ORDER BY a.pending DESC, b.username"
+          "rawSql": "WITH posts AS (SELECT t.brand_id, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending AS \"미처리\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '돌았으나 미달' ELSE '안 돌음' END AS \"상태\", b.last_swept_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 수집 실패·미실행 — 새벽 2~3시면 순서 대기일 수 있음' ELSE '피드 훑기가 중간에 끊김 — 다음 날 자동 재시도, 반복되면 로그 확인' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending > 0 ORDER BY a.pending DESC, b.username"
         }
       ]
     },
