@@ -612,6 +612,68 @@
       ]
     },
     {
+      "id": 121,
+      "type": "timeseries",
+      "title": "등록 초기 응답 (브랜드별)",
+      "description": "등록 요청 한 건 한 건이 몇 ms 만에 처리됐는지 — monitoring의 '브랜드 등록 완료' 로그(username·durationMs)를 Loki에서 파싱해 브랜드별 점으로 찍는다. 등록 즉시 수집(Hiker 콜 동기 포함)이 이 시간 안에 들어 있고, replay(기존 활성 브랜드 재등록)는 Hiker 콜이 없어 훨씬 짧다. 위 '수신 처리 p95'가 분포라면 이건 개별 기록. **로컬 하니스는 Loki 스텁이라 이 패널이 에러로 보이는 게 정상**(dev README '운영과 다른 점') — 검증은 운영에서.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "기간 내 등록 없음",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 8,
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "range",
+          "legendFormat": "{{username}}",
+          "expr": "max_over_time({service=\"monitoring\"} |= \"브랜드 등록 완료\" | regexp \"username=(?P<username>\\\\S+) durationMs=(?P<duration_ms>[0-9]+)\" | unwrap duration_ms [$__auto]) by (username)"
+        }
+      ]
+    },
+    {
       "id": 113,
       "type": "table",
       "title": "최근 등록 15건 — 총 소요",
@@ -620,7 +682,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "datasource": {
         "type": "postgres",
@@ -690,7 +752,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 41
       },
       "collapsed": false,
       "panels": []
@@ -704,7 +766,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 34
+        "y": 42
       },
       "datasource": {
         "type": "prometheus",
@@ -767,7 +829,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 34
+        "y": 42
       },
       "datasource": {
         "type": "prometheus",
@@ -829,7 +891,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 34
+        "y": 42
       },
       "datasource": {
         "type": "prometheus",
@@ -902,7 +964,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "panels": []
     },
@@ -915,7 +977,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 43
+        "y": 51
       },
       "datasource": {
         "type": "postgres",
@@ -978,7 +1040,7 @@
         "h": 9,
         "w": 16,
         "x": 8,
-        "y": 43
+        "y": 51
       },
       "datasource": {
         "type": "postgres",
