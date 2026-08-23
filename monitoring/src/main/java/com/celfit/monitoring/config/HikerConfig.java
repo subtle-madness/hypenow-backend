@@ -6,9 +6,11 @@ import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
 import com.celfit.monitoring.hiker.TargetCallContext;
+import com.celfit.monitoring.hiker.TimedHikerHttp;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -24,9 +26,12 @@ public class HikerConfig {
 	@Bean
 	public HikerClient hikerClient(HikerHttp transport, RawPayloadRepository rawPayloads,
 			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
-			TargetCallContext targetContext, TargetCallCountRepository targetCounts) {
+			TargetCallContext targetContext, TargetCallCountRepository targetCounts,
+			MeterRegistry meterRegistry) {
 		// 집계가 바깥 — 원형 적재까지 끝난 "호출자가 성공으로 본 콜"과 집계가 1:1로 맞는다.
-		return new HikerClient(new CountingHikerHttp(new RecordingHikerHttp(transport, rawPayloads),
+		// 타이머는 최내곽(전송 바로 바깥) — 원형 적재·집계의 DB 쓰기 시간이 외부 구간 지표에 안 섞인다.
+		return new HikerClient(new CountingHikerHttp(
+				new RecordingHikerHttp(new TimedHikerHttp(transport, meterRegistry), rawPayloads),
 				brandContext, brandCounts, targetContext, targetCounts));
 	}
 }

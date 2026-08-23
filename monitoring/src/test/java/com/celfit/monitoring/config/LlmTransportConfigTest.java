@@ -1,8 +1,12 @@
 package com.celfit.monitoring.config;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.celfit.monitoring.llm.GeminiHttp;
+import com.celfit.monitoring.llm.TimedGeminiHttp;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -33,5 +37,14 @@ class LlmTransportConfigTest {
 	void 프로젝트도_SA_키도_없으면_vertex_미사용() {
 		assertFalse(LlmTransportConfig.useVertex("", false));
 		assertFalse(LlmTransportConfig.useVertex(null, false));
+	}
+
+	/** 외부 콜 타이머 배선 고정(2026-08-23) — 데코레이터가 있어도 빈 조립에서 빠지면 지표는 안 나온다. */
+	@Test
+	void geminiHttp_빈은_타이머_데코레이터로_감싸진다() {
+		GeminiHttp bean = new LlmTransportConfig().geminiHttp(
+				"", "global", "test-key", "http://127.0.0.1:1", new SimpleMeterRegistry());
+
+		assertInstanceOf(TimedGeminiHttp.class, bean);
 	}
 }
