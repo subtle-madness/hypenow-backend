@@ -3,6 +3,7 @@ package com.celfit.monitoring.web;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -167,6 +168,24 @@ class RegistrationApiTest {
 		hiker.commentsFail = false;
 		hiker.commentsHasMorePages = false;
 		hiker.commentsCalls = 0;
+	}
+
+	/**
+	 * external.call 히스토그램 버킷 노출 회귀 고정(2026-08-23) — yml의 percentiles-histogram
+	 * 바인딩과 프로메테우스 지표명(external_call_seconds_bucket)이 대시보드 PromQL의 전제다.
+	 * 어느 쪽이 깨져도 앱은 멀쩡히 뜨고 패널만 영구 공백이 되므로 테스트로만 잡을 수 있다
+	 * (was ActuatorPrometheusTest의 http_server_requests 버킷 단언과 같은 취지).
+	 */
+	@Test
+	void 프로메테우스_엔드포인트가_외부_콜_히스토그램_버킷을_노출한다() throws Exception {
+		// 등록 시도로 외부(fake) 콜을 최소 1건 유발 — 버킷 라인은 첫 관측 후에만 나타난다.
+		// 등록 자체의 성패는 이 테스트의 관심사가 아니다(프로필 콜 1건이면 충분).
+		mvc.perform(post("/api/targets")
+				.contentType(MediaType.APPLICATION_JSON).content(ACCOUNT_BODY));
+
+		mvc.perform(get("/actuator/prometheus"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(containsString("external_call_seconds_bucket")));
 	}
 
 	/**
