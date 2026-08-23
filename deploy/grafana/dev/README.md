@@ -109,6 +109,26 @@ GRANT 누락은 이 하니스로 못 잡는다** — 패널을 추가하면 GRAN
 도니 패널 쿼리도 `current_date`가 아니라 `(now() AT TIME ZONE 'Asia/Seoul')::date`를 써야
 UTC 15~24시(=KST 00~09시)에 오진하지 않는다.
 
+## 2-5. test 데이터 모드 (선택)
+
+목 시드 대신 **서버 test 스테이징 DB의 실데이터**로 대시보드를 그려 보는 모드. postgres
+데이터소스만 SSH 터널 너머 test DB로 바뀌고(같은 uid — JSON 무수정), 나머지 루프(JSON 수정
+→60초 반영)는 동일하다. 프로메테우스·Loki는 그대로 로컬/스텁이라 **요청 축 패널은 이 모드와
+무관**하다(로컬 bootRun + 모의 트래픽으로 채움 — §"운영과 다른 점" monitoring 잡 항목).
+
+```bash
+ssh -N -L 55433:localhost:5434 ubuntu@<서버> &                    # test postgres 터널
+eval "$(ssh ubuntu@<서버> 'grep -E "^DEV_DB_(USER|PASSWORD)=" ~/deploy/.env' | sed 's/^DEV_DB_/export TEST_DB_/')"
+docker compose -f compose.dev.yaml -f compose.test-data.yaml up -d grafana
+```
+
+복귀(목 시드 모드): `docker compose -f compose.dev.yaml up -d grafana`
+
+- **계정은 절대 커밋하지 않는다** — compose가 셸 환경변수로만 넘긴다(미설정 시 기동 거부).
+- test DB엔 SELECT만 나간다(그라파나 쿼리). 그래도 **운영 DB에는 이 모드를 절대 만들지
+  않는다** — 위 "운영과 다른 점" 첫 항목의 경계는 그대로다.
+- test는 일일 수집 크론이 상시로 돌지 않아 신선도·미처리 타일이 빨강일 수 있다 — 그게 실상태다.
+
 ## 3. 리셋 / 정리
 
 레포 루트에서(§2와 같은 기준):
