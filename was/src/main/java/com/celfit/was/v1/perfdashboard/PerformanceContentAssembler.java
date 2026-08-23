@@ -331,8 +331,11 @@ public class PerformanceContentAssembler {
 			}
 			// 지표 집계라 정산 전 게시물도 담는다(ALL) — 미정산분도 스냅샷(지표)은 이미 있다(열거에서
 			// 오고 monitoring processPage가 저장한다). 없는 건 댓글·게시자뿐이라 빼면 지표가 과소 계상된다.
+			// 성과 대시보드는 실수집 범위만 집계한다(커버리지 클램프 on, 수집 상한 v2 §7-1) — 컷 밖
+			// 레거시 수집분이 요약·버킷에 섞이면 covered=false(빗금) 구간에 값이 실려 화면이 모순된다.
 			for (BrandPostResponse post : brandPostAssembler.get()
-					.assembleBrandPosts(userId, account.get(), withComments, BrandPostAssembler.BrandPostScope.ALL)) {
+					.assembleBrandPosts(userId, account.get(), withComments, BrandPostAssembler.BrandPostScope.ALL,
+							true)) {
 				byShortcode.putIfAbsent(post.shortcode(), post);
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());

@@ -9,6 +9,13 @@ scrape_configs:
     static_configs:
       - targets: ["was:9081"]
 
+  # monitoring JVM 지표(스펙 2026-08-22) — OOM 선행 신호(old gen after-GC·GC pause) 수집.
+  # 9083은 compose env MANAGEMENT_SERVER_PORT로 분리된 관리 포트(내부망 전용).
+  - job_name: monitoring
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["monitoring:9083"]
+
   # 호스트·컨테이너 지표(대시보드 개편 스펙 2026-08-18) — node-exporter는 CPU·메모리·디스크,
   # cAdvisor는 컨테이너별 사용량. 둘 다 기본 경로(/metrics)라 metrics_path 불요.
   - job_name: node

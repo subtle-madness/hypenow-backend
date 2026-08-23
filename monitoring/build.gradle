@@ -7,6 +7,9 @@ dependencies {
 	implementation project(':common-llm')
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
+	// JVM 지표 노출(스펙 2026-08-22) — /actuator/prometheus. was와 같은 패턴
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'com.google.cloud:google-cloud-storage:2.48.0'
 	runtimeOnly 'org.postgresql:postgresql'

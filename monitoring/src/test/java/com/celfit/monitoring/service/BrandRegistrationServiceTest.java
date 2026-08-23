@@ -11,8 +11,12 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
+import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -40,6 +44,9 @@ import org.junit.jupiter.api.Test;
  */
 class BrandRegistrationServiceTest {
 
+	/** 확장 스킵 판정의 창 컷 계산이 KST 캘린더 개월이라 테스트도 같은 존을 쓴다. */
+	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
 	private static final String PROFILE_JSON = """
 			{"user":{"pk":111,"username":"brandx","full_name":"브랜드","profile_pic_url":"https://p",
 			"biography":"소개","follower_count":1234,"following_count":10,"media_count":5,
@@ -55,6 +62,10 @@ class BrandRegistrationServiceTest {
 		final List<List<String>> enrichedAtTouchSwept = new CopyOnWriteArrayList<>();
 		final Map<Long, String> backfillErrors = new HashMap<>();
 		final List<Long> expanded = new ArrayList<>();
+		/** raiseWindowCapped 호출 기록(스펙 §7-2) — 창·폴백 인자까지 본다. */
+		record CappedRaise(long brandId, int months, Instant coveredUntilFallback) {}
+
+		final List<CappedRaise> cappedRaises = new ArrayList<>();
 		/** 동시 확장 경합 주입 — 더 큰 창이 이미 반영돼 조건부 UPDATE가 0행을 맞는 상황(rowcount false). */
 		boolean loseExpandRace = false;
 		long nextId = 1;
@@ -85,6 +96,19 @@ class BrandRegistrationServiceTest {
 			}
 			rows.replaceAll((u, r) -> r.id() == brandId
 					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months) : r);
+			return true;
+		}
+
+		/** 실 SQL 의미와 등가 — 창만 GREATEST로 올리고 수집 상태(lastSweptOn)는 건드리지 않는다. */
+		@Override
+		public boolean raiseWindowCapped(long brandId, int months, Instant coveredUntilFallback) {
+			cappedRaises.add(new CappedRaise(brandId, months, coveredUntilFallback));
+			BrandRow row = rows.values().stream().filter(r -> r.id() == brandId).findFirst().orElseThrow();
+			if (months <= row.collectionMonths()) {
+				return false;
+			}
+			rows.replaceAll((u, r) -> r.id() == brandId
+					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), r.lastSweptOn(), months) : r);
 			return true;
 		}
 
@@ -142,7 +166,7 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, null, 2000, 3, 30, true);
+			super(null, null, null, null, null, null, null, null, null, null, 2000, 10000, 3, 30, true);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
@@ -266,12 +290,33 @@ class BrandRegistrationServiceTest {
 		}
 	}
 
+	/** 확장 스킵 판정 입력(스펙 §7-2) — limit번째 최신 태그 행의 taken_at만 스텁한다. */
+	private static final class StubTaggedPosts extends TaggedPostRepository {
+		/** null = 태그 행이 상한 미만(컷 안 걸림). */
+		Instant nthNewest;
+		/** 마지막 호출의 n — 상한이 그대로 넘어갔는지 본다. */
+		Integer askedN;
+
+		StubTaggedPosts() {
+			super(null);
+		}
+
+		@Override
+		public Optional<Instant> nthNewestTagTakenAt(long brandId, int n) {
+			askedN = n;
+			return Optional.ofNullable(nthNewest);
+		}
+	}
+
 	private final List<String> hikerCalls = new ArrayList<>();
 	private final StubCollect collect = new StubCollect();
 	private final InMemoryBrands brands = new InMemoryBrands(() -> collect.enrichedCodes());
 	private final RecordingCallCounts callCounts = new RecordingCallCounts();
 	private final StubHashtags hashtags = new StubHashtags();
 	private final StubHashtagCollect hashtagCollect = new StubHashtagCollect();
+	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
+	/** 실 기본값(application.yml)과 같은 상한 — 개별 테스트가 필요하면 바꾼다. */
+	private int collectionPostLimit = 2000;
 
 	/** enrich executor에 제출된 태스크 — 개수만 본다(실행은 아래 풀이 실제로 한다). */
 	private final List<Runnable> enrichSubmissions = new CopyOnWriteArrayList<>();
@@ -356,7 +401,8 @@ class BrandRegistrationServiceTest {
 			return PROFILE_JSON;
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtags, hashtagCollect, Runnable::run, enrich, hashtagSweep);
+				hashtags, hashtagCollect, taggedPosts, collectionPostLimit,
+				Runnable::run, enrich, hashtagSweep);
 	}
 
 	@Test
@@ -507,6 +553,81 @@ class BrandRegistrationServiceTest {
 			assertThat(row.collectionMonths()).isEqualTo(12);
 			assertThat(row.lastSweptOn()).isNull();
 		});
+	}
+
+	/**
+	 * 확장 스킵(스펙 §7-2) — 재백필의 컷(limit번째 최신 태그 행)이 기존 창 <b>안</b>에 떨어지면
+	 * 확장 구간에는 한 건도 도달하지 못하므로 열거를 시작하지 않는다. 창·커버리지 마킹만 하고
+	 * 수집 상태(lastSweptOn)는 불변이다.
+	 */
+	@Test
+	void 컷이_기존_창_안에_떨어지면_확장은_백필_없이_창만_올린다() {
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		// limit번째 최신 행이 1개월 전 = 기존 창(3개월) 안 → 재백필해도 3~12개월 구간엔 못 간다.
+		Instant predictedCut = ZonedDateTime.now(KST).minusMonths(1).toInstant();
+		taggedPosts.nthNewest = predictedCut;
+
+		var result = service().register("brandx", null, 12);
+
+		assertThat(result.replayed()).isTrue();
+		assertThat(collect.coreSwept).isEmpty();       // 백필 미제출(~96콜 절약)
+		assertThat(brands.expanded).isEmpty();         // 수집 상태를 리셋하는 expandWindow는 안 탄다
+		assertThat(taggedPosts.askedN).isEqualTo(collectionPostLimit);   // n = 상한
+		assertThat(brands.cappedRaises).singleElement().satisfies(raise -> {
+			assertThat(raise.brandId()).isEqualTo(first.brandId());
+			assertThat(raise.months()).isEqualTo(12);
+			// 폴백 = 예측 컷 그 자체(근사 아닌 실제 도달 깊이) — §7-4 클램프 입력이기도 하다.
+			assertThat(raise.coveredUntilFallback()).isEqualTo(predictedCut);
+		});
+		assertThat(brands.rows.get("brandx").collectionMonths()).isEqualTo(12);
+	}
+
+	@Test
+	void 태그_행이_상한_미만이면_확장은_기존_경로다() {
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		taggedPosts.nthNewest = null;   // limit번째 행 없음 = 컷이 안 걸린다
+
+		service().register("brandx", null, 12);
+
+		assertThat(brands.cappedRaises).isEmpty();
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");   // 기존 재백필 경로 그대로
+	}
+
+	/**
+	 * 구 판정(생애 누적 행 수)의 오표기 회귀 가드 — 누적은 상한을 넘었어도 limit번째 행이 기존
+	 * 창 <b>밖</b>이면 재백필은 컷 전에 창 컷에 먼저 닿는다(= 확장 구간에 실제로 도달한다).
+	 * 여기서 스킵하면 도달 가능했던 구간이 capped 오표기 + §7-4 클램프로 영구 동결된다.
+	 */
+	@Test
+	void 컷이_기존_창_밖이면_누적이_상한을_넘어도_확장한다() {
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		// 창 밖 과거 행이 많은 브랜드(누적 2,400 / 창 안 900) — limit번째가 8개월 전이다.
+		taggedPosts.nthNewest = ZonedDateTime.now(KST).minusMonths(8).toInstant();
+
+		service().register("brandx", null, 12);
+
+		assertThat(brands.cappedRaises).isEmpty();
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");
+	}
+
+	@Test
+	void 상한이_0_이하면_확장_스킵이_비활성이다() {
+		collectionPostLimit = 0;   // 무제한 — 컷 자체가 없으니 스킵 판정도 없다
+		var first = service().register("brandx", null, 3);
+		collect.coreSwept.clear();
+		taggedPosts.nthNewest = ZonedDateTime.now(KST).minusMonths(1).toInstant();
+
+		service().register("brandx", null, 12);
+
+		assertThat(taggedPosts.askedN).isNull();       // 조회조차 안 한다
+		assertThat(brands.cappedRaises).isEmpty();
+		assertThat(brands.expanded).containsExactly(first.brandId());
+		assertThat(collect.coreSwept).containsExactly("brandx");
 	}
 
 	@Test

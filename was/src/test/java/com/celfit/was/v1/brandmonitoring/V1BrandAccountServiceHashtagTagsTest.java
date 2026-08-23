@@ -230,6 +230,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null,
 				30876L, 12L, 340L, null, null, "https://cdn/pic.jpg", null, null, "ACTIVE", null,
-				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"));
+				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 }

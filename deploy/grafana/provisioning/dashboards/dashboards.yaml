@@ -1,4 +1,4 @@
-# 대시보드 JSON 자동 로드 — json/ 하위 파일을 "HypeNow" 폴더에 등록한다.
+# 대시보드 JSON 자동 로드 — 폴더별 프로바이더 2개(json/ → "HypeNow", json-brand/ → "브랜드 모니터링").
 # allowUiUpdates: false — 수정은 이 리포 파일로만(운영 UI에서 손댄 변경은 다음 재기동에 덮인다,
 # compose·Caddyfile이 레포로만 갱신되는 것과 같은 규율).
 apiVersion: 1
@@ -13,4 +13,18 @@ providers:
     allowUiUpdates: false
     options:
       path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false
+
+  # 브랜드 모니터링 폴더(2026-08-18 스펙) — json/ 프로바이더가 하위 디렉토리를 재귀 탐색하므로
+  # 형제 디렉토리(json-brand)여야 이중 로드가 없다. 폴더명은 여기(yaml)서 한글 지정 —
+  # 디렉토리명을 영문으로 두는 이유는 macOS↔linux 한글 NFC/NFD 정규화 차이 회피.
+  - name: hypenow-brand-dashboards
+    orgId: 1
+    folder: 브랜드 모니터링
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/json-brand
       foldersFromFilesStructure: false

@@ -15,6 +15,18 @@ spring:
 server:
   port: 8083   # crawler 8080 · was 8081 · analytics 8082 다음
 
+# JVM 지표 노출(스펙 2026-08-22) — health·prometheus만. 운영은 compose env(MANAGEMENT_SERVER_PORT
+# 9083)로 관리 포트를 분리해 내부망 전용(Caddy 라우팅 없음), 로컬·테스트는 메인 포트에 그대로 노출.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # 수신 uri별 p95(브랜드 운영 건강 '수신 처리 p95') — was와 같은 관용구
+
 monitoring:
   hiker:
     api-key: ${HIKER_API_KEY:}
@@ -53,6 +65,12 @@ monitoring:
                                     # 2,000은 tooq급 정상 고물량(11.8건/일 → 365일 창 ~4,300건)이 백필·
                                     # 심층 티어 스윕에서 닿아 08-12 상향 — 도달 시 커버 깊이 밖이 영구
                                     # 공백이 되므로 정상 브랜드가 절대 닿지 않는 값이어야 한다(08-12 스펙)
+    collection-post-limit: 2000     # 수집 개수 상한(2026-08-19 스펙) — 한 실행의 열거를 최신 N건에서
+                                    # "의도된 자연 종료"(INFO)로 끊는다. 종료 시 목표 컷 전체를 touch해
+                                    # 컷 밖 게시물은 지표 동결·계속 서빙(due 재열거 루프 차단). 위
+                                    # 안전 밸브(ERROR·커버 미처리)와 역할이 다르다 — was 목록 상한
+                                    # (V1BrandPostsController.POST_LIMIT 2000)과 정합값.
+                                    # 0 이하면 무제한(backfill-max-per-run 관용 일치)
     comment-pages: 3            # 게시물당 댓글 상한 3콜 45개(스펙 §2 — 정책 v1에서 30일 보충 없이 유지 확정)
     author-stale-days: 30       # 게시자 프로필 등장 시 stale 갱신 기준(스펙 §8)
     enrich-concurrency: 10      # 보강(게시자·댓글) 워커 풀 크기 — 08-13 실측에서 6/8/10 어느 레벨도 5초 초과 콜

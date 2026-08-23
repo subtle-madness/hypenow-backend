@@ -8,7 +8,8 @@
 - 컨테이너명 prefix `grafana-dev` (compose `name:`)
 
 대시보드 provider는 운영 파일(`../provisioning/dashboards`)을 그대로 읽기 전용 마운트한다 —
-`../provisioning/dashboards/json/*.json`을 고치면 **60초 안에** 로컬 그라파나에 반영된다
+`../provisioning/dashboards/json/*.json`(HypeNow 폴더)·`../provisioning/dashboards/json-brand/*.json`
+(브랜드 모니터링 폴더) 어느 쪽을 고쳐도 **60초 안에** 로컬 그라파나에 반영된다
 (`updateIntervalSeconds: 60`). 즉 이 하니스에서 보는 대시보드는 레포에 커밋될 그 파일이다.
 
 ## 1. 기동
@@ -43,6 +44,10 @@ DB는 **빈 상태**로 뜬다(테이블조차 없다). 스키마 적용 → 시
 bash deploy/grafana/dev/apply-migrations.sh
 ```
 
+**기존 볼륨을 재사용하는 하니스는 08-17 이후 마이그레이션이 빠져 있으면 시드가
+`column "ad_verdict" does not exist`로 깨진다**(V20260817160000 광고 판정 · V20260818024048 백필
+인덱스) — §3의 `down -v` 리셋 후 이 스크립트를 다시 돌리거나, 두 파일만 수동 적용할 것.
+
 레포 Flyway SQL(analytics `analysis` · was `app` · monitoring)을 버전 숫자순으로 적용한다.
 운영에서 Flyway 밖에 있는 전제(롤 `was_reader`·`alarm_reader`, `app` 스키마, `search_path=app`)도
 스크립트가 대신 만든다. **멱등이 아니다** — 이미 적용된 DB에 다시 돌리면 `already exists`로
@@ -71,7 +76,7 @@ IDENTITY CASCADE` 한다). 난수도 `setseed`로 고정이라 재적용 때 같
 | | 값 |
 |---|---|
 | analysis | users 53 · brand_monitorings 130 · campaigns 12 · monitoring_items 76 · registrations 20 · digests 20 · accounts 200 · contents 2,400 |
-| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
+| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · brand_post_meta 8,000(판정 60%) · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
 
 ### 2-3. 빨간불 상태 확인
 
@@ -83,6 +88,10 @@ Prometheus/Loki/node-exporter 소관이라 여기서 못 만든다.
 sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed-red.sql | $C -d analysis
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | $C -d monitoring
 ```
+
+브랜드 폴더 2장의 빨간불도 같이 뒤집는다 — **[브랜드] 수집 현황**: 오늘 신규 태그 게시물 0 ·
+백필 미완 브랜드 4 · enrich 잔여 600(빨강 임계 500 초과), **[브랜드] 광고 표기**: 오늘 판정 0건
+(판정 잡 정지 양상).
 
 복원은 **`seed.sql` 재적용**이면 된다(`down -v`까지 갈 필요 없다).
 
@@ -99,6 +108,26 @@ GRANT 누락은 이 하니스로 못 잡는다** — 패널을 추가하면 GRAN
 `called_on` 같은 date 컬럼은 **KST 달력일이 정본**이다(운영 규약). 컨테이너 postgres는 UTC로
 도니 패널 쿼리도 `current_date`가 아니라 `(now() AT TIME ZONE 'Asia/Seoul')::date`를 써야
 UTC 15~24시(=KST 00~09시)에 오진하지 않는다.
+
+## 2-5. test 데이터 모드 (선택)
+
+목 시드 대신 **서버 test 스테이징 DB의 실데이터**로 대시보드를 그려 보는 모드. postgres
+데이터소스만 SSH 터널 너머 test DB로 바뀌고(같은 uid — JSON 무수정), 나머지 루프(JSON 수정
+→60초 반영)는 동일하다. 프로메테우스·Loki는 그대로 로컬/스텁이라 **요청 축 패널은 이 모드와
+무관**하다(로컬 bootRun + 모의 트래픽으로 채움 — §"운영과 다른 점" monitoring 잡 항목).
+
+```bash
+ssh -N -L 55433:localhost:5434 ubuntu@<서버> &                    # test postgres 터널
+eval "$(ssh ubuntu@<서버> 'grep -E "^DEV_DB_(USER|PASSWORD)=" ~/deploy/.env' | sed 's/^DEV_DB_/export TEST_DB_/')"
+docker compose -f compose.dev.yaml -f compose.test-data.yaml up -d grafana
+```
+
+복귀(목 시드 모드): `docker compose -f compose.dev.yaml up -d grafana`
+
+- **계정은 절대 커밋하지 않는다** — compose가 셸 환경변수로만 넘긴다(미설정 시 기동 거부).
+- test DB엔 SELECT만 나간다(그라파나 쿼리). 그래도 **운영 DB에는 이 모드를 절대 만들지
+  않는다** — 위 "운영과 다른 점" 첫 항목의 경계는 그대로다.
+- test는 일일 수집 크론이 상시로 돌지 않아 신선도·미처리 타일이 빨강일 수 있다 — 그게 실상태다.
 
 ## 3. 리셋 / 정리
 
@@ -144,4 +173,16 @@ bash deploy/grafana/dev/apply-migrations.sh                     # §2-1
 
   ```bash
   ./gradlew :was:bootRun --args='--management.server.port=9081'
+  ```
+
+- **`monitoring` 잡도 같은 구조로 기본 down이다**(스펙 2026-08-22). JVM 패널을 만질 때만 로컬
+  monitoring을 관리 포트 9083으로 띄워 붙인다. 로컬 기동은 안전하다 — 스윕·알람 크론이 기본
+  전부 `"-"` 비활성이고 API 키도 빈값이라 외부 호출이 없다. **DB는 시드된 `monitoring`이 아니라
+  빈 스크래치 DB를 쓴다** — monitoring의 Flyway는 커스텀 빈(FlywayConfig)이라 `spring.flyway.*`
+  속성을 읽지 않아 끌 수 없고, 시드 DB엔 flyway_schema_history가 없어 그대로 붙이면 기동이
+  깨진다(JVM 패널 검증에 DB 내용은 무관하므로 스크래치면 충분하다).
+
+  ```bash
+  docker exec grafana-dev-postgres-1 psql -qtA -U dev -d analysis -c 'CREATE DATABASE monitoring_boot OWNER dev'  # 최초 1회
+  ./gradlew :monitoring:bootRun --args='--management.server.port=9083 --spring.datasource.url=jdbc:postgresql://localhost:55432/monitoring_boot --spring.datasource.username=dev --spring.datasource.password=dev'
   ```

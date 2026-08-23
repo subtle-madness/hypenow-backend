@@ -548,6 +548,29 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 
 	// ── 리뷰 반영(2026-07-30) — campaignId·campaignName 짝 방어 ──────────────────
 
+	// ── monitoring_items.keywords NULL 방어(레거시 개인 추적 아이템, readKeywordRule) ────────
+
+	/**
+	 * readKeywordRule이 null 체크 없이 objectMapper.readValue를 호출해 keywords가 NULL인 레거시
+	 * account 아이템에서 IllegalArgumentException → 500이 나던 결함의 회귀 테스트. readMatchedKeywords와
+	 * 동일하게 null이면 빈 KeywordRule로 폴백해야 한다.
+	 */
+	@Test
+	void keywords가_NULL인_레거시_계정_아이템도_예외_없이_빈_규칙으로_조립된다() {
+		LocalDate registeredOn = LocalDate.now();
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "glowdeep", null, null,
+				14, registeredOn);
+		long targetId = seedTarget("ACCOUNT", "glowdeep", "WATCHING", null, null, null, false, null);
+		itemRepository.confirmTarget(itemId, targetId);
+
+		TrackingItemResponse item = assembler.assembleList(userId).items().get(0);
+
+		assertThat(item.keywords()).isNotNull();
+		assertThat(item.keywords().and()).isEmpty();
+		assertThat(item.keywords().or()).isEmpty();
+		assertThat(item.keywords().exclude()).isEmpty();
+	}
+
 	@Test
 	void campaignId가_있어도_소유자가_다른_캠페인이면_짝을_맞춰_둘_다_null이다() {
 		// FK는 campaign_id가 "존재하는 행"이면 통과시킨다 — 다른 유저 소유 캠페인을 가리키는 이론상
