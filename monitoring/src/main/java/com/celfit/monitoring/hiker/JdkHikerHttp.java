@@ -77,7 +77,9 @@ public class JdkHikerHttp implements HikerHttp {
 				throw new HikerBadRequestException("Hiker 400: " + res.body());
 			}
 			if (res.statusCode() >= 300) {
-				throw new HikerFetchException("Hiker HTTP " + res.statusCode() + ": " + res.body());
+				// 상태코드 동봉 — 지표 outcome(4xx|5xx) 분류용(TimedHikerHttp). 제어 흐름은 그대로다.
+				throw new HikerFetchException("Hiker HTTP " + res.statusCode() + ": " + res.body(),
+						Integer.valueOf(res.statusCode()));
 			}
 			return res.body();
 		} catch (IOException e) {
