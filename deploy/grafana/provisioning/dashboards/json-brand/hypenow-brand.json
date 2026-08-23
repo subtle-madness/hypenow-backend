@@ -341,10 +341,10 @@
       ]
     },
     {
-      "id": 122,
+      "id": 124,
       "type": "table",
       "title": "오늘 게시물 갱신 — 티어별",
-      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **스윕은 매일 같은 시각에 돌고 due 판정은 정확히 주기 경과라, 스윕 슬롯이 직전 touch보다 몇 초만 일러도 그날 하루 미처리로 보였다가 다음 날 자동 수습된다(하루 밀림 — 08-23 실측 263건 전부 이 패턴).** 미처리가 이틀 이상 유지되거나 매일 티어에서 나오면 그때가 진짜 이상(수집 실패·중단)이다.",
+      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **일일 수집(KST 02:00) 완료 후 미처리 > 0은 진짜 이상이다** — 스윕 슬롯이 직전 touch보다 몇 분 일러 하루 밀리던 경계 레이스(08-23 실측 262건)는 BrandCrawlPolicy의 주기 여유 12h(08-23~)로 제거됐다. 어느 브랜드가 왜 남았는지는 아래 '미처리 브랜드별' 테이블이 가른다(브랜드 스윕 실패 vs 스윕 성공인데 미커버). KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -427,6 +427,186 @@
       ]
     },
     {
+      "id": 125,
+      "type": "table",
+      "title": "미처리 브랜드별",
+      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상이고, 행이 뜨면 전부 살펴볼 대상이다. **안 돌음** = 오늘 이 브랜드 차례가 끝까지 돌지 않음(brand_account.last_swept_on ≠ 오늘) — 예외로 실패했거나(Hiker 402·타임아웃 등, 로그 WARN '브랜드 일일 수집 실패') 새벽 2~3시 수집 중이라 아직 순서 전. '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다. **돌았으나 미달** = 브랜드 차례는 끝까지 돌았는데(last_swept_on = 오늘) 피드 훑기가 기한 게시물 깊이까지 못 내려가 갱신 도장(last_crawled_at)이 안 찍힘 — 원인은 커서 미전진(WARN '태그 커서 미전진 의심')·안전 상한(ERROR '태그 열거 안전 상한 도달'). 이때도 last_swept_on은 일부러 찍는다: 비워 두면 프론트가 '준비 중'으로 숨기고 다음 날 12개월 전체 재백필(Hiker 콜 폭증)이 돌기 때문. 기존 데이터는 그대로 서빙되고 다음 날 스윕이 같은 깊이를 다시 열어 수습된다 — **이틀 연속이면 이상**. 정책 여유 12h(08-23~) 배포 전에는 스윕 슬롯이 기한보다 몇 분 일찍 지나간 경계 레이스도 '돌았으나 미달'로 잡힌다(배포 후 소멸). due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "미처리 없음 — 전 브랜드 정상",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "브랜드"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "오늘 처리"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "상태"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "안 돌음": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "돌았으나 미달": {
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "마지막 성공"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH posts AS (SELECT t.brand_id, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending AS \"미처리\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '돌았으나 미달' ELSE '안 돌음' END AS \"상태\", b.last_swept_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 수집 실패·미실행 — 새벽 2~3시면 순서 대기일 수 있음' ELSE '피드 훑기가 중간에 끊김 — 다음 날 자동 재시도, 반복되면 로그 확인' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending > 0 ORDER BY a.pending DESC, b.username"
+        }
+      ]
+    },
+    {
       "id": 5,
       "type": "table",
       "title": "오늘 브랜드별 처리 현황",
@@ -435,7 +615,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 21
       },
       "datasource": {
         "type": "postgres",
@@ -506,7 +686,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 30
       },
       "collapsed": false,
       "panels": []
@@ -520,7 +700,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 24
+        "y": 31
       },
       "datasource": {
         "type": "postgres",
@@ -582,7 +762,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 24
+        "y": 31
       },
       "datasource": {
         "type": "postgres",
@@ -644,7 +824,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 31
       },
       "datasource": {
         "type": "prometheus",
@@ -706,7 +886,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 39
       },
       "datasource": {
         "type": "loki",
@@ -768,7 +948,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 47
       },
       "datasource": {
         "type": "postgres",
@@ -838,7 +1018,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 56
       },
       "collapsed": false,
       "panels": []
@@ -852,7 +1032,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "datasource": {
         "type": "prometheus",
@@ -915,7 +1095,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 50
+        "y": 57
       },
       "datasource": {
         "type": "prometheus",
@@ -977,7 +1157,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 50
+        "y": 57
       },
       "datasource": {
         "type": "prometheus",
@@ -1050,7 +1230,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "datasource": {
         "type": "prometheus",
@@ -1112,7 +1292,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 57
       },
       "datasource": {
         "type": "prometheus",
@@ -1175,7 +1355,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 65
       },
       "panels": []
     },
@@ -1188,7 +1368,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 59
+        "y": 66
       },
       "datasource": {
         "type": "postgres",
@@ -1251,7 +1431,7 @@
         "h": 9,
         "w": 16,
         "x": 8,
-        "y": 59
+        "y": 66
       },
       "datasource": {
         "type": "postgres",
