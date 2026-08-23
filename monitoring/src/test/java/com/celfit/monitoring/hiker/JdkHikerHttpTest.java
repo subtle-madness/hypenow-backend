@@ -140,6 +140,24 @@ class JdkHikerHttpTest {
 		assertThat(calls.get()).isEqualTo(3);
 	}
 
+	/** 지표 outcome 분류(TimedHikerHttp)가 상태코드에 의존한다 — HTTP 실패에는 상태코드가 실려야 한다. */
+	@Test
+	void HTTP_실패_예외에는_상태코드가_실린다() throws IOException {
+		String baseUrl = startServer(502, "bad gateway");
+
+		assertThatThrownBy(() -> http(baseUrl, "test-key").get("/v2/user/medias?user_id=1"))
+				.isInstanceOfSatisfying(HikerFetchException.class,
+						e -> assertThat(e.statusCode()).isEqualTo(502));
+	}
+
+	@Test
+	void IO_실패_예외에는_상태코드가_없다() {
+		// 연결 자체가 안 된 실패 — HTTP 교환이 없었으므로 상태코드 null(지표 outcome=error 근거)
+		assertThatThrownBy(() -> http("http://127.0.0.1:1", "test-key").get("/v2/user/medias?user_id=1"))
+				.isInstanceOfSatisfying(HikerFetchException.class,
+						e -> assertThat(e.statusCode()).isNull());
+	}
+
 	/** 404는 대상 부재라 몇 번을 더 쏴도 같다 — 재시도는 콜 과금만 늘리고 종결을 늦춘다. */
 	@Test
 	void _404는_재시도하지_않는다() throws IOException {

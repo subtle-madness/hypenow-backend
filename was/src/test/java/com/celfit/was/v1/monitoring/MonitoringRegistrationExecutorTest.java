@@ -331,6 +331,33 @@ class MonitoringRegistrationExecutorTest extends IntegrationTest {
 	}
 
 	@Test
+	void keywords가_NULL인_레거시_계정_아이템도_빈_규칙으로_복구_등록된다() {
+		// readKeywordRule이 null 체크 없이 readValue(null)를 호출해 keywords가 NULL인 레거시 account
+		// 아이템의 복구가 매 틱 IllegalArgumentException으로 영구 실패하던 결함의 회귀 테스트 —
+		// TrackingItemAssembler(#521)와 동일하게 빈 KeywordRule로 폴백해 등록이 진행돼야 한다.
+		long itemId = itemRepository.insertPending(userId, "account", UUID.randomUUID(), null, "legacy.acct",
+				null, null, 14, LocalDate.of(2026, 7, 30));
+		jdbcClient.sql("UPDATE app.monitoring_items SET created_at = now() - interval '10 minutes' WHERE id = :id")
+				.param("id", itemId)
+				.update();
+		long registrationId = registrationRepository.insert(userId, 14, null);
+		registrationRepository.insertEntry(registrationId, 0, "legacy.acct", "account", "pending", null, null, null,
+				itemId);
+
+		// 다른 테스트 클래스가 공유 컨테이너에 남긴 오래된 pending 행도 함께 복구될 수 있어
+		// 횟수·바디를 특정하지 않는다(recoverStalePending 기본 테스트와 동일한 이유).
+		server.expect(ExpectedCount.manyTimes(), requestTo(BASE + "/api/targets"))
+				.andRespond(withSuccess("{ \"targetId\": 960, \"status\": \"WATCHING\" }", MediaType.APPLICATION_JSON));
+
+		executor.recoverStalePending();
+
+		assertThat(itemRepository.findByIdAndUser(itemId, userId).orElseThrow().targetId()).isEqualTo(960L);
+		RegistrationEntryRow entry = onlyEntry(registrationId);
+		assertThat(entry.result()).isEqualTo("success");
+		assertThat(registrationRepository.findById(registrationId).orElseThrow().completedAt()).isNotNull();
+	}
+
+	@Test
 	void entry_처리_중_예외가_나도_다른_entry는_계속_처리되고_완료_마킹이_시도된다() {
 		// entry #1: keywords가 깨진 JSON이라 readKeywordRule()에서 예외가 난다 — per-entry
 		// try-catch로 격리돼야 entry #2 처리·완료 마킹 시도가 막히지 않는다.
