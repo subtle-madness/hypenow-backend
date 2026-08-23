@@ -876,10 +876,10 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
   -c "GRANT SELECT (started_at, completed_at, ok) ON sweep_run TO grafana_reader" \
   -c "GRANT SELECT (type, status, tracked_since, fetch_failing) ON target TO grafana_reader" \
   -c "GRANT SELECT (event_type, occurred_at, email_status, email_attempts) ON alarm_event TO grafana_reader" \
-  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, collection_months) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, collection_months, backfill_completed_at, backfill_error) ON brand_account TO grafana_reader" \
   -c "GRANT SELECT (brand_id, called_on, calls) ON brand_call_count TO grafana_reader" \
   -c "GRANT SELECT (called_on, calls) ON target_call_count TO grafana_reader" \
-  -c "GRANT SELECT (first_seen_at, enriched_at) ON brand_tagged_post TO grafana_reader" \
+  -c "GRANT SELECT (brand_id, taken_at, first_seen_at, last_crawled_at, enriched_at) ON brand_tagged_post TO grafana_reader" \
   -c "GRANT SELECT (verdict, first_seen_at) ON brand_hashtag_post TO grafana_reader" \
   -c "GRANT SELECT (short_code, username, ad_verdict, ad_verdict_source, ad_violations, ad_judged_at, judged_caption_hash) ON brand_post_meta TO grafana_reader"
 ```

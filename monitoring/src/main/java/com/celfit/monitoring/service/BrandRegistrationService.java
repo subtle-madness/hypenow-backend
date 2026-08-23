@@ -134,6 +134,7 @@ public class BrandRegistrationService {
 	 * 수행한다 — 재등록이 창 상향의 유일한 입구다(별도 API 없음).
 	 */
 	public Result register(String username, String brandName, Integer collectionMonths) {
+		long startNanos = System.nanoTime();
 		if (username == null || username.isBlank()) {
 			throw new ValidationException("username은 필수다");
 		}
@@ -148,6 +149,7 @@ public class BrandRegistrationService {
 			seedHashtagsSafely(existing.get().id(), normalized, brandName);
 			triggerHashtagSweep(existing.get());
 			expandIfRequested(existing.get(), months);
+			logRegistered(normalized, startNanos, true);
 			return new Result(existing.get().id(), normalized, null, true);
 		}
 		ProfileInfo profile = hiker.fetchProfile(normalized);
@@ -158,7 +160,18 @@ public class BrandRegistrationService {
 		BrandRow row = brands.findByUsername(normalized).orElseThrow();
 		seedHashtagsSafely(id, normalized, brandName);
 		backfill.execute(() -> runBackfillSafely(row));
+		logRegistered(normalized, startNanos, false);
 		return new Result(id, normalized, profile.followers(), false);
+	}
+
+	/**
+	 * 등록 완료 로그 — 그라파나 '등록 초기 응답' 패널(브랜드 운영 건강)이 Loki에서 이 줄을
+	 * {@code username=... durationMs=...} 정규식으로 파싱한다. 포맷을 바꾸면 패널 쿼리도 함께
+	 * 바꿀 것. 등록 소요를 DB에 남기지 않는 대신 로그가 브랜드별 개별 기록의 정본이다.
+	 */
+	private void logRegistered(String username, long startNanos, boolean replayed) {
+		long durationMs = (System.nanoTime() - startNanos) / 1_000_000;
+		log.info("브랜드 등록 완료 username={} durationMs={} replayed={}", username, durationMs, replayed);
 	}
 
 	/**
