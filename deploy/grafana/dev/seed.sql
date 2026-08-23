@@ -201,7 +201,7 @@ INSERT INTO brand_account (id, username, ig_user_id, followers, following, media
                            collection_months, collection_started_at, backfill_completed_at, is_verified)
 -- registered_at을 서브쿼리에서 먼저 뽑는다 — collection_started_at(등록 직후)·backfill_completed_at
 -- (등록 + 5~180분)이 등록 시각에서 파생돼야 하기 때문. 독립 난수로 뽑으면 완료가 등록보다 앞서는
--- 행이 절반쯤 생겨 운영 건강 '백필 소요' 패널이 음수를 그린다(2026-08-22 실측).
+-- 행이 절반쯤 생겨 [브랜드] 운영 '등록→백필 완료 중앙값' 패널이 음수를 그린다(2026-08-22 실측).
 SELECT g, 'brand' || g, '17841400' || lpad(g::text, 6, '0'),
        (random() * 500000)::bigint, (random() * 2000)::bigint, (random() * 3000)::bigint,
        '목브랜드' || g, '하니스 목 브랜드 계정 ' || g,
@@ -309,7 +309,7 @@ FROM generate_series(1, 2543) g;
 -- 태그드 게시물 28,255
 -- last_crawled_at은 taken_at 나이 티어(BrandCrawlPolicy: 14일 매일 / 30일 3일 / 90일 7일 /
 -- 180일 30일)와 정합으로 생성한다 — 매일 티어는 오늘 새벽 일일 수집(10시간 전)에 갱신됐고,
--- 나머지 티어는 주기 이내. 독립 난수로 뽑으면 수집 현황 '오늘 게시물 갱신' 타일(08-23 운영 건강에서 이관)이 초록 시드에서
+-- 나머지 티어는 주기 이내. 독립 난수로 뽑으면 [브랜드] 운영 '오늘 게시물 갱신' 타일이 초록 시드에서
 -- 빨강이 된다(2026-08-22).
 INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id, taken_at,
                                first_seen_at, comments_collected_count, last_crawled_at, enriched_at)
@@ -358,7 +358,7 @@ SELECT 'TP' || g, 'author' || (g % 2000),
        CASE WHEN g % 5 < 3 THEN md5('목 캡션 ' || g) END
 FROM generate_series(1, 8000) g;
 
--- enrich 분포 조정(수집 현황 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
+-- enrich 분포 조정([브랜드] 운영 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
 -- 잔여 스탯이 상시 수천으로 뜬다 — 하루 넘게 미처리는 전부 메워 초록 시드의 잔여를 0으로.
 -- 24h 이내 유입분의 NULL(자연 처리 대기)은 그대로 둔다 — '오늘' 타일들과 마찬가지로
 -- 하니스 시드는 24시간 내 재적용 전제(시간이 지나면 이 대기분이 창을 넘어 잔여로 늙는다).
