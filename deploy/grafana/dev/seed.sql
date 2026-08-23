@@ -309,7 +309,7 @@ FROM generate_series(1, 2543) g;
 -- 태그드 게시물 28,255
 -- last_crawled_at은 taken_at 나이 티어(BrandCrawlPolicy: 14일 매일 / 30일 3일 / 90일 7일 /
 -- 180일 30일)와 정합으로 생성한다 — 매일 티어는 오늘 새벽 일일 수집(10시간 전)에 갱신됐고,
--- 나머지 티어는 주기 이내. 독립 난수로 뽑으면 운영 건강 '갱신 미처리' 타일이 초록 시드에서
+-- 나머지 티어는 주기 이내. 독립 난수로 뽑으면 수집 현황 '오늘 게시물 갱신' 타일(08-23 운영 건강에서 이관)이 초록 시드에서
 -- 빨강이 된다(2026-08-22).
 INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id, taken_at,
                                first_seen_at, comments_collected_count, last_crawled_at, enriched_at)

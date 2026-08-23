@@ -775,9 +775,11 @@ ssh -L 3001:localhost:3000 ubuntu@<IP>    # 터미널 1: 터널 유지
     Hiker는 4xx도 과금이라 비용 축과 실패 축이 보완 관계다.
   - **인프라**(`hypenow-infra`) — 호스트·컨테이너·JVM 지표 + 전 서비스 에러 로그(§16의 조회축 흡수).
 - **브랜드 모니터링**(별도 폴더, 08-18 분리 — 3장): `[브랜드] 운영 건강`(`hypenow-brand`,
-  스윕 신선도·오늘 성공/소요·처리 간격 — 브랜드 스윕은 런 단위 기록이 없어
-  (`brand_account.last_swept_at/on`뿐) 소요·간격은 당일 유도 근사) ·
-  `[브랜드] 수집 현황`(`hypenow-brand-collection`, 태그 게시물·해시태그 감지·enrich·백필) ·
+  등록·백필 소요(계층별 p95)·monitoring 런타임·외부 API 콜·사용량) ·
+  `[브랜드] 수집 현황`(`hypenow-brand-collection`, 야간 일일 수집(KST 02:00) 신선도·오늘
+  성공/소요·게시물 갱신·브랜드별 처리 간격 + 태그 게시물·해시태그 감지·enrich·백필 — 08-23 일일
+  수집 row를 운영 건강에서 이관. 브랜드 스윕은 런 단위 기록이 없어(`brand_account.last_swept_at/on`뿐)
+  소요·간격은 당일 유도 근사) ·
   `[브랜드] 광고 표기`(`hypenow-brand-ad`, 판정 분포·경로·추이·미표기 목록)
 - 건강 stat은 fail-loud(`noValue`·null 매핑 빨강 + 임계), 사용량 stat은 중립(색 없음) —
   수정 시 이 규약 유지. 상태 스냅샷 패널은 전역 시간 필터를 의도적으로 안 탄다.
