@@ -11,6 +11,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import java.sql.Connection;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -130,6 +131,25 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(row.registeredAt()).isNotNull();
 		assertThat(row.backfillCompletedAt()).isNotNull();
 		assertThat(row.backfillError()).isNull();
+		// 커버리지 2컬럼(수집 상한 v2 §7-1) — 시드가 명시하지 않은 행은 DDL 기본값(완주 = 창 전체 커버).
+		assertThat(row.collectionCapped()).isFalse();
+		assertThat(row.coveredUntil()).isNull();
+	}
+
+	/** 상한 도달로 끊긴 백필은 capped=true + covered_until(실수집 깊이)이 그대로 읽힌다(§7-1). */
+	@Test
+	void 상한_도달_계정은_커버리지_컬럼이_읽힌다() {
+		long brandId = jdbc.sql("""
+				INSERT INTO brand_account (username, ig_user_id, collection_capped, covered_until)
+				VALUES ('brand_capped', 'IG_CAPPED', true, '2026-05-02T12:00:00+09:00')
+				RETURNING id
+				""").query(Long.class).single();
+
+		BrandAccountRow row = repository.findAccount(brandId).orElseThrow();
+
+		assertThat(row.collectionCapped()).isTrue();
+		// 드라이버가 돌려주는 오프셋(UTC/세션 존)에 흔들리지 않게 순간(Instant)으로 비교한다.
+		assertThat(row.coveredUntil().toInstant()).isEqualTo(Instant.parse("2026-05-02T03:00:00Z"));
 	}
 
 	@Test

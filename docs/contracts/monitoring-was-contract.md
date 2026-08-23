@@ -5,8 +5,8 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.13 (시딩 계정 관리 API 철회 — seededAuthor 캠페인 도출로 교체, direct 통합(v2.12) 후
-> 구조 위에 재조정, 2026-08-18)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.14 (수집 커버리지 노출 — `collectionCapped`·`coveredUntil` 2필드 신설, §10.
+> 2026-08-19)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
 > 계약과 무관한 신규 3테이블, §8. **v2.12로 direct 게시물도 이 서브시스템에 합류** — 레거시
@@ -101,6 +101,13 @@
 > 범위 밖 — 미사용 상태로 보존, 추후 contract 단계에서 DROP). `BrandPostResponse.seededAuthor`
 > 필드·응답 계약(§9-1)은 불변, 산출 기준만 재기술(§9-1 참조) — was 신규 API 없음,
 > `fix/seeded-from-campaign`).
+> → **v2.14**(2026-08-19, 수집 커버리지 노출 — `brand_account`에 `collection_capped`·
+> `covered_until` 추가(`V20260819125244`), `BrandAccountResponse`에 `collectionCapped`·
+> `coveredUntil` 2필드 노출(§10). "12개월 신청 · 2,000건 상한 도달"을 FE가 고지할 수 있게 한
+> 서버 측 데이터 원천이다. **was가 두 컬럼을 무조건 SELECT하므로 monitoring → was 순서 배포,
+> 롤백은 역순.** 설계
+> [2026-08-19 §7](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md),
+> `feat/brand-collection-post-limit`.)
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -1014,3 +1021,60 @@ DROP은 이번 범위 밖(추후 contract 단계). was는 이 테이블을 더 �
 }
 // expose=false(기본)면 같은 행이 adDisclosure=null, adViolations=[], adEvidence=[], seededAuthor=false로 내려간다.
 ```
+
+## 10. 브랜드 태그 모니터링 확장 — 수집 커버리지 노출 (v2.14, 2026-08-19)
+
+> ⚠️ §8·§9와 마찬가지로 target/캠페인 계약과 무관한 브랜드 태그 모니터링 서브시스템 확장이다.
+> 수집 상한 파이프라인 자체의 정본은
+> [specs/2026-08-19-brand-collection-post-limit-design.md](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) §7이고,
+> 이 절은 was가 노출하는 표면만 다룬다.
+
+브랜드 태그 수집에는 **게시물 개수 상한(기본 2,000)**이 있다. 신청 창(`collectionMonths`)이
+12개월이어도 태그 유입량이 많은 브랜드는 상한에서 열거가 끊기므로, "신청한 창"과 "실제로 수집된
+범위"가 갈린다. 그 사실을 `brand_account`에 영속화하고(`collection_capped`·`covered_until`,
+마이그레이션 `V20260819125244`) `BrandAccountResponse`(등록 202·목록·단건 폴링 공통 셰이프)에
+2필드로 노출한다.
+
+### 10-1. `BrandAccountResponse` 신규 필드 2종
+
+| 필드 | 타입 | 비고 |
+|---|---|---|
+| `collectionCapped` | `boolean` | 백필이 수집 개수 상한에서 끊겼는지. `false`면 신청 창 전체가 수집 범위다 |
+| `coveredUntil` | `string \| null` | 실수집 깊이 — **이 시각 이후 구간만** 수집됐다는 뜻(KST 오프셋 ISO, 계약 1.5). `null`이면 요청 창 전체 커버 |
+
+**자산(브랜드) 속성이다** — 같은 브랜드를 보는 유저 전원이 같은 값을 받는다. 유저별로 다른 건
+신청 창(`collectionMonths`)뿐이다.
+
+**FE 표기 시나리오**
+
+- `collectionCapped=true && coveredUntil != null` → **"12개월 신청 · 2026-02-14까지 수집(상한
+  도달)"**. 신청 창과 실제 범위가 다르다는 고지가 이 조합의 존재 이유다.
+- `collectionCapped=false` → 신청 창 그대로 표기(**"12개월 수집"**). 이때 `coveredUntil`은 항상
+  `null`이므로 참조하지 않는다.
+- `coveredUntil=null`인데 `collectionCapped=true`인 조합은 **서버가 내려보내지 않는다**(모순쌍
+  가드, 스펙 §7-1) — 그래도 방어적으로 받는다면 capped 문구 없이 신청 창만 표기하면 된다.
+- 갱신 시점: **백필(등록·기간 확장) 종료 시에만** 기록된다. 일일 스윕은 이 값을 건드리지 않으므로
+  폴링으로 값이 바뀌길 기대하면 안 된다. 이미 상한 도달인 브랜드의 기간 확장은 재수집 없이
+  창·커버리지 마킹만 하므로(스펙 §7-2), 확장 직후 `collectionMonths`는 오르고
+  `collectionCompletedAt`은 그대로인 응답이 정상이다.
+
+```json
+// GET .../accounts 200 (12개월 신청 · 상한 도달로 2026-02-14까지만 수집된 브랜드)
+{
+  "data": [
+    {
+      "id": "42",
+      "collectionMonths": 12,
+      "collectionStatus": "ready",
+      "collectionCapped": true,
+      "coveredUntil": "2026-02-14T09:31:00+09:00"
+    }
+  ]
+}
+// 상한 미도달 브랜드는 "collectionCapped": false, "coveredUntil": null.
+```
+
+### 10-2. 배포 순서 (운영 주의)
+
+was `BrandReadRepository`가 `collection_capped`·`covered_until`을 **무조건 SELECT**하므로
+**monitoring(마이그레이션) → was 순서로 배포**해야 하고 **롤백은 역순**이다.
