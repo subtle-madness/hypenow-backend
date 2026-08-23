@@ -33,6 +33,16 @@ spring:
     multipart:
       max-file-size: 2MB                # 컨테이너 컷은 여유 — 1MB 정본 검증은 ProfileImageStore(스펙 6.13)
       max-request-size: 3MB
+# 요청 ID 출력(RequestIdFilter → MDC requestId, 2026-08-23 요청 단위 로그 묶기) — Boot 기본
+# 콘솔 패턴의 correlation 슬롯([스레드명] 뒤·로거명 앞)에 끼워 넣으므로 타임스탬프(1번 토큰)·
+# 레벨(2번 토큰) 위치가 변하지 않는다. 운영 Alloy(deploy/alloy/config.alloy)가 이 위치로 level
+# 라벨을 파싱하니(^\S+\s+(LEVEL)\s) logging.pattern.console을 직접 덮어쓰지 말 것 — 깨지면
+# level 라벨이 사라져 {level="ERROR"} 대시보드·알람이 침묵한다. 요청 밖 로그(스케줄 잡·부팅)는
+# 빈 대괄호([])로 찍힌다. 내부 호출 전파는 RequestIdPropagatingInterceptor 참조.
+logging:
+  pattern:
+    correlation: "[%X{requestId:-}] "
+
 server:
   port: 8081
   # 성과 대시보드 /contents는 유저에 따라 수십 MB JSON(전량 반환 설계)이고 FE는 브라우저에서
