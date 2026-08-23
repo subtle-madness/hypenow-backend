@@ -310,6 +310,11 @@ public class MonitoringRegistrationExecutor implements RegistrationExecutor {
 	/** 동기 구간(V1MonitoringRegistrationService.writeKeywordsJson)이 저장한 {and,or,exclude} 형태를
 	 * 계약 KeywordRule(and,any,exclude)로 옮긴다 — 저장 키는 "or"지만 계약·모니터링 어휘는 "any"다. */
 	private KeywordRule readKeywordRule(String keywordsJson) {
+		// keywords가 NULL(또는 blank)인 레거시 개인 추적 아이템 방어 — 빈 규칙으로 취급
+		// (TrackingItemAssembler.readKeywordRule과 동일 규약, PR #521).
+		if (keywordsJson == null || keywordsJson.isBlank()) {
+			return new KeywordRule(List.of(), List.of(), List.of());
+		}
 		Map<?, ?> map = objectMapper.readValue(keywordsJson, Map.class);
 		return new KeywordRule(castList(map.get("and")), castList(map.get("or")), castList(map.get("exclude")));
 	}
