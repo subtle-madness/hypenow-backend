@@ -1,5 +1,6 @@
 package com.celfit.was.monitoring;
 
+import com.celfit.was.logging.MdcTaskDecorator;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
@@ -50,6 +51,7 @@ public class MonitoringConfig {
 		this.monitoringRestClient = RestClient.builder()
 				.requestFactory(requestFactory)
 				.baseUrl(baseUrl)
+				.requestInterceptor(new RequestIdPropagatingInterceptor())
 				.build();
 
 		// direct 등록 전용 타임아웃(2026-08-18 스테이징 실측) — monitoring 동기 처리 최대 ~7초(Hiker
@@ -62,6 +64,7 @@ public class MonitoringConfig {
 		this.directPostRestClient = RestClient.builder()
 				.requestFactory(directPostRequestFactory)
 				.baseUrl(baseUrl)
+				.requestInterceptor(new RequestIdPropagatingInterceptor())
 				.build();
 
 		// 커넥션 풀 획득은 마지막 — 이후 라인이 예외를 던지면 @PreDestroy 미등록 상태로 풀이 새기 때문
@@ -87,6 +90,8 @@ public class MonitoringConfig {
 		pool.setCorePoolSize(2);
 		pool.setMaxPoolSize(2);
 		pool.setQueueCapacity(100);
+		// 제출한 웹 요청의 requestId(MDC)를 워커에 이어줘 접수 로그와 백그라운드 처리 로그가 묶인다
+		pool.setTaskDecorator(new MdcTaskDecorator());
 		pool.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
 		pool.setWaitForTasksToCompleteOnShutdown(true);
 		pool.setAwaitTerminationSeconds(15);
@@ -101,6 +106,7 @@ public class MonitoringConfig {
 		brandPool.setCorePoolSize(2);
 		brandPool.setMaxPoolSize(2);
 		brandPool.setQueueCapacity(100);
+		brandPool.setTaskDecorator(new MdcTaskDecorator());
 		brandPool.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
 		brandPool.setWaitForTasksToCompleteOnShutdown(true);
 		brandPool.setAwaitTerminationSeconds(15);
