@@ -64,4 +64,15 @@ class TimedGeminiHttpTest {
 
 		assertThat(timer("other", "ok").count()).isEqualTo(1);
 	}
+
+	@Test
+	void 허용_목록_밖_액션은_operation_other로_기록한다() {
+		// operation 태그는 코드가 못박은 유한 집합이어야 한다(Hiker 쪽 정확 일치 매핑과 같은 규율) —
+		// 경로 문자열을 그대로 태그에 실으면 호출부 변화가 곧 카디널리티 폭발이 된다
+		TimedGeminiHttp timed = new TimedGeminiHttp((path, body) -> "{}", registry);
+
+		timed.post("/v1beta/models/gemini-2.5-flash:someFutureAction", "{}");
+
+		assertThat(timer("other", "ok").count()).isEqualTo(1);
+	}
 }

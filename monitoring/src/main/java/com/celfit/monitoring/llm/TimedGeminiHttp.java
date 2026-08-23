@@ -46,10 +46,19 @@ public final class TimedGeminiHttp implements GeminiHttp {
 		}
 	}
 
-	/** "models/{m}:{action}" 액션 세그먼트 — 없으면 other(모델명은 태그에 싣지 않는다 — 카디널리티 통제). */
+	/**
+	 * "models/{m}:{action}" 액션 세그먼트의 허용 목록 매핑 — Hiker 쪽 정확 일치 매핑과 같은 규율로
+	 * 태그 값을 코드가 못박은 유한 집합에 가둔다(모델명·미지 액션은 태그에 싣지 않는다 — 카디널리티 통제).
+	 */
 	static String operationOf(String path) {
 		int colon = path.lastIndexOf(':');
-		return colon >= 0 && colon < path.length() - 1 ? path.substring(colon + 1) : "other";
+		if (colon < 0 || colon >= path.length() - 1) {
+			return "other";
+		}
+		return switch (path.substring(colon + 1)) {
+			case "generateContent", "streamGenerateContent" -> path.substring(colon + 1);
+			default -> "other";
+		};
 	}
 
 	private void record(String operation, String outcome, long elapsedNanos) {

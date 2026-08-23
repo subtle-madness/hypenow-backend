@@ -1021,7 +1021,7 @@
       "id": 123,
       "type": "timeseries",
       "title": "외부 API 콜 실패율",
-      "description": "api별 실패 콜 비율(outcome≠ok, 5분 창) — 외부 API 장애·차단·잔액 소진의 조기 신호. 해석 주의: **Hiker는 4xx도 과금**되므로 4xx 급증은 비용 사고(402 잔액 소진·차단)일 수 있고, 반대로 태그·게시물 0건 계정의 404(빈 열거)도 4xx로 집계되는 정상 잡음이 섞인다 — 급증 시 outcome 축(external_call_seconds_count의 outcome 라벨)으로 4xx/5xx/error를 갈라 볼 것. error는 HTTP 교환 없는 실패(IO·타임아웃·키 미설정)다.",
+      "description": "api별 실패 콜 비율(outcome≠ok, 5분 창) — 외부 API 장애·차단·잔액 소진의 조기 신호. 트래픽이 있는데 실패가 없으면 0%로 그려진다(공백은 무트래픽). 해석 주의: **Hiker는 4xx도 과금**되므로 4xx 급증은 비용 사고(402 잔액 소진·차단)일 수 있고, 반대로 태그·게시물 0건 계정의 404(빈 열거)도 4xx로 집계되는 정상 잡음이 섞인다 — 급증 시 outcome 축(external_call_seconds_count의 outcome 라벨)으로 4xx/5xx/error를 갈라 볼 것. error는 HTTP 교환 없는 실패(IO·타임아웃·키 미설정)와 예상 밖 상태(3xx 등)다. 여기 1건은 재시도가 접힌 **논리 콜 1건**이라 실제 과금 콜 수는 표시의 최대 3배(1+재시도 2)일 수 있다.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1076,7 +1076,7 @@
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{api}}",
-          "expr": "100 * sum by (api) (rate(external_call_seconds_count{job=\"monitoring\", outcome!=\"ok\"}[5m])) / sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m]))"
+          "expr": "100 * (sum by (api) (rate(external_call_seconds_count{job=\"monitoring\", outcome!=\"ok\"}[5m])) or sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m])) * 0) / sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m]))"
         }
       ]
     },
