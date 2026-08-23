@@ -341,6 +341,92 @@
       ]
     },
     {
+      "id": 122,
+      "type": "table",
+      "title": "오늘 게시물 갱신 — 티어별",
+      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **스윕은 매일 같은 시각에 돌고 due 판정은 정확히 주기 경과라, 스윕 슬롯이 직전 touch보다 몇 초만 일러도 그날 하루 미처리로 보였다가 다음 날 자동 수습된다(하루 밀림 — 08-23 실측 263건 전부 이 패턴).** 미처리가 이틀 이상 유지되거나 매일 티어에서 나오면 그때가 진짜 이상(수집 실패·중단)이다.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "noValue": "—",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH posts AS (SELECT CASE WHEN t.taken_at >= now() - interval '14 days' THEN 1 WHEN t.taken_at >= now() - interval '30 days' THEN 2 WHEN t.taken_at >= now() - interval '90 days' THEN 3 WHEN t.taken_at >= now() - interval '180 days' THEN 4 ELSE 5 END AS tier, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t JOIN brand_account b ON b.id = t.brand_id AND b.closed_at IS NULL WHERE t.taken_at IS NOT NULL), agg AS (SELECT tier, count(*) AS held, count(*) FILTER (WHERE done_today) AS done, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE NOT done_today AND NOT due_now) AS waiting FROM posts GROUP BY tier) SELECT \"티어\", \"보유\", \"오늘 대상\", \"오늘 처리\", \"미처리\", \"대기\" FROM (SELECT l.ord, l.label AS \"티어\", coalesce(a.held,0) AS \"보유\", coalesce(a.done,0)+coalesce(a.pending,0) AS \"오늘 대상\", coalesce(a.done,0) AS \"오늘 처리\", coalesce(a.pending,0) AS \"미처리\", coalesce(a.waiting,0) AS \"대기\" FROM (VALUES (1,'매일 (0–14일)'),(2,'3일 (14–30일)'),(3,'7일 (30–90일)'),(4,'30일 (90–180일)')) AS l(ord,label) LEFT JOIN agg a ON a.tier = l.ord UNION ALL SELECT 5, '추적 종료 (180일+)', coalesce((SELECT held FROM agg WHERE tier = 5),0), NULL, NULL, NULL, NULL UNION ALL SELECT 6, '합계 (0–180일)', coalesce(sum(held),0), coalesce(sum(done),0)+coalesce(sum(pending),0), coalesce(sum(done),0), coalesce(sum(pending),0), coalesce(sum(waiting),0) FROM agg WHERE tier <= 4) x ORDER BY x.ord"
+        }
+      ]
+    },
+    {
       "id": 5,
       "type": "table",
       "title": "오늘 브랜드별 처리 현황",
@@ -349,7 +435,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 14
       },
       "datasource": {
         "type": "postgres",
@@ -420,7 +506,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 23
       },
       "collapsed": false,
       "panels": []
@@ -434,7 +520,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "postgres",
@@ -496,7 +582,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "postgres",
@@ -558,7 +644,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -620,7 +706,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "datasource": {
         "type": "loki",
@@ -682,7 +768,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "datasource": {
         "type": "postgres",
@@ -752,7 +838,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 49
       },
       "collapsed": false,
       "panels": []
@@ -766,7 +852,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -829,7 +915,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -891,7 +977,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "prometheus",
@@ -964,7 +1050,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 58
       },
       "panels": []
     },
@@ -977,7 +1063,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 51
+        "y": 59
       },
       "datasource": {
         "type": "postgres",
@@ -1040,7 +1126,7 @@
         "h": 9,
         "w": 16,
         "x": 8,
-        "y": 51
+        "y": 59
       },
       "datasource": {
         "type": "postgres",
