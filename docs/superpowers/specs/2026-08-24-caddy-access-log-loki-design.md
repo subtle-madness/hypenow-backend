@@ -50,8 +50,8 @@ caddy·was·monitoring 전 계층)에는 5xx가 0건이었다 — 원인은 백�
 
 - `./logs/caddy:/var/log/caddy:ro` — 입력 파일.
 - `alloy-data:/var/lib/alloy/data`(named volume) — **포지션 영속**. 없으면 alloy 재기동
-  (배포)마다 access.log 전체(~50MiB)를 재수집해 중복 적재된다. 기존 docker 소스의 재시작
-  중복도 같이 해소된다.
+  (배포)마다 `tail_from_end`가 새로 걸려 재기동 순간의 로그를 놓친다(포지션이 있으면
+  이어읽기). 기존 docker 소스의 포지션도 같이 영속된다.
 
 ### 3. `grafana/provisioning/dashboards/json/hypenow-home.json` — "엣지 5xx" stat 패널 추가
 
