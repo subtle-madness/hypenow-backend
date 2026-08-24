@@ -230,25 +230,35 @@ public class BeautyJob {
             if (!applied.add(v.username())) continue;  // 같은 username 재등장 — 카운터·save·로그 모두 건너뜀
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
-            inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
-            inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
             // 판정에 실제로 쓴 캡션 건수 — 0이면 나중에 캡션이 쌓였을 때 재판정 대상이 된다
-            inf.setBeautyCaptionCount(captionCounts.getOrDefault(v.username(), 0).shortValue());
-            influencers.save(inf);
-            switch (v.beautyClass()) {
-                case INFLUENCER, COMPANY -> beauty++;
-                case BEAUTY_SERVICE -> service++;
-                case FOREIGN_INFLUENCER -> foreign++;
-                case NOT_BEAUTY -> notBeauty++;
+            short capCount = captionCounts.getOrDefault(v.username(), 0).shortValue();
+            // 축별 class는 모델 응답이 무효·누락이면 null — 그 축만 미판정으로 남기고 다른 축은 적용한다
+            String label = "뷰티축 무응답";
+            if (v.beautyClass() != null) {
+                inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
+                inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
+                inf.setBeautyCaptionCount(capCount);
+                switch (v.beautyClass()) {
+                    case INFLUENCER, COMPANY -> beauty++;
+                    case BEAUTY_SERVICE -> service++;
+                    case FOREIGN_INFLUENCER -> foreign++;
+                    case NOT_BEAUTY -> notBeauty++;
+                }
+                label = switch (v.beautyClass()) {
+                    case INFLUENCER -> "뷰티(인플루언서)";
+                    case COMPANY -> "뷰티(회사)";
+                    case BEAUTY_SERVICE -> "뷰티(시술·서비스)";
+                    case FOREIGN_INFLUENCER -> "뷰티(외국인)";
+                    case NOT_BEAUTY -> "비뷰티";
+                };
             }
+            if (v.fnbClass() != null) {
+                inf.classifyFnb(v.fnbClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.fnbReason(), v.fnbBasis());
+                inf.setFnbJudgedAt(clock.instant());
+                inf.setFnbCaptionCount(capCount);
+            }
+            influencers.save(inf);
             done++;
-            String label = switch (v.beautyClass()) {
-                case INFLUENCER -> "뷰티(인플루언서)";
-                case COMPANY -> "뷰티(회사)";
-                case BEAUTY_SERVICE -> "뷰티(시술·서비스)";
-                case FOREIGN_INFLUENCER -> "뷰티(외국인)";
-                case NOT_BEAUTY -> "비뷰티";
-            };
             log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(), label, v.reason());
         }
         return new ChunkResult(beauty, service, foreign, notBeauty);
