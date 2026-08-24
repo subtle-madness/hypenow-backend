@@ -18,13 +18,14 @@ docker compose -p alloytest -f deploy/alloy/test/compose.test.yaml down -v  # �
 - Loki API: http://localhost:3100
 - Grafana: http://localhost:3000 (익명 Admin, 프로비저닝된 대시보드가 그대로 뜬다)
 
-## 검증 3종
+## 검증 4종
 
 | 확인 | 쿼리 | 기대 |
 |---|---|---|
-| `level` 라벨 | `/loki/api/v1/label/level/values` | `["ERROR","INFO","WARN"]` — JVM 파이프라인에서만 붙는다 |
+| `level` 라벨 | `/loki/api/v1/label/level/values` | `["ERROR","INFO","WARN"]` — JVM 파이프라인과 액세스 로그 5xx 승격에서만 붙는다 |
 | 스택트레이스 병합 | `{service="was", level="ERROR"}` | 엔트리 1건이 6줄(`IllegalStateException`~`... 3 more`)을 통째로 담는다 |
 | 비-JVM 회귀 | `{service="caddy"}` | 전 엔트리가 1줄·`level` 라벨 없음. 2줄 이상이면 분기가 잘못 걸린 것 |
+| 파일 소스(액세스 로그) | `{service="caddy-access"}` | 200·500 엔트리 존재, 500만 `level=ERROR`. 로테이션 파일(status 599)·test-access.log(status 598)는 0건 |
 
 `service` 라벨은 JVM 여부와 무관하게 **모든** 수집 컨테이너에 붙는다(compose 서비스명) —
 리그에선 `was`·`monitoring`·`caddy` 외에 리그 자신(`loki`·`alloy`·`grafana`)도 보인다.
