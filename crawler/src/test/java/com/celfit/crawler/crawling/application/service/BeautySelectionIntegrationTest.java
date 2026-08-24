@@ -7,6 +7,7 @@ import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import com.celfit.crawler.crawling.domain.CrawlRun;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
@@ -228,6 +229,25 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
                 InfluencerStatus.QUALIFIED.name(), Influencer.BEAUTY_SOURCE_CLAUDE, 3, PageRequest.of(0, 10));
 
         assertThat(targets).extracting(Influencer::getUsername).doesNotContain(PREFIX + "manual");
+    }
+
+    @Test
+    void fnb_판정이_저장되고_재조회된다() {
+        Influencer inf = influencers.save(new Influencer(PREFIX + "fnb-roundtrip"));
+        inf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "레시피 계정", "CAPTION");
+        inf.setFnbJudgedAt(Instant.parse("2026-08-24T00:00:00Z"));
+        inf.setFnbCaptionCount((short) 5);
+        influencers.save(inf);
+
+        Influencer found = influencers.findByUsername(PREFIX + "fnb-roundtrip").orElseThrow();
+        assertThat(found.getFnbClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(found.getFnb()).isTrue();
+        assertThat(found.getFnbCompany()).isFalse();
+        assertThat(found.getFnbSource()).isEqualTo(Influencer.BEAUTY_SOURCE_CLAUDE);
+        assertThat(found.getFnbReason()).isEqualTo("레시피 계정");
+        assertThat(found.getFnbBasis()).isEqualTo("CAPTION");
+        assertThat(found.getFnbJudgedAt()).isEqualTo(Instant.parse("2026-08-24T00:00:00Z"));
+        assertThat(found.getFnbCaptionCount()).isEqualTo((short) 5);
     }
 
 }
