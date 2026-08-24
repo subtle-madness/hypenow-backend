@@ -41,8 +41,10 @@ caddy·was·monitoring 전 계층)에는 5xx가 0건이었다 — 원인은 백�
     (카디널리티) — 조회는 쿼리 시 `| json | status >= 500`.
   - **status 5xx일 때만 `level="ERROR"` 라벨** 부여 → 기존 홈 "ERROR 급증"·인프라 "서비스별
     ERROR" 패널이 추가 작업 없이 엣지 5xx를 잡는다. 4xx 이하는 level 라벨 없음.
-  - `stage.timestamp`로 JSON `ts`(epoch float)를 엔트리 시각으로 사용 — 수집 지연 시에도
-    발생 시각 보존.
+  - 타임스탬프는 수집 시각 사용(`stage.timestamp` 없음 — 구현 시 확정): `tail_from_end=true`라
+    테일 지연이 ms 단위고, JSON `ts`(epoch float)는 JMESPath 숫자→문자열 변환의 지수 표기
+    위험이 있어 파서를 걸 이유가 없다. `tail_from_end`는 기존 파일(~50MiB) 일괄 재수집으로
+    "지금" 타임스탬프의 과거 로그가 쏟아지는 것도 함께 막는다.
 
 ### 2. `compose.yaml` — alloy 볼륨 2개 추가
 
