@@ -1040,6 +1040,9 @@ docker exec deploy-prometheus-1 wget -qO- 'http://loki:3100/loki/api/v1/label/co
 
 Grafana(§14-1 터널) → 홈 탭의 API 5xx·인프라 탭의 JVM·커넥션 풀 패널이 그려지는지 확인.
 로그는 Explore → Loki 데이터소스 → `{service="was"}`.
+엣지 액세스 로그는 `{service="caddy-access"} | json | status >= 500` — caddy 액세스 로그
+파일을 alloy가 테일링한다(2026-08-24 스펙, 5xx만 `level="ERROR"` 라벨로 승격돼 홈 "엣지
+5xx"·"ERROR 급증" 패널에 잡힌다. 운영 access.log만 — test-access.log는 미수집).
 
 > ⚠️ **배포 직후 수 분 구간의 지표는 신뢰하지 말 것.** was 롤링 배포(§5-1) 창에는 신·구 컨테이너가
 > 수 분간 공존하는데, prometheus 타깃은 `was:9081` 단일 DNS 이름이라 스크레이프마다 두 JVM 중

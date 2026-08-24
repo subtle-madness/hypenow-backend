@@ -30,13 +30,18 @@ public class BrandRepository {
 	 * 다시 도는 것이라, 지난 가입의 완주·실패 기록이 남으면 was 폴링이 곧장 ready를 본다.
 	 * 수집 창은 GREATEST로 합친다 — 재가입 축소 요청은 무시한다: 기존 수집분이 이미 있어 창을
 	 * 줄이면 응답 창과 보유 데이터가 어긋난다.
+	 *
+	 * <p>{@code ownRequest}(2026-08-19 경쟁사 판정 제거 설계, was accountType != 'competitor')는
+	 * has_own_link 초기화·승격에 쓰인다 — 신규 삽입이면 그 값 그대로 심고, 기존 행 재가입이면 true일
+	 * 때만 승격한다(경쟁사 재등록은 다른 유저의 own 연결을 모를 수 있어 절대 false로 내리지 않는다).
 	 */
-	public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths) {
+	public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths,
+			boolean ownRequest) {
 		return db.queryForObject("""
 				INSERT INTO brand_account (username, ig_user_id, followers, biography, full_name,
 				                           profile_pic_url, is_verified, external_url, following, media_count,
-				                           collection_months, collection_started_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+				                           collection_months, collection_started_at, has_own_link)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), ?)
 				ON CONFLICT (username) DO UPDATE SET
 				  ig_user_id = EXCLUDED.ig_user_id, followers = EXCLUDED.followers,
 				  biography = EXCLUDED.biography, full_name = EXCLUDED.full_name,
@@ -46,11 +51,22 @@ public class BrandRepository {
 				  last_swept_on = NULL, backfill_error = NULL, backfill_completed_at = NULL,
 				  registered_at = now(),
 				  collection_months = GREATEST(brand_account.collection_months, EXCLUDED.collection_months),
-				  collection_started_at = now()
+				  collection_started_at = now(),
+				  has_own_link = CASE WHEN EXCLUDED.has_own_link THEN true ELSE brand_account.has_own_link END
 				RETURNING id""",
 				Long.class, username, profile.userId(), profile.followers(), profile.biography(),
 				profile.fullName(), profile.profilePicUrl(), profile.isVerified(), profile.externalUrl(),
-				profile.following(), profile.mediaCount(), collectionMonths);
+				profile.following(), profile.mediaCount(), collectionMonths, ownRequest);
+	}
+
+	/**
+	 * own-link 플래그 절대값 설정(멱등, PUT /api/brands/{username}/own-link — 2026-08-19 경쟁사 판정
+	 * 제거 설계 §2) — was가 연결 변이(changeType 양방향·부분 해지) 커밋 후 원장에서 재계산한 값을
+	 * 그대로 민다. insertOrReactivate의 "승격만" 규칙과 달리 여기는 false로도 내릴 수 있다 — was가
+	 * 이미 전체 원장을 재계산한 정본값이라서다.
+	 */
+	public void setHasOwnLink(String username, boolean hasOwnLink) {
+		db.update("UPDATE brand_account SET has_own_link = ? WHERE username = ?", hasOwnLink, username);
 	}
 
 	/**
@@ -144,7 +160,7 @@ public class BrandRepository {
 
 	public Optional<BrandRow> findByUsername(String username) {
 		return db.query("""
-				SELECT id, username, ig_user_id, status, last_swept_on, collection_months
+				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
 				FROM brand_account WHERE username = ?""",
 				BrandRepository::toRow, username).stream().findFirst();
 	}
@@ -157,14 +173,14 @@ public class BrandRepository {
 	 */
 	public Optional<BrandRow> findById(long brandId) {
 		return db.query("""
-				SELECT id, username, ig_user_id, status, last_swept_on, collection_months
+				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
 				FROM brand_account WHERE id = ?""",
 				BrandRepository::toRow, brandId).stream().findFirst();
 	}
 
 	public List<BrandRow> findActive() {
 		return db.query("""
-				SELECT id, username, ig_user_id, status, last_swept_on, collection_months
+				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
 				FROM brand_account WHERE status = 'ACTIVE' ORDER BY id""",
 				BrandRepository::toRow);
 	}
@@ -236,6 +252,7 @@ public class BrandRepository {
 		java.sql.Date swept = rs.getDate("last_swept_on");
 		return new BrandRow(rs.getLong("id"), rs.getString("username"), rs.getString("ig_user_id"),
 				BrandStatus.valueOf(rs.getString("status")),
-				swept == null ? null : swept.toLocalDate(), rs.getInt("collection_months"));
+				swept == null ? null : swept.toLocalDate(), rs.getInt("collection_months"),
+				rs.getBoolean("has_own_link"));
 	}
 }

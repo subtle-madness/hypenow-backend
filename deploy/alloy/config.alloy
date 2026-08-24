@@ -111,6 +111,47 @@ loki.source.docker "others" {
   refresh_interval = "30s"
 }
 
+// 엣지 액세스 로그(2026-08-24 스펙) — caddy 액세스 로그는 파일로만 남아(Caddyfile log output file)
+// 도커 파이프라인에 안 잡힌다. 파일을 직접 테일링해 엣지 5xx(예: 롤링 배포 순단 502)가
+// 대시보드에 보이게 한다. 경로는 정확 매칭 — 로테이션 산출물(access-*.log.gz)·test 도메인
+// (test-access.log)은 패턴 밖이어야 한다("운영만 계측" 원칙).
+local.file_match "caddy_access" {
+  path_targets = [{
+    __path__ = "/var/log/caddy/access.log",
+    service  = "caddy-access",
+  }]
+}
+
+loki.source.file "caddy_access" {
+  targets    = local.file_match.caddy_access.targets
+  forward_to = [loki.process.caddy_access.receiver]
+
+  // 첫 발견 시 파일 끝부터 — 기존 파일(~50MiB) 일괄 재수집으로 "지금" 타임스탬프의 과거
+  // 로그가 쏟아지는 것을 막는다. 이후 재기동은 포지션 파일(compose의 alloy-data 볼륨)로 이어읽는다.
+  tail_from_end = true
+}
+
+loki.process "caddy_access" {
+  // status·uri·method는 라벨로 올리지 않는다(카디널리티) — 조회는 쿼리 시 `| json | status >= 500`.
+  // 단 5xx 여부만 level=ERROR로 승격 — 홈 "ERROR 급증"·인프라 "서비스별 ERROR" 패널이
+  // {level="ERROR"}를 집계하므로 추가 작업 없이 엣지 5xx가 편입된다. 4xx 이하는 level 라벨
+  // 없음(빈 문자열 라벨은 Prometheus 의미론상 미존재와 동일 — 리그 실측 확인).
+  stage.json {
+    expressions = { status = "status" }
+  }
+
+  stage.template {
+    source   = "edge_level"
+    template = "{{ if ge (int .status) 500 }}ERROR{{ end }}"
+  }
+
+  stage.labels {
+    values = { level = "edge_level" }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
 loki.write "local" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"

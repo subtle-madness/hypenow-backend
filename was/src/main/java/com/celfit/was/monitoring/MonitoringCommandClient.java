@@ -74,11 +74,27 @@ public class MonitoringCommandClient {
 	 * 유저의 company_name만 채워 넣고, 그 외에는 null을 보낸다.
 	 *
 	 * <p>collectionMonths는 수집 창(1|3|6|12) — 이미 활성인 브랜드에 더 큰 값이면 monitoring이 기간 확장으로 처리한다.
+	 *
+	 * <p>accountType(nullable, 2026-08-19 경쟁사 판정 제거 설계 §2)은 monitoring의 has_own_link
+	 * 파생 플래그 초기화·승격 재료다 — {@link com.celfit.was.v1.brandmonitoring.BrandAccountType}의
+	 * own/competitor 값을 그대로 전달한다. null은 own과 동치(monitoring 기본값).
 	 */
-	public BrandRegisterResult registerBrand(String username, String brandName, int collectionMonths) {
+	public BrandRegisterResult registerBrand(String username, String brandName, int collectionMonths,
+			String accountType) {
 		return exchange(() -> restClient.post().uri("/api/brands")
-				.body(new BrandRegisterRequest(username, brandName, collectionMonths))
+				.body(new BrandRegisterRequest(username, brandName, collectionMonths, accountType))
 				.retrieve().body(BrandRegisterResult.class));
+	}
+
+	/**
+	 * own-link 플래그 절대값 push(2026-08-19 경쟁사 판정 제거 설계 §2) — was가 연결 변이(changeType
+	 * 양방향·부분 해지) 커밋 후 원장(app.brand_monitorings 활성 연결)에서 재계산한 값을 그대로 민다.
+	 * {@code deregisterBrand}와 같은 best-effort 컨벤션으로 호출부가 감싼다(실패 시 warn 로그만,
+	 * 예외 전파 금지 — 이 메서드 자체는 일반 규칙대로 예외를 던진다).
+	 */
+	public void pushOwnLink(String username, boolean hasOwnLink) {
+		exchange(() -> restClient.put().uri("/api/brands/{username}/own-link", username)
+				.body(new OwnLinkRequest(hasOwnLink)).retrieve().toBodilessEntity());
 	}
 
 	/**
@@ -210,11 +226,15 @@ public class MonitoringCommandClient {
 	record ShareResolveRequest(String url, Long userId) {
 	}
 
-	record BrandRegisterRequest(String username, String brandName, int collectionMonths) {
+	record BrandRegisterRequest(String username, String brandName, int collectionMonths, String accountType) {
 	}
 
 	/** monitoring BrandController.BrandRegisterResponse와 동형 — followers는 등록 시점 관측값(null 가능). */
 	public record BrandRegisterResult(long brandId, String username, Long followers, String status) {
+	}
+
+	/** monitoring BrandController.OwnLinkRequest와 동형(2026-08-19 경쟁사 판정 제거 설계 §2). */
+	record OwnLinkRequest(boolean hasOwnLink) {
 	}
 
 	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */

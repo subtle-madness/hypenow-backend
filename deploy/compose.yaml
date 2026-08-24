@@ -410,6 +410,11 @@ services:
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 엣지 액세스 로그 테일링(2026-08-24 스펙) — caddy가 같은 호스트 경로에 쓴다(caddy 서비스의
+      # ./logs/caddy 바인드와 짝). 포지션은 named volume으로 영속 — 없으면 매 배포(restart alloy)마다
+      # tail_from_end가 새로 걸려 재기동 순간의 로그를 놓친다.
+      - ./logs/caddy:/var/log/caddy:ro
+      - alloy-data:/var/lib/alloy/data
 
   # 서비스 현황 대시보드(app 스키마 읽기 전용) — 호스트 포트 미노출, Caddy가 grafana:3000으로 프록시.
   # CPU 2코어 제약 고려: 익명접속·회원가입·원격 리포팅/업데이트체크류 전부 끔, mem_limit 512m로 상한.
@@ -506,5 +511,6 @@ volumes:
   caddy-data:
   caddy-config:
   grafana-data:
+  alloy-data:
   prometheus-data:
   loki-data:
