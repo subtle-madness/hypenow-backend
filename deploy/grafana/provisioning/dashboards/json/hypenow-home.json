@@ -53,7 +53,7 @@
       "description": "최근 1시간 5xx 비율(UNKNOWN·root·actuator 제외). 1% 이상이면 유저가 실제로 에러를 본다. 무트래픽 시간대는 0/0=NaN이 되는데 이건 정상이라 무값 매핑을 null로만 좁혔다(빨강 '데이터 없음'은 was 메트릭 소실일 때만). 클릭 → API 성능.",
       "gridPos": {
         "h": 5,
-        "w": 6,
+        "w": 5,
         "x": 0,
         "y": 1
       },
@@ -138,14 +138,103 @@
       ]
     },
     {
+      "id": 14,
+      "type": "stat",
+      "title": "엣지 5xx",
+      "description": "최근 1시간 caddy 엣지 5xx 건수(액세스 로그 → Loki, 2026-08-24 스펙). 왼쪽 'API 5xx'(앱 계층)가 0인데 여기만 뜨면 배포 순단 502·업스트림 다운 — 요청이 was까지 못 간 실패다. 평시 0건이 정상이라 임계 1.",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 5,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "links": [
+        {
+          "title": "인프라 대시보드로",
+          "url": "/d/hypenow-infra"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "인프라 대시보드로",
+              "url": "/d/hypenow-infra"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "instant",
+          "legendFormat": "1h 엣지 5xx",
+          "expr": "sum(count_over_time({service=\"caddy-access\", level=\"ERROR\"}[1h])) or vector(0)"
+        }
+      ]
+    },
+    {
       "id": 2,
       "type": "stat",
       "title": "ERROR 급증",
       "description": "최근 1시간 전 서비스 ERROR 로그 건수. 임계 30은 느슨한 초기값이며 배치 후 1주 실측으로 보정한다(설계 §6). LogQL은 매칭 0건이면 빈 벡터를 주므로 `or vector(0)`로 '0건'과 '로키 죽음'을 갈랐다. 클릭 → 에러.",
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 6,
+        "w": 5,
+        "x": 9,
         "y": 1
       },
       "datasource": {
@@ -233,8 +322,8 @@
       "description": "최근 24시간 Hiker 402(잔액 소진). 1건이라도 뜨면 사람이 충전해야 한다 — 08-10에 이 상태로 브랜드 스윕 4건이 collecting에 고착했다. 평시 0건이 정상이라 `or vector(0)`로 0을 명시한다(없으면 빈 벡터 → 상시 '데이터 없음'). 클릭 → 에러.",
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 12,
+        "w": 5,
+        "x": 14,
         "y": 1
       },
       "datasource": {
@@ -322,8 +411,8 @@
       "description": "최근 24시간 401(IP 차단 신호). 07-24에 similar 잡 대량 유입 → 401 전면 실패 전례. 임계 50은 느슨한 초기값이며 실측 보정 대상(설계 §6). 타일 3과 같은 이유로 `or vector(0)`. 클릭 → 에러.",
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 18,
+        "w": 5,
+        "x": 19,
         "y": 1
       },
       "datasource": {

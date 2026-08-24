@@ -44,13 +44,15 @@ class MonitoringBrandCommandClientTest {
 				.andExpect(jsonPath("$.username").value("brand_official"))
 				.andExpect(jsonPath("$.brandName").value("브랜드코퍼레이션"))
 				.andExpect(jsonPath("$.collectionMonths").value(3))
+				.andExpect(jsonPath("$.accountType").value("competitor"))
 				.andRespond(withStatus(HttpStatus.CREATED)
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("""
 								{ "brandId": 42, "username": "brand_official", "followers": 12345, "status": "ACTIVE" }
 								"""));
 
-		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", "브랜드코퍼레이션", 3);
+		MonitoringCommandClient.BrandRegisterResult result =
+				client.registerBrand("brand_official", "브랜드코퍼레이션", 3, "competitor");
 
 		assertThat(result.brandId()).isEqualTo(42L);
 		assertThat(result.username()).isEqualTo("brand_official");
@@ -68,7 +70,7 @@ class MonitoringBrandCommandClientTest {
 						{ "brandId": 42, "username": "brand_official", "followers": null, "status": "ACTIVE" }
 						""", MediaType.APPLICATION_JSON));
 
-		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", null, 12);
+		MonitoringCommandClient.BrandRegisterResult result = client.registerBrand("brand_official", null, 12, null);
 
 		assertThat(result.brandId()).isEqualTo(42L);
 		assertThat(result.followers()).isNull();
@@ -81,7 +83,7 @@ class MonitoringBrandCommandClientTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.body("{ \"code\": \"PRIVATE_ACCOUNT\", \"message\": \"비공개 계정\" }"));
 
-		assertThatThrownBy(() -> client.registerBrand("private_brand", null, 12))
+		assertThatThrownBy(() -> client.registerBrand("private_brand", null, 12, null))
 				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
 					assertThat(e.code()).isEqualTo("PRIVATE_ACCOUNT");
 					assertThat(e.httpStatus()).isEqualTo(422);
@@ -93,7 +95,7 @@ class MonitoringBrandCommandClientTest {
 		server.expect(requestTo(BASE + "/api/brands"))
 				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
 
-		assertThatThrownBy(() -> client.registerBrand("brand_official", null, 12))
+		assertThatThrownBy(() -> client.registerBrand("brand_official", null, 12, null))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
 
@@ -135,6 +137,28 @@ class MonitoringBrandCommandClientTest {
 				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
 
 		assertThatThrownBy(() -> client.deregisterBrand("brand_official"))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
+	// ---------- own-link push(2026-08-19 경쟁사 판정 제거 설계 §2) ----------
+
+	@Test
+	void own_link_push는_절대값을_그대로_전달한다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/own-link"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(jsonPath("$.hasOwnLink").value(false))
+				.andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+		assertThatCode(() -> client.pushOwnLink("brand_official", false)).doesNotThrowAnyException();
+		server.verify();
+	}
+
+	@Test
+	void own_link_push_실패는_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/own-link"))
+				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
+
+		assertThatThrownBy(() -> client.pushOwnLink("brand_official", true))
 				.isInstanceOf(MonitoringUnavailableException.class);
 	}
 

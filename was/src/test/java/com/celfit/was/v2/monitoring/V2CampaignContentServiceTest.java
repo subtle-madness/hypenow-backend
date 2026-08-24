@@ -337,7 +337,8 @@ class V2CampaignContentServiceTest {
 				service.add(USER_ID, CAMPAIGN_ID, List.of("ABC"), 30).body().results().get(0);
 
 		assertThat(result.result()).isEqualTo("failed");
-		then(brandPostAssembler).should(never()).assembleBrandPosts(anyLong(), any(), anyBoolean(), any(), anyBoolean());
+		then(brandPostAssembler).should(never())
+				.assembleBrandPosts(anyLong(), any(), anyBoolean(), any(), anyBoolean(), any());
 	}
 
 	@Test
@@ -546,11 +547,17 @@ class V2CampaignContentServiceTest {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(links));
 	}
 
-	/** 브랜드 1개의 태그 목록 — 계정 행 조회까지 함께 물린다. */
+	/**
+	 * 브랜드 1개의 태그 목록 — 계정 행 조회까지 함께 물린다. viewerAccountType은 이 테스트 파일이
+	 * 쓰는 두 브랜드 상수({@code BRAND_ID}=own, {@code RIVAL_BRAND_ID}=competitor)로 고정 유도한다 —
+	 * 모든 호출부가 실제로 그 짝({@link #givenLinks}의 link accountType)과 일치한다.
+	 */
 	private void givenTaggedPosts(long brandId, BrandPostResponse... posts) {
 		BrandAccountRow account = account(brandId);
 		given(brandReadRepository.findAccount(brandId)).willReturn(Optional.of(account));
-		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL, false))
+		String viewerAccountType = brandId == RIVAL_BRAND_ID ? "competitor" : "own";
+		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, true, BrandPostScope.ALL, false,
+				viewerAccountType))
 				.willReturn(List.of(posts));
 	}
 

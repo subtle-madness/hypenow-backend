@@ -57,7 +57,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		verify(repository, never()).findComments(anyCollection(), anyInt());
 		assertThat(posts).singleElement().satisfies(post -> {
@@ -87,7 +87,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).extracting(BrandPostResponse::shortcode).containsExactly("ABC");
 	}
@@ -107,7 +107,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.shortcode()).isEqualTo("XYZ");
@@ -135,7 +135,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).extracting(BrandPostResponse::shortcode).containsExactlyInAnyOrder("ABC", "GHI");
 		assertThat(posts).filteredOn(p -> p.shortcode().equals("GHI")).singleElement()
@@ -156,7 +156,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
-		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		verify(directRepository, never()).shortCodesByUser(anyLong());
 	}
@@ -179,11 +179,11 @@ class BrandPostAssemblerTest {
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
 
-		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY, false);
+		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY, false, BrandAccountType.OWN);
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
 
 		clearInvocations(repository);
-		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(false));
 	}
 
@@ -199,7 +199,7 @@ class BrandPostAssemblerTest {
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
 
-		assembler.assembleForBrand(7L, account);
+		assembler.assembleForBrand(7L, account, BrandAccountType.OWN);
 
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
 	}
@@ -361,14 +361,15 @@ class BrandPostAssemblerTest {
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 						7L, rowCrawledLater, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false);
+				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false, BrandAccountType.OWN);
 		var accountWins = BrandPostAssembler.brandPost(100L,
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 						7L, rowCrawledEarlier, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null),
-				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false);
+				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false, BrandAccountType.OWN);
 		var rowNull = BrandPostAssembler.brandPost(100L,
-				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false);
+				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false,
+				BrandAccountType.OWN);
 
 		assertThat(rowWins.updatedAt()).isEqualTo(KstTimestamps.toKstIso(rowCrawledLater));
 		assertThat(accountWins.updatedAt()).isEqualTo(KstTimestamps.toKstIso(accountSwept));
@@ -544,13 +545,37 @@ class BrandPostAssemblerTest {
 		// (겹침_행의_source는_등록자_관점으로_갈린다)가 고정한다. 여기는 광고 판정 필드가 source와
 		// 무관하게 채워짐을 검증한다.
 		var post = BrandPostAssembler.brandPost(100L, overlapRow, adMeta, null, List.of(), List.of(), SWEPT_AT,
-				List.of(), true, Set.of("glowdeep_92"), true);
+				List.of(), true, Set.of("glowdeep_92"), true, BrandAccountType.OWN);
 
 		assertThat(post.source()).isEqualTo("direct");
 		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
 		assertThat(post.adEvidence()).singleElement()
 				.satisfies(e -> assertThat(e.phrase()).isEqualTo("#광고"));
 		assertThat(post.seededAuthor()).isTrue();
+	}
+
+	/**
+	 * 경쟁사 조회자 노출 제거(2026-08-19 경쟁사 판정 제거 설계 §4) — exposeAdDisclosure 토글이 켜져
+	 * 있고 meta도 있어도, 조회 유저의 이 브랜드 연결이 competitor면 광고 표기 4필드가 전부 비노출된다.
+	 * seededAuthor는 광고 판정과 무관한 필드라 영향받지 않는다(연결 accountType이 아니라 캠페인 연결
+	 * 여부로 결정 — 클래스 주석 참조).
+	 */
+	@Test
+	void 경쟁사_조회자에게는_광고_필드가_비노출된다() {
+		var adMeta = new BrandReadRepository.BrandPostMetaRow("XYZ", "glowdeep_92", "FEED",
+				LocalDate.of(2026, 8, 6), "오늘 소개 #광고", null, null, null, null, null,
+				"DISCLOSED", "[]", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
+
+		var post = BrandPostAssembler.brandPost(100L, taggedRow("XYZ"), adMeta, null, List.of(), List.of(), SWEPT_AT,
+				List.of(), true, Set.of("glowdeep_92"), false, BrandAccountType.COMPETITOR);
+
+		assertThat(post.adDisclosure()).isNull();
+		assertThat(post.adViolations()).isEmpty();
+		assertThat(post.adEvidence()).isEmpty();
+		// 같은 브랜드를 own으로 보는 유저는 그대로 노출된다 — 비노출은 연결 단위 판정이지 브랜드 단위가 아니다.
+		var ownerView = BrandPostAssembler.brandPost(100L, taggedRow("XYZ"), adMeta, null, List.of(), List.of(),
+				SWEPT_AT, List.of(), true, Set.of("glowdeep_92"), false, BrandAccountType.OWN);
+		assertThat(ownerView.adDisclosure()).isEqualTo("DISCLOSED");
 	}
 
 	// ---------- 정렬 ----------
@@ -596,7 +621,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, true);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
@@ -627,7 +652,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, true);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
 	}
@@ -662,7 +687,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, true);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
 	}
@@ -693,7 +718,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, true);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isTrue());
 	}
@@ -717,7 +742,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, true);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> assertThat(post.seededAuthor()).isFalse());
 	}
@@ -734,7 +759,7 @@ class BrandPostAssemblerTest {
 				"DISCLOSED", "{broken", "[{\"phrase\":\"#광고\",\"category\":\"CLEAR\",\"offset\":5}]");
 
 		var post = BrandPostAssembler.brandPost(100L, taggedRow("ABC"), meta, null, List.of(), List.of(), SWEPT_AT,
-				List.of(), true, Set.of(), false);
+				List.of(), true, Set.of(), false, BrandAccountType.OWN);
 
 		assertThat(post.adDisclosure()).isEqualTo("DISCLOSED");
 		assertThat(post.adViolations()).isEmpty();
@@ -762,7 +787,7 @@ class BrandPostAssemblerTest {
 		// findCampaignLinkedShortCodes)를 호출조차 하지 않는다(드라이런 중 불필요한 조회 방지).
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.adDisclosure()).isNull();
@@ -796,7 +821,8 @@ class BrandPostAssemblerTest {
 		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
 				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
 				mock(MonitoringItemRepository.class), false);
-		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, true);
+		var posts = assembler.assembleBrandPosts(7L, account, false, BrandPostAssembler.BrandPostScope.ALL, true,
+				BrandAccountType.OWN);
 
 		assertThat(posts).extracting(BrandPostResponse::shortcode)
 				.containsExactly("NEW", "EDGE", "OLD_DIRECT");
@@ -815,10 +841,10 @@ class BrandPostAssemblerTest {
 
 		// 클램프 off(목록·캠페인 판정 소비자) — capped 계정이어도 전량.
 		var uncapped = assembler.assembleBrandPosts(7L, cappedAccountRow("2026-05-02T03:00:00Z"),
-				false, BrandPostAssembler.BrandPostScope.ALL, false);
+				false, BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 		// 클램프 on이지만 coveredUntil null(완주 계정) — 자를 것이 없다.
 		var completed = assembler.assembleBrandPosts(7L, accountRow(), false,
-				BrandPostAssembler.BrandPostScope.ALL, true);
+				BrandPostAssembler.BrandPostScope.ALL, true, BrandAccountType.OWN);
 
 		assertThat(uncapped).hasSize(2);
 		assertThat(completed).hasSize(2);
@@ -851,8 +877,11 @@ class BrandPostAssemblerTest {
 			List<BrandReadRepository.BrandSnapshotRow> snapshotRows,
 			List<BrandReadRepository.BrandCommentRow> commentRows, List<String> campaignIds,
 			boolean registeredByUser) {
+		// viewerAccountType="own" 고정 — 이 축약을 쓰는 테스트는 경쟁사 노출 게이트(2026-08-19)와
+		// 무관한 필드(source·트래킹 시각 등)만 본다. 경쟁사 게이트 자체는 BrandPostAssembler.brandPost를
+		// 직접 호출하는 전용 테스트가 검증한다(아래 광고_판정_필드 절 참조).
 		return BrandPostAssembler.brandPost(100L, post, meta, author, snapshotRows, commentRows, SWEPT_AT,
-				campaignIds, false, Set.of(), registeredByUser);
+				campaignIds, false, Set.of(), registeredByUser, BrandAccountType.OWN);
 	}
 
 	private static BrandReadRepository.BrandAccountRow accountRow() {

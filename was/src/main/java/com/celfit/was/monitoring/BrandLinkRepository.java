@@ -162,4 +162,21 @@ public class BrandLinkRepository {
 				.query(Integer.class)
 				.single();
 	}
+
+	/**
+	 * 브랜드에 활성 own 연결이 하나라도 있는지(2026-08-19 경쟁사 판정 제거 설계 §3) — monitoring
+	 * has_own_link push의 재계산 정본 쿼리. own 연결이 이 was 원장(app.brand_monitorings)의 정본이라
+	 * (브랜드 풀은 유저 간 공유), 타입 변경·부분 해지 후 이 값을 다시 읽어 monitoring에 민다.
+	 */
+	public boolean existsActiveOwnLink(long brandId) {
+		return Boolean.TRUE.equals(jdbcClient.sql("""
+				SELECT EXISTS (
+				  SELECT 1 FROM app.brand_monitorings
+				  WHERE brand_id = :brandId AND deleted_at IS NULL AND account_type = 'own'
+				)
+				""")
+				.param("brandId", brandId)
+				.query(Boolean.class)
+				.single());
+	}
 }
