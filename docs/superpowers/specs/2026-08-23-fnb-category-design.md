@@ -70,7 +70,7 @@ crawler Flyway 마이그레이션(UTC 채번) 1건, 컬럼 추가만(expand — 
 
 ## 4. 수집·시드 게이트 — 토글, 기본 off
 
-- `app_setting` 키 `crawler.fnb.pipeline-enabled`(기본 `false`) — crawler 마이그레이션으로 시드
+- `app_setting` 키 `fnb.pipeline-enabled`(기본 `false`) — crawler 마이그레이션으로 시드
   (`ON CONFLICT DO NOTHING`, V16 패턴).
 - off(기본): collect·reels·similar 선정 쿼리 전부 현행 그대로(뷰티만). F&B는 판정 명단만 쌓인다.
 - on: `findCollectTargets`/`findReelsTargets`/SIMILAR 시드 선정에 `OR (fnb ∧ ¬fnb_company)`

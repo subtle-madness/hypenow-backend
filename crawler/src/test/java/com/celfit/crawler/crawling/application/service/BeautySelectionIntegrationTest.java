@@ -1,6 +1,7 @@
 package com.celfit.crawler.crawling.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.crawler.IntegrationTest;
 import com.celfit.crawler.crawling.application.port.out.CrawlRunRepository;
@@ -248,6 +249,19 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         assertThat(found.getFnbBasis()).isEqualTo("CAPTION");
         assertThat(found.getFnbJudgedAt()).isEqualTo(Instant.parse("2026-08-24T00:00:00Z"));
         assertThat(found.getFnbCaptionCount()).isEqualTo((short) 5);
+    }
+
+    @Test
+    void fnb_분류_밖의_값은_DB가_거부한다() {
+        // beauty 축과 같은 CHECK 제약(V18·V22 관용구) — enum 밖 문자열이 조용히 적재되지 않는다.
+        Influencer inf = influencers.save(new Influencer(PREFIX + "fnb-bad-class"));
+
+        assertThatThrownBy(() -> jdbc.update(
+                "update influencer set fnb_class = 'RESTAURANT' where id = ?", inf.getId()))
+                .hasMessageContaining("influencer_fnb_class_check");
+        assertThatThrownBy(() -> jdbc.update(
+                "update influencer set fnb_basis = 'VIBES' where id = ?", inf.getId()))
+                .hasMessageContaining("influencer_fnb_basis_check");
     }
 
 }
