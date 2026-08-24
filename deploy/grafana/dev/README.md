@@ -89,7 +89,7 @@ sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed-re
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | $C -d monitoring
 ```
 
-브랜드 폴더 2장의 빨간불도 같이 뒤집는다 — **[브랜드] 수집 현황**: 오늘 신규 태그 게시물 0 ·
+브랜드 폴더 2장의 빨간불도 같이 뒤집는다 — **[브랜드] 운영**(적재 결과 row): 오늘 신규 태그 게시물 0 ·
 백필 미완 브랜드 4 · enrich 잔여 600(빨강 임계 500 초과), **[브랜드] 광고 표기**: 오늘 판정 0건
 (판정 잡 정지 양상).
 

@@ -58,7 +58,7 @@ UPDATE target
    SET fetch_failing = true, fail_reason = 'HIKER_401'
  WHERE id IN (SELECT id FROM target WHERE status = 'TRACKING' ORDER BY id LIMIT 6);
 
--- [브랜드] 수집 현황 빨강 — 오늘 신규 태그 게시물 0(스윕 불발 양상) + 백필 미완 브랜드 4
+-- [브랜드] 운영 '적재 결과' row 빨강 — 오늘 신규 태그 게시물 0(스윕 불발 양상) + 백필 미완 브랜드 4
 --                          + enrich 잔여 600(빨강 임계 500 초과)
 DELETE FROM brand_tagged_post
  WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date;
