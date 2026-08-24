@@ -139,6 +139,20 @@ class AdDisclosurePatternsTest {
 	}
 
 	@Test
+	void 상품제공_해시태그는_매칭된다() {
+		// #제품제공(08-19 핫픽스 #514)과 동일 구조 — 프롬프트 CLEAR 예시와 사전의 비대칭 정합.
+		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch("#상품제공 후기 남겨요");
+		assertThat(m).isNotNull();
+		assertThat(m.phrase()).isEqualTo("#상품제공");
+	}
+
+	@Test
+	void 상품제공_해시태그도_토큰_경계로_접두_매칭을_차단한다() {
+		// "#상품제공이벤트"(증정 공지)는 "#상품제공"으로 오탐하지 않는다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("#상품제공이벤트 참여하세요")).isNull();
+	}
+
+	@Test
 	void 텍스트_단독_제품제공은_사전에_없다() {
 		// "제품제공 이벤트"(증정 공지)류 오탐 여지 — 수령형(받아/받았/받은/받고)이 아니면 LLM(Tier2) 몫.
 		assertThat(AdDisclosurePatterns.findFirstMatch("팔로워 대상 제품제공 이벤트를 엽니다")).isNull();

@@ -4,7 +4,9 @@ import com.celfit.common.llm.VertexHttpTransport;
 import com.celfit.common.llm.VertexTokenProvider;
 import com.celfit.monitoring.llm.GeminiHttp;
 import com.celfit.monitoring.llm.GeminiHttpTransport;
+import com.celfit.monitoring.llm.TimedGeminiHttp;
 import com.celfit.monitoring.llm.VertexGeminiHttp;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,7 +44,15 @@ public class LlmTransportConfig {
 			@Value("${monitoring.llm.vertex-project:}") String vertexProject,
 			@Value("${monitoring.llm.vertex-location:global}") String vertexLocation,
 			@Value("${monitoring.gemini.api-key:}") String apiKey,
-			@Value("${monitoring.gemini.base-url:https://generativelanguage.googleapis.com}") String baseUrl) {
+			@Value("${monitoring.gemini.base-url:https://generativelanguage.googleapis.com}") String baseUrl,
+			MeterRegistry meterRegistry) {
+		// 어느 전송이든 외부 콜 타이머로 감싼다(2026-08-23 계층별 p95 뺄셈 설계 — TimedGeminiHttp 참조)
+		return new TimedGeminiHttp(
+				buildTransport(vertexProject, vertexLocation, apiKey, baseUrl), meterRegistry);
+	}
+
+	private GeminiHttp buildTransport(String vertexProject, String vertexLocation,
+			String apiKey, String baseUrl) {
 		if (useVertex(vertexProject, VertexTokenProvider.credentialsPresent())) {
 			VertexHttpTransport transport = new VertexHttpTransport(
 					VertexTokenProvider.fromEnv(), VertexHttpTransport.DEFAULT_BASE_URL, 15_000);

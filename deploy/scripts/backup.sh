@@ -29,10 +29,18 @@
 #  (sar 실측 user 58~62%) CPU 85% 알람 문턱 직하에서 매일 돌던 것을 해소. 압축률 동급,
 #  압축 CPU 수 배 절감. 전환기엔 구 .sql.gz와 신 .sql.zst가 롤링창 동안 공존하므로
 #  로컬 롤링 글롭은 확장자 불문(.sql.*)으로 두 세대를 한 세트로 회전시킨다.)
+# (08-20: B2 업로드 대역 제한 도입 — 업로드가 실효 ~17MiB/s(08-19 실측: 11.4GiB/11.4분)로
+#  디스크를 읽어 2 vCPU 서버 iowait가 60~79%까지 올라 외부 health 프로브가 2~3분 실패
+#  (08-20 04:41 KST hypenow-api-unreachable 알람). ionice는 대안이 못 된다 — 서버 sda의
+#  IO 스케줄러가 `none`이라 IO 우선순위가 무시된다(실측 확인). rclone --bwlimit이 읽기
+#  속도 자체를 깎는 유일한 지렛대. 같은 사고의 나머지 절반은 백업 크론을 야간 분석
+#  파이프라인(19:25 refresh→19:30 미러→20:00 분석) 밖 15:00 UTC로 옮겨 해소 — setup-server.sh 참조.)
 set -euo pipefail
 
 B2_CRAWLER_KEEP=3     # B2에 유지할 crawler 덤프 개수 — 복원 창 3일, 덤프가 11GiB급이라 개수가 곧 용량(08-04 5→3)
 LOCAL_CRAWLER_KEEP=2  # B2 실패 시 서버에 남길 crawler 덤프 개수 — 로컬 pull 사본 전제(08-04 축소)
+B2_BWLIMIT=10M        # rclone 업로드 대역 상한 — 무제한 시 실효 17MiB/s가 iowait를 포화시킴(08-20 알람).
+                      # 10M이면 crawler 11GiB급 업로드가 ~20분 — 크론 슬롯(15:00, 다음 배치는 16:00 크롤)에 여유
 
 BACKUP_DIR="$HOME/backups"
 DEPLOY_DIR="$HOME/deploy"
@@ -79,8 +87,8 @@ fi
 # analysis·crawler 둘 다 성공해야 offsite_ok=true — 아래 crawler 로컬 보관 분기의 기준이 된다.
 offsite_ok=false
 if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q '^b2:'; then
-  if rclone copy "$BACKUP_DIR/analysis-$STAMP.sql.zst" "$B2/analysis/" \
-     && rclone copy "$BACKUP_DIR/crawler-$STAMP.sql.zst" "$B2/crawler/"; then
+  if rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/analysis-$STAMP.sql.zst" "$B2/analysis/" \
+     && rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/crawler-$STAMP.sql.zst" "$B2/crawler/"; then
     offsite_ok=true
     # ⚠ 이 아래 뒷정리(기간 롤링·개수 트리밍·monitoring 업로드)는 **전부 비치명이어야 한다**.
     # 여기는 if 본문이라 set -e가 살아 있어서 한 줄이라도 실패하면 스크립트가 즉사하고,
@@ -99,7 +107,7 @@ if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q
     # 덤프가 작아 analysis와 같은 7일 기간 롤링. analysis·crawler 업로드가 이미 성공한
     # 뒤라 캡 여유가 있다고 보고 시도 — monitoring 실패가 위 offsite_ok를 되돌리지 않는다.
     if [ -f "$BACKUP_DIR/monitoring-$STAMP.sql.zst" ]; then
-      if rclone copy "$BACKUP_DIR/monitoring-$STAMP.sql.zst" "$B2/monitoring/"; then
+      if rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/monitoring-$STAMP.sql.zst" "$B2/monitoring/"; then
         rclone delete --min-age 7d "$B2/monitoring/" \
           || echo "경고: B2 monitoring 기간 롤링 실패 — 다음 실행에서 재시도" >&2
       else

@@ -24,9 +24,15 @@ if ! swapon --show --noheadings | grep -q '^/swapfile'; then
 fi
 grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
 
-# 4) 백업 크론 (서버 UTC 19:10 = KST 04:10, 스크립트 경로는 ~/deploy 기준)
+# 4) 백업 크론 (서버 UTC 15:00 = KST 00:00, 스크립트 경로는 ~/deploy 기준)
+#    시각 근거(08-20): 배치가 전혀 없는 02:40~16:00 UTC 공백 구간의 끝자락 + KST 자정(API 한산).
+#    구 19:10은 야간 배치 열차(16~19시 크롤 → 19:25 스냅샷 refresh → 19:30 미러 → 20:00 분석)
+#    한복판이라 덤프·업로드 iowait(60~79%)가 배치 부하와 중첩돼 외부 health 프로브가 실패했다
+#    (08-20 04:41 KST api-unreachable 알람). 백업은 파이프라인 결합이 없는 유일한 잡이라 이것만
+#    옮긴다 — refresh를 옮기면 미러와의 "직전" 결합이 깨져 분석 크론 전체가 연쇄 조정된다.
+#    백업 소요 ~45분(덤프 23분 + bwlimit 10M 업로드 20분) — 16:00 크롤 시작 전 완료 여유 확인 후 채번.
 mkdir -p "$HOME/backups"
 ( crontab -l 2>/dev/null | grep -v 'scripts/backup.sh' || true ;
-  echo "10 19 * * * $HOME/deploy/scripts/backup.sh >> $HOME/backups/backup.log 2>&1" ) | crontab -
+  echo "0 15 * * * $HOME/deploy/scripts/backup.sh >> $HOME/backups/backup.log 2>&1" ) | crontab -
 
 echo "셋업 완료 — 재로그인(docker 그룹) 후 deploy/.env 채우고 'docker compose up -d'"
