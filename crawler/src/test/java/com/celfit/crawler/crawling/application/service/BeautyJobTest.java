@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,6 +18,7 @@ import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository;
 import com.celfit.crawler.crawling.application.port.out.RawProfileRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.crawling.domain.JobName;
@@ -144,6 +146,79 @@ class BeautyJobTest {
 
         assertThat(a.getBeauty()).isTrue();
         assertThat(a.getBeautyCompany()).isTrue();
+    }
+
+    @Test
+    void 양축_판정은_뷰티와_FnB에_모두_적용되고_저장은_계정당_한_번이다() {
+        // 2축 판정(스펙 2026-08-23 §2) — 한 응답으로 두 축을 각각 적용한다.
+        Influencer a = qualified(1L, "a");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("biography", "bio");
+        payload.put("latestPosts", List.of(Map.of("caption", "쿠션 발색"), Map.of("caption", "오늘의 레시피")));
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L)).thenReturn(Optional.of(
+                new RawProfile(1L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict(
+                "a", BeautyClass.INFLUENCER, "뷰티 리뷰", "CAPTION",
+                CategoryClass.INFLUENCER, "레시피 다수", "CAPTION")));
+
+        var s = job.run(TriggerType.MANUAL, false);
+
+        // 뷰티 축 — 기존 동작 그대로
+        assertThat(a.getBeautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(a.getBeauty()).isTrue();
+        assertThat(a.getBeautyBasis()).isEqualTo("CAPTION");
+        assertThat(a.getBeautyJudgedAt()).isEqualTo(NOW);
+        assertThat(a.getBeautyCaptionCount()).isEqualTo((short) 2);
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+        // F&B 축 — classifyFnb가 파생 boolean까지 fnb_class와 일치시킨다
+        assertThat(a.getFnbClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(a.getFnb()).isTrue();
+        assertThat(a.getFnbCompany()).isFalse();
+        assertThat(a.getFnbSource()).isEqualTo(Influencer.BEAUTY_SOURCE_CLAUDE);
+        assertThat(a.getFnbReason()).isEqualTo("레시피 다수");
+        assertThat(a.getFnbBasis()).isEqualTo("CAPTION");
+        assertThat(a.getFnbJudgedAt()).isEqualTo(NOW);
+        assertThat(a.getFnbCaptionCount()).isEqualTo((short) 2);
+        // 두 축을 적용해도 save는 계정당 1회 — 축별 중복 저장이 아니다
+        verify(influencers, times(1)).save(a);
+    }
+
+    @Test
+    void 뷰티축이_무응답이면_뷰티_필드는_건드리지_않고_FnB만_적용한다() {
+        // 모델이 beauty 축만 무효값·누락으로 낸 경우 — 그 축은 미판정으로 남아 다음 실행에 재시도되고,
+        // 유효한 fnb 축은 버리지 않는다(파서가 축별 null로 넘긴다).
+        Influencer a = qualified(1L, "cafe_acc");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "카페", "성수동 카페")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict(
+                "cafe_acc", null, null, null,
+                CategoryClass.SERVICE, "카페 업장 공식 계정", "BIO")));
+
+        var s = job.run(TriggerType.MANUAL, false);
+
+        // 뷰티 축은 미판정 유지 — 어떤 필드도 쓰이지 않는다
+        assertThat(a.getBeautyClass()).isNull();
+        assertThat(a.getBeauty()).isNull();
+        assertThat(a.getBeautySource()).isNull();
+        assertThat(a.getBeautyJudgedAt()).isNull();
+        assertThat(a.getBeautyCaptionCount()).isNull();
+        assertThat(s.judgedBeauty() + s.judgedService() + s.judgedForeign() + s.judgedNotBeauty()).isZero();
+        // F&B 축만 적용 — SERVICE는 파생 fnb=false(타깃 아님)
+        assertThat(a.getFnbClass()).isEqualTo(CategoryClass.SERVICE);
+        assertThat(a.getFnb()).isFalse();
+        assertThat(a.getFnbCompany()).isFalse();
+        assertThat(a.getFnbReason()).isEqualTo("카페 업장 공식 계정");
+        assertThat(a.getFnbBasis()).isEqualTo("BIO");
+        assertThat(a.getFnbJudgedAt()).isEqualTo(NOW);
+        assertThat(a.getFnbCaptionCount()).isEqualTo((short) 0);
+        verify(influencers, times(1)).save(a);
     }
 
     @Test
