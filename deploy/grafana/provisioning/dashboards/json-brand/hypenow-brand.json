@@ -1,5 +1,5 @@
 {
-  "title": "[브랜드] 운영 건강",
+  "title": "[브랜드] 운영",
   "uid": "hypenow-brand",
   "schemaVersion": 39,
   "editable": false,
@@ -34,7 +34,6 @@
   ],
   "panels": [
     {
-      "id": 100,
       "type": "row",
       "title": "야간 일일 수집 (매일 KST 02:00)",
       "collapsed": false,
@@ -44,7 +43,8 @@
         "x": 0,
         "y": 0
       },
-      "panels": []
+      "panels": [],
+      "id": 100
     },
     {
       "id": 1,
@@ -248,10 +248,10 @@
       ]
     },
     {
-      "id": 120,
+      "id": 4,
       "type": "stat",
       "title": "오늘 게시물 갱신",
-      "description": "야간 일일 수집이 오늘 갱신해야 하는(했던) 태그 게시물 수(대상)와, 기한이 지났는데 아직 안 돈 수(미처리). 대상 기준은 게시물 나이 티어 정책(BrandCrawlPolicy) — 게시 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다. 미처리는 일일 수집(KST 02:00) 완료 후 0이 정상이고, 0이 아니면 수집이 실패했거나 중간에 끊긴 것. **KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.** 여기서 '갱신'은 게시물 지표(좋아요·댓글 수) 재수집이다 — 댓글 본문·게시자 보강의 잔여는 수집 현황 'enrich 잔여' 타일이 본다.",
+      "description": "야간 일일 수집이 오늘 갱신해야 하는(했던) 태그 게시물 수(대상)와, 기한이 지났는데 아직 안 돈 수(미처리). 대상 기준은 게시물 나이 티어 정책(BrandCrawlPolicy) — 게시 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다. 미처리는 일일 수집(KST 02:00) 완료 후 0이 정상이고, 0이 아니면 수집이 실패했거나 중간에 끊긴 것. **KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.** 여기서 '갱신'은 게시물 지표(좋아요·댓글 수) 재수집이다 — 댓글 본문·게시자 보강의 잔여는 아래 '적재 결과' row의 'enrich 잔여' 타일이 본다.",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -341,10 +341,10 @@
       ]
     },
     {
-      "id": 122,
+      "id": 5,
       "type": "table",
       "title": "오늘 게시물 갱신 — 티어별",
-      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **스윕은 매일 같은 시각에 돌고 due 판정은 정확히 주기 경과라, 스윕 슬롯이 직전 touch보다 몇 초만 일러도 그날 하루 미처리로 보였다가 다음 날 자동 수습된다(하루 밀림 — 08-23 실측 263건 전부 이 패턴).** 미처리가 이틀 이상 유지되거나 매일 티어에서 나오면 그때가 진짜 이상(수집 실패·중단)이다.",
+      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **일일 수집(KST 02:00) 완료 후 미처리 > 0은 진짜 이상이다** — 스윕 슬롯이 직전 touch보다 몇 분 일러 하루 밀리던 경계 레이스(08-23 실측 262건)는 BrandCrawlPolicy의 주기 여유 12h(08-23~)로 제거됐다. 어느 브랜드가 왜 남았는지는 아래 '미처리 브랜드별' 테이블이 가른다(브랜드 스윕 실패 vs 스윕 성공인데 미커버). KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -427,7 +427,187 @@
       ]
     },
     {
-      "id": 5,
+      "id": 6,
+      "type": "table",
+      "title": "미처리 브랜드별",
+      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상이고, 행이 뜨면 전부 살펴볼 대상이다. **안 돌음** = 오늘 이 브랜드 차례가 끝까지 돌지 않음(brand_account.last_swept_on ≠ 오늘) — 예외로 실패했거나(Hiker 402·타임아웃 등, 로그 WARN '브랜드 일일 수집 실패') 새벽 2~3시 수집 중이라 아직 순서 전. '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다. **돌았으나 미달** = 브랜드 차례는 끝까지 돌았는데(last_swept_on = 오늘) 피드 훑기가 기한 게시물 깊이까지 못 내려가 갱신 도장(last_crawled_at)이 안 찍힘 — 원인은 커서 미전진(WARN '태그 커서 미전진 의심')·안전 상한(ERROR '태그 열거 안전 상한 도달'). 이때도 last_swept_on은 일부러 찍는다: 비워 두면 프론트가 '준비 중'으로 숨기고 다음 날 12개월 전체 재백필(Hiker 콜 폭증)이 돌기 때문. 기존 데이터는 그대로 서빙되고 다음 날 스윕이 같은 깊이를 다시 열어 수습된다 — **이틀 연속이면 이상**. 정책 여유 12h(08-23~) 배포 전에는 스윕 슬롯이 기한보다 몇 분 일찍 지나간 경계 레이스도 '돌았으나 미달'로 잡힌다(배포 후 소멸). due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "미처리 없음 — 전 브랜드 정상",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "브랜드"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "오늘 처리"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "상태"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "안 돌음": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "돌았으나 미달": {
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "마지막 성공"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH posts AS (SELECT t.brand_id, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending AS \"미처리\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '돌았으나 미달' ELSE '안 돌음' END AS \"상태\", b.last_swept_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 수집 실패·미실행 — 새벽 2~3시면 순서 대기일 수 있음' ELSE '피드 훑기가 중간에 끊김 — 다음 날 자동 재시도, 반복되면 로그 확인' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending > 0 ORDER BY a.pending DESC, b.username"
+        }
+      ]
+    },
+    {
+      "id": 7,
       "type": "table",
       "title": "오늘 브랜드별 처리 현황",
       "description": "브랜드 일일 수집은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것. 간격과 함께 브랜드별 수집량도 본다 — 오늘 Hiker 콜(과금 규모), 오늘 신규 게시물(그날 실제 유입), 누적 게시물(자산 규모). 콜만 많고 신규가 0이면 변화 없는 브랜드를 재확인만 한 것이라 정상일 수 있지만, 전 브랜드가 그러면 수집이 헛돌고 있는 것.",
@@ -435,7 +615,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 21
       },
       "datasource": {
         "type": "postgres",
@@ -499,20 +679,344 @@
       ]
     },
     {
-      "id": 110,
       "type": "row",
-      "title": "등록·백필",
+      "title": "적재 결과 (야간 스윕 + 등록 백필)",
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 30
       },
-      "collapsed": false,
-      "panels": []
+      "panels": [],
+      "id": 101
     },
     {
-      "id": 4,
+      "id": 8,
+      "type": "stat",
+      "title": "오늘 신규 태그 게시물",
+      "description": "오늘(KST 달력일) 새로 적재된 브랜드 태그 게시물 수. 0이면 브랜드 일일 수집이 돌지 않은 것 — 02:00 KST 일일 수집 불발이나 Hiker 잔액 소진(08-10 402 고착)을 의심한다. first_seen_at은 UTC 저장이라 KST 달력일로 환산해 비교한다. 이 row는 두 적재 경로(야간 스윕·등록 시 백필)의 합산이다 — brand_tagged_post에 적재 경로 컬럼이 없어 가르지 못한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "0 — 일일 수집 확인",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_tagged_post\nWHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "enrich 잔여 (24h+)",
+      "description": "적재된 지 24시간이 넘도록 enrich(상세 수집)가 붙지 않은 태그 게시물 수. 정상은 0 — 1건이라도 남으면 enrich가 밀리기 시작한 것이고, 500건 이상이면 사실상 정지로 본다. 이 row는 두 적재 경로(야간 스윕·등록 시 백필)의 합산이다 — brand_tagged_post에 적재 경로 컬럼이 없어 가르지 못한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_tagged_post\nWHERE enriched_at IS NULL AND first_seen_at < now() - interval '24 hours'"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "백필 미완 브랜드",
+      "description": "활성 브랜드 중 일일 수집이 한 번도 성공한 적 없는 계정 수(last_swept_on IS NULL). 갓 등록된 브랜드가 잠깐 잡히는 건 정상이지만, 계속 남아 있으면 그 브랜드는 수집이 시작조차 못 한 것이다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_account WHERE last_swept_on IS NULL AND closed_at IS NULL"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "해시태그 감지 7일",
+      "description": "최근 7일 새로 감지된 해시태그 게시물의 판정(verdict) 분포. 규모·품질 지표라 신호등이 아니다 — 색 임계를 달지 않는다. '불확실' 비중이 갑자기 커지면 룰 커버리지나 LLM 판정 품질을 의심한다. 이 row는 두 적재 경로(야간 스윕·등록 시 백필)의 합산이다 — brand_tagged_post에 적재 경로 컬럼이 없어 가르지 못한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) FILTER (WHERE verdict = 'RELEVANT')  AS \"관련\",\n       count(*) FILTER (WHERE verdict = 'UNCERTAIN') AS \"불확실\",\n       count(*) FILTER (WHERE verdict = 'IRRELEVANT') AS \"무관\",\n       count(*) FILTER (WHERE verdict IN ('SELF', 'DIRECT_TAGGED')) AS \"자사·직태그\"\nFROM brand_hashtag_post WHERE first_seen_at > now() - interval '7 days'"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "등록·백필 처리",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "panels": [],
+      "id": 102
+    },
+    {
+      "id": 12,
       "type": "stat",
       "title": "신규 등록 브랜드",
       "description": "brand_account 신규 등록(KST 기준).",
@@ -520,7 +1024,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 24
+        "y": 37
       },
       "datasource": {
         "type": "postgres",
@@ -574,15 +1078,15 @@
       ]
     },
     {
-      "id": 111,
+      "id": 13,
       "type": "stat",
       "title": "등록→백필 완료 중앙값 (30일)",
-      "description": "등록 시점부터 백필 완료까지 걸린 시간의 중앙값(최근 30일 등록분) — 사용자 체감 \"등록하면 언제 다 차나\". 미완·에러 건은 표본에서 빠진다(그건 수집 현황 '백필 미완 브랜드'가 본다). 시간 필터를 타지 않는 상태 스냅샷.",
+      "description": "등록 시점부터 백필 완료까지 걸린 시간의 중앙값(최근 30일 등록분) — 사용자 체감 \"등록하면 언제 다 차나\". 미완·에러 건은 표본에서 빠진다(그건 위 '적재 결과' row의 '백필 미완 브랜드'가 본다). 시간 필터를 타지 않는 상태 스냅샷.",
       "gridPos": {
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 24
+        "y": 37
       },
       "datasource": {
         "type": "postgres",
@@ -636,7 +1140,7 @@
       ]
     },
     {
-      "id": 112,
+      "id": 14,
       "type": "timeseries",
       "title": "수신 처리 p95 (monitoring)",
       "description": "monitoring이 받은 API 요청의 p95 응답시간(uri별). 수신 엔드포인트는 등록(POST /api/brands)·해지(DELETE)·직접 게시물 등록(direct-posts)·해시태그 규칙 관리(hashtag-tags)·공유 resolve·경쟁사 타깃 등록(/api/targets) 등이며, **트래픽이 있는 엔드포인트만 선으로 나타난다**(로컬에서 일부만 보이는 건 그래서다). **등록(POST /api/brands)이 핵심 관심 대상** — 등록 즉시 수집(Hiker 콜 동기 포함)이 이 요청 안에서 돌므로 이 선이 곧 '초기 요청에 얼마나 빠르게 응답했나'의 분포다. 몇 초 걸리는 게 정상이고 was→monitoring 10초 타임아웃 예산이 상한. was 등록 API가 느릴 때 이 패널과 was 쪽 p95를 나란히 보면 어느 구간이 느린지 뺄셈으로 갈린다.",
@@ -644,7 +1148,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 37
       },
       "datasource": {
         "type": "prometheus",
@@ -698,7 +1202,7 @@
       ]
     },
     {
-      "id": 121,
+      "id": 15,
       "type": "timeseries",
       "title": "등록 초기 응답 (브랜드별)",
       "description": "등록 요청 한 건 한 건이 몇 ms 만에 처리됐는지 — monitoring의 '브랜드 등록 완료' 로그(username·durationMs)를 Loki에서 파싱해 브랜드별 점으로 찍는다. 등록 즉시 수집(Hiker 콜 동기 포함)이 이 시간 안에 들어 있고, replay(기존 활성 브랜드 재등록)는 Hiker 콜이 없어 훨씬 짧다. 위 '수신 처리 p95'가 분포라면 이건 개별 기록. **로컬 하니스는 Loki 스텁이라 이 패널이 에러로 보이는 게 정상**(dev README '운영과 다른 점') — 검증은 운영에서.",
@@ -706,7 +1210,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 45
       },
       "datasource": {
         "type": "loki",
@@ -760,15 +1264,15 @@
       ]
     },
     {
-      "id": 113,
+      "id": 16,
       "type": "table",
       "title": "최근 등록 15건 — 총 소요",
-      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 수집 현황 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
+      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 위 '적재 결과' row의 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
       "gridPos": {
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 53
       },
       "datasource": {
         "type": "postgres",
@@ -831,469 +1335,660 @@
       ]
     },
     {
-      "id": 114,
+      "type": "row",
+      "title": "적재 추이·규모 (야간 스윕 + 등록 백필)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      },
+      "panels": [
+        {
+          "id": 17,
+          "type": "timeseries",
+          "title": "태그 게시물 적재 추이 30일",
+          "description": "일별 신규 적재 태그 게시물 수(KST 달력일 경계). 대시보드 시간창과 무관하게 최근 30일 고정. 특정 날짜만 0이거나 급락했으면 그날 일일 수집이 실패한 것이다. 야간 스윕은 하루 수백 건 규모라, 하루 1만 건대 스파이크(08-12·08-19 실측)는 신규 등록 브랜드의 백필(collection_months만큼 소급)이다 — 등록 이력과 같이 읽는다.",
+          "gridPos": {
+            "h": 8,
+            "w": 9,
+            "x": 0,
+            "y": 63
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "timeFrom": "30d",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 1,
+                "fillOpacity": 60,
+                "barAlignment": 0,
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-monitoring-pg"
+              },
+              "format": "time_series",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT date_trunc('day', first_seen_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul' AS time,\n       count(*) AS \"신규 태그 게시물\"\nFROM brand_tagged_post\nWHERE first_seen_at > now() - interval '30 days'\nGROUP BY 1 ORDER BY 1"
+            }
+          ]
+        },
+        {
+          "id": 18,
+          "type": "timeseries",
+          "title": "해시태그 감지 추이 30일",
+          "description": "일별 신규 감지 해시태그 게시물 수(KST 달력일 경계, verdict 무관 전체). 대시보드 시간창과 무관하게 최근 30일 고정. 해시태그 수집량은 브랜드가 등록한 태그 수에 좌우되므로 절대량보다 추세로 읽는다. 등록 직후 해시태그 스윕도 여기에 합산되므로 등록일엔 급등이 정상이다.",
+          "gridPos": {
+            "h": 8,
+            "w": 9,
+            "x": 9,
+            "y": 63
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "timeFrom": "30d",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 1,
+                "fillOpacity": 60,
+                "barAlignment": 0,
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-monitoring-pg"
+              },
+              "format": "time_series",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT date_trunc('day', first_seen_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul' AS time,\n       count(*) AS \"신규 감지 게시물\"\nFROM brand_hashtag_post\nWHERE first_seen_at > now() - interval '30 days'\nGROUP BY 1 ORDER BY 1"
+            }
+          ]
+        },
+        {
+          "id": 19,
+          "type": "stat",
+          "title": "수집 기간 설정 분포",
+          "description": "활성 브랜드의 수집 기간 설정(collection_months) 분포. 백필 부담과 Hiker 콜 총량을 좌우하는 규모 지표라 신호등이 아니다. 긴 기간(12개월) 쪽이 늘면 일일 수집 소요와 과금이 함께 늘어난다.",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 63
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "graphMode": "none",
+            "colorMode": "none",
+            "textMode": "value_and_name",
+            "justifyMode": "center",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-monitoring-pg"
+              },
+              "format": "table",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT count(*) FILTER (WHERE collection_months = 1)  AS \"1개월\",\n       count(*) FILTER (WHERE collection_months = 3)  AS \"3개월\",\n       count(*) FILTER (WHERE collection_months = 6)  AS \"6개월\",\n       count(*) FILTER (WHERE collection_months = 12) AS \"12개월\"\nFROM brand_account WHERE closed_at IS NULL"
+            }
+          ]
+        }
+      ],
+      "id": 103
+    },
+    {
       "type": "row",
       "title": "런타임 (monitoring)",
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 63
       },
-      "collapsed": false,
-      "panels": []
-    },
-    {
-      "id": 115,
-      "type": "timeseries",
-      "title": "힙 사용률",
-      "description": "monitoring JVM 힙 사용률(used/max %) — 파이프라인(일일 수집·백필·등록 수신) 느림의 런타임 원인축. 모듈 간 비교·영역별 상세는 인프라 대시보드에서. 로컬에서는 monitoring을 관리 포트로 띄웠을 때만 그려진다(dev README).",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 50
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "hypenow-prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "decimals": 1,
-          "min": 0,
-          "max": 100,
-          "noValue": "데이터 없음 (모듈 미기동 시 정상)",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "showPoints": "never",
-            "spanNulls": false
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "id": 20,
+          "type": "timeseries",
+          "title": "힙 사용률",
+          "description": "monitoring JVM 힙 사용률(used/max %) — 파이프라인(일일 수집·백필·등록 수신) 느림의 런타임 원인축. 모듈 간 비교·영역별 상세는 인프라 대시보드에서. 로컬에서는 monitoring을 관리 포트로 띄웠을 때만 그려진다(dev README).",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 64
+          },
           "datasource": {
             "type": "prometheus",
             "uid": "hypenow-prometheus"
           },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "힙 사용률",
-          "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\",job=\"monitoring\"}) / sum(jvm_memory_max_bytes{area=\"heap\",job=\"monitoring\"} > 0)"
-        }
-      ]
-    },
-    {
-      "id": 116,
-      "type": "timeseries",
-      "title": "GC pause",
-      "description": "monitoring 초당 GC 정지 시간(s/s) — 힙 사용률과 같이 오르면 GC가 못 비우고 있는 것(OOM 전조). 임계는 실측 후 알람과 함께 정한다.",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 50
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "hypenow-prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 3,
-          "min": 0,
-          "noValue": "데이터 없음 (모듈 미기동 시 정상)",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "showPoints": "never",
-            "spanNulls": false
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "hypenow-prometheus"
-          },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "{{action}} / {{cause}}",
-          "expr": "rate(jvm_gc_pause_seconds_sum{job=\"monitoring\"}[5m])"
-        }
-      ]
-    },
-    {
-      "id": 117,
-      "type": "timeseries",
-      "title": "HikariCP 커넥션",
-      "description": "monitoring의 DB 커넥션 풀 — pending이 0을 벗어나면 커넥션이 말라 일일 수집·등록 처리가 줄을 서는 것. active가 최대치에 붙기만 한 건 여유가 없을 뿐 막힌 게 아니다.",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 50
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "hypenow-prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "min": 0,
-          "noValue": "데이터 없음 (모듈 미기동 시 정상)",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "showPoints": "never",
-            "spanNulls": false
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "hypenow-prometheus"
-          },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "active {{pool}}",
-          "expr": "hikaricp_connections_active{job=\"monitoring\"}"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "hypenow-prometheus"
-          },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "pending {{pool}}",
-          "expr": "hikaricp_connections_pending{job=\"monitoring\"}"
-        }
-      ]
-    },
-    {
-      "id": 122,
-      "type": "timeseries",
-      "title": "외부 API 콜 p95 (hiker·gemini)",
-      "description": "monitoring이 부른 외부 API(Hiker 수집 콜·Gemini 판정 콜)의 p95 소요 — 계층별 p95 뺄셈의 마지막 항. **was 등록 p95 − 수신 처리 p95 − 이 패널 = monitoring 내부 처리분**으로 느림의 책임 구간이 갈린다. 기록 단위는 재시도·백오프를 포함한 **논리 콜 1건**(전송 내부 재시도로 살아난 콜은 ok 하나로 접히고 그 대기 시간까지 지연에 포함) — 재시도가 잦아지면 실패율보다 이 선이 먼저 오른다. 트래픽이 있는 operation만 선으로 나타난다(등록·스윕이 안 도는 시간대엔 비는 게 정상).",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 50
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "hypenow-prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "decimals": 2,
-          "min": 0,
-          "noValue": "데이터 없음 (외부 콜 없을 때 정상)",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "showPoints": "never",
-            "spanNulls": false
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "hypenow-prometheus"
-          },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "{{api}} {{operation}}",
-          "expr": "histogram_quantile(0.95, sum by (le, api, operation) (rate(external_call_seconds_bucket{job=\"monitoring\"}[5m])))"
-        }
-      ]
-    },
-    {
-      "id": 123,
-      "type": "timeseries",
-      "title": "외부 API 콜 실패율",
-      "description": "api별 실패 콜 비율(outcome≠ok, 5분 창) — 외부 API 장애·차단·잔액 소진의 조기 신호. 트래픽이 있는데 실패가 없으면 0%로 그려진다(공백은 무트래픽). 해석 주의: **Hiker는 4xx도 과금**되므로 4xx 급증은 비용 사고(402 잔액 소진·차단)일 수 있고, 반대로 태그·게시물 0건 계정의 404(빈 열거)도 4xx로 집계되는 정상 잡음이 섞인다 — 급증 시 outcome 축(external_call_seconds_count의 outcome 라벨)으로 4xx/5xx/error를 갈라 볼 것. error는 HTTP 교환 없는 실패(IO·타임아웃·키 미설정)와 예상 밖 상태(3xx 등)다. 여기 1건은 재시도가 접힌 **논리 콜 1건**이라 실제 과금 콜 수는 표시의 최대 3배(1+재시도 2)일 수 있다.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 50
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "hypenow-prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "decimals": 1,
-          "min": 0,
-          "noValue": "데이터 없음 (외부 콜 없을 때 정상)",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "max": 100
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "hypenow-prometheus"
-          },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "{{api}}",
-          "expr": "100 * (sum by (api) (rate(external_call_seconds_count{job=\"monitoring\", outcome!=\"ok\"}[5m])) or sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m])) * 0) / sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m]))"
-        }
-      ]
-    },
-    {
-      "id": 101,
-      "type": "row",
-      "title": "사용량",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 58
-      },
-      "panels": []
-    },
-    {
-      "id": 8,
-      "type": "stat",
-      "title": "브랜드 모니터링",
-      "description": "브랜드·경쟁사 모니터링 등록 현황(app.brand_monitorings). 활성 = 해지되지 않은 등록, 이번주 신규 = 최근 7일 생성. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다.",
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 0,
-        "y": 59
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "hypenow-analysis-pg"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 1,
+              "min": 0,
+              "max": 100,
+              "noValue": "데이터 없음 (모듈 미기동 시 정상)",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "spanNulls": false
               }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "graphMode": "none",
-        "colorMode": "none",
-        "textMode": "value_and_name",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "postgres",
-            "uid": "hypenow-analysis-pg"
+            },
+            "overrides": []
           },
-          "format": "table",
-          "rawQuery": true,
-          "editorMode": "code",
-          "rawSql": "SELECT count(*) FILTER (WHERE deleted_at IS NULL) AS \"활성\",\n       count(*) FILTER (WHERE created_at > now() - interval '7 days') AS \"이번주 신규\"\nFROM app.brand_monitorings"
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "hypenow-prometheus"
+              },
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "힙 사용률",
+              "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\",job=\"monitoring\"}) / sum(jvm_memory_max_bytes{area=\"heap\",job=\"monitoring\"} > 0)"
+            }
+          ]
+        },
+        {
+          "id": 21,
+          "type": "timeseries",
+          "title": "GC pause",
+          "description": "monitoring 초당 GC 정지 시간(s/s) — 힙 사용률과 같이 오르면 GC가 못 비우고 있는 것(OOM 전조). 임계는 실측 후 알람과 함께 정한다.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 64
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 3,
+              "min": 0,
+              "noValue": "데이터 없음 (모듈 미기동 시 정상)",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "hypenow-prometheus"
+              },
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "{{action}} / {{cause}}",
+              "expr": "rate(jvm_gc_pause_seconds_sum{job=\"monitoring\"}[5m])"
+            }
+          ]
+        },
+        {
+          "id": 22,
+          "type": "timeseries",
+          "title": "HikariCP 커넥션",
+          "description": "monitoring의 DB 커넥션 풀 — pending이 0을 벗어나면 커넥션이 말라 일일 수집·등록 처리가 줄을 서는 것. active가 최대치에 붙기만 한 건 여유가 없을 뿐 막힌 게 아니다.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 64
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "min": 0,
+              "noValue": "데이터 없음 (모듈 미기동 시 정상)",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "hypenow-prometheus"
+              },
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "active {{pool}}",
+              "expr": "hikaricp_connections_active{job=\"monitoring\"}"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "hypenow-prometheus"
+              },
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "pending {{pool}}",
+              "expr": "hikaricp_connections_pending{job=\"monitoring\"}"
+            }
+          ]
+        },
+        {
+          "id": 23,
+          "type": "timeseries",
+          "title": "외부 API 콜 p95 (hiker·gemini)",
+          "description": "monitoring이 부른 외부 API(Hiker 수집 콜·Gemini 판정 콜)의 p95 소요 — 계층별 p95 뺄셈의 마지막 항. **was 등록 p95 − 수신 처리 p95 − 이 패널 = monitoring 내부 처리분**으로 느림의 책임 구간이 갈린다. 기록 단위는 재시도·백오프를 포함한 **논리 콜 1건**(전송 내부 재시도로 살아난 콜은 ok 하나로 접히고 그 대기 시간까지 지연에 포함) — 재시도가 잦아지면 실패율보다 이 선이 먼저 오른다. 트래픽이 있는 operation만 선으로 나타난다(등록·스윕이 안 도는 시간대엔 비는 게 정상).",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 72
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 2,
+              "min": 0,
+              "noValue": "데이터 없음 (외부 콜 없을 때 정상)",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "hypenow-prometheus"
+              },
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "{{api}} {{operation}}",
+              "expr": "histogram_quantile(0.95, sum by (le, api, operation) (rate(external_call_seconds_bucket{job=\"monitoring\"}[5m])))"
+            }
+          ]
+        },
+        {
+          "id": 24,
+          "type": "timeseries",
+          "title": "외부 API 콜 실패율",
+          "description": "api별 실패 콜 비율(outcome≠ok, 5분 창) — 외부 API 장애·차단·잔액 소진의 조기 신호. 트래픽이 있는데 실패가 없으면 0%로 그려진다(공백은 무트래픽). 해석 주의: **Hiker는 4xx도 과금**되므로 4xx 급증은 비용 사고(402 잔액 소진·차단)일 수 있고, 반대로 태그·게시물 0건 계정의 404(빈 열거)도 4xx로 집계되는 정상 잡음이 섞인다 — 급증 시 outcome 축(external_call_seconds_count의 outcome 라벨)으로 4xx/5xx/error를 갈라 볼 것. error는 HTTP 교환 없는 실패(IO·타임아웃·키 미설정)와 예상 밖 상태(3xx 등)다. 여기 1건은 재시도가 접힌 **논리 콜 1건**이라 실제 과금 콜 수는 표시의 최대 3배(1+재시도 2)일 수 있다.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 72
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 1,
+              "min": 0,
+              "noValue": "데이터 없음 (외부 콜 없을 때 정상)",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "max": 100
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "hypenow-prometheus"
+              },
+              "editorMode": "code",
+              "range": true,
+              "legendFormat": "{{api}}",
+              "expr": "100 * (sum by (api) (rate(external_call_seconds_count{job=\"monitoring\", outcome!=\"ok\"}[5m])) or sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m])) * 0) / sum by (api) (rate(external_call_seconds_count{job=\"monitoring\"}[5m]))"
+            }
+          ]
         }
-      ]
+      ],
+      "id": 104
     },
     {
-      "id": 11,
-      "type": "table",
-      "title": "최근 등록 브랜드 모니터링",
-      "description": "가장 최근 등록된 브랜드 모니터링 15건. 전역 시간 필터를 타지 않는다(항상 최신 15건). 해지가 연달아 찍히면 이탈 신호로 본다.",
+      "type": "row",
+      "title": "사용량 (서비스 등록 규모)",
+      "collapsed": true,
       "gridPos": {
-        "h": 9,
-        "w": 16,
-        "x": 8,
-        "y": 59
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 64
       },
-      "datasource": {
-        "type": "postgres",
-        "uid": "hypenow-analysis-pg"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "데이터 없음",
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm",
-        "footer": {
-          "show": false,
-          "reducer": [
-            "sum"
-          ],
-          "countRows": false,
-          "fields": ""
-        }
-      },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "id": 25,
+          "type": "stat",
+          "title": "브랜드 모니터링",
+          "description": "브랜드·경쟁사 모니터링 등록 현황(app.brand_monitorings). 활성 = 해지되지 않은 등록, 이번주 신규 = 최근 7일 생성. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다.",
+          "gridPos": {
+            "h": 5,
+            "w": 8,
+            "x": 0,
+            "y": 65
+          },
           "datasource": {
             "type": "postgres",
             "uid": "hypenow-analysis-pg"
           },
-          "format": "table",
-          "rawQuery": true,
-          "editorMode": "code",
-          "rawSql": "SELECT created_at AS \"등록 시각\",\n       username AS \"계정\",\n       CASE WHEN deleted_at IS NULL THEN '활성' ELSE '해지' END AS \"상태\"\nFROM app.brand_monitorings\nORDER BY created_at DESC\nLIMIT 15"
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "graphMode": "none",
+            "colorMode": "none",
+            "textMode": "value_and_name",
+            "justifyMode": "center",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-analysis-pg"
+              },
+              "format": "table",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT count(*) FILTER (WHERE deleted_at IS NULL) AS \"활성\",\n       count(*) FILTER (WHERE created_at > now() - interval '7 days') AS \"이번주 신규\"\nFROM app.brand_monitorings"
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "type": "table",
+          "title": "최근 등록 브랜드 모니터링",
+          "description": "가장 최근 등록된 브랜드 모니터링 15건. 전역 시간 필터를 타지 않는다(항상 최신 15건). 해지가 연달아 찍히면 이탈 신호로 본다.",
+          "gridPos": {
+            "h": 9,
+            "w": 16,
+            "x": 8,
+            "y": 65
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "데이터 없음",
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-analysis-pg"
+              },
+              "format": "table",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT created_at AS \"등록 시각\",\n       username AS \"계정\",\n       CASE WHEN deleted_at IS NULL THEN '활성' ELSE '해지' END AS \"상태\"\nFROM app.brand_monitorings\nORDER BY created_at DESC\nLIMIT 15"
+            }
+          ]
         }
-      ]
+      ],
+      "id": 105
     }
   ]
 }

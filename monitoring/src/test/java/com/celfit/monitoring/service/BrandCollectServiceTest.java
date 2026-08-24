@@ -83,10 +83,10 @@ class BrandCollectServiceTest {
 	private boolean commentPage2Fails = false;
 	private int tagCall = 0;
 
-	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null, 12);
+	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null, 12, true);
 	// 완주 이력 있는 브랜드 — 티어 경로(백필 아님). 어제 완주로 두어 오늘 스윕 시나리오를 만든다.
 	private final BrandRow sweptBrand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE,
-			LocalDate.now().minusDays(1), 12);
+			LocalDate.now().minusDays(1), 12, true);
 
 	// ── 스텁 대역(CollectServiceTest NoopCommentRepository 관용구) ────────────
 
@@ -556,7 +556,7 @@ class BrandCollectServiceTest {
 		// 3개월 창 브랜드 — 95일령(minusMonths(3)=89~92일보다 항상 과거)만 실린 1페이지는
 		// "페이지 전체가 컷 이전"으로 1콜 종료, 편입 컷 밖이라 적재도 0건.
 		// 12개월 창 대조군(백필은_365일_전체를_연다)은 같은 배치를 2콜 끝까지 연다.
-		BrandRow narrow = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null, 3);
+		BrandRow narrow = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, null, 3, true);
 		tagPages.add(page("p2", reel("Old95a", OLD_95D, 0, 101, ""), reel("Old95b", OLD_95D, 0, 102, "")));
 		tagPages.add(page(null, reel("Old95c", OLD_95D, 0, 103, "")));
 
@@ -1273,6 +1273,37 @@ class BrandCollectServiceTest {
 
 		assertThat(adJudge.judged).isEmpty();          // adJudge 호출 자체가 없다
 		assertThat(tagged.enriched).contains("AAA");    // 정산은 킬 스위치와 무관하게 그대로 돈다
+	}
+
+	/**
+	 * 경쟁사 판정 스킵(2026-08-19 경쟁사 판정 제거 설계 §3) — brand.hasOwnLink()==false(활성 own
+	 * 연결이 하나도 없는 브랜드)면 킬 스위치와 같은 층위에서 adJudge 호출 자체가 나가지 않는다. 정산·
+	 * 댓글 수집은 무관하게 그대로 돈다(킬 스위치 테스트와 같은 회귀 방지 포인트).
+	 */
+	@Test
+	void 경쟁사_전용_브랜드는_광고_판정_호출_자체가_나가지_않는다() {
+		BrandRow competitorOnlyBrand = new BrandRow(brand.id(), brand.username(), brand.igUserId(), brand.status(),
+				brand.lastSweptOn(), brand.collectionMonths(), false);
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, null, 0L);
+
+		svc.enrich(competitorOnlyBrand, List.of(post));
+
+		assertThat(adJudge.judged).isEmpty();          // adJudge 호출 자체가 없다
+		assertThat(tagged.enriched).contains("AAA");    // 정산은 own 연결 여부와 무관하게 그대로 돈다
+	}
+
+	/** own 연결이 있는 브랜드는 기존대로 판정이 돈다 — 회귀 방지(대조군). */
+	@Test
+	void own_연결이_있는_브랜드는_광고_판정이_돈다() {
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithAdJudge(adJudge);
+		PostInfo post = post("AAA", RECENT, null, 0L);
+
+		svc.enrich(brand, List.of(post));   // brand.hasOwnLink() == true(픽스처 기본값)
+
+		assertThat(adJudge.judged).contains("AAA");
 	}
 
 	// ---------- 계정 게이트 훅(onVisible, 2026-08-18 markServing 단축 — 스펙 §8 후속) ----------

@@ -8,6 +8,8 @@ import java.time.Instant;
  * 입력은 taken_at·last_crawled_at·현재 시각 3개뿐, 저장된 티어 상태 없음(정책 원칙).
  * 티어 경계·주기는 정책 상수라 코드에 둔다(런타임 토글 불필요 — v1.1 적응형 조정이 오면
  * 이 클래스만 바뀐다). 판정 기준은 항상 taken_at(게시물 나이)이다 — 발견 시각이 아니다.
+ * 주기 경과는 {@link #INTERVAL_SLACK}(12h) 여유를 두고 본다 — 일일 스윕 슬롯 드리프트로 하루
+ * 밀리는 경계 레이스 방지(필드 주석).
  */
 public final class BrandCrawlPolicy {
 
@@ -22,6 +24,18 @@ public final class BrandCrawlPolicy {
 	private static final Duration TIER3_MAX_AGE = Duration.ofDays(90);
 	private static final Duration TIER3_INTERVAL = Duration.ofDays(7);
 	private static final Duration TIER4_INTERVAL = Duration.ofDays(30);
+
+	/**
+	 * 주기 판정 여유(2026-08-23) — 스윕은 하루 1회 같은 시각(KST 02:00)에 브랜드를 순회하는데
+	 * 경과를 주기와 초 단위로 정확히 비교하면, 오늘 스윕이 직전 touch 시각보다 몇 초~몇 분만
+	 * 일찍 도착한 브랜드의 게시물은 전부 건너뛰고 그날 하루 "미처리"로 보였다가 다음 날에야
+	 * 수습된다(08-23 운영 실측: 3일 티어 262건 전부 이 패턴 — 직전 touch 02:07~02:34, 오늘
+	 * 스윕 통과가 그보다 수 분 일렀다). 12시간은 슬롯 드리프트(분 단위)를 흡수하면서 전날
+	 * 스윕(경과 ≈ 주기 − 1일)은 여전히 건너뛰는 중간값이다 — 실질 주기가 줄지 않는다.
+	 * 대시보드의 "미처리"(정확 주기 기준)는 그대로 둔다: 여유로 잡힌 게시물은 오늘 touch돼
+	 * "오늘 처리"로 들어가므로, 미처리 > 0은 이제 수집 실패·미커버 종료만 뜻한다.
+	 */
+	static final Duration INTERVAL_SLACK = Duration.ofHours(12);
 
 	private BrandCrawlPolicy() {}
 
@@ -43,11 +57,16 @@ public final class BrandCrawlPolicy {
 		}
 		Duration sinceCrawl = Duration.between(lastCrawledAt, now);
 		if (age.compareTo(TIER2_MAX_AGE) <= 0) {
-			return sinceCrawl.compareTo(TIER2_INTERVAL) >= 0;
+			return elapsed(sinceCrawl, TIER2_INTERVAL);
 		}
 		if (age.compareTo(TIER3_MAX_AGE) <= 0) {
-			return sinceCrawl.compareTo(TIER3_INTERVAL) >= 0;
+			return elapsed(sinceCrawl, TIER3_INTERVAL);
 		}
-		return sinceCrawl.compareTo(TIER4_INTERVAL) >= 0;
+		return elapsed(sinceCrawl, TIER4_INTERVAL);
+	}
+
+	/** 주기 경과 판정 — {@link #INTERVAL_SLACK}만큼 모자라도 경과로 본다. */
+	private static boolean elapsed(Duration sinceCrawl, Duration interval) {
+		return sinceCrawl.compareTo(interval.minus(INTERVAL_SLACK)) >= 0;
 	}
 }
