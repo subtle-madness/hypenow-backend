@@ -18,6 +18,132 @@
   "editable": false,
   "panels": [
     {
+      "id": 4,
+      "type": "timeseries",
+      "title": "요청 추이 (상태코드별, 엣지 기준)",
+      "description": "엣지(caddy) 액세스 로그 기준 시간대별 요청 수를 상태코드별로 쌓아 본다 — 아래 \"최근 요청\" 테이블과 같은 소스·같은 필터(/health 제외). 특정 시각의 급증·5xx 물결을 먼저 눈으로 잡고, 그 구간을 드래그해 시간창을 좁힌 뒤 테이블에서 개별 요청(request_id)으로 내려간다. 4xx 물결은 대부분 스캐너(.env 등 404·401)라 놀랄 일 아님 — path를 테이블에서 확인.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "기간 내 요청 없음",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^2../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^3../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^4../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^5../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "range",
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (count_over_time({service=\"caddy-access\"} | json status=\"status\" | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` [$__auto]))"
+        }
+      ]
+    },
+    {
       "id": 3,
       "type": "table",
       "title": "최근 요청 (전체, 엣지 기준)",
@@ -26,7 +152,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 8
       },
       "datasource": {
         "type": "loki",
@@ -118,7 +244,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 18
       },
       "datasource": {
         "type": "loki",
@@ -204,7 +330,7 @@
         "h": 18,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 27
       },
       "datasource": {
         "type": "loki",
