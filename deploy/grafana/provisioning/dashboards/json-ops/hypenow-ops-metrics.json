@@ -476,13 +476,245 @@
       ]
     },
     {
+      "id": 12,
+      "type": "timeseries",
+      "title": "스레드",
+      "description": "live가 계단식으로 계속 오르면 스레드 누수. blocked가 지속되면 락 경합 — 파이프라인 정체의 런타임 원인축.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "live",
+          "expr": "jvm_threads_live_threads{job=\"$module\"}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "daemon",
+          "expr": "jvm_threads_daemon_threads{job=\"$module\"}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "peak",
+          "expr": "jvm_threads_peak_threads{job=\"$module\"}"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{state}}",
+          "expr": "sum by (state) (jvm_threads_states_threads{job=\"$module\", state=~\"blocked|waiting\"})"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "풀GC 후 잔존 힙 (OOM 전조)",
+      "description": "풀GC 직후 살아남은 힙 / old gen 최대치(%) — GC로도 못 비운 몫이라 계단식 우상향이면 누수(OOM 전조). 풀GC가 아직 안 돌았으면 0이 정상.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 18,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "잔존/최대 %",
+          "expr": "100 * jvm_gc_live_data_size_bytes{job=\"$module\"} / jvm_gc_max_data_size_bytes{job=\"$module\"}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "프로세스 CPU",
+      "description": "JVM이 직접 보고하는 프로세스 CPU(0~1). cAdvisor 컨테이너 지표가 공백인 동안 모듈별 CPU는 이걸로 본다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 18,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "$module",
+          "expr": "process_cpu_usage{job=\"$module\"}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "시스템 전체(참고)",
+          "expr": "system_cpu_usage{job=\"monitoring\"}"
+        }
+      ]
+    },
+    {
       "id": 9,
       "type": "row",
       "title": "외부 호출 — $module",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 26,
         "w": 24,
         "h": 1
       },
@@ -495,7 +727,7 @@
       "description": "monitoring이 부른 외부 API(Hiker 수집 콜·Gemini 판정 콜)의 p95 소요 — 계층별 p95 뺄셈의 마지막 항. **was 등록 p95 − 수신 처리 p95 − 이 패널 = monitoring 내부 처리분**으로 느림의 책임 구간이 갈린다. 기록 단위는 재시도·백오프를 포함한 **논리 콜 1건**(전송 내부 재시도로 살아난 콜은 ok 하나로 접히고 그 대기 시간까지 지연에 포함) — 재시도가 잦아지면 실패율보다 이 선이 먼저 오른다. 트래픽이 있는 operation만 선으로 나타난다(등록·스윕이 안 도는 시간대엔 비는 게 정상).",
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 27,
         "w": 12,
         "h": 8
       },
@@ -557,7 +789,7 @@
       "description": "api별 실패 콜 비율(outcome≠ok, 5분 창) — 외부 API 장애·차단·잔액 소진의 조기 신호. 트래픽이 있는데 실패가 없으면 0%로 그려진다(공백은 무트래픽). 해석 주의: **Hiker는 4xx도 과금**되므로 4xx 급증은 비용 사고(402 잔액 소진·차단)일 수 있고, 반대로 태그·게시물 0건 계정의 404(빈 열거)도 4xx로 집계되는 정상 잡음이 섞인다 — 급증 시 outcome 축(external_call_seconds_count의 outcome 라벨)으로 4xx/5xx/error를 갈라 볼 것. error는 HTTP 교환 없는 실패(IO·타임아웃·키 미설정)와 예상 밖 상태(3xx 등)다. 여기 1건은 재시도가 접힌 **논리 콜 1건**이라 실제 과금 콜 수는 표시의 최대 3배(1+재시도 2)일 수 있다.",
       "gridPos": {
         "x": 12,
-        "y": 19,
+        "y": 27,
         "w": 12,
         "h": 8
       },
