@@ -28,3 +28,16 @@ providers:
     options:
       path: /etc/grafana/provisioning/dashboards/json-brand
       foldersFromFilesStructure: false
+
+  # 운영 탭 4장(2026-08-25 개편 스펙) — Datadog식 관심사 탭($module 필터 + 태그 hypenow-ops
+  # 탭 링크 바). 디렉토리명 영문(json-ops)은 json-brand와 같은 NFC/NFD 회피 사유.
+  - name: hypenow-ops-dashboards
+    orgId: 1
+    folder: 운영
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/json-ops
+      foldersFromFilesStructure: false

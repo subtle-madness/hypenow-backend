@@ -1,0 +1,332 @@
+{
+  "uid": "hypenow-ops-logs",
+  "title": "운영 / 로그",
+  "description": "$module 서비스 로그 — 레벨·로거·원인 분해",
+  "tags": [
+    "hypenow",
+    "hypenow-ops"
+  ],
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "editable": true,
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "hypenow-ops"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "title": "",
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "module",
+        "label": "모듈",
+        "type": "custom",
+        "query": "crawler,analytics,was,monitoring",
+        "current": {
+          "text": "monitoring",
+          "value": "monitoring",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "crawler",
+            "value": "crawler",
+            "selected": false
+          },
+          {
+            "text": "analytics",
+            "value": "analytics",
+            "selected": false
+          },
+          {
+            "text": "was",
+            "value": "was",
+            "selected": false
+          },
+          {
+            "text": "monitoring",
+            "value": "monitoring",
+            "selected": true
+          }
+        ],
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "추이 — $module",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "ERROR 추이 (로거별)",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{logger}}",
+          "expr": "sum by (logger) (count_over_time({service=\"$module\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__auto]))"
+        }
+      ],
+      "description": "어떤 클래스가 언제 ERROR를 냈는지. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다."
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "WARN 추이 (로거별)",
+      "description": "ERROR로 안 올라오는 반복 잡음(예: Hiker 404 미완주 보존)의 규모. Hiker는 4xx도 과금이라 WARN이어도 비용 신호다.",
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{logger}}",
+          "expr": "sum by (logger) (count_over_time({service=\"$module\", level=\"WARN\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "로거별 ERROR Top 15",
+      "description": "어느 클래스가 시끄러운지가 원인 추적의 첫 갈래다. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다.",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (logger) (count_over_time({service=\"$module\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "원인 — $module",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "응답코드 추이 (Hiker, WARN·ERROR 로그)",
+      "description": "로그 본문의 \"Hiker NNN\" 상태코드를 추출해 코드별로 집계. 404=대상 없음(빈 열거 잡음 섞임)·402=잔액 소진(즉시 조치)·5xx=Hiker 장애. 4xx도 과금이므로 급증 = 비용 신호.",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "402"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{code}}",
+          "expr": "sum by (code) (count_over_time({service=\"$module\", level=~\"WARN|ERROR\"} |~ `Hiker \\d{3}` | regexp `Hiker (?P<code>\\d{3})` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "예외 클래스별 Top 15 (WARN·ERROR)",
+      "description": "multiline 병합 덕에 스택트레이스 본문에서 예외 클래스를 뽑을 수 있다. 끝의 \\b가 없으면 로거명 접두가 오매칭된다.",
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (exc) (count_over_time({service=\"$module\", level=~\"WARN|ERROR\"} |~ `(?:Exception|Error)` | regexp `(?P<exc>[\\w.]+(?:Exception|Error))\\b` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "탐색 — $module",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "logs",
+      "title": "로그 탐색",
+      "description": "$module 서비스 전체 로그.",
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "expr": "{service=\"$module\"}"
+        }
+      ]
+    }
+  ]
+}
