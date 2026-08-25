@@ -142,4 +142,6 @@ monitoring:
     gcs-bucket: ${IMAGE_GCS_BUCKET:}
     # 전용 SA 키 파일 경로 — 미설정이면 ADC 폴백. analytics와 같은 키를 재사용한다
     gcs-key: ${IMAGE_GCS_KEY:}
-    archive-batch-limit: 1000   # 1회 스윕당 다운로드+업로드 상한 — 초과분은 다음 스윕으로 이월
+    # 08-25: 배치 상한(archive-batch-limit) 완전 제거 — 상한 1000/일에 author_profile 46.9%가
+    # 정체돼 CDN 서명 만료로 영구 유실되는 문제(08-25 운영 진단) 재발 방지. 이제 매 스윕이 대기분
+    # 전량을 처리한다(만료 필터·건 단위 실패 격리는 그대로 유지).
