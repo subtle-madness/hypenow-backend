@@ -4,6 +4,7 @@ import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.monitoring.service.AuthorImageBackfillAlreadyRunningException;
 import com.celfit.monitoring.service.InvalidStateException;
 import com.celfit.monitoring.service.SweepAlreadyRunningException;
 import com.celfit.monitoring.service.TargetNotFoundException;
@@ -81,6 +82,13 @@ public class ApiExceptionHandler {
 	public ResponseEntity<ApiError> handleSweepAlreadyRunning(SweepAlreadyRunningException e) {
 		log.info("스윕 중복 트리거 차단");
 		return body(HttpStatus.CONFLICT, "SWEEP_ALREADY_RUNNING", "이미 스윕이 실행 중입니다. 완료 후 다시 시도해 주세요.");
+	}
+
+	/** 이미지 백필 수동 트리거가 이미 실행 중인 백필과 겹쳤다 — AuthorImageBackfillGuard 획득 실패. */
+	@ExceptionHandler(AuthorImageBackfillAlreadyRunningException.class)
+	public ResponseEntity<ApiError> handleAuthorImageBackfillAlreadyRunning(AuthorImageBackfillAlreadyRunningException e) {
+		log.info("이미지 백필 중복 트리거 차단");
+		return body(HttpStatus.CONFLICT, "AUTHOR_IMAGE_BACKFILL_ALREADY_RUNNING", "이미 이미지 백필이 실행 중입니다. 완료 후 다시 시도해 주세요.");
 	}
 
 	/** Hiker 일시 오류 — was는 그대로 실패를 전달하고, 재시도는 같은 registrationKey로 사용자 몫(계약 §4). */
