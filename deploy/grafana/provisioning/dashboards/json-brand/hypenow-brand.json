@@ -50,7 +50,7 @@
       "id": 1,
       "type": "stat",
       "title": "일일 수집 신선도",
-      "description": "활성 브랜드의 마지막 일일 수집 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "description": "활성 브랜드 last_swept_at의 중앙값 기준 경과 시간. 야간 일일 수집(KST 02:00)은 전 브랜드에 도장을 찍으므로 중앙값은 어젯밤 수집 시각을 따른다(정상 ~19h대에서 오르내림). max가 아니라 중앙값인 이유: 등록 백필 완료도 last_swept_at을 찍어(touchSwept·markServing) 낮에 브랜드 하나만 등록돼도 max는 리셋돼 보인다 — 08-25 실측 max 2.8h vs 중앙값 19.2h. 26h 초과 = 어젯밤 02:00 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -119,7 +119,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL"
+          "rawSql": "SELECT (EXTRACT(EPOCH FROM now()) - percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL AND last_swept_at IS NOT NULL"
         }
       ]
     },
@@ -181,7 +181,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT count(*) FILTER (WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date) AS \"성공\", count(*) FILTER (WHERE closed_at IS NULL) AS \"활성 전체\" FROM brand_account"
+          "rawSql": "SELECT count(*) FILTER (WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND closed_at IS NULL) AS \"성공\", count(*) FILTER (WHERE closed_at IS NULL) AS \"활성 전체\" FROM brand_account"
         }
       ]
     },
@@ -189,7 +189,7 @@
       "id": 3,
       "type": "stat",
       "title": "오늘 수집 소요",
-      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
+      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값. 오늘 등록된 브랜드는 제외 — 등록 백필 완료도 last_swept_at을 찍어서(touchSwept) 포함하면 새벽 스윕~저녁 등록 간격을 재게 된다(08-25 실측 17h로 오염).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -243,7 +243,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date"
+          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND (registered_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date"
         }
       ]
     },
