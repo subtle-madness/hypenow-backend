@@ -305,6 +305,10 @@ services:
       IMAGE_STORE: ${IMAGE_STORE:-par}
       IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
       IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
+      # 만료 CDN 프로필 이미지 재수집 백필 트리거(POST /api/author-image-backfill, 2026-08-25) —
+      # 기본 off. 실행할 때만 .env에 true를 넣고 up -d monitoring으로 개통(MONITORING_ENABLED 관용구),
+      # 백필 완주 후 되돌린다. Hiker 재조회 콜 증폭 지점이라 상시 개방하지 않는다(limit 필수가 2차 방어).
+      MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED: ${MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED:-false}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       # 브랜드 태그 스윕 — KST 02:00(UTC 17:00). 설계 원안은 03:00(캠페인 스윕과 시차)이었으나
