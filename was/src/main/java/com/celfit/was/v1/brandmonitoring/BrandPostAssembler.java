@@ -77,6 +77,7 @@ public class BrandPostAssembler {
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
 	/** 브랜드 풀 게시물은 전부 나이 티어 정책으로 계속 수집되는 활성 상태라 항상 tracking이다(설계 §3-3). */
 	private static final String TRACKING = "tracking";
+	private static final String HIDDEN = "hidden";
 
 	private final BrandReadRepository brandReadRepository;
 	private final BrandPostCampaignRepository postCampaignRepository;
@@ -400,7 +401,9 @@ public class BrandPostAssembler {
 				BrandSponsorshipClassifier.classify(meta == null ? null : meta.isPaidPartnership(),
 						meta == null ? null : meta.caption()),
 				meta == null ? null : meta.isPaidPartnership(),
-				TRACKING,
+				// 야간 스윕이 삭제·비공개(404)를 관측한 행은 hidden(2026-08-25 설계) — FE 칩("삭제·비공개")의
+				// 유일한 트리거. tagged-only 행은 단건 콜이 없어 항상 null이라 기존대로 tracking이다.
+				post.unavailableAt() != null ? HIDDEN : TRACKING,
 				KstTimestamps.toKstIso(trackingStarted),
 				// 종료 개념이 없다 — 취소가 유일한 종료 경로고, 취소되면 이 행 자체가 목록에서 빠진다.
 				null,
