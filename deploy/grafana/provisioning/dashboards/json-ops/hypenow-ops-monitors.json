@@ -795,6 +795,314 @@
           "rawSql": "SELECT coalesce((SELECT sum(calls) FROM brand_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date), 0) + coalesce((SELECT sum(calls) FROM target_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date), 0) AS value"
         }
       ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "엣지 (caddy) — 유저 체감 축",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "상태코드별 요청 추이",
+      "description": "엣지 액세스 로그 기준 — was 메트릭과 달리 유저에게 실제로 나간 응답이다.",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "5.."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (count_over_time({service=\"caddy-access\"} | json status=\"status\" [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "엣지 응답 p95 (실값·상한 없음)",
+      "description": "액세스 로그 duration의 p95 — 히스토그램 버킷 포화가 없어 96s면 96s로 나온다. was p95(메트릭 탭)와의 차이가 크면 전송·직렬화 구간이 병목.",
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "p95",
+          "expr": "quantile_over_time(0.95, {service=\"caddy-access\"} | json duration=\"duration\" | unwrap duration [$__auto])"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "느린 응답 (10s 초과)",
+      "description": "10초 넘게 걸린 응답 건수 — 에러 코드 없이 \"200 흘리다 클라이언트 abort\"로 끝나는 posts류 장애를 잡는 신호. 평시 0이 정상.",
+      "gridPos": {
+        "x": 16,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "10s 초과",
+          "expr": "sum(count_over_time({service=\"caddy-access\"} | json duration=\"duration\" | duration > 10 [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "느린 요청 Top 15 (10s 초과, uri별)",
+      "description": "어느 엔드포인트가 유저를 기다리게 하는지. path는 쿼리스트링 앞까지만 추출(정규식 스테이지 — label_format 템플릿은 이스케이프 문제로 불가).",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (method, path) (count_over_time({service=\"caddy-access\"} | json duration=\"duration\", method=\"request.method\" | duration > 10 | regexp `\"uri\":\"(?P<path>[^\"?]+)` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "엣지 5xx",
+      "description": "최근 1시간 caddy 엣지 5xx 건수(액세스 로그 → Loki, 2026-08-24 스펙). 왼쪽 'API 5xx'(앱 계층)가 0인데 여기만 뜨면 배포 순단 502·업스트림 다운 — 요청이 was까지 못 간 실패다. 평시 0건이 정상이라 임계 1.",
+      "gridPos": {
+        "x": 18,
+        "y": 29,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "links": [
+        {
+          "title": "인프라 대시보드로",
+          "url": "/d/hypenow-infra"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "인프라 대시보드로",
+              "url": "/d/hypenow-infra"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "instant",
+          "legendFormat": "1h 엣지 5xx",
+          "expr": "sum(count_over_time({service=\"caddy-access\", level=\"ERROR\"}[1h])) or vector(0)"
+        }
+      ]
     }
   ]
 }
