@@ -138,7 +138,7 @@
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 8,
+        "w": 6,
         "h": 8
       }
     },
@@ -197,11 +197,91 @@
       ],
       "id": 3,
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 1,
-        "w": 8,
+        "w": 6,
         "h": 8
       }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "상태코드별 (2xx 제외)",
+      "description": "2xx를 뺀 응답을 정확한 상태코드별로 집계 — 어떤 400/500인지가 여기서 갈린다. 툴팁에서 코드별 uri를 보려면 패널 클릭 → Explore에서 sum by (status, uri)로 내려간다.",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "noValue": "데이터 없음 (2xx뿐이면 정상)",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "5.."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (rate(http_server_requests_seconds_count{job=\"$module\", status!~\"2..|3..\"}[5m]))"
+        }
+      ]
     },
     {
       "type": "timeseries",
@@ -258,9 +338,9 @@
       ],
       "id": 4,
       "gridPos": {
-        "x": 16,
+        "x": 18,
         "y": 1,
-        "w": 8,
+        "w": 6,
         "h": 8
       }
     },
