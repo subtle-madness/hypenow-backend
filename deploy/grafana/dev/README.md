@@ -155,15 +155,15 @@ bash deploy/grafana/dev/apply-migrations.sh                     # §2-1
   전제해서 하니스에선 초기화가 깨진다(`role "crawler" does not exist` → 컨테이너 exit 3).
   하니스는 `./initdb/01-create-monitoring-db.sql`로 `monitoring` DB만 만들고 `analysis`는
   `POSTGRES_DB`가 만든다. 둘 다 소유자는 `dev`.
-- **호스트 디스크·컨테이너별 지표는 로컬에서 무데이터다 — Loki 스텁과 동급으로 취급한다.**
+- **호스트 디스크 지표는 로컬에서 무데이터다 — Loki 스텁과 동급으로 취급한다.**
   macOS Docker Desktop은 컨테이너가 리눅스 VM 안에서 도는 구조라, 마운트를 붙여도 호스트(macOS)
-  파일시스템과 도커 이미지 레이어 메타데이터에 닿지 못한다. **해당 패널들의 검증은 운영에서 한다.**
+  파일시스템에 닿지 못한다. **해당 패널들의 검증은 운영에서 한다.**
   compose는 운영(Task 9)과 같은 마운트를 그대로 유지한다 — 로컬에서 안 나온다고 빼면 운영과 어긋난다.
 
-  | 지표 | 로컬 실측(2026-08-18) |
+  | 지표 | 로컬 실측(2026-08-25) |
   |---|---|
-  | `container_cpu_usage_seconds_total{name=~".+"}` | **빈 결과.** cAdvisor에 `/var/lib/docker:ro`를 붙여도 동일 — Docker Desktop의 이미지 저장소 레이아웃엔 `image/overlayfs/layerdb/mounts/<id>/mount-id`가 없어 로그가 `failed to identify the read-write layer ID`로 도배된다. 노출되는 건 cgroup 루트(`id="/"`, `/docker`)뿐이라 `name` 라벨이 붙은 시계열 자체가 없다 |
-  | `container_memory_working_set_bytes{name=~".+"}` | 빈 결과(같은 원인) |
+  | `container_cpu_usage_seconds_total{name=~".+"}` | **나온다**(VM 안 전체 컨테이너, `name` 라벨 포함). 2026-08-18 실측의 "빈 결과 + `failed to identify the read-write layer ID` 도배"는 cAdvisor v0.49.1이 containerd 스냅샷터 이미지 스토어를 못 읽던 문제였고, 0.56.2 + `/run/containerd/containerd.sock` 마운트로 해소됐다(운영도 같은 원인·같은 수정 — deploy/compose.yaml 주석 참조) |
+  | `container_memory_working_set_bytes{name=~".+"}` | 나온다(위와 동일) |
   | `node_filesystem_avail_bytes{mountpoint="/"}` | **빈 결과.** node-exporter가 보는 마운트는 컨테이너 자기 것(`/etc/hostname`·`/etc/hosts`·`/etc/resolv.conf`)뿐 — 마운트를 추가해도 호스트 디스크는 안 보인다 |
   | `node_cpu_seconds_total` | 나온다(VM 기준 값). CPU·메모리 계열 패널은 로컬에서 형태 확인 가능 |
 
