@@ -402,7 +402,8 @@ public class BrandPostAssembler {
 						meta == null ? null : meta.caption()),
 				meta == null ? null : meta.isPaidPartnership(),
 				// 야간 스윕이 삭제·비공개(404)를 관측한 행은 hidden(2026-08-25 설계) — FE 칩("삭제·비공개")의
-				// 유일한 트리거. tagged-only 행은 단건 콜이 없어 항상 null이라 기존대로 tracking이다.
+				// 유일한 트리거. direct는 2단계 단건 수집이, tagged는 커버 열거 부재의 검증 콜이 마킹한다
+				// (tagged 확장 설계 — 둘 다 unavailable_at 단일 표식).
 				post.unavailableAt() != null ? HIDDEN : TRACKING,
 				KstTimestamps.toKstIso(trackingStarted),
 				// 종료 개념이 없다 — 취소가 유일한 종료 경로고, 취소되면 이 행 자체가 목록에서 빠진다.
