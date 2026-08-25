@@ -421,7 +421,7 @@
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{name}}",
-          "expr": "100 * container_memory_working_set_bytes{name=~\".*-${module}-[0-9]+\"} / container_spec_memory_limit_bytes{name=~\".*-${module}-[0-9]+\"} != +Inf"
+          "expr": "100 * container_memory_working_set_bytes{name=~\".*-${module}-[0-9]+\", name!~\".*-test-.*\"} / container_spec_memory_limit_bytes{name=~\".*-${module}-[0-9]+\", name!~\".*-test-.*\"} != +Inf"
         }
       ]
     },
@@ -484,7 +484,7 @@
           "editorMode": "code",
           "range": true,
           "legendFormat": "{{name}}",
-          "expr": "rate(container_cpu_usage_seconds_total{name=~\".*-${module}-[0-9]+\"}[5m])"
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\".*-${module}-[0-9]+\", name!~\".*-test-.*\"}[5m])"
         }
       ]
     }
