@@ -278,6 +278,25 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
     }
 
     @Test
+    void 백필_잔여_카운트는_선정_쿼리와_같은_모수를_센다() {
+        // 대시보드 "F&B 미판정 · 백필 잔여" 타일 — beauty IS NULL(신규 판정 대기)까지 세면
+        // 백필이 다 끝나도 잔여가 0으로 안 떨어져 진행률을 오독한다.
+        long before = influencers.countFnbBackfillRemaining(InfluencerStatus.QUALIFIED);
+
+        Influencer judged = influencers.save(qualified("cnt_judged"));     // 백필 모수 → +1
+        judged.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(judged);
+        influencers.save(qualified("cnt_unjudged"));                       // beauty NULL → 신규 경로 몫
+        Influencer done = influencers.save(qualified("cnt_done"));         // 둘 다 판정 → 제외
+        done.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        done.classifyFnb(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(done);
+
+        assertThat(influencers.countFnbBackfillRemaining(InfluencerStatus.QUALIFIED))
+                .isEqualTo(before + 1);
+    }
+
+    @Test
     void 백필_선정은_수동_뷰티_판정분도_대상으로_삼는다() {
         // 백필은 뷰티 축을 덮지 않으므로(BeautyJob의 fnbOnly 마스크) MANUAL을 제외할 이유가 없다 —
         // 수동 교정 계정도 F&B 축은 채워야 한다.

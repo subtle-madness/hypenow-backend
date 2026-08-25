@@ -102,7 +102,7 @@ public class StatusService {
                 influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED),
                 // F&B 축 타일 — 토글과 무관하게 판정 결과 자체를 보여준다(백필 진행률 확인용)
                 influencers.countFnbInfluencers(InfluencerStatus.QUALIFIED),
-                influencers.countByStatusAndFnbIsNull(InfluencerStatus.QUALIFIED),
+                influencers.countFnbBackfillRemaining(InfluencerStatus.QUALIFIED),
                 // 수집 대기열 타일은 선정 쿼리와 같은 모수 — fnb.pipeline-enabled가 켜지면 F&B가 자동 편입된다
                 influencers.countBackfillPending(includeFnb),
                 influencers.countTrackDue(revisitBefore, includeFnb),

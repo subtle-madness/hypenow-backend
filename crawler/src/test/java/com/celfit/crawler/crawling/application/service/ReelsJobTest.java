@@ -241,6 +241,17 @@ class ReelsJobTest {
     }
 
     @Test
+    void 대상_조회는_F앤B_파이프라인_토글을_그대로_전달한다() {
+        // fnb.pipeline-enabled(스펙 2026-08-23 §4) — 잡은 토글 값을 판단하지 않고 선정 쿼리에 넘긴다.
+        when(settings.fnbPipelineEnabled()).thenReturn(true);
+        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of());
+
+        job(List.of()).run(TriggerType.MANUAL);
+
+        verify(influencers).findReelsTargets(any(), eq(true), any());
+    }
+
+    @Test
     void pk_없는_계정은_스킵하고_클립을_호출하지_않는다() {
         Influencer noPk = beautyTarget(1L, "no_pk_user", null);
         when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(noPk));

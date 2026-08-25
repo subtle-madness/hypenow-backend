@@ -74,6 +74,28 @@ class JobCostEstimatorTest {
     }
 
     @Test
+    void 비용_추정_모수는_F앤B_파이프라인_토글을_그대로_전달한다() {
+        // fnb.pipeline-enabled(스펙 2026-08-23 §4) — 예상 비용 카드는 잡 선정 쿼리와 같은 모수를
+        // 써야 화면 수치와 실제 대상이 일치한다. 추정기는 토글을 판단하지 않고 그대로 넘긴다.
+        when(searchKeywords.findByEnabledTrue()).thenReturn(List.of());
+        when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);
+        when(settings.revisitIntervalDays()).thenReturn(7);
+        when(settings.fnbPipelineEnabled()).thenReturn(true);
+        when(profileSource.current()).thenReturn(ProfileSource.SELF);
+
+        estimator.estimates();
+
+        org.mockito.Mockito.verify(influencers).countBackfillPending(true);
+        org.mockito.Mockito.verify(influencers).countTrackDue(Instant.parse("2026-07-08T00:00:00Z"), true);
+        org.mockito.Mockito.verify(influencers).countReelsDue(Instant.parse("2026-07-08T00:00:00Z"), true);
+        org.mockito.Mockito.verify(influencers)
+                .countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus.QUALIFIED, true);
+        org.mockito.Mockito.verify(influencers)
+                .countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+                        InfluencerStatus.QUALIFIED, true);
+    }
+
+    @Test
     void discover_HIKER_소스면_키워드당_페이지_반복으로_요청수를_계산한다() {
         when(searchKeywords.findByEnabledTrue()).thenReturn(keywords(3));
         when(discoverSource.current()).thenReturn(DiscoverSource.HIKER);

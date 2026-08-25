@@ -233,8 +233,14 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "and (i.fnbCompany is null or i.fnbCompany = false)")
     long countFnbInfluencers(@Param("status") InfluencerStatus status);
 
-    /** 대시보드 F&B 판정 그룹용: F&B 축 미판정(백필 잔여) 수 — 백필 진행률 지표. */
-    long countByStatusAndFnbIsNull(InfluencerStatus status);
+    /**
+     * 대시보드 F&B 판정 그룹용: 백필 잔여 수 — 백필 선정(findFnbBackfillTargets)과 같은 모수
+     * (뷰티 축 판정 완료 ∧ F&B 축 미판정)를 센다. beauty IS NULL(신규 판정 대기)까지 세면
+     * 백필이 다 끝나도 잔여가 0으로 안 떨어져 진행률을 오독한다.
+     */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.beauty is not null and i.fnb is null")
+    long countFnbBackfillRemaining(@Param("status") InfluencerStatus status);
 
     /** SIMILAR 시드 대기 수 — 선정 쿼리와 같은 모수(includeFnb=true면 F&B 포함). */
     @Query("select count(i) from Influencer i where i.status = :status and ("

@@ -90,6 +90,19 @@ class SimilarJobTest {
     }
 
     @Test
+    void 시드_조회는_F앤B_파이프라인_토글을_그대로_전달한다() {
+        // fnb.pipeline-enabled(스펙 2026-08-23 §4) — 잡은 토글 값을 판단하지 않고 선정 쿼리에 넘긴다.
+        when(settings.fnbPipelineEnabled()).thenReturn(true);
+        when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of());
+
+        job.run(TriggerType.MANUAL);
+
+        verify(influencers).findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                eq(InfluencerStatus.QUALIFIED), eq(true), any());
+    }
+
+    @Test
     void 유사_계정을_DISCOVERED로_upsert하고_출처를_기록하고_시드를_마킹한다() {
         Influencer s = seed(1L, "seed1", "100");
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
