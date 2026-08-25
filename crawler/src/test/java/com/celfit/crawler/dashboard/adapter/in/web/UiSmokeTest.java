@@ -284,9 +284,15 @@ class UiSmokeTest extends IntegrationTest {
                 Influencer.BEAUTY_SOURCE_CLAUDE, "카페 공식 계정", null);
         influencers.save(inf);
 
+        // 배지 "렌더 자체"를 고정한다 — 단순 containsString("매장·서비스")는 F&B 필터 체크박스
+        // 라벨("F&B: 매장·서비스")이 항상 있어서 배지가 없어도 통과한다(무효 단언).
+        // 배지는 색상 클래스 + 여는 태그 직후 텍스트라 체크박스 라벨과 형태로 구분된다.
         mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-fnb-badge")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("매장·서비스")))
+                .andExpect(content().string(org.hamcrest.Matchers.matchesRegex(
+                        "(?s).*class=\"badge BEAUTY_SERVICE\"[^>]*>매장·서비스<.*")))
+                // 판정 근거는 배지 툴팁으로
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("카페 공식 계정")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString(
                         "/ui/influencers/" + inf.getId() + "/fnb")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("fnbClass")));
@@ -581,6 +587,28 @@ class UiSmokeTest extends IntegrationTest {
         mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("F&amp;B 판정")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("F&amp;B 인플루언서")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("백필 잔여")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("백필 잔여")))
+                // 배지는 뷰티 색상 클래스를 빌려 쓰되 텍스트는 F&B 라벨 — "BEAUTY"로 찍히면 안 된다
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge BEAUTY\">F&amp;B<")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge UNJUDGED\">미판정<")));
+    }
+
+    @Test
+    void 상태_타일_라벨은_기본적으로_key로_폴백된다() throws Exception {
+        // StatusTile에 label을 추가해도 기존 타일(색상 클래스 = 표시 텍스트)의 렌더는 그대로여야 한다.
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge DISCOVERED\">DISCOVERED<")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge QUALIFIED\">QUALIFIED<")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge BEAUTY_COMPANY\">BEAUTY_COMPANY<")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge READY\">READY<")))
+                // 게시물 수집 타일(두 번째 루프)도 같은 폴백을 탄다
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "class=\"badge FEED\">FEED<")));
     }
 }

@@ -66,8 +66,17 @@ public class UiController {
         return "redirect:/ui";
     }
 
-    /** 대시보드 상태 카드용 뷰. key는 badge 색상 클래스 겸 라벨. */
-    public record StatusTile(String key, long count, String desc) {}
+    /**
+     * 대시보드 상태 카드용 뷰. key는 badge 색상 클래스, label은 배지에 찍히는 텍스트.
+     * 색상 클래스와 표시 텍스트가 같은 상태 타일(DISCOVERED·READY 등)은 3인자 생성자로 만들면
+     * label이 key로 폴백된다 — 색상만 빌려 쓰는 타일(F&B 축이 뷰티 배지 색을 재사용)은
+     * label을 명시해 "BEAUTY" 같은 엉뚱한 텍스트가 찍히지 않게 한다.
+     */
+    public record StatusTile(String key, String label, long count, String desc) {
+        public StatusTile(String key, long count, String desc) {
+            this(key, key, count, desc);
+        }
+    }
 
     /** 파이프라인 단계별 타일 묶음 — 한 잡이 만든 상태들을 시각적으로 구분해 렌더. */
     public record StatusTileGroup(String title, java.util.List<StatusTile> tiles) {}
@@ -158,10 +167,11 @@ public class UiController {
                                 "비뷰티 · 수집 제외"),
                         new StatusTile("UNJUDGED", s.beautyUnjudged(),
                                 "미판정 · 뷰티판정 대기"))),
+                // 배지 색상은 뷰티 축 클래스를 재사용하되, 텍스트는 F&B 축 라벨로 따로 준다
                 new StatusTileGroup("③-2 F&B 판정 — beauty 잡의 F&B 축 (QUALIFIED 내)", java.util.List.of(
-                        new StatusTile("BEAUTY", s.fnbInfluencer(),
+                        new StatusTile("BEAUTY", "F&B", s.fnbInfluencer(),
                                 "F&B 인플루언서 · 수집 편입은 fnb.pipeline-enabled 토글(기본 off)"),
-                        new StatusTile("UNJUDGED", s.fnbUnjudged(),
+                        new StatusTile("UNJUDGED", "미판정", s.fnbUnjudged(),
                                 "F&B 미판정 · 백필 잔여"))),
                 new StatusTileGroup("④ 수집 대기열 — 게시물을 위한 프로필 수집(collect)·릴스 수집(reels)이 방문할 대상",
                         java.util.List.of(
