@@ -1,0 +1,481 @@
+{
+  "title": "[흐름] 콘텐츠 파이프라인",
+  "uid": "hypenow-flow-content",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "5m",
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "tags": [
+    "hypenow",
+    "hypenow-flow"
+  ],
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "",
+      "tags": [
+        "hypenow-flow"
+      ],
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "① 탐색·미러 (raw → analysis)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": [],
+      "id": 100
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "미러 신선도",
+      "description": "landing_stats.updated_at 기준 미러 경과 시간 — 홈 타일7과 같은 쿼리다. **대용 지표**다: analysis DB에는 미러 실행 이력 테이블이 없어(설계 §3) '랜딩 통계가 마지막으로 갱신된 시각'으로 미러 시각을 대신한다. 미러는 하루 1회라 26시간을 넘으면 랭킹이 어제 것이다. 값이 아예 없으면(landing_stats 0행) '데이터 없음'을 빨강으로 띄운다 — 무값은 초록이 아니다.",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "h",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 AS value FROM landing_stats"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "랭킹 산출 규모",
+      "description": "랭킹·탐색이 딛고 서 있는 미러 모수 — analysis DB `public.accounts`·`public.contents` 행 수. 신선도가 초록이어도 **모수가 0이면 랭킹이 빈 판**이므로 건강 절에 둔다(0 또는 무값이면 빨강). 평시에는 미러가 돌 때마다 완만히 늘어난다 — 갑자기 줄면 미러가 부분 적재로 끝난 것이다. 조회수 기반 지표를 여기 두지 않는 이유는 §읽는 법 참조.",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT (SELECT count(*) FROM accounts) AS \"계정\",\n       (SELECT count(*) FROM contents) AS \"콘텐츠\""
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "② 분석 (LLM·지표 산출)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "panels": [],
+      "id": 101
+    },
+    {
+      "id": 201,
+      "type": "stat",
+      "title": "분석 산출",
+      "description": "content_analyses에 새로 쌓인 분석 결과 수(KST 달력일·최근 7일). 산출량 지표다 — 며칠째 0이면 분석 잡이 멈춘 것. ⚠️ '분석 잔여 몇 건'은 이 장에 없다: 미분석 후보 판정(v_analysis_candidates.timely)은 crawler DB, 기분석 셋은 analysis DB라 크로스 DB 셋 대조가 필요해 대시보드 단일 쿼리로는 못 세고, analytics/check/pending.sh가 정본이다(단독 카운트는 '제때창 놓쳐 영구 제외'와 '대기'를 뭉갠다).",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "noValue": "데이터 없음",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) FILTER (WHERE (analyzed_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS \"오늘\", count(*) FILTER (WHERE analyzed_at > now() - interval '7 days') AS \"7일\" FROM content_analyses"
+        }
+      ]
+    },
+    {
+      "id": 202,
+      "type": "timeseries",
+      "title": "분석 산출 추이 30일",
+      "description": "일별 신규 분석 결과 수(KST 달력일 경계, 대시보드 시간창 무관 30일 고정). 특정 날짜만 0이면 그날 분석 잡이 멈춘 것. 백필·재분석이 돌면 그날에 몰려 찍히는 게 정상.",
+      "gridPos": {
+        "x": 8,
+        "y": 7,
+        "w": 16,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "timeFrom": "30d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "barAlignment": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('day', analyzed_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul' AS time, count(*) AS \"신규 분석\" FROM content_analyses WHERE analyzed_at > now() - interval '30 days' GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "③ 서빙·사용 (유저 활동)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "panels": [],
+      "id": 102
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "저장 활동",
+      "description": "유저가 찜해 둔 인플루언서(app.saved_influencers)·콘텐츠(app.saved_contents) 누적 건수. 해제하면 행이 지워지므로 **지금 남아 있는 저장 수**다. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다. 실측 밀도가 한 자릿수라(2026-08-18 기준 9·4) 며칠씩 값이 안 움직이는 게 정상이다.",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT (SELECT count(*) FROM app.saved_influencers) AS \"저장 인플루언서\",\n       (SELECT count(*) FROM app.saved_contents) AS \"저장 콘텐츠\""
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "최근 저장 인플루언서",
+      "description": "가장 최근 저장된 인플루언서 10건(app.saved_influencers.created_at 기준 — 컬럼은 was V1__users_and_saved.sql에 있다). 전역 시간 필터를 타지 않는다(항상 최신 10건). 상태는 was가 확정한 어휘(reviewing/contact_planned/collaborating)를 한글로 바꿔 보여 준다. 저장이 몇 주째 안 늘면 발굴 리스트가 안 쓰이고 있다는 뜻이다.",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "저장 이력 없음",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT created_at AS \"저장 시각\",\n       handle AS \"핸들\",\n       CASE status\n         WHEN 'reviewing' THEN '검토중'\n         WHEN 'contact_planned' THEN '컨택 예정'\n         WHEN 'collaborating' THEN '협업 중'\n         ELSE status\n       END AS \"상태\"\nFROM app.saved_influencers\nORDER BY created_at DESC\nLIMIT 10"
+        }
+      ]
+    }
+  ]
+}

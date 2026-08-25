@@ -950,6 +950,19 @@ ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json-brand/hypen
   Loki 타일(ERROR 급증·402·401)은 매칭 0건이 숫자 0으로 떠야 정상(`or vector(0)` — 빈 벡터면
   빨강 "데이터 없음"이 뜨게 fail-loud로 짜여 있다).
 
+#### 14-2-3. 비즈니스 흐름 폴더 GRANT (08-25, ⚠️ **main 배포 전 서버 실행 필수 — 아직 미적용**)
+
+08-25 개편의 "비즈니스 흐름" 폴더 중 [흐름] 콘텐츠 파이프라인의 분석 패널 2개(분석 산출·분석
+산출 추이 30일)가 **analysis DB public 스키마의 `content_analyses`를 새로 조회**한다. 실행
+전까지 그 두 패널만 권한 오류로 빈다(같은 장의 나머지 패널과 흐름 폴더 다른 3장은 기존 GRANT
+재사용이라 추가 없음). 패널은 `analyzed_at` 하나만 쓴다 — §14-2 최소권한 원칙대로 한 컬럼만
+부여한다. GRANT는 멱등이라 재실행 무해.
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
+  -c "GRANT SELECT (analyzed_at) ON public.content_analyses TO grafana_reader"
+```
+
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
 | 변수 | 설명 |
