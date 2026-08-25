@@ -474,7 +474,15 @@ services:
     volumes: ["/:/rootfs:ro"]
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # 0.49는 containerd 스냅샷터 이미지 스토어(도커 29 기본, 서버 Storage Driver "overlayfs")를
+    # 못 읽어 컨테이너 핸들러 생성이 통째로 실패했다 — name 라벨 시계열 0개, 로그는
+    # "failed to identify the read-write layer ID" 도배(cadvisor#3643, 0.54.0에서 수정).
+    # 0.54+ 도커 팩토리는 containerd 소켓 연결이 필수라 /run/containerd 마운트가 같이 필요하다.
+    # 이미지 배포처는 gcr.io → ghcr.io로 이관됨(gcr에는 v0.52.1까지만 있다).
+    image: ghcr.io/google/cadvisor:0.56.2
+    # 컨테이너 외 cgroup(systemd 유닛 등)·compose 메타 라벨 시계열 억제 — 대시보드는
+    # name 라벨만 쓴다(hypenow-infra.json).
+    command: ["--docker_only=true", "--store_container_labels=false"]
     restart: unless-stopped
     logging: *logging
     networks: [prod]
@@ -484,6 +492,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
+      # 0.54+ 도커 핸들러가 rw 레이어 경로를 containerd 스펙에서 직접 읽는다 — 이 소켓이
+      # 없으면 도커 팩토리 등록 자체가 실패해 0.49 때와 같은 무데이터로 돌아간다.
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
 
   caddy:
     image: caddy:2-alpine
