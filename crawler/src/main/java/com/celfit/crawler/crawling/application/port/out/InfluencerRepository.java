@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import org.springframework.data.domain.Pageable;
@@ -210,6 +211,30 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     org.springframework.data.domain.Page<Influencer> findByStatusInAndBeautyClassInOrNull(
             @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
             @Param("classes") java.util.Collection<BeautyClass> classes, Pageable pageable);
+
+    /** 명단 F&B 필터: 선택한 분류(fnb_class)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndFnbClassIn(
+            java.util.Collection<InfluencerStatus> statuses,
+            java.util.Collection<CategoryClass> classes, Pageable pageable);
+
+    /** 명단 F&B 필터: F&B 미판정(백필 잔여)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndFnbClassIsNull(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
+    /** 명단 F&B 필터: 선택 분류 + 미판정을 함께 체크한 경우. */
+    @Query("select i from Influencer i where i.status in :statuses "
+            + "and (i.fnbClass in :classes or i.fnbClass is null)")
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndFnbClassInOrNull(
+            @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
+            @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
+
+    /** 대시보드 F&B 판정 그룹용: F&B 인플루언서(회사 제외) 수. */
+    @Query("select count(i) from Influencer i where i.status = :status and i.fnb = true "
+            + "and (i.fnbCompany is null or i.fnbCompany = false)")
+    long countFnbInfluencers(@Param("status") InfluencerStatus status);
+
+    /** 대시보드 F&B 판정 그룹용: F&B 축 미판정(백필 잔여) 수 — 백필 진행률 지표. */
+    long countByStatusAndFnbIsNull(InfluencerStatus status);
 
     /** SIMILAR 시드 대기 수 — 선정 쿼리와 같은 모수(includeFnb=true면 F&B 포함). */
     @Query("select count(i) from Influencer i where i.status = :status and ("

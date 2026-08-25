@@ -211,6 +211,88 @@ class UiSmokeTest extends IntegrationTest {
     }
 
     @Test
+    void 인플루언서_명단_F앤B_필터가_분류와_미판정을_거른다() throws Exception {
+        Influencer fnb = new Influencer("smoke-ff-fnb");
+        fnb.setStatus(InfluencerStatus.QUALIFIED);
+        fnb.classifyFnb(com.celfit.crawler.crawling.domain.CategoryClass.INFLUENCER,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "먹스타 계정", null);
+        influencers.save(fnb);
+        Influencer service = new Influencer("smoke-ff-service");
+        service.setStatus(InfluencerStatus.QUALIFIED);
+        service.classifyFnb(com.celfit.crawler.crawling.domain.CategoryClass.SERVICE,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "카페 공식 계정", null);
+        influencers.save(service);
+        Influencer unjudged = new Influencer("smoke-ff-unjudged");
+        unjudged.setStatus(InfluencerStatus.QUALIFIED);
+        influencers.save(unjudged);   // F&B 축 미판정(백필 잔여)
+
+        // 단일 분류 필터
+        mvc.perform(get("/ui/influencers").param("fnb", "INFLUENCER"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-ff-fnb")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-ff-service"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-ff-unjudged"))));
+
+        // 미판정 필터 — fnb_class 없는 계정만
+        mvc.perform(get("/ui/influencers").param("fnb", "UNJUDGED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-ff-unjudged")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-ff-fnb"))));
+
+        // 분류 + 미판정 동시 선택
+        mvc.perform(get("/ui/influencers").param("fnb", "SERVICE").param("fnb", "UNJUDGED"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-ff-service")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-ff-unjudged")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-ff-fnb"))));
+    }
+
+    @Test
+    void 뷰티_필터와_F앤B_필터를_동시_선택하면_뷰티가_이긴다() throws Exception {
+        // 두 축 교차 조합은 미지원 — 뷰티 필터만 적용된다(단순성 우선).
+        Influencer beautyOnly = new Influencer("smoke-mix-beauty");
+        beautyOnly.setStatus(InfluencerStatus.QUALIFIED);
+        beautyOnly.classify(com.celfit.crawler.crawling.domain.BeautyClass.INFLUENCER,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "뷰티 계정", null);
+        beautyOnly.classifyFnb(com.celfit.crawler.crawling.domain.CategoryClass.NONE,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "F&B 아님", null);
+        influencers.save(beautyOnly);
+        Influencer fnbOnly = new Influencer("smoke-mix-fnb");
+        fnbOnly.setStatus(InfluencerStatus.QUALIFIED);
+        fnbOnly.classify(com.celfit.crawler.crawling.domain.BeautyClass.NOT_BEAUTY,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "뷰티 아님", null);
+        fnbOnly.classifyFnb(com.celfit.crawler.crawling.domain.CategoryClass.INFLUENCER,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "먹스타 계정", null);
+        influencers.save(fnbOnly);
+
+        mvc.perform(get("/ui/influencers").param("beauty", "INFLUENCER").param("fnb", "INFLUENCER"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-mix-beauty")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("smoke-mix-fnb"))));
+    }
+
+    @Test
+    void 인플루언서_명단이_F앤B_배지와_수동_오버라이드_폼을_렌더한다() throws Exception {
+        Influencer inf = new Influencer("smoke-fnb-badge");
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.classifyFnb(com.celfit.crawler.crawling.domain.CategoryClass.SERVICE,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "카페 공식 계정", null);
+        influencers.save(inf);
+
+        mvc.perform(get("/ui/influencers")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("smoke-fnb-badge")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("매장·서비스")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "/ui/influencers/" + inf.getId() + "/fnb")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("fnbClass")));
+    }
+
+    @Test
     void 인플루언서_명단_유저명이_인스타그램_프로필_링크로_렌더된다() throws Exception {
         Influencer inf = new Influencer("smoke-link-user");
         inf.setStatus(InfluencerStatus.QUALIFIED);
@@ -482,5 +564,23 @@ class UiSmokeTest extends IntegrationTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("뷰티 회사")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("NOT_BEAUTY")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("미판정")));
+    }
+
+    @Test
+    void 대시보드에_F앤B_판정_그룹이_렌더된다() throws Exception {
+        // beauty 잡의 F&B 축 결과 — 판정 수와 백필 잔여(미판정)를 별도 그룹으로 노출.
+        Influencer fnb = new Influencer("smoke-fnb-tile-user");
+        fnb.setStatus(InfluencerStatus.QUALIFIED);
+        fnb.classifyFnb(com.celfit.crawler.crawling.domain.CategoryClass.INFLUENCER,
+                Influencer.BEAUTY_SOURCE_CLAUDE, "먹스타 계정", null);
+        influencers.save(fnb);
+
+        long fnbCount = influencers.countFnbInfluencers(InfluencerStatus.QUALIFIED);
+        assertThat(fnbCount).isGreaterThanOrEqualTo(1);
+
+        mvc.perform(get("/ui/fragments/status-tiles")).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("F&amp;B 판정")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("F&amp;B 인플루언서")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("백필 잔여")));
     }
 }

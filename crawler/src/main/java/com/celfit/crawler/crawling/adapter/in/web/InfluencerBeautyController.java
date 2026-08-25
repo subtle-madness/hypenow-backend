@@ -2,6 +2,7 @@ package com.celfit.crawler.crawling.adapter.in.web;
 
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import java.util.List;
@@ -14,8 +15,9 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
- * 명단 페이지 뷰티 수동 오버라이드(4분류: 뷰티 인플루언서/뷰티 회사/시술·서비스/뷰티 아님) —
- * MANUAL 출처는 BEAUTY 잡 재판정에서도 보존된다.
+ * 명단 페이지 수동 오버라이드 — 뷰티 축(5분류: 뷰티 인플루언서/뷰티 회사/시술·서비스/외국인/뷰티 아님)과
+ * F&amp;B 축(CategoryClass 5분류)을 각각 독립으로 덮어쓴다.
+ * MANUAL 출처는 BEAUTY 잡 재판정·F&amp;B 백필에서도 보존된다.
  */
 @Controller
 public class InfluencerBeautyController {
@@ -31,6 +33,7 @@ public class InfluencerBeautyController {
                            @RequestParam(defaultValue = "0") int page,
                            @RequestParam(required = false) List<InfluencerStatus> status,
                            @RequestParam(required = false) List<String> beauty,
+                           @RequestParam(required = false) List<String> fnb,
                            RedirectAttributes ra) {
         Influencer inf = influencers.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
@@ -39,6 +42,26 @@ public class InfluencerBeautyController {
         ra.addAttribute("page", page);
         if (status != null && !status.isEmpty()) ra.addAttribute("status", status);
         if (beauty != null && !beauty.isEmpty()) ra.addAttribute("beauty", beauty);   // 뷰티 필터 보존
+        if (fnb != null && !fnb.isEmpty()) ra.addAttribute("fnb", fnb);               // F&B 필터 보존
+        return "redirect:/ui/influencers";
+    }
+
+    /** F&B 축 수동 오버라이드 — MANUAL 출처는 백필 선정(fnb IS NULL)에서 자연 제외돼 보존된다. */
+    @PostMapping("/ui/influencers/{id}/fnb")
+    public String overrideFnb(@PathVariable Long id, @RequestParam CategoryClass fnbClass,
+                              @RequestParam(defaultValue = "0") int page,
+                              @RequestParam(required = false) List<InfluencerStatus> status,
+                              @RequestParam(required = false) List<String> beauty,
+                              @RequestParam(required = false) List<String> fnb,
+                              RedirectAttributes ra) {
+        Influencer inf = influencers.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
+        inf.classifyFnb(fnbClass, Influencer.BEAUTY_SOURCE_MANUAL, "수동 판정", null);
+        influencers.save(inf);
+        ra.addAttribute("page", page);
+        if (status != null && !status.isEmpty()) ra.addAttribute("status", status);
+        if (beauty != null && !beauty.isEmpty()) ra.addAttribute("beauty", beauty);
+        if (fnb != null && !fnb.isEmpty()) ra.addAttribute("fnb", fnb);
         return "redirect:/ui/influencers";
     }
 }
