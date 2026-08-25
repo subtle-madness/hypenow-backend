@@ -75,6 +75,9 @@ class BrandCollectServiceTest {
 	private final List<String> calls = new ArrayList<>();
 	private final List<String> tagPages = new ArrayList<>();
 	private final Set<String> failingAuthorIds = new HashSet<>();
+	// 부재 검증 단건 콜(fetchPost) 대역 — code별 응답 JSON / 404 집합(BrandDirectCollectServiceTest 관용구)
+	private final Map<String, String> postResponses = new HashMap<>();
+	private final Set<String> notFoundCodes = new HashSet<>();
 	// 게시자별 "앞으로 몇 번 더 404를 낼지" — 산발적 404(1회) / 지속 404를 같은 대역으로 표현한다.
 	private final Map<String, Integer> authorNotFoundTimes = new HashMap<>();
 	private boolean tagNotFound = false;
@@ -205,6 +208,10 @@ class BrandCollectServiceTest {
 		// 대역 쪽에 표식이 필요해 여기 둔다: trackedPosts·touchCrawledDepth 둘 다 이 집합을 배제한다.
 		final Set<String> directCodes = new HashSet<>();
 		final Map<String, Instant> touched = new HashMap<>();
+		// 부재 검증(2026-08-25 tagged 삭제 감지) — 실 SQL(tagVerifyCandidates·markUnavailable·
+		// markAbsenceChecked)의 상태 미러.
+		final List<String> unavailable = new ArrayList<>();
+		final Map<String, Instant> absenceChecked = new HashMap<>();
 		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
 		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
 		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
@@ -259,7 +266,35 @@ class BrandCollectServiceTest {
 		public void touchCrawled(long brandId, Collection<String> codes, Instant at) {
 			for (String c : codes) {
 				touched.put(c, at);
+				// 실 SQL과 동형 — 재관측은 부재 마킹·검증 스로틀을 해제한다.
+				unavailable.remove(c);
+				absenceChecked.remove(c);
 			}
+		}
+
+		@Override
+		public List<String> tagVerifyCandidates(long brandId, Instant minTakenAt, Instant recheckBefore) {
+			// 실 SQL의 tagged-only(direct 제외)·검증 하한·unavailable/스로틀 제외 대역.
+			return tracked.stream()
+					.filter(t -> !t.takenAt().isBefore(minTakenAt))
+					.filter(t -> !directCodes.contains(t.shortCode()))
+					.filter(t -> !unavailable.contains(t.shortCode()))
+					.filter(t -> {
+						Instant checked = absenceChecked.get(t.shortCode());
+						return checked == null || checked.isBefore(recheckBefore);
+					})
+					.map(TaggedPostRepository.TrackedPost::shortCode)
+					.toList();
+		}
+
+		@Override
+		public void markUnavailable(long brandId, String shortCode, Instant at) {
+			unavailable.add(shortCode);
+		}
+
+		@Override
+		public void markAbsenceChecked(long brandId, String shortCode, Instant at) {
+			absenceChecked.put(shortCode, at);
 		}
 
 		@Override
@@ -333,6 +368,17 @@ class BrandCollectServiceTest {
 				}
 				return tagPages.get(Math.min(tagCall++, tagPages.size() - 1));
 			}
+			if (path.startsWith("/v2/media/info/by/code")) {
+				String code = path.substring(path.indexOf("?code=") + "?code=".length());
+				if (notFoundCodes.contains(code)) {
+					throw new SubjectNotFoundException("게시물 없음: " + code);
+				}
+				String body = postResponses.get(code);
+				if (body == null) {
+					throw new IllegalStateException("예상 밖 코드: " + code);
+				}
+				return body;
+			}
 			if (path.startsWith("/v2/user/by/id")) {
 				// 쿼리 파라미터명은 id(08-07 실측 교정 — HikerClient.fetchAuthorProfile 주석 참조)
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());
@@ -397,6 +443,15 @@ class BrandCollectServiceTest {
 				"ig_play_count":1000,"play_count":1000%s,
 				"user":{"pk":%d,"username":"author_%d","full_name":"작가","profile_pic_url":"https://p"}}"""
 				.formatted(code, takenAtField, commentCount, extra, authorPk, authorPk);
+	}
+
+	/** 부재 검증 단건 콜(fetchPost) 응답 — BrandDirectCollectServiceTest.postJson과 동형. */
+	private static String postJson(String code, long takenAt, long authorPk) {
+		return """
+				{"media_or_ad":{"code":"%s","taken_at":%d,"product_type":"clips","like_count":10,
+				"comment_count":2,"ig_play_count":500,
+				"user":{"pk":%d,"username":"author_%d","full_name":"작가","profile_pic_url":"https://p"}}}"""
+				.formatted(code, takenAt, authorPk, authorPk);
 	}
 
 	private static String page(String nextPageId, String... items) {
@@ -614,6 +669,79 @@ class BrandCollectServiceTest {
 
 		assertThat(tagged.depthCalls).isEqualTo(1);
 		assertThat(tagged.touched).containsKeys("A", "Gone60d");
+	}
+
+	@Test
+	void 커버_스윕은_열거에서_사라진_tagged_게시물을_검증_콜로_확정한다() {
+		// due 확장으로 컷이 60일까지 열리는데 열거에는 안 실린 게시물 셋 — 삭제(404)·태그 해제(생존)·
+		// direct 겹침(2단계가 잡으므로 검증 제외).
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("GoneReel",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Untagged",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("DirectGone",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.directCodes.add("DirectGone");
+		notFoundCodes.add("GoneReel");
+		postResponses.put("Untagged", postJson("Untagged", RETRO_IN_WINDOW, 101));
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));   // 커서 소진 — 자연 종료(커버)
+
+		service(2000).sweep(sweptBrand);
+
+		// 404 확정 — unavailable 마킹만(스로틀 마킹 없음: unavailable 자체가 후보 제외 조건)
+		assertThat(tagged.unavailable).containsExactly("GoneReel");
+		// 생존(태그 해제) — 스로틀만 찍고 상태 불변
+		assertThat(tagged.absenceChecked).containsKey("Untagged");
+		assertThat(tagged.unavailable).doesNotContain("Untagged");
+		// direct 겹침 행은 검증 콜 자체가 없다(2단계 단건 수집 소관 — 중복 과금 방지)
+		assertThat(calls.stream().filter(p -> p.contains("code=DirectGone")).count()).isZero();
+		// 열거에 실린 게시물은 검증 대상이 아니다
+		assertThat(calls.stream().filter(p -> p.contains("code=A")).count()).isZero();
+	}
+
+	@Test
+	void 미커버_스윕은_부재_검증을_하지_않는다() {
+		// 안전 상한(④)으로 끊긴 실행 — 커버하지 못한 열거의 부재는 증거가 아니다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Gone5d",
+				Instant.ofEpochSecond(RECENT), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
+		tagPages.add(page("p3", reel("C", RECENT, 0, 103, ""), reel("D", RECENT, 0, 104, "")));
+		tagPages.add(page(null, reel("E", RECENT, 0, 105, "")));
+
+		service(3).sweep(sweptBrand);
+
+		assertThat(tagged.unavailable).isEmpty();
+		assertThat(tagged.absenceChecked).isEmpty();
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/media/info/by/code")).count()).isZero();
+	}
+
+	@Test
+	void 최근_검증한_생존_게시물은_재검증_콜을_내지_않는다() {
+		// 태그 해제로 살아있는 게시물 — 7일 스로틀 안이면 매일 콜을 내지 않는다.
+		tagged.tracked.add(new TaggedPostRepository.TrackedPost("Silent",
+				Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+		tagged.absenceChecked.put("Silent", Instant.now().minusSeconds(86400));   // 어제 검증됨
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/media/info/by/code")).count()).isZero();
+	}
+
+	@Test
+	void 부재_검증은_스윕당_상한까지만_콜을_낸다() {
+		for (int i = 0; i < 35; i++) {
+			String code = "Vanished" + i;
+			tagged.tracked.add(new TaggedPostRepository.TrackedPost(code,
+					Instant.ofEpochSecond(RETRO_IN_WINDOW), Instant.ofEpochSecond(NOW - 10L * 86400)));
+			postResponses.put(code, postJson(code, RETRO_IN_WINDOW, 101));
+		}
+		tagPages.add(page(null, reel("A", RECENT, 0, 101, "")));
+
+		service(2000).sweep(sweptBrand);
+
+		assertThat(calls.stream().filter(p -> p.startsWith("/v2/media/info/by/code")).count()).isEqualTo(30);
+		assertThat(tagged.absenceChecked).hasSize(30);   // 잔여 5건은 다음 스윕이 이어받는다
 	}
 
 	@Test
