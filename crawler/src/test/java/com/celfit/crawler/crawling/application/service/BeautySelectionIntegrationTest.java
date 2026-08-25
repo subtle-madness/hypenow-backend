@@ -292,6 +292,94 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
     }
 
     @Test
+    void 수집_선정은_토글_on일_때만_F앤B_인플루언서를_포함하고_회사는_항상_제외한다() {
+        Influencer fnbInf = influencers.save(qualified("gate_fnb"));
+        fnbInf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        fnbInf.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(fnbInf);
+        Influencer fnbCo = influencers.save(qualified("gate_fnb_co"));
+        fnbCo.classifyFnb(CategoryClass.COMPANY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        fnbCo.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(fnbCo);
+
+        Instant future = Instant.now().plusSeconds(3600);
+        var off = influencers.findCollectTargets(future, false, PageRequest.of(0, 1000));
+        assertThat(off).extracting(Influencer::getUsername)
+                .doesNotContain(PREFIX + "gate_fnb", PREFIX + "gate_fnb_co");
+
+        var on = influencers.findCollectTargets(future, true, PageRequest.of(0, 1000));
+        assertThat(on).extracting(Influencer::getUsername).contains(PREFIX + "gate_fnb");
+        assertThat(on).extracting(Influencer::getUsername).doesNotContain(PREFIX + "gate_fnb_co");
+    }
+
+    @Test
+    void 시드_선정도_토글을_따른다() {
+        Influencer fnbInf = influencers.save(qualified("seed_fnb"));
+        fnbInf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        fnbInf.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(fnbInf);
+
+        assertThat(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                InfluencerStatus.QUALIFIED, false, PageRequest.of(0, 1000)))
+                .extracting(Influencer::getUsername).doesNotContain(PREFIX + "seed_fnb");
+        assertThat(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                InfluencerStatus.QUALIFIED, true, PageRequest.of(0, 1000)))
+                .extracting(Influencer::getUsername).contains(PREFIX + "seed_fnb");
+    }
+
+    @Test
+    void 카운트_쿼리도_토글에_따라_F앤B_모수를_더한다() {
+        // 대시보드 대기열 타일·예상 비용 카드가 선정 쿼리와 같은 모수를 보게 하는 게이트 —
+        // 토글 off면 뷰티 축 카운트가 그대로여야 한다(운영 기본값이 off).
+        Instant future = Instant.now().plusSeconds(3600);
+        long backfillOff = influencers.countBackfillPending(false);
+        long reelsOff = influencers.countReelsDue(future, false);
+        long seedOff = influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                InfluencerStatus.QUALIFIED, false);
+        long noPkOff = influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+                InfluencerStatus.QUALIFIED, false);
+
+        Influencer fnbInf = influencers.save(qualified("count_fnb"));
+        fnbInf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        fnbInf.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(fnbInf);
+
+        assertThat(influencers.countBackfillPending(false)).isEqualTo(backfillOff);
+        assertThat(influencers.countBackfillPending(true)).isEqualTo(backfillOff + 1);
+        assertThat(influencers.countReelsDue(future, false)).isEqualTo(reelsOff);
+        assertThat(influencers.countReelsDue(future, true)).isEqualTo(reelsOff + 1);
+        assertThat(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                InfluencerStatus.QUALIFIED, false)).isEqualTo(seedOff);
+        assertThat(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+                InfluencerStatus.QUALIFIED, true)).isEqualTo(seedOff + 1);
+        assertThat(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+                InfluencerStatus.QUALIFIED, false)).isEqualTo(noPkOff);
+        assertThat(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
+                InfluencerStatus.QUALIFIED, true)).isEqualTo(noPkOff + 1);
+    }
+
+    @Test
+    void 추적_대기_카운트와_릴스_선정도_토글을_따른다() {
+        Instant future = Instant.now().plusSeconds(3600);
+        long trackOff = influencers.countTrackDue(future, false);
+
+        Influencer fnbInf = influencers.save(qualified("track_fnb"));
+        fnbInf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        fnbInf.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        fnbInf.setFirstCollectedAt(Instant.now().minusSeconds(86400));
+        fnbInf.setLastCollectedAt(Instant.now().minusSeconds(86400));
+        influencers.save(fnbInf);
+
+        assertThat(influencers.countTrackDue(future, false)).isEqualTo(trackOff);
+        assertThat(influencers.countTrackDue(future, true)).isEqualTo(trackOff + 1);
+
+        assertThat(influencers.findReelsTargets(future, false, PageRequest.of(0, 1000)))
+                .extracting(Influencer::getUsername).doesNotContain(PREFIX + "track_fnb");
+        assertThat(influencers.findReelsTargets(future, true, PageRequest.of(0, 1000)))
+                .extracting(Influencer::getUsername).contains(PREFIX + "track_fnb");
+    }
+
+    @Test
     void fnb_분류_밖의_값은_DB가_거부한다() {
         // beauty 축과 같은 CHECK 제약(V18·V22 관용구) — enum 밖 문자열이 조용히 적재되지 않는다.
         Influencer inf = influencers.save(new Influencer(PREFIX + "fnb-bad-class"));
