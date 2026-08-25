@@ -1,5 +1,7 @@
 package com.celfit.monitoring.config;
 
+import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.image.AuthorImageBackfillJob;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
@@ -11,6 +13,7 @@ import com.celfit.monitoring.image.ImageStore;
 import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
+import com.celfit.monitoring.store.AuthorProfileRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -118,5 +121,18 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
 		return new HashtagPostAuthorImageArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
 				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+	}
+
+	/**
+	 * 만료된 CDN 프로필 이미지 재수집 백필(2026-08-25, 어드민 수동 트리거 전용 — AuthorImageBackfillController
+	 * 참고) — 위 두 잡(authorProfileImageArchiveJob·hashtagPostAuthorImageArchiveJob) 빈을 그대로
+	 * 재사용해 백필 직후 같은 실행에서 다운로드·업로드까지 닫는다.
+	 */
+	@Bean
+	public AuthorImageBackfillJob authorImageBackfillJob(JdbcTemplate db, HikerClient hikerClient,
+			AuthorProfileRepository authorProfileRepo, AuthorProfileImageArchiveJob authorProfileImageArchiveJob,
+			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchiveJob) {
+		return new AuthorImageBackfillJob(db, hikerClient, authorProfileRepo, authorProfileImageArchiveJob,
+				hashtagPostAuthorImageArchiveJob);
 	}
 }
