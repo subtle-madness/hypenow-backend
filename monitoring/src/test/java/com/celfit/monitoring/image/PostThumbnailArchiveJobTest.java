@@ -17,9 +17,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * ① 신규 아카이브(object_path·source_name·archived_at 기록) ② source_name 미변경 시 재다운로드 스킵
  * ③ 쿼리스트링만 다르고 파일명이 같으면 스킵(핵심 회귀 방지 — 매일 전량 재다운로드 버그)
  * ④ 한 건 실패 격리(계속 진행) ⑤ PAR 미설정 시 no-op ⑥ http(s) 아닌/null thumbnail_url은 후보 제외
- * ⑦ 배치 상한은 다운로드 시도만 소모(스킵 공짜 — 창 잠식 결함 재발 방지)
- * ⑧ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않는다 — 그래서 만료가 무관한 픽스처의 oe는
- *   CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다 — 절대값 리터럴은 2038년에 일제 파손.
+ * ⑦ 만료(oe) URL은 시도 없이 제외한다(08-25 배치 상한 완전 제거 — 상한 관련 계약은 폐기) — 그래서
+ *   만료가 무관한 픽스처의 oe는 CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다 — 절대값 리터럴은
+ *   2038년에 일제 파손.
  */
 class PostThumbnailArchiveJobTest {
 
@@ -43,12 +43,12 @@ class PostThumbnailArchiveJobTest {
 				puts.add(Map.of("path", objectPath, "cacheControl", cacheControl));
 	}
 
-	PostThumbnailArchiveJob job(String parUrl, int batchLimit) {
-		return new PostThumbnailArchiveJob(db, fakeStore(), fakeDownloader(), parUrl, batchLimit);
+	PostThumbnailArchiveJob job(String parUrl) {
+		return new PostThumbnailArchiveJob(db, fakeStore(), fakeDownloader(), parUrl);
 	}
 
 	PostThumbnailArchiveJob job() {
-		return job("https://par.example/o/", 1000);
+		return job("https://par.example/o/");
 	}
 
 	@BeforeEach
@@ -145,7 +145,7 @@ class PostThumbnailArchiveJobTest {
 	void PAR_미설정이면_no_op이다() {
 		seedPostMeta("SC1", "https://cdn.example/1_n.jpg", null, null);
 
-		job("", 1000).run();
+		job("").run();
 
 		assertThat(downloads).isEmpty();
 		assertThat(puts).isEmpty();
@@ -163,31 +163,23 @@ class PostThumbnailArchiveJobTest {
 		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-post/VALID.jpg");
 	}
 
-	/**
-	 * 핵심 계약({@link BrandPostThumbnailArchiveJobTest}과 동형) — 상한은 다운로드 시도만 소모하고
-	 * 스킵은 공짜다. 후보 리스트를 상한에서 먼저 자르면 "이미 아카이브됨" 행이 창을 잠식해 뒤쪽
-	 * 미아카이브 꼬리에 도달하지 못한다(08-12 운영 실측 — author_profile 백로그 잔존).
-	 */
+	/** 대량 백로그도 한 스윕에서 전량 처리된다(08-25 배치 상한 완전 제거 — 상한 관련 계약은 폐기). */
 	@Test
-	void 배치_상한은_다운로드_시도만_소모하고_스킵은_소모하지_않는다() {
-		// 이미 아카이브된 행 3건이 후보 앞쪽을 차지해도(상한 2보다 많음) —
+	void 미아카이브_행_전량이_한_스윕에서_처리된다() {
 		seedPostMeta("DONE1", "https://cdn.example/a_n.jpg", "monitor-post/DONE1.jpg", "a_n.jpg");
-		seedPostMeta("DONE2", "https://cdn.example/b_n.jpg", "monitor-post/DONE2.jpg", "b_n.jpg");
-		seedPostMeta("DONE3", "https://cdn.example/c_n.jpg", "monitor-post/DONE3.jpg", "c_n.jpg");
 		seedPostMeta("NEW1", "https://cdn.example/d_n.jpg", null, null);
 		seedPostMeta("NEW2", "https://cdn.example/e_n.jpg", null, null);
 		seedPostMeta("NEW3", "https://cdn.example/f_n.jpg", null, null);
 
-		job("https://par.example/o/", 2).run();
+		job().run();
 
-		// — 미아카이브 행이 상한(2)만큼 반드시 아카이브된다. 셋째는 다음 스윕으로 이월.
-		assertThat(puts).hasSize(2);
+		assertThat(puts).hasSize(3);
 		Long archived = db.queryForObject(
 				"SELECT count(image_object_path) FROM post_meta WHERE short_code LIKE 'NEW%'", Long.class);
-		assertThat(archived).isEqualTo(2);
+		assertThat(archived).isEqualTo(3);
 	}
 
-	/** 만료 URL은 재시도해도 영원히 403 — 시도 자체를 걸러야 예산이 미아카이브 꼬리에 도달한다. */
+	/** 만료 URL은 재시도해도 영원히 403 — 시도 자체를 걸러 예산(HTTP 왕복)을 낭비하지 않는다. */
 	@Test
 	void 만료된_URL은_다운로드_시도조차_하지_않는다() {
 		seedPostMeta("DEAD", CdnUrls.expiringIn("dead_n.jpg", -3600), null, null);
@@ -199,30 +191,5 @@ class PostThumbnailArchiveJobTest {
 		assertThat(downloads).noneMatch(u -> u.contains("dead_n.jpg"));
 		assertThat(puts).extracting(m -> m.get("path"))
 				.containsExactlyInAnyOrder("monitor-post/LIVE.jpg", "monitor-post/UNKNOWN.jpg");
-	}
-
-	@Test
-	void 만료된_URL은_배치_상한을_소모하지_않는다() {
-		seedPostMeta("DEAD1", CdnUrls.expiringIn("dead1_n.jpg", -3600), null, null);
-		seedPostMeta("DEAD2", CdnUrls.expiringIn("dead2_n.jpg", -3600), null, null);
-		seedPostMeta("LIVE1", CdnUrls.expiringIn("live1_n.jpg", 86400), null, null);
-		seedPostMeta("LIVE2", CdnUrls.expiringIn("live2_n.jpg", 86400), null, null);
-
-		job("https://par.example/o/", 2).run();
-
-		assertThat(puts).extracting(m -> m.get("path"))
-				.containsExactlyInAnyOrder("monitor-post/LIVE1.jpg", "monitor-post/LIVE2.jpg");
-	}
-
-	/** 상한이 걸리면 먼저 죽을 URL부터 — 임박분을 이월하면 다음 스윕엔 이미 만료돼 영구 유실된다. */
-	@Test
-	void 상한이_걸리면_만료_임박_순으로_예산을_쓴다() {
-		seedPostMeta("FAR", CdnUrls.expiringIn("far_n.jpg", 86400 * 3), null, null);
-		seedPostMeta("SOON", CdnUrls.expiringIn("soon_n.jpg", 3600), null, null);
-		seedPostMeta("UNKNOWN", CdnUrls.noOe("unknown_n.jpg"), null, null);
-
-		job("https://par.example/o/", 1).run();
-
-		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-post/SOON.jpg");
 	}
 }

@@ -23,8 +23,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 사진이 스윕 사이 바뀌는 빈도가 게시물 썸네일보다 훨씬 낮고, 바뀌어도 다음 스윕에서 그 작성자의
  * 새 미아카이브 행이 생기면 자연히 재처리된다 — 태스크 범위를 최소로 유지).
  *
- * <p>배치 상한은 다운로드 시도만 소모한다(스킵 공짜) — 근거는 {@link BrandPostThumbnailArchiveJob}
- * 클래스 주석 참고.
+ * <p>배치 상한은 08-25 완전히 제거됐다 — 이력·근거는 {@link BrandPostThumbnailArchiveJob} 클래스
+ * 주석 참고. 상한이 없으니 후보 전량이 매 스윕에서 처리된다.
  */
 public class HashtagPostAuthorImageArchiveJob {
 
@@ -38,15 +38,13 @@ public class HashtagPostAuthorImageArchiveJob {
 	private final ImageStore store;
 	private final ImageDownloader downloader;
 	private final String parUrl;
-	private final int batchLimit;
 
 	public HashtagPostAuthorImageArchiveJob(JdbcTemplate db, ImageStore store, ImageDownloader downloader,
-			String parUrl, int batchLimit) {
+			String parUrl) {
 		this.db = db;
 		this.store = store;
 		this.downloader = downloader;
 		this.parUrl = parUrl;
-		this.batchLimit = batchLimit;
 	}
 
 	public void run() {
@@ -70,7 +68,6 @@ public class HashtagPostAuthorImageArchiveJob {
 		int archived = 0;
 		int skipped = 0;
 		int failed = 0;
-		int deferred = 0;
 		for (Candidate c : candidates) {
 			String sourceName;
 			try {
@@ -79,10 +76,6 @@ public class HashtagPostAuthorImageArchiveJob {
 				// 원본 URL 파싱 실패 — 이 건만 스킵하고 다음 스윕에서 재시도(다른 작성자는 계속 처리).
 				log.warn("해시태그 작성자 프로필 URL 파싱 실패 — 스킵: authorUsername={}", c.authorUsername(), e);
 				skipped++;
-				continue;
-			}
-			if (archived + failed >= batchLimit) {
-				deferred++;   // 다운로드 예산 소진 — 다음 스윕으로 이월.
 				continue;
 			}
 			try {
@@ -103,8 +96,8 @@ public class HashtagPostAuthorImageArchiveJob {
 				log.warn("해시태그 작성자 프로필 이미지 아카이브 실패 — authorUsername={}", c.authorUsername(), e);
 			}
 		}
-		log.info("해시태그 작성자 프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건{}",
-				archived, skipped, failed, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("해시태그 작성자 프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건",
+				archived, skipped, failed);
 	}
 
 	/**

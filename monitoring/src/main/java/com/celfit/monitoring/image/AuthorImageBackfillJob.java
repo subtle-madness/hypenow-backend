@@ -30,8 +30,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 낫다(프론트 이니셜 placeholder)는 판단으로 조용히 skip한다.
  *
  * <p>{@code limit}은 이 실행에서 두 phase가 함께 쓰는 <b>Hiker 호출 총량 상한</b>이다(다운로드
- * 상한이 아니라 재조회 콜 상한 — 아카이브 잡들의 배치 상한과는 별개 예산). Phase A를 먼저 소모하고
- * 남은 예산을 Phase B가 쓴다 — 소진 후 잔여는 deferred로 이월(다음 트리거가 재시도).
+ * 상한이 아니라 재조회 콜 상한 — 08-25 배치 상한 폐지로 다운로드·업로드 자체엔 이제 상한이 없다).
+ * Phase A를 먼저 소모하고 남은 예산을 Phase B가 쓴다 — 소진 후 잔여는 deferred로 이월(다음 트리거가 재시도).
  */
 public class AuthorImageBackfillJob {
 
@@ -73,8 +73,8 @@ public class AuthorImageBackfillJob {
 				b.refreshed(), b.reused(), b.failed(),
 				b.deferred() > 0 ? ", 잔여 " + b.deferred() + "건 이월" : "");
 
-		// 백필이 갱신한 신선 URL을 같은 실행 안에서 바로 수거 — 각 잡의 자체 batchLimit·만료 필터·
-		// 건 단위 격리는 그대로 존중한다(재구현하지 않는다).
+		// 백필이 갱신한 신선 URL을 같은 실행 안에서 바로 수거 — 각 잡의 만료 필터·건 단위 격리는
+		// 그대로 존중한다(재구현하지 않는다). 08-25 배치 상한 폐지로 이제 매 실행이 대기분 전량을 처리한다.
 		log.info("백필 직후 즉시 아카이브 수거 시작");
 		authorArchiveJob.run();
 		hashtagArchiveJob.run();
