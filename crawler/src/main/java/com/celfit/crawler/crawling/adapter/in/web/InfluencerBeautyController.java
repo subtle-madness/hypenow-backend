@@ -17,7 +17,10 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 /**
  * 명단 페이지 수동 오버라이드 — 뷰티 축(5분류: 뷰티 인플루언서/뷰티 회사/시술·서비스/외국인/뷰티 아님)과
  * F&amp;B 축(CategoryClass 5분류)을 각각 독립으로 덮어쓴다.
- * MANUAL 출처는 BEAUTY 잡 재판정·F&amp;B 백필에서도 보존된다.
+ * MANUAL 출처는 BEAUTY 잡이 덮지 않는다 — 축별로 보호 지점이 다르다.
+ * 뷰티 MANUAL은 rejudge 선정 쿼리(beauty_source='CLAUDE')에서 제외돼 보존되고,
+ * F&amp;B MANUAL은 어느 경로로 선정되든 적용 시점 가드(fnb_source='MANUAL'이면 F&amp;B 축 미적용)로
+ * 보존된다.
  */
 @Controller
 public class InfluencerBeautyController {
@@ -46,7 +49,11 @@ public class InfluencerBeautyController {
         return "redirect:/ui/influencers";
     }
 
-    /** F&B 축 수동 오버라이드 — MANUAL 출처는 백필 선정(fnb IS NULL)에서 자연 제외돼 보존된다. */
+    /**
+     * F&B 축 수동 오버라이드 — MANUAL 출처는 백필 선정(fnb IS NULL)에서 자연 제외되고,
+     * 뷰티 rejudge·신규 판정 경로로 같은 계정이 다시 잡혀도 BeautyJob의 적용 시점 가드
+     * (fnb_source='MANUAL')가 F&B 축을 덮지 않는다.
+     */
     @PostMapping("/ui/influencers/{id}/fnb")
     public String overrideFnb(@PathVariable Long id, @RequestParam CategoryClass fnbClass,
                               @RequestParam(defaultValue = "0") int page,

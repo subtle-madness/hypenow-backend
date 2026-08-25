@@ -255,6 +255,46 @@ class BeautyJobTest {
     }
 
     @Test
+    void rejudge_경로에서도_수동_FnB_판정은_덮이지_않는다() {
+        // fnbOnly 마스크는 뷰티 축만 보호한다 — 백필이 아닌 경로(rejudge·신규)로 같은 계정이
+        // 다시 잡히면 F&B MANUAL이 CLAUDE로 조용히 덮인다. 적용 시점 가드로 막는다.
+        Influencer inf = qualified(1L, "manual_fnb");
+        inf.setBeauty(false);
+        inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        inf.classifyFnb(CategoryClass.SERVICE, Influencer.BEAUTY_SOURCE_MANUAL, "수동 F&B", "BIO");
+        Instant manualJudgedAt = Instant.parse("2026-08-01T00:00:00Z");
+        inf.setFnbJudgedAt(manualJudgedAt);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findRejudgeTargets(
+                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("manual_fnb",
+                BeautyClass.INFLUENCER, "뷰티로 뒤집힘", "BIO",
+                CategoryClass.INFLUENCER, "모델이 딴소리", "CAPTION")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, true);
+
+        // 뷰티 축은 재판정 결과가 적용된다(rejudge의 목적)
+        assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(inf.getBeautyJudgedAt()).isEqualTo(NOW);
+        assertThat(s.judgedBeauty()).isEqualTo(1);
+        // F&B 축은 MANUAL 그대로 — class·source·judgedAt 어느 것도 안 바뀐다
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.SERVICE);
+        assertThat(inf.getFnbSource()).isEqualTo(Influencer.BEAUTY_SOURCE_MANUAL);
+        assertThat(inf.getFnbReason()).isEqualTo("수동 F&B");
+        assertThat(inf.getFnbJudgedAt()).isEqualTo(manualJudgedAt);
+        assertThat(s.fnbApplied()).isZero();
+        assertThat(s.fnbPositive()).isZero();
+    }
+
+    @Test
     void 신규_판정은_두_축을_모두_적용한다() {
         Influencer inf = qualified(2L, "fresh");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))

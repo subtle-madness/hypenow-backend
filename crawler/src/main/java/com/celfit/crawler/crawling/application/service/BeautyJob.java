@@ -36,7 +36,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 2026-08-23 §3), (3) rejudge=true일 때의 재판정. (2)는 F&B 축만 적용하고 뷰티 판정은
  * MANUAL 포함해 절대 덮지 않는다(fnbOnly 마스크).
  * rejudge는 판정 후 재료(raw_profile)가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다 —
- * MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
+ * 뷰티 MANUAL(수동)은 선정에서 빠져 덮이지 않고, F&amp;B MANUAL은 선정 경로와 무관하게
+ * 적용 시점 가드(fnb_source=MANUAL이면 F&amp;B 축 미적용)로 보존된다.
  * beauty=true는 SIMILAR 잡의 시드 자격이 된다.
  */
 @Service
@@ -273,9 +274,13 @@ public class BeautyJob {
             // F&B 백필로 선정된 계정은 뷰티 축을 절대 덮지 않는다 — 모델이 뷰티 판정을 같이 내도 버린다
             // (MANUAL 수동 교정분도 백필 대상이라, 여기서 막지 않으면 수동 판정이 조용히 날아간다).
             boolean applyBeauty = !fnbOnly.contains(v.username()) && v.beautyClass() != null;
-            // 적용할 축이 하나도 없으면(백필 마스크로 뷰티를 버렸는데 F&B축까지 무응답) 저장·카운터·
+            // F&B 축의 MANUAL(수동 교정)은 적용 시점에 막는다 — fnbOnly 마스크는 뷰티 축만 보호하므로,
+            // rejudge·신규 경로로 같은 계정이 다시 잡히면 수동 F&B 판정이 CLAUDE로 조용히 덮인다.
+            boolean applyFnb = v.fnbClass() != null
+                    && !Influencer.BEAUTY_SOURCE_MANUAL.equals(inf.getFnbSource());
+            // 적용할 축이 하나도 없으면(마스크·MANUAL 가드로 둘 다 버렸거나 양축 무응답) 저장·카운터·
             // 계정별 로그를 모두 건너뛴다 — 바뀐 게 없는데 진행 카운터가 오르면 배치 진척을 오독한다.
-            if (!applyBeauty && v.fnbClass() == null) continue;
+            if (!applyBeauty && !applyFnb) continue;
             // 축별 class는 모델 응답이 무효·누락이면 null — 그 축만 미판정으로 남기고 다른 축은 적용한다
             String beautyLabel = fnbOnly.contains(v.username()) ? "뷰티 판정 보존" : "뷰티축 무응답";
             if (applyBeauty) {
@@ -296,14 +301,14 @@ public class BeautyJob {
                     case NOT_BEAUTY -> "비뷰티";
                 };
             }
-            if (v.fnbClass() != null) {
+            if (applyFnb) {
                 inf.classifyFnb(v.fnbClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.fnbReason(), v.fnbBasis());
                 inf.setFnbJudgedAt(clock.instant());
                 inf.setFnbCaptionCount(capCount);
                 fnbApplied++;
                 if (v.fnbClass().inCategory()) fnbPositive++;
             }
-            String fnbLabel = v.fnbClass() == null ? "" : " / " + switch (v.fnbClass()) {
+            String fnbLabel = !applyFnb ? "" : " / " + switch (v.fnbClass()) {
                 case INFLUENCER -> "F&B(인플루언서)";
                 case COMPANY -> "F&B(회사)";
                 case SERVICE -> "F&B(매장·서비스)";
