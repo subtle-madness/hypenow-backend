@@ -248,7 +248,12 @@ public class TaggedPostRepository {
 				Timestamp.from(at), brandId, Timestamp.from(minTakenAt));
 	}
 
-	/** 이번 열거에서 만난 게시물의 마지막 수집 시각 배치 갱신 — 다음 스윕의 티어 판정 입력. */
+	/**
+	 * 이번 열거·실수집에서 실제로 만난 게시물의 마지막 수집 시각 배치 갱신 — 다음 스윕의 티어 판정
+	 * 입력. 직접 관측 = 존재 확인이므로 삭제·비공개 마킹({@link #markUnavailable})도 여기서 해제한다
+	 * (IG 보관 후 재공개 자가 치유). 깊이 touch({@link #touchCrawledDepth})는 개별 관측이 아니라
+	 * 해제하지 않는다.
+	 */
 	public void touchCrawled(long brandId, Collection<String> codes, Instant at) {
 		if (codes.isEmpty()) {
 			return;
@@ -261,8 +266,18 @@ public class TaggedPostRepository {
 		for (String code : codes) {
 			args[i++] = code;
 		}
-		db.update("UPDATE brand_tagged_post SET last_crawled_at = ? WHERE brand_id = ? AND short_code IN ("
-				+ placeholders + ")", args);
+		db.update("UPDATE brand_tagged_post SET last_crawled_at = ?, unavailable_at = NULL"
+				+ " WHERE brand_id = ? AND short_code IN (" + placeholders + ")", args);
+	}
+
+	/**
+	 * 삭제·비공개 관측 마킹(2026-08-25 설계) — 야간 스윕 단건 콜이 404(SubjectNotFound)를 받은
+	 * 게시물에 찍는다. 행·스냅샷은 보존(was가 hidden으로 노출), 재관측({@link #touchCrawled})이
+	 * 해제하는 자가 치유 짝이다. 재마킹은 무해하다(시각만 갱신).
+	 */
+	public void markUnavailable(long brandId, String shortCode, Instant at) {
+		db.update("UPDATE brand_tagged_post SET unavailable_at = ? WHERE brand_id = ? AND short_code = ?",
+				Timestamp.from(at), brandId, shortCode);
 	}
 
 	/**
