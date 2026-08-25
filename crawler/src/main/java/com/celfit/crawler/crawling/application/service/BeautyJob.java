@@ -273,6 +273,9 @@ public class BeautyJob {
             // F&B 백필로 선정된 계정은 뷰티 축을 절대 덮지 않는다 — 모델이 뷰티 판정을 같이 내도 버린다
             // (MANUAL 수동 교정분도 백필 대상이라, 여기서 막지 않으면 수동 판정이 조용히 날아간다).
             boolean applyBeauty = !fnbOnly.contains(v.username()) && v.beautyClass() != null;
+            // 적용할 축이 하나도 없으면(백필 마스크로 뷰티를 버렸는데 F&B축까지 무응답) 저장·카운터·
+            // 계정별 로그를 모두 건너뛴다 — 바뀐 게 없는데 진행 카운터가 오르면 배치 진척을 오독한다.
+            if (!applyBeauty && v.fnbClass() == null) continue;
             // 축별 class는 모델 응답이 무효·누락이면 null — 그 축만 미판정으로 남기고 다른 축은 적용한다
             String beautyLabel = fnbOnly.contains(v.username()) ? "뷰티 판정 보존" : "뷰티축 무응답";
             if (applyBeauty) {
