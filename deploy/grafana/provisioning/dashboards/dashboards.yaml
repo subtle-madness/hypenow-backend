@@ -41,3 +41,17 @@ providers:
     options:
       path: /etc/grafana/provisioning/dashboards/json-ops
       foldersFromFilesStructure: false
+
+  # 비즈니스 흐름(2026-08-25 개편 스펙) — "이 업무가 흘러가고 있나"의 단계별 장, 태그
+  # hypenow-flow 링크 바로 장 간 이동. 기존 탐색·경쟁사·Hiker·[브랜드] 2장을 통합·이관하는
+  # 대상이며, 원본 대시보드 퇴역은 전 장 완성 후 별도 확인을 거쳐 진행(uid가 달라 공존 무해).
+  - name: hypenow-flow-dashboards
+    orgId: 1
+    folder: 비즈니스 흐름
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/json-flow
+      foldersFromFilesStructure: false

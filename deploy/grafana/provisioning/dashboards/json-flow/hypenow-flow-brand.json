@@ -1,0 +1,2121 @@
+{
+  "title": "[흐름] 브랜드 모니터링",
+  "uid": "hypenow-flow-brand",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "5m",
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "tags": [
+    "hypenow",
+    "hypenow-flow"
+  ],
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "",
+      "tags": [
+        "hypenow-flow"
+      ],
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "① 수집 — 야간 일일 수집 (매일 KST 02:00)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": [],
+      "id": 100
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "일일 수집 신선도",
+      "description": "활성 브랜드 last_swept_at의 중앙값 기준 경과 시간. 야간 일일 수집(KST 02:00)은 전 브랜드에 도장을 찍으므로 중앙값은 어젯밤 수집 시각을 따른다(정상 ~19h대에서 오르내림). max가 아니라 중앙값인 이유: 등록 백필 완료도 last_swept_at을 찍어(touchSwept·markServing) 낮에 브랜드 하나만 등록돼도 max는 리셋돼 보인다 — 08-25 실측 max 2.8h vs 중앙값 19.2h. 26h 초과 = 어젯밤 02:00 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "h",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT (EXTRACT(EPOCH FROM now()) - percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL AND last_swept_at IS NOT NULL"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "오늘 수집 성공",
+      "description": "오늘(KST) 일일 수집이 성공한 브랜드 수 / 활성 브랜드 수. 실패 브랜드는 last_swept_on이 갱신되지 않아 차이로 드러난다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT count(*) FILTER (WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND closed_at IS NULL) AS \"성공\", count(*) FILTER (WHERE closed_at IS NULL) AS \"활성 전체\" FROM brand_account"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "오늘 수집 소요",
+      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값. 오늘 등록된 브랜드는 제외 — 등록 백필 완료도 last_swept_at을 찍어서(touchSwept) 포함하면 새벽 스윕~저녁 등록 간격을 재게 된다(08-25 실측 17h로 오염).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND (registered_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "오늘 게시물 갱신",
+      "description": "야간 일일 수집이 오늘 갱신해야 하는(했던) 태그 게시물 수(대상)와, 기한이 지났는데 아직 안 돈 수(미처리). 대상 기준은 게시물 나이 티어 정책(BrandCrawlPolicy) — 게시 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다. 미처리는 일일 수집(KST 02:00) 완료 후 0이 정상이고, 0이 아니면 수집이 실패했거나 중간에 끊긴 것. **KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.** 여기서 '갱신'은 게시물 지표(좋아요·댓글 수) 재수집이다 — 댓글 본문·게시자 보강의 잔여는 아래 '적재 결과' row의 'enrich 잔여' 타일이 본다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "noValue": "데이터 없음",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) FILTER (WHERE (t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date OR ((t.last_crawled_at IS NULL OR (t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date) AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days'))) AS \"대상\", count(*) FILTER (WHERE (t.last_crawled_at IS NULL OR (t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date) AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS \"미처리\" FROM brand_tagged_post t JOIN brand_account b ON b.id = t.brand_id AND b.closed_at IS NULL WHERE t.taken_at >= now() - interval '180 days'"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "오늘 게시물 갱신 — 티어별",
+      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **일일 수집(KST 02:00) 완료 후 미처리 > 0은 진짜 이상이다** — 스윕 슬롯이 직전 touch보다 몇 분 일러 하루 밀리던 경계 레이스(08-23 실측 262건)는 BrandCrawlPolicy의 주기 여유 12h(08-23~)로 제거됐다. 어느 브랜드가 왜 남았는지는 아래 '미처리 브랜드별' 테이블이 가른다(브랜드 스윕 실패 vs 스윕 성공인데 미커버). KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "noValue": "—",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH posts AS (SELECT CASE WHEN t.taken_at >= now() - interval '14 days' THEN 1 WHEN t.taken_at >= now() - interval '30 days' THEN 2 WHEN t.taken_at >= now() - interval '90 days' THEN 3 WHEN t.taken_at >= now() - interval '180 days' THEN 4 ELSE 5 END AS tier, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t JOIN brand_account b ON b.id = t.brand_id AND b.closed_at IS NULL WHERE t.taken_at IS NOT NULL), agg AS (SELECT tier, count(*) AS held, count(*) FILTER (WHERE done_today) AS done, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE NOT done_today AND NOT due_now) AS waiting FROM posts GROUP BY tier) SELECT \"티어\", \"보유\", \"오늘 대상\", \"오늘 처리\", \"미처리\", \"대기\" FROM (SELECT l.ord, l.label AS \"티어\", coalesce(a.held,0) AS \"보유\", coalesce(a.done,0)+coalesce(a.pending,0) AS \"오늘 대상\", coalesce(a.done,0) AS \"오늘 처리\", coalesce(a.pending,0) AS \"미처리\", coalesce(a.waiting,0) AS \"대기\" FROM (VALUES (1,'매일 (0–14일)'),(2,'3일 (14–30일)'),(3,'7일 (30–90일)'),(4,'30일 (90–180일)')) AS l(ord,label) LEFT JOIN agg a ON a.tier = l.ord UNION ALL SELECT 5, '추적 종료 (180일+)', coalesce((SELECT held FROM agg WHERE tier = 5),0), NULL, NULL, NULL, NULL UNION ALL SELECT 6, '합계 (0–180일)', coalesce(sum(held),0), coalesce(sum(done),0)+coalesce(sum(pending),0), coalesce(sum(done),0), coalesce(sum(pending),0), coalesce(sum(waiting),0) FROM agg WHERE tier <= 4) x ORDER BY x.ord"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "미처리 브랜드별",
+      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상이고, 행이 뜨면 전부 살펴볼 대상이다. **안 돌음** = 오늘 이 브랜드 차례가 끝까지 돌지 않음(brand_account.last_swept_on ≠ 오늘) — 예외로 실패했거나(Hiker 402·타임아웃 등, 로그 WARN '브랜드 일일 수집 실패') 새벽 2~3시 수집 중이라 아직 순서 전. '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다. **돌았으나 미달** = 브랜드 차례는 끝까지 돌았는데(last_swept_on = 오늘) 피드 훑기가 기한 게시물 깊이까지 못 내려가 갱신 도장(last_crawled_at)이 안 찍힘 — 원인은 커서 미전진(WARN '태그 커서 미전진 의심')·안전 상한(ERROR '태그 열거 안전 상한 도달'). 이때도 last_swept_on은 일부러 찍는다: 비워 두면 프론트가 '준비 중'으로 숨기고 다음 날 12개월 전체 재백필(Hiker 콜 폭증)이 돌기 때문. 기존 데이터는 그대로 서빙되고 다음 날 스윕이 같은 깊이를 다시 열어 수습된다 — **이틀 연속이면 이상**. 정책 여유 12h(08-23~) 배포 전에는 스윕 슬롯이 기한보다 몇 분 일찍 지나간 경계 레이스도 '돌았으나 미달'로 잡힌다(배포 후 소멸). due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "미처리 없음 — 전 브랜드 정상",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "브랜드"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "오늘 처리"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "상태"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "안 돌음": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "돌았으나 미달": {
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "마지막 성공"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH posts AS (SELECT t.brand_id, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending AS \"미처리\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '돌았으나 미달' ELSE '안 돌음' END AS \"상태\", b.last_swept_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 수집 실패·미실행 — 새벽 2~3시면 순서 대기일 수 있음' ELSE '피드 훑기가 중간에 끊김 — 다음 날 자동 재시도, 반복되면 로그 확인' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending > 0 ORDER BY a.pending DESC, b.username"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "오늘 브랜드별 처리 현황",
+      "description": "브랜드 일일 수집은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것. 간격과 함께 브랜드별 수집량도 본다 — 오늘 Hiker 콜(과금 규모), 오늘 신규 게시물(그날 실제 유입), 누적 게시물(자산 규모). 콜만 많고 신규가 0이면 변화 없는 브랜드를 재확인만 한 것이라 정상일 수 있지만, 전 브랜드가 그러면 수집이 헛돌고 있는 것.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "오늘 일일 수집 기록 없음",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "간격(초)"
+            },
+            "properties": [
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "오늘 콜"
+            },
+            "properties": [
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT b.username AS \"브랜드\", b.last_swept_at AS \"성공 시각\", round(EXTRACT(EPOCH FROM (b.last_swept_at - lag(b.last_swept_at) OVER (ORDER BY b.last_swept_at)))::numeric,1) AS \"간격(초)\", c.calls AS \"오늘 콜\", coalesce(t.today_posts, 0) AS \"오늘 신규 게시물\", coalesce(t.total_posts, 0) AS \"누적 게시물\" FROM brand_account b LEFT JOIN brand_call_count c ON c.brand_id = b.id AND c.called_on = (now() AT TIME ZONE 'Asia/Seoul')::date LEFT JOIN (SELECT brand_id, count(*) FILTER (WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS today_posts, count(*) AS total_posts FROM brand_tagged_post GROUP BY brand_id) t ON t.brand_id = b.id WHERE b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY b.last_swept_at"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "② 적재 결과 (야간 스윕 + 등록 백필)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": [],
+      "id": 101
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "오늘 신규 태그 게시물",
+      "description": "오늘(KST 달력일) 새로 적재된 브랜드 태그 게시물 수. 0이면 브랜드 일일 수집이 돌지 않은 것 — 02:00 KST 일일 수집 불발이나 Hiker 잔액 소진(08-10 402 고착)을 의심한다. first_seen_at은 UTC 저장이라 KST 달력일로 환산해 비교한다. 이 row는 두 적재 경로(야간 스윕·등록 시 백필)의 합산이다 — brand_tagged_post에 적재 경로 컬럼이 없어 가르지 못한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "0 — 일일 수집 확인",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_tagged_post\nWHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "enrich 잔여 (24h+)",
+      "description": "적재된 지 24시간이 넘도록 enrich(상세 수집)가 붙지 않은 태그 게시물 수. 정상은 0 — 1건이라도 남으면 enrich가 밀리기 시작한 것이고, 500건 이상이면 사실상 정지로 본다. 이 row는 두 적재 경로(야간 스윕·등록 시 백필)의 합산이다 — brand_tagged_post에 적재 경로 컬럼이 없어 가르지 못한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_tagged_post\nWHERE enriched_at IS NULL AND first_seen_at < now() - interval '24 hours'"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "백필 미완 브랜드",
+      "description": "활성 브랜드 중 일일 수집이 한 번도 성공한 적 없는 계정 수(last_swept_on IS NULL). 갓 등록된 브랜드가 잠깐 잡히는 건 정상이지만, 계속 남아 있으면 그 브랜드는 수집이 시작조차 못 한 것이다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_account WHERE last_swept_on IS NULL AND closed_at IS NULL"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "해시태그 감지 7일",
+      "description": "최근 7일 새로 감지된 해시태그 게시물의 판정(verdict) 분포. 규모·품질 지표라 신호등이 아니다 — 색 임계를 달지 않는다. '불확실' 비중이 갑자기 커지면 룰 커버리지나 LLM 판정 품질을 의심한다. 이 row는 두 적재 경로(야간 스윕·등록 시 백필)의 합산이다 — brand_tagged_post에 적재 경로 컬럼이 없어 가르지 못한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 31
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) FILTER (WHERE verdict = 'RELEVANT')  AS \"관련\",\n       count(*) FILTER (WHERE verdict = 'UNCERTAIN') AS \"불확실\",\n       count(*) FILTER (WHERE verdict = 'IRRELEVANT') AS \"무관\",\n       count(*) FILTER (WHERE verdict IN ('SELF', 'DIRECT_TAGGED')) AS \"자사·직태그\"\nFROM brand_hashtag_post WHERE first_seen_at > now() - interval '7 days'"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "② 상세 — 적재 추이·규모",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "panels": [
+        {
+          "id": 17,
+          "type": "timeseries",
+          "title": "태그 게시물 적재 추이 30일",
+          "description": "일별 신규 적재 태그 게시물 수(KST 달력일 경계). 대시보드 시간창과 무관하게 최근 30일 고정. 특정 날짜만 0이거나 급락했으면 그날 일일 수집이 실패한 것이다. 야간 스윕은 하루 수백 건 규모라, 하루 1만 건대 스파이크(08-12·08-19 실측)는 신규 등록 브랜드의 백필(collection_months만큼 소급)이다 — 등록 이력과 같이 읽는다.",
+          "gridPos": {
+            "h": 8,
+            "w": 9,
+            "x": 0,
+            "y": 63
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "timeFrom": "30d",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 1,
+                "fillOpacity": 60,
+                "barAlignment": 0,
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-monitoring-pg"
+              },
+              "format": "time_series",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT date_trunc('day', first_seen_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul' AS time,\n       count(*) AS \"신규 태그 게시물\"\nFROM brand_tagged_post\nWHERE first_seen_at > now() - interval '30 days'\nGROUP BY 1 ORDER BY 1"
+            }
+          ]
+        },
+        {
+          "id": 18,
+          "type": "timeseries",
+          "title": "해시태그 감지 추이 30일",
+          "description": "일별 신규 감지 해시태그 게시물 수(KST 달력일 경계, verdict 무관 전체). 대시보드 시간창과 무관하게 최근 30일 고정. 해시태그 수집량은 브랜드가 등록한 태그 수에 좌우되므로 절대량보다 추세로 읽는다. 등록 직후 해시태그 스윕도 여기에 합산되므로 등록일엔 급등이 정상이다.",
+          "gridPos": {
+            "h": 8,
+            "w": 9,
+            "x": 9,
+            "y": 63
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "timeFrom": "30d",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 1,
+                "fillOpacity": 60,
+                "barAlignment": 0,
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-monitoring-pg"
+              },
+              "format": "time_series",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT date_trunc('day', first_seen_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul' AS time,\n       count(*) AS \"신규 감지 게시물\"\nFROM brand_hashtag_post\nWHERE first_seen_at > now() - interval '30 days'\nGROUP BY 1 ORDER BY 1"
+            }
+          ]
+        },
+        {
+          "id": 19,
+          "type": "stat",
+          "title": "수집 기간 설정 분포",
+          "description": "활성 브랜드의 수집 기간 설정(collection_months) 분포. 백필 부담과 Hiker 콜 총량을 좌우하는 규모 지표라 신호등이 아니다. 긴 기간(12개월) 쪽이 늘면 일일 수집 소요와 과금이 함께 늘어난다.",
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 63
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "graphMode": "none",
+            "colorMode": "none",
+            "textMode": "value_and_name",
+            "justifyMode": "center",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-monitoring-pg"
+              },
+              "format": "table",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT count(*) FILTER (WHERE collection_months = 1)  AS \"1개월\",\n       count(*) FILTER (WHERE collection_months = 3)  AS \"3개월\",\n       count(*) FILTER (WHERE collection_months = 6)  AS \"6개월\",\n       count(*) FILTER (WHERE collection_months = 12) AS \"12개월\"\nFROM brand_account WHERE closed_at IS NULL"
+            }
+          ]
+        }
+      ],
+      "id": 103
+    },
+    {
+      "type": "row",
+      "title": "③ 등록·백필 처리",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "panels": [],
+      "id": 102
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "신규 등록 브랜드",
+      "description": "brand_account 신규 등록(KST 기준).",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 38
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT count(*) FILTER (WHERE (registered_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS \"오늘\", count(*) FILTER (WHERE registered_at > now() - interval '7 days') AS \"이번주\" FROM brand_account"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "등록→백필 완료 중앙값 (30일)",
+      "description": "등록 시점부터 백필 완료까지 걸린 시간의 중앙값(최근 30일 등록분) — 사용자 체감 \"등록하면 언제 다 차나\". 미완·에러 건은 표본에서 빠진다(그건 위 '적재 결과' row의 '백필 미완 브랜드'가 본다). 시간 필터를 타지 않는 상태 스냅샷.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 38
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "decimals": 0,
+          "noValue": "30일 내 완료 건 없음",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT round((percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (backfill_completed_at - registered_at)))/60)::numeric, 0) AS value FROM brand_account WHERE backfill_completed_at IS NOT NULL AND registered_at >= now() - interval '30 days'"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "수신 처리 p95 (monitoring)",
+      "description": "monitoring이 받은 API 요청의 p95 응답시간(uri별). 수신 엔드포인트는 등록(POST /api/brands)·해지(DELETE)·직접 게시물 등록(direct-posts)·해시태그 규칙 관리(hashtag-tags)·공유 resolve·경쟁사 타깃 등록(/api/targets) 등이며, **트래픽이 있는 엔드포인트만 선으로 나타난다**(로컬에서 일부만 보이는 건 그래서다). **등록(POST /api/brands)이 핵심 관심 대상** — 등록 즉시 수집(Hiker 콜 동기 포함)이 이 요청 안에서 돌므로 이 선이 곧 '초기 요청에 얼마나 빠르게 응답했나'의 분포다. 몇 초 걸리는 게 정상이고 was→monitoring 10초 타임아웃 예산이 상한. was 등록 API가 느릴 때 이 패널과 was 쪽 p95를 나란히 보면 어느 구간이 느린지 뺄셈으로 갈린다.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "min": 0,
+          "noValue": "데이터 없음 (수신 요청 없을 때 정상)",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{method}} {{uri}}",
+          "expr": "histogram_quantile(0.95, sum by (le, uri, method) (rate(http_server_requests_seconds_bucket{job=\"monitoring\", uri=~\"/api/.*\"}[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "등록 초기 응답 (브랜드별)",
+      "description": "등록 요청 한 건 한 건이 몇 ms 만에 처리됐는지 — monitoring의 '브랜드 등록 완료' 로그(username·durationMs)를 Loki에서 파싱해 브랜드별 점으로 찍는다. 등록 즉시 수집(Hiker 콜 동기 포함)이 이 시간 안에 들어 있고, replay(기존 활성 브랜드 재등록)는 Hiker 콜이 없어 훨씬 짧다. 위 '수신 처리 p95'가 분포라면 이건 개별 기록. **로컬 하니스는 Loki 스텁이라 이 패널이 에러로 보이는 게 정상**(dev README '운영과 다른 점') — 검증은 운영에서.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "기간 내 등록 없음",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 8,
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "range",
+          "legendFormat": "{{username}}",
+          "expr": "max_over_time({service=\"monitoring\"} |= \"브랜드 등록 완료\" | regexp \"username=(?P<username>\\\\S+) durationMs=(?P<duration_ms>[0-9]+)\" | unwrap duration_ms [$__auto]) by (username)"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "최근 등록 15건 — 총 소요",
+      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 위 '적재 결과' row의 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "등록 브랜드 없음",
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "총 소요(분)"
+            },
+            "properties": [
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "에러"
+            },
+            "properties": [
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))/60)::numeric, 0) AS \"총 소요(분)\", CASE WHEN backfill_completed_at IS NOT NULL THEN '완료' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "④ 광고 표기 판정",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "panels": [],
+      "id": 300
+    },
+    {
+      "id": 201,
+      "type": "stat",
+      "title": "오늘 판정 건수",
+      "description": "오늘(KST 달력일) 광고 표기 판정이 붙은 게시물 수. 0이면 판정 잡이 한 건도 돌지 않은 것 — 신규 판정과 백필이 함께 멈춘 상태다. ad_judged_at은 UTC 저장이라 KST 달력일로 환산해 비교한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "0 — 판정 잡 확인",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_post_meta\nWHERE (ad_judged_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date"
+        }
+      ]
+    },
+    {
+      "id": 202,
+      "type": "stat",
+      "title": "미판정 잔여",
+      "description": "아직 판정이 붙지 않은 게시물 수(judged_caption_hash IS NULL). 08-17 신설 이후 과거 게시물 백필이 진행 중이라 **큰 수가 정상**이다 — 신호등이 아니라 진척 게이지라서 색 임계를 달지 않는다(스펙 §3-3 예외 승인). 이 수가 며칠째 줄지 않으면 그때 판정 잡을 의심한다.",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM brand_post_meta WHERE judged_caption_hash IS NULL"
+        }
+      ]
+    },
+    {
+      "id": 203,
+      "type": "stat",
+      "title": "verdict 분포",
+      "description": "판정이 끝난 게시물의 광고 표기 판정 누적 분포. 품질 지표라 신호등이 아니다 — 색 임계를 달지 않는다. '미표기'는 그 자체로 즉시 대응할 값이 아니라(아래 목록에서 개별 확인) 비중 변화를 본다. '판단 불충분'·'불확실'이 갑자기 커지면 룰 커버리지나 LLM 판정 품질을 의심한다.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 69
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) FILTER (WHERE ad_verdict = 'DISCLOSED')     AS \"표기\",\n       count(*) FILTER (WHERE ad_verdict = 'NOT_DISCLOSED') AS \"미표기\",\n       count(*) FILTER (WHERE ad_verdict = 'INSUFFICIENT')  AS \"판단 불충분\",\n       count(*) FILTER (WHERE ad_verdict = 'UNCERTAIN')     AS \"불확실\"\nFROM brand_post_meta WHERE ad_verdict IS NOT NULL"
+        }
+      ]
+    },
+    {
+      "id": 204,
+      "type": "stat",
+      "title": "판정 경로",
+      "description": "판정이 어느 경로로 결정됐는지의 누적 분포. 규칙(RULE)은 공짜지만 LLM은 호출마다 비용이 든다 — LLM 비중이 급증하면 룰이 못 걸러내는 캡션 패턴이 늘었다는 신호이자 비용 신호다. 규모 지표라 색 임계를 달지 않는다.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 69
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) FILTER (WHERE ad_verdict_source = 'RULE') AS \"규칙\",\n       count(*) FILTER (WHERE ad_verdict_source = 'LLM')  AS \"LLM\"\nFROM brand_post_meta WHERE ad_verdict_source IS NOT NULL"
+        }
+      ]
+    },
+    {
+      "id": 205,
+      "type": "timeseries",
+      "title": "판정 추이 30일",
+      "description": "일별 판정 건수를 verdict별로 쌓아 본다(KST 달력일 경계). 대시보드 시간창과 무관하게 최근 30일 고정. 쿼리가 돌려주는 시리즈명은 DB 원값(DISCLOSED·NOT_DISCLOSED·INSUFFICIENT·UNCERTAIN)이고, 「verdict 분포」 타일과 같은 한글 라벨로 읽히도록 필드 override로 표시명만 바꿨다. 특정 날짜만 비어 있으면 그날 판정 잡이 실패한 것이고, 백필 중에는 과거 게시물 판정이 실행한 날짜에 몰려 찍힌다.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 69
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "timeFrom": "30d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "DISCLOSED"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "표기"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "NOT_DISCLOSED"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "미표기"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "INSUFFICIENT"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "판단 불충분"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UNCERTAIN"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "불확실"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT date_trunc('day', ad_judged_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul' AS time,\n       ad_verdict AS metric, count(*) AS value\nFROM brand_post_meta\nWHERE ad_judged_at > now() - interval '30 days'\nGROUP BY 1, 2 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 206,
+      "type": "table",
+      "title": "최근 미표기 15건",
+      "description": "광고 표기 없음(NOT_DISCLOSED)으로 판정된 최근 15건. 전역 시간 필터를 타지 않는다(지금 남아 있는 미표기 중 최신순). 캡션과 판정 근거(ad_evidence)는 조회하지 않는다 — 최소권한 원칙(스펙 §3-3)이라 상세는 서비스 화면에서 확인한다. '위반 코드'는 판정이 남긴 jsonb 배열 원문이다.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "미표기 없음 (정상)",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT ad_judged_at AS \"판정 시각\", short_code AS \"게시물\", username AS \"작성자\",\n       ad_violations::text AS \"위반 코드\"\nFROM brand_post_meta WHERE ad_verdict = 'NOT_DISCLOSED'\nORDER BY ad_judged_at DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "사용량 (서비스 등록 규모)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 87
+      },
+      "panels": [
+        {
+          "id": 25,
+          "type": "stat",
+          "title": "브랜드 모니터링",
+          "description": "브랜드·경쟁사 모니터링 등록 현황(app.brand_monitorings). 활성 = 해지되지 않은 등록, 이번주 신규 = 최근 7일 생성. 규모 지표라 신호등이 아니다 — 색 임계를 달지 않는다.",
+          "gridPos": {
+            "h": 5,
+            "w": 8,
+            "x": 0,
+            "y": 65
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "graphMode": "none",
+            "colorMode": "none",
+            "textMode": "value_and_name",
+            "justifyMode": "center",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-analysis-pg"
+              },
+              "format": "table",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT count(*) FILTER (WHERE deleted_at IS NULL) AS \"활성\",\n       count(*) FILTER (WHERE created_at > now() - interval '7 days') AS \"이번주 신규\"\nFROM app.brand_monitorings"
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "type": "table",
+          "title": "최근 등록 브랜드 모니터링",
+          "description": "가장 최근 등록된 브랜드 모니터링 15건. 전역 시간 필터를 타지 않는다(항상 최신 15건). 해지가 연달아 찍히면 이탈 신호로 본다.",
+          "gridPos": {
+            "h": 9,
+            "w": 16,
+            "x": 8,
+            "y": 65
+          },
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "데이터 없음",
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "postgres",
+                "uid": "hypenow-analysis-pg"
+              },
+              "format": "table",
+              "rawQuery": true,
+              "editorMode": "code",
+              "rawSql": "SELECT created_at AS \"등록 시각\",\n       username AS \"계정\",\n       CASE WHEN deleted_at IS NULL THEN '활성' ELSE '해지' END AS \"상태\"\nFROM app.brand_monitorings\nORDER BY created_at DESC\nLIMIT 15"
+            }
+          ]
+        }
+      ],
+      "id": 105
+    }
+  ]
+}
