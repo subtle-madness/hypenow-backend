@@ -39,6 +39,9 @@ public class StatusService {
                                  long fnbForeign,
                                  long fnbNone,
                                  long fnbUnjudged,
+                                 long beautyOnlyCollectable,
+                                 long fnbOnlyCollectable,
+                                 long bothCollectable,
                                  long backfillPending,
                                  long trackDue,
                                  long reelsDue,
@@ -113,6 +116,11 @@ public class StatusService {
                 influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.FOREIGN_INFLUENCER),
                 influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.NONE),
                 influencers.countFnbBackfillRemaining(InfluencerStatus.QUALIFIED),
+                // 중복 제거 그룹 — 두 축의 수집 대상(각 축 positive ∧ 회사 제외)을 겹침 없이 나눠 센다.
+                // 토글과 무관하게 항상 계산한다(off일 때도 "켜면 이만큼 합류"를 보여주는 용도).
+                influencers.countBeautyOnlyCollectable(InfluencerStatus.QUALIFIED),
+                influencers.countFnbOnlyCollectable(InfluencerStatus.QUALIFIED),
+                influencers.countBothCollectable(InfluencerStatus.QUALIFIED),
                 // 수집 대기열 타일은 선정 쿼리와 같은 모수 — fnb.pipeline-enabled가 켜지면 F&B가 자동 편입된다
                 influencers.countBackfillPending(includeFnb),
                 influencers.countTrackDue(revisitBefore, includeFnb),
