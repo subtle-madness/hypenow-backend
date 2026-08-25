@@ -228,6 +228,9 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
             @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
 
+    /** F&B 판정 5분류 집계 — 대시보드 타일용(COMPANY·SERVICE 등, 뷰티 축 countByStatusAndBeautyClass와 대칭). */
+    long countByStatusAndFnbClass(InfluencerStatus status, CategoryClass fnbClass);
+
     /** 대시보드 F&B 판정 그룹용: F&B 인플루언서(회사 제외) 수. */
     @Query("select count(i) from Influencer i where i.status = :status and i.fnb = true "
             + "and (i.fnbCompany is null or i.fnbCompany = false)")
