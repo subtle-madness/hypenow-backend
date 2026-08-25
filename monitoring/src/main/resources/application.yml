@@ -15,6 +15,29 @@ spring:
 server:
   port: 8083   # crawler 8080 · was 8081 · analytics 8082 다음
 
+# 요청 ID 출력(RequestIdFilter → MDC requestId, 2026-08-23 요청 단위 로그 묶기) — Boot 기본
+# 콘솔 패턴의 correlation 슬롯([스레드명] 뒤·로거명 앞)에 끼워 넣으므로 타임스탬프(1번 토큰)·
+# 레벨(2번 토큰) 위치가 변하지 않는다. 운영 Alloy(deploy/alloy/config.alloy)가 이 위치로 level
+# 라벨을 파싱하니(^\S+\s+(LEVEL)\s) logging.pattern.console을 직접 덮어쓰지 말 것 — 깨지면
+# level 라벨이 사라져 {level="ERROR"} 대시보드·알람이 침묵한다. 요청 밖 로그(스케줄 잡·부팅)는
+# 빈 대괄호([])로 찍힌다.
+logging:
+  pattern:
+    correlation: "[%X{requestId:-}] "
+
+# JVM 지표 노출(스펙 2026-08-22) — health·prometheus만. 운영은 compose env(MANAGEMENT_SERVER_PORT
+# 9083)로 관리 포트를 분리해 내부망 전용(Caddy 라우팅 없음), 로컬·테스트는 메인 포트에 그대로 노출.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # 수신 uri별 p95(브랜드 운영 건강 '수신 처리 p95') — was와 같은 관용구
+        external.call: true          # 외부 API 콜(Hiker·Gemini) p95 — 계층별 p95 뺄셈의 외부 구간(2026-08-23)
+
 monitoring:
   hiker:
     api-key: ${HIKER_API_KEY:}

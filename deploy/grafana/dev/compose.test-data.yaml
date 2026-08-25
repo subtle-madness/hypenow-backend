@@ -1,0 +1,14 @@
+# test 스테이징 데이터 모드 오버레이 — postgres 데이터소스를 서버 test DB(SSH 터널)로 교체한다.
+# 기동:  docker compose -f compose.dev.yaml -f compose.test-data.yaml up -d grafana
+# 복귀:  docker compose -f compose.dev.yaml up -d grafana
+# 선행: SSH 터널 + 계정 환경변수 — dev/README.md "test 데이터 모드" 절 참조.
+services:
+  grafana:
+    environment:
+      TEST_DB_USER: ${TEST_DB_USER:?ssh 서버 .env의 DEV_DB_USER를 export할 것}
+      TEST_DB_PASSWORD: ${TEST_DB_PASSWORD:?ssh 서버 .env의 DEV_DB_PASSWORD를 export할 것}
+    volumes:
+      - ../provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./datasources-test:/etc/grafana/provisioning/datasources:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

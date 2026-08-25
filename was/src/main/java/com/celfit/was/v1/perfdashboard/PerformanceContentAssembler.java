@@ -335,7 +335,7 @@ public class PerformanceContentAssembler {
 			// 레거시 수집분이 요약·버킷에 섞이면 covered=false(빗금) 구간에 값이 실려 화면이 모순된다.
 			for (BrandPostResponse post : brandPostAssembler.get()
 					.assembleBrandPosts(userId, account.get(), withComments, BrandPostAssembler.BrandPostScope.ALL,
-							true)) {
+							true, link.accountType())) {
 				byShortcode.putIfAbsent(post.shortcode(), post);
 			}
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.get().lastSweptAt());

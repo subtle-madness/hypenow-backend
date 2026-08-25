@@ -73,4 +73,27 @@ class BrandCrawlPolicyTest {
 		assertThat(BrandCrawlPolicy.due(daysAgo(180), daysAgo(30), NOW)).isTrue();
 		assertThat(BrandCrawlPolicy.due(daysAgo(180), daysAgo(29), NOW)).isFalse();
 	}
+
+	@Test
+	void 스윕_슬롯이_직전_touch보다_몇_분_일러도_due다() {
+		// 08-23 운영 실측: 3일 전 스윕이 02:07에 touch한 게시물을 오늘 스윕이 02:05에 방문하면
+		// 경과가 3일에 2분 모자라 건너뛰고, 그날 하루 "미처리"로 보였다가 다음 날에야 수습됐다
+		// (262건 전부 이 패턴). 스윕은 하루 1회라 주기에서 12시간까지는 여유로 본다.
+		assertThat(BrandCrawlPolicy.due(daysAgo(20), daysAgo(3).plus(Duration.ofMinutes(2)), NOW)).isTrue();
+		assertThat(BrandCrawlPolicy.due(daysAgo(60), daysAgo(7).plus(Duration.ofHours(1)), NOW)).isTrue();
+		assertThat(BrandCrawlPolicy.due(daysAgo(120), daysAgo(30).plus(Duration.ofHours(11)), NOW)).isTrue();
+		// 여유 상한(12h)은 포함 — 딱 12h 모자라면 due, 12h 1초 넘게 모자라면 아직
+		assertThat(BrandCrawlPolicy.due(daysAgo(20), daysAgo(3).plus(Duration.ofHours(12)), NOW)).isTrue();
+		assertThat(BrandCrawlPolicy.due(daysAgo(20), daysAgo(3).plus(Duration.ofHours(12)).plusSeconds(1), NOW))
+				.isFalse();
+	}
+
+	@Test
+	void 여유는_하루_전_스윕까지_당기지_않는다() {
+		// 3일 주기 게시물을 어제(경과 2일 − 2분) 스윕이 잡아가면 실질 주기가 2일로 줄어든다 — 여유
+		// 12h는 슬롯 드리프트(분 단위)만 흡수하고 전날 스윕(경과 ≈ 주기 − 1일)은 여전히 건너뛴다.
+		assertThat(BrandCrawlPolicy.due(daysAgo(20), daysAgo(2).plus(Duration.ofMinutes(2)), NOW)).isFalse();
+		assertThat(BrandCrawlPolicy.due(daysAgo(60), daysAgo(6).plus(Duration.ofMinutes(2)), NOW)).isFalse();
+		assertThat(BrandCrawlPolicy.due(daysAgo(120), daysAgo(29).plus(Duration.ofMinutes(2)), NOW)).isFalse();
+	}
 }

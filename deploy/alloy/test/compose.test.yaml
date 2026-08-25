@@ -36,6 +36,17 @@ services:
     volumes:
       - ./fixtures:/fixtures:ro
 
+  # 액세스 로그 **파일** 발생기(2026-08-24 스펙) — caddy가 파일로만 남기는 액세스 로그를 흉내낸다.
+  # 컨테이너 로그가 아니라 공유 볼륨의 파일이 테스트 입력이라, 서비스명은 운영과 맞출 필요 없다.
+  caddy-access-writer:
+    image: alpine:3.20
+    container_name: alloytest-caddy-access-writer
+    networks: [prod]
+    entrypoint: ["sh", "/fixtures/emit-caddy-access.sh"]
+    volumes:
+      - ./fixtures:/fixtures:ro
+      - caddy-logs:/var/log/caddy
+
   # 서비스 키는 loki로 둔다 — config.alloy의 loki.write url(http://loki:3100)이 이 이름으로 붙는다.
   loki:
     image: grafana/loki:3.5.0
@@ -55,6 +66,8 @@ services:
     volumes:
       - ../config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 운영 compose.yaml의 ./logs/caddy:/var/log/caddy:ro와 동일 마운트 지점(액세스 로그 테일링)
+      - caddy-logs:/var/log/caddy:ro
 
   # 대시보드 JSON 확인용(Task 2·3). 운영과 달리 익명 Admin — 로컬 루프백 전용이라 인증 불필요.
   # 프로비저닝은 Loki 데이터소스와 대시보드만 마운트한다(postgres 데이터소스·알림 규칙은
@@ -73,3 +86,6 @@ services:
     volumes:
       - ../../grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ../../grafana/provisioning/datasources/observability.yaml:/etc/grafana/provisioning/datasources/observability.yaml:ro
+
+volumes:
+  caddy-logs:

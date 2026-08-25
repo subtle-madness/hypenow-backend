@@ -199,22 +199,26 @@ TRUNCATE brand_post_meta;                          -- 게시물 전역 테이블
 INSERT INTO brand_account (id, username, ig_user_id, followers, following, media_count, full_name,
                            biography, status, registered_at, closed_at, last_swept_on, last_swept_at,
                            collection_months, collection_started_at, backfill_completed_at, is_verified)
+-- registered_at을 서브쿼리에서 먼저 뽑는다 — collection_started_at(등록 직후)·backfill_completed_at
+-- (등록 + 5~180분)이 등록 시각에서 파생돼야 하기 때문. 독립 난수로 뽑으면 완료가 등록보다 앞서는
+-- 행이 절반쯤 생겨 [브랜드] 운영 '등록→백필 완료 중앙값' 패널이 음수를 그린다(2026-08-22 실측).
 SELECT g, 'brand' || g, '17841400' || lpad(g::text, 6, '0'),
        (random() * 500000)::bigint, (random() * 2000)::bigint, (random() * 3000)::bigint,
        '목브랜드' || g, '하니스 목 브랜드 계정 ' || g,
        CASE WHEN g > 126 THEN 'CLOSED' ELSE 'ACTIVE' END,
-       CASE WHEN g > 126 THEN now() - interval '150 days'                -- 종결 계정은 등록이 확실히 앞서게
-            ELSE now() - (random() * 120 || ' days')::interval END,
+       reg,
        CASE WHEN g > 126 THEN now() - ((g - 122) || ' days')::interval END,
        CASE WHEN g > 126 THEN ((now() - ((g - 122) || ' days')::interval) AT TIME ZONE 'Asia/Seoul')::date
             ELSE (now() AT TIME ZONE 'Asia/Seoul')::date END,
        CASE WHEN g > 126 THEN now() - ((g - 122) || ' days')::interval - interval '3 hours'
             ELSE now() - interval '10 hours' END,
        (ARRAY[1, 3, 6, 12])[1 + (g % 4)],
-       now() - (random() * 120 || ' days')::interval,
-       now() - (random() * 100 || ' days')::interval,
+       reg + (random() * 60 || ' seconds')::interval,
+       reg + ((5 + random() * 175) || ' minutes')::interval,
        g % 9 = 0
-FROM generate_series(1, 130) g;
+FROM (SELECT g, CASE WHEN g > 126 THEN now() - interval '150 days'     -- 종결 계정은 등록이 확실히 앞서게
+                     ELSE now() - (random() * 120 || ' days')::interval END AS reg
+      FROM generate_series(1, 130) g) s;
 SELECT setval('brand_account_id_seq', 130);
 
 -- 브랜드별 해시태그 3개(수집 규칙)
@@ -303,15 +307,23 @@ SELECT (g % 130) + 1, 'HP' || g,
 FROM generate_series(1, 2543) g;
 
 -- 태그드 게시물 28,255
+-- last_crawled_at은 taken_at 나이 티어(BrandCrawlPolicy: 14일 매일 / 30일 3일 / 90일 7일 /
+-- 180일 30일)와 정합으로 생성한다 — 매일 티어는 오늘 새벽 일일 수집(10시간 전)에 갱신됐고,
+-- 나머지 티어는 주기 이내. 독립 난수로 뽑으면 [브랜드] 운영 '오늘 게시물 갱신' 타일이 초록 시드에서
+-- 빨강이 된다(2026-08-22).
 INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id, taken_at,
                                first_seen_at, comments_collected_count, last_crawled_at, enriched_at)
 SELECT (g % 130) + 1, 'TP' || g, 'author' || (g % 2000), '17841500' || lpad((g % 2000)::text, 6, '0'),
-       now() - (random() * 180 || ' days')::interval,
+       tk,
        now() - (random() * 40 || ' days')::interval,
        (random() * 30)::bigint,
-       CASE WHEN g % 3 <> 0 THEN now() - (random() * 10 || ' days')::interval END,
+       CASE WHEN tk >= now() - interval '14 days' THEN now() - interval '10 hours'
+            WHEN tk >= now() - interval '30 days' THEN now() - (random() * 2.5 || ' days')::interval
+            WHEN tk >= now() - interval '90 days' THEN now() - (random() * 6.5 || ' days')::interval
+            ELSE now() - (random() * 29 || ' days')::interval END,
        CASE WHEN g % 4 <> 0 THEN now() - (random() * 10 || ' days')::interval END
-FROM generate_series(1, 28255) g;
+FROM (SELECT g, now() - (random() * 180 || ' days')::interval AS tk
+      FROM generate_series(1, 28255) g) s;
 
 -- detected_candidate는 의도적으로 비워 둔다 — 실측 0건(설계 §3: 첫 감지는 후보 단계 없이
 -- target.matched_keywords만 남기고 바로 자동 추적 전환).
@@ -346,7 +358,7 @@ SELECT 'TP' || g, 'author' || (g % 2000),
        CASE WHEN g % 5 < 3 THEN md5('목 캡션 ' || g) END
 FROM generate_series(1, 8000) g;
 
--- enrich 분포 조정(수집 현황 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
+-- enrich 분포 조정([브랜드] 운영 'enrich 잔여' stat용): 기존 시드는 25%가 무기한 NULL이라
 -- 잔여 스탯이 상시 수천으로 뜬다 — 하루 넘게 미처리는 전부 메워 초록 시드의 잔여를 0으로.
 -- 24h 이내 유입분의 NULL(자연 처리 대기)은 그대로 둔다 — '오늘' 타일들과 마찬가지로
 -- 하니스 시드는 24시간 내 재적용 전제(시간이 지나면 이 대기분이 창을 넘어 잔여로 늙는다).

@@ -1,0 +1,38 @@
+# test 스테이징 데이터 모드(2026-08-23) — postgres 데이터소스만 서버 test DB(SSH 터널)로 바꾼다.
+# uid는 dev.yaml·운영과 동일해서 대시보드 JSON 무수정. 사용법·주의는 dev/README.md "test 데이터 모드".
+# 계정은 커밋하지 않는다 — compose가 셸 환경변수(TEST_DB_USER/TEST_DB_PASSWORD)를 넘겨준다.
+apiVersion: 1
+datasources:
+  - name: HypeNow analysis (test 스테이징)
+    uid: hypenow-analysis-pg
+    type: postgres
+    access: proxy
+    editable: false
+    url: host.docker.internal:55433
+    database: analysis
+    user: $TEST_DB_USER
+    isDefault: true
+    jsonData: { database: analysis, sslmode: disable, postgresVersion: 1700 }
+    secureJsonData: { password: $TEST_DB_PASSWORD }
+  - name: HypeNow monitoring (test 스테이징)
+    uid: hypenow-monitoring-pg
+    type: postgres
+    access: proxy
+    editable: false
+    url: host.docker.internal:55433
+    database: monitoring
+    user: $TEST_DB_USER
+    jsonData: { database: monitoring, sslmode: disable, postgresVersion: 1700 }
+    secureJsonData: { password: $TEST_DB_PASSWORD }
+  - name: Prometheus (dev)
+    uid: hypenow-prometheus
+    type: prometheus
+    access: proxy
+    editable: false
+    url: http://prometheus:9090
+  - name: Loki (스텁 — 로컬 미기동)
+    uid: hypenow-loki
+    type: loki
+    access: proxy
+    editable: false
+    url: http://loki:3100
