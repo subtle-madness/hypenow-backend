@@ -965,11 +965,11 @@
     {
       "id": 18,
       "type": "timeseries",
-      "title": "ERROR 추이",
+      "title": "ERROR 추이 (로거별)",
       "gridPos": {
         "x": 0,
         "y": 29,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "datasource": {
@@ -989,8 +989,42 @@
         {
           "refId": "A",
           "queryType": "range",
-          "legendFormat": "{{service}}",
-          "expr": "sum by (service) (count_over_time({service=\"monitoring\", level=\"ERROR\"}[$__auto]))"
+          "legendFormat": "{{logger}}",
+          "expr": "sum by (logger) (count_over_time({service=\"monitoring\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__auto]))"
+        }
+      ],
+      "description": "어떤 클래스가 언제 ERROR를 냈는지. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다."
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "WARN 추이 (로거별)",
+      "description": "ERROR로 안 올라오는 반복 잡음(예: Hiker 404 미완주 보존)의 규모. Hiker는 4xx도 과금이라 WARN이어도 비용 신호다.",
+      "gridPos": {
+        "x": 8,
+        "y": 29,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{logger}}",
+          "expr": "sum by (logger) (count_over_time({service=\"monitoring\", level=\"WARN\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__auto]))"
         }
       ]
     },
@@ -1000,9 +1034,9 @@
       "title": "로거별 ERROR Top 15",
       "description": "어느 클래스가 시끄러운지가 원인 추적의 첫 갈래다. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다.",
       "gridPos": {
-        "x": 12,
+        "x": 16,
         "y": 29,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "datasource": {
@@ -1035,7 +1069,7 @@
       "id": 20,
       "type": "logs",
       "title": "로그 탐색",
-      "description": "상단 $svc·$level·$search 변수를 그대로 따른다. 검색어는 정규식이며 대소문자를 무시한다.",
+      "description": "monitoring 서비스 전체 로그.",
       "gridPos": {
         "x": 0,
         "y": 37,
