@@ -79,7 +79,8 @@ public class BrandReadRepository {
 		String enrichedFilter = enrichedOnly ? " AND enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
-				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at
+				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
+				       unavailable_at
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId
 				  AND ( taken_at >= :cutoff OR direct_registered_at IS NOT NULL )
@@ -346,10 +347,14 @@ public class BrandReadRepository {
 	 * (태그 열거가 이 링크를 처음 만난 시각, null이면 direct-only), {@code directRegisteredAt}
 	 * (직접 등록 시각, null이면 tagged-only — 둘 다 있으면 겹침 행). {@code source} 파생과
 	 * {@code trackingStartedAt} 산정의 원천이다({@code BrandPostAssembler.brandPost}).
+	 *
+	 * <p>{@code unavailableAt}(야간 스윕 단건 콜이 404를 받은 시각, null이면 정상 — 값이 있으면
+	 * trackingStatus가 hidden으로 내려간다, 2026-08-25 설계).
 	 */
 	public record BrandTaggedPostRow(String shortCode, String authorUsername, String authorIgUserId,
 			OffsetDateTime takenAt, OffsetDateTime firstSeenAt, long commentsCollectedCount,
-			OffsetDateTime lastCrawledAt, OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt) {
+			OffsetDateTime lastCrawledAt, OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
+			OffsetDateTime unavailableAt) {
 	}
 
 	/**

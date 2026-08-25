@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS brand_tagged_post (
     -- 기존 tagged 행은 전부 tag_detected_at이 채워져 있다는 운영 DDL 전제를 픽스처도 DEFAULT로 재현한다.
     tag_detected_at          timestamptz DEFAULT now(),
     direct_registered_at     timestamptz,
+    -- 삭제·비공개 관측(V20260825044536) — 야간 스윕 단건 콜 404 시각, was는 hidden 판정에 읽는다.
+    unavailable_at           timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 

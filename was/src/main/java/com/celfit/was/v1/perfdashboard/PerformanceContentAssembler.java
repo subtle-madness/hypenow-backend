@@ -77,7 +77,6 @@ public class PerformanceContentAssembler {
 	 * 판정을 좌우하지 않는다). */
 	private static final int TAGGED_TRACKING_DAYS = 90;
 	private static final String MODE_URL = "url";
-	private static final String STATUS_TRACKING = "tracking";
 
 	/** 레거시 응답엔 shortcode 필드가 없어 post.url 경로 세그먼트에서 뽑는다(스펙 §7-1). */
 	private static final Pattern SHORTCODE_PATTERN = Pattern.compile("/(?:p|reel|reels)/([A-Za-z0-9_-]+)");
@@ -229,7 +228,8 @@ public class PerformanceContentAssembler {
 	 * (2026-08-18 direct 통합 이후 tagged든 direct든 조립 경로가 하나다).
 	 *
 	 * <p>등록일은 브랜드가 이 게시물을 처음 본 날(first_seen), 추적 기간은 표시용 상수(90) —
-	 * {@link #TAGGED_TRACKING_DAYS} 참고.
+	 * {@link #TAGGED_TRACKING_DAYS} 참고. 상태는 {@link BrandPostResponse#trackingStatus()}를 그대로
+	 * 승계한다 — 삭제·비공개 감지(hidden, 2026-08-25 설계)가 대시보드에도 반영된다.
 	 *
 	 * <p>{@code campaignId}·{@code campaignName}은 {@code post.campaignIds()}의 head로 채운다
 	 * (비면 둘 다 null). 여러 캠페인이 붙어 있어도 첫 번째만 쓴다 — 응답 필드가 단수라서다(다중 부착
@@ -252,7 +252,7 @@ public class PerformanceContentAssembler {
 						.orElse(null);
 
 		return new PerformanceContentResponse(
-				new PerformanceItemResponse(SYNTHETIC_ID_PREFIX + post.shortcode(), MODE_URL, STATUS_TRACKING,
+				new PerformanceItemResponse(SYNTHETIC_ID_PREFIX + post.shortcode(), MODE_URL, post.trackingStatus(),
 						handle, displayName, post.authorProfilePicUrl(), post.authorFollowers(),
 						// 게시자의 마지막 업로드 시각은 브랜드 파이프라인이 관측하지 않는다(프로필 스윕 대상이 아님).
 						null, campaignId, campaignName, post.postUrl(), dateOf(post.trackingStartedAt()),
