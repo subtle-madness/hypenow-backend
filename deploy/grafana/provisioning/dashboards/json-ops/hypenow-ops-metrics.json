@@ -145,7 +145,7 @@
     {
       "type": "timeseries",
       "title": "응답 p95 (uri별)",
-      "description": "",
+      "description": "히스토그램 최대 버킷보다 오래 걸린 요청은 상한값으로 눌려 보인다 — 상한에 정확히 붙은 평평한 선은 \"그 값 이상\"으로 읽을 것. 상한은 120s(08-25 확장, 배포 전 수집분은 30s).",
       "datasource": {
         "type": "prometheus",
         "uid": "hypenow-prometheus"

@@ -37,6 +37,10 @@ management:
       percentiles-histogram:
         http.server.requests: true   # 수신 uri별 p95(브랜드 운영 건강 '수신 처리 p95') — was와 같은 관용구
         external.call: true          # 외부 API 콜(Hiker·Gemini) p95 — 계층별 p95 뺄셈의 외부 구간(2026-08-23)
+      maximum-expected-value:
+        # 기본 상한 30s 포화 해제(08-25 실측: hiker tagged_feed가 정확히 30.00s로 캡) —
+        # 논리 콜 1건이 재시도·백오프를 포함하므로 30s를 넘을 수 있다.
+        external.call: 120s
 
 monitoring:
   hiker:
