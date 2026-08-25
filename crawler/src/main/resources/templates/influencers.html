@@ -33,11 +33,19 @@
                onchange="this.form.submit()"/>
         <span class="badge" th:classappend="${bf.badge()}" th:text="${bf.label()}"></span>
     </label>
+    <!-- F&B 판정 필터 — 뷰티 필터와 동시 선택 시 뷰티가 이긴다(두 축 교차 조합 미지원) -->
+    <span class="filter-sep" th:unless="${companyView}"></span>
+    <label class="check" th:unless="${companyView}" th:each="ff : ${fnbFilters}">
+        <input type="checkbox" name="fnb" th:value="${ff.key()}"
+               th:checked="${fnb != null && fnb.contains(ff.key())}"
+               onchange="this.form.submit()"/>
+        <span class="badge" th:classappend="${ff.badge()}" th:text="${'F&B: ' + ff.label()}"></span>
+    </label>
     <span class="hint">체크 없음 = 판정 완료 전체</span>
 </form>
 
 <table class="data">
-    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th><th>뷰티</th>
+    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th><th>뷰티</th><th>F&amp;B</th>
         <th>발굴 키워드</th><th>발굴일</th><th>최근 수집</th></tr>
     <tr th:each="row : ${page.content}">
         <td th:text="${row.influencer.id}"></td>
@@ -65,9 +73,29 @@
                 <input type="hidden" name="page" th:value="${page.number}"/>
                 <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
                 <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
+                <input type="hidden" th:each="f : ${fnb}" name="fnb" th:value="${f}"/>
                 <input type="hidden" name="beautyClass" th:value="${target.name()}"/>
                 <button type="submit"
                         th:text="${target.name() == 'INFLUENCER'} ? '뷰티' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'BEAUTY_SERVICE'} ? '시술' : (${target.name() == 'FOREIGN_INFLUENCER'} ? '외국인' : '아님')))"></button>
+            </form>
+        </td>
+        <td th:with="fcls=${row.influencer.fnbClass != null ? row.influencer.fnbClass.name() : null}">
+            <!-- F&B 축 5분류 배지 — 배지 색상 클래스는 뷰티 것 재사용(색 의미 동일) -->
+            <span th:if="${fcls != null}" class="badge"
+                  th:classappend="${fcls == 'INFLUENCER'} ? 'BEAUTY' : (${fcls == 'COMPANY'} ? 'BEAUTY_COMPANY' : (${fcls == 'SERVICE'} ? 'BEAUTY_SERVICE' : (${fcls == 'FOREIGN_INFLUENCER'} ? 'FOREIGN_INFLUENCER' : 'NOT_BEAUTY')))"
+                  th:text="${fcls == 'INFLUENCER'} ? 'F&B' : (${fcls == 'COMPANY'} ? 'F&B 회사' : (${fcls == 'SERVICE'} ? '매장·서비스' : (${fcls == 'FOREIGN_INFLUENCER'} ? 'F&B 외국인' : 'F&B 아님')))"
+                  th:title="${row.influencer.fnbReason}"></span>
+            <span th:if="${fcls == null}">—</span>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/fnb|}"
+                  style="display:inline" th:each="target : ${fnbClasses}"
+                  th:unless="${fcls == target.name()}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
+                <input type="hidden" th:each="f : ${fnb}" name="fnb" th:value="${f}"/>
+                <input type="hidden" name="fnbClass" th:value="${target.name()}"/>
+                <button type="submit"
+                        th:text="${target.name() == 'INFLUENCER'} ? 'F&B' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'SERVICE'} ? '매장' : (${target.name() == 'FOREIGN_INFLUENCER'} ? '외국인' : '아님')))"></button>
             </form>
         </td>
         <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>
@@ -77,10 +105,10 @@
 </table>
 <p class="pager">
     <a th:if="${page.hasPrevious()}"
-       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, page=${page.number - 1}, company=${companyView})}">이전</a>
+       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, fnb=${fnb}, page=${page.number - 1}, company=${companyView})}">이전</a>
     <span th:text="${page.number + 1} + ' / ' + ${page.totalPages}"></span>
     <a th:if="${page.hasNext()}"
-       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, page=${page.number + 1}, company=${companyView})}">다음</a>
+       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, fnb=${fnb}, page=${page.number + 1}, company=${companyView})}">다음</a>
 </p>
 </main>
 </body>

@@ -198,6 +198,21 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 윈도우_조회는_unavailable_at을_함께_읽는다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedTaggedPost(brandId, "GONE", now.minusDays(2).toString());
+		seedTaggedPost(brandId, "ALIVE", now.minusDays(1).toString());
+		jdbc.sql("UPDATE brand_tagged_post SET unavailable_at = now() WHERE short_code = 'GONE'").update();
+
+		List<BrandTaggedPostRow> rows = repository.findBrandPostsInWindow(brandId, now.minusDays(365), false);
+
+		assertThat(rows).extracting(BrandTaggedPostRow::shortCode).containsExactly("ALIVE", "GONE");
+		assertThat(rows.get(0).unavailableAt()).isNull();
+		assertThat(rows.get(1).unavailableAt()).isNotNull();
+	}
+
+	@Test
 	void 윈도우_조회는_다른_브랜드_행을_섞지_않는다() {
 		long mine = seedBrand("brand_mine");
 		long other = seedBrand("brand_other");

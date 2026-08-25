@@ -11,10 +11,12 @@
 # 보관 정책:
 #   - analysis:   서버 3일 롤링 + B2 7일(기간) 롤링 — 덤프가 작지만(105MB급) 분석 결과는
 #                 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 길게 들 이유가 없다
-#   - crawler:    서버는 오프사이트 성패에 따라 1개(성공) / $LOCAL_CRAWLER_KEEP개(실패) 롤링
-#                 (offsite_ok 분기 — B2가 막혀도 로컬 사본 + 수동 pull(pull-backup.sh)로 버팀),
-#                 B2는 최신 $B2_CRAWLER_KEEP개(개수) 롤링. 덤프 전 선-회전으로 구 사본을
-#                 KEEP-1개까지 줄여 "구 사본 + 신규 덤프" 동시 존재 피크를 없앤다
+#   - crawler:    B2가 살아 있으면 덤프를 B2로 직스트리밍(pg_dump|zstd|tee|rclone rcat) —
+#                 성공 시 서버 로컬 0개(B2 사본 확인됨), 실패 시 로컬 전용 덤프로 폴백해
+#                 $LOCAL_CRAWLER_KEEP개 롤링(offsite_ok 분기 — B2가 막혀도 로컬 사본 +
+#                 수동 pull(pull-backup.sh)로 버팀). B2는 최신 $B2_CRAWLER_KEEP개(개수) 롤링.
+#                 덤프 전 선-회전으로 과거 실패일 폴백 사본을 KEEP-1개까지 줄여 "구 사본 +
+#                 신규 덤프" 동시 존재 피크를 없앤다
 #                 (08-03 hypenow-disk-high: 구 3 + 신규 1 공존으로 루트 디스크 85% 순간 초과).
 #   - monitoring: 서버 3일 롤링 + B2 7일(기간) 롤링 — 캠페인·스냅샷뿐이라 덤프가 작다
 #
@@ -35,6 +37,17 @@
 #  IO 스케줄러가 `none`이라 IO 우선순위가 무시된다(실측 확인). rclone --bwlimit이 읽기
 #  속도 자체를 깎는 유일한 지렛대. 같은 사고의 나머지 절반은 백업 크론을 야간 분석
 #  파이프라인(19:25 refresh→19:30 미러→20:00 분석) 밖 15:00 UTC로 옮겨 해소 — setup-server.sh 참조.)
+# (08-25: crawler B2 직스트리밍 전환 + B2 가드 레이스 수정 —
+#  ① 종전 `rclone listremotes | grep -q '^b2:'` 가드는 b2:가 출력 첫 줄이라 grep -q가
+#  즉시 종료하며 파이프를 닫고, 나머지 줄을 쓰던 rclone이 SIGPIPE(141)로 죽어 pipefail
+#  아래서 가드 전체가 실패 판정됐다 — 서버 실측 100회 중 5회(5%), 08-23 무음 실패의 원인.
+#  rclone 에러 출력 전에 죽는 데다 2>/dev/null이 stderr마저 버려 로그에 아무 흔적이 없었다.
+#  파이프 없는 명령 치환 + 문자열 매치로 교체, stderr는 더 이상 버리지 않는다.
+#  ② 덤프→업로드 2단계 직렬(덤프 19분 + 업로드 19분, 로컬 11GiB 상주, 업로드 구간 재읽기
+#  iowait 24% — 08-24 sar 실측)을 단일 스트리밍 파이프라인(~20분)으로 합침. 성공 시 로컬
+#  crawler 사본 0개(-11GiB — 08-24 disk-high 87%의 백업 몫 해소), 실패 시 로컬 덤프 폴백.
+#  ③ 동시화로 압축·업로드 CPU가 같은 시간대에 겹치므로(덤프 구간 idle 13% 실측) zstd·rclone을
+#  nice -n 19로 실행 — WAS·크롤러가 CPU 우선, 부족분은 파이프 역압으로 백업만 감속한다.)
 set -euo pipefail
 
 B2_CRAWLER_KEEP=3     # B2에 유지할 crawler 덤프 개수 — 복원 창 3일, 덤프가 11GiB급이라 개수가 곧 용량(08-04 5→3)
@@ -53,20 +66,54 @@ docker compose exec -T postgres pg_dump -U "$DB_USER" -d analysis \
   | zstd -q > "$BACKUP_DIR/analysis-$STAMP.sql.zst"
 ls -1t "$BACKUP_DIR"/analysis-*.sql.* | tail -n +4 | xargs -r rm
 
-# crawler 덤프는 GB급이라 신규 덤프와 구 사본이 겹치는 동안 디스크 피크가 생긴다 —
-# 덤프 전에 구 사본을 KEEP-1개까지 선-회전해 피크를 정상 상태 수준으로 유지한다.
-# 반쪽 파일이 다음 날 선-회전에서 정상본을 밀어내지 않도록 임시 이름(.tmp, 롤링 글롭
-# crawler-[0-9]* 비매치)으로 받고 성공 시에만 편입한다(set -euo로 실패 시 즉사 → mv 미도달).
-# 선-회전은 비치명 — 사본이 0개인 첫 실행(서버 재구축 §14)에서 ls가 실패해도 덤프는 계속.
+# B2 사용 가능 판정 — crawler 스트리밍과 아래 업로드 블록이 공유한다.
+# ⚠ 파이프(`listremotes | grep -q`) 금지: grep -q의 조기 종료가 rclone을 SIGPIPE로 죽여
+# pipefail 아래서 ~5% 확률로 오판한다(08-23 무음 실패 — 상단 08-25 주석). 명령 치환은
+# 출력을 전량 읽어 조기 종료가 원천 불가. stderr는 버리지 않는다(무음 실패 증거 보존).
+b2_ready=false
+if command -v rclone >/dev/null 2>&1; then
+  remotes="$(rclone listremotes || true)"
+  if [[ $'\n'"$remotes" == *$'\n'"b2:"* ]]; then b2_ready=true; fi
+fi
+
+# crawler 덤프는 GB급이라 "로컬에 쓰고 다시 읽어 올리는" 2단계가 시간·디스크 I/O를 배로
+# 먹는다 — B2가 살아 있으면 덤프·압축·로컬 기록(tee)·업로드를 한 파이프라인으로 스트리밍
+# 한다(08-25, 상단 주석 ②③). 선-회전은 종전과 동일: 과거 실패일 폴백 사본과 신규 덤프의
+# 동시 존재 피크를 KEEP-1개 수준으로 유지하며, 비치명(사본 0개면 ls 실패해도 계속).
+# 반쪽 파일 규약도 종전과 동일 — 임시 이름(.tmp, 롤링 글롭 crawler-[0-9]* 비매치)으로만
+# 쓰고, 성공이 확인된 사본만 정식 이름을 갖는다.
 rm -f "$BACKUP_DIR"/.crawler-*.sql.*.tmp
 { ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.* 2>/dev/null | tail -n +"$LOCAL_CRAWLER_KEEP" | xargs -r rm; } || true
-docker compose exec -T postgres-raw pg_dump -U "$RAW_DB_USER" -d crawler \
-  | zstd -q > "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp"
-mv "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp" "$BACKUP_DIR/crawler-$STAMP.sql.zst"
+
+crawler_offsite=false
+if "$b2_ready"; then
+  if docker compose exec -T postgres-raw pg_dump -U "$RAW_DB_USER" -d crawler \
+      | nice -n 19 zstd -q \
+      | tee "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp" \
+      | nice -n 19 rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/crawler/crawler-$STAMP.sql.zst"; then
+    crawler_offsite=true
+    rm -f "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp"   # B2 사본 확인 — 로컬 임시본 폐기
+  else
+    # 파이프 어느 단계가 죽었든 통째 실패로 처리한다. pg_dump가 중간에 죽어도 rcat은 잘린
+    # 스트림을 정상 종료로 닫고 원격 파일을 만들 수 있다 — 반쪽 원격본이 정식 이름으로
+    # 남으면 복원 사고가 되므로 즉시 제거를 시도한다(없으면 에러 한 줄, 무해).
+    echo "경고: crawler 스트리밍 백업 실패 — 반쪽 원격본 정리 후 로컬 전용 덤프로 폴백" >&2
+    rclone deletefile "$B2/crawler/crawler-$STAMP.sql.zst" || true
+    rclone cleanup "$B2" || true   # 중단된 청크 업로드의 미완성 large-file 파트 회수
+    rm -f "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp"
+  fi
+fi
+if ! "$crawler_offsite"; then
+  # 폴백: 종전 방식의 로컬 전용 덤프 — B2 장애 기간(07-27~08-13 전력)에도 시점 스냅샷을
+  # 로컬에 남긴다. set -euo라 여기가 실패하면 즉사 → mv 미도달(반쪽 파일은 .tmp로만 존재).
+  docker compose exec -T postgres-raw pg_dump -U "$RAW_DB_USER" -d crawler \
+    | nice -n 19 zstd -q > "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp"
+  mv "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp" "$BACKUP_DIR/crawler-$STAMP.sql.zst"
+fi
 
 # monitoring은 같은 postgres 인스턴스의 별도 DB — 소유자 계정으로 덤프.
-# 신규 추가분이라 통째로 비치명 처리한다 — 여기서 set -euo로 죽으면 위 analysis·crawler
-# 덤프의 B2 업로드까지 통째로 유실된다(매일 04:10 크론, 기존 백업 경로 보호가 우선).
+# 신규 추가분이라 통째로 비치명 처리한다 — 여기서 set -euo로 죽으면 아래 analysis 업로드와
+# 로컬 보관 정리까지 통째로 유실된다(매일 15:00 UTC 크론, 기존 백업 경로 보호가 우선).
 #   * 변수 미설정: 개통 전(README §13 미실행) — 건너뛴다
 #   * 덤프 실패: DB 미생성·자격 불일치 등 — 경고 후 반쪽 파일 제거하고 계속
 MONITORING_DUMP=""
@@ -83,18 +130,22 @@ else
   echo "경고: MONITORING_DB_USER 미설정 — monitoring 백업 건너뜀(개통은 deploy/README.md §13)" >&2
 fi
 
-# 오프사이트: rclone b2 리모트가 설정돼 있으면 업로드 (설정 절차는 README §6-1)
-# analysis·crawler 둘 다 성공해야 offsite_ok=true — 아래 crawler 로컬 보관 분기의 기준이 된다.
+# 오프사이트: crawler는 위 스트리밍으로 이미 올라갔다(crawler_offsite) — 여기서는 analysis를
+# 올리고, 둘 다 성공해야 offsite_ok=true(아래 crawler 로컬 보관 분기의 기준). crawler 스트리밍이
+# 실패했어도 analysis 업로드는 시도한다(작고 독립적 — 덤프 계열별 오프사이트는 서로 비의존).
 offsite_ok=false
-if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q '^b2:'; then
-  if rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/analysis-$STAMP.sql.zst" "$B2/analysis/" \
-     && rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/crawler-$STAMP.sql.zst" "$B2/crawler/"; then
+if "$b2_ready"; then
+  analysis_offsite=false
+  if rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/analysis-$STAMP.sql.zst" "$B2/analysis/"; then
+    analysis_offsite=true
+  fi
+  if "$analysis_offsite" && "$crawler_offsite"; then
     offsite_ok=true
     # ⚠ 이 아래 뒷정리(기간 롤링·개수 트리밍·monitoring 업로드)는 **전부 비치명이어야 한다**.
     # 여기는 if 본문이라 set -e가 살아 있어서 한 줄이라도 실패하면 스크립트가 즉사하고,
     # 그러면 파일 끝의 **crawler 로컬 보관 정리가 건너뛰어져** 로컬 덤프가 하루 ~8.5GiB씩
     # 무한 누적된다(디스크 만재 → 07-30에 87%까지 찬 그 사고의 재발). 지켜야 할 본질인
-    # analysis·crawler 오프사이트 사본은 이미 위 조건절에서 성공했으므로, 뒷정리 실패는
+    # analysis(위 조건절)·crawler(스트리밍) 오프사이트 사본은 이미 성공했으므로, 뒷정리 실패는
     # 경고만 남기고 다음 실행에서 재시도하면 된다.
     rclone delete --min-age 7d "$B2/analysis/" \
       || echo "경고: B2 analysis 기간 롤링 실패 — 다음 실행에서 재시도" >&2
@@ -120,10 +171,13 @@ fi
 
 # 롤링 글롭은 crawler-[0-9]* — 수동 스냅샷(crawler-pre-* 등)은 롤링에서 제외
 if "$offsite_ok"; then
-  ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.* | tail -n +2 | xargs -r rm
+  # 스트리밍 성공일은 오늘자 로컬 사본이 애초에 없다 — 남아 있는 건 과거 실패일의 폴백뿐이라
+  # B2 사본이 확인된 지금 전부 정리한다(평상시 로컬 crawler 0개 — 08-25 스트리밍 전환).
+  rm -f "$BACKUP_DIR"/crawler-[0-9]*.sql.*
 else
-  echo "경고: B2 업로드 실패(캡 초과 등) 또는 리모트 미설정 — 서버 로컬 ${LOCAL_CRAWLER_KEEP}개 유지로 버팀" >&2
-  ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.* | tail -n +"$((LOCAL_CRAWLER_KEEP + 1))" | xargs -r rm
+  echo "경고: B2 업로드 실패(캡 초과 등) 또는 리모트 미설정 — 서버 로컬 최대 ${LOCAL_CRAWLER_KEEP}개 유지로 버팀" >&2
+  # 스트리밍만 성공하고 analysis가 실패한 날은 로컬 crawler가 0개일 수 있다 — ls 실패 비치명.
+  { ls -1t "$BACKUP_DIR"/crawler-[0-9]*.sql.* 2>/dev/null | tail -n +"$((LOCAL_CRAWLER_KEEP + 1))" | xargs -r rm; } || true
 fi
 # monitoring은 건너뛰거나 실패하면 목록에서 빠진다 — 크론 로그만으로 성패 판별 가능
 echo "백업 완료: analysis-$STAMP.sql.zst, crawler-$STAMP.sql.zst${MONITORING_DUMP:+, $MONITORING_DUMP}"

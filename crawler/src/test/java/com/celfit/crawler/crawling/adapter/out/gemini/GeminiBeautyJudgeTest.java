@@ -38,7 +38,8 @@ class GeminiBeautyJudgeTest {
     void 응답_텍스트를_팀_파서로_판정에_매핑한다() {
         String response = """
                 {"candidates":[{"content":{"parts":[{"text":
-                "[{\\"username\\":\\"user1\\",\\"class\\":\\"COMPANY\\",\\"reason\\":\\"쇼핑몰\\"}]"}]}}]}""";
+                "[{\\"username\\":\\"user1\\",\\"beauty\\":{\\"class\\":\\"COMPANY\\",\\"reason\\":\\"쇼핑몰\\"},\
+                \\"fnb\\":{\\"class\\":\\"NONE\\",\\"reason\\":\\"F&B 아님\\"}}]"}]}}]}""";
         String text = GeminiBeautyJudge.extractText(om, response);
         List<Verdict> verdicts = ClaudeCliBeautyJudge.parse(om, text);
         assertEquals(1, verdicts.size());
@@ -56,5 +57,23 @@ class GeminiBeautyJudgeTest {
         assertThat(GeminiBeautyJudge.RESPONSE_SCHEMA)
                 .contains("FOREIGN_INFLUENCER")
                 .contains("CATEGORY_ONLY");
+    }
+
+    @Test
+    void 응답_스키마가_두_축을_각각_담는다() {
+        // 2축 판정(스펙 2026-08-23 §2) — beauty는 BEAUTY_SERVICE·NOT_BEAUTY, fnb는 SERVICE·NONE 어휘
+        assertThat(GeminiBeautyJudge.RESPONSE_SCHEMA)
+                .contains("\"beauty\"")
+                .contains("\"fnb\"")
+                .contains("BEAUTY_SERVICE")
+                .contains("NOT_BEAUTY")
+                .contains("\"SERVICE\"")
+                .contains("\"NONE\"");
+    }
+
+    @Test
+    void 출력_토큰_상한이_2축_분량으로_상향되어_있다() {
+        String body = GeminiBeautyJudge.requestBody(om, "prompt");
+        assertEquals(16384, om.readTree(body).path("generationConfig").path("maxOutputTokens").asInt());
     }
 }

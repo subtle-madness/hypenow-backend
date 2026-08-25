@@ -61,7 +61,7 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 
 | 테이블 | 내용 |
 |---|---|
-| `influencer` | 계정 (username, status, followers, 뷰티 판정 5분류 beauty_class(+파생 beauty/beauty_company)/beauty_judged_at) |
+| `influencer` | 계정 (username, status, followers, 뷰티 판정 5분류 beauty_class(+파생 beauty/beauty_company)/beauty_judged_at + F&B 축(fnb_class 5분류·fnb/fnb_company 파생, 2026-08-24)) |
 | `content` | 게시물 제어 (short_code, content_type, owner, uploaded_at, origin DISCOVERY/ENUMERATION, status) — 캡션·지표 없음 |
 | `raw_media_page` | 릴스 페이지 원형(HIKER_V2_CLIPS, 임시 액터 전환 기간엔 APIFY_ACTOR `{"items":[...]}` — DECISIONS 08-06) — 릴스 캡션·지표·썸네일의 소스 |
 | `raw_profile` | 프로필 원형(SELF_GQL·HIKER_MOBILE 등 source별 jsonb) — SELF_GQL엔 내장 타임라인 12개(피드 캡션·지표의 소스) |

@@ -32,7 +32,20 @@ class StatusServiceTest {
 
         service.summary();
 
-        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"));
-        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"));
+        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), false);
+        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), false);
+    }
+
+    @Test
+    void 대기열_타일은_F앤B_토글을_그대로_모수에_반영한다() {
+        // 토글 on이면 대기열 타일이 선정 쿼리와 같은 모수(F&B 포함)를 보여준다 — 스펙 2026-08-23 §4.
+        when(settings.revisitIntervalDays()).thenReturn(1);
+        when(settings.fnbPipelineEnabled()).thenReturn(true);
+
+        service.summary();
+
+        verify(influencers).countBackfillPending(true);
+        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), true);
+        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), true);
     }
 }
