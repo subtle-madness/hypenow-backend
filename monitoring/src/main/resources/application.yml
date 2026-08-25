@@ -143,3 +143,8 @@ monitoring:
     # 전용 SA 키 파일 경로 — 미설정이면 ADC 폴백. analytics와 같은 키를 재사용한다
     gcs-key: ${IMAGE_GCS_KEY:}
     archive-batch-limit: 1000   # 1회 스윕당 다운로드+업로드 상한 — 초과분은 다음 스윕으로 이월
+    backfill-trigger-enabled: false   # AuthorImageBackfillController(POST /api/author-image-backfill) 게이트
+                                       # — 기본 off. 호출 1회가 대상 수만큼 Hiker 재조회 콜 + 직후 아카이브
+                                       # 다운로드·업로드까지 내는 증폭 지점이라 운영 공격면을 최소화한다
+                                       # (Caddyfile 무배선이 1차 방어, 이건 2차 방어 — sweep.manual-trigger-enabled와
+                                       # 동일 근거). false면 컨트롤러 빈 자체가 등록되지 않아 이 경로는 404.
