@@ -28,9 +28,10 @@ import org.springframework.stereotype.Component;
  * 성공하면 카운터를 유지해 다음 빈 응답부터는 즉시 폴백한다(Hiker 수집 가능 확인됨).
  * 카운터는 인메모리라 재기동 시 초기화된다 — 임계값만큼의 방문 실패 후 폴백이 재개된다.
  *
- * <p>빈 응답 트랙은 <b>COLLECT 잡 전용</b>이다 — qualify는 대상 재선정(followers null)에
- * 종결 장치가 없어 빈 응답 유료 폴백을 열면 숨겨진 DISCOVERED 계정이 무한 재과금되고,
- * 30일 수명 정책(confirmedEmpty 소비)도 CollectJob에만 있다. 400 폴백은 두 잡 공통.
+ * <p>빈 응답 트랙은 <b>COLLECT·QUALIFY 잡 전용</b>이다 — 두 잡 모두 confirmedEmpty를 소비하는
+ * 종결 장치가 있어야 열 수 있다(없으면 숨겨진 계정이 재선정마다 무한 재과금된다). CollectJob은
+ * 30일 수명 정책, QualifyJob은 즉시 소프트 딜리트(DISCOVERED는 아직 리드일 뿐이라 보수적일
+ * 이유가 없고, 재발굴되면 다시 들어온다)로 종결한다. 400 폴백은 잡 무관 공통.
  */
 @Component
 public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
@@ -63,7 +64,8 @@ public class SelfWithHikerFallbackProfileFetcher implements ProfileFetcher {
         List<String> empty = new ArrayList<>();
         ApifyResult base = self.collect(usernames, badRequest, empty);
         List<String> emptyFallback = new ArrayList<>();
-        if (job == JobName.COLLECT) {   // 빈 응답 트랙은 COLLECT 전용 — 클래스 주석 참조
+        // 빈 응답 트랙은 종결 장치가 있는 잡만 — 클래스 주석 참조
+        if (job == JobName.COLLECT || job == JobName.QUALIFY) {
             resetStreaksForResolved(base);
             for (String u : empty) {
                 int streak = emptyStreaks.merge(u, 1, Integer::sum);
