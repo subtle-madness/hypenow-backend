@@ -28,7 +28,7 @@ class BrandSweepJobTest {
 		boolean failing;
 
 		StubArchive() {
-			super(null, null, null, "https://par.example/o/", 1000);
+			super(null, null, null, "https://par.example/o/");
 		}
 
 		@Override
@@ -45,7 +45,7 @@ class BrandSweepJobTest {
 		boolean failing;
 
 		StubBrandArchive() {
-			super(null, null, null, "https://par.example/o/", 1000);
+			super(null, null, null, "https://par.example/o/");
 		}
 
 		@Override
@@ -62,7 +62,7 @@ class BrandSweepJobTest {
 		boolean failing;
 
 		StubPostThumbArchive() {
-			super(null, null, null, "https://par.example/o/", 1000);
+			super(null, null, null, "https://par.example/o/");
 		}
 
 		@Override
@@ -79,7 +79,7 @@ class BrandSweepJobTest {
 		boolean failing;
 
 		StubHashtagThumbArchive() {
-			super(null, null, null, "https://par.example/o/", 1000);
+			super(null, null, null, "https://par.example/o/");
 		}
 
 		@Override
@@ -96,7 +96,7 @@ class BrandSweepJobTest {
 		boolean failing;
 
 		StubHashtagAuthorArchive() {
-			super(null, null, null, "https://par.example/o/", 1000);
+			super(null, null, null, "https://par.example/o/");
 		}
 
 		@Override

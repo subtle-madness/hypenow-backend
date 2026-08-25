@@ -18,8 +18,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * {@code DISTINCT ON (short_code)}로 접고, UPDATE도 short_code 기준으로 쳐서 전 브랜드 행에
  * 같은 아카이브 경로를 채운다(같은 게시물 = 같은 썸네일).
  *
- * <p>배치 상한은 다운로드 시도만 소모한다(스킵 공짜) — 근거는 {@link BrandPostThumbnailArchiveJob}
- * 클래스 주석 참고.
+ * <p>배치 상한은 08-25 완전히 제거됐다 — 이력·근거는 {@link BrandPostThumbnailArchiveJob} 클래스
+ * 주석 참고. 상한이 없으니 후보 전량이 매 스윕에서 처리된다.
  */
 public class HashtagPostThumbnailArchiveJob {
 
@@ -33,15 +33,13 @@ public class HashtagPostThumbnailArchiveJob {
 	private final ImageStore store;
 	private final ImageDownloader downloader;
 	private final String parUrl;
-	private final int batchLimit;
 
 	public HashtagPostThumbnailArchiveJob(JdbcTemplate db, ImageStore store, ImageDownloader downloader,
-			String parUrl, int batchLimit) {
+			String parUrl) {
 		this.db = db;
 		this.store = store;
 		this.downloader = downloader;
 		this.parUrl = parUrl;
-		this.batchLimit = batchLimit;
 	}
 
 	public void run() {
@@ -73,7 +71,6 @@ public class HashtagPostThumbnailArchiveJob {
 		int skipped = 0;
 		int failed = 0;
 		int expired = 0;
-		int deferred = 0;
 		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
 			Candidate c = r.item();
 			String sourceName;
@@ -90,11 +87,7 @@ public class HashtagPostThumbnailArchiveJob {
 				continue;
 			}
 			if (r.expired(nowEpoch)) {
-				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
-				continue;
-			}
-			if (archived + failed >= batchLimit) {
-				deferred++;   // 다운로드 예산 소진 — 다음 스윕으로 이월.
+				expired++;   // CDN 서명 만료 — 시도해도 403이라 스킵.
 				continue;
 			}
 			try {
@@ -114,8 +107,8 @@ public class HashtagPostThumbnailArchiveJob {
 				log.warn("해시태그 게시물 썸네일 아카이브 실패 — shortCode={}", c.shortCode(), e);
 			}
 		}
-		log.info("해시태그 게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건{}",
-				archived, skipped, failed, expired, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("해시태그 게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건",
+				archived, skipped, failed, expired);
 	}
 
 	/**
