@@ -124,9 +124,9 @@ class SelfWithHikerFallbackProfileFetcherTest {
         assertThat(ex.notFound()).isEmpty();
     }
 
-    @Test void 빈_응답_폴백은_COLLECT_잡에서만_작동한다() {
-        // qualify는 대상 재선정에 종결 장치(30일 정책)가 없다 — 빈 응답 유료 폴백을 열면
-        // 숨겨진 DISCOVERED 계정이 무한 재과금된다. 400 폴백은 두 잡 모두 기존대로.
+    @Test void 빈_응답_폴백은_QUALIFY_잡에서도_작동한다() {
+        // qualify에 종결 장치(confirmedEmpty → 즉시 소프트 딜리트)가 생겨 빈 응답 트랙을
+        // COLLECT 전용에서 확대했다 — 익명 API에서 숨겨진 DISCOVERED 계정을 Hiker로 회수한다.
         AtomicInteger hikerCalls = new AtomicInteger();
         HikerHttp http = path -> {
             hikerCalls.incrementAndGet();
@@ -135,13 +135,27 @@ class SelfWithHikerFallbackProfileFetcherTest {
         var f = fetcher(webWithEmptyFor(Set.of("hidden")), http);
 
         CrawlExecutor.Execution ex = null;
-        for (int round = 1; round <= THRESHOLD + 1; round++) {
+        for (int round = 1; round <= THRESHOLD; round++) {
             ex = f.fetch(JobName.QUALIFY, List.of("hidden"), TriggerType.MANUAL);
         }
 
-        assertThat(hikerCalls.get()).isZero();   // 임계값을 넘겨도 qualify에선 폴백 없음
-        assertThat(ex.items()).isEmpty();
-        assertThat(ex.confirmedEmpty()).isEmpty();
+        assertThat(hikerCalls.get()).isEqualTo(1);   // 임계값 도달 회차에만 호출
+        assertThat(ex.items()).hasSize(1);
+        assertThat(ProfileExtractor.detect(ex.items().get(0), RawSource.SELF_GQL))
+                .isEqualTo(RawSource.HIKER_MOBILE);
+    }
+
+    @Test void QUALIFY의_빈_응답_폴백도_빈_응답이면_확인된_빈_계정으로_보고된다() {
+        // QualifyJob이 이 신호로 즉시 소프트 딜리트한다 — 재선정·재과금 종결 장치
+        HikerHttp http = path -> "{\"user\":null}";
+        var f = fetcher(webWithEmptyFor(Set.of("dormant")), http);
+
+        CrawlExecutor.Execution ex = null;
+        for (int round = 1; round <= THRESHOLD; round++) {
+            ex = f.fetch(JobName.QUALIFY, List.of("dormant"), TriggerType.MANUAL);
+        }
+
+        assertThat(ex.confirmedEmpty()).containsExactly("dormant");
     }
 
     @Test void 폴백_요청_실패는_확인된_빈_계정으로_보고되지_않고_다음_방문에_폴백을_재시도한다() {
