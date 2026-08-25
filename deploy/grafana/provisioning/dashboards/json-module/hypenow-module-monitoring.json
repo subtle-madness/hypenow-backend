@@ -1066,13 +1066,99 @@
       ]
     },
     {
+      "id": 22,
+      "type": "timeseries",
+      "title": "응답코드 추이 (Hiker, WARN·ERROR 로그)",
+      "description": "로그 본문의 \"Hiker NNN\" 상태코드를 추출해 코드별로 집계. 404=대상 없음(빈 열거 잡음 섞임)·402=잔액 소진(즉시 조치)·5xx=Hiker 장애. 4xx도 과금이므로 급증 = 비용 신호.",
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "402"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{code}}",
+          "expr": "sum by (code) (count_over_time({service=\"monitoring\", level=~\"WARN|ERROR\"} |~ `Hiker \\d{3}` | regexp `Hiker (?P<code>\\d{3})` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "table",
+      "title": "예외 클래스별 Top 15 (WARN·ERROR)",
+      "description": "multiline 병합 덕에 스택트레이스 본문에서 예외 클래스를 뽑을 수 있다. 끝의 \\b가 없으면 로거명 접두가 오매칭된다.",
+      "gridPos": {
+        "x": 12,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (exc) (count_over_time({service=\"monitoring\", level=~\"WARN|ERROR\"} |~ `(?:Exception|Error)` | regexp `(?P<exc>[\\w.]+(?:Exception|Error))\\b` [$__range])))"
+        }
+      ]
+    },
+    {
       "id": 20,
       "type": "logs",
       "title": "로그 탐색",
       "description": "monitoring 서비스 전체 로그.",
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 45,
         "w": 24,
         "h": 10
       },
