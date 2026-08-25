@@ -30,6 +30,10 @@ INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, 
  (99990004,'dummy_x' ,'QUALIFIED', 9000, false, false, timestamptz '2026-06-01 00:00:00+09'),
  (99990005,'dummy_e' ,'EXCLUDED',  NULL, NULL,  NULL,  NULL);
 
+-- F&B 축 시드: dummy_a는 뷰티+F&B 겸임(복수 카테고리), 나머지는 F&B 미판정(NULL)
+UPDATE influencer SET fnb = true, fnb_company = false, fnb_class = 'INFLUENCER'
+WHERE username = 'dummy_a';
+
 INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at, status, first_seen_at, origin, collect_attempts) VALUES
  (99990101,'dummy_r1','REELS','dummy_a' ,99990001, timestamptz '2026-06-01 09:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
  (99990102,'dummy_r2','REELS','dummy_a' ,99990001, timestamptz '2026-06-02 09:00:00+09','PENDING', timestamptz '2026-06-02 12:00:00+09','ENUMERATION',0),

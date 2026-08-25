@@ -39,10 +39,17 @@ public class GeminiBeautyJudge implements BeautyJudge {
     static final String RESPONSE_SCHEMA = """
             {"type":"array","items":{"type":"object","properties":{
               "username":{"type":"string"},
-              "reason":{"type":"string"},
-              "basis":{"type":"string","enum":["CAPTION","BIO","CATEGORY_ONLY"]},
-              "class":{"type":"string","enum":["INFLUENCER","FOREIGN_INFLUENCER","COMPANY","BEAUTY_SERVICE","NOT_BEAUTY"]}},
-             "required":["username","reason","basis","class"]}}""";
+              "beauty":{"type":"object","properties":{
+                "reason":{"type":"string"},
+                "basis":{"type":"string","enum":["CAPTION","BIO","CATEGORY_ONLY"]},
+                "class":{"type":"string","enum":["INFLUENCER","FOREIGN_INFLUENCER","COMPANY","BEAUTY_SERVICE","NOT_BEAUTY"]}},
+               "required":["reason","basis","class"]},
+              "fnb":{"type":"object","properties":{
+                "reason":{"type":"string"},
+                "basis":{"type":"string","enum":["CAPTION","BIO","CATEGORY_ONLY"]},
+                "class":{"type":"string","enum":["INFLUENCER","FOREIGN_INFLUENCER","COMPANY","SERVICE","NONE"]}},
+               "required":["reason","basis","class"]}},
+             "required":["username","beauty","fnb"]}}""";
 
     private final ObjectMapper om;
     private final String model;
@@ -70,7 +77,8 @@ public class GeminiBeautyJudge implements BeautyJudge {
         gen.put("temperature", 0);
         gen.put("responseMimeType", "application/json");
         gen.set("responseSchema", om.readTree(RESPONSE_SCHEMA));
-        gen.put("maxOutputTokens", 8192);
+        // 계정당 2축(beauty+fnb) 출력으로 ~2배 — 8192에서 상향 (스펙 2026-08-23 §2)
+        gen.put("maxOutputTokens", 16384);
         return om.writeValueAsString(root);
     }
 

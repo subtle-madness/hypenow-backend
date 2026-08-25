@@ -13,18 +13,20 @@ public interface BeautyJudge {
                        List<String> captions) {}
 
     /**
-     * 5분류 판정 결과 — 파생 boolean(beauty/company)은 BeautyClass 규칙을 위임한다.
-     * BEAUTY_SERVICE(시술·서비스)는 beauty=false — 리스트업 세그먼트로만 남고 수집·유사발굴 제외.
-     * basis는 판정의 주근거(CAPTION·BIO·CATEGORY_ONLY) — 모델이 밝히지 않거나 알 수 없는 값이면 null.
+     * 2축 판정 결과 — beauty(뷰티 제품)·fnb(식품/음료 제품) 축을 독립 판정한다(스펙 2026-08-23 §2).
+     * 축별 class는 모델 응답이 무효·누락이면 null — 호출자는 null 아닌 축만 적용한다(해당 축은
+     * 미판정으로 남아 다음 실행 재시도). 파생 boolean은 각 enum 규칙에 위임.
      */
-    record Verdict(String username, com.celfit.crawler.crawling.domain.BeautyClass beautyClass, String reason,
-                   String basis) {
+    record Verdict(String username, com.celfit.crawler.crawling.domain.BeautyClass beautyClass,
+                   String reason, String basis,
+                   com.celfit.crawler.crawling.domain.CategoryClass fnbClass,
+                   String fnbReason, String fnbBasis) {
         public boolean beauty() {
-            return beautyClass.beauty();
+            return beautyClass != null && beautyClass.beauty();
         }
 
         public boolean company() {
-            return beautyClass.company();
+            return beautyClass != null && beautyClass.company();
         }
     }
 

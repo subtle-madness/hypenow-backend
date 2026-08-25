@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.BeautyJudge;
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -18,47 +19,107 @@ class ClaudeCliBeautyJudgeTest {
     void 코드펜스로_감싼_5분류_JSON_배열을_판정으로_파싱한다() {
         String output = """
                 ```json
-                [{"username":"a","class":"INFLUENCER","reason":"메이크업 크리에이터"},
-                 {"username":"b","class":"COMPANY","reason":"화장품 브랜드 공식몰"},
-                 {"username":"c","class":"BEAUTY_SERVICE","reason":"피부과 시술 홍보 계정"},
-                 {"username":"d","class":"NOT_BEAUTY","reason":"여행 계정"},
-                 {"username":"e","class":"FOREIGN_INFLUENCER","reason":"영어 뷰티 콘텐츠"}]
+                [{"username":"a","beauty":{"class":"INFLUENCER","reason":"메이크업 크리에이터"},"fnb":{"class":"NONE","reason":"F&B 아님"}},
+                 {"username":"b","beauty":{"class":"COMPANY","reason":"화장품 브랜드 공식몰"},"fnb":{"class":"NONE","reason":"F&B 아님"}},
+                 {"username":"c","beauty":{"class":"BEAUTY_SERVICE","reason":"피부과 시술 홍보 계정"},"fnb":{"class":"NONE","reason":"F&B 아님"}},
+                 {"username":"d","beauty":{"class":"NOT_BEAUTY","reason":"여행 계정"},"fnb":{"class":"NONE","reason":"F&B 아님"}},
+                 {"username":"e","beauty":{"class":"FOREIGN_INFLUENCER","reason":"영어 뷰티 콘텐츠"},"fnb":{"class":"NONE","reason":"F&B 아님"}}]
                 ```
                 """;
         List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, output);
         assertThat(v).containsExactly(
-                new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 크리에이터", null),
-                new BeautyJudge.Verdict("b", BeautyClass.COMPANY, "화장품 브랜드 공식몰", null),
-                new BeautyJudge.Verdict("c", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보 계정", null),
-                new BeautyJudge.Verdict("d", BeautyClass.NOT_BEAUTY, "여행 계정", null),
-                new BeautyJudge.Verdict("e", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠", null));
+                new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 크리에이터", null,
+                        CategoryClass.NONE, "F&B 아님", null),
+                new BeautyJudge.Verdict("b", BeautyClass.COMPANY, "화장품 브랜드 공식몰", null,
+                        CategoryClass.NONE, "F&B 아님", null),
+                new BeautyJudge.Verdict("c", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보 계정", null,
+                        CategoryClass.NONE, "F&B 아님", null),
+                new BeautyJudge.Verdict("d", BeautyClass.NOT_BEAUTY, "여행 계정", null,
+                        CategoryClass.NONE, "F&B 아님", null),
+                new BeautyJudge.Verdict("e", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠", null,
+                        CategoryClass.NONE, "F&B 아님", null));
+    }
+
+    @Test
+    void 이축_JSON을_판정으로_파싱한다() {
+        String out = """
+                [{"username":"kim","beauty":{"reason":"뷰티 리뷰","basis":"CAPTION","class":"INFLUENCER"},
+                  "fnb":{"reason":"레시피 다수","basis":"CAPTION","class":"INFLUENCER"}}]""";
+        List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, out);
+        assertThat(v).hasSize(1);
+        assertThat(v.get(0).beautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(v.get(0).fnbClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(v.get(0).fnbReason()).isEqualTo("레시피 다수");
+        assertThat(v.get(0).fnbBasis()).isEqualTo("CAPTION");
+    }
+
+    @Test
+    void 한_축이_무효여도_다른_축_판정은_살린다() {
+        String out = """
+                [{"username":"kim","beauty":{"reason":"r","basis":"BIO","class":"뭔가이상한값"},
+                  "fnb":{"reason":"r2","basis":"BIO","class":"NONE"}}]""";
+        List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, out);
+        assertThat(v).hasSize(1);
+        assertThat(v.get(0).beautyClass()).isNull();
+        assertThat(v.get(0).fnbClass()).isEqualTo(CategoryClass.NONE);
+    }
+
+    @Test
+    void 양축_모두_무효면_항목을_건너뛴다() {
+        String out = """
+                [{"username":"kim","beauty":{"class":"X"},"fnb":{"class":"Y"}}]""";
+        assertThat(ClaudeCliBeautyJudge.parse(om, out)).isEmpty();
+    }
+
+    @Test
+    void 프롬프트에_두_축_분류와_출력_형식이_들어간다() {
+        String p = ClaudeCliBeautyJudge.buildPrompt(om, List.of(
+                new BeautyJudge.ProfileCard("u", "이름", "cat", "bio", List.of())));
+        assertThat(p).contains("beauty");
+        assertThat(p).contains("fnb");
+        assertThat(p).contains("BEAUTY_SERVICE");   // 뷰티 축 어휘
+        // F&B 축 어휘(매장) — BEAUTY_SERVICE의 부분 문자열로 우연히 통과하지 않도록 경계까지 함께 본다
+        assertThat(p).contains("- SERVICE: 매장");
+        assertThat(p).contains("|SERVICE|NONE");
+        assertThat(p).contains("NONE");
+        assertThat(p).contains("두 축은 독립");
     }
 
     @Test
     void Verdict의_파생_boolean은_BeautyClass_규칙을_따른다() {
-        assertThat(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, null, null).beauty()).isTrue();
-        assertThat(new BeautyJudge.Verdict("a", BeautyClass.COMPANY, null, null).company()).isTrue();
-        assertThat(new BeautyJudge.Verdict("a", BeautyClass.BEAUTY_SERVICE, null, null).beauty()).isFalse();
-        assertThat(new BeautyJudge.Verdict("a", BeautyClass.FOREIGN_INFLUENCER, null, null).beauty()).isFalse();
-        assertThat(new BeautyJudge.Verdict("a", BeautyClass.NOT_BEAUTY, null, null).beauty()).isFalse();
+        assertThat(verdict(BeautyClass.INFLUENCER).beauty()).isTrue();
+        assertThat(verdict(BeautyClass.COMPANY).company()).isTrue();
+        assertThat(verdict(BeautyClass.BEAUTY_SERVICE).beauty()).isFalse();
+        assertThat(verdict(BeautyClass.FOREIGN_INFLUENCER).beauty()).isFalse();
+        assertThat(verdict(BeautyClass.NOT_BEAUTY).beauty()).isFalse();
+        // 뷰티 축 무판정(모델 응답 무효·누락) — 파생 boolean은 false로 접힌다(NPE 아님)
+        assertThat(verdict(null).beauty()).isFalse();
+        assertThat(verdict(null).company()).isFalse();
+    }
+
+    private static BeautyJudge.Verdict verdict(BeautyClass cls) {
+        return new BeautyJudge.Verdict("a", cls, null, null, null, null, null);
     }
 
     @Test
     void 펜스_없는_생_JSON도_파싱한다() {
         List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om,
-                "[{\"username\":\"a\",\"class\":\"INFLUENCER\",\"reason\":null}]");
-        assertThat(v).containsExactly(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, null, null));
+                "[{\"username\":\"a\",\"beauty\":{\"class\":\"INFLUENCER\",\"reason\":null},"
+                        + "\"fnb\":{\"class\":\"NONE\",\"reason\":null}}]");
+        assertThat(v).containsExactly(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, null, null,
+                CategoryClass.NONE, null, null));
     }
 
     @Test
     void username_누락이나_class가_5분류가_아닌_항목은_건너뛴다() {
         List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, """
-                [{"class":"INFLUENCER","reason":"x"},
-                 {"username":"ok","class":"BEAUTY"},
+                [{"beauty":{"class":"INFLUENCER","reason":"x"},"fnb":{"class":"NONE"}},
+                 {"username":"ok","beauty":{"class":"BEAUTY"},"fnb":{"class":"FOOD"}},
                  {"username":"legacy","beauty":true},
-                 {"username":"good","class":"NOT_BEAUTY","reason":"r"}]
+                 {"username":"good","beauty":{"class":"NOT_BEAUTY","reason":"r"},"fnb":{"class":"NONE","reason":"r2"}}]
                 """);
-        assertThat(v).containsExactly(new BeautyJudge.Verdict("good", BeautyClass.NOT_BEAUTY, "r", null));
+        assertThat(v).containsExactly(new BeautyJudge.Verdict("good", BeautyClass.NOT_BEAUTY, "r", null,
+                CategoryClass.NONE, "r2", null));
     }
 
     @Test
@@ -82,7 +143,8 @@ class ClaudeCliBeautyJudgeTest {
     @Test
     void basis를_파싱한다() {
         String output = """
-                [{"username":"a","reason":"뷰티 캡션 다수","basis":"CAPTION","class":"INFLUENCER"}]""";
+                [{"username":"a","beauty":{"reason":"뷰티 캡션 다수","basis":"CAPTION","class":"INFLUENCER"},
+                  "fnb":{"reason":"F&B 아님","basis":"CAPTION","class":"NONE"}}]""";
 
         var verdicts = ClaudeCliBeautyJudge.parse(om, output);
 
@@ -96,14 +158,18 @@ class ClaudeCliBeautyJudgeTest {
     @Test
     void 알_수_없는_basis는_null로_두고_판정은_살린다() {
         String output = """
-                [{"username":"a","reason":"이유","basis":"VIBES","class":"INFLUENCER"},
-                 {"username":"b","reason":"이유","class":"NOT_BEAUTY"}]""";
+                [{"username":"a","beauty":{"reason":"이유","basis":"VIBES","class":"INFLUENCER"},
+                  "fnb":{"reason":"이유","basis":"VIBES","class":"NONE"}},
+                 {"username":"b","beauty":{"reason":"이유","class":"NOT_BEAUTY"},
+                  "fnb":{"reason":"이유","class":"NONE"}}]""";
 
         var verdicts = ClaudeCliBeautyJudge.parse(om, output);
 
         assertThat(verdicts).hasSize(2);
         assertThat(verdicts.get(0).basis()).isNull();
+        assertThat(verdicts.get(0).fnbBasis()).isNull();
         assertThat(verdicts.get(1).basis()).isNull();
+        assertThat(verdicts.get(1).fnbBasis()).isNull();
     }
 
     @Test
