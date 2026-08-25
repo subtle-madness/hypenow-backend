@@ -66,8 +66,17 @@ public class UiController {
         return "redirect:/ui";
     }
 
-    /** 대시보드 상태 카드용 뷰. key는 badge 색상 클래스 겸 라벨. */
-    public record StatusTile(String key, long count, String desc) {}
+    /**
+     * 대시보드 상태 카드용 뷰. key는 badge 색상 클래스, label은 배지에 찍히는 텍스트.
+     * 색상 클래스와 표시 텍스트가 같은 상태 타일(DISCOVERED·READY 등)은 3인자 생성자로 만들면
+     * label이 key로 폴백된다 — 색상만 빌려 쓰는 타일(F&B 축이 뷰티 배지 색을 재사용)은
+     * label을 명시해 "BEAUTY" 같은 엉뚱한 텍스트가 찍히지 않게 한다.
+     */
+    public record StatusTile(String key, String label, long count, String desc) {
+        public StatusTile(String key, long count, String desc) {
+            this(key, key, count, desc);
+        }
+    }
 
     /** 파이프라인 단계별 타일 묶음 — 한 잡이 만든 상태들을 시각적으로 구분해 렌더. */
     public record StatusTileGroup(String title, java.util.List<StatusTile> tiles) {}
@@ -158,6 +167,12 @@ public class UiController {
                                 "비뷰티 · 수집 제외"),
                         new StatusTile("UNJUDGED", s.beautyUnjudged(),
                                 "미판정 · 뷰티판정 대기"))),
+                // 배지 색상은 뷰티 축 클래스를 재사용하되, 텍스트는 F&B 축 라벨로 따로 준다
+                new StatusTileGroup("③-2 F&B 판정 — beauty 잡의 F&B 축 (QUALIFIED 내)", java.util.List.of(
+                        new StatusTile("BEAUTY", "F&B", s.fnbInfluencer(),
+                                "F&B 인플루언서 · 수집 편입은 fnb.pipeline-enabled 토글(기본 off)"),
+                        new StatusTile("UNJUDGED", "미판정", s.fnbUnjudged(),
+                                "F&B 미판정 · 백필 잔여"))),
                 new StatusTileGroup("④ 수집 대기열 — 게시물을 위한 프로필 수집(collect)·릴스 수집(reels)이 방문할 대상",
                         java.util.List.of(
                         new StatusTile("READY", s.backfillPending() + s.trackDue(),
@@ -216,9 +231,19 @@ public class UiController {
             new BeautyFilter("NOT_BEAUTY", "뷰티 아님", "NOT_BEAUTY"),
             new BeautyFilter("UNJUDGED", "미판정", "UNJUDGED"));
 
+    /** F&B 5분류 + 미판정 — 배지 CSS는 뷰티 것 재사용(색 의미 동일: 타깃/회사/서비스/외국인/아님). */
+    private static final java.util.List<BeautyFilter> FNB_FILTERS = java.util.List.of(
+            new BeautyFilter("INFLUENCER", "F&B", "BEAUTY"),
+            new BeautyFilter("COMPANY", "F&B 회사", "BEAUTY_COMPANY"),
+            new BeautyFilter("SERVICE", "매장·서비스", "BEAUTY_SERVICE"),
+            new BeautyFilter("FOREIGN_INFLUENCER", "외국인", "FOREIGN_INFLUENCER"),
+            new BeautyFilter("NONE", "F&B 아님", "NOT_BEAUTY"),
+            new BeautyFilter("UNJUDGED", "미판정", "UNJUDGED"));
+
     @GetMapping("/ui/influencers")
     public String influencers(@RequestParam(required = false) java.util.List<InfluencerStatus> status,
                               @RequestParam(required = false) java.util.List<String> beauty,
+                              @RequestParam(required = false) java.util.List<String> fnb,
                               @RequestParam(required = false, defaultValue = "false") boolean company,
                               @RequestParam(defaultValue = "0") int page, Model model) {
         var selected = status == null ? java.util.List.<InfluencerStatus>of()
@@ -230,19 +255,28 @@ public class UiController {
         boolean unjudged = beautySelected.contains("UNJUDGED");
         var classes = beautySelected.stream().filter(k -> !"UNJUDGED".equals(k))
                 .map(BeautyClass::valueOf).toList();
+        var fnbKeys = FNB_FILTERS.stream().map(BeautyFilter::key).toList();
+        var fnbSelected = fnb == null ? java.util.List.<String>of()
+                                      : fnb.stream().filter(fnbKeys::contains).toList();
+        boolean fnbUnjudged = fnbSelected.contains("UNJUDGED");
+        var fnbClasses = fnbSelected.stream().filter(k -> !"UNJUDGED".equals(k))
+                .map(com.celfit.crawler.crawling.domain.CategoryClass::valueOf).toList();
         var pageable = PageRequest.of(Math.max(page, 0), 50, Sort.by(Sort.Direction.DESC, "id"));
-        // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용, 뷰티 필터 없음)
+        // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용, 뷰티 필터 없음).
+        // 뷰티·F&B 필터를 동시에 체크하면 뷰티가 이긴다 — 두 축 교차 조합은 지원하지 않는다(단순성 우선).
         org.springframework.data.domain.Page<com.celfit.crawler.crawling.domain.Influencer> result;
         if (company) {
             result = influencers.findByStatusInAndBeautyTrueAndBeautyCompanyTrue(effective, pageable);
-        } else if (classes.isEmpty() && !unjudged) {
-            result = influencers.findByStatusIn(effective, pageable);
-        } else if (classes.isEmpty()) {
-            result = influencers.findByStatusInAndBeautyClassIsNull(effective, pageable);
-        } else if (!unjudged) {
-            result = influencers.findByStatusInAndBeautyClassIn(effective, classes, pageable);
+        } else if (!classes.isEmpty() || unjudged) {
+            if (classes.isEmpty()) result = influencers.findByStatusInAndBeautyClassIsNull(effective, pageable);
+            else if (!unjudged) result = influencers.findByStatusInAndBeautyClassIn(effective, classes, pageable);
+            else result = influencers.findByStatusInAndBeautyClassInOrNull(effective, classes, pageable);
+        } else if (!fnbClasses.isEmpty() || fnbUnjudged) {
+            if (fnbClasses.isEmpty()) result = influencers.findByStatusInAndFnbClassIsNull(effective, pageable);
+            else if (!fnbUnjudged) result = influencers.findByStatusInAndFnbClassIn(effective, fnbClasses, pageable);
+            else result = influencers.findByStatusInAndFnbClassInOrNull(effective, fnbClasses, pageable);
         } else {
-            result = influencers.findByStatusInAndBeautyClassInOrNull(effective, classes, pageable);
+            result = influencers.findByStatusIn(effective, pageable);
         }
         model.addAttribute("companyView", company);
 
@@ -266,6 +300,9 @@ public class UiController {
         model.addAttribute("beautyFilters", BEAUTY_FILTERS);
         // 수동 오버라이드 버튼용 4분류 목록 — 템플릿 하드코딩 대신 enum 단일 원천
         model.addAttribute("beautyClasses", BeautyClass.values());
+        model.addAttribute("fnb", fnbSelected);
+        model.addAttribute("fnbFilters", FNB_FILTERS);
+        model.addAttribute("fnbClasses", com.celfit.crawler.crawling.domain.CategoryClass.values());
         return "influencers";
     }
 
