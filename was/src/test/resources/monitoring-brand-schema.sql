@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS brand_tagged_post (
     direct_registered_at     timestamptz,
     -- 삭제·비공개 관측(V20260825044536) — 야간 스윕 단건 콜 404 시각, was는 hidden 판정에 읽는다.
     unavailable_at           timestamptz,
+    -- 태그 부재 검증 스로틀(V20260825061133) — monitoring 전용(was 미조회), 미러 정합만 유지.
+    absence_checked_at       timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
 

@@ -58,6 +58,14 @@ public class BrandCollectService {
 	private static final Logger log = LoggerFactory.getLogger(BrandCollectService.class);
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
+	/**
+	 * 태그 부재 검증(2026-08-25 tagged 삭제 감지 설계) — 스윕당 브랜드당 검증 콜 상한(폭주 방어).
+	 * 초과분은 로그를 남기고 다음 스윕이 이어받는다. 재검증 스로틀은 살아있는 채 태그만 해제된
+	 * 게시물이 매일 콜(과금)을 유발하지 않게 하는 간격이다.
+	 */
+	static final int MAX_ABSENCE_VERIFY_PER_SWEEP = 30;
+	static final Duration ABSENCE_RECHECK = Duration.ofDays(7);
+
 	private final HikerClient hiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
@@ -276,6 +284,10 @@ public class BrandCollectService {
 			// 열거에 더 안 실리는 링크(삭제·태그 제거·비공개 전환)까지 포함해 커버한 깊이 전체를
 			// touch — 안 하면 그 링크의 due가 영구 true로 굳어 매 스윕이 같은 깊이를 다시 연다.
 			taggedPosts.touchCrawledDepth(brand.id(), cutoff, now);
+			// 태그 부재 검증(2026-08-25 tagged 삭제 감지 설계) — 커버한 열거에서 사라진 tagged-only
+			// 게시물만 단건 콜로 확정한다. ⑤(수집 상한) 종료는 목표 컷이 아니라 실제 커버 깊이가
+			// 하한이다 — 목표 컷을 쓰면 미도달 구간 전체를 부재로 오판해 검증 콜이 폭주한다.
+			verifyAbsentTagged(brand, seen, cappedThisRun ? oldestTakenAt(collected) : cutoff, now);
 		}
 		if (brand.lastSweptOn() == null) {
 			// 백필 커버리지 기록(스펙 §7-1) — 일일 스윕은 기록하지 않는다(창 커버리지는 백필 속성:
@@ -294,6 +306,50 @@ public class BrandCollectService {
 			brands.updateCoverage(brand.id(), capped, capped ? depth : null);
 		}
 		return List.copyOf(collected);
+	}
+
+	/**
+	 * 태그 부재 검증(2026-08-25 tagged 삭제 감지 설계) — 커버된 열거의 검증 하한(verifyFloor) 안쪽인데
+	 * 이번 열거({@code seen})에 안 실린 tagged-only 게시물을 단건 조회로 확정한다. 열거 부재는 태그
+	 * 해제·열거 요동과 구분되지 않아 후보 신호로만 쓰고, <b>확정은 fetchPost 404로만</b> 한다(오탐 0).
+	 *
+	 * <p>404 → {@code unavailable_at} 마킹(was가 hidden 노출, direct 경로와 동일 표식). 생존 →
+	 * {@code absence_checked_at}만 기록(재검증 스로틀 {@link #ABSENCE_RECHECK} — 태그 해제 게시물이
+	 * 매일 콜을 유발하지 않게). 그 외 실패는 격리(다음 스윕 재시도). 재관측(touchCrawled)이 두 표식을
+	 * 해제한다. 검증 하한이 null(⑤ 컷인데 편입 0건 — 깊이 미상)이면 범위를 정할 수 없어 건너뛴다.
+	 */
+	private void verifyAbsentTagged(BrandRow brand, Set<String> seen, Instant verifyFloor, Instant now) {
+		if (verifyFloor == null) {
+			return;
+		}
+		List<String> candidates = taggedPosts
+				.tagVerifyCandidates(brand.id(), verifyFloor, now.minus(ABSENCE_RECHECK)).stream()
+				.filter(code -> !seen.contains(code))
+				.toList();
+		if (candidates.isEmpty()) {
+			return;
+		}
+		List<String> toVerify = candidates.size() <= MAX_ABSENCE_VERIFY_PER_SWEEP
+				? candidates : candidates.subList(0, MAX_ABSENCE_VERIFY_PER_SWEEP);
+		if (toVerify.size() < candidates.size()) {
+			log.warn("태그 부재 검증 상한({}) 컷 — 브랜드 {} 후보 {}건 중 {}건만 검증, 잔여는 다음 스윕",
+					MAX_ABSENCE_VERIFY_PER_SWEEP, brand.username(), candidates.size(), toVerify.size());
+		}
+		int gone = 0;
+		for (String code : toVerify) {
+			try {
+				hiker.fetchPost(code);
+				taggedPosts.markAbsenceChecked(brand.id(), code, now);
+			} catch (SubjectNotFoundException e) {
+				log.info("tagged 게시물 부재 확정 — unavailable 마킹: {} ({})", code, e.toString());
+				taggedPosts.markUnavailable(brand.id(), code, now);
+				gone++;
+			} catch (RuntimeException e) {
+				// 5xx·타임아웃 등 비결정 실패 — 아무 표식도 안 찍고 격리(다음 스윕이 재시도).
+				log.warn("태그 부재 검증 실패(격리) — {}: {}", code, e.toString());
+			}
+		}
+		log.info("태그 부재 검증 — 브랜드 {} 검증 {}건, 부재 확정 {}건", brand.username(), toVerify.size(), gone);
 	}
 
 	/**
