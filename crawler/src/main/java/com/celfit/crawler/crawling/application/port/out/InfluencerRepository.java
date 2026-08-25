@@ -237,6 +237,28 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     long countFnbInfluencers(@Param("status") InfluencerStatus status);
 
     /**
+     * 대시보드 중복 제거 그룹용: 뷰티 수집 대상이면서 F&B 수집 대상은 아닌 수.
+     * 부정절은 명시 분해형 — NOT(fnb = true AND …)로 쓰면 F&B 미판정(fnb IS NULL)이
+     * NULL 평가로 빠져 뷰티만 카운트가 축소된다(설계 2026-08-25 §구현 주의점).
+     */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false) "
+            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true)")
+    long countBeautyOnlyCollectable(@Param("status") InfluencerStatus status);
+
+    /** 대시보드 중복 제거 그룹용: F&B 수집 대상이면서 뷰티 수집 대상은 아닌 수 — 위와 대칭. */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false) "
+            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true)")
+    long countFnbOnlyCollectable(@Param("status") InfluencerStatus status);
+
+    /** 대시보드 중복 제거 그룹용: 두 축 모두 수집 대상(겹침)인 수. */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false) "
+            + "and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)")
+    long countBothCollectable(@Param("status") InfluencerStatus status);
+
+    /**
      * 대시보드 F&B 판정 그룹용: 백필 잔여 수 — 백필 선정(findFnbBackfillTargets)과 같은 모수
      * (뷰티 축 판정 완료 ∧ F&B 축 미판정)를 센다. beauty IS NULL(신규 판정 대기)까지 세면
      * 백필이 다 끝나도 잔여가 0으로 안 떨어져 진행률을 오독한다.
