@@ -116,10 +116,10 @@ class AuthorImageBackfillJobTest {
 		// 즉시 아카이브 단계가 이 테스트의 Hiker 재조회·DB 갱신 검증에 끼어들지 않게 한다.
 		var authorArchive = new AuthorProfileImageArchiveJob(db, (p, b, c, cc) -> {}, url -> {
 			throw new IllegalStateException("no-op 잡이 다운로드를 시도해선 안 된다");
-		}, "", 1000);
+		}, "");
 		var hashtagArchive = new HashtagPostAuthorImageArchiveJob(db, (p, b, c, cc) -> {}, url -> {
 			throw new IllegalStateException("no-op 잡이 다운로드를 시도해선 안 된다");
-		}, "", 1000);
+		}, "");
 		return new AuthorImageBackfillJob(db, hikerClient, authorProfileRepo, authorArchive, hashtagArchive);
 	}
 

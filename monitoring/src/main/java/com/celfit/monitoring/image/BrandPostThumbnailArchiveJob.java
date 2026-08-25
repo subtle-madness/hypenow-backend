@@ -16,11 +16,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <p>키 스킴 {@code monitor-brand-post/<short_code>.jpg}는 캠페인 {@code monitor-post/}와
  * 프리픽스를 분리한다 — 같은 버킷 안에서 잡끼리 서로 덮어쓰지 않게 하기 위함이다.
  *
- * <p>배치 상한 적용 방식이 기존 잡과 다르다: 기존 잡은 후보 리스트를 상한에서 먼저 자르는데,
- * 그러면 "이미 아카이브됨" 스킵 행이 상한 창을 잠식해 창 밖의 미아카이브 꼬리에 영영 도달하지
- * 못할 수 있다(08-12 운영 실측 — author_profile 백로그 2,675건이 상한 1,000에도 5일째 잔존).
- * 이 잡은 전 후보를 순회하되 <b>다운로드 시도(성공·실패)만 상한을 소모</b>한다 — 스킵은 공짜라
- * 백로그가 상한보다 커도 매 스윕 상한만큼 확실히 전진한다.
+ * <p>배치 상한은 08-25 완전히 제거됐다(08-25 운영 진단 — author_profile 30,362건 중 46.9%가
+ * 상한 1,000/일에 정체, 밀린 행은 인스타 CDN 서명 만료로 영구 유실). 도입 당시(08-12) 이 잡만
+ * "다운로드 시도(성공·실패)만 상한을 소모"하는 방식이었다 — 후보 리스트를 상한에서 먼저 자르면
+ * "이미 아카이브됨" 스킵 행이 창을 잠식해 미아카이브 꼬리에 도달하지 못하는 문제(author_profile
+ * 백로그 2,675건이 상한 1,000에도 5일째 잔존)가 있었기 때문. 상한 자체가 없어진 지금은 후보
+ * 전량이 매 스윕에서 처리된다 — 만료 필터(CdnExpiry)와 건 단위 실패 격리만으로 안전성을 유지한다.
  */
 public class BrandPostThumbnailArchiveJob {
 
@@ -34,15 +35,13 @@ public class BrandPostThumbnailArchiveJob {
 	private final ImageStore store;
 	private final ImageDownloader downloader;
 	private final String parUrl;
-	private final int batchLimit;
 
 	public BrandPostThumbnailArchiveJob(JdbcTemplate db, ImageStore store, ImageDownloader downloader,
-			String parUrl, int batchLimit) {
+			String parUrl) {
 		this.db = db;
 		this.store = store;
 		this.downloader = downloader;
 		this.parUrl = parUrl;
-		this.batchLimit = batchLimit;
 	}
 
 	public void run() {
@@ -69,7 +68,6 @@ public class BrandPostThumbnailArchiveJob {
 		int skipped = 0;
 		int failed = 0;
 		int expired = 0;
-		int deferred = 0;
 		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::thumbnailUrl)) {
 			Candidate c = r.item();
 			String sourceName;
@@ -88,11 +86,7 @@ public class BrandPostThumbnailArchiveJob {
 				continue;
 			}
 			if (r.expired(nowEpoch)) {
-				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
-				continue;
-			}
-			if (archived + failed >= batchLimit) {
-				deferred++;   // 다운로드 예산 소진 — 다음 스윕으로 이월.
+				expired++;   // CDN 서명 만료 — 시도해도 403이라 스킵.
 				continue;
 			}
 			try {
@@ -111,8 +105,8 @@ public class BrandPostThumbnailArchiveJob {
 				log.warn("브랜드 게시물 썸네일 아카이브 실패 — shortCode={}", c.shortCode(), e);
 			}
 		}
-		log.info("브랜드 게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건{}",
-				archived, skipped, failed, expired, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("브랜드 게시물 썸네일 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건",
+				archived, skipped, failed, expired);
 	}
 
 	/**

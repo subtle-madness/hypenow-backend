@@ -35,15 +35,13 @@ public class ProfileImageArchiveJob {
 	private final ImageStore store;
 	private final ImageDownloader downloader;
 	private final String parUrl;
-	private final int batchLimit;
 
 	public ProfileImageArchiveJob(JdbcTemplate db, ImageStore store, ImageDownloader downloader,
-			String parUrl, int batchLimit) {
+			String parUrl) {
 		this.db = db;
 		this.store = store;
 		this.downloader = downloader;
 		this.parUrl = parUrl;
-		this.batchLimit = batchLimit;
 	}
 
 	public void run() {
@@ -66,7 +64,6 @@ public class ProfileImageArchiveJob {
 		int skipped = 0;
 		int failed = 0;
 		int expired = 0;
-		int deferred = 0;
 		for (CdnExpiry.Ranked<Candidate> r : CdnExpiry.soonestExpiryFirst(candidates, Candidate::profileImageUrl)) {
 			Candidate c = r.item();
 			String sourceName;
@@ -86,11 +83,7 @@ public class ProfileImageArchiveJob {
 				continue;
 			}
 			if (r.expired(nowEpoch)) {
-				expired++;   // CDN 서명 만료 — 시도해도 403이라 예산을 쓰지 않는다(상한 미소모).
-				continue;
-			}
-			if (archived + failed >= batchLimit) {
-				deferred++;   // 다운로드 예산 소진 — 다음 스윕으로 이월.
+				expired++;   // CDN 서명 만료 — 시도해도 403이라 스킵.
 				continue;
 			}
 			try {
@@ -109,8 +102,8 @@ public class ProfileImageArchiveJob {
 				log.warn("프로필 이미지 아카이브 실패 — username={}", c.username(), e);
 			}
 		}
-		log.info("프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건{}",
-				archived, skipped, failed, expired, deferred > 0 ? ", 잔여 " + deferred + "건 이월" : "");
+		log.info("프로필 이미지 아카이브 완료 — 아카이브 {}건 / 스킵 {}건 / 실패 {}건 / 만료 제외 {}건",
+				archived, skipped, failed, expired);
 	}
 
 	/**
