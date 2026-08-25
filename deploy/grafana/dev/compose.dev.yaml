@@ -48,10 +48,14 @@ services:
     image: prom/node-exporter:v1.8.2
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # 운영(deploy/compose.yaml)과 동일 구성 — 0.56.2 + containerd 소켓 마운트로
+    # containerd 스냅샷터 스토어(Docker Desktop도 동일)에서 컨테이너별 시계열이 나온다.
+    # 예전 v0.49.1의 "read-write layer ID 못 찾음" 무데이터는 이걸로 해소(README 참조).
+    image: ghcr.io/google/cadvisor:0.56.2
+    command: ["--docker_only=true", "--store_container_labels=false"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
-      # 컨테이너별 시계열에 필요(운영 Task 9와 동일 마운트) — 없으면 cAdvisor가 read-write 레이어를
-      # 못 찾아 container_* 메트릭이 통째로 비었다. macOS 한계는 README "운영과 다른 점" 참조.
       - /var/lib/docker:/var/lib/docker:ro
+      # 0.54+ 도커 핸들러 필수 — 없으면 도커 팩토리 등록이 실패해 다시 무데이터가 된다
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
