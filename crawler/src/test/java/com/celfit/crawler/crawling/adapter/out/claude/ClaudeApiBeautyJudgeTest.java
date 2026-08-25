@@ -31,12 +31,15 @@ class ClaudeApiBeautyJudgeTest {
         String text = params.messages().get(0).content().string().orElse("");
         assertTrue(text.contains("INFLUENCER"));
         assertTrue(text.contains("user1"));
+        // 2축 출력 분량(스펙 2026-08-23 §2) — 8192에서 상향
+        assertEquals(16384L, params.maxTokens());
     }
 
     @Test
     void 응답_텍스트를_팀_파서로_판정에_매핑한다() {
         Message message = message(
-                "[{\"username\":\"user1\",\"class\":\"COMPANY\",\"reason\":\"쇼핑몰\"}]");
+                "[{\"username\":\"user1\",\"beauty\":{\"class\":\"COMPANY\",\"reason\":\"쇼핑몰\"},"
+                        + "\"fnb\":{\"class\":\"NONE\",\"reason\":\"F&B 아님\"}}]");
         List<Verdict> verdicts = ClaudeCliBeautyJudge.parse(om, ClaudeApiBeautyJudge.extractText(message));
         assertEquals(1, verdicts.size());
         assertTrue(verdicts.get(0).beauty());

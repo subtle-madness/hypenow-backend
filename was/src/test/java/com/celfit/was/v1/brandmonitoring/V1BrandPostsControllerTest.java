@@ -718,7 +718,7 @@ class V1BrandPostsControllerTest {
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {
 		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
-				firstSeenAt, firstSeenAt, null);
+				firstSeenAt, firstSeenAt, null, null);
 	}
 
 	/** direct 등록 행 — direct_registered_at만 채워지고 tag_detected_at은 null(direct-only, source=direct). */
@@ -726,7 +726,7 @@ class V1BrandPostsControllerTest {
 		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 0L,
-				registeredAt, null, registeredAt);
+				registeredAt, null, registeredAt, null);
 	}
 
 	/** 겹침 행 — tag_detected_at·direct_registered_at 둘 다 채워짐(해시태그 감지 + 누군가의 direct 등록). */
@@ -734,7 +734,7 @@ class V1BrandPostsControllerTest {
 		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
-				registeredAt, firstSeenAt, registeredAt);
+				registeredAt, firstSeenAt, registeredAt, null);
 	}
 
 	private static BrandHashtagPostRow hashtagRow(String code, String takenAt) {

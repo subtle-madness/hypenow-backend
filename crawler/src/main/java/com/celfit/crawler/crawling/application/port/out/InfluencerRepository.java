@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import com.celfit.crawler.crawling.domain.Influencer;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import org.springframework.data.domain.Pageable;
@@ -33,31 +34,52 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** 비용 추정용: 프로필(followers) 미확보라 qualify가 API를 호출해야 하는 인플루언서 수. */
     long countByStatusAndFollowersIsNull(InfluencerStatus status);
 
-    /** 백필 대기: 판정 통과 + 뷰티 확정이지만 첫 수집(backfill)이 아직 안 된 인플루언서 수. */
-    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    /**
+     * 백필 대기: 판정 통과 + 카테고리 확정이지만 첫 수집(backfill)이 아직 안 된 인플루언서 수.
+     * includeFnb=true(fnb.pipeline-enabled 토글)면 F&B 인플루언서(회사 제외)도 모수에 든다.
+     */
+    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and i.firstCollectedAt is null")
-    long countBackfillPending();
-
-    /** 추적 대기: 첫 수집은 끝났지만 재방문 주기(revisitBefore)가 지나 다시 수집 대상이 될 뷰티 인플루언서 수. */
-    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
-            + "and i.firstCollectedAt is not null and i.lastCollectedAt < :revisitBefore")
-    long countTrackDue(@Param("revisitBefore") Instant revisitBefore);
+    long countBackfillPending(@Param("includeFnb") boolean includeFnb);
 
     /**
-     * 수집 대상: 판정 통과 + 뷰티 확정(beauty=true) + (백필 안 된 것 우선) + 재방문 주기(revisitBefore)가
-     * 지난 것만. 비뷰티·미판정은 QUALIFIED여도 방문하지 않고, 최근에 이미 수집한(주기 안 지난)
-     * 인플루언서도 대상에서 빠진다.
+     * 추적 대기: 첫 수집은 끝났지만 재방문 주기(revisitBefore)가 지나 다시 수집 대상이 될 인플루언서 수.
+     * includeFnb=true면 F&B 인플루언서(회사 제외)도 모수에 든다 — 스펙 2026-08-23 §4.
      */
-    @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "and i.firstCollectedAt is not null and i.lastCollectedAt < :revisitBefore")
+    long countTrackDue(@Param("revisitBefore") Instant revisitBefore,
+                       @Param("includeFnb") boolean includeFnb);
+
+    /**
+     * 수집 대상: 판정 통과 + 카테고리 확정 + (백필 안 된 것 우선) + 재방문 주기(revisitBefore)가
+     * 지난 것만. 기본 모수는 뷰티 인플루언서(회사 제외)이고, includeFnb=true(fnb.pipeline-enabled
+     * 토글)면 F&B 인플루언서(회사 제외)도 포함한다 — 스펙 2026-08-23 §4.
+     * 미판정·비대상은 QUALIFIED여도 방문하지 않고, 최근에 이미 수집한(주기 안 지난) 인플루언서도 빠진다.
+     */
+    @Query("select i from Influencer i where i.status = 'QUALIFIED' and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and (i.firstCollectedAt is null or i.lastCollectedAt < :revisitBefore) "
             + "order by case when i.firstCollectedAt is null then 0 else 1 end, i.lastCollectedAt asc nulls first")
-    List<Influencer> findCollectTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
+    List<Influencer> findCollectTargets(@Param("revisitBefore") Instant revisitBefore,
+                                        @Param("includeFnb") boolean includeFnb, Pageable pageable);
 
     /** BEAUTY 잡 대상: 판정 통과했지만 뷰티 미판정 — id 순 Pageable로 결정적으로 소진한다. */
     List<Influencer> findByStatusAndBeautyIsNull(InfluencerStatus status, Pageable pageable);
+
+    /**
+     * F&B 백필 대상: 뷰티 축은 판정 완료(MANUAL 포함 — 백필은 뷰티 판정을 덮지 않으므로 안전)지만
+     * F&B 축이 미판정인 계정 — 카테고리 확장(스펙 2026-08-23 §3)의 기존 판정분 전체 재판정 경로.
+     * id 순 Pageable로 결정적으로 소진한다.
+     */
+    @Query("select i from Influencer i where i.status = :status and i.beauty is not null "
+            + "and i.fnb is null order by i.id")
+    List<Influencer> findFnbBackfillTargets(@Param("status") InfluencerStatus status, Pageable pageable);
 
     /**
      * BEAUTY 재판정(rejudge) 대상: CLAUDE가 비뷰티로 판정했지만 판정 후 프로필 재료가 갱신된
@@ -97,16 +119,19 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
                                                Pageable pageable);
 
     /**
-     * REELS 잡 대상: 뷰티 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만.
+     * REELS 잡 대상: 카테고리 확정 + (릴스 백필 우선) + 재방문 주기(revisitBefore)가 지난 것만.
      * 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 있고 릴스가 없는 "짝 안 맞는" 계정부터 채운다.
+     * includeFnb=true(fnb.pipeline-enabled 토글)면 F&B 인플루언서(회사 제외)도 포함 — 스펙 §4.
      */
-    @Query("select i from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    @Query("select i from Influencer i where i.status = 'QUALIFIED' and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore) "
             + "order by case when i.lastReelsAt is null then 0 else 1 end, "
             + "case when i.lastCollectedAt is null then 1 else 0 end, "
             + "i.lastReelsAt asc nulls first, i.id")
-    List<Influencer> findReelsTargets(@Param("revisitBefore") Instant revisitBefore, Pageable pageable);
+    List<Influencer> findReelsTargets(@Param("revisitBefore") Instant revisitBefore,
+                                      @Param("includeFnb") boolean includeFnb, Pageable pageable);
 
     /** 대시보드 게시물 수집 카드의 계정 기준: 프로필 스냅샷(수집 방문)을 1회 이상 수행한 계정 수. */
     long countByLastCollectedAtIsNotNull();
@@ -128,18 +153,25 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "where i.lastCollectedAt is not null or i.lastReelsAt is not null")
     long countAnyCollected();
 
-    /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. */
-    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. includeFnb=true면 F&B도 모수. */
+    @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore)")
-    long countReelsDue(@Param("revisitBefore") Instant revisitBefore);
+    long countReelsDue(@Param("revisitBefore") Instant revisitBefore,
+                       @Param("includeFnb") boolean includeFnb);
 
-    /** SIMILAR 시드: 뷰티 인플루언서(회사 제외) + 미수확 — id 순 Pageable로 결정적으로 소진한다. */
-    @Query("select i from Influencer i where i.status = :status and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    /**
+     * SIMILAR 시드: 카테고리 인플루언서(회사 제외) + 미수확 — id 순 Pageable로 결정적으로 소진한다.
+     * includeFnb=true(fnb.pipeline-enabled 토글)면 F&B 인플루언서도 시드가 된다 — 스펙 §4.
+     */
+    @Query("select i from Influencer i where i.status = :status and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and i.similarProcessedAt is null order by i.id")
     List<Influencer> findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-            @Param("status") InfluencerStatus status, Pageable pageable);
+            @Param("status") InfluencerStatus status,
+            @Param("includeFnb") boolean includeFnb, Pageable pageable);
 
     /** 비용 추정용. */
     long countByStatusAndBeautyIsNull(InfluencerStatus status);
@@ -180,15 +212,49 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
             @Param("classes") java.util.Collection<BeautyClass> classes, Pageable pageable);
 
-    @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    /** 명단 F&B 필터: 선택한 분류(fnb_class)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndFnbClassIn(
+            java.util.Collection<InfluencerStatus> statuses,
+            java.util.Collection<CategoryClass> classes, Pageable pageable);
+
+    /** 명단 F&B 필터: F&B 미판정(백필 잔여)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndFnbClassIsNull(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
+    /** 명단 F&B 필터: 선택 분류 + 미판정을 함께 체크한 경우. */
+    @Query("select i from Influencer i where i.status in :statuses "
+            + "and (i.fnbClass in :classes or i.fnbClass is null)")
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndFnbClassInOrNull(
+            @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
+            @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
+
+    /** 대시보드 F&B 판정 그룹용: F&B 인플루언서(회사 제외) 수. */
+    @Query("select count(i) from Influencer i where i.status = :status and i.fnb = true "
+            + "and (i.fnbCompany is null or i.fnbCompany = false)")
+    long countFnbInfluencers(@Param("status") InfluencerStatus status);
+
+    /**
+     * 대시보드 F&B 판정 그룹용: 백필 잔여 수 — 백필 선정(findFnbBackfillTargets)과 같은 모수
+     * (뷰티 축 판정 완료 ∧ F&B 축 미판정)를 센다. beauty IS NULL(신규 판정 대기)까지 세면
+     * 백필이 다 끝나도 잔여가 0으로 안 떨어져 진행률을 오독한다.
+     */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.beauty is not null and i.fnb is null")
+    long countFnbBackfillRemaining(@Param("status") InfluencerStatus status);
+
+    /** SIMILAR 시드 대기 수 — 선정 쿼리와 같은 모수(includeFnb=true면 F&B 포함). */
+    @Query("select count(i) from Influencer i where i.status = :status and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and i.similarProcessedAt is null")
-    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(@Param("status") InfluencerStatus status);
+    long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
+            @Param("status") InfluencerStatus status, @Param("includeFnb") boolean includeFnb);
 
     /** 비용 추정용: pk 미보유라 SIMILAR가 username 해석 1회를 추가로 사는 시드 수(회사 제외). */
-    @Query("select count(i) from Influencer i where i.status = :status and i.beauty = true "
-            + "and (i.beautyCompany is null or i.beautyCompany = false) "
+    @Query("select count(i) from Influencer i where i.status = :status and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
             + "and i.similarProcessedAt is null and i.igUserId is null")
     long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
-            @Param("status") InfluencerStatus status);
+            @Param("status") InfluencerStatus status, @Param("includeFnb") boolean includeFnb);
 }

@@ -142,6 +142,7 @@ class BrandDirectCollectServiceTest {
 		final Map<String, Instant> touched = new HashMap<>();
 		final List<String> enriched = java.util.Collections.synchronizedList(new ArrayList<>());
 		final List<TrackedPost> due = new ArrayList<>();
+		final List<String> unavailable = new ArrayList<>();
 
 		InMemoryTagged() {
 			super(null);
@@ -162,6 +163,11 @@ class BrandDirectCollectServiceTest {
 		@Override
 		public void markEnriched(long brandId, Collection<String> codes, Instant at) {
 			enriched.addAll(codes);
+		}
+
+		@Override
+		public void markUnavailable(long brandId, String shortCode, Instant at) {
+			unavailable.add(shortCode);
 		}
 
 		@Override
@@ -323,6 +329,25 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(postCalls()).isZero();
 		assertThat(writer.saved).isEmpty();
+	}
+
+	@Test
+	void 스윕_404_게시물은_unavailable_마킹되고_나머지는_계속_수집된다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("Gone", Instant.ofEpochSecond(RECENT),
+				Instant.now().minusSeconds(86400)));
+		tagged.due.add(new TaggedPostRepository.TrackedPost("Alive", Instant.ofEpochSecond(RECENT),
+				Instant.now().minusSeconds(86400)));
+		notFoundCodes.add("Gone");
+		postResponses.put("Alive", postJson("Alive", RECENT, 105));
+
+		service().sweepDirect(brand);
+
+		// 404 게시물: 마킹만, 저장·touch 없음(마지막 수집값 보존)
+		assertThat(tagged.unavailable).containsExactly("Gone");
+		assertThat(tagged.touched).doesNotContainKey("Gone");
+		// 격리 유지: 나머지 게시물은 정상 수집되고 touch(관측=해제 경로)를 지난다
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("Alive");
+		assertThat(tagged.touched).containsKey("Alive");
 	}
 
 	@Test

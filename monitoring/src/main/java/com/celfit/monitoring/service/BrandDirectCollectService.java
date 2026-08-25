@@ -118,9 +118,10 @@ public class BrandDirectCollectService {
 
 	/**
 	 * 게시물 1건 격리 수집 — 삭제·비공개 전환({@link SubjectNotFoundException})에도 행을 지우지
-	 * 않는다: 브랜드 파이프라인은 상태 전이를 하지 않는다(스펙 §8·BrandSweepJob 주석 승계). 카드는
-	 * 마지막 스냅샷으로 남는다. 그 외 실패(타임아웃·5xx·셰이프 이상)도 이 게시물만 건너뛰고 나머지는
-	 * 계속 — 한 건의 실패가 배치 전체를 죽이면 안 된다.
+	 * 않는다. 대신 unavailable_at을 마킹해 was가 hidden으로 노출한다(2026-08-25 설계 — 스펙 §8의
+	 * "상태 전이 없음"에 대한 유일한 예외이며, 성공 재관측이 해제하는 가역 마킹이라 CLOSED 같은
+	 * 종결 전이가 아니다). 카드는 마지막 스냅샷으로 남는다. 그 외 실패(타임아웃·5xx·셰이프 이상)는
+	 * 이 게시물만 건너뛰고 나머지는 계속 — 한 건의 실패가 배치 전체를 죽이면 안 된다.
 	 */
 	private Optional<PostInfo> collectOne(BrandRow brand, String shortCode, Instant now) {
 		try {
@@ -134,7 +135,8 @@ public class BrandDirectCollectService {
 			taggedPosts.touchCrawled(brand.id(), List.of(shortCode), now);
 			return Optional.of(adjusted);
 		} catch (SubjectNotFoundException e) {
-			log.info("direct 게시물 부재/비공개 전환(격리, 상태 전이 없음) — {}: {}", shortCode, e.toString());
+			log.info("direct 게시물 부재/비공개 — unavailable 마킹: {} ({})", shortCode, e.toString());
+			taggedPosts.markUnavailable(brand.id(), shortCode, now);
 		} catch (RuntimeException e) {
 			log.warn("direct 단건 수집 실패(격리) — {}: {}", shortCode, e.toString());
 		}

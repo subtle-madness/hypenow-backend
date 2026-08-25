@@ -122,7 +122,8 @@ public class CollectJob {
     public Summary run(TriggerType trigger) {
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         List<Influencer> targets = influencers.findCollectTargets(
-                revisitBefore, PageRequest.of(0, settings.collectBatchLimit()));
+                revisitBefore, settings.fnbPipelineEnabled(),
+                PageRequest.of(0, settings.collectBatchLimit()));
         var visited = new java.util.concurrent.atomic.AtomicInteger();
         var upserted = new java.util.concurrent.atomic.AtomicInteger();
         var collected = new java.util.concurrent.atomic.AtomicInteger();
