@@ -29,10 +29,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 뷰티 판정 잡 — QUALIFIED 중 미판정분의 최신 raw_profile 텍스트 재료(이름·카테고리·bio)를
- * 로컬 Claude에 배치로 넘겨 beauty_class와 파생 boolean을 저장한다. 인스타그램 API 호출 없음(비용 $0).
- * rejudge=true면 판정 후 재료(raw_profile)가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다 —
- * MANUAL(수동)은 선정에서 빠져 절대 덮이지 않는다.
+ * 판정 잡 — 두 카테고리 축(뷰티·F&B)을 1콜로 판정한다. QUALIFIED 중 미판정분의 최신 raw_profile
+ * 텍스트 재료(이름·카테고리·bio)를 로컬 Claude에 배치로 넘겨 beauty_class·fnb_class와 각 파생
+ * boolean을 저장한다. 인스타그램 API 호출 없음(비용 $0).
+ * 선정은 세 경로다 — (1) 뷰티 미판정 신규, (2) F&B 백필(뷰티는 판정 완료·F&B만 미판정 — 스펙
+ * 2026-08-23 §3), (3) rejudge=true일 때의 재판정. (2)는 F&B 축만 적용하고 뷰티 판정은
+ * MANUAL 포함해 절대 덮지 않는다(fnbOnly 마스크).
+ * rejudge는 판정 후 재료(raw_profile)가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다 —
+ * 뷰티 MANUAL(수동)은 선정에서 빠져 덮이지 않고, F&amp;B MANUAL은 선정 경로와 무관하게
+ * 적용 시점 가드(fnb_source=MANUAL이면 F&amp;B 축 미적용)로 보존된다.
  * beauty=true는 SIMILAR 잡의 시드 자격이 된다.
  */
 @Service
@@ -56,7 +61,7 @@ public class BeautyJob {
     static final int REJUDGE_MIN_ITEMS = 3;
 
     public record Summary(int judgedBeauty, int judgedService, int judgedForeign, int judgedNotBeauty,
-                          int skippedNoProfile, int failedBatches) {}
+                          int fnbApplied, int fnbPositive, int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
@@ -92,6 +97,15 @@ public class BeautyJob {
         int limit = settings.beautyBatchLimit();
         List<Influencer> targets = new ArrayList<>(influencers.findByStatusAndBeautyIsNull(
                 InfluencerStatus.QUALIFIED, PageRequest.of(0, limit, Sort.by("id"))));
+        // F&B 백필 — 뷰티 축은 판정 완료, F&B 축만 채운다(스펙 §3). 뷰티 판정(MANUAL 포함)은 덮지 않는다.
+        // rejudge보다 앞선다 — 초기 백로그 소화가 이번 확장의 목적이고, rejudge는 백필 완료 후 자연 재개된다.
+        Set<String> fnbOnly = new HashSet<>();
+        if (targets.size() < limit) {
+            List<Influencer> backfill = influencers.findFnbBackfillTargets(
+                    InfluencerStatus.QUALIFIED, PageRequest.of(0, limit - targets.size()));
+            backfill.forEach(i -> fnbOnly.add(i.getUsername()));
+            targets.addAll(backfill);
+        }
         if (rejudge && targets.size() < limit) {
             // 재료(raw_profile)가 판정 후 갱신된 비뷰티만 — 재료가 그대로면 같은 판정만 반복한다.
             // 오래된 판정 우선(쿼리 정렬) — 실패 배치가 옛 판정 시각으로 남아 먼저 재시도된다
@@ -129,8 +143,13 @@ public class BeautyJob {
         }
 
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0, failedBatches = 0;
+        int fnbApplied = 0, fnbPositive = 0, done = 0;
         List<List<BeautyJudge.ProfileCard>> chunks = ActorInputs.chunk(cards, JUDGE_CHUNK);
-        log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}), 배치 {}개", cards.size(), skipped, chunks.size());
+        // 백필 선정분 중 실제로 카드가 만들어진 수 — fnbOnly 원본 크기를 쓰면 재료 없어 스킵된 건까지
+        // 세어 "대상 N명 그중 백필 M"의 M이 N을 넘을 수 있다(백필 백로그 소진 속도를 오독하게 된다).
+        long backfillCards = fnbOnly.stream().filter(byUsername::containsKey).count();
+        log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}, 그중 F&B 백필 선정 {}), 배치 {}개",
+                cards.size(), skipped, backfillCards, chunks.size());
         int total = chunks.size(), i = 0;
         for (List<BeautyJudge.ProfileCard> chunk : chunks) {
             if (stopFlag.isRequested(JobName.BEAUTY)) {
@@ -146,18 +165,23 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
-            logResponseGaps(chunk, verdicts);
-            int done = beauty + service + foreign + notBeauty;
-            ChunkResult r = txTemplate.execute(
-                    status -> applyVerdicts(verdicts, byUsername, captionCounts, done, cards.size()));
+            logResponseGaps(chunk, verdicts, fnbOnly);
+            int doneBefore = done;
+            ChunkResult r = txTemplate.execute(status ->
+                    applyVerdicts(verdicts, byUsername, captionCounts, fnbOnly, doneBefore, cards.size()));
             beauty += r.beauty();
             service += r.service();
             foreign += r.foreign();
             notBeauty += r.notBeauty();
-            log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 시술·서비스 {} / 외국인 {} / 비뷰티 {}",
-                    i, total, beauty, service, foreign, notBeauty);
+            fnbApplied += r.fnbApplied();
+            fnbPositive += r.fnbPositive();
+            done += r.applied();
+            log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 시술·서비스 {} / 외국인 {} / 비뷰티 {}"
+                            + " / F&B 적용 {} (인플루언서·회사 {})",
+                    i, total, beauty, service, foreign, notBeauty, fnbApplied, fnbPositive);
         }
-        return new Summary(beauty, service, foreign, notBeauty, skipped, failedBatches);
+        return new Summary(beauty, service, foreign, notBeauty, fnbApplied, fnbPositive,
+                skipped, failedBatches);
     }
 
     /**
@@ -191,19 +215,28 @@ public class BeautyJob {
         return c.substring(0, end);
     }
 
-    private record ChunkResult(int beauty, int service, int foreign, int notBeauty) {}
+    /** applied는 이 배치에서 실제로 저장한 계정 수 — 계정별 로그의 진행 카운터 기준(F&B만 적용한 건 포함). */
+    private record ChunkResult(int beauty, int service, int foreign, int notBeauty,
+                               int fnbApplied, int fnbPositive, int applied) {}
 
     /**
-     * 응답 누락·중복 관측 — 모델이 요청한 계정 일부를 빼먹어도 예외가 아니라서(나머지 판정을
-     * 버릴 이유가 없다) 조용히 지나가던 것을 로그로 드러낸다. 누락분은 미판정으로 남아 다음 실행에
-     * 재시도되므로 데이터 유실은 아니지만, 빈도가 높아지면 프롬프트·청크 크기를 의심해야 한다.
+     * 응답 누락·중복·축 부분 무응답 관측 — 모델이 요청한 계정 일부를 빼먹거나 한 축만 무효값으로 내도
+     * 예외가 아니라서(나머지 판정을 버릴 이유가 없다) 조용히 지나가던 것을 로그로 드러낸다. 누락분·
+     * 무응답 축은 미판정으로 남아 다음 실행에 재시도되므로 데이터 유실은 아니지만, 빈도가 높아지면
+     * 프롬프트·청크 크기를 의심해야 한다. 백필(fnbOnly)은 뷰티 축을 애초에 안 쓰므로 결손이 아니다.
      */
     private static void logResponseGaps(List<BeautyJudge.ProfileCard> chunk,
-                                        List<BeautyJudge.Verdict> verdicts) {
+                                        List<BeautyJudge.Verdict> verdicts, Set<String> fnbOnly) {
         Set<String> returned = new LinkedHashSet<>();
         List<String> dups = new ArrayList<>();
+        int beautyGaps = 0, fnbGaps = 0;
         for (BeautyJudge.Verdict v : verdicts) {
-            if (!returned.add(v.username())) dups.add(v.username());
+            if (!returned.add(v.username())) {
+                dups.add(v.username());
+                continue;  // 중복분은 어차피 버려지므로 축 결손으로도 세지 않는다
+            }
+            if (v.beautyClass() == null && !fnbOnly.contains(v.username())) beautyGaps++;
+            if (v.fnbClass() == null) fnbGaps++;
         }
         List<String> missing = chunk.stream()
                 .map(BeautyJudge.ProfileCard::username)
@@ -215,6 +248,10 @@ public class BeautyJob {
         if (!dups.isEmpty()) {
             log.warn("뷰티 판정 응답 중복 {}건 — 첫 값이 적용됨: {}", dups.size(), dups);
         }
+        if (beautyGaps > 0 || fnbGaps > 0) {
+            log.warn("판정 응답 축 부분 무응답 — 뷰티축 {}건 / F&B축 {}건 (해당 축만 미판정 유지, 다음 실행 재시도)",
+                    beautyGaps, fnbGaps);
+        }
     }
 
     /**
@@ -223,34 +260,69 @@ public class BeautyJob {
      * (CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — CollectJobIntegrationTest 참고).
      */
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
-                                      Map<String, Integer> captionCounts, int done, int totalCards) {
-        int beauty = 0, service = 0, foreign = 0, notBeauty = 0;
+                                      Map<String, Integer> captionCounts, Set<String> fnbOnly,
+                                      int done, int totalCards) {
+        int beauty = 0, service = 0, foreign = 0, notBeauty = 0, fnbApplied = 0, fnbPositive = 0;
+        int startDone = done;
         Set<String> applied = new HashSet<>();  // 중복 응답 방어 — 첫 값만 채택(logResponseGaps가 경고)
         for (BeautyJudge.Verdict v : verdicts) {
             if (!applied.add(v.username())) continue;  // 같은 username 재등장 — 카운터·save·로그 모두 건너뜀
             Influencer inf = byUsername.get(v.username());
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
-            inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
-            inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
             // 판정에 실제로 쓴 캡션 건수 — 0이면 나중에 캡션이 쌓였을 때 재판정 대상이 된다
-            inf.setBeautyCaptionCount(captionCounts.getOrDefault(v.username(), 0).shortValue());
-            influencers.save(inf);
-            switch (v.beautyClass()) {
-                case INFLUENCER, COMPANY -> beauty++;
-                case BEAUTY_SERVICE -> service++;
-                case FOREIGN_INFLUENCER -> foreign++;
-                case NOT_BEAUTY -> notBeauty++;
+            short capCount = captionCounts.getOrDefault(v.username(), 0).shortValue();
+            // F&B 백필로 선정된 계정은 뷰티 축을 절대 덮지 않는다 — 모델이 뷰티 판정을 같이 내도 버린다
+            // (MANUAL 수동 교정분도 백필 대상이라, 여기서 막지 않으면 수동 판정이 조용히 날아간다).
+            boolean applyBeauty = !fnbOnly.contains(v.username()) && v.beautyClass() != null;
+            // F&B 축의 MANUAL(수동 교정)은 적용 시점에 막는다 — fnbOnly 마스크는 뷰티 축만 보호하므로,
+            // rejudge·신규 경로로 같은 계정이 다시 잡히면 수동 F&B 판정이 CLAUDE로 조용히 덮인다.
+            boolean applyFnb = v.fnbClass() != null
+                    && !Influencer.BEAUTY_SOURCE_MANUAL.equals(inf.getFnbSource());
+            // 적용할 축이 하나도 없으면(마스크·MANUAL 가드로 둘 다 버렸거나 양축 무응답) 저장·카운터·
+            // 계정별 로그를 모두 건너뛴다 — 바뀐 게 없는데 진행 카운터가 오르면 배치 진척을 오독한다.
+            if (!applyBeauty && !applyFnb) continue;
+            // 축별 class는 모델 응답이 무효·누락이면 null — 그 축만 미판정으로 남기고 다른 축은 적용한다
+            String beautyLabel = fnbOnly.contains(v.username()) ? "뷰티 판정 보존" : "뷰티축 무응답";
+            if (applyBeauty) {
+                inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
+                inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
+                inf.setBeautyCaptionCount(capCount);
+                switch (v.beautyClass()) {
+                    case INFLUENCER, COMPANY -> beauty++;
+                    case BEAUTY_SERVICE -> service++;
+                    case FOREIGN_INFLUENCER -> foreign++;
+                    case NOT_BEAUTY -> notBeauty++;
+                }
+                beautyLabel = switch (v.beautyClass()) {
+                    case INFLUENCER -> "뷰티(인플루언서)";
+                    case COMPANY -> "뷰티(회사)";
+                    case BEAUTY_SERVICE -> "뷰티(시술·서비스)";
+                    case FOREIGN_INFLUENCER -> "뷰티(외국인)";
+                    case NOT_BEAUTY -> "비뷰티";
+                };
             }
-            done++;
-            String label = switch (v.beautyClass()) {
-                case INFLUENCER -> "뷰티(인플루언서)";
-                case COMPANY -> "뷰티(회사)";
-                case BEAUTY_SERVICE -> "뷰티(시술·서비스)";
-                case FOREIGN_INFLUENCER -> "뷰티(외국인)";
-                case NOT_BEAUTY -> "비뷰티";
+            if (applyFnb) {
+                inf.classifyFnb(v.fnbClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.fnbReason(), v.fnbBasis());
+                inf.setFnbJudgedAt(clock.instant());
+                inf.setFnbCaptionCount(capCount);
+                fnbApplied++;
+                if (v.fnbClass().inCategory()) fnbPositive++;
+            }
+            String fnbLabel = !applyFnb ? "" : " / " + switch (v.fnbClass()) {
+                case INFLUENCER -> "F&B(인플루언서)";
+                case COMPANY -> "F&B(회사)";
+                case SERVICE -> "F&B(매장·서비스)";
+                case FOREIGN_INFLUENCER -> "F&B(외국인)";
+                case NONE -> "비F&B";
             };
-            log.info("뷰티 판정 ({}/{}) {} — {} ({})", done, totalCards, v.username(), label, v.reason());
+            influencers.save(inf);
+            done++;
+            // 사유는 실제로 적용한 축의 것 — 뷰티를 안 쓴 건에 뷰티 사유가 찍히면 덮인 것으로 오독된다
+            String reason = applyBeauty ? v.reason() : v.fnbReason();
+            log.info("뷰티 판정 ({}/{}) {} — {}{} ({})",
+                    done, totalCards, v.username(), beautyLabel, fnbLabel, reason);
         }
-        return new ChunkResult(beauty, service, foreign, notBeauty);
+        return new ChunkResult(beauty, service, foreign, notBeauty, fnbApplied, fnbPositive,
+                done - startDone);
     }
 }

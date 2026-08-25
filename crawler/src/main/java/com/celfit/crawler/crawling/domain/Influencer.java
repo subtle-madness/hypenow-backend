@@ -80,6 +80,37 @@ public class Influencer {
     @Column(name = "beauty_basis")
     private String beautyBasis;
 
+    /** F&B 계정 여부 — NULL이면 미판정(백필 대상). 수집·시드 편입은 fnb.pipeline-enabled 토글이 게이트. */
+    private Boolean fnb;
+
+    /** F&B 회사(식품·음료 브랜드·쇼핑몰) 여부 — fnb=true의 하위 구분. 토글 on이어도 수집 제외. */
+    @Column(name = "fnb_company")
+    private Boolean fnbCompany;
+
+    /** F&B 5분류 원본 — boolean은 이 값의 파생. NULL이면 F&B 축 미판정. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "fnb_class")
+    private CategoryClass fnbClass;
+
+    @Column(name = "fnb_source")
+    private String fnbSource;
+
+    /** F&B 판정 근거 한 줄 — 명단 페이지 툴팁 표시용. */
+    @Column(name = "fnb_reason")
+    private String fnbReason;
+
+    /** F&B 축 판정 시각. */
+    @Column(name = "fnb_judged_at")
+    private Instant fnbJudgedAt;
+
+    /** F&B 판정에 실제로 넣은 캡션 건수 — 추후 F&B rejudge 도입 시 재료. */
+    @Column(name = "fnb_caption_count")
+    private Short fnbCaptionCount;
+
+    /** F&B 판정 주근거 — CAPTION·BIO·CATEGORY_ONLY. */
+    @Column(name = "fnb_basis")
+    private String fnbBasis;
+
     /** SIMILAR 잡이 이 시드의 유사 계정 수확을 마친(또는 수확 불가로 확정한) 시각. NULL이면 시드 후보. */
     @Column(name = "similar_processed_at")
     private Instant similarProcessedAt;
@@ -107,5 +138,15 @@ public class Influencer {
         this.beautySource = source;
         this.beautyReason = reason;
         this.beautyBasis = basis;
+    }
+
+    /** F&B 축 판정 적용 — 파생 boolean을 fnb_class와 항상 일치시킨다. judgedAt은 호출자 몫. */
+    public void classifyFnb(CategoryClass cls, String source, String reason, String basis) {
+        this.fnbClass = cls;
+        this.fnb = cls.inCategory();
+        this.fnbCompany = cls.company();
+        this.fnbSource = source;
+        this.fnbReason = reason;
+        this.fnbBasis = basis;
     }
 }
