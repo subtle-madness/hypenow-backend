@@ -5,8 +5,8 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.15 (브랜드 direct 게시물 삭제 감지 — `brand_tagged_post.unavailable_at` 신설,
-> hidden 노출. 2026-08-25)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.16 (삭제 감지 tagged 확장 — 열거 부재 검증 콜·`absence_checked_at` 신설.
+> 2026-08-25)** · 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
 > 계약과 무관한 신규 3테이블, §8. **v2.12로 direct 게시물도 이 서브시스템에 합류** — 레거시
@@ -117,6 +117,14 @@
 > was 순서 배포, 롤백은 역순.** 설계
 > [2026-08-25](../superpowers/specs/2026-08-25-brand-post-deletion-hidden-design.md),
 > `feature/brand-post-deletion-detection`.)
+> → **v2.16**(2026-08-25, 삭제 감지 tagged 확장 — `brand_tagged_post`에 `absence_checked_at`
+> 추가(`V20260825061133`, monitoring 전용·was 미조회). 커버된 태그 열거에서 사라진 tagged-only
+> 게시물을 단건 검증 콜로 확정한다: 404 → `unavailable_at`(v2.15와 동일 표식 → hidden), 생존 →
+> `absence_checked_at`(7일 재검증 스로틀). 겹침 행은 direct 2단계 소관이라 검증 제외, 상한
+> 브랜드당 30콜/스윕. was 계약 표면 변화 없음 — v2.15의 "tagged-only는 항상 tracking" 서술만
+> 폐기(이제 tagged도 hidden 가능). 설계
+> [2026-08-25 tagged 확장](../superpowers/specs/2026-08-25-brand-tagged-deletion-verify-design.md),
+> `feat/brand-tagged-deletion-verify`.)
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
