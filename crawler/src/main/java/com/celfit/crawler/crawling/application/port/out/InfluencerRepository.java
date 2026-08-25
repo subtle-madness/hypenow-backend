@@ -60,6 +60,15 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     List<Influencer> findByStatusAndBeautyIsNull(InfluencerStatus status, Pageable pageable);
 
     /**
+     * F&B 백필 대상: 뷰티 축은 판정 완료(MANUAL 포함 — 백필은 뷰티 판정을 덮지 않으므로 안전)지만
+     * F&B 축이 미판정인 계정 — 카테고리 확장(스펙 2026-08-23 §3)의 기존 판정분 전체 재판정 경로.
+     * id 순 Pageable로 결정적으로 소진한다.
+     */
+    @Query("select i from Influencer i where i.status = :status and i.beauty is not null "
+            + "and i.fnb is null order by i.id")
+    List<Influencer> findFnbBackfillTargets(@Param("status") InfluencerStatus status, Pageable pageable);
+
+    /**
      * BEAUTY 재판정(rejudge) 대상: CLAUDE가 비뷰티로 판정했지만 판정 후 프로필 재료가 갱신된
      * (새 raw_profile 스냅샷이 생긴) 계정만 — 재료가 그대로면 같은 판정만 반복하므로 배치 낭비다.
      * MANUAL은 선정 자체에서 제외되고, 뷰티 판정분은 재검하지 않는다(캡션이 뷰티→비뷰티로

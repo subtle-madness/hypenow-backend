@@ -222,6 +222,152 @@ class BeautyJobTest {
     }
 
     @Test
+    void 백필_대상은_F앤B_축만_적용하고_뷰티_판정을_보존한다() {
+        // F&B 백필(스펙 2026-08-23 §3) — 뷰티 판정이 이미 있는 계정을 F&B 축만 채우려고 부른다.
+        // 모델이 뷰티 축을 같이 내도 무시해야 한다(MANUAL 판정이 덮이면 수동 교정이 날아간다).
+        Influencer inf = qualified(1L, "kept");
+        inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_MANUAL, "수동", null);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("kept",
+                BeautyClass.NOT_BEAUTY, "모델이 딴소리", "BIO",
+                CategoryClass.INFLUENCER, "레시피 계정", "CAPTION")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
+
+        // 뷰티 축은 그대로 (MANUAL INFLUENCER 보존 — 모델의 NOT_BEAUTY 무시)
+        assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(inf.getBeautySource()).isEqualTo(Influencer.BEAUTY_SOURCE_MANUAL);
+        assertThat(inf.getBeautyReason()).isEqualTo("수동");
+        assertThat(inf.getBeautyJudgedAt()).isNull();
+        // F&B 축만 적용
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(inf.getFnb()).isTrue();
+        assertThat(s.fnbApplied()).isEqualTo(1);
+        assertThat(s.fnbPositive()).isEqualTo(1);
+        assertThat(s.judgedBeauty()).isZero();
+    }
+
+    @Test
+    void 신규_판정은_두_축을_모두_적용한다() {
+        Influencer inf = qualified(2L, "fresh");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(2L))
+                .thenReturn(Optional.of(legacyProfile(2L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("fresh",
+                BeautyClass.NOT_BEAUTY, "뷰티 아님", "CAPTION",
+                CategoryClass.INFLUENCER, "요리 계정", "CAPTION")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
+
+        assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.NOT_BEAUTY);
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(s.judgedNotBeauty()).isEqualTo(1);
+        assertThat(s.fnbApplied()).isEqualTo(1);
+    }
+
+    @Test
+    void 백필은_신규가_한도를_다_채우면_호출되지_않는다() {
+        // 신규(미판정)가 배치 한도를 다 쓰면 백필은 다음 실행 몫 — 한도를 넘겨 부풀리지 않는다
+        when(settings.beautyBatchLimit()).thenReturn(1);
+        Influencer fresh = qualified(3L, "only_new");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(fresh));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(3L))
+                .thenReturn(Optional.of(legacyProfile(3L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("only_new",
+                BeautyClass.NOT_BEAUTY, "r", "BIO", CategoryClass.NONE, "r", "BIO")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        verify(influencers, never()).findFnbBackfillTargets(any(), any());
+    }
+
+    @Test
+    void 백필_계정의_로그는_보존_표기와_FnB_사유를_남긴다() {
+        // 이월 Minor (a) — 뷰티 축을 적용하지 않은 건에 뷰티 사유가 찍히면 판정이 덮인 것으로 오독된다
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer inf = qualified(1L, "bfacc");
+            inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_MANUAL, "수동", null);
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                    .thenReturn(List.of());
+            when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                    .thenReturn(List.of(inf));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                    .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+            when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                    .thenReturn(Optional.empty());
+            when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("bfacc",
+                    BeautyClass.NOT_BEAUTY, "모델이 딴소리", "BIO",
+                    CategoryClass.SERVICE, "카페 업장", "BIO")));
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> msgs = appender.list.stream()
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(msgs).anyMatch(m -> m.contains("bfacc")
+                    && m.contains("뷰티 판정 보존")            // 덮지 않았음을 명시
+                    && m.contains("F&B(매장·서비스)")          // 실제 적용된 축의 라벨
+                    && m.contains("카페 업장")                 // 사유도 적용된 축의 것
+                    && !m.contains("모델이 딴소리"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void 축_부분_무응답_건수를_경고로_남긴다() {
+        // 이월 Minor (b) — 한 축만 무효인 응답이 늘어나면 프롬프트·파서를 의심해야 하는데,
+        // 지금까지는 계정별 로그에만 흔적이 남아 배치 단위 추세가 보이지 않았다.
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(BeautyJob.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Influencer a = qualified(1L, "acc1");
+            Influencer b = qualified(2L, "acc2");
+            when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                    .thenReturn(List.of(a, b));
+            when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(anyLong()))
+                    .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+            when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                    .thenReturn(Optional.empty());
+            when(judge.judge(any())).thenReturn(List.of(
+                    new BeautyJudge.Verdict("acc1", null, null, null,
+                            CategoryClass.NONE, "비F&B", "BIO"),          // 뷰티축만 무효
+                    new BeautyJudge.Verdict("acc2", BeautyClass.NOT_BEAUTY, "r", "BIO",
+                            null, null, null)));                          // F&B축만 무효
+
+            job.run(TriggerType.MANUAL, false);
+
+            List<String> warns = appender.list.stream()
+                    .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).anyMatch(m -> m.contains("축 부분 무응답")
+                    && m.contains("뷰티축 1건") && m.contains("F&B축 1건"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
     void 시작_요약과_계정별_판정_로그를_남긴다() {
         var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(BeautyJob.class);

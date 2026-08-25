@@ -60,6 +60,13 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         return influencers.save(inf);
     }
 
+    /** 판정 전 상태의 QUALIFIED 계정 — 판정은 호출자가 원하는 축만 붙인다. */
+    Influencer qualified(String name) {
+        Influencer inf = new Influencer(PREFIX + name);
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        return inf;
+    }
+
     Long runId() {
         return crawlRuns.save(new CrawlRun(JobName.QUALIFY, TriggerType.MANUAL,
                 null, PREFIX + "run", "it-source", Instant.now())).getId();
@@ -249,6 +256,39 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         assertThat(found.getFnbBasis()).isEqualTo("CAPTION");
         assertThat(found.getFnbJudgedAt()).isEqualTo(Instant.parse("2026-08-24T00:00:00Z"));
         assertThat(found.getFnbCaptionCount()).isEqualTo((short) 5);
+    }
+
+    @Test
+    void 백필_선정은_뷰티_판정_완료이고_fnb_미판정인_계정만_고른다() {
+        Influencer judged = influencers.save(qualified("bf_judged"));      // beauty 판정됨, fnb NULL → 대상
+        judged.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(judged);
+        influencers.save(qualified("bf_unjudged"));                        // beauty NULL → 신규 경로 몫, 제외
+        Influencer done = influencers.save(qualified("bf_done"));          // 둘 다 판정 → 제외
+        done.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        done.classifyFnb(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(done);
+
+        var picked = influencers.findFnbBackfillTargets(
+                InfluencerStatus.QUALIFIED, PageRequest.of(0, 10));
+
+        assertThat(picked).extracting(Influencer::getUsername)
+                .filteredOn(u -> u.startsWith(PREFIX))
+                .containsExactly(PREFIX + "bf_judged");
+    }
+
+    @Test
+    void 백필_선정은_수동_뷰티_판정분도_대상으로_삼는다() {
+        // 백필은 뷰티 축을 덮지 않으므로(BeautyJob의 fnbOnly 마스크) MANUAL을 제외할 이유가 없다 —
+        // 수동 교정 계정도 F&B 축은 채워야 한다.
+        Influencer manual = influencers.save(qualified("bf_manual"));
+        manual.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_MANUAL, "수동", null);
+        influencers.save(manual);
+
+        var picked = influencers.findFnbBackfillTargets(
+                InfluencerStatus.QUALIFIED, PageRequest.of(0, 10));
+
+        assertThat(picked).extracting(Influencer::getUsername).contains(PREFIX + "bf_manual");
     }
 
     @Test
