@@ -37,6 +37,9 @@ public class SettingsService {
     static final String REELS_BATCH_LIMIT = "reels.batch-limit";
     static final String REELS_ACTOR_RESULTS_LIMIT = "reels.actor-results-limit";
 
+    /** F&B 파이프라인 게이트 키 — 수집(collect·reels)·유사발굴 시드·비용 추정의 F&B 편입 여부. */
+    static final String FNB_PIPELINE_ENABLED = "fnb.pipeline-enabled";
+
     // 댓글 관련 키(comments-per-post·max-attempts)는 댓글 수집이 꺼지면서(yml comments-enabled)
     // UI 목록에서 제외 — 로직·기본값은 유지되므로 재활성화 시 다시 넣으면 된다.
     private static final List<String> KEYS = List.of(
@@ -135,6 +138,17 @@ public class SettingsService {
     @Transactional(readOnly = true)
     public int reelsActorResultsLimit() {
         return effective(REELS_ACTOR_RESULTS_LIMIT);
+    }
+
+    /**
+     * F&B 판정 통과 계정의 수집·시드 편입 여부(기본 false — 스펙 2026-08-23 §4).
+     * 숫자 설정(KEYS·UI 목록)과 달리 boolean 런타임 토글 — on은 운영 수동 UPDATE.
+     */
+    @Transactional(readOnly = true)
+    public boolean fnbPipelineEnabled() {
+        return settings.findById(FNB_PIPELINE_ENABLED)
+                .map(s -> Boolean.parseBoolean(s.getValue()))
+                .orElse(false);
     }
 
     @Transactional(readOnly = true)

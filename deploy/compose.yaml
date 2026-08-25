@@ -305,6 +305,10 @@ services:
       IMAGE_STORE: ${IMAGE_STORE:-par}
       IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
       IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
+      # 만료 CDN 프로필 이미지 재수집 백필 트리거(POST /api/author-image-backfill, 2026-08-25) —
+      # 기본 off. 실행할 때만 .env에 true를 넣고 up -d monitoring으로 개통(MONITORING_ENABLED 관용구),
+      # 백필 완주 후 되돌린다. Hiker 재조회 콜 증폭 지점이라 상시 개방하지 않는다(limit 필수가 2차 방어).
+      MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED: ${MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED:-false}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       # 브랜드 태그 스윕 — KST 02:00(UTC 17:00). 설계 원안은 03:00(캠페인 스윕과 시차)이었으나
@@ -474,7 +478,15 @@ services:
     volumes: ["/:/rootfs:ro"]
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # 0.49는 containerd 스냅샷터 이미지 스토어(도커 29 기본, 서버 Storage Driver "overlayfs")를
+    # 못 읽어 컨테이너 핸들러 생성이 통째로 실패했다 — name 라벨 시계열 0개, 로그는
+    # "failed to identify the read-write layer ID" 도배(cadvisor#3643, 0.54.0에서 수정).
+    # 0.54+ 도커 팩토리는 containerd 소켓 연결이 필수라 /run/containerd 마운트가 같이 필요하다.
+    # 이미지 배포처는 gcr.io → ghcr.io로 이관됨(gcr에는 v0.52.1까지만 있다).
+    image: ghcr.io/google/cadvisor:0.56.2
+    # 컨테이너 외 cgroup(systemd 유닛 등)·compose 메타 라벨 시계열 억제 — 대시보드는
+    # name 라벨만 쓴다(hypenow-infra.json).
+    command: ["--docker_only=true", "--store_container_labels=false"]
     restart: unless-stopped
     logging: *logging
     networks: [prod]
@@ -484,6 +496,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
+      # 0.54+ 도커 핸들러가 rw 레이어 경로를 containerd 스펙에서 직접 읽는다 — 이 소켓이
+      # 없으면 도커 팩토리 등록 자체가 실패해 0.49 때와 같은 무데이터로 돌아간다.
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
 
   caddy:
     image: caddy:2-alpine

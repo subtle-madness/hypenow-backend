@@ -6,6 +6,7 @@ import com.celfit.crawler.content.domain.ContentOrigin;
 import com.celfit.crawler.content.domain.ContentType;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
 import com.celfit.crawler.crawling.domain.BeautyClass;
+import com.celfit.crawler.crawling.domain.CategoryClass;
 import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
@@ -32,6 +33,12 @@ public class StatusService {
                                  long beautyForeign,
                                  long beautyFalse,
                                  long beautyUnjudged,
+                                 long fnbInfluencer,
+                                 long fnbCompany,
+                                 long fnbService,
+                                 long fnbForeign,
+                                 long fnbNone,
+                                 long fnbUnjudged,
                                  long backfillPending,
                                  long trackDue,
                                  long reelsDue,
@@ -90,6 +97,7 @@ public class StatusService {
             byInfluencerStatus.put(s, influencers.countByStatus(s));
         }
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
+        boolean includeFnb = settings.fnbPipelineEnabled();
         return new StatusSummary(byInfluencerStatus,
                 influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
                 influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),
@@ -97,9 +105,18 @@ public class StatusService {
                 influencers.countByStatusAndBeautyClass(InfluencerStatus.QUALIFIED, BeautyClass.FOREIGN_INFLUENCER),
                 influencers.countByStatusAndBeauty(InfluencerStatus.QUALIFIED, false),
                 influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED),
-                influencers.countBackfillPending(),
-                influencers.countTrackDue(revisitBefore),
-                influencers.countReelsDue(revisitBefore),
+                // F&B 축 타일 — 토글과 무관하게 판정 결과 자체를 보여준다(백필 진행률 확인용).
+                // 회사·서비스·외국인·아님은 fnb_class 단일 기준(뷰티 5분류 타일과 대칭).
+                influencers.countFnbInfluencers(InfluencerStatus.QUALIFIED),
+                influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.COMPANY),
+                influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.SERVICE),
+                influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.FOREIGN_INFLUENCER),
+                influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.NONE),
+                influencers.countFnbBackfillRemaining(InfluencerStatus.QUALIFIED),
+                // 수집 대기열 타일은 선정 쿼리와 같은 모수 — fnb.pipeline-enabled가 켜지면 F&B가 자동 편입된다
+                influencers.countBackfillPending(includeFnb),
+                influencers.countTrackDue(revisitBefore, includeFnb),
+                influencers.countReelsDue(revisitBefore, includeFnb),
                 contents.countByOrigin(ContentOrigin.ENUMERATION),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.FEED),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.REELS),

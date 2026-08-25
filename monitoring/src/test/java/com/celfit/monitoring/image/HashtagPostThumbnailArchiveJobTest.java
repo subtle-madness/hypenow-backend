@@ -17,8 +17,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * ① RELEVANT만 후보다(비노출 판정은 아카이브하지 않는다 — 판정은 저장 후 불변)
  * ② (brand_id, short_code) PK라 같은 게시물이 브랜드별 행으로 중복될 수 있다 — 다운로드는 1회,
  *   UPDATE는 short_code 기준 전 브랜드 행.
- * ③ 만료(oe) URL은 시도 없이 제외하고 상한도 소모하지 않는다 — 그래서 만료가 무관한 픽스처의 oe는
- *   CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다.
+ * ③ 만료(oe) URL은 시도 없이 제외한다(08-25 배치 상한 완전 제거 — 상한 관련 계약은 폐기) — 그래서
+ *   만료가 무관한 픽스처의 oe는 CdnUrls.farFutureOe()(실행 시점 +10년)로 만든다.
  */
 class HashtagPostThumbnailArchiveJobTest {
 
@@ -42,12 +42,12 @@ class HashtagPostThumbnailArchiveJobTest {
 				puts.add(Map.of("path", objectPath, "cacheControl", cacheControl));
 	}
 
-	HashtagPostThumbnailArchiveJob job(String parUrl, int batchLimit) {
-		return new HashtagPostThumbnailArchiveJob(db, fakeStore(), fakeDownloader(), parUrl, batchLimit);
+	HashtagPostThumbnailArchiveJob job(String parUrl) {
+		return new HashtagPostThumbnailArchiveJob(db, fakeStore(), fakeDownloader(), parUrl);
 	}
 
 	HashtagPostThumbnailArchiveJob job() {
-		return job("https://par.example/o/", 1000);
+		return job("https://par.example/o/");
 	}
 
 	@BeforeEach
@@ -144,31 +144,29 @@ class HashtagPostThumbnailArchiveJobTest {
 		long brand = seedBrand("brand_a");
 		seedPost(brand, "SC1", "RELEVANT", "https://cdn.example/1_n.jpg", null, null);
 
-		job("", 1000).run();
+		job("").run();
 
 		assertThat(downloads).isEmpty();
 	}
 
-	/** 상한은 다운로드 시도만 소모한다 — 근거는 BrandPostThumbnailArchiveJobTest의 동명 테스트 참고. */
+	/** 대량 백로그도 한 스윕에서 전량 처리된다(08-25 배치 상한 완전 제거 — 상한 관련 계약은 폐기). */
 	@Test
-	void 배치_상한은_다운로드_시도만_소모하고_스킵은_소모하지_않는다() {
+	void 미아카이브_행_전량이_한_스윕에서_처리된다() {
 		long brand = seedBrand("brand_a");
 		seedPost(brand, "DONE1", "RELEVANT", "https://cdn.example/a_n.jpg",
 				"monitor-hashtag-post/DONE1.jpg", "a_n.jpg");
-		seedPost(brand, "DONE2", "RELEVANT", "https://cdn.example/b_n.jpg",
-				"monitor-hashtag-post/DONE2.jpg", "b_n.jpg");
 		seedPost(brand, "NEW1", "RELEVANT", "https://cdn.example/d_n.jpg", null, null);
 		seedPost(brand, "NEW2", "RELEVANT", "https://cdn.example/e_n.jpg", null, null);
 
-		job("https://par.example/o/", 1).run();
+		job().run();
 
-		assertThat(puts).hasSize(1);
+		assertThat(puts).hasSize(2);
 		Long archived = db.queryForObject(
 				"SELECT count(image_object_path) FROM brand_hashtag_post WHERE short_code LIKE 'NEW%'", Long.class);
-		assertThat(archived).isEqualTo(1);
+		assertThat(archived).isEqualTo(2);
 	}
 
-	/** 만료 URL은 재시도해도 영원히 403 — 시도 자체를 걸러야 예산이 미아카이브 꼬리에 도달한다. */
+	/** 만료 URL은 재시도해도 영원히 403 — 시도 자체를 걸러 예산(HTTP 왕복)을 낭비하지 않는다. */
 	@Test
 	void 만료된_URL은_다운로드_시도조차_하지_않는다() {
 		long brand = seedBrand("brand_a");
@@ -181,32 +179,5 @@ class HashtagPostThumbnailArchiveJobTest {
 		assertThat(downloads).noneMatch(u -> u.contains("dead_n.jpg"));
 		assertThat(puts).extracting(m -> m.get("path"))
 				.containsExactlyInAnyOrder("monitor-hashtag-post/LIVE.jpg", "monitor-hashtag-post/UNKNOWN.jpg");
-	}
-
-	@Test
-	void 만료된_URL은_배치_상한을_소모하지_않는다() {
-		long brand = seedBrand("brand_a");
-		seedPost(brand, "DEAD1", "RELEVANT", CdnUrls.expiringIn("dead1_n.jpg", -3600), null, null);
-		seedPost(brand, "DEAD2", "RELEVANT", CdnUrls.expiringIn("dead2_n.jpg", -3600), null, null);
-		seedPost(brand, "LIVE1", "RELEVANT", CdnUrls.expiringIn("live1_n.jpg", 86400), null, null);
-		seedPost(brand, "LIVE2", "RELEVANT", CdnUrls.expiringIn("live2_n.jpg", 86400), null, null);
-
-		job("https://par.example/o/", 2).run();
-
-		assertThat(puts).extracting(m -> m.get("path"))
-				.containsExactlyInAnyOrder("monitor-hashtag-post/LIVE1.jpg", "monitor-hashtag-post/LIVE2.jpg");
-	}
-
-	/** 상한이 걸리면 먼저 죽을 URL부터 — 임박분을 이월하면 다음 스윕엔 이미 만료돼 영구 유실된다. */
-	@Test
-	void 상한이_걸리면_만료_임박_순으로_예산을_쓴다() {
-		long brand = seedBrand("brand_a");
-		seedPost(brand, "FAR", "RELEVANT", CdnUrls.expiringIn("far_n.jpg", 86400 * 3), null, null);
-		seedPost(brand, "SOON", "RELEVANT", CdnUrls.expiringIn("soon_n.jpg", 3600), null, null);
-		seedPost(brand, "UNKNOWN", "RELEVANT", CdnUrls.noOe("unknown_n.jpg"), null, null);
-
-		job("https://par.example/o/", 1).run();
-
-		assertThat(puts).extracting(m -> m.get("path")).containsExactly("monitor-hashtag-post/SOON.jpg");
 	}
 }

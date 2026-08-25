@@ -41,12 +41,12 @@ class HashtagPostAuthorImageArchiveJobTest {
 				puts.add(Map.of("path", objectPath, "cacheControl", cacheControl));
 	}
 
-	HashtagPostAuthorImageArchiveJob job(String parUrl, int batchLimit) {
-		return new HashtagPostAuthorImageArchiveJob(db, fakeStore(), fakeDownloader(), parUrl, batchLimit);
+	HashtagPostAuthorImageArchiveJob job(String parUrl) {
+		return new HashtagPostAuthorImageArchiveJob(db, fakeStore(), fakeDownloader(), parUrl);
 	}
 
 	HashtagPostAuthorImageArchiveJob job() {
-		return job("https://par.example/o/", 1000);
+		return job("https://par.example/o/");
 	}
 
 	@BeforeEach
@@ -144,23 +144,23 @@ class HashtagPostAuthorImageArchiveJobTest {
 		long brand = seedBrand("brand_a");
 		seedPost(brand, "SC1", "RELEVANT", "author_a", "https://cdn.example/1_n.jpg", null, null);
 
-		job("", 1000).run();
+		job("").run();
 
 		assertThat(downloads).isEmpty();
 	}
 
-	/** 상한은 다운로드 시도만 소모한다 — 근거는 BrandPostThumbnailArchiveJobTest의 동명 테스트 참고. */
+	/** 대량 백로그도 한 스윕에서 전량 처리된다(08-25 배치 상한 완전 제거 — 상한 관련 계약은 폐기). */
 	@Test
-	void 배치_상한은_다운로드_시도만_소모한다() {
+	void 미아카이브_작성자_전량이_한_스윕에서_처리된다() {
 		long brand = seedBrand("brand_a");
 		seedPost(brand, "NEW1", "RELEVANT", "author_1", "https://cdn.example/d_n.jpg", null, null);
 		seedPost(brand, "NEW2", "RELEVANT", "author_2", "https://cdn.example/e_n.jpg", null, null);
 
-		job("https://par.example/o/", 1).run();
+		job().run();
 
-		assertThat(puts).hasSize(1);
+		assertThat(puts).hasSize(2);
 		Long archived = db.queryForObject(
 				"SELECT count(*) FROM brand_hashtag_post WHERE author_image_object_path IS NOT NULL", Long.class);
-		assertThat(archived).isEqualTo(1);
+		assertThat(archived).isEqualTo(2);
 	}
 }

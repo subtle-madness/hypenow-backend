@@ -1,11 +1,14 @@
 package com.celfit.crawler.dashboard.application;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.celfit.crawler.content.application.port.out.ContentRepository;
 import com.celfit.crawler.crawling.application.port.out.InfluencerRepository;
+import com.celfit.crawler.crawling.domain.CategoryClass;
+import com.celfit.crawler.crawling.domain.InfluencerStatus;
 import com.celfit.crawler.settings.application.service.SettingsService;
 import java.time.Clock;
 import java.time.Instant;
@@ -32,7 +35,41 @@ class StatusServiceTest {
 
         service.summary();
 
-        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"));
-        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"));
+        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), false);
+        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), false);
+    }
+
+    @Test
+    void 대기열_타일은_F앤B_토글을_그대로_모수에_반영한다() {
+        // 토글 on이면 대기열 타일이 선정 쿼리와 같은 모수(F&B 포함)를 보여준다 — 스펙 2026-08-23 §4.
+        when(settings.revisitIntervalDays()).thenReturn(1);
+        when(settings.fnbPipelineEnabled()).thenReturn(true);
+
+        service.summary();
+
+        verify(influencers).countBackfillPending(true);
+        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), true);
+        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), true);
+    }
+
+    @Test
+    void 상태판은_F앤B_분류별_카운트를_fnb_class_기준으로_센다() {
+        // 뷰티 그룹과 대칭인 5분류 타일 — 회사/서비스/외국인/아님은 fnb_class 단일 기준으로 센다
+        when(settings.revisitIntervalDays()).thenReturn(1);
+        when(influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.COMPANY))
+                .thenReturn(3L);
+        when(influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.SERVICE))
+                .thenReturn(2L);
+        when(influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.FOREIGN_INFLUENCER))
+                .thenReturn(1L);
+        when(influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.NONE))
+                .thenReturn(5L);
+
+        StatusService.StatusSummary s = service.summary();
+
+        assertThat(s.fnbCompany()).isEqualTo(3);
+        assertThat(s.fnbService()).isEqualTo(2);
+        assertThat(s.fnbForeign()).isEqualTo(1);
+        assertThat(s.fnbNone()).isEqualTo(5);
     }
 }

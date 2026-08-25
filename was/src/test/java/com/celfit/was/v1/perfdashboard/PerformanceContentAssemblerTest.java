@@ -199,6 +199,16 @@ class PerformanceContentAssemblerTest {
 		assertThat(item.post().commentsTotal()).isEqualTo(3L);
 	}
 
+	@Test
+	void 브랜드_풀_hidden_게시물은_합성_아이템도_hidden이다() {
+		givenLegacy();
+		givenBrand(directPostHidden("ABC"));
+
+		var item = assembler().assemble(USER_ID).contents().get(0).item();
+
+		assertThat(item.status()).isEqualTo("hidden");
+	}
+
 	/** campaignId/campaignName = campaignIds 헤드(설계 §결정 3) — 캠페인 이름은 CampaignRepository 조회로 채운다. */
 	@Test
 	void 브랜드_풀_전용_아이템의_campaignId_campaignName은_campaignIds_헤드에서_온다() {
@@ -618,12 +628,22 @@ class PerformanceContentAssemblerTest {
 
 	private static BrandPostResponse brandPost(String shortcode, String source, List<SnapshotResponse> snapshots,
 			String caption, boolean commentsHidden, long brandId, List<String> campaignIds) {
+		return brandPost(shortcode, source, snapshots, caption, commentsHidden, brandId, campaignIds, "tracking");
+	}
+
+	/** 삭제·비공개 감지(hidden)된 direct 게시물 — 합성 아이템의 status 승계 검증용(2026-08-25 설계). */
+	private static BrandPostResponse directPostHidden(String shortcode) {
+		return brandPost(shortcode, "direct", List.of(), "브랜드 태그 캡션", false, BRAND_ID, List.of(), "hidden");
+	}
+
+	private static BrandPostResponse brandPost(String shortcode, String source, List<SnapshotResponse> snapshots,
+			String caption, boolean commentsHidden, long brandId, List<String> campaignIds, String trackingStatus) {
 		SnapshotResponse latest = snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
 		return new BrandPostResponse(shortcode, String.valueOf(brandId), source,
 				"https://www.instagram.com/reel/" + shortcode + "/", shortcode, "reels",
 				"2026-08-06T09:00:00+09:00", caption, null, null, null,
 				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,
-				"unknown", null, "tracking", "2026-08-06T09:30:00+09:00", null, latest, snapshots,
+				"unknown", null, trackingStatus, "2026-08-06T09:30:00+09:00", null, latest, snapshots,
 				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), campaignIds,
 				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
 				null, List.of(), List.of(), false);

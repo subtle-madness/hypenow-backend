@@ -248,7 +248,12 @@ public class TaggedPostRepository {
 				Timestamp.from(at), brandId, Timestamp.from(minTakenAt));
 	}
 
-	/** 이번 열거에서 만난 게시물의 마지막 수집 시각 배치 갱신 — 다음 스윕의 티어 판정 입력. */
+	/**
+	 * 이번 열거·실수집에서 실제로 만난 게시물의 마지막 수집 시각 배치 갱신 — 다음 스윕의 티어 판정
+	 * 입력. 직접 관측 = 존재 확인이므로 삭제·비공개 마킹({@link #markUnavailable})과 부재 검증
+	 * 스로틀({@link #markAbsenceChecked})도 여기서 해제한다(IG 보관 후 재공개 자가 치유 + 재소실 시
+	 * 즉시 재검증). 깊이 touch({@link #touchCrawledDepth})는 개별 관측이 아니라 해제하지 않는다.
+	 */
 	public void touchCrawled(long brandId, Collection<String> codes, Instant at) {
 		if (codes.isEmpty()) {
 			return;
@@ -261,8 +266,46 @@ public class TaggedPostRepository {
 		for (String code : codes) {
 			args[i++] = code;
 		}
-		db.update("UPDATE brand_tagged_post SET last_crawled_at = ? WHERE brand_id = ? AND short_code IN ("
-				+ placeholders + ")", args);
+		db.update("UPDATE brand_tagged_post SET last_crawled_at = ?, unavailable_at = NULL,"
+				+ " absence_checked_at = NULL WHERE brand_id = ? AND short_code IN (" + placeholders + ")", args);
+	}
+
+	/**
+	 * 삭제·비공개 관측 마킹(2026-08-25 설계) — 야간 스윕 단건 콜이 404(SubjectNotFound)를 받은
+	 * 게시물에 찍는다. 행·스냅샷은 보존(was가 hidden으로 노출), 재관측({@link #touchCrawled})이
+	 * 해제하는 자가 치유 짝이다. 재마킹은 무해하다(시각만 갱신).
+	 */
+	public void markUnavailable(long brandId, String shortCode, Instant at) {
+		db.update("UPDATE brand_tagged_post SET unavailable_at = ? WHERE brand_id = ? AND short_code = ?",
+				Timestamp.from(at), brandId, shortCode);
+	}
+
+	/**
+	 * 태그 부재 검증 후보(2026-08-25 tagged 삭제 감지 설계 §1) — 커버된 열거의 검증 하한 안쪽인데
+	 * 이번 열거에 안 실렸을 수 있는 tagged-only 행. 겹침 행(direct_registered_at 존재)은 야간 스윕
+	 * 2단계 단건 수집이 이미 404를 잡으므로 제외한다(중복 과금 방지). 이미 부재 확정(unavailable_at)
+	 * 이거나 최근 검증한(absence_checked_at ≥ recheckBefore — 살아있는 태그 해제 게시물의 재검증
+	 * 스로틀) 행도 제외. 이번 열거 관측분 제외는 호출자가 메모리로 거른다(seen이 수천이면 IN 절이
+	 * 무의미하게 커진다).
+	 */
+	public List<String> tagVerifyCandidates(long brandId, Instant minTakenAt, Instant recheckBefore) {
+		return db.queryForList("""
+				SELECT short_code FROM brand_tagged_post
+				WHERE brand_id = ? AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND taken_at >= ? AND unavailable_at IS NULL
+				  AND (absence_checked_at IS NULL OR absence_checked_at < ?)
+				ORDER BY taken_at DESC""",
+				String.class, brandId, Timestamp.from(minTakenAt), Timestamp.from(recheckBefore));
+	}
+
+	/**
+	 * 부재 검증 완료 마킹(설계 §2·§3) — 검증 콜이 성공(게시물 생존 — 태그 해제·열거 요동)한 행에
+	 * 찍는 재검증 스로틀. 재관측({@link #touchCrawled})이 NULL로 되돌려, 재등장 후 다시 사라지면
+	 * 스로틀 없이 즉시 검증한다.
+	 */
+	public void markAbsenceChecked(long brandId, String shortCode, Instant at) {
+		db.update("UPDATE brand_tagged_post SET absence_checked_at = ? WHERE brand_id = ? AND short_code = ?",
+				Timestamp.from(at), brandId, shortCode);
 	}
 
 	/**

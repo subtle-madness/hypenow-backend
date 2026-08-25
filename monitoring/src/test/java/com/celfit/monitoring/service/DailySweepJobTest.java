@@ -360,8 +360,8 @@ class DailySweepJobTest {
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
 		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
-		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
-		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "", 1000);
+		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "");
+		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "");
 		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3, Duration.ZERO,
 				imageArchive, thumbnailArchive);
 	}

@@ -43,8 +43,8 @@ public class V1PerformanceDashboardController {
 	private static final String CAMPAIGN_NONE = "none";
 
 	/**
-	 * statusCounts 키 순서(FE 탭 순서) — 레거시 {@link ItemStatus} 어휘 그대로다. tagged-only 합성
-	 * 아이템은 항상 {@code tracking}이라 값 공간이 늘지 않는다.
+	 * statusCounts 키 순서(FE 탭 순서) — 레거시 {@link ItemStatus} 어휘 그대로다. 브랜드 풀 합성
+	 * 아이템도 hidden이 가능하다(2026-08-25 삭제 감지) — 어휘는 여전히 이 목록 안이다.
 	 */
 	private static final List<String> STATUSES = List.of(ItemStatus.TRACKING, ItemStatus.COLLECTING,
 			ItemStatus.DETECTING, ItemStatus.NOT_UPLOADED, ItemStatus.ENDED, ItemStatus.HIDDEN, ItemStatus.ERROR);

@@ -1,5 +1,7 @@
 package com.celfit.monitoring.config;
 
+import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.monitoring.image.AuthorImageBackfillJob;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
 import com.celfit.monitoring.image.BrandProfileImageArchiveJob;
@@ -11,6 +13,7 @@ import com.celfit.monitoring.image.ImageStore;
 import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
+import com.celfit.monitoring.store.AuthorProfileRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,10 +46,9 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new ProfileImageArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
 	}
 
 	@Bean
@@ -54,10 +56,9 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new PostThumbnailArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
 	}
 
 	/** 브랜드 태그 파이프라인의 게시자 프로필 사진 — 같은 버킷, 프리픽스만 monitor-author/로 분리. */
@@ -66,10 +67,9 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new AuthorProfileImageArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
 	}
 
 	/** 브랜드 본인 프로필 사진 — 같은 버킷, 프리픽스만 monitor-brand/로 분리. */
@@ -78,10 +78,9 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new BrandProfileImageArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
 	}
 
 	/** 브랜드 태그 게시물 썸네일 — 같은 버킷, 프리픽스만 monitor-brand-post/로 분리. */
@@ -90,10 +89,9 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new BrandPostThumbnailArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
 	}
 
 	/** 해시태그 발견 게시물 썸네일(RELEVANT만) — 같은 버킷, 프리픽스만 monitor-hashtag-post/로 분리. */
@@ -102,10 +100,9 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new HashtagPostThumbnailArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
 	}
 
 	/** 해시태그 발견 게시물 작성자 프로필 사진(RELEVANT만) — 같은 버킷, 프리픽스만 monitor-hashtag-author/로 분리. */
@@ -114,9 +111,21 @@ public class ImageArchiveConfig {
 			@Value("${monitoring.image.par-url:}") String parUrl,
 			@Value("${monitoring.image.store:par}") String storeMode,
 			@Value("${monitoring.image.gcs-bucket:}") String gcsBucket,
-			@Value("${monitoring.image.gcs-key:}") String gcsKey,
-			@Value("${monitoring.image.archive-batch-limit:1000}") int batchLimit) {
+			@Value("${monitoring.image.gcs-key:}") String gcsKey) {
 		return new HashtagPostAuthorImageArchiveJob(db, imageStore(storeMode, parUrl, gcsBucket, gcsKey),
-				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket), batchLimit);
+				ImageDownloader.http(), storeTarget(storeMode, parUrl, gcsBucket));
+	}
+
+	/**
+	 * 만료된 CDN 프로필 이미지 재수집 백필(2026-08-25, 어드민 수동 트리거 전용 — AuthorImageBackfillController
+	 * 참고) — 위 두 잡(authorProfileImageArchiveJob·hashtagPostAuthorImageArchiveJob) 빈을 그대로
+	 * 재사용해 백필 직후 같은 실행에서 다운로드·업로드까지 닫는다.
+	 */
+	@Bean
+	public AuthorImageBackfillJob authorImageBackfillJob(JdbcTemplate db, HikerClient hikerClient,
+			AuthorProfileRepository authorProfileRepo, AuthorProfileImageArchiveJob authorProfileImageArchiveJob,
+			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchiveJob) {
+		return new AuthorImageBackfillJob(db, hikerClient, authorProfileRepo, authorProfileImageArchiveJob,
+				hashtagPostAuthorImageArchiveJob);
 	}
 }
