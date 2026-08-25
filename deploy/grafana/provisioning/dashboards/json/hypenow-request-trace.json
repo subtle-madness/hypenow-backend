@@ -21,7 +21,7 @@
       "id": 3,
       "type": "table",
       "title": "최근 요청 (전체, 엣지 기준)",
-      "description": "엣지(caddy) 액세스 로그 기반 — 응답 헤더 X-Request-Id로 앱 요청 ID를 붙였다. 에러가 없어도 모든 요청이 여기 잡히므로, 추적할 ID를 여기서 집어 상단 변수에 넣는다. /health 헬스체크는 소음이라 제외. 최근 200건.",
+      "description": "엣지(caddy) 액세스 로그 기반 — 응답 헤더 X-Request-Id로 앱 요청 ID를 붙였다. 에러가 없어도 모든 요청이 여기 잡히므로, 추적할 ID를 여기서 집어 상단 변수에 넣는다. (유저 식별 컬럼은 없다 — caddy user_id는 basic auth 전용이라 JWT 서비스에선 항상 빈 값, 앱이 X-User-Id 응답 헤더를 내면 추가 가능. /health 헬스체크는 소음이라 제외. 최근 200건.)",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -37,7 +37,7 @@
           "refId": "A",
           "queryType": "range",
           "maxLines": 200,
-          "expr": "{service=\"caddy-access\"} | json method=\"request.method\", status=\"status\", duration=\"duration\", user_id=\"user_id\", request_id=`resp_headers[\"X-Request-Id\"][0]` | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` | label_format duration=`{{ printf \"%.2f\" (float64 .duration) }}`"
+          "expr": "{service=\"caddy-access\"} | json method=\"request.method\", status=\"status\", duration=\"duration\", request_id=`resp_headers[\"X-Request-Id\"][0]` | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` | label_format duration=`{{ printf \"%.2f\" (float64 .duration) }}`"
         }
       ],
       "transformations": [
@@ -71,8 +71,7 @@
               "path": 2,
               "status": 3,
               "duration": 4,
-              "request_id": 5,
-              "user_id": 6
+              "request_id": 5
             },
             "renameByName": {
               "duration": "duration(s)"
