@@ -48,12 +48,44 @@
 #  crawler 사본 0개(-11GiB — 08-24 disk-high 87%의 백업 몫 해소), 실패 시 로컬 덤프 폴백.
 #  ③ 동시화로 압축·업로드 CPU가 같은 시간대에 겹치므로(덤프 구간 idle 13% 실측) zstd·rclone을
 #  nice -n 19로 실행 — WAS·크롤러가 CPU 우선, 부족분은 파이프 역압으로 백업만 감속한다.)
+# (08-27: CPU 상한(cgroup CPUQuota) 자기 래핑 도입 — ③의 동시화 첫 실행(08-26 KST 00:12)이
+#  hypenow-api-cpu-high를 발화시켰다: 직렬이 겹치며 CPU 85~89%가 21분 지속. nice는 서비스
+#  지연은 지키지만(iowait 1.5~2.5%, api-unreachable 미발화) OCI CpuUtilization은 nice 사용분도
+#  집계해 알람은 그대로 운다. 실행 중 set-property로 스텝 실측한 결과(60%→전체 86%,
+#  45%→80%, 35%→57~60%) 상한 밖 postgres-raw 백엔드가 ~0.5코어를 더 쓰고 크롤 잡이 1분
+#  단위 +20~30%p 출렁여, 여유까지 반영한 안전선이 35%다. 소요 +30%(28→36분)로 15:00 크론
+#  슬롯 안에 수용. 파이프라인 유닛만 상한해도 pg_dump 클라이언트가 감속하면 postgres 쪽도
+#  배압으로 따라 줄어 전체가 내려간다.)
 set -euo pipefail
 
 B2_CRAWLER_KEEP=3     # B2에 유지할 crawler 덤프 개수 — 복원 창 3일, 덤프가 11GiB급이라 개수가 곧 용량(08-04 5→3)
 LOCAL_CRAWLER_KEEP=2  # B2 실패 시 서버에 남길 crawler 덤프 개수 — 로컬 pull 사본 전제(08-04 축소)
 B2_BWLIMIT=10M        # rclone 업로드 대역 상한 — 무제한 시 실효 17MiB/s가 iowait를 포화시킴(08-20 알람).
                       # 10M이면 crawler 11GiB급 업로드가 ~20분 — 크론 슬롯(15:00, 다음 배치는 16:00 크롤)에 여유
+BACKUP_CPUQUOTA=35%   # 백업 유닛 CPU 상한(2코어 중 0.35코어) — 08-27 실험 실측 안전선(상단 주석).
+                      # 조정 시 알람 문턱 85% 대비 동거 부하(+20~30%p) 여유를 남길 것
+
+# CPU 상한 자기 래핑 — 크론이 그냥 실행해도 systemd transient 유닛(CPUQuota) 안에서 돌게
+# 재실행한다(크론탭 무수정 — 상한값·로직이 이 파일 하나에 남아 버전 관리된다).
+#   * 유닛명 고정(backup-capped): 전일 실행이 아직 살아 있으면 systemd-run이 이름 충돌로
+#     실패한다 — 이중 백업 방지 가드를 겸한다. --collect가 실패 유닛 잔재를 자동 회수.
+#   * StandardOutput=append: 유닛의 stdout은 크론의 `>> backup.log` 리다이렉트에 닿지 않아
+#     직접 backup.log에 붙인다(수동 실행도 동일하게 로그로 감 — 화면 출력 없음에 주의).
+#   * systemd-run/sudo 불가 환경이면 상한 없이 진행 — 래퍼 때문에 백업 자체가 죽는 것이
+#     상한 없는 백업(최악: WARNING 알람 1회)보다 나쁘다.
+if [ -z "${BACKUP_CPU_CAPPED:-}" ]; then
+  if command -v systemd-run >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    exec sudo -n systemd-run --quiet --wait --collect --unit backup-capped \
+      --uid "$(id -un)" --gid "$(id -gn)" \
+      -p CPUQuota="$BACKUP_CPUQUOTA" \
+      -p Environment="HOME=$HOME" -p Environment=BACKUP_CPU_CAPPED=1 \
+      -p WorkingDirectory="$HOME" \
+      -p StandardOutput="append:$HOME/backups/backup.log" \
+      -p StandardError="append:$HOME/backups/backup.log" \
+      /bin/bash "$0" "$@"
+  fi
+  echo "경고: systemd-run/sudo 사용 불가 — CPU 상한 없이 백업을 계속한다" >&2
+fi
 
 BACKUP_DIR="$HOME/backups"
 DEPLOY_DIR="$HOME/deploy"
