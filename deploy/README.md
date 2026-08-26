@@ -963,6 +963,32 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis \
   -c "GRANT SELECT (analyzed_at) ON public.content_analyses TO grafana_reader"
 ```
 
+#### 14-2-4. 구 폴더 퇴역 — 서버 잔존 파일 정리 (08-26, ⚠️ **main 배포 전 실행 필수 — 아직 미적용**)
+
+08-26 개편 마무리로 구 프로바이더 2개(json/ → "HypeNow", json-brand/ → "브랜드 모니터링")를
+dashboards.yaml에서 제거하고, 구 대시보드 6장(탐색·경쟁사·Hiker·인프라·[브랜드] 2장)을 레포에서
+삭제, 홈·요청 추적은 json-ops/(운영 폴더)로 이동했다. CD scp는 추가 전용이라(§14-2-2 일반 규칙)
+**서버의 구 파일 8개를 배포 전에 수동 삭제**해야 한다.
+
+**순서가 중요하다**: ① 아래 rm을 먼저 실행 → 아직 살아 있는 구 프로바이더가 60초 안에 해당
+대시보드를 DB에서 프루닝 → ② 그 다음 main 배포(새 dashboards.yaml이 구 프로바이더 제거).
+순서를 바꾸면(배포 먼저) 프로바이더가 사라진 뒤라 프루닝할 주체가 없어, 구 대시보드가 DB에
+고아로 남는다 — 그 경우 Grafana UI에서 수동 삭제.
+
+```bash
+ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-discovery,hypenow-competitor,hypenow-hiker,hypenow-infra,hypenow-home,hypenow-request-trace}.json ~/deploy/grafana/provisioning/dashboards/json-brand/{hypenow-brand,hypenow-brand-ad}.json'
+```
+
+- 홈(`hypenow-home`)·요청 추적(`hypenow-request-trace`)은 json-ops/로 **이동**이라 uid가 같다 —
+  json/ 쪽 구 파일을 안 지우면 배포 후 같은 uid를 두 경로가 이중 프로비저닝한다(§14-2-2 ④와
+  같은 함정). rm 직후~배포 사이에 홈·요청 추적이 잠시 안 보이는 것은 정상(배포가 json-ops/로
+  되살린다).
+- **배포 후**: 비게 된 "HypeNow"·"브랜드 모니터링" 폴더 2개는 프로바이더가 사라져 자동 삭제되지
+  않는다 — Grafana UI(Dashboards → 폴더 선택 → Delete)에서 수동 삭제. 빈 폴더 삭제라 무위험.
+- 구 uid(`hypenow-infra`·`hypenow-discovery`·`hypenow-competitor`·`hypenow-hiker`·
+  `hypenow-brand`·`hypenow-brand-ad`)를 참조하던 대시보드 내부 링크는 이 PR에서 전부 새 착지로
+  재지정했다(홈 14곳·운영/모니터링 12곳). 외부에 적어 둔 북마크만 깨진다.
+
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
 | 변수 | 설명 |

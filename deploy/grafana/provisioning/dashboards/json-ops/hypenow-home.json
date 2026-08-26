@@ -1,5 +1,5 @@
 {
-  "title": "HypeNow 홈 — 지금 정상인가",
+  "title": "홈 — 지금 정상인가",
   "uid": "hypenow-home",
   "schemaVersion": 39,
   "editable": false,
@@ -72,8 +72,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/메트릭(was)로 이동",
+              "url": "/d/hypenow-ops-metrics?var-module=was"
             }
           ],
           "mappings": [
@@ -163,8 +163,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/모니터링(엣지 row)로 이동",
+              "url": "/d/hypenow-ops-monitors"
             }
           ],
           "mappings": [
@@ -252,8 +252,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/로그로 이동",
+              "url": "/d/hypenow-ops-logs"
             }
           ],
           "mappings": [
@@ -341,8 +341,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "Hiker 대시보드로",
-              "url": "/d/hypenow-hiker"
+              "title": "[흐름] 비용·외부 의존로 이동",
+              "url": "/d/hypenow-flow-cost"
             }
           ],
           "mappings": [
@@ -430,8 +430,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "Hiker 대시보드로",
-              "url": "/d/hypenow-hiker"
+              "title": "[흐름] 비용·외부 의존로 이동",
+              "url": "/d/hypenow-flow-cost"
             }
           ],
           "mappings": [
@@ -583,8 +583,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "경쟁사 모니터링으로",
-              "url": "/d/hypenow-competitor"
+              "title": "[흐름] 경쟁사 모니터링로 이동",
+              "url": "/d/hypenow-flow-competitor"
             }
           ],
           "mappings": [
@@ -756,8 +756,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "Hiker 대시보드로",
-              "url": "/d/hypenow-hiker"
+              "title": "[흐름] 비용·외부 의존로 이동",
+              "url": "/d/hypenow-flow-cost"
             }
           ],
           "unit": "locale",
@@ -856,8 +856,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "탐색 대시보드로",
-              "url": "/d/hypenow-discovery"
+              "title": "[흐름] 콘텐츠 파이프라인로 이동",
+              "url": "/d/hypenow-flow-content"
             }
           ],
           "mappings": [
@@ -946,8 +946,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "경쟁사 모니터링으로",
-              "url": "/d/hypenow-competitor"
+              "title": "[흐름] 경쟁사 모니터링로 이동",
+              "url": "/d/hypenow-flow-competitor"
             }
           ],
           "mappings": [
@@ -1036,8 +1036,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "경쟁사 모니터링으로",
-              "url": "/d/hypenow-competitor"
+              "title": "[흐름] 경쟁사 모니터링로 이동",
+              "url": "/d/hypenow-flow-competitor"
             }
           ],
           "mappings": [
@@ -1139,8 +1139,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/인프라로 이동",
+              "url": "/d/hypenow-ops-infra"
             }
           ],
           "mappings": [
@@ -1232,8 +1232,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/인프라로 이동",
+              "url": "/d/hypenow-ops-infra"
             }
           ],
           "mappings": [
@@ -1323,8 +1323,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/메트릭(was)로 이동",
+              "url": "/d/hypenow-ops-metrics?var-module=was"
             }
           ],
           "mappings": [
@@ -1416,8 +1416,8 @@
           "noValue": "데이터 없음",
           "links": [
             {
-              "title": "인프라 대시보드로",
-              "url": "/d/hypenow-infra"
+              "title": "운영/메트릭(was)로 이동",
+              "url": "/d/hypenow-ops-metrics?var-module=was"
             }
           ],
           "mappings": [
