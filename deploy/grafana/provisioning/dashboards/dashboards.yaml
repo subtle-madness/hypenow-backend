@@ -1,30 +1,35 @@
-# 대시보드 JSON 자동 로드 — 폴더별 프로바이더 2개(json/ → "HypeNow", json-brand/ → "브랜드 모니터링").
+# 대시보드 JSON 자동 로드 — 폴더별 프로바이더 2개(json-ops/ → "운영", json-flow/ → "비즈니스 흐름").
 # allowUiUpdates: false — 수정은 이 리포 파일로만(운영 UI에서 손댄 변경은 다음 재기동에 덮인다,
 # compose·Caddyfile이 레포로만 갱신되는 것과 같은 규율).
+# 디렉토리명 영문은 macOS↔linux 한글 NFC/NFD 정규화 차이 회피(08-18 결정), 폴더명은 여기(yaml)서
+# 한글 지정. 구 프로바이더 2개(json/ → "HypeNow", json-brand/ → "브랜드 모니터링")는 08-26 개편
+# 마무리로 퇴역 — 서버 잔존 파일·빈 폴더 정리는 deploy/README §14-2-4(배포 전 실행 필수).
 apiVersion: 1
 
 providers:
-  - name: hypenow-dashboards
+  # 운영 탭 4장 + 홈 + 요청 추적(2026-08-25 개편 스펙, 08-26 홈·요청 추적 흡수) — Datadog식
+  # 관심사 탭($module 필터 + 태그 hypenow-ops 탭 링크 바).
+  - name: hypenow-ops-dashboards
     orgId: 1
-    folder: HypeNow
+    folder: 운영
     type: file
     disableDeletion: false
     updateIntervalSeconds: 60
     allowUiUpdates: false
     options:
-      path: /etc/grafana/provisioning/dashboards/json
+      path: /etc/grafana/provisioning/dashboards/json-ops
       foldersFromFilesStructure: false
 
-  # 브랜드 모니터링 폴더(2026-08-18 스펙) — json/ 프로바이더가 하위 디렉토리를 재귀 탐색하므로
-  # 형제 디렉토리(json-brand)여야 이중 로드가 없다. 폴더명은 여기(yaml)서 한글 지정 —
-  # 디렉토리명을 영문으로 두는 이유는 macOS↔linux 한글 NFC/NFD 정규화 차이 회피.
-  - name: hypenow-brand-dashboards
+  # 비즈니스 흐름(2026-08-25 개편 스펙) — "이 업무가 흘러가고 있나"의 단계별 장, 태그
+  # hypenow-flow 링크 바로 장 간 이동. 기존 탐색·경쟁사·Hiker·[브랜드] 2장을 통합·이관하는
+  # 대상이며, 원본 대시보드 퇴역은 전 장 완성 후 별도 확인을 거쳐 진행(uid가 달라 공존 무해).
+  - name: hypenow-flow-dashboards
     orgId: 1
-    folder: 브랜드 모니터링
+    folder: 비즈니스 흐름
     type: file
     disableDeletion: false
     updateIntervalSeconds: 60
     allowUiUpdates: false
     options:
-      path: /etc/grafana/provisioning/dashboards/json-brand
+      path: /etc/grafana/provisioning/dashboards/json-flow
       foldersFromFilesStructure: false

@@ -114,6 +114,26 @@ class QualifyJobTest {
     }
 
     @Test
+    void 양쪽_소스_빈_응답_확인_계정은_소프트_딜리트되어_재선정되지_않는다() {
+        // SELF 연속 빈 응답 임계 도달 + Hiker 폴백도 빈 응답(confirmedEmpty) — 종결하지 않으면
+        // followers-NULL 재선정이 무한 반복돼 빈 응답 유료 폴백을 열 수 없다
+        when(settings.qualifyBatchLimit()).thenReturn(50);
+        Influencer dormant = influencer(1L, "dormant", InfluencerStatus.DISCOVERED, null, null);
+        when(influencers.findByStatusAndFollowersIsNull(
+                InfluencerStatus.DISCOVERED, PageRequest.of(0, 50, Sort.by("id"))))
+                .thenReturn(List.of(dormant));
+        when(selector.currentSource()).thenReturn(RawSource.SELF_GQL);
+        when(selector.fetchAndSupplement(any(), any(), any()))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("dormant")));
+
+        var summary = job.run(TriggerType.MANUAL, false);
+
+        assertThat(dormant.getStatus()).isEqualTo(InfluencerStatus.DELETED);
+        verify(influencers).save(dormant);
+        assertThat(summary.deferred()).isZero();  // 종결 계정은 재시도 대상(deferred)이 아니다
+    }
+
+    @Test
     void 프로필_미확보_인플루언서가_id순_배치_상한만큼_선정된다() {
         when(settings.qualifyBatchLimit()).thenReturn(7);
 

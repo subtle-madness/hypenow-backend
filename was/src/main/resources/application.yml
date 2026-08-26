@@ -91,6 +91,10 @@ management:
     distribution:
       percentiles-histogram:
         http.server.requests: true   # uri별 p95/p99를 Prometheus 쪽에서 histogram_quantile로 산출
+      maximum-expected-value:
+        # 기본 상한 30s에서는 그 이상 걸린 요청이 전부 30s 버킷으로 포화된다 — 08-25 posts
+        # 서빙 장애(실측 96s)가 대시보드에 30s로 눌려 보인 원인. 실값 상한 확장.
+        http.server.requests: 120s
 monitoring:
   enabled: false   # true면 monitoring.datasource.*(읽기 전용 계정) 필수, monitoring.api.base-url은 기본값 http://monitoring:8083(계약 §1) — 계약: docs/contracts/monitoring-was-contract.md
   brand:

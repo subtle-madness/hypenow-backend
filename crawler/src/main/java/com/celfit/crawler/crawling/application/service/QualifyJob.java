@@ -155,6 +155,17 @@ public class QualifyJob {
             influencers.save(inf);
             log.info("qualify 계정 소멸(404) — DELETED: {}", gone);
         }
+        // 양쪽 소스 모두 빈 응답 확인(SELF 연속 임계 도달 + Hiker 폴백도 빈 응답) — 즉시 소프트
+        // 딜리트로 종결한다. 이 종결이 없으면 followers-NULL 재선정이 무한 반복돼 빈 응답 유료
+        // 폴백을 열 수 없다(컴포지트 페처 클래스 주석). collect의 30일 유예와 달리 즉시인 이유:
+        // DISCOVERED는 아직 리드일 뿐이고, 소프트 딜리트라 재발굴되면 다시 들어온다.
+        for (String dormant : ex.confirmedEmpty()) {
+            Influencer inf = byName.get(dormant);
+            if (inf == null) continue;
+            inf.setStatus(InfluencerStatus.DELETED);
+            influencers.save(inf);
+            log.info("qualify 양쪽 소스 빈 응답 확인(비활성화·숨김) — DELETED: {}", dormant);
+        }
         for (Map<String, Object> item : ex.items()) {
             // 컴포지트(400 → Hiker 폴백) 배치는 아이템별 원형이 섞인다 — 셰이프로 실제 소스 감지
             RawSource source = ProfileExtractor.detect(item, batchSource);
