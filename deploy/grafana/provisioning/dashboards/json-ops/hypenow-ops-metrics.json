@@ -788,13 +788,75 @@
       ]
     },
     {
+      "id": 320,
+      "type": "timeseries",
+      "title": "힙 (영역별)",
+      "description": "선택 모듈의 JVM 힙 사용량을 메모리 풀(id)별로 분해 — 구 인프라 대시보드에서 흡수(08-26). **볼 곳은 Old Gen**: Eden은 톱니로 오르내리는 게 정상이고, Old Gen이 GC 후에도 안 내려가고 계단식으로 오르면 누수를 의심한다(위 '풀GC 후 잔존 힙'이 같은 신호의 비율판). crawler·analytics는 액추에이터가 없어 무데이터가 정상.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미대상)",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{id}}",
+          "expr": "jvm_memory_used_bytes{area=\"heap\", job=\"$module\"}"
+        }
+      ]
+    },
+    {
       "id": 9,
       "type": "row",
       "title": "외부 호출 — $module",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 34,
         "w": 24,
         "h": 1
       },
@@ -807,7 +869,7 @@
       "description": "monitoring이 부른 외부 API(Hiker 수집 콜·Gemini 판정 콜)의 p95 소요 — 계층별 p95 뺄셈의 마지막 항. **was 등록 p95 − 수신 처리 p95 − 이 패널 = monitoring 내부 처리분**으로 느림의 책임 구간이 갈린다. 기록 단위는 재시도·백오프를 포함한 **논리 콜 1건**(전송 내부 재시도로 살아난 콜은 ok 하나로 접히고 그 대기 시간까지 지연에 포함) — 재시도가 잦아지면 실패율보다 이 선이 먼저 오른다. 트래픽이 있는 operation만 선으로 나타난다(등록·스윕이 안 도는 시간대엔 비는 게 정상).",
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 35,
         "w": 12,
         "h": 8
       },
@@ -869,7 +931,7 @@
       "description": "api별 실패 콜 비율(outcome≠ok, 5분 창) — 외부 API 장애·차단·잔액 소진의 조기 신호. 트래픽이 있는데 실패가 없으면 0%로 그려진다(공백은 무트래픽). 해석 주의: **Hiker는 4xx도 과금**되므로 4xx 급증은 비용 사고(402 잔액 소진·차단)일 수 있고, 반대로 태그·게시물 0건 계정의 404(빈 열거)도 4xx로 집계되는 정상 잡음이 섞인다 — 급증 시 outcome 축(external_call_seconds_count의 outcome 라벨)으로 4xx/5xx/error를 갈라 볼 것. error는 HTTP 교환 없는 실패(IO·타임아웃·키 미설정)와 예상 밖 상태(3xx 등)다. 여기 1건은 재시도가 접힌 **논리 콜 1건**이라 실제 과금 콜 수는 표시의 최대 3배(1+재시도 2)일 수 있다.",
       "gridPos": {
         "x": 12,
-        "y": 27,
+        "y": 35,
         "w": 12,
         "h": 8
       },

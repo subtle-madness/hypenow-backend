@@ -1,6 +1,6 @@
 {
-  "title": "HypeNow Hiker — 비용·외부 의존",
-  "uid": "hypenow-hiker",
+  "title": "[흐름] 비용·외부 의존",
+  "uid": "hypenow-flow-cost",
   "schemaVersion": 39,
   "editable": false,
   "refresh": "5m",
@@ -30,14 +30,27 @@
   },
   "tags": [
     "hypenow",
-    "hiker",
-    "cost"
+    "hypenow-flow"
+  ],
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "",
+      "tags": [
+        "hypenow-flow"
+      ],
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false
+    }
   ],
   "panels": [
     {
       "id": 100,
       "type": "row",
-      "title": "비용",
+      "title": "① 비용 (Hiker 과금)",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -200,7 +213,7 @@
     {
       "id": 101,
       "type": "row",
-      "title": "외부 의존 실패",
+      "title": "② 외부 의존 실패 (Hiker·IG)",
       "collapsed": false,
       "gridPos": {
         "h": 1,
