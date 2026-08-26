@@ -70,6 +70,12 @@ public class BrandPostAssembler {
 	static final int WINDOW_DAYS = 365;
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
 	private static final int COMMENT_LIMIT = 45;
+	/**
+	 * 느린 조립 단계 분해 로그 임계(ms) — 08-25 posts 지연(6.4~12초, DB ~350ms 외 전부 앱 조립·매핑)
+	 * 분석에서 "어느 단계가 몇 초인지" 볼 표면이 전무했던 공백의 해소. 정상 요청은 수백 ms라 1초면
+	 * 평시 소음 없이 문제 요청만 잡는다.
+	 */
+	private static final long SLOW_ASSEMBLY_LOG_THRESHOLD_MS = 1_000;
 
 	private static final String CONTENT_TYPE_REELS = "REELS";
 	private static final String REELS = "reels";
@@ -169,8 +175,10 @@ public class BrandPostAssembler {
 	 */
 	public List<BrandPostResponse> assembleBrandPosts(long userId, BrandAccountRow account, boolean withComments,
 			BrandPostScope scope, boolean capToCoverage, String viewerAccountType) {
+		long startNanos = System.nanoTime();
 		List<BrandTaggedPostRow> allPosts = brandReadRepository.findBrandPostsInWindow(account.id(), windowCutoff(),
 				scope == BrandPostScope.ENRICHED_ONLY);
+		long postsNanos = System.nanoTime();
 		// 커버리지 클램프(수집 상한 v2 §7-1, 2026-08-20 사용자 결정 — 성과 대시보드는 실수집 범위만
 		// 집계한다). 기준은 coveredUntil의 KST 달력일·경계일 포함 — covered 버킷 판정과 같은 규칙이라
 		// covered=true 버킷의 게시물이 집계에서 빠지는 불일치가 없다. direct 등록 행은 상한 밖(§7-3 —
@@ -200,25 +208,51 @@ public class BrandPostAssembler {
 
 		Set<String> codes = posts.stream().map(BrandTaggedPostRow::shortCode)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
+		long filterNanos = System.nanoTime();
 		Map<String, BrandPostMetaRow> metaByCode = brandReadRepository.findPostMeta(codes).stream()
 				.collect(Collectors.toMap(BrandPostMetaRow::shortCode, Function.identity(), (a, b) -> a));
+		long metaNanos = System.nanoTime();
 		Map<String, List<BrandSnapshotRow>> snapshotsByCode = brandReadRepository.findSnapshots(codes).stream()
 				.collect(Collectors.groupingBy(BrandSnapshotRow::shortCode));
+		long snapshotsNanos = System.nanoTime();
 		Map<String, List<BrandCommentRow>> commentsByCode = !withComments ? Map.of()
 				: brandReadRepository.findComments(codes, COMMENT_LIMIT).stream()
 						.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
+		long commentsNanos = System.nanoTime();
 		Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
+		long authorsNanos = System.nanoTime();
 		Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), codes);
 		// 토글이 꺼져 있으면 조회 자체를 생략한다(드라이런 중 불필요한 조회 방지).
 		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
+		long campaignsNanos = System.nanoTime();
 
-		return posts.stream()
+		List<BrandPostResponse> result = posts.stream()
 				.map(p -> brandPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
 						snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
 						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
 						campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure, seededUsernames,
 						ownedShortCodes.contains(p.shortCode()), viewerAccountType))
 				.toList();
+		long endNanos = System.nanoTime();
+
+		// 느린 조립 단계 분해 로그(08-26 — posts 9초 지연 분석 후속) — 요청 추적 대시보드의 워터폴
+		// 패널이 이 한 줄을 request_id로 파싱한다. 임계 미만 요청은 로그 0줄(평시 소음 없음). 여기서 재는
+		// 건 조립까지다 — JSON 직렬화·gzip·전송은 이 뒤(메시지 컨버터·톰캣)라 caddy duration과의 차로
+		// 근사한다(대시보드 패널 설명 참조). key=value 꼬리 형식·키 이름은 대시보드 정규식과 계약이다.
+		long totalMs = (endNanos - startNanos) / 1_000_000;
+		if (totalMs >= SLOW_ASSEMBLY_LOG_THRESHOLD_MS) {
+			int commentRows = commentsByCode.values().stream().mapToInt(List::size).sum();
+			int snapshotRows = snapshotsByCode.values().stream().mapToInt(List::size).sum();
+			log.info("브랜드 게시물 조립 느림 brand_id={} post_rows={} snapshot_rows={} comment_rows={} "
+					+ "posts_ms={} filter_ms={} meta_ms={} snapshots_ms={} comments_ms={} authors_ms={} "
+					+ "campaigns_ms={} assemble_ms={} total_ms={}",
+					account.id(), posts.size(), snapshotRows, commentRows,
+					(postsNanos - startNanos) / 1_000_000, (filterNanos - postsNanos) / 1_000_000,
+					(metaNanos - filterNanos) / 1_000_000, (snapshotsNanos - metaNanos) / 1_000_000,
+					(commentsNanos - snapshotsNanos) / 1_000_000, (authorsNanos - commentsNanos) / 1_000_000,
+					(campaignsNanos - authorsNanos) / 1_000_000, (endNanos - campaignsNanos) / 1_000_000, totalMs);
+		}
+		return result;
 	}
 
 	/**

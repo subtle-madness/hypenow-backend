@@ -322,6 +322,163 @@
       ]
     },
     {
+      "id": 5,
+      "type": "bargauge",
+      "title": "단계 분해 — 느린 브랜드 게시물 조립 (>1s)",
+      "description": "이 요청이 브랜드 게시물 조립(assembleBrandPosts)에서 단계별로 몇 ms를 썼는지 — was의 \"브랜드 게시물 조립 느림\" 구조화 로그 1줄(임계 1초 이상만 기록)을 request_id로 파싱한다. 08-25 posts 9초 지연 분석의 계측 공백 해소: DB 쿼리 합계는 ~350ms뿐이고 지분 대부분이 JDBC 행 매핑(댓글 최대)·조립이었다. **여기 합계(total_ms)와 엣지 duration의 차이 ≈ JSON 직렬화 + gzip + 전송**(메시지 컨버터·톰캣 구간이라 미계측 — 전체 요청 테이블의 duration과 뺄셈으로 근사). 패널이 비면 이 요청은 조립 1초 미만(로그 미기록)이거나 브랜드 posts 요청이 아닌 것. 키 이름(posts_ms 등)은 BrandPostAssembler 로그와 정규식 계약.",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "느린 조립 로그 없음 (1초 미만이거나 대상 요청 아님)",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*_ms$/",
+          "values": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "instant",
+          "instant": true,
+          "maxLines": 5,
+          "expr": "{service=\"was\"} |= `[$request_id]` |= `브랜드 게시물 조립 느림` | regexp `post_rows=(?P<post_rows>\\d+) snapshot_rows=(?P<snapshot_rows>\\d+) comment_rows=(?P<comment_rows>\\d+) posts_ms=(?P<posts_ms>\\d+) filter_ms=(?P<filter_ms>\\d+) meta_ms=(?P<meta_ms>\\d+) snapshots_ms=(?P<snapshots_ms>\\d+) comments_ms=(?P<comments_ms>\\d+) authors_ms=(?P<authors_ms>\\d+) campaigns_ms=(?P<campaigns_ms>\\d+) assemble_ms=(?P<assemble_ms>\\d+) total_ms=(?P<total_ms>\\d+)`"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "posts_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "filter_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "meta_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "snapshots_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "comments_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "authors_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "campaigns_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "assemble_ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "total_ms",
+                "destinationType": "number"
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "labels": true,
+              "id": true,
+              "tsNs": true,
+              "Time": true,
+              "service": true,
+              "container": true,
+              "level": true,
+              "filename": true,
+              "labelTypes": true,
+              "detected_level": true,
+              "service_name": true,
+              "brand_id": true,
+              "post_rows": true,
+              "snapshot_rows": true,
+              "comment_rows": true
+            },
+            "renameByName": {
+              "posts_ms": "① 윈도우 조회",
+              "filter_ms": "② 클램프·필터",
+              "meta_ms": "③ 메타 조회",
+              "snapshots_ms": "④ 스냅샷 조회",
+              "comments_ms": "⑤ 댓글 조회(매핑 최대 지분)",
+              "authors_ms": "⑥ 작성자 해석",
+              "campaigns_ms": "⑦ 캠페인·시딩",
+              "assemble_ms": "⑧ 조립",
+              "total_ms": "합계 (조립까지 — 직렬화·gzip 제외)"
+            }
+          }
+        }
+      ]
+    },
+    {
       "id": 2,
       "type": "logs",
       "title": "요청 로그 (was·monitoring 통합, 시간 오름차순)",
@@ -330,7 +487,7 @@
         "h": 18,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 33
       },
       "datasource": {
         "type": "loki",
