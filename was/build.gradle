@@ -26,6 +26,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+	// 느린 요청 단계 분해(2026-08-27) — *Repository 빈 자동 타이밍(RepositoryTimingAspect).
+	// Boot 4는 starter-aop가 없다(스타터 재편) — aspectjweaver가 클래스패스에 있으면 AOP 자동구성이 켜진다.
+	implementation 'org.aspectj:aspectjweaver'
 	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	// Boot 4는 자동구성이 모듈로 분리 — spring-session-jdbc 단독으론 자동구성이 없어 starter를 쓴다
