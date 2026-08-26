@@ -10,7 +10,9 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: hypenow-registrations
-    folder: HypeNow
+    # 폴더는 운영 — 08-26 개편으로 HypeNow 폴더가 퇴역했는데 이 규칙이 folder: HypeNow로 남아
+    # 빈 폴더를 계속 되살렸다(폴더 삭제 400 folder.not-empty). 알림 규칙도 새 2폴더 체계를 따른다.
+    folder: 운영
     interval: 5m
     rules:
       - uid: incomplete-registration-30m
@@ -20,7 +22,7 @@ groups:
         noDataState: OK
         execErrState: Error
         annotations:
-          summary: "completed_at IS NULL 상태로 30분 넘게 남아있는 등록이 있습니다. 대시보드 '미완료 등록' 패널 확인."
+          summary: "completed_at IS NULL 상태로 30분 넘게 남아있는 등록이 있습니다. [흐름] 경쟁사 모니터링의 '처리 중 멈춘 등록' 패널 확인."
         labels:
           severity: warning
         data:
