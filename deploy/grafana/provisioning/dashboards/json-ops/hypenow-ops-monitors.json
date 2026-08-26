@@ -1,0 +1,1108 @@
+{
+  "uid": "hypenow-ops-monitors",
+  "title": "운영 / 모니터링",
+  "description": "주기 작업이 제때 돌고 있나 + 알람 현황. 잡 타일은 담당 모듈을 제목에 명시 — 모듈 필터와 무관.",
+  "tags": [
+    "hypenow",
+    "hypenow-ops"
+  ],
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "editable": true,
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "hypenow-ops"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "title": "",
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "module",
+        "label": "모듈",
+        "type": "custom",
+        "query": "crawler,analytics,was,monitoring",
+        "current": {
+          "text": "monitoring",
+          "value": "monitoring",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "crawler",
+            "value": "crawler",
+            "selected": false
+          },
+          {
+            "text": "analytics",
+            "value": "analytics",
+            "selected": false
+          },
+          {
+            "text": "was",
+            "value": "was",
+            "selected": false
+          },
+          {
+            "text": "monitoring",
+            "value": "monitoring",
+            "selected": true
+          }
+        ],
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "알람",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "alertlist",
+      "title": "울리는 중·대기 알람",
+      "datasource": null,
+      "options": {
+        "viewMode": "list",
+        "groupMode": "default",
+        "maxItems": 20,
+        "sortOrder": 1,
+        "alertName": "",
+        "dashboardTitle": "",
+        "stateFilter": {
+          "firing": true,
+          "pending": true,
+          "noData": false,
+          "normal": false,
+          "error": true
+        },
+        "folder": null
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "알림 발송 실패",
+      "description": "최근 24시간 email_status='FAILED' 알림 건수. 1건이라도 있으면 유저에게 메일이 안 나가고 있다. 클릭 → 모니터링.",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "links": [
+        {
+          "title": "[흐름] 경쟁사 모니터링으로 이동",
+          "url": "/d/hypenow-flow-competitor"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "[흐름] 경쟁사 모니터링으로 이동",
+              "url": "/d/hypenow-flow-competitor"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM alarm_event WHERE email_status = 'FAILED' AND occurred_at > now() - interval '24 hours'"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "row",
+      "title": "잡·크론 신선도",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "일일 수집 신선도 (monitoring)",
+      "description": "활성 브랜드의 마지막 일일 수집 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "h",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "경쟁사 스윕 신선도 (monitoring)",
+      "description": "마지막 성공 스윕(sweep_run.ok)으로부터 경과 시간. 스윕은 매일 새벽 1회라 26시간을 넘으면 어젯밤 스윕이 안 돈 것이다. 클릭 → 모니터링.",
+      "gridPos": {
+        "x": 6,
+        "y": 10,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "links": [
+        {
+          "title": "[흐름] 경쟁사 모니터링으로 이동",
+          "url": "/d/hypenow-flow-competitor"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "[흐름] 경쟁사 모니터링으로 이동",
+              "url": "/d/hypenow-flow-competitor"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "h",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(started_at)))/3600 AS value FROM sweep_run WHERE ok"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "미러 신선도 (analytics)",
+      "description": "landing_stats.updated_at 기준 미러 경과 시간(대용 지표 — analysis DB에 미러 실행 이력이 없다, 설계 §3). 26시간 초과면 랭킹이 어제 것이다. 클릭 → 탐색.",
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "links": [
+        {
+          "title": "[흐름] 콘텐츠 파이프라인으로 이동",
+          "url": "/d/hypenow-flow-content"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "[흐름] 콘텐츠 파이프라인으로 이동",
+              "url": "/d/hypenow-flow-content"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "h",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 26
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(updated_at)))/3600 AS value FROM landing_stats"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "멈춘 등록 (crawler)",
+      "description": "30분 넘게 완료되지 않은 모니터링 등록 건수(기존 알림과 같은 30분 기준). 1건이라도 있으면 유저 등록이 걸린 것이다. 클릭 → 모니터링.",
+      "gridPos": {
+        "x": 18,
+        "y": 10,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-analysis-pg"
+      },
+      "links": [
+        {
+          "title": "[흐름] 경쟁사 모니터링으로 이동",
+          "url": "/d/hypenow-flow-competitor"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "[흐름] 경쟁사 모니터링으로 이동",
+              "url": "/d/hypenow-flow-competitor"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-analysis-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS value FROM app.monitoring_registrations WHERE completed_at IS NULL AND requested_at < now() - interval '30 minutes'"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "오늘 처리량",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "오늘 수집 성공 (monitoring)",
+      "description": "오늘(KST) 일일 수집이 성공한 브랜드 수 / 활성 브랜드 수. 실패 브랜드는 last_swept_on이 갱신되지 않아 차이로 드러난다.",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT count(*) FILTER (WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date) AS \"성공\", count(*) FILTER (WHERE closed_at IS NULL) AS \"활성 전체\" FROM brand_account"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "오늘 수집 소요 (monitoring)",
+      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
+      "gridPos": {
+        "x": 6,
+        "y": 15,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "오늘 Hiker 콜 (monitoring)",
+      "description": "오늘(KST 달력일) 브랜드+타깃 Hiker 콜 합계. 0이면 스윕 불발, 3,300 이상이면 과금 폭주(7일 평균 ~1,650의 2배)다. called_on은 KST가 정본이라 current_date가 아니라 (now() AT TIME ZONE 'Asia/Seoul')::date로 비교한다. 클릭 → 모니터링.",
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "links": [
+        {
+          "title": "[흐름] 비용·외부 의존으로 이동",
+          "url": "/d/hypenow-flow-cost"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "[흐름] 비용·외부 의존으로 이동",
+              "url": "/d/hypenow-flow-cost"
+            }
+          ],
+          "unit": "locale",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "0 — 스윕 불발?",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 3300
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT coalesce((SELECT sum(calls) FROM brand_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date), 0) + coalesce((SELECT sum(calls) FROM target_call_count WHERE called_on = (now() AT TIME ZONE 'Asia/Seoul')::date), 0) AS value"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "엣지 (caddy) — 유저 체감 축",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "상태코드별 요청 추이",
+      "description": "엣지 액세스 로그 기준 — was 메트릭과 달리 유저에게 실제로 나간 응답이다.",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "5.."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (count_over_time({service=\"caddy-access\"} | json status=\"status\" [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "엣지 응답 p95 (실값·상한 없음)",
+      "description": "액세스 로그 duration의 p95 — 히스토그램 버킷 포화가 없어 96s면 96s로 나온다. was p95(메트릭 탭)와의 차이가 크면 전송·직렬화 구간이 병목.",
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "p95",
+          "expr": "quantile_over_time(0.95, {service=\"caddy-access\"} | json duration=\"duration\" | unwrap duration [$__auto])"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "느린 응답 (10s 초과)",
+      "description": "10초 넘게 걸린 응답 건수 — 에러 코드 없이 \"200 흘리다 클라이언트 abort\"로 끝나는 posts류 장애를 잡는 신호. 평시 0이 정상.",
+      "gridPos": {
+        "x": 16,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "10s 초과",
+          "expr": "sum(count_over_time({service=\"caddy-access\"} | json duration=\"duration\" | duration > 10 [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "느린 요청 Top 15 (10s 초과, uri별)",
+      "description": "어느 엔드포인트가 유저를 기다리게 하는지. path는 쿼리스트링 앞까지만 추출(정규식 스테이지 — label_format 템플릿은 이스케이프 문제로 불가).",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "topk(15, sum by (method, path) (count_over_time({service=\"caddy-access\"} | json duration=\"duration\", method=\"request.method\" | duration > 10 | regexp `\"uri\":\"(?P<path>[^\"?]+)` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "엣지 5xx",
+      "description": "최근 1시간 caddy 엣지 5xx 건수(액세스 로그 → Loki, 2026-08-24 스펙). 왼쪽 'API 5xx'(앱 계층)가 0인데 여기만 뜨면 배포 순단 502·업스트림 다운 — 요청이 was까지 못 간 실패다. 평시 0건이 정상이라 임계 1.",
+      "gridPos": {
+        "x": 18,
+        "y": 29,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "links": [
+        {
+          "title": "운영/인프라로 이동",
+          "url": "/d/hypenow-ops-infra"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "links": [
+            {
+              "title": "운영/인프라로 이동",
+              "url": "/d/hypenow-ops-infra"
+            }
+          ],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "instant",
+          "legendFormat": "1h 엣지 5xx",
+          "expr": "sum(count_over_time({service=\"caddy-access\", level=\"ERROR\"}[1h])) or vector(0)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,390 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "panels": [
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "요청 추이 (상태코드별, 엣지 기준)",
+      "description": "엣지(caddy) 액세스 로그 기준 시간대별 요청 수를 상태코드별로 쌓아 본다 — 아래 \"최근 요청\" 테이블과 같은 소스·같은 필터(/health 제외). 특정 시각의 급증·5xx 물결을 먼저 눈으로 잡고, 그 구간을 드래그해 시간창을 좁힌 뒤 테이블에서 개별 요청(request_id)으로 내려간다. 4xx 물결은 대부분 스캐너(.env 등 404·401)라 놀랄 일 아님 — path를 테이블에서 확인.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "기간 내 요청 없음",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^2../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^3../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^4../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^5../"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "range",
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (count_over_time({service=\"caddy-access\"} | json status=\"status\" | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` [$__auto]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "최근 요청 (전체, 엣지 기준)",
+      "description": "엣지(caddy) 액세스 로그 기반 — 응답 헤더 X-Request-Id로 앱 요청 ID를 붙였다. 에러가 없어도 모든 요청이 여기 잡히므로, request_id 셀을 클릭하면 그 요청 추적으로 바로 이동한다. (유저 식별 컬럼은 없다 — caddy user_id는 basic auth 전용이라 JWT 서비스에선 항상 빈 값, 앱이 X-User-Id 응답 헤더를 내면 추가 가능. /health 헬스체크는 소음이라 제외. 최근 200건.)",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "maxLines": 200,
+          "expr": "{service=\"caddy-access\"} | json method=\"request.method\", status=\"status\", duration=\"duration\", request_id=`resp_headers[\"X-Request-Id\"][0]` | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` | label_format duration=`{{ printf \"%.2f\" (float64 .duration) }}`"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "keepTime": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "labels": true,
+              "id": true,
+              "tsNs": true,
+              "service": true,
+              "container": true,
+              "level": true,
+              "filename": true,
+              "labelTypes": true,
+              "detected_level": true,
+              "service_name": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "method": 1,
+              "path": 2,
+              "status": 3,
+              "duration": 4,
+              "request_id": 5
+            },
+            "renameByName": {
+              "duration": "duration(s)"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "request_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "이 요청 추적하기",
+                    "url": "/d/hypenow-request-trace/request-trace?var-request_id=${__data.fields.request_id}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": []
+      }
+    },
+    {
+      "id": 1,
+      "type": "table",
+      "title": "최근 에러 요청 (진입점)",
+      "description": "시간 범위 안에서 ERROR 로그를 남긴 requestId 목록(요청별 에러 줄 수, 상위 50). request_id 셀을 클릭하면 아래 로그 패널이 그 요청으로 필터된다. 정규식은 correlation 슬롯 앵커(대괄호 그룹 바로 뒤에 로거명과 ' : ')라 [모듈명]·[스레드명] 대괄호와 오인 매칭이 없고, requestId 없는 요청 밖 에러(빈 [])는 제외된다. **로컬 하니스는 Loki 스텁이라 이 대시보드 전체가 에러로 보이는 게 정상**(dev README '운영과 다른 점') — 검증은 운영에서.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "request_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "이 요청의 로그 보기",
+                    "url": "/d/hypenow-request-trace/request-trace?var-request_id=${__data.fields.request_id}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "에러 줄 수",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "에러 줄 수"
+            },
+            "indexByName": {
+              "request_id": 0,
+              "service": 1,
+              "에러 줄 수": 2
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "instant",
+          "instant": true,
+          "expr": "topk(50, sum by (request_id, service) (count_over_time({service=~\"was|monitoring\", level=\"ERROR\"} | regexp `\\] \\[(?P<request_id>[A-Za-z0-9_-]{1,64})\\] \\S+\\s+: ` | request_id != `` [$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "요청 로그 (was·monitoring 통합, 시간 오름차순)",
+      "description": "상단 request_id 변수의 요청에 속한 두 모듈 로그를 시간순으로 보여준다 — 줄 간 타임스탬프 간격이 곧 구간 소요다(등록: was 접수 → monitoring 수신 → 프로필 콜 → 저장 → 백필 제출). 대괄호 포함 매칭([id])이라 메시지 본문의 우연한 8자와 안 섞인다. ID는 위 에러 테이블 클릭, 응답 X-Request-Id 헤더, 또는 로그 라인에서 복사.",
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Ascending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "range",
+          "expr": "{service=~\"was|monitoring\"} |= `[$request_id]`"
+        }
+      ]
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": [
+    "hypenow",
+    "request-trace"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "request_id",
+        "label": "요청 ID",
+        "description": "추적할 요청의 8자 ID(또는 X-Request-Id로 넘긴 값). 기본값 ?는 어떤 ID와도 매칭되지 않는다 — 입력 전 빈 화면이 의도. 빈 값으로 두면 요청 밖 로그([])만 나오니 지우지 말 것.",
+        "type": "textbox",
+        "query": "?",
+        "current": {
+          "text": "?",
+          "value": "?"
+        },
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timezone": "Asia/Seoul",
+  "title": "요청 추적",
+  "uid": "hypenow-request-trace"
+}
