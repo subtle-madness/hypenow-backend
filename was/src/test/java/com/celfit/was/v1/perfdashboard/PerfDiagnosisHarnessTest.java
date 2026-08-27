@@ -69,13 +69,19 @@ class PerfDiagnosisHarnessTest {
 		for (int run = 1; run <= 2; run++) {
 			System.out.println("===== 본측정 " + run + " =====");
 			time("assemble 전체(댓글 포함 — 단건 조회 경로)", () -> assembler.assemble(USER_ID));
-			// 목록·비교는 2단 조립(2026-08-27) — 1단(index)이 요청당 고정비, 2단(hydratePage)이
+			// [구경로 기준선] 2026-08-27 이전 목록이 쓰던 1단 전량 조립. 신경로 수치와 같은 실행·같은
+			// 데이터에서 나란히 재야 "전량 경로가 회귀했나"에 답할 수 있어 하니스에 상주시킨다.
+			var slim = time("[구경로] assembleSlim 전량(2단 전환 전 목록 경로)",
+					() -> assembler.assembleSlim(USER_ID));
+			System.out.println("   콘텐츠 = " + slim.contents().size() + "건");
+			// [신경로] 목록·비교는 2단 조립(2026-08-27) — 1단(index)이 요청당 고정비, 2단(hydratePage)이
 			// 페이지 크기에 비례하는 변동비다. 전량·페이지 두 케이스를 나란히 재는 것이 그 계약의 계측이다.
-			var index = time("index(1단 — 경량 ref 인덱스)", () -> assembler.index(USER_ID));
+			var index = time("[신경로] index(1단 — 경량 ref 인덱스)", () -> assembler.index(USER_ID));
 			System.out.println("   ref = " + index.refs().size() + "건");
-			time("hydratePage 전량(페이지 파라미터 생략 응답)", () -> assembler.hydratePage(index, index.refs()));
+			time("[신경로] hydratePage 전량(페이지 파라미터 생략 응답 — assembleSlim과 비교 대상)",
+					() -> assembler.hydratePage(index, index.refs()));
 			List<PerformanceContentAssembler.DashboardRef> firstPage = index.refs().stream().limit(20).toList();
-			time("hydratePage 20건(페이지 모드 응답)", () -> assembler.hydratePage(index, firstPage));
+			time("[신경로] hydratePage 20건(페이지 모드 응답)", () -> assembler.hydratePage(index, firstPage));
 		}
 
 		System.out.println("===== 구간별(assemble 내부 순서 그대로) =====");
@@ -102,9 +108,8 @@ class PerfDiagnosisHarnessTest {
 		}
 
 		System.out.println("===== assembleBrandPosts 내부 쿼리별(최대 브랜드 1개로 분해) =====");
-		// BrandPostAssembler.windowCutoff()와 같은 식(패키지 밖이라 재계산) — KST 오늘−365일 자정.
-		var cutoff = java.time.LocalDate.now(com.celfit.was.v1.common.KstTimestamps.KST).minusDays(365)
-				.atStartOfDay(com.celfit.was.v1.common.KstTimestamps.KST).toOffsetDateTime();
+		// 창 정책은 조립 코드와 같은 정본을 쓴다 — 여기서 식을 복사하면 창이 이원화된다.
+		var cutoff = BrandPostAssembler.windowCutoff();
 		BrandLinkRow biggest = links.get(0);
 		long biggestCount = -1;
 		for (BrandLinkRow link : links) {
