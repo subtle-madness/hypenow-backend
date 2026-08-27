@@ -1097,6 +1097,53 @@ class V1PerformanceDashboardControllerTest {
 	}
 
 	@Test
+	void growth_한쪽만_지정해도_상한은_유효_범위로_판정된다() throws Exception {
+		// 사전 판정(양쪽 지정)만 있으면 한쪽 생략이 상한을 통째로 우회한다 — 생략한 끝이 데이터
+		// 범위로 확정돼 rangeFrom=2026-08-05·rangeTo=9999-12-31, 약 290만 버킷이 만들어진다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&to=9999-12-31").with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		// 유효 범위를 알려면 인덱스가 필요하다 — 이 판정만은 index() 뒤다(딱 1회, 그 뒤로 진행 없음).
+		then(assembler).should().index(7L);
+		then(assembler).should(never()).hydratePage(any(), anyList());
+	}
+
+	@Test
+	void growth_한쪽만_지정한_정상_범위는_반대끝이_데이터로_폴백된다() throws Exception {
+		// 재판정이 정상 조회까지 막지 않는지 — from만 주면 to는 데이터 최대 업로드일이다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "glowdeep_92", "2026-08-07", "sponsored", "12", 1000L, 100L, 10L, 3L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-08-05").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.points[*].start")
+						.value(Matchers.contains("2026-08-05", "2026-08-06", "2026-08-07")))
+				.andExpect(jsonPath("$.data.points[*].contentCount").value(Matchers.contains(1, 0, 1)));
+	}
+
+	@Test
+	void growth_양쪽_생략도_데이터_범위가_넓으면_400이다() throws Exception {
+		// 파라미터가 하나도 없어도 day 버킷이면 수년치 레거시 데이터만으로 상한을 넘는다.
+		// 400 메시지가 granularity 상향을 안내하므로 사용자가 스스로 빠져나올 수 있다(의도된 동작).
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2019-01-01", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 100L, 10L, 3L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day").with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		// 같은 데이터·같은 파라미터라도 month면 통과한다(안내대로 빠져나갈 길이 실제로 있다).
+		mockMvc.perform(get(GROWTH).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.points[0].start").value("2019-01-01"));
+	}
+
+	@Test
 	void growth_계정_축은_연결_브랜드고_accountIds가_있으면_그_순서다() throws Exception {
 		// 15는 경쟁사 — 미지정 기본값(경쟁사 제외)에서는 축에서도 빠진다.
 		givenIndexedRefs(Set.of("15"), List.of("15", "12"),

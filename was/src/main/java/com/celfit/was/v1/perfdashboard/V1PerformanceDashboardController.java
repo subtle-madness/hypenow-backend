@@ -16,6 +16,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -354,9 +355,18 @@ public class V1PerformanceDashboardController {
 	 * 계정도 빈 시리즈로 남아 차트에서 계정이 사라지지 않는다. keySet 순회 순서는 조립 경로에 따라
 	 * 흔들릴 수 있어 <b>브랜드 id 숫자 오름차순으로 결정화</b>한다(같은 요청이 같은 축을 준다).
 	 *
-	 * <p><b>버킷 수 상한 {@value #MAX_GROWTH_BUCKETS}</b> — 구간을 지정한 요청만 판정한다. 생략하면
-	 * 범위가 유저 데이터의 최소~최대 업로드일이라 유계이고(추적 대상이 유한하다), 상한을 걸면 정상
-	 * 조회가 이유 없이 막힌다. 계산은 버킷 시작일 사이의 걸음 수라 루프 없이 정확하다.
+	 * <p><b>버킷 수 상한 {@value #MAX_GROWTH_BUCKETS}</b> — <b>집계에 실제로 쓰이는 유효 범위</b>로
+	 * 판정한다(넘으면 400). 판정은 두 번이다:
+	 * <ol>
+	 *   <li>양쪽을 지정한 요청은 {@code index()} <b>앞에서</b> 먼저 걸러진다(DB를 건드리지 않는 빠른 400).</li>
+	 *   <li>한쪽이라도 생략한 요청은 반대쪽 끝이 <b>데이터 범위</b>(필터된 ref의 최소·최대 업로드일)로
+	 *       확정돼야 범위를 알 수 있으므로, ref 필터 후 집계기와 같은 규칙으로 유효 범위를 산출해
+	 *       다시 판정한다. 이 재판정이 없으면 {@code ?granularity=day&to=9999-12-31} 한 방으로 수백만
+	 *       버킷 × (1 + 계정 수)개의 Point가 만들어진다 — 상한을 통째로 우회하는 구멍이었다.</li>
+	 * </ol>
+	 * 양쪽을 생략한 요청도 이 재판정을 받는다 — 수년치 레거시 데이터 + {@code granularity=day}면 막히고,
+	 * 400 메시지가 granularity 상향을 안내하므로 사용자가 스스로 빠져나올 수 있다(의도된 동작).
+	 * 계산은 버킷 시작일 사이의 걸음 수라 루프 없이 정확하다.
 	 */
 	@GetMapping("/growth")
 	public ApiResponse<PerformanceGrowthResponse> growth(
@@ -379,6 +389,7 @@ public class V1PerformanceDashboardController {
 		LocalDate fromDate = DashboardQueries.parseDate(from, "from");
 		LocalDate toDate = DashboardQueries.parseDate(to, "to");
 		// 값 공간 검증은 전부 인덱스 패스 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
+		// 버킷 상한은 여기서 "양쪽 지정" 요청만 걸러진다(나머지는 유효 범위 확정 후 재판정, 아래).
 		checkBucketBudget(bucket, fromDate, toDate);
 
 		PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
@@ -392,6 +403,11 @@ public class V1PerformanceDashboardController {
 						&& DashboardQueries.withinUploadWindow(r.uploadedOn(), fromDate, toDate))
 				.toList();
 
+		// 유효 범위 재판정 — 생략한 끝은 데이터 범위로 확정되므로 여기서만 버킷 수를 알 수 있다.
+		// 산출 규칙은 집계기와 같다(from/to 우선, 없으면 필터된 ref의 최소·최대 업로드일).
+		checkBucketBudget(bucket, fromDate != null ? fromDate : minUploadedOn(filtered),
+				toDate != null ? toDate : maxUploadedOn(filtered));
+
 		// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
 		List<String> accountAxis = accountIdsFilter != null ? List.copyOf(accountIdsFilter)
 				: index.brandsById().keySet().stream()
@@ -404,9 +420,13 @@ public class V1PerformanceDashboardController {
 	}
 
 	/**
-	 * 구간을 지정한 요청의 버킷 수 상한 — 넘으면 400이다. 상한이 없으면 {@code granularity=day}에
-	 * 수십 년 구간이 오는 것만으로 응답 Point가 수만 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가
-	 * 무너진다). 한쪽이라도 생략됐거나 뒤집힌 구간이면 판정하지 않는다(위 {@link #growth} javadoc).
+	 * 버킷 수 상한 판정 — 넘으면 400이다. 상한이 없으면 {@code granularity=day}에 수백 년 구간이 오는
+	 * 것만으로 응답 Point가 수백만 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가 무너진다).
+	 *
+	 * <p>인자는 <b>확정된 유효 범위</b>여야 한다 — 요청 파라미터를 그대로 넘기는 호출(사전 판정)은 양쪽을
+	 * 지정한 요청만 잡고, 나머지는 데이터 범위가 확정된 뒤 다시 불러야 한다(위 {@link #growth} javadoc).
+	 * 범위가 확정되지 않거나(둘 중 하나가 null — 유효 ref 0건) 뒤집힌 구간이면 버킷 자체가 없어
+	 * 판정할 것이 없다.
 	 */
 	private static void checkBucketBudget(Granularity granularity, LocalDate from, LocalDate to) {
 		if (from == null || to == null || from.isAfter(to)) {
@@ -422,6 +442,21 @@ public class V1PerformanceDashboardController {
 		if (buckets > MAX_GROWTH_BUCKETS) {
 			throw V1ApiException.validation("조회 구간이 너무 넓어요. 기간을 좁히거나 granularity를 높여 주세요.");
 		}
+	}
+
+	/**
+	 * 데이터 범위의 시작 — 업로드일 미상 ref는 집계기가 버리므로 여기서도 뺀다(같은 규칙이어야 재판정한
+	 * 버킷 수가 실제 생성 수와 일치한다). 유효 ref가 0건이면 null(범위 없음 = 빈 시리즈).
+	 */
+	private static LocalDate minUploadedOn(List<DashboardRef> refs) {
+		return refs.stream().map(DashboardRef::uploadedOn).filter(Objects::nonNull)
+				.min(Comparator.naturalOrder()).orElse(null);
+	}
+
+	/** 데이터 범위의 끝 — {@link #minUploadedOn}과 같은 규칙. */
+	private static LocalDate maxUploadedOn(List<DashboardRef> refs) {
+		return refs.stream().map(DashboardRef::uploadedOn).filter(Objects::nonNull)
+				.max(Comparator.naturalOrder()).orElse(null);
 	}
 
 	// ---------- meta ----------
