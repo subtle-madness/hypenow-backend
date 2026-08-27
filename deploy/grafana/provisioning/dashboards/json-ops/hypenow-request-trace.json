@@ -370,11 +370,9 @@
         "orientation": "horizontal",
         "showUnfilled": true,
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+          "values": true,
+          "calcs": [],
+          "fields": ""
         }
       },
       "targets": [
