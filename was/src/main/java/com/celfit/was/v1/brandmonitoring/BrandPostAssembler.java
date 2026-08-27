@@ -161,10 +161,27 @@ public class BrandPostAssembler {
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
 
-		// 노출 필터(등록자 전용 노출, 08-19 — filterVisibleToUser 동형) + shortcode 중복 방어.
+		// 해시태그 격리 보조 조회(2026-08-27 설계 §3, filterVisibleToUser 동형) — 격리 대상은 tagged
+		// 성분도 없고 이 유저 소유도 아닌 hashtag-only 행뿐이라, 그 후보가 하나도 없으면 조회 자체를
+		// 생략한다(exposeAdDisclosure 토글과 같은 관용구).
+		Set<String> hashtagOnlyCandidates = allRows.stream()
+				.filter(r -> r.tagDetectedAt() == null && r.hashtagDetectedAt() != null
+						&& !ownedShortCodes.contains(r.shortCode()))
+				.map(BrandReadRepository.BrandPostIndexRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> myTags = hashtagOnlyCandidates.isEmpty() ? Set.of()
+				: hashtagTagRepository.findByUserAndBrand(userId, account.id());
+		Map<String, Set<String>> matchedTagsByCode = hashtagOnlyCandidates.isEmpty() ? Map.of()
+				: brandReadRepository.findMatchedTags(account.id(), hashtagOnlyCandidates).stream()
+						.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
+								Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
+
+		// 노출 필터(등록자 전용 노출 08-19 + 해시태그 격리 2026-08-27 설계 §3 — isVisible 동형,
+		// filterVisibleToUser와 같은 판정 코어를 공유한다) + shortcode 중복 방어.
 		Map<String, BrandReadRepository.BrandPostIndexRow> poolByCode = new LinkedHashMap<>();
 		for (BrandReadRepository.BrandPostIndexRow row : allRows) {
-			if (row.tagDetectedAt() != null || ownedShortCodes.contains(row.shortCode())) {
+			if (isVisible(row.tagDetectedAt(), row.hashtagDetectedAt(), ownedShortCodes.contains(row.shortCode()),
+					row.shortCode(), myTags, matchedTagsByCode)) {
 				poolByCode.putIfAbsent(row.shortCode(), row);
 			}
 		}
@@ -190,7 +207,7 @@ public class BrandPostAssembler {
 		List<PostRef> refs = new ArrayList<>(poolByCode.size() + legacyByCode.size());
 		for (BrandReadRepository.BrandPostIndexRow row : poolByCode.values()) {
 			refs.add(new PostRef(row.shortCode(),
-					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
+					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), row.hashtagDetectedAt(),
 							ownedShortCodes.contains(row.shortCode())),
 					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
 					KstTimestamps.toKstDate(row.takenAt()),
@@ -401,16 +418,27 @@ public class BrandPostAssembler {
 
 	private static boolean visibleToUser(BrandTaggedPostRow post, Set<String> ownedShortCodes,
 			Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
-		if (post.tagDetectedAt() != null) {
+		return isVisible(post.tagDetectedAt(), post.hashtagDetectedAt(), ownedShortCodes.contains(post.shortCode()),
+				post.shortCode(), myTags, matchedTagsByCode);
+	}
+
+	/**
+	 * 노출 판정 코어(위 세 갈래 규칙의 단일 산지) — 풀 조립({@link #visibleToUser})과 인덱스 패스
+	 * ({@link #indexForBrand})가 행 타입만 다르고(각각 {@code BrandTaggedPostRow}·
+	 * {@code BrandPostIndexRow}) 판정 로직은 동형이라 여기 한 곳에서만 정의한다.
+	 */
+	private static boolean isVisible(OffsetDateTime tagDetectedAt, OffsetDateTime hashtagDetectedAt, boolean owned,
+			String shortCode, Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
+		if (tagDetectedAt != null) {
 			return true;
 		}
-		if (ownedShortCodes.contains(post.shortCode())) {
+		if (owned) {
 			return true;
 		}
-		if (post.hashtagDetectedAt() == null) {
+		if (hashtagDetectedAt == null) {
 			return false;   // 남이 등록한 direct-only
 		}
-		Set<String> matched = matchedTagsByCode.get(post.shortCode());
+		Set<String> matched = matchedTagsByCode.get(shortCode);
 		return matched != null && !Collections.disjoint(matched, myTags);
 	}
 
@@ -614,34 +642,31 @@ public class BrandPostAssembler {
 	 *   <li>그 외(성분이 hashtag뿐)는 "hashtag".</li>
 	 * </ol>
 	 *
-	 * <p>인덱스 패스({@link #indexForBrand})는 이 메서드가 아니라 {@link #resolveSource(OffsetDateTime,
-	 * OffsetDateTime, boolean)} 2인자 코어를 쓴다 — 인덱스 프로젝션({@code BrandPostIndexRow})에
-	 * hashtag_detected_at이 아직 없어 3원화가 반영되지 않는다(2026-08-27 목록 타임아웃 해소 설계와
-	 * 별개 갭 — 해시태그 격리 트랙 후속 과제).
+	 * <p>풀 조립·인덱스 패스({@link #indexForBrand}) 둘 다 이 우선순위를 아래 4인자 코어 하나로
+	 * 공유한다 — 이 메서드는 {@code BrandTaggedPostRow} 필드를 코어에 그대로 위임하는 얇은 오버로드다.
 	 */
 	private static String resolveSource(BrandTaggedPostRow post, boolean registeredByUser) {
-		if (post.directRegisteredAt() != null && registeredByUser) {
-			return SOURCE_DIRECT;
-		}
-		if (post.tagDetectedAt() != null) {
-			return SOURCE_TAGGED;
-		}
-		if (post.directRegisteredAt() != null) {
-			return post.hashtagDetectedAt() != null ? SOURCE_HASHTAG : SOURCE_DIRECT;
-		}
-		return SOURCE_HASHTAG;
+		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), post.hashtagDetectedAt(),
+				registeredByUser);
 	}
 
-	/** 판정 코어 — 인덱스 행({@link #indexForBrand})의 source 파생 전용(위 3원화 갭 참조). */
+	/**
+	 * source 파생 코어(2026-08-27 3원화 설계 §3, 위 우선순위 규칙의 단일 산지) — 풀 조립
+	 * ({@link #resolveSource(BrandTaggedPostRow, boolean)})과 인덱스 패스({@link #indexForBrand})가
+	 * 행 타입만 다르고 파생 로직은 동형이라 여기 한 곳에서만 정의한다.
+	 */
 	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
-			boolean registeredByUser) {
-		if (directRegisteredAt == null) {
-			return SOURCE_TAGGED;
-		}
-		if (tagDetectedAt == null) {
+			OffsetDateTime hashtagDetectedAt, boolean registeredByUser) {
+		if (directRegisteredAt != null && registeredByUser) {
 			return SOURCE_DIRECT;
 		}
-		return registeredByUser ? SOURCE_DIRECT : SOURCE_TAGGED;
+		if (tagDetectedAt != null) {
+			return SOURCE_TAGGED;
+		}
+		if (directRegisteredAt != null) {
+			return hashtagDetectedAt != null ? SOURCE_HASHTAG : SOURCE_DIRECT;
+		}
+		return SOURCE_HASHTAG;
 	}
 
 	/**

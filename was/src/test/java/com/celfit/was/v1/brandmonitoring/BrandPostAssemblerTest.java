@@ -157,6 +157,90 @@ class BrandPostAssemblerTest {
 		assertThat(index.refs()).extracting(BrandPostAssembler.PostRef::shortcode).containsExactly("TAG1");
 	}
 
+	// ---------- 인덱스 경로 hashtag 성분·격리(2026-08-27 목록 타임아웃 해소 갭 보완) ----------
+
+	/** hashtag-only 인덱스 행도 풀 조립(assembleBrandPosts)과 같은 규칙 — 내 태그와 겹치면 보인다. */
+	@Test
+	void 인덱스에서_내_태그와_겹치는_해시태그_전용_행은_hashtag로_보인다() {
+		var repository = mock(BrandReadRepository.class);
+		var hashtagTagRepository = mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("MINE", "2026-08-06T01:00:00Z", null, null, "2026-08-06T03:00:00Z", null, null)));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 42L)).willReturn(Set.of("끌리메"));
+		given(repository.findMatchedTags(eq(42L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("MINE", "끌리메")));
+
+		var index = newAssemblerWithTags(repository, hashtagTagRepository).indexForBrand(7L, accountRow(), false);
+
+		assertThat(index.refs()).singleElement().satisfies(ref -> {
+			assertThat(ref.shortcode()).isEqualTo("MINE");
+			assertThat(ref.source()).isEqualTo("hashtag");
+		});
+		assertThat(index.poolCodes()).containsExactly("MINE");
+	}
+
+	/** fail-closed(설계 §3) — 매칭 교집합이 없는 hashtag-only 행은 refs·poolCodes 양쪽에서 빠진다. */
+	@Test
+	void 인덱스에서_교집합_없는_해시태그_전용_행은_빠진다() {
+		var repository = mock(BrandReadRepository.class);
+		var hashtagTagRepository = mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("ORPHAN", "2026-08-06T01:00:00Z", null, null, "2026-08-06T03:00:00Z", null, null)));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 42L)).willReturn(Set.of("끌리메"));
+		given(repository.findMatchedTags(eq(42L), any())).willReturn(List.of());   // 매칭 기록 없음
+
+		var index = newAssemblerWithTags(repository, hashtagTagRepository).indexForBrand(7L, accountRow(), false);
+
+		assertThat(index.refs()).isEmpty();
+		assertThat(index.poolCodes()).isEmpty();
+	}
+
+	/**
+	 * tagged 성분이 있으면(겹침 행) 격리 필터 없이 전원 노출되고 source는 "tagged"다 — hashtag-only
+	 * 후보가 하나도 없으므로 태그 장부·매칭 태그 조회 자체가 생략된다(지연 조회 관용구).
+	 */
+	@Test
+	void 인덱스에서_tagged_겹침_행은_격리_조회_없이_tagged로_보인다() {
+		var repository = mock(BrandReadRepository.class);
+		var hashtagTagRepository = mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("BOTH", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null,
+						"2026-08-06T03:00:00Z", null, null)));
+
+		var index = newAssemblerWithTags(repository, hashtagTagRepository).indexForBrand(7L, accountRow(), false);
+
+		assertThat(index.refs()).singleElement().satisfies(ref -> {
+			assertThat(ref.shortcode()).isEqualTo("BOTH");
+			assertThat(ref.source()).isEqualTo("tagged");
+		});
+		verify(hashtagTagRepository, never()).findByUserAndBrand(anyLong(), anyLong());
+		verify(repository, never()).findMatchedTags(anyLong(), anyCollection());
+	}
+
+	/** 3성분 겹침(direct+hashtag) 행을 등록자 본인이 조회하면 등록자 관점이 이겨 source는 "direct"다. */
+	@Test
+	void 인덱스에서_direct_hashtag_겹침_행을_등록자가_보면_direct다() {
+		var repository = mock(BrandReadRepository.class);
+		var hashtagTagRepository = mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("MIX", "2026-08-06T01:00:00Z", null, "2026-08-07T02:00:00Z",
+						"2026-08-06T03:00:00Z", null, null)));
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of("MIX"));   // 내가 등록했다
+
+		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
+				directRepository, mock(TrackingItemAssembler.class), mock(MonitoringItemRepository.class),
+				hashtagTagRepository, false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		assertThat(index.refs()).singleElement().satisfies(ref -> {
+			assertThat(ref.shortcode()).isEqualTo("MIX");
+			assertThat(ref.source()).isEqualTo("direct");
+		});
+		// 소유 행은 hashtag-only 후보가 아니므로 격리 조회를 타지 않는다.
+		verify(hashtagTagRepository, never()).findByUserAndBrand(anyLong(), anyLong());
+	}
+
 	@Test
 	void 하이드레이트는_지정_코드만_조립하고_입력_순서를_지킨다() {
 		var repository = mock(BrandReadRepository.class);
@@ -1209,12 +1293,20 @@ class BrandPostAssemblerTest {
 		return row(code, "2026-08-06T02:00:00Z", takenAt, null);
 	}
 
-	/** 인덱스 행 빌더 — 판정 입력 6컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프). */
+	/** 인덱스 행 빌더 — 판정 입력 6컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프). hashtag 성분 없음 고정. */
 	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
 			String tagDetectedAt, String directRegisteredAt, Boolean paid, String caption) {
+		return indexRow(code, takenAt, tagDetectedAt, directRegisteredAt, null, paid, caption);
+	}
+
+	/** 인덱스 행 빌더(hashtag 성분 포함, 2026-08-27 해시태그 격리 인덱스 경로 보완). */
+	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
+			String tagDetectedAt, String directRegisteredAt, String hashtagDetectedAt, Boolean paid,
+			String caption) {
 		return new BrandReadRepository.BrandPostIndexRow(code, OffsetDateTime.parse(takenAt),
 				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
-				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption);
+				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt),
+				hashtagDetectedAt == null ? null : OffsetDateTime.parse(hashtagDetectedAt), paid, caption);
 	}
 
 	/** 범용 row 빌더 — tagDetectedAt·directRegisteredAt을 직접 지정해 source 파생을 검증한다. */

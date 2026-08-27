@@ -130,7 +130,7 @@ public class BrandReadRepository {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
 				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
-				       m.is_paid_partnership, m.caption
+				       t.hashtag_detected_at, m.is_paid_partnership, m.caption
 				FROM brand_tagged_post t
 				LEFT JOIN brand_post_meta m ON m.short_code = t.short_code
 				WHERE t.brand_id = :brandId
@@ -459,10 +459,13 @@ public class BrandReadRepository {
 	/**
 	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership·caption null은
 	 * "메타 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라
-	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt은 source 파생·노출 필터 입력이다.
+	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt·hashtagDetectedAt은 source 3원화·노출 필터
+	 * 입력이다(2026-08-27 해시태그 직접 수집 설계 §3 — {@code BrandTaggedPostRow}의 같은 세 필드와
+	 * 동형, {@code BrandPostAssembler.indexForBrand}가 소비한다).
 	 */
 	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
-			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption) {
+			OffsetDateTime directRegisteredAt, OffsetDateTime hashtagDetectedAt, Boolean isPaidPartnership,
+			String caption) {
 	}
 
 	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */
