@@ -531,7 +531,8 @@ public class BrandPostAssembler {
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
 		List<TrackingItemResponse.PostCommentResponse> comments = commentRows.stream()
 				.map(BrandPostAssembler::commentOf).filter(Objects::nonNull).toList();
-		String username = author != null ? author.username() : post.authorUsername();
+		// author 행이 있어도 username이 비어 있으면 열거 관측으로 폴백한다(동치 계약 — refOfPoolRow와 같은 폴백).
+		String username = author != null && author.username() != null ? author.username() : post.authorUsername();
 		String source = resolveSource(post, registeredByUser);
 		OffsetDateTime trackingStarted = post.directRegisteredAt() != null ? post.directRegisteredAt()
 				: post.firstSeenAt();

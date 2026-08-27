@@ -292,13 +292,14 @@ public class V1PerformanceDashboardController {
 	 * null로 접는다 — 0으로 두면 "좋아요가 없는 게시물"과 구분되지 않는다.
 	 */
 	private static Comparator<DashboardRef> comparator(String sortKey, boolean ascending) {
-		Comparator<DashboardRef> tie = Comparator
-				.comparing(DashboardRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
-				.thenComparing(DashboardRef::contentKey);
 		if (SORT_UPLOADED.equals(sortKey)) {
 			return Comparator.comparing(DashboardRef::uploadedOn, directional(ascending))
 					.thenComparing(DashboardRef::contentKey);
 		}
+		// 타이브레이크는 uploaded 분기가 자체 순서를 갖는 나머지 키에서만 쓴다.
+		Comparator<DashboardRef> tie = Comparator
+				.comparing(DashboardRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
+				.thenComparing(DashboardRef::contentKey);
 		Function<DashboardRef, Double> key = switch (sortKey) {
 			case SORT_VIEWS -> r -> r.latestViews() == null ? null : r.latestViews().doubleValue();
 			case SORT_LIKES -> r -> r.latestLikesHidden() || r.latestLikes() == null ? null
