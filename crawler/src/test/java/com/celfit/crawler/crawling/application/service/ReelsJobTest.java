@@ -109,7 +109,7 @@ class ReelsJobTest {
 
     @Test
     void 중지_요청이_있으면_방문하지_않는다() {
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(beautyTarget(1L, "a", "pk1")));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(beautyTarget(1L, "a", "pk1")));
         stopFlag.request(JobName.REELS);
 
         // 페처 없이도 방문 자체가 스킵되므로 예외·실패 카운트 없이 조기 종료된다
@@ -166,7 +166,7 @@ class ReelsJobTest {
     @Test
     void 뷰티_대상에_클립_1페이지를_수집하고_last_reels_at을_북키핑한다() {
         Influencer inf = beautyTarget(1L, "alice", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         Map<String, Object> page = clipsPage(List.of(clipsItem("R1", RECENT), clipsItem("R2", RECENT)));
 
         var s = job(List.of(clipsFetcher(Map.of("PK1", page)))).run(TriggerType.MANUAL);
@@ -208,7 +208,7 @@ class ReelsJobTest {
         when(tickingClock.getZone()).thenReturn(ZoneOffset.UTC);   // RevisitCutoff.boundary가 LocalDate.now(clock)에 씀
 
         Influencer inf = beautyTarget(1L, "alice", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         Map<String, Object> page = clipsPage(List.of(clipsItem("RT1", RECENT)));
 
         ReelsJob job = new ReelsJob(influencers, rawMediaPages,
@@ -232,29 +232,29 @@ class ReelsJobTest {
     void 대상_조회는_달력일_기준_경계와_배치_한도로_호출한다() {
         // NOW = 2026-07-15T00:00Z, 주기 7일 → 경계 = 오늘 자정 − 6일 = 2026-07-09 자정 (달력일 기준)
         when(settings.reelsBatchLimit()).thenReturn(3);
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of());
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
 
         job(List.of()).run(TriggerType.MANUAL);
 
         verify(influencers).findReelsTargets(
-                eq(Instant.parse("2026-07-09T00:00:00Z")), eq(false), eq(PageRequest.of(0, 3)));
+                eq(Instant.parse("2026-07-09T00:00:00Z")), eq(false), anyBoolean(), eq(PageRequest.of(0, 3)));
     }
 
     @Test
     void 대상_조회는_F앤B_파이프라인_토글을_그대로_전달한다() {
         // fnb.pipeline-enabled(스펙 2026-08-23 §4) — 잡은 토글 값을 판단하지 않고 선정 쿼리에 넘긴다.
         when(settings.fnbPipelineEnabled()).thenReturn(true);
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of());
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
 
         job(List.of()).run(TriggerType.MANUAL);
 
-        verify(influencers).findReelsTargets(any(), eq(true), any());
+        verify(influencers).findReelsTargets(any(), eq(true), anyBoolean(), any());
     }
 
     @Test
     void pk_없는_계정은_스킵하고_클립을_호출하지_않는다() {
         Influencer noPk = beautyTarget(1L, "no_pk_user", null);
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(noPk));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(noPk));
 
         var s = job(List.of(clipsFetcher(Map.of()))).run(TriggerType.MANUAL);  // 어떤 호출도 즉시 실패
 
@@ -268,7 +268,7 @@ class ReelsJobTest {
     void 방문_실패는_격리되고_다음_계정을_계속한다() {
         Influencer bad = beautyTarget(1L, "bad", "PK_BAD");
         Influencer good = beautyTarget(2L, "good", "PK_GOOD");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(bad, good));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(bad, good));
         UserMediaPageFetcher fetcher = new UserMediaPageFetcher() {
             @Override
             public RawSource source() {
@@ -293,7 +293,7 @@ class ReelsJobTest {
     @Test
     void 릴스가_없는_계정의_404는_수확_완료로_마킹해_재시도_루프를_막는다() {
         Influencer noClips = beautyTarget(1L, "no_clips_user", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(noClips));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(noClips));
         UserMediaPageFetcher fetcher = new UserMediaPageFetcher() {
             @Override
             public RawSource source() {
@@ -331,7 +331,7 @@ class ReelsJobTest {
                     }
                 });
         Influencer noClips = beautyTarget(1L, "no_clips_user", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(noClips));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(noClips));
         UserMediaPageFetcher fetcher = new UserMediaPageFetcher() {
             @Override
             public RawSource source() {
@@ -355,7 +355,7 @@ class ReelsJobTest {
     @Test
     void 이미_있는_DISCOVERY_행은_새로_만들지_않고_ENUMERATION으로_승격한다() {
         Influencer inf = beautyTarget(1L, "alice", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         Content discovered = new Content("R_DUP", com.celfit.crawler.content.domain.ContentType.REELS,
                 "alice", 1L, RECENT, RECENT, ContentOrigin.DISCOVERY);
         contentStore.put("R_DUP", discovered);
@@ -381,7 +381,7 @@ class ReelsJobTest {
         when(reelsSource.current()).thenReturn(ReelsSource.ACTOR);
         when(settings.reelsActorResultsLimit()).thenReturn(6);
         Influencer inf = beautyTarget(1L, "alice", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         List<Map<String, Object>> items = List.of(
                 actorItem("A1", "2026-07-10T00:00:00Z"), actorItem("A2", "2026-07-10T00:00:00Z"));
         when(executor.execute(eq(JobName.REELS), any(), isNull(), eq("alice"),
@@ -407,7 +407,7 @@ class ReelsJobTest {
         when(reelsSource.current()).thenReturn(ReelsSource.ACTOR);
         when(settings.reelsActorResultsLimit()).thenReturn(6);
         Influencer noPk = beautyTarget(1L, "no_pk_user", null);
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(noPk));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(noPk));
         when(executor.execute(eq(JobName.REELS), any(), isNull(), eq("no_pk_user"),
                 eq(Actors.DETAIL_REELS), anyMap()))
                 .thenReturn(new CrawlExecutor.Execution(runIdSeq.incrementAndGet(),
@@ -425,7 +425,7 @@ class ReelsJobTest {
         when(reelsSource.current()).thenReturn(ReelsSource.ACTOR);
         when(settings.reelsActorResultsLimit()).thenReturn(6);
         Influencer noClips = beautyTarget(1L, "no_clips_user", "PK1");
-        when(influencers.findReelsTargets(any(), anyBoolean(), any())).thenReturn(List.of(noClips));
+        when(influencers.findReelsTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(noClips));
         when(executor.execute(eq(JobName.REELS), any(), isNull(), eq("no_clips_user"),
                 eq(Actors.DETAIL_REELS), anyMap()))
                 .thenReturn(new CrawlExecutor.Execution(runIdSeq.incrementAndGet(), List.of()));
