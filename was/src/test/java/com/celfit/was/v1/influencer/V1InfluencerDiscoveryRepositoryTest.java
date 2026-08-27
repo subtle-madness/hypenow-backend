@@ -245,6 +245,8 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		// 다른 테스트 클래스의 DROP TABLE content_analyses(CASCADE 없음)가 의존성 오류로 깨진다
 		// (V2InfluencerReportRepositoryTest의 account_peer_stats·account_category_stats와 같은 이유).
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_share");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_sponsored_counts");
 	}
 
 	@Test
