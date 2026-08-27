@@ -10,6 +10,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
+import com.celfit.was.v1.brandmonitoring.BrandSponsorshipClassifier;
 import java.sql.Connection;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -332,20 +333,21 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				""").update();
 
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
-				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
+				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true,
+				BrandSponsorshipClassifier.postgresMarkerRegex());
 
 		assertThat(rows).hasSize(2);
-		BrandReadRepository.BrandPostIndexRow enriched = rows.stream()
-				.filter(r -> r.shortCode().equals("SHORT1")).findFirst().orElseThrow();
-		assertThat(enriched.caption()).isEqualTo("#협찬 후기");
+		BrandReadRepository.BrandPostIndexRow enriched = byCode(rows, "SHORT1");
+		assertThat(enriched.captionMarker()).isTrue();       // 캡션 원문 대신 SQL 마커 매치 결과
 		assertThat(enriched.isPaidPartnership()).isNull();   // null = 키 부재(판정 unknown) 보존
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
 		assertThat(enriched.takenAt()).isNotNull();
-		BrandReadRepository.BrandPostIndexRow noMeta = rows.stream()
-				.filter(r -> r.shortCode().equals("NOMETA")).findFirst().orElseThrow();
-		assertThat(noMeta.caption()).isNull();               // 메타 없음 → 판정 입력 null(unknown)
+		BrandReadRepository.BrandPostIndexRow noMeta = byCode(rows, "NOMETA");
+		assertThat(noMeta.captionMarker()).isFalse();        // 메타 없음 → 마커 매치 false(판정은 unknown)
 		assertThat(noMeta.isPaidPartnership()).isNull();
+		assertThat(noMeta.contentType()).isNull();
+		assertThat(noMeta.adVerdict()).isNull();
 	}
 
 	/** direct 등록 행은 창 밖이어도 인덱스에 포함된다 — findBrandPostsInWindow의 창 예외와 동형. */
@@ -360,11 +362,70 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				""").update();
 
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
-				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), false);
+				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), false,
+				BrandSponsorshipClassifier.postgresMarkerRegex());
 
 		assertThat(rows).hasSize(1);
 		assertThat(rows.get(0).isPaidPartnership()).isTrue();
 		assertThat(rows.get(0).directRegisteredAt()).isNotNull();
+	}
+
+	/**
+	 * 슬림 인덱스(2026-08-27 P0)는 캡션 원문을 전송하지 않는다 — 마커 매치는 SQL이 계산하고
+	 * (captionMarker), 필터·패싯 입력(contentType·adVerdict)과 작성자 판정 컬럼은 author_profile
+	 * 조인으로 함께 온다. 조인이 안 되는 행(author_ig_user_id null)은 author 컬럼이 전부 null이고
+	 * 원시 관측 username(rawAuthorUsername)만 남는다 — username 폴백 해소는 어셈블러 몫이다.
+	 */
+	@Test
+	void 인덱스는_캡션_대신_마커_매치와_작성자_판정_컬럼을_준다() {
+		long brandId = seedBrand("brand");
+		jdbc.sql("""
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
+				                               taken_at, comments_collected_count, enriched_at, tag_detected_at)
+				VALUES (:brandId, 'CODE1', 'author1', 'IG_1', '2026-08-01T12:00:00+09:00', 3, now(), now()),
+				       (:brandId, 'CODE2', 'noprofile', NULL, '2026-08-02T12:00:00+09:00', 0, now(), now())
+				""")
+				.param("brandId", brandId).update();
+		jdbc.sql("""
+				INSERT INTO brand_post_meta (short_code, username, content_type, uploaded_at, caption,
+				                             is_paid_partnership, ad_verdict, ad_verdict_source)
+				VALUES ('CODE1', 'author1', 'REELS', '2026-08-01', '#광고 후기', NULL, 'NOT_DISCLOSED', 'RULE'),
+				       ('CODE2', 'noprofile', 'FEED', '2026-08-02', '일상', NULL, NULL, NULL)
+				""").update();
+		jdbc.sql("""
+				INSERT INTO author_profile (ig_user_id, username, full_name, followers, profile_pic_url,
+				                            is_verified, fetched_at, image_object_path)
+				VALUES ('IG_1', 'author1', '작성자 1', 12500, 'http://cdn/a1.jpg', true, now(),
+				        'monitor-author/author1.jpg')
+				""").update();
+
+		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
+				brandId, OffsetDateTime.now().minusDays(365), true,
+				BrandSponsorshipClassifier.postgresMarkerRegex());
+
+		BrandReadRepository.BrandPostIndexRow ad = byCode(rows, "CODE1");
+		assertThat(ad.captionMarker()).isTrue();
+		assertThat(ad.contentType()).isEqualTo("REELS");
+		assertThat(ad.adVerdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(ad.authorUsername()).isEqualTo("author1");
+		assertThat(ad.authorFullName()).isEqualTo("작성자 1");
+		assertThat(ad.authorProfilePicUrl()).isEqualTo("http://cdn/a1.jpg");
+		assertThat(ad.authorImageObjectPath()).isEqualTo("monitor-author/author1.jpg");
+		assertThat(ad.authorFollowers()).isEqualTo(12500L);
+		assertThat(ad.rawAuthorUsername()).isEqualTo("author1");
+
+		BrandReadRepository.BrandPostIndexRow plain = byCode(rows, "CODE2");
+		assertThat(plain.captionMarker()).isFalse();
+		assertThat(plain.contentType()).isEqualTo("FEED");
+		assertThat(plain.adVerdict()).isNull();
+		assertThat(plain.authorUsername()).isNull();          // 프로필 미해결 — 폴백은 어셈블러 몫
+		assertThat(plain.authorFollowers()).isNull();
+		assertThat(plain.rawAuthorUsername()).isEqualTo("noprofile");
+	}
+
+	private static BrandReadRepository.BrandPostIndexRow byCode(
+			List<BrandReadRepository.BrandPostIndexRow> rows, String shortCode) {
+		return rows.stream().filter(r -> r.shortCode().equals(shortCode)).findFirst().orElseThrow();
 	}
 
 	/** 하이드레이트용 풀 행 배치 조회 — 브랜드+shortcode 스코프, 다른 브랜드 행은 섞이지 않는다. */
@@ -415,6 +476,59 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				.filter(r -> r.shortCode().equals("SHORT2")).findFirst().orElseThrow();
 		assertThat(feed.views()).isNull();
 		assertThat(feed.contentType()).isEqualTo("FEED");
+	}
+
+	/**
+	 * 최신 스냅샷 지표 프로젝션(2026-08-27 P0) — 게시물당 captured_on 최신 1행만, views뿐 아니라
+	 * likes·likesHidden·comments까지. 역순 삽입으로 물리 순서 의존을 잡는다.
+	 */
+	@Test
+	void 최신_스냅샷_지표는_게시물당_1행_최신값이다() {
+		long brandId = seedBrand("brand");
+		seedTaggedPost(brandId, "CODE1", "2026-08-01T12:00:00+09:00");
+		jdbc.sql("""
+				INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type,
+				                                 likes, likes_hidden, comments, views, fb_plays,
+				                                 saves, shares, shares_hidden, reposts)
+				VALUES ('influencer_a', 'CODE1', '2026-08-03', 'REELS', 20, false, 2, 200, 0, 3, 4, false, 1),
+				       ('influencer_a', 'CODE1', '2026-08-02', 'REELS', 10, false, 1, 100, 0, 2, 3, false, 0)
+				""").update();
+
+		List<BrandReadRepository.LatestMetricsRow> rows = repository.findLatestMetricsForBrand(
+				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
+
+		assertThat(rows).hasSize(1);
+		assertThat(rows.get(0).shortCode()).isEqualTo("CODE1");
+		assertThat(rows.get(0).contentType()).isEqualTo("REELS");
+		assertThat(rows.get(0).likes()).isEqualTo(20L);
+		assertThat(rows.get(0).views()).isEqualTo(200L);
+		assertThat(rows.get(0).comments()).isEqualTo(2L);
+		assertThat(rows.get(0).likesHidden()).isFalse();
+	}
+
+	/** 최신 지표 프로젝션도 브랜드 창 스코프다 — 남의 브랜드·창 밖·미정산 행은 섞이지 않는다. */
+	@Test
+	void 최신_스냅샷_지표는_브랜드_창_스코프다() {
+		long brandId = seedBrand("brand");
+		long otherBrand = seedBrand("other_brand");
+		seedTaggedPost(brandId, "MINE", "2026-08-01T12:00:00+09:00");
+		seedUnenrichedTaggedPost(brandId, "RAW1", "2026-08-02T12:00:00+09:00");
+		seedTaggedPost(otherBrand, "OTHER", "2026-08-01T12:00:00+09:00");
+		jdbc.sql("""
+				INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type,
+				                                 likes, likes_hidden, comments, views)
+				VALUES ('influencer_a', 'MINE', '2026-08-03', 'FEED', 5, true, 1, NULL),
+				       ('influencer_a', 'RAW1', '2026-08-03', 'REELS', 7, false, 1, 70),
+				       ('influencer_c', 'OTHER', '2026-08-03', 'REELS', 9, false, 1, 90)
+				""").update();
+
+		List<BrandReadRepository.LatestMetricsRow> rows = repository.findLatestMetricsForBrand(
+				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
+
+		assertThat(rows).extracting(BrandReadRepository.LatestMetricsRow::shortCode).containsExactly("MINE");
+		assertThat(rows.get(0).views()).isNull();       // 피드 조회수 NULL 규칙 보존
+		assertThat(rows.get(0).likes()).isEqualTo(5L);
+		assertThat(rows.get(0).likesHidden()).isTrue();
 	}
 
 	@Test
@@ -639,6 +753,37 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				.orElseThrow();
 		assertThat(archived.authorImageObjectPath()).isEqualTo("monitor-hashtag-author/influencer_h.jpg");
 		assertThat(unarchived.authorImageObjectPath()).isNull();
+	}
+
+	/**
+	 * 해시태그 발견분의 shortcode 슬림 조회(2026-08-27 P0) — counts·교차 중복 제거에 코드만 필요한
+	 * 경로용. WHERE/ORDER/LIMIT는 {@link BrandReadRepository#findHashtagPosts}와 동형이어야 한다
+	 * (어긋나면 목록 모수와 counts가 갈라진다).
+	 */
+	@Test
+	void 해시태그_발견_shortcode_슬림_조회는_RELEVANT_창_안만_최신순으로_준다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "OUT", "RELEVANT", now.minusDays(400).toString());   // 창 밖 — 제외
+		seedHashtagPost(brandId, "IRR", "IRRELEVANT", now.minusDays(1).toString());   // 관련 없음 — 제외
+		seedHashtagPost(brandId, "OLDER", "RELEVANT", now.minusDays(10).toString());
+		seedHashtagPost(brandId, "NEWER", "RELEVANT", now.minusDays(1).toString());
+
+		assertThat(repository.findHashtagPostCodes(brandId, now.minusDays(365), 2000))
+				.containsExactly("NEWER", "OLDER");
+	}
+
+	/** 상한도 findHashtagPosts와 동형으로 SQL 단계에서 최신 쪽만 남긴다. */
+	@Test
+	void 해시태그_shortcode_슬림_조회는_상한을_넘으면_최신_쪽만_남긴다() {
+		long brandId = seedBrand("brand_official");
+		OffsetDateTime now = OffsetDateTime.now();
+		seedHashtagPost(brandId, "A", "RELEVANT", now.minusDays(1).toString());
+		seedHashtagPost(brandId, "B", "RELEVANT", now.minusDays(2).toString());
+		seedHashtagPost(brandId, "C", "RELEVANT", now.minusDays(3).toString());
+
+		assertThat(repository.findHashtagPostCodes(brandId, now.minusDays(365), 2))
+				.containsExactly("A", "B");
 	}
 
 	// ---------- 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) ----------

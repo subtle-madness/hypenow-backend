@@ -115,7 +115,7 @@ class V1BrandPostsControllerTest {
 		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 시드 관용구(givenTagged의
 		// findBrandPostsInWindow + findPostMeta·findSnapshots 고정)에서 파생시킨다 — 시드를 그대로
 		// 재사용하고, 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
-		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
+		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean(), any())).willAnswer(inv -> {
 			var metaByCode = new java.util.LinkedHashMap<String, BrandPostMetaRow>();
 			for (BrandPostMetaRow m : brandReadRepository.findPostMeta(List.of())) {
 				metaByCode.putIfAbsent(m.shortCode(), m);
@@ -123,9 +123,16 @@ class V1BrandPostsControllerTest {
 			return brandReadRepository.findBrandPostsInWindow(0L, null, true).stream()
 					.map(r -> {
 						BrandPostMetaRow m = metaByCode.get(r.shortCode());
+						// 캡션 원문 대신 SQL이 계산한 마커 매치를 싣는 슬림 셰이프(2026-08-27 P0) —
+						// 같은 시드 캡션을 자바 판정기로 접어 SQL과 같은 값을 만든다. 필터·패싯·작성자
+						// 컬럼은 이 테스트가 아직 소비하지 않아 기본값(null)으로 둔다(Task 4 소관).
+						String caption = m == null ? null : m.caption();
 						return new BrandReadRepository.BrandPostIndexRow(r.shortCode(), r.takenAt(),
-								r.tagDetectedAt(), r.directRegisteredAt(),
-								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption());
+								r.tagDetectedAt(), r.directRegisteredAt(), r.authorUsername(),
+								m == null ? null : m.isPaidPartnership(),
+								caption != null
+										&& BrandSponsorshipClassifier.containsSponsorshipMarker(caption),
+								null, null, null, null, null, null, null);
 					})
 					.toList();
 		});

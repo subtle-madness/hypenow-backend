@@ -132,7 +132,7 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 6컬럼 <b>단일 조인 쿼리</b>({@link
+	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 슬림 컬럼 <b>단일 조인 쿼리</b>({@link
 	 * BrandReadRepository#findBrandPostIndex}) + (withViews면) 최신 스냅샷 1행 프로젝션만 읽어
 	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없고, 무거운
 	 * 조립은 {@link #hydrate}가 페이지 코드에만 수행한다. 표시 표면 전용이라 scope는 항상
@@ -147,7 +147,7 @@ public class BrandPostAssembler {
 	 */
 	public BrandPostIndex indexForBrand(long userId, BrandAccountRow account, boolean withViews) {
 		List<BrandReadRepository.BrandPostIndexRow> allRows = brandReadRepository.findBrandPostIndex(
-				account.id(), windowCutoff(), true);
+				account.id(), windowCutoff(), true, BrandSponsorshipClassifier.postgresMarkerRegex());
 		boolean hasDirectRegistration = allRows.stream().anyMatch(r -> r.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
@@ -183,7 +183,7 @@ public class BrandPostAssembler {
 			refs.add(new PostRef(row.shortCode(),
 					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
 							ownedShortCodes.contains(row.shortCode())),
-					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
+					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
 					KstTimestamps.toKstDate(row.takenAt()),
 					viewsByCode.get(row.shortCode())));
 		}
