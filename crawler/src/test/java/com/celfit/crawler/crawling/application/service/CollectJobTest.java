@@ -165,7 +165,7 @@ class CollectJobTest {
     @Test
     void 중지_요청이_있으면_워커가_방문을_집지_않는다() {
         wireCommon();
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(
                 influencer(1L, "a", null, null), influencer(2L, "b", null, null)));
         stopFlag.request(JobName.COLLECT);
 
@@ -192,7 +192,7 @@ class CollectJobTest {
         wireCommon();
         List<Influencer> targets = new java.util.ArrayList<>();
         for (long i = 1; i <= 8; i++) targets.add(influencer(i, "par_user" + i, null, null));
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(targets);
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(targets);
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         var active = new java.util.concurrent.atomic.AtomicInteger();
         var maxActive = new java.util.concurrent.atomic.AtomicInteger();
@@ -217,7 +217,7 @@ class CollectJobTest {
     void 프로필_404_계정은_방문_실패가_아니라_소프트_딜리트된다() {
         wireCommon();
         Influencer gone = influencer(1L, "gone", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(gone));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(gone));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("gone")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of("gone")));
@@ -237,7 +237,7 @@ class CollectJobTest {
         wireCommon();
         Influencer dormant = influencer(1L, "dormant", null, null);
         dormant.setLastProfiledAt(NOW.minus(CollectJob.EMPTY_PROFILE_DELETE_AFTER).minus(Duration.ofDays(1)));
-        when(influencers.findCollectTargets(any(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(dormant));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(dormant));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("dormant")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("dormant")));
@@ -254,7 +254,7 @@ class CollectJobTest {
         wireCommon();
         Influencer recent = influencer(1L, "recent_empty", null, null);
         recent.setLastProfiledAt(NOW.minus(CollectJob.EMPTY_PROFILE_DELETE_AFTER).plus(Duration.ofDays(1)));
-        when(influencers.findCollectTargets(any(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(recent));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(recent));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("recent_empty")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("recent_empty")));
@@ -270,7 +270,7 @@ class CollectJobTest {
         // lastProfiledAt이 null이면 "30일 경과"를 판정할 기준점이 없다 — 재시도 유지
         wireCommon();
         Influencer fresh = influencer(1L, "fresh_empty", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(fresh));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(fresh));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("fresh_empty")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of(), List.of(), List.of("fresh_empty")));
@@ -314,7 +314,7 @@ class CollectJobTest {
     void 폴백으로_넘어온_프로필은_감지된_소스로_저장되고_추출된다() {
         wireCommon();
         Influencer inf = influencer(1L, "bugged_user", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any(PageRequest.class))).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);   // 컴포지트 기본 소스
         when(profileSourceSelector.fetchAndSupplement(
                 eq(JobName.COLLECT), eq(List.of("bugged_user")), eq(TriggerType.MANUAL)))
@@ -377,7 +377,7 @@ class CollectJobTest {
 
         Influencer backfillInf = influencer(1L, "backfill_user", null, null);
         Influencer trackInf = influencer(2L, "track_user", NOW.minusSeconds(1), NOW.minusSeconds(1));
-        when(influencers.findCollectTargets(any(), anyBoolean(), eq(PageRequest.of(0, 5))))
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), eq(PageRequest.of(0, 5))))
                 .thenReturn(List.of(backfillInf, trackInf));
 
         wireProfile("backfill_user", 1000L, "U1");
@@ -387,7 +387,7 @@ class CollectJobTest {
 
         // 우선순위는 선정 쿼리 정렬(백필 먼저)이 담당하고, 병렬 방문은 리스트 앞에서부터 집어간다 —
         // 워커 간 완료 순서는 보장되지 않으므로 호출 순서(InOrder)가 아니라 "둘 다 방문됨"을 검증한다.
-        verify(influencers).findCollectTargets(any(), anyBoolean(), eq(PageRequest.of(0, 5)));
+        verify(influencers).findCollectTargets(any(), anyBoolean(), anyBoolean(), eq(PageRequest.of(0, 5)));
         verify(profileSourceSelector).fetchAndSupplement(
                 eq(JobName.COLLECT), eq(List.of("backfill_user")), eq(TriggerType.MANUAL));
         verify(profileSourceSelector).fetchAndSupplement(
@@ -403,11 +403,11 @@ class CollectJobTest {
         // "지금 − 7일"(경과 시간)이 아니라 달력일 기준이어야 자정에 전원 리셋된다.
         wireCommon();
         when(settings.revisitIntervalDays()).thenReturn(7);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of());
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
 
         job().run(TriggerType.MANUAL);
 
-        verify(influencers).findCollectTargets(eq(Instant.parse("2026-07-08T00:00:00Z")), eq(false), any());
+        verify(influencers).findCollectTargets(eq(Instant.parse("2026-07-08T00:00:00Z")), eq(false), anyBoolean(), any());
     }
 
     @Test
@@ -415,11 +415,11 @@ class CollectJobTest {
         // fnb.pipeline-enabled(스펙 2026-08-23 §4) — 잡은 토글 값을 판단하지 않고 선정 쿼리에 넘긴다.
         wireCommon();
         when(settings.fnbPipelineEnabled()).thenReturn(true);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of());
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
 
         job().run(TriggerType.MANUAL);
 
-        verify(influencers).findCollectTargets(any(), eq(true), any());
+        verify(influencers).findCollectTargets(any(), eq(true), anyBoolean(), any());
     }
 
     // ---------------------------------------------------------------------
@@ -430,7 +430,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         Map<String, Object> profilePayload = profileItem("alice", 12345L, "USR1");
@@ -457,7 +457,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "bob", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         Map<String, Object> noUserId = new LinkedHashMap<>();
@@ -484,7 +484,7 @@ class CollectJobTest {
 
         Influencer inf = influencer(1L, "alice", null, null);
         inf.setIgUserId("STORED1");
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
                 .thenReturn(new CrawlExecutor.Execution(1L, List.of())); // 401 등으로 계정이 응답에 없음
@@ -503,7 +503,7 @@ class CollectJobTest {
 
         Influencer inf = influencer(1L, "alice", null, null);
         inf.setIgUserId("STORED1");
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
                 .thenThrow(new ApifyException("프로필 요청 실패"));
@@ -523,7 +523,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 12345L, "USR1", List.of(
                 selfTimelineNode("EMB_FEED", RECENT, "", false),
                 selfTimelineNode("EMB_REEL", OLD, "clips", true)));
@@ -542,7 +542,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1"); // APIFY_ACTOR 형태 — 내장 타임라인 없음
 
         var summary = job().run(TriggerType.MANUAL);
@@ -561,7 +561,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");   // APIFY_ACTOR 형태 — 내장 타임라인 없음
 
         var chunkFetcher = mock(com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher.class);
@@ -589,7 +589,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         var chunkFetcher = mock(com.celfit.crawler.crawling.application.port.out.UserMediaPageFetcher.class);
@@ -608,7 +608,7 @@ class CollectJobTest {
 
         // 재방문(추적)이어도 컷오프가 없다 — 내장 타임라인에 있으면 날짜 무관 전부 수집
         Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("VERY_OLD", OLD, "", false)));
 
@@ -623,7 +623,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("NORM1", RECENT, "", false),
                 selfTimelineNode("PIN_IN", RECENT, "", true)));
@@ -643,7 +643,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("POST1", RECENT, "", false)));
 
@@ -682,7 +682,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("POST_OK", RECENT, "", false),
                 selfTimelineNode("POST_FAIL", RECENT, "", false)));
@@ -712,7 +712,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("POST1", RECENT, "", false)));
 
@@ -739,7 +739,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         job().run(TriggerType.MANUAL);
@@ -754,7 +754,7 @@ class CollectJobTest {
 
         Instant original = NOW.minus(Duration.ofDays(30));
         Influencer inf = influencer(1L, "alice", original, original);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireProfile("alice", 1000L, "USR1");
 
         job().run(TriggerType.MANUAL);
@@ -771,7 +771,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("NO_CMT", RECENT, "", false)));
 
@@ -793,7 +793,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null); // 첫 방문
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.SELF_GQL);
         // 1차 방문: 타임라인에 OLD_FAIL — 2차 방문: 최근 12개에서 밀려나 빈 타임라인
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("alice")), eq(TriggerType.MANUAL)))
@@ -830,7 +830,7 @@ class CollectJobTest {
 
         // 첫 방문은 이미 오래 전 완료(재방문) — 이번 열거는 새로 아무것도 안 내놓는다.
         Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of()); // 빈 타임라인
 
         // 이전 열거로 이미 승격돼 있던(origin=ENUMERATION), 이번 열거에 안 잡히는 오래된 PENDING content.
@@ -863,7 +863,7 @@ class CollectJobTest {
 
         Influencer bad = influencer(1L, "bad_user", null, null);
         Influencer good = influencer(2L, "good_user", null, null);
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(bad, good));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(bad, good));
 
         when(profileSourceSelector.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
         when(profileSourceSelector.fetchAndSupplement(eq(JobName.COLLECT), eq(List.of("bad_user")), eq(TriggerType.MANUAL)))
@@ -887,7 +887,7 @@ class CollectJobTest {
         wireCommon();
 
         Influencer inf = influencer(1L, "alice", null, null); // backfill 방문
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of(
                 selfTimelineNode("PROMOTE1", RECENT, "", false)));
 
@@ -911,7 +911,7 @@ class CollectJobTest {
 
         // 추적 방문(첫 방문 완료) — 이번 열거는 새로 아무것도 안 내놓아 기존 PENDING만이 댓글 대상 후보다.
         Influencer inf = influencer(1L, "alice", NOW.minus(Duration.ofDays(60)), NOW.minus(Duration.ofDays(60)));
-        when(influencers.findCollectTargets(any(), anyBoolean(), any())).thenReturn(List.of(inf));
+        when(influencers.findCollectTargets(any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(inf));
         wireSelfProfile("alice", 1000L, "USR1", List.of()); // 빈 타임라인
 
         Content discoveryPending = new Content("DISC_PEND", ContentType.FEED, "alice", 1L,

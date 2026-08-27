@@ -393,6 +393,24 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 파라미터(성과만 true, 목록·존재/중복 판정은 false), direct 등록 행 면제(§7-3)·경계일
 포함(covered 판정과 동일 규칙). DECISIONS.md 2026-08-20 두 항목 참조.
 
+게시물 목록 서버 필터·패싯 + 인플루언서 집계 API(2026-08-27 — DECISIONS 08-27 행,
+[spec 2026-08-27](../superpowers/specs/2026-08-27-post-list-server-filter-facets-design.md)):
+FE 변경요청 2건을 한 브랜치(`feature/post-list-server-filter-facets-04b967`)로 처리 —
+① 목록 고정비 제거(P0)·서버 필터 5종(P1)·패싯+influencerCount(P1)·해시태그 발견 게시물
+count 전용 엔드포인트(P2), ② `GET /v1/brand-monitoring/influencers` 신설.
+P0의 요지는 `findBrandPostIndex`에서 **캡션 원문을 빼고 협찬 마커 매치를 SQL boolean으로**
+받는 것(`lower(m.caption) ~ :markerRegex`) — 마커 상수는 `BrandSponsorshipClassifier` 한 곳에
+남아 **키워드 소급성이 유지**되고, 동치성은 골든 코퍼스(`BrandSponsorshipSqlEquivalenceTest`)가
+봉인한다. 인덱스 프로젝션은 소형 컬럼으로 확장(`content_type`·`ad_verdict`·author 조인 3필드),
+정렬 키는 시계열 전량 대신 최신 1행만 읽는 `findLatestMetricsForBrand` 신설.
+`meta.facets`는 **additive 신규 키**로 기존 `meta.counts`·전량 모드 응답은 불변.
+필터 판정은 **FE 화면 코드가 정본**(`brand-influencers.ts`·`ad-disclosure.ts` 1:1 이식) —
+follower 밴드는 요청서의 "6.21과 동일"이 아니라 실제 화면의 5토큰을 따랐다(**FE 통보 필요**).
+**perf119 실측 유의**: 캡션 전송 제거분(13.5→6.1ms)보다 마커 평가의 WAS→PG 이동분이 커서
+DB 왕복 자체는 13.5→107.2ms로 늘었다(구 경로의 Java 판정 87.1ms와 맞바꾼 등가 교환).
+DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 본체(JDBC 매핑·GC·2코어 경합)를
+못 잰다 — **dev-api 배포 후 FE와 동일 조건 재측정이 판정 지점**(아래 미결·후속).
+
 ## 잔여 작업
 
 - **[수집 상한 v2 배포 후] 기존 capped 브랜드 커버리지 운영 보정 1회** — `collection_capped`·
@@ -459,6 +477,33 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 
 ## 미결·후속
 
+- **[게시물 목록 서버 필터 배포 후] dev-api 재측정으로 P0 효과 확정 + FE 회신** — 로컬
+  perf119 하니스는 DB 왕복만 재고, 스펙이 지목한 요청당 ~1.9초 고정비의 본체(JDBC String
+  생성·GC·2코어 호스트 CPU 경합)를 재지 못한다(DB 측 전송분은 ~7.5ms뿐). FE 실측과 **같은
+  조건**(계정 119·12개월·2,000건, 4병렬 포함)으로 재측정해 회신한다. 회신에 함께 확인 요청할
+  것 5건: `meta.facets` 키 형태, follower 5토큰 어휘(요청서의 "6.21과 동일"과 다름),
+  profileUrl 형식, **meta 셰이프 2종**(게시물 목록은 중첩 `meta.page`, 인플루언서는 flat
+  `meta{total,offset,limit}` — 의도된 설계), **`facets.*.all`은 기존 `counts.all`과 동일하게
+  `POST_LIMIT`(2,000) 캡 미적용**.
+- **[staging→main 승격 게이트] 4병렬 재측정 시 풀 공유 엔드포인트까지 함께 본다** — dev-api
+  재측정에서 브랜드 목록 응답시간만 보지 말고, **monitoring-ro 풀(max 3)을 공유하는 다른
+  엔드포인트(캠페인 items·성과 대시보드)의 p95와 Hikari 대기 지표**를 함께 확인한다. 신 인덱스
+  쿼리가 DB 왕복을 13.5→107ms로 늘려 **커넥션 점유가 8배**다 — 총 CPU는 구 경로의 WAS Java
+  판정 87ms와 등가 교환이지만 **점유는 등가가 아니라서**, 08-27 벤치로 확정된 풀 대기 병목
+  (캠페인 items 꼬리 지연)이 타 표면으로 번질 수 있다. 완화 후보: `caption ~*`(107→59ms —
+  아래 후속 후보, 케이스 폴딩 코퍼스 보강이 선행)·풀 상향(실측 근거 필요).
+- ~~인덱스 조회의 author username 폴백이 추가 왕복 비용을 낼 가능성~~ → **실측 무해**(perf119
+  실측 2026-08-27): 창 안 4,969행 중 `author_ig_user_id`가 NULL인 행이 10.0%(499건)이지만
+  `author_profile` 전체가 3,173행뿐이라 폴백 배치 쿼리가 **2.96ms**다.
+- **[후속 후보] `/influencers`의 `accountIds` 개수 상한이 없다** — 소유 링크로 제한돼 인가
+  문제는 아니지만(타 유저 브랜드는 조회 자체가 안 됨), 계정 수에 비례해 조회량이 늘어난다.
+  상한(예: 20) 도입 또는 최소한 계정 수 로깅을 검토한다.
+- **[후속 후보] 협찬 마커 매치를 `lower(caption) ~` → `caption ~*` 로** — perf119 실측상
+  신 인덱스 쿼리 101ms 중 `lower()`가 ~51ms라 107.2→58.7ms(1.8배)가 된다. 다만 `~*`의 케이스
+  폴딩은 Java `toLowerCase(Locale.ROOT)`와 유니코드 엣지(터키어 İ, ẞ 등)에서 어긋날 수 있어
+  `BrandSponsorshipSqlEquivalenceTest` 골든 코퍼스에 해당 사례를 추가해 동치성을 먼저 봉인해야
+  한다. **perf119 캡션이 전부 합성 ASCII(익명화 사본)라 CJK 실캡션 비용은 미측정**인 점도 함께
+  확인 대상.
 - ~~창 밖 tagged 등록이 DUPLICATE로 막혀 데드엔드가 되는 문제, "의도된 대가"로 수용~~(08-17
   링크 레벨 표시 창) → **08-18 direct 파이프라인 통합으로 대가 없이 해소**: 창 밖 tagged를
   직접 등록하면 `direct_registered_at`이 채워지고 direct 행은 표시 창 예외라 그 자리에서 바로

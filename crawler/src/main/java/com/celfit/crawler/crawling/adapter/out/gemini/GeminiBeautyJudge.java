@@ -78,7 +78,7 @@ public class GeminiBeautyJudge implements BeautyJudge {
         gen.put("responseMimeType", "application/json");
         gen.set("responseSchema", om.readTree(RESPONSE_SCHEMA));
         // 계정당 2축(beauty+fnb) 출력으로 ~2배 — 8192에서 상향 (스펙 2026-08-23 §2)
-        gen.put("maxOutputTokens", 16384);
+        gen.put("maxOutputTokens", 24576);
         return om.writeValueAsString(root);
     }
 

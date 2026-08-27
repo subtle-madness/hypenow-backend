@@ -111,6 +111,38 @@ public class Influencer {
     @Column(name = "fnb_basis")
     private String fnbBasis;
 
+    /** 홈/리빙 계정 여부 — NULL이면 미판정(백필 대상). 수집·시드 편입은 home-living.pipeline-enabled 토글이 게이트. */
+    @Column(name = "home_living")
+    private Boolean homeLiving;
+
+    /** 홈/리빙 회사(가구·리빙 브랜드·쇼핑몰) 여부 — home_living=true의 하위 구분. 토글 on이어도 수집 제외. */
+    @Column(name = "home_living_company")
+    private Boolean homeLivingCompany;
+
+    /** 홈/리빙 5분류 원본 — boolean은 이 값의 파생. NULL이면 홈/리빙 축 미판정. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "home_living_class")
+    private CategoryClass homeLivingClass;
+
+    @Column(name = "home_living_source")
+    private String homeLivingSource;
+
+    /** 홈/리빙 판정 근거 한 줄 — 명단 페이지 툴팁 표시용. */
+    @Column(name = "home_living_reason")
+    private String homeLivingReason;
+
+    /** 홈/리빙 축 판정 시각. */
+    @Column(name = "home_living_judged_at")
+    private Instant homeLivingJudgedAt;
+
+    /** 홈/리빙 판정에 실제로 넣은 캡션 건수 — 정착 규칙(캡션 0건 → 1회 업그레이드)의 재료. */
+    @Column(name = "home_living_caption_count")
+    private Short homeLivingCaptionCount;
+
+    /** 홈/리빙 판정 주근거 — CAPTION·BIO·CATEGORY_ONLY. */
+    @Column(name = "home_living_basis")
+    private String homeLivingBasis;
+
     /** SIMILAR 잡이 이 시드의 유사 계정 수확을 마친(또는 수확 불가로 확정한) 시각. NULL이면 시드 후보. */
     @Column(name = "similar_processed_at")
     private Instant similarProcessedAt;
@@ -148,5 +180,15 @@ public class Influencer {
         this.fnbSource = source;
         this.fnbReason = reason;
         this.fnbBasis = basis;
+    }
+
+    /** 홈/리빙 축 판정 적용 — 파생 boolean을 home_living_class와 항상 일치시킨다. judgedAt은 호출자 몫. */
+    public void classifyHomeLiving(CategoryClass cls, String source, String reason, String basis) {
+        this.homeLivingClass = cls;
+        this.homeLiving = cls.inCategory();
+        this.homeLivingCompany = cls.company();
+        this.homeLivingSource = source;
+        this.homeLivingReason = reason;
+        this.homeLivingBasis = basis;
     }
 }

@@ -16,10 +16,10 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
  * 명단 페이지 수동 오버라이드 — 뷰티 축(5분류: 뷰티 인플루언서/뷰티 회사/시술·서비스/외국인/뷰티 아님)과
- * F&amp;B 축(CategoryClass 5분류)을 각각 독립으로 덮어쓴다.
+ * F&amp;B·홈/리빙 축(각 CategoryClass 5분류)을 각각 독립으로 덮어쓴다.
  * MANUAL 출처는 BEAUTY 잡이 덮지 않는다 — 축별로 보호 지점이 다르다.
  * 뷰티 MANUAL은 rejudge 선정 쿼리(beauty_source='CLAUDE')에서 제외돼 보존되고,
- * F&amp;B MANUAL은 어느 경로로 선정되든 적용 시점 가드(fnb_source='MANUAL'이면 F&amp;B 축 미적용)로
+ * F&amp;B·홈/리빙 MANUAL은 어느 경로로 선정되든 적용 시점 가드(source='MANUAL'이면 해당 축 미적용)로
  * 보존된다.
  */
 @Controller
@@ -37,15 +37,13 @@ public class InfluencerBeautyController {
                            @RequestParam(required = false) List<InfluencerStatus> status,
                            @RequestParam(required = false) List<String> beauty,
                            @RequestParam(required = false) List<String> fnb,
+                           @RequestParam(required = false) List<String> homeLiving,
                            RedirectAttributes ra) {
         Influencer inf = influencers.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
         inf.classify(beautyClass, Influencer.BEAUTY_SOURCE_MANUAL, "수동 판정", null);
         influencers.save(inf);
-        ra.addAttribute("page", page);
-        if (status != null && !status.isEmpty()) ra.addAttribute("status", status);
-        if (beauty != null && !beauty.isEmpty()) ra.addAttribute("beauty", beauty);   // 뷰티 필터 보존
-        if (fnb != null && !fnb.isEmpty()) ra.addAttribute("fnb", fnb);               // F&B 필터 보존
+        keepFilters(ra, page, status, beauty, fnb, homeLiving);
         return "redirect:/ui/influencers";
     }
 
@@ -60,15 +58,40 @@ public class InfluencerBeautyController {
                               @RequestParam(required = false) List<InfluencerStatus> status,
                               @RequestParam(required = false) List<String> beauty,
                               @RequestParam(required = false) List<String> fnb,
+                              @RequestParam(required = false) List<String> homeLiving,
                               RedirectAttributes ra) {
         Influencer inf = influencers.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
         inf.classifyFnb(fnbClass, Influencer.BEAUTY_SOURCE_MANUAL, "수동 판정", null);
         influencers.save(inf);
+        keepFilters(ra, page, status, beauty, fnb, homeLiving);
+        return "redirect:/ui/influencers";
+    }
+
+    /** 홈/리빙 축 수동 오버라이드 — 적용 시점 가드(home_living_source='MANUAL')가 자동 판정을 막는다. */
+    @PostMapping("/ui/influencers/{id}/homeLiving")
+    public String overrideHomeLiving(@PathVariable Long id, @RequestParam CategoryClass homeLivingClass,
+                                     @RequestParam(defaultValue = "0") int page,
+                                     @RequestParam(required = false) List<InfluencerStatus> status,
+                                     @RequestParam(required = false) List<String> beauty,
+                                     @RequestParam(required = false) List<String> fnb,
+                                     @RequestParam(required = false) List<String> homeLiving,
+                                     RedirectAttributes ra) {
+        Influencer inf = influencers.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "인플루언서 없음"));
+        inf.classifyHomeLiving(homeLivingClass, Influencer.BEAUTY_SOURCE_MANUAL, "수동 판정", null);
+        influencers.save(inf);
+        keepFilters(ra, page, status, beauty, fnb, homeLiving);
+        return "redirect:/ui/influencers";
+    }
+
+    /** 오버라이드 후 리다이렉트에 명단 필터 상태를 그대로 실어 사용자의 필터 컨텍스트를 보존한다. */
+    private static void keepFilters(RedirectAttributes ra, int page, List<InfluencerStatus> status,
+                                    List<String> beauty, List<String> fnb, List<String> homeLiving) {
         ra.addAttribute("page", page);
         if (status != null && !status.isEmpty()) ra.addAttribute("status", status);
         if (beauty != null && !beauty.isEmpty()) ra.addAttribute("beauty", beauty);
         if (fnb != null && !fnb.isEmpty()) ra.addAttribute("fnb", fnb);
-        return "redirect:/ui/influencers";
+        if (homeLiving != null && !homeLiving.isEmpty()) ra.addAttribute("homeLiving", homeLiving);
     }
 }
