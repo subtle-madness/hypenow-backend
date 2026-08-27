@@ -106,3 +106,10 @@ monitoring:
                        # 이 키는 was 전용(노출 토글)이다 — monitoring 모듈 application.yml의
                        # 같은 이름 하위 경로(monitoring.brand.ad-disclosure.judge-model·concurrency,
                        # Tier2 LLM 풀 설정)와는 모듈도 뜻도 다른 별개 키다. grep 시 혼동 주의.
+    ai:
+      enabled: ${BRAND_AI_ENABLED:false}   # AI 어시스턴트 킬 스위치(설계 §7) - false면 컨트롤러 빈이
+                       # 등록되지 않아 /v1/brand-monitoring/ai/chat가 404다. monitoring.enabled와
+                       # 둘 다 true여야 배선이 뜬다(BrandReadRepository가 monitoring 조건부 빈이라).
+      vertex-project: ${BRAND_AI_VERTEX_PROJECT:}   # 켤 때 필수. SA 키는 GOOGLE_APPLICATION_CREDENTIALS
+      vertex-location: ${BRAND_AI_VERTEX_LOCATION:global}
+      model: ${BRAND_AI_MODEL:gemini-2.5-flash}     # function calling 지원 모델이어야 한다
