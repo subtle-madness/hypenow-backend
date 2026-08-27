@@ -115,14 +115,14 @@ class V1BrandPostsControllerTest {
 		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 표시 메타·스냅샷 스텁에서
 		// 파생시킨다 — 이 클래스의 시드 관용구(findPostMeta·findSnapshots 고정)를 그대로 재사용하고,
 		// 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
-		given(brandReadRepository.findSponsorshipMeta(any())).willAnswer(inv ->
-				brandReadRepository.findPostMeta(inv.getArgument(0)).stream()
+		given(brandReadRepository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv ->
+				brandReadRepository.findPostMeta(List.of()).stream()
 						.map(m -> new BrandReadRepository.SponsorshipMetaRow(m.shortCode(),
 								m.isPaidPartnership(), m.caption()))
 						.toList());
-		given(brandReadRepository.findLatestViews(any())).willAnswer(inv -> {
+		given(brandReadRepository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
 			var latest = new java.util.LinkedHashMap<String, BrandSnapshotRow>();
-			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(inv.getArgument(0))) {
+			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(List.of())) {
 				latest.merge(row.shortCode(), row, (a, b) -> b.capturedOn().isAfter(a.capturedOn()) ? b : a);
 			}
 			return latest.values().stream()
