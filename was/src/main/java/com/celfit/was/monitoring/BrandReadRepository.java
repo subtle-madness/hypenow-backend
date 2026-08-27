@@ -112,30 +112,55 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 협찬 판정 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·필터가 필요한 건
-	 * 판정 입력(is_paid_partnership·caption)뿐이라 표시 메타 전체({@link #findPostMeta})를 싣지
-	 * 않는다. 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
+	 * 브랜드 게시물 인덱스 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·창·필터·정렬·페이지
+	 * 슬라이스에 필요한 판정 입력만 <b>단일 쿼리</b>로 읽는다: 행 식별·창·source 파생(short_code·
+	 * taken_at·tag_detected_at·direct_registered_at) + 협찬 판정 입력(is_paid_partnership·caption).
+	 * 협찬 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
 	 * 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
 	 *
-	 * <p>shortcode IN이 아니라 <b>브랜드 창 스코프 조인</b>이다(스테이징 실측 2026-08-27) — 창 안
-	 * 정산 게시물이 만 건대인 브랜드(marynmay 10,427건)에서 IN 바인드 만 개 전개가 요청당 2초대를
-	 * 만들었다. 같은 술어의 조인은 서버 실행 200ms. 창·정산 술어는 {@link #findBrandPostsInWindow}와
-	 * 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다. 노출 필터(direct-only 등록자 전용)로
-	 * 걸러질 행의 메타가 섞여 올 수 있지만 호출부가 shortcode 키 조회만 하므로 무해하다.
+	 * <p>단일 쿼리·최소 컬럼인 이유(스테이징 실측 2026-08-27, marynmay 창 안 10,427행): 이 규모에선
+	 * DB 실행(EXPLAIN 21ms)이 아니라 <b>행×컬럼 값 전송·매핑</b>이 지배 비용이다 — 10컬럼 전량
+	 * 조회(1.78s) + 3컬럼 협찬 조회(0.44s) 2왕복 구조가 요청당 2초대를 만들었다. 창·정산 술어는
+	 * {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다.
+	 * 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown). 정렬은 호출부(자바) 몫이라
+	 * ORDER BY를 두지 않는다.
 	 */
-	public List<SponsorshipMetaRow> findSponsorshipMetaForBrand(long brandId, OffsetDateTime cutoff,
+	public List<BrandPostIndexRow> findBrandPostIndex(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
-				SELECT m.short_code, m.is_paid_partnership, m.caption
-				FROM brand_post_meta m
-				JOIN brand_tagged_post t ON t.short_code = m.short_code
+				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
+				       m.is_paid_partnership, m.caption
+				FROM brand_tagged_post t
+				LEFT JOIN brand_post_meta m ON m.short_code = t.short_code
 				WHERE t.brand_id = :brandId
 				  AND ( t.taken_at >= :cutoff OR t.direct_registered_at IS NOT NULL )
 				""" + enrichedFilter)
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(SponsorshipMetaRow.class)
+				.query(BrandPostIndexRow.class)
+				.list();
+	}
+
+	/**
+	 * 브랜드 풀 행 배치 조회(shortcode 스코프) — 하이드레이트가 페이지에 실을 코드만 풀 행으로
+	 * 다시 읽는 용도({@link #findBrandPostIndex}가 경량 컬럼만 주므로). 페이지 상한(≤100)의 IN이라
+	 * 인덱스 프로젝션과 달리 바인드 전개 부담이 없다.
+	 */
+	public List<BrandTaggedPostRow> findBrandPostsByShortCodes(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
+				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
+				       unavailable_at
+				FROM brand_tagged_post
+				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
+				""")
+				.param("brandId", brandId)
+				.param("shortCodes", shortCodes)
+				.query(BrandTaggedPostRow.class)
 				.list();
 	}
 
@@ -423,8 +448,13 @@ public class BrandReadRepository {
 			String adEvidenceJson) {
 	}
 
-	/** 협찬 판정 입력 프로젝션({@link #findSponsorshipMetaForBrand}) — isPaidPartnership null = 키 부재 보존. */
-	public record SponsorshipMetaRow(String shortCode, Boolean isPaidPartnership, String caption) {
+	/**
+	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership·caption null은
+	 * "메타 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라
+	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt은 source 파생·노출 필터 입력이다.
+	 */
+	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
+			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption) {
 	}
 
 	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */

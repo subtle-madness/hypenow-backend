@@ -92,12 +92,10 @@ class BrandPostAssemblerTest {
 	void 인덱스는_스냅샷_댓글_게시자_조회를_돌리지_않는다() {
 		var repository = mock(BrandReadRepository.class);
 		var account = accountRow();
-		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(
-				taggedRow("TAG1"),
-				row("BOTH", "2026-08-05T02:00:00Z", "2026-08-05T01:00:00Z", "2026-08-06T00:00:00Z")));
-		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
-				new BrandReadRepository.SponsorshipMetaRow("TAG1", null, "#협찬 후기"),
-				new BrandReadRepository.SponsorshipMetaRow("BOTH", false, "일상")));
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("TAG1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, "#협찬 후기"),
+				indexRow("BOTH", "2026-08-05T01:00:00Z", "2026-08-05T02:00:00Z", "2026-08-06T00:00:00Z",
+						false, "일상")));
 		var directRepository = mock(BrandDirectPostRepository.class);
 		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of("BOTH"));
 
@@ -109,6 +107,8 @@ class BrandPostAssemblerTest {
 		verify(repository, never()).findComments(anyCollection(), anyInt());
 		verify(repository, never()).findAuthors(anyCollection());
 		verify(repository, never()).findPostMeta(anyCollection());
+		// 풀 행 전량 조회가 인덱스에 되살아나면 안 된다 — 만 건대 브랜드에서 행×컬럼 매핑이 지배 비용(실측).
+		verify(repository, never()).findBrandPostsInWindow(anyLong(), any(), anyBoolean());
 		assertThat(index.refs()).hasSize(2);
 		var tag1 = index.refs().stream().filter(r -> r.shortcode().equals("TAG1")).findFirst().orElseThrow();
 		assertThat(tag1.source()).isEqualTo("tagged");
@@ -123,9 +123,9 @@ class BrandPostAssemblerTest {
 	@Test
 	void 인덱스는_performance용_최신뷰를_피드면_null로_접는다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true)))
-				.willReturn(List.of(taggedRow("REELS1"), taggedRow("FEED1")));
-		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("REELS1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
+				indexRow("FEED1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
 		given(repository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
 				new BrandReadRepository.LatestViewsRow("REELS1", "REELS", 500L),
 				new BrandReadRepository.LatestViewsRow("FEED1", "FEED", 300L)));
@@ -144,10 +144,9 @@ class BrandPostAssemblerTest {
 	@Test
 	void 인덱스에서_다른_유저의_direct_전용_행은_빠진다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(
-				taggedRow("TAG1"),
-				row("OTHERS", null, "2026-08-05T01:00:00Z", "2026-08-06T00:00:00Z")));
-		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("TAG1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
+				indexRow("OTHERS", "2026-08-05T01:00:00Z", null, "2026-08-06T00:00:00Z", null, null)));
 		var directRepository = mock(BrandDirectPostRepository.class);
 		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of());   // 내 등록이 아니다
 
@@ -161,9 +160,12 @@ class BrandPostAssemblerTest {
 	@Test
 	void 하이드레이트는_지정_코드만_조립하고_입력_순서를_지킨다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true)))
-				.willReturn(List.of(taggedRow("AAA"), taggedRow("BBB"), taggedRow("CCC")));
-		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("AAA", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
+				indexRow("BBB", "2026-08-05T01:00:00Z", "2026-08-05T02:00:00Z", null, null, null),
+				indexRow("CCC", "2026-08-04T01:00:00Z", "2026-08-04T02:00:00Z", null, null, null)));
+		given(repository.findBrandPostsByShortCodes(eq(42L), anyCollection()))
+				.willReturn(List.of(taggedRow("CCC"), taggedRow("AAA")));
 		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
 		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
 		given(repository.findAuthors(anyCollection())).willReturn(List.of());
@@ -176,7 +178,8 @@ class BrandPostAssemblerTest {
 				List.of("CCC", "AAA"), false);
 
 		assertThat(posts).extracting(BrandPostResponse::shortcode).containsExactly("CCC", "AAA");
-		// 배치 조회는 페이지 코드 2건으로만 돈다 — 전량(3건) 조립이 되살아나면 페이지네이션이 무의미하다.
+		// 풀 행·배치 조회는 페이지 코드 2건으로만 돈다 — 전량(3건) 조립이 되살아나면 페이지네이션이 무의미하다.
+		verify(repository).findBrandPostsByShortCodes(eq(42L), eq(Set.of("CCC", "AAA")));
 		verify(repository).findPostMeta(eq(Set.of("CCC", "AAA")));
 		verify(repository).findSnapshots(eq(Set.of("CCC", "AAA")));
 	}
@@ -184,8 +187,10 @@ class BrandPostAssemblerTest {
 	@Test
 	void 하이드레이트는_withComments_false면_댓글_조회_없이_빈_목록이다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(taggedRow("AAA")));
-		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+				indexRow("AAA", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
+		given(repository.findBrandPostsByShortCodes(eq(42L), anyCollection()))
+				.willReturn(List.of(taggedRow("AAA")));
 		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
 		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
 		given(repository.findAuthors(anyCollection())).willReturn(List.of());
@@ -347,7 +352,7 @@ class BrandPostAssemblerTest {
 
 		assembler.indexForBrand(7L, account, false);
 
-		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
+		verify(repository).findBrandPostIndex(eq(42L), any(), eq(true));
 	}
 
 	// ---------- 윈도우 컷 ----------
@@ -1073,6 +1078,14 @@ class BrandPostAssemblerTest {
 
 	private static BrandReadRepository.BrandTaggedPostRow taggedRow(String code, String takenAt) {
 		return row(code, "2026-08-06T02:00:00Z", takenAt, null);
+	}
+
+	/** 인덱스 행 빌더 — 판정 입력 6컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프). */
+	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
+			String tagDetectedAt, String directRegisteredAt, Boolean paid, String caption) {
+		return new BrandReadRepository.BrandPostIndexRow(code, OffsetDateTime.parse(takenAt),
+				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
+				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption);
 	}
 
 	/** 범용 row 빌더 — tagDetectedAt·directRegisteredAt을 직접 지정해 source 파생을 검증한다. */

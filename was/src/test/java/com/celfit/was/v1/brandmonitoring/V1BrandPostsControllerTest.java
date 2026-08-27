@@ -112,14 +112,29 @@ class V1BrandPostsControllerTest {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(account()));
-		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 표시 메타·스냅샷 스텁에서
-		// 파생시킨다 — 이 클래스의 시드 관용구(findPostMeta·findSnapshots 고정)를 그대로 재사용하고,
-		// 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
-		given(brandReadRepository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv ->
-				brandReadRepository.findPostMeta(List.of()).stream()
-						.map(m -> new BrandReadRepository.SponsorshipMetaRow(m.shortCode(),
-								m.isPaidPartnership(), m.caption()))
-						.toList());
+		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 시드 관용구(givenTagged의
+		// findBrandPostsInWindow + findPostMeta·findSnapshots 고정)에서 파생시킨다 — 시드를 그대로
+		// 재사용하고, 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
+		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
+			var metaByCode = new java.util.LinkedHashMap<String, BrandPostMetaRow>();
+			for (BrandPostMetaRow m : brandReadRepository.findPostMeta(List.of())) {
+				metaByCode.putIfAbsent(m.shortCode(), m);
+			}
+			return brandReadRepository.findBrandPostsInWindow(0L, null, true).stream()
+					.map(r -> {
+						BrandPostMetaRow m = metaByCode.get(r.shortCode());
+						return new BrandReadRepository.BrandPostIndexRow(r.shortCode(), r.takenAt(),
+								r.tagDetectedAt(), r.directRegisteredAt(),
+								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption());
+					})
+					.toList();
+		});
+		given(brandReadRepository.findBrandPostsByShortCodes(anyLong(), any())).willAnswer(inv -> {
+			java.util.Collection<String> codes = inv.getArgument(1);
+			return brandReadRepository.findBrandPostsInWindow(0L, null, true).stream()
+					.filter(r -> codes.contains(r.shortCode()))
+					.toList();
+		});
 		given(brandReadRepository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
 			var latest = new java.util.LinkedHashMap<String, BrandSnapshotRow>();
 			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(List.of())) {
