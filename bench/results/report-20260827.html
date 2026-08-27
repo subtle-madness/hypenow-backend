@@ -192,6 +192,33 @@ pre {
     <code>lastSuccessfulSweepAt</code> 캐싱.
   </div>
 
+  <h2>수리와 검증 — monitoring 왕복 병합 7회 → 3회</h2>
+  <p>
+    진단에 따라 <code>GET /v1/monitoring/items</code>의 monitoring DB 왕복을 병합했다:
+    target·last_sweep·post_meta·profile_meta·최신 팔로워 <b>5개 왕복을 단일 SQL</b>(LEFT JOIN + LATERAL,
+    <code>findTargetDetails</code>)로 접고, 행 수가 많은 스냅샷·댓글만 별도 왕복으로 남겼다.
+    풀(3개) 획득 횟수가 요청당 7회→3회가 되므로 경합 시 대기줄에 서는 횟수 자체가 줄어든다.
+    기존 통합 테스트 105개 전부 통과(동작 보존).
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>시나리오</th><th>지표</th><th>병합 전</th><th>병합 후</th><th>Δ</th></tr></thead>
+    <tbody>
+      <tr><td>운영 규모 · 순차</td><td>p50</td><td>22 ms</td><td>19 ms</td><td>−14%</td></tr>
+      <tr><td>운영 규모 · 동시 20</td><td>p50 / p95</td><td>69 / 104 ms</td><td>63 / 86 ms</td><td>−9% / −17%</td></tr>
+      <tr><td>극한 시드¹ · 순차</td><td>p50</td><td>1,036 ms</td><td>969 ms</td><td>−6%</td></tr>
+      <tr><td>극한 시드 · 동시 5</td><td>p95</td><td>2,486 ms</td><td>1,700 ms</td><td>−32%</td></tr>
+      <tr><td>극한 시드 · 동시 10</td><td>p95 / max</td><td>4,387 / 6,134 ms</td><td>3,544 / 4,004 ms</td><td>−19% / −35%</td></tr>
+      <tr><td>극한 시드 · 동시 20</td><td>p95 / max</td><td>7,476 / 12,311 ms</td><td>6,966 / 7,028 ms</td><td>−7% / <b>−43%</b></td></tr>
+    </tbody>
+  </table></div>
+  <p style="font-size:12.5px; color:var(--ink-3); margin-top:6px">¹ K=300 · D=90 · C=200 — 응답 369KB, 요청당 스냅샷 2.7만 행을 실제로 읽는 합성 극단.</p>
+  <p>
+    읽는 법: <b>개선의 본체는 꼬리(최악치)다.</b> 극한 시드의 평균은 스냅샷·댓글 실작업이 지배해 소폭이지만,
+    풀 대기가 증폭시키던 최악치는 절반 가까이 줄었고(12.3초→7.0초), "0ms짜리 쿼리가 대기로 2.4초"가 되던
+    왕복 5개는 아예 사라졌다. 운영의 문제 상황 — 경합 순간의 증폭 — 에 정확히 작용하는 개선이다.
+    부수 효과로 팔로워 스냅샷 <code>followers</code> NULL이 500을 내던 NPE 함정도 목록 경로에서 제거됐다.
+  </p>
+
   <h2>운영 관측과의 대조</h2>
   <p>
     로컬 기준점(운영 규모 재현) p50 <b>18ms</b>는 운영 엣지 p50 <b>29ms</b>와 같은 자릿수로, 벤치 환경이
