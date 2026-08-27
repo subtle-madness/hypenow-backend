@@ -112,6 +112,47 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 협찬 판정 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·필터가 필요한 건
+	 * 판정 입력(is_paid_partnership·caption)뿐이라 표시 메타 전체({@link #findPostMeta})를 싣지
+	 * 않는다. 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
+	 * 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
+	 */
+	public List<SponsorshipMetaRow> findSponsorshipMeta(Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT short_code, is_paid_partnership, caption
+				FROM brand_post_meta
+				WHERE short_code IN (:shortCodes)
+				""")
+				.param("shortCodes", shortCodes)
+				.query(SponsorshipMetaRow.class)
+				.list();
+	}
+
+	/**
+	 * 게시물별 최신 스냅샷 1행의 views 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) —
+	 * performance_desc 정렬 키 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대
+	 * 365행이라 정렬 키만 필요한 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를
+	 * null로 접는 서빙 규칙({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
+	 */
+	public List<LatestViewsRow> findLatestViews(Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (short_code) short_code, content_type, views
+				FROM brand_post_snapshot
+				WHERE short_code IN (:shortCodes)
+				ORDER BY short_code, captured_on DESC
+				""")
+				.param("shortCodes", shortCodes)
+				.query(LatestViewsRow.class)
+				.list();
+	}
+
+	/**
 	 * 게시물별 일 단위 지표 시계열 전량(오름차순) — 브랜드 스냅샷은 윈도우 이탈 후에도 영구
 	 * 보존이라 상한(워터마크)을 두지 않는다. views는 DDL 주석대로 이미 화면 합산값(IG 몫 + FB 몫)이라
 	 * fb_plays를 따로 읽지 않는다.
@@ -367,6 +408,14 @@ public class BrandReadRepository {
 			String caption, String thumbnailUrl, String videoUrl, Double videoDuration,
 			Boolean isPaidPartnership, String imageObjectPath, String adVerdict, String adViolationsJson,
 			String adEvidenceJson) {
+	}
+
+	/** 협찬 판정 입력 프로젝션({@link #findSponsorshipMeta}) — isPaidPartnership null = 키 부재 보존. */
+	public record SponsorshipMetaRow(String shortCode, Boolean isPaidPartnership, String caption) {
+	}
+
+	/** 게시물별 최신 스냅샷 views({@link #findLatestViews}) — contentType은 피드 views null 규칙용. */
+	public record LatestViewsRow(String shortCode, String contentType, Long views) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */

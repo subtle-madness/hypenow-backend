@@ -308,6 +308,60 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 협찬_판정_프로젝션은_유료협찬과_캡션만_읽는다() {
+		jdbc.sql("""
+				INSERT INTO brand_post_meta (short_code, username, content_type, uploaded_at, caption,
+				                             thumbnail_url, video_url, video_duration, is_paid_partnership)
+				VALUES ('SHORT1', 'influencer_a', 'REELS', '2026-08-01', '#협찬 후기', 'http://cdn/1.jpg',
+				        NULL, NULL, NULL),
+				       ('SHORT2', 'influencer_b', 'FEED', '2026-08-02', '', NULL, NULL, NULL, true)
+				""").update();
+
+		List<BrandReadRepository.SponsorshipMetaRow> rows =
+				repository.findSponsorshipMeta(List.of("SHORT1", "SHORT2", "MISSING"));
+
+		assertThat(rows).hasSize(2);
+		BrandReadRepository.SponsorshipMetaRow first = rows.stream()
+				.filter(r -> r.shortCode().equals("SHORT1")).findFirst().orElseThrow();
+		assertThat(first.caption()).isEqualTo("#협찬 후기");
+		assertThat(first.isPaidPartnership()).isNull();   // null = 키 부재(판정 unknown) 보존
+		BrandReadRepository.SponsorshipMetaRow second = rows.stream()
+				.filter(r -> r.shortCode().equals("SHORT2")).findFirst().orElseThrow();
+		assertThat(second.caption()).isEmpty();
+		assertThat(second.isPaidPartnership()).isTrue();
+
+		assertThat(repository.findSponsorshipMeta(List.of())).isEmpty();   // IN () 선처리
+	}
+
+	/** 최신 1행 판정은 captured_on 기준이어야 한다 — 물리 삽입 순서로 새는 것을 역순 삽입으로 잡는다. */
+	@Test
+	void 최신_스냅샷_프로젝션은_게시물당_마지막_1행이다() {
+		jdbc.sql("""
+				INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type,
+				                                 likes, likes_hidden, comments, views, fb_plays,
+				                                 saves, shares, shares_hidden, reposts)
+				VALUES ('influencer_a', 'SHORT1', '2026-08-03', 'REELS', 20, false, 2, 500, 100, 3, 4, false, 1),
+				       ('influencer_a', 'SHORT1', '2026-08-02', 'REELS', 10, false, 1, 300, 50, 2, 3, false, 0),
+				       ('influencer_b', 'SHORT2', '2026-08-02', 'FEED', NULL, true, 5, NULL, NULL, 1, NULL, true, NULL)
+				""").update();
+
+		List<BrandReadRepository.LatestViewsRow> rows =
+				repository.findLatestViews(List.of("SHORT1", "SHORT2", "MISSING"));
+
+		assertThat(rows).hasSize(2);
+		BrandReadRepository.LatestViewsRow reels = rows.stream()
+				.filter(r -> r.shortCode().equals("SHORT1")).findFirst().orElseThrow();
+		assertThat(reels.views()).isEqualTo(500L);   // 08-03 행 — captured_on 최신
+		assertThat(reels.contentType()).isEqualTo("REELS");
+		BrandReadRepository.LatestViewsRow feed = rows.stream()
+				.filter(r -> r.shortCode().equals("SHORT2")).findFirst().orElseThrow();
+		assertThat(feed.views()).isNull();
+		assertThat(feed.contentType()).isEqualTo("FEED");
+
+		assertThat(repository.findLatestViews(List.of())).isEmpty();   // IN () 선처리
+	}
+
+	@Test
 	void 스냅샷은_날짜_오름차순이고_숨김_플래그와_null_지표가_보존된다() {
 		// 역순 삽입 — ORDER BY가 없으면 물리 순서로 새는 것을 잡는다
 		jdbc.sql("""
