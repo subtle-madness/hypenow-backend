@@ -277,9 +277,19 @@ public class BrandPostAssembler {
 
 	/**
 	 * 브랜드 풀(tagged ∪ direct) 조립 — {@code brand_tagged_post} 한 산지에서 통째로 읽는다(설계
-	 * §결정 1). 공개 이유: 성과 대시보드는 레거시 전량을 이미 자기가 조립해 두고 브랜드 풀만 얹으면
-	 * 되므로 과도기 폴백이 붙는 경로를 태우면 유저 전량 배치 조회가 통째로 중복된다. 브랜드 화면의
-	 * 진입점은 {@link #indexForBrand} + {@link #hydrate}다(2026-08-27 2단 조립).
+	 * §결정 1).
+	 *
+	 * <p><b>공개 이유(2026-08-27 갱신)</b>: 더 이상 성과 대시보드가 아니다. 대시보드는 2단 조립
+	 * (인덱스+하이드레이트)으로 전환돼 프로덕션에서 이 메서드를 타지 않고, 브랜드 화면의 진입점도
+	 * {@link #indexForBrand} + {@link #hydrate}다. 지금 남은 사용처는 둘뿐이다:
+	 * <ol>
+	 *   <li><b>프로덕션</b> — {@code V2CampaignContentService}의 캠페인 태그 <b>존재 판정</b>
+	 *       (userId 스코프·scope=ALL·클램프 off). 유저의 전 브랜드를 한 번에 훑어야 해서 브랜드
+	 *       단위 2단 조립이 맞지 않는다.</li>
+	 *   <li><b>테스트 전용</b> — {@code PerformanceContentAssembler.assembleSlim}(구 전량 조립)이
+	 *       2단 조립의 <b>동치성 기준선</b>으로 남아 이 메서드를 경유한다. 기준선이 은퇴해도 위 1번이
+	 *       남으므로 이 메서드 자체는 그때도 삭제 대상이 아니다.</li>
+	 * </ol>
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
