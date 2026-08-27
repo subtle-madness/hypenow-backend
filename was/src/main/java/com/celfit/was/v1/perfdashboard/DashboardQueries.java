@@ -155,7 +155,8 @@ final class DashboardQueries {
 	 * 작성자 필터(2026-08-27 §2) — 미지정·빈 값은 필터 없음. 공용 {@link #normalizeFilter(String)}을
 	 * 쓰지 않는 이유는 값 공간이 인스타그램 핸들이라 {@code all}이 실제 계정명과 충돌할 수 있어서다
 	 * (핸들 {@code all}을 가진 작성자를 조회할 수 없게 만들지 않는다). 비교는 대소문자 무시다 —
-	 * 대시보드 handle은 소문자 계약이지만 레거시 아이템의 handle은 등록 시 입력값 그대로다.
+	 * 레거시·브랜드 풀 모두 handle은 산지에서 소문자로 정규화돼 나오지만(집계기 규칙 9의
+	 * "재정규화 금지"가 서 있는 근거다), 입력은 사용자가 손으로 치는 값이라 대문자가 섞여 온다.
 	 */
 	static String normalizeAuthorUsername(String raw) {
 		if (raw == null || raw.isBlank()) {

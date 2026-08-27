@@ -827,6 +827,10 @@ class V1PerformanceDashboardControllerTest {
 				// 신설 표면이라 목록의 statusCounts·limit·lastCollectedAt은 없다(meta는 total·page뿐).
 				.andExpect(jsonPath("$.meta", Matchers.aMapWithSize(2)))
 				.andExpect(jsonPath("$.meta.page.offset").value(0));
+
+		// 인플루언서 표면은 인덱스 ref만으로 답한다 — 목록용 카드 하이드레이션(비싼 패스)을 타면
+		// 신설 표면의 비용 이점이 사라진다.
+		then(assembler).should(never()).hydratePage(any(), anyList());
 	}
 
 	@Test

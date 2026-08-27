@@ -96,7 +96,9 @@ public final class PerformanceInfluencerAggregator {
 	/**
 	 * 업로드 최신 ref 우선으로 필드별 첫 non-null을 고른다 — 같은 작성자의 관측이 산지·시점별로
 	 * 들쭉날쭉해도 최신 관측이 이긴다. 업로드일 미상 ref는 최신성을 주장할 근거가 없어 마지막
-	 * 순번으로 밀린다. displayName은 전부 null이면 handle로 폴백한다(표시 공백 방지).
+	 * 순번으로 밀린다. displayName은 빈 문자열도 부재로 보고(상류 폴백 {@code refOfPoolRow}·
+	 * {@code fromBrandPost}와 같은 술어) 전부 비면 handle로 폴백한다 — 빈 이름이 이기면 FE가
+	 * 공백을 렌더한다. profileImageUrl·followers는 blank 개념이 없어 null만 본다.
 	 */
 	private static Display pickDisplay(String handle, List<DashboardRef> group) {
 		List<DashboardRef> latestFirst = new ArrayList<>(group);
@@ -107,7 +109,7 @@ public final class PerformanceInfluencerAggregator {
 		String profileImageUrl = null;
 		Long followers = null;
 		for (DashboardRef ref : latestFirst) {
-			if (displayName == null) {
+			if (displayName == null && ref.displayName() != null && !ref.displayName().isBlank()) {
 				displayName = ref.displayName();
 			}
 			if (profileImageUrl == null) {

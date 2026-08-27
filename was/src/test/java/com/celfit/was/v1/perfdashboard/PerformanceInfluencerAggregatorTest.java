@@ -139,6 +139,24 @@ class PerformanceInfluencerAggregatorTest {
 	}
 
 	@Test
+	void displayName은_빈_문자열을_부재로_보고_다음_ref로_넘어간다() {
+		// 최신 ref의 displayName이 ""다 — 상류 폴백(refOfPoolRow·fromBrandPost)과 같은 술어라면
+		// 빈 값은 이기지 못하고 그다음 최신 ref의 이름이 채택돼야 한다(FE 공백 렌더 방지).
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-05", true, null, null, false, null, null, null, null, "이름", null),
+				ref("a", "2026-08-06", true, null, null, false, null, null, null, null, "", null)));
+
+		assertThat(rows.get(0).displayName()).isEqualTo("이름");
+
+		// 전부 blank면 값이 없는 것과 같아 handle로 폴백한다.
+		var allBlank = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("beautylover", "2026-08-05", true, null, null, false, null, null, null, null, "  ", null),
+				ref("beautylover", "2026-08-06", true, null, null, false, null, null, null, null, "", null)));
+
+		assertThat(allBlank.get(0).displayName()).isEqualTo("beautylover");
+	}
+
+	@Test
 	void displayName은_전부_null이면_handle로_폴백한다() {
 		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
 				ref("beautylover", "2026-08-06", true, 100L, 10L, false, 1L)));
