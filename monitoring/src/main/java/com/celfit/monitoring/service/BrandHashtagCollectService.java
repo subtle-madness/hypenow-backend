@@ -41,9 +41,17 @@ import org.slf4j.LoggerFactory;
  * 태그 B의 스트림에 실려도 B의 종료 신호로 보지 않는다 — 안 그러면 B의 열거 깊이가 태그 순서에
  * 좌우된다. {@code insertedThisRun}이 그 구분을 들고 있다.
  *
- * <p><b>편입 상한</b>: hashtag 성분 행이 브랜드당 {@code postLimit}(기본 1,000)에 닿으면 신규 편입을
- * 멈춘다(최신 우선 — recent 스트림 순서가 곧 우선순위다). 이미 풀에 있는 행에 hashtag 성분만 얹는
- * <b>겹침 병기는 상한 밖</b>이다(행이 늘지 않는다 — 설계 §2-3). tagged의 2,000 상한과는 별도 카운터다.
+ * <p><b>편입 상한</b>: hashtag 성분 행이 브랜드당 {@code postLimit}(기본 1,000)에 닿으면 <b>그 브랜드의
+ * 해시태그 열거 자체를 중단</b>한다(콜 예산 보호 — {@link #doSweep}이 예산 소진 후의 태그는 아예
+ * 열거하지 않는다). 이미 풀에 있는 행에 hashtag 성분만 얹는 <b>겹침 병기는 상한 밖</b>이다(행이
+ * 늘지 않는다 — 설계 §2-3) — 단 이 면제는 <b>태그가 실제로 열거되는 동안만</b> 유효하다: 상한
+ * 도달로 어느 태그가 아예 열거되지 않으면 그 태그의 겹침도 병기되지 않는다. tagged의 2,000
+ * 상한과는 별도 카운터다.
+ *
+ * <p><b>태그 간 우선순위</b>: 예산은 태그 목록({@link BrandHashtagRepository#findTags}, 등록순
+ * created_at·tag)을 순서대로 태우므로, "최신 우선"은 태그 <b>하나</b>의 recent 스트림 안에서만
+ * 성립한다 — 여러 태그 사이에서는 먼저 등록된 태그가 예산을 먼저 소진하고, 뒤 태그는 남은 예산이
+ * 없으면 이번 스윕에서 아예 열거되지 않는다.
  *
  * <p>plain class + {@code BrandHashtagConfig}에서 배선(구 구조에서 이어받은 배치).
  */
@@ -114,7 +122,16 @@ public class BrandHashtagCollectService {
 				log.info("브랜드 해시태그 편입 상한({}) 도달 — {} 잔여 태그 열거 중단", postLimit, brand.username());
 				break;
 			}
-			savedTotal += sweepTag(brand, tag, cutoff, now, state);
+			// 태그 단위 격리(교환비): tags.findTags는 등록순(created_at, tag) 고정 순서다 — 여기서
+			// 한 태그의 실패(Hiker 5xx·타임아웃·파싱 이상)를 안 막으면 그 태그가 매 야간 스윕마다
+			// 뒤 태그 전부를 영구 굶긴다. BrandDirectCollectService.collectOne과 같은 이유의 격리이고,
+			// 미처리분은 다음 스윕이 같은 순서로 재시도한다(별도 백스톱 불필요 — 열거 자체가 멱등).
+			try {
+				savedTotal += sweepTag(brand, tag, cutoff, now, state);
+			} catch (RuntimeException e) {
+				log.warn("해시태그 태그 열거 실패(격리, 다음 태그 계속) — {} 태그 {}: {}",
+						brand.username(), tag, e.toString());
+			}
 		}
 		log.info("브랜드 해시태그 수집 완료 — {} 태그 {}개, 신규 편입 {}건, 잔여 편입 여유 {}건",
 				brand.username(), tagList.size(), savedTotal, state.budget);

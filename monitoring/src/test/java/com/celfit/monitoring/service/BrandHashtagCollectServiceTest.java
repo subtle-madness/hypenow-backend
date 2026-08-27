@@ -53,6 +53,7 @@ class BrandHashtagCollectServiceTest {
 
 	private final Map<String, List<String>> pagesByTag = new HashMap<>();
 	private final Map<String, Integer> pageIndexByTag = new HashMap<>();
+	private final Set<String> failingTags = new HashSet<>();
 	private final List<String> calls = new ArrayList<>();
 
 	private final BrandRow brand =
@@ -229,6 +230,9 @@ class BrandHashtagCollectServiceTest {
 				throw new IllegalStateException("예상 밖 콜: " + path);
 			}
 			String tag = URLDecoder.decode(tagParam(path), StandardCharsets.UTF_8);
+			if (failingTags.contains(tag)) {
+				throw new RuntimeException("의도된 태그 열거 실패: " + tag);
+			}
 			if (!pagesByTag.containsKey(tag)) {
 				throw new IllegalStateException("등록 안 된 태그 콜: " + tag);
 			}
@@ -348,19 +352,26 @@ class BrandHashtagCollectServiceTest {
 		assertThat(tagged.upsertedHashtag).containsExactly("N1", "N2");
 	}
 
-	/** 이미 풀에 있는 행(tagged·direct)에 hashtag 성분만 얹는 병기는 행이 늘지 않아 상한 밖이다. */
+	/**
+	 * 이미 풀에 있는 행(tagged·direct)에 hashtag 성분만 얹는 병기는 행이 늘지 않아 상한 밖이다.
+	 * 겹침 2건 + 신규 2건을 같은 페이지에 섞어, 겹침 쪽에 남은 예산(brandNew의 {@code limit})이
+	 * 잘못 전이되지 않는지까지 고정한다(겹침 리스트에 예산 limit을 걸면 이 테스트가 깨진다).
+	 */
 	@Test
 	void 겹침_병기는_편입_상한을_소모하지_않는다() {
 		tags.tags = List.of("cclime");
-		tagged.known.add("OVERLAP");   // tagged로 이미 확보한 게시물(hashtag 성분은 없음)
+		tagged.known.add("OVERLAP1");   // tagged로 이미 확보한 게시물(hashtag 성분은 없음)
+		tagged.known.add("OVERLAP2");
 		pagesByTag.put("cclime", List.of(sectionsBody(null,
-				media("OVERLAP", RECENT, "poster0"), media("N1", RECENT, "poster1"),
-				media("N2", RECENT, "poster2"))));
+				media("OVERLAP1", RECENT, "poster0"), media("OVERLAP2", RECENT, "poster0b"),
+				media("N1", RECENT, "poster1"), media("N2", RECENT, "poster2"))));
 
 		service(4, 1).sweep(brand);
 
-		// 상한 1이라 신규는 N1 하나뿐이지만, 겹침 OVERLAP은 상한과 무관하게 병기된다.
-		assertThat(tagged.upsertedHashtag).containsExactlyInAnyOrder("OVERLAP", "N1");
+		// 상한 1이라 신규는 N1 하나뿐이지만, 겹침 OVERLAP1·OVERLAP2는 둘 다 상한과 무관하게 병기된다.
+		assertThat(tagged.upsertedHashtag).containsExactlyInAnyOrder("OVERLAP1", "OVERLAP2", "N1");
+		assertThat(tagged.matchedTagsOf("OVERLAP1")).containsExactly("cclime");
+		assertThat(tagged.matchedTagsOf("OVERLAP2")).containsExactly("cclime");
 	}
 
 	// ── 조기 종료 ───────────────────────────────────────────────────────────
@@ -405,5 +416,22 @@ class BrandHashtagCollectServiceTest {
 		service(4, 1000).sweep(brand);
 
 		assertThat(calls).isEmpty();
+	}
+
+	// ── 태그 단위 격리 ──────────────────────────────────────────────────────
+
+	/**
+	 * 태그 목록은 등록순 고정 순서라(tags.findTags), 한 태그의 Hiker 실패(5xx·타임아웃·파싱 이상)를
+	 * doSweep이 격리하지 않으면 그 태그가 매 스윕마다 뒤 태그 전부를 영구 굶긴다.
+	 */
+	@Test
+	void 한_태그의_실패는_다음_태그를_굶기지_않는다() {
+		tags.tags = List.of("실패", "cclime");
+		failingTags.add("실패");
+		pagesByTag.put("cclime", List.of(sectionsBody(null, media("N1", RECENT, "poster1"))));
+
+		service(4, 1000).sweep(brand);
+
+		assertThat(tagged.upsertedHashtag).containsExactly("N1");
 	}
 }
