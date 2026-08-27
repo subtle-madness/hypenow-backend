@@ -77,6 +77,21 @@ public record BrandPostResponse(
 	}
 
 	/**
+	 * 댓글만 비운 사본(2026-08-27 목록 타임아웃 해소 — FE 요청 1) — 목록 표면은 댓글을 렌더하지
+	 * 않아 {@code recentComments}를 싣지 않는다(상세만 포함). 계약 무결성 규칙 #1(키 생략 금지)대로
+	 * 키는 유지하고 빈 목록·0으로 내린다. 스냅샷 유래 지표({@code commentsTotal}·
+	 * {@code commentsHidden})는 그대로다 — 댓글 수 표시는 그쪽이 정본이다.
+	 */
+	public BrandPostResponse withoutRecentComments() {
+		return new BrandPostResponse(id, brandAccountId, source, postUrl, shortcode, contentType, takenAt,
+				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
+				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
+				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
+				commentsHidden, 0L, List.of(), campaignIds, createdAt, updatedAt,
+				adDisclosure, adViolations, adEvidence, seededAuthor);
+	}
+
+	/**
 	 * 광고 표기 판정 4필드만 교체한 사본 — shortcode 병합에서 direct 본체를 유지한 채 tagged의
 	 * 판정값만 승격시키는 데 쓴다({@link #withSponsorship}과 같은 관용구, 정보 손실 방지 —
 	 * 코디네이터 스펙 리뷰 반영). direct 산지엔 이 필드들의 원천(brand_post_meta)이 없으므로

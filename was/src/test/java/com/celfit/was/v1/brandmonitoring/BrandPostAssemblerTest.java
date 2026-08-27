@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -64,6 +65,151 @@ class BrandPostAssemblerTest {
 			assertThat(post.recentComments()).isEmpty();
 			assertThat(post.commentsCollectedCount()).isEqualTo(0);
 		});
+	}
+
+	// ---------- 인덱스/하이드레이트 분리(2026-08-27 목록 타임아웃 해소) ----------
+
+	@Test
+	void withoutRecentComments는_댓글만_비운다() {
+		var comment = new BrandReadRepository.BrandCommentRow("ABC", "c1", "user_a", "본문", 3L,
+				OffsetDateTime.parse("2026-08-06T03:00:00Z"), null);
+		var full = brandPost(taggedRow("ABC"), meta("ABC", "REELS", true), null,
+				List.of(snapshotRow("ABC", 6, 100L)), List.of(comment), List.of("7"));
+
+		var stripped = full.withoutRecentComments();
+
+		assertThat(stripped.recentComments()).isEmpty();
+		assertThat(stripped.commentsCollectedCount()).isZero();
+		// 나머지 필드는 전부 그대로 — 스냅샷 유래 지표(commentsTotal)와 표시 필드가 흔들리면 안 된다.
+		assertThat(stripped.commentsTotal()).isEqualTo(full.commentsTotal());
+		assertThat(stripped.snapshots()).isEqualTo(full.snapshots());
+		assertThat(stripped.sponsorship()).isEqualTo(full.sponsorship());
+		assertThat(stripped.campaignIds()).isEqualTo(full.campaignIds());
+	}
+
+	/** 인덱스 패스는 counts·정렬·페이지 계산 전용이라 무거운 배치 조회(스냅샷·댓글·게시자·표시 메타)가 없어야 한다. */
+	@Test
+	void 인덱스는_스냅샷_댓글_게시자_조회를_돌리지_않는다() {
+		var repository = mock(BrandReadRepository.class);
+		var account = accountRow();
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(
+				taggedRow("TAG1"),
+				row("BOTH", "2026-08-05T02:00:00Z", "2026-08-05T01:00:00Z", "2026-08-06T00:00:00Z")));
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
+				new BrandReadRepository.SponsorshipMetaRow("TAG1", null, "#협찬 후기"),
+				new BrandReadRepository.SponsorshipMetaRow("BOTH", false, "일상")));
+		var directRepository = mock(BrandDirectPostRepository.class);
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of("BOTH"));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class), directRepository,
+				mock(TrackingItemAssembler.class), mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, account, false);
+
+		verify(repository, never()).findSnapshots(anyCollection());
+		verify(repository, never()).findComments(anyCollection(), anyInt());
+		verify(repository, never()).findAuthors(anyCollection());
+		verify(repository, never()).findPostMeta(anyCollection());
+		assertThat(index.refs()).hasSize(2);
+		var tag1 = index.refs().stream().filter(r -> r.shortcode().equals("TAG1")).findFirst().orElseThrow();
+		assertThat(tag1.source()).isEqualTo("tagged");
+		assertThat(tag1.sponsorship()).isEqualTo("sponsored");        // 캡션 키워드 — 풀 조립과 같은 판정 함수
+		assertThat(tag1.uploadedOn()).isEqualTo(LocalDate.of(2026, 8, 6));   // KST 달력일(UTC 08-06T01Z → KST 10시)
+		var both = index.refs().stream().filter(r -> r.shortcode().equals("BOTH")).findFirst().orElseThrow();
+		assertThat(both.source()).isEqualTo("direct");                // 겹침 행 + 등록자 → direct
+		assertThat(both.sponsorship()).isEqualTo("organic");
+	}
+
+	/** withViews 인덱스의 정렬 키는 서빙 규칙(피드 views null)과 같아야 performance 정렬이 풀 조립과 일치한다. */
+	@Test
+	void 인덱스는_performance용_최신뷰를_피드면_null로_접는다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true)))
+				.willReturn(List.of(taggedRow("REELS1"), taggedRow("FEED1")));
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
+				new BrandReadRepository.LatestViewsRow("REELS1", "REELS", 500L),
+				new BrandReadRepository.LatestViewsRow("FEED1", "FEED", 300L)));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), true);
+
+		var reels = index.refs().stream().filter(r -> r.shortcode().equals("REELS1")).findFirst().orElseThrow();
+		var feed = index.refs().stream().filter(r -> r.shortcode().equals("FEED1")).findFirst().orElseThrow();
+		assertThat(reels.latestViews()).isEqualTo(500L);
+		assertThat(feed.latestViews()).isNull();   // 피드 views null 서빙 규칙(snapshotOf) 동형
+	}
+
+	@Test
+	void 인덱스에서_다른_유저의_direct_전용_행은_빠진다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(
+				taggedRow("TAG1"),
+				row("OTHERS", null, "2026-08-05T01:00:00Z", "2026-08-06T00:00:00Z")));
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		var directRepository = mock(BrandDirectPostRepository.class);
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of());   // 내 등록이 아니다
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class), directRepository,
+				mock(TrackingItemAssembler.class), mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		assertThat(index.refs()).extracting(BrandPostAssembler.PostRef::shortcode).containsExactly("TAG1");
+	}
+
+	@Test
+	void 하이드레이트는_지정_코드만_조립하고_입력_순서를_지킨다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true)))
+				.willReturn(List.of(taggedRow("AAA"), taggedRow("BBB"), taggedRow("CCC")));
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+		var posts = assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index,
+				List.of("CCC", "AAA"), false);
+
+		assertThat(posts).extracting(BrandPostResponse::shortcode).containsExactly("CCC", "AAA");
+		// 배치 조회는 페이지 코드 2건으로만 돈다 — 전량(3건) 조립이 되살아나면 페이지네이션이 무의미하다.
+		verify(repository).findPostMeta(eq(Set.of("CCC", "AAA")));
+		verify(repository).findSnapshots(eq(Set.of("CCC", "AAA")));
+	}
+
+	@Test
+	void 하이드레이트는_withComments_false면_댓글_조회_없이_빈_목록이다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(taggedRow("AAA")));
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+		given(repository.findComments(anyCollection(), anyInt())).willReturn(List.of(
+				new BrandReadRepository.BrandCommentRow("AAA", "c1", "user_a", "본문", 1L,
+						OffsetDateTime.parse("2026-08-06T03:00:00Z"), null)));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		var withoutComments = assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index,
+				List.of("AAA"), false);
+		verify(repository, never()).findComments(anyCollection(), anyInt());
+		assertThat(withoutComments).singleElement().satisfies(post -> {
+			assertThat(post.recentComments()).isEmpty();
+			assertThat(post.commentsCollectedCount()).isZero();
+		});
+
+		var withComments = assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index,
+				List.of("AAA"), true);
+		assertThat(withComments).singleElement()
+				.satisfies(post -> assertThat(post.commentsCollectedCount()).isEqualTo(1));
 	}
 
 	// ---------- 노출 필터(등록자 전용, 08-19) ----------
@@ -199,7 +345,7 @@ class BrandPostAssemblerTest {
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
 
-		assembler.assembleForBrand(7L, account, BrandAccountType.OWN);
+		assembler.indexForBrand(7L, account, false);
 
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
 	}
