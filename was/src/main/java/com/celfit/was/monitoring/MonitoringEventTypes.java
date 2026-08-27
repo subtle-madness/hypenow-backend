@@ -2,6 +2,8 @@ package com.celfit.was.monitoring;
 
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 모니터링 이벤트 유형 4종(스펙 6.32 다이제스트·6.33 알림 설정 공통, 순서 고정).
@@ -15,6 +17,8 @@ import java.util.Map;
  * content_issue↔CONTENT_UNAVAILABLE만 이름이 다르고 나머지는 대소문자만 다르다.
  */
 public final class MonitoringEventTypes {
+
+	private static final Logger log = LoggerFactory.getLogger(MonitoringEventTypes.class);
 
 	public static final List<String> EVENT_TYPES =
 			List.of("collection_started", "collection_ended", "metrics_private", "content_issue");
@@ -43,11 +47,17 @@ public final class MonitoringEventTypes {
 		return storage;
 	}
 
-	/** 저장(monitoring AlarmEventType) 대문자 어휘 → 프론트 소문자 어휘. 미지 값은 예외. */
+	/**
+	 * 저장(monitoring AlarmEventType) 대문자 어휘 → 프론트 소문자 어휘. 미지 값은 <b>경고 로그 후
+	 * null</b>(2026-08-28 품질 리뷰 nit) — 유일한 호출부인 WeeklyDigestJob의 주간 집계가
+	 * alarm_event에 5번째 유형이 추가되는 순간 예외로 통째로 죽지 않고 그 이벤트만 조용히
+	 * 건너뛴다. 사용자 입력을 검증하는 반대 방향({@link #toStorage})은 여전히 예외를 던진다 —
+	 * 그쪽은 잘못된 입력을 즉시 거부하는 게 맞다.
+	 */
 	public static String toFront(String storageType) {
 		String front = STORAGE_TO_FRONT.get(storageType);
 		if (front == null) {
-			throw new IllegalArgumentException("알 수 없는 저장 이벤트 유형: " + storageType);
+			log.warn("알 수 없는 저장 이벤트 유형(무시) — {}", storageType);
 		}
 		return front;
 	}
