@@ -29,9 +29,10 @@ import org.springframework.stereotype.Component;
  * <p><b>입력 다섯 종</b>(설계 §2-1) — 하나라도 놓치면 실패가 아니라 <b>낡은 데이터의 조용한 서빙</b>이다:
  * <ol>
  *   <li>레거시 스윕 워터마크 — {@link MonitoringReadRepository#lastSuccessfulSweepAt()}</li>
- *   <li>브랜드 스윕 워터마크 — 내 연결 브랜드의 {@code (id, last_swept_at, covered_until)}.
- *       {@code covered_until}까지 넣는 이유는 그것이 커버리지 클램프 술어의 입력이라 스윕 시각이
- *       그대로여도 응답 모수를 바꾸기 때문이다.</li>
+ *   <li>브랜드 스윕 워터마크 — 내 연결 브랜드의 {@code brand_account} 행에서 응답에 영향을 주는
+ *       6필드({@link #brandWatermarks} 참조). 스윕 시각만으로는 부족하다: 창 확장·재활성화처럼
+ *       <b>스윕 밖</b>에서 그 행을 바꾸는 경로가 있고, 브랜드는 유저 간 공유 자산이라 <b>남의</b>
+ *       등록·확장이 내 응답을 바꾼다.</li>
  *   <li>유저 자신의 쓰기 — {@link DashboardVersionRepository}의 행 지문 5종</li>
  *   <li>KST 날짜 — 데이터가 하나도 안 바뀌어도 자정을 넘기면 상태 유도와 365일 창이 달라진다</li>
  *   <li>배포 세대({@code cacheEpoch}) — 응답 스키마가 바뀐 배포에서 옛 ETag가 맞으면 새 필드가 영영
@@ -52,7 +53,7 @@ public class DashboardVersion {
 	 * ({@code cacheEpoch})가 이미 모든 배포에서 키를 무효화하므로 안전망이지만, 빌드 시각을 못 읽는
 	 * 환경({@code "dev"} 폴백)에서 구성만 바뀐 경우의 유일한 방어선이다.
 	 */
-	private static final String LAYOUT = "pdv1";
+	private static final String LAYOUT = "pdv2";
 
 	/** 값이 없는 자리의 표식 — 빈 문자열을 쓰면 인접 필드와 구분이 흐려진다. */
 	private static final String ABSENT = "-";
@@ -157,10 +158,29 @@ public class DashboardVersion {
 	}
 
 	/**
-	 * ② 브랜드 스윕 워터마크 — 활성 연결의 monitoring 계정 행에서 {@code (id, last_swept_at,
-	 * covered_until)}을 뽑아 <b>brand_id 오름차순</b>으로 join한다. 정렬을 고정하는 이유는 연결 순서
-	 * ({@code created_at})가 바뀌어도 워터마크 자체는 같은 값이어야 하고, 무엇보다 순서가 흔들리면
-	 * 데이터가 그대로여도 키가 달라져 304가 영영 안 나기 때문이다.
+	 * ② 브랜드 워터마크 — 활성 연결의 monitoring 계정 행({@code brand_account})에서 응답에 영향을
+	 * 주는 6필드를 뽑아 <b>brand_id 오름차순</b>으로 join한다.
+	 *
+	 * <table>
+	 *   <caption>필드 ↔ 응답 영향 지점</caption>
+	 *   <tr><th>필드</th><th>응답 영향</th></tr>
+	 *   <tr><td>{@code id}</td><td>행 식별(정렬 키)</td></tr>
+	 *   <tr><td>{@code last_swept_at}</td><td>스윕 세대 — 게시물·스냅샷이 통째로 갱신되는 지점</td></tr>
+	 *   <tr><td>{@code covered_until}</td><td>목록의 커버리지 클램프 술어 · {@code /comparison}의 covered 판정</td></tr>
+	 *   <tr><td>{@code backfill_completed_at}</td><td>{@code /comparison}의 {@code accountCovered} 판정</td></tr>
+	 *   <tr><td>{@code last_swept_on}</td><td>〃 (같은 술어의 다른 절)</td></tr>
+	 *   <tr><td>{@code collection_months}</td><td>{@code /comparison}의 창 시작일({@code today.minusMonths})</td></tr>
+	 *   <tr><td>{@code collection_started_at}</td><td>{@code /comparison} 응답 필드(수집 시작 시각)</td></tr>
+	 * </table>
+	 *
+	 * <p><b>스윕 시각 2개만으로는 부족하다.</b> 뒤 4필드는 창 확장·재활성화·상한 조정
+	 * ({@code BrandRepository.expandWindow}·{@code insertOrReactivate}·{@code raiseWindowCapped}) 같은
+	 * <b>스윕 밖</b> 경로에서 바뀌고, 그때 {@code last_swept_at}·{@code covered_until}은 미동이다.
+	 * 게다가 브랜드는 유저 간 공유 자산이라 <b>다른 유저의</b> 등록·확장이 내 응답을 바꾸는데,
+	 * 그건 내 app 링크 지문({@link DashboardVersionRepository#brandLinksFingerprint})이 잡을 수 없다.
+	 *
+	 * <p>정렬을 고정하는 이유는 연결 순서({@code created_at})가 바뀌어도 워터마크 자체는 같은 값이어야
+	 * 하고, 무엇보다 순서가 흔들리면 데이터가 그대로여도 키가 달라져 304가 영영 안 나기 때문이다.
 	 *
 	 * <p>계정 행이 없는 연결(경합·삭제)은 건너뛴다 — 조립도 그 브랜드를 통째로 빼므로 응답과 같은
 	 * 판정이다. 나중에 행이 생기면 이 문자열이 달라져 자연히 무효화된다.
@@ -187,7 +207,11 @@ public class DashboardVersion {
 			}
 			sb.append(account.id()).append(':')
 					.append(instantText(account.lastSweptAt())).append(':')
-					.append(instantText(account.coveredUntil()));
+					.append(instantText(account.coveredUntil())).append(':')
+					.append(instantText(account.backfillCompletedAt())).append(':')
+					.append(account.lastSweptOn() == null ? ABSENT : account.lastSweptOn().toString()).append(':')
+					.append(account.collectionMonths()).append(':')
+					.append(instantText(account.collectionStartedAt()));
 		}
 		return sb.toString();
 	}

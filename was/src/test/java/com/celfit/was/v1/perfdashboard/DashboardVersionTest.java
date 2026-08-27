@@ -11,6 +11,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.MonitoringReadRepository;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -49,6 +51,10 @@ class DashboardVersionTest {
 		OffsetDateTime brandLastSweptAt = odt("2026-08-28T04:00:00Z");
 		// ②' 브랜드 커버리지 상한(brand_account.covered_until) — 클램프 술어의 입력이라 응답을 바꾼다
 		OffsetDateTime brandCoveredUntil = odt("2025-09-01T00:00:00Z");
+		// ②'' 스윕 밖 경로(창 확장·재활성화)로 바뀌는 계정 행 필드 — /comparison의 covered 판정·창·응답
+		// 필드 산지다. 브랜드가 유저 간 공유 자산이라 남의 등록·확장이 내 응답을 바꾼다.
+		OffsetDateTime brandBackfillCompletedAt = odt("2026-07-05T00:00:00Z");
+		int brandCollectionMonths = 12;
 		// ④ 유저 쓰기 지문 5종
 		String itemsFingerprint = "0000000000000000000000000000aaaa";
 		String linksFingerprint = "0000000000000000000000000000bbbb";
@@ -58,6 +64,8 @@ class DashboardVersionTest {
 		// ⑤ KST 날짜
 		Instant now = Instant.parse("2026-08-28T05:00:00Z");   // KST 2026-08-28 14:00
 		boolean monitoringEnabled = true;
+		// ⑤ 배포 세대 — 기본은 BuildProperties 부재("dev" 폴백, 로컬·테스트 환경)
+		ObjectProvider<BuildProperties> buildProperties = buildPropertiesProvider(null);
 	}
 
 	private static String compute(Inputs in) {
@@ -80,9 +88,11 @@ class DashboardVersionTest {
 			// 브랜드 2건 — 연결 순서는 뒤죽박죽으로 주고(2 → 1) 정렬이 실제로 걸리는지 본다.
 			given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(link(2L), link(1L)));
 			given(brandRead.findAccount(1L)).willReturn(Optional.of(
-					account(1L, in.brandLastSweptAt, in.brandCoveredUntil)));
+					account(1L, in.brandLastSweptAt, in.brandCoveredUntil, in.brandBackfillCompletedAt,
+							in.brandCollectionMonths)));
 			given(brandRead.findAccount(2L)).willReturn(Optional.of(
-					account(2L, odt("2026-08-28T04:30:00Z"), odt("2025-10-01T00:00:00Z"))));
+					account(2L, odt("2026-08-28T04:30:00Z"), odt("2025-10-01T00:00:00Z"),
+							odt("2026-07-06T00:00:00Z"), 6)));
 			brandReadRepository = Optional.of(brandRead);
 		} else {
 			given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of());
@@ -91,7 +101,7 @@ class DashboardVersionTest {
 		}
 
 		DashboardVersion version = new DashboardVersion(repository, monitoringReadRepository, linkRepository,
-				brandReadRepository, buildPropertiesProvider(), Clock.fixed(in.now, ZoneOffset.UTC));
+				brandReadRepository, in.buildProperties, Clock.fixed(in.now, ZoneOffset.UTC));
 		return version.compute(USER_ID);
 	}
 
@@ -113,6 +123,10 @@ class DashboardVersionTest {
 		mutations.put("① 레거시 스윕", in -> in.legacySweepAt = odt("2026-08-28T03:00:01Z"));
 		mutations.put("② 브랜드 last_swept_at", in -> in.brandLastSweptAt = odt("2026-08-28T04:00:01Z"));
 		mutations.put("② 브랜드 covered_until", in -> in.brandCoveredUntil = odt("2025-09-02T00:00:00Z"));
+		// 스윕 밖 경로로 바뀌는 필드 — last_swept_at·covered_until이 미동인 채로 응답만 달라진다.
+		mutations.put("② 브랜드 backfill_completed_at",
+				in -> in.brandBackfillCompletedAt = odt("2026-07-05T00:00:01Z"));
+		mutations.put("② 브랜드 collection_months", in -> in.brandCollectionMonths = 6);
 		mutations.put("④ 아이템 지문", in -> in.itemsFingerprint = "0000000000000000000000000000a0a0");
 		mutations.put("④ 링크 지문", in -> in.linksFingerprint = "0000000000000000000000000000b0b0");
 		mutations.put("④ direct 지문", in -> in.directFingerprint = "0000000000000000000000000000c0c0");
@@ -149,7 +163,7 @@ class DashboardVersionTest {
 		given(linkRepository.findAllActiveByUser(org.mockito.ArgumentMatchers.anyLong())).willReturn(List.of());
 
 		DashboardVersion version = new DashboardVersion(repository, Optional.empty(), linkRepository,
-				Optional.empty(), buildPropertiesProvider(), Clock.fixed(in.now, ZoneOffset.UTC));
+				Optional.empty(), in.buildProperties, Clock.fixed(in.now, ZoneOffset.UTC));
 		assertThat(version.compute(7L)).isNotEqualTo(version.compute(8L));
 	}
 
@@ -182,6 +196,22 @@ class DashboardVersionTest {
 			in.monitoringEnabled = false;
 			in.itemsFingerprint = "0000000000000000000000000000a0a0";
 		})).isNotEqualTo(off);
+	}
+
+	@Test
+	void 배포_세대가_다르면_키가_바뀐다() {
+		// 설계 §2-6 — 응답 스키마가 바뀐 배포에서 옛 ETag가 그대로 맞으면 새 필드가 영영 안 나간다.
+		String dev = computeBaseline();   // BuildProperties 부재 → "dev"
+		String build1 = compute(in -> in.buildProperties =
+				buildPropertiesProvider(Instant.parse("2026-08-28T00:00:00Z")));
+		String build2 = compute(in -> in.buildProperties =
+				buildPropertiesProvider(Instant.parse("2026-08-29T00:00:00Z")));
+
+		assertThat(build1).isNotEqualTo(dev);
+		assertThat(build2).isNotEqualTo(build1);
+		// 같은 빌드 시각이면 같은 세대다(재기동만으로 전 유저 ETag가 날아가지 않는다).
+		assertThat(build1).isEqualTo(compute(in -> in.buildProperties =
+				buildPropertiesProvider(Instant.parse("2026-08-28T00:00:00Z"))));
 	}
 
 	// ---------- ETag 표면 ----------
@@ -219,16 +249,25 @@ class DashboardVersionTest {
 				odt("2026-08-01T00:00:00Z"), null);
 	}
 
-	private static BrandAccountRow account(long id, OffsetDateTime lastSweptAt, OffsetDateTime coveredUntil) {
-		return new BrandAccountRow(id, "brand" + id, null, lastSweptAt, odt("2026-07-01T00:00:00Z"), null, null,
-				100L, 10L, 20L, null, null, null, null, null, "ACTIVE", null, 12,
+	private static BrandAccountRow account(long id, OffsetDateTime lastSweptAt, OffsetDateTime coveredUntil,
+			OffsetDateTime backfillCompletedAt, int collectionMonths) {
+		return new BrandAccountRow(id, "brand" + id, LocalDate.of(2026, 8, 28), lastSweptAt,
+				odt("2026-07-01T00:00:00Z"), backfillCompletedAt, null,
+				100L, 10L, 20L, null, null, null, null, null, "ACTIVE", null, collectionMonths,
 				odt("2026-07-01T00:00:00Z"), false, coveredUntil);
 	}
 
+	/** {@code null}이면 {@code BuildProperties} 부재(로컬·테스트 — {@code "dev"} 폴백)를 흉내 낸다. */
 	@SuppressWarnings("unchecked")
-	private static ObjectProvider<BuildProperties> buildPropertiesProvider() {
+	private static ObjectProvider<BuildProperties> buildPropertiesProvider(Instant buildTime) {
 		ObjectProvider<BuildProperties> provider = mock(ObjectProvider.class);
-		given(provider.getIfAvailable()).willReturn(null);   // 로컬·테스트는 BuildProperties 없음 → "dev"
+		if (buildTime == null) {
+			given(provider.getIfAvailable()).willReturn(null);
+		} else {
+			Properties properties = new Properties();
+			properties.setProperty("time", Long.toString(buildTime.toEpochMilli()));
+			given(provider.getIfAvailable()).willReturn(new BuildProperties(properties));
+		}
 		return provider;
 	}
 }

@@ -175,8 +175,10 @@ public class DashboardVersionRepository {
 	 *   <tr><th>컬럼</th><th>응답 영향</th></tr>
 	 *   <tr><td>{@code brand_id}·{@code short_code}·{@code campaign_id}</td>
 	 *       <td>{@code campaignIds}(head가 {@code item.campaignId}·{@code campaignName}) · 캠페인 필터</td></tr>
-	 *   <tr><td>{@code user_id}</td><td>시딩 계정 도출 스코프 — 같은 (brand, code, campaign)에 유저별
-	 *       행이 공존할 수 있어 식별에 포함한다</td></tr>
+	 *   <tr><td>{@code user_id}</td><td>유저 스코프 다리({@code findShortCodesByUser} — 시딩 계정 도출)의
+	 *       <b>멤버십 결정 컬럼</b>이다. 행의 소유자가 바뀌면 그 행이 UNION의 유저 쪽 갈래에
+	 *       들고 나므로 지문에 포함한다 — PK는 {@code (brand_id, short_code, campaign_id)} 3중이라
+	 *       같은 조합의 행이 유저별로 여럿 있을 수는 없다</td></tr>
 	 * </table>
 	 */
 	public String postCampaignLinksFingerprint(long userId) {
