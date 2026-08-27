@@ -116,6 +116,90 @@ class AdDisclosureJudgeServiceTest {
 		assertThat(repo.written.get("AAA").verdict()).isEqualTo("INSUFFICIENT");
 	}
 
+	// 완전 외국어(비한국어) 게시물 — 한국 지침 적용 대상이 아니므로 LLM 호출 없이 FOREIGN_POST로
+	// 확정한다(2026-08-27 결정, DECISIONS.md 참조). Tier0 신설 규칙 — is_paid_partnership·공백
+	// 캡션 규칙보다 뒤, Tier1 사전 매칭보다 앞이다.
+
+	@Test
+	void 완전_외국어_캡션은_LLM_호출_없이_FOREIGN_POST() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(post("AAA", "This is my favorite product ever! #ad", "FEED", null)));
+
+		assertThat(extractor.calls).isEmpty();
+		assertThat(repo.written.get("AAA").verdict()).isEqualTo("FOREIGN_POST");
+		assertThat(repo.written.get("AAA").source()).isEqualTo("RULE");
+		assertThat(repo.written.get("AAA").violations()).isEmpty();
+		assertThat(repo.written.get("AAA").evidence()).isEmpty();
+	}
+
+	@Test
+	void 완전_외국어_이모지_해시태그만_있어도_FOREIGN_POST() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(post("AAA", "😍🔥 #ad #style", "FEED", null)));
+
+		assertThat(extractor.calls).isEmpty();
+		assertThat(repo.written.get("AAA").verdict()).isEqualTo("FOREIGN_POST");
+	}
+
+	@Test
+	void 한국어_캡션_외국어_단독_표기는_기존_LLM_FOREIGN_경로_유지() {
+		FakeExtractor extractor = new FakeExtractor();
+		extractor.next = List.of(new Disclosure("#ad", Category.FOREIGN));
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(post("AAA", "오늘 소개하는 제품이에요 #ad", "FEED", null)));
+
+		assertThat(extractor.calls).containsExactly("오늘 소개하는 제품이에요 #ad");
+		assertThat(repo.written.get("AAA").verdict()).isEqualTo("INSUFFICIENT");
+		assertThat(repo.written.get("AAA").violations()).containsExactly("FOREIGN_LANGUAGE");
+	}
+
+	@Test
+	void 한글_1자만_섞여도_FOREIGN_POST가_아니라_기존_경로() {
+		FakeExtractor extractor = new FakeExtractor();
+		extractor.next = List.of();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(post("AAA", "so cute 애 #ad", "FEED", null)));
+
+		assertThat(extractor.calls).containsExactly("so cute 애 #ad");
+		assertThat(repo.written.get("AAA").verdict()).isNotEqualTo("FOREIGN_POST");
+	}
+
+	@Test
+	void 유료협찬_라벨이_외국어_캡션보다_우선해서_DISCLOSED() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(post("AAA", "This is a paid collaboration!", "FEED", true)));
+
+		assertThat(extractor.calls).isEmpty();
+		assertThat(repo.written.get("AAA").verdict()).isEqualTo("DISCLOSED");
+		assertThat(repo.written.get("AAA").source()).isEqualTo("RULE");
+	}
+
+	@Test
+	void 공백_캡션은_외국어_규칙보다_기존_공백_규칙이_우선() {
+		FakeExtractor extractor = new FakeExtractor();
+		FakeRepo repo = new FakeRepo();
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run);
+
+		service.judgePosts(List.of(post("F1", "", "FEED", null), post("R1", "", "REELS", null)));
+
+		assertThat(repo.written.get("F1").verdict()).isEqualTo("NOT_DISCLOSED");
+		assertThat(repo.written.get("R1").verdict()).isEqualTo("UNCERTAIN");
+		assertThat(extractor.calls).isEmpty();
+	}
+
 	@Test
 	void 이미_같은_캡션으로_판정된_게시물은_재판정하지_않는다() {
 		FakeExtractor extractor = new FakeExtractor();
