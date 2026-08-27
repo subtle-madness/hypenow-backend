@@ -208,7 +208,7 @@ class CacheIntegrationTest extends IntegrationTest {
 				// 어긋나 실 record 기준으로 바로잡음(2026-07-29). avgHypeScorePrecise는 2026-07-30 신설(스펙 §10).
 				List.of(new CardRow("glow", "글로우", null, 20000L, 214L, 380L, "소개",
 						"저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
-						413200L, 10370L, 152L, 72L, 3L, "glow@example.com", new BigDecimal("72.5000"))),
+						413200L, 10370L, 152L, 72L, 3L, "glow@example.com", new BigDecimal("72.5000"), 1L)),
 				List.of(new ShareRow("glow", "skincare", 80), new ShareRow("glow", "makeup", 20)),
 				List.of(new BrandRow("glow", "롬앤")),
 				List.of(new ThumbRow("glow", "c1", null, "reels", "skincare", "organic",

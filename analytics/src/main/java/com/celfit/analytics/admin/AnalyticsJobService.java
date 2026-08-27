@@ -7,10 +7,13 @@ import com.celfit.analytics.analyze.ContentAnalysisJob;
 import com.celfit.analytics.analyze.JobResult;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
+import com.celfit.analytics.mirror.DerivedViewRefresher;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
 import com.celfit.analytics.mirror.MirrorSpec;
 import java.time.Instant;
+import java.util.EnumSet;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -40,6 +43,11 @@ public class AnalyticsJobService {
 	private final ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob;
 	private final JobProgressRegistry progress;
 	private final RunHistory history;
+	private final DerivedViewRefresher derivedViewRefresher;
+
+	/** 파생 matview 입력(account_content_series·content_analyses)을 쓰는 잡 — 완료 후 사전집계를 갱신한다. */
+	private static final Set<JobName> DERIVED_INPUT_JOBS = EnumSet.of(
+			JobName.MIRROR, JobName.ANALYZE, JobName.LATE_BACKFILL_ANALYZE, JobName.BATCH_COLLECT);
 
 	public AnalyticsJobService(JobLock lock, TaskExecutor executor,
 			MirrorJob mirrorJob, MirrorRegistry registry,
@@ -51,7 +59,8 @@ public class AnalyticsJobService {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
-			JobProgressRegistry progress, RunHistory history) {
+			JobProgressRegistry progress, RunHistory history,
+			DerivedViewRefresher derivedViewRefresher) {
 		this.lock = lock;
 		this.executor = executor;
 		this.mirrorJob = mirrorJob;
@@ -66,6 +75,7 @@ public class AnalyticsJobService {
 		this.traitCanonJob = traitCanonJob;
 		this.progress = progress;
 		this.history = history;
+		this.derivedViewRefresher = derivedViewRefresher;
 	}
 
 	public TriggerResult trigger(JobName job, TriggerType triggerType) {
@@ -78,6 +88,7 @@ public class AnalyticsJobService {
 			try {
 				log.info("{} 시작 (trigger={})", job, triggerType);
 				result = run(job);
+				refreshDerivedViews(job);
 			} catch (Exception e) {
 				error = e;
 				log.error("{} 잡 실패", job, e);
@@ -100,6 +111,17 @@ public class AnalyticsJobService {
 
 	public boolean isRunning(JobName job) {
 		return lock.isRunning(job);
+	}
+
+	/** 입력 변경 잡 성공(부분 실패 포함) 후 발굴 사전집계 matview 갱신 — 실패해도 잡 이력은 오염시키지 않는다
+	 * (다음 입력 잡 후크가 재시도 기회). run()이 던지면 호출 자체가 스킵된다. */
+	private void refreshDerivedViews(JobName job) {
+		if (!DERIVED_INPUT_JOBS.contains(job)) return;
+		try {
+			derivedViewRefresher.refresh();
+		} catch (Exception e) {
+			log.error("파생 matview 갱신 실패", e);
+		}
 	}
 
 	static RunHistory.Outcome outcomeOf(JobResult result, Exception error) {

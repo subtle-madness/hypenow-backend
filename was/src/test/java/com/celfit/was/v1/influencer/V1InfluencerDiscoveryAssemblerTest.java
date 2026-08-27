@@ -23,7 +23,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 	private static CardRow row(String handle, Long followers) {
 		return new CardRow(handle, "이름", "/img/p.jpg", followers, 214L, 380L,
 				"소개\n둘째줄", "태그라인", new BigDecimal("12.42"), new BigDecimal("3.84"),
-				413200L, 10370L, 152L, 72L, 3L, "contact@glow.co", new BigDecimal("72.5000"));
+				413200L, 10370L, 152L, 72L, 3L, "contact@glow.co", new BigDecimal("72.5000"), null);
 	}
 
 	@Test
@@ -46,7 +46,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 	@Test
 	void bio_tagline_부재는_빈문자열_배열은_빈배열() {
 		var bare = new CardRow("mute", "이름", null, 40000L, 40L, 50L, null, null,
-				null, null, null, 300L, 10L, null, 0L, null, null);
+				null, null, null, 300L, 10L, null, 0L, null, null, null);
 		var card = assembler.toCards(List.of(bare), List.of(), List.of(), List.of(), List.of()).get(0);
 		assertThat(card.bio()).isEmpty();
 		assertThat(card.tagline()).isEmpty();
