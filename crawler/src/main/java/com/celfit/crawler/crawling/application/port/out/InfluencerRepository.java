@@ -84,15 +84,20 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /**
      * BEAUTY 재판정(rejudge) 대상: CLAUDE가 비뷰티로 판정했지만 판정 후 프로필 재료가 갱신된
      * (새 raw_profile 스냅샷이 생긴) 계정만 — 재료가 그대로면 같은 판정만 반복하므로 배치 낭비다.
+     * cooldownBefore 이후(쿨다운 이내) 판정분은 제외한다 — F&amp;B 파이프라인 편입 계정은 수집
+     * 재방문마다 프로필이 갱신돼, 이 절이 없으면 매일 전원이 재선정된다(스펙 2026-08-27).
      * MANUAL은 선정 자체에서 제외되고, 뷰티 판정분은 재검하지 않는다(캡션이 뷰티→비뷰티로
      * 뒤집는 사례는 관측되지 않음 — 2026-07-16 실험). 오래된 판정 우선(시각 미기록 = 가장 오래됨).
      */
     @Query("select i from Influencer i where i.status = :status and i.beautySource = :beautySource "
-            + "and i.beauty = false and (i.beautyJudgedAt is null or i.beautyJudgedAt < "
+            + "and i.beauty = false "
+            + "and (i.beautyJudgedAt is null or i.beautyJudgedAt < :cooldownBefore) "
+            + "and (i.beautyJudgedAt is null or i.beautyJudgedAt < "
             + "(select max(rp.capturedAt) from RawProfile rp where rp.influencerId = i.id)) "
             + "order by i.beautyJudgedAt asc nulls first, i.id")
     List<Influencer> findRejudgeTargets(@Param("status") InfluencerStatus status,
                                         @Param("beautySource") String beautySource,
+                                        @Param("cooldownBefore") java.time.Instant cooldownBefore,
                                         Pageable pageable);
 
     /**

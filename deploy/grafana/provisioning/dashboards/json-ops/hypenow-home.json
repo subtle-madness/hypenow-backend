@@ -1,5 +1,5 @@
 {
-  "title": "홈 — 지금 정상인가",
+  "title": "홈",
   "uid": "hypenow-home",
   "schemaVersion": 39,
   "editable": false,
@@ -36,7 +36,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "지금 아픈가",
+      "title": "장애 신호",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -50,7 +50,7 @@
       "id": 1,
       "type": "stat",
       "title": "API 5xx",
-      "description": "최근 1시간 5xx 비율(UNKNOWN·root·actuator 제외). 1% 이상이면 유저가 실제로 에러를 본다. 무트래픽 시간대는 0/0=NaN이 되는데 이건 정상이라 무값 매핑을 null로만 좁혔다(빨강 '데이터 없음'은 was 메트릭 소실일 때만). 클릭 → 운영/메트릭(was).",
+      "description": "최근 1시간 앱 계층 5xx 건수(UNKNOWN·root·actuator 제외). 평시 0건이 정상이라(08-27 실측: 8월 한 달 0건) 옆 '엣지 5xx'와 같은 건수+임계 1 — 한 건이라도 뜨면 빨강. increase()가 아니라 현재값−1h전 값 차분인 이유: 5xx 시계열은 첫 500에서 탄생하는데 increase는 시계열 첫 증가분을 못 봐서 사상 첫 500이 0으로 눌린다(08-27 로컬 하니스 실측). clamp_min은 재시작 counter 리셋 방어. 5xx율·엔드포인트 분해는 클릭 → 운영/메트릭(was). or vector(0)으로 0건을 보장하되, `and on() up` 가드로 was 스크레이프가 죽으면 값 대신 빨강 '수집 끊김'이 뜬다.",
       "gridPos": {
         "x": 0,
         "y": 1,
@@ -69,7 +69,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "noValue": "데이터 없음",
+          "noValue": "수집 끊김",
           "links": [
             {
               "title": "운영/메트릭(was)로 이동",
@@ -82,15 +82,15 @@
               "options": {
                 "match": "null",
                 "result": {
-                  "text": "데이터 없음",
+                  "text": "수집 끊김",
                   "color": "red",
                   "index": 0
                 }
               }
             }
           ],
-          "unit": "percentunit",
-          "decimals": 2,
+          "unit": "short",
+          "decimals": 0,
           "color": {
             "mode": "thresholds"
           },
@@ -103,7 +103,7 @@
               },
               {
                 "color": "red",
-                "value": 0.01
+                "value": 1
               }
             ]
           }
@@ -113,7 +113,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -132,8 +132,8 @@
           "editorMode": "code",
           "instant": true,
           "range": false,
-          "legendFormat": "5xx율",
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}[1h])) / sum(rate(http_server_requests_seconds_count{uri!~\"UNKNOWN|root|/actuator.*\"}[1h]))"
+          "legendFormat": "1h API 5xx",
+          "expr": "clamp_min((sum(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}) or vector(0)) - (sum(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"} offset 1h) or vector(0)), 0) and on() up{job=\"was\"} == 1"
         }
       ]
     },
@@ -204,7 +204,7 @@
       "options": {
         "graphMode": "none",
         "colorMode": "background",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -547,7 +547,7 @@
     {
       "id": 200,
       "type": "row",
-      "title": "돌고 있나",
+      "title": "파이프라인 가동",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1103,7 +1103,7 @@
     {
       "id": 300,
       "type": "row",
-      "title": "여유가 있나",
+      "title": "자원 여유",
       "collapsed": false,
       "gridPos": {
         "h": 1,
