@@ -1,10 +1,13 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 협찬 판정(FE §4.4) — 조회 시 계산·저장 없음(캡션 원문이 있어 키워드 개선이 과거분에 즉시 소급).
@@ -56,16 +59,60 @@ public final class BrandSponsorshipClassifier {
 	private BrandSponsorshipClassifier() {}
 
 	public static String classify(Boolean isPaidPartnership, String caption) {
+		return classify(isPaidPartnership, caption != null && containsSponsorshipMarker(caption));
+	}
+
+	/**
+	 * (isPaidPartnership, 캡션 마커 매치 여부) → 판정. SQL이 마커 매치를 대신 계산한 경로
+	 * (슬림 인덱스, 2026-08-27 P0)용 — 판정 트리는 caption 버전과 동일하다.
+	 */
+	public static String classify(Boolean isPaidPartnership, boolean captionMarker) {
 		if (Boolean.TRUE.equals(isPaidPartnership)) {
 			return SPONSORED;
 		}
-		if (caption != null && containsSponsorshipMarker(caption)) {
+		if (captionMarker) {
 			return SPONSORED;
 		}
 		return Boolean.FALSE.equals(isPaidPartnership) ? ORGANIC : UNKNOWN;
 	}
 
-	private static boolean containsSponsorshipMarker(String caption) {
+	/** Java \s(ASCII 공백)와 같은 문자만 — PG [[:space:]]는 로케일에 따라 유니코드 공백까지 넓어진다. */
+	private static final String ARE_SPACE = "[ \t\n\f\r]";
+
+	/**
+	 * 마커 상수 → Postgres ARE 정규식(2026-08-27 P0) — {@code lower(caption) ~ :regex}로 쓴다.
+	 * Java 정규식과의 문법 차이(룩비하인드·룩어헤드 없음)는 소비형으로 등가 변환한다:
+	 * {@code (?<![\p{L}\p{N}])} → {@code (^|[^[:alnum:]])}, {@code l(?=\s)} → {@code l[공백]}.
+	 * 동치성은 SQL 골든 코퍼스 테스트(BrandSponsorshipSqlEquivalenceTest)가 봉인한다 —
+	 * 마커 상수를 고치면 그 테스트가 함께 검증한다(별도 갱신 불필요, 코퍼스에 사례만 추가).
+	 */
+	public static String postgresMarkerRegex() {
+		List<String> alts = new ArrayList<>();
+		for (String marker : CONFIRM_SUBSTRINGS) {
+			alts.add(escapeAre(marker));
+		}
+		// 해시태그: # 뒤 태그 토큰 전체 일치 — 뒤가 토큰 문자면 다른 태그(#adventure ≠ #ad).
+		// ARE는 최장 일치라 순서 무관하지만 결정성 위해 길이 내림차순 정렬.
+		String tags = CONFIRM_HASHTAGS.stream()
+				.sorted(Comparator.comparingInt(String::length).reversed()
+						.thenComparing(Comparator.naturalOrder()))
+				.map(BrandSponsorshipClassifier::escapeAre)
+				.collect(Collectors.joining("|"));
+		alts.add("#(?:" + tags + ")($|[^[:alnum:]_])");
+		// reklam 단어 접두 — 앞이 문자·숫자면 단어 중간(WORD_PREFIX_MARKERS 등가).
+		alts.add("(^|[^[:alnum:]])reklam");
+		// 캡션 선두 접두 표기(LEADING_PREFIX_DISCLOSURE 등가) — 하이픈은 클래스 마지막에 둔다(ARE).
+		alts.add("^" + ARE_SPACE + "*(?:광고|협찬|ad)(?:" + ARE_SPACE + "*[ㅣ|｜/–—:,.·~-]|"
+				+ ARE_SPACE + "+l" + ARE_SPACE + ")");
+		return alts.stream().map(a -> "(?:" + a + ")").collect(Collectors.joining("|"));
+	}
+
+	/** ARE 메타문자 이스케이프 — 마커 리터럴이 정규식으로 오작동하지 않게. */
+	private static String escapeAre(String literal) {
+		return literal.replaceAll("([\\\\.^$*+?()\\[\\]{}|])", "\\\\$1");
+	}
+
+	static boolean containsSponsorshipMarker(String caption) {
 		String lower = caption.toLowerCase(Locale.ROOT);
 		for (String marker : CONFIRM_SUBSTRINGS) {
 			if (lower.contains(marker)) {

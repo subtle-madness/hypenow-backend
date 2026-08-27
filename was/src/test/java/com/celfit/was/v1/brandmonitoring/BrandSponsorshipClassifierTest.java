@@ -72,4 +72,31 @@ class BrandSponsorshipClassifierTest {
 		assertThat(BrandSponsorshipClassifier.classify(false, "この動画は広告です")).isEqualTo("sponsored");
 		assertThat(BrandSponsorshipClassifier.classify(false, "業配影片分享")).isEqualTo("sponsored");
 	}
+
+	@Test
+	void 오버로드_classify는_캡션_판정_결과와_같은_트리를_탄다() {
+		// (isPaidPartnership, captionMarker) 조합 6칸 전부
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.TRUE, false)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.TRUE, true)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(null, true)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.FALSE, true)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.FALSE, false)).isEqualTo("organic");
+		assertThat(BrandSponsorshipClassifier.classify(null, false)).isEqualTo("unknown");
+	}
+
+	@Test
+	void 캡션_classify는_마커_오버로드에_위임한다() {
+		// 기존 caption 경로와 오버로드 경로가 같은 답을 내는지 — 대표 케이스만(전수 대조는 SQL 골든 코퍼스)
+		assertThat(BrandSponsorshipClassifier.classify(null, "#광고 후기"))
+				.isEqualTo(BrandSponsorshipClassifier.classify(null,
+						BrandSponsorshipClassifier.containsSponsorshipMarker("#광고 후기")));
+	}
+
+	@Test
+	void 정규식_빌더는_비어있지_않은_ARE를_만든다() {
+		String regex = BrandSponsorshipClassifier.postgresMarkerRegex();
+		assertThat(regex).contains("#(?:").contains("reklam").contains("광고");
+		// Java에서도 컴파일 가능한 부분집합만 쓰는지 스모크(ARE와 100% 동형은 아님 — 실검증은 SQL 코퍼스)
+		assertThat(regex).doesNotContain("(?<").doesNotContain("(?=");
+	}
 }
