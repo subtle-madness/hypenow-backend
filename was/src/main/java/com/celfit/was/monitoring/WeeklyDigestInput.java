@@ -12,12 +12,16 @@ import java.util.Map;
  * @param brandNewPosts 지난주 새로 발견된 브랜드 게시물(태그 + 해시태그, direct 제외)
  * @param endedPosts    지난주 수집이 끝난 콘텐츠의 최신 지표
  * @param adNotDisclosedShortCodes 지난주 미표기 판정된 등록 게시물(이미 알린 것은 제외된 뒤)
- * @param campaignNames 모니터링 진행 섹션 문안에 붙일 캠페인 이름(이름순, 중복 없음)
+ * @param startedCampaignNames collection_started 문안에만 붙일 캠페인 이름(이름순, 중복 없음)
+ * @param endedCampaignNames   collection_ended 문안에만 붙일 캠페인 이름(이름순, 중복 없음) —
+ *        2026-08-28 품질 리뷰 I5로 startedCampaignNames와 분리됐다. 합쳐서 하나로 두면 이번 주
+ *        새로 시작한 캠페인 이름이 "끝났다" 문안에도 섞여 나가는 오귀속이 생긴다.
  */
 public record WeeklyDigestInput(
 		Map<String, Long> eventCounts,
 		List<WeeklyPostMetrics> brandNewPosts,
 		List<WeeklyPostMetrics> endedPosts,
 		List<String> adNotDisclosedShortCodes,
-		List<String> campaignNames) {
+		List<String> startedCampaignNames,
+		List<String> endedCampaignNames) {
 }

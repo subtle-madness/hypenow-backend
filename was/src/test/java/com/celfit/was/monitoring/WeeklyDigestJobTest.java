@@ -65,7 +65,7 @@ class WeeklyDigestJobTest extends IntegrationTest {
 			ScriptUtils.executeSqlScript(conn, new ClassPathResource("monitoring-brand-schema.sql"));
 		}
 		monitoringJdbc = JdbcClient.create(dataSource);
-		monitoringJdbc.sql("TRUNCATE alarm_event RESTART IDENTITY").update();
+		monitoringJdbc.sql("TRUNCATE alarm_event, target, post_snapshot RESTART IDENTITY").update();
 		monitoringJdbc.sql("""
 				TRUNCATE brand_tagged_post, brand_account, brand_post_meta, brand_post_snapshot,
 				         brand_hashtag_post RESTART IDENTITY CASCADE
@@ -76,10 +76,14 @@ class WeeklyDigestJobTest extends IntegrationTest {
 	}
 
 	private WeeklyDigestJob newJob(boolean exposeAdDisclosure) {
+		return newJobAt(exposeAdDisclosure, NOW);
+	}
+
+	private WeeklyDigestJob newJobAt(boolean exposeAdDisclosure, Instant now) {
 		return new WeeklyDigestJob(monitoringReadRepository, brandReadRepository, brandLinkRepository,
 				brandDirectPostRepository, monitoringItemRepository, adDisclosureNoticeRepository,
 				digestRepository, new WeeklyDigestAssembler(), new ObjectMapper(),
-				Clock.fixed(NOW, ZoneOffset.UTC), exposeAdDisclosure);
+				Clock.fixed(now, ZoneOffset.UTC), exposeAdDisclosure);
 	}
 
 	private long seedUser() {
@@ -122,6 +126,32 @@ class WeeklyDigestJobTest extends IntegrationTest {
 				VALUES (:shortCode, 'author_a', DATE '2026-08-19', '캡션', :adVerdict, :adJudgedAt)
 				""")
 				.param("shortCode", shortCode).param("adVerdict", adVerdict).param("adJudgedAt", adJudgedAt)
+				.update();
+	}
+
+	/** 레거시 캠페인 추적(target) 1행 — endedPosts() 실경로 검증용(I6-2). RETURNING id로 alarm_event.target_id에 쓴다. */
+	private long seedTarget(String username, String trackedShortCode) {
+		return monitoringJdbc.sql("""
+				INSERT INTO target (type, username, status, tracked_short_code, tracked_since,
+				                    registration_key, expires_at)
+				VALUES ('POST', :username, 'TRACKING', :trackedShortCode, :trackedSince,
+				        :registrationKey, :expiresAt)
+				RETURNING id
+				""")
+				.param("username", username).param("trackedShortCode", trackedShortCode)
+				.param("trackedSince", IN_WEEK).param("registrationKey", "rk-" + UUID.randomUUID())
+				.param("expiresAt", IN_WEEK.plusDays(30))
+				.query(Long.class).single();
+	}
+
+	private void seedPostSnapshot(String shortCode, LocalDate capturedOn, String contentType,
+			Long views, Long likes, Long comments) {
+		monitoringJdbc.sql("""
+				INSERT INTO post_snapshot (username, short_code, captured_on, content_type, likes, comments, views)
+				VALUES ('author_e', :shortCode, :capturedOn, :contentType, :likes, :comments, :views)
+				""")
+				.param("shortCode", shortCode).param("capturedOn", capturedOn).param("contentType", contentType)
+				.param("likes", likes).param("comments", comments).param("views", views)
 				.update();
 	}
 
@@ -273,5 +303,90 @@ class WeeklyDigestJobTest extends IntegrationTest {
 		assertThat(digestRepository.findRecentByUser(userId, 30))
 				.extracting(DigestRow::digestDate)
 				.containsExactly(WEEK_START.minusWeeks(1));
+	}
+
+	@Test
+	void 화요일에_따라잡기가_돌아도_같은_주간_창을_복구한다() {
+		// 품질 리뷰 C1 — 따라잡기 기본 크론이 월요일 한정이 아니라 매일이어야 한다. 화요일
+		// 10:00 KST에서 WeekWindow.previousWeekOf는 여전히 같은 WEEK_START(2026-08-17)를 준다.
+		long userId = seedUser();
+		seedEvent(1, userId, "COLLECTION_STARTED", IN_WEEK);
+		Instant tuesday = OffsetDateTime.of(2026, 8, 25, 10, 0, 0, 0, ZoneOffset.ofHours(9)).toInstant();
+
+		newJobAt(true, tuesday).catchUp();
+
+		assertThat(digestRepository.countByUser(userId)).isEqualTo(1);
+		assertThat(items(userId)).extracting(item -> item.get("type")).containsExactly("collection_started");
+	}
+
+	@Test
+	void 킬_스위치를_끄고_재실행하면_미표기만_있던_주간_행이_사라진다() {
+		// 품질 리뷰 I4 — 조립 결과가 비면 "스킵"이 아니라 이전 실행이 만든 행을 실제로 삭제해야 한다.
+		long userId = seedUser();
+		long brandId = seedBrand(userId, "toggle_brand");
+		seedTagged(brandId, "SC_MINE", BEFORE_WEEK);
+		seedMeta("SC_MINE", "NOT_DISCLOSED", IN_WEEK);
+		brandDirectPostRepository.upsertDirect(userId, brandId, "SC_MINE");
+		job.run();   // 킬 스위치 on(기본 job) — 미표기 항목만 있는 행 생성
+		assertThat(digestRepository.countByUser(userId)).isEqualTo(1);
+
+		newJob(false).run();   // 킬 스위치 off로 재실행 — 조립 결과가 빈 목록이 된다
+
+		assertThat(digestRepository.countByUser(userId)).isZero();
+	}
+
+	@Test
+	void 일요일_23시59분_이벤트는_포함되고_다음_월요일_00시_이벤트는_배제된다() {
+		// 품질 리뷰 I6-1 — 창 상한 경계 정밀도. endDateInclusive(일요일)의 마지막 분은 포함,
+		// 다음 주 창의 첫 순간(월요일 00:00:00 정각)은 배제(occurred_at < to는 엄격 부등호).
+		long userId = seedUser();
+		OffsetDateTime sundayLate = OffsetDateTime.of(2026, 8, 23, 23, 59, 0, 0, ZoneOffset.ofHours(9));
+		OffsetDateTime nextMondayMidnight = OffsetDateTime.of(2026, 8, 24, 0, 0, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userId, "COLLECTION_STARTED", sundayLate);
+		seedEvent(2, userId, "COLLECTION_ENDED", nextMondayMidnight);
+
+		job.run();
+
+		assertThat(items(userId)).extracting(item -> item.get("type")).containsExactly("collection_started");
+	}
+
+	@Test
+	void 일요일_심야_도착_이벤트가_월요일_정시_실행에_흡수된다() {
+		// 품질 리뷰 I6-3 — 따라잡기가 아니라 월요일 09:00 정시 run() 경로에서도 일요일 심야
+		// 이벤트가 그 주 다이제스트로 정상 흡수돼야 한다(자정 경계 유실류 사고의 재발 방지).
+		long userId = seedUser();
+		OffsetDateTime sundayLateNight = OffsetDateTime.of(2026, 8, 23, 23, 58, 0, 0, ZoneOffset.ofHours(9));
+		seedEvent(1, userId, "CONTENT_UNAVAILABLE", sundayLateNight);
+
+		job.run();
+
+		assertThat(digestRepository.countByUser(userId)).isEqualTo(1);
+		assertThat(items(userId)).extracting(item -> item.get("type")).containsExactly("content_issue");
+	}
+
+	@Test
+	void 수집_종료_실경로는_최신_스냅샷_지표로_항목과_하이라이트를_만든다() {
+		// 품질 리뷰 I6-2 — endedPosts()가 target.tracked_short_code를 되짚어 post_snapshot 최신
+		// 1행을 찾아오는 전체 경로를 target·post_snapshot 실테이블 시드로 검증한다(Task 8은
+		// findTargets·findLatestSnapshots를 잡 레벨에서 이 경로로 검증한 적이 없었다).
+		long userId = seedUser();
+		long targetId = seedTarget("author_e", "SC_ENDED");
+		seedPostSnapshot("SC_ENDED", LocalDate.of(2026, 8, 18), "REELS", 100L, 10L, 2L);
+		seedPostSnapshot("SC_ENDED", LocalDate.of(2026, 8, 20), "REELS", 500L, 50L, 5L);   // 최신 스냅샷
+		seedEvent(targetId, userId, "COLLECTION_ENDED", IN_WEEK);
+
+		job.run();
+
+		List<Map<String, Object>> items = items(userId);
+		assertThat(items).extracting(item -> item.get("type")).containsExactly("collection_ended", "top_post");
+
+		Map<String, Object> ended = items.get(0);
+		assertThat(ended).containsEntry("count", 1);
+		@SuppressWarnings("unchecked")
+		Map<String, Object> endedMetrics = (Map<String, Object>) ended.get("metrics");
+		assertThat(endedMetrics).containsEntry("views", 500).containsEntry("likes", 50).containsEntry("comments", 5);
+
+		Map<String, Object> highlight = items.get(1);
+		assertThat(highlight.get("summary")).isEqualTo("@author_e 게시물 · 조회수 500");
 	}
 }

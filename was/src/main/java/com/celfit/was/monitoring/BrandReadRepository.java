@@ -304,8 +304,14 @@ public class BrandReadRepository {
 	/**
 	 * 지난주 <b>태그 열거로 새로 발견된</b> 게시물 + 최신 스냅샷 지표(설계 §4 브랜드 새 게시물).
 	 * direct 등록분은 제외한다 — 사용자가 스스로 넣은 게시물은 "발견 소식"이 아니다.
-	 * 같은 게시물이 유저의 브랜드 두 개에 동시에 걸리면 DISTINCT ON이 한 건으로 접는다.
 	 * 스냅샷이 아직 없는 발견분도 모수에 남도록 LEFT JOIN이며, 그때 지표는 전부 null이다.
+	 *
+	 * <p>2026-08-28 품질 리뷰 I3: 잡이 유저마다 호출하던 것을 전 유저 브랜드id를 한데 모아 <b>1회</b>
+	 * 호출하는 방식으로 바뀌었다 — brandIds가 이제 여러 유저의 브랜드를 함께 담을 수 있어, DISTINCT ON을
+	 * short_code 단독이 아니라 (brand_id, short_code)로 건다. short_code 단독으로 접으면 브랜드 A·B가
+	 * 각각 발견한 동일 shortCode 중 하나가 사라져 그 브랜드를 보는 유저가 소식을 못 받는다 — 유저별
+	 * 최종 dedup(같은 유저가 여러 브랜드를 걸고 있어 겹치는 경우)은 호출부({@code WeeklyDigestJob})가
+	 * brandId로 되짚은 뒤 shortCode 기준으로 한다.
 	 */
 	public List<WeeklyPostMetrics> findTaggedPostsDiscoveredBetween(Collection<Long> brandIds,
 			OffsetDateTime from, OffsetDateTime toExclusive) {
@@ -313,14 +319,14 @@ public class BrandReadRepository {
 			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
 		}
 		return jdbc.sql("""
-				SELECT DISTINCT ON (t.short_code) t.short_code, t.author_username,
+				SELECT DISTINCT ON (t.brand_id, t.short_code) t.brand_id, t.short_code, t.author_username,
 				       s.content_type, s.views, s.likes, s.comments
 				FROM brand_tagged_post t
 				LEFT JOIN brand_post_snapshot s ON s.short_code = t.short_code
 				WHERE t.brand_id IN (:brandIds)
 				  AND t.direct_registered_at IS NULL
 				  AND t.tag_detected_at >= :from AND t.tag_detected_at < :toExclusive
-				ORDER BY t.short_code, s.captured_on DESC NULLS LAST
+				ORDER BY t.brand_id, t.short_code, s.captured_on DESC NULLS LAST
 				""")
 				.param("brandIds", brandIds)
 				.param("from", from)
@@ -333,6 +339,9 @@ public class BrandReadRepository {
 	 * 지난주 <b>해시태그 스윕이 새로 발견한</b> 관련 게시물(설계 §4). 이 표면은 스냅샷·보강이
 	 * 없어(스펙 2026-08-11 §5 보류) 지표가 열거 관측값 그대로고 조회수 자체가 없다 — views는
 	 * 항상 null로 내려 합산 규칙(릴스만 조회수)과 자연히 정합한다.
+	 *
+	 * <p>2026-08-28 품질 리뷰 I3: {@link #findTaggedPostsDiscoveredBetween}와 같은 이유로
+	 * DISTINCT ON을 (brand_id, short_code)로 건다 — brandIds가 이제 전 유저 배치 호출의 합집합이다.
 	 */
 	public List<WeeklyPostMetrics> findHashtagPostsDiscoveredBetween(Collection<Long> brandIds,
 			OffsetDateTime from, OffsetDateTime toExclusive) {
@@ -340,12 +349,12 @@ public class BrandReadRepository {
 			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
 		}
 		return jdbc.sql("""
-				SELECT DISTINCT ON (short_code) short_code, author_username, content_type,
+				SELECT DISTINCT ON (brand_id, short_code) brand_id, short_code, author_username, content_type,
 				       NULL::bigint AS views, likes, comments
 				FROM brand_hashtag_post
 				WHERE brand_id IN (:brandIds) AND verdict = 'RELEVANT'
 				  AND first_seen_at >= :from AND first_seen_at < :toExclusive
-				ORDER BY short_code, first_seen_at DESC
+				ORDER BY brand_id, short_code, first_seen_at DESC
 				""")
 				.param("brandIds", brandIds)
 				.param("from", from)

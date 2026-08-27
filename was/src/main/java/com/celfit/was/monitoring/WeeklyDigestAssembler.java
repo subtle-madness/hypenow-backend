@@ -40,12 +40,13 @@ public class WeeklyDigestAssembler {
 		// 2. 브랜드 소식
 		add(items, CATEGORY_BRAND, "brand_new_posts", "브랜드를 언급한 새 게시물을 찾았어요",
 				input.brandNewPosts().size(), sum(input.brandNewPosts()));
-		// 3. 모니터링 진행 - 캠페인 이름 문맥은 두 항목에 같은 목록으로 붙인다.
+		// 3. 모니터링 진행 - 캠페인 이름 문맥은 항목마다 해당 이벤트로 시작된 캠페인 목록만 붙인다
+		// (2026-08-28 품질 리뷰 I5 - 합쳐서 쓰면 시작 캠페인 이름이 종료 문안에도 섞여 나간다).
 		add(items, CATEGORY_CONTENT, "collection_started",
-				withCampaigns("새로 수집을 시작한 콘텐츠가 있어요", input.campaignNames()),
+				withCampaigns("새로 수집을 시작한 콘텐츠가 있어요", input.startedCampaignNames()),
 				count(input, "collection_started"), null);
 		add(items, CATEGORY_CONTENT, "collection_ended",
-				withCampaigns("모니터링 기간이 끝난 콘텐츠가 있어요", input.campaignNames()),
+				withCampaigns("모니터링 기간이 끝난 콘텐츠가 있어요", input.endedCampaignNames()),
 				count(input, "collection_ended"), sum(input.endedPosts()));
 		// 4. 하이라이트(선택 노출)
 		highlight(input).ifPresent(items::add);

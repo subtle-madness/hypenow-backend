@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -18,9 +19,9 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * 주간 다이제스트 생성 크론(2026-08-27 주간 개편 §2·§4·§8) — 매주 월요일 09:00 KST에 <b>지난주
- * (월~일)</b>를 집계해 app.monitoring_digests에 (user_id, 주 시작일) 멱등 upsert한다.
- * 일일 다이제스트(구 DigestJob)를 대체한다.
+ * 주간 다이제스트 생성 크론(2026-08-27 주간 개편 §2·§4·§8, 2026-08-28 품질 리뷰 반영) — 매주
+ * 월요일 09:00 KST에 <b>지난주(월~일)</b>를 집계해 app.monitoring_digests에 (user_id, 주 시작일)
+ * 멱등 upsert한다. 일일 다이제스트(구 DigestJob)를 대체한다.
  *
  * <h2>이벤트 원장 없이 "주간 조회"</h2>
  * 주간 리듬에서는 실시간 이벤트 적재가 대부분 불필요하다(설계 §4). 이 잡이 정본 테이블을 기간
@@ -33,15 +34,36 @@ import tools.jackson.databind.ObjectMapper;
  * "그 주 어느 요일에 불러도 직전 주"라 09:00 정시 실행과 따라잡기 틱이 전부 같은 구간을 다시
  * 집계한다 — 다이제스트 자정 경계 유실(트랙 GG)과 같은 계열의 사고를 구조적으로 막는다(설계 §8).
  *
- * <h2>멱등 — 워터마크가 없다</h2>
- * {@link DigestRepository#upsert}가 (user_id, digest_date) 유니크로 재실행을 안전하게 만든다.
- * 같은 주를 몇 번 다시 돌려도 행이 늘지 않고 items만 최신 집계로 덮인다(created_at·read_at은
- * SET 절에 없어 보존). 유일한 부작용 기록은 미표기 알림 이력인데, 그것도 "이번 주가 아닌 주에
- * 알린 것만 제외"라 같은 주 재실행이 자기 기록에 걸리지 않는다.
+ * <h2>따라잡기는 요일 제한이 없다(2026-08-28 품질 리뷰 C1)</h2>
+ * {@link #catchUp()}의 기본 크론은 월요일 한정이 아니라 <b>매일</b> 09:10~23:50 매 10분이다.
+ * {@link #currentWindow()}가 주중 어느 요일에 불러도 같은 "직전 주" 창을 계산하므로, was가
+ * 월요일 하루 종일 죽어 있다가 화~일 아무 때나 되살아나도 그 주의 다이제스트를 복구할 수 있어야
+ * 한다 — 월요일로만 한정하면 정확히 그 시나리오(가장 복구가 필요한 순간)를 놓친다. 멱등 upsert라
+ * 매일 재계산해도 안전하다.
  *
- * <h2>이벤트 0건이면 미생성</h2>
- * 조립 결과가 빈 목록이면 upsert 자체를 하지 않는다(설계 §2 "이벤트 0건이면 그 주는 알림 미생성").
- * 브랜드 연결만 있고 소식이 없는 유저에게 빈 알림이 매주 가지 않는다.
+ * <h2>멱등 — 워터마크가 없다</h2>
+ * {@link DigestRepository#upsertWeekly}가 (user_id, digest_date) 유니크로 재실행을 안전하게
+ * 만든다. 같은 주를 몇 번 다시 돌려도 행이 늘지 않고 items만 최신 집계로 덮인다(created_at·
+ * read_at은 원칙적으로 보존). 유일한 부작용 기록은 미표기 알림 이력인데, 그것도 "이번 주가 아닌
+ * 주에 알린 것만 제외"라 같은 주 재실행이 자기 기록에 걸리지 않는다.
+ *
+ * <h2>구 일일 잡과의 digest_date 충돌(2026-08-28 품질 리뷰 C2)</h2>
+ * 주간 전환 첫 주의 창 시작 월요일은 구 일일 DigestJob이 이미 그 날짜로 행을 만들어 뒀을 수
+ * 있다(digest_date 컬럼을 "달력일"과 "주 시작일" 둘 다로 썼던 값 공간이 겹친다). {@link
+ * DigestRepository#upsertWeekly}가 이 충돌을 감지해 리셋한다 — 조건은 그 메서드 참조.
+ *
+ * <h2>이벤트 0건이면 삭제(2026-08-28 품질 리뷰 I4)</h2>
+ * 조립 결과가 빈 목록이면 upsert 대신 그 (user, 주 시작일) 행을 <b>삭제</b>한다(행이 없으면
+ * no-op). 킬 스위치를 끄거나 브랜드 연결을 해제한 뒤 재실행하면, 이전 실행이 만들어 둔 행이 낡은
+ * 채로 남지 않고 실제로 걷힌다 — 예전의 "스킵"은 upsert를 안 할 뿐 이미 있는 행은 그대로 둬서
+ * 이 시나리오를 놓쳤다.
+ *
+ * <h2>배치 조회로 N+1 해소(2026-08-28 품질 리뷰 I3)</h2>
+ * 브랜드 발견분·미표기 판정은 유저 수만큼 왕복하지 않는다 — {@link #runFor}가 대상 유저 전체의
+ * 브랜드id·등록shortcode를 한 번에 모아 조회한 뒤 메모리에서 userId로 그룹핑해 각 유저의
+ * upsertWeekly 호출에 넘긴다. 유저 단위 실패 격리(장애 하나가 전체를 막지 않는 정책)는 조립·
+ * upsert가 일어나는 {@link #upsertWeekly} 호출 자체에 남아 있다 — 배치 조회 단계가 실패하면
+ * (공유 입력이라) 그 실행 전체가 실패하는 게 맞다.
  */
 @Component
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
@@ -89,11 +111,13 @@ public class WeeklyDigestJob {
 	}
 
 	/**
-	 * 따라잡기 틱(월요일 09:10~23:50, 매 10분) — {@link #run()}과 완전히 같은 재계산을 반복한다.
-	 * 09:00 실행 이후 도착한 이벤트(늦게 끝난 스윕 등)를 같은 주 행으로 흡수하고, 메일 발송
-	 * 실패분을 재시도할 창이기도 하다(Task 10에서 발송이 붙는다).
+	 * 따라잡기 틱(품질 리뷰 C1 — 요일 제한 없이 매일 09:10~23:50, 매 10분) — {@link #run()}과
+	 * 완전히 같은 재계산을 반복한다. 09:00 실행 이후 도착한 이벤트(늦게 끝난 스윕 등)를 같은 주
+	 * 행으로 흡수하고, was가 월요일 내내 죽어 있다가 다른 요일에 되살아나도 {@link
+	 * WeekWindow#previousWeekOf}가 같은 "직전 주" 창을 주므로 그 주를 복구한다. 메일 발송 실패분을
+	 * 재시도할 창이기도 하다(Task 10에서 발송이 붙는다).
 	 */
-	@Scheduled(cron = "${monitoring.digest.weekly-catchup-cron:0 10,20,30,40,50 9-23 * * MON}", zone = "Asia/Seoul")
+	@Scheduled(cron = "${monitoring.digest.weekly-catchup-cron:0 10,20,30,40,50 9-23 * * *}", zone = "Asia/Seoul")
 	public void catchUp() {
 		runFor(currentWindow());
 	}
@@ -110,17 +134,26 @@ public class WeeklyDigestJob {
 		Map<Long, List<AlarmEventRow>> eventsByUser = monitoringRead
 				.findAlarmEventsBetween(window.startDate(), window.endDateInclusive()).stream()
 				.collect(Collectors.groupingBy(AlarmEventRow::userId, LinkedHashMap::new, Collectors.toList()));
-		Map<Long, List<Long>> brandIdsByUser = brandLinks.findAllActive().stream()
+		List<BrandLinkRow> activeLinks = brandLinks.findAllActive();
+		Map<Long, List<Long>> brandIdsByUser = activeLinks.stream()
 				.collect(Collectors.groupingBy(BrandLinkRow::userId, LinkedHashMap::new,
 						Collectors.mapping(BrandLinkRow::brandId, Collectors.toList())));
+		Map<Long, List<Long>> userIdsByBrand = activeLinks.stream()
+				.collect(Collectors.groupingBy(BrandLinkRow::brandId, LinkedHashMap::new,
+						Collectors.mapping(BrandLinkRow::userId, Collectors.toList())));
 		Set<Long> userIds = new LinkedHashSet<>(eventsByUser.keySet());
 		userIds.addAll(brandIdsByUser.keySet());
+
+		// 품질 리뷰 I3 — 유저 수만큼 왕복하지 않고 전 유저분을 한 번에 모아 조회한 뒤 그룹핑한다.
+		Map<Long, List<WeeklyPostMetrics>> brandNewPostsByUser = brandNewPostsByUser(userIdsByBrand, window);
+		Map<Long, List<String>> adNotDisclosedByUser = adNotDisclosedByUser(userIds, window);
 
 		int upserted = 0;
 		for (long userId : userIds) {
 			try {
 				if (upsertWeekly(userId, window, eventsByUser.getOrDefault(userId, List.of()),
-						brandIdsByUser.getOrDefault(userId, List.of()))) {
+						brandNewPostsByUser.getOrDefault(userId, List.of()),
+						adNotDisclosedByUser.getOrDefault(userId, List.of()))) {
 					upserted++;
 				}
 			} catch (RuntimeException e) {
@@ -133,49 +166,75 @@ public class WeeklyDigestJob {
 	}
 
 	/**
-	 * @return 다이제스트를 만들었으면 true, 내용이 없어 건너뛰었으면 false
+	 * @return 다이제스트를 만들었으면 true, 내용이 없어 삭제(또는 애초에 없어 no-op)했으면 false
 	 *
-	 * <p>불변식(품질 리뷰 이월 확인 #1): eventCounts와 endedPosts는 <b>같은 userEvents 목록</b>에서
-	 * 유도된다 — eventCounts는 전체 그룹핑, endedPosts는 COLLECTION_ENDED로 필터링한 부분집합이다.
-	 * 따라서 endedPosts가 비어있지 않으면 그 안에 최소 한 건의 COLLECTION_ENDED 이벤트가 실재했다는
-	 * 뜻이고, eventCounts의 "collection_ended" 카운트도 같은 이벤트에서 나와 반드시 0보다 크다 —
-	 * 두 값이 서로 다른 창을 보고 있어서 하이라이트 후보와 이벤트 카운트가 어긋나는 사고는
-	 * 구조적으로 발생하지 않는다(brandNewPosts는 별도 조회원이지만 그 카운트도 같은 리스트
-	 * (brandNewPosts.size())를 쓰므로 동일한 논리가 적용된다).
+	 * <p>불변식(Task 8 품질 리뷰 이월 확인 #1): eventCounts와 endedPosts는 <b>같은 userEvents
+	 * 목록</b>에서 유도된다 — eventCounts는 toFront 매핑 후 그룹핑, endedPosts는 COLLECTION_ENDED
+	 * 원본 유형으로 필터링한 부분집합이다. COLLECTION_ENDED는 toFront가 항상 "collection_ended"로
+	 * 매핑하는 기지(旣知) 유형이라(toFront의 null 반환은 <em>미지</em> 유형에만 발생), endedPosts가
+	 * 비어있지 않으면 eventCounts의 collection_ended도 반드시 0보다 크다 — 두 값이 서로 다른 창을
+	 * 보고 있어서 하이라이트 후보와 이벤트 카운트가 어긋나는 사고는 구조적으로 발생하지 않는다.
 	 */
 	private boolean upsertWeekly(long userId, WeekWindow window, List<AlarmEventRow> userEvents,
-			List<Long> brandIds) {
-		Map<String, Long> eventCounts = userEvents.stream().collect(Collectors.groupingBy(
-				event -> MonitoringEventTypes.toFront(event.eventType()), Collectors.counting()));
-		List<String> adShortCodes = adNotDisclosed(userId, window);
-		List<DigestItem> items = assembler.assemble(new WeeklyDigestInput(eventCounts,
-				brandNewPosts(brandIds, window), endedPosts(userEvents), adShortCodes,
-				campaignNames(userId, userEvents)));
+			List<WeeklyPostMetrics> brandNewPosts, List<String> adShortCodes) {
+		// 미지 이벤트 유형은 조용히 건너뛴다(MonitoringEventTypes.toFront 참조, 품질 리뷰 nit) —
+		// alarm_event에 5번째 유형이 추가돼도 이 잡 전체가 예외로 죽지 않는다.
+		Map<String, Long> eventCounts = userEvents.stream()
+				.map(event -> MonitoringEventTypes.toFront(event.eventType()))
+				.filter(Objects::nonNull)
+				.collect(Collectors.groupingBy(frontType -> frontType, Collectors.counting()));
+		List<DigestItem> items = assembler.assemble(new WeeklyDigestInput(eventCounts, brandNewPosts,
+				endedPosts(userEvents), adShortCodes,
+				campaignNamesFor(userId, userEvents, COLLECTION_STARTED),
+				campaignNamesFor(userId, userEvents, COLLECTION_ENDED)));
 		if (items.isEmpty()) {
+			// 품질 리뷰 I4 — 스킵이 아니라 삭제. 이전 실행이 만들어 둔 행이 낡은 채로 남지 않게 한다.
+			digests.delete(userId, window.startDate());
 			return false;
 		}
-		// 이력은 실제로 알림에 실릴 때만 남긴다 — 조립 결과가 비면(도달 불가하지만 방어) 다음 주에 다시 기회를 준다.
+		digests.upsertWeekly(userId, window.startDate(), window.toExclusive(),
+				objectMapper.writeValueAsString(items));
+		// 품질 리뷰 I1 — upsert가 실제로 성공한 뒤에만 이력을 남긴다. 순서를 뒤집으면(이력 먼저)
+		// upsert 실패 시 "알림은 못 갔는데 이력엔 통보됨으로 찍힌" 무음 유실이 생긴다 — 이 순서면
+		// 실패 방향이 "다음 주 중복 통지"(자가 복구, 성가시지만 안전)로 뒤집힌다.
 		adNotices.markNotified(userId, adShortCodes, window.startDate());
-		digests.upsert(userId, window.startDate(), objectMapper.writeValueAsString(items));
 		return true;
 	}
 
-	/** 태그 발견분 + 해시태그 발견분(shortcode 중복 제거) — direct 등록분은 조회 단계에서 이미 빠졌다. */
-	private List<WeeklyPostMetrics> brandNewPosts(List<Long> brandIds, WeekWindow window) {
-		if (brandIds.isEmpty()) {
-			return List.of();
+	/**
+	 * 브랜드 발견분 배치 조회(품질 리뷰 I3) — 유저 수만큼 왕복하지 않고 전 브랜드를 한 번에 조회해
+	 * userId로 되짚는다. 브랜드 풀은 유저 간 공유라 같은 발견분이 그 브랜드를 건 유저 전원에게
+	 * 뿌려진다. 유저 내부 dedup(shortcode 기준, 태그 발견이 해시태그 발견보다 우선)은 여기서
+	 * 그대로 재현한다 — 예전에 유저마다 호출하던 {@code brandNewPosts(brandIds, window)}와 동치.
+	 */
+	private Map<Long, List<WeeklyPostMetrics>> brandNewPostsByUser(Map<Long, List<Long>> userIdsByBrand,
+			WeekWindow window) {
+		if (userIdsByBrand.isEmpty()) {
+			return Map.of();
 		}
-		Map<String, WeeklyPostMetrics> byShortCode = new LinkedHashMap<>();
-		for (WeeklyPostMetrics post : brandRead.findTaggedPostsDiscoveredBetween(
-				brandIds, window.from(), window.toExclusive())) {
-			byShortCode.putIfAbsent(post.shortCode(), post);
+		List<Long> allBrandIds = List.copyOf(userIdsByBrand.keySet());
+		List<WeeklyPostMetrics> tagged = brandRead.findTaggedPostsDiscoveredBetween(
+				allBrandIds, window.from(), window.toExclusive());
+		List<WeeklyPostMetrics> hashtag = brandRead.findHashtagPostsDiscoveredBetween(
+				allBrandIds, window.from(), window.toExclusive());
+
+		Map<Long, Map<String, WeeklyPostMetrics>> byUserThenShortCode = new LinkedHashMap<>();
+		for (WeeklyPostMetrics post : tagged) {
+			for (long userId : userIdsByBrand.getOrDefault(post.brandId(), List.of())) {
+				byUserThenShortCode.computeIfAbsent(userId, key -> new LinkedHashMap<>())
+						.putIfAbsent(post.shortCode(), post);
+			}
 		}
-		for (WeeklyPostMetrics post : brandRead.findHashtagPostsDiscoveredBetween(
-				brandIds, window.from(), window.toExclusive())) {
+		for (WeeklyPostMetrics post : hashtag) {
 			// 태그 풀에 이미 있는 게시물이면 지표가 더 풍부한 태그 쪽(스냅샷 기반)을 남긴다.
-			byShortCode.putIfAbsent(post.shortCode(), post);
+			for (long userId : userIdsByBrand.getOrDefault(post.brandId(), List.of())) {
+				byUserThenShortCode.computeIfAbsent(userId, key -> new LinkedHashMap<>())
+						.putIfAbsent(post.shortCode(), post);
+			}
 		}
-		return List.copyOf(byShortCode.values());
+		Map<Long, List<WeeklyPostMetrics>> result = new LinkedHashMap<>();
+		byUserThenShortCode.forEach((userId, byShortCode) -> result.put(userId, List.copyOf(byShortCode.values())));
+		return result;
 	}
 
 	/** 수집 종료 이벤트의 target을 되짚어 추적 게시물의 최신 스냅샷 지표를 모은다. */
@@ -198,39 +257,73 @@ public class WeeklyDigestJob {
 			return List.of();
 		}
 		return monitoringRead.findLatestSnapshots(authorByShortCode.keySet()).stream()
-				.map(snapshot -> new WeeklyPostMetrics(snapshot.shortCode(),
+				// brandId 0L = 해당 없음 — 수집 종료분은 target 기원이라 브랜드 태그와 무관하다
+				// (WeeklyPostMetrics#brandId 참조).
+				.map(snapshot -> new WeeklyPostMetrics(0L, snapshot.shortCode(),
 						authorByShortCode.get(snapshot.shortCode()), snapshot.contentType(),
 						snapshot.views(), snapshot.likes(), snapshot.comments()))
 				.toList();
 	}
 
 	/**
-	 * 지난주 미표기 판정된 <b>등록(시딩) 게시물</b>. 스윕이 발견한 제3자 게시물은 대응 불가능한
-	 * 소음이라 제외한다(설계 §2 "미표기 범위"). 등록 원장의 정본은 app.brand_direct_posts다.
-	 * 킬 스위치가 꺼져 있으면 아예 조회하지 않는다 — FE 미노출 정보가 알림으로 새는 사고 방지(설계 §8).
+	 * 지난주 미표기 판정된 등록(시딩) 게시물을 유저별로 배치 조회(품질 리뷰 I3) —
+	 * {@code shortCodesByUser}·{@code findNotDisclosedJudgedBetween}을 유저마다 왕복하던 것을
+	 * 전 유저 registered shortcode를 한 번에 모아 조회 1회로 줄인다. 스윕이 발견한 제3자 게시물은
+	 * 대응 불가능한 소음이라 제외한다(설계 §2 "미표기 범위"). 등록 원장의 정본은
+	 * app.brand_direct_posts다. 킬 스위치가 꺼져 있으면 아예 조회하지 않는다 — FE 미노출 정보가
+	 * 알림으로 새는 사고 방지(설계 §8).
+	 *
+	 * <p>{@code findNotifiedInOtherWeek}(유저별 통지 이력 확인)는 배치할 수 없다 — 유저마다 자기
+	 * 이력만 봐야 하는 스칼라 userId 파라미터라서다. 다만 judged 후보가 있는 유저에게만 호출하므로
+	 * 브랜드 연결만 있고 등록·판정이 없는 대다수 유저는 이 호출 자체가 생기지 않는다.
 	 */
-	private List<String> adNotDisclosed(long userId, WeekWindow window) {
+	private Map<Long, List<String>> adNotDisclosedByUser(Set<Long> userIds, WeekWindow window) {
 		if (!exposeAdDisclosure) {
-			return List.of();
+			return Map.of();
 		}
-		Set<String> registered = brandDirectPosts.shortCodesByUser(userId);
-		if (registered.isEmpty()) {
-			return List.of();
+		List<BrandDirectPostRepository.UserShortCodeRow> registrations = brandDirectPosts.findAllUserShortCodes();
+		if (registrations.isEmpty()) {
+			return Map.of();
 		}
-		List<String> judged = brandRead.findNotDisclosedJudgedBetween(
-				registered, window.from(), window.toExclusive());
-		if (judged.isEmpty()) {
-			return List.of();
+		Map<Long, Set<String>> registeredByUser = registrations.stream()
+				.collect(Collectors.groupingBy(BrandDirectPostRepository.UserShortCodeRow::userId, LinkedHashMap::new,
+						Collectors.mapping(BrandDirectPostRepository.UserShortCodeRow::shortCode,
+								Collectors.toCollection(LinkedHashSet::new))));
+		Set<String> allRegistered = registrations.stream()
+				.map(BrandDirectPostRepository.UserShortCodeRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		List<String> judgedAll = brandRead.findNotDisclosedJudgedBetween(
+				allRegistered, window.from(), window.toExclusive());
+		if (judgedAll.isEmpty()) {
+			return Map.of();
 		}
-		Set<String> alreadyNotified = adNotices.findNotifiedInOtherWeek(userId, judged, window.startDate());
-		return judged.stream().filter(shortCode -> !alreadyNotified.contains(shortCode)).toList();
+
+		Map<Long, List<String>> result = new LinkedHashMap<>();
+		for (long userId : userIds) {
+			Set<String> registered = registeredByUser.getOrDefault(userId, Set.of());
+			if (registered.isEmpty()) {
+				continue;
+			}
+			List<String> judgedForUser = judgedAll.stream().filter(registered::contains).toList();
+			if (judgedForUser.isEmpty()) {
+				continue;
+			}
+			Set<String> alreadyNotified = adNotices.findNotifiedInOtherWeek(userId, judgedForUser, window.startDate());
+			List<String> remaining = judgedForUser.stream().filter(sc -> !alreadyNotified.contains(sc)).toList();
+			if (!remaining.isEmpty()) {
+				result.put(userId, remaining);
+			}
+		}
+		return result;
 	}
 
-	/** 모니터링 진행 섹션 문안에 붙일 캠페인 이름(설계 §3). 유저 스코프는 조회가 건다. */
-	private List<String> campaignNames(long userId, List<AlarmEventRow> userEvents) {
+	/**
+	 * 모니터링 진행 섹션 문안에 붙일 캠페인 이름(설계 §3) — 품질 리뷰 I5로 이벤트 유형별로
+	 * 나뉜다(시작 캠페인 이름이 종료 문안에도 섞여 나가는 오귀속을 없앤다). 유저 스코프는 조회가 건다.
+	 */
+	private List<String> campaignNamesFor(long userId, List<AlarmEventRow> userEvents, String eventType) {
 		List<Long> targetIds = userEvents.stream()
-				.filter(event -> COLLECTION_STARTED.equals(event.eventType())
-						|| COLLECTION_ENDED.equals(event.eventType()))
+				.filter(event -> eventType.equals(event.eventType()))
 				.map(AlarmEventRow::targetId)
 				.distinct()
 				.toList();

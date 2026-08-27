@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.was.IntegrationTest;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -135,5 +136,59 @@ class DigestRepositoryTest extends IntegrationTest {
 		repository.upsert(userId, LocalDate.of(2026, 7, 28), "[]");
 
 		assertThat(repository.countByUser(userId)).isEqualTo(2);
+	}
+
+	@Test
+	void upsertWeekly_창_시작일에_구_일일_행이_있으면_미읽음_새_행처럼_리셋한다() {
+		// 품질 리뷰 C2 — 구 일일 DigestJob이 같은 digest_date(월요일)에 만든 행을 흉내낸다. 그 행의
+		// created_at은 이 테스트가 실행되는 실제 지금(now())이므로, windowCloseAt을 넉넉히 미래로
+		// 잡아 "행 생성 시각이 그 주 창이 닫히기 전이었다"는 리셋 조건을 재현한다.
+		LocalDate weekStart = LocalDate.of(2026, 8, 17);
+		OffsetDateTime windowCloseAt = OffsetDateTime.now().plusDays(7);
+		long legacyId = repository.upsert(userId, weekStart, "[]");
+		repository.markRead(userId, List.of(legacyId));
+		assertThat(repository.findRecentByUser(userId, 1).get(0).readAt()).isNotNull();
+
+		long weeklyId = repository.upsertWeekly(userId, weekStart, windowCloseAt,
+				"[{\"category\":\"brand\",\"type\":\"brand_new_posts\",\"summary\":\"s\",\"count\":1}]");
+
+		DigestRow after = repository.findRecentByUser(userId, 1).get(0);
+		assertThat(weeklyId).isEqualTo(legacyId);   // 같은 (user, date) 행 — 새 행이 아니라 리셋
+		assertThat(after.readAt()).isNull();
+		assertThat(after.itemsJson()).contains("brand_new_posts");
+	}
+
+	@Test
+	void upsertWeekly_같은_주_재실행은_read_at을_보존한다() {
+		// windowCloseAt을 안전하게 과거로 잡아 "이 행은 창이 닫힌 뒤에 만들어진 정당한 주간 행"
+		// 시나리오를 재현한다(created_at은 real now() — 항상 과거 windowCloseAt보다 뒤다).
+		LocalDate weekStart = LocalDate.of(2026, 8, 17);
+		OffsetDateTime windowCloseAt = OffsetDateTime.of(2026, 1, 1, 0, 0, 0, 0, ZoneOffset.ofHours(9));
+		long digestId = repository.upsertWeekly(userId, weekStart, windowCloseAt, "[]");
+		repository.markRead(userId, List.of(digestId));
+		DigestRow beforeRerun = repository.findRecentByUser(userId, 1).get(0);
+		assertThat(beforeRerun.readAt()).isNotNull();
+
+		long secondId = repository.upsertWeekly(userId, weekStart, windowCloseAt,
+				"[{\"category\":\"content\",\"type\":\"collection_ended\",\"summary\":\"s\",\"count\":2}]");
+
+		DigestRow afterRerun = repository.findRecentByUser(userId, 1).get(0);
+		assertThat(secondId).isEqualTo(digestId);
+		assertThat(afterRerun.readAt()).isEqualTo(beforeRerun.readAt());
+		assertThat(afterRerun.createdAt()).isEqualTo(beforeRerun.createdAt());
+		assertThat(afterRerun.itemsJson()).contains("collection_ended");
+	}
+
+	@Test
+	void delete는_행을_없애고_없는_행에는_no_op이다() {
+		LocalDate date = LocalDate.of(2026, 7, 29);
+		repository.upsert(userId, date, "[]");
+		assertThat(repository.countByUser(userId)).isEqualTo(1);
+
+		repository.delete(userId, date);
+
+		assertThat(repository.countByUser(userId)).isZero();
+		repository.delete(userId, date);   // 이미 없는 행 — 예외 없이 no-op
+		assertThat(repository.countByUser(userId)).isZero();
 	}
 }

@@ -12,16 +12,26 @@ class WeeklyDigestAssemblerTest {
 	private final WeeklyDigestAssembler assembler = new WeeklyDigestAssembler();
 
 	private static WeeklyPostMetrics reels(String shortCode, String author, Long views, Long likes, Long comments) {
-		return new WeeklyPostMetrics(shortCode, author, "REELS", views, likes, comments);
+		return new WeeklyPostMetrics(0L, shortCode, author, "REELS", views, likes, comments);
 	}
 
 	private static WeeklyPostMetrics feed(String shortCode, String author, Long views, Long likes, Long comments) {
-		return new WeeklyPostMetrics(shortCode, author, "FEED", views, likes, comments);
+		return new WeeklyPostMetrics(0L, shortCode, author, "FEED", views, likes, comments);
 	}
 
 	private static WeeklyDigestInput input(Map<String, Long> eventCounts, List<WeeklyPostMetrics> brandNewPosts,
 			List<WeeklyPostMetrics> endedPosts, List<String> adShortCodes, List<String> campaignNames) {
-		return new WeeklyDigestInput(eventCounts, brandNewPosts, endedPosts, adShortCodes, campaignNames);
+		// 기존 호출부 다수는 시작·종료 캠페인 이름을 구분하지 않고 검증하므로, 둘 다에 같은 목록을
+		// 채워 넣어 이전 동작을 그대로 재현한다 — 시작/종료를 독립적으로 검증하는 테스트는
+		// input6(...)을 직접 쓴다.
+		return input6(eventCounts, brandNewPosts, endedPosts, adShortCodes, campaignNames, campaignNames);
+	}
+
+	private static WeeklyDigestInput input6(Map<String, Long> eventCounts, List<WeeklyPostMetrics> brandNewPosts,
+			List<WeeklyPostMetrics> endedPosts, List<String> adShortCodes, List<String> startedCampaignNames,
+			List<String> endedCampaignNames) {
+		return new WeeklyDigestInput(eventCounts, brandNewPosts, endedPosts, adShortCodes, startedCampaignNames,
+				endedCampaignNames);
 	}
 
 	@Test
@@ -121,6 +131,22 @@ class WeeklyDigestAssemblerTest {
 
 		assertThat(items.get(0).summary())
 				.isEqualTo("새로 수집을 시작한 콘텐츠가 있어요 (여름 캠페인, 가을 캠페인 외 2건)");
+	}
+
+	@Test
+	void 시작_캠페인과_종료_캠페인_이름이_각각_해당_항목에만_붙는다() {
+		// 품질 리뷰 I5 — 하나로 합쳐서 두면 시작 캠페인 이름이 종료 문안에도(또는 그 반대로) 새어
+		// 나간다. 두 이벤트가 모두 있고 캠페인 이름이 서로 다를 때 각자 자기 문안에만 붙어야 한다.
+		// endedPosts를 비워 하이라이트가 끼어들지 않게 한다 - 이 테스트의 관심사는 오직 캠페인
+		// 이름이 항목별로 올바르게 갈리는지다.
+		List<DigestItem> items = assembler.assemble(input6(
+				Map.of("collection_started", 1L, "collection_ended", 1L),
+				List.of(), List.of(), List.of(),
+				List.of("여름 캠페인"), List.of("겨울 캠페인")));
+
+		assertThat(items).extracting(DigestItem::summary).containsExactly(
+				"새로 수집을 시작한 콘텐츠가 있어요 (여름 캠페인)",
+				"모니터링 기간이 끝난 콘텐츠가 있어요 (겨울 캠페인)");
 	}
 
 	@Test
