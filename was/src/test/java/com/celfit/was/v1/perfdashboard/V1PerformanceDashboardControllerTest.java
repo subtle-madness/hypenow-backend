@@ -1,6 +1,7 @@
 package com.celfit.was.v1.perfdashboard;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -17,14 +18,21 @@ import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import com.celfit.was.v1.monitoring.TrackingItemResponse.SnapshotResponse;
+import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardIndex;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformanceItemResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformancePostResponse;
+import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PreviousDayValues;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -60,38 +68,73 @@ class V1PerformanceDashboardControllerTest {
 				OffsetDateTime.parse("2026-06-01T00:00:00Z")));
 	}
 
-	/** 어셈블러 스텁 — 전량(필터 전)을 준다. 수집 시각은 KST 2026-08-08T03:00:00로 고정. */
+	/** 단건 라우트 스텁 — 전량(필터 전)을 준다. 수집 시각은 KST 2026-08-08T03:00:00로 고정. */
 	private void givenAssembled(PerformanceContentResponse... contents) {
-		givenAssembled(Set.of(), contents);
+		lenient().when(assembler.assemble(7L)).thenReturn(new PerformanceContentAssembler.Assembled(
+				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z"), Set.of()));
+	}
+
+	/** ref·카드 쌍 스텁 — 경쟁사 집합 없이(=own·개인추적만) 목록 라우트를 스텁한다. */
+	private void givenIndexed(PerformanceContentResponse... contents) {
+		givenIndexed(Set.of(), contents);
 	}
 
 	/**
-	 * 경쟁사 집합까지 주는 스텁(08-12) — accountType 필터의 판정 근거다. 슬림·전체 양쪽을 같은 값으로
-	 * 스텁한다 — 여기 테스트들의 관심사는 필터·meta 규칙이지 조립 변형이 아니고, 어느 경로를 타는지는
-	 * 전용 테스트(목록은_슬림_조립을_쓴다 계열)가 고정한다. lenient인 이유: 각 테스트는 한쪽만 탄다.
+	 * ref·카드 쌍 스텁(목록 라우트) — {@code index()}가 refs를, {@code hydratePage()}가 넘어온 ref
+	 * 순서대로 대응 카드를 준다. 카드에서 ref를 유도하는 규칙은 어셈블러의 {@code refOf}와 같다
+	 * ({@link #refOf}) — 컨트롤러가 ref 위에서 세고 거르고 정렬한 결과가 카드 기준 기대값과 일치해야
+	 * 한다는 것 자체가 이 스텁의 계약이다.
+	 *
+	 * <p>경쟁사 집합(08-12)은 accountType 필터의 판정 근거다. lenient인 이유: 400으로 끝나는
+	 * 테스트는 어느 스텁도 타지 않는다.
 	 */
-	private void givenAssembled(Set<String> competitorBrandAccountIds, PerformanceContentResponse... contents) {
-		var assembled = new PerformanceContentAssembler.Assembled(
-				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds);
-		lenient().when(assembler.assemble(7L)).thenReturn(assembled);
-		lenient().when(assembler.assembleSlim(7L)).thenReturn(assembled);
+	private void givenIndexed(Set<String> competitorBrandAccountIds, PerformanceContentResponse... contents) {
+		DashboardIndex index = index(OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds,
+				Arrays.stream(contents).map(V1PerformanceDashboardControllerTest::refOf).toList(),
+				Arrays.stream(contents).collect(Collectors.toMap(c -> c.item().id(), Function.identity(),
+						(a, b) -> a, LinkedHashMap::new)));
+		lenient().when(assembler.index(7L)).thenReturn(index);
+		lenient().when(assembler.hydratePage(eq(index), anyList())).thenAnswer(invocation -> {
+			List<DashboardRef> page = invocation.getArgument(1);
+			return page.stream().map(r -> index.legacyCards().get(r.contentKey())).toList();
+		});
 	}
 
 	/**
 	 * 비교 라우트 스텁 — /comparison은 인덱스 패스(경량 ref)만 소비한다. 하이드레이트 재료
 	 * (legacyCards·brandByCode·brandsById·campaignsById)는 이 표면과 무관해 비워 둔다.
 	 */
-	private void givenIndexed(DashboardRef... refs) {
-		lenient().when(assembler.index(7L)).thenReturn(new PerformanceContentAssembler.DashboardIndex(
+	private void givenIndexedRefs(DashboardRef... refs) {
+		lenient().when(assembler.index(7L)).thenReturn(new DashboardIndex(
 				7L, List.of(refs), OffsetDateTime.parse("2026-08-07T18:00:00Z"), Set.of(),
 				Map.of(), Map.of(), Map.of(), Map.of()));
+	}
+
+	private static DashboardIndex index(OffsetDateTime lastCollectedAt, Set<String> competitorBrandAccountIds,
+			List<DashboardRef> refs, Map<String, PerformanceContentResponse> cards) {
+		return new DashboardIndex(7L, refs, lastCollectedAt, competitorBrandAccountIds, cards,
+				Map.of(), Map.of(), Map.of());
+	}
+
+	/** 카드 → ref 유도(어셈블러 {@code refOf}와 같은 규칙) — 최신 스냅샷은 목록의 마지막 원소다. */
+	private static DashboardRef refOf(PerformanceContentResponse content) {
+		PerformancePostResponse post = content.item().post();
+		SnapshotResponse latest = post == null || post.snapshots().isEmpty() ? null
+				: post.snapshots().get(post.snapshots().size() - 1);
+		return new DashboardRef(content.item().id(), content.canonicalPostId(), content.source(),
+				content.sponsorship(), content.item().status(),
+				PerformanceContentAssembler.uploadedOn(content), content.brandAccountId(),
+				content.item().campaignId(), content.item().handle(), content.item().followers(),
+				latest == null ? null : latest.views(), latest == null ? null : latest.likes(),
+				latest != null && latest.likesHidden(), latest == null ? null : latest.comments(),
+				latest != null);
 	}
 
 	// ---------- statusCounts ----------
 
 	@Test
 	void statusCounts는_업로드_기간_필터와_무관하다() throws Exception {
-		givenAssembled(content("1", "tracking", "2026-08-06"), content("2", "tracking", "2026-08-01"));
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "tracking", "2026-08-01"));
 
 		mockMvc.perform(get(CONTENTS + "?uploadedFrom=2026-08-05").with(user(principal())))
 				.andExpect(status().isOk())
@@ -108,8 +151,9 @@ class V1PerformanceDashboardControllerTest {
 	@Test
 	void 상태_7종_키가_항상_전부_존재한다() throws Exception {
 		// 0건 + 수집 이력 없음(브랜드 연동 전 신규 유저) — 가장 빈 응답에서도 키셋이 온전해야 한다.
-		given(assembler.assembleSlim(7L))
-				.willReturn(new PerformanceContentAssembler.Assembled(List.of(), null, Set.of()));
+		DashboardIndex empty = index(null, Set.of(), List.of(), Map.of());
+		given(assembler.index(7L)).willReturn(empty);
+		given(assembler.hydratePage(eq(empty), anyList())).willReturn(List.of());
 
 		mockMvc.perform(get(CONTENTS).with(user(principal())))
 				.andExpect(status().isOk())
@@ -129,7 +173,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void statusCounts는_status_필터를_자기_자신에게_적용하지_않는다() throws Exception {
-		givenAssembled(content("1", "tracking", "2026-08-06"), content("2", "ended", "2026-08-05"));
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "ended", "2026-08-05"));
 
 		mockMvc.perform(get(CONTENTS + "?status=ended").with(user(principal())))
 				.andExpect(status().isOk())
@@ -142,7 +186,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void statusCounts는_분류_필터는_적용한다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
 				content("2", "SC2", "ended", "2026-08-06", "tagged", "unknown", null, "100"));
 
@@ -156,7 +200,7 @@ class V1PerformanceDashboardControllerTest {
 	@Test
 	void statusCounts는_협찬_필터도_적용한다() throws Exception {
 		// sponsorship은 카운트 키 축(상태)과 직교라 자기 0화가 없다 — 분류 범위 필터로 적용한다.
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "individual", "sponsored", null, null),
 				content("2", "SC2", "ended", "2026-08-05", "individual", "organic", null, null));
 
@@ -168,7 +212,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void post가_없는_항목은_기간_필터에서_빠지지만_statusCounts엔_남는다() throws Exception {
-		givenAssembled(content("1", "tracking", "2026-08-06"), content("2", "collecting", null));
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "collecting", null));
 
 		mockMvc.perform(get(CONTENTS + "?uploadedFrom=2026-08-01&uploadedTo=2026-08-31")
 						.with(user(principal())))
@@ -182,7 +226,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void campaignId_none은_캠페인_없는_콘텐츠만이다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", "9", null),
 				content("2", "SC2", "tracking", "2026-08-05", "individual", "unknown", null, null));
 
@@ -195,19 +239,21 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void campaignId_지정은_그_캠페인만이다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", "9", null),
 				content("2", "SC2", "tracking", "2026-08-05", "individual", "unknown", "10", null));
 
 		mockMvc.perform(get(CONTENTS + "?campaignId=10").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].item.campaignId").value("10"));
+				.andExpect(jsonPath("$.data[0].item.campaignId").value("10"))
+				// 캠페인도 분류 필터라 statusCounts 모수에 적용된다(§7-1).
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1));
 	}
 
 	@Test
 	void campaignId_all은_필터하지_않는다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", "9", null),
 				content("2", "SC2", "tracking", "2026-08-05", "individual", "unknown", null, null));
 
@@ -218,7 +264,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void brandAccountId_필터는_tagged와_direct를_모두_잡는다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "100"),
 				content("2", "SC2", "tracking", "2026-08-05", "direct", "unknown", null, "100"),
 				content("3", "SC3", "tracking", "2026-08-04", "individual", "unknown", null, null),
@@ -232,7 +278,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void source와_sponsorship_필터가_함께_걸린다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "tagged", "sponsored", null, "100"),
 				content("2", "SC2", "tracking", "2026-08-05", "tagged", "organic", null, "100"),
 				content("3", "SC3", "tracking", "2026-08-04", "individual", "sponsored", null, null));
@@ -245,7 +291,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void status_필터는_해당_상태만_남긴다() throws Exception {
-		givenAssembled(content("1", "tracking", "2026-08-06"), content("2", "ended", "2026-08-05"));
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "ended", "2026-08-05"));
 
 		mockMvc.perform(get(CONTENTS + "?status=ended").with(user(principal())))
 				.andExpect(status().isOk())
@@ -255,7 +301,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void 필터_미지정과_all은_전량이다() throws Exception {
-		givenAssembled(
+		givenIndexed(
 				content("1", "SC1", "tracking", "2026-08-06", "tagged", "sponsored", "9", "100"),
 				content("2", "SC2", "ended", "2026-08-05", "individual", "organic", null, null));
 
@@ -272,7 +318,7 @@ class V1PerformanceDashboardControllerTest {
 	 * 경쟁사 집합은 {@code {"11"}}이라 콘텐츠 11번만 경쟁사 소속이다.
 	 */
 	private void givenOwnCompetitorIndividual() {
-		givenAssembled(Set.of("11"),
+		givenIndexed(Set.of("11"),
 				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "10"),
 				content("11", "SC11", "tracking", "2026-08-05", "tagged", "unknown", null, "11"),
 				content("3", "SC3", "tracking", "2026-08-04", "individual", "unknown", null, null));
@@ -366,7 +412,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
 		then(assembler).should(never()).assemble(anyLong());
-		then(assembler).should(never()).assembleSlim(anyLong());
+		then(assembler).should(never()).index(anyLong());
 	}
 
 	// ---------- 검증 ----------
@@ -377,9 +423,9 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		// 검증은 전량 조립(두 DB·SQL ~11회)보다 먼저다.
+		// 검증은 인덱스 조립(두 DB·SQL 다회)보다 먼저다.
 		then(assembler).should(never()).assemble(anyLong());
-		then(assembler).should(never()).assembleSlim(anyLong());
+		then(assembler).should(never()).index(anyLong());
 	}
 
 	@Test
@@ -409,20 +455,20 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(status().isUnauthorized());
 	}
 
-	// ---------- 조립 변형 라우팅(08-12 슬림 계약) ----------
+	// ---------- 조립 변형 라우팅(08-12 슬림 계약 → 08-27 2단 조립) ----------
 
 	@Test
-	void 목록과_비교는_전체_조립을_부르지_않는다() throws Exception {
-		givenAssembled(content("1", "tracking", "2026-08-06"));
-		givenIndexed(ref("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null));
+	void 목록과_비교는_전량_조립을_부르지_않는다() throws Exception {
+		givenIndexed(content("1", "tracking", "2026-08-06"));
 		given(comparisonAssembler.assemble(eq(7L), anyList()))
 				.willReturn(new PerformanceComparisonResponse(List.of()));
 
 		mockMvc.perform(get(CONTENTS).with(user(principal()))).andExpect(status().isOk());
 		mockMvc.perform(get(COMPARISON).with(user(principal()))).andExpect(status().isOk());
 
-		// 댓글 조회(전체 조립)가 목록·비교 경로에 되살아나면 고정 지연이 재발한다(08-12 실측 근거).
+		// 전량 풀 조립이 목록·비교 경로에 되살아나면 요청당 고정비가 재발한다(08-12·08-27 실측 근거).
 		then(assembler).should(never()).assemble(anyLong());
+		then(assembler).should(never()).assembleSlim(anyLong());
 	}
 
 	@Test
@@ -431,8 +477,8 @@ class V1PerformanceDashboardControllerTest {
 
 		mockMvc.perform(get(CONTENTS + "/SC1").with(user(principal()))).andExpect(status().isOk());
 
-		// 단건은 댓글 포함 계약(§7-1) — 슬림으로 바뀌면 상세 패널의 댓글이 조용히 빈다.
-		then(assembler).should(never()).assembleSlim(anyLong());
+		// 단건은 댓글 포함 계약(§7-1) — 목록의 2단 조립(댓글 없음)으로 바뀌면 상세 패널 댓글이 조용히 빈다.
+		then(assembler).should(never()).index(anyLong());
 	}
 
 	// ---------- 단건 ----------
@@ -479,7 +525,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void comparison은_분류_필터를_걸어_비교_어셈블러에_넘긴다() throws Exception {
-		givenIndexed(
+		givenIndexedRefs(
 				ref("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
 				ref("2", "SC2", "tracking", "2026-08-06", "tagged", "sponsored", null, "100"));
 		given(comparisonAssembler.assemble(eq(7L), anyList())).willReturn(
@@ -515,7 +561,7 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void comparison은_campaignId_none을_캠페인_없음으로_거른다() throws Exception {
-		givenIndexed(
+		givenIndexedRefs(
 				ref("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", "c-1", "100"),
 				ref("2", "SC2", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
 		given(comparisonAssembler.assemble(eq(7L), anyList()))
@@ -533,7 +579,7 @@ class V1PerformanceDashboardControllerTest {
 	@Test
 	void comparison은_계정별_accountType을_내리고_경쟁사도_포함한다() throws Exception {
 		// 경쟁사(11)·own(10)·individual 3건 — 비교 라우트는 accountType 필터가 없어 전부 모수다.
-		givenIndexed(
+		givenIndexedRefs(
 				ref("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "10"),
 				ref("11", "SC11", "tracking", "2026-08-05", "tagged", "unknown", null, "11"),
 				ref("3", "SC3", "tracking", "2026-08-04", "individual", "unknown", null, null));
@@ -556,7 +602,242 @@ class V1PerformanceDashboardControllerTest {
 		assertThat(captor.getValue()).hasSize(3);
 	}
 
+	// ---------- 정렬(2026-08-27 §2) ----------
+
+	@Test
+	void 정렬_views_desc는_최신_스냅샷_조회수_내림차순이고_null은_마지막이다() throws Exception {
+		givenIndexed(contentWithViews("1", 100L), contentWithViews("2", null), contentWithViews("3", 300L));
+
+		mockMvc.perform(get(CONTENTS + "?sort=views").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].item.id").value("3"))
+				.andExpect(jsonPath("$.data[1].item.id").value("1"))
+				.andExpect(jsonPath("$.data[2].item.id").value("2"));
+	}
+
+	@Test
+	void 정렬_asc여도_null은_마지막이다() throws Exception {
+		// null은 "값이 작은 것"이 아니라 "순위 밖"이다 — order를 뒤집어도 앞으로 올라오지 않는다.
+		givenIndexed(contentWithViews("1", 100L), contentWithViews("2", null), contentWithViews("3", 300L));
+
+		mockMvc.perform(get(CONTENTS + "?sort=views&order=asc").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].item.id").value("1"))
+				.andExpect(jsonPath("$.data[1].item.id").value("3"))
+				.andExpect(jsonPath("$.data[2].item.id").value("2"));
+	}
+
+	@Test
+	void 정렬_likes는_좋아요_숨김을_순위에서_뺀다() throws Exception {
+		// 숨김은 0이 아니라 미상이다 — 큰 값으로도 작은 값으로도 취급하면 안 된다.
+		givenIndexed(metricContent("1", "2026-08-06", 100L, 10L, 5L, false, 3L),
+				metricContent("2", "2026-08-06", 100L, 10L, 999L, true, 3L),
+				metricContent("3", "2026-08-06", 100L, 10L, 50L, false, 3L));
+
+		mockMvc.perform(get(CONTENTS + "?sort=likes").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("3", "1", "2")));
+	}
+
+	@Test
+	void engagement는_좋아요_숨김이나_팔로워_미상이면_순위에서_빠진다() throws Exception {
+		givenIndexed(
+				metricContent("1", "2026-08-06", 100L, 10L, 10L, false, 5L),      // 0.15
+				metricContent("2", "2026-08-06", 100L, 10L, 40L, true, 10L),      // 좋아요 숨김 → 제외
+				metricContent("3", "2026-08-06", null, 10L, 40L, false, 10L),     // 팔로워 미상 → 제외
+				metricContent("4", "2026-08-06", 1000L, 10L, 100L, false, 100L)); // 0.2
+
+		mockMvc.perform(get(CONTENTS + "?sort=engagement").with(user(principal())))
+				.andExpect(status().isOk())
+				// 순위 안은 참여율 내림차순, 순위 밖(null) 둘은 마지막에서 업로드 최신순→id 타이브레이크.
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("4", "1", "2", "3")));
+	}
+
+	@Test
+	void 기본_정렬은_업로드_최신순이고_업로드일_미상은_마지막이다() throws Exception {
+		// 기본값(uploaded desc)이 종전 전량 조립 순서와 같아야 페이지 미사용 FE의 응답이 안 바뀐다.
+		givenIndexed(content("2", "tracking", "2026-08-01"), content("3", "collecting", null),
+				content("1", "tracking", "2026-08-06"));
+
+		mockMvc.perform(get(CONTENTS).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "2", "3")));
+	}
+
+	// ---------- 페이지네이션(2026-08-27 §2) ----------
+
+	@Test
+	void 페이지_두_쪽의_합은_전량이고_중복이_없다() throws Exception {
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "tracking", "2026-08-05"),
+				content("3", "tracking", "2026-08-04"));
+
+		mockMvc.perform(get(CONTENTS + "?offset=0&limit=2").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "2")))
+				// total은 페이지가 아니라 필터 적용 후 전체다.
+				.andExpect(jsonPath("$.meta.total").value(3))
+				.andExpect(jsonPath("$.meta.page.offset").value(0))
+				.andExpect(jsonPath("$.meta.page.limit").value(2))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(3));
+
+		mockMvc.perform(get(CONTENTS + "?offset=2&limit=2").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("3")))
+				.andExpect(jsonPath("$.meta.total").value(3))
+				.andExpect(jsonPath("$.meta.page.offset").value(2))
+				.andExpect(jsonPath("$.meta.page.limit").value(2));
+	}
+
+	@Test
+	void 페이지에_실린_ref만_하이드레이트_경계를_넘는다() throws Exception {
+		// P0의 절감 계약 자체다 — 페이지 밖 콘텐츠의 카드 조립(스냅샷 시계열·표시 메타)이 되살아나면
+		// 요청당 고정비가 데이터 규모에 다시 비례한다.
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "tracking", "2026-08-05"),
+				content("3", "tracking", "2026-08-04"));
+
+		mockMvc.perform(get(CONTENTS + "?limit=1").with(user(principal()))).andExpect(status().isOk());
+
+		ArgumentCaptor<List<DashboardRef>> captor = ArgumentCaptor.captor();
+		then(assembler).should().hydratePage(any(), captor.capture());
+		assertThat(captor.getValue()).extracting(DashboardRef::contentKey).containsExactly("1");
+	}
+
+	@Test
+	void 페이지_파라미터_생략은_전량이고_meta_page는_0_null이다() throws Exception {
+		givenIndexed(content("1", "tracking", "2026-08-06"), content("2", "tracking", "2026-08-05"));
+
+		mockMvc.perform(get(CONTENTS).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.meta.total").value(2))
+				.andExpect(jsonPath("$.meta.limit").value(2))
+				.andExpect(jsonPath("$.meta.page.offset").value(0))
+				// limit null = 안 잘랐다는 표식(키는 유지 — 계약 무결성 규칙 #1).
+				.andExpect(jsonPath("$.meta.page", Matchers.hasKey("limit")))
+				.andExpect(jsonPath("$.meta.page.limit").value(Matchers.nullValue()));
+	}
+
+	@Test
+	void limit_범위_밖은_400이다() throws Exception {
+		for (String query : List.of("?limit=0", "?limit=101", "?offset=-1")) {
+			mockMvc.perform(get(CONTENTS + query).with(user(principal())))
+					.andExpect(status().isBadRequest())
+					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		}
+		then(assembler).should(never()).index(anyLong());
+	}
+
+	// ---------- 신규 필터(2026-08-27 §2) ----------
+
+	@Test
+	void accountIds는_쉼표_목록이고_brandAccountId보다_우선한다() throws Exception {
+		// 경쟁사(15)를 섞어 둔다 — accountIds 명시도 brandAccountId와 같이 accountType=all을 함의한다.
+		givenIndexed(Set.of("15"),
+				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "12"),
+				content("2", "SC2", "tracking", "2026-08-05", "tagged", "unknown", null, "15"),
+				content("3", "SC3", "tracking", "2026-08-04", "tagged", "unknown", null, "99"),
+				content("4", "SC4", "tracking", "2026-08-03", "individual", "unknown", null, null));
+
+		mockMvc.perform(get(CONTENTS + "?accountIds=12,15&brandAccountId=99").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "2")))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(2));
+	}
+
+	@Test
+	void authorUsername은_그_작성자_게시물만이고_statusCounts_모수에도_적용된다() throws Exception {
+		// 인플루언서 뷰의 상태 뱃지가 그 작성자 기준이어야 해서 분류 필터다(status·기간과 다르다).
+		givenIndexed(authoredContent("1", "glowdeep_92", "tracking"),
+				authoredContent("2", "otherhandle", "tracking"),
+				authoredContent("3", "glowdeep_92", "ended"));
+
+		mockMvc.perform(get(CONTENTS + "?authorUsername=GlowDeep_92").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].item.id").value(Matchers.contains("1", "3")))
+				.andExpect(jsonPath("$.meta.statusCounts.tracking").value(1))
+				.andExpect(jsonPath("$.meta.statusCounts.ended").value(1));
+	}
+
+	// ---------- snapshotMode(2026-08-27 §3) ----------
+
+	@Test
+	void snapshotMode_latest는_스냅샷을_최신_1개로_줄인다() throws Exception {
+		givenIndexed(twoSnapshotContent("1"));
+
+		mockMvc.perform(get(CONTENTS + "?snapshotMode=latest").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].item.post.snapshots.length()").value(1))
+				.andExpect(jsonPath("$.data[0].item.post.snapshots[0].date").value("2026-08-06"))
+				// 증가분 재료는 잘라내기 전 시계열에서 계산돼 있어 그대로 남는다(§3).
+				.andExpect(jsonPath("$.data[0].item.post.previousDayValues.views").value(100));
+	}
+
+	@Test
+	void snapshotMode_생략은_스냅샷_전체_이력이다() throws Exception {
+		givenIndexed(twoSnapshotContent("1"));
+
+		mockMvc.perform(get(CONTENTS).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].item.post.snapshots.length()").value(2));
+	}
+
+	@Test
+	void sort_order_snapshotMode_값_공간_밖은_400이다() throws Exception {
+		for (String query : List.of("?sort=followers", "?order=random", "?snapshotMode=none")) {
+			mockMvc.perform(get(CONTENTS + query).with(user(principal())))
+					.andExpect(status().isBadRequest())
+					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		}
+		then(assembler).should(never()).index(anyLong());
+	}
+
 	// ---------- 픽스처 ----------
+
+	/** 지표 픽스처 — 최신 스냅샷 1개를 실은 콘텐츠(정렬 키의 산지). 업로드일·작성자 팔로워는 인자다. */
+	private static PerformanceContentResponse metricContent(String id, String uploadedOn, Long followers,
+			Long views, Long likes, boolean likesHidden, Long comments) {
+		String shortcode = "SC" + id;
+		String url = "https://www.instagram.com/reel/" + shortcode + "/";
+		SnapshotResponse snapshot = new SnapshotResponse(uploadedOn, views, likes, likesHidden, comments,
+				null, null, false, null);
+		PerformancePostResponse post = new PerformancePostResponse(url, shortcode, "reels", uploadedOn, "캡션",
+				List.of(), "https://cdn/thumb.jpg", null, List.of(snapshot), null, comments, false, 0L, List.of());
+		PerformanceItemResponse item = new PerformanceItemResponse(id, "url", "tracking", "glowdeep_92", "글로우딥",
+				"https://cdn/author.jpg", followers, null, null, null, url, "2026-08-01", 30, null, post, null);
+		return new PerformanceContentResponse(item, "individual", "unknown", shortcode, List.of(), null);
+	}
+
+	/** views만 다른 지표 픽스처 — 나머지 정렬 키는 전부 같게 둔다. */
+	private static PerformanceContentResponse contentWithViews(String id, Long views) {
+		return metricContent(id, "2026-08-06", 1000L, views, 10L, false, 5L);
+	}
+
+	/** 작성자 핸들 픽스처(authorUsername 필터용) — 대시보드 handle은 소문자 계약이다. */
+	private static PerformanceContentResponse authoredContent(String id, String handle, String status) {
+		String shortcode = "SC" + id;
+		String url = "https://www.instagram.com/reel/" + shortcode + "/";
+		PerformancePostResponse post = new PerformancePostResponse(url, shortcode, "reels", "2026-08-06", "캡션",
+				List.of(), "https://cdn/thumb.jpg", null, List.of(), null, null, false, 0L, List.of());
+		PerformanceItemResponse item = new PerformanceItemResponse(id, "url", status, handle, "글로우딥",
+				"https://cdn/author.jpg", 12345L, null, null, null, url, "2026-08-01", 30, null, post, null);
+		return new PerformanceContentResponse(item, "individual", "unknown", shortcode, List.of(), null);
+	}
+
+	/** 스냅샷 2개 + previousDayValues를 실은 픽스처(snapshotMode 계약용) — 하이드레이트 카드의 셰이프다. */
+	private static PerformanceContentResponse twoSnapshotContent(String id) {
+		String shortcode = "SC" + id;
+		String url = "https://www.instagram.com/reel/" + shortcode + "/";
+		List<SnapshotResponse> snapshots = List.of(
+				new SnapshotResponse("2026-08-05", 100L, 10L, false, 3L, null, null, false, null),
+				new SnapshotResponse("2026-08-06", 150L, 14L, false, 5L, null, null, false, null));
+		PerformancePostResponse post = new PerformancePostResponse(url, shortcode, "reels", "2026-08-05", "캡션",
+				List.of(), "https://cdn/thumb.jpg", null, snapshots,
+				new PreviousDayValues(100L, 10L, 3L), 5L, false, 0L, List.of());
+		PerformanceItemResponse item = new PerformanceItemResponse(id, "url", "tracking", "glowdeep_92", "글로우딥",
+				"https://cdn/author.jpg", 12345L, null, null, null, url, "2026-08-01", 30, null, post, null);
+		return new PerformanceContentResponse(item, "individual", "unknown", shortcode, List.of(), null);
+	}
+
 
 	private static PerformanceContentResponse content(String id, String status, String uploadedAt) {
 		return content(id, "SC" + id, status, uploadedAt, "individual", "unknown", null, null);

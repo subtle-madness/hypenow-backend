@@ -109,13 +109,18 @@ public class PerformanceContentAssembler {
 	}
 
 	/**
-	 * 댓글 없는 전량 조립(08-12 고정 지연 대응) — 목록·비교 표면용. 두 표면은 댓글을 렌더하지 않는데
-	 * 운영 실측(08-12 덤프 하니스)에서 조립 시간의 절반 이상이 댓글 배치 조회 + 수만 행 매핑이었다.
-	 * 결과 콘텐츠의 {@code recentComments}는 빈 목록, {@code commentsCollectedCount}는 0이다 —
+	 * 댓글 없는 전량 조립(08-12) — <b>동치성 테스트의 기준선 전용이고 프로덕션 호출부는 없다</b>
+	 * (2026-08-27: 목록·비교 표면이 {@link #index} + {@link #hydratePage} 2단 조립으로 갈아탔다).
+	 * 그래서 공개 표면에서 내리고 패키지 범위로 좁혔다 — 남겨 둔 이유는 이 클래스의 두 동치성 계약
+	 * ({@code index의 ref는 전량 조립 결과와 판정값이 일치한다} · {@code hydratePage 전량은
+	 * assembleSlim과 같은 응답을 만든다})이 "구 경로와 같은 답"을 단정하는 테스트라 기준선이
+	 * 사라지면 단정 자체가 공허해지기 때문이다.
+	 *
+	 * <p>결과 콘텐츠의 {@code recentComments}는 빈 목록, {@code commentsCollectedCount}는 0이다 —
 	 * 스냅샷 유래 지표({@code commentsTotal}·{@code commentsHidden})와 나머지 필드는 전부 동일하다.
 	 * 댓글이 필요한 단건 조회는 {@link #assemble(long)}을 그대로 쓴다.
 	 */
-	public Assembled assembleSlim(long userId) {
+	Assembled assembleSlim(long userId) {
 		return assemble(userId, false);
 	}
 

@@ -68,8 +68,14 @@ class PerfDiagnosisHarnessTest {
 
 		for (int run = 1; run <= 2; run++) {
 			System.out.println("===== 본측정 " + run + " =====");
-			time("assemble 전체(댓글 포함 — 종전 목록 경로)", () -> assembler.assemble(USER_ID));
-			time("assembleSlim(댓글 없음 — 신규 목록·비교 경로)", () -> assembler.assembleSlim(USER_ID));
+			time("assemble 전체(댓글 포함 — 단건 조회 경로)", () -> assembler.assemble(USER_ID));
+			// 목록·비교는 2단 조립(2026-08-27) — 1단(index)이 요청당 고정비, 2단(hydratePage)이
+			// 페이지 크기에 비례하는 변동비다. 전량·페이지 두 케이스를 나란히 재는 것이 그 계약의 계측이다.
+			var index = time("index(1단 — 경량 ref 인덱스)", () -> assembler.index(USER_ID));
+			System.out.println("   ref = " + index.refs().size() + "건");
+			time("hydratePage 전량(페이지 파라미터 생략 응답)", () -> assembler.hydratePage(index, index.refs()));
+			List<PerformanceContentAssembler.DashboardRef> firstPage = index.refs().stream().limit(20).toList();
+			time("hydratePage 20건(페이지 모드 응답)", () -> assembler.hydratePage(index, firstPage));
 		}
 
 		System.out.println("===== 구간별(assemble 내부 순서 그대로) =====");

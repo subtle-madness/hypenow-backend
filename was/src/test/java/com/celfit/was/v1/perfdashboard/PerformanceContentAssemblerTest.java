@@ -642,7 +642,7 @@ class PerformanceContentAssemblerTest {
 		var assembler = assembler();
 
 		var index = assembler.index(USER_ID);
-		var slim = assembler.assembleSlim(USER_ID);   // Task 7 전까지 존치 — 동치성 기준선
+		var slim = assembler.assembleSlim(USER_ID);   // 구 전량 조립 — 동치성 기준선(프로덕션 미사용)
 
 		assertThat(index.refs()).hasSameSizeAs(slim.contents());
 		for (int i = 0; i < slim.contents().size(); i++) {
@@ -843,7 +843,7 @@ class PerformanceContentAssemblerTest {
 		var index = assembler.index(USER_ID);
 		List<PerformanceContentResponse> hydrated = assembler.hydratePage(index, index.refs());
 
-		assertThat(hydrated).isEqualTo(assembler.assembleSlim(USER_ID).contents());   // Task 7 전까지 존치
+		assertThat(hydrated).isEqualTo(assembler.assembleSlim(USER_ID).contents());   // 기준선(프로덕션 미사용)
 	}
 
 	/**
