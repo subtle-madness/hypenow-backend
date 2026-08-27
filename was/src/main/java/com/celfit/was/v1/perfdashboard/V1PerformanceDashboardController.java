@@ -158,7 +158,7 @@ public class V1PerformanceDashboardController {
 
 	/**
 	 * 성과 비교 집계(스펙 2026-08-10) — 브랜드 계정 × 5구간. 기간 파라미터는 없다(5구간 항상 전부).
-	 * 모수는 목록과 같은 조립 전량에 분류 필터(source·sponsorship·campaignId)만 건 것 — 목록·비교
+	 * 모수는 목록과 같은 인덱스 전량에 분류 필터(source·sponsorship·campaignId)만 건 것 — 목록·비교
 	 * 막대의 숫자가 정의상 일치한다. individual은 계정 귀속이 불가능해 집계에서 빠진다
 	 * (source=individual이면 전 구간이 빈다 — 의도된 동작).
 	 *
@@ -177,12 +177,14 @@ public class V1PerformanceDashboardController {
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
 		String campaignFilter = normalizeFilter(campaignId);
 
-		// 슬림 조립(댓글 없음, 08-12) — 비교 집계는 스냅샷·업로드일만 소비한다.
-		List<PerformanceContentResponse> filtered = assembler.assembleSlim(principal.getUserId()).contents().stream()
-				.filter(c -> (sourceFilter == null || sourceFilter.equals(c.source()))
-						&& (sponsorshipFilter == null || sponsorshipFilter.equals(c.sponsorship()))
-						&& matchesCampaign(c, campaignFilter))
-				.toList();
+		// 인덱스 패스(2026-08-27) — 비교 집계는 업로드일·귀속 브랜드·최신 스냅샷 지표만 소비하고
+		// 그 값은 전부 ref에 있다. 카드 조립(스냅샷 시계열·표시 메타)은 이 표면에 필요 없다.
+		List<PerformanceContentAssembler.DashboardRef> filtered =
+				assembler.index(principal.getUserId()).refs().stream()
+						.filter(r -> (sourceFilter == null || sourceFilter.equals(r.source()))
+								&& (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+								&& matchesCampaign(r.campaignId(), campaignFilter))
+						.toList();
 		return ApiResponse.ok(comparisonAssembler.assemble(principal.getUserId(), filtered));
 	}
 
@@ -226,10 +228,17 @@ public class V1PerformanceDashboardController {
 	}
 
 	private static boolean matchesCampaign(PerformanceContentResponse content, String filter) {
+		return matchesCampaign(content.item().campaignId(), filter);
+	}
+
+	/**
+	 * 캠페인 필터 술어 정본 — 카드(목록)와 ref(비교)가 같은 규칙을 쓴다. {@code none}은 값이 아니라
+	 * 부재를 고르는 어휘라 별도 분기다(위 {@link #CAMPAIGN_NONE} 참고).
+	 */
+	private static boolean matchesCampaign(String campaignId, String filter) {
 		if (filter == null) {
 			return true;
 		}
-		String campaignId = content.item().campaignId();
 		return CAMPAIGN_NONE.equals(filter) ? campaignId == null : Objects.equals(campaignId, filter);
 	}
 

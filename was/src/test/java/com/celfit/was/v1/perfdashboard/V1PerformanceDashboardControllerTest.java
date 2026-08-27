@@ -17,10 +17,13 @@ import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformanceItemResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformancePostResponse;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
@@ -72,6 +75,16 @@ class V1PerformanceDashboardControllerTest {
 				List.of(contents), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds);
 		lenient().when(assembler.assemble(7L)).thenReturn(assembled);
 		lenient().when(assembler.assembleSlim(7L)).thenReturn(assembled);
+	}
+
+	/**
+	 * 비교 라우트 스텁 — /comparison은 인덱스 패스(경량 ref)만 소비한다. 하이드레이트 재료
+	 * (legacyCards·brandByCode·brandsById·campaignsById)는 이 표면과 무관해 비워 둔다.
+	 */
+	private void givenIndexed(DashboardRef... refs) {
+		lenient().when(assembler.index(7L)).thenReturn(new PerformanceContentAssembler.DashboardIndex(
+				7L, List.of(refs), OffsetDateTime.parse("2026-08-07T18:00:00Z"), Set.of(),
+				Map.of(), Map.of(), Map.of(), Map.of()));
 	}
 
 	// ---------- statusCounts ----------
@@ -399,8 +412,9 @@ class V1PerformanceDashboardControllerTest {
 	// ---------- 조립 변형 라우팅(08-12 슬림 계약) ----------
 
 	@Test
-	void 목록과_비교는_슬림_조립을_쓰고_전체_조립을_부르지_않는다() throws Exception {
+	void 목록과_비교는_전체_조립을_부르지_않는다() throws Exception {
 		givenAssembled(content("1", "tracking", "2026-08-06"));
+		givenIndexed(ref("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null));
 		given(comparisonAssembler.assemble(eq(7L), anyList()))
 				.willReturn(new PerformanceComparisonResponse(List.of()));
 
@@ -465,9 +479,9 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void comparison은_분류_필터를_걸어_비교_어셈블러에_넘긴다() throws Exception {
-		givenAssembled(
-				content("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
-				content("2", "SC2", "tracking", "2026-08-06", "tagged", "sponsored", null, "100"));
+		givenIndexed(
+				ref("1", "SC1", "tracking", "2026-08-06", "individual", "unknown", null, null),
+				ref("2", "SC2", "tracking", "2026-08-06", "tagged", "sponsored", null, "100"));
 		given(comparisonAssembler.assemble(eq(7L), anyList())).willReturn(
 				new PerformanceComparisonResponse(List.of(
 						new PerformanceComparisonResponse.AccountComparison("100", "cclime.beauty", "own",
@@ -486,7 +500,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.data.accounts[0].buckets[0].views").value(Matchers.nullValue()));
 
 		// source=tagged 필터가 비교 모수에 적용됐는지 — individual 1건이 걸러져 tagged만 남아야 한다.
-		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		ArgumentCaptor<List<DashboardRef>> captor = ArgumentCaptor.captor();
 		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
 		assertThat(captor.getValue()).hasSize(1);
 		assertThat(captor.getValue().get(0).source()).isEqualTo("tagged");
@@ -501,24 +515,28 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void comparison은_campaignId_none을_캠페인_없음으로_거른다() throws Exception {
-		givenAssembled(
-				content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", "c-1", "100"),
-				content("2", "SC2", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
+		givenIndexed(
+				ref("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", "c-1", "100"),
+				ref("2", "SC2", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
 		given(comparisonAssembler.assemble(eq(7L), anyList()))
 				.willReturn(new PerformanceComparisonResponse(List.of()));
 
 		mockMvc.perform(get(COMPARISON + "?campaignId=none").with(user(principal())))
 				.andExpect(status().isOk());
 
-		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		ArgumentCaptor<List<DashboardRef>> captor = ArgumentCaptor.captor();
 		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
 		assertThat(captor.getValue()).hasSize(1);
-		assertThat(captor.getValue().get(0).item().campaignId()).isNull();
+		assertThat(captor.getValue().get(0).campaignId()).isNull();
 	}
 
 	@Test
 	void comparison은_계정별_accountType을_내리고_경쟁사도_포함한다() throws Exception {
-		givenOwnCompetitorIndividual();
+		// 경쟁사(11)·own(10)·individual 3건 — 비교 라우트는 accountType 필터가 없어 전부 모수다.
+		givenIndexed(
+				ref("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "10"),
+				ref("11", "SC11", "tracking", "2026-08-05", "tagged", "unknown", null, "11"),
+				ref("3", "SC3", "tracking", "2026-08-04", "individual", "unknown", null, null));
 		given(comparisonAssembler.assemble(eq(7L), anyList())).willReturn(
 				new PerformanceComparisonResponse(List.of(
 						new PerformanceComparisonResponse.AccountComparison("10", "cclime.beauty", "own",
@@ -533,7 +551,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.data.accounts[1].accountType").value("competitor"));
 
 		// 비교 화면엔 accountType 필터가 없다 — 경쟁사 콘텐츠도 모수에 그대로 들어간다(스펙 §6).
-		ArgumentCaptor<List<PerformanceContentResponse>> captor = ArgumentCaptor.captor();
+		ArgumentCaptor<List<DashboardRef>> captor = ArgumentCaptor.captor();
 		then(comparisonAssembler).should().assemble(eq(7L), captor.capture());
 		assertThat(captor.getValue()).hasSize(3);
 	}
@@ -542,6 +560,18 @@ class V1PerformanceDashboardControllerTest {
 
 	private static PerformanceContentResponse content(String id, String status, String uploadedAt) {
 		return content(id, "SC" + id, status, uploadedAt, "individual", "unknown", null, null);
+	}
+
+	/**
+	 * 인덱스 패스 ref 픽스처(비교 라우트용) — 이 표면이 보는 건 분류 필터 필드(source·sponsorship·
+	 * campaignId)뿐이라 지표는 비워 둔다(집계 규칙은 {@link PerformanceComparisonAssemblerTest}).
+	 * uploadedOn이 null이면 업로드일 미상(post 없는 collecting·detecting·not_uploaded).
+	 */
+	private static DashboardRef ref(String id, String shortcode, String status, String uploadedOn,
+			String source, String sponsorship, String campaignId, String brandAccountId) {
+		return new DashboardRef(id, shortcode, source, sponsorship, status,
+				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, campaignId,
+				"glowdeep_92", 12345L, null, null, false, null, false);
 	}
 
 	/** uploadedAt이 null이면 post 자체가 없는 콘텐츠(collecting·detecting·not_uploaded)다. */

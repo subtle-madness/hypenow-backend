@@ -10,8 +10,8 @@ import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.v1.brandmonitoring.BrandAccountType;
-import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceComparisonAssembler.BucketRange;
+import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -100,34 +100,34 @@ class PerformanceComparisonAssemblerTest {
 		return completedAccount(12);
 	}
 
-	private static TrackingItemResponse.SnapshotResponse snapshot(Long views, Long likes,
-			boolean likesHidden, Long comments) {
-		return new TrackingItemResponse.SnapshotResponse("2026-08-09", views, likes, likesHidden,
-				comments, null, null, false, null);
+	/**
+	 * 관측 있는 ref 픽스처 — 지표는 <b>최신 스냅샷 유래</b> 값이다(고르는 일은 인덱스 패스의
+	 * {@code refOf}·{@code refOfPoolRow} 책임이고, 그 계약은 {@link PerformanceContentAssemblerTest}가
+	 * 고정한다). uploadedOn이 null이면 업로드일 미상(post 없는 collecting 등).
+	 */
+	private static DashboardRef ref(String shortcode, String brandAccountId, String uploadedOn,
+			Long followers, Long views, Long likes, boolean likesHidden, Long comments) {
+		return new DashboardRef(shortcode, shortcode, "tagged", "unknown", "tracking",
+				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
+				"handle", followers, views, likes, likesHidden, comments, true);
 	}
 
-	/** 콘텐츠 픽스처 — 스냅샷 없이 만들면 post.snapshots는 빈 목록(관측 전무)이다. */
-	private static PerformanceContentResponse content(String shortcode, String brandAccountId,
-			String uploadedAt, Long followers, TrackingItemResponse.SnapshotResponse... snapshots) {
-		PerformanceContentResponse.PerformancePostResponse post = uploadedAt == null ? null
-				: new PerformanceContentResponse.PerformancePostResponse(
-						"https://www.instagram.com/p/" + shortcode + "/", shortcode, "reels", uploadedAt,
-						"", List.of(), null, null, List.of(snapshots), null, null, false, 0, List.of());
-		return new PerformanceContentResponse(
-				new PerformanceContentResponse.PerformanceItemResponse(shortcode, "url", "tracking",
-						"handle", "이름", null, followers, null, null, null, null, "2026-01-01", 90,
-						null, post, null),
-				"tagged", "unknown", shortcode, List.of(), brandAccountId);
+	/** 관측 전무 ref — 스냅샷 0개라 지표는 전부 결측이고 숨김도 셀 수 없다(hasSnapshots=false). */
+	private static DashboardRef refWithoutSnapshots(String shortcode, String brandAccountId,
+			String uploadedOn, Long followers) {
+		return new DashboardRef(shortcode, shortcode, "tagged", "unknown", "tracking",
+				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
+				"handle", followers, null, null, false, null, false);
 	}
 
 	@Test
 	void 업로드일이_구간_경계에_정확히_귀속된다() {
 		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
-				content("A", "2", "2026-08-04", 100L, snapshot(10L, 1L, false, 1L)),   // 1w 하한
-				content("B", "2", "2026-08-03", 100L, snapshot(10L, 1L, false, 1L)),   // 1w_1m 상한
-				content("C", "2", "2025-08-10", 100L, snapshot(10L, 1L, false, 1L)),   // 6m_12m 하한
-				content("D", "2", "2025-08-09", 100L, snapshot(10L, 1L, false, 1L)),   // 12개월 밖 — 제외
-				content("E", "2", null, 100L)),                                        // 업로드일 미상 — 제외
+				ref("A", "2", "2026-08-04", 100L, 10L, 1L, false, 1L),   // 1w 하한
+				ref("B", "2", "2026-08-03", 100L, 10L, 1L, false, 1L),   // 1w_1m 상한
+				ref("C", "2", "2025-08-10", 100L, 10L, 1L, false, 1L),   // 6m_12m 하한
+				ref("D", "2", "2025-08-09", 100L, 10L, 1L, false, 1L),   // 12개월 밖 — 제외
+				refWithoutSnapshots("E", "2", null, 100L)),              // 업로드일 미상 — 제외
 				RANGES, TODAY);
 
 		assertThat(result.brandAccountId()).isEqualTo("2");
@@ -146,9 +146,9 @@ class PerformanceComparisonAssemblerTest {
 	void 합계는_non_null만_더하고_전부_null이면_null이다() {
 		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
 				// views 87400+20, likes 2800+null, comments 320+8 — 피드(views null)는 결측 카운트로.
-				content("A", "2", "2026-08-09", 400000L, snapshot(87400L, 2800L, false, 320L)),
-				content("B", "2", "2026-08-08", 12000L, snapshot(20L, null, true, 8L)),
-				content("C", "2", "2026-08-07", null, snapshot(null, 24L, false, null))),
+				ref("A", "2", "2026-08-09", 400000L, 87400L, 2800L, false, 320L),
+				ref("B", "2", "2026-08-08", 12000L, 20L, null, true, 8L),
+				ref("C", "2", "2026-08-07", null, null, 24L, false, null)),
 				RANGES, TODAY);
 
 		var oneWeek = result.buckets().get(0);
@@ -174,7 +174,7 @@ class PerformanceComparisonAssemblerTest {
 	@Test
 	void 스냅샷이_없는_콘텐츠는_지표_결측으로_센다() {
 		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
-				content("A", "2", "2026-08-09", 100L)),   // 스냅샷 0개 — 관측 전무
+				refWithoutSnapshots("A", "2", "2026-08-09", 100L)),   // 스냅샷 0개 — 관측 전무
 				RANGES, TODAY);
 
 		var oneWeek = result.buckets().get(0);
@@ -187,17 +187,16 @@ class PerformanceComparisonAssemblerTest {
 	}
 
 	@Test
-	void 지표는_최신_스냅샷에서_읽는다() {
+	void 지표는_ref의_최신_스냅샷_유래값을_그대로_쓴다() {
+		// 최신 스냅샷을 고르는 일(날짜 오름차순 계약의 마지막 원소·겹침 병합 후)은 인덱스 패스
+		// (PerformanceContentAssembler.refOf)로 옮겼다 — 여기서는 그 값을 재해석 없이 쓰는 것만 고정한다.
 		var result = PerformanceComparisonAssembler.compare(readyAccount(), BrandAccountType.OWN, List.of(
-				// 스냅샷은 날짜 오름차순 계약 — 마지막(08-09)이 최신이다.
-				content("A", "2", "2026-08-09", 100L,
-						new TrackingItemResponse.SnapshotResponse("2026-08-08", 50L, 5L, false, 2L,
-								null, null, false, null),
-						snapshot(70L, 7L, false, 3L))),
+				ref("A", "2", "2026-08-09", 100L, 70L, 7L, false, 3L)),
 				RANGES, TODAY);
 
 		assertThat(result.buckets().get(0).views()).isEqualTo(70L);
 		assertThat(result.buckets().get(0).likes()).isEqualTo(7L);
+		assertThat(result.buckets().get(0).comments()).isEqualTo(3L);
 	}
 
 	@Test
@@ -324,7 +323,7 @@ class PerformanceComparisonAssemblerTest {
 		// 집계값은 내린다). FE가 이 조합(covered=false ∧ contentCount>0)을 받는 것이 정상임을 고정.
 		var result = PerformanceComparisonAssembler.compare(
 				completedAccount(12, true, "2026-04-01T00:00:00+09:00"), BrandAccountType.OWN,
-				List.of(content("A", "2", "2026-05-01", 100L, snapshot(10L, 1L, false, 1L))),
+				List.of(ref("A", "2", "2026-05-01", 100L, 10L, 1L, false, 1L)),
 				RANGES, TODAY);
 
 		var partial = result.buckets().get(3);   // 3m_6m
@@ -358,9 +357,9 @@ class PerformanceComparisonAssemblerTest {
 						12, OffsetDateTime.parse("2026-08-09T00:00:00Z"), false, null)));
 
 		var response = assembler().assemble(7L, List.of(
-				content("A", "2", "2026-08-09", 100L, snapshot(10L, 1L, false, 1L)),
-				content("B", "3", "2026-08-09", 100L, snapshot(20L, 2L, false, 2L)),
-				content("C", null, "2026-08-09", 100L, snapshot(30L, 3L, false, 3L))),   // individual
+				ref("A", "2", "2026-08-09", 100L, 10L, 1L, false, 1L),
+				ref("B", "3", "2026-08-09", 100L, 20L, 2L, false, 2L),
+				ref("C", null, "2026-08-09", 100L, 30L, 3L, false, 3L)),   // individual
 				LocalDate.parse("2026-08-10"));
 
 		assertThat(response.accounts()).extracting("brandAccountId", "username")
