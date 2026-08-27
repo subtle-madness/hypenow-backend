@@ -50,7 +50,7 @@
       "id": 1,
       "type": "stat",
       "title": "API 5xx",
-      "description": "최근 1시간 5xx 비율(UNKNOWN·root·actuator 제외). 1% 이상이면 유저가 실제로 에러를 본다. 무트래픽 시간대는 0/0=NaN이 되는데 이건 정상이라 무값 매핑을 null로만 좁혔다(빨강 '데이터 없음'은 was 메트릭 소실일 때만). 클릭 → 운영/메트릭(was).",
+      "description": "최근 1시간 5xx 비율(UNKNOWN·root·actuator 제외). 1% 이상이면 유저가 실제로 에러를 본다. 5xx가 한 번도 없으면 status=5xx 시계열 자체가 없어 분자가 빈 벡터가 되므로 or vector(0)으로 0%를 보장한다(ops-metrics와 같은 관용구) — 따라서 빨강 '수집 끊김'은 분모까지 없는 경우, 즉 was 메트릭 소실일 때만 뜬다. 클릭 → 운영/메트릭(was).",
       "gridPos": {
         "x": 0,
         "y": 1,
@@ -69,7 +69,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "noValue": "데이터 없음",
+          "noValue": "수집 끊김",
           "links": [
             {
               "title": "운영/메트릭(was)로 이동",
@@ -82,7 +82,7 @@
               "options": {
                 "match": "null",
                 "result": {
-                  "text": "데이터 없음",
+                  "text": "수집 끊김",
                   "color": "red",
                   "index": 0
                 }
@@ -133,7 +133,7 @@
           "instant": true,
           "range": false,
           "legendFormat": "5xx율",
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}[1h])) / sum(rate(http_server_requests_seconds_count{uri!~\"UNKNOWN|root|/actuator.*\"}[1h]))"
+          "expr": "(sum(rate(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}[1h])) or vector(0)) / sum(rate(http_server_requests_seconds_count{uri!~\"UNKNOWN|root|/actuator.*\"}[1h]))"
         }
       ]
     },
