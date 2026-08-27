@@ -24,9 +24,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * 성과 대시보드 고정 지연(FE 실측 ~7초) 원인 규명용 1회성 하니스 — CI에서는 돌지 않는다
- * (PERF_DIAG=1 환경변수 필요). 운영 덤프를 복원한 로컬 컨테이너(5434)에 실제 조립 코드를
- * 그대로 배선해 구간별 소요를 잰다. 진단이 끝나면 삭제 대상.
+ * 성과 대시보드 조립 성능 하니스 — CI에서는 돌지 않는다(PERF_DIAG=1 환경변수 필요). 운영
+ * 덤프를 복원한 로컬 컨테이너(5434)에 실제 조립 코드를 그대로 배선해 구간별 소요를 잰다.
+ * 08-12 고정 지연 진단용 1회성으로 시작했지만, 2단 조립 전환(2026-08-27) 이후 구경로
+ * (assembleSlim) 기준선 대비 신경로(index+hydratePage) 실측 도구로 상주한다 — 조립 경로를
+ * 손대면 이 하니스로 전/후를 비교할 것.
  */
 @EnabledIfEnvironmentVariable(named = "PERF_DIAG", matches = "1")
 class PerfDiagnosisHarnessTest {

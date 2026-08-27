@@ -256,7 +256,7 @@ public class BrandPostAssembler {
 	 * 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다.
 	 *
 	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 창을 봐야 한다 — 패키지 밖에서 식을
-	 * 재계산하면 창 정책이 이원화된다(진단 하니스가 실제로 그렇게 복사돼 있다).
+	 * 재계산하면 창 정책이 이원화된다(진단 하니스의 복사본도 이 정본 호출로 정리했다).
 	 */
 	public static OffsetDateTime windowCutoff() {
 		return LocalDate.now(KstTimestamps.KST).minusDays(WINDOW_DAYS)
