@@ -911,6 +911,61 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isUnauthorized());
 	}
 
+	// ---------- 해시태그 발견 게시물 count 전용(P2, 2026-08-27) ----------
+
+	/**
+	 * count는 목록과 같은 판정을 슬림 조회 위에서 태운 값이다 — 여기선 표면 계약(200·셰이프)만 보고,
+	 * 목록과의 동치(판정 공유)는 {@code BrandHashtagPostAssemblerTest}가 봉인한다.
+	 */
+	@Test
+	void 해시태그_발견_게시물_count는_판정_후_개수를_내려준다() throws Exception {
+		givenHashtagCodes("HHH", "III");
+		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.BrandPoolStatusRow("HHH", true, false,   // tagged-only — 제외
+						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.data.count").value(1));
+	}
+
+	@Test
+	void 해시태그_발견분이_없으면_count는_0이다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.count").value(0));
+	}
+
+	@Test
+	void 남의_계정_해시태그_count는_403이고_조회하지_않는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/999/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(brandReadRepository).should(never()).findHashtagPostCodes(anyLong(), any(), anyInt());
+	}
+
+	@Test
+	void 없는_브랜드_계정의_해시태그_count는_404다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	/** accountId가 숫자가 아니면 존재할 수 없는 id → 404(목록과 같은 관용구). */
+	@Test
+	void 문자_accountId의_해시태그_count는_404다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/abc/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
 	// ---------- 상세 ----------
 
 	@Test
@@ -1107,6 +1162,11 @@ class V1BrandPostsControllerTest {
 
 	private void givenHashtag(BrandHashtagPostRow... rows) {
 		given(brandReadRepository.findHashtagPosts(anyLong(), any(), anyInt())).willReturn(List.of(rows));
+	}
+
+	/** count 전용 슬림 조회 시드(P2) — 목록 조회와 술어가 동형이라 같은 shortcode 집합이다. */
+	private void givenHashtagCodes(String... shortCodes) {
+		given(brandReadRepository.findHashtagPostCodes(anyLong(), any(), anyInt())).willReturn(List.of(shortCodes));
 	}
 
 	/**

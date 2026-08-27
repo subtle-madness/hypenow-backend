@@ -205,6 +205,21 @@ public class V1BrandPostsController {
 	}
 
 	/**
+	 * 해시태그 발견 게시물 개수만(P2, 2026-08-27) — FE 탭 뱃지가 목록 본문 없이 숫자만 필요할 때 쓴다
+	 * (전량 조립·전송을 태우지 않는 슬림 경로). 판정은 {@link #hashtagPosts}와 완전히 같은 함수를
+	 * 공유하므로({@link BrandHashtagPostAssembler#countForBrand}) 이 숫자는 정의상 목록 길이와 같다.
+	 * 소유 검증도 목록과 같은 관용구(403·404)다.
+	 */
+	@GetMapping("/accounts/{accountId}/hashtag-posts/count")
+	public ApiResponse<Map<String, Object>> hashtagPostCount(
+			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
+		long brandId = parseAccountId(accountId);
+		requireOwnership(principal.getUserId(), brandId);
+		findAccountOrThrow(brandId);
+		return ApiResponse.ok(Map.of("count", hashtagPostAssembler.countForBrand(principal.getUserId(), brandId)));
+	}
+
+	/**
 	 * 상세(§6-2) — postId는 shortcode다. 경로에 브랜드가 없어 연결된 브랜드 전체(다계정)를 순서대로
 	 * 뒤진다 — 어느 목록에도 없으면 존재 여부를 흘리지 않고 404.
 	 *
