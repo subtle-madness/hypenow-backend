@@ -16,7 +16,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -71,10 +70,11 @@ public class V1PerformanceDashboardController {
 	private static final String SNAPSHOT_MODE_LATEST = "latest";
 
 	/**
-	 * growth 버킷 수 상한 — 3년치 일 버킷(약 1,096개)은 막고, 2년치 일 버킷(731개)·60년치 월 버킷은
-	 * 통과하는 자리다. FE 차트 1개가 실제로 그릴 수 있는 점의 규모에서 잡았다.
+	 * growth <b>Point 총량</b> 상한 — 응답 Point 수는 {@code 버킷 수 × (1 + 계정 축 크기)}다(총계 축 1개
+	 * + 계정 시리즈). 3년치 일 버킷(약 1,096개)은 막고, 2년치 일 버킷(731개)·60년치 월 버킷은 축이
+	 * 비었을 때 통과하는 자리다 — FE 차트 1개가 실제로 그릴 수 있는 점의 규모에서 잡았다.
 	 */
-	private static final int MAX_GROWTH_BUCKETS = 750;
+	private static final int MAX_GROWTH_POINTS = 750;
 
 	/** growth 버킷 단위 값 공간 — 기본값은 {@code month}(개요 탭 초기 화면). */
 	private static final String GRANULARITY_DAY = "day";
@@ -355,13 +355,19 @@ public class V1PerformanceDashboardController {
 	 * 계정도 빈 시리즈로 남아 차트에서 계정이 사라지지 않는다. keySet 순회 순서는 조립 경로에 따라
 	 * 흔들릴 수 있어 <b>브랜드 id 숫자 오름차순으로 결정화</b>한다(같은 요청이 같은 축을 준다).
 	 *
-	 * <p><b>버킷 수 상한 {@value #MAX_GROWTH_BUCKETS}</b> — <b>집계에 실제로 쓰이는 유효 범위</b>로
-	 * 판정한다(넘으면 400). 판정은 두 번이다:
+	 * <p><b>Point 총량 상한 {@value #MAX_GROWTH_POINTS}</b> — 응답이 실제로 만드는 점의 수
+	 * ({@code 버킷 수 × (1 + 계정 축 크기)})로 판정한다(넘으면 400). <b>버킷 단독 상한은 우회
+	 * 가능했다</b>(PR ③ 리뷰): 계정 축은 {@code accountIds}로 요청자가 정하는 값이라, 버킷 수가 상한
+	 * 이내여도 {@code accountIds}에 수백 개를 나열하면 Point가 버킷 수의 수백 배로 불어난다.
+	 * 판정은 두 번이다:
 	 * <ol>
-	 *   <li>양쪽을 지정한 요청은 {@code index()} <b>앞에서</b> 먼저 걸러진다(DB를 건드리지 않는 빠른 400).</li>
-	 *   <li>한쪽이라도 생략한 요청은 반대쪽 끝이 <b>데이터 범위</b>(필터된 ref의 최소·최대 업로드일)로
-	 *       확정돼야 범위를 알 수 있으므로, ref 필터 후 집계기와 같은 규칙으로 유효 범위를 산출해
-	 *       다시 판정한다. 이 재판정이 없으면 {@code ?granularity=day&to=9999-12-31} 한 방으로 수백만
+	 *   <li>양쪽을 지정한 요청은 {@code index()} <b>앞에서</b> 먼저 걸러진다(DB를 건드리지 않는 빠른
+	 *       400). 이 시점엔 계정 축이 아직 없어(미지정이면 연결 브랜드에서 나온다) <b>버킷 수만으로
+	 *       보수 판정</b>한다 — 축을 포함한 판정은 아래 재판정이 맡는다.</li>
+	 *   <li>{@code index()} 뒤에서 축과 유효 범위가 확정되면 다시 판정한다. 한쪽이라도 생략한 요청은
+	 *       반대쪽 끝이 <b>데이터 범위</b>(필터된 ref의 최소·최대 업로드일)로 확정돼야 범위를 알 수
+	 *       있어 여기서만 버킷 수가 나온다({@link PerformanceGrowthAggregator#effectiveRange} — 집계기와
+	 *       같은 메서드다). 이 재판정이 없으면 {@code ?granularity=day&to=9999-12-31} 한 방으로 수백만
 	 *       버킷 × (1 + 계정 수)개의 Point가 만들어진다 — 상한을 통째로 우회하는 구멍이었다.</li>
 	 * </ol>
 	 * 양쪽을 생략한 요청도 이 재판정을 받는다 — 수년치 레거시 데이터 + {@code granularity=day}면 막히고,
@@ -389,11 +395,23 @@ public class V1PerformanceDashboardController {
 		LocalDate fromDate = DashboardQueries.parseDate(from, "from");
 		LocalDate toDate = DashboardQueries.parseDate(to, "to");
 		// 값 공간 검증은 전부 인덱스 패스 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
-		// 버킷 상한은 여기서 "양쪽 지정" 요청만 걸러진다(나머지는 유효 범위 확정 후 재판정, 아래).
-		checkBucketBudget(bucket, fromDate, toDate);
+		// Point 예산은 여기서 "양쪽 지정" 요청만, 그것도 축을 뺀 버킷 수로 보수 판정한다(축은 아직
+		// 모른다 — 나머지는 축·유효 범위 확정 후 재판정, 아래).
+		checkPointBudget(bucket, fromDate, toDate, 0);
 
 		PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
 		Set<String> competitorIds = index.competitorBrandAccountIds();
+
+		// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
+		// 예산 재판정보다 앞이다(축 크기가 Point 총량의 곱셈 인자라서다) — 축 계산엔 필터 결과가
+		// 필요 없다(brandsById·competitorIds뿐). accountIds 축은 "요청한 것"이라, accountType 필터로
+		// 모수에서 빠진 계정도 축에는 남아 빈 시리즈로 내려간다.
+		List<String> accountAxis = accountIdsFilter != null ? List.copyOf(accountIdsFilter)
+				: index.brandsById().keySet().stream()
+						.filter(id -> DashboardQueries.matchesAccountType(id, accountTypeFilter, competitorIds))
+						.sorted(ACCOUNT_ID_ORDER)
+						.toList();
+
 		List<DashboardRef> filtered = index.refs().stream()
 				.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
 						&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
@@ -403,32 +421,31 @@ public class V1PerformanceDashboardController {
 						&& DashboardQueries.withinUploadWindow(r.uploadedOn(), fromDate, toDate))
 				.toList();
 
-		// 유효 범위 재판정 — 생략한 끝은 데이터 범위로 확정되므로 여기서만 버킷 수를 알 수 있다.
-		// 산출 규칙은 집계기와 같다(from/to 우선, 없으면 필터된 ref의 최소·최대 업로드일).
-		checkBucketBudget(bucket, fromDate != null ? fromDate : minUploadedOn(filtered),
-				toDate != null ? toDate : maxUploadedOn(filtered));
-
-		// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
-		List<String> accountAxis = accountIdsFilter != null ? List.copyOf(accountIdsFilter)
-				: index.brandsById().keySet().stream()
-						.filter(id -> DashboardQueries.matchesAccountType(id, accountTypeFilter, competitorIds))
-						.sorted(ACCOUNT_ID_ORDER)
-						.toList();
+		// 예산 재판정 — 축 크기가 확정됐고, 생략한 끝은 데이터 범위로 확정되므로 여기서만 실제 Point
+		// 총량을 알 수 있다. 범위 산출은 집계기와 같은 메서드다(규칙이 갈리면 판정이 어긋난다).
+		PerformanceGrowthAggregator.Range range =
+				PerformanceGrowthAggregator.effectiveRange(filtered, fromDate, toDate);
+		checkPointBudget(bucket, range.from(), range.to(), accountAxis.size());
 
 		return ApiResponse.ok(
 				PerformanceGrowthAggregator.aggregate(filtered, bucket, fromDate, toDate, accountAxis));
 	}
 
 	/**
-	 * 버킷 수 상한 판정 — 넘으면 400이다. 상한이 없으면 {@code granularity=day}에 수백 년 구간이 오는
-	 * 것만으로 응답 Point가 수백만 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가 무너진다).
+	 * Point 총량 예산 판정 — 넘으면 400이다. 예산이 없으면 {@code granularity=day}에 수백 년 구간이
+	 * 오는 것만으로, 또는 {@code accountIds}에 계정을 수백 개 나열하는 것만으로 응답 Point가 수백만
+	 * 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가 무너진다).
 	 *
 	 * <p>인자는 <b>확정된 유효 범위</b>여야 한다 — 요청 파라미터를 그대로 넘기는 호출(사전 판정)은 양쪽을
 	 * 지정한 요청만 잡고, 나머지는 데이터 범위가 확정된 뒤 다시 불러야 한다(위 {@link #growth} javadoc).
 	 * 범위가 확정되지 않거나(둘 중 하나가 null — 유효 ref 0건) 뒤집힌 구간이면 버킷 자체가 없어
 	 * 판정할 것이 없다.
+	 *
+	 * @param accountCount 계정 축 크기 — Point는 버킷마다 총계 1개 + 계정 수만큼이라 곱셈 인자가
+	 *     {@code 1 + accountCount}다. 축이 아직 확정되지 않은 사전 판정은 0을 넘겨 보수 판정한다.
 	 */
-	private static void checkBucketBudget(Granularity granularity, LocalDate from, LocalDate to) {
+	private static void checkPointBudget(Granularity granularity, LocalDate from, LocalDate to,
+			int accountCount) {
 		if (from == null || to == null || from.isAfter(to)) {
 			return;
 		}
@@ -439,24 +456,9 @@ public class V1PerformanceDashboardController {
 			case WEEK -> ChronoUnit.DAYS.between(first, last) / 7 + 1;
 			case MONTH -> ChronoUnit.MONTHS.between(first, last) + 1;
 		};
-		if (buckets > MAX_GROWTH_BUCKETS) {
+		if (buckets * (1L + accountCount) > MAX_GROWTH_POINTS) {
 			throw V1ApiException.validation("조회 구간이 너무 넓어요. 기간을 좁히거나 granularity를 높여 주세요.");
 		}
-	}
-
-	/**
-	 * 데이터 범위의 시작 — 업로드일 미상 ref는 집계기가 버리므로 여기서도 뺀다(같은 규칙이어야 재판정한
-	 * 버킷 수가 실제 생성 수와 일치한다). 유효 ref가 0건이면 null(범위 없음 = 빈 시리즈).
-	 */
-	private static LocalDate minUploadedOn(List<DashboardRef> refs) {
-		return refs.stream().map(DashboardRef::uploadedOn).filter(Objects::nonNull)
-				.min(Comparator.naturalOrder()).orElse(null);
-	}
-
-	/** 데이터 범위의 끝 — {@link #minUploadedOn}과 같은 규칙. */
-	private static LocalDate maxUploadedOn(List<DashboardRef> refs) {
-		return refs.stream().map(DashboardRef::uploadedOn).filter(Objects::nonNull)
-				.max(Comparator.naturalOrder()).orElse(null);
 	}
 
 	// ---------- meta ----------

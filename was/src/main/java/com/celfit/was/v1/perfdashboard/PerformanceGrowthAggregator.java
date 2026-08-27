@@ -37,6 +37,46 @@ public final class PerformanceGrowthAggregator {
 	public enum Granularity { DAY, WEEK, MONTH }
 
 	/**
+	 * 집계에 실제로 쓰이는 유효 범위(양끝 포함) — {@link #effectiveRange}의 결과다.
+	 *
+	 * @param from 시작(null이면 범위 없음 — 유효 ref 0건)
+	 * @param to 끝(null이면 범위 없음)
+	 */
+	public record Range(LocalDate from, LocalDate to) {
+
+		/** 접을 버킷이 없는 범위 — 한쪽이 미확정이거나 뒤집힌 구간이다. */
+		public boolean empty() {
+			return from == null || to == null || from.isAfter(to);
+		}
+	}
+
+	/**
+	 * 유효 범위 산출 — 요청 from/to가 있으면 그 값, 없는 쪽은 <b>데이터 범위</b>(업로드일 미상을 뺀
+	 * refs의 최소·최대 업로드일)다. 유효 ref가 0건이고 그쪽 끝도 지정되지 않으면 null이 남는다.
+	 *
+	 * <p>{@link #aggregate}와 컨트롤러의 <b>버킷 예산 재판정</b>이 같은 메서드를 부른다 — 규칙이 갈리면
+	 * 재판정한 버킷 수와 실제 생성 수가 어긋나 상한이 헐거워지거나 정상 조회를 막는다.
+	 */
+	public static Range effectiveRange(List<DashboardRef> refs, LocalDate from, LocalDate to) {
+		LocalDate minUploadedOn = null;
+		LocalDate maxUploadedOn = null;
+		// 양쪽이 다 지정됐으면 데이터 범위는 결과에 영향이 없지만, 순회 1회라 분기를 두지 않는다.
+		for (DashboardRef ref : refs) {
+			LocalDate uploadedOn = ref.uploadedOn();
+			if (uploadedOn == null) {
+				continue;
+			}
+			if (minUploadedOn == null || uploadedOn.isBefore(minUploadedOn)) {
+				minUploadedOn = uploadedOn;
+			}
+			if (maxUploadedOn == null || uploadedOn.isAfter(maxUploadedOn)) {
+				maxUploadedOn = uploadedOn;
+			}
+		}
+		return new Range(from != null ? from : minUploadedOn, to != null ? to : maxUploadedOn);
+	}
+
+	/**
 	 * 필터 적용 후 ref → 시계열 집계. 업로드일 미상 ref는 제외한다. from/to가 null이면 그쪽 끝을
 	 * 데이터 범위(최소·최대 업로드일)로 잡고, 지정되면 그 구간의 버킷을 빈 버킷 포함 연속 생성한다.
 	 * 구간을 지정하면 구간 밖 업로드일은 (버킷이 구간을 덮더라도) 어느 버킷에도 실리지 않는다.
@@ -49,38 +89,23 @@ public final class PerformanceGrowthAggregator {
 		List<String> ids = accountIds == null ? List.of() : accountIds;
 		String label = granularity.name().toLowerCase(Locale.ROOT);
 
-		List<DashboardRef> dated = new ArrayList<>(refs.size());
-		LocalDate minUploadedOn = null;
-		LocalDate maxUploadedOn = null;
-		for (DashboardRef ref : refs) {
-			LocalDate uploadedOn = ref.uploadedOn();
-			if (uploadedOn == null) {
-				continue;
-			}
-			dated.add(ref);
-			if (minUploadedOn == null || uploadedOn.isBefore(minUploadedOn)) {
-				minUploadedOn = uploadedOn;
-			}
-			if (maxUploadedOn == null || uploadedOn.isAfter(maxUploadedOn)) {
-				maxUploadedOn = uploadedOn;
-			}
-		}
-
-		LocalDate rangeFrom = from != null ? from : minUploadedOn;
-		LocalDate rangeTo = to != null ? to : maxUploadedOn;
-		if (rangeFrom == null || rangeTo == null || rangeFrom.isAfter(rangeTo)) {
+		Range range = effectiveRange(refs, from, to);
+		if (range.empty()) {
 			// 유효 ref도 없고 범위도 주어지지 않았다(또는 빈 구간) — 접을 버킷 자체가 없다.
 			List<AccountSeries> empty = new ArrayList<>(ids.size());
 			ids.forEach(id -> empty.add(new AccountSeries(id, List.of())));
 			return new PerformanceGrowthResponse(label, List.copyOf(empty), List.of());
 		}
+		LocalDate rangeFrom = range.from();
+		LocalDate rangeTo = range.to();
 
 		Map<LocalDate, List<DashboardRef>> total = new HashMap<>();
 		Map<String, Map<LocalDate, List<DashboardRef>>> byAccount = new LinkedHashMap<>();
 		ids.forEach(id -> byAccount.computeIfAbsent(id, key -> new HashMap<>()));
-		for (DashboardRef ref : dated) {
+		for (DashboardRef ref : refs) {
 			LocalDate uploadedOn = ref.uploadedOn();
-			if (uploadedOn.isBefore(rangeFrom) || uploadedOn.isAfter(rangeTo)) {
+			// 업로드일 미상은 어느 버킷에도 실리지 않는다(범위 산출에서도 같은 규칙 — effectiveRange).
+			if (uploadedOn == null || uploadedOn.isBefore(rangeFrom) || uploadedOn.isAfter(rangeTo)) {
 				continue;
 			}
 			LocalDate key = bucketStart(uploadedOn, granularity);
@@ -154,6 +179,14 @@ public final class PerformanceGrowthAggregator {
 	 * 버킷 1개 접기 — 합계는 아는 값만, 하나도 모르면 null이고 못 더한 사유는 카운트로 남는다.
 	 * 라벨은 요청 구간과의 교집합으로 클램프한다(클래스 javadoc) — 빈 버킷·계정 시리즈도 같은 경로라
 	 * 총계와 계정 축의 라벨이 언제나 같다.
+	 *
+	 * <p><b>likes 게이트가 {@code /comparison}과 갈리는 유일한 케이스</b>(PR ③ 리뷰): 여기서는
+	 * {@code latestLikesHidden}이면 값이 있어도 합산에서 빼고 {@code likesHiddenCount}로만 남기는데,
+	 * {@code /comparison}은 숨김 여부와 무관하게 값을 더한다(카운트는 따로 센다). 두 표면이 실제로
+	 * 갈리는 입력은 {@code likes != null && likesHidden == true} 조합뿐이고, 그건 산지가 둘인 콘텐츠의
+	 * 스냅샷 병합({@code PerformanceContentAssembler.mergeOne})에서만 나온다 — 한 산지는 값을 주고
+	 * 다른 산지는 숨김을 관측했을 때 값은 채택되고 hidden은 OR로 남는다. 방향은 <b>growth가 보수적</b>
+	 * (숨김 관측이 하나라도 있으면 값을 안 쓴다). mergeOne 정합은 이 PR 범위 밖이다.
 	 */
 	private static Point foldOne(LocalDate start, List<DashboardRef> bucket, Granularity granularity,
 			LocalDate from, LocalDate to) {

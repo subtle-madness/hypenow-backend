@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -1094,6 +1095,30 @@ class V1PerformanceDashboardControllerTest {
 		mockMvc.perform(get(GROWTH + "?granularity=month&from=2023-01-01&to=2026-01-01")
 						.with(user(principal())))
 				.andExpect(status().isOk());
+	}
+
+	@Test
+	void growth_예산은_버킷과_계정_축의_곱이다() throws Exception {
+		// 버킷 수는 상한 이내(day + 60일 = 60버킷)지만 계정 축이 100개면 Point는 60 × 101 = 6,060개다
+		// — 축은 accountIds로 요청자가 정하는 값이라 버킷 단독 상한은 이렇게 우회됐다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-01-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
+		String manyIds = IntStream.rangeClosed(1, 100).mapToObj(Integer::toString)
+				.collect(Collectors.joining(","));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-01-01&to=2026-03-01&accountIds=" + manyIds)
+						.with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		// 축 크기를 알려면 인덱스가 필요하다 — 이 판정은 index() 뒤다(딱 1회, 그 뒤로 진행 없음).
+		then(assembler).should().index(7L);
+		then(assembler).should(never()).hydratePage(any(), anyList());
+
+		// 같은 구간·같은 granularity라도 축이 작으면 통과한다(60 × 2 = 120) — 회귀 방지.
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-01-01&to=2026-03-01&accountIds=12")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(1));
 	}
 
 	@Test
