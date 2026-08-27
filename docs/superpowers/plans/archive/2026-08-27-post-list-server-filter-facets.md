@@ -1,6 +1,6 @@
 # 게시물 목록 서버 필터·패싯 + 인플루언서 집계 API 구현 계획
 
-> 상태: 🟢 활성 (2026-08-27)
+> 상태: ✅ 실행 완료 (2026-08-27)
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
