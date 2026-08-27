@@ -8,8 +8,10 @@ import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.perfdashboard.DashboardQueries.PageParams;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
+import com.celfit.was.v1.perfdashboard.PerformanceGrowthAggregator.Granularity;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,6 +68,26 @@ public class V1PerformanceDashboardController {
 	/** 스냅샷 모드(2026-08-27 §3) — 기본은 전체 이력(full), latest는 최신 1개로 줄인 옵트인이다. */
 	private static final String SNAPSHOT_MODE_FULL = "full";
 	private static final String SNAPSHOT_MODE_LATEST = "latest";
+
+	/**
+	 * growth 버킷 수 상한 — 3년치 일 버킷(약 1,096개)은 막고, 2년치 일 버킷(731개)·60년치 월 버킷은
+	 * 통과하는 자리다. FE 차트 1개가 실제로 그릴 수 있는 점의 규모에서 잡았다.
+	 */
+	private static final int MAX_GROWTH_BUCKETS = 750;
+
+	/** growth 버킷 단위 값 공간 — 기본값은 {@code month}(개요 탭 초기 화면). */
+	private static final String GRANULARITY_DAY = "day";
+	private static final String GRANULARITY_WEEK = "week";
+	private static final String GRANULARITY_MONTH = "month";
+
+	/**
+	 * 계정 축 정렬(growth) — 브랜드 id는 숫자 문자열이라 숫자 오름차순이 자연스럽다. 숫자가 아닌 id가
+	 * 섞여도 죽지 않게 파싱 실패는 뒤로 보내고 문자열 순으로 이어 붙인다(전순서 보장).
+	 */
+	private static final Comparator<String> ACCOUNT_ID_ORDER = Comparator
+			.comparing(V1PerformanceDashboardController::accountIdOrder,
+					Comparator.nullsLast(Comparator.naturalOrder()))
+			.thenComparing(Comparator.naturalOrder());
 
 	/**
 	 * statusCounts 키 순서(FE 탭 순서) — 레거시 {@link ItemStatus} 어휘 그대로다. 브랜드 풀 합성
@@ -313,6 +335,95 @@ public class V1PerformanceDashboardController {
 		return ApiResponse.ok(data, meta);
 	}
 
+	/**
+	 * 성장 시계열 집계(스펙 2026-08-28 §5) — 목록과 같은 인덱스 ref를 업로드일 버킷으로 접는다. DB
+	 * 신규 쿼리는 없다(집계기는 순수 함수, {@link PerformanceGrowthAggregator}).
+	 *
+	 * <p><b>페이지·정렬 파라미터가 없다</b> — 응답이 시계열 축 하나라 자를 지점도, 줄 세울 행도 없다.
+	 * 그래서 {@code meta}도 없이 {@code data} 하나만 내린다(FE 제안 셰이프).
+	 *
+	 * <p>필터는 목록과 같은 분류 축(sponsorship·accountIds·campaignId·accountType)이고 전부 집계
+	 * 모수에 적용된다. {@code from}·{@code to}는 ref 필터(업로드일 미상 제외)와 버킷 범위 양쪽에
+	 * 걸린다 — 지정하면 그 구간의 버킷이 빈 버킷 포함 연속 생성되고, 양끝 부분 버킷의 라벨은 구간과의
+	 * 교집합으로 클램프된다({@link PerformanceGrowthResponse.Point} javadoc).
+	 *
+	 * <p><b>계정 축 결정</b>: {@code accountIds}를 지정하면 그 목록 그대로다(순서 유지 — FE 범례 순서가
+	 * 요청 순서와 같아야 한다). 미지정이면 <b>연결 활성 브랜드 전체</b>
+	 * ({@code index.brandsById()})에서 accountType 술어를 통과하는 계정이다 — {@code /comparison}의
+	 * "축은 연결된 계정"과 같은 규칙이라 두 표면의 범례가 어긋나지 않고, 이 기간에 게시물이 0건인
+	 * 계정도 빈 시리즈로 남아 차트에서 계정이 사라지지 않는다. keySet 순회 순서는 조립 경로에 따라
+	 * 흔들릴 수 있어 <b>브랜드 id 숫자 오름차순으로 결정화</b>한다(같은 요청이 같은 축을 준다).
+	 *
+	 * <p><b>버킷 수 상한 {@value #MAX_GROWTH_BUCKETS}</b> — 구간을 지정한 요청만 판정한다. 생략하면
+	 * 범위가 유저 데이터의 최소~최대 업로드일이라 유계이고(추적 대상이 유한하다), 상한을 걸면 정상
+	 * 조회가 이유 없이 막힌다. 계산은 버킷 시작일 사이의 걸음 수라 루프 없이 정확하다.
+	 */
+	@GetMapping("/growth")
+	public ApiResponse<PerformanceGrowthResponse> growth(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestParam(required = false) String from,
+			@RequestParam(required = false) String to,
+			@RequestParam(required = false) String granularity,
+			@RequestParam(required = false) String sponsorship,
+			@RequestParam(required = false) String accountIds,
+			@RequestParam(required = false) String campaignId,
+			@RequestParam(required = false) String accountType) {
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
+		Set<String> accountIdsFilter = DashboardQueries.normalizeAccountIds(accountIds);
+		// 함의 인자는 "브랜드를 콕 집어 물었는가" — 이 표면엔 단수 파라미터가 없어 accountIds뿐이다.
+		String accountTypeFilter = DashboardQueries.normalizeAccountType(accountType, accountIdsFilter != null);
+		Granularity bucket = normalizeGranularity(granularity);
+		LocalDate fromDate = DashboardQueries.parseDate(from, "from");
+		LocalDate toDate = DashboardQueries.parseDate(to, "to");
+		// 값 공간 검증은 전부 인덱스 패스 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
+		checkBucketBudget(bucket, fromDate, toDate);
+
+		PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+		Set<String> competitorIds = index.competitorBrandAccountIds();
+		List<DashboardRef> filtered = index.refs().stream()
+				.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+						&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
+						// 단수 필터 자리는 항상 null이다(이 표면엔 파라미터가 없다 — 위 javadoc).
+						&& DashboardQueries.matchesBrand(r.brandAccountId(), null, accountIdsFilter)
+						&& DashboardQueries.matchesAccountType(r.brandAccountId(), accountTypeFilter, competitorIds)
+						&& DashboardQueries.withinUploadWindow(r.uploadedOn(), fromDate, toDate))
+				.toList();
+
+		// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
+		List<String> accountAxis = accountIdsFilter != null ? List.copyOf(accountIdsFilter)
+				: index.brandsById().keySet().stream()
+						.filter(id -> DashboardQueries.matchesAccountType(id, accountTypeFilter, competitorIds))
+						.sorted(ACCOUNT_ID_ORDER)
+						.toList();
+
+		return ApiResponse.ok(
+				PerformanceGrowthAggregator.aggregate(filtered, bucket, fromDate, toDate, accountAxis));
+	}
+
+	/**
+	 * 구간을 지정한 요청의 버킷 수 상한 — 넘으면 400이다. 상한이 없으면 {@code granularity=day}에
+	 * 수십 년 구간이 오는 것만으로 응답 Point가 수만 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가
+	 * 무너진다). 한쪽이라도 생략됐거나 뒤집힌 구간이면 판정하지 않는다(위 {@link #growth} javadoc).
+	 */
+	private static void checkBucketBudget(Granularity granularity, LocalDate from, LocalDate to) {
+		if (from == null || to == null || from.isAfter(to)) {
+			return;
+		}
+		LocalDate first = PerformanceGrowthAggregator.bucketStart(from, granularity);
+		LocalDate last = PerformanceGrowthAggregator.bucketStart(to, granularity);
+		long buckets = switch (granularity) {
+			case DAY -> ChronoUnit.DAYS.between(first, last) + 1;
+			case WEEK -> ChronoUnit.DAYS.between(first, last) / 7 + 1;
+			case MONTH -> ChronoUnit.MONTHS.between(first, last) + 1;
+		};
+		if (buckets > MAX_GROWTH_BUCKETS) {
+			throw V1ApiException.validation("조회 구간이 너무 넓어요. 기간을 좁히거나 granularity를 높여 주세요.");
+		}
+	}
+
 	// ---------- meta ----------
 
 	/**
@@ -467,6 +578,32 @@ public class V1PerformanceDashboardController {
 			throw V1ApiException.validation("order 값이 올바르지 않아요.");
 		}
 		return true;
+	}
+
+	/**
+	 * 버킷 단위 — 미지정·빈 값은 기본값 {@code month}, 값 공간 밖은 400. {@link DashboardQueries}가
+	 * 아니라 여기 두는 이유는 값 공간이 이 표면 전용이어서다(목록·인플루언서엔 이 축이 없다).
+	 */
+	private static Granularity normalizeGranularity(String raw) {
+		if (raw == null || raw.isBlank() || GRANULARITY_MONTH.equals(raw)) {
+			return Granularity.MONTH;
+		}
+		if (GRANULARITY_DAY.equals(raw)) {
+			return Granularity.DAY;
+		}
+		if (GRANULARITY_WEEK.equals(raw)) {
+			return Granularity.WEEK;
+		}
+		throw V1ApiException.validation("granularity 값이 올바르지 않아요.");
+	}
+
+	/** 계정 축 정렬 키 — 숫자로 못 읽는 id는 null(뒤로 밀린다, {@link #ACCOUNT_ID_ORDER}). */
+	private static Long accountIdOrder(String brandAccountId) {
+		try {
+			return Long.valueOf(brandAccountId);
+		} catch (NumberFormatException e) {
+			return null;
+		}
 	}
 
 	/** 스냅샷 모드 — 미지정·빈 값·{@code full}은 전체 이력(하위 호환). @return true면 최신 1개만 */
