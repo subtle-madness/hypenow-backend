@@ -76,8 +76,12 @@ public final class BrandSponsorshipClassifier {
 		return Boolean.FALSE.equals(isPaidPartnership) ? ORGANIC : UNKNOWN;
 	}
 
-	/** Java \s(ASCII 공백)와 같은 문자만 — PG [[:space:]]는 로케일에 따라 유니코드 공백까지 넓어진다. */
-	private static final String ARE_SPACE = "[ \t\n\f\r]";
+	/**
+	 * Java \s(ASCII 공백 6종)와 <b>같은</b> 문자만 — PG [[:space:]]는 로케일에 따라 유니코드 공백까지
+	 * 넓어진다. \013은 수직탭 U+000B로, Java \s에는 들어가고 \t\n\f\r에는 안 잡혀 빠뜨리기 쉽다
+	 * (빠지면 "광고<VT>ㅣ …" 캡션에서 SQL만 미탐).
+	 */
+	private static final String ARE_SPACE = "[ \t\n\013\f\r]";
 
 	/**
 	 * 마커 상수 → Postgres ARE 정규식(2026-08-27 P0) — {@code lower(caption) ~ :regex}로 쓴다.
