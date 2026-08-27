@@ -112,6 +112,60 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 협찬 판정 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·필터가 필요한 건
+	 * 판정 입력(is_paid_partnership·caption)뿐이라 표시 메타 전체({@link #findPostMeta})를 싣지
+	 * 않는다. 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
+	 * 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
+	 *
+	 * <p>shortcode IN이 아니라 <b>브랜드 창 스코프 조인</b>이다(스테이징 실측 2026-08-27) — 창 안
+	 * 정산 게시물이 만 건대인 브랜드(marynmay 10,427건)에서 IN 바인드 만 개 전개가 요청당 2초대를
+	 * 만들었다. 같은 술어의 조인은 서버 실행 200ms. 창·정산 술어는 {@link #findBrandPostsInWindow}와
+	 * 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다. 노출 필터(direct-only 등록자 전용)로
+	 * 걸러질 행의 메타가 섞여 올 수 있지만 호출부가 shortcode 키 조회만 하므로 무해하다.
+	 */
+	public List<SponsorshipMetaRow> findSponsorshipMetaForBrand(long brandId, OffsetDateTime cutoff,
+			boolean enrichedOnly) {
+		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
+		return jdbc.sql("""
+				SELECT m.short_code, m.is_paid_partnership, m.caption
+				FROM brand_post_meta m
+				JOIN brand_tagged_post t ON t.short_code = m.short_code
+				WHERE t.brand_id = :brandId
+				  AND ( t.taken_at >= :cutoff OR t.direct_registered_at IS NOT NULL )
+				""" + enrichedFilter)
+				.param("brandId", brandId)
+				.param("cutoff", cutoff)
+				.query(SponsorshipMetaRow.class)
+				.list();
+	}
+
+	/**
+	 * 게시물별 최신 스냅샷 1행의 views 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) —
+	 * performance_desc 정렬 키 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대
+	 * 365행이라 정렬 키만 필요한 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를
+	 * null로 접는 서빙 규칙({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
+	 * 브랜드 창 스코프 조인인 이유는 {@link #findSponsorshipMetaForBrand} 주석 참조.
+	 */
+	public List<LatestViewsRow> findLatestViewsForBrand(long brandId, OffsetDateTime cutoff,
+			boolean enrichedOnly) {
+		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
+		return jdbc.sql("""
+				SELECT DISTINCT ON (s.short_code) s.short_code, s.content_type, s.views
+				FROM brand_post_snapshot s
+				JOIN brand_tagged_post t ON t.short_code = s.short_code
+				WHERE t.brand_id = :brandId
+				  AND ( t.taken_at >= :cutoff OR t.direct_registered_at IS NOT NULL )
+				""" + enrichedFilter + """
+
+				ORDER BY s.short_code, s.captured_on DESC
+				""")
+				.param("brandId", brandId)
+				.param("cutoff", cutoff)
+				.query(LatestViewsRow.class)
+				.list();
+	}
+
+	/**
 	 * 게시물별 일 단위 지표 시계열 전량(오름차순) — 브랜드 스냅샷은 윈도우 이탈 후에도 영구
 	 * 보존이라 상한(워터마크)을 두지 않는다. views는 DDL 주석대로 이미 화면 합산값(IG 몫 + FB 몫)이라
 	 * fb_plays를 따로 읽지 않는다.
@@ -367,6 +421,14 @@ public class BrandReadRepository {
 			String caption, String thumbnailUrl, String videoUrl, Double videoDuration,
 			Boolean isPaidPartnership, String imageObjectPath, String adVerdict, String adViolationsJson,
 			String adEvidenceJson) {
+	}
+
+	/** 협찬 판정 입력 프로젝션({@link #findSponsorshipMetaForBrand}) — isPaidPartnership null = 키 부재 보존. */
+	public record SponsorshipMetaRow(String shortCode, Boolean isPaidPartnership, String caption) {
+	}
+
+	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */
+	public record LatestViewsRow(String shortCode, String contentType, Long views) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */
