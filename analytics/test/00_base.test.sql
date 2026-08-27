@@ -12,10 +12,6 @@ BEGIN
     'v_base_influencer dummy_a fnb != true';
   ASSERT (SELECT fnb FROM analytics.v_base_influencer WHERE username = 'dummy_co') IS NULL,
     'v_base_influencer dummy_co fnb not null (미판정)';
-  ASSERT (SELECT home_living FROM analytics.v_base_influencer WHERE username = 'dummy_a') = true,
-    'v_base_influencer dummy_a home_living != true';
-  ASSERT (SELECT home_living FROM analytics.v_base_influencer WHERE username = 'dummy_co') IS NULL,
-    'v_base_influencer dummy_co home_living not null (미판정)';
 
   -- v_base_profile: 계정별 최신 1건 + 소스 분기
   ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 4,

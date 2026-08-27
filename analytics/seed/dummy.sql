@@ -34,10 +34,6 @@ INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, 
 UPDATE influencer SET fnb = true, fnb_company = false, fnb_class = 'INFLUENCER'
 WHERE username = 'dummy_a';
 
--- 홈/리빙 축 시드: dummy_a는 홈/리빙도 겸임(3축 복수 카테고리), 나머지는 미판정(NULL)
-UPDATE influencer SET home_living = true, home_living_company = false, home_living_class = 'INFLUENCER'
-WHERE username = 'dummy_a';
-
 INSERT INTO content(id, short_code, content_type, owner_username, influencer_id, uploaded_at, status, first_seen_at, origin, collect_attempts) VALUES
  (99990101,'dummy_r1','REELS','dummy_a' ,99990001, timestamptz '2026-06-01 09:00:00+09','PENDING', timestamptz '2026-06-01 12:00:00+09','ENUMERATION',0),
  (99990102,'dummy_r2','REELS','dummy_a' ,99990001, timestamptz '2026-06-02 09:00:00+09','PENDING', timestamptz '2026-06-02 12:00:00+09','ENUMERATION',0),
