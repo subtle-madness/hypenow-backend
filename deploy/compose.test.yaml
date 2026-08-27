@@ -72,9 +72,11 @@ services:
       ANALYTICS_SCHEDULE_ENABLED: "false"
       # 이미지 아카이브는 test 대상 아님(운영 버킷 오염 방지) — 빈 값이면 잡이 fail-fast
       ANALYTICS_IMAGE_PAR_URL: ""
-      JAVA_OPTS: "-Xms256m -Xmx768m"
+      # OOM 자동 힙 덤프(08-27 스펙) — 운영 analytics 주석 참조, test는 test-* 파일명으로 구분
+      JAVA_OPTS: "-Xms256m -Xmx768m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/test-analytics.hprof"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
+      - ./dumps:/dumps
     ports:
       - "127.0.0.1:8083:8082"   # 루프백 전용 — 어드민은 SSH 터널(ssh -L 8083:localhost:8083)
     healthcheck:
@@ -131,7 +133,10 @@ services:
       MONITORING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
       MONITORING_DATASOURCE_USERNAME: was_reader
       MONITORING_DATASOURCE_PASSWORD: ${DEV_WAS_READER_PASSWORD:-}
-      JAVA_OPTS: "-Xms512m -Xmx512m"
+      # OOM 자동 힙 덤프 — 운영 analytics 주석 참조
+      JAVA_OPTS: "-Xms512m -Xmx512m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/test-was.hprof"
+    volumes:
+      - ./dumps:/dumps
     # 기동 순서는 운영과 동일 규율 — test-analytics healthy(=test analysis DB 마이그레이션 완료) 후
     depends_on:
       test-postgres:
@@ -195,9 +200,11 @@ services:
       MONITORING_ALARM_ALLOWED_RECIPIENTS: ${DEV_ALARM_ALLOWED_RECIPIENTS:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # ExitOnOOM은 운영과 동일 관용구(08-12) — test는 데이터가 작아 힙 상향은 미적용.
-      JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError"
+      # OOM 자동 힙 덤프 — 운영 analytics 주석 참조. ExitOnOOM과 공존(덤프를 먼저 쓰고 종료).
+      JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/test-monitoring.hprof"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
+      - ./dumps:/dumps
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(운영 monitoring과 동일 관용구).
     healthcheck:

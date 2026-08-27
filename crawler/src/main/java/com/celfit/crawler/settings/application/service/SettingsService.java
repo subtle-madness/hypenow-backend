@@ -34,6 +34,7 @@ public class SettingsService {
     static final String COLLECT_REVISIT_INTERVAL_DAYS = "collect.revisit-interval-days";
     static final String SIMILAR_BATCH_LIMIT = "similar.batch-limit";
     static final String BEAUTY_BATCH_LIMIT = "beauty.batch-limit";
+    static final String BEAUTY_REJUDGE_COOLDOWN_DAYS = "beauty.rejudge-cooldown-days";
     static final String REELS_BATCH_LIMIT = "reels.batch-limit";
     static final String REELS_ACTOR_RESULTS_LIMIT = "reels.actor-results-limit";
 
@@ -45,19 +46,23 @@ public class SettingsService {
     private static final List<String> KEYS = List.of(
             RESULTS_LIMIT, QUALIFY_BATCH_LIMIT, QUALIFY_MIN_FOLLOWERS, QUALIFY_MAX_FOLLOWERS,
             COLLECT_BATCH_LIMIT, COLLECT_REVISIT_INTERVAL_DAYS, SIMILAR_BATCH_LIMIT,
-            BEAUTY_BATCH_LIMIT, REELS_BATCH_LIMIT, REELS_ACTOR_RESULTS_LIMIT);
+            BEAUTY_BATCH_LIMIT, BEAUTY_REJUDGE_COOLDOWN_DAYS, REELS_BATCH_LIMIT,
+            REELS_ACTOR_RESULTS_LIMIT);
 
-    private static final java.util.Map<String, String> DESCRIPTIONS = java.util.Map.of(
-            RESULTS_LIMIT, "discover: 키워드당 발굴할 게시물 수 상한 (해시태그 페이지 반복량 결정)",
-            QUALIFY_BATCH_LIMIT, "qualify: 판정 1회당 처리할 인플루언서 수 상한 (프로필 호출량 제어)",
-            QUALIFY_MIN_FOLLOWERS, "qualify: 판정 통과 팔로워 하한 — 미만이면 EXCLUDED (전역)",
-            QUALIFY_MAX_FOLLOWERS, "qualify: 판정 통과 팔로워 상한 — 초과면 EXCLUDED (전역)",
-            COLLECT_BATCH_LIMIT, "collect: 실행 1회당 방문할 인플루언서 수",
-            COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 달력 기준. 1이면 오늘(KST) 아직 방문 안 한 계정이 대상, 자정에 전원 리셋",
-            SIMILAR_BATCH_LIMIT, "similar: 실행 1회당 유사 계정을 수확할 시드 수 (Hiker 호출량 제어)",
-            BEAUTY_BATCH_LIMIT, "beauty: 판정 1회당 처리할 계정 수 상한 (실행 시간 제어 — 초과분은 다음 실행)",
-            REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)",
-            REELS_ACTOR_RESULTS_LIMIT, "reels: ACTOR 소스일 때 계정당 수확할 릴스 수 (Apify 결과 건수 과금)");
+    // Map.of는 10쌍이 언어 상한이라 ofEntries로 — 키가 늘어도 그대로 이어 붙일 수 있다.
+    private static final java.util.Map<String, String> DESCRIPTIONS = java.util.Map.ofEntries(
+            java.util.Map.entry(RESULTS_LIMIT, "discover: 키워드당 발굴할 게시물 수 상한 (해시태그 페이지 반복량 결정)"),
+            java.util.Map.entry(QUALIFY_BATCH_LIMIT, "qualify: 판정 1회당 처리할 인플루언서 수 상한 (프로필 호출량 제어)"),
+            java.util.Map.entry(QUALIFY_MIN_FOLLOWERS, "qualify: 판정 통과 팔로워 하한 — 미만이면 EXCLUDED (전역)"),
+            java.util.Map.entry(QUALIFY_MAX_FOLLOWERS, "qualify: 판정 통과 팔로워 상한 — 초과면 EXCLUDED (전역)"),
+            java.util.Map.entry(COLLECT_BATCH_LIMIT, "collect: 실행 1회당 방문할 인플루언서 수"),
+            java.util.Map.entry(COLLECT_REVISIT_INTERVAL_DAYS, "collect: 재방문 주기 (일) — 달력 기준. 1이면 오늘(KST) 아직 방문 안 한 계정이 대상, 자정에 전원 리셋"),
+            java.util.Map.entry(SIMILAR_BATCH_LIMIT, "similar: 실행 1회당 유사 계정을 수확할 시드 수 (Hiker 호출량 제어)"),
+            java.util.Map.entry(BEAUTY_BATCH_LIMIT, "beauty: 판정 1회당 처리할 계정 수 상한 (실행 시간 제어 — 초과분은 다음 실행)"),
+            java.util.Map.entry(BEAUTY_REJUDGE_COOLDOWN_DAYS,
+                    "beauty: 비뷰티 재판정 쿨다운(일) — 판정 후 이 기간 안엔 프로필이 갱신돼도 재선정 안 함"),
+            java.util.Map.entry(REELS_BATCH_LIMIT, "reels: 실행 1회당 릴스를 수확할 계정 수 (Hiker 호출량 제어 — 계정당 1요청)"),
+            java.util.Map.entry(REELS_ACTOR_RESULTS_LIMIT, "reels: ACTOR 소스일 때 계정당 수확할 릴스 수 (Apify 결과 건수 과금)"));
 
     private final AppSettingRepository settings;
     private final DiscoverProperties discoverProps;
@@ -131,6 +136,11 @@ public class SettingsService {
     }
 
     @Transactional(readOnly = true)
+    public int beautyRejudgeCooldownDays() {
+        return effective(BEAUTY_REJUDGE_COOLDOWN_DAYS);
+    }
+
+    @Transactional(readOnly = true)
     public int reelsBatchLimit() {
         return effective(REELS_BATCH_LIMIT);
     }
@@ -195,6 +205,7 @@ public class SettingsService {
             case COLLECT_REVISIT_INTERVAL_DAYS -> collectProps.revisitIntervalDays();
             case SIMILAR_BATCH_LIMIT -> similarProps.batchLimit();
             case BEAUTY_BATCH_LIMIT -> beautyProps.batchLimit();
+            case BEAUTY_REJUDGE_COOLDOWN_DAYS -> beautyProps.rejudgeCooldownDays();
             case REELS_BATCH_LIMIT -> reelsProps.batchLimit();
             case REELS_ACTOR_RESULTS_LIMIT -> reelsProps.actorResultsLimit();
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 설정 키: " + key);
