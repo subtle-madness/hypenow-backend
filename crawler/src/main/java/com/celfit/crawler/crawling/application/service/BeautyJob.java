@@ -108,10 +108,13 @@ public class BeautyJob {
         }
         if (rejudge && targets.size() < limit) {
             // 재료(raw_profile)가 판정 후 갱신된 비뷰티만 — 재료가 그대로면 같은 판정만 반복한다.
+            // 쿨다운(beauty.rejudge-cooldown-days) 이내 판정분은 제외 — F&B 수집 계정의 매일 재선정 차단.
             // 오래된 판정 우선(쿼리 정렬) — 실패 배치가 옛 판정 시각으로 남아 먼저 재시도된다
+            java.time.Instant cooldownBefore = clock.instant()
+                    .minus(java.time.Duration.ofDays(settings.beautyRejudgeCooldownDays()));
             targets.addAll(influencers.findRejudgeTargets(
                     InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
-                    PageRequest.of(0, limit - targets.size())));
+                    cooldownBefore, PageRequest.of(0, limit - targets.size())));
         }
         if (rejudge && targets.size() < limit) {
             // 캡션 0건으로 판정된 뒤 릴스가 쌓인 계정 — 뷰티 판정분도 포함해 실측으로 되돌린다

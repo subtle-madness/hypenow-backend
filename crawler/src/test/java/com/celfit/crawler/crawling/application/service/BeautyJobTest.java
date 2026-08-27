@@ -65,6 +65,7 @@ class BeautyJobTest {
         // 그대로 성립하는지 확인하기 위한 passthrough.
         when(influencers.save(any(Influencer.class))).thenAnswer(inv -> inv.getArgument(0));
         when(settings.beautyBatchLimit()).thenReturn(500);
+        when(settings.beautyRejudgeCooldownDays()).thenReturn(30);
     }
 
     static Influencer qualified(Long id, String username) {
@@ -269,7 +270,8 @@ class BeautyJobTest {
         when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
                 .thenReturn(List.of());
         when(influencers.findRejudgeTargets(
-                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
+                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE),
+                any(Instant.class), any(Pageable.class)))
                 .thenReturn(List.of(inf));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
@@ -666,6 +668,7 @@ class BeautyJobTest {
                 InfluencerStatus.QUALIFIED, PageRequest.of(0, 3, Sort.by("id")))).thenReturn(List.of(a));
         when(influencers.findRejudgeTargets(
                 InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                NOW.minus(java.time.Duration.ofDays(30)),
                 PageRequest.of(0, 2))).thenReturn(List.of(b, c));  // 정렬은 쿼리(오래된 판정 우선) 몫
         for (long id = 1; id <= 3; id++) {
             when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(id))
@@ -694,7 +697,7 @@ class BeautyJobTest {
 
         job.run(TriggerType.MANUAL, true);
 
-        verify(influencers, never()).findRejudgeTargets(any(), any(), any());
+        verify(influencers, never()).findRejudgeTargets(any(), any(), any(), any());
     }
 
     @Test
@@ -702,13 +705,15 @@ class BeautyJobTest {
         // 비뷰티·재료 갱신·MANUAL 제외 조건 자체는 쿼리 몫 — BeautySelectionIntegrationTest가 고정한다.
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of());
         when(influencers.findRejudgeTargets(
-                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
+                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE),
+                any(Instant.class), any(Pageable.class)))
                 .thenReturn(List.of());
 
         job.run(TriggerType.MANUAL, true);
 
-        verify(influencers).findRejudgeTargets(
-                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class));
+        verify(influencers).findRejudgeTargets(eq(InfluencerStatus.QUALIFIED),
+                eq(Influencer.BEAUTY_SOURCE_CLAUDE),
+                eq(NOW.minus(java.time.Duration.ofDays(30))), any(Pageable.class));
     }
 
     @Test
@@ -723,7 +728,8 @@ class BeautyJobTest {
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
                 .thenReturn(List.of());
         when(influencers.findRejudgeTargets(
-                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
+                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE),
+                any(Instant.class), any(Pageable.class)))
                 .thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
@@ -739,7 +745,8 @@ class BeautyJobTest {
         Influencer a = qualified(1L, "a");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class))).thenReturn(List.of(a));
         when(influencers.findRejudgeTargets(
-                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Pageable.class)))
+                eq(InfluencerStatus.QUALIFIED), eq(Influencer.BEAUTY_SOURCE_CLAUDE),
+                any(Instant.class), any(Pageable.class)))
                 .thenReturn(List.of(a));
         when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
                 .thenReturn(Optional.of(legacyProfile(1L, "메이크업", "코덕")));
