@@ -12,7 +12,8 @@ import org.springframework.stereotype.Repository;
  * 6.21 발굴 목록 조회 — 모수는 account_summaries 보유 계정(최근 12창 분석 계정) ⋈ accounts.
  * 광고 판정 정본은 content_analyses.ad_type='sponsored'(캡션 분류) — series.sponsored(raw 플래그)는
  * 쓰지 않는다(리포트 개편 07-27과 동일 결정). 중분류 확장은 어휘 테이블(beauty_taxonomy)로 SQL 안에서
- * 처리(§4-4). 필터·정렬·페이지는 본 쿼리 1회 + count 1회, 반환 페이지 핸들에 대해서만 보강 4쿼리
+ * 처리(§4-4). 필터·정렬·페이지·total은 본 쿼리 1회(count(*) OVER () — 0행일 때만 count 폴백),
+ * 반환 페이지 핸들에 대해서만 보강 4쿼리
  * (카테고리 비중·협업 브랜드·최근 썸네일·유효 팔로워 시계열)를 더 친다. 유효 팔로워 자체는
  * SQL이 아니라 Java(EffectiveFollowers, 6.21/6.22 공용 산식)에서 계산한다(스펙 7절 17번).
  */
@@ -28,17 +29,16 @@ public class V1InfluencerDiscoveryRepository {
 	// 20%는 기존 카테고리 게이트(build() 내 mainCategory 임계값)와 동일 기준을 그대로 재사용한다.
 	private static final double MIN_BEAUTY_RATIO_PERCENT = 20.0;
 
-	// cp(최신 태그라인)·sp(광고 수)·br(뷰티 비율)는 q·sponsored 필터·게이트가 참조하므로
+	// cp(최신 태그라인)·sp(협찬 수)·br(뷰티 비율)는 q·sponsored 필터·게이트가 참조하므로
 	// count 쿼리에도 함께 붙인다. findCardsByHandles(6.23 유사 카드 재사용)도 이 조인을
 	// 공유하지만, 그쪽 후보는 findSimilarHandles에서 이미 게이트를 통과한 핸들만 들어오므로
 	// 별도 WHERE 재적용은 하지 않는다.
 	//
-	// %s는 sp(협찬 게시물 수) 서브쿼리의 핸들 푸시다운 슬롯 — 두 경로가 조인을 공유하되 여기만
-	// 갈린다. 발굴 목록은 모수 전체를 필터링해야 하므로 빈 문자열(=기존 SQL과 바이트 동일),
-	// 핸들 지정 조회는 대상 핸들로 좁힌다. sp는 su.handle에 LEFT JOIN되고 su.handle = a.handle
-	// 이라 바깥이 핸들을 고정하는 경로에서는 나머지 계정의 집계 행이 애초에 조인되지 않는다 —
-	// 푸시다운은 결과 동일·스캔만 축소다(실데이터 6,584계정 전수 대조로 확인, 2026-07-30).
-	private static final String FROM_JOINS_TEMPLATE = """
+	// sp·br·mainCategory 게이트(account_category_share)는 사전집계 matview(analytics
+	// V20260827045100, 입력 변경 잡 후 DerivedViewRefresher가 갱신 — 스펙
+	// 2026-08-27-discovery-precompute-design.md). 요청 시점 풀 집계가 사라져 2026-07-30의
+	// sp 핸들 푸시다운 분기도 존재 이유가 소멸했다 — 두 경로가 같은 FROM을 쓴다.
+	private static final String FROM_JOINS = """
 
 			FROM account_summaries su
 			JOIN accounts a ON a.handle = su.handle
@@ -46,20 +46,8 @@ public class V1InfluencerDiscoveryRepository {
 			LEFT JOIN LATERAL (SELECT aa.tagline FROM account_analyses aa
 			                   WHERE aa.handle = su.handle
 			                   ORDER BY aa.analyzed_at DESC LIMIT 1) cp ON true
-			LEFT JOIN (SELECT s.account_handle, count(*) AS cnt
-			           FROM account_content_series s
-			           JOIN content_analyses an ON an.short_code = s.short_code
-			                                   AND an.ad_type = 'sponsored'%s
-			           GROUP BY s.account_handle) sp ON sp.account_handle = su.handle
+			LEFT JOIN account_sponsored_counts sp ON sp.account_handle = su.handle
 			LEFT JOIN account_beauty_ratio br ON br.account_handle = su.handle""";
-
-	/** 발굴 목록(전체 모수 필터링) 경로 — sp는 전 계정 집계 그대로. */
-	private static final String FROM_JOINS = FROM_JOINS_TEMPLATE.formatted("");
-
-	// 핸들 지정 조회 경로 — sp를 대상 핸들로 좁힌다. 좁히지 않으면 카드 10장을 위해 계정 6.6천 개의
-	// 협찬 수를 전부 집계했다(2026-07-30 실측: findCardsByHandles 158ms 중 121ms가 이 서브쿼리).
-	private static final String FROM_JOINS_BY_HANDLES =
-			FROM_JOINS_TEMPLATE.formatted("\n           WHERE s.account_handle IN (:handles)");
 
 	private final JdbcClient jdbcClient;
 
@@ -76,7 +64,8 @@ public class V1InfluencerDiscoveryRepository {
 						       su.posts_count, su.follows_count, su.biography, cp.tagline,
 						       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 						       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-						       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
+						       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise,
+						       count(*) OVER () AS total_count
 						""" + sql.fromJoins + "\n" + sql.where + orderBy(q.sort())
 						+ "\nLIMIT " + q.limit() + " OFFSET " + q.offset())
 				.params(sql.params)
@@ -92,9 +81,8 @@ public class V1InfluencerDiscoveryRepository {
 
 	/**
 	 * 핸들 목록 카드 일괄 조회(6.23 유사 카드 재사용) — 필터·정렬 없음, 순서는 호출부가 복원.
-	 * FROM 절은 발굴 목록과 같은 템플릿이되 sp 서브쿼리만 :handles로 좁힌 변형을 쓴다
-	 * (FROM_JOINS_BY_HANDLES 주석 참조) — :handles가 sp 안팎에서 두 번 참조되지만 JdbcClient의
-	 * 명명 파라미터는 이름 기준이라 바인딩 1개로 양쪽에 들어간다.
+	 * FROM 절은 발굴 목록과 동일(sp가 사전집계 matview라 핸들 푸시다운 변형이 더는 필요 없다).
+	 * total_count는 발굴 목록 페이징 전용 개념이라 여기서는 NULL.
 	 */
 	public List<CardRow> findCardsByHandles(List<String> handles) {
 		if (handles.isEmpty()) {
@@ -107,8 +95,9 @@ public class V1InfluencerDiscoveryRepository {
 				       su.posts_count, su.follows_count, su.biography, cp.tagline,
 				       su.views_per_follower, su.avg_er_pct AS avg_er_pct,
 				       su.avg_views, su.avg_likes, su.avg_comments, su.avg_hype_score,
-				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise
-				""" + FROM_JOINS_BY_HANDLES + """
+				       COALESCE(sp.cnt, 0) AS sponsored_count, su.email, su.avg_hype_score_precise,
+				       NULL::bigint AS total_count
+				""" + FROM_JOINS + """
 
 				WHERE a.handle IN (:handles)
 				""").param("handles", handles).query(CardRow.class).list();
@@ -134,15 +123,14 @@ public class V1InfluencerDiscoveryRepository {
 		params.put("minAnalyzed", MIN_ANALYZED);
 		params.put("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
 		if (q.mainCategory() != null) {
-			// 비중 임계값 매칭(포함 여부 아님) — 분모·round가 categoryShares.pct와 동일해야 한다(스펙 6.21)
+			// 비중 임계값 매칭(포함 여부 아님) — 산식은 account_category_share가 사전계산
+			// (분모·round가 categoryShares.pct와 동일 — matview 정의 주석 참조, 스펙 6.21).
+			// 대상 대분류 게시물 0건이면 행 부재 = EXISTS false — 기존 COALESCE(...,0)>=20 false와 동치.
 			where.append("""
 
-					  AND COALESCE((SELECT round(100.0 * count(*) FILTER (WHERE an.main_category = :mainCategory)
-					                             / NULLIF(count(*), 0))
-					                FROM account_content_series s
-					                JOIN content_analyses an ON an.short_code = s.short_code
-					                WHERE s.account_handle = su.handle
-					                  AND an.is_beauty IS TRUE AND an.main_category IS NOT NULL), 0) >= 20""");
+					  AND EXISTS (SELECT 1 FROM account_category_share cs
+					              WHERE cs.account_handle = su.handle
+					                AND cs.main_category = :mainCategory AND cs.pct >= 20)""");
 			params.put("mainCategory", q.mainCategory());
 		}
 		if (q.midCategory() != null) {
@@ -323,7 +311,10 @@ public class V1InfluencerDiscoveryRepository {
 			Long avgLikes, Long avgComments, Long avgHypeScore, Long sponsoredCount, String email,
 			// 하입 스코어 소수점 노출(2026-07-30) — avgHypeScore(정수, 값·의미 불변)는 그대로 두고
 			// 표시·정렬은 이 필드로 옮긴다(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §10).
-			BigDecimal avgHypeScorePrecise) {
+			BigDecimal avgHypeScorePrecise,
+			// findCards의 count(*) OVER () — 필터 전체 건수(LIMIT 전). findCardsByHandles는 null
+			// (2026-08-27 count 통합 — countCards는 0행 폴백 전용으로 존치).
+			Long totalCount) {
 	}
 
 	public record ShareRow(String accountHandle, String mainCategory, Integer pct) {
