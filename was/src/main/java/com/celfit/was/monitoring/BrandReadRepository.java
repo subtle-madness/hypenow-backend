@@ -124,13 +124,19 @@ public class BrandReadRepository {
 	 * {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다.
 	 * 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown). 정렬은 호출부(자바) 몫이라
 	 * ORDER BY를 두지 않는다.
+	 *
+	 * <p>성과 대시보드 인덱스(2026-08-27 목록 최적화 설계)가 이 프로젝션을 상태(hidden)·작성자 판정에
+	 * 함께 쓴다 — {@code unavailable_at}·{@code author_username}·{@code author_ig_user_id} 세 컬럼 모두
+	 * short 값이라 캡션 대비 폭 증가는 무시 수준이다(행×컬럼 전송 비용이 지배하는 경로라 컬럼 추가는
+	 * 이 기준으로만 허용한다).
 	 */
 	public List<BrandPostIndexRow> findBrandPostIndex(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
 				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
-				       m.is_paid_partnership, m.caption
+				       m.is_paid_partnership, m.caption,
+				       t.unavailable_at, t.author_username, t.author_ig_user_id
 				FROM brand_tagged_post t
 				LEFT JOIN brand_post_meta m ON m.short_code = t.short_code
 				WHERE t.brand_id = :brandId
@@ -165,17 +171,18 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 게시물별 최신 스냅샷 1행의 views 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) —
-	 * performance_desc 정렬 키 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대
-	 * 365행이라 정렬 키만 필요한 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를
-	 * null로 접는 서빙 규칙({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
-	 * 브랜드 창 스코프 조인인 이유는 {@link #findSponsorshipMetaForBrand} 주석 참조.
+	 * 게시물별 최신 스냅샷 1행의 지표 프로젝션(2026-08-27 대시보드 목록 최적화 설계에서 확장) —
+	 * 정렬 키(views·likes·comments·engagement)와 대시보드 ref의 최신 지표 산출 전용. 시계열
+	 * 전량({@link #findSnapshots})은 게시물당 최대 365행이라 지표만 필요한 경로에 싣지 않는다.
+	 * content_type을 함께 주는 이유: 피드는 views를 null로 접는 서빙 규칙
+	 * ({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
 	 */
-	public List<LatestViewsRow> findLatestViewsForBrand(long brandId, OffsetDateTime cutoff,
+	public List<LatestSnapshotRow> findLatestSnapshotsForBrand(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
-				SELECT DISTINCT ON (s.short_code) s.short_code, s.content_type, s.views
+				SELECT DISTINCT ON (s.short_code) s.short_code, s.captured_on, s.content_type,
+				       s.views, s.likes, s.likes_hidden, s.comments
 				FROM brand_post_snapshot s
 				JOIN brand_tagged_post t ON t.short_code = s.short_code
 				WHERE t.brand_id = :brandId
@@ -186,7 +193,7 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(LatestViewsRow.class)
+				.query(LatestSnapshotRow.class)
 				.list();
 	}
 
@@ -452,13 +459,18 @@ public class BrandReadRepository {
 	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership·caption null은
 	 * "메타 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라
 	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt은 source 파생·노출 필터 입력이다.
+	 *
+	 * <p>뒤 3개(unavailableAt·authorUsername·authorIgUserId)는 성과 대시보드 인덱스(2026-08-27 목록
+	 * 최적화 설계)의 상태(hidden)·작성자 판정 입력이다 — 브랜드 표면은 쓰지 않는다.
 	 */
 	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
-			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption) {
+			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption,
+			OffsetDateTime unavailableAt, String authorUsername, String authorIgUserId) {
 	}
 
-	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */
-	public record LatestViewsRow(String shortCode, String contentType, Long views) {
+	/** 게시물별 최신 스냅샷 지표({@link #findLatestSnapshotsForBrand}) — contentType은 피드 views null 규칙용. */
+	public record LatestSnapshotRow(String shortCode, LocalDate capturedOn, String contentType,
+			Long views, Long likes, boolean likesHidden, Long comments) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */

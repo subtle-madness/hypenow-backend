@@ -6,7 +6,7 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.common.KstTimestamps;
-import com.celfit.was.v1.monitoring.TrackingItemResponse;
+import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,8 +18,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * 성과 비교 집계 조립(스펙 2026-08-10) — 목록 API가 조립한 전량(필터 적용 후)을 받아 브랜드
- * 계정 × 5구간으로 합산한다. 구간 산출·합산은 전부 정적 순수 함수라 DB 없이 단위 테스트한다.
+ * 성과 비교 집계 조립(스펙 2026-08-10) — 대시보드 인덱스의 경량 참조 전량(분류 필터 적용 후)을
+ * 받아 브랜드 계정 × 5구간으로 합산한다. 구간 산출·합산은 전부 정적 순수 함수라 DB 없이 단위 테스트한다.
+ *
+ * <p>2026-08-27 목록 최적화: 입력이 풀 조립 카드({@code PerformanceContentResponse})에서
+ * {@link DashboardRef}로 바뀌었다 — 집계가 쓰는 값(업로드일·귀속 브랜드·최신 스냅샷 지표·팔로워)은
+ * 인덱스 패스가 이미 산출해 두므로 <b>결과는 동일</b>하고, 전량 풀 조립(게시물당 스냅샷 시계열·표시
+ * 메타)이라는 고정비만 사라진다.
  */
 @Component
 public class PerformanceComparisonAssembler {
@@ -35,9 +40,9 @@ public class PerformanceComparisonAssembler {
 		this.brandReadRepository = brandReadRepository;
 	}
 
-	/** 컨트롤러 진입점 — contents는 분류 필터(source·sponsorship·campaignId) 적용 후 전량. */
-	public PerformanceComparisonResponse assemble(long userId, List<PerformanceContentResponse> contents) {
-		return assemble(userId, contents, LocalDate.now(KstTimestamps.KST));
+	/** 컨트롤러 진입점 — refs는 분류 필터(source·sponsorship·campaignId) 적용 후 전량. */
+	public PerformanceComparisonResponse assemble(long userId, List<DashboardRef> refs) {
+		return assemble(userId, refs, LocalDate.now(KstTimestamps.KST));
 	}
 
 	/**
@@ -46,15 +51,14 @@ public class PerformanceComparisonAssembler {
 	 * individual(brandAccountId null)은 계정 귀속이 불가능해 어느 막대에도 안 든다(스펙 §집계 규칙
 	 * — source=individual 필터 시 전 구간이 비는 것은 의도된 동작).
 	 */
-	PerformanceComparisonResponse assemble(long userId, List<PerformanceContentResponse> contents,
-			LocalDate today) {
+	PerformanceComparisonResponse assemble(long userId, List<DashboardRef> refs, LocalDate today) {
 		if (brandReadRepository.isEmpty()) {
 			return new PerformanceComparisonResponse(List.of());   // monitoring 비활성 — 비교 축 없음
 		}
 		List<BucketRange> ranges = bucketRanges(today);
-		Map<String, List<PerformanceContentResponse>> byBrand = contents.stream()
-				.filter(c -> c.brandAccountId() != null)
-				.collect(Collectors.groupingBy(PerformanceContentResponse::brandAccountId));
+		Map<String, List<DashboardRef>> byBrand = refs.stream()
+				.filter(r -> r.brandAccountId() != null)
+				.collect(Collectors.groupingBy(DashboardRef::brandAccountId));
 
 		List<PerformanceComparisonResponse.AccountComparison> accounts = new ArrayList<>();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
@@ -90,7 +94,7 @@ public class PerformanceComparisonAssembler {
 	}
 
 	/**
-	 * 계정 1개 집계 — accountContents는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
+	 * 계정 1개 집계 — accountRefs는 이미 이 계정으로 귀속된 콘텐츠만 받는다(그룹핑은 호출부).
 	 * covered는 <b>버킷별</b> 판정이다(collectionMonths 스펙 2026-08-12): 백필이 열거하는 범위가
 	 * collection_months 창뿐이라, 완주해도 창 밖 버킷은 수집한 적 자체가 없다 — 계정 단위 true는
 	 * 3개월 브랜드의 3m_6m·6m_12m을 "게시물 없음"으로 오보한다(#454 리뷰 ②). 판정 4중 AND:
@@ -124,7 +128,7 @@ public class PerformanceComparisonAssembler {
 	 * 뜻이 아니다(대시보드는 아직 링크 창을 적용하지 않는다 — 의도적 범위 밖).
 	 */
 	static PerformanceComparisonResponse.AccountComparison compare(BrandAccountRow account, String accountType,
-			List<PerformanceContentResponse> accountContents, List<BucketRange> ranges, LocalDate today) {
+			List<DashboardRef> accountRefs, List<BucketRange> ranges, LocalDate today) {
 		boolean accountCovered = account.backfillCompletedAt() != null && account.lastSweptOn() != null;
 		LocalDate windowStart = today.minusMonths(account.collectionMonths());
 		// 커버 하한은 창 하한과 실수집 깊이(coveredUntil, KST 달력일) 중 얕은 쪽 — 두 하한은 같은
@@ -137,7 +141,7 @@ public class PerformanceComparisonAssembler {
 		List<PerformanceComparisonResponse.Bucket> buckets = new ArrayList<>(ranges.size());
 		for (BucketRange range : ranges) {
 			boolean covered = accountCovered && !range.from().isBefore(coverageStart);
-			buckets.add(aggregate(range, covered, accountContents));
+			buckets.add(aggregate(range, covered, accountRefs));
 		}
 		// collectionStartedAt은 브랜드 계정 API와 같은 앵커(collection_started_at, 확장 시 갱신) —
 		// registered_at을 쓰면 같은 이름의 필드가 API마다 다른 시각을 가리키게 된다.
@@ -147,12 +151,13 @@ public class PerformanceComparisonAssembler {
 	}
 
 	/**
-	 * 구간 1개 합산 — 지표는 콘텐츠별 <b>최신 스냅샷</b>(날짜 오름차순 계약이라 마지막 원소 — 목록의
-	 * commentsTotal과 같은 관용구). 합은 non-null만 더하고 non-null이 하나도 없으면(0건 포함) null:
-	 * 합 0(전부 관측됐는데 0)과 null(전부 미제공)을 FE가 다르게 그린다(규칙 ③ — 피드는 views 항상 null).
+	 * 구간 1개 합산 — 지표는 콘텐츠별 <b>최신 스냅샷</b> 유래 값이다(고르는 일은 인덱스 패스의
+	 * {@code refOf}·{@code refOfPoolRow}가 끝냈다 — 날짜 오름차순 계약의 마지막 원소, 겹침은 병합 후).
+	 * 합은 non-null만 더하고 non-null이 하나도 없으면(0건 포함) null: 합 0(전부 관측됐는데 0)과
+	 * null(전부 미제공)을 FE가 다르게 그린다(규칙 ③ — 피드는 views 항상 null).
 	 */
 	private static PerformanceComparisonResponse.Bucket aggregate(BucketRange range, boolean covered,
-			List<PerformanceContentResponse> contents) {
+			List<DashboardRef> refs) {
 		int contentCount = 0;
 		Long views = null;
 		Long likes = null;
@@ -161,28 +166,29 @@ public class PerformanceComparisonAssembler {
 		int viewsMissing = 0;
 		int likesHidden = 0;
 		int followersMissing = 0;
-		for (PerformanceContentResponse content : contents) {
-			LocalDate uploadedOn = PerformanceContentAssembler.uploadedOn(content);
+		for (DashboardRef ref : refs) {
+			LocalDate uploadedOn = ref.uploadedOn();
 			// 업로드일 미상(post 없는 collecting 등)·구간 밖은 어느 구간에도 안 든다(스펙 §구간).
 			if (uploadedOn == null || uploadedOn.isBefore(range.from()) || uploadedOn.isAfter(range.to())) {
 				continue;
 			}
 			contentCount++;
 
-			TrackingItemResponse.SnapshotResponse latest = latestSnapshot(content);
-			views = accumulate(views, latest == null ? null : latest.views());
-			likes = accumulate(likes, latest == null ? null : latest.likes());
-			comments = accumulate(comments, latest == null ? null : latest.comments());
-			followersSum = accumulate(followersSum, content.item().followers());
+			views = accumulate(views, ref.latestViews());
+			likes = accumulate(likes, ref.latestLikes());
+			comments = accumulate(comments, ref.latestComments());
+			followersSum = accumulate(followersSum, ref.followers());
 
-			if (latest == null || latest.views() == null) {
+			// 관측 전무(스냅샷 0개)는 지표가 전부 null이라 아래 조건과 같은 결과지만, "스냅샷 없음"을
+			// 명시적으로 남겨 현행(latest == null) 분기와 대조가 되게 둔다.
+			if (!ref.hasSnapshots() || ref.latestViews() == null) {
 				viewsMissing++;
 			}
 			// 숨김은 관측이 있어야 셀 수 있다 — 스냅샷 자체가 없으면 결측이지 숨김이 아니다.
-			if (latest != null && latest.likesHidden()) {
+			if (ref.hasSnapshots() && ref.latestLikesHidden()) {
 				likesHidden++;
 			}
-			if (content.item().followers() == null) {
+			if (ref.followers() == null) {
 				followersMissing++;
 			}
 		}
@@ -196,14 +202,5 @@ public class PerformanceComparisonAssembler {
 			return sum;
 		}
 		return sum == null ? value : sum + value;
-	}
-
-	/** 스냅샷은 날짜 오름차순 계약 — 마지막이 최신. post가 없거나 스냅샷 0개면 null(관측 전무). */
-	private static TrackingItemResponse.SnapshotResponse latestSnapshot(PerformanceContentResponse content) {
-		var post = content.item().post();
-		if (post == null || post.snapshots() == null || post.snapshots().isEmpty()) {
-			return null;
-		}
-		return post.snapshots().get(post.snapshots().size() - 1);
 	}
 }

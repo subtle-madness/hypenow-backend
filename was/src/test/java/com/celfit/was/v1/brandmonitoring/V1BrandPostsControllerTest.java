@@ -125,7 +125,8 @@ class V1BrandPostsControllerTest {
 						BrandPostMetaRow m = metaByCode.get(r.shortCode());
 						return new BrandReadRepository.BrandPostIndexRow(r.shortCode(), r.takenAt(),
 								r.tagDetectedAt(), r.directRegisteredAt(),
-								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption());
+								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption(),
+								r.unavailableAt(), r.authorUsername(), r.authorIgUserId());
 					})
 					.toList();
 		});
@@ -135,13 +136,14 @@ class V1BrandPostsControllerTest {
 					.filter(r -> codes.contains(r.shortCode()))
 					.toList();
 		});
-		given(brandReadRepository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
+		given(brandReadRepository.findLatestSnapshotsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
 			var latest = new java.util.LinkedHashMap<String, BrandSnapshotRow>();
 			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(List.of())) {
 				latest.merge(row.shortCode(), row, (a, b) -> b.capturedOn().isAfter(a.capturedOn()) ? b : a);
 			}
 			return latest.values().stream()
-					.map(r -> new BrandReadRepository.LatestViewsRow(r.shortCode(), r.contentType(), r.views()))
+					.map(r -> new BrandReadRepository.LatestSnapshotRow(r.shortCode(), r.capturedOn(),
+							r.contentType(), r.views(), r.likes(), r.likesHidden(), r.comments()))
 					.toList();
 		});
 	}

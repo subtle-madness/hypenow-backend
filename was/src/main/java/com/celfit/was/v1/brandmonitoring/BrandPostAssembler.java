@@ -132,7 +132,7 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 6컬럼 <b>단일 조인 쿼리</b>({@link
+	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 <b>단일 조인 쿼리</b>({@link
 	 * BrandReadRepository#findBrandPostIndex}) + (withViews면) 최신 스냅샷 1행 프로젝션만 읽어
 	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없고, 무거운
 	 * 조립은 {@link #hydrate}가 페이지 코드에만 수행한다. 표시 표면 전용이라 scope는 항상
@@ -164,7 +164,7 @@ public class BrandPostAssembler {
 		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
 		Map<String, Long> viewsByCode = new LinkedHashMap<>();
 		if (withViews && !poolByCode.isEmpty()) {
-			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViewsForBrand(
+			for (BrandReadRepository.LatestSnapshotRow row : brandReadRepository.findLatestSnapshotsForBrand(
 					account.id(), windowCutoff(), true)) {
 				viewsByCode.put(row.shortCode(),
 						CONTENT_TYPE_REELS.equalsIgnoreCase(row.contentType()) ? row.views() : null);
@@ -252,8 +252,13 @@ public class BrandPostAssembler {
 
 	// ---------- 브랜드 풀 ----------
 
-	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
-	static OffsetDateTime windowCutoff() {
+	/**
+	 * 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 창을 봐야 한다 — 패키지 밖에서 식을
+	 * 재계산하면 창 정책이 이원화된다(진단 하니스의 복사본도 이 정본 호출로 정리했다).
+	 */
+	public static OffsetDateTime windowCutoff() {
 		return LocalDate.now(KstTimestamps.KST).minusDays(WINDOW_DAYS)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 	}
@@ -272,9 +277,19 @@ public class BrandPostAssembler {
 
 	/**
 	 * 브랜드 풀(tagged ∪ direct) 조립 — {@code brand_tagged_post} 한 산지에서 통째로 읽는다(설계
-	 * §결정 1). 공개 이유: 성과 대시보드는 레거시 전량을 이미 자기가 조립해 두고 브랜드 풀만 얹으면
-	 * 되므로 과도기 폴백이 붙는 경로를 태우면 유저 전량 배치 조회가 통째로 중복된다. 브랜드 화면의
-	 * 진입점은 {@link #indexForBrand} + {@link #hydrate}다(2026-08-27 2단 조립).
+	 * §결정 1).
+	 *
+	 * <p><b>공개 이유(2026-08-27 갱신)</b>: 더 이상 성과 대시보드가 아니다. 대시보드는 2단 조립
+	 * (인덱스+하이드레이트)으로 전환돼 프로덕션에서 이 메서드를 타지 않고, 브랜드 화면의 진입점도
+	 * {@link #indexForBrand} + {@link #hydrate}다. 지금 남은 사용처는 둘뿐이다:
+	 * <ol>
+	 *   <li><b>프로덕션</b> — {@code V2CampaignContentService}의 캠페인 태그 <b>존재 판정</b>
+	 *       (userId 스코프·scope=ALL·클램프 off). 유저의 전 브랜드를 한 번에 훑어야 해서 브랜드
+	 *       단위 2단 조립이 맞지 않는다.</li>
+	 *   <li><b>테스트 전용</b> — {@code PerformanceContentAssembler.assembleSlim}(구 전량 조립)이
+	 *       2단 조립의 <b>동치성 기준선</b>으로 남아 이 메서드를 경유한다. 기준선이 은퇴해도 위 1번이
+	 *       남으므로 이 메서드 자체는 그때도 삭제 대상이 아니다.</li>
+	 * </ol>
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
@@ -366,8 +381,12 @@ public class BrandPostAssembler {
 				.toList();
 	}
 
-	/** campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다. */
-	private Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
+	/**
+	 * campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
 		Map<String, List<String>> byCode = new LinkedHashMap<>();
 		for (BrandPostCampaignRepository.Link link : postCampaignRepository.findByBrandAndShortCodes(brandId, codes)) {
 			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
@@ -416,24 +435,52 @@ public class BrandPostAssembler {
 	}
 
 	/**
+	 * 이 유저가 직접 등록한 게시물 원장(노출 필터·source 파생 입력) — {@code app.brand_direct_posts}.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 원장을 봐야 한다. 리포지토리를 그쪽에
+	 * 직접 주입하는 대신 이 경유로 노출한다 — 원장의 해석(무엇이 "내 등록인가")은 브랜드 조립의
+	 * 책임이고, 대시보드는 그 판정을 빌려 쓸 뿐이다.
+	 *
+	 * <p>호출 관용구도 그대로 승계한다: direct 등록 행이 하나도 없으면 <b>호출하지 않는다</b>
+	 * (불필요한 조회 방지 — {@link #assembleBrandPosts}·{@link #indexForBrand}와 동형).
+	 */
+	public Set<String> directRegisteredShortCodes(long userId) {
+		return directPostRepository.shortCodesByUser(userId);
+	}
+
+	/**
+	 * 게시자 해석 입력 키 — 산지(풀 행·성과 대시보드 인덱스 행)가 달라도 해석에 필요한 값은 이 셋뿐이다.
+	 */
+	public record AuthorKey(String shortCode, String igUserId, String username) {
+	}
+
+	/** 풀 행용 어댑터 — 해석 로직은 {@link #resolveAuthorsByKeys}가 단일 산지다. */
+	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
+		return resolveAuthorsByKeys(posts.stream()
+				.map(p -> new AuthorKey(p.shortCode(), p.authorIgUserId(), p.authorUsername())).toList());
+	}
+
+	/**
 	 * 게시자 프로필 해석 — 기본은 ig_user_id, 못 찾은 건만 username으로 한 번 더 찾는다(2차 SQL은
 	 * 전부 해석되면 아예 돌지 않는다). 열거 셰이프에 따라 author_ig_user_id가 비는 행이 있어
 	 * 폴백 경로가 필요하다({@code findAuthorsByUsername}은 계정당 최신 1행만 준다).
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
 	 */
-	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
-		Set<String> igUserIds = posts.stream().map(BrandTaggedPostRow::authorIgUserId)
+	public Map<String, AuthorRow> resolveAuthorsByKeys(List<AuthorKey> keys) {
+		Set<String> igUserIds = keys.stream().map(AuthorKey::igUserId)
 				.filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, AuthorRow> byIgUserId = brandReadRepository.findAuthors(igUserIds).stream()
 				.collect(Collectors.toMap(AuthorRow::igUserId, Function.identity(), (a, b) -> a));
 
 		Map<String, AuthorRow> byPost = new LinkedHashMap<>();
 		Set<String> pendingUsernames = new LinkedHashSet<>();
-		for (BrandTaggedPostRow post : posts) {
-			AuthorRow row = post.authorIgUserId() == null ? null : byIgUserId.get(post.authorIgUserId());
+		for (AuthorKey key : keys) {
+			AuthorRow row = key.igUserId() == null ? null : byIgUserId.get(key.igUserId());
 			if (row != null) {
-				byPost.put(post.shortCode(), row);
-			} else if (post.authorUsername() != null) {
-				pendingUsernames.add(post.authorUsername());
+				byPost.put(key.shortCode(), row);
+			} else if (key.username() != null) {
+				pendingUsernames.add(key.username());
 			}
 		}
 		if (pendingUsernames.isEmpty()) {
@@ -442,11 +489,11 @@ public class BrandPostAssembler {
 
 		Map<String, AuthorRow> byUsername = brandReadRepository.findAuthorsByUsername(pendingUsernames).stream()
 				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
-		for (BrandTaggedPostRow post : posts) {
-			if (!byPost.containsKey(post.shortCode()) && post.authorUsername() != null) {
-				AuthorRow row = byUsername.get(post.authorUsername());
+		for (AuthorKey key : keys) {
+			if (!byPost.containsKey(key.shortCode()) && key.username() != null) {
+				AuthorRow row = byUsername.get(key.username());
 				if (row != null) {
-					byPost.put(post.shortCode(), row);
+					byPost.put(key.shortCode(), row);
 				}
 			}
 		}
@@ -484,7 +531,8 @@ public class BrandPostAssembler {
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
 		List<TrackingItemResponse.PostCommentResponse> comments = commentRows.stream()
 				.map(BrandPostAssembler::commentOf).filter(Objects::nonNull).toList();
-		String username = author != null ? author.username() : post.authorUsername();
+		// author 행이 있어도 username이 비어 있으면 열거 관측으로 폴백한다(동치 계약 — refOfPoolRow와 같은 폴백).
+		String username = author != null && author.username() != null ? author.username() : post.authorUsername();
 		String source = resolveSource(post, registeredByUser);
 		OffsetDateTime trackingStarted = post.directRegisteredAt() != null ? post.directRegisteredAt()
 				: post.firstSeenAt();
@@ -563,8 +611,12 @@ public class BrandPostAssembler {
 		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), registeredByUser);
 	}
 
-	/** 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다. */
-	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
+	/**
+	 * 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
 			boolean registeredByUser) {
 		if (directRegisteredAt == null) {
 			return SOURCE_TAGGED;
