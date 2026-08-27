@@ -71,10 +71,15 @@ public class V1PerformanceDashboardController {
 
 	/**
 	 * growth <b>Point 총량</b> 상한 — 응답 Point 수는 {@code 버킷 수 × (1 + 계정 축 크기)}다(총계 축 1개
-	 * + 계정 시리즈). 3년치 일 버킷(약 1,096개)은 막고, 2년치 일 버킷(731개)·60년치 월 버킷은 축이
-	 * 비었을 때 통과하는 자리다 — FE 차트 1개가 실제로 그릴 수 있는 점의 규모에서 잡았다.
+	 * + 계정 시리즈).
+	 *
+	 * <p>캘리브레이션(2026-08-28): 축을 곱에 넣으면 종전 750은 <b>정상 사용을 막는다</b> — FE 개요 탭의
+	 * 계정 성장 차트가 쓰는 일 입자 × 1년 × 계정 4개만으로 365 × 5 = 1,825다. 그래서 <b>4,000</b>이다:
+	 * 일 입자 1년 × 연결 7계정(365 × 8 = 2,920)은 통과하고, 일 입자 2년 × 7계정(5,840)은 400이라
+	 * granularity 상향으로 빠져나가게 된다. 막으려는 것은 수백만 Point(OOM·직렬화 붕괴) 시나리오라
+	 * 여기서 세 자릿수 배 거리가 남는다.
 	 */
-	private static final int MAX_GROWTH_POINTS = 750;
+	private static final int MAX_GROWTH_POINTS = 4000;
 
 	/** growth 버킷 단위 값 공간 — 기본값은 {@code month}(개요 탭 초기 화면). */
 	private static final String GRANULARITY_DAY = "day";
@@ -363,7 +368,8 @@ public class V1PerformanceDashboardController {
 	 * <ol>
 	 *   <li>양쪽을 지정한 요청은 {@code index()} <b>앞에서</b> 먼저 걸러진다(DB를 건드리지 않는 빠른
 	 *       400). 이 시점엔 계정 축이 아직 없어(미지정이면 연결 브랜드에서 나온다) <b>버킷 수만으로
-	 *       보수 판정</b>한다 — 축을 포함한 판정은 아래 재판정이 맡는다.</li>
+	 *       보수 판정</b>한다 — 한도는 같은 {@value #MAX_GROWTH_POINTS}라 두 판정이 일관된다(버킷
+	 *       수 자체가 한도를 넘으면 어떤 축에서도 넘는다). 축을 포함한 판정은 아래 재판정이 맡는다.</li>
 	 *   <li>{@code index()} 뒤에서 축과 유효 범위가 확정되면 다시 판정한다. 한쪽이라도 생략한 요청은
 	 *       반대쪽 끝이 <b>데이터 범위</b>(필터된 ref의 최소·최대 업로드일)로 확정돼야 범위를 알 수
 	 *       있어 여기서만 버킷 수가 나온다({@link PerformanceGrowthAggregator#effectiveRange} — 집계기와

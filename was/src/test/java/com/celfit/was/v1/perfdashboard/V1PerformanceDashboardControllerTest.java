@@ -1083,8 +1083,9 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void growth_버킷_수_상한을_넘는_구간은_400이다() throws Exception {
-		// day + 3년(약 1,096 버킷) — 상한 750을 넘는다. 같은 구간도 month면 통과해야 한다.
-		mockMvc.perform(get(GROWTH + "?granularity=day&from=2023-01-01&to=2026-01-01")
+		// day + 12년(약 4,384 버킷) — 축이 비어도 상한 4,000을 넘어 index() 앞 사전 판정에서 걸린다.
+		// 같은 구간도 month면(145 버킷) 통과해야 한다.
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2014-01-01&to=2026-01-01")
 						.with(user(principal())))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
@@ -1099,8 +1100,9 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void growth_예산은_버킷과_계정_축의_곱이다() throws Exception {
-		// 버킷 수는 상한 이내(day + 60일 = 60버킷)지만 계정 축이 100개면 Point는 60 × 101 = 6,060개다
-		// — 축은 accountIds로 요청자가 정하는 값이라 버킷 단독 상한은 이렇게 우회됐다.
+		// 버킷 수는 상한 이내(day + 60일 = 60버킷)지만 계정 축이 100개면 Point는 60 × 101 = 6,060개로
+		// 상한 4,000을 넘는다 — 축은 accountIds로 요청자가 정하는 값이라 버킷 단독 상한은 이렇게
+		// 우회됐다.
 		givenIndexedRefs(Set.of(), List.of("12"),
 				influencerRef("1", "glowdeep_92", "2026-01-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
 		String manyIds = IntStream.rangeClosed(1, 100).mapToObj(Integer::toString)
@@ -1119,6 +1121,16 @@ class V1PerformanceDashboardControllerTest {
 						.with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.accounts.length()").value(1));
+
+		// 캘리브레이션 하한 — FE 개요 탭이 실제로 쓰는 규모(일 입자 × 1년 × 계정 7개 = 365 × 8 =
+		// 2,920)는 통과해야 한다. 상한을 다시 조이면 여기서 먼저 깨진다.
+		String sevenIds = IntStream.rangeClosed(1, 7).mapToObj(Integer::toString)
+				.collect(Collectors.joining(","));
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2025-01-01&to=2025-12-31&accountIds=" + sevenIds)
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(7))
+				.andExpect(jsonPath("$.data.points.length()").value(365));
 	}
 
 	@Test
@@ -1152,7 +1164,8 @@ class V1PerformanceDashboardControllerTest {
 
 	@Test
 	void growth_양쪽_생략도_데이터_범위가_넓으면_400이다() throws Exception {
-		// 파라미터가 하나도 없어도 day 버킷이면 수년치 레거시 데이터만으로 상한을 넘는다.
+		// 파라미터가 하나도 없어도 day 버킷이면 수년치 레거시 데이터만으로 상한을 넘는다
+		// (2019-01-01~2026-08-05 = 2,774 버킷 × (1 + 계정 1) = 5,548 > 4,000).
 		// 400 메시지가 granularity 상향을 안내하므로 사용자가 스스로 빠져나올 수 있다(의도된 동작).
 		givenIndexedRefs(Set.of(), List.of("12"),
 				influencerRef("1", "glowdeep_92", "2019-01-01", "sponsored", "12", 1000L, 200L, 20L, 7L),
