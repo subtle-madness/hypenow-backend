@@ -90,6 +90,10 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 		jdbcClient.sql("DELETE FROM brand_tagged_post").update();
 		jdbcClient.sql("DELETE FROM brand_account").update();
 		jdbcClient.sql("DELETE FROM app.brand_monitorings").update();
+		// 자식부터 정리(FK) — saved_*는 users FK에 ON DELETE CASCADE가 없어, 앞서 돈 클래스가
+		// 남긴 시드가 있으면 users 삭제가 FK 위반으로 깨진다(컨테이너는 JVM 전체 공유).
+		jdbcClient.sql("DELETE FROM app.saved_contents").update();
+		jdbcClient.sql("DELETE FROM app.saved_influencers").update();
 		jdbcClient.sql("DELETE FROM app.users").update();
 		// PUT 테스트가 전역 단가를 바꾼다 — 매 테스트 시드값으로 복원.
 		jdbcClient.sql("""
