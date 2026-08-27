@@ -275,7 +275,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyEmailOptOutRepositoryTest.java`에 아래 전문을 쓴다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyEmailOptOutRepositoryTest.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -357,7 +357,7 @@
   }
   ```
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/AdDisclosureNoticeRepositoryTest.java`에 아래 전문을 쓴다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/AdDisclosureNoticeRepositoryTest.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -444,13 +444,13 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyEmailOptOutRepositoryTest" --tests "com.celfit.was.monitoring.AdDisclosureNoticeRepositoryTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: class WeeklyEmailOptOutRepository`, `cannot find symbol: class AdDisclosureNoticeRepository`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyEmailOptOutRepository.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyEmailOptOutRepository.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -517,7 +517,7 @@
   }
   ```
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/AdDisclosureNoticeRepository.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/AdDisclosureNoticeRepository.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -579,7 +579,7 @@
   }
   ```
 
-- [ ] 아카이브 카탈로그 등재 — `was/src/main/java/com/celfit/was/archive/ArchiveTables.java`의 `BRAND_HASHTAG_TAGS` 상수 정의(137~141행) 바로 뒤에 아래를 삽입한다.
+- [x] 아카이브 카탈로그 등재 — `was/src/main/java/com/celfit/was/archive/ArchiveTables.java`의 `BRAND_HASHTAG_TAGS` 상수 정의(137~141행) 바로 뒤에 아래를 삽입한다.
   ```java
   	/**
   	 * 광고 미표기 알림 이력(2026-08-27 주간 개편 §8) — users CASCADE(직접 FK). BRAND_HASHTAG_TAGS와
@@ -591,13 +591,13 @@
   ```
   이어서 `CATALOG` 목록의 마지막 원소 `BRAND_HASHTAG_TAGS);`를 `BRAND_HASHTAG_TAGS,\n\t\t\tAD_DISCLOSURE_NOTICES);`로, `ACCOUNT_DELETION_ORDER`의 `BRAND_HASHTAG_TAGS,`(USERS 직전) 뒤에 `\t\t\tAD_DISCLOSURE_NOTICES,` 한 줄을 추가한다.
 
-- [ ] 실행해 통과 확인 — 순수 추가라 기존 테스트는 영향받지 않는다.
+- [x] 실행해 통과 확인 — 순수 추가라 기존 테스트는 영향받지 않는다.
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyEmailOptOutRepositoryTest" --tests "com.celfit.was.monitoring.AdDisclosureNoticeRepositoryTest" --tests "com.celfit.was.archive.*"
   ```
   기대 출력: `BUILD SUCCESSFUL`. 특히 `ArchiveCascadeReachabilityTest.users에서_CASCADE로_재귀_도달하는_테이블은_전부_ACCOUNT_DELETION_ORDER에_있다`가 통과해야 한다(등재 누락 시 `missing: [app.ad_disclosure_notices]`로 실패).
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/java/com/celfit/was/monitoring/WeeklyEmailOptOutRepository.java was/src/main/java/com/celfit/was/monitoring/AdDisclosureNoticeRepository.java was/src/test/java/com/celfit/was/monitoring/WeeklyEmailOptOutRepositoryTest.java was/src/test/java/com/celfit/was/monitoring/AdDisclosureNoticeRepositoryTest.java was/src/main/java/com/celfit/was/archive/ArchiveTables.java
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
