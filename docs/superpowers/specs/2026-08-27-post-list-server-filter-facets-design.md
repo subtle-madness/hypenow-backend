@@ -59,7 +59,7 @@ FE 실측표와 같은 조건으로 재측정해 회신한다(백엔드 직접 �
 | 파라미터 | 판정 | 비고 |
 |---|---|---|
 | `contentType` | `reels`/`feed` | `all`·생략 = 무필터(기존 `normalizeFilter` 관용구) |
-| `follower` | 6.21 토큰 `500-3k`/`3k-10k`/`10k-30k`/`30k-50k` | 하한 포함·상한 배타(디스커버리와 동일 경계). followers null은 필터 시 제외 |
+| `follower` | `0-3k`/`3k-10k`/`10k-30k`/`30k-50k`/`50k+` | **FE 화면 코드(`BRAND_FOLLOWER_RANGES`) 어휘** — 요청서는 "6.21과 동일"이라 했지만 실제 화면은 0-3k·50k+ 포함 5종을 쓴다(FE 코드 대조로 확정, FE에 통보). 하한 포함·상한 배타, followers null은 필터 시 제외 |
 | `keyword` | username·fullName 소문자 부분 일치 | |
 | `adRisk` | `true`만 유효(생략·false = 무필터) | 아래 판정 규칙 |
 | `authorUsername` | 계정명 일치(대소문자 무시) | 인플루언서 상세 전용 |
@@ -126,9 +126,17 @@ null로 받아 0이 되는 현행 동작과 일치).
     형식(`https://www.instagram.com/{username}/`).
   - latestPostAt: 기간 내 최신 taken_at(KST ISO).
   - 같은 username이 여러 계정에 있으면 합산해 1행.
-- **정렬 7종** + 동점 username 오름차순. `likes`: likesKnownCount=0은 맨 뒤.
-  `engagement` = (likes+comments)/(followers×postCount)×100 — followers null/0·postCount
-  0·likesKnownCount 0이면 값 없음으로 맨 뒤. `avg_views` = round(views/postCount).
+- **정렬 7종은 FE 화면 코드(`sortBrandInfluencers`, celfit-front `brand-influencers.ts`)를
+  1:1 복제한다** — 요청서 표와 두 곳이 다르다(완료 판정이 "현재 화면과 일치"이므로 코드가
+  정본): `posts` 정렬의 동점은 username 전에 **likes 내림차순이 2차 키**, likes·engagement의
+  "모름"(likesKnownCount=0·계산 불가)은 nullsLast로 맨 뒤. `engagement` =
+  (likes+comments)/(followers×postCount)×100 — followers null/0·postCount 0·likesKnownCount
+  0이면 값 없음. `avg_views` = round(views/postCount). 최종 타이브레이크 username 오름차순.
+- **게시물 교차 중복 제거**: 같은 게시물이 두 계정을 태그하면 FE `mergeBrandPosts`처럼
+  shortcode 기준 1회만 집계한다(요청 accountIds 순서로 먼저 온 계정 소속) — 두 번 세면
+  성과가 두 배로 접힌다.
+- likesKnown 판정은 FE와 동일하게 **최신 스냅샷 likesHidden=false AND likes≠null** —
+  스냅샷 없는 게시물은 likesKnown 아님.
 - **응답**: FE 예시 셰이프 그대로(항목 12필드), `meta {total, offset, limit}` flat.
   예상 크기 계정 4개 기준 ~0.5MB(<1MB 목표).
 - **연계**: 인플루언서 상세는 ①의 `authorUsername` 필터로 처리(FE 요청서 명시).
