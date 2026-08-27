@@ -1721,7 +1721,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestJobTest.java`에 아래 전문을 쓴다(`DigestJobTest`의 관용구를 따르되 브랜드 픽스처도 함께 올린다).
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestJobTest.java`에 아래 전문을 쓴다(`DigestJobTest`의 관용구를 따르되 브랜드 픽스처도 함께 올린다).
   ```java
   package com.celfit.was.monitoring;
 
@@ -2002,13 +2002,17 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestJobTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: class WeeklyDigestJob`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestJob.java`에 아래 전문을 쓴다.
+  (08-28 실측: 테스트 전문에 있던 `assertThat(...).singleElement().containsEntry(...)` 체이닝 2곳이
+  `ObjectAssert`엔 `containsEntry`가 없어 별도 컴파일 오류였다 — `hasSize(1)` + `get(0)` 2단계로
+  고쳐 의도는 그대로 두고 컴파일만 통과시켰다. `WeeklyDigestJob` 미존재 오류만 남는 것 확인.)
+
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestJob.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -2241,25 +2245,35 @@
   }
   ```
 
-- [ ] 구 일일 잡 제거
+- [x] 구 일일 잡 제거
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign rm was/src/main/java/com/celfit/was/monitoring/DigestJob.java was/src/test/java/com/celfit/was/monitoring/DigestJobTest.java
   ```
 
-- [ ] 크론 설정 추가 — `was/src/main/resources/application.yml`의 `monitoring:` 블록에서 `enabled: false` 줄 바로 아래에 아래 3줄을 삽입한다(들여쓰기는 `brand:`와 같은 2칸).
+  (08-28 실측: 계획 파일 목록에 없던 두 곳이 `DigestJob`을 직접 참조해 컴파일이 깨졌다 —
+  `was/src/test/java/com/celfit/was/MonitoringDisabledTest.java`·`MonitoringEnabledConfigTest.java`
+  (둘 다 monitoring.enabled 조건부 빈 배선 스모크 테스트). import·타입 참조를 `WeeklyDigestJob`으로,
+  `MonitoringEnabledConfigTest`의 크론 봉인 프로퍼티를 `monitoring.digest.cron`/`catchup-cron`에서
+  `monitoring.digest.weekly-cron`/`weekly-catchup-cron`으로 함께 고쳤다 — 같은 치환을 계획이 놓친
+  두 파일에 마저 적용한 것뿐이라 의미가 달라지는 어긋남은 아니라고 판단해 진행했다.)
+
+- [x] 크론 설정 추가 — `was/src/main/resources/application.yml`의 `monitoring:` 블록에서 `enabled: false` 줄 바로 아래에 아래 3줄을 삽입한다(들여쓰기는 `brand:`와 같은 2칸).
   ```yaml
     digest:
       weekly-cron: "0 0 9 * * MON"                       # 주간 다이제스트 정시 실행(KST) — 지난주(월~일)를 집계
       weekly-catchup-cron: "0 10,20,30,40,50 9-23 * * MON"   # 같은 창 재계산 따라잡기 + 메일 재시도 창(월요일 한정)
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestJobTest"
   ```
   기대 출력: `BUILD SUCCESSFUL`, 10개 테스트 통과.
 
-- [ ] 커밋
+  (08-28 실측: 10 tests / 0 failures. 추가로 `MonitoringDisabledTest`·`MonitoringEnabledConfigTest`
+  개별 실행, `./gradlew :was:test` 전체(1572 tests, 0 failures)까지 그린 확인.)
+
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add -A was/src/main/java/com/celfit/was/monitoring was/src/test/java/com/celfit/was/monitoring was/src/main/resources/application.yml
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'

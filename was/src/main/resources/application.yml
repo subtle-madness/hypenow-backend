@@ -97,6 +97,9 @@ management:
         http.server.requests: 120s
 monitoring:
   enabled: false   # true면 monitoring.datasource.*(읽기 전용 계정) 필수, monitoring.api.base-url은 기본값 http://monitoring:8083(계약 §1) — 계약: docs/contracts/monitoring-was-contract.md
+  digest:
+    weekly-cron: "0 0 9 * * MON"                       # 주간 다이제스트 정시 실행(KST) — 지난주(월~일)를 집계
+    weekly-catchup-cron: "0 10,20,30,40,50 9-23 * * MON"   # 같은 창 재계산 따라잡기 + 메일 재시도 창(월요일 한정)
   brand:
     ad-disclosure:
       expose: ${AD_DISCLOSURE_EXPOSE:false}   # 광고 표기 판정 was 노출 토글(스펙 §10-3) — true 전환이
