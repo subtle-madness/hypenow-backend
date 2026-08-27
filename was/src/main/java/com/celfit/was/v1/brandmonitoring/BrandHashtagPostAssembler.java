@@ -113,10 +113,8 @@ public class BrandHashtagPostAssembler {
 			return List.of();
 		}
 
-		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
-				.collect(Collectors.toCollection(LinkedHashSet::new));
-		Map<String, BrandPoolStatusRow> poolStatus = brandReadRepository.findBrandPoolStatus(brandId, shortCodes)
-				.stream().collect(Collectors.toMap(BrandPoolStatusRow::shortCode, Function.identity(), (a, b) -> a));
+		Map<String, BrandPoolStatusRow> poolStatus = poolStatusOf(brandId,
+				rows.stream().map(BrandHashtagPostRow::shortCode).toList());
 		// direct 등록 행이 하나도 없으면 원장 조회를 생략한다(불필요한 조회 방지 — BrandPostAssembler와
 		// 같은 관용구).
 		boolean hasAnyDirectRegistered = poolStatus.values().stream().anyMatch(BrandPoolStatusRow::directRegistered);
@@ -135,24 +133,65 @@ public class BrandHashtagPostAssembler {
 	}
 
 	/**
+	 * 해시태그 발견 게시물 개수만(P2, 2026-08-27) — FE 탭 뱃지처럼 목록 본문이 필요 없는 호출용이다.
+	 * {@link #assembleForBrand}와 <b>같은 판정</b>(tagged-only 겹침 제외 → 내 태그 교집합, fail-open·
+	 * 원장 미시딩 전원 노출 포함)을 슬림 shortcode 목록({@link BrandReadRepository#findHashtagPostCodes},
+	 * 목록 조회와 술어 동형) 위에서 태운다 — 판정을 복제하면 뱃지 숫자와 목록 길이가 조용히 갈라진다.
+	 *
+	 * <p>배지(brandPostId) 파생만 빠진다 — 셀 때는 쓸 데가 없어 등록자 원장 조회도 생략한다.
+	 */
+	public long countForBrand(long userId, long brandId) {
+		List<String> codes = brandReadRepository.findHashtagPostCodes(brandId, BrandPostAssembler.windowCutoff(),
+				HASHTAG_POST_LIMIT);
+		if (codes.isEmpty()) {
+			return 0;
+		}
+		Map<String, BrandPoolStatusRow> poolStatus = poolStatusOf(brandId, codes);
+		List<String> visible = codes.stream()
+				.filter(code -> !isTaggedOnly(poolStatus.get(code)))
+				.toList();
+		return filterCodesByMyTags(userId, brandId, visible).size();
+	}
+
+	/** 브랜드 풀 상태 배치 조회 → shortcode 맵(목록·count 공용 — 중복 shortcode는 첫 행 유지). */
+	private Map<String, BrandPoolStatusRow> poolStatusOf(long brandId, List<String> shortCodes) {
+		Set<String> distinct = new LinkedHashSet<>(shortCodes);
+		return brandReadRepository.findBrandPoolStatus(brandId, distinct).stream()
+				.collect(Collectors.toMap(BrandPoolStatusRow::shortCode, Function.identity(), (a, b) -> a));
+	}
+
+	/**
 	 * 내 태그 매칭 필터(요구사항, 08-19) — 클래스 javadoc의 "내 태그 매칭 필터"·"시딩 전 정합성"
-	 * 참조. 내 태그 원장이 비어 있으면 필터를 건너뛴다(원장 조회 자체는 이미 했으므로 재조회 없음).
+	 * 참조. 판정 본체는 shortcode 기반 {@link #filterCodesByMyTags}에 있고(목록·count 공유), 여기서는
+	 * 통과한 shortcode로 행을 되걸러 낼 뿐이다.
 	 */
 	private List<BrandHashtagPostRow> filterByMyTags(long userId, long brandId, List<BrandHashtagPostRow> rows) {
 		if (rows.isEmpty()) {
 			return rows;
 		}
+		Set<String> kept = Set.copyOf(filterCodesByMyTags(userId, brandId,
+				rows.stream().map(BrandHashtagPostRow::shortCode).distinct().toList()));
+		return rows.stream().filter(row -> kept.contains(row.shortCode())).toList();
+	}
+
+	/**
+	 * 내 태그 매칭 판정 본체 — 내 태그 원장이 비어 있으면 필터를 건너뛴다(시딩 전 전원 노출). 매칭
+	 * 기록이 없는 행은 fail-open. 목록({@link #filterByMyTags})과 count가 이 함수 하나를 공유한다.
+	 */
+	private List<String> filterCodesByMyTags(long userId, long brandId, List<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return shortCodes;
+		}
 		Set<String> myTags = hashtagTagRepository.findByUserAndBrand(userId, brandId);
 		if (myTags.isEmpty()) {
-			return rows;   // 시딩 전(또는 전체 삭제 후) — 필터 없이 전원 노출.
+			return shortCodes;   // 시딩 전(또는 전체 삭제 후) — 필터 없이 전원 노출.
 		}
-		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
-				.collect(Collectors.toCollection(LinkedHashSet::new));
-		Map<String, Set<String>> matchedTagsByCode = brandReadRepository.findMatchedTags(brandId, shortCodes).stream()
+		Set<String> distinct = new LinkedHashSet<>(shortCodes);
+		Map<String, Set<String>> matchedTagsByCode = brandReadRepository.findMatchedTags(brandId, distinct).stream()
 				.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
 						Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
-		return rows.stream()
-				.filter(row -> matchesMyTags(matchedTagsByCode.get(row.shortCode()), myTags))
+		return shortCodes.stream()
+				.filter(code -> matchesMyTags(matchedTagsByCode.get(code), myTags))
 				.toList();
 	}
 

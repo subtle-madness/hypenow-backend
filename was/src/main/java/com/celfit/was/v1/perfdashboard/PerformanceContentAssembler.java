@@ -327,7 +327,8 @@ public class PerformanceContentAssembler {
 			String brandAccountId = String.valueOf(account.id());
 			// scope=ALL(enrichedOnly=false) — 지표 집계라 정산 전 게시물도 담는다(loadBrandPool 승계).
 			List<BrandReadRepository.BrandPostIndexRow> rows = brandReadRepository.get()
-					.findBrandPostIndex(account.id(), BrandPostAssembler.windowCutoff(), false);
+					.findBrandPostIndex(account.id(), BrandPostAssembler.windowCutoff(), false,
+							BrandSponsorshipClassifier.postgresMarkerRegex());
 			// 커버리지 클램프(수집 상한 v2 §7-1) — coveredUntil의 KST 달력일보다 앞선 tagged 행 제외,
 			// direct 등록 행은 상한 밖이라 면제. assembleBrandPosts의 현행 술어와 같은 식이다.
 			LocalDate coveredOn = KstTimestamps.toKstDate(account.coveredUntil());
@@ -404,7 +405,7 @@ public class PerformanceContentAssembler {
 		List<BrandPostAssembler.AuthorKey> keys = codes.stream()
 				.map(code -> pool.byCode().get(code).row())
 				.map(row -> new BrandPostAssembler.AuthorKey(row.shortCode(), row.authorIgUserId(),
-						row.authorUsername()))
+						row.rawAuthorUsername()))
 				.toList();
 		return brandPostAssembler.get().resolveAuthorsByKeys(keys);
 	}
@@ -453,12 +454,15 @@ public class PerformanceContentAssembler {
 	private static DashboardRef refOfPoolRow(String brandAccountId, BrandReadRepository.BrandPostIndexRow row,
 			BrandReadRepository.LatestSnapshotRow snap, BrandReadRepository.AuthorRow author,
 			List<String> campaignIds, boolean registeredByUser) {
-		String username = author != null && author.username() != null ? author.username() : row.authorUsername();
+		String username = author != null && author.username() != null ? author.username()
+				: row.rawAuthorUsername();
 		String handle = username == null ? "" : username.toLowerCase(Locale.ROOT);
 		boolean reels = snap != null && CONTENT_TYPE_REELS.equalsIgnoreCase(snap.contentType());
 		return new DashboardRef(SYNTHETIC_ID_PREFIX + row.shortCode(), row.shortCode(),
 				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), registeredByUser),
-				BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
+				// 협찬 판정 입력은 캡션 원문이 아니라 SQL 마커 매치다(2026-08-27 P0 슬림 인덱스) —
+				// 브랜드 표면과 같은 caption_marker를 쓴다(동치성은 골든 코퍼스가 봉인).
+				BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
 				row.unavailableAt() != null ? ItemStatus.HIDDEN : ItemStatus.TRACKING,
 				KstTimestamps.toKstDate(row.takenAt()), brandAccountId,
 				campaignIds.isEmpty() ? null : campaignIds.get(0), handle,

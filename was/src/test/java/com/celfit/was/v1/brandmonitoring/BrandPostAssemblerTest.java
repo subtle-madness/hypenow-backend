@@ -24,6 +24,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -92,7 +93,7 @@ class BrandPostAssemblerTest {
 	void 인덱스는_스냅샷_댓글_게시자_조회를_돌리지_않는다() {
 		var repository = mock(BrandReadRepository.class);
 		var account = accountRow();
-		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
 				indexRow("TAG1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, "#협찬 후기"),
 				indexRow("BOTH", "2026-08-05T01:00:00Z", "2026-08-05T02:00:00Z", "2026-08-06T00:00:00Z",
 						false, "일상")));
@@ -121,16 +122,16 @@ class BrandPostAssemblerTest {
 
 	/** withViews 인덱스의 정렬 키는 서빙 규칙(피드 views null)과 같아야 performance 정렬이 풀 조립과 일치한다. */
 	@Test
-	void 인덱스는_performance용_최신뷰를_피드면_null로_접는다() {
+	void 인덱스는_performance용_최신지표를_피드면_views_null로_접는다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
 				indexRow("REELS1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
 				indexRow("FEED1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
 		given(repository.findLatestSnapshotsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
 				new BrandReadRepository.LatestSnapshotRow("REELS1", LocalDate.parse("2026-08-06"), "REELS",
-						500L, 10L, false, 2L),
+						500L, 30L, false, 4L),
 				new BrandReadRepository.LatestSnapshotRow("FEED1", LocalDate.parse("2026-08-06"), "FEED",
-						300L, 20L, false, 3L)));
+						300L, 20L, false, 2L)));
 
 		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
 				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
@@ -143,10 +144,135 @@ class BrandPostAssemblerTest {
 		assertThat(feed.latestViews()).isNull();   // 피드 views null 서빙 규칙(snapshotOf) 동형
 	}
 
+	/**
+	 * 신규 필터·패싯 판정값(2026-08-27 서버 필터 설계) — 인덱스 행의 매체·광고 판정·게시자 표시값이
+	 * 그대로 ref로 옮겨진다. 프로필 사진은 풀 카드와 같은 산지 규칙({@code resolveImageUrl} — 아카이브
+	 * 우선)을 태워야 목록 카드와 ref가 다른 URL을 말하지 않는다.
+	 */
+	@Test
+	void 인덱스_ref는_매체_광고판정_게시자값을_싣는다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
+				authorIndexRow("REELS1", "REELS", "DISCLOSED", "glowdeep_92", "글로우딥",
+						"https://cdn/author.jpg", "monitor-author/9001.jpg", 12345L),
+				authorIndexRow("BARE", null, null, "bare_user", null, null, null, null)));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		var reels = index.refs().stream().filter(r -> r.shortcode().equals("REELS1")).findFirst().orElseThrow();
+		assertThat(reels.contentType()).isEqualTo("reels");
+		assertThat(reels.adVerdict()).isEqualTo("DISCLOSED");
+		assertThat(reels.authorUsername()).isEqualTo("glowdeep_92");
+		assertThat(reels.authorFullName()).isEqualTo("글로우딥");
+		// 아카이브 사본이 원본 CDN보다 우선(resolveImageUrl 동형) — 풀 카드와 같은 값이어야 한다.
+		assertThat(reels.authorProfilePicUrl()).isEqualTo("/img/monitor-author/9001.jpg");
+		assertThat(reels.authorFollowers()).isEqualTo(12345L);
+		assertThat(reels.takenAtKst()).isEqualTo("2026-08-06T10:00:00+09:00");   // 카드 takenAt과 같은 문자열
+		// content_type 불명은 피드로 접는다(brandPost·snapshotOf와 같은 방향).
+		var bare = index.refs().stream().filter(r -> r.shortcode().equals("BARE")).findFirst().orElseThrow();
+		assertThat(bare.contentType()).isEqualTo("feed");
+		assertThat(bare.adVerdict()).isNull();
+		// 조인이 전부 해결됐으면 폴백 배치 조회 자체를 돌리지 않는다(resolveAuthors 2차 SQL 관용구 동형).
+		verify(repository, never()).findAuthorsByUsername(anyCollection());
+	}
+
+	/**
+	 * 게시자 조인 미스(author_ig_user_id 부재 — 열거 셰이프에 따라 발생) 폴백 — 미해결 username만
+	 * 모아 <b>1회</b> 배치로 해결한다. 끝내 못 찾은 행은 원시 관측 username만 남고 나머지는 null이다
+	 * (풀 조립 {@code resolveAuthors} + {@code brandPost}의 폴백 규칙과 같은 방향).
+	 */
+	@Test
+	void 인덱스_게시자_조인_미스는_username_폴백_배치_1회로_해결한다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
+				authorIndexRow("JOINED", "REELS", null, "joined_user", "조인됨", "https://cdn/j.jpg", null, 100L),
+				authorIndexRow("FALLBACK", "REELS", null, null, null, null, null, null),
+				authorIndexRow("GHOST", "REELS", null, null, null, null, null, null)));
+		given(repository.findAuthorsByUsername(anyCollection())).willAnswer(inv -> List.of(
+				new BrandReadRepository.AuthorRow("9002", "fallback_user", "폴백", 777L,
+						"https://cdn/f.jpg", false, null)));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		// 미해결 username만, 한 번에.
+		verify(repository).findAuthorsByUsername(eq(Set.of("fallback_user", "ghost_user")));
+		var fallback = index.refs().stream().filter(r -> r.shortcode().equals("FALLBACK")).findFirst().orElseThrow();
+		assertThat(fallback.authorUsername()).isEqualTo("fallback_user");
+		assertThat(fallback.authorFullName()).isEqualTo("폴백");
+		assertThat(fallback.authorProfilePicUrl()).isEqualTo("https://cdn/f.jpg");
+		assertThat(fallback.authorFollowers()).isEqualTo(777L);
+		// 끝내 미해결 — 원시 관측 username만 남고 표시값은 전부 null(거짓 표시를 만들지 않는다).
+		var ghost = index.refs().stream().filter(r -> r.shortcode().equals("GHOST")).findFirst().orElseThrow();
+		assertThat(ghost.authorUsername()).isEqualTo("ghost_user");
+		assertThat(ghost.authorFullName()).isNull();
+		assertThat(ghost.authorProfilePicUrl()).isNull();
+		assertThat(ghost.authorFollowers()).isNull();
+	}
+
+	/**
+	 * 과도기 폴백(레거시 direct) ref도 신규 필드를 채운다 — 풀 ref와 셰이프가 어긋나면 서버 필터가
+	 * 레거시 카드만 조용히 떨군다. 산지는 이미 조립된 카드다(contentType 불명은 피드로 접는다).
+	 */
+	@Test
+	void 레거시_폴백_ref도_신규_필드를_채운다() {
+		var repository = mock(BrandReadRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		var trackingAssembler = mock(TrackingItemAssembler.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of());
+		given(directRepository.findPendingByUser(7L)).willReturn(List.of(
+				new BrandDirectPostRepository.Row(7L, 42L, "LEG1", 55L),
+				new BrandDirectPostRepository.Row(7L, 42L, "LEG2", 56L)));
+		given(trackingAssembler.assembleList(7L)).willReturn(new TrackingItemAssembler.AssembledList(
+				List.of(legacyItem("55", legacyPost("reels", "2026-08-06T10:00:00+09:00")),
+						legacyItem("56", null)),
+				SWEPT_AT, LocalDate.of(2026, 8, 8)));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class), directRepository,
+				trackingAssembler, mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		var withPost = index.refs().stream().filter(r -> r.shortcode().equals("LEG1")).findFirst().orElseThrow();
+		assertThat(withPost.contentType()).isEqualTo("reels");
+		assertThat(withPost.adVerdict()).isNull();          // 레거시 산지엔 광고 판정이 없다
+		assertThat(withPost.authorUsername()).isEqualTo("legacy_handle");
+		assertThat(withPost.authorFullName()).isEqualTo("레거시");
+		assertThat(withPost.authorProfilePicUrl()).isEqualTo("https://cdn/legacy.jpg");
+		assertThat(withPost.authorFollowers()).isEqualTo(999L);
+		assertThat(withPost.takenAtKst()).isEqualTo("2026-08-06T10:00:00+09:00");
+		// 게시물 미확정(collecting) — 매체를 모르니 피드로 접고 업로드 시각은 없다.
+		var pending = index.refs().stream().filter(r -> r.shortcode().equals("LEG2")).findFirst().orElseThrow();
+		assertThat(pending.contentType()).isEqualTo("feed");
+		assertThat(pending.takenAtKst()).isNull();
+	}
+
+	/**
+	 * 광고 표기 노출 게이트의 단일 정의(스펙 §10-2 + 2026-08-19 경쟁사 제외) — 서버 필터·패싯이
+	 * {@code brandPost}와 같은 판정을 써야 "화면엔 없는 값으로 필터가 걸리는" 불일치가 안 생긴다.
+	 */
+	@Test
+	void adDisclosureExposed는_토글과_조회자_연결로_갈린다() {
+		var on = newAssembler(mock(BrandReadRepository.class), mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), true);
+		var off = newAssembler(mock(BrandReadRepository.class), mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+
+		assertThat(on.adDisclosureExposed(BrandAccountType.OWN)).isTrue();
+		assertThat(on.adDisclosureExposed(BrandAccountType.COMPETITOR)).isFalse();
+		assertThat(off.adDisclosureExposed(BrandAccountType.OWN)).isFalse();
+	}
+
 	@Test
 	void 인덱스에서_다른_유저의_direct_전용_행은_빠진다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
 				indexRow("TAG1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
 				indexRow("OTHERS", "2026-08-05T01:00:00Z", null, "2026-08-06T00:00:00Z", null, null)));
 		var directRepository = mock(BrandDirectPostRepository.class);
@@ -162,7 +288,7 @@ class BrandPostAssemblerTest {
 	@Test
 	void 하이드레이트는_지정_코드만_조립하고_입력_순서를_지킨다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
 				indexRow("AAA", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
 				indexRow("BBB", "2026-08-05T01:00:00Z", "2026-08-05T02:00:00Z", null, null, null),
 				indexRow("CCC", "2026-08-04T01:00:00Z", "2026-08-04T02:00:00Z", null, null, null)));
@@ -189,7 +315,7 @@ class BrandPostAssemblerTest {
 	@Test
 	void 하이드레이트는_withComments_false면_댓글_조회_없이_빈_목록이다() {
 		var repository = mock(BrandReadRepository.class);
-		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
 				indexRow("AAA", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
 		given(repository.findBrandPostsByShortCodes(eq(42L), anyCollection()))
 				.willReturn(List.of(taggedRow("AAA")));
@@ -354,7 +480,7 @@ class BrandPostAssemblerTest {
 
 		assembler.indexForBrand(7L, account, false);
 
-		verify(repository).findBrandPostIndex(eq(42L), any(), eq(true));
+		verify(repository).findBrandPostIndex(eq(42L), any(), eq(true), any());
 	}
 
 	// ---------- 윈도우 컷 ----------
@@ -1083,16 +1209,46 @@ class BrandPostAssemblerTest {
 	}
 
 	/**
-	 * 인덱스 행 빌더 — 판정 입력 컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프).
-	 * 뒤 3개(unavailableAt·authorUsername·authorIgUserId)는 대시보드 표면 전용이라 브랜드 표면
-	 * 테스트에서는 null로 채운다.
+	 * 인덱스 행 빌더 — 슬림 인덱스 셰이프(2026-08-27 P0, findBrandPostIndex). 캡션 원문 대신 SQL이
+	 * 계산한 마커 매치(captionMarker)를 받으므로, 여기서는 캡션을 자바 판정기로 한 번 접어 SQL과 같은
+	 * 값을 만든다 — 시드 문구를 그대로 쓰면서도 record 셰이프는 새 계약을 따른다. 필터·패싯·작성자
+	 * 컬럼과 대시보드 전용 컬럼(unavailableAt·authorIgUserId)은 이 테스트가 소비하지 않아
+	 * 기본값(null)으로 채운다.
 	 */
 	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
 			String tagDetectedAt, String directRegisteredAt, Boolean paid, String caption) {
 		return new BrandReadRepository.BrandPostIndexRow(code, OffsetDateTime.parse(takenAt),
 				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
-				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption,
-				null, null, null);
+				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt),
+				null, "glowdeep_92", null, paid,
+				caption != null && BrandSponsorshipClassifier.containsSponsorshipMarker(caption),
+				null, null, null, null, null, null, null);
+	}
+
+	/**
+	 * 필터·패싯·게시자 컬럼까지 지정하는 인덱스 행 빌더 — tagged 행 고정(감지 시각만 채움)이고
+	 * {@code authorUsername}을 null로 주면 조인 미스(= username 폴백 대상)를 뜻한다. 그때 원시 관측
+	 * username은 shortcode 기반으로 만들어(FALLBACK→fallback_user) 폴백 배치 인자를 눈으로 읽게 한다.
+	 */
+	private static BrandReadRepository.BrandPostIndexRow authorIndexRow(String code, String contentType,
+			String adVerdict, String authorUsername, String authorFullName, String authorProfilePicUrl,
+			String authorImageObjectPath, Long authorFollowers) {
+		return new BrandReadRepository.BrandPostIndexRow(code,
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				null, null, code.toLowerCase(Locale.ROOT) + "_user", null, null, false, contentType, adVerdict,
+				authorUsername, authorFullName, authorProfilePicUrl, authorImageObjectPath, authorFollowers);
+	}
+
+	/** 과도기 폴백 원본(레거시 TrackingItem) — 브랜드 ref가 읽는 게시자·매체 필드만 채운다. */
+	private static TrackingItemResponse legacyItem(String id, TrackingItemResponse.TrackedPostResponse post) {
+		return new TrackingItemResponse(id, "url", "tracking", "legacy_handle", "레거시",
+				"https://cdn/legacy.jpg", 999L, null, null, null, null, "2026-08-05T10:00:00+09:00",
+				30, null, post, null);
+	}
+
+	private static TrackingItemResponse.TrackedPostResponse legacyPost(String contentType, String uploadedAt) {
+		return new TrackingItemResponse.TrackedPostResponse("https://www.instagram.com/reel/LEG1/", contentType,
+				uploadedAt, "캡션", List.of(), "https://cdn/legacy-thumb.jpg", null, List.of(), List.of());
 	}
 
 	/** 범용 row 빌더 — tagDetectedAt·directRegisteredAt을 직접 지정해 source 파생을 검증한다. */
