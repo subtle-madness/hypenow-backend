@@ -112,7 +112,9 @@ public class BrandDirectCollectService {
 		// 스윕당 상한(2026-08-27 설계 §5) — 구 감지 데이터 이관분은 last_crawled_at이 NULL이라 180일
 		// 안이면 전부 즉시 due다. 상한이 없으면 이관 직후 첫 스윕이 브랜드당 최대 1,000건의 단건 콜 +
 		// 보강 콜을 한 번에 쏟아내 "전역 동시 콜 14" 예산을 넘긴다. 모수 정렬이 미보강 우선이라
-		// (unenumeratedDuePosts) 잘리는 쪽은 항상 이미 보강된 행이고, 잔여는 다음 스윕이 이어받는다.
+		// (unenumeratedDuePosts) 미보강 잔량이 상한 이하인 평시엔 잘리는 쪽이 이미 보강된 행이지만,
+		// 이관 직후처럼 미보강 due가 상한을 넘는 동안은 잘리는 쪽도 미보강 행이다 — 그 경우 백로그가
+		// 여러 스윕에 걸쳐 점진적으로 소진된다.
 		List<TaggedPostRepository.TrackedPost> due = sweepLimit > 0 && dueAll.size() > sweepLimit
 				? dueAll.subList(0, sweepLimit) : dueAll;
 		if (due.size() < dueAll.size()) {
@@ -143,7 +145,12 @@ public class BrandDirectCollectService {
 		try {
 			PostInfo post = hiker.fetchPost(shortCode);
 			if (post.takenAt() == null) {
-				log.warn("direct 단건 수집 — 게시일 미상, 건너뜀: {}", shortCode);
+				// fetch 자체는 성공했으므로 커버로 기록해 즉시-due 창에서 빼고, 나이 티어 주기로
+				// 재시도한다 — 영구 점유 방지(touchCrawled 없이 두면 unenumeratedDuePosts 정렬이
+				// 미보강 우선이라 이 행이 계속 상한 창 맨 앞을 차지해 나머지 행이 영구 굶는다).
+				log.warn("unenumerated 재수집: taken_at 없는 게시물 셰이프 - 커버 처리 후 건너뜀 brand={} code={}",
+						brand.id(), shortCode);
+				taggedPosts.touchCrawled(brand.id(), List.of(shortCode), now);
 				return Optional.empty();
 			}
 			PostInfo adjusted = collect.adjustLotteryMetrics(List.of(post)).get(0);

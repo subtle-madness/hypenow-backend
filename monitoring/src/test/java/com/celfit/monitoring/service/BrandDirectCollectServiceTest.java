@@ -408,4 +408,22 @@ class BrandDirectCollectServiceTest {
 		assertThat(postCalls()).isEqualTo(2);
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("M0", "M1");
 	}
+
+	/**
+	 * fetch는 성공했지만 게시일 미상이라 저장 불가한 행(collectOne)은 touchCrawled로 커버 처리해야
+	 * 한다 — 안 그러면 unenumeratedDuePosts 정렬이 미보강 우선이라 이 행이 계속 상한 창 맨 앞을
+	 * 점유해 나머지 행이 영구 굶는다(2026-08-27 리뷰 지적).
+	 */
+	@Test
+	void taken_at_없는_게시물은_커버_처리되어_상한_창을_점유하지_않는다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("NoDate", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("NoDate", postJsonNoTakenAt("NoDate", 106));
+		tagged.due.add(new TaggedPostRepository.TrackedPost("After", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("After", postJson("After", RECENT, 107));
+
+		service().sweepUnenumerated(brand);
+
+		assertThat(tagged.touched).containsKey("NoDate");   // 커버 처리 — 즉시-due 창에서 빠진다
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("After");
+	}
 }
