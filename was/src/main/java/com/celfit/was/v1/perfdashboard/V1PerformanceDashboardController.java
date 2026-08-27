@@ -49,6 +49,17 @@ public class V1PerformanceDashboardController {
 	private static final List<String> SORT_KEYS =
 			List.of(SORT_UPLOADED, SORT_VIEWS, SORT_LIKES, SORT_COMMENTS, SORT_ENGAGEMENT);
 
+	private static final String SORT_POSTS = "posts";
+	private static final String SORT_LATEST = "latest";
+
+	/**
+	 * 인플루언서 표면 전용 정렬 키(2026-08-27 §4) — 값 공간이 목록과 다르다: 집계 행엔 업로드일 축이
+	 * 없어 {@code uploaded} 대신 {@code latest}(최신 업로드일)·{@code posts}(게시물 수)가 들어간다.
+	 * 기본값은 첫 원소 {@code views}(FE 기본 화면이 조회수 랭킹이다).
+	 */
+	private static final List<String> INFLUENCER_SORT_KEYS =
+			List.of(SORT_VIEWS, SORT_LIKES, SORT_COMMENTS, SORT_ENGAGEMENT, SORT_POSTS, SORT_LATEST);
+
 	private static final String ORDER_DESC = "desc";
 	private static final String ORDER_ASC = "asc";
 
@@ -238,6 +249,70 @@ public class V1PerformanceDashboardController {
 		return ApiResponse.ok(comparisonAssembler.assemble(principal.getUserId(), filtered));
 	}
 
+	/**
+	 * 인기 인플루언서 집계(스펙 2026-08-27 §4) — 목록과 같은 인덱스 ref를 작성자(handle)로 접는다.
+	 * DB 신규 쿼리는 없다(집계기는 순수 함수, {@link PerformanceInfluencerAggregator}).
+	 *
+	 * <p><b>필터는 전부 집계 모수에 적용된다</b> — 목록의 statusCounts처럼 "필터를 일부만 건 모수"가
+	 * 이 표면엔 없다. 랭킹 행 자체가 응답의 전부라, 필터가 걸리면 행도 {@code meta.total}도 같이 준다.
+	 *
+	 * <p><b>단수 {@code brandAccountId} 파라미터는 없다</b> — 신설 표면이라 구계약(08-12 단수 파라미터)
+	 * 짐을 지지 않는다. 브랜드 범위는 복수 {@code accountIds}가 정본이고, {@code accountType} 함의
+	 * (명시하면 all, 단 명시한 accountType이 이김)는 목록과 같은 규칙이다.
+	 *
+	 * <p>정렬은 <b>집계 후 응답 행</b> 기준이다(ref 기준인 목록과 다르다) — 합계·비율이 접힌 뒤라야
+	 * 나오는 값이라서다. 값 공간·기본값은 {@link #INFLUENCER_SORT_KEYS} 참고. 페이지는 정렬 후
+	 * 슬라이스이고 {@code meta.total}은 슬라이스 전 집계 행 전체 수다.
+	 */
+	@GetMapping("/influencers")
+	public ApiResponse<List<PerformanceInfluencerResponse>> influencers(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestParam(required = false) String uploadedFrom,
+			@RequestParam(required = false) String uploadedTo,
+			@RequestParam(required = false) String sponsorship,
+			@RequestParam(required = false) String campaignId,
+			@RequestParam(required = false) String accountIds,
+			@RequestParam(required = false) String accountType,
+			@RequestParam(required = false) String sort,
+			@RequestParam(required = false) String order,
+			@RequestParam(required = false) Integer limit,
+			@RequestParam(required = false) Integer offset) {
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
+		Set<String> accountIdsFilter = DashboardQueries.normalizeAccountIds(accountIds);
+		// 함의 인자는 "브랜드를 콕 집어 물었는가" — 이 표면엔 단수 파라미터가 없어 accountIds뿐이다.
+		String accountTypeFilter = DashboardQueries.normalizeAccountType(accountType, accountIdsFilter != null);
+		String sortKey = normalizeSort(sort, INFLUENCER_SORT_KEYS, SORT_VIEWS);
+		boolean ascending = normalizeOrder(order);
+		LocalDate from = DashboardQueries.parseDate(uploadedFrom, "uploadedFrom");
+		LocalDate to = DashboardQueries.parseDate(uploadedTo, "uploadedTo");
+		PageParams page = DashboardQueries.normalizePage(limit, offset);
+
+		PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+		Set<String> competitorIds = index.competitorBrandAccountIds();
+		List<DashboardRef> filtered = index.refs().stream()
+				.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+						&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
+						// 단수 필터 자리는 항상 null이다(이 표면엔 파라미터가 없다 — 위 javadoc).
+						&& DashboardQueries.matchesBrand(r.brandAccountId(), null, accountIdsFilter)
+						&& DashboardQueries.matchesAccountType(r.brandAccountId(), accountTypeFilter, competitorIds)
+						&& DashboardQueries.withinUploadWindow(r.uploadedOn(), from, to))
+				.toList();
+
+		List<PerformanceInfluencerResponse> rows = PerformanceInfluencerAggregator.aggregate(filtered).stream()
+				.sorted(influencerComparator(sortKey, ascending))
+				.toList();
+		List<PerformanceInfluencerResponse> data = page == null ? rows
+				: rows.stream().skip(page.offset()).limit(page.limit()).toList();
+
+		Map<String, Object> meta = new LinkedHashMap<>();
+		meta.put("total", rows.size());
+		meta.put("page", DashboardQueries.pageMeta(page));
+		return ApiResponse.ok(data, meta);
+	}
+
 	// ---------- meta ----------
 
 	/**
@@ -296,6 +371,54 @@ public class V1PerformanceDashboardController {
 				.thenComparing(tie);
 	}
 
+	/**
+	 * 인플루언서 정렬 비교자(§4) — 키가 <b>집계 행</b>이라 목록 {@link #comparator}와 따로 둔다. null
+	 * 키는 order와 무관하게 항상 마지막이고(순위 밖), 타이브레이크는 {@code handle}이라 전순서다 —
+	 * handle은 집계 행의 그룹 키(중복 없음)라 페이지 간 중복·누락이 생기지 않는다.
+	 *
+	 * <p>{@code latest}만 문자열 키다 — {@code latestPostAt}은 ISO date(YYYY-MM-DD)라 사전순이 곧
+	 * 시간순이고, 값이 이미 문자열이라 되파싱할 이유가 없다.
+	 */
+	private static Comparator<PerformanceInfluencerResponse> influencerComparator(String sortKey,
+			boolean ascending) {
+		Comparator<PerformanceInfluencerResponse> byKey;
+		if (SORT_LATEST.equals(sortKey)) {
+			byKey = Comparator.comparing(PerformanceInfluencerResponse::latestPostAt,
+					V1PerformanceDashboardController.<String>directional(ascending));
+		} else {
+			Function<PerformanceInfluencerResponse, Double> key = switch (sortKey) {
+				case SORT_LIKES -> r -> toDouble(r.likes());
+				case SORT_COMMENTS -> r -> toDouble(r.comments());
+				// postCount는 int라 항상 값이 있다(0건 작성자는 행 자체가 없다).
+				case SORT_POSTS -> r -> (double) r.postCount();
+				case SORT_ENGAGEMENT -> V1PerformanceDashboardController::engagementRateOf;
+				default -> r -> toDouble(r.views());   // SORT_VIEWS(기본값)
+			};
+			byKey = Comparator.comparing(key, V1PerformanceDashboardController.<Double>directional(ascending));
+		}
+		return byKey.thenComparing(PerformanceInfluencerResponse::handle);
+	}
+
+	/**
+	 * 집계 행의 참여율 = {@code ratedEngaged ÷ ratedFollowers} — 분모가 미상이거나 0이면 순위 밖
+	 * (null)이다. 분모·분자는 집계기가 같은 조건에서 함께 채우지만(둘 다 null이거나 둘 다 값),
+	 * 나눗셈 앞이라 분자도 같이 본다.
+	 *
+	 * <p>비율을 응답 필드로 내리지 않고 여기서만 계산하는 이유는 응답 계약이다 — 집계 행은 분자·분모를
+	 * 따로 내려 FE가 재평균 없이 합칠 수 있게 한다({@link PerformanceInfluencerResponse} javadoc).
+	 */
+	private static Double engagementRateOf(PerformanceInfluencerResponse row) {
+		if (row.ratedFollowers() == null || row.ratedFollowers() <= 0 || row.ratedEngaged() == null) {
+			return null;
+		}
+		return row.ratedEngaged() / (double) row.ratedFollowers();
+	}
+
+	/** 합계 정렬 키 — 미상(null)은 0으로 접지 않는다(0은 "전부 관측됐는데 0"이라 다른 값이다). */
+	private static Double toDouble(Long value) {
+		return value == null ? null : value.doubleValue();
+	}
+
 	/** 요청 방향 비교자 — null은 {@code order}와 무관하게 항상 마지막이다(위 javadoc). */
 	private static <T extends Comparable<? super T>> Comparator<T> directional(boolean ascending) {
 		return Comparator.nullsLast(ascending ? Comparator.<T>naturalOrder() : Comparator.<T>reverseOrder());
@@ -314,14 +437,22 @@ public class V1PerformanceDashboardController {
 		return (ref.latestLikes() + ref.latestComments()) / (double) ref.followers();
 	}
 
-	// ---------- 목록 전용 정규화(공용 정규화·술어는 DashboardQueries) ----------
+	// ---------- 표면별 정규화(공용 정규화·술어는 DashboardQueries) ----------
 
-	/** 정렬 키 — 미지정·빈 값은 기본값 {@code uploaded}(종전 응답 순서), 값 공간 밖은 400. */
+	/** 목록 정렬 키 — 미지정·빈 값은 기본값 {@code uploaded}(종전 응답 순서), 값 공간 밖은 400. */
 	private static String normalizeSort(String raw) {
+		return normalizeSort(raw, SORT_KEYS, SORT_UPLOADED);
+	}
+
+	/**
+	 * 정렬 키 정규화 — 값 공간·기본값은 표면마다 다르고(목록 vs 인플루언서) 400 메시지만 같다. 그래서
+	 * {@link DashboardQueries}가 아니라 여기 둔다(공용화 기준은 "값 공간이 표면 간에 같아야 하는가").
+	 */
+	private static String normalizeSort(String raw, List<String> allowed, String fallback) {
 		if (raw == null || raw.isBlank()) {
-			return SORT_UPLOADED;
+			return fallback;
 		}
-		if (!SORT_KEYS.contains(raw)) {
+		if (!allowed.contains(raw)) {
 			throw V1ApiException.validation("sort 값이 올바르지 않아요.");
 		}
 		return raw;
