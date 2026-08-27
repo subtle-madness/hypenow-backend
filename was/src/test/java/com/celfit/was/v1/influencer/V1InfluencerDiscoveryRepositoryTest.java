@@ -42,8 +42,10 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 	@BeforeEach
 	void setUpTables() {
-		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V10·V20·V30·V37·V45 참조
+		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V10·V20·V30·V37·V45·V20260827045100 참조
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_share");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_sponsored_counts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_content_series");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_analyses");
@@ -136,6 +138,24 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				       count(*) FILTER (WHERE an.is_beauty IS TRUE)     AS beauty_count
 				FROM account_content_series s
 				JOIN content_analyses an ON an.short_code = s.short_code
+				GROUP BY s.account_handle
+				""");
+		// analytics V20260827045100 정의 그대로(운영은 matview, 테스트는 뷰 — 리포지토리 SQL은 구분 없음).
+		// mainCategory 게이트·sp 조인이 참조한다.
+		jdbcTemplate.execute("""
+				CREATE VIEW account_category_share AS
+				SELECT s.account_handle, an.main_category,
+				       round(100.0 * count(*) / sum(count(*)) OVER (PARTITION BY s.account_handle))::int AS pct
+				FROM account_content_series s
+				JOIN content_analyses an ON an.short_code = s.short_code
+				WHERE an.is_beauty IS TRUE AND an.main_category IS NOT NULL
+				GROUP BY s.account_handle, an.main_category
+				""");
+		jdbcTemplate.execute("""
+				CREATE VIEW account_sponsored_counts AS
+				SELECT s.account_handle, count(*) AS cnt
+				FROM account_content_series s
+				JOIN content_analyses an ON an.short_code = s.short_code AND an.ad_type = 'sponsored'
 				GROUP BY s.account_handle
 				""");
 
@@ -461,6 +481,33 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		var calm = engagements.stream()
 				.filter(e -> e.accountHandle().equals("calm")).toList();
 		assertThat(calm).hasSize(3);
+	}
+
+	@Test
+	void findCards의_totalCount는_countCards와_일치한다() {
+		for (V1InfluencerDiscoveryQuery q : List.of(
+				all(),
+				query(null, "skincare", null, null, null, null, null, null, null, null, null),
+				query(null, null, null, null, "10k-30k", null, null, null, null, null, null),
+				query(null, null, null, null, null, null, "1-2", null, null, null, null))) {
+			var rows = repository.findCards(q);
+			if (!rows.isEmpty()) {
+				assertThat(rows.getFirst().totalCount()).isEqualTo(repository.countCards(q));
+			}
+		}
+	}
+
+	@Test
+	void totalCount는_LIMIT과_무관하게_필터_전체_건수다() {
+		var rows = repository.findCards(query(null, null, null, null, null, null, null, null, null, 1, 0));
+		assertThat(rows).hasSize(1);
+		assertThat(rows.getFirst().totalCount()).isEqualTo(repository.countCards(all()));
+	}
+
+	@Test
+	void findCardsByHandles의_totalCount는_null이다() {
+		var rows = repository.findCardsByHandles(List.of("glow"));
+		assertThat(rows.getFirst().totalCount()).isNull();
 	}
 
 	@Test
