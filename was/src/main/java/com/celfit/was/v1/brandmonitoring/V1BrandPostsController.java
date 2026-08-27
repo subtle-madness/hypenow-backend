@@ -458,7 +458,8 @@ public class V1BrandPostsController {
 						&& r.authorFullName().toLowerCase(Locale.ROOT).contains(keywordLower));
 	}
 
-	private static boolean matchesFollower(Long followers, FollowerBand band) {
+	/** 인플루언서 집계({@link BrandInfluencerAggregator#matchesFollower})도 이 판정을 재사용한다. */
+	static boolean matchesFollower(Long followers, FollowerBand band) {
 		// 팔로워 미상은 어느 구간에도 넣지 않는다 — 0으로 접으면 "0-3k"가 미상 계정 창고가 된다.
 		return followers != null && followers >= band.min()
 				&& (band.max() == null || followers < band.max());
