@@ -90,6 +90,10 @@ class AdminCrawlingCostSummaryIntegrationTest extends IntegrationTest {
 				CREATE TABLE crawl_call_daily (job text NOT NULL, called_on date NOT NULL,
 				    calls bigint NOT NULL, PRIMARY KEY (job, called_on))
 				""").update();
+		// 자식부터 정리(FK) — saved_*는 users FK에 ON DELETE CASCADE가 없어, 앞서 돈 클래스가
+		// 남긴 시드가 있으면 users 삭제가 FK 위반으로 깨진다(컨테이너는 JVM 전체 공유).
+		jdbcClient.sql("DELETE FROM app.saved_contents").update();
+		jdbcClient.sql("DELETE FROM app.saved_influencers").update();
 		jdbcClient.sql("DELETE FROM app.users").update();
 		jdbcClient.sql("""
 				INSERT INTO app.app_setting (key, value) VALUES ('crawling.unit-price-usd', '0.0006')

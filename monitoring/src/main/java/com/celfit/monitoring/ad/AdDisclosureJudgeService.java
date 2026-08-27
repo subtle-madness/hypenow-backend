@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,6 +72,11 @@ public class AdDisclosureJudgeService {
 	private static final int DEFAULT_LLM_FAILURE_ABORT_THRESHOLD = 10;
 	/** 1회 백필 호출 처리 상한 — 0 이하면 무제한. 08-18 429 폭주 방어선(상한 재도입). */
 	private static final int DEFAULT_BACKFILL_MAX_PER_RUN = 1000;
+	/**
+	 * 한글 판별 — 음절(U+AC00–U+D7A3)·자모(U+1100–U+11FF 조합형, U+3130–U+318F 호환형) 어디에도
+	 * 없으면 캡션이 완전 비한국어라고 본다(2026-08-27 FOREIGN_POST 분리 결정, DECISIONS.md 참조).
+	 */
+	private static final Pattern HANGUL = Pattern.compile("[\\uAC00-\\uD7A3\\u1100-\\u11FF\\u3130-\\u318F]");
 
 	private final BrandPostMetaRepository metaRepo;
 	private final AdDisclosureExtractor extractor;
@@ -288,6 +294,14 @@ public class AdDisclosureJudgeService {
 			return isVideo
 					? new AdVerdictResult("UNCERTAIN", "RULE", List.of(), List.of(), List.of())
 					: new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), List.of(), List.of());
+		}
+		// 완전 외국어(비한국어) 게시물 — 한국 공정위 지침 적용 대상 자체가 아니라 판정을 제외한다
+		// (2026-08-27 결정, DECISIONS.md 참조). 캡션에 한글이 한 글자라도 있으면(예: 한국어 문장 +
+		// 외국어 단독 표기) 이 규칙을 건너뛰고 기존 Tier1~3 경로(LLM FOREIGN 카테고리 →
+		// INSUFFICIENT+FOREIGN_LANGUAGE)로 그대로 흐른다 — is_paid_partnership·공백 캡션 규칙보다
+		// 뒤에 둬 그 두 규칙의 언어 무관 우선순위를 건드리지 않는다.
+		if (!HANGUL.matcher(caption).find()) {
+			return new AdVerdictResult("FOREIGN_POST", "RULE", List.of(), List.of(), List.of());
 		}
 		AdDisclosurePatterns.Match tier1 = AdDisclosurePatterns.findFirstMatch(caption);
 		if (tier1 != null) {

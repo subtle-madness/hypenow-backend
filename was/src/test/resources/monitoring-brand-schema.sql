@@ -94,9 +94,10 @@ CREATE TABLE IF NOT EXISTS brand_post_meta (
     image_object_path   text,
     image_source_name   text,
     image_archived_at   timestamptz,
-    -- 광고 표기 판정 6컬럼(V20260817160000) — was는 ad_verdict·ad_violations·ad_evidence 3개만 읽는다.
+    -- 광고 표기 판정 6컬럼(V20260817160000, FOREIGN_POST는 V20260827060558) — was는
+    -- ad_verdict·ad_violations·ad_evidence 3개만 읽는다.
     ad_verdict           text CHECK (ad_verdict IN
-                              ('DISCLOSED', 'NOT_DISCLOSED', 'INSUFFICIENT', 'UNCERTAIN')),
+                              ('DISCLOSED', 'NOT_DISCLOSED', 'INSUFFICIENT', 'UNCERTAIN', 'FOREIGN_POST')),
     ad_verdict_source    text CHECK (ad_verdict_source IN ('RULE', 'LLM')),
     ad_violations        jsonb,
     ad_evidence          jsonb,
