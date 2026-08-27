@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -94,7 +95,7 @@ class BrandPostAssemblerTest {
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(
 				taggedRow("TAG1"),
 				row("BOTH", "2026-08-05T02:00:00Z", "2026-08-05T01:00:00Z", "2026-08-06T00:00:00Z")));
-		given(repository.findSponsorshipMeta(anyCollection())).willReturn(List.of(
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
 				new BrandReadRepository.SponsorshipMetaRow("TAG1", null, "#협찬 후기"),
 				new BrandReadRepository.SponsorshipMetaRow("BOTH", false, "일상")));
 		var directRepository = mock(BrandDirectPostRepository.class);
@@ -124,8 +125,8 @@ class BrandPostAssemblerTest {
 		var repository = mock(BrandReadRepository.class);
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true)))
 				.willReturn(List.of(taggedRow("REELS1"), taggedRow("FEED1")));
-		given(repository.findSponsorshipMeta(anyCollection())).willReturn(List.of());
-		given(repository.findLatestViews(anyCollection())).willReturn(List.of(
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
+		given(repository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
 				new BrandReadRepository.LatestViewsRow("REELS1", "REELS", 500L),
 				new BrandReadRepository.LatestViewsRow("FEED1", "FEED", 300L)));
 
@@ -146,7 +147,7 @@ class BrandPostAssemblerTest {
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(
 				taggedRow("TAG1"),
 				row("OTHERS", null, "2026-08-05T01:00:00Z", "2026-08-06T00:00:00Z")));
-		given(repository.findSponsorshipMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
 		var directRepository = mock(BrandDirectPostRepository.class);
 		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of());   // 내 등록이 아니다
 
@@ -162,7 +163,7 @@ class BrandPostAssemblerTest {
 		var repository = mock(BrandReadRepository.class);
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true)))
 				.willReturn(List.of(taggedRow("AAA"), taggedRow("BBB"), taggedRow("CCC")));
-		given(repository.findSponsorshipMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
 		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
 		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
 		given(repository.findAuthors(anyCollection())).willReturn(List.of());
@@ -184,7 +185,7 @@ class BrandPostAssemblerTest {
 	void 하이드레이트는_withComments_false면_댓글_조회_없이_빈_목록이다() {
 		var repository = mock(BrandReadRepository.class);
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(taggedRow("AAA")));
-		given(repository.findSponsorshipMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSponsorshipMetaForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of());
 		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
 		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
 		given(repository.findAuthors(anyCollection())).willReturn(List.of());
