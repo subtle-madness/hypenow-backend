@@ -101,6 +101,62 @@ public class TaggedPostRepository {
 				Timestamp.from(Instant.ofEpochSecond(post.takenAt())), Timestamp.from(registeredAt));
 	}
 
+	/**
+	 * 해시태그 편입 upsert(2026-08-27 해시태그 직접 수집 설계 §2-3) — 해시태그 recent 열거로 얻은
+	 * 게시물을 hashtag 표식과 함께 통합 풀에 링크한다. {@link #upsertDirect}와 같은 규칙이다:
+	 * tag_detected_at은 명시적 NULL로 둬 DEFAULT now()를 무력화하고(이 행이 태그 열거 산지가
+	 * 아니라는 표시 — 나중에 태그 열거가 만나면 {@link #insert}가 COALESCE로 채운다), 이미 있던
+	 * 행(tagged·direct)에는 hashtag_detected_at만 얹는다. COALESCE라 재발견·재수집으로 최초 편입
+	 * 시각이 밀리지 않는다.
+	 */
+	public void upsertHashtag(long brandId, PostInfo post, Instant detectedAt) {
+		db.update("""
+				INSERT INTO brand_tagged_post
+				    (brand_id, short_code, author_username, author_ig_user_id, taken_at,
+				     tag_detected_at, hashtag_detected_at)
+				VALUES (?, ?, ?, ?, ?, NULL, ?)
+				ON CONFLICT (brand_id, short_code) DO UPDATE SET
+				    hashtag_detected_at = COALESCE(brand_tagged_post.hashtag_detected_at, EXCLUDED.hashtag_detected_at),
+				    author_ig_user_id   = COALESCE(brand_tagged_post.author_ig_user_id, EXCLUDED.author_ig_user_id)""",
+				brandId, post.shortCode(), post.username(), post.ownerUserId(),
+				Timestamp.from(Instant.ofEpochSecond(post.takenAt())), Timestamp.from(detectedAt));
+	}
+
+	/**
+	 * 이 브랜드에서 hashtag 성분이 이미 있는 코드 전체 — 해시태그 스윕의 dedup·조기 종료 판정과
+	 * 편입 상한 잔량 계산(크기)의 공용 입력이다(구 {@code BrandHashtagRepository.existingCodes}의
+	 * 통합 풀판). 스윕 1회당 1번만 읽고 페이지마다 메모리로 교차한다 — 페이지당 IN 쿼리보다 싸다.
+	 *
+	 * <p>기준이 "브랜드 풀에 있는 코드"가 아니라 "hashtag 성분이 있는 코드"인 것이 핵심이다:
+	 * 전자로 하면 tagged 열거가 이미 확보한 게시물이 전부 조기 종료 신호가 돼, 해시태그 스트림
+	 * 깊은 곳의 hashtag-only 게시물에 영영 도달하지 못한다.
+	 */
+	public Set<String> hashtagCodes(long brandId) {
+		return new HashSet<>(db.queryForList(
+				"SELECT short_code FROM brand_tagged_post WHERE brand_id = ? AND hashtag_detected_at IS NOT NULL",
+				String.class, brandId));
+	}
+
+	/**
+	 * 매칭 태그 기록(2026-08-27 설계 §1) — "이 (brand, shortcode)가 이 태그의 열거 스트림에도
+	 * 나타났다". FK가 brand_tagged_post를 향하므로 호출부는 편입 직후(또는 이미 있는 행)에만
+	 * 부른다. 멱등(ON CONFLICT DO NOTHING).
+	 */
+	public void recordMatchedTag(long brandId, String shortCode, String tag) {
+		db.update("""
+				INSERT INTO brand_post_matched_tag (brand_id, short_code, tag)
+				VALUES (?, ?, ?)
+				ON CONFLICT DO NOTHING""",
+				brandId, shortCode, tag);
+	}
+
+	/** {@link #recordMatchedTag} 배치판 — 페이지 내 "이미 hashtag 성분이 있는" 코드 묶음 전용. */
+	public void recordMatchedTags(long brandId, Collection<String> shortCodes, String tag) {
+		for (String shortCode : shortCodes) {
+			recordMatchedTag(brandId, shortCode, tag);
+		}
+	}
+
 	/** 취소(겹침 행) — direct 표식만 해제, tagged 행은 그대로 남는다(설계 §2-4). 행이 없어도 무해. */
 	public void clearDirect(long brandId, String shortCode) {
 		db.update("UPDATE brand_tagged_post SET direct_registered_at = NULL WHERE brand_id = ? AND short_code = ?",
