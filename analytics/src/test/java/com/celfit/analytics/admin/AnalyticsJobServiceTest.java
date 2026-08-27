@@ -39,6 +39,8 @@ class AnalyticsJobServiceTest {
 	private final AccountBatchCollectJob accountBatchCollectJob = mock(AccountBatchCollectJob.class);
 	private final JobProgressRegistry progress = new JobProgressRegistry();
 	private final RunHistory history = new RunHistory(50);
+	private final com.celfit.analytics.mirror.DerivedViewRefresher derivedViewRefresher =
+			mock(com.celfit.analytics.mirror.DerivedViewRefresher.class);
 
 	private AnalyticsJobService service() {
 		return new AnalyticsJobService(lock, new SyncTaskExecutor(), mirrorJob, registry,
@@ -49,7 +51,29 @@ class AnalyticsJobServiceTest {
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(archiveJob),
 				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
-				progress, history);
+				progress, history, derivedViewRefresher);
+	}
+
+	@Test
+	void 입력_변경_잡_성공_후_파생_matview를_갱신한다() {
+		when(analyzeJob.run()).thenReturn(new JobResult(1, 0, false));
+		service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
+		org.mockito.Mockito.verify(derivedViewRefresher).refresh();
+	}
+
+	@Test
+	void 입력_무관_잡은_파생_matview를_갱신하지_않는다() {
+		when(archiveJob.run()).thenReturn(new JobResult(1, 0, false));
+		service().trigger(JobName.ARCHIVE, TriggerType.MANUAL);
+		org.mockito.Mockito.verify(derivedViewRefresher, org.mockito.Mockito.never()).refresh();
+	}
+
+	@Test
+	void 갱신_실패는_잡_결과를_오염시키지_않는다() {
+		when(analyzeJob.run()).thenReturn(new JobResult(1, 0, false));
+		org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(derivedViewRefresher).refresh();
+		service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
+		assertThat(history.recent(1).getFirst().outcome()).isEqualTo(RunHistory.Outcome.SUCCESS);
 	}
 
 	@Test
@@ -143,7 +167,8 @@ class AnalyticsJobServiceTest {
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)),
-				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)), progress, history);
+				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)), progress, history,
+				derivedViewRefresher);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);
