@@ -99,4 +99,29 @@ class TaggedPostHashtagSourceTest {
 				"SELECT tag FROM brand_post_matched_tag WHERE brand_id = ? AND short_code = 'HHH'",
 				String.class, brandId))).containsExactlyInAnyOrder("끌리메", "cclime");
 	}
+
+	/**
+	 * direct 취소({@code deleteIfDirectOnly})가 hashtag 성분이 있는 겹침 행을 삭제하면 안 된다
+	 * (설계 §2-4 — direct 취소는 direct 표식만 해제한다). 컨트롤러는 이 메서드가 false를 돌려주면
+	 * {@link TaggedPostRepository#clearDirect}로 폴백한다.
+	 */
+	@Test
+	void direct_취소는_hashtag_성분_행을_삭제하지_않는다() {
+		repo.upsertHashtag(brandId, post("HHH", "poster1", NOW.minusSeconds(86400)), NOW);
+		repo.upsertDirect(brandId, post("HHH", "poster1", NOW.minusSeconds(86400)), NOW);
+
+		assertThat(repo.deleteIfDirectOnly(brandId, "HHH")).isFalse();
+		assertThat(db.queryForObject(
+				"SELECT hashtag_detected_at IS NOT NULL AND direct_registered_at IS NOT NULL"
+						+ " FROM brand_tagged_post WHERE brand_id = ? AND short_code = 'HHH'",
+				Boolean.class, brandId)).isTrue();
+
+		repo.clearDirect(brandId, "HHH");
+
+		assertThat(db.queryForObject(
+				"SELECT direct_registered_at IS NULL FROM brand_tagged_post WHERE brand_id = ? AND short_code = 'HHH'",
+				Boolean.class, brandId)).isTrue();
+		assertThat(db.queryForObject("SELECT count(*) FROM brand_tagged_post WHERE brand_id = ?",
+				Integer.class, brandId)).isEqualTo(1);
+	}
 }

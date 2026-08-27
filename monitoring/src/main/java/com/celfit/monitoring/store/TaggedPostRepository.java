@@ -165,11 +165,14 @@ public class TaggedPostRepository {
 
 	/**
 	 * 취소(순수 direct 행) — tag_detected_at이 없는(=태그 열거가 한 번도 만난 적 없는) 행만 지운다.
-	 * 겹침 행을 잘못 지우면 태그 발견 사실이 사라진다. @return 실제로 지웠으면 true.
+	 * tagged나 hashtag 성분이 있으면 삭제하지 않는다(2026-08-27 해시태그 직접 수집 설계 §2-4) —
+	 * 겹침 행을 잘못 지우면 태그·해시태그 발견 사실은 물론 {@code brand_post_matched_tag} 매칭 태그
+	 * 행까지 CASCADE로 함께 사라진다. @return 실제로 지웠으면 true.
 	 */
 	public boolean deleteIfDirectOnly(long brandId, String shortCode) {
 		return db.update(
-				"DELETE FROM brand_tagged_post WHERE brand_id = ? AND short_code = ? AND tag_detected_at IS NULL",
+				"DELETE FROM brand_tagged_post WHERE brand_id = ? AND short_code = ?"
+						+ " AND tag_detected_at IS NULL AND hashtag_detected_at IS NULL",
 				brandId, shortCode) > 0;
 	}
 
