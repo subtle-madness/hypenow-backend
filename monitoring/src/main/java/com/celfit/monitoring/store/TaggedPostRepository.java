@@ -236,7 +236,7 @@ public class TaggedPostRepository {
 	 * 확장): direct 등록 게시물은 상한 밖이라 {@link #touchCrawledDepth}의 커버 간주 touch를 받지
 	 * 않는다. 그래서 컷 밖 겹침 행(태그·direct 둘 다인 행)의 due는 1단계 열거가 도달하지 못하는
 	 * 한 잔존하는데, 그걸 여기 남겨 두면 매 스윕이 도달 불가 깊이까지 열거를 벌린다. 이 행들의
-	 * 갱신은 열거 깊이가 아니라 {@link #directDuePosts} 2단계 단건 콜이 책임진다 — 추가 비용은
+	 * 갱신은 열거 깊이가 아니라 {@link #unenumeratedDuePosts} 2단계 단건 콜이 책임진다 — 추가 비용은
 	 * "컷 밖 direct 게시물 수 × 티어 주기당 1콜"로 유한하다.
 	 */
 	public List<TrackedPost> trackedPosts(long brandId, Instant minTakenAt) {
@@ -306,7 +306,7 @@ public class TaggedPostRepository {
 	 * <p><b>direct_registered_at IS NULL 가드도 필수</b>(2026-08-19 수집 상한 v2 §7-3): 위 동결은
 	 * 태그 열거 산지 게시물에만 적용되는 비용 정책이고, direct 등록 게시물은 상한 밖이다. 겹침 행
 	 * (태그·direct 둘 다)까지 touch하면 컷 밖 direct 게시물의 due가 실크롤 없이 꺼져 {@link
-	 * #directDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히
+	 * #unenumeratedDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히
 	 * 얼어붙는다. direct 행의 last_crawled_at은 실수집({@link #touchCrawled})으로만 전진한다.
 	 */
 	public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {

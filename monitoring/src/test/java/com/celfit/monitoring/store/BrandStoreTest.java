@@ -656,7 +656,7 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void directDuePosts는_겹침_행도_포함한다() {
+	void unenumeratedDuePosts는_겹침_행도_포함한다() {
 		// §7-3 — 모든 direct 행이 2단계 모수다. 중복 콜 방지는 필터가 아니라 구조로 유지된다:
 		// 1단계 열거가 실제로 만난 겹침 행은 touchCrawled로 갱신돼 due 판정에서 빠진다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
@@ -671,7 +671,7 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void directDuePosts는_minTakenAt_이전_direct_행을_거른다() {
+	void unenumeratedDuePosts는_minTakenAt_이전_direct_행을_거른다() {
 		// minTakenAt 인자로 나이 컷이 걸린다 — 상한만 면제다(§7-3 첫 줄). 다만 런타임 호출자가
 		// 넘기는 값은 브랜드 창이 아니라 180일(BrandCrawlPolicy.TRACKED_MAX_AGE) 고정이다
 		// (trackedPosts와 같은 추적 범위 컷) — 여기 12개월 창은 시드 편의일 뿐 판정에 안 쓰인다.
