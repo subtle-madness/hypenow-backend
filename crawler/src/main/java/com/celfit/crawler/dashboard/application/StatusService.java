@@ -101,6 +101,7 @@ public class StatusService {
         }
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         boolean includeFnb = settings.fnbPipelineEnabled();
+        boolean includeHomeLiving = settings.homeLivingPipelineEnabled();
         return new StatusSummary(byInfluencerStatus,
                 influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
                 influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),
@@ -121,10 +122,10 @@ public class StatusService {
                 influencers.countBeautyOnlyCollectable(InfluencerStatus.QUALIFIED),
                 influencers.countFnbOnlyCollectable(InfluencerStatus.QUALIFIED),
                 influencers.countBothCollectable(InfluencerStatus.QUALIFIED),
-                // 수집 대기열 타일은 선정 쿼리와 같은 모수 — fnb.pipeline-enabled가 켜지면 F&B가 자동 편입된다
-                influencers.countBackfillPending(includeFnb),
-                influencers.countTrackDue(revisitBefore, includeFnb),
-                influencers.countReelsDue(revisitBefore, includeFnb),
+                // 수집 대기열 타일은 선정 쿼리와 같은 모수 — 파이프라인 토글이 켜지면 해당 축이 자동 편입된다
+                influencers.countBackfillPending(includeFnb, includeHomeLiving),
+                influencers.countTrackDue(revisitBefore, includeFnb, includeHomeLiving),
+                influencers.countReelsDue(revisitBefore, includeFnb, includeHomeLiving),
                 contents.countByOrigin(ContentOrigin.ENUMERATION),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.FEED),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.REELS),

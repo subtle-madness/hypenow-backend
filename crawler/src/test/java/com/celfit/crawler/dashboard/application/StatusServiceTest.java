@@ -35,8 +35,8 @@ class StatusServiceTest {
 
         service.summary();
 
-        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), false);
-        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), false);
+        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), false, false);
+        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), false, false);
     }
 
     @Test
@@ -47,9 +47,9 @@ class StatusServiceTest {
 
         service.summary();
 
-        verify(influencers).countBackfillPending(true);
-        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), true);
-        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), true);
+        verify(influencers).countBackfillPending(true, false);
+        verify(influencers).countTrackDue(Instant.parse("2026-07-17T15:00:00Z"), true, false);
+        verify(influencers).countReelsDue(Instant.parse("2026-07-17T15:00:00Z"), true, false);
     }
 
     @Test
