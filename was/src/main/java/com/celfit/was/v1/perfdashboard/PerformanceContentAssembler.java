@@ -242,6 +242,64 @@ public class PerformanceContentAssembler {
 	}
 
 	/**
+	 * 하이드레이트 패스(무거움) — 페이지에 실을 ref만 완성 카드로 만든다. 반환 순서는 {@code page}
+	 * 순서 그대로다(정렬·필터·슬라이스는 호출부가 ref 위에서 이미 끝냈다).
+	 *
+	 * <p>두 갈래다:
+	 * <ol>
+	 *   <li><b>레거시 ref</b>는 {@link #index}가 이미 조립한 카드를 그대로 재사용한다 — 겹침 병합·협찬
+	 *       승격·귀속이 반영된 카드라 여기서 다시 만들 것이 없다(재조립하면 판정이 이원화된다).</li>
+	 *   <li><b>풀 전용 ref</b>만 브랜드별로 묶어 {@link BrandPostAssembler#hydrate}에 넘긴다 — 무거운
+	 *       배치 조회(스냅샷 시계열·표시 메타·게시자·캠페인)가 전부 그 경계 안이라 <b>페이지 코드만</b>
+	 *       넘기는 것이 비용 계약 자체다. 댓글은 싣지 않는다(목록·비교 표면 계약, 08-12).</li>
+	 * </ol>
+	 *
+	 * <p>카드를 못 만든 ref는 조용히 건너뛴다({@code hydrate}의 관용구와 동형) — 인덱스 시점 이후
+	 * 행이 사라지는 경합에서 목록 전체를 죽이지 않는다.
+	 */
+	public List<PerformanceContentResponse> hydratePage(DashboardIndex index, List<DashboardRef> page) {
+		// 브랜드당 hydrate 1회 — 코드 순서는 페이지 순서를 따른다(hydrate 반환 순서 계약과 무관하게
+		// 최종 정렬은 아래 page 순회가 정한다).
+		Map<String, List<String>> codesByBrand = new LinkedHashMap<>();
+		for (DashboardRef ref : page) {
+			if (index.legacyCards().containsKey(ref.contentKey())) {
+				continue;
+			}
+			String brandAccountId = index.brandByCode().get(ref.shortcode());
+			if (brandAccountId == null || !index.brandsById().containsKey(brandAccountId)) {
+				continue;   // 인덱스가 대표하지 않는 ref — 카드를 만들 재료가 없다.
+			}
+			codesByBrand.computeIfAbsent(brandAccountId, k -> new ArrayList<>()).add(ref.shortcode());
+		}
+
+		Map<String, PerformanceContentResponse> poolCards = new LinkedHashMap<>();
+		if (brandPostAssembler.isPresent()) {
+			for (Map.Entry<String, List<String>> entry : codesByBrand.entrySet()) {
+				DashboardIndex.BrandHydration brand = index.brandsById().get(entry.getKey());
+				// refs·legacyByCode는 대시보드가 쓰지 않는다(hydrateOverlaps와 같은 어댑터).
+				BrandPostAssembler.BrandPostIndex adapter = new BrandPostAssembler.BrandPostIndex(
+						List.of(), Set.copyOf(entry.getValue()), Map.of(), brand.ownedShortCodes());
+				for (BrandPostResponse post : brandPostAssembler.get().hydrate(index.userId(), brand.account(),
+						brand.accountType(), adapter, entry.getValue(), false)) {
+					poolCards.putIfAbsent(post.shortcode(), fromBrandPost(post, index.campaignsById()));
+				}
+			}
+		}
+
+		List<PerformanceContentResponse> out = new ArrayList<>(page.size());
+		for (DashboardRef ref : page) {
+			PerformanceContentResponse card = index.legacyCards().get(ref.contentKey());
+			if (card == null) {
+				card = poolCards.get(ref.shortcode());
+			}
+			if (card != null) {
+				out.add(card);
+			}
+		}
+		return List.copyOf(out);
+	}
+
+	/**
 	 * 브랜드 풀 경량 인덱스 — {@link #loadBrandPool}의 순회 구조(own-first · putIfAbsent · 계정 행
 	 * 부재 방어 · lastSweptAt max)를 그대로 쓰되, 브랜드당 조회가 판정 컬럼 1쿼리 + 최신 스냅샷
 	 * 1쿼리로 줄었다. 클램프·노출 필터는 {@code assembleBrandPosts}가 하던 것을 여기서 한다.

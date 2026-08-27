@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -824,6 +825,50 @@ class PerformanceContentAssemblerTest {
 		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean());
 	}
 
+	// ---------- 하이드레이트 패스(2026-08-27 목록 최적화 §1-2) ----------
+
+	/**
+	 * 동치성 계약 — 인덱스 전량을 페이지로 넘기면 전량 조립({@link
+	 * PerformanceContentAssembler#assembleSlim})과 <b>응답 자체가</b> 같아야 한다. ref 동치성(판정값)
+	 * 위에 얹히는 두 번째 기준선이다: 카드 본문(스냅샷 시계열·게시자·캠페인·댓글 셰이프)까지 같아야
+	 * 목록 표면을 인덱스+하이드레이트로 갈아끼워도 FE 계약이 바뀌지 않는다.
+	 */
+	@Test
+	void hydratePage_전량은_assembleSlim과_같은_응답을_만든다() {
+		givenIndexFixture();
+		givenPagePoolHydration();
+		givenFullAssemblyBaseline();
+		var assembler = assembler();
+
+		var index = assembler.index(USER_ID);
+		List<PerformanceContentResponse> hydrated = assembler.hydratePage(index, index.refs());
+
+		assertThat(hydrated).isEqualTo(assembler.assembleSlim(USER_ID).contents());   // Task 7 전까지 존치
+	}
+
+	/**
+	 * P0의 절감이 실제로 페이지 크기에 비례하는지 — 무거운 조회(스냅샷 시계열·표시 메타·게시자 배치)는
+	 * 전부 {@link BrandPostAssembler#hydrate} 안에서 일어나므로 이 클래스가 지킬 수 있는 계약은
+	 * <b>그 경계로 넘기는 코드 목록</b>이다: 페이지에 실린 코드 하나뿐이어야 하고, 페이지 밖 풀 코드가
+	 * 섞이면 그 코드의 시계열·메타 조회가 되살아난다.
+	 */
+	@Test
+	void hydratePage는_페이지_코드만_무거운_조회를_한다() {
+		givenIndexFixture();
+		var assembler = assembler();
+		var index = assembler.index(USER_ID);
+		// 풀 전용 ref 1건만 페이지로 — 나머지 풀 코드(POOL2)는 하이드레이트 경계를 넘지 말아야 한다.
+		var page = index.refs().stream()
+				.filter(r -> index.brandByCode().containsKey(r.shortcode())).limit(1).toList();
+
+		assembler.hydratePage(index, page);
+
+		then(brandPostAssembler).should()
+				.hydrate(eq(USER_ID), any(), any(), any(), eq(List.of("POOL1")), eq(false));
+		then(brandPostAssembler).should(never())
+				.hydrate(anyLong(), any(), any(), any(), argThat(codes -> codes.contains("POOL2")), anyBoolean());
+	}
+
 	// ---------- 픽스처 ----------
 
 	/**
@@ -852,6 +897,16 @@ class PerformanceContentAssemblerTest {
 		// 캠페인 다중 부착 — 응답 필드가 단수라 head("7")만 실린다(설계 §결정 3). POOL1은 매핑 없음.
 		given(brandPostAssembler.campaignIdsByCode(eq(BRAND_ID), any()))
 				.willReturn(Map.of("POOL2", List.of("7", "8")));
+	}
+
+	/**
+	 * 같은 시나리오의 <b>페이지 하이드레이트</b> 스텁 — 풀 전용 코드(POOL1·POOL2)는 브랜드당 한 번에
+	 * 넘어가고, 돌아오는 카드는 전량 조립 기준선이 쓰는 것과 같은 픽스처다(동치성 비교의 전제).
+	 */
+	private void givenPagePoolHydration() {
+		given(brandPostAssembler.hydrate(eq(USER_ID), eq(OWN_ACCOUNT), eq("own"), any(),
+				eq(List.of("POOL1", "POOL2")), eq(false)))
+				.willReturn(List.of(poolOnlyPost(), hiddenSponsoredPoolPost()));
 	}
 
 	/** 같은 시나리오를 전량 조립(슬림) 경로로도 스텁한다 — 동치성 비교의 기준선. */
