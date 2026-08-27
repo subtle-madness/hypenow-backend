@@ -181,17 +181,34 @@ public class UiController {
                                 "F&B 아님 · 수집 제외"),
                         new StatusTile("UNJUDGED", "미판정", s.fnbUnjudged(),
                                 "F&B 미판정 · 백필 잔여"))),
-                // 두 축의 수집 대상을 겹침 없이 나눠 센다 — 합계가 실제 방문 계정 총수(유니온).
+                new StatusTileGroup("③-4 홈/리빙 판정 — beauty 잡의 홈/리빙 축 (QUALIFIED 내)", java.util.List.of(
+                        new StatusTile("BEAUTY", "홈/리빙", s.homeLivingInfluencer(),
+                                "홈/리빙 인플루언서 · 수집 편입은 home-living.pipeline-enabled 토글(기본 off)"),
+                        new StatusTile("BEAUTY_COMPANY", "홈/리빙 회사", s.homeLivingCompany(),
+                                "가구·리빙 브랜드 · 리스트업 전용(수집 제외)"),
+                        new StatusTile("BEAUTY_SERVICE", "서비스", s.homeLivingService(),
+                                "서비스(인테리어 시공·이사·청소 등 업체) · 타깃 제외"),
+                        new StatusTile("FOREIGN", "외국인", s.homeLivingForeign(),
+                                "외국인 홈/리빙 인플루언서 · 한국 시장 타깃 제외"),
+                        new StatusTile("NOT_BEAUTY", "홈/리빙 아님", s.homeLivingNone(),
+                                "홈/리빙 아님 · 수집 제외"),
+                        new StatusTile("UNJUDGED", "미판정", s.homeLivingUnjudged(),
+                                "홈/리빙 미판정 · 백필 잔여"))),
+                // 세 축의 수집 대상을 겹침 없이 나눠 센다 — 합계가 실제 방문 계정 총수(유니온).
+                // 겹침은 유니온 − 단독 3합(2축 이상 동시 해당 전체 — 2^3 조합 세분화는 타일 낭비).
                 // 배지 색은 기존 클래스 재사용, 의미는 label이 준다(③-2 관례).
-                new StatusTileGroup("③-3 수집 모수 — 뷰티 ∪ F&B (중복 제거)", java.util.List.of(
+                new StatusTileGroup("③-3 수집 모수 — 뷰티 ∪ F&B ∪ 홈/리빙 (중복 제거)", java.util.List.of(
                         new StatusTile("BEAUTY", "뷰티만", s.beautyOnlyCollectable(),
-                                "뷰티 수집 대상 · F&B 아님(미판정 포함)"),
+                                "뷰티 수집 대상 · 다른 축 아님(미판정 포함)"),
                         new StatusTile("BEAUTY", "F&B만", s.fnbOnlyCollectable(),
-                                "F&B 수집 대상 · 뷰티 아님"),
-                        new StatusTile("BEAUTY_SERVICE", "겹침", s.bothCollectable(),
-                                "두 축 모두 수집 대상 · 중복 방문 없음(계정당 1회)"),
-                        new StatusTile("QUALIFIED", "합계", s.beautyOnlyCollectable()
-                                + s.fnbOnlyCollectable() + s.bothCollectable(),
+                                "F&B 수집 대상 · 다른 축 아님"),
+                        new StatusTile("BEAUTY", "홈·리빙만", s.homeLivingOnlyCollectable(),
+                                "홈/리빙 수집 대상 · 다른 축 아님"),
+                        new StatusTile("BEAUTY_SERVICE", "겹침", s.anyCollectable()
+                                - s.beautyOnlyCollectable() - s.fnbOnlyCollectable()
+                                - s.homeLivingOnlyCollectable(),
+                                "2축 이상 동시 수집 대상 · 중복 방문 없음(계정당 1회)"),
+                        new StatusTile("QUALIFIED", "합계", s.anyCollectable(),
                                 "유니온 · 실제 방문하게 될 계정 총수"))),
                 new StatusTileGroup("④ 수집 대기열 — 게시물을 위한 프로필 수집(collect)·릴스 수집(reels)이 방문할 대상",
                         java.util.List.of(

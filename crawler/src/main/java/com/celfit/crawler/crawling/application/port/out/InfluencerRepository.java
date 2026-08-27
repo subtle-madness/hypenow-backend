@@ -277,27 +277,48 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "and (i.fnbCompany is null or i.fnbCompany = false)")
     long countFnbInfluencers(@Param("status") InfluencerStatus status);
 
+    /** 홈/리빙 판정 5분류 집계 — 대시보드 타일용(F&B 축 countByStatusAndFnbClass와 대칭). */
+    long countByStatusAndHomeLivingClass(InfluencerStatus status, CategoryClass homeLivingClass);
+
+    /** 대시보드 홈/리빙 판정 그룹용: 홈/리빙 인플루언서(회사 제외) 수. */
+    @Query("select count(i) from Influencer i where i.status = :status and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false)")
+    long countHomeLivingInfluencers(@Param("status") InfluencerStatus status);
+
     /**
-     * 대시보드 중복 제거 그룹용: 뷰티 수집 대상이면서 F&B 수집 대상은 아닌 수.
-     * 부정절은 명시 분해형 — NOT(fnb = true AND …)로 쓰면 F&B 미판정(fnb IS NULL)이
-     * NULL 평가로 빠져 뷰티만 카운트가 축소된다(설계 2026-08-25 §구현 주의점).
+     * 대시보드 중복 제거 그룹용: 뷰티 수집 대상이면서 F&B·홈/리빙 수집 대상은 아닌 수.
+     * 부정절은 명시 분해형 — NOT(x = true AND …)로 쓰면 미판정(NULL)이 NULL 평가로 빠져
+     * 단독 카운트가 축소된다(설계 2026-08-25 §구현 주의점).
      */
     @Query("select count(i) from Influencer i where i.status = :status "
             + "and i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false) "
-            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true)")
+            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true) "
+            + "and (i.homeLiving is null or i.homeLiving = false or i.homeLivingCompany = true)")
     long countBeautyOnlyCollectable(@Param("status") InfluencerStatus status);
 
-    /** 대시보드 중복 제거 그룹용: F&B 수집 대상이면서 뷰티 수집 대상은 아닌 수 — 위와 대칭. */
+    /** 대시보드 중복 제거 그룹용: F&B 수집 대상이면서 뷰티·홈/리빙 수집 대상은 아닌 수 — 위와 대칭. */
     @Query("select count(i) from Influencer i where i.status = :status "
             + "and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false) "
-            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true)")
+            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true) "
+            + "and (i.homeLiving is null or i.homeLiving = false or i.homeLivingCompany = true)")
     long countFnbOnlyCollectable(@Param("status") InfluencerStatus status);
 
-    /** 대시보드 중복 제거 그룹용: 두 축 모두 수집 대상(겹침)인 수. */
+    /** 대시보드 중복 제거 그룹용: 홈/리빙 수집 대상이면서 뷰티·F&B 수집 대상은 아닌 수 — 위와 대칭. */
     @Query("select count(i) from Influencer i where i.status = :status "
-            + "and i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false) "
-            + "and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)")
-    long countBothCollectable(@Param("status") InfluencerStatus status);
+            + "and i.homeLiving = true and (i.homeLivingCompany is null or i.homeLivingCompany = false) "
+            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true) "
+            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true)")
+    long countHomeLivingOnlyCollectable(@Param("status") InfluencerStatus status);
+
+    /**
+     * 대시보드 중복 제거 그룹용: 세 축 중 하나라도 수집 대상인 수(유니온) — 겹침 타일은
+     * 별도 "2축 이상" 쿼리 대신 (유니온 − 단독 3합)으로 계산한다(2^3 조합 열거 회피).
+     */
+    @Query("select count(i) from Influencer i where i.status = :status and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (i.homeLiving = true and (i.homeLivingCompany is null or i.homeLivingCompany = false)))")
+    long countAnyCollectable(@Param("status") InfluencerStatus status);
 
     /**
      * 대시보드 F&B 판정 그룹용: 백필 잔여 수 — 백필 선정(findFnbBackfillTargets)과 같은 모수

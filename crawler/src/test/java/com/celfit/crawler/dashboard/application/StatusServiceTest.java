@@ -72,4 +72,29 @@ class StatusServiceTest {
         assertThat(s.fnbForeign()).isEqualTo(1);
         assertThat(s.fnbNone()).isEqualTo(5);
     }
+
+    @Test
+    void 상태판은_홈리빙_분류별_카운트를_home_living_class_기준으로_센다() {
+        // F&B 그룹과 대칭인 홈/리빙 5분류 타일 + 백필 잔여(미판정) 타일 — 스펙 2026-08-27 §5.
+        when(settings.revisitIntervalDays()).thenReturn(1);
+        when(influencers.countHomeLivingInfluencers(InfluencerStatus.QUALIFIED)).thenReturn(7L);
+        when(influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.COMPANY))
+                .thenReturn(3L);
+        when(influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.SERVICE))
+                .thenReturn(2L);
+        when(influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.FOREIGN_INFLUENCER))
+                .thenReturn(1L);
+        when(influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.NONE))
+                .thenReturn(5L);
+        when(influencers.countHomeLivingBackfillRemaining(InfluencerStatus.QUALIFIED)).thenReturn(9L);
+
+        StatusService.StatusSummary s = service.summary();
+
+        assertThat(s.homeLivingInfluencer()).isEqualTo(7);
+        assertThat(s.homeLivingCompany()).isEqualTo(3);
+        assertThat(s.homeLivingService()).isEqualTo(2);
+        assertThat(s.homeLivingForeign()).isEqualTo(1);
+        assertThat(s.homeLivingNone()).isEqualTo(5);
+        assertThat(s.homeLivingUnjudged()).isEqualTo(9);
+    }
 }
