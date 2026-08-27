@@ -141,6 +141,9 @@ final class DashboardQueries {
 	/**
 	 * 복수 브랜드 필터(2026-08-27 §2) — 쉼표 목록이다. 미지정·빈 값·{@code all}은 필터 없음(null,
 	 * FE의 "전체" 탭이 그대로 넘어와도 전량), 빈 항목은 무시하고 전부 비면 필터 없음이다.
+	 *
+	 * <p><b>반환 순서는 입력 등장 순</b>({@link LinkedHashSet})이다 — growth 표면의 계정 축(응답
+	 * {@code accounts[]} 순서 = FE 범례 순서)이 이 순서에 의존한다.
 	 */
 	static Set<String> normalizeAccountIds(String raw) {
 		if (raw == null || raw.isBlank() || FILTER_ALL.equals(raw)) {
