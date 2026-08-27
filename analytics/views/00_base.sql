@@ -6,7 +6,8 @@
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- influencer 노출 — 서빙 모수(뷰티 인플루언서) 필터 재료. 필터 자체는 상위 뷰(01·02·20) 몫.
--- fnb 축(2026-08-24)은 노출만 — 현재 소비자 없음, 추후 카테고리 서빙 개편 재료(스펙 2026-08-23 §6).
+-- fnb 축(2026-08-24)·홈/리빙 축(2026-08-27)은 노출만 — 현재 소비자 없음,
+-- 추후 카테고리 서빙 개편 재료(스펙 2026-08-23 §6, 2026-08-27 §6).
 CREATE OR REPLACE VIEW analytics.v_base_influencer AS
 SELECT
   id AS influencer_id,
@@ -18,7 +19,10 @@ SELECT
   beauty_judged_at,
   fnb,
   fnb_company,
-  fnb_judged_at
+  fnb_judged_at,
+  home_living,
+  home_living_company,
+  home_living_judged_at
 FROM influencer;
 
 -- 계정별 최신 프로필 1건. 실컬럼(username·followers) 우선, payload 폴백.

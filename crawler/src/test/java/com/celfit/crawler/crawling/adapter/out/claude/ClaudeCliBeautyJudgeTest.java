@@ -29,15 +29,15 @@ class ClaudeCliBeautyJudgeTest {
         List<BeautyJudge.Verdict> v = ClaudeCliBeautyJudge.parse(om, output);
         assertThat(v).containsExactly(
                 new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, "메이크업 크리에이터", null,
-                        CategoryClass.NONE, "F&B 아님", null),
+                        CategoryClass.NONE, "F&B 아님", null, null, null, null),
                 new BeautyJudge.Verdict("b", BeautyClass.COMPANY, "화장품 브랜드 공식몰", null,
-                        CategoryClass.NONE, "F&B 아님", null),
+                        CategoryClass.NONE, "F&B 아님", null, null, null, null),
                 new BeautyJudge.Verdict("c", BeautyClass.BEAUTY_SERVICE, "피부과 시술 홍보 계정", null,
-                        CategoryClass.NONE, "F&B 아님", null),
+                        CategoryClass.NONE, "F&B 아님", null, null, null, null),
                 new BeautyJudge.Verdict("d", BeautyClass.NOT_BEAUTY, "여행 계정", null,
-                        CategoryClass.NONE, "F&B 아님", null),
+                        CategoryClass.NONE, "F&B 아님", null, null, null, null),
                 new BeautyJudge.Verdict("e", BeautyClass.FOREIGN_INFLUENCER, "영어 뷰티 콘텐츠", null,
-                        CategoryClass.NONE, "F&B 아님", null));
+                        CategoryClass.NONE, "F&B 아님", null, null, null, null));
     }
 
     @Test
@@ -82,7 +82,54 @@ class ClaudeCliBeautyJudgeTest {
         assertThat(p).contains("- SERVICE: 매장");
         assertThat(p).contains("|SERVICE|NONE");
         assertThat(p).contains("NONE");
-        assertThat(p).contains("두 축은 독립");
+        assertThat(p).contains("세 축은 독립");
+    }
+
+    @Test
+    void 삼축_JSON을_파싱한다() {
+        String out = """
+                [{"username":"a",
+                  "beauty":{"reason":"뷰티 리뷰","basis":"CAPTION","class":"INFLUENCER"},
+                  "fnb":{"reason":"레시피","basis":"CAPTION","class":"INFLUENCER"},
+                  "home_living":{"reason":"집꾸미기 콘텐츠","basis":"CAPTION","class":"INFLUENCER"}}]
+                """;
+        var verdicts = ClaudeCliBeautyJudge.parse(om, out);
+        assertThat(verdicts).hasSize(1);
+        assertThat(verdicts.getFirst().homeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(verdicts.getFirst().homeLivingReason()).isEqualTo("집꾸미기 콘텐츠");
+        assertThat(verdicts.getFirst().homeLivingBasis()).isEqualTo("CAPTION");
+    }
+
+    @Test
+    void 홈리빙_축이_누락되면_그_축만_null이다() {
+        String out = """
+                [{"username":"a",
+                  "beauty":{"reason":"뷰티","basis":"BIO","class":"INFLUENCER"},
+                  "fnb":{"reason":"아님","basis":"BIO","class":"NONE"}}]
+                """;
+        var verdicts = ClaudeCliBeautyJudge.parse(om, out);
+        assertThat(verdicts).hasSize(1);
+        assertThat(verdicts.getFirst().beautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(verdicts.getFirst().homeLivingClass()).isNull();
+    }
+
+    @Test
+    void 세_축_모두_무효면_건너뛴다() {
+        String out = """
+                [{"username":"a",
+                  "beauty":{"class":"?"},"fnb":{"class":"?"},"home_living":{"class":"?"}}]
+                """;
+        assertThat(ClaudeCliBeautyJudge.parse(om, out)).isEmpty();
+    }
+
+    @Test
+    void 프롬프트에_홈리빙_축_지시가_들어간다() {
+        String p = ClaudeCliBeautyJudge.buildPrompt(om, List.of(
+                new BeautyJudge.ProfileCard("a", "이름", "카테고리", "bio", List.of())));
+        assertThat(p).contains("home_living");
+        assertThat(p).contains("집꾸미기");
+        // ①+② 경계(스펙 2026-08-27) — 일상·가족 계정은 NONE이라는 배제 규칙까지 프롬프트에 실려야 한다
+        assertThat(p).contains("집이 배경으로만 등장");
     }
 
     @Test
@@ -98,7 +145,7 @@ class ClaudeCliBeautyJudgeTest {
     }
 
     private static BeautyJudge.Verdict verdict(BeautyClass cls) {
-        return new BeautyJudge.Verdict("a", cls, null, null, null, null, null);
+        return new BeautyJudge.Verdict("a", cls, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -107,7 +154,7 @@ class ClaudeCliBeautyJudgeTest {
                 "[{\"username\":\"a\",\"beauty\":{\"class\":\"INFLUENCER\",\"reason\":null},"
                         + "\"fnb\":{\"class\":\"NONE\",\"reason\":null}}]");
         assertThat(v).containsExactly(new BeautyJudge.Verdict("a", BeautyClass.INFLUENCER, null, null,
-                CategoryClass.NONE, null, null));
+                CategoryClass.NONE, null, null, null, null, null));
     }
 
     @Test
@@ -119,7 +166,7 @@ class ClaudeCliBeautyJudgeTest {
                  {"username":"good","beauty":{"class":"NOT_BEAUTY","reason":"r"},"fnb":{"class":"NONE","reason":"r2"}}]
                 """);
         assertThat(v).containsExactly(new BeautyJudge.Verdict("good", BeautyClass.NOT_BEAUTY, "r", null,
-                CategoryClass.NONE, "r2", null));
+                CategoryClass.NONE, "r2", null, null, null, null));
     }
 
     @Test

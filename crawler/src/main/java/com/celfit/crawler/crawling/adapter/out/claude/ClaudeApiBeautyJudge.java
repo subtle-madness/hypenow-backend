@@ -26,7 +26,7 @@ import tools.jackson.databind.ObjectMapper;
 public class ClaudeApiBeautyJudge implements BeautyJudge {
 
     /** 출력이 계정당 2축(beauty+fnb)으로 ~2배가 되어 8192 → 16384로 상향 (스펙 2026-08-23 §2). */
-    private static final long MAX_TOKENS = 16384L;
+    private static final long MAX_TOKENS = 24576L;
 
     private final ObjectMapper om;
     private final String model;
