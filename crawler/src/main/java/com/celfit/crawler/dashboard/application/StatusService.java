@@ -39,9 +39,16 @@ public class StatusService {
                                  long fnbForeign,
                                  long fnbNone,
                                  long fnbUnjudged,
+                                 long homeLivingInfluencer,
+                                 long homeLivingCompany,
+                                 long homeLivingService,
+                                 long homeLivingForeign,
+                                 long homeLivingNone,
+                                 long homeLivingUnjudged,
                                  long beautyOnlyCollectable,
                                  long fnbOnlyCollectable,
-                                 long bothCollectable,
+                                 long homeLivingOnlyCollectable,
+                                 long anyCollectable,
                                  long backfillPending,
                                  long trackDue,
                                  long reelsDue,
@@ -101,6 +108,7 @@ public class StatusService {
         }
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         boolean includeFnb = settings.fnbPipelineEnabled();
+        boolean includeHomeLiving = settings.homeLivingPipelineEnabled();
         return new StatusSummary(byInfluencerStatus,
                 influencers.countBeautyInfluencers(InfluencerStatus.QUALIFIED),
                 influencers.countBeautyCompanies(InfluencerStatus.QUALIFIED),
@@ -116,15 +124,24 @@ public class StatusService {
                 influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.FOREIGN_INFLUENCER),
                 influencers.countByStatusAndFnbClass(InfluencerStatus.QUALIFIED, CategoryClass.NONE),
                 influencers.countFnbBackfillRemaining(InfluencerStatus.QUALIFIED),
-                // 중복 제거 그룹 — 두 축의 수집 대상(각 축 positive ∧ 회사 제외)을 겹침 없이 나눠 센다.
-                // 토글과 무관하게 항상 계산한다(off일 때도 "켜면 이만큼 합류"를 보여주는 용도).
+                // 홈/리빙 축 타일 — F&B 타일과 대칭(토글 무관, 백필 진행률 확인용).
+                influencers.countHomeLivingInfluencers(InfluencerStatus.QUALIFIED),
+                influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.COMPANY),
+                influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.SERVICE),
+                influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.FOREIGN_INFLUENCER),
+                influencers.countByStatusAndHomeLivingClass(InfluencerStatus.QUALIFIED, CategoryClass.NONE),
+                influencers.countHomeLivingBackfillRemaining(InfluencerStatus.QUALIFIED),
+                // 중복 제거 그룹 — 세 축의 수집 대상(각 축 positive ∧ 회사 제외)을 단독 3개 + 유니온으로
+                // 센다(겹침 = 유니온 − 단독합, UiController 몫). 토글과 무관하게 항상 계산한다
+                // (off일 때도 "켜면 이만큼 합류"를 보여주는 용도).
                 influencers.countBeautyOnlyCollectable(InfluencerStatus.QUALIFIED),
                 influencers.countFnbOnlyCollectable(InfluencerStatus.QUALIFIED),
-                influencers.countBothCollectable(InfluencerStatus.QUALIFIED),
-                // 수집 대기열 타일은 선정 쿼리와 같은 모수 — fnb.pipeline-enabled가 켜지면 F&B가 자동 편입된다
-                influencers.countBackfillPending(includeFnb),
-                influencers.countTrackDue(revisitBefore, includeFnb),
-                influencers.countReelsDue(revisitBefore, includeFnb),
+                influencers.countHomeLivingOnlyCollectable(InfluencerStatus.QUALIFIED),
+                influencers.countAnyCollectable(InfluencerStatus.QUALIFIED),
+                // 수집 대기열 타일은 선정 쿼리와 같은 모수 — 파이프라인 토글이 켜지면 해당 축이 자동 편입된다
+                influencers.countBackfillPending(includeFnb, includeHomeLiving),
+                influencers.countTrackDue(revisitBefore, includeFnb, includeHomeLiving),
+                influencers.countReelsDue(revisitBefore, includeFnb, includeHomeLiving),
                 contents.countByOrigin(ContentOrigin.ENUMERATION),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.FEED),
                 contents.countByOriginAndContentType(ContentOrigin.ENUMERATION, ContentType.REELS),

@@ -181,17 +181,34 @@ public class UiController {
                                 "F&B 아님 · 수집 제외"),
                         new StatusTile("UNJUDGED", "미판정", s.fnbUnjudged(),
                                 "F&B 미판정 · 백필 잔여"))),
-                // 두 축의 수집 대상을 겹침 없이 나눠 센다 — 합계가 실제 방문 계정 총수(유니온).
+                new StatusTileGroup("③-4 홈/리빙 판정 — beauty 잡의 홈/리빙 축 (QUALIFIED 내)", java.util.List.of(
+                        new StatusTile("BEAUTY", "홈/리빙", s.homeLivingInfluencer(),
+                                "홈/리빙 인플루언서 · 수집 편입은 home-living.pipeline-enabled 토글(기본 off)"),
+                        new StatusTile("BEAUTY_COMPANY", "홈/리빙 회사", s.homeLivingCompany(),
+                                "가구·리빙 브랜드 · 리스트업 전용(수집 제외)"),
+                        new StatusTile("BEAUTY_SERVICE", "서비스", s.homeLivingService(),
+                                "서비스(인테리어 시공·이사·청소 등 업체) · 타깃 제외"),
+                        new StatusTile("FOREIGN", "외국인", s.homeLivingForeign(),
+                                "외국인 홈/리빙 인플루언서 · 한국 시장 타깃 제외"),
+                        new StatusTile("NOT_BEAUTY", "홈/리빙 아님", s.homeLivingNone(),
+                                "홈/리빙 아님 · 수집 제외"),
+                        new StatusTile("UNJUDGED", "미판정", s.homeLivingUnjudged(),
+                                "홈/리빙 미판정 · 백필 잔여"))),
+                // 세 축의 수집 대상을 겹침 없이 나눠 센다 — 합계가 실제 방문 계정 총수(유니온).
+                // 겹침은 유니온 − 단독 3합(2축 이상 동시 해당 전체 — 2^3 조합 세분화는 타일 낭비).
                 // 배지 색은 기존 클래스 재사용, 의미는 label이 준다(③-2 관례).
-                new StatusTileGroup("③-3 수집 모수 — 뷰티 ∪ F&B (중복 제거)", java.util.List.of(
+                new StatusTileGroup("③-3 수집 모수 — 뷰티 ∪ F&B ∪ 홈/리빙 (중복 제거)", java.util.List.of(
                         new StatusTile("BEAUTY", "뷰티만", s.beautyOnlyCollectable(),
-                                "뷰티 수집 대상 · F&B 아님(미판정 포함)"),
+                                "뷰티 수집 대상 · 다른 축 아님(미판정 포함)"),
                         new StatusTile("BEAUTY", "F&B만", s.fnbOnlyCollectable(),
-                                "F&B 수집 대상 · 뷰티 아님"),
-                        new StatusTile("BEAUTY_SERVICE", "겹침", s.bothCollectable(),
-                                "두 축 모두 수집 대상 · 중복 방문 없음(계정당 1회)"),
-                        new StatusTile("QUALIFIED", "합계", s.beautyOnlyCollectable()
-                                + s.fnbOnlyCollectable() + s.bothCollectable(),
+                                "F&B 수집 대상 · 다른 축 아님"),
+                        new StatusTile("BEAUTY", "홈·리빙만", s.homeLivingOnlyCollectable(),
+                                "홈/리빙 수집 대상 · 다른 축 아님"),
+                        new StatusTile("BEAUTY_SERVICE", "겹침", s.anyCollectable()
+                                - s.beautyOnlyCollectable() - s.fnbOnlyCollectable()
+                                - s.homeLivingOnlyCollectable(),
+                                "2축 이상 동시 수집 대상 · 중복 방문 없음(계정당 1회)"),
+                        new StatusTile("QUALIFIED", "합계", s.anyCollectable(),
                                 "유니온 · 실제 방문하게 될 계정 총수"))),
                 new StatusTileGroup("④ 수집 대기열 — 게시물을 위한 프로필 수집(collect)·릴스 수집(reels)이 방문할 대상",
                         java.util.List.of(
@@ -260,10 +277,20 @@ public class UiController {
             new BeautyFilter("NONE", "F&B 아님", "NOT_BEAUTY"),
             new BeautyFilter("UNJUDGED", "미판정", "UNJUDGED"));
 
+    /** 홈/리빙 5분류 + 미판정 — 배지 CSS는 뷰티 것 재사용(색 의미 동일). */
+    private static final java.util.List<BeautyFilter> HOME_LIVING_FILTERS = java.util.List.of(
+            new BeautyFilter("INFLUENCER", "홈/리빙", "BEAUTY"),
+            new BeautyFilter("COMPANY", "홈/리빙 회사", "BEAUTY_COMPANY"),
+            new BeautyFilter("SERVICE", "서비스", "BEAUTY_SERVICE"),
+            new BeautyFilter("FOREIGN_INFLUENCER", "외국인", "FOREIGN_INFLUENCER"),
+            new BeautyFilter("NONE", "홈/리빙 아님", "NOT_BEAUTY"),
+            new BeautyFilter("UNJUDGED", "미판정", "UNJUDGED"));
+
     @GetMapping("/ui/influencers")
     public String influencers(@RequestParam(required = false) java.util.List<InfluencerStatus> status,
                               @RequestParam(required = false) java.util.List<String> beauty,
                               @RequestParam(required = false) java.util.List<String> fnb,
+                              @RequestParam(required = false) java.util.List<String> homeLiving,
                               @RequestParam(required = false, defaultValue = "false") boolean company,
                               @RequestParam(defaultValue = "0") int page, Model model) {
         var selected = status == null ? java.util.List.<InfluencerStatus>of()
@@ -281,9 +308,15 @@ public class UiController {
         boolean fnbUnjudged = fnbSelected.contains("UNJUDGED");
         var fnbClasses = fnbSelected.stream().filter(k -> !"UNJUDGED".equals(k))
                 .map(com.celfit.crawler.crawling.domain.CategoryClass::valueOf).toList();
+        var homeLivingKeys = HOME_LIVING_FILTERS.stream().map(BeautyFilter::key).toList();
+        var homeLivingSelected = homeLiving == null ? java.util.List.<String>of()
+                                                    : homeLiving.stream().filter(homeLivingKeys::contains).toList();
+        boolean homeLivingUnjudged = homeLivingSelected.contains("UNJUDGED");
+        var homeLivingClasses = homeLivingSelected.stream().filter(k -> !"UNJUDGED".equals(k))
+                .map(com.celfit.crawler.crawling.domain.CategoryClass::valueOf).toList();
         var pageable = PageRequest.of(Math.max(page, 0), 50, Sort.by(Sort.Direction.DESC, "id"));
         // company=true — 뷰티 회사 리스트업 뷰(수집 제외 계정 확인용, 뷰티 필터 없음).
-        // 뷰티·F&B 필터를 동시에 체크하면 뷰티가 이긴다 — 두 축 교차 조합은 지원하지 않는다(단순성 우선).
+        // 필터를 동시에 체크하면 뷰티 > F&B > 홈/리빙 순으로 이긴다 — 축 교차 조합은 지원하지 않는다(단순성 우선).
         org.springframework.data.domain.Page<com.celfit.crawler.crawling.domain.Influencer> result;
         if (company) {
             result = influencers.findByStatusInAndBeautyTrueAndBeautyCompanyTrue(effective, pageable);
@@ -295,6 +328,10 @@ public class UiController {
             if (fnbClasses.isEmpty()) result = influencers.findByStatusInAndFnbClassIsNull(effective, pageable);
             else if (!fnbUnjudged) result = influencers.findByStatusInAndFnbClassIn(effective, fnbClasses, pageable);
             else result = influencers.findByStatusInAndFnbClassInOrNull(effective, fnbClasses, pageable);
+        } else if (!homeLivingClasses.isEmpty() || homeLivingUnjudged) {
+            if (homeLivingClasses.isEmpty()) result = influencers.findByStatusInAndHomeLivingClassIsNull(effective, pageable);
+            else if (!homeLivingUnjudged) result = influencers.findByStatusInAndHomeLivingClassIn(effective, homeLivingClasses, pageable);
+            else result = influencers.findByStatusInAndHomeLivingClassInOrNull(effective, homeLivingClasses, pageable);
         } else {
             result = influencers.findByStatusIn(effective, pageable);
         }
@@ -323,6 +360,9 @@ public class UiController {
         model.addAttribute("fnb", fnbSelected);
         model.addAttribute("fnbFilters", FNB_FILTERS);
         model.addAttribute("fnbClasses", com.celfit.crawler.crawling.domain.CategoryClass.values());
+        model.addAttribute("homeLiving", homeLivingSelected);
+        model.addAttribute("homeLivingFilters", HOME_LIVING_FILTERS);
+        model.addAttribute("homeLivingClasses", com.celfit.crawler.crawling.domain.CategoryClass.values());
         return "influencers";
     }
 

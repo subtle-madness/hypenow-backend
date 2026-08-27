@@ -69,8 +69,8 @@ class JobCostEstimatorTest {
 
         estimator.estimates();
 
-        org.mockito.Mockito.verify(influencers).countTrackDue(Instant.parse("2026-07-08T00:00:00Z"), false);
-        org.mockito.Mockito.verify(influencers).countReelsDue(Instant.parse("2026-07-08T00:00:00Z"), false);
+        org.mockito.Mockito.verify(influencers).countTrackDue(Instant.parse("2026-07-08T00:00:00Z"), false, false);
+        org.mockito.Mockito.verify(influencers).countReelsDue(Instant.parse("2026-07-08T00:00:00Z"), false, false);
     }
 
     @Test
@@ -85,14 +85,14 @@ class JobCostEstimatorTest {
 
         estimator.estimates();
 
-        org.mockito.Mockito.verify(influencers).countBackfillPending(true);
-        org.mockito.Mockito.verify(influencers).countTrackDue(Instant.parse("2026-07-08T00:00:00Z"), true);
-        org.mockito.Mockito.verify(influencers).countReelsDue(Instant.parse("2026-07-08T00:00:00Z"), true);
+        org.mockito.Mockito.verify(influencers).countBackfillPending(true, false);
+        org.mockito.Mockito.verify(influencers).countTrackDue(Instant.parse("2026-07-08T00:00:00Z"), true, false);
+        org.mockito.Mockito.verify(influencers).countReelsDue(Instant.parse("2026-07-08T00:00:00Z"), true, false);
         org.mockito.Mockito.verify(influencers)
-                .countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus.QUALIFIED, true);
+                .countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(InfluencerStatus.QUALIFIED, true, false);
         org.mockito.Mockito.verify(influencers)
                 .countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
-                        InfluencerStatus.QUALIFIED, true);
+                        InfluencerStatus.QUALIFIED, true, false);
     }
 
     @Test
@@ -202,8 +202,8 @@ class JobCostEstimatorTest {
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(10);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(2L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(0L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(2L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(0L);
         when(profileSource.current()).thenReturn(ProfileSource.DATALIKERS);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 
@@ -226,8 +226,8 @@ class JobCostEstimatorTest {
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(5);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(2L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(1L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(2L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(1L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 
@@ -252,8 +252,8 @@ class JobCostEstimatorTest {
         when(settings.qualifyBatchLimit()).thenReturn(0);
         when(settings.collectBatchLimit()).thenReturn(10);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(2L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(0L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(2L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(0L);
         when(profileSource.current()).thenReturn(ProfileSource.HIKER_WEB_GQL);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 
@@ -274,9 +274,9 @@ class JobCostEstimatorTest {
         when(settings.collectBatchLimit()).thenReturn(0);
         when(settings.reelsBatchLimit()).thenReturn(10);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(0L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(0L);
-        when(influencers.countReelsDue(any(), anyBoolean())).thenReturn(25L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(0L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(0L);
+        when(influencers.countReelsDue(any(), anyBoolean(), anyBoolean())).thenReturn(25L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
         when(reelsSource.current()).thenReturn(ReelsSource.HIKER);
@@ -301,9 +301,9 @@ class JobCostEstimatorTest {
         when(settings.reelsBatchLimit()).thenReturn(10);
         when(settings.reelsActorResultsLimit()).thenReturn(6);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(0L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(0L);
-        when(influencers.countReelsDue(any(), anyBoolean())).thenReturn(25L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(0L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(0L);
+        when(influencers.countReelsDue(any(), anyBoolean(), anyBoolean())).thenReturn(25L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
         when(reelsSource.current()).thenReturn(ReelsSource.ACTOR);
@@ -327,8 +327,8 @@ class JobCostEstimatorTest {
         when(settings.collectBatchLimit()).thenReturn(0);
         when(settings.revisitIntervalDays()).thenReturn(0);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(0L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(0L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(0L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(0L);
         when(influencers.countByStatusAndBeautyIsNull(InfluencerStatus.QUALIFIED)).thenReturn(516L);
         when(settings.beautyBatchLimit()).thenReturn(500);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
@@ -352,13 +352,13 @@ class JobCostEstimatorTest {
         when(settings.collectBatchLimit()).thenReturn(0);
         when(settings.revisitIntervalDays()).thenReturn(0);
         when(influencers.countByStatusAndFollowersIsNull(InfluencerStatus.DISCOVERED)).thenReturn(0L);
-        when(influencers.countBackfillPending(anyBoolean())).thenReturn(0L);
-        when(influencers.countTrackDue(any(), anyBoolean())).thenReturn(0L);
+        when(influencers.countBackfillPending(anyBoolean(), anyBoolean())).thenReturn(0L);
+        when(influencers.countTrackDue(any(), anyBoolean(), anyBoolean())).thenReturn(0L);
         when(settings.similarBatchLimit()).thenReturn(50);
         when(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean())).thenReturn(200L);
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean())).thenReturn(200L);
         when(influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean())).thenReturn(30L);
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean())).thenReturn(30L);
         when(profileSource.current()).thenReturn(ProfileSource.SELF);
         when(profileSupplement.relatedEnabled()).thenReturn(false);
 

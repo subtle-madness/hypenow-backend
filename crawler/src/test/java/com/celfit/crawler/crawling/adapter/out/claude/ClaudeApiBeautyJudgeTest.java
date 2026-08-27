@@ -32,7 +32,7 @@ class ClaudeApiBeautyJudgeTest {
         assertTrue(text.contains("INFLUENCER"));
         assertTrue(text.contains("user1"));
         // 2축 출력 분량(스펙 2026-08-23 §2) — 8192에서 상향
-        assertEquals(16384L, params.maxTokens());
+        assertEquals(24576L, params.maxTokens());
     }
 
     @Test

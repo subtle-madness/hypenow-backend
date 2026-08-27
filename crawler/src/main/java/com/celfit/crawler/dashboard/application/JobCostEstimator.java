@@ -111,14 +111,15 @@ public class JobCostEstimator {
     }
 
     private JobCost similarEstimate() {
-        // 예상 비용 카드는 잡의 선정 쿼리와 같은 모수를 쓴다 — fnb.pipeline-enabled를 켜면
-        // F&B 시드가 자동으로 추정에 반영된다(토글 off면 뷰티 축 그대로).
+        // 예상 비용 카드는 잡의 선정 쿼리와 같은 모수를 쓴다 — 파이프라인 토글을 켜면
+        // 해당 축 시드가 자동으로 추정에 반영된다(토글 off면 뷰티 축 그대로).
         boolean includeFnb = settings.fnbPipelineEnabled();
+        boolean includeHomeLiving = settings.homeLivingPipelineEnabled();
         long due = influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                InfluencerStatus.QUALIFIED, includeFnb);
+                InfluencerStatus.QUALIFIED, includeFnb, includeHomeLiving);
         long targets = Math.min((long) settings.similarBatchLimit(), due);
         long noPk = influencers.countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
-                InfluencerStatus.QUALIFIED, includeFnb);
+                InfluencerStatus.QUALIFIED, includeFnb, includeHomeLiving);
         // 배치가 pk 미보유 시드를 몇 명 집을지는 id 순서에 달렸으므로 min(전원 보유)~max(미보유 우선)로 추정
         long min = targets;
         long max = targets + Math.min(targets, noPk);
@@ -132,10 +133,11 @@ public class JobCostEstimator {
 
     private JobCost collectEstimate() {
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
-        // 수집 모수도 선정 쿼리와 동일 — 토글 on이면 F&B 계정이 추정 대상 수에 자동 편입된다
+        // 수집 모수도 선정 쿼리와 동일 — 토글 on이면 해당 축 계정이 추정 대상 수에 자동 편입된다
         boolean includeFnb = settings.fnbPipelineEnabled();
-        long collectDue = influencers.countBackfillPending(includeFnb)
-                + influencers.countTrackDue(revisitBefore, includeFnb);
+        boolean includeHomeLiving = settings.homeLivingPipelineEnabled();
+        long collectDue = influencers.countBackfillPending(includeFnb, includeHomeLiving)
+                + influencers.countTrackDue(revisitBefore, includeFnb, includeHomeLiving);
         long targets = Math.min((long) settings.collectBatchLimit(), collectDue);
         List<String> endpoints = new ArrayList<>();
         // 프로필 요청은 소스별 단가(DataLikers 별도), 피드/릴스는 HikerAPI 단가 — 나눠서 합산한다.
@@ -152,7 +154,8 @@ public class JobCostEstimator {
 
     private JobCost reelsEstimate() {
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
-        long due = influencers.countReelsDue(revisitBefore, settings.fnbPipelineEnabled());
+        long due = influencers.countReelsDue(revisitBefore, settings.fnbPipelineEnabled(),
+                settings.homeLivingPipelineEnabled());
         long targets = Math.min((long) settings.reelsBatchLimit(), due);
         if (reelsSource.current() == ReelsSource.ACTOR) {
             return new JobCost("reels", "릴스 수집",
