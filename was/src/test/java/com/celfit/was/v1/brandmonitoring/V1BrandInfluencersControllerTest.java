@@ -19,7 +19,7 @@ import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostIndexRow;
-import com.celfit.was.monitoring.BrandReadRepository.LatestMetricsRow;
+import com.celfit.was.monitoring.BrandReadRepository.LatestSnapshotRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
@@ -43,7 +43,7 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p>어셈블러({@link BrandPostAssembler})는 실 빈으로 붙이고 DB 접점만 mock한다 — 인덱스 조립부터
  * 집계·정렬까지 실제 코드가 돈다. 시드는 슬림 인덱스 행({@link BrandPostIndexRow})과 최신 지표
- * 프로젝션({@link LatestMetricsRow}) 두 산지뿐이라, 게시물 목록 테스트와 달리 풀 카드 시드를
+ * 프로젝션({@link LatestSnapshotRow}) 두 산지뿐이라, 게시물 목록 테스트와 달리 풀 카드 시드를
  * 깔지 않는다(이 표면은 하이드레이트를 아예 타지 않는다).
  */
 @WebMvcTest(controllers = V1BrandInfluencersController.class,
@@ -187,7 +187,7 @@ class V1BrandInfluencersControllerTest {
 				indexRow("FEED", "2026-08-04T00:00:00Z", "glowdeep_92", "글로우딥", 10_000L, true));
 		givenMetrics(100L, metrics("REEL", 100L, 10L),
 				// 피드 스냅샷에도 views 값이 실려 있지만 서빙 규칙상 null로 접는다(항상 NULL 규칙).
-				new LatestMetricsRow("FEED", "FEED", 555L, 5L, false, 2L));
+				new LatestSnapshotRow("FEED", LocalDate.parse("2026-08-05"), "FEED", 555L, 5L, false, 2L));
 
 		mockMvc.perform(get(URL).param("accountIds", "100").with(user(principal())))
 				.andExpect(status().isOk())
@@ -337,7 +337,7 @@ class V1BrandInfluencersControllerTest {
 				indexRow("C", "2026-08-03T00:00:00Z", "skinlog", "스킨로그", 60_000L, false));
 		givenMetrics(100L, metrics("A", 100L, 7L),
 				// 좋아요 숨김 = "모름" — 0(beautykim)보다도 뒤여야 한다.
-				new LatestMetricsRow("B", "REELS", 200L, null, true, 2L),
+				new LatestSnapshotRow("B", LocalDate.parse("2026-08-05"), "REELS", 200L, null, true, 2L),
 				metrics("C", 300L, 0L));
 
 		mockMvc.perform(get(URL).param("accountIds", "100").param("sort", "likes").with(user(principal())))
@@ -411,8 +411,8 @@ class V1BrandInfluencersControllerTest {
 				.willReturn(List.of(rows));
 	}
 
-	private void givenMetrics(long brandId, LatestMetricsRow... rows) {
-		given(brandReadRepository.findLatestMetricsForBrand(eq(brandId), any(), anyBoolean()))
+	private void givenMetrics(long brandId, LatestSnapshotRow... rows) {
+		given(brandReadRepository.findLatestSnapshotsForBrand(eq(brandId), any(), anyBoolean()))
 				.willReturn(List.of(rows));
 	}
 
@@ -438,12 +438,12 @@ class V1BrandInfluencersControllerTest {
 	private static BrandPostIndexRow indexRow(String code, String takenAt, String username, String fullName,
 			Long followers, boolean paid) {
 		OffsetDateTime detectedAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
-		return new BrandPostIndexRow(code, OffsetDateTime.parse(takenAt), detectedAt, null, username,
-				paid, false, "REELS", null, username, fullName, "https://cdn/" + username + ".jpg", null,
-				followers);
+		return new BrandPostIndexRow(code, OffsetDateTime.parse(takenAt), detectedAt, null, null,
+				username, null, paid, false, "REELS", null, username, fullName,
+				"https://cdn/" + username + ".jpg", null, followers);
 	}
 
-	private static LatestMetricsRow metrics(String code, Long views, Long likes) {
-		return new LatestMetricsRow(code, "REELS", views, likes, false, 1L);
+	private static LatestSnapshotRow metrics(String code, Long views, Long likes) {
+		return new LatestSnapshotRow(code, LocalDate.parse("2026-08-05"), "REELS", views, likes, false, 1L);
 	}
 }

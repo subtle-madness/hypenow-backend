@@ -132,6 +132,11 @@ public class BrandReadRepository {
 	 * 행(author_ig_user_id 미기입)은 author 컬럼이 전부 null로 오고 username 폴백 해소는 호출부 몫이다
 	 * — 그래서 원시 관측 username(raw_author_username)도 함께 싣는다.
 	 *
+	 * <p>성과 대시보드 인덱스(2026-08-27 목록 최적화 설계)도 이 프로젝션을 상태(hidden)·작성자 판정에
+	 * 함께 쓴다 — {@code unavailable_at}·{@code author_ig_user_id}는 short 값이라 폭 증가는 무시
+	 * 수준이고(컬럼 추가는 이 기준으로만 허용), 협찬 판정은 브랜드 표면과 같은 caption_marker를 쓴다
+	 * (캡션 전송 제거 이득을 대시보드도 함께 받는다).
+	 *
 	 * <p>창·정산 술어는 {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록
 	 * 모수와 갈라진다. 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown,
 	 * caption_marker는 좌항 IS NOT NULL 가드 덕에 false). 정렬은 호출부(자바) 몫이라 ORDER BY를 두지
@@ -145,7 +150,7 @@ public class BrandReadRepository {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
 				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
-				       t.author_username AS raw_author_username,
+				       t.unavailable_at, t.author_username AS raw_author_username, t.author_ig_user_id,
 				       m.is_paid_partnership,
 				       (m.caption IS NOT NULL AND lower(m.caption) ~ :markerRegex) AS caption_marker,
 				       m.content_type, m.ad_verdict,
@@ -189,20 +194,21 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 게시물별 최신 스냅샷 1행의 지표 프로젝션(2026-08-27 서버 필터·패싯 설계) — 정렬 키(성과·좋아요·
-	 * 댓글) 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대 365행이라 정렬 키만 필요한
-	 * 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를 null로 접는 서빙 규칙
+	 * 게시물별 최신 스냅샷 1행의 지표 프로젝션(2026-08-27 대시보드 목록 최적화 설계에서 확장) —
+	 * 정렬 키(views·likes·comments·engagement)·인플루언서 집계·대시보드 ref의 최신 지표 산출 전용.
+	 * 시계열 전량({@link #findSnapshots})은 게시물당 최대 365행이라 지표만 필요한 경로에 싣지 않는다.
+	 * content_type을 함께 주는 이유: 피드는 views를 null로 접는 서빙 규칙
 	 * ({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다. likes_hidden은 "0"과
-	 * "숨김"을 호출부가 구분하기 위한 것이다(숨김을 0으로 뭉개면 정렬이 거짓말을 한다).
+	 * "숨김"을 호출부가 구분하기 위한 것이다(숨김을 0으로 뭉개면 정렬·집계가 거짓말을 한다).
 	 * 브랜드 창 스코프 조인인 이유는 {@link #findBrandPostIndex} 주석과 같다 — 창·정산 술어가
-	 * 인덱스와 동형이어야 정렬 키가 목록 모수와 어긋나지 않는다.
+	 * 인덱스와 동형이어야 지표가 목록 모수와 어긋나지 않는다.
 	 */
-	public List<LatestMetricsRow> findLatestMetricsForBrand(long brandId, OffsetDateTime cutoff,
+	public List<LatestSnapshotRow> findLatestSnapshotsForBrand(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
-				SELECT DISTINCT ON (s.short_code) s.short_code, s.content_type, s.views, s.likes,
-				       s.likes_hidden, s.comments
+				SELECT DISTINCT ON (s.short_code) s.short_code, s.captured_on, s.content_type,
+				       s.views, s.likes, s.likes_hidden, s.comments
 				FROM brand_post_snapshot s
 				JOIN brand_tagged_post t ON t.short_code = s.short_code
 				WHERE t.brand_id = :brandId
@@ -213,7 +219,7 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(LatestMetricsRow.class)
+				.query(LatestSnapshotRow.class)
 				.list();
 	}
 
@@ -502,20 +508,23 @@ public class BrandReadRepository {
 	 * 메타 행이 없으면 false). {@code rawAuthorUsername}은 brand_tagged_post의 원시 관측값이고,
 	 * {@code author*} 5필드는 author_profile 조인 결과라 조인 미스면 전부 null이다 — username 폴백
 	 * 해소는 호출부(어셈블러) 몫이라는 뜻이다.
+	 *
+	 * <p>{@code unavailableAt}·{@code authorIgUserId}는 성과 대시보드 인덱스(2026-08-27 목록 최적화
+	 * 설계)의 상태(hidden)·작성자 판정 입력이다 — 브랜드 표면은 쓰지 않는다.
 	 */
 	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
-			OffsetDateTime directRegisteredAt, String rawAuthorUsername, Boolean isPaidPartnership,
-			boolean captionMarker, String contentType, String adVerdict, String authorUsername,
-			String authorFullName, String authorProfilePicUrl, String authorImageObjectPath,
-			Long authorFollowers) {
+			OffsetDateTime directRegisteredAt, OffsetDateTime unavailableAt, String rawAuthorUsername,
+			String authorIgUserId, Boolean isPaidPartnership, boolean captionMarker, String contentType,
+			String adVerdict, String authorUsername, String authorFullName, String authorProfilePicUrl,
+			String authorImageObjectPath, Long authorFollowers) {
 	}
 
 	/**
-	 * 게시물별 최신 스냅샷 지표 1행({@link #findLatestMetricsForBrand}) — contentType은 피드 views null
-	 * 규칙용, likesHidden은 "0"과 "숨김"을 구분하는 플래그다(숨김이면 likes는 null).
+	 * 게시물별 최신 스냅샷 지표 1행({@link #findLatestSnapshotsForBrand}) — contentType은 피드 views
+	 * null 규칙용, likesHidden은 "0"과 "숨김"을 구분하는 플래그다(숨김이면 likes는 null).
 	 */
-	public record LatestMetricsRow(String shortCode, String contentType, Long views, Long likes,
-			boolean likesHidden, Long comments) {
+	public record LatestSnapshotRow(String shortCode, LocalDate capturedOn, String contentType,
+			Long views, Long likes, boolean likesHidden, Long comments) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */

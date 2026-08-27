@@ -127,9 +127,11 @@ class BrandPostAssemblerTest {
 		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
 				indexRow("REELS1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
 				indexRow("FEED1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
-		given(repository.findLatestMetricsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
-				new BrandReadRepository.LatestMetricsRow("REELS1", "REELS", 500L, 30L, false, 4L),
-				new BrandReadRepository.LatestMetricsRow("FEED1", "FEED", 300L, 20L, false, 2L)));
+		given(repository.findLatestSnapshotsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
+				new BrandReadRepository.LatestSnapshotRow("REELS1", LocalDate.parse("2026-08-06"), "REELS",
+						500L, 30L, false, 4L),
+				new BrandReadRepository.LatestSnapshotRow("FEED1", LocalDate.parse("2026-08-06"), "FEED",
+						300L, 20L, false, 2L)));
 
 		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
 				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
@@ -1210,14 +1212,15 @@ class BrandPostAssemblerTest {
 	 * 인덱스 행 빌더 — 슬림 인덱스 셰이프(2026-08-27 P0, findBrandPostIndex). 캡션 원문 대신 SQL이
 	 * 계산한 마커 매치(captionMarker)를 받으므로, 여기서는 캡션을 자바 판정기로 한 번 접어 SQL과 같은
 	 * 값을 만든다 — 시드 문구를 그대로 쓰면서도 record 셰이프는 새 계약을 따른다. 필터·패싯·작성자
-	 * 컬럼은 이 테스트가 아직 소비하지 않아 기본값(null)으로 채운다(Task 4 소관).
+	 * 컬럼과 대시보드 전용 컬럼(unavailableAt·authorIgUserId)은 이 테스트가 소비하지 않아
+	 * 기본값(null)으로 채운다.
 	 */
 	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
 			String tagDetectedAt, String directRegisteredAt, Boolean paid, String caption) {
 		return new BrandReadRepository.BrandPostIndexRow(code, OffsetDateTime.parse(takenAt),
 				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
 				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt),
-				"glowdeep_92", paid,
+				null, "glowdeep_92", null, paid,
 				caption != null && BrandSponsorshipClassifier.containsSponsorshipMarker(caption),
 				null, null, null, null, null, null, null);
 	}
@@ -1232,7 +1235,7 @@ class BrandPostAssemblerTest {
 			String authorImageObjectPath, Long authorFollowers) {
 		return new BrandReadRepository.BrandPostIndexRow(code,
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-				null, code.toLowerCase(Locale.ROOT) + "_user", null, false, contentType, adVerdict,
+				null, null, code.toLowerCase(Locale.ROOT) + "_user", null, null, false, contentType, adVerdict,
 				authorUsername, authorFullName, authorProfilePicUrl, authorImageObjectPath, authorFollowers);
 	}
 

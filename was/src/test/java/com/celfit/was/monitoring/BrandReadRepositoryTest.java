@@ -343,6 +343,9 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
 		assertThat(enriched.takenAt()).isNotNull();
+		assertThat(enriched.unavailableAt()).isNull();       // 정상 — hidden 아님(대시보드 상태 판정 입력)
+		assertThat(enriched.rawAuthorUsername()).isEqualTo("influencer_a");
+		assertThat(enriched.authorIgUserId()).isEqualTo("IG_A");
 		BrandReadRepository.BrandPostIndexRow noMeta = byCode(rows, "NOMETA");
 		assertThat(noMeta.captionMarker()).isFalse();        // 메타 없음 → 마커 매치 false(판정은 unknown)
 		assertThat(noMeta.isPaidPartnership()).isNull();
@@ -462,11 +465,12 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('influencer_a', 'CODE1', '2026-08-02', 'REELS', 10, false, 1, 100, 0, 2, 3, false, 0)
 				""").update();
 
-		List<BrandReadRepository.LatestMetricsRow> rows = repository.findLatestMetricsForBrand(
+		List<BrandReadRepository.LatestSnapshotRow> rows = repository.findLatestSnapshotsForBrand(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
 
 		assertThat(rows).hasSize(1);
 		assertThat(rows.get(0).shortCode()).isEqualTo("CODE1");
+		assertThat(rows.get(0).capturedOn()).isEqualTo(LocalDate.parse("2026-08-03"));   // captured_on 최신 행
 		assertThat(rows.get(0).contentType()).isEqualTo("REELS");
 		assertThat(rows.get(0).likes()).isEqualTo(20L);
 		assertThat(rows.get(0).views()).isEqualTo(200L);
@@ -490,10 +494,10 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('influencer_c', 'OTHER', '2026-08-03', 'REELS', 9, false, 1, 90)
 				""").update();
 
-		List<BrandReadRepository.LatestMetricsRow> rows = repository.findLatestMetricsForBrand(
+		List<BrandReadRepository.LatestSnapshotRow> rows = repository.findLatestSnapshotsForBrand(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
 
-		assertThat(rows).extracting(BrandReadRepository.LatestMetricsRow::shortCode).containsExactly("MINE");
+		assertThat(rows).extracting(BrandReadRepository.LatestSnapshotRow::shortCode).containsExactly("MINE");
 		assertThat(rows.get(0).views()).isNull();       // 피드 조회수 NULL 규칙 보존
 		assertThat(rows.get(0).likes()).isEqualTo(5L);
 		assertThat(rows.get(0).likesHidden()).isTrue();

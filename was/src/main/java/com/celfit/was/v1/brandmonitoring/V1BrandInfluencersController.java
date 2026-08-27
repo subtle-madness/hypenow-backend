@@ -42,7 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>모수는 게시물 목록과 <b>같은</b> 인덱스 기계를 탄다({@link BrandPostAssembler#indexForBrand}) —
  * 경량 ref에 게시자·협찬·업로드일이 이미 실려 있어 카드 하이드레이트가 전혀 필요 없다. 지표는
- * 게시물별 최신 스냅샷 1행 프로젝션({@link BrandReadRepository#findLatestMetricsForBrand})만 읽는다
+ * 게시물별 최신 스냅샷 1행 프로젝션({@link BrandReadRepository#findLatestSnapshotsForBrand})만 읽는다
  * (시계열 전량은 게시물당 최대 365행이라 집계 경로에 싣지 않는다).
  *
  * <p>다계정은 요청 {@code accountIds} 순서대로 처리하고, 같은 게시물이 두 계정을 태그했으면
@@ -166,10 +166,10 @@ public class V1BrandInfluencersController {
 		if (refs.isEmpty()) {
 			return List.of();
 		}
-		Map<String, BrandReadRepository.LatestMetricsRow> metricsByCode =
-				brandReadRepository.findLatestMetricsForBrand(account.id(), BrandPostAssembler.windowCutoff(), true)
+		Map<String, BrandReadRepository.LatestSnapshotRow> metricsByCode =
+				brandReadRepository.findLatestSnapshotsForBrand(account.id(), BrandPostAssembler.windowCutoff(), true)
 						.stream()
-						.collect(Collectors.toMap(BrandReadRepository.LatestMetricsRow::shortCode,
+						.collect(Collectors.toMap(BrandReadRepository.LatestSnapshotRow::shortCode,
 								Function.identity(), (a, b) -> a, LinkedHashMap::new));
 
 		List<BrandInfluencerAggregator.InfluencerPost> out = new ArrayList<>(refs.size());
@@ -190,11 +190,11 @@ public class V1BrandInfluencersController {
 	 * ({@code BrandPostAssembler.snapshotOf} 서빙 규칙 동형 — 피드 조회수는 구조적으로 없다).
 	 *
 	 * <p>최신 지표 행이 없으면 과도기 폴백(레거시 direct) 카드의 최신 스냅샷을 본다 — 그 카드는
-	 * 브랜드 스냅샷 테이블이 아니라 레거시 조립에서 오므로 {@code findLatestMetricsForBrand}에
+	 * 브랜드 스냅샷 테이블이 아니라 레거시 조립에서 오므로 {@code findLatestSnapshotsForBrand}에
 	 * 잡히지 않는다. 둘 다 없으면 지표 미상이고, 그 게시물은 {@code postCount}에만 기여한다.
 	 */
 	static BrandInfluencerAggregator.InfluencerPost toInfluencerPost(BrandPostAssembler.PostRef ref,
-			BrandReadRepository.LatestMetricsRow m, BrandPostResponse legacyCard) {
+			BrandReadRepository.LatestSnapshotRow m, BrandPostResponse legacyCard) {
 		Long views;
 		Long likes;
 		boolean likesHidden;

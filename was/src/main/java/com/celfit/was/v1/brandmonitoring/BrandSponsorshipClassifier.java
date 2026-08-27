@@ -93,8 +93,17 @@ public final class BrandSponsorshipClassifier {
 	 * <p><b>전제</b>: {@code [[:alnum:]]}의 유니코드 인식 여부는 DB 이미지·로케일에 종속된다 —
 	 * 테스트 컨테이너와 운영이 같은 {@code postgres:17-alpine}이라 동치가 성립한다.
 	 * 이미지 계열을 바꿨을 때 동치성 테스트가 깨지면 이 전제부터 확인할 것.
+	 *
+	 * <p>상수에서만 파생되는 불변값이라 클래스 로드 시 1회 빌드해 캐시한다 — 브랜드 목록·대시보드가
+	 * 요청·계정마다 부르는 자리라 재조립 비용을 반복하지 않는다.
 	 */
 	public static String postgresMarkerRegex() {
+		return POSTGRES_MARKER_REGEX;
+	}
+
+	private static final String POSTGRES_MARKER_REGEX = buildPostgresMarkerRegex();
+
+	private static String buildPostgresMarkerRegex() {
 		List<String> alts = new ArrayList<>();
 		for (String marker : CONFIRM_SUBSTRINGS) {
 			alts.add(escapeAre(marker));
