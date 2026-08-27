@@ -21,6 +21,9 @@ normalization {
 
 dependencies {
 	implementation project(':contract-analysis')
+	// AI 어시스턴트 LLM 전송(2026-08-27 설계 §3) - Vertex HTTP·SA 토큰·재시도만 재사용한다.
+	// 프롬프트·툴 정의·에이전트 루프는 was 소관이라 common-llm에 반입하지 않는다(monitoring과 동일 원칙).
+	implementation project(':common-llm')
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	// API 성능 측정(스펙 2026-08-10) — /actuator/prometheus로 uri별 레이턴시 히스토그램 노출
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
