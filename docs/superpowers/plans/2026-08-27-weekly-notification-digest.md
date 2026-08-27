@@ -188,11 +188,11 @@
 설계 §7의 이관·§8의 알림 이력 가드·§6의 발송 상태를 한 파일에 담는다. **전부 expand 단계**(신규 테이블, CHECK 허용값 확대, nullable/DEFAULT 있는 ADD COLUMN)라 롤링 창에서 구버전 was가 깨지지 않는다. 구 4종 옵트아웃 행과 CHECK의 구 어휘는 **이번 릴리스에서 지우지 않는다** — contract 단계(다음 릴리스) 몫이다.
 
 **Files:**
-- Create: `was/src/main/resources/db/migration/app/V20260827112529__weekly_notification_digest_expand.sql`
+- Create: `was/src/main/resources/db/migration/app/V20260827135725__weekly_notification_digest_expand.sql`(재채번 — 아래 참조)
 
 **Steps:**
 
-- [ ] 마이그레이션 파일 작성 — 위 경로에 아래 전문을 쓴다. 파일명은 UTC 채번(`date -u +%Y%m%d%H%M%S` = `20260827112529`)이며, **이미 채번된 이 이름을 그대로 쓴다**(다시 채번하면 이 계획의 후속 스텝과 어긋난다).
+- [x] 마이그레이션 파일 작성 — 위 경로에 아래 전문을 쓴다. **실제로는 구현 시점에 `date -u +%Y%m%d%H%M%S`로 재채번**해 `20260827135725`를 썼다(디렉토리 최대 기존 버전 `20260819050953`보다 큼 확인 — 세션 지시에 따름, 계획서 원안의 `20260827112529`는 미사용).
   ```sql
   -- 주간 알림 다이제스트 개편(2026-08-27 설계 §6·§7·§8) — expand 단계.
   -- 셋 다 additive다: ① 옵트아웃 CHECK 허용값 확대 + 보수적 이관 INSERT, ② 신규 테이블 1개,
@@ -233,21 +233,21 @@
       ADD COLUMN email_attempts smallint NOT NULL DEFAULT 0;
   ```
 
-- [ ] 실행해 마이그레이션 적용 확인 — 마이그레이션은 통합 테스트 부팅 시 Flyway가 적용한다. 기존 테스트 하나로 부팅을 검증한다.
+- [x] 실행해 마이그레이션 적용 확인 — 마이그레이션은 통합 테스트 부팅 시 Flyway가 적용한다. 기존 테스트 하나로 부팅을 검증한다.
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.DigestRepositoryTest"
   ```
-  기대 출력: `BUILD SUCCESSFUL` (Flyway가 새 버전을 적용하고 기존 다이제스트 테스트가 그대로 통과).
+  기대 출력: `BUILD SUCCESSFUL` (Flyway가 새 버전을 적용하고 기존 다이제스트 테스트가 그대로 통과). **확인됨** — `BUILD SUCCESSFUL in 38s`.
 
-- [ ] 마이그레이션 가드 확인 — 파괴적 구문이 없는지 눈으로 재확인한다(가드는 CI에서 돈다).
+- [x] 마이그레이션 가드 확인 — 파괴적 구문이 없는지 눈으로 재확인한다(가드는 CI에서 돈다).
   ```
-  grep -nE 'DROP TABLE|DROP COLUMN|RENAME|SET NOT NULL|ALTER COLUMN .* TYPE' was/src/main/resources/db/migration/app/V20260827112529__weekly_notification_digest_expand.sql
+  grep -nE 'DROP TABLE|DROP COLUMN|RENAME|SET NOT NULL|ALTER COLUMN .* TYPE' was/src/main/resources/db/migration/app/V20260827135725__weekly_notification_digest_expand.sql
   ```
-  기대 출력: 매치 없음(exit code 1). `DROP CONSTRAINT`는 CHECK 확대 짝이라 가드 대상이 아니다.
+  기대 출력: 매치 없음(exit code 1). **실제로는 헤더 주석 3행("DROP·RENAME·타입 변경·SET NOT NULL 없음")의 서술 텍스트가 이 단순 grep에 문자 그대로 걸려 매치 1건(exit 0)이 나온다** — SQL 본문이 아니라 주석 안에서 "없다"고 설명하는 문장 자체가 패턴에 맞음. 실제 CI 가드(`.github/scripts/check-migration-safety.sh`, `sed 's/--.*$//'`로 주석 제거 후 검사)로 직접 재확인: `--scan` 실행 결과 `OK`(파괴적 DDL 없음 확인).
 
-- [ ] 커밋
+- [x] 커밋
   ```
-  git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/resources/db/migration/app/V20260827112529__weekly_notification_digest_expand.sql
+  git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/resources/db/migration/app/V20260827135725__weekly_notification_digest_expand.sql
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
   feat(was): 주간 알림 개편 app 스키마 expand 마이그레이션
 
