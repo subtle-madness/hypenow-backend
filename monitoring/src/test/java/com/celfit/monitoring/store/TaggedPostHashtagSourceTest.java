@@ -116,16 +116,27 @@ class TaggedPostHashtagSourceTest {
 				.containsExactly("TAGONLY");
 	}
 
-	/** 커버 간주 touch도 마찬가지 — 여기 걸리면 2단계 단건 수집의 due가 실크롤 없이 꺼진다. */
+	/**
+	 * 커버 간주 touch도 마찬가지 — 여기 걸리면 2단계 단건 수집의 due가 실크롤 없이 꺼진다. BOTH(겹침)
+	 * 행으로 검증해야 한다: hashtag 성분만 있는 행은 tag_detected_at이 NULL이라 이 가드가 없어도
+	 * 기존 tag_detected_at IS NOT NULL 조건에 걸려 애초에 안 건드려진다 — 신규 가드를 지우면 이 테스트가
+	 * 거짓 통과한다. TAGONLY도 함께 심어 가드가 "아무것도 안 건드림"이 아니라 "hashtag 성분만 가림"을
+	 * 증명한다.
+	 */
 	@Test
 	void touchCrawledDepth는_hashtag_성분_행을_건드리지_않는다() {
 		Instant takenAt = NOW.minusSeconds(86400);
-		repo.upsertHashtag(brandId, post("HASHONLY", "poster2", takenAt), NOW);
+		repo.insert(brandId, post("TAGONLY", "poster1", takenAt));
+		repo.insert(brandId, post("BOTH", "poster2", takenAt));
+		repo.upsertHashtag(brandId, post("BOTH", "poster2", takenAt), NOW);
 
 		repo.touchCrawledDepth(brandId, takenAt.minusSeconds(1), NOW);
 
 		assertThat(db.queryForObject(
-				"SELECT last_crawled_at IS NULL FROM brand_tagged_post WHERE brand_id = ? AND short_code = 'HASHONLY'",
+				"SELECT last_crawled_at IS NULL FROM brand_tagged_post WHERE brand_id = ? AND short_code = 'BOTH'",
+				Boolean.class, brandId)).isTrue();
+		assertThat(db.queryForObject(
+				"SELECT last_crawled_at IS NOT NULL FROM brand_tagged_post WHERE brand_id = ? AND short_code = 'TAGONLY'",
 				Boolean.class, brandId)).isTrue();
 	}
 
@@ -141,18 +152,24 @@ class TaggedPostHashtagSourceTest {
 				.containsExactly("TAGONLY");
 	}
 
-	/** 2단계 모수는 direct ∪ hashtag — tagged-only만 빠진다. 미보강 행이 먼저 온다(이관분 우선 충전). */
+	/**
+	 * 2단계 모수는 direct ∪ hashtag — tagged-only만 빠진다. 미보강 행이 먼저 오고(이관분 우선 충전),
+	 * 미보강 행끼리는 taken_at DESC(최신 우선) 보조 정렬이 걸린다 — DIRECT2를 HASHTAG보다 더 예전
+	 * taken_at으로 심어 그 보조 정렬을 고정한다.
+	 */
 	@Test
 	void unenumeratedDuePosts는_direct와_hashtag를_미보강_우선으로_돌려준다() {
 		Instant takenAt = NOW.minusSeconds(86400);
+		Instant olderTakenAt = NOW.minusSeconds(172800);
 		repo.insert(brandId, post("TAGONLY", "poster1", takenAt));
 		repo.upsertDirect(brandId, post("DIRECT", "poster2", takenAt), NOW);
 		repo.upsertHashtag(brandId, post("HASHTAG", "poster3", takenAt), NOW);
+		repo.upsertDirect(brandId, post("DIRECT2", "poster4", olderTakenAt), NOW);
 		repo.markEnriched(brandId, List.of("DIRECT"), NOW);   // 보강 완료 — 뒤로 밀린다
 
-		assertThat(repo.unenumeratedDuePosts(brandId, takenAt.minusSeconds(1)))
+		assertThat(repo.unenumeratedDuePosts(brandId, olderTakenAt.minusSeconds(1)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode)
-				.containsExactly("HASHTAG", "DIRECT");
+				.containsExactly("HASHTAG", "DIRECT2", "DIRECT");
 	}
 
 	/**
