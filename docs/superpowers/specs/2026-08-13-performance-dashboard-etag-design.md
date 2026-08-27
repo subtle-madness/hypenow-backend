@@ -1,6 +1,6 @@
 # 성과 대시보드 조건부 요청(ETag / 304) 설계
 
-> 상태: 🟢 활성 (2026-08-13 작성, 미구현 — 브랜치 `feature/data-fetch-performance-54d741`)
+> 상태: ✅ 구현/반영됨 (2026-08-28, PR ④ — 표면 4종(/contents·/comparison·/influencers·/growth) 확장·아카이브 워터마크 생략. 운영 승격 전 §5 스테이징 검증 8종 필수)
 >
 > 선행: [2026-08-12 성과 대시보드 고정 지연 원인 규명 회신](2026-08-12-perf-dashboard-fixed-latency-reply.md)
 > (슬림 조립으로 평균 7초 → 1.1초). 이 문서는 그 다음 단계다.

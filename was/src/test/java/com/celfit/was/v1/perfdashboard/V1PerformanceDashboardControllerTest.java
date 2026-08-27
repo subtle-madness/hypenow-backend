@@ -11,6 +11,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -35,6 +36,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.hamcrest.Matchers;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +44,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 /**
  * /v1/performance-dashboard 표면 계약(스펙 §7-1) — 필터 값 공간, statusCounts의 기간 필터 무관성,
@@ -63,6 +66,27 @@ class V1PerformanceDashboardControllerTest {
 
 	@MockitoBean
 	PerformanceComparisonAssembler comparisonAssembler;
+
+	@MockitoBean
+	DashboardVersion dashboardVersion;
+
+	/**
+	 * 기본 스텁의 버전키 — 이 클래스의 기존 표면 계약 테스트는 {@code If-None-Match}를 보내지 않아
+	 * 전부 조건부 <b>미스</b>(200)다. 304를 보려는 테스트만 아래 {@link #ETAG}를 명시적으로 실어 보낸다.
+	 */
+	private static final String VERSION = "0123456789abcdef0123456789abcdef";
+
+	/** 위 버전키의 ETag 표면 — 앞 16자 약한 검증자(설계 §2-7). 리터럴이라 산출 규칙과 독립이다. */
+	private static final String ETAG = "W/\"0123456789abcdef\"";
+
+	/** 설계 §4의 캐시 헤더 — Spring Security 기본(no-store)을 이 4표면에서만 덮는다. */
+	private static final String CACHE_CONTROL = "private, no-cache";
+
+	@BeforeEach
+	void 버전키_기본_스텁() {
+		// lenient: 400으로 끝나는 테스트는 버전 계산에 도달하지 않는다(값 공간 검증이 조건부보다 앞).
+		lenient().when(dashboardVersion.compute(7L)).thenReturn(VERSION);
+	}
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
@@ -1221,6 +1245,72 @@ class V1PerformanceDashboardControllerTest {
 
 		// 시계열은 인덱스 ref만으로 답한다 — 카드 하이드레이션(비싼 패스)을 타면 이점이 사라진다.
 		then(assembler).should(never()).hydratePage(any(), anyList());
+	}
+
+	// ---------- 조건부 요청(2026-08-13 ETag 설계) ----------
+
+	@Test
+	void 같은_버전이면_304이고_조립이_돌지_않는다() throws Exception {
+		mockMvc.perform(get(CONTENTS).header("If-None-Match", ETAG).with(user(principal())))
+				.andExpect(status().isNotModified())
+				.andExpect(header().string("ETag", ETAG))
+				.andExpect(header().stringValues("Cache-Control", CACHE_CONTROL))
+				// 304는 본문을 실을 수 없다(설계 §5-④) — 잔재가 남으면 일부 클라이언트가 응답을
+				// 기다리며 멈춘다.
+				// 픽스처 메서드 content(...)와 이름이 겹쳐 정적 임포트 대신 한정한다.
+				.andExpect(MockMvcResultMatchers.content().string(""))
+				.andExpect(header().doesNotExist("Content-Length"));
+
+		// 이 설계의 이득 자체 — 조립·직렬화를 통째로 건너뛴다(응답 후 해싱 방식과 갈리는 지점, §3).
+		then(assembler).should(never()).index(anyLong());
+		then(assembler).should(never()).assemble(anyLong());
+	}
+
+	@Test
+	void 다른_버전이면_200과_ETag_캐시_헤더가_실린다() throws Exception {
+		givenIndexed(content("1", "tracking", "2026-08-06"));
+
+		mockMvc.perform(get(CONTENTS).header("If-None-Match", "W/\"0000000000000000\"")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(header().string("ETag", ETAG))
+				// stringValues로 값 목록 전체를 못박는다 — Security 기본값이 두 번째 Cache-Control로
+				// 따라붙으면 첫 값만 보는 단정은 통과해 버린다(no-store가 남은 채로 그린).
+				.andExpect(header().stringValues("Cache-Control", CACHE_CONTROL))
+				// Pragma: no-cache도 함께 걷힌다 — Security 헤더 라이터는 셋(Cache-Control·Pragma·
+				// Expires) 중 하나라도 이미 있으면 통째로 물러선다.
+				.andExpect(header().doesNotExist("Pragma"))
+				// 본문 계약은 불변이다 — 조건부는 헤더만 더한다(기존 단정과 같은 값).
+				.andExpect(jsonPath("$.data[0].item.id").value("1"))
+				.andExpect(jsonPath("$.meta.total").value(1));
+	}
+
+	@Test
+	void 파라미터_400은_조건부보다_앞이다() throws Exception {
+		mockMvc.perform(get(CONTENTS + "?sort=bogus").header("If-None-Match", ETAG).with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		// 잘못된 요청이 304로 가려지면 클라이언트는 낡은 사본을 정답으로 믿는다(400이 사라진다).
+		then(dashboardVersion).should(never()).compute(anyLong());
+	}
+
+	@Test
+	void 네_표면_모두_조건부가_걸리고_단건은_아니다() throws Exception {
+		for (String url : List.of(CONTENTS, COMPARISON, INFLUENCERS, GROWTH)) {
+			mockMvc.perform(get(url).header("If-None-Match", ETAG).with(user(principal())))
+					.andExpect(status().isNotModified())
+					.andExpect(header().string("ETag", ETAG))
+					.andExpect(header().string("Cache-Control", CACHE_CONTROL));
+		}
+		then(assembler).should(never()).index(anyLong());
+
+		// 단건은 제외(설계 §1) — 응답이 작고 호출이 드물다. If-None-Match를 보내도 그대로 200이고
+		// ETag도 없다(조건부 표면이 아니라는 뜻).
+		givenAssembled(content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
+		mockMvc.perform(get(CONTENTS + "/SC1").header("If-None-Match", ETAG).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(header().doesNotExist("ETag"));
 	}
 
 	// ---------- 픽스처 ----------
