@@ -54,6 +54,7 @@ crawler:
     batch-limit: 50   # 실행 1회당 유사 계정을 수확할 시드(뷰티 QUALIFIED) 수
   beauty:
     batch-limit: 500  # 판정 1회당 처리할 계정 수 상한(실행 시간 제어 — 청크 50 × 최대 240s). 초과분은 다음 실행에서.
+    rejudge-cooldown-days: 30  # 비뷰티 재판정 쿨다운(일) — 수집으로 프로필이 매 주기 갱신되는 F&B 계정이 매일 재선정되는 것을 차단(스펙 2026-08-27)
     judge: claude-api # 판정 구현 — claude-api(기본, Anthropic SDK: ANTHROPIC_AUTH_TOKEN 구독 우선·ANTHROPIC_API_KEY 폴백, 모델 crawler.beauty.claude-model 기본 claude-haiku-4-5) | gemini(롤백: GEMINI_API_KEY) | claude-cli(로컬 Claude CLI 롤백)
   reels:
     batch-limit: 10   # 실행 1회당 릴스를 수확할 계정 수 — 계정당 HikerAPI 1요청(pk 없으면 스킵)

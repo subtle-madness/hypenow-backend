@@ -50,7 +50,7 @@ class SettingsApiTest extends IntegrationTest {
     void 기본값_조회() throws Exception {
         mvc.perform(get("/admin/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(10))
+                .andExpect(jsonPath("$.length()").value(11))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].effective").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].defaultValue").value(100))
                 .andExpect(jsonPath("$[?(@.key=='discover.results-limit')].overridden").value(false))
@@ -61,6 +61,7 @@ class SettingsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$[?(@.key=='collect.revisit-interval-days')].defaultValue").value(7))
                 .andExpect(jsonPath("$[?(@.key=='similar.batch-limit')].defaultValue").value(50))
                 .andExpect(jsonPath("$[?(@.key=='beauty.batch-limit')].defaultValue").value(500))
+                .andExpect(jsonPath("$[?(@.key=='beauty.rejudge-cooldown-days')].defaultValue").value(30))
                 .andExpect(jsonPath("$[?(@.key=='reels.batch-limit')].defaultValue").value(10))
                 .andExpect(jsonPath("$[?(@.key=='reels.actor-results-limit')].defaultValue").value(6));
     }

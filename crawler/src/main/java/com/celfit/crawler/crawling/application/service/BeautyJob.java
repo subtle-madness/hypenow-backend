@@ -108,10 +108,13 @@ public class BeautyJob {
         }
         if (rejudge && targets.size() < limit) {
             // 재료(raw_profile)가 판정 후 갱신된 비뷰티만 — 재료가 그대로면 같은 판정만 반복한다.
+            // 쿨다운(beauty.rejudge-cooldown-days) 이내 판정분은 제외 — F&B 수집 계정의 매일 재선정 차단.
             // 오래된 판정 우선(쿼리 정렬) — 실패 배치가 옛 판정 시각으로 남아 먼저 재시도된다
+            java.time.Instant cooldownBefore = clock.instant()
+                    .minus(java.time.Duration.ofDays(settings.beautyRejudgeCooldownDays()));
             targets.addAll(influencers.findRejudgeTargets(
                     InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
-                    PageRequest.of(0, limit - targets.size())));
+                    cooldownBefore, PageRequest.of(0, limit - targets.size())));
         }
         if (rejudge && targets.size() < limit) {
             // 캡션 0건으로 판정된 뒤 릴스가 쌓인 계정 — 뷰티 판정분도 포함해 실측으로 되돌린다
@@ -276,8 +279,14 @@ public class BeautyJob {
             boolean applyBeauty = !fnbOnly.contains(v.username()) && v.beautyClass() != null;
             // F&B 축의 MANUAL(수동 교정)은 적용 시점에 막는다 — fnbOnly 마스크는 뷰티 축만 보호하므로,
             // rejudge·신규 경로로 같은 계정이 다시 잡히면 수동 F&B 판정이 CLAUDE로 조용히 덮인다.
+            // 정착 규칙(스펙 2026-08-27 §1): 캡션 기반 판정은 자동 재적용 금지(이후는 수동만),
+            // 캡션 0건 판정은 캡션이 생겼을 때만 1회 업그레이드 — count 미기록(NULL)은 정착으로 취급.
+            Short prevFnbCap = inf.getFnbCaptionCount();
+            boolean fnbFirstJudgment = inf.getFnbClass() == null;
+            boolean fnbCaptionUpgrade = prevFnbCap != null && prevFnbCap == 0 && capCount > 0;
             boolean applyFnb = v.fnbClass() != null
-                    && !Influencer.BEAUTY_SOURCE_MANUAL.equals(inf.getFnbSource());
+                    && !Influencer.BEAUTY_SOURCE_MANUAL.equals(inf.getFnbSource())
+                    && (fnbFirstJudgment || fnbCaptionUpgrade);
             // 적용할 축이 하나도 없으면(마스크·MANUAL 가드로 둘 다 버렸거나 양축 무응답) 저장·카운터·
             // 계정별 로그를 모두 건너뛴다 — 바뀐 게 없는데 진행 카운터가 오르면 배치 진척을 오독한다.
             if (!applyBeauty && !applyFnb) continue;

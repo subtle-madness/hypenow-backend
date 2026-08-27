@@ -128,11 +128,35 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         notBeauty("no-profile", JUDGED);
 
         List<Influencer> out = influencers.findRejudgeTargets(
-                InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE, PageRequest.of(0, 100));
+                InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                Instant.now(), PageRequest.of(0, 100));
 
         assertThat(out.stream().map(Influencer::getUsername)
                 .filter(u -> u.startsWith(PREFIX)))
                 .containsExactly(PREFIX + "refreshed");
+    }
+
+    @Test
+    void 재판정_선정은_쿨다운_이내_판정을_제외한다() {
+        Long run = runId();
+        // 컷오프: 이 시각 이전 판정만 재판정 대상
+        Instant cooldownBefore = JUDGED.plusSeconds(60);
+
+        // 대상: 판정이 컷오프보다 오래됐고 판정 후 새 스냅샷이 있다
+        Influencer old = notBeauty("cool-old", JUDGED);
+        profile(old, RawSource.SELF_GQL, JUDGED.plusSeconds(3600), run);
+
+        // 제외: 새 스냅샷은 있지만 판정이 컷오프 이후(쿨다운 이내)
+        Influencer recent = notBeauty("cool-recent", JUDGED.plusSeconds(120));
+        profile(recent, RawSource.SELF_GQL, JUDGED.plusSeconds(3600), run);
+
+        List<Influencer> out = influencers.findRejudgeTargets(
+                InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                cooldownBefore, PageRequest.of(0, 100));
+
+        assertThat(out.stream().map(Influencer::getUsername)
+                .filter(u -> u.startsWith(PREFIX)))
+                .containsExactly(PREFIX + "cool-old");
     }
 
     @Test
@@ -148,7 +172,8 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
         profile(legacy, RawSource.SELF_GQL, JUDGED.plusSeconds(3600), run);
 
         List<Long> order = influencers.findRejudgeTargets(
-                        InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE, PageRequest.of(0, 1000))
+                        InfluencerStatus.QUALIFIED, Influencer.BEAUTY_SOURCE_CLAUDE,
+                        Instant.now(), PageRequest.of(0, 1000))
                 .stream().map(Influencer::getId)
                 .filter(List.of(fresh.getId(), stale.getId(), legacy.getId())::contains).toList();
 
