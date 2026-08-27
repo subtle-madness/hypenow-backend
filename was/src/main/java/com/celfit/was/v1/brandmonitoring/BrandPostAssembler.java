@@ -121,20 +121,23 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * 인덱스 패스 결과 — refs 외 나머지는 {@link #hydrate}가 재사용하는 재료다: poolRowsByCode는
-	 * 노출 필터를 통과한 브랜드 풀 행, legacyByCode는 과도기 폴백 카드(풀과 겹치는 shortcode는 이미
-	 * 제외 — 풀 우선 병합 규칙), ownedShortCodes는 이 유저의 direct 등록 원장(source 파생에 썼던
-	 * 값을 하이드레이트가 다시 조회하지 않게 실어 나른다).
+	 * 인덱스 패스 결과 — refs 외 나머지는 {@link #hydrate}가 재사용하는 재료다: poolCodes는 노출
+	 * 필터를 통과한 브랜드 풀 shortcode 집합(하이드레이트의 풀/레거시 분기 기준), legacyByCode는
+	 * 과도기 폴백 카드(풀과 겹치는 shortcode는 이미 제외 — 풀 우선 병합 규칙), ownedShortCodes는
+	 * 이 유저의 direct 등록 원장(source 파생에 썼던 값을 하이드레이트가 다시 조회하지 않게 실어
+	 * 나른다).
 	 */
-	public record BrandPostIndex(List<PostRef> refs, Map<String, BrandTaggedPostRow> poolRowsByCode,
+	public record BrandPostIndex(List<PostRef> refs, Set<String> poolCodes,
 			Map<String, BrandPostResponse> legacyByCode, Set<String> ownedShortCodes) {
 	}
 
 	/**
-	 * 인덱스 패스(경량) — 브랜드 풀 행 + 협찬 판정 프로젝션(+ withViews면 최신 스냅샷 1행)만 읽어
-	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없어 비용이
-	 * 풀 크기(수집 상한 2,000)로 캡되고, 무거운 조립은 {@link #hydrate}가 페이지 코드에만 수행한다.
-	 * 표시 표면 전용이라 scope는 항상 ENRICHED_ONLY다.
+	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 6컬럼 <b>단일 조인 쿼리</b>({@link
+	 * BrandReadRepository#findBrandPostIndex}) + (withViews면) 최신 스냅샷 1행 프로젝션만 읽어
+	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없고, 무거운
+	 * 조립은 {@link #hydrate}가 페이지 코드에만 수행한다. 표시 표면 전용이라 scope는 항상
+	 * ENRICHED_ONLY다. 단일 쿼리·최소 컬럼인 이유(만 건대 브랜드의 행×컬럼 매핑이 지배 비용)는
+	 * 리포지토리 주석 참조.
 	 *
 	 * <p>과도기 폴백(레거시 direct)은 유저별 소량·이관으로 소멸 중이라 여기서 통째로 조립해 ref와
 	 * 카드 양쪽에 재사용한다 — 풀과 겹치는 shortcode는 풀이 이긴다(기존 병합 규칙 불변).
@@ -143,24 +146,20 @@ public class BrandPostAssembler {
 	 *                  최신 스냅샷 조회 자체를 생략한다(withComments 관용구와 같은 이유).
 	 */
 	public BrandPostIndex indexForBrand(long userId, BrandAccountRow account, boolean withViews) {
-		List<BrandTaggedPostRow> allPosts = brandReadRepository.findBrandPostsInWindow(account.id(),
-				windowCutoff(), true);
-		boolean hasDirectRegistration = allPosts.stream().anyMatch(p -> p.directRegisteredAt() != null);
+		List<BrandReadRepository.BrandPostIndexRow> allRows = brandReadRepository.findBrandPostIndex(
+				account.id(), windowCutoff(), true);
+		boolean hasDirectRegistration = allRows.stream().anyMatch(r -> r.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
 
-		Map<String, BrandTaggedPostRow> poolByCode = new LinkedHashMap<>();
-		for (BrandTaggedPostRow post : filterVisibleToUser(allPosts, ownedShortCodes)) {
-			poolByCode.putIfAbsent(post.shortCode(), post);
+		// 노출 필터(등록자 전용 노출, 08-19 — filterVisibleToUser 동형) + shortcode 중복 방어.
+		Map<String, BrandReadRepository.BrandPostIndexRow> poolByCode = new LinkedHashMap<>();
+		for (BrandReadRepository.BrandPostIndexRow row : allRows) {
+			if (row.tagDetectedAt() != null || ownedShortCodes.contains(row.shortCode())) {
+				poolByCode.putIfAbsent(row.shortCode(), row);
+			}
 		}
 
-		// 프로젝션은 shortcode IN이 아니라 브랜드 창 스코프 조인이다(스테이징 실측 2026-08-27 —
-		// 만 건대 IN 바인드 전개가 요청당 2초대를 만들었다). 술어가 findBrandPostsInWindow와 동형이라
-		// 모수가 같고, 노출 필터로 걸러질 행의 메타가 섞여 와도 키 조회만 하므로 무해하다.
-		Map<String, BrandReadRepository.SponsorshipMetaRow> metaByCode = poolByCode.isEmpty() ? Map.of()
-				: brandReadRepository.findSponsorshipMetaForBrand(account.id(), windowCutoff(), true).stream()
-						.collect(Collectors.toMap(BrandReadRepository.SponsorshipMetaRow::shortCode,
-								Function.identity(), (a, b) -> a));
 		// 피드 views null 서빙 규칙(snapshotOf 동형)을 정렬 키에도 적용한다 — HashMap을 쓰는 이유는
 		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
 		Map<String, Long> viewsByCode = new LinkedHashMap<>();
@@ -180,21 +179,20 @@ public class BrandPostAssembler {
 		}
 
 		List<PostRef> refs = new ArrayList<>(poolByCode.size() + legacyByCode.size());
-		for (BrandTaggedPostRow post : poolByCode.values()) {
-			BrandReadRepository.SponsorshipMetaRow meta = metaByCode.get(post.shortCode());
-			refs.add(new PostRef(post.shortCode(),
-					resolveSource(post, ownedShortCodes.contains(post.shortCode())),
-					BrandSponsorshipClassifier.classify(meta == null ? null : meta.isPaidPartnership(),
-							meta == null ? null : meta.caption()),
-					KstTimestamps.toKstDate(post.takenAt()),
-					viewsByCode.get(post.shortCode())));
+		for (BrandReadRepository.BrandPostIndexRow row : poolByCode.values()) {
+			refs.add(new PostRef(row.shortCode(),
+					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
+							ownedShortCodes.contains(row.shortCode())),
+					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
+					KstTimestamps.toKstDate(row.takenAt()),
+					viewsByCode.get(row.shortCode())));
 		}
 		for (BrandPostResponse legacy : legacyByCode.values()) {
 			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
 			refs.add(new PostRef(legacy.shortcode(), legacy.source(), legacy.sponsorship(), uploadedOn(legacy),
 					latest == null ? null : latest.views()));
 		}
-		return new BrandPostIndex(List.copyOf(refs), poolByCode, legacyByCode, ownedShortCodes);
+		return new BrandPostIndex(List.copyOf(refs), poolByCode.keySet(), legacyByCode, ownedShortCodes);
 	}
 
 	/**
@@ -208,15 +206,16 @@ public class BrandPostAssembler {
 	 */
 	public List<BrandPostResponse> hydrate(long userId, BrandAccountRow account, String viewerAccountType,
 			BrandPostIndex index, List<String> codes, boolean withComments) {
-		List<BrandTaggedPostRow> posts = codes.stream()
-				.map(index.poolRowsByCode()::get)
-				.filter(Objects::nonNull)
-				.toList();
+		Set<String> poolCodes = codes.stream()
+				.filter(index.poolCodes()::contains)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		// 인덱스는 경량 컬럼만 들고 있어 풀 카드 조립 입력(게시자 id·first_seen 등)은 페이지 코드만
+		// 여기서 다시 읽는다 — 페이지 상한(≤100) IN이라 인덱스 프로젝션과 달리 부담이 없다.
+		List<BrandTaggedPostRow> posts = poolCodes.isEmpty() ? List.of()
+				: brandReadRepository.findBrandPostsByShortCodes(account.id(), poolCodes);
 
 		Map<String, BrandPostResponse> poolCards = new LinkedHashMap<>();
 		if (!posts.isEmpty()) {
-			Set<String> poolCodes = posts.stream().map(BrandTaggedPostRow::shortCode)
-					.collect(Collectors.toCollection(LinkedHashSet::new));
 			Map<String, BrandPostMetaRow> metaByCode = brandReadRepository.findPostMeta(poolCodes).stream()
 					.collect(Collectors.toMap(BrandPostMetaRow::shortCode, Function.identity(), (a, b) -> a));
 			Map<String, List<BrandSnapshotRow>> snapshotsByCode = brandReadRepository.findSnapshots(poolCodes)
@@ -561,10 +560,16 @@ public class BrandPostAssembler {
 	 * 관점으로 갈린다 — 등록자에겐 "direct", 그 외 유저에겐 "tagged"(요구사항 §3).
 	 */
 	private static String resolveSource(BrandTaggedPostRow post, boolean registeredByUser) {
-		if (post.directRegisteredAt() == null) {
+		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), registeredByUser);
+	}
+
+	/** 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다. */
+	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
+			boolean registeredByUser) {
+		if (directRegisteredAt == null) {
 			return SOURCE_TAGGED;
 		}
-		if (post.tagDetectedAt() == null) {
+		if (tagDetectedAt == null) {
 			return SOURCE_DIRECT;
 		}
 		return registeredByUser ? SOURCE_DIRECT : SOURCE_TAGGED;
