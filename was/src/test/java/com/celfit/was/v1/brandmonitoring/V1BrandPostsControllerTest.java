@@ -444,30 +444,52 @@ class V1BrandPostsControllerTest {
 	}
 
 	/**
-	 * 회귀 케이스(2026-08-12 별도 탭 결정) — 해시태그 발견분은 더 이상 §6-1 목록에 섞이지 않는다.
-	 * repository가 tagged·hashtag 둘 다 갖고 있어도 posts 응답은 tagged만 보이고, source 화이트리스트·
-	 * meta.counts에서도 hashtag 어휘가 완전히 빠져야 한다(예전엔 여기 있었다 — Task 11 되돌림).
+	 * 해시태그 게시물은 통합 목록에 {@code source=hashtag}로 합류한다(2026-08-27 설계 §3, 08-12
+	 * 별도 탭 결정 폐기). counts에 hashtag 키가 생기고 source 화이트리스트도 그 값을 받는다.
 	 */
 	@Test
-	void 게시물_목록_API는_해시태그_발견분을_더이상_병합하지_않는다() throws Exception {
-		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+	void 게시물_목록은_해시태그_게시물을_source_hashtag로_합류시킨다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
-		givenHashtag(hashtagRow("HHH", "2026-08-05T01:00:00Z"));
+		givenMyTagMatch("HHH");
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"))
-				.andExpect(jsonPath("$.meta.counts", Matchers.not(Matchers.hasKey("hashtag"))));
-
-		then(brandReadRepository).should(never()).findHashtagPosts(anyLong(), any(), anyInt());
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].source")
+						.value(Matchers.contains("hashtag")))
+				.andExpect(jsonPath("$.meta.counts.hashtag").value(1))
+				.andExpect(jsonPath("$.meta.counts.tagged").value(1));
 	}
 
 	@Test
-	void source_필터에_hashtag를_주면_400이다() throws Exception {
+	void source_필터는_hashtag만_남긴다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		givenMyTagMatch("HHH");
+
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=hashtag").with(user(principal())))
-				.andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				// counts는 필터 전 전량 기준이라 흔들리지 않는다.
+				.andExpect(jsonPath("$.meta.counts.tagged").value(1));
+	}
+
+	/** 내 장부 태그와 겹치지 않는 해시태그 게시물은 목록에도 counts에도 없다(격리, fail-open 폐기). */
+	@Test
+	void 내_태그와_겹치지_않는_해시태그_게시물은_목록에_없다() throws Exception {
+		givenTagged(hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L)).willReturn(Set.of("내태그"));
+		given(brandReadRepository.findMatchedTags(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("HHH", "남의태그")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.counts.hashtag").value(0));
 	}
 
 	@Test
@@ -895,6 +917,22 @@ class V1BrandPostsControllerTest {
 				OffsetDateTime.parse("2026-08-01T01:00:00Z"), null, 30876L, 12L, 340L, null, "리즈다",
 				"https://cdn/pic.jpg", true, null, "ACTIVE", null,
 				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
+	}
+
+	/** hashtag-only 행 — hashtag_detected_at만 채워진다(source=hashtag, 사용자 격리 대상). */
+	private static BrandTaggedPostRow hashtagOnlyRow(String code, String takenAt) {
+		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
+		return new BrandTaggedPostRow(code, "hashtag_influencer", "9002", OffsetDateTime.parse(takenAt),
+				firstSeenAt, 0L, firstSeenAt, null, null, null, firstSeenAt);
+	}
+
+	/** 조회자(7L)의 장부 태그와 게시물 매칭 태그가 겹치도록 스텁 — 해시태그 격리 통과 조건. */
+	private void givenMyTagMatch(String... shortCodes) {
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L)).willReturn(Set.of("끌리메"));
+		given(brandReadRepository.findMatchedTags(eq(100L), any())).willReturn(
+				java.util.Arrays.stream(shortCodes)
+						.map(code -> new BrandReadRepository.MatchedTagRow(code, "끌리메"))
+						.toList());
 	}
 
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {

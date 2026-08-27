@@ -50,9 +50,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 이미 잘린 뒤다: 자산은 유저 간 max로 수집하므로 12개월치가 있어도 3개월 신청 유저에겐 3개월만
  * 보이고, counts도 그 창 기준이라 탭 뱃지가 실제 목록과 어긋나지 않는다. 상세도 같은 창이다.
  *
- * <p>해시태그 발견 게시물은 §6-1 목록에 <b>병합하지 않는다</b>(2026-08-12 결정 — 별도 탭) — 스냅샷·
- * 댓글·팔로워 보강이 없는 별개 성격의 데이터라 같은 필터·정렬·counts 계약에 억지로 끼워 맞추면
- * null 필드가 늘어난다. {@link #hashtagPosts} 참조.
+ * <p>해시태그 게시물은 2026-08-27 직접 수집 전환으로 <b>이 목록에 {@code source=hashtag}로 합류</b>한다
+ * (08-12 "별도 탭" 결정 폐기) — 이제 tagged·direct와 같은 풀에서 같은 보강·스냅샷·재수집을 받으므로
+ * "null 필드가 늘어난다"는 분리 근거가 사라졌다. 단 hashtag-only 행은 <b>조회자의 장부 태그와
+ * 겹칠 때만</b> 보인다({@code BrandPostAssembler.filterVisibleToUser}). 구 전용 API
+ * ({@link #hashtagPosts})는 전환 기간 동안 같은 풀에서 구 셰이프로 서빙된다.
  */
 @RestController
 @RequestMapping("/v1/brand-monitoring")
@@ -112,7 +114,7 @@ public class V1BrandPostsController {
 		BrandAccountRow account = findAccountOrThrow(brandId);
 
 		String sourceFilter = normalizeFilter(source, "source", BrandPostAssembler.SOURCE_TAGGED,
-				BrandPostAssembler.SOURCE_DIRECT);
+				BrandPostAssembler.SOURCE_DIRECT, BrandPostAssembler.SOURCE_HASHTAG);
 		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
 		String sortKey = normalizeSort(sort);
@@ -280,6 +282,9 @@ public class V1BrandPostsController {
 				BrandPostAssembler.SOURCE_TAGGED));
 		counts.put(BrandPostAssembler.SOURCE_DIRECT, count(all, BrandPostAssembler.PostRef::source,
 				BrandPostAssembler.SOURCE_DIRECT));
+		// 해시태그 합류(2026-08-27 설계 §3) — 08-12 별도 탭 결정으로 빠졌던 키가 통합과 함께 돌아왔다.
+		counts.put(BrandPostAssembler.SOURCE_HASHTAG, count(all, BrandPostAssembler.PostRef::source,
+				BrandPostAssembler.SOURCE_HASHTAG));
 		counts.put(BrandSponsorshipClassifier.SPONSORED, count(all, BrandPostAssembler.PostRef::sponsorship,
 				BrandSponsorshipClassifier.SPONSORED));
 		counts.put(BrandSponsorshipClassifier.ORGANIC, count(all, BrandPostAssembler.PostRef::sponsorship,
