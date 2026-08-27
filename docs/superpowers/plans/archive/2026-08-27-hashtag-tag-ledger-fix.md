@@ -1,6 +1,6 @@
 # 해시태그 태그 장부 갭 수정 Implementation Plan
 
-> 상태: 🟢 활성 · 2026-08-27 작성, 실행 전
+> 상태: ✅ 구현됨 · 2026-08-27 작성·구현
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

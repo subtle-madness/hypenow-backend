@@ -14,7 +14,7 @@
 
 ## 전제·주의 (실행 전에 반드시 읽을 것)
 
-- **선행 조건:** `docs/superpowers/plans/2026-08-27-hashtag-tag-ledger-fix.md`(계획 1)가 **먼저 완주·머지**돼 있어야 한다. 이 계획의 격리 필터는 사용자 태그 장부가 비어 있지 않다는 것을 전제하며, fail-open을 폐기한다.
+- **선행 조건:** `docs/superpowers/plans/archive/2026-08-27-hashtag-tag-ledger-fix.md`(계획 1 — 구현 완료·archive)가 **먼저 머지·배포**돼 있어야 한다. 이 계획의 격리 필터는 사용자 태그 장부가 비어 있지 않다는 것을 전제하며, fail-open을 폐기한다.
 - **정본 스펙:** `docs/superpowers/specs/2026-08-27-hashtag-direct-collection-design.md`. 설계 결정은 재논의하지 않는다.
 - **테스트 실행 전 매 셸에서 아래를 export한다.** 미설정 시 Testcontainers가 colima 소켓을 못 찾아 통합 테스트가 무더기로 실패한다(테스트 결함으로 오진하기 쉬운 실패 양상).
   ```bash
