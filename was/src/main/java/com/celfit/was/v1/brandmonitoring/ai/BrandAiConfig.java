@@ -5,6 +5,8 @@ import com.celfit.common.llm.VertexTokenProvider;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.setting.AppSettingRepository;
+import com.celfit.was.v1.brandmonitoring.BrandHashtagPostAssembler;
+import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import java.time.Clock;
 import java.util.concurrent.ThreadPoolExecutor;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,13 +50,15 @@ public class BrandAiConfig {
 
 	@Bean
 	public BrandAiToolbox brandAiToolbox(BrandLinkRepository linkRepository,
-			BrandReadRepository brandReadRepository, ObjectMapper objectMapper,
-			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
-		// 광고 판정 노출은 FE와 같은 토글을 쓴다 - 화면에서 가린 값을 어시스턴트가 말하면 킬 스위치가 무의미해진다.
+			BrandReadRepository brandReadRepository, BrandPostAssembler postAssembler,
+			BrandHashtagPostAssembler hashtagPostAssembler, ObjectMapper objectMapper) {
+		// 표시 표면(FE)과 같은 격리 경로 위에 재배치(2026-08-27 리뷰 C1/I2/I3/I4/I9) - 유저별 가시성
+		// 필터·표시 창 검사·경쟁사 광고 판정 억제는 BrandPostAssembler·BrandHashtagPostAssembler가
+		// 이미 강제하므로(광고 판정 노출 토글도 그쪽 배선에 있다) 여기서 따로 흉내내지 않는다.
 		// Clock은 빈이 아니라 직접 만든다 - was에 Clock 빈이 없고(생성자 직접 주입 관용구), 전역 빈을
 		// 새로 등록하면 자기 fixed Clock을 띄우는 기존 통합 테스트들과 충돌한다.
-		return new BrandAiToolbox(linkRepository, brandReadRepository, objectMapper,
-				Clock.systemUTC(), exposeAdDisclosure);
+		return new BrandAiToolbox(linkRepository, brandReadRepository, postAssembler, hashtagPostAssembler,
+				objectMapper, Clock.systemUTC());
 	}
 
 	@Bean
