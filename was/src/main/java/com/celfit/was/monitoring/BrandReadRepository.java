@@ -112,45 +112,77 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 협찬 판정 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·필터가 필요한 건
-	 * 판정 입력(is_paid_partnership·caption)뿐이라 표시 메타 전체({@link #findPostMeta})를 싣지
-	 * 않는다. 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
+	 * 브랜드 게시물 인덱스 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·창·필터·정렬·페이지
+	 * 슬라이스에 필요한 판정 입력만 <b>단일 쿼리</b>로 읽는다: 행 식별·창·source 파생(short_code·
+	 * taken_at·tag_detected_at·direct_registered_at) + 협찬 판정 입력(is_paid_partnership·caption).
+	 * 협찬 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
 	 * 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
 	 *
-	 * <p>shortcode IN이 아니라 <b>브랜드 창 스코프 조인</b>이다(스테이징 실측 2026-08-27) — 창 안
-	 * 정산 게시물이 만 건대인 브랜드(marynmay 10,427건)에서 IN 바인드 만 개 전개가 요청당 2초대를
-	 * 만들었다. 같은 술어의 조인은 서버 실행 200ms. 창·정산 술어는 {@link #findBrandPostsInWindow}와
-	 * 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다. 노출 필터(direct-only 등록자 전용)로
-	 * 걸러질 행의 메타가 섞여 올 수 있지만 호출부가 shortcode 키 조회만 하므로 무해하다.
+	 * <p>단일 쿼리·최소 컬럼인 이유(스테이징 실측 2026-08-27, marynmay 창 안 10,427행): 이 규모에선
+	 * DB 실행(EXPLAIN 21ms)이 아니라 <b>행×컬럼 값 전송·매핑</b>이 지배 비용이다 — 10컬럼 전량
+	 * 조회(1.78s) + 3컬럼 협찬 조회(0.44s) 2왕복 구조가 요청당 2초대를 만들었다. 창·정산 술어는
+	 * {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다.
+	 * 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown). 정렬은 호출부(자바) 몫이라
+	 * ORDER BY를 두지 않는다.
+	 *
+	 * <p>성과 대시보드 인덱스(2026-08-27 목록 최적화 설계)가 이 프로젝션을 상태(hidden)·작성자 판정에
+	 * 함께 쓴다 — {@code unavailable_at}·{@code author_username}·{@code author_ig_user_id} 세 컬럼 모두
+	 * short 값이라 캡션 대비 폭 증가는 무시 수준이다(행×컬럼 전송 비용이 지배하는 경로라 컬럼 추가는
+	 * 이 기준으로만 허용한다).
 	 */
-	public List<SponsorshipMetaRow> findSponsorshipMetaForBrand(long brandId, OffsetDateTime cutoff,
+	public List<BrandPostIndexRow> findBrandPostIndex(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
-				SELECT m.short_code, m.is_paid_partnership, m.caption
-				FROM brand_post_meta m
-				JOIN brand_tagged_post t ON t.short_code = m.short_code
+				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
+				       m.is_paid_partnership, m.caption,
+				       t.unavailable_at, t.author_username, t.author_ig_user_id
+				FROM brand_tagged_post t
+				LEFT JOIN brand_post_meta m ON m.short_code = t.short_code
 				WHERE t.brand_id = :brandId
 				  AND ( t.taken_at >= :cutoff OR t.direct_registered_at IS NOT NULL )
 				""" + enrichedFilter)
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(SponsorshipMetaRow.class)
+				.query(BrandPostIndexRow.class)
 				.list();
 	}
 
 	/**
-	 * 게시물별 최신 스냅샷 1행의 views 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) —
-	 * performance_desc 정렬 키 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대
-	 * 365행이라 정렬 키만 필요한 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를
-	 * null로 접는 서빙 규칙({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
-	 * 브랜드 창 스코프 조인인 이유는 {@link #findSponsorshipMetaForBrand} 주석 참조.
+	 * 브랜드 풀 행 배치 조회(shortcode 스코프) — 하이드레이트가 페이지에 실을 코드만 풀 행으로
+	 * 다시 읽는 용도({@link #findBrandPostIndex}가 경량 컬럼만 주므로). 페이지 상한(≤100)의 IN이라
+	 * 인덱스 프로젝션과 달리 바인드 전개 부담이 없다.
 	 */
-	public List<LatestViewsRow> findLatestViewsForBrand(long brandId, OffsetDateTime cutoff,
+	public List<BrandTaggedPostRow> findBrandPostsByShortCodes(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
+				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
+				       unavailable_at
+				FROM brand_tagged_post
+				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
+				""")
+				.param("brandId", brandId)
+				.param("shortCodes", shortCodes)
+				.query(BrandTaggedPostRow.class)
+				.list();
+	}
+
+	/**
+	 * 게시물별 최신 스냅샷 1행의 지표 프로젝션(2026-08-27 대시보드 목록 최적화 설계에서 확장) —
+	 * 정렬 키(views·likes·comments·engagement)와 대시보드 ref의 최신 지표 산출 전용. 시계열
+	 * 전량({@link #findSnapshots})은 게시물당 최대 365행이라 지표만 필요한 경로에 싣지 않는다.
+	 * content_type을 함께 주는 이유: 피드는 views를 null로 접는 서빙 규칙
+	 * ({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
+	 */
+	public List<LatestSnapshotRow> findLatestSnapshotsForBrand(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
-				SELECT DISTINCT ON (s.short_code) s.short_code, s.content_type, s.views
+				SELECT DISTINCT ON (s.short_code) s.short_code, s.captured_on, s.content_type,
+				       s.views, s.likes, s.likes_hidden, s.comments
 				FROM brand_post_snapshot s
 				JOIN brand_tagged_post t ON t.short_code = s.short_code
 				WHERE t.brand_id = :brandId
@@ -161,7 +193,7 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(LatestViewsRow.class)
+				.query(LatestSnapshotRow.class)
 				.list();
 	}
 
@@ -423,12 +455,22 @@ public class BrandReadRepository {
 			String adEvidenceJson) {
 	}
 
-	/** 협찬 판정 입력 프로젝션({@link #findSponsorshipMetaForBrand}) — isPaidPartnership null = 키 부재 보존. */
-	public record SponsorshipMetaRow(String shortCode, Boolean isPaidPartnership, String caption) {
+	/**
+	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership·caption null은
+	 * "메타 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라
+	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt은 source 파생·노출 필터 입력이다.
+	 *
+	 * <p>뒤 3개(unavailableAt·authorUsername·authorIgUserId)는 성과 대시보드 인덱스(2026-08-27 목록
+	 * 최적화 설계)의 상태(hidden)·작성자 판정 입력이다 — 브랜드 표면은 쓰지 않는다.
+	 */
+	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
+			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption,
+			OffsetDateTime unavailableAt, String authorUsername, String authorIgUserId) {
 	}
 
-	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */
-	public record LatestViewsRow(String shortCode, String contentType, Long views) {
+	/** 게시물별 최신 스냅샷 지표({@link #findLatestSnapshotsForBrand}) — contentType은 피드 views null 규칙용. */
+	public record LatestSnapshotRow(String shortCode, LocalDate capturedOn, String contentType,
+			Long views, Long likes, boolean likesHidden, Long comments) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */

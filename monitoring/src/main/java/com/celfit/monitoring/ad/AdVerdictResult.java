@@ -3,8 +3,10 @@ package com.celfit.monitoring.ad;
 import java.util.List;
 
 /**
- * Tier0~3 최종 판정 — verdict 4종(DISCLOSED/NOT_DISCLOSED/INSUFFICIENT/UNCERTAIN) ·
+ * Tier0~3 최종 판정 — verdict 5종(DISCLOSED/NOT_DISCLOSED/INSUFFICIENT/UNCERTAIN/FOREIGN_POST) ·
  * source(RULE/LLM) · violations 코드 배열 · evidence 근거 문구(스펙 §4 컬럼과 1:1).
+ * FOREIGN_POST(2026-08-27 추가, DECISIONS.md 참조)는 캡션 전체가 비한국어라 한국 공정위 지침
+ * 적용 대상이 아닌 게시물을 판정 제외한다는 뜻이다 — violations·evidence는 항상 빈 리스트.
  *
  * @param discardedPhrases 판정 계산에 반영되지 못하고 버려진 phrase 원문 — (1) LLM이 인용했지만
  *                          캡션에 실존하지 않거나(환각 차단) 공백인 phrase, (2) {@link

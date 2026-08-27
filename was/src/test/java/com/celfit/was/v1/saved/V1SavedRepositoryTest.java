@@ -11,6 +11,7 @@ import com.celfit.was.v1.saved.V1SavedRepository.SavedContentRow;
 import com.celfit.was.v1.saved.V1SavedRepository.SavedInfluencerRow;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -115,6 +116,16 @@ class V1SavedRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update("DELETE FROM app.users");
 		userId = jdbcTemplate.queryForObject(
 				"INSERT INTO app.users (email, password_hash) VALUES ('u@example.com', 'x') RETURNING id", Long.class);
+	}
+
+	@AfterEach
+	void tearDownSeeds() {
+		// 컨테이너는 JVM 전체 공유(IntegrationTest static 싱글턴) — 시드가 남으면 뒤에 오는 클래스의
+		// DELETE FROM app.users가 saved_* FK(ON DELETE CASCADE 없음) 위반으로 깨진다
+		// (V1InfluencerDiscoveryRepositoryTest.tearDownView()와 같은 공유 상태 규약).
+		jdbcTemplate.update("DELETE FROM app.saved_contents");
+		jdbcTemplate.update("DELETE FROM app.saved_influencers");
+		jdbcTemplate.update("DELETE FROM app.users");
 	}
 
 	/**

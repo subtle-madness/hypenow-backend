@@ -8,6 +8,7 @@ import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.classify.CommentClassificationJob;
 import com.celfit.analytics.config.AnalyticsSettings;
 import com.celfit.analytics.coverage.CoverageRepository;
+import com.celfit.analytics.mirror.DerivedViewRefresher;
 import com.celfit.analytics.mirror.MirrorJob;
 import com.celfit.analytics.mirror.MirrorRegistry;
 import javax.sql.DataSource;
@@ -59,10 +60,12 @@ public class AdminConfig {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
-			JobProgressRegistry jobProgressRegistry, RunHistory runHistory) {
+			JobProgressRegistry jobProgressRegistry, RunHistory runHistory,
+			DerivedViewRefresher derivedViewRefresher) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
 				classifyJob, analyzeJob, batchCollectJob, accountBatchCollectJob, accountAnalyzeJob,
-				synthesisRefreshJob, archiveJob, traitCanonJob, jobProgressRegistry, runHistory);
+				synthesisRefreshJob, archiveJob, traitCanonJob, jobProgressRegistry, runHistory,
+				derivedViewRefresher);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")

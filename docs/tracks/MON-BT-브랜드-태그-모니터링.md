@@ -266,6 +266,38 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
   채로 was를 배포하면) 브랜드 목록 조회가 500 에러가 난다. monitoring이 healthy임을 확인한
   뒤 was를 배포할 것. (08-18 시딩 계정 관리 표면 철회로 `brand_seeded_account`는 이 목록에서
   빠졌다 — was가 더 이상 그 테이블을 조회하지 않는다.)
+- **완전 외국어 캡션 FOREIGN_POST 분리**(2026-08-27 — **구현 완료**, DECISIONS.md 2026-08-27
+  행): LLM FOREIGN 카테고리(외국어 단독 표기)가 조합 단계에서 무조건 INSUFFICIENT+
+  FOREIGN_LANGUAGE가 되는데, 실측상 FOREIGN 1,854건 중 92%(1,701건)는 캡션 전체가 외국어인
+  해외 게시물이라 한국 지침 적용 대상이 아니다. 캡션에 한글이 전혀 없으면(음절
+  U+AC00–U+D7A3·자모 0자) LLM 호출 없이 신규 verdict `FOREIGN_POST`로 확정하는 Tier0 규칙을
+  추가(`AdDisclosureJudgeService.judgeCore`, is_paid_partnership·공백 캡션 규칙보다 뒤, Tier1
+  사전보다 앞). 한국어 캡션+외국어 단독 표기(한글 1자라도 있음)는 이 규칙을 건너뛰어 종전
+  경로(LLM FOREIGN→INSUFFICIENT+FOREIGN_LANGUAGE)를 그대로 유지 — 조합기(`AdVerdictCombiner`)
+  자체는 무변경. `ad_verdict` CHECK 제약에 FOREIGN_POST 추가
+  (`V20260827060558__ad_disclosure_foreign_post_verdict.sql`, additive, archived_rows 선례와
+  동일 패턴). was는 verdict를 문자열 그대로 패스스루라(`BrandReadRepository`·
+  `BrandPostAssembler`) 신규 값에 대한 코드 변경 불필요(확인만).
+  **배포 시 운영 리셋 필요** — 사전·프롬프트 변경은 자동 재판정 안 되는 기존 계약(스펙 §7
+  캡션 해시 비교)이라, 기존에 이미 INSUFFICIENT+FOREIGN_LANGUAGE로 확정된 완전 외국어 행은
+  캡션이 안 바뀌는 한 재판정되지 않는다. 배포 후 아래 SQL로 verdict를 NULL로 되돌려야 다음
+  백필(`backfillUnjudged`)이 새 Tier0 규칙으로 재판정한다:
+  ```sql
+  -- brand_post_meta.ad_violations는 jsonb 배열(예: ["FOREIGN_LANGUAGE"]) — ?| 연산자로 포함 검사.
+  UPDATE brand_post_meta
+     SET ad_verdict = NULL,
+         ad_verdict_source = NULL,
+         ad_violations = NULL,
+         ad_evidence = NULL,
+         ad_judged_at = NULL,
+         judged_caption_hash = NULL
+   WHERE ad_verdict = 'INSUFFICIENT'
+     AND ad_violations ?| array['FOREIGN_LANGUAGE'];
+  ```
+  리셋 대상 중 한국어 캡션이 섞인 행(케이스 1)은 새 Tier0 규칙을 통과해 그대로 LLM
+  FOREIGN→INSUFFICIENT로 재확정되므로 결과가 바뀌지 않는다 — 리셋은 "완전 외국어 행만 골라
+  다시 도는" 정밀 타격이 아니라 조건에 걸리는 전량 재판정이지만, 재판정 결과가 다르지
+  않은 행은 verdict만 같은 값으로 다시 쓰여 손실이 없다.
 
 수집 개수 상한(2026-08-19 — **구현 완료**,
 [spec 2026-08-19](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) ·

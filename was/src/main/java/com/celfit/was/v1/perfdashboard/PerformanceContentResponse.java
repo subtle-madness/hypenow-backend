@@ -70,9 +70,36 @@ public record PerformanceContentResponse(
 			String thumbnailUrl,
 			String hiddenAt,
 			List<TrackingItemResponse.SnapshotResponse> snapshots,
+			PreviousDayValues previousDayValues,
 			Long commentsTotal,
 			boolean commentsHidden,
 			long commentsCollectedCount,
 			List<TrackingItemResponse.PostCommentResponse> recentComments) {
+	}
+
+	/** 직전 스냅샷의 지표 3종(FE "▲오늘" 증가분 재료, 2026-08-27) — 직전 스냅샷이 없으면 객체 자체가 null. */
+	public record PreviousDayValues(Long views, Long likes, Long comments) {
+	}
+
+	/**
+	 * snapshotMode=latest(2026-08-27) — 스냅샷을 최신 1개로 줄인 사본. previousDayValues는 전체
+	 * 시계열에서 이미 계산돼 있어 그대로 보존된다(잘라낸 뒤 계산하면 항상 null이 되므로 순서 불변).
+	 */
+	public PerformanceContentResponse withLatestSnapshotOnly() {
+		PerformancePostResponse post = item().post();
+		if (post == null || post.snapshots().size() <= 1) {
+			return this;
+		}
+		List<TrackingItemResponse.SnapshotResponse> latest = List.of(post.snapshots().get(post.snapshots().size() - 1));
+		PerformancePostResponse trimmed = new PerformancePostResponse(post.url(), post.shortcode(),
+				post.contentType(), post.uploadedAt(), post.caption(), post.matchedKeywords(),
+				post.thumbnailUrl(), post.hiddenAt(), latest, post.previousDayValues(), post.commentsTotal(),
+				post.commentsHidden(), post.commentsCollectedCount(), post.recentComments());
+		return new PerformanceContentResponse(new PerformanceItemResponse(item().id(), item().mode(),
+				item().status(), item().handle(), item().displayName(), item().profileImageUrl(),
+				item().followers(), item().lastUploadedAt(), item().campaignId(), item().campaignName(),
+				item().sourceUrl(), item().registeredAt(), item().trackingDays(), item().keywords(), trimmed,
+				item().nextCheckAt()), source(), sponsorship(), canonicalPostId(), additionalSources(),
+				brandAccountId());
 	}
 }
