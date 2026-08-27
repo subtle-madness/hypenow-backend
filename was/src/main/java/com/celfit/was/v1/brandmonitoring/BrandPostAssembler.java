@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
@@ -9,6 +10,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
+import com.celfit.was.monitoring.BrandReadRepository.MatchedTagRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.AuthorMask;
@@ -17,6 +19,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -57,6 +60,8 @@ public class BrandPostAssembler {
 
 	static final String SOURCE_TAGGED = "tagged";
 	static final String SOURCE_DIRECT = "direct";
+	/** 해시태그 열거로만 편입된 행(2026-08-27 설계 §3) — 사용자 격리 필터가 걸리는 유일한 source. */
+	static final String SOURCE_HASHTAG = "hashtag";
 
 	private static final Logger log = LoggerFactory.getLogger(BrandPostAssembler.class);
 
@@ -86,6 +91,8 @@ public class BrandPostAssembler {
 	/** 과도기 폴백 전용 — TODO(contract) C 단계에서 제거. */
 	private final TrackingItemAssembler trackingItemAssembler;
 	private final MonitoringItemRepository monitoringItemRepository;
+	/** 해시태그 격리 필터(2026-08-27 설계 §3) — 조회자 본인의 태그 원장. */
+	private final BrandHashtagTagRepository hashtagTagRepository;
 	/** 광고 표기 판정 노출 게이트(스펙 §10-2 드라이런 후 개통) — 기본 false, was 문서화(Task 18)에서 개통 절차 안내. */
 	private final boolean exposeAdDisclosure;
 	private static final ObjectMapper OM = new ObjectMapper();
@@ -93,12 +100,14 @@ public class BrandPostAssembler {
 	public BrandPostAssembler(BrandReadRepository brandReadRepository,
 			BrandPostCampaignRepository postCampaignRepository, BrandDirectPostRepository directPostRepository,
 			TrackingItemAssembler trackingItemAssembler, MonitoringItemRepository monitoringItemRepository,
+			BrandHashtagTagRepository hashtagTagRepository,
 			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
 		this.brandReadRepository = brandReadRepository;
 		this.postCampaignRepository = postCampaignRepository;
 		this.directPostRepository = directPostRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
 		this.monitoringItemRepository = monitoringItemRepository;
+		this.hashtagTagRepository = hashtagTagRepository;
 		this.exposeAdDisclosure = exposeAdDisclosure;
 	}
 
@@ -317,13 +326,26 @@ public class BrandPostAssembler {
 			return List.of();
 		}
 
-		// 노출 필터(등록자 전용 노출 요구사항, 08-19) — direct-only(tag_detected_at IS NULL)는 등록한
-		// 유저에게만 보인다. 원장 조회는 direct 등록 행이 하나도 없으면 생략한다(불필요한 조회 방지 —
+		// 노출 필터(등록자 전용 노출 요구사항 08-19 + 해시태그 격리 2026-08-27 설계 §3) —
+		// direct-only는 등록한 유저에게만, hashtag-only는 "내 장부 태그 ∩ 게시물 매칭 태그 ≠ ∅"일
+		// 때만 보인다. 두 보조 조회 모두 해당 성분의 행이 하나도 없으면 생략한다(불필요한 조회 방지 —
 		// exposeAdDisclosure 토글과 같은 관용구).
 		boolean hasDirectRegistration = allPosts.stream().anyMatch(p -> p.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
-		List<BrandTaggedPostRow> posts = filterVisibleToUser(allPosts, ownedShortCodes);
+		// 격리 대상은 tagged 성분이 없는 hashtag 행뿐이다 — tagged가 붙은 행은 브랜드 공유(기존 규칙).
+		Set<String> isolatedCodes = allPosts.stream()
+				.filter(p -> p.tagDetectedAt() == null && p.hashtagDetectedAt() != null)
+				.map(BrandTaggedPostRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> myTags = isolatedCodes.isEmpty() ? Set.of()
+				: hashtagTagRepository.findByUserAndBrand(userId, account.id());
+		Map<String, Set<String>> matchedTagsByCode = isolatedCodes.isEmpty() ? Map.of()
+				: brandReadRepository.findMatchedTags(account.id(), isolatedCodes).stream()
+						.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
+								Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
+		List<BrandTaggedPostRow> posts =
+				filterVisibleToUser(allPosts, ownedShortCodes, myTags, matchedTagsByCode);
 		if (posts.isEmpty()) {
 			return List.of();
 		}
@@ -352,18 +374,44 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * 노출 필터(요구사항 §2, 08-19) — 해시태그로 감지된 게시물({@code tag_detected_at IS NOT NULL})은
-	 * 전원 노출, 직접 등록 전용 게시물({@code tag_detected_at IS NULL && direct_registered_at IS NOT
-	 * NULL})은 등록한 유저에게만 노출한다. 등록자 원장은 {@code app.brand_direct_posts}
-	 * ({@link BrandDirectPostRepository#shortCodesByUser}) — 2026-08-18 direct 통합 이후 신규 등록·
-	 * 이관 전 레거시 등록을 모두 아우르는 유저 귀속 원장이다. monitoring DB({@code brand_tagged_post})와
-	 * SQL 조인하지 않고 이 자바 코드에서 조합한다(시스템 경계 — was는 monitoring·app 스키마를 조인하지 않는다).
+	 * 노출 필터(요구사항 §2 08-19 + 해시태그 격리 2026-08-27 설계 §3) — 세 갈래다:
+	 *
+	 * <ol>
+	 *   <li><b>tagged 성분이 있는 행</b>({@code tag_detected_at IS NOT NULL}) — 전원 노출. 브랜드에
+	 *       연결된 사용자가 공유하는 자산이다(기존 규칙 불변).</li>
+	 *   <li><b>내가 등록한 direct 행</b> — 등록자 원장 {@code app.brand_direct_posts}
+	 *       ({@link BrandDirectPostRepository#shortCodesByUser})에 있으면 노출.</li>
+	 *   <li><b>hashtag-only 행</b> — 조회자의 장부 태그({@code app.brand_hashtag_tags})와 게시물의
+	 *       매칭 태그({@code brand_post_matched_tag})의 <b>교집합이 있을 때만</b> 노출.</li>
+	 * </ol>
+	 *
+	 * <p><b>fail-open은 폐기됐다</b>(구 감지 목록은 "매칭 기록이 없거나 장부가 비면 전원 노출"이었다) —
+	 * 태그 장부 시딩·백필(2026-08-27 설계 §4)로 모든 사용자에게 최소 자동 태그가 생겨 완화가 필요
+	 * 없어졌고, 남겨 두면 남의 태그로 잡힌 게시물이 브랜드 전원에게 새어 나간다.
+	 *
+	 * <p>monitoring DB와 app DB는 물리적으로 분리돼 SQL 조인이 불가능하다 — 조합은 이 자바 코드에서
+	 * 한다(시스템 경계).
 	 */
 	private static List<BrandTaggedPostRow> filterVisibleToUser(List<BrandTaggedPostRow> posts,
-			Set<String> ownedShortCodes) {
+			Set<String> ownedShortCodes, Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
 		return posts.stream()
-				.filter(p -> p.tagDetectedAt() != null || ownedShortCodes.contains(p.shortCode()))
+				.filter(p -> visibleToUser(p, ownedShortCodes, myTags, matchedTagsByCode))
 				.toList();
+	}
+
+	private static boolean visibleToUser(BrandTaggedPostRow post, Set<String> ownedShortCodes,
+			Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
+		if (post.tagDetectedAt() != null) {
+			return true;
+		}
+		if (ownedShortCodes.contains(post.shortCode())) {
+			return true;
+		}
+		if (post.hashtagDetectedAt() == null) {
+			return false;   // 남이 등록한 direct-only
+		}
+		Set<String> matched = matchedTagsByCode.get(post.shortCode());
+		return matched != null && !Collections.disjoint(matched, myTags);
 	}
 
 	/** campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다. */
@@ -554,16 +602,37 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * source 파생(등록자 전용 노출 요구사항, 08-19) — tagged-only는 항상 "tagged". direct-only
-	 * ({@code tag_detected_at IS NULL})는 항상 "direct"다: {@link #filterVisibleToUser}를 통과한
-	 * 시점에 이미 이 유저가 등록자임이 보장된다. 겹침 행(둘 다 값이 있음, 전원 노출 대상)만 조회자
-	 * 관점으로 갈린다 — 등록자에겐 "direct", 그 외 유저에겐 "tagged"(요구사항 §3).
+	 * source 파생(등록자 전용 노출 요구사항 08-19 + 3원화 2026-08-27 설계 §3) — 우선순위는
+	 * <b>direct(등록자 관점) &gt; tagged &gt; hashtag</b>다.
+	 *
+	 * <ol>
+	 *   <li>이 유저가 직접 등록한 행이면 "direct" — 겹침이어도 등록자 관점이 이긴다.</li>
+	 *   <li>tagged 성분이 있으면 "tagged" — 남이 등록한 direct 성분은 이 유저에게 direct가 아니다.</li>
+	 *   <li>남은 direct 성분(남이 등록)은 hashtag 성분이 함께 있을 때 "hashtag"다 — 이 행이 이
+	 *       유저에게 보이는 이유가 그것이기 때문이다. hashtag 성분마저 없으면
+	 *       {@link #filterVisibleToUser}가 이미 걸렀으므로 도달 불가지만, 안전값으로 "direct"를 둔다.</li>
+	 *   <li>그 외(성분이 hashtag뿐)는 "hashtag".</li>
+	 * </ol>
+	 *
+	 * <p>인덱스 패스({@link #indexForBrand})는 이 메서드가 아니라 {@link #resolveSource(OffsetDateTime,
+	 * OffsetDateTime, boolean)} 2인자 코어를 쓴다 — 인덱스 프로젝션({@code BrandPostIndexRow})에
+	 * hashtag_detected_at이 아직 없어 3원화가 반영되지 않는다(2026-08-27 목록 타임아웃 해소 설계와
+	 * 별개 갭 — 해시태그 격리 트랙 후속 과제).
 	 */
 	private static String resolveSource(BrandTaggedPostRow post, boolean registeredByUser) {
-		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), registeredByUser);
+		if (post.directRegisteredAt() != null && registeredByUser) {
+			return SOURCE_DIRECT;
+		}
+		if (post.tagDetectedAt() != null) {
+			return SOURCE_TAGGED;
+		}
+		if (post.directRegisteredAt() != null) {
+			return post.hashtagDetectedAt() != null ? SOURCE_HASHTAG : SOURCE_DIRECT;
+		}
+		return SOURCE_HASHTAG;
 	}
 
-	/** 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다. */
+	/** 판정 코어 — 인덱스 행({@link #indexForBrand})의 source 파생 전용(위 3원화 갭 참조). */
 	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
 			boolean registeredByUser) {
 		if (directRegisteredAt == null) {
