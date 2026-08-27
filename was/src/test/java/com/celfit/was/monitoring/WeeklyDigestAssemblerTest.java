@@ -177,6 +177,37 @@ class WeeklyDigestAssemblerTest {
 	}
 
 	@Test
+	void 만_경계값_정확히_10000이면_1만이다() {
+		List<DigestItem> items = assembler.assemble(input(Map.of(),
+				List.of(reels("B1", "big", 10_000L, 1L, 1L)), List.of(), List.of(), List.of()));
+
+		assertThat(items.get(items.size() - 1).summary()).isEqualTo("@big 게시물 · 조회수 1만");
+	}
+
+	@Test
+	void 조회수_동률이면_먼저_나온_후보가_선택된다() {
+		// Stream.max는 동률일 때 먼저 등장한 원소를 유지한다(BinaryOperator.maxBy 구현) -
+		// candidates는 brandNewPosts를 endedPosts보다 앞에 두므로 동률 시 brandNewPosts가 이긴다.
+		List<DigestItem> items = assembler.assemble(input(Map.of(),
+				List.of(reels("B1", "brand_tied", 1_000L, 1L, 1L)),
+				List.of(reels("E1", "ended_tied", 1_000L, 1L, 1L)),
+				List.of(), List.of()));
+
+		assertThat(items.get(items.size() - 1).summary()).isEqualTo("@brand_tied 게시물 · 조회수 1,000");
+	}
+
+	@Test
+	void 좋아요_동률이면_먼저_나온_후보가_선택된다() {
+		// 조회수가 전부 없을 때도 같은 규칙 - candidates 순서상 brandNewPosts가 endedPosts보다 앞이다.
+		List<DigestItem> items = assembler.assemble(input(Map.of(),
+				List.of(feed("B1", "brand_tied", null, 50L, 1L)),
+				List.of(feed("E1", "ended_tied", null, 50L, 1L)),
+				List.of(), List.of()));
+
+		assertThat(items.get(items.size() - 1).summary()).isEqualTo("@brand_tied 게시물 · 좋아요 50");
+	}
+
+	@Test
 	void 지표가_하나도_없으면_하이라이트를_만들지_않는다() {
 		List<DigestItem> items = assembler.assemble(input(Map.of(),
 				List.of(feed("B1", "a", null, null, null)), List.of(), List.of(), List.of()));
