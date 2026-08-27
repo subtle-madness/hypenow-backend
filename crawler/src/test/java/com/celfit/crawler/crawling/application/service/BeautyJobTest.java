@@ -297,6 +297,108 @@ class BeautyJobTest {
     }
 
     @Test
+    void 캡션_기반_FnB_판정은_재판정에서_덮이지_않는다() {
+        // 정착 규칙(스펙 2026-08-27 §1) — 캡션 실측으로 판정된 F&B는 자동 재적용 금지, 이후는 수동만.
+        Influencer inf = qualified(1L, "settled");
+        inf.setBeauty(false);
+        inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        inf.classifyFnb(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "취미 계정", "CAPTION");
+        Instant prevJudgedAt = Instant.parse("2026-08-25T00:00:00Z");
+        inf.setFnbJudgedAt(prevJudgedAt);
+        inf.setFnbCaptionCount((short) 5);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findRejudgeTargets(eq(InfluencerStatus.QUALIFIED),
+                eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("settled",
+                BeautyClass.NOT_BEAUTY, "여전히 비뷰티", "BIO",
+                CategoryClass.INFLUENCER, "모델 노이즈로 뒤집힘", "BIO")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, true);
+
+        // 뷰티 축은 재판정 결과가 적용된다(rejudge의 목적)
+        assertThat(inf.getBeautyJudgedAt()).isEqualTo(NOW);
+        // F&B 축은 정착 — class·judgedAt·캡션 수 어느 것도 안 바뀐다
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.NONE);
+        assertThat(inf.getFnbJudgedAt()).isEqualTo(prevJudgedAt);
+        assertThat(inf.getFnbCaptionCount()).isEqualTo((short) 5);
+        assertThat(s.fnbApplied()).isZero();
+    }
+
+    @Test
+    void 캡션0_FnB_판정은_캡션이_생기면_업그레이드_재판정된다() {
+        // 캡션 없이(프로필 텍스트만) 판정된 것은 캡션이 쌓였을 때 1회 실측 재판정한다.
+        Influencer inf = qualified(2L, "upgrade");
+        inf.setBeauty(false);
+        inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        inf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "얇은 근거", "BIO");
+        inf.setFnbJudgedAt(Instant.parse("2026-08-25T00:00:00Z"));
+        inf.setFnbCaptionCount((short) 0);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("biography", "bio");
+        payload.put("latestPosts", List.of(Map.of("caption", "클라이밍"), Map.of("caption", "등산")));
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findRejudgeTargets(eq(InfluencerStatus.QUALIFIED),
+                eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(2L)).thenReturn(Optional.of(
+                new RawProfile(2L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("upgrade",
+                BeautyClass.NOT_BEAUTY, "비뷰티", "CAPTION",
+                CategoryClass.NONE, "캡션이 취미 위주", "CAPTION")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, true);
+
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.NONE);
+        assertThat(inf.getFnbJudgedAt()).isEqualTo(NOW);
+        assertThat(inf.getFnbCaptionCount()).isEqualTo((short) 2);
+        assertThat(s.fnbApplied()).isEqualTo(1);
+    }
+
+    @Test
+    void 캡션0_FnB_판정은_이번에도_캡션이_없으면_재적용하지_않는다() {
+        // 같은 품질(캡션 0건)의 판정으로 덮는 것은 노이즈 반복일 뿐이다 — 업그레이드만 허용.
+        Influencer inf = qualified(3L, "still-zero");
+        inf.setBeauty(false);
+        inf.setBeautySource(Influencer.BEAUTY_SOURCE_CLAUDE);
+        inf.classifyFnb(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "얇은 근거", "BIO");
+        Instant prevJudgedAt = Instant.parse("2026-08-25T00:00:00Z");
+        inf.setFnbJudgedAt(prevJudgedAt);
+        inf.setFnbCaptionCount((short) 0);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findRejudgeTargets(eq(InfluencerStatus.QUALIFIED),
+                eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(3L))
+                .thenReturn(Optional.of(legacyProfile(3L, "이름", "bio")));  // 캡션 없음
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("still-zero",
+                BeautyClass.NOT_BEAUTY, "비뷰티", "BIO",
+                CategoryClass.NONE, "근거 없음", "BIO")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, true);
+
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(inf.getFnbJudgedAt()).isEqualTo(prevJudgedAt);
+        assertThat(s.fnbApplied()).isZero();
+    }
+
+    @Test
     void 신규_판정은_두_축을_모두_적용한다() {
         Influencer inf = qualified(2L, "fresh");
         when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
