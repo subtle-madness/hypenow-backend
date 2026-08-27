@@ -10,6 +10,8 @@ import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
 import com.celfit.was.v1.brandmonitoring.BrandSponsorshipClassifier;
+import com.celfit.was.v1.common.KstTimestamps;
+import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceContentResponse.PerformanceItemResponse;
@@ -77,6 +79,8 @@ public class PerformanceContentAssembler {
 	 * 판정을 좌우하지 않는다). */
 	private static final int TAGGED_TRACKING_DAYS = 90;
 	private static final String MODE_URL = "url";
+	/** 최신 스냅샷 프로젝션의 매체 구분 — 피드는 views를 null로 접는다({@code snapshotOf} 서빙 규칙). */
+	private static final String CONTENT_TYPE_REELS = "REELS";
 
 	/** 레거시 응답엔 shortcode 필드가 없어 post.url 경로 세그먼트에서 뽑는다(스펙 §7-1). */
 	private static final Pattern SHORTCODE_PATTERN = Pattern.compile("/(?:p|reel|reels)/([A-Za-z0-9_-]+)");
@@ -146,6 +150,259 @@ public class PerformanceContentAssembler {
 				.thenComparing(c -> c.item().id()));
 		return new Assembled(List.copyOf(contents),
 				lastCollectedAt(legacy.lastCollectedAt(), brandPool.lastSweptAt()), competitorIds);
+	}
+
+	// ---------- 인덱스 패스(2026-08-27 목록 최적화 설계 §1-2) ----------
+
+	/**
+	 * 대시보드 인덱스 패스(경량) — 필터·정렬·statusCounts·페이지 슬라이스·집계가 필요로 하는 판정값
+	 * ({@link DashboardRef})만 만든다. {@link #assembleSlim}의 지배 비용(브랜드 풀 <b>전량</b> 풀
+	 * 조립 — 게시물당 최대 365행 스냅샷 시계열 + 표시 메타 배치)이 여기서 사라진다: 브랜드 풀은
+	 * 판정 컬럼 1쿼리({@link BrandReadRepository#findBrandPostIndex}) + 게시물별 최신 스냅샷 1행
+	 * 프로젝션({@link BrandReadRepository#findLatestSnapshotsForBrand})만 읽는다.
+	 *
+	 * <p>구성은 세 갈래이고, <b>판정·병합 의미론을 현행과 그대로 보존하는 분해</b>가 핵심이다:
+	 * <ol>
+	 *   <li><b>레거시 계열은 현행 전량 조립 유지</b>(유저당 최대 33행 — 08-12 실측 6ms). 조립된
+	 *       카드에서 ref를 유도하고({@link #refOf}), 카드 자체는 하이드레이트가 재사용한다.</li>
+	 *   <li><b>레거시와 겹치는 풀 코드만 풀 하이드레이트</b> — 겹침은 레거시 건수로 유계다.
+	 *       {@link BrandPostAssembler#hydrate}로 받은 풀 카드를 현행과 같은 {@link #fromLegacy}에
+	 *       태워 스냅샷 병합·협찬 승격·additionalSources·귀속을 그대로 수행한다. ref를 그 병합 카드에서
+	 *       유도하므로 "지표별 병합된 최신 스냅샷"이 재구현 없이 보존된다.</li>
+	 *   <li><b>나머지 풀 전량은 경량 ref 직조</b>({@link #refOfPoolRow}) — 파생 규칙은
+	 *       {@link #fromBrandPost}와 같은 함수를 공유한다(판정 함수 이원화 금지).</li>
+	 * </ol>
+	 *
+	 * <p>브랜드 표면({@link BrandPostAssembler#indexForBrand})과 다른 세 가지를 그대로 승계한다:
+	 * scope=ALL(정산 전 포함 — 빼면 지표 과소 계상), 커버리지 클램프 on(실수집 범위만 집계),
+	 * 노출 필터 + own-first 다계정 병합. {@link #loadBrandPool} 주석 참조.
+	 */
+	public DashboardIndex index(long userId) {
+		TrackingItemAssembler.AssembledList legacy = trackingItemAssembler.assembleList(userId);
+		// 활성 링크는 monitoring 게이트 밖에서 한 번 읽는다(08-12) — assemble과 같은 이유.
+		List<BrandLinkRow> links = linkRepository.findAllActiveByUser(userId);
+		Set<String> competitorIds = competitorBrandAccountIds(links);
+		Map<Long, CampaignRow> campaignsById = campaignRepository.findByUser(userId).stream()
+				.collect(Collectors.toMap(CampaignRow::id, Function.identity()));
+		PoolIndex pool = loadPoolIndex(userId, links);
+
+		// 레거시 아이템의 shortcode와 겹침 코드(브랜드별)를 먼저 확정한다 — 하이드레이트는 브랜드당 1회다.
+		Map<String, String> codeByItemId = new LinkedHashMap<>();
+		Map<String, Set<String>> overlapCodesByBrand = new LinkedHashMap<>();
+		for (TrackingItemResponse item : legacy.items()) {
+			String shortcode = shortcodeOf(item.post() == null ? null : item.post().url());
+			if (shortcode == null) {
+				continue;   // 게시물이 아직 없는 아이템(collecting·detecting) — item.id로만 식별된다.
+			}
+			codeByItemId.put(item.id(), shortcode);
+			PoolEntry entry = pool.byCode().get(shortcode);
+			if (entry != null) {
+				// 같은 shortcode를 가리키는 레거시 아이템이 둘이어도 하이드레이트는 코드당 1회다.
+				overlapCodesByBrand.computeIfAbsent(entry.brandAccountId(), k -> new LinkedHashSet<>())
+						.add(shortcode);
+			}
+		}
+		Map<String, BrandPostResponse> overlapByCode = hydrateOverlaps(userId, pool, overlapCodesByBrand);
+
+		Map<String, PerformanceContentResponse> legacyCards = new LinkedHashMap<>();
+		List<DashboardRef> refs = new ArrayList<>(legacy.items().size() + pool.byCode().size());
+		for (TrackingItemResponse item : legacy.items()) {
+			String shortcode = codeByItemId.get(item.id());
+			// 목록·비교 표면 계약대로 댓글 없이 조립한다(08-12 슬림) — 단건 조회는 assemble이 맡는다.
+			PerformanceContentResponse card = fromLegacy(item, shortcode,
+					shortcode == null ? null : overlapByCode.get(shortcode), false);
+			legacyCards.put(card.item().id(), card);
+			refs.add(refOf(card));
+		}
+
+		// 풀 전용 = 풀에 있는데 레거시가 대표하지 않는 코드. 소비 판정은 <b>풀 소속</b> 기준이다
+		// (하이드레이트가 어떤 이유로 카드를 못 만들어도 같은 콘텐츠가 두 번 실리지 않게).
+		Set<String> legacyCodes = Set.copyOf(codeByItemId.values());
+		List<String> poolOnlyCodes = pool.byCode().keySet().stream()
+				.filter(code -> !legacyCodes.contains(code))
+				.toList();
+		Map<String, String> brandByCode = new LinkedHashMap<>();
+		Map<String, BrandReadRepository.AuthorRow> authorsByCode = resolvePoolAuthors(pool, poolOnlyCodes);
+		Map<String, List<String>> campaignIdsByCode = resolvePoolCampaigns(pool, poolOnlyCodes);
+		for (String code : poolOnlyCodes) {
+			PoolEntry entry = pool.byCode().get(code);
+			DashboardIndex.BrandHydration brand = pool.brandsById().get(entry.brandAccountId());
+			brandByCode.put(code, entry.brandAccountId());
+			refs.add(refOfPoolRow(entry.brandAccountId(), entry.row(), entry.snapshot(), authorsByCode.get(code),
+					campaignIdsByCode.getOrDefault(code, List.of()),
+					brand.ownedShortCodes().contains(code)));
+		}
+
+		// 현행 contents 정렬과 같은 계약 — 업로드 최신순(미상 마지막), 타이브레이크는 contentKey.
+		refs.sort(Comparator.comparing(DashboardRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
+				.thenComparing(DashboardRef::contentKey));
+		return new DashboardIndex(userId, List.copyOf(refs),
+				lastCollectedAt(legacy.lastCollectedAt(), pool.lastSweptAt()), competitorIds,
+				Map.copyOf(legacyCards), Map.copyOf(brandByCode), pool.brandsById(), campaignsById);
+	}
+
+	/**
+	 * 브랜드 풀 경량 인덱스 — {@link #loadBrandPool}의 순회 구조(own-first · putIfAbsent · 계정 행
+	 * 부재 방어 · lastSweptAt max)를 그대로 쓰되, 브랜드당 조회가 판정 컬럼 1쿼리 + 최신 스냅샷
+	 * 1쿼리로 줄었다. 클램프·노출 필터는 {@code assembleBrandPosts}가 하던 것을 여기서 한다.
+	 */
+	private PoolIndex loadPoolIndex(long userId, List<BrandLinkRow> links) {
+		if (brandReadRepository.isEmpty() || brandPostAssembler.isEmpty() || links.isEmpty()) {
+			return PoolIndex.EMPTY;   // monitoring 비활성이거나 연결 0건 — 레거시 계열만
+		}
+
+		Map<String, PoolEntry> byCode = new LinkedHashMap<>();
+		Map<String, DashboardIndex.BrandHydration> brandsById = new LinkedHashMap<>();
+		OffsetDateTime lastSweptAt = null;
+		for (BrandLinkRow link : ownFirst(links)) {
+			Optional<BrandAccountRow> found = brandReadRepository.get().findAccount(link.brandId());
+			if (found.isEmpty()) {
+				log.warn("브랜드 연결의 monitoring 계정 행 부재 — 브랜드 풀 생략 brandId={}", link.brandId());
+				continue;
+			}
+			BrandAccountRow account = found.get();
+			String brandAccountId = String.valueOf(account.id());
+			// scope=ALL(enrichedOnly=false) — 지표 집계라 정산 전 게시물도 담는다(loadBrandPool 승계).
+			List<BrandReadRepository.BrandPostIndexRow> rows = brandReadRepository.get()
+					.findBrandPostIndex(account.id(), BrandPostAssembler.windowCutoff(), false);
+			// 커버리지 클램프(수집 상한 v2 §7-1) — coveredUntil의 KST 달력일보다 앞선 tagged 행 제외,
+			// direct 등록 행은 상한 밖이라 면제. assembleBrandPosts의 현행 술어와 같은 식이다.
+			LocalDate coveredOn = KstTimestamps.toKstDate(account.coveredUntil());
+			if (coveredOn != null) {
+				rows = rows.stream()
+						.filter(r -> r.directRegisteredAt() != null
+								|| !KstTimestamps.toKstDate(r.takenAt()).isBefore(coveredOn))
+						.toList();
+			}
+			// 원장 조회는 direct 등록 행이 하나도 없으면 생략한다(현행 관용구).
+			boolean hasDirectRegistration = rows.stream().anyMatch(r -> r.directRegisteredAt() != null);
+			Set<String> ownedShortCodes = hasDirectRegistration
+					? brandPostAssembler.get().directRegisteredShortCodes(userId) : Set.of();
+			// 노출 필터(등록자 전용 노출, 08-19 — filterVisibleToUser 동형) + shortcode 중복 방어.
+			Map<String, BrandReadRepository.BrandPostIndexRow> visible = new LinkedHashMap<>();
+			for (BrandReadRepository.BrandPostIndexRow row : rows) {
+				if (row.tagDetectedAt() != null || ownedShortCodes.contains(row.shortCode())) {
+					visible.putIfAbsent(row.shortCode(), row);
+				}
+			}
+
+			// 하이드레이트 재료는 게시물 0건인 브랜드도 실어 둔다 — 페이지 하이드레이트가 계정 행을
+			// 다시 읽지 않게 하는 것이 목적이고, lastSweptAt도 게시물 유무와 무관하다(현행과 동일).
+			brandsById.put(brandAccountId,
+					new DashboardIndex.BrandHydration(account, link.accountType(), ownedShortCodes));
+			lastSweptAt = lastCollectedAt(lastSweptAt, account.lastSweptAt());
+			if (visible.isEmpty()) {
+				continue;
+			}
+
+			Map<String, BrandReadRepository.LatestSnapshotRow> latestByCode = new LinkedHashMap<>();
+			for (BrandReadRepository.LatestSnapshotRow snapshot : brandReadRepository.get()
+					.findLatestSnapshotsForBrand(account.id(), BrandPostAssembler.windowCutoff(), false)) {
+				latestByCode.putIfAbsent(snapshot.shortCode(), snapshot);
+			}
+			for (BrandReadRepository.BrandPostIndexRow row : visible.values()) {
+				// own 링크를 먼저 순회하므로 같은 shortcode의 동률은 내 브랜드 쪽으로 풀린다(08-12 규칙).
+				byCode.putIfAbsent(row.shortCode(),
+						new PoolEntry(brandAccountId, row, latestByCode.get(row.shortCode())));
+			}
+		}
+		return new PoolIndex(byCode, Map.copyOf(brandsById), lastSweptAt);
+	}
+
+	/**
+	 * 레거시와 겹치는 코드만 브랜드별로 풀 카드 조립 — {@link BrandPostAssembler#hydrate}에 넘길
+	 * 인덱스는 이 코드들만 담은 어댑터다(refs·legacyByCode는 대시보드가 쓰지 않는다). 댓글은 싣지
+	 * 않는다(목록·비교 표면 계약, 08-12).
+	 */
+	private Map<String, BrandPostResponse> hydrateOverlaps(long userId, PoolIndex pool,
+			Map<String, Set<String>> codesByBrand) {
+		if (codesByBrand.isEmpty() || brandPostAssembler.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, BrandPostResponse> byCode = new LinkedHashMap<>();
+		for (Map.Entry<String, Set<String>> entry : codesByBrand.entrySet()) {
+			DashboardIndex.BrandHydration brand = pool.brandsById().get(entry.getKey());
+			List<String> codes = List.copyOf(entry.getValue());
+			BrandPostAssembler.BrandPostIndex adapter = new BrandPostAssembler.BrandPostIndex(
+					List.of(), Set.copyOf(codes), Map.of(), brand.ownedShortCodes());
+			for (BrandPostResponse post : brandPostAssembler.get()
+					.hydrate(userId, brand.account(), brand.accountType(), adapter, codes, false)) {
+				byCode.putIfAbsent(post.shortcode(), post);
+			}
+		}
+		return byCode;
+	}
+
+	/** 풀 전용 코드의 게시자 해석 — 브랜드를 넘어 한 번에 배치한다(조회는 ig_user_id 1회 + 폴백 1회). */
+	private Map<String, BrandReadRepository.AuthorRow> resolvePoolAuthors(PoolIndex pool, List<String> codes) {
+		if (codes.isEmpty() || brandPostAssembler.isEmpty()) {
+			return Map.of();
+		}
+		List<BrandPostAssembler.AuthorKey> keys = codes.stream()
+				.map(code -> pool.byCode().get(code).row())
+				.map(row -> new BrandPostAssembler.AuthorKey(row.shortCode(), row.authorIgUserId(),
+						row.authorUsername()))
+				.toList();
+		return brandPostAssembler.get().resolveAuthorsByKeys(keys);
+	}
+
+	/** 풀 전용 코드의 캠페인 매핑 — 조회가 브랜드 스코프라 브랜드별로 묶어 1회씩 부른다. */
+	private Map<String, List<String>> resolvePoolCampaigns(PoolIndex pool, List<String> codes) {
+		if (codes.isEmpty() || brandPostAssembler.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, Set<String>> codesByBrand = new LinkedHashMap<>();
+		for (String code : codes) {
+			codesByBrand.computeIfAbsent(pool.byCode().get(code).brandAccountId(),
+					k -> new LinkedHashSet<>()).add(code);
+		}
+		Map<String, List<String>> byCode = new LinkedHashMap<>();
+		for (Map.Entry<String, Set<String>> entry : codesByBrand.entrySet()) {
+			long brandId = pool.brandsById().get(entry.getKey()).account().id();
+			byCode.putAll(brandPostAssembler.get().campaignIdsByCode(brandId, entry.getValue()));
+		}
+		return byCode;
+	}
+
+	/**
+	 * 레거시 계열 카드 → ref. 최신 스냅샷은 <b>병합 후</b> 목록의 마지막 원소다 — 겹침 콘텐츠의
+	 * 지표가 "지표별 병합"을 거친 값이라야 ref 집계가 전량 조립과 일치한다.
+	 */
+	private static DashboardRef refOf(PerformanceContentResponse content) {
+		PerformancePostResponse post = content.item().post();
+		TrackingItemResponse.SnapshotResponse latest =
+				post == null || post.snapshots().isEmpty() ? null
+						: post.snapshots().get(post.snapshots().size() - 1);
+		return new DashboardRef(content.item().id(), content.canonicalPostId(), content.source(),
+				content.sponsorship(), content.item().status(), uploadedOn(content), content.brandAccountId(),
+				content.item().campaignId(), content.item().handle(), content.item().followers(),
+				latest == null ? null : latest.views(), latest == null ? null : latest.likes(),
+				latest != null && latest.likesHidden(), latest == null ? null : latest.comments(),
+				latest != null);
+	}
+
+	/**
+	 * 브랜드 풀 전용 행 → ref. 파생 규칙은 {@link #fromBrandPost}(및 그 산지인
+	 * {@code BrandPostAssembler.brandPost}·{@code snapshotOf})와 같다 — handle은 author_profile
+	 * 우선·열거 관측 폴백 후 소문자, views는 피드에서 null, 상태는 unavailable이면 hidden,
+	 * campaignId는 campaignIds의 head다.
+	 */
+	private static DashboardRef refOfPoolRow(String brandAccountId, BrandReadRepository.BrandPostIndexRow row,
+			BrandReadRepository.LatestSnapshotRow snap, BrandReadRepository.AuthorRow author,
+			List<String> campaignIds, boolean registeredByUser) {
+		String username = author != null && author.username() != null ? author.username() : row.authorUsername();
+		String handle = username == null ? "" : username.toLowerCase(Locale.ROOT);
+		boolean reels = snap != null && CONTENT_TYPE_REELS.equalsIgnoreCase(snap.contentType());
+		return new DashboardRef(SYNTHETIC_ID_PREFIX + row.shortCode(), row.shortCode(),
+				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), registeredByUser),
+				BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
+				row.unavailableAt() != null ? ItemStatus.HIDDEN : ItemStatus.TRACKING,
+				KstTimestamps.toKstDate(row.takenAt()), brandAccountId,
+				campaignIds.isEmpty() ? null : campaignIds.get(0), handle,
+				author == null ? null : author.followers(),
+				snap == null || !reels ? null : snap.views(),
+				snap == null ? null : snap.likes(), snap != null && snap.likesHidden(),
+				snap == null ? null : snap.comments(), snap != null);
 	}
 
 	// ---------- 레거시 계열 ----------
@@ -537,5 +794,44 @@ public class PerformanceContentAssembler {
 	private record BrandPool(Map<String, BrandPostResponse> byShortcode, OffsetDateTime lastSweptAt) {
 
 		static final BrandPool EMPTY = new BrandPool(Map.of(), null);
+	}
+
+	/** 대시보드 콘텐츠 1건의 경량 참조 — 필터·statusCounts·정렬·페이지·집계의 판정값 전부. */
+	public record DashboardRef(String contentKey, String shortcode, String source, String sponsorship,
+			String status, LocalDate uploadedOn, String brandAccountId, String campaignId,
+			String handle, Long followers, Long latestViews, Long latestLikes, boolean latestLikesHidden,
+			Long latestComments, boolean hasSnapshots) {
+	}
+
+	/**
+	 * 인덱스 패스 결과({@link #index}) — refs 외 나머지는 페이지 하이드레이트가 재사용하는 재료다.
+	 * 인덱스가 이미 읽은 것(레거시 카드·계정 행·등록 원장·캠페인)을 다시 읽지 않게 실어 나른다.
+	 *
+	 * @param legacyCards contentKey(=item.id) → 조립 완료 카드. 겹침 병합분이 이미 반영돼 있다.
+	 * @param brandByCode 풀 전용 shortcode → brandAccountId(겹침 코드는 레거시 카드가 정본이라 없다).
+	 * @param brandsById brandAccountId → 하이드레이트 재료. 게시물 0건인 연결 브랜드도 담긴다.
+	 * @param campaignsById 캠페인 id → 행(합성 아이템의 campaignName 산지).
+	 */
+	public record DashboardIndex(long userId, List<DashboardRef> refs, OffsetDateTime lastCollectedAt,
+			Set<String> competitorBrandAccountIds,
+			Map<String, PerformanceContentResponse> legacyCards,
+			Map<String, String> brandByCode,
+			Map<String, BrandHydration> brandsById,
+			Map<Long, CampaignRow> campaignsById) {
+
+		public record BrandHydration(BrandAccountRow account, String accountType, Set<String> ownedShortCodes) {
+		}
+	}
+
+	/** 풀 전용 ref 직조 입력 1건 — 귀속 브랜드 + 판정 컬럼 행 + (있으면) 최신 스냅샷 1행. */
+	private record PoolEntry(String brandAccountId, BrandReadRepository.BrandPostIndexRow row,
+			BrandReadRepository.LatestSnapshotRow snapshot) {
+	}
+
+	/** 브랜드 풀 경량 인덱스 — own-first putIfAbsent로 확정된 shortcode 키 풀 + 하이드레이트 재료. */
+	private record PoolIndex(Map<String, PoolEntry> byCode,
+			Map<String, DashboardIndex.BrandHydration> brandsById, OffsetDateTime lastSweptAt) {
+
+		static final PoolIndex EMPTY = new PoolIndex(Map.of(), Map.of(), null);
 	}
 }

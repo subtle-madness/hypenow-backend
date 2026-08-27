@@ -252,8 +252,13 @@ public class BrandPostAssembler {
 
 	// ---------- 브랜드 풀 ----------
 
-	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
-	static OffsetDateTime windowCutoff() {
+	/**
+	 * 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 창을 봐야 한다 — 패키지 밖에서 식을
+	 * 재계산하면 창 정책이 이원화된다(진단 하니스가 실제로 그렇게 복사돼 있다).
+	 */
+	public static OffsetDateTime windowCutoff() {
 		return LocalDate.now(KstTimestamps.KST).minusDays(WINDOW_DAYS)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 	}
@@ -417,6 +422,20 @@ public class BrandPostAssembler {
 			}
 		}
 		return usernames;
+	}
+
+	/**
+	 * 이 유저가 직접 등록한 게시물 원장(노출 필터·source 파생 입력) — {@code app.brand_direct_posts}.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 원장을 봐야 한다. 리포지토리를 그쪽에
+	 * 직접 주입하는 대신 이 경유로 노출한다 — 원장의 해석(무엇이 "내 등록인가")은 브랜드 조립의
+	 * 책임이고, 대시보드는 그 판정을 빌려 쓸 뿐이다.
+	 *
+	 * <p>호출 관용구도 그대로 승계한다: direct 등록 행이 하나도 없으면 <b>호출하지 않는다</b>
+	 * (불필요한 조회 방지 — {@link #assembleBrandPosts}·{@link #indexForBrand}와 동형).
+	 */
+	public Set<String> directRegisteredShortCodes(long userId) {
+		return directPostRepository.shortCodesByUser(userId);
 	}
 
 	/**
