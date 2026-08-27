@@ -100,6 +100,61 @@ class TaggedPostHashtagSourceTest {
 				String.class, brandId))).containsExactlyInAnyOrder("끌리메", "cclime");
 	}
 
+	// ── 열거 커버 가드(설계 §2-5) ────────────────────────────────────────────
+
+	/** hashtag 성분 행은 tagged 열거가 도달할 수 없다 — 열거 깊이 판정 모수에서 빠져야 한다. */
+	@Test
+	void trackedPosts는_hashtag_성분_행을_제외한다() {
+		Instant takenAt = NOW.minusSeconds(86400);
+		repo.insert(brandId, post("TAGONLY", "poster1", takenAt));
+		repo.upsertHashtag(brandId, post("HASHONLY", "poster2", takenAt), NOW);
+		repo.insert(brandId, post("BOTH", "poster3", takenAt));
+		repo.upsertHashtag(brandId, post("BOTH", "poster3", takenAt), NOW);
+
+		assertThat(repo.trackedPosts(brandId, takenAt.minusSeconds(1)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactly("TAGONLY");
+	}
+
+	/** 커버 간주 touch도 마찬가지 — 여기 걸리면 2단계 단건 수집의 due가 실크롤 없이 꺼진다. */
+	@Test
+	void touchCrawledDepth는_hashtag_성분_행을_건드리지_않는다() {
+		Instant takenAt = NOW.minusSeconds(86400);
+		repo.upsertHashtag(brandId, post("HASHONLY", "poster2", takenAt), NOW);
+
+		repo.touchCrawledDepth(brandId, takenAt.minusSeconds(1), NOW);
+
+		assertThat(db.queryForObject(
+				"SELECT last_crawled_at IS NULL FROM brand_tagged_post WHERE brand_id = ? AND short_code = 'HASHONLY'",
+				Boolean.class, brandId)).isTrue();
+	}
+
+	/** 부재 검증은 tagged-only 전용 — hashtag 성분 행의 404는 2단계 단건 수집이 이미 잡는다. */
+	@Test
+	void tagVerifyCandidates는_hashtag_성분_행을_제외한다() {
+		Instant takenAt = NOW.minusSeconds(86400);
+		repo.insert(brandId, post("TAGONLY", "poster1", takenAt));
+		repo.insert(brandId, post("BOTH", "poster3", takenAt));
+		repo.upsertHashtag(brandId, post("BOTH", "poster3", takenAt), NOW);
+
+		assertThat(repo.tagVerifyCandidates(brandId, takenAt.minusSeconds(1), NOW))
+				.containsExactly("TAGONLY");
+	}
+
+	/** 2단계 모수는 direct ∪ hashtag — tagged-only만 빠진다. 미보강 행이 먼저 온다(이관분 우선 충전). */
+	@Test
+	void unenumeratedDuePosts는_direct와_hashtag를_미보강_우선으로_돌려준다() {
+		Instant takenAt = NOW.minusSeconds(86400);
+		repo.insert(brandId, post("TAGONLY", "poster1", takenAt));
+		repo.upsertDirect(brandId, post("DIRECT", "poster2", takenAt), NOW);
+		repo.upsertHashtag(brandId, post("HASHTAG", "poster3", takenAt), NOW);
+		repo.markEnriched(brandId, List.of("DIRECT"), NOW);   // 보강 완료 — 뒤로 밀린다
+
+		assertThat(repo.unenumeratedDuePosts(brandId, takenAt.minusSeconds(1)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactly("HASHTAG", "DIRECT");
+	}
+
 	/**
 	 * direct 취소({@code deleteIfDirectOnly})가 hashtag 성분이 있는 겹침 행을 삭제하면 안 된다
 	 * (설계 §2-4 — direct 취소는 direct 표식만 해제한다). 컨트롤러는 이 메서드가 false를 돌려주면

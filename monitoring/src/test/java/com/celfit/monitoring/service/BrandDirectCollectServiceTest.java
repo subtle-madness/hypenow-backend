@@ -180,7 +180,7 @@ class BrandDirectCollectServiceTest {
 		}
 
 		@Override
-		public List<TrackedPost> directDuePosts(long brandId, Instant minTakenAt) {
+		public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt) {
 			return due.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
 		}
 	}

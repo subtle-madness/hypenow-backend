@@ -665,7 +665,7 @@ class BrandStoreTest {
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
 		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
-		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1700000000L)))
+		assertThat(taggedPosts.unenumeratedDuePosts(id, Instant.ofEpochSecond(1700000000L)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode)
 				.containsExactlyInAnyOrder("DirectOnly", "Overlap");
 	}
@@ -679,7 +679,7 @@ class BrandStoreTest {
 		taggedPosts.upsertDirect(id, post("Recent", 1754000000L), Instant.now());
 		taggedPosts.upsertDirect(id, post("Ancient", 1700000000L), Instant.now());
 
-		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1750000000L)))
+		assertThat(taggedPosts.unenumeratedDuePosts(id, Instant.ofEpochSecond(1750000000L)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Recent");
 	}
 

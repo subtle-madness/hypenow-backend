@@ -78,7 +78,7 @@ public class BrandDirectCollectService {
 	}
 
 	/**
-	 * 야간 스윕 2단계(설계 §3-2) — {@code directDuePosts} 중 {@link BrandCrawlPolicy#due}인 것만
+	 * 야간 스윕 2단계(설계 §3-2) — {@code unenumeratedDuePosts} 중 {@link BrandCrawlPolicy#due}인 것만
 	 * 게시물 단위 격리로 단건 수집한다. N건(20) 배치마다 {@link BrandCollectService#enrich}를 불러
 	 * markEnriched가 finally로 보장되게 한다(08-13 완결 배치 서빙 규율 — direct-only 행은 태그 열거
 	 * 백스톱 자체가 없어 1단계보다 더 엄격히 지켜야 한다).
@@ -100,7 +100,7 @@ public class BrandDirectCollectService {
 	private void doSweepDirect(BrandRow brand) {
 		Instant now = Instant.now();
 		List<TaggedPostRepository.TrackedPost> due = taggedPosts
-				.directDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE)).stream()
+				.unenumeratedDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE)).stream()
 				.filter(t -> BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now))
 				.toList();
 		List<PostInfo> batch = new ArrayList<>();

@@ -243,7 +243,8 @@ public class TaggedPostRepository {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
 				WHERE brand_id = ? AND taken_at >= ?
-				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL""",
+				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND hashtag_detected_at IS NULL""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
@@ -253,23 +254,32 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * direct 2단계 스윕의 모수 — <b>브랜드 창 안의 direct 등록 행 전부</b>다(2026-08-19 수집 상한 v2
-	 * §7-3). 겹침 행(태그·direct 둘 다)도 포함한다: direct 게시물은 2,000 상한 밖이라, 1단계 열거가
-	 * 상한에 걸려 도달하지 못한 겹침 행은 여기서 단건 콜로 살려야 사용자가 직접 등록한 게시물이
+	 * 2단계 스윕의 모수 — <b>브랜드 창 안에서 tagged 열거가 커버하지 못하는 행 전부</b>다
+	 * (2026-08-19 수집 상한 v2 §7-3 + <b>2026-08-27 해시태그 직접 수집 설계 §2-5 일반화</b>):
+	 * direct 등록 행과 hashtag 편입 행. 겹침 행(태그와 함께 있는 행)도 포함한다: 이 둘은 태그
+	 * 열거의 2,000 상한 밖이라, 1단계가 상한에 걸려 도달하지 못한 겹침 행은 여기서 단건 콜로 살려야
 	 * 동결되지 않는다. 구 필터({@code tag_detected_at IS NULL})는 그 구제 경로를 막았다.
+	 *
+	 * <p><b>정렬은 미보강(enriched_at IS NULL) 우선</b>(설계 §5) — 구 감지 데이터 이관분은 게시자·
+	 * 댓글·스냅샷이 통째로 비어 있고 was 표시 게이트가 정산분만 서빙하므로, 나이 기반 due 순서에
+	 * 맡기면 오래된 이관분의 첫 보강이 한없이 밀린다. 호출부가 스윕당 건수 상한으로 자르므로
+	 * 이 정렬이 곧 "누구부터 충전하나"의 정본이다.
 	 *
 	 * <p><b>중복 콜 방지는 필터가 아니라 구조로 유지된다</b>: 1단계 열거가 실제로 만난 겹침 행은
 	 * {@link #touchCrawled}로 last_crawled_at이 갱신돼 호출자의 {@link BrandCrawlPolicy#due}
 	 * 판정에서 빠진다. 즉 컷 안이라 방금 수집된 겹침 행은 2단계가 건너뛰고, 컷 밖이라 못 만난
 	 * 겹침 행만 단건 수집된다. (예외는 0~14일 티어 — {@code due}가 last_crawled_at과 무관하게 항상
 	 * true라 그 나이대 겹침 행은 스윕당 1콜이 겹친다. direct 등록은 수동 소수라 유한한 비용이다.)
-	 * 커버 간주 touch({@link #touchCrawledDepth})는 direct 행을 건드리지 않으므로 이 due는 실수집
-	 * 없이 사라지지 않는다.
+	 * 커버 간주 touch({@link #touchCrawledDepth})는 direct·hashtag 행을 건드리지 않으므로 이 due는
+	 * 실수집 없이 사라지지 않는다.
 	 */
-	public List<TrackedPost> directDuePosts(long brandId, Instant minTakenAt) {
+	public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt) {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
-				WHERE brand_id = ? AND direct_registered_at IS NOT NULL AND taken_at >= ?""",
+				WHERE brand_id = ?
+				  AND (direct_registered_at IS NOT NULL OR hashtag_detected_at IS NOT NULL)
+				  AND taken_at >= ?
+				ORDER BY (enriched_at IS NULL) DESC, taken_at DESC""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
@@ -303,7 +313,8 @@ public class TaggedPostRepository {
 		db.update("""
 				UPDATE brand_tagged_post SET last_crawled_at = ?
 				WHERE brand_id = ? AND taken_at >= ?
-				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL""",
+				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND hashtag_detected_at IS NULL""",
 				Timestamp.from(at), brandId, Timestamp.from(minTakenAt));
 	}
 
@@ -351,6 +362,7 @@ public class TaggedPostRepository {
 		return db.queryForList("""
 				SELECT short_code FROM brand_tagged_post
 				WHERE brand_id = ? AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND hashtag_detected_at IS NULL
 				  AND taken_at >= ? AND unavailable_at IS NULL
 				  AND (absence_checked_at IS NULL OR absence_checked_at < ?)
 				ORDER BY taken_at DESC""",
