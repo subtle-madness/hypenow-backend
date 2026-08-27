@@ -80,7 +80,10 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 - **분석 결과** — 뷰 결과가 미러되는 테이블(Flyway로 명시 정의 — §4-3). analytics가 쓰고 was가 읽는다.
   - **파생 뷰(미러 아님)** — 입력이 전부 analysis DB 안에 있는 집계는 미러를 거치지 않고 이 DB의 뷰로
     둔다. raw를 볼 필요가 없으니 뷰가 DB 경계를 넘을 일이 없고, 미러 지연 없이 항상 최신이며 과거
-    적재분에도 자동 소급된다. 현재 `account_category_stats`(계정 카테고리 믹스 — V35) 하나.
+    적재분에도 자동 소급된다. 현재 `account_category_stats`(계정 카테고리 믹스 — V35, 뷰) +
+    발굴 사전집계 **materialized view 3종**(`account_beauty_ratio`·`account_category_share`·
+    `account_sponsored_counts` — V20260827045100, 입력 변경 잡 완료 시 analytics
+    `DerivedViewRefresher`가 REFRESH CONCURRENTLY).
 - Flyway 이력은 스키마별 분리 소유 — 분석 결과는 analytics가, `app` 스키마는 was가 관리.
 - **서비스 데이터 (`app` 스키마)** — 로그인·후보 관리 등 was가 직접 읽고 쓰는 일반 앱 데이터.
   분석 결과와 스키마로 격리, 나중에 물리 분리 가능. 테이블(태스크 G + P2 확장): `users`(이메일 lower
