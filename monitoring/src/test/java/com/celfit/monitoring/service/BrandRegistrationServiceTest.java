@@ -272,7 +272,7 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubHashtagCollect() {
-			super(null, null, null, null, null, 0, 0);
+			super(null, null, null, null, null, null, 0, 0);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */

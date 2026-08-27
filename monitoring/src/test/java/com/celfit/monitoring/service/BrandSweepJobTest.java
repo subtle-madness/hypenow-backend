@@ -193,7 +193,7 @@ class BrandSweepJobTest {
 		final Set<String> failing = new HashSet<>();
 
 		StubHashtagCollect() {
-			super(null, null, null, null, null, 0, 0);
+			super(null, null, null, null, null, null, 0, 0);
 		}
 
 		@Override
