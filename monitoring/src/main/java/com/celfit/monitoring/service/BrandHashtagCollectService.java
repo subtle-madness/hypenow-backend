@@ -166,12 +166,17 @@ public class BrandHashtagCollectService {
 					.toList();
 			List<PostInfo> overlap = fresh.stream().filter(p -> state.known.contains(p.shortCode())).toList();
 			List<PostInfo> brandNew = fresh.stream().filter(p -> !state.known.contains(p.shortCode()))
-					.limit(Math.max(0, state.budget - created))
+					.limit(Math.max(0, state.budget))
 					.toList();
 			List<PostInfo> toCollect = new ArrayList<>(overlap);
 			toCollect.addAll(brandNew);
 			collectPage(brand, tag, toCollect, now);
 			created += brandNew.size();
+			// 페이지 단위 즉시 차감(2026-08-27 재리뷰 반영) — 태그 루프 전체를 돈 뒤 한 번에 빼면,
+			// 도중 예외(격리된 태그 실패)로 이 태그가 여기서 끊길 때 이미 커밋된 페이지분이 예산에서
+			// 안 빠져 다음 태그가 그만큼 초과 편입한다. 페이지마다 바로 빼면 어느 페이지에서 끊기든
+			// state.budget이 그 순간까지의 실편입을 정확히 반영한다.
+			state.budget -= brandNew.size();
 			for (PostInfo p : toCollect) {
 				state.insertedThisRun.add(p.shortCode());
 				state.known.add(p.shortCode());
@@ -188,7 +193,6 @@ public class BrandHashtagCollectService {
 				break;
 			}
 		}
-		state.budget -= created;
 		return created;
 	}
 

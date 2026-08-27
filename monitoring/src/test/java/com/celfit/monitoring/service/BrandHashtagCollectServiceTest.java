@@ -54,6 +54,7 @@ class BrandHashtagCollectServiceTest {
 	private final Map<String, List<String>> pagesByTag = new HashMap<>();
 	private final Map<String, Integer> pageIndexByTag = new HashMap<>();
 	private final Set<String> failingTags = new HashSet<>();
+	private final Map<String, Integer> failAfterCallByTag = new HashMap<>();
 	private final List<String> calls = new ArrayList<>();
 
 	private final BrandRow brand =
@@ -233,11 +234,16 @@ class BrandHashtagCollectServiceTest {
 			if (failingTags.contains(tag)) {
 				throw new RuntimeException("의도된 태그 열거 실패: " + tag);
 			}
+			int callIndex = pageIndexByTag.merge(tag, 1, Integer::sum);   // 이 태그의 1-based 호출 번호
+			Integer failAt = failAfterCallByTag.get(tag);
+			if (failAt != null && callIndex == failAt) {
+				throw new RuntimeException("의도된 페이지 실패: " + tag + " 호출 " + callIndex);
+			}
 			if (!pagesByTag.containsKey(tag)) {
 				throw new IllegalStateException("등록 안 된 태그 콜: " + tag);
 			}
 			List<String> pages = pagesByTag.get(tag);
-			int idx = pageIndexByTag.merge(tag, 1, Integer::sum) - 1;
+			int idx = callIndex - 1;
 			return pages.get(Math.min(idx, pages.size() - 1));
 		});
 	}
@@ -433,5 +439,25 @@ class BrandHashtagCollectServiceTest {
 		service(4, 1000).sweep(brand);
 
 		assertThat(tagged.upsertedHashtag).containsExactly("N1");
+	}
+
+	/**
+	 * 재리뷰(2026-08-27) 반영 — 예산 차감이 태그 루프 종료 후 일괄이면, 태그 도중 예외로 그 지점까지
+	 * 이미 커밋된 페이지분이 예산에서 안 빠져 다음 태그가 초과 편입한다. cclime은 1페이지에서 2건을
+	 * 편입한 뒤 2페이지 요청에서 실패(격리)한다 — 상한 3 중 남은 예산은 1이어야 하고, 끌리메는
+	 * 딱 1건만 편입해야 총합이 상한 3을 넘지 않는다.
+	 */
+	@Test
+	void 태그_중도_실패해도_이미_편입된_페이지는_예산에서_차감된다() {
+		tags.tags = List.of("cclime", "끌리메");
+		pagesByTag.put("cclime", List.of(
+				sectionsBody("p2", media("A1", RECENT, "poster1"), media("A2", RECENT, "poster2"))));
+		failAfterCallByTag.put("cclime", 2);   // 1페이지는 정상, 2페이지 요청에서 예외
+		pagesByTag.put("끌리메", List.of(sectionsBody(null,
+				media("B1", RECENT, "poster3"), media("B2", RECENT, "poster4"), media("B3", RECENT, "poster5"))));
+
+		service(4, 3).sweep(brand);
+
+		assertThat(tagged.upsertedHashtag).containsExactly("A1", "A2", "B1");
 	}
 }
