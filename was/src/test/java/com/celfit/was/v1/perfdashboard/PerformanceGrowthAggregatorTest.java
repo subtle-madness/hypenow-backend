@@ -4,6 +4,7 @@ import static com.celfit.was.v1.perfdashboard.PerformanceGrowthAggregator.Granul
 import static com.celfit.was.v1.perfdashboard.PerformanceGrowthAggregator.Granularity.MONTH;
 import static com.celfit.was.v1.perfdashboard.PerformanceGrowthAggregator.Granularity.WEEK;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import com.celfit.was.v1.perfdashboard.PerformanceGrowthResponse.Point;
@@ -47,10 +48,11 @@ class PerformanceGrowthAggregatorTest {
 		var res = PerformanceGrowthAggregator.aggregate(List.of(ref("2028-02-10")),
 				MONTH, LocalDate.parse("2028-01-31"), LocalDate.parse("2028-03-01"), List.of());
 
+		// 양끝은 요청 구간으로 클램프된다 — 가운데 2월만 온전한 버킷이라 월말(윤년 29일)이 그대로다.
 		assertThat(res.points()).extracting(Point::start)
-				.containsExactly("2028-01-01", "2028-02-01", "2028-03-01");
+				.containsExactly("2028-01-31", "2028-02-01", "2028-03-01");
 		assertThat(res.points()).extracting(Point::end)
-				.containsExactly("2028-01-31", "2028-02-29", "2028-03-31");
+				.containsExactly("2028-01-31", "2028-02-29", "2028-03-01");
 	}
 
 	@Test
@@ -117,8 +119,39 @@ class PerformanceGrowthAggregatorTest {
 				WEEK, LocalDate.parse("2026-08-26"), LocalDate.parse("2026-08-28"), List.of());
 
 		assertThat(res.points()).hasSize(1);
-		assertThat(res.points().get(0).start()).isEqualTo("2026-08-24");
+		// 라벨은 버킷 시작(08-24)이 아니라 요청 구간과의 교집합이다(부분 버킷 클램프).
+		assertThat(res.points().get(0).start()).isEqualTo("2026-08-26");
+		assertThat(res.points().get(0).end()).isEqualTo("2026-08-28");
 		assertThat(res.points().get(0).contentCount()).isEqualTo(1);
+	}
+
+	@Test
+	void 부분_버킷의_라벨은_요청_구간으로_클램프된다() {
+		// from=수요일·to=화요일 → 양끝 버킷이 잘린다. 라벨이 온전한 주(월~일)면 FE 축에서 양끝이
+		// 이유 없이 과소로 보인다 — 라벨이 실제 집계 범위를 말해야 한다.
+		var res = PerformanceGrowthAggregator.aggregate(List.of(
+				ref("2026-08-27", "12", true, 100L, null, false, null, null)),
+				WEEK, LocalDate.parse("2026-08-26"), LocalDate.parse("2026-09-01"), List.of("12"));
+
+		assertThat(res.points()).extracting(Point::start, Point::end).containsExactly(
+				tuple("2026-08-26", "2026-08-30"),
+				tuple("2026-08-31", "2026-09-01"));
+		// 계정 시리즈·빈 버킷도 같은 라벨이다(차트 축 공유).
+		assertThat(res.accounts().get(0).points()).extracting(Point::start, Point::end).containsExactly(
+				tuple("2026-08-26", "2026-08-30"),
+				tuple("2026-08-31", "2026-09-01"));
+		assertThat(res.points().get(1).contentCount()).isZero();
+	}
+
+	@Test
+	void 한쪽만_지정하면_그쪽만_클램프된다() {
+		// to만 지정 — 시작 라벨은 데이터 범위(버킷 경계) 그대로다(요청이 자른 끝이 아니다).
+		var res = PerformanceGrowthAggregator.aggregate(List.of(ref("2026-08-27")),
+				WEEK, null, LocalDate.parse("2026-08-28"), List.of());
+
+		assertThat(res.points()).hasSize(1);
+		assertThat(res.points().get(0).start()).isEqualTo("2026-08-24");
+		assertThat(res.points().get(0).end()).isEqualTo("2026-08-28");
 	}
 
 	@Test
@@ -197,7 +230,7 @@ class PerformanceGrowthAggregatorTest {
 		for (var series : res.accounts()) {
 			assertThat(series.points()).extracting(Point::start, Point::end)
 					.containsExactlyElementsOf(res.points().stream()
-							.map(point -> org.assertj.core.groups.Tuple.tuple(point.start(), point.end()))
+							.map(point -> tuple(point.start(), point.end()))
 							.toList());
 		}
 	}
@@ -213,6 +246,45 @@ class PerformanceGrowthAggregatorTest {
 		assertThat(res.points().get(0).contentCount()).isEqualTo(1);
 		assertThat(res.points().get(0).views()).isEqualTo(100L);
 		assertThat(res.accounts().get(0).points().get(0).contentCount()).isEqualTo(1);
+	}
+
+	@Test
+	void 계정_시리즈_순서는_인자_순서지_id_정렬이_아니다() {
+		// 축 순서는 호출부(컨트롤러)가 정한 순서 그대로다 — 여기서 정렬하면 FE 범례 순서가 뒤집힌다.
+		var res = PerformanceGrowthAggregator.aggregate(List.of(
+				ref("2026-08-26", "12", true, 100L, null, false, null, null),
+				ref("2026-08-26", "15", true, 200L, null, false, null, null)),
+				DAY, null, null, List.of("15", "12"));
+
+		assertThat(res.accounts()).extracting(PerformanceGrowthResponse.AccountSeries::brandAccountId)
+				.containsExactly("15", "12");
+		assertThat(res.accounts().get(0).points().get(0).views()).isEqualTo(200L);
+		assertThat(res.accounts().get(1).points().get(0).views()).isEqualTo(100L);
+	}
+
+	@Test
+	void from이_to보다_뒤면_빈_시리즈다() {
+		// 뒤집힌 구간은 버킷이 없다 — 무한 루프도, 역순 축도 만들지 않는다.
+		var res = PerformanceGrowthAggregator.aggregate(List.of(ref("2026-08-26")),
+				DAY, LocalDate.parse("2026-08-28"), LocalDate.parse("2026-08-26"), List.of("12"));
+
+		assertThat(res.points()).isEmpty();
+		assertThat(res.accounts()).hasSize(1);
+		assertThat(res.accounts().get(0).points()).isEmpty();
+	}
+
+	@Test
+	void from만_지정하면_to는_데이터_범위로_폴백한다() {
+		// 한쪽만 지정 — 반대쪽 끝은 데이터의 최대 업로드일이다(구간 밖은 여전히 안 실린다).
+		var res = PerformanceGrowthAggregator.aggregate(List.of(
+				ref("2026-08-24"),   // from 이전 — 제외
+				ref("2026-08-26"),
+				ref("2026-08-28")),
+				DAY, LocalDate.parse("2026-08-26"), null, List.of());
+
+		assertThat(res.points()).extracting(Point::start)
+				.containsExactly("2026-08-26", "2026-08-27", "2026-08-28");
+		assertThat(res.points()).extracting(Point::contentCount).containsExactly(1, 0, 1);
 	}
 
 	@Test

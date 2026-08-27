@@ -20,6 +20,13 @@ import java.util.Map;
  *
  * <p>결과는 입력 순서와 무관하게 결정적이다 — 버킷은 범위에서 생성돼 항상 오름차순이고, 빈 버킷도
  * Point로 나온다(차트 축이 끊기지 않게).
+ *
+ * <p><b>부분 버킷 라벨은 요청 구간으로 클램프한다</b>(PR ③ Task 1 리뷰) — WEEK·MONTH에서 from/to가
+ * 버킷 중간이면 그 버킷에 실리는 건 <b>구간과의 교집합</b>뿐인데, 라벨이 온전한 버킷 경계(월요일~
+ * 일요일·1일~월말)면 FE 축에서 양끝 버킷이 이유 없이 과소로 보인다. 그래서 Point의 start·end를
+ * {@code max(버킷시작, from)}·{@code min(버킷끝, to)}로 내려 <b>라벨이 실제 집계 범위를 정직하게
+ * 반영</b>하게 한다 — 신규 필드 없이도 FE가 "라벨 길이가 온전한 버킷보다 짧다"로 부분 버킷을
+ * 식별한다. from/to가 null인 쪽은 클램프하지 않는다(그 끝은 요청이 자른 게 아니라 데이터 범위다).
  */
 public final class PerformanceGrowthAggregator {
 
@@ -89,9 +96,10 @@ public final class PerformanceGrowthAggregator {
 		List<LocalDate> starts = bucketStarts(rangeFrom, rangeTo, granularity);
 		List<AccountSeries> accounts = new ArrayList<>(ids.size());
 		for (String id : ids) {
-			accounts.add(new AccountSeries(id, fold(starts, byAccount.get(id), granularity)));
+			accounts.add(new AccountSeries(id, fold(starts, byAccount.get(id), granularity, from, to)));
 		}
-		return new PerformanceGrowthResponse(label, List.copyOf(accounts), fold(starts, total, granularity));
+		return new PerformanceGrowthResponse(label, List.copyOf(accounts),
+				fold(starts, total, granularity, from, to));
 	}
 
 	/** 버킷 시작일 — DAY: 그대로, WEEK: ISO 월요일, MONTH: 1일. (패키지 공개 — 경계 테스트 대상) */
@@ -134,16 +142,21 @@ public final class PerformanceGrowthAggregator {
 	}
 
 	private static List<Point> fold(List<LocalDate> starts, Map<LocalDate, List<DashboardRef>> byBucket,
-			Granularity granularity) {
+			Granularity granularity, LocalDate from, LocalDate to) {
 		List<Point> points = new ArrayList<>(starts.size());
 		for (LocalDate start : starts) {
-			points.add(foldOne(start, byBucket.getOrDefault(start, List.of()), granularity));
+			points.add(foldOne(start, byBucket.getOrDefault(start, List.of()), granularity, from, to));
 		}
 		return List.copyOf(points);
 	}
 
-	/** 버킷 1개 접기 — 합계는 아는 값만, 하나도 모르면 null이고 못 더한 사유는 카운트로 남는다. */
-	private static Point foldOne(LocalDate start, List<DashboardRef> bucket, Granularity granularity) {
+	/**
+	 * 버킷 1개 접기 — 합계는 아는 값만, 하나도 모르면 null이고 못 더한 사유는 카운트로 남는다.
+	 * 라벨은 요청 구간과의 교집합으로 클램프한다(클래스 javadoc) — 빈 버킷·계정 시리즈도 같은 경로라
+	 * 총계와 계정 축의 라벨이 언제나 같다.
+	 */
+	private static Point foldOne(LocalDate start, List<DashboardRef> bucket, Granularity granularity,
+			LocalDate from, LocalDate to) {
 		Long views = null;
 		Long likes = null;
 		Long comments = null;
@@ -180,9 +193,20 @@ public final class PerformanceGrowthAggregator {
 			comments = accumulate(comments, ref.latestComments());
 		}
 
-		return new Point(start.toString(), bucketEnd(start, granularity).toString(), bucket.size(),
+		return new Point(clampStart(start, from).toString(),
+				clampEnd(bucketEnd(start, granularity), to).toString(), bucket.size(),
 				views, likes, comments, followersSum,
 				viewsMissingCount, likesHiddenCount, followersMissingCount);
+	}
+
+	/** 라벨 시작 = max(버킷 시작, from) — from이 없으면 클램프 없음(클래스 javadoc). */
+	private static LocalDate clampStart(LocalDate start, LocalDate from) {
+		return from != null && start.isBefore(from) ? from : start;
+	}
+
+	/** 라벨 끝 = min(버킷 끝, to) — to가 없으면 클램프 없음. */
+	private static LocalDate clampEnd(LocalDate end, LocalDate to) {
+		return to != null && end.isAfter(to) ? to : end;
 	}
 
 	/** null 유지 합산 — 첫 non-null에서 합이 시작되고, value가 null이면 sum을 건드리지 않는다. */
