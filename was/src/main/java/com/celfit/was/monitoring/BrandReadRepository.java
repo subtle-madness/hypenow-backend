@@ -189,36 +189,6 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 게시물별 최신 스냅샷 1행의 views 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) —
-	 * performance_desc 정렬 키 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대
-	 * 365행이라 정렬 키만 필요한 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를
-	 * null로 접는 서빙 규칙({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
-	 * 브랜드 창 스코프 조인인 이유는 {@link #findSponsorshipMetaForBrand} 주석 참조.
-	 *
-	 * @deprecated {@link #findLatestMetricsForBrand}가 흡수했다(2026-08-27 P0 — 정렬 키가 views 외에
-	 *             likes·comments로 넓어져 같은 왕복에서 받는다). 호출부 이관 후 제거한다.
-	 */
-	@Deprecated
-	public List<LatestViewsRow> findLatestViewsForBrand(long brandId, OffsetDateTime cutoff,
-			boolean enrichedOnly) {
-		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
-		return jdbc.sql("""
-				SELECT DISTINCT ON (s.short_code) s.short_code, s.content_type, s.views
-				FROM brand_post_snapshot s
-				JOIN brand_tagged_post t ON t.short_code = s.short_code
-				WHERE t.brand_id = :brandId
-				  AND ( t.taken_at >= :cutoff OR t.direct_registered_at IS NOT NULL )
-				""" + enrichedFilter + """
-
-				ORDER BY s.short_code, s.captured_on DESC
-				""")
-				.param("brandId", brandId)
-				.param("cutoff", cutoff)
-				.query(LatestViewsRow.class)
-				.list();
-	}
-
-	/**
 	 * 게시물별 최신 스냅샷 1행의 지표 프로젝션(2026-08-27 서버 필터·패싯 설계) — 정렬 키(성과·좋아요·
 	 * 댓글) 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대 365행이라 정렬 키만 필요한
 	 * 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를 null로 접는 서빙 규칙
@@ -538,15 +508,6 @@ public class BrandReadRepository {
 			boolean captionMarker, String contentType, String adVerdict, String authorUsername,
 			String authorFullName, String authorProfilePicUrl, String authorImageObjectPath,
 			Long authorFollowers) {
-	}
-
-	/**
-	 * 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용.
-	 *
-	 * @deprecated {@link LatestMetricsRow}가 흡수했다(2026-08-27 P0) — 호출부 이관 후 제거한다.
-	 */
-	@Deprecated
-	public record LatestViewsRow(String shortCode, String contentType, Long views) {
 	}
 
 	/**

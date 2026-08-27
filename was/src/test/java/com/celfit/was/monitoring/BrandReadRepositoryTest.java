@@ -446,38 +446,6 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(repository.findBrandPostsByShortCodes(brandId, List.of())).isEmpty();   // IN () 선처리
 	}
 
-	/** 최신 1행 판정은 captured_on 기준이어야 한다 — 물리 삽입 순서로 새는 것을 역순 삽입으로 잡는다. */
-	@Test
-	void 최신_스냅샷_프로젝션은_브랜드_창_스코프로_게시물당_마지막_1행이다() {
-		long brandId = seedBrand("brand");
-		long otherBrand = seedBrand("other_brand");
-		seedTaggedPost(brandId, "SHORT1", "2026-08-01T12:00:00+09:00");
-		seedTaggedPost(brandId, "SHORT2", "2026-08-02T12:00:00+09:00");
-		seedTaggedPost(otherBrand, "SHORT9", "2026-08-01T12:00:00+09:00");   // 남의 브랜드 — 제외
-		jdbc.sql("""
-				INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type,
-				                                 likes, likes_hidden, comments, views, fb_plays,
-				                                 saves, shares, shares_hidden, reposts)
-				VALUES ('influencer_a', 'SHORT1', '2026-08-03', 'REELS', 20, false, 2, 500, 100, 3, 4, false, 1),
-				       ('influencer_a', 'SHORT1', '2026-08-02', 'REELS', 10, false, 1, 300, 50, 2, 3, false, 0),
-				       ('influencer_b', 'SHORT2', '2026-08-02', 'FEED', NULL, true, 5, NULL, NULL, 1, NULL, true, NULL),
-				       ('influencer_c', 'SHORT9', '2026-08-02', 'REELS', 10, false, 1, 999, 50, 2, 3, false, 0)
-				""").update();
-
-		List<BrandReadRepository.LatestViewsRow> rows = repository.findLatestViewsForBrand(
-				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
-
-		assertThat(rows).hasSize(2);
-		BrandReadRepository.LatestViewsRow reels = rows.stream()
-				.filter(r -> r.shortCode().equals("SHORT1")).findFirst().orElseThrow();
-		assertThat(reels.views()).isEqualTo(500L);   // 08-03 행 — captured_on 최신
-		assertThat(reels.contentType()).isEqualTo("REELS");
-		BrandReadRepository.LatestViewsRow feed = rows.stream()
-				.filter(r -> r.shortCode().equals("SHORT2")).findFirst().orElseThrow();
-		assertThat(feed.views()).isNull();
-		assertThat(feed.contentType()).isEqualTo("FEED");
-	}
-
 	/**
 	 * 최신 스냅샷 지표 프로젝션(2026-08-27 P0) — 게시물당 captured_on 최신 1행만, views뿐 아니라
 	 * likes·likesHidden·comments까지. 역순 삽입으로 물리 순서 의존을 잡는다.

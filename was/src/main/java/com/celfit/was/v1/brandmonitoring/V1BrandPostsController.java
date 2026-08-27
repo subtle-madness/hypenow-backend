@@ -123,18 +123,18 @@ public class V1BrandPostsController {
 		// 유저 표시 창(2026-08-17) — 자산(brand_account)은 유저 간 max로 수집하므로 12개월치가
 		// 있어도, 이 유저가 신청한 기간까지만 서빙한다. counts·필터·정렬 전부 자른 전량 기준.
 		// 컷은 스트림 밖에서 한 번만 구한다 — 건마다 시계를 읽으면 자정을 걸친 응답에서 창이 흔들린다.
-		LocalDate windowStart = linkWindowStart(today(), link.collectionMonths());
+		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
 		// 인덱스 패스(경량) — counts·필터·정렬·페이지 슬라이스는 전부 ref 위에서 끝낸다. 최신뷰
 		// 정렬 키는 performance 정렬일 때만 조회한다(그 외 정렬에선 스냅샷을 아예 안 읽는다).
 		BrandPostAssembler.BrandPostIndex index = assembler.indexForBrand(principal.getUserId(), account,
 				SORT_PERFORMANCE_DESC.equals(sortKey));
 		List<BrandPostAssembler.PostRef> all = index.refs().stream()
-				.filter(r -> withinLinkWindow(r, windowStart))
+				.filter(r -> BrandPostWindows.withinLinkWindow(r, windowStart))
 				.toList();
 		List<BrandPostAssembler.PostRef> filtered = all.stream()
 				.filter(r -> sourceFilter == null || sourceFilter.equals(r.source()))
 				.filter(r -> sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
-				.filter(r -> withinUploadWindow(r.uploadedOn(), from, to))
+				.filter(r -> BrandPostWindows.withinUploadWindow(r.uploadedOn(), from, to))
 				.sorted(comparator(sortKey))
 				.limit(POST_LIMIT)
 				.toList();
@@ -202,12 +202,12 @@ public class V1BrandPostsController {
 			if (account.isEmpty()) {
 				continue;
 			}
-			LocalDate windowStart = linkWindowStart(today, link.collectionMonths());
+			LocalDate windowStart = BrandPostWindows.linkWindowStart(today, link.collectionMonths());
 			BrandPostAssembler.BrandPostIndex index = assembler.indexForBrand(principal.getUserId(),
 					account.get(), false);
 			// 창 밖 게시물은 목록에 없다 — 상세만 열리는 불일치를 만들지 않는다(같은 404).
 			boolean present = index.refs().stream()
-					.anyMatch(r -> r.shortcode().equals(postId) && withinLinkWindow(r, windowStart));
+					.anyMatch(r -> r.shortcode().equals(postId) && BrandPostWindows.withinLinkWindow(r, windowStart));
 			if (!present) {
 				continue;
 			}
@@ -310,35 +310,12 @@ public class V1BrandPostsController {
 
 	// ---------- 필터·정렬 ----------
 
-	private static boolean withinUploadWindow(LocalDate uploadedOn, LocalDate from, LocalDate to) {
-		if (from == null && to == null) {
-			return true;
-		}
-		if (uploadedOn == null) {
-			// 업로드일을 모르는 건(수집 전 직접 등록분)은 기간 필터를 걸면 판정 불가라 제외한다.
-			return false;
-		}
-		return (from == null || !uploadedOn.isBefore(from)) && (to == null || !uploadedOn.isAfter(to));
-	}
+	// 창 판정 3함수(withinUploadWindow·linkWindowStart·withinLinkWindow)는 BrandPostWindows로 옮겼다
+	// (2026-08-27 서버 필터·패싯 설계) — 서버 필터·패싯이 같은 규칙을 재사용해야 하기 때문이다.
 
 	/** 창 계산의 기준일 — KST 달력일(windowCutoff 관용구 동형: 인스턴트 빼기는 경계가 흔들린다). */
 	private LocalDate today() {
 		return LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
-	}
-
-	/** 링크 표시 창의 하한. */
-	private static LocalDate linkWindowStart(LocalDate today, int collectionMonths) {
-		return today.minusMonths(collectionMonths);
-	}
-
-	/**
-	 * 링크 창 판정(2026-08-17) — direct는 유저가 URL을 명시 등록한 추적 대상이라 창과 무관하게
-	 * 통과한다(창은 태그 수집 범위의 개념). 나머지는 기간 필터와 같은 판정이라 그쪽에 위임한다
-	 * (업로드일 미상 제외 규칙의 정의가 {@link #withinUploadWindow} 한 곳에만 있게).
-	 */
-	private static boolean withinLinkWindow(BrandPostAssembler.PostRef ref, LocalDate windowStart) {
-		return BrandPostAssembler.SOURCE_DIRECT.equals(ref.source())
-				|| withinUploadWindow(ref.uploadedOn(), windowStart, null);
 	}
 
 	/**

@@ -120,19 +120,33 @@ class V1BrandPostsControllerTest {
 			for (BrandPostMetaRow m : brandReadRepository.findPostMeta(List.of())) {
 				metaByCode.putIfAbsent(m.shortCode(), m);
 			}
+			// author_profile LEFT JOIN 재현 — 게시자 시드(findAuthors)도 한 산지에서 파생시킨다.
+			var authorByIgUserId = new java.util.LinkedHashMap<String, AuthorRow>();
+			for (AuthorRow a : brandReadRepository.findAuthors(List.of())) {
+				authorByIgUserId.putIfAbsent(a.igUserId(), a);
+			}
 			return brandReadRepository.findBrandPostsInWindow(0L, null, true).stream()
 					.map(r -> {
 						BrandPostMetaRow m = metaByCode.get(r.shortCode());
+						AuthorRow a = r.authorIgUserId() == null ? null
+								: authorByIgUserId.get(r.authorIgUserId());
 						// 캡션 원문 대신 SQL이 계산한 마커 매치를 싣는 슬림 셰이프(2026-08-27 P0) —
-						// 같은 시드 캡션을 자바 판정기로 접어 SQL과 같은 값을 만든다. 필터·패싯·작성자
-						// 컬럼은 이 테스트가 아직 소비하지 않아 기본값(null)으로 둔다(Task 4 소관).
+						// 같은 시드 캡션을 자바 판정기로 접어 SQL과 같은 값을 만든다. 매체·광고 판정·
+						// 게시자도 같은 시드(meta·author_profile)에서 파생시킨다 — 두 산지의 값이
+						// 어긋나 필터·패싯이 풀 조립과 불일치하는 시드 실수를 원천 차단한다.
 						String caption = m == null ? null : m.caption();
 						return new BrandReadRepository.BrandPostIndexRow(r.shortCode(), r.takenAt(),
 								r.tagDetectedAt(), r.directRegisteredAt(), r.authorUsername(),
 								m == null ? null : m.isPaidPartnership(),
 								caption != null
 										&& BrandSponsorshipClassifier.containsSponsorshipMarker(caption),
-								null, null, null, null, null, null, null);
+								m == null ? null : m.contentType(),
+								m == null ? null : m.adVerdict(),
+								a == null ? null : a.username(),
+								a == null ? null : a.fullName(),
+								a == null ? null : a.profilePicUrl(),
+								a == null ? null : a.imageObjectPath(),
+								a == null ? null : a.followers());
 					})
 					.toList();
 		});
@@ -142,13 +156,14 @@ class V1BrandPostsControllerTest {
 					.filter(r -> codes.contains(r.shortCode()))
 					.toList();
 		});
-		given(brandReadRepository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
+		given(brandReadRepository.findLatestMetricsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
 			var latest = new java.util.LinkedHashMap<String, BrandSnapshotRow>();
 			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(List.of())) {
 				latest.merge(row.shortCode(), row, (a, b) -> b.capturedOn().isAfter(a.capturedOn()) ? b : a);
 			}
 			return latest.values().stream()
-					.map(r -> new BrandReadRepository.LatestViewsRow(r.shortCode(), r.contentType(), r.views()))
+					.map(r -> new BrandReadRepository.LatestMetricsRow(r.shortCode(), r.contentType(), r.views(),
+							r.likes(), r.likesHidden(), r.comments()))
 					.toList();
 		});
 	}
