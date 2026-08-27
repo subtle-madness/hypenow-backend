@@ -154,15 +154,19 @@ public class BrandPostAssembler {
 			poolByCode.putIfAbsent(post.shortCode(), post);
 		}
 
+		// 프로젝션은 shortcode IN이 아니라 브랜드 창 스코프 조인이다(스테이징 실측 2026-08-27 —
+		// 만 건대 IN 바인드 전개가 요청당 2초대를 만들었다). 술어가 findBrandPostsInWindow와 동형이라
+		// 모수가 같고, 노출 필터로 걸러질 행의 메타가 섞여 와도 키 조회만 하므로 무해하다.
 		Map<String, BrandReadRepository.SponsorshipMetaRow> metaByCode = poolByCode.isEmpty() ? Map.of()
-				: brandReadRepository.findSponsorshipMeta(poolByCode.keySet()).stream()
+				: brandReadRepository.findSponsorshipMetaForBrand(account.id(), windowCutoff(), true).stream()
 						.collect(Collectors.toMap(BrandReadRepository.SponsorshipMetaRow::shortCode,
 								Function.identity(), (a, b) -> a));
 		// 피드 views null 서빙 규칙(snapshotOf 동형)을 정렬 키에도 적용한다 — HashMap을 쓰는 이유는
 		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
 		Map<String, Long> viewsByCode = new LinkedHashMap<>();
 		if (withViews && !poolByCode.isEmpty()) {
-			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViews(poolByCode.keySet())) {
+			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViewsForBrand(
+					account.id(), windowCutoff(), true)) {
 				viewsByCode.put(row.shortCode(),
 						CONTENT_TYPE_REELS.equalsIgnoreCase(row.contentType()) ? row.views() : null);
 			}
