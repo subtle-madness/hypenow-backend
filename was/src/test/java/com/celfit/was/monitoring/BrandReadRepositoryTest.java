@@ -342,6 +342,9 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
 		assertThat(enriched.takenAt()).isNotNull();
+		assertThat(enriched.unavailableAt()).isNull();       // 정상 — hidden 아님(대시보드 상태 판정 입력)
+		assertThat(enriched.authorUsername()).isEqualTo("influencer_a");
+		assertThat(enriched.authorIgUserId()).isEqualTo("IG_A");
 		BrandReadRepository.BrandPostIndexRow noMeta = rows.stream()
 				.filter(r -> r.shortCode().equals("NOMETA")).findFirst().orElseThrow();
 		assertThat(noMeta.caption()).isNull();               // 메타 없음 → 판정 입력 null(unknown)
@@ -403,18 +406,24 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('influencer_c', 'SHORT9', '2026-08-02', 'REELS', 10, false, 1, 999, 50, 2, 3, false, 0)
 				""").update();
 
-		List<BrandReadRepository.LatestViewsRow> rows = repository.findLatestViewsForBrand(
+		List<BrandReadRepository.LatestSnapshotRow> rows = repository.findLatestSnapshotsForBrand(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
 
 		assertThat(rows).hasSize(2);
-		BrandReadRepository.LatestViewsRow reels = rows.stream()
+		BrandReadRepository.LatestSnapshotRow reels = rows.stream()
 				.filter(r -> r.shortCode().equals("SHORT1")).findFirst().orElseThrow();
 		assertThat(reels.views()).isEqualTo(500L);   // 08-03 행 — captured_on 최신
+		assertThat(reels.capturedOn()).isEqualTo(LocalDate.parse("2026-08-03"));
 		assertThat(reels.contentType()).isEqualTo("REELS");
-		BrandReadRepository.LatestViewsRow feed = rows.stream()
+		assertThat(reels.likes()).isEqualTo(20L);
+		assertThat(reels.likesHidden()).isFalse();
+		assertThat(reels.comments()).isEqualTo(2L);
+		BrandReadRepository.LatestSnapshotRow feed = rows.stream()
 				.filter(r -> r.shortCode().equals("SHORT2")).findFirst().orElseThrow();
 		assertThat(feed.views()).isNull();
 		assertThat(feed.contentType()).isEqualTo("FEED");
+		assertThat(feed.likes()).isNull();           // 좋아요 숨김 — null 지표 보존
+		assertThat(feed.likesHidden()).isTrue();
 	}
 
 	@Test

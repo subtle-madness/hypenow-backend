@@ -132,7 +132,7 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 6컬럼 <b>단일 조인 쿼리</b>({@link
+	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 <b>단일 조인 쿼리</b>({@link
 	 * BrandReadRepository#findBrandPostIndex}) + (withViews면) 최신 스냅샷 1행 프로젝션만 읽어
 	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없고, 무거운
 	 * 조립은 {@link #hydrate}가 페이지 코드에만 수행한다. 표시 표면 전용이라 scope는 항상
@@ -164,7 +164,7 @@ public class BrandPostAssembler {
 		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
 		Map<String, Long> viewsByCode = new LinkedHashMap<>();
 		if (withViews && !poolByCode.isEmpty()) {
-			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViewsForBrand(
+			for (BrandReadRepository.LatestSnapshotRow row : brandReadRepository.findLatestSnapshotsForBrand(
 					account.id(), windowCutoff(), true)) {
 				viewsByCode.put(row.shortCode(),
 						CONTENT_TYPE_REELS.equalsIgnoreCase(row.contentType()) ? row.views() : null);

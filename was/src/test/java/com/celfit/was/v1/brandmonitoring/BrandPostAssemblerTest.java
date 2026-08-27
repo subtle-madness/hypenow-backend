@@ -126,9 +126,11 @@ class BrandPostAssemblerTest {
 		given(repository.findBrandPostIndex(eq(42L), any(), eq(true))).willReturn(List.of(
 				indexRow("REELS1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
 				indexRow("FEED1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
-		given(repository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
-				new BrandReadRepository.LatestViewsRow("REELS1", "REELS", 500L),
-				new BrandReadRepository.LatestViewsRow("FEED1", "FEED", 300L)));
+		given(repository.findLatestSnapshotsForBrand(anyLong(), any(), anyBoolean())).willReturn(List.of(
+				new BrandReadRepository.LatestSnapshotRow("REELS1", LocalDate.parse("2026-08-06"), "REELS",
+						500L, 10L, false, 2L),
+				new BrandReadRepository.LatestSnapshotRow("FEED1", LocalDate.parse("2026-08-06"), "FEED",
+						300L, 20L, false, 3L)));
 
 		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
 				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
@@ -1080,12 +1082,17 @@ class BrandPostAssemblerTest {
 		return row(code, "2026-08-06T02:00:00Z", takenAt, null);
 	}
 
-	/** 인덱스 행 빌더 — 판정 입력 6컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프). */
+	/**
+	 * 인덱스 행 빌더 — 판정 입력 컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프).
+	 * 뒤 3개(unavailableAt·authorUsername·authorIgUserId)는 대시보드 표면 전용이라 브랜드 표면
+	 * 테스트에서는 null로 채운다.
+	 */
 	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
 			String tagDetectedAt, String directRegisteredAt, Boolean paid, String caption) {
 		return new BrandReadRepository.BrandPostIndexRow(code, OffsetDateTime.parse(takenAt),
 				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
-				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption);
+				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption,
+				null, null, null);
 	}
 
 	/** 범용 row 빌더 — tagDetectedAt·directRegisteredAt을 직접 지정해 source 파생을 검증한다. */
