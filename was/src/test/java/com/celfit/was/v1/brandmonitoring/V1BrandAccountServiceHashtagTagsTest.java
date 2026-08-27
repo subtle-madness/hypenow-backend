@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 import com.celfit.was.auth.UserRepository;
@@ -99,6 +100,24 @@ class V1BrandAccountServiceHashtagTagsTest {
 		service.register(USER_ID, ".beauty", BrandAccountType.OWN, 12);
 
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+	}
+
+	/**
+	 * 시딩 실패 격리 회귀(품질 리뷰 지적) — 링크는 이미 커밋됐으므로 장부 시딩이 던져도 등록 응답은
+	 * 그대로 나가야 한다({@code seedLedgerTagsSafely}의 try-catch 격리 대상,
+	 * {@code V1BrandAccountsControllerTest.own_link_push_실패는_PATCH_응답에_영향_없다}와 동형).
+	 */
+	@Test
+	void 장부_시딩_실패는_등록_응답에_영향이_없다() {
+		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
+		willThrow(new RuntimeException("장부 실패"))
+				.given(hashtagTagRepository).addTags(USER_ID, BRAND_ID, List.of(USERNAME));
+
+		BrandAccountResponse response = service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
+
+		assertThat(response).isNotNull();
+		assertThat(response.id()).isEqualTo(String.valueOf(BRAND_ID));
 	}
 
 	// ---------- 조회 ----------

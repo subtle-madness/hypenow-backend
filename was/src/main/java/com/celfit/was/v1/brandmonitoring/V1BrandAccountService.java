@@ -133,7 +133,10 @@ public class V1BrandAccountService {
 			throw e;
 		}
 		// 태그 장부 시딩(2026-08-27 해시태그 직접 수집 설계 §4) — 신규 링크에만 건다. 멱등 재-POST는
-		// 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지 않는다(지운 태그 부활 방지).
+		// 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지 않는다(지운 태그 부활 방지). 개명
+		// 재등록(precheck가 옛 계정명 기준이라 미스 나고 위 link()가 기존 brandId로 접히는 경우, 128행
+		// 주석 참고)은 이 경로를 그대로 지나간다 — 새 계정명 유도 태그를 더할 뿐 기존 태그를 지우지
+		// 않으므로 "지운 태그 부활" 위험이 없어 의도적으로 허용한다.
 		seedLedgerTagsSafely(userId, registered.brandId(), username);
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
@@ -158,7 +161,7 @@ public class V1BrandAccountService {
 				hashtagTagRepository.addTags(userId, brandId, derived);
 			}
 		} catch (RuntimeException e) {
-			log.warn("해시태그 태그 장부 시딩 실패(격리) — userId={}, brandId={}: {}", userId, brandId, e.toString());
+			log.warn("해시태그 태그 장부 시딩 실패(격리) — userId={}, brandId={}", userId, brandId, e);
 		}
 	}
 
