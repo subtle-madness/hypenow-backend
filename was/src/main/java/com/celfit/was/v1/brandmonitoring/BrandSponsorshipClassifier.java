@@ -89,6 +89,10 @@ public final class BrandSponsorshipClassifier {
 	 * {@code (?<![\p{L}\p{N}])} → {@code (^|[^[:alnum:]])}, {@code l(?=\s)} → {@code l[공백]}.
 	 * 동치성은 SQL 골든 코퍼스 테스트(BrandSponsorshipSqlEquivalenceTest)가 봉인한다 —
 	 * 마커 상수를 고치면 그 테스트가 함께 검증한다(별도 갱신 불필요, 코퍼스에 사례만 추가).
+	 *
+	 * <p><b>전제</b>: {@code [[:alnum:]]}의 유니코드 인식 여부는 DB 이미지·로케일에 종속된다 —
+	 * 테스트 컨테이너와 운영이 같은 {@code postgres:17-alpine}이라 동치가 성립한다.
+	 * 이미지 계열을 바꿨을 때 동치성 테스트가 깨지면 이 전제부터 확인할 것.
 	 */
 	public static String postgresMarkerRegex() {
 		List<String> alts = new ArrayList<>();
