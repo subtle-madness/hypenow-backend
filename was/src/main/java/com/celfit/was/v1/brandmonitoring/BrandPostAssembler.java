@@ -120,6 +120,147 @@ public class BrandPostAssembler {
 		return mergeWithLegacyPending(brandPool, legacyPending);
 	}
 
+	// ---------- 인덱스/하이드레이트(2026-08-27 목록 타임아웃 해소 설계) ----------
+
+	/**
+	 * 게시물 1건의 경량 참조 — counts·필터·정렬·페이지 슬라이스가 필요로 하는 판정값만 담는다.
+	 * 판정 산지는 풀 조립과 동일 함수({@code resolveSource}·{@code BrandSponsorshipClassifier.classify}·
+	 * KST 달력일)라 ref 기반 counts는 전량 풀 조립 counts와 정의상 일치한다.
+	 *
+	 * @param latestViews performance 정렬 키(피드는 null — {@link #snapshotOf} 서빙 규칙 동형).
+	 *                    {@code withViews=false} 인덱스에서는 항상 null이다.
+	 */
+	public record PostRef(String shortcode, String source, String sponsorship, LocalDate uploadedOn,
+			Long latestViews) {
+	}
+
+	/**
+	 * 인덱스 패스 결과 — refs 외 나머지는 {@link #hydrate}가 재사용하는 재료다: poolRowsByCode는
+	 * 노출 필터를 통과한 브랜드 풀 행, legacyByCode는 과도기 폴백 카드(풀과 겹치는 shortcode는 이미
+	 * 제외 — 풀 우선 병합 규칙), ownedShortCodes는 이 유저의 direct 등록 원장(source 파생에 썼던
+	 * 값을 하이드레이트가 다시 조회하지 않게 실어 나른다).
+	 */
+	public record BrandPostIndex(List<PostRef> refs, Map<String, BrandTaggedPostRow> poolRowsByCode,
+			Map<String, BrandPostResponse> legacyByCode, Set<String> ownedShortCodes) {
+	}
+
+	/**
+	 * 인덱스 패스(경량) — 브랜드 풀 행 + 협찬 판정 프로젝션(+ withViews면 최신 스냅샷 1행)만 읽어
+	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없어 비용이
+	 * 풀 크기(수집 상한 2,000)로 캡되고, 무거운 조립은 {@link #hydrate}가 페이지 코드에만 수행한다.
+	 * 표시 표면 전용이라 scope는 항상 ENRICHED_ONLY다.
+	 *
+	 * <p>과도기 폴백(레거시 direct)은 유저별 소량·이관으로 소멸 중이라 여기서 통째로 조립해 ref와
+	 * 카드 양쪽에 재사용한다 — 풀과 겹치는 shortcode는 풀이 이긴다(기존 병합 규칙 불변).
+	 *
+	 * @param withViews true면 performance 정렬 키(latestViews)를 채운다 — 그 정렬이 아닐 때는
+	 *                  최신 스냅샷 조회 자체를 생략한다(withComments 관용구와 같은 이유).
+	 */
+	public BrandPostIndex indexForBrand(long userId, BrandAccountRow account, boolean withViews) {
+		List<BrandTaggedPostRow> allPosts = brandReadRepository.findBrandPostsInWindow(account.id(),
+				windowCutoff(), true);
+		boolean hasDirectRegistration = allPosts.stream().anyMatch(p -> p.directRegisteredAt() != null);
+		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
+				: Set.of();
+
+		Map<String, BrandTaggedPostRow> poolByCode = new LinkedHashMap<>();
+		for (BrandTaggedPostRow post : filterVisibleToUser(allPosts, ownedShortCodes)) {
+			poolByCode.putIfAbsent(post.shortCode(), post);
+		}
+
+		Map<String, BrandReadRepository.SponsorshipMetaRow> metaByCode = poolByCode.isEmpty() ? Map.of()
+				: brandReadRepository.findSponsorshipMeta(poolByCode.keySet()).stream()
+						.collect(Collectors.toMap(BrandReadRepository.SponsorshipMetaRow::shortCode,
+								Function.identity(), (a, b) -> a));
+		// 피드 views null 서빙 규칙(snapshotOf 동형)을 정렬 키에도 적용한다 — HashMap을 쓰는 이유는
+		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
+		Map<String, Long> viewsByCode = new LinkedHashMap<>();
+		if (withViews && !poolByCode.isEmpty()) {
+			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViews(poolByCode.keySet())) {
+				viewsByCode.put(row.shortCode(),
+						CONTENT_TYPE_REELS.equalsIgnoreCase(row.contentType()) ? row.views() : null);
+			}
+		}
+
+		Map<String, BrandPostResponse> legacyByCode = new LinkedHashMap<>();
+		for (BrandPostResponse legacy : assembleLegacyPending(userId, account.id())) {
+			if (!poolByCode.containsKey(legacy.shortcode())) {
+				legacyByCode.putIfAbsent(legacy.shortcode(), legacy);
+			}
+		}
+
+		List<PostRef> refs = new ArrayList<>(poolByCode.size() + legacyByCode.size());
+		for (BrandTaggedPostRow post : poolByCode.values()) {
+			BrandReadRepository.SponsorshipMetaRow meta = metaByCode.get(post.shortCode());
+			refs.add(new PostRef(post.shortCode(),
+					resolveSource(post, ownedShortCodes.contains(post.shortCode())),
+					BrandSponsorshipClassifier.classify(meta == null ? null : meta.isPaidPartnership(),
+							meta == null ? null : meta.caption()),
+					KstTimestamps.toKstDate(post.takenAt()),
+					viewsByCode.get(post.shortCode())));
+		}
+		for (BrandPostResponse legacy : legacyByCode.values()) {
+			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
+			refs.add(new PostRef(legacy.shortcode(), legacy.source(), legacy.sponsorship(), uploadedOn(legacy),
+					latest == null ? null : latest.views()));
+		}
+		return new BrandPostIndex(List.copyOf(refs), poolByCode, legacyByCode, ownedShortCodes);
+	}
+
+	/**
+	 * 하이드레이트 패스(무거움) — 인덱스가 고른 {@code codes}만 풀 카드로 조립한다. 배치 조회
+	 * (표시 메타·스냅샷·게시자·캠페인·(withComments면) 댓글)가 전부 codes 스코프라, 페이지네이션이
+	 * 걸리면 비용이 페이지 크기에만 비례한다. 반환 순서는 입력 codes 순서다(정렬은 호출부가 ref로
+	 * 이미 끝냈다). 인덱스에 없는 코드는 조용히 건너뛴다.
+	 *
+	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않고(08-12 관용구) 과도기 폴백
+	 * 카드도 {@link BrandPostResponse#withoutRecentComments()}로 비운다 — 목록 표면 계약(FE 요청 1).
+	 */
+	public List<BrandPostResponse> hydrate(long userId, BrandAccountRow account, String viewerAccountType,
+			BrandPostIndex index, List<String> codes, boolean withComments) {
+		List<BrandTaggedPostRow> posts = codes.stream()
+				.map(index.poolRowsByCode()::get)
+				.filter(Objects::nonNull)
+				.toList();
+
+		Map<String, BrandPostResponse> poolCards = new LinkedHashMap<>();
+		if (!posts.isEmpty()) {
+			Set<String> poolCodes = posts.stream().map(BrandTaggedPostRow::shortCode)
+					.collect(Collectors.toCollection(LinkedHashSet::new));
+			Map<String, BrandPostMetaRow> metaByCode = brandReadRepository.findPostMeta(poolCodes).stream()
+					.collect(Collectors.toMap(BrandPostMetaRow::shortCode, Function.identity(), (a, b) -> a));
+			Map<String, List<BrandSnapshotRow>> snapshotsByCode = brandReadRepository.findSnapshots(poolCodes)
+					.stream().collect(Collectors.groupingBy(BrandSnapshotRow::shortCode));
+			Map<String, List<BrandCommentRow>> commentsByCode = !withComments ? Map.of()
+					: brandReadRepository.findComments(poolCodes, COMMENT_LIMIT).stream()
+							.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
+			Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
+			Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), poolCodes);
+			Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
+			for (BrandTaggedPostRow post : posts) {
+				poolCards.put(post.shortCode(), brandPost(account.id(), post, metaByCode.get(post.shortCode()),
+						authorsByPost.get(post.shortCode()),
+						snapshotsByCode.getOrDefault(post.shortCode(), List.of()),
+						commentsByCode.getOrDefault(post.shortCode(), List.of()), account.lastSweptAt(),
+						campaignIdsByCode.getOrDefault(post.shortCode(), List.of()), exposeAdDisclosure,
+						seededUsernames, index.ownedShortCodes().contains(post.shortCode()), viewerAccountType));
+			}
+		}
+
+		List<BrandPostResponse> out = new ArrayList<>(codes.size());
+		for (String code : codes) {
+			BrandPostResponse card = poolCards.get(code);
+			if (card == null) {
+				card = index.legacyByCode().get(code);
+			}
+			if (card == null) {
+				continue;
+			}
+			out.add(withComments ? card : card.withoutRecentComments());
+		}
+		return out;
+	}
+
 	// ---------- 브랜드 풀 ----------
 
 	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
